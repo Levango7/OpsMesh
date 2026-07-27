@@ -1,0 +1,562 @@
+package store
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"opsmesh/internal/events"
+	"opsmesh/internal/proto"
+)
+
+func TestMemoryStore_RegisterAssignsID(t *testing.T) {
+	m := NewMemoryStore()
+	a := m.Register(&proto.AgentInfo{Segment: "seg-a"})
+	if a.AgentID == "" {
+		t.Fatal("expected server-assigned agentID")
+	}
+	if a.Status != "online" {
+		t.Fatalf("Status = %q, want online", a.Status)
+	}
+}
+
+// TestMemoryStore_LeaderAlwaysTrue A3 单实例（MemoryStore）恒为 leader，
+// RenewLeadership 任意 ttl 均返回 true，IsLeader 恒 true。
+func TestMemoryStore_LeaderAlwaysTrue(t *testing.T) {
+	m := NewMemoryStore()
+	if !m.RenewLeadership(0) {
+		t.Fatal("MemoryStore.RenewLeadership(0) = false, want true")
+	}
+	if !m.RenewLeadership(15 * time.Second) {
+		t.Fatal("MemoryStore.RenewLeadership(15s) = false, want true")
+	}
+	if !m.IsLeader() {
+		t.Fatal("MemoryStore.IsLeader() = false, want true")
+	}
+}
+
+// TestMemoryStore_CancelledTaskIDs F3 取消信号下发：取消一个任务后，
+// CancelledTaskIDs 仅返回该任务，未取消任务不出现。
+func TestMemoryStore_CancelledTaskIDs(t *testing.T) {
+	m := NewMemoryStore()
+	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+	t1 := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo 1"})
+	_ = m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo 2"})
+
+	if got := m.CancelledTaskIDs(a.AgentID); len(got) != 0 {
+		t.Fatalf("before cancel: %v, want empty", got)
+	}
+	if !m.CancelTask(t1.TaskID, "t1") {
+		t.Fatal("CancelTask(t1) = false")
+	}
+	got := m.CancelledTaskIDs(a.AgentID)
+	if len(got) != 1 || got[0] != t1.TaskID {
+		t.Fatalf("after cancel: %v, want [%s]", got, t1.TaskID)
+	}
+	// 仅查询本 agent；其他 agent 不受影响
+	a2 := m.Register(&proto.AgentInfo{Segment: "seg-b", TenantID: "t2"})
+	if got := m.CancelledTaskIDs(a2.AgentID); len(got) != 0 {
+		t.Fatalf("other agent CancelledTaskIDs = %v, want empty", got)
+	}
+}
+
+// TestMemoryStore_RetireStaleDevices F5 离线超龄自动归档：最后心跳早于阈值的
+// agent 对应设备被批量 retired；在线设备与已退役设备不受影响。
+func TestMemoryStore_RetireStaleDevices(t *testing.T) {
+	m := NewMemoryStore()
+	// 在线 agent（心跳刚刚）
+	live := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1", Status: "online"})
+	// 离线 agent（心跳已过去 2 小时）
+	dead := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1", Status: "online"})
+	m.Heartbeat(dead.AgentID, "offline", 1)
+	m.mu.Lock()
+	m.agents[dead.AgentID].LastSeen = time.Now().Add(-2 * time.Hour)
+	m.mu.Unlock()
+
+	n := m.RetireStaleDevices(1 * time.Hour)
+	if n != 1 {
+		t.Fatalf("archived = %d, want 1 (仅离线 agent 的设备）", n)
+	}
+	// 离线设备已 retired
+	if dev := m.Device("dev-" + dead.AgentID); !dev.Retired {
+		t.Fatal("离线设备未被 retired")
+	}
+	// 在线设备仍在活跃清单
+	if dev := m.Device("dev-" + live.AgentID); dev.Retired {
+		t.Fatal("在线设备不应被归档")
+	}
+	// <=0 阈值关闭归档
+	if m.RetireStaleDevices(0) != 0 {
+		t.Fatal("maxAge<=0 应返回 0（关闭）")
+	}
+}
+
+func TestMemoryStore_TenantFilter_Agents(t *testing.T) {
+	m := NewMemoryStore()
+	m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+	m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t2"})
+
+	if got := m.Agents("t1"); len(got) != 1 || got[0].TenantID != "t1" {
+		t.Fatalf("Agents(t1) = %+v, want exactly 1 with tenant t1", got)
+	}
+	if got := m.Agents("t2"); len(got) != 1 || got[0].TenantID != "t2" {
+		t.Fatalf("Agents(t2) = %+v, want exactly 1 with tenant t2", got)
+	}
+	if got := m.Agents(""); len(got) != 2 {
+		t.Fatalf("Agents(\"\") = %d, want 2 (no filter)", len(got))
+	}
+}
+
+func TestMemoryStore_TenantFilter_Snapshot(t *testing.T) {
+	m := NewMemoryStore()
+	m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+	m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t2"})
+
+	snap := m.Snapshot("t1")
+	total := 0
+	for _, devs := range snap {
+		for _, d := range devs {
+			total++
+			if d.TenantID != "t1" {
+				t.Fatalf("Snapshot(t1) leaked device tenant=%q", d.TenantID)
+			}
+		}
+	}
+	if total != 1 {
+		t.Fatalf("Snapshot(t1) device count = %d, want 1", total)
+	}
+	if total2 := countDevices(m.Snapshot("")); total2 != 2 {
+		t.Fatalf("Snapshot(\"\") device count = %d, want 2", total2)
+	}
+}
+
+func countDevices(m map[string][]proto.DeviceInfo) int {
+	n := 0
+	for _, ds := range m {
+		n += len(ds)
+	}
+	return n
+}
+
+func TestMemoryStore_PresetTask(t *testing.T) {
+	m := NewMemoryStore().WithDemo(true)
+	a := m.Register(&proto.AgentInfo{Segment: "seg-a"})
+	ts := m.GetTasks(a.AgentID)
+	if len(ts) != 1 {
+		t.Fatalf("preset tasks = %d, want 1", len(ts))
+	}
+	if ts[0].Command != "uname -a" {
+		t.Fatalf("Command = %q, want uname -a", ts[0].Command)
+	}
+}
+
+// TestMemoryStore_DAGReleaseBlockedToPending 验证 M5 作业编排的 blocked→release 调度：
+// 含前置依赖的任务初始为 block ed，当前置依赖 done 后由 SubmitResult 自动释放为 pending。
+// 这是 dag.AllDepsDone + store.releaseDeps 端到端链路的唯一覆盖测试（dag_test.go 仅测纯函数）。
+func TestMemoryStore_DAGReleaseBlockedToPending(t *testing.T) {
+	m := NewMemoryStore()
+	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+
+	ta := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "step1"})
+	if ta.Status != "pending" {
+		t.Fatalf("task A status = %q, want pending", ta.Status)
+	}
+
+	tb := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell",
+		Command: "step2", DependsOn: []string{ta.TaskID}})
+	if tb.Status != "blocked" {
+		t.Fatalf("task B (has deps) status = %q, want blocked", tb.Status)
+	}
+	// 依赖未达成前，B 必须保持 blocked（不能被提前下发）。
+	if tb.Status == "pending" {
+		t.Fatal("task B released before dependency done")
+	}
+
+	// A 完成 → B 应被自动释放为 pending（进入可下发队列）。
+	m.SubmitResult(&proto.TaskResult{TaskID: ta.TaskID, AgentID: a.AgentID, ExitCode: 0})
+	if ta.Status != "done" {
+		t.Fatalf("task A status = %q, want done", ta.Status)
+	}
+	if tb.Status != "pending" {
+		t.Fatalf("after A done: task B status = %q, want pending (release failed)", tb.Status)
+	}
+}
+
+func TestMemoryStore_SubmitResult(t *testing.T) {
+	m := NewMemoryStore().WithDemo(true)
+	a := m.Register(&proto.AgentInfo{Segment: "seg-a"})
+	ts := m.GetTasks(a.AgentID)
+	m.SubmitResult(&proto.TaskResult{TaskID: ts[0].TaskID, AgentID: a.AgentID, ExitCode: 0})
+
+	for _, ds := range m.Snapshot("") {
+		for _, d := range ds {
+			if d.AgentID == a.AgentID && d.TaskState != "done" {
+				t.Fatalf("device TaskState = %q, want done", d.TaskState)
+			}
+		}
+	}
+}
+
+// TestMemoryStore_TaskLifecycle 验证 P0-1 修复：SubmitResult 后任务不再被重复下发。
+func TestMemoryStore_TaskLifecycle(t *testing.T) {
+	m := NewMemoryStore().WithDemo(true)
+	a := m.Register(&proto.AgentInfo{Segment: "seg-a"})
+	if got := m.GetTasks(a.AgentID); len(got) != 1 {
+		t.Fatalf("before submit: GetTasks = %d, want 1", len(got))
+	}
+	m.SubmitResult(&proto.TaskResult{TaskID: "task-" + a.AgentID + "-1", AgentID: a.AgentID, ExitCode: 0})
+	if got := m.GetTasks(a.AgentID); len(got) != 0 {
+		t.Fatalf("after submit: GetTasks = %d, want 0 (no re-run)", len(got))
+	}
+}
+
+// TestMemoryStore_CreateTask 验证 P0-2 内部下发入口：分配 ID、status=pending、可被拉取。
+func TestMemoryStore_CreateTask(t *testing.T) {
+	m := NewMemoryStore().WithDemo(true)
+	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+	created := m.CreateTask(&proto.Task{AgentID: a.AgentID, Type: "shell", Command: "echo hi", TenantID: "t1"})
+	if created.TaskID == "" {
+		t.Fatal("expected server-assigned taskID")
+	}
+	if created.Status != "pending" {
+		t.Fatalf("Status = %q, want pending", created.Status)
+	}
+	if got := m.GetTasks(a.AgentID); len(got) != 2 { // 预置 1 + 下发 1
+		t.Fatalf("GetTasks after CreateTask = %d, want 2", len(got))
+	}
+}
+
+// TestMemoryStore_Audit 验证 P2-10 审计产出：事件被记录且补默时间。
+func TestMemoryStore_Audit(t *testing.T) {
+	m := NewMemoryStore()
+	m.Audit(&proto.AuditEvent{TenantID: "t1", Action: "register", Target: "agent-1"})
+	if len(m.audits) != 1 {
+		t.Fatalf("audits = %d, want 1", len(m.audits))
+	}
+	if m.audits[0].CreatedAt.IsZero() {
+		t.Fatal("expected CreatedAt to be set")
+	}
+}
+
+// TestMemoryStore_ClaimTask 验证 P1-1 原子领取：首次领取翻转 running，二次返回 nil（不双领）。
+func TestMemoryStore_ClaimTask(t *testing.T) {
+	m := NewMemoryStore().WithDemo(true)
+	a := m.Register(&proto.AgentInfo{Segment: "seg-a"})
+	got := m.ClaimTask(a.AgentID)
+	if got == nil {
+		t.Fatal("first ClaimTask = nil, want task")
+	}
+	if got.Status != "running" {
+		t.Fatalf("claimed Status = %q, want running", got.Status)
+	}
+	if m.ClaimTask(a.AgentID) != nil {
+		t.Fatal("second ClaimTask should be nil (no double-claim)")
+	}
+	// 下发新 pending 任务后可被领取
+	m.CreateTask(&proto.Task{AgentID: a.AgentID, Type: "shell", Command: "echo hi", TenantID: "t1"})
+	if m.ClaimTask(a.AgentID) == nil {
+		t.Fatal("expected newly created pending task to be claimable")
+	}
+}
+
+// TestMemoryStore_UpsertDevice 验证 P0-2 真实纳管：设备可写入并按 deviceID 幂等更新。
+func TestMemoryStore_UpsertDevice(t *testing.T) {
+	m := NewMemoryStore()
+	m.UpsertDevice(&proto.DeviceInfo{DeviceID: "dev-10.30.0.5", Segment: "seg-a", TenantID: "t1", IP: "10.30.0.5", AgentID: "agent-x", State: "online", TaskState: "idle"})
+	m.UpsertDevice(&proto.DeviceInfo{DeviceID: "dev-10.30.0.5", Segment: "seg-a", TenantID: "t1", IP: "10.30.0.5", AgentID: "agent-x", State: "online", TaskState: "done"})
+	snap := m.Snapshot("t1")
+	n := 0
+	for _, devs := range snap {
+		for _, d := range devs {
+			n++
+			if d.TaskState != "done" {
+				t.Fatalf("UpsertDevice 未幂等更新，TaskState=%q", d.TaskState)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("UpsertDevice 设备数 = %d, want 1（幂等）", n)
+	}
+}
+
+// TestMemoryStore_PendingDepth 验证 P2-1 队列深度：注册后=1，领取后=0。
+func TestMemoryStore_PendingDepth(t *testing.T) {
+	m := NewMemoryStore().WithDemo(true)
+	a := m.Register(&proto.AgentInfo{Segment: "seg-a"})
+	if d := m.PendingDepth(); d != 1 {
+		t.Fatalf("PendingDepth = %d, want 1", d)
+	}
+	m.ClaimTask(a.AgentID)
+	if d := m.PendingDepth(); d != 0 {
+		t.Fatalf("PendingDepth after claim = %d, want 0", d)
+	}
+}
+
+// recordingBus 是测试用的内存事件总线，记录所有发布的事件。
+type recordingBus struct {
+	events []events.Event
+}
+
+func (b *recordingBus) Publish(_ context.Context, e events.Event) error {
+	b.events = append(b.events, e)
+	return nil
+}
+
+// TestMemoryStore_QueryMethods 验证功能补全：AllTasks / Device / Results 三个查询方法。
+func TestMemoryStore_QueryMethods(t *testing.T) {
+	m := NewMemoryStore().WithDemo(true)
+	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+
+	// 下发一条任务并上报结果，构造可查询的数据。
+	created := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	m.SubmitResult(&proto.TaskResult{TaskID: created.TaskID, AgentID: a.AgentID, ExitCode: 0, Stdout: "hi"})
+
+	all := m.AllTasks("t1")
+	if len(all) != 2 { // 预置 1 + 下发 1
+		t.Fatalf("AllTasks(t1) = %d, want 2", len(all))
+	}
+	if got := m.AllTasks("other-tenant"); len(got) != 0 {
+		t.Fatalf("AllTasks(other) 应被租户隔离，得到 %d 条", len(got))
+	}
+
+	dev := m.Device("dev-" + a.AgentID)
+	if dev == nil || dev.AgentID != a.AgentID {
+		t.Fatalf("Device 查询失败: %+v", dev)
+	}
+	if m.Device("nope") != nil {
+		t.Fatal("未知 deviceID 应返回 nil")
+	}
+
+	results := m.Results(a.AgentID)
+	if len(results) != 1 || results[0].Stdout != "hi" {
+		t.Fatalf("Results 查询失败: %+v", results)
+	}
+}
+
+// TestMemoryStore_Agent 验证 P2-17：O(1) 直查 + 深拷贝隔离。
+// 返回副本被篡改不应影响内部存储，未知 id 必须返回 nil。
+func TestMemoryStore_Agent(t *testing.T) {
+	m := NewMemoryStore()
+	a := m.Register(&proto.AgentInfo{Segment: "seg-x", TenantID: "t9"})
+
+	got := m.Agent(a.AgentID)
+	if got == nil {
+		t.Fatalf("Agent(%q) 应为非 nil", a.AgentID)
+	}
+	if got.AgentID != a.AgentID || got.Segment != "seg-x" {
+		t.Fatalf("Agent 字段不匹配: %+v", got)
+	}
+
+	// 深拷贝隔离：修改返回值不影响内部。
+	got.Segment = "MUTATED"
+	inner := m.Agent(a.AgentID)
+	if inner == nil || inner.Segment != "seg-x" {
+		t.Fatalf("Agent(id) 未做深拷贝：内部 Segment 被改成 %q", inner.Segment)
+	}
+
+	if m.Agent("no-such-id") != nil {
+		t.Fatal("未知 id 的 Agent 应返回 nil")
+	}
+}
+
+// TestMemoryStore_EventPublish 验证事件总线接入：Register/CreateTask/SubmitResult 均经总线发布。
+func TestMemoryStore_EventPublish(t *testing.T) {
+	bus := &recordingBus{}
+	m := NewMemoryStore().WithBus(bus)
+	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+	created := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	m.SubmitResult(&proto.TaskResult{TaskID: created.TaskID, AgentID: a.AgentID, ExitCode: 0})
+
+	actions := map[string]bool{}
+	for _, e := range bus.events {
+		actions[e.Action] = true
+	}
+	for _, want := range []string{"register", "create_task", "report_result"} {
+		if !actions[want] {
+			t.Fatalf("缺失事件 %q；已发布: %+v", want, bus.events)
+		}
+	}
+}
+
+// TestMemoryStore_ReclaimStaleTasks 验证 P0-1 任务必达：超期 running 任务被复位 pending 重调度。
+func TestMemoryStore_ReclaimStaleTasks(t *testing.T) {
+	m := NewMemoryStore()
+	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+	// 显式下发一条任务供领取（不依赖演示预置）
+	m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	// 领取使其变成 running（ClaimedAt=now）
+	if got := m.ClaimTask(a.AgentID); got == nil || got.Status != "running" {
+		t.Fatalf("claim = %+v, want running", got)
+	}
+	// 模拟 agent 失联：把 ClaimedAt 拨到 1h 前
+	m.mu.Lock()
+	ts := m.tasks[a.AgentID]
+	ts[0].ClaimedAt = time.Now().Add(-time.Hour)
+	m.mu.Unlock()
+	// 超过租约（5min）应被回收
+	if n := m.ReclaimStaleTasks(5 * time.Minute); n != 1 {
+		t.Fatalf("ReclaimStaleTasks = %d, want 1", n)
+	}
+	if got := m.GetTasks(a.AgentID); len(got) != 1 || got[0].Status != "pending" {
+		t.Fatalf("after reclaim GetTasks=%+v, want 1 pending", got)
+	}
+	// 未超期不应被回收（重新领取后 ClaimedAt=now）
+	m.ClaimTask(a.AgentID)
+	if n := m.ReclaimStaleTasks(5 * time.Minute); n != 0 {
+		t.Fatalf("fresh claim reclaimed = %d, want 0", n)
+	}
+}
+
+// TestMemoryStore_QueryAudits 验证 P0-4 审计可查：租户隔离 + 动作过滤 + 倒序 + limit。
+func TestMemoryStore_QueryAudits(t *testing.T) {
+	m := NewMemoryStore()
+	m.Audit(&proto.AuditEvent{TenantID: "t1", Action: "register", Target: "a1", CreatedAt: time.Now().Add(-time.Hour)})
+	m.Audit(&proto.AuditEvent{TenantID: "t1", Action: "create_task", Target: "x", CreatedAt: time.Now()})
+	m.Audit(&proto.AuditEvent{TenantID: "t2", Action: "register", Target: "a2", CreatedAt: time.Now()})
+	// 租户隔离
+	if got := m.QueryAudits("t1", "", time.Time{}, time.Time{}, 0); len(got) != 2 {
+		t.Fatalf("tenant t1 = %d, want 2", len(got))
+	}
+	// 动作过滤
+	if got := m.QueryAudits("", "register", time.Time{}, time.Time{}, 0); len(got) != 2 {
+		t.Fatalf("action register = %d, want 2", len(got))
+	}
+	// 倒序：最新在前
+	all := m.QueryAudits("", "", time.Time{}, time.Time{}, 0)
+	if len(all) != 3 || all[0].TenantID != "t2" {
+		t.Fatalf("order = %+v, want t2 first", all)
+	}
+	// limit
+	if got := m.QueryAudits("", "", time.Time{}, time.Time{}, 1); len(got) != 1 {
+		t.Fatalf("limit 1 = %d, want 1", len(got))
+	}
+}
+
+// TestMemoryStore_Provision B1 自动纳管：签发一次性 install token，标记设备 provisioning。
+func TestMemoryStore_Provision(t *testing.T) {
+	m := NewMemoryStore().WithSecret("opsmesh-test-secret")
+	m.UpsertDevice(&proto.DeviceInfo{
+		DeviceID: "dev-test-1", Segment: "default", TenantID: "t1",
+		IP: "10.0.0.1", AgentID: "", State: "discovered", Managed: false,
+	})
+	tok, boot, err := m.Provision("dev-test-1", "10.0.0.1", "t1")
+	if err != nil {
+		t.Fatalf("Provision err = %v", err)
+	}
+	if tok == "" {
+		t.Fatal("token empty")
+	}
+	if boot == "" {
+		t.Fatal("bootstrap empty")
+	}
+	// bootstrap 应包含 token
+	if !strings.Contains(boot, "--token=") {
+		t.Fatalf("bootstrap missing --token=: %s", boot)
+	}
+	// 设备状态应变成 provisioning
+	if dev := m.Device("dev-test-1"); dev == nil || dev.State != "provisioning" {
+		t.Fatalf("device state = %q, want provisioning", dev.State)
+	}
+	// 不存在的设备应报错
+	if _, _, err2 := m.Provision("dev-nonexistent", "", ""); err2 == nil {
+		t.Fatal("expected error for nonexistent device")
+	}
+}
+
+// TestMemoryStore_ConsumeToken_OneTime B1 token 一次性校验：首次 ok，二次 fail；过期 fail。
+func TestMemoryStore_ConsumeToken_OneTime(t *testing.T) {
+	m := NewMemoryStore().WithSecret("opsmesh-test-secret")
+	m.UpsertDevice(&proto.DeviceInfo{
+		DeviceID: "dev-consume", Segment: "default", TenantID: "t1",
+		IP: "10.0.0.2", State: "discovered", Managed: false,
+	})
+	tok, _, err := m.Provision("dev-consume", "10.0.0.2", "t1")
+	if err != nil {
+		t.Fatalf("Provision err = %v", err)
+	}
+	// 首次消费：应当成功，返回设备与租户
+	devID, tenID, ok := m.ConsumeToken(tok)
+	if !ok {
+		t.Fatal("ConsumeToken first call = false, want true")
+	}
+	if devID != "dev-consume" || tenID != "t1" {
+		t.Fatalf("ConsumeToken = (%q, %q), want (dev-consume, t1)", devID, tenID)
+	}
+	// 二次消费：应当失败（已 consumed）
+	if _, _, ok2 := m.ConsumeToken(tok); ok2 {
+		t.Fatal("ConsumeToken second call = true, want false")
+	}
+	// 不存在的 token
+	if _, _, ok3 := m.ConsumeToken("fake-token"); ok3 {
+		t.Fatal("ConsumeToken fake = true, want false")
+	}
+}
+
+// TestMemoryStore_Register_Onboard B1 Register 带 OnboardDeviceID 翻转候选设备为已纳管。
+func TestMemoryStore_Register_Onboard(t *testing.T) {
+	m := NewMemoryStore()
+	// 创建候选设备
+	m.UpsertDevice(&proto.DeviceInfo{
+		DeviceID: "dev-candidate", Segment: "seg-a", TenantID: "t1",
+		IP: "10.0.0.3", State: "discovered", Managed: false,
+	})
+	// Register 时携带 OnboardDeviceID → 应翻转该设备而非新建占位设备
+	a := m.Register(&proto.AgentInfo{
+		AgentID: "agent-onboard-1", Hostname: "h1", Segment: "seg-a",
+		Addr: "10.0.0.3", TenantID: "t1",
+		OnboardDeviceID: "dev-candidate",
+	})
+	if a.AgentID == "" {
+		t.Fatal("expected non-empty AgentID")
+	}
+	// 候选设备现在应该已纳管
+	dev := m.Device("dev-candidate")
+	if dev == nil {
+		t.Fatal("dev-candidate not found")
+	}
+	if !dev.Managed {
+		t.Fatal("dev-candidate.Managed = false, want true")
+	}
+	if dev.State != "online" {
+		t.Fatalf("dev-candidate.State = %q, want online", dev.State)
+	}
+	if dev.AgentID != a.AgentID {
+		t.Fatalf("dev-candidate.AgentID = %q, want %q", dev.AgentID, a.AgentID)
+	}
+	// 不应新增占位设备 dev-<agentID>
+	if placeholder := m.Device("dev-" + a.AgentID); placeholder != nil {
+		t.Fatalf("unexpected placeholder device dev-%s", a.AgentID)
+	}
+}
+
+// TestMemoryStore_Register_Onboard_TenantMismatch 安全回归（P0-F1 纵深防御）：
+// 候选设备租户与 agent 租户不一致时，store 层拒绝翻转（即便上层漏校验也拦得住）。
+func TestMemoryStore_Register_Onboard_TenantMismatch(t *testing.T) {
+	m := NewMemoryStore()
+	// 租户 tB 的候选设备
+	m.UpsertDevice(&proto.DeviceInfo{
+		DeviceID: "dev-victim", Segment: "seg-a", TenantID: "tB",
+		IP: "10.0.0.9", State: "discovered", Managed: false,
+	})
+	// 租户 tA 的 agent 试图翻转 tB 的设备（绕过上层校验的场景）
+	a := m.Register(&proto.AgentInfo{
+		AgentID: "agent-evil", Hostname: "h1", Segment: "seg-a",
+		Addr: "10.0.0.9", TenantID: "tA",
+		OnboardDeviceID: "dev-victim",
+	})
+	dev := m.Device("dev-victim")
+	if dev == nil {
+		t.Fatal("dev-victim not found")
+	}
+	if dev.Managed {
+		t.Fatal("跨租户设备被错误翻转 Managed=true（应拒绝）")
+	}
+	if dev.AgentID == a.AgentID {
+		t.Fatal("跨租户设备被错误绑定到攻击者 agent")
+	}
+	if dev.TenantID != "tB" {
+		t.Fatalf("受害设备租户被改写: %q, want tB", dev.TenantID)
+	}
+}
+

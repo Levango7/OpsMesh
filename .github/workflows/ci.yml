@@ -1,0 +1,148 @@
+name: ci
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Download modules
+        run: go mod download
+      - name: Verify modules
+        run: go mod verify
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: Test (unit, memory store)
+        run: go test ./...
+
+  # E1：SQL 后端集成测试 —— 默认 build-test 中 SQL Store 测试因无 DSN 被 Skip，
+  # 此处起 mysql:8 + redis:7 真实后端，激活 OPSMESH_TEST_* 集成测试（报告 P1 缺口）。
+  integration:
+    runs-on: ubuntu-latest
+    needs: build-test
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: opsmesh
+          MYSQL_USER: opsmesh
+          MYSQL_PASSWORD: opsmesh
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpass"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    env:
+      # 真实后端 DSN：激活 sql_test.go 中 Skip 的集成用例（租户隔离 + schema 自举建表）。
+      OPSMESH_TEST_MYSQL_DSN: "opsmesh:opsmesh@tcp(127.0.0.1:3306)/opsmesh?parseTime=true"
+      OPSMESH_TEST_REDIS_ADDR: "127.0.0.1:6379"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Wait for MySQL
+        run: until (echo > /dev/tcp/127.0.0.1/3306) 2>/dev/null; do sleep 2; done
+      - name: Wait for Redis
+        run: until (echo > /dev/tcp/127.0.0.1/6379) 2>/dev/null; do sleep 2; done
+      - name: Run SQL/Redis store integration tests
+        run: go test -timeout 300s -v ./internal/store/...
+
+  security:
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: gosec (SAST 静态安全扫描)
+        uses: securego/gosec@master
+        with:
+          args: ./...
+      - name: Trivy 文件系统扫描
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+
+  # E4：镜像构建/推送 —— 推送路径须与 Helm values 的镜像引用逐字一致，
+  # 否则 Argo CD 拉不到（registry.internal/opsmesh/opsmesh-binary:tag）。
+  # 同时钉死 digest（不可变镜像），helm values.global.image.tag 在发布流程中替换为该 digest。
+  image:
+    runs-on: ubuntu-latest
+    needs: security
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: 登录镜像仓库
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+      - name: 构建并推送（钉死 digest）
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # 注意：repository 名 opsmesh-binary 必须与 charts/opsmesh-controlplane/values.yaml
+          # 的 global.image.repository 逐字一致；REGISTRY 必须等于 global.imageRegistry。
+          tags: ${{ secrets.REGISTRY }}/opsmesh-binary:${{ github.sha }}
+      - name: Trivy 镜像扫描
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.REGISTRY }}/opsmesh-binary:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+      # E4 闭环：构建后把镜像 tag 钉死写回 GitOps chart（消除"发布流程手动替换"的部署脆弱点）。
+      # 原 chart global.image.tag 硬编码 "0.1"，CI 却推 :sha，原样部署会去拉不存在的 :0.1。
+      # 此处克隆独立 gitops 仓库，用 yq 把 tag 覆写为本Commit sha（与推送的 :sha 一致），
+      # 并加守卫：写回后不得再含占位符 "0.1"，否则失败（证明写回真发生）。
+      # 需仓库配置 secret：GITOPS_REPO（git@.../opsmesh-gitops.git）、GITOPS_PAT（可写 PAT）。
+      - name: 钉死镜像 tag 写回 GitOps values（E4 闭环）
+        env:
+          TAG: ${{ github.sha }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          GITOPS_REPO: ${{ secrets.GITOPS_REPO }}
+          GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+        run: |
+          echo "pinned tag = ${TAG}"
+          echo "digest    = ${DIGEST}"
+          command -v yq >/dev/null 2>&1 || {
+            curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
+            chmod +x /usr/local/bin/yq
+          }
+          git config --global user.email "ci@opsmesh"
+          git config --global user.name "OpsMesh CI"
+          git clone "https://${GITOPS_PAT}@${GITOPS_REPO}" /tmp/gitops
+          cd /tmp/gitops
+          yq -i '.global.image.tag = strenv(TAG)' charts/opsmesh-controlplane/values.yaml
+          if grep -q 'tag: *"0.1"' charts/opsmesh-controlplane/values.yaml; then
+            echo "ERROR: image tag 写回失败，仍含占位符 0.1"; exit 1
+          fi
+          git add charts/opsmesh-controlplane/values.yaml
+          git commit -m "ci: pin opsmesh-binary to ${TAG}" && git push

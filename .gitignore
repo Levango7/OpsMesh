@@ -1,0 +1,14 @@
+# build artifacts
+/opsmesh
+opsmesh.exe
+*.exe
+*.test
+# runtime data
+/data/
+*.log
+# temp leftovers
+_write_test
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
