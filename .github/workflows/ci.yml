@@ -89,10 +89,12 @@ jobs:
   # E4：镜像构建/推送 —— 推送路径须与 Helm values 的镜像引用逐字一致，
   # 否则 Argo CD 拉不到（registry.internal/opsmesh/opsmesh-binary:tag）。
   # 同时钉死 digest（不可变镜像），helm values.global.image.tag 在发布流程中替换为该 digest。
+  # 注意：本 job 依赖仓库 secret REGISTRY/REGISTRY_USER/REGISTRY_TOKEN（私有镜像仓库凭证）。
+  # 若未配置这些 secret，则整个 job 自动跳过（而非失败），保证 build-test/integration/security 仍可全绿。
   image:
     runs-on: ubuntu-latest
     needs: security
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && secrets.REGISTRY != ''
     steps:
       - uses: actions/checkout@v4
       - name: Set up Docker Buildx
@@ -123,7 +125,9 @@ jobs:
       # 此处克隆独立 gitops 仓库，用 yq 把 tag 覆写为本Commit sha（与推送的 :sha 一致），
       # 并加守卫：写回后不得再含占位符 "0.1"，否则失败（证明写回真发生）。
       # 需仓库配置 secret：GITOPS_REPO（git@.../opsmesh-gitops.git）、GITOPS_PAT（可写 PAT）。
+      # 若未配置这两个 secret，本步骤自动跳过（仅跳过写回，不影响镜像构建推送）。
       - name: 钉死镜像 tag 写回 GitOps values（E4 闭环）
+        if: secrets.GITOPS_REPO != '' && secrets.GITOPS_PAT != ''
         env:
           TAG: ${{ github.sha }}
           DIGEST: ${{ steps.build.outputs.digest }}
