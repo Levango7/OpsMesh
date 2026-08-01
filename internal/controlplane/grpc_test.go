@@ -22,8 +22,7 @@ import (
 // 并断言「服务端按网关注入租户盖章、租户隔离生效」。
 func TestGRPCRegistrationLoop(t *testing.T) {
 	st := store.NewMemoryStore().WithDemo(true)
-	reg := NewRegistryWithStore(st)
-	srvImpl := &grpcServerImpl{reg: reg, requireAuth: false}
+	srvImpl := &grpcServerImpl{store: st, requireAuth: false}
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -58,10 +57,10 @@ func TestGRPCRegistrationLoop(t *testing.T) {
 	}
 
 	// 服务端按网关租户盖章：t1 看到 1 个，且 TenantID 被强制为 t1；t2 看到 0 个（隔离生效）
-	if got := reg.Agents("t1"); len(got) != 1 || got[0].TenantID != "t1" {
+	if got := st.Agents("t1"); len(got) != 1 || got[0].TenantID != "t1" {
 		t.Fatalf("server-side tenant stamping failed: %+v", got)
 	}
-	if got := reg.Agents("t2"); len(got) != 0 {
+	if got := st.Agents("t2"); len(got) != 0 {
 		t.Fatalf("tenant isolation broken, t2 sees %d agents", len(got))
 	}
 
@@ -92,7 +91,7 @@ func TestGRPCRegistrationLoop(t *testing.T) {
 		t.Fatalf("ReportResult: %v", err)
 	}
 	found := false
-	for _, ds := range reg.Snapshot("t1") {
+	for _, ds := range st.Snapshot("t1") {
 		for _, d := range ds {
 			if d.AgentID == regResp.AgentID {
 				found = true
@@ -112,7 +111,7 @@ func TestGRPCRegistrationLoop(t *testing.T) {
 		&grpcx.Empty{}, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
 		t.Fatalf("Heartbeat: %v", err)
 	}
-	if got := reg.Agents("t1"); got[0].Load != 7 {
+	if got := st.Agents("t1"); got[0].Load != 7 {
 		t.Fatalf("Load = %d, want 7", got[0].Load)
 	}
 }
@@ -122,8 +121,7 @@ func TestGRPCRegistrationLoop(t *testing.T) {
 // 且任务状态保持 cancelled（worker 不回写 store，避免误翻 done/死信）。
 func TestGRPCCancelReachesWorker(t *testing.T) {
 	st := store.NewMemoryStore()
-	reg := NewRegistryWithStore(st)
-	srvImpl := &grpcServerImpl{reg: reg, requireAuth: false}
+	srvImpl := &grpcServerImpl{store: st, requireAuth: false}
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -155,7 +153,7 @@ func TestGRPCCancelReachesWorker(t *testing.T) {
 	agentID := regResp.AgentID
 
 	// 注入一个长任务（sleep 5s）：取消信号若真正到达，应在远小于 5s 内中止
-	longTask := reg.CreateTask(&proto.Task{
+	longTask := st.CreateTask(&proto.Task{
 		AgentID: agentID, TenantID: "t1", Type: "shell", Command: "sleep 5",
 	})
 
@@ -250,8 +248,7 @@ func TestGRPCCancelReachesWorker(t *testing.T) {
 // TestGRPCRegister_ConsumesToken B1 端到端：带 install token 注册，服务端消费 token 并翻转候选设备。
 func TestGRPCRegister_ConsumesToken(t *testing.T) {
 	st := store.NewMemoryStore().WithSecret("opsmesh-test-secret")
-	reg := NewRegistryWithStore(st)
-	srvImpl := &grpcServerImpl{reg: reg, requireAuth: false}
+	srvImpl := &grpcServerImpl{store: st, requireAuth: false}
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

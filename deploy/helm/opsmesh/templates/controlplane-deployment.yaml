@@ -1,0 +1,145 @@
+{{- if .Values.controlplane -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "opsmesh.controlplane.serviceName" . }}
+  labels:
+    {{- include "opsmesh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controlplane
+spec:
+  replicas: {{ .Values.controlplane.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "opsmesh.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: controlplane
+  template:
+    metadata:
+      labels:
+        {{- include "opsmesh.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: controlplane
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        # 强制滚动更新：configmap/secret 变更即重启
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      {{- include "opsmesh.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "opsmesh.serviceAccountName" . }}
+      {{- with .Values.controlplane.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controlplane.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controlplane.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: controlplane
+          image: {{ include "opsmesh.image" (list . .Values.controlplane.image) }}
+          imagePullPolicy: {{ .Values.controlplane.image.pullPolicy }}
+          args:
+            - --mode=controlplane
+            - --http-port=8080
+            - --grpc-port=9090
+            - --metrics-port=9091
+            - --store={{ .Values.controlplane.store }}
+            - --replicas={{ .Values.controlplane.replicaCount }}
+            - --task-lease-sec={{ .Values.controlplane.taskLeaseSec }}
+            - --task-max-retries={{ .Values.controlplane.taskMaxRetries }}
+            - --leader-ttl-sec={{ .Values.controlplane.leaderTTLSec }}
+            - --leader-tick-sec={{ .Values.controlplane.leaderTickSec }}
+            - --archive-age-min={{ .Values.controlplane.archiveAgeMin }}
+            {{- if .Values.controlplane.production }}
+            - --production
+            {{- end }}
+            {{- if .Values.controlplane.requireAuth }}
+            - --require-auth
+            {{- end }}
+            {{- if .Values.controlplane.advertiseAddr }}
+            - --advertise-addr={{ .Values.controlplane.advertiseAddr }}
+            {{- end }}
+            {{- if .Values.controlplane.tls.enabled }}
+            - --tls-cert=/etc/opsmesh/tls/tls.crt
+            - --tls-key=/etc/opsmesh/tls/tls.key
+            - --client-ca=/etc/opsmesh/tls/ca.crt
+            {{- end }}
+            {{- if eq .Values.controlplane.store "mysql" }}
+            - --mysql-dsn=$(OPSMESH_MYSQL_DSN)
+            - --redis-addr={{ include "opsmesh.redis.serviceName" . }}:6379
+            {{- end }}
+            {{- if .Values.controlplane.alertWebhookURL }}
+            - --alert-webhook-url={{ .Values.controlplane.alertWebhookURL }}
+            - --alert-notifier-type={{ .Values.controlplane.alertNotifierType }}
+            {{- end }}
+          env:
+            - name: OPSMESH_PROVISION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "opsmesh.fullname" . }}-secret
+                  key: provision-secret
+            {{- if eq .Values.controlplane.store "mysql" }}
+            - name: OPSMESH_MYSQL_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "opsmesh.fullname" . }}-secret
+                  key: mysql-dsn
+            {{- end }}
+            {{- with .Values.controlplane.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: grpc
+              containerPort: 9090
+              protocol: TCP
+            - name: metrics
+              containerPort: 9091
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.controlplane.resources | nindent 12 }}
+          {{- if .Values.controlplane.tls.enabled }}
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/opsmesh/tls
+              readOnly: true
+          {{- end }}
+      {{- if .Values.controlplane.tls.enabled }}
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ .Values.controlplane.tls.secretName }}
+            defaultMode: 0440
+      {{- end }}
+{{- end }}

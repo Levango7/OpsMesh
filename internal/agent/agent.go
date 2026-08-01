@@ -412,9 +412,11 @@ func (a *Agent) execute(ctx context.Context, t proto.Task) proto.TaskResult {
 
 	switch t.Type {
 	case "", proto.TaskTypeShell:
-		// 安全提示（P1-10）：命令来自控制面下发，内核不做命令白名单过滤，
-		// 依赖前置网关/运营鉴权保证下发来源可信；同租户 RCE 风险由等保三级的 IAM 边界兜底。
-		// 生产如需加固，可在此接入命令前缀白名单（配合 --require-auth）。
+		// 安全提示（P1-10 / H4-M8）：shell 命令来自控制面下发，内核不做命令白名单过滤，
+		// 依赖控制面下发来源可信（前置网关/运营鉴权 + 等保三级 IAM 边界兜底）。
+		// 生产建议配合命令白名单中间件（如仅允许预设脚本前缀、拒绝 rm -rf / 等），
+		// 可在此接入命令前缀白名单（配合 --require-auth + 控制面侧 SubmitTask 校验）。
+		// 信任边界设计：service 类型已加 verb 白名单（见 execService），shell 类型保留全能力以支持运维脚本。
 		if t.Command == "" {
 			res.ExitCode = -1
 			res.Stderr = "empty command"
@@ -470,10 +472,30 @@ func (a *Agent) execService(ctx context.Context, out, errb *bytes.Buffer, t prot
 			verb = "status"
 		}
 	}
+	// H4/M8 service verb 白名单：verb 解析完成后、执行 systemctl 前校验，
+	// 拒绝任意 verb 注入（防止 "cat /etc/shadow" 等经 Command 字段拼装绕过）。
+	if !serviceVerbWhitelist[verb] {
+		return fmt.Errorf("service verb %q not allowed (whitelist: start|stop|restart|status|reload|enable|disable|is-active|is-enabled)", verb)
+	}
 	c := exec.CommandContext(ctx, "systemctl", verb, svc)
 	c.Stdout = out
 	c.Stderr = errb
 	return c.Run()
+}
+
+// serviceVerbWhitelist 是 systemctl 允许的动词白名单（H4/M8 安全加固）。
+// 仅放行只读/常规服务管理动词，拒绝任意 verb 注入 systemctl（如 "cat /etc/shadow" 经 verb 字段拼装）。
+// 如需扩展（如 mask/unmask/daemon-reload）应经安全评审后显式新增，切勿放行任意字符串。
+var serviceVerbWhitelist = map[string]bool{
+	"start":     true,
+	"stop":      true,
+	"restart":   true,
+	"status":    true,
+	"reload":    true,
+	"enable":    true,
+	"disable":   true,
+	"is-active": true,
+	"is-enabled": true,
 }
 
 // execFile 原子写入文件：先写同目录临时文件，再 rename 到目标路径（Path），避免半写文件。

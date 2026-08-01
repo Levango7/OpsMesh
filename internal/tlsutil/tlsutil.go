@@ -18,7 +18,12 @@ func ServerCreds(certFile, keyFile, clientCA string) (credentials.TransportCrede
 	if err != nil {
 		return nil, err
 	}
-	cfg := &tls.Config{Certificates: []tls.Certificate{cert}}
+	// H3: 强制 TLS 1.2+，禁用 SSLv3/TLSv1.0/TLSv1.1 等弱协议版本。
+	// 不显式设置 CipherSuites，保留 Go 默认强套件（Go 1.17+ 默认已排除不安全套件）。
+	cfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
 	if clientCA != "" {
 		pool := x509.NewCertPool()
 		b, err := os.ReadFile(clientCA)
@@ -35,7 +40,8 @@ func ServerCreds(certFile, keyFile, clientCA string) (credentials.TransportCrede
 // ClientCreds 构造客户端传输凭证。certFile/keyFile 为空时仅校验服务端（需 caFile）；
 // 全部非空时启用双向 mTLS。
 func ClientCreds(certFile, keyFile, caFile string) (credentials.TransportCredentials, error) {
-	cfg := &tls.Config{}
+	// H3: 客户端同样强制 TLS 1.2+，与服务端策略一致。
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if certFile != "" && keyFile != "" {
 		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 		if err != nil {

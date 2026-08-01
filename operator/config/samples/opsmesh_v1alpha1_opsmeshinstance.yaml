@@ -1,0 +1,28 @@
+# Production-grade OpsMeshInstance: 3 control-plane replicas, MySQL + Redis
+# backing stores, mTLS enabled, segment 10.244.0.0/16.
+#
+# Apply with: kubectl apply -f config/samples/opsmesh_v1alpha1_opsmeshinstance.yaml
+# (create the target namespace first, or use the companion namespace file).
+apiVersion: opsmesh.io/v1alpha1
+kind: OpsMeshInstance
+metadata:
+  name: prod
+  namespace: opsmesh-system
+  labels:
+    app.kubernetes.io/name: opsmesh
+    app.kubernetes.io/instance: prod
+spec:
+  replicas: 3
+  image: opsmesh/opsmesh:v0.1.0
+  agentImage: opsmesh/opsmesh-agent:v0.1.0
+  store: mysql
+  production: true
+  tlsEnabled: true
+  segmentCIDR: 10.244.0.0/16
+  mysql:
+    enabled: true
+    storage: 20Gi
+    password: change-me-in-prod
+  redis:
+    enabled: true
+    storage: 2Gi

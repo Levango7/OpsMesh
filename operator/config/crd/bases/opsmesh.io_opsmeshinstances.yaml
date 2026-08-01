@@ -1,0 +1,174 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: opsmeshinstances.opsmesh.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: opsmesh.io
+  names:
+    kind: OpsMeshInstance
+    listKind: OpsMeshInstanceList
+    plural: opsmeshinstances
+    singular: opsmeshinstance
+    shortNames:
+      - opsmesh
+      - opsmeshes
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: |-
+            OpsMeshInstance is the Schema for the opsmeshinstances API.
+
+            An OpsMeshInstance declaratively manages a complete OpsMesh deployment:
+            the control-plane Deployment, the node-agent DaemonSet, optional MySQL /
+            Redis StatefulSets and the headless Service that wires them together.
+          properties:
+            apiVersion:
+              type: string
+              description: |-
+                APIVersion defines the versioned schema of this representation of an
+                object. Servers should convert recognized schemas to the latest
+                internal value, and may reject unrecognized values.
+            kind:
+              type: string
+              description: |-
+                Kind is a string value representing the REST resource this object
+                represents. Servers may infer this from the endpoint the client
+                submits requests to.
+            metadata:
+              type: object
+            spec:
+              type: object
+              required:
+                - agentImage
+                - image
+                - replicas
+                - segmentCIDR
+                - store
+              properties:
+                replicas:
+                  type: integer
+                  format: int32
+                  default: 1
+                  description: Replicas is the number of control-plane Deployment replicas.
+                image:
+                  type: string
+                  default: opsmesh/opsmesh:latest
+                  description: Image is the control-plane container image.
+                agentImage:
+                  type: string
+                  default: opsmesh/opsmesh-agent:latest
+                  description: AgentImage is the node-agent DaemonSet container image.
+                store:
+                  type: string
+                  default: memory
+                  enum:
+                    - memory
+                    - mysql
+                  description: 'Store selects the backing store: "memory" or "mysql".'
+                production:
+                  type: boolean
+                  default: false
+                  description: Production toggles production-grade defaults.
+                tlsEnabled:
+                  type: boolean
+                  default: false
+                  description: TLSEnabled enables mTLS between control-plane and agents.
+                segmentCIDR:
+                  type: string
+                  default: 10.244.0.0/16
+                  description: SegmentCIDR is the overlay segment CIDR used by agents.
+                mysql:
+                  type: object
+                  required:
+                    - enabled
+                    - storage
+                  properties:
+                    enabled:
+                      type: boolean
+                      description: Enabled controls whether the operator reconciles a MySQL StatefulSet.
+                    storage:
+                      type: string
+                      default: 10Gi
+                      description: 'Storage is the requested persistent volume size, e.g. "10Gi".'
+                    password:
+                      type: string
+                      description: Password is the MySQL root password.
+                redis:
+                  type: object
+                  required:
+                    - enabled
+                    - storage
+                  properties:
+                    enabled:
+                      type: boolean
+                      description: Enabled controls whether the operator reconciles a Redis StatefulSet.
+                    storage:
+                      type: string
+                      default: 1Gi
+                      description: 'Storage is the requested persistent volume size, e.g. "1Gi".'
+            status:
+              type: object
+              description: OpsMeshInstanceStatus defines the observed state of OpsMeshInstance.
+              properties:
+                conditions:
+                  type: array
+                  description: Conditions describe the observed reconciliation state.
+                  items:
+                    type: object
+                    required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                  x-kubernetes-list-map-keys:
+                    - type
+                  x-kubernetes-list-type: map
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Replicas
+          type: integer
+          jsonPath: .spec.replicas
+        - name: Store
+          type: string
+          jsonPath: .spec.store
+        - name: Production
+          type: boolean
+          jsonPath: .spec.production
+        - name: TLS
+          type: boolean
+          jsonPath: .spec.tlsEnabled
+        - name: Ready
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Ready")].status
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

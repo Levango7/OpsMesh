@@ -1,0 +1,170 @@
+# OpsMesh Helm Chart 默认值（开发/体验环境）
+# 生产环境请使用 -f values-production.yaml 覆盖关键项。
+# 文档：https://github.com/opsmesh/opsmesh  端口约定 HTTP 8080 / gRPC 9090 / metrics 9091
+
+## @section Global
+global:
+  # 镜像仓库前缀，空表示使用 Docker Hub 公共镜像；私有环境填 registry.example.com/
+  imageRegistry: ""
+  # 镜像拉取凭证（私有仓库必填）
+  imagePullSecrets: []
+  #  name: myregistrykey
+  # 存储类，空表示使用集群默认 StorageClass
+  storageClass: ""
+
+## @section Controlplane
+controlplane:
+  image:
+    repository: opsmesh/opsmesh
+    tag: "0.1"
+    pullPolicy: IfNotPresent
+  # 控制面副本数；>1 时务必设置 store=mysql，否则 memory 多副本数据分裂
+  replicaCount: 1
+  # 持久化后端：memory（默认零依赖） | mysql（U-04 数据本地化，多副本必需）
+  store: memory
+  # 生产模式（A4）：默认开启 require-auth，并对 store=memory 强告警
+  production: false
+  # 要求网关注入 X-Tenant-ID，缺失则拒绝（生产 hardening）
+  requireAuth: false
+  # 控制面对外 HTTP 地址（拼接 bootstrap 安装命令）；空则回退 127.0.0.1:<http-port>
+  advertiseAddr: ""
+  # gRPC TLS / mTLS
+  tls:
+    enabled: false
+    # 证书需以 Secret 形式预置，键名 tls.crt / tls.key / ca.crt
+    secretName: opsmesh-tls
+  # 任务租约租期秒；超期未上报结果则复位重调度
+  taskLeaseSec: 300
+  # 任务失败重试上限；超出置 failed（死信）
+  taskMaxRetries: 3
+  # A3 选主租约秒
+  leaderTTLSec: 15
+  leaderTickSec: 5
+  # F5 离线超龄自动归档阈值（分钟）
+  archiveAgeMin: 1440
+  # B1 自动纳管 install token 的 HMAC 签名密钥；空则本实例随机生成（多副本需一致）
+  provisionSecret: ""
+  # M7 告警 Webhook
+  alertWebhookURL: ""
+  alertNotifierType: generic
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  # Pod 水平自动扩缩容（可选）
+  autoscaling:
+    enabled: false
+  # 节点选择器/亲和/容忍
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  # 额外环境变量（透传到 OPSMESH_* 配置）
+  extraEnv: []
+  #  name: OPSMESH_DEMO
+  #  value: "true"
+
+## @section Agent
+agent:
+  enabled: true
+  image:
+    repository: opsmesh/opsmesh-agent
+    tag: "0.1"
+    pullPolicy: IfNotPresent
+  # agent 所属网段
+  segment: default
+  # agent 任务 worker 池并发度
+  workerConcurrency: 4
+  # agent 单任务执行超时
+  taskTimeout: 120s
+  # agent 身份文件目录（agent.id 落盘于此，重启沿用）
+  dataDir: /var/lib/opsmesh
+  # 演示模式：每个 agent 注册预置示例任务（生产务必关闭）
+  demo: false
+  # 管理节点容忍：让 agent 调度到 control-plane/etcd 节点（单节点体验集群必需）
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+  nodeSelector: {}
+  affinity: {}
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  # headless Service（供控制面反向连接 agent）
+  service:
+    enabled: true
+  extraEnv: []
+
+## @section MySQL（U-04 数据本地化）
+mysql:
+  enabled: true
+  image: mysql:8
+  imagePullPolicy: IfNotPresent
+  # 数据库与用户名（密码走 Secret）
+  database: opsmesh
+  user: opsmesh
+  # 持久化
+  persistence:
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+
+## @section Redis（状态缓存）
+redis:
+  enabled: true
+  image: redis:7
+  imagePullPolicy: IfNotPresent
+  persistence:
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+
+## @section ServiceAccount
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+## @section Ingress（可选）
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: opsmesh.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+## @section Observability
+podAnnotations: {}
+podLabels: {}

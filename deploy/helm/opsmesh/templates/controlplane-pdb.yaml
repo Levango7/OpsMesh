@@ -1,0 +1,15 @@
+{{- if gt (int .Values.controlplane.replicaCount) 1 -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "opsmesh.controlplane.serviceName" . }}-pdb
+  labels:
+    {{- include "opsmesh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controlplane
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "opsmesh.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: controlplane
+{{- end -}}

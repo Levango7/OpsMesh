@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -101,6 +103,32 @@ type Config struct {
 	// B1 SSH KnownHosts 文件路径（等保安全加固）。非空时使用 ssh.KnownHosts 校验远程主机指纹；
 	// 空（默认）时回退 InsecureIgnoreHostKey（MVP 便利，生产必须配置）。
 	ProvisionSSHKnownHosts string
+
+	// M3-2A JWT 验签（网关公钥 RS256）：可选启用，启用后控制面自行校验 Authorization: Bearer <token>，
+	// 从 claims 提取 tenant_id/user_id/user_roles，不再纯依赖网关注入的 X-Tenant-ID 等头。
+	// 空（默认）=关闭，回退到 FromHTTPHeader 头注入模式（MVP 兼容）。
+	// 生产模式（--production=true）下推荐配置，作为"网关剥离 + 内核二次校验"的纵深防御。
+	JWTPublicKey string // PEM 格式 RSA 公钥文件路径（RS256 验签用）；空=关闭 JWT 验签
+	JWTIssuer    string // 预期 JWT issuer（iss claim）；非空时校验 iss 必须匹配，空=不校验 iss
+
+	// M4-4B 日志检索后端选择：memory（默认，环形缓冲） | sql（MySQL） | loki（Grafana Loki） | es（Elasticsearch）。
+	// 与 Store（控制面持久化后端）解耦：Store 管 agent/device 状态，LogBackend 管日志检索。
+	// loki/es 模式下日志由 agent 经 promtail/filebeat 直接推送，控制面仅做查询（Append 为 noop）。
+	LogBackend   string // memory | sql | loki | es（默认 memory）
+	LokiEndpoint string // Loki API endpoint（如 http://loki:3100）；--log-backend=loki 时生效
+	ESEndpoint   string // Elasticsearch endpoint（如 http://es:9200）；--log-backend=es 时生效
+	ESIndex      string // Elasticsearch 索引名（默认 opsmesh-logs）；--log-backend=es 时生效
+
+	// M4-4C 多租户 schema 隔离：每租户路由到独立 MySQL schema（database），物理级数据隔离。
+	// 开启后 store 层使用 MultiSchemaStore 而非单个 SQLStore。
+	// 仅 --store=mysql 时生效（Validate 中校验）。
+	MultiSchema  bool   // 是否开启多租户 schema 隔离（默认 false）
+	SchemaPrefix string // schema 名前缀（默认 "opsmesh_tenant_"），最终 schema 名 = SchemaPrefix + tenantID
+
+	// M4-4D 控制面联邦：逗号分隔的 peer 控制面 HTTP 地址列表（如 http://peer1:8080,http://peer2:8080）。
+	// 非空时启用联邦 API（跨网段任务转发 / 联邦设备视图），控制面之间通过 HTTP/JSON 复用现有 REST API 通信。
+	// peer 不可达不影响本地服务（容错设计：联邦 API 返回可用部分 + 不可达标记）。
+	FederationPeers []string
 }
 
 // Load 解析 flag 并用环境变量兜底，返回 *Config。
@@ -151,6 +179,18 @@ func Load() *Config {
 	provisionSSHKey := flag.String("provision-ssh-key", "", "B1 SSH 自动推送：SSH 私钥路径（空=关闭 SSH 推送）")
 	provisionSSHKP := flag.String("provision-ssh-key-pass", "", "B1 SSH 自动推送：SSH 密钥密码（推荐 OPSMESH_PROVISION_SSH_KEY_PASS 环境变量）")
 	provisionSSHKnownHosts := flag.String("provision-ssh-known-hosts", "", "B1 SSH KnownHosts 文件路径（等保加固）；空=InsecureIgnoreHostKey（生产务必配置）")
+	jwtPublicKey := flag.String("jwt-public-key", "", "M3-2A JWT 验签公钥 PEM 文件路径（RS256）；空=关闭 JWT 验签回退头注入模式（或 env OPSMESH_JWT_PUBLIC_KEY）")
+	jwtIssuer := flag.String("jwt-issuer", "", "M3-2A 预期 JWT issuer（iss claim）；非空时校验 iss 必须匹配（或 env OPSMESH_JWT_ISSUER）")
+	// M4-4B 日志检索后端：memory（默认） | sql | loki | es。
+	logBackend := flag.String("log-backend", "memory", "日志检索后端: memory | sql | loki | es（M4-4B；loki/es 模式下日志由 agent 直接推送，控制面仅查询）")
+	lokiEndpoint := flag.String("loki-endpoint", "", "Loki API endpoint（如 http://loki:3100）；--log-backend=loki 时生效（或 env OPSMESH_LOKI_ENDPOINT）")
+	esEndpoint := flag.String("es-endpoint", "", "Elasticsearch endpoint（如 http://es:9200）；--log-backend=es 时生效（或 env OPSMESH_ES_ENDPOINT）")
+	esIndex := flag.String("es-index", "opsmesh-logs", "Elasticsearch 索引名（--log-backend=es 时生效，默认 opsmesh-logs；或 env OPSMESH_ES_INDEX）")
+	// M4-4C 多租户 schema 隔离：每租户独立 MySQL schema（database），物理级数据隔离。
+	multiSchema := flag.Bool("multi-schema", false, "开启多租户 schema 隔离（M4-4C）：每租户路由到独立 MySQL schema；仅 --store=mysql 时生效（或 env OPSMESH_MULTI_SCHEMA）")
+	schemaPrefix := flag.String("schema-prefix", "opsmesh_tenant_", "schema 名前缀（M4-4C）；最终 schema 名 = 前缀 + tenantID（或 env OPSMESH_SCHEMA_PREFIX）")
+	// M4-4D 控制面联邦：逗号分隔的 peer 控制面 HTTP 地址列表。
+	federationPeers := flag.String("federation-peers", "", "M4-4D 控制面联邦 peer 地址列表（逗号分隔，如 http://peer1:8080,http://peer2:8080）；非空时启用联邦 API（跨网段任务转发/联邦设备视图）；或 env OPSMESH_FEDERATION_PEERS")
 	flag.Parse()
 
 	// 记录被显式设置的 flag，用于"flag 优先、env 兜底"的正确语义（P1-8 修复：原实现 env 会覆盖显式 flag）。
@@ -236,6 +276,15 @@ func Load() *Config {
 		ProvisionSSHKey:  val("provision-ssh-key", *provisionSSHKey, "OPSMESH_PROVISION_SSH_KEY"),
 		ProvisionSSHKP:   val("provision-ssh-key-pass", *provisionSSHKP, "OPSMESH_PROVISION_SSH_KEY_PASS"),
 		ProvisionSSHKnownHosts: val("provision-ssh-known-hosts", *provisionSSHKnownHosts, "OPSMESH_PROVISION_SSH_KNOWN_HOSTS"),
+		JWTPublicKey:           val("jwt-public-key", *jwtPublicKey, "OPSMESH_JWT_PUBLIC_KEY"),
+		JWTIssuer:              val("jwt-issuer", *jwtIssuer, "OPSMESH_JWT_ISSUER"),
+		LogBackend:             val("log-backend", *logBackend, "OPSMESH_LOG_BACKEND"),
+		LokiEndpoint:           val("loki-endpoint", *lokiEndpoint, "OPSMESH_LOKI_ENDPOINT"),
+		ESEndpoint:             val("es-endpoint", *esEndpoint, "OPSMESH_ES_ENDPOINT"),
+		ESIndex:                val("es-index", *esIndex, "OPSMESH_ES_INDEX"),
+		MultiSchema:            valBool("multi-schema", *multiSchema, "OPSMESH_MULTI_SCHEMA"),
+		SchemaPrefix:           val("schema-prefix", *schemaPrefix, "OPSMESH_SCHEMA_PREFIX"),
+		FederationPeers:        parseFederationPeers(val("federation-peers", *federationPeers, "OPSMESH_FEDERATION_PEERS")),
 	}
 	// A4 生产模式：默认开启 require-auth（除非显式关闭），并强告警 memory store。
 	if cfg.Production && !explicit["require-auth"] {
@@ -244,11 +293,15 @@ func Load() *Config {
 	if cfg.Production && cfg.Store == "memory" {
 		fmt.Fprintln(os.Stderr, "[config] 警告：生产模式但 store=memory（多副本数据分裂），请改用 --store=mysql（U-04 数据本地化）")
 	}
-	if cfg.Production && cfg.TLSCert == "" && cfg.TLSKey == "" {
-		fmt.Fprintln(os.Stderr, "[config] 警告：生产模式但 TLS 未配置（--tls-cert, --tls-key），agent 与控制面之间通信为明文（等保三级生产建议开启 mTLS）")
-	}
+	// H6: 生产模式 TLS 未配置的拒绝逻辑已移至 Validate()（启动即 fail-fast），
+	// 此处保留 require-auth 告警以便运维感知。
 	if cfg.Production && !cfg.RequireAuth {
 		fmt.Fprintln(os.Stderr, "[config] 警告：生产模式但 --require-auth=false，agent 注册不经过网关身份校验（仅开发/内网调试推荐）")
+	}
+	// M3-2A：生产模式但未启用 JWT 二次验签时友好告警（不强制，向后兼容纯头注入模式）。
+	// 启用 JWT 验签可作为"网关注入 + 内核二次校验"的纵深防御，降低网关被绕过时的越权面。
+	if cfg.Production && cfg.JWTPublicKey == "" {
+		fmt.Fprintln(os.Stderr, "[config] 提示：生产模式未配置 --jwt-public-key，仅依赖网关注入的 X-Tenant-ID 头（建议启用 JWT 二次验签作为纵深防御）")
 	}
 	return cfg
 }
@@ -297,6 +350,26 @@ func durationEnv(key string, def time.Duration) time.Duration {
 	return def
 }
 
+// parseFederationPeers 解析逗号分隔的 peer 地址列表为 []string，去除空白项与首尾空格。
+// 输入空串返回 nil（不启用联邦），保证 NewServer 中 `if cfg.FederationPeers != nil` 判空可用。
+func parseFederationPeers(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // Validate 启动期配置校验：把明显的非法配置在启动即失败，而非运行期诡异出错（P0-3 健壮性）。
 // 返回 error 时调用方应 os.Exit(1)。
 func (c *Config) Validate() error {
@@ -340,6 +413,44 @@ func (c *Config) Validate() error {
 		}
 		if _, _, err := net.ParseCIDR(c.SegmentCIDR); err != nil {
 			return fmt.Errorf("非法 --segment-cidr=%q: %w", c.SegmentCIDR, err)
+		}
+	}
+	// H6 生产模式 TLS 强制：Production==true 且未配置 TLS 证书时直接拒绝启动，
+	// 避免 agent↔控制面明文通信（等保三级要求）。agent 与 controlplane 同样适用：
+	// agent 模式下 Production=true 也必须持证与控制面建立 mTLS。
+	// 非 Production 模式不校验（开发/内网友好网络降级）。
+	if c.Production && c.TLSCert == "" {
+		return fmt.Errorf("生产模式（--production=true）必须配置 TLS（--tls-cert 为空），明文通信不满足等保三级要求；请提供证书或关闭 --production")
+	}
+	// M4-4B 日志检索后端校验：非法值或缺失必要 endpoint 直接 fail-fast。
+	switch c.LogBackend {
+	case "memory", "sql", "loki", "es":
+	default:
+		return fmt.Errorf("非法 --log-backend=%q（应为 memory | sql | loki | es）", c.LogBackend)
+	}
+	if c.LogBackend == "loki" && c.LokiEndpoint == "" {
+		return fmt.Errorf("--log-backend=loki 但 --loki-endpoint 为空（M4-4B 需要 Loki API 地址）")
+	}
+	if c.LogBackend == "es" {
+		if c.ESEndpoint == "" {
+			return fmt.Errorf("--log-backend=es 但 --es-endpoint 为空（M4-4B 需要 Elasticsearch API 地址）")
+		}
+		if c.ESIndex == "" {
+			return fmt.Errorf("--log-backend=es 但 --es-index 为空（M4-4B 需要索引名）")
+		}
+	}
+	// M4-4C 多租户 schema 隔离：仅支持 mysql store（MultiSchemaStore 内部用 *SQLStore）。
+	if c.MultiSchema && c.Store != "mysql" {
+		return fmt.Errorf("--multi-schema=true 但 --store=%q（多 schema 隔离仅支持 mysql 后端）", c.Store)
+	}
+	// M4-4D 控制面联邦：peer 地址必须是合法 URL（含 scheme + host），启动期 fail-fast 避免运行期诡异失败。
+	for i, p := range c.FederationPeers {
+		u, err := url.Parse(p)
+		if err != nil {
+			return fmt.Errorf("非法 --federation-peers[%d]=%q: %w", i, p, err)
+		}
+		if u.Scheme == "" || u.Host == "" {
+			return fmt.Errorf("非法 --federation-peers[%d]=%q（需含 scheme 与 host，如 http://peer:8080）", i, p)
 		}
 	}
 	return nil

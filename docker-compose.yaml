@@ -1,0 +1,91 @@
+# OpsMesh 一键体验环境（开发/演示用，非生产）。
+# 生产部署请使用 Helm Chart + values-production.yaml，配合外部托管 MySQL/Redis、TLS 证书、认证鉴权等。
+# 启动：docker compose up -d
+# 停止：docker compose down
+# 清理数据卷：docker compose down -v
+#
+# 服务拓扑：
+#   controlplane (HTTP 8080 / gRPC 9090 / metrics 9091) → mysql:3306 + redis:6379
+#   agent → controlplane:8080
+services:
+  controlplane:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: opsmesh/controlplane:dev
+    command:
+      - --mode=controlplane
+      - --store=mysql
+      - --mysql-dsn=opsmesh:opsmesh@tcp(mysql:3306)/opsmesh?parseTime=true
+      - --redis-addr=redis:6379
+      - --advertise-addr=http://controlplane:8080
+    ports:
+      - "8080:8080"   # HTTP API / Web UI
+      - "9090:9090"   # gRPC
+      - "9091:9091"   # Prometheus metrics
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # distroless/static-debian12 无 curl/wget/sh，无法用 CMD-SHELL 探 /healthz。
+    # 复用二进制自身做轻量探活（与 Dockerfile HEALTHCHECK 语义一致）。
+    # 若 opsmesh 提供 --health 或健康探针子命令，建议替换为该命令以做真实 /healthz 探测。
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/opsmesh", "--version"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    # 可选：挂载 TLS 证书启用 HTTPS（需同时在 command 追加 --tls-cert/--tls-key 参数）
+    # volumes:
+    #   - ./tls/server.crt:/etc/opsmesh/tls/server.crt:ro
+    #   - ./tls/server.key:/etc/opsmesh/tls/server.key:ro
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: opsmesh
+      MYSQL_USER: opsmesh
+      MYSQL_PASSWORD: opsmesh
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpass"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
+    restart: unless-stopped
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    image: opsmesh/agent:dev
+    command:
+      - --mode=agent
+      - --control-addr=http://controlplane:8080
+      - --segment=default
+    depends_on:
+      controlplane:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+  redis-data:

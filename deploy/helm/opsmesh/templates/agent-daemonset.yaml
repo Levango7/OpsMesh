@@ -1,0 +1,96 @@
+{{- if .Values.agent.enabled -}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "opsmesh.agent.serviceName" . }}
+  labels:
+    {{- include "opsmesh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+spec:
+  selector:
+    matchLabels:
+      {{- include "opsmesh.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: agent
+  template:
+    metadata:
+      labels:
+        {{- include "opsmesh.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: agent
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- include "opsmesh.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "opsmesh.serviceAccountName" . }}
+      {{- with .Values.agent.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agent.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agent.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: agent
+          image: {{ include "opsmesh.image" (list . .Values.agent.image) }}
+          imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
+          args:
+            - --mode=agent
+            - --control-addr=http://{{ include "opsmesh.controlplane.serviceName" . }}:8080
+            - --control-addrs={{ include "opsmesh.controlplane.serviceName" . }}:9090
+            - --segment={{ .Values.agent.segment }}
+            - --worker-concurrency={{ .Values.agent.workerConcurrency }}
+            - --task-timeout={{ .Values.agent.taskTimeout }}
+            - --data-dir={{ .Values.agent.dataDir }}
+            {{- if .Values.agent.demo }}
+            - --demo
+            {{- end }}
+            {{- if .Values.controlplane.tls.enabled }}
+            - --tls-cert=/etc/opsmesh/tls/tls.crt
+            - --tls-key=/etc/opsmesh/tls/tls.key
+            - --client-ca=/etc/opsmesh/tls/ca.crt
+            {{- end }}
+          env:
+            - name: OPSMESH_DATA_DIR
+              value: {{ .Values.agent.dataDir | quote }}
+            {{- with .Values.agent.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: grpc
+              containerPort: 9090
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.agent.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.agent.dataDir }}
+            {{- if .Values.controlplane.tls.enabled }}
+            - name: tls
+              mountPath: /etc/opsmesh/tls
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: data
+          emptyDir: {}
+        {{- if .Values.controlplane.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.controlplane.tls.secretName }}
+            defaultMode: 0440
+        {{- end }}
+{{- end -}}

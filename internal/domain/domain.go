@@ -4,7 +4,23 @@
 // 避免传输结构泄漏进业务逻辑（回应二次审计⑩「DDD/ACL 代码层不存在」）。
 package domain
 
-import "time"
+import (
+	"errors"
+	"fmt"
+	"time"
+)
+
+// M2-1C 领域 sentinel error：状态机非法转换的精确错误。
+// 调用方（handler）可经 errors.Is 精确区分，映射到不同 HTTP 状态码（404 vs 409）。
+var (
+	ErrTaskAlreadyDone       = errors.New("task already done, cannot cancel")
+	ErrTaskAlreadyFailed     = errors.New("task already failed, cannot cancel")
+	ErrTaskAlreadyCancelled  = errors.New("task already cancelled")
+	ErrDeviceAlreadyProvisioning = errors.New("device already provisioning")
+	ErrAlertAlreadyAcknowledged  = errors.New("alert already acknowledged")
+	ErrAlertAlreadySilenced      = errors.New("alert already silenced")
+	ErrAlertSilenced             = errors.New("alert silenced, acknowledge not allowed")
+)
 
 // Tenant 租户（U-04 行级隔离键）。
 type Tenant struct {
@@ -90,6 +106,9 @@ type AuditEvent struct {
 }
 
 // Alert 内核产出的告警事件（M7 监控告警，业务闭环最小数据源，显式 json tag）。
+//
+// M2-1C DDD 实质化：补 Status/AcknowledgedBy/SilencedUntil/Comment/UpdatedAt 状态字段，
+// 使 Alert 成为富领域实体，承载 Acknowledge/Silence/IsExpired 状态机行为（见 behaviour.go）。
 type Alert struct {
 	AlertID   string    `json:"alertID"`
 	TenantID  string    `json:"tenantID"`
@@ -98,4 +117,198 @@ type Alert struct {
 	Severity  string    `json:"severity"` // warning / critical
 	Message   string    `json:"message"`
 	CreatedAt time.Time `json:"createdAt"`
+	// 处理状态（M7 ack/silence）：未处理=firing；确认=acknowledged；静默=silenced。
+	Status         string    `json:"status"`
+	AcknowledgedBy string    `json:"acknowledgedBy"` // 确认人
+	SilencedUntil  time.Time `json:"silencedUntil"`  // 静默截止时间
+	Comment        string    `json:"comment"`        // 处理备注
+	UpdatedAt      time.Time `json:"updatedAt"`      // 最近一次状态变更时间
+}
+
+// =============================================================================
+// M2-1C DDD 实质化：领域实体业务行为（状态机 / 重试判定 / 纳管翻转 / 规则匹配）
+//
+// 此前 domain 仅是数据结构 + mapper，业务逻辑散落在 handler 和 store。现把不变的业务规则
+// 下沉到领域实体，handler 退化为薄编排层（解析请求 → 调领域方法 → 写响应）。
+// 状态机方法返回 error 而非 bool，使非法状态转换在调用方可精确区分（而非笼统的 false）。
+// =============================================================================
+
+// --- Task 状态常量 ---
+const (
+	TaskStatusPending   = "pending"
+	TaskStatusRunning   = "running"
+	TaskStatusDone      = "done"
+	TaskStatusFailed    = "failed"
+	TaskStatusCancelled = "cancelled"
+)
+
+// --- Device 状态常量 ---
+const (
+	DeviceStateOnline       = "online"
+	DeviceStateOffline      = "offline"
+	DeviceStateDiscovered   = "discovered"
+	DeviceStateProvisioning = "provisioning"
+)
+
+// --- Alert 状态常量（与 proto.AlertStatus* 对齐） ---
+const (
+	AlertStatusFiring       = "firing"
+	AlertStatusAcknowledged = "acknowledged"
+	AlertStatusSilenced     = "silenced"
+)
+
+// ---------------------------------------------------------------------------
+// Task 业务行为
+// ---------------------------------------------------------------------------
+
+// Cancel 任务取消状态机：pending/running → cancelled。
+// 终态（done/failed/cancelled）返回 error，调用方据此返回 404/409。
+// 幂等：已 cancelled 重复调用返回 error（而非静默成功），便于上层精确报错。
+func (t *Task) Cancel() error {
+	switch t.Status {
+	case TaskStatusPending, TaskStatusRunning, "": // 空串按 pending 处理（兼容旧数据）
+		t.Status = TaskStatusCancelled
+		return nil
+	case TaskStatusDone:
+		return ErrTaskAlreadyDone
+	case TaskStatusFailed:
+		return ErrTaskAlreadyFailed
+	case TaskStatusCancelled:
+		return ErrTaskAlreadyCancelled
+	default:
+		return fmt.Errorf("unknown task status %q, cannot cancel", t.Status)
+	}
+}
+
+// CanRetry 重试判定：仅 failed 且 RetryCount < maxRetries 时可重试。
+// maxRetries <= 0 表示不允许重试（一次失败即死信）。
+func (t *Task) CanRetry(maxRetries int) bool {
+	if t.Status != TaskStatusFailed {
+		return false
+	}
+	if maxRetries <= 0 {
+		return false
+	}
+	return t.RetryCount < maxRetries
+}
+
+// IsLeaseExpired 租约超时判定：running 且距 ClaimedAt 超过 maxAge。
+// 非 running 或 ClaimedAt 零值返回 false（未领取的任务无租约概念）。
+// maxAge <= 0 永不超时（关闭租约回收）。
+func (t *Task) IsLeaseExpired(maxAge time.Duration) bool {
+	if t.Status != TaskStatusRunning || t.ClaimedAt.IsZero() {
+		return false
+	}
+	if maxAge <= 0 {
+		return false
+	}
+	return time.Since(t.ClaimedAt) > maxAge
+}
+
+// MarkDead 标记死信：重试耗尽后置 DeadLetter=true 并把状态翻为 failed。
+// 幂等：已 DeadLetter 的任务重复调用无副作用（状态保持 failed）。
+func (t *Task) MarkDead() {
+	t.DeadLetter = true
+	t.Status = TaskStatusFailed
+}
+
+// ---------------------------------------------------------------------------
+// Device 业务行为
+// ---------------------------------------------------------------------------
+
+// CanRetire 退役资格判定：未退役且（离线 或 最近结果超龄）。
+// maxAge <= 0 时不按超龄判定，仅离线设备可退役（手动退役场景）。
+// 已 retired 返回 false（幂等拒绝，避免重复归档）。
+func (d *Device) CanRetire(maxAge time.Duration) bool {
+	if d.Retired {
+		return false
+	}
+	if d.State == DeviceStateOffline {
+		return true
+	}
+	if maxAge > 0 && !d.LastResultAt.IsZero() && time.Since(d.LastResultAt) > maxAge {
+		return true
+	}
+	return false
+}
+
+// TransitionToProvisioning 纳管状态翻转：仅 discovered 候选可翻 provisioning（B1 推送中）。
+// 已 managed（online/offline）或已 provisioning 返回 error（幂等拒绝）。
+// 调用方据此区分"首次推送"与"重复推送"，避免重复签发 install token。
+func (d *Device) TransitionToProvisioning() error {
+	switch d.State {
+	case DeviceStateDiscovered, "": // 空串按 discovered 处理（兼容旧数据）
+		d.State = DeviceStateProvisioning
+		return nil
+	case DeviceStateProvisioning:
+		return ErrDeviceAlreadyProvisioning
+	case DeviceStateOnline, DeviceStateOffline:
+		return fmt.Errorf("device already managed (state=%s)", d.State)
+	default:
+		return fmt.Errorf("unknown device state %q, cannot transition to provisioning", d.State)
+	}
+}
+
+// IsOrphan 孤儿设备判定：网段发现候选（!Managed）且无 agent 绑定。
+// 这类设备需经 provision 推送 agent 才能真正纳管（B1 自动纳管闭环的输入）。
+func (d *Device) IsOrphan() bool {
+	return !d.Managed && d.AgentID == ""
+}
+
+// ---------------------------------------------------------------------------
+// Alert 业务行为
+// ---------------------------------------------------------------------------
+
+// Acknowledge 告警确认状态机：仅 firing 可确认。
+// acknowledged/silenced 返回 error（幂等拒绝）；空 Status 视为 firing（兼容旧数据）。
+// by 为确认人（来自网关注入的 X-User-Id）。
+func (a *Alert) Acknowledge(by string) error {
+	st := a.Status
+	if st == "" {
+		st = AlertStatusFiring
+	}
+	switch st {
+	case AlertStatusFiring:
+		a.Status = AlertStatusAcknowledged
+		a.AcknowledgedBy = by
+		a.UpdatedAt = time.Now()
+		return nil
+	case AlertStatusAcknowledged:
+		return ErrAlertAlreadyAcknowledged
+	case AlertStatusSilenced:
+		return ErrAlertSilenced
+	default:
+		return fmt.Errorf("unknown alert status %q, cannot acknowledge", st)
+	}
+}
+
+// Silence 告警静默状态机：firing/acknowledged 可静默；已 silenced 返回 error。
+// until 为静默截止时间；comment 为处理备注。空 until 表示立即过期（等价于 ack）。
+func (a *Alert) Silence(until time.Time, comment string) error {
+	st := a.Status
+	if st == "" {
+		st = AlertStatusFiring
+	}
+	switch st {
+	case AlertStatusFiring, AlertStatusAcknowledged:
+		a.Status = AlertStatusSilenced
+		a.SilencedUntil = until
+		a.Comment = comment
+		a.UpdatedAt = time.Now()
+		return nil
+	case AlertStatusSilenced:
+		return ErrAlertAlreadySilenced
+	default:
+		return fmt.Errorf("unknown alert status %q, cannot silence", st)
+	}
+}
+
+// IsExpired 静默过期判定：silenced 且当前时间已过 SilencedUntil。
+// 非 silenced 或 SilencedUntil 零值返回 false。
+// 用于 notifyLoop 决定是否把已过期静默告警重新纳入推送。
+func (a *Alert) IsExpired() bool {
+	if a.Status != AlertStatusSilenced || a.SilencedUntil.IsZero() {
+		return false
+	}
+	return time.Now().After(a.SilencedUntil)
 }

@@ -1,0 +1,24 @@
+# Lightweight OpsMeshInstance: single control-plane replica, in-memory store,
+# no MySQL/Redis, no TLS. Suitable for dev / CI.
+apiVersion: opsmesh.io/v1alpha1
+kind: OpsMeshInstance
+metadata:
+  name: dev
+  namespace: opsmesh-system
+  labels:
+    app.kubernetes.io/name: opsmesh
+    app.kubernetes.io/instance: dev
+spec:
+  replicas: 1
+  image: opsmesh/opsmesh:latest
+  agentImage: opsmesh/opsmesh-agent:latest
+  store: memory
+  production: false
+  tlsEnabled: false
+  segmentCIDR: 10.244.0.0/16
+  mysql:
+    enabled: false
+    storage: 1Gi
+  redis:
+    enabled: false
+    storage: 1Gi

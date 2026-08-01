@@ -1,0 +1,18 @@
+# M3-3A buf 模块配置（proto/ 目录根）。
+# buf.yaml v2：lint 用 STANDARD 规则集（字段下划线命名/枚举前缀等），
+# breaking 用 FILE 策略（按文件粒度检测破坏性变更：禁止删字段/改类型/改字段号/改字段名）。
+# FILE 比 WIRE 更严格：WIRE 只守二进制兼容，FILE 还守源码兼容（更早暴露破坏性变更）。
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+  # 除默认忽略外，本模块允许：
+  # - DIRECTORY_SAME_PACKAGE：所有 .proto 在 opsmesh/v1/ 下同包，符合版本化目录约定。
+  # - PACKAGE_VERSION_SUFFIX：包名 opsmesh.v1 已带版本后缀。
+  except:
+    - DIRECTORY_SAME_PACKAGE
+breaking:
+  use:
+    - FILE

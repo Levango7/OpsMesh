@@ -1,0 +1,86 @@
+# OpsMesh golangci-lint 配置（M1）
+#
+# CI（.github/workflows/ci.yml）已通过 golangci/golangci-lint-action@v6 引用本文件，
+# args: ./... 全仓扫描。本配置面向 golangci-lint v1.59+，启用全量主流 linter；
+# 若个别 linter 在更高版本被移除/重命名，CI 会以 "level=error msg=\"...unknown linters...\""
+# 形式报错，届时按报错增删 enable 列表即可（不要直接放宽规则）。
+#
+# 设计取舍：
+# - revive.exported 关闭（MVP 阶段不强制导出注释，避免噪音阻塞 CI）。
+# - 测试文件放宽 errcheck/gosec/unparam（_test.go 中常故意忽略错误/含弱口令 fixture）。
+# - max-issues-per-linter=0 / max-same-issues=0：不截断输出，全量暴露问题便于一次性修。
+
+run:
+  timeout: 5m
+  go: "1.22"
+
+
+linters:
+  # 默认启用：errcheck, gosimple, govet, ineffassign, staticcheck, unused。
+  # 下面显式追加全量补充规则。
+  enable:
+    - errcheck        # 未检查的 error 返回值
+    - gosimple        # 简化代码建议
+    - govet           # go vet 严格版
+    - ineffassign     # 无效赋值
+    - staticcheck     # 静态检查全套（含 SA*）
+    - unused          # 未使用代码
+    - misspell        # 注释/字符串拼写
+    - revive          # 替代 golint 的风格检查
+    - gofmt           # 格式检查
+    - goimports       # import 分组与排序
+    - bodyclose       # http.Response.Body 必须 Close
+    - contextcheck    # context 是否正确传递
+    - errorlint       # error 包装（%w / Is / As）建议
+    - copyloopvar     # 循环变量拷贝检查（exportloopref 在 v1.60+ 因 Go1.22 loopvar 已 deprecated，改用此现代替代）
+    - nilerr          # 返回 nil 但 error 也 nil 的可疑模式
+    - nilnil          # 同时返回 nil, nil 的可疑模式
+    - noctx           # http.Request 缺少 context
+    - rowserrcheck    # sql.Rows.Err() 必须检查
+    - sqlclosecheck   # sql.Rows/Stmt/Conn 必须 Close
+    - unparam         # 未使用的函数参数/返回值
+    - wastedassign    # 立即被覆盖的浪费赋值
+    - durationcheck   # duration 乘以常量应显式 cast
+    - prealloc        # 切片预分配建议（性能）
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  revive:
+    rules:
+      - name: exported
+        disabled: true  # MVP 不强制导出注释
+  goimports:
+    local-prefixes: opsmesh
+  govet:
+    enable-all: true
+  staticcheck:
+    checks: ["all"]
+  prealloc:
+    simple: true
+    range-loops: true
+    for-loops: false
+
+issues:
+  # 跳过 vendor / 生成代码 / 文档站点（run.skip-dirs/skip-files 在 v1.60+ 已迁至此）。
+  exclude-dirs:
+    - vendor
+    - docs
+  exclude-files:
+    - ".*\\.gen\\.go$"
+  exclude-rules:
+    # 测试文件放宽：常故意忽略 err / 含弱口令 fixture / 用空参数占位。
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+        - unparam
+        - wastedassign
+    # main.go 中 os.Exit 后的 fmt.Fprintf 返回值无需检查。
+    - path: cmd/opsmesh/main\.go
+      linters:
+        - errcheck
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  fix: false

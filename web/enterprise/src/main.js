@@ -1,0 +1,11 @@
+// Vue 应用入口 — 挂载 Pinia + Router
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+import App from './App.vue'
+import router from './router'
+import './assets/tokens.css'
+
+const app = createApp(App)
+app.use(createPinia())
+app.use(router)
+app.mount('#app')

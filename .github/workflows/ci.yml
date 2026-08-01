@@ -20,10 +20,22 @@ jobs:
         run: go build ./...
       - name: Vet
         run: go vet ./...
+      - name: golangci-lint (H10 聚合静态分析)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          # 默认读取仓库根 .golangci.yml；args 限定扫描范围为全仓。
+          args: ./...
       - name: Gofmt
         run: test -z "$(gofmt -l .)"
-      - name: Test (unit, memory store)
-        run: go test ./...
+      - name: Test (unit, memory store, -race + coverage)
+        # -race 启用竞态检测（H11）；-coverprofile 产出覆盖率（H12）；-timeout 120s 防单测挂死（问题8）。
+        run: go test -race -timeout 120s -coverprofile=coverage.out ./...
+      - name: 上传覆盖率到 Codecov (H12)
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.out
+          # 未配 CODECOV_TOKEN 时不让 CI 失败（仅跳过上报），保证 fork/无 token PR 可跑。
+          fail_ci_if_error: false
 
   # E1：SQL 后端集成测试 —— 默认 build-test 中 SQL Store 测试因无 DSN 被 Skip，
   # 此处起 mysql:8 + redis:7 真实后端，激活 OPSMESH_TEST_* 集成测试（报告 P1 缺口）。
@@ -64,7 +76,7 @@ jobs:
       - name: Wait for Redis
         run: until (echo > /dev/tcp/127.0.0.1/6379) 2>/dev/null; do sleep 2; done
       - name: Run SQL/Redis store integration tests
-        run: go test -timeout 300s -v ./internal/store/...
+        run: go test -race -timeout 300s -v ./internal/store/...
 
   security:
     runs-on: ubuntu-latest
@@ -75,7 +87,7 @@ jobs:
         with:
           go-version: "1.22"
       - name: gosec (SAST 静态安全扫描)
-        uses: securego/gosec@master
+        uses: securego/gosec@v2.22.5
         with:
           args: ./...
       - name: Trivy 文件系统扫描
@@ -84,7 +96,31 @@ jobs:
           scan-type: fs
           scan-ref: .
           severity: HIGH,CRITICAL
-          exit-code: "0"
+          exit-code: "1"
+
+  # M3-3A protobuf 契约守护：lint（STANDARD 规则）+ breaking（FILE 策略，禁止删字段/改类型/改字段号）。
+  # buf 用 Docker 镜像，无需本机安装。breaking 对比 main 分支（PR 时检测破坏性变更）。
+  # 生成 stub（internal/grpcx/pb/*.go）已提交仓库，本 job 只校验 .proto 契约，不重新生成。
+  proto:
+    runs-on: ubuntu-latest
+    needs: build-test
+    defaults:
+      run:
+        working-directory: proto
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # breaking 检查需要对比 main 分支历史，fetch-depth=0 取全量历史。
+          fetch-depth: 0
+      - name: buf lint（STANDARD 规则集）
+        uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+      - run: buf lint
+      - name: buf breaking（FILE 策略，对比 main）
+        # 仅在 PR 或非 main 分支 push 时检测破坏性变更（main 自身是基线，无对比意义）。
+        if: github.ref != 'refs/heads/main'
+        run: buf breaking --against ".git#branch=main,subdir=proto"
 
   # E4：镜像构建/推送 —— 推送路径须与 Helm values 的镜像引用逐字一致，
   # 否则 Argo CD 拉不到（registry.internal/opsmesh/opsmesh-binary:tag）。
@@ -119,13 +155,17 @@ jobs:
         with:
           image-ref: ${{ secrets.REGISTRY }}/opsmesh-binary:${{ github.sha }}
           severity: HIGH,CRITICAL
-          exit-code: "0"
+          exit-code: "1"
       # E4 闭环：构建后把镜像 tag 钉死写回 GitOps chart（消除"发布流程手动替换"的部署脆弱点）。
       # 原 chart global.image.tag 硬编码 "0.1"，CI 却推 :sha，原样部署会去拉不存在的 :0.1。
       # 此处克隆独立 gitops 仓库，用 yq 把 tag 覆写为本Commit sha（与推送的 :sha 一致），
       # 并加守卫：写回后不得再含占位符 "0.1"，否则失败（证明写回真发生）。
       # 需仓库配置 secret：GITOPS_REPO（git@.../opsmesh-gitops.git）、GITOPS_PAT（可写 PAT）。
       # 若未配置这两个 secret，本步骤自动跳过（仅跳过写回，不影响镜像构建推送）。
+      # TODO(H19): charts/opsmesh-controlplane/values.yaml 位于独立 GitOps 仓库，
+      # 需先建立该 chart 仓库（含 opsmesh-controlplane chart 及 values.yaml）后本步骤方能生效。
+      # 在 chart 仓库建立前，本步骤即使 secret 齐全也会因 clone 路径不存在而失败——
+      # 故 chart 仓库的建立是本闭环的前置依赖（保留步骤以维持 E4 闭环设计完整性）。
       - name: 钉死镜像 tag 写回 GitOps values（E4 闭环）
         if: secrets.GITOPS_REPO != '' && secrets.GITOPS_PAT != ''
         env:

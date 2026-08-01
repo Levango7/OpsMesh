@@ -12,3 +12,23 @@ _write_test
 .DS_Store
 Thumbs.db
 *.swp
+
+# 敏感文件（M25 防误提交凭证/密钥/运行态数据）
+*.pem
+*.key
+*.crt
+.env
+.env.*
+install.token
+agent.id
+data/
+
+# M3-3A buf 工作产物（生成 stub internal/grpcx/pb/*.go 已提交仓库，不忽略）
+.buf/
+.buf-cache/
+
+# 前端依赖与构建产物
+node_modules/
+dist/
+.vite/
+

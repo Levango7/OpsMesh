@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "opsmesh.fullname" . }}-config
+  labels:
+    {{- include "opsmesh.labels" . | nindent 4 }}
+data:
+  # 非敏感运行时配置（敏感项走 Secret）
+  OPSMESH_MODE: controlplane
+  OPSMESH_HTTP_PORT: "8080"
+  OPSMESH_GRPC_PORT: "9090"
+  OPSMESH_METRICS_PORT: "9091"
+  OPSMESH_STORE: {{ .Values.controlplane.store | quote }}
+  OPSMESH_REPLICAS: {{ .Values.controlplane.replicaCount | quote }}
+  OPSMESH_TASK_LEASE_SEC: {{ .Values.controlplane.taskLeaseSec | quote }}
+  OPSMESH_TASK_MAX_RETRIES: {{ .Values.controlplane.taskMaxRetries | quote }}
+  OPSMESH_LEADER_TTL_SEC: {{ .Values.controlplane.leaderTTLSec | quote }}
+  OPSMESH_LEADER_TICK_SEC: {{ .Values.controlplane.leaderTickSec | quote }}
+  OPSMESH_ARCHIVE_AGE_MIN: {{ .Values.controlplane.archiveAgeMin | quote }}
+  OPSMESH_PRODUCTION: {{ .Values.controlplane.production | quote }}
+  OPSMESH_REQUIRE_AUTH: {{ .Values.controlplane.requireAuth | quote }}
+  {{- if .Values.controlplane.advertiseAddr }}
+  OPSMESH_ADVERTISE_ADDR: {{ .Values.controlplane.advertiseAddr | quote }}
+  {{- end }}
+  {{- if .Values.controlplane.alertWebhookURL }}
+  OPSMESH_ALERT_WEBHOOK_URL: {{ .Values.controlplane.alertWebhookURL | quote }}
+  OPSMESH_ALERT_NOTIFIER_TYPE: {{ .Values.controlplane.alertNotifierType | quote }}
+  {{- end }}
+  {{- if eq .Values.controlplane.store "mysql" }}
+  OPSMESH_REDIS_ADDR: {{ printf "%s:6379" (include "opsmesh.redis.serviceName" .) | quote }}
+  {{- end }}
+  # agent 段标识
+  OPSMESH_SEGMENT: {{ .Values.agent.segment | quote }}

@@ -1,0 +1,60 @@
+# OpsMesh goreleaser 配置（M1）
+#
+# 跨平台发布：linux/amd64 + linux/arm64（agent 部署到 ARM 网段设备）。
+# 产物：tar.gz 归档 + sha256 checksums + SBOM（syft 生成，CI 需装 syft）。
+# 版本注入：通过 -ldflags -X 写入 internal/version.{Version,Commit,Date}，
+#           与 cmd/opsmesh --version 输出对齐（U-05）。
+#
+# 触发方式：git tag v* → goreleaser release（CI 中由 release job 调用）。
+# 本地验证：goreleaser check（语法校验，不实际构建）。
+#
+# goreleaser v2 格式（version: 2 必需）。如使用 v1 请降级：把 archives.formats 改为 format（单值）。
+
+version: 2
+
+project_name: opsmesh
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: opsmesh
+    main: ./cmd/opsmesh
+    binary: opsmesh
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -trimpath
+      - -X opsmesh/internal/version.Version={{.Version}}
+      - -X opsmesh/internal/version.Commit={{.ShortCommit}}
+      - -X opsmesh/internal/version.Date={{.Date}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+sboms:
+  - artifacts: archive
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  draft: false
+  prerelease: auto

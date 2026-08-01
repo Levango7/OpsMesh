@@ -1,0 +1,160 @@
+# OpsMesh 生产环境 overlay
+# 用法：helm install opsmesh ./deploy/helm/opsmesh -f deploy/helm/opsmesh/values-production.yaml -n opsmesh
+# 关键差异：3 副本 + mysql 持久化 + TLS + require-auth + 资源放大
+
+## @section Global
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  # 生产推荐使用 fast SSD 存储类
+  storageClass: ""
+
+## @section Controlplane
+controlplane:
+  image:
+    repository: opsmesh/opsmesh
+    tag: "0.1"
+    pullPolicy: IfNotPresent
+  # 生产 3 副本 + leader 选举（A3）
+  replicaCount: 3
+  # 生产必须 mysql（多副本数据一致）
+  store: mysql
+  production: true
+  # 生产强制鉴权
+  requireAuth: true
+  # 控制面对外可达地址（按需改为 Ingress/LB 域名）
+  advertiseAddr: ""
+  # 生产强制 TLS / mTLS
+  tls:
+    enabled: true
+    secretName: opsmesh-tls
+  taskLeaseSec: 300
+  taskMaxRetries: 3
+  leaderTTLSec: 15
+  leaderTickSec: 5
+  archiveAgeMin: 1440
+  # provisionSecret 务必显式注入（多副本需一致），建议 helm install --set controlplane.provisionSecret=$(openssl rand -hex 32)
+  provisionSecret: ""
+  alertWebhookURL: ""
+  alertNotifierType: generic
+  # 生产资源放大
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+  autoscaling:
+    enabled: false
+  nodeSelector: {}
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: opsmesh
+                app.kubernetes.io/component: controlplane
+            topologyKey: kubernetes.io/hostname
+  tolerations: []
+  extraEnv: []
+
+## @section Agent
+agent:
+  enabled: true
+  image:
+    repository: opsmesh/opsmesh-agent
+    tag: "0.1"
+    pullPolicy: IfNotPresent
+  segment: default
+  workerConcurrency: 8
+  taskTimeout: 300s
+  dataDir: /var/lib/opsmesh
+  demo: false
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+  nodeSelector: {}
+  affinity: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  service:
+    enabled: true
+  extraEnv: []
+
+## @section MySQL
+mysql:
+  enabled: true
+  image: mysql:8
+  imagePullPolicy: IfNotPresent
+  database: opsmesh
+  user: opsmesh
+  persistence:
+    # 生产 100Gi
+    size: 100Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+
+## @section Redis
+redis:
+  enabled: true
+  image: redis:7
+  imagePullPolicy: IfNotPresent
+  persistence:
+    # 生产 20Gi
+    size: 20Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+
+## @section ServiceAccount
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+## @section Ingress
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: opsmesh.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+## @section Observability
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9091"
+podLabels: {}

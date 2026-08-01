@@ -1,0 +1,19 @@
+{{- if and .Values.redis.enabled (eq .Values.controlplane.store "mysql") -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "opsmesh.redis.serviceName" . }}
+  labels:
+    {{- include "opsmesh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+      protocol: TCP
+  selector:
+    {{- include "opsmesh.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+{{- end -}}

@@ -1,0 +1,17 @@
+[Unit]
+Description=OpsMesh Agent
+Documentation=https://opsmesh.example/docs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/opsmesh --mode=agent
+EnvironmentFile=/etc/opsmesh/opsmesh-agent.env
+Restart=always
+RestartSec=5
+User=opsmesh
+Group=opsmesh
+
+[Install]
+WantedBy=multi-user.target

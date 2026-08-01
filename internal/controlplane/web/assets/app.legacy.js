@@ -85,7 +85,29 @@ function loadAgents(){
     (a||[]).forEach(function(x){var o=document.createElement('option');o.value=x.agentID;o.textContent=x.agentID+' ('+x.hostname+')';sel.appendChild(o);});
   }).catch(function(e){console.error(e);});
 }
-function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+// 时间格式化：能解析为 Date 则按 zh-CN 24h 制展示，否则原样转义
+function fmtTime(s){ if(!s) return ''; var d=new Date(s); if(isNaN(d.getTime())) return esc(s); return d.toLocaleString('zh-CN',{hour12:false}); }
+// 统一 API 失败处理：累计失败次数，并在对应面板显示连接异常徽标
+var pollFailCount={devices:0,tasks:0,alerts:0,deploys:0,alertsFull:0};
+function apiFail(tag,e){
+  console.error('['+tag+']',e);
+  pollFailCount[tag]=(pollFailCount[tag]||0)+1;
+  var el=null;
+  if(tag==='devices') el=document.getElementById('devices');
+  else if(tag==='tasks') el=document.getElementById('tasks');
+  else if(tag==='alerts') el=document.getElementById('alerts');
+  else if(tag==='deploys') el=document.getElementById('deployList');
+  else if(tag==='alertsFull') el=document.getElementById('alertsFull');
+  if(el){
+    var badge='<div class="poll-err">⚠️ 连接异常（已重试 '+pollFailCount[tag]+' 次）</div>';
+    // 仅在面板内容为空或已是错误提示时替换，避免覆盖已加载的有效数据
+    if(!el.innerHTML || el.innerHTML.indexOf('poll-err')>=0 || el.innerHTML.indexOf('加载中')>=0){
+      el.innerHTML=badge;
+    }
+  }
+}
+function apiOk(tag){ if(pollFailCount[tag]){ pollFailCount[tag]=0; } }
 function renderDevices(snap){
   lastDevices=snap||{};
   var html='';var keys=Object.keys(snap||{});
@@ -115,7 +137,7 @@ function renderAlerts(list){
   var html=note;
   fl.forEach(function(a){
     var cls=a.severity==='critical'?'alert':'alert warn';
-    html+='<div class="'+cls+'"><b>['+esc(a.severity)+']</b> 设备 '+esc(a.deviceID)+'<br>'+esc(a.message)+'<br><small class="muted">'+esc(a.createdAt)+'</small>'
+    html+='<div class="'+cls+'"><b>['+esc(a.severity)+']</b> 设备 '+esc(a.deviceID)+'<br>'+esc(a.message)+'<br><small class="muted">'+fmtTime(a.createdAt)+'</small>'
       +'<br><button class="jbtn" style="margin-top:6px" onclick="setFocus(\''+esc(a.deviceID)+'\',\'\',\'\',\'\');switchTab(\'alerts\')">🔗 上下文串联</button></div>';
   });
   document.getElementById('alerts').innerHTML=html;
@@ -135,11 +157,11 @@ function renderTasks(tasks){
   document.getElementById('tasks').innerHTML=html;
   paintStats();
 }
-function pollDevices(){fetch('/api/v1/devices').then(function(r){return r.json();}).then(renderDevices).catch(function(e){console.error(e);});}
-function pollAlerts(){fetch('/api/v1/alerts').then(function(r){return r.json();}).then(renderAlerts).catch(function(e){console.error(e);});}
+function pollDevices(){fetch('/api/v1/devices').then(function(r){return r.json();}).then(function(s){apiOk('devices');renderDevices(s);}).catch(function(e){apiFail('devices',e);});}
+function pollAlerts(){fetch('/api/v1/alerts').then(function(r){return r.json();}).then(function(s){apiOk('alerts');renderAlerts(s);}).catch(function(e){apiFail('alerts',e);});}
 function pollTasks(){
   var st=document.getElementById('statusFilter').value;
-  fetch('/api/v1/tasks'+(st?'?status='+encodeURIComponent(st):'')).then(function(r){return r.json();}).then(renderTasks).catch(function(e){console.error(e);});
+  fetch('/api/v1/tasks'+(st?'?status='+encodeURIComponent(st):'')).then(function(r){return r.json();}).then(function(s){apiOk('tasks');renderTasks(s);}).catch(function(e){apiFail('tasks',e);});
 }
 function openDevice(id){
   fetch('/api/v1/devices/'+encodeURIComponent(id)).then(function(r){return r.json();}).then(function(d){
@@ -149,7 +171,7 @@ function openDevice(id){
     h+='<p>状态: '+esc(dev.state)+' ｜ 任务态: '+esc(dev.taskState)+'</p>';
     if(dev.lastResult){
       var c=dev.lastResult==='failed'?'warn':'ok';
-      h+='<p class="msg '+c+'">LastResult: '+esc(dev.lastResult)+' @ '+esc(dev.lastResultAt)+'</p>';
+      h+='<p class="msg '+c+'">LastResult: '+esc(dev.lastResult)+' @ '+fmtTime(dev.lastResultAt)+'</p>';
     }
     if(dev.state==='discovered'){
       h+='<button onclick="provision(\''+esc(dev.deviceID)+'\')">推送 Agent 纳管（B1）</button> ';
@@ -641,7 +663,7 @@ function pollDeploys(){
       });
       html+='</table>';
       document.getElementById('deployList').innerHTML=html;
-    }).catch(function(e){console.error(e);});
+    }).catch(function(e){apiFail('deploys',e);});
 }
 function execDeploy(id){
   fetch('/api/v1/deploys/'+id+'/execute',{method:'POST'})
@@ -663,7 +685,7 @@ function openDeploy(id){
     if(d.repo_url)h+='<p>仓库: <code>'+esc(d.repo_url)+'</code></p>';
     if(d.path)h+='<p>路径: <code>'+esc(d.path)+'</code></p>';
     if(d.content)h+='<p>内容: <code>'+esc(d.content)+'</code></p>';
-    h+='<p class="muted">创建人: '+esc(d.created_by)+' ｜ 创建: '+esc(d.created_at)+' ｜ 更新: '+esc(d.updated_at)+'</p>';
+    h+='<p class="muted">创建人: '+esc(d.created_by)+' ｜ 创建: '+fmtTime(d.created_at)+' ｜ 更新: '+fmtTime(d.updated_at)+'</p>';
     if(d.task_ids)h+='<p>派发任务: <code>'+esc((d.task_ids||'').replace(/,/g,', '))+'</code></p>';
     document.getElementById('drawerBody').innerHTML=h;
     document.getElementById('drawer').classList.add('open');
@@ -761,13 +783,13 @@ function pollAlertsFull(){
         +'设备 '+esc(a.deviceID)+' ｜ Agent '+esc(a.agentID)
         +(a.comment?'<br><small class="muted">备注：'+esc(a.comment)+'</small>':'')
         +'<br>'+esc(a.message)
-        +'<br><small class="muted">'+esc(a.createdAt)+'</small>'
+        +'<br><small class="muted">'+fmtTime(a.createdAt)+'</small>'
         +actions
         +'<button class="jbtn" style="margin-top:6px" onclick="setFocus(\''+esc(a.deviceID)+'\',\'\',\'\',\'\');switchTab(\'alerts\')">🔗 上下文串联</button>'
         +'</div>';
     });
     document.getElementById('alertsFull').innerHTML=html;
-  }).catch(function(e){console.error(e);});
+  }).catch(function(e){apiFail('alertsFull',e);});
 }
 
 // 确认告警（M7）：POST /api/v1/alerts/{id}/ack
@@ -926,7 +948,12 @@ function fetchMe(){
 // ---------- 启动 ----------
 window.onload=function(){
   loadAgents();pollDevices();pollTasks();pollAlerts();paintOverview();fetchMe();
-  setInterval(pollDevices,5000);setInterval(pollTasks,5000);setInterval(pollAlerts,10000);
+  // 主轮询：受页面可见性控制（隐藏时暂停，可见时恢复并立即拉一次）
+  var pollTimers=[];
+  function startPolls(){ if(pollTimers.length) return; pollTimers=[setInterval(pollDevices,5000),setInterval(pollTasks,5000),setInterval(pollAlerts,10000)]; }
+  function stopPolls(){ pollTimers.forEach(clearInterval); pollTimers=[]; }
+  document.addEventListener('visibilitychange',function(){ if(document.hidden){stopPolls();}else{startPolls(); pollDevices();pollTasks();pollAlerts();} });
+  startPolls();
   document.getElementById('statusFilter').addEventListener('change',pollTasks);
   document.getElementById('taskForm').addEventListener('submit',function(e){
     e.preventDefault();

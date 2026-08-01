@@ -1,0 +1,50 @@
+{{- /*
+安装后提示：展示访问方式与下一步操作。
+*/ -}}
+OpsMesh "{{ .Chart.Name }}" 已安装到命名空间 {{ .Release.Namespace }}。
+
+控制面副本数：{{ .Values.controlplane.replicaCount }}  持久化后端：{{ .Values.controlplane.store }}
+生产模式：{{ .Values.controlplane.production }}  TLS：{{ .Values.controlplane.tls.enabled }}  require-auth：{{ .Values.controlplane.requireAuth }}
+
+1. 查看各组件 Pod 状态：
+
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+2. 端口转发访问控制面 B/S 仪表盘（HTTP 8080）：
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "opsmesh.controlplane.serviceName" . }} 8080:8080
+
+  然后浏览器打开： http://127.0.0.1:8080
+
+3. 端口转发 gRPC（agent 注册通道，9090）：
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "opsmesh.controlplane.serviceName" . }} 9090:9090
+
+4. 拉取 Prometheus 指标（9091）：
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "opsmesh.controlplane.serviceName" . }} 9091:9091
+  curl http://127.0.0.1:9091/metrics
+
+{{- if eq .Values.controlplane.store "mysql" }}
+5. MySQL 已启用（StatefulSet {{ include "opsmesh.mysql.serviceName" . }}），DSN 走 Secret {{ include "opsmesh.fullname" . }}-secret/mysql-dsn。
+   Redis 已启用（{{ include "opsmesh.redis.serviceName" . }}:6379）。
+{{- else }}
+5. 当前 store=memory（零依赖开发模式）。多副本或生产请改用：
+     helm upgrade {{ .Release.Name }} ./deploy/helm/opsmesh -f deploy/helm/opsmesh/values-production.yaml
+{{- end }}
+
+{{- if gt (int .Values.controlplane.replicaCount) 1 }}
+6. 控制面已启用 PodDisruptionBudget（minAvailable=1），保证滚动维护期间至少 1 副本可用。
+{{- end }}
+
+{{- if .Values.controlplane.tls.enabled }}
+7. TLS 已启用，请确认 Secret {{ .Values.controlplane.tls.secretName }} 已预置 tls.crt / tls.key / ca.crt。
+{{- else }}
+7. TLS 未启用。生产环境请使用 values-production.yaml 或设置 controlplane.tls.enabled=true。
+{{- end }}
+
+{{- if .Values.agent.enabled }}
+Agent DaemonSet 已部署，每节点一个 agent，自动注册到控制面。
+{{- end }}
+
+文档：https://github.com/opsmesh/opsmesh

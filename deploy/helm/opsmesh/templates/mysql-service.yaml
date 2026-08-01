@@ -1,0 +1,19 @@
+{{- if and .Values.mysql.enabled (eq .Values.controlplane.store "mysql") -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "opsmesh.mysql.serviceName" . }}
+  labels:
+    {{- include "opsmesh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mysql
+spec:
+  type: ClusterIP
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql
+      protocol: TCP
+  selector:
+    {{- include "opsmesh.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mysql
+{{- end -}}

@@ -1,0 +1,138 @@
+/* ===========================================================================
+ * OpsMesh 企业版设计 token — 与个人版 web/assets/app.css 共享浅色靛蓝主题
+ * 仅抽取 :root 变量 + 基础排版，组件样式由各 .vue scoped 控制
+ * =========================================================================== */
+:root {
+  /* 背景与表面 */
+  --bg: #e8ecf7; --bg-soft: #eef1f9; --surface: #f7f8fd; --surface-2: #ffffff; --surface-3: #eef1f9;
+  --border: #e1e6f2; --border-2: #cfd6ea;
+  --text: #1f2540; --text-2: #525a78; --text-3: #6b7390;
+
+  /* 主色（靛蓝）— 用于操作/作业编排 */
+  --accent: #5b5ef0; --accent-2: #6366f1; --accent-soft: #eceaff;
+
+  /* 四色搭配：靛蓝 / 青 / 琥珀 / 玫红 */
+  --indigo: #6366f1; --indigo-soft: #eceaff;
+  --teal: #0d9488;   --teal-soft: #d8f3ef;
+  --amber: #d97706;  --amber-soft: #fef3e2;
+  --rose: #e11d48;   --rose-soft: #ffe4ec;
+  --violet: #7c3aed; --violet-soft: #f1e9ff;
+  --sky: #0284c7;    --sky-soft: #e0f2fe;
+  --green: #059669;  --green-soft: #d6f3e8;
+
+  /* 状态色 */
+  --ok: #059669; --ok-bg: #d6f3e8; --ok-soft: #eafaf3;
+  --fail: #e11d48; --fail-bg: #ffe4ec; --fail-soft: #fff1f5;
+  --warn: #d97706; --warn-bg: #fef3e2; --warn-soft: #fdf6ec;
+  --info: #6366f1; --info-bg: #eceaff;
+
+  /* 圆角 / 阴影 / 间距 / 字号 */
+  --radius: 14px; --radius-sm: 9px;
+  --shadow: 0 1px 2px rgba(31,37,64,.05), 0 6px 20px rgba(31,37,64,.07);
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px;
+  --fs-xs: 11.5px; --fs-sm: 12.5px; --fs-base: 13.5px; --fs-md: 14px; --fs-lg: 16px; --fs-xl: 18px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-base);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
+h1 { font-size: var(--fs-xl); }
+h2 { font-size: var(--fs-lg); color: var(--text); margin-bottom: 10px; }
+h3 { font-size: var(--fs-md); color: var(--text); margin: 14px 0 8px; }
+h4 { font-size: 13px; color: var(--text-2); margin: 12px 0 6px; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  background: var(--surface-3);
+  padding: 1px 6px;
+  border-radius: 5px;
+  color: #4338ca;
+}
+p { color: var(--text-2); margin: 6px 0; }
+.muted { color: var(--text-3); }
+.hint { font-size: var(--fs-sm); color: var(--text-3); margin: 4px 0 10px; }
+
+/* 通用按钮 */
+button {
+  font-family: inherit;
+  font-size: var(--fs-base);
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-2);
+  transition: .15s;
+  white-space: nowrap;
+}
+button:hover { background: var(--bg-soft); color: var(--text); }
+button:active { transform: translateY(1px); }
+button:disabled { opacity: .55; cursor: not-allowed; }
+button.primary { background: var(--accent); color: #fff; box-shadow: 0 2px 8px rgba(91,94,240,.32); }
+button.primary:hover { background: var(--accent-2); color: #fff; }
+button.teal { background: var(--teal); color: #fff; box-shadow: 0 2px 8px rgba(13,148,136,.3); }
+button.teal:hover { background: #0a8076; color: #fff; }
+button.danger { background: var(--fail); color: #fff; }
+button.danger:hover { background: #be1230; color: #fff; }
+button.xs { height: 26px; padding: 0 11px; font-size: var(--fs-sm); border-radius: 7px; }
+button.outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+
+/* 表单控件 */
+input, select, textarea {
+  font-family: inherit;
+  font-size: var(--fs-base);
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: .15s;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+label { display: inline-flex; align-items: center; gap: 6px; margin: 4px 12px 8px 0; color: var(--text-2); font-size: 13px; }
+
+/* 通用工具类 */
+.btnbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.row { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+.col { flex: 1; min-width: 380px; }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+  margin-bottom: 18px;
+}
+.card > h2:first-child, .card > h3:first-child { margin-top: 0; }
+.divider { height: 1px; background: var(--border); border: 0; margin: 16px 0; }
+.msg { margin-top: 10px; font-size: var(--fs-base); white-space: pre-wrap; }
+.msg.ok { color: var(--ok); }
+.msg.err { color: var(--fail); }
+
+/* 路由切换淡入 */
+.fade-enter-active, .fade-leave-active { transition: opacity .2s ease, transform .2s ease; }
+.fade-enter-from { opacity: 0; transform: translateY(4px); }
+.fade-leave-to { opacity: 0; transform: translateY(-4px); }
+
+/* 响应式 */
+@media (max-width: 768px) {
+  .col { min-width: 100%; }
+}

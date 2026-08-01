@@ -107,6 +107,8 @@ func AuditFromProto(e *proto.AuditEvent) *AuditEvent {
 }
 
 // AlertFromProto 入站：传输层 Alert -> 领域 Alert。
+// M2-1C：补 Status/AcknowledgedBy/SilencedUntil/Comment/UpdatedAt 状态字段映射，
+// 使领域 Alert 可承载 Acknowledge/Silence 状态机行为。
 func AlertFromProto(a *proto.Alert) *Alert {
 	if a == nil {
 		return nil
@@ -114,10 +116,13 @@ func AlertFromProto(a *proto.Alert) *Alert {
 	return &Alert{
 		AlertID: a.AlertID, TenantID: a.TenantID, DeviceID: a.DeviceID,
 		AgentID: a.AgentID, Severity: a.Severity, Message: a.Message, CreatedAt: a.CreatedAt,
+		Status: a.Status, AcknowledgedBy: a.AcknowledgedBy, SilencedUntil: a.SilencedUntil,
+		Comment: a.Comment, UpdatedAt: a.UpdatedAt,
 	}
 }
 
 // AlertToProto 出站：领域 Alert -> 传输层 Alert。
+// M2-1C：补状态字段映射，使 store 层 ack/silence 后的状态可经 HTTP/gRPC 边界完整传出。
 func AlertToProto(a *Alert) *proto.Alert {
 	if a == nil {
 		return nil
@@ -125,5 +130,7 @@ func AlertToProto(a *Alert) *proto.Alert {
 	return &proto.Alert{
 		AlertID: a.AlertID, TenantID: a.TenantID, DeviceID: a.DeviceID,
 		AgentID: a.AgentID, Severity: a.Severity, Message: a.Message, CreatedAt: a.CreatedAt,
+		Status: a.Status, AcknowledgedBy: a.AcknowledgedBy, SilencedUntil: a.SilencedUntil,
+		Comment: a.Comment, UpdatedAt: a.UpdatedAt,
 	}
 }

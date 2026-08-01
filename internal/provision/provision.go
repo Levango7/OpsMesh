@@ -89,8 +89,11 @@ func PushAndExec(ctx context.Context, addr, user, keyPath, keyPass, knownHostsPa
 	if user == "" {
 		user = "root"
 	}
-	// 安全（F16）：KnownHosts 主机指纹校验——等保生产必须配置 --provision-ssh-known-hosts。
+	// 安全（F16 / M12）：KnownHosts 主机指纹校验——等保生产必须配置 --provision-ssh-known-hosts。
 	// 未配置时回退 InsecureIgnoreHostKey 并打印警告（仅开发/内网调试）。
+	// 生产环境（--production=true）必须在 autoProvisionLoop 调用处拒绝 SSH 推送（见 auto.go），
+	// 此处保留 Insecure 回退仅为向后兼容非 production 调用方，绝不应用于生产。
+	// MITM 风险说明：无主机指纹校验时，攻击者可劫持 SSH 连接注入恶意 agent 二进制（供应链 RCE）。
 	hostKeyCallback := ssh.InsecureIgnoreHostKey()
 	if knownHostsPath != "" {
 		cb, err := knownHostsCallback(knownHostsPath)
@@ -98,6 +101,9 @@ func PushAndExec(ctx context.Context, addr, user, keyPath, keyPass, knownHostsPa
 			return "", err
 		}
 		hostKeyCallback = cb
+	} else {
+		// M12: 未配置 known_hosts → MITM 风险，打印显眼警告（生产应由 auto.go 提前拦截）。
+		fmt.Fprintln(os.Stderr, "[provision] 警告：SSH 未配置 known_hosts（--provision-ssh-known-hosts 为空），回退 InsecureIgnoreHostKey，存在中间人攻击风险；生产环境必须配置 known_hosts")
 	}
 	config := &ssh.ClientConfig{
 		User:            user,

@@ -83,9 +83,17 @@ func AutoProvision(ctx context.Context, deps Deps, cfg *config.Config, cidrs []s
 			sum.Provisioned++
 			mu.Unlock()
 
-			if cfg.ProvisionSSHKey == "" {
-				continue // 未配置 SSH 私钥：仅签发 token，等待用户手动 curl|sh 或 agent 自助纳管
-			}
+		if cfg.ProvisionSSHKey == "" {
+			continue // 未配置 SSH 私钥：仅签发 token，等待用户手动 curl|sh 或 agent 自助纳管
+		}
+		// M12 生产环境强制 known_hosts：拒绝 InsecureIgnoreHostKey SSH 推送（MITM 防护）。
+		// 生产模式下 known_hosts 为空时直接跳过 SSH 推送并记录失败，避免供应链 RCE 风险。
+		if cfg.Production && cfg.ProvisionSSHKnownHosts == "" {
+			mu.Lock()
+			sum.Failures = append(sum.Failures, fmt.Sprintf("ssh %s: 生产模式拒绝 InsecureIgnoreHostKey（MITM 风险），请配置 --provision-ssh-known-hosts", ip))
+			mu.Unlock()
+			continue
+		}
 			advertise := cfg.AdvertiseAddr
 			if advertise == "" {
 				advertise = fmt.Sprintf("http://127.0.0.1:%d", cfg.HTTPPort)

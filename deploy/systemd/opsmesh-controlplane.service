@@ -1,0 +1,18 @@
+[Unit]
+Description=OpsMesh ControlPlane
+Documentation=https://opsmesh.example/docs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/opsmesh --mode=controlplane
+EnvironmentFile=/etc/opsmesh/opsmesh-controlplane.env
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+User=opsmesh
+Group=opsmesh
+
+[Install]
+WantedBy=multi-user.target

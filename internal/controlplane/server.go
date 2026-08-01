@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -47,7 +48,6 @@ import (
 
 // Server 控制面服务（HTTP + gRPC + metrics）。
 type Server struct {
-	reg           *Registry
 	cfg           *config.Config
 	httpPort      int
 	grpcPort      int
@@ -65,6 +65,15 @@ type Server struct {
 	deployHandler *deploy.Handler        // M3 部署中心处理器
 	orchHandler   *orchestration.Handler // M5 作业编排中心处理器
 	lastAlertSent time.Time              // M7 告警 Webhook：上次已推送的告警时间戳（notifyLoop 防重复）
+	// M3-2B SSE 实时推送：订阅者集合与互斥保护。
+	// 每个 SSE 连接对应一个 buffered chan，publishEvent 非阻塞广播到所有订阅者。
+	// 慢消费者（缓冲满）丢弃事件，避免一个慢客户端拖垮广播（M3-2B 设计取舍）。
+	eventMu   sync.RWMutex
+	eventSubs map[chan SSEEvent]struct{}
+
+	// M4-4D 控制面联邦管理器（nil=未启用联邦）。
+	// 由 NewServer 在 cfg.FederationPeers 非空时构造；启用后路由层注册 /api/v1/federation/* 端点。
+	fed *FederationManager
 }
 
 // NewServer 构造控制面服务。按 cfg.Store 选择持久化后端（默认 memory），并初始化事件总线与指标。
@@ -72,9 +81,7 @@ func NewServer(cfg *config.Config) *Server {
 	// Kafka brokers/topic 经参数传入事件总线（避免 os.Setenv 并发不安全，P1-5）。
 	bus := events.New(cfg.EventBus, cfg.KafkaBrokers, cfg.KafkaTopic)
 	st := selectStore(cfg, bus)
-	reg := NewRegistryWithStore(st)
 	s := &Server{
-		reg:           reg,
 		cfg:           cfg,
 		store:         st,
 		httpPort:      cfg.HTTPPort,
@@ -89,8 +96,9 @@ func NewServer(cfg *config.Config) *Server {
 		metrics:       metrics.New(),
 		cmdbHandler:   newCMDBHandler(st),
 		logHandler:    newLogHandler(st),
-		deployHandler: newDeployHandler(st, reg),
+		deployHandler: newDeployHandler(st),
 		orchHandler:   newOrchestrationHandler(st),
+		eventSubs:     make(map[chan SSEEvent]struct{}), // M3-2B SSE 订阅者集合
 	}
 	if cfg.Demo {
 		// 演示模式（P0-5）：主动播种 demo 拓扑，让 6 大模块在无真实 agent 时也能完整演示。
@@ -109,12 +117,15 @@ func NewServer(cfg *config.Config) *Server {
 			logx.Warn(context.Background(), "demo 部署播种失败", err)
 		}
 	}
+	// M4-4D 控制面联邦：cfg.FederationPeers 非空时构造 FederationManager，启用联邦 API。
+	// nil 时路由层跳过 /api/v1/federation/* 注册（向后兼容，不影响未启用联邦的部署）。
+	s.fed = NewFederationManager(cfg.FederationPeers, st)
 	return s
 }
 
 // newDeployHandler 构造 M3 部署处理器：按 store 类型选 SQL/Memory 后端，
-// 并用 Registry 适配 deploy.Dispatcher（防腐接口，避免 deploy 反向依赖 controlplane）。
-func newDeployHandler(st store.Store, reg *Registry) *deploy.Handler {
+// 并用 store 适配 deploy.Dispatcher（防腐接口，避免 deploy 反向依赖 controlplane）。
+func newDeployHandler(st store.Store) *deploy.Handler {
 	var ds deploy.DeployStore
 	if ss, ok := st.(*store.SQLStore); ok {
 		s, err := deploy.NewSQL(ss.DB())
@@ -128,7 +139,7 @@ func newDeployHandler(st store.Store, reg *Registry) *deploy.Handler {
 	} else {
 		ds = deploy.NewMemory()
 	}
-	return deploy.NewHandler(ds, &registryDispatcher{reg: reg})
+	return deploy.NewHandler(ds, &storeDispatcher{store: st})
 }
 
 // newOrchestrationHandler 构造 M5 作业编排处理器：按 store 类型选 SQL/Memory 后端，
@@ -150,20 +161,21 @@ func newOrchestrationHandler(st store.Store) *orchestration.Handler {
 	return orchestration.NewHandler(ws, st)
 }
 
-// registryDispatcher 以 Registry 适配 deploy.Dispatcher（M3 -> M4 任务引擎派发）。
-type registryDispatcher struct {
-	reg *Registry
+// storeDispatcher 以 store.Store 适配 deploy.Dispatcher（M3 -> M4 任务引擎派发）。
+// M2-1B：原 registryDispatcher 持有 *Registry 薄间接层，现直连 store.Store 小接口。
+type storeDispatcher struct {
+	store store.Store
 }
 
-func (d *registryDispatcher) CreateTask(t *proto.Task) *proto.Task {
-	return d.reg.CreateTask(t)
+func (d *storeDispatcher) CreateTask(t *proto.Task) *proto.Task {
+	return d.store.CreateTask(t)
 }
 
-func (d *registryDispatcher) Device(id string) *proto.DeviceInfo {
-	return d.reg.Device(id)
+func (d *storeDispatcher) Device(id string) *proto.DeviceInfo {
+	return d.store.Device(id)
 }
 
-func (d *registryDispatcher) TaskStates(ids []string, tenantID string) map[string]string {
+func (d *storeDispatcher) TaskStates(ids []string, tenantID string) map[string]string {
 	out := make(map[string]string)
 	if len(ids) == 0 {
 		return out
@@ -172,7 +184,7 @@ func (d *registryDispatcher) TaskStates(ids []string, tenantID string) map[strin
 	for _, id := range ids {
 		set[id] = true
 	}
-	for _, t := range d.reg.AllTasks(tenantID) {
+	for _, t := range d.store.AllTasks(tenantID) {
 		if set[t.TaskID] {
 			out[t.TaskID] = t.Status
 		}
@@ -182,8 +194,18 @@ func (d *registryDispatcher) TaskStates(ids []string, tenantID string) map[strin
 
 // selectStore 按配置选择后端：--store=mysql 且 DSN 非空时启用 SQLStore，否则 MemoryStore。
 // 同时注入事件总线（P1-5），使 store 层状态变更可经 Kafka 等真实消费。
+// M4-4C：--multi-schema=true 时使用 MultiSchemaStore（每租户独立 schema），而非单个 SQLStore。
 func selectStore(cfg *config.Config, bus events.Bus) store.Store {
 	if cfg.Store == "mysql" && cfg.MySQLDSN != "" {
+		if cfg.MultiSchema {
+			ms, err := store.NewMultiSchemaStore(cfg.MySQLDSN, cfg.RedisAddr, store.DefaultSchemaNamer(cfg.SchemaPrefix))
+			if err != nil {
+				logx.Error(context.Background(), "Multi-schema store 初始化失败，回退 memory", err)
+				return store.NewMemoryStore().WithSecret(cfg.ProvisionSecret).WithBus(bus).WithDemo(cfg.Demo)
+			}
+			logx.Info(context.Background(), "持久化后端=mysql(multi-schema)", "reason", "M4-4C 多租户 schema 隔离")
+			return ms.WithBus(bus).WithSecret(cfg.ProvisionSecret).WithDemo(cfg.Demo)
+		}
 		ss, err := store.NewSQLStore(cfg.MySQLDSN, cfg.RedisAddr)
 		if err != nil {
 			logx.Error(context.Background(), "MySQL store 初始化失败，回退 memory", err)
@@ -219,6 +241,20 @@ func newLogHandler(st store.Store) *logstore.Handler {
 	return logstore.NewHandler(logstore.NewMemory(0))
 }
 
+// securityHeadersMiddleware 为 HTTP 响应注入安全头（H5 安全头中间件）。
+// 应用于整个主 mux（仪表盘 + /api/v1/* + 静态资源）；/metrics 在独立 server（buildMetrics）不受影响。
+// CSP 允许 self + inline script/style（前端有 inline onclick/style，后续可收紧为 nonce-based）。
+// /healthz 也被包裹但 CSP 对其无副作用（返回 text/plain，无脚本/HTML 解析）。
+func securityHeadersMiddleware(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
+		h.ServeHTTP(w, r)
+	})
+}
+
 // Start 启动 HTTP(B/S)、gRPC(9090)、metrics(9091) 三个监听，并在收到 SIGTERM/SIGINT 时优雅退出。
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
@@ -235,6 +271,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/devices/", s.handleDeviceRouting)       // 子路径：{id} DELETE 退役、{id}/provision
 	mux.HandleFunc("/api/v1/alerts", s.handleAlerts)                // GET 活跃告警（M7）
 	mux.HandleFunc("/api/v1/alerts/", s.handleAlertRouting)         // 子路径：{id}/ack、{id}/silence
+	mux.HandleFunc("/api/v1/events/stream", s.handleEventsStream)   // M3-2B SSE 实时推送（替代 5s 轮询）
 	// B1 自动纳管：install.sh 分发脚本 + agent 二进制分发 + 自动纳管触发
 	mux.HandleFunc("/install.sh", s.handleInstallSh)
 	mux.HandleFunc("/bin/opsmesh-agent", s.handleServeAgent)
@@ -247,10 +284,17 @@ func (s *Server) Start() error {
 	s.deployHandler.RegisterRoutes(mux)
 	// M5 作业编排中心：POST/GET /api/v1/workflows（租户隔离由 authctx 注入）。
 	s.orchHandler.RegisterRoutes(mux)
+	// M4-4D 控制面联邦：仅当配置了 --federation-peers 时注册联邦 API。
+	// 未启用时这些端点返回 404（mux 未注册），保证向后兼容。
+	if s.fed != nil {
+		mux.HandleFunc("/api/v1/federation/peers", s.handleFederationPeers)
+		mux.HandleFunc("/api/v1/federation/forward/task", s.handleFederationForwardTask)
+		mux.HandleFunc("/api/v1/federation/devices", s.handleFederationDevices)
+	}
 
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", s.httpPort),
-		Handler:           mux,
+		Handler:           securityHeadersMiddleware(mux), // H5 安全头中间件（CSP/X-Frame-Options 等）
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -319,13 +363,14 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
 	}
 	gs := grpc.NewServer(opts...)
 	gs.RegisterService(&grpcx.Registration_ServiceDesc, &grpcServerImpl{
-		reg:         s.reg,
+		store:       s.store,
 		requireAuth: s.requireAuth,
 		cfg:         s.cfg,
 		bus:         s.bus,
 		metrics:     s.metrics,
 		cmdb:        s.cmdbHandler,
 		logs:        s.logHandler,
+		srv:         s, // M3-2B：注入 Server 引用，使 gRPC handler 可发布 SSE 事件
 	})
 	return gs, lis
 }
@@ -339,7 +384,7 @@ func (s *Server) buildMetrics() (*http.Server, net.Listener) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		s.metrics.SetAgents(len(s.reg.Agents("")))
+		s.metrics.SetAgents(len(s.store.Agents("")))
 		fmt.Fprint(w, s.metrics.Render())
 	})
 	return &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}, lis
@@ -356,7 +401,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
 		return
 	}
-	writeJSON(w, http.StatusOK, s.reg.Snapshot(actx.TenantID))
+	writeJSON(w, http.StatusOK, s.store.Snapshot(actx.TenantID))
 }
 
 // handleAgents 处理 GET /api/v1/agents，按网关注入租户返回已注册 agent 列表（供前端下拉框，P1-4）。
@@ -371,7 +416,7 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]map[string]string, 0)
-	for _, a := range s.reg.Agents(actx.TenantID) {
+	for _, a := range s.store.Agents(actx.TenantID) {
 		out = append(out, map[string]string{
 			"agentID":  a.AgentID,
 			"hostname": a.Hostname,
@@ -441,7 +486,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "agent not found or tenant mismatch"})
 		return
 	}
-	task := s.reg.CreateTask(&proto.Task{
+	task := s.store.CreateTask(&proto.Task{
 		AgentID:    body.AgentID,
 		TenantID:   targetTenant,
 		Type:       body.Type,
@@ -449,7 +494,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Schedule:   body.Schedule,        // F4 模板任务（cron）随创建下传
 		MaxRetries: s.cfg.TaskMaxRetries, // F2 失败重试上限随任务下发（store 层按策略重入队/死信）
 	})
-	s.reg.Audit(&proto.AuditEvent{
+	s.store.Audit(&proto.AuditEvent{
 		TenantID: targetTenant,
 		UserID:   actx.UserID,
 		Action:   "create_task",
@@ -464,8 +509,14 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if s.metrics != nil {
-		s.metrics.SetQueueDepth(s.reg.PendingDepth())
+		s.metrics.SetQueueDepth(s.store.PendingDepth())
 	}
+	// M3-2B SSE：通知前端新任务已创建（前端任务表追加一行 pending）
+	s.publishEvent("task_status", map[string]string{
+		"taskID":  task.TaskID,
+		"status":  task.Status,
+		"agentID": body.AgentID,
+	})
 	writeJSON(w, http.StatusCreated, task)
 }
 
@@ -487,7 +538,7 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := r.URL.Query().Get("status")
-	tasks := s.reg.AllTasks(actx.TenantID)
+	tasks := s.store.AllTasks(actx.TenantID)
 	out := make([]*domain.Task, 0, len(tasks))
 	for _, t := range tasks {
 		if status != "" && t.Status != status {
@@ -514,7 +565,7 @@ func (s *Server) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
 		return
 	}
-	dev := s.reg.Device(id)
+	dev := s.store.Device(id)
 	if dev == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
 		return
@@ -529,12 +580,12 @@ func (s *Server) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 		Results []*domain.TaskResult `json:"results"`
 	}
 	dd := deviceDetail{Device: domain.DeviceFromProto(dev)}
-	for _, t := range s.reg.AllTasks(actx.TenantID) {
+	for _, t := range s.store.AllTasks(actx.TenantID) {
 		if t.AgentID == dev.AgentID {
 			dd.Tasks = append(dd.Tasks, domain.TaskFromProto(t))
 		}
 	}
-	for _, res := range s.reg.Results(dev.AgentID) {
+	for _, res := range s.store.Results(dev.AgentID) {
 		dd.Results = append(dd.Results, domain.TaskResultFromProto(res))
 	}
 	writeJSON(w, http.StatusOK, dd)
@@ -542,7 +593,7 @@ func (s *Server) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 
 // lookupAgent 按 agentID 直接查（O(1) 直查，P2-17 修复线性扫描）。
 func (s *Server) lookupAgent(id string) *proto.AgentInfo {
-	return s.reg.Agent(id)
+	return s.store.Agent(id)
 }
 
 // scheduleLoop 周期性评估模板任务（F4 定时/周期调度）：每 30s 调一次
@@ -556,10 +607,10 @@ func (s *Server) scheduleLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !s.reg.IsLeader() {
+			if !s.store.IsLeader() {
 				continue // A3：非 leader 不派生，避免多副本重复派生定时实例
 			}
-			n := s.reg.FireDueSchedules(time.Now())
+			n := s.store.FireDueSchedules(time.Now())
 			if n > 0 {
 				logx.Info(ctx, "定时任务派生", "fired", n)
 			}
@@ -581,14 +632,14 @@ func (s *Server) archiveLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !s.reg.IsLeader() {
+			if !s.store.IsLeader() {
 				continue
 			}
-			n := s.reg.RetireStaleDevices(time.Duration(s.cfg.ArchiveAgeMin) * time.Minute)
+			n := s.store.RetireStaleDevices(time.Duration(s.cfg.ArchiveAgeMin) * time.Minute)
 			if n > 0 {
 				logx.Info(ctx, "离线设备自动归档", "archived", n)
 			}
-			if tc := s.reg.CleanupTokens(1000); tc > 0 {
+			if tc := s.store.CleanupTokens(1000); tc > 0 {
 				logx.Info(ctx, "过期 install token 清理", "cleaned", tc)
 			}
 		}
@@ -609,7 +660,7 @@ func (s *Server) notifyLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			alerts := s.reg.Alerts("")
+			alerts := s.store.Alerts("")
 			for _, a := range alerts {
 				if a.Severity != "critical" {
 					continue
@@ -641,10 +692,10 @@ func (s *Server) reclaimLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !s.reg.IsLeader() {
+			if !s.store.IsLeader() {
 				continue // A3：非 leader 不回收，避免多副本重复复位 running 任务
 			}
-			n := s.reg.ReclaimStaleTasks(time.Duration(s.cfg.TaskLeaseSec) * time.Second)
+			n := s.store.ReclaimStaleTasks(time.Duration(s.cfg.TaskLeaseSec) * time.Second)
 			if n > 0 {
 				logx.Info(ctx, "任务租约回收", "reclaimed", n)
 			}
@@ -672,7 +723,7 @@ func (s *Server) leaderLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			isLeader := s.reg.RenewLeadership(ttl)
+			isLeader := s.store.RenewLeadership(ttl)
 			if isLeader != wasLeader {
 				if isLeader {
 					logx.Info(ctx, "晋升为 leader，开始执行周期协调任务", "ttl", ttl.String())
@@ -738,7 +789,7 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 			fails = append(fails, fail{Target: tid, Error: "agent not found or tenant mismatch"})
 			continue
 		}
-		task := s.reg.CreateTask(&proto.Task{
+		task := s.store.CreateTask(&proto.Task{
 			AgentID:    tid,
 			TenantID:   targetTenant,
 			Type:       body.Type,
@@ -748,7 +799,7 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 			Schedule:   body.Schedule,        // F4 批量模板也支持 cron
 			MaxRetries: s.cfg.TaskMaxRetries, // F2 批量下发同样带重试上限
 		})
-		s.reg.Audit(&proto.AuditEvent{
+		s.store.Audit(&proto.AuditEvent{
 			TenantID: targetTenant,
 			UserID:   actx.UserID,
 			Action:   "create_task",
@@ -762,9 +813,15 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 			})
 		}
 		created = append(created, task.TaskID)
+		// M3-2B SSE：批量下发也逐条推送 task_status（前端实时追加任务行）
+		s.publishEvent("task_status", map[string]string{
+			"taskID":  task.TaskID,
+			"status":  task.Status,
+			"agentID": tid,
+		})
 	}
 	if s.metrics != nil {
-		s.metrics.SetQueueDepth(s.reg.PendingDepth())
+		s.metrics.SetQueueDepth(s.store.PendingDepth())
 	}
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"count":   len(created),
@@ -811,7 +868,7 @@ func (s *Server) handleAudits(w http.ResponseWriter, r *http.Request) {
 	if limit > 1000 {
 		limit = 1000
 	}
-	evs := s.reg.QueryAudits(tenant, action, since, until, limit)
+	evs := s.store.QueryAudits(tenant, action, since, until, limit)
 	writeJSON(w, http.StatusOK, evs)
 }
 
@@ -845,12 +902,12 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 	tenant := actx.TenantID
-	ok := s.reg.CancelTask(id, tenant)
+	ok := s.store.CancelTask(id, tenant)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not cancellable (not found / not pending|running / tenant mismatch)"})
 		return
 	}
-	s.reg.Audit(&proto.AuditEvent{
+	s.store.Audit(&proto.AuditEvent{
 		TenantID: tenant, UserID: actx.UserID, Action: "cancel_task", Target: id, Detail: "cancelled via HTTP",
 	})
 	if s.bus != nil {
@@ -858,6 +915,11 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request, id str
 			TenantID: tenant, UserID: actx.UserID, Action: "cancel_task", Target: id, Level: events.LevelInfo,
 		})
 	}
+	// M3-2B SSE：通知前端任务已取消（任务表对应行状态翻 cancelled）
+	s.publishEvent("task_status", map[string]string{
+		"taskID": id,
+		"status": "cancelled",
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "taskID": id})
 }
 
@@ -869,7 +931,7 @@ func (s *Server) handleTaskResult(w http.ResponseWriter, r *http.Request, id str
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
 		return
 	}
-	res := s.reg.TaskResult(id)
+	res := s.store.TaskResult(id)
 	if res == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "result not found"})
 		return
@@ -877,7 +939,7 @@ func (s *Server) handleTaskResult(w http.ResponseWriter, r *http.Request, id str
 	// 租户隔离：结果对应的任务须属于当前租户（requireAuth 时强制）。
 	if actx.TenantID != "" {
 		found := false
-		for _, t := range s.reg.AllTasks(actx.TenantID) {
+		for _, t := range s.store.AllTasks(actx.TenantID) {
 			if t.TaskID == id {
 				found = true
 				break
@@ -924,13 +986,17 @@ func (s *Server) handleRetireDevice(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	tenant := actx.TenantID
-	ok := s.reg.RetireDevice(id, tenant)
+	ok := s.store.RetireDevice(id, tenant)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found or tenant mismatch"})
 		return
 	}
-	s.reg.Audit(&proto.AuditEvent{
+	s.store.Audit(&proto.AuditEvent{
 		TenantID: tenant, UserID: actx.UserID, Action: "retire_device", Target: id, Detail: "retired via HTTP",
+	})
+	// M3-2B SSE：通知前端设备已下线（设备表移除/置灰）
+	s.publishEvent("device_offline", map[string]string{
+		"deviceID": id,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "retired", "deviceID": id})
 }
@@ -945,7 +1011,7 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 	tenant := actx.TenantID
-	dev := s.reg.Device(id)
+	dev := s.store.Device(id)
 	if dev == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
 		return
@@ -954,7 +1020,7 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id stri
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 		return
 	}
-	token, _, err := s.reg.Provision(id, dev.IP, tenant)
+	token, _, err := s.store.Provision(id, dev.IP, tenant)
 	if err != nil {
 		// TOCTOU 窗口补偿：store 层可能返回"device not found"（设备在本 handler 前置校验
 		// 与 Provision 之间被删除）。安全（P2-F12）：映射为 404 而非 500。
@@ -988,7 +1054,7 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id stri
 			}
 		}(sshAddr, bootstrap, id)
 	}
-	s.reg.Audit(&proto.AuditEvent{
+	s.store.Audit(&proto.AuditEvent{
 		TenantID: tenant, UserID: actx.UserID, Action: "provision_agent", Target: id, Detail: "token issued via HTTP",
 	})
 	writeJSON(w, http.StatusOK, map[string]string{
@@ -1011,7 +1077,7 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
 		return
 	}
-	writeJSON(w, http.StatusOK, s.reg.Alerts(actx.TenantID))
+	writeJSON(w, http.StatusOK, s.store.Alerts(actx.TenantID))
 }
 
 // handleAlertRouting 统一分派 /api/v1/alerts/{id}/... 子路径：
@@ -1043,18 +1109,23 @@ func (s *Server) handleAckAlert(w http.ResponseWriter, r *http.Request, id strin
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
 		return
 	}
-	if s.reg.Alert(id) == nil {
+	if s.store.Alert(id) == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert not found"})
 		return
 	}
-	if !s.reg.AckAlert(id, actx.TenantID, actx.UserID) {
+	if !s.store.AckAlert(id, actx.TenantID, actx.UserID) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "alert not found or tenant mismatch"})
 		return
 	}
-	s.reg.Audit(&proto.AuditEvent{TenantID: actx.TenantID, UserID: actx.UserID, Action: "ack_alert", Target: id, Detail: "acknowledged via HTTP"})
+	s.store.Audit(&proto.AuditEvent{TenantID: actx.TenantID, UserID: actx.UserID, Action: "ack_alert", Target: id, Detail: "acknowledged via HTTP"})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{TenantID: actx.TenantID, UserID: actx.UserID, Action: "ack_alert", Target: id, Level: events.LevelInfo})
 	}
+	// M3-2B SSE：通知前端告警状态已变更（告警面板刷新）
+	s.publishEvent("alert_new", map[string]string{
+		"alertID": id,
+		"action":  "ack",
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "acknowledged", "alertID": id})
 }
 
@@ -1071,7 +1142,7 @@ func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id s
 		Comment         string `json:"comment"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	if s.reg.Alert(id) == nil {
+	if s.store.Alert(id) == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert not found"})
 		return
 	}
@@ -1079,14 +1150,19 @@ func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id s
 	if body.DurationMinutes > 0 {
 		until = until.Add(time.Duration(body.DurationMinutes) * time.Minute)
 	}
-	if !s.reg.SilenceAlert(id, actx.TenantID, actx.UserID, until, body.Comment) {
+	if !s.store.SilenceAlert(id, actx.TenantID, actx.UserID, until, body.Comment) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "alert not found or tenant mismatch"})
 		return
 	}
-	s.reg.Audit(&proto.AuditEvent{TenantID: actx.TenantID, UserID: actx.UserID, Action: "silence_alert", Target: id, Detail: fmt.Sprintf("silenced %dm: %s", body.DurationMinutes, body.Comment)})
+	s.store.Audit(&proto.AuditEvent{TenantID: actx.TenantID, UserID: actx.UserID, Action: "silence_alert", Target: id, Detail: fmt.Sprintf("silenced %dm: %s", body.DurationMinutes, body.Comment)})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{TenantID: actx.TenantID, UserID: actx.UserID, Action: "silence_alert", Target: id, Level: events.LevelInfo})
 	}
+	// M3-2B SSE：通知前端告警已静默（告警面板刷新）
+	s.publishEvent("alert_new", map[string]string{
+		"alertID": id,
+		"action":  "silence",
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "silenced", "alertID": id})
 }
 
@@ -1174,14 +1250,14 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sum, err := provision.AutoProvision(r.Context(), provision.Deps{
-		UpsertDevice: s.reg.UpsertDevice,
-		Provision:    s.reg.Provision,
+		UpsertDevice: s.store.UpsertDevice,
+		Provision:    s.store.Provision,
 	}, s.cfg, cidrs, tenant)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	s.reg.Audit(&proto.AuditEvent{
+	s.store.Audit(&proto.AuditEvent{
 		TenantID: tenant, UserID: actx.UserID, Action: "auto_provision", Target: strings.Join(cidrs, ","),
 		Detail: fmt.Sprintf("scanned=%d registered=%d provisioned=%d sshPushed=%d", sum.Scanned, sum.Registered, sum.Provisioned, sum.SSHPushed),
 	})
@@ -1199,10 +1275,10 @@ func (s *Server) autoProvisionLoop(ctx context.Context) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		if s.reg.IsLeader() && s.cfg.SegmentCIDR != "" {
+		if s.store.IsLeader() && s.cfg.SegmentCIDR != "" {
 			_, _ = provision.AutoProvision(ctx, provision.Deps{
-				UpsertDevice: s.reg.UpsertDevice,
-				Provision:    s.reg.Provision,
+				UpsertDevice: s.store.UpsertDevice,
+				Provision:    s.store.Provision,
 			}, s.cfg, []string{s.cfg.SegmentCIDR}, "")
 		}
 		select {
@@ -1220,7 +1296,7 @@ func (s *Server) deployReconcileLoop(ctx context.Context) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		if s.reg.IsLeader() {
+		if s.store.IsLeader() {
 			s.deployHandler.ReconcileAll(ctx, "")
 		}
 		select {
@@ -1243,7 +1319,7 @@ func (s *Server) workflowScheduleLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
-		if !s.reg.IsLeader() {
+		if !s.store.IsLeader() {
 			continue
 		}
 		list, err := s.orchHandler.ListActive(ctx)

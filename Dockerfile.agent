@@ -1,0 +1,19 @@
+# OpsMesh Agent 镜像（U-05 agent 角色）。
+# agent 需 sh -c 执行 shell/service 任务（如调用系统命令、跑脚本），
+# 故 runtime 用 gcr.io/distroless/base-debian12（含 sh）而非 static-debian12（无 shell）。
+# base-debian12 仍为 distroless（无包管理器、无 shell 之外的用户态工具），攻击面远小于完整发行版。
+# 多阶段构建：build 阶段拉取依赖并编译静态二进制，runtime 阶段用 distroless 精简镜像。
+FROM golang:1.22.12-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /opsmesh ./cmd/opsmesh
+
+FROM gcr.io/distroless/base-debian12 AS runtime
+# base-debian12 内置 nonroot 用户（UID/GID 65532），以非 root 运行（H16）。
+USER nonroot:nonroot
+COPY --from=build /opsmesh /usr/local/bin/opsmesh
+# agent 默认以 agent 模式启动；--control-addr 等参数由 deployment args 覆盖。
+ENTRYPOINT ["/usr/local/bin/opsmesh"]
+CMD ["--mode=agent"]

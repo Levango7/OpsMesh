@@ -19,6 +19,7 @@ func base() *Config {
 		TaskLeaseSec:   300,
 		Replicas:       1,
 		TaskMaxRetries: 3,
+		LogBackend:     "memory", // M4-4B 默认日志后端
 	}
 }
 
@@ -50,16 +51,17 @@ func TestValidate_MysqlMultiReplica(t *testing.T) {
 	}
 }
 
-// TestValidate_ProductionMemoryWarns A4：生产模式 + memory 在 Validate 层仍拒绝
-// （memory 多副本规则已覆盖；单副本 memory 生产虽能启动但 Load() 会强告警）。
-func TestValidate_ProductionMemoryWarns(t *testing.T) {
+// TestValidate_ProductionRejectsNoTLS H6 等保加固：生产模式 + 无 TLS 证书应被 Validate 拒绝
+// （Production=true 且 TLSCert="" 直接返回 error，避免 agent↔控制面明文通信）。
+func TestValidate_ProductionRejectsNoTLS(t *testing.T) {
 	c := base()
 	c.Production = true
 	c.Store = "memory"
 	c.Replicas = 1 // 单副本不触发多副本拒绝
-	// 单副本 memory 生产：Validate 允许（告警在 Load 层），此处仅确认不崩溃。
-	if err := c.Validate(); err != nil {
-		t.Fatalf("production+memory 单副本 Validate 不应报错: %v", err)
+	c.TLSCert = ""  // 无 TLS 证书
+	// production + 无 TLS 应被拒绝（H6 等保三级要求）。
+	if err := c.Validate(); err == nil {
+		t.Fatal("production + 无 TLS 应被拒绝，但 Validate 通过了")
 	}
 }
 
@@ -91,5 +93,66 @@ func TestLoad_ProductionEnablesRequireAuth(t *testing.T) {
 	}
 	if !c.RequireAuth {
 		t.Fatal("production 模式应默认开启 require-auth")
+	}
+}
+
+// TestValidate_LogBackend M4-4B：非法 log-backend 必须被拒绝。
+func TestValidate_LogBackend(t *testing.T) {
+	c := base()
+	c.LogBackend = "bogus"
+	if err := c.Validate(); err == nil {
+		t.Fatal("非法 log-backend 应被拒绝")
+	}
+}
+
+// TestValidate_LogBackendLokiMissingEndpoint M4-4B：log-backend=loki 但缺 endpoint 必须被拒绝。
+func TestValidate_LogBackendLokiMissingEndpoint(t *testing.T) {
+	c := base()
+	c.LogBackend = "loki"
+	c.LokiEndpoint = ""
+	if err := c.Validate(); err == nil {
+		t.Fatal("log-backend=loki 缺 endpoint 应被拒绝")
+	}
+}
+
+// TestValidate_LogBackendLokiOK M4-4B：log-backend=loki + endpoint 合法。
+func TestValidate_LogBackendLokiOK(t *testing.T) {
+	c := base()
+	c.LogBackend = "loki"
+	c.LokiEndpoint = "http://loki:3100"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("loki 合法配置应通过: %v", err)
+	}
+}
+
+// TestValidate_LogBackendESMissingEndpoint M4-4B：log-backend=es 但缺 endpoint 必须被拒绝。
+func TestValidate_LogBackendESMissingEndpoint(t *testing.T) {
+	c := base()
+	c.LogBackend = "es"
+	c.ESEndpoint = ""
+	if err := c.Validate(); err == nil {
+		t.Fatal("log-backend=es 缺 endpoint 应被拒绝")
+	}
+}
+
+// TestValidate_LogBackendESMissingIndex M4-4B：log-backend=es 但缺 index 必须被拒绝。
+func TestValidate_LogBackendESMissingIndex(t *testing.T) {
+	c := base()
+	c.LogBackend = "es"
+	c.ESEndpoint = "http://es:9200"
+	c.ESIndex = ""
+	if err := c.Validate(); err == nil {
+		t.Fatal("log-backend=es 缺 index 应被拒绝")
+	}
+}
+
+// TestValidate_LogBackendESOK M4-4B：log-backend=es + endpoint + index 合法。
+func TestValidate_LogBackendESOK(t *testing.T) {
+	c := base()
+	c.LogBackend = "es"
+	c.ESEndpoint = "http://es:9200"
+	c.ESIndex = "opsmesh-logs"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("es 合法配置应通过: %v", err)
 	}
 }

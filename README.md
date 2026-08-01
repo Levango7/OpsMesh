@@ -2,7 +2,7 @@
 
 **OpsMesh** 是私有化单中心 B/S 自动化部署与运维平台。服务部署到某网段后，整段网络打通的设备自动纳管，各设备可并行执行各自的自动化任务（shell 脚本/服务管理/文件分发），支持失败重试/死信/取消/定时周期/告警等完整任务生命周期。
 
-底层的设备管理底座复用 **蓝鲸 GSE 社区版**（零 license，零外部依赖）。
+管控通道采用 **自研 gRPC（direct + proxy）**。原蓝鲸 GSE 社区版底座已移出 MVP，降格为可选增强（见 `DELIVERY.md` ADR-001）。
 
 ---
 
@@ -150,13 +150,15 @@ mysql -e "CREATE DATABASE IF NOT EXISTS ops_device"
   --tls-key=/etc/opsmesh/tls.key
 ```
 
-### Kubernetes Helm
+### Kubernetes 部署
 
-OpsMesh 提供 Helm Chart（`deploy/helm/opsmesh/`）和 `values-production.yaml` overlay，支持：
-- 控制面 Deployment + Service
-- 多副本（`replicas: 2`）+ leader 选举
-- MySQL + Redis StatefulSet 自动部署
-- Argo CD ApplicationSet 网段批量渲染
+K8s 部署：**Helm Chart 计划中**（见 `docs/product-roadmap.md`），当前可用 Dockerfile + docker-compose 部署：
+
+- 控制面：`Dockerfile`（多阶段构建，产物为单二进制 `opsmesh`）
+- Agent：`Dockerfile.agent`（多阶段构建，产物为 `opsmesh-agent`）
+- 编排：`docker-compose.yaml`（controlplane + agent + mysql + redis 一键起）
+
+> Helm Chart（`deploy/helm/opsmesh/`）与 `values-production.yaml` overlay、Argo CD ApplicationSet 网段批量渲染均为规划中能力，当前仓库未提供。
 
 ---
 
@@ -296,17 +298,24 @@ Agent 端多控制面 failover：`--control-addrs="cp1:9090,cp2:9090"`，客户�
 | GET | `/api/v1/devices/{id}` | 设备详情（含任务结果） |
 | DELETE | `/api/v1/devices/{id}` | 退役/下线设备 |
 | POST | `/api/v1/devices/{id}/provision` | **B1 纳管**：签发 install token，返回 bootstrap |
+| POST | `/api/v1/provision/auto` | 自动纳管：按网段批量签发 install token |
 | GET | `/api/v1/agents` | agent 清单 |
-| GET | `/api/v1/me` | 当前身份信息 |
+| GET | `/api/v1/me` | 当前身份信息（解析 X-Tenant-ID / X-User-Id / X-User-Roles） |
 | GET | `/api/v1/tasks` | 任务列表（支持 `?status=pending` 过滤） |
 | POST | `/api/v1/tasks` | 下发任务（单条，租户隔离 + 审计） |
 | POST | `/api/v1/tasks/batch` | 批量下发（逐台查找 agent + 租户校验） |
-| GET | `/api/v1/tasks/{id}/cancel` | 取消任务 |
+| POST | `/api/v1/tasks/{id}/cancel` | 取消任务（pending 拦截 / running 强杀） |
 | GET | `/api/v1/tasks/{id}/result` | 查询单条结果 |
 | GET | `/api/v1/alerts` | 告警列表（M7） |
 | GET | `/api/v1/audits` | 审计事件（P0-4 可查：?tenant=&action=&from=&to=&limit=） |
+| \* | `/api/v1/cmdb/*` | CMDB 配置项：模型 / 实例 CRUD + 采集（M2） |
+| \* | `/api/v1/workflows/*` | 作业编排：DAG 创建 / 触发 / 状态查询（M5） |
+| \* | `/api/v1/deploys/*` | 服务部署：计划 / fan-out 执行 / Reconcile / Rollback（M3） |
+| GET | `/api/v1/logs` | 日志检索：双后端(Memory/SQL) + offset 分页（M6） |
 | GET | `/healthz` | 健康检查 |
 | GET | `/metrics` | Prometheus 文本指标 |
+| GET | `/install.sh` | agent bootstrap 脚本（curl ... \| sh -s -- --token=<tok>） |
+| GET | `/bin/opsmesh-agent` | agent 二进制下载（纳管 bootstrap 拉取） |
 
 **租户隔离**：require-auth 开启时，所有查询/写入操作按 `X-Tenant-ID` 头自动过滤，
 越权返回 403/404。
@@ -388,6 +397,9 @@ docker build -t opsmesh:latest .
 kafka-go 须钉 `v0.4.48`（最后兼容 Go 1.22 的版本；`v0.4.49+` 要求 Go ≥ 1.23）。
 运行 `go test -tags kafka` 前确保已 `go mod tidy`。
 
+> **构建说明**：`go.mod` 直接 `require kafka-go`，默认 `go build` 即编译 kafka-go 包（无 build tag 排除）。
+> `-tags kafka` 用于**启用事件总线 kafka 后端**（`--event-bus=kafka`），未加 tag 时事件总线仅可用 noop/log。
+
 ---
 
 ## 等保三级合规对照
@@ -411,15 +423,21 @@ cmd/opsmesh/              ← 入口 main：解析 --mode 分派 controlplane / 
 internal/
 ├── agent/                ← agent 运行时（注册/心跳/worker 池/执行器）
 ├── authctx/              ← HTTP 头 / gRPC metadata 身份提取
+├── cmdb/                 ← 配置库 CMDB（M2）：模型 + 实例 CRUD + SQL + 采集
 ├── config/               ← 统一配置（flag + env 兜底）
 ├── controlplane/         ← 控制面（HTTP 路由/gRPC server/Registry/dashboard）
 ├── cron/                 ← 5 字段 cron 表达式匹配
+├── dag/                  ← DAG 引擎（M5 作业编排）：节点状态机 + 边触发 + 环检测
+├── deploy/               ← 服务部署（M3）：计划 + fan-out 执行 + Reconcile + Rollback
 ├── discover/             ← TCP 存活扫描（网段发现）
 ├── domain/               ← 纯领域模型 + 防腐层 mapper
 ├── events/               ← 可插拔事件总线（noop/log/kafka）
 ├── grpcx/                ← gRPC ServiceDesc / JSON codec / 消息类型
+├── logstore/             ← 日志检索（M6）：双后端(Memory/SQL) + 查询 API + offset 分页
 ├── logx/                 ← slog 封装 + traceID
 ├── metrics/              ← 零依赖 Prometheus 文本指标
+├── notify/               ← 通知渠道（M7）：Webhook / 飞书 / 钉钉
+├── orchestration/        ← 作业编排（M5）：DAG 调度 + store 阻塞→释放链路 + 画布
 ├── proto/                ← 共享数据类型（AgentInfo/DeviceInfo/Task/…）
 ├── store/                ← Store 接口 + MemoryStore + SQLStore
 ├── tlsutil/              ← gRPC TLS / mTLS 工具
@@ -430,4 +448,4 @@ internal/
 
 ## License
 
-内部项目，私有部署。蓝鲸 GSE 社区版 — 零 license，零外部依赖。
+内部项目，私有部署。管控通道为自研 gRPC（direct + proxy）；原蓝鲸 GSE 社区版底座已移出 MVP，降格为可选增强（见 `DELIVERY.md` ADR-001）。
