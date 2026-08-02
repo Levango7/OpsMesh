@@ -6,6 +6,7 @@
 import * as api from './api.js';
 import { esc, fmtTime, paintStats, dpStatusPill, logLevelPill, setRenderDeps } from './render.js';
 import { pollDevices, pollTasks, pollAlerts } from './poll.js';
+import { icon } from './icons.js';
 
 // ---------- 跨模块联动（F1）：focus 状态 ----------
 let focusDevice = null;
@@ -51,10 +52,10 @@ export function focusCI() {
       const all = []; groups.forEach(function (g) { all.push.apply(all, g); });
       const el = document.getElementById('ciList');
       if (!all.length) { el.innerHTML = '<p class="muted">配置库中无关联该设备的配置项。</p>'; return; }
-      let html = '<p class="hint">🔗 已按设备 <code>' + esc(focusDevice.id) + '</code> 过滤（' + all.length + ' 条）</p>';
-      html += '<table><tr><th>ID</th><th>名称</th><th>类型</th><th>状态</th></tr>';
-      all.forEach(function (c) { html += '<tr class="ci" onclick="openCI(\'' + esc(c.id) + '\')"><td><code>' + esc(c.id) + '</code></td><td>' + esc(c.name) + '</td><td>' + esc(c.ciType) + '</td><td>' + esc(c.status) + '</td></tr>'; });
-      html += '</table>';
+      let html = '<p class="hint">' + icon('context', 14) + ' 已按设备 <code>' + esc(focusDevice.id) + '</code> 过滤（' + all.length + ' 条）</p>';
+      html += '<div class="table-wrap"><table><colgroup><col style="width:30%"><col style="width:30%"><col style="width:20%"><col style="width:20%"></colgroup><thead><tr><th>ID</th><th>名称</th><th>类型</th><th>状态</th></tr></thead><tbody>';
+      all.forEach(function (c) { html += '<tr class="ci" onclick="openCI(\'' + esc(c.id) + '\')"><td><code title="' + esc(c.id) + '">' + esc(c.id) + '</code></td><td>' + esc(c.name) + '</td><td>' + esc(c.ciType) + '</td><td>' + esc(c.status) + '</td></tr>'; });
+      html += '</tbody></table></div>';
       el.innerHTML = html;
     }).catch(function (e) { console.error(e); });
   }).catch(function (e) { console.error(e); });
@@ -65,7 +66,7 @@ setRenderDeps({ setFocus: setFocus, openDevice: null, focusDevice: getFocusDevic
 
 // ---------- 标签切换 ----------
 export function switchTab(name) {
-  ['home', 'ops', 'cmdb', 'deploy', 'flow', 'logs', 'alerts'].forEach(function (t) {
+  ['home', 'ops', 'cmdb', 'deploy', 'flow', 'logs', 'alerts', 'users', 'roles', 'permissions'].forEach(function (t) {
     const p = document.getElementById('tab-' + t); if (p) p.classList.toggle('active', t === name);
     const b = document.getElementById('tab-' + t + '-btn'); if (b) b.classList.toggle('active', t === name);
   });
@@ -75,6 +76,10 @@ export function switchTab(name) {
   if (name === 'deploy') { pollDeploys(); }
   if (name === 'alerts') { pollAlertsFull(); }
   if (name === 'home') { paintStats(); }
+  // 用户/角色/权限管理：通过 window 兼容层调用（避免 flow.js → main.js 循环依赖）
+  if (name === 'users' && typeof window.pollUsers === 'function') { window.pollUsers(); }
+  if (name === 'roles' && typeof window.pollRoles === 'function') { window.pollRoles(); }
+  if (name === 'permissions' && typeof window.pollPermissions === 'function') { window.pollPermissions(); }
 }
 export function toggleGuide() { document.getElementById('guide-ops').classList.toggle('open'); }
 
@@ -92,12 +97,12 @@ export function openDevice(id) {
     if (dev.state === 'discovered') {
       h += '<button onclick="provision(\'' + esc(dev.deviceID) + '\')">推送 Agent 纳管（B1）</button> ';
     }
-    h += '<h4>任务</h4><table><tr><th>ID</th><th>类型</th><th>状态</th></tr>';
-    (d.tasks || []).forEach(function (t) { h += '<tr><td><code>' + esc(t.taskID) + '</code></td><td>' + esc(t.type) + '</td><td>' + esc(t.status) + '</td></tr>'; });
-    h += '</table>';
-    h += '<h4>最近结果</h4><table><tr><th>任务</th><th>退出码</th><th>输出</th></tr>';
-    (d.results || []).slice(0, 5).forEach(function (r) { h += '<tr><td><code>' + esc(r.taskID) + '</code></td><td>' + esc(r.exitCode) + '</td><td><code>' + esc(r.stdout) + '</code></td></tr>'; });
-    h += '</table>';
+    h += '<h4>任务</h4><div class="table-wrap"><table><colgroup><col style="width:50%"><col style="width:25%"><col style="width:25%"></colgroup><thead><tr><th>ID</th><th>类型</th><th>状态</th></tr></thead><tbody>';
+    (d.tasks || []).forEach(function (t) { h += '<tr><td><code title="' + esc(t.taskID) + '">' + esc(t.taskID) + '</code></td><td>' + esc(t.type) + '</td><td>' + esc(t.status) + '</td></tr>'; });
+    h += '</tbody></table></div>';
+    h += '<h4>最近结果</h4><div class="table-wrap"><table><colgroup><col style="width:30%"><col style="width:15%"><col style="width:55%"></colgroup><thead><tr><th>任务</th><th>退出码</th><th>输出</th></tr></thead><tbody>';
+    (d.results || []).slice(0, 5).forEach(function (r) { h += '<tr><td><code title="' + esc(r.taskID) + '">' + esc(r.taskID) + '</code></td><td>' + esc(r.exitCode) + '</td><td><code title="' + esc(r.stdout) + '">' + esc(r.stdout) + '</code></td></tr>'; });
+    h += '</tbody></table></div>';
     document.getElementById('drawerBody').innerHTML = h;
     document.getElementById('drawer').classList.add('open');
   }).catch(function (e) { console.error(e); });
@@ -131,11 +136,11 @@ export function pollCIs() {
   if (!t) { document.getElementById('ciList').innerHTML = '<p class="muted">请先选择一个类型</p>'; return; }
   api.getCIs(t).then(function (list) {
     if (!list || list.length === 0) { document.getElementById('ciList').innerHTML = '<p class="muted">该类型暂无配置项</p>'; return; }
-    let html = '<table><tr><th>ID</th><th>名称</th><th>状态</th><th>来源</th><th>版本</th></tr>';
+    let html = '<div class="table-wrap"><table><colgroup><col style="width:24%"><col style="width:24%"><col style="width:16%"><col style="width:18%"><col style="width:18%"></colgroup><thead><tr><th>ID</th><th>名称</th><th>状态</th><th>来源</th><th>版本</th></tr></thead><tbody>';
     list.forEach(function (c) {
-      html += '<tr class="ci" onclick="openCI(\'' + esc(c.id) + '\')"><td><code>' + esc(c.id) + '</code></td><td>' + esc(c.name) + '</td><td>' + esc(c.status) + '</td><td>' + esc(c.source) + '</td><td>' + esc(c.version) + '</td></tr>';
+      html += '<tr class="ci" onclick="openCI(\'' + esc(c.id) + '\')"><td><code title="' + esc(c.id) + '">' + esc(c.id) + '</code></td><td>' + esc(c.name) + '</td><td>' + esc(c.status) + '</td><td>' + esc(c.source) + '</td><td>' + esc(c.version) + '</td></tr>';
     });
-    html += '</table>';
+    html += '</tbody></table></div>';
     document.getElementById('ciList').innerHTML = html;
   }).catch(function (e) { console.error(e); });
 }
@@ -145,11 +150,11 @@ export function pollTemplates() {
   if (!t) { document.getElementById('tmplList').innerHTML = '<p class="muted">请先选择一个类型</p>'; return; }
   api.getAttrTemplates(t).then(function (list) {
     if (!list || list.length === 0) { document.getElementById('tmplList').innerHTML = '<p class="muted">该类型暂无属性模板</p>'; return; }
-    let html = '<table><tr><th>Key</th><th>标签</th><th>类型</th><th>必填</th></tr>';
+    let html = '<div class="table-wrap"><table><colgroup><col style="width:25%"><col style="width:35%"><col style="width:25%"><col style="width:15%"></colgroup><thead><tr><th>Key</th><th>标签</th><th>类型</th><th>必填</th></tr></thead><tbody>';
     list.forEach(function (x) {
-      html += '<tr><td><code>' + esc(x.attrKey) + '</code></td><td>' + esc(x.label) + '</td><td>' + esc(x.attrType) + '</td><td>' + (x.required ? '是' : '否') + '</td></tr>';
+      html += '<tr><td><code title="' + esc(x.attrKey) + '">' + esc(x.attrKey) + '</code></td><td>' + esc(x.label) + '</td><td>' + esc(x.attrType) + '</td><td>' + (x.required ? '是' : '否') + '</td></tr>';
     });
-    html += '</table>';
+    html += '</tbody></table></div>';
     document.getElementById('tmplList').innerHTML = html;
   }).catch(function (e) { console.error(e); });
 }
@@ -253,7 +258,7 @@ export function loadDemo() {
   };
   document.getElementById('wfName').value = flow.name;
   document.getElementById('wfCron').value = '';
-  nodePos = {}; autoLayout(); renderFlow(); flowMsg('已载入示例作业流（尚未保存，可改动后点「💾 保存」）', true);
+  nodePos = {}; autoLayout(); renderFlow(); flowMsg('已载入示例作业流（尚未保存，可改动后点「保存」）', true);
 }
 
 export function addNode() {
@@ -276,7 +281,7 @@ export function selectNode(id) { selectedNode = id; renderFlow(); }
 
 export function toggleLink() {
   linking = !linking; linkSrc = null;
-  const b = document.getElementById('linkBtn'); if (b) b.textContent = linking ? '🔗 连线中…(点两节点)' : '🔗 连线';
+  const b = document.getElementById('linkBtn'); if (b) b.innerHTML = linking ? icon('link', 16) + ' 连线中…(点两节点)' : icon('link', 16) + ' 连线';
   const p = document.getElementById('tab-flow'); if (p) p.classList.toggle('linkmode', linking);
 }
 
@@ -459,7 +464,7 @@ function deleteEdge(src, dst) {
 function startLinkDrag(ev, id) {
   linking = true; linkSrc = id;
   const c = flowPoint(ev); linkDrag = { from: id, x: c.x, y: c.y };
-  const b = document.getElementById('linkBtn'); if (b) b.textContent = '🔗 拖拽连线中…';
+  const b = document.getElementById('linkBtn'); if (b) b.innerHTML = icon('link', 16) + ' 拖拽连线中…';
   const p = document.getElementById('tab-flow'); if (p) p.classList.add('linkmode');
   document.addEventListener('mousemove', linkDragMove);
   document.addEventListener('mouseup', linkDragUp);
@@ -473,7 +478,7 @@ function linkDragUp(ev) {
   flow.dag.forEach(function (n) { const p = nodePos[n.id]; if (!p) return; if (c.x >= p.x && c.x <= p.x + 170 && c.y >= p.y && c.y <= p.y + 66) target = n.id; });
   const fromId = linkDrag ? linkDrag.from : null;
   linking = false; linkSrc = null; linkDrag = null;
-  const b = document.getElementById('linkBtn'); if (b) b.textContent = '🔗 连线';
+  const b = document.getElementById('linkBtn'); if (b) b.innerHTML = icon('link', 16) + ' 连线';
   const p = document.getElementById('tab-flow'); if (p) p.classList.remove('linkmode');
   if (target && target !== fromId) { snapshot(); addDep(target, fromId); }
   renderFlow();
@@ -561,7 +566,7 @@ function paintRunState() {
   const label = { 'done': '成功', 'running': '运行中', 'pending': '等待', 'blocked': '阻塞', 'failed': '失败' };
   let html = '<span class="muted">运行态:</span>';
   Object.keys(c).forEach(function (k) { html += '<span class="pill"><span class="dot" style="background:' + (col[k] || '#64748b') + '"></span>' + (label[k] || k) + ' ' + c[k] + '</span>'; });
-  html += '<button onclick="switchTab(\'ops\')" title="跳到运维中枢查看任务执行详情">🔍 在运维中枢查看</button>';
+  html += '<button onclick="switchTab(\'ops\')" title="跳到运维中枢查看任务执行详情">' + icon('search', 14) + ' 在运维中枢查看</button>';
   el.className = 'flowLegend show'; el.innerHTML = html;
 }
 
@@ -622,16 +627,16 @@ export function pollDeploys() {
   api.getDeploys(st)
     .then(function (list) {
       const fl = applyFocus(list || [], 'deploy');
-      const note = focusDevice ? '<p class="hint">🔗 已按设备 <code>' + esc(focusDevice.id) + '</code> 过滤（' + fl.length + ' 条）</p>' : '';
+      const note = focusDevice ? '<p class="hint">' + icon('context', 14) + ' 已按设备 <code>' + esc(focusDevice.id) + '</code> 过滤（' + fl.length + ' 条）</p>' : '';
       if (!fl || fl.length === 0) { document.getElementById('deployList').innerHTML = note + '<p class="muted">暂无部署任务。在左侧登记一个吧。</p>'; return; }
-      let html = note + '<table><tr><th>ID</th><th>名称</th><th>类型</th><th>目标设备</th><th>状态</th><th>操作</th></tr>';
+      let html = note + '<div class="table-wrap"><table><colgroup><col style="width:16%"><col style="width:18%"><col style="width:12%"><col style="width:24%"><col style="width:12%"><col style="width:18%"></colgroup><thead><tr><th>ID</th><th>名称</th><th>类型</th><th>目标设备</th><th>状态</th><th>操作</th></tr></thead><tbody>';
       fl.forEach(function (d) {
         const targets = (d.target_ids || '').replace(/,/g, ', ');
-        html += '<tr><td><code>' + esc(d.id) + '</code></td><td>' + esc(d.name) + '</td><td>' + esc(d.type) + '</td>'
-          + '<td><code>' + esc(targets) + '</code></td><td>' + dpStatusPill(d.status) + '</td>'
-          + '<td><button onclick="execDeploy(' + d.id + ')">▶ 执行</button> <button onclick="rollbackDeploy(' + d.id + ')">↩ 回滚</button> <button onclick="openDeploy(' + d.id + ')">详情</button></td></tr>';
+        html += '<tr><td><code title="' + esc(d.id) + '">' + esc(d.id) + '</code></td><td>' + esc(d.name) + '</td><td>' + esc(d.type) + '</td>'
+          + '<td><code title="' + esc(targets) + '">' + esc(targets) + '</code></td><td>' + dpStatusPill(d.status) + '</td>'
+          + '<td class="row-actions-cell"><button onclick="execDeploy(' + d.id + ')">▶ 执行</button> <button onclick="rollbackDeploy(' + d.id + ')">↩ 回滚</button> <button onclick="openDeploy(' + d.id + ')">详情</button></td></tr>';
       });
-      html += '</table>';
+      html += '</tbody></table></div>';
       document.getElementById('deployList').innerHTML = html;
     }).catch(function (e) { api.apiFail('deploys', e); });
 }
@@ -710,12 +715,12 @@ export function searchLogs(offset) {
   api.getLogs(buildLogQuery(logOffset))
     .then(function (list) {
       if (!list || list.length === 0) { document.getElementById('logList').innerHTML = '<p class="muted">没有匹配的日志。</p>'; updateLogPage(0); return; }
-      let html = '<table><tr><th>时间</th><th>级别</th><th>来源</th><th>设备</th><th>Agent</th><th>消息</th></tr>';
+      let html = '<div class="table-wrap"><table><colgroup><col style="width:15%"><col style="width:8%"><col style="width:8%"><col style="width:18%"><col style="width:18%"><col style="width:33%"></colgroup><thead><tr><th>时间</th><th>级别</th><th>来源</th><th>设备</th><th>Agent</th><th>消息</th></tr></thead><tbody>';
       list.forEach(function (e) {
         const ts = (e.timestamp || '').toString().replace('T', ' ').replace('Z', '');
-        html += '<tr><td><small class="muted">' + esc(ts) + '</small></td><td>' + logLevelPill(e.level) + '</td><td>' + esc(e.source || '') + '</td><td><code>' + (e.deviceID || '') + '</code></td><td><code>' + (e.agentID || '') + '</code></td><td style="white-space:pre-wrap">' + esc(e.message || '') + '</td></tr>';
+        html += '<tr><td><small class="muted">' + esc(ts) + '</small></td><td>' + logLevelPill(e.level) + '</td><td>' + esc(e.source || '') + '</td><td><code title="' + esc(e.deviceID || '') + '">' + (e.deviceID || '') + '</code></td><td><code title="' + esc(e.agentID || '') + '">' + (e.agentID || '') + '</code></td><td class="wrap">' + esc(e.message || '') + '</td></tr>';
       });
-      html += '</table>';
+      html += '</tbody></table></div>';
       document.getElementById('logList').innerHTML = html;
       updateLogPage(list.length);
     }).catch(function (err) { logMsg('error: ' + err, false); });
@@ -743,8 +748,8 @@ export function pollAlertsFull() {
     const sc = document.getElementById('statCritical'); if (sc) sc.textContent = crit;
     const sw = document.getElementById('statWarning'); if (sw) sw.textContent = warn;
     const stEl = document.getElementById('statTotalAlerts'); if (stEl) stEl.textContent = fl.length;
-    const note = focusDevice ? '<p class="hint">🔗 已按设备 <code>' + esc(focusDevice.id) + '</code> 过滤（' + fl.length + ' 条）</p>' : '';
-    if (fl.length === 0) { document.getElementById('alertsFull').innerHTML = note + '<p class="muted">暂无告警，一切正常 ✅</p>'; return; }
+    const note = focusDevice ? '<p class="hint">' + icon('context', 14) + ' 已按设备 <code>' + esc(focusDevice.id) + '</code> 过滤（' + fl.length + ' 条）</p>' : '';
+    if (fl.length === 0) { document.getElementById('alertsFull').innerHTML = note + '<p class="muted">暂无告警，一切正常</p>'; return; }
     let html = note;
     fl.forEach(function (a) {
       const cls = a.severity === 'critical' ? 'alert' : 'alert warn';
@@ -755,8 +760,8 @@ export function pollAlertsFull() {
       let actions = '';
       if (ast === 'firing') {
         actions = '<div class="alert-actions">'
-          + '<button class="btn xs" onclick="ackAlert(\'' + esc(a.alertID) + '\')">✓ 确认</button>'
-          + '<button class="btn xs outline" onclick="silenceAlert(\'' + esc(a.alertID) + '\')">🔕 静默</button>'
+          + '<button class="btn xs" onclick="ackAlert(\'' + esc(a.alertID) + '\')">' + icon('check', 14) + ' 确认</button>'
+          + '<button class="btn xs outline" onclick="silenceAlert(\'' + esc(a.alertID) + '\')">' + icon('close', 14) + ' 静默</button>'
           + '</div>';
       } else {
         let meta = esc(a.acknowledgedBy || '');
@@ -770,7 +775,7 @@ export function pollAlertsFull() {
         + '<br>' + esc(a.message)
         + '<br><small class="muted">' + fmtTime(a.createdAt) + '</small>'
         + actions
-        + '<button class="jbtn" style="margin-top:6px" onclick="setFocus(\'' + esc(a.deviceID) + '\',\'\',\'\',\'\');switchTab(\'alerts\')">🔗 上下文串联</button>'
+        + '<button class="jbtn" style="margin-top:6px" onclick="setFocus(\'' + esc(a.deviceID) + '\',\'\',\'\',\'\');switchTab(\'alerts\')">' + icon('context', 14) + ' 上下文串联</button>'
         + '</div>';
     });
     document.getElementById('alertsFull').innerHTML = html;

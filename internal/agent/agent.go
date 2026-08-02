@@ -35,18 +35,19 @@ type runState struct {
 
 // Agent 网段 agent 运行时。
 type Agent struct {
-	cfg         *config.Config
-	grpc        *GRPCClient // 到控制面 9090 的 gRPC 通道
-	agentID     string
-	hostname    string
-	dataDir     string        // agent.id 落盘目录（P0-2 身份持久化）
-	taskTimeout time.Duration
-	workers     int
-	taskCh      chan proto.Task // 待执行任务队列（worker 池消费，P1-3）
-	runMu       sync.Mutex    // 保护 running 的并发读写
-	running     map[string]*runState // 当前正在执行的任务 ID -> 控制句柄（F3）
-	cmdbSeq     int64                // CMDB 上报序列号（agent 侧递增）
-	cmdbLastCol time.Time            // 上次 CMDB 采集时间（每 60s 采集一次）
+	cfg            *config.Config
+	grpc           *GRPCClient // 到控制面 9090 的 gRPC 通道
+	agentID        string
+	hostname       string
+	dataDir        string // agent.id 落盘目录（P0-2 身份持久化）
+	taskTimeout    time.Duration
+	workers        int
+	taskCh         chan proto.Task      // 待执行任务队列（worker 池消费，P1-3）
+	runMu          sync.Mutex           // 保护 running 的并发读写
+	running        map[string]*runState // 当前正在执行的任务 ID -> 控制句柄（F3）
+	cmdbSeq        int64                // CMDB 上报序列号（agent 侧递增）
+	cmdbLastCol    time.Time            // 上次 CMDB 采集时间（每 60s 采集一次）
+	metricsLastCol time.Time            // 上次监控指标采集时间（每 30s 采集一次）
 }
 
 // New 构造 agent（读取 hostname，作为注册信息）。
@@ -212,14 +213,16 @@ func capabilityNote(goos string) string {
 // register 经 gRPC Register 注册自身，拿到 agentID。带有限重试，避免控制面未就绪即退出。
 func (a *Agent) register() error {
 	info := proto.AgentInfo{
-		AgentID:     a.agentID, // P0-2 上传持久化身份，服务端幂等复用（不重新分配，避免孤儿）
-		Hostname:    a.hostname,
-		Segment:     a.cfg.Segment,
-		Addr:        a.cfg.Addr,
-		GRPCPort:    a.cfg.GRPCPort,
-		MetricsPort: a.cfg.MetricsPort,
-		Status:      "online",
+		AgentID:      a.agentID, // P0-2 上传持久化身份，服务端幂等复用（不重新分配，避免孤儿）
+		Hostname:     a.hostname,
+		Segment:      a.cfg.Segment,
+		Addr:         a.cfg.Addr,
+		GRPCPort:     a.cfg.GRPCPort,
+		MetricsPort:  a.cfg.MetricsPort,
+		Status:       "online",
 		InstallToken: a.installToken(), // B1 自动纳管闭环：优先读文件，fallback 到配置
+		OS:           runtime.GOOS,     // 目标机操作系统（控制面据此填充 DeviceInfo.OS）
+		Arch:         runtime.GOARCH,   // 目标机 CPU 架构（控制面据此填充 DeviceInfo.Arch）
 	}
 	ctx := logx.WithTrace(context.Background(), "register")
 	for i := 0; i < 30; i++ {
@@ -243,6 +246,7 @@ func (a *Agent) register() error {
 }
 
 // heartbeatLoop 每 10s 经 gRPC Heartbeat 发送一次心跳（ctx 取消即退出）。
+// 监控指标采集频率独立：每 30s 采集一次（cpu.Percent 等需要采样间隔，频繁调用消耗 CPU）。
 func (a *Agent) heartbeatLoop(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -256,6 +260,11 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 			if report := a.collectCmdbReport(); report != nil {
 				req.CmdbReport = report
 			}
+			// 监控指标上报：每 30 秒采集一次系统指标（CPU/内存/磁盘/网络/OS/服务/进程）。
+			// 心跳每 10s 一次，但采集频率独立降低以减少系统开销。
+			if metrics := a.collectDeviceMetrics(); metrics != nil {
+				req.Metrics = metrics
+			}
 			cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			err := a.grpc.Heartbeat(cctx, req)
 			cancel()
@@ -266,6 +275,16 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 			logx.Info(ctx, "心跳 ok", "agentID", a.agentID)
 		}
 	}
+}
+
+// collectDeviceMetrics 采集系统监控指标（每 30s 一次，节流避免高频采集消耗 CPU）。
+// 返回 nil 表示本轮跳过（距上次采集不足 30s）。deviceID 用 dev-<agentID> 与控制面 DeviceInfo 对齐。
+func (a *Agent) collectDeviceMetrics() *proto.DeviceMetrics {
+	if time.Since(a.metricsLastCol) < 30*time.Second {
+		return nil // 距上次采集不足 30s，跳过
+	}
+	a.metricsLastCol = time.Now()
+	return CollectMetrics("dev-" + a.agentID)
 }
 
 // dispatchLoop 每 15s 触发一次 drainTasks：尽量把当前所有 pending 任务领取并投入 worker 队列，
@@ -487,14 +506,14 @@ func (a *Agent) execService(ctx context.Context, out, errb *bytes.Buffer, t prot
 // 仅放行只读/常规服务管理动词，拒绝任意 verb 注入 systemctl（如 "cat /etc/shadow" 经 verb 字段拼装）。
 // 如需扩展（如 mask/unmask/daemon-reload）应经安全评审后显式新增，切勿放行任意字符串。
 var serviceVerbWhitelist = map[string]bool{
-	"start":     true,
-	"stop":      true,
-	"restart":   true,
-	"status":    true,
-	"reload":    true,
-	"enable":    true,
-	"disable":   true,
-	"is-active": true,
+	"start":      true,
+	"stop":       true,
+	"restart":    true,
+	"status":     true,
+	"reload":     true,
+	"enable":     true,
+	"disable":    true,
+	"is-active":  true,
 	"is-enabled": true,
 }
 

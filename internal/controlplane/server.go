@@ -9,6 +9,10 @@ package controlplane
 
 import (
 	"context"
+	cryptoRand "crypto/rand"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,6 +30,8 @@ import (
 	"opsmesh/internal/version"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"opsmesh/internal/authctx"
 	"opsmesh/internal/cmdb"
@@ -74,6 +80,14 @@ type Server struct {
 	// M4-4D 控制面联邦管理器（nil=未启用联邦）。
 	// 由 NewServer 在 cfg.FederationPeers 非空时构造；启用后路由层注册 /api/v1/federation/* 端点。
 	fed *FederationManager
+
+	// 用户中心 JWT 签发密钥（HS256，来自 config.JWTSecret；空=随机生成）。
+	// 用于 auth.go 中登录/注册后签发 token。空时 NewServer 随机生成 32 字节密钥
+	// （重启后旧 token 失效，仅开发/单实例适用）。
+	jwtSecret []byte
+
+	// loginGuard 登录/注册防爆破 + 限流（P1-4，进程内）。多副本 HA 下建议后续换 Redis 共享。
+	loginGuard *loginGuard
 }
 
 // NewServer 构造控制面服务。按 cfg.Store 选择持久化后端（默认 memory），并初始化事件总线与指标。
@@ -119,7 +133,23 @@ func NewServer(cfg *config.Config) *Server {
 	}
 	// M4-4D 控制面联邦：cfg.FederationPeers 非空时构造 FederationManager，启用联邦 API。
 	// nil 时路由层跳过 /api/v1/federation/* 注册（向后兼容，不影响未启用联邦的部署）。
-	s.fed = NewFederationManager(cfg.FederationPeers, st)
+	// P1-6 硬化：传入共享 HMAC 密钥 + 出站 mTLS 配置（nil 表示明文联邦）。
+	fedClientTLS, err := tlsutil.HTTPClientTLSConfig(cfg.FederationTLSCert, cfg.FederationTLSKey, cfg.FederationCA)
+	if err != nil {
+		log.Fatalf("[controlplane] 联邦客户端 TLS 配置失败: %v", err)
+	}
+	s.fed = NewFederationManager(cfg.FederationPeers, st, cfg.FederationSecret, fedClientTLS)
+	// 用户中心 JWT 密钥：优先用 config.JWTSecret，空则随机生成 32 字节（重启后旧 token 失效）。
+	if cfg.JWTSecret != "" {
+		s.jwtSecret = []byte(cfg.JWTSecret)
+	} else {
+		s.jwtSecret = make([]byte, 32)
+		if _, err := cryptoRand.Read(s.jwtSecret); err != nil {
+			log.Fatalf("[controlplane] JWT 密钥随机生成失败: %v", err)
+		}
+	}
+	// P1-4 登录/注册防爆破 + 限流守卫（进程内；多副本建议后续换 Redis）。
+	s.loginGuard = newLoginGuard()
 	return s
 }
 
@@ -255,6 +285,43 @@ func securityHeadersMiddleware(h http.Handler) http.Handler {
 	})
 }
 
+// recoveryMiddleware 兜底盘：捕获任何 handler 内的 panic，避免单请求崩溃拖垮整个 HTTP 服务
+// （P0-2 致命短板——internal/ 生产代码零 recover，某 handler 未预期 panic 会击穿 net/http 默认
+// recover 仅打印日志但仍返回 200 空响应，掩盖故障且无 trace）。此处返回 500 + 结构化错误 + traceID，
+// 并交由 logx 落结构化日志。
+func recoveryMiddleware(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				ctx := logx.WithTrace(r.Context(), "http-recover")
+			logx.Error(ctx, "HTTP handler panic recovered",
+				fmt.Errorf("%v", rec), "method", r.Method, "path", r.URL.Path)
+				// net/http 在 WriteHeader 已调用后无法覆写状态码；此时仅记录，避免二次 panic。
+				if w.Header().Get("Content-Type") == "" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					_ = json.NewEncoder(w).Encode(map[string]string{
+						"error":   "internal server error",
+						"traceId": logx.Trace(ctx),
+					})
+				}
+			}
+		}()
+		h.ServeHTTP(w, r)
+	})
+}
+
+// maxBodyBytes 限制请求体大小（P1-3 防 DoS：拒绝超大 body 直接 413，避免 JSON 解析拖垮内存）。
+const maxBodyBytes = 1 << 20 // 1 MiB
+
+// decodeJSONBody 在 MaxBytesReader 约束下解析 JSON 请求体（P1-3 请求体大小限制）。
+// 替换所有裸 json.NewDecoder(r.Body).Decode 调用，统一防超大请求体。
+// 注意：仅做大小限制，不启用 DisallowUnknownFields，避免破坏前端多传字段的既有兼容行为。
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	return json.NewDecoder(r.Body).Decode(v)
+}
+
 // Start 启动 HTTP(B/S)、gRPC(9090)、metrics(9091) 三个监听，并在收到 SIGTERM/SIGINT 时优雅退出。
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
@@ -291,15 +358,30 @@ func (s *Server) Start() error {
 		mux.HandleFunc("/api/v1/federation/forward/task", s.handleFederationForwardTask)
 		mux.HandleFunc("/api/v1/federation/devices", s.handleFederationDevices)
 	}
+	// 用户中心（RBAC + JWT）：注册/登录/查询当前用户 + 用户/角色/权限 CRUD。
+	// 与网关注入身份模式并存：用户中心用于 B/S 仪表盘登录，网关注入用于 agent gRPC 通道。
+	mux.HandleFunc("/api/v1/auth/register", s.handleAuthRegister)
+	mux.HandleFunc("/api/v1/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("/api/v1/auth/me", s.handleAuthMe)
+	mux.HandleFunc("/api/v1/users", s.handleUsers)
+	mux.HandleFunc("/api/v1/users/", s.handleUserRouting)
+	mux.HandleFunc("/api/v1/roles", s.handleRoles)
+	mux.HandleFunc("/api/v1/roles/", s.handleRoleRouting)
+	mux.HandleFunc("/api/v1/permissions", s.handlePermissions)
 
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", s.httpPort),
-		Handler:           securityHeadersMiddleware(mux), // H5 安全头中间件（CSP/X-Frame-Options 等）
+		Handler:           recoveryMiddleware(securityHeadersMiddleware(mux)), // P0-2 兜底盘 + H5 安全头中间件
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	grpcSrv, grpcLis := s.buildGRPC()
 	metricsSrv, metricsLis := s.buildMetrics()
+	// P1-6 联邦独立 mTLS 监听（端口 >0 且已启用联邦时生效；否则返回 nil）。
+	fedSrv, fedLis, fedErr := s.buildFederationServer()
+	if fedErr != nil {
+		log.Fatalf("[controlplane] 联邦 mTLS 监听构建失败: %v", fedErr)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -330,8 +412,21 @@ func (s *Server) Start() error {
 			errCh <- fmt.Errorf("http: %w", err)
 		}
 	}()
+	if fedSrv != nil {
+		go func() {
+			logx.Info(ctx, "联邦 mTLS 监听", "port", s.cfg.FederationPort)
+			// TLSConfig 已设置 RequireAndVerifyClientCert，ServeTLS 启用 mTLS。
+			if err := fedSrv.ServeTLS(fedLis, "", ""); err != nil && err != http.ErrServerClosed {
+				errCh <- fmt.Errorf("federation: %w", err)
+			}
+		}()
+	}
 
-	logx.Info(ctx, "控制面已启动", "http", s.httpPort, "grpc", s.grpcPort, "metrics", s.metricsPort)
+	if s.cfg.FederationPort > 0 && s.fed != nil {
+		logx.Info(ctx, "控制面已启动", "http", s.httpPort, "grpc", s.grpcPort, "metrics", s.metricsPort, "federation_mtls", s.cfg.FederationPort)
+	} else {
+		logx.Info(ctx, "控制面已启动", "http", s.httpPort, "grpc", s.grpcPort, "metrics", s.metricsPort)
+	}
 	select {
 	case <-ctx.Done():
 		logx.Info(ctx, "收到终止信号，优雅退出", "window", s.shutdownWait.String())
@@ -340,6 +435,9 @@ func (s *Server) Start() error {
 		defer cancel()
 		_ = httpSrv.Shutdown(shutCtx)
 		_ = metricsSrv.Shutdown(shutCtx)
+		if fedSrv != nil {
+			_ = fedSrv.Shutdown(shutCtx)
+		}
 		return nil
 	case err := <-errCh:
 		return err
@@ -361,6 +459,8 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
 		opts = append(opts, grpc.Creds(creds))
 		logx.Info(context.Background(), "gRPC 已启用 TLS", "mtls", s.clientCA != "")
 	}
+	// P0-2 兜底盘：拦截 unary handler panic，避免单 RPC 击穿整个 gRPC server。
+	opts = append(opts, grpc.UnaryInterceptor(grpcRecoveryInterceptor))
 	gs := grpc.NewServer(opts...)
 	gs.RegisterService(&grpcx.Registration_ServiceDesc, &grpcServerImpl{
 		store:       s.store,
@@ -375,6 +475,83 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
 	return gs, lis
 }
 
+// grpcRecoveryInterceptor 兜底盘：拦截任何 unary handler 内的 panic，避免单个 RPC panic
+// 击穿 gRPC 默认行为（整个 server 崩溃），转为 Internal 状态码 + 结构化日志（P0-2）。
+func grpcRecoveryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			tctx := logx.WithTrace(ctx, "grpc-recover")
+			logx.Error(tctx, "gRPC handler panic recovered",
+				fmt.Errorf("%v", rec), "method", info.FullMethod)
+			err = status.Errorf(codes.Internal, "internal server error")
+		}
+	}()
+	return handler(ctx, req)
+}
+
+// metricsAllowed 判断客户端是否为 metrics 端点授权来源（P1-5 CIDR 白名单）。
+// 白名单为空（默认）= 允许全部（向后兼容 MVP）；非空时仅允许命中白名单的 IP。
+func (s *Server) metricsAllowed(remoteAddr string) bool {
+	if strings.TrimSpace(s.cfg.MetricsAllowCIDR) == "" {
+		return true // 未配置白名单：向后兼容开放
+	}
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	clientIP := net.ParseIP(host)
+	if clientIP == nil {
+		return false
+	}
+	for _, item := range strings.Split(s.cfg.MetricsAllowCIDR, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		_, netCIDR, err := net.ParseCIDR(item)
+		if err != nil {
+			continue
+		}
+		if netCIDR.Contains(clientIP) {
+			return true
+		}
+	}
+	return false
+}
+
+// buildFederationServer 构造联邦独立 mTLS 监听（P1-6）。
+// 仅暴露联邦入站端点（任务创建 / 设备视图），强制对端持证（RequireAndVerifyClientCert）。
+// 端口 ≤0 或未启用联邦时返回 (nil, nil, nil)（不启用独立监听，复用主 HTTP）。
+func (s *Server) buildFederationServer() (*http.Server, net.Listener, error) {
+	if s.cfg.FederationPort <= 0 || s.fed == nil {
+		return nil, nil, nil
+	}
+	tlsCfg, err := tlsutil.HTTPServerTLSConfig(s.cfg.FederationTLSCert, s.cfg.FederationTLSKey, s.cfg.FederationCA)
+	if err != nil {
+		return nil, nil, fmt.Errorf("federation server TLS: %w", err)
+	}
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.cfg.FederationPort))
+	if err != nil {
+		return nil, nil, fmt.Errorf("federation listen: %w", err)
+	}
+	mux := http.NewServeMux()
+	// 仅暴露联邦必需的入站端点；两者均已内置 P1-6 联邦签名验签。
+	mux.HandleFunc("/api/v1/tasks", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			s.handleCreateTask(w, r)
+			return
+		}
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	})
+	mux.HandleFunc("/api/v1/devices", s.handleDevices)
+	srv := &http.Server{
+		Handler:           recoveryMiddleware(securityHeadersMiddleware(mux)),
+		TLSConfig:         tlsCfg,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	return srv, lis, nil
+}
+
 // buildMetrics 构造 metrics HTTP server 与监听，渲染零依赖 Prometheus 文本指标（P2-1）。
 func (s *Server) buildMetrics() (*http.Server, net.Listener) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.metricsPort))
@@ -383,17 +560,65 @@ func (s *Server) buildMetrics() (*http.Server, net.Listener) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		// P1-5 metrics 访问控制：白名单非空时仅允许授权来源，否则 403。
+		if !s.metricsAllowed(r.RemoteAddr) {
+			ctx := logx.WithTrace(r.Context(), "metrics")
+			logx.Warn(ctx, "metrics 访问被拒（不在 CIDR 白名单）", "remote", r.RemoteAddr)
+			http.Error(w, "metrics access denied", http.StatusForbidden)
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 		s.metrics.SetAgents(len(s.store.Agents("")))
 		fmt.Fprint(w, s.metrics.Render())
 	})
-	return &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}, lis
+	return &http.Server{Handler: recoveryMiddleware(mux), ReadHeaderTimeout: 5 * time.Second}, lis
 }
 
 // handleDevices 处理 GET /api/v1/devices，按网关注入租户返回 segment -> 设备 列表。
+// verifyFederationRequest 校验入站请求的联邦签名（P1-6）。
+// 仅当请求携带 X-Federation-Forwarded 标记（由本集群转发管理器设置）时才验签；
+// 未携带则视为普通网关注入请求，返回 nil（不改变既有网关鉴权路径）。
+// 验签失败（密钥缺失/签名不符/时间戳超窗）返回 error，调用方应拒绝（401）。
+func (s *Server) verifyFederationRequest(r *http.Request) error {
+	if r.Header.Get("X-Federation-Forwarded") != "1" {
+		return nil // 非联邦转发请求，跳过（走网关注入逻辑）
+	}
+	if s.cfg.FederationSecret == "" {
+		return fmt.Errorf("federation request received but --federation-secret not configured")
+	}
+	tsStr := r.Header.Get("X-Federation-Ts")
+	sig := r.Header.Get("X-Federation-Sig")
+	if tsStr == "" || sig == "" {
+		return fmt.Errorf("missing federation signature headers")
+	}
+	ts, err := strconv.ParseInt(tsStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid federation timestamp")
+	}
+	skew := time.Now().Unix() - ts
+	if skew > federationSigMaxSkew || skew < -federationSigMaxSkew {
+		return fmt.Errorf("federation timestamp skew out of window")
+	}
+	tenant := r.Header.Get("X-Tenant-ID")
+	user := r.Header.Get("X-User-Id")
+	roles := r.Header.Get("X-User-Roles")
+	mac := hmac.New(sha256.New, []byte(s.cfg.FederationSecret))
+	mac.Write([]byte(strings.Join([]string{r.Method, r.URL.Path, tsStr, tenant, user, roles}, "|")))
+	expected := hex.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(expected), []byte(sig)) {
+		return fmt.Errorf("federation signature mismatch")
+	}
+	return nil
+}
+
 func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// P1-6 联邦入站验签：带转发标记的请求必须验签，防跨不可信网段伪造租户身份。
+	if err := s.verifyFederationRequest(r); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
 	actx := authctx.FromHTTPHeader(r.Header)
@@ -454,6 +679,11 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// P1-6 联邦入站验签：带转发标记的请求必须验签，防跨不可信网段伪造租户身份。
+	if err := s.verifyFederationRequest(r); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return
+	}
 	actx := authctx.FromHTTPHeader(r.Header)
 	if s.requireAuth && actx.TenantID == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
@@ -466,7 +696,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		TenantID string `json:"tenantID"`
 		Schedule string `json:"schedule"` // F4 可选：5 字段 cron，设定则成为模板任务（周期派生实例）
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -758,7 +988,7 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 		TenantID string   `json:"tenantID"`
 		Schedule string   `json:"schedule"` // F4 可选：批量下发的任务模板也支持 cron
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -957,6 +1187,7 @@ func (s *Server) handleTaskResult(w http.ResponseWriter, r *http.Request, id str
 //   - GET    /api/v1/devices/{id}：设备详情（设备+任务+结果）
 //   - DELETE /api/v1/devices/{id}：退役/下线设备（F5）
 //   - POST   /api/v1/devices/{id}/provision：触发自动纳管推送（B1）
+//   - GET    /api/v1/devices/{id}/metrics：返回设备最新监控指标
 func (s *Server) handleDeviceRouting(w http.ResponseWriter, r *http.Request) {
 	idAndRest := strings.TrimPrefix(r.URL.Path, "/api/v1/devices/")
 	parts := strings.SplitN(idAndRest, "/", 2)
@@ -972,6 +1203,8 @@ func (s *Server) handleDeviceRouting(w http.ResponseWriter, r *http.Request) {
 		s.handleRetireDevice(w, r, id)
 	case len(parts) == 2 && parts[1] == "provision" && r.Method == http.MethodPost:
 		s.handleProvision(w, r, id)
+	case len(parts) == 2 && parts[1] == "metrics" && r.Method == http.MethodGet:
+		s.handleDeviceMetrics(w, r, id)
 	default:
 		http.NotFound(w, r)
 	}
@@ -1141,7 +1374,7 @@ func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id s
 		DurationMinutes int    `json:"durationMinutes"`
 		Comment         string `json:"comment"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeJSONBody(w, r, &body)
 	if s.store.Alert(id) == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert not found"})
 		return
@@ -1184,6 +1417,11 @@ func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// P1-5 访问审计：install.sh 是 bootstrap 端点，保持开放但审计访问来源供溯源。
+	s.store.Audit(&proto.AuditEvent{
+		TenantID: "default", UserID: clientIP(r), Action: "bootstrap_install_sh", Target: "/install.sh",
+		Detail: "remote=" + r.RemoteAddr,
+	})
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(provision.InstallScript(s.cfg.AdvertiseAddr, version.Version)))
@@ -1196,6 +1434,11 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// P1-5 访问审计：agent 二进制分发端点，保持开放但审计下载来源供溯源。
+	s.store.Audit(&proto.AuditEvent{
+		TenantID: "default", UserID: clientIP(r), Action: "bootstrap_serve_agent", Target: "/bin/opsmesh-agent",
+		Detail: "remote=" + r.RemoteAddr,
+	})
 	path, err := os.Executable()
 	if err != nil {
 		http.Error(w, "cannot resolve agent binary", http.StatusInternalServerError)
@@ -1233,7 +1476,7 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 		CIDRs    []string `json:"cidrs"`
 		TenantID string   `json:"tenantID"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && r.ContentLength != 0 {
+	if err := decodeJSONBody(w, r, &body); err != nil && r.ContentLength != 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid JSON: %v", err)})
 		return
 	}

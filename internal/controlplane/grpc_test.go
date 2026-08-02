@@ -318,3 +318,148 @@ func TestGRPCRegister_ConsumesToken(t *testing.T) {
 		t.Fatal("Register with invalid token should fail")
 	}
 }
+
+// TestGRPCHeartbeat_MetricsE2E 监控指标全链路端到端：
+// agent 心跳携带 Metrics -> 控制面 Heartbeat 接收并 store.StoreDeviceMetrics 缓存 ->
+// store.DeviceMetrics 可读到 -> GET /api/v1/devices/{id}/metrics 返回。
+func TestGRPCHeartbeat_MetricsE2E(t *testing.T) {
+	st := store.NewMemoryStore()
+	srvImpl := &grpcServerImpl{store: st, requireAuth: false}
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	gs := grpc.NewServer()
+	gs.RegisterService(&grpcx.Registration_ServiceDesc, srvImpl)
+	go func() { _ = gs.Serve(lis) }()
+	defer gs.Stop()
+
+	port := lis.Addr().(*net.TCPAddr).Port
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := grpc.DialContext(ctx, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(grpc.ForceCodec(grpcx.JSONCodec)),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// 注册 agent（拿到 agentID，控制面创建占位设备 dev-<agentID>）
+	regResp := &grpcx.RegisterResp{}
+	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/Register",
+		&proto.AgentInfo{Segment: "seg-a", Hostname: "web-01", OS: "linux", Arch: "amd64"},
+		regResp, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	agentID := regResp.AgentID
+	deviceID := "dev-" + agentID
+
+	// 心跳携带监控指标
+	metrics := &proto.DeviceMetrics{
+		DeviceID: deviceID,
+		Hostname: "web-01",
+		OS:       "linux",
+		Arch:     "amd64",
+		CPU:      proto.CPUMetrics{Cores: 8, Usage: 42.5, Model: "Intel Xeon E5"},
+		Memory:   proto.MemMetrics{Total: 16384, Used: 4096, Available: 12288, Usage: 25.0},
+		Disks: []proto.DiskMetrics{
+			{Mount: "/", Total: 100, Used: 30, Free: 70, Usage: 30.0, Type: "ext4"},
+		},
+	}
+	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/Heartbeat",
+		&grpcx.HeartbeatReq{AgentID: agentID, Status: "online", Load: 1, Metrics: metrics},
+		&grpcx.Empty{}, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
+		t.Fatalf("Heartbeat with metrics: %v", err)
+	}
+
+	// store 层应能读到
+	got := st.DeviceMetrics(deviceID)
+	if got == nil {
+		t.Fatal("store.DeviceMetrics returned nil")
+	}
+	if got.CPU.Cores != 8 || got.CPU.Usage != 42.5 {
+		t.Fatalf("CPU = %+v, want cores=8 usage=42.5", got.CPU)
+	}
+	if got.Memory.Total != 16384 {
+		t.Fatalf("Memory.Total = %d, want 16384", got.Memory.Total)
+	}
+	if len(got.Disks) != 1 || got.Disks[0].Mount != "/" {
+		t.Fatalf("Disks = %+v, want 1 disk mount=/", got.Disks)
+	}
+
+	// DeviceInfo 应已填充 Hostname/OS/Arch（注册时上报）
+	dev := st.Device(deviceID)
+	if dev == nil {
+		t.Fatal("device not found")
+	}
+	if dev.Hostname != "web-01" || dev.OS != "linux" || dev.Arch != "amd64" {
+		t.Fatalf("dev meta = {host=%q os=%q arch=%q}, want web-01/linux/amd64", dev.Hostname, dev.OS, dev.Arch)
+	}
+
+	// 心跳不携带 metrics 时不应清空已有缓存
+	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/Heartbeat",
+		&grpcx.HeartbeatReq{AgentID: agentID, Status: "online", Load: 2},
+		&grpcx.Empty{}, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
+		t.Fatalf("Heartbeat without metrics: %v", err)
+	}
+	if got := st.DeviceMetrics(deviceID); got == nil {
+		t.Fatal("无 metrics 心跳误清了已有缓存")
+	}
+}
+
+// TestGRPCHeartbeat_MetricsAutoDeviceID 心跳携带 metrics 但 DeviceID 为空时，
+// 控制面应自动用 dev-<agentID> 兜底（与 Register 创建的占位设备 ID 对齐）。
+func TestGRPCHeartbeat_MetricsAutoDeviceID(t *testing.T) {
+	st := store.NewMemoryStore()
+	srvImpl := &grpcServerImpl{store: st, requireAuth: false}
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	gs := grpc.NewServer()
+	gs.RegisterService(&grpcx.Registration_ServiceDesc, srvImpl)
+	go func() { _ = gs.Serve(lis) }()
+	defer gs.Stop()
+
+	port := lis.Addr().(*net.TCPAddr).Port
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := grpc.DialContext(ctx, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(grpc.ForceCodec(grpcx.JSONCodec)),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	regResp := &grpcx.RegisterResp{}
+	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/Register",
+		&proto.AgentInfo{Segment: "seg-a"}, regResp, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	agentID := regResp.AgentID
+
+	// 心跳携带 metrics 但 DeviceID 为空
+	metrics := &proto.DeviceMetrics{
+		Hostname: "auto-host",
+		CPU:      proto.CPUMetrics{Cores: 2, Usage: 10.0},
+	}
+	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/Heartbeat",
+		&grpcx.HeartbeatReq{AgentID: agentID, Status: "online", Load: 1, Metrics: metrics},
+		&grpcx.Empty{}, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
+		t.Fatalf("Heartbeat: %v", err)
+	}
+	// 应自动写到 dev-<agentID>
+	got := st.DeviceMetrics("dev-" + agentID)
+	if got == nil {
+		t.Fatal("metrics not auto-stored under dev-<agentID>")
+	}
+	if got.Hostname != "auto-host" {
+		t.Fatalf("Hostname = %q, want auto-host", got.Hostname)
+	}
+}

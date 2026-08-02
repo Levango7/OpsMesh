@@ -17,6 +17,8 @@ import (
 	"opsmesh/internal/dag"
 	"opsmesh/internal/events"
 	"opsmesh/internal/proto"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // MemoryStore 内存实现：逻辑与原 controlplane.Registry 一致（单机、并发安全）。
@@ -27,23 +29,33 @@ type MemoryStore struct {
 	segments map[string][]*proto.DeviceInfo // segment -> 设备列表
 	tasks    map[string][]*proto.Task       // agentID -> 任务列表
 	results  map[string][]*proto.TaskResult // agentID -> 上报结果
-	audits   []*proto.AuditEvent           // 审计事件（U-04 留痕）
-	alerts   []*proto.Alert                // 告警事件（M7）
+	audits   []*proto.AuditEvent            // 审计事件（U-04 留痕）
+	alerts   []*proto.Alert                 // 告警事件（M7）
 	seq      int                            // 自增序号，用于生成 agentID
-	bus      events.Bus                    // 事件总线（P1-5）；可 nil（测试/默认 noop）
+	bus      events.Bus                     // 事件总线（P1-5）；可 nil（测试/默认 noop）
 	demo     bool                           // 演示模式（P0-5）：开启时注册预置 uname -a
 	// B1 自动纳管闭环：install token 的 HMAC 签名密钥与已签发 token 登记表。
 	// secret 为空时由 NewMemoryStore 随机生成（单实例 MVP）；多副本须一致（经 WithSecret 注入）。
 	secret string
 	tokens map[string]*tokenMeta // token -> 元数据（一次性、限时）
+	// 用户中心（RBAC）：users/roles/permissions 内存表。
+	// permissions 为预定义权限（按组分类），初始化时填充，运行期只读。
+	// users/roles 支持 CRUD；密码以 bcrypt 哈希存于 User.PasswordHash。
+	users       map[string]*User // id -> user
+	usersByName map[string]*User // username -> user（登录 O(1) 直查）
+	roles       map[string]*Role // id -> role
+	permissions []*Permission    // 预定义权限列表（只读）
+	// 设备实时监控指标：deviceID -> 最新指标（agent 心跳上报，仅保留最新值）。
+	// 历史时序由 Prometheus 负责，这里只缓存最近一次采集结果供 API 查询。
+	deviceMetrics map[string]*proto.DeviceMetrics
 }
 
 // tokenMeta B1 install token 元数据：一次性、限时，消费后标记 consumed。
 type tokenMeta struct {
-	deviceID string
-	tenantID string
+	deviceID  string
+	tenantID  string
 	expiresAt time.Time
-	consumed bool
+	consumed  bool
 }
 
 // WithBus 注入事件总线（store 构造后由控制面注入，避免改动所有构造调用点）。
@@ -122,11 +134,11 @@ func (m *MemoryStore) SeedDemoTopology() {
 		}
 		m.agents[aid] = a
 		m.segments[s.seg] = append(m.segments[s.seg], &proto.DeviceInfo{
-			DeviceID: devID,
-			Segment:  s.seg,
-			TenantID: "default",
-			IP:       s.ip,
-			AgentID:  aid,
+			DeviceID:  devID,
+			Segment:   s.seg,
+			TenantID:  "default",
+			IP:        s.ip,
+			AgentID:   aid,
 			State:     "online",
 			TaskState: "idle",
 			Managed:   true,
@@ -142,13 +154,13 @@ func (m *MemoryStore) SeedDemoTopology() {
 				TaskID:     fmt.Sprintf("task-%s-3", aid),
 				AgentID:    aid,
 				TenantID:   "default",
-				Type:        "shell",
-				Command:     "deploy.sh --rollback",
-				Status:      "failed",
-				RetryCount:  3,
+				Type:       "shell",
+				Command:    "deploy.sh --rollback",
+				Status:     "failed",
+				RetryCount: 3,
 				MaxRetries: 3,
-				DeadLetter:  true,
-				CreatedAt:   now.Add(-10 * time.Minute),
+				DeadLetter: true,
+				CreatedAt:  now.Add(-10 * time.Minute),
 			})
 		}
 		m.tasks[aid] = ts
@@ -163,15 +175,184 @@ func (m *MemoryStore) publish(e events.Event) {
 }
 
 // NewMemoryStore 构造空内存存储。secret 随机生成（单实例 MVP；多副本经 WithSecret 注入一致密钥）。
+// 同时预填充用户中心数据：预定义权限（按组分类）、预定义角色（admin/operator/viewer）、
+// 预定义用户（admin/admin123、operator/operator123、viewer/viewer123）。
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{
-		agents:   make(map[string]*proto.AgentInfo),
-		segments: make(map[string][]*proto.DeviceInfo),
-		tasks:    make(map[string][]*proto.Task),
-		results:  make(map[string][]*proto.TaskResult),
-		tokens:   make(map[string]*tokenMeta),
-		secret:   mustRandHex(32),
+	m := &MemoryStore{
+		agents:        make(map[string]*proto.AgentInfo),
+		segments:      make(map[string][]*proto.DeviceInfo),
+		tasks:         make(map[string][]*proto.Task),
+		results:       make(map[string][]*proto.TaskResult),
+		tokens:        make(map[string]*tokenMeta),
+		users:         make(map[string]*User),
+		usersByName:   make(map[string]*User),
+		roles:         make(map[string]*Role),
+		secret:        mustRandHex(32),
+		deviceMetrics: make(map[string]*proto.DeviceMetrics),
 	}
+	m.seedRBAC()
+	return m
+}
+
+// seedRBAC 预填充用户中心数据：权限/角色/用户。
+// 在 NewMemoryStore 中调用一次，幂等（重复调用会重置 map，但构造期单线程无并发风险）。
+//
+// 预定义权限按组分类：device/task/alert/cmdb/deploy/workflow/log/audit/user/role/federation。
+// 预定义角色：
+//   - admin：所有权限
+//   - operator：device/task/alert/cmdb/deploy/workflow/log/audit 的 read+write（不含 delete）
+//   - viewer：所有 *:read 权限
+//
+// 预定义用户（密码 bcrypt 哈希）：
+//   - admin/admin123（admin 角色）
+//   - operator/operator123（operator 角色）
+//   - viewer/viewer123（viewer 角色）
+func (m *MemoryStore) seedRBAC() {
+	// 1. 预定义权限（按组分类）。
+	permSpecs := []struct {
+		group string
+		name  string
+		desc  string
+	}{
+		{"device", "device:read", "查看设备"},
+		{"device", "device:write", "操作设备"},
+		{"device", "device:delete", "退役设备"},
+		{"task", "task:read", "查看任务"},
+		{"task", "task:write", "下发任务"},
+		{"task", "task:cancel", "取消任务"},
+		{"alert", "alert:read", "查看告警"},
+		{"alert", "alert:ack", "确认告警"},
+		{"alert", "alert:silence", "静默告警"},
+		{"cmdb", "cmdb:read", "查看配置项"},
+		{"cmdb", "cmdb:write", "编辑配置项"},
+		{"deploy", "deploy:read", "查看部署"},
+		{"deploy", "deploy:write", "执行部署"},
+		{"workflow", "workflow:read", "查看工作流"},
+		{"workflow", "workflow:write", "编辑工作流"},
+		{"log", "log:read", "查看日志"},
+		{"audit", "audit:read", "查看审计"},
+		{"user", "user:read", "查看用户"},
+		{"user", "user:write", "编辑用户"},
+		{"user", "user:delete", "删除用户"},
+		{"role", "role:read", "查看角色"},
+		{"role", "role:write", "编辑角色"},
+		{"role", "role:delete", "删除角色"},
+		{"federation", "federation:read", "查看联邦"},
+		{"federation", "federation:write", "编辑联邦"},
+	}
+	allPerms := make([]string, 0, len(permSpecs))
+	m.permissions = make([]*Permission, 0, len(permSpecs))
+	for i, ps := range permSpecs {
+		pid := fmt.Sprintf("perm-%s-%02d", ps.group, i+1)
+		m.permissions = append(m.permissions, &Permission{
+			ID:          pid,
+			Name:        ps.name,
+			Description: ps.desc,
+			Group:       ps.group,
+		})
+		allPerms = append(allPerms, ps.name)
+	}
+
+	// 2. 预定义角色。
+	// viewer：所有 *:read 权限。
+	viewerPerms := []string{}
+	for _, p := range allPerms {
+		if strings.HasSuffix(p, ":read") {
+			viewerPerms = append(viewerPerms, p)
+		}
+	}
+	// operator：device/task/alert/cmdb/deploy/workflow/log/audit 的 read+write（不含 delete）。
+	operatorPerms := []string{}
+	operatorGroups := map[string]bool{
+		"device": true, "task": true, "alert": true, "cmdb": true,
+		"deploy": true, "workflow": true, "log": true, "audit": true,
+	}
+	for _, p := range allPerms {
+		// 解析 "group:action" 格式。
+		idx := strings.Index(p, ":")
+		if idx <= 0 {
+			continue
+		}
+		group, action := p[:idx], p[idx+1:]
+		if !operatorGroups[group] {
+			continue
+		}
+		if action == "read" || action == "write" {
+			operatorPerms = append(operatorPerms, p)
+		}
+	}
+	// admin：所有权限。
+	adminPerms := append([]string{}, allPerms...)
+
+	now := time.Now()
+	m.roles["role-admin"] = &Role{
+		ID:          "role-admin",
+		Name:        "admin",
+		Description: "超级管理员，拥有所有权限",
+		Permissions: adminPerms,
+		CreatedAt:   now,
+	}
+	m.roles["role-operator"] = &Role{
+		ID:          "role-operator",
+		Name:        "operator",
+		Description: "运维人员，可操作设备/任务/告警/部署等，不含删除权限",
+		Permissions: operatorPerms,
+		CreatedAt:   now,
+	}
+	m.roles["role-viewer"] = &Role{
+		ID:          "role-viewer",
+		Name:        "viewer",
+		Description: "只读用户，仅可查看各类资源",
+		Permissions: viewerPerms,
+		CreatedAt:   now,
+	}
+
+	// 3. 预定义用户（密码 bcrypt 哈希）。
+	// bcrypt 哈希失败时 panic（构造期失败优于运行期诡异出错）。
+	type userSpec struct {
+		id, name, password, email string
+		roleIDs                   []string
+	}
+	specs := []userSpec{
+		{"user-admin", "admin", "admin123", "admin@opsmesh.local", []string{"role-admin"}},
+		{"user-operator", "operator", "operator123", "operator@opsmesh.local", []string{"role-operator"}},
+		{"user-viewer", "viewer", "viewer123", "viewer@opsmesh.local", []string{"role-viewer"}},
+	}
+	for _, us := range specs {
+		hash, err := bcryptHash(us.password)
+		if err != nil {
+			// bcrypt 失败属于环境异常（成本因子超限等），构造期 panic 暴露问题。
+			log.Panicf("[store] 预填充用户 %q 的 bcrypt 哈希失败: %v", us.name, err)
+		}
+		u := &User{
+			ID:           us.id,
+			Username:     us.name,
+			Email:        us.email,
+			PasswordHash: hash,
+			Status:       "active",
+			RoleIDs:      us.roleIDs,
+			CreatedAt:    now,
+		}
+		m.users[u.ID] = u
+		m.usersByName[u.Username] = u
+	}
+}
+
+// bcryptHash 包装 bcrypt.GenerateFromPassword，避免 memory.go 直接依赖 bcrypt 包
+// （集中在此函数便于后续替换哈希算法或调整成本因子）。
+// 成本因子使用 bcrypt.DefaultCost（10），兼顾安全与性能。
+func bcryptHash(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
+}
+
+// bcryptCompare 包装 bcrypt.CompareHashAndPassword，返回是否匹配。
+// 用于登录校验：哈希与明文密码比对。
+func bcryptCompare(hash, password string) bool {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
 // WithSecret 注入 B1 install token 的 HMAC 签名密钥（空则保留构造时随机密钥）。
@@ -287,6 +468,14 @@ func (m *MemoryStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 		for _, d := range m.segments[a.Segment] {
 			if d.AgentID == a.AgentID {
 				exists = true
+				// 已存在则补全主机元信息（旧版 agent 可能未上报 OS/Arch，注册升级时回填）。
+				d.Hostname = a.Hostname
+				if a.OS != "" {
+					d.OS = a.OS
+				}
+				if a.Arch != "" {
+					d.Arch = a.Arch
+				}
 				break
 			}
 		}
@@ -300,6 +489,9 @@ func (m *MemoryStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 				State:     "online",
 				TaskState: "idle",
 				Managed:   true, // agent 主动注册 = 真正纳管（B1 闭环：discovered 候选才 false）
+				Hostname:  a.Hostname,
+				OS:        a.OS,
+				Arch:      a.Arch,
 			})
 		}
 	}
@@ -558,7 +750,7 @@ func (m *MemoryStore) SubmitResult(res *proto.TaskResult) {
 				TenantID:  t.TenantID,
 				DeviceID:  "dev-" + res.AgentID,
 				AgentID:   res.AgentID,
-				Severity: "critical",
+				Severity:  "critical",
 				Message:   fmt.Sprintf("task %s entered dead-letter after %d retries (exitCode=%d)", t.TaskID, t.RetryCount, res.ExitCode),
 				CreatedAt: time.Now(),
 			})
@@ -1047,4 +1239,28 @@ func (m *MemoryStore) Snapshot(tenantID string) map[string][]proto.DeviceInfo {
 		out[seg] = list
 	}
 	return out
+}
+
+// StoreDeviceMetrics 存储设备最新监控指标（agent 心跳上报，仅保留最新值）。
+// deviceID 为空或 metrics 为 nil 时直接返回。深拷贝入参避免外部并发修改。
+func (m *MemoryStore) StoreDeviceMetrics(deviceID string, metrics *proto.DeviceMetrics) {
+	if deviceID == "" || metrics == nil {
+		return
+	}
+	cp := *metrics
+	m.mu.Lock()
+	m.deviceMetrics[deviceID] = &cp
+	m.mu.Unlock()
+}
+
+// DeviceMetrics 返回设备最新监控指标（无数据时返回 nil）。返回深拷贝避免外部并发修改。
+func (m *MemoryStore) DeviceMetrics(deviceID string) *proto.DeviceMetrics {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	v, ok := m.deviceMetrics[deviceID]
+	if !ok || v == nil {
+		return nil
+	}
+	cp := *v
+	return &cp
 }

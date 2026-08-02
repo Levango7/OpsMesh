@@ -7,6 +7,7 @@ package tlsutil
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"os"
 
 	"google.golang.org/grpc/credentials"
@@ -59,4 +60,62 @@ func ClientCreds(certFile, keyFile, caFile string) (credentials.TransportCredent
 		cfg.RootCAs = pool
 	}
 	return credentials.NewTLS(cfg), nil
+}
+
+// HTTPClientTLSConfig 构造 HTTP 客户端 mTLS TLS 配置（P1-6 联邦通道硬化）：
+// 若 certFile/keyFile 非空则呈现客户端证书（双向 mTLS）；若 caFile 非空则校验证书链（防 MITM/伪 peer）。
+// 三者皆空返回 (nil, nil) 表示不启用 TLS（向后兼容明文联邦）。
+func HTTPClientTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
+	if certFile == "" && keyFile == "" && caFile == "" {
+		return nil, nil
+	}
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if certFile != "" && keyFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load federation client cert: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+	if caFile != "" {
+		pool := x509.NewCertPool()
+		b, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("read federation CA: %w", err)
+		}
+		if !pool.AppendCertsFromPEM(b) {
+			return nil, fmt.Errorf("parse federation CA failed")
+		}
+		cfg.RootCAs = pool
+	}
+	return cfg, nil
+}
+
+// HTTPServerTLSConfig 构造 HTTP 服务端 TLS 配置（P1-6 联邦 mTLS 监听）：
+// 服务端证书必备；clientCA 非空时要求对端持证（RequireAndVerifyClientCert），实现联邦双向认证。
+func HTTPServerTLSConfig(certFile, keyFile, clientCA string) (*tls.Config, error) {
+	if certFile == "" || keyFile == "" {
+		return nil, fmt.Errorf("federation server requires cert and key")
+	}
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, err
+	}
+	cfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
+	if clientCA != "" {
+		pool := x509.NewCertPool()
+		b, err := os.ReadFile(clientCA)
+		if err != nil {
+			return nil, err
+		}
+		if !pool.AppendCertsFromPEM(b) {
+			return nil, fmt.Errorf("parse federation client CA failed")
+		}
+		cfg.ClientCAs = pool
+		cfg.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	return cfg, nil
 }

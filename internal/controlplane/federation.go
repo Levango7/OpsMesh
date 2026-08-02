@@ -16,10 +16,15 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +39,9 @@ import (
 // 单 peer 5s 足够覆盖正常 LAN/WAN RTT + 控制面处理时延。
 const peerRequestTimeout = 5 * time.Second
 
+// federationSigMaxSkew 联邦签名时间戳允许的最大时钟偏差（±5min），防重放。
+const federationSigMaxSkew = 5 * 60
+
 // PeerStatus 描述一个联邦 peer 的地址与当前在线状态。
 type PeerStatus struct {
 	URL    string `json:"url"`    // peer 控制面 HTTP 地址（如 http://peer1:8080）
@@ -42,26 +50,36 @@ type PeerStatus struct {
 
 // FederationManager 管理联邦 peer 列表，提供跨网段任务转发与联邦设备视图聚合。
 //
-// 不持有自己的 goroutine（健康检查按调用即时执行），无状态可变字段，
-// 可被多个 HTTP handler 并发调用（http.Client 内部线程安全）。
+// 不持有自己的 goroutine（健康检查按调用即时执行），可被多个 HTTP handler 并发调用
+// （http.Client 内部线程安全）。
+//
+// P1-6 硬化：
+//   - tlsConfig：非空时出站请求走 mTLS（呈现客户端证书 + 校验证书链），防伪 peer/MITM；
+//   - secret：非空时对转发的身份头做 HMAC 签名 + 时间戳，peer 侧验签防跨段伪造与重放。
 type FederationManager struct {
-	peers      []string       // 不可变 peer 地址列表（构造时确定）
-	httpClient *http.Client   // 共享 HTTP 客户端（带超时）
-	localStore store.Store    // 本地存储引用（聚合设备视图时取本地数据）
+	peers      []string     // 不可变 peer 地址列表（构造时确定）
+	httpClient *http.Client // 共享 HTTP 客户端（带超时 + 可选 mTLS）
+	localStore store.Store  // 本地存储引用（聚合设备视图时取本地数据）
+	secret     string       // 联邦共享 HMAC 密钥（空=不签名）
+	tlsConfig  *tls.Config  // 联邦 mTLS 配置（空=明文）
 }
 
 // NewFederationManager 构造联邦管理器。peers 为空时返回 nil（调用方据此跳过联邦路由注册）。
-// localStore 用于 FederatedDevices 聚合本地设备列表，避免本地数据也走 HTTP 自环。
-func NewFederationManager(peers []string, localStore store.Store) *FederationManager {
+// localStore 用于 FederatedDevices 聚合本地设备列表；secret/tlsConfig 为 P1-6 硬化参数（可空）。
+func NewFederationManager(peers []string, localStore store.Store, secret string, tlsConfig *tls.Config) *FederationManager {
 	if len(peers) == 0 {
 		return nil
 	}
+	cli := &http.Client{Timeout: peerRequestTimeout}
+	if tlsConfig != nil {
+		cli.Transport = &http.Transport{TLSClientConfig: tlsConfig}
+	}
 	return &FederationManager{
-		peers: peers,
-		httpClient: &http.Client{
-			Timeout: peerRequestTimeout,
-		},
+		peers:      peers,
+		httpClient: cli,
 		localStore: localStore,
+		secret:     secret,
+		tlsConfig:  tlsConfig,
 	}
 }
 
@@ -118,6 +136,8 @@ func (f *FederationManager) ForwardTask(ctx context.Context, peerURL string, tas
 			req.Header.Set(h, v)
 		}
 	}
+	// P1-6 对转发的身份头做 HMAC 签名 + 时间戳，peer 侧验签防跨不可信网段伪造与重放。
+	f.signFederationRequest(req)
 	resp, err := f.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("peer %s unreachable: %w", peerURL, err)
@@ -132,6 +152,25 @@ func (f *FederationManager) ForwardTask(ctx context.Context, peerURL string, tas
 		return nil, fmt.Errorf("decode peer response: %w", err)
 	}
 	return &created, nil
+}
+
+// signFederationRequest 对出站联邦请求的身份头做 HMAC 签名 + 时间戳（P1-6）。
+// 计算覆盖 method + path + 时间戳 + 三个身份头，peer 侧按同一规则验签。
+// 仅在管理器配置了共享密钥时签名；未配置则跳过（向后兼容明文联邦，但启动已告警）。
+func (f *FederationManager) signFederationRequest(req *http.Request) {
+	if f.secret == "" {
+		return
+	}
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	tenant := req.Header.Get("X-Tenant-ID")
+	user := req.Header.Get("X-User-Id")
+	roles := req.Header.Get("X-User-Roles")
+	mac := hmac.New(sha256.New, []byte(f.secret))
+	mac.Write([]byte(strings.Join([]string{req.Method, req.URL.Path, ts, tenant, user, roles}, "|")))
+	sig := hex.EncodeToString(mac.Sum(nil))
+	req.Header.Set("X-Federation-Forwarded", "1")
+	req.Header.Set("X-Federation-Ts", ts)
+	req.Header.Set("X-Federation-Sig", sig)
 }
 
 // FederatedDevices 聚合本地 + 所有 peer 的设备视图。
@@ -180,6 +219,8 @@ func (f *FederationManager) fetchPeerDevices(ctx context.Context, peerURL, tenan
 	if tenantID != "" {
 		req.Header.Set("X-Tenant-ID", tenantID)
 	}
+	// P1-6 对转发的身份头做 HMAC 签名 + 时间戳，peer 侧验签防伪造与重放。
+	f.signFederationRequest(req)
 	resp, err := f.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("peer %s unreachable: %w", peerURL, err)
@@ -234,7 +275,7 @@ func (s *Server) handleFederationForwardTask(w http.ResponseWriter, r *http.Requ
 		PeerURL string     `json:"peerURL"`
 		Task    proto.Task `json:"task"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}

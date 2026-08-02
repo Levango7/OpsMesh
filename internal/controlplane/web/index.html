@@ -4,7 +4,45 @@
 <title>OpsMesh 网段运维中枢</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%236366f1'/><circle cx='10' cy='11' r='2.6' fill='white'/><circle cx='22' cy='11' r='2.6' fill='white'/><circle cx='16' cy='22' r='2.6' fill='white'/><path d='M10 11 L16 22 L22 11' stroke='white' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>">
 <link rel="stylesheet" href="/assets/app.css"></head><body>
-<div class="app">
+
+<!-- ============ 登录/注册页 ============ -->
+<div id="authPage" class="auth-page" style="display:none">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="logo">
+        <svg width="22" height="22" viewBox="0 0 32 32" fill="none">
+          <circle cx="10" cy="11" r="2.6" fill="white"/><circle cx="22" cy="11" r="2.6" fill="white"/>
+          <circle cx="16" cy="22" r="2.6" fill="white"/>
+          <path d="M10 11 L16 22 L22 11" stroke="white" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <h1 id="authBrand">OpsMesh</h1>
+    </div>
+    <div class="auth-subtitle" id="authSubtitle">欢迎回来，请登录你的账号</div>
+    <form class="auth-form" id="authForm" onsubmit="return false">
+      <div class="field">
+        <label id="authUsernameLabel">用户名</label>
+        <input type="text" id="authUsername" autocomplete="username" placeholder="请输入用户名">
+      </div>
+      <div class="field">
+        <label id="authPasswordLabel">密码</label>
+        <input type="password" id="authPassword" autocomplete="current-password" placeholder="请输入密码">
+      </div>
+      <div class="field" id="authEmailField" style="display:none">
+        <label id="authEmailLabel">邮箱（可选）</label>
+        <input type="email" id="authEmail" autocomplete="email" placeholder="you@example.com">
+      </div>
+      <div class="auth-msg" id="authMsg"></div>
+      <button type="submit" class="primary auth-submit" id="authSubmitBtn" onclick="submitAuth()">登录</button>
+    </form>
+    <div class="auth-link">
+      <span id="authSwitchText">没有账号？</span><a id="authSwitchLink" onclick="switchAuthMode('register')">去注册</a>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 主应用 ============ -->
+<div id="appMain" class="app" style="display:none">
 <header class="appbar">
   <div class="brand">
     <div class="logo">
@@ -16,35 +54,57 @@
     </div>
     <div class="brand-txt">
       <h1>OpsMesh</h1>
-      <span class="sub">网段运维中枢 · 同一个程序，两种身份（控制面 / 采集端）</span>
+      <span class="sub" id="brandSub">网段运维中枢 · 同一个程序，两种身份（控制面 / 采集端）</span>
     </div>
   </div>
   <div class="appbar-meta">
-    <span class="chip" title="控制面健康状态"><span class="dot ok" style="display:inline-block;margin-right:5px"></span>运行正常</span>
+    <span class="chip" id="statusChip" title="控制面健康状态"><span class="dot ok" style="display:inline-block;margin-right:5px"></span><span id="statusOkTxt">运行正常</span></span>
     <span class="chip" id="identityChip" title="身份由前置网关注入（X-Tenant / X-User / X-User-Roles）；无网关注入时为隐式租户">租户 <b id="idTenant">default</b> · 角色 <b id="idRole">admin</b></span>
-    <span class="chip help" onclick="toggleGuide()">❔ 使用帮助</span>
+    <span class="chip help" onclick="toggleGuide()" id="helpChip">使用帮助</span>
+  </div>
+  <div class="appbar-tools">
+    <button class="iconbtn" id="themeToggleBtn" title="切换主题" aria-label="切换主题"></button>
+    <button class="iconbtn" id="langToggleBtn" title="切换语言" aria-label="切换语言"></button>
+    <button class="user-menu" id="userMenuBtn" onclick="toggleUserMenu()" title="用户菜单">
+      <span class="icon" id="userMenuIcon"></span>
+      <span class="uname" id="userMenuName">–</span>
+      <span class="icon" id="userMenuArrow"></span>
+    </button>
   </div>
 </header>
 
+<!-- 用户下拉菜单 -->
+<div id="userDropdown" style="display:none;position:absolute;top:60px;right:24px;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow);padding:6px;min-width:160px">
+  <button class="ghost" style="width:100%;justify-content:flex-start" onclick="switchTab('users');toggleUserMenu()" id="menuUsersBtn">用户中心</button>
+  <button class="ghost" style="width:100%;justify-content:flex-start" onclick="switchTab('roles');toggleUserMenu()" id="menuRolesBtn">角色管理</button>
+  <button class="ghost" style="width:100%;justify-content:flex-start" onclick="switchTab('permissions');toggleUserMenu()" id="menuPermsBtn">权限管理</button>
+  <hr class="divider" style="margin:4px 0">
+  <button class="ghost" style="width:100%;justify-content:flex-start;color:var(--fail)" onclick="doLogout()" id="menuLogoutBtn">退出登录</button>
+</div>
+
 <div class="layout">
 <aside class="sidebar">
-  <div class="navgroup">总览</div>
-  <button class="tab active" id="tab-home-btn" onclick="switchTab('home')"><span class="tdot" style="background:var(--accent)"></span>总览</button>
-  <div class="navgroup">运维</div>
-  <button class="tab" id="tab-ops-btn" onclick="switchTab('ops')"><span class="tdot" style="background:var(--indigo)"></span>运维中枢</button>
-  <button class="tab" id="tab-cmdb-btn" onclick="switchTab('cmdb')"><span class="tdot" style="background:var(--teal)"></span>配置库（CMDB）</button>
-  <div class="navgroup">交付</div>
-  <button class="tab" id="tab-deploy-btn" onclick="switchTab('deploy')"><span class="tdot" style="background:var(--violet)"></span>部署中心（M3）</button>
-  <button class="tab" id="tab-flow-btn" onclick="switchTab('flow')"><span class="tdot" style="background:var(--amber)"></span>作业编排（M5）</button>
-  <div class="navgroup">观测</div>
-  <button class="tab" id="tab-logs-btn" onclick="switchTab('logs')"><span class="tdot" style="background:var(--sky)"></span>日志检索（M6）</button>
-  <button class="tab" id="tab-alerts-btn" onclick="switchTab('alerts')"><span class="tdot" style="background:var(--rose)"></span>监控告警（M7）</button>
+  <div class="navgroup" id="navGroupOverview">概览</div>
+  <button class="tab active" id="tab-home-btn" onclick="switchTab('home')"><span class="icon" id="navIconHome"></span>总览</button>
+  <div class="navgroup" id="navGroupOps">运维管理</div>
+  <button class="tab" id="tab-ops-btn" onclick="switchTab('ops')"><span class="icon" id="navIconOps"></span>运维中枢</button>
+  <button class="tab" id="tab-cmdb-btn" onclick="switchTab('cmdb')"><span class="icon" id="navIconCmdb"></span>配置库（CMDB）</button>
+  <div class="navgroup" id="navGroupDelivery">交付中心</div>
+  <button class="tab" id="tab-deploy-btn" onclick="switchTab('deploy')"><span class="icon" id="navIconDeploy"></span>部署中心</button>
+  <button class="tab" id="tab-flow-btn" onclick="switchTab('flow')"><span class="icon" id="navIconFlow"></span>作业编排</button>
+  <div class="navgroup" id="navGroupObservability">可观测性</div>
+  <button class="tab" id="tab-logs-btn" onclick="switchTab('logs')"><span class="icon" id="navIconLogs"></span>日志检索</button>
+  <button class="tab" id="tab-alerts-btn" onclick="switchTab('alerts')"><span class="icon" id="navIconAlerts"></span>监控告警</button>
+  <div class="navgroup" id="navGroupSystem">系统管理</div>
+  <button class="tab" id="tab-users-btn" onclick="switchTab('users')"><span class="icon" id="navIconUsers"></span>用户中心</button>
+  <button class="tab" id="tab-roles-btn" onclick="switchTab('roles')"><span class="icon" id="navIconRoles"></span>角色管理</button>
+  <button class="tab" id="tab-permissions-btn" onclick="switchTab('permissions')"><span class="icon" id="navIconPerms"></span>权限管理</button>
 </aside>
 
 <main class="content">
 
 <div class="ctxbar" id="ctxbar">
-  <span class="ctx-title">🔗 上下文串联</span>
+  <span class="ctx-title"><span class="icon" id="ctxIcon"></span> 上下文串联</span>
   <span>设备 <code id="ctxDev">–</code></span>
   <span class="jbtn" onclick="jumpFocus('ops')">运维中枢</span>
   <span class="jbtn" onclick="jumpFocus('cmdb')">配置库</span>
@@ -57,7 +117,7 @@
 <!-- ============ 总览 ============ -->
 <div id="tab-home" class="pane active">
   <div class="pane-intro">
-    <div class="ico" style="background:var(--accent-soft);color:var(--accent)">📊</div>
+    <div class="ico" style="background:var(--accent-soft);color:var(--accent)"><span class="icon" id="introIconHome"></span></div>
     <div class="txt">
       <h3>总览 · 一句话看懂</h3>
       <p>把六块能力（运维 / 配置库 / 部署 / 编排 / 日志 / 告警）的<b>关键指标</b>汇到一屏，先看清全局，再进具体模块。点任意数字卡片可直达对应模块。</p>
@@ -70,6 +130,38 @@
     <div class="stat teal" style="cursor:pointer" onclick="switchTab('cmdb')" title="查看配置库"><div class="stat-v" id="ovCIs">–</div><div class="stat-l">配置项</div></div>
     <div class="stat amber" style="cursor:pointer" onclick="switchTab('deploy')" title="查看部署中心"><div class="stat-v" id="ovTasks">–</div><div class="stat-l">任务总数</div></div>
     <div class="stat rose" style="cursor:pointer" onclick="switchTab('alerts')" title="查看监控告警"><div class="stat-v" id="ovAlerts">–</div><div class="stat-l">活跃告警</div></div>
+  </div>
+
+  <!-- 运维能力方向：6 大能力一屏纵览 -->
+  <div class="ops-caps">
+    <h3>运维能力方向</h3>
+    <p class="field-hint">OpsMesh 个人版围绕网段设备提供 6 大运维能力，点击卡片进入对应功能模块。</p>
+    <div class="ops-caps-grid">
+      <div class="ops-cap" onclick="switchTab('ops')" title="设备纳管：自动发现网段设备、安装 agent、纳管上线">
+        <div class="ops-cap-ico" style="background:var(--indigo-soft);color:var(--indigo)"><span class="icon" id="capIconDevice"></span></div>
+        <div class="ops-cap-txt"><b>设备纳管</b><span class="ops-cap-desc">自动发现网段设备、安装 agent、纳管上线</span></div>
+      </div>
+      <div class="ops-cap" onclick="switchTab('ops')" title="任务执行：远程执行 shell 命令、查看执行结果、失败重试">
+        <div class="ops-cap-ico" style="background:var(--teal-soft);color:var(--teal)"><span class="icon" id="capIconTask"></span></div>
+        <div class="ops-cap-txt"><b>任务执行</b><span class="ops-cap-desc">远程执行 shell 命令、查看结果、失败重试</span></div>
+      </div>
+      <div class="ops-cap" onclick="switchTab('cmdb')" title="配置下发：远程写文件、配置项管理（CMDB）">
+        <div class="ops-cap-ico" style="background:var(--amber-soft);color:var(--amber)"><span class="icon" id="capIconCmdb"></span></div>
+        <div class="ops-cap-txt"><b>配置下发</b><span class="ops-cap-desc">远程写文件、配置项管理（CMDB）</span></div>
+      </div>
+      <div class="ops-cap" onclick="switchTab('ops')" title="服务管理：远程启停系统服务、查看服务状态">
+        <div class="ops-cap-ico" style="background:var(--violet-soft);color:var(--violet)"><span class="icon" id="capIconService"></span></div>
+        <div class="ops-cap-txt"><b>服务管理</b><span class="ops-cap-desc">远程启停系统服务、查看服务状态</span></div>
+      </div>
+      <div class="ops-cap" onclick="switchTab('deploy')" title="文件分发：远程文件写入、批量分发">
+        <div class="ops-cap-ico" style="background:var(--sky-soft);color:var(--sky)"><span class="icon" id="capIconFile"></span></div>
+        <div class="ops-cap-txt"><b>文件分发</b><span class="ops-cap-desc">远程文件写入、批量分发</span></div>
+      </div>
+      <div class="ops-cap" onclick="switchTab('alerts')" title="状态监控：CPU/内存/磁盘/网络实时指标、告警">
+        <div class="ops-cap-ico" style="background:var(--rose-soft);color:var(--rose)"><span class="icon" id="capIconMonitor"></span></div>
+        <div class="ops-cap-txt"><b>状态监控</b><span class="ops-cap-desc">CPU/内存/磁盘/网络实时指标、告警</span></div>
+      </div>
+    </div>
   </div>
 
   <div class="row">
@@ -124,7 +216,7 @@
 <!-- ============ 运维中枢 ============ -->
 <div id="tab-ops" class="pane">
   <div class="pane-intro">
-    <div class="ico">🛠️</div>
+    <div class="ico"><span class="icon" id="introIconOps"></span></div>
     <div class="txt">
       <h3>运维中枢 · 一句话看懂</h3>
       <p>这里集中管理「设备」和「任务」：把命令下发给设备上的<b>采集端</b>去执行，查看纳管状态，跟踪失败与告警。上方彩色数字卡片是全局概览，也可在左侧「总览」一屏纵览。</p>
@@ -149,7 +241,7 @@
   <div class="card accent-indigo">
     <h2>下发任务</h2>
     <p class="field-hint">把一条执行指令交给某台设备上的采集端。命令将在该设备本地运行。</p>
-    <form id="taskForm">
+    <form id="taskForm" class="form-stack">
       <label title="采集端（Agent）：部署在设备上的小代理，负责执行任务">采集端:
         <select id="agentID"></select></label>
       <label>类型:
@@ -159,10 +251,10 @@
           <option value="file">file（下发文件）</option>
         </select>
       </label>
-      <label>命令/动作: <input id="command" size="40" placeholder="shell: uname -a ｜ service: restart nginx" title="要执行的具体内容" /></label>
-      <label>路径(path，file/service 用): <input id="path" size="26" placeholder="/tmp/x.out 或 nginx" /></label>
-      <label>内容(content，file 用): <input id="content" size="26" placeholder="要写入文件的内容" /></label>
-      <div class="btnbar"><button type="submit" class="primary" title="把任务下发给选中的采集端">📤 下发任务</button></div>
+      <label>命令/动作: <input id="command" placeholder="shell: uname -a ｜ service: restart nginx" title="要执行的具体内容" /></label>
+      <label>路径(path，file/service 用): <input id="path" placeholder="/tmp/x.out 或 nginx" /></label>
+      <label>内容(content，file 用): <input id="content" placeholder="要写入文件的内容" /></label>
+      <div class="btnbar"><button type="submit" class="primary" title="把任务下发给选中的采集端"><span class="icon" id="iconDispatch"></span>下发任务</button></div>
     </form>
     <div id="taskResult" class="msg"></div>
   </div>
@@ -204,7 +296,7 @@
 <!-- ============ CMDB ============ -->
 <div id="tab-cmdb" class="pane">
   <div class="pane-intro">
-    <div class="ico" style="background:var(--teal-soft);color:var(--teal)">🗃️</div>
+    <div class="ico" style="background:var(--teal-soft);color:var(--teal)"><span class="icon" id="introIconCmdb"></span></div>
     <div class="txt">
       <h3>配置管理库（CMDB）· 一句话看懂</h3>
       <p>把服务器、服务等资产登记为<b>配置项（CI）</b>，记录它们的属性（IP、内核等）和彼此关系，方便统一追溯与变更管理。</p>
@@ -221,10 +313,10 @@
       <div class="card">
         <h3>新建配置项</h3>
         <p class="field-hint">登记一条新资产。属性用 JSON 填写，如 <code>{"ip":"10.0.0.1"}</code>。</p>
-        <form id="ciForm">
-          <label>类型: <select id="ciTypeNew" required></select></label><br>
-          <label>名称: <input id="ciName" size="30" placeholder="hostname / svc-name" /></label><br>
-          <label>属性(JSON): <input id="ciAttrs" size="50" placeholder='{"ip":"10.0.0.1","kernel":"5.4"}' title="以 JSON 填写该资产的属性" /></label><br>
+        <form id="ciForm" class="form-stack">
+          <label>类型: <select id="ciTypeNew" required></select></label>
+          <label>名称: <input id="ciName" placeholder="hostname / svc-name" /></label>
+          <label>属性(JSON): <input id="ciAttrs" placeholder='{"ip":"10.0.0.1","kernel":"5.4"}' title="以 JSON 填写该资产的属性" /></label>
           <div class="btnbar"><button type="submit" class="primary">创建</button></div>
         </form>
         <div id="cmdbMsg" class="msg"></div>
@@ -249,7 +341,7 @@
 <!-- ============ 作业编排（M5 DAG 画布） ============ -->
 <div id="tab-flow" class="pane">
   <div class="pane-intro">
-    <div class="ico" style="background:var(--amber-soft);color:var(--amber)">🧩</div>
+    <div class="ico" style="background:var(--amber-soft);color:var(--amber)"><span class="icon" id="introIconFlow"></span></div>
     <div class="txt">
       <h3>作业编排（M5）· 一句话看懂</h3>
       <p>把多个<b>步骤</b>按先后顺序连成一张<b>依赖图</b>，一键按顺序执行，或按时间<b>定时</b>自动跑。适合「发布」「巡检」这类多步操作。</p>
@@ -257,27 +349,27 @@
     <span class="hint-link" onclick="loadDemo()">载入示例</span>
   </div>
   <div class="row">
-    <div class="col" style="max-width:360px">
+    <div class="col" style="flex:0 0 340px;max-width:340px;min-width:0">
       <div class="card accent-amber">
         <h3>作业流</h3>
         <p class="field-hint">作业流 = 一组带依赖关系的步骤。可新建，或从下拉选择已有作业流继续编辑。</p>
         <label style="display:flex;width:100%">作业流:
-          <select id="wfSelect" onchange="openWorkflow()" style="flex:1"></select>
+          <select id="wfSelect" onchange="openWorkflow()" style="flex:1;min-width:0"></select>
         </label>
-        <label style="display:flex;width:100%">名称: <input id="wfName" size="18" placeholder="deploy-nginx" style="flex:1" title="作业流的名字，便于识别" /></label>
-        <label style="display:flex;width:100%">采集端: <select id="wfAgent" style="flex:1" title="由哪台设备的采集端执行本作业流"></select></label>
-        <label style="display:flex;width:100%">定时(cron): <input id="wfCron" size="14" placeholder="0 * * * *" title="空=不定时；填写后按此周期自动运行" style="flex:1" /></label>
+        <label style="display:flex;width:100%">名称: <input id="wfName" placeholder="deploy-nginx" style="flex:1;min-width:0" title="作业流的名字，便于识别" /></label>
+        <label style="display:flex;width:100%">采集端: <select id="wfAgent" style="flex:1;min-width:0" title="由哪台设备的采集端执行本作业流"></select></label>
+        <label style="display:flex;width:100%">定时(cron): <input id="wfCron" placeholder="0 * * * *" title="空=不定时；填写后按此周期自动运行" style="flex:1;min-width:0" /></label>
         <div class="btnbar">
-          <button onclick="newWorkflow()">＋ 新建</button>
-          <button onclick="loadDemo()">📋 示例</button>
-          <button onclick="saveWorkflow()" class="primary" title="新建走 POST，编辑已有走 PUT">💾 保存</button>
-          <button onclick="runWorkflow()" class="teal" title="立即把本作业流展开为任务并下发执行">▶ 运行</button>
-          <button onclick="scheduleWorkflowPrompt()" title="按 cron 表达式周期性自动运行">⏰ 定时</button>
+          <button onclick="newWorkflow()"><span class="icon" id="iconWfNew"></span> 新建</button>
+          <button onclick="loadDemo()"><span class="icon" id="iconWfDemo"></span> 示例</button>
+          <button onclick="saveWorkflow()" class="primary" title="新建走 POST，编辑已有走 PUT"><span class="icon" id="iconWfSave"></span> 保存</button>
+          <button onclick="runWorkflow()" class="teal" title="立即把本作业流展开为任务并下发执行"><span class="icon" id="iconWfRun"></span> 运行</button>
+          <button onclick="scheduleWorkflowPrompt()" title="按 cron 表达式周期性自动运行"><span class="icon" id="iconWfSchedule"></span> 定时</button>
         </div>
         <hr class="divider">
         <h3>步骤节点</h3>
         <div id="nodeList"><p class="muted">请选择或新建作业流</p></div>
-        <div class="btnbar"><button onclick="addNode()">＋ 添加步骤</button></div>
+        <div class="btnbar"><button onclick="addNode()"><span class="icon" id="iconAddNode"></span> 添加步骤</button></div>
         <div id="wfMsg" class="msg"></div>
       </div>
     </div>
@@ -285,13 +377,13 @@
       <div class="card">
         <h3>依赖图画布</h3>
         <p class="hint">
-          点节点选中/编辑；点「🔗 连线」后依次点两个节点建立前后置依赖；直接拖动节点调整位置。
+          点节点选中/编辑；点「<span class="icon" id="iconLinkHint"></span> 连线」后依次点两个节点建立前后置依赖；直接拖动节点调整位置。
         </p>
         <div class="flowbar">
-          <button id="linkBtn" onclick="toggleLink()" title="进入连线模式：先点「源步骤」，再点「目标步骤」">🔗 连线</button>
-          <button onclick="autoLayout()" title="按依赖关系自动分层排布">🎯 自动布局</button>
-          <button onclick="undo()" title="撤销 (Ctrl+Z)">↶ 撤销</button>
-          <button onclick="redo()" title="重做 (Ctrl+Y)">↷ 重做</button>
+          <button id="linkBtn" onclick="toggleLink()" title="进入连线模式：先点「源步骤」，再点「目标步骤」"><span class="icon" id="iconLink"></span> 连线</button>
+          <button onclick="autoLayout()" title="按依赖关系自动分层排布"><span class="icon" id="iconAutoLayout"></span> 自动布局</button>
+          <button onclick="undo()" title="撤销 (Ctrl+Z)"><span class="icon" id="iconUndo"></span> 撤销</button>
+          <button onclick="redo()" title="重做 (Ctrl+Y)"><span class="icon" id="iconRedo"></span> 重做</button>
         </div>
         <div id="zoombar">
           <button onclick="zoomBy(0.85)" title="缩小">－</button>
@@ -319,7 +411,7 @@
 <!-- ============ 部署中心（M3） ============ -->
 <div id="tab-deploy" class="pane">
   <div class="pane-intro">
-    <div class="ico" style="background:var(--violet-soft);color:var(--violet)">🚀</div>
+    <div class="ico" style="background:var(--violet-soft);color:var(--violet)"><span class="icon" id="introIconDeploy"></span></div>
     <div class="txt">
       <h3>部署中心（M3）· 一句话看懂</h3>
       <p>把<b>应用发布</b>变得可控：登记一次「部署任务」（脚本 / 文件 / K8s 清单），选好目标设备，点一下就能批量下发，并随时跟踪<b>执行 / 成功 / 失败 / 回滚</b>状态。</p>
@@ -327,23 +419,23 @@
     <span class="hint-link" onclick="loadDeployDemo()">载入示例</span>
   </div>
   <div class="row">
-    <div class="col" style="max-width:430px">
+    <div class="col" style="flex:0 0 380px;max-width:380px;min-width:0">
       <div class="card accent-violet">
         <h3>登记部署任务</h3>
         <p class="field-hint">一次登记，可多次执行与回滚。<b>目标设备</b>填写设备 ID，多个用逗号分隔。</p>
-        <form id="deployForm">
-          <label style="display:flex;width:100%">名称: <input id="dpName" size="22" placeholder="deploy-nginx" style="flex:1" title="部署任务的名字，便于识别" /></label>
-          <label style="display:flex;width:100%">类型:
-            <select id="dpType" style="flex:1" title="script=执行 Git 仓库脚本；file=下发/写入文件；k8s=应用 K8s 清单">
+        <form id="deployForm" class="form-stack">
+          <label>名称: <input id="dpName" placeholder="deploy-nginx" title="部署任务的名字，便于识别" /></label>
+          <label>类型:
+            <select id="dpType" title="script=执行 Git 仓库脚本；file=下发/写入文件；k8s=应用 K8s 清单">
               <option value="script">script（执行脚本）</option>
               <option value="file">file（下发文件）</option>
               <option value="k8s">k8s（应用清单）</option>
             </select></label>
-          <label style="display:flex;width:100%">仓库地址(repo_url): <input id="dpRepo" size="26" placeholder="https://git.example.com/ops/nginx.git" style="flex:1" title="script / k8s 类型填写 Git 仓库地址" /></label>
-          <label style="display:flex;width:100%">文件内容(content): <input id="dpContent" size="26" placeholder="要写入目标文件的内容" style="flex:1" title="file 类型填写要写入目标路径的内容" /></label>
-          <label style="display:flex;width:100%">目标路径(path): <input id="dpPath" size="26" placeholder="/tmp/app.conf" style="flex:1" title="file 类型填写目标设备上的路径" /></label>
-          <label style="display:flex;width:100%">目标设备(target_ids): <input id="dpTargets" size="26" placeholder="dev-10.0.0.1, dev-10.0.0.2" style="flex:1" title="要部署到的设备，多个用逗号或空格分隔" /></label>
-          <div class="btnbar"><button type="submit" class="primary" style="background:var(--violet);box-shadow:0 2px 8px rgba(124,58,237,.32)" title="登记部署任务（后端会校验名称与目标的合法性）">＋ 登记部署</button></div>
+          <label>仓库地址(repo_url): <input id="dpRepo" placeholder="https://git.example.com/ops/nginx.git" title="script / k8s 类型填写 Git 仓库地址" /></label>
+          <label>文件内容(content): <input id="dpContent" placeholder="要写入目标文件的内容" title="file 类型填写要写入目标路径的内容" /></label>
+          <label>目标路径(path): <input id="dpPath" placeholder="/tmp/app.conf" title="file 类型填写目标设备上的路径" /></label>
+          <label>目标设备(target_ids): <input id="dpTargets" placeholder="dev-10.0.0.1, dev-10.0.0.2" title="要部署到的设备，多个用逗号或空格分隔" /></label>
+          <div class="btnbar"><button type="submit" class="primary" style="background:var(--violet);box-shadow:0 2px 8px rgba(124,58,237,.32)" title="登记部署任务（后端会校验名称与目标的合法性）"><span class="icon" id="iconDeployAdd"></span> 登记部署</button></div>
         </form>
         <div id="deployMsg" class="msg"></div>
       </div>
@@ -372,7 +464,7 @@
 <!-- ============ 日志检索（M6） ============ -->
 <div id="tab-logs" class="pane">
   <div class="pane-intro">
-    <div class="ico" style="background:var(--sky-soft);color:var(--sky)">🔎</div>
+    <div class="ico" style="background:var(--sky-soft);color:var(--sky)"><span class="icon" id="introIconLogs"></span></div>
     <div class="txt">
       <h3>日志检索（M6）· 一句话看懂</h3>
       <p>把所有设备、任务产生的<b>运行日志</b>集中起来，按设备 / 级别 / 关键字 / 时间范围快速<b>筛选排查</b>，定位问题不再翻箱倒柜。</p>
@@ -382,8 +474,8 @@
     <h3>查询条件</h3>
     <p class="field-hint">留空的项表示「不限制」。时间格式如 <code>2026-07-27T00:00:00Z</code>，起止可只填其一。</p>
     <div class="row" style="gap:12px">
-      <label>设备: <input id="logDevice" size="18" placeholder="dev-10.0.0.1" /></label>
-      <label>Agent: <input id="logAgent" size="16" placeholder="agent-xyz" /></label>
+      <label>设备: <input id="logDevice" placeholder="dev-10.0.0.1" /></label>
+      <label>Agent: <input id="logAgent" placeholder="agent-xyz" /></label>
       <label>级别:
         <select id="logLevel">
           <option value="">全部</option>
@@ -400,13 +492,13 @@
         </select></label>
     </div>
     <div class="row" style="gap:12px">
-      <label style="flex:1;min-width:240px">关键字: <input id="logKeyword" size="30" placeholder="message 模糊匹配，如 refused" style="flex:1" /></label>
-      <label title="起始时间（RFC3339），可留空">起(from): <input id="logFrom" size="20" placeholder="2026-07-27T00:00:00Z" /></label>
-      <label title="结束时间（RFC3339），可留空">止(to): <input id="logTo" size="20" placeholder="2026-07-27T23:59:59Z" /></label>
+      <label style="flex:1;min-width:240px">关键字: <input id="logKeyword" placeholder="message 模糊匹配，如 refused" style="flex:1;min-width:0" /></label>
+      <label title="起始时间（RFC3339），可留空">起(from): <input id="logFrom" placeholder="2026-07-27T00:00:00Z" /></label>
+      <label title="结束时间（RFC3339），可留空">止(to): <input id="logTo" placeholder="2026-07-27T23:59:59Z" /></label>
       <label title="单次返回最多条数（上限 1000）">条数: <input id="logLimit" type="number" value="200" min="1" max="1000" style="width:70px" /></label>
     </div>
     <div class="btnbar">
-      <button onclick="searchLogs(0)" class="primary" style="background:var(--sky);box-shadow:0 2px 8px rgba(2,132,199,.3)" title="按条件查询日志">🔍 查询</button>
+      <button onclick="searchLogs(0)" class="primary" style="background:var(--sky);box-shadow:0 2px 8px rgba(2,132,199,.3)" title="按条件查询日志"><span class="icon" id="iconLogSearch"></span> 查询</button>
       <button onclick="resetLogFilters()" title="清空查询条件">清空</button>
     </div>
     <div id="logMsg" class="msg"></div>
@@ -428,10 +520,10 @@
 <!-- ============ 监控告警（M7） ============ -->
 <div id="tab-alerts" class="pane">
   <div class="pane-intro">
-    <div class="ico" style="background:var(--rose-soft);color:var(--rose)">🔔</div>
+    <div class="ico" style="background:var(--rose-soft);color:var(--rose)"><span class="icon" id="introIconAlerts"></span></div>
     <div class="txt">
       <h3>监控告警（M7）· 一句话看懂</h3>
-      <p>实时汇聚各设备的<b>异常告警</b>。红色为「严重(critical)」、琥珀色为「警告(warning)」。<b>对正在响的告警，你可以「✓ 确认」已知晓、或「🔕 静默」一段时间不再打扰</b>；问题修复后系统会自动清除。</p>
+      <p>实时汇聚各设备的<b>异常告警</b>。红色为「严重(critical)」、琥珀色为「警告(warning)」。<b>对正在响的告警，你可以「✓ 确认」已知晓、或「静默」一段时间不再打扰</b>；问题修复后系统会自动清除。</p>
     </div>
     <span class="hint-link" onclick="pollAlertsFull()">刷新</span>
   </div>
@@ -456,21 +548,84 @@
         <p><code>GET :9091/metrics</code></p>
         <p class="muted" style="font-size:12.5px">该接口为文本格式，可供 Prometheus / Grafana 抓取。当前 Web 端暂未内置图表展示（后续版本接入）。</p>
         <div class="alert" style="background:var(--info-bg);border-color:var(--info-bg)">
-          💡 想看实时曲线？把 <code>:9091/metrics</code> 配进 Grafana 即可。
+          <span class="icon" id="iconAlertTip" style="vertical-align:middle"></span> 想看实时曲线？把 <code>:9091/metrics</code> 配进 Grafana 即可。
         </div>
       </div>
     </div>
   </div>
 </div>
 
+<!-- ============ 用户中心 ============ -->
+<div id="tab-users" class="pane">
+  <div class="pane-intro">
+    <div class="ico" style="background:var(--accent-soft);color:var(--accent)"><span class="icon" id="introIconUsers"></span></div>
+    <div class="txt">
+      <h3 id="usersTitle">用户中心 · 用户管理</h3>
+      <p id="usersDesc">管理系统所有用户账号：新增、编辑、删除、分配角色、启停账号。</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="mgmt-toolbar">
+      <div class="search-box">
+        <span class="icon" id="iconUsersSearch"></span>
+        <input type="text" id="usersSearchInput" placeholder="搜索用户名/邮箱" oninput="usersSetSearch(this.value)">
+      </div>
+      <button class="primary" onclick="openAddUserModal()"><span class="icon" id="iconUsersAdd"></span> 新增用户</button>
+      <button class="ghost" onclick="pollUsers()"><span class="icon" id="iconUsersRefresh"></span> 刷新</button>
+    </div>
+    <div id="usersTable"><p class="muted">加载中…</p></div>
+  </div>
+</div>
+
+<!-- ============ 角色管理 ============ -->
+<div id="tab-roles" class="pane">
+  <div class="pane-intro">
+    <div class="ico" style="background:var(--teal-soft);color:var(--teal)"><span class="icon" id="introIconRoles"></span></div>
+    <div class="txt">
+      <h3 id="rolesTitle">角色管理</h3>
+      <p id="rolesDesc">管理系统角色：定义角色名称、描述，并为角色分配权限。</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="mgmt-toolbar">
+      <button class="primary" onclick="openAddRoleModal()"><span class="icon" id="iconRolesAdd"></span> 新增角色</button>
+      <button class="ghost" onclick="pollRoles()"><span class="icon" id="iconRolesRefresh"></span> 刷新</button>
+    </div>
+    <div id="rolesTable"><p class="muted">加载中…</p></div>
+  </div>
+</div>
+
+<!-- ============ 权限管理 ============ -->
+<div id="tab-permissions" class="pane">
+  <div class="pane-intro">
+    <div class="ico" style="background:var(--violet-soft);color:var(--violet)"><span class="icon" id="introIconPerms"></span></div>
+    <div class="txt">
+      <h3 id="permsTitle">权限管理</h3>
+      <p id="permsDesc">查看系统所有权限，按分组展示。权限由后端定义，前端只读。</p>
+    </div>
+  </div>
+  <div id="permsList"><p class="muted">加载中…</p></div>
+</div>
+
 </main>
 </div>
 <footer class="footbar">
-  <span>OpsMesh 网段运维中枢 · 控制面运行中 ●</span>
-  <span style="color:var(--text-3)">后端接口：<code>/api/v1/{agents,devices,tasks,cmdb,workflows,deploys,logs,alerts}</code> ｜ 指标 <code>/metrics</code>（Prometheus）｜ 版本 v0.9</span>
+  <span id="footerRunning">OpsMesh 网段运维中枢 · 控制面运行中 ●</span>
+  <span style="color:var(--text-3)" id="footerApi">后端接口：<code>/api/v1/{agents,devices,tasks,cmdb,workflows,deploys,logs,alerts}</code> ｜ 指标 <code>/metrics</code>（Prometheus）｜ 版本 v0.9</span>
 </footer>
 
 <div id="drawer"><button onclick="closeDrawer()">关闭</button><div id="drawerBody"></div></div>
+</div>
+
+<!-- ============ 设备详情 · 监控指标弹窗 ============ -->
+<div id="deviceDetailModal" class="dev-modal-overlay">
+  <div class="dev-modal" role="dialog" aria-modal="true">
+    <div class="dev-modal-header">
+      <h3>设备监控详情</h3>
+      <button class="close-btn" onclick="closeDeviceDetail()" aria-label="关闭">✕</button>
+    </div>
+    <div class="dev-modal-body" id="deviceDetailBody"><p class="muted">加载中…</p></div>
+  </div>
 </div>
 
 <script type="module" src="/assets/main.js"></script>

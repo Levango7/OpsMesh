@@ -224,3 +224,80 @@ func TestHandleProvision_ReturnsToken(t *testing.T) {
 		t.Fatalf("device state = %q, want provisioning", dev.State)
 	}
 }
+
+// TestHandleDeviceMetrics_GET 测试 GET /api/v1/devices/{id}/metrics 端点。
+// 覆盖：正常返回、设备不存在 404、无指标 404、租户隔离。
+func TestHandleDeviceMetrics_GET(t *testing.T) {
+	st := store.NewMemoryStore()
+	// 注册一台 agent，控制面创建占位设备 dev-<agentID>
+	a := st.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1", Hostname: "web-01", OS: "linux", Arch: "amd64"})
+	deviceID := "dev-" + a.AgentID
+	// 注入监控指标
+	st.StoreDeviceMetrics(deviceID, &proto.DeviceMetrics{
+		DeviceID: deviceID,
+		CPU:      proto.CPUMetrics{Cores: 4, Usage: 50.0},
+		Memory:   proto.MemMetrics{Total: 8192, Used: 4096},
+	})
+
+	s := &Server{store: st, requireAuth: false, cfg: &config.Config{}}
+
+	// 正常返回
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/devices/"+deviceID+"/metrics", nil)
+	rec := httptest.NewRecorder()
+	s.handleDeviceRouting(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET metrics = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got proto.DeviceMetrics
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("json decode: %v", err)
+	}
+	if got.CPU.Cores != 4 || got.CPU.Usage != 50.0 {
+		t.Fatalf("CPU = %+v, want cores=4 usage=50", got.CPU)
+	}
+
+	// 设备不存在 -> 404
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/devices/dev-nonexistent/metrics", nil)
+	rec = httptest.NewRecorder()
+	s.handleDeviceRouting(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("nonexistent device = %d, want 404", rec.Code)
+	}
+
+	// 设备存在但无指标 -> 404
+	st.UpsertDevice(&proto.DeviceInfo{DeviceID: "dev-no-metrics", Segment: "seg-a", TenantID: "t1", State: "online"})
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/devices/dev-no-metrics/metrics", nil)
+	rec = httptest.NewRecorder()
+	s.handleDeviceRouting(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("device without metrics = %d, want 404", rec.Code)
+	}
+}
+
+// TestHandleDeviceMetrics_TenantIsolation 租户隔离：他租户设备指标不可访问。
+func TestHandleDeviceMetrics_TenantIsolation(t *testing.T) {
+	st := store.NewMemoryStore()
+	a := st.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+	deviceID := "dev-" + a.AgentID
+	st.StoreDeviceMetrics(deviceID, &proto.DeviceMetrics{DeviceID: deviceID, Hostname: "h1"})
+
+	s := &Server{store: st, requireAuth: true, cfg: &config.Config{}}
+
+	// t2 用户访问 t1 设备 -> 403
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/devices/"+deviceID+"/metrics", nil)
+	req.Header.Set("X-Tenant-ID", "t2")
+	rec := httptest.NewRecorder()
+	s.handleDeviceRouting(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-tenant access = %d, want 403", rec.Code)
+	}
+
+	// t1 用户访问自己设备 -> 200
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/devices/"+deviceID+"/metrics", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
+	rec = httptest.NewRecorder()
+	s.handleDeviceRouting(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("same-tenant access = %d, want 200", rec.Code)
+	}
+}

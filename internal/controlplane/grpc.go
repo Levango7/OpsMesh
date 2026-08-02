@@ -26,13 +26,13 @@ import (
 // grpcServerImpl 实现 grpcx.RegistrationServer 接口，把四条 gRPC 通道转发到 store。
 type grpcServerImpl struct {
 	store       store.Store
-	requireAuth    bool
-	cfg            *config.Config    // 可为 nil（测试）；非 nil 时启用网段发现（P0-2）
-	bus            events.Bus        // 可为 nil（测试）；非 nil 时发布审计/告警事件（P1-5）
-	metrics        *metrics.M        // 可为 nil（测试）；非 nil 时更新观测指标（P2-1）
-	cmdb           *cmdb.Handler     // CMDB 处理器（Phase 1）；nil 时不处理 CmdbReport
-	logs           *logstore.Handler // M6 日志检索处理器；nil 时不落地任务日志
-	srv            *Server           // M3-2B：控制面 Server 引用，nil 时不发布 SSE 事件（测试兼容）
+	requireAuth bool
+	cfg         *config.Config    // 可为 nil（测试）；非 nil 时启用网段发现（P0-2）
+	bus         events.Bus        // 可为 nil（测试）；非 nil 时发布审计/告警事件（P1-5）
+	metrics     *metrics.M        // 可为 nil（测试）；非 nil 时更新观测指标（P2-1）
+	cmdb        *cmdb.Handler     // CMDB 处理器（Phase 1）；nil 时不处理 CmdbReport
+	logs        *logstore.Handler // M6 日志检索处理器；nil 时不落地任务日志
+	srv         *Server           // M3-2B：控制面 Server 引用，nil 时不发布 SSE 事件（测试兼容）
 }
 
 // Register 注册：调用 store.Register，返回分配到的 agentID 与控制面下发配置。
@@ -143,12 +143,22 @@ func (g *grpcServerImpl) checkAgentTenant(ctx context.Context, agentID string) e
 	return nil
 }
 
-// Heartbeat 心跳：转发到 store.Heartbeat。
+// Heartbeat 心跳：转发到 store.Heartbeat；若携带监控指标则缓存到 store。
 func (g *grpcServerImpl) Heartbeat(ctx context.Context, req *grpcx.HeartbeatReq) (*grpcx.Empty, error) {
 	if err := g.checkAgentTenant(ctx, req.AgentID); err != nil {
 		return nil, err
 	}
 	g.store.Heartbeat(req.AgentID, req.Status, req.Load)
+	// 监控指标上报：agent 每 30s 采集一次系统指标随心跳上报，控制面缓存最新值供 API 查询。
+	if req.Metrics != nil {
+		// 若 metrics.DeviceID 为空，用 dev-<agentID> 兜底（与 Register 创建占位设备的 ID 对齐）。
+		deviceID := req.Metrics.DeviceID
+		if deviceID == "" {
+			deviceID = "dev-" + req.AgentID
+			req.Metrics.DeviceID = deviceID
+		}
+		g.store.StoreDeviceMetrics(deviceID, req.Metrics)
+	}
 	return &grpcx.Empty{}, nil
 }
 
@@ -202,9 +212,9 @@ func (g *grpcServerImpl) ReportResult(ctx context.Context, res *proto.TaskResult
 		}
 		g.bus.Publish(ctx, events.Event{
 			TenantID: "", UserID: "", Action: "report_result",
-			Target:   dr.TaskID,
-			Detail:   fmt.Sprintf("exitCode=%d", dr.ExitCode),
-			Level:    lvl,
+			Target: dr.TaskID,
+			Detail: fmt.Sprintf("exitCode=%d", dr.ExitCode),
+			Level:  lvl,
 		})
 	}
 	// M3-2B SSE：通知前端任务状态已变更（结果上报 → done/failed，前端任务表刷新）。

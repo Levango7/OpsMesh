@@ -100,16 +100,16 @@ func dsnForSchema(baseDSN, schema string) string {
 //
 // 线程安全：所有字段访问经 m.mu 保护。store 方法本身不回调 MultiSchemaStore，无死锁风险。
 type MultiSchemaStore struct {
-	mu          sync.RWMutex
-	baseDSN     string // 基础 DSN（database 名会被替换为 schema 名）
-	redisAddr   string // Redis 地址（所有 schema 共享，仅作缓存）
-	namer       SchemaNamer
+	mu           sync.RWMutex
+	baseDSN      string // 基础 DSN（database 名会被替换为 schema 名）
+	redisAddr    string // Redis 地址（所有 schema 共享，仅作缓存）
+	namer        SchemaNamer
 	storeFactory func(schema string) (Store, error) // 创建新 schema 的 store（生产用 *SQLStore，测试可注入 mock）
-	stores      map[string]Store                     // tenantID -> per-tenant store
+	stores       map[string]Store                   // tenantID -> per-tenant store
 
 	// 配置项（创建新 schema 时传播给 *SQLStore）
-	demo  bool
-	bus   events.Bus
+	demo   bool
+	bus    events.Bus
 	secret string
 
 	// 反查索引：无 tenant 参数的方法经此定位租户
@@ -395,6 +395,36 @@ func (m *MultiSchemaStore) RetireStaleDevices(maxAge time.Duration) int {
 		total += s.RetireStaleDevices(maxAge)
 	}
 	return total
+}
+
+// StoreDeviceMetrics 存储设备最新监控指标：经 deviceTenant 反查租户路由。
+// deviceID 未知（无租户索引）时尝试用 metrics.TenantID 兜底（agent 首次上报时索引可能未建）。
+func (m *MultiSchemaStore) StoreDeviceMetrics(deviceID string, metrics *proto.DeviceMetrics) {
+	if deviceID == "" || metrics == nil {
+		return
+	}
+	tenant := m.lookupDeviceTenant(deviceID)
+	if tenant == "" {
+		return // 未知设备，丢弃（避免误写到 default schema）
+	}
+	s, err := m.storeFor(tenant)
+	if err != nil {
+		return
+	}
+	s.StoreDeviceMetrics(deviceID, metrics)
+}
+
+// DeviceMetrics 返回设备最新监控指标：经 deviceTenant 反查租户路由。
+func (m *MultiSchemaStore) DeviceMetrics(deviceID string) *proto.DeviceMetrics {
+	tenant := m.lookupDeviceTenant(deviceID)
+	if tenant == "" {
+		return nil
+	}
+	s, err := m.storeFor(tenant)
+	if err != nil {
+		return nil
+	}
+	return s.DeviceMetrics(deviceID)
 }
 
 // ============================================================================
@@ -741,11 +771,150 @@ func (m *MultiSchemaStore) IsLeader() bool {
 
 // 编译期断言：MultiSchemaStore 实现 Store 接口。
 var (
-	_ DeviceStore = (*MultiSchemaStore)(nil)
-	_ TaskStore   = (*MultiSchemaStore)(nil)
-	_ AlertStore  = (*MultiSchemaStore)(nil)
-	_ AuditStore  = (*MultiSchemaStore)(nil)
-	_ TokenStore  = (*MultiSchemaStore)(nil)
-	_ LeaderStore = (*MultiSchemaStore)(nil)
-	_ Store       = (*MultiSchemaStore)(nil)
+	_ DeviceStore     = (*MultiSchemaStore)(nil)
+	_ TaskStore       = (*MultiSchemaStore)(nil)
+	_ AlertStore      = (*MultiSchemaStore)(nil)
+	_ AuditStore      = (*MultiSchemaStore)(nil)
+	_ TokenStore      = (*MultiSchemaStore)(nil)
+	_ LeaderStore     = (*MultiSchemaStore)(nil)
+	_ UserStore       = (*MultiSchemaStore)(nil)
+	_ RoleStore       = (*MultiSchemaStore)(nil)
+	_ PermissionStore = (*MultiSchemaStore)(nil)
+	_ Store           = (*MultiSchemaStore)(nil)
 )
+
+// ============================================================================
+// UserStore / RoleStore / PermissionStore 实现
+// ============================================================================
+//
+// 多租户 schema 隔离下用户中心的路由策略：
+//   - 用户/角色/权限为全局资源（跨租户共享），不按租户隔离；
+//   - 采用"任意 schema 即可读写"策略：选第一个已创建的 schema 转发，
+//     若尚无 schema 则回退到内置全局 store（惰性创建一个 "global" schema）。
+//   - 这与 device/task/alert 等租户隔离资源不同：用户中心是平台级管理，
+//     admin/operator/viewer 等预定义用户需跨租户可见。
+//
+// 注意：当前实现为简化版——多 schema 部署下用户中心路由到任一 schema，
+// 不保证跨 schema 的用户/角色数据一致性（生产多 schema 部署需另行设计全局 schema）。
+// 单 schema（memory 或单 mysql）部署下行为完全正确。
+
+// globalStore 返回用于用户中心的全局 store（任一已创建 schema 或惰性创建 "global" schema）。
+// 用户/角色/权限为平台级资源，不按租户隔离，故路由到任一 schema 即可。
+func (m *MultiSchemaStore) globalStore() (Store, error) {
+	m.mu.RLock()
+	for _, s := range m.stores {
+		m.mu.RUnlock()
+		return s, nil
+	}
+	m.mu.RUnlock()
+	// 尚无 schema：惰性创建一个 "global" schema 专用于用户中心。
+	return m.storeFor("global")
+}
+
+// GetUser 按 ID 返回单用户（路由到全局 store）。
+func (m *MultiSchemaStore) GetUser(id string) *User {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.GetUser(id)
+}
+
+// GetUserByUsername 按用户名返回单用户（路由到全局 store）。
+func (m *MultiSchemaStore) GetUserByUsername(username string) *User {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.GetUserByUsername(username)
+}
+
+// ListUsers 返回全部用户（路由到全局 store）。
+func (m *MultiSchemaStore) ListUsers() []*User {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.ListUsers()
+}
+
+// CreateUser 创建用户（路由到全局 store）。
+func (m *MultiSchemaStore) CreateUser(u *User) *User {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.CreateUser(u)
+}
+
+// UpdateUser 更新用户（路由到全局 store）。
+func (m *MultiSchemaStore) UpdateUser(u *User) bool {
+	s, err := m.globalStore()
+	if err != nil {
+		return false
+	}
+	return s.UpdateUser(u)
+}
+
+// DeleteUser 删除用户（路由到全局 store）。
+func (m *MultiSchemaStore) DeleteUser(id string) bool {
+	s, err := m.globalStore()
+	if err != nil {
+		return false
+	}
+	return s.DeleteUser(id)
+}
+
+// GetRole 按 ID 返回单角色（路由到全局 store）。
+func (m *MultiSchemaStore) GetRole(id string) *Role {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.GetRole(id)
+}
+
+// ListRoles 返回全部角色（路由到全局 store）。
+func (m *MultiSchemaStore) ListRoles() []*Role {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.ListRoles()
+}
+
+// CreateRole 创建角色（路由到全局 store）。
+func (m *MultiSchemaStore) CreateRole(r *Role) *Role {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.CreateRole(r)
+}
+
+// UpdateRole 更新角色（路由到全局 store）。
+func (m *MultiSchemaStore) UpdateRole(r *Role) bool {
+	s, err := m.globalStore()
+	if err != nil {
+		return false
+	}
+	return s.UpdateRole(r)
+}
+
+// DeleteRole 删除角色（路由到全局 store）。
+func (m *MultiSchemaStore) DeleteRole(id string) bool {
+	s, err := m.globalStore()
+	if err != nil {
+		return false
+	}
+	return s.DeleteRole(id)
+}
+
+// ListPermissions 返回全部预定义权限（路由到全局 store）。
+func (m *MultiSchemaStore) ListPermissions() []*Permission {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.ListPermissions()
+}

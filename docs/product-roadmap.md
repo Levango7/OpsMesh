@@ -34,13 +34,13 @@ MVP 功能完成度高，但面向生产规模化仍存在以下结构性短板�
 
 | 问题类别 | 具体表现 | 风险等级 |
 |---|---|---|
-| 文档脱节 | `README.md` 与 `DELIVERY.md` 对 Helm Chart、Argo CD 等能力描述存在出入，部分承诺能力仓库未提供 | 中 |
+| 文档脱节 | `README.md` 与 `DELIVERY.md` 曾对 Helm Chart 描述为"规划中"，与仓库实际（Helm Chart 已提供）不符；Argo CD GitOps 仍属规划中 | 低（已部分纠正：2026-08-02 修订 README/DELIVERY 消除 Helm 矛盾） |
 | 供应链风险 | `kafka-go` 须钉 `v0.4.48`（最后兼容 Go 1.22 版本），`v0.4.49+` 要求 Go ≥ 1.23，升级窗口受限 | 中 |
 | 纵深防御缺失 | agent shell 命令无白名单、file 路径无白名单、bootstrap token 编码未防 shell 注入、webhook/autoProvision URL 无 SSRF 校验 | 高 |
 | 测试覆盖不足 | `sql.go` 约 57KB 仅 1 个测试；12 个 HTTP handler 无测试；8 个后台 loop 无测试；前端零测试 | 高 |
 | 前端工程化弱 | 仪表盘为原生 JS 单文件约 986 行，无模块化/类型/构建/Lint | 中 |
 | 架构内聚不足 | Store 巨型接口（40+ 方法）违反接口隔离原则（ISP）；`domain` 包仅有数据结构无业务行为；Registry 仅一对一转发 store；agent 每次 RPC 重新 Dial | 中 |
-| 交付物缺口 | `docker-compose.yaml`、Helm Chart、`goreleaser` 配置、systemd unit 等交付物在 README 中提及但仓库未提供或未完善 | 中 |
+| 交付物缺口 | `docker-compose.yaml` 与 Helm Chart（`deploy/helm/opsmesh/`）现已提供；`goreleaser` 配置、systemd unit、Argo CD GitOps 仓库仍为规划/待完善 | 低 |
 
 ---
 
@@ -286,16 +286,19 @@ agent 侧 `grpcclient` 在每次 RPC 调用时重新 `Dial` 控制面，引入�
 
 ### 5.3 Helm Chart
 
-补 `deploy/helm/opsmesh/`，兑现 README 承诺：
+✅ **已交付（2026-08-02）**：`deploy/helm/opsmesh/` 已落地，含以下全套模板，兑现 README 承诺：
 
 | 模板 | 资源 | 说明 |
 |---|---|---|
-| controlplane | Deployment + Service | 多副本，PDB，liveness/readiness probe |
-| agent | DaemonSet | 每节点一个， tolerations 支持管理节点 |
+| controlplane | Deployment + Service + PDB | 多副本，PDB(minAvailable=1)，liveness/readiness probe |
+| agent | DaemonSet + Service | 每节点一个， tolerations 支持管理节点 |
 | mysql | StatefulSet + Service | 持久化 PVC |
 | redis | StatefulSet + Service | 持久化 PVC |
+| configmap / secret | — | provision-secret / mysql-dsn / TLS 证书挂载 |
 | values.yaml | — | 默认值 |
 | values-production.yaml | — | 生产 overlay：副本数、资源、TLS、require-auth |
+
+> 后续仅需补 Argo CD ApplicationSet 网段批量渲染（见 5.4）。
 
 ### 5.4 GitOps
 
@@ -543,6 +546,6 @@ agent 侧 `grpcclient` 在每次 RPC 调用时重新 `Dial` 控制面，引入�
 
 本文档中所有"计划/目标/演进/远期"措辞均为规划意图，不代表已实现能力。已实现能力以 `README.md` 功能矩阵与 `DELIVERY.md` 交付说明为准。具体而言：
 
-- Helm Chart、Argo CD ApplicationSet、`goreleaser`、`docker-compose.yaml`、systemd unit：README 已提及但仓库未提供或未完善，属 M1/M2 计划交付物
-- Store 接口拆分、DDD 实质化、protobuf、Vue 3 迁移、SSE、operator、联邦、schema 隔离：均为演进规划，当前未实现
+- Helm Chart、`docker-compose.yaml`：README 已提及且仓库已提供（已交付，见 5.3）。Argo CD ApplicationSet、`goreleaser`、systemd unit：仍为 M1/M2 计划交付物，仓库未提供或未完善
+- Store 接口拆分、DDD 实质化、protobuf、Vue 3 迁移、SSE、operator、schema 隔离：均为演进规划，当前未实现。联邦（控制面跨网段任务转发 mTLS + HMAC 签名验签，P1-6）已于 2026-08-02 落地
 - 安全加固项（命令白名单、JWT 验签、SSRF 校验、CSP 收紧等）：均为规划，当前未实现

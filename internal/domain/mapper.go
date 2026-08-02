@@ -14,6 +14,7 @@ func AgentFromProto(a *proto.AgentInfo) *Agent {
 		AgentID: a.AgentID, Hostname: a.Hostname, Segment: a.Segment,
 		TenantID: a.TenantID, Addr: a.Addr, GRPCPort: a.GRPCPort,
 		MetricsPort: a.MetricsPort, Status: a.Status, Load: a.Load, LastSeen: a.LastSeen,
+		OS: a.OS, Arch: a.Arch,
 		// 安全（P0-F1）：OnboardDeviceID 为服务端内部字段，绝不从线上 agent 自报拷贝——
 		// 仅由 gRPC Register 经 ConsumeToken 校验后回填。入站防腐层必须剔除，防跨租户设备劫持。
 	}
@@ -29,6 +30,7 @@ func AgentToProto(a *Agent) *proto.AgentInfo {
 		TenantID: a.TenantID, Addr: a.Addr, GRPCPort: a.GRPCPort,
 		MetricsPort: a.MetricsPort, Status: a.Status, Load: a.Load, LastSeen: a.LastSeen,
 		OnboardDeviceID: a.OnboardDeviceID,
+		OS:              a.OS, Arch: a.Arch,
 	}
 }
 
@@ -41,6 +43,7 @@ func DeviceFromProto(d *proto.DeviceInfo) *Device {
 		DeviceID: d.DeviceID, Segment: d.Segment, TenantID: d.TenantID,
 		IP: d.IP, AgentID: d.AgentID, State: d.State, TaskState: d.TaskState,
 		Managed: d.Managed, LastResult: d.LastResult, LastResultAt: d.LastResultAt, Retired: d.Retired,
+		Hostname: d.Hostname, OS: d.OS, Arch: d.Arch,
 	}
 }
 
@@ -53,6 +56,7 @@ func DeviceToProto(d *Device) *proto.DeviceInfo {
 		DeviceID: d.DeviceID, Segment: d.Segment, TenantID: d.TenantID,
 		IP: d.IP, AgentID: d.AgentID, State: d.State, TaskState: d.TaskState,
 		Managed: d.Managed, LastResult: d.LastResult, LastResultAt: d.LastResultAt, Retired: d.Retired,
+		Hostname: d.Hostname, OS: d.OS, Arch: d.Arch,
 	}
 }
 

@@ -38,16 +38,21 @@ import (
 // 仅 leader 执行周期性协调任务（reclaim / schedule / provision / 离线归档），
 // 避免重复派生/回收。每个进程实例持唯一 instanceID 参与抢占。
 type SQLStore struct {
-	db  *sql.DB
-	rdb *redis.Client
-	bus events.Bus // 事件总线（P1-5）；可 nil（测试/默认 noop）
+	db   *sql.DB
+	rdb  *redis.Client
+	bus  events.Bus // 事件总线（P1-5）；可 nil（测试/默认 noop）
 	demo bool       // 演示模式（P0-5）：开启时注册预置 uname -a
 
-	instanceID string    // 本进程实例唯一标识（A3 选主参与方）
-	mu         sync.Mutex // 保护 isLeader / leaseUntil 的读写
+	instanceID string     // 本进程实例唯一标识（A3 选主参与方）
+	mu         sync.Mutex // 保护 isLeader / leaseUntil / deviceMetrics 的读写
 	isLeader   bool       // 本实例当前是否自认为 leader
-	leaseUntil time.Time // 当前租约过期时间（UTC）
-	secret     string      // B1 install token 的 HMAC 签名密钥（WithSecret 注入；空则构造时随机）
+	leaseUntil time.Time  // 当前租约过期时间（UTC）
+	secret     string     // B1 install token 的 HMAC 签名密钥（WithSecret 注入；空则构造时随机）
+
+	// 设备实时监控指标缓存：deviceID -> 最新指标。
+	// 高频时序数据落库应由 Prometheus/InfluxDB 承担，控制面仅缓存最新值供 API 查询，
+	// 避免给 MySQL 写入压力（每 30s/agent 一次写）。
+	deviceMetrics map[string]*proto.DeviceMetrics
 }
 
 // DB 暴露底层 *sql.DB 给 CMDB 等需要同库连接的子系统复用连接池。
@@ -108,7 +113,7 @@ func NewSQLStore(dsn, redisAddr string) (*SQLStore, error) {
 	}
 	instID := fmt.Sprintf("%s-%d-%d", host, os.Getpid(), time.Now().UnixNano())
 
-	s := &SQLStore{db: db, rdb: rdb, instanceID: instID, secret: mustRandHex(32)}
+	s := &SQLStore{db: db, rdb: rdb, instanceID: instID, secret: mustRandHex(32), deviceMetrics: make(map[string]*proto.DeviceMetrics)}
 	if err := s.initSchema(); err != nil {
 		log.Printf("[store] 建表失败（运行期可能不可用）: %v", err)
 	}
@@ -196,9 +201,9 @@ func (s *SQLStore) initSchema() error {
 			detail TEXT,
 			created_at DATETIME
 		)`,
-	// A3 选主租约表：单行（id=1）记录当前 leader 实例与租约过期时间。
-	// 多副本控制面通过原子 INSERT ... ON DUPLICATE KEY UPDATE 抢占/续租。
-	`CREATE TABLE IF NOT EXISTS leader_lease (
+		// A3 选主租约表：单行（id=1）记录当前 leader 实例与租约过期时间。
+		// 多副本控制面通过原子 INSERT ... ON DUPLICATE KEY UPDATE 抢占/续租。
+		`CREATE TABLE IF NOT EXISTS leader_lease (
 			id INT PRIMARY KEY DEFAULT 1,
 			holder VARCHAR(128),
 			expires_at DATETIME,
@@ -212,6 +217,30 @@ func (s *SQLStore) initSchema() error {
 			tenant_id VARCHAR(64),
 			expires_at DATETIME,
 			consumed BOOLEAN DEFAULT 0
+		)`,
+		// P0-1 用户中心（RBAC）：users / roles / permissions 三表。
+		// 用户名唯一索引兜底（CreateUser 重复校验 + INSERT 失败均返回 nil）。
+		`CREATE TABLE IF NOT EXISTS users (
+			id VARCHAR(64) PRIMARY KEY,
+			username VARCHAR(64) NOT NULL UNIQUE,
+			email VARCHAR(255),
+			password_hash VARCHAR(255),
+			status VARCHAR(16) DEFAULT 'active',
+			role_ids JSON,
+			created_at DATETIME
+		)`,
+		`CREATE TABLE IF NOT EXISTS roles (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(64) NOT NULL UNIQUE,
+			description VARCHAR(255),
+			permissions JSON,
+			created_at DATETIME
+		)`,
+		`CREATE TABLE IF NOT EXISTS permissions (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(64) NOT NULL UNIQUE,
+			description VARCHAR(255),
+			group_name VARCHAR(64)
 		)`,
 	}
 	for _, q := range stmts {
@@ -240,6 +269,10 @@ func (s *SQLStore) initSchema() error {
 	s.alterColumnIfMissing(ctx, "devices", "last_result", "VARCHAR(16)")
 	s.alterColumnIfMissing(ctx, "devices", "last_result_at", "DATETIME")
 	s.alterColumnIfMissing(ctx, "devices", "retired", "BOOLEAN DEFAULT 0")
+	// 设备基础元信息列（agent 注册时上报，设备列表/详情展示用）。
+	s.alterColumnIfMissing(ctx, "devices", "hostname", "VARCHAR(255)")
+	s.alterColumnIfMissing(ctx, "devices", "os", "VARCHAR(32)")
+	s.alterColumnIfMissing(ctx, "devices", "arch", "VARCHAR(32)")
 	s.alterColumnIfMissing(ctx, "tasks", "retry_count", "INT DEFAULT 0")
 	s.alterColumnIfMissing(ctx, "tasks", "max_retries", "INT DEFAULT 0")
 	s.alterColumnIfMissing(ctx, "tasks", "dead_letter", "BOOLEAN DEFAULT 0")
@@ -341,6 +374,10 @@ func (s *SQLStore) initSchema() error {
 		)`); err != nil {
 		log.Printf("[store] 建 ci_attr_templates 表失败（非致命）: %v", err)
 	}
+	// P0-1 用户中心：幂等 seed 默认权限/角色/用户（与 MemoryStore 一致，保 HA 多副本身份一致）。
+	if err := s.seedRBAC(ctx); err != nil {
+		log.Printf("[store] seedRBAC 失败（非致命）: %v", err)
+	}
 	return nil
 }
 
@@ -407,7 +444,6 @@ ON DUPLICATE KEY UPDATE
 		log.Printf("[store] Register upsert agents 失败 %s: %v", a.AgentID, err)
 	}
 
-
 	// B1 自动纳管闭环：若携带 OnboardDeviceID（由 gRPC Register 校验 install token 后回填），
 	// 翻转该「已发现候选设备」为已纳管（Managed=1, State=online, 绑定 agentID）；
 	// 否则按 agent 即设备语义新建占位设备 dev-<agentID>。
@@ -420,21 +456,21 @@ ON DUPLICATE KEY UPDATE
 			log.Printf("[store] Register onboard 拒绝跨租户翻转 %s（device tenant=%q, agent tenant=%q）", a.OnboardDeviceID, curTenant, a.TenantID)
 		} else {
 			_, err = s.db.ExecContext(ctx, `
-INSERT INTO devices (device_id, segment, tenant_id, ip, agent_id, state, task_state, managed)
-VALUES (?, ?, ?, ?, ?, 'online', 'idle', 1)
-ON DUPLICATE KEY UPDATE segment=VALUES(segment), tenant_id=VALUES(tenant_id), ip=VALUES(ip), agent_id=VALUES(agent_id), state='online', task_state='idle', managed=1
-`, a.OnboardDeviceID, a.Segment, a.TenantID, a.Addr, a.AgentID)
+INSERT INTO devices (device_id, segment, tenant_id, ip, agent_id, state, task_state, managed, hostname, os, arch)
+VALUES (?, ?, ?, ?, ?, 'online', 'idle', 1, ?, ?, ?)
+ON DUPLICATE KEY UPDATE segment=VALUES(segment), tenant_id=VALUES(tenant_id), ip=VALUES(ip), agent_id=VALUES(agent_id), state='online', task_state='idle', managed=1, hostname=VALUES(hostname), os=VALUES(os), arch=VALUES(arch)
+`, a.OnboardDeviceID, a.Segment, a.TenantID, a.Addr, a.AgentID, a.Hostname, a.OS, a.Arch)
 			if err != nil {
 				log.Printf("[store] Register onboard 设备失败 %s: %v", a.OnboardDeviceID, err)
 			}
 		}
 	} else {
 		_, err = s.db.ExecContext(ctx, `
-INSERT INTO devices (device_id, segment, tenant_id, ip, agent_id, state, task_state, managed)
-VALUES (?, ?, ?, ?, ?, 'online', 'idle', 1)
+INSERT INTO devices (device_id, segment, tenant_id, ip, agent_id, state, task_state, managed, hostname, os, arch)
+VALUES (?, ?, ?, ?, ?, 'online', 'idle', 1, ?, ?, ?)
 ON DUPLICATE KEY UPDATE
-	segment=VALUES(segment), tenant_id=VALUES(tenant_id), ip=VALUES(ip), state=VALUES(state), task_state=VALUES(task_state), managed=1
-`, "dev-"+a.AgentID, a.Segment, a.TenantID, a.Addr, a.AgentID, "online", "idle")
+	segment=VALUES(segment), tenant_id=VALUES(tenant_id), ip=VALUES(ip), state=VALUES(state), task_state=VALUES(task_state), managed=1, hostname=VALUES(hostname), os=VALUES(os), arch=VALUES(arch)
+`, "dev-"+a.AgentID, a.Segment, a.TenantID, a.Addr, a.AgentID, "online", "idle", a.Hostname, a.OS, a.Arch)
 	}
 	if err != nil {
 		log.Printf("[store] Register insert devices 失败 %s: %v", a.AgentID, err)
@@ -484,9 +520,9 @@ func (s *SQLStore) Heartbeat(agentID, status string, load int) bool {
 		c2, c2cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer c2cancel()
 		b, _ := json.Marshal(map[string]interface{}{
-			"agentID": agentID,
-			"status":  status,
-			"load":    load,
+			"agentID":  agentID,
+			"status":   status,
+			"load":     load,
 			"lastSeen": time.Now().UTC(),
 		})
 		if err := s.rdb.HSet(c2, "opsmesh:agents", agentID, string(b)).Err(); err != nil {
@@ -582,7 +618,7 @@ ON DUPLICATE KEY UPDATE
 				TenantID:  tenantID,
 				DeviceID:  "dev-" + res.AgentID,
 				AgentID:   res.AgentID,
-				Severity: "critical",
+				Severity:  "critical",
 				Message:   fmt.Sprintf("task %s dead-letter after %d retries (exitCode=%d)", res.TaskID, rc, res.ExitCode),
 				CreatedAt: time.Now().UTC(),
 			})
@@ -623,7 +659,7 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 		return
 	}
 	type rec struct {
-		id  string
+		id   string
 		deps string
 	}
 	var blocked []rec
@@ -694,7 +730,7 @@ func (s *SQLStore) Snapshot(tenantID string) map[string][]proto.DeviceInfo {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	q := `SELECT device_id, segment, tenant_id, ip, agent_id, state, task_state, managed, last_result, last_result_at, retired FROM devices`
+	q := `SELECT device_id, segment, tenant_id, ip, agent_id, state, task_state, managed, last_result, last_result_at, retired, hostname, os, arch FROM devices`
 	var args []interface{}
 	where := []string{`(retired IS NULL OR retired=0)`} // F5 退役设备不出现在活跃清单
 	if tenantID != "" {
@@ -715,8 +751,9 @@ func (s *SQLStore) Snapshot(tenantID string) map[string][]proto.DeviceInfo {
 		var managed, retired bool
 		var lastResult sql.NullString
 		var lastResultAt sql.NullTime
+		var hostname, osName, arch sql.NullString
 		if err := rows.Scan(&d.DeviceID, &d.Segment, &d.TenantID, &d.IP, &d.AgentID,
-			&d.State, &d.TaskState, &managed, &lastResult, &lastResultAt, &retired); err != nil {
+			&d.State, &d.TaskState, &managed, &lastResult, &lastResultAt, &retired, &hostname, &osName, &arch); err != nil {
 			log.Printf("[store] Snapshot 扫描失败: %v", err)
 			continue
 		}
@@ -727,6 +764,15 @@ func (s *SQLStore) Snapshot(tenantID string) map[string][]proto.DeviceInfo {
 		}
 		if lastResultAt.Valid {
 			d.LastResultAt = lastResultAt.Time
+		}
+		if hostname.Valid {
+			d.Hostname = hostname.String
+		}
+		if osName.Valid {
+			d.OS = osName.String
+		}
+		if arch.Valid {
+			d.Arch = arch.String
 		}
 		out[d.Segment] = append(out[d.Segment], d)
 	}
@@ -768,17 +814,35 @@ func (s *SQLStore) Device(id string) *proto.DeviceInfo {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	row := s.db.QueryRowContext(ctx,
-		`SELECT device_id, segment, tenant_id, ip, agent_id, state, task_state, managed, last_result, last_result_at, retired FROM devices WHERE device_id=?`, id)
+		`SELECT device_id, segment, tenant_id, ip, agent_id, state, task_state, managed, last_result, last_result_at, retired, hostname, os, arch FROM devices WHERE device_id=?`, id)
 	var d proto.DeviceInfo
 	var managed, retired bool
 	var lastResult sql.NullString
 	var lastResultAt sql.NullTime
+	var hostname, osName, arch sql.NullString
 	if err := row.Scan(&d.DeviceID, &d.Segment, &d.TenantID, &d.IP, &d.AgentID,
-		&d.State, &d.TaskState, &managed, &lastResult, &lastResultAt, &retired); err != nil {
+		&d.State, &d.TaskState, &managed, &lastResult, &lastResultAt, &retired, &hostname, &osName, &arch); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] Device 查询失败 %s: %v", id, err)
 		}
 		return nil
+	}
+	d.Managed = managed
+	d.Retired = retired
+	if lastResult.Valid {
+		d.LastResult = lastResult.String
+	}
+	if lastResultAt.Valid {
+		d.LastResultAt = lastResultAt.Time
+	}
+	if hostname.Valid {
+		d.Hostname = hostname.String
+	}
+	if osName.Valid {
+		d.OS = osName.String
+	}
+	if arch.Valid {
+		d.Arch = arch.String
 	}
 	return &d
 }
@@ -970,8 +1034,8 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 	defer rows.Close()
 	type tpl struct {
 		id, agentID, tenantID, typ, command, content, path, schedule string
-		maxRetries                                                            int
-		lastFiredAt                                                            time.Time
+		maxRetries                                                   int
+		lastFiredAt                                                  time.Time
 	}
 	due := make([]tpl, 0)
 	for rows.Next() {
@@ -1517,4 +1581,28 @@ func (s *SQLStore) RetireStaleDevices(maxAge time.Duration) int {
 	}
 	n, _ := res.RowsAffected()
 	return int(n)
+}
+
+// StoreDeviceMetrics 缓存设备最新监控指标（agent 心跳上报，仅保留最新值）。
+// 高频时序数据落库应由 Prometheus 承担，控制面仅缓存最新值供 GET /api/v1/devices/{id}/metrics 查询。
+func (s *SQLStore) StoreDeviceMetrics(deviceID string, metrics *proto.DeviceMetrics) {
+	if deviceID == "" || metrics == nil {
+		return
+	}
+	cp := *metrics
+	s.mu.Lock()
+	s.deviceMetrics[deviceID] = &cp
+	s.mu.Unlock()
+}
+
+// DeviceMetrics 返回设备最新监控指标缓存（无数据时返回 nil）。
+func (s *SQLStore) DeviceMetrics(deviceID string) *proto.DeviceMetrics {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.deviceMetrics[deviceID]
+	if !ok || v == nil {
+		return nil
+	}
+	cp := *v
+	return &cp
 }

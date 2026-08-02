@@ -560,3 +560,65 @@ func TestMemoryStore_Register_Onboard_TenantMismatch(t *testing.T) {
 	}
 }
 
+// TestMemoryStore_DeviceMetrics 存储与查询设备最新监控指标。
+// 覆盖：写入后可读到、nil 入参安全、空 deviceID 安全、返回深拷贝（外部修改不影响内部）。
+func TestMemoryStore_DeviceMetrics(t *testing.T) {
+	m := NewMemoryStore()
+	// 初始无数据。
+	if got := m.DeviceMetrics("dev-1"); got != nil {
+		t.Fatalf("DeviceMetrics(dev-1) = %+v, want nil", got)
+	}
+	metrics := &proto.DeviceMetrics{
+		DeviceID: "dev-1",
+		Hostname: "web-01",
+		OS:       "linux",
+		Arch:     "amd64",
+		CPU:      proto.CPUMetrics{Cores: 4, Usage: 12.5, Model: "Intel Xeon"},
+		Memory:   proto.MemMetrics{Total: 8192, Used: 2048, Available: 6144, Usage: 25.0},
+	}
+	m.StoreDeviceMetrics("dev-1", metrics)
+	got := m.DeviceMetrics("dev-1")
+	if got == nil {
+		t.Fatal("DeviceMetrics(dev-1) = nil, want non-nil")
+	}
+	if got.CPU.Cores != 4 || got.CPU.Usage != 12.5 {
+		t.Fatalf("CPU = %+v, want cores=4 usage=12.5", got.CPU)
+	}
+	if got.Memory.Total != 8192 {
+		t.Fatalf("Memory.Total = %d, want 8192", got.Memory.Total)
+	}
+	// 深拷贝：外部修改不应影响 store 内部缓存。
+	got.CPU.Cores = 999
+	if got2 := m.DeviceMetrics("dev-1"); got2.CPU.Cores != 4 {
+		t.Fatalf("深拷贝失效：内部缓存被外部修改 cores=%d, want 4", got2.CPU.Cores)
+	}
+	// 安全：nil 入参与空 deviceID 不 panic。
+	m.StoreDeviceMetrics("", metrics)
+	m.StoreDeviceMetrics("dev-1", nil)
+	// 上述空 deviceID 不应写入新键，dev-1 仍可读。
+	if got := m.DeviceMetrics("dev-1"); got == nil {
+		t.Fatal("StoreDeviceMetrics(dev-1, nil) 误清了已有缓存")
+	}
+}
+
+// TestMemoryStore_Register_FillsDeviceMeta 注册时上报 OS/Arch 应填充到 DeviceInfo。
+func TestMemoryStore_Register_FillsDeviceMeta(t *testing.T) {
+	m := NewMemoryStore()
+	a := m.Register(&proto.AgentInfo{
+		AgentID: "agent-meta", Hostname: "web-01", Segment: "seg-a",
+		OS: "linux", Arch: "amd64",
+	})
+	dev := m.Device("dev-" + a.AgentID)
+	if dev == nil {
+		t.Fatal("占位设备未创建")
+	}
+	if dev.Hostname != "web-01" {
+		t.Fatalf("dev.Hostname = %q, want web-01", dev.Hostname)
+	}
+	if dev.OS != "linux" {
+		t.Fatalf("dev.OS = %q, want linux", dev.OS)
+	}
+	if dev.Arch != "amd64" {
+		t.Fatalf("dev.Arch = %q, want amd64", dev.Arch)
+	}
+}

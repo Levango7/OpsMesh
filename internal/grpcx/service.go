@@ -20,10 +20,11 @@ type RegisterResp struct {
 
 // HeartbeatReq agent 心跳请求。
 type HeartbeatReq struct {
-	AgentID    string            `json:"agentID"`
-	Status     string            `json:"status"`
-	Load       int               `json:"load"`
-	CmdbReport *proto.CmdbReport `json:"cmdbReport,omitempty"` // CMDB 增量上报（cmdb 选填）
+	AgentID    string               `json:"agentID"`
+	Status     string               `json:"status"`
+	Load       int                  `json:"load"`
+	CmdbReport *proto.CmdbReport    `json:"cmdbReport,omitempty"` // CMDB 增量上报（cmdb 选填）
+	Metrics    *proto.DeviceMetrics `json:"metrics,omitempty"`    // 实时监控指标（agent 周期采集，选填）
 }
 
 // Empty 无业务负载的空响应（心跳/上报结果用）。

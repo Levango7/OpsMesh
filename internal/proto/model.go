@@ -19,10 +19,13 @@ type AgentInfo struct {
 	LastSeen    time.Time `json:"lastSeen"`    // 最近一次心跳时间
 	// B1 自动纳管闭环：agent 经 bootstrap 安装后携带一次性 install token 注册。
 	// InstallToken 由控制面 Provision 发放（HMAC 签名、一次性、限时），agent 不可伪造。
-	InstallToken     string `json:"installToken"`
+	InstallToken string `json:"installToken"`
 	// OnboardDeviceID 为内部字段（由 gRPC Register 校验 token 后回填，不依赖 agent 自报）：
 	// 非空时 Register 把该「已发现候选设备」翻转 onboarded（Managed=true），而非新建占位设备。
 	OnboardDeviceID string `json:"onboardDeviceID"`
+	// 目标机基础元信息（agent 注册时上报，控制面据此填充对应 DeviceInfo 的 Hostname/OS/Arch）。
+	OS   string `json:"os"`   // 操作系统：windows / linux / darwin
+	Arch string `json:"arch"` // CPU 架构：amd64 / arm64
 }
 
 // DeviceInfo 被纳管的网段内设备（U-02：服务部署后整段网络打通，设备自动纳管）。
@@ -36,15 +39,83 @@ type AgentInfo struct {
 type DeviceInfo struct {
 	DeviceID     string    `json:"deviceID"`
 	Segment      string    `json:"segment"`
-	TenantID    string    `json:"tenantID"`    // 所属租户（取自纳管该设备的 agent）
+	TenantID     string    `json:"tenantID"`     // 所属租户（取自纳管该设备的 agent）
 	IP           string    `json:"ip"`           // agent 上报的地址作为占位 IP
-	AgentID      string    `json:"agentID"`     // 纳管该设备的 agent（discovered 候选为空）
+	AgentID      string    `json:"agentID"`      // 纳管该设备的 agent（discovered 候选为空）
 	State        string    `json:"state"`        // online / offline / discovered（B1 候选）/ provisioning（B1 推送中）
-	TaskState    string    `json:"taskState"`   // idle / running / done
+	TaskState    string    `json:"taskState"`    // idle / running / done
 	Managed      bool      `json:"managed"`      // true=agent 已注册纳管；false=网段发现候选（待装 agent，B1）
 	LastResult   string    `json:"lastResult"`   // success / failed（B2 失败回写看板）
 	LastResultAt time.Time `json:"lastResultAt"` // B2 最近结果时间
 	Retired      bool      `json:"retired"`      // F5 设备退役：true=已退役/下线，不出现在活跃清单
+	// 设备基础元信息（agent 注册时上报，设备列表/详情展示用）。
+	// 与 DeviceMetrics 区别：这里是相对静态的设备属性，DeviceMetrics 是动态实时指标。
+	Hostname string `json:"hostname"` // 主机名
+	OS       string `json:"os"`       // 操作系统：windows / linux / darwin
+	Arch     string `json:"arch"`     // CPU 架构：amd64 / arm64
+}
+
+// DeviceMetrics 设备实时监控指标（agent 采集，心跳上报，控制面缓存最新值）。
+// 仅保留最新值（不做历史时序——历史时序是 Prometheus/InfluxDB 的职责）。
+// agent 每 30 秒采集一次（心跳每 10 秒一次，但采集频率独立降低以减少系统开销）。
+type DeviceMetrics struct {
+	DeviceID     string        `json:"deviceID"`
+	Hostname     string        `json:"hostname"`
+	OS           string        `json:"os"`        // windows / linux / darwin
+	OSVersion    string        `json:"osVersion"` // 如 "Microsoft Windows 11 Pro" / "Ubuntu 22.04 LTS"
+	Kernel       string        `json:"kernel"`    // 内核版本
+	Arch         string        `json:"arch"`      // amd64 / arm64
+	Uptime       int64         `json:"uptime"`    // 运行时长（秒）
+	CPU          CPUMetrics    `json:"cpu"`
+	Memory       MemMetrics    `json:"memory"`
+	Disks        []DiskMetrics `json:"disks"`
+	Network      []NetMetrics  `json:"network"`
+	Services     []ServiceInfo `json:"services"`
+	ProcessCount int           `json:"processCount"`
+	CollectedAt  time.Time     `json:"collectedAt"`
+}
+
+// CPUMetrics CPU 指标。
+type CPUMetrics struct {
+	Cores int     `json:"cores"` // 逻辑核心数
+	Usage float64 `json:"usage"` // 使用率 0-100
+	Model string  `json:"model"` // CPU 型号
+}
+
+// MemMetrics 内存指标（单位 MB）。
+type MemMetrics struct {
+	Total     uint64  `json:"total"`     // 总内存（MB）
+	Used      uint64  `json:"used"`      // 已用（MB）
+	Available uint64  `json:"available"` // 可用（MB）
+	Usage     float64 `json:"usage"`     // 使用率 0-100
+}
+
+// DiskMetrics 单个磁盘/分区指标（单位 GB）。
+type DiskMetrics struct {
+	Mount string  `json:"mount"` // 挂载点/盘符
+	Total uint64  `json:"total"` // 总容量（GB）
+	Used  uint64  `json:"used"`  // 已用（GB）
+	Free  uint64  `json:"free"`  // 可用（GB）
+	Usage float64 `json:"usage"` // 使用率 0-100
+	Type  string  `json:"type"`  // 文件系统类型 NTFS/ext4
+}
+
+// NetMetrics 单个网卡指标。
+type NetMetrics struct {
+	Name    string `json:"name"`    // 网卡名
+	IP      string `json:"ip"`      // IP 地址
+	MAC     string `json:"mac"`     // MAC 地址
+	RxBytes uint64 `json:"rxBytes"` // 接收字节数
+	TxBytes uint64 `json:"txBytes"` // 发送字节数
+	Status  string `json:"status"`  // up/down
+	Speed   int    `json:"speed"`   // 速率 Mbps
+}
+
+// ServiceInfo 服务状态（仅采集常见运维相关服务，避免列全部服务）。
+type ServiceInfo struct {
+	Name    string `json:"name"`    // 服务名
+	Status  string `json:"status"`  // running/stopped
+	Enabled bool   `json:"enabled"` // 是否开机自启
 }
 
 // 任务类型常量（agent 按 Type 选择执行器）。
@@ -68,8 +139,8 @@ type Task struct {
 	ClaimedAt time.Time `json:"claimedAt"` // 领取时间（P1-1）
 	CreatedAt time.Time `json:"createdAt"`
 	// F2 失败重试 / 死信（P2 业务闭环）：RetryCount 累计重试，达 MaxRetries 置 failed（死信）。
-	RetryCount int `json:"retryCount"`
-	MaxRetries int `json:"maxRetries"`
+	RetryCount int  `json:"retryCount"`
+	MaxRetries int  `json:"maxRetries"`
 	DeadLetter bool `json:"deadLetter"` // 重试耗尽后置 true，表示进入死信（需人工处置）
 	// F3 任务取消：控制面 CancelTask 置 cancelled，未起动的 pending 不会被执行。
 	// F4 定时/周期调度：Schedule 为 5 字段 cron 表达式（空=不调度），派生实例写 ParentID + LastFiredAt。
@@ -104,9 +175,9 @@ type TaskResult struct {
 
 // Alert 状态（M7 监控告警）。
 const (
-	AlertStatusFiring      = "firing"      // 触发中（未处理）
+	AlertStatusFiring       = "firing"       // 触发中（未处理）
 	AlertStatusAcknowledged = "acknowledged" // 已确认（已知晓，待处理）
-	AlertStatusSilenced    = "silenced"     // 已静默（在静默截止前不再打扰）
+	AlertStatusSilenced     = "silenced"     // 已静默（在静默截止前不再打扰）
 )
 
 // Alert 内核产出的告警事件（M7 监控告警，业务闭环最小数据源）。
@@ -122,9 +193,9 @@ type Alert struct {
 	// 处理状态（M7 ack/silence）：未处理=firing；确认=acknowledged；静默=silenced。
 	Status         string    `json:"status"`
 	AcknowledgedBy string    `json:"acknowledgedBy"` // 确认人
-	SilencedUntil  time.Time `json:"silencedUntil"`   // 静默截止时间
-	Comment        string    `json:"comment"`          // 处理备注
-	UpdatedAt      time.Time `json:"updatedAt"`        // 最近一次状态变更时间
+	SilencedUntil  time.Time `json:"silencedUntil"`  // 静默截止时间
+	Comment        string    `json:"comment"`        // 处理备注
+	UpdatedAt      time.Time `json:"updatedAt"`      // 最近一次状态变更时间
 }
 
 // CmdbAttr 一条扁平化的 CMDB 属性（agent→控制面增量上报）。
@@ -138,7 +209,7 @@ type CmdbAttr struct {
 // CmdbReport agent 通过 Heartbeat 上报到控制面的 CMDB 增量数据。
 // 非空时控制面 CmdbConsumer 处理并更新 CI 条目。空=无变化。
 type CmdbReport struct {
-	CiType string `json:"ciType"` // 覆盖的 CI 类型（machine / os / service）
-	Seq    int64  `json:"seq"`    // 顺序号（控制面去重）
-	Attrs  []CmdbAttr `json:"attrs"` // 属性列表
+	CiType string     `json:"ciType"` // 覆盖的 CI 类型（machine / os / service）
+	Seq    int64      `json:"seq"`    // 顺序号（控制面去重）
+	Attrs  []CmdbAttr `json:"attrs"`  // 属性列表
 }

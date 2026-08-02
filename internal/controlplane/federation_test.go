@@ -39,7 +39,7 @@ func TestFederationManager_ForwardTask(t *testing.T) {
 	defer peer.Close()
 
 	localStore := store.NewMemoryStore()
-	fed := NewFederationManager([]string{peer.URL}, localStore)
+	fed := NewFederationManager([]string{peer.URL}, localStore, "", nil)
 	if fed == nil {
 		t.Fatal("NewFederationManager returned nil for non-empty peers")
 	}
@@ -95,7 +95,7 @@ func TestFederationManager_FederatedDevices(t *testing.T) {
 	// 本地也注册一台 agent，使 local 部分非空。
 	localStore.Register(&proto.AgentInfo{Segment: "local-seg", TenantID: "t1", Hostname: "local-agent"})
 
-	fed := NewFederationManager([]string{peer1.URL, peer2URL}, localStore)
+	fed := NewFederationManager([]string{peer1.URL, peer2URL}, localStore, "", nil)
 	result := fed.FederatedDevices(context.Background(), "")
 
 	// local 部分应有至少 1 台设备。
@@ -132,7 +132,7 @@ func TestFederationManager_HealthCheck(t *testing.T) {
 	defer peer.Close()
 
 	localStore := store.NewMemoryStore()
-	fed := NewFederationManager([]string{peer.URL}, localStore)
+	fed := NewFederationManager([]string{peer.URL}, localStore, "", nil)
 
 	if !fed.HealthCheck(context.Background(), peer.URL) {
 		t.Fatal("HealthCheck(online peer) = false, want true")
@@ -148,7 +148,7 @@ func TestFederationManager_Peers(t *testing.T) {
 	defer peer.Close()
 	unreachable := "http://127.0.0.1:1"
 
-	fed := NewFederationManager([]string{peer.URL, unreachable}, store.NewMemoryStore())
+	fed := NewFederationManager([]string{peer.URL, unreachable}, store.NewMemoryStore(), "", nil)
 	statuses := fed.Peers()
 	if len(statuses) != 2 {
 		t.Fatalf("len(Peers) = %d, want 2", len(statuses))
@@ -174,7 +174,7 @@ func TestHandleFederationPeers(t *testing.T) {
 	s := &Server{
 		store: store.NewMemoryStore(),
 		cfg:   &config.Config{FederationPeers: []string{peer.URL}},
-		fed:   NewFederationManager([]string{peer.URL}, store.NewMemoryStore()),
+		fed:   NewFederationManager([]string{peer.URL}, store.NewMemoryStore(), "", nil),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/federation/peers", nil)
@@ -201,7 +201,7 @@ func TestHandleFederationForwardTask(t *testing.T) {
 	s := &Server{
 		store: store.NewMemoryStore(),
 		cfg:   &config.Config{FederationPeers: []string{peer.URL}},
-		fed:   NewFederationManager([]string{peer.URL}, store.NewMemoryStore()),
+		fed:   NewFederationManager([]string{peer.URL}, store.NewMemoryStore(), "", nil),
 	}
 
 	// 取 peer 上 agent ID（黑盒：通过 /api/v1/devices 反推）。
@@ -274,7 +274,7 @@ func TestHandleFederationDevices(t *testing.T) {
 	s := &Server{
 		store: localSt,
 		cfg:   &config.Config{FederationPeers: []string{peer.URL}},
-		fed:   NewFederationManager([]string{peer.URL}, localSt),
+		fed:   NewFederationManager([]string{peer.URL}, localSt, "", nil),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/federation/devices", nil)
@@ -327,13 +327,13 @@ func TestFederationDisabled_NotRegistered(t *testing.T) {
 
 // TestNewFederationManager_NilForEmptyPeers 验证 peers 为空时返回 nil（调用方据此跳过路由注册）。
 func TestNewFederationManager_NilForEmptyPeers(t *testing.T) {
-	if got := NewFederationManager(nil, store.NewMemoryStore()); got != nil {
+	if got := NewFederationManager(nil, store.NewMemoryStore(), "", nil); got != nil {
 		t.Fatalf("NewFederationManager(nil, _) = %v, want nil", got)
 	}
-	if got := NewFederationManager([]string{}, store.NewMemoryStore()); got != nil {
+	if got := NewFederationManager([]string{}, store.NewMemoryStore(), "", nil); got != nil {
 		t.Fatalf("NewFederationManager([], _) = %v, want nil", got)
 	}
-	if got := NewFederationManager([]string{""}, store.NewMemoryStore()); got == nil {
+	if got := NewFederationManager([]string{""}, store.NewMemoryStore(), "", nil); got == nil {
 		t.Fatal("NewFederationManager(['']) = nil, want non-nil (single empty string still constructs)")
 	}
 }

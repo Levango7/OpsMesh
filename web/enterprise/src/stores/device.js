@@ -1,13 +1,16 @@
-// 设备 store — 网段分组设备列表 + 详情
+// 设备 store — 网段分组设备列表 + 详情 + 监控指标
 import { defineStore } from 'pinia'
-import { getDevices, getDevice, provisionDevice } from '@/api/device'
+import { getDevices, getDevice, provisionDevice, getMetrics } from '@/api/device'
 
 export const useDeviceStore = defineStore('device', {
   state: () => ({
     segments: {},          // { segName: Device[] }
     current: null,         // 当前打开的设备详情 { device, tasks, results }
+    metrics: null,         // 当前设备的监控指标聚合
     loading: false,
-    error: ''
+    metricsLoading: false,
+    error: '',
+    metricsError: ''
   }),
   getters: {
     total: (s) => Object.values(s.segments).reduce((n, arr) => n + (arr ? arr.length : 0), 0),
@@ -38,6 +41,23 @@ export const useDeviceStore = defineStore('device', {
       const r = await provisionDevice(id)
       await this.fetchDevices()
       return r
+    },
+    // 拉取设备监控指标聚合
+    async fetchMetrics(id) {
+      this.metricsLoading = true; this.metricsError = ''
+      try {
+        this.metrics = await getMetrics(id)
+      } catch (e) {
+        this.metricsError = e.j?.error || '监控指标拉取失败'
+        this.metrics = null
+      } finally {
+        this.metricsLoading = false
+      }
+    },
+    // 清空监控指标（离开详情页时调用）
+    clearMetrics() {
+      this.metrics = null
+      this.metricsError = ''
     },
     closeDrawer() { this.current = null }
   }

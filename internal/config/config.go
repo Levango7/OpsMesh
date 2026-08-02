@@ -21,17 +21,17 @@ type Config struct {
 	// A3 多控制面 failover：逗号分隔的多个控制面地址，agent 依次重试（HA 真多副本前置）。
 	// 为空时回退使用 ControlAddr 单地址（向后兼容）。
 	ControlAddrs string
-	Segment     string // agent 所属网段（U-02 分桶键）
-	HTTPPort    int    // 控制面 HTTP(B/S) 端口（约定 8080）
-	GRPCPort    int    // gRPC 端口（约定 9090，真实 gRPC 注册通道）
-	MetricsPort int    // metrics 端口（约定 9091）
+	Segment      string // agent 所属网段（U-02 分桶键）
+	HTTPPort     int    // 控制面 HTTP(B/S) 端口（约定 8080）
+	GRPCPort     int    // gRPC 端口（约定 9090，真实 gRPC 注册通道）
+	MetricsPort  int    // metrics 端口（约定 9091）
 	// U-04 数据本地化：持久化后端选择。
-	Store     string // 持久化后端: memory（默认） | mysql
-	MySQLDSN  string // MySQL DSN（--store=mysql 时生效），如 user:pass@tcp(host:3306)/ops_device
+	Store       string // 持久化后端: memory（默认） | mysql
+	MySQLDSN    string // MySQL DSN（--store=mysql 时生效），如 user:pass@tcp(host:3306)/ops_device
 	RedisAddr   string // Redis 地址（--store=mysql 时作 agent/device 状态缓存），如 redis:6379
 	RequireAuth bool   // 生产模式：要求网关注入租户头，缺失则拒绝（MVP 默认 false=开发降级）
 	// 运行健壮性
-	TaskTimeout    time.Duration // agent 单任务执行超时（P0-3，默认 120s）
+	TaskTimeout     time.Duration // agent 单任务执行超时（P0-3，默认 120s）
 	ShutdownTimeout time.Duration // 收到 SIGTERM 后的优雅退出窗口（P0-3，默认 15s）
 	// gRPC TLS / mTLS（P1-6，默认空=关闭，仅内网友好网用；等保生产建议开启）
 	TLSCert  string // 服务端证书 / 客户端证书 文件路径
@@ -111,6 +111,11 @@ type Config struct {
 	JWTPublicKey string // PEM 格式 RSA 公钥文件路径（RS256 验签用）；空=关闭 JWT 验签
 	JWTIssuer    string // 预期 JWT issuer（iss claim）；非空时校验 iss 必须匹配，空=不校验 iss
 
+	// 用户中心 JWT 签发密钥（HS256）：内核自行签发 token 用于用户登录/注册后下发。
+	// 与 JWTPublicKey（网关 RS256 验签）互补：JWTPublicKey 验签网关 token，JWTSecret 签发内核 token。
+	// 空=随机生成（重启后旧 token 失效，仅开发/单实例适用）；生产多副本须注入一致密钥。
+	JWTSecret string // HS256 对称密钥；空=随机生成（重启后旧 token 失效）
+
 	// M4-4B 日志检索后端选择：memory（默认，环形缓冲） | sql（MySQL） | loki（Grafana Loki） | es（Elasticsearch）。
 	// 与 Store（控制面持久化后端）解耦：Store 管 agent/device 状态，LogBackend 管日志检索。
 	// loki/es 模式下日志由 agent 经 promtail/filebeat 直接推送，控制面仅做查询（Append 为 noop）。
@@ -129,6 +134,20 @@ type Config struct {
 	// 非空时启用联邦 API（跨网段任务转发 / 联邦设备视图），控制面之间通过 HTTP/JSON 复用现有 REST API 通信。
 	// peer 不可达不影响本地服务（容错设计：联邦 API 返回可用部分 + 不可达标记）。
 	FederationPeers []string
+
+	// P1-5 metrics 访问控制：逗号分隔的 CIDR 白名单，仅允许这些来源访问 /metrics 端点。
+	// 空（默认）=不限制（向后兼容 MVP），但生产建议显式配置内网监控网段（如 10.0.0.0/8）。
+	MetricsAllowCIDR string
+
+	// P1-6 联邦通道硬化：
+	//   - FederationSecret：联邦 peer 间共享 HMAC 密钥，对转发的身份头签名/验签，防跨不可信网段伪造租户身份。
+	//   - FederationTLSCert/Key/CA：联邦专用 mTLS 凭证（区别于 gRPC 的 --tls-cert/key/client-ca）。
+	//   - FederationPort：联邦独立 mTLS 监听端口（>0 时启用，强制对端持证）；0=不启用独立监听（复用主 HTTP）。
+	FederationSecret  string
+	FederationTLSCert string
+	FederationTLSKey  string
+	FederationCA      string
+	FederationPort    int
 }
 
 // Load 解析 flag 并用环境变量兜底，返回 *Config。
@@ -181,6 +200,7 @@ func Load() *Config {
 	provisionSSHKnownHosts := flag.String("provision-ssh-known-hosts", "", "B1 SSH KnownHosts 文件路径（等保加固）；空=InsecureIgnoreHostKey（生产务必配置）")
 	jwtPublicKey := flag.String("jwt-public-key", "", "M3-2A JWT 验签公钥 PEM 文件路径（RS256）；空=关闭 JWT 验签回退头注入模式（或 env OPSMESH_JWT_PUBLIC_KEY）")
 	jwtIssuer := flag.String("jwt-issuer", "", "M3-2A 预期 JWT issuer（iss claim）；非空时校验 iss 必须匹配（或 env OPSMESH_JWT_ISSUER）")
+	jwtSecret := flag.String("jwt-secret", "", "用户中心 JWT 签发密钥（HS256）；空=随机生成（重启后旧 token 失效）（或 env OPSMESH_JWT_SECRET）")
 	// M4-4B 日志检索后端：memory（默认） | sql | loki | es。
 	logBackend := flag.String("log-backend", "memory", "日志检索后端: memory | sql | loki | es（M4-4B；loki/es 模式下日志由 agent 直接推送，控制面仅查询）")
 	lokiEndpoint := flag.String("loki-endpoint", "", "Loki API endpoint（如 http://loki:3100）；--log-backend=loki 时生效（或 env OPSMESH_LOKI_ENDPOINT）")
@@ -191,6 +211,14 @@ func Load() *Config {
 	schemaPrefix := flag.String("schema-prefix", "opsmesh_tenant_", "schema 名前缀（M4-4C）；最终 schema 名 = 前缀 + tenantID（或 env OPSMESH_SCHEMA_PREFIX）")
 	// M4-4D 控制面联邦：逗号分隔的 peer 控制面 HTTP 地址列表。
 	federationPeers := flag.String("federation-peers", "", "M4-4D 控制面联邦 peer 地址列表（逗号分隔，如 http://peer1:8080,http://peer2:8080）；非空时启用联邦 API（跨网段任务转发/联邦设备视图）；或 env OPSMESH_FEDERATION_PEERS")
+	// P1-5 metrics 访问控制：逗号分隔的 CIDR 白名单。
+	metricsAllowCIDR := flag.String("metrics-allow-cidr", "", "P1-5 metrics(/metrics) 访问控制：逗号分隔的 CIDR 白名单；空=不限制（生产建议配置内网监控网段，如 10.0.0.0/8）；或 env OPSMESH_METRICS_ALLOW_CIDR")
+	// P1-6 联邦通道硬化配置。
+	federationSecret := flag.String("federation-secret", "", "P1-6 联邦共享 HMAC 密钥（所有 peer 须一致）；签名/验签转发的身份头，防跨不可信网段伪造租户身份；空=不签名（仅内网信任）；或 env OPSMESH_FEDERATION_SECRET")
+	federationTLSCert := flag.String("federation-tls-cert", "", "P1-6 联邦 mTLS 服务端/客户端证书（独立于 --tls-cert）；空=明文联邦（仅内网）；或 env OPSMESH_FEDERATION_TLS_CERT")
+	federationTLSKey := flag.String("federation-tls-key", "", "P1-6 联邦 mTLS 私钥；或 env OPSMESH_FEDERATION_TLS_KEY")
+	federationCA := flag.String("federation-ca", "", "P1-6 联邦 mTLS 对端 CA（校验证书链/要求客户端持证）；或 env OPSMESH_FEDERATION_CA")
+	federationPort := flag.Int("federation-port", 0, "P1-6 联邦独立 mTLS 监听端口（>0 启用，强制对端持证）；0=不启用独立监听（复用主 HTTP）；或 env OPSMESH_FEDERATION_PORT")
 	flag.Parse()
 
 	// 记录被显式设置的 flag，用于"flag 优先、env 兜底"的正确语义（P1-8 修复：原实现 env 会覆盖显式 flag）。
@@ -231,53 +259,54 @@ func Load() *Config {
 	}
 
 	cfg := &Config{
-		Mode:        val("mode", *mode, "OPSMESH_MODE"),
-		Addr:        val("addr", *addr, "OPSMESH_ADDR"),
-		ControlAddr: val("control-addr", *controlAddr, "OPSMESH_CONTROL_ADDR"),
-		ControlAddrs: val("control-addrs", *controlAddrs, "OPSMESH_CONTROL_ADDRS"),
-		Segment:     val("segment", *segment, "OPSMESH_SEGMENT"),
-		HTTPPort:    valInt("http-port", *httpPort, "OPSMESH_HTTP_PORT"),
-		GRPCPort:    valInt("grpc-port", *grpcPort, "OPSMESH_GRPC_PORT"),
-		MetricsPort: valInt("metrics-port", *metricsPort, "OPSMESH_METRICS_PORT"),
-		Store:       val("store", *store, "OPSMESH_STORE"),
-		MySQLDSN:    val("mysql-dsn", *mysqlDSN, "OPSMESH_MYSQL_DSN"),
-		RedisAddr:      val("redis-addr", *redisAddr, "OPSMESH_REDIS_ADDR"),
-		RequireAuth:    valBool("require-auth", *requireAuth, "OPSMESH_REQUIRE_AUTH"),
-		TaskTimeout:    valDur("task-timeout", *taskTimeout, "OPSMESH_TASK_TIMEOUT"),
-		ShutdownTimeout: valDur("shutdown-timeout", *shutdownTimeout, "OPSMESH_SHUTDOWN_TIMEOUT"),
-		TLSCert:        val("tls-cert", *tlsCert, "OPSMESH_TLS_CERT"),
-		TLSKey:         val("tls-key", *tlsKey, "OPSMESH_TLS_KEY"),
-		ClientCA:       val("client-ca", *clientCA, "OPSMESH_CLIENT_CA"),
-		Discover:        valBool("discover", *discover, "OPSMESH_DISCOVER"),
-		SegmentCIDR:     val("segment-cidr", *segmentCIDR, "OPSMESH_SEGMENT_CIDR"),
-		AutoProvision:   valBool("auto-provision", *autoProvision, "OPSMESH_AUTO_PROVISION"),
-		MaxProcs:        valInt("max-procs", *maxProcs, "OPSMESH_MAX_PROCS"),
-		MaxFiles:        valInt("max-files", *maxFiles, "OPSMESH_MAX_FILES"),
-		MaxMemoryMB:     valInt64("max-memory-mb", *maxMemoryMB, "OPSMESH_MAX_MEMORY_MB"),
-		WorkerConcurrency: valInt("worker-concurrency", *workerConcurrency, "OPSMESH_WORKER_CONCURRENCY"),
-		EventBus:        val("event-bus", *eventBus, "OPSMESH_EVENT_BUS"),
-		KafkaBrokers:    val("kafka-brokers", *kafkaBrokers, "OPSMESH_KAFKA_BROKERS"),
-		KafkaTopic:      val("kafka-topic", *kafkaTopic, "OPSMESH_KAFKA_TOPIC"),
-		DataDir:       val("data-dir", *dataDir, "OPSMESH_DATA_DIR"),
-		Demo:          valBool("demo", *demo, "OPSMESH_DEMO"),
-		InstallToken:  val("install-token", *installToken, "OPSMESH_INSTALL_TOKEN"),
-		TaskLeaseSec:  valInt("task-lease-sec", *taskLeaseSec, "OPSMESH_TASK_LEASE_SEC"),
-		Replicas:      valInt("replicas", *replicas, "OPSMESH_REPLICAS"),
-		Production:    valBool("production", *production, "OPSMESH_PRODUCTION"),
-		TaskMaxRetries: valInt("task-max-retries", *taskMaxRetries, "OPSMESH_TASK_MAX_RETRIES"),
-		LeaderTTLSec:   valInt("leader-ttl-sec", *leaderTTLSec, "OPSMESH_LEADER_TTL_SEC"),
-		LeaderTickSec:  valInt("leader-tick-sec", *leaderTickSec, "OPSMESH_LEADER_TICK_SEC"),
-		ArchiveAgeMin:  valInt("archive-age-min", *archiveAgeMin, "OPSMESH_ARCHIVE_AGE_MIN"),
-		ProvisionSecret: val("provision-secret", *provisionSecret, "OPSMESH_PROVISION_SECRET"),
-		AdvertiseAddr:   val("advertise-addr", *advertiseAddr, "OPSMESH_ADVERTISE_ADDR"),
-		AlertWebhookURL:   val("alert-webhook-url", *alertWebhookURL, "OPSMESH_ALERT_WEBHOOK_URL"),
-		AlertNotifierType: val("alert-notifier-type", *alertNotifierType, "OPSMESH_ALERT_NOTIFIER_TYPE"),
-		ProvisionSSHUser: val("provision-ssh-user", *provisionSSHUser, "OPSMESH_PROVISION_SSH_USER"),
-		ProvisionSSHKey:  val("provision-ssh-key", *provisionSSHKey, "OPSMESH_PROVISION_SSH_KEY"),
-		ProvisionSSHKP:   val("provision-ssh-key-pass", *provisionSSHKP, "OPSMESH_PROVISION_SSH_KEY_PASS"),
+		Mode:                   val("mode", *mode, "OPSMESH_MODE"),
+		Addr:                   val("addr", *addr, "OPSMESH_ADDR"),
+		ControlAddr:            val("control-addr", *controlAddr, "OPSMESH_CONTROL_ADDR"),
+		ControlAddrs:           val("control-addrs", *controlAddrs, "OPSMESH_CONTROL_ADDRS"),
+		Segment:                val("segment", *segment, "OPSMESH_SEGMENT"),
+		HTTPPort:               valInt("http-port", *httpPort, "OPSMESH_HTTP_PORT"),
+		GRPCPort:               valInt("grpc-port", *grpcPort, "OPSMESH_GRPC_PORT"),
+		MetricsPort:            valInt("metrics-port", *metricsPort, "OPSMESH_METRICS_PORT"),
+		Store:                  val("store", *store, "OPSMESH_STORE"),
+		MySQLDSN:               val("mysql-dsn", *mysqlDSN, "OPSMESH_MYSQL_DSN"),
+		RedisAddr:              val("redis-addr", *redisAddr, "OPSMESH_REDIS_ADDR"),
+		RequireAuth:            valBool("require-auth", *requireAuth, "OPSMESH_REQUIRE_AUTH"),
+		TaskTimeout:            valDur("task-timeout", *taskTimeout, "OPSMESH_TASK_TIMEOUT"),
+		ShutdownTimeout:        valDur("shutdown-timeout", *shutdownTimeout, "OPSMESH_SHUTDOWN_TIMEOUT"),
+		TLSCert:                val("tls-cert", *tlsCert, "OPSMESH_TLS_CERT"),
+		TLSKey:                 val("tls-key", *tlsKey, "OPSMESH_TLS_KEY"),
+		ClientCA:               val("client-ca", *clientCA, "OPSMESH_CLIENT_CA"),
+		Discover:               valBool("discover", *discover, "OPSMESH_DISCOVER"),
+		SegmentCIDR:            val("segment-cidr", *segmentCIDR, "OPSMESH_SEGMENT_CIDR"),
+		AutoProvision:          valBool("auto-provision", *autoProvision, "OPSMESH_AUTO_PROVISION"),
+		MaxProcs:               valInt("max-procs", *maxProcs, "OPSMESH_MAX_PROCS"),
+		MaxFiles:               valInt("max-files", *maxFiles, "OPSMESH_MAX_FILES"),
+		MaxMemoryMB:            valInt64("max-memory-mb", *maxMemoryMB, "OPSMESH_MAX_MEMORY_MB"),
+		WorkerConcurrency:      valInt("worker-concurrency", *workerConcurrency, "OPSMESH_WORKER_CONCURRENCY"),
+		EventBus:               val("event-bus", *eventBus, "OPSMESH_EVENT_BUS"),
+		KafkaBrokers:           val("kafka-brokers", *kafkaBrokers, "OPSMESH_KAFKA_BROKERS"),
+		KafkaTopic:             val("kafka-topic", *kafkaTopic, "OPSMESH_KAFKA_TOPIC"),
+		DataDir:                val("data-dir", *dataDir, "OPSMESH_DATA_DIR"),
+		Demo:                   valBool("demo", *demo, "OPSMESH_DEMO"),
+		InstallToken:           val("install-token", *installToken, "OPSMESH_INSTALL_TOKEN"),
+		TaskLeaseSec:           valInt("task-lease-sec", *taskLeaseSec, "OPSMESH_TASK_LEASE_SEC"),
+		Replicas:               valInt("replicas", *replicas, "OPSMESH_REPLICAS"),
+		Production:             valBool("production", *production, "OPSMESH_PRODUCTION"),
+		TaskMaxRetries:         valInt("task-max-retries", *taskMaxRetries, "OPSMESH_TASK_MAX_RETRIES"),
+		LeaderTTLSec:           valInt("leader-ttl-sec", *leaderTTLSec, "OPSMESH_LEADER_TTL_SEC"),
+		LeaderTickSec:          valInt("leader-tick-sec", *leaderTickSec, "OPSMESH_LEADER_TICK_SEC"),
+		ArchiveAgeMin:          valInt("archive-age-min", *archiveAgeMin, "OPSMESH_ARCHIVE_AGE_MIN"),
+		ProvisionSecret:        val("provision-secret", *provisionSecret, "OPSMESH_PROVISION_SECRET"),
+		AdvertiseAddr:          val("advertise-addr", *advertiseAddr, "OPSMESH_ADVERTISE_ADDR"),
+		AlertWebhookURL:        val("alert-webhook-url", *alertWebhookURL, "OPSMESH_ALERT_WEBHOOK_URL"),
+		AlertNotifierType:      val("alert-notifier-type", *alertNotifierType, "OPSMESH_ALERT_NOTIFIER_TYPE"),
+		ProvisionSSHUser:       val("provision-ssh-user", *provisionSSHUser, "OPSMESH_PROVISION_SSH_USER"),
+		ProvisionSSHKey:        val("provision-ssh-key", *provisionSSHKey, "OPSMESH_PROVISION_SSH_KEY"),
+		ProvisionSSHKP:         val("provision-ssh-key-pass", *provisionSSHKP, "OPSMESH_PROVISION_SSH_KEY_PASS"),
 		ProvisionSSHKnownHosts: val("provision-ssh-known-hosts", *provisionSSHKnownHosts, "OPSMESH_PROVISION_SSH_KNOWN_HOSTS"),
 		JWTPublicKey:           val("jwt-public-key", *jwtPublicKey, "OPSMESH_JWT_PUBLIC_KEY"),
 		JWTIssuer:              val("jwt-issuer", *jwtIssuer, "OPSMESH_JWT_ISSUER"),
+		JWTSecret:              val("jwt-secret", *jwtSecret, "OPSMESH_JWT_SECRET"),
 		LogBackend:             val("log-backend", *logBackend, "OPSMESH_LOG_BACKEND"),
 		LokiEndpoint:           val("loki-endpoint", *lokiEndpoint, "OPSMESH_LOKI_ENDPOINT"),
 		ESEndpoint:             val("es-endpoint", *esEndpoint, "OPSMESH_ES_ENDPOINT"),
@@ -285,6 +314,12 @@ func Load() *Config {
 		MultiSchema:            valBool("multi-schema", *multiSchema, "OPSMESH_MULTI_SCHEMA"),
 		SchemaPrefix:           val("schema-prefix", *schemaPrefix, "OPSMESH_SCHEMA_PREFIX"),
 		FederationPeers:        parseFederationPeers(val("federation-peers", *federationPeers, "OPSMESH_FEDERATION_PEERS")),
+		MetricsAllowCIDR:        val("metrics-allow-cidr", *metricsAllowCIDR, "OPSMESH_METRICS_ALLOW_CIDR"),
+		FederationSecret:        val("federation-secret", *federationSecret, "OPSMESH_FEDERATION_SECRET"),
+		FederationTLSCert:       val("federation-tls-cert", *federationTLSCert, "OPSMESH_FEDERATION_TLS_CERT"),
+		FederationTLSKey:        val("federation-tls-key", *federationTLSKey, "OPSMESH_FEDERATION_TLS_KEY"),
+		FederationCA:            val("federation-ca", *federationCA, "OPSMESH_FEDERATION_CA"),
+		FederationPort:          valInt("federation-port", *federationPort, "OPSMESH_FEDERATION_PORT"),
 	}
 	// A4 生产模式：默认开启 require-auth（除非显式关闭），并强告警 memory store。
 	if cfg.Production && !explicit["require-auth"] {
@@ -452,6 +487,28 @@ func (c *Config) Validate() error {
 		if u.Scheme == "" || u.Host == "" {
 			return fmt.Errorf("非法 --federation-peers[%d]=%q（需含 scheme 与 host，如 http://peer:8080）", i, p)
 		}
+	}
+	// P1-5 metrics CIDR 白名单格式校验：每项必须是合法 CIDR，启动 fail-fast。
+	if c.MetricsAllowCIDR != "" {
+		for _, item := range strings.Split(c.MetricsAllowCIDR, ",") {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			if _, _, err := net.ParseCIDR(item); err != nil {
+				return fmt.Errorf("非法 --metrics-allow-cidr 项 %q: %w", item, err)
+			}
+		}
+	}
+	// P1-6 联邦通道硬化校验：独立 mTLS 监听需证书；启用联邦但缺失共享密钥时告警（身份不可验签）。
+	if c.FederationPort > 65535 {
+		return fmt.Errorf("非法 --federation-port=%d（应 ≤ 65535）", c.FederationPort)
+	}
+	if c.FederationPort > 0 && (c.FederationTLSCert == "" || c.FederationTLSKey == "") {
+		return fmt.Errorf("--federation-port>0 但 --federation-tls-cert/key 为空（独立 mTLS 监听需要服务端证书）")
+	}
+	if len(c.FederationPeers) > 0 && c.FederationSecret == "" {
+		fmt.Fprintln(os.Stderr, "[config] 警告：联邦已启用但 --federation-secret 为空，转发的身份头未签名，跨不可信网段存在伪造风险")
 	}
 	return nil
 }

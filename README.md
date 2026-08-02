@@ -150,15 +150,33 @@ mysql -e "CREATE DATABASE IF NOT EXISTS ops_device"
   --tls-key=/etc/opsmesh/tls.key
 ```
 
-### Kubernetes 部署
+### Kubernetes 部署（Helm Chart，已提供）
 
-K8s 部署：**Helm Chart 计划中**（见 `docs/product-roadmap.md`），当前可用 Dockerfile + docker-compose 部署：
+仓库已自带完整 Helm Chart（`deploy/helm/opsmesh/`，含 `Chart.yaml` / `values.yaml` / `values-production.yaml` / `templates/` 全套 14 个模板），可一键部署控制面 + agent DaemonSet + MySQL + Redis：
 
-- 控制面：`Dockerfile`（多阶段构建，产物为单二进制 `opsmesh`）
-- Agent：`Dockerfile.agent`（多阶段构建，产物为 `opsmesh-agent`）
-- 编排：`docker-compose.yaml`（controlplane + agent + mysql + redis 一键起）
+```bash
+# 开发/体验：单副本 + memory store
+helm install opsmesh ./deploy/helm/opsmesh -n opsmesh --create-namespace
 
-> Helm Chart（`deploy/helm/opsmesh/`）与 `values-production.yaml` overlay、Argo CD ApplicationSet 网段批量渲染均为规划中能力，当前仓库未提供。
+# 生产：3 副本 + mysql 持久化 + TLS + require-auth（values-production.yaml overlay）
+helm install opsmesh ./deploy/helm/opsmesh -n opsmesh --create-namespace \
+  -f deploy/helm/opsmesh/values-production.yaml \
+  --set controlplane.provisionSecret=$(openssl rand -hex 32)
+
+# 已安装后升级到生产配置
+helm upgrade opsmesh ./deploy/helm/opsmesh -n opsmesh \
+  -f deploy/helm/opsmesh/values-production.yaml
+```
+
+Chart 要点：
+- 控制面 `Deployment`（`replicaCount` 可调，>1 时务必 `store=mysql`）+ `PodDisruptionBudget`（minAvailable=1）。
+- Agent `DaemonSet`（每节点一个，自动注册到控制面）。
+- MySQL / Redis `StatefulSet`（持久化 PV）+ `Secret`（`provision-secret` / `mysql-dsn`）；TLS 证书走 `controlplane.tls.secretName` 预置 Secret（键 `tls.crt` / `tls.key` / `ca.crt`）。
+- 进阶开关（`--metrics-allow-cidr`、`--federation-*`）可通过 `controlplane.extraEnv` 注入对应 `OPSMESH_*` 环境变量（配置层已实现 env 兜底）。
+
+> 旧版文档曾标注"Helm 规划中"，与当前仓库实际不符——现已纠正：Chart 已落地可用。Argo CD ApplicationSet 网段批量渲染仍属规划中能力。
+
+容器编排（非 Helm 路径）：`docker-compose.yaml`（controlplane + agent + mysql + redis 一键起）、`Dockerfile`（控制面多阶段）、`Dockerfile.agent`（agent 多阶段）。
 
 ---
 
@@ -368,6 +386,13 @@ Agent 端多控制面 failover：`--control-addrs="cp1:9090,cp2:9090"`，客户�
 | `--event-bus` | noop | OPSMESH_EVENT_BUS | 事件总线类型：noop/log/kafka |
 | `--data-dir` | ./data | OPSMESH_DATA_DIR | agent 身份文件目录 |
 | `--demo` | false | OPSMESH_DEMO | 演示模式：预置示例任务 |
+| `--metrics-allow-cidr` | "" | OPSMESH_METRICS_ALLOW_CIDR | P1-5 metrics(/metrics) 访问控制：逗号分隔 CIDR 白名单；空=不限制（生产建议内网监控网段，如 10.0.0.0/8） |
+| `--federation-peers` | "" | OPSMESH_FEDERATION_PEERS | P1-6 控制面联邦 peer 地址列表（逗号分隔，如 https://peer1:9092）；非空启用联邦（跨网段任务转发/设备视图） |
+| `--federation-secret` | "" | OPSMESH_FEDERATION_SECRET | P1-6 联邦共享 HMAC 密钥（所有 peer 须一致）；空=不分转发身份头（仅内网信任） |
+| `--federation-tls-cert` | "" | OPSMESH_FEDERATION_TLS_CERT | P1-6 联邦 mTLS 证书（独立于 --tls-cert）；空=明文联邦（仅内网） |
+| `--federation-tls-key` | "" | OPSMESH_FEDERATION_TLS_KEY | P1-6 联邦 mTLS 私钥 |
+| `--federation-ca` | "" | OPSMESH_FEDERATION_CA | P1-6 联邦 mTLS 对端 CA（校验证书链 / 要求客户端持证） |
+| `--federation-port` | 0 | OPSMESH_FEDERATION_PORT | P1-6 联邦独立 mTLS 监听端口（>0 启用，强制对端持证）；0=复用主 HTTP |
 
 ---
 
@@ -413,6 +438,48 @@ kafka-go 须钉 `v0.4.48`（最后兼容 Go 1.22 的版本；`v0.4.49+` 要求 G
 | 访问控制 | --require-auth 拒绝未鉴权请求；gRPC 网关注入租户头 |
 | 入侵检测 | 任务命令来源受限（仅控制面下发），shell 执行经 exec.CommandContext |
 | 通信加密 | gRPC TLS / mTLS（--tls-cert, --tls-key, --client-ca） |
+
+---
+
+## 生产安全加固（P0/P1）
+
+面向"上线即崩 / 越权 / 爆破 / 伪造"的企业级风险，本仓库已落地以下加固（实现位于 `internal/controlplane`、`internal/tlsutil`、`internal/store`）：
+
+| 编号 | 加固项 | 实现要点 |
+|---|---|---|
+| P0-1 | RBAC 持久化建表 + 种子 | `SQLStore.initSchema` 新增 `users` / `roles` / `permissions` 三表；`seedRBAC` 幂等写入 24 条默认权限 + `admin` 角色 + 默认 `admin` 用户。多副本共享同一 MySQL，HA 部署身份一致（修复 mysql 后端启动即 panic） |
+| P0-2 | HTTP / gRPC 兜底恢复 | `recoveryMiddleware`（HTTP 兜底盘：返回 500 + JSON + traceId）+ `grpcRecoveryInterceptor`（unary 拦截器：recover 后返回 `codes.Internal`）。单处 handler panic 不再拖垮整个控制面 |
+| P1-2 | 请求体限流 | 统一 `decodeJSONBody` 经 `http.MaxBytesReader` 限 1 MiB，防止超大 body 占满内存 |
+| P1-3 | 登录防爆破 / 失败锁账号 | `loginGuard`：令牌桶限流（每 IP 10 突发 / 每 3s 补 1）+ 连续失败 5 次锁 15min；用户名不存在场景同样计入限流，避免账号枚举 |
+| P1-5 | metrics 访问控制 + bootstrap 审计 | `--metrics-allow-cidr` CIDR 白名单拒绝非监控网段拉 `/metrics`（403 + 审计）；`/install.sh`、`/bin/opsmesh-agent` 保留开放但记录来源 IP 审计 |
+| P1-6 | 联邦 mTLS + 转发签名验签 | 见下「联邦（跨网段任务转发）」 |
+
+### 联邦（跨网段任务转发）
+
+企业多终端环境常按网段割裂为多个控制面。OpsMesh 支持**每段一套控制面 + 控制面联邦**，将任务跨段转发到下一段的 agent 执行；转发通道硬化为 mTLS + HMAC 签名，防伪造 / 防重放：
+
+- **入站**：启用 `--federation-port>0` 后，控制面起**独立 mTLS 监听**（仅暴露 `POST /api/v1/tasks` 与 `GET /api/v1/devices`），强制 `RequireAndVerifyClientCert`，物理隔离联邦流量与公网 B/S。
+- **验签**：`verifyFederationRequest` 仅对携带 `X-Federation-Forwarded: 1` 的请求验签；签名 = HMAC-SHA256（method + path + 时间戳 + 身份头），时间戳偏差窗 ±5min 防重放；密钥缺失 / 签名不符 / 超窗 → 401 拒绝。
+- **出站**：`FederationManager.ForwardTask` / `fetchPeerDevices` 经 `signFederationRequest` 主动签名，并使用 `--federation-tls-cert/key/ca` 构造的客户端 TLS 配置（明文联邦仅限内网可信场景）。
+- **配置**：所有 peer 须共享同一 `--federation-secret`；启用独立监听须同时配置联邦 TLS 证书，否则 `Validate()` 直接报错。
+
+```bash
+# 控制面 A（段 1）：启用联邦独立 mTLS 监听
+./opsmesh --mode=controlplane --store=mysql \
+  --federation-port=9092 \
+  --federation-secret=$(openssl rand -hex 32) \
+  --federation-tls-cert=/etc/opsmesh/fed.crt \
+  --federation-tls-key=/etc/opsmesh/fed.key \
+  --federation-ca=/etc/opsmesh/fed-ca.crt
+
+# 控制面 B（段 2）：将 A 设为联邦 peer（跨段任务转发到 A 段 agent 执行）
+./opsmesh --mode=controlplane --store=mysql \
+  --federation-peers=https://<a-host>:9092 \
+  --federation-secret=<与 A 完全一致> \
+  --federation-tls-cert=/etc/opsmesh/fed.crt \
+  --federation-tls-key=/etc/opsmesh/fed.key \
+  --federation-ca=/etc/opsmesh/fed-ca.crt
+```
 
 ---
 

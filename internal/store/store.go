@@ -17,8 +17,8 @@ import (
 	"opsmesh/internal/proto"
 )
 
-// DeviceStore 设备/Agent 纳管领域：注册、心跳、设备视图、退役归档。
-// 共 10 个方法，覆盖 P0-2 真实网段发现、P2-17 agent 直查、F5 离线归档。
+// DeviceStore 设备/Agent 纳管领域：注册、心跳、设备视图、退役归档、监控指标。
+// 共 12 个方法，覆盖 P0-2 真实网段发现、P2-17 agent 直查、F5 离线归档、监控指标采集。
 type DeviceStore interface {
 	// Register 注册一个 agent，返回（可能被分配了 agentID 的）agent 信息。
 	Register(*proto.AgentInfo) *proto.AgentInfo
@@ -42,6 +42,11 @@ type DeviceStore interface {
 	// （或已无 agent 的孤儿设备），批量标记 retired（退出活跃清单但仍可查归档）。返回归档数。
 	// 仅 leader 周期执行（归档属协调任务，避免多副本重复）。
 	RetireStaleDevices(maxAge time.Duration) int
+	// StoreDeviceMetrics 存储设备最新监控指标（agent 心跳上报，仅保留最新值）。
+	// deviceID 为空或 metrics 为 nil 时直接返回。控制面缓存最新值供 GET /api/v1/devices/{id}/metrics 查询。
+	StoreDeviceMetrics(deviceID string, metrics *proto.DeviceMetrics)
+	// DeviceMetrics 返回设备最新监控指标（无数据时返回 nil）。
+	DeviceMetrics(deviceID string) *proto.DeviceMetrics
 }
 
 // TaskStore 任务调度领域：下发、领取、上报、取消、定时派生、失联复位。
@@ -132,8 +137,46 @@ type LeaderStore interface {
 	IsLeader() bool
 }
 
+// UserStore 用户领域：注册、查询、创建、更新、删除。
+// 密码以 bcrypt 哈希存储（CreateUser 入参 u.PasswordHash 已哈希，store 不再二次哈希）。
+type UserStore interface {
+	// GetUser 按 ID 返回单用户（不存在返回 nil）。
+	GetUser(id string) *User
+	// GetUserByUsername 按用户名返回单用户（登录用；不存在返回 nil）。
+	GetUserByUsername(username string) *User
+	// ListUsers 返回全部用户（按创建时间升序）。
+	ListUsers() []*User
+	// CreateUser 创建用户。调用方须先 bcrypt 哈希密码填入 u.PasswordHash。
+	// 用户名重复时返回 nil（调用方据此判断冲突）。
+	CreateUser(u *User) *User
+	// UpdateUser 更新用户 email/roles/status（按 u.ID 定位）。不存在返回 false。
+	UpdateUser(u *User) bool
+	// DeleteUser 按 ID 删除用户。不存在返回 false。
+	DeleteUser(id string) bool
+}
+
+// RoleStore 角色领域：CRUD。
+type RoleStore interface {
+	// GetRole 按 ID 返回单角色（不存在返回 nil）。
+	GetRole(id string) *Role
+	// ListRoles 返回全部角色。
+	ListRoles() []*Role
+	// CreateRole 创建角色。角色名重复时返回 nil。
+	CreateRole(r *Role) *Role
+	// UpdateRole 更新角色 description/permissions（按 r.ID 定位）。不存在返回 false。
+	UpdateRole(r *Role) bool
+	// DeleteRole 按 ID 删除角色。不存在返回 false。
+	DeleteRole(id string) bool
+}
+
+// PermissionStore 权限领域：预定义权限列表（只读）。
+type PermissionStore interface {
+	// ListPermissions 返回全部预定义权限（按组分类）。
+	ListPermissions() []*Permission
+}
+
 // Store 控制面注册表的可插拔持久化组合接口。
-// 由 6 个领域小接口组合而成（M2-1A 拆分），方法签名刻意与旧版内存 Registry 保持一致，
+// 由 9 个领域小接口组合而成（M2-1A 拆分 + 用户中心扩展），方法签名刻意与旧版内存 Registry 保持一致，
 // 便于平滑替换。U-04: 数据本地化，默认 memory；生产可切换 mysql（MySQL/Redis 私有部署）。
 //
 // 消费方可按需依赖最小子接口（如 provision 只需 TokenStore），当前保留 Store
@@ -145,6 +188,9 @@ type Store interface {
 	AuditStore
 	TokenStore
 	LeaderStore
+	UserStore       // 用户中心：注册/登录/CRUD
+	RoleStore       // 角色管理：CRUD
+	PermissionStore // 权限列表：只读
 
 	// WithDemo 设置是否开启演示模式（P0-5）：开启时每个 agent 注册预置 uname -a 示例任务。
 	WithDemo(bool) Store
@@ -153,19 +199,25 @@ type Store interface {
 // 编译期断言：确保 MemoryStore / SQLStore 实现各领域小接口。
 // 任一方法缺失会在编译期立刻暴露（而非运行期），降低后续拆分消费方时的回归风险。
 var (
-	_ DeviceStore = (*MemoryStore)(nil)
-	_ TaskStore   = (*MemoryStore)(nil)
-	_ AlertStore  = (*MemoryStore)(nil)
-	_ AuditStore  = (*MemoryStore)(nil)
-	_ TokenStore  = (*MemoryStore)(nil)
-	_ LeaderStore = (*MemoryStore)(nil)
-	_ Store       = (*MemoryStore)(nil)
+	_ DeviceStore     = (*MemoryStore)(nil)
+	_ TaskStore       = (*MemoryStore)(nil)
+	_ AlertStore      = (*MemoryStore)(nil)
+	_ AuditStore      = (*MemoryStore)(nil)
+	_ TokenStore      = (*MemoryStore)(nil)
+	_ LeaderStore     = (*MemoryStore)(nil)
+	_ UserStore       = (*MemoryStore)(nil)
+	_ RoleStore       = (*MemoryStore)(nil)
+	_ PermissionStore = (*MemoryStore)(nil)
+	_ Store           = (*MemoryStore)(nil)
 
-	_ DeviceStore = (*SQLStore)(nil)
-	_ TaskStore   = (*SQLStore)(nil)
-	_ AlertStore  = (*SQLStore)(nil)
-	_ AuditStore  = (*SQLStore)(nil)
-	_ TokenStore  = (*SQLStore)(nil)
-	_ LeaderStore = (*SQLStore)(nil)
-	_ Store       = (*SQLStore)(nil)
+	_ DeviceStore     = (*SQLStore)(nil)
+	_ TaskStore       = (*SQLStore)(nil)
+	_ AlertStore      = (*SQLStore)(nil)
+	_ AuditStore      = (*SQLStore)(nil)
+	_ TokenStore      = (*SQLStore)(nil)
+	_ LeaderStore     = (*SQLStore)(nil)
+	_ UserStore       = (*SQLStore)(nil)
+	_ RoleStore       = (*SQLStore)(nil)
+	_ PermissionStore = (*SQLStore)(nil)
+	_ Store           = (*SQLStore)(nil)
 )

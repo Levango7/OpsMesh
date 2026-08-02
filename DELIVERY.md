@@ -36,7 +36,7 @@
 | ⑤ | 监控告警 M7 | 规则引擎 + alert(Status/Ack/Silence) + ack/silence 端点 + Webhook/飞书/钉钉 |
 | ⑥ | 作业编排 M5 | DAG 引擎 + store 阻塞→释放链路 + 画布 |
 
-其余已落地能力：定时/周期调度、失败重试+死信队列、设备自动退役(F5)、B1 自动纳管令牌闭环、A3 多副本保护+agent 多控制面 failover+真 HA leader 选举、A4 生产基线、前端壳层重构、Prometheus 指标 + /healthz、多阶段 Dockerfile + CI(gosec/Trivy/golangci-lint/-race)。Helm Charts + Argo CD GitOps 规划中（见 `docs/product-roadmap.md`）。
+其余已落地能力：定时/周期调度、失败重试+死信队列、设备自动退役(F5)、B1 自动纳管令牌闭环、A3 多副本保护+agent 多控制面 failover+真 HA leader 选举、A4 生产基线、前端壳层重构、Prometheus 指标 + /healthz、多阶段 Dockerfile + CI(gosec/Trivy/golangci-lint/-race)。**Helm Chart（`deploy/helm/opsmesh/`）已落地可用**，Argo CD ApplicationSet 网段批量渲染仍属规划中。
 
 ## 5. 网络分区（CIDR）
 
@@ -64,7 +64,7 @@ go build ./... && go vet ./... && go test ./...
 ```
 
 - 容器：`Dockerfile`（controlplane，多阶段）+ `Dockerfile.agent`（agent，多阶段），已含 gosec/Trivy 扫描门禁
-- 编排：**Helm Chart / GitOps 仓库规划中**（见 `docs/product-roadmap.md`），当前部署用 Dockerfile + docker-compose（controlplane 用 `Dockerfile`，agent 用 `Dockerfile.agent`）
+- 编排：**Helm Chart 已提供**（`deploy/helm/opsmesh/`，含 values / values-production overlay），可直接 `helm install`；Argo CD GitOps 仓库规划中。非 Helm 路径仍可用 Dockerfile + docker-compose（controlplane 用 `Dockerfile`，agent 用 `Dockerfile.agent`）
 
 ## 7. CI 状态
 
@@ -84,4 +84,28 @@ go build ./... && go vet ./... && go test ./...
 - 提交内容：19 包源码 + 约 27 测试 + Dockerfile/Dockerfile.agent + docker-compose + README + DELIVERY + `.github/ci.yml` + `.gitignore`
 
 ---
+## 9. 生产安全加固（P0/P1）
+
+在 MVP 基线之上，针对"上线即崩 / 越权 / 爆破 / 伪造"风险追加了企业级加固（代码位于 `internal/controlplane`、`internal/tlsutil`、`internal/store`）：
+
+| 编号 | 加固项 | 落地文件 / 入口 |
+|---|---|---|
+| P0-1 | RBAC 持久化三表 + 种子（修复 mysql 后端启动即 panic、HA 多副本身份一致） | `internal/store/sql.go`（`initSchema` 建表 + `seedRBAC`）、`internal/store/sql_rbac.go` |
+| P0-2 | HTTP / gRPC 兜底恢复（handler panic 不再拖垮控制面） | `internal/controlplane/server.go`（`recoveryMiddleware` + `grpcRecoveryInterceptor`） |
+| P1-2 | 请求体限流（1 MiB，统一 `decodeJSONBody`） | `internal/controlplane/server.go`（`MaxBytesReader`）、`auth.go` 全部解码调用 |
+| P1-3 | 登录防爆破 + 失败锁账号（令牌桶 + 5 次锁 15min） | `internal/controlplane/auth.go`（`loginGuard`） |
+| P1-5 | metrics CIDR 白名单 + bootstrap 端点审计 | `internal/controlplane/server.go`（`metricsAllowed`）、`config.go`（`--metrics-allow-cidr`） |
+| P1-6 | 联邦 mTLS + HMAC 转发签名验签（防伪造/重放） | `internal/controlplane/server.go`（`buildFederationServer`/`verifyFederationRequest`）、`federation.go`（`signFederationRequest`）、`tlsutil.go`（`HTTPServerTLSConfig`/`HTTPClientTLSConfig`）、`config.go`（6 个 `--federation-*` flag） |
+
+### 验证状态
+
+- ⚠️ **本地构建/测试**：当前沙箱无 Go 工具链，以上改动**未经 `go build ./... && go test ./...` 真跑**。需在用户本机（Go 1.22+）或 CI runner 执行：
+  ```bash
+  go build ./... && go vet ./... && go test -timeout 300s ./...
+  ```
+  其中 `internal/controlplane/federation_test.go` 已同步更新为新四参数签名 `NewFederationManager(peers, store, secret, tlsConfig)`。
+- ⚠️ **CI 集成/安全扫描**：`integration`（`-race` + MySQL/Redis service container）、`security`（gosec/Trivy）、`lint`（golangci-lint）仍需 GitHub Actions runner 真跑，标记「阻塞·待外部」。
+
+---
+
 *本说明随 MVP 交付生成；后续若启用蓝鲸 GSE 级联增强，将单独立项并更新本文档。*

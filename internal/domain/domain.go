@@ -13,9 +13,9 @@ import (
 // M2-1C 领域 sentinel error：状态机非法转换的精确错误。
 // 调用方（handler）可经 errors.Is 精确区分，映射到不同 HTTP 状态码（404 vs 409）。
 var (
-	ErrTaskAlreadyDone       = errors.New("task already done, cannot cancel")
-	ErrTaskAlreadyFailed     = errors.New("task already failed, cannot cancel")
-	ErrTaskAlreadyCancelled  = errors.New("task already cancelled")
+	ErrTaskAlreadyDone           = errors.New("task already done, cannot cancel")
+	ErrTaskAlreadyFailed         = errors.New("task already failed, cannot cancel")
+	ErrTaskAlreadyCancelled      = errors.New("task already cancelled")
 	ErrDeviceAlreadyProvisioning = errors.New("device already provisioning")
 	ErrAlertAlreadyAcknowledged  = errors.New("alert already acknowledged")
 	ErrAlertAlreadySilenced      = errors.New("alert already silenced")
@@ -42,6 +42,9 @@ type Agent struct {
 	// B1 自动纳管闭环：经 install token 校验后回填的候选设备 ID（不依赖 agent 自报）。
 	// 非空时控制面 Register 把该「已发现候选设备」翻转 onboarded（Managed=true）。
 	OnboardDeviceID string
+	// 目标机基础元信息（agent 注册时上报）。
+	OS   string // 操作系统：windows / linux / darwin
+	Arch string // CPU 架构：amd64 / arm64
 }
 
 // Device 被纳管的网段内设备（U-02：服务部署后整段网络打通，设备自动纳管）。
@@ -50,15 +53,18 @@ type Agent struct {
 type Device struct {
 	DeviceID     string    `json:"deviceID"`
 	Segment      string    `json:"segment"`
-	TenantID    string    `json:"tenantID"`
+	TenantID     string    `json:"tenantID"`
 	IP           string    `json:"ip"`
 	AgentID      string    `json:"agentID"`
-	State        string    `json:"state"`     // online / offline / discovered（B1 候选）/ provisioning（B1 推送中）
+	State        string    `json:"state"` // online / offline / discovered（B1 候选）/ provisioning（B1 推送中）
 	TaskState    string    `json:"taskState"`
-	Managed      bool      `json:"managed"`   // true=agent 已注册纳管；false=网段发现候选（待装 agent，B1）
+	Managed      bool      `json:"managed"`    // true=agent 已注册纳管；false=网段发现候选（待装 agent，B1）
 	LastResult   string    `json:"lastResult"` // success / failed（B2 失败回写看板）
 	LastResultAt time.Time `json:"lastResultAt"`
-	Retired      bool      `json:"retired"`   // F5 设备退役
+	Retired      bool      `json:"retired"`  // F5 设备退役
+	Hostname     string    `json:"hostname"` // 主机名
+	OS           string    `json:"os"`       // 操作系统：windows / linux / darwin
+	Arch         string    `json:"arch"`     // CPU 架构：amd64 / arm64
 }
 
 // Task 下发给 agent 的自动化任务。
@@ -75,7 +81,7 @@ type Task struct {
 	ClaimedBy   string    `json:"claimedBy"`
 	ClaimedAt   time.Time `json:"claimedAt"`
 	CreatedAt   time.Time `json:"createdAt"`
-	RetryCount   int       `json:"retryCount"` // F2 重试累计
+	RetryCount  int       `json:"retryCount"` // F2 重试累计
 	MaxRetries  int       `json:"maxRetries"` // F2 重试上限
 	DeadLetter  bool      `json:"deadLetter"` // F2 死信标记
 	Schedule    string    `json:"schedule"`   // F4 cron 表达式（空=不调度）

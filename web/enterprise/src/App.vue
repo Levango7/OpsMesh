@@ -1,37 +1,75 @@
 <template>
-  <div class="app">
+  <!-- 未登录：只渲染路由（登录/注册页自己负责全屏布局） -->
+  <router-view v-if="!authStore.isLoggedIn" />
+
+  <!-- 已登录：主布局（顶栏 + 侧栏 + 内容 + 底栏） -->
+  <div v-else class="app">
     <!-- 顶栏 -->
     <header class="appbar">
       <div class="brand">
-        <div class="logo">OM</div>
+        <div class="logo"><Icon name="brand" :size="20" /></div>
         <div>
-          <h1>OpsMesh 企业版</h1>
-          <div class="sub">多租户运维编排控制台 · Vue 3</div>
+          <h1>{{ $t('app.title') }}</h1>
+          <div class="sub">{{ $t('app.subtitle') }}</div>
         </div>
       </div>
-      <div class="appbar-meta">
-        <span class="chip">设备 <b>{{ deviceStore.total }}</b></span>
-        <span class="chip">纳管 <b>{{ deviceStore.managed }}</b></span>
-        <span class="chip">告警 <b>{{ alertStore.list.length }}</b></span>
+
+      <div class="appbar-right">
+        <!-- 资源统计 chip -->
+        <div class="appbar-meta">
+          <span class="chip">{{ $t('topbar.devices') }} <b>{{ deviceStore.total }}</b></span>
+          <span class="chip">{{ $t('topbar.managed') }} <b>{{ deviceStore.managed }}</b></span>
+          <span class="chip">{{ $t('topbar.alerts') }} <b>{{ alertStore.list.length }}</b></span>
+        </div>
+
+        <!-- 主题切换 -->
+        <button
+          class="icon-btn"
+          @click="themeStore.toggle()"
+          :title="themeStore.isDark ? $t('topbar.theme_light') : $t('topbar.theme_dark')"
+        >
+          <Icon :name="themeStore.isDark ? 'theme-light' : 'theme-dark'" :size="18" />
+        </button>
+
+        <!-- 语言切换 -->
+        <button class="icon-btn" @click="toggleLang" :title="$t('topbar.lang')">
+          <Icon name="lang" :size="18" />
+          <span class="lang-label">{{ currentLang === 'zh' ? '中' : 'EN' }}</span>
+        </button>
+
+        <!-- 用户信息 -->
+        <div class="user-info">
+          <span class="user-avatar"><Icon name="users" :size="16" /></span>
+          <span class="user-name">{{ authStore.user?.username || '—' }}</span>
+        </div>
+
+        <!-- 退出 -->
+        <button class="icon-btn danger" @click="onLogout" :title="$t('topbar.logout')">
+          <Icon name="logout" :size="18" />
+        </button>
       </div>
     </header>
 
     <div class="layout">
-      <!-- 侧栏导航 -->
+      <!-- 侧栏导航：分组 -->
       <aside class="sidebar">
-        <div
-          v-for="item in navItems"
-          :key="item.name"
-          class="tab"
-          :class="{ active: $route.name === item.name }"
-          @click="$router.push('/' + item.name)"
-        >
-          <span class="tdot" :style="{ background: item.color }"></span>
-          {{ item.title }}
+        <div v-for="grp in navGroups" :key="grp.group" class="nav-group">
+          <div class="nav-group-title">{{ $t(grp.labelKey) }}</div>
+          <div
+            v-for="item in grp.items"
+            :key="item.name"
+            class="tab"
+            :class="{ active: $route.name === item.name }"
+            @click="$router.push('/' + item.name)"
+          >
+            <span class="tab-icon"><Icon :name="item.icon" :size="16" /></span>
+            <span class="tab-label">{{ $t(item.labelKey) }}</span>
+          </div>
         </div>
+
         <div class="apilist">
-          <div>API: <code>/api/v1</code></div>
-          <div>Base: <code>/enterprise/</code></div>
+          <div>{{ $t('common.api_base') }}</div>
+          <div>{{ $t('common.web_base') }}</div>
         </div>
       </aside>
 
@@ -46,31 +84,81 @@
     </div>
 
     <footer class="footbar">
-      <span>OpsMesh Enterprise · Vue 3 + Vite + Pinia</span>
-      <span class="muted">© 2026 OpsMesh</span>
+      <span>{{ $t('app.footer') }}</span>
+      <span class="muted">{{ $t('app.copyright') }}</span>
     </footer>
   </div>
 </template>
 
 <script setup>
+// 应用根组件 — 顶栏 + 分组侧栏 + 内容 + 底栏
+// 已登录显示主布局；未登录仅渲染路由（登录/注册页全屏）
 import { onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { useAlertStore } from '@/stores/alert'
+import { useAuthStore } from '@/stores/auth'
+import { useThemeStore } from '@/stores/theme'
+import { currentLang, setLang } from '@/i18n'
+import Icon from '@/components/Icon.vue'
 
+const router = useRouter()
 const deviceStore = useDeviceStore()
 const alertStore = useAlertStore()
+const authStore = useAuthStore()
+const themeStore = useThemeStore()
 
-const navItems = [
-  { name: 'devices', title: '设备纳管', color: 'var(--indigo)' },
-  { name: 'tasks', title: '任务下发', color: 'var(--teal)' },
-  { name: 'alerts', title: '监控告警', color: 'var(--rose)' },
-  { name: 'cmdb', title: '配置项 CMDB', color: 'var(--amber)' },
-  { name: 'workflows', title: '作业编排', color: 'var(--violet)' },
-  { name: 'deploys', title: '部署中心', color: 'var(--sky)' },
-  { name: 'logs', title: '日志检索', color: 'var(--green)' }
+// 分组导航：每组 { group, labelKey, items[{ name, icon, labelKey }] }
+const navGroups = [
+  {
+    group: 'overview', labelKey: 'nav.overview',
+    items: [{ name: 'overview', icon: 'home', labelKey: 'nav.home' }]
+  },
+  {
+    group: 'ops', labelKey: 'nav.ops',
+    items: [
+      { name: 'devices', icon: 'device', labelKey: 'nav.devices' },
+      { name: 'tasks', icon: 'task', labelKey: 'nav.tasks' },
+      { name: 'alerts', icon: 'alerts', labelKey: 'nav.alerts' }
+    ]
+  },
+  {
+    group: 'assets', labelKey: 'nav.assets',
+    items: [{ name: 'cmdb', icon: 'cmdb', labelKey: 'nav.cmdb' }]
+  },
+  {
+    group: 'delivery', labelKey: 'nav.delivery',
+    items: [
+      { name: 'workflows', icon: 'flow', labelKey: 'nav.workflows' },
+      { name: 'deploys', icon: 'deploy', labelKey: 'nav.deploys' }
+    ]
+  },
+  {
+    group: 'observability', labelKey: 'nav.observability',
+    items: [{ name: 'logs', icon: 'logs', labelKey: 'nav.logs' }]
+  },
+  {
+    group: 'system', labelKey: 'nav.system',
+    items: [
+      { name: 'users', icon: 'users', labelKey: 'nav.users' },
+      { name: 'roles', icon: 'roles', labelKey: 'nav.roles' },
+      { name: 'permissions', icon: 'permissions', labelKey: 'nav.permissions' }
+    ]
+  }
 ]
 
-// 主轮询：受页面可见性控制
+// 切换语言
+function toggleLang() {
+  setLang(currentLang.value === 'zh' ? 'en' : 'zh')
+}
+
+// 退出登录
+function onLogout() {
+  authStore.logout()
+  router.push({ name: 'login' })
+}
+
+// 主轮询：受页面可见性控制（仅已登录时启动）
 let pollTimers = []
 function startPolls() {
   if (pollTimers.length) return
@@ -87,10 +175,14 @@ function onVisibility() {
 }
 
 onMounted(() => {
-  deviceStore.fetchDevices()
-  alertStore.fetchAlerts()
-  document.addEventListener('visibilitychange', onVisibility)
-  startPolls()
+  // 已登录时拉取当前用户信息 + 启动轮询
+  if (authStore.isLoggedIn) {
+    authStore.fetchMe()
+    deviceStore.fetchDevices()
+    alertStore.fetchAlerts()
+    document.addEventListener('visibilitychange', onVisibility)
+    startPolls()
+  }
 })
 onUnmounted(() => {
   stopPolls()
@@ -103,22 +195,24 @@ onUnmounted(() => {
 .appbar {
   position: sticky; top: 0; z-index: 30;
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 24px;
-  background: rgba(247,248,253,.86);
+  padding: 10px 20px;
+  background: var(--appbar-bg);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand .logo {
   width: 38px; height: 38px; border-radius: 10px;
-  background: linear-gradient(135deg, var(--indigo), #8b5cf6);
+  background: linear-gradient(135deg, var(--indigo), var(--violet));
   display: flex; align-items: center; justify-content: center;
-  color: #fff; font-weight: 700; font-size: 14px;
+  color: #fff;
   box-shadow: 0 4px 14px rgba(99,102,241,.4);
 }
 .brand h1 { line-height: 1.1; font-size: 16px; }
 .brand .sub { font-size: 12px; color: var(--text-3); }
-.appbar-meta { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.appbar-right { display: flex; align-items: center; gap: 8px; }
+.appbar-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-right: 4px; }
 .chip {
   font-size: 12px; color: var(--text-2);
   background: var(--surface-3); border: 1px solid var(--border);
@@ -126,26 +220,65 @@ onUnmounted(() => {
 }
 .chip b { color: var(--text); font-weight: 600; }
 
+/* 顶栏图标按钮 */
+.icon-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 34px; padding: 0 10px;
+  background: var(--surface-3); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-2); cursor: pointer; transition: .15s;
+}
+.icon-btn:hover { background: var(--bg-soft); color: var(--text); }
+.icon-btn.danger:hover { color: var(--fail); border-color: var(--fail); }
+.lang-label { font-size: 12px; font-weight: 600; }
+
+/* 用户信息 */
+.user-info {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 34px; padding: 0 10px;
+  background: var(--accent-soft); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+}
+.user-avatar {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--accent); color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.user-name { font-size: 13px; font-weight: 500; }
+
+/* 布局 */
 .layout { display: flex; flex: 1; min-height: 0; }
 .sidebar {
   flex: 0 0 210px; width: 210px;
   background: var(--surface); border-right: 1px solid var(--border);
-  padding: 16px 12px; overflow: auto;
+  padding: 14px 10px; overflow: auto;
+}
+
+/* 分组导航 */
+.nav-group { margin-bottom: 14px; }
+.nav-group-title {
+  font-size: 11px; font-weight: 600; color: var(--text-3);
+  text-transform: uppercase; letter-spacing: .06em;
+  padding: 6px 12px 4px;
 }
 .sidebar .tab {
   display: flex; width: 100%; text-align: left;
-  padding: 9px 12px; border-radius: 9px;
+  padding: 8px 12px; border-radius: var(--radius-sm);
   color: var(--text-2); border: none; background: none;
   font-weight: 500; gap: 9px; margin: 2px 0; font-size: 13.5px;
   cursor: pointer; align-items: center;
 }
 .sidebar .tab:hover { background: var(--bg-soft); color: var(--text); }
 .sidebar .tab.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-.sidebar .tab .tdot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+.tab-icon { display: inline-flex; flex-shrink: 0; }
+.tab-label { flex: 1; min-width: 0; }
+
 .apilist {
-  margin-top: 22px; padding-top: 16px;
+  margin-top: 18px; padding-top: 14px;
   border-top: 1px dashed var(--border);
-  font-size: 12.5px; color: var(--text-3); line-height: 1.8;
+  font-size: 12px; color: var(--text-3); line-height: 1.8;
+  padding-left: 12px;
 }
 
 .content { flex: 1; max-width: 1200px; margin: 0 auto; padding: 22px; }
@@ -160,6 +293,7 @@ onUnmounted(() => {
 @media (max-width: 768px) {
   .sidebar { flex: 0 0 100%; position: fixed; transform: translateX(-100%); z-index: 100; }
   .content { padding: 14px; }
-  .appbar { padding: 10px 14px; }
+  .appbar { padding: 8px 12px; }
+  .appbar-meta { display: none; }
 }
 </style>
