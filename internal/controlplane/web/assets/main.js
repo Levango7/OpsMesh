@@ -10,9 +10,12 @@ import { startPolling, stopPolling, setAuxCallbacks, pollDevices, pollTasks, pol
 import {
   paintStats, renderUsers, renderRoles, renderPermissions,
   mgmtState, showModal, closeModal, showUserModal, showRoleModal, setModalMsg,
-  usersPrevPage, usersNextPage, usersSetSearch, rolesPrevPage, rolesNextPage,
-  paintUsersTable, paintRolesTable, paintPermsList,
+  usersPrevPage, usersNextPage, usersSetSearch, paintUsersTable, paintRolesTable, paintPermsList,
+  permsSetSearch, switchDocPanel,
+  rolesPrevPage, rolesNextPage,
   renderDeviceDetail, closeDeviceDetail,
+  renderPageNotes, renderSettings, renderDocs,
+  renderDevices, state as renderState,
 } from './render.js';
 import {
   switchTab, toggleGuide, openDevice, provision, closeDrawer,
@@ -27,7 +30,7 @@ import {
   fetchMe, loadAgents, submitTaskForm,
 } from './flow.js';
 import { icon } from './icons.js';
-import { initTheme, toggleTheme, getTheme } from './theme.js';
+import { initTheme, toggleTheme, getTheme, setTheme } from './theme.js';
 import { initI18n, t, getLang, setLang, toggleLang } from './i18n.js';
 import * as api from './api.js';
 
@@ -138,6 +141,17 @@ w.submitAuth = async function () {
     } else {
       r = await api.apiAuthRegister(username, password, email || undefined);
     }
+    // P1-7 注册安全：注册成功后区分两种情况：
+    //   - demo 模式：返回 token，直接进入主界面（兼容旧行为）；
+    //   - 非 demo 模式：返回 {message, userId, status}（无 token），显示待审批提示，不自动登录，切回登录页。
+    if (authMode === 'register' && (r.s === 201) && r.j && !r.j.token && r.j.message) {
+      msg.textContent = t('register.pending');
+      msg.className = 'auth-msg ok';
+      // 清空密码字段，切回登录模式（不自动登录）。
+      document.getElementById('authPassword').value = '';
+      setTimeout(function () { switchAuthMode('login'); }, 2000);
+      return;
+    }
     if ((r.s === 200 || r.s === 201) && r.j && r.j.token) {
       msg.textContent = authMode === 'register' ? t('register.success') : '';
       msg.className = 'auth-msg ok';
@@ -226,15 +240,25 @@ w.toggleUserMenu = function () {
 w.pollUsers = function () {
   const el = document.getElementById('usersTable');
   if (el) el.innerHTML = '<p class="muted">' + esc(t('users.loading')) + '</p>';
-  api.apiListUsers().then(function (r) {
-    if (r.s === 200 && r.j && r.j.users) {
-      renderUsers(r.j.users);
-    } else {
-      el.innerHTML = '<p class="muted">' + esc(t('common.error')) + (r.j && (r.j.error || r.j.message) || ('HTTP ' + r.s)) + '</p>';
-    }
-  }).catch(function (e) {
-    el.innerHTML = '<p class="muted">' + esc(t('common.networkError')) + '</p>';
-    console.error('[users]', e);
+  // 确保角色已加载（用于显示用户角色名）
+  const loadRoles = (!mgmtState.rolesCache || mgmtState.rolesCache.length === 0)
+    ? api.apiListRoles().then(function (r) {
+        if (r.s === 200 && r.j && r.j.roles) {
+          mgmtState.rolesCache = r.j.roles;
+        }
+      }).catch(function () {})
+    : Promise.resolve();
+  loadRoles.then(function () {
+    api.apiListUsers().then(function (r) {
+      if (r.s === 200 && r.j && r.j.users) {
+        renderUsers(r.j.users);
+      } else {
+        el.innerHTML = '<p class="muted">' + esc(t('common.error')) + (r.j && (r.j.error || r.j.message) || ('HTTP ' + r.s)) + '</p>';
+      }
+    }).catch(function (e) {
+      el.innerHTML = '<p class="muted">' + esc(t('common.networkError')) + '</p>';
+      console.error('[users]', e);
+    });
   });
 };
 
@@ -442,6 +466,68 @@ w.submitRoleModal = async function (id) {
 // 弹窗关闭
 w.closeModal = closeModal;
 
+// ---------- 系统设置 / 文档 ----------
+w.pollSettings = function () { renderSettings(); };
+w.pollDocs = function () { renderDocs(); };
+
+// 保存系统设置（前端持久化到 localStorage）
+w.saveSettings = function () {
+  // 主题
+  const themeBtns = document.querySelectorAll('#themeToggleGroup button');
+  let theme = 'light';
+  themeBtns.forEach(function (b) { if (b.classList.contains('active')) theme = b.getAttribute('data-val'); });
+  if (theme === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    localStorage.setItem('opsmesh-theme', 'dark');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+    localStorage.setItem('opsmesh-theme', 'light');
+  }
+  // 语言
+  const langBtns = document.querySelectorAll('#langToggleGroup button');
+  let lang = 'zh';
+  langBtns.forEach(function (b) { if (b.classList.contains('active')) lang = b.getAttribute('data-val'); });
+  setLang(lang);
+  // 通知 / 告警 / 任务
+  const val = function (id) { const e = document.getElementById(id); return e ? e.value : ''; };
+  localStorage.setItem('opsmesh-notify-email', val('setNotifyEmail'));
+  localStorage.setItem('opsmesh-notify-webhook', val('setWebhookUrl'));
+  localStorage.setItem('opsmesh-alert-critical', val('setAlertCritical'));
+  localStorage.setItem('opsmesh-alert-warning', val('setAlertWarning'));
+  localStorage.setItem('opsmesh-alert-silence', val('setAlertSilence'));
+  localStorage.setItem('opsmesh-task-timeout', val('setTaskTimeout'));
+  localStorage.setItem('opsmesh-task-retry', val('setTaskRetry'));
+  localStorage.setItem('opsmesh-task-concurrency', val('setTaskConc'));
+  const msg = document.getElementById('settingsMsg');
+  if (msg) { msg.textContent = t('settings.saved'); msg.className = 'settings-msg ok'; }
+};
+
+// 主题/语言切换按钮组点击
+document.addEventListener('click', function (e) {
+  const tg = e.target.closest('#themeToggleGroup button');
+  if (tg) {
+    tg.parentNode.querySelectorAll('button').forEach(function (b) { b.classList.remove('active'); });
+    tg.classList.add('active');
+    // 立即应用主题切换
+    const val = tg.getAttribute('data-val');
+    if (val === 'dark') {
+      setTheme('dark');
+    } else {
+      setTheme('light');
+    }
+    return;
+  }
+  const lg = e.target.closest('#langToggleGroup button');
+  if (lg) {
+    lg.parentNode.querySelectorAll('button').forEach(function (b) { b.classList.remove('active'); });
+    lg.classList.add('active');
+    // 立即应用语言切换
+    const lang = lg.getAttribute('data-val');
+    setLang(lang);
+    return;
+  }
+});
+
 // ---------- 设备详情 · 监控指标弹窗 ----------
 // showDeviceDetail：调用 API 获取设备监控指标 → 渲染详情 → 显示弹窗
 w.showDeviceDetail = async function (deviceID) {
@@ -472,6 +558,8 @@ w.usersNextPage = usersNextPage;
 w.usersSetSearch = usersSetSearch;
 w.rolesPrevPage = rolesPrevPage;
 w.rolesNextPage = rolesNextPage;
+w.permsSetSearch = permsSetSearch;
+w.switchDocPanel = switchDocPanel;
 
 // ---------- 简易 esc（避免在 main.js 中 import render.js 的 esc 循环） ----------
 function esc(s) {
@@ -491,12 +579,12 @@ function initStaticIcons() {
     'navIconHome': 'home', 'navIconOps': 'ops', 'navIconCmdb': 'cmdb',
     'navIconDeploy': 'deploy', 'navIconFlow': 'flow', 'navIconLogs': 'logs',
     'navIconAlerts': 'alerts', 'navIconUsers': 'users', 'navIconRoles': 'roles',
-    'navIconPerms': 'permissions',
+    'navIconPerms': 'permissions', 'navIconSettings': 'settings', 'navIconDocs': 'info',
     // pane-intro
     'introIconHome': 'home', 'introIconOps': 'ops', 'introIconCmdb': 'cmdb',
     'introIconFlow': 'flow', 'introIconDeploy': 'deploy', 'introIconLogs': 'logs',
     'introIconAlerts': 'alerts', 'introIconUsers': 'users', 'introIconRoles': 'roles',
-    'introIconPerms': 'permissions',
+    'introIconPerms': 'permissions', 'introIconSettings': 'settings', 'introIconDocs': 'info',
     // 上下文
     'ctxIcon': 'context',
     // 按钮
@@ -548,11 +636,24 @@ function applyI18nToDOM() {
   setText('tab-users-btn', t('nav.users'), true);
   setText('tab-roles-btn', t('nav.roles'), true);
   setText('tab-permissions-btn', t('nav.permissions'), true);
+  setText('tab-settings-btn', t('nav.settings'), true);
+  setText('tab-docs-btn', t('nav.docs'), true);
+  setText('navGroupHelp', t('nav.group.help'));
   // 用户菜单下拉
   setText('menuUsersBtn', t('nav.users'), true);
   setText('menuRolesBtn', t('nav.roles'), true);
   setText('menuPermsBtn', t('nav.permissions'), true);
+  setText('menuSettingsBtn', t('nav.settings'), true);
   setText('menuLogoutBtn', t('topbar.logout'), true);
+  // 上下文条
+  setText('ctxTitle', t('ctx.title'));
+  setText('ctxDeviceLabel', t('ctx.device'));
+  setText('ctxOps', t('ctx.ops'));
+  setText('ctxCmdb', t('ctx.cmdb'));
+  setText('ctxDeploy', t('ctx.deploy'));
+  setText('ctxLogs', t('ctx.logs'));
+  setText('ctxAlerts', t('ctx.alerts'));
+  setText('ctxClear', t('ctx.clearBtn'));
   // 用户中心页
   setText('usersTitle', t('users.title'));
   setText('usersDesc', t('users.desc'));
@@ -560,6 +661,183 @@ function applyI18nToDOM() {
   setText('rolesDesc', t('roles.desc'));
   setText('permsTitle', t('perms.title'));
   setText('permsDesc', t('perms.desc'));
+  // 系统设置 / 文档
+  setText('settingsTitle', t('settings.title'));
+  setText('settingsDesc', t('settings.desc'));
+  setText('docsTitle', t('docs.title'));
+  setText('docsDesc', t('docs.desc'));
+  // 设备详情弹窗
+  setText('deviceDetailTitle', t('device.detail.title'));
+  // pane-intro 标题与描述（含 HTML 标签，用 innerHTML）
+  setHTML('introHomeTitle', t('home.title'));
+  setHTML('introHomeDesc', t('home.desc'));
+  setText('introHomeHowToUse', t('home.howToUse'));
+  setHTML('introOpsTitle', t('ops.title'));
+  setHTML('introOpsDesc', t('ops.desc'));
+  setText('introOpsHowToUse', t('home.howToUse'));
+  setHTML('introCmdbTitle', t('cmdb.title'));
+  setHTML('introCmdbDesc', t('cmdb.desc'));
+  setHTML('introFlowTitle', t('flow.title'));
+  setHTML('introFlowDesc', t('flow.desc'));
+  setText('introFlowLoadDemo', t('flow.loadDemo'));
+  setHTML('introDeployTitle', t('deploy.title'));
+  setHTML('introDeployDesc', t('deploy.desc'));
+  setText('introDeployLoadDemo', t('flow.loadDemo'));
+  setHTML('introLogsTitle', t('logs.title'));
+  setHTML('introLogsDesc', t('logs.desc'));
+  setHTML('introAlertsTitle', t('alerts.title'));
+  setHTML('introAlertsDesc', t('alerts.desc'));
+  setText('introAlertsRefresh', t('cmdb.refresh'));
+  // stats 卡片标签
+  setText('ovDevicesLabel', t('home.stat.devices'));
+  setText('ovCIsLabel', t('home.stat.cis'));
+  setText('ovTasksLabel', t('home.stat.tasks'));
+  setText('ovAlertsLabel', t('home.stat.alerts'));
+  setText('statDevicesLabel', t('ops.stat.devices'));
+  setText('statManagedLabel', t('ops.stat.managed'));
+  setText('statTasksLabel', t('ops.stat.tasks'));
+  setText('statAlertsLabel', t('ops.stat.alerts'));
+  setText('statCriticalLabel', t('alerts.stat.critical'));
+  setText('statWarningLabel', t('alerts.stat.warning'));
+  setText('statTotalAlertsLabel', t('alerts.stat.total'));
+  setText('statMonPortLabel', t('alerts.stat.port'));
+  // home 运维能力方向
+  setText('homeCapsTitle', t('home.capsTitle'));
+  setText('homeCapsHint', t('home.capsHint'));
+  setText('capDeviceName', t('home.cap.device'));
+  setText('capDeviceDesc', t('home.cap.device.desc'));
+  setText('capTaskName', t('home.cap.task'));
+  setText('capTaskDesc', t('home.cap.task.desc'));
+  setText('capCmdbName', t('home.cap.cmdb'));
+  setText('capCmdbDesc', t('home.cap.cmdb.desc'));
+  setText('capServiceName', t('home.cap.service'));
+  setText('capServiceDesc', t('home.cap.service.desc'));
+  setText('capFileName', t('home.cap.file'));
+  setText('capFileDesc', t('home.cap.file.desc'));
+  setText('capMonitorName', t('home.cap.monitor'));
+  setText('capMonitorDesc', t('home.cap.monitor.desc'));
+  // home card 标题与描述
+  setText('homeQuickEntry', t('home.quickEntry'));
+  setText('homeQuickEntryHint', t('home.quickEntryHint'));
+  setText('homeQuickOps', t('nav.ops'));
+  setText('homeQuickCmdb', t('nav.cmdb'));
+  setText('homeQuickDeploy', t('nav.deploy'));
+  setText('homeQuickFlow', t('nav.flow'));
+  setText('homeQuickLogs', t('nav.logs'));
+  setText('homeQuickAlerts', t('nav.alerts'));
+  setText('homeDataSource', t('home.dataSource'));
+  setText('homeDataSourceDesc', t('home.dataSourceDesc'));
+  setText('homeTaskHealth', t('home.taskHealth'));
+  setText('homeTaskHealthHint', t('home.taskHealthHint'));
+  setText('homeTrend', t('home.trend'));
+  setText('homeTrendHint', t('home.trendHint'));
+  setText('homeAlertLevel', t('home.alertLevel'));
+  setText('homeAlertLevelHint', t('home.alertLevelHint'));
+  setText('homeResType', t('home.resType'));
+  setText('homeResTypeHint', t('home.resTypeHint'));
+  setText('homeTopo', t('home.topo'));
+  setText('homeTopoHint', t('home.topoHint'));
+  // ops 页面 card
+  setText('opsDispatchTitle', t('ops.dispatch'));
+  setText('opsDispatchHint', t('ops.dispatchHint'));
+  setText('opsAgentLabel', t('ops.agentLabel'));
+  setText('opsTypeLabel', t('ops.typeLabel'));
+  setText('opsCommandLabel', t('ops.commandLabel'));
+  setText('opsPathLabel', t('ops.pathLabel'));
+  setText('opsContentLabel', t('ops.contentLabel'));
+  setText('opsDispatchBtn', t('ops.dispatchBtn'));
+  setText('opsNetworkTitle', t('ops.network'));
+  setText('opsNetworkHint', t('ops.networkHint'));
+  setText('opsTasksTitle', t('ops.tasks'));
+  setText('opsStatusFilterLabelText', t('ops.statusFilterLabel'));
+  setText('opsActiveAlertsTitle', t('ops.activeAlerts'));
+  setText('opsActiveAlertsHint', t('ops.activeAlertsHint'));
+  // cmdb 页面 card
+  setText('cmdbCiInstancesTitle', t('cmdb.ciInstances'));
+  setText('cmdbCiTypeLabelText', t('cmdb.ciTypeLabel'));
+  setText('cmdbRefreshBtn1', t('cmdb.refresh'));
+  setText('cmdbAttrTemplateTitle', t('cmdb.attrTemplate'));
+  setText('cmdbTmplTypeLabelText', t('cmdb.ciTypeLabel'));
+  setText('cmdbRefreshBtn2', t('cmdb.refresh'));
+  setText('cmdbNewCITitle', t('cmdb.newCI'));
+  setHTML('cmdbNewCIHint', t('cmdb.newCIHint'));
+  setText('cmdbNewCITypeLabelText', t('cmdb.newCITypeLabel'));
+  setText('cmdbNewCINameLabel', t('cmdb.newCINameLabel'));
+  setText('cmdbNewCIAttrsLabel', t('cmdb.newCIAttrsLabel'));
+  setText('cmdbCreateBtn', t('cmdb.create'));
+  setText('cmdbCiGraphTitle', t('cmdb.ciGraph'));
+  setText('cmdbCiGraphHint', t('cmdb.ciGraphHint'));
+  // flow 页面 card
+  setText('flowWorkflowTitle', t('flow.workflow'));
+  setText('flowWorkflowHint', t('flow.workflowHint'));
+  setText('flowSelectLabel', t('flow.selectLabel'));
+  setText('flowNameLabel', t('flow.nameLabel'));
+  setText('flowAgentLabel', t('flow.agentLabel'));
+  setText('flowCronLabel', t('flow.cronLabel'));
+  setText('flowNewBtn', t('flow.new'));
+  setText('flowDemoBtn', t('flow.demo'));
+  setText('flowSaveBtn', t('flow.save'));
+  setText('flowRunBtn', t('flow.run'));
+  setText('flowScheduleBtn', t('flow.schedule'));
+  setText('flowNodesTitle', t('flow.nodes'));
+  setText('flowAddNodeBtn', t('flow.addNode'));
+  setText('flowCanvasTitle', t('flow.canvas'));
+  setText('flowCanvasHint', t('flow.canvasHint'));
+  setText('flowLinkBtn', t('flow.link'));
+  setText('flowAutoLayoutBtn', t('flow.autoLayout'));
+  setText('flowUndoBtn', t('flow.undo'));
+  setText('flowRedoBtn', t('flow.redo'));
+  setText('flowFitBtn', t('flow.fit'));
+  setText('flowResetBtn', t('flow.reset'));
+  setText('flowAlignSelLabel', t('flow.alignSel'));
+  setText('flowAlignLeftBtn', t('flow.alignLeft'));
+  setText('flowAlignRightBtn', t('flow.alignRight'));
+  setText('flowAlignTopBtn', t('flow.alignTop'));
+  setText('flowAlignBottomBtn', t('flow.alignBottom'));
+  // deploy 页面 card
+  setText('deployRegisterTitle', t('deploy.register'));
+  setHTML('deployRegisterHint', t('deploy.registerHint'));
+  setText('deployNameLabel', t('deploy.nameLabel'));
+  setText('deployTypeLabel', t('deploy.typeLabel'));
+  setText('deployRepoLabel', t('deploy.repoLabel'));
+  setText('deployContentLabel', t('deploy.contentLabel'));
+  setText('deployPathLabel', t('deploy.pathLabel'));
+  setText('deployTargetsLabel', t('deploy.targetsLabel'));
+  setText('deployAddBtn', t('deploy.addBtn'));
+  setText('deployListTitle', t('deploy.list'));
+  setText('deployListHint', t('deploy.listHint'));
+  setText('deployStatusFilterLabelText', t('deploy.statusFilterLabel'));
+  setText('deployRefreshBtn', t('cmdb.refresh'));
+  // logs 页面 card
+  setText('logsQueryTitle', t('logs.query'));
+  setHTML('logsQueryHint', t('logs.queryHint'));
+  setText('logsDeviceLabel', t('logs.deviceLabel'));
+  setText('logsAgentLabel', t('logs.agentLabel'));
+  setText('logsLevelLabel', t('logs.levelLabel'));
+  setText('logsSourceLabel', t('logs.sourceLabel'));
+  setText('logsKeywordLabel', t('logs.keywordLabel'));
+  setText('logsFromLabel', t('logs.fromLabel'));
+  setText('logsToLabel', t('logs.toLabel'));
+  setText('logsLimitLabel', t('logs.limitLabel'));
+  setText('logsSearchBtn', t('logs.searchBtn'));
+  setText('logsResetBtn', t('logs.resetBtn'));
+  setText('logsResultTitle', t('logs.result'));
+  setHTML('logsResultHint', t('logs.resultHint'));
+  setText('logsPrevBtn', t('logs.prevBtn'));
+  setText('logsNextBtn', t('logs.nextBtn'));
+  // alerts 页面 card
+  setText('alertsActiveTitle', t('alerts.active'));
+  setText('alertsRefreshBtn', t('alerts.refreshBtn'));
+  setText('alertsActiveHint', t('alerts.activeHint'));
+  setText('alertsMetricsTitle', t('alerts.metrics'));
+  setText('alertsMetricsHint', t('alerts.metricsHint'));
+  setText('alertsMetricsNote', t('alerts.metricsNote'));
+  setHTML('alertsMetricsTip', t('alerts.metricsTip'));
+  // users / roles 按钮
+  setText('usersAddBtn', t('users.addBtn'));
+  setText('usersRefreshBtn', t('users.refreshBtn'));
+  setText('rolesAddBtn', t('roles.addBtn'));
+  setText('rolesRefreshBtn', t('roles.refreshBtn'));
   // 搜索框 placeholder
   const usi = document.getElementById('usersSearchInput');
   if (usi) usi.placeholder = t('users.searchPlaceholder');
@@ -585,6 +863,12 @@ function setText(id, text, keepIcon) {
   }
 }
 
+// setHTML: 设置元素 innerHTML（用于含 <b> 等标签的翻译文本）
+function setHTML(id, html) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = html;
+}
+
 // ---------- 初始化主界面 ----------
 function initMain() {
   loadAgents();
@@ -592,6 +876,9 @@ function initMain() {
   pollDevices(); pollTasks(); pollAlerts();
   paintStats();
   fetchMe();
+
+  // 渲染各页面底部说明
+  renderPageNotes();
 
   // M3-2B：优先启动 SSE 实时推送，失败自动降级回退轮询（startSSE 内部处理降级）。
   startSSE();
@@ -632,13 +919,10 @@ function init() {
   // 初始化主题与语言（尽早，避免闪烁）
   initTheme();
   initI18n();
-
   // 填充静态图标
   initStaticIcons();
-
   // 应用 i18n 到静态 DOM
   applyI18nToDOM();
-
   // 监听语言切换事件，重渲染静态文本
   document.addEventListener('langchange', function () {
     applyI18nToDOM();
@@ -646,6 +930,18 @@ function init() {
     if (mgmtState.users.list.length) paintUsersTable();
     if (mgmtState.roles.list.length) paintRolesTable();
     if (mgmtState.perms.list.length) paintPermsList();
+    // 重渲染设备列表（"网段 X（N 台设备）"等文本需 i18n）
+    if (renderState && renderState.lastDevices && Object.keys(renderState.lastDevices).length) {
+      renderDevices(renderState.lastDevices);
+    }
+    // 重渲染页面底部说明 / 系统*设置 / 文档（若已渲染）
+    renderPageNotes();
+    if (document.getElementById('settingsBody') && document.getElementById('settingsBody').innerHTML) {
+      renderSettings();
+    }
+    if (document.getElementById('docsBody') && document.getElementById('docsBody').innerHTML) {
+      renderDocs();
+    }
   });
 
   // 检查登录状态
@@ -654,10 +950,15 @@ function init() {
     api.apiAuthMe().then(function (r) {
       if (r.s === 200 && r.j && r.j.user) {
         enterApp(r.j.user);
-      } else {
-        // token 无效，清除并显示登录页
+      } else if (r.s === 401) {
+        // token 已过期：显示提示，让用户手动决定是否重新登录
+        // 不立即清除 token，避免误判（可能后端暂时性故障）
+        alert('登录已失效，请重新登录');
         api.apiLogout();
         showAuthPage();
+      } else {
+        // 其他非 200 状态：仍尝试进入主界面（可能后端暂未启用认证或暂时性故障）
+        enterApp(null);
       }
     }).catch(function () {
       // 网络异常：仍尝试进入主界面（可能后端暂未启用认证）

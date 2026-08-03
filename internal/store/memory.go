@@ -234,6 +234,7 @@ func (m *MemoryStore) seedRBAC() {
 		{"user", "user:read", "查看用户"},
 		{"user", "user:write", "编辑用户"},
 		{"user", "user:delete", "删除用户"},
+		{"user", "user:approve", "审批用户注册"},
 		{"role", "role:read", "查看角色"},
 		{"role", "role:write", "编辑角色"},
 		{"role", "role:delete", "删除角色"},

@@ -7,6 +7,7 @@ import * as api from './api.js';
 import { esc, fmtTime, paintStats, dpStatusPill, logLevelPill, setRenderDeps } from './render.js';
 import { pollDevices, pollTasks, pollAlerts } from './poll.js';
 import { icon } from './icons.js';
+import { t } from './i18n.js';
 
 // ---------- 跨模块联动（F1）：focus 状态 ----------
 let focusDevice = null;
@@ -66,7 +67,7 @@ setRenderDeps({ setFocus: setFocus, openDevice: null, focusDevice: getFocusDevic
 
 // ---------- 标签切换 ----------
 export function switchTab(name) {
-  ['home', 'ops', 'cmdb', 'deploy', 'flow', 'logs', 'alerts', 'users', 'roles', 'permissions'].forEach(function (t) {
+  ['home', 'ops', 'cmdb', 'deploy', 'flow', 'logs', 'alerts', 'users', 'roles', 'permissions', 'settings', 'docs'].forEach(function (t) {
     const p = document.getElementById('tab-' + t); if (p) p.classList.toggle('active', t === name);
     const b = document.getElementById('tab-' + t + '-btn'); if (b) b.classList.toggle('active', t === name);
   });
@@ -80,6 +81,9 @@ export function switchTab(name) {
   if (name === 'users' && typeof window.pollUsers === 'function') { window.pollUsers(); }
   if (name === 'roles' && typeof window.pollRoles === 'function') { window.pollRoles(); }
   if (name === 'permissions' && typeof window.pollPermissions === 'function') { window.pollPermissions(); }
+  // 系统设置 / 文档：通过 window 兼容层调用
+  if (name === 'settings' && typeof window.pollSettings === 'function') { window.pollSettings(); }
+  if (name === 'docs' && typeof window.pollDocs === 'function') { window.pollDocs(); }
 }
 export function toggleGuide() { document.getElementById('guide-ops').classList.toggle('open'); }
 
@@ -122,17 +126,18 @@ export function closeDrawer() { document.getElementById('drawer').classList.remo
 export function loadCMDBTypes() {
   api.getCMDBTypes().then(function (ts) {
     const ft = document.getElementById('ciTypeFilter'), nt = document.getElementById('ciTypeNew'), tt = document.getElementById('tmplTypeFilter');
-    [ft, nt, tt].forEach(function (sel) { sel.innerHTML = '<option value="">（先选一个类型）</option>'; });
+    [ft, nt, tt].forEach(function (sel) { if (!sel) return; sel.innerHTML = '<option value="">（先选一个类型）</option>'; });
     (ts || []).forEach(function (t) {
-      [ft, nt, tt].forEach(function (sel) { const o = document.createElement('option'); o.value = t.name; o.textContent = t.displayName + ' (' + t.name + ')'; sel.appendChild(o); });
+      [ft, nt, tt].forEach(function (sel) { if (!sel) return; const o = document.createElement('option'); o.value = t.name; o.textContent = t.displayName + ' (' + t.name + ')'; sel.appendChild(o); });
     });
-    ft.addEventListener('change', pollCIs);
-    tt.addEventListener('change', pollTemplates);
+    if (ft) ft.addEventListener('change', pollCIs);
+    if (tt) tt.addEventListener('change', pollTemplates);
   }).catch(function (e) { console.error(e); });
 }
 
 export function pollCIs() {
-  const t = document.getElementById('ciTypeFilter').value;
+  const sel = document.getElementById('ciTypeFilter');
+  const t = sel ? sel.value : '';
   if (!t) { document.getElementById('ciList').innerHTML = '<p class="muted">请先选择一个类型</p>'; return; }
   api.getCIs(t).then(function (list) {
     if (!list || list.length === 0) { document.getElementById('ciList').innerHTML = '<p class="muted">该类型暂无配置项</p>'; return; }
@@ -146,7 +151,8 @@ export function pollCIs() {
 }
 
 export function pollTemplates() {
-  const t = document.getElementById('tmplTypeFilter').value;
+  const sel = document.getElementById('tmplTypeFilter');
+  const t = sel ? sel.value : '';
   if (!t) { document.getElementById('tmplList').innerHTML = '<p class="muted">请先选择一个类型</p>'; return; }
   api.getAttrTemplates(t).then(function (list) {
     if (!list || list.length === 0) { document.getElementById('tmplList').innerHTML = '<p class="muted">该类型暂无属性模板</p>'; return; }
@@ -186,7 +192,8 @@ export function cmdbMsg(s, ok) {
 }
 
 export function submitCIForm() {
-  const type = document.getElementById('ciTypeNew').value;
+  const typeSel = document.getElementById('ciTypeNew');
+  const type = typeSel ? typeSel.value : '';
   let attrs = {};
   const raw = document.getElementById('ciAttrs').value.trim();
   if (raw) { try { attrs = JSON.parse(raw); } catch (err) { cmdbMsg('属性 JSON 解析失败: ' + err, false); return; } }
@@ -494,8 +501,8 @@ function renderNodeList() {
 
 function renderNodeEditor() {
   const el = document.getElementById('nodeEditor'); if (!el) return;
-  if (!selectedNode) { el.innerHTML = ''; return; }
-  const n = flow.dag.find(function (x) { return x.id === selectedNode; }); if (!n) { el.innerHTML = ''; return; }
+  if (!selectedNode) { el.innerHTML = ''; el.style.display = 'none'; return; }
+  const n = flow.dag.find(function (x) { return x.id === selectedNode; }); if (!n) { el.innerHTML = ''; el.style.display = 'none'; return; }
   const others = flow.dag.filter(function (x) { return x.id !== n.id; }).map(function (x) {
     return '<option value="' + esc(x.id) + '"' + (((n.dependsOn || []).indexOf(x.id) >= 0) ? ' selected' : '') + '>' + esc(x.name || x.id) + '</option>';
   }).join('');
@@ -506,6 +513,7 @@ function renderNodeEditor() {
     + '<label>路径(path):<input id="nPath" value="' + esc(n.path) + '" size="18"></label><br>'
     + '<label>依赖(多选):<select id="nDeps" multiple size="3" title="本步骤开始前应完成的其它步骤">' + others + '</select></label><br>'
     + '<div class="btnbar"><button onclick="applyNode()">应用</button> <button onclick="deleteNode(\'' + esc(n.id) + '\')">删除步骤</button></div>';
+  el.style.display = 'block';
 }
 
 export function applyNode() {
@@ -623,7 +631,8 @@ export function loadDeployDemo() {
 }
 
 export function pollDeploys() {
-  const st = document.getElementById('dpStatusFilter').value;
+  const sf = document.getElementById('dpStatusFilter');
+  const st = sf ? sf.value : '';
   api.getDeploys(st)
     .then(function (list) {
       const fl = applyFocus(list || [], 'deploy');
@@ -748,34 +757,34 @@ export function pollAlertsFull() {
     const sc = document.getElementById('statCritical'); if (sc) sc.textContent = crit;
     const sw = document.getElementById('statWarning'); if (sw) sw.textContent = warn;
     const stEl = document.getElementById('statTotalAlerts'); if (stEl) stEl.textContent = fl.length;
-    const note = focusDevice ? '<p class="hint">' + icon('context', 14) + ' 已按设备 <code>' + esc(focusDevice.id) + '</code> 过滤（' + fl.length + ' 条）</p>' : '';
-    if (fl.length === 0) { document.getElementById('alertsFull').innerHTML = note + '<p class="muted">暂无告警，一切正常</p>'; return; }
+    const note = focusDevice ? '<p class="hint">' + icon('context', 14) + ' ' + esc(t('render.linkFiltered')) + ' <code>' + esc(focusDevice.id) + '</code> ' + esc(t('render.filtered')) + '（' + fl.length + '）</p>' : '';
+    if (fl.length === 0) { document.getElementById('alertsFull').innerHTML = note + '<p class="muted">' + esc(t('render.noAlerts')) + '</p>'; return; }
     let html = note;
     fl.forEach(function (a) {
       const cls = a.severity === 'critical' ? 'alert' : 'alert warn';
       const ast = a.status || 'firing';
-      const badge = ast === 'acknowledged' ? '<span class="badge ok">已确认</span>'
-        : ast === 'silenced' ? '<span class="badge info">已静默</span>'
-          : '<span class="badge fail">待处理</span>';
+      const badge = ast === 'acknowledged' ? '<span class="badge ok">' + esc(t('alerts.acknowledged')) + '</span>'
+        : ast === 'silenced' ? '<span class="badge info">' + esc(t('alerts.silenced')) + '</span>'
+          : '<span class="badge fail">' + esc(t('alerts.pending')) + '</span>';
       let actions = '';
       if (ast === 'firing') {
         actions = '<div class="alert-actions">'
-          + '<button class="btn xs" onclick="ackAlert(\'' + esc(a.alertID) + '\')">' + icon('check', 14) + ' 确认</button>'
-          + '<button class="btn xs outline" onclick="silenceAlert(\'' + esc(a.alertID) + '\')">' + icon('close', 14) + ' 静默</button>'
+          + '<button class="btn xs" onclick="ackAlert(\'' + esc(a.alertID) + '\')">' + icon('check', 14) + ' ' + esc(t('alerts.ack')) + '</button>'
+          + '<button class="btn xs outline" onclick="silenceAlert(\'' + esc(a.alertID) + '\')">' + icon('close', 14) + ' ' + esc(t('alerts.silence')) + '</button>'
           + '</div>';
       } else {
         let meta = esc(a.acknowledgedBy || '');
-        if (ast === 'silenced' && a.silencedUntil) { meta += ' · 至 ' + esc(a.silencedUntil); }
-        actions = '<div class="alert-actions"><span class="muted" style="font-size:12px">处理人：' + (meta || '—') + '</span></div>';
+        if (ast === 'silenced' && a.silencedUntil) { meta += ' · ' + esc(a.silencedUntil); }
+        actions = '<div class="alert-actions"><span class="muted" style="font-size:12px">' + esc(t('alerts.handler')) + (meta || '—') + '</span></div>';
       }
       html += '<div class="' + cls + '">'
         + '<div class="alert-head"><b>[' + esc(a.severity) + ']</b> ' + badge + '</div>'
-        + '设备 ' + esc(a.deviceID) + ' ｜ Agent ' + esc(a.agentID)
-        + (a.comment ? '<br><small class="muted">备注：' + esc(a.comment) + '</small>' : '')
+        + esc(t('alerts.device')) + ' ' + esc(a.deviceID) + ' ｜ Agent ' + esc(a.agentID)
+        + (a.comment ? '<br><small class="muted">' + esc(t('alerts.comment')) + esc(a.comment) + '</small>' : '')
         + '<br>' + esc(a.message)
         + '<br><small class="muted">' + fmtTime(a.createdAt) + '</small>'
         + actions
-        + '<button class="jbtn" style="margin-top:6px" onclick="setFocus(\'' + esc(a.deviceID) + '\',\'\',\'\',\'\');switchTab(\'alerts\')">' + icon('context', 14) + ' 上下文串联</button>'
+        + '<button class="jbtn" style="margin-top:6px" onclick="setFocus(\'' + esc(a.deviceID) + '\',\'\',\'\',\'\');switchTab(\'alerts\')">' + icon('context', 14) + ' ' + esc(t('render.contextLink')) + '</button>'
         + '</div>';
     });
     document.getElementById('alertsFull').innerHTML = html;
@@ -786,21 +795,21 @@ export function pollAlertsFull() {
 export function ackAlert(id) {
   api.ackAlert(id).then(function (x) {
     if (x.s < 400) { pollAlertsFull(); pollAlerts(); }
-    else { alert('确认失败：' + (x.j.error || x.s)); }
-  }).catch(function (err) { alert('确认失败：' + err); });
+    else { alert(t('alerts.ackFail') + (x.j.error || x.s)); }
+  }).catch(function (err) { alert(t('alerts.ackFail') + err); });
 }
 
 // 静默告警（M7）：POST /api/v1/alerts/{id}/silence（默认 24h）
 export function silenceAlert(id) {
-  const dur = prompt('静默时长（分钟，留空=24 小时）：', '1440');
+  const dur = prompt(t('alerts.silencePrompt'), '1440');
   if (dur === null) return;
   let minutes = parseInt(dur, 10); if (isNaN(minutes) || minutes <= 0) minutes = 1440;
-  const comment = prompt('处理备注（可选）：', '') || '';
+  const comment = prompt(t('alerts.commentPrompt'), '') || '';
   api.silenceAlert(id, { durationMinutes: minutes, comment: comment })
     .then(function (x) {
       if (x.s < 400) { pollAlertsFull(); pollAlerts(); }
-      else { alert('静默失败：' + (x.j.error || x.s)); }
-    }).catch(function (err) { alert('静默失败：' + err); });
+      else { alert(t('alerts.silenceFail') + (x.j.error || x.s)); }
+    }).catch(function (err) { alert(t('alerts.silenceFail') + err); });
 }
 
 // ---------- 动态身份注入（F3） ----------

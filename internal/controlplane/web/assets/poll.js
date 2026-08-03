@@ -20,7 +20,8 @@ export function pollAlerts() {
 }
 
 export function pollTasks() {
-  const st = document.getElementById('statusFilter').value;
+  const sf = document.getElementById('statusFilter');
+  const st = sf ? sf.value : '';
   getTasks(st)
     .then(function (s) { apiOk('tasks'); renderTasks(s); })
     .catch(function (e) { apiFail('tasks', e); });

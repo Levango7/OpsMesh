@@ -10,6 +10,22 @@ export function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
 export function setToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); }
 export function isLoggedIn() { return !!getToken(); }
 
+// ---------- 401 处理 ----------
+// 当 API 返回 401 时，不自动跳转登录页，而是显示提示让用户手动重新登录。
+// 通过自定义事件通知 UI 层，避免 api.js 反向依赖 main.js。
+let authErrorShown = false;
+export function handleAuthError() {
+  // 避免短时间内重复弹窗
+  if (authErrorShown) return;
+  authErrorShown = true;
+  // 5 秒后重置，允许再次提示
+  setTimeout(function () { authErrorShown = false; }, 5000);
+  // 派发事件，由 main.js 监听并显示提示
+  try { document.dispatchEvent(new CustomEvent('opsmesh:auth-error')); } catch (_) {}
+  // 同时 alert 兜底（确保用户一定能看到）
+  try { alert('登录已失效，请重新登录'); } catch (_) {}
+}
+
 // ---------- 统一 fetch 包装 ----------
 // 注：X-Tenant-ID / X-User / X-User-Roles 由前置网关注入，前端不主动设置；
 // 此处仅做 JSON 解析与 {status, json} 形态归一，便于上层判断。
@@ -60,6 +76,7 @@ export function authFetch(url, method) {
 
 // 带认证的 GET，直接返回解析后的 json；非 2xx 时 throw Error（便于上层 catch 统一处理）
 // 用于 getDevices / getTasks / getAlerts 等返回纯 json 的函数，确保携带 Authorization token。
+// 401 时不自动跳转登录页，而是显示提示让用户手动重新登录。
 function authGet(url) {
   const h = {};
   const token = getToken();
@@ -67,6 +84,7 @@ function authGet(url) {
   return fetch(url, { method: 'GET', headers: h })
     .then(function (r) {
       if (!r.ok) {
+        if (r.status === 401) { handleAuthError(); }
         const err = new Error('HTTP ' + r.status);
         err.status = r.status;
         throw err;

@@ -73,6 +73,16 @@ type Config struct {
 	Replicas int
 	// A4 生产模式：开启后默认 require-auth=true 且对 store=memory 强告警（生产基线）。
 	Production bool
+	// 注册安全（P1-7）：是否允许公开注册。
+	// true（默认，向后兼容）=允许 /api/v1/auth/register 公开调用，但新用户 Status="pending" 须管理员审批；
+	// false=关闭公开注册接口（仅管理员可通过 POST /api/v1/users 创建用户）。
+	// demo 模式下保持 true 且新用户 Status="active"（方便演示，无需审批）。
+	PublicRegister bool
+	// 注册安全（P1-7）：是否允许公开注册免审批（Status=active + 立即签发 token）。
+	// false（默认，安全基线）=所有注册（包括 demo 模式）都走 pending 审批流程，须管理员激活后方可登录；
+	// true=注册即激活并立即签发 token（仅演示/内网受信环境使用，生产务必关闭）。
+	// 与 PublicRegister 解耦：PublicRegister 控制接口是否开放，AllowPublicRegister 控制是否免审批。
+	AllowPublicRegister bool
 	// F2 任务失败重试上限：SubmitResult 失败时按策略重入队，达上限置 failed（死信）。
 	TaskMaxRetries int
 	// A3 选主租约秒：本实例持有 leader 身份的时长；到期前需续租，否则被其他副本抢占。
@@ -186,6 +196,8 @@ func Load() *Config {
 	taskLeaseSec := flag.Int("task-lease-sec", 300, "任务租约租期秒（P0-1）；超期未上报结果则复位重调度")
 	replicas := flag.Int("replicas", 1, "控制面副本数（A3 由部署平台注入）；>1 须用 --store=mysql，否则 memory 多副本分裂")
 	production := flag.Bool("production", false, "生产模式（A4）：默认开启 require-auth，并对 store=memory 强告警")
+	publicRegister := flag.Bool("public-register", true, "允许公开注册（P1-7 注册安全）：true=开放 /api/v1/auth/register 但新用户须管理员审批；false=关闭公开注册（仅管理员可创建用户）；demo 模式覆盖为 true 且免审批")
+	allowPublicRegister := flag.Bool("allow-public-register", false, "允许公开注册免审批（P1-7 注册安全）：true=注册即激活并立即签发 token（仅演示/内网受信环境）；false=所有注册（含 demo 模式）都走 pending 审批流程（默认安全基线）；或 env OPSMESH_ALLOW_PUBLIC_REGISTER")
 	taskMaxRetries := flag.Int("task-max-retries", 3, "任务失败重试上限（F2）；超出置 failed（死信），需人工处置")
 	leaderTTLSec := flag.Int("leader-ttl-sec", 15, "A3 选主租约秒；本实例持有 leader 身份的时长，到期前需续租")
 	leaderTickSec := flag.Int("leader-tick-sec", 5, "A3 选主续租周期秒；leaderLoop 续租频率（应小于 leader-ttl-sec）")
@@ -292,6 +304,8 @@ func Load() *Config {
 		TaskLeaseSec:           valInt("task-lease-sec", *taskLeaseSec, "OPSMESH_TASK_LEASE_SEC"),
 		Replicas:               valInt("replicas", *replicas, "OPSMESH_REPLICAS"),
 		Production:             valBool("production", *production, "OPSMESH_PRODUCTION"),
+		PublicRegister:         valBool("public-register", *publicRegister, "OPSMESH_PUBLIC_REGISTER"),
+		AllowPublicRegister:    valBool("allow-public-register", *allowPublicRegister, "OPSMESH_ALLOW_PUBLIC_REGISTER"),
 		TaskMaxRetries:         valInt("task-max-retries", *taskMaxRetries, "OPSMESH_TASK_MAX_RETRIES"),
 		LeaderTTLSec:           valInt("leader-ttl-sec", *leaderTTLSec, "OPSMESH_LEADER_TTL_SEC"),
 		LeaderTickSec:          valInt("leader-tick-sec", *leaderTickSec, "OPSMESH_LEADER_TICK_SEC"),
@@ -314,16 +328,31 @@ func Load() *Config {
 		MultiSchema:            valBool("multi-schema", *multiSchema, "OPSMESH_MULTI_SCHEMA"),
 		SchemaPrefix:           val("schema-prefix", *schemaPrefix, "OPSMESH_SCHEMA_PREFIX"),
 		FederationPeers:        parseFederationPeers(val("federation-peers", *federationPeers, "OPSMESH_FEDERATION_PEERS")),
-		MetricsAllowCIDR:        val("metrics-allow-cidr", *metricsAllowCIDR, "OPSMESH_METRICS_ALLOW_CIDR"),
-		FederationSecret:        val("federation-secret", *federationSecret, "OPSMESH_FEDERATION_SECRET"),
-		FederationTLSCert:       val("federation-tls-cert", *federationTLSCert, "OPSMESH_FEDERATION_TLS_CERT"),
-		FederationTLSKey:        val("federation-tls-key", *federationTLSKey, "OPSMESH_FEDERATION_TLS_KEY"),
-		FederationCA:            val("federation-ca", *federationCA, "OPSMESH_FEDERATION_CA"),
-		FederationPort:          valInt("federation-port", *federationPort, "OPSMESH_FEDERATION_PORT"),
+		MetricsAllowCIDR:       val("metrics-allow-cidr", *metricsAllowCIDR, "OPSMESH_METRICS_ALLOW_CIDR"),
+		FederationSecret:       val("federation-secret", *federationSecret, "OPSMESH_FEDERATION_SECRET"),
+		FederationTLSCert:      val("federation-tls-cert", *federationTLSCert, "OPSMESH_FEDERATION_TLS_CERT"),
+		FederationTLSKey:       val("federation-tls-key", *federationTLSKey, "OPSMESH_FEDERATION_TLS_KEY"),
+		FederationCA:           val("federation-ca", *federationCA, "OPSMESH_FEDERATION_CA"),
+		FederationPort:         valInt("federation-port", *federationPort, "OPSMESH_FEDERATION_PORT"),
 	}
 	// A4 生产模式：默认开启 require-auth（除非显式关闭），并强告警 memory store。
 	if cfg.Production && !explicit["require-auth"] {
 		cfg.RequireAuth = true
+	}
+	// P1-7 注册安全：生产模式但未显式设置 --public-register 时，默认关闭公开注册（安全基线）。
+	// demo 模式始终强制 PublicRegister=true（接口开放，方便演示），但是否免审批由 AllowPublicRegister 控制。
+	// 默认 AllowPublicRegister=false：demo 模式下注册也走 pending 审批流程（安全基线）；
+	// 显式 --allow-public-register=true 时 demo 模式注册才免审批（Status=active + 立即签发 token）。
+	if cfg.Demo {
+		cfg.PublicRegister = true
+	} else if cfg.Production && !explicit["public-register"] {
+		cfg.PublicRegister = false
+	}
+	if cfg.Production && cfg.PublicRegister {
+		fmt.Fprintln(os.Stderr, "[config] 警告：生产模式开启 --public-register=true，公开注册开放但新用户须管理员审批（建议生产关闭 --public-register=false）")
+	}
+	if cfg.AllowPublicRegister {
+		fmt.Fprintln(os.Stderr, "[config] 警告：--allow-public-register=true 已启用，公开注册将免审批（Status=active + 立即签发 token），仅演示/内网受信环境推荐；生产务必关闭")
 	}
 	if cfg.Production && cfg.Store == "memory" {
 		fmt.Fprintln(os.Stderr, "[config] 警告：生产模式但 store=memory（多副本数据分裂），请改用 --store=mysql（U-04 数据本地化）")

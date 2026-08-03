@@ -77,9 +77,9 @@ func verifyPassword(hash, password string) bool {
 // ============================================================================
 
 const (
-	loginRateBurst  = 10            // 令牌桶容量（瞬时允许的最大尝试数）
-	loginRateRefill = 1.0 / 3.0     // 令牌补充速率（每秒），约每 3s 1 个，≈20/min
-	loginMaxFails   = 5             // 单账号允许的连续失败次数
+	loginRateBurst  = 10               // 令牌桶容量（瞬时允许的最大尝试数）
+	loginRateRefill = 1.0 / 3.0        // 令牌补充速率（每秒），约每 3s 1 个，≈20/min
+	loginMaxFails   = 5                // 单账号允许的连续失败次数
 	loginFailWindow = 15 * time.Minute // 失败计数滑动窗口
 	loginLockDur    = 15 * time.Minute // 账号锁定时长
 )
@@ -245,10 +245,22 @@ type authResponse struct {
 
 // handleAuthRegister 处理 POST /api/v1/auth/register：用户注册。
 // 请求体：{username, password, email?}；密码最短 6 字符，bcrypt 哈希后存库。
-// 成功返回 201 {token, user}；用户名重复返回 409。
+//
+// 注册安全（P1-7）：
+//   - --public-register=false 时返回 403 拒绝公开注册（仅管理员可经 POST /api/v1/users 创建）；
+//   - --allow-public-register=true 时新用户 Status="active" 并立即签发 token（仅演示/内网受信环境）；
+//   - 否则（默认 --allow-public-register=false）新用户 Status="pending"，不签发 token，
+//     返回 201 {"message": "registration submitted, pending admin approval"}，须管理员审批后激活。
+//
+// 用户名重复返回 409。
 func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	// P1-7 注册安全：--public-register=false 时关闭公开注册接口。
+	if !s.cfg.PublicRegister {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "public registration is disabled"})
 		return
 	}
 	// P1-4 限流：按客户端 IP 令牌桶约束注册频率，防滥用/枚举。
@@ -283,27 +295,43 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "password hash failed: " + err.Error()})
 		return
 	}
+	// P1-7 注册安全：只有显式 --allow-public-register=true 时才免审批（Status=active + 立即签发 token）。
+	// 否则所有注册（包括 demo 模式）都走 pending 审批流程（默认安全基线）。
+	initialStatus := "pending"
+	if s.cfg.AllowPublicRegister {
+		initialStatus = "active"
+	}
 	u := &store.User{
 		ID:           randHexID("user"),
 		Username:     body.Username,
 		Email:        body.Email,
 		PasswordHash: hash,
-		Status:       "active",
+		Status:       initialStatus,
 		RoleIDs:      []string{"role-viewer"}, // 注册用户默认 viewer 角色
 	}
 	if s.store.CreateUser(u) == nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
 		return
 	}
-	token, err := s.issueUserToken(u)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token sign failed: " + err.Error()})
+	s.store.Audit(&proto.AuditEvent{
+		TenantID: "default", UserID: u.ID, Action: "user_register", Target: u.ID, Detail: "username=" + u.Username + " status=" + initialStatus,
+	})
+	// 只有 --allow-public-register=true 时才立即签发 token；否则返回 pending 提示。
+	if s.cfg.AllowPublicRegister {
+		token, err := s.issueUserToken(u)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token sign failed: " + err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusCreated, authResponse{Token: token, User: u})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: u.ID, Action: "user_register", Target: u.ID, Detail: "username=" + u.Username,
+	// 默认：不签发 token，返回待审批提示。
+	writeJSON(w, http.StatusCreated, map[string]string{
+		"message": "registration submitted, pending admin approval",
+		"userId":  u.ID,
+		"status":  u.Status,
 	})
-	writeJSON(w, http.StatusCreated, authResponse{Token: token, User: u})
 }
 
 // handleAuthLogin 处理 POST /api/v1/auth/login：用户登录。
@@ -343,13 +371,24 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 		return
 	}
-	if u.Status != "active" {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "user disabled"})
-		return
-	}
 	if !verifyPassword(u.PasswordHash, body.Password) {
 		s.loginGuard.recordFail(body.Username)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
+		return
+	}
+	// P1-7 注册安全：密码已校验通过后再检查 Status，根据状态返回差异化提示。
+	// 顺序保证：未持正确密码的攻击者无法探测账号状态（防枚举）。
+	if u.Status != "active" {
+		switch u.Status {
+		case "pending":
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "account pending admin approval"})
+		case "disabled":
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "account disabled"})
+		case "rejected":
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "account registration rejected"})
+		default:
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "account not active"})
+		}
 		return
 	}
 	// 登录成功：清除失败计数（解锁）。
@@ -517,12 +556,40 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 // handleUserRouting 分派 /api/v1/users/{id} 子路径：
 //   - PUT /api/v1/users/{id}：更新用户（需 user:write 权限）
 //   - DELETE /api/v1/users/{id}：删除用户（需 user:delete 权限）
+//   - POST /api/v1/users/{id}/approve：审批用户（需 user:approve 权限，P1-7 注册安全）
+//   - POST /api/v1/users/{id}/reject：拒绝用户（需 user:approve 权限，P1-7 注册安全）
 func (s *Server) handleUserRouting(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/api/v1/users/")
+	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/users/")
+	if rest == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user id required"})
+		return
+	}
+	// 解析 {id} 或 {id}/approve 或 {id}/reject。
+	id := rest
+	subAction := ""
+	if idx := strings.Index(rest, "/"); idx > 0 {
+		id = rest[:idx]
+		subAction = rest[idx+1:]
+	}
 	if id == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user id required"})
 		return
 	}
+	// 子路径分发（approve/reject）。
+	if subAction != "" {
+		switch subAction {
+		case "approve":
+			s.handleApproveUser(w, r, id)
+			return
+		case "reject":
+			s.handleRejectUser(w, r, id)
+			return
+		default:
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + subAction})
+			return
+		}
+	}
+	// 主路径分发（PUT/DELETE）。
 	switch r.Method {
 	case http.MethodPut:
 		s.handleUpdateUser(w, r, id)
@@ -531,6 +598,80 @@ func (s *Server) handleUserRouting(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
+}
+
+// handleApproveUser 处理 POST /api/v1/users/{id}/approve：管理员审批用户注册（P1-7 注册安全）。
+// 将用户 Status 从 "pending" 改为 "active"；仅 pending 状态可审批，其他状态返回 409。
+// 鉴权：需 user:approve 权限（admin 角色自动拥有）。
+func (s *Server) handleApproveUser(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	caller, ok := s.requirePermission(w, r, "user:approve")
+	if !ok {
+		return
+	}
+	existing := s.store.GetUser(id)
+	if existing == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+	if existing.Status != "pending" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "user is not pending (current status: " + existing.Status + ")"})
+		return
+	}
+	existing.Status = "active"
+	if !s.store.UpdateUser(existing) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+	s.store.Audit(&proto.AuditEvent{
+		TenantID: "default", UserID: caller.ID, Action: "user_approve", Target: id, Detail: "approved user " + existing.Username,
+	})
+	writeJSON(w, http.StatusOK, s.store.GetUser(id))
+}
+
+// handleRejectUser 处理 POST /api/v1/users/{id}/reject：管理员拒绝用户注册（P1-7 注册安全）。
+// 将用户 Status 改为 "rejected"；仅 pending 状态可拒绝，其他状态返回 409。
+// 鉴权：需 user:approve 权限（admin 角色自动拥有）。
+// 请求体可选：{reason?: "拒绝原因"}，记录到审计日志。
+func (s *Server) handleRejectUser(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	caller, ok := s.requirePermission(w, r, "user:approve")
+	if !ok {
+		return
+	}
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	// 请求体可选；解析失败时忽略（兼容空 body 调用）。
+	_ = decodeJSONBody(w, r, &body)
+	existing := s.store.GetUser(id)
+	if existing == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+	if existing.Status != "pending" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "user is not pending (current status: " + existing.Status + ")"})
+		return
+	}
+	existing.Status = "rejected"
+	if !s.store.UpdateUser(existing) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+	detail := "rejected user " + existing.Username
+	if body.Reason != "" {
+		detail += " reason: " + body.Reason
+	}
+	s.store.Audit(&proto.AuditEvent{
+		TenantID: "default", UserID: caller.ID, Action: "user_reject", Target: id, Detail: detail,
+	})
+	writeJSON(w, http.StatusOK, s.store.GetUser(id))
 }
 
 // handleUpdateUser 处理 PUT /api/v1/users/{id}：更新用户 email/roles/status（需 user:write 权限）。

@@ -18,7 +18,7 @@ type User struct {
 	Username     string    `json:"username"`
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"`      // bcrypt 哈希；JSON 序列化时不输出（防泄露）
-	Status       string    `json:"status"` // "active" | "disabled"
+	Status       string    `json:"status"` // "active" | "pending" | "rejected" | "disabled"（P1-7：pending=待管理员审批）
 	RoleIDs      []string  `json:"roleIDs"`
 	CreatedAt    time.Time `json:"createdAt"`
 }

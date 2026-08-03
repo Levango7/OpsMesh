@@ -20,13 +20,16 @@ import (
 
 // newAuthTestServer 构造测试用 Server：memory store + 固定 jwtSecret。
 // 固定 jwtSecret 避免随机性导致测试不稳定。
+// P1-7 注册安全：测试默认启用 demo 模式 + AllowPublicRegister=true（注册即激活 + 立即签发 token），
+// 保持原有测试行为不变；pending 审批行为由独立测试用例覆盖（TestAuthRegisterDemoPending/TestAuthRegisterPending）。
 func newAuthTestServer(t *testing.T) *Server {
 	t.Helper()
 	st := store.NewMemoryStore()
 	return &Server{
-		store:     st,
-		cfg:       &config.Config{TaskMaxRetries: 3},
-		jwtSecret: []byte("test-jwt-secret-for-auth-test-32bytes!"),
+		store:      st,
+		cfg:        &config.Config{TaskMaxRetries: 3, Demo: true, PublicRegister: true, AllowPublicRegister: true},
+		jwtSecret:  []byte("test-jwt-secret-for-auth-test-32bytes!"),
+		loginGuard: newLoginGuard(),
 	}
 }
 
@@ -73,17 +76,17 @@ func doWithAuth(method, path, auth string, body interface{}) *http.Request {
 func TestPredefinedData(t *testing.T) {
 	s := newAuthTestServer(t)
 
-	// 预定义权限：应有 25 个（device 3 + task 3 + alert 3 + cmdb 2 + deploy 2 + workflow 2 + log 1 + audit 1 + user 3 + role 3 + federation 2）。
+	// 预定义权限：应有 26 个（device 3 + task 3 + alert 3 + cmdb 2 + deploy 2 + workflow 2 + log 1 + audit 1 + user 4 + role 3 + federation 2）。
 	perms := s.store.ListPermissions()
-	if len(perms) != 25 {
-		t.Fatalf("permissions count = %d, want 25", len(perms))
+	if len(perms) != 26 {
+		t.Fatalf("permissions count = %d, want 26", len(perms))
 	}
 	// 检查关键权限存在。
 	permNames := make(map[string]bool)
 	for _, p := range perms {
 		permNames[p.Name] = true
 	}
-	for _, want := range []string{"device:read", "device:write", "device:delete", "task:read", "task:write", "task:cancel", "alert:read", "alert:ack", "alert:silence", "cmdb:read", "cmdb:write", "deploy:read", "deploy:write", "workflow:read", "workflow:write", "log:read", "audit:read", "user:read", "user:write", "user:delete", "role:read", "role:write", "role:delete", "federation:read", "federation:write"} {
+	for _, want := range []string{"device:read", "device:write", "device:delete", "task:read", "task:write", "task:cancel", "alert:read", "alert:ack", "alert:silence", "cmdb:read", "cmdb:write", "deploy:read", "deploy:write", "workflow:read", "workflow:write", "log:read", "audit:read", "user:read", "user:write", "user:delete", "user:approve", "role:read", "role:write", "role:delete", "federation:read", "federation:write"} {
 		if !permNames[want] {
 			t.Fatalf("missing permission %q", want)
 		}
@@ -98,8 +101,8 @@ func TestPredefinedData(t *testing.T) {
 	for _, r := range roles {
 		roleByName[r.Name] = r
 	}
-	if admin := roleByName["admin"]; admin == nil || len(admin.Permissions) != 25 {
-		t.Fatalf("admin role missing or permissions = %d, want 25", len(admin.Permissions))
+	if admin := roleByName["admin"]; admin == nil || len(admin.Permissions) != 26 {
+		t.Fatalf("admin role missing or permissions = %d, want 26", len(admin.Permissions))
 	}
 	if viewer := roleByName["viewer"]; viewer == nil {
 		t.Fatal("viewer role missing")
@@ -536,8 +539,8 @@ func TestListPermissions(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(resp.Permissions) != 25 {
-		t.Fatalf("permissions count = %d, want 25", len(resp.Permissions))
+	if len(resp.Permissions) != 26 {
+		t.Fatalf("permissions count = %d, want 26", len(resp.Permissions))
 	}
 }
 
@@ -549,5 +552,261 @@ func TestListPermissionsNoToken(t *testing.T) {
 	s.handlePermissions(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("permissions without token = %d, want 401", rec.Code)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// P1-7 注册安全：公开注册开关 + pending 审批流程
+// ----------------------------------------------------------------------------
+
+// newAuthTestServerNonDemo 构造非 demo 模式测试 Server（PublicRegister=true 但新用户 pending）。
+func newAuthTestServerNonDemo(t *testing.T) *Server {
+	t.Helper()
+	st := store.NewMemoryStore()
+	return &Server{
+		store:      st,
+		cfg:        &config.Config{TaskMaxRetries: 3, Demo: false, PublicRegister: true},
+		jwtSecret:  []byte("test-jwt-secret-for-auth-test-32bytes!"),
+		loginGuard: newLoginGuard(),
+	}
+}
+
+// TestAuthRegisterPending 非 demo 模式注册 → 201 + 待审批提示（无 token）。
+func TestAuthRegisterPending(t *testing.T) {
+	s := newAuthTestServerNonDemo(t)
+	body, _ := json.Marshal(map[string]string{"username": "pendinguser", "password": "pass123", "email": "p@test.com"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleAuthRegister(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Message string `json:"message"`
+		UserID  string `json:"userId"`
+		Status  string `json:"status"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode resp: %v", err)
+	}
+	if resp.Status != "pending" {
+		t.Fatalf("status = %q, want pending", resp.Status)
+	}
+	if resp.Message == "" {
+		t.Fatal("message is empty")
+	}
+	// 验证用户确实处于 pending 状态。
+	u := s.store.GetUserByUsername("pendinguser")
+	if u == nil || u.Status != "pending" {
+		t.Fatalf("user status = %v, want pending", u)
+	}
+}
+
+// TestAuthRegisterDemoPending demo 模式但 AllowPublicRegister=false → 201 + 待审批提示（无 token）。
+// 验证 P1-7 注册安全修复：demo 模式不再隐式免审批，须显式 --allow-public-register=true 才免审批。
+func TestAuthRegisterDemoPending(t *testing.T) {
+	st := store.NewMemoryStore()
+	s := &Server{
+		store:      st,
+		cfg:        &config.Config{TaskMaxRetries: 3, Demo: true, PublicRegister: true, AllowPublicRegister: false},
+		jwtSecret:  []byte("test-jwt-secret-for-auth-test-32bytes!"),
+		loginGuard: newLoginGuard(),
+	}
+	body, _ := json.Marshal(map[string]string{"username": "demopending", "password": "pass123", "email": "dp@test.com"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleAuthRegister(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Message string `json:"message"`
+		UserID  string `json:"userId"`
+		Status  string `json:"status"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode resp: %v", err)
+	}
+	if resp.Status != "pending" {
+		t.Fatalf("status = %q, want pending", resp.Status)
+	}
+	if resp.Message == "" {
+		t.Fatal("message is empty")
+	}
+	// 验证用户确实处于 pending 状态。
+	u := s.store.GetUserByUsername("demopending")
+	if u == nil || u.Status != "pending" {
+		t.Fatalf("user status = %v, want pending", u)
+	}
+}
+
+// TestAuthRegisterNonDemoAllowPublicRegister 非 demo 模式但 AllowPublicRegister=true → 201 + active + token。
+// 验证 AllowPublicRegister 是免审批的唯一控制（与 demo 模式解耦）。
+func TestAuthRegisterNonDemoAllowPublicRegister(t *testing.T) {
+	st := store.NewMemoryStore()
+	s := &Server{
+		store:      st,
+		cfg:        &config.Config{TaskMaxRetries: 3, Demo: false, PublicRegister: true, AllowPublicRegister: true},
+		jwtSecret:  []byte("test-jwt-secret-for-auth-test-32bytes!"),
+		loginGuard: newLoginGuard(),
+	}
+	body, _ := json.Marshal(map[string]string{"username": "allowreg", "password": "pass123", "email": "ar@test.com"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleAuthRegister(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp authResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode resp: %v", err)
+	}
+	if resp.Token == "" {
+		t.Fatal("token is empty")
+	}
+	if resp.User == nil || resp.User.Username != "allowreg" {
+		t.Fatalf("user = %+v, want username=allowreg", resp.User)
+	}
+	if resp.User.Status != "active" {
+		t.Fatalf("status = %q, want active", resp.User.Status)
+	}
+}
+
+// TestAuthRegisterPublicDisabled PublicRegister=false → 403。
+func TestAuthRegisterPublicDisabled(t *testing.T) {
+	st := store.NewMemoryStore()
+	s := &Server{
+		store:      st,
+		cfg:        &config.Config{TaskMaxRetries: 3, Demo: false, PublicRegister: false},
+		jwtSecret:  []byte("test-jwt-secret-for-auth-test-32bytes!"),
+		loginGuard: newLoginGuard(),
+	}
+	body, _ := json.Marshal(map[string]string{"username": "newuser", "password": "pass123"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleAuthRegister(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("register with public disabled = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAuthLoginPending pending 用户登录 → 403 待审批提示。
+func TestAuthLoginPending(t *testing.T) {
+	s := newAuthTestServerNonDemo(t)
+	// 注册一个 pending 用户。
+	regBody, _ := json.Marshal(map[string]string{"username": "pendinglogin", "password": "pass123"})
+	regReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(regBody))
+	regRec := httptest.NewRecorder()
+	s.handleAuthRegister(regRec, regReq)
+	if regRec.Code != http.StatusCreated {
+		t.Fatalf("setup register failed: %d %s", regRec.Code, regRec.Body.String())
+	}
+	// pending 用户尝试登录 → 403。
+	loginBody, _ := json.Marshal(map[string]string{"username": "pendinglogin", "password": "pass123"})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
+	loginRec := httptest.NewRecorder()
+	s.handleAuthLogin(loginRec, loginReq)
+	if loginRec.Code != http.StatusForbidden {
+		t.Fatalf("pending login = %d, want 403; body=%s", loginRec.Code, loginRec.Body.String())
+	}
+}
+
+// TestApproveUser 管理员审批 pending 用户 → 200 + active。
+func TestApproveUser(t *testing.T) {
+	s := newAuthTestServerNonDemo(t)
+	auth := loginAsAdmin(t, s)
+	// 注册一个 pending 用户。
+	regBody, _ := json.Marshal(map[string]string{"username": "toapprove", "password": "pass123"})
+	regReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(regBody))
+	regRec := httptest.NewRecorder()
+	s.handleAuthRegister(regRec, regReq)
+	if regRec.Code != http.StatusCreated {
+		t.Fatalf("setup register failed: %d %s", regRec.Code, regRec.Body.String())
+	}
+	pendingUser := s.store.GetUserByUsername("toapprove")
+	if pendingUser == nil {
+		t.Fatal("pending user not found")
+	}
+	// 管理员审批。
+	req := doWithAuth(http.MethodPost, "/api/v1/users/"+pendingUser.ID+"/approve", auth, nil)
+	rec := httptest.NewRecorder()
+	s.handleUserRouting(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("approve = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var u store.User
+	if err := json.NewDecoder(rec.Body).Decode(&u); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if u.Status != "active" {
+		t.Fatalf("status = %q, want active", u.Status)
+	}
+	// 审批后应能登录。
+	loginBody, _ := json.Marshal(map[string]string{"username": "toapprove", "password": "pass123"})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
+	loginRec := httptest.NewRecorder()
+	s.handleAuthLogin(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login after approve = %d, want 200; body=%s", loginRec.Code, loginRec.Body.String())
+	}
+}
+
+// TestRejectUser 管理员拒绝 pending 用户 → 200 + rejected。
+func TestRejectUser(t *testing.T) {
+	s := newAuthTestServerNonDemo(t)
+	auth := loginAsAdmin(t, s)
+	// 注册一个 pending 用户。
+	regBody, _ := json.Marshal(map[string]string{"username": "toreject", "password": "pass123"})
+	regReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(regBody))
+	regRec := httptest.NewRecorder()
+	s.handleAuthRegister(regRec, regReq)
+	if regRec.Code != http.StatusCreated {
+		t.Fatalf("setup register failed: %d %s", regRec.Code, regRec.Body.String())
+	}
+	pendingUser := s.store.GetUserByUsername("toreject")
+	if pendingUser == nil {
+		t.Fatal("pending user not found")
+	}
+	// 管理员拒绝。
+	req := doWithAuth(http.MethodPost, "/api/v1/users/"+pendingUser.ID+"/reject", auth, map[string]string{"reason": "测试拒绝"})
+	rec := httptest.NewRecorder()
+	s.handleUserRouting(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reject = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var u store.User
+	if err := json.NewDecoder(rec.Body).Decode(&u); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if u.Status != "rejected" {
+		t.Fatalf("status = %q, want rejected", u.Status)
+	}
+	// 拒绝后登录 → 403。
+	loginBody, _ := json.Marshal(map[string]string{"username": "toreject", "password": "pass123"})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
+	loginRec := httptest.NewRecorder()
+	s.handleAuthLogin(loginRec, loginReq)
+	if loginRec.Code != http.StatusForbidden {
+		t.Fatalf("login after reject = %d, want 403; body=%s", loginRec.Code, loginRec.Body.String())
+	}
+}
+
+// TestApproveUserNoPermission 无 user:approve 权限 → 403。
+func TestApproveUserNoPermission(t *testing.T) {
+	s := newAuthTestServerNonDemo(t)
+	// operator 登录（无 user:approve 权限）。
+	body, _ := json.Marshal(map[string]string{"username": "operator", "password": "operator123"})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	loginRec := httptest.NewRecorder()
+	s.handleAuthLogin(loginRec, loginReq)
+	var loginResp authResponse
+	_ = json.NewDecoder(loginRec.Body).Decode(&loginResp)
+	auth := "Bearer " + loginResp.Token
+	// 任意用户 ID 尝试审批。
+	req := doWithAuth(http.MethodPost, "/api/v1/users/user-admin/approve", auth, nil)
+	rec := httptest.NewRecorder()
+	s.handleUserRouting(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("operator approve = %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
 }

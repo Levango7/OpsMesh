@@ -72,6 +72,7 @@ export function paintOverview() {
   drawAlertDonut('ovAlertChart', ac, aw);
   paintTrend();
   paintTopo();
+  paintResTypeDist();
   // 配置项：拉各类型 CI 计数汇总
   getCMDBTypes().then(function (ts) {
     const list = (ts || []);
@@ -129,6 +130,40 @@ export function setRenderDeps(deps) {
   renderDeps = Object.assign(renderDeps, deps);
 }
 
+// ---------- 设备资源类型推断 ----------
+// 依据 os / hostname / deviceID / agentID / ip 推断设备类型
+// 返回值：physical / vm / container / pod / middleware / database / script / unknown
+export function inferDeviceType(d) {
+  const os = String(d.os || '').toLowerCase();
+  const host = String(d.hostname || d.deviceID || '').toLowerCase();
+  const id = String(d.deviceID || '').toLowerCase();
+  const combined = os + ' ' + host + ' ' + id;
+  // Pod / K8s
+  if (/pod-|pod_|-pod-|k8s-/.test(id) || /^pod/.test(host)) return 'pod';
+  // 容器
+  if (/container|docker|containerd/.test(combined)) return 'container';
+  // 数据库
+  if (/mysql|postgres|postgresql|mongodb|redis|sqlite|oracle|mariadb|cockroach|tidb/.test(combined)) return 'database';
+  // 中间件
+  if (/kafka|zookeeper|zk-|rabbitmq|rocketmq|nginx|tomcat|jetty|elasticsearch|loki|prometheus|grafana|influx|consul|etcd|nacos/.test(combined)) return 'middleware';
+  // 脚本/任务（不含 OS 信息且 hostname 以 task/script 开头）
+  if (/^task-|^script-|^job-/.test(host)) return 'script';
+  // 虚拟机：cloud/vm/kvm/xen/qemu/vbox/hyperv
+  if (/vm-|vm_|-vm$|kvm|xen|qemu|vbox|hyperv|cloud-|ecs|ec2|gce|azurevm/.test(combined)) return 'vm';
+  // 物理机：含裸金属 OS 标志
+  if (/ubuntu|centos|rhel|debian|fedora|alpine|windows|linux|darwin|aix|solaris|freebsd|openbsd/.test(os)) {
+    // 有 OS 信息默认物理机（除非已判为 vm）
+    return 'physical';
+  }
+  return 'unknown';
+}
+
+// 渲染资源类型标签
+export function typeTag(type) {
+  const label = t('resType.' + (type || 'unknown'));
+  return '<span class="type-tag ' + (type || 'unknown') + '">' + esc(label) + '</span>';
+}
+
 export function renderDevices(snap) {
   state.lastDevices = snap || {};
   const el = document.getElementById('devices');
@@ -143,7 +178,7 @@ export function renderDevices(snap) {
   keys.forEach(function (seg) {
     const devs = snap[seg] || [];
     html += '<h3>' + esc(t('render.segment')) + ' ' + esc(seg) + '（' + devs.length + ' ' + esc(t('render.devicesUnit')) + '）</h3>';
-    html += '<div class="table-wrap"><table><colgroup><col style="width:26%"><col style="width:14%"><col style="width:14%"><col style="width:12%"><col style="width:14%"><col style="width:20%"></colgroup><thead><tr><th>主机名</th><th>网段</th><th>IP</th><th>状态</th><th>OS</th><th>操作</th></tr></thead><tbody>';
+    html += '<div class="table-wrap"><table><colgroup><col style="width:22%"><col style="width:12%"><col style="width:11%"><col style="width:11%"><col style="width:10%"><col style="width:14%"><col style="width:20%"></colgroup><thead><tr><th>' + esc(t('render.col.hostname')) + '</th><th>' + esc(t('render.col.type')) + '</th><th>' + esc(t('render.col.segment')) + '</th><th>IP</th><th>' + esc(t('render.col.status')) + '</th><th>OS</th><th>' + esc(t('render.col.actions')) + '</th></tr></thead><tbody>';
     devs.forEach(function (d) {
       const rowCls = 'device' + (d.lastResult === 'failed' ? ' fail' : '');
       // 状态徽章：managed/online=绿、discovered=蓝、offline/lost=红、其余=灰
@@ -160,10 +195,12 @@ export function renderDevices(snap) {
       }
       const hostname = d.hostname || d.deviceID || '–';
       const osInfo = d.os ? esc(d.os) + (d.arch ? ' / ' + esc(d.arch) : '') : '–';
+      const rtype = inferDeviceType(d);
       // 行点击：设置上下文 + 打开设备详情抽屉（保留原有联动）
       const rowClick = "setFocus('" + esc(d.deviceID) + "','" + esc(d.ip) + "','" + esc(d.agentID) + "','" + esc(seg) + "');openDevice('" + esc(d.deviceID) + "')";
       html += '<tr class="' + rowCls + '" onclick="' + rowClick + '">'
         + '<td class="cell-stack"><b>' + esc(hostname) + '</b><code title="' + esc(d.deviceID) + '">' + esc(d.deviceID) + '</code></td>'
+        + '<td>' + typeTag(rtype) + '</td>'
         + '<td>' + esc(seg) + '</td>'
         + '<td>' + esc(d.ip || '–') + '</td>'
         + '<td>' + stateBadge + '</td>'
@@ -342,7 +379,7 @@ export function paintTopo() {
 export const mgmtState = {
   users: { list: [], page: 1, pageSize: 10, search: '' },
   roles: { list: [], page: 1, pageSize: 10 },
-  perms: { list: [] },
+  perms: { list: [], search: '' },
   // 缓存角色/权限，供用户编辑弹窗使用
   rolesCache: [],
   permsCache: [],
@@ -410,7 +447,8 @@ export function paintUsersTable() {
     + '<th>' + esc(t('users.col.actions')) + '</th>'
     + '</tr></thead><tbody>';
   pageList.forEach(function (u) {
-    const roleBadges = (u.role_ids || []).map(function (rid) {
+    const userRoleIds = u.roleIDs || u.role_ids || [];
+    const roleBadges = userRoleIds.map(function (rid) {
       const r = mgmtState.rolesCache.find(function (x) { return String(x.id) === String(rid); });
       const name = r ? r.name : rid;
       return '<span class="pill info">' + esc(name) + '</span>';
@@ -530,18 +568,44 @@ export function paintPermsList() {
   const el = document.getElementById('permsList');
   if (!el) return;
   const list = mgmtState.perms.list;
+  // 顶部：说明卡片 + 搜索框
+  let html = '<div class="card" style="margin-bottom:12px;padding:12px 14px;background:var(--accent-soft);border:1px solid var(--accent);border-radius:var(--radius-sm)">'
+    + '<div style="display:flex;align-items:flex-start;gap:8px">'
+    + '<span style="font-size:16px;color:var(--accent);line-height:1.4">ⓘ</span>'
+    + '<div style="flex:1;font-size:13px;color:var(--text);line-height:1.6">' + esc(t('perms.tip')) + '</div>'
+    + '</div></div>';
+  html += '<div class="mgmt-toolbar" style="margin-bottom:10px">'
+    + '<div class="search-box">'
+    + '<span class="icon">' + icon('search', 14) + '</span>'
+    + '<input type="text" id="permsSearchInput" placeholder="' + esc(t('perms.search.placeholder')) + '" value="' + esc(mgmtState.perms.search || '') + '" oninput="permsSetSearch(this.value)">'
+    + '</div></div>';
   if (!list.length) {
-    el.innerHTML = '<p class="muted">' + esc(t('perms.empty')) + '</p>';
+    html += '<p class="muted">' + esc(t('perms.empty')) + '</p>';
+    el.innerHTML = html;
+    return;
+  }
+  // 搜索过滤
+  let filtered = list;
+  if (mgmtState.perms.search) {
+    const kw = mgmtState.perms.search.toLowerCase();
+    filtered = list.filter(function (p) {
+      return (p.name || '').toLowerCase().indexOf(kw) >= 0
+        || (p.description || '').toLowerCase().indexOf(kw) >= 0
+        || (p.group || '').toLowerCase().indexOf(kw) >= 0;
+    });
+  }
+  if (!filtered.length) {
+    html += '<p class="muted">' + esc(t('common.noMatch', { kw: mgmtState.perms.search })) + '</p>';
+    el.innerHTML = html;
     return;
   }
   // 按 group 分组
   const groups = {};
-  list.forEach(function (p) {
+  filtered.forEach(function (p) {
     const g = p.group || (getLang() === 'zh' ? '未分组' : 'Ungrouped');
     if (!groups[g]) groups[g] = [];
     groups[g].push(p);
   });
-  let html = '';
   Object.keys(groups).sort().forEach(function (g) {
     html += '<div class="card"><h3>' + esc(g) + ' <span class="muted">(' + groups[g].length + ')</span></h3>';
     html += '<div class="table-wrap"><table><colgroup><col style="width:35%"><col style="width:65%"></colgroup><thead><tr>'
@@ -556,13 +620,20 @@ export function paintPermsList() {
   el.innerHTML = html;
 }
 
+export function permsSetSearch(kw) {
+  mgmtState.perms.search = kw || '';
+  paintPermsList();
+}
+
 // ---------- 用户编辑/新增弹窗 ----------
 // rolesCache / permsCache 已由 renderRoles / renderPermissions 填充；
 // 若未加载，调用方应先加载角色列表。
 export function showUserModal(user) {
   const isEdit = !!user;
-  const u = user || { username: '', email: '', role_ids: [], status: 'active' };
+  const u = user || { username: '', email: '', roleIDs: [], status: 'active' };
   const roles = mgmtState.rolesCache || [];
+  // 兼容后端返回的 roleIDs（驼峰）与 role_ids（下划线）两种字段
+  const userRoleIds = u.roleIDs || u.role_ids || [];
   // 角色复选框
   let roleCheckboxes = '';
   if (roles.length === 0) {
@@ -570,7 +641,7 @@ export function showUserModal(user) {
   } else {
     roleCheckboxes = '<div style="display:flex;flex-direction:column;gap:6px;max-height:180px;overflow:auto">';
     roles.forEach(function (r) {
-      const checked = (u.role_ids || []).some(function (rid) { return String(rid) === String(r.id); });
+      const checked = userRoleIds.some(function (rid) { return String(rid) === String(r.id); });
       roleCheckboxes += '<label style="margin:0"><input type="checkbox" name="role_ids" value="' + esc(r.id) + '" ' + (checked ? 'checked' : '') + '> ' + esc(r.name) + ' <span class="muted">— ' + esc(r.description || '') + '</span></label>';
     });
     roleCheckboxes += '</div>';
@@ -824,4 +895,369 @@ export function renderDeviceDetail(metrics) {
 export function closeDeviceDetail() {
   const modal = document.getElementById('deviceDetailModal');
   if (modal) modal.classList.remove('open');
+}
+
+// ============================================================
+// 资源类型分布（总览页）
+// ============================================================
+export function paintResTypeDist() {
+  const el = document.getElementById('ovResTypeChart');
+  if (!el) return;
+  const devs = state.lastDevices || {};
+  const counts = { physical: 0, vm: 0, container: 0, pod: 0, middleware: 0, database: 0, script: 0, unknown: 0 };
+  Object.keys(devs).forEach(function (seg) {
+    (devs[seg] || []).forEach(function (d) {
+      const t = inferDeviceType(d);
+      counts[t] = (counts[t] || 0) + 1;
+    });
+  });
+  const types = ['physical', 'vm', 'container', 'pod', 'middleware', 'database', 'script', 'unknown'];
+  const total = types.reduce(function (a, k) { return a + counts[k]; }, 0);
+  if (total === 0) {
+    el.innerHTML = '<p class="muted">' + esc(t('render.noDevices')) + '</p>';
+    return;
+  }
+  // 横向条形图
+  const colors = {
+    physical: 'var(--amber)', vm: 'var(--indigo)', container: 'var(--sky)', pod: 'var(--teal)',
+    middleware: 'var(--violet)', database: 'var(--rose)', script: 'var(--ok)', unknown: 'var(--text-3)'
+  };
+  let html = '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">';
+  types.forEach(function (k) {
+    const n = counts[k];
+    if (n === 0) return;
+    const pct = (n / total * 100).toFixed(1);
+    html += '<div style="display:flex;align-items:center;gap:10px">'
+      + '<span class="type-tag ' + k + '" style="min-width:78px;justify-content:center">' + esc(t('resType.' + k)) + '</span>'
+      + '<div style="flex:1;height:14px;background:var(--bg-soft);border-radius:7px;overflow:hidden;min-width:0">'
+      + '<div style="height:100%;width:' + pct + '%;background:' + colors[k] + ';border-radius:7px"></div></div>'
+      + '<span style="font-size:12px;color:var(--text-2);min-width:60px;text-align:right">' + n + ' (' + pct + '%)</span>'
+      + '</div>';
+  });
+  html += '</div>';
+  html += '<p class="muted" style="margin-top:10px;font-size:12px">共 ' + total + ' 台设备</p>';
+  el.innerHTML = html;
+}
+
+// ============================================================
+// 页面底部说明渲染
+// ============================================================
+export function renderPageNotes() {
+  const pages = ['home', 'ops', 'cmdb', 'flow', 'deploy', 'logs', 'alerts', 'users', 'roles', 'permissions', 'settings'];
+  pages.forEach(function (p) {
+    const el = document.getElementById('note-' + p);
+    if (!el) return;
+    const title = t('note.' + p + '.title');
+    const text = t('note.' + p + '.text');
+    // 如果 note 内容为空（title 和 text 都为空或仅是 key 本身未翻译），隐藏整个 page-note 元素
+    if (!title && !text) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    const hasTitle = title && title !== ('note.' + p + '.title');
+    const hasText = text && text !== ('note.' + p + '.text');
+    if (!hasTitle && !hasText) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = '';
+    el.innerHTML = '<div class="note-title"><span class="icon">' + icon('info', 14) + '</span>' + esc(title) + '</div>'
+      + '<div>' + text + '</div>';
+  });
+}
+
+// ============================================================
+// 系统设置渲染
+// ============================================================
+export function renderSettings() {
+  const el = document.getElementById('settingsBody');
+  if (!el) return;
+  // 读取 localStorage 现有值
+  const ls = function (k, def) { const v = localStorage.getItem(k); return v == null ? def : v; };
+  const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  const lang = ls('opsmesh-lang', 'zh');
+  const notifyEmail = ls('opsmesh-notify-email', 'off');
+  const webhookUrl = ls('opsmesh-notify-webhook', '');
+  const alertCritical = ls('opsmesh-alert-critical', '90');
+  const alertWarning = ls('opsmesh-alert-warning', '70');
+  const alertSilence = ls('opsmesh-alert-silence', '30');
+  const taskTimeout = ls('opsmesh-task-timeout', '300');
+  const taskRetry = ls('opsmesh-task-retry', '3');
+  const taskConc = ls('opsmesh-task-concurrency', '10');
+
+  const langZh = getLang() === 'zh';
+  const section = function (title, body) {
+    return '<div class="settings-section"><h3>' + esc(title) + '</h3>' + body + '</div>';
+  };
+  const row = function (label, desc, control) {
+    return '<div class="settings-row"><div><div class="settings-label">' + label + '</div>'
+      + '<div class="settings-desc">' + esc(desc) + '</div></div>'
+      + '<div class="settings-control">' + control + '</div></div>';
+  };
+
+  let html = '';
+  // 外观
+  html += section(t('settings.section.appearance'),
+    row(t('settings.theme'), t('settings.theme.desc'),
+      '<div class="toggle-group" id="themeToggleGroup">'
+      + '<button data-val="light" class="' + (theme === 'light' ? 'active' : '') + '">' + esc(t('settings.theme.light')) + '</button>'
+      + '<button data-val="dark" class="' + (theme === 'dark' ? 'active' : '') + '">' + esc(t('settings.theme.dark')) + '</button>'
+      + '</div>')
+  );
+  // 语言
+  html += section(t('settings.section.locale'),
+    row(t('settings.lang'), t('settings.lang.desc'),
+      '<div class="toggle-group" id="langToggleGroup">'
+      + '<button data-val="zh" class="' + (lang === 'zh' ? 'active' : '') + '">' + esc(t('settings.lang.zh')) + '</button>'
+      + '<button data-val="en" class="' + (lang === 'en' ? 'active' : '') + '">' + esc(t('settings.lang.en')) + '</button>'
+      + '</div>')
+  );
+  // 通知
+  html += section(t('settings.section.notification'),
+    row(t('settings.notify.email'), t('settings.notify.email.desc'),
+      '<select id="setNotifyEmail"><option value="off" ' + (notifyEmail === 'off' ? 'selected' : '') + '>' + (langZh ? '关闭' : 'Off') + '</option><option value="on" ' + (notifyEmail === 'on' ? 'selected' : '') + '>' + (langZh ? '开启' : 'On') + '</option></select>')
+    + row(t('settings.notify.webhook'), t('settings.notify.webhook.desc'),
+      '<input type="text" id="setWebhookUrl" value="' + esc(webhookUrl) + '" placeholder="https://example.com/hook" style="min-width:240px">')
+  );
+  // 告警阈值
+  html += section(t('settings.section.alert'),
+    row(t('settings.alert.critical'), t('settings.alert.critical.desc'),
+      '<input type="number" id="setAlertCritical" value="' + esc(alertCritical) + '" min="1" max="100">')
+    + row(t('settings.alert.warning'), t('settings.alert.warning.desc'),
+      '<input type="number" id="setAlertWarning" value="' + esc(alertWarning) + '" min="1" max="100">')
+    + row(t('settings.alert.silence'), t('settings.alert.silence.desc'),
+      '<input type="number" id="setAlertSilence" value="' + esc(alertSilence) + '" min="1">')
+  );
+  // 任务超时
+  html += section(t('settings.section.task'),
+    row(t('settings.task.timeout'), t('settings.task.timeout.desc'),
+      '<input type="number" id="setTaskTimeout" value="' + esc(taskTimeout) + '" min="1">')
+    + row(t('settings.task.retry'), t('settings.task.retry.desc'),
+      '<input type="number" id="setTaskRetry" value="' + esc(taskRetry) + '" min="0">')
+    + row(t('settings.task.concurrency'), t('settings.task.concurrency.desc'),
+      '<input type="number" id="setTaskConc" value="' + esc(taskConc) + '" min="1">')
+  );
+
+  html += '<div class="btnbar" style="margin-top:8px"><button class="primary" onclick="saveSettings()">' + esc(t('settings.save')) + '</button></div>';
+  html += '<div class="settings-msg" id="settingsMsg"></div>';
+  el.innerHTML = html;
+}
+
+// ============================================================
+// 文档中心渲染
+// ============================================================
+export function renderDocs() {
+  const el = document.getElementById('docsBody');
+  if (!el) return;
+  const langZh = getLang() === 'zh';
+  const panel = function (id, body, active) {
+    return '<div class="docs-panel' + (active ? ' active' : '') + '" id="' + id + '">' + body + '</div>';
+  };
+  const api = function (m, p, d) {
+    return '<div class="api-endpoint"><span class="api-method ' + m + '">' + m + '</span><span class="api-path">' + esc(p) + '</span><span class="api-desc">' + esc(d) + '</span></div>';
+  };
+
+  // 左侧菜单 + 右侧内容
+  let html = '<div class="docs-layout">';
+  // 左侧菜单
+  html += '<div class="docs-sidebar">'
+    + '<a class="docs-nav-item active" data-doc="intro" onclick="switchDocPanel(\'intro\')">' + esc(t('docs.intro')) + '</a>'
+    + '<a class="docs-nav-item" data-doc="quickstart" onclick="switchDocPanel(\'quickstart\')">' + esc(t('docs.quickstart')) + '</a>'
+    + '<a class="docs-nav-item" data-doc="api" onclick="switchDocPanel(\'api\')">' + esc(t('docs.api')) + '</a>'
+    + '<a class="docs-nav-item" data-doc="arch" onclick="switchDocPanel(\'arch\')">' + esc(t('docs.arch')) + '</a>'
+    + '<a class="docs-nav-item" data-doc="faq" onclick="switchDocPanel(\'faq\')">' + esc(t('docs.faq')) + '</a>'
+    + '</div>';
+  // 右侧内容
+  html += '<div class="docs-content">';
+
+  // 简介
+  const introBody = langZh
+    ? '<p>OpsMesh 是一个<b>网段运维中枢</b>，同一个程序两种身份：<b>控制面</b>（Web UI + API）和<b>采集端</b>（部署在每台设备上的 Agent）。</p>'
+    + '<p>核心能力：</p><ul>'
+    + '<li>设备纳管：自动发现网段设备、安装 agent、纳管上线</li>'
+    + '<li>任务执行：远程执行 shell 命令、查看结果、失败重试</li>'
+    + '<li>配置下发：远程写文件、配置项管理（CMDB）</li>'
+    + '<li>服务管理：远程启停系统服务、查看服务状态</li>'
+    + '<li>文件分发：远程文件写入、批量分发</li>'
+    + '<li>状态监控：CPU/内存/磁盘/网络实时指标、告警</li>'
+    + '</ul>'
+    + '<p>个人版使用 SQLite 轻量级存储；企业版可选 PostgreSQL + Redis + 消息队列。</p>'
+    : '<p>OpsMesh is a <b>Network Ops Hub</b>: one program, two roles — <b>control plane</b> (Web UI + API) and <b>agent</b> (deployed on each device).</p>'
+    + '<p>Core capabilities:</p><ul>'
+    + '<li>Device onboarding: auto-discover network devices, install agent, manage</li>'
+    + '<li>Task execution: run shell remotely, view results, retry on failure</li>'
+    + '<li>Config delivery: remote file writes, CMDB</li>'
+    + '<li>Service management: start/stop system services remotely</li>'
+    + '<li>File distribution: remote file writes, batch dispatch</li>'
+    + '<li>Monitoring: CPU/Memory/Disk/Network metrics, alerts</li>'
+    + '</ul>'
+    + '<p>Personal edition uses SQLite; enterprise edition supports PostgreSQL + Redis + message queues.</p>';
+  html += panel('docs-panel-intro', '<h3>' + esc(t('docs.intro')) + '</h3>' + introBody, true);
+
+  // 快速开始
+  const qsBody = langZh
+    ? '<ol>'
+    + '<li>启动控制面：<code>opsmesh.exe</code>（默认监听 :8080）</li>'
+    + '<li>浏览器打开 <code>http://127.0.0.1:8080</code>，注册账号并登录</li>'
+    + '<li>在「运维中枢」下发任务，或先在「总览」查看全局指标</li>'
+    + '<li>采集端自动注册到 <code>/api/v1/agents</code>，设备按网段分组展示</li>'
+    + '<li>任务失败会进入死信并触发告警，可在「监控告警」查看与确认</li>'
+    + '<li>指标以 Prometheus 格式暴露在 <code>:9091/metrics</code></li>'
+    + '</ol>'
+    : '<ol>'
+    + '<li>Start the control plane: <code>opsmesh.exe</code> (listens on :8080 by default)</li>'
+    + '<li>Open <code>http://127.0.0.1:8080</code>, register and login</li>'
+    + '<li>Dispatch tasks in "Ops Hub", or view global metrics in "Home"</li>'
+    + '<li>Agents auto-register at <code>/api/v1/agents</code>; devices grouped by network segment</li>'
+    + '<li>Failed tasks enter a dead-letter queue and trigger alerts; view/ack in "Alerts"</li>'
+    + '<li>Metrics exposed in Prometheus format at <code>:9091/metrics</code></li>'
+    + '</ol>';
+  html += panel('docs-panel-quickstart', '<h3>' + esc(t('docs.quickstart')) + '</h3>' + qsBody);
+
+  // API 文档
+  const apiBody = langZh
+    ? '<p>所有 API 前缀 <code>/api/v1</code>，需登录态（Cookie 或 Bearer Token）。</p>'
+    + '<h4>认证</h4>'
+    + api('POST', '/auth/login', '登录，返回 token')
+    + api('POST', '/auth/register', '注册新用户')
+    + api('GET', '/auth/me', '获取当前用户信息')
+    + api('POST', '/auth/logout', '退出登录')
+    + '<h4>采集端 / 设备</h4>'
+    + api('GET', '/agents', '采集端列表')
+    + api('GET', '/devices', '设备列表（按网段分组）')
+    + api('GET', '/devices/{id}', '设备详情')
+    + api('GET', '/devices/{id}/metrics', '设备监控指标')
+    + api('POST', '/devices/{id}/provision', '推送 Agent 纳管')
+    + '<h4>任务</h4>'
+    + api('GET', '/tasks', '任务列表')
+    + api('POST', '/tasks', '下发任务')
+    + api('GET', '/tasks/{id}', '任务详情')
+    + '<h4>CMDB</h4>'
+    + api('GET', '/cmdb/types', '配置项类型')
+    + api('GET', '/cmdb/cis?type=', '配置项列表')
+    + api('POST', '/cmdb/cis', '新建配置项')
+    + api('GET', '/cmdb/cis/{id}/graph', '配置项关系图谱')
+    + api('GET', '/cmdb/templates?type=', '属性模板')
+    + '<h4>作业编排</h4>'
+    + api('GET', '/workflows', '作业流列表')
+    + api('POST', '/workflows', '新建作业流')
+    + api('PUT', '/workflows/{id}', '更新作业流')
+    + api('POST', '/workflows/{id}/run', '运行作业流')
+    + api('POST', '/workflows/{id}/schedule', '定时调度')
+    + '<h4>部署</h4>'
+    + api('GET', '/deploys', '部署列表')
+    + api('POST', '/deploys', '登记部署任务')
+    + api('POST', '/deploys/{id}/execute', '执行部署')
+    + api('POST', '/deploys/{id}/rollback', '回滚部署')
+    + '<h4>日志 / 告警</h4>'
+    + api('GET', '/logs', '日志查询')
+    + api('GET', '/alerts', '告警列表')
+    + api('POST', '/alerts/{id}/ack', '确认告警')
+    + api('POST', '/alerts/{id}/silence', '静默告警')
+    + '<h4>用户 / 角色 / 权限</h4>'
+    + api('GET', '/users', '用户列表')
+    + api('POST', '/users', '新建用户')
+    + api('PATCH', '/users/{id}', '更新用户')
+    + api('DELETE', '/users/{id}', '删除用户')
+    + api('GET', '/roles', '角色列表')
+    + api('GET', '/permissions', '权限列表')
+    : '<p>All APIs are prefixed with <code>/api/v1</code>; auth required (Cookie or Bearer Token).</p>'
+    + '<h4>Auth</h4>'
+    + api('POST', '/auth/login', 'Login, returns token')
+    + api('POST', '/auth/register', 'Register a new user')
+    + api('GET', '/auth/me', 'Get current user info')
+    + api('POST', '/auth/logout', 'Logout')
+    + '<h4>Agents / Devices</h4>'
+    + api('GET', '/agents', 'List agents')
+    + api('GET', '/devices', 'List devices (grouped by segment)')
+    + api('GET', '/devices/{id}', 'Device detail')
+    + api('GET', '/devices/{id}/metrics', 'Device metrics')
+    + api('POST', '/devices/{id}/provision', 'Push agent & provision')
+    + '<h4>Tasks</h4>'
+    + api('GET', '/tasks', 'List tasks')
+    + api('POST', '/tasks', 'Dispatch a task')
+    + api('GET', '/tasks/{id}', 'Task detail')
+    + '<h4>CMDB</h4>'
+    + api('GET', '/cmdb/types', 'CI types')
+    + api('GET', '/cmdb/cis?type=', 'List CIs')
+    + api('POST', '/cmdb/cis', 'Create CI')
+    + api('GET', '/cmdb/cis/{id}/graph', 'CI relation graph')
+    + api('GET', '/cmdb/templates?type=', 'Attribute templates')
+    + '<h4>Workflow</h4>'
+    + api('GET', '/workflows', 'List workflows')
+    + api('POST', '/workflows', 'Create workflow')
+    + api('PUT', '/workflows/{id}', 'Update workflow')
+    + api('POST', '/workflows/{id}/run', 'Run workflow')
+    + api('POST', '/workflows/{id}/schedule', 'Schedule workflow')
+    + '<h4>Deploy</h4>'
+    + api('GET', '/deploys', 'List deploys')
+    + api('POST', '/deploys', 'Register deploy task')
+    + api('POST', '/deploys/{id}/execute', 'Execute deploy')
+    + api('POST', '/deploys/{id}/rollback', 'Rollback deploy')
+    + '<h4>Logs / Alerts</h4>'
+    + api('GET', '/logs', 'Query logs')
+    + api('GET', '/alerts', 'List alerts')
+    + api('POST', '/alerts/{id}/ack', 'Acknowledge alert')
+    + api('POST', '/alerts/{id}/silence', 'Silence alert')
+    + '<h4>Users / Roles / Permissions</h4>'
+    + api('GET', '/users', 'List users')
+    + api('POST', '/users', 'Create user')
+    + api('PATCH', '/users/{id}', 'Update user')
+    + api('DELETE', '/users/{id}', 'Delete user')
+    + api('GET', '/roles', 'List roles')
+    + api('GET', '/permissions', 'List permissions');
+  html += panel('docs-panel-api', '<h3>' + esc(t('docs.api')) + '</h3>' + apiBody);
+
+  // 架构
+  const archBody = langZh
+    ? '<p>OpsMesh 采用<b>单一二进制</b>设计，编译期通过 <code>go:embed</code> 把前端静态资源嵌入二进制。</p>'
+    + '<h4>组件</h4><ul>'
+    + '<li><b>控制面</b>（controlplane）：HTTP API + Web UI + SSE 推送 + gRPC 联邦</li>'
+    + '<li><b>采集端</b>（agent）：部署在设备上，接收任务、上报状态与指标</li>'
+    + '<li><b>存储</b>：个人版 SQLite；企业版 PostgreSQL + Redis</li>'
+    + '<li><b>指标</b>：Prometheus 格式暴露在 :9091/metrics</li>'
+    + '</ul>'
+    + '<h4>数据流</h4><ul>'
+    + '<li>设备接入网段 → 控制面发现 → 自动纳管</li>'
+    + '<li>用户下发任务 → 控制面调度 → 采集端执行 → 结果回传</li>'
+    + '<li>失败超限 → 死信队列 → 触发告警</li>'
+    + '<li>日志 / 指标持续采集 → 可供 Prometheus / Grafana 抓取</li>'
+    + '</ul>'
+    : '<p>OpsMesh is a <b>single binary</b>; front-end assets are embedded via <code>go:embed</code> at compile time.</p>'
+    + '<h4>Components</h4><ul>'
+    + '<li><b>Control plane</b>: HTTP API + Web UI + SSE + gRPC federation</li>'
+    + '<li><b>Agent</b>: deployed on devices; receives tasks, reports status & metrics</li>'
+    + '<li><b>Storage</b>: SQLite (personal); PostgreSQL + Redis (enterprise)</li>'
+    + '<li><b>Metrics</b>: Prometheus format at :9091/metrics</li>'
+    + '</ul>'
+    + '<h4>Data Flow</h4><ul>'
+    + '<li>Device joins network → control plane discovers → auto-managed</li>'
+    + '<li>User dispatches task → control plane schedules → agent executes → result returned</li>'
+    + '<li>Failure beyond limit → dead-letter queue → alert triggered</li>'
+    + '<li>Logs / metrics continuously collected → Prometheus / Grafana scrape</li>'
+    + '</ul>';
+  html += panel('docs-panel-arch', '<h3>' + esc(t('docs.arch')) + '</h3>' + archBody);
+
+  // FAQ
+  const faqBody = langZh
+    ? '<h4>Q: 如何添加一台新设备？</h4><p>A: 设备接入网段后会被自动发现；也可手动调用 <code>POST /devices/{id}/provision</code> 推送 Agent。</p>'
+    + '<h4>Q: 任务失败怎么办？</h4><p>A: 在「运维中枢 → 任务」查看失败原因；超限会进入死信并触发告警，可在「监控告警」确认或静默。</p>'
+    + '<h4>Q: 如何定时执行任务？</h4><p>A: 在「作业编排」创建作业流并填写 cron 表达式，保存后点「定时」。</p>'
+    + '<h4>Q: 监控指标怎么接入 Grafana？</h4><p>A: 把 <code>:9091/metrics</code> 配为 Prometheus 数据源，再在 Grafana 引用。</p>'
+    + '<h4>Q: 个人版与企业版区别？</h4><p>A: 个人版 SQLite 轻量；企业版支持 PostgreSQL + Redis + 消息队列 + 多租户联邦。</p>'
+    : '<h4>Q: How to add a new device?</h4><p>A: Devices are auto-discovered when joining a network segment; or call <code>POST /devices/{id}/provision</code> manually.</p>'
+    + '<h4>Q: What if a task fails?</h4><p>A: View failure in "Ops Hub → Tasks"; beyond the retry limit it enters the dead-letter queue and triggers an alert; ack or silence in "Alerts".</p>'
+    + '<h4>Q: How to schedule tasks?</h4><p>A: Create a workflow in "Workflow", fill in a cron expression, save, then click "Schedule".</p>'
+    + '<h4>Q: How to integrate metrics with Grafana?</h4><p>A: Configure <code>:9091/metrics</code> as a Prometheus datasource, then reference in Grafana.</p>'
+    + '<h4>Q: Personal vs Enterprise?</h4><p>A: Personal uses SQLite; Enterprise supports PostgreSQL + Redis + message queues + multi-tenant federation.</p>';
+  html += panel('docs-panel-faq', '<h3>' + esc(t('docs.faq')) + '</h3>' + faqBody);
+
+  html += '</div></div>'; // 关闭 docs-content 和 docs-layout
+
+  el.innerHTML = html;
+}
+
+export function switchDocPanel(name) {
+  // 切换菜单项 active
+  document.querySelectorAll('.docs-nav-item').forEach(function (a) {
+    a.classList.toggle('active', a.getAttribute('data-doc') === name);
+  });
+  // 切换 panel 显示
+  document.querySelectorAll('.docs-panel').forEach(function (p) {
+    p.classList.toggle('active', p.id === 'docs-panel-' + name);
+  });
 }

@@ -30,7 +30,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dashboard asset missing: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// HTML 文件不缓存：每次请求都重新获取，避免前端版本升级后浏览器使用旧 HTML + 旧 JS 导致页面空白。
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Write(data)
 }
 
@@ -63,5 +65,8 @@ func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
+	// 静态资源不缓存：go:embed 在编译期打包，重新编译后文件内容变化但 URL 不变，
+	// 若浏览器缓存旧版本（如旧 main.js 无 showAuthPage），与新 HTML 不匹配会导致页面空白。
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Write(data)
 }
