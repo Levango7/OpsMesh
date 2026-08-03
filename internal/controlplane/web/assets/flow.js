@@ -85,7 +85,18 @@ export function switchTab(name) {
   if (name === 'settings' && typeof window.pollSettings === 'function') { window.pollSettings(); }
   if (name === 'docs' && typeof window.pollDocs === 'function') { window.pollDocs(); }
 }
-export function toggleGuide() { document.getElementById('guide-ops').classList.toggle('open'); }
+export function toggleGuide() {
+  // 切换当前活跃 tab 内的 .guide-pop 元素；
+  // 优先按 id（guide-<tab>）查找，回退到当前活跃 pane 内首个 .guide-pop。
+  const activePane = document.querySelector('.pane.active');
+  if (!activePane) return;
+  let guide = null;
+  if (activePane.id && activePane.id.indexOf('tab-') === 0) {
+    guide = document.getElementById('guide-' + activePane.id.slice(4));
+  }
+  if (!guide) guide = activePane.querySelector('.guide-pop');
+  if (guide) guide.classList.toggle('open');
+}
 
 // ---------- 设备详情抽屉 / 纳管 ----------
 export function openDevice(id) {

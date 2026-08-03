@@ -128,6 +128,13 @@
     </div>
     <span class="hint-link" onclick="toggleGuide()" id="introHomeHowToUse">怎么用？</span>
   </div>
+  <div class="guide-pop" id="guide-home">
+    <b>给第一次用的你：</b><br>
+    · <b>总览</b>：把六块能力（运维 / 配置库 / 部署 / 编排 / 日志 / 告警）的关键指标汇到一屏。<br>
+    · 上方四个彩色数字卡片是全局概览，点任意一个可直达对应模块。<br>
+    · 下方「运维能力方向」是六大能力入口，点卡片进入对应功能模块。<br>
+    · 「快捷入口」可一键直达各模块；图表区展示任务健康、告警级别、资源分布与网段拓扑。
+  </div>
 
   <div class="stats">
     <div class="stat indigo" style="cursor:pointer" onclick="switchTab('ops')" title="查看运维中枢"><div class="stat-v" id="ovDevices">–</div><div class="stat-l" id="ovDevicesLabel">登记设备</div></div>
@@ -261,18 +268,18 @@
       <h2 id="opsDispatchTitle">下发任务</h2>
       <p class="field-hint" id="opsDispatchHint">把一条执行指令交给某台设备上的采集端。命令将在该设备本地运行。</p>
       <form id="taskForm" class="form-stack">
-        <label title="采集端（Agent）：部署在设备上的小代理，负责执行任务" id="opsAgentLabel">采集端:
+        <label title="采集端（Agent）：部署在设备上的小代理，负责执行任务" id="opsAgentLabel"><span id="opsAgentLabelText">采集端:</span>
           <select id="agentID"></select></label>
-        <label id="opsTypeLabel">类型:
+        <label id="opsTypeLabel"><span id="opsTypeLabelText">类型:</span>
           <select id="type" title="shell=执行命令；service=启停服务；file=下发/写入文件">
             <option value="shell">shell（执行命令）</option>
             <option value="service">service（启停服务）</option>
             <option value="file">file（下发文件）</option>
           </select>
         </label>
-        <label id="opsCommandLabel">命令/动作: <input id="command" placeholder="shell: uname -a ｜ service: restart nginx" title="要执行的具体内容" /></label>
-        <label id="opsPathLabel">路径(path，file/service 用): <input id="path" placeholder="/tmp/x.out 或 nginx" /></label>
-        <label id="opsContentLabel">内容(content，file 用): <input id="content" placeholder="要写入文件的内容" /></label>
+        <label id="opsCommandLabel"><span id="opsCommandLabelText">命令/动作:</span> <input id="command" placeholder="shell: uname -a ｜ service: restart nginx" title="要执行的具体内容" /></label>
+        <label id="opsPathLabel"><span id="opsPathLabelText">路径(path，file/service 用):</span> <input id="path" placeholder="/tmp/x.out 或 nginx" /></label>
+        <label id="opsContentLabel"><span id="opsContentLabelText">内容(content，file 用):</span> <input id="content" placeholder="要写入文件的内容" /></label>
         <div class="btnbar"><button type="submit" class="primary" title="把任务下发给选中的采集端"><span class="icon" id="iconDispatch"></span><span id="opsDispatchBtn">下发任务</span></button></div>
       </form>
       <div id="taskResult" class="msg"></div>
@@ -360,8 +367,8 @@
       <p class="field-hint" id="cmdbNewCIHint">登记一条新资产。属性用 JSON 填写，如 <code>{"ip":"10.0.0.1"}</code>。</p>
       <form id="ciForm" class="form-stack">
         <label id="cmdbNewCITypeLabel"><span id="cmdbNewCITypeLabelText">类型:</span> <select id="ciTypeNew" required></select></label>
-        <label id="cmdbNewCINameLabel">名称: <input id="ciName" placeholder="hostname / svc-name" /></label>
-        <label id="cmdbNewCIAttrsLabel">属性(JSON): <input id="ciAttrs" placeholder='{"ip":"10.0.0.1","kernel":"5.4"}' title="以 JSON 填写该资产的属性" /></label>
+        <label id="cmdbNewCINameLabel"><span id="cmdbNewCINameLabelText">名称:</span> <input id="ciName" placeholder="hostname / svc-name" /></label>
+        <label id="cmdbNewCIAttrsLabel"><span id="cmdbNewCIAttrsLabelText">属性(JSON):</span> <input id="ciAttrs" placeholder='{"ip":"10.0.0.1","kernel":"5.4"}' title="以 JSON 填写该资产的属性" /></label>
         <div class="btnbar"><button type="submit" class="primary" id="cmdbCreateBtn">创建</button></div>
       </form>
       <div id="cmdbMsg" class="msg"></div>
@@ -397,12 +404,12 @@
       <h3 id="flowWorkflowTitle">作业流</h3>
       <p class="field-hint" id="flowWorkflowHint">作业流 = 一组带依赖关系的步骤。可新建，或从下拉选择已有作业流继续编辑。</p>
       <div class="form-row" style="gap:12px;flex-wrap:wrap">
-        <label style="display:flex;flex:1;min-width:200px" id="flowSelectLabel">作业流:
+        <label style="display:flex;flex:1;min-width:200px" id="flowSelectLabel"><span id="flowSelectLabelText">作业流:</span>
           <select id="wfSelect" onchange="openWorkflow()" style="flex:1;min-width:0"></select>
         </label>
-        <label style="display:flex;flex:1;min-width:200px" id="flowNameLabel">名称: <input id="wfName" placeholder="deploy-nginx" style="flex:1;min-width:0" title="作业流的名字，便于识别" /></label>
-        <label style="display:flex;flex:1;min-width:200px" id="flowAgentLabel">采集端: <select id="wfAgent" style="flex:1;min-width:0" title="由哪台设备的采集端执行本作业流"></select></label>
-        <label style="display:flex;flex:1;min-width:200px" id="flowCronLabel">定时(cron): <input id="wfCron" placeholder="0 * * * *" title="空=不定时；填写后按此周期自动运行" style="flex:1;min-width:0" /></label>
+        <label style="display:flex;flex:1;min-width:200px" id="flowNameLabel"><span id="flowNameLabelText">名称:</span> <input id="wfName" placeholder="deploy-nginx" style="flex:1;min-width:0" title="作业流的名字，便于识别" /></label>
+        <label style="display:flex;flex:1;min-width:200px" id="flowAgentLabel"><span id="flowAgentLabelText">采集端:</span> <select id="wfAgent" style="flex:1;min-width:0" title="由哪台设备的采集端执行本作业流"></select></label>
+        <label style="display:flex;flex:1;min-width:200px" id="flowCronLabel"><span id="flowCronLabelText">定时(cron):</span> <input id="wfCron" placeholder="0 * * * *" title="空=不定时；填写后按此周期自动运行" style="flex:1;min-width:0" /></label>
       </div>
       <div class="btnbar">
         <button onclick="newWorkflow()" id="flowNewBtn"><span class="icon" id="iconWfNew"></span> 新建</button>
@@ -473,17 +480,17 @@
       <h3 id="deployRegisterTitle">登记部署任务</h3>
       <p class="field-hint" id="deployRegisterHint">一次登记，可多次执行与回滚。<b>目标设备</b>填写设备 ID，多个用逗号分隔。</p>
       <form id="deployForm" class="form-stack">
-        <label id="deployNameLabel">名称: <input id="dpName" placeholder="deploy-nginx" title="部署任务的名字，便于识别" /></label>
-        <label id="deployTypeLabel">类型:
+        <label id="deployNameLabel"><span id="deployNameLabelText">名称:</span> <input id="dpName" placeholder="deploy-nginx" title="部署任务的名字，便于识别" /></label>
+        <label id="deployTypeLabel"><span id="deployTypeLabelText">类型:</span>
           <select id="dpType" title="script=执行 Git 仓库脚本；file=下发/写入文件；k8s=应用 K8s 清单">
             <option value="script">script（执行脚本）</option>
             <option value="file">file（下发文件）</option>
             <option value="k8s">k8s（应用清单）</option>
           </select></label>
-        <label id="deployRepoLabel">仓库地址(repo_url): <input id="dpRepo" placeholder="https://git.example.com/ops/nginx.git" title="script / k8s 类型填写 Git 仓库地址" /></label>
-        <label id="deployContentLabel">文件内容(content): <input id="dpContent" placeholder="要写入目标文件的内容" title="file 类型填写要写入目标路径的内容" /></label>
-        <label id="deployPathLabel">目标路径(path): <input id="dpPath" placeholder="/tmp/app.conf" title="file 类型填写目标设备上的路径" /></label>
-        <label id="deployTargetsLabel">目标设备(target_ids): <input id="dpTargets" placeholder="dev-10.0.0.1, dev-10.0.0.2" title="要部署到的设备，多个用逗号或空格分隔" /></label>
+        <label id="deployRepoLabel"><span id="deployRepoLabelText">仓库地址(repo_url):</span> <input id="dpRepo" placeholder="https://git.example.com/ops/nginx.git" title="script / k8s 类型填写 Git 仓库地址" /></label>
+        <label id="deployContentLabel"><span id="deployContentLabelText">文件内容(content):</span> <input id="dpContent" placeholder="要写入目标文件的内容" title="file 类型填写要写入目标路径的内容" /></label>
+        <label id="deployPathLabel"><span id="deployPathLabelText">目标路径(path):</span> <input id="dpPath" placeholder="/tmp/app.conf" title="file 类型填写目标设备上的路径" /></label>
+        <label id="deployTargetsLabel"><span id="deployTargetsLabelText">目标设备(target_ids):</span> <input id="dpTargets" placeholder="dev-10.0.0.1, dev-10.0.0.2" title="要部署到的设备，多个用逗号或空格分隔" /></label>
         <div class="btnbar"><button type="submit" class="primary" style="background:var(--violet);box-shadow:0 2px 8px rgba(124,58,237,.32)" title="登记部署任务（后端会校验名称与目标的合法性）"><span class="icon" id="iconDeployAdd"></span> <span id="deployAddBtn">登记部署</span></button></div>
       </form>
       <div id="deployMsg" class="msg"></div>
@@ -529,16 +536,16 @@
       <h3 id="logsQueryTitle">查询条件</h3>
       <p class="field-hint" id="logsQueryHint">留空的项表示「不限制」。时间格式如 <code>2026-07-27T00:00:00Z</code>，起止可只填其一。</p>
       <div class="filter-bar">
-        <label id="logsDeviceLabel">设备: <input id="logDevice" placeholder="dev-10.0.0.1" /></label>
-        <label id="logsAgentLabel">Agent: <input id="logAgent" placeholder="agent-xyz" /></label>
-        <label id="logsLevelLabel">级别:
+        <label id="logsDeviceLabel"><span id="logsDeviceLabelText">设备:</span> <input id="logDevice" placeholder="dev-10.0.0.1" /></label>
+        <label id="logsAgentLabel"><span id="logsAgentLabelText">Agent:</span> <input id="logAgent" placeholder="agent-xyz" /></label>
+        <label id="logsLevelLabel"><span id="logsLevelLabelText">级别:</span>
           <select id="logLevel">
             <option value="">全部</option>
             <option value="info">info</option>
             <option value="warn">warn</option>
             <option value="error">error</option>
           </select></label>
-        <label id="logsSourceLabel">来源:
+        <label id="logsSourceLabel"><span id="logsSourceLabelText">来源:</span>
           <select id="logSource">
             <option value="">全部</option>
             <option value="agent">agent</option>
@@ -547,10 +554,10 @@
           </select></label>
       </div>
       <div class="filter-bar">
-        <label style="flex:1;min-width:240px" id="logsKeywordLabel">关键字: <input id="logKeyword" placeholder="message 模糊匹配，如 refused" style="min-width:160px" /></label>
-        <label title="起始时间（RFC3339），可留空" id="logsFromLabel">起(from): <input id="logFrom" placeholder="2026-07-27T00:00:00Z" /></label>
-        <label title="结束时间（RFC3339），可留空" id="logsToLabel">止(to): <input id="logTo" placeholder="2026-07-27T23:59:59Z" /></label>
-        <label title="单次返回最多条数（上限 1000）" id="logsLimitLabel">条数: <input id="logLimit" type="number" value="200" min="1" max="1000" style="width:70px" /></label>
+        <label style="flex:1;min-width:240px" id="logsKeywordLabel"><span id="logsKeywordLabelText">关键字:</span> <input id="logKeyword" placeholder="message 模糊匹配，如 refused" style="min-width:160px" /></label>
+        <label title="起始时间（RFC3339），可留空" id="logsFromLabel"><span id="logsFromLabelText">起(from):</span> <input id="logFrom" placeholder="2026-07-27T00:00:00Z" /></label>
+        <label title="结束时间（RFC3339），可留空" id="logsToLabel"><span id="logsToLabelText">止(to):</span> <input id="logTo" placeholder="2026-07-27T23:59:59Z" /></label>
+        <label title="单次返回最多条数（上限 1000）" id="logsLimitLabel"><span id="logsLimitLabelText">条数:</span> <input id="logLimit" type="number" value="200" min="1" max="1000" style="width:70px" /></label>
       </div>
       <div class="btnbar">
         <button onclick="searchLogs(0)" class="primary" style="background:var(--sky);box-shadow:0 2px 8px rgba(2,132,199,.3)" title="按条件查询日志"><span class="icon" id="iconLogSearch"></span> <span id="logsSearchBtn">查询</span></button>
@@ -625,7 +632,7 @@
   <div class="pane-intro">
     <div class="ico" style="background:var(--accent-soft);color:var(--accent)"><span class="icon" id="introIconUsers"></span></div>
     <div class="txt">
-      <h3 id="usersTitle">用户中心 · 用户管理</h3>
+      <h3 id="usersTitle">用户中心</h3>
       <p id="usersDesc">管理系统所有用户账号：新增、编辑、删除、分配角色、启停账号。</p>
     </div>
   </div>

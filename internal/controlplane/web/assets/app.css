@@ -58,6 +58,8 @@
 }
 
 *{box-sizing:border-box}
+/* 预留滚动条空间，避免页面切换时因滚动条出现/消失导致内容左右偏移 */
+html{scrollbar-gutter:stable}
 body{font-family:var(--font);margin:0;background:var(--bg);color:var(--text);font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased}
 h1,h2,h3,h4{margin:0;font-weight:600;letter-spacing:-.01em}
 h1{font-size:18px}h2{font-size:16px;color:var(--text);margin-bottom:10px}h3{font-size:14px;color:var(--text);margin:14px 0 8px}h4{font-size:13px;color:var(--text-2);margin:12px 0 6px}

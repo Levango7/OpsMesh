@@ -740,11 +740,11 @@ function applyI18nToDOM() {
   // ops 页面 card
   setText('opsDispatchTitle', t('ops.dispatch'));
   setText('opsDispatchHint', t('ops.dispatchHint'));
-  setText('opsAgentLabel', t('ops.agentLabel'));
-  setText('opsTypeLabel', t('ops.typeLabel'));
-  setText('opsCommandLabel', t('ops.commandLabel'));
-  setText('opsPathLabel', t('ops.pathLabel'));
-  setText('opsContentLabel', t('ops.contentLabel'));
+  setText('opsAgentLabelText', t('ops.agentLabel'));
+  setText('opsTypeLabelText', t('ops.typeLabel'));
+  setText('opsCommandLabelText', t('ops.commandLabel'));
+  setText('opsPathLabelText', t('ops.pathLabel'));
+  setText('opsContentLabelText', t('ops.contentLabel'));
   setText('opsDispatchBtn', t('ops.dispatchBtn'));
   setText('opsNetworkTitle', t('ops.network'));
   setText('opsNetworkHint', t('ops.networkHint'));
@@ -762,18 +762,18 @@ function applyI18nToDOM() {
   setText('cmdbNewCITitle', t('cmdb.newCI'));
   setHTML('cmdbNewCIHint', t('cmdb.newCIHint'));
   setText('cmdbNewCITypeLabelText', t('cmdb.newCITypeLabel'));
-  setText('cmdbNewCINameLabel', t('cmdb.newCINameLabel'));
-  setText('cmdbNewCIAttrsLabel', t('cmdb.newCIAttrsLabel'));
+  setText('cmdbNewCINameLabelText', t('cmdb.newCINameLabel'));
+  setText('cmdbNewCIAttrsLabelText', t('cmdb.newCIAttrsLabel'));
   setText('cmdbCreateBtn', t('cmdb.create'));
   setText('cmdbCiGraphTitle', t('cmdb.ciGraph'));
   setText('cmdbCiGraphHint', t('cmdb.ciGraphHint'));
   // flow 页面 card
   setText('flowWorkflowTitle', t('flow.workflow'));
   setText('flowWorkflowHint', t('flow.workflowHint'));
-  setText('flowSelectLabel', t('flow.selectLabel'));
-  setText('flowNameLabel', t('flow.nameLabel'));
-  setText('flowAgentLabel', t('flow.agentLabel'));
-  setText('flowCronLabel', t('flow.cronLabel'));
+  setText('flowSelectLabelText', t('flow.selectLabel'));
+  setText('flowNameLabelText', t('flow.nameLabel'));
+  setText('flowAgentLabelText', t('flow.agentLabel'));
+  setText('flowCronLabelText', t('flow.cronLabel'));
   setText('flowNewBtn', t('flow.new'));
   setText('flowDemoBtn', t('flow.demo'));
   setText('flowSaveBtn', t('flow.save'));
@@ -797,12 +797,12 @@ function applyI18nToDOM() {
   // deploy 页面 card
   setText('deployRegisterTitle', t('deploy.register'));
   setHTML('deployRegisterHint', t('deploy.registerHint'));
-  setText('deployNameLabel', t('deploy.nameLabel'));
-  setText('deployTypeLabel', t('deploy.typeLabel'));
-  setText('deployRepoLabel', t('deploy.repoLabel'));
-  setText('deployContentLabel', t('deploy.contentLabel'));
-  setText('deployPathLabel', t('deploy.pathLabel'));
-  setText('deployTargetsLabel', t('deploy.targetsLabel'));
+  setText('deployNameLabelText', t('deploy.nameLabel'));
+  setText('deployTypeLabelText', t('deploy.typeLabel'));
+  setText('deployRepoLabelText', t('deploy.repoLabel'));
+  setText('deployContentLabelText', t('deploy.contentLabel'));
+  setText('deployPathLabelText', t('deploy.pathLabel'));
+  setText('deployTargetsLabelText', t('deploy.targetsLabel'));
   setText('deployAddBtn', t('deploy.addBtn'));
   setText('deployListTitle', t('deploy.list'));
   setText('deployListHint', t('deploy.listHint'));
@@ -811,14 +811,14 @@ function applyI18nToDOM() {
   // logs 页面 card
   setText('logsQueryTitle', t('logs.query'));
   setHTML('logsQueryHint', t('logs.queryHint'));
-  setText('logsDeviceLabel', t('logs.deviceLabel'));
-  setText('logsAgentLabel', t('logs.agentLabel'));
-  setText('logsLevelLabel', t('logs.levelLabel'));
-  setText('logsSourceLabel', t('logs.sourceLabel'));
-  setText('logsKeywordLabel', t('logs.keywordLabel'));
-  setText('logsFromLabel', t('logs.fromLabel'));
-  setText('logsToLabel', t('logs.toLabel'));
-  setText('logsLimitLabel', t('logs.limitLabel'));
+  setText('logsDeviceLabelText', t('logs.deviceLabel'));
+  setText('logsAgentLabelText', t('logs.agentLabel'));
+  setText('logsLevelLabelText', t('logs.levelLabel'));
+  setText('logsSourceLabelText', t('logs.sourceLabel'));
+  setText('logsKeywordLabelText', t('logs.keywordLabel'));
+  setText('logsFromLabelText', t('logs.fromLabel'));
+  setText('logsToLabelText', t('logs.toLabel'));
+  setText('logsLimitLabelText', t('logs.limitLabel'));
   setText('logsSearchBtn', t('logs.searchBtn'));
   setText('logsResetBtn', t('logs.resetBtn'));
   setText('logsResultTitle', t('logs.result'));

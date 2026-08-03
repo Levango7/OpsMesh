@@ -209,7 +209,7 @@ const ZH = {
   'alerts.silencePrompt': '静默时长（分钟，留空=24 小时）：',
   'alerts.commentPrompt': '处理备注（可选）：',
   // 用户中心
-  'users.title': '用户中心 · 用户管理',
+  'users.title': '用户中心',
   'users.desc': '管理系统所有用户账号：新增、编辑、删除、分配角色、启停账号。',
   'users.add': '新增用户',
   'users.edit': '编辑用户',
@@ -680,7 +680,7 @@ const EN = {
   'alerts.silencePrompt': 'Silence duration (minutes, blank=24h): ',
   'alerts.commentPrompt': 'Comment (optional): ',
   // 用户中心
-  'users.title': 'Users · User Management',
+  'users.title': 'Users',
   'users.desc': 'Manage all user accounts in the system: add, edit, delete, assign roles, enable/disable accounts.',
   'users.add': 'Add User',
   'users.edit': 'Edit User',
