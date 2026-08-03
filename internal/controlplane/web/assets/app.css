@@ -131,6 +131,14 @@ p{color:var(--text-2);margin:6px 0}
 .filter-bar{display:flex;flex-wrap:wrap;align-items:center;gap:12px 18px;margin:6px 0 12px}
 .filter-bar label{margin:0;min-width:0}
 .filter-bar input,.filter-bar select{min-width:120px}
+/* 日志检索查询条件：grid 4 列，label 文字在上 input 在下，整齐对齐 */
+.filter-bar-logs{display:grid;grid-template-columns:repeat(4,1fr);gap:12px 16px;margin:6px 0 12px;align-items:start}
+.filter-bar-logs label{display:flex;flex-direction:column;align-items:stretch;gap:4px;margin:0;width:100%}
+.filter-bar-logs label > span{font-size:12.5px;color:var(--text-2);font-weight:500;line-height:1.4}
+.filter-bar-logs label > input,.filter-bar-logs label > select{width:100%;min-width:0;flex:none}
+.filter-bar-logs .logs-keyword{grid-column:span 2}
+@media (max-width:1100px){.filter-bar-logs{grid-template-columns:repeat(2,1fr)}.filter-bar-logs .logs-keyword{grid-column:span 2}}
+@media (max-width:600px){.filter-bar-logs{grid-template-columns:1fr}.filter-bar-logs .logs-keyword{grid-column:span 1}}
 /* 页面底部说明卡片 */
 .page-note{margin-top:18px;padding:14px 18px;background:var(--bg-soft);border:1px dashed var(--border-2);
   border-radius:var(--radius-sm);font-size:12.5px;color:var(--text-3);line-height:1.7}
@@ -202,9 +210,9 @@ p{color:var(--text-2);margin:6px 0}
 
 /* ---------- 表单 ---------- */
 label{display:inline-flex;align-items:center;gap:6px;margin:4px 12px 8px 0;color:var(--text-2);font-size:13px;max-width:100%}
-input,select{font-family:inherit;font-size:13px;color:var(--text);background:var(--surface-2);
-  border:1px solid var(--border-2);padding:7px 10px;border-radius:var(--radius-sm);outline:none;transition:.15s;
-  min-width:0;max-width:100%}
+input,select{font-family:inherit;font-size:14px;line-height:1.5;color:var(--text);background:var(--surface-2);
+  border:1px solid var(--border-2);padding:8px 10px;border-radius:var(--radius-sm);outline:none;transition:.15s;
+  min-width:0;max-width:100%;caret-color:var(--accent)}
 input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 button{font-family:inherit;font-size:13px;font-weight:500;cursor:pointer;border:1px solid transparent;
   padding:7px 14px;border-radius:var(--radius-sm);background:var(--surface-3);color:var(--text-2);
@@ -602,7 +610,7 @@ td code,th code{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-spac
 .docs-nav-item.active{background:var(--accent);color:#fff;font-weight:700;border-color:var(--accent)}
 .docs-content{flex:1 1 auto;min-width:0}
 .docs-panel{display:none;padding:4px 0;box-sizing:border-box;width:100%}
-.docs-panel.active{display:block}
+.docs-panel.active{display:block;min-height:420px}
 .docs-panel h2{font-size:18px;font-weight:700;margin:0 0 12px;color:var(--text)}
 .docs-panel h3{font-size:15px;font-weight:600;margin:16px 0 8px;color:var(--text)}
 .docs-panel h4{font-size:13.5px;font-weight:600;margin:14px 0 6px;color:var(--text)}

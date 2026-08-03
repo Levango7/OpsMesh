@@ -535,7 +535,7 @@
     <div class="card accent-sky">
       <h3 id="logsQueryTitle">查询条件</h3>
       <p class="field-hint" id="logsQueryHint">留空的项表示「不限制」。时间格式如 <code>2026-07-27T00:00:00Z</code>，起止可只填其一。</p>
-      <div class="filter-bar">
+      <div class="filter-bar-logs">
         <label id="logsDeviceLabel"><span id="logsDeviceLabelText">设备:</span> <input id="logDevice" placeholder="dev-10.0.0.1" /></label>
         <label id="logsAgentLabel"><span id="logsAgentLabelText">Agent:</span> <input id="logAgent" placeholder="agent-xyz" /></label>
         <label id="logsLevelLabel"><span id="logsLevelLabelText">级别:</span>
@@ -552,12 +552,10 @@
             <option value="task">task</option>
             <option value="system">system</option>
           </select></label>
-      </div>
-      <div class="filter-bar">
-        <label style="flex:1;min-width:240px" id="logsKeywordLabel"><span id="logsKeywordLabelText">关键字:</span> <input id="logKeyword" placeholder="message 模糊匹配，如 refused" style="min-width:160px" /></label>
+        <label class="logs-keyword" title="message 模糊匹配" id="logsKeywordLabel"><span id="logsKeywordLabelText">关键字:</span> <input id="logKeyword" placeholder="message 模糊匹配，如 refused" /></label>
         <label title="起始时间（RFC3339），可留空" id="logsFromLabel"><span id="logsFromLabelText">起(from):</span> <input id="logFrom" placeholder="2026-07-27T00:00:00Z" /></label>
         <label title="结束时间（RFC3339），可留空" id="logsToLabel"><span id="logsToLabelText">止(to):</span> <input id="logTo" placeholder="2026-07-27T23:59:59Z" /></label>
-        <label title="单次返回最多条数（上限 1000）" id="logsLimitLabel"><span id="logsLimitLabelText">条数:</span> <input id="logLimit" type="number" value="200" min="1" max="1000" style="width:70px" /></label>
+        <label title="单次返回最多条数（上限 1000）" id="logsLimitLabel"><span id="logsLimitLabelText">条数:</span> <input id="logLimit" type="number" value="200" min="1" max="1000" /></label>
       </div>
       <div class="btnbar">
         <button onclick="searchLogs(0)" class="primary" style="background:var(--sky);box-shadow:0 2px 8px rgba(2,132,199,.3)" title="按条件查询日志"><span class="icon" id="iconLogSearch"></span> <span id="logsSearchBtn">查询</span></button>
