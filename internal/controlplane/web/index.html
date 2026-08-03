@@ -100,6 +100,7 @@
   <button class="tab" id="tab-users-btn" onclick="switchTab('users')"><span class="icon" id="navIconUsers"></span>用户中心</button>
   <button class="tab" id="tab-roles-btn" onclick="switchTab('roles')"><span class="icon" id="navIconRoles"></span>角色管理</button>
   <button class="tab" id="tab-permissions-btn" onclick="switchTab('permissions')"><span class="icon" id="navIconPerms"></span>权限管理</button>
+  <button class="tab" id="tab-audits-btn" onclick="switchTab('audits')"><span class="icon" id="navIconAudits"></span>审计日志</button>
   <button class="tab" id="tab-settings-btn" onclick="switchTab('settings')"><span class="icon" id="navIconSettings"></span>系统设置</button>
   <div class="navgroup" id="navGroupHelp">帮助</div>
   <button class="tab" id="tab-docs-btn" onclick="switchTab('docs')"><span class="icon" id="navIconDocs"></span>文档</button>
@@ -684,6 +685,50 @@
     <div id="permsList" class="card"><p class="muted">加载中…</p></div>
   </div>
   <div class="page-note" id="note-permissions"></div>
+</div>
+
+<!-- ============ 审计日志 ============ -->
+<div id="tab-audits" class="pane">
+  <div class="pane-intro">
+    <div class="ico" style="background:var(--violet-soft);color:var(--violet)"><span class="icon" id="introIconAudits"></span></div>
+    <div class="txt">
+      <h3 id="auditsTitle">审计日志</h3>
+      <p id="auditsDesc">查看系统操作审计记录，支持按动作、时间窗、条数过滤。</p>
+    </div>
+  </div>
+  <div class="row-single">
+    <div class="card">
+      <div class="audit-filter" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+        <div>
+          <label><span id="auditActionLabelText">动作</span></label>
+          <select id="auditActionFilter" class="form-control">
+            <option value="">全部</option>
+            <option value="login">登录</option>
+            <option value="create">创建</option>
+            <option value="update">更新</option>
+            <option value="delete">删除</option>
+            <option value="execute">执行</option>
+          </select>
+        </div>
+        <div>
+          <label><span id="auditFromLabelText">开始时间</span></label>
+          <input type="datetime-local" id="auditFromInput" class="form-control">
+        </div>
+        <div>
+          <label><span id="auditToLabelText">结束时间</span></label>
+          <input type="datetime-local" id="auditToInput" class="form-control">
+        </div>
+        <div>
+          <label><span id="auditLimitLabelText">条数限制</span></label>
+          <input type="number" id="auditLimitInput" class="form-control" value="100" min="1" max="1000">
+        </div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="loadAudits()" id="auditSearchBtn">查询</button>
+      <button class="btn btn-sm" onclick="loadAudits()" style="margin-left:8px">刷新</button>
+      <div id="auditList" style="margin-top:16px"><p class="muted">点击查询加载审计日志</p></div>
+    </div>
+  </div>
+  <div class="page-note" id="note-audits"></div>
 </div>
 
 <!-- ============ 系统设置 ============ -->

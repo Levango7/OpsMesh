@@ -328,6 +328,7 @@ const ZH = {
   // 导航新增
   'nav.group.help': '帮助',
   'nav.settings': '系统设置',
+  'nav.audits': '审计日志',
   'nav.docs': '文档',
   // 系统设置
   'settings.title': '系统设置',
@@ -478,6 +479,22 @@ const ZH = {
   'ctx.logs': '日志检索',
   'ctx.alerts': '监控告警',
   'ctx.clearBtn': '✕ 清除',
+  // 审计日志
+  'audits.title': '审计日志',
+  'audits.desc': '查看系统操作审计记录，支持按动作、时间窗、条数过滤。',
+  'audits.action': '动作',
+  'audits.from': '开始时间',
+  'audits.to': '结束时间',
+  'audits.limit': '条数限制',
+  'audits.search': '查询',
+  'audits.refresh': '刷新',
+  'audits.empty': '暂无审计日志',
+  'audits.loading': '加载中…',
+  'audits.time': '时间',
+  'audits.user': '用户',
+  'audits.target': '目标',
+  'audits.detail': '详情',
+  'audits.tenant': '租户',
 };
 
 // ---------- 英文语言包 ----------
@@ -798,6 +815,7 @@ const EN = {
   // 导航新增
   'nav.group.help': 'Help',
   'nav.settings': 'Settings',
+  'nav.audits': 'Audit Logs',
   'nav.docs': 'Docs',
   // 系统设置
   'settings.title': 'System Settings',
@@ -948,6 +966,22 @@ const EN = {
   'ctx.logs': 'Logs',
   'ctx.alerts': 'Alerts',
   'ctx.clearBtn': '✕ Clear',
+  // Audit logs
+  'audits.title': 'Audit Logs',
+  'audits.desc': 'View system audit records; filter by action, time range, limit.',
+  'audits.action': 'Action',
+  'audits.from': 'From',
+  'audits.to': 'To',
+  'audits.limit': 'Limit',
+  'audits.search': 'Search',
+  'audits.refresh': 'Refresh',
+  'audits.empty': 'No audit logs',
+  'audits.loading': 'Loading…',
+  'audits.time': 'Time',
+  'audits.user': 'User',
+  'audits.target': 'Target',
+  'audits.detail': 'Detail',
+  'audits.tenant': 'Tenant',
 };
 
 const PACKS = { zh: ZH, en: EN };

@@ -78,7 +78,7 @@ export function paintOverview() {
     const list = (ts || []);
     if (list.length === 0) { setText('ovCIs', 0); return; }
     Promise.all(list.map(function (t) {
-      return getCIs(t.type).then(function (arr) { return (arr || []).length; });
+      return getCIs(t.name).then(function (arr) { return (arr || []).length; });
     })).then(function (ns) {
       const s = ns.reduce(function (a, b) { return a + b; }, 0);
       setText('ovCIs', s);
@@ -1155,6 +1155,8 @@ export function renderDocs() {
     + api('DELETE', '/users/{id}', '删除用户')
     + api('GET', '/roles', '角色列表')
     + api('GET', '/permissions', '权限列表')
+    + '<h4>审计</h4>'
+    + api('GET', '/audits', '审计日志（支持 action/from/to/limit 过滤）')
     : '<p>All APIs are prefixed with <code>/api/v1</code>; auth required (Cookie or Bearer Token).</p>'
     + '<h4>Auth</h4>'
     + api('POST', '/auth/login', 'Login, returns token')
@@ -1199,7 +1201,9 @@ export function renderDocs() {
     + api('PATCH', '/users/{id}', 'Update user')
     + api('DELETE', '/users/{id}', 'Delete user')
     + api('GET', '/roles', 'List roles')
-    + api('GET', '/permissions', 'List permissions');
+    + api('GET', '/permissions', 'List permissions')
+    + '<h4>Audit</h4>'
+    + api('GET', '/audits', 'Audit logs (action/from/to/limit filters)');
   html += panel('docs-panel-api', '<h3>' + esc(t('docs.api')) + '</h3>' + apiBody);
 
   // 架构

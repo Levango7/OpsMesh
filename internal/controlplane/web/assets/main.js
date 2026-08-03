@@ -28,6 +28,7 @@ import {
   pollAlertsFull, ackAlert, silenceAlert,
   setFocus, clearFocus, jumpFocus,
   fetchMe, loadAgents, submitTaskForm,
+  loadAudits,
 } from './flow.js';
 import { icon } from './icons.js';
 import { initTheme, toggleTheme, getTheme, setTheme } from './theme.js';
@@ -86,6 +87,8 @@ w.silenceAlert = silenceAlert;
 w.setFocus = setFocus;
 w.clearFocus = clearFocus;
 w.jumpFocus = jumpFocus;
+// 审计日志
+w.loadAudits = loadAudits;
 
 // ---------- 主题 / 语言 ----------
 w.toggleTheme = toggleTheme;
@@ -579,12 +582,12 @@ function initStaticIcons() {
     'navIconHome': 'home', 'navIconOps': 'ops', 'navIconCmdb': 'cmdb',
     'navIconDeploy': 'deploy', 'navIconFlow': 'flow', 'navIconLogs': 'logs',
     'navIconAlerts': 'alerts', 'navIconUsers': 'users', 'navIconRoles': 'roles',
-    'navIconPerms': 'permissions', 'navIconSettings': 'settings', 'navIconDocs': 'info',
+    'navIconPerms': 'permissions', 'navIconAudits': 'audit', 'navIconSettings': 'settings', 'navIconDocs': 'info',
     // pane-intro
     'introIconHome': 'home', 'introIconOps': 'ops', 'introIconCmdb': 'cmdb',
     'introIconFlow': 'flow', 'introIconDeploy': 'deploy', 'introIconLogs': 'logs',
     'introIconAlerts': 'alerts', 'introIconUsers': 'users', 'introIconRoles': 'roles',
-    'introIconPerms': 'permissions', 'introIconSettings': 'settings', 'introIconDocs': 'info',
+    'introIconPerms': 'permissions', 'introIconAudits': 'audit', 'introIconSettings': 'settings', 'introIconDocs': 'info',
     // 上下文
     'ctxIcon': 'context',
     // 按钮
@@ -636,6 +639,7 @@ function applyI18nToDOM() {
   setText('tab-users-btn', t('nav.users'), true);
   setText('tab-roles-btn', t('nav.roles'), true);
   setText('tab-permissions-btn', t('nav.permissions'), true);
+  setText('tab-audits-btn', t('nav.audits'), true);
   setText('tab-settings-btn', t('nav.settings'), true);
   setText('tab-docs-btn', t('nav.docs'), true);
   setText('navGroupHelp', t('nav.group.help'));
@@ -661,6 +665,14 @@ function applyI18nToDOM() {
   setText('rolesDesc', t('roles.desc'));
   setText('permsTitle', t('perms.title'));
   setText('permsDesc', t('perms.desc'));
+  // 审计日志页
+  setText('auditsTitle', t('audits.title'));
+  setText('auditsDesc', t('audits.desc'));
+  setText('auditActionLabelText', t('audits.action'));
+  setText('auditFromLabelText', t('audits.from'));
+  setText('auditToLabelText', t('audits.to'));
+  setText('auditLimitLabelText', t('audits.limit'));
+  setText('auditSearchBtn', t('audits.search'));
   // 系统设置 / 文档
   setText('settingsTitle', t('settings.title'));
   setText('settingsDesc', t('settings.desc'));

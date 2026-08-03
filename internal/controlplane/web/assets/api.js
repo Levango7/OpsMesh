@@ -174,6 +174,9 @@ export function getCMDBTypes() {
   return authGet('/api/v1/cmdb/types');
 }
 export function getCIs(type) {
+  // 防御性检查：type 为 undefined/null/空字符串时直接返回空数组，避免发出
+  // /api/v1/cmdb/ci?type=undefined 这类无效请求。
+  if (type == null || type === '') return Promise.resolve([]);
   return authGet('/api/v1/cmdb/ci?type=' + encodeURIComponent(type));
 }
 export function createCI(body) {
@@ -341,4 +344,16 @@ export function apiDeleteRole(id) {
 // ---------- Permissions ----------
 export function apiListPermissions() {
   return authFetch('/api/v1/permissions', 'GET');
+}
+
+// ---------- Audits ----------
+// 审计日志查询：GET /api/v1/audits → 200 AuditEvent[]
+// 查询参数：action（过滤动作类型）、from/to（RFC3339 时间窗）、limit（默认 100，上限 1000）。
+export function getAudits(action, from, to, limit) {
+  let qs = [];
+  if (action) qs.push('action=' + encodeURIComponent(action));
+  if (from) qs.push('from=' + encodeURIComponent(from));
+  if (to) qs.push('to=' + encodeURIComponent(to));
+  if (limit) qs.push('limit=' + encodeURIComponent(limit));
+  return authGet('/api/v1/audits' + (qs.length ? '?' + qs.join('&') : ''));
 }
