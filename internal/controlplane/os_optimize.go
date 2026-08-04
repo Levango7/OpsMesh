@@ -11,7 +11,9 @@
 package controlplane
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"opsmesh/internal/authctx"
@@ -21,7 +23,8 @@ import (
 
 // OSTemplate 预置 OS 优化任务模板。
 // Commands 为一段 shell 脚本（在目标 Linux 主机以 `sh -c` 执行）；
-// 需要参数的模板在脚本内通过 $1/$2/... 引用，execute 时由控制面注入位置参数。
+// 需要参数的模板在脚本内通过 $1/$2/... 引用（旧模式）或 {name}/{port}/... 占位符引用（新模式），
+// execute 时由控制面注入位置参数或做占位符替换。
 type OSTemplate struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
@@ -31,6 +34,16 @@ type OSTemplate struct {
 	Risk        string   `json:"risk"`     // low/medium/high
 	Tags        []string `json:"tags"`     // 标签
 	OS          string   `json:"os"`       // 适用操作系统：centos/ubuntu/all
+	Params      []OSParam `json:"params,omitempty"` // 参数定义（新模式占位符替换 + 验证）
+}
+
+// OSParam OS 优化模板参数定义。
+type OSParam struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Default     string `json:"default"`
+	Required    bool   `json:"required"`
+	Type        string `json:"type"` // string/int
 }
 
 // osTemplates 预置 OS 优化模板集合。
@@ -454,6 +467,202 @@ echo "user-create done: $USER"
 		Tags: []string{"user", "sudo", "ops"},
 		OS:   "all",
 	},
+
+	// ---------------- Phase 1/2 扩展模板 ----------------
+	// swap-setup (kernel, low) — 配置 swap 空间
+	{
+		ID:          "swap-setup",
+		Name:        "配置 Swap 空间",
+		Category:    "kernel",
+		Description: "创建并启用 swap 文件，写入 /etc/fstab 持久化；参数 size 指定大小（如 2G/4G）",
+		Commands: `#!/bin/bash
+set -e
+SIZE="{size}"
+if swapon --show 2>/dev/null | grep -q "/swapfile"; then
+  echo "swap already active, skip"
+  exit 0
+fi
+fallocate -l "$SIZE" /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+grep -q "/swapfile" /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+echo "swap-setup done: size=$SIZE"
+`,
+		Risk:     "low",
+		Tags:     []string{"kernel", "swap", "memory"},
+		OS:       "all",
+		Params:   []OSParam{{Name: "size", Description: "swap 文件大小（如 2G/4G）", Default: "2G", Required: true, Type: "string"}},
+	},
+	// limits-config (kernel, low) — 配置 /etc/security/limits.conf
+	{
+		ID:          "limits-config",
+		Name:        "配置文件描述符限制",
+		Category:    "kernel",
+		Description: "在 /etc/security/limits.conf 设置 nofile 上限；参数 nofile 指定值",
+		Commands: `#!/bin/bash
+set -e
+NOFILE="{nofile}"
+grep -q "opsmesh-limits" /etc/security/limits.conf 2>/dev/null || cat >> /etc/security/limits.conf <<EOF
+# opsmesh-limits
+* soft nofile $NOFILE
+* hard nofile $NOFILE
+EOF
+echo "limits-config done: nofile=$NOFILE"
+`,
+		Risk:     "low",
+		Tags:     []string{"kernel", "limits", "fd"},
+		OS:       "all",
+		Params:   []OSParam{{Name: "nofile", Description: "文件描述符上限", Default: "65536", Required: true, Type: "int"}},
+	},
+	// net-security (security, medium) — 网络安全参数
+	{
+		ID:          "net-security",
+		Name:        "网络安全参数加固",
+		Category:    "security",
+		Description: "禁用 ICMP 重定向与广播响应，加固网络协议栈",
+		Commands: `#!/bin/bash
+set -e
+sysctl -w net.ipv4.conf.all.accept_redirects=0
+sysctl -w net.ipv4.conf.all.send_redirects=0
+sysctl -w net.ipv4.conf.default.accept_redirects=0
+sysctl -w net.ipv4.conf.default.send_redirects=0
+sysctl -w net.ipv4.icmp_echo_ignore_broadcasts=1
+sysctl -w net.ipv4.icmp_ignore_bogus_error_responses=1
+cat > /etc/sysctl.d/99-opsmesh-netsec.conf <<'EOF'
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+EOF
+sysctl --system
+echo "net-security done"
+`,
+		Risk: "medium",
+		Tags: []string{"security", "network", "sysctl"},
+		OS:   "all",
+	},
+	// ntp-setup (time, low) — NTP 时间同步
+	{
+		ID:          "ntp-setup",
+		Name:        "NTP 时间同步",
+		Category:    "time",
+		Description: "安装 ntp 并启动 ntpd 服务；参数 ntpserver 指定上游 NTP 服务器",
+		Commands: `#!/bin/bash
+set -e
+NTPSERVER="{ntpserver}"
+if command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+  yum install -y ntp || dnf install -y ntp
+elif command -v apt >/dev/null 2>&1; then
+  apt update -y && apt install -y ntp
+else
+  echo "unsupported package manager" >&2
+  exit 2
+fi
+sed -i '/^server /d' /etc/ntp.conf
+echo "server $NTPSERVER iburst" >> /etc/ntp.conf
+systemctl enable ntpd 2>/dev/null || systemctl enable ntp
+systemctl restart ntpd 2>/dev/null || systemctl restart ntp
+ntpq -p 2>/dev/null || true
+echo "ntp-setup done: server=$NTPSERVER"
+`,
+		Risk:   "low",
+		Tags:   []string{"time", "ntp", "sync"},
+		OS:     "all",
+		Params: []OSParam{{Name: "ntpserver", Description: "上游 NTP 服务器", Default: "pool.ntp.org", Required: true, Type: "string"}},
+	},
+	// dns-config (network, low) — DNS 配置
+	{
+		ID:          "dns-config",
+		Name:        "DNS 配置",
+		Category:    "network",
+		Description: "配置 /etc/resolv.conf DNS 服务器；参数 dns1/dns2 指定主备 DNS",
+		Commands: `#!/bin/bash
+set -e
+DNS1="{dns1}"
+DNS2="{dns2}"
+cat > /etc/resolv.conf <<EOF
+nameserver $DNS1
+nameserver $DNS2
+EOF
+echo "dns-config done: dns1=$DNS1 dns2=$DNS2"
+`,
+		Risk:   "low",
+		Tags:   []string{"network", "dns", "resolv"},
+		OS:     "all",
+		Params: []OSParam{{Name: "dns1", Description: "主 DNS 服务器", Default: "8.8.8.8", Required: true, Type: "string"}, {Name: "dns2", Description: "备 DNS 服务器", Default: "114.114.114.114", Required: true, Type: "string"}},
+	},
+	// tcp-tune (network, low) — TCP 连接优化
+	{
+		ID:          "tcp-tune",
+		Name:        "TCP 连接优化",
+		Category:    "network",
+		Description: "优化 TCP 连接复用与超时参数，提升短连接场景性能",
+		Commands: `#!/bin/bash
+set -e
+sysctl -w net.ipv4.tcp_tw_reuse=1
+sysctl -w net.ipv4.tcp_fin_timeout=30
+sysctl -w net.ipv4.tcp_keepalive_time=600
+cat > /etc/sysctl.d/99-opsmesh-tcp.conf <<'EOF'
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 30
+net.ipv4.tcp_keepalive_time = 600
+EOF
+sysctl --system
+echo "tcp-tune done"
+`,
+		Risk: "low",
+		Tags: []string{"network", "tcp", "sysctl"},
+		OS:   "all",
+	},
+	// memory-tune (kernel, low) — 内存参数优化
+	{
+		ID:          "memory-tune",
+		Name:        "内存参数优化",
+		Category:    "kernel",
+		Description: "调整 swappiness 与 dirty_ratio，优化内存回收与写回策略",
+		Commands: `#!/bin/bash
+set -e
+sysctl -w vm.swappiness=10
+sysctl -w vm.dirty_ratio=10
+sysctl -w vm.dirty_background_ratio=5
+cat > /etc/sysctl.d/99-opsmesh-mem.conf <<'EOF'
+vm.swappiness = 10
+vm.dirty_ratio = 10
+vm.dirty_background_ratio = 5
+EOF
+sysctl --system
+echo "memory-tune done"
+`,
+		Risk: "low",
+		Tags: []string{"kernel", "memory", "sysctl"},
+		OS:   "all",
+	},
+	// disk-io-tune (disk, medium) — 磁盘 IO 调优
+	{
+		ID:          "disk-io-tune",
+		Name:        "磁盘 IO 调度器调优",
+		Category:    "disk",
+		Description: "设置磁盘 IO 调度器为 deadline；参数 device 指定磁盘（如 sda/vda）",
+		Commands: `#!/bin/bash
+set -e
+DEVICE="{device}"
+SCHED_PATH="/sys/block/$DEVICE/queue/scheduler"
+if [ ! -f "$SCHED_PATH" ]; then
+  echo "device scheduler not found: $SCHED_PATH" >&2
+  exit 3
+fi
+echo deadline > "$SCHED_PATH"
+cat "$SCHED_PATH"
+echo "disk-io-tune done: device=$DEVICE scheduler=deadline"
+`,
+		Risk:   "medium",
+		Tags:   []string{"disk", "io", "scheduler"},
+		OS:     "all",
+		Params: []OSParam{{Name: "device", Description: "磁盘设备名（如 sda/vda）", Default: "sda", Required: true, Type: "string"}},
+	},
 }
 
 // osTemplateByID 按 ID 查找预置模板，未找到返回 nil。
@@ -540,9 +749,10 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	var body struct {
-		AgentID  string   `json:"agentID"`
-		Params   []string `json:"params"`
-		TenantID string   `json:"tenantID"`
+		AgentID   string            `json:"agentID"`
+		Params    []string          `json:"params"`
+		ParamsMap map[string]string `json:"paramsMap"`
+		TenantID  string            `json:"tenantID"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -551,6 +761,39 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 	if body.AgentID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agentID is required"})
 		return
+	}
+	// 参数验证与 command 拼接：
+	// - 新模式（模板有 Params 定义）：用 paramsMap 做占位符替换 + 验证；
+	// - 旧模式（无 Params 定义）：用 params []string 通过 `set --` 注入位置参数。
+	var command string
+	if len(tpl.Params) > 0 {
+		paramsMap := body.ParamsMap
+		if paramsMap == nil {
+			paramsMap = map[string]string{}
+		}
+		// 填充默认值 + 校验必填。
+		for _, p := range tpl.Params {
+			val, ok := paramsMap[p.Name]
+			if !ok || val == "" {
+				if p.Default != "" {
+					paramsMap[p.Name] = p.Default
+					continue
+				}
+				if p.Required {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error": "param required: " + p.Name})
+					return
+				}
+			}
+			_ = val
+		}
+		// 类型与语义验证。
+		if err := validateOSParams(tpl.Params, paramsMap); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		command = renderOSScript(tpl.Commands, paramsMap)
+	} else {
+		command = buildOSExecuteCommand(tpl.Commands, body.Params)
 	}
 	targetTenant := body.TenantID
 	if targetTenant == "" {
@@ -562,7 +805,7 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	// 拼接最终 command：通过 `set --` 注入位置参数，使脚本内 $1/$2/... 可用。
-	command := buildOSExecuteCommand(tpl.Commands, body.Params)
+
 	task := s.store.CreateTask(&proto.Task{
 		AgentID:    body.AgentID,
 		TenantID:   targetTenant,
@@ -617,6 +860,69 @@ func buildOSExecuteCommand(commands string, params []string) string {
 	b.WriteString("\n")
 	b.WriteString(commands)
 	return b.String()
+}
+
+// renderOSScript 将脚本中的 {name}/{size}/... 占位符替换为 params 实际值。
+// 占位符语法：{key}，未提供 key 时保留原占位符（便于排查）。
+func renderOSScript(script string, params map[string]string) string {
+	out := script
+	for k, v := range params {
+		out = strings.ReplaceAll(out, "{"+k+"}", v)
+	}
+	return out
+}
+
+// validateOSParams 校验 OS 模板参数的类型与语义。
+// - int 类型：必须为整数；若参数名为 port 则校验端口范围 1-65535。
+// - string 类型：非空校验。
+func validateOSParams(params []OSParam, values map[string]string) error {
+	for _, p := range params {
+		val, ok := values[p.Name]
+		if !ok || val == "" {
+			continue // 必填已在调用前处理
+		}
+		switch p.Type {
+		case "int":
+			n, err := strconv.Atoi(val)
+			if err != nil {
+				return fmt.Errorf("param %s must be integer, got %s", p.Name, val)
+			}
+			if p.Name == "port" {
+				if err := validatePort(n); err != nil {
+					return err
+				}
+			}
+		case "string":
+			if err := validateNonEmpty(p.Name, val); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validatePort 校验端口范围 1-65535。
+func validatePort(port int) error {
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("port must be between 1 and 65535, got %d", port)
+	}
+	return nil
+}
+
+// validateNonEmpty 校验字符串非空（trim 后）。
+func validateNonEmpty(name, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s must not be empty", name)
+	}
+	return nil
+}
+
+// validatePath 校验路径以 / 开头。
+func validatePath(path string) error {
+	if !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("path must start with /, got %s", path)
+	}
+	return nil
 }
 
 // handleOSTemplateRouting 统一分派 /api/v1/os-templates/{id}... 子路径：

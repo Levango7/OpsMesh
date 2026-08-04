@@ -410,3 +410,21 @@ export async function deployMiddleware(id, agentID, deployType, params) {
 export function getMiddlewareInstances() {
   return authGet('/api/v1/middleware-instances');
 }
+
+// ---------- 任务详情查询（用于执行/部署/卸载日志轮询） ----------
+// 契约：GET /api/v1/tasks/{taskID} → 200 {taskID, status, output, ...}
+//   status: pending / running / completed / failed
+//   output: 任务执行 stdout/stderr 拼接文本
+// 用于前端轮询任务状态、展示执行/部署/卸载日志。
+export function getTaskDetail(taskID) {
+  return authGet('/api/v1/tasks/' + encodeURIComponent(taskID));
+}
+
+// ---------- 中间件卸载 ----------
+// 契约：POST /api/v1/middleware-instances/{instanceID}/uninstall
+//   请求体：{agentID, deployType}
+//   返回：{s, j}，j 形如 {taskID} 或 {taskID, status, ...}
+// 用于在指定 agent 上卸载已部署的中间件实例，返回卸载任务 ID 供前端轮询。
+export async function uninstallMiddleware(instanceID, agentID, deployType) {
+  return await request('/api/v1/middleware-instances/' + encodeURIComponent(instanceID) + '/uninstall', jsonBody({ agentID: agentID, deployType: deployType }));
+}

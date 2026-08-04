@@ -33,6 +33,8 @@ import {
   executeOSOptimize, closeOSExecModal, confirmOSExec,
   loadMiddlewareTemplates, filterMiddlewareTemplates, showMiddlewareDetail, hideMiddlewareDetail,
   deployMiddleware, closeMwDeployModal, confirmMwDeploy, onMwDeployTypeChange, loadMiddlewareInstances,
+  uninstallMiddlewareInstance, closeMwUninstallModal, confirmMwUninstall,
+  pollTaskResult,
 } from './flow.js';
 import { icon } from './icons.js';
 import { initTheme, toggleTheme, getTheme, setTheme } from './theme.js';
@@ -111,6 +113,12 @@ w.closeMwDeployModal = closeMwDeployModal;
 w.confirmMwDeploy = confirmMwDeploy;
 w.onMwDeployTypeChange = onMwDeployTypeChange;
 w.loadMiddlewareInstances = loadMiddlewareInstances;
+// 中间件卸载（Phase 2）
+w.uninstallMiddlewareInstance = uninstallMiddlewareInstance;
+w.closeMwUninstallModal = closeMwUninstallModal;
+w.confirmMwUninstall = confirmMwUninstall;
+// 任务结果轮询（Phase 2，调试用）
+w.pollTaskResult = pollTaskResult;
 
 // ---------- 主题 / 语言 ----------
 w.toggleTheme = toggleTheme;
@@ -712,6 +720,10 @@ function applyI18nToDOM() {
   setText('osoptCatDisk', t('osopt.category.disk'));
   setText('osoptCatSystem', t('osopt.category.system'));
   setText('osoptCatUser', t('osopt.category.user'));
+  // Phase 2：OS 优化新分类按钮（storage/service/monitor）
+  setText('osoptCatStorage', t('osopt.category.storage'));
+  setText('osoptCatService', t('osopt.category.service'));
+  setText('osoptCatMonitor', t('osopt.category.monitor'));
   setText('osoptRefreshBtn', t('osopt.refresh'));
   setText('osExecTitle', t('osopt.execTitle'));
   setText('osExecHint', t('osopt.execHint'));
@@ -739,6 +751,21 @@ function applyI18nToDOM() {
   setText('mwDeployParamsLabel', t('mwdep.params'));
   setText('mwDeployCancelBtn', t('mwdep.cancel'));
   setText('mwDeployConfirmBtn', t('mwdep.confirm'));
+  // Phase 2：执行/部署日志展示区 + 卸载对话框
+  setText('osExecLogLabel', t('osopt.execLog'));
+  setText('mwDeployLogLabel', t('mwdep.deployLog'));
+  setText('mwUninstallTitle', t('mwdep.uninstallTitle'));
+  setText('mwUninstallHint', t('mwdep.uninstallHint'));
+  setText('mwUninstallInsIdLabel', t('mwdep.instance.col.id'));
+  setText('mwUninstallAgentIdLabel', t('mwdep.instance.col.agent'));
+  setText('mwUninstallDeployTypeLabel', t('mwdep.instance.col.deployType'));
+  setText('mwUninstallLogLabel', t('mwdep.uninstallLog'));
+  setText('mwUninstallCancelBtn', t('mwdep.uninstallCancel'));
+  setText('mwUninstallConfirmBtn', t('mwdep.uninstallConfirmBtn'));
+  // 新增中间件分类按钮（storage / service / monitor）
+  setText('mwdepCatStorage', t('mwdep.category.storage'));
+  setText('mwdepCatService', t('mwdep.category.service'));
+  setText('mwdepCatMonitor', t('mwdep.category.monitor'));
   // 系统设置 / 文档
   setText('settingsTitle', t('settings.title'));
   setText('settingsDesc', t('settings.desc'));

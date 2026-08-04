@@ -910,6 +910,269 @@ export function submitTaskForm() {
 let osoptCurrentCat = '';
 // 当前待执行的模板 ID（执行对话框用）
 let osoptExecId = '';
+// 当前待执行的模板详情（用于参数动态渲染，Phase 2）
+let osoptExecTpl = null;
+// 当前执行轮询定时器（用于在关闭对话框时停止轮询）
+let osoptExecTimer = null;
+
+// ---------- 任务结果轮询（执行/部署/卸载日志展示） ----------
+// 通用轮询：每 interval 毫秒调用 api.getTaskDetail(taskID) 获取任务状态与输出，
+// 将 stdout/stderr 写入 logEl；任务完成（completed/failed）或达到最大轮询次数后停止。
+// 参数：
+//   taskID   - 任务 ID
+//   logEl    - 日志展示 DOM 元素（<pre>）
+//   interval - 轮询间隔（毫秒），默认 3000
+//   onDone   - 完成回调（可选），签名 function(status) 其中 status 为 completed/failed/timeout
+// 返回：定时器句柄（可 clearInterval）
+//
+// Phase 2 增强：在日志头部展示任务状态（pending/running/completed/failed），
+// 并保留 output 主体；状态行使用 osopt.taskStatus.* 翻译键。
+export function pollTaskResult(taskID, logEl, interval, onDone) {
+  let pollCount = 0;
+  const maxPolls = 40; // 最多轮询 40 次（约 120 秒，适配长任务）
+  // 状态 → 翻译键映射（含图标前缀，便于一眼识别）
+  function statusLine(st) {
+    const key = 'osopt.taskStatus.' + (st || 'pending');
+    const label = t(key);
+    if (st === 'completed') return '✓ [' + label + ']';
+    if (st === 'failed')    return '✗ [' + label + ']';
+    if (st === 'running')   return '⏳ [' + label + ']';
+    return '… [' + label + ']';
+  }
+  const timer = setInterval(function () {
+    pollCount++;
+    api.getTaskDetail(taskID).then(function (r) {
+      // getTaskDetail 通过 authGet 返回解析后的 json（任务对象）
+      const task = r && r.task ? r.task : r;
+      if (!task) return;
+      const st = task.status || '';
+      // 拼接日志：状态行 + output（stdout/stderr 拼接）
+      if (logEl) {
+        const output = String(task.output || '');
+        logEl.textContent = statusLine(st) + '\n' + output;
+      }
+      // 检查是否结束
+      if (st === 'completed' || st === 'failed' || pollCount >= maxPolls) {
+        clearInterval(timer);
+        if (logEl) {
+          if (st === 'completed') {
+            logEl.textContent += '\n✓ ' + t('osopt.execSuccess');
+          } else if (st === 'failed') {
+            logEl.textContent += '\n✗ ' + t('osopt.execFailed');
+          } else {
+            logEl.textContent += '\n⚠ ' + t('osopt.pollTimeout');
+          }
+        }
+        if (typeof onDone === 'function') {
+          onDone(st === 'completed' ? 'completed' : (st === 'failed' ? 'failed' : 'timeout'));
+        }
+      }
+    }).catch(function (e) {
+      // 网络错误，继续轮询直到 maxPolls
+      console.error('[pollTask]', e);
+      if (pollCount >= maxPolls) {
+        clearInterval(timer);
+        if (logEl) {
+          logEl.textContent += '\n⚠ ' + t('osopt.pollTimeout');
+        }
+        if (typeof onDone === 'function') onDone('timeout');
+      }
+    });
+  }, interval || 3000);
+  return timer;
+}
+
+// ---------- 参数验证辅助函数 ----------
+// 判断参数名是否为端口类型（包含 port）
+function isPortParam(name) {
+  return (name || '').toLowerCase().indexOf('port') >= 0;
+}
+// 判断参数名是否为路径类型（包含 dir 或 path）
+function isPathParam(name) {
+  const n = (name || '').toLowerCase();
+  return n.indexOf('dir') >= 0 || n.indexOf('path') >= 0;
+}
+// 判断参数名是否为密码类型（包含 password 或 pwd）
+function isPasswordParam(name) {
+  const n = (name || '').toLowerCase();
+  return n.indexOf('password') >= 0 || n.indexOf('pwd') >= 0;
+}
+
+// Phase 2：密码强度计算
+// 规则：长度<8 → weak；长度>=8 且含大小写+数字 → medium；含大小写+数字+特殊字符 且长度>=8 → strong
+// 返回 'weak' / 'medium' / 'strong' / null（空值返回 null）
+function passwordStrength(v) {
+  if (!v) return null;
+  const hasLower = /[a-z]/.test(v);
+  const hasUpper = /[A-Z]/.test(v);
+  const hasDigit = /\d/.test(v);
+  const hasSpecial = /[^a-zA-Z0-9]/.test(v);
+  if (v.length < 8) return 'weak';
+  if (hasLower && hasUpper && hasDigit && hasSpecial) return 'strong';
+  if (hasLower && hasUpper && hasDigit) return 'medium';
+  return 'weak';
+}
+
+// Phase 2：参数输入实时反馈（oninput 触发）
+// - 必填：未填写时红色边框 + 提示，填写后恢复
+// - 密码：实时显示强度（弱/中/强）
+// - 端口：超出范围时红色边框
+// 通过 window._opsmeshParamOnInput 暴露给内联 oninput 调用
+function paramInputOnInput(inp) {
+  if (!inp) return;
+  const name = inp.getAttribute('data-pname') || '';
+  const v = inp.value || '';
+  // 必填红色边框
+  const required = inp.hasAttribute('required');
+  if (required && !v.trim()) {
+    inp.style.borderColor = 'var(--fail)';
+    inp.style.borderWidth = '2px';
+  } else {
+    inp.style.borderColor = '';
+    inp.style.borderWidth = '';
+  }
+  // 端口范围红色边框
+  if (isPortParam(name) && v) {
+    const n = parseInt(v, 10);
+    if (isNaN(n) || n < 1 || n > 65535) {
+      inp.style.borderColor = 'var(--fail)';
+      inp.style.borderWidth = '2px';
+    }
+  }
+  // 密码强度实时提示
+  if (isPasswordParam(name)) {
+    const strengthId = inp.id + '_strength';
+    const el = document.getElementById(strengthId);
+    if (el) {
+      const s = passwordStrength(v);
+      if (!s) {
+        el.textContent = '';
+        el.style.color = '';
+      } else if (s === 'weak') {
+        el.textContent = t('param.passwordWeak');
+        el.style.color = 'var(--fail)';
+      } else if (s === 'medium') {
+        el.textContent = t('param.passwordMedium');
+        el.style.color = 'var(--accent)';
+      } else {
+        el.textContent = t('param.passwordStrong');
+        el.style.color = 'var(--green)';
+      }
+    }
+  }
+}
+// 暴露到 window 供内联 oninput 调用（ES6 模块作用域隔离）
+try { window._opsmeshParamOnInput = paramInputOnInput; } catch (_) {}
+
+// 验证单个参数值：返回 null 表示通过，否则返回错误消息
+function validateParamValue(p, value) {
+  const name = p.name || '';
+  const v = (value || '').trim();
+  // 必填校验
+  if (p.required && !v) {
+    return t('param.required');
+  }
+  if (!v) return null; // 非必填且为空，跳过后续校验
+  // 端口校验
+  if (isPortParam(name) || p.type === 'int') {
+    if (!/^-?\d+$/.test(v)) return t('osopt.invalidPort');
+    const n = parseInt(v, 10);
+    if (isNaN(n) || n < 1 || n > 65535) return t('osopt.invalidPort');
+  }
+  // 路径校验
+  if (isPathParam(name)) {
+    if (v.charAt(0) !== '/') return t('osopt.invalidPath');
+  }
+  // 密码强度校验：必填密码至少要求 medium（避免弱密码提交）
+  if ((p.type === 'password' || isPasswordParam(name)) && p.required) {
+    const s = passwordStrength(v);
+    if (s === 'weak') return t('param.passwordWeak');
+  }
+  return null;
+}
+
+// 渲染单个参数输入框（含 label / hint / required 标记 / 实时验证反馈）
+// 用于 OS 优化执行对话框与中间件部署对话框的参数表单。
+// prefix - DOM id 前缀，避免重复（'os' / 'mw'）
+function renderParamInput(p, prefix) {
+  const name = p.name || '';
+  const def = p.default != null ? String(p.default) : '';
+  const required = p.required ? ' <span style="color:var(--fail)">*</span>' : '';
+  const placeholder = p.description || '';
+  const type = p.type || 'text';
+  // 输入框类型：int → number；password → password（Phase 2 暴露密码强度提示）
+  let inputType = 'text';
+  if (type === 'int' || isPortParam(name)) inputType = 'number';
+  else if (type === 'password' || isPasswordParam(name)) inputType = 'password';
+  // 端口范围 min/max
+  let rangeAttr = '';
+  if (inputType === 'number' && isPortParam(name)) {
+    rangeAttr = ' min="1" max="65535"';
+  }
+  // 提示文本
+  const hints = [];
+  if (isPortParam(name)) hints.push(t('param.portRange'));
+  if (isPathParam(name)) hints.push(t('osopt.pathHint'));
+  if (isPasswordParam(name)) hints.push(t('osopt.passwordHint'));
+  const hintHtml = hints.length ? ' <span class="field-hint" style="margin-left:4px;color:var(--text-3)">' + esc(hints.join(' · ')) + '</span>' : '';
+  // 必填属性
+  const requiredAttr = p.required ? ' required' : '';
+  // 唯一 id（用于 label/input 关联与验证读取）
+  const inputId = prefix + 'Param_' + esc(name).replace(/[^a-zA-Z0-9_]/g, '_');
+  // Phase 2：密码强度提示元素（实时更新）
+  const isPwd = (type === 'password' || isPasswordParam(name));
+  const strengthHtml = isPwd
+    ? ' <span id="' + inputId + '_strength" style="margin-left:6px;font-size:12px;font-weight:600"></span>'
+    : '';
+  // Phase 2：oninput 实时验证（必填红色边框 + 密码强度 + 端口范围）
+  const onInputAttr = ' oninput="window._opsmeshParamOnInput && window._opsmeshParamOnInput(this)"';
+  let html = '<div style="margin-bottom:8px">'
+    + '<label style="display:block;margin-bottom:2px" for="' + inputId + '"><code>' + esc(name) + '</code>' + required + hintHtml + strengthHtml + '</label>'
+    + '<input type="' + inputType + '"' + rangeAttr + requiredAttr + onInputAttr + ' class="form-control" id="' + inputId + '" data-pname="' + esc(name) + '" value="' + esc(def) + '" placeholder="' + esc(placeholder) + '">'
+    + '</div>';
+  return html;
+}
+
+// 收集参数表单值并执行校验。
+//   paramsEl - 包含 input[data-pname] 的容器
+//   params   - 模板参数定义数组（用于校验）
+// 返回：{ok: true, values: {...}} 或 {ok: false, errors: ['xxx: msg', ...]}
+// Phase 2：校验失败时对对应输入框添加红色边框，通过时清除红色边框
+function collectAndValidateParams(paramsEl, params) {
+  const values = {};
+  const errors = [];
+  if (!paramsEl || !params) return { ok: true, values: values };
+  const inputs = paramsEl.querySelectorAll('input[data-pname]');
+  inputs.forEach(function (inp) {
+    const k = inp.getAttribute('data-pname');
+    if (!k) return;
+    values[k] = inp.value;
+  });
+  // 对每个定义的参数执行校验
+  (params || []).forEach(function (p) {
+    const name = p.name || '';
+    const err = validateParamValue(p, values[name] || '');
+    if (err) errors.push(name + ': ' + err);
+  });
+  // Phase 2：校验失败时对对应输入框添加红色边框，通过时清除
+  if (paramsEl) {
+    (params || []).forEach(function (p) {
+      const name = p.name || '';
+      const inputId = (paramsEl.querySelector('input[data-pname="' + name + '"]'));
+      if (inputId) {
+        const err = validateParamValue(p, values[name] || '');
+        if (err) {
+          inputId.style.borderColor = 'var(--fail)';
+          inputId.style.borderWidth = '2px';
+        } else {
+          inputId.style.borderColor = '';
+          inputId.style.borderWidth = '';
+        }
+      }
+    });
+  }
+  return { ok: errors.length === 0, values: values, errors: errors };
+}
 
 // 风险等级 → 颜色 + 文本键
 function osoptRiskStyle(risk) {
@@ -1030,17 +1293,30 @@ export function hideOSTemplateDetail() {
   if (el) { el.style.display = 'none'; el.innerHTML = ''; }
 }
 
-// 打开执行对话框：加载设备列表供选择
+// 打开执行对话框：加载设备列表供选择 + 加载模板详情用于动态生成参数表单
 export function executeOSOptimize(id) {
   osoptExecId = id;
+  osoptExecTpl = null;
   const modal = document.getElementById('osExecModal');
   if (!modal) return;
   // 重置结果区
   const resultEl = document.getElementById('osExecResult');
   if (resultEl) { resultEl.innerHTML = ''; resultEl.className = ''; }
-  // 清空参数
-  const paramsEl = document.getElementById('osExecParams');
-  if (paramsEl) paramsEl.value = '';
+  // 重置日志区（Phase 2）
+  const logEl = document.getElementById('osExecLog');
+  if (logEl) logEl.textContent = '';
+  // 停止上一次的轮询
+  if (osoptExecTimer) { clearInterval(osoptExecTimer); osoptExecTimer = null; }
+  // 加载模板详情用于动态生成参数表单（Phase 2 参数验证 UI）
+  api.getOSTemplate(id).then(function (tpl) {
+    osoptExecTpl = tpl || null;
+    // 渲染动态参数表单
+    renderOSExecParams();
+  }).catch(function (e) {
+    console.error('[os-exec template]', e);
+    osoptExecTpl = null;
+    renderOSExecParams();
+  });
   // 加载设备列表到下拉
   const agentSel = document.getElementById('osExecAgent');
   if (agentSel) {
@@ -1072,14 +1348,35 @@ export function executeOSOptimize(id) {
   modal.classList.add('open');
 }
 
-// 关闭执行对话框
+// 渲染 OS 优化执行参数表单（根据当前模板的 Params 定义动态生成）
+function renderOSExecParams() {
+  const paramsEl = document.getElementById('osExecParams');
+  if (!paramsEl) return;
+  const tpl = osoptExecTpl;
+  if (!tpl || !tpl.params || tpl.params.length === 0) {
+    // 无参数定义：保留 textarea 兼容旧契约（每行一个）
+    paramsEl.innerHTML = '<textarea id="osExecParamsRaw" class="form-control" rows="3" placeholder="param1&#10;param2"></textarea>';
+    return;
+  }
+  // 有参数定义：动态生成输入框（含验证提示）
+  let html = '';
+  tpl.params.forEach(function (p) {
+    html += renderParamInput(p, 'os');
+  });
+  paramsEl.innerHTML = html;
+}
+
+// 关闭执行对话框：停止轮询并清理状态
 export function closeOSExecModal() {
   const modal = document.getElementById('osExecModal');
   if (modal) modal.classList.remove('open');
+  if (osoptExecTimer) { clearInterval(osoptExecTimer); osoptExecTimer = null; }
   osoptExecId = '';
+  osoptExecTpl = null;
 }
 
 // 确认执行：调用 API 在选定设备上执行模板
+// Phase 2 改造：提交前参数验证 + 提交后轮询任务状态 + 日志展示
 export function confirmOSExec() {
   const resultEl = document.getElementById('osExecResult');
   if (!osoptExecId) {
@@ -1092,19 +1389,58 @@ export function confirmOSExec() {
     if (resultEl) { resultEl.className = 'msg err'; resultEl.textContent = t('osopt.noAgent'); }
     return;
   }
+  // 收集参数 + 验证
   const paramsEl = document.getElementById('osExecParams');
-  const paramsText = paramsEl ? paramsEl.value : '';
-  const params = paramsText.split('\n').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+  let params = [];
+  if (osoptExecTpl && osoptExecTpl.params && osoptExecTpl.params.length > 0) {
+    // 动态参数模式：收集并校验
+    const r = collectAndValidateParams(paramsEl, osoptExecTpl.params);
+    if (!r.ok) {
+      if (resultEl) {
+        resultEl.className = 'msg err';
+        resultEl.textContent = t('osopt.paramInvalid') + '：' + r.errors.join('；');
+      }
+      return;
+    }
+    // 转为数组（按模板定义顺序）
+    osoptExecTpl.params.forEach(function (p) {
+      params.push(r.values[p.name] != null ? String(r.values[p.name]) : '');
+    });
+  } else {
+    // 兼容旧契约：textarea 每行一个
+    const rawEl = document.getElementById('osExecParamsRaw');
+    const paramsText = rawEl ? rawEl.value : (paramsEl ? paramsEl.value : '');
+    params = paramsText.split('\n').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+  }
 
   if (resultEl) { resultEl.className = 'msg'; resultEl.textContent = t('osopt.loading'); }
+  // 清空日志区
+  const logEl = document.getElementById('osExecLog');
+  if (logEl) logEl.textContent = '';
   api.executeOSTemplate(osoptExecId, agentID, params).then(function (r) {
     if (!resultEl) return;
     if (r && r.s && r.s < 400 && r.j) {
       const taskId = (r.j.taskID || r.j.id || r.j.taskId || '');
       resultEl.className = 'msg ok';
       resultEl.textContent = t('osopt.execSuccess') + (taskId || JSON.stringify(r.j));
-      // 执行成功后延迟关闭对话框
-      setTimeout(closeOSExecModal, 2000);
+      // Phase 2：自动轮询任务状态并展示日志
+      if (taskId && logEl) {
+        logEl.textContent = t('osopt.polling') + '\n';
+        if (osoptExecTimer) clearInterval(osoptExecTimer);
+        osoptExecTimer = pollTaskResult(taskId, logEl, 3000, function (status) {
+          if (status === 'completed') {
+            resultEl.className = 'msg ok';
+            resultEl.textContent = t('osopt.execSuccess') + taskId;
+          } else if (status === 'failed') {
+            resultEl.className = 'msg err';
+            resultEl.textContent = t('osopt.execFailed') + ' (task: ' + taskId + ')';
+          }
+          osoptExecTimer = null;
+        });
+      } else {
+        // 无 taskID 或无日志区，延迟关闭对话框
+        setTimeout(closeOSExecModal, 2000);
+      }
     } else {
       resultEl.className = 'msg err';
       resultEl.textContent = t('osopt.execFail') + ': [' + (r && r.s || '?') + '] ' + (r && r.j ? JSON.stringify(r.j) : '');
@@ -1135,6 +1471,12 @@ export function confirmOSExec() {
 let mwdepCurrentCat = '';
 // 当前待部署的模板（部署对话框用）
 let mwdepDeployTpl = null;
+// 当前部署轮询定时器（用于在关闭对话框时停止轮询）
+let mwdepDeployTimer = null;
+// 当前待卸载的实例（卸载对话框用）
+let mwdepUninstallIns = null;
+// 当前卸载轮询定时器
+let mwdepUninstallTimer = null;
 
 // 风险等级 → 颜色 + 文本键
 function mwdepRiskStyle(risk) {
@@ -1362,6 +1704,7 @@ export function deployMiddleware(id) {
 }
 
 // 渲染部署参数表单（根据当前模板与部署方式）
+// Phase 2 改造：使用通用 renderParamInput，添加端口范围 / 密码强度 / 路径提示 + required
 function renderMwDeployParams() {
   const paramsEl = document.getElementById('mwDeployParams');
   if (!paramsEl || !mwdepDeployTpl) return;
@@ -1372,16 +1715,7 @@ function renderMwDeployParams() {
   }
   let html = '';
   params.forEach(function (p) {
-    const name = p.name || '';
-    const def = p.default != null ? String(p.default) : '';
-    const required = p.required ? ' <span style="color:var(--fail)">*</span>' : '';
-    const placeholder = p.description || '';
-    const type = p.type || 'text';
-    const inputType = type === 'int' ? 'number' : (type === 'password' ? 'text' : 'text');
-    html += '<div style="margin-bottom:8px">'
-      + '<label style="display:block;margin-bottom:2px"><code>' + esc(name) + '</code>' + required + ' <span class="field-hint" style="margin-left:4px">' + esc(p.description || '') + '</span></label>'
-      + '<input type="' + inputType + '" class="form-control" data-pname="' + esc(name) + '" value="' + esc(def) + '" placeholder="' + esc(placeholder) + '">'
-      + '</div>';
+    html += renderParamInput(p, 'mw');
   });
   paramsEl.innerHTML = html;
 }
@@ -1391,14 +1725,16 @@ export function onMwDeployTypeChange() {
   // 参数由模板决定，与部署方式无关，无需重新渲染
 }
 
-// 关闭部署对话框
+// 关闭部署对话框：停止轮询并清理状态
 export function closeMwDeployModal() {
   const modal = document.getElementById('mwDeployModal');
   if (modal) modal.classList.remove('open');
+  if (mwdepDeployTimer) { clearInterval(mwdepDeployTimer); mwdepDeployTimer = null; }
   mwdepDeployTpl = null;
 }
 
 // 确认部署：调用 API 在选定设备上以指定方式部署中间件
+// Phase 2 改造：提交前参数验证 + 提交后轮询任务状态 + 日志展示
 export function confirmMwDeploy() {
   const resultEl = document.getElementById('mwDeployResult');
   if (!mwdepDeployTpl || !mwdepDeployTpl.id) {
@@ -1417,26 +1753,48 @@ export function confirmMwDeploy() {
     if (resultEl) { resultEl.className = 'msg err'; resultEl.textContent = t('mwdep.noAgent'); }
     return;
   }
-  // 收集参数
-  const params = {};
+  // 收集参数 + 验证
   const paramsEl = document.getElementById('mwDeployParams');
-  if (paramsEl) {
-    paramsEl.querySelectorAll('input[data-pname]').forEach(function (inp) {
-      const k = inp.getAttribute('data-pname');
-      if (!k) return;
-      params[k] = inp.value;
-    });
+  const r = collectAndValidateParams(paramsEl, (mwdepDeployTpl.params || []));
+  if (!r.ok) {
+    if (resultEl) {
+      resultEl.className = 'msg err';
+      resultEl.textContent = t('mwdep.paramInvalid') + '：' + r.errors.join('；');
+    }
+    return;
   }
+  const params = r.values;
 
   if (resultEl) { resultEl.className = 'msg'; resultEl.textContent = t('mwdep.loading'); }
+  // 清空日志区
+  const logEl = document.getElementById('mwDeployLog');
+  if (logEl) logEl.textContent = '';
   api.deployMiddleware(mwdepDeployTpl.id, agentID, deployType, params).then(function (r) {
     if (!resultEl) return;
     if (r && r.s && r.s < 400 && r.j) {
       const taskId = (r.j.taskID || r.j.id || r.j.taskId || '');
       resultEl.className = 'msg ok';
       resultEl.textContent = t('mwdep.deploySuccess') + (taskId || JSON.stringify(r.j));
-      // 部署成功后延迟关闭对话框并刷新实例列表
-      setTimeout(function () { closeMwDeployModal(); loadMiddlewareInstances(); }, 2000);
+      // Phase 2：自动轮询任务状态并展示部署日志
+      if (taskId && logEl) {
+        logEl.textContent = t('osopt.polling') + '\n';
+        if (mwdepDeployTimer) clearInterval(mwdepDeployTimer);
+        mwdepDeployTimer = pollTaskResult(taskId, logEl, 3000, function (status) {
+          if (status === 'completed') {
+            resultEl.className = 'msg ok';
+            resultEl.textContent = t('mwdep.deploySuccess') + taskId;
+            // 部署成功后刷新实例列表
+            loadMiddlewareInstances();
+          } else if (status === 'failed') {
+            resultEl.className = 'msg err';
+            resultEl.textContent = t('mwdep.deployFail') + ' (task: ' + taskId + ')';
+          }
+          mwdepDeployTimer = null;
+        });
+      } else {
+        // 无 taskID 或无日志区，延迟关闭对话框并刷新实例列表
+        setTimeout(function () { closeMwDeployModal(); loadMiddlewareInstances(); }, 2000);
+      }
     } else {
       resultEl.className = 'msg err';
       resultEl.textContent = t('mwdep.deployFail') + ': [' + (r && r.s || '?') + '] ' + (r && r.j ? JSON.stringify(r.j) : '');
@@ -1451,6 +1809,7 @@ export function confirmMwDeploy() {
 }
 
 // 加载已部署实例列表
+// Phase 2 改造：在每行添加"卸载"按钮
 export function loadMiddlewareInstances() {
   const listEl = document.getElementById('mwInstanceList');
   if (!listEl) return;
@@ -1463,7 +1822,7 @@ export function loadMiddlewareInstances() {
       return;
     }
     let html = '<div class="table-wrap"><table><colgroup>'
-      + '<col style="width:18%"><col style="width:14%"><col style="width:18%"><col style="width:14%"><col style="width:14%"><col style="width:22%">'
+      + '<col style="width:16%"><col style="width:12%"><col style="width:16%"><col style="width:12%"><col style="width:12%"><col style="width:18%"><col style="width:14%">'
       + '</colgroup><thead><tr>'
       + '<th>' + esc(t('mwdep.instance.col.id')) + '</th>'
       + '<th>' + esc(t('mwdep.instance.col.template')) + '</th>'
@@ -1471,6 +1830,7 @@ export function loadMiddlewareInstances() {
       + '<th>' + esc(t('mwdep.instance.col.deployType')) + '</th>'
       + '<th>' + esc(t('mwdep.instance.col.status')) + '</th>'
       + '<th>' + esc(t('mwdep.instance.col.createdAt')) + '</th>'
+      + '<th>' + esc(t('mwdep.instance.col.action')) + '</th>'
       + '</tr></thead><tbody>';
     list.forEach(function (ins) {
       const status = ins.status || '-';
@@ -1479,13 +1839,22 @@ export function loadMiddlewareInstances() {
         : (status === 'failed' || status === 'error'
           ? '<span class="badge" style="background:var(--fail-soft,#fde8e8);color:var(--fail)">' + esc(status) + '</span>'
           : '<span class="badge" style="background:var(--bg-2);color:var(--text-2)">' + esc(status) + '</span>');
+      // 卸载按钮：仅对运行中/成功的实例显示，避免对已卸载/失败的实例再次卸载
+      const canUninstall = status === 'running' || status === 'ok' || status === 'success' || status === 'deployed' || status === 'installed';
+      const insId = esc(ins.id || '');
+      const agentID = esc(ins.agentID || ins.agentId || '');
+      const deployType = esc(ins.deployType || ins.deploy_type || '');
+      const actionHtml = canUninstall
+        ? '<button class="btn btn-sm" style="color:var(--fail);border:1px solid var(--fail)" onclick="uninstallMiddlewareInstance(\'' + insId + '\',\'' + agentID + '\',\'' + deployType + '\')">' + icon('close', 12) + ' ' + esc(t('mwdep.uninstall')) + '</button>'
+        : '<span class="muted">—</span>';
       html += '<tr>'
-        + '<td><code title="' + esc(ins.id || '') + '">' + esc(ins.id || '-') + '</code></td>'
+        + '<td><code title="' + insId + '">' + insId + '</code></td>'
         + '<td>' + esc(ins.templateID || ins.templateId || ins.template || '-') + '</td>'
-        + '<td>' + esc(ins.agentID || ins.agentId || '-') + '</td>'
+        + '<td>' + agentID + '</td>'
         + '<td>' + mwdepDeployTypeBadge(ins.deployType || ins.deploy_type) + '</td>'
         + '<td>' + statusBadge + '</td>'
         + '<td>' + esc(fmtTime(ins.createdAt || ins.created_at || '')) + '</td>'
+        + '<td>' + actionHtml + '</td>'
         + '</tr>';
     });
     html += '</tbody></table></div>';
@@ -1495,4 +1864,88 @@ export function loadMiddlewareInstances() {
     const el = document.getElementById('mwInstanceList');
     if (el) el.innerHTML = '<p class="muted">' + esc(t('mwdep.networkError')) + '</p>';
   });
+}
+
+// ---------- 中间件卸载（Phase 2） ----------
+// 打开卸载对话框：传入实例 ID / agentID / deployType，弹出确认对话框
+export function uninstallMiddlewareInstance(instanceID, agentID, deployType) {
+  mwdepUninstallIns = { id: instanceID, agentID: agentID, deployType: deployType };
+  const modal = document.getElementById('mwUninstallModal');
+  if (!modal) {
+    // 兜底：若 HTML 未提供卸载对话框，使用 confirm 直接卸载
+    if (!confirm(t('mwdep.uninstallConfirm'))) return;
+    doUninstallMiddleware();
+    return;
+  }
+  // 重置结果区与日志区
+  const resultEl = document.getElementById('mwUninstallResult');
+  if (resultEl) { resultEl.innerHTML = ''; resultEl.className = ''; }
+  const logEl = document.getElementById('mwUninstallLog');
+  if (logEl) logEl.textContent = '';
+  // 填充实例信息
+  const idEl = document.getElementById('mwUninstallInsId');
+  if (idEl) idEl.textContent = instanceID || '-';
+  const agentEl = document.getElementById('mwUninstallAgentId');
+  if (agentEl) agentEl.textContent = agentID || '-';
+  const typeEl = document.getElementById('mwUninstallDeployType');
+  if (typeEl) typeEl.textContent = deployType || '-';
+  modal.classList.add('open');
+}
+
+// 关闭卸载对话框
+export function closeMwUninstallModal() {
+  const modal = document.getElementById('mwUninstallModal');
+  if (modal) modal.classList.remove('open');
+  if (mwdepUninstallTimer) { clearInterval(mwdepUninstallTimer); mwdepUninstallTimer = null; }
+  mwdepUninstallIns = null;
+}
+
+// 执行卸载：调用 API 并轮询任务状态
+function doUninstallMiddleware() {
+  if (!mwdepUninstallIns || !mwdepUninstallIns.id) return;
+  const resultEl = document.getElementById('mwUninstallResult');
+  const logEl = document.getElementById('mwUninstallLog');
+  if (resultEl) { resultEl.className = 'msg'; resultEl.textContent = t('mwdep.uninstalling'); }
+  if (logEl) logEl.textContent = '';
+  api.uninstallMiddleware(mwdepUninstallIns.id, mwdepUninstallIns.agentID, mwdepUninstallIns.deployType).then(function (r) {
+    if (!resultEl) return;
+    if (r && r.s && r.s < 400 && r.j) {
+      const taskId = (r.j.taskID || r.j.id || r.j.taskId || '');
+      resultEl.className = 'msg ok';
+      resultEl.textContent = t('mwdep.uninstalling') + (taskId ? (' (task: ' + taskId + ')') : '');
+      // 轮询卸载任务状态
+      if (taskId && logEl) {
+        logEl.textContent = t('osopt.polling') + '\n';
+        if (mwdepUninstallTimer) clearInterval(mwdepUninstallTimer);
+        mwdepUninstallTimer = pollTaskResult(taskId, logEl, 3000, function (status) {
+          if (status === 'completed') {
+            resultEl.className = 'msg ok';
+            resultEl.textContent = t('mwdep.uninstallSuccess');
+            loadMiddlewareInstances();
+          } else if (status === 'failed') {
+            resultEl.className = 'msg err';
+            resultEl.textContent = t('mwdep.uninstallFailed') + ' (task: ' + taskId + ')';
+          }
+          mwdepUninstallTimer = null;
+        });
+      } else {
+        // 无 taskID：延迟关闭并刷新
+        setTimeout(function () { closeMwUninstallModal(); loadMiddlewareInstances(); }, 1500);
+      }
+    } else {
+      resultEl.className = 'msg err';
+      resultEl.textContent = t('mwdep.uninstallFailed') + ': [' + (r && r.s || '?') + '] ' + (r && r.j ? JSON.stringify(r.j) : '');
+    }
+  }).catch(function (e) {
+    console.error('[mw-uninstall]', e);
+    if (resultEl) {
+      resultEl.className = 'msg err';
+      resultEl.textContent = t('mwdep.uninstallFailed') + ': ' + (e && e.message || e);
+    }
+  });
+}
+
+// 确认卸载：从对话框触发
+export function confirmMwUninstall() {
+  doUninstallMiddleware();
 }

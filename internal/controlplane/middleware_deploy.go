@@ -16,7 +16,9 @@
 package controlplane
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"opsmesh/internal/authctx"
@@ -27,16 +29,16 @@ import (
 // MiddlewareTemplate 预置中间件部署模板。
 // Scripts 按 deployType（"docker"/"systemd"）索引对应部署/验证/卸载脚本。
 type MiddlewareTemplate struct {
-	ID          string                     `json:"id"`
-	Name        string                     `json:"name"`
-	Category    string                     `json:"category"`    // database/cache/message/web/search
-	Version     string                     `json:"version"`
-	Description string                     `json:"description"`
-	DeployTypes []string                   `json:"deployTypes"` // ["docker","systemd"]
-	Params      []MiddlewareParam          `json:"params"`
+	ID          string                      `json:"id"`
+	Name        string                      `json:"name"`
+	Category    string                      `json:"category"` // database/cache/message/web/search
+	Version     string                      `json:"version"`
+	Description string                      `json:"description"`
+	DeployTypes []string                    `json:"deployTypes"` // ["docker","systemd"]
+	Params      []MiddlewareParam           `json:"params"`
 	Scripts     map[string]MiddlewareScript `json:"scripts"` // key: "docker"/"systemd"
-	Risk        string                     `json:"risk"`     // low/medium/high
-	Tags        []string                   `json:"tags"`
+	Risk        string                      `json:"risk"`    // low/medium/high
+	Tags        []string                    `json:"tags"`
 }
 
 // MiddlewareParam 中间件部署参数定义。
@@ -342,6 +344,145 @@ var middlewareTemplates = []MiddlewareTemplate{
 		Risk: "medium",
 		Tags: []string{"search", "elk", "fulltext"},
 	},
+
+	// ---------------- Phase 1/2 扩展：storage/service/monitor ----------------
+	// minio (storage, low) — MinIO 对象存储
+	{
+		ID:          "minio",
+		Name:        "MinIO",
+		Category:    "storage",
+		Version:     "latest",
+		Description: "MinIO 高性能对象存储，兼容 S3 API，适用于非结构化数据",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "minio", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "9000", Required: true, Type: "int"},
+			{Name: "user", Description: "管理员用户名", Default: "minioadmin", Required: true, Type: "string"},
+			{Name: "password", Description: "管理员密码", Default: "minioadmin", Required: true, Type: "string"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/minio", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:9000 -e MINIO_ROOT_USER={user} -e MINIO_ROOT_PASSWORD={password} -v {datadir}:/data --restart unless-stopped minio/minio server /data",
+				Verify:    "curl -fsS http://localhost:{port}/minio/health/live",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "wget -qO /usr/local/bin/minio https://dl.min.io/server/minio/release/linux-amd64/minio && chmod +x /usr/local/bin/minio && mkdir -p /data && cat > /etc/systemd/system/minio.service <<'EOF'\n[Unit]\nDescription=MinIO Object Storage\nAfter=network.target\n[Service]\nType=simple\nExecStart=/usr/local/bin/minio server /data\nEnvironment=MINIO_ROOT_USER={user}\nEnvironment=MINIO_ROOT_PASSWORD={password}\nRestart=always\n[Install]\nWantedBy=multi-user.target\nEOF\nsystemctl daemon-reload && systemctl enable minio && systemctl start minio",
+				Verify:    "systemctl is-active minio",
+				Uninstall: "systemctl stop minio && systemctl disable minio && rm -f /usr/local/bin/minio /etc/systemd/system/minio.service",
+			},
+		},
+		Risk: "low",
+		Tags: []string{"storage", "s3", "object"},
+	},
+	// consul (service, low) — Consul 服务发现
+	{
+		ID:          "consul",
+		Name:        "Consul",
+		Category:    "service",
+		Version:     "1.15",
+		Description: "Consul 服务发现与配置管理，提供服务注册/健康检查/KV 存储",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "consul", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p 8500:8500 -p 8300:8300 -p 8301:8301 -p 8302:8302 --restart unless-stopped hashicorp/consul agent -dev -client=0.0.0.0",
+				Verify:    "curl -fsS http://localhost:8500/v1/status/leader",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "yum install -y consul && systemctl enable consul && systemctl start consul",
+				Verify:    "systemctl is-active consul",
+				Uninstall: "systemctl stop consul && yum remove -y consul",
+			},
+		},
+		Risk: "low",
+		Tags: []string{"service", "discovery", "consensus"},
+	},
+	// etcd (storage, medium) — etcd 键值存储
+	{
+		ID:          "etcd",
+		Name:        "etcd",
+		Category:    "storage",
+		Version:     "3.5",
+		Description: "etcd 分布式键值存储，为 Kubernetes 等提供可靠的数据存储",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "etcd", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p 2379:2379 -p 2380:2380 --restart unless-stopped gcr.io/etcd-development/etcd /usr/local/bin/etcd -name etcd0 -data-dir /data -listen-client-urls http://0.0.0.0:2379 -advertise-client-urls http://0.0.0.0:2379",
+				Verify:    "docker exec {name} etcdctl endpoint health",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "yum install -y etcd && systemctl enable etcd && systemctl start etcd",
+				Verify:    "systemctl is-active etcd",
+				Uninstall: "systemctl stop etcd && yum remove -y etcd",
+			},
+		},
+		Risk: "medium",
+		Tags: []string{"storage", "kv", "distributed"},
+	},
+	// prometheus (monitor, low) — Prometheus 监控
+	{
+		ID:          "prometheus",
+		Name:        "Prometheus",
+		Category:    "monitor",
+		Version:     "2.45",
+		Description: "Prometheus 监控与告警系统，适用于时序指标采集与存储",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "prometheus", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "9090", Required: true, Type: "int"},
+			{Name: "configdir", Description: "配置目录（宿主机路径）", Default: "/etc/prometheus", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:9090 -v {configdir}:/etc/prometheus --restart unless-stopped prom/prometheus:v2.45.0",
+				Verify:    "curl -fsS http://localhost:{port}/-/healthy",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "wget -qO /tmp/prom.tar.gz https://github.com/prometheus/prometheus/releases/download/v2.45.0/prometheus-2.45.0.linux-amd64.tar.gz && tar xzf /tmp/prom.tar.gz -C /opt/ && ln -sf /opt/prometheus-2.45.0.linux-amd64/prometheus /usr/local/bin/prometheus && mkdir -p {configdir} && cat > /etc/systemd/system/prometheus.service <<'EOF'\n[Unit]\nDescription=Prometheus\nAfter=network.target\n[Service]\nExecStart=/usr/local/bin/prometheus --config.file={configdir}/prometheus.yml\nRestart=always\n[Install]\nWantedBy=multi-user.target\nEOF\nsystemctl daemon-reload && systemctl enable prometheus && systemctl start prometheus",
+				Verify:    "systemctl is-active prometheus",
+				Uninstall: "systemctl stop prometheus && systemctl disable prometheus && rm -f /usr/local/bin/prometheus /etc/systemd/system/prometheus.service",
+			},
+		},
+		Risk: "low",
+		Tags: []string{"monitor", "metrics", "timeseries"},
+	},
+	// grafana (monitor, low) — Grafana 可视化
+	{
+		ID:          "grafana",
+		Name:        "Grafana",
+		Category:    "monitor",
+		Version:     "10.2",
+		Description: "Grafana 可视化平台，适用于指标/日志/链路面板展示与告警",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "grafana", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "3000", Required: true, Type: "int"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:3000 --restart unless-stopped grafana/grafana:10.2.0",
+				Verify:    "curl -fsS http://localhost:{port}/api/health",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "cat > /etc/yum.repos.d/grafana.repo <<'EOF'\n[grafana]\nname=grafana\nbaseurl=https://packages.grafana.com/oss/rpm\nrepo_gpgcheck=1\nenabled=1\ngpgkey=https://packages.grafana.com/gpg.key\ngpgcheck=1\nEOF\nyum install -y grafana && systemctl enable grafana && systemctl start grafana",
+				Verify:    "systemctl is-active grafana",
+				Uninstall: "systemctl stop grafana && yum remove -y grafana",
+			},
+		},
+		Risk: "low",
+		Tags: []string{"monitor", "dashboard", "visualization"},
+	},
 }
 
 // middlewareTemplateByID 按 ID 查找预置中间件模板，未找到返回 nil。
@@ -487,6 +628,11 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 			body.Params[p.Name] = p.Default
 		}
 	}
+	// 参数类型与语义验证（端口范围/路径/非空）。
+	if err := validateMiddlewareParams(tpl.Params, body.Params); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	targetTenant := body.TenantID
 	if targetTenant == "" {
 		targetTenant = actx.TenantID
@@ -595,4 +741,180 @@ func renderMiddlewareScript(script string, params map[string]string) string {
 		out = strings.ReplaceAll(out, "{"+k+"}", v)
 	}
 	return out
+}
+
+// validateMiddlewareParams 校验中间件模板参数的类型与语义。
+//   - int 类型：必须为整数；若参数名为 port 或以 port 结尾则校验端口范围 1-65535。
+//   - string 类型：若参数名为路径类（datadir/configdir/confpath/javahome 或以 dir/path 结尾）则校验以 / 开头。
+//
+// validatePort/validateNonEmpty/validatePath 定义在 os_optimize.go（同包共享）。
+func validateMiddlewareParams(params []MiddlewareParam, values map[string]string) error {
+	for _, p := range params {
+		val, ok := values[p.Name]
+		if !ok || val == "" {
+			continue
+		}
+		switch p.Type {
+		case "int":
+			n, err := strconv.Atoi(val)
+			if err != nil {
+				return fmt.Errorf("param %s must be integer, got %s", p.Name, val)
+			}
+			if p.Name == "port" || strings.HasSuffix(p.Name, "port") {
+				if err := validatePort(n); err != nil {
+					return err
+				}
+			}
+		case "string":
+			if p.Name == "datadir" || p.Name == "configdir" || p.Name == "confpath" || p.Name == "javahome" ||
+				strings.HasSuffix(p.Name, "dir") || strings.HasSuffix(p.Name, "path") {
+				if err := validatePath(val); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// handleUninstallMiddlewareInstance 处理 POST /api/v1/middleware-instances/{id}/uninstall：
+// 卸载已部署的中间件实例。
+// 请求体: { "agentID": "...", "templateID": "...", "deployType": "docker|systemd", "params": {...}, "tenantID": "..." }
+// 实现：根据 templateID 取对应 deployType 的 Uninstall 脚本，占位符替换后作为 shell task 下发，
+// 复用 store.CreateTask + Audit + 事件总线 + SSE，与 deploy 同款逻辑。
+// 响应: { "task": ..., "taskID": "...", "instanceID": "...", "templateID": "...", "templateName": "...", "deployType": "..." }
+func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *http.Request, instanceID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := s.verifyFederationRequest(r); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return
+	}
+	actx := authctx.FromHTTPHeader(r.Header)
+	if s.requireAuth && actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+		return
+	}
+	var body struct {
+		AgentID    string            `json:"agentID"`
+		TemplateID string            `json:"templateID"`
+		DeployType string            `json:"deployType"`
+		Params     map[string]string `json:"params"`
+		TenantID   string            `json:"tenantID"`
+	}
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if body.AgentID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agentID is required"})
+		return
+	}
+	if body.TemplateID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "templateID is required"})
+		return
+	}
+	if body.DeployType == "" {
+		body.DeployType = "docker" // 默认 docker 部署
+	}
+	tpl := middlewareTemplateByID(body.TemplateID)
+	if tpl == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found: " + body.TemplateID})
+		return
+	}
+	script, ok := tpl.Scripts[body.DeployType]
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "script not found for deployType: " + body.DeployType})
+		return
+	}
+	if script.Uninstall == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "uninstall script not defined for template: " + body.TemplateID})
+		return
+	}
+	// 填充默认参数（与 deploy 一致，确保占位符能被替换）。
+	if body.Params == nil {
+		body.Params = map[string]string{}
+	}
+	for _, p := range tpl.Params {
+		if _, ok := body.Params[p.Name]; !ok && p.Default != "" {
+			body.Params[p.Name] = p.Default
+		}
+	}
+	targetTenant := body.TenantID
+	if targetTenant == "" {
+		targetTenant = actx.TenantID
+	}
+	agent := s.lookupAgent(body.AgentID)
+	if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "agent not found or tenant mismatch"})
+		return
+	}
+	// 拼接最终 command：将 Uninstall 脚本中占位符替换为 params 实际值。
+	command := renderMiddlewareScript(script.Uninstall, body.Params)
+	task := s.store.CreateTask(&proto.Task{
+		AgentID:    body.AgentID,
+		TenantID:   targetTenant,
+		Type:       proto.TaskTypeShell,
+		Command:    command,
+		MaxRetries: s.cfg.TaskMaxRetries,
+	})
+	s.store.Audit(&proto.AuditEvent{
+		TenantID: targetTenant,
+		UserID:   actx.UserID,
+		Action:   "uninstall_middleware",
+		Target:   task.TaskID,
+		Detail:   "instance=" + instanceID + " template=" + body.TemplateID + " deployType=" + body.DeployType + " agent=" + body.AgentID,
+	})
+	if s.bus != nil {
+		s.bus.Publish(r.Context(), events.Event{
+			TenantID: targetTenant, UserID: actx.UserID,
+			Action: "uninstall_middleware", Target: task.TaskID,
+			Detail: "instance=" + instanceID + " template=" + body.TemplateID + " deployType=" + body.DeployType + " agent=" + body.AgentID, Level: events.LevelInfo,
+		})
+	}
+	if s.metrics != nil {
+		s.metrics.SetQueueDepth(s.store.PendingDepth())
+	}
+	s.publishEvent("task_status", map[string]string{
+		"taskID":  task.TaskID,
+		"status":  task.Status,
+		"agentID": body.AgentID,
+	})
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"task":         task,
+		"taskID":       task.TaskID,
+		"instanceID":   instanceID,
+		"templateID":   body.TemplateID,
+		"templateName": tpl.Name,
+		"deployType":   body.DeployType,
+	})
+}
+
+// handleMiddlewareInstanceRouting 统一分派 /api/v1/middleware-instances/{id}... 子路径：
+//   - POST /api/v1/middleware-instances/{id}/uninstall：卸载实例
+//
+// 注意：/api/v1/middleware-instances（无尾斜杠）由 handleMiddlewareInstances 处理；
+// /api/v1/middleware-instances/（带尾斜杠但无 id）此处转给 list handler 兜底。
+func (s *Server) handleMiddlewareInstanceRouting(w http.ResponseWriter, r *http.Request) {
+	idAndRest := strings.TrimPrefix(r.URL.Path, "/api/v1/middleware-instances/")
+	if idAndRest == "" {
+		// 兜底：/api/v1/middleware-instances/（带尾斜杠）转给 list handler 处理 GET。
+		s.handleMiddlewareInstances(w, r)
+		return
+	}
+	parts := strings.SplitN(idAndRest, "/", 2)
+	id := parts[0]
+	if id == "" {
+		http.Error(w, "instance id required", http.StatusBadRequest)
+		return
+	}
+	switch {
+	case len(parts) == 2 && parts[1] == "uninstall":
+		// POST /api/v1/middleware-instances/{id}/uninstall
+		s.handleUninstallMiddlewareInstance(w, r, id)
+	default:
+		http.NotFound(w, r)
+	}
 }

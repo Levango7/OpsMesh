@@ -711,6 +711,10 @@
         <button class="btn btn-sm osopt-cat-btn" data-cat="disk" onclick="filterOSTemplates('disk')" id="osoptCatDisk">磁盘</button>
         <button class="btn btn-sm osopt-cat-btn" data-cat="system" onclick="filterOSTemplates('system')" id="osoptCatSystem">系统</button>
         <button class="btn btn-sm osopt-cat-btn" data-cat="user" onclick="filterOSTemplates('user')" id="osoptCatUser">用户</button>
+        <!-- Phase 2：新增分类（与后端新模板对齐：swap-setup/limits-config/net-security/ntp-setup/dns-config/tcp-tune/memory-tune/disk-io-tune） -->
+        <button class="btn btn-sm osopt-cat-btn" data-cat="storage" onclick="filterOSTemplates('storage')" id="osoptCatStorage">存储</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="service" onclick="filterOSTemplates('service')" id="osoptCatService">服务发现</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="monitor" onclick="filterOSTemplates('monitor')" id="osoptCatMonitor">监控</button>
         <button class="btn btn-sm" onclick="loadOSTemplates()" style="margin-left:auto" id="osoptRefreshBtn">刷新</button>
       </div>
       <!-- 模板列表 -->
@@ -737,9 +741,16 @@
       </div>
       <div style="margin-bottom:12px">
         <label><span id="osExecParamsLabel">参数（每行一个）</span></label>
-        <textarea id="osExecParams" class="form-control" rows="3" placeholder="param1&#10;param2"></textarea>
+        <!-- Phase 2：改为 div 容器，由 flow.js renderOSExecParams() 动态渲染参数表单（含验证提示）。
+             旧契约下无参数定义时，flow.js 会在此 div 内生成 <textarea id="osExecParamsRaw">。 -->
+        <div id="osExecParams"></div>
       </div>
       <div id="osExecResult" style="margin-top:12px"></div>
+      <!-- Phase 2：执行日志展示区（轮询任务状态展示 stdout/stderr） -->
+      <div style="margin-top:12px">
+        <label><span id="osExecLogLabel">执行日志</span></label>
+        <pre id="osExecLog" style="background:var(--bg-2);color:var(--text-1);padding:12px;border-radius:6px;overflow:auto;max-height:240px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all;min-height:48px"></pre>
+      </div>
       <div style="margin-top:16px;text-align:right">
         <button class="btn btn-sm" onclick="closeOSExecModal()" id="osExecCancelBtn">取消</button>
         <button class="btn btn-primary btn-sm" onclick="confirmOSExec()" id="osExecConfirmBtn" style="margin-left:8px">确认执行</button>
@@ -767,6 +778,10 @@
         <button class="btn btn-sm osopt-cat-btn" data-cat="message" onclick="filterMiddlewareTemplates('message')" id="mwdepCatMessage">消息队列</button>
         <button class="btn btn-sm osopt-cat-btn" data-cat="web" onclick="filterMiddlewareTemplates('web')" id="mwdepCatWeb">Web 服务器</button>
         <button class="btn btn-sm osopt-cat-btn" data-cat="search" onclick="filterMiddlewareTemplates('search')" id="mwdepCatSearch">搜索引擎</button>
+        <!-- Phase 2：新增分类（与后端新模板对齐：minio/consul/etcd/prometheus/grafana） -->
+        <button class="btn btn-sm osopt-cat-btn" data-cat="storage" onclick="filterMiddlewareTemplates('storage')" id="mwdepCatStorage">存储</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="service" onclick="filterMiddlewareTemplates('service')" id="mwdepCatService">服务</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="monitor" onclick="filterMiddlewareTemplates('monitor')" id="mwdepCatMonitor">监控</button>
         <button class="btn btn-sm" onclick="loadMiddlewareTemplates()" style="margin-left:auto" id="mwdepRefreshBtn">刷新</button>
       </div>
       <!-- 模板列表 -->
@@ -808,9 +823,42 @@
         <div id="mwDeployParams"></div>
       </div>
       <div id="mwDeployResult" style="margin-top:12px"></div>
+      <!-- Phase 2：部署日志展示区（轮询任务状态展示 stdout/stderr） -->
+      <div style="margin-top:12px">
+        <label><span id="mwDeployLogLabel">部署日志</span></label>
+        <pre id="mwDeployLog" style="background:var(--bg-2);color:var(--text-1);padding:12px;border-radius:6px;overflow:auto;max-height:240px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all;min-height:48px"></pre>
+      </div>
       <div style="margin-top:16px;text-align:right">
         <button class="btn btn-sm" onclick="closeMwDeployModal()" id="mwDeployCancelBtn">取消</button>
         <button class="btn btn-primary btn-sm" onclick="confirmMwDeploy()" id="mwDeployConfirmBtn" style="margin-left:8px">确认部署</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 中间件卸载对话框（Phase 2） ============ -->
+<div id="mwUninstallModal" class="dev-modal-overlay">
+  <div class="dev-modal" role="dialog" aria-modal="true">
+    <div class="dev-modal-header">
+      <h3 id="mwUninstallTitle">卸载中间件</h3>
+      <button class="close-btn" onclick="closeMwUninstallModal()" aria-label="关闭">✕</button>
+    </div>
+    <div class="dev-modal-body" id="mwUninstallBody">
+      <div id="mwUninstallHint" class="field-hint" style="margin-bottom:12px;color:var(--fail)">将在选定设备上卸载此中间件实例，此操作不可逆，请确认后继续。</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:12px">
+        <div><div class="field-hint" id="mwUninstallInsIdLabel">实例 ID</div><div><code id="mwUninstallInsId">-</code></div></div>
+        <div><div class="field-hint" id="mwUninstallAgentIdLabel">设备</div><div><code id="mwUninstallAgentId">-</code></div></div>
+        <div><div class="field-hint" id="mwUninstallDeployTypeLabel">部署方式</div><div id="mwUninstallDeployType">-</div></div>
+      </div>
+      <div id="mwUninstallResult" style="margin-top:12px"></div>
+      <!-- 卸载日志展示区 -->
+      <div style="margin-top:12px">
+        <label><span id="mwUninstallLogLabel">卸载日志</span></label>
+        <pre id="mwUninstallLog" style="background:var(--bg-2);color:var(--text-1);padding:12px;border-radius:6px;overflow:auto;max-height:240px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all;min-height:48px"></pre>
+      </div>
+      <div style="margin-top:16px;text-align:right">
+        <button class="btn btn-sm" onclick="closeMwUninstallModal()" id="mwUninstallCancelBtn">取消</button>
+        <button class="btn btn-primary btn-sm" onclick="confirmMwUninstall()" id="mwUninstallConfirmBtn" style="margin-left:8px;background:var(--fail);border-color:var(--fail)">确认卸载</button>
       </div>
     </div>
   </div>
