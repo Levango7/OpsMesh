@@ -39,3 +39,24 @@ type Permission struct {
 	Description string `json:"description"`
 	Group       string `json:"group"` // 如 "device", "task", "alert"
 }
+
+// K8sCluster K8s 集群配置实体（Phase 3 后端 K8s 集群管理）。
+//
+// 字段说明：
+//   - ID：集群唯一标识（创建时由 store 分配随机 ID）；
+//   - Name：集群展示名（用户输入，如 "prod-cluster"）；
+//   - Server：API Server 地址（从 kubeconfig 解析得到，便于列表展示无需解 kubeconfig）；
+//   - Kubeconfig：kubeconfig YAML 内容（敏感，API 返回时须脱敏为 ***）；
+//   - Status：连接状态（online/offline/unknown，由 test API 刷新）；
+//   - CreatedAt / UpdatedAt：创建/更新时间戳。
+//
+// 安全要点：Kubeconfig 含集群凭据，绝不原样返回给前端；API 层负责脱敏。
+type K8sCluster struct {
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	Server     string    `json:"server"`     // API Server 地址
+	Kubeconfig string    `json:"kubeconfig"` // kubeconfig 内容（YAML，敏感）
+	Status     string    `json:"status"`     // online/offline/unknown
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+}

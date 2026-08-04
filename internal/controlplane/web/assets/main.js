@@ -35,6 +35,12 @@ import {
   deployMiddleware, closeMwDeployModal, confirmMwDeploy, onMwDeployTypeChange, loadMiddlewareInstances,
   uninstallMiddlewareInstance, closeMwUninstallModal, confirmMwUninstall,
   pollTaskResult,
+  loadK8sClusters, showAddK8sClusterModal, closeK8sAddClusterModal, confirmAddK8sCluster,
+  deleteK8sClusterConfirm, testK8sClusterConnection,
+  loadK8sResources, switchK8sResource, reloadK8sResources, onK8sClusterSelectChange, onK8sNamespaceKeyDown,
+  loadK8sPods, showPodLogs, closeK8sPodLogsModal, refreshK8sPodLogs, deletePodConfirm,
+  loadK8sDeployments, scaleDeployment, closeK8sScaleModal, confirmScaleDeployment, restartDeployment,
+  loadK8sServices, loadK8sConfigMaps, loadK8sSecrets, loadK8sNodes,
 } from './flow.js';
 import { icon } from './icons.js';
 import { initTheme, toggleTheme, getTheme, setTheme } from './theme.js';
@@ -119,6 +125,32 @@ w.closeMwUninstallModal = closeMwUninstallModal;
 w.confirmMwUninstall = confirmMwUninstall;
 // 任务结果轮询（Phase 2，调试用）
 w.pollTaskResult = pollTaskResult;
+// K8s 管理（Phase 3）
+w.loadK8sClusters = loadK8sClusters;
+w.showAddK8sClusterModal = showAddK8sClusterModal;
+w.closeK8sAddClusterModal = closeK8sAddClusterModal;
+w.confirmAddK8sCluster = confirmAddK8sCluster;
+w.deleteK8sClusterConfirm = deleteK8sClusterConfirm;
+w.testK8sClusterConnection = testK8sClusterConnection;
+w.loadK8sResources = loadK8sResources;
+w.switchK8sResource = switchK8sResource;
+w.reloadK8sResources = reloadK8sResources;
+w.onK8sClusterSelectChange = onK8sClusterSelectChange;
+w.onK8sNamespaceKeyDown = onK8sNamespaceKeyDown;
+w.loadK8sPods = loadK8sPods;
+w.showPodLogs = showPodLogs;
+w.closeK8sPodLogsModal = closeK8sPodLogsModal;
+w.refreshK8sPodLogs = refreshK8sPodLogs;
+w.deletePodConfirm = deletePodConfirm;
+w.loadK8sDeployments = loadK8sDeployments;
+w.scaleDeployment = scaleDeployment;
+w.closeK8sScaleModal = closeK8sScaleModal;
+w.confirmScaleDeployment = confirmScaleDeployment;
+w.restartDeployment = restartDeployment;
+w.loadK8sServices = loadK8sServices;
+w.loadK8sConfigMaps = loadK8sConfigMaps;
+w.loadK8sSecrets = loadK8sSecrets;
+w.loadK8sNodes = loadK8sNodes;
 
 // ---------- 主题 / 语言 ----------
 w.toggleTheme = toggleTheme;
@@ -615,6 +647,7 @@ function initStaticIcons() {
     'navIconPerms': 'permissions', 'navIconAudits': 'audit', 'navIconSettings': 'settings', 'navIconDocs': 'info',
     'navIconOsOpt': 'osopt',
     'navIconMwDep': 'mwdep',
+    'navIconK8s': 'k8s',
     // pane-intro
     'introIconHome': 'home', 'introIconOps': 'ops', 'introIconCmdb': 'cmdb',
     'introIconFlow': 'flow', 'introIconDeploy': 'deploy', 'introIconLogs': 'logs',
@@ -622,6 +655,7 @@ function initStaticIcons() {
     'introIconPerms': 'permissions', 'introIconAudits': 'audit', 'introIconSettings': 'settings', 'introIconDocs': 'info',
     'introIconOsOpt': 'osopt',
     'introIconMwDep': 'mwdep',
+    'introIconK8s': 'k8s',
     // 上下文
     'ctxIcon': 'context',
     // 按钮
@@ -766,6 +800,47 @@ function applyI18nToDOM() {
   setText('mwdepCatStorage', t('mwdep.category.storage'));
   setText('mwdepCatService', t('mwdep.category.service'));
   setText('mwdepCatMonitor', t('mwdep.category.monitor'));
+  // K8s 管理页（Phase 3）
+  setText('tab-k8s-btn', t('nav.k8s'), true);
+  setHTML('k8sTitle', t('k8s.title'));
+  setHTML('k8sDesc', t('k8s.desc'));
+  setText('k8sClustersTitle', t('k8s.clusters'));
+  setText('k8sClustersHint', t('k8s.clustersHint'));
+  setText('k8sClustersRefreshBtn', t('cmdb.refresh'));
+  setText('k8sAddClusterBtn', t('k8s.addCluster'));
+  setText('k8sResourcesTitle', t('k8s.resources'));
+  setText('k8sResourcesHint', t('k8s.resourcesHint'));
+  setText('k8sSelectClusterLabel', t('k8s.selectCluster'));
+  setText('k8sNamespaceLabel', t('k8s.namespace'));
+  const k8sNsI = document.getElementById('k8sNamespaceInput');
+  if (k8sNsI) k8sNsI.placeholder = t('k8s.namespaceHint');
+  setText('k8sReloadBtn', t('common.search'));
+  setText('k8sTabPods', t('k8s.pods'));
+  setText('k8sTabDeployments', t('k8s.deployments'));
+  setText('k8sTabServices', t('k8s.services'));
+  setText('k8sTabConfigMaps', t('k8s.configmaps'));
+  setText('k8sTabSecrets', t('k8s.secrets'));
+  setText('k8sTabNodes', t('k8s.nodes'));
+  // K8s 添加集群对话框
+  setText('k8sAddClusterTitle', t('k8s.addCluster'));
+  setText('k8sAddClusterNameLabel', t('k8s.clusterName'));
+  setText('k8sAddClusterServerLabel', t('k8s.server'));
+  setText('k8sAddClusterKubeconfigLabel', t('k8s.kubeconfig'));
+  setText('k8sAddClusterKubeconfigHint', t('k8s.kubeconfigHint'));
+  setText('k8sAddClusterCancelBtn', t('k8s.cancel'));
+  setText('k8sAddClusterConfirmBtn', t('k8s.confirm'));
+  // K8s Pod 日志对话框
+  setText('k8sPodLogsTailLabel', t('k8s.tailLines'));
+  setText('k8sPodLogsContainerLabel', t('k8s.container'));
+  const k8sPodContI = document.getElementById('k8sPodLogsContainer');
+  if (k8sPodContI) k8sPodContI.placeholder = t('k8s.containerHint');
+  setText('k8sPodLogsRefreshBtn', t('k8s.refreshLogs'));
+  setText('k8sPodLogsCloseBtn', t('common.close'));
+  // K8s 扩缩容对话框
+  setText('k8sScaleHint', t('k8s.scaleHint'));
+  setText('k8sScaleReplicasLabel', t('k8s.targetReplicas'));
+  setText('k8sScaleCancelBtn', t('k8s.cancel'));
+  setText('k8sScaleConfirmBtn', t('k8s.confirm'));
   // 系统设置 / 文档
   setText('settingsTitle', t('settings.title'));
   setText('settingsDesc', t('settings.desc'));

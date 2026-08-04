@@ -175,9 +175,26 @@ type PermissionStore interface {
 	ListPermissions() []*Permission
 }
 
+// K8sClusterStore K8s 集群配置管理领域（Phase 3）：CRUD。
+//
+// 与 DeviceStore 等领域解耦，独立小接口组合进 Store。
+// Kubeconfig 为敏感内容，调用方（API 层）负责脱敏后再返回前端。
+type K8sClusterStore interface {
+	// ListK8sClusters 返回所有 K8s 集群配置（按创建时间升序）。
+	ListK8sClusters() []*K8sCluster
+	// GetK8sCluster 按 ID 返回单个集群配置（不存在返回 nil）。
+	GetK8sCluster(id string) *K8sCluster
+	// SaveK8sCluster 创建或更新集群配置（按 ID 幂等）。
+	// ID 为空时由 store 分配随机 ID；CreatedAt/UpdatedAt 为空时填当前时间。
+	SaveK8sCluster(*K8sCluster)
+	// DeleteK8sCluster 删除集群配置，返回是否删除成功（不存在返回 false）。
+	DeleteK8sCluster(id string) bool
+}
+
 // Store 控制面注册表的可插拔持久化组合接口。
-// 由 9 个领域小接口组合而成（M2-1A 拆分 + 用户中心扩展），方法签名刻意与旧版内存 Registry 保持一致，
-// 便于平滑替换。U-04: 数据本地化，默认 memory；生产可切换 mysql（MySQL/Redis 私有部署）。
+// 由 10 个领域小接口组合而成（M2-1A 拆分 + 用户中心扩展 + K8s 集群管理），
+// 方法签名刻意与旧版内存 Registry 保持一致，便于平滑替换。
+// U-04: 数据本地化，默认 memory；生产可切换 mysql（MySQL/Redis 私有部署）。
 //
 // 消费方可按需依赖最小子接口（如 provision 只需 TokenStore），当前保留 Store
 // 组合接口向后兼容，后续可渐进迁移到小接口以降低耦合。
@@ -191,6 +208,7 @@ type Store interface {
 	UserStore       // 用户中心：注册/登录/CRUD
 	RoleStore       // 角色管理：CRUD
 	PermissionStore // 权限列表：只读
+	K8sClusterStore // K8s 集群管理：CRUD（Phase 3）
 
 	// WithDemo 设置是否开启演示模式（P0-5）：开启时每个 agent 注册预置 uname -a 示例任务。
 	WithDemo(bool) Store
@@ -208,6 +226,7 @@ var (
 	_ UserStore       = (*MemoryStore)(nil)
 	_ RoleStore       = (*MemoryStore)(nil)
 	_ PermissionStore = (*MemoryStore)(nil)
+	_ K8sClusterStore = (*MemoryStore)(nil)
 	_ Store           = (*MemoryStore)(nil)
 
 	_ DeviceStore     = (*SQLStore)(nil)
@@ -219,5 +238,6 @@ var (
 	_ UserStore       = (*SQLStore)(nil)
 	_ RoleStore       = (*SQLStore)(nil)
 	_ PermissionStore = (*SQLStore)(nil)
+	_ K8sClusterStore = (*SQLStore)(nil)
 	_ Store           = (*SQLStore)(nil)
 )

@@ -428,3 +428,117 @@ export function getTaskDetail(taskID) {
 export async function uninstallMiddleware(instanceID, agentID, deployType) {
   return await request('/api/v1/middleware-instances/' + encodeURIComponent(instanceID) + '/uninstall', jsonBody({ agentID: agentID, deployType: deployType }));
 }
+
+// ============================================================
+// K8s 集群 / 资源管理 API（Phase 3）
+// 契约：
+//   GET    /api/v1/k8s/clusters                                  → 200 {clusters: [{id,name,server,status,createdAt,updatedAt}]}
+//   POST   /api/v1/k8s/clusters          {name,server,kubeconfig} → 200 Cluster
+//   DELETE /api/v1/k8s/clusters/{id}                             → 204
+//   POST   /api/v1/k8s/clusters/{id}/test                        → 200 {status,message}
+//   GET    /api/v1/k8s/clusters/{id}/namespaces                  → 200 {namespaces: [{name,status,createdAt}]}
+//   GET    /api/v1/k8s/clusters/{id}/pods?namespace={ns}         → 200 {pods: [{name,namespace,status,podIP,nodeIP,restarts,age}]}
+//   GET    /api/v1/k8s/clusters/{id}/pods/{ns}/{name}/logs       → 200 {logs: "..."}
+//   DELETE /api/v1/k8s/clusters/{id}/pods/{ns}/{name}            → 204
+//   GET    /api/v1/k8s/clusters/{id}/deployments?namespace={ns}  → 200 {deployments: [{name,namespace,replicas,availableReplicas,image}]}
+//   POST   /api/v1/k8s/clusters/{id}/deployments/{ns}/{name}/scale  {replicas} → 200 {name,replicas}
+//   POST   /api/v1/k8s/clusters/{id}/deployments/{ns}/{name}/restart        → 200 {status,restartedAt}
+//   GET    /api/v1/k8s/clusters/{id}/services?namespace={ns}     → 200 {services: [{name,namespace,type,clusterIP,externalIP,ports}]}
+//   GET    /api/v1/k8s/clusters/{id}/configmaps?namespace={ns}   → 200 {configmaps: [{name,namespace,dataKeys}]}
+//   GET    /api/v1/k8s/clusters/{id}/secrets?namespace={ns}      → 200 {secrets: [{name,namespace,type,dataKeys}]}
+//   GET    /api/v1/k8s/clusters/{id}/nodes                       → 200 {nodes: [{name,status,roles,version,internalIP,externalIP,cpu,memory}]}
+// ============================================================
+
+// ---------- K8s 集群管理 ----------
+// 列出所有集群（kubeconfig 已脱敏为 ***）
+export function getK8sClusters() {
+  return authGet('/api/v1/k8s/clusters');
+}
+
+// 添加集群
+export async function createK8sCluster(name, server, kubeconfig) {
+  return await request('/api/v1/k8s/clusters', jsonBody({ name: name, server: server, kubeconfig: kubeconfig }));
+}
+
+// 删除集群：返回 {s, j}（j 为 null，204）
+export function deleteK8sCluster(id) {
+  const h = {};
+  const token = getToken();
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  return fetch('/api/v1/k8s/clusters/' + encodeURIComponent(id), { method: 'DELETE', headers: h })
+    .then(function (r) { return { s: r.status, j: null }; });
+}
+
+// 测试集群连接：返回 {s, j}，j 形如 {status, message}
+export function testK8sCluster(id) {
+  return authPost('/api/v1/k8s/clusters/' + encodeURIComponent(id) + '/test');
+}
+
+// ---------- K8s 资源管理 ----------
+// 列出 namespace
+export function getK8sNamespaces(clusterID) {
+  return authGet('/api/v1/k8s/clusters/' + encodeURIComponent(clusterID) + '/namespaces');
+}
+
+// 列出 pod（按 namespace 过滤）
+export function getK8sPods(clusterID, namespace) {
+  const qs = namespace ? '?namespace=' + encodeURIComponent(namespace) : '';
+  return authGet('/api/v1/k8s/clusters/' + encodeURIComponent(clusterID) + '/pods' + qs);
+}
+
+// 获取 pod 日志（tailLines 默认 100，container 可选）
+export function getK8sPodLogs(clusterID, ns, name, tailLines, container) {
+  let qs = [];
+  if (tailLines) qs.push('tailLines=' + encodeURIComponent(tailLines));
+  if (container) qs.push('container=' + encodeURIComponent(container));
+  const q = qs.length ? '?' + qs.join('&') : '';
+  return authGet('/api/v1/k8s/clusters/' + encodeURIComponent(clusterID) + '/pods/' + encodeURIComponent(ns) + '/' + encodeURIComponent(name) + '/logs' + q);
+}
+
+// 删除 pod：返回 {s, j}（j 为 null，204）
+export function deleteK8sPod(clusterID, ns, name) {
+  const h = {};
+  const token = getToken();
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  return fetch('/api/v1/k8s/clusters/' + encodeURIComponent(clusterID) + '/pods/' + encodeURIComponent(ns) + '/' + encodeURIComponent(name), { method: 'DELETE', headers: h })
+    .then(function (r) { return { s: r.status, j: null }; });
+}
+
+// 列出 deployment（按 namespace 过滤）
+export function getK8sDeployments(clusterID, namespace) {
+  const qs = namespace ? '?namespace=' + encodeURIComponent(namespace) : '';
+  return authGet('/api/v1/k8s/clusters/' + encodeURIComponent(clusterID) + '/deployments' + qs);
+}
+
+// 扩缩容 deployment：body {replicas}，返回 {s, j}，j 形如 {name, replicas}
+export async function scaleK8sDeployment(clusterID, ns, name, replicas) {
+  return await request('/api/v1/k8s/clusters/' + encodeURIComponent(clusterID) + '/deployments/' + encodeURIComponent(ns) + '/' + encodeURIComponent(name) + '/scale', jsonBody({ replicas: replicas }));
+}
+
+// 重启 deployment：返回 {s, j}，j 形如 {status, restartedAt}
+export async function restartK8sDeployment(clusterID, ns, name) {
+  return await request('/api/v1/k8s/clusters/' + encodeURIComponent(clusterID) + '/deployments/' + encodeURIComponent(ns) + '/' + encodeURIComponent(name) + '/restart', jsonBody({}));
+}
+
+// 列出 service（按 namespace 过滤）
+export function getK8sServices(clusterID, namespace) {
+  const qs = namespace ? '?namespace=' + encodeURIComponent(namespace) : '';
+  return authGet('/api/v1/k8s/clusters/' + encodeURIComponent(clusterID) + '/services' + qs);
+}
+
+// 列出 configmap（按 namespace 过滤）
+export function getK8sConfigMaps(clusterID, namespace) {
+  const qs = namespace ? '?namespace=' + encodeURIComponent(namespace) : '';
+  return authGet('/api/v1/k8s/clusters/' + encodeURIComponent(clusterID) + '/configmaps' + qs);
+}
+
+// 列出 secret（按 namespace 过滤）
+export function getK8sSecrets(clusterID, namespace) {
+  const qs = namespace ? '?namespace=' + encodeURIComponent(namespace) : '';
+  return authGet('/api/v1/k8s/clusters/' + encodeURIComponent(clusterID) + '/secrets' + qs);
+}
+
+// 列出 node
+export function getK8sNodes(clusterID) {
+  return authGet('/api/v1/k8s/clusters/' + encodeURIComponent(clusterID) + '/nodes');
+}

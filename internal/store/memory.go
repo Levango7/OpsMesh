@@ -48,6 +48,9 @@ type MemoryStore struct {
 	// 设备实时监控指标：deviceID -> 最新指标（agent 心跳上报，仅保留最新值）。
 	// 历史时序由 Prometheus 负责，这里只缓存最近一次采集结果供 API 查询。
 	deviceMetrics map[string]*proto.DeviceMetrics
+	// K8s 集群配置（Phase 3）：clusterID -> 集群配置。
+	// 与 deviceMetrics 同样由 m.mu 保护并发安全；Kubeconfig 为敏感内容，API 层负责脱敏。
+	k8sClusters map[string]*K8sCluster
 }
 
 // tokenMeta B1 install token 元数据：一次性、限时，消费后标记 consumed。
@@ -189,6 +192,7 @@ func NewMemoryStore() *MemoryStore {
 		roles:         make(map[string]*Role),
 		secret:        mustRandHex(32),
 		deviceMetrics: make(map[string]*proto.DeviceMetrics),
+		k8sClusters:   make(map[string]*K8sCluster),
 	}
 	m.seedRBAC()
 	return m

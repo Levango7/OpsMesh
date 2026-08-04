@@ -780,6 +780,7 @@ var (
 	_ UserStore       = (*MultiSchemaStore)(nil)
 	_ RoleStore       = (*MultiSchemaStore)(nil)
 	_ PermissionStore = (*MultiSchemaStore)(nil)
+	_ K8sClusterStore = (*MultiSchemaStore)(nil)
 	_ Store           = (*MultiSchemaStore)(nil)
 )
 
@@ -917,4 +918,44 @@ func (m *MultiSchemaStore) ListPermissions() []*Permission {
 		return nil
 	}
 	return s.ListPermissions()
+}
+
+// ============================================================================
+// K8sClusterStore 实现（Phase 3，路由到全局 store）
+// ============================================================================
+
+// ListK8sClusters 返回所有 K8s 集群配置（路由到全局 store）。
+func (m *MultiSchemaStore) ListK8sClusters() []*K8sCluster {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.ListK8sClusters()
+}
+
+// GetK8sCluster 按 ID 返回单个集群配置（路由到全局 store）。
+func (m *MultiSchemaStore) GetK8sCluster(id string) *K8sCluster {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.GetK8sCluster(id)
+}
+
+// SaveK8sCluster 创建或更新集群配置（路由到全局 store）。
+func (m *MultiSchemaStore) SaveK8sCluster(c *K8sCluster) {
+	s, err := m.globalStore()
+	if err != nil {
+		return
+	}
+	s.SaveK8sCluster(c)
+}
+
+// DeleteK8sCluster 删除集群配置（路由到全局 store）。
+func (m *MultiSchemaStore) DeleteK8sCluster(id string) bool {
+	s, err := m.globalStore()
+	if err != nil {
+		return false
+	}
+	return s.DeleteK8sCluster(id)
 }

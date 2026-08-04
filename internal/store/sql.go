@@ -378,6 +378,20 @@ func (s *SQLStore) initSchema() error {
 	if err := s.seedRBAC(ctx); err != nil {
 		log.Printf("[store] seedRBAC 失败（非致命）: %v", err)
 	}
+	// Phase 3 K8s 集群管理：k8s_clusters 表（clusterID/name/server/kubeconfig/status）。
+	// Kubeconfig 为敏感内容（TEXT 列），API 层负责脱敏后返回前端。
+	if _, err := s.db.ExecContext(ctx, `
+	CREATE TABLE IF NOT EXISTS k8s_clusters (
+		id VARCHAR(64) PRIMARY KEY,
+		name VARCHAR(255) NOT NULL,
+		server VARCHAR(255),
+		kubeconfig TEXT,
+		status VARCHAR(16) DEFAULT 'unknown',
+		created_at DATETIME,
+		updated_at DATETIME
+	)`); err != nil {
+		log.Printf("[store] 建 k8s_clusters 表失败（非致命）: %v", err)
+	}
 	return nil
 }
 

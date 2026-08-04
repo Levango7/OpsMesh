@@ -41,6 +41,7 @@ import (
 	"opsmesh/internal/domain"
 	"opsmesh/internal/events"
 	"opsmesh/internal/grpcx"
+	"opsmesh/internal/k8s"
 	"opsmesh/internal/logstore"
 	"opsmesh/internal/logx"
 	"opsmesh/internal/metrics"
@@ -88,6 +89,10 @@ type Server struct {
 
 	// loginGuard 登录/注册防爆破 + 限流（P1-4，进程内）。多副本 HA 下建议后续换 Redis 共享。
 	loginGuard *loginGuard
+
+	// clusterMgr K8s 多集群连接管理器（Phase 3）。
+	// 由 NewServer 构造；用户创建/更新集群时 AddCluster，删除时 RemoveCluster，测试连接时 TestCluster。
+	clusterMgr *k8s.ClusterManager
 }
 
 // NewServer 构造控制面服务。按 cfg.Store 选择持久化后端（默认 memory），并初始化事件总线与指标。
@@ -150,6 +155,8 @@ func NewServer(cfg *config.Config) *Server {
 	}
 	// P1-4 登录/注册防爆破 + 限流守卫（进程内；多副本建议后续换 Redis）。
 	s.loginGuard = newLoginGuard()
+	// Phase 3 K8s 多集群连接管理器：构造空管理器，用户创建集群时 AddCluster。
+	s.clusterMgr = k8s.NewClusterManager()
 	return s
 }
 
@@ -376,6 +383,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/middleware-templates/", s.handleMiddlewareTemplateDetail) // 子路径：{id} 和 {id}/deploy
 	mux.HandleFunc("/api/v1/middleware-instances", s.handleMiddlewareInstances)
 	mux.HandleFunc("/api/v1/middleware-instances/", s.handleMiddlewareInstanceRouting) // 子路径：{id}/uninstall
+	// Phase 3 K8s 集群管理：GET/POST 集群列表 + DELETE 单集群 + POST 测试连接。
+	mux.HandleFunc("/api/v1/k8s/clusters", s.handleK8sClusters)
+	mux.HandleFunc("/api/v1/k8s/clusters/", s.handleK8sClusterRouting) // 子路径：{id} 和 {id}/test
 
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", s.httpPort),

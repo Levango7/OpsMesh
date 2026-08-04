@@ -639,3 +639,12 @@ td code,th code{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-spac
 #osTemplateDetail h4{font-size:14px}
 #osTemplateDetail .field-hint{font-size:12px;color:var(--text-3);margin-bottom:2px}
 #osTemplateDetail pre{font-family:"SFMono-Regular",Consolas,monospace}
+
+/* ============================================================
+   K8s 管理页（Phase 3）
+   - 资源类型 tab 按钮的 active 状态（与 osopt-cat-btn 风格一致）
+   - 集群下拉 / namespace 输入 / 资源列表表格沿用现有 .form-control / .table-wrap 样式
+   ============================================================ */
+.k8s-res-tab{cursor:pointer}
+.k8s-res-tab.active{background:var(--accent);color:#fff;font-weight:600;border-color:var(--accent)}
+.k8s-res-tab.active:hover{background:var(--accent);color:#fff}

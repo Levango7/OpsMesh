@@ -92,6 +92,7 @@
   <button class="tab" id="tab-cmdb-btn" onclick="switchTab('cmdb')"><span class="icon" id="navIconCmdb"></span>配置库（CMDB）</button>
   <button class="tab" id="tab-osopt-btn" onclick="switchTab('osopt')"><span class="icon" id="navIconOsOpt"></span>OS 优化</button>
   <button class="tab" id="tab-mwdep-btn" onclick="switchTab('mwdep')"><span class="icon" id="navIconMwDep"></span>中间件部署</button>
+  <button class="tab" id="tab-k8s-btn" onclick="switchTab('k8s')"><span class="icon" id="navIconK8s"></span>K8s 管理</button>
   <div class="navgroup" id="navGroupDelivery">交付中心</div>
   <button class="tab" id="tab-deploy-btn" onclick="switchTab('deploy')"><span class="icon" id="navIconDeploy"></span>部署中心</button>
   <button class="tab" id="tab-flow-btn" onclick="switchTab('flow')"><span class="icon" id="navIconFlow"></span>作业编排</button>
@@ -859,6 +860,153 @@
       <div style="margin-top:16px;text-align:right">
         <button class="btn btn-sm" onclick="closeMwUninstallModal()" id="mwUninstallCancelBtn">取消</button>
         <button class="btn btn-primary btn-sm" onclick="confirmMwUninstall()" id="mwUninstallConfirmBtn" style="margin-left:8px;background:var(--fail);border-color:var(--fail)">确认卸载</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ K8s 管理 ============ -->
+<div id="tab-k8s" class="pane">
+  <div class="pane-intro">
+    <div class="ico" style="background:var(--indigo-soft);color:var(--indigo)"><span class="icon" id="introIconK8s"></span></div>
+    <div class="txt">
+      <h3 id="k8sTitle">K8s 管理</h3>
+      <p id="k8sDesc">管理多个 Kubernetes 集群：添加/删除集群、测试连接，并查看集群下的资源（Pod / Deployment / Service / ConfigMap / Secret / Node）。</p>
+    </div>
+  </div>
+
+  <!-- 集群管理 -->
+  <div class="row-single">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div>
+          <h4 id="k8sClustersTitle" style="margin:0 0 4px 0">集群管理</h4>
+          <p class="field-hint" id="k8sClustersHint" style="margin:0">管理已纳管的 Kubernetes 集群列表。</p>
+        </div>
+        <div>
+          <button class="btn btn-sm" onclick="loadK8sClusters()" style="margin-right:6px" id="k8sClustersRefreshBtn">刷新</button>
+          <button class="btn btn-primary btn-sm" onclick="showAddK8sClusterModal()" id="k8sAddClusterBtn">添加集群</button>
+        </div>
+      </div>
+      <div id="k8sClusterList"><p class="muted">加载中…</p></div>
+    </div>
+  </div>
+
+  <!-- 资源管理 -->
+  <div class="row-single">
+    <div class="card">
+      <div style="margin-bottom:12px">
+        <h4 id="k8sResourcesTitle" style="margin:0 0 4px 0">资源管理</h4>
+        <p class="field-hint" id="k8sResourcesHint" style="margin:0">选择集群与命名空间，查看资源列表。</p>
+      </div>
+      <!-- 集群选择 + namespace 输入 -->
+      <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;margin-bottom:16px;align-items:end">
+        <div>
+          <label><span id="k8sSelectClusterLabel">选择集群</span></label>
+          <select id="k8sClusterSelect" class="form-control" onchange="onK8sClusterSelectChange()">
+            <option value="">— 请选择 —</option>
+          </select>
+        </div>
+        <div>
+          <label><span id="k8sNamespaceLabel">命名空间</span></label>
+          <input type="text" id="k8sNamespaceInput" class="form-control" placeholder="留空查全部" onkeydown="onK8sNamespaceKeyDown(event)">
+        </div>
+        <div>
+          <button class="btn btn-primary btn-sm" onclick="reloadK8sResources()" id="k8sReloadBtn">查询</button>
+        </div>
+      </div>
+      <!-- 资源类型 tab -->
+      <div id="k8sResourceTabs" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:8px">
+        <button class="btn btn-sm k8s-res-tab active" data-res="pods" onclick="switchK8sResource('pods')" id="k8sTabPods">Pod</button>
+        <button class="btn btn-sm k8s-res-tab" data-res="deployments" onclick="switchK8sResource('deployments')" id="k8sTabDeployments">Deployment</button>
+        <button class="btn btn-sm k8s-res-tab" data-res="services" onclick="switchK8sResource('services')" id="k8sTabServices">Service</button>
+        <button class="btn btn-sm k8s-res-tab" data-res="configmaps" onclick="switchK8sResource('configmaps')" id="k8sTabConfigMaps">ConfigMap</button>
+        <button class="btn btn-sm k8s-res-tab" data-res="secrets" onclick="switchK8sResource('secrets')" id="k8sTabSecrets">Secret</button>
+        <button class="btn btn-sm k8s-res-tab" data-res="nodes" onclick="switchK8sResource('nodes')" id="k8sTabNodes">Node</button>
+      </div>
+      <!-- 资源列表 -->
+      <div id="k8sResourceList"><p class="muted">未选择集群</p></div>
+    </div>
+  </div>
+  <div class="page-note" id="note-k8s"></div>
+</div>
+
+<!-- ============ K8s 添加集群对话框 ============ -->
+<div id="k8sAddClusterModal" class="dev-modal-overlay">
+  <div class="dev-modal" role="dialog" aria-modal="true">
+    <div class="dev-modal-header">
+      <h3 id="k8sAddClusterTitle">添加集群</h3>
+      <button class="close-btn" onclick="closeK8sAddClusterModal()" aria-label="关闭">✕</button>
+    </div>
+    <div class="dev-modal-body">
+      <div style="margin-bottom:12px">
+        <label><span id="k8sAddClusterNameLabel">集群名称</span></label>
+        <input type="text" id="k8sAddClusterName" class="form-control" placeholder="my-cluster">
+      </div>
+      <div style="margin-bottom:12px">
+        <label><span id="k8sAddClusterServerLabel">API Server</span></label>
+        <input type="text" id="k8sAddClusterServer" class="form-control" placeholder="https://10.0.0.1:6443">
+      </div>
+      <div style="margin-bottom:12px">
+        <label><span id="k8sAddClusterKubeconfigLabel">Kubeconfig</span></label>
+        <div class="field-hint" id="k8sAddClusterKubeconfigHint" style="margin-bottom:4px">粘贴 kubeconfig 文件内容</div>
+        <textarea id="k8sAddClusterKubeconfig" class="form-control" rows="10" style="font-family:monospace;font-size:12px;resize:vertical" placeholder="apiVersion: v1&#10;clusters:&#10;- cluster:&#10;    server: https://10.0.0.1:6443&#10;    certificate-authority-data: ...&#10;  name: my-cluster&#10;contexts:&#10;- context:&#10;    cluster: my-cluster&#10;    user: my-user&#10;  name: my-context&#10;current-context: my-context&#10;kind: Config&#10;preferences: {}&#10;users:&#10;- name: my-user&#10;  user:&#10;    client-certificate-data: ...&#10;    client-key-data: ..."></textarea>
+      </div>
+      <div id="k8sAddClusterMsg" class="msg" style="margin-top:12px"></div>
+      <div style="margin-top:16px;text-align:right">
+        <button class="btn btn-sm" onclick="closeK8sAddClusterModal()" id="k8sAddClusterCancelBtn">取消</button>
+        <button class="btn btn-primary btn-sm" onclick="confirmAddK8sCluster()" id="k8sAddClusterConfirmBtn" style="margin-left:8px">确认添加</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ K8s Pod 日志对话框 ============ -->
+<div id="k8sPodLogsModal" class="dev-modal-overlay">
+  <div class="dev-modal" role="dialog" aria-modal="true" style="max-width:900px">
+    <div class="dev-modal-header">
+      <h3 id="k8sPodLogsTitle">Pod 日志</h3>
+      <button class="close-btn" onclick="closeK8sPodLogsModal()" aria-label="关闭">✕</button>
+    </div>
+    <div class="dev-modal-body">
+      <div style="display:grid;grid-template-columns:auto 1fr auto;gap:12px;margin-bottom:12px;align-items:end">
+        <div>
+          <label><span id="k8sPodLogsTailLabel">行数</span></label>
+          <input type="number" id="k8sPodLogsTail" class="form-control" value="100" min="1" max="10000" style="width:120px">
+        </div>
+        <div>
+          <label><span id="k8sPodLogsContainerLabel">容器</span></label>
+          <input type="text" id="k8sPodLogsContainer" class="form-control" placeholder="留空取默认容器">
+        </div>
+        <div>
+          <button class="btn btn-primary btn-sm" onclick="refreshK8sPodLogs()" id="k8sPodLogsRefreshBtn">刷新</button>
+        </div>
+      </div>
+      <pre id="k8sPodLogsContent" style="background:var(--bg-2);color:var(--text-1);padding:12px;border-radius:6px;overflow:auto;max-height:480px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all;min-height:200px">加载中…</pre>
+      <div style="margin-top:16px;text-align:right">
+        <button class="btn btn-sm" onclick="closeK8sPodLogsModal()" id="k8sPodLogsCloseBtn">关闭</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ K8s Deployment 扩缩容对话框 ============ -->
+<div id="k8sScaleModal" class="dev-modal-overlay">
+  <div class="dev-modal" role="dialog" aria-modal="true">
+    <div class="dev-modal-header">
+      <h3 id="k8sScaleTitle">扩缩容</h3>
+      <button class="close-btn" onclick="closeK8sScaleModal()" aria-label="关闭">✕</button>
+    </div>
+    <div class="dev-modal-body">
+      <div id="k8sScaleHint" class="field-hint" style="margin-bottom:12px">设置目标副本数，K8s 会自动调度 Pod 达到期望状态。</div>
+      <div style="margin-bottom:12px">
+        <label><span id="k8sScaleReplicasLabel">目标副本数</span></label>
+        <input type="number" id="k8sScaleReplicas" class="form-control" value="1" min="0" max="1000">
+      </div>
+      <div id="k8sScaleMsg" class="msg" style="margin-top:12px"></div>
+      <div style="margin-top:16px;text-align:right">
+        <button class="btn btn-sm" onclick="closeK8sScaleModal()" id="k8sScaleCancelBtn">取消</button>
+        <button class="btn btn-primary btn-sm" onclick="confirmScaleDeployment()" id="k8sScaleConfirmBtn" style="margin-left:8px">确认</button>
       </div>
     </div>
   </div>
