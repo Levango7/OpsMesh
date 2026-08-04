@@ -9,8 +9,8 @@ package controlplane
 
 import (
 	"context"
-	cryptoRand "crypto/rand"
 	"crypto/hmac"
+	cryptoRand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -294,8 +294,8 @@ func recoveryMiddleware(h http.Handler) http.Handler {
 		defer func() {
 			if rec := recover(); rec != nil {
 				ctx := logx.WithTrace(r.Context(), "http-recover")
-			logx.Error(ctx, "HTTP handler panic recovered",
-				fmt.Errorf("%v", rec), "method", r.Method, "path", r.URL.Path)
+				logx.Error(ctx, "HTTP handler panic recovered",
+					fmt.Errorf("%v", rec), "method", r.Method, "path", r.URL.Path)
 				// net/http 在 WriteHeader 已调用后无法覆写状态码；此时仅记录，避免二次 panic。
 				if w.Header().Get("Content-Type") == "" {
 					w.Header().Set("Content-Type", "application/json")
@@ -368,6 +368,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/roles", s.handleRoles)
 	mux.HandleFunc("/api/v1/roles/", s.handleRoleRouting)
 	mux.HandleFunc("/api/v1/permissions", s.handlePermissions)
+	// OS 基础环境优化：预置模板列表 + 详情 + 在指定 agent 上执行。
+	mux.HandleFunc("/api/v1/os-templates", s.handleListOSTemplates)
+	mux.HandleFunc("/api/v1/os-templates/", s.handleOSTemplateRouting) // 子路径：{id} 和 {id}/execute
 
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", s.httpPort),

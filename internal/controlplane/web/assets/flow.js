@@ -67,12 +67,13 @@ setRenderDeps({ setFocus: setFocus, openDevice: null, focusDevice: getFocusDevic
 
 // ---------- 标签切换 ----------
 export function switchTab(name) {
-  ['home', 'ops', 'cmdb', 'deploy', 'flow', 'logs', 'alerts', 'users', 'roles', 'permission', 'audits', 'settings', 'docs'].forEach(function (t) {
+  ['home', 'ops', 'cmdb', 'osopt', 'deploy', 'flow', 'logs', 'alerts', 'users', 'roles', 'permission', 'audits', 'settings', 'docs'].forEach(function (t) {
     const p = document.getElementById('tab-' + t); if (p) p.classList.toggle('active', t === name);
     const b = document.getElementById('tab-' + t + '-btn'); if (b) b.classList.toggle('active', t === name);
   });
   if (name === 'ops') { pollTasks(); }
   if (name === 'cmdb') { loadCMDBTypes(); }
+  if (name === 'osopt') { loadOSTemplates(); }
   if (name === 'flow') { loadFlows(); }
   if (name === 'deploy') { pollDeploys(); }
   if (name === 'alerts') { pollAlertsFull(); }
@@ -893,4 +894,225 @@ export function submitTaskForm() {
   api.createTask(body)
     .then(function (x) { const el = document.getElementById('taskResult'); el.className = 'msg ' + (x.s < 400 ? 'ok' : 'err'); el.textContent = '[' + x.s + '] ' + JSON.stringify(x.j); pollTasks(); pollDevices(); })
     .catch(function (err) { const el = document.getElementById('taskResult'); el.className = 'msg err'; el.textContent = 'error: ' + err; });
+}
+
+// ============================================================
+// OS 基础环境优化
+// ============================================================
+// 模板列表加载、分类筛选、详情查看、执行。
+// 后端契约：
+//   GET  /api/v1/os-templates[?category=] → OSTemplate[]
+//   GET  /api/v1/os-templates/{id}         → OSTemplate
+//   POST /api/v1/os-templates/{id}/execute {agentID, params[]} → task
+
+// 当前分类筛选（模块级状态）
+let osoptCurrentCat = '';
+// 当前待执行的模板 ID（执行对话框用）
+let osoptExecId = '';
+
+// 风险等级 → 颜色 + 文本键
+function osoptRiskStyle(risk) {
+  if (risk === 'low') return { color: 'var(--green)', bg: 'var(--green-soft, #e6f9ee)' };
+  if (risk === 'high') return { color: 'var(--fail)', bg: 'var(--fail-soft, #fde8e8)' };
+  return { color: 'var(--accent)', bg: 'var(--accent-soft)' };
+}
+
+// 渲染风险等级标签
+function osoptRiskBadge(risk) {
+  const s = osoptRiskStyle(risk);
+  return '<span class="badge" style="background:' + s.bg + ';color:' + s.color + ';border:1px solid ' + s.color + '">' + esc(t('osopt.risk.' + (risk || 'medium'))) + '</span>';
+}
+
+// 渲染分类标签
+function osoptCatBadge(cat) {
+  const key = 'osopt.category.' + (cat || 'all');
+  return '<span class="badge" style="background:var(--bg-2);color:var(--text-2)">' + esc(t(key)) + '</span>';
+}
+
+// 加载 OS 优化模板列表（按当前分类筛选）
+export function loadOSTemplates() {
+  const listEl = document.getElementById('osTemplateList');
+  if (listEl) listEl.innerHTML = '<p class="muted">' + esc(t('osopt.loading')) + '</p>';
+  // 隐藏详情面板
+  const detailEl = document.getElementById('osTemplateDetail');
+  if (detailEl) detailEl.style.display = 'none';
+  api.getOSTemplates(osoptCurrentCat).then(function (list) {
+    const el = document.getElementById('osTemplateList');
+    if (!el) return;
+    if (!list || list.length === 0) {
+      el.innerHTML = '<p class="muted">' + esc(t('osopt.noTemplates')) + '</p>';
+      return;
+    }
+    let html = '<div class="table-wrap"><table><colgroup>'
+      + '<col style="width:18%"><col style="width:26%"><col style="width:14%"><col style="width:14%"><col style="width:28%">'
+      + '</colgroup><thead><tr>'
+      + '<th>' + esc(t('osopt.col.id')) + '</th>'
+      + '<th>' + esc(t('osopt.col.name')) + '</th>'
+      + '<th>' + esc(t('osopt.col.category')) + '</th>'
+      + '<th>' + esc(t('osopt.col.risk')) + '</th>'
+      + '<th>' + esc(t('osopt.col.action')) + '</th>'
+      + '</tr></thead><tbody>';
+    list.forEach(function (tpl) {
+      const tid = esc(tpl.id || '');
+      html += '<tr>'
+        + '<td><code title="' + tid + '">' + tid + '</code></td>'
+        + '<td>' + esc(tpl.name || '') + '</td>'
+        + '<td>' + osoptCatBadge(tpl.category) + '</td>'
+        + '<td>' + osoptRiskBadge(tpl.risk) + '</td>'
+        + '<td>'
+        + '<button class="btn btn-sm" onclick="showOSTemplateDetail(\'' + tid + '\')" style="margin-right:6px">' + icon('search', 12) + ' ' + esc(t('osopt.view')) + '</button>'
+        + '<button class="btn btn-primary btn-sm" onclick="executeOSOptimize(\'' + tid + '\')">' + icon('task', 12) + ' ' + esc(t('osopt.execute')) + '</button>'
+        + '</td>'
+        + '</tr>';
+    });
+    html += '</tbody></table></div>';
+    el.innerHTML = html;
+  }).catch(function (e) {
+    console.error('[os-templates]', e);
+    const el = document.getElementById('osTemplateList');
+    if (el) el.innerHTML = '<p class="muted">' + esc(t('osopt.networkError')) + '</p>';
+  });
+}
+
+// 分类筛选：切换分类并重新加载
+export function filterOSTemplates(category) {
+  osoptCurrentCat = category || '';
+  // 更新按钮 active 状态
+  document.querySelectorAll('.osopt-cat-btn').forEach(function (btn) {
+    btn.classList.toggle('active', (btn.getAttribute('data-cat') || '') === osoptCurrentCat);
+  });
+  loadOSTemplates();
+}
+
+// 显示模板详情
+export function showOSTemplateDetail(id) {
+  const detailEl = document.getElementById('osTemplateDetail');
+  if (!detailEl) return;
+  detailEl.style.display = '';
+  detailEl.innerHTML = '<p class="muted">' + esc(t('osopt.loading')) + '</p>';
+  api.getOSTemplate(id).then(function (tpl) {
+    const el = document.getElementById('osTemplateDetail');
+    if (!el) return;
+    if (!tpl || !tpl.id) {
+      el.innerHTML = '<p class="muted">' + esc(t('osopt.noTemplates')) + '</p>';
+      return;
+    }
+    const tags = (tpl.tags || []).map(function (tag) { return '<span class="badge" style="background:var(--bg-2);color:var(--text-2);margin-right:4px">' + esc(tag) + '</span>'; }).join('');
+    let html = '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:12px">'
+      + '<h4 style="margin:0">' + esc(tpl.name || tpl.id) + ' <code style="font-size:12px;color:var(--text-3)">' + esc(tpl.id) + '</code></h4>'
+      + '<button class="btn btn-sm" onclick="hideOSTemplateDetail()">' + icon('close', 12) + ' ' + esc(t('osopt.detailClose')) + '</button>'
+      + '</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:12px">'
+      + '<div><div class="field-hint">' + esc(t('osopt.col.category')) + '</div><div>' + osoptCatBadge(tpl.category) + '</div></div>'
+      + '<div><div class="field-hint">' + esc(t('osopt.col.risk')) + '</div><div>' + osoptRiskBadge(tpl.risk) + '</div></div>'
+      + '<div><div class="field-hint">' + esc(t('osopt.detailOs')) + '</div><div>' + esc(tpl.os || 'all') + '</div></div>'
+      + '<div><div class="field-hint">' + esc(t('osopt.detailTags')) + '</div><div>' + (tags || '-') + '</div></div>'
+      + '</div>';
+    html += '<div style="margin-bottom:12px"><div class="field-hint">' + esc(t('osopt.detailDesc')) + '</div><div>' + esc(tpl.description || '-') + '</div></div>';
+    html += '<div><div class="field-hint" style="margin-bottom:4px">' + esc(t('osopt.detailCommands')) + '</div>'
+      + '<pre style="background:var(--bg-2);color:var(--text-1);padding:12px;border-radius:6px;overflow:auto;max-height:320px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all">' + esc(tpl.commands || '') + '</pre>'
+      + '</div>';
+    html += '<div style="margin-top:12px;text-align:right">'
+      + '<button class="btn btn-primary btn-sm" onclick="executeOSOptimize(\'' + esc(tpl.id) + '\')">' + icon('task', 12) + ' ' + esc(t('osopt.execute')) + '</button>'
+      + '</div>';
+    el.innerHTML = html;
+  }).catch(function (e) {
+    console.error('[os-template-detail]', e);
+    const el = document.getElementById('osTemplateDetail');
+    if (el) el.innerHTML = '<p class="muted">' + esc(t('osopt.networkError')) + '</p>';
+  });
+}
+
+// 隐藏模板详情
+export function hideOSTemplateDetail() {
+  const el = document.getElementById('osTemplateDetail');
+  if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+}
+
+// 打开执行对话框：加载设备列表供选择
+export function executeOSOptimize(id) {
+  osoptExecId = id;
+  const modal = document.getElementById('osExecModal');
+  if (!modal) return;
+  // 重置结果区
+  const resultEl = document.getElementById('osExecResult');
+  if (resultEl) { resultEl.innerHTML = ''; resultEl.className = ''; }
+  // 清空参数
+  const paramsEl = document.getElementById('osExecParams');
+  if (paramsEl) paramsEl.value = '';
+  // 加载设备列表到下拉
+  const agentSel = document.getElementById('osExecAgent');
+  if (agentSel) {
+    agentSel.innerHTML = '<option value="">— ' + esc(t('osopt.selectAgent')) + ' —</option>';
+    api.getDevices().then(function (devs) {
+      if (!agentSel) return;
+      // devs 可能是数组或按网段分组的对象，统一拍平为数组
+      let arr = [];
+      if (Array.isArray(devs)) {
+        arr = devs;
+      } else if (devs && typeof devs === 'object') {
+        Object.keys(devs).forEach(function (seg) {
+          const v = devs[seg];
+          if (Array.isArray(v)) { v.forEach(function (d) { arr.push(d); }); }
+          else { arr.push(v); }
+        });
+      }
+      arr.forEach(function (d) {
+        const aid = d.agentID || d.id || '';
+        if (!aid) return;
+        const label = aid + ' (' + esc(d.hostname || d.ip || d.deviceID || '') + ')';
+        const o = document.createElement('option');
+        o.value = aid;
+        o.textContent = label;
+        agentSel.appendChild(o);
+      });
+    }).catch(function (e) { console.error('[os-exec devices]', e); });
+  }
+  modal.classList.add('open');
+}
+
+// 关闭执行对话框
+export function closeOSExecModal() {
+  const modal = document.getElementById('osExecModal');
+  if (modal) modal.classList.remove('open');
+  osoptExecId = '';
+}
+
+// 确认执行：调用 API 在选定设备上执行模板
+export function confirmOSExec() {
+  const resultEl = document.getElementById('osExecResult');
+  if (!osoptExecId) {
+    if (resultEl) { resultEl.className = 'msg err'; resultEl.textContent = t('osopt.execFail') + ': no template'; }
+    return;
+  }
+  const agentSel = document.getElementById('osExecAgent');
+  const agentID = agentSel ? agentSel.value : '';
+  if (!agentID) {
+    if (resultEl) { resultEl.className = 'msg err'; resultEl.textContent = t('osopt.noAgent'); }
+    return;
+  }
+  const paramsEl = document.getElementById('osExecParams');
+  const paramsText = paramsEl ? paramsEl.value : '';
+  const params = paramsText.split('\n').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+
+  if (resultEl) { resultEl.className = 'msg'; resultEl.textContent = t('osopt.loading'); }
+  api.executeOSTemplate(osoptExecId, agentID, params).then(function (r) {
+    if (!resultEl) return;
+    if (r && r.s && r.s < 400 && r.j) {
+      const taskId = (r.j.taskID || r.j.id || r.j.taskId || '');
+      resultEl.className = 'msg ok';
+      resultEl.textContent = t('osopt.execSuccess') + (taskId || JSON.stringify(r.j));
+      // 执行成功后延迟关闭对话框
+      setTimeout(closeOSExecModal, 2000);
+    } else {
+      resultEl.className = 'msg err';
+      resultEl.textContent = t('osopt.execFail') + ': [' + (r && r.s || '?') + '] ' + (r && r.j ? JSON.stringify(r.j) : '');
+    }
+  }).catch(function (e) {
+    console.error('[os-exec]', e);
+    if (resultEl) {
+      resultEl.className = 'msg err';
+      resultEl.textContent = t('osopt.execFail') + ': ' + (e && e.message || e);
+    }
+  });
 }

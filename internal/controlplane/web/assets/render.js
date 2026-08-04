@@ -943,7 +943,7 @@ export function paintResTypeDist() {
 // 页面底部说明渲染
 // ============================================================
 export function renderPageNotes() {
-  const pages = ['home', 'ops', 'cmdb', 'flow', 'deploy', 'logs', 'alerts', 'users', 'roles', 'permissions', 'settings'];
+  const pages = ['home', 'ops', 'cmdb', 'osopt', 'flow', 'deploy', 'logs', 'alerts', 'users', 'roles', 'permissions', 'settings'];
   pages.forEach(function (p) {
     const el = document.getElementById('note-' + p);
     if (!el) return;
@@ -1157,6 +1157,10 @@ export function renderDocs() {
     + api('GET', '/permissions', '权限列表')
     + '<h4>审计</h4>'
     + api('GET', '/audits', '审计日志（支持 action/from/to/limit 过滤）')
+    + '<h4>OS 优化</h4>'
+    + api('GET', '/os-templates', 'OS 优化模板列表（可选 ?category= 过滤）')
+    + api('GET', '/os-templates/{id}', 'OS 优化模板详情')
+    + api('POST', '/os-templates/{id}/execute', '在指定设备上执行模板')
     : '<p>All APIs are prefixed with <code>/api/v1</code>; auth required (Cookie or Bearer Token).</p>'
     + '<h4>Auth</h4>'
     + api('POST', '/auth/login', 'Login, returns token')
@@ -1203,7 +1207,11 @@ export function renderDocs() {
     + api('GET', '/roles', 'List roles')
     + api('GET', '/permissions', 'List permissions')
     + '<h4>Audit</h4>'
-    + api('GET', '/audits', 'Audit logs (action/from/to/limit filters)');
+    + api('GET', '/audits', 'Audit logs (action/from/to/limit filters)')
+    + '<h4>OS Optimize</h4>'
+    + api('GET', '/os-templates', 'List OS optimization templates (optional ?category= filter)')
+    + api('GET', '/os-templates/{id}', 'OS optimization template detail')
+    + api('POST', '/os-templates/{id}/execute', 'Execute template on a device');
   html += panel('docs-panel-api', '<h3>' + esc(t('docs.api')) + '</h3>' + apiBody);
 
   // 架构

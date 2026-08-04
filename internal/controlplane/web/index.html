@@ -90,6 +90,7 @@
   <div class="navgroup" id="navGroupOps">运维管理</div>
   <button class="tab" id="tab-ops-btn" onclick="switchTab('ops')"><span class="icon" id="navIconOps"></span>运维中枢</button>
   <button class="tab" id="tab-cmdb-btn" onclick="switchTab('cmdb')"><span class="icon" id="navIconCmdb"></span>配置库（CMDB）</button>
+  <button class="tab" id="tab-osopt-btn" onclick="switchTab('osopt')"><span class="icon" id="navIconOsOpt"></span>OS 优化</button>
   <div class="navgroup" id="navGroupDelivery">交付中心</div>
   <button class="tab" id="tab-deploy-btn" onclick="switchTab('deploy')"><span class="icon" id="navIconDeploy"></span>部署中心</button>
   <button class="tab" id="tab-flow-btn" onclick="switchTab('flow')"><span class="icon" id="navIconFlow"></span>作业编排</button>
@@ -685,6 +686,65 @@
     <div id="permsList" class="card"><p class="muted">加载中…</p></div>
   </div>
   <div class="page-note" id="note-permissions"></div>
+</div>
+
+<!-- ============ OS 基础环境优化 ============ -->
+<div id="tab-osopt" class="pane">
+  <div class="pane-intro">
+    <div class="ico" style="background:var(--teal-soft);color:var(--teal)"><span class="icon" id="introIconOsOpt"></span></div>
+    <div class="txt">
+      <h3 id="osoptTitle">OS 基础环境优化</h3>
+      <p id="osoptDesc">预置操作系统优化模板，支持内核调优、安全加固、时间同步等，一键在目标设备上执行。</p>
+    </div>
+  </div>
+  <div class="row-single">
+    <div class="card">
+      <!-- 分类筛选 -->
+      <div class="osopt-cat-filter" id="osoptCatFilter" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">
+        <button class="btn btn-sm osopt-cat-btn active" data-cat="" onclick="filterOSTemplates('')" id="osoptCatAll">全部</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="kernel" onclick="filterOSTemplates('kernel')" id="osoptCatKernel">内核</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="network" onclick="filterOSTemplates('network')" id="osoptCatNetwork">网络</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="security" onclick="filterOSTemplates('security')" id="osoptCatSecurity">安全</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="time" onclick="filterOSTemplates('time')" id="osoptCatTime">时间</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="ssh" onclick="filterOSTemplates('ssh')" id="osoptCatSsh">SSH</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="disk" onclick="filterOSTemplates('disk')" id="osoptCatDisk">磁盘</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="system" onclick="filterOSTemplates('system')" id="osoptCatSystem">系统</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="user" onclick="filterOSTemplates('user')" id="osoptCatUser">用户</button>
+        <button class="btn btn-sm" onclick="loadOSTemplates()" style="margin-left:auto" id="osoptRefreshBtn">刷新</button>
+      </div>
+      <!-- 模板列表 -->
+      <div id="osTemplateList"><p class="muted">加载中…</p></div>
+      <!-- 模板详情面板（默认隐藏） -->
+      <div id="osTemplateDetail" style="display:none;margin-top:16px;border-top:1px solid var(--border);padding-top:16px"></div>
+    </div>
+  </div>
+  <div class="page-note" id="note-osopt"></div>
+</div>
+
+<!-- ============ OS 优化执行对话框 ============ -->
+<div id="osExecModal" class="dev-modal-overlay">
+  <div class="dev-modal" role="dialog" aria-modal="true">
+    <div class="dev-modal-header">
+      <h3 id="osExecTitle">执行模板</h3>
+      <button class="close-btn" onclick="closeOSExecModal()" aria-label="关闭">✕</button>
+    </div>
+    <div class="dev-modal-body" id="osExecBody">
+      <div id="osExecHint" class="field-hint" style="margin-bottom:12px"></div>
+      <div style="margin-bottom:12px">
+        <label><span id="osExecAgentLabel">选择目标设备</span></label>
+        <select id="osExecAgent" class="form-control"></select>
+      </div>
+      <div style="margin-bottom:12px">
+        <label><span id="osExecParamsLabel">参数（每行一个）</span></label>
+        <textarea id="osExecParams" class="form-control" rows="3" placeholder="param1&#10;param2"></textarea>
+      </div>
+      <div id="osExecResult" style="margin-top:12px"></div>
+      <div style="margin-top:16px;text-align:right">
+        <button class="btn btn-sm" onclick="closeOSExecModal()" id="osExecCancelBtn">取消</button>
+        <button class="btn btn-primary btn-sm" onclick="confirmOSExec()" id="osExecConfirmBtn" style="margin-left:8px">确认执行</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- ============ 审计日志 ============ -->

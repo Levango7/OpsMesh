@@ -357,3 +357,25 @@ export function getAudits(action, from, to, limit) {
   if (limit) qs.push('limit=' + encodeURIComponent(limit));
   return authGet('/api/v1/audits' + (qs.length ? '?' + qs.join('&') : ''));
 }
+
+// ---------- OS 优化模板 ----------
+// 契约：
+//   GET  /api/v1/os-templates            → 200 OSTemplate[]（可选 ?category= 过滤）
+//   GET  /api/v1/os-templates/{id}       → 200 OSTemplate
+//   POST /api/v1/os-templates/{id}/execute  {agentID, params[]} → 200 task 信息
+// OSTemplate 字段：id, name, category, description, commands, risk(low/medium/high), tags[], os
+export function getOSTemplates(category) {
+  const qs = category ? '?category=' + encodeURIComponent(category) : '';
+  return authGet('/api/v1/os-templates' + qs);
+}
+
+export function getOSTemplate(id) {
+  return authGet('/api/v1/os-templates/' + encodeURIComponent(id));
+}
+
+// 执行模板：在指定 agent 上执行 OS 优化模板，返回创建的 task 信息。
+// 由于 authPost 不带 body，这里用 request + jsonBody 发送 POST 请求。
+export async function executeOSTemplate(id, agentID, params) {
+  const body = { agentID: agentID, params: params || [] };
+  return await request('/api/v1/os-templates/' + encodeURIComponent(id) + '/execute', jsonBody(body));
+}

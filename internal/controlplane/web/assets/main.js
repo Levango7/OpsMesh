@@ -29,6 +29,8 @@ import {
   setFocus, clearFocus, jumpFocus,
   fetchMe, loadAgents, submitTaskForm,
   loadAudits,
+  loadOSTemplates, filterOSTemplates, showOSTemplateDetail, hideOSTemplateDetail,
+  executeOSOptimize, closeOSExecModal, confirmOSExec,
 } from './flow.js';
 import { icon } from './icons.js';
 import { initTheme, toggleTheme, getTheme, setTheme } from './theme.js';
@@ -89,6 +91,14 @@ w.clearFocus = clearFocus;
 w.jumpFocus = jumpFocus;
 // 审计日志
 w.loadAudits = loadAudits;
+// OS 基础环境优化
+w.loadOSTemplates = loadOSTemplates;
+w.filterOSTemplates = filterOSTemplates;
+w.showOSTemplateDetail = showOSTemplateDetail;
+w.hideOSTemplateDetail = hideOSTemplateDetail;
+w.executeOSOptimize = executeOSOptimize;
+w.closeOSExecModal = closeOSExecModal;
+w.confirmOSExec = confirmOSExec;
 
 // ---------- 主题 / 语言 ----------
 w.toggleTheme = toggleTheme;
@@ -583,11 +593,13 @@ function initStaticIcons() {
     'navIconDeploy': 'deploy', 'navIconFlow': 'flow', 'navIconLogs': 'logs',
     'navIconAlerts': 'alerts', 'navIconUsers': 'users', 'navIconRoles': 'roles',
     'navIconPerms': 'permissions', 'navIconAudits': 'audit', 'navIconSettings': 'settings', 'navIconDocs': 'info',
+    'navIconOsOpt': 'osopt',
     // pane-intro
     'introIconHome': 'home', 'introIconOps': 'ops', 'introIconCmdb': 'cmdb',
     'introIconFlow': 'flow', 'introIconDeploy': 'deploy', 'introIconLogs': 'logs',
     'introIconAlerts': 'alerts', 'introIconUsers': 'users', 'introIconRoles': 'roles',
     'introIconPerms': 'permissions', 'introIconAudits': 'audit', 'introIconSettings': 'settings', 'introIconDocs': 'info',
+    'introIconOsOpt': 'osopt',
     // 上下文
     'ctxIcon': 'context',
     // 按钮
@@ -673,6 +685,26 @@ function applyI18nToDOM() {
   setText('auditToLabelText', t('audits.to'));
   setText('auditLimitLabelText', t('audits.limit'));
   setText('auditSearchBtn', t('audits.search'));
+  // OS 基础环境优化页
+  setText('tab-osopt-btn', t('nav.osopt'), true);
+  setHTML('osoptTitle', t('osopt.title'));
+  setHTML('osoptDesc', t('osopt.desc'));
+  setText('osoptCatAll', t('osopt.category.all'));
+  setText('osoptCatKernel', t('osopt.category.kernel'));
+  setText('osoptCatNetwork', t('osopt.category.network'));
+  setText('osoptCatSecurity', t('osopt.category.security'));
+  setText('osoptCatTime', t('osopt.category.time'));
+  setText('osoptCatSsh', t('osopt.category.ssh'));
+  setText('osoptCatDisk', t('osopt.category.disk'));
+  setText('osoptCatSystem', t('osopt.category.system'));
+  setText('osoptCatUser', t('osopt.category.user'));
+  setText('osoptRefreshBtn', t('osopt.refresh'));
+  setText('osExecTitle', t('osopt.execTitle'));
+  setText('osExecHint', t('osopt.execHint'));
+  setText('osExecAgentLabel', t('osopt.selectAgent'));
+  setText('osExecParamsLabel', t('osopt.params'));
+  setText('osExecCancelBtn', t('osopt.cancel'));
+  setText('osExecConfirmBtn', t('osopt.confirm'));
   // 系统设置 / 文档
   setText('settingsTitle', t('settings.title'));
   setText('settingsDesc', t('settings.desc'));
