@@ -31,6 +31,8 @@ import {
   loadAudits,
   loadOSTemplates, filterOSTemplates, showOSTemplateDetail, hideOSTemplateDetail,
   executeOSOptimize, closeOSExecModal, confirmOSExec,
+  loadMiddlewareTemplates, filterMiddlewareTemplates, showMiddlewareDetail, hideMiddlewareDetail,
+  deployMiddleware, closeMwDeployModal, confirmMwDeploy, onMwDeployTypeChange, loadMiddlewareInstances,
 } from './flow.js';
 import { icon } from './icons.js';
 import { initTheme, toggleTheme, getTheme, setTheme } from './theme.js';
@@ -99,6 +101,16 @@ w.hideOSTemplateDetail = hideOSTemplateDetail;
 w.executeOSOptimize = executeOSOptimize;
 w.closeOSExecModal = closeOSExecModal;
 w.confirmOSExec = confirmOSExec;
+// 中间件部署
+w.loadMiddlewareTemplates = loadMiddlewareTemplates;
+w.filterMiddlewareTemplates = filterMiddlewareTemplates;
+w.showMiddlewareDetail = showMiddlewareDetail;
+w.hideMiddlewareDetail = hideMiddlewareDetail;
+w.deployMiddleware = deployMiddleware;
+w.closeMwDeployModal = closeMwDeployModal;
+w.confirmMwDeploy = confirmMwDeploy;
+w.onMwDeployTypeChange = onMwDeployTypeChange;
+w.loadMiddlewareInstances = loadMiddlewareInstances;
 
 // ---------- 主题 / 语言 ----------
 w.toggleTheme = toggleTheme;
@@ -594,12 +606,14 @@ function initStaticIcons() {
     'navIconAlerts': 'alerts', 'navIconUsers': 'users', 'navIconRoles': 'roles',
     'navIconPerms': 'permissions', 'navIconAudits': 'audit', 'navIconSettings': 'settings', 'navIconDocs': 'info',
     'navIconOsOpt': 'osopt',
+    'navIconMwDep': 'mwdep',
     // pane-intro
     'introIconHome': 'home', 'introIconOps': 'ops', 'introIconCmdb': 'cmdb',
     'introIconFlow': 'flow', 'introIconDeploy': 'deploy', 'introIconLogs': 'logs',
     'introIconAlerts': 'alerts', 'introIconUsers': 'users', 'introIconRoles': 'roles',
     'introIconPerms': 'permissions', 'introIconAudits': 'audit', 'introIconSettings': 'settings', 'introIconDocs': 'info',
     'introIconOsOpt': 'osopt',
+    'introIconMwDep': 'mwdep',
     // 上下文
     'ctxIcon': 'context',
     // 按钮
@@ -705,6 +719,26 @@ function applyI18nToDOM() {
   setText('osExecParamsLabel', t('osopt.params'));
   setText('osExecCancelBtn', t('osopt.cancel'));
   setText('osExecConfirmBtn', t('osopt.confirm'));
+  // 中间件部署页
+  setText('tab-mwdep-btn', t('nav.mwdep'), true);
+  setHTML('mwdepTitle', t('mwdep.title'));
+  setHTML('mwdepDesc', t('mwdep.desc'));
+  setText('mwdepCatAll', t('mwdep.category.all'));
+  setText('mwdepCatDatabase', t('mwdep.category.database'));
+  setText('mwdepCatCache', t('mwdep.category.cache'));
+  setText('mwdepCatMessage', t('mwdep.category.message'));
+  setText('mwdepCatWeb', t('mwdep.category.web'));
+  setText('mwdepCatSearch', t('mwdep.category.search'));
+  setText('mwdepRefreshBtn', t('mwdep.refresh'));
+  setText('mwInstancesTitle', t('mwdep.instancesTitle'));
+  setText('mwInstancesHint', t('mwdep.instancesHint'));
+  setText('mwDeployTitle', t('mwdep.deployTitle'));
+  setText('mwDeployHint', t('mwdep.deployHint'));
+  setText('mwDeployTypeLabel', t('mwdep.selectDeployType'));
+  setText('mwDeployAgentLabel', t('mwdep.selectAgent'));
+  setText('mwDeployParamsLabel', t('mwdep.params'));
+  setText('mwDeployCancelBtn', t('mwdep.cancel'));
+  setText('mwDeployConfirmBtn', t('mwdep.confirm'));
   // 系统设置 / 文档
   setText('settingsTitle', t('settings.title'));
   setText('settingsDesc', t('settings.desc'));

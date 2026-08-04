@@ -943,7 +943,7 @@ export function paintResTypeDist() {
 // 页面底部说明渲染
 // ============================================================
 export function renderPageNotes() {
-  const pages = ['home', 'ops', 'cmdb', 'osopt', 'flow', 'deploy', 'logs', 'alerts', 'users', 'roles', 'permissions', 'settings'];
+  const pages = ['home', 'ops', 'cmdb', 'osopt', 'mwdep', 'flow', 'deploy', 'logs', 'alerts', 'users', 'roles', 'permissions', 'settings'];
   pages.forEach(function (p) {
     const el = document.getElementById('note-' + p);
     if (!el) return;
@@ -1161,6 +1161,11 @@ export function renderDocs() {
     + api('GET', '/os-templates', 'OS 优化模板列表（可选 ?category= 过滤）')
     + api('GET', '/os-templates/{id}', 'OS 优化模板详情')
     + api('POST', '/os-templates/{id}/execute', '在指定设备上执行模板')
+    + '<h4>中间件部署</h4>'
+    + api('GET', '/middleware-templates', '中间件模板列表（可选 ?category= 过滤）')
+    + api('GET', '/middleware-templates/{id}', '中间件模板详情')
+    + api('POST', '/middleware-templates/{id}/deploy', '部署中间件到指定设备')
+    + api('GET', '/middleware-instances', '已部署中间件实例列表')
     : '<p>All APIs are prefixed with <code>/api/v1</code>; auth required (Cookie or Bearer Token).</p>'
     + '<h4>Auth</h4>'
     + api('POST', '/auth/login', 'Login, returns token')
@@ -1211,7 +1216,12 @@ export function renderDocs() {
     + '<h4>OS Optimize</h4>'
     + api('GET', '/os-templates', 'List OS optimization templates (optional ?category= filter)')
     + api('GET', '/os-templates/{id}', 'OS optimization template detail')
-    + api('POST', '/os-templates/{id}/execute', 'Execute template on a device');
+    + api('POST', '/os-templates/{id}/execute', 'Execute template on a device')
+    + '<h4>Middleware Deploy</h4>'
+    + api('GET', '/middleware-templates', 'List middleware templates (optional ?category= filter)')
+    + api('GET', '/middleware-templates/{id}', 'Middleware template detail')
+    + api('POST', '/middleware-templates/{id}/deploy', 'Deploy middleware to a device')
+    + api('GET', '/middleware-instances', 'List deployed middleware instances');
   html += panel('docs-panel-api', '<h3>' + esc(t('docs.api')) + '</h3>' + apiBody);
 
   // 架构

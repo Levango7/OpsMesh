@@ -371,6 +371,10 @@ func (s *Server) Start() error {
 	// OS 基础环境优化：预置模板列表 + 详情 + 在指定 agent 上执行。
 	mux.HandleFunc("/api/v1/os-templates", s.handleListOSTemplates)
 	mux.HandleFunc("/api/v1/os-templates/", s.handleOSTemplateRouting) // 子路径：{id} 和 {id}/execute
+	// 中间件部署：预置模板列表 + 详情 + 在指定 agent 上部署 + 已部署实例查询。
+	mux.HandleFunc("/api/v1/middleware-templates", s.handleMiddlewareTemplates)
+	mux.HandleFunc("/api/v1/middleware-templates/", s.handleMiddlewareTemplateDetail) // 子路径：{id} 和 {id}/deploy
+	mux.HandleFunc("/api/v1/middleware-instances", s.handleMiddlewareInstances)
 
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", s.httpPort),

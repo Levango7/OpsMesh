@@ -379,3 +379,34 @@ export async function executeOSTemplate(id, agentID, params) {
   const body = { agentID: agentID, params: params || [] };
   return await request('/api/v1/os-templates/' + encodeURIComponent(id) + '/execute', jsonBody(body));
 }
+
+// ---------- 中间件部署模板 ----------
+// 契约：
+//   GET  /api/v1/middleware-templates            → 200 MiddlewareTemplate[]（可选 ?category= 过滤）
+//   GET  /api/v1/middleware-templates/{id}       → 200 MiddlewareTemplate
+//   POST /api/v1/middleware-templates/{id}/deploy  {agentID, deployType, params} → 200 {taskID}
+//   GET  /api/v1/middleware-instances            → 200 MiddlewareInstance[]
+// MiddlewareTemplate 字段：
+//   id, name, category, version, description, deployTypes[], params[], scripts{docker,systemd}, risk, tags[]
+// MiddlewareInstance 字段：{id, templateID, agentID, deployType, status, createdAt, ...}
+export function getMiddlewareTemplates(category) {
+  const qs = category ? '?category=' + encodeURIComponent(category) : '';
+  return authGet('/api/v1/middleware-templates' + qs);
+}
+
+export function getMiddlewareTemplate(id) {
+  return authGet('/api/v1/middleware-templates/' + encodeURIComponent(id));
+}
+
+// 部署中间件：在指定 agent 上以指定部署方式（docker/systemd）部署中间件模板。
+// params 为对象，例如 {name, port, password, ...}，由模板 params 定义。
+// 返回 {s, j}，其中 j 形如 {taskID}。
+export async function deployMiddleware(id, agentID, deployType, params) {
+  const body = { agentID: agentID, deployType: deployType, params: params || {} };
+  return await request('/api/v1/middleware-templates/' + encodeURIComponent(id) + '/deploy', jsonBody(body));
+}
+
+// 查询已部署的中间件实例列表。
+export function getMiddlewareInstances() {
+  return authGet('/api/v1/middleware-instances');
+}

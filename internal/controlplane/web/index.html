@@ -91,6 +91,7 @@
   <button class="tab" id="tab-ops-btn" onclick="switchTab('ops')"><span class="icon" id="navIconOps"></span>运维中枢</button>
   <button class="tab" id="tab-cmdb-btn" onclick="switchTab('cmdb')"><span class="icon" id="navIconCmdb"></span>配置库（CMDB）</button>
   <button class="tab" id="tab-osopt-btn" onclick="switchTab('osopt')"><span class="icon" id="navIconOsOpt"></span>OS 优化</button>
+  <button class="tab" id="tab-mwdep-btn" onclick="switchTab('mwdep')"><span class="icon" id="navIconMwDep"></span>中间件部署</button>
   <div class="navgroup" id="navGroupDelivery">交付中心</div>
   <button class="tab" id="tab-deploy-btn" onclick="switchTab('deploy')"><span class="icon" id="navIconDeploy"></span>部署中心</button>
   <button class="tab" id="tab-flow-btn" onclick="switchTab('flow')"><span class="icon" id="navIconFlow"></span>作业编排</button>
@@ -742,6 +743,74 @@
       <div style="margin-top:16px;text-align:right">
         <button class="btn btn-sm" onclick="closeOSExecModal()" id="osExecCancelBtn">取消</button>
         <button class="btn btn-primary btn-sm" onclick="confirmOSExec()" id="osExecConfirmBtn" style="margin-left:8px">确认执行</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 中间件部署 ============ -->
+<div id="tab-mwdep" class="pane">
+  <div class="pane-intro">
+    <div class="ico" style="background:var(--indigo-soft);color:var(--indigo)"><span class="icon" id="introIconMwDep"></span></div>
+    <div class="txt">
+      <h3 id="mwdepTitle">中间件部署</h3>
+      <p id="mwdepDesc">预置中间件部署模板（MySQL / Redis / Kafka / Nginx 等），支持 docker 容器化与 systemd 裸机两种部署方式，一键在目标设备上部署。</p>
+    </div>
+  </div>
+  <div class="row-single">
+    <div class="card">
+      <!-- 分类筛选 -->
+      <div class="osopt-cat-filter" id="mwdepCatFilter" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">
+        <button class="btn btn-sm osopt-cat-btn active" data-cat="" onclick="filterMiddlewareTemplates('')" id="mwdepCatAll">全部</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="database" onclick="filterMiddlewareTemplates('database')" id="mwdepCatDatabase">数据库</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="cache" onclick="filterMiddlewareTemplates('cache')" id="mwdepCatCache">缓存</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="message" onclick="filterMiddlewareTemplates('message')" id="mwdepCatMessage">消息队列</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="web" onclick="filterMiddlewareTemplates('web')" id="mwdepCatWeb">Web 服务器</button>
+        <button class="btn btn-sm osopt-cat-btn" data-cat="search" onclick="filterMiddlewareTemplates('search')" id="mwdepCatSearch">搜索引擎</button>
+        <button class="btn btn-sm" onclick="loadMiddlewareTemplates()" style="margin-left:auto" id="mwdepRefreshBtn">刷新</button>
+      </div>
+      <!-- 模板列表 -->
+      <div id="mwTemplateList"><p class="muted">加载中…</p></div>
+      <!-- 模板详情面板（默认隐藏） -->
+      <div id="mwTemplateDetail" style="display:none;margin-top:16px;border-top:1px solid var(--border);padding-top:16px"></div>
+    </div>
+  </div>
+  <!-- 已部署实例 -->
+  <div class="row-single">
+    <div class="card">
+      <h4 id="mwInstancesTitle" style="margin:0 0 4px 0">已部署实例</h4>
+      <p class="field-hint" id="mwInstancesHint" style="margin:0 0 12px 0">查看当前已部署的中间件实例列表。</p>
+      <div id="mwInstanceList"><p class="muted">加载中…</p></div>
+    </div>
+  </div>
+  <div class="page-note" id="note-mwdep"></div>
+</div>
+
+<!-- ============ 中间件部署对话框 ============ -->
+<div id="mwDeployModal" class="dev-modal-overlay">
+  <div class="dev-modal" role="dialog" aria-modal="true">
+    <div class="dev-modal-header">
+      <h3 id="mwDeployTitle">部署中间件</h3>
+      <button class="close-btn" onclick="closeMwDeployModal()" aria-label="关闭">✕</button>
+    </div>
+    <div class="dev-modal-body" id="mwDeployBody">
+      <div id="mwDeployHint" class="field-hint" style="margin-bottom:12px"></div>
+      <div style="margin-bottom:12px">
+        <label><span id="mwDeployTypeLabel">部署方式</span></label>
+        <select id="mwDeployType" class="form-control" onchange="onMwDeployTypeChange()"></select>
+      </div>
+      <div style="margin-bottom:12px">
+        <label><span id="mwDeployAgentLabel">选择目标设备</span></label>
+        <select id="mwDeployAgent" class="form-control"></select>
+      </div>
+      <div style="margin-bottom:12px">
+        <label><span id="mwDeployParamsLabel">部署参数</span></label>
+        <div id="mwDeployParams"></div>
+      </div>
+      <div id="mwDeployResult" style="margin-top:12px"></div>
+      <div style="margin-top:16px;text-align:right">
+        <button class="btn btn-sm" onclick="closeMwDeployModal()" id="mwDeployCancelBtn">取消</button>
+        <button class="btn btn-primary btn-sm" onclick="confirmMwDeploy()" id="mwDeployConfirmBtn" style="margin-left:8px">确认部署</button>
       </div>
     </div>
   </div>
