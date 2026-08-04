@@ -34,3 +34,26 @@ dist/
 
 
 .gocache/
+
+# 临时调试文件（清理工程师添加，防止再次提交）
+diag*.js
+debug_*.js
+check_*.js
+probe_*.js
+find_*.js
+full_test.js
+verify_*.js
+puppeteer_*.js
+test_*.js
+test_*.ps1
+test_*.css
+test_*.html
+*_screenshot.png
+*_report.json
+*_results.json
+*_result.json
+.puppeteer-profile/
+screenshots/
+opsmesh.exe~
+package.json
+package-lock.json

@@ -26,14 +26,14 @@ import (
 // 需要参数的模板在脚本内通过 $1/$2/... 引用（旧模式）或 {name}/{port}/... 占位符引用（新模式），
 // execute 时由控制面注入位置参数或做占位符替换。
 type OSTemplate struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Category    string   `json:"category"` // kernel/network/security/time/ssh/disk/system/user
-	Description string   `json:"description"`
-	Commands    string   `json:"commands"` // shell 脚本（可用 #!/bin/bash 开头）
-	Risk        string   `json:"risk"`     // low/medium/high
-	Tags        []string `json:"tags"`     // 标签
-	OS          string   `json:"os"`       // 适用操作系统：centos/ubuntu/all
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Category    string    `json:"category"` // kernel/network/security/time/ssh/disk/system/user
+	Description string    `json:"description"`
+	Commands    string    `json:"commands"`         // shell 脚本（可用 #!/bin/bash 开头）
+	Risk        string    `json:"risk"`             // low/medium/high
+	Tags        []string  `json:"tags"`             // 标签
+	OS          string    `json:"os"`               // 适用操作系统：centos/ubuntu/all
 	Params      []OSParam `json:"params,omitempty"` // 参数定义（新模式占位符替换 + 验证）
 }
 
@@ -489,10 +489,10 @@ swapon /swapfile
 grep -q "/swapfile" /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
 echo "swap-setup done: size=$SIZE"
 `,
-		Risk:     "low",
-		Tags:     []string{"kernel", "swap", "memory"},
-		OS:       "all",
-		Params:   []OSParam{{Name: "size", Description: "swap 文件大小（如 2G/4G）", Default: "2G", Required: true, Type: "string"}},
+		Risk:   "low",
+		Tags:   []string{"kernel", "swap", "memory"},
+		OS:     "all",
+		Params: []OSParam{{Name: "size", Description: "swap 文件大小（如 2G/4G）", Default: "2G", Required: true, Type: "string"}},
 	},
 	// limits-config (kernel, low) — 配置 /etc/security/limits.conf
 	{
@@ -510,10 +510,10 @@ grep -q "opsmesh-limits" /etc/security/limits.conf 2>/dev/null || cat >> /etc/se
 EOF
 echo "limits-config done: nofile=$NOFILE"
 `,
-		Risk:     "low",
-		Tags:     []string{"kernel", "limits", "fd"},
-		OS:       "all",
-		Params:   []OSParam{{Name: "nofile", Description: "文件描述符上限", Default: "65536", Required: true, Type: "int"}},
+		Risk:   "low",
+		Tags:   []string{"kernel", "limits", "fd"},
+		OS:     "all",
+		Params: []OSParam{{Name: "nofile", Description: "文件描述符上限", Default: "65536", Required: true, Type: "int"}},
 	},
 	// net-security (security, medium) — 网络安全参数
 	{
