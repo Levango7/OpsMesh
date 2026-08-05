@@ -44,13 +44,16 @@ jwtSecret: ""
 **`templates/secret.yaml` 新增键（用 `lookup` 跨 upgrade 保持）：**
 ```yaml
 {{- $secretName := printf "%s-secret" (include "opsmesh.fullname" .) }}
+{{- $existingSecret := lookup "v1" "Secret" .Release.Namespace $secretName }}
 {{- $existing := "" }}
-{{- if lookup "v1" "Secret" .Release.Namespace $secretName }}
-{{-   $existing = (lookup "v1" "Secret" .Release.Namespace $secretName).data.jwt-secret }}
+{{- if $existingSecret }}
+{{-   $existing = $existingSecret.data.jwt-secret | default "" | b64dec }}
 {{- end }}
 # JWT 签发密钥：显式值 > 已有 Secret（保持） > 首次随机。upgrade 天然不轮换。
 jwt-secret: {{ if .Values.controlplane.jwtSecret }}{{ .Values.controlplane.jwtSecret }}{{ else if $existing }}{{ $existing }}{{ else }}{{ randAlphaNum 32 }}{{ end }}
 ```
+- **base64 关键点**：`lookup` 返回的 Secret `.data` 是 base64 编码态（K8s API 原样返回）。secret.yaml 用 `stringData:`（明文区），故必须 `| b64dec` 还原成明文再放入 `stringData`，否则密钥双编码、实际值错。
+- `default ""` 兜底旧 Secret 里尚无 `jwt-secret` 键的场景（老版本升级）。
 - `lookup` 仅在集群内 upgrade/install 时返回已有数据；`helm template`（dry-run/CI 渲染）无集群时返回空，回退随机，仍可渲染。
 - 关键即："显式值 > 已有 Secret > 随机"，普通 upgrade 走"已有 Secret"分支 → 不重生成、不轮换。
 - 配合 deployment 已有 `checksum/secret` 注解（deployment:29），仅当 Secret 内容确实变化才触发滚动。
@@ -119,5 +122,6 @@ if c.Production && len([]byte(c.JWTSecret)) < 32 {
 - 一致性：fail 的 `Production` 强制与文档一致；`lookup` 与 deployment、密钥与`checksum` 逻辑一致。
 - 范围聚焦单实现批次，无外部仓依赖（charts/ 仓库缺失的 H19 不在本 design）。倒是：`M3-2Ab` 编号为本地锚点，非产品 backlog 编号。
 - 模糊性：`升32字节` 用 `len([]byte())` 计数，统一以字节计。
+- 风险标签：显式注入 `jwtSecret` 后若要轮换，将触发全量重登（拆包即全量重登，文档明示副作用）。
 
 （待用户审查后进入实施计划）
