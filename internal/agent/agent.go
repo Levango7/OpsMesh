@@ -8,6 +8,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -231,7 +233,14 @@ func (a *Agent) register() error {
 		cancel()
 		if err == nil {
 			a.agentID = resp.AgentID
-			logx.Info(ctx, "注册成功", "agentID", a.agentID, "segment", a.cfg.Segment, "grpc", a.cfg.ControlAddr)
+			// task 81 gRPC agent 身份绑定：保存控制面下发的 HMAC 签名密钥。
+			// 后续 PullTasks/ReportResult/PollCancels/Heartbeat 请求在 metadata 中携带签名，
+			// 控制面据此验证 agent 身份，不再纯信任 agent 自报的 AgentID。
+			// resp.Secret 为空表示控制面未启用签名验证（demo 模式或未配置 --grpc-require-signature），agent 不签名。
+			if resp.Secret != "" {
+				a.grpc.SetSecret(resp.Secret)
+			}
+			logx.Info(ctx, "注册成功", "agentID", a.agentID, "segment", a.cfg.Segment, "grpc", a.cfg.ControlAddr, "signed", resp.Secret != "")
 			return nil
 		}
 		// 安全（P1-F5）：Unauthenticated（install token 无效/过期/已被消费）属不可重试错误，
@@ -420,36 +429,40 @@ func (a *Agent) worker(ctx context.Context) {
 
 // execute 本地执行任务，按 Type 分派执行器（shell / service / file，见 proto.TaskType* 常量）。
 // 使用传入的 ctx（worker 已绑定 taskTimeout 与取消信号，F3 取消时 ctx 被取消、命令立即中断）。
+// 安全加固（task 78）：stdout/stderr 用 LimitedBuffer 限制 10MB，避免 cat 大文件耗尽 agent 内存。
 func (a *Agent) execute(ctx context.Context, t proto.Task) proto.TaskResult {
 	start := time.Now()
 	res := proto.TaskResult{TaskID: t.TaskID, AgentID: a.agentID, FinishedAt: time.Now()}
 
 	_ = ctx // ctx 由 shell/service/file 执行器经 exec.CommandContext 消费（取消信号直达子进程）
 
-	var stdout, stderr bytes.Buffer
+	stdout := newLimitedBuffer(maxOutputBytes)
+	stderr := newLimitedBuffer(maxOutputBytes)
 	var runErr error
 
 	switch t.Type {
 	case "", proto.TaskTypeShell:
-		// 安全提示（P1-10 / H4-M8）：shell 命令来自控制面下发，内核不做命令白名单过滤，
-		// 依赖控制面下发来源可信（前置网关/运营鉴权 + 等保三级 IAM 边界兜底）。
-		// 生产建议配合命令白名单中间件（如仅允许预设脚本前缀、拒绝 rm -rf / 等），
-		// 可在此接入命令前缀白名单（配合 --require-auth + 控制面侧 SubmitTask 校验）。
-		// 信任边界设计：service 类型已加 verb 白名单（见 execService），shell 类型保留全能力以支持运维脚本。
+		// 安全提示（P1-10 / H4-M8）：shell 命令来自控制面下发，内核做命令白名单过滤（task 78），
+		// 白名单为空时放行所有命令（向后兼容，demo/受信内网环境）。
+		// 信任边界设计：service 类型已加 verb 白名单（见 execService），shell 类型可经 --agent-shell-whitelist 收紧。
 		if t.Command == "" {
 			res.ExitCode = -1
 			res.Stderr = "empty command"
 			res.DurationMs = time.Since(start).Milliseconds()
 			return res
 		}
-		cmd := shellCommandContext(ctx, t.Command)
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		runErr = cmd.Run()
+		// 安全加固（task 78）：命令白名单检查（白名单为空时跳过，向后兼容）。
+		if err := a.checkShellWhitelist(t.Command); err != nil {
+			res.ExitCode = -1
+			res.Stderr = err.Error()
+			res.DurationMs = time.Since(start).Milliseconds()
+			return res
+		}
+		runErr = a.executeShell(ctx, t.Command, stdout, stderr)
 	case proto.TaskTypeService:
-		runErr = a.execService(ctx, &stdout, &stderr, t)
+		runErr = a.execService(ctx, stdout, stderr, t)
 	case proto.TaskTypeFile:
-		runErr = a.execFile(ctx, &stdout, &stderr, t)
+		runErr = a.execFile(ctx, stdout, stderr, t)
 	default:
 		res.ExitCode = -1
 		res.Stderr = "unsupported task type: " + t.Type
@@ -473,9 +486,121 @@ func (a *Agent) execute(ctx context.Context, t proto.Task) proto.TaskResult {
 	return res
 }
 
+// maxOutputBytes 是单个任务 stdout/stderr 的最大字节数（10MB），超过即截断并追加提示（task 78）。
+const maxOutputBytes = 10 * 1024 * 1024
+
+// limitedBuffer 是带上限的 io.Writer，超过 maxBytes 后丢弃后续写入并追加截断提示。
+// 用于限制单个任务 stdout/stderr 内存占用，避免 cat 大文件耗尽 agent 内存（task 78）。
+type limitedBuffer struct {
+	buf       bytes.Buffer
+	maxBytes  int
+	truncated bool
+}
+
+// newLimitedBuffer 构造一个 max 字节上限的 limitedBuffer。
+func newLimitedBuffer(max int) *limitedBuffer {
+	return &limitedBuffer{maxBytes: max}
+}
+
+// Write 实现 io.Writer。超过上限后丢弃写入并一次性追加截断提示。
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if b.truncated {
+		return len(p), nil // 已截断，静默丢弃后续写入
+	}
+	remaining := b.maxBytes - b.buf.Len()
+	if remaining <= 0 {
+		b.markTruncated()
+		return len(p), nil
+	}
+	if len(p) <= remaining {
+		return b.buf.Write(p)
+	}
+	b.buf.Write(p[:remaining])
+	b.markTruncated()
+	return len(p), nil
+}
+
+// markTruncated 追加截断提示（仅追加一次）。
+func (b *limitedBuffer) markTruncated() {
+	if b.truncated {
+		return
+	}
+	b.truncated = true
+	fmt.Fprintf(&b.buf, "\n...[output truncated at %dMB]...\n", b.maxBytes/1024/1024)
+}
+
+// String 返回已收集的内容（含截断提示）。
+func (b *limitedBuffer) String() string {
+	return b.buf.String()
+}
+
+// checkShellWhitelist 检查命令是否在白名单内（task 78 安全加固）。
+// 白名单为空时放行所有命令（向后兼容，demo/受信内网环境）。
+// 白名单非空时，取命令第一个 token 的 basename，检查是否匹配白名单中某个前缀。
+// 注意：这是最佳努力防御，无法完全阻止 "ls;rm -rf /" 这类 shell 元字符拼接绕过
+// （;后内容仍由同一 sh -c 解释执行）。纵深防御应配合控制面侧 SubmitTask 校验 + IAM 鉴权 +
+// 限制为非交互式单命令下发（无 sh -c 元字符）。本检查覆盖"第一个程序名不在白名单"的常见误用与
+// 控制面被攻陷后下发任意命令的场景。
+func (a *Agent) checkShellWhitelist(command string) error {
+	wl := a.cfg.AgentShellWhitelist
+	if wl == "" {
+		return nil // 白名单为空，不限制（向后兼容）
+	}
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return nil // 空命令已在调用前拦截，此处兜底放行
+	}
+	first := fields[0]
+	base := filepath.Base(first) // 取 basename（如 /bin/ls -> ls）
+	for _, prefix := range strings.Split(wl, ",") {
+		prefix = strings.TrimSpace(prefix)
+		if prefix == "" {
+			continue
+		}
+		// 精确匹配或前缀匹配（如白名单 "system" 允许 "systemctl"）
+		if base == prefix || strings.HasPrefix(base, prefix) {
+			return nil
+		}
+	}
+	return fmt.Errorf("command %q not in shell whitelist (allowed prefixes: %s)", base, wl)
+}
+
+// executeShell 启动 shell 子进程并等待其结束或 ctx 取消（task 78 安全加固）。
+// 与原 shellCommandContext + cmd.Run 的区别：
+//   - 设置 Setpgid=true（Linux/Darwin），使子进程成为新进程组 leader，
+//     ctx 取消/超时时杀整个进程组（包括子进程 fork 出的后台进程），避免孤儿后台进程继续运行。
+//   - Windows 上 Setpgid 无效，取消时用 cmd.Process.Kill() 杀父进程 + taskkill /T /F /PID 杀进程树。
+func (a *Agent) executeShell(ctx context.Context, command string, stdout, stderr io.Writer) error {
+	cmd := shellCommand(command)
+	setProcessGroup(cmd) // 平台特定：Linux/Darwin 设 Setpgid；Windows noop
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+	select {
+	case err := <-waitCh:
+		return err
+	case <-ctx.Done():
+		// 取消/超时：先杀进程组/树（Linux: SIGTERM 进程组；Windows: taskkill /T /F /PID 进程树），
+		// 再用 cmd.Process.Kill() 兜底杀父进程（确保终止，避免 taskkill 启动慢时父进程继续运行）。
+		if err := killProcessGroup(cmd.Process.Pid); err != nil {
+			log.Printf("agent: killProcessGroup(pid=%d) 失败: %v", cmd.Process.Pid, err)
+		}
+		if err := cmd.Process.Kill(); err != nil {
+			log.Printf("agent: Process.Kill(pid=%d) 失败: %v", cmd.Process.Pid, err)
+		}
+		// 等待 cmd.Wait 返回，回收子进程资源避免僵尸进程
+		<-waitCh
+		return ctx.Err()
+	}
+}
+
 // execService 运行系统服务管理命令：Command 为 start|stop|restart|status；
 // 服务名优先取 Path，否则从 Command 解析（例如 "restart nginx" -> systemctl restart nginx）。
-func (a *Agent) execService(ctx context.Context, out, errb *bytes.Buffer, t proto.Task) error {
+func (a *Agent) execService(ctx context.Context, out, errb io.Writer, t proto.Task) error {
 	verb := strings.TrimSpace(t.Command)
 	if verb == "" {
 		return fmt.Errorf("service task requires command (start|stop|restart|status)")
@@ -518,32 +643,92 @@ var serviceVerbWhitelist = map[string]bool{
 }
 
 // execFile 原子写入文件：先写同目录临时文件，再 rename 到目标路径（Path），避免半写文件。
-func (a *Agent) execFile(ctx context.Context, out, errb *bytes.Buffer, t proto.Task) error {
+// 安全加固（task 78）：路径遍历防护——
+//   - 先 filepath.Clean 规范化原始路径，Clean 后仍含 ".." 说明试图逃逸根目录，拒绝；
+//   - 再 filepath.Abs 解析为绝对路径（Abs 内部会再 Clean 一次，确保路径规范）；
+//   - 用 os.Lstat 检查符号链接，拒绝（避免经符号链接逃逸到任意路径）；
+//   - 可选 --agent-file-root-whitelist 限制允许操作的根目录（主要路径遍历防护）。
+func (a *Agent) execFile(ctx context.Context, out, errb io.Writer, t proto.Task) error {
+	_ = ctx
 	if t.Path == "" {
 		return fmt.Errorf("file task requires path")
 	}
-	// 安全提示（P1-11）：文件路径穿越未做白名单限制，依赖下发来源可信。
-	// 生产如需加固，应在下方对 clean 路径做根目录前缀白名单校验（如只允许 /var/opsmesh/files/）。
-	clean := filepath.Clean(t.Path)
+	// 路径遍历防护（task 78）：先 Clean 原始路径，检查是否残留 ".."。
+	// 纯相对路径如 "../../etc/passwd" Clean 后仍含 ".."，说明试图逃逸，拒绝。
+	// 绝对路径如 "/var/opsmesh/../../etc/passwd" Clean 后不含 ".."（已解析），靠根目录白名单防护。
+	cleanRaw := filepath.Clean(t.Path)
+	if strings.Contains(cleanRaw, "..") {
+		return fmt.Errorf("path traversal detected: %q (cleaned: %q)", t.Path, cleanRaw)
+	}
+	// 解析绝对路径（Abs 内部会再 Clean，确保路径规范）。
+	abs, err := filepath.Abs(cleanRaw)
+	if err != nil {
+		return fmt.Errorf("resolve absolute path %q: %w", t.Path, err)
+	}
+	clean := filepath.Clean(abs)
+	// 拒绝符号链接（避免经符号链接逃逸到任意路径）。
+	if fi, err := os.Lstat(clean); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("symlink not allowed: %q -> %q", t.Path, clean)
+	}
+	// 根目录白名单检查（task 78：可选，白名单为空时跳过；主要路径遍历防护）。
+	if err := a.checkFileRootWhitelist(clean); err != nil {
+		return err
+	}
 	dir := filepath.Dir(clean)
 	tmp, err := os.CreateTemp(dir, ".opsmesh-*")
 	if err != nil {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
+	defer func() {
+		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
+			log.Printf("agent: 清理临时文件 %s 失败: %v", tmpName, err)
+		}
+	}()
 	if _, err := tmp.WriteString(t.Content); err != nil {
-		_ = tmp.Close()
+		if cerr := tmp.Close(); cerr != nil {
+			log.Printf("agent: 写临时文件失败后关闭句柄失败: %v", cerr)
+		}
 		return err
 	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpName, t.Path); err != nil {
+	if err := os.Rename(tmpName, clean); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "wrote %d bytes to %s\n", len(t.Content), t.Path)
+	fmt.Fprintf(out, "wrote %d bytes to %s\n", len(t.Content), clean)
 	return nil
+}
+
+// checkFileRootWhitelist 检查路径是否落在允许的根目录之下（task 78 安全加固）。
+// 白名单为空时不限制（向后兼容，仍拒绝 ../ 与符号链接）。
+// 白名单非空时，路径必须落在某个根目录之下（用 filepath.Rel 判断相对路径不以 ".." 开头）。
+func (a *Agent) checkFileRootWhitelist(path string) error {
+	wl := a.cfg.AgentFileRootWhitelist
+	if wl == "" {
+		return nil
+	}
+	for _, root := range strings.Split(wl, ",") {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		rootAbs, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		rootClean := filepath.Clean(rootAbs)
+		rel, err := filepath.Rel(rootClean, path)
+		if err != nil {
+			continue
+		}
+		// rel 不以 ".." 开头说明 path 在 rootClean 之下（含相等）。
+		if !strings.HasPrefix(rel, "..") {
+			return nil
+		}
+	}
+	return fmt.Errorf("path %q not under any allowed root (whitelist: %s)", path, wl)
 }
 
 // reportResult 把执行结果经 gRPC ReportResult 上报控制面。
@@ -557,10 +742,12 @@ func (a *Agent) reportResult(ctx context.Context, t proto.Task, res proto.TaskRe
 	logx.Info(ctx, "任务完成", "taskID", t.TaskID, "exitCode", res.ExitCode, "durationMs", res.DurationMs)
 }
 
-// shellCommandContext 按操作系统选择 shell，并绑定 context 超时（P0-3）。
-func shellCommandContext(ctx context.Context, command string) *exec.Cmd {
+// shellCommand 按操作系统选择 shell 构造子进程（task 78：取消信号由 executeShell 监听 ctx 后
+// 经 killProcessGroup 杀整个进程组，不再用 exec.CommandContext 直接绑定 ctx，因为后者只杀父进程
+// 不杀子进程 fork 出的后台进程）。
+func shellCommand(command string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
-		return exec.CommandContext(ctx, "cmd", "/C", command)
+		return exec.Command("cmd", "/C", command)
 	}
-	return exec.CommandContext(ctx, "sh", "-c", command)
+	return exec.Command("sh", "-c", command)
 }

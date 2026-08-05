@@ -307,10 +307,12 @@ func recoveryMiddleware(h http.Handler) http.Handler {
 				if w.Header().Get("Content-Type") == "" {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusInternalServerError)
-					_ = json.NewEncoder(w).Encode(map[string]string{
+					if err := json.NewEncoder(w).Encode(map[string]string{
 						"error":   "internal server error",
 						"traceId": logx.Trace(ctx),
-					})
+					}); err != nil {
+						log.Printf("controlplane: panic recover 写错误响应失败: %v", err)
+					}
 				}
 			}
 		}()
@@ -327,6 +329,39 @@ const maxBodyBytes = 1 << 20 // 1 MiB
 func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	return json.NewDecoder(r.Body).Decode(v)
+}
+
+// requireTenantContext 提取并校验网关注入的租户身份上下文（H6 认证防御）。
+//
+// 行为矩阵：
+//   - 头非空（X-Tenant-ID 已注入） → 返回 actx, true
+//   - 头为空且 requireAuth=true → 401 Unauthorized（拒绝，生产模式严格校验）
+//   - 头为空且 requireAuth=false 且 demo=true → 自动填充 default/demo（放宽，便于本地一键体验）
+//   - 头为空且 requireAuth=false 且 demo=false → 400 Bad Request（拒绝空租户头，防越权伪造）
+//
+// 安全语义：非生产非 demo 模式下也拒绝空租户头，避免任意客户端伪造 X-Tenant-ID 越权；
+// demo 模式保持宽松（自动填充默认租户），不影响本地体验。
+// 调用方应在 ok=false 时直接 return（响应已写入）。
+func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (authctx.Context, bool) {
+	actx := authctx.FromHTTPHeader(r.Header)
+	if actx.TenantID != "" {
+		return actx, true
+	}
+	if s.requireAuth {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+		return actx, false
+	}
+	if s.cfg != nil && s.cfg.Demo {
+		// demo 模式放宽：未携带身份头时填充默认租户/用户，便于本地一键体验。
+		actx.TenantID = "default"
+		if actx.UserID == "" {
+			actx.UserID = "demo"
+		}
+		return actx, true
+	}
+	// 非生产非 demo 模式：拒绝空租户头，防越权伪造。
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing X-Tenant-ID header (tenant context required)"})
+	return actx, false
 }
 
 // Start 启动 HTTP(B/S)、gRPC(9090)、metrics(9091) 三个监听，并在收到 SIGTERM/SIGINT 时优雅退出。
@@ -370,6 +405,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/auth/register", s.handleAuthRegister)
 	mux.HandleFunc("/api/v1/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("/api/v1/auth/me", s.handleAuthMe)
+	mux.HandleFunc("/api/v1/auth/change-password", s.handleAuthChangePassword) // 安全债 85：预置弱口令强制改密
 	mux.HandleFunc("/api/v1/users", s.handleUsers)
 	mux.HandleFunc("/api/v1/users/", s.handleUserRouting)
 	mux.HandleFunc("/api/v1/roles", s.handleRoles)
@@ -451,10 +487,16 @@ func (s *Server) Start() error {
 		grpcSrv.GracefulStop()
 		shutCtx, cancel := context.WithTimeout(context.Background(), s.shutdownWait)
 		defer cancel()
-		_ = httpSrv.Shutdown(shutCtx)
-		_ = metricsSrv.Shutdown(shutCtx)
+		if err := httpSrv.Shutdown(shutCtx); err != nil {
+			log.Printf("controlplane: HTTP 服务优雅退出失败: %v", err)
+		}
+		if err := metricsSrv.Shutdown(shutCtx); err != nil {
+			log.Printf("controlplane: metrics 服务优雅退出失败: %v", err)
+		}
 		if fedSrv != nil {
-			_ = fedSrv.Shutdown(shutCtx)
+			if err := fedSrv.Shutdown(shutCtx); err != nil {
+				log.Printf("controlplane: federation 服务优雅退出失败: %v", err)
+			}
 		}
 		return nil
 	case err := <-errCh:
@@ -489,6 +531,9 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
 		cmdb:        s.cmdbHandler,
 		logs:        s.logHandler,
 		srv:         s, // M3-2B：注入 Server 引用，使 gRPC handler 可发布 SSE 事件
+		// task 81 gRPC agent 身份绑定：按 config.GRPCRequireSignature 启用签名验证。
+		// demo 模式下 config 已强制关闭（cfg.GRPCRequireSignature=false），此处直接透传。
+		requireSignature: s.cfg != nil && s.cfg.GRPCRequireSignature,
 	})
 	return gs, lis
 }
@@ -639,9 +684,8 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.store.Snapshot(actx.TenantID))
@@ -653,9 +697,8 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	out := make([]map[string]string, 0)
@@ -676,9 +719,8 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -702,9 +744,8 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -725,10 +766,8 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	if body.Type == "" {
 		body.Type = "shell"
 	}
-	targetTenant := body.TenantID
-	if targetTenant == "" {
-		targetTenant = actx.TenantID
-	}
+	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	targetTenant := actx.TenantID
 	agent := s.lookupAgent(body.AgentID)
 	if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "agent not found or tenant mismatch"})
@@ -760,7 +799,8 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		s.metrics.SetQueueDepth(s.store.PendingDepth())
 	}
 	// M3-2B SSE：通知前端新任务已创建（前端任务表追加一行 pending）
-	s.publishEvent("task_status", map[string]string{
+	// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
+	s.publishEvent("task_status", targetTenant, map[string]string{
 		"taskID":  task.TaskID,
 		"status":  task.Status,
 		"agentID": body.AgentID,
@@ -780,9 +820,8 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	status := r.URL.Query().Get("status")
@@ -808,9 +847,8 @@ func (s *Server) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "device id required", http.StatusBadRequest)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	dev := s.store.Device(id)
@@ -992,9 +1030,8 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -1021,10 +1058,8 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 	if body.Type == "" {
 		body.Type = "shell"
 	}
-	targetTenant := body.TenantID
-	if targetTenant == "" {
-		targetTenant = actx.TenantID
-	}
+	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	targetTenant := actx.TenantID
 	created := make([]string, 0, len(body.Targets))
 	type fail struct {
 		Target string `json:"target"`
@@ -1062,7 +1097,8 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 		}
 		created = append(created, task.TaskID)
 		// M3-2B SSE：批量下发也逐条推送 task_status（前端实时追加任务行）
-		s.publishEvent("task_status", map[string]string{
+		// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
+		s.publishEvent("task_status", targetTenant, map[string]string{
 			"taskID":  task.TaskID,
 			"status":  task.Status,
 			"agentID": tid,
@@ -1085,9 +1121,8 @@ func (s *Server) handleAudits(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	q := r.URL.Query()
@@ -1144,13 +1179,12 @@ func (s *Server) handleTaskRouting(w http.ResponseWriter, r *http.Request) {
 // handleCancelTask 处理 POST /api/v1/tasks/{id}/cancel：取消 pending/running 任务（F3）。
 // 租户隔离：requireAuth 时强制用网关注入租户，禁止越权取消他租户任务。
 func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request, id string) {
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	tenant := actx.TenantID
-	ok := s.store.CancelTask(id, tenant)
+	ok = s.store.CancelTask(id, tenant)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not cancellable (not found / not pending|running / tenant mismatch)"})
 		return
@@ -1164,7 +1198,8 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request, id str
 		})
 	}
 	// M3-2B SSE：通知前端任务已取消（任务表对应行状态翻 cancelled）
-	s.publishEvent("task_status", map[string]string{
+	// H6 租户隔离：携带 tenant，仅同租户订阅者收到。
+	s.publishEvent("task_status", tenant, map[string]string{
 		"taskID": id,
 		"status": "cancelled",
 	})
@@ -1174,9 +1209,8 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request, id str
 // handleTaskResult 处理 GET /api/v1/tasks/{id}/result：返回单条执行结果（A5/F7）。
 // 租户隔离：requireAuth 时仅返回本租户任务的结果（通过任务的租户归属判定）。
 func (s *Server) handleTaskResult(w http.ResponseWriter, r *http.Request, id string) {
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	res := s.store.TaskResult(id)
@@ -1231,22 +1265,22 @@ func (s *Server) handleDeviceRouting(w http.ResponseWriter, r *http.Request) {
 // handleRetireDevice 处理 DELETE /api/v1/devices/{id}：退役/下线设备（F5）。
 // 标记 retired，退出活跃清单但仍可查归档；租户隔离。
 func (s *Server) handleRetireDevice(w http.ResponseWriter, r *http.Request, id string) {
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	tenant := actx.TenantID
-	ok := s.store.RetireDevice(id, tenant)
-	if !ok {
+	if !s.store.RetireDevice(id, tenant) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found or tenant mismatch"})
 		return
 	}
 	s.store.Audit(&proto.AuditEvent{
 		TenantID: tenant, UserID: actx.UserID, Action: "retire_device", Target: id, Detail: "retired via HTTP",
 	})
+
 	// M3-2B SSE：通知前端设备已下线（设备表移除/置灰）
-	s.publishEvent("device_offline", map[string]string{
+	// H6 租户隔离：携带 tenant，仅同租户订阅者收到。
+	s.publishEvent("device_offline", tenant, map[string]string{
 		"deviceID": id,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "retired", "deviceID": id})
@@ -1256,9 +1290,8 @@ func (s *Server) handleRetireDevice(w http.ResponseWriter, r *http.Request, id s
 // 签发一次性 install token + 构造可直接复制粘贴的 bootstrap curl|sh 命令，
 // 经此命令在候选设备上安装 agent 后，agent 携带 token 回注册完成闭环。
 func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id string) {
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	tenant := actx.TenantID
@@ -1323,9 +1356,8 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.store.Alerts(actx.TenantID))
@@ -1355,9 +1387,8 @@ func (s *Server) handleAlertRouting(w http.ResponseWriter, r *http.Request) {
 // handleAckAlert 处理 POST /api/v1/alerts/{id}/ack：确认告警（M7）。
 // 租户隔离：requireAuth 时强制网关注入租户，禁止越权确认他租户告警。
 func (s *Server) handleAckAlert(w http.ResponseWriter, r *http.Request, id string) {
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	if s.store.Alert(id) == nil {
@@ -1373,7 +1404,8 @@ func (s *Server) handleAckAlert(w http.ResponseWriter, r *http.Request, id strin
 		s.bus.Publish(r.Context(), events.Event{TenantID: actx.TenantID, UserID: actx.UserID, Action: "ack_alert", Target: id, Level: events.LevelInfo})
 	}
 	// M3-2B SSE：通知前端告警状态已变更（告警面板刷新）
-	s.publishEvent("alert_new", map[string]string{
+	// H6 租户隔离：携带 actx.TenantID，仅同租户订阅者收到。
+	s.publishEvent("alert_new", actx.TenantID, map[string]string{
 		"alertID": id,
 		"action":  "ack",
 	})
@@ -1383,16 +1415,17 @@ func (s *Server) handleAckAlert(w http.ResponseWriter, r *http.Request, id strin
 // handleSilenceAlert 处理 POST /api/v1/alerts/{id}/silence：静默告警（M7）。
 // 请求体（可选）：{"durationMinutes":1440,"comment":"..."}；缺省静默 24h。
 func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id string) {
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
 		DurationMinutes int    `json:"durationMinutes"`
 		Comment         string `json:"comment"`
 	}
-	_ = decodeJSONBody(w, r, &body)
+	if err := decodeJSONBody(w, r, &body); err != nil && err != io.EOF {
+		log.Printf("controlplane: handleSilenceAlert 解析请求体失败: %v", err)
+	}
 	if s.store.Alert(id) == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert not found"})
 		return
@@ -1410,7 +1443,8 @@ func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id s
 		s.bus.Publish(r.Context(), events.Event{TenantID: actx.TenantID, UserID: actx.UserID, Action: "silence_alert", Target: id, Level: events.LevelInfo})
 	}
 	// M3-2B SSE：通知前端告警已静默（告警面板刷新）
-	s.publishEvent("alert_new", map[string]string{
+	// H6 租户隔离：携带 actx.TenantID，仅同租户订阅者收到。
+	s.publishEvent("alert_new", actx.TenantID, map[string]string{
 		"alertID": id,
 		"action":  "silence",
 	})
@@ -1424,7 +1458,9 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+		log.Printf("controlplane: handleHealthz 写响应失败: %v", err)
+	}
 }
 
 // handleInstallSh 处理 GET /install.sh：下发 agent 自举安装脚本（B1 bootstrap）。
@@ -1442,7 +1478,9 @@ func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 	})
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(provision.InstallScript(s.cfg.AdvertiseAddr, version.Version)))
+	if _, err := w.Write([]byte(provision.InstallScript(s.cfg.AdvertiseAddr, version.Version))); err != nil {
+		log.Printf("controlplane: handleInstallSh 写安装脚本失败: %v", err)
+	}
 }
 
 // handleServeAgent 处理 GET /bin/opsmesh-agent：分发 agent 二进制本体（双模式同体），
@@ -1475,7 +1513,9 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, f)
+	if _, err := io.Copy(w, f); err != nil {
+		log.Printf("controlplane: handleServeAgent 写 agent 二进制失败: %v", err)
+	}
 }
 
 // handleAutoProvision 处理 POST /api/v1/provision/auto：手动触发 B1 自动纳管编排。
@@ -1485,9 +1525,8 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -1502,10 +1541,8 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 	if len(cidrs) == 0 && s.cfg.SegmentCIDR != "" {
 		cidrs = []string{s.cfg.SegmentCIDR}
 	}
-	tenant := body.TenantID
-	if tenant == "" {
-		tenant = actx.TenantID
-	}
+	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	tenant := actx.TenantID
 	if len(cidrs) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no cidrs provided (body.cidrs or --segment-cidr)"})
 		return
@@ -1537,10 +1574,12 @@ func (s *Server) autoProvisionLoop(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		if s.store.IsLeader() && s.cfg.SegmentCIDR != "" {
-			_, _ = provision.AutoProvision(ctx, provision.Deps{
+			if _, err := provision.AutoProvision(ctx, provision.Deps{
 				UpsertDevice: s.store.UpsertDevice,
 				Provision:    s.store.Provision,
-			}, s.cfg, []string{s.cfg.SegmentCIDR}, "")
+			}, s.cfg, []string{s.cfg.SegmentCIDR}, ""); err != nil {
+				log.Printf("controlplane: autoProvisionLoop 自动纳管失败: %v", err)
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -1605,7 +1644,9 @@ func (s *Server) workflowScheduleLoop(ctx context.Context) {
 				logx.Error(ctx, "工作流 cron 触发失败", err, "workflowID", wf.ID)
 				continue
 			}
-			_ = s.orchHandler.Reconcile(ctx, wf.ID, wf.TenantID)
+			if err := s.orchHandler.Reconcile(ctx, wf.ID, wf.TenantID); err != nil {
+				log.Printf("controlplane: cronLoop Reconcile 工作流 %d 失败: %v", wf.ID, err)
+			}
 		}
 	}
 }

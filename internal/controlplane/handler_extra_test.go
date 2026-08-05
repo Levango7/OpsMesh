@@ -32,13 +32,15 @@ import (
 // 注入 X-Tenant-ID 等网关头，断言 HTTP status code 与响应体。每个 handler 至少一个 happy path
 // 加一个错误 case（租户缺失 / 资源不存在 / 越权 / method not allowed）。
 
-// newExtraTestServer 构造一个最小测试控制面（无 demo 预置、无 auth、无总线），便于精确断言。
-// 与 endpoint_test.go 的 newTestServer（开 demo）区分开，避免预置告警/任务干扰断言。
+// newExtraTestServer 构造一个最小测试控制面（无 demo 预置任务、无 auth、无总线），便于精确断言。
+// 与 endpoint_test.go 的 newTestServer（开 demo 预置任务）区分开，避免预置告警/任务干扰断言。
+// cfg.Demo=true 仅用于认证放宽（未携带 X-Tenant-ID 头时自动填充默认租户），不播种预置任务
+// （store 未 WithDemo(true)），H6 认证防御后非 demo 模式会拒绝空租户头。
 func newExtraTestServer() *Server {
 	st := store.NewMemoryStore()
 	return &Server{
 		store:       st,
-		cfg:         &config.Config{TaskMaxRetries: 3},
+		cfg:         &config.Config{TaskMaxRetries: 3, Demo: true},
 		requireAuth: false,
 	}
 }
@@ -121,6 +123,7 @@ func TestHandleTaskRouting_CancelDispatch(t *testing.T) {
 	tk := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+tk.TaskID+"/cancel", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
 	rec := httptest.NewRecorder()
 	s.handleTaskRouting(rec, req)
 	if rec.Code != http.StatusOK {
@@ -215,6 +218,7 @@ func TestHandleDeviceRouting_RetireDispatch(t *testing.T) {
 	devID := "dev-" + a.AgentID
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/devices/"+devID, nil)
+	req.Header.Set("X-Tenant-ID", "t1")
 	rec := httptest.NewRecorder()
 	s.handleDeviceRouting(rec, req)
 	if rec.Code != http.StatusOK {
@@ -369,6 +373,8 @@ func TestHandleAlertRouting_AckAndSilence(t *testing.T) {
 
 	// ack via routing
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/al-5/ack", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
+	req.Header.Set("X-User-Id", "u1")
 	rec := httptest.NewRecorder()
 	s.handleAlertRouting(rec, req)
 	if rec.Code != http.StatusOK {
@@ -378,6 +384,8 @@ func TestHandleAlertRouting_AckAndSilence(t *testing.T) {
 	// silence via routing
 	s.store.AddAlert(&proto.Alert{AlertID: "al-6", TenantID: "t1", Severity: "warning", Status: proto.AlertStatusFiring})
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/al-6/silence", nil)
+	req2.Header.Set("X-Tenant-ID", "t1")
+	req2.Header.Set("X-User-Id", "u1")
 	rec2 := httptest.NewRecorder()
 	s.handleAlertRouting(rec2, req2)
 	if rec2.Code != http.StatusOK {
@@ -638,6 +646,7 @@ func TestHandleBatchCreateTasks_PartialFailure(t *testing.T) {
 		"command": "echo batch",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/batch", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "t1")
 	rec := httptest.NewRecorder()
 	s.handleBatchCreateTasks(rec, req)
 	if rec.Code != http.StatusCreated {

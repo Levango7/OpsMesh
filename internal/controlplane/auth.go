@@ -23,6 +23,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -234,9 +236,11 @@ func (s *Server) issueUserToken(u *store.User) (string, error) {
 }
 
 // authResponse 登录/注册成功响应体。
+// MustChangePassword（安全债 85）：当用户首登须改密时为 true，前端据此弹出改密对话框。
 type authResponse struct {
-	Token string      `json:"token"`
-	User  *store.User `json:"user"`
+	Token              string      `json:"token"`
+	User               *store.User `json:"user"`
+	MustChangePassword bool        `json:"mustChangePassword"`
 }
 
 // ============================================================================
@@ -401,7 +405,8 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	s.store.Audit(&proto.AuditEvent{
 		TenantID: "default", UserID: u.ID, Action: "user_login", Target: u.ID, Detail: "username=" + u.Username,
 	})
-	writeJSON(w, http.StatusOK, authResponse{Token: token, User: u})
+	// 安全债 85：返回 mustChangePassword 标记，前端据此弹出改密对话框。
+	writeJSON(w, http.StatusOK, authResponse{Token: token, User: u, MustChangePassword: u.MustChangePassword})
 }
 
 // handleAuthMe 处理 GET /api/v1/auth/me：返回当前登录用户信息。
@@ -418,6 +423,100 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, u)
+}
+
+// ============================================================================
+// 改密 handler（安全债 85）：POST /api/v1/auth/change-password
+// ============================================================================
+
+// changePasswordMinLen 改密新密码最短长度（强口令基线：8 字符）。
+const changePasswordMinLen = 8
+
+// validateStrongPassword 强口令校验（安全债 85）：至少 8 字符，包含大小写字母与数字。
+// 返回不满足时的可读提示（满足返回空串）。
+func validateStrongPassword(pw string) string {
+	if len(pw) < changePasswordMinLen {
+		return "password too short (min 8 chars)"
+	}
+	var hasUpper, hasLower, hasDigit bool
+	for _, c := range pw {
+		switch {
+		case c >= 'A' && c <= 'Z':
+			hasUpper = true
+		case c >= 'a' && c <= 'z':
+			hasLower = true
+		case c >= '0' && c <= '9':
+			hasDigit = true
+		}
+	}
+	if !hasUpper {
+		return "password must contain at least one uppercase letter"
+	}
+	if !hasLower {
+		return "password must contain at least one lowercase letter"
+	}
+	if !hasDigit {
+		return "password must contain at least one digit"
+	}
+	return ""
+}
+
+// handleAuthChangePassword 处理 POST /api/v1/auth/change-password：用户改密（安全债 85）。
+// 请求体：{oldPassword, newPassword}；鉴权：须携带当前用户有效 token。
+// 流程：从 token 提取用户 → 校验旧密码 → 校验新密码强度 → bcrypt 哈希 → 落库 → 清除 mustChangePassword。
+// 新密码强度：≥8 字符且含大小写字母与数字。新旧相同拒绝（防无效改密）。
+func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	u, err := s.userFromToken(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return
+	}
+	var body struct {
+		OldPassword string `json:"oldPassword"`
+		NewPassword string `json:"newPassword"`
+	}
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if body.OldPassword == "" || body.NewPassword == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "oldPassword and newPassword are required"})
+		return
+	}
+	// 旧密码校验：与当前 PasswordHash 比对，失败返回 401（防越权改密）。
+	if !verifyPassword(u.PasswordHash, body.OldPassword) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "old password incorrect"})
+		return
+	}
+	// 新旧相同拒绝（防无效改密绕过强制改密）。
+	if body.OldPassword == body.NewPassword {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "new password must differ from old password"})
+		return
+	}
+	// 新密码强度校验。
+	if msg := validateStrongPassword(body.NewPassword); msg != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+		return
+	}
+	// bcrypt 哈希新密码。
+	newHash, err := hashPassword(body.NewPassword)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "password hash failed: " + err.Error()})
+		return
+	}
+	// 落库：写入新哈希并清除 must_change_password 标记。
+	if !s.store.ChangePassword(u.ID, newHash) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+	s.store.Audit(&proto.AuditEvent{
+		TenantID: "default", UserID: u.ID, Action: "user_change_password", Target: u.ID, Detail: "username=" + u.Username,
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"message": "password changed"})
 }
 
 // userFromToken 从请求的 Authorization: Bearer <token> 提取并验签 JWT，返回对应用户。
@@ -648,8 +747,10 @@ func (s *Server) handleRejectUser(w http.ResponseWriter, r *http.Request, id str
 	var body struct {
 		Reason string `json:"reason"`
 	}
-	// 请求体可选；解析失败时忽略（兼容空 body 调用）。
-	_ = decodeJSONBody(w, r, &body)
+	// 请求体可选；解析失败时记录日志（兼容空 body 调用）。
+	if err := decodeJSONBody(w, r, &body); err != nil && err != io.EOF {
+		log.Printf("controlplane: handleApproveUser 解析请求体失败: %v", err)
+	}
 	existing := s.store.GetUser(id)
 	if existing == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})

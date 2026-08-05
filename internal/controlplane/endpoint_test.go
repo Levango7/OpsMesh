@@ -14,11 +14,13 @@ import (
 )
 
 // newTestServer 构造一个无总线/无指标的测试控制面（白盒，直接装配 Registry）。
+// cfg.Demo=true：demo 模式放宽认证，未携带 X-Tenant-ID 头时自动填充默认租户，
+// 便于测试在不显式注入网关头的情况下调用 handler（H6 认证防御后非 demo 模式会拒绝空租户头）。
 func newTestServer() *Server {
 	st := store.NewMemoryStore().WithDemo(true)
 	return &Server{
 		store:       st,
-		cfg:         &config.Config{},
+		cfg:         &config.Config{Demo: true},
 		requireAuth: false,
 	}
 }
@@ -30,6 +32,7 @@ func TestHandleListTasks(t *testing.T) {
 	s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
 	w := httptest.NewRecorder()
 	s.handleListTasks(w, req)
 	if w.Code != http.StatusOK {
@@ -51,6 +54,7 @@ func TestHandleListTasks_StatusFilter(t *testing.T) {
 	s.store.SubmitResult(&proto.TaskResult{TaskID: "task-" + a.AgentID + "-1", AgentID: a.AgentID, ExitCode: 0})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks?status=pending", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
 	w := httptest.NewRecorder()
 	s.handleListTasks(w, req)
 	var tasks []*domain.Task
@@ -68,6 +72,7 @@ func TestHandleDeviceDetail(t *testing.T) {
 	s.store.SubmitResult(&proto.TaskResult{TaskID: "task-" + a.AgentID + "-1", AgentID: a.AgentID, ExitCode: 0, Stdout: "ok"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/devices/"+devID, nil)
+	req.Header.Set("X-Tenant-ID", "t1")
 	w := httptest.NewRecorder()
 	s.handleDeviceDetail(w, req)
 	if w.Code != http.StatusOK {
@@ -107,6 +112,7 @@ func TestHandleDeviceDetail_TenantMismatch(t *testing.T) {
 func TestHandleDeviceDetail_NotFound(t *testing.T) {
 	s := newTestServer()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/devices/nope", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
 	w := httptest.NewRecorder()
 	s.handleDeviceDetail(w, req)
 	if w.Code != http.StatusNotFound {
@@ -126,6 +132,7 @@ func TestHandleBatchCreateTasks(t *testing.T) {
 		"command": "echo batch",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/batch", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "t1")
 	w := httptest.NewRecorder()
 	s.handleBatchCreateTasks(w, req)
 	if w.Code != http.StatusCreated {
@@ -155,6 +162,7 @@ func TestHandleAudits(t *testing.T) {
 	s.store.Audit(&proto.AuditEvent{TenantID: "t1", Action: "create_task", Target: "x"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/audits?action=create_task", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
 	w := httptest.NewRecorder()
 	s.handleAudits(w, req)
 	if w.Code != http.StatusOK {

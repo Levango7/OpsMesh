@@ -13,13 +13,18 @@
 // 信封格式（data 行为 SSEEvent JSON）：
 //
 //	event: task_status\n
-//	data: {"type":"task_status","data":{"taskID":"xxx","status":"running","agentID":"yyy"}}\n\n
+//	data: {"type":"task_status","tenantID":"t1","data":{"taskID":"xxx","status":"running","agentID":"yyy"}}\n\n
 //
 // 慢消费者策略：每个订阅者 buffered chan(16)，publishEvent 非阻塞广播；
 // 缓冲满则丢弃该事件（避免一个慢客户端拖垮广播，M3-2B 设计取舍）。
 //
 // 连接保活：每 15s 发送 SSE 注释帧 ": ping\n\n"（不触发客户端 message 事件，仅保活）。
 // 客户端断开（ctx.Done）时 unsubscribe 并 close chan，防止泄漏。
+//
+// 安全（H6 SSE 租户隔离）：handler 入口提取网关注入的身份上下文（X-Tenant-ID /
+// Authorization Bearer），requireAuth 时缺失身份 → 401；demo 模式下缺失 → 填充
+// "default" 租户便于本地体验。publishEvent 携带 tenantID 标记事件归属，handler
+// 仅下发与本租户匹配的事件，跨租户事件在 SSE 通道被丢弃（不广播给他人）。
 package controlplane
 
 import (
@@ -27,14 +32,18 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"opsmesh/internal/authctx"
 )
 
 // SSEEvent 是推送给前端的事件信封。
 // Type 为事件类型（task_status / alert_new / device_online / device_offline），
+// TenantID 为事件归属租户（空表示全局事件，如 hello；非空时仅下发到同租户订阅者），
 // Data 为业务载荷（任意可 JSON 序列化结构）。
 type SSEEvent struct {
-	Type string      `json:"type"`
-	Data interface{} `json:"data"`
+	Type     string      `json:"type"`
+	TenantID string      `json:"tenantID,omitempty"`
+	Data     interface{} `json:"data"`
 }
 
 // sseSubscriberBuf 每个订阅者的缓冲通道容量。
@@ -46,14 +55,40 @@ const sseSubscriberBuf = 16
 // 防止中间代理（nginx / envoy）因空闲超时关闭连接。
 const sseHeartbeatInterval = 15 * time.Second
 
+// sseDefaultTenant 是 demo 模式下未携带身份头时填充的默认租户。
+// 仅在 cfg.Demo=true 且 requireAuth=false 时启用，便于本地一键体验；
+// 生产环境（requireAuth=true）必须由网关注入真实租户，不会走该降级路径。
+const sseDefaultTenant = "default"
+
 // handleEventsStream 处理 GET /api/v1/events/stream：SSE 长连接。
 // 设置标准 SSE 响应头，订阅事件总线，循环写事件帧 + flush。
 // 客户端断开（r.Context().Done()）时自动取消订阅并释放资源。
+//
+// 鉴权（H6 SSE 租户隔离）：
+//   - requireAuth=true：从 X-Tenant-ID / Authorization Bearer 提取租户，缺失 → 401；
+//   - requireAuth=false 且 demo=true：缺失身份头 → 填充 "default" 租户（本地体验）；
+//   - requireAuth=false 且 demo=false：缺失身份头 → 视为全局订阅（兼容旧单租户部署）。
+//
+// 租户过滤：收到的事件若 TenantID 非空且与当前订阅者租户不匹配则丢弃，
+// 不跨租户广播（防止 A 租户订阅者收到 B 租户的任务/告警事件）。
 func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// 提取网关注入的身份上下文（X-Tenant-ID / Authorization Bearer）。
+	actx := authctx.FromHTTPHeader(r.Header)
+	tenant := actx.TenantID
+	if s.requireAuth && tenant == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+		return
+	}
+	// demo 模式放宽：未携带身份头时填充默认租户，便于本地一键体验。
+	// 仅在非 requireAuth 时启用（requireAuth 已在上面拦截）。
+	if tenant == "" && s.cfg != nil && s.cfg.Demo {
+		tenant = sseDefaultTenant
+	}
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -84,6 +119,12 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 		case ev, open := <-ch:
 			if !open {
 				return // 通道被关闭（服务端主动关闭订阅）
+			}
+			// 租户隔离：事件归属租户非空且与当前订阅者不匹配则丢弃，
+			// 不跨租户下发（H6 防跨租户信息泄露）。
+			// 订阅者租户为空（旧单租户/无网关降级）时放行全部，保持向后兼容。
+			if ev.TenantID != "" && tenant != "" && ev.TenantID != tenant {
+				continue
 			}
 			data, err := json.Marshal(ev)
 			if err != nil {
@@ -123,14 +164,16 @@ func (s *Server) unsubscribeEvents(ch chan SSEEvent) {
 // publishEvent 非阻塞广播一个事件到所有活跃订阅者。
 // 慢消费者（缓冲满）丢弃该事件，避免一个慢客户端拖垮广播。
 // typ 为事件类型（task_status / alert_new / device_online / device_offline），
+// tenantID 为事件归属租户（空表示全局事件，所有订阅者均接收；
+// 非空时由 handleEventsStream 按租户过滤，跨租户订阅者不会收到），
 // data 为业务载荷（任意可 JSON 序列化结构）。
-func (s *Server) publishEvent(typ string, data interface{}) {
+func (s *Server) publishEvent(typ string, tenantID string, data interface{}) {
 	s.eventMu.RLock()
 	defer s.eventMu.RUnlock()
 	if len(s.eventSubs) == 0 {
 		return // 无订阅者，快速返回（避免构造事件开销）
 	}
-	ev := SSEEvent{Type: typ, Data: data}
+	ev := SSEEvent{Type: typ, TenantID: tenantID, Data: data}
 	for ch := range s.eventSubs {
 		select {
 		case ch <- ev:

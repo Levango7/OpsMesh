@@ -12,7 +12,7 @@ package store
 
 import (
 	"context"
-	"fmt"
+	"log"
 	"time"
 )
 
@@ -81,8 +81,8 @@ func (s *SQLStore) SaveK8sCluster(c *K8sCluster) {
 		 ON DUPLICATE KEY UPDATE name=VALUES(name), server=VALUES(server), kubeconfig=VALUES(kubeconfig),
 		 status=VALUES(status), updated_at=VALUES(updated_at)`,
 		c.ID, c.Name, c.Server, c.Kubeconfig, c.Status, c.CreatedAt, c.UpdatedAt); err != nil {
-		// DB 不可用时静默返回（与 SQLStore 其他方法一致，不 panic）。
-		_ = fmt.Errorf("k8s: SaveK8sCluster 失败: %w", err)
+		// DB 不可用时记录日志后返回（与 SQLStore 其他方法一致，不 panic）。
+		log.Printf("k8s: SaveK8sCluster 失败: %v", err)
 	}
 }
 

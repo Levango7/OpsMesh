@@ -16,7 +16,7 @@ import (
 	"strconv"
 	"strings"
 
-	"opsmesh/internal/authctx"
+
 	"opsmesh/internal/events"
 	"opsmesh/internal/proto"
 )
@@ -682,9 +682,8 @@ func (s *Server) handleListOSTemplates(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	_, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	q := r.URL.Query()
@@ -713,9 +712,8 @@ func (s *Server) handleOSTemplateByID(w http.ResponseWriter, r *http.Request, id
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	_, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	t := osTemplateByID(id)
@@ -738,9 +736,8 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	tpl := osTemplateByID(id)
@@ -795,10 +792,8 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 	} else {
 		command = buildOSExecuteCommand(tpl.Commands, body.Params)
 	}
-	targetTenant := body.TenantID
-	if targetTenant == "" {
-		targetTenant = actx.TenantID
-	}
+	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	targetTenant := actx.TenantID
 	agent := s.lookupAgent(body.AgentID)
 	if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "agent not found or tenant mismatch"})
@@ -830,7 +825,9 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 	if s.metrics != nil {
 		s.metrics.SetQueueDepth(s.store.PendingDepth())
 	}
-	s.publishEvent("task_status", map[string]string{
+	// M3-2B SSE：通知前端 OS 模板执行任务已创建。
+	// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
+	s.publishEvent("task_status", targetTenant, map[string]string{
 		"taskID":  task.TaskID,
 		"status":  task.Status,
 		"agentID": body.AgentID,

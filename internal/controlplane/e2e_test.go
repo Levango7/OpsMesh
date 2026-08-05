@@ -82,7 +82,7 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewGRPCClient: %v", err)
 	}
-	regResp, err := cli.Register(ctx, &proto.AgentInfo{Segment: "seg-e2e"})
+	regResp, err := cli.Register(ctx, &proto.AgentInfo{Segment: "seg-e2e", TenantID: "t1"})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -92,6 +92,7 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 	agentID := regResp.AgentID
 
 	// 2) 经 HTTP API 下发任务（验证 HTTP 入口 + agent 校验）
+	// H6 认证防御：非 demo 模式下必须携带 X-Tenant-ID 头，否则 400。
 	createBody := fmt.Sprintf(
 		`{"agentID":%q,"type":"shell","command":"echo hello-opsmesh-e2e"}`,
 		agentID)
@@ -99,6 +100,7 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 		fmt.Sprintf("http://127.0.0.1:%d/api/v1/tasks", httpPort),
 		strings.NewReader(createBody))
 	creq.Header.Set("Content-Type", "application/json")
+	creq.Header.Set("X-Tenant-ID", "t1")
 	cresp, err := http.DefaultClient.Do(creq)
 	if err != nil {
 		t.Fatalf("create task: %v", err)
@@ -151,6 +153,7 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 	// 6) 经 HTTP API 读回，断言终态 done + stdout 含执行结果
 	greq, _ := http.NewRequest(http.MethodGet,
 		fmt.Sprintf("http://127.0.0.1:%d/api/v1/tasks", httpPort), nil)
+	greq.Header.Set("X-Tenant-ID", "t1")
 	gresp, err := http.DefaultClient.Do(greq)
 	if err != nil {
 		t.Fatalf("list tasks: %v", err)

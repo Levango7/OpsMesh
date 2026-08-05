@@ -2,9 +2,13 @@ package agent
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +16,7 @@ import (
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
 	"opsmesh/internal/grpcx"
 	"opsmesh/internal/proto"
@@ -25,6 +30,16 @@ type GRPCClient struct {
 	addrs   []string // 候选控制面地址（host:grpcPort），按序 failover
 	creds   credentials.TransportCredentials
 	grpcPort int
+	// task 81 gRPC agent 身份绑定：agent 的 HMAC 签名密钥（由 Register 响应下发）。
+	// 非空时，invoke 在每次请求的 gRPC metadata 中携带 agent-signature 与 agent-timestamp，
+	// 控制面据此验证 agent 身份。空=未启用签名（demo 模式或控制面未下发 secret）。
+	secret string
+}
+
+// SetSecret task 81：设置 agent 的 HMAC 签名密钥（由 Register 响应下发）。
+// 注册成功后由 agent.go 调用。线程安全：仅在注册成功后调用一次，后续 invoke 只读。
+func (c *GRPCClient) SetSecret(secret string) {
+	c.secret = secret
 }
 
 // grpcTarget 从控制面地址解析出 gRPC 拨号目标，规则：
@@ -122,6 +137,25 @@ func (c *GRPCClient) invoke(ctx context.Context, method string, req, resp interf
 	return lastErr
 }
 
+// signContext task 81 gRPC agent 身份绑定：为请求 ctx 附加 HMAC 签名 metadata。
+// 当 client 持有 secret 且 agentID 非空时，计算 agent-signature = HMAC-SHA256(secret, timestamp+agentID)
+// 并附加 agent-signature / agent-timestamp 到 outgoing metadata。
+// secret 为空（未启用签名）或 agentID 为空（无身份）时原样返回 ctx（向后兼容）。
+// 控制面 verifyAgentSignature 据此验证 agent 身份，不再纯信任 agent 自报的 AgentID。
+func (c *GRPCClient) signContext(ctx context.Context, agentID string) context.Context {
+	if c.secret == "" || agentID == "" {
+		return ctx // 未启用签名或无身份，原样返回（向后兼容 demo/未配置）
+	}
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, []byte(c.secret))
+	mac.Write([]byte(ts + agentID))
+	sig := hex.EncodeToString(mac.Sum(nil))
+	return metadata.AppendToOutgoingContext(ctx,
+		"agent-signature", sig,
+		"agent-timestamp", ts,
+	)
+}
+
 // Register 通过 gRPC Register 方法注册自身，返回控制面分配的 agentID 与配置。
 func (c *GRPCClient) Register(ctx context.Context, info *proto.AgentInfo) (*grpcx.RegisterResp, error) {
 	resp := &grpcx.RegisterResp{}
@@ -132,6 +166,7 @@ func (c *GRPCClient) Register(ctx context.Context, info *proto.AgentInfo) (*grpc
 // Heartbeat 通过 gRPC Heartbeat 方法上报心跳。
 func (c *GRPCClient) Heartbeat(ctx context.Context, req *grpcx.HeartbeatReq) error {
 	resp := &grpcx.Empty{}
+	ctx = c.signContext(ctx, req.AgentID) // task 81：附加 HMAC 签名
 	return c.invoke(ctx, "/opsmesh.v1.Registration/Heartbeat", req, resp)
 }
 
@@ -139,6 +174,7 @@ func (c *GRPCClient) Heartbeat(ctx context.Context, req *grpcx.HeartbeatReq) err
 func (c *GRPCClient) PullTasks(ctx context.Context, agentID string) ([]proto.Task, error) {
 	resp := &grpcx.PullTasksResp{}
 	req := &grpcx.PullTasksReq{AgentID: agentID}
+	ctx = c.signContext(ctx, agentID) // task 81：附加 HMAC 签名
 	if err := c.invoke(ctx, "/opsmesh.v1.Registration/PullTasks", req, resp); err != nil {
 		return nil, err
 	}
@@ -148,6 +184,7 @@ func (c *GRPCClient) PullTasks(ctx context.Context, agentID string) ([]proto.Tas
 // ReportResult 通过 gRPC ReportResult 方法上报任务执行结果。
 func (c *GRPCClient) ReportResult(ctx context.Context, res *proto.TaskResult) error {
 	resp := &grpcx.Empty{}
+	ctx = c.signContext(ctx, res.AgentID) // task 81：附加 HMAC 签名
 	return c.invoke(ctx, "/opsmesh.v1.Registration/ReportResult", res, resp)
 }
 
@@ -162,6 +199,7 @@ func (c *GRPCClient) CancelTask(ctx context.Context, taskID, tenantID string) er
 func (c *GRPCClient) PollCancels(ctx context.Context, agentID string) ([]string, error) {
 	resp := &grpcx.PollCancelsResp{}
 	req := &grpcx.PollCancelsReq{AgentID: agentID}
+	ctx = c.signContext(ctx, agentID) // task 81：附加 HMAC 签名
 	if err := c.invoke(ctx, "/opsmesh.v1.Registration/PollCancels", req, resp); err != nil {
 		return nil, err
 	}

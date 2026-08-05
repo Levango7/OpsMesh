@@ -129,6 +129,7 @@ func (m *MemoryStore) CreateUser(u *User) *User {
 
 // UpdateUser 更新用户 email/roles/status（按 u.ID 定位）。不存在返回 false。
 // Username 与 PasswordHash 不可经此方法修改（避免误覆盖登录凭据）。
+// MustChangePassword 字段同步更新（安全债 85：管理员可经此标记重置用户改密义务）。
 func (m *MemoryStore) UpdateUser(u *User) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -139,7 +140,7 @@ func (m *MemoryStore) UpdateUser(u *User) bool {
 	if !ok {
 		return false
 	}
-	// 仅更新允许的字段（email/roles/status），保留 Username/PasswordHash/CreatedAt。
+	// 仅更新允许的字段（email/roles/status/MustChangePassword），保留 Username/PasswordHash/CreatedAt。
 	if u.Email != "" {
 		existing.Email = u.Email
 	}
@@ -149,6 +150,22 @@ func (m *MemoryStore) UpdateUser(u *User) bool {
 	if u.RoleIDs != nil {
 		existing.RoleIDs = append([]string(nil), u.RoleIDs...)
 	}
+	existing.MustChangePassword = u.MustChangePassword
+	return true
+}
+
+// ChangePassword 改密（安全债 85）：写入新 bcrypt 哈希并清除 MustChangePassword 标记。
+// 与 UpdateUser 分离，避免误覆盖 PasswordHash；调用方须先 bcrypt 哈希新密码。
+// 用户不存在返回 false。
+func (m *MemoryStore) ChangePassword(userID, newPasswordHash string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing, ok := m.users[userID]
+	if !ok {
+		return false
+	}
+	existing.PasswordHash = newPasswordHash
+	existing.MustChangePassword = false
 	return true
 }
 

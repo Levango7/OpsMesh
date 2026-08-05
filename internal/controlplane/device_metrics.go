@@ -8,7 +8,6 @@ package controlplane
 import (
 	"net/http"
 
-	"opsmesh/internal/authctx"
 )
 
 // handleDeviceMetrics 处理 GET /api/v1/devices/{id}/metrics：返回设备最新监控指标。
@@ -19,9 +18,8 @@ func (s *Server) handleDeviceMetrics(w http.ResponseWriter, r *http.Request, id 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	// 先校验设备存在 + 租户归属，避免泄露他租户设备指标。

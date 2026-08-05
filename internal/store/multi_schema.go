@@ -388,6 +388,21 @@ func (m *MultiSchemaStore) Agent(id string) *proto.AgentInfo {
 	return s.Agent(id)
 }
 
+// AgentSecret 返回该 agent 的 HMAC 签名密钥（task 81 gRPC 身份绑定）。
+// 经 agentTenant 反查租户路由到对应 schema 的 store，再委托其 AgentSecret。
+// agent 不存在或未生成密钥时返回空串。
+func (m *MultiSchemaStore) AgentSecret(agentID string) string {
+	tenant := m.lookupAgentTenant(agentID)
+	if tenant == "" {
+		return ""
+	}
+	s, err := m.storeFor(tenant)
+	if err != nil {
+		return ""
+	}
+	return s.AgentSecret(agentID)
+}
+
 // RetireStaleDevices F5 离线超龄自动归档：遍历所有 schema 求和（leader 周期执行）。
 func (m *MultiSchemaStore) RetireStaleDevices(maxAge time.Duration) int {
 	total := 0
@@ -864,6 +879,15 @@ func (m *MultiSchemaStore) DeleteUser(id string) bool {
 		return false
 	}
 	return s.DeleteUser(id)
+}
+
+// ChangePassword 改密（安全债 85，路由到全局 store）。
+func (m *MultiSchemaStore) ChangePassword(userID, newPasswordHash string) bool {
+	s, err := m.globalStore()
+	if err != nil {
+		return false
+	}
+	return s.ChangePassword(userID, newPasswordHash)
 }
 
 // GetRole 按 ID 返回单角色（路由到全局 store）。

@@ -51,6 +51,10 @@ type MemoryStore struct {
 	// K8s 集群配置（Phase 3）：clusterID -> 集群配置。
 	// 与 deviceMetrics 同样由 m.mu 保护并发安全；Kubeconfig 为敏感内容，API 层负责脱敏。
 	k8sClusters map[string]*K8sCluster
+	// task 81 gRPC agent 身份绑定：agentID -> HMAC 签名密钥（32 字节 hex）。
+	// 由 Register 时为每个 agent 随机生成；agent 拉任务/上报/轮询取消时用此密钥签名，
+	// 控制面据此验证 agent 身份，不再纯信任 agent 自报的 AgentID。
+	agentSecrets map[string]string
 }
 
 // tokenMeta B1 install token 元数据：一次性、限时，消费后标记 consumed。
@@ -173,7 +177,9 @@ func (m *MemoryStore) SeedDemoTopology() {
 // publish 在总线非空时发布领域事件（审计/告警可接 Kafka）。
 func (m *MemoryStore) publish(e events.Event) {
 	if m.bus != nil {
-		_ = m.bus.Publish(context.Background(), e)
+		if err := m.bus.Publish(context.Background(), e); err != nil {
+			log.Printf("store: memory 发布事件 %s 失败: %v", e.Action, err)
+		}
 	}
 }
 
@@ -193,6 +199,7 @@ func NewMemoryStore() *MemoryStore {
 		secret:        mustRandHex(32),
 		deviceMetrics: make(map[string]*proto.DeviceMetrics),
 		k8sClusters:   make(map[string]*K8sCluster),
+		agentSecrets:  make(map[string]string),
 	}
 	m.seedRBAC()
 	return m
@@ -314,6 +321,9 @@ func (m *MemoryStore) seedRBAC() {
 
 	// 3. 预定义用户（密码 bcrypt 哈希）。
 	// bcrypt 哈希失败时 panic（构造期失败优于运行期诡异出错）。
+	// 安全债 85：预置弱口令（admin123/operator123/viewer123）首登强制改密，
+	// MustChangePassword=true 标记由 auth.go 登录响应返回前端，弹出改密对话框；
+	// 改密成功后由 change-password API 清除标记。避免弱口令被遗忘长期可登。
 	type userSpec struct {
 		id, name, password, email string
 		roleIDs                   []string
@@ -330,13 +340,14 @@ func (m *MemoryStore) seedRBAC() {
 			log.Panicf("[store] 预填充用户 %q 的 bcrypt 哈希失败: %v", us.name, err)
 		}
 		u := &User{
-			ID:           us.id,
-			Username:     us.name,
-			Email:        us.email,
-			PasswordHash: hash,
-			Status:       "active",
-			RoleIDs:      us.roleIDs,
-			CreatedAt:    now,
+			ID:                 us.id,
+			Username:           us.name,
+			Email:              us.email,
+			PasswordHash:       hash,
+			Status:             "active",
+			RoleIDs:            us.roleIDs,
+			CreatedAt:          now,
+			MustChangePassword: true, // 预置弱口令强制改密（安全债 85）
 		}
 		m.users[u.ID] = u
 		m.usersByName[u.Username] = u
@@ -446,6 +457,11 @@ func (m *MemoryStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 	}
 	a.LastSeen = time.Now()
 	m.agents[a.AgentID] = a
+	// task 81 gRPC agent 身份绑定：为每个 agent 生成 HMAC 签名密钥（仅首次注册时生成，复用已有 agent 不重置）。
+	// agent 拉任务/上报/轮询取消时用此密钥签名，控制面据此验证 agent 身份，不再纯信任 agent 自报的 AgentID。
+	if _, ok := m.agentSecrets[a.AgentID]; !ok {
+		m.agentSecrets[a.AgentID] = mustRandHex(32)
+	}
 
 	// B1 自动纳管闭环：若携带 OnboardDeviceID（由 gRPC Register 校验 install token 后回填），
 	// 说明这是「已发现候选设备」经 provision 推送 agent 后回注册——翻转该候选设备为已纳管，
@@ -574,7 +590,7 @@ func (m *MemoryStore) TasksByParent(parentID string) []*proto.Task {
 }
 
 // ClaimTask 原子领取该 agent 的下一条 pending 任务（pending→running），返回被领取的任务。
-// 并发调用时由同一把锁保证同一任务只被领取一次（HA 协调，P1-1）。
+// 并发调用时由同一把锁保证同一任务只被领取一次（HA 协调，P1-1）。返回值为锁内拷贝。
 func (m *MemoryStore) ClaimTask(agentID string) *proto.Task {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -588,7 +604,9 @@ func (m *MemoryStore) ClaimTask(agentID string) *proto.Task {
 			t.Status = "running"
 			t.ClaimedAt = time.Now()
 			t.ClaimedBy = "controlplane"
-			return t
+			// 返回锁内拷贝：调用方（gRPC 层）在锁外读取/序列化，避免与 SubmitResult 锁内修改构成 data race。
+			c := *t
+			return &c
 		}
 	}
 	return nil
@@ -1174,6 +1192,14 @@ func (m *MemoryStore) CancelledTaskIDs(agentID string) []string {
 		}
 	}
 	return out
+}
+
+// AgentSecret 返回该 agent 的 HMAC 签名密钥（task 81 gRPC 身份绑定）。
+// agent 不存在或未生成密钥时返回空串（调用方据此判断是否需要签名）。
+func (m *MemoryStore) AgentSecret(agentID string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.agentSecrets[agentID]
 }
 
 // RetireStaleDevices F5 离线超龄自动归档：扫描最后心跳早于 maxAge 的 agent 对应设备

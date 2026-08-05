@@ -810,3 +810,118 @@ func TestApproveUserNoPermission(t *testing.T) {
 		t.Fatalf("operator approve = %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// ----------------------------------------------------------------------------
+// 安全债 85：预置弱口令强制改密（mustChangePassword 标记 + change-password API）
+// ----------------------------------------------------------------------------
+
+// TestPresetUsersMustChangePassword 验证预置 admin/operator/viewer 都带 mustChangePassword=true。
+func TestPresetUsersMustChangePassword(t *testing.T) {
+	s := newAuthTestServer(t)
+	for _, username := range []string{"admin", "operator", "viewer"} {
+		u := s.store.GetUserByUsername(username)
+		if u == nil {
+			t.Fatalf("preset user %s not found", username)
+		}
+		if !u.MustChangePassword {
+			t.Fatalf("preset user %s mustChangePassword = false, want true", username)
+		}
+	}
+}
+
+// TestLoginReturnsMustChangePassword 验证登录响应中返回 mustChangePassword=true。
+func TestLoginReturnsMustChangePassword(t *testing.T) {
+	s := newAuthTestServer(t)
+	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "admin123"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleAuthLogin(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp authResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode login resp: %v", err)
+	}
+	if !resp.MustChangePassword {
+		t.Fatal("login response mustChangePassword = false, want true")
+	}
+}
+
+// TestChangePasswordSuccess 验证改密成功后 mustChangePassword 标记被清除。
+func TestChangePasswordSuccess(t *testing.T) {
+	s := newAuthTestServer(t)
+	auth := loginAsAdmin(t, s)
+	// 改密：admin123 → Admin@2025（满足强度：8 字符 + 大小写 + 数字）。
+	req := doWithAuth(http.MethodPost, "/api/v1/auth/change-password", auth, map[string]string{"oldPassword": "admin123", "newPassword": "Admin@2025"})
+	rec := httptest.NewRecorder()
+	s.handleAuthChangePassword(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("change password = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	// 验证标记已清除。
+	u := s.store.GetUserByUsername("admin")
+	if u.MustChangePassword {
+		t.Fatal("after change password, mustChangePassword still true, want false")
+	}
+	// 验证新密码可登录且响应中 mustChangePassword=false。
+	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "Admin@2025"})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	rec = httptest.NewRecorder()
+	s.handleAuthLogin(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login with new password = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp authResponse
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	if resp.MustChangePassword {
+		t.Fatal("after change password, login response mustChangePassword still true, want false")
+	}
+}
+
+// TestChangePasswordWrongOld 验证旧密码错误 → 401。
+func TestChangePasswordWrongOld(t *testing.T) {
+	s := newAuthTestServer(t)
+	auth := loginAsAdmin(t, s)
+	req := doWithAuth(http.MethodPost, "/api/v1/auth/change-password", auth, map[string]string{"oldPassword": "wrong-old-pwd", "newPassword": "Admin@2025"})
+	rec := httptest.NewRecorder()
+	s.handleAuthChangePassword(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("change password with wrong old = %d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChangePasswordWeakNew 验证新密码强度不足 → 400。
+func TestChangePasswordWeakNew(t *testing.T) {
+	s := newAuthTestServer(t)
+	auth := loginAsAdmin(t, s)
+	cases := []struct {
+		name, newPwd string
+	}{
+		{"too short", "Ab1"},
+		{"no uppercase", "admin2025"},
+		{"no lowercase", "ADMIN2025"},
+		{"no digit", "AdminPassword"},
+		{"same as old", "admin123"},
+	}
+	for _, c := range cases {
+		req := doWithAuth(http.MethodPost, "/api/v1/auth/change-password", auth, map[string]string{"oldPassword": "admin123", "newPassword": c.newPwd})
+		rec := httptest.NewRecorder()
+		s.handleAuthChangePassword(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("change password weak new [%s] = %d, want 400; body=%s", c.name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestChangePasswordNoToken 验证无 token → 401。
+func TestChangePasswordNoToken(t *testing.T) {
+	s := newAuthTestServer(t)
+	body, _ := json.Marshal(map[string]string{"oldPassword": "admin123", "newPassword": "Admin@2025"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/change-password", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleAuthChangePassword(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("change password without token = %d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+}

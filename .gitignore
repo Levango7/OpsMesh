@@ -55,5 +55,4 @@ test_*.html
 .puppeteer-profile/
 screenshots/
 opsmesh.exe~
-package.json
-package-lock.json
+

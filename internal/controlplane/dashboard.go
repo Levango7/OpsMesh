@@ -17,12 +17,25 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 仪表盘同样按网关注入的租户执行行级隔离：租户为空（无网关/开发模式）才看全局视图。
+	// H6 认证防御：非 demo 模式下也拒绝空租户头，防越权伪造。
 	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprint(w, "401 Unauthorized: 缺少网关注入的身份上下文（X-Tenant-ID）")
-		return
+	if actx.TenantID == "" {
+		if s.requireAuth {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, "401 Unauthorized: 缺少网关注入的身份上下文（X-Tenant-ID）")
+			return
+		}
+		if s.cfg != nil && s.cfg.Demo {
+			// demo 模式放宽：填充默认租户，便于本地一键体验。
+			actx.TenantID = "default"
+		} else {
+			// 非生产非 demo 模式：拒绝空租户头。
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, "400 Bad Request: 缺少 X-Tenant-ID 头（租户上下文必需）")
+			return
+		}
 	}
 
 	data, err := webFS.ReadFile("web/index.html")

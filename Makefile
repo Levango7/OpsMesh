@@ -1,4 +1,4 @@
-﻿# OpsMesh Makefile - 一键构建和运维
+# OpsMesh Makefile - 一键构建和运维
 # 用法：make <target>
 
 # 变量
@@ -10,6 +10,12 @@ GOFLAGS = -timeout 120s
 BINARY = opsmesh
 BINARY_WIN = opsmesh.exe
 MAIN = ./cmd/opsmesh
+
+# 环境变量配置（生产环境必须设置 OPSMESH_JWT_SECRET）
+# ?= 表示如果环境变量已设置则用环境变量，否则用默认值
+# 默认值用于开发/demo，生产环境通过环境变量覆盖
+OPSMESH_JWT_SECRET ?= opsmesh-demo-jwt-secret-2026
+ALLOW_PUBLIC_REGISTER ?= false
 
 # 前端
 NPM = npm
@@ -52,7 +58,8 @@ ci: vet test build
 # 启动控制面（demo 模式）
 .PHONY: run
 run: build
-	./$(BINARY_WIN) --mode=controlplane --store=memory --demo --allow-public-register=true --jwt-secret=opsmesh-demo-jwt-secret-2026 --http-port=8080 --grpc-port=9090
+	# 需设置 OPSMESH_JWT_SECRET 环境变量，ALLOW_PUBLIC_REGISTER 默认为空
+	./$(BINARY_WIN) --mode=controlplane --store=memory --demo --allow-public-register=$(ALLOW_PUBLIC_REGISTER) --jwt-secret=$(OPSMESH_JWT_SECRET) --http-port=8080 --grpc-port=9090
 
 # 启动 agent
 .PHONY: run-agent

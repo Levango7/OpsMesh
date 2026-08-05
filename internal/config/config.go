@@ -158,6 +158,24 @@ type Config struct {
 	FederationTLSKey  string
 	FederationCA      string
 	FederationPort    int
+
+	// 安全加固（task 78）：agent 侧纵深防御，避免控制面被绕过/被攻陷时直接 RCE 目标机。
+	//   - AgentShellWhitelist：逗号分隔的允许命令前缀列表（如 ls,cat,echo,ping,systemctl,docker,kubectl）。
+	//     空（默认）=不限制（向后兼容，demo/受信内网环境）；非空=仅当命令第一个词匹配某前缀时放行。
+	//     匹配按"命令第一个 token 的 basename"做前缀匹配，避免 "ls;rm -rf /" 这类拼接绕过（;后仍属同一 sh -c 命令，
+	//     白名单仅做最佳努力防御，纵深防御应配合控制面侧 SubmitTask 校验 + IAM 鉴权）。
+	//   - AgentFileRootWhitelist：逗号分隔的允许文件任务根目录列表（如 /var/opsmesh/files,/etc/opsmesh）。
+	//     空（默认）=不限制根目录（仍拒绝 ../ 路径遍历与符号链接）；非空=目标路径必须落在某个根目录之下。
+	AgentShellWhitelist    string
+	AgentFileRootWhitelist string
+
+	// task 81 gRPC agent 身份绑定：是否强制要求 agent 在 PullTasks/ReportResult/PollCancels/Heartbeat
+	// 请求中携带 HMAC 签名（agent-signature metadata）。开启后，控制面用该 agentID 对应的 secret 重新
+	// 计算 HMAC 并与 metadata 中的签名比对，签名不匹配或 timestamp 超过 5 分钟则拒绝。
+	//   - demo 模式下强制关闭（向后兼容，demo 不需要签名）。
+	//   - 生产模式（--production=true）下默认开启（除非显式 --grpc-require-signature=false）。
+	//   - 已启用 mTLS（--tls-cert + --client-ca 均非空）时可不开启（mTLS 本身提供身份绑定）。
+	GRPCRequireSignature bool
 }
 
 // Load 解析 flag 并用环境变量兜底，返回 *Config。
@@ -231,6 +249,11 @@ func Load() *Config {
 	federationTLSKey := flag.String("federation-tls-key", "", "P1-6 联邦 mTLS 私钥；或 env OPSMESH_FEDERATION_TLS_KEY")
 	federationCA := flag.String("federation-ca", "", "P1-6 联邦 mTLS 对端 CA（校验证书链/要求客户端持证）；或 env OPSMESH_FEDERATION_CA")
 	federationPort := flag.Int("federation-port", 0, "P1-6 联邦独立 mTLS 监听端口（>0 启用，强制对端持证）；0=不启用独立监听（复用主 HTTP）；或 env OPSMESH_FEDERATION_PORT")
+	// 安全加固（task 78）：agent 侧命令白名单与文件任务根目录白名单。
+	agentShellWhitelist := flag.String("agent-shell-whitelist", "", "安全加固：agent shell 任务允许的命令前缀列表（逗号分隔，如 ls,cat,echo,ping,systemctl,docker,kubectl）；空=不限制（向后兼容，demo/受信内网）；非空=仅当命令第一个词匹配某前缀时放行；或 env OPSMESH_AGENT_SHELL_WHITELIST")
+	agentFileRootWhitelist := flag.String("agent-file-root-whitelist", "", "安全加固：agent 文件任务允许的根目录白名单（逗号分隔，如 /var/opsmesh/files,/etc/opsmesh）；空=不限制根目录（仍拒绝 ../ 路径遍历与符号链接）；非空=目标路径必须落在某个根目录之下；或 env OPSMESH_AGENT_FILE_ROOT_WHITELIST")
+	// task 81 gRPC agent 身份绑定：强制要求 agent 请求携带 HMAC 签名。
+	grpcRequireSignature := flag.Bool("grpc-require-signature", false, "gRPC agent 身份绑定：强制要求 agent 在 PullTasks/ReportResult/PollCancels/Heartbeat 携带 HMAC 签名（防冒领任务/伪造上报）；demo 模式强制关闭；生产模式默认开启（除非显式 false）；或 env OPSMESH_GRPC_REQUIRE_SIGNATURE")
 	flag.Parse()
 
 	// 记录被显式设置的 flag，用于"flag 优先、env 兜底"的正确语义（P1-8 修复：原实现 env 会覆盖显式 flag）。
@@ -334,6 +357,9 @@ func Load() *Config {
 		FederationTLSKey:       val("federation-tls-key", *federationTLSKey, "OPSMESH_FEDERATION_TLS_KEY"),
 		FederationCA:           val("federation-ca", *federationCA, "OPSMESH_FEDERATION_CA"),
 		FederationPort:         valInt("federation-port", *federationPort, "OPSMESH_FEDERATION_PORT"),
+		AgentShellWhitelist:    val("agent-shell-whitelist", *agentShellWhitelist, "OPSMESH_AGENT_SHELL_WHITELIST"),
+		AgentFileRootWhitelist: val("agent-file-root-whitelist", *agentFileRootWhitelist, "OPSMESH_AGENT_FILE_ROOT_WHITELIST"),
+		GRPCRequireSignature:   valBool("grpc-require-signature", *grpcRequireSignature, "OPSMESH_GRPC_REQUIRE_SIGNATURE"),
 	}
 	// A4 生产模式：默认开启 require-auth（除非显式关闭），并强告警 memory store。
 	if cfg.Production && !explicit["require-auth"] {
@@ -347,6 +373,15 @@ func Load() *Config {
 		cfg.PublicRegister = true
 	} else if cfg.Production && !explicit["public-register"] {
 		cfg.PublicRegister = false
+	}
+	// task 81 gRPC agent 身份绑定：
+	//   - demo 模式强制关闭签名验证（向后兼容，demo 不需要签名）。
+	//   - 生产模式但未显式设置 --grpc-require-signature 时默认开启（纵深防御）。
+	//   - 已启用 mTLS（tls-cert + client-ca 均非空）时可不开启（mTLS 本身提供身份绑定），但仍可显式开启叠加防御。
+	if cfg.Demo {
+		cfg.GRPCRequireSignature = false
+	} else if cfg.Production && !explicit["grpc-require-signature"] {
+		cfg.GRPCRequireSignature = true
 	}
 	if cfg.Production && cfg.PublicRegister {
 		fmt.Fprintln(os.Stderr, "[config] 警告：生产模式开启 --public-register=true，公开注册开放但新用户须管理员审批（建议生产关闭 --public-register=false）")

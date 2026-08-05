@@ -16,6 +16,12 @@ import (
 type RegisterResp struct {
 	AgentID       string         `json:"agentID"`
 	ControlConfig map[string]int `json:"controlConfig"` // heartbeatInterval / taskPollInterval
+	// task 81 gRPC agent 身份绑定：控制面为该 agent 生成的 HMAC 签名密钥（32 字节 hex）。
+	// agent 收到后保存，后续 PullTasks/ReportResult/PollCancels/Heartbeat 请求在 gRPC metadata
+	// 中携带 agent-signature = HMAC-SHA256(secret, timestamp+agentID)，控制面据此验证 agent 身份，
+	// 不再纯信任 agent 自报的 AgentID（防冒领任务/伪造上报）。
+	// 空串表示该控制面未启用签名验证（demo 模式或未配置 --grpc-require-signature），agent 可不签名。
+	Secret string `json:"secret,omitempty"`
 }
 
 // HeartbeatReq agent 心跳请求。

@@ -47,6 +47,11 @@ type DeviceStore interface {
 	StoreDeviceMetrics(deviceID string, metrics *proto.DeviceMetrics)
 	// DeviceMetrics 返回设备最新监控指标（无数据时返回 nil）。
 	DeviceMetrics(deviceID string) *proto.DeviceMetrics
+	// AgentSecret 返回该 agent 的 HMAC 签名密钥（task 81 gRPC 身份绑定）。
+	// 由 Register 时为每个 agent 随机生成 32 字节 hex 串并落库；agent 拉任务/上报/轮询取消时
+	// 用此密钥计算 HMAC-SHA256(secret, timestamp+agentID) 签名，控制面据此验证 agent 身份，
+	// 不再纯信任 agent 自报的 AgentID（防冒领任务/伪造上报）。agent 不存在或未生成密钥时返回空串。
+	AgentSecret(agentID string) string
 }
 
 // TaskStore 任务调度领域：下发、领取、上报、取消、定时派生、失联复位。
@@ -153,6 +158,10 @@ type UserStore interface {
 	UpdateUser(u *User) bool
 	// DeleteUser 按 ID 删除用户。不存在返回 false。
 	DeleteUser(id string) bool
+	// ChangePassword 改密（安全债 85）：按 userID 定位，写入新的 bcrypt 哈希，
+	// 并清除 MustChangePassword 标记。返回是否成功（用户不存在/哈希失败为 false）。
+	// 与 UpdateUser 分离，避免 UpdateUser 误覆盖 PasswordHash。
+	ChangePassword(userID, newPasswordHash string) bool
 }
 
 // RoleStore 角色领域：CRUD。

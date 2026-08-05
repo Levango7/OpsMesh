@@ -31,7 +31,22 @@ func (s *SQLLogStore) initSchema(ctx context.Context) error {
 			source VARCHAR(32),
 			message MEDIUMTEXT
 		)`)
-	return err
+	if err != nil {
+		return err
+	}
+	// 工程债治理：补二级索引，避免按租户分页查询（tenant_id + ts DESC）全表扫描。
+	// MySQL 不支持 CREATE INDEX IF NOT EXISTS，先查 information_schema 再建。
+	var idxCnt int
+	if qerr := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.statistics
+		 WHERE table_schema=DATABASE() AND table_name='log_entries' AND index_name='idx_logs_tenant_created'`,
+	).Scan(&idxCnt); qerr == nil && idxCnt == 0 {
+		if _, ierr := s.db.ExecContext(ctx, `CREATE INDEX idx_logs_tenant_created ON log_entries(tenant_id, ts DESC)`); ierr != nil {
+			// 索引创建失败不阻断启动（兼容老库缺列场景）。
+			_ = ierr
+		}
+	}
+	return nil
 }
 
 // Append 写入一条日志（tenant_id 由调用方强制赋值）。

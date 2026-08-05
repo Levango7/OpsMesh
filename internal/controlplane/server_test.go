@@ -65,7 +65,7 @@ func TestHandleCreateTask_TenantIsolation(t *testing.T) {
 // 各按扩展名设 Content-Type，且 main.js 作为 ES module 入口含 import 语句。
 func TestHandleDashboard_ServesEmbedded(t *testing.T) {
 	st := store.NewMemoryStore()
-	s := &Server{store: st, requireAuth: false, cfg: &config.Config{TaskMaxRetries: 3}}
+	s := &Server{store: st, requireAuth: false, cfg: &config.Config{TaskMaxRetries: 3, Demo: true}}
 
 	// --- GET / ：HTML 外壳 ---
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -130,7 +130,7 @@ func TestHandleDashboard_ServesEmbedded(t *testing.T) {
 // 内核产出 critical 告警，且 GET /api/v1/alerts 可查询、前端告警面板有数据源。
 func TestHandleAlerts_DeadLetter(t *testing.T) {
 	st := store.NewMemoryStore()
-	s := &Server{store: st, requireAuth: false, cfg: &config.Config{TaskMaxRetries: 0}}
+	s := &Server{store: st, requireAuth: false, cfg: &config.Config{TaskMaxRetries: 0, Demo: true}}
 
 	// 注册 agent + 创建一条 MaxRetries=0 的任务（一次失败即死信）
 	a := st.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
@@ -152,6 +152,7 @@ func TestHandleAlerts_DeadLetter(t *testing.T) {
 
 	// HTTP 端点可查询
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/alerts", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
 	rec := httptest.NewRecorder()
 	s.handleAlerts(rec, req)
 	if rec.Code != http.StatusOK {
@@ -183,7 +184,7 @@ func TestHandleDashboard_RequireAuth(t *testing.T) {
 // TestHandleProvision_ReturnsToken B1：handleProvision 返回 installToken 与 bootstrap 命令。
 func TestHandleProvision_ReturnsToken(t *testing.T) {
 	st := store.NewMemoryStore().WithSecret("opsmesh-test-secret")
-	s := &Server{store: st, requireAuth: false, cfg: &config.Config{TaskMaxRetries: 3}}
+	s := &Server{store: st, requireAuth: false, cfg: &config.Config{TaskMaxRetries: 3, Demo: true}}
 
 	// 先创建一个候选手动注册的设备
 	st.Register(&proto.AgentInfo{AgentID: "a1", Hostname: "h1", Segment: "seg-a", Addr: "10.0.0.6", TenantID: "t1"})
@@ -195,6 +196,7 @@ func TestHandleProvision_ReturnsToken(t *testing.T) {
 
 	body := strings.NewReader(`{}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/devices/dev-provision-test/provision", body)
+	req.Header.Set("X-Tenant-ID", "t1")
 	rec := httptest.NewRecorder()
 	// 因为 handleProvision 通过路由调用，直接调 handleDeviceRouting
 	s.handleDeviceRouting(rec, req)
@@ -239,10 +241,11 @@ func TestHandleDeviceMetrics_GET(t *testing.T) {
 		Memory:   proto.MemMetrics{Total: 8192, Used: 4096},
 	})
 
-	s := &Server{store: st, requireAuth: false, cfg: &config.Config{}}
+	s := &Server{store: st, requireAuth: false, cfg: &config.Config{Demo: true}}
 
 	// 正常返回
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/devices/"+deviceID+"/metrics", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
 	rec := httptest.NewRecorder()
 	s.handleDeviceRouting(rec, req)
 	if rec.Code != http.StatusOK {
@@ -258,6 +261,7 @@ func TestHandleDeviceMetrics_GET(t *testing.T) {
 
 	// 设备不存在 -> 404
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/devices/dev-nonexistent/metrics", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
 	rec = httptest.NewRecorder()
 	s.handleDeviceRouting(rec, req)
 	if rec.Code != http.StatusNotFound {
@@ -267,6 +271,7 @@ func TestHandleDeviceMetrics_GET(t *testing.T) {
 	// 设备存在但无指标 -> 404
 	st.UpsertDevice(&proto.DeviceInfo{DeviceID: "dev-no-metrics", Segment: "seg-a", TenantID: "t1", State: "online"})
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/devices/dev-no-metrics/metrics", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
 	rec = httptest.NewRecorder()
 	s.handleDeviceRouting(rec, req)
 	if rec.Code != http.StatusNotFound {

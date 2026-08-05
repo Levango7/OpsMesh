@@ -53,6 +53,10 @@ type SQLStore struct {
 	// 高频时序数据落库应由 Prometheus/InfluxDB 承担，控制面仅缓存最新值供 API 查询，
 	// 避免给 MySQL 写入压力（每 30s/agent 一次写）。
 	deviceMetrics map[string]*proto.DeviceMetrics
+
+	// task 81 gRPC agent 身份绑定：agentID -> HMAC 签名密钥缓存（避免每次请求都查 MySQL）。
+	// 权威存储在 agents.secret 列；此处仅缓存已查询过的 agent 密钥（首次查询后填充）。
+	agentSecretCache map[string]string
 }
 
 // DB 暴露底层 *sql.DB 给 CMDB 等需要同库连接的子系统复用连接池。
@@ -85,7 +89,9 @@ func (s *SQLStore) WithSecret(secret string) *SQLStore {
 // publish 在总线非空时发布领域事件（审计/告警可接 Kafka）。
 func (s *SQLStore) publish(e events.Event) {
 	if s.bus != nil {
-		_ = s.bus.Publish(context.Background(), e)
+		if err := s.bus.Publish(context.Background(), e); err != nil {
+			log.Printf("store: 发布事件 %s 失败: %v", e.Action, err)
+		}
 	}
 }
 
@@ -96,6 +102,13 @@ func NewSQLStore(dsn, redisAddr string) (*SQLStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open mysql: %w", err)
 	}
+	// 工程债治理：连接池上限（多租户 schema 隔离下每租户独立 *sql.DB，
+	// 无上限会导致连接数随租户数无界增长，最终打满 MySQL max_connections）。
+	// 50/10/30min 为单 schema 上限：多租户总连接数 = 租户数 × 50，须配合
+	// MySQL server 端 max_connections 容量规划。
+	db.SetMaxOpenConns(50)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(30 * time.Minute)
 	// Ping 失败不阻塞启动（MVP 允许延迟连接），仅日志提示。
 	if err := db.Ping(); err != nil {
 		log.Printf("[store] mysql ping 失败（将延迟重连）: %v", err)
@@ -113,7 +126,7 @@ func NewSQLStore(dsn, redisAddr string) (*SQLStore, error) {
 	}
 	instID := fmt.Sprintf("%s-%d-%d", host, os.Getpid(), time.Now().UnixNano())
 
-	s := &SQLStore{db: db, rdb: rdb, instanceID: instID, secret: mustRandHex(32), deviceMetrics: make(map[string]*proto.DeviceMetrics)}
+	s := &SQLStore{db: db, rdb: rdb, instanceID: instID, secret: mustRandHex(32), deviceMetrics: make(map[string]*proto.DeviceMetrics), agentSecretCache: make(map[string]string)}
 	if err := s.initSchema(); err != nil {
 		log.Printf("[store] 建表失败（运行期可能不可用）: %v", err)
 	}
@@ -168,6 +181,8 @@ func (s *SQLStore) initSchema() error {
 			tenant_id VARCHAR(64),
 			type VARCHAR(32),
 			command TEXT,
+			content MEDIUMTEXT,
+			path VARCHAR(512),
 			status VARCHAR(16),
 			claimed_by VARCHAR(64),
 			claimed_at DATETIME,
@@ -273,6 +288,10 @@ func (s *SQLStore) initSchema() error {
 	s.alterColumnIfMissing(ctx, "devices", "hostname", "VARCHAR(255)")
 	s.alterColumnIfMissing(ctx, "devices", "os", "VARCHAR(32)")
 	s.alterColumnIfMissing(ctx, "devices", "arch", "VARCHAR(32)")
+	// 安全债 85：users 表增加 must_change_password 列，预置弱口令首登强制改密。
+	s.alterColumnIfMissing(ctx, "users", "must_change_password", "BOOLEAN DEFAULT 0")
+	// task 81 gRPC agent 身份绑定：agents 表增加 secret 列存储 HMAC 签名密钥。
+	s.alterColumnIfMissing(ctx, "agents", "secret", "VARCHAR(64)")
 	s.alterColumnIfMissing(ctx, "tasks", "retry_count", "INT DEFAULT 0")
 	s.alterColumnIfMissing(ctx, "tasks", "max_retries", "INT DEFAULT 0")
 	s.alterColumnIfMissing(ctx, "tasks", "dead_letter", "BOOLEAN DEFAULT 0")
@@ -280,6 +299,8 @@ func (s *SQLStore) initSchema() error {
 	s.alterColumnIfMissing(ctx, "tasks", "parent_id", "VARCHAR(64)")
 	s.alterColumnIfMissing(ctx, "tasks", "last_fired_at", "DATETIME")
 	s.alterColumnIfMissing(ctx, "tasks", "depends_on", "TEXT")
+	s.alterColumnIfMissing(ctx, "tasks", "content", "MEDIUMTEXT")
+	s.alterColumnIfMissing(ctx, "tasks", "path", "VARCHAR(512)")
 	// A3 leader_lease 表：仅当表已存在时补列（全新库由 CREATE TABLE 保证结构）。
 	var llCnt int
 	if err := s.db.QueryRowContext(ctx,
@@ -392,7 +413,29 @@ func (s *SQLStore) initSchema() error {
 	)`); err != nil {
 		log.Printf("[store] 建 k8s_clusters 表失败（非致命）: %v", err)
 	}
+	// 工程债治理：补二级索引，避免 ClaimTask 的 FOR UPDATE 全表扫描加锁，
+	// 以及按租户分页查询（tenant_id + created_at DESC）回表全扫。
+	// MySQL 不支持 CREATE INDEX IF NOT EXISTS，故用 createIndexIfMissing 兼容已有库。
+	s.createIndexIfMissing(ctx, "tasks", "idx_tasks_tenant_created", "(tenant_id, created_at DESC)")
+	s.createIndexIfMissing(ctx, "tasks", "idx_tasks_agent", "(agent_id, status)")
+	s.createIndexIfMissing(ctx, "audit_log", "idx_audit_tenant_created", "(tenant_id, created_at DESC)")
 	return nil
+}
+
+// createIndexIfMissing 当索引不存在时 CREATE INDEX（MySQL 无 CREATE INDEX IF NOT EXISTS）。
+// 通过 information_schema.statistics 查询索引名是否已存在，避免重复建索引报错。
+// 索引不存在或列缺失时仅日志提示，不阻断启动（兼容老库缺列场景）。
+func (s *SQLStore) createIndexIfMissing(ctx context.Context, table, indexName, indexSpec string) {
+	var cnt int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.statistics
+		 WHERE table_schema=DATABASE() AND table_name=? AND index_name=?`,
+		table, indexName).Scan(&cnt); err != nil || cnt > 0 {
+		return
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX `+indexName+` ON `+table+` `+indexSpec); err != nil {
+		log.Printf("[store] 建索引 %s.%s 失败（非致命，可能缺列）: %v", table, indexName, err)
+	}
 }
 
 // alterColumnIfMissing 当列不存在时 ALTER TABLE 补列（MySQL 无 ADD COLUMN IF NOT EXISTS）。
@@ -446,7 +489,41 @@ func (s *SQLStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 	}
 	now := time.Now().UTC()
 
-	_, err := s.db.ExecContext(ctx, `
+	// task 81 gRPC agent 身份绑定：为该 agent 生成 HMAC 签名密钥。
+	// 仅在该 agent 首次注册（agents 表无此 agent_id）时生成；复用已有 agent 不重置密钥，
+	// 避免 agent 重启注册后旧密钥失效。secret 列可能不存在（老库未迁移），故容错处理。
+	agentSecret := ""
+	var existingSecret string
+	hasSecretCol := true
+	if qerr := s.db.QueryRowContext(ctx, `SELECT secret FROM agents WHERE agent_id=?`, a.AgentID).Scan(&existingSecret); qerr != nil {
+		if qerr == sql.ErrNoRows {
+			// 新 agent：生成新密钥
+			agentSecret = mustRandHex(32)
+		} else {
+			// secret 列可能不存在（老库未迁移）或查询失败：降级为不生成密钥，签名验证降级放行
+			agentSecret = ""
+			hasSecretCol = false
+		}
+	} else {
+		// 已存在 agent：复用原密钥（不重置，避免 agent 重启后旧密钥失效）
+		agentSecret = existingSecret
+	}
+
+	var err error
+	if hasSecretCol {
+		_, err = s.db.ExecContext(ctx, `
+INSERT INTO agents (agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, load, last_seen, secret)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE
+	hostname=VALUES(hostname), segment=VALUES(segment), tenant_id=VALUES(tenant_id), addr=VALUES(addr),
+	grpc_port=VALUES(grpc_port), metrics_port=VALUES(metrics_port),
+	status=VALUES(status), load=VALUES(load), last_seen=VALUES(last_seen)
+`, a.AgentID, a.Hostname, a.Segment, a.TenantID, a.Addr, a.GRPCPort, a.MetricsPort, a.Status, 1, now, agentSecret)
+		if err != nil {
+			log.Printf("[store] Register upsert agents 失败 %s: %v", a.AgentID, err)
+		}
+	} else {
+		_, err = s.db.ExecContext(ctx, `
 INSERT INTO agents (agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, load, last_seen)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE
@@ -454,8 +531,15 @@ ON DUPLICATE KEY UPDATE
 	grpc_port=VALUES(grpc_port), metrics_port=VALUES(metrics_port),
 	status=VALUES(status), load=VALUES(load), last_seen=VALUES(last_seen)
 `, a.AgentID, a.Hostname, a.Segment, a.TenantID, a.Addr, a.GRPCPort, a.MetricsPort, a.Status, 1, now)
-	if err != nil {
-		log.Printf("[store] Register upsert agents 失败 %s: %v", a.AgentID, err)
+		if err != nil {
+			log.Printf("[store] Register upsert agents 失败 %s: %v", a.AgentID, err)
+		}
+	}
+	// 缓存 agent secret 供 AgentSecret O(1) 查询
+	if agentSecret != "" {
+		s.mu.Lock()
+		s.agentSecretCache[a.AgentID] = agentSecret
+		s.mu.Unlock()
 	}
 
 	// B1 自动纳管闭环：若携带 OnboardDeviceID（由 gRPC Register 校验 install token 后回填），
@@ -465,7 +549,9 @@ ON DUPLICATE KEY UPDATE
 	if a.OnboardDeviceID != "" {
 		// 先查候选设备当前租户，校验一致性后再翻转（agent 租户空=单租户放行）。
 		var curTenant string
-		_ = s.db.QueryRowContext(ctx, `SELECT tenant_id FROM devices WHERE device_id=?`, a.OnboardDeviceID).Scan(&curTenant)
+		if err := s.db.QueryRowContext(ctx, `SELECT tenant_id FROM devices WHERE device_id=?`, a.OnboardDeviceID).Scan(&curTenant); err != nil && err != sql.ErrNoRows {
+			log.Printf("[store] Register onboard 查询候选设备 %s 租户失败: %v", a.OnboardDeviceID, err)
+		}
 		if a.TenantID != "" && curTenant != "" && curTenant != a.TenantID {
 			log.Printf("[store] Register onboard 拒绝跨租户翻转 %s（device tenant=%q, agent tenant=%q）", a.OnboardDeviceID, curTenant, a.TenantID)
 		} else {
@@ -552,7 +638,7 @@ func (s *SQLStore) GetTasks(agentID string) []*proto.Task {
 	defer cancel()
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT task_id, agent_id, type, command, status, created_at FROM tasks WHERE agent_id=? AND (status IS NULL OR status='pending')`, agentID)
+		`SELECT task_id, agent_id, type, command, content, path, status, created_at FROM tasks WHERE agent_id=? AND (status IS NULL OR status='pending')`, agentID)
 	if err != nil {
 		log.Printf("[store] GetTasks 查询失败 %s: %v", agentID, err)
 		return nil
@@ -562,11 +648,14 @@ func (s *SQLStore) GetTasks(agentID string) []*proto.Task {
 	var out []*proto.Task
 	for rows.Next() {
 		var t proto.Task
+		var content, path sql.NullString
 		var createdAt time.Time
-		if err := rows.Scan(&t.TaskID, &t.AgentID, &t.Type, &t.Command, &t.Status, &createdAt); err != nil {
+		if err := rows.Scan(&t.TaskID, &t.AgentID, &t.Type, &t.Command, &content, &path, &t.Status, &createdAt); err != nil {
 			log.Printf("[store] GetTasks 扫描失败: %v", err)
 			continue
 		}
+		t.Content = content.String
+		t.Path = path.String
 		t.CreatedAt = createdAt
 		out = append(out, &t)
 	}
@@ -707,7 +796,9 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 	for _, b := range blocked {
 		var deps []string
 		if b.deps != "" {
-			_ = json.Unmarshal([]byte(b.deps), &deps)
+			if err := json.Unmarshal([]byte(b.deps), &deps); err != nil {
+				log.Printf("[store] 解析阻塞任务 %s 依赖 JSON 失败: %v", b.id, err)
+			}
 		}
 		t := &proto.Task{TaskID: b.id, DependsOn: deps, Status: "blocked"}
 		if dag.AllDepsDone(t, byID) {
@@ -797,7 +888,7 @@ func (s *SQLStore) Snapshot(tenantID string) map[string][]proto.DeviceInfo {
 func (s *SQLStore) AllTasks(tenantID string) []*proto.Task {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	q := `SELECT task_id, agent_id, tenant_id, type, command, status, created_at FROM tasks`
+	q := `SELECT task_id, agent_id, tenant_id, type, command, content, path, status, created_at FROM tasks`
 	var args []interface{}
 	if tenantID != "" {
 		q += ` WHERE tenant_id=?`
@@ -812,11 +903,14 @@ func (s *SQLStore) AllTasks(tenantID string) []*proto.Task {
 	var out []*proto.Task
 	for rows.Next() {
 		var t proto.Task
+		var content, path sql.NullString
 		var createdAt time.Time
-		if err := rows.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &t.Command, &t.Status, &createdAt); err != nil {
+		if err := rows.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &t.Command, &content, &path, &t.Status, &createdAt); err != nil {
 			log.Printf("[store] AllTasks 扫描失败: %v", err)
 			continue
 		}
+		t.Content = content.String
+		t.Path = path.String
 		t.CreatedAt = createdAt
 		out = append(out, &t)
 	}
@@ -938,6 +1032,29 @@ func (s *SQLStore) Agent(id string) *proto.AgentInfo {
 	return &a
 }
 
+// AgentSecret 返回该 agent 的 HMAC 签名密钥（task 81 gRPC 身份绑定）。
+// 优先查内存缓存（Register 时已填充），未命中则查 MySQL agents.secret 列。
+// agent 不存在或密钥为空时返回空串（调用方据此判断是否需要签名验证）。
+func (s *SQLStore) AgentSecret(agentID string) string {
+	s.mu.Lock()
+	if sec, ok := s.agentSecretCache[agentID]; ok {
+		s.mu.Unlock()
+		return sec
+	}
+	s.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var sec string
+	if err := s.db.QueryRowContext(ctx, `SELECT secret FROM agents WHERE agent_id=?`, agentID).Scan(&sec); err != nil {
+		return ""
+	}
+	s.mu.Lock()
+	s.agentSecretCache[agentID] = sec
+	s.mu.Unlock()
+	return sec
+}
+
 // CreateTask 下发任务给指定 agent（agentID 必填；TaskID 为空时分配；status=pending）。
 func (s *SQLStore) CreateTask(t *proto.Task) *proto.Task {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -983,11 +1100,12 @@ func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 	defer tx.Rollback()
 
 	var taskID, typ, command string
+	var tenantID, content, path sql.NullString
 	var createdAt time.Time
 	if err := tx.QueryRowContext(ctx,
-		`SELECT task_id, type, command, created_at FROM tasks
+		`SELECT task_id, tenant_id, type, command, content, path, created_at FROM tasks
 		 WHERE agent_id=? AND (status IS NULL OR status='pending') AND (schedule IS NULL OR schedule='') ORDER BY created_at LIMIT 1 FOR UPDATE`,
-		agentID).Scan(&taskID, &typ, &command, &createdAt); err != nil {
+		agentID).Scan(&taskID, &tenantID, &typ, &command, &content, &path, &createdAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil
 		}
@@ -1005,7 +1123,8 @@ func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 		return nil
 	}
 	return &proto.Task{
-		TaskID: taskID, AgentID: agentID, Type: typ, Command: command,
+		TaskID: taskID, AgentID: agentID, TenantID: tenantID.String, Type: typ, Command: command,
+		Content: content.String, Path: path.String,
 		Status: "running", CreatedAt: createdAt, ClaimedBy: "controlplane", ClaimedAt: time.Now().UTC(),
 	}
 }
@@ -1074,7 +1193,7 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 	}
 	fired := 0
 	for _, tp := range due {
-		instID := "task-" + strconv.FormatInt(now.UnixNano(), 10)
+		instID := fmt.Sprintf("task-%d-%s", now.UnixNano(), tp.id)
 		if _, err := s.db.ExecContext(ctx,
 			`INSERT INTO tasks (task_id, agent_id, tenant_id, type, command, content, path, status, retry_count, max_retries, schedule, parent_id, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, '', ?, ?)`,
@@ -1492,15 +1611,18 @@ func (s *SQLStore) RenewLeadership(ttl time.Duration) bool {
 	defer cancel()
 	now := time.Now().UTC()
 	exp := now.Add(ttl)
-	// 4 个插入占位（id, holder, expires_at, updated_at）+ 6 个 ON DUPLICATE 条件占位。
+	// 3 个 VALUES 占位（holder, expires_at, updated_at；id 为常量 1）+ 3 个 ON DUPLICATE 条件占位（均为 now）。
+	// 条件为 (租约已过期 OR 当前即本实例持有)：过期则抢占；本实例持有且未过期则续租（刷新 expires_at）。
+	// 修复：原逻辑仅 IF(expires_at < now)，本实例持有时租约不续期，每 TTL 周期被迫易主一次。
+	// 注意 ON DUPLICATE KEY UPDATE 从左到右求值：后续 IF 引用 holder 时取第 1 行赋值后的新值。
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO leader_lease (id, holder, expires_at, updated_at)
 		VALUES (1, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
-			holder=IF(expires_at < ?, VALUES(holder), holder),
-			expires_at=IF(expires_at < ?, VALUES(expires_at), expires_at),
-			updated_at=IF(expires_at < ?, VALUES(updated_at), updated_at)
-	`, s.instanceID, exp, now, now, s.instanceID, exp, now); err != nil {
+			holder=IF(expires_at < ? OR holder=VALUES(holder), VALUES(holder), holder),
+			expires_at=IF(expires_at < ? OR holder=VALUES(holder), VALUES(expires_at), expires_at),
+			updated_at=IF(expires_at < ? OR holder=VALUES(holder), VALUES(updated_at), updated_at)
+	`, s.instanceID, exp, now, now, now, now); err != nil {
 		log.Printf("[store] RenewLeadership 抢占失败: %v", err)
 		s.mu.Lock()
 		s.isLeader = false

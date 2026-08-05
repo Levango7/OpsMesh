@@ -41,6 +41,7 @@ import {
   loadK8sPods, showPodLogs, closeK8sPodLogsModal, refreshK8sPodLogs, deletePodConfirm,
   loadK8sDeployments, scaleDeployment, closeK8sScaleModal, confirmScaleDeployment, restartDeployment,
   loadK8sServices, loadK8sConfigMaps, loadK8sSecrets, loadK8sNodes,
+  showChangePasswordModal,
 } from './flow.js';
 import { icon } from './icons.js';
 import { initTheme, toggleTheme, getTheme, setTheme } from './theme.js';
@@ -220,6 +221,20 @@ w.submitAuth = async function () {
     if ((r.s === 200 || r.s === 201) && r.j && r.j.token) {
       msg.textContent = authMode === 'register' ? t('register.success') : '';
       msg.className = 'auth-msg ok';
+      // 安全债 85：登录响应 mustChangePassword=true 时弹出改密对话框，
+      // 改密成功后继续进入主界面；取消则退出登录回登录页。
+      if (authMode === 'login' && r.j.mustChangePassword) {
+        showChangePasswordModal(
+          function () { enterApp(r.j.user); },
+          function () {
+            api.apiLogout();
+            showAuthPage();
+            const m = document.getElementById('authMsg');
+            if (m) { m.textContent = t('changePassword.cancelledHint'); m.className = 'auth-msg err'; }
+          }
+        );
+        return;
+      }
       // 进入主界面
       enterApp(r.j.user);
     } else {

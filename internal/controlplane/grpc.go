@@ -2,7 +2,11 @@ package controlplane
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strconv"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -23,6 +27,16 @@ import (
 	"opsmesh/internal/store"
 )
 
+// agentSignatureMaxSkew task 81：签名 timestamp 允许的最大时钟偏移（5 分钟）。
+// 超过该偏移视为重放/过期，拒绝请求。5 分钟窗口兼顾合理时钟漂移与重放攻击窗口。
+const agentSignatureMaxSkew = 5 * time.Minute
+
+// agentSignatureMetadataKey task 81：gRPC metadata 中签名键名（小写按 gRPC 约定）。
+const agentSignatureMetadataKey = "agent-signature"
+
+// agentTimestampMetadataKey task 81：gRPC metadata 中 timestamp 键名（Unix 秒）。
+const agentTimestampMetadataKey = "agent-timestamp"
+
 // grpcServerImpl 实现 grpcx.RegistrationServer 接口，把四条 gRPC 通道转发到 store。
 type grpcServerImpl struct {
 	store       store.Store
@@ -33,6 +47,11 @@ type grpcServerImpl struct {
 	cmdb        *cmdb.Handler     // CMDB 处理器（Phase 1）；nil 时不处理 CmdbReport
 	logs        *logstore.Handler // M6 日志检索处理器；nil 时不落地任务日志
 	srv         *Server           // M3-2B：控制面 Server 引用，nil 时不发布 SSE 事件（测试兼容）
+	// task 81 gRPC agent 身份绑定：是否强制要求 agent 请求携带 HMAC 签名。
+	// false（默认，零值）=不校验签名（向后兼容 demo/测试/未启用 --grpc-require-signature 的部署）；
+	// true=PullTasks/ReportResult/PollCancels/Heartbeat 入口校验 agent-signature metadata，
+	// 签名不匹配或 timestamp 超过 5 分钟则拒绝（防冒领任务/伪造上报）。
+	requireSignature bool
 }
 
 // Register 注册：调用 store.Register，返回分配到的 agentID 与控制面下发配置。
@@ -96,8 +115,9 @@ func (g *grpcServerImpl) Register(ctx context.Context, info *proto.AgentInfo) (*
 	}
 
 	// M3-2B SSE：通知前端新 agent/设备已上线（设备表实时追加）
+	// H6 租户隔离：携带 registered.TenantID，仅同租户订阅者收到。
 	if g.srv != nil {
-		g.srv.publishEvent("device_online", map[string]string{
+		g.srv.publishEvent("device_online", registered.TenantID, map[string]string{
 			"agentID":  registered.AgentID,
 			"hostname": registered.Hostname,
 			"segment":  registered.Segment,
@@ -110,6 +130,11 @@ func (g *grpcServerImpl) Register(ctx context.Context, info *proto.AgentInfo) (*
 			"heartbeatInterval": 10, // 与 agent 心跳周期一致
 			"taskPollInterval":  15, // 与 agent 任务轮询周期一致
 		},
+		// task 81 gRPC agent 身份绑定：随注册响应下发该 agent 的 HMAC 签名密钥。
+		// agent 收到后保存，后续 PullTasks/ReportResult/PollCancels/Heartbeat 请求在 metadata 中
+		// 携带 agent-signature = HMAC-SHA256(secret, timestamp+agentID)。
+		// 仅在控制面启用 requireSignature 时下发（demo/未启用时为空，agent 不签名）。
+		Secret: g.store.AgentSecret(registered.AgentID),
 	}, nil
 }
 
@@ -143,9 +168,76 @@ func (g *grpcServerImpl) checkAgentTenant(ctx context.Context, agentID string) e
 	return nil
 }
 
+// verifyAgentSignature task 81 gRPC agent 身份绑定：校验请求 metadata 中的 HMAC 签名。
+// 开启 requireSignature 时，agent 必须在 gRPC metadata 中携带：
+//   - agent-timestamp：签名生成时刻（Unix 秒，十进制字符串）
+//   - agent-signature：HMAC-SHA256(secret, timestamp + agentID) 的 hex 编码
+//
+// 控制面用该 agentID 对应的 store.AgentSecret(agentID) 重新计算 HMAC 并与 metadata 中的签名比对。
+// 校验项：签名缺失 / timestamp 缺失或非法 / timestamp 超过 5 分钟偏移 / 签名不匹配 → Unauthenticated。
+// requireSignature 关闭时直接放行（向后兼容 demo/未启用 --grpc-require-signature 的部署）。
+// agent 不存在或未生成 secret 时：requireSignature 开启则拒绝（未注册 agent 不应有签名），
+// 关闭则放行（保持原有行为）。
+func (g *grpcServerImpl) verifyAgentSignature(ctx context.Context, agentID string) error {
+	if !g.requireSignature {
+		return nil // 未启用签名验证，放行（向后兼容）
+	}
+	if agentID == "" {
+		return status.Error(codes.InvalidArgument, "agentID required (signature verification enabled)")
+	}
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return status.Error(codes.Unauthenticated, "missing gRPC metadata: agent-signature required")
+	}
+	sigVals := md.Get(agentSignatureMetadataKey)
+	tsVals := md.Get(agentTimestampMetadataKey)
+	if len(sigVals) == 0 || len(tsVals) == 0 {
+		return status.Error(codes.Unauthenticated, "missing agent-signature or agent-timestamp metadata")
+	}
+	providedSig := sigVals[0]
+	tsStr := tsVals[0]
+
+	// 解析 timestamp（Unix 秒）
+	tsSec, err := strconv.ParseInt(tsStr, 10, 64)
+	if err != nil {
+		return status.Error(codes.Unauthenticated, "invalid agent-timestamp: not a valid Unix second")
+	}
+	tsTime := time.Unix(tsSec, 0)
+	now := time.Now()
+	if skew := now.Sub(tsTime); skew > agentSignatureMaxSkew || skew < -agentSignatureMaxSkew {
+		return status.Error(codes.Unauthenticated, fmt.Sprintf("agent-timestamp out of skew (max %v): got %v, now %v", agentSignatureMaxSkew, tsTime, now))
+	}
+
+	// 取该 agent 的 secret
+	secret := g.store.AgentSecret(agentID)
+	if secret == "" {
+		// agent 未注册或未生成 secret：requireSignature 开启时拒绝（未注册 agent 不应能签名）
+		return status.Error(codes.Unauthenticated, fmt.Sprintf("agent %q has no signing secret (not registered or secret not generated)", agentID))
+	}
+
+	// 重新计算 HMAC-SHA256(secret, timestamp + agentID) 并比对
+	wantSig := computeAgentSignature(secret, tsStr, agentID)
+	if !hmac.Equal([]byte(providedSig), []byte(wantSig)) {
+		return status.Error(codes.Unauthenticated, "agent-signature mismatch: HMAC verification failed")
+	}
+	return nil
+}
+
+// computeAgentSignature task 81：计算 HMAC-SHA256(secret, timestamp + agentID) 的 hex 编码。
+// 消息 = timestamp（Unix 秒字符串）+ agentID，密钥 = agent 的 secret。
+// 控制面与 agent 端共用此函数（agent 端在 grpcclient.go 内联实现，保持一致）。
+func computeAgentSignature(secret, timestamp, agentID string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp + agentID))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 // Heartbeat 心跳：转发到 store.Heartbeat；若携带监控指标则缓存到 store。
 func (g *grpcServerImpl) Heartbeat(ctx context.Context, req *grpcx.HeartbeatReq) (*grpcx.Empty, error) {
 	if err := g.checkAgentTenant(ctx, req.AgentID); err != nil {
+		return nil, err
+	}
+	if err := g.verifyAgentSignature(ctx, req.AgentID); err != nil {
 		return nil, err
 	}
 	g.store.Heartbeat(req.AgentID, req.Status, req.Load)
@@ -168,6 +260,9 @@ func (g *grpcServerImpl) PullTasks(ctx context.Context, req *grpcx.PullTasksReq)
 	if err := g.checkAgentTenant(ctx, req.AgentID); err != nil {
 		return nil, err
 	}
+	if err := g.verifyAgentSignature(ctx, req.AgentID); err != nil {
+		return nil, err
+	}
 	t := g.store.ClaimTask(req.AgentID)
 	if g.metrics != nil {
 		g.metrics.SetQueueDepth(g.store.PendingDepth())
@@ -182,6 +277,9 @@ func (g *grpcServerImpl) PullTasks(ctx context.Context, req *grpcx.PullTasksReq)
 // ReportResult 上报结果：转发到 store.SubmitResult，并更新观测指标 / 事件总线。
 func (g *grpcServerImpl) ReportResult(ctx context.Context, res *proto.TaskResult) (*grpcx.Empty, error) {
 	if err := g.checkAgentTenant(ctx, res.AgentID); err != nil {
+		return nil, err
+	}
+	if err := g.verifyAgentSignature(ctx, res.AgentID); err != nil {
 		return nil, err
 	}
 	g.store.SubmitResult(res)
@@ -220,19 +318,25 @@ func (g *grpcServerImpl) ReportResult(ctx context.Context, res *proto.TaskResult
 	// M3-2B SSE：通知前端任务状态已变更（结果上报 → done/failed，前端任务表刷新）。
 	// 失败时同时发 alert_new：任务失败可能触发死信 → critical 告警（store 层在 SubmitResult
 	// 内部判定），前端收到 alert_new 即刷新告警面板。冗余刷新可接受（前端刷新幂等）。
+	// H6 租户隔离：事件归属租户取自 agent 注册时的 TenantID（agent 不可伪造，由 Register 盖章），
+	// 仅同租户订阅者收到；agent 不存在时 tenant 留空（兼容旧数据/无网关降级）。
 	if g.srv != nil {
+		agentTenant := ""
+		if a := g.store.Agent(res.AgentID); a != nil {
+			agentTenant = a.TenantID
+		}
 		status := "done"
 		if dr.ExitCode != 0 {
 			status = "failed"
 		}
-		g.srv.publishEvent("task_status", map[string]interface{}{
+		g.srv.publishEvent("task_status", agentTenant, map[string]interface{}{
 			"taskID":   dr.TaskID,
 			"status":   status,
 			"agentID":  res.AgentID,
 			"exitCode": dr.ExitCode,
 		})
 		if dr.ExitCode != 0 {
-			g.srv.publishEvent("alert_new", map[string]string{
+			g.srv.publishEvent("alert_new", agentTenant, map[string]string{
 				"taskID": dr.TaskID,
 				"action": "dead_letter_check",
 			})
@@ -263,8 +367,9 @@ func (g *grpcServerImpl) CancelTask(ctx context.Context, req *grpcx.CancelTaskRe
 		return nil, status.Error(codes.NotFound, "task not cancellable (not found / not pending|running / tenant mismatch)")
 	}
 	// M3-2B SSE：通知前端任务已取消（gRPC 通道，agent 侧或编排系统触发）
+	// H6 租户隔离：携带 tenant，仅同租户订阅者收到。
 	if g.srv != nil {
-		g.srv.publishEvent("task_status", map[string]string{
+		g.srv.publishEvent("task_status", tenant, map[string]string{
 			"taskID": req.TaskID,
 			"status": "cancelled",
 		})
@@ -277,6 +382,15 @@ func (g *grpcServerImpl) CancelTask(ctx context.Context, req *grpcx.CancelTaskRe
 func (g *grpcServerImpl) PollCancels(ctx context.Context, req *grpcx.PollCancelsReq) (*grpcx.PollCancelsResp, error) {
 	if req.AgentID == "" {
 		return nil, status.Error(codes.InvalidArgument, "agentID required")
+	}
+	// task 81：PollCancels 原完全无租户校验，知道 AgentID 即可拉取消列表。
+	// 现添加签名验证，确保只有持有该 agent secret 的调用方能拉取（防冒充）。
+	if err := g.verifyAgentSignature(ctx, req.AgentID); err != nil {
+		return nil, err
+	}
+	// 同时补做租户归属校验（与 PullTasks/ReportResult 一致），防跨租户拉取消列表。
+	if err := g.checkAgentTenant(ctx, req.AgentID); err != nil {
+		return nil, err
 	}
 	ids := g.store.CancelledTaskIDs(req.AgentID)
 	return &grpcx.PollCancelsResp{CancelledTaskIDs: ids}, nil

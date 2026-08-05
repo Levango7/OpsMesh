@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"opsmesh/internal/config"
 	"opsmesh/internal/proto"
 )
 
 func newTestAgent(timeout time.Duration) *Agent {
-	return &Agent{agentID: "agent-test", taskTimeout: timeout}
+	return &Agent{agentID: "agent-test", taskTimeout: timeout, cfg: &config.Config{}}
 }
 
 // TestExecute_Shell 验证 shell 任务捕获 stdout/stderr 与退出码。

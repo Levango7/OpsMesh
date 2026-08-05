@@ -23,12 +23,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"opsmesh/internal/authctx"
+
 	"opsmesh/internal/logx"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
@@ -109,7 +110,9 @@ func (f *FederationManager) HealthCheck(ctx context.Context, peerURL string) boo
 		return false
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		log.Printf("controlplane: federation HealthCheck drain body 失败 (peer=%s): %v", peerURL, err)
+	}
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
@@ -266,9 +269,8 @@ func (s *Server) handleFederationForwardTask(w http.ResponseWriter, r *http.Requ
 		http.NotFound(w, r)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -324,9 +326,8 @@ func (s *Server) handleFederationDevices(w http.ResponseWriter, r *http.Request)
 		http.NotFound(w, r)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	tenant := r.URL.Query().Get("tenant")

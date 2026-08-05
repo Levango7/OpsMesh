@@ -2,6 +2,9 @@ package controlplane
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"net"
 	"os/exec"
 	"strconv"
@@ -461,5 +464,178 @@ func TestGRPCHeartbeat_MetricsAutoDeviceID(t *testing.T) {
 	}
 	if got.Hostname != "auto-host" {
 		t.Fatalf("Hostname = %q, want auto-host", got.Hostname)
+	}
+}
+
+// TestGRPCAgentSignature_VerifyAndReject task 81 端到端：启用 requireSignature 后，
+// 携带正确签名的请求放行，无签名/错误签名/过期签名被拒绝。
+func TestGRPCAgentSignature_VerifyAndReject(t *testing.T) {
+	st := store.NewMemoryStore()
+	srvImpl := &grpcServerImpl{store: st, requireAuth: false, requireSignature: true}
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	gs := grpc.NewServer()
+	gs.RegisterService(&grpcx.Registration_ServiceDesc, srvImpl)
+	go func() { _ = gs.Serve(lis) }()
+	defer gs.Stop()
+
+	port := lis.Addr().(*net.TCPAddr).Port
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, err := grpc.DialContext(ctx, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(grpc.ForceCodec(grpcx.JSONCodec)),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// 注册 agent（Register 不校验签名，返回 secret）
+	regResp := &grpcx.RegisterResp{}
+	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/Register",
+		&proto.AgentInfo{Segment: "seg-a"}, regResp, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	agentID := regResp.AgentID
+	secret := regResp.Secret
+	if secret == "" {
+		t.Fatal("Register should return non-empty secret when requireSignature enabled")
+	}
+	// store 中应能查到同一 secret
+	if got := st.AgentSecret(agentID); got != secret {
+		t.Fatalf("store.AgentSecret = %q, want %q", got, secret)
+	}
+
+	// helper：构造签名 metadata
+	signCtx := func(base context.Context, sec, aid string, ts int64) context.Context {
+		mac := hmac.New(sha256.New, []byte(sec))
+		mac.Write([]byte(strconv.FormatInt(ts, 10) + aid))
+		sig := hex.EncodeToString(mac.Sum(nil))
+		return metadata.AppendToOutgoingContext(base,
+			"agent-signature", sig,
+			"agent-timestamp", strconv.FormatInt(ts, 10),
+		)
+	}
+
+	// 1) 正确签名 → 放行
+	goodCtx := signCtx(ctx, secret, agentID, time.Now().Unix())
+	ptResp := &grpcx.PullTasksResp{}
+	if err := conn.Invoke(goodCtx, "/opsmesh.v1.Registration/PullTasks",
+		&grpcx.PullTasksReq{AgentID: agentID}, ptResp, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
+		t.Fatalf("PullTasks with valid signature should succeed: %v", err)
+	}
+
+	// 2) 无签名 → 拒绝
+	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/PullTasks",
+		&grpcx.PullTasksReq{AgentID: agentID}, &grpcx.PullTasksResp{}, grpc.ForceCodec(grpcx.JSONCodec)); err == nil {
+		t.Fatal("PullTasks without signature should fail")
+	}
+
+	// 3) 错误签名 → 拒绝
+	badSigCtx := metadata.AppendToOutgoingContext(ctx,
+		"agent-signature", "deadbeef",
+		"agent-timestamp", strconv.FormatInt(time.Now().Unix(), 10),
+	)
+	if err := conn.Invoke(badSigCtx, "/opsmesh.v1.Registration/PullTasks",
+		&grpcx.PullTasksReq{AgentID: agentID}, &grpcx.PullTasksResp{}, grpc.ForceCodec(grpcx.JSONCodec)); err == nil {
+		t.Fatal("PullTasks with bad signature should fail")
+	}
+
+	// 4) 过期 timestamp（6 分钟前）→ 拒绝
+	expiredCtx := signCtx(ctx, secret, agentID, time.Now().Add(-6*time.Minute).Unix())
+	if err := conn.Invoke(expiredCtx, "/opsmesh.v1.Registration/PullTasks",
+		&grpcx.PullTasksReq{AgentID: agentID}, &grpcx.PullTasksResp{}, grpc.ForceCodec(grpcx.JSONCodec)); err == nil {
+		t.Fatal("PullTasks with expired timestamp should fail")
+	}
+
+	// 5) 冒充其他 agentID（用 agent-1 的 secret 签 agent-2）→ 拒绝
+	// 先注册第二个 agent 拿到其 agentID（但用第一个的 secret 签名）
+	regResp2 := &grpcx.RegisterResp{}
+	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/Register",
+		&proto.AgentInfo{Segment: "seg-b"}, regResp2, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
+		t.Fatalf("Register#2: %v", err)
+	}
+	if regResp2.AgentID == agentID {
+		t.Fatal("second agent should have different ID")
+	}
+	// 用 agent1 的 secret 签 agent2 的请求 → 签名不匹配（secret 不同）
+	forgeCtx := signCtx(ctx, secret, regResp2.AgentID, time.Now().Unix())
+	if err := conn.Invoke(forgeCtx, "/opsmesh.v1.Registration/PullTasks",
+		&grpcx.PullTasksReq{AgentID: regResp2.AgentID}, &grpcx.PullTasksResp{}, grpc.ForceCodec(grpcx.JSONCodec)); err == nil {
+		t.Fatal("PullTasks with forged signature (agent1 secret for agent2) should fail")
+	}
+
+	// 6) PollCancels 也校验签名
+	goodPollCtx := signCtx(ctx, secret, agentID, time.Now().Unix())
+	if err := conn.Invoke(goodPollCtx, "/opsmesh.v1.Registration/PollCancels",
+		&grpcx.PollCancelsReq{AgentID: agentID}, &grpcx.PollCancelsResp{}, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
+		t.Fatalf("PollCancels with valid signature should succeed: %v", err)
+	}
+	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/PollCancels",
+		&grpcx.PollCancelsReq{AgentID: agentID}, &grpcx.PollCancelsResp{}, grpc.ForceCodec(grpcx.JSONCodec)); err == nil {
+		t.Fatal("PollCancels without signature should fail")
+	}
+
+	// 7) ReportResult 也校验签名
+	goodRepCtx := signCtx(ctx, secret, agentID, time.Now().Unix())
+	if err := conn.Invoke(goodRepCtx, "/opsmesh.v1.Registration/ReportResult",
+		&proto.TaskResult{TaskID: "task-x", AgentID: agentID, ExitCode: 0},
+		&grpcx.Empty{}, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
+		t.Fatalf("ReportResult with valid signature should succeed: %v", err)
+	}
+	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/ReportResult",
+		&proto.TaskResult{TaskID: "task-y", AgentID: agentID, ExitCode: 0},
+		&grpcx.Empty{}, grpc.ForceCodec(grpcx.JSONCodec)); err == nil {
+		t.Fatal("ReportResult without signature should fail")
+	}
+}
+
+// TestGRPCAgentSignature_DisabledByDefault task 81：requireSignature=false（默认）时，
+// 无签名请求放行（向后兼容 demo/未启用 --grpc-require-signature 的部署）。
+func TestGRPCAgentSignature_DisabledByDefault(t *testing.T) {
+	st := store.NewMemoryStore().WithDemo(true)
+	srvImpl := &grpcServerImpl{store: st, requireAuth: false, requireSignature: false}
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	gs := grpc.NewServer()
+	gs.RegisterService(&grpcx.Registration_ServiceDesc, srvImpl)
+	go func() { _ = gs.Serve(lis) }()
+	defer gs.Stop()
+
+	port := lis.Addr().(*net.TCPAddr).Port
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := grpc.DialContext(ctx, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(grpc.ForceCodec(grpcx.JSONCodec)),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// 注册（requireSignature=false 时 Register 仍下发 secret，但 agent 不签名也能通过）
+	regResp := &grpcx.RegisterResp{}
+	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/Register",
+		&proto.AgentInfo{Segment: "seg-a"}, regResp, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	// 无签名 PullTasks 应放行（向后兼容）
+	ptResp := &grpcx.PullTasksResp{}
+	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/PullTasks",
+		&grpcx.PullTasksReq{AgentID: regResp.AgentID}, ptResp, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
+		t.Fatalf("PullTasks without signature should succeed when requireSignature=false: %v", err)
+	}
+	// 无签名 PollCancels 应放行
+	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/PollCancels",
+		&grpcx.PollCancelsReq{AgentID: regResp.AgentID}, &grpcx.PollCancelsResp{}, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
+		t.Fatalf("PollCancels without signature should succeed when requireSignature=false: %v", err)
 	}
 }

@@ -21,7 +21,7 @@ import (
 	"strconv"
 	"strings"
 
-	"opsmesh/internal/authctx"
+
 	"opsmesh/internal/events"
 	"opsmesh/internal/proto"
 )
@@ -503,9 +503,8 @@ func (s *Server) handleMiddlewareTemplates(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	_, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	q := r.URL.Query()
@@ -530,9 +529,8 @@ func (s *Server) handleMiddlewareTemplateByID(w http.ResponseWriter, r *http.Req
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	_, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	t := middlewareTemplateByID(id)
@@ -557,9 +555,8 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	tpl := middlewareTemplateByID(id)
@@ -633,10 +630,8 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	targetTenant := body.TenantID
-	if targetTenant == "" {
-		targetTenant = actx.TenantID
-	}
+	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	targetTenant := actx.TenantID
 	agent := s.lookupAgent(body.AgentID)
 	if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "agent not found or tenant mismatch"})
@@ -668,7 +663,9 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	if s.metrics != nil {
 		s.metrics.SetQueueDepth(s.store.PendingDepth())
 	}
-	s.publishEvent("task_status", map[string]string{
+	// M3-2B SSE：通知前端新部署任务已创建。
+	// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
+	s.publishEvent("task_status", targetTenant, map[string]string{
 		"taskID":  task.TaskID,
 		"status":  task.Status,
 		"agentID": body.AgentID,
@@ -690,9 +687,8 @@ func (s *Server) handleMiddlewareInstances(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	_, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	// MVP：返回空数组。后续可从审计/任务历史推导已部署实例。
@@ -792,9 +788,8 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
-	actx := authctx.FromHTTPHeader(r.Header)
-	if s.requireAuth && actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -842,10 +837,8 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 			body.Params[p.Name] = p.Default
 		}
 	}
-	targetTenant := body.TenantID
-	if targetTenant == "" {
-		targetTenant = actx.TenantID
-	}
+	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	targetTenant := actx.TenantID
 	agent := s.lookupAgent(body.AgentID)
 	if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "agent not found or tenant mismatch"})
@@ -877,7 +870,9 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 	if s.metrics != nil {
 		s.metrics.SetQueueDepth(s.store.PendingDepth())
 	}
-	s.publishEvent("task_status", map[string]string{
+	// M3-2B SSE：通知前端卸载任务已创建。
+	// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
+	s.publishEvent("task_status", targetTenant, map[string]string{
 		"taskID":  task.TaskID,
 		"status":  task.Status,
 		"agentID": body.AgentID,

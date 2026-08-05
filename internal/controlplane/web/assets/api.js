@@ -288,6 +288,12 @@ export function apiAuthMe() {
   return authFetch('/api/v1/auth/me', 'GET');
 }
 
+// 改密（安全债 85）：POST /api/v1/auth/change-password {oldPassword, newPassword} → 200 {message}
+// 鉴权：须携带当前 token。新密码强度由后端校验（≥8 字符且含大小写字母与数字）。
+export function apiAuthChangePassword(oldPassword, newPassword) {
+  return request('/api/v1/auth/change-password', jsonMethod('POST', { oldPassword: oldPassword, newPassword: newPassword }));
+}
+
 // 退出登录：清除本地 token
 export function apiLogout() {
   setToken('');

@@ -15,6 +15,8 @@ import (
 
 // newPeerTestServer 构造一个模拟 peer 控制面的 httptest.Server，复用真实 Server 的 handler。
 // 这样 peer 侧的任务创建/设备列表/健康检查走真实代码路径，测试更接近生产。
+// cfg.Demo=true：demo 模式放宽认证，便于测试在不显式注入网关头时调用 peer handler
+// （H6 认证防御后非 demo 模式会拒绝空租户头）。
 func newPeerTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	st := store.NewMemoryStore()
@@ -22,7 +24,7 @@ func newPeerTestServer(t *testing.T) *httptest.Server {
 	st.Register(&proto.AgentInfo{Segment: "peer-seg", TenantID: "t1", Hostname: "peer-agent-1"})
 	srv := &Server{
 		store:       st,
-		cfg:         &config.Config{TaskMaxRetries: 3},
+		cfg:         &config.Config{TaskMaxRetries: 3, Demo: true},
 		requireAuth: false,
 	}
 	mux := http.NewServeMux()
@@ -49,7 +51,10 @@ func TestFederationManager_ForwardTask(t *testing.T) {
 	_ = peerAgents
 	// 直接从 peer 的 store 取 agent ID（白盒：peer 用的是真实 Server，agent ID 由 Register 分配）。
 	// 改用 HTTP 拉取设备视图反推 agent ID（黑盒，更稳健）。
-	resp, err := peer.Client().Get(peer.URL + "/api/v1/devices")
+	// H6 认证防御：peer 启用 demo 模式，但 agent 属于 t1 租户，需带 X-Tenant-ID 头才能查到。
+	devReq, _ := http.NewRequest(http.MethodGet, peer.URL+"/api/v1/devices", nil)
+	devReq.Header.Set("X-Tenant-ID", "t1")
+	resp, err := peer.Client().Do(devReq)
 	if err != nil {
 		t.Fatalf("get peer devices: %v", err)
 	}
@@ -68,7 +73,10 @@ func TestFederationManager_ForwardTask(t *testing.T) {
 	}
 
 	task := proto.Task{AgentID: peerAgentID, Type: "shell", Command: "echo federated"}
-	created, err := fed.ForwardTask(context.Background(), peer.URL, task, http.Header{"X-Tenant-ID": {"t1"}})
+	// 注意：http.Header 直接 map 字面量赋值不会规范化键名，需用 Set 确保 Get 能查到。
+	idHeaders := http.Header{}
+	idHeaders.Set("X-Tenant-ID", "t1")
+	created, err := fed.ForwardTask(context.Background(), peer.URL, task, idHeaders)
 	if err != nil {
 		t.Fatalf("ForwardTask err: %v", err)
 	}
@@ -96,7 +104,8 @@ func TestFederationManager_FederatedDevices(t *testing.T) {
 	localStore.Register(&proto.AgentInfo{Segment: "local-seg", TenantID: "t1", Hostname: "local-agent"})
 
 	fed := NewFederationManager([]string{peer1.URL, peer2URL}, localStore, "", nil)
-	result := fed.FederatedDevices(context.Background(), "")
+	// H6 认证防御：传 t1 租户，peer 侧 demo 模式但 agent 属于 t1，需带 X-Tenant-ID 才能查到。
+	result := fed.FederatedDevices(context.Background(), "t1")
 
 	// local 部分应有至少 1 台设备。
 	localDevs, _ := result["local"].([]proto.DeviceInfo)
@@ -205,7 +214,10 @@ func TestHandleFederationForwardTask(t *testing.T) {
 	}
 
 	// 取 peer 上 agent ID（黑盒：通过 /api/v1/devices 反推）。
-	resp, err := peer.Client().Get(peer.URL + "/api/v1/devices")
+	// H6 认证防御：peer 启用 demo 模式，但 agent 属于 t1 租户，需带 X-Tenant-ID 头才能查到。
+	devReq, _ := http.NewRequest(http.MethodGet, peer.URL+"/api/v1/devices", nil)
+	devReq.Header.Set("X-Tenant-ID", "t1")
+	resp, err := peer.Client().Do(devReq)
 	if err != nil {
 		t.Fatalf("get peer devices: %v", err)
 	}
@@ -273,11 +285,12 @@ func TestHandleFederationDevices(t *testing.T) {
 	localSt.Register(&proto.AgentInfo{Segment: "local-seg", TenantID: "t1", Hostname: "local-agent"})
 	s := &Server{
 		store: localSt,
-		cfg:   &config.Config{FederationPeers: []string{peer.URL}},
+		cfg:   &config.Config{FederationPeers: []string{peer.URL}, Demo: true},
 		fed:   NewFederationManager([]string{peer.URL}, localSt, "", nil),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/federation/devices", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
 	rec := httptest.NewRecorder()
 	s.handleFederationDevices(rec, req)
 	if rec.Code != http.StatusOK {

@@ -622,3 +622,37 @@ func TestMemoryStore_Register_FillsDeviceMeta(t *testing.T) {
 		t.Fatalf("dev.Arch = %q, want amd64", dev.Arch)
 	}
 }
+
+// TestMemoryStore_AgentSecret task 81：Register 时为每个 agent 生成 HMAC 签名密钥，
+// AgentSecret 可查到；不同 agent 密钥不同；复用已注册 agent 不重置密钥。
+func TestMemoryStore_AgentSecret(t *testing.T) {
+	m := NewMemoryStore()
+	a1 := m.Register(&proto.AgentInfo{AgentID: "agent-sec-1", Segment: "seg-a"})
+	a2 := m.Register(&proto.AgentInfo{AgentID: "agent-sec-2", Segment: "seg-a"})
+
+	s1 := m.AgentSecret(a1.AgentID)
+	s2 := m.AgentSecret(a2.AgentID)
+	if s1 == "" {
+		t.Fatal("agent-sec-1 should have non-empty secret")
+	}
+	if s2 == "" {
+		t.Fatal("agent-sec-2 should have non-empty secret")
+	}
+	if s1 == s2 {
+		t.Fatal("different agents should have different secrets")
+	}
+	if len(s1) != 64 { // 32 bytes hex = 64 chars
+		t.Fatalf("secret length = %d, want 64 (32 bytes hex)", len(s1))
+	}
+
+	// 未注册 agent 返回空串
+	if got := m.AgentSecret("agent-nonexistent"); got != "" {
+		t.Fatalf("AgentSecret(nonexistent) = %q, want empty", got)
+	}
+
+	// 复用已注册 agent 不重置密钥
+	m.Register(&proto.AgentInfo{AgentID: "agent-sec-1", Segment: "seg-a"})
+	if got := m.AgentSecret(a1.AgentID); got != s1 {
+		t.Fatalf("re-register should not reset secret: got %q, want %q", got, s1)
+	}
+}

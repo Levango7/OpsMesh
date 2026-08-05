@@ -125,7 +125,7 @@ func TestSSE_EventPushFormat(t *testing.T) {
 	// 从另一 goroutine 发布事件（模拟服务端状态变更）
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		s.publishEvent("task_status", map[string]string{
+		s.publishEvent("task_status", "", map[string]string{
 			"taskID":  "task-123",
 			"status":  "running",
 			"agentID": "agent-456",
@@ -182,8 +182,8 @@ func TestSSE_BroadcastToMultiple(t *testing.T) {
 		t.Fatalf("read r2 hello: %v", err)
 	}
 
-	// 发布一条 alert_new 事件，两个订阅者都应收到
-	s.publishEvent("alert_new", map[string]string{"alertID": "alert-789"})
+	// 发布一条 alert_new 事件，两个订阅者都应收到（tenantID 为空 = 全局事件）
+	s.publishEvent("alert_new", "", map[string]string{"alertID": "alert-789"})
 
 	f1, err := readSSEFrame(br1)
 	if err != nil {
@@ -268,7 +268,7 @@ func TestSSE_PublishEvent_NoSubscribers(t *testing.T) {
 	// 无订阅者，直接发布（不应 panic / 阻塞）
 	done := make(chan struct{})
 	go func() {
-		s.publishEvent("task_status", map[string]string{"taskID": "x"})
+		s.publishEvent("task_status", "", map[string]string{"taskID": "x"})
 		close(done)
 	}()
 	select {
@@ -276,5 +276,90 @@ func TestSSE_PublishEvent_NoSubscribers(t *testing.T) {
 		// ok
 	case <-time.After(time.Second):
 		t.Fatal("publishEvent with no subscribers blocked for >1s")
+	}
+}
+
+// TestSSE_TenantIsolation 验证 H6 租户隔离：A 租户订阅者不会收到 B 租户的事件。
+// 发布 tenantB 的 task_status 事件，tenantA 订阅者不应收到（应继续等待心跳或阻塞）。
+func TestSSE_TenantIsolation(t *testing.T) {
+	s := newSSETestServer()
+	ts := httptest.NewServer(http.HandlerFunc(s.handleEventsStream))
+	defer ts.Close()
+
+	// 建立 tenantA 订阅者（携带 X-Tenant-ID 头）
+	reqA, err := http.NewRequest(http.MethodGet, ts.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest A: %v", err)
+	}
+	reqA.Header.Set("X-Tenant-ID", "tenantA")
+	respA, err := http.DefaultClient.Do(reqA)
+	if err != nil {
+		t.Fatalf("GET SSE A: %v", err)
+	}
+	defer respA.Body.Close()
+
+	brA := bufio.NewReader(respA.Body)
+	// 读 hello 握手帧
+	if _, err := readSSEFrame(brA); err != nil {
+		t.Fatalf("read A hello: %v", err)
+	}
+
+	// 发布 tenantB 的事件 —— tenantA 订阅者不应收到
+	s.publishEvent("task_status", "tenantB", map[string]string{
+		"taskID": "task-b",
+		"status": "running",
+	})
+	// 发布 tenantA 的事件 —— tenantA 订阅者应收到
+	s.publishEvent("task_status", "tenantA", map[string]string{
+		"taskID": "task-a",
+		"status": "running",
+	})
+
+	// 读取下一帧：应为 tenantA 的事件，而非 tenantB 的
+	frame, err := readSSEFrame(brA)
+	if err != nil {
+		t.Fatalf("read A event frame: %v", err)
+	}
+	if !strings.Contains(frame, `"taskID":"task-a"`) {
+		t.Fatalf("tenantA subscriber received wrong event (expected task-a, got: %q)", frame)
+	}
+	if strings.Contains(frame, `"taskID":"task-b"`) {
+		t.Fatalf("tenantA subscriber received tenantB event (cross-tenant leak): %q", frame)
+	}
+}
+
+// TestSSE_RequireAuthRejectsMissingTenant 验证 requireAuth=true 时缺失身份头返回 401。
+func TestSSE_RequireAuthRejectsMissingTenant(t *testing.T) {
+	s := newSSETestServer()
+	s.requireAuth = true
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events/stream", nil)
+	rec := httptest.NewRecorder()
+	s.handleEventsStream(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing tenant with requireAuth = %d, want 401", rec.Code)
+	}
+}
+
+// TestSSE_DemoFillsDefaultTenant 验证 demo 模式下缺失身份头填充默认租户（不 401）。
+func TestSSE_DemoFillsDefaultTenant(t *testing.T) {
+	s := newSSETestServer()
+	s.cfg = &config.Config{Demo: true}
+	ts := httptest.NewServer(http.HandlerFunc(s.handleEventsStream))
+	defer ts.Close()
+
+	// 不携带 X-Tenant-ID 头，demo 模式应放行（填充 "default"）
+	resp, err := http.Get(ts.URL)
+	if err != nil {
+		t.Fatalf("GET SSE: %v", err)
+	}
+	defer resp.Body.Close()
+
+	br := bufio.NewReader(resp.Body)
+	frame, err := readSSEFrame(br)
+	if err != nil {
+		t.Fatalf("read hello frame: %v", err)
+	}
+	if !strings.Contains(frame, "event: hello") {
+		t.Fatalf("demo mode should allow connection (got frame: %q)", frame)
 	}
 }
