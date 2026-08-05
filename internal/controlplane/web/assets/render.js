@@ -20,6 +20,18 @@ export function esc(s) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
   });
 }
+// jsStr：把值转义为可安全嵌入「单引号 JS 字符串字面量」的形式（task 90 XSS 防护）。
+// esc() 只做 HTML 实体转义，放进内联 onclick="fn('...')" 后会被浏览器先 HTML 解码，
+// &#39; 还原为 ' 从而截断 JS 字符串造成注入。此处先做 JS 字符串转义（再由调用方 HTML 转义）。
+export function jsStr(s) {
+  return (s == null ? '' : String(s))
+    .replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"')
+    .replace(/</g, '\\x3c').replace(/>/g, '\\x3e').replace(/&/g, '\\x26')
+    .replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+}
+// escAttr：用于 HTML 内联事件处理器中的动态参数（onclick="fn('...')"）。
+// 先 jsStr（JS 字符串上下文）再 esc（HTML 属性上下文），双重转义防注入。
+export function escAttr(s) { return esc(jsStr(s)); }
 // 时间格式化：能解析为 Date 则按 zh-CN 24h 制展示，否则原样转义
 export function fmtTime(s) {
   if (!s) return '';
@@ -197,7 +209,7 @@ export function renderDevices(snap) {
       const osInfo = d.os ? esc(d.os) + (d.arch ? ' / ' + esc(d.arch) : '') : '–';
       const rtype = inferDeviceType(d);
       // 行点击：设置上下文 + 打开设备详情抽屉（保留原有联动）
-      const rowClick = "setFocus('" + esc(d.deviceID) + "','" + esc(d.ip) + "','" + esc(d.agentID) + "','" + esc(seg) + "');openDevice('" + esc(d.deviceID) + "')";
+      const rowClick = "setFocus('" + escAttr(d.deviceID) + "','" + escAttr(d.ip) + "','" + escAttr(d.agentID) + "','" + escAttr(seg) + "');openDevice('" + escAttr(d.deviceID) + "')";
       html += '<tr class="' + rowCls + '" onclick="' + rowClick + '">'
         + '<td class="cell-stack"><b>' + esc(hostname) + '</b><code title="' + esc(d.deviceID) + '">' + esc(d.deviceID) + '</code></td>'
         + '<td>' + typeTag(rtype) + '</td>'
@@ -206,8 +218,8 @@ export function renderDevices(snap) {
         + '<td>' + stateBadge + '</td>'
         + '<td>' + osInfo + '</td>'
         + '<td class="row-actions-cell" onclick="event.stopPropagation()">'
-        + '<button class="ghost" title="查看监控指标详情" onclick="showDeviceDetail(\'' + esc(d.deviceID) + '\')">' + icon('device', 14) + ' 详情</button> '
-        + '<button class="ghost" title="下发任务到该设备" onclick="setFocus(\'' + esc(d.deviceID) + '\',\'' + esc(d.ip) + '\',\'' + esc(d.agentID) + '\',\'' + esc(seg) + '\');switchTab(\'ops\')">' + icon('task', 14) + ' 下发</button>'
+        + '<button class="ghost" title="查看监控指标详情" onclick="showDeviceDetail(\'' + escAttr(d.deviceID) + '\')">' + icon('device', 14) + ' 详情</button> '
+        + '<button class="ghost" title="下发任务到该设备" onclick="setFocus(\'' + escAttr(d.deviceID) + '\',\'' + escAttr(d.ip) + '\',\'' + escAttr(d.agentID) + '\',\'' + escAttr(seg) + '\');switchTab(\'ops\')">' + icon('task', 14) + ' 下发</button>'
         + '</td>'
         + '</tr>';
     });
@@ -236,7 +248,7 @@ export function renderAlerts(list) {
   fl.forEach(function (a) {
     const cls = a.severity === 'critical' ? 'alert' : 'alert warn';
     html += '<div class="' + cls + '"><b>[' + esc(a.severity) + ']</b> ' + (getLang() === 'zh' ? '设备' : 'Device') + ' ' + esc(a.deviceID) + '<br>' + esc(a.message) + '<br><small class="muted">' + fmtTime(a.createdAt) + '</small>'
-      + '<br><button class="jbtn" style="margin-top:6px" onclick="setFocus(\'' + esc(a.deviceID) + '\',\'\',\'\',\'\');switchTab(\'alerts\')">' + icon('context', 14) + ' ' + esc(t('render.contextLink')) + '</button></div>';
+      + '<br><button class="jbtn" style="margin-top:6px" onclick="setFocus(\'' + escAttr(a.deviceID) + '\',\'\',\'\',\'\');switchTab(\'alerts\')">' + icon('context', 14) + ' ' + esc(t('render.contextLink')) + '</button></div>';
   });
   document.getElementById('alerts').innerHTML = html;
   paintStats();
@@ -463,8 +475,8 @@ export function paintUsersTable() {
       + '<td>' + statusPill + '</td>'
       + '<td>' + fmtTime(u.created_at) + '</td>'
       + '<td><div class="row-actions">'
-      + '<button class="ghost" onclick="editUser(\'' + esc(u.id) + '\')">' + icon('edit', 14) + esc(t('common.edit')) + '</button>'
-      + '<button class="ghost" onclick="deleteUser(\'' + esc(u.id) + '\')">' + icon('delete', 14) + esc(t('common.delete')) + '</button>'
+      + '<button class="ghost" onclick="editUser(\'' + escAttr(u.id) + '\')">' + icon('edit', 14) + esc(t('common.edit')) + '</button>'
+      + '<button class="ghost" onclick="deleteUser(\'' + escAttr(u.id) + '\')">' + icon('delete', 14) + esc(t('common.delete')) + '</button>'
       + '</div></td>'
       + '</tr>';
   });
@@ -532,8 +544,8 @@ export function paintRolesTable() {
       + '<td>' + permCount + '</td>'
       + '<td>' + fmtTime(r.created_at) + '</td>'
       + '<td><div class="row-actions">'
-      + '<button class="ghost" onclick="editRole(\'' + esc(r.id) + '\')">' + icon('edit', 14) + esc(t('common.edit')) + '</button>'
-      + '<button class="ghost" onclick="deleteRole(\'' + esc(r.id) + '\')">' + icon('delete', 14) + esc(t('common.delete')) + '</button>'
+      + '<button class="ghost" onclick="editRole(\'' + escAttr(r.id) + '\')">' + icon('edit', 14) + esc(t('common.edit')) + '</button>'
+      + '<button class="ghost" onclick="deleteRole(\'' + escAttr(r.id) + '\')">' + icon('delete', 14) + esc(t('common.delete')) + '</button>'
       + '</div></td>'
       + '</tr>';
   });
@@ -659,7 +671,7 @@ export function showUserModal(user) {
     + '<div class="modal-msg" id="modalMsg"></div>';
   const footer =
     '<button class="ghost" onclick="closeModal()">' + esc(t('common.cancel')) + '</button>'
-    + '<button class="primary" onclick="submitUserModal(' + (isEdit ? '\'' + esc(u.id) + '\'' : 'null') + ')">' + esc(t('common.save')) + '</button>';
+    + '<button class="primary" onclick="submitUserModal(' + (isEdit ? '\'' + escAttr(u.id) + '\'' : 'null') + ')">' + esc(t('common.save')) + '</button>';
   showModal(isEdit ? t('users.edit') : t('users.add'), body, footer);
 }
 
@@ -699,7 +711,7 @@ export function showRoleModal(role) {
     + '<div class="modal-msg" id="modalMsg"></div>';
   const footer =
     '<button class="ghost" onclick="closeModal()">' + esc(t('common.cancel')) + '</button>'
-    + '<button class="primary" onclick="submitRoleModal(' + (isEdit ? '\'' + esc(r.id) + '\'' : 'null') + ')">' + esc(t('common.save')) + '</button>';
+    + '<button class="primary" onclick="submitRoleModal(' + (isEdit ? '\'' + escAttr(r.id) + '\'' : 'null') + ')">' + esc(t('common.save')) + '</button>';
   showModal(isEdit ? t('roles.edit') : t('roles.add'), body, footer);
 }
 

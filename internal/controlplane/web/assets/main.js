@@ -333,7 +333,7 @@ w.pollUsers = function () {
       if (r.s === 200 && r.j && r.j.users) {
         renderUsers(r.j.users);
       } else {
-        el.innerHTML = '<p class="muted">' + esc(t('common.error')) + (r.j && (r.j.error || r.j.message) || ('HTTP ' + r.s)) + '</p>';
+        el.innerHTML = '<p class="muted">' + esc(t('common.error')) + esc(r.j && (r.j.error || r.j.message) || ('HTTP ' + r.s)) + '</p>';
       }
     }).catch(function (e) {
       el.innerHTML = '<p class="muted">' + esc(t('common.networkError')) + '</p>';
@@ -350,7 +350,7 @@ w.pollRoles = function () {
     if (r.s === 200 && r.j && r.j.roles) {
       renderRoles(r.j.roles);
     } else {
-      el.innerHTML = '<p class="muted">' + esc(t('common.error')) + (r.j && (r.j.error || r.j.message) || ('HTTP ' + r.s)) + '</p>';
+      el.innerHTML = '<p class="muted">' + esc(t('common.error')) + esc(r.j && (r.j.error || r.j.message) || ('HTTP ' + r.s)) + '</p>';
     }
   }).catch(function (e) {
     el.innerHTML = '<p class="muted">' + esc(t('common.networkError')) + '</p>';
@@ -366,7 +366,7 @@ w.pollPermissions = function () {
     if (r.s === 200 && r.j && r.j.permissions) {
       renderPermissions(r.j.permissions);
     } else {
-      el.innerHTML = '<p class="muted">' + esc(t('common.error')) + (r.j && (r.j.error || r.j.message) || ('HTTP ' + r.s)) + '</p>';
+      el.innerHTML = '<p class="muted">' + esc(t('common.error')) + esc(r.j && (r.j.error || r.j.message) || ('HTTP ' + r.s)) + '</p>';
     }
   }).catch(function (e) {
     el.innerHTML = '<p class="muted">' + esc(t('common.networkError')) + '</p>';

@@ -4,7 +4,7 @@
 // 调用 api.js 的函数并触发 render.js / poll.js 重渲染。
 
 import * as api from './api.js';
-import { esc, fmtTime, paintStats, dpStatusPill, logLevelPill, setRenderDeps } from './render.js';
+import { esc, escAttr, fmtTime, paintStats, dpStatusPill, logLevelPill, setRenderDeps } from './render.js';
 import { pollDevices, pollTasks, pollAlerts } from './poll.js';
 import { icon } from './icons.js';
 import { t } from './i18n.js';
@@ -55,7 +55,7 @@ export function focusCI() {
       if (!all.length) { el.innerHTML = '<p class="muted">配置库中无关联该设备的配置项。</p>'; return; }
       let html = '<p class="hint">' + icon('context', 14) + ' 已按设备 <code>' + esc(focusDevice.id) + '</code> 过滤（' + all.length + ' 条）</p>';
       html += '<div class="table-wrap"><table><colgroup><col style="width:30%"><col style="width:30%"><col style="width:20%"><col style="width:20%"></colgroup><thead><tr><th>ID</th><th>名称</th><th>类型</th><th>状态</th></tr></thead><tbody>';
-      all.forEach(function (c) { html += '<tr class="ci" onclick="openCI(\'' + esc(c.id) + '\')"><td><code title="' + esc(c.id) + '">' + esc(c.id) + '</code></td><td>' + esc(c.name) + '</td><td>' + esc(c.ciType) + '</td><td>' + esc(c.status) + '</td></tr>'; });
+      all.forEach(function (c) { html += '<tr class="ci" onclick="openCI(\'' + escAttr(c.id) + '\')"><td><code title="' + esc(c.id) + '">' + esc(c.id) + '</code></td><td>' + esc(c.name) + '</td><td>' + esc(c.ciType) + '</td><td>' + esc(c.status) + '</td></tr>'; });
       html += '</tbody></table></div>';
       el.innerHTML = html;
     }).catch(function (e) { console.error(e); });
@@ -151,7 +151,7 @@ export function openDevice(id) {
       h += '<p class="msg ' + c + '">LastResult: ' + esc(dev.lastResult) + ' @ ' + fmtTime(dev.lastResultAt) + '</p>';
     }
     if (dev.state === 'discovered') {
-      h += '<button onclick="provision(\'' + esc(dev.deviceID) + '\')">推送 Agent 纳管（B1）</button> ';
+      h += '<button onclick="provision(\'' + escAttr(dev.deviceID) + '\')">推送 Agent 纳管（B1）</button> ';
     }
     h += '<h4>任务</h4><div class="table-wrap"><table><colgroup><col style="width:50%"><col style="width:25%"><col style="width:25%"></colgroup><thead><tr><th>ID</th><th>类型</th><th>状态</th></tr></thead><tbody>';
     (d.tasks || []).forEach(function (t) { h += '<tr><td><code title="' + esc(t.taskID) + '">' + esc(t.taskID) + '</code></td><td>' + esc(t.type) + '</td><td>' + esc(t.status) + '</td></tr>'; });
@@ -195,7 +195,7 @@ export function pollCIs() {
     if (!list || list.length === 0) { document.getElementById('ciList').innerHTML = '<p class="muted">该类型暂无配置项</p>'; return; }
     let html = '<div class="table-wrap"><table><colgroup><col style="width:24%"><col style="width:24%"><col style="width:16%"><col style="width:18%"><col style="width:18%"></colgroup><thead><tr><th>ID</th><th>名称</th><th>状态</th><th>来源</th><th>版本</th></tr></thead><tbody>';
     list.forEach(function (c) {
-      html += '<tr class="ci" onclick="openCI(\'' + esc(c.id) + '\')"><td><code title="' + esc(c.id) + '">' + esc(c.id) + '</code></td><td>' + esc(c.name) + '</td><td>' + esc(c.status) + '</td><td>' + esc(c.source) + '</td><td>' + esc(c.version) + '</td></tr>';
+      html += '<tr class="ci" onclick="openCI(\'' + escAttr(c.id) + '\')"><td><code title="' + esc(c.id) + '">' + esc(c.id) + '</code></td><td>' + esc(c.name) + '</td><td>' + esc(c.status) + '</td><td>' + esc(c.source) + '</td><td>' + esc(c.version) + '</td></tr>';
     });
     html += '</tbody></table></div>';
     document.getElementById('ciList').innerHTML = html;
@@ -547,7 +547,7 @@ function renderNodeList() {
   const el = document.getElementById('nodeList'); if (!el) return;
   if (!flow.dag.length) { el.innerHTML = '<p class="muted">暂无步骤。点「＋ 添加步骤」开始，或点右上「载入示例」。</p>'; return; }
   el.innerHTML = flow.dag.map(function (n) {
-    return '<div class="ci' + (selectedNode === n.id ? ' sel' : '') + '" onclick="selectNode(\'' + esc(n.id) + '\')">' + esc(n.name || n.id) + ' <small class="muted">' + esc(n.type) + '</small>' + (selectedNode === n.id ? ' ✦' : '') + '</div>';
+    return '<div class="ci' + (selectedNode === n.id ? ' sel' : '') + '" onclick="selectNode(\'' + escAttr(n.id) + '\')">' + esc(n.name || n.id) + ' <small class="muted">' + esc(n.type) + '</small>' + (selectedNode === n.id ? ' ✦' : '') + '</div>';
   }).join('');
 }
 
@@ -564,7 +564,7 @@ function renderNodeEditor() {
     + '<label>命令/动作:<input id="nCmd" value="' + esc(n.command) + '" size="28" title="该步骤要执行的内容"></label><br>'
     + '<label>路径(path):<input id="nPath" value="' + esc(n.path) + '" size="18"></label><br>'
     + '<label>依赖(多选):<select id="nDeps" multiple size="3" title="本步骤开始前应完成的其它步骤">' + others + '</select></label><br>'
-    + '<div class="btnbar"><button onclick="applyNode()">应用</button> <button onclick="deleteNode(\'' + esc(n.id) + '\')">删除步骤</button></div>';
+    + '<div class="btnbar"><button onclick="applyNode()">应用</button> <button onclick="deleteNode(\'' + escAttr(n.id) + '\')">删除步骤</button></div>';
   el.style.display = 'block';
 }
 
@@ -695,7 +695,7 @@ export function pollDeploys() {
         const targets = (d.target_ids || '').replace(/,/g, ', ');
         html += '<tr><td><code title="' + esc(d.id) + '">' + esc(d.id) + '</code></td><td>' + esc(d.name) + '</td><td>' + esc(d.type) + '</td>'
           + '<td><code title="' + esc(targets) + '">' + esc(targets) + '</code></td><td>' + dpStatusPill(d.status) + '</td>'
-          + '<td class="row-actions-cell"><button onclick="execDeploy(' + d.id + ')">▶ 执行</button> <button onclick="rollbackDeploy(' + d.id + ')">↩ 回滚</button> <button onclick="openDeploy(' + d.id + ')">详情</button></td></tr>';
+          + '<td class="row-actions-cell"><button onclick="execDeploy(' + escAttr(d.id) + ')">▶ 执行</button> <button onclick="rollbackDeploy(' + escAttr(d.id) + ')">↩ 回滚</button> <button onclick="openDeploy(' + escAttr(d.id) + ')">详情</button></td></tr>';
       });
       html += '</tbody></table></div>';
       document.getElementById('deployList').innerHTML = html;
@@ -779,7 +779,7 @@ export function searchLogs(offset) {
       let html = '<div class="table-wrap"><table><colgroup><col style="width:15%"><col style="width:8%"><col style="width:8%"><col style="width:18%"><col style="width:18%"><col style="width:33%"></colgroup><thead><tr><th>时间</th><th>级别</th><th>来源</th><th>设备</th><th>Agent</th><th>消息</th></tr></thead><tbody>';
       list.forEach(function (e) {
         const ts = (e.timestamp || '').toString().replace('T', ' ').replace('Z', '');
-        html += '<tr><td><small class="muted">' + esc(ts) + '</small></td><td>' + logLevelPill(e.level) + '</td><td>' + esc(e.source || '') + '</td><td><code title="' + esc(e.deviceID || '') + '">' + (e.deviceID || '') + '</code></td><td><code title="' + esc(e.agentID || '') + '">' + (e.agentID || '') + '</code></td><td class="wrap">' + esc(e.message || '') + '</td></tr>';
+        html += '<tr><td><small class="muted">' + esc(ts) + '</small></td><td>' + logLevelPill(e.level) + '</td><td>' + esc(e.source || '') + '</td><td><code title="' + esc(e.deviceID || '') + '">' + esc(e.deviceID || '') + '</code></td><td><code title="' + esc(e.agentID || '') + '">' + esc(e.agentID || '') + '</code></td><td class="wrap">' + esc(e.message || '') + '</td></tr>';
       });
       html += '</tbody></table></div>';
       document.getElementById('logList').innerHTML = html;
@@ -821,8 +821,8 @@ export function pollAlertsFull() {
       let actions = '';
       if (ast === 'firing') {
         actions = '<div class="alert-actions">'
-          + '<button class="btn xs" onclick="ackAlert(\'' + esc(a.alertID) + '\')">' + icon('check', 14) + ' ' + esc(t('alerts.ack')) + '</button>'
-          + '<button class="btn xs outline" onclick="silenceAlert(\'' + esc(a.alertID) + '\')">' + icon('close', 14) + ' ' + esc(t('alerts.silence')) + '</button>'
+          + '<button class="btn xs" onclick="ackAlert(\'' + escAttr(a.alertID) + '\')">' + icon('check', 14) + ' ' + esc(t('alerts.ack')) + '</button>'
+          + '<button class="btn xs outline" onclick="silenceAlert(\'' + escAttr(a.alertID) + '\')">' + icon('close', 14) + ' ' + esc(t('alerts.silence')) + '</button>'
           + '</div>';
       } else {
         let meta = esc(a.acknowledgedBy || '');
@@ -836,7 +836,7 @@ export function pollAlertsFull() {
         + '<br>' + esc(a.message)
         + '<br><small class="muted">' + fmtTime(a.createdAt) + '</small>'
         + actions
-        + '<button class="jbtn" style="margin-top:6px" onclick="setFocus(\'' + esc(a.deviceID) + '\',\'\',\'\',\'\');switchTab(\'alerts\')">' + icon('context', 14) + ' ' + esc(t('render.contextLink')) + '</button>'
+        + '<button class="jbtn" style="margin-top:6px" onclick="setFocus(\'' + escAttr(a.deviceID) + '\',\'\',\'\',\'\');switchTab(\'alerts\')">' + icon('context', 14) + ' ' + esc(t('render.contextLink')) + '</button>'
         + '</div>';
     });
     document.getElementById('alertsFull').innerHTML = html;
@@ -1225,8 +1225,8 @@ export function loadOSTemplates() {
         + '<td>' + osoptCatBadge(tpl.category) + '</td>'
         + '<td>' + osoptRiskBadge(tpl.risk) + '</td>'
         + '<td>'
-        + '<button class="btn btn-sm" onclick="showOSTemplateDetail(\'' + tid + '\')" style="margin-right:6px">' + icon('search', 12) + ' ' + esc(t('osopt.view')) + '</button>'
-        + '<button class="btn btn-primary btn-sm" onclick="executeOSOptimize(\'' + tid + '\')">' + icon('task', 12) + ' ' + esc(t('osopt.execute')) + '</button>'
+        + '<button class="btn btn-sm" onclick="showOSTemplateDetail(\'' + escAttr(tpl.id || '') + '\')" style="margin-right:6px">' + icon('search', 12) + ' ' + esc(t('osopt.view')) + '</button>'
+        + '<button class="btn btn-primary btn-sm" onclick="executeOSOptimize(\'' + escAttr(tpl.id || '') + '\')">' + icon('task', 12) + ' ' + esc(t('osopt.execute')) + '</button>'
         + '</td>'
         + '</tr>';
     });
@@ -1278,7 +1278,7 @@ export function showOSTemplateDetail(id) {
       + '<pre style="background:var(--bg-2);color:var(--text-1);padding:12px;border-radius:6px;overflow:auto;max-height:320px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all">' + esc(tpl.commands || '') + '</pre>'
       + '</div>';
     html += '<div style="margin-top:12px;text-align:right">'
-      + '<button class="btn btn-primary btn-sm" onclick="executeOSOptimize(\'' + esc(tpl.id) + '\')">' + icon('task', 12) + ' ' + esc(t('osopt.execute')) + '</button>'
+      + '<button class="btn btn-primary btn-sm" onclick="executeOSOptimize(\'' + escAttr(tpl.id) + '\')">' + icon('task', 12) + ' ' + esc(t('osopt.execute')) + '</button>'
       + '</div>';
     el.innerHTML = html;
   }).catch(function (e) {
@@ -1539,8 +1539,8 @@ export function loadMiddlewareTemplates() {
         + '<td>' + (deployTypesHtml || '-') + '</td>'
         + '<td>' + mwdepRiskBadge(tpl.risk) + '</td>'
         + '<td>'
-        + '<button class="btn btn-sm" onclick="showMiddlewareDetail(\'' + tid + '\')" style="margin-right:6px">' + icon('search', 12) + ' ' + esc(t('mwdep.view')) + '</button>'
-        + '<button class="btn btn-primary btn-sm" onclick="deployMiddleware(\'' + tid + '\')">' + icon('deploy', 12) + ' ' + esc(t('mwdep.deploy')) + '</button>'
+        + '<button class="btn btn-sm" onclick="showMiddlewareDetail(\'' + escAttr(tpl.id || '') + '\')" style="margin-right:6px">' + icon('search', 12) + ' ' + esc(t('mwdep.view')) + '</button>'
+        + '<button class="btn btn-primary btn-sm" onclick="deployMiddleware(\'' + escAttr(tpl.id || '') + '\')">' + icon('deploy', 12) + ' ' + esc(t('mwdep.deploy')) + '</button>'
         + '</td>'
         + '</tr>';
     });
@@ -1626,7 +1626,7 @@ export function showMiddlewareDetail(id) {
       html += '</div>';
     }
     html += '<div style="margin-top:12px;text-align:right">'
-      + '<button class="btn btn-primary btn-sm" onclick="deployMiddleware(\'' + esc(tpl.id) + '\')">' + icon('deploy', 12) + ' ' + esc(t('mwdep.deploy')) + '</button>'
+      + '<button class="btn btn-primary btn-sm" onclick="deployMiddleware(\'' + escAttr(tpl.id) + '\')">' + icon('deploy', 12) + ' ' + esc(t('mwdep.deploy')) + '</button>'
       + '</div>';
     el.innerHTML = html;
   }).catch(function (e) {
@@ -1846,7 +1846,7 @@ export function loadMiddlewareInstances() {
       const agentID = esc(ins.agentID || ins.agentId || '');
       const deployType = esc(ins.deployType || ins.deploy_type || '');
       const actionHtml = canUninstall
-        ? '<button class="btn btn-sm" style="color:var(--fail);border:1px solid var(--fail)" onclick="uninstallMiddlewareInstance(\'' + insId + '\',\'' + agentID + '\',\'' + deployType + '\')">' + icon('close', 12) + ' ' + esc(t('mwdep.uninstall')) + '</button>'
+        ? '<button class="btn btn-sm" style="color:var(--fail);border:1px solid var(--fail)" onclick="uninstallMiddlewareInstance(\'' + escAttr(ins.id || '') + '\',\'' + escAttr(ins.agentID || ins.agentId || '') + '\',\'' + escAttr(ins.deployType || ins.deploy_type || '') + '\')">' + icon('close', 12) + ' ' + esc(t('mwdep.uninstall')) + '</button>'
         : '<span class="muted">—</span>';
       html += '<tr>'
         + '<td><code title="' + insId + '">' + insId + '</code></td>'
@@ -2019,9 +2019,9 @@ export function loadK8sClusters() {
         + '<td><span class="' + statusCls + '">' + statusTxt + '</span></td>'
         + '<td>' + esc(c.createdAt || '-') + '</td>'
         + '<td>'
-        + '<button class="btn btn-sm" onclick="testK8sClusterConnection(\'' + cid + '\')" style="margin-right:6px">' + icon('link', 12) + ' ' + esc(t('k8s.test')) + '</button>'
-        + '<button class="btn btn-primary btn-sm" onclick="loadK8sResources(\'' + cid + '\')" style="margin-right:6px">' + icon('search', 12) + ' ' + esc(t('k8s.resources')) + '</button>'
-        + '<button class="btn btn-sm" style="color:var(--fail)" onclick="deleteK8sClusterConfirm(\'' + cid + '\')">' + icon('delete', 12) + ' ' + esc(t('k8s.delete')) + '</button>'
+        + '<button class="btn btn-sm" onclick="testK8sClusterConnection(\'' + escAttr(c.id || '') + '\')" style="margin-right:6px">' + icon('link', 12) + ' ' + esc(t('k8s.test')) + '</button>'
+        + '<button class="btn btn-primary btn-sm" onclick="loadK8sResources(\'' + escAttr(c.id || '') + '\')" style="margin-right:6px">' + icon('search', 12) + ' ' + esc(t('k8s.resources')) + '</button>'
+        + '<button class="btn btn-sm" style="color:var(--fail)" onclick="deleteK8sClusterConfirm(\'' + escAttr(c.id || '') + '\')">' + icon('delete', 12) + ' ' + esc(t('k8s.delete')) + '</button>'
         + '</td>'
         + '</tr>';
     });
@@ -2241,8 +2241,8 @@ export function loadK8sPods(clusterID) {
         + '<td>' + esc(p.restarts != null ? p.restarts : '-') + '</td>'
         + '<td>' + esc(p.age || '-') + '</td>'
         + '<td>'
-        + '<button class="btn btn-sm" onclick="showPodLogs(\'' + k8sCurrentClusterID + '\',\'' + ns + '\',\'' + name + '\')" style="margin-right:6px">' + icon('logs', 12) + ' ' + esc(t('k8s.viewLogs')) + '</button>'
-        + '<button class="btn btn-sm" style="color:var(--fail)" onclick="deletePodConfirm(\'' + k8sCurrentClusterID + '\',\'' + ns + '\',\'' + name + '\')">' + icon('delete', 12) + ' ' + esc(t('k8s.delete')) + '</button>'
+        + '<button class="btn btn-sm" onclick="showPodLogs(\'' + escAttr(k8sCurrentClusterID) + '\',\'' + escAttr(p.namespace || '') + '\',\'' + escAttr(p.name || '') + '\')" style="margin-right:6px">' + icon('logs', 12) + ' ' + esc(t('k8s.viewLogs')) + '</button>'
+        + '<button class="btn btn-sm" style="color:var(--fail)" onclick="deletePodConfirm(\'' + escAttr(k8sCurrentClusterID) + '\',\'' + escAttr(p.namespace || '') + '\',\'' + escAttr(p.name || '') + '\')">' + icon('delete', 12) + ' ' + esc(t('k8s.delete')) + '</button>'
         + '</td>'
         + '</tr>';
     });
@@ -2363,8 +2363,8 @@ export function loadK8sDeployments(clusterID) {
         + '<td>' + available + '</td>'
         + '<td><code style="font-size:11px;word-break:break-all">' + esc(d.image || '-') + '</code></td>'
         + '<td>'
-        + '<button class="btn btn-sm" onclick="scaleDeployment(\'' + k8sCurrentClusterID + '\',\'' + ns + '\',\'' + name + '\')" style="margin-right:6px">' + icon('edit', 12) + ' ' + esc(t('k8s.scale')) + '</button>'
-        + '<button class="btn btn-sm" onclick="restartDeployment(\'' + k8sCurrentClusterID + '\',\'' + ns + '\',\'' + name + '\')">' + icon('refresh', 12) + ' ' + esc(t('k8s.restart')) + '</button>'
+        + '<button class="btn btn-sm" onclick="scaleDeployment(\'' + escAttr(k8sCurrentClusterID) + '\',\'' + escAttr(d.namespace || '') + '\',\'' + escAttr(d.name || '') + '\')" style="margin-right:6px">' + icon('edit', 12) + ' ' + esc(t('k8s.scale')) + '</button>'
+        + '<button class="btn btn-sm" onclick="restartDeployment(\'' + escAttr(k8sCurrentClusterID) + '\',\'' + escAttr(d.namespace || '') + '\',\'' + escAttr(d.name || '') + '\')">' + icon('refresh', 12) + ' ' + esc(t('k8s.restart')) + '</button>'
         + '</td>'
         + '</tr>';
     });
