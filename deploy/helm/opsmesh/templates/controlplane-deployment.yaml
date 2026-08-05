@@ -91,6 +91,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "opsmesh.fullname" . }}-secret
                   key: provision-secret
+            - name: OPSMESH_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "opsmesh.fullname" . }}-secret
+                  key: jwt-secret
             {{- if eq .Values.controlplane.store "mysql" }}
             - name: OPSMESH_MYSQL_DSN
               valueFrom:
