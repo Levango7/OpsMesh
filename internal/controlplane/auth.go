@@ -44,6 +44,38 @@ const minPasswordLen = 6
 // jwtTokenExpiry JWT token 有效期（24h，与 SignJWT 默认一致）。
 const jwtTokenExpiry = 24 * time.Hour
 
+// authCookieName 用户中心会话 Cookie 名（task 94 JWT 存储加固）。
+// task 94：token 同时以 HttpOnly Cookie 下发，XSS 无法读取（对比 localStorage 可被任意脚本窃取）；
+// Authorization: Bearer 头仍保留兼容（移动端/脚本调用），服务端两路均接受。
+const authCookieName = "opsmesh_token"
+
+// setAuthCookie 把 JWT 以 HttpOnly Cookie 写入响应（task 94）。
+// HttpOnly：JS 不可读（防 XSS 窃取）；SameSite=Lax：防 CSRF 跨站携带；
+// Path=/：全站 API 可用；Secure 由反代/HTTPS 终止点保证（私有化内网 http 部署不设 Secure，
+// 否则 http 下 Cookie 不生效导致会话丢失——生产 HTTPS 部署建议前置网关补 Secure）。
+func setAuthCookie(w http.ResponseWriter, token string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     authCookieName,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   int(jwtTokenExpiry.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// clearAuthCookie 清除会话 Cookie（登出时调用）。
+func clearAuthCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     authCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
 // randHexID 生成随机十六进制 ID（16 字节，crypto/rand 密码学安全）。
 // 用于用户/角色 ID 分配（调用方未填 ID 时）。
 func randHexID(prefix string) string {
@@ -327,6 +359,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token sign failed: " + err.Error()})
 			return
 		}
+		setAuthCookie(w, token) // task 94：同登录，HttpOnly Cookie 下发
 		writeJSON(w, http.StatusCreated, authResponse{Token: token, User: u})
 		return
 	}
@@ -405,8 +438,27 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	s.store.Audit(&proto.AuditEvent{
 		TenantID: "default", UserID: u.ID, Action: "user_login", Target: u.ID, Detail: "username=" + u.Username,
 	})
+	// task 94：token 同时以 HttpOnly Cookie 下发，XSS 无法窃取（localStorage 已不再持久化）。
+	setAuthCookie(w, token)
 	// 安全债 85：返回 mustChangePassword 标记，前端据此弹出改密对话框。
 	writeJSON(w, http.StatusOK, authResponse{Token: token, User: u, MustChangePassword: u.MustChangePassword})
+}
+
+// handleAuthLogout 处理 POST /api/v1/auth/logout：登出并清除会话 Cookie（task 94）。
+// JWT 为无状态令牌，服务端不做黑名单（MVP）；清除 HttpOnly Cookie 即终止浏览器会话，
+// 前端同时清空内存 token。token 自然过期由 jwtTokenExpiry（24h）约束。
+func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if u, err := s.userFromToken(r); err == nil {
+		s.store.Audit(&proto.AuditEvent{
+			TenantID: "default", UserID: u.ID, Action: "user_logout", Target: u.ID, Detail: "username=" + u.Username,
+		})
+	}
+	clearAuthCookie(w)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "logged out"})
 }
 
 // handleAuthMe 处理 GET /api/v1/auth/me：返回当前登录用户信息。
@@ -525,7 +577,13 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 func (s *Server) userFromToken(r *http.Request) (*store.User, error) {
 	tokenStr, err := extractBearer(r)
 	if err != nil {
-		return nil, err
+		// task 94：Bearer 头缺失时回退 HttpOnly Cookie（前端不再持久化 token 到
+		// localStorage，刷新后靠 Cookie 保持会话；两路均走同一 ParseHSJWT 校验）。
+		if ck, ckErr := r.Cookie(authCookieName); ckErr == nil && strings.TrimSpace(ck.Value) != "" {
+			tokenStr = ck.Value
+		} else {
+			return nil, err
+		}
 	}
 	claims, err := authctx.ParseHSJWT(tokenStr, s.jwtSecret)
 	if err != nil {

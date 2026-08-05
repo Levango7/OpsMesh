@@ -4,10 +4,16 @@
 // 不持有业务状态，仅 pollFailCount 用于退避计数（由 render.js 的 apiFail/apiOk 读写）。
 // 新增：JWT token 管理（localStorage）、auth/users/roles/permissions API。
 
-// ---------- JWT token 管理 ----------
-const TOKEN_KEY = 'opsmesh-token';
-export function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
-export function setToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); }
+// ---------- JWT token 管理（task 94：内存持有 + HttpOnly Cookie 会话） ----------
+// token 仅存内存，不再写 localStorage——localStorage 可被任意脚本（XSS）读取；
+// 服务端登录时同时下发 HttpOnly Cookie（opsmesh_token），刷新后浏览器自动携带维持会话。
+let memoryToken = '';
+export function getToken() { return memoryToken; }
+export function setToken(t) {
+  memoryToken = t || '';
+  // 清理旧版本遗留的 localStorage token（XSS 风险面，一次性迁移）。
+  try { localStorage.removeItem('opsmesh-token'); } catch (_) {}
+}
 export function isLoggedIn() { return !!getToken(); }
 
 // ---------- 401 处理 ----------
@@ -294,9 +300,11 @@ export function apiAuthChangePassword(oldPassword, newPassword) {
   return request('/api/v1/auth/change-password', jsonMethod('POST', { oldPassword: oldPassword, newPassword: newPassword }));
 }
 
-// 退出登录：清除本地 token
+// 退出登录（task 94）：清内存 token + 调后端清除 HttpOnly Cookie。
+// JWT 无状态，服务端不做黑名单；Cookie 清除即终止浏览器会话，token 24h 自然过期。
 export function apiLogout() {
   setToken('');
+  return fetch('/api/v1/auth/logout', { method: 'POST' }).catch(function () {});
 }
 
 // ---------- Users ----------

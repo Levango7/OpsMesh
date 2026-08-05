@@ -925,3 +925,88 @@ func TestChangePasswordNoToken(t *testing.T) {
 		t.Fatalf("change password without token = %d, want 401; body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// =============================================================================
+// task 94：HttpOnly Cookie 会话（JWT 存储加固）
+// =============================================================================
+
+// TestAuthLogin_SetsHttpOnlyCookie 验证登录成功时下发 HttpOnly Cookie（opsmesh_token）。
+func TestAuthLogin_SetsHttpOnlyCookie(t *testing.T) {
+	s := newAuthTestServer(t)
+	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "admin123"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleAuthLogin(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	cookies := rec.Result().Cookies()
+	var ck *http.Cookie
+	for _, c := range cookies {
+		if c.Name == authCookieName {
+			ck = c
+			break
+		}
+	}
+	if ck == nil {
+		t.Fatalf("登录响应应包含 %s Cookie；实际 cookies=%+v", authCookieName, cookies)
+	}
+	if !ck.HttpOnly {
+		t.Error("会话 Cookie 必须是 HttpOnly（防 XSS 窃取）")
+	}
+	if ck.Value == "" {
+		t.Error("会话 Cookie 值不应为空")
+	}
+}
+
+// TestAuthMe_CookieFallback 验证无 Authorization 头时靠 Cookie 恢复会话（刷新场景）。
+func TestAuthMe_CookieFallback(t *testing.T) {
+	s := newAuthTestServer(t)
+	auth := loginAsAdmin(t, s) // "Bearer <token>"
+	token := auth[len("Bearer "):]
+	// 仅携带 Cookie，不带 Authorization 头。
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.AddCookie(&http.Cookie{Name: authCookieName, Value: token})
+	rec := httptest.NewRecorder()
+	s.handleAuthMe(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("仅 Cookie 的 /auth/me = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAuthMe_NoCookieNoHeader 验证既无头也无 Cookie 时返回 401。
+func TestAuthMe_NoCookieNoHeader(t *testing.T) {
+	s := newAuthTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	rec := httptest.NewRecorder()
+	s.handleAuthMe(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("无凭据 /auth/me = %d, want 401", rec.Code)
+	}
+}
+
+// TestAuthLogout_ClearsCookie 验证登出清除会话 Cookie。
+func TestAuthLogout_ClearsCookie(t *testing.T) {
+	s := newAuthTestServer(t)
+	auth := loginAsAdmin(t, s)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	req.Header.Set("Authorization", auth)
+	rec := httptest.NewRecorder()
+	s.handleAuthLogout(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("logout = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var ck *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == authCookieName {
+			ck = c
+			break
+		}
+	}
+	if ck == nil {
+		t.Fatalf("登出响应应包含清除 %s Cookie 的 Set-Cookie", authCookieName)
+	}
+	if ck.MaxAge != -1 && ck.MaxAge != 0 {
+		t.Errorf("登出 Cookie MaxAge 应为负值（立即过期），得到 %d", ck.MaxAge)
+	}
+}

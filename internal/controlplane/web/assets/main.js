@@ -1139,30 +1139,27 @@ function init() {
     }
   });
 
-  // 检查登录状态
-  if (api.isLoggedIn()) {
-    // 已登录：验证 token 有效性
-    api.apiAuthMe().then(function (r) {
-      if (r.s === 200 && r.j && r.j.user) {
-        enterApp(r.j.user);
-      } else if (r.s === 401) {
-        // token 已过期：显示提示，让用户手动决定是否重新登录
-        // 不立即清除 token，避免误判（可能后端暂时性故障）
+  // 检查登录状态（task 94：内存 token 或 HttpOnly Cookie 恢复会话）
+  // token 不再持久化到 localStorage，刷新后靠 HttpOnly Cookie 自动携带调 /auth/me 恢复会话；
+  // 后端未启用认证或暂时性故障时保持原兜底行为（进入主界面）。
+  api.apiAuthMe().then(function (r) {
+    if (r.s === 200 && r.j && r.j.user) {
+      enterApp(r.j.user);
+    } else if (r.s === 401) {
+      // 会话失效：内存 token 在则提示过期，否则属正常未登录（静默进登录页）
+      if (api.isLoggedIn()) {
         alert('登录已失效，请重新登录');
-        api.apiLogout();
-        showAuthPage();
-      } else {
-        // 其他非 200 状态：仍尝试进入主界面（可能后端暂未启用认证或暂时性故障）
-        enterApp(null);
       }
-    }).catch(function () {
-      // 网络异常：仍尝试进入主界面（可能后端暂未启用认证）
+      api.apiLogout();
+      showAuthPage();
+    } else {
+      // 其他非 200 状态：仍尝试进入主界面（可能后端暂未启用认证或暂时性故障）
       enterApp(null);
-    });
-  } else {
-    // 未登录：显示登录页
-    showAuthPage();
-  }
+    }
+  }).catch(function () {
+    // 网络异常：仍尝试进入主界面（可能后端暂未启用认证）
+    enterApp(null);
+  });
 }
 
 
