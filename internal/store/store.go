@@ -193,9 +193,9 @@ type K8sClusterStore interface {
 	ListK8sClusters(tenantID string) []*K8sCluster
 	// GetK8sCluster 按 ID 返回单个集群配置（不存在返回 nil）。
 	GetK8sCluster(id string) *K8sCluster
-	// SaveK8sCluster 创建或更新集群配置（按 ID 幂等）。
+	// SaveK8sCluster 创建或更新集群配置（按 ID 幂等），返回持久化错误（task 92）。
 	// ID 为空时由 store 分配随机 ID；CreatedAt/UpdatedAt 为空时填当前时间。
-	SaveK8sCluster(*K8sCluster)
+	SaveK8sCluster(*K8sCluster) error
 	// DeleteK8sCluster 删除集群配置，返回是否删除成功（不存在返回 false）。
 	DeleteK8sCluster(id string) bool
 }

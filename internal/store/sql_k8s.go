@@ -12,6 +12,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 )
@@ -74,9 +75,9 @@ func (s *SQLStore) GetK8sCluster(id string) *K8sCluster {
 //   - CreatedAt 为空时填当前时间；
 //   - UpdatedAt 始终刷新为当前时间；
 //   - Status 为空时默认 "unknown"。
-func (s *SQLStore) SaveK8sCluster(c *K8sCluster) {
+func (s *SQLStore) SaveK8sCluster(c *K8sCluster) error {
 	if c == nil {
-		return
+		return nil
 	}
 	// task 88 租户隔离：空租户归一为 default（与 MemoryStore 一致）。
 	if c.TenantID == "" {
@@ -101,9 +102,11 @@ func (s *SQLStore) SaveK8sCluster(c *K8sCluster) {
 		 ON DUPLICATE KEY UPDATE name=VALUES(name), server=VALUES(server), kubeconfig=VALUES(kubeconfig),
 		 status=VALUES(status), updated_at=VALUES(updated_at)`,
 		c.ID, c.TenantID, c.Name, c.Server, c.Kubeconfig, c.Status, c.CreatedAt, c.UpdatedAt); err != nil {
-		// DB 不可用时记录日志后返回（与 SQLStore 其他方法一致，不 panic）。
+		// task 92：DB 持久化失败上抛错误（调用方据此返回非 2xx，不再假装成功）。
 		log.Printf("k8s: SaveK8sCluster 失败: %v", err)
+		return fmt.Errorf("k8s: save cluster: %w", err)
 	}
+	return nil
 }
 
 // DeleteK8sCluster 删除集群配置，返回是否删除成功（不存在返回 false）。

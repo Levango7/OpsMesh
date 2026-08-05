@@ -73,9 +73,9 @@ func (m *MemoryStore) GetK8sCluster(id string) *K8sCluster {
 //   - CreatedAt 为空时填当前时间（新建场景）；
 //   - UpdatedAt 始终刷新为当前时间；
 //   - Status 为空时默认 "unknown"。
-func (m *MemoryStore) SaveK8sCluster(c *K8sCluster) {
+func (m *MemoryStore) SaveK8sCluster(c *K8sCluster) error {
 	if c == nil {
-		return
+		return nil
 	}
 	// task 88 租户隔离：空租户归一为 default（与 deploy 模块一致）。
 	if c.TenantID == "" {
@@ -95,6 +95,7 @@ func (m *MemoryStore) SaveK8sCluster(c *K8sCluster) {
 	}
 	c.UpdatedAt = now
 	m.k8sClusters[c.ID] = c
+	return nil // memory 存储无持久化失败
 }
 
 // DeleteK8sCluster 删除集群配置，返回是否删除成功（不存在返回 false）。

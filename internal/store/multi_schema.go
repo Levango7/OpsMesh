@@ -966,13 +966,13 @@ func (m *MultiSchemaStore) GetK8sCluster(id string) *K8sCluster {
 	return s.GetK8sCluster(id)
 }
 
-// SaveK8sCluster 创建或更新集群配置（路由到全局 store）。
-func (m *MultiSchemaStore) SaveK8sCluster(c *K8sCluster) {
+// SaveK8sCluster 创建或更新集群配置（路由到全局 store），返回持久化错误（task 92）。
+func (m *MultiSchemaStore) SaveK8sCluster(c *K8sCluster) error {
 	s, err := m.globalStore()
 	if err != nil {
-		return
+		return err
 	}
-	s.SaveK8sCluster(c)
+	return s.SaveK8sCluster(c)
 }
 
 // DeleteK8sCluster 删除集群配置（路由到全局 store）。

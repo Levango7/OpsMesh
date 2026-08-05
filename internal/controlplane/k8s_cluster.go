@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"opsmesh/internal/authctx"
+	"opsmesh/internal/logx"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 )
@@ -118,7 +119,11 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 		Kubeconfig: body.Kubeconfig,
 		Status:     "unknown",
 	}
-	s.store.SaveK8sCluster(c)
+	// task 92：持久化失败直接返回 500，不再假装保存成功。
+	if err := s.store.SaveK8sCluster(c); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save cluster failed"})
+		return
+	}
 	// 尝试建立 client-go 连接：成功标记 online，失败标记 offline（仍保存配置，用户可后续 test 重试）。
 	if s.clusterMgr != nil {
 		if err := s.clusterMgr.AddCluster(c.ID, body.Kubeconfig); err != nil {
@@ -126,7 +131,10 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 		} else {
 			c.Status = "online"
 		}
-		s.store.SaveK8sCluster(c)
+		// 状态回写失败不阻断（连接已建立或已标记），仅记日志。
+		if err := s.store.SaveK8sCluster(c); err != nil {
+			logx.Error(r.Context(), "K8s 集群状态回写失败", err, "clusterID", c.ID)
+		}
 	}
 	s.store.Audit(&proto.AuditEvent{
 		TenantID: c.TenantID, UserID: caller.ID, Action: "k8s_cluster_create", Target: c.ID, Detail: "name=" + c.Name,
@@ -239,15 +247,20 @@ func (s *Server) handleTestK8sCluster(w http.ResponseWriter, r *http.Request, id
 	err := s.clusterMgr.TestCluster(id, existing.Kubeconfig)
 	if err != nil {
 		existing.Status = "offline"
-		s.store.SaveK8sCluster(existing)
+		_ = s.store.SaveK8sCluster(existing)
+		// task 92：原始错误可能泄漏 API Server 地址等内部信息，仅记日志，前端给通用文案。
+		logx.Error(r.Context(), "K8s 集群测试连接失败", err, "clusterID", id)
 		writeJSON(w, http.StatusOK, map[string]string{
 			"status":  "offline",
-			"message": err.Error(),
+			"message": "连接失败（详见控制面日志）",
 		})
 		return
 	}
 	existing.Status = "online"
-	s.store.SaveK8sCluster(existing)
+	// 状态回写失败不阻断测试结论，仅记日志。
+	if err := s.store.SaveK8sCluster(existing); err != nil {
+		logx.Error(r.Context(), "K8s 集群状态回写失败", err, "clusterID", id)
+	}
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "online",
 		"message": "连接正常",

@@ -158,6 +158,14 @@ func NewServer(cfg *config.Config) *Server {
 	s.loginGuard = newLoginGuard()
 	// Phase 3 K8s 多集群连接管理器：构造空管理器，用户创建集群时 AddCluster。
 	s.clusterMgr = k8s.NewClusterManager()
+	// task 92 重启恢复连接：控制面重启后 ClusterManager 为空，按库内集群配置重建连接。
+	// AddCluster 仅解析 kubeconfig 构造 Clientset，不发起网络请求，启动轻量；
+	// 连通性由用户「测试连接」或资源 API 按需刷新，恢复失败仅告警不阻断启动。
+	for _, kc := range st.ListK8sClusters("") {
+		if err := s.clusterMgr.AddCluster(kc.ID, kc.Kubeconfig); err != nil {
+			logx.Warn(context.Background(), "K8s 集群重启恢复连接失败", err, "clusterID", kc.ID)
+		}
+	}
 	return s
 }
 

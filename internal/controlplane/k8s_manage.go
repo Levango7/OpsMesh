@@ -267,7 +267,8 @@ func (s *Server) handlePodLogs(w http.ResponseWriter, r *http.Request, client *k
 		return
 	}
 	defer stream.Close()
-	data, err := io.ReadAll(stream)
+	const maxPodLogBytes = 2 << 20 // task 92：2MB 上限，防超大日志打爆控制面内存
+	data, err := io.ReadAll(io.LimitReader(stream, maxPodLogBytes))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "read pod logs failed: " + err.Error()})
 		return
