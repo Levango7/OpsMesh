@@ -54,6 +54,7 @@ type Permission struct {
 // 安全要点：Kubeconfig 含集群凭据，绝不原样返回给前端；API 层负责脱敏。
 type K8sCluster struct {
 	ID         string    `json:"id"`
+	TenantID   string    `json:"tenantId"` // 所属租户（task 88 租户隔离；空值保存时归一为 default）
 	Name       string    `json:"name"`
 	Server     string    `json:"server"`     // API Server 地址
 	Kubeconfig string    `json:"kubeconfig"` // kubeconfig 内容（YAML，敏感）

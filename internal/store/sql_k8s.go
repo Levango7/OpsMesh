@@ -20,7 +20,7 @@ import (
 func scanK8sCluster(row rowScanner) *K8sCluster {
 	var c K8sCluster
 	var createdAt, updatedAt time.Time
-	if err := row.Scan(&c.ID, &c.Name, &c.Server, &c.Kubeconfig, &c.Status, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&c.ID, &c.TenantID, &c.Name, &c.Server, &c.Kubeconfig, &c.Status, &createdAt, &updatedAt); err != nil {
 		return nil
 	}
 	c.CreatedAt = createdAt
@@ -28,10 +28,25 @@ func scanK8sCluster(row rowScanner) *K8sCluster {
 	return &c
 }
 
-// ListK8sClusters 返回所有 K8s 集群配置（按创建时间升序）。
-func (s *SQLStore) ListK8sClusters() []*K8sCluster {
-	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT id, name, server, kubeconfig, status, created_at, updated_at FROM k8s_clusters ORDER BY created_at ASC`)
+// ListK8sClusters 返回 K8s 集群配置（按创建时间升序）；tenantID 非空时仅返回同租户集群（task 88 租户隔离）。
+func (s *SQLStore) ListK8sClusters(tenantID string) []*K8sCluster {
+	q := 
+`
+SELECT id, tenant_id, name, server, kubeconfig, status, created_at, updated_at FROM k8s_clusters
+`
+	var args []interface{}
+	if tenantID != "" {
+		q += 
+`
+ WHERE tenant_id=?
+`
+		args = append(args, tenantID)
+	}
+	q += 
+`
+ ORDER BY created_at ASC
+`
+	rows, err := s.db.QueryContext(context.Background(), q, args...)
 	if err != nil {
 		return nil
 	}
@@ -63,6 +78,10 @@ func (s *SQLStore) SaveK8sCluster(c *K8sCluster) {
 	if c == nil {
 		return
 	}
+	// task 88 租户隔离：空租户归一为 default（与 MemoryStore 一致）。
+	if c.TenantID == "" {
+		c.TenantID = "default"
+	}
 	now := time.Now().UTC()
 	if c.ID == "" {
 		c.ID = randK8sClusterID()
@@ -75,12 +94,13 @@ func (s *SQLStore) SaveK8sCluster(c *K8sCluster) {
 	}
 	c.UpdatedAt = now
 	// INSERT ... ON DUPLICATE KEY UPDATE 实现 upsert（按 id 幂等）。
+	// task 88：tenant_id 仅插入不更新，防 upsert 改写集群租户归属。
 	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO k8s_clusters (id, name, server, kubeconfig, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO k8s_clusters (id, tenant_id, name, server, kubeconfig, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE name=VALUES(name), server=VALUES(server), kubeconfig=VALUES(kubeconfig),
 		 status=VALUES(status), updated_at=VALUES(updated_at)`,
-		c.ID, c.Name, c.Server, c.Kubeconfig, c.Status, c.CreatedAt, c.UpdatedAt); err != nil {
+		c.ID, c.TenantID, c.Name, c.Server, c.Kubeconfig, c.Status, c.CreatedAt, c.UpdatedAt); err != nil {
 		// DB 不可用时记录日志后返回（与 SQLStore 其他方法一致，不 panic）。
 		log.Printf("k8s: SaveK8sCluster 失败: %v", err)
 	}

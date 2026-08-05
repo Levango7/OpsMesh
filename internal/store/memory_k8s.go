@@ -30,11 +30,15 @@ func randK8sClusterID() string {
 }
 
 // ListK8sClusters 返回所有 K8s 集群配置（按创建时间升序；深拷贝）。
-func (m *MemoryStore) ListK8sClusters() []*K8sCluster {
+func (m *MemoryStore) ListK8sClusters(tenantID string) []*K8sCluster {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]*K8sCluster, 0, len(m.k8sClusters))
 	for _, c := range m.k8sClusters {
+		// task 88 租户隔离：tenantID 非空时仅返回同租户集群（空=不过滤，仅内部调用）。
+		if tenantID != "" && c.TenantID != tenantID {
+			continue
+		}
 		// 深拷贝，避免外部修改破坏内部状态。
 		cp := *c
 		out = append(out, &cp)
@@ -72,6 +76,10 @@ func (m *MemoryStore) GetK8sCluster(id string) *K8sCluster {
 func (m *MemoryStore) SaveK8sCluster(c *K8sCluster) {
 	if c == nil {
 		return
+	}
+	// task 88 租户隔离：空租户归一为 default（与 deploy 模块一致）。
+	if c.TenantID == "" {
+		c.TenantID = "default"
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

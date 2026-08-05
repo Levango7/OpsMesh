@@ -64,6 +64,11 @@ func (s *Server) handleK8sResourceRouting(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "cluster manager not initialized"})
 		return
 	}
+	// task 88 租户隔离：校验集群归属当前租户，防跨租户操作集群资源（不泄露存在性）。
+	if c := s.store.GetK8sCluster(clusterID); c == nil || c.TenantID != k8sTenantFromRequest(r) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
+		return
+	}
 	client, err := s.clusterMgr.GetClient(clusterID)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not connected: " + err.Error()})

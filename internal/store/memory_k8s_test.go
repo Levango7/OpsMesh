@@ -21,7 +21,7 @@ func TestMemoryStore_K8sClusterCRUD(t *testing.T) {
 	s := NewMemoryStore()
 
 	// 1. 初始列表为空
-	clusters := s.ListK8sClusters()
+	clusters := s.ListK8sClusters("")
 	if len(clusters) != 0 {
 		t.Fatalf("expected empty list, got %d", len(clusters))
 	}
@@ -39,7 +39,7 @@ func TestMemoryStore_K8sClusterCRUD(t *testing.T) {
 	s.SaveK8sCluster(c1)
 
 	// 3. 列表有 1 个
-	clusters = s.ListK8sClusters()
+	clusters = s.ListK8sClusters("")
 	if len(clusters) != 1 {
 		t.Fatalf("expected 1 cluster, got %d", len(clusters))
 	}
@@ -64,7 +64,7 @@ func TestMemoryStore_K8sClusterCRUD(t *testing.T) {
 	}
 
 	// 7. 删除后列表为空
-	clusters = s.ListK8sClusters()
+	clusters = s.ListK8sClusters("")
 	if len(clusters) != 0 {
 		t.Fatalf("expected empty after delete, got %d", len(clusters))
 	}
@@ -89,7 +89,7 @@ func TestMemoryStore_K8sClusterMultiple(t *testing.T) {
 		})
 	}
 
-	clusters := s.ListK8sClusters()
+	clusters := s.ListK8sClusters("")
 	if len(clusters) != 5 {
 		t.Fatalf("expected 5 clusters, got %d", len(clusters))
 	}
@@ -172,12 +172,12 @@ func TestMemoryStore_K8sClusterDeepCopy(t *testing.T) {
 	}
 
 	// ListK8sClusters 深拷贝
-	list := s.ListK8sClusters()
+	list := s.ListK8sClusters("")
 	if len(list) != 1 {
 		t.Fatalf("list len = %d, want 1", len(list))
 	}
 	list[0].Status = "MUTATED"
-	list2 := s.ListK8sClusters()
+	list2 := s.ListK8sClusters("")
 	if list2[0].Status != "online" {
 		t.Fatalf("ListK8sClusters not deep-copied: Status=%q, want online", list2[0].Status)
 	}
@@ -188,7 +188,7 @@ func TestMemoryStore_K8sClusterSaveNil(t *testing.T) {
 	s := NewMemoryStore()
 	// 不应 panic
 	s.SaveK8sCluster(nil)
-	if len(s.ListK8sClusters()) != 0 {
+	if len(s.ListK8sClusters("")) != 0 {
 		t.Fatal("SaveK8sCluster(nil) should not add any cluster")
 	}
 }
@@ -202,7 +202,7 @@ func TestMemoryStore_K8sClusterListOrder(t *testing.T) {
 	s.SaveK8sCluster(&K8sCluster{ID: "c1", Name: "c1", CreatedAt: base.Add(-2 * time.Hour)})
 	s.SaveK8sCluster(&K8sCluster{ID: "c3", Name: "c3", CreatedAt: base})
 
-	list := s.ListK8sClusters()
+	list := s.ListK8sClusters("")
 	if len(list) != 3 {
 		t.Fatalf("list len = %d, want 3", len(list))
 	}

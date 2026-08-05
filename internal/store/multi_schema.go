@@ -948,13 +948,13 @@ func (m *MultiSchemaStore) ListPermissions() []*Permission {
 // K8sClusterStore 实现（Phase 3，路由到全局 store）
 // ============================================================================
 
-// ListK8sClusters 返回所有 K8s 集群配置（路由到全局 store）。
-func (m *MultiSchemaStore) ListK8sClusters() []*K8sCluster {
+// ListK8sClusters 返回 K8s 集群配置（路由到全局 store；tenantID 过滤，task 88）。
+func (m *MultiSchemaStore) ListK8sClusters(tenantID string) []*K8sCluster {
 	s, err := m.globalStore()
 	if err != nil {
 		return nil
 	}
-	return s.ListK8sClusters()
+	return s.ListK8sClusters(tenantID)
 }
 
 // GetK8sCluster 按 ID 返回单个集群配置（路由到全局 store）。

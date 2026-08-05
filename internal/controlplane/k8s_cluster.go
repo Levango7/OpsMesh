@@ -21,9 +21,20 @@ import (
 	"net/http"
 	"strings"
 
+	"opsmesh/internal/authctx"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 )
+
+// k8sTenantFromRequest 提取请求归属租户（task 88 K8s 租户隔离）。
+// 优先取网关注入的 X-Tenant-ID；缺省归一为 default（与 store 层 SaveK8sCluster 空租户归一一致），
+// 使无网关的本地/demo 部署行为不变。
+func k8sTenantFromRequest(r *http.Request) string {
+	if t := authctx.FromHTTPHeader(r.Header).TenantID; t != "" {
+		return t
+	}
+	return "default"
+}
 
 // k8sClusterKubeconfigMasked 是 kubeconfig 脱敏后的占位符。
 // GET 列表/详情时用此值替换原 kubeconfig，避免敏感凭据泄露到前端。
@@ -70,7 +81,8 @@ func (s *Server) handleListK8sClusters(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "user:read"); !ok {
 		return
 	}
-	clusters := s.store.ListK8sClusters()
+	// task 88 租户隔离：仅返回当前租户的集群。
+	clusters := s.store.ListK8sClusters(k8sTenantFromRequest(r))
 	writeJSON(w, http.StatusOK, map[string]interface{}{"clusters": maskK8sClusters(clusters)})
 }
 
@@ -101,6 +113,7 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 	}
 	c := &store.K8sCluster{
 		Name:       body.Name,
+		TenantID:   k8sTenantFromRequest(r), // task 88 租户归属
 		Server:     body.Server,
 		Kubeconfig: body.Kubeconfig,
 		Status:     "unknown",
@@ -116,7 +129,7 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 		s.store.SaveK8sCluster(c)
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "k8s_cluster_create", Target: c.ID, Detail: "name=" + c.Name,
+		TenantID: c.TenantID, UserID: caller.ID, Action: "k8s_cluster_create", Target: c.ID, Detail: "name=" + c.Name,
 	})
 	writeJSON(w, http.StatusCreated, maskK8sCluster(c))
 }
@@ -178,7 +191,8 @@ func (s *Server) handleDeleteK8sCluster(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	existing := s.store.GetK8sCluster(id)
-	if existing == nil {
+	// task 88 租户隔离：集群不存在或归属其他租户时按 not found 拒绝（不泄露存在性）。
+	if existing == nil || existing.TenantID != k8sTenantFromRequest(r) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
 		return
 	}
@@ -191,7 +205,7 @@ func (s *Server) handleDeleteK8sCluster(w http.ResponseWriter, r *http.Request, 
 		s.clusterMgr.RemoveCluster(id)
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "k8s_cluster_delete", Target: id, Detail: "name=" + existing.Name,
+		TenantID: existing.TenantID, UserID: caller.ID, Action: "k8s_cluster_delete", Target: id, Detail: "name=" + existing.Name,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -212,7 +226,8 @@ func (s *Server) handleTestK8sCluster(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	existing := s.store.GetK8sCluster(id)
-	if existing == nil {
+	// task 88 租户隔离：集群不存在或归属其他租户时按 not found 拒绝。
+	if existing == nil || existing.TenantID != k8sTenantFromRequest(r) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
 		return
 	}

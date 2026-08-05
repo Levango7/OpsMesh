@@ -404,6 +404,7 @@ func (s *SQLStore) initSchema() error {
 	if _, err := s.db.ExecContext(ctx, `
 	CREATE TABLE IF NOT EXISTS k8s_clusters (
 		id VARCHAR(64) PRIMARY KEY,
+		tenant_id VARCHAR(64),
 		name VARCHAR(255) NOT NULL,
 		server VARCHAR(255),
 		kubeconfig TEXT,
@@ -413,6 +414,8 @@ func (s *SQLStore) initSchema() error {
 	)`); err != nil {
 		log.Printf("[store] 建 k8s_clusters 表失败（非致命）: %v", err)
 	}
+	// task 88 租户隔离：存量 k8s_clusters 表补 tenant_id 列（全新库由 CREATE TABLE 保证）。
+	s.alterColumnIfMissing(ctx, "k8s_clusters", "tenant_id", "VARCHAR(64)")
 	// 工程债治理：补二级索引，避免 ClaimTask 的 FOR UPDATE 全表扫描加锁，
 	// 以及按租户分页查询（tenant_id + created_at DESC）回表全扫。
 	// MySQL 不支持 CREATE INDEX IF NOT EXISTS，故用 createIndexIfMissing 兼容已有库。

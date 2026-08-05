@@ -189,8 +189,8 @@ type PermissionStore interface {
 // 与 DeviceStore 等领域解耦，独立小接口组合进 Store。
 // Kubeconfig 为敏感内容，调用方（API 层）负责脱敏后再返回前端。
 type K8sClusterStore interface {
-	// ListK8sClusters 返回所有 K8s 集群配置（按创建时间升序）。
-	ListK8sClusters() []*K8sCluster
+	// ListK8sClusters 返回 K8s 集群配置（按创建时间升序）；tenantID 非空时仅返回同租户集群（task 88 租户隔离）。
+	ListK8sClusters(tenantID string) []*K8sCluster
 	// GetK8sCluster 按 ID 返回单个集群配置（不存在返回 nil）。
 	GetK8sCluster(id string) *K8sCluster
 	// SaveK8sCluster 创建或更新集群配置（按 ID 幂等）。
