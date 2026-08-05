@@ -521,6 +521,15 @@ func (c *Config) Validate() error {
 	if c.Production && c.TLSCert == "" {
 		return fmt.Errorf("生产模式（--production=true）必须配置 TLS（--tls-cert 为空），明文通信不满足等保三级要求；请提供证书或关闭 --production")
 	}
+	// M3-2Ab 生产控制面必须配置稳定 JWT 密钥（task 96）。
+	// 语义：控机用户中心 JWT 签发密钥为空则重启丢会话、多副本各自独立随机密钥互不相认、用户间歇 401。
+	// 生产直接 fail-fast，与 H6 生产强 TLS 同风格。dev 随机兜底语义（config.JWTSecret 空=随机）保留。
+	if c.Production && c.JWTSecret == "" {
+		return fmt.Errorf("生产模式（--production=true）controlplane 必须设置 --jwt-secret（或环境变量 OPSMESH_JWT_SECRET）；否则各副本独立随机密钥互相不认、重启后会话全部失效")
+	}
+	if c.Production && len([]byte(c.JWTSecret)) < 32 {
+		return fmt.Errorf("生产模式 --jwt-secret 长度不足（%d 字节 < 32）：需强随机 256-bit 对称密钥（建议 openssl rand -hex 32）", len([]byte(c.JWTSecret)))
+	}
 	// M4-4B 日志检索后端校验：非法值或缺失必要 endpoint 直接 fail-fast。
 	switch c.LogBackend {
 	case "memory", "sql", "loki", "es":
