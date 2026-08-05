@@ -23,6 +23,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 // K8sClient 封装单个 K8s 集群的客户端连接。
@@ -46,6 +47,15 @@ func NewK8sClient(name, kubeconfigData string) (*K8sClient, error) {
 	if kubeconfigData == "" {
 		return nil, fmt.Errorf("k8s: 集群 %q 的 kubeconfig 内容为空", name)
 	}
+	// 安全校验（task 85）：拒绝含 exec/auth-provider 凭据插件的 kubeconfig，
+	// client-go 会在首次请求时本地执行此类插件，恶意 kubeconfig 可致控制面 RCE。
+	cfg, err := clientcmd.Load([]byte(kubeconfigData))
+	if err != nil {
+		return nil, fmt.Errorf("k8s: 集群 %q 解析 kubeconfig 结构失败: %w", name, err)
+	}
+	if err := validateKubeConfigSafety(cfg); err != nil {
+		return nil, fmt.Errorf("k8s: 集群 %q %w", name, err)
+	}
 	// RESTConfigFromKubeConfig 直接从 kubeconfig 字节解析出 rest.Config，
 	// 不依赖 KUBECONFIG 环境变量或 ~/.kube/config 默认路径。
 	config, err := clientcmd.RESTConfigFromKubeConfig([]byte(kubeconfigData))
@@ -56,6 +66,7 @@ func NewK8sClient(name, kubeconfigData string) (*K8sClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("k8s: 集群 %q 创建 Clientset 失败: %w", name, err)
 	}
+	forceSecureTLS(config)
 	return &K8sClient{
 		Name:      name,
 		Server:    config.Host,
@@ -71,6 +82,14 @@ func NewK8sClientFromPath(name, kubeconfigPath string) (*K8sClient, error) {
 	if kubeconfigPath == "" {
 		return nil, fmt.Errorf("k8s: 集群 %q 的 kubeconfig 路径为空", name)
 	}
+	// 安全校验（task 85）：同内容版，拒绝含 exec/auth-provider 凭据插件的 kubeconfig。
+	cfg, err := clientcmd.LoadFromFile(kubeconfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("k8s: 集群 %q 读取 kubeconfig 文件失败: %w", name, err)
+	}
+	if err := validateKubeConfigSafety(cfg); err != nil {
+		return nil, fmt.Errorf("k8s: 集群 %q %w", name, err)
+	}
 	// BuildConfigFromFlags 第一个参数为空串时跳过 master URL，强制从 kubeconfig 解析。
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
@@ -80,6 +99,7 @@ func NewK8sClientFromPath(name, kubeconfigPath string) (*K8sClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("k8s: 集群 %q 创建 Clientset 失败: %w", name, err)
 	}
+	forceSecureTLS(config)
 	return &K8sClient{
 		Name:      name,
 		Server:    config.Host,
@@ -122,4 +142,32 @@ func (c *K8sClient) TestConnection() error {
 // 无显式 Close 方法；此处保留 Close 占位以兼容后续可能引入的显式资源（如 DynamicClient 缓存）。
 func (c *K8sClient) Close() {
 	// 当前 client-go Clientset 无需显式释放；保留方法以稳定接口。
+}
+
+// validateKubeConfigSafety 校验 kubeconfig 不含可在本机执行任意命令的凭据插件（task 85 安全加固）。
+// client-go 在首次 API 请求时会本地执行 users[].user.exec 凭据插件与 auth-provider 外部命令，
+// 恶意 kubeconfig 可借此在控制面主机上执行任意命令（RCE），故一律拒绝，要求使用静态凭据（token/证书）。
+func validateKubeConfigSafety(cfg *clientcmdapi.Config) error {
+	for userName, authInfo := range cfg.AuthInfos {
+		if authInfo == nil {
+			continue
+		}
+		if authInfo.Exec != nil {
+			return fmt.Errorf("用户 %q 配置了 exec 凭据插件（command=%q），出于安全已禁用；请改用 token 或客户端证书", userName, authInfo.Exec.Command)
+		}
+		if authInfo.AuthProvider != nil {
+			return fmt.Errorf("用户 %q 配置了 auth-provider 凭据插件（name=%q），出于安全已禁用；请改用 token 或客户端证书", userName, authInfo.AuthProvider.Name)
+		}
+	}
+	return nil
+}
+
+// forceSecureTLS 强制关闭 insecure-skip-tls-verify（task 85 安全加固）。
+// kubeconfig 中 insecure-skip-tls-verify: true 会跳过服务端证书校验，易被中间人攻击；
+// 托管集群统一要求有效证书链（自签证书请通过 certificate-authority-data 提供 CA）。
+func forceSecureTLS(config *rest.Config) {
+	if config == nil {
+		return
+	}
+	config.TLSClientConfig.Insecure = false
 }
