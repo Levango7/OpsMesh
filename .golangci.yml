@@ -12,7 +12,7 @@
 
 run:
   timeout: 5m
-  go: "1.22"
+  go: "1.26"
 
 
 linters:
@@ -42,6 +42,7 @@ linters:
     - wastedassign    # 立即被覆盖的浪费赋值
     - durationcheck   # duration 乘以常量应显式 cast
     - prealloc        # 切片预分配建议（性能）
+    - gosec           # 安全静态分析（task 91：此前 exclude-rules 引用但 enable 漏配，现补齐）
 
 linters-settings:
   errcheck:
