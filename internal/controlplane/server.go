@@ -8,6 +8,7 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	cryptoRand "crypto/rand"
@@ -638,10 +639,12 @@ func (s *Server) buildMetrics() (*http.Server, net.Listener) {
 }
 
 // handleDevices 处理 GET /api/v1/devices，按网关注入租户返回 segment -> 设备 列表。
-// verifyFederationRequest 校验入站请求的联邦签名（P1-6）。
+// verifyFederationRequest 校验入站请求的联邦签名（P1-6 / task 83）。
 // 仅当请求携带 X-Federation-Forwarded 标记（由本集群转发管理器设置）时才验签；
 // 未携带则视为普通网关注入请求，返回 nil（不改变既有网关鉴权路径）。
-// 验签失败（密钥缺失/签名不符/时间戳超窗）返回 error，调用方应拒绝（401）。
+// 签名覆盖 method + path + 时间戳 + 身份头 + sha256(body)，防任务体被中间人篡改；
+// 验签读取 body 后以 NopCloser 复原，下游 handler（decodeJSONBody）可继续读取。
+// 验签失败（密钥缺失/签名不符/时间戳超窗/body 超限）返回 error，调用方应拒绝（401）。
 func (s *Server) verifyFederationRequest(r *http.Request) error {
 	if r.Header.Get("X-Federation-Forwarded") != "1" {
 		return nil // 非联邦转发请求，跳过（走网关注入逻辑）
@@ -665,8 +668,20 @@ func (s *Server) verifyFederationRequest(r *http.Request) error {
 	tenant := r.Header.Get("X-Tenant-ID")
 	user := r.Header.Get("X-User-Id")
 	roles := r.Header.Get("X-User-Roles")
+	// task 83：请求体纳入签名覆盖（sha256(body) 摘要），防中间人篡改转发任务体。
+	// 读取 body 参与验签后以 NopCloser 复原，保证下游 decodeJSONBody 仍能读取；
+	// 限读 maxBodyBytes+1 防超大请求体内存攻击（超限即拒绝，不复原）。
+	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
+	if err != nil {
+		return fmt.Errorf("read federation request body: %w", err)
+	}
+	if int64(len(bodyBytes)) > maxBodyBytes {
+		return fmt.Errorf("federation request body exceeds %d bytes", maxBodyBytes)
+	}
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	bodyDigest := sha256.Sum256(bodyBytes)
 	mac := hmac.New(sha256.New, []byte(s.cfg.FederationSecret))
-	mac.Write([]byte(strings.Join([]string{r.Method, r.URL.Path, tsStr, tenant, user, roles}, "|")))
+	mac.Write([]byte(strings.Join([]string{r.Method, r.URL.Path, tsStr, tenant, user, roles, hex.EncodeToString(bodyDigest[:])}, "|")))
 	expected := hex.EncodeToString(mac.Sum(nil))
 	if !hmac.Equal([]byte(expected), []byte(sig)) {
 		return fmt.Errorf("federation signature mismatch")

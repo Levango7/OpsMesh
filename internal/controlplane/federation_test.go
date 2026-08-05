@@ -3,10 +3,17 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"opsmesh/internal/config"
 	"opsmesh/internal/proto"
@@ -348,5 +355,64 @@ func TestNewFederationManager_NilForEmptyPeers(t *testing.T) {
 	}
 	if got := NewFederationManager([]string{""}, store.NewMemoryStore(), "", nil); got == nil {
 		t.Fatal("NewFederationManager(['']) = nil, want non-nil (single empty string still constructs)")
+	}
+}
+
+// TestVerifyFederationRequest_BodyTampering 验证 task 83：联邦签名覆盖请求体。
+// 合法签名请求通过且 body 被复原（下游 decodeJSONBody 可读）；
+// body 被篡改（签名不变）时必须拒绝——防中间人在签名合法的情况下改任务体。
+func TestVerifyFederationRequest_BodyTampering(t *testing.T) {
+	secret := "fed-test-secret"
+	s := &Server{store: store.NewMemoryStore(), cfg: &config.Config{FederationSecret: secret}}
+
+	// 与 signFederationRequest/verifyFederationRequest 同规则：method|path|ts|tenant|user|roles|sha256(body)。
+	sign := func(ts string, body []byte) string {
+		sum := sha256.Sum256(body)
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write([]byte(strings.Join([]string{http.MethodPost, "/api/v1/tasks", ts, "t1", "u1", "role-admin", hex.EncodeToString(sum[:])}, "|")))
+		return hex.EncodeToString(mac.Sum(nil))
+	}
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	body, _ := json.Marshal(map[string]string{"agentID": "a1", "command": "echo hi"})
+
+	newReq := func(b []byte, sig string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewReader(b))
+		req.Header.Set("X-Federation-Forwarded", "1")
+		req.Header.Set("X-Tenant-ID", "t1")
+		req.Header.Set("X-User-Id", "u1")
+		req.Header.Set("X-User-Roles", "role-admin")
+		req.Header.Set("X-Federation-Ts", ts)
+		req.Header.Set("X-Federation-Sig", sig)
+		return req
+	}
+
+	// 1) 合法签名：通过，且 body 被复原可供下游读取。
+	req := newReq(body, sign(ts, body))
+	if err := s.verifyFederationRequest(req); err != nil {
+		t.Fatalf("valid federation signature rejected: %v", err)
+	}
+	readBack, _ := io.ReadAll(req.Body)
+	if string(readBack) != string(body) {
+		t.Fatalf("body not restored after verify: %q", readBack)
+	}
+
+	// 2) body 被篡改（沿用对原 body 的合法签名）：必须拒绝。
+	tampered, _ := json.Marshal(map[string]string{"agentID": "a1", "command": "rm -rf /"})
+	req2 := newReq(tampered, sign(ts, body))
+	if err := s.verifyFederationRequest(req2); err == nil {
+		t.Fatal("tampered body accepted, want signature mismatch error")
+	}
+
+	// 3) GET 请求（空 body）签名同样覆盖空体摘要：通过。
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/devices", nil)
+	getReq.Header.Set("X-Federation-Forwarded", "1")
+	getReq.Header.Set("X-Tenant-ID", "t1")
+	getReq.Header.Set("X-Federation-Ts", ts)
+	mac := hmac.New(sha256.New, []byte(secret))
+	emptyDigest := sha256.Sum256(nil)
+	mac.Write([]byte(strings.Join([]string{http.MethodGet, "/api/v1/devices", ts, "t1", "", "", hex.EncodeToString(emptyDigest[:])}, "|")))
+	getReq.Header.Set("X-Federation-Sig", hex.EncodeToString(mac.Sum(nil)))
+	if err := s.verifyFederationRequest(getReq); err != nil {
+		t.Fatalf("empty-body GET signature rejected: %v", err)
 	}
 }

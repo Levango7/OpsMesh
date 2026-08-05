@@ -139,8 +139,8 @@ func (f *FederationManager) ForwardTask(ctx context.Context, peerURL string, tas
 			req.Header.Set(h, v)
 		}
 	}
-	// P1-6 对转发的身份头做 HMAC 签名 + 时间戳，peer 侧验签防跨不可信网段伪造与重放。
-	f.signFederationRequest(req)
+	// P1-6 / task 83 对身份头 + 请求体做 HMAC 签名 + 时间戳，peer 侧验签防伪造、重放与任务体篡改。
+	f.signFederationRequest(req, body)
 	resp, err := f.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("peer %s unreachable: %w", peerURL, err)
@@ -157,10 +157,11 @@ func (f *FederationManager) ForwardTask(ctx context.Context, peerURL string, tas
 	return &created, nil
 }
 
-// signFederationRequest 对出站联邦请求的身份头做 HMAC 签名 + 时间戳（P1-6）。
-// 计算覆盖 method + path + 时间戳 + 三个身份头，peer 侧按同一规则验签。
+// signFederationRequest 对出站联邦请求的身份头与请求体做 HMAC 签名 + 时间戳（P1-6 / task 83）。
+// 计算覆盖 method + path + 时间戳 + 三个身份头 + sha256(body) 摘要，peer 侧按同一规则验签；
+// body 摘要防止中间人在签名合法的情况下篡改转发的任务体（GET 请求 body 传 nil，即空体摘要）。
 // 仅在管理器配置了共享密钥时签名；未配置则跳过（向后兼容明文联邦，但启动已告警）。
-func (f *FederationManager) signFederationRequest(req *http.Request) {
+func (f *FederationManager) signFederationRequest(req *http.Request, body []byte) {
 	if f.secret == "" {
 		return
 	}
@@ -168,8 +169,10 @@ func (f *FederationManager) signFederationRequest(req *http.Request) {
 	tenant := req.Header.Get("X-Tenant-ID")
 	user := req.Header.Get("X-User-Id")
 	roles := req.Header.Get("X-User-Roles")
+	// task 83：body 摘要纳入签名，防中间人篡改转发任务体（body 为 nil 时即空体摘要）。
+	bodyDigest := sha256.Sum256(body)
 	mac := hmac.New(sha256.New, []byte(f.secret))
-	mac.Write([]byte(strings.Join([]string{req.Method, req.URL.Path, ts, tenant, user, roles}, "|")))
+	mac.Write([]byte(strings.Join([]string{req.Method, req.URL.Path, ts, tenant, user, roles, hex.EncodeToString(bodyDigest[:])}, "|")))
 	sig := hex.EncodeToString(mac.Sum(nil))
 	req.Header.Set("X-Federation-Forwarded", "1")
 	req.Header.Set("X-Federation-Ts", ts)
@@ -222,8 +225,8 @@ func (f *FederationManager) fetchPeerDevices(ctx context.Context, peerURL, tenan
 	if tenantID != "" {
 		req.Header.Set("X-Tenant-ID", tenantID)
 	}
-	// P1-6 对转发的身份头做 HMAC 签名 + 时间戳，peer 侧验签防伪造与重放。
-	f.signFederationRequest(req)
+	// P1-6 / task 83 对身份头做 HMAC 签名（GET 无 body，传 nil），peer 侧验签防伪造与重放。
+	f.signFederationRequest(req, nil)
 	resp, err := f.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("peer %s unreachable: %w", peerURL, err)
