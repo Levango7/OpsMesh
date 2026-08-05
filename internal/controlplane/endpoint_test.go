@@ -51,6 +51,7 @@ func TestHandleListTasks(t *testing.T) {
 func TestHandleListTasks_StatusFilter(t *testing.T) {
 	s := newTestServer()
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+	s.store.ClaimTask(a.AgentID) // 状态守卫：上报前须先领取
 	s.store.SubmitResult(&proto.TaskResult{TaskID: "task-" + a.AgentID + "-1", AgentID: a.AgentID, ExitCode: 0})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks?status=pending", nil)
@@ -69,6 +70,7 @@ func TestHandleDeviceDetail(t *testing.T) {
 	s := newTestServer()
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
 	devID := "dev-" + a.AgentID
+	s.store.ClaimTask(a.AgentID) // 状态守卫：上报前须先领取
 	s.store.SubmitResult(&proto.TaskResult{TaskID: "task-" + a.AgentID + "-1", AgentID: a.AgentID, ExitCode: 0, Stdout: "ok"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/devices/"+devID, nil)

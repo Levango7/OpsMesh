@@ -745,6 +745,7 @@ func (m *MemoryStore) CreateTask(t *proto.Task) *proto.Task {
 // SubmitResult 接收 agent 上报的执行结果，按成功/失败处理任务终态，并同步设备看板（B2）。
 // F2 失败重试 / 死信：失败且未达上限 → 复位 pending（RetryCount++）重新入队；
 // 已达上限 → 置 failed 且标记 DeadLetter（死信，需人工处置）并产出 critical 告警（M7）。
+// 状态守卫（幂等）：仅接受任务处于 running 时的上报；其他状态的迟到上报被忽略（结果记录不受影响）。
 func (m *MemoryStore) SubmitResult(res *proto.TaskResult) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -755,6 +756,13 @@ func (m *MemoryStore) SubmitResult(res *proto.TaskResult) {
 	for _, t := range m.tasks[res.AgentID] {
 		if t.TaskID != res.TaskID {
 			continue
+		}
+		// 状态守卫（幂等，task 82）：仅接受任务处于 running 时的上报；
+		// 其他状态的迟到/重复上报一律忽略，防止已取消任务被翻回 done、
+		// 防止重复失败上报反复累计 retry_count 造成假死信。
+		if t.Status != "running" {
+			log.Printf("store: memory SubmitResult 忽略非 running 任务 %s (status=%s exitCode=%d)", t.TaskID, t.Status, res.ExitCode)
+			return
 		}
 		if success {
 			t.Status = "done"

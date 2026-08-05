@@ -87,6 +87,8 @@ func TestOrchestration_RunAndReconcile(t *testing.T) {
 	}
 
 	// done n1 → n2 应被 releaseDeps 释放为 pending。
+	// 状态守卫：SubmitResult 仅接受 running，须先领取（pending→running）。
+	st.ClaimTask(a.AgentID)
 	st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n1", AgentID: a.AgentID, ExitCode: 0})
 	fm := fresh()
 	if fm[prefix+"n2"].Status != "pending" {
@@ -98,11 +100,13 @@ func TestOrchestration_RunAndReconcile(t *testing.T) {
 		t.Fatal("reconciled success too early")
 	}
 
+	st.ClaimTask(a.AgentID) // 领取 n2（n1 done 后由 releaseDeps 释放为 pending）
 	st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n2", AgentID: a.AgentID, ExitCode: 0})
 	fm = fresh()
 	if fm[prefix+"n3"].Status != "pending" {
 		t.Fatalf("after n2 done: n3 status=%s, want pending", fm[prefix+"n3"].Status)
 	}
+	st.ClaimTask(a.AgentID) // 领取 n3
 	st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n3", AgentID: a.AgentID, ExitCode: 0})
 
 	if err := h.Reconcile(context.Background(), wf.ID, "t1"); err != nil {

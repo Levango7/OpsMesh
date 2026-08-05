@@ -576,6 +576,8 @@ func TestMultiSchemaStore_SubmitResultRouting(t *testing.T) {
 	m.Register(&proto.AgentInfo{AgentID: "agent-a", Segment: "seg-1", TenantID: "tA"})
 	task := m.CreateTask(&proto.Task{AgentID: "agent-a", TenantID: "tA", Type: "shell", Command: "echo hi"})
 
+	// 状态守卫：上报前须先领取（经 agentTenant 反查路由）。
+	m.ClaimTask("agent-a")
 	// SubmitResult 经 taskTenant 反查路由到 tenant A 的 schema。
 	m.SubmitResult(&proto.TaskResult{
 		TaskID:     task.TaskID,

@@ -93,7 +93,8 @@ func TestHandleCancelTask_NotCancellable(t *testing.T) {
 	s := newExtraTestServer()
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
 	tk := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
-	// 上报成功结果，任务变 done
+	// 领取后上报成功结果，任务变 done（状态守卫：仅 running 接受上报）
+	s.store.ClaimTask(a.AgentID)
 	s.store.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 0})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+tk.TaskID+"/cancel", nil)

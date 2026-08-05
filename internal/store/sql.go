@@ -686,6 +686,7 @@ func (s *SQLStore) TasksByParent(parentID string) []*proto.Task {
 }
 
 // SubmitResult 写入 task_results，按成功/失败处理任务终态（F2 重试/死信）并回写设备看板（B2）。
+// 状态守卫（幂等）：仅接受任务处于 running 时的上报，防止迟到/重复上报破坏终态。
 func (s *SQLStore) SubmitResult(res *proto.TaskResult) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -700,32 +701,57 @@ ON DUPLICATE KEY UPDATE
 	}
 
 	success := res.ExitCode == 0
-	// 读取任务当前重试计数 / 上限，决定终态。
-	var tid, tenantID string
+	// 读取任务当前状态/重试计数/上限，决定终态。
+	// 状态守卫（幂等，task 82）：仅接受任务处于 running 时的上报——防止迟到上报把已取消任务翻回，
+	// 防止重复失败上报反复累计 retry_count 造成假死信。UPDATE 附带 AND status='running' 防并发窗口；
+	// RowsAffected==0 表示状态被并发改写 → 跳过后续事件/告警。
+	var tid, tenantID, status string
 	var rc, mr int
+	accepted := false
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT task_id, tenant_id, retry_count, max_retries FROM tasks WHERE task_id=?`, res.TaskID,
-	).Scan(&tid, &tenantID, &rc, &mr); err == nil && tid != "" {
-		if success {
-			s.db.ExecContext(ctx, `UPDATE tasks SET status='done' WHERE task_id=?`, res.TaskID)
+		`SELECT task_id, tenant_id, status, retry_count, max_retries FROM tasks WHERE task_id=?`, res.TaskID,
+	).Scan(&tid, &tenantID, &status, &rc, &mr); err == nil && tid != "" {
+		if status != "running" {
+			log.Printf("[store] SubmitResult 忽略非 running 任务 %s (status=%s exitCode=%d)", res.TaskID, status, res.ExitCode)
+		} else if success {
+			if r, uerr := s.db.ExecContext(ctx, `UPDATE tasks SET status='done' WHERE task_id=? AND status='running'`, res.TaskID); uerr != nil {
+				log.Printf("[store] SubmitResult done 更新失败 %s: %v", res.TaskID, uerr)
+			} else if n, _ := r.RowsAffected(); n > 0 {
+				accepted = true
+			}
 		} else if rc < mr {
-			s.db.ExecContext(ctx,
-				`UPDATE tasks SET status='pending', claimed_by=NULL, claimed_at=NULL, retry_count=retry_count+1 WHERE task_id=?`,
+			r, uerr := s.db.ExecContext(ctx,
+				`UPDATE tasks SET status='pending', claimed_by=NULL, claimed_at=NULL, retry_count=retry_count+1 WHERE task_id=? AND status='running'`,
 				res.TaskID)
-			s.publish(events.Event{Action: "task_retry", Target: res.TaskID, TenantID: tenantID,
-				Detail: fmt.Sprintf("retry %d/%d", rc+1, mr), Level: events.LevelWarn})
+			if uerr != nil {
+				log.Printf("[store] SubmitResult retry 更新失败 %s: %v", res.TaskID, uerr)
+			} else if n, _ := r.RowsAffected(); n > 0 {
+				accepted = true
+				s.publish(events.Event{Action: "task_retry", Target: res.TaskID, TenantID: tenantID,
+					Detail: fmt.Sprintf("retry %d/%d", rc+1, mr), Level: events.LevelWarn})
+			}
 		} else {
-			s.db.ExecContext(ctx, `UPDATE tasks SET status='failed', dead_letter=1 WHERE task_id=?`, res.TaskID)
-			s.addAlert(ctx, &proto.Alert{
-				AlertID:   "alert-" + res.TaskID,
-				TenantID:  tenantID,
-				DeviceID:  "dev-" + res.AgentID,
-				AgentID:   res.AgentID,
-				Severity:  "critical",
-				Message:   fmt.Sprintf("task %s dead-letter after %d retries (exitCode=%d)", res.TaskID, rc, res.ExitCode),
-				CreatedAt: time.Now().UTC(),
-			})
+			r, uerr := s.db.ExecContext(ctx, `UPDATE tasks SET status='failed', dead_letter=1 WHERE task_id=? AND status='running'`, res.TaskID)
+			if uerr != nil {
+				log.Printf("[store] SubmitResult dead-letter 更新失败 %s: %v", res.TaskID, uerr)
+			} else if n, _ := r.RowsAffected(); n > 0 {
+				accepted = true
+				s.addAlert(ctx, &proto.Alert{
+					AlertID:   "alert-" + res.TaskID,
+					TenantID:  tenantID,
+					DeviceID:  "dev-" + res.AgentID,
+					AgentID:   res.AgentID,
+					Severity:  "critical",
+					Message:   fmt.Sprintf("task %s dead-letter after %d retries (exitCode=%d)", res.TaskID, rc, res.ExitCode),
+					CreatedAt: time.Now().UTC(),
+				})
+			}
 		}
+	}
+
+	// 任务存在但上报被忽略（非 running）：结果已记录，不再回写看板/事件/依赖释放。
+	if tid != "" && !accepted {
+		return
 	}
 
 	// 回写设备 TaskState + LastResult（B2 失败回写看板）。

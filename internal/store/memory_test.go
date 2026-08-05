@@ -174,6 +174,8 @@ func TestMemoryStore_DAGReleaseBlockedToPending(t *testing.T) {
 	}
 
 	// A 完成 → B 应被自动释放为 pending（进入可下发队列）。
+	// 状态守卫：SubmitResult 仅接受 running 任务，须先领取。
+	m.ClaimTask(a.AgentID)
 	m.SubmitResult(&proto.TaskResult{TaskID: ta.TaskID, AgentID: a.AgentID, ExitCode: 0})
 	if ta.Status != "done" {
 		t.Fatalf("task A status = %q, want done", ta.Status)
@@ -187,6 +189,7 @@ func TestMemoryStore_SubmitResult(t *testing.T) {
 	m := NewMemoryStore().WithDemo(true)
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a"})
 	ts := m.GetTasks(a.AgentID)
+	m.ClaimTask(a.AgentID) // 状态守卫：上报前须先领取（pending→running）
 	m.SubmitResult(&proto.TaskResult{TaskID: ts[0].TaskID, AgentID: a.AgentID, ExitCode: 0})
 
 	for _, ds := range m.Snapshot("") {
@@ -205,6 +208,7 @@ func TestMemoryStore_TaskLifecycle(t *testing.T) {
 	if got := m.GetTasks(a.AgentID); len(got) != 1 {
 		t.Fatalf("before submit: GetTasks = %d, want 1", len(got))
 	}
+	m.ClaimTask(a.AgentID) // 状态守卫：上报前须先领取
 	m.SubmitResult(&proto.TaskResult{TaskID: "task-" + a.AgentID + "-1", AgentID: a.AgentID, ExitCode: 0})
 	if got := m.GetTasks(a.AgentID); len(got) != 0 {
 		t.Fatalf("after submit: GetTasks = %d, want 0 (no re-run)", len(got))
@@ -310,6 +314,9 @@ func TestMemoryStore_QueryMethods(t *testing.T) {
 
 	// 下发一条任务并上报结果，构造可查询的数据。
 	created := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	// 状态守卫：上报前须先领取；ClaimTask 按创建顺序返回，先领走 demo 任务、再领到本条下发任务。
+	m.ClaimTask(a.AgentID)
+	m.ClaimTask(a.AgentID)
 	m.SubmitResult(&proto.TaskResult{TaskID: created.TaskID, AgentID: a.AgentID, ExitCode: 0, Stdout: "hi"})
 
 	all := m.AllTasks("t1")
@@ -366,6 +373,7 @@ func TestMemoryStore_EventPublish(t *testing.T) {
 	m := NewMemoryStore().WithBus(bus)
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
 	created := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	m.ClaimTask(a.AgentID) // 状态守卫：上报前须先领取
 	m.SubmitResult(&proto.TaskResult{TaskID: created.TaskID, AgentID: a.AgentID, ExitCode: 0})
 
 	actions := map[string]bool{}
@@ -654,5 +662,47 @@ func TestMemoryStore_AgentSecret(t *testing.T) {
 	m.Register(&proto.AgentInfo{AgentID: "agent-sec-1", Segment: "seg-a"})
 	if got := m.AgentSecret(a1.AgentID); got != s1 {
 		t.Fatalf("re-register should not reset secret: got %q, want %q", got, s1)
+	}
+}
+
+
+// TestMemoryStore_SubmitResult_StateGuard 验证 task 82 状态守卫（幂等）：
+// 仅 running 任务接受上报；pending/cancelled 的迟到/重复上报被忽略（结果记录保留），
+// 防止 cancelled 被翻回 done、防止重复失败上报累计重试造成假死信。
+func TestMemoryStore_SubmitResult_StateGuard(t *testing.T) {
+	m := NewMemoryStore()
+	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+	tk := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi", MaxRetries: 3})
+
+	// 1) 未领取的 pending 任务收到迟到上报：忽略，不累计重试。
+	m.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 1})
+	if tk.Status != "pending" || tk.RetryCount != 0 {
+		t.Fatalf("pending 任务应忽略上报: status=%q retryCount=%d", tk.Status, tk.RetryCount)
+	}
+
+	// 2) 领取后的正常上报被接受（失败→重试）。
+	m.ClaimTask(a.AgentID)
+	m.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 1})
+	if tk.Status != "pending" || tk.RetryCount != 1 {
+		t.Fatalf("running 任务失败上报应重试: status=%q retryCount=%d", tk.Status, tk.RetryCount)
+	}
+
+	// 3) 同一失败的重复上报（此时已复位 pending）：忽略，retryCount 保持 1。
+	m.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 1})
+	if tk.RetryCount != 1 {
+		t.Fatalf("重复迟到上报不应累计重试, retryCount=%d", tk.RetryCount)
+	}
+
+	// 4) cancelled 不被迟到成功上报翻回 done。
+	m.ClaimTask(a.AgentID)
+	m.CancelTask(tk.TaskID, "")
+	m.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 0})
+	if tk.Status != "cancelled" {
+		t.Fatalf("cancelled 任务不得被翻回, status=%q", tk.Status)
+	}
+
+	// 结果记录全部保留（守卫不影响 results 留痕）。
+	if rs := m.Results(a.AgentID); len(rs) != 4 {
+		t.Fatalf("Results = %d, want 4（全部保留）", len(rs))
 	}
 }
