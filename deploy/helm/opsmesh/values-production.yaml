@@ -35,6 +35,9 @@ controlplane:
   archiveAgeMin: 1440
   # provisionSecret 务必显式注入（多副本需一致），建议 helm install --set controlplane.provisionSecret=$(openssl rand -hex 32)
   provisionSecret: ""
+  # jwtSecret 务必显式注入（多副本需一致），与 provisionSecret 同法：
+  # helm install ... --set controlplane.jwtSecret=$(openssl rand -hex 32)
+  jwtSecret: ""
   alertWebhookURL: ""
   alertNotifierType: generic
   # 生产资源放大
