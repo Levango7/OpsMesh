@@ -788,6 +788,11 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		// shell 元字符校验（task 86）：占位符替换前拒绝含元字符的值，防命令注入。
+		if err := validateShellSafeValues(paramsMap); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		command = renderOSScript(tpl.Commands, paramsMap)
 	} else {
 		command = buildOSExecuteCommand(tpl.Commands, body.Params)
@@ -918,6 +923,23 @@ func validateNonEmpty(name, value string) error {
 func validatePath(path string) error {
 	if !strings.HasPrefix(path, "/") {
 		return fmt.Errorf("path must start with /, got %s", path)
+	}
+	return nil
+}
+
+// shellUnsafeChars 是禁止出现在模板参数值中的 shell 元字符（task 86 命令注入防护）。
+// 模板参数经 renderMiddlewareScript/renderOSScript 原样替换进 shell 脚本，由 agent 以 sh -c 执行；
+// 值中若含以下字符即可截断/拼接命令造成目标机 RCE，故一律拒绝（含空格，防参数歧义）。
+const shellUnsafeChars = " ;&|$`\n\r\t<>(){}\"'\\*?[]!#~"
+
+// validateShellSafeValues 校验全部模板参数值不含 shell 元字符（task 86 命令注入防护）。
+// 对 values 中每个键值做检查，任一值含元字符即返回错误。
+// 调用点：middleware deploy/uninstall 与 OS 模板 execute 在渲染脚本前统一调用。
+func validateShellSafeValues(values map[string]string) error {
+	for name, val := range values {
+		if strings.ContainsAny(val, shellUnsafeChars) {
+			return fmt.Errorf("param %s contains shell metacharacters and is rejected for safety", name)
+		}
 	}
 	return nil
 }

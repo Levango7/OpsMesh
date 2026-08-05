@@ -630,6 +630,11 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	// shell 元字符校验（task 86）：占位符替换前拒绝含元字符的值，防命令注入。
+	if err := validateShellSafeValues(body.Params); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
 	targetTenant := actx.TenantID
 	agent := s.lookupAgent(body.AgentID)
@@ -836,6 +841,15 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		if _, ok := body.Params[p.Name]; !ok && p.Default != "" {
 			body.Params[p.Name] = p.Default
 		}
+	}
+	// 类型语义校验 + shell 元字符校验（task 86）：与 deploy 同规则，防卸载路径命令注入。
+	if err := validateMiddlewareParams(tpl.Params, body.Params); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := validateShellSafeValues(body.Params); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
 	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
 	targetTenant := actx.TenantID
