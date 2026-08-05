@@ -3,7 +3,10 @@
 // M4 自动化执行引擎（复用底层任务通道）。双后端（Memory / SQL，U-04 数据本地化）。
 package deploy
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // 部署状态常量（对齐 系统设计 3.2.M3 状态机）。
 const (
@@ -21,6 +24,11 @@ const (
 	TypeK8s    = "k8s"    // K8s GitOps：RepoURL 指向 manifest，派发 shell apply（MVP 占位）
 )
 
+// repoURLUnsafeChars 是禁止出现在 RepoURL 中的 shell 元字符（task 87 命令注入防护）。
+// RepoURL 在 Execute 时被原样作为 shell 任务的 Command 下发给 agent（以 sh -c 执行），
+// 值中若含以下字符即可拼接/截断命令造成目标机 RCE，故一律拒绝。
+const repoURLUnsafeChars = " \t\n\r;&|`$\"'<>(){}[]*?!\\#~"
+
 // DeployTask 是 M3 部署中心的部署任务（对齐 系统设计 3.2.M3 结构定义，并补充执行所需字段）。
 type DeployTask struct {
 	ID        int64     `json:"id"`
@@ -31,7 +39,7 @@ type DeployTask struct {
 	Path      string    `json:"path"`       // file 类型目标路径（可选）
 	TargetIDs string    `json:"target_ids"` // 目标设备 ID（逗号/空格分隔）
 	// TaskIDs 为内部字段：执行时派发的底层任务 ID（逗号分隔），供 reconcile 判定终态。
-	TaskIDs  string `json:"task_ids,omitempty"`
+	TaskIDs   string    `json:"task_ids,omitempty"`
 	TenantID  string    `json:"tenant_id"`
 	CreatedBy string    `json:"created_by"`
 	Status    string    `json:"status"`
@@ -51,6 +59,26 @@ func (d *DeployTask) Valid() error {
 	}
 	if d.TargetIDs == "" {
 		return errInvalid("target_ids required")
+	}
+	// task 87：RepoURL 非空时校验为安全的仓库地址，防命令注入。
+	if d.RepoURL != "" {
+		if err := validateRepoURL(d.RepoURL); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateRepoURL 校验 RepoURL 为安全的仓库地址（task 87 命令注入防护）。
+// 要求不含 shell 元字符，且以 http(s):// / git:// / ssh:// / git@ / 绝对路径 开头。
+func validateRepoURL(u string) error {
+	if strings.ContainsAny(u, repoURLUnsafeChars) {
+		return errInvalid("repo_url contains shell metacharacters and is rejected for safety")
+	}
+	if !(strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://") ||
+		strings.HasPrefix(u, "git://") || strings.HasPrefix(u, "ssh://") ||
+		strings.HasPrefix(u, "git@") || strings.HasPrefix(u, "/")) {
+		return errInvalid("repo_url must start with http(s)://, git://, ssh://, git@, or /")
 	}
 	return nil
 }

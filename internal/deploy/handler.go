@@ -48,6 +48,7 @@ func (h *Handler) handleDeploys(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var dt DeployTask
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // task 87：请求体限 1MiB，防超大 Content 打爆内存/存储
 		if err := json.NewDecoder(r.Body).Decode(&dt); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid JSON: %v", err)})
 			return

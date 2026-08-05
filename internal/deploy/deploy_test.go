@@ -152,3 +152,47 @@ func TestReconcileDetectsFailed(t *testing.T) {
 		t.Fatalf("want failed after reconcile, got %s", got.Status)
 	}
 }
+
+
+// TestValidateRepoURL 验证 task 87：RepoURL 命令注入防护。
+func TestValidateRepoURL(t *testing.T) {
+	// 合法仓库地址应通过。
+	for _, ok := range []string{
+		"https://git.example.com/ops/nginx.git",
+		"http://gitlab.local/repo.git",
+		"git@github.com:org/repo.git",
+		"ssh://git@git.internal/repo.git",
+		"/opt/scripts/deploy.sh",
+	} {
+		if err := validateRepoURL(ok); err != nil {
+			t.Errorf("合法 RepoURL %q 不应被拒绝: %v", ok, err)
+		}
+	}
+	// 含 shell 元字符的注入载荷应被拒绝。
+	for _, bad := range []string{
+		"https://x.git; rm -rf /",
+		"repo`whoami`.git",
+		"https://x.git && curl evil",
+		"$(reboot)",
+		"a|b",
+		"https://x.git\nrm -rf /",
+	} {
+		if err := validateRepoURL(bad); err == nil {
+			t.Errorf("RepoURL %q 应被拒绝", bad)
+		}
+	}
+	// 非法 scheme 应被拒绝。
+	if err := validateRepoURL("evil.example.com/repo"); err == nil {
+		t.Error("无 scheme 的 RepoURL 应被拒绝")
+	}
+}
+
+// TestCreateRejectsMaliciousRepoURL 端到端：恶意 RepoURL 在创建时被拒绝。
+func TestCreateRejectsMaliciousRepoURL(t *testing.T) {
+	st := NewMemory()
+	dt := newDeploy("evil", TypeScript, "dev-1", "t1")
+	dt.RepoURL = "https://x.git; reboot"
+	if _, err := st.Create(context.Background(), dt); err == nil {
+		t.Fatal("含 shell 元字符的 RepoURL 应在创建时被拒绝")
+	}
+}
