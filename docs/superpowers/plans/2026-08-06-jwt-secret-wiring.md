@@ -138,11 +138,12 @@ git commit -m "feat(config): 生产 JWT 密钥强制 + 长度校验（task 96）
 
 - [ ] **步骤 1：values.yaml 加字段**
 
-在 `deploy/helm/opsmesh/values.yaml` 的 `controlplane.provisionSecret="""` 同级缩进 2 空格后追加：
+在 `deploy/helm/opsmesh/values.yaml` 的 `controlplane.provisionSecret` 同级（2 空格缩进）之后追加：
 
 ```yaml
   # 用户中心 JWT 签发密钥（HS256，多副本必须一致）。空=helm 首次安装随机生成并固化。
-  # 生产务必 --set 注入（见 README 运维），长度≥32 字节。jwtSecret: ""
+  # 生产务必 --set 注入，长度≥32 字节。
+  jwtSecret: ""
 ```
 
 - [ ] **步骤 2：values-production.yaml 加字段**
