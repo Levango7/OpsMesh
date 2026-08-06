@@ -182,9 +182,9 @@ Chart 要点：
 
 用户中心 JWT 签发密钥，三处接线保持一致：**config（Go）+ Helm secret/deployment + systemd/compose 环境变量**，改一处需同步三处。
 
-1. **变量名**：env `OPSMESH_JWT_SECRET`；Helm 对应 `controlplane.jwtSecret`；docker-compose 与 systemd 均通过同名环境变量 `${OPSMESH_JWT_SECRET:-}` 注入。
+1. **变量名**：env `OPSMESH_JWT_SECRET`；Helm 对应 `controlplane.jwtSecret`。docker-compose 走环境变量插值 `${OPSMESH_JWT_SECRET:-}`；systemd 则直接填 `OPSMESH_JWT_SECRET=<openssl rand -hex 32>`（见 `deploy/systemd/opsmesh-controlplane.env`，无 `${...}` 展开语法）。
 2. **语义**：HS256 签发密钥，**多副本集群必须一致**，否则一个副本签发的 token 其它副本校验失败（用户间歇 401）。
-3. **生成**：生产建议 `openssl rand -hex 32`（64 字节 hex，满足生产 ≥32 字节强校验）。
+3. **生成**：生产建议 `openssl rand -hex 32`（32 字节 = 64 个 hex 字符，满足生产 ≥32 字节强校验）。
 4. **生产强制**：`--production=true` 下此值为空或 <32 字节会直接 **fail-fast**（服务拒绝启动）；本地开发可留空（自动随机兜底，重启丢会话）。
 5. **Helm 注入方式**：
    ```bash
@@ -194,7 +194,7 @@ Chart 要点：
    ```
    密钥存于 Secret 键 `jwt-secret`：首次安装为空值时会**随机生成并固化**；`helm upgrade` **不轮换**（通过 `lookup` 复用已存在 Secret）。因此 upgrade 后 token 不会意外失效——若要换密钥，请先 `kubectl delete secret`（对应 Secret）再 upgrade，让新值进模板。
 
-> `--help` 与 `Makefile` 演示默认值（`opsmesh-demo-jwt-secret-2026`）仅限本地演示，生产务必显式注入强随机密钥。
+> `Makefile` 与 `start.bat` 演示默认值（`opsmesh-demo-jwt-secret-2026`）仅限本地演示，生产务必显式注入强随机密钥。
 
 ---
 
