@@ -61,10 +61,10 @@ run: build
 	# 需设置 OPSMESH_JWT_SECRET 环境变量，ALLOW_PUBLIC_REGISTER 默认为空
 	./$(BINARY_WIN) --mode=controlplane --store=memory --demo --allow-public-register=$(ALLOW_PUBLIC_REGISTER) --jwt-secret=$(OPSMESH_JWT_SECRET) --http-port=8080 --grpc-port=9090
 
-# 启动 agent
+# 启动 agent（task 97：修正 flag 名称 --controlplane → --control-addr）
 .PHONY: run-agent
 run-agent: build
-	./$(BINARY_WIN) --mode=agent --controlplane=http://127.0.0.1:8080
+	./$(BINARY_WIN) --mode=agent --control-addr=http://127.0.0.1:8080
 
 # 清理构建产物
 .PHONY: clean

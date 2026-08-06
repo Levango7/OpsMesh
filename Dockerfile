@@ -3,7 +3,7 @@
 # 无 shell、无包管理器，攻击面最小，适合常驻控制面服务。
 # agent 角色需 sh 执行 shell/service 任务，请用 Dockerfile.agent（base-debian12 含 sh）。
 # 多阶段构建：build 阶段拉取依赖并编译静态二进制，runtime 阶段用 distroless 精简镜像。
-FROM golang:1.22.12-bookworm AS build
+FROM golang:1.25-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
