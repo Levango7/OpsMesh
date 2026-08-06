@@ -26,8 +26,8 @@
       <button @click="store.fetchAlerts()">↻ 刷新</button>
     </div>
 
-    <div v-if="store.error" class="poll-err">⚠️ {{ store.error }}</div>
-    <div v-else-if="!store.list.length" class="muted">暂无告警，一切正常 ✅</div>
+    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
+    <div v-else-if="!store.list.length" class="muted"><Icon name="success" :size="14" /> 暂无告警，一切正常</div>
 
     <div
       v-for="a in store.list"
@@ -60,6 +60,7 @@
 import { computed, onMounted } from 'vue'
 import { useAlertStore } from '@/stores/alert'
 import StatusBadge from '@/components/StatusBadge.vue'
+import Icon from '@/components/Icon.vue'
 
 const store = useAlertStore()
 

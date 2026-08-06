@@ -27,7 +27,7 @@
         </div>
       </div>
       <div class="stat-card">
-        <div class="stat-icon" style="color: var(--violet);"><Icon name="flow" :size="22" /></div>
+        <div class="stat-icon" style="color: var(--sky);"><Icon name="flow" :size="22" /></div>
         <div class="stat-body">
           <div class="stat-val">{{ workflowCount }}</div>
           <div class="stat-label">{{ $t('overview.stats_workflows') }}</div>
@@ -113,7 +113,7 @@ const quickEntries = [
   { to: '/tasks', icon: 'task', color: 'var(--teal)', label: 'nav.tasks' },
   { to: '/alerts', icon: 'alerts', color: 'var(--rose)', label: 'nav.alerts' },
   { to: '/cmdb', icon: 'cmdb', color: 'var(--amber)', label: 'nav.cmdb' },
-  { to: '/workflows', icon: 'flow', color: 'var(--violet)', label: 'nav.workflows' },
+  { to: '/workflows', icon: 'flow', color: 'var(--sky)', label: 'nav.workflows' },
   { to: '/deploys', icon: 'deploy', color: 'var(--sky)', label: 'nav.deploys' },
   { to: '/logs', icon: 'logs', color: 'var(--green)', label: 'nav.logs' },
   { to: '/users', icon: 'users', color: 'var(--indigo)', label: 'nav.users' }
@@ -141,7 +141,7 @@ const capabilities = [
   },
   {
     no: '04', key: 'service',
-    icon: 'ops', color: 'var(--violet)', bg: 'var(--violet-soft)',
+    icon: 'ops', color: 'var(--green)', bg: 'var(--green-soft)',
     to: '/devices',
     label: 'overview.cap_service', desc: 'overview.cap_service_desc'
   },

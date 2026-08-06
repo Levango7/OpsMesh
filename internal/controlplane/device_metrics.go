@@ -22,6 +22,9 @@ func (s *Server) handleDeviceMetrics(w http.ResponseWriter, r *http.Request, id 
 	if !ok {
 		return
 	}
+	if _, ok := s.requireProd(w, r, "device:read"); !ok {
+		return
+	}
 	// 先校验设备存在 + 租户归属，避免泄露他租户设备指标。
 	dev := s.store.Device(id)
 	if dev == nil {

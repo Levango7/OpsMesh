@@ -79,7 +79,7 @@ func (s *Server) handleK8sClusters(w http.ResponseWriter, r *http.Request) {
 
 // handleListK8sClusters 处理 GET /api/v1/k8s/clusters：列出所有集群（kubeconfig 脱敏）。
 func (s *Server) handleListK8sClusters(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requirePermission(w, r, "user:read"); !ok {
+	if _, ok := s.requirePermission(w, r, "k8s:read"); !ok {
 		return
 	}
 	// task 88 租户隔离：仅返回当前租户的集群。
@@ -95,7 +95,7 @@ func (s *Server) handleListK8sClusters(w http.ResponseWriter, r *http.Request) {
 //   - 尝试建立 client-go 连接（ClusterManager.AddCluster），成功标记 online，失败标记 offline；
 //   - 返回创建的集群（含 ID，kubeconfig 脱敏）。
 func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) {
-	caller, ok := s.requirePermission(w, r, "user:write")
+	caller, ok := s.requirePermission(w, r, "k8s:write")
 	if !ok {
 		return
 	}
@@ -143,8 +143,8 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleK8sClusterRouting 分派 /api/v1/k8s/clusters/{id} 子路径：
-//   - DELETE /api/v1/k8s/clusters/{id}：删除集群（需 user:delete 权限，返回 204）
-//   - POST   /api/v1/k8s/clusters/{id}/test：测试连接（需 user:read 权限）
+	//   - DELETE /api/v1/k8s/clusters/{id}：删除集群（需 k8s:delete 权限，返回 204）
+	//   - POST   /api/v1/k8s/clusters/{id}/test：测试连接（需 k8s:read 权限）
 //   - GET    /api/v1/k8s/clusters/{id}/namespaces|pods|deployments|services|configmaps|secrets|nodes[...]：
 //     K8s 资源管理（详见 k8s_manage.go）。
 //
@@ -194,7 +194,7 @@ func (s *Server) handleK8sClusterRouting(w http.ResponseWriter, r *http.Request)
 // handleDeleteK8sCluster 处理 DELETE /api/v1/k8s/clusters/{id}：删除集群（返回 204）。
 // 同时从 ClusterManager 移除连接（若存在）。
 func (s *Server) handleDeleteK8sCluster(w http.ResponseWriter, r *http.Request, id string) {
-	caller, ok := s.requirePermission(w, r, "user:delete")
+	caller, ok := s.requirePermission(w, r, "k8s:delete")
 	if !ok {
 		return
 	}
@@ -230,7 +230,7 @@ func (s *Server) handleTestK8sCluster(w http.ResponseWriter, r *http.Request, id
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if _, ok := s.requirePermission(w, r, "user:read"); !ok {
+	if _, ok := s.requirePermission(w, r, "k8s:read"); !ok {
 		return
 	}
 	existing := s.store.GetK8sCluster(id)

@@ -1,26 +1,32 @@
-// 认证 store — JWT token + 当前用户，localStorage 持久化 token
+// 认证 store — 双 HttpOnly Cookie（at+rt）会话，前端不持有令牌。
+// 登录/注册成功后由服务端下发 Cookie；token 续期由 request.js 静默刷新完成。
+// isLoggedIn 以当前 user 是否存在为准（首次加载经 fetchMe 从 Cookie 恢复会话）。
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authApi } from '@/api/auth'
-import { TOKEN_KEY } from '@/api/request'
+import { setUnauthorizedHandler } from '@/api/request'
 
 export const useAuthStore = defineStore('auth', () => {
-  // JWT token（持久化到 localStorage）
-  const token = ref(localStorage.getItem(TOKEN_KEY) || '')
-  // 当前用户对象 {id, username, email, status, role_ids, created_at}
+  // 当前用户对象 {id, username, email, status, role_ids, permissions, ...}
   const user = ref(null)
   // 加载/错误状态
   const loading = ref(false)
   const error = ref('')
 
-  // 是否已登录
-  const isLoggedIn = computed(() => !!token.value)
+  // 是否已登录：以 user 是否存在为准（会话由 Cookie 维持，前端不存令牌）。
+  const isLoggedIn = computed(() => !!user.value)
 
-  // 设置 token 并持久化
-  function setToken(t) {
-    token.value = t || ''
-    if (t) localStorage.setItem(TOKEN_KEY, t)
-    else localStorage.removeItem(TOKEN_KEY)
+  // 当前用户有效权限集合（来自 /auth/me 的 permissions 字段，由后端按角色展开）。
+  const permissions = computed(() => user.value?.permissions || [])
+
+  // 是否拥有某权限：required 为空表示无权限门槛（始终可见）；
+  // 若权限集合为空（如 demo 模式未下发权限）则放宽——展示全部入口，避免误隐藏。
+  // 与后端 requireProd 闸同源，侧栏/操作按当前用户权限严格过滤（UI 权限门控）。
+  function hasPerm(required) {
+    if (!required) return true
+    const ps = permissions.value
+    if (ps.length === 0) return true
+    return ps.includes(required)
   }
 
   // 登录
@@ -29,7 +35,6 @@ export const useAuthStore = defineStore('auth', () => {
     error.value = ''
     try {
       const { j } = await authApi.login(username, password)
-      setToken(j.token)
       user.value = j.user || null
       return j
     } catch (e) {
@@ -40,13 +45,12 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // 注册
+  // 注册（仅当后端开放公开注册时可用；企业版默认关闭，入口已隐藏）
   async function register(username, password, email) {
     loading.value = true
     error.value = ''
     try {
       const { j } = await authApi.register(username, password, email)
-      setToken(j.token)
       user.value = j.user || null
       return j
     } catch (e) {
@@ -57,25 +61,43 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // 拉取当前用户信息
+  // 拉取当前用户信息（从 Cookie 恢复会话；at 过期时由 request.js 静默刷新后重试）。
+  // 仅当 at/rt 均不存在（确无会话）时跳过，避免冷启动对匿名用户发起无意义 401。
   async function fetchMe() {
-    if (!token.value) return null
+    const c = document.cookie
+    if (!c.includes('opsmesh_at') && !c.includes('opsmesh_rt')) return null
     try {
       const me = await authApi.me()
       user.value = me
       return me
     } catch (e) {
-      // 401 已由拦截器处理，这里仅清空 user
       if (e.s === 401) user.value = null
       return null
     }
   }
 
-  // 退出登录
-  function logout() {
-    setToken('')
+  // 清空会话状态（刷新失败/手动登出时调用）
+  function clearSession() {
     user.value = null
   }
 
-  return { token, user, loading, error, isLoggedIn, login, register, fetchMe, logout, setToken }
+  // 退出登录（清 Cookie + 吊销 rt 由后端完成）
+  async function logout() {
+    try {
+      await authApi.logout()
+    } catch (_) { /* 忽略网络错误，前端仍清状态 */ }
+    user.value = null
+  }
+
+  // 注册未授权回调：刷新失败 → 清会话并跳登录
+  function onUnauthorized() {
+    user.value = null
+    const base = import.meta.env.BASE_URL || '/'
+    if (!/\/(login|register)(\/|$|\?)/.test(window.location.pathname)) {
+      window.location.href = base + 'login'
+    }
+  }
+  setUnauthorizedHandler(onUnauthorized)
+
+  return { user, loading, error, isLoggedIn, permissions, hasPerm, login, register, fetchMe, logout, clearSession }
 })

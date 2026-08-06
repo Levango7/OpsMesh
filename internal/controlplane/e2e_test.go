@@ -101,6 +101,7 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 		strings.NewReader(createBody))
 	creq.Header.Set("Content-Type", "application/json")
 	creq.Header.Set("X-Tenant-ID", "t1")
+	creq.Header.Set("X-User-Roles", "admin") // task 96：requireProd 网关注入路径放行（cache key 为短名）
 	cresp, err := http.DefaultClient.Do(creq)
 	if err != nil {
 		t.Fatalf("create task: %v", err)
@@ -154,6 +155,7 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 	greq, _ := http.NewRequest(http.MethodGet,
 		fmt.Sprintf("http://127.0.0.1:%d/api/v1/tasks", httpPort), nil)
 	greq.Header.Set("X-Tenant-ID", "t1")
+	greq.Header.Set("X-User-Roles", "admin") // task 96：requireProd 网关注入路径放行
 	gresp, err := http.DefaultClient.Do(greq)
 	if err != nil {
 		t.Fatalf("list tasks: %v", err)

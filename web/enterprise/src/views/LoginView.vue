@@ -52,11 +52,6 @@
         </button>
       </form>
 
-      <!-- 切换到注册 -->
-      <div class="auth-switch">
-        <router-link to="/register">{{ $t('login.to_register') }}</router-link>
-      </div>
-
       <!-- 顶栏小工具：主题 + 语言 -->
       <div class="auth-tools">
         <button class="tool-btn" @click="themeStore.toggle()" :title="themeStore.isDark ? $t('topbar.theme_light') : $t('topbar.theme_dark')">
@@ -130,7 +125,7 @@ function toggleLang() {
 }
 .blob-2 {
   width: 380px; height: 380px;
-  background: var(--violet);
+  background: var(--sky);
   bottom: -100px; right: -100px;
 }
 
@@ -147,7 +142,7 @@ function toggleLang() {
 .brand { text-align: center; margin-bottom: 24px; }
 .brand .logo {
   width: 52px; height: 52px; border-radius: 14px;
-  background: linear-gradient(135deg, var(--indigo), var(--violet));
+  background: linear-gradient(135deg, var(--indigo), var(--sky));
   display: inline-flex; align-items: center; justify-content: center;
   color: #fff;
   box-shadow: 0 6px 20px rgba(99,102,241,.4);

@@ -51,9 +51,9 @@
     </header>
 
     <div class="layout">
-      <!-- 侧栏导航：分组 -->
+      <!-- 侧栏导航：分组 + 编号功能入口 -->
       <aside class="sidebar">
-        <div v-for="grp in navGroups" :key="grp.group" class="nav-group">
+        <div v-for="grp in navView" :key="grp.group" class="nav-group">
           <div class="nav-group-title">{{ $t(grp.labelKey) }}</div>
           <div
             v-for="item in grp.items"
@@ -62,6 +62,7 @@
             :class="{ active: $route.name === item.name }"
             @click="$router.push('/' + item.name)"
           >
+            <span class="tab-index">{{ item.index }}</span>
             <span class="tab-icon"><Icon :name="item.icon" :size="16" /></span>
             <span class="tab-label">{{ $t(item.labelKey) }}</span>
           </div>
@@ -93,7 +94,7 @@
 <script setup>
 // 应用根组件 — 顶栏 + 分组侧栏 + 内容 + 底栏
 // 已登录显示主布局；未登录仅渲染路由（登录/注册页全屏）
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { useAlertStore } from '@/stores/alert'
@@ -108,44 +109,60 @@ const alertStore = useAlertStore()
 const authStore = useAuthStore()
 const themeStore = useThemeStore()
 
-// 分组导航：每组 { group, labelKey, items[{ name, icon, labelKey }] }
+// 分组导航：每组 { group, labelKey, items[{ name, icon, labelKey, required }] }
+// required 为该功能入口对应的后端权限（与 requireProd 闸同源）；
+// 为空表示无需权限门槛（如概览页，登录即可见）。侧栏将按当前用户权限过滤。
 const navGroups = [
   {
     group: 'overview', labelKey: 'nav.overview',
-    items: [{ name: 'overview', icon: 'home', labelKey: 'nav.home' }]
+    items: [{ name: 'overview', icon: 'home', labelKey: 'nav.home', required: '' }]
   },
   {
     group: 'ops', labelKey: 'nav.ops',
     items: [
-      { name: 'devices', icon: 'device', labelKey: 'nav.devices' },
-      { name: 'tasks', icon: 'task', labelKey: 'nav.tasks' },
-      { name: 'alerts', icon: 'alerts', labelKey: 'nav.alerts' }
+      { name: 'devices', icon: 'device', labelKey: 'nav.devices', required: 'device:read' },
+      { name: 'tasks', icon: 'task', labelKey: 'nav.tasks', required: 'task:read' },
+      { name: 'alerts', icon: 'alerts', labelKey: 'nav.alerts', required: 'alert:read' }
     ]
   },
   {
     group: 'assets', labelKey: 'nav.assets',
-    items: [{ name: 'cmdb', icon: 'cmdb', labelKey: 'nav.cmdb' }]
+    items: [{ name: 'cmdb', icon: 'cmdb', labelKey: 'nav.cmdb', required: 'cmdb:read' }]
   },
   {
     group: 'delivery', labelKey: 'nav.delivery',
     items: [
-      { name: 'workflows', icon: 'flow', labelKey: 'nav.workflows' },
-      { name: 'deploys', icon: 'deploy', labelKey: 'nav.deploys' }
+      { name: 'workflows', icon: 'flow', labelKey: 'nav.workflows', required: 'workflow:read' },
+      { name: 'deploys', icon: 'deploy', labelKey: 'nav.deploys', required: 'deploy:read' }
     ]
   },
   {
     group: 'observability', labelKey: 'nav.observability',
-    items: [{ name: 'logs', icon: 'logs', labelKey: 'nav.logs' }]
+    items: [{ name: 'logs', icon: 'logs', labelKey: 'nav.logs', required: 'log:read' }]
   },
   {
     group: 'system', labelKey: 'nav.system',
     items: [
-      { name: 'users', icon: 'users', labelKey: 'nav.users' },
-      { name: 'roles', icon: 'roles', labelKey: 'nav.roles' },
-      { name: 'permissions', icon: 'permissions', labelKey: 'nav.permissions' }
+      { name: 'users', icon: 'users', labelKey: 'nav.users', required: 'user:read' },
+      { name: 'roles', icon: 'roles', labelKey: 'nav.roles', required: 'role:read' },
+      { name: 'permissions', icon: 'permissions', labelKey: 'nav.permissions', required: 'role:read' }
     ]
   }
 ]
+
+// 权限过滤后的侧栏视图：仅保留当前用户有权限的入口，并赋予全局连续编号（1、2、3…）。
+// 编号即"功能入口序号"，用户点击即可执行对应操作；空权限集合时（demo 等）放宽展示全部。
+const navView = computed(() => {
+  const out = []
+  let idx = 0
+  for (const grp of navGroups) {
+    const items = grp.items
+      .filter((it) => authStore.hasPerm(it.required))
+      .map((it) => ({ ...it, index: ++idx }))
+    if (items.length) out.push({ ...grp, items })
+  }
+  return out
+})
 
 // 切换语言
 function toggleLang() {
@@ -203,7 +220,7 @@ onUnmounted(() => {
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand .logo {
   width: 38px; height: 38px; border-radius: 10px;
-  background: linear-gradient(135deg, var(--indigo), var(--violet));
+  background: linear-gradient(135deg, var(--indigo), var(--sky));
   display: flex; align-items: center; justify-content: center;
   color: #fff;
   box-shadow: 0 4px 14px rgba(99,102,241,.4);
@@ -271,6 +288,14 @@ onUnmounted(() => {
 }
 .sidebar .tab:hover { background: var(--bg-soft); color: var(--text); }
 .sidebar .tab.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.tab-index {
+  flex: 0 0 20px; height: 20px; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+  background: var(--surface-3); color: var(--text-3);
+  border: 1px solid var(--border);
+}
+.sidebar .tab.active .tab-index { background: var(--accent); color: #fff; border-color: var(--accent); }
 .tab-icon { display: inline-flex; flex-shrink: 0; }
 .tab-label { flex: 1; min-width: 0; }
 

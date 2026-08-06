@@ -189,11 +189,12 @@ func TestHandleFederationPeers(t *testing.T) {
 
 	s := &Server{
 		store: store.NewMemoryStore(),
-		cfg:   &config.Config{FederationPeers: []string{peer.URL}},
+		cfg:   &config.Config{FederationPeers: []string{peer.URL}, Demo: true}, // task 96：Demo 放行 requireProd
 		fed:   NewFederationManager([]string{peer.URL}, store.NewMemoryStore(), "", nil),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/federation/peers", nil)
+	req.Header.Set("X-Tenant-ID", "t1") // task 96：新增 requireTenantContext 需要租户头
 	rec := httptest.NewRecorder()
 	s.handleFederationPeers(rec, req)
 	if rec.Code != http.StatusOK {
@@ -216,7 +217,7 @@ func TestHandleFederationForwardTask(t *testing.T) {
 
 	s := &Server{
 		store: store.NewMemoryStore(),
-		cfg:   &config.Config{FederationPeers: []string{peer.URL}},
+		cfg:   &config.Config{FederationPeers: []string{peer.URL}, Demo: true}, // task 96：Demo 放行 requireProd
 		fed:   NewFederationManager([]string{peer.URL}, store.NewMemoryStore(), "", nil),
 	}
 

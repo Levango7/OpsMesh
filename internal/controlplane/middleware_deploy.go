@@ -507,6 +507,9 @@ func (s *Server) handleMiddlewareTemplates(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	if _, ok := s.requireProd(w, r, "middleware:read"); !ok {
+		return
+	}
 	q := r.URL.Query()
 	category := q.Get("category")
 	risk := q.Get("risk")
@@ -533,6 +536,9 @@ func (s *Server) handleMiddlewareTemplateByID(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	if _, ok := s.requireProd(w, r, "middleware:read"); !ok {
+		return
+	}
 	t := middlewareTemplateByID(id)
 	if t == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
@@ -557,6 +563,9 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	}
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "middleware:execute"); !ok {
 		return
 	}
 	tpl := middlewareTemplateByID(id)
@@ -696,6 +705,9 @@ func (s *Server) handleMiddlewareInstances(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	if _, ok := s.requireProd(w, r, "middleware:read"); !ok {
+		return
+	}
 	// MVP：返回空数组。后续可从审计/任务历史推导已部署实例。
 	// 保留 query 参数解析以兼容前端调用，避免后续扩展时改签名。
 	_ = r.URL.Query().Get("agentID")
@@ -795,6 +807,9 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 	}
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "middleware:execute"); !ok {
 		return
 	}
 	var body struct {

@@ -177,7 +177,7 @@ func (s *Server) routeDeployments(w http.ResponseWriter, r *http.Request, client
 // handleListNamespaces 处理 GET /api/v1/k8s/clusters/{id}/namespaces：列出所有 namespace。
 // 返回 {namespaces: [{name, status, createdAt}]}。
 func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient) {
-	if _, ok := s.requirePermission(w, r, "user:read"); !ok {
+	if _, ok := s.requirePermission(w, r, "k8s:read"); !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), k8sAPITimeout)
@@ -206,7 +206,7 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request, cl
 // namespace 为空时跨所有 namespace 列出（client-go 支持 ns="" 表示 all namespaces）。
 // 返回 {pods: [{name, namespace, status, podIP, nodeIP, restarts, age}]}。
 func (s *Server) handleListPods(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient) {
-	if _, ok := s.requirePermission(w, r, "user:read"); !ok {
+	if _, ok := s.requirePermission(w, r, "k8s:read"); !ok {
 		return
 	}
 	ns := r.URL.Query().Get("namespace")
@@ -247,7 +247,7 @@ func (s *Server) handleListPods(w http.ResponseWriter, r *http.Request, client *
 //
 // 返回 {logs: "..."}。
 func (s *Server) handlePodLogs(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient, ns, name string) {
-	if _, ok := s.requirePermission(w, r, "user:read"); !ok {
+	if _, ok := s.requirePermission(w, r, "k8s:read"); !ok {
 		return
 	}
 	opts := &corev1.PodLogOptions{}
@@ -280,7 +280,7 @@ func (s *Server) handlePodLogs(w http.ResponseWriter, r *http.Request, client *k
 // 删除由 deployment/replicaset 控制器托管的 pod 时，控制器会立即拉起新 pod。
 // 返回 204 No Content。
 func (s *Server) handleDeletePod(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient, ns, name string) {
-	caller, ok := s.requirePermission(w, r, "user:delete")
+	caller, ok := s.requirePermission(w, r, "k8s:delete")
 	if !ok {
 		return
 	}
@@ -300,7 +300,7 @@ func (s *Server) handleDeletePod(w http.ResponseWriter, r *http.Request, client 
 // 返回 {deployments: [{name, namespace, replicas, availableReplicas, image}]}。
 // image 取 template 中第一个容器的 image（多容器 pod 仅展示主容器）。
 func (s *Server) handleListDeployments(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient) {
-	if _, ok := s.requirePermission(w, r, "user:read"); !ok {
+	if _, ok := s.requirePermission(w, r, "k8s:read"); !ok {
 		return
 	}
 	ns := r.URL.Query().Get("namespace")
@@ -333,7 +333,7 @@ func (s *Server) handleListDeployments(w http.ResponseWriter, r *http.Request, c
 // 行为：GetScale → 修改 Spec.Replicas → UpdateScale（保持 ResourceVersion 一致）。
 // 返回 {name, replicas}。
 func (s *Server) handleScaleDeployment(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient, ns, name string) {
-	caller, ok := s.requirePermission(w, r, "user:write")
+	caller, ok := s.requirePermission(w, r, "k8s:write")
 	if !ok {
 		return
 	}
@@ -372,7 +372,7 @@ func (s *Server) handleScaleDeployment(w http.ResponseWriter, r *http.Request, c
 // 触发 deployment 控制器滚动更新（与 kubectl rollout restart 等价）。
 // 返回 {status: "restarted", restartedAt: "..."}。
 func (s *Server) handleRestartDeployment(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient, ns, name string) {
-	caller, ok := s.requirePermission(w, r, "user:write")
+	caller, ok := s.requirePermission(w, r, "k8s:write")
 	if !ok {
 		return
 	}
@@ -397,7 +397,7 @@ func (s *Server) handleRestartDeployment(w http.ResponseWriter, r *http.Request,
 // 返回 {services: [{name, namespace, type, clusterIP, externalIP, ports}]}。
 // ports: [{name, port, targetPort, protocol}]；externalIP 取 LoadBalancer Ingress 第一个 IP/Host。
 func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient) {
-	if _, ok := s.requirePermission(w, r, "user:read"); !ok {
+	if _, ok := s.requirePermission(w, r, "k8s:read"); !ok {
 		return
 	}
 	ns := r.URL.Query().Get("namespace")
@@ -443,7 +443,7 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request, clie
 // 返回 {configmaps: [{name, namespace, dataKeys}]}。
 // dataKeys 为 Data map 的 key 列表（已排序），不返回 value（避免大体积响应）。
 func (s *Server) handleListConfigMaps(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient) {
-	if _, ok := s.requirePermission(w, r, "user:read"); !ok {
+	if _, ok := s.requirePermission(w, r, "k8s:read"); !ok {
 		return
 	}
 	ns := r.URL.Query().Get("namespace")
@@ -474,7 +474,7 @@ func (s *Server) handleListConfigMaps(w http.ResponseWriter, r *http.Request, cl
 // 返回 {secrets: [{name, namespace, type, dataKeys}]}。
 // 安全约束：仅返回 key 名（dataKeys），不返回 secret 值（避免敏感内容泄露到前端）。
 func (s *Server) handleListSecrets(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient) {
-	if _, ok := s.requirePermission(w, r, "user:read"); !ok {
+	if _, ok := s.requirePermission(w, r, "k8s:read"); !ok {
 		return
 	}
 	ns := r.URL.Query().Get("namespace")
@@ -509,7 +509,7 @@ func (s *Server) handleListSecrets(w http.ResponseWriter, r *http.Request, clien
 //   - roles：从 labels[node-role.kubernetes.io/*] 提取，无角色标签时默认 ["worker"]；
 //   - cpu/memory：取 Status.Capacity（节点总容量，非已分配）。
 func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient) {
-	if _, ok := s.requirePermission(w, r, "user:read"); !ok {
+	if _, ok := s.requirePermission(w, r, "k8s:read"); !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), k8sAPITimeout)
