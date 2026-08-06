@@ -33,7 +33,7 @@
 </template>
 
 <script setup>
-const props = defineProps({
+defineProps({
   columns: { type: Array, required: true },     // [{ key, title, width?, slot?, format? }]
   rows: { type: Array, default: () => [] },
   rowKey: { type: String, default: '' },

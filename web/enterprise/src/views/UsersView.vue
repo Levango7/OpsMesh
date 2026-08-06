@@ -78,7 +78,7 @@
 
 <script setup>
 // 用户管理页 — 列表 + 新增/编辑/删除，复用 DataTable / DetailDrawer / StatusBadge
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted } from 'vue'
 import { authApi } from '@/api/auth'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
