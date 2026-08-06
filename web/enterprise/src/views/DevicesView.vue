@@ -3,7 +3,7 @@
     <h2>{{ $t('devices.title') }}</h2>
     <p class="muted">{{ $t('devices.subtitle') }}</p>
 
-    <div v-if="store.error" class="poll-err">⚠️ {{ store.error }}</div>
+    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
     <div v-if="store.loading && !segments.length" class="muted">加载中…</div>
     <div v-else-if="!segments.length" class="muted">
@@ -85,6 +85,7 @@ import { useDeviceStore } from '@/stores/device'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
+import Icon from '@/components/Icon.vue'
 
 const router = useRouter()
 const store = useDeviceStore()

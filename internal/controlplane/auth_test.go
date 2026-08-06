@@ -51,6 +51,12 @@ func loginAsAdmin(t *testing.T, s *Server) string {
 	if resp.Token == "" {
 		t.Fatal("login token is empty")
 	}
+	// 模拟管理员已完成首次登录强制改密（安全债 85 服务端落地后，mustChangePassword 用户
+	// 仅能访问 /change-password，须先改密方可调用受保护 API）。此 helper 代表"改密后的管理员"，
+	// 使下游 16+ 鉴权用例保持有效；首次登录改密前的拦截行为由专门的测试用例覆盖。
+	if u := s.store.GetUserByUsername("admin"); u != nil {
+		s.store.ChangePassword(u.ID, u.PasswordHash)
+	}
 	return "Bearer " + resp.Token
 }
 
@@ -76,10 +82,10 @@ func doWithAuth(method, path, auth string, body interface{}) *http.Request {
 func TestPredefinedData(t *testing.T) {
 	s := newAuthTestServer(t)
 
-	// 预定义权限：应有 26 个（device 3 + task 3 + alert 3 + cmdb 2 + deploy 2 + workflow 2 + log 1 + audit 1 + user 4 + role 3 + federation 2）。
+	// 预定义权限：应有 34 个（新增 provision/k8s/middleware 等 RBAC 权限，task 96）。
 	perms := s.store.ListPermissions()
-	if len(perms) != 26 {
-		t.Fatalf("permissions count = %d, want 26", len(perms))
+	if len(perms) != 34 {
+		t.Fatalf("permissions count = %d, want 34", len(perms))
 	}
 	// 检查关键权限存在。
 	permNames := make(map[string]bool)
@@ -101,8 +107,8 @@ func TestPredefinedData(t *testing.T) {
 	for _, r := range roles {
 		roleByName[r.Name] = r
 	}
-	if admin := roleByName["admin"]; admin == nil || len(admin.Permissions) != 26 {
-		t.Fatalf("admin role missing or permissions = %d, want 26", len(admin.Permissions))
+	if admin := roleByName["admin"]; admin == nil || len(admin.Permissions) != 34 {
+		t.Fatalf("admin role missing or permissions = %d, want 34", len(admin.Permissions))
 	}
 	if viewer := roleByName["viewer"]; viewer == nil {
 		t.Fatal("viewer role missing")
@@ -133,7 +139,7 @@ func TestPredefinedData(t *testing.T) {
 // TestAuthRegister 注册新用户 → 201 + token。
 func TestAuthRegister(t *testing.T) {
 	s := newAuthTestServer(t)
-	body, _ := json.Marshal(map[string]string{"username": "newuser", "password": "pass123", "email": "new@test.com"})
+	body, _ := json.Marshal(map[string]string{"username": "newuser", "password": "Pass1234", "email": "new@test.com"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleAuthRegister(rec, req)
@@ -160,7 +166,7 @@ func TestAuthRegister(t *testing.T) {
 // TestAuthRegisterDuplicate 重复用户名 → 409。
 func TestAuthRegisterDuplicate(t *testing.T) {
 	s := newAuthTestServer(t)
-	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "pass123"})
+	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "Pass1234"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleAuthRegister(rec, req)
@@ -327,7 +333,7 @@ func TestCreateUser(t *testing.T) {
 	auth := loginAsAdmin(t, s)
 	req := doWithAuth(http.MethodPost, "/api/v1/users", auth, map[string]interface{}{
 		"username": "createduser",
-		"password": "pass123",
+		"password": "Pass1234",
 		"email":    "created@test.com",
 		"role_ids": []string{"role-viewer"},
 	})
@@ -352,7 +358,7 @@ func TestUpdateUser(t *testing.T) {
 	// 先创建一个用户。
 	createReq := doWithAuth(http.MethodPost, "/api/v1/users", auth, map[string]interface{}{
 		"username": "toupdate",
-		"password": "pass123",
+		"password": "Pass1234",
 		"role_ids": []string{"role-viewer"},
 	})
 	createRec := httptest.NewRecorder()
@@ -393,7 +399,7 @@ func TestDeleteUser(t *testing.T) {
 	// 先创建一个用户。
 	createReq := doWithAuth(http.MethodPost, "/api/v1/users", auth, map[string]interface{}{
 		"username": "todelete",
-		"password": "pass123",
+		"password": "Pass1234",
 	})
 	createRec := httptest.NewRecorder()
 	s.handleUsers(createRec, createReq)
@@ -539,8 +545,8 @@ func TestListPermissions(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(resp.Permissions) != 26 {
-		t.Fatalf("permissions count = %d, want 26", len(resp.Permissions))
+	if len(resp.Permissions) != 34 {
+		t.Fatalf("permissions count = %d, want 34", len(resp.Permissions))
 	}
 }
 
@@ -574,7 +580,7 @@ func newAuthTestServerNonDemo(t *testing.T) *Server {
 // TestAuthRegisterPending 非 demo 模式注册 → 201 + 待审批提示（无 token）。
 func TestAuthRegisterPending(t *testing.T) {
 	s := newAuthTestServerNonDemo(t)
-	body, _ := json.Marshal(map[string]string{"username": "pendinguser", "password": "pass123", "email": "p@test.com"})
+	body, _ := json.Marshal(map[string]string{"username": "pendinguser", "password": "Pass1234", "email": "p@test.com"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleAuthRegister(rec, req)
@@ -612,7 +618,7 @@ func TestAuthRegisterDemoPending(t *testing.T) {
 		jwtSecret:  []byte("test-jwt-secret-for-auth-test-32bytes!"),
 		loginGuard: newLoginGuard(),
 	}
-	body, _ := json.Marshal(map[string]string{"username": "demopending", "password": "pass123", "email": "dp@test.com"})
+	body, _ := json.Marshal(map[string]string{"username": "demopending", "password": "Pass1234", "email": "dp@test.com"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleAuthRegister(rec, req)
@@ -650,7 +656,7 @@ func TestAuthRegisterNonDemoAllowPublicRegister(t *testing.T) {
 		jwtSecret:  []byte("test-jwt-secret-for-auth-test-32bytes!"),
 		loginGuard: newLoginGuard(),
 	}
-	body, _ := json.Marshal(map[string]string{"username": "allowreg", "password": "pass123", "email": "ar@test.com"})
+	body, _ := json.Marshal(map[string]string{"username": "allowreg", "password": "Pass1234", "email": "ar@test.com"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleAuthRegister(rec, req)
@@ -681,7 +687,7 @@ func TestAuthRegisterPublicDisabled(t *testing.T) {
 		jwtSecret:  []byte("test-jwt-secret-for-auth-test-32bytes!"),
 		loginGuard: newLoginGuard(),
 	}
-	body, _ := json.Marshal(map[string]string{"username": "newuser", "password": "pass123"})
+	body, _ := json.Marshal(map[string]string{"username": "newuser", "password": "Pass1234"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleAuthRegister(rec, req)
@@ -694,7 +700,7 @@ func TestAuthRegisterPublicDisabled(t *testing.T) {
 func TestAuthLoginPending(t *testing.T) {
 	s := newAuthTestServerNonDemo(t)
 	// 注册一个 pending 用户。
-	regBody, _ := json.Marshal(map[string]string{"username": "pendinglogin", "password": "pass123"})
+	regBody, _ := json.Marshal(map[string]string{"username": "pendinglogin", "password": "Pass1234"})
 	regReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(regBody))
 	regRec := httptest.NewRecorder()
 	s.handleAuthRegister(regRec, regReq)
@@ -702,7 +708,7 @@ func TestAuthLoginPending(t *testing.T) {
 		t.Fatalf("setup register failed: %d %s", regRec.Code, regRec.Body.String())
 	}
 	// pending 用户尝试登录 → 403。
-	loginBody, _ := json.Marshal(map[string]string{"username": "pendinglogin", "password": "pass123"})
+	loginBody, _ := json.Marshal(map[string]string{"username": "pendinglogin", "password": "Pass1234"})
 	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
 	loginRec := httptest.NewRecorder()
 	s.handleAuthLogin(loginRec, loginReq)
@@ -716,7 +722,7 @@ func TestApproveUser(t *testing.T) {
 	s := newAuthTestServerNonDemo(t)
 	auth := loginAsAdmin(t, s)
 	// 注册一个 pending 用户。
-	regBody, _ := json.Marshal(map[string]string{"username": "toapprove", "password": "pass123"})
+	regBody, _ := json.Marshal(map[string]string{"username": "toapprove", "password": "Pass1234"})
 	regReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(regBody))
 	regRec := httptest.NewRecorder()
 	s.handleAuthRegister(regRec, regReq)
@@ -742,7 +748,7 @@ func TestApproveUser(t *testing.T) {
 		t.Fatalf("status = %q, want active", u.Status)
 	}
 	// 审批后应能登录。
-	loginBody, _ := json.Marshal(map[string]string{"username": "toapprove", "password": "pass123"})
+	loginBody, _ := json.Marshal(map[string]string{"username": "toapprove", "password": "Pass1234"})
 	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
 	loginRec := httptest.NewRecorder()
 	s.handleAuthLogin(loginRec, loginReq)
@@ -756,7 +762,7 @@ func TestRejectUser(t *testing.T) {
 	s := newAuthTestServerNonDemo(t)
 	auth := loginAsAdmin(t, s)
 	// 注册一个 pending 用户。
-	regBody, _ := json.Marshal(map[string]string{"username": "toreject", "password": "pass123"})
+	regBody, _ := json.Marshal(map[string]string{"username": "toreject", "password": "Pass1234"})
 	regReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(regBody))
 	regRec := httptest.NewRecorder()
 	s.handleAuthRegister(regRec, regReq)
@@ -782,7 +788,7 @@ func TestRejectUser(t *testing.T) {
 		t.Fatalf("status = %q, want rejected", u.Status)
 	}
 	// 拒绝后登录 → 403。
-	loginBody, _ := json.Marshal(map[string]string{"username": "toreject", "password": "pass123"})
+	loginBody, _ := json.Marshal(map[string]string{"username": "toreject", "password": "Pass1234"})
 	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
 	loginRec := httptest.NewRecorder()
 	s.handleAuthLogin(loginRec, loginReq)
@@ -926,6 +932,84 @@ func TestChangePasswordNoToken(t *testing.T) {
 	}
 }
 
+// ----------------------------------------------------------------------------
+// P1 服务端强制改密（requirePermission 拦截未改密用户）
+// ----------------------------------------------------------------------------
+
+// TestMustChangePasswordBlocksProtectedAPI 验证未改密用户（mustChangePassword=true）调用受保护 API 被拒（403），
+// 仅能访问 /change-password（P1 服务端强制改密落地后，弱口令不再能长期在线操作）。
+func TestMustChangePasswordBlocksProtectedAPI(t *testing.T) {
+	s := newAuthTestServer(t)
+	// 直接登录预设 admin（不改密，mustChangePassword=true）；不走 loginAsAdmin（后者会清标）。
+	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "admin123"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleAuthLogin(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp authResponse
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	auth := "Bearer " + resp.Token
+	// 受保护 API（需 user:read）应被拒（403 MUST_CHANGE_PASSWORD）。
+	listReq := doWithAuth(http.MethodGet, "/api/v1/users", auth, nil)
+	listRec := httptest.NewRecorder()
+	s.handleListUsers(listRec, listReq)
+	if listRec.Code != http.StatusForbidden {
+		t.Fatalf("protected API for must-change user = %d, want 403; body=%s", listRec.Code, listRec.Body.String())
+	}
+}
+
+// TestMustChangePasswordCanChangeThenAccess 验证未改密用户改密后受保护 API 立即可用。
+func TestMustChangePasswordCanChangeThenAccess(t *testing.T) {
+	s := newAuthTestServer(t)
+	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "admin123"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleAuthLogin(rec, req)
+	var resp authResponse
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	auth := "Bearer " + resp.Token
+	// 改密（old=admin123, new=Admin@2025 满足强口令）。
+	cpReq := doWithAuth(http.MethodPost, "/api/v1/auth/change-password", auth, map[string]string{"oldPassword": "admin123", "newPassword": "Admin@2025"})
+	cpRec := httptest.NewRecorder()
+	s.handleAuthChangePassword(cpRec, cpReq)
+	if cpRec.Code != http.StatusOK {
+		t.Fatalf("change password = %d, want 200; body=%s", cpRec.Code, cpRec.Body.String())
+	}
+	// 改密后受保护 API 可用（403 → 200）。
+	listReq := doWithAuth(http.MethodGet, "/api/v1/users", auth, nil)
+	listRec := httptest.NewRecorder()
+	s.handleListUsers(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("protected API after change = %d, want 200; body=%s", listRec.Code, listRec.Body.String())
+	}
+}
+
+// TestUserFromTokenRevokesNonActive 验证被禁用用户的既有有效签名 token 立即失效（P1 吊销）：
+// 管理员禁用账号后无需等待 24h 过期即收回访问。
+func TestUserFromTokenRevokesNonActive(t *testing.T) {
+	s := newAuthTestServer(t)
+	// 取预置 viewer（active），置为 disabled 后签发 token，再经 userFromToken 验签应被拒。
+	v := s.store.GetUserByUsername("viewer")
+	if v == nil {
+		t.Fatal("preset viewer not found")
+	}
+	v.Status = "disabled"
+	if !s.store.UpdateUser(v) {
+		t.Fatal("update viewer status failed")
+	}
+	token, err := s.issueUserToken(v)
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	if _, uerr := s.userFromToken(req); uerr == nil {
+		t.Fatal("disabled user token should be rejected by userFromToken")
+	}
+}
+
 // =============================================================================
 // task 94：HttpOnly Cookie 会话（JWT 存储加固）
 // =============================================================================
@@ -943,13 +1027,13 @@ func TestAuthLogin_SetsHttpOnlyCookie(t *testing.T) {
 	cookies := rec.Result().Cookies()
 	var ck *http.Cookie
 	for _, c := range cookies {
-		if c.Name == authCookieName {
+		if c.Name == accessTokenCookieName {
 			ck = c
 			break
 		}
 	}
 	if ck == nil {
-		t.Fatalf("登录响应应包含 %s Cookie；实际 cookies=%+v", authCookieName, cookies)
+		t.Fatalf("登录响应应包含 %s Cookie；实际 cookies=%+v", accessTokenCookieName, cookies)
 	}
 	if !ck.HttpOnly {
 		t.Error("会话 Cookie 必须是 HttpOnly（防 XSS 窃取）")
@@ -966,7 +1050,7 @@ func TestAuthMe_CookieFallback(t *testing.T) {
 	token := auth[len("Bearer "):]
 	// 仅携带 Cookie，不带 Authorization 头。
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
-	req.AddCookie(&http.Cookie{Name: authCookieName, Value: token})
+	req.AddCookie(&http.Cookie{Name: accessTokenCookieName, Value: token})
 	rec := httptest.NewRecorder()
 	s.handleAuthMe(rec, req)
 	if rec.Code != http.StatusOK {
@@ -998,13 +1082,13 @@ func TestAuthLogout_ClearsCookie(t *testing.T) {
 	}
 	var ck *http.Cookie
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == authCookieName {
+		if c.Name == accessTokenCookieName {
 			ck = c
 			break
 		}
 	}
 	if ck == nil {
-		t.Fatalf("登出响应应包含清除 %s Cookie 的 Set-Cookie", authCookieName)
+		t.Fatalf("登出响应应包含清除 %s Cookie 的 Set-Cookie", accessTokenCookieName)
 	}
 	if ck.MaxAge != -1 && ck.MaxAge != 0 {
 		t.Errorf("登出 Cookie MaxAge 应为负值（立即过期），得到 %d", ck.MaxAge)

@@ -19,7 +19,7 @@ func TestHandleCreateTask_TenantIsolation(t *testing.T) {
 	// 注册两个不同租户的 agent
 	a1 := st.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
 	a2 := st.Register(&proto.AgentInfo{Segment: "seg-b", TenantID: "t2"})
-	s := &Server{store: st, requireAuth: false, cfg: &config.Config{TaskMaxRetries: 3}}
+	s := &Server{store: st, requireAuth: false, cfg: &config.Config{TaskMaxRetries: 3, Demo: true}} // Demo 放行 RBAC，聚焦租户隔离验证
 
 	post := func(tenant, agentID, cmd string) *httptest.ResponseRecorder {
 		body, _ := json.Marshal(map[string]string{
@@ -286,7 +286,7 @@ func TestHandleDeviceMetrics_TenantIsolation(t *testing.T) {
 	deviceID := "dev-" + a.AgentID
 	st.StoreDeviceMetrics(deviceID, &proto.DeviceMetrics{DeviceID: deviceID, Hostname: "h1"})
 
-	s := &Server{store: st, requireAuth: true, cfg: &config.Config{}}
+	s := &Server{store: st, requireAuth: true, cfg: &config.Config{Demo: true}} // Demo 放行 RBAC，聚焦租户隔离验证
 
 	// t2 用户访问 t1 设备 -> 403
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/devices/"+deviceID+"/metrics", nil)

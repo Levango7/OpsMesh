@@ -220,41 +220,9 @@ func NewMemoryStore() *MemoryStore {
 //   - viewer/viewer123（viewer 角色）
 func (m *MemoryStore) seedRBAC() {
 	// 1. 预定义权限（按组分类）。
-	permSpecs := []struct {
-		group string
-		name  string
-		desc  string
-	}{
-		{"device", "device:read", "查看设备"},
-		{"device", "device:write", "操作设备"},
-		{"device", "device:delete", "退役设备"},
-		{"task", "task:read", "查看任务"},
-		{"task", "task:write", "下发任务"},
-		{"task", "task:cancel", "取消任务"},
-		{"alert", "alert:read", "查看告警"},
-		{"alert", "alert:ack", "确认告警"},
-		{"alert", "alert:silence", "静默告警"},
-		{"cmdb", "cmdb:read", "查看配置项"},
-		{"cmdb", "cmdb:write", "编辑配置项"},
-		{"deploy", "deploy:read", "查看部署"},
-		{"deploy", "deploy:write", "执行部署"},
-		{"workflow", "workflow:read", "查看工作流"},
-		{"workflow", "workflow:write", "编辑工作流"},
-		{"log", "log:read", "查看日志"},
-		{"audit", "audit:read", "查看审计"},
-		{"user", "user:read", "查看用户"},
-		{"user", "user:write", "编辑用户"},
-		{"user", "user:delete", "删除用户"},
-		{"user", "user:approve", "审批用户注册"},
-		{"role", "role:read", "查看角色"},
-		{"role", "role:write", "编辑角色"},
-		{"role", "role:delete", "删除角色"},
-		{"federation", "federation:read", "查看联邦"},
-		{"federation", "federation:write", "编辑联邦"},
-	}
-	allPerms := make([]string, 0, len(permSpecs))
-	m.permissions = make([]*Permission, 0, len(permSpecs))
-	for i, ps := range permSpecs {
+	// 复用 rbacPermSpecs 作为权限单一来源（与 SQLStore 保持一致，杜绝两份定义漂移）。
+	m.permissions = make([]*Permission, 0, len(rbacPermSpecs))
+	for i, ps := range rbacPermSpecs {
 		pid := fmt.Sprintf("perm-%s-%02d", ps.group, i+1)
 		m.permissions = append(m.permissions, &Permission{
 			ID:          pid,
@@ -262,39 +230,13 @@ func (m *MemoryStore) seedRBAC() {
 			Description: ps.desc,
 			Group:       ps.group,
 		})
-		allPerms = append(allPerms, ps.name)
 	}
 
-	// 2. 预定义角色。
-	// viewer：所有 *:read 权限。
-	viewerPerms := []string{}
-	for _, p := range allPerms {
-		if strings.HasSuffix(p, ":read") {
-			viewerPerms = append(viewerPerms, p)
-		}
-	}
-	// operator：device/task/alert/cmdb/deploy/workflow/log/audit 的 read+write（不含 delete）。
-	operatorPerms := []string{}
-	operatorGroups := map[string]bool{
-		"device": true, "task": true, "alert": true, "cmdb": true,
-		"deploy": true, "workflow": true, "log": true, "audit": true,
-	}
-	for _, p := range allPerms {
-		// 解析 "group:action" 格式。
-		idx := strings.Index(p, ":")
-		if idx <= 0 {
-			continue
-		}
-		group, action := p[:idx], p[idx+1:]
-		if !operatorGroups[group] {
-			continue
-		}
-		if action == "read" || action == "write" {
-			operatorPerms = append(operatorPerms, p)
-		}
-	}
-	// admin：所有权限。
-	adminPerms := append([]string{}, allPerms...)
+	// 2. 预定义角色（复用 RolePermissions() 统一角色→权限映射，与 RBAC 闸保持一致）。
+	rp := RolePermissions()
+	viewerPerms := rp["viewer"]
+	operatorPerms := rp["operator"]
+	adminPerms := rp["admin"]
 
 	now := time.Now()
 	m.roles["role-admin"] = &Role{

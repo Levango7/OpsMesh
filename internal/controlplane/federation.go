@@ -257,6 +257,12 @@ func (s *Server) handleFederationPeers(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if _, ok := s.requireTenantContext(w, r); !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "federation:read"); !ok {
+		return
+	}
 	writeJSON(w, http.StatusOK, s.fed.Peers())
 }
 
@@ -274,6 +280,9 @@ func (s *Server) handleFederationForwardTask(w http.ResponseWriter, r *http.Requ
 	}
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "federation:write"); !ok {
 		return
 	}
 	var body struct {
@@ -331,6 +340,9 @@ func (s *Server) handleFederationDevices(w http.ResponseWriter, r *http.Request)
 	}
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "federation:read"); !ok {
 		return
 	}
 	tenant := r.URL.Query().Get("tenant")

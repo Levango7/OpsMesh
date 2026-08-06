@@ -38,42 +38,125 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// minPasswordLen 密码最短长度（安全基线）。
-const minPasswordLen = 6
+// 双 HttpOnly Cookie 令牌方案（同源最简单且安全）：
+//   - at（access token）：短期 JWT（15min），仅标识身份，XSS 窃取后利用窗口极小；
+//   - rt（refresh token）：长期不透明随机串（7d），服务端可吊销/旋转，用于静默续期。
+// 两者均为 HttpOnly + SameSite=Lax（防 XSS 读取 / 防 CSRF 跨站携带），同源由浏览器自动携带。
+const (
+	accessTokenCookieName  = "opsmesh_at"
+	refreshTokenCookieName = "opsmesh_rt"
+	accessTokenExpiry      = 15 * time.Minute
+	refreshTokenExpiry     = 7 * 24 * time.Hour
+)
 
-// jwtTokenExpiry JWT token 有效期（24h，与 SignJWT 默认一致）。
-const jwtTokenExpiry = 24 * time.Hour
-
-// authCookieName 用户中心会话 Cookie 名（task 94 JWT 存储加固）。
-// task 94：token 同时以 HttpOnly Cookie 下发，XSS 无法读取（对比 localStorage 可被任意脚本窃取）；
-// Authorization: Bearer 头仍保留兼容（移动端/脚本调用），服务端两路均接受。
-const authCookieName = "opsmesh_token"
-
-// setAuthCookie 把 JWT 以 HttpOnly Cookie 写入响应（task 94）。
-// HttpOnly：JS 不可读（防 XSS 窃取）；SameSite=Lax：防 CSRF 跨站携带；
-// Path=/：全站 API 可用；Secure 由反代/HTTPS 终止点保证（私有化内网 http 部署不设 Secure，
-// 否则 http 下 Cookie 不生效导致会话丢失——生产 HTTPS 部署建议前置网关补 Secure）。
-func setAuthCookie(w http.ResponseWriter, token string) {
+// setCookie 统一的 HttpOnly Cookie 写入（Path=/、SameSite=Lax；HTTPS 部署才置 Secure）。
+func (s *Server) setCookie(w http.ResponseWriter, name, value string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     authCookieName,
-		Value:    token,
+		Name:     name,
+		Value:    value,
 		Path:     "/",
-		MaxAge:   int(jwtTokenExpiry.Seconds()),
+		MaxAge:   maxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Secure:   s.cfg.TLSCert != "", // HTTPS 部署才置 Secure（明文 http 内网下不设，否则会话丢失）
 	})
 }
 
-// clearAuthCookie 清除会话 Cookie（登出时调用）。
-func clearAuthCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     authCookieName,
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+// setAccessCookie 下发短期访问令牌（at）HttpOnly Cookie。
+func (s *Server) setAccessCookie(w http.ResponseWriter, token string) {
+	s.setCookie(w, accessTokenCookieName, token, int(accessTokenExpiry.Seconds()))
+}
+
+// setRefreshCookie 下发刷新令牌（rt）HttpOnly Cookie（长期，服务端可吊销/旋转）。
+func (s *Server) setRefreshCookie(w http.ResponseWriter, rt string) {
+	s.setCookie(w, refreshTokenCookieName, rt, int(refreshTokenExpiry.Seconds()))
+}
+
+// setAuthCookies 同时下发 at + rt（登录/刷新成功时调用）。
+func (s *Server) setAuthCookies(w http.ResponseWriter, at, rt string) {
+	s.setAccessCookie(w, at)
+	s.setRefreshCookie(w, rt)
+}
+
+// clearAuthCookies 清除 at + rt（登出时调用）。
+func (s *Server) clearAuthCookies(w http.ResponseWriter) {
+	s.setCookie(w, accessTokenCookieName, "", -1)
+	s.setCookie(w, refreshTokenCookieName, "", -1)
+}
+
+// ============================================================================
+// 刷新令牌存储（服务端状态，支持吊销与旋转）—— MVP 采用进程内存储。
+// 多副本/重启场景应替换为 DB/Redis（接口稳定，后续平滑替换）。
+// ============================================================================
+
+// refreshSession 刷新令牌会话记录。
+type refreshSession struct {
+	UserID    string
+	ExpiresAt time.Time
+}
+
+var refreshTokens = struct {
+	sync.Mutex
+	m map[string]*refreshSession
+}{m: make(map[string]*refreshSession)}
+
+// createRefreshToken 生成并存储一个刷新令牌 ID（crypto/rand，32 字节十六进制）。
+func createRefreshToken(userID string) (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	id := hex.EncodeToString(b)
+	refreshTokens.Lock()
+	refreshTokens.m[id] = &refreshSession{UserID: userID, ExpiresAt: time.Now().Add(refreshTokenExpiry)}
+	refreshTokens.Unlock()
+	return id, nil
+}
+
+// consumeRefreshToken 校验并消费刷新令牌（一次性：校验通过即删除，实现旋转）。
+// 无效/过期/已消费返回 (nil, false)。
+func consumeRefreshToken(id string) (*refreshSession, bool) {
+	refreshTokens.Lock()
+	defer refreshTokens.Unlock()
+	rs, ok := refreshTokens.m[id]
+	if !ok {
+		return nil, false
+	}
+	delete(refreshTokens.m, id) // 旋转：旧 rt 立即作废，防重放
+	if time.Now().After(rs.ExpiresAt) {
+		return nil, false
+	}
+	return rs, true
+}
+
+// revokeRefreshToken 吊销指定刷新令牌（登出时调用）。
+func revokeRefreshToken(id string) {
+	refreshTokens.Lock()
+	delete(refreshTokens.m, id)
+	refreshTokens.Unlock()
+}
+
+// revokeUserRefreshTokens 吊销某用户全部刷新令牌（禁用/删除账号时收回全部会话）。
+func revokeUserRefreshTokens(userID string) {
+	refreshTokens.Lock()
+	for k, v := range refreshTokens.m {
+		if v.UserID == userID {
+			delete(refreshTokens.m, k)
+		}
+	}
+	refreshTokens.Unlock()
+}
+
+// purgeExpiredRefreshTokens 清理过期刷新令牌，防内存无限增长（由 startRefreshSweep 周期调用）。
+func purgeExpiredRefreshTokens() {
+	now := time.Now()
+	refreshTokens.Lock()
+	for k, v := range refreshTokens.m {
+		if now.After(v.ExpiresAt) {
+			delete(refreshTokens.m, k)
+		}
+	}
+	refreshTokens.Unlock()
 }
 
 // randHexID 生成随机十六进制 ID（16 字节，crypto/rand 密码学安全）。
@@ -201,13 +284,52 @@ func (g *loginGuard) resetFail(username string) {
 	delete(g.fails, username)
 }
 
-// clientIP 提取客户端真实 IP：优先 X-Forwarded-For（网关/代理场景），否则去 RemoteAddr 端口。
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.Index(xff, ","); idx > 0 {
-			return strings.TrimSpace(xff[:idx])
+// startSweep 启动后台回收 goroutine，定期清理过期限流令牌桶与已解锁且超窗的失败计数，
+// 防止 ips/fails map 在长运行中无界增长（原实现只增不删，进程内内存泄漏）。
+// 仅在 NewServer（生产路径）调用；测试直接构造 Server 不触发，避免测试悬挂 goroutine。
+func (g *loginGuard) startSweep(interval time.Duration) {
+	if interval <= 0 {
+		interval = 10 * time.Minute
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			g.sweep()
 		}
-		return strings.TrimSpace(xff)
+	}()
+}
+
+// sweep 清理过期条目：
+//   - ips：令牌已回满（无待补充）且超过 1 小时无新活动 → 回收；
+//   - fails：当前未锁定且失败窗口已过的失败计数 → 回收。
+func (g *loginGuard) sweep() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	now := time.Now()
+	for ip, rec := range g.ips {
+		if rec.tokens >= loginRateBurst && now.Sub(rec.last) > time.Hour {
+			delete(g.ips, ip)
+		}
+	}
+	for user, rec := range g.fails {
+		if now.After(rec.lockedUntil) && now.Sub(rec.firstAt) > loginFailWindow {
+			delete(g.fails, user)
+		}
+	}
+}
+
+// clientIP 提取客户端真实 IP。
+// trustProxy=false（默认，安全）：仅用 RemoteAddr，防止客户端伪造 X-Forwarded-For 绕过登录限流/审计；
+// trustProxy=true（确有可信反代/LB 前置并注入真实 IP 时）：信任 XFF 首段。
+func clientIP(r *http.Request, trustProxy bool) string {
+	if trustProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if idx := strings.Index(xff, ","); idx > 0 {
+				return strings.TrimSpace(xff[:idx])
+			}
+			return strings.TrimSpace(xff)
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -262,7 +384,7 @@ func (s *Server) issueUserToken(u *store.User) (string, error) {
 		Roles:       u.RoleIDs,
 		Permissions: s.userPermissions(u),
 		TenantID:    "default", // 用户中心为平台级，统一 "default" 租户
-		ExpiresAt:   time.Now().Add(jwtTokenExpiry),
+		ExpiresAt:   time.Now().Add(accessTokenExpiry),
 	}
 	return authctx.SignJWT(claims, s.jwtSecret)
 }
@@ -300,7 +422,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// P1-4 限流：按客户端 IP 令牌桶约束注册频率，防滥用/枚举。
-	if !s.loginGuard.allow(clientIP(r)) {
+	if !s.loginGuard.allow(clientIP(r, s.cfg.TrustProxy)) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
 	}
@@ -317,8 +439,8 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
 		return
 	}
-	if len(body.Password) < minPasswordLen {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password too short (min 6 chars)"})
+	if msg := validateStrongPassword(body.Password); msg != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
 	// 用户名重复校验。
@@ -359,7 +481,12 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token sign failed: " + err.Error()})
 			return
 		}
-		setAuthCookie(w, token) // task 94：同登录，HttpOnly Cookie 下发
+		rt, err := createRefreshToken(u.ID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "refresh token gen failed: " + err.Error()})
+			return
+		}
+		s.setAuthCookies(w, token, rt) // task 94：at+rt 双 HttpOnly Cookie 下发
 		writeJSON(w, http.StatusCreated, authResponse{Token: token, User: u})
 		return
 	}
@@ -380,7 +507,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// P1-4 限流：按客户端 IP 令牌桶约束登录频率，防撞库与 DoS。
-	if !s.loginGuard.allow(clientIP(r)) {
+	if !s.loginGuard.allow(clientIP(r, s.cfg.TrustProxy)) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
 	}
@@ -438,8 +565,13 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	s.store.Audit(&proto.AuditEvent{
 		TenantID: "default", UserID: u.ID, Action: "user_login", Target: u.ID, Detail: "username=" + u.Username,
 	})
-	// task 94：token 同时以 HttpOnly Cookie 下发，XSS 无法窃取（localStorage 已不再持久化）。
-	setAuthCookie(w, token)
+	// 双 Cookie：at（短寿命，JS 不可读）+ rt（长寿命，服务端可吊销/旋转）。
+	rt, err := createRefreshToken(u.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "refresh token gen failed: " + err.Error()})
+		return
+	}
+	s.setAuthCookies(w, token, rt)
 	// 安全债 85：返回 mustChangePassword 标记，前端据此弹出改密对话框。
 	writeJSON(w, http.StatusOK, authResponse{Token: token, User: u, MustChangePassword: u.MustChangePassword})
 }
@@ -457,8 +589,51 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 			TenantID: "default", UserID: u.ID, Action: "user_logout", Target: u.ID, Detail: "username=" + u.Username,
 		})
 	}
-	clearAuthCookie(w)
+	// 吊销请求携带的 rt，并清除 at+rt Cookie（服务端状态失效 + 浏览器会话终止）。
+	if ck, ckErr := r.Cookie(refreshTokenCookieName); ckErr == nil && strings.TrimSpace(ck.Value) != "" {
+		revokeRefreshToken(ck.Value)
+	}
+	s.clearAuthCookies(w)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "logged out"})
+}
+
+// handleAuthRefresh 处理 POST /api/v1/auth/refresh：用 rt Cookie 静默换取新 at+rt（旋转）。
+// 同源 HttpOnly rt 由浏览器自动携带；成功重置 at（短寿命）+ 新 rt，旧 rt 立即失效（防重放）。
+// 缺失/无效/过期 rt → 401 并清除 Cookie（前端据此跳转登录）。
+func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	ck, err := r.Cookie(refreshTokenCookieName)
+	if err != nil || strings.TrimSpace(ck.Value) == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing refresh token"})
+		return
+	}
+	sess, ok := consumeRefreshToken(ck.Value)
+	if !ok {
+		s.clearAuthCookies(w)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired refresh token"})
+		return
+	}
+	u := s.store.GetUser(sess.UserID)
+	if u == nil || u.Status != "active" {
+		s.clearAuthCookies(w)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "user not active"})
+		return
+	}
+	at, err := s.issueUserToken(u)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token sign failed: " + err.Error()})
+		return
+	}
+	rt, err := createRefreshToken(u.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "refresh token gen failed: " + err.Error()})
+		return
+	}
+	s.setAuthCookies(w, at, rt)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"user": u})
 }
 
 // handleAuthMe 处理 GET /api/v1/auth/me：返回当前登录用户信息。
@@ -474,6 +649,23 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
+	// 展开角色 → 有效权限集合，供前端侧栏按权限过滤功能入口（与 requireProd 闸同源）。
+	// 取并集去重；role_ids 解析失败或角色不存在时跳过该角色，不阻断主流程。
+	eff := make([]string, 0, 16)
+	seen := make(map[string]bool, 16)
+	for _, rid := range u.RoleIDs {
+		role := s.store.GetRole(rid)
+		if role == nil {
+			continue
+		}
+		for _, p := range role.Permissions {
+			if !seen[p] {
+				seen[p] = true
+				eff = append(eff, p)
+			}
+		}
+	}
+	u.EffectivePermissions = eff
 	writeJSON(w, http.StatusOK, u)
 }
 
@@ -579,7 +771,7 @@ func (s *Server) userFromToken(r *http.Request) (*store.User, error) {
 	if err != nil {
 		// task 94：Bearer 头缺失时回退 HttpOnly Cookie（前端不再持久化 token 到
 		// localStorage，刷新后靠 Cookie 保持会话；两路均走同一 ParseHSJWT 校验）。
-		if ck, ckErr := r.Cookie(authCookieName); ckErr == nil && strings.TrimSpace(ck.Value) != "" {
+		if ck, ckErr := r.Cookie(accessTokenCookieName); ckErr == nil && strings.TrimSpace(ck.Value) != "" {
 			tokenStr = ck.Value
 		} else {
 			return nil, err
@@ -592,6 +784,11 @@ func (s *Server) userFromToken(r *http.Request) (*store.User, error) {
 	u := s.store.GetUser(claims.UserID)
 	if u == nil {
 		return nil, errors.New("user not found")
+	}
+	// P1 吊销：非 active 用户（disabled/rejected/pending/空）既有的有效签名 token 立即失效，
+	// 使管理员禁用/删除账号后无需等待 24h 过期即收回访问。
+	if u.Status != "active" {
+		return nil, errors.New("user account is not active")
 	}
 	return u, nil
 }
@@ -622,10 +819,78 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, requi
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return nil, false
 	}
+	// P1 强制改密：标记 MustChangePassword 的用户只能访问 /api/v1/auth/change-password
+	// （该端点走 userFromToken，不经此处），其余受保护 API 一律拒绝，避免弱口令长期在线。
+	if u.MustChangePassword {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "password change required (MUST_CHANGE_PASSWORD)"})
+		return nil, false
+	}
 	perms := s.userPermissions(u)
 	for _, p := range perms {
 		if p == required {
 			return u, true
+		}
+	}
+	writeJSON(w, http.StatusForbidden, map[string]string{"error": "permission denied: " + required})
+	return nil, false
+}
+
+// ============================================================================
+// 统一产品级 RBAC 闸（B3：权限控制无疏漏）—— 兼容两种身份来源。
+// ============================================================================
+
+// rolePermCache 缓存角色名→权限集合映射（取自 store.RolePermissions()，包初始化时计算一次）。
+var rolePermCache = store.RolePermissions()
+
+// requireProd 统一产品级 RBAC 鉴权闸：在 requireTenantContext（租户隔离）之后调用，
+// 校验当前身份是否拥有 required 权限。兼容两种身份来源：
+//   - 联邦入站（X-Federation-Forwarded=1）：调用方已用 verifyFederationRequest 验签 HMAC，
+//     信任来自可信控制面 peer 的请求（用户级 RBAC 已在来源控制面执行）；直接放行。
+//   - Authorization: Bearer（或 opsmesh_at Cookie）：走 JWT 路径（requirePermission）。
+//   - 网关注入 X-User-Roles（角色名）：展开为权限集合后校验（authorizeByRoles）。
+//   - demo 模式且无任何身份头：放行，保持本地一键体验的宽松语义（与 requireTenantContext 一致）。
+//   - 其余：401。
+// 返回 (user, ok)；ok=false 时已写入响应，调用方应直接 return。
+func (s *Server) requireProd(w http.ResponseWriter, r *http.Request, required string) (*store.User, bool) {
+	// 1. 联邦入站：verifyFederationRequest 已验签 HMAC，信任 peer（用户 RBAC 已在来源侧执行）。
+	if r.Header.Get("X-Federation-Forwarded") == "1" {
+		return nil, true
+	}
+	// 2. JWT Bearer / Cookie 路径：用户中心登录后携带的 token。
+	auth := r.Header.Get("Authorization")
+	hasBearer := strings.HasPrefix(auth, "Bearer ")
+	hasCookie := false
+	if ck, err := r.Cookie(accessTokenCookieName); err == nil && strings.TrimSpace(ck.Value) != "" {
+		hasCookie = true
+	}
+	if hasBearer || hasCookie {
+		return s.requirePermission(w, r, required)
+	}
+	// 3. 网关注入路径：X-User-Roles 携带角色名。
+	if strings.TrimSpace(r.Header.Get("X-User-Roles")) != "" {
+		return s.authorizeByRoles(w, r, required)
+	}
+	// 4. demo 模式宽松放行（无身份，自动填充 default/demo）。
+	if s.cfg != nil && s.cfg.Demo {
+		return nil, true
+	}
+	// 5. 无可用身份 → 拒绝。
+	writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity (no bearer token or gateway role header)"})
+	return nil, false
+}
+
+// authorizeByRoles 将网关注入/联邦转发的角色名展开为权限集合并校验 required。
+func (s *Server) authorizeByRoles(w http.ResponseWriter, r *http.Request, required string) (*store.User, bool) {
+	roleNames := authctx.FromHTTPHeader(r.Header).Roles
+	if len(roleNames) == 0 {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "no roles in identity context"})
+		return nil, false
+	}
+	for _, rn := range roleNames {
+		for _, p := range rolePermCache[rn] {
+			if p == required {
+				return nil, true
+			}
 		}
 	}
 	writeJSON(w, http.StatusForbidden, map[string]string{"error": "permission denied: " + required})
@@ -679,9 +944,16 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
 		return
 	}
-	if len(body.Password) < minPasswordLen {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password too short (min 6 chars)"})
+	if msg := validateStrongPassword(body.Password); msg != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
+	}
+	// P3 角色引用校验：role_ids 若存在须全部指向真实角色，避免写入无效角色引用。
+	for _, rid := range body.RoleIDs {
+		if rid != "" && s.store.GetRole(rid) == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown role id: " + rid})
+			return
+		}
 	}
 	if s.store.GetUserByUsername(body.Username) != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
@@ -848,6 +1120,13 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request, id str
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
+	}
+	// P2 状态变更需更高权限：仅 user:write 不能激活/禁用账号，须 user:approve（与 P1-7 审批模型一致），
+	// 防止低权限用户自行把 Status 置 active/rejected 绕过审批流。
+	if body.Status != "" {
+		if _, ok := s.requirePermission(w, r, "user:approve"); !ok {
+			return
+		}
 	}
 	existing := s.store.GetUser(id)
 	if existing == nil {

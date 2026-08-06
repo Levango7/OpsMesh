@@ -22,6 +22,9 @@ type User struct {
 	RoleIDs           []string  `json:"roleIDs"`
 	CreatedAt         time.Time `json:"createdAt"`
 	MustChangePassword bool     `json:"mustChangePassword"` // 强制改密标记：预置弱口令用户首登须改密（安全债 85）
+	// EffectivePermissions 为角色展开后的有效权限集合（由 /auth/me 计算填充，非持久化字段）。
+	// 供前端侧栏按权限过滤功能入口，与后端 RBAC 闸（requireProd）同源，杜绝定义漂移。
+	EffectivePermissions []string `json:"permissions"`
 }
 
 // Role 角色实体。Permissions 为权限字符串数组（如 ["device:read", "task:write"]）。

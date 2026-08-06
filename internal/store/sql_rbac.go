@@ -274,6 +274,14 @@ var rbacPermSpecs = []struct {
 	{"role", "role:delete", "删除角色"},
 	{"federation", "federation:read", "查看联邦"},
 	{"federation", "federation:write", "编辑联邦"},
+	{"os", "os:read", "查看OS优化模板"},
+	{"os", "os:execute", "执行OS优化"},
+	{"middleware", "middleware:read", "查看中间件模板"},
+	{"middleware", "middleware:execute", "部署/卸载中间件"},
+	{"provision", "provision:execute", "自动纳管/纳管设备"},
+	{"k8s", "k8s:read", "查看K8s集群"},
+	{"k8s", "k8s:write", "管理K8s集群"},
+	{"k8s", "k8s:delete", "删除K8s集群"},
 }
 
 // seedRBAC 在 initSchema 末尾调用，幂等写入默认权限/角色/用户。
@@ -288,29 +296,11 @@ func (s *SQLStore) seedRBAC(ctx context.Context) error {
 		}
 	}
 	// 2. 角色权限集合（与 memory.go 的计算逻辑一致）。
-	allPerms := make([]string, 0, len(rbacPermSpecs))
-	for _, ps := range rbacPermSpecs {
-		allPerms = append(allPerms, ps.name)
-	}
-	viewerPerms := make([]string, 0)
-	operatorPerms := make([]string, 0)
-	operatorGroups := map[string]bool{
-		"device": true, "task": true, "alert": true, "cmdb": true,
-		"deploy": true, "workflow": true, "log": true, "audit": true,
-	}
-	for _, p := range allPerms {
-		idx := strings.Index(p, ":")
-		if idx <= 0 {
-			continue
-		}
-		group, action := p[:idx], p[idx+1:]
-		if strings.HasSuffix(p, ":read") {
-			viewerPerms = append(viewerPerms, p)
-		}
-		if operatorGroups[group] && (action == "read" || action == "write") {
-			operatorPerms = append(operatorPerms, p)
-		}
-	}
+	// 角色→权限映射统一取自 RolePermissions()，避免与 RBAC 闸逻辑漂移。
+	rp := RolePermissions()
+	allPerms := rp["admin"]
+	viewerPerms := rp["viewer"]
+	operatorPerms := rp["operator"]
 	now := time.Now().UTC()
 	roles := []struct {
 		id, name, desc string
@@ -355,4 +345,41 @@ func (s *SQLStore) seedRBAC(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// RolePermissions 返回预置角色名→权限集合映射，与 seedRBAC 的角色定义保持一致。
+// 供控制面网关注入/联邦转发身份（携带角色名而非权限字符串）做产品级 RBAC 校验。
+// 这是角色权限划分的单一来源：seedRBAC 与 RBAC 闸都从此派生，杜绝定义漂移。
+func RolePermissions() map[string][]string {
+	allPerms := make([]string, 0, len(rbacPermSpecs))
+	for _, ps := range rbacPermSpecs {
+		allPerms = append(allPerms, ps.name)
+	}
+	viewerPerms := make([]string, 0)
+	operatorPerms := make([]string, 0)
+	// operatorGroups：运维角色可操作的资源组（read + write/execute）。
+	// 注意：k8s 不在其中 —— K8s 集群管理仅 admin 可写/删，operator/viewer 仅读（严谨最小权限）。
+	operatorGroups := map[string]bool{
+		"device": true, "task": true, "alert": true, "cmdb": true,
+		"deploy": true, "workflow": true, "log": true, "audit": true,
+		"os": true, "middleware": true, "provision": true,
+	}
+	for _, p := range allPerms {
+		idx := strings.Index(p, ":")
+		if idx <= 0 {
+			continue
+		}
+		group, action := p[:idx], p[idx+1:]
+		if strings.HasSuffix(p, ":read") {
+			viewerPerms = append(viewerPerms, p)
+		}
+		if operatorGroups[group] && (action == "read" || action == "write" || action == "execute") {
+			operatorPerms = append(operatorPerms, p)
+		}
+	}
+	return map[string][]string{
+		"admin":    allPerms,
+		"operator": operatorPerms,
+		"viewer":   viewerPerms,
+	}
 }

@@ -4,7 +4,7 @@
     <div class="detail-topbar">
       <div class="topbar-left">
         <button class="xs outline" @click="goBack">
-          <span style="display:inline-flex;align-items:center;gap:4px;">← {{ $t('common.back') || '返回' }}</span>
+          <span style="display:inline-flex;align-items:center;gap:4px;"><Icon name="arrow-left" :size="14" /> {{ $t('common.back') || '返回' }}</span>
         </button>
         <h2>{{ $t('device_detail.title') }}</h2>
         <code v-if="metrics">{{ metrics.deviceID }}</code>
@@ -27,7 +27,7 @@
     </div>
 
     <!-- 错误提示 -->
-    <div v-if="store.metricsError" class="poll-err">⚠️ {{ store.metricsError }}</div>
+    <div v-if="store.metricsError" class="poll-err"><Icon name="warning" :size="14" /> {{ store.metricsError }}</div>
 
     <!-- 加载中 / 空态 -->
     <div v-if="store.metricsLoading && !metrics" class="muted loading-block">
@@ -80,7 +80,7 @@
       <!-- CPU + 内存（左右两栏） -->
       <div class="row">
         <div class="col col-half">
-          <MetricsCard :title="$t('device_detail.cpu')" icon="ops" accent="--violet">
+          <MetricsCard :title="$t('device_detail.cpu')" icon="ops" accent="--sky">
             <div class="cpu-wrap">
               <ProgressRing
                 :value="cpuUsage"

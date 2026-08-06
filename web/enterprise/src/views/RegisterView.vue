@@ -143,7 +143,7 @@ function toggleLang() {
 }
 .blob-1 {
   width: 420px; height: 420px;
-  background: var(--violet);
+  background: var(--sky);
   top: -120px; right: -120px;
 }
 .blob-2 {
@@ -165,10 +165,10 @@ function toggleLang() {
 .brand { text-align: center; margin-bottom: 24px; }
 .brand .logo {
   width: 52px; height: 52px; border-radius: 14px;
-  background: linear-gradient(135deg, var(--violet), var(--indigo));
+  background: linear-gradient(135deg, var(--sky), var(--indigo));
   display: inline-flex; align-items: center; justify-content: center;
   color: #fff;
-  box-shadow: 0 6px 20px rgba(124,58,237,.4);
+  box-shadow: 0 6px 20px rgba(99,102,241,.4);
   margin-bottom: 12px;
 }
 .brand h1 { font-size: 18px; color: var(--text); }

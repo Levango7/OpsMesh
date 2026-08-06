@@ -3,7 +3,7 @@
     <h2>任务下发</h2>
     <p class="muted">向采集端下发 shell / file / service 任务，支持按状态过滤与取消。</p>
 
-    <div class="card">
+    <div class="card" v-if="authStore.hasPerm('task:write')">
       <h3>下发任务</h3>
       <form @submit.prevent="onSubmit">
         <div class="row">
@@ -45,6 +45,9 @@
         <p v-if="msg" :class="['msg', msgOk ? 'ok' : 'err']">{{ msg }}</p>
       </form>
     </div>
+    <div v-else class="card">
+      <p class="muted">当前账号无下发权限（需 task:write）。</p>
+    </div>
 
     <div class="card">
       <div class="flowbar">
@@ -62,7 +65,7 @@
         <button @click="store.fetchTasks()">↻ 刷新</button>
       </div>
 
-      <div v-if="store.error" class="poll-err">⚠️ {{ store.error }}</div>
+      <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
       <DataTable :columns="columns" :rows="store.list" row-key="taskID" empty-text="暂无任务">
         <template #cell-taskID="{ value }"><code>{{ value }}</code></template>
@@ -72,7 +75,7 @@
         </template>
         <template #cell-actions="{ row }">
           <button
-            v-if="row.status === 'pending' || row.status === 'running'"
+            v-if="(row.status === 'pending' || row.status === 'running') && authStore.hasPerm('task:cancel')"
             class="xs outline"
             @click.stop="onCancel(row.taskID)"
           >取消</button>
@@ -86,11 +89,14 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { useTaskStore } from '@/stores/task'
+import { useAuthStore } from '@/stores/auth'
 import { getAgents } from '@/api/device'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
+import Icon from '@/components/Icon.vue'
 
 const store = useTaskStore()
+const authStore = useAuthStore()
 const agents = ref([])
 const form = ref({ agentID: '', type: 'shell', command: '', path: '', content: '' })
 const msg = ref('')

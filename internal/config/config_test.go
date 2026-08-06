@@ -156,3 +156,47 @@ func TestValidate_LogBackendESOK(t *testing.T) {
 		t.Fatalf("es 合法配置应通过: %v", err)
 	}
 }
+
+// TestValidate_ProductionControlplaneRequiresJWTSecret：生产 controlplane 必须显式注入 JWT 密钥。
+func TestValidate_ProductionControlplaneRequiresJWTSecret(t *testing.T) {
+	// prod + 空密钥 -> 拒绝
+	c := base()
+	c.Production = true
+	c.TLSCert = "tls.crt" // 绕过 H6 TLS，聚焦 JWT 校验
+	if err := c.Validate(); err == nil {
+		t.Fatal("production + 空 jwt-secret 应被拒绝，但 Validate 通过了")
+	}
+	// prod + 合法密钥 -> 通过
+	c2 := base()
+	c2.Production = true
+	c2.TLSCert = "tls.crt"
+	c2.JWTSecret = "0123456789abcdef0123456789abcdef" // 32 字节
+	if err := c2.Validate(); err != nil {
+		t.Fatalf("production + 合法 jwt-secret 应通过: %v", err)
+	}
+	// 非 prod + 空密钥 -> 通过（dev 随机兜底保留）
+	c3 := base()
+	c3.Production = false
+	c3.JWTSecret = ""
+	if err := c3.Validate(); err != nil {
+		t.Fatalf("非 production + 空 jwt-secret 应通过: %v", err)
+	}
+}
+
+// TestValidate_ProductionJWTSecretLength：生产 jwt-secret 过短（<32 字节）必须拒绝。
+func TestValidate_ProductionJWTSecretLength(t *testing.T) {
+	c := base()
+	c.Production = true
+	c.TLSCert = "tls.crt"
+	c.JWTSecret = "tooshort" // 8 字节 < 32
+	if err := c.Validate(); err == nil {
+		t.Fatal("production + (<32) jwt-secret 应被拒绝，但通过了")
+	}
+	c2 := base()
+	c2.Production = true
+	c2.TLSCert = "tls.crt"
+	c2.JWTSecret = "0123456789abcdef0123456789abcdef" // 32 字节
+	if err := c2.Validate(); err != nil {
+		t.Fatalf("production + 32 字节 jwt-secret 应通过: %v", err)
+	}
+}

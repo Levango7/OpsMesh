@@ -97,6 +97,20 @@ type Server struct {
 }
 
 // NewServer 构造控制面服务。按 cfg.Store 选择持久化后端（默认 memory），并初始化事件总线与指标。
+// startRefreshSweep 周期清理过期刷新令牌，防止refreshTokens 内存无限增长。
+func (s *Server) startRefreshSweep(interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Hour
+	}
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for range t.C {
+			purgeExpiredRefreshTokens()
+		}
+	}()
+}
+
 func NewServer(cfg *config.Config) *Server {
 	// Kafka brokers/topic 经参数传入事件总线（避免 os.Setenv 并发不安全，P1-5）。
 	bus := events.New(cfg.EventBus, cfg.KafkaBrokers, cfg.KafkaTopic)
@@ -156,6 +170,9 @@ func NewServer(cfg *config.Config) *Server {
 	}
 	// P1-4 登录/注册防爆破 + 限流守卫（进程内；多副本建议后续换 Redis）。
 	s.loginGuard = newLoginGuard()
+	// P2 启动守卫回收，防止 ips/fails map 在长运行中无界增长（内存泄漏）。
+	s.loginGuard.startSweep(10 * time.Minute)
+	s.startRefreshSweep(time.Hour) // 周期清理过期刷新令牌，防内存增长
 	// Phase 3 K8s 多集群连接管理器：构造空管理器，用户创建集群时 AddCluster。
 	s.clusterMgr = k8s.NewClusterManager()
 	// task 92 重启恢复连接：控制面重启后 ClusterManager 为空，按库内集群配置重建连接。
@@ -415,6 +432,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("/api/v1/auth/me", s.handleAuthMe)
 	mux.HandleFunc("/api/v1/auth/logout", s.handleAuthLogout) // task 94：登出清 HttpOnly Cookie
+	mux.HandleFunc("/api/v1/auth/refresh", s.handleAuthRefresh) // 双 Cookie：rt 静默换新 at+rt（旋转）
 	mux.HandleFunc("/api/v1/auth/change-password", s.handleAuthChangePassword) // 安全债 85：预置弱口令强制改密
 	mux.HandleFunc("/api/v1/users", s.handleUsers)
 	mux.HandleFunc("/api/v1/users/", s.handleUserRouting)
@@ -712,6 +730,9 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if _, ok := s.requireProd(w, r, "device:read"); !ok {
+		return
+	}
 	writeJSON(w, http.StatusOK, s.store.Snapshot(actx.TenantID))
 }
 
@@ -770,6 +791,9 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 	var body struct {
@@ -848,6 +872,9 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if _, ok := s.requireProd(w, r, "task:read"); !ok {
+		return
+	}
 	status := r.URL.Query().Get("status")
 	tasks := s.store.AllTasks(actx.TenantID)
 	out := make([]*domain.Task, 0, len(tasks))
@@ -873,6 +900,9 @@ func (s *Server) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "device:read"); !ok {
 		return
 	}
 	dev := s.store.Device(id)
@@ -1058,6 +1088,9 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
+		return
+	}
 	var body struct {
 		Targets  []string `json:"targets"`
 		Type     string   `json:"type"`
@@ -1149,6 +1182,9 @@ func (s *Server) handleAudits(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if _, ok := s.requireProd(w, r, "audit:read"); !ok {
+		return
+	}
 	q := r.URL.Query()
 	tenant := q.Get("tenant")
 	if s.requireAuth {
@@ -1207,6 +1243,9 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request, id str
 	if !ok {
 		return
 	}
+	if _, ok := s.requireProd(w, r, "task:cancel"); !ok {
+		return
+	}
 	tenant := actx.TenantID
 	ok = s.store.CancelTask(id, tenant)
 	if !ok {
@@ -1235,6 +1274,9 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request, id str
 func (s *Server) handleTaskResult(w http.ResponseWriter, r *http.Request, id string) {
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "task:read"); !ok {
 		return
 	}
 	res := s.store.TaskResult(id)
@@ -1293,6 +1335,9 @@ func (s *Server) handleRetireDevice(w http.ResponseWriter, r *http.Request, id s
 	if !ok {
 		return
 	}
+	if _, ok := s.requireProd(w, r, "device:delete"); !ok {
+		return
+	}
 	tenant := actx.TenantID
 	if !s.store.RetireDevice(id, tenant) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found or tenant mismatch"})
@@ -1316,6 +1361,9 @@ func (s *Server) handleRetireDevice(w http.ResponseWriter, r *http.Request, id s
 func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id string) {
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "provision:execute"); !ok {
 		return
 	}
 	tenant := actx.TenantID
@@ -1384,6 +1432,9 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if _, ok := s.requireProd(w, r, "alert:read"); !ok {
+		return
+	}
 	writeJSON(w, http.StatusOK, s.store.Alerts(actx.TenantID))
 }
 
@@ -1415,6 +1466,9 @@ func (s *Server) handleAckAlert(w http.ResponseWriter, r *http.Request, id strin
 	if !ok {
 		return
 	}
+	if _, ok := s.requireProd(w, r, "alert:ack"); !ok {
+		return
+	}
 	if s.store.Alert(id) == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert not found"})
 		return
@@ -1441,6 +1495,9 @@ func (s *Server) handleAckAlert(w http.ResponseWriter, r *http.Request, id strin
 func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id string) {
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "alert:silence"); !ok {
 		return
 	}
 	var body struct {
@@ -1497,7 +1554,7 @@ func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 	}
 	// P1-5 访问审计：install.sh 是 bootstrap 端点，保持开放但审计访问来源供溯源。
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: clientIP(r), Action: "bootstrap_install_sh", Target: "/install.sh",
+		TenantID: "default", UserID: clientIP(r, s.cfg.TrustProxy), Action: "bootstrap_install_sh", Target: "/install.sh",
 		Detail: "remote=" + r.RemoteAddr,
 	})
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
@@ -1516,7 +1573,7 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	// P1-5 访问审计：agent 二进制分发端点，保持开放但审计下载来源供溯源。
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: clientIP(r), Action: "bootstrap_serve_agent", Target: "/bin/opsmesh-agent",
+		TenantID: "default", UserID: clientIP(r, s.cfg.TrustProxy), Action: "bootstrap_serve_agent", Target: "/bin/opsmesh-agent",
 		Detail: "remote=" + r.RemoteAddr,
 	})
 	path, err := os.Executable()
@@ -1551,6 +1608,9 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 	}
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "provision:execute"); !ok {
 		return
 	}
 	var body struct {

@@ -686,6 +686,9 @@ func (s *Server) handleListOSTemplates(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if _, ok := s.requireProd(w, r, "os:read"); !ok {
+		return
+	}
 	q := r.URL.Query()
 	category := q.Get("category")
 	risk := q.Get("risk")
@@ -716,6 +719,9 @@ func (s *Server) handleOSTemplateByID(w http.ResponseWriter, r *http.Request, id
 	if !ok {
 		return
 	}
+	if _, ok := s.requireProd(w, r, "os:read"); !ok {
+		return
+	}
 	t := osTemplateByID(id)
 	if t == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
@@ -738,6 +744,9 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 	}
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "os:execute"); !ok {
 		return
 	}
 	tpl := osTemplateByID(id)

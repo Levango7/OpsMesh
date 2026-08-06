@@ -35,6 +35,9 @@ dist/
 
 .gocache/
 
+# SDD 工作流产物（superpowers 技能生成，非源码，避免误提交）
+.superpowers/
+
 # 临时调试文件（清理工程师添加，防止再次提交）
 diag*.js
 debug_*.js

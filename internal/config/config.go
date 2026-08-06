@@ -176,6 +176,9 @@ type Config struct {
 	//   - 生产模式（--production=true）下默认开启（除非显式 --grpc-require-signature=false）。
 	//   - 已启用 mTLS（--tls-cert + --client-ca 均非空）时可不开启（mTLS 本身提供身份绑定）。
 	GRPCRequireSignature bool
+	// 反向代理信任（安全运行于 LB/网关后时）：开启后 clientIP 信任 X-Forwarded-For 首段取真实客户端 IP；
+	// 默认 false=仅用 RemoteAddr（防止客户端伪造 XFF 绕过登录限流/审计）；仅当确有可信反代前置时才开启。
+	TrustProxy bool
 }
 
 // Load 解析 flag 并用环境变量兜底，返回 *Config。
@@ -214,7 +217,7 @@ func Load() *Config {
 	taskLeaseSec := flag.Int("task-lease-sec", 300, "任务租约租期秒（P0-1）；超期未上报结果则复位重调度")
 	replicas := flag.Int("replicas", 1, "控制面副本数（A3 由部署平台注入）；>1 须用 --store=mysql，否则 memory 多副本分裂")
 	production := flag.Bool("production", false, "生产模式（A4）：默认开启 require-auth，并对 store=memory 强告警")
-	publicRegister := flag.Bool("public-register", true, "允许公开注册（P1-7 注册安全）：true=开放 /api/v1/auth/register 但新用户须管理员审批；false=关闭公开注册（仅管理员可创建用户）；demo 模式覆盖为 true 且免审批")
+	publicRegister := flag.Bool("public-register", true, "允许公开注册（P1-7 注册安全）：true=开放 /api/v1/auth/register 但新用户须管理员审批；false=关闭公开注册（仅管理员可创建用户，返回 403）。注意：--demo 会强制覆盖为 true（接口开放），故企业版要关闭注册须【不带 --demo】并显式 --public-register=false；是否免审批另由 --allow-public-register 控制")
 	allowPublicRegister := flag.Bool("allow-public-register", false, "允许公开注册免审批（P1-7 注册安全）：true=注册即激活并立即签发 token（仅演示/内网受信环境）；false=所有注册（含 demo 模式）都走 pending 审批流程（默认安全基线）；或 env OPSMESH_ALLOW_PUBLIC_REGISTER")
 	taskMaxRetries := flag.Int("task-max-retries", 3, "任务失败重试上限（F2）；超出置 failed（死信），需人工处置")
 	leaderTTLSec := flag.Int("leader-ttl-sec", 15, "A3 选主租约秒；本实例持有 leader 身份的时长，到期前需续租")
@@ -254,6 +257,9 @@ func Load() *Config {
 	agentFileRootWhitelist := flag.String("agent-file-root-whitelist", "", "安全加固：agent 文件任务允许的根目录白名单（逗号分隔，如 /var/opsmesh/files,/etc/opsmesh）；空=不限制根目录（仍拒绝 ../ 路径遍历与符号链接）；非空=目标路径必须落在某个根目录之下；或 env OPSMESH_AGENT_FILE_ROOT_WHITELIST")
 	// task 81 gRPC agent 身份绑定：强制要求 agent 请求携带 HMAC 签名。
 	grpcRequireSignature := flag.Bool("grpc-require-signature", false, "gRPC agent 身份绑定：强制要求 agent 在 PullTasks/ReportResult/PollCancels/Heartbeat 携带 HMAC 签名（防冒领任务/伪造上报）；demo 模式强制关闭；生产模式默认开启（除非显式 false）；或 env OPSMESH_GRPC_REQUIRE_SIGNATURE")
+	// P2 安全运行于反向代理/LB 后：开启后 clientIP 信任 X-Forwarded-For 首段；默认 false 仅用 RemoteAddr，
+	// 防止客户端伪造 XFF 绕过登录限流与审计。仅当确有可信反代（如 APISIX/Nginx 注入真实 IP）前置时启用。
+	trustProxy := flag.Bool("trust-proxy", false, "信任反向代理：开启后 clientIP 取 X-Forwarded-For 首段（仅当有可信 LB/网关前置时启用）；默认 false=仅用 RemoteAddr 防 XFF 伪造绕过限流；或 env OPSMESH_TRUST_PROXY")
 	flag.Parse()
 
 	// 记录被显式设置的 flag，用于"flag 优先、env 兜底"的正确语义（P1-8 修复：原实现 env 会覆盖显式 flag）。
@@ -360,6 +366,7 @@ func Load() *Config {
 		AgentShellWhitelist:    val("agent-shell-whitelist", *agentShellWhitelist, "OPSMESH_AGENT_SHELL_WHITELIST"),
 		AgentFileRootWhitelist: val("agent-file-root-whitelist", *agentFileRootWhitelist, "OPSMESH_AGENT_FILE_ROOT_WHITELIST"),
 		GRPCRequireSignature:   valBool("grpc-require-signature", *grpcRequireSignature, "OPSMESH_GRPC_REQUIRE_SIGNATURE"),
+		TrustProxy:             valBool("trust-proxy", *trustProxy, "OPSMESH_TRUST_PROXY"),
 	}
 	// A4 生产模式：默认开启 require-auth（除非显式关闭），并强告警 memory store。
 	if cfg.Production && !explicit["require-auth"] {
@@ -520,6 +527,15 @@ func (c *Config) Validate() error {
 	// 非 Production 模式不校验（开发/内网友好网络降级）。
 	if c.Production && c.TLSCert == "" {
 		return fmt.Errorf("生产模式（--production=true）必须配置 TLS（--tls-cert 为空），明文通信不满足等保三级要求；请提供证书或关闭 --production")
+	}
+	// M3-2Ab 生产控制面必须配置稳定 JWT 密钥（task 96）。
+	// 语义：控机用户中心 JWT 签发密钥为空则重启丢会话、多副本各自独立随机密钥互不相认、用户间歇 401。
+	// 生产直接 fail-fast，与 H6 生产强 TLS 同风格。dev 随机兜底语义（config.JWTSecret 空=随机）保留。
+	if c.Production && c.JWTSecret == "" {
+		return fmt.Errorf("生产模式（--production=true）controlplane 必须设置 --jwt-secret（或环境变量 OPSMESH_JWT_SECRET）；否则各副本独立随机密钥互相不认、重启后会话全部失效")
+	}
+	if c.Production && len([]byte(c.JWTSecret)) < 32 {
+		return fmt.Errorf("生产模式 --jwt-secret 长度不足（%d 字节 < 32）：需强随机 256-bit 对称密钥（建议 openssl rand -hex 32）", len([]byte(c.JWTSecret)))
 	}
 	// M4-4B 日志检索后端校验：非法值或缺失必要 endpoint 直接 fail-fast。
 	switch c.LogBackend {

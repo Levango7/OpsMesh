@@ -67,7 +67,7 @@
             <button @click="store.fetchList()">↻ 刷新</button>
           </div>
 
-          <div v-if="store.error" class="poll-err">⚠️ {{ store.error }}</div>
+          <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
           <DataTable :columns="columns" :rows="store.list" row-key="id" empty-text="暂无部署任务">
             <template #cell-id="{ value }"><code>{{ value }}</code></template>
@@ -107,6 +107,7 @@ import { useDeployStore } from '@/stores/deploy'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
+import Icon from '@/components/Icon.vue'
 
 const store = useDeployStore()
 const form = reactive({

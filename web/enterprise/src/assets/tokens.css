@@ -9,14 +9,13 @@
   --text: #1f2540; --text-2: #525a78; --text-3: #6b7390;
 
   /* 主色（靛蓝）— 用于操作/作业编排 */
-  --accent: #5b5ef0; --accent-2: #6366f1; --accent-soft: #eceaff;
+  --accent: #5b5ef0; --accent-2: #6366f1; --accent-soft: #e7eaf3;
 
   /* 四色搭配：靛蓝 / 青 / 琥珀 / 玫红 */
-  --indigo: #6366f1; --indigo-soft: #eceaff;
+  --indigo: #6366f1; --indigo-soft: #e7eaf3;
   --teal: #0d9488;   --teal-soft: #d8f3ef;
   --amber: #d97706;  --amber-soft: #fef3e2;
   --rose: #e11d48;   --rose-soft: #ffe4ec;
-  --violet: #7c3aed; --violet-soft: #f1e9ff;
   --sky: #0284c7;    --sky-soft: #e0f2fe;
   --green: #059669;  --green-soft: #d6f3e8;
 
@@ -24,7 +23,7 @@
   --ok: #059669; --ok-bg: #d6f3e8; --ok-soft: #eafaf3;
   --fail: #e11d48; --fail-bg: #ffe4ec; --fail-soft: #fff1f5;
   --warn: #d97706; --warn-bg: #fef3e2; --warn-soft: #fdf6ec;
-  --info: #6366f1; --info-bg: #eceaff;
+  --info: #6366f1; --info-bg: #e7eaf3;
 
   /* 圆角 / 阴影 / 间距 / 字号 */
   --radius: 14px; --radius-sm: 9px;
@@ -60,7 +59,6 @@
   --teal: #2dd4bf;   --teal-soft: #134e4a;
   --amber: #fbbf24;  --amber-soft: #78350f;
   --rose: #fb7185;   --rose-soft: #4c1d2f;
-  --violet: #a78bfa; --violet-soft: #3b1d6e;
   --sky: #38bdf8;    --sky-soft: #0c4a6e;
   --green: #34d399;  --green-soft: #064e3b;
 
