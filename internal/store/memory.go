@@ -1361,9 +1361,12 @@ func (m *MemoryStore) CreateAlertRule(r *AlertRule) *AlertRule {
 	if r.CreatedAt.IsZero() {
 		r.CreatedAt = time.Now()
 	}
-	m.alertRules[r.ID] = r
-	cp := *r
-	return &cp
+	// 深拷贝存储，避免调用方继续修改 r 影响 store 内部状态
+	// （AlertRule 字段均为值类型，浅拷贝即深拷贝）。
+	stored := *r
+	m.alertRules[r.ID] = &stored
+	ret := *r
+	return &ret
 }
 
 // ListAlertRules 返回告警规则（task 100）；tenantID 非空时按租户过滤。
@@ -1434,7 +1437,10 @@ func (m *MemoryStore) SaveOSTemplate(t *OSTemplate) error {
 		t.CreatedAt = now
 	}
 	t.UpdatedAt = now
-	m.osTemplates[t.ID] = t
+	// 深拷贝存储，避免调用方继续修改 t 影响 store 内部状态
+	// （OSTemplate 字段均为值类型，浅拷贝即深拷贝）。
+	stored := *t
+	m.osTemplates[t.ID] = &stored
 	return nil
 }
 
@@ -1516,7 +1522,10 @@ func (m *MemoryStore) SaveMiddlewareTemplate(t *MiddlewareTemplate) error {
 		t.CreatedAt = now
 	}
 	t.UpdatedAt = now
-	m.middlewareTemplates[t.ID] = t
+	// 深拷贝存储，避免调用方继续修改 t 影响 store 内部状态
+	// （MiddlewareTemplate 字段均为值类型，浅拷贝即深拷贝）。
+	stored := *t
+	m.middlewareTemplates[t.ID] = &stored
 	return nil
 }
 

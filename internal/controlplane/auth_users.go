@@ -199,7 +199,7 @@ func (s *Server) handleRejectUser(w http.ResponseWriter, r *http.Request, id str
 	}
 	// 请求体可选；解析失败时记录日志（兼容空 body 调用）。
 	if err := decodeJSONBody(w, r, &body); err != nil && err != io.EOF {
-		log.Printf("controlplane: handleApproveUser 解析请求体失败: %v", err)
+		log.Printf("controlplane: handleRejectUser 解析请求体失败: %v", err)
 	}
 	existing := s.store.GetUser(id)
 	if existing == nil {

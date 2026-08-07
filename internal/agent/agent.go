@@ -687,8 +687,10 @@ func (b *limitedBuffer) String() string {
 //
 // 设计决策（task 98）：仅拦截最高危元字符，平衡安全与可用性：
 //   - ";"  命令分隔符，高危（可拼接任意命令），拦截。
-//   - "&"  单个 & 为后台执行符，高危（可脱离 agent 控制），拦截；但允许 "&&"（条件拼接，
-//     合法运维极常用，如 systemctl status nginx && echo ok），通过剔除 && 后检测剩余 & 实现。
+//   - "&"  单个 & 为后台执行符，高危（可脱离 agent 控制），拦截；但允许以下合法模式：
+//     "&&"（条件拼接，合法运维常用，如 systemctl status nginx && echo ok）、
+//     ">&"/"&>"（fd 重定向/合并重定向，如 echo hello 1>&2、cmd &>file），
+//     通过先剔除这些合法模式再检测剩余 & 实现。
 //   - "$(" 命令替换注入，高危（可执行任意子命令），拦截。
 //   - "`"  反引号命令替换，高危（可执行任意子命令），拦截。
 //   - "|"  管道符暂不拦截——合法运维用途过多（如 systemctl status nginx | grep Active），
@@ -699,9 +701,16 @@ func checkShellMetachars(command string) error {
 	if strings.Contains(command, ";") {
 		return errors.New("shell command contains dangerous metacharacters (';'): command rejected")
 	}
-	// 检测单个 &（后台执行），允许 &&（条件拼接，合法运维常用）。
-	// 实现方式：将所有 "&&" 替换为空串后，若仍含 "&" 说明存在单个 & 后台执行符。
-	if strings.Contains(strings.ReplaceAll(command, "&&", ""), "&") {
+	// 检测单个 &（后台执行），允许合法模式：
+	//   - "&&"  条件拼接（合法运维常用）
+	//   - ">&"  fd 重定向/合并（如 1>&2、2>&1）
+	//   - "&>"  重定向 stdout+stderr 到文件（如 cmd &>file）
+	// 实现方式：将上述合法模式替换为空串后，若仍含 & 说明存在单个 & 后台执行符。
+	cmd := command
+	cmd = strings.ReplaceAll(cmd, ">&", "")
+	cmd = strings.ReplaceAll(cmd, "&>", "")
+	cmd = strings.ReplaceAll(cmd, "&&", "")
+	if strings.Contains(cmd, "&") {
 		return errors.New("shell command contains dangerous metacharacters ('&'): command rejected")
 	}
 	if strings.Contains(command, "$(") {
@@ -987,6 +996,9 @@ func (a *Agent) collectAndReportLogs(ctx context.Context) {
 // 基于 offset 增量读取：记录上次读取到的文件大小作为 offset，下次从 offset 处读到文件末尾。
 // 处理文件轮转：若当前文件大小小于已记录的 offset，说明文件被截断或轮转，重置 offset 从头读。
 // 返回新增内容字符串；无新增时返回空串。
+//
+// 安全（OOM 防护）：单次读取上限 1MB（io.LimitReader），避免日志暴增导致 agent OOM。
+// 若新增内容超过 1MB，本次仅返回前 1MB，offset 推进到 offset+1MB，剩余内容下次循环再读。
 func (a *Agent) readLogIncrement(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -1006,15 +1018,16 @@ func (a *Agent) readLogIncrement(path string) (string, error) {
 	if fi.Size() == offset {
 		return "", nil
 	}
-	// 定位到 offset 处读取到文件末尾。
+	// 定位到 offset 处读取到文件末尾（上限 1MB 防 OOM）。
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		return "", err
 	}
-	data, err := io.ReadAll(f)
+	data, err := io.ReadAll(io.LimitReader(f, 1<<20))
 	if err != nil {
 		return "", err
 	}
-	// 更新 offset 为当前文件大小，下次从此处继续读。
-	a.logOffsets[path] = fi.Size()
+	// 更新 offset 为本次读取结束位置，下次从此处继续读。
+	// 用 offset+len(data) 而非 fi.Size()：若本次因 1MB 上限未读完，fi.Size() 会跳过未读内容。
+	a.logOffsets[path] = offset + int64(len(data))
 	return string(data), nil
 }

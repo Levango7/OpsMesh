@@ -31,6 +31,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -242,13 +244,37 @@ func consumeChangePasswordToken(id string) (*changePasswordSession, bool) {
 	return cs, true
 }
 
+// changePasswordTokenSweepExpiry 改密令牌过期清理阈值：令牌过期超过此时长后由 sweep 回收。
+// 取 10 分钟。consumeChangePasswordToken 消费时已即时删除；此处仅兜底清理未被消费的过期残留，
+// 约束 changePasswordTokens map 在长运行中的最长滞留（≤ changePasswordTokenExpiry + 此阈值），
+// 防无界增长（内存泄漏）。阈值 > 0 确保不会误清理仍在有效期内的令牌。
+const changePasswordTokenSweepExpiry = 10 * time.Minute
+
+// purgeExpiredChangePasswordTokens 清理过期改密令牌（过期超过 changePasswordTokenSweepExpiry 的）。
+// 由 loginGuard.sweep 周期调用，防 changePasswordTokens map 在长运行中无界增长。
+// 加锁保护，与 createChangePasswordToken/consumeChangePasswordToken 互斥。
+func purgeExpiredChangePasswordTokens() {
+	changePasswordTokens.Lock()
+	defer changePasswordTokens.Unlock()
+	now := time.Now()
+	for id, cs := range changePasswordTokens.m {
+		// cs.ExpiresAt 为过期时刻；now.Sub(cs.ExpiresAt) 为已过期时长，超过阈值则回收。
+		if now.Sub(cs.ExpiresAt) > changePasswordTokenSweepExpiry {
+			delete(changePasswordTokens.m, id)
+		}
+	}
+}
+
 // randHexID 生成随机十六进制 ID（16 字节，crypto/rand 密码学安全）。
 // 用于用户/角色 ID 分配（调用方未填 ID 时）。
+//
+// 安全要求：熵源失败时 panic 而非回退到可预测值。回退到 "prefix+timestamp+fallback"
+// 会使 ID 可预测，攻击者可枚举/伪造 ID 绕过唯一性假设；密码学安全场景下熵源不可用
+// 属于不可恢复的运行时故障，应快速失败暴露问题而非静默降级。
 func randHexID(prefix string) string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		// 熵源失败回退时间戳（降级但可容忍，唯一性由 store 索引兜底）。
-		return prefix + "-" + hex.EncodeToString([]byte(time.Now().Format("20060102150405"))) + "fallback"
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
 	}
 	return prefix + "-" + hex.EncodeToString(b)
 }
@@ -390,10 +416,12 @@ func (g *loginGuard) startSweep(interval time.Duration) {
 
 // sweep 清理过期条目：
 //   - ips：令牌已回满（无待补充）且超过 1 小时无新活动 → 回收；
-//   - fails：当前未锁定且失败窗口已过的失败计数 → 回收。
+//   - fails：当前未锁定且失败窗口已过的失败计数 → 回收；
+//   - changePasswordTokens：过期超过 changePasswordTokenSweepExpiry 的改密令牌 → 回收。
+//
+// changePasswordTokens 使用独立锁，在 g.mu 释放后清理，避免持 g.mu 时嵌套加锁。
 func (g *loginGuard) sweep() {
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	now := time.Now()
 	for ip, rec := range g.ips {
 		if rec.tokens >= loginRateBurst && now.Sub(rec.last) > time.Hour {
@@ -405,6 +433,9 @@ func (g *loginGuard) sweep() {
 			delete(g.fails, user)
 		}
 	}
+	g.mu.Unlock()
+	// 清理过期改密令牌（独立锁，g.mu 已释放）。
+	purgeExpiredChangePasswordTokens()
 }
 
 // clientIP 提取客户端真实 IP。
@@ -605,13 +636,23 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, requi
 // 统一产品级 RBAC 闸（B3：权限控制无疏漏）—— 兼容两种身份来源。
 // ============================================================================
 
-// rolePermCache 缓存角色名→权限集合映射（取自 store.RolePermissions()，包初始化时计算一次）。
-var rolePermCache = store.RolePermissions()
+// getRolePermCache 返回角色名→权限集合映射（取自 store.RolePermissions()）。
+//
+// 原实现为包初始化时计算一次的全局 var rolePermCache，管理员经 CreateRole/UpdateRole/
+// DeleteRole 修改角色权限后缓存不更新，导致权限陈旧（已分配新权限的用户被旧缓存拒绝，
+// 或已收回权限的用户仍被旧缓存放行）。改为每次调用动态查询 store.RolePermissions()，
+// 保证权限划分始终与 seedRBAC/DB 当前定义一致，杜绝定义漂移。
+//
+// 性能：store.RolePermissions() 仅遍历预置 rbacPermSpecs 派生映射（纯内存计算，无 IO），
+// 每次调用开销可忽略，且 authorizeByRoles 仅在网关注入/联邦转发路径（非热路径）调用。
+func getRolePermCache() map[string][]string {
+	return store.RolePermissions()
+}
 
 // requireProd 统一产品级 RBAC 鉴权闸：在 requireTenantContext（租户隔离）之后调用，
 // 校验当前身份是否拥有 required 权限。兼容两种身份来源：
-//   - 联邦入站（X-Federation-Forwarded=1）：调用方已用 verifyFederationRequest 验签 HMAC，
-//     信任来自可信控制面 peer 的请求（用户级 RBAC 已在来源控制面执行）；直接放行。
+//   - 联邦入站（X-Federation-Forwarded=1）：必须经 verifyFederationRequest 验签 HMAC 通过，
+//     信任来自可信控制面 peer 的请求（用户级 RBAC 已在来源控制面执行）；验签失败 → 403。
 //   - Authorization: Bearer（或 opsmesh_at Cookie）：走 JWT 路径（requirePermission）。
 //   - 网关注入 X-User-Roles（角色名）：展开为权限集合后校验（authorizeByRoles）。
 //   - demo 模式且无任何身份头：放行，保持本地一键体验的宽松语义（与 requireTenantContext 一致）。
@@ -619,8 +660,14 @@ var rolePermCache = store.RolePermissions()
 //
 // 返回 (user, ok)；ok=false 时已写入响应，调用方应直接 return。
 func (s *Server) requireProd(w http.ResponseWriter, r *http.Request, required string) (*store.User, bool) {
-	// 1. 联邦入站：verifyFederationRequest 已验签 HMAC，信任 peer（用户 RBAC 已在来源侧执行）。
+	// 1. 联邦入站：必须验签 HMAC 通过才信任 peer（用户 RBAC 已在来源侧执行）。
+	//    原实现仅判断头存在即放行，未验签，任意客户端伪造 X-Federation-Forwarded=1 即可绕过 RBAC。
 	if r.Header.Get("X-Federation-Forwarded") == "1" {
+		if err := s.verifyFederationRequest(r); err != nil {
+			log.Printf("controlplane: requireProd 联邦验签失败: %v", err)
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "federation signature verification failed"})
+			return nil, false
+		}
 		return nil, true
 	}
 	// 2. JWT Bearer / Cookie 路径：用户中心登录后携带的 token。
@@ -653,8 +700,10 @@ func (s *Server) authorizeByRoles(w http.ResponseWriter, r *http.Request, requir
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "no roles in identity context"})
 		return nil, false
 	}
+	// 动态查询角色权限映射，保证管理员修改角色权限后立即生效（无陈旧缓存）。
+	rolePerms := getRolePermCache()
 	for _, rn := range roleNames {
-		for _, p := range rolePermCache[rn] {
+		for _, p := range rolePerms[rn] {
 			if p == required {
 				return nil, true
 			}

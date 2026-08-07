@@ -70,6 +70,15 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
 		return
 	}
+	// 默认角色存在性校验：注册用户硬编码绑定 role-viewer，须确保该角色已 seed 入库。
+	// 若角色缺失（seed 未执行/被误删），继续创建会把无效角色引用写入用户记录，导致后续
+	// 权限展开失败（userPermissions 跳过 nil 角色），用户实际无任何权限且难以排查。
+	// 此处前置校验快速失败暴露配置问题，返回 500 表明是服务端数据缺陷而非客户端错误。
+	if s.store.GetRole("role-viewer") == nil {
+		log.Printf("controlplane: handleAuthRegister 默认角色 role-viewer 不存在，注册中止")
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "default role not found"})
+		return
+	}
 	hash, err := hashPassword(body.Password)
 	if err != nil {
 		log.Printf("controlplane: handleAuthRegister 哈希密码失败: %v", err)

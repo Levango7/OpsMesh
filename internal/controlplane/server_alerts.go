@@ -191,9 +191,10 @@ func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id s
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert not found"})
 		return
 	}
-	until := time.Now()
+	// 缺省静默 24h（与注释一致）；显式指定 DurationMinutes>0 时覆盖。
+	until := time.Now().Add(24 * time.Hour)
 	if body.DurationMinutes > 0 {
-		until = until.Add(time.Duration(body.DurationMinutes) * time.Minute)
+		until = time.Now().Add(time.Duration(body.DurationMinutes) * time.Minute)
 	}
 	if !s.store.SilenceAlert(id, actx.TenantID, actx.UserID, until, body.Comment) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "alert not found or tenant mismatch"})
@@ -360,6 +361,8 @@ type alertRuleStore struct {
 	rules map[string]*AlertRule // key: rule.ID
 }
 
+// TODO(tech-debt): globalAlertRules 应迁移到 store.AlertRule 持久化，
+// 当前进程内全局存储在多副本 HA 下会数据分裂。
 var globalAlertRules = &alertRuleStore{rules: make(map[string]*AlertRule)}
 
 func (s *alertRuleStore) list(tenantID string) []*AlertRule {

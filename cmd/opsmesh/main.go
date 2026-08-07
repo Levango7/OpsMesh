@@ -68,15 +68,27 @@ func main() {
 //
 // 设计要点：
 //   - 用独立 FlagSet 解析 --http-port，避免污染 config.Load 的全局 flag 表；
+//   - 从 os.Args[1:] 过滤掉 --health/-health 自身再 parse，避免假设 --health 必为首个参数
+//     （如 `opsmesh --http-port=8080 --health` 时 os.Args[2:] 含 --health，FlagSet 不认识会 exit 2）；
+//   - FlagSet 用 ContinueOnError，parse 失败返回 2（参数错误），不污染主进程 flag 表；
 //   - 3s 超时与 docker-compose healthcheck.timeout 对齐，避免阻塞容器编排；
 //   - 仅依赖 Go 标准库，distroless 镜像无需 curl/wget/sh 即可探活；
 //   - 错误诊断输出到 stderr，stdout 保持空，便于编排系统解析退出码。
 func runHealth() int {
-	fs := flag.NewFlagSet("health", flag.ExitOnError)
+	fs := flag.NewFlagSet("health", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
 	httpPort := fs.Int("http-port", 8080, "控制面 HTTP 端口（探活目标）")
-	if err := fs.Parse(os.Args[2:]); err != nil {
-		// flag.ExitOnError 已处理（打印用法 + exit 2），此处不可达。
-		return 1
+	// 过滤掉 --health/-health 自身，剩余参数交给 FlagSet 解析。
+	// 这样无论 --health 出现在命令行哪个位置都能正确解析其他 flag。
+	var args []string
+	for _, a := range os.Args[1:] {
+		if a == "--health" || a == "-health" {
+			continue
+		}
+		args = append(args, a)
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
 	}
 
 	url := fmt.Sprintf("http://localhost:%d/healthz", *httpPort)

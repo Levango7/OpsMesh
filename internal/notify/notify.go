@@ -177,6 +177,13 @@ func wecomMarkdown(a *proto.Alert) map[string]interface{} {
 // 通道识别与 Webhook 分发
 // ============================================================================
 
+// matchDomain 判断 host 是否等于 domain 或为其子域（host == domain 或 host 以 "."+domain 结尾）。
+// 用于 DetectChannelByURL 的精确域名匹配，避免 strings.Contains 的子串误判
+// （如 strings.Contains("evil-slack.com.attacker.com", "slack.com") 会误命中）。
+func matchDomain(host, domain string) bool {
+	return host == domain || strings.HasSuffix(host, "."+domain)
+}
+
 // DetectChannelByURL 根据 webhook URL 域名自动识别通道：
 //   - slack.com → "slack"
 //   - qyapi.weixin.qq.com → "wecom"（企业微信）
@@ -190,10 +197,10 @@ func DetectChannelByURL(webhookURL string) string {
 		return ""
 	}
 	host := strings.ToLower(u.Host)
-	if strings.Contains(host, "slack.com") {
+	if matchDomain(host, "slack.com") {
 		return "slack"
 	}
-	if strings.Contains(host, "qyapi.weixin.qq.com") {
+	if matchDomain(host, "qyapi.weixin.qq.com") {
 		return "wecom"
 	}
 	return ""
@@ -280,8 +287,20 @@ func SendEmail(cfg *EmailConfig, a *proto.Alert) error {
 	}
 }
 
+// sanitizeEmailField 移除邮件字段中的 CR/LF，防止邮件头注入
+// （如 subject 含 "\r\nBcc: attacker@x.com" 会注入 Bcc 头）。
+// 告警的 DeviceID/Message 来自设备上报，可能含恶意换行，故 subject/body 均需转义。
+func sanitizeEmailField(s string) string {
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	return s
+}
+
 // buildRFC822 构造 RFC 822 邮件正文（含必要头：From/To/Subject/MIME/Content-Type）。
+// subject 与 body 经 sanitizeEmailField 转义，移除 CR/LF 防止邮件头注入。
 func buildRFC822(from string, to []string, subject, body string) string {
+	subject = sanitizeEmailField(subject)
+	body = sanitizeEmailField(body)
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "From: %s\r\n", from)
 	fmt.Fprintf(&buf, "To: %s\r\n", strings.Join(to, ", "))

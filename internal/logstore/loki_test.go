@@ -13,14 +13,14 @@ import (
 )
 
 // TestLokiBuildLogQL 验证 OpsMesh Query → LogQL 翻译。
-// 标签顺序固定（app 在前），keyword 翻译为 |~ "kw" regex 管道（全文检索对接 Loki 倒排）。
+// 标签顺序固定（app 在前），keyword 翻译为 |= "kw" 字面子串管道（向后兼容，避免正则元字符改变语义）。
 func TestLokiBuildLogQL(t *testing.T) {
 	s := NewLokiStore("http://loki:3100")
 
 	// 全条件。
 	q := Query{TenantID: "t1", DeviceID: "d1", AgentID: "a1", Level: "error", Source: "task", Keyword: "boom"}
 	got := s.buildLogQL(q)
-	want := `{app="opsmesh", tenant_id="t1", device_id="d1", agent_id="a1", level="error", source="task"} |~ "boom"`
+	want := `{app="opsmesh", tenant_id="t1", device_id="d1", agent_id="a1", level="error", source="task"} |= "boom"`
 	if got != want {
 		t.Fatalf("LogQL 翻译失败:\n got=%q\nwant=%q", got, want)
 	}
@@ -71,8 +71,8 @@ func TestLokiQueryAndParse(t *testing.T) {
 		if !strings.Contains(query, `tenant_id="t1"`) {
 			t.Errorf("query 缺 tenant_id 标签: %s", query)
 		}
-		if !strings.Contains(query, `|~ "boom"`) {
-			t.Errorf("query 缺 keyword regex 管道: %s", query)
+		if !strings.Contains(query, `|= "boom"`) {
+			t.Errorf("query 缺 keyword 字面子串管道: %s", query)
 		}
 		if dir := r.URL.Query().Get("direction"); dir != "backward" {
 			t.Errorf("direction want backward, got %q", dir)

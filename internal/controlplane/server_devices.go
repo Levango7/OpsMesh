@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"opsmesh/internal/domain"
 	"opsmesh/internal/logx"
@@ -265,7 +266,9 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id stri
 	if s.cfg.ProvisionSSHKey != "" {
 		sshAddr := fmt.Sprintf("%s:22", dev.IP)
 		go func(addr, cmd, device string) {
-			ctx := context.Background()
+			// 5 分钟超时，防 SSH 推送阻塞导致 goroutine 泄漏。
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
 			logx.Info(ctx, "SSH 自动推送 agent", "device", device, "sshAddr", addr)
 			out, err := provision.PushAndExec(ctx, addr, s.cfg.ProvisionSSHUser, s.cfg.ProvisionSSHKey, s.cfg.ProvisionSSHKP, s.cfg.ProvisionSSHKnownHosts, cmd)
 			if err != nil {
