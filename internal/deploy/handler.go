@@ -426,9 +426,15 @@ func (h *Handler) Reconcile(ctx context.Context, id int64, tenantID string) erro
 //   - HealthCheckURL：由调用方在外部评估（此处仅按任务终态判定），URL 留待扩展。
 //
 // gate 全零值时（已由 ResolvedGate 回退默认）要求 100% 成功。
+// 仅设 MaxFailRate 未设 SuccessRate 时，默认要求 SuccessRate>=1（至少 1% 成功率），
+// 避免 MaxFailRate=100 时 0% 成功率也被放行的边界漏洞。
 func evaluateGate(gate GateConfig, done, failed, total int) bool {
 	if total == 0 {
 		return false
+	}
+	// 仅设 MaxFailRate 未设 SuccessRate 时，补默认 SuccessRate=1，避免 0% 成功率被放行。
+	if gate.SuccessRate == 0 && gate.MaxFailRate > 0 {
+		gate.SuccessRate = 1
 	}
 	successRate := float64(done) / float64(total) * 100.0
 	failRate := float64(failed) / float64(total) * 100.0

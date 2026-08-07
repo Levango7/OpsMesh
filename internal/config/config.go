@@ -419,11 +419,14 @@ func Load() *Config {
 		cfg.RequireAuth = true
 	}
 	// P1-7 注册安全：生产模式但未显式设置 --public-register 时，默认关闭公开注册（安全基线）。
-	// demo 模式始终强制 PublicRegister=true（接口开放，方便演示），但是否免审批由 AllowPublicRegister 控制。
+	// demo 模式默认强制 PublicRegister=true（接口开放，方便演示），但是否免审批由 AllowPublicRegister 控制。
 	// 默认 AllowPublicRegister=false：demo 模式下注册也走 pending 审批流程（安全基线）；
 	// 显式 --allow-public-register=true 时 demo 模式注册才免审批（Status=active + 立即签发 token）。
+	// 显式 --public-register=false 时尊重用户设置（不覆盖），用于 demo 模式下仍想关闭公开注册的场景。
 	if cfg.Demo {
-		cfg.PublicRegister = true
+		if !explicit["public-register"] {
+			cfg.PublicRegister = true
+		}
 	} else if cfg.Production && !explicit["public-register"] {
 		cfg.PublicRegister = false
 	}

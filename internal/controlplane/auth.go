@@ -174,6 +174,8 @@ func (s *Server) consumeRefreshToken(id, deviceFP string) (*store.RefreshToken, 
 	}
 	// 设备绑定校验（task 112）：存储的 DeviceFP 非空且请求携带了 DeviceFP 时，两者必须匹配。
 	// 存储 DeviceFP 为空（旧客户端签发时未绑定）或请求未携带 DeviceFP 时不校验（向后兼容）。
+	// 注：DeviceFP 为空时跳过校验，兼容旧客户端签发的 token（未绑定设备指纹）。
+	// 新签发的 refresh token 均绑定 DeviceFP，旧 token 旋转后自动获得绑定。
 	if rt.DeviceFP != "" && deviceFP != "" && rt.DeviceFP != deviceFP {
 		return nil, false
 	}
@@ -308,8 +310,8 @@ func verifyPassword(hash, password string) bool {
 // ============================================================================
 
 const (
-	loginRateBurst  = 10               // 令牌桶容量（瞬时允许的最大尝试数）
-	loginRateRefill = 1.0 / 3.0        // 令牌补充速率（每秒），约每 3s 1 个，≈20/min
+	loginRateBurst  = 5                // 令牌桶容量（瞬时允许的最大尝试数）；收紧自 10，强化撞库防护
+	loginRateRefill = 1.0 / 6.0        // 令牌补充速率（每秒），约每 6s 1 个，≈10/min；收紧自 1/3（≈20/min）
 	loginMaxFails   = 5                // 单账号允许的连续失败次数
 	loginFailWindow = 15 * time.Minute // 失败计数滑动窗口
 	loginLockDur    = 15 * time.Minute // 账号锁定时长
@@ -319,6 +321,7 @@ type loginGuard struct {
 	mu    sync.Mutex
 	ips   map[string]*rateRec // 客户端 IP -> 限流令牌桶
 	fails map[string]*failRec // 用户名 -> 失败计数记录
+	done  chan struct{}       // stopSweep 关闭此 chan 通知 sweep goroutine 退出
 }
 
 type rateRec struct {
@@ -336,6 +339,7 @@ func newLoginGuard() *loginGuard {
 	return &loginGuard{
 		ips:   make(map[string]*rateRec),
 		fails: make(map[string]*failRec),
+		done:  make(chan struct{}),
 	}
 }
 
@@ -401,6 +405,11 @@ func (g *loginGuard) resetFail(username string) {
 // startSweep 启动后台回收 goroutine，定期清理过期限流令牌桶与已解锁且超窗的失败计数，
 // 防止 ips/fails map 在长运行中无界增长（原实现只增不删，进程内内存泄漏）。
 // 仅在 NewServer（生产路径）调用；测试直接构造 Server 不触发，避免测试悬挂 goroutine。
+//
+// 退出机制：goroutine 通过 select 监听 g.done 与 ticker.C，stopSweep 关闭 g.done 即可让其
+// 优雅退出。当前 Server 未暴露 Close/Shutdown 方法，调用方（NewServer 的拥有者）在销毁
+// Server 前应显式调用 s.loginGuard.stopSweep() 以避免 goroutine 泄漏；后续若新增 Server.Close
+// 应在其中调用 stopSweep。
 func (g *loginGuard) startSweep(interval time.Duration) {
 	if interval <= 0 {
 		interval = 10 * time.Minute
@@ -408,10 +417,22 @@ func (g *loginGuard) startSweep(interval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
-			g.sweep()
+		for {
+			select {
+			case <-g.done:
+				return
+			case <-ticker.C:
+				g.sweep()
+			}
 		}
 	}()
+}
+
+// stopSweep 通知 startSweep 启动的后台 goroutine 退出（关闭 done chan）。
+// 幂等：用 recover 容忍多次调用（重复 close 已关闭 chan 会 panic）。
+func (g *loginGuard) stopSweep() {
+	defer func() { _ = recover() }()
+	close(g.done)
 }
 
 // sweep 清理过期条目：

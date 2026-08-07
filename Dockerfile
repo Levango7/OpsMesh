@@ -14,9 +14,10 @@ FROM gcr.io/distroless/static-debian12 AS runtime
 # distroless static-debian12 内置 nonroot 用户（UID/GID 65532），以非 root 运行（H16）。
 USER nonroot:nonroot
 COPY --from=build /opsmesh /usr/local/bin/opsmesh
-# distroless 无 curl/wget，HEALTHCHECK 复用二进制自身做轻量探活（要求 opsmesh 支持 --version 且快速退出）。
-# 若二进制不支持该探测语义，可移除本行改由 K8s liveness/readiness probe（TCP/HTTP）兜底。
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s CMD ["/usr/local/bin/opsmesh", "--mode=controlplane", "--version"]
+# distroless 无 curl/wget，HEALTHCHECK 复用二进制 --health 子命令探活 localhost:8080/healthz。
+# --health 在 config.Load 之前短路，纯 Go 标准库实现（无需 curl/sh），HTTP 200 → 退出 0，否则 → 退出 1。
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["/usr/local/bin/opsmesh", "--health"]
 # 默认起控制面；agent 模式通过 deployment args 覆盖：["--mode=agent","--control-addr=..."]
 ENTRYPOINT ["/usr/local/bin/opsmesh"]
 CMD ["--mode=controlplane"]

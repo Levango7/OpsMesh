@@ -1,4 +1,3 @@
-
 // server_tasks.go 任务相关 HTTP handler 与后台循环。
 //
 // 从 server.go 拆分而来（task 114：按路由域拆分巨型 server.go）。
@@ -19,6 +18,20 @@ import (
 	"opsmesh/internal/logx"
 	"opsmesh/internal/proto"
 )
+
+// sanitizeAuditDetail 对写入审计/事件 Detail 的用户输入做脱敏与规范化：
+//   - 移除换行符（\n→空格、\r→删除），防日志注入/解析错位；
+//   - 截断超过 200 字符的内容，避免长命令撑爆日志、可能携带的敏感尾部外泄。
+//
+// 仅用于含用户原始输入（body.Command / body.Reason）的 Detail；固定字符串无需调用。
+func sanitizeAuditDetail(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", "")
+	if len(s) > 200 {
+		s = s[:200] + "..."
+	}
+	return s
+}
 
 // handleCreateTask 处理 POST /api/v1/tasks：内部下发入口（P0-2）。
 // 请求体：{ "agentID": "...", "type": "shell", "command": "...", "tenantID": "可选" }
@@ -80,13 +93,13 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		UserID:   actx.UserID,
 		Action:   "create_task",
 		Target:   task.TaskID,
-		Detail:   body.Command,
+		Detail:   sanitizeAuditDetail(body.Command),
 	})
 	// 事件总线（P1-5）+ 队列深度观测（P2-1）。
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: targetTenant, UserID: actx.UserID,
-			Action: "create_task", Target: task.TaskID, Detail: body.Command, Level: events.LevelInfo,
+			Action: "create_task", Target: task.TaskID, Detail: sanitizeAuditDetail(body.Command), Level: events.LevelInfo,
 		})
 	}
 	if s.metrics != nil {
@@ -324,12 +337,12 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 			UserID:   actx.UserID,
 			Action:   "create_task",
 			Target:   task.TaskID,
-			Detail:   "batch:" + body.Command,
+			Detail:   sanitizeAuditDetail("batch:" + body.Command),
 		})
 		if s.bus != nil {
 			s.bus.Publish(r.Context(), events.Event{
 				TenantID: targetTenant, UserID: actx.UserID,
-				Action: "create_task", Target: task.TaskID, Detail: "batch:" + body.Command, Level: events.LevelInfo,
+				Action: "create_task", Target: task.TaskID, Detail: sanitizeAuditDetail("batch:" + body.Command), Level: events.LevelInfo,
 			})
 		}
 		created = append(created, task.TaskID)
@@ -508,7 +521,7 @@ func (s *Server) handleRejectTask(w http.ResponseWriter, r *http.Request, id str
 	}
 	s.store.Audit(&proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "reject_task", Target: id,
-		Detail: "rejected via HTTP: " + body.Reason,
+		Detail: sanitizeAuditDetail("rejected via HTTP: " + body.Reason),
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{

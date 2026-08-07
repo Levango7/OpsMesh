@@ -64,7 +64,10 @@ spec:
           {{- include "opsmesh.imagePullSecrets" . | nindent 10 }}
           restartPolicy: OnFailure
           securityContext:
-            runAsNonRoot: false
+            # 以 mysql 用户（UID 999）非 root 运行，符合最小权限原则。
+            # mysqldump 仅需读凭据 + 写 /backup PVC，无需 root；PVC fsGroup=999 保证卷可写。
+            runAsNonRoot: true
+            runAsUser: 999
             fsGroup: 999
           containers:
             - name: mysqldump
@@ -106,6 +109,11 @@ spec:
                   echo "[backup] done size=$(du -h "${OUT}" | cut -f1)"
                   # 保留最近 N 天的本地备份文件
                   KEEP={{ .Values.mysql.backup.retentionDays | default 7 }}
+                  # 校验 KEEP 为正整数，防止 helm values 注入 shell（如 retentionDays: "7; rm -rf /"）
+                  if ! echo "$KEEP" | grep -qE '^[0-9]+$'; then
+                    echo "ERROR: KEEP must be a positive integer, got: $KEEP"
+                    exit 1
+                  fi
                   find /backup -name "${MYSQL_DATABASE}-*.sql.gz" -type f -mtime +${KEEP} -print -delete \
                     | sed 's/^/[backup] pruned /'
                   echo "[backup] retention=${KEEP}d complete"

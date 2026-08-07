@@ -99,6 +99,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		Status:       initialStatus,
 		RoleIDs:      []string{"role-viewer"}, // 注册用户默认 viewer 角色
 	}
+	// 注：store.CreateUser 内部也会校验用户名唯一性（兜底），此处提前检查以提供更友好的错误消息。
 	if s.store.CreateUser(u) == nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
 		return

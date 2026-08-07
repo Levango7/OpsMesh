@@ -111,7 +111,7 @@ jobs:
           args: ./...
       - name: govulncheck（task 91：官方 Go 漏洞数据库扫描）
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           govulncheck ./...
       - name: Trivy 文件系统扫描
         uses: aquasecurity/trivy-action@v0.9.2  # task 91：钉死版本，防 @master 供应链漂移

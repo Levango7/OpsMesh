@@ -237,9 +237,41 @@ func collectCmdbMiddleware() []proto.CmdbAttr {
 		psOutput = string(out)
 	}
 	psLower := strings.ToLower(psOutput)
+	// 按行匹配进程名而非全文子串，避免 /home/mysql_backup/script.sh 等路径误报 mysql。
+	// - Linux/Darwin ps aux: 前 10 列为 USER PID %CPU %MEM VSZ RSS TTY STAT START TIME，
+	//   第 11 列起为 COMMAND；取 COMMAND 首个 token 的 basename 作为进程名。
+	//   另取末字段 basename 兼容 Java 中间件（进程名 java，类名/jar 在命令行末尾）。
+	// - Windows tasklist: 第一列为映像名（如 mysql.exe）。
+	// 权衡：仍用 Contains 匹配进程名，not_mysql_process 等罕见名仍可能误报，
+	// 但已消除路径/参数/其他列的误报，显著优于全文 Contains。
+	found := make(map[string]bool)
+	for _, line := range strings.Split(psLower, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		var candidates []string
+		if runtime.GOOS == "windows" {
+			candidates = []string{fields[0]}
+		} else {
+			candidates = make([]string, 0, 2)
+			if len(fields) >= 11 {
+				candidates = append(candidates, filepath.Base(fields[10]))
+			}
+			candidates = append(candidates, filepath.Base(fields[len(fields)-1]))
+		}
+		for _, procName := range candidates {
+			for _, kw := range keywords {
+				if strings.Contains(procName, kw) {
+					found[kw] = true
+					break
+				}
+			}
+		}
+	}
 	var attrs []proto.CmdbAttr
 	for _, kw := range keywords {
-		if strings.Contains(psLower, kw) {
+		if found[kw] {
 			attrs = append(attrs, proto.CmdbAttr{
 				Key:   "middleware." + kw + ".installed",
 				Value: "true",

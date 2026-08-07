@@ -1279,6 +1279,7 @@ func (m *MemoryStore) DeviceMetrics(deviceID string) *proto.DeviceMetrics {
 func (m *MemoryStore) ApproveTask(id, tenantID, approvedBy string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// TODO(perf): ApproveTask/RejectTask 遍历所有任务为 O(N)，任务量大时需优化为按 ID 直查。
 	for _, ts := range m.tasks {
 		for _, t := range ts {
 			if t.TaskID != id {
@@ -1307,6 +1308,7 @@ func (m *MemoryStore) ApproveTask(id, tenantID, approvedBy string) bool {
 func (m *MemoryStore) RejectTask(id, tenantID, approvedBy string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// TODO(perf): ApproveTask/RejectTask 遍历所有任务为 O(N)，任务量大时需优化为按 ID 直查。
 	for _, ts := range m.tasks {
 		for _, t := range ts {
 			if t.TaskID != id {

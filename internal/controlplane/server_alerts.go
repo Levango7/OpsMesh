@@ -1,4 +1,3 @@
-
 // server_alerts.go 告警相关 HTTP handler、后台推送循环与告警规则 CRUD。
 //
 // 从 server.go 拆分而来（task 114：按路由域拆分巨型 server.go）。
