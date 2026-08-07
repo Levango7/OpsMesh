@@ -153,18 +153,32 @@ jobs:
   image:
     runs-on: ubuntu-latest
     needs: security
-    if: github.event_name == 'push' && secrets.REGISTRY != ''
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
+      - name: Check registry secret
+        id: check
+        env:
+          REGISTRY: ${{ secrets.REGISTRY }}
+        run: |
+          if [ -z "$REGISTRY" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "REGISTRY secret not set, skipping image build/push"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
       - name: Set up Docker Buildx
+        if: steps.check.outputs.skip != 'true'
         uses: docker/setup-buildx-action@v3
       - name: 登录镜像仓库
+        if: steps.check.outputs.skip != 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ secrets.REGISTRY }}
           username: ${{ secrets.REGISTRY_USER }}
           password: ${{ secrets.REGISTRY_TOKEN }}
       - name: 构建并推送（钉死 digest）
+        if: steps.check.outputs.skip != 'true'
         id: build
         uses: docker/build-push-action@v6
         with:
@@ -174,6 +188,7 @@ jobs:
           # 的 global.image.repository 逐字一致；REGISTRY 必须等于 global.imageRegistry。
           tags: ${{ secrets.REGISTRY }}/opsmesh-binary:${{ github.sha }}
       - name: Trivy 镜像扫描
+        if: steps.check.outputs.skip != 'true'
         uses: aquasecurity/trivy-action@v0.9.2  # task 91：钉死版本，防 @master 供应链漂移
         with:
           image-ref: ${{ secrets.REGISTRY }}/opsmesh-binary:${{ github.sha }}
@@ -190,7 +205,7 @@ jobs:
       # 在 chart 仓库建立前，本步骤即使 secret 齐全也会因 clone 路径不存在而失败——
       # 故 chart 仓库的建立是本闭环的前置依赖（保留步骤以维持 E4 闭环设计完整性）。
       - name: 钉死镜像 tag 写回 GitOps values（E4 闭环）
-        if: secrets.GITOPS_REPO != '' && secrets.GITOPS_PAT != ''
+        if: steps.check.outputs.skip != 'true' && env.GITOPS_REPO != '' && env.GITOPS_PAT != ''
         env:
           TAG: ${{ github.sha }}
           DIGEST: ${{ steps.build.outputs.digest }}
