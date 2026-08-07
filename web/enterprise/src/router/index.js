@@ -16,6 +16,9 @@ const routes = [
   { path: '/devices/:id', name: 'device-detail', component: () => import('@/views/DeviceDetailView.vue'), meta: { title: '设备详情', group: '运维管理', icon: 'device' } },
   { path: '/tasks', name: 'tasks', component: () => import('@/views/TasksView.vue'), meta: { title: '任务下发', group: '运维管理', icon: 'task' } },
   { path: '/alerts', name: 'alerts', component: () => import('@/views/AlertsView.vue'), meta: { title: '监控告警', group: '运维管理', icon: 'alerts' } },
+  { path: '/os-optimize', name: 'os-optimize', component: () => import('@/views/OSOptimizeView.vue'), meta: { title: 'OS 优化', group: '运维管理', icon: 'task' } },
+  { path: '/middleware', name: 'middleware', component: () => import('@/views/MiddlewareDeployView.vue'), meta: { title: '中间件部署', group: '运维管理', icon: 'deploy' } },
+  { path: '/k8s', name: 'k8s', component: () => import('@/views/K8sManageView.vue'), meta: { title: 'K8s 管理', group: '运维管理', icon: 'device' } },
 
   // 资产配置
   { path: '/cmdb', name: 'cmdb', component: () => import('@/views/CMDBView.vue'), meta: { title: '配置项 CMDB', group: '资产配置', icon: 'cmdb' } },

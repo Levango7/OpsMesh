@@ -371,46 +371,144 @@ Agent 端多控制面 failover：`--control-addrs="cp1:9090,cp2:9090"`，客户�
 
 ## 配置参考
 
-| flag | 默认值 | 环境变量 | 说明 |
-|---|---|---|---|
-| `--mode` | controlplane | OPSMESH_MODE | controlplane / agent |
-| `--store` | memory | OPSMESH_STORE | memory / mysql |
-| `--mysql-dsn` | "" | OPSMESH_MYSQL_DSN | MySQL DSN（store=mysql 必填） |
-| `--redis-addr` | "" | OPSMESH_REDIS_ADDR | Redis 地址（store=mysql 推荐） |
-| `--production` | false | OPSMESH_PRODUCTION | 生产模式：require-auth 默认开，无 TLS 告警 |
-| `--require-auth` | false | OPSMESH_REQUIRE_AUTH | 生产模式下默认 true，缺失租户头拒绝 |
-| `--provision-secret` | "" | OPSMESH_PROVISION_SECRET | B1 token 签名密钥（多副本须一致） |
-| `--install-token` | "" | OPSMESH_INSTALL_TOKEN | agent 携带的 install token（bootstrap 注入） |
-| `--tls-cert` | "" | OPSMESH_TLS_CERT | 服务端证书路径 |
-| `--tls-key` | "" | OPSMESH_TLS_KEY | 私钥路径 |
-| `--client-ca` | "" | OPSMESH_CLIENT_CA | mTLS 客户端 CA |
-| `--http-port` | 8080 | OPSMESH_HTTP_PORT | HTTP(B/S) 端口 |
-| `--grpc-port` | 9090 | OPSMESH_GRPC_PORT | gRPC 端口 |
-| `--metrics-port` | 9091 | OPSMESH_METRICS_PORT | metrics 端口 |
-| `--control-addr` | http://127.0.0.1:8080 | OPSMESH_CONTROL_ADDR | 控制面 HTTP 地址（agent 用） |
-| `--control-addrs` | "" | OPSMESH_CONTROL_ADDRS | HA 多控制面地址（逗号分隔） |
-| `--segment` | default | OPSMESH_SEGMENT | agent 所属网段 |
-| `--discover` | false | OPSMESH_DISCOVER | 开启真实网段发现 |
-| `--segment-cidr` | "" | OPSMESH_SEGMENT_CIDR | 扫描网段 |
-| `--task-timeout` | 120s | OPSMESH_TASK_TIMEOUT | 单任务执行超时 |
-| `--shutdown-timeout` | 15s | OPSMESH_SHUTDOWN_TIMEOUT | 优雅退出窗口 |
-| `--worker-concurrency` | 4 | OPSMESH_WORKER_CONCURRENCY | agent worker 池并发度 |
-| `--task-max-retries` | 3 | OPSMESH_TASK_MAX_RETRIES | 任务失败重试上限 |
-| `--task-lease-sec` | 300 | OPSMESH_TASK_LEASE_SEC | 任务租约秒（超期回收） |
-| `--replicas` | 1 | OPSMESH_REPLICAS | 控制面副本数 |
-| `--leader-ttl-sec` | 15 | OPSMESH_LEADER_TTL_SEC | 选主租约 TTL |
-| `--leader-tick-sec` | 5 | OPSMESH_LEADER_TICK_SEC | 选主续租周期 |
-| `--archive-age-min` | 1440 | OPSMESH_ARCHIVE_AGE_MIN | 离线设备自动归档分钟数 |
-| `--event-bus` | noop | OPSMESH_EVENT_BUS | 事件总线类型：noop/log/kafka |
-| `--data-dir` | ./data | OPSMESH_DATA_DIR | agent 身份文件目录 |
-| `--demo` | false | OPSMESH_DEMO | 演示模式：预置示例任务 |
-| `--metrics-allow-cidr` | "" | OPSMESH_METRICS_ALLOW_CIDR | P1-5 metrics(/metrics) 访问控制：逗号分隔 CIDR 白名单；空=不限制（生产建议内网监控网段，如 10.0.0.0/8） |
-| `--federation-peers` | "" | OPSMESH_FEDERATION_PEERS | P1-6 控制面联邦 peer 地址列表（逗号分隔，如 https://peer1:9092）；非空启用联邦（跨网段任务转发/设备视图） |
-| `--federation-secret` | "" | OPSMESH_FEDERATION_SECRET | P1-6 联邦共享 HMAC 密钥（所有 peer 须一致）；空=不分转发身份头（仅内网信任） |
-| `--federation-tls-cert` | "" | OPSMESH_FEDERATION_TLS_CERT | P1-6 联邦 mTLS 证书（独立于 --tls-cert）；空=明文联邦（仅内网） |
-| `--federation-tls-key` | "" | OPSMESH_FEDERATION_TLS_KEY | P1-6 联邦 mTLS 私钥 |
-| `--federation-ca` | "" | OPSMESH_FEDERATION_CA | P1-6 联邦 mTLS 对端 CA（校验证书链 / 要求客户端持证） |
-| `--federation-port` | 0 | OPSMESH_FEDERATION_PORT | P1-6 联邦独立 mTLS 监听端口（>0 启用，强制对端持证）；0=复用主 HTTP |
+OpsMesh 启动参数共 **75 个 flag**，全部支持"命令行 flag 优先、环境变量兜底"语义（同名环境变量前缀 `OPSMESH_`）。下表按功能分组列出全部 flag。完整定义见 `internal/config/config.go`。
+
+### 基础配置
+
+运行模式、监听端口、副本数与演示开关。
+
+| Flag | 类型 | 默认值 | 环境变量 | 说明 |
+|------|------|--------|----------|------|
+| `--mode` | string | controlplane | OPSMESH_MODE | 运行模式: controlplane \| agent |
+| `--addr` | string | 127.0.0.1 | OPSMESH_ADDR | agent 自身地址（占位，供控制面感知） |
+| `--control-addr` | string | http://127.0.0.1:8080 | OPSMESH_CONTROL_ADDR | 控制面 HTTP 地址（agent 注册/心跳/拉任务用） |
+| `--control-addrs` | string | "" | OPSMESH_CONTROL_ADDRS | A3 多控制面地址（逗号分隔，如 cp1:9090,cp2:9090）；agent 依次重试实现 HA failover；空则回退 --control-addr |
+| `--segment` | string | default | OPSMESH_SEGMENT | agent 所属网段（U-02 分桶键） |
+| `--http-port` | int | 8080 | OPSMESH_HTTP_PORT | 控制面 HTTP(B/S) 端口 |
+| `--grpc-port` | int | 9090 | OPSMESH_GRPC_PORT | gRPC 端口（注册/心跳/拉任务/上报/取消） |
+| `--metrics-port` | int | 9091 | OPSMESH_METRICS_PORT | Prometheus metrics 端口 |
+| `--replicas` | int | 1 | OPSMESH_REPLICAS | 控制面副本数（A3 HA）；>1 须用 --store=mysql，否则 memory 多副本数据分裂 |
+| `--production` | bool | false | OPSMESH_PRODUCTION | 生产模式（A4）：默认开启 require-auth，并对 store=memory 强告警 |
+| `--demo` | bool | false | OPSMESH_DEMO | 演示模式（P0-5）：每个 agent 注册预置 uname -a 示例任务（生产务必关闭） |
+
+### 存储配置
+
+控制面持久化后端与多租户 schema 隔离。
+
+| Flag | 类型 | 默认值 | 环境变量 | 说明 |
+|------|------|--------|----------|------|
+| `--store` | string | memory | OPSMESH_STORE | 持久化后端: memory（默认，零依赖） \| mysql（U-04 数据本地化） |
+| `--mysql-dsn` | string | "" | OPSMESH_MYSQL_DSN | MySQL DSN（--store=mysql 时生效），如 user:pass@tcp(mysql:3306)/ops_device |
+| `--redis-addr` | string | "" | OPSMESH_REDIS_ADDR | Redis 地址（--store=mysql 时作 agent/device 状态缓存），如 redis:6379 |
+| `--multi-schema` | bool | false | OPSMESH_MULTI_SCHEMA | 开启多租户 schema 隔离（M4-4C）：每租户路由到独立 MySQL schema；仅 --store=mysql 时生效 |
+| `--schema-prefix` | string | opsmesh_tenant_ | OPSMESH_SCHEMA_PREFIX | schema 名前缀（M4-4C）；最终 schema 名 = 前缀 + tenantID |
+| `--data-dir` | string | ./data | OPSMESH_DATA_DIR | agent 身份文件目录（P0-2）；agent.id 落盘于此，重启沿用 |
+
+### 安全配置
+
+鉴权、TLS/mTLS、JWT、注册策略、agent 侧纵深防御。
+
+| Flag | 类型 | 默认值 | 环境变量 | 说明 |
+|------|------|--------|----------|------|
+| `--require-auth` | bool | false | OPSMESH_REQUIRE_AUTH | 要求网关注入 X-Tenant-ID，缺失则拒绝（生产 hardening）；--production 下默认 true |
+| `--tls-cert` | string | "" | OPSMESH_TLS_CERT | gRPC TLS 服务端证书路径（P1-6；空=关闭） |
+| `--tls-key` | string | "" | OPSMESH_TLS_KEY | gRPC TLS 私钥路径 |
+| `--client-ca` | string | "" | OPSMESH_CLIENT_CA | 服务端要求客户端 CA（mTLS）/ 客户端校验服务端 CA |
+| `--jwt-public-key` | string | "" | OPSMESH_JWT_PUBLIC_KEY | M3-2A JWT 验签公钥 PEM 文件路径（RS256）；空=关闭 JWT 验签回退头注入模式 |
+| `--jwt-issuer` | string | "" | OPSMESH_JWT_ISSUER | M3-2A 预期 JWT issuer（iss claim）；非空时校验 iss 必须匹配 |
+| `--jwt-secret` | string | "" | OPSMESH_JWT_SECRET | 用户中心 JWT 签发密钥（HS256）；空=随机生成（重启后旧 token 失效）；多副本须一致 |
+| `--public-register` | bool | true | OPSMESH_PUBLIC_REGISTER | 允许公开注册（P1-7）：true=开放 /api/v1/auth/register 但新用户须管理员审批；false=关闭公开注册（仅管理员可创建用户） |
+| `--allow-public-register` | bool | false | OPSMESH_ALLOW_PUBLIC_REGISTER | 允许公开注册免审批（P1-7）：true=注册即激活并立即签发 token（仅演示/内网受信环境）；false=所有注册都走 pending 审批流程 |
+| `--grpc-require-signature` | bool | false | OPSMESH_GRPC_REQUIRE_SIGNATURE | gRPC agent 身份绑定：强制要求 agent 在 PullTasks/ReportResult/PollCancels/Heartbeat 携带 HMAC 签名；demo 模式强制关闭；生产模式默认开启 |
+| `--trust-proxy` | bool | false | OPSMESH_TRUST_PROXY | 信任反向代理：开启后 clientIP 取 X-Forwarded-For 首段（仅当有可信 LB/网关前置时启用）；默认 false=仅用 RemoteAddr 防 XFF 伪造绕过限流 |
+| `--cookie-secure` | bool | false | OPSMESH_COOKIE_SECURE | Cookie Secure 标志：true=at/rt Cookie 仅经 HTTPS 传输（防中间人窃取）；默认 false（明文内网/开发需要）；生产模式默认 true |
+| `--agent-shell-whitelist` | string | "" | OPSMESH_AGENT_SHELL_WHITELIST | 安全加固：agent shell 任务允许的命令前缀列表（逗号分隔，如 ls,cat,echo,ping,systemctl,docker,kubectl）；空=不限制 |
+| `--agent-file-root-whitelist` | string | "" | OPSMESH_AGENT_FILE_ROOT_WHITELIST | 安全加固：agent 文件任务允许的根目录白名单（逗号分隔）；空=不限制根目录（仍拒绝 ../ 路径遍历与符号链接） |
+| `--metrics-allow-cidr` | string | "" | OPSMESH_METRICS_ALLOW_CIDR | P1-5 metrics(/metrics) 访问控制：逗号分隔 CIDR 白名单；空=不限制（生产建议内网监控网段，如 10.0.0.0/8） |
+
+### 网络配置
+
+联邦 peer 通道硬化（mTLS + HMAC 签名）。
+
+| Flag | 类型 | 默认值 | 环境变量 | 说明 |
+|------|------|--------|----------|------|
+| `--federation-peers` | string | "" | OPSMESH_FEDERATION_PEERS | M4-4D 控制面联邦 peer 地址列表（逗号分隔，如 http://peer1:8080,http://peer2:8080）；非空时启用联邦 API（跨网段任务转发/联邦设备视图） |
+| `--federation-secret` | string | "" | OPSMESH_FEDERATION_SECRET | P1-6 联邦共享 HMAC 密钥（所有 peer 须一致）；签名/验签转发的身份头，防跨不可信网段伪造租户身份；空=不签名（仅内网信任） |
+| `--federation-tls-cert` | string | "" | OPSMESH_FEDERATION_TLS_CERT | P1-6 联邦 mTLS 服务端/客户端证书（独立于 --tls-cert）；空=明文联邦（仅内网） |
+| `--federation-tls-key` | string | "" | OPSMESH_FEDERATION_TLS_KEY | P1-6 联邦 mTLS 私钥 |
+| `--federation-ca` | string | "" | OPSMESH_FEDERATION_CA | P1-6 联邦 mTLS 对端 CA（校验证书链/要求客户端持证） |
+| `--federation-port` | int | 0 | OPSMESH_FEDERATION_PORT | P1-6 联邦独立 mTLS 监听端口（>0 启用，强制对端持证）；0=不启用独立监听（复用主 HTTP） |
+
+### 告警配置
+
+Webhook 通道（generic/feishu/dingtalk/slack/企业微信）与邮件通道（SMTP）。
+
+| Flag | 类型 | 默认值 | 环境变量 | 说明 |
+|------|------|--------|----------|------|
+| `--alert-webhook-url` | string | "" | OPSMESH_ALERT_WEBHOOK_URL | M7 告警 Webhook 推送 URL（POST JSON 告警到此地址）；空=不推送。B7：URL 含 slack.com 走 Slack Block Kit，含 qyapi.weixin.qq.com 走企业微信 markdown |
+| `--alert-notifier-type` | string | generic | OPSMESH_ALERT_NOTIFIER_TYPE | M7 告警通知类型：generic(直接POST Alert JSON)/feishu(飞书卡片)/dingtalk(钉钉markdown)；B7：Webhook URL 域名可识别时自动覆盖此值 |
+| `--alert-email-host` | string | "" | OPSMESH_ALERT_EMAIL_HOST | B7 告警邮件 SMTP 主机（如 smtp.example.com）；空=关闭邮件通道 |
+| `--alert-email-port` | int | 25 | OPSMESH_ALERT_EMAIL_PORT | B7 告警邮件 SMTP 端口（默认 25） |
+| `--alert-email-user` | string | "" | OPSMESH_ALERT_EMAIL_USER | B7 告警邮件 SMTP 用户名（空=匿名发送） |
+| `--alert-email-pass` | string | "" | OPSMESH_ALERT_EMAIL_PASS | B7 告警邮件 SMTP 密码（推荐 env 注入） |
+| `--alert-email-from` | string | "" | OPSMESH_ALERT_EMAIL_FROM | B7 告警邮件发件人地址（如 opsmesh@example.com） |
+| `--alert-email-to` | string | "" | OPSMESH_ALERT_EMAIL_TO | B7 告警邮件收件人列表（逗号分隔） |
+
+### 联邦配置
+
+> 联邦通道硬化配置已合并至上方「网络配置」分组（`--federation-*` 共 6 项），此处不再重复列出。
+
+### 日志配置
+
+日志检索后端（memory/sql/loki/es）与外部后端连接参数。
+
+| Flag | 类型 | 默认值 | 环境变量 | 说明 |
+|------|------|--------|----------|------|
+| `--log-backend` | string | memory | OPSMESH_LOG_BACKEND | 日志检索后端: memory \| sql \| loki \| es（M4-4B；loki/es 模式下日志由 agent 直接推送，控制面仅查询） |
+| `--log-store` | string | memory | OPSMESH_LOG_STORE | 日志后端选择: memory \| sql \| loki \| es（--log-backend 别名，task 97；显式设置时覆盖 --log-backend） |
+| `--loki-endpoint` | string | "" | OPSMESH_LOKI_ENDPOINT | Loki API endpoint（如 http://loki:3100）；--log-backend=loki 时生效 |
+| `--es-endpoint` | string | "" | OPSMESH_ES_ENDPOINT | Elasticsearch endpoint（如 http://es:9200）；--log-backend=es 时生效 |
+| `--es-index` | string | opsmesh-logs | OPSMESH_ES_INDEX | Elasticsearch 索引名（--log-backend=es 时生效，默认 opsmesh-logs） |
+
+### K8s / 调度配置
+
+任务调度、HA 选主、agent 资源限额、事件总线。
+
+| Flag | 类型 | 默认值 | 环境变量 | 说明 |
+|------|------|--------|----------|------|
+| `--task-timeout` | duration | 120s | OPSMESH_TASK_TIMEOUT | agent 单任务执行超时（P0-3） |
+| `--shutdown-timeout` | duration | 15s | OPSMESH_SHUTDOWN_TIMEOUT | SIGTERM 优雅退出窗口（P0-3） |
+| `--task-lease-sec` | int | 300 | OPSMESH_TASK_LEASE_SEC | 任务租约租期秒（P0-1）；超期未上报结果则复位重调度 |
+| `--task-max-retries` | int | 3 | OPSMESH_TASK_MAX_RETRIES | 任务失败重试上限（F2）；超出置 failed（死信），需人工处置 |
+| `--leader-ttl-sec` | int | 15 | OPSMESH_LEADER_TTL_SEC | A3 选主租约秒；本实例持有 leader 身份的时长，到期前需续租 |
+| `--leader-tick-sec` | int | 5 | OPSMESH_LEADER_TICK_SEC | A3 选主续租周期秒；leaderLoop 续租频率（应小于 leader-ttl-sec） |
+| `--archive-age-min` | int | 1440 | OPSMESH_ARCHIVE_AGE_MIN | F5 离线超龄自动归档阈值（分钟）；agent 最后心跳早于该时长的设备自动 retired（<=0 关闭） |
+| `--worker-concurrency` | int | 4 | OPSMESH_WORKER_CONCURRENCY | agent 任务 worker 池并发度（P1-3） |
+| `--max-procs` | int | 256 | OPSMESH_MAX_PROCS | agent RLIMIT_NPROC 上限（P0-3，fork 炸弹防护；0=不限制） |
+| `--max-files` | int | 4096 | OPSMESH_MAX_FILES | agent RLIMIT_NOFILE 上限（P0-3，文件描述符耗尽防护；0=不限制） |
+| `--max-memory-mb` | int64 | 0 | OPSMESH_MAX_MEMORY_MB | agent RLIMIT_AS 上限 MB（P0-3；0=不限制） |
+| `--event-bus` | string | noop | OPSMESH_EVENT_BUS | 事件总线类型（P1-5）：noop \| log \| kafka |
+| `--kafka-brokers` | string | "" | OPSMESH_KAFKA_BROKERS | Kafka brokers（P1-5；--event-bus=kafka 时生效） |
+| `--kafka-topic` | string | "" | OPSMESH_KAFKA_TOPIC | Kafka topic（P1-5；--event-bus=kafka 时生效） |
+
+### 纳管配置
+
+网段发现、自动纳管闭环、SSH 推送。
+
+| Flag | 类型 | 默认值 | 环境变量 | 说明 |
+|------|------|--------|----------|------|
+| `--discover` | bool | false | OPSMESH_DISCOVER | 开启真实网段发现（P0-2）；关闭时采用 agent 即设备的 MVP 降级纳管 |
+| `--segment-cidr` | string | "" | OPSMESH_SEGMENT_CIDR | 待扫描网段（P0-2，如 10.30.0.0/24）；开启 --discover 时生效 |
+| `--auto-provision` | bool | false | OPSMESH_AUTO_PROVISION | B1 自动纳管：discover 扫描到存活主机后自动登记候选设备并（配置 --provision-ssh-key 时）推送 agent |
+| `--install-token` | string | "" | OPSMESH_INSTALL_TOKEN | B1 自动纳管：agent 经 bootstrap 安装时携带的一次性 install token（空=无令牌闭环） |
+| `--provision-secret` | string | "" | OPSMESH_PROVISION_SECRET | B1 自动纳管 install token 的 HMAC 签名密钥；空则本实例随机生成（多副本需一致） |
+| `--advertise-addr` | string | "" | OPSMESH_ADVERTISE_ADDR | B1 自动纳管控制面对外 HTTP 地址（拼接 bootstrap 安装命令）；空则回退 127.0.0.1:<http-port>（仅本机开发） |
+| `--provision-ssh-user` | string | root | OPSMESH_PROVISION_SSH_USER | B1 SSH 自动推送：SSH 用户 |
+| `--provision-ssh-key` | string | "" | OPSMESH_PROVISION_SSH_KEY | B1 SSH 自动推送：SSH 私钥路径（空=关闭 SSH 推送，仅返回 bootstrap 文本） |
+| `--provision-ssh-key-pass` | string | "" | OPSMESH_PROVISION_SSH_KEY_PASS | B1 SSH 自动推送：SSH 密钥密码（推荐 env 注入） |
+| `--provision-ssh-known-hosts` | string | "" | OPSMESH_PROVISION_SSH_KNOWN_HOSTS | B1 SSH KnownHosts 文件路径（等保加固）；空=InsecureIgnoreHostKey（生产务必配置） |
+
+> 共 **75 个 flag**，覆盖基础/存储/安全/网络/告警/日志/调度/纳管八大领域。所有 flag 均支持同名 `OPSMESH_*` 环境变量兜底，命令行显式设置优先级最高。
 
 ---
 

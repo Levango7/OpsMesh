@@ -122,7 +122,10 @@ const navGroups = [
     items: [
       { name: 'devices', icon: 'device', labelKey: 'nav.devices', required: 'device:read' },
       { name: 'tasks', icon: 'task', labelKey: 'nav.tasks', required: 'task:read' },
-      { name: 'alerts', icon: 'alerts', labelKey: 'nav.alerts', required: 'alert:read' }
+      { name: 'alerts', icon: 'alerts', labelKey: 'nav.alerts', required: 'alert:read' },
+      { name: 'os-optimize', icon: 'task', labelKey: 'nav.osopt', required: 'task:read' },
+      { name: 'middleware', icon: 'deploy', labelKey: 'nav.mwdep', required: 'deploy:read' },
+      { name: 'k8s', icon: 'device', labelKey: 'nav.k8s', required: 'device:read' }
     ]
   },
   {

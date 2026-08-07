@@ -315,6 +315,28 @@ func (s *SQLStore) AllTasks(tenantID string) []*proto.Task {
 	return out
 }
 
+// TaskByID 按 taskID 返回单条任务（不存在返回 nil）。供按 ID 直查场景（如租户归属校验）。
+
+func (s *SQLStore) TaskByID(taskID string) *proto.Task {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	row := s.db.QueryRowContext(ctx,
+		`SELECT task_id, agent_id, tenant_id, type, command, content, path, status, created_at FROM tasks WHERE task_id=?`, taskID)
+	var t proto.Task
+	var content, path sql.NullString
+	var createdAt time.Time
+	if err := row.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &t.Command, &content, &path, &t.Status, &createdAt); err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("[store] TaskByID 查询失败 %s: %v", taskID, err)
+		}
+		return nil
+	}
+	t.Content = content.String
+	t.Path = path.String
+	t.CreatedAt = createdAt
+	return &t
+}
+
 // Device 按 deviceID 返回单台设备（供设备详情端点）。
 
 func (s *SQLStore) Results(agentID string) []*proto.TaskResult {

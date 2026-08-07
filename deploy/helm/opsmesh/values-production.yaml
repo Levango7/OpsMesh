@@ -38,6 +38,9 @@ controlplane:
   # jwtSecret 务必显式注入（多副本需一致），与 provisionSecret 同法：
   # helm install ... --set controlplane.jwtSecret=$(openssl rand -hex 32)
   jwtSecret: ""
+  # Cookie Secure 标志（task 112）：生产强制 true——HTTPS 反代终止 TLS 时控制面虽收 HTTP，
+  # 但对外是 HTTPS，Cookie 须 Secure 防中间人窃取会话。
+  cookieSecure: true
   alertWebhookURL: ""
   alertNotifierType: generic
   # 生产资源放大

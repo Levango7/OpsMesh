@@ -27,6 +27,51 @@ services:
     # 若当生产使用，务必注入 32 字节强随机密钥（openssl rand -hex 32）。
     environment:
       OPSMESH_JWT_SECRET: ${OPSMESH_JWT_SECRET:-}
+      # ── 安全相关 flag 环境变量映射（config.go 中对应 flag）──
+      # 开发/演示环境默认值见各项注释；生产部署请改用 Helm chart + values-production.yaml。
+      #
+      # Cookie Secure（task 112，--cookie-secure）：控制 at/rt HttpOnly Cookie 的 Secure 属性。
+      # 开发默认 false（明文 HTTP 下 Secure Cookie 会被浏览器拒绝回传，导致会话丢失）；
+      # 生产 HTTPS 环境务必 true（防中间人窃取会话）。
+      OPSMESH_COOKIE_SECURE: ${OPSMESH_COOKIE_SECURE:-false}
+      #
+      # 公开注册开关（--public-register）：true=开放 /api/v1/auth/register 但新用户须管理员审批；
+      # false=关闭公开注册（仅管理员可创建用户）。开发默认 true，生产默认 false。
+      OPSMESH_PUBLIC_REGISTER: ${OPSMESH_PUBLIC_REGISTER:-true}
+      #
+      # 公开注册免审批（--allow-public-register）：true=注册即激活并立即签发 token（仅演示/内网受信）；
+      # false=所有注册走 pending 审批流程（安全基线）。默认 false，生产务必关闭。
+      OPSMESH_ALLOW_PUBLIC_REGISTER: ${OPSMESH_ALLOW_PUBLIC_REGISTER:-false}
+      #
+      # 生产模式（--production）：开启后默认 require-auth=true、cookie-secure=true、grpc-require-signature=true，
+      # 并对 store=memory 强告警、强制 TLS 与 jwt-secret≥32 字节。开发环境不开启。
+      # OPSMESH_PRODUCTION: "false"
+      #
+      # 强制鉴权（--require-auth）：要求网关注入 X-Tenant-ID，缺失则拒绝。开发默认 false。
+      # OPSMESH_REQUIRE_AUTH: "false"
+      #
+      # 联邦共享 HMAC 密钥（--federation-secret）：联邦 peer 间签名/验签身份头，防跨不可信网段伪造。
+      # 启用联邦（OPSMESH_FEDERATION_PEERS 非空）时必填。空=不签名（仅内网信任）。
+      # OPSMESH_FEDERATION_SECRET: ""
+      # OPSMESH_FEDERATION_PEERS: "http://peer1:8080,http://peer2:8080"
+      #
+      # 自动纳管 install token HMAC 密钥（--provision-secret）：多副本需一致；空=本实例随机生成。
+      # OPSMESH_PROVISION_SECRET: ""
+      #
+      # gRPC agent 身份绑定（--grpc-require-signature）：强制 agent 请求携带 HMAC 签名。
+      # demo 模式强制关闭；生产模式默认开启。开发默认 false。
+      # OPSMESH_GRPC_REQUIRE_SIGNATURE: "false"
+      #
+      # 信任反向代理（--trust-proxy）：开启后 clientIP 取 X-Forwarded-For 首段。
+      # 默认 false=仅用 RemoteAddr 防 XFF 伪造绕过限流。仅当有可信 LB/网关前置时启用。
+      # OPSMESH_TRUST_PROXY: "false"
+      #
+      # JWT 验签公钥（--jwt-public-key，RS256）：网关剥离 + 内核二次校验的纵深防御。空=关闭回退头注入。
+      # OPSMESH_JWT_PUBLIC_KEY: ""
+      # OPSMESH_JWT_ISSUER: ""
+      #
+      # metrics 访问控制（--metrics-allow-cidr）：CIDR 白名单，空=不限制。生产建议配置内网监控网段。
+      # OPSMESH_METRICS_ALLOW_CIDR: "10.0.0.0/8"
     depends_on:
       mysql:
         condition: service_healthy

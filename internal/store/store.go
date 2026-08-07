@@ -70,6 +70,10 @@ type TaskStore interface {
 	SubmitResult(*proto.TaskResult)
 	// AllTasks 返回全部任务（tenantID 非空时按租户过滤；供任务列表端点，功能补全）。
 	AllTasks(tenantID string) []*proto.Task
+	// TaskByID 按 taskID 返回单条任务（不存在返回 nil）。
+	// 用于按 ID 直查场景（如结果查询的租户归属校验），避免遍历 AllTasks（O(N) → O(1)）。
+	// 返回深拷贝避免外部并发修改破坏内部状态。
+	TaskByID(taskID string) *proto.Task
 	// TaskResult 按 taskID 返回单条执行结果（A5/F7 结果查询 API；供 GET /api/v1/tasks/{id}/result）。
 	TaskResult(taskID string) *proto.TaskResult
 	// CancelTask 取消任务（F3）：pending/running -> cancelled；已 done/failed 不可取消。返回是否生效。

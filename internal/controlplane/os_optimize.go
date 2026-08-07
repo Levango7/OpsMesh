@@ -769,12 +769,12 @@ func (s *Server) handleCreateOSTemplate(w http.ResponseWriter, r *http.Request) 
 		userID = caller.ID
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: userID, Action: "os_template_create", Target: st.ID, Detail: "name=" + tpl.Name,
+		TenantID: actx.TenantID, UserID: userID, Action: "os_template_create", Target: st.ID, Detail: sanitizeAuditDetail("name=" + tpl.Name),
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: actx.TenantID, UserID: userID,
-			Action: "os_template_create", Target: st.ID, Detail: "name=" + tpl.Name, Level: events.LevelInfo,
+			Action: "os_template_create", Target: st.ID, Detail: sanitizeAuditDetail("name=" + tpl.Name), Level: events.LevelInfo,
 		})
 	}
 	s.publishEvent("os_template_changed", actx.TenantID, map[string]string{"id": st.ID, "op": "create"})
@@ -832,12 +832,12 @@ func (s *Server) handleUpdateOSTemplate(w http.ResponseWriter, r *http.Request, 
 		userID = caller.ID
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: userID, Action: "os_template_update", Target: id, Detail: "name=" + tpl.Name,
+		TenantID: actx.TenantID, UserID: userID, Action: "os_template_update", Target: id, Detail: sanitizeAuditDetail("name=" + tpl.Name),
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: actx.TenantID, UserID: userID,
-			Action: "os_template_update", Target: id, Detail: "name=" + tpl.Name, Level: events.LevelInfo,
+			Action: "os_template_update", Target: id, Detail: sanitizeAuditDetail("name=" + tpl.Name), Level: events.LevelInfo,
 		})
 	}
 	s.publishEvent("os_template_changed", actx.TenantID, map[string]string{"id": id, "op": "update"})
@@ -875,12 +875,12 @@ func (s *Server) handleDeleteOSTemplate(w http.ResponseWriter, r *http.Request, 
 		userID = caller.ID
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: userID, Action: "os_template_delete", Target: id, Detail: "name=" + existing.Name,
+		TenantID: actx.TenantID, UserID: userID, Action: "os_template_delete", Target: id, Detail: sanitizeAuditDetail("name=" + existing.Name),
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: actx.TenantID, UserID: userID,
-			Action: "os_template_delete", Target: id, Detail: "name=" + existing.Name, Level: events.LevelInfo,
+			Action: "os_template_delete", Target: id, Detail: sanitizeAuditDetail("name=" + existing.Name), Level: events.LevelInfo,
 		})
 	}
 	s.publishEvent("os_template_changed", actx.TenantID, map[string]string{"id": id, "op": "delete"})
@@ -1005,13 +1005,13 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 		UserID:   actx.UserID,
 		Action:   "execute_os_template",
 		Target:   task.TaskID,
-		Detail:   "template=" + id + " agent=" + body.AgentID,
+		Detail:   sanitizeAuditDetail("template=" + id + " agent=" + body.AgentID),
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: targetTenant, UserID: actx.UserID,
 			Action: "execute_os_template", Target: task.TaskID,
-			Detail: "template=" + id + " agent=" + body.AgentID, Level: events.LevelInfo,
+			Detail: sanitizeAuditDetail("template=" + id + " agent=" + body.AgentID), Level: events.LevelInfo,
 		})
 	}
 	if s.metrics != nil {

@@ -47,6 +47,10 @@ controlplane:
   # 用户中心 JWT 签发密钥（HS256，多副本必须一致）。空=helm 首次安装随机生成并固化。
   # 生产务必 --set 注入，长度≥32 字节。
   jwtSecret: ""
+  # Cookie Secure 标志（task 112）：控制 at/rt HttpOnly Cookie 的 Secure 属性。
+  # true=Cookie 仅经 HTTPS 传输（防中间人窃取会话）；false=Cookie 亦经 HTTP 传输（明文内网/本地开发需要）。
+  # 开发默认 false；生产模式（production=true）下代码侧会自动回退 true，但建议显式设置以便审计。
+  cookieSecure: false
   # M7 告警 Webhook
   alertWebhookURL: ""
   alertNotifierType: generic

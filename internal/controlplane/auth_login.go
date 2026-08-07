@@ -105,7 +105,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: u.ID, Action: "user_register", Target: u.ID, Detail: "username=" + u.Username + " status=" + initialStatus,
+		TenantID: "default", UserID: u.ID, Action: "user_register", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username + " status=" + initialStatus),
 	})
 	// 只有 --allow-public-register=true 时才立即签发 token；否则返回 pending 提示。
 	if s.cfg.AllowPublicRegister {
@@ -194,7 +194,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	// 登录成功：清除失败计数（解锁）。
 	s.loginGuard.resetFail(body.Username)
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: u.ID, Action: "user_login", Target: u.ID, Detail: "username=" + u.Username,
+		TenantID: "default", UserID: u.ID, Action: "user_login", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 	})
 	// 任务 96：mustChangePassword=true 时不签发 access token（at），仅签发一次性短时效
 	// changePasswordToken（5min），仅可用于 /api/v1/auth/change-password。改密成功后才签发
@@ -240,7 +240,7 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	if u, err := s.userFromToken(r); err == nil {
 		s.store.Audit(&proto.AuditEvent{
-			TenantID: "default", UserID: u.ID, Action: "user_logout", Target: u.ID, Detail: "username=" + u.Username,
+			TenantID: "default", UserID: u.ID, Action: "user_logout", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 		})
 	}
 	// 吊销请求携带的 rt，并清除 at+rt Cookie（服务端状态失效 + 浏览器会话终止）。
@@ -353,6 +353,12 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	// P1-4 限流：按客户端 IP 令牌桶约束改密频率，防暴力破解旧密码。
+	// 复用 loginGuard 的 IP 令牌桶（与登录/注册同维度），避免单独维护限流器。
+	if !s.loginGuard.allow(clientIP(r, s.cfg.TrustProxy)) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
+		return
+	}
 	var body struct {
 		OldPassword         string `json:"oldPassword"`
 		NewPassword         string `json:"newPassword"`
@@ -419,7 +425,7 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: u.ID, Action: "user_change_password", Target: u.ID, Detail: "username=" + u.Username,
+		TenantID: "default", UserID: u.ID, Action: "user_change_password", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 	})
 	// 首登强制改密场景：改密成功后签发正式 at+rt，前端据此进入正常会话。
 	if firstLoginChange {

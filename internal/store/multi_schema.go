@@ -530,6 +530,19 @@ func (m *MultiSchemaStore) AllTasks(tenantID string) []*proto.Task {
 	return s.AllTasks(tenantID)
 }
 
+// TaskByID 按 taskID 返回单条任务：经 taskTenant 反查租户路由后直查。
+func (m *MultiSchemaStore) TaskByID(taskID string) *proto.Task {
+	tenant := m.lookupTaskTenant(taskID)
+	if tenant == "" {
+		return nil
+	}
+	s, err := m.storeFor(tenant)
+	if err != nil {
+		return nil
+	}
+	return s.TaskByID(taskID)
+}
+
 // TaskResult 按 taskID 返回单条结果：经 taskTenant 反查租户路由。
 func (m *MultiSchemaStore) TaskResult(taskID string) *proto.TaskResult {
 	tenant := m.lookupTaskTenant(taskID)

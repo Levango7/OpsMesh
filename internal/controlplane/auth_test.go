@@ -929,6 +929,7 @@ func TestChangePasswordWeakNew(t *testing.T) {
 		{"same as old", "admin123"},
 	}
 	for _, c := range cases {
+		s.loginGuard = newLoginGuard() // 重置限流器，避免连续请求被 IP 令牌桶限流（429）掩盖业务校验结果
 		req := doWithAuth(http.MethodPost, "/api/v1/auth/change-password", auth, map[string]string{"oldPassword": "admin123", "newPassword": c.newPwd})
 		rec := httptest.NewRecorder()
 		s.handleAuthChangePassword(rec, req)

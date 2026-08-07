@@ -74,7 +74,7 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "role_create", Target: role.ID, Detail: "name=" + role.Name,
+		TenantID: "default", UserID: caller.ID, Action: "role_create", Target: role.ID, Detail: sanitizeAuditDetail("name=" + role.Name),
 	})
 	writeJSON(w, http.StatusCreated, role)
 }

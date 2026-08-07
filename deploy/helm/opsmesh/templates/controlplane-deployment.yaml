@@ -63,6 +63,9 @@ spec:
             - --leader-ttl-sec={{ .Values.controlplane.leaderTTLSec }}
             - --leader-tick-sec={{ .Values.controlplane.leaderTickSec }}
             - --archive-age-min={{ .Values.controlplane.archiveAgeMin }}
+            # task 112 Cookie Secure：透传到控制面，控制 at/rt HttpOnly Cookie 的 Secure 属性。
+            # 显式传值（true/false）以确保语义明确，避免依赖代码侧 production 回退逻辑。
+            - --cookie-secure={{ .Values.controlplane.cookieSecure }}
             {{- if .Values.controlplane.production }}
             - --production
             {{- end }}

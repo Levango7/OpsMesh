@@ -97,7 +97,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "user_create", Target: u.ID, Detail: "username=" + u.Username,
+		TenantID: "default", UserID: caller.ID, Action: "user_create", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 	})
 	writeJSON(w, http.StatusCreated, u)
 }
@@ -176,7 +176,7 @@ func (s *Server) handleApproveUser(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "user_approve", Target: id, Detail: "approved user " + existing.Username,
+		TenantID: "default", UserID: caller.ID, Action: "user_approve", Target: id, Detail: sanitizeAuditDetail("approved user " + existing.Username),
 	})
 	writeJSON(w, http.StatusOK, s.store.GetUser(id))
 }
@@ -220,7 +220,7 @@ func (s *Server) handleRejectUser(w http.ResponseWriter, r *http.Request, id str
 		detail += " reason: " + body.Reason
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "user_reject", Target: id, Detail: detail,
+		TenantID: "default", UserID: caller.ID, Action: "user_reject", Target: id, Detail: sanitizeAuditDetail(detail),
 	})
 	writeJSON(w, http.StatusOK, s.store.GetUser(id))
 }

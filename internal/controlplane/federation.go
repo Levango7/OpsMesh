@@ -322,7 +322,7 @@ func (s *Server) handleFederationForwardTask(w http.ResponseWriter, r *http.Requ
 		UserID:   actx.UserID,
 		Action:   "federation_forward_task",
 		Target:   created.TaskID,
-		Detail:   fmt.Sprintf("forwarded to %s, agentID=%s", body.PeerURL, body.Task.AgentID),
+		Detail:   sanitizeAuditDetail(fmt.Sprintf("forwarded to %s, agentID=%s", body.PeerURL, body.Task.AgentID)),
 	})
 	writeJSON(w, http.StatusCreated, created)
 }

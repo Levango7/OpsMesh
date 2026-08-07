@@ -586,12 +586,12 @@ func (s *Server) handleCreateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		userID = caller.ID
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: userID, Action: "mw_template_create", Target: st.ID, Detail: "name=" + tpl.Name,
+		TenantID: actx.TenantID, UserID: userID, Action: "mw_template_create", Target: st.ID, Detail: sanitizeAuditDetail("name=" + tpl.Name),
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: actx.TenantID, UserID: userID,
-			Action: "mw_template_create", Target: st.ID, Detail: "name=" + tpl.Name, Level: events.LevelInfo,
+			Action: "mw_template_create", Target: st.ID, Detail: sanitizeAuditDetail("name=" + tpl.Name), Level: events.LevelInfo,
 		})
 	}
 	s.publishEvent("mw_template_changed", actx.TenantID, map[string]string{"id": st.ID, "op": "create"})
@@ -647,12 +647,12 @@ func (s *Server) handleUpdateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		userID = caller.ID
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: userID, Action: "mw_template_update", Target: id, Detail: "name=" + tpl.Name,
+		TenantID: actx.TenantID, UserID: userID, Action: "mw_template_update", Target: id, Detail: sanitizeAuditDetail("name=" + tpl.Name),
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: actx.TenantID, UserID: userID,
-			Action: "mw_template_update", Target: id, Detail: "name=" + tpl.Name, Level: events.LevelInfo,
+			Action: "mw_template_update", Target: id, Detail: sanitizeAuditDetail("name=" + tpl.Name), Level: events.LevelInfo,
 		})
 	}
 	s.publishEvent("mw_template_changed", actx.TenantID, map[string]string{"id": id, "op": "update"})
@@ -689,12 +689,12 @@ func (s *Server) handleDeleteMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		userID = caller.ID
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: userID, Action: "mw_template_delete", Target: id, Detail: "name=" + existing.Name,
+		TenantID: actx.TenantID, UserID: userID, Action: "mw_template_delete", Target: id, Detail: sanitizeAuditDetail("name=" + existing.Name),
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: actx.TenantID, UserID: userID,
-			Action: "mw_template_delete", Target: id, Detail: "name=" + existing.Name, Level: events.LevelInfo,
+			Action: "mw_template_delete", Target: id, Detail: sanitizeAuditDetail("name=" + existing.Name), Level: events.LevelInfo,
 		})
 	}
 	s.publishEvent("mw_template_changed", actx.TenantID, map[string]string{"id": id, "op": "delete"})
@@ -840,13 +840,13 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		UserID:   actx.UserID,
 		Action:   "deploy_middleware",
 		Target:   task.TaskID,
-		Detail:   "template=" + id + " deployType=" + body.DeployType + " agent=" + body.AgentID,
+		Detail:   sanitizeAuditDetail("template=" + id + " deployType=" + body.DeployType + " agent=" + body.AgentID),
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: targetTenant, UserID: actx.UserID,
 			Action: "deploy_middleware", Target: task.TaskID,
-			Detail: "template=" + id + " deployType=" + body.DeployType + " agent=" + body.AgentID, Level: events.LevelInfo,
+			Detail: sanitizeAuditDetail("template=" + id + " deployType=" + body.DeployType + " agent=" + body.AgentID), Level: events.LevelInfo,
 		})
 	}
 	if s.metrics != nil {
@@ -1073,13 +1073,13 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		UserID:   actx.UserID,
 		Action:   "uninstall_middleware",
 		Target:   task.TaskID,
-		Detail:   "instance=" + instanceID + " template=" + body.TemplateID + " deployType=" + body.DeployType + " agent=" + body.AgentID,
+		Detail:   sanitizeAuditDetail("instance=" + instanceID + " template=" + body.TemplateID + " deployType=" + body.DeployType + " agent=" + body.AgentID),
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: targetTenant, UserID: actx.UserID,
 			Action: "uninstall_middleware", Target: task.TaskID,
-			Detail: "instance=" + instanceID + " template=" + body.TemplateID + " deployType=" + body.DeployType + " agent=" + body.AgentID, Level: events.LevelInfo,
+			Detail: sanitizeAuditDetail("instance=" + instanceID + " template=" + body.TemplateID + " deployType=" + body.DeployType + " agent=" + body.AgentID), Level: events.LevelInfo,
 		})
 	}
 	if s.metrics != nil {

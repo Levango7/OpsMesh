@@ -28,7 +28,13 @@ type MemoryStore struct {
 	agents   map[string]*proto.AgentInfo
 	segments map[string][]*proto.DeviceInfo // segment -> 设备列表
 	tasks    map[string][]*proto.Task       // agentID -> 任务列表
-	results  map[string][]*proto.TaskResult // agentID -> 上报结果
+	// tasksByID 为 tasks 的辅助索引：taskID -> 任务指针。
+	// 用于 ApproveTask/RejectTask/CancelTask/TaskByID 等按 taskID 直查的路径，
+	// 避免遍历 m.tasks（O(N) → O(1)）。由 addTaskLocked 在任务入表时同步维护，
+	// 任务从不删除（无 delete task 路径），故无需处理索引移除。
+	// 与 m.tasks 同由 m.mu 保护并发安全。
+	tasksByID map[string]*proto.Task
+	results   map[string][]*proto.TaskResult // agentID -> 上报结果
 	audits   []*proto.AuditEvent            // 审计事件（U-04 留痕）
 	alerts   []*proto.Alert                 // 告警事件（M7）
 	seq      int                            // 自增序号，用于生成 agentID
@@ -185,6 +191,11 @@ func (m *MemoryStore) SeedDemoTopology() {
 			})
 		}
 		m.tasks[aid] = ts
+		// 同步维护 tasksByID 索引（SeedDemoTopology 直接赋值 m.tasks[aid]，
+		// 须手动同步索引以保持一致性）。
+		for _, t := range ts {
+			m.tasksByID[t.TaskID] = t
+		}
 	}
 }
 
@@ -205,6 +216,7 @@ func NewMemoryStore() *MemoryStore {
 		agents:              make(map[string]*proto.AgentInfo),
 		segments:            make(map[string][]*proto.DeviceInfo),
 		tasks:               make(map[string][]*proto.Task),
+		tasksByID:           make(map[string]*proto.Task),
 		results:             make(map[string][]*proto.TaskResult),
 		tokens:              make(map[string]*tokenMeta),
 		users:               make(map[string]*User),
@@ -479,17 +491,16 @@ func (m *MemoryStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 
 	// 演示模式（P0-5）：仅 --demo 开启时预置一条 uname -a 示例任务，避免污染生产。
 	if m.demo && len(m.tasks[a.AgentID]) == 0 {
-		m.tasks[a.AgentID] = []*proto.Task{
-			{
-				TaskID:    "task-" + a.AgentID + "-1",
-				AgentID:   a.AgentID,
-				TenantID:  a.TenantID,
-				Type:      "shell",
-				Command:   "uname -a",
-				Status:    "pending",
-				CreatedAt: time.Now(),
-			},
+		t := &proto.Task{
+			TaskID:    "task-" + a.AgentID + "-1",
+			AgentID:   a.AgentID,
+			TenantID:  a.TenantID,
+			Type:      "shell",
+			Command:   "uname -a",
+			Status:    "pending",
+			CreatedAt: time.Now(),
 		}
+		m.addTaskLocked(t)
 	}
 	// 事件驱动：注册事件经总线发布（审计/告警可接 Kafka，P1-5）。
 	m.publish(events.Event{Action: "register", Target: a.AgentID, TenantID: a.TenantID, Level: events.LevelInfo})
@@ -666,7 +677,7 @@ func (m *MemoryStore) FireDueSchedules(now time.Time) int {
 			}
 			m.seq++
 			inst.TaskID = fmt.Sprintf("task-%d-%d", now.UnixNano(), m.seq)
-			m.tasks[t.AgentID] = append(m.tasks[t.AgentID], inst)
+			m.addTaskLocked(inst)
 			t.LastFiredAt = now
 			fired++
 			m.publish(events.Event{Action: "schedule_fire", Target: inst.TaskID, TenantID: t.TenantID,
@@ -701,10 +712,18 @@ func (m *MemoryStore) CreateTask(t *proto.Task) *proto.Task {
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = time.Now()
 	}
-	m.tasks[t.AgentID] = append(m.tasks[t.AgentID], t)
+	m.addTaskLocked(t)
 	// 事件驱动：下发任务事件经总线发布。
 	m.publish(events.Event{Action: "create_task", Target: t.TaskID, TenantID: t.TenantID, Detail: t.Command, Level: events.LevelInfo})
 	return t
+}
+
+// addTaskLocked 在持锁下将任务追加到 m.tasks 并同步更新 tasksByID 索引。
+// 调用方须持 m.mu 写锁。索引一致性：所有任务入表必须经此方法，杜绝漏维护索引。
+// 若同 TaskID 已存在（理论上不会发生，TaskID 含纳秒级时间戳+自增序），覆盖旧值以保持索引最新。
+func (m *MemoryStore) addTaskLocked(t *proto.Task) {
+	m.tasks[t.AgentID] = append(m.tasks[t.AgentID], t)
+	m.tasksByID[t.TaskID] = t
 }
 
 // SubmitResult 接收 agent 上报的执行结果，按成功/失败处理任务终态，并同步设备看板（B2）。
@@ -907,23 +926,20 @@ func (m *MemoryStore) TaskResult(taskID string) *proto.TaskResult {
 
 // CancelTask 取消任务（F3）：pending/running -> cancelled；已 done/failed/cancelled 不可取消。
 // 取消 pending 后其不会进入 ClaimTask 领取（原子翻转只看 pending），实现运行前拦截。
+// 性能：经 tasksByID 索引 O(1) 直查，避免遍历 m.tasks（原 O(N)）。
 func (m *MemoryStore) CancelTask(id, tenantID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, ts := range m.tasks {
-		for _, t := range ts {
-			if t.TaskID != id {
-				continue
-			}
-			if tenantID != "" && t.TenantID != tenantID {
-				return false
-			}
-			if t.Status == "pending" || t.Status == "running" {
-				t.Status = "cancelled"
-				return true
-			}
-			return false
-		}
+	t, ok := m.tasksByID[id]
+	if !ok {
+		return false
+	}
+	if tenantID != "" && t.TenantID != tenantID {
+		return false
+	}
+	if t.Status == "pending" || t.Status == "running" {
+		t.Status = "cancelled"
+		return true
 	}
 	return false
 }
@@ -1095,6 +1111,19 @@ func (m *MemoryStore) AllTasks(tenantID string) []*proto.Task {
 		}
 	}
 	return out
+}
+
+// TaskByID 按 taskID 返回单条任务（不存在返回 nil）。
+// 经 tasksByID 索引 O(1) 直查，避免遍历 m.tasks。返回深拷贝避免外部并发修改。
+func (m *MemoryStore) TaskByID(taskID string) *proto.Task {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	t, ok := m.tasksByID[taskID]
+	if !ok {
+		return nil
+	}
+	c := *t
+	return &c
 }
 
 // Device 按 deviceID 返回单台设备（供设备详情端点）。
@@ -1276,59 +1305,51 @@ func (m *MemoryStore) DeviceMetrics(deviceID string) *proto.DeviceMetrics {
 // ApproveTask 审批通过任务（task 100）：将 pending_approval 状态翻转回 pending，
 // 记录审批人/审批时间。仅 pending_approval 状态可审批；其他状态返回 false。
 // tenantID 非空时校验任务归属，越权返回 false。
+// 性能：经 tasksByID 索引 O(1) 直查，避免遍历 m.tasks（原 O(N)）。
 func (m *MemoryStore) ApproveTask(id, tenantID, approvedBy string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// TODO(perf): ApproveTask/RejectTask 遍历所有任务为 O(N)，任务量大时需优化为按 ID 直查。
-	for _, ts := range m.tasks {
-		for _, t := range ts {
-			if t.TaskID != id {
-				continue
-			}
-			if tenantID != "" && t.TenantID != tenantID {
-				return false
-			}
-			if t.Status != "pending_approval" {
-				return false
-			}
-			t.Status = "pending"
-			t.ApprovedBy = approvedBy
-			t.ApprovedAt = time.Now()
-			m.publish(events.Event{Action: "task_approved", Target: t.TaskID, TenantID: t.TenantID,
-				Detail: "by=" + approvedBy, Level: events.LevelInfo})
-			return true
-		}
+	t, ok := m.tasksByID[id]
+	if !ok {
+		return false
 	}
-	return false
+	if tenantID != "" && t.TenantID != tenantID {
+		return false
+	}
+	if t.Status != "pending_approval" {
+		return false
+	}
+	t.Status = "pending"
+	t.ApprovedBy = approvedBy
+	t.ApprovedAt = time.Now()
+	m.publish(events.Event{Action: "task_approved", Target: t.TaskID, TenantID: t.TenantID,
+		Detail: "by=" + approvedBy, Level: events.LevelInfo})
+	return true
 }
 
 // RejectTask 驳回任务（task 100）：将 pending_approval 状态置为 rejected，
 // 记录审批人/审批时间。被驳回任务永不进入 ClaimTask 队列。仅 pending_approval 状态可驳回。
 // tenantID 非空时校验任务归属，越权返回 false。
+// 性能：经 tasksByID 索引 O(1) 直查，避免遍历 m.tasks（原 O(N)）。
 func (m *MemoryStore) RejectTask(id, tenantID, approvedBy string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// TODO(perf): ApproveTask/RejectTask 遍历所有任务为 O(N)，任务量大时需优化为按 ID 直查。
-	for _, ts := range m.tasks {
-		for _, t := range ts {
-			if t.TaskID != id {
-				continue
-			}
-			if tenantID != "" && t.TenantID != tenantID {
-				return false
-			}
-			if t.Status != "pending_approval" {
-				return false
-			}
-			t.Status = "rejected"
-			t.ApprovedBy = approvedBy
-			t.ApprovedAt = time.Now()
-			m.publish(events.Event{Action: "task_rejected", Target: t.TaskID, TenantID: t.TenantID,
-				Detail: "by=" + approvedBy, Level: events.LevelWarn})
-			return true
-		}
+	t, ok := m.tasksByID[id]
+	if !ok {
+		return false
 	}
-	return false
+	if tenantID != "" && t.TenantID != tenantID {
+		return false
+	}
+	if t.Status != "pending_approval" {
+		return false
+	}
+	t.Status = "rejected"
+	t.ApprovedBy = approvedBy
+	t.ApprovedAt = time.Now()
+	m.publish(events.Event{Action: "task_rejected", Target: t.TaskID, TenantID: t.TenantID,
+		Detail: "by=" + approvedBy, Level: events.LevelWarn})
+	return true
 }
 
 // ============================================================================

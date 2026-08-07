@@ -137,7 +137,7 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: c.TenantID, UserID: caller.ID, Action: "k8s_cluster_create", Target: c.ID, Detail: "name=" + c.Name,
+		TenantID: c.TenantID, UserID: caller.ID, Action: "k8s_cluster_create", Target: c.ID, Detail: sanitizeAuditDetail("name=" + c.Name),
 	})
 	writeJSON(w, http.StatusCreated, maskK8sCluster(c))
 }
@@ -213,7 +213,7 @@ func (s *Server) handleDeleteK8sCluster(w http.ResponseWriter, r *http.Request, 
 		s.clusterMgr.RemoveCluster(id)
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: existing.TenantID, UserID: caller.ID, Action: "k8s_cluster_delete", Target: id, Detail: "name=" + existing.Name,
+		TenantID: existing.TenantID, UserID: caller.ID, Action: "k8s_cluster_delete", Target: id, Detail: sanitizeAuditDetail("name=" + existing.Name),
 	})
 	w.WriteHeader(http.StatusNoContent)
 }

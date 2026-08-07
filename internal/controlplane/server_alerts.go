@@ -199,7 +199,7 @@ func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id s
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "alert not found or tenant mismatch"})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{TenantID: actx.TenantID, UserID: actx.UserID, Action: "silence_alert", Target: id, Detail: fmt.Sprintf("silenced %dm: %s", body.DurationMinutes, body.Comment)})
+	s.store.Audit(&proto.AuditEvent{TenantID: actx.TenantID, UserID: actx.UserID, Action: "silence_alert", Target: id, Detail: sanitizeAuditDetail(fmt.Sprintf("silenced %dm: %s", body.DurationMinutes, body.Comment))})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{TenantID: actx.TenantID, UserID: actx.UserID, Action: "silence_alert", Target: id, Level: events.LevelInfo})
 	}
@@ -314,7 +314,7 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 	s.saveAlertRule(&rule)
 	s.store.Audit(&proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "create_alert_rule", Target: rule.ID,
-		Detail: fmt.Sprintf("metric=%s op=%s threshold=%g severity=%s", rule.Metric, rule.Op, rule.Threshold, rule.Severity),
+		Detail: sanitizeAuditDetail(fmt.Sprintf("metric=%s op=%s threshold=%g severity=%s", rule.Metric, rule.Op, rule.Threshold, rule.Severity)),
 	})
 	writeJSON(w, http.StatusCreated, rule)
 }

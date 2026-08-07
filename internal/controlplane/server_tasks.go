@@ -440,17 +440,10 @@ func (s *Server) handleTaskResult(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 	// 租户隔离：结果对应的任务须属于当前租户（requireAuth 时强制）。
-	// TODO(perf): 此处遍历 AllTasks 为 O(N)，任务量大时需优化为按 (tenantID, taskID) 直查。
-	// 当前 store 未暴露按 (tenantID, taskID) 直查方法，暂保留遍历实现，行为不变。
+	// 经 TaskByID 索引 O(1) 直查任务并校验租户归属，避免遍历 AllTasks（原 O(N)）。
 	if actx.TenantID != "" {
-		found := false
-		for _, t := range s.store.AllTasks(actx.TenantID) {
-			if t.TaskID == id {
-				found = true
-				break
-			}
-		}
-		if !found {
+		t := s.store.TaskByID(id)
+		if t == nil || t.TenantID != actx.TenantID {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 			return
 		}
