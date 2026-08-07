@@ -86,7 +86,9 @@ spec:
             {{- end }}
       volumes:
         - name: data
-          emptyDir: {}
+          hostPath:
+            path: /var/lib/opsmesh
+            type: DirectoryOrCreate
         {{- if .Values.controlplane.tls.enabled }}
         - name: tls
           secret:

@@ -35,11 +35,11 @@ type MemoryStore struct {
 	// 与 m.tasks 同由 m.mu 保护并发安全。
 	tasksByID map[string]*proto.Task
 	results   map[string][]*proto.TaskResult // agentID -> 上报结果
-	audits   []*proto.AuditEvent            // 审计事件（U-04 留痕）
-	alerts   []*proto.Alert                 // 告警事件（M7）
-	seq      int                            // 自增序号，用于生成 agentID
-	bus      events.Bus                     // 事件总线（P1-5）；可 nil（测试/默认 noop）
-	demo     bool                           // 演示模式（P0-5）：开启时注册预置 uname -a
+	audits    []*proto.AuditEvent            // 审计事件（U-04 留痕）
+	alerts    []*proto.Alert                 // 告警事件（M7）
+	seq       int                            // 自增序号，用于生成 agentID
+	bus       events.Bus                     // 事件总线（P1-5）；可 nil（测试/默认 noop）
+	demo      bool                           // 演示模式（P0-5）：开启时注册预置 uname -a
 	// B1 自动纳管闭环：install token 的 HMAC 签名密钥与已签发 token 登记表。
 	// secret 为空时由 NewMemoryStore 随机生成（单实例 MVP）；多副本须一致（经 WithSecret 注入）。
 	secret string

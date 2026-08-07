@@ -12,6 +12,7 @@
 - [生产环境检查清单](#生产环境检查清单)
 - [多租户部署](#多租户部署)
 - [联邦部署](#联邦部署)
+- [企业版前端部署](#企业版前端部署)
 
 ---
 
@@ -611,3 +612,164 @@ M4-4D 控制面联邦：企业多终端环境按网段割裂为多个控制面�
 - 启用独立监听（`--federation-port>0`）须同时配置联邦 TLS 证书，否则 `Validate()` 报错
 - 明文联邦（不配 TLS）仅限内网可信场景
 - 所有 peer 须共享同一 `--federation-secret`
+
+---
+
+## 企业版前端部署
+
+OpsMesh 控制面内置 Go 模板仪表盘（`/`），适合轻量内网运维。面向企业级前端体验，仓库另提供独立 SPA 前端（`web/enterprise/`，技术栈 Vue 3 + Vite + Pinia + Vue Router），**与控制面解耦、独立构建、独立部署**：Nginx/CDN 托管静态资源，反向代理 API 到控制面 `:8080`。
+
+### 1. 构建步骤
+
+```bash
+# 依赖：Node.js 18+（推荐 20 LTS）
+cd web/enterprise
+npm ci              # 严格按 package-lock.json 安装依赖（CI/生产推荐）
+npm run build       # 产出 dist/（index.html + assets/）
+
+# 产物校验
+ls dist/             # 应见 index.html、assets/ 等静态文件
+
+# 开发模式（可选，本地调试）
+npm install         # 首次安装依赖
+npm run dev         # Vite dev server，端口 5174，自动代理 /api → localhost:8080
+```
+
+构建产物为纯静态文件（`dist/index.html` + `dist/assets/*`），可托管于任意静态服务器或 CDN。
+
+### 2. Nginx 配置示例
+
+#### 2.1 独立站点（根路径部署）
+
+若企业版前端独占一个域名/端口，将 `vite.config.js` 中 `base` 改为 `'/'` 后重新构建，Nginx 配置如下：
+
+```nginx
+server {
+    listen 80;
+    server_name opsmesh-web.example.com;
+
+    root /path/to/web/enterprise/dist;
+    index index.html;
+
+    # SPA 路由回退：所有未命中静态文件的请求回退到 index.html
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 反代 API 到控制面 8080 端口
+    location /api/v1/ {
+        proxy_pass http://controlplane:8080;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+#### 2.2 子路径部署（保留默认 `/enterprise/` 前缀）
+
+`vite.config.js` 默认 `base: '/enterprise/'`，构建产物以 `/enterprise/` 前缀分发，可由控制面或统一网关托管于子路径：
+
+```nginx
+server {
+    listen 80;
+    server_name opsmesh.example.com;
+
+    # 企业版前端（/enterprise/ 子路径）
+    location /enterprise/ {
+        alias /path/to/web/enterprise/dist/;
+        try_files $uri $uri/ /enterprise/index.html;
+    }
+
+    # 控制面内置仪表盘 + REST API
+    location / {
+        proxy_pass http://controlplane:8080;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+### 3. 与后端 API 的反代配置
+
+企业版前端通过 `/api/v1/` 前缀调用控制面 REST API，反代要点：
+
+| 配置项 | 说明 |
+|---|---|
+| `proxy_pass http://controlplane:8080` | 控制面 HTTP 端口（`--http-port`，默认 8080） |
+| `X-Forwarded-For` | 透传真实客户端 IP，控制面审计/限流依赖（须同时 `--trust-proxy=true`） |
+| `X-Forwarded-Proto` | 透传原始协议（http/https），控制面据此判断是否设置 Secure Cookie |
+| `Host` | 透传原始 Host，避免控制面生成错误的回调 URL |
+| 路径前缀 | 仅反代 `/api/v1/`，避免误把 `/metrics`、`/healthz`、`/install.sh`、`/bin/opsmesh-agent` 暴露到公网 |
+
+完整 API 列表见 [README.md - HTTP API 速查](../README.md#http-api-速查)。
+
+### 4. 注意事项
+
+#### 4.1 Cookie 跨域配置
+
+控制面会签发 `at`（access token）/ `rt`（refresh token）Cookie 用于会话维持。前端与 API 同源（同域名同端口）时无跨域问题；若前端独立域名（如 `opsmesh-web.example.com` → API `opsmesh-api.example.com`），需做跨域 Cookie 配置：
+
+- **方案 A（推荐，同站点）**：Nginx 将 `/api/v1/` 反代到控制面，前端与 API 对外同源（同域名同端口），Cookie 自动同源携带，无需额外配置。
+- **方案 B（跨子域）**：前端与 API 分属不同子域（如 `web.example.com` / `api.example.com`），需保证 Cookie 的 `Domain` 属性设为父域 `.example.com`，且：
+  - 前端 axios 开启 `withCredentials: true`；
+  - 控制面响应头 `Access-Control-Allow-Credentials: true` + `Access-Control-Allow-Origin: <前端确切 origin>`（**不能为 `*`**）；
+  - `--cookie-secure=true`（HTTPS 环境强制 Secure 标志）。
+- **方案 C（完全跨域）**：前端与 API 完全不同域名，建议改用 Bearer Token（localStorage 存 access token，请求头 `Authorization: Bearer <token>`），不走 Cookie。
+
+#### 4.2 HTTPS 建议
+
+生产环境**强烈建议**全链路 HTTPS：
+
+- **前端 → 用户**：Nginx 配置 TLS 证书（Let's Encrypt / 企业 PKI），`listen 443 ssl http2;`。
+- **Nginx → 控制面**：若同机/内网可信可走 HTTP；跨网段建议走 HTTPS（控制面 `--tls-cert` / `--tls-key` 启用 HTTP TLS，Nginx `proxy_pass https://controlplane:8080;` + `proxy_ssl_verify on;`）。
+- **控制面 → agent**：gRPC TLS / mTLS（`--tls-cert` / `--tls-key` / `--client-ca`），与前端部署无关但须一并配置。
+- **Cookie Secure**：HTTPS 环境下控制面 `--cookie-secure=true`，确保 at/rt Cookie 仅经 HTTPS 传输，防中间人窃取。
+- **HSTS**：Nginx 加 `add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;` 强制后续访问走 HTTPS。
+
+#### 4.3 鉴权头注入
+
+企业版前端独立部署时，`X-Tenant-ID` / `X-User-Id` / `X-User-Roles` 身份头由前置网关（APISIX/Envoy）或 Nginx 注入。控制面 `--require-auth` 开启后，缺失 `X-Tenant-ID` 的请求被直接拒绝（401）。详见 [README.md - IAM 与租户隔离](../README.md#iam-与租户隔离)。
+
+#### 4.4 缓存与版本发布
+
+- **静态资源**：Vite 构建产物 `assets/*` 文件名含内容哈希（如 `index-<hash>.js`），可设置 `Cache-Control: public, max-age=31536000, immutable` 长缓存。
+- **index.html**：**不缓存**（`Cache-Control: no-cache` 或 `max-age=0`），确保用户及时拉到新版本入口。
+- **版本发布**：构建新产物 → 替换 `dist/` →（可选）`nginx -s reload`；无需重启控制面。
+
+#### 4.5 CDN 部署
+
+将 `dist/` 上传至 CDN（OSS/COS/S3 + CDN 加速），`index.html` 不缓存、`assets/*` 长缓存。API 请求须配置 CDN 回源或前端 axios `baseURL` 指向控制面公网域名（注意跨域 Cookie 配置见 4.1）。
+
+#### 4.6 容器化部署（可选）
+
+将企业版前端构建为 Nginx 镜像：
+
+```dockerfile
+# 构建阶段
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY web/enterprise/package*.json ./
+RUN npm ci
+COPY web/enterprise/ ./
+RUN npm run build
+
+# 运行阶段
+FROM nginx:alpine
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
+```
+
+```nginx
+# nginx.conf
+server {
+    listen 80;
+    root /usr/share/nginx/html;
+    location / { try_files $uri $uri/ /index.html; }
+    location /api/v1/ { proxy_pass http://controlplane:8080; }
+}
+```

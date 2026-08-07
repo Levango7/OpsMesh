@@ -143,8 +143,8 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleK8sClusterRouting 分派 /api/v1/k8s/clusters/{id} 子路径：
-	//   - DELETE /api/v1/k8s/clusters/{id}：删除集群（需 k8s:delete 权限，返回 204）
-	//   - POST   /api/v1/k8s/clusters/{id}/test：测试连接（需 k8s:read 权限）
+//   - DELETE /api/v1/k8s/clusters/{id}：删除集群（需 k8s:delete 权限，返回 204）
+//   - POST   /api/v1/k8s/clusters/{id}/test：测试连接（需 k8s:read 权限）
 //   - GET    /api/v1/k8s/clusters/{id}/namespaces|pods|deployments|services|configmaps|secrets|nodes[...]：
 //     K8s 资源管理（详见 k8s_manage.go）。
 //

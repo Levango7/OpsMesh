@@ -16,7 +16,8 @@ global:
 controlplane:
   image:
     repository: opsmesh/opsmesh
-    tag: "0.1"
+    # 镜像 tag：开发环境用 latest；生产环境用 --set controlplane.image.tag=<sha> 或 GitOps 写回
+    tag: "latest"
     pullPolicy: IfNotPresent
   # 控制面副本数；>1 时务必设置 store=mysql，否则 memory 多副本数据分裂
   replicaCount: 1

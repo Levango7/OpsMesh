@@ -1,4 +1,4 @@
-﻿// sql_templates.go 实现 SQLStore 的 TemplateStore 子接口（OS/中间件部署模板领域 task 100，P0-1 生产就绪）。
+// sql_templates.go 实现 SQLStore 的 TemplateStore 子接口（OS/中间件部署模板领域 task 100，P0-1 生产就绪）。
 //
 // 涵盖：OSTemplate CRUD（kickstart/preseed 安装模板，B1 自动纳管裸机→OS→agent 链路）、
 // MiddlewareTemplate CRUD（MySQL/Redis/Kafka/... 标准化部署配置，应用编排复用）。

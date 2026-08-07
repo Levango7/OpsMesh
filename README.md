@@ -543,6 +543,47 @@ kafka-go 须钉 `v0.4.48`（最后兼容 Go 1.22 的版本；`v0.4.49+` 要求 G
 
 ---
 
+## 前端（企业版）构建与部署
+
+OpsMesh 控制面内置的 B/S 仪表盘为 Go 模板渲染（`/`），适合轻量内网运维。面向企业级前端体验，仓库另提供独立 SPA 前端，**与控制面解耦、独立构建、独立部署**，由 Nginx/CDN 托管静态资源，反向代理 API 到控制面 8080 端口。
+
+| 项 | 说明 |
+|---|---|
+| 源码路径 | `web/enterprise/` |
+| 技术栈 | Vue 3 + Vite + Pinia + Vue Router |
+| 构建命令 | `cd web/enterprise && npm ci && npm run build` |
+| 产物目录 | `web/enterprise/dist/`（静态资源，含 index.html / assets/） |
+| 部署方式 | 独立部署（Nginx 静态托管 / CDN 分发），API 反代到控制面 `:8080` |
+| 开发模式 | `cd web/enterprise && npm install && npm run dev`（Vite dev server，端口 5174，自动代理 `/api` 到 `localhost:8080`） |
+
+### 构建
+
+```bash
+# 依赖：Node.js 18+（推荐 20 LTS）
+cd web/enterprise
+npm ci              # 严格按 package-lock.json 安装依赖
+npm run build       # 产出 dist/（index.html + assets/）
+```
+
+### 部署（Nginx 反代 API 到控制面 8080）
+
+```nginx
+server {
+    listen 80;
+    root /path/to/web/enterprise/dist;
+    location / { try_files $uri $uri/ /index.html; }
+    location /api/v1/ { proxy_pass http://controlplane:8080; }
+}
+```
+
+> **base 前缀**：`vite.config.js` 默认 `base: '/enterprise/'`，构建产物以 `/enterprise/` 前缀分发。若改为根路径独立站点（如上 Nginx 示例 `location /`），需将 `base` 改为 `'/'` 后重新构建；若由控制面统一托管于 `/enterprise/` 子路径，则保留默认 `base` 并将 `root` 指向 `dist`、`location /enterprise/` 套 `try_files`。
+
+> **鉴权头**：企业版前端独立部署时，`X-Tenant-ID` / `X-User-Id` / `X-User-Roles` 身份头由前置网关（APISIX/Envoy）或 Nginx 注入，控制面 `--require-auth` 开启后缺失则 401。详见 [IAM 与租户隔离](#iam-与租户隔离)。
+
+完整部署步骤（含 Cookie 跨域、HTTPS、CDN 等注意项）见 [部署指南 - 企业版前端部署](./docs/deployment-guide.md#企业版前端部署)。
+
+---
+
 ## 等保三级合规对照
 
 | 要求 | OpsMesh 实现 |

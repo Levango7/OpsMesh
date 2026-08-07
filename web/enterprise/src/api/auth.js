@@ -7,6 +7,7 @@ export const authApi = {
   register: (username, password, email) =>
     postJSON('/auth/register', { username, password, email: email || undefined }),
   me: () => getJSON('/auth/me'),
+  logout: () => postJSON('/auth/logout'),
 
   // —— 用户管理 ——
   listUsers: () => getJSON('/users'),

@@ -13,7 +13,9 @@ global:
 controlplane:
   image:
     repository: opsmesh/opsmesh
-    tag: "0.1"
+    # 生产环境必须用精确 sha 或 semver：--set controlplane.image.tag=<sha>
+    # 或通过 GitOps 写回（ci.yml E4 闭环，需配置 GITOPS_REPO/GITOPS_PAT secret）
+    tag: "latest"
     pullPolicy: IfNotPresent
   # 生产 3 副本 + leader 选举（A3）
   replicaCount: 3
