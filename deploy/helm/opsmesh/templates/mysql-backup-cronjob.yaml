@@ -1,0 +1,121 @@
+# OpsMesh MySQL 定期备份 CronJob
+# - 每天 02:00 执行 mysqldump --single-transaction（InnoDB 一致性快照，不锁表）
+# - gzip 压缩写入专用 PVC（{{ fullname }}-mysql-backup）
+# - 保留策略双重保险：
+#   1) successfulJobsHistoryLimit=7 保留最近 7 个成功 Job 历史
+#   2) 容器内 find -mtime +7 -delete 清理 7 天前的备份文件
+# - 凭证复用 {{ fullname }}-secret 的 mysql-root-password
+# - 启用条件：mysql.enabled && controlplane.store==mysql && mysql.backup.enabled
+{{- if and .Values.mysql.enabled (eq .Values.controlplane.store "mysql") .Values.mysql.backup.enabled -}}
+---
+# 1) 备份存储 PVC（ReadWriteOnce，供 CronJob Pod 串行写入）
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "opsmesh.fullname" . }}-mysql-backup
+  labels:
+    {{- include "opsmesh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mysql-backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- $sc := .Values.mysql.backup.storageClass | default .Values.global.storageClass }}
+  {{- with $sc }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.mysql.backup.storageSize | default "20Gi" }}
+---
+# 2) 备份 CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "opsmesh.fullname" . }}-mysql-backup
+  labels:
+    {{- include "opsmesh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mysql-backup
+  {{- with .Values.mysql.backup.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  # 每天凌晨 2:00（集群节点本地时区；生产建议节点 UTC 并相应调整 schedule）
+  schedule: {{ .Values.mysql.backup.schedule | default "0 2 * * *" | quote }}
+  # 上一次未跑完则跳过本次，避免并发写同一 PVC
+  concurrencyPolicy: Forbid
+  # 保留最近 7 次成功 Job 历史（对应 7 天）
+  successfulJobsHistoryLimit: {{ .Values.mysql.backup.historyLimit | default 7 }}
+  failedJobsHistoryLimit: {{ .Values.mysql.backup.failedHistoryLimit | default 3 }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.mysql.backup.backoffLimit | default 2 }}
+      activeDeadlineSeconds: {{ .Values.mysql.backup.activeDeadlineSeconds | default 1800 }}
+      template:
+        metadata:
+          labels:
+            {{- include "opsmesh.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: mysql-backup
+          {{- with .Values.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        spec:
+          {{- include "opsmesh.imagePullSecrets" . | nindent 10 }}
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: false
+            fsGroup: 999
+          containers:
+            - name: mysqldump
+              image: {{ .Values.mysql.image | default "mysql:8" }}
+              imagePullPolicy: {{ .Values.mysql.imagePullPolicy | default "IfNotPresent" }}
+              env:
+                - name: MYSQL_HOST
+                  value: {{ include "opsmesh.mysql.serviceName" . }}
+                - name: MYSQL_PORT
+                  value: "3306"
+                - name: MYSQL_DATABASE
+                  value: {{ .Values.mysql.database | quote }}
+                - name: MYSQL_ROOT_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "opsmesh.fullname" . }}-secret
+                      key: mysql-root-password
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  TS=$(date -u +%Y%m%dT%H%M%SZ)
+                  OUT="/backup/${MYSQL_DATABASE}-${TS}.sql.gz"
+                  echo "[backup] start ts=${TS} dest=${OUT}"
+                  mysqldump \
+                    -h"${MYSQL_HOST}" -P"${MYSQL_PORT}" \
+                    -uroot -p"${MYSQL_ROOT_PASSWORD}" \
+                    --single-transaction --quick --flush-logs \
+                    --routines --triggers --events \
+                    --all-databases \
+                    | gzip -c > "${OUT}"
+                  # 完整性自检：gzip 解压校验
+                  if ! gzip -t "${OUT}"; then
+                    echo "[backup] FAIL gzip integrity check: ${OUT}"
+                    rm -f "${OUT}"
+                    exit 1
+                  fi
+                  echo "[backup] done size=$(du -h "${OUT}" | cut -f1)"
+                  # 保留最近 N 天的本地备份文件
+                  KEEP={{ .Values.mysql.backup.retentionDays | default 7 }}
+                  find /backup -name "${MYSQL_DATABASE}-*.sql.gz" -type f -mtime +${KEEP} -print -delete \
+                    | sed 's/^/[backup] pruned /'
+                  echo "[backup] retention=${KEEP}d complete"
+              resources:
+                {{- toYaml (.Values.mysql.backup.resources | default (dict "requests" (dict "cpu" "100m" "memory" "128Mi") "limits" (dict "cpu" "500m" "memory" "512Mi"))) | nindent 16 }}
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: {{ include "opsmesh.fullname" . }}-mysql-backup
+{{- end -}}

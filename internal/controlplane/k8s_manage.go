@@ -11,6 +11,7 @@
 //   - GET    /api/v1/k8s/clusters/{id}/deployments?namespace={ns}       列出 deployment
 //   - POST   /api/v1/k8s/clusters/{id}/deployments/{ns}/{name}/scale    扩缩容 {replicas}
 //   - POST   /api/v1/k8s/clusters/{id}/deployments/{ns}/{name}/restart  滚动重启
+//   - POST   /api/v1/k8s/clusters/{id}/deployments/{ns}/{name}/rollback 回滚到上一 revision
 //   - GET    /api/v1/k8s/clusters/{id}/services?namespace={ns}          列出 service
 //   - GET    /api/v1/k8s/clusters/{id}/configmaps?namespace={ns}        列出 configmap
 //   - GET    /api/v1/k8s/clusters/{id}/secrets?namespace={ns}           列出 secret（仅 key 名）
@@ -28,6 +29,7 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,6 +41,7 @@ import (
 	"opsmesh/internal/k8s"
 	"opsmesh/internal/proto"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -138,6 +141,7 @@ func (s *Server) routePods(w http.ResponseWriter, r *http.Request, client *k8s.K
 //   - ""                                              → GET   handleListDeployments
 //   - "{ns}/{name}/scale"                             → POST  handleScaleDeployment
 //   - "{ns}/{name}/restart"                           → POST  handleRestartDeployment
+//   - "{ns}/{name}/rollback"                          → POST  handleRollbackDeployment
 func (s *Server) routeDeployments(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient, sub string) {
 	if sub == "" {
 		if r.Method != http.MethodGet {
@@ -168,6 +172,13 @@ func (s *Server) routeDeployments(w http.ResponseWriter, r *http.Request, client
 				return
 			}
 			s.handleRestartDeployment(w, r, client, ns, name)
+			return
+		case "rollback":
+			if r.Method != http.MethodPost {
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+				return
+			}
+			s.handleRollbackDeployment(w, r, client, ns, name)
 			return
 		}
 	}
@@ -291,7 +302,7 @@ func (s *Server) handleDeletePod(w http.ResponseWriter, r *http.Request, client 
 		return
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "k8s_pod_delete", Target: ns + "/" + name,
+		TenantID: k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_pod_delete", Target: ns + "/" + name,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -358,7 +369,7 @@ func (s *Server) handleScaleDeployment(w http.ResponseWriter, r *http.Request, c
 		return
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "k8s_deployment_scale", Target: ns + "/" + name,
+		TenantID: k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_deployment_scale", Target: ns + "/" + name,
 		Detail: fmt.Sprintf("replicas=%d", body.Replicas),
 	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -387,10 +398,98 @@ func (s *Server) handleRestartDeployment(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "k8s_deployment_restart", Target: ns + "/" + name,
+		TenantID: k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_deployment_restart", Target: ns + "/" + name,
 		Detail: "restartedAt=" + now,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "restarted", "restartedAt": now})
+}
+
+// handleRollbackDeployment 处理 POST /api/v1/k8s/clusters/{id}/deployments/{ns}/{name}/rollback：回滚到上一 revision。
+//
+// 实现思路（与 kubectl rollout undo 等价，无 kubectl 依赖）：
+//  1. Get 当前 deployment，读取 annotations["deployment.kubernetes.io/revision"] 得到当前 revision；
+//  2. 目标 revision = 当前 revision - 1（若 ≤1 表示无历史可回滚，返回 400）；
+//  3. List 该 namespace 下所有 ReplicaSet，通过 ControllerRef 过滤出属于此 deployment 的 ReplicaSet，
+//     再匹配 annotations["deployment.kubernetes.io/revision"] == 目标 revision；
+//  4. 将目标 ReplicaSet 的 Spec.Template 通过 StrategicMergePatch 写回 deployment 的 Spec.Template，
+//     触发 deployment controller 滚动更新到目标 revision 的 Pod 模板。
+//
+// 返回 {status: "rolled back", fromRevision, toRevision}。
+func (s *Server) handleRollbackDeployment(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient, ns, name string) {
+	caller, ok := s.requirePermission(w, r, "k8s:write")
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), k8sAPITimeout)
+	defer cancel()
+
+	// 1. 获取当前 deployment，读取 revision annotation。
+	dep, err := client.Clientset.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "get deployment failed: " + err.Error()})
+		return
+	}
+	currentRevStr := dep.Annotations["deployment.kubernetes.io/revision"]
+	if currentRevStr == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deployment has no revision annotation"})
+		return
+	}
+	currentRev, err := strconv.ParseInt(currentRevStr, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "parse current revision failed: " + err.Error()})
+		return
+	}
+	if currentRev <= 1 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deployment is at initial revision, no history to rollback"})
+		return
+	}
+	targetRev := currentRev - 1
+	targetRevStr := strconv.FormatInt(targetRev, 10)
+
+	// 2. 列出 ReplicaSet，找到属于此 deployment 且 revision 为 targetRev 的 ReplicaSet。
+	rsList, err := client.Clientset.AppsV1().ReplicaSets(ns).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list replicasets failed: " + err.Error()})
+		return
+	}
+	var targetRS *appsv1.ReplicaSet
+	for i := range rsList.Items {
+		rs := &rsList.Items[i]
+		if !metav1.IsControlledBy(rs, dep) {
+			continue
+		}
+		if rs.Annotations["deployment.kubernetes.io/revision"] == targetRevStr {
+			targetRS = rs
+			break
+		}
+	}
+	if targetRS == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("replicaset with revision %d not found", targetRev)})
+		return
+	}
+
+	// 3. 将目标 ReplicaSet 的 template patch 回 deployment（StrategicMergePatch）。
+	templateBytes, err := json.Marshal(targetRS.Spec.Template)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "marshal template failed: " + err.Error()})
+		return
+	}
+	patch := fmt.Sprintf(`{"spec":{"template":%s}}`, string(templateBytes))
+	if _, err := client.Clientset.AppsV1().Deployments(ns).Patch(
+		ctx, name, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "rollback deployment failed: " + err.Error()})
+		return
+	}
+
+	s.store.Audit(&proto.AuditEvent{
+		TenantID: k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_deployment_rollback", Target: ns + "/" + name,
+		Detail: fmt.Sprintf("from revision %d to %d", currentRev, targetRev),
+	})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":       "rolled back",
+		"fromRevision": currentRev,
+		"toRevision":   targetRev,
+	})
 }
 
 // handleListServices 处理 GET /api/v1/k8s/clusters/{id}/services?namespace={ns}：列出 service。

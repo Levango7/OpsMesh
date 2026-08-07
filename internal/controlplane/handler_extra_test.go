@@ -16,7 +16,7 @@ import (
 
 // 本文件为 M2 handler 测试补全：覆盖 server.go 中此前无单测的 HTTP handler。
 //
-// 覆盖范围：
+// 覆盖范围（12 个 handler）：
 //   - handleCancelTask      （F3 取消任务）
 //   - handleRetireDevice    （F5 退役设备）
 //   - handleAckAlert        （M7 告警确认）
@@ -27,6 +27,8 @@ import (
 //   - handleMe              （当前租户解析）
 //   - handleBatchCreateTasks（P0-3 批量下发，错误 case；happy path 见 endpoint_test.go）
 //   - handleAudits          （P0-4 审计检索，补充 case；happy path 见 endpoint_test.go）
+//   - handleApproveTask     （task 100 审批通过）
+//   - handleRejectTask      （task 100 审批拒绝）
 //
 // 测试模式：直接装配 Server{reg: NewRegistryWithStore(MemoryStore)}，用 httptest 发请求，
 // 注入 X-Tenant-ID 等网关头，断言 HTTP status code 与响应体。每个 handler 至少一个 happy path
@@ -791,5 +793,197 @@ func TestHandleAudits_MethodNotAllowed(t *testing.T) {
 	s.handleAudits(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status=%d, want 405", rec.Code)
+	}
+}
+
+// =============================================================================
+// handleApproveTask（task 100 审批通过）
+// =============================================================================
+//
+// pending_approval 状态的任务经 ApproveTask 翻转为 pending（进入 ClaimTask 队列）。
+// 创建待审批任务：CreateTask 时 ApprovalRequired=true → 初始状态 pending_approval。
+
+// TestHandleApproveTask_Happy 验证审批 pending_approval 任务成功，状态翻 pending。
+func TestHandleApproveTask_Happy(t *testing.T) {
+	s := newExtraTestServer()
+	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+	tk := s.store.CreateTask(&proto.Task{
+		AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "rm -rf /tmp/x",
+		ApprovalRequired: true,
+	})
+	if tk.Status != "pending_approval" {
+		t.Fatalf("precondition: status=%q, want pending_approval", tk.Status)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+tk.TaskID+"/approve", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
+	req.Header.Set("X-User-Id", "approver-1")
+	rec := httptest.NewRecorder()
+	s.handleApproveTask(rec, req, tk.TaskID)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, body=%s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["status"] != "approved" {
+		t.Fatalf("status=%q, want approved", resp["status"])
+	}
+	// 验证任务状态已翻 pending 且记录审批人
+	got := s.store.AllTasks("t1")
+	if len(got) == 0 || got[0].Status != "pending" || got[0].ApprovedBy != "approver-1" {
+		t.Fatalf("task not approved: %+v", got)
+	}
+}
+
+// TestHandleApproveTask_NotFound 验证审批不存在的任务返回 404。
+func TestHandleApproveTask_NotFound(t *testing.T) {
+	s := newExtraTestServer()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/nope/approve", nil)
+	rec := httptest.NewRecorder()
+	s.handleApproveTask(rec, req, "nope")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status=%d, want 404", rec.Code)
+	}
+}
+
+// TestHandleApproveTask_NotApprovable 验证审批非 pending_approval 状态的任务返回 404。
+func TestHandleApproveTask_NotApprovable(t *testing.T) {
+	s := newExtraTestServer()
+	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+	// 普通任务初始为 pending（非 pending_approval），不可审批
+	tk := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+tk.TaskID+"/approve", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
+	rec := httptest.NewRecorder()
+	s.handleApproveTask(rec, req, tk.TaskID)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("approve pending task=%d, want 404", rec.Code)
+	}
+}
+
+// TestHandleApproveTask_TenantMismatch 验证越权审批他租户任务返回 404。
+func TestHandleApproveTask_TenantMismatch(t *testing.T) {
+	s := newExtraTestServer()
+	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+	tk := s.store.CreateTask(&proto.Task{
+		AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "rm -rf /tmp/x",
+		ApprovalRequired: true,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+tk.TaskID+"/approve", nil)
+	req.Header.Set("X-Tenant-ID", "t2") // 越权
+	rec := httptest.NewRecorder()
+	s.handleApproveTask(rec, req, tk.TaskID)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant approve=%d, want 404", rec.Code)
+	}
+}
+
+// TestHandleApproveTask_RequireAuth 验证 requireAuth 且无身份时返回 401。
+func TestHandleApproveTask_RequireAuth(t *testing.T) {
+	s := newExtraTestServer()
+	s.requireAuth = true
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/x/approve", nil)
+	rec := httptest.NewRecorder()
+	s.handleApproveTask(rec, req, "x")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want 401", rec.Code)
+	}
+}
+
+// =============================================================================
+// handleRejectTask（task 100 审批拒绝）
+// =============================================================================
+
+// TestHandleRejectTask_Happy 验证拒绝 pending_approval 任务成功，状态翻 rejected。
+func TestHandleRejectTask_Happy(t *testing.T) {
+	s := newExtraTestServer()
+	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+	tk := s.store.CreateTask(&proto.Task{
+		AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "rm -rf /tmp/x",
+		ApprovalRequired: true,
+	})
+
+	body := strings.NewReader(`{"reason":"too dangerous"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+tk.TaskID+"/reject", body)
+	req.Header.Set("X-Tenant-ID", "t1")
+	req.Header.Set("X-User-Id", "approver-1")
+	rec := httptest.NewRecorder()
+	s.handleRejectTask(rec, req, tk.TaskID)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, body=%s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["status"] != "rejected" {
+		t.Fatalf("status=%q, want rejected", resp["status"])
+	}
+	// 验证任务状态已翻 rejected
+	got := s.store.AllTasks("t1")
+	if len(got) == 0 || got[0].Status != "rejected" || got[0].ApprovedBy != "approver-1" {
+		t.Fatalf("task not rejected: %+v", got)
+	}
+}
+
+// TestHandleRejectTask_NotFound 验证拒绝不存在的任务返回 404。
+func TestHandleRejectTask_NotFound(t *testing.T) {
+	s := newExtraTestServer()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/nope/reject", nil)
+	rec := httptest.NewRecorder()
+	s.handleRejectTask(rec, req, "nope")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status=%d, want 404", rec.Code)
+	}
+}
+
+// TestHandleRejectTask_NotApprovable 验证拒绝非 pending_approval 状态的任务返回 404。
+func TestHandleRejectTask_NotApprovable(t *testing.T) {
+	s := newExtraTestServer()
+	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+	tk := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+tk.TaskID+"/reject", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
+	rec := httptest.NewRecorder()
+	s.handleRejectTask(rec, req, tk.TaskID)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("reject pending task=%d, want 404", rec.Code)
+	}
+}
+
+// TestHandleRejectTask_TenantMismatch 验证越权拒绝他租户任务返回 404。
+func TestHandleRejectTask_TenantMismatch(t *testing.T) {
+	s := newExtraTestServer()
+	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
+	tk := s.store.CreateTask(&proto.Task{
+		AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "rm -rf /tmp/x",
+		ApprovalRequired: true,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+tk.TaskID+"/reject", nil)
+	req.Header.Set("X-Tenant-ID", "t2") // 越权
+	rec := httptest.NewRecorder()
+	s.handleRejectTask(rec, req, tk.TaskID)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant reject=%d, want 404", rec.Code)
+	}
+}
+
+// TestHandleRejectTask_RequireAuth 验证 requireAuth 且无身份时返回 401。
+func TestHandleRejectTask_RequireAuth(t *testing.T) {
+	s := newExtraTestServer()
+	s.requireAuth = true
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/x/reject", nil)
+	rec := httptest.NewRecorder()
+	s.handleRejectTask(rec, req, "x")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want 401", rec.Code)
 	}
 }

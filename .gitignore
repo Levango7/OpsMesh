@@ -59,3 +59,9 @@ test_*.html
 screenshots/
 opsmesh.exe~
 
+# 测试/构建产物
+coverage
+coverage/
+tmp/
+store
+

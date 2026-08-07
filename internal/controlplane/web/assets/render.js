@@ -105,14 +105,14 @@ export function drawTaskBar(elId, done, failed, other) {
   const pct = function (n) { return (n / total * 100).toFixed(1); };
   el.innerHTML =
     '<div style="display:flex;height:22px;border-radius:6px;overflow:hidden;margin:6px 0 10px">'
-    + '<div style="width:' + pct(done) + '%;background:var(--green)" title="成功 ' + done + '"></div>'
-    + '<div style="width:' + pct(failed) + '%;background:var(--fail)" title="失败 ' + failed + '"></div>'
-    + '<div style="width:' + pct(other) + '%;background:var(--border-2)" title="进行中/排队 ' + other + '"></div>'
+    + '<div style="width:' + pct(done) + '%;background:var(--green)" title="' + esc(t('render.taskBar.successTitle')) + done + '"></div>'
+    + '<div style="width:' + pct(failed) + '%;background:var(--fail)" title="' + esc(t('render.taskBar.failedTitle')) + failed + '"></div>'
+    + '<div style="width:' + pct(other) + '%;background:var(--border-2)" title="' + esc(t('render.taskBar.otherTitle')) + other + '"></div>'
     + '</div>'
     + '<div style="display:flex;gap:16px;font-size:12px;color:var(--text-2)">'
-    + '<span><span class="dot ok" style="display:inline-block;margin-right:5px"></span>' + (getLang() === 'zh' ? '成功 ' : 'Success ') + done + '</span>'
-    + '<span><span class="dot fail" style="display:inline-block;margin-right:5px"></span>' + (getLang() === 'zh' ? '失败 ' : 'Failed ') + failed + '</span>'
-    + '<span><span class="dot" style="display:inline-block;background:var(--border-2);margin-right:5px"></span>' + (getLang() === 'zh' ? '其余 ' : 'Other ') + other + '</span>'
+    + '<span><span class="dot ok" style="display:inline-block;margin-right:5px"></span>' + esc(t('render.taskBar.success')) + done + '</span>'
+    + '<span><span class="dot fail" style="display:inline-block;margin-right:5px"></span>' + esc(t('render.taskBar.failed')) + failed + '</span>'
+    + '<span><span class="dot" style="display:inline-block;background:var(--border-2);margin-right:5px"></span>' + esc(t('render.taskBar.other')) + other + '</span>'
     + '</div>';
 }
 
@@ -121,9 +121,9 @@ export function drawAlertDonut(elId, c, w) {
   const total = c + w;
   if (total === 0) { el.innerHTML = '<p class="muted">' + esc(t('render.noAlerts')) + '</p>'; return; }
   const R = 42, C = 2 * Math.PI * R, critLen = c / total * C, warnLen = w / total * C;
-  const activeLbl = getLang() === 'zh' ? '活跃告警' : 'Active';
-  const critLbl = getLang() === 'zh' ? '严重 ' : 'Critical ';
-  const warnLbl = getLang() === 'zh' ? '警告 ' : 'Warning ';
+  const activeLbl = t('render.alert.active');
+  const critLbl = t('render.alert.critical');
+  const warnLbl = t('render.alert.warning');
   el.innerHTML =
     '<svg width="120" height="120" viewBox="0 0 120 120">'
     + '<circle cx="60" cy="60" r="' + R + '" fill="none" stroke="var(--fail)" stroke-width="14" stroke-dasharray="' + critLen + ' ' + (C - critLen) + '" stroke-dashoffset="0" transform="rotate(-90 60 60)"></circle>'
@@ -218,8 +218,8 @@ export function renderDevices(snap) {
         + '<td>' + stateBadge + '</td>'
         + '<td>' + osInfo + '</td>'
         + '<td class="row-actions-cell" onclick="event.stopPropagation()">'
-        + '<button class="ghost" title="查看监控指标详情" onclick="showDeviceDetail(\'' + escAttr(d.deviceID) + '\')">' + icon('device', 14) + ' 详情</button> '
-        + '<button class="ghost" title="下发任务到该设备" onclick="setFocus(\'' + escAttr(d.deviceID) + '\',\'' + escAttr(d.ip) + '\',\'' + escAttr(d.agentID) + '\',\'' + escAttr(seg) + '\');switchTab(\'ops\')">' + icon('task', 14) + ' 下发</button>'
+        + '<button class="ghost" title="' + esc(t('render.action.detailTitle')) + '" onclick="showDeviceDetail(\'' + escAttr(d.deviceID) + '\')">' + icon('device', 14) + ' ' + esc(t('render.action.detail')) + '</button> '
+        + '<button class="ghost" title="' + esc(t('render.action.dispatchTitle')) + '" onclick="setFocus(\'' + escAttr(d.deviceID) + '\',\'' + escAttr(d.ip) + '\',\'' + escAttr(d.agentID) + '\',\'' + escAttr(seg) + '\');switchTab(\'ops\')">' + icon('task', 14) + ' ' + esc(t('render.action.dispatch')) + '</button>'
         + '</td>'
         + '</tr>';
     });
@@ -247,7 +247,7 @@ export function renderAlerts(list) {
   let html = note;
   fl.forEach(function (a) {
     const cls = a.severity === 'critical' ? 'alert' : 'alert warn';
-    html += '<div class="' + cls + '"><b>[' + esc(a.severity) + ']</b> ' + (getLang() === 'zh' ? '设备' : 'Device') + ' ' + esc(a.deviceID) + '<br>' + esc(a.message) + '<br><small class="muted">' + fmtTime(a.createdAt) + '</small>'
+    html += '<div class="' + cls + '"><b>[' + esc(a.severity) + ']</b> ' + esc(t('render.alert.devicePrefix')) + ' ' + esc(a.deviceID) + '<br>' + esc(a.message) + '<br><small class="muted">' + fmtTime(a.createdAt) + '</small>'
       + '<br><button class="jbtn" style="margin-top:6px" onclick="setFocus(\'' + escAttr(a.deviceID) + '\',\'\',\'\',\'\');switchTab(\'alerts\')">' + icon('context', 14) + ' ' + esc(t('render.contextLink')) + '</button></div>';
   });
   document.getElementById('alerts').innerHTML = html;
@@ -269,7 +269,7 @@ export function renderTasks(tasks) {
     paintStats();
     return;
   }
-  let html = note + '<div class="table-wrap"><table><colgroup><col style="width:18%"><col style="width:18%"><col style="width:10%"><col style="width:40%"><col style="width:14%"></colgroup><thead><tr><th>TaskID</th><th>采集端</th><th>类型</th><th>命令</th><th>状态</th></tr></thead><tbody>';
+  let html = note + '<div class="table-wrap"><table><colgroup><col style="width:18%"><col style="width:18%"><col style="width:10%"><col style="width:40%"><col style="width:14%"></colgroup><thead><tr><th>TaskID</th><th>' + esc(t('render.col.agent')) + '</th><th>' + esc(t('render.col.type')) + '</th><th>' + esc(t('render.col.command')) + '</th><th>' + esc(t('render.col.status')) + '</th></tr></thead><tbody>';
   list.forEach(function (t) {
     html += '<tr><td><code title="' + esc(t.taskID) + '">' + esc(t.taskID) + '</code></td><td>' + esc(t.agentID) + '</td><td>' + esc(t.type) + '</td><td><code title="' + esc(t.command) + '">' + esc(t.command) + '</code></td><td>' + esc(t.status) + '</td></tr>';
   });
@@ -332,10 +332,10 @@ export function paintTrend() {
 
 // ---------- 网段拓扑（F2） ----------
 const SEG_META = [
-  { cidr: '10.20.0.0/24', name: 'mgmt-net（管理网）', color: 'var(--indigo)' },
-  { cidr: '10.21.0.0/24', name: 'data-net（数据网）', color: 'var(--teal)' },
-  { cidr: '10.22.0.0/24', name: 'soc-net（安全网）', color: 'var(--amber)' },
-  { cidr: '10.30.0.0/16', name: 'seg-net（业务网）', color: 'var(--rose)' },
+  { cidr: '10.20.0.0/24', nameKey: 'topo.mgmt', color: 'var(--indigo)' },
+  { cidr: '10.21.0.0/24', nameKey: 'topo.data', color: 'var(--teal)' },
+  { cidr: '10.22.0.0/24', nameKey: 'topo.soc', color: 'var(--amber)' },
+  { cidr: '10.30.0.0/16', nameKey: 'topo.seg', color: 'var(--rose)' },
 ];
 
 function ipToInt(ip) {
@@ -362,13 +362,13 @@ export function paintTopo() {
       SEG_META.forEach(function (m) { if (cidrMatch(d.ip, m.cidr)) counts[m.cidr]++; });
     });
   });
-  const segs = SEG_META.map(function (m) { return { name: m.name, color: m.color, count: counts[m.cidr] || 0 }; });
+  const segs = SEG_META.map(function (m) { return { name: t(m.nameKey), color: m.color, count: counts[m.cidr] || 0 }; });
   if (segs.length === 0) { el.innerHTML = '<p class="muted">' + esc(t('render.noTopo')) + '</p>'; return; }
   const W = 720, H = Math.max(170, 30 + segs.length * 46), padL = 20, padT = 20;
   const cpX = 30, cpY = H / 2, cpW = 150, cpH = 58;
   let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" style="display:block">';
   svg += '<rect x="' + cpX + '" y="' + (cpY - cpH / 2) + '" width="' + cpW + '" height="' + cpH + '" rx="12" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>';
-  svg += '<text x="' + (cpX + cpW / 2) + '" y="' + (cpY - 4) + '" text-anchor="middle" font-size="13" font-weight="600" fill="var(--text)">控制面</text>';
+  svg += '<text x="' + (cpX + cpW / 2) + '" y="' + (cpY - 4) + '" text-anchor="middle" font-size="13" font-weight="600" fill="var(--text)">' + esc(t('render.topo.controlPlane')) + '</text>';
   svg += '<text x="' + (cpX + cpW / 2) + '" y="' + (cpY + 14) + '" text-anchor="middle" font-size="11" fill="var(--text-3)">OpsMesh</text>';
   const nx = cpX + cpW + 120, nw = W - nx - 20, nh = 40;
   segs.forEach(function (s, i) {
@@ -377,7 +377,7 @@ export function paintTopo() {
     svg += '<rect x="' + nx + '" y="' + ny + '" width="' + nw + '" height="' + nh + '" rx="10" fill="var(--surface-2)" stroke="' + s.color + '" stroke-width="2"/>';
     svg += '<circle cx="' + (nx + 20) + '" cy="' + (ny + nh / 2) + '" r="7" fill="' + s.color + '"/>';
     svg += '<text class="topo-label" x="' + (nx + 38) + '" y="' + (ny + nh / 2 - 3) + '">' + esc(s.name) + '</text>';
-    svg += '<text class="topo-count" x="' + (nx + 38) + '" y="' + (ny + nh / 2 + 15) + '" fill="' + s.color + '">' + s.count + (getLang() === 'zh' ? ' 台设备' : ' devices') + '</text>';
+    svg += '<text class="topo-count" x="' + (nx + 38) + '" y="' + (ny + nh / 2 + 15) + '" fill="' + s.color + '">' + s.count + ' ' + esc(t('render.devicesUnit')) + '</text>';
   });
   svg += '</svg>';
   el.innerHTML = svg;
@@ -614,7 +614,7 @@ export function paintPermsList() {
   // 按 group 分组
   const groups = {};
   filtered.forEach(function (p) {
-    const g = p.group || (getLang() === 'zh' ? '未分组' : 'Ungrouped');
+    const g = p.group || t('render.perm.ungrouped');
     if (!groups[g]) groups[g] = [];
     groups[g].push(p);
   });
@@ -683,7 +683,7 @@ export function showRoleModal(role) {
   // 权限按 group 分组展示
   const groups = {};
   perms.forEach(function (p) {
-    const g = p.group || (getLang() === 'zh' ? '未分组' : 'Ungrouped');
+    const g = p.group || t('render.perm.ungrouped');
     if (!groups[g]) groups[g] = [];
     groups[g].push(p);
   });
@@ -756,9 +756,9 @@ export function fmtUptime(sec) {
   const h = Math.floor((sec % 86400) / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const parts = [];
-  if (d > 0) parts.push(d + '天');
-  if (h > 0 || d > 0) parts.push(h + '小时');
-  parts.push(m + '分钟');
+  if (d > 0) parts.push(d + t('uptime.day'));
+  if (h > 0 || d > 0) parts.push(h + t('uptime.hour'));
+  parts.push(m + t('uptime.minute'));
   return parts.join('');
 }
 
@@ -791,10 +791,10 @@ export function renderCPUCard(cpu) {
   const usage = cpu.usage != null ? Number(cpu.usage) : null;
   const usageTxt = usage != null ? usage.toFixed(1) + '%' : '–';
   return '<div class="metric-card accent-indigo">'
-    + '<div class="metric-card-head"><span class="icon">' + icon('ops', 16) + '</span> CPU</div>'
-    + '<div class="metric-row"><span class="metric-label">型号</span><span class="metric-val">' + esc(cpu.model || '–') + '</span></div>'
-    + '<div class="metric-row"><span class="metric-label">核心数</span><span class="metric-val">' + esc(cpu.cores != null ? cpu.cores : '–') + '</span></div>'
-    + '<div class="metric-row"><span class="metric-label">使用率</span><span class="metric-val" style="color:' + usageColor(usage) + ';font-weight:600">' + usageTxt + '</span></div>'
+    + '<div class="metric-card-head"><span class="icon">' + icon('ops', 16) + '</span> ' + esc(t('metric.cpu')) + '</div>'
+    + '<div class="metric-row"><span class="metric-label">' + esc(t('metric.model')) + '</span><span class="metric-val">' + esc(cpu.model || '–') + '</span></div>'
+    + '<div class="metric-row"><span class="metric-label">' + esc(t('metric.cores')) + '</span><span class="metric-val">' + esc(cpu.cores != null ? cpu.cores : '–') + '</span></div>'
+    + '<div class="metric-row"><span class="metric-label">' + esc(t('metric.usage')) + '</span><span class="metric-val" style="color:' + usageColor(usage) + ';font-weight:600">' + usageTxt + '</span></div>'
     + progressBar(usage)
     + '</div>';
 }
@@ -805,11 +805,11 @@ export function renderMemCard(mem) {
   const usage = mem.usage != null ? Number(mem.usage) : null;
   const usageTxt = usage != null ? usage.toFixed(1) + '%' : '–';
   return '<div class="metric-card accent-teal">'
-    + '<div class="metric-card-head"><span class="icon">' + icon('cmdb', 16) + '</span> 内存</div>'
-    + '<div class="metric-row"><span class="metric-label">总内存</span><span class="metric-val">' + fmtBytes(mem.total) + '</span></div>'
-    + '<div class="metric-row"><span class="metric-label">已用</span><span class="metric-val">' + fmtBytes(mem.used) + '</span></div>'
-    + '<div class="metric-row"><span class="metric-label">可用</span><span class="metric-val">' + fmtBytes(mem.available) + '</span></div>'
-    + '<div class="metric-row"><span class="metric-label">使用率</span><span class="metric-val" style="color:' + usageColor(usage) + ';font-weight:600">' + usageTxt + '</span></div>'
+    + '<div class="metric-card-head"><span class="icon">' + icon('cmdb', 16) + '</span> ' + esc(t('metric.memory')) + '</div>'
+    + '<div class="metric-row"><span class="metric-label">' + esc(t('metric.total')) + '</span><span class="metric-val">' + fmtBytes(mem.total) + '</span></div>'
+    + '<div class="metric-row"><span class="metric-label">' + esc(t('metric.used')) + '</span><span class="metric-val">' + fmtBytes(mem.used) + '</span></div>'
+    + '<div class="metric-row"><span class="metric-label">' + esc(t('metric.available')) + '</span><span class="metric-val">' + fmtBytes(mem.available) + '</span></div>'
+    + '<div class="metric-row"><span class="metric-label">' + esc(t('metric.usage')) + '</span><span class="metric-val" style="color:' + usageColor(usage) + ';font-weight:600">' + usageTxt + '</span></div>'
     + progressBar(usage)
     + '</div>';
 }
@@ -817,16 +817,16 @@ export function renderMemCard(mem) {
 // 磁盘监控卡片（多分区列表）
 export function renderDiskCards(disks) {
   if (!disks || !disks.length) return '';
-  let html = '<div class="metric-card accent-amber"><div class="metric-card-head"><span class="icon">' + icon('deploy', 16) + '</span> 磁盘</div>';
+  let html = '<div class="metric-card accent-amber"><div class="metric-card-head"><span class="icon">' + icon('deploy', 16) + '</span> ' + esc(t('metric.disk')) + '</div>';
   disks.forEach(function (d) {
     const usage = d.usage != null ? Number(d.usage) : null;
     const usageTxt = usage != null ? usage.toFixed(1) + '%' : '–';
     html += '<div class="disk-item">'
       + '<div class="disk-head"><b>' + esc(d.mount || '–') + '</b> <span class="muted">(' + esc(d.type || '–') + ')</span></div>'
-      + '<div class="metric-row"><span class="metric-label">总容量</span><span class="metric-val">' + fmtBytes(d.total) + '</span></div>'
-      + '<div class="metric-row"><span class="metric-label">已用</span><span class="metric-val">' + fmtBytes(d.used) + '</span></div>'
-      + '<div class="metric-row"><span class="metric-label">可用</span><span class="metric-val">' + fmtBytes(d.free) + '</span></div>'
-      + '<div class="metric-row"><span class="metric-label">使用率</span><span class="metric-val" style="color:' + usageColor(usage) + ';font-weight:600">' + usageTxt + '</span></div>'
+      + '<div class="metric-row"><span class="metric-label">' + esc(t('metric.totalCapacity')) + '</span><span class="metric-val">' + fmtBytes(d.total) + '</span></div>'
+      + '<div class="metric-row"><span class="metric-label">' + esc(t('metric.used')) + '</span><span class="metric-val">' + fmtBytes(d.used) + '</span></div>'
+      + '<div class="metric-row"><span class="metric-label">' + esc(t('metric.available')) + '</span><span class="metric-val">' + fmtBytes(d.free) + '</span></div>'
+      + '<div class="metric-row"><span class="metric-label">' + esc(t('metric.usage')) + '</span><span class="metric-val" style="color:' + usageColor(usage) + ';font-weight:600">' + usageTxt + '</span></div>'
       + progressBar(usage)
       + '</div>';
   });
@@ -837,7 +837,7 @@ export function renderDiskCards(disks) {
 // 网络监控卡片（多网卡列表）
 export function renderNetCards(network) {
   if (!network || !network.length) return '';
-  let html = '<div class="metric-card accent-sky"><div class="metric-card-head"><span class="icon">' + icon('context', 16) + '</span> 网络</div>';
+  let html = '<div class="metric-card accent-sky"><div class="metric-card-head"><span class="icon">' + icon('context', 16) + '</span> ' + esc(t('metric.network')) + '</div>';
   network.forEach(function (n) {
     const up = (n.status === 'up' || n.status === 'UP');
     const statusPill = up ? '<span class="pill ok">up</span>' : '<span class="pill fail">' + esc(n.status || 'down') + '</span>';
@@ -845,9 +845,9 @@ export function renderNetCards(network) {
       + '<div class="net-head"><b>' + esc(n.name || '–') + '</b> ' + statusPill + '</div>'
       + '<div class="metric-row"><span class="metric-label">IP</span><span class="metric-val">' + esc(n.ip || '–') + '</span></div>'
       + '<div class="metric-row"><span class="metric-label">MAC</span><span class="metric-val">' + esc(n.mac || '–') + '</span></div>'
-      + '<div class="metric-row"><span class="metric-label">速率</span><span class="metric-val">' + esc(n.speed != null ? n.speed + ' Mbps' : '–') + '</span></div>'
-      + '<div class="metric-row"><span class="metric-label">接收</span><span class="metric-val">' + fmtBytes(n.rxBytes) + '</span></div>'
-      + '<div class="metric-row"><span class="metric-label">发送</span><span class="metric-val">' + fmtBytes(n.txBytes) + '</span></div>'
+      + '<div class="metric-row"><span class="metric-label">' + esc(t('metric.speed')) + '</span><span class="metric-val">' + esc(n.speed != null ? n.speed + ' ' + t('metric.mbps') : '–') + '</span></div>'
+      + '<div class="metric-row"><span class="metric-label">' + esc(t('metric.rx')) + '</span><span class="metric-val">' + fmtBytes(n.rxBytes) + '</span></div>'
+      + '<div class="metric-row"><span class="metric-label">' + esc(t('metric.tx')) + '</span><span class="metric-val">' + fmtBytes(n.txBytes) + '</span></div>'
       + '</div>';
   });
   html += '</div>';
@@ -857,12 +857,12 @@ export function renderNetCards(network) {
 // 服务状态卡片（running=绿/stopped=红 + 开机自启）
 export function renderServiceCards(services) {
   if (!services || !services.length) return '';
-  let html = '<div class="metric-card accent-violet"><div class="metric-card-head"><span class="icon">' + icon('settings', 16) + '</span> 服务状态</div>';
-  html += '<div class="table-wrap"><table class="svc-table"><colgroup><col style="width:50%"><col style="width:25%"><col style="width:25%"></colgroup><thead><tr><th>服务名</th><th>状态</th><th>开机自启</th></tr></thead><tbody>';
+  let html = '<div class="metric-card accent-violet"><div class="metric-card-head"><span class="icon">' + icon('settings', 16) + '</span> ' + esc(t('metric.service')) + '</div>';
+  html += '<div class="table-wrap"><table class="svc-table"><colgroup><col style="width:50%"><col style="width:25%"><col style="width:25%"></colgroup><thead><tr><th>' + esc(t('metric.serviceName')) + '</th><th>' + esc(t('metric.status')) + '</th><th>' + esc(t('metric.autoStart')) + '</th></tr></thead><tbody>';
   services.forEach(function (s) {
     const running = (s.status === 'running' || s.status === 'active');
     const statusPill = running ? '<span class="pill ok">running</span>' : '<span class="pill fail">' + esc(s.status || 'stopped') + '</span>';
-    const enabledPill = s.enabled ? '<span class="pill info">是</span>' : '<span class="pill">否</span>';
+    const enabledPill = s.enabled ? '<span class="pill info">' + esc(t('metric.yes')) + '</span>' : '<span class="pill">' + esc(t('metric.no')) + '</span>';
     html += '<tr><td><b>' + esc(s.name || '–') + '</b></td><td>' + statusPill + '</td><td>' + enabledPill + '</td></tr>';
   });
   html += '</tbody></table></div></div>';
@@ -876,17 +876,17 @@ export function renderDeviceDetail(metrics) {
   if (!body) return;
   // 基本信息卡片
   let html = '<div class="metric-card">'
-    + '<div class="metric-card-head"><span class="icon">' + icon('device', 16) + '</span> 基本信息</div>'
+    + '<div class="metric-card-head"><span class="icon">' + icon('device', 16) + '</span> ' + esc(t('metric.basicInfo')) + '</div>'
     + '<div class="info-grid">'
-    + infoItem('主机名', m.hostname)
-    + infoItem('设备ID', m.deviceID, true)
-    + infoItem('操作系统', m.os)
-    + infoItem('系统版本', m.osVersion)
-    + infoItem('内核', m.kernel)
-    + infoItem('架构', m.arch)
-    + infoItem('运行时长', fmtUptime(m.uptime))
-    + infoItem('进程数', m.processCount)
-    + infoItem('采集时间', fmtTime(m.collectedAt))
+    + infoItem(t('metric.hostname'), m.hostname)
+    + infoItem(t('metric.deviceId'), m.deviceID, true)
+    + infoItem(t('metric.os'), m.os)
+    + infoItem(t('metric.osVersion'), m.osVersion)
+    + infoItem(t('metric.kernel'), m.kernel)
+    + infoItem(t('metric.arch'), m.arch)
+    + infoItem(t('metric.uptime'), fmtUptime(m.uptime))
+    + infoItem(t('metric.processCount'), m.processCount)
+    + infoItem(t('metric.collectedAt'), fmtTime(m.collectedAt))
     + '</div></div>';
   // CPU + 内存（并排）
   html += '<div class="metric-grid">';
@@ -947,7 +947,7 @@ export function paintResTypeDist() {
       + '</div>';
   });
   html += '</div>';
-  html += '<p class="muted" style="margin-top:10px;font-size:12px">共 ' + total + ' 台设备</p>';
+  html += '<p class="muted" style="margin-top:10px;font-size:12px">' + esc(t('render.resA.totalDevices', { n: total })) + '</p>';
   el.innerHTML = html;
 }
 
@@ -1021,7 +1021,7 @@ export function renderSettings() {
   // 通知
   html += section(t('settings.section.notification'),
     row(t('settings.notify.email'), t('settings.notify.email.desc'),
-      '<select id="setNotifyEmail"><option value="off" ' + (notifyEmail === 'off' ? 'selected' : '') + '>' + (langZh ? '关闭' : 'Off') + '</option><option value="on" ' + (notifyEmail === 'on' ? 'selected' : '') + '>' + (langZh ? '开启' : 'On') + '</option></select>')
+      '<select id="setNotifyEmail"><option value="off" ' + (notifyEmail === 'off' ? 'selected' : '') + '>' + esc(t('common.off')) + '</option><option value="on" ' + (notifyEmail === 'on' ? 'selected' : '') + '>' + esc(t('common.on')) + '</option></select>')
     + row(t('settings.notify.webhook'), t('settings.notify.webhook.desc'),
       '<input type="text" id="setWebhookUrl" value="' + esc(webhookUrl) + '" placeholder="https://example.com/hook" style="min-width:240px">')
   );

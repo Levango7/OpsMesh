@@ -796,6 +796,7 @@ var (
 	_ RoleStore       = (*MultiSchemaStore)(nil)
 	_ PermissionStore = (*MultiSchemaStore)(nil)
 	_ K8sClusterStore = (*MultiSchemaStore)(nil)
+	_ TemplateStore   = (*MultiSchemaStore)(nil)
 	_ Store           = (*MultiSchemaStore)(nil)
 )
 
@@ -982,4 +983,171 @@ func (m *MultiSchemaStore) DeleteK8sCluster(id string) bool {
 		return false
 	}
 	return s.DeleteK8sCluster(id)
+}
+
+// ============================================================================
+// task 100 任务审批：ApproveTask / RejectTask（按 tenantID 路由，与 CancelTask 同模式）
+// ============================================================================
+
+// ApproveTask 审批通过任务：直接用 tenantID 路由。
+func (m *MultiSchemaStore) ApproveTask(id, tenantID, approvedBy string) bool {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return false
+	}
+	return s.ApproveTask(id, tenantID, approvedBy)
+}
+
+// RejectTask 驳回任务：直接用 tenantID 路由。
+func (m *MultiSchemaStore) RejectTask(id, tenantID, approvedBy string) bool {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return false
+	}
+	return s.RejectTask(id, tenantID, approvedBy)
+}
+
+// ============================================================================
+// task 100 告警规则：CreateAlertRule / ListAlertRules / DeleteAlertRule
+// ============================================================================
+
+// CreateAlertRule 创建告警规则：从 r.TenantID 路由（与 AddAlert 同模式）。
+func (m *MultiSchemaStore) CreateAlertRule(r *AlertRule) *AlertRule {
+	if r == nil {
+		return nil
+	}
+	s, err := m.storeFor(r.TenantID)
+	if err != nil {
+		log.Printf("[multi-schema] CreateAlertRule 路由失败 tenant=%q: %v", r.TenantID, err)
+		return nil
+	}
+	return s.CreateAlertRule(r)
+}
+
+// ListAlertRules 返回告警规则：直接用 tenantID 路由（与 Alerts 同模式）。
+func (m *MultiSchemaStore) ListAlertRules(tenantID string) []*AlertRule {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return nil
+	}
+	return s.ListAlertRules(tenantID)
+}
+
+// DeleteAlertRule 删除告警规则：遍历所有 schema 尝试删除（与 Alert 单查同模式：规则 ID 跨 schema 唯一性弱）。
+func (m *MultiSchemaStore) DeleteAlertRule(id string) bool {
+	for _, s := range m.allStores() {
+		if s.DeleteAlertRule(id) {
+			return true
+		}
+	}
+	return false
+}
+
+// ============================================================================
+// task 100 OS/中间件部署模板：TemplateStore 实现（路由到全局 store，与 K8sClusterStore 同模式）
+// ============================================================================
+
+// SaveOSTemplate 创建或更新 OS 安装模板（路由到全局 store）。
+func (m *MultiSchemaStore) SaveOSTemplate(t *OSTemplate) error {
+	s, err := m.globalStore()
+	if err != nil {
+		return err
+	}
+	return s.SaveOSTemplate(t)
+}
+
+// ListOSTemplates 返回 OS 安装模板（路由到全局 store；tenantID 过滤）。
+func (m *MultiSchemaStore) ListOSTemplates(tenantID string) []*OSTemplate {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.ListOSTemplates(tenantID)
+}
+
+// GetOSTemplate 按 ID 返回单个 OS 安装模板（路由到全局 store）。
+func (m *MultiSchemaStore) GetOSTemplate(id string) *OSTemplate {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.GetOSTemplate(id)
+}
+
+// DeleteOSTemplate 删除 OS 安装模板（路由到全局 store）。
+func (m *MultiSchemaStore) DeleteOSTemplate(id string) bool {
+	s, err := m.globalStore()
+	if err != nil {
+		return false
+	}
+	return s.DeleteOSTemplate(id)
+}
+
+// SaveMiddlewareTemplate 创建或更新中间件部署模板（路由到全局 store）。
+func (m *MultiSchemaStore) SaveMiddlewareTemplate(t *MiddlewareTemplate) error {
+	s, err := m.globalStore()
+	if err != nil {
+		return err
+	}
+	return s.SaveMiddlewareTemplate(t)
+}
+
+// ListMiddlewareTemplates 返回中间件部署模板（路由到全局 store；tenantID 过滤）。
+func (m *MultiSchemaStore) ListMiddlewareTemplates(tenantID string) []*MiddlewareTemplate {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.ListMiddlewareTemplates(tenantID)
+}
+
+// GetMiddlewareTemplate 按 ID 返回单个中间件部署模板（路由到全局 store）。
+func (m *MultiSchemaStore) GetMiddlewareTemplate(id string) *MiddlewareTemplate {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.GetMiddlewareTemplate(id)
+}
+
+// DeleteMiddlewareTemplate 删除中间件部署模板（路由到全局 store）。
+func (m *MultiSchemaStore) DeleteMiddlewareTemplate(id string) bool {
+	s, err := m.globalStore()
+	if err != nil {
+		return false
+	}
+	return s.DeleteMiddlewareTemplate(id)
+}
+
+// ============================================================================
+// task 111 刷新令牌：SaveRefreshToken / GetRefreshToken / DeleteRefreshToken
+// 路由到全局 store（token_hash 为全局唯一主键，跨 schema 查询需全局视角，
+// 与 K8sCluster/Template 同模式）。
+// ============================================================================
+
+// SaveRefreshToken 保存/更新 refresh token（路由到全局 store），返回持久化错误。
+func (m *MultiSchemaStore) SaveRefreshToken(rt *RefreshToken) error {
+	s, err := m.globalStore()
+	if err != nil {
+		return err
+	}
+	return s.SaveRefreshToken(rt)
+}
+
+// GetRefreshToken 按 token_hash 返回单个 refresh token（路由到全局 store）。
+func (m *MultiSchemaStore) GetRefreshToken(tokenHash string) *RefreshToken {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.GetRefreshToken(tokenHash)
+}
+
+// DeleteRefreshToken 按 token_hash 删除 refresh token（路由到全局 store）。
+func (m *MultiSchemaStore) DeleteRefreshToken(tokenHash string) bool {
+	s, err := m.globalStore()
+	if err != nil {
+		return false
+	}
+	return s.DeleteRefreshToken(tokenHash)
 }

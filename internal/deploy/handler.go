@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"opsmesh/internal/authctx"
 	"opsmesh/internal/proto"
@@ -100,7 +101,7 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 子操作：execute / rollback。
+	// 子操作：execute / rollback / promote（灰度晋级）。
 	if len(parts) == 2 {
 		switch parts[1] {
 		case "execute":
@@ -121,6 +122,19 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := h.Rollback(r.Context(), id, actx.TenantID); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			dt, _ := h.store.Get(r.Context(), id, actx.TenantID)
+			writeJSON(w, http.StatusOK, dt)
+			return
+		case "promote":
+			// 灰度晋级：canary/gated -> 全量派发剩余目标。
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if err := h.Promote(r.Context(), id, actx.TenantID); err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
@@ -150,7 +164,17 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dt)
 }
 
-// Execute 执行部署：派发底层任务到目标 agent，状态 created -> running（无可用目标则 failed）。
+// Execute 执行部署：按策略派发底层任务到目标 agent。
+//
+// 策略分流：
+//   - rolling：全量目标一次性派发，状态 created -> running（向后兼容）。
+//   - canary：按 CanaryWeight 比例选取部分目标派发，状态 created -> canary，
+//     记录 CanaryTargets；剩余目标在 Promote 阶段派发。
+//   - bluegreen：将 TargetIDs 视为新（inactive）一组，全量派发并记入 CanaryTargets，
+//     旧版本目标记入 StableTargets（由调用方在 TargetIDs 之外显式提供，MVP 不自动推断），
+//     状态 created -> canary；Promote 阶段切换流量（标记 success），Rollback 下线新组。
+//
+// 无可用目标则 failed。
 func (h *Handler) Execute(ctx context.Context, id int64, tenantID string) error {
 	dt, err := h.store.Get(ctx, id, tenantID)
 	if err != nil {
@@ -159,7 +183,28 @@ func (h *Handler) Execute(ctx context.Context, id int64, tenantID string) error 
 	if dt.Status != StatusCreated {
 		return fmt.Errorf("deploy %d not executable in status %s", id, dt.Status)
 	}
-	targets := SplitIDs(dt.TargetIDs)
+	allTargets := SplitIDs(dt.TargetIDs)
+	strategy := dt.EffectiveStrategy()
+
+	var targets []string
+	switch strategy {
+	case StrategyCanary:
+		// 金丝雀：按比例选取部分目标。
+		targets = selectCanaryTargets(allTargets, dt.EffectiveCanaryWeight())
+		if len(targets) == 0 {
+			// 比例过低导致无目标：至少取 1 个，保证灰度阶段有流量。
+			targets = allTargets[:1]
+		}
+		dt.CanaryTargets = strings.Join(targets, ",")
+	case StrategyBlueGreen:
+		// 蓝绿：新组全量派发（TargetIDs 即新版本目标），旧组由 StableTargets 标记。
+		targets = allTargets
+		dt.CanaryTargets = strings.Join(targets, ",")
+	default:
+		// rolling：全量派发。
+		targets = allTargets
+	}
+
 	taskIDs := make([]string, 0, len(targets))
 	for _, tid := range targets {
 		dev := h.disp.Device(tid)
@@ -169,11 +214,11 @@ func (h *Handler) Execute(ctx context.Context, id int64, tenantID string) error 
 		t := &proto.Task{
 			AgentID:  dev.AgentID,
 			TenantID: dt.TenantID,
-			Type:      deployTypeToTaskType(dt.Type),
-			Command:   dt.RepoURL,
-			Content:   dt.Content,
-			Path:      dt.Path,
-			Status:    "pending",
+			Type:     deployTypeToTaskType(dt.Type),
+			Command:  dt.RepoURL,
+			Content:  dt.Content,
+			Path:     dt.Path,
+			Status:   "pending",
 		}
 		created := h.disp.CreateTask(t)
 		if created != nil && created.TaskID != "" {
@@ -183,33 +228,137 @@ func (h *Handler) Execute(ctx context.Context, id int64, tenantID string) error 
 	if len(taskIDs) == 0 {
 		dt.Status = StatusFailed
 	} else {
-		dt.Status = StatusRunning
 		dt.TaskIDs = strings.Join(taskIDs, ",")
+		switch strategy {
+		case StrategyCanary, StrategyBlueGreen:
+			dt.Status = StatusCanary // 灰度阶段，等待门禁评估
+		default:
+			dt.Status = StatusRunning
+		}
 	}
 	return h.store.Update(ctx, dt)
 }
 
-// Rolback 回滚：running/success -> rolledback（MVP：状态回退；真实 Argo CD 回滚由外部同步）。
+// selectCanaryTargets 按 weight 比例从 all 中选取前 k 个目标作为金丝雀流量。
+// weight=0 返回空（调用方应回退至少 1 个）；weight>=100 返回全部。
+// 选取策略：按列表顺序取前 k 个（确定性，便于 reconcile 与测试复现）。
+func selectCanaryTargets(all []string, weight int) []string {
+	if len(all) == 0 || weight <= 0 {
+		return nil
+	}
+	if weight >= canaryWeightMax {
+		return all
+	}
+	k := len(all) * weight / canaryWeightMax
+	if k < 1 {
+		k = 1
+	}
+	if k > len(all) {
+		k = len(all)
+	}
+	return all[:k]
+}
+
+// Promote 灰度晋级：canary/gated -> promoting，派发剩余目标，全量完成后 -> success。
+//
+// 对 canary：剩余目标 = TargetIDs - CanaryTargets，派发后状态 -> promoting。
+// 对 bluegreen：新组已全量派发，promote 直接切流量（标记 success），旧组下线由外部同步。
+// 对 rolling/无灰度：返回错误（不可晋级）。
+func (h *Handler) Promote(ctx context.Context, id int64, tenantID string) error {
+	dt, err := h.store.Get(ctx, id, tenantID)
+	if err != nil {
+		return err
+	}
+	if dt.Status != StatusCanary && dt.Status != StatusGated {
+		return fmt.Errorf("deploy %d cannot promote from status %s", id, dt.Status)
+	}
+	strategy := dt.EffectiveStrategy()
+	if strategy == StrategyRolling {
+		return fmt.Errorf("deploy %d strategy=rolling has no canary stage to promote", id)
+	}
+
+	// bluegreen：promote 即切流量完成，直接 success。
+	if strategy == StrategyBlueGreen {
+		dt.Status = StatusSuccess
+		return h.store.Update(ctx, dt)
+	}
+
+	// canary：派发剩余目标。
+	all := SplitIDs(dt.TargetIDs)
+	done := SplitIDs(dt.CanaryTargets)
+	doneSet := make(map[string]bool, len(done))
+	for _, d := range done {
+		doneSet[d] = true
+	}
+	var remaining []string
+	for _, t := range all {
+		if !doneSet[t] {
+			remaining = append(remaining, t)
+		}
+	}
+	taskIDs := SplitIDs(dt.TaskIDs) // 已有 canary 阶段任务
+	for _, tid := range remaining {
+		dev := h.disp.Device(tid)
+		if dev == nil || dev.AgentID == "" {
+			continue
+		}
+		t := &proto.Task{
+			AgentID:  dev.AgentID,
+			TenantID: dt.TenantID,
+			Type:     deployTypeToTaskType(dt.Type),
+			Command:  dt.RepoURL,
+			Content:  dt.Content,
+			Path:     dt.Path,
+			Status:   "pending",
+		}
+		created := h.disp.CreateTask(t)
+		if created != nil && created.TaskID != "" {
+			taskIDs = append(taskIDs, created.TaskID)
+		}
+	}
+	dt.TaskIDs = strings.Join(taskIDs, ",")
+	dt.CanaryTargets = dt.TargetIDs // 全量已派发
+	dt.Status = StatusPromoting
+	return h.store.Update(ctx, dt)
+}
+
+// Rollback 回滚：running/canary/gated/promoting/success -> rolledback。
+//
+// 灰度阶段（canary/gated/promoting）回滚即下线新版本、恢复稳定版本；
+// 全量阶段（running/success）回滚为状态回退（MVP，真实 Argo CD 回滚由外部同步）。
 func (h *Handler) Rollback(ctx context.Context, id int64, tenantID string) error {
 	dt, err := h.store.Get(ctx, id, tenantID)
 	if err != nil {
 		return err
 	}
-	if dt.Status != StatusRunning && dt.Status != StatusSuccess {
+	switch dt.Status {
+	case StatusRunning, StatusCanary, StatusGated, StatusPromoting, StatusSuccess:
+		// 允许回滚的状态。
+	default:
 		return fmt.Errorf("deploy %d cannot rollback from status %s", id, dt.Status)
 	}
 	dt.Status = StatusRolledBack
 	return h.store.Update(ctx, dt)
 }
 
-// Reconcile 对单条 running 部署做状态对账：底层任务全 done -> success；任一 failed -> failed。
+// Reconcile 对单条进行中部署做状态对账：
+//
+//   - running/promoting（全量阶段）：底层任务全 done -> success；任一 failed -> failed。
+//   - canary（灰度阶段）：底层任务终态评估发布门禁——
+//     门禁通过 -> gated（可调 Promote 晋级）；
+//     门禁不通过 -> failed，若 AutoRollback=true 则自动回滚（状态 -> rolledback）。
+//
+// 非进行中状态（created/success/failed/rolledback/gated）不对账。
 func (h *Handler) Reconcile(ctx context.Context, id int64, tenantID string) error {
 	dt, err := h.store.Get(ctx, id, tenantID)
 	if err != nil {
 		return err
 	}
-	if dt.Status != StatusRunning {
-		return nil // 非 running 不对账
+	switch dt.Status {
+	case StatusRunning, StatusPromoting, StatusCanary:
+		// 进行中状态，继续对账。
+	default:
+		return nil
 	}
 	ids := SplitIDs(dt.TaskIDs)
 	states := h.disp.TaskStates(ids, dt.TenantID)
@@ -225,26 +374,107 @@ func (h *Handler) Reconcile(ctx context.Context, id int64, tenantID string) erro
 			failed++
 		}
 	}
+	total := len(states)
+
+	// 灰度阶段：评估发布门禁。
+	if dt.Status == StatusCanary {
+		// 仍有任务未终态：等待。
+		if done+failed < total {
+			return nil
+		}
+		gate := dt.ResolvedGate()
+		if evaluateGate(gate, done, failed, total) {
+			dt.Status = StatusGated
+			return h.store.Update(ctx, dt)
+		}
+		// 门禁不通过。
+		dt.Status = StatusFailed
+		if err := h.store.Update(ctx, dt); err != nil {
+			return err
+		}
+		if dt.AutoRollback {
+			return h.autoRollback(ctx, dt)
+		}
+		return nil
+	}
+
+	// 全量阶段（running/promoting）。
 	if failed > 0 {
 		dt.Status = StatusFailed
-	} else if done == len(states) {
-		dt.Status = StatusSuccess
-	} else {
-		return nil // 仍在进行中
+		if err := h.store.Update(ctx, dt); err != nil {
+			return err
+		}
+		// 全量阶段失败也支持自动回滚（如蓝绿切流量后健康检查失败）。
+		if dt.AutoRollback {
+			return h.autoRollback(ctx, dt)
+		}
+		return nil
 	}
+	if done == total {
+		dt.Status = StatusSuccess
+		return h.store.Update(ctx, dt)
+	}
+	return nil // 仍在进行中
+}
+
+// evaluateGate 评估发布门禁是否通过。
+//
+// 判定规则（任一不满足即不通过）：
+//   - SuccessRate > 0：done/total * 100 >= SuccessRate
+//   - MaxFailRate > 0：failed/total * 100 <= MaxFailRate
+//   - MinSuccessCount > 0：done >= MinSuccessCount
+//   - HealthCheckURL：由调用方在外部评估（此处仅按任务终态判定），URL 留待扩展。
+//
+// gate 全零值时（已由 ResolvedGate 回退默认）要求 100% 成功。
+func evaluateGate(gate GateConfig, done, failed, total int) bool {
+	if total == 0 {
+		return false
+	}
+	successRate := float64(done) / float64(total) * 100.0
+	failRate := float64(failed) / float64(total) * 100.0
+	if gate.SuccessRate > 0 && successRate < gate.SuccessRate {
+		return false
+	}
+	if gate.MaxFailRate > 0 && failRate > gate.MaxFailRate {
+		return false
+	}
+	if gate.MinSuccessCount > 0 && done < gate.MinSuccessCount {
+		return false
+	}
+	// 默认门禁（SuccessRate=100, MaxFailRate=0）：任一失败即不通过。
+	if gate.SuccessRate == 0 && gate.MaxFailRate == 0 && gate.MinSuccessCount == 0 {
+		if failed > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// autoRollback 自动回滚：将 failed 部署转为 rolledback，记录回滚时间。
+//
+// MVP：仅置状态（与手动 Rollback 同语义），真实回滚动作（如 Argo CD rollback、
+// K8s rollout undo）由外部控制器监听 status=rolledback 事件同步执行。
+func (h *Handler) autoRollback(ctx context.Context, dt *DeployTask) error {
+	dt.Status = StatusRolledBack
+	dt.UpdatedAt = time.Now()
 	return h.store.Update(ctx, dt)
 }
 
-// ReconcileAll 对账所有 running 部署（controlplane 后台周期调用）。
+// ReconcileAll 对账所有进行中部署（controlplane 后台周期调用）。
+//
+// 覆盖状态：running（全量）、canary（灰度阶段，评估门禁）、promoting（灰度晋级中）。
+// 多状态分别 List 后合并对账，避免单次 List 跨状态过滤遗漏。
 func (h *Handler) ReconcileAll(ctx context.Context, tenantID string) int {
-	list, err := h.store.List(ctx, tenantID, StatusRunning)
-	if err != nil {
-		return 0
-	}
 	n := 0
-	for i := range list {
-		if h.Reconcile(ctx, list[i].ID, tenantID) == nil {
-			n++
+	for _, status := range []string{StatusRunning, StatusCanary, StatusPromoting} {
+		list, err := h.store.List(ctx, tenantID, status)
+		if err != nil {
+			continue
+		}
+		for i := range list {
+			if h.Reconcile(ctx, list[i].ID, tenantID) == nil {
+				n++
+			}
 		}
 	}
 	return n

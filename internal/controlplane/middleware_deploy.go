@@ -3,27 +3,34 @@
 // 提供 10+ 个常见中间件（MySQL/Redis/Kafka/Nginx/Tomcat/Zookeeper/PostgreSQL/
 // MongoDB/RabbitMQ/Elasticsearch）的部署模板，每个模板支持 docker 容器化与 systemd
 // 裸机两种部署方式，通过：
-//   - GET  /api/v1/middleware-templates          列出所有模板（可选 ?category= 过滤）
-//   - GET  /api/v1/middleware-templates/{id}     获取模板详情
-//   - POST /api/v1/middleware-templates/{id}/deploy 在指定 agent 上部署
-//   - GET  /api/v1/middleware-instances          查询已部署实例（从任务历史推导）
+//   - GET    /api/v1/middleware-templates          列出所有模板（可选 ?category= 过滤）
+//   - POST   /api/v1/middleware-templates          创建新模板（task 104 CRUD）
+//   - GET    /api/v1/middleware-templates/{id}     获取模板详情
+//   - PUT    /api/v1/middleware-templates/{id}     更新模板（task 104 CRUD）
+//   - DELETE /api/v1/middleware-templates/{id}     删除模板（task 104 CRUD）
+//   - POST   /api/v1/middleware-templates/{id}/deploy 在指定 agent 上部署
+//   - GET    /api/v1/middleware-instances          查询已部署实例（从任务历史推导）
 //
-// 设计要点：
-//   - 模板为内存常量，不落库（预置最佳实践，版本随代码升级）。
+// 设计要点（task 104：模板从内存常量改为 store 持久化，支持在线 CRUD）：
+//   - 预置模板仍以内存常量 middlewareTemplates 维护（版本随代码升级），启动时
+//     seedPresetMiddlewareTemplates 将其幂等写入 store（按 ID 去重，已存在不覆盖）。
+//   - API 从 store 读取模板列表/详情；store 为空时回退到内存常量（向后兼容）。
 //   - deploy 将 params 替换脚本占位符（{name}/{port}/...）后作为 shell task 下发，
 //     复用 store.CreateTask + Audit + 事件总线 + SSE，与 os_optimize.go 同款逻辑。
 //   - 租户隔离与审计复用 handleCreateTask 同款逻辑。
 package controlplane
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
-
 	"opsmesh/internal/events"
 	"opsmesh/internal/proto"
+	"opsmesh/internal/store"
 )
 
 // MiddlewareTemplate 预置中间件部署模板。
@@ -495,15 +502,26 @@ func middlewareTemplateByID(id string) *MiddlewareTemplate {
 	return nil
 }
 
-// handleMiddlewareTemplates 处理 GET /api/v1/middleware-templates：列出所有预置中间件模板。
-// 可选查询参数 category 过滤、risk 过滤。
+// handleMiddlewareTemplates 处理 /api/v1/middleware-templates：
+//   - GET：列出所有模板（从 store 读取，store 为空回退预置；可选 category/risk 过滤）
+//   - POST：创建新模板（task 104 CRUD，需 middleware:write 权限）
+//
 // 该路由注册在精确路径 /api/v1/middleware-templates（无尾斜杠）。
 func (s *Server) handleMiddlewareTemplates(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+	switch r.Method {
+	case http.MethodGet:
+		s.handleListMiddlewareTemplatesGet(w, r)
+	case http.MethodPost:
+		s.handleCreateMiddlewareTemplate(w, r)
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
-	_, ok := s.requireTenantContext(w, r)
+}
+
+// handleListMiddlewareTemplatesGet 处理 GET /api/v1/middleware-templates：列出所有模板（从 store 读取，含回退）。
+// 可选查询参数 category 过滤、risk 过滤。
+func (s *Server) handleListMiddlewareTemplatesGet(w http.ResponseWriter, r *http.Request) {
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
@@ -513,8 +531,9 @@ func (s *Server) handleMiddlewareTemplates(w http.ResponseWriter, r *http.Reques
 	q := r.URL.Query()
 	category := q.Get("category")
 	risk := q.Get("risk")
-	out := make([]MiddlewareTemplate, 0, len(middlewareTemplates))
-	for _, t := range middlewareTemplates {
+	all := s.listMiddlewareTemplatesFromStore(actx.TenantID)
+	out := make([]MiddlewareTemplate, 0, len(all))
+	for _, t := range all {
 		if category != "" && t.Category != category {
 			continue
 		}
@@ -526,10 +545,166 @@ func (s *Server) handleMiddlewareTemplates(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleMiddlewareTemplateByID 处理 GET /api/v1/middleware-templates/{id}：返回模板详情。
+// handleCreateMiddlewareTemplate 处理 POST /api/v1/middleware-templates：创建新中间件模板（task 104 CRUD）。
+// 请求体即 MiddlewareTemplate JSON；ID 为空时由 store 分配随机 ID。
+// 需 middleware:write 权限；创建后审计 + 事件总线 + SSE 通知。
+func (s *Server) handleCreateMiddlewareTemplate(w http.ResponseWriter, r *http.Request) {
+	if err := s.verifyFederationRequest(r); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return
+	}
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	caller, ok := s.requireProd(w, r, "middleware:write")
+	if !ok {
+		return
+	}
+	var tpl MiddlewareTemplate
+	if err := decodeJSONBody(w, r, &tpl); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if tpl.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+	if len(tpl.Scripts) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "scripts is required"})
+		return
+	}
+	tpl.Risk = normalizeRisk(tpl.Risk)
+	st := middlewareTemplateToStore(&tpl, actx.TenantID)
+	if err := s.store.SaveMiddlewareTemplate(st); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save template failed: " + err.Error()})
+		return
+	}
+	saved := middlewareTemplateFromStore(s.store.GetMiddlewareTemplate(st.ID))
+	userID := ""
+	if caller != nil {
+		userID = caller.ID
+	}
+	s.store.Audit(&proto.AuditEvent{
+		TenantID: actx.TenantID, UserID: userID, Action: "mw_template_create", Target: st.ID, Detail: "name=" + tpl.Name,
+	})
+	if s.bus != nil {
+		s.bus.Publish(r.Context(), events.Event{
+			TenantID: actx.TenantID, UserID: userID,
+			Action: "mw_template_create", Target: st.ID, Detail: "name=" + tpl.Name, Level: events.LevelInfo,
+		})
+	}
+	s.publishEvent("mw_template_changed", actx.TenantID, map[string]string{"id": st.ID, "op": "create"})
+	writeJSON(w, http.StatusCreated, saved)
+}
+
+// handleUpdateMiddlewareTemplate 处理 PUT /api/v1/middleware-templates/{id}：更新中间件模板（task 104 CRUD）。
+// 需 middleware:write 权限；不存在返回 404。
+func (s *Server) handleUpdateMiddlewareTemplate(w http.ResponseWriter, r *http.Request, id string) {
+	if err := s.verifyFederationRequest(r); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return
+	}
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	caller, ok := s.requireProd(w, r, "middleware:write")
+	if !ok {
+		return
+	}
+	var tpl MiddlewareTemplate
+	if err := decodeJSONBody(w, r, &tpl); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if tpl.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+	if len(tpl.Scripts) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "scripts is required"})
+		return
+	}
+	existing := s.store.GetMiddlewareTemplate(id)
+	if existing == nil {
+		// 回退检查：若为预置模板 ID 且尚未 seed，允许 upsert。
+		if preset := middlewareTemplateByID(id); preset == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+			return
+		}
+	}
+	tpl.ID = id
+	tpl.Risk = normalizeRisk(tpl.Risk)
+	st := middlewareTemplateToStore(&tpl, actx.TenantID)
+	if err := s.store.SaveMiddlewareTemplate(st); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save template failed: " + err.Error()})
+		return
+	}
+	saved := middlewareTemplateFromStore(s.store.GetMiddlewareTemplate(id))
+	userID := ""
+	if caller != nil {
+		userID = caller.ID
+	}
+	s.store.Audit(&proto.AuditEvent{
+		TenantID: actx.TenantID, UserID: userID, Action: "mw_template_update", Target: id, Detail: "name=" + tpl.Name,
+	})
+	if s.bus != nil {
+		s.bus.Publish(r.Context(), events.Event{
+			TenantID: actx.TenantID, UserID: userID,
+			Action: "mw_template_update", Target: id, Detail: "name=" + tpl.Name, Level: events.LevelInfo,
+		})
+	}
+	s.publishEvent("mw_template_changed", actx.TenantID, map[string]string{"id": id, "op": "update"})
+	writeJSON(w, http.StatusOK, saved)
+}
+
+// handleDeleteMiddlewareTemplate 处理 DELETE /api/v1/middleware-templates/{id}：删除中间件模板（task 104 CRUD）。
+// 需 middleware:write 权限；不存在返回 404；删除成功返回 204。
+func (s *Server) handleDeleteMiddlewareTemplate(w http.ResponseWriter, r *http.Request, id string) {
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	caller, ok := s.requireProd(w, r, "middleware:write")
+	if !ok {
+		return
+	}
+	existing := s.store.GetMiddlewareTemplate(id)
+	if existing == nil {
+		if middlewareTemplateByID(id) == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+			return
+		}
+		// 预置模板未 seed，store 中本就不存在，直接返回 204。
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if !s.store.DeleteMiddlewareTemplate(id) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+		return
+	}
+	userID := ""
+	if caller != nil {
+		userID = caller.ID
+	}
+	s.store.Audit(&proto.AuditEvent{
+		TenantID: actx.TenantID, UserID: userID, Action: "mw_template_delete", Target: id, Detail: "name=" + existing.Name,
+	})
+	if s.bus != nil {
+		s.bus.Publish(r.Context(), events.Event{
+			TenantID: actx.TenantID, UserID: userID,
+			Action: "mw_template_delete", Target: id, Detail: "name=" + existing.Name, Level: events.LevelInfo,
+		})
+	}
+	s.publishEvent("mw_template_changed", actx.TenantID, map[string]string{"id": id, "op": "delete"})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleMiddlewareTemplateByID 处理 GET /api/v1/middleware-templates/{id}：返回模板详情（从 store 读取，含回退）。
 func (s *Server) handleMiddlewareTemplateByID(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	_, ok := s.requireTenantContext(w, r)
@@ -539,7 +714,7 @@ func (s *Server) handleMiddlewareTemplateByID(w http.ResponseWriter, r *http.Req
 	if _, ok := s.requireProd(w, r, "middleware:read"); !ok {
 		return
 	}
-	t := middlewareTemplateByID(id)
+	t := s.getMiddlewareTemplateByID(id)
 	if t == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
@@ -554,7 +729,7 @@ func (s *Server) handleMiddlewareTemplateByID(w http.ResponseWriter, r *http.Req
 // 响应: { "task": ..., "taskID": "...", "templateID": "...", "templateName": "...", "deployType": "..." }
 func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if err := s.verifyFederationRequest(r); err != nil {
@@ -568,7 +743,7 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	if _, ok := s.requireProd(w, r, "middleware:execute"); !ok {
 		return
 	}
-	tpl := middlewareTemplateByID(id)
+	tpl := s.getMiddlewareTemplateByID(id)
 	if tpl == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
@@ -698,7 +873,7 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 // 可选查询参数 agentID 过滤、category 过滤。
 func (s *Server) handleMiddlewareInstances(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	_, ok := s.requireTenantContext(w, r)
@@ -716,33 +891,44 @@ func (s *Server) handleMiddlewareInstances(w http.ResponseWriter, r *http.Reques
 }
 
 // handleMiddlewareTemplateDetail 统一分派 /api/v1/middleware-templates/{id}... 子路径：
-//   - GET  /api/v1/middleware-templates/{id}：模板详情
-//   - POST /api/v1/middleware-templates/{id}/deploy：在指定 agent 上部署
+//   - GET    /api/v1/middleware-templates/{id}：模板详情
+//   - PUT    /api/v1/middleware-templates/{id}：更新模板（task 104 CRUD）
+//   - DELETE /api/v1/middleware-templates/{id}：删除模板（task 104 CRUD）
+//   - POST   /api/v1/middleware-templates/{id}/deploy：在指定 agent 上部署
 //
 // 注意：/api/v1/middleware-templates（无尾斜杠）由 handleMiddlewareTemplates 处理；
 // /api/v1/middleware-templates/（带尾斜杠但无 id）此处转给 list handler 兜底。
 func (s *Server) handleMiddlewareTemplateDetail(w http.ResponseWriter, r *http.Request) {
 	idAndRest := strings.TrimPrefix(r.URL.Path, "/api/v1/middleware-templates/")
 	if idAndRest == "" {
-		// 兜底：/api/v1/middleware-templates/（带尾斜杠）转给 list handler 处理 GET。
+		// 兜底：/api/v1/middleware-templates/（带尾斜杠）转给 list handler 处理 GET/POST。
 		s.handleMiddlewareTemplates(w, r)
 		return
 	}
 	parts := strings.SplitN(idAndRest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		http.Error(w, "template id required", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "template id required"})
 		return
 	}
 	switch {
 	case len(parts) == 1:
-		// GET /api/v1/middleware-templates/{id}
-		s.handleMiddlewareTemplateByID(w, r, id)
+		// /api/v1/middleware-templates/{id}
+		switch r.Method {
+		case http.MethodGet:
+			s.handleMiddlewareTemplateByID(w, r, id)
+		case http.MethodPut:
+			s.handleUpdateMiddlewareTemplate(w, r, id)
+		case http.MethodDelete:
+			s.handleDeleteMiddlewareTemplate(w, r, id)
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
 	case len(parts) == 2 && parts[1] == "deploy":
 		// POST /api/v1/middleware-templates/{id}/deploy
 		s.handleDeployMiddlewareTemplate(w, r, id)
 	default:
-		http.NotFound(w, r)
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	}
 }
 
@@ -798,7 +984,7 @@ func validateMiddlewareParams(params []MiddlewareParam, values map[string]string
 // 响应: { "task": ..., "taskID": "...", "instanceID": "...", "templateID": "...", "templateName": "...", "deployType": "..." }
 func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *http.Request, instanceID string) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if err := s.verifyFederationRequest(r); err != nil {
@@ -834,7 +1020,7 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 	if body.DeployType == "" {
 		body.DeployType = "docker" // 默认 docker 部署
 	}
-	tpl := middlewareTemplateByID(body.TemplateID)
+	tpl := s.getMiddlewareTemplateByID(body.TemplateID)
 	if tpl == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found: " + body.TemplateID})
 		return
@@ -931,7 +1117,7 @@ func (s *Server) handleMiddlewareInstanceRouting(w http.ResponseWriter, r *http.
 	parts := strings.SplitN(idAndRest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		http.Error(w, "instance id required", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "instance id required"})
 		return
 	}
 	switch {
@@ -939,6 +1125,105 @@ func (s *Server) handleMiddlewareInstanceRouting(w http.ResponseWriter, r *http.
 		// POST /api/v1/middleware-instances/{id}/uninstall
 		s.handleUninstallMiddlewareInstance(w, r, id)
 	default:
-		http.NotFound(w, r)
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	}
+}
+
+// ============================================================================
+// task 104：中间件模板 store 持久化适配（转换 + seed + 查询回退）
+// ============================================================================
+
+// middlewareTemplateToStore 将 controlplane.MiddlewareTemplate 转换为 store.MiddlewareTemplate。
+// 整个 MiddlewareTemplate 序列化为 JSON 存入 Config 字段；
+// store.MiddlewareTemplate 的 Name/Type/Version 冗余存储便于 SQL 过滤。
+func middlewareTemplateToStore(t *MiddlewareTemplate, tenantID string) *store.MiddlewareTemplate {
+	if t == nil {
+		return nil
+	}
+	cfg, _ := json.Marshal(t)
+	return &store.MiddlewareTemplate{
+		ID:       t.ID,
+		TenantID: tenantID,
+		Name:     t.Name,
+		Type:     t.Category, // Category 映射到 Type（中间件类别）
+		Version:  t.Version,
+		Config:   string(cfg),
+	}
+}
+
+// middlewareTemplateFromStore 将 store.MiddlewareTemplate 反转换为 controlplane.MiddlewareTemplate。
+// Config 为空或反序列化失败时，用 store 行的 ID/Name/Type/Version 构造最小模板（向后兼容）。
+func middlewareTemplateFromStore(st *store.MiddlewareTemplate) *MiddlewareTemplate {
+	if st == nil {
+		return nil
+	}
+	if st.Config == "" {
+		return &MiddlewareTemplate{ID: st.ID, Name: st.Name, Category: st.Type, Version: st.Version}
+	}
+	var t MiddlewareTemplate
+	if err := json.Unmarshal([]byte(st.Config), &t); err != nil {
+		return &MiddlewareTemplate{ID: st.ID, Name: st.Name, Category: st.Type, Version: st.Version}
+	}
+	// 以 store 行的 ID/Name 为准（防 Config 中过期值）。
+	if st.ID != "" {
+		t.ID = st.ID
+	}
+	if st.Name != "" {
+		t.Name = st.Name
+	}
+	return &t
+}
+
+// seedPresetMiddlewareTemplates 启动时将预置中间件模板幂等写入 store（按 ID 去重，已存在不覆盖）。
+// 保持向后兼容：store 为空时 API 回退到内存常量 middlewareTemplates。
+// 预置模板归入 "default" 租户，对所有租户可见。
+func (s *Server) seedPresetMiddlewareTemplates() {
+	for i := range middlewareTemplates {
+		tpl := &middlewareTemplates[i]
+		if existing := s.store.GetMiddlewareTemplate(tpl.ID); existing != nil {
+			continue // 已存在（用户可能已在线修改），不覆盖
+		}
+		st := middlewareTemplateToStore(tpl, "default")
+		if err := s.store.SaveMiddlewareTemplate(st); err != nil {
+			log.Printf("[controlplane] seed 预置中间件模板 %s 失败: %v", tpl.ID, err)
+		}
+	}
+}
+
+// listMiddlewareTemplatesFromStore 从 store 读取中间件模板列表（含回退）。
+// 合并当前租户的模板与 default 租户的预置模板（按 ID 去重）；
+// store 完全为空时回退到内存常量 middlewareTemplates（向后兼容）。
+func (s *Server) listMiddlewareTemplatesFromStore(tenantID string) []MiddlewareTemplate {
+	stored := s.store.ListMiddlewareTemplates(tenantID)
+	if tenantID != "" && tenantID != "default" {
+		stored = append(stored, s.store.ListMiddlewareTemplates("default")...)
+	}
+	if len(stored) == 0 {
+		// 回退到内存常量（store 未初始化或为空）。
+		out := make([]MiddlewareTemplate, len(middlewareTemplates))
+		copy(out, middlewareTemplates)
+		return out
+	}
+	seen := make(map[string]bool, len(stored))
+	out := make([]MiddlewareTemplate, 0, len(stored))
+	for _, st := range stored {
+		if seen[st.ID] {
+			continue
+		}
+		seen[st.ID] = true
+		if t := middlewareTemplateFromStore(st); t != nil {
+			out = append(out, *t)
+		}
+	}
+	return out
+}
+
+// getMiddlewareTemplateByID 从 store 读取单个中间件模板（含回退）。
+// store 中不存在时回退到内存常量 middlewareTemplateByID（向后兼容）。
+func (s *Server) getMiddlewareTemplateByID(id string) *MiddlewareTemplate {
+	if st := s.store.GetMiddlewareTemplate(id); st != nil {
+		return middlewareTemplateFromStore(st)
+	}
+	// 回退到预置模板（store 未 seed 或为空）。
+	return middlewareTemplateByID(id)
 }

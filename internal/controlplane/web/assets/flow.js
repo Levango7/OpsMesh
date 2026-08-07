@@ -52,9 +52,9 @@ export function focusCI() {
     })).then(function (groups) {
       const all = []; groups.forEach(function (g) { all.push.apply(all, g); });
       const el = document.getElementById('ciList');
-      if (!all.length) { el.innerHTML = '<p class="muted">配置库中无关联该设备的配置项。</p>'; return; }
-      let html = '<p class="hint">' + icon('context', 14) + ' 已按设备 <code>' + esc(focusDevice.id) + '</code> 过滤（' + all.length + ' 条）</p>';
-      html += '<div class="table-wrap"><table><colgroup><col style="width:30%"><col style="width:30%"><col style="width:20%"><col style="width:20%"></colgroup><thead><tr><th>ID</th><th>名称</th><th>类型</th><th>状态</th></tr></thead><tbody>';
+      if (!all.length) { el.innerHTML = '<p class="muted">' + esc(t('flow.msg.noCiForDevice')) + '</p>'; return; }
+      let html = '<p class="hint">' + icon('context', 14) + ' ' + t('flow.msg.filteredByDevice', { id: '<code>' + esc(focusDevice.id) + '</code>', n: all.length }) + '</p>';
+      html += '<div class="table-wrap"><table><colgroup><col style="width:30%"><col style="width:30%"><col style="width:20%"><col style="width:20%"></colgroup><thead><tr><th>' + esc(t('cmdb.col.id')) + '</th><th>' + esc(t('cmdb.col.name')) + '</th><th>' + esc(t('cmdb.col.type')) + '</th><th>' + esc(t('cmdb.col.status')) + '</th></tr></thead><tbody>';
       all.forEach(function (c) { html += '<tr class="ci" onclick="openCI(\'' + escAttr(c.id) + '\')"><td><code title="' + esc(c.id) + '">' + esc(c.id) + '</code></td><td>' + esc(c.name) + '</td><td>' + esc(c.ciType) + '</td><td>' + esc(c.status) + '</td></tr>'; });
       html += '</tbody></table></div>';
       el.innerHTML = html;
@@ -143,20 +143,20 @@ export function toggleGuide() {
 export function openDevice(id) {
   api.getDevice(id).then(function (d) {
     const dev = d.device || {};
-    let h = '<h3>设备 ' + esc(dev.deviceID) + '</h3>';
-    h += '<p>IP: ' + esc(dev.ip) + ' ｜ 采集端: ' + esc(dev.agentID) + ' ｜ 租户: ' + esc(dev.tenantID) + '</p>';
-    h += '<p>状态: ' + esc(dev.state) + ' ｜ 任务态: ' + esc(dev.taskState) + '</p>';
+    let h = '<h3>' + esc(t('device.detail.heading', { id: dev.deviceID })) + '</h3>';
+    h += '<p>' + esc(t('device.detail.ipAgentTenant', { ip: dev.ip, agent: dev.agentID, tenant: dev.tenantID })) + '</p>';
+    h += '<p>' + esc(t('device.detail.stateTask', { state: dev.state, taskState: dev.taskState })) + '</p>';
     if (dev.lastResult) {
       const c = dev.lastResult === 'failed' ? 'warn' : 'ok';
-      h += '<p class="msg ' + c + '">LastResult: ' + esc(dev.lastResult) + ' @ ' + fmtTime(dev.lastResultAt) + '</p>';
+      h += '<p class="msg ' + c + '">' + esc(t('device.detail.lastResult', { result: dev.lastResult, time: fmtTime(dev.lastResultAt) })) + '</p>';
     }
     if (dev.state === 'discovered') {
-      h += '<button onclick="provision(\'' + escAttr(dev.deviceID) + '\')">推送 Agent 纳管（B1）</button> ';
+      h += '<button onclick="provision(\'' + escAttr(dev.deviceID) + '\')">' + esc(t('device.detail.provisionBtn')) + '</button> ';
     }
-    h += '<h4>任务</h4><div class="table-wrap"><table><colgroup><col style="width:50%"><col style="width:25%"><col style="width:25%"></colgroup><thead><tr><th>ID</th><th>类型</th><th>状态</th></tr></thead><tbody>';
+    h += '<h4>' + esc(t('device.detail.tasksHeading')) + '</h4><div class="table-wrap"><table><colgroup><col style="width:50%"><col style="width:25%"><col style="width:25%"></colgroup><thead><tr><th>ID</th><th>' + esc(t('cmdb.col.type')) + '</th><th>' + esc(t('cmdb.col.status')) + '</th></tr></thead><tbody>';
     (d.tasks || []).forEach(function (t) { h += '<tr><td><code title="' + esc(t.taskID) + '">' + esc(t.taskID) + '</code></td><td>' + esc(t.type) + '</td><td>' + esc(t.status) + '</td></tr>'; });
     h += '</tbody></table></div>';
-    h += '<h4>最近结果</h4><div class="table-wrap"><table><colgroup><col style="width:30%"><col style="width:15%"><col style="width:55%"></colgroup><thead><tr><th>任务</th><th>退出码</th><th>输出</th></tr></thead><tbody>';
+    h += '<h4>' + esc(t('device.detail.recentResults')) + '</h4><div class="table-wrap"><table><colgroup><col style="width:30%"><col style="width:15%"><col style="width:55%"></colgroup><thead><tr><th>' + esc(t('device.detail.col.task')) + '</th><th>' + esc(t('device.detail.col.exitCode')) + '</th><th>' + esc(t('device.detail.col.output')) + '</th></tr></thead><tbody>';
     (d.results || []).slice(0, 5).forEach(function (r) { h += '<tr><td><code title="' + esc(r.taskID) + '">' + esc(r.taskID) + '</code></td><td>' + esc(r.exitCode) + '</td><td><code title="' + esc(r.stdout) + '">' + esc(r.stdout) + '</code></td></tr>'; });
     h += '</tbody></table></div>';
     document.getElementById('drawerBody').innerHTML = h;
@@ -178,7 +178,7 @@ export function closeDrawer() { document.getElementById('drawer').classList.remo
 export function loadCMDBTypes() {
   api.getCMDBTypes().then(function (ts) {
     const ft = document.getElementById('ciTypeFilter'), nt = document.getElementById('ciTypeNew'), tt = document.getElementById('tmplTypeFilter');
-    [ft, nt, tt].forEach(function (sel) { if (!sel) return; sel.innerHTML = '<option value="">（先选一个类型）</option>'; });
+    [ft, nt, tt].forEach(function (sel) { if (!sel) return; sel.innerHTML = '<option value="">' + esc(t('cmdb.selectTypeFirst')) + '</option>'; });
     (ts || []).forEach(function (t) {
       [ft, nt, tt].forEach(function (sel) { if (!sel) return; const o = document.createElement('option'); o.value = t.name; o.textContent = t.displayName + ' (' + t.name + ')'; sel.appendChild(o); });
     });
@@ -190,10 +190,10 @@ export function loadCMDBTypes() {
 export function pollCIs() {
   const sel = document.getElementById('ciTypeFilter');
   const t = sel ? sel.value : '';
-  if (!t) { document.getElementById('ciList').innerHTML = '<p class="muted">请先选择一个类型</p>'; return; }
+  if (!t) { document.getElementById('ciList').innerHTML = '<p class="muted">' + esc(t('flow.msg.ciTypeRequired')) + '</p>'; return; }
   api.getCIs(t).then(function (list) {
-    if (!list || list.length === 0) { document.getElementById('ciList').innerHTML = '<p class="muted">该类型暂无配置项</p>'; return; }
-    let html = '<div class="table-wrap"><table><colgroup><col style="width:24%"><col style="width:24%"><col style="width:16%"><col style="width:18%"><col style="width:18%"></colgroup><thead><tr><th>ID</th><th>名称</th><th>状态</th><th>来源</th><th>版本</th></tr></thead><tbody>';
+    if (!list || list.length === 0) { document.getElementById('ciList').innerHTML = '<p class="muted">' + esc(t('flow.msg.noCiForType')) + '</p>'; return; }
+    let html = '<div class="table-wrap"><table><colgroup><col style="width:24%"><col style="width:24%"><col style="width:16%"><col style="width:18%"><col style="width:18%"></colgroup><thead><tr><th>' + esc(t('cmdb.col.id')) + '</th><th>' + esc(t('cmdb.col.name')) + '</th><th>' + esc(t('cmdb.col.status')) + '</th><th>' + esc(t('cmdb.col.source')) + '</th><th>' + esc(t('cmdb.col.version')) + '</th></tr></thead><tbody>';
     list.forEach(function (c) {
       html += '<tr class="ci" onclick="openCI(\'' + escAttr(c.id) + '\')"><td><code title="' + esc(c.id) + '">' + esc(c.id) + '</code></td><td>' + esc(c.name) + '</td><td>' + esc(c.status) + '</td><td>' + esc(c.source) + '</td><td>' + esc(c.version) + '</td></tr>';
     });
@@ -205,12 +205,12 @@ export function pollCIs() {
 export function pollTemplates() {
   const sel = document.getElementById('tmplTypeFilter');
   const t = sel ? sel.value : '';
-  if (!t) { document.getElementById('tmplList').innerHTML = '<p class="muted">请先选择一个类型</p>'; return; }
+  if (!t) { document.getElementById('tmplList').innerHTML = '<p class="muted">' + esc(t('flow.msg.ciTypeRequired')) + '</p>'; return; }
   api.getAttrTemplates(t).then(function (list) {
-    if (!list || list.length === 0) { document.getElementById('tmplList').innerHTML = '<p class="muted">该类型暂无属性模板</p>'; return; }
-    let html = '<div class="table-wrap"><table><colgroup><col style="width:25%"><col style="width:35%"><col style="width:25%"><col style="width:15%"></colgroup><thead><tr><th>Key</th><th>标签</th><th>类型</th><th>必填</th></tr></thead><tbody>';
+    if (!list || list.length === 0) { document.getElementById('tmplList').innerHTML = '<p class="muted">' + esc(t('flow.msg.noTemplateForType')) + '</p>'; return; }
+    let html = '<div class="table-wrap"><table><colgroup><col style="width:25%"><col style="width:35%"><col style="width:25%"><col style="width:15%"></colgroup><thead><tr><th>Key</th><th>' + esc(t('cmdb.col.label')) + '</th><th>' + esc(t('cmdb.col.type')) + '</th><th>' + esc(t('cmdb.col.required')) + '</th></tr></thead><tbody>';
     list.forEach(function (x) {
-      html += '<tr><td><code title="' + esc(x.attrKey) + '">' + esc(x.attrKey) + '</code></td><td>' + esc(x.label) + '</td><td>' + esc(x.attrType) + '</td><td>' + (x.required ? '是' : '否') + '</td></tr>';
+      html += '<tr><td><code title="' + esc(x.attrKey) + '">' + esc(x.attrKey) + '</code></td><td>' + esc(x.label) + '</td><td>' + esc(x.attrType) + '</td><td>' + (x.required ? esc(t('metric.yes')) : esc(t('metric.no'))) + '</td></tr>';
     });
     html += '</tbody></table></div>';
     document.getElementById('tmplList').innerHTML = html;
@@ -222,12 +222,12 @@ export function openCI(id) {
     if (g.error) { document.getElementById('ciDetail').innerHTML = '<p class="msg err">' + esc(g.error) + '</p>'; return; }
     const c = g.centerCI || {};
     let h = '<h4>' + esc(c.name) + ' <small class="muted">(' + esc(c.ciType) + ' / ' + esc(c.id) + ')</small></h4>';
-    h += '<p>状态: ' + esc(c.status) + ' ｜ 来源: ' + esc(c.source) + ' ｜ 版本: ' + esc(c.version) + '</p>';
+    h += '<p>' + esc(t('cmdb.graph.stateSourceVersion', { state: c.status, source: c.source, version: c.version })) + '</p>';
     if (c.attrs && Object.keys(c.attrs).length) {
-      h += '<p>属性: ' + Object.keys(c.attrs).map(function (k) { return '<code>' + esc(k) + '</code>=' + esc(c.attrs[k]); }).join('，') + '</p>';
+      h += '<p>' + esc(t('cmdb.graph.attrs')) + ' ' + Object.keys(c.attrs).map(function (k) { return '<code>' + esc(k) + '</code>=' + esc(c.attrs[k]); }).join('，') + '</p>';
     }
-    h += '<h4>关系拓扑（' + (g.relations ? g.relations.length : 0) + '）</h4>';
-    if (!g.relations || g.relations.length === 0) { h += '<p class="muted">无关系</p>'; }
+    h += '<h4>' + esc(t('cmdb.graph.relations', { n: g.relations ? g.relations.length : 0 })) + '</h4>';
+    if (!g.relations || g.relations.length === 0) { h += '<p class="muted">' + esc(t('cmdb.graph.noRelation')) + '</p>'; }
     else {
       g.relations.forEach(function (r) {
         h += '<div class="rel"><b>' + esc(r.relationType) + '</b> → ' + esc(r.targetName) + ' <small class="muted">(' + esc(r.targetType) + ')</small></div>';
@@ -248,11 +248,11 @@ export function submitCIForm() {
   const type = typeSel ? typeSel.value : '';
   let attrs = {};
   const raw = document.getElementById('ciAttrs').value.trim();
-  if (raw) { try { attrs = JSON.parse(raw); } catch (err) { cmdbMsg('属性 JSON 解析失败: ' + err, false); return; } }
+  if (raw) { try { attrs = JSON.parse(raw); } catch (err) { cmdbMsg(t('flow.msg.attrJsonError', { err: err }), false); return; } }
   const body = { ciType: type, name: document.getElementById('ciName').value, attrs: attrs };
   api.createCI(body)
     .then(function (x) { cmdbMsg('[' + x.s + '] ' + JSON.stringify(x.j), x.s < 400); pollCIs(); })
-    .catch(function (err) { cmdbMsg('error: ' + err, false); });
+    .catch(function (err) { cmdbMsg(t('flow.msg.errorPrefix', { err: err }), false); });
 }
 
 // ---------- 作业编排（M5 DAG 画布） ----------
@@ -270,8 +270,8 @@ const TYPE_SOFT = { 'shell': '#eceaff', 'file': '#d8f3ef', 'service': '#fef3e2' 
 
 function snap(v) { return Math.round(v / GRID) * GRID; }
 function snapshot() { history.push(JSON.stringify({ dag: flow.dag, pos: nodePos, sel: selectedNode, edge: selectedEdge })); if (history.length > 60) history.shift(); future = []; }
-export function undo() { if (!history.length) return; future.push(JSON.stringify({ dag: flow.dag, pos: nodePos, sel: selectedNode, edge: selectedEdge })); const s = JSON.parse(history.pop()); flow.dag = s.dag; nodePos = s.pos; selectedNode = s.sel; selectedEdge = s.edge; renderFlow(); flowMsg('已撤销', true); }
-export function redo() { if (!future.length) return; history.push(JSON.stringify({ dag: flow.dag, pos: nodePos, sel: selectedNode, edge: selectedEdge })); const s = JSON.parse(future.pop()); flow.dag = s.dag; nodePos = s.pos; selectedNode = s.sel; selectedEdge = s.edge; renderFlow(); flowMsg('已重做', true); }
+export function undo() { if (!history.length) return; future.push(JSON.stringify({ dag: flow.dag, pos: nodePos, sel: selectedNode, edge: selectedEdge })); const s = JSON.parse(history.pop()); flow.dag = s.dag; nodePos = s.pos; selectedNode = s.sel; selectedEdge = s.edge; renderFlow(); flowMsg(t('flow.msg.undone'), true); }
+export function redo() { if (!future.length) return; history.push(JSON.stringify({ dag: flow.dag, pos: nodePos, sel: selectedNode, edge: selectedEdge })); const s = JSON.parse(future.pop()); flow.dag = s.dag; nodePos = s.pos; selectedNode = s.sel; selectedEdge = s.edge; renderFlow(); flowMsg(t('flow.msg.redone'), true); }
 export function flowMsg(s, ok) { const el = document.getElementById('wfMsg'); if (el) { el.className = 'msg ' + (ok ? 'ok' : 'err'); el.textContent = (ok ? '[ok] ' : '[err] ') + s; } }
 
 export function loadFlows() {
@@ -280,7 +280,7 @@ export function loadFlows() {
     (a || []).forEach(function (x) { const o = document.createElement('option'); o.value = x.agentID; o.textContent = x.agentID + ' (' + x.hostname + ')'; sel.appendChild(o); });
   }).catch(function (e) { console.error(e); });
   api.getWorkflows().then(function (list) {
-    const sel = document.getElementById('wfSelect'); if (!sel) return; sel.innerHTML = '<option value="">（新建空白作业流）</option>';
+    const sel = document.getElementById('wfSelect'); if (!sel) return; sel.innerHTML = '<option value="">' + esc(t('cmdb.newBlankWorkflow')) + '</option>';
     (list || []).forEach(function (w) { const o = document.createElement('option'); o.value = w.id; o.textContent = '#' + w.id + ' ' + w.name + ' [' + w.status + ']'; sel.appendChild(o); });
   }).catch(function (e) { console.error(e); });
 }
@@ -304,27 +304,27 @@ export function newWorkflow() {
   flow = { id: 0, name: '', agentID: document.getElementById('wfAgent').value, cron: '', dag: [], status: 'draft' };
   document.getElementById('wfName').value = '';
   document.getElementById('wfCron').value = '';
-  nodePos = {}; renderFlow(); flowMsg('已新建空白作业流，添加步骤后保存', true);
+  nodePos = {}; renderFlow(); flowMsg(t('flow.msg.newBlank'), true);
 }
 
 export function loadDemo() {
   flow = {
-    id: 0, name: '示例-nginx发布', agentID: document.getElementById('wfAgent').value, cron: '', dag: [
-      { id: 'n1', name: '拉取镜像', type: 'shell', command: 'docker pull nginx:latest', path: '', dependsOn: [] },
-      { id: 'n2', name: '停旧容器', type: 'shell', command: 'docker stop nginx', path: '', dependsOn: ['n1'] },
-      { id: 'n3', name: '起新容器', type: 'service', command: 'nginx', path: '', dependsOn: ['n2'] },
+    id: 0, name: t('flow.demo.name'), agentID: document.getElementById('wfAgent').value, cron: '', dag: [
+      { id: 'n1', name: t('flow.demo.step1'), type: 'shell', command: 'docker pull nginx:latest', path: '', dependsOn: [] },
+      { id: 'n2', name: t('flow.demo.step2'), type: 'shell', command: 'docker stop nginx', path: '', dependsOn: ['n1'] },
+      { id: 'n3', name: t('flow.demo.step3'), type: 'service', command: 'nginx', path: '', dependsOn: ['n2'] },
     ], status: 'draft',
   };
   document.getElementById('wfName').value = flow.name;
   document.getElementById('wfCron').value = '';
-  nodePos = {}; autoLayout(); renderFlow(); flowMsg('已载入示例作业流（尚未保存，可改动后点「保存」）', true);
+  nodePos = {}; autoLayout(); renderFlow(); flowMsg(t('flow.msg.demoLoaded'), true);
 }
 
 export function addNode() {
   let id = 'n' + (flow.dag.length + 1);
   while (flow.dag.some(function (n) { return n.id === id; })) { id = 'n' + Math.floor(Math.random() * 1000); }
   snapshot();
-  flow.dag.push({ id: id, name: '步骤' + id, type: 'shell', command: '', path: '', dependsOn: [] });
+  flow.dag.push({ id: id, name: t('flow.editor.stepPrefix') + id, type: 'shell', command: '', path: '', dependsOn: [] });
   nodePos[id] = { x: snap(60 + Math.random() * 40), y: snap(60 + flow.dag.length * 70) };
   selectNode(id); renderFlow();
 }
@@ -340,7 +340,7 @@ export function selectNode(id) { selectedNode = id; renderFlow(); }
 
 export function toggleLink() {
   linking = !linking; linkSrc = null;
-  const b = document.getElementById('linkBtn'); if (b) b.innerHTML = linking ? icon('link', 16) + ' 连线中…(点两节点)' : icon('link', 16) + ' 连线';
+  const b = document.getElementById('linkBtn'); if (b) b.innerHTML = linking ? icon('link', 16) + ' ' + esc(t('flow.link.linking')) : icon('link', 16) + ' ' + esc(t('flow.link.link'));
   const p = document.getElementById('tab-flow'); if (p) p.classList.toggle('linkmode', linking);
 }
 
@@ -498,13 +498,27 @@ export function fitView() {
 export function resetView() { view = { scale: 1, tx: 0, ty: 0 }; applyView(); }
 
 function addDep(srcId, depId) {
-  if (srcId === depId) { flowMsg('不能依赖自身', false); return false; }
+  if (srcId === depId) { flowMsg(t('flow.msg.depSelf'), false); return false; }
   const src = flow.dag.find(function (n) { return n.id === srcId; });
   if (!src) return false;
-  if ((src.dependsOn || []).indexOf(depId) >= 0) { flowMsg('依赖已存在', false); return false; }
-  if (createsCycle(srcId, depId)) { flowMsg('该依赖会形成环，已忽略', false); return false; }
+  if ((src.dependsOn || []).indexOf(depId) >= 0) { flowMsg(t('flow.msg.depExists'), false); return false; }
+  if (createsCycle(srcId, depId)) { flowMsg(t('flow.msg.depCycle'), false); return false; }
   src.dependsOn = src.dependsOn || []; src.dependsOn.push(depId);
-  flowMsg('已添加依赖: ' + srcId + ' → ' + depId, true); return true;
+  flowMsg(t('flow.msg.depAdded', { src: srcId, dst: depId }), true); return true;
+}
+function linkClick(id) {
+  if (!linkSrc) { linkSrc = id; flowMsg(t('flow.msg.linkSrc', { id: id }), true); return; }
+  if (linkSrc === id) { flowMsg(t('flow.msg.depSelf'), false); linkSrc = null; return; }
+  snapshot();
+  addDep(linkSrc, id);
+  linkSrc = null; renderFlow();
+}
+function selectEdge(src, dst) { selectedEdge = { src: src, dst: dst }; renderFlow(); flowMsg(t('flow.msg.edgeSelected', { src: src, dst: dst }), true); }
+function deleteEdge(src, dst) {
+  const n = flow.dag.find(function (x) { return x.id === dst; }); if (!n) return;
+  snapshot();
+  n.dependsOn = (n.dependsOn || []).filter(function (d) { return d !== src; });
+  selectedEdge = null; renderFlow(); flowMsg(t('flow.msg.edgeDeleted', { src: src, dst: dst }), true);
 }
 function linkClick(id) {
   if (!linkSrc) { linkSrc = id; flowMsg('连线源: ' + id + '，点击目标步骤', true); return; }
@@ -523,7 +537,7 @@ function deleteEdge(src, dst) {
 function startLinkDrag(ev, id) {
   linking = true; linkSrc = id;
   const c = flowPoint(ev); linkDrag = { from: id, x: c.x, y: c.y };
-  const b = document.getElementById('linkBtn'); if (b) b.innerHTML = icon('link', 16) + ' 拖拽连线中…';
+  const b = document.getElementById('linkBtn'); if (b) b.innerHTML = icon('link', 16) + ' ' + esc(t('flow.link.linking'));
   const p = document.getElementById('tab-flow'); if (p) p.classList.add('linkmode');
   document.addEventListener('mousemove', linkDragMove);
   document.addEventListener('mouseup', linkDragUp);
@@ -537,7 +551,7 @@ function linkDragUp(ev) {
   flow.dag.forEach(function (n) { const p = nodePos[n.id]; if (!p) return; if (c.x >= p.x && c.x <= p.x + 170 && c.y >= p.y && c.y <= p.y + 66) target = n.id; });
   const fromId = linkDrag ? linkDrag.from : null;
   linking = false; linkSrc = null; linkDrag = null;
-  const b = document.getElementById('linkBtn'); if (b) b.innerHTML = icon('link', 16) + ' 连线';
+  const b = document.getElementById('linkBtn'); if (b) b.innerHTML = icon('link', 16) + ' ' + esc(t('flow.link.link'));
   const p = document.getElementById('tab-flow'); if (p) p.classList.remove('linkmode');
   if (target && target !== fromId) { snapshot(); addDep(target, fromId); }
   renderFlow();
@@ -545,7 +559,7 @@ function linkDragUp(ev) {
 
 function renderNodeList() {
   const el = document.getElementById('nodeList'); if (!el) return;
-  if (!flow.dag.length) { el.innerHTML = '<p class="muted">暂无步骤。点「＋ 添加步骤」开始，或点右上「载入示例」。</p>'; return; }
+  if (!flow.dag.length) { el.innerHTML = '<p class="muted">' + esc(t('flow.msg.noStepHint')) + '</p>'; return; }
   el.innerHTML = flow.dag.map(function (n) {
     return '<div class="ci' + (selectedNode === n.id ? ' sel' : '') + '" onclick="selectNode(\'' + escAttr(n.id) + '\')">' + esc(n.name || n.id) + ' <small class="muted">' + esc(n.type) + '</small>' + (selectedNode === n.id ? ' ✦' : '') + '</div>';
   }).join('');
@@ -558,13 +572,13 @@ function renderNodeEditor() {
   const others = flow.dag.filter(function (x) { return x.id !== n.id; }).map(function (x) {
     return '<option value="' + esc(x.id) + '"' + (((n.dependsOn || []).indexOf(x.id) >= 0) ? ' selected' : '') + '>' + esc(x.name || x.id) + '</option>';
   }).join('');
-  el.innerHTML = '<h4>编辑步骤: ' + esc(n.id) + '</h4>'
-    + '<label>名称:<input id="nName" value="' + esc(n.name) + '" size="16"></label><br>'
-    + '<label>类型:<select id="nType"><option value="shell"' + (n.type === 'shell' ? ' selected' : '') + '>shell（执行命令）</option><option value="file"' + (n.type === 'file' ? ' selected' : '') + '>file（下发文件）</option><option value="service"' + (n.type === 'service' ? ' selected' : '') + '>service（启停服务）</option></select></label><br>'
-    + '<label>命令/动作:<input id="nCmd" value="' + esc(n.command) + '" size="28" title="该步骤要执行的内容"></label><br>'
-    + '<label>路径(path):<input id="nPath" value="' + esc(n.path) + '" size="18"></label><br>'
-    + '<label>依赖(多选):<select id="nDeps" multiple size="3" title="本步骤开始前应完成的其它步骤">' + others + '</select></label><br>'
-    + '<div class="btnbar"><button onclick="applyNode()">应用</button> <button onclick="deleteNode(\'' + escAttr(n.id) + '\')">删除步骤</button></div>';
+  el.innerHTML = '<h4>' + esc(t('flow.editor.heading', { id: n.id })) + '</h4>'
+    + '<label>' + esc(t('flow.editor.name')) + '<input id="nName" value="' + esc(n.name) + '" size="16"></label><br>'
+    + '<label>' + esc(t('flow.editor.type')) + '<select id="nType"><option value="shell"' + (n.type === 'shell' ? ' selected' : '') + '>' + esc(t('flow.editor.typeShell')) + '</option><option value="file"' + (n.type === 'file' ? ' selected' : '') + '>' + esc(t('flow.editor.typeFile')) + '</option><option value="service"' + (n.type === 'service' ? ' selected' : '') + '>' + esc(t('flow.editor.typeService')) + '</option></select></label><br>'
+    + '<label>' + esc(t('flow.editor.command')) + '<input id="nCmd" value="' + esc(n.command) + '" size="28" title="' + esc(t('flow.editor.commandTitle')) + '"></label><br>'
+    + '<label>' + esc(t('flow.editor.path')) + '<input id="nPath" value="' + esc(n.path) + '" size="18"></label><br>'
+    + '<label>' + esc(t('flow.editor.deps')) + '<select id="nDeps" multiple size="3" title="' + esc(t('flow.editor.depsTitle')) + '">' + others + '</select></label><br>'
+    + '<div class="btnbar"><button onclick="applyNode()">' + esc(t('flow.editor.apply')) + '</button> <button onclick="deleteNode(\'' + escAttr(n.id) + '\')">' + esc(t('flow.editor.deleteStep')) + '</button></div>';
   el.style.display = 'block';
 }
 
@@ -585,37 +599,37 @@ export function saveWorkflow() {
   const name = document.getElementById('wfName').value.trim();
   const agent = document.getElementById('wfAgent').value;
   const cron = document.getElementById('wfCron').value.trim();
-  if (!name || !agent) { flowMsg('请填写名称和采集端', false); return; }
+  if (!name || !agent) { flowMsg(t('flow.msg.needNameAgent'), false); return; }
   const dagStr = JSON.stringify(flow.dag);
   if (flow.id) {
     api.updateWorkflow(flow.id, { name: name, dag: dagStr, cron: cron })
-      .then(function (x) { if (x.s >= 400) { flowMsg('[' + x.s + '] ' + (x.j.error || ''), false); } else { flow.id = x.j.id; flow.status = x.j.status; flow.cron = x.j.cron || ''; flowMsg('已保存 #' + x.j.id, true); loadFlows(); } });
+      .then(function (x) { if (x.s >= 400) { flowMsg('[' + x.s + '] ' + (x.j.error || ''), false); } else { flow.id = x.j.id; flow.status = x.j.status; flow.cron = x.j.cron || ''; flowMsg(t('flow.msg.saved', { id: x.j.id }), true); loadFlows(); } });
   } else {
     api.createWorkflow({ name: name, agentID: agent, dag: dagStr, cron: cron })
-      .then(function (x) { if (x.s >= 400) { flowMsg('[' + x.s + '] ' + (x.j.error || ''), false); } else { flow.id = x.j.id; flow.status = x.j.status; flow.cron = x.j.cron || ''; flowMsg('已创建 #' + x.j.id, true); loadFlows(); } });
+      .then(function (x) { if (x.s >= 400) { flowMsg('[' + x.s + '] ' + (x.j.error || ''), false); } else { flow.id = x.j.id; flow.status = x.j.status; flow.cron = x.j.cron || ''; flowMsg(t('flow.msg.created', { id: x.j.id }), true); loadFlows(); } });
   }
 }
 
 export function runWorkflow() {
-  if (!flow.id) { flowMsg('请先保存作业流', false); return; }
+  if (!flow.id) { flowMsg(t('flow.msg.needSaveFirst'), false); return; }
   api.runWorkflow(flow.id)
-    .then(function (x) { if (x.s >= 400) { flowMsg('[' + x.s + '] ' + (x.j.error || ''), false); } else { flowMsg('已触发运行 #' + flow.id, true); pollStatus(); } });
+    .then(function (x) { if (x.s >= 400) { flowMsg('[' + x.s + '] ' + (x.j.error || ''), false); } else { flowMsg(t('flow.msg.runTriggered', { id: flow.id }), true); pollStatus(); } });
 }
 
 export function alignSel(axis) {
-  if (!selectedNode) { flowMsg('先选中一个步骤作为对齐基准', false); return; }
+  if (!selectedNode) { flowMsg(t('flow.msg.needAlignBase'), false); return; }
   const ref = nodePos[selectedNode]; if (!ref) return;
   const others = flow.dag.filter(function (n) { return n.id !== selectedNode; }).map(function (n) { return nodePos[n.id]; }).filter(Boolean);
   snapshot();
   if (!others.length) {
     if (axis === 'left') ref.x = 0; else if (axis === 'right') ref.x = snap(170 - 170); else if (axis === 'top') ref.y = 0; else if (axis === 'bottom') ref.y = 0;
-    renderFlow(); flowMsg('已对齐到画布', true); return;
+    renderFlow(); flowMsg(t('flow.msg.alignedToCanvas'), true); return;
   }
   if (axis === 'left') { const x = Math.min.apply(null, others.map(function (p) { return p.x; })); ref.x = snap(x); }
   else if (axis === 'right') { const x = Math.max.apply(null, others.map(function (p) { return p.x + 170; })); ref.x = snap(x - 170); }
   else if (axis === 'top') { const y = Math.min.apply(null, others.map(function (p) { return p.y; })); ref.y = snap(y); }
   else if (axis === 'bottom') { const y = Math.max.apply(null, others.map(function (p) { return p.y + 66; })); ref.y = snap(y - 66); }
-  renderFlow(); flowMsg('已' + (axis === 'left' ? '左' : axis === 'right' ? '右' : axis === 'top' ? '上' : '下') + '对齐', true);
+  renderFlow(); flowMsg(t('flow.msg.aligned', { axis: t('flow.msg.axis' + (axis.charAt(0).toUpperCase() + axis.slice(1))) }), true);
 }
 
 function paintRunState() {
@@ -623,10 +637,10 @@ function paintRunState() {
   if (!flow.id || !Object.keys(nodeStatus).length) { el.className = 'flowLegend'; el.innerHTML = ''; return; }
   const c = {}; Object.keys(nodeStatus).forEach(function (k) { c[nodeStatus[k]] = (c[nodeStatus[k]] || 0) + 1; });
   const col = { 'done': '#059669', 'running': '#6366f1', 'pending': '#d97706', 'blocked': '#64748b', 'failed': '#e11d48' };
-  const label = { 'done': '成功', 'running': '运行中', 'pending': '等待', 'blocked': '阻塞', 'failed': '失败' };
-  let html = '<span class="muted">运行态:</span>';
-  Object.keys(c).forEach(function (k) { html += '<span class="pill"><span class="dot" style="background:' + (col[k] || '#64748b') + '"></span>' + (label[k] || k) + ' ' + c[k] + '</span>'; });
-  html += '<button onclick="switchTab(\'ops\')" title="跳到运维中枢查看任务执行详情">' + icon('search', 14) + ' 在运维中枢查看</button>';
+  const label = { 'done': t('flow.status.done'), 'running': t('flow.status.running'), 'pending': t('flow.status.pending'), 'blocked': t('flow.status.blocked'), 'failed': t('flow.status.failed') };
+  let html = '<span class="muted">' + esc(t('flow.runState.label')) + '</span>';
+  Object.keys(c).forEach(function (k) { html += '<span class="pill"><span class="dot" style="background:' + (col[k] || '#64748b') + '"></span>' + esc(label[k] || k) + ' ' + c[k] + '</span>'; });
+  html += '<button onclick="switchTab(\'ops\')" title="' + esc(t('flow.runState.viewInOpsTitle')) + '">' + icon('search', 14) + ' ' + esc(t('flow.runState.viewInOps')) + '</button>';
   el.className = 'flowLegend show'; el.innerHTML = html;
 }
 
@@ -638,16 +652,16 @@ function pollStatus() {
     Object.keys(nt).forEach(function (k) { const nid = k.replace(/^wf-\d+-/, ''); nodeStatus[nid] = nt[k]; });
     renderFlow(); paintRunState();
     const cnt = {}; Object.keys(nodeStatus).forEach(function (k) { cnt[nodeStatus[k]] = (cnt[nodeStatus[k]] || 0) + 1; });
-    flowMsg('运行态: ' + JSON.stringify(cnt), true);
+    flowMsg(t('flow.msg.runState', { state: JSON.stringify(cnt) }), true);
     setTimeout(function () { const p = document.getElementById('tab-flow'); if (p && p.classList.contains('active')) pollStatus(); }, 3000);
   }).catch(function (e) { console.error(e); });
 }
 
 export function scheduleWorkflowPrompt() {
-  if (!flow.id) { flowMsg('请先保存作业流', false); return; }
+  if (!flow.id) { flowMsg(t('flow.msg.needSaveFirst'), false); return; }
   const cron = document.getElementById('wfCron').value.trim();
   api.scheduleWorkflow(flow.id, cron)
-    .then(function (x) { if (x.s >= 400) { flowMsg('[' + x.s + '] ' + (x.j.error || ''), false); } else { flow.cron = x.j.cron || ''; flow.status = x.j.status; flowMsg('已设置定时: ' + (x.j.cron || '(无)'), true); loadFlows(); } });
+    .then(function (x) { if (x.s >= 400) { flowMsg('[' + x.s + '] ' + (x.j.error || ''), false); } else { flow.cron = x.j.cron || ''; flow.status = x.j.status; flowMsg(t('flow.msg.scheduleSet', { cron: x.j.cron || t('flow.msg.cronNone') }), true); loadFlows(); } });
 }
 
 export function flowKey(e) {
@@ -679,7 +693,7 @@ export function loadDeployDemo() {
   document.getElementById('dpContent').value = '';
   document.getElementById('dpPath').value = '';
   document.getElementById('dpTargets').value = 'dev-10.0.0.1, dev-10.0.0.2';
-  deployMsg('已载入示例，可改后点「登记部署」', true);
+  deployMsg(t('flow.msg.demoLoadedDeploy'), true);
 }
 
 export function pollDeploys() {
@@ -688,14 +702,14 @@ export function pollDeploys() {
   api.getDeploys(st)
     .then(function (list) {
       const fl = applyFocus(list || [], 'deploy');
-      const note = focusDevice ? '<p class="hint">' + icon('context', 14) + ' 已按设备 <code>' + esc(focusDevice.id) + '</code> 过滤（' + fl.length + ' 条）</p>' : '';
-      if (!fl || fl.length === 0) { document.getElementById('deployList').innerHTML = note + '<p class="muted">暂无部署任务。在左侧登记一个吧。</p>'; return; }
-      let html = note + '<div class="table-wrap"><table><colgroup><col style="width:16%"><col style="width:18%"><col style="width:12%"><col style="width:24%"><col style="width:12%"><col style="width:18%"></colgroup><thead><tr><th>ID</th><th>名称</th><th>类型</th><th>目标设备</th><th>状态</th><th>操作</th></tr></thead><tbody>';
+      const note = focusDevice ? '<p class="hint">' + icon('context', 14) + ' ' + t('flow.msg.filteredByDevice', { id: '<code>' + esc(focusDevice.id) + '</code>', n: fl.length }) + '</p>' : '';
+      if (!fl || fl.length === 0) { document.getElementById('deployList').innerHTML = note + '<p class="muted">' + esc(t('flow.msg.noDeploy')) + '</p>'; return; }
+      let html = note + '<div class="table-wrap"><table><colgroup><col style="width:16%"><col style="width:18%"><col style="width:12%"><col style="width:24%"><col style="width:12%"><col style="width:18%"></colgroup><thead><tr><th>' + esc(t('cmdb.col.id')) + '</th><th>' + esc(t('cmdb.col.name')) + '</th><th>' + esc(t('cmdb.col.type')) + '</th><th>' + esc(t('cmdb.col.target')) + '</th><th>' + esc(t('cmdb.col.status')) + '</th><th>' + esc(t('cmdb.col.action')) + '</th></tr></thead><tbody>';
       fl.forEach(function (d) {
         const targets = (d.target_ids || '').replace(/,/g, ', ');
         html += '<tr><td><code title="' + esc(d.id) + '">' + esc(d.id) + '</code></td><td>' + esc(d.name) + '</td><td>' + esc(d.type) + '</td>'
           + '<td><code title="' + esc(targets) + '">' + esc(targets) + '</code></td><td>' + dpStatusPill(d.status) + '</td>'
-          + '<td class="row-actions-cell"><button onclick="execDeploy(' + escAttr(d.id) + ')">▶ 执行</button> <button onclick="rollbackDeploy(' + escAttr(d.id) + ')">↩ 回滚</button> <button onclick="openDeploy(' + escAttr(d.id) + ')">详情</button></td></tr>';
+          + '<td class="row-actions-cell"><button onclick="execDeploy(' + escAttr(d.id) + ')">' + esc(t('deploy.action.execute')) + '</button> <button onclick="rollbackDeploy(' + escAttr(d.id) + ')">' + esc(t('deploy.action.rollback')) + '</button> <button onclick="openDeploy(' + escAttr(d.id) + ')">' + esc(t('deploy.action.detail')) + '</button></td></tr>';
       });
       html += '</tbody></table></div>';
       document.getElementById('deployList').innerHTML = html;
@@ -704,26 +718,26 @@ export function pollDeploys() {
 
 export function execDeploy(id) {
   api.executeDeploy(id)
-    .then(function (x) { deployMsg('[' + x.s + '] ' + (x.j.error || '已触发执行 #' + id), x.s < 400); pollDeploys(); })
-    .catch(function (e) { deployMsg('error: ' + e, false); });
+    .then(function (x) { deployMsg('[' + x.s + '] ' + (x.j.error || t('flow.msg.execTriggered', { id: id })), x.s < 400); pollDeploys(); })
+    .catch(function (e) { deployMsg(t('flow.msg.errorPrefix', { err: e }), false); });
 }
 
 export function rollbackDeploy(id) {
   api.rollbackDeploy(id)
-    .then(function (x) { deployMsg('[' + x.s + '] ' + (x.j.error || '已回滚 #' + id), x.s < 400); pollDeploys(); })
-    .catch(function (e) { deployMsg('error: ' + e, false); });
+    .then(function (x) { deployMsg('[' + x.s + '] ' + (x.j.error || t('flow.msg.rolledBack', { id: id })), x.s < 400); pollDeploys(); })
+    .catch(function (e) { deployMsg(t('flow.msg.errorPrefix', { err: e }), false); });
 }
 
 export function openDeploy(id) {
   api.getDeploy(id).then(function (d) {
-    let h = '<h3>部署 #' + esc(d.id) + ' · ' + esc(d.name) + '</h3>';
-    h += '<p>类型: ' + esc(d.type) + ' ｜ 状态: ' + dpStatusPill(d.status) + '</p>';
-    h += '<p>目标设备: <code>' + esc((d.target_ids || '').replace(/,/g, ', ')) + '</code></p>';
-    if (d.repo_url) h += '<p>仓库: <code>' + esc(d.repo_url) + '</code></p>';
-    if (d.path) h += '<p>路径: <code>' + esc(d.path) + '</code></p>';
-    if (d.content) h += '<p>内容: <code>' + esc(d.content) + '</code></p>';
-    h += '<p class="muted">创建人: ' + esc(d.created_by) + ' ｜ 创建: ' + fmtTime(d.created_at) + ' ｜ 更新: ' + fmtTime(d.updated_at) + '</p>';
-    if (d.task_ids) h += '<p>派发任务: <code>' + esc((d.task_ids || '').replace(/,/g, ', ')) + '</code></p>';
+    let h = '<h3>' + esc(t('deploy.detail.heading', { id: d.id, name: d.name })) + '</h3>';
+    h += '<p>' + t('deploy.detail.typeStatus', { type: esc(d.type), status: '' }) + dpStatusPill(d.status) + '</p>';
+    h += '<p>' + t('deploy.detail.targets', { targets: '<code>' + esc((d.target_ids || '').replace(/,/g, ', ')) + '</code>' }) + '</p>';
+    if (d.repo_url) h += '<p>' + t('deploy.detail.repo', { repo: '<code>' + esc(d.repo_url) + '</code>' }) + '</p>';
+    if (d.path) h += '<p>' + t('deploy.detail.path', { path: '<code>' + esc(d.path) + '</code>' }) + '</p>';
+    if (d.content) h += '<p>' + t('deploy.detail.content', { content: '<code>' + esc(d.content) + '</code>' }) + '</p>';
+    h += '<p class="muted">' + t('deploy.detail.creator', { creator: esc(d.created_by), created: fmtTime(d.created_at), updated: fmtTime(d.updated_at) }) + '</p>';
+    if (d.task_ids) h += '<p>' + t('deploy.detail.taskIds', { ids: '<code>' + esc((d.task_ids || '').replace(/,/g, ', ')) + '</code>' }) + '</p>';
     document.getElementById('drawerBody').innerHTML = h;
     document.getElementById('drawer').classList.add('open');
   }).catch(function (e) { console.error(e); });
@@ -738,10 +752,10 @@ export function submitDeployForm() {
     path: document.getElementById('dpPath').value.trim(),
     target_ids: document.getElementById('dpTargets').value.trim(),
   };
-  if (!body.name || !body.target_ids) { deployMsg('请填写名称和至少一个目标设备', false); return; }
+  if (!body.name || !body.target_ids) { deployMsg(t('flow.msg.needNameTargets'), false); return; }
   api.createDeploy(body)
-    .then(function (x) { deployMsg('[' + x.s + '] ' + (x.j.error || '已登记 #' + (x.j && x.j.id)), x.s < 400); if (x.s < 400) pollDeploys(); })
-    .catch(function (err) { deployMsg('error: ' + err, false); });
+    .then(function (x) { deployMsg('[' + x.s + '] ' + (x.j.error || t('flow.msg.registered', { id: (x.j && x.j.id) })), x.s < 400); if (x.s < 400) pollDeploys(); })
+    .catch(function (err) { deployMsg(t('flow.msg.errorPrefix', { err: err }), false); });
 }
 
 // ---------- 日志检索（M6） ----------
@@ -775,8 +789,8 @@ export function searchLogs(offset) {
   document.getElementById('logLimitInfo').textContent = document.getElementById('logLimit').value || '200';
   api.getLogs(buildLogQuery(logOffset))
     .then(function (list) {
-      if (!list || list.length === 0) { document.getElementById('logList').innerHTML = '<p class="muted">没有匹配的日志。</p>'; updateLogPage(0); return; }
-      let html = '<div class="table-wrap"><table><colgroup><col style="width:15%"><col style="width:8%"><col style="width:8%"><col style="width:18%"><col style="width:18%"><col style="width:33%"></colgroup><thead><tr><th>时间</th><th>级别</th><th>来源</th><th>设备</th><th>Agent</th><th>消息</th></tr></thead><tbody>';
+      if (!list || list.length === 0) { document.getElementById('logList').innerHTML = '<p class="muted">' + esc(t('flow.msg.noLogMatch')) + '</p>'; updateLogPage(0); return; }
+      let html = '<div class="table-wrap"><table><colgroup><col style="width:15%"><col style="width:8%"><col style="width:8%"><col style="width:18%"><col style="width:18%"><col style="width:33%"></colgroup><thead><tr><th>' + esc(t('logs.col.time')) + '</th><th>' + esc(t('logs.col.level')) + '</th><th>' + esc(t('logs.col.source')) + '</th><th>' + esc(t('logs.col.device')) + '</th><th>' + esc(t('logs.col.agent')) + '</th><th>' + esc(t('logs.col.message')) + '</th></tr></thead><tbody>';
       list.forEach(function (e) {
         const ts = (e.timestamp || '').toString().replace('T', ' ').replace('Z', '');
         html += '<tr><td><small class="muted">' + esc(ts) + '</small></td><td>' + logLevelPill(e.level) + '</td><td>' + esc(e.source || '') + '</td><td><code title="' + esc(e.deviceID || '') + '">' + esc(e.deviceID || '') + '</code></td><td><code title="' + esc(e.agentID || '') + '">' + esc(e.agentID || '') + '</code></td><td class="wrap">' + esc(e.message || '') + '</td></tr>';
@@ -790,14 +804,14 @@ export function searchLogs(offset) {
 function updateLogPage(n) {
   const lim = parseInt(document.getElementById('logLimit').value || '200', 10);
   const cur = Math.floor(logOffset / lim) + 1;
-  document.getElementById('logPageInfo').textContent = '第 ' + cur + ' 页（本页 ' + n + ' 条）';
+  document.getElementById('logPageInfo').textContent = t('flow.msg.logPage', { cur: cur, n: n });
 }
 export function logPrev() { if (logOffset > 0) { searchLogs(Math.max(0, logOffset - parseInt(document.getElementById('logLimit').value || '200', 10))); } }
 export function logNext() { searchLogs(logOffset + parseInt(document.getElementById('logLimit').value || '200', 10)); }
 export function resetLogFilters() {
   ['logDevice', 'logAgent', 'logKeyword', 'logFrom', 'logTo'].forEach(function (id) { document.getElementById(id).value = ''; });
   document.getElementById('logLevel').value = ''; document.getElementById('logSource').value = '';
-  document.getElementById('logList').innerHTML = '<p class="muted">已清空，填写条件后点「查询」。</p>';
+  document.getElementById('logList').innerHTML = '<p class="muted">' + esc(t('flow.msg.logCleared')) + '</p>';
 }
 
 // ---------- 监控告警（M7，独立 Tab） ----------
@@ -872,7 +886,7 @@ export function fetchMe() {
     const role = (x.j.roles && x.j.roles.length) ? x.j.roles.join('/') : 'admin';
     const te = document.getElementById('idTenant'); if (te) te.textContent = t;
     const re = document.getElementById('idRole'); if (re) re.textContent = role;
-    const chip = document.getElementById('identityChip'); if (chip) chip.title = '身份由前置网关注入（X-Tenant / X-User / X-User-Roles）；当前：租户 ' + t + ' · 用户 ' + u;
+    const chip = document.getElementById('identityChip'); if (chip) chip.title = t('device.detail.identityTooltip', { tenant: t, user: u });
   }).catch(function (e) { console.error('me', e); });
 }
 
@@ -895,7 +909,7 @@ export function submitTaskForm() {
   };
   api.createTask(body)
     .then(function (x) { const el = document.getElementById('taskResult'); el.className = 'msg ' + (x.s < 400 ? 'ok' : 'err'); el.textContent = '[' + x.s + '] ' + JSON.stringify(x.j); pollTasks(); pollDevices(); })
-    .catch(function (err) { const el = document.getElementById('taskResult'); el.className = 'msg err'; el.textContent = 'error: ' + err; });
+    .catch(function (err) { const el = document.getElementById('taskResult'); el.className = 'msg err'; el.textContent = t('flow.msg.errorPrefix', { err: err }); });
 }
 
 // ============================================================

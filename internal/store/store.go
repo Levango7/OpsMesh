@@ -86,6 +86,14 @@ type TaskStore interface {
 	// 对到点（cron 匹配 now 且 LastFiredAt 早于本分钟）的模板派生一个 pending 实例并回写 LastFiredAt。
 	// 返回本批次派生的实例数（F4 定时/周期调度；控制面 scheduleLoop 周期调用）。
 	FireDueSchedules(now time.Time) int
+	// ApproveTask 审批通过任务（task 100）：将 pending_approval 状态翻转回 pending，
+	// 记录审批人/审批时间。仅 pending_approval 状态可审批；其他状态返回 false。
+	// tenantID 非空时校验任务归属，越权返回 false。
+	ApproveTask(id, tenantID, approvedBy string) bool
+	// RejectTask 驳回任务（task 100）：将 pending_approval 状态置为 rejected，
+	// 记录审批人/审批时间。被驳回任务永不进入 ClaimTask 队列。仅 pending_approval 状态可驳回。
+	// tenantID 非空时校验任务归属，越权返回 false。
+	RejectTask(id, tenantID, approvedBy string) bool
 }
 
 // AlertStore 告警领域（M7）：列表、记录、单查、确认、静默。
@@ -101,6 +109,13 @@ type AlertStore interface {
 	// SilenceAlert 静默告警（M7）：置 silenced 并记录静默截止与备注；tenantID 非空时校验归属，越权返回 false。
 	// until 为零值时由存储层默认静默 24h。
 	SilenceAlert(id, tenantID, by string, until time.Time, comment string) bool
+	// CreateAlertRule 创建告警规则（task 100）：ID 为空时由 store 分配随机 ID；
+	// TenantID 为空时归一为 default。返回持久化后的规则（含分配的 ID）。
+	CreateAlertRule(*AlertRule) *AlertRule
+	// ListAlertRules 返回告警规则（task 100）；tenantID 非空时按租户过滤。
+	ListAlertRules(tenantID string) []*AlertRule
+	// DeleteAlertRule 删除告警规则（task 100），返回是否删除成功（不存在返回 false）。
+	DeleteAlertRule(id string) bool
 }
 
 // AuditStore 审计领域（U-04 等保三级留痕）：记录、全量、按条件检索。
@@ -200,8 +215,63 @@ type K8sClusterStore interface {
 	DeleteK8sCluster(id string) bool
 }
 
+// TemplateStore OS/中间件部署模板领域（task 100）：CRUD。
+//
+// 用于 B1 自动纳管闭环的「裸机→OS→agent」全自动安装链路 + 应用编排中间件实例化：
+//   - OSTemplate 定义 OS 安装模板（kickstart/preseed），Provision 时按设备元信息匹配推送；
+//   - MiddlewareTemplate 定义中间件（MySQL/Redis/Kafka/...）标准化部署配置，供应用编排复用。
+//
+// 与 K8sClusterStore 同样按租户隔离；Config 为敏感内容（含 root 密码/连接串等），
+// 调用方（API 层）负责脱敏后再返回前端。
+type TemplateStore interface {
+	// SaveOSTemplate 创建或更新 OS 安装模板（按 ID 幂等）。
+	// ID 为空时由 store 分配随机 ID；TenantID 为空时归一为 default；
+	// CreatedAt 为空时填当前时间；UpdatedAt 始终刷新。
+	SaveOSTemplate(*OSTemplate) error
+	// ListOSTemplates 返回 OS 安装模板（按创建时间升序）；tenantID 非空时按租户过滤。
+	ListOSTemplates(tenantID string) []*OSTemplate
+	// GetOSTemplate 按 ID 返回单个 OS 安装模板（不存在返回 nil）。
+	GetOSTemplate(id string) *OSTemplate
+	// DeleteOSTemplate 删除 OS 安装模板，返回是否删除成功（不存在返回 false）。
+	DeleteOSTemplate(id string) bool
+	// SaveMiddlewareTemplate 创建或更新中间件部署模板（按 ID 幂等）。
+	// ID 为空时由 store 分配随机 ID；TenantID 为空时归一为 default；
+	// CreatedAt 为空时填当前时间；UpdatedAt 始终刷新。
+	SaveMiddlewareTemplate(*MiddlewareTemplate) error
+	// ListMiddlewareTemplates 返回中间件部署模板（按创建时间升序）；tenantID 非空时按租户过滤。
+	ListMiddlewareTemplates(tenantID string) []*MiddlewareTemplate
+	// GetMiddlewareTemplate 按 ID 返回单个中间件部署模板（不存在返回 nil）。
+	GetMiddlewareTemplate(id string) *MiddlewareTemplate
+	// DeleteMiddlewareTemplate 删除中间件部署模板，返回是否删除成功（不存在返回 false）。
+	DeleteMiddlewareTemplate(id string) bool
+}
+
+// RefreshTokenStore 刷新令牌领域（task 111）：access token 过期后的无感续期。
+//
+// 与 TokenStore（B1 install token，一次性、限时、HMAC 签名）解耦——refresh token
+// 生命周期长（如 7d）、可多次使用（直至过期或被主动吊销）、由调用方（auth 层）
+// 生成随机串并取 SHA-256 摘要后存库（P1-F7 明文不落库）。
+//
+// 设计要点：
+//   - 按 TokenHash（SHA-256 摘要）为主键，CRUD 均以摘要为键；
+//   - DeviceFP 用于校验 refresh token 仅在原签发设备上使用（防跨设备重放）；
+//   - 多副本控制面共享同一 MySQL 时，refresh token 落库以实现跨副本续期一致性。
+type RefreshTokenStore interface {
+	// SaveRefreshToken 保存/更新一个 refresh token（按 TokenHash 幂等 upsert）。
+	// 调用方须先对明文 token 取 SHA-256 摘要填入 rt.TokenHash，并填好 UserID/TenantID/
+	// DeviceFP/ExpiresAt/CreatedAt。TenantID 为空时归一为 default。返回持久化错误。
+	SaveRefreshToken(rt *RefreshToken) error
+	// GetRefreshToken 按 TokenHash 返回单个 refresh token（不存在返回 nil）。
+	// 续期流程：调用方传入明文 token 的摘要，store 据此查回元信息（UserID/TenantID/
+	// DeviceFP/ExpiresAt），校验未过期且 DeviceFP 匹配后签发新 access token。
+	GetRefreshToken(tokenHash string) *RefreshToken
+	// DeleteRefreshToken 按 TokenHash 删除 refresh token（登出/吊销/过期清理用）。
+	// 返回是否删除成功（不存在返回 false）。
+	DeleteRefreshToken(tokenHash string) bool
+}
+
 // Store 控制面注册表的可插拔持久化组合接口。
-// 由 10 个领域小接口组合而成（M2-1A 拆分 + 用户中心扩展 + K8s 集群管理），
+// 由 12 个领域小接口组合而成（M2-1A 拆分 + 用户中心扩展 + K8s 集群管理 + OS/中间件模板 + 刷新令牌），
 // 方法签名刻意与旧版内存 Registry 保持一致，便于平滑替换。
 // U-04: 数据本地化，默认 memory；生产可切换 mysql（MySQL/Redis 私有部署）。
 //
@@ -214,10 +284,12 @@ type Store interface {
 	AuditStore
 	TokenStore
 	LeaderStore
-	UserStore       // 用户中心：注册/登录/CRUD
-	RoleStore       // 角色管理：CRUD
-	PermissionStore // 权限列表：只读
-	K8sClusterStore // K8s 集群管理：CRUD（Phase 3）
+	UserStore         // 用户中心：注册/登录/CRUD
+	RoleStore         // 角色管理：CRUD
+	PermissionStore   // 权限列表：只读
+	K8sClusterStore   // K8s 集群管理：CRUD（Phase 3）
+	TemplateStore     // OS/中间件部署模板：CRUD（task 100）
+	RefreshTokenStore // 刷新令牌：续期/吊销（task 111）
 
 	// WithDemo 设置是否开启演示模式（P0-5）：开启时每个 agent 注册预置 uname -a 示例任务。
 	WithDemo(bool) Store
@@ -226,27 +298,31 @@ type Store interface {
 // 编译期断言：确保 MemoryStore / SQLStore 实现各领域小接口。
 // 任一方法缺失会在编译期立刻暴露（而非运行期），降低后续拆分消费方时的回归风险。
 var (
-	_ DeviceStore     = (*MemoryStore)(nil)
-	_ TaskStore       = (*MemoryStore)(nil)
-	_ AlertStore      = (*MemoryStore)(nil)
-	_ AuditStore      = (*MemoryStore)(nil)
-	_ TokenStore      = (*MemoryStore)(nil)
-	_ LeaderStore     = (*MemoryStore)(nil)
-	_ UserStore       = (*MemoryStore)(nil)
-	_ RoleStore       = (*MemoryStore)(nil)
-	_ PermissionStore = (*MemoryStore)(nil)
-	_ K8sClusterStore = (*MemoryStore)(nil)
-	_ Store           = (*MemoryStore)(nil)
+	_ DeviceStore       = (*MemoryStore)(nil)
+	_ TaskStore         = (*MemoryStore)(nil)
+	_ AlertStore        = (*MemoryStore)(nil)
+	_ AuditStore        = (*MemoryStore)(nil)
+	_ TokenStore        = (*MemoryStore)(nil)
+	_ LeaderStore       = (*MemoryStore)(nil)
+	_ UserStore         = (*MemoryStore)(nil)
+	_ RoleStore         = (*MemoryStore)(nil)
+	_ PermissionStore   = (*MemoryStore)(nil)
+	_ K8sClusterStore   = (*MemoryStore)(nil)
+	_ TemplateStore     = (*MemoryStore)(nil)
+	_ RefreshTokenStore = (*MemoryStore)(nil)
+	_ Store             = (*MemoryStore)(nil)
 
-	_ DeviceStore     = (*SQLStore)(nil)
-	_ TaskStore       = (*SQLStore)(nil)
-	_ AlertStore      = (*SQLStore)(nil)
-	_ AuditStore      = (*SQLStore)(nil)
-	_ TokenStore      = (*SQLStore)(nil)
-	_ LeaderStore     = (*SQLStore)(nil)
-	_ UserStore       = (*SQLStore)(nil)
-	_ RoleStore       = (*SQLStore)(nil)
-	_ PermissionStore = (*SQLStore)(nil)
-	_ K8sClusterStore = (*SQLStore)(nil)
-	_ Store           = (*SQLStore)(nil)
+	_ DeviceStore       = (*SQLStore)(nil)
+	_ TaskStore         = (*SQLStore)(nil)
+	_ AlertStore        = (*SQLStore)(nil)
+	_ AuditStore        = (*SQLStore)(nil)
+	_ TokenStore        = (*SQLStore)(nil)
+	_ LeaderStore       = (*SQLStore)(nil)
+	_ UserStore         = (*SQLStore)(nil)
+	_ RoleStore         = (*SQLStore)(nil)
+	_ PermissionStore   = (*SQLStore)(nil)
+	_ K8sClusterStore   = (*SQLStore)(nil)
+	_ TemplateStore     = (*SQLStore)(nil)
+	_ RefreshTokenStore = (*SQLStore)(nil)
+	_ Store             = (*SQLStore)(nil)
 )

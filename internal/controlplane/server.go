@@ -20,6 +20,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
+
 	"os"
 	"os/signal"
 	"strconv"
@@ -37,9 +39,7 @@ import (
 	"opsmesh/internal/authctx"
 	"opsmesh/internal/cmdb"
 	"opsmesh/internal/config"
-	"opsmesh/internal/cron"
 	"opsmesh/internal/deploy"
-	"opsmesh/internal/domain"
 	"opsmesh/internal/events"
 	"opsmesh/internal/grpcx"
 	"opsmesh/internal/k8s"
@@ -73,6 +73,10 @@ type Server struct {
 	deployHandler *deploy.Handler        // M3 部署中心处理器
 	orchHandler   *orchestration.Handler // M5 作业编排中心处理器
 	lastAlertSent time.Time              // M7 告警 Webhook：上次已推送的告警时间戳（notifyLoop 防重复）
+	// B7 告警聚合器：同源告警 5 分钟聚合 + 级别抑制（critical 抑制同源 warning）。
+	alertAggr *notify.AlertAggregator
+	// B7 告警多通道（Webhook + Email）。NewServer 从 cfg 构造；notifyLoop 每次推送复用。
+	alertChannels *notify.Channels
 	// M3-2B SSE 实时推送：订阅者集合与互斥保护。
 	// 每个 SSE 连接对应一个 buffered chan，publishEvent 非阻塞广播到所有订阅者。
 	// 慢消费者（缓冲满）丢弃事件，避免一个慢客户端拖垮广播（M3-2B 设计取舍）。
@@ -97,7 +101,8 @@ type Server struct {
 }
 
 // NewServer 构造控制面服务。按 cfg.Store 选择持久化后端（默认 memory），并初始化事件总线与指标。
-// startRefreshSweep 周期清理过期刷新令牌，防止refreshTokens 内存无限增长。
+// startRefreshSweep 周期清理过期刷新令牌（task 112：store 持久化后改为 no-op，
+// 过期清理由 consumeRefreshToken 顺带完成；保留 sweep 机制以兼容未来 store 层扩展批量清理）。
 func (s *Server) startRefreshSweep(interval time.Duration) {
 	if interval <= 0 {
 		interval = time.Hour
@@ -106,7 +111,7 @@ func (s *Server) startRefreshSweep(interval time.Duration) {
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		for range t.C {
-			purgeExpiredRefreshTokens()
+			s.purgeExpiredRefreshTokens()
 		}
 	}()
 }
@@ -129,10 +134,23 @@ func NewServer(cfg *config.Config) *Server {
 		bus:           bus,
 		metrics:       metrics.New(),
 		cmdbHandler:   newCMDBHandler(st),
-		logHandler:    newLogHandler(st),
+		logHandler:    newLogHandler(st, cfg),
 		deployHandler: newDeployHandler(st),
 		orchHandler:   newOrchestrationHandler(st),
 		eventSubs:     make(map[chan SSEEvent]struct{}), // M3-2B SSE 订阅者集合
+		alertAggr:     notify.NewAlertAggregator(),      // B7 告警聚合器
+		alertChannels: &notify.Channels{ // B7 多通道（Webhook + Email）
+			NotifierType: cfg.AlertNotifierType,
+			WebhookURL:   cfg.AlertWebhookURL,
+			Email: &notify.EmailConfig{
+				Host: cfg.AlertEmailHost,
+				Port: cfg.AlertEmailPort,
+				User: cfg.AlertEmailUser,
+				Pass: cfg.AlertEmailPass,
+				From: cfg.AlertEmailFrom,
+				To:   cfg.AlertEmailTo,
+			},
+		},
 	}
 	if cfg.Demo {
 		// 演示模式（P0-5）：主动播种 demo 拓扑，让 6 大模块在无真实 agent 时也能完整演示。
@@ -183,6 +201,10 @@ func NewServer(cfg *config.Config) *Server {
 			logx.Warn(context.Background(), "K8s 集群重启恢复连接失败", err, "clusterID", kc.ID)
 		}
 	}
+	// task 104：启动时将预置 OS/中间件模板幂等写入 store（按 ID 去重，已存在不覆盖）。
+	// 使模板支持在线 CRUD；store 为空时 API 回退到内存常量（向后兼容）。
+	s.seedPresetOSTemplates()
+	s.seedPresetMiddlewareTemplates()
 	return s
 }
 
@@ -289,8 +311,36 @@ func newCMDBHandler(st store.Store) *cmdb.Handler {
 	return cmdb.NewHandler(cmdb.NewMemoryCiStore())
 }
 
-// newLogHandler 按 store 类型创建 M6 日志检索处理器：MySQL 时使用 SQLLogStore，否则 MemoryLogStore。
-func newLogHandler(st store.Store) *logstore.Handler {
+// newLogHandler 按 cfg.LogStore 选择 M6 日志检索后端（B1 修复 8：Loki/ES 接入）：
+//   - memory（默认）：环形缓冲，无外部依赖
+//   - sql：MySQL 后端（与控制面共享连接池）
+//   - loki：Grafana Loki 后端（仅查询，Append 为 noop，日志由 promtail 直接推送）
+//   - es：Elasticsearch 后端（仅查询，Append 为 noop，日志由 filebeat 直接推送）
+//
+// loki/es 初始化失败时回退 memory（不阻断启动）。
+func newLogHandler(st store.Store, cfg *config.Config) *logstore.Handler {
+	// B1 修复 8：优先按 cfg.LogStore 选择后端（loki/es 分支）。
+	switch cfg.LogStore {
+	case "loki":
+		if cfg.LokiEndpoint == "" {
+			logx.Error(context.Background(), "LogStore=loki 但 LokiEndpoint 为空，回退 memory", nil)
+			return logstore.NewHandler(logstore.NewMemory(0))
+		}
+		logx.Info(context.Background(), "M6 日志后端=loki", "endpoint", cfg.LokiEndpoint)
+		return logstore.NewHandler(logstore.NewLokiStore(cfg.LokiEndpoint))
+	case "es":
+		if cfg.ESEndpoint == "" {
+			logx.Error(context.Background(), "LogStore=es 但 ESEndpoint 为空，回退 memory", nil)
+			return logstore.NewHandler(logstore.NewMemory(0))
+		}
+		idx := cfg.ESIndex
+		if idx == "" {
+			idx = "opsmesh-logs"
+		}
+		logx.Info(context.Background(), "M6 日志后端=es", "endpoint", cfg.ESEndpoint, "index", idx)
+		return logstore.NewHandler(logstore.NewESStore(cfg.ESEndpoint, idx))
+	}
+	// 默认：按 store 类型选择 memory/sql。
 	if ss, ok := st.(*store.SQLStore); ok {
 		ls, err := logstore.NewSQL(ss.DB())
 		if err != nil {
@@ -306,14 +356,38 @@ func newLogHandler(st store.Store) *logstore.Handler {
 
 // securityHeadersMiddleware 为 HTTP 响应注入安全头（H5 安全头中间件）。
 // 应用于整个主 mux（仪表盘 + /api/v1/* + 静态资源）；/metrics 在独立 server（buildMetrics）不受影响。
-// CSP 允许 self + inline script/style（前端有 inline onclick/style，后续可收紧为 nonce-based）。
+//
+// B1 修复 5+6：安全头补全 + CSP nonce 收紧
+//   - HSTS：仅 HTTPS 部署（s.tlsCert != ""）时注入 Strict-Transport-Security
+//   - Permissions-Policy：禁用 camera/microphone/geolocation
+//   - CSP nonce：每请求生成随机 nonce 并注入 CSP（为后续前端改造做准备）；
+//     由于前端有 141+ 个 inline onclick 事件处理器，暂保留 'unsafe-inline' 向后兼容。
+//     后续收紧计划：前端改造为 addEventListener + nonce-based inline script/style 后，
+//     移除 'unsafe-inline'，仅保留 'self' + 'nonce-{nonce}'。
+//
 // /healthz 也被包裹但 CSP 对其无副作用（返回 text/plain，无脚本/HTML 解析）。
-func securityHeadersMiddleware(h http.Handler) http.Handler {
+func (s *Server) securityHeadersMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
+		// B1 修复 5：Permissions-Policy 禁用敏感设备权限。
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		// B1 修复 5：HSTS 仅 HTTPS 部署时注入（tlsCert 非空表示启用了 TLS）。
+		if s.tlsCert != "" {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		// B1 修复 6：CSP nonce-based 收紧。
+		// 每请求生成 16 字节随机 nonce（hex 编码 32 字符），注入 CSP 头。
+		// 前端改造完成后移除 'unsafe-inline'，仅保留 'self' + 'nonce-{nonce}'。
+		nonceBytes := make([]byte, 16)
+		if _, err := cryptoRand.Read(nonceBytes); err != nil {
+			// 随机数生成失败（极罕见）：回退到固定 nonce（仅影响 CSP 强度，不阻断请求）。
+			nonceBytes = []byte("fallback-nonce-v1")
+		}
+		nonce := hex.EncodeToString(nonceBytes)
+		w.Header().Set("Content-Security-Policy",
+			fmt.Sprintf("default-src 'self'; script-src 'self' 'unsafe-inline' 'nonce-%s'; style-src 'self' 'unsafe-inline' 'nonce-%s'; img-src 'self' data:; connect-src 'self'", nonce, nonce))
 		h.ServeHTTP(w, r)
 	})
 }
@@ -359,18 +433,37 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) error
 
 // requireTenantContext 提取并校验网关注入的租户身份上下文（H6 认证防御）。
 //
-// 行为矩阵：
-//   - 头非空（X-Tenant-ID 已注入） → 返回 actx, true
-//   - 头为空且 requireAuth=true → 401 Unauthorized（拒绝，生产模式严格校验）
-//   - 头为空且 requireAuth=false 且 demo=true → 自动填充 default/demo（放宽，便于本地一键体验）
-//   - 头为空且 requireAuth=false 且 demo=false → 400 Bad Request（拒绝空租户头，防越权伪造）
+// 行为矩阵（B1 修复 1+2：增加 Bearer token 回退与交叉校验）：
+//   - 头非空（X-Tenant-ID 已注入）：
+//   - token 也携带 tenant_id 且一致 → 返回 actx, true
+//   - token 也携带 tenant_id 但不一致 → 403 Forbidden（防绕过网关伪造租户头）
+//   - token 无 tenant_id → 返回 actx, true（仅头注入，向后兼容）
+//   - 头为空且 token 携带 tenant_id → 回退到 token 中的 tenant_id，返回 actx, true
+//   - 头为空且 token 无 tenant_id 且 requireAuth=true → 401 Unauthorized
+//   - 头为空且 token 无 tenant_id 且 requireAuth=false 且 demo=true → 自动填充 default/demo
+//   - 头为空且 token 无 tenant_id 且 requireAuth=false 且 demo=false → 400 Bad Request
 //
-// 安全语义：非生产非 demo 模式下也拒绝空租户头，避免任意客户端伪造 X-Tenant-ID 越权；
-// demo 模式保持宽松（自动填充默认租户），不影响本地体验。
+// 安全语义：Bearer token 中的 tenant_id 与 X-Tenant-ID 头交叉校验，防绕过网关伪造租户头；
+// 头空时回退到 token，支持无网关直连场景（用户中心登录后直接访问 API）。
 // 调用方应在 ok=false 时直接 return（响应已写入）。
 func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (authctx.Context, bool) {
 	actx := authctx.FromHTTPHeader(r.Header)
+	// B1 修复 1+2：从 Bearer token/Cookie 提取 tenant_id 作为回退/交叉校验。
+	tokenTenant, tokenUser := s.tenantFromBearer(r)
 	if actx.TenantID != "" {
+		// 头非空：若 token 也携带 tenant_id，校验两者一致，防绕过网关伪造租户头。
+		if tokenTenant != "" && tokenTenant != actx.TenantID {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch between X-Tenant-ID header and JWT claims"})
+			return actx, false
+		}
+		return actx, true
+	}
+	// 头空：回退到 token 中的 tenant_id（支持无网关直连场景）。
+	if tokenTenant != "" {
+		actx.TenantID = tokenTenant
+		if actx.UserID == "" && tokenUser != "" {
+			actx.UserID = tokenUser
+		}
 		return actx, true
 	}
 	if s.requireAuth {
@@ -388,6 +481,26 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 	// 非生产非 demo 模式：拒绝空租户头，防越权伪造。
 	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing X-Tenant-ID header (tenant context required)"})
 	return actx, false
+}
+
+// tenantFromBearer 从 Authorization: Bearer <token> 或 HttpOnly Cookie 中提取 tenant_id/user_id。
+// 用于 requireTenantContext 的 token 回退与交叉校验（B1 修复 1+2）。
+// token 缺失/无效时返回空串（不阻断，由调用方决定后续行为）。
+func (s *Server) tenantFromBearer(r *http.Request) (tenantID, userID string) {
+	tokenStr, err := extractBearer(r)
+	if err != nil {
+		// 回退 HttpOnly Cookie（与 userFromToken 一致，task 94 双 Cookie 方案）。
+		if ck, ckErr := r.Cookie(accessTokenCookieName); ckErr == nil && strings.TrimSpace(ck.Value) != "" {
+			tokenStr = ck.Value
+		} else {
+			return "", ""
+		}
+	}
+	claims, err := authctx.ParseHSJWT(tokenStr, s.jwtSecret)
+	if err != nil {
+		return "", ""
+	}
+	return claims.TenantID, claims.UserID
 }
 
 // Start 启动 HTTP(B/S)、gRPC(9090)、metrics(9091) 三个监听，并在收到 SIGTERM/SIGINT 时优雅退出。
@@ -416,9 +529,17 @@ func (s *Server) Start() error {
 	// M6 日志检索：GET/POST /api/v1/logs（租户隔离由 authctx 注入）。
 	s.logHandler.RegisterRoutes(mux)
 	// M3 部署中心：POST/GET /api/v1/deploys（租户隔离由 authctx 注入）。
-	s.deployHandler.RegisterRoutes(mux)
+	// B1 修复 3：用 paginateJSONHandler 包装 GET 列表做分页（向后兼容）。
+	deployMux := http.NewServeMux()
+	s.deployHandler.RegisterRoutes(deployMux)
+	mux.Handle("/api/v1/deploys", paginateJSONHandler(deployMux))
+	mux.Handle("/api/v1/deploys/", deployMux)
 	// M5 作业编排中心：POST/GET /api/v1/workflows（租户隔离由 authctx 注入）。
-	s.orchHandler.RegisterRoutes(mux)
+	// B1 修复 3：同上分页包装。
+	orchMux := http.NewServeMux()
+	s.orchHandler.RegisterRoutes(orchMux)
+	mux.Handle("/api/v1/workflows", paginateJSONHandler(orchMux))
+	mux.Handle("/api/v1/workflows/", orchMux)
 	// M4-4D 控制面联邦：仅当配置了 --federation-peers 时注册联邦 API。
 	// 未启用时这些端点返回 404（mux 未注册），保证向后兼容。
 	if s.fed != nil {
@@ -431,8 +552,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/auth/register", s.handleAuthRegister)
 	mux.HandleFunc("/api/v1/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("/api/v1/auth/me", s.handleAuthMe)
-	mux.HandleFunc("/api/v1/auth/logout", s.handleAuthLogout) // task 94：登出清 HttpOnly Cookie
-	mux.HandleFunc("/api/v1/auth/refresh", s.handleAuthRefresh) // 双 Cookie：rt 静默换新 at+rt（旋转）
+	mux.HandleFunc("/api/v1/auth/logout", s.handleAuthLogout)                  // task 94：登出清 HttpOnly Cookie
+	mux.HandleFunc("/api/v1/auth/refresh", s.handleAuthRefresh)                // 双 Cookie：rt 静默换新 at+rt（旋转）
 	mux.HandleFunc("/api/v1/auth/change-password", s.handleAuthChangePassword) // 安全债 85：预置弱口令强制改密
 	mux.HandleFunc("/api/v1/users", s.handleUsers)
 	mux.HandleFunc("/api/v1/users/", s.handleUserRouting)
@@ -450,10 +571,14 @@ func (s *Server) Start() error {
 	// Phase 3 K8s 集群管理：GET/POST 集群列表 + DELETE 单集群 + POST 测试连接。
 	mux.HandleFunc("/api/v1/k8s/clusters", s.handleK8sClusters)
 	mux.HandleFunc("/api/v1/k8s/clusters/", s.handleK8sClusterRouting) // 子路径：{id} 和 {id}/test
+	// B1 修复 9：告警规则 CRUD API。
+	mux.HandleFunc("/api/v1/alert-rules", s.handleAlertRules)
+	mux.HandleFunc("/api/v1/alert-rules/", s.handleAlertRuleRouting) // 子路径：{id} DELETE 删除
 
+	// B1 修复 4：用 jsonErrorMux 包装 mux，将 404 统一为 JSON 格式。
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", s.httpPort),
-		Handler:           recoveryMiddleware(securityHeadersMiddleware(mux)), // P0-2 兜底盘 + H5 安全头中间件
+		Handler:           recoveryMiddleware(s.securityHeadersMiddleware(&jsonErrorMux{inner: mux})), // P0-2 兜底盘 + H5 安全头 + B1 404 JSON
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -632,11 +757,11 @@ func (s *Server) buildFederationServer() (*http.Server, net.Listener, error) {
 			s.handleCreateTask(w, r)
 			return
 		}
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
 	})
 	mux.HandleFunc("/api/v1/devices", s.handleDevices)
 	srv := &http.Server{
-		Handler:           recoveryMiddleware(securityHeadersMiddleware(mux)),
+		Handler:           recoveryMiddleware(s.securityHeadersMiddleware(&jsonErrorMux{inner: mux})),
 		TLSConfig:         tlsCfg,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -655,7 +780,7 @@ func (s *Server) buildMetrics() (*http.Server, net.Listener) {
 		if !s.metricsAllowed(r.RemoteAddr) {
 			ctx := logx.WithTrace(r.Context(), "metrics")
 			logx.Warn(ctx, "metrics 访问被拒（不在 CIDR 白名单）", "remote", r.RemoteAddr)
-			http.Error(w, "metrics access denied", http.StatusForbidden)
+			jsonError(w, http.StatusForbidden, "metrics access denied")
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
@@ -716,825 +841,10 @@ func (s *Server) verifyFederationRequest(r *http.Request) error {
 	return nil
 }
 
-func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	// P1-6 联邦入站验签：带转发标记的请求必须验签，防跨不可信网段伪造租户身份。
-	if err := s.verifyFederationRequest(r); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
-		return
-	}
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := s.requireProd(w, r, "device:read"); !ok {
-		return
-	}
-	writeJSON(w, http.StatusOK, s.store.Snapshot(actx.TenantID))
-}
-
-// handleAgents 处理 GET /api/v1/agents，按网关注入租户返回已注册 agent 列表（供前端下拉框，P1-4）。
-func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return
-	}
-	out := make([]map[string]string, 0)
-	for _, a := range s.store.Agents(actx.TenantID) {
-		out = append(out, map[string]string{
-			"agentID":  a.AgentID,
-			"hostname": a.Hostname,
-			"segment":  a.Segment,
-			"status":   a.Status,
-		})
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-// handleMe 返回网关注入的当前身份上下文（供 B/S 仪表盘渲染身份、租户、角色）。
-func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"tenantID": actx.TenantID,
-		"userID":   actx.UserID,
-		"roles":    actx.Roles,
-		"mode":     "gateway-injected", // 内核不自鉴权，身份由前置网关注入
-	})
-}
-
-// handleCreateTask 处理 POST /api/v1/tasks：内部下发入口（P0-2）。
-// 请求体：{ "agentID": "...", "type": "shell", "command": "...", "tenantID": "可选" }
-// 租户隔离：任务只能下发给本租户（网关注入）的 agent；缺失则按 body.tenantID 兜底。
-func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	// P1-6 联邦入站验签：带转发标记的请求必须验签，防跨不可信网段伪造租户身份。
-	if err := s.verifyFederationRequest(r); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
-		return
-	}
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := s.requireProd(w, r, "task:write"); !ok {
-		return
-	}
-	var body struct {
-		AgentID  string `json:"agentID"`
-		Type     string `json:"type"`
-		Command  string `json:"command"`
-		TenantID string `json:"tenantID"`
-		Schedule string `json:"schedule"` // F4 可选：5 字段 cron，设定则成为模板任务（周期派生实例）
-	}
-	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	if body.AgentID == "" || body.Command == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agentID and command are required"})
-		return
-	}
-	if body.Type == "" {
-		body.Type = "shell"
-	}
-	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
-	targetTenant := actx.TenantID
-	agent := s.lookupAgent(body.AgentID)
-	if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "agent not found or tenant mismatch"})
-		return
-	}
-	task := s.store.CreateTask(&proto.Task{
-		AgentID:    body.AgentID,
-		TenantID:   targetTenant,
-		Type:       body.Type,
-		Command:    body.Command,
-		Schedule:   body.Schedule,        // F4 模板任务（cron）随创建下传
-		MaxRetries: s.cfg.TaskMaxRetries, // F2 失败重试上限随任务下发（store 层按策略重入队/死信）
-	})
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: targetTenant,
-		UserID:   actx.UserID,
-		Action:   "create_task",
-		Target:   task.TaskID,
-		Detail:   body.Command,
-	})
-	// 事件总线（P1-5）+ 队列深度观测（P2-1）。
-	if s.bus != nil {
-		s.bus.Publish(r.Context(), events.Event{
-			TenantID: targetTenant, UserID: actx.UserID,
-			Action: "create_task", Target: task.TaskID, Detail: body.Command, Level: events.LevelInfo,
-		})
-	}
-	if s.metrics != nil {
-		s.metrics.SetQueueDepth(s.store.PendingDepth())
-	}
-	// M3-2B SSE：通知前端新任务已创建（前端任务表追加一行 pending）
-	// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
-	s.publishEvent("task_status", targetTenant, map[string]string{
-		"taskID":  task.TaskID,
-		"status":  task.Status,
-		"agentID": body.AgentID,
-	})
-	writeJSON(w, http.StatusCreated, task)
-}
-
-// handleListTasks 统一处理 /api/v1/tasks：
-//   - GET：列出任务（租户隔离 + 可选 ?status= 过滤），经 domain 防腐层对外暴露领域模型。
-//   - POST：下发给指定 agent（逻辑复用 handleCreateTask，P0-2 内部下发入口）。
-func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost {
-		s.handleCreateTask(w, r)
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := s.requireProd(w, r, "task:read"); !ok {
-		return
-	}
-	status := r.URL.Query().Get("status")
-	tasks := s.store.AllTasks(actx.TenantID)
-	out := make([]*domain.Task, 0, len(tasks))
-	for _, t := range tasks {
-		if status != "" && t.Status != status {
-			continue
-		}
-		out = append(out, domain.TaskFromProto(t))
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-// handleDeviceDetail 处理 GET /api/v1/devices/{id}：返回设备详情 + 其任务与最近执行结果（租户隔离）。
-func (s *Server) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/v1/devices/")
-	if id == "" {
-		http.Error(w, "device id required", http.StatusBadRequest)
-		return
-	}
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := s.requireProd(w, r, "device:read"); !ok {
-		return
-	}
-	dev := s.store.Device(id)
-	if dev == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
-		return
-	}
-	if actx.TenantID != "" && dev.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
-		return
-	}
-	type deviceDetail struct {
-		Device  *domain.Device       `json:"device"`
-		Tasks   []*domain.Task       `json:"tasks"`
-		Results []*domain.TaskResult `json:"results"`
-	}
-	dd := deviceDetail{Device: domain.DeviceFromProto(dev)}
-	for _, t := range s.store.AllTasks(actx.TenantID) {
-		if t.AgentID == dev.AgentID {
-			dd.Tasks = append(dd.Tasks, domain.TaskFromProto(t))
-		}
-	}
-	for _, res := range s.store.Results(dev.AgentID) {
-		dd.Results = append(dd.Results, domain.TaskResultFromProto(res))
-	}
-	writeJSON(w, http.StatusOK, dd)
-}
-
-// lookupAgent 按 agentID 直接查（O(1) 直查，P2-17 修复线性扫描）。
-func (s *Server) lookupAgent(id string) *proto.AgentInfo {
-	return s.store.Agent(id)
-}
-
-// scheduleLoop 周期性评估模板任务（F4 定时/周期调度）：每 30s 调一次
-// reg.FireDueSchedules(now)，对到点（cron 匹配且本分钟未触发）的模板派生 pending 实例。
-// ctx 取消即退出。
-func (s *Server) scheduleLoop(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if !s.store.IsLeader() {
-				continue // A3：非 leader 不派生，避免多副本重复派生定时实例
-			}
-			n := s.store.FireDueSchedules(time.Now())
-			if n > 0 {
-				logx.Info(ctx, "定时任务派生", "fired", n)
-			}
-		}
-	}
-}
-
-// archiveLoop F5 离线超龄自动归档：每 60s 由 leader 扫描最后心跳早于
-// ArchiveAgeMin 的 agent 对应设备（或孤儿设备），批量标记 retired。
-// 仅 leader 执行（归档属协调任务，避免多副本重复归档）。
-func (s *Server) archiveLoop(ctx context.Context) {
-	if s.cfg.ArchiveAgeMin <= 0 {
-		return // 关闭自动归档（仅手动 DELETE 退役）
-	}
-	ticker := time.NewTicker(60 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if !s.store.IsLeader() {
-				continue
-			}
-			n := s.store.RetireStaleDevices(time.Duration(s.cfg.ArchiveAgeMin) * time.Minute)
-			if n > 0 {
-				logx.Info(ctx, "离线设备自动归档", "archived", n)
-			}
-			if tc := s.store.CleanupTokens(1000); tc > 0 {
-				logx.Info(ctx, "过期 install token 清理", "cleaned", tc)
-			}
-		}
-	}
-}
-
-// notifyLoop M7 告警 Webhook 推送：每 10s 检查是否有新的 critical 告警，
-// 有则通过 HTTP POST 推送到 cfg.AlertWebhookURL。cfg.AlertWebhookURL 为空时不启动。
-// 防重复：通过 lastAlertSent 时间戳追踪；只推送 CreatedAt 晚于该时间戳的告警。
-func (s *Server) notifyLoop(ctx context.Context) {
-	if s.cfg.AlertWebhookURL == "" {
-		return // Webhook 未配置，不启动 notifyLoop
-	}
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			alerts := s.store.Alerts("")
-			for _, a := range alerts {
-				if a.Severity != "critical" {
-					continue
-				}
-				if !a.CreatedAt.After(s.lastAlertSent) {
-					continue // 已推送过
-				}
-				if err := notify.PostByType(s.cfg.AlertNotifierType, s.cfg.AlertWebhookURL, a); err != nil {
-					logx.Error(ctx, "告警 Webhook 推送失败", err, "alertID", a.AlertID)
-				} else {
-					logx.Info(ctx, "告警 Webhook 推送成功", "alertID", a.AlertID)
-				}
-				if a.CreatedAt.After(s.lastAlertSent) {
-					s.lastAlertSent = a.CreatedAt
-				}
-			}
-		}
-	}
-}
-
-// handleHealthz 健康检查端点（K8s liveness/readiness 探针，P2-12）。
-// reclaimLoop 周期性复位超期 running 任务（P0-1 任务必达）：agent 领取后超过租约租期仍未
-// 上报结果，视为失联，复位 pending 重新进入调度队列。ctx 取消即退出。
-func (s *Server) reclaimLoop(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if !s.store.IsLeader() {
-				continue // A3：非 leader 不回收，避免多副本重复复位 running 任务
-			}
-			n := s.store.ReclaimStaleTasks(time.Duration(s.cfg.TaskLeaseSec) * time.Second)
-			if n > 0 {
-				logx.Info(ctx, "任务租约回收", "reclaimed", n)
-			}
-		}
-	}
-}
-
-// leaderLoop A3 选主循环：每 LeaderTickSec 秒续租一次 leader 租约，
-// 并通过日志在晋升/失去 leader 身份时打印一次（避免每 tick 刷屏）。
-// 仅 leader 才会由 reclaimLoop/scheduleLoop（及后续 provision/离线归档循环）真正执行周期协调任务。
-func (s *Server) leaderLoop(ctx context.Context) {
-	tick := time.Duration(s.cfg.LeaderTickSec) * time.Second
-	if tick <= 0 {
-		tick = 5 * time.Second
-	}
-	ttl := time.Duration(s.cfg.LeaderTTLSec) * time.Second
-	if ttl <= 0 {
-		ttl = 15 * time.Second
-	}
-	ticker := time.NewTicker(tick)
-	defer ticker.Stop()
-	var wasLeader bool
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			isLeader := s.store.RenewLeadership(ttl)
-			if isLeader != wasLeader {
-				if isLeader {
-					logx.Info(ctx, "晋升为 leader，开始执行周期协调任务", "ttl", ttl.String())
-				} else {
-					logx.Info(ctx, "失去 leader 身份，暂停周期协调任务（其他副本接管）")
-				}
-				wasLeader = isLeader
-			}
-		}
-	}
-}
-
-// handleBatchCreateTasks 处理 POST /api/v1/tasks/batch：向多台 agent 批量下发同一任务模板（P0-3 卖点闭环）。
-// 请求体：{ "targets":["a1","a2"], "type","command","content","path","tenantID" }
-// 逐台 CreateTask（复用租户隔离校验与审计）；返回已创建任务 ID 与逐台失败条目。
-func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := s.requireProd(w, r, "task:write"); !ok {
-		return
-	}
-	var body struct {
-		Targets  []string `json:"targets"`
-		Type     string   `json:"type"`
-		Command  string   `json:"command"`
-		Content  string   `json:"content"`
-		Path     string   `json:"path"`
-		TenantID string   `json:"tenantID"`
-		Schedule string   `json:"schedule"` // F4 可选：批量下发的任务模板也支持 cron
-	}
-	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	if len(body.Targets) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "targets is required (non-empty)"})
-		return
-	}
-	if body.Command == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "command is required"})
-		return
-	}
-	if body.Type == "" {
-		body.Type = "shell"
-	}
-	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
-	targetTenant := actx.TenantID
-	created := make([]string, 0, len(body.Targets))
-	type fail struct {
-		Target string `json:"target"`
-		Error  string `json:"error"`
-	}
-	fails := make([]fail, 0)
-	for _, tid := range body.Targets {
-		agent := s.lookupAgent(tid)
-		if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
-			fails = append(fails, fail{Target: tid, Error: "agent not found or tenant mismatch"})
-			continue
-		}
-		task := s.store.CreateTask(&proto.Task{
-			AgentID:    tid,
-			TenantID:   targetTenant,
-			Type:       body.Type,
-			Command:    body.Command,
-			Content:    body.Content,
-			Path:       body.Path,
-			Schedule:   body.Schedule,        // F4 批量模板也支持 cron
-			MaxRetries: s.cfg.TaskMaxRetries, // F2 批量下发同样带重试上限
-		})
-		s.store.Audit(&proto.AuditEvent{
-			TenantID: targetTenant,
-			UserID:   actx.UserID,
-			Action:   "create_task",
-			Target:   task.TaskID,
-			Detail:   "batch:" + body.Command,
-		})
-		if s.bus != nil {
-			s.bus.Publish(r.Context(), events.Event{
-				TenantID: targetTenant, UserID: actx.UserID,
-				Action: "create_task", Target: task.TaskID, Detail: "batch:" + body.Command, Level: events.LevelInfo,
-			})
-		}
-		created = append(created, task.TaskID)
-		// M3-2B SSE：批量下发也逐条推送 task_status（前端实时追加任务行）
-		// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
-		s.publishEvent("task_status", targetTenant, map[string]string{
-			"taskID":  task.TaskID,
-			"status":  task.Status,
-			"agentID": tid,
-		})
-	}
-	if s.metrics != nil {
-		s.metrics.SetQueueDepth(s.store.PendingDepth())
-	}
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"count":   len(created),
-		"created": created,
-		"errors":  fails,
-	})
-}
-
-// handleAudits 处理 GET /api/v1/audits：按租户/动作/时间窗检索审计事件（P0-4 审计可查；U-04 等保三级留痕必须可检索）。
-// 查询参数：tenant（requireAuth 时强制取自身租户）、action、from/to（RFC3339）、limit（默认 100，上限 1000）。
-func (s *Server) handleAudits(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := s.requireProd(w, r, "audit:read"); !ok {
-		return
-	}
-	q := r.URL.Query()
-	tenant := q.Get("tenant")
-	if s.requireAuth {
-		tenant = actx.TenantID // 强制租户隔离，忽略客户端伪造
-	}
-	action := q.Get("action")
-	var since, until time.Time
-	if v := q.Get("from"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			since = t
-		}
-	}
-	if v := q.Get("to"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			until = t
-		}
-	}
-	limit := 100
-	if v := q.Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
-		}
-	}
-	if limit > 1000 {
-		limit = 1000
-	}
-	evs := s.store.QueryAudits(tenant, action, since, until, limit)
-	writeJSON(w, http.StatusOK, evs)
-}
-
-// handleTaskRouting 统一分派 /api/v1/tasks/{id}/... 子路径：
-//   - POST /api/v1/tasks/{id}/cancel：取消任务（F3）
-//   - GET  /api/v1/tasks/{id}/result：查询单条执行结果（A5/F7）
-func (s *Server) handleTaskRouting(w http.ResponseWriter, r *http.Request) {
-	idAndRest := strings.TrimPrefix(r.URL.Path, "/api/v1/tasks/")
-	parts := strings.SplitN(idAndRest, "/", 2)
-	id := parts[0]
-	if id == "" {
-		http.Error(w, "task id required", http.StatusBadRequest)
-		return
-	}
-	switch {
-	case len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost:
-		s.handleCancelTask(w, r, id)
-	case len(parts) == 2 && parts[1] == "result" && r.Method == http.MethodGet:
-		s.handleTaskResult(w, r, id)
-	default:
-		http.NotFound(w, r)
-	}
-}
-
-// handleCancelTask 处理 POST /api/v1/tasks/{id}/cancel：取消 pending/running 任务（F3）。
-// 租户隔离：requireAuth 时强制用网关注入租户，禁止越权取消他租户任务。
-func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request, id string) {
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := s.requireProd(w, r, "task:cancel"); !ok {
-		return
-	}
-	tenant := actx.TenantID
-	ok = s.store.CancelTask(id, tenant)
-	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not cancellable (not found / not pending|running / tenant mismatch)"})
-		return
-	}
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: tenant, UserID: actx.UserID, Action: "cancel_task", Target: id, Detail: "cancelled via HTTP",
-	})
-	if s.bus != nil {
-		s.bus.Publish(r.Context(), events.Event{
-			TenantID: tenant, UserID: actx.UserID, Action: "cancel_task", Target: id, Level: events.LevelInfo,
-		})
-	}
-	// M3-2B SSE：通知前端任务已取消（任务表对应行状态翻 cancelled）
-	// H6 租户隔离：携带 tenant，仅同租户订阅者收到。
-	s.publishEvent("task_status", tenant, map[string]string{
-		"taskID": id,
-		"status": "cancelled",
-	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "taskID": id})
-}
-
-// handleTaskResult 处理 GET /api/v1/tasks/{id}/result：返回单条执行结果（A5/F7）。
-// 租户隔离：requireAuth 时仅返回本租户任务的结果（通过任务的租户归属判定）。
-func (s *Server) handleTaskResult(w http.ResponseWriter, r *http.Request, id string) {
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := s.requireProd(w, r, "task:read"); !ok {
-		return
-	}
-	res := s.store.TaskResult(id)
-	if res == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "result not found"})
-		return
-	}
-	// 租户隔离：结果对应的任务须属于当前租户（requireAuth 时强制）。
-	if actx.TenantID != "" {
-		found := false
-		for _, t := range s.store.AllTasks(actx.TenantID) {
-			if t.TaskID == id {
-				found = true
-				break
-			}
-		}
-		if !found {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
-			return
-		}
-	}
-	writeJSON(w, http.StatusOK, domain.TaskResultFromProto(res))
-}
-
-// handleDeviceRouting 统一分派 /api/v1/devices/{id}... 子路径：
-//   - GET    /api/v1/devices/{id}：设备详情（设备+任务+结果）
-//   - DELETE /api/v1/devices/{id}：退役/下线设备（F5）
-//   - POST   /api/v1/devices/{id}/provision：触发自动纳管推送（B1）
-//   - GET    /api/v1/devices/{id}/metrics：返回设备最新监控指标
-func (s *Server) handleDeviceRouting(w http.ResponseWriter, r *http.Request) {
-	idAndRest := strings.TrimPrefix(r.URL.Path, "/api/v1/devices/")
-	parts := strings.SplitN(idAndRest, "/", 2)
-	id := parts[0]
-	if id == "" {
-		http.Error(w, "device id required", http.StatusBadRequest)
-		return
-	}
-	switch {
-	case len(parts) == 1 && r.Method == http.MethodGet:
-		s.handleDeviceDetail(w, r)
-	case len(parts) == 1 && r.Method == http.MethodDelete:
-		s.handleRetireDevice(w, r, id)
-	case len(parts) == 2 && parts[1] == "provision" && r.Method == http.MethodPost:
-		s.handleProvision(w, r, id)
-	case len(parts) == 2 && parts[1] == "metrics" && r.Method == http.MethodGet:
-		s.handleDeviceMetrics(w, r, id)
-	default:
-		http.NotFound(w, r)
-	}
-}
-
-// handleRetireDevice 处理 DELETE /api/v1/devices/{id}：退役/下线设备（F5）。
-// 标记 retired，退出活跃清单但仍可查归档；租户隔离。
-func (s *Server) handleRetireDevice(w http.ResponseWriter, r *http.Request, id string) {
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := s.requireProd(w, r, "device:delete"); !ok {
-		return
-	}
-	tenant := actx.TenantID
-	if !s.store.RetireDevice(id, tenant) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found or tenant mismatch"})
-		return
-	}
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: tenant, UserID: actx.UserID, Action: "retire_device", Target: id, Detail: "retired via HTTP",
-	})
-
-	// M3-2B SSE：通知前端设备已下线（设备表移除/置灰）
-	// H6 租户隔离：携带 tenant，仅同租户订阅者收到。
-	s.publishEvent("device_offline", tenant, map[string]string{
-		"deviceID": id,
-	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "retired", "deviceID": id})
-}
-
-// handleProvision 处理 POST /api/v1/devices/{id}/provision：触发自动纳管（B1）。
-// 签发一次性 install token + 构造可直接复制粘贴的 bootstrap curl|sh 命令，
-// 经此命令在候选设备上安装 agent 后，agent 携带 token 回注册完成闭环。
-func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id string) {
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := s.requireProd(w, r, "provision:execute"); !ok {
-		return
-	}
-	tenant := actx.TenantID
-	dev := s.store.Device(id)
-	if dev == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
-		return
-	}
-	if tenant != "" && dev.TenantID != tenant {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
-		return
-	}
-	token, _, err := s.store.Provision(id, dev.IP, tenant)
-	if err != nil {
-		// TOCTOU 窗口补偿：store 层可能返回"device not found"（设备在本 handler 前置校验
-		// 与 Provision 之间被删除）。安全（P2-F12）：映射为 404 而非 500。
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "not found") {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": errMsg})
-		} else {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": errMsg})
-		}
-		return
-	}
-	// 安全（P1-F4）：bootstrap 地址用运维显式配置的 advertise-addr，绝不能用请求方可控的 r.Host
-	// （Host 头注入可让 bootstrap 指向攻击者服务器→供应链 RCE）。空则回退本机（仅开发）。
-	advertise := strings.TrimRight(s.cfg.AdvertiseAddr, "/")
-	if advertise == "" {
-		advertise = fmt.Sprintf("http://127.0.0.1:%d", s.httpPort)
-		logx.Warn(r.Context(), "advertise-addr 未配置，bootstrap 回退本机地址（仅开发，生产务必配置 --advertise-addr）")
-	}
-	bootstrap := fmt.Sprintf("curl -sSL %s/install.sh | sh -s -- --token=%s", advertise, token)
-	// B1 SSH 自动推送：若配置了 SSH 私钥，自动通过 SSH 在候选设备上执行 bootstrap。
-	if s.cfg.ProvisionSSHKey != "" {
-		sshAddr := fmt.Sprintf("%s:22", dev.IP)
-		go func(addr, cmd, device string) {
-			ctx := context.Background()
-			logx.Info(ctx, "SSH 自动推送 agent", "device", device, "sshAddr", addr)
-			out, err := provision.PushAndExec(ctx, addr, s.cfg.ProvisionSSHUser, s.cfg.ProvisionSSHKey, s.cfg.ProvisionSSHKP, s.cfg.ProvisionSSHKnownHosts, cmd)
-			if err != nil {
-				logx.Error(ctx, "SSH 推送失败", err, "device", device, "sshAddr", addr, "output", out)
-			} else {
-				logx.Info(ctx, "SSH 推送成功", "device", device, "output", out)
-			}
-		}(sshAddr, bootstrap, id)
-	}
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: tenant, UserID: actx.UserID, Action: "provision_agent", Target: id, Detail: "token issued via HTTP",
-	})
-	writeJSON(w, http.StatusOK, map[string]string{
-		"status":       "provisioning",
-		"deviceID":     id,
-		"installToken": token,
-		"bootstrap":    bootstrap,
-	})
-}
-
-// handleAlerts 处理 GET /api/v1/alerts：返回活跃告警（M7 监控告警最小数据源）。
-// 租户隔离：requireAuth 时仅返回本租户告警。
-func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := s.requireProd(w, r, "alert:read"); !ok {
-		return
-	}
-	writeJSON(w, http.StatusOK, s.store.Alerts(actx.TenantID))
-}
-
-// handleAlertRouting 统一分派 /api/v1/alerts/{id}/... 子路径：
-//   - POST /api/v1/alerts/{id}/ack：确认告警（M7）
-//   - POST /api/v1/alerts/{id}/silence：静默告警（M7）
-func (s *Server) handleAlertRouting(w http.ResponseWriter, r *http.Request) {
-	idAndRest := strings.TrimPrefix(r.URL.Path, "/api/v1/alerts/")
-	parts := strings.SplitN(idAndRest, "/", 2)
-	id := parts[0]
-	if id == "" {
-		http.Error(w, "alert id required", http.StatusBadRequest)
-		return
-	}
-	switch {
-	case len(parts) == 2 && parts[1] == "ack" && r.Method == http.MethodPost:
-		s.handleAckAlert(w, r, id)
-	case len(parts) == 2 && parts[1] == "silence" && r.Method == http.MethodPost:
-		s.handleSilenceAlert(w, r, id)
-	default:
-		http.NotFound(w, r)
-	}
-}
-
-// handleAckAlert 处理 POST /api/v1/alerts/{id}/ack：确认告警（M7）。
-// 租户隔离：requireAuth 时强制网关注入租户，禁止越权确认他租户告警。
-func (s *Server) handleAckAlert(w http.ResponseWriter, r *http.Request, id string) {
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := s.requireProd(w, r, "alert:ack"); !ok {
-		return
-	}
-	if s.store.Alert(id) == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert not found"})
-		return
-	}
-	if !s.store.AckAlert(id, actx.TenantID, actx.UserID) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "alert not found or tenant mismatch"})
-		return
-	}
-	s.store.Audit(&proto.AuditEvent{TenantID: actx.TenantID, UserID: actx.UserID, Action: "ack_alert", Target: id, Detail: "acknowledged via HTTP"})
-	if s.bus != nil {
-		s.bus.Publish(r.Context(), events.Event{TenantID: actx.TenantID, UserID: actx.UserID, Action: "ack_alert", Target: id, Level: events.LevelInfo})
-	}
-	// M3-2B SSE：通知前端告警状态已变更（告警面板刷新）
-	// H6 租户隔离：携带 actx.TenantID，仅同租户订阅者收到。
-	s.publishEvent("alert_new", actx.TenantID, map[string]string{
-		"alertID": id,
-		"action":  "ack",
-	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "acknowledged", "alertID": id})
-}
-
-// handleSilenceAlert 处理 POST /api/v1/alerts/{id}/silence：静默告警（M7）。
-// 请求体（可选）：{"durationMinutes":1440,"comment":"..."}；缺省静默 24h。
-func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id string) {
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := s.requireProd(w, r, "alert:silence"); !ok {
-		return
-	}
-	var body struct {
-		DurationMinutes int    `json:"durationMinutes"`
-		Comment         string `json:"comment"`
-	}
-	if err := decodeJSONBody(w, r, &body); err != nil && err != io.EOF {
-		log.Printf("controlplane: handleSilenceAlert 解析请求体失败: %v", err)
-	}
-	if s.store.Alert(id) == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert not found"})
-		return
-	}
-	until := time.Now()
-	if body.DurationMinutes > 0 {
-		until = until.Add(time.Duration(body.DurationMinutes) * time.Minute)
-	}
-	if !s.store.SilenceAlert(id, actx.TenantID, actx.UserID, until, body.Comment) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "alert not found or tenant mismatch"})
-		return
-	}
-	s.store.Audit(&proto.AuditEvent{TenantID: actx.TenantID, UserID: actx.UserID, Action: "silence_alert", Target: id, Detail: fmt.Sprintf("silenced %dm: %s", body.DurationMinutes, body.Comment)})
-	if s.bus != nil {
-		s.bus.Publish(r.Context(), events.Event{TenantID: actx.TenantID, UserID: actx.UserID, Action: "silence_alert", Target: id, Level: events.LevelInfo})
-	}
-	// M3-2B SSE：通知前端告警已静默（告警面板刷新）
-	// H6 租户隔离：携带 actx.TenantID，仅同租户订阅者收到。
-	s.publishEvent("alert_new", actx.TenantID, map[string]string{
-		"alertID": id,
-		"action":  "silence",
-	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "silenced", "alertID": id})
-}
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1549,7 +859,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 // 配合 bootstrap 命令 `curl -sSL <addr>/install.sh | sh -s -- --token=<tok>` 完成 agent 安装与注册。
 func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	// P1-5 访问审计：install.sh 是 bootstrap 端点，保持开放但审计访问来源供溯源。
@@ -1568,7 +878,7 @@ func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 // 供 install.sh 脚本下载安装。
 func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	// P1-5 访问审计：agent 二进制分发端点，保持开放但审计下载来源供溯源。
@@ -1578,12 +888,12 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 	})
 	path, err := os.Executable()
 	if err != nil {
-		http.Error(w, "cannot resolve agent binary", http.StatusInternalServerError)
+		jsonError(w, http.StatusInternalServerError, "cannot resolve agent binary")
 		return
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		http.Error(w, "cannot open agent binary", http.StatusInternalServerError)
+		jsonError(w, http.StatusInternalServerError, "cannot open agent binary")
 		return
 	}
 	defer f.Close()
@@ -1603,7 +913,7 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 // body: {"cidrs":["10.30.0.0/24"], "tenantID":"t1"}；cidrs 缺省时回退 --segment-cidr。
 func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -1630,6 +940,13 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 	if len(cidrs) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no cidrs provided (body.cidrs or --segment-cidr)"})
 		return
+	}
+	// B1 修复 7：SSRF 校验 advertise URL（仅警告不阻止，控制面常部署内网）。
+	// advertise URL 是控制面自身地址（运维配置），非用户可控，SSRF 校验仅做安全审计告警。
+	if s.cfg.AdvertiseAddr != "" {
+		if err := validateURLSSRF(s.cfg.AdvertiseAddr); err != nil {
+			logx.Warn(r.Context(), "AdvertiseAddr SSRF 校验失败（仅警告，控制面常部署内网）", "url", s.cfg.AdvertiseAddr, "err", err)
+		}
 	}
 	sum, err := provision.AutoProvision(r.Context(), provision.Deps{
 		UpsertDevice: s.store.UpsertDevice,
@@ -1673,67 +990,6 @@ func (s *Server) autoProvisionLoop(ctx context.Context) {
 	}
 }
 
-// deployReconcileLoop 后台周期对账 M3 部署：把 running 部署按底层任务结果翻成功/失败。
-// 仅 leader 执行（避免多副本重复对账写库）。
-func (s *Server) deployReconcileLoop(ctx context.Context) {
-	const interval = 15 * time.Second
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		if s.store.IsLeader() {
-			s.deployHandler.ReconcileAll(ctx, "")
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
-}
-
-// workflowScheduleLoop 后台周期按 cron 触发 active 工作流并 reconcile 运行态。
-// 仅 leader 执行（避免多副本重复派发底层任务）。
-func (s *Server) workflowScheduleLoop(ctx context.Context) {
-	const interval = 30 * time.Second
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-		if !s.store.IsLeader() {
-			continue
-		}
-		list, err := s.orchHandler.ListActive(ctx)
-		if err != nil {
-			continue
-		}
-		now := time.Now()
-		nowMin := now.Truncate(time.Minute)
-		for _, wf := range list {
-			if wf.Cron == "" {
-				continue
-			}
-			ok, err := cron.Match(wf.Cron, now)
-			if err != nil || !ok {
-				continue
-			}
-			// 防同分钟重复触发：与上次运行落在本分钟内则跳过。
-			if !wf.LastRunAt.IsZero() && wf.LastRunAt.Truncate(time.Minute).Equal(nowMin) {
-				continue
-			}
-			if _, err := s.orchHandler.Trigger(ctx, wf.ID, wf.TenantID); err != nil {
-				logx.Error(ctx, "工作流 cron 触发失败", err, "workflowID", wf.ID)
-				continue
-			}
-			if err := s.orchHandler.Reconcile(ctx, wf.ID, wf.TenantID); err != nil {
-				log.Printf("controlplane: cronLoop Reconcile 工作流 %d 失败: %v", wf.ID, err)
-			}
-		}
-	}
-}
 
 // writeJSON 统一写出 JSON 响应。
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
@@ -1741,3 +997,229 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
+
+// ============================================================================
+// B1 修复 4：404/405 统一 JSON 错误格式
+// ============================================================================
+
+// jsonError 替换 http.Error，返回 application/json 格式的错误响应。
+// 用于所有原 http.Error 调用点，统一错误格式为 {"error": "message"}。
+func jsonError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// jsonErrorMux 包装 http.ServeMux，将 404 响应统一为 JSON 格式。
+// 当 mux 无匹配路由时（pattern == ""），返回 JSON 404 而非默认的 text/plain。
+// 405 由各 handler 内部用 jsonError 处理（显式方法检查）。
+type jsonErrorMux struct {
+	inner *http.ServeMux
+}
+
+func (m *jsonErrorMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h, pattern := m.inner.Handler(r)
+	if pattern == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
+		return
+	}
+	h.ServeHTTP(w, r)
+}
+
+// ============================================================================
+// B1 修复 3：列表 API 分页辅助函数
+// ============================================================================
+
+// paginateResult 分页响应结构。当客户端传 page 参数时，列表 API 返回此结构；
+// 不传 page 时返回原数组（向后兼容）。
+type paginateResult struct {
+	Data     interface{} `json:"data"`
+	Total    int         `json:"total"`
+	Page     int         `json:"page"`
+	PageSize int         `json:"pageSize"`
+	HasMore  bool        `json:"hasMore"`
+}
+
+// parsePagination 从 query 参数解析 page/pageSize。
+// page 从 1 开始，pageSize 默认 20、上限 200。
+// page == 0 表示不分页（返回全量，向后兼容）。
+func parsePagination(q url.Values) (page, pageSize int) {
+	pageStr := q.Get("page")
+	if pageStr == "" {
+		return 0, 0 // 不分页
+	}
+	page, _ = strconv.Atoi(pageStr)
+	if page < 1 {
+		page = 1
+	}
+	pageSize = 20
+	if v := q.Get("pageSize"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			pageSize = n
+		}
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+	return page, pageSize
+}
+
+// responseCapture 捕获 http.Handler 的响应（状态码 + body），用于分页包装。
+// 仅用于 GET 列表请求的分页捕获，非分页请求直接透传。
+type responseCapture struct {
+	http.ResponseWriter
+	status int
+	body   bytes.Buffer
+}
+
+func (c *responseCapture) WriteHeader(code int) {
+	c.status = code
+}
+
+func (c *responseCapture) Write(b []byte) (int, error) {
+	if c.status == 0 {
+		c.status = http.StatusOK
+	}
+	return c.body.Write(b)
+}
+
+// paginateJSONHandler 包装一个返回 JSON 数组的 handler，对 GET 请求支持 page/pageSize 分页。
+// 不传 page 时直接透传（向后兼容）；传 page 时捕获原 handler 响应，解析 JSON 数组并分页。
+// 用于 deploys/workflows 等外部 handler 注册的列表 API。
+func paginateJSONHandler(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Query().Get("page") == "" {
+			h.ServeHTTP(w, r)
+			return
+		}
+		// 捕获原 handler 响应
+		rc := &responseCapture{ResponseWriter: w}
+		h.ServeHTTP(rc, r)
+		if rc.status != http.StatusOK {
+			// 非 200 直接转发原响应
+			for k, v := range rc.Header() {
+				w.Header()[k] = v
+			}
+			if rc.status == 0 {
+				rc.status = http.StatusOK
+			}
+			w.WriteHeader(rc.status)
+			w.Write(rc.body.Bytes())
+			return
+		}
+		// 解析 JSON 数组并分页
+		page, pageSize := parsePagination(r.URL.Query())
+		var arr []json.RawMessage
+		if err := json.Unmarshal(rc.body.Bytes(), &arr); err != nil {
+			// 非 JSON 数组（可能是对象），直接转发原响应
+			for k, v := range rc.Header() {
+				w.Header()[k] = v
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(rc.status)
+			w.Write(rc.body.Bytes())
+			return
+		}
+		total := len(arr)
+		start := (page - 1) * pageSize
+		if start >= total {
+			start = total
+		}
+		end := start + pageSize
+		if end > total {
+			end = total
+		}
+		writeJSON(w, http.StatusOK, paginateResult{
+			Data:     arr[start:end],
+			Total:    total,
+			Page:     page,
+			PageSize: pageSize,
+			HasMore:  end < total,
+		})
+	})
+}
+
+// ============================================================================
+// B1 修复 7：SSRF 校验
+// ============================================================================
+
+// validateURLSSRF 校验 URL 是否安全（防 SSRF）。
+// 拒绝条件：
+//   - 协议非 http/https
+//   - 主机解析为私网地址（10.x/172.16-31.x/192.168.x/127.x/169.254.x）
+//   - IPv6 link-local（fe80::/10）
+//   - 元数据地址（169.254.169.254）
+//   - 主机无法解析
+func validateURLSSRF(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	// 协议白名单：仅允许 http/https。
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("scheme %q not allowed (only http/https)", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("empty host in URL")
+	}
+	// 解析主机名中的 IP 地址（如果是域名则解析 DNS）。
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		// DNS 解析失败：可能是 IP 字面量，尝试直接解析。
+		ip := net.ParseIP(host)
+		if ip == nil {
+			return fmt.Errorf("cannot resolve host %q: %w", host, err)
+		}
+		ips = []net.IP{ip}
+	}
+	for _, ip := range ips {
+		if isPrivateIP(ip) {
+			return fmt.Errorf("host %q resolves to private/loopback/link-local address %s", host, ip)
+		}
+	}
+	return nil
+}
+
+// isPrivateIP 判断 IP 是否为私网/环回/链路本地/元数据地址。
+func isPrivateIP(ip net.IP) bool {
+	// IPv4 私网/环回/链路本地。
+	if ip4 := ip.To4(); ip4 != nil {
+		// 127.x.x.x（环回）
+		if ip4[0] == 127 {
+			return true
+		}
+		// 10.x.x.x（A 类私网）
+		if ip4[0] == 10 {
+			return true
+		}
+		// 172.16-31.x.x（B 类私网）
+		if ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31 {
+			return true
+		}
+		// 192.168.x.x（C 类私网）
+		if ip4[0] == 192 && ip4[1] == 168 {
+			return true
+		}
+		// 169.254.x.x（链路本地 + 云元数据）
+		if ip4[0] == 169 && ip4[1] == 254 {
+			return true
+		}
+		// 0.0.0.0（未指定）
+		if ip4[0] == 0 && ip4[1] == 0 && ip4[2] == 0 && ip4[3] == 0 {
+			return true
+		}
+		return false
+	}
+	// IPv6：拒绝 loopback (::1) 和 link-local (fe80::/10)。
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return true
+	}
+	// IPv6 ULA (fc00::/7) 私网地址。
+	if len(ip) == 16 {
+		if (ip[0] & 0xfe) == 0xfc {
+			return true
+		}
+	}
+	return false
+}
+

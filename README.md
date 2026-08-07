@@ -417,7 +417,7 @@ Agent 端多控制面 failover：`--control-addrs="cp1:9090,cp2:9090"`，客户�
 ## 从源码构建
 
 ```bash
-# 依赖：Go 1.22+
+# 依赖：Go 1.26+
 git clone <repo>
 cd opsmesh-src
 

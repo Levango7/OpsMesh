@@ -48,7 +48,8 @@ func (s *ESStore) Append(_ context.Context, _ *Entry) error { return nil }
 //
 // 翻译规则：
 //   - TenantID/DeviceID/AgentID/Level/Source → bool.must 的 term 子句（精确匹配）
-//   - Keyword → bool.must 的 match_phrase 子句（短语匹配，避免分词拆散）
+//   - Keyword → bool.must 的 match_phrase 子句（短语匹配，对接 ES 倒排索引实现全文本检索，
+//     避免分词拆散多词关键字如 "disk full" 不应匹配 "disk" + "full" 分离的文档）
 //   - From/To → bool.filter 的 range 子句（不参与评分，性能更好）
 //   - Limit → size（受 maxQueryLimit 约束）
 //   - Offset → from（ES 原生支持分页）
@@ -139,7 +140,8 @@ func (s *ESStore) buildDSL(q Query, limit int) []byte {
 		must = append(must, map[string]interface{}{"term": map[string]string{"source": q.Source}})
 	}
 	if q.Keyword != "" {
-		// match_phrase 避免分词拆散多词关键字（如 "disk full" 不应匹配 "disk" + "full" 分离的文档）。
+		// match_phrase 对接 ES 倒排索引实现全文本检索：短语匹配保证词序敏感，
+		// 避免分词拆散多词关键字（如 "disk full" 不应匹配 "disk" + "full" 分离的文档）。
 		must = append(must, map[string]interface{}{"match_phrase": map[string]string{"message": q.Keyword}})
 	}
 

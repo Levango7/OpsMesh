@@ -149,6 +149,13 @@ type Task struct {
 	LastFiredAt time.Time `json:"lastFiredAt"`
 	// M5 作业编排占位（完整版 DAG）：DependsOn 为前置任务 ID，MVP 仅记录不执行。
 	DependsOn []string `json:"dependsOn"`
+	// 任务审批（task 100）：高风险任务下发前需管理员审批。
+	//   - ApprovalRequired=true 时 CreateTask 将状态置为 pending_approval（不进入 ClaimTask 队列）；
+	//   - ApproveTask 翻转 pending_approval → pending（ApprovedBy/ApprovedAt 记录审批信息）；
+	//   - RejectTask  翻转 pending_approval → rejected（驳回，永不进入队列）。
+	ApprovalRequired bool      `json:"approvalRequired"`
+	ApprovedBy       string    `json:"approvedBy"`
+	ApprovedAt       time.Time `json:"approvedAt"`
 }
 
 // AuditEvent 内核产出的审计事件（U-04 等保三级：操作 100% 留痕）。
@@ -189,6 +196,7 @@ type Alert struct {
 	AgentID   string    `json:"agentID"`
 	Severity  string    `json:"severity"` // warning / critical
 	Message   string    `json:"message"`
+	Metric    string    `json:"metric"` // 指标名（如 cpu.usage）；告警聚合键之一，空时回退到 Message
 	CreatedAt time.Time `json:"createdAt"`
 	// 处理状态（M7 ack/silence）：未处理=firing；确认=acknowledged；静默=silenced。
 	Status         string    `json:"status"`

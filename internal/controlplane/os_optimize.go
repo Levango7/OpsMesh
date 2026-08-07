@@ -4,21 +4,27 @@
 // 通过 GET /api/v1/os-templates 列表、GET /api/v1/os-templates/{id} 详情、
 // POST /api/v1/os-templates/{id}/execute 在指定 agent 上执行（复用 task 下发通道）。
 //
-// 设计要点：
-//   - 模板为内存常量，不落库（预置最佳实践，版本随代码升级）。
+// 设计要点（task 104：模板从内存常量改为 store 持久化，支持在线 CRUD）：
+//   - 预置模板仍以内存常量 osTemplates 维护（版本随代码升级），启动时 seedPresetOSTemplates
+//     将其幂等写入 store（按 ID 去重，已存在不覆盖，保留用户在线修改）。
+//   - API 从 store 读取模板列表/详情；store 为空时回退到内存常量（向后兼容）。
+//   - 新增 CRUD：POST /api/v1/os-templates 创建、PUT /api/v1/os-templates/{id} 更新、
+//     DELETE /api/v1/os-templates/{id} 删除。
 //   - execute 将 params 通过 `set --` 注入脚本位置参数，agent 侧 `sh -c command` 执行时 $1/$2 即可拿到。
 //   - 租户隔离与审计复用 handleCreateTask 同款逻辑（requireAuth + authctx + Audit + 事件总线 + SSE）。
 package controlplane
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
-
 	"opsmesh/internal/events"
 	"opsmesh/internal/proto"
+	"opsmesh/internal/store"
 )
 
 // OSTemplate 预置 OS 优化任务模板。
@@ -675,14 +681,24 @@ func osTemplateByID(id string) *OSTemplate {
 	return nil
 }
 
-// handleListOSTemplates 处理 GET /api/v1/os-templates：列出所有预置模板。
-// 可选查询参数 category 过滤；可选 risk 过滤；可选 os 过滤。
+// handleListOSTemplates 处理 /api/v1/os-templates：
+//   - GET：列出所有模板（从 store 读取，store 为空回退预置；可选 category/risk/os 过滤）
+//   - POST：创建新模板（task 104 CRUD，需 os:write 权限）
 func (s *Server) handleListOSTemplates(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+	switch r.Method {
+	case http.MethodGet:
+		s.handleListOSTemplatesGet(w, r)
+	case http.MethodPost:
+		s.handleCreateOSTemplate(w, r)
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
-	_, ok := s.requireTenantContext(w, r)
+}
+
+// handleListOSTemplatesGet 处理 GET /api/v1/os-templates：列出所有模板（从 store 读取，含回退）。
+// 可选查询参数 category 过滤；可选 risk 过滤；可选 os 过滤。
+func (s *Server) handleListOSTemplatesGet(w http.ResponseWriter, r *http.Request) {
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
@@ -693,8 +709,9 @@ func (s *Server) handleListOSTemplates(w http.ResponseWriter, r *http.Request) {
 	category := q.Get("category")
 	risk := q.Get("risk")
 	osFilter := q.Get("os")
-	out := make([]OSTemplate, 0, len(osTemplates))
-	for _, t := range osTemplates {
+	all := s.listOSTemplatesFromStore(actx.TenantID)
+	out := make([]OSTemplate, 0, len(all))
+	for _, t := range all {
 		if category != "" && t.Category != category {
 			continue
 		}
@@ -709,10 +726,171 @@ func (s *Server) handleListOSTemplates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleOSTemplateByID 处理 GET /api/v1/os-templates/{id}：返回模板详情。
+// handleCreateOSTemplate 处理 POST /api/v1/os-templates：创建新 OS 模板（task 104 CRUD）。
+// 请求体即 OSTemplate JSON；ID 为空时由 store 分配随机 ID。
+// 需 os:write 权限；创建后审计 + 事件总线 + SSE 通知。
+func (s *Server) handleCreateOSTemplate(w http.ResponseWriter, r *http.Request) {
+	if err := s.verifyFederationRequest(r); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return
+	}
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	caller, ok := s.requireProd(w, r, "os:write")
+	if !ok {
+		return
+	}
+	var tpl OSTemplate
+	if err := decodeJSONBody(w, r, &tpl); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if tpl.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+	if tpl.Commands == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "commands is required"})
+		return
+	}
+	// 基本字段校验：risk 必须为 low/medium/high（空则归一为 low）。
+	tpl.Risk = normalizeRisk(tpl.Risk)
+	st := osTemplateToStore(&tpl, actx.TenantID)
+	if err := s.store.SaveOSTemplate(st); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save template failed: " + err.Error()})
+		return
+	}
+	// 回读以获取 store 分配的 ID/时间戳。
+	saved := osTemplateFromStore(s.store.GetOSTemplate(st.ID))
+	userID := ""
+	if caller != nil {
+		userID = caller.ID
+	}
+	s.store.Audit(&proto.AuditEvent{
+		TenantID: actx.TenantID, UserID: userID, Action: "os_template_create", Target: st.ID, Detail: "name=" + tpl.Name,
+	})
+	if s.bus != nil {
+		s.bus.Publish(r.Context(), events.Event{
+			TenantID: actx.TenantID, UserID: userID,
+			Action: "os_template_create", Target: st.ID, Detail: "name=" + tpl.Name, Level: events.LevelInfo,
+		})
+	}
+	s.publishEvent("os_template_changed", actx.TenantID, map[string]string{"id": st.ID, "op": "create"})
+	writeJSON(w, http.StatusCreated, saved)
+}
+
+// handleUpdateOSTemplate 处理 PUT /api/v1/os-templates/{id}：更新 OS 模板（task 104 CRUD）。
+// 请求体为 OSTemplate JSON；ID 路径参数与 body.ID 不一致时以路径为准。
+// 需 os:write 权限；不存在返回 404。
+func (s *Server) handleUpdateOSTemplate(w http.ResponseWriter, r *http.Request, id string) {
+	if err := s.verifyFederationRequest(r); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return
+	}
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	caller, ok := s.requireProd(w, r, "os:write")
+	if !ok {
+		return
+	}
+	var tpl OSTemplate
+	if err := decodeJSONBody(w, r, &tpl); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if tpl.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+	if tpl.Commands == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "commands is required"})
+		return
+	}
+	// 检查存在性（含回退预置模板：预置模板在 store 中已 seed，此处能查到）。
+	existing := s.store.GetOSTemplate(id)
+	if existing == nil {
+		// 回退检查：若为预置模板 ID 且尚未 seed，允许"upsert"（首次写入 store）。
+		if preset := osTemplateByID(id); preset == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+			return
+		}
+	}
+	tpl.ID = id
+	tpl.Risk = normalizeRisk(tpl.Risk)
+	st := osTemplateToStore(&tpl, actx.TenantID)
+	if err := s.store.SaveOSTemplate(st); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save template failed: " + err.Error()})
+		return
+	}
+	saved := osTemplateFromStore(s.store.GetOSTemplate(id))
+	userID := ""
+	if caller != nil {
+		userID = caller.ID
+	}
+	s.store.Audit(&proto.AuditEvent{
+		TenantID: actx.TenantID, UserID: userID, Action: "os_template_update", Target: id, Detail: "name=" + tpl.Name,
+	})
+	if s.bus != nil {
+		s.bus.Publish(r.Context(), events.Event{
+			TenantID: actx.TenantID, UserID: userID,
+			Action: "os_template_update", Target: id, Detail: "name=" + tpl.Name, Level: events.LevelInfo,
+		})
+	}
+	s.publishEvent("os_template_changed", actx.TenantID, map[string]string{"id": id, "op": "update"})
+	writeJSON(w, http.StatusOK, saved)
+}
+
+// handleDeleteOSTemplate 处理 DELETE /api/v1/os-templates/{id}：删除 OS 模板（task 104 CRUD）。
+// 需 os:write 权限；不存在返回 404；删除成功返回 204。
+func (s *Server) handleDeleteOSTemplate(w http.ResponseWriter, r *http.Request, id string) {
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	caller, ok := s.requireProd(w, r, "os:write")
+	if !ok {
+		return
+	}
+	existing := s.store.GetOSTemplate(id)
+	if existing == nil {
+		// 回退检查：预置模板 ID 但未 seed → 视为不存在。
+		if osTemplateByID(id) == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+			return
+		}
+		// 预置模板未 seed，直接返回 204（内存中无法删除，但 store 中本就不存在）。
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if !s.store.DeleteOSTemplate(id) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+		return
+	}
+	userID := ""
+	if caller != nil {
+		userID = caller.ID
+	}
+	s.store.Audit(&proto.AuditEvent{
+		TenantID: actx.TenantID, UserID: userID, Action: "os_template_delete", Target: id, Detail: "name=" + existing.Name,
+	})
+	if s.bus != nil {
+		s.bus.Publish(r.Context(), events.Event{
+			TenantID: actx.TenantID, UserID: userID,
+			Action: "os_template_delete", Target: id, Detail: "name=" + existing.Name, Level: events.LevelInfo,
+		})
+	}
+	s.publishEvent("os_template_changed", actx.TenantID, map[string]string{"id": id, "op": "delete"})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleOSTemplateByID 处理 GET /api/v1/os-templates/{id}：返回模板详情（从 store 读取，含回退）。
 func (s *Server) handleOSTemplateByID(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	_, ok := s.requireTenantContext(w, r)
@@ -722,7 +900,7 @@ func (s *Server) handleOSTemplateByID(w http.ResponseWriter, r *http.Request, id
 	if _, ok := s.requireProd(w, r, "os:read"); !ok {
 		return
 	}
-	t := osTemplateByID(id)
+	t := s.getOSTemplateByID(id)
 	if t == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
@@ -735,7 +913,7 @@ func (s *Server) handleOSTemplateByID(w http.ResponseWriter, r *http.Request, id
 // 实现：将模板 Commands 通过 `set --` 注入位置参数后作为 shell task 下发，复用 store.CreateTask。
 func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if err := s.verifyFederationRequest(r); err != nil {
@@ -749,7 +927,7 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 	if _, ok := s.requireProd(w, r, "os:execute"); !ok {
 		return
 	}
-	tpl := osTemplateByID(id)
+	tpl := s.getOSTemplateByID(id)
 	if tpl == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
@@ -954,32 +1132,154 @@ func validateShellSafeValues(values map[string]string) error {
 }
 
 // handleOSTemplateRouting 统一分派 /api/v1/os-templates/{id}... 子路径：
-//   - GET  /api/v1/os-templates/{id}：模板详情
-//   - POST /api/v1/os-templates/{id}/execute：在指定 agent 上执行模板
+//   - GET    /api/v1/os-templates/{id}：模板详情
+//   - PUT    /api/v1/os-templates/{id}：更新模板（task 104 CRUD）
+//   - DELETE /api/v1/os-templates/{id}：删除模板（task 104 CRUD）
+//   - POST   /api/v1/os-templates/{id}/execute：在指定 agent 上执行模板
 //
 // 注意：/api/v1/os-templates（无尾斜杠）由 handleListOSTemplates 处理；
 // /api/v1/os-templates/（带尾斜杠但无 id）此处返回 400。
 func (s *Server) handleOSTemplateRouting(w http.ResponseWriter, r *http.Request) {
 	idAndRest := strings.TrimPrefix(r.URL.Path, "/api/v1/os-templates/")
 	if idAndRest == "" {
-		// 兜底：/api/v1/os-templates/（带尾斜杠）转给 list handler 处理 GET。
+		// 兜底：/api/v1/os-templates/（带尾斜杠）转给 list handler 处理 GET/POST。
 		s.handleListOSTemplates(w, r)
 		return
 	}
 	parts := strings.SplitN(idAndRest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		http.Error(w, "template id required", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "template id required"})
 		return
 	}
 	switch {
 	case len(parts) == 1:
-		// GET /api/v1/os-templates/{id}
-		s.handleOSTemplateByID(w, r, id)
+		// /api/v1/os-templates/{id}
+		switch r.Method {
+		case http.MethodGet:
+			s.handleOSTemplateByID(w, r, id)
+		case http.MethodPut:
+			s.handleUpdateOSTemplate(w, r, id)
+		case http.MethodDelete:
+			s.handleDeleteOSTemplate(w, r, id)
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
 	case len(parts) == 2 && parts[1] == "execute":
 		// POST /api/v1/os-templates/{id}/execute
 		s.handleExecuteOSTemplate(w, r, id)
 	default:
-		http.NotFound(w, r)
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+	}
+}
+
+// ============================================================================
+// task 104：OS 模板 store 持久化适配（转换 + seed + 查询回退）
+// ============================================================================
+
+// osTemplateToStore 将 controlplane.OSTemplate 转换为 store.OSTemplate。
+// 整个 OSTemplate 序列化为 JSON 存入 Config 字段；store.OSTemplate 的 Name/OS 冗余存储便于 SQL 过滤。
+func osTemplateToStore(t *OSTemplate, tenantID string) *store.OSTemplate {
+	if t == nil {
+		return nil
+	}
+	cfg, _ := json.Marshal(t)
+	return &store.OSTemplate{
+		ID:       t.ID,
+		TenantID: tenantID,
+		Name:     t.Name,
+		OS:       t.OS,
+		Config:   string(cfg),
+	}
+}
+
+// osTemplateFromStore 将 store.OSTemplate 反转换为 controlplane.OSTemplate（从 Config 反序列化）。
+// Config 为空或反序列化失败时，用 store 行的 ID/Name/OS 构造最小 OSTemplate（向后兼容）。
+func osTemplateFromStore(st *store.OSTemplate) *OSTemplate {
+	if st == nil {
+		return nil
+	}
+	if st.Config == "" {
+		return &OSTemplate{ID: st.ID, Name: st.Name, OS: st.OS}
+	}
+	var t OSTemplate
+	if err := json.Unmarshal([]byte(st.Config), &t); err != nil {
+		return &OSTemplate{ID: st.ID, Name: st.Name, OS: st.OS}
+	}
+	// 以 store 行的 ID/Name/OS 为准（防 Config 中过期值）。
+	if st.ID != "" {
+		t.ID = st.ID
+	}
+	if st.Name != "" {
+		t.Name = st.Name
+	}
+	if st.OS != "" {
+		t.OS = st.OS
+	}
+	return &t
+}
+
+// seedPresetOSTemplates 启动时将预置 OS 模板幂等写入 store（按 ID 去重，已存在不覆盖）。
+// 保持向后兼容：store 为空时 API 回退到内存常量 osTemplates。
+// 预置模板归入 "default" 租户，对所有租户可见。
+func (s *Server) seedPresetOSTemplates() {
+	for i := range osTemplates {
+		tpl := &osTemplates[i]
+		if existing := s.store.GetOSTemplate(tpl.ID); existing != nil {
+			continue // 已存在（用户可能已在线修改），不覆盖
+		}
+		st := osTemplateToStore(tpl, "default")
+		if err := s.store.SaveOSTemplate(st); err != nil {
+			log.Printf("[controlplane] seed 预置 OS 模板 %s 失败: %v", tpl.ID, err)
+		}
+	}
+}
+
+// listOSTemplatesFromStore 从 store 读取 OS 模板列表（含回退）。
+// 合并当前租户的模板与 default 租户的预置模板（按 ID 去重）；
+// store 完全为空时回退到内存常量 osTemplates（向后兼容）。
+func (s *Server) listOSTemplatesFromStore(tenantID string) []OSTemplate {
+	// 取当前租户模板 + default 租户预置模板（合并去重）。
+	stored := s.store.ListOSTemplates(tenantID)
+	if tenantID != "" && tenantID != "default" {
+		stored = append(stored, s.store.ListOSTemplates("default")...)
+	}
+	if len(stored) == 0 {
+		// 回退到内存常量（store 未初始化或为空）。
+		out := make([]OSTemplate, len(osTemplates))
+		copy(out, osTemplates)
+		return out
+	}
+	seen := make(map[string]bool, len(stored))
+	out := make([]OSTemplate, 0, len(stored))
+	for _, st := range stored {
+		if seen[st.ID] {
+			continue
+		}
+		seen[st.ID] = true
+		if t := osTemplateFromStore(st); t != nil {
+			out = append(out, *t)
+		}
+	}
+	return out
+}
+
+// getOSTemplateByID 从 store 读取单个 OS 模板（含回退）。
+// store 中不存在时回退到内存常量 osTemplateByID（向后兼容）。
+func (s *Server) getOSTemplateByID(id string) *OSTemplate {
+	if st := s.store.GetOSTemplate(id); st != nil {
+		return osTemplateFromStore(st)
+	}
+	// 回退到预置模板（store 未 seed 或为空）。
+	return osTemplateByID(id)
+}
+
+// normalizeRisk 将 risk 归一为合法值（low/medium/high），空或非法值归一为 low。
+func normalizeRisk(risk string) string {
+	switch risk {
+	case "low", "medium", "high":
+		return risk
+	default:
+		return "low"
 	}
 }

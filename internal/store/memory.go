@@ -55,6 +55,20 @@ type MemoryStore struct {
 	// 由 Register 时为每个 agent 随机生成；agent 拉任务/上报/轮询取消时用此密钥签名，
 	// 控制面据此验证 agent 身份，不再纯信任 agent 自报的 AgentID。
 	agentSecrets map[string]string
+	// task 100 告警规则：ruleID -> 规则。由 m.mu 保护并发安全。
+	// 控制面告警引擎周期评估 Enabled 规则，按 Metric/Op/Threshold 比对设备最新指标，
+	// 持续 ForDuration 满足则产出 Alert（M7）。
+	alertRules map[string]*AlertRule
+	// task 100 OS 安装模板：templateID -> 模板。由 m.mu 保护并发安全。
+	// 用于 B1 自动纳管闭环的「裸机→OS→agent」全自动安装链路；Config 为敏感内容，API 层负责脱敏。
+	osTemplates map[string]*OSTemplate
+	// task 100 中间件部署模板：templateID -> 模板。由 m.mu 保护并发安全。
+	// 供「应用编排→中间件实例化」复用；Config 为敏感内容，API 层负责脱敏。
+	middlewareTemplates map[string]*MiddlewareTemplate
+	// task 111 刷新令牌：tokenHash -> refresh token。由 m.mu 保护并发安全。
+	// key 为明文 token 的 SHA-256 摘要（P1-F7 明文不落库）；value 为元信息。
+	// 用于 access token 过期后的无感续期；登出/吊销时按摘要删除。
+	refreshTokens map[string]*RefreshToken
 }
 
 // tokenMeta B1 install token 元数据：一次性、限时，消费后标记 consumed。
@@ -188,18 +202,22 @@ func (m *MemoryStore) publish(e events.Event) {
 // 预定义用户（admin/admin123、operator/operator123、viewer/viewer123）。
 func NewMemoryStore() *MemoryStore {
 	m := &MemoryStore{
-		agents:        make(map[string]*proto.AgentInfo),
-		segments:      make(map[string][]*proto.DeviceInfo),
-		tasks:         make(map[string][]*proto.Task),
-		results:       make(map[string][]*proto.TaskResult),
-		tokens:        make(map[string]*tokenMeta),
-		users:         make(map[string]*User),
-		usersByName:   make(map[string]*User),
-		roles:         make(map[string]*Role),
-		secret:        mustRandHex(32),
-		deviceMetrics: make(map[string]*proto.DeviceMetrics),
-		k8sClusters:   make(map[string]*K8sCluster),
-		agentSecrets:  make(map[string]string),
+		agents:              make(map[string]*proto.AgentInfo),
+		segments:            make(map[string][]*proto.DeviceInfo),
+		tasks:               make(map[string][]*proto.Task),
+		results:             make(map[string][]*proto.TaskResult),
+		tokens:              make(map[string]*tokenMeta),
+		users:               make(map[string]*User),
+		usersByName:         make(map[string]*User),
+		roles:               make(map[string]*Role),
+		secret:              mustRandHex(32),
+		deviceMetrics:       make(map[string]*proto.DeviceMetrics),
+		k8sClusters:         make(map[string]*K8sCluster),
+		agentSecrets:        make(map[string]string),
+		alertRules:          make(map[string]*AlertRule),
+		osTemplates:         make(map[string]*OSTemplate),
+		middlewareTemplates: make(map[string]*MiddlewareTemplate),
+		refreshTokens:       make(map[string]*RefreshToken),
 	}
 	m.seedRBAC()
 	return m
@@ -674,6 +692,11 @@ func (m *MemoryStore) CreateTask(t *proto.Task) *proto.Task {
 	// M5 作业编排：含前置依赖的任务初始为 blocked，待依赖 done 后由 SubmitResult 释放为 pending。
 	if len(t.DependsOn) > 0 {
 		t.Status = "blocked"
+	}
+	// task 100 任务审批：高风险任务（ApprovalRequired=true）初始为 pending_approval，
+	// 不进入 ClaimTask 队列（ClaimTask 仅领取 pending）；待 ApproveTask 翻转为 pending 后才可下发。
+	if t.ApprovalRequired && t.Status == "pending" {
+		t.Status = "pending_approval"
 	}
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = time.Now()
@@ -1244,4 +1267,300 @@ func (m *MemoryStore) DeviceMetrics(deviceID string) *proto.DeviceMetrics {
 	}
 	cp := *v
 	return &cp
+}
+
+// ============================================================================
+// task 100 任务审批：ApproveTask / RejectTask
+// ============================================================================
+
+// ApproveTask 审批通过任务（task 100）：将 pending_approval 状态翻转回 pending，
+// 记录审批人/审批时间。仅 pending_approval 状态可审批；其他状态返回 false。
+// tenantID 非空时校验任务归属，越权返回 false。
+func (m *MemoryStore) ApproveTask(id, tenantID, approvedBy string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, ts := range m.tasks {
+		for _, t := range ts {
+			if t.TaskID != id {
+				continue
+			}
+			if tenantID != "" && t.TenantID != tenantID {
+				return false
+			}
+			if t.Status != "pending_approval" {
+				return false
+			}
+			t.Status = "pending"
+			t.ApprovedBy = approvedBy
+			t.ApprovedAt = time.Now()
+			m.publish(events.Event{Action: "task_approved", Target: t.TaskID, TenantID: t.TenantID,
+				Detail: "by=" + approvedBy, Level: events.LevelInfo})
+			return true
+		}
+	}
+	return false
+}
+
+// RejectTask 驳回任务（task 100）：将 pending_approval 状态置为 rejected，
+// 记录审批人/审批时间。被驳回任务永不进入 ClaimTask 队列。仅 pending_approval 状态可驳回。
+// tenantID 非空时校验任务归属，越权返回 false。
+func (m *MemoryStore) RejectTask(id, tenantID, approvedBy string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, ts := range m.tasks {
+		for _, t := range ts {
+			if t.TaskID != id {
+				continue
+			}
+			if tenantID != "" && t.TenantID != tenantID {
+				return false
+			}
+			if t.Status != "pending_approval" {
+				return false
+			}
+			t.Status = "rejected"
+			t.ApprovedBy = approvedBy
+			t.ApprovedAt = time.Now()
+			m.publish(events.Event{Action: "task_rejected", Target: t.TaskID, TenantID: t.TenantID,
+				Detail: "by=" + approvedBy, Level: events.LevelWarn})
+			return true
+		}
+	}
+	return false
+}
+
+// ============================================================================
+// task 100 告警规则：CreateAlertRule / ListAlertRules / DeleteAlertRule
+// ============================================================================
+
+// randAlertRuleID 生成随机告警规则 ID（16 字节十六进制，crypto/rand 密码学安全）。
+// 用于 CreateAlertRule 分配 ID（调用方未填 ID 时）。
+func randAlertRuleID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// 熵源失败回退时间戳（降级但可容忍，唯一性由 alertRules map key 兜底）。
+		return fmt.Sprintf("alert-rule-%d", time.Now().UnixNano())
+	}
+	return "alert-rule-" + hex.EncodeToString(b)
+}
+
+// CreateAlertRule 创建告警规则（task 100）：ID 为空时由 store 分配随机 ID；
+// TenantID 为空时归一为 default。返回持久化后的规则（含分配的 ID）。
+func (m *MemoryStore) CreateAlertRule(r *AlertRule) *AlertRule {
+	if r == nil {
+		return nil
+	}
+	if r.TenantID == "" {
+		r.TenantID = "default"
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if r.ID == "" {
+		r.ID = randAlertRuleID()
+	}
+	if r.CreatedAt.IsZero() {
+		r.CreatedAt = time.Now()
+	}
+	m.alertRules[r.ID] = r
+	cp := *r
+	return &cp
+}
+
+// ListAlertRules 返回告警规则（task 100）；tenantID 非空时按租户过滤。
+// 按创建时间升序返回深拷贝，避免外部修改破坏内部状态。
+func (m *MemoryStore) ListAlertRules(tenantID string) []*AlertRule {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*AlertRule, 0, len(m.alertRules))
+	for _, r := range m.alertRules {
+		if tenantID != "" && r.TenantID != tenantID {
+			continue
+		}
+		cp := *r
+		out = append(out, &cp)
+	}
+	// 按创建时间升序（插入排序，与 ListK8sClusters 风格一致）。
+	for i := 1; i < len(out); i++ {
+		j := i
+		for j > 0 && out[j].CreatedAt.Before(out[j-1].CreatedAt) {
+			out[j], out[j-1] = out[j-1], out[j]
+			j--
+		}
+	}
+	return out
+}
+
+// DeleteAlertRule 删除告警规则（task 100），返回是否删除成功（不存在返回 false）。
+func (m *MemoryStore) DeleteAlertRule(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.alertRules[id]; !ok {
+		return false
+	}
+	delete(m.alertRules, id)
+	return true
+}
+
+// ============================================================================
+// task 100 OS 安装模板：SaveOSTemplate / ListOSTemplates / GetOSTemplate / DeleteOSTemplate
+// ============================================================================
+
+// randOSTemplateID 生成随机 OS 安装模板 ID（16 字节十六进制，crypto/rand 密码学安全）。
+func randOSTemplateID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("os-tmpl-%d", time.Now().UnixNano())
+	}
+	return "os-tmpl-" + hex.EncodeToString(b)
+}
+
+// SaveOSTemplate 创建或更新 OS 安装模板（按 ID 幂等）。
+// ID 为空时分配随机 ID；TenantID 为空时归一为 default；
+// CreatedAt 为空时填当前时间；UpdatedAt 始终刷新。
+func (m *MemoryStore) SaveOSTemplate(t *OSTemplate) error {
+	if t == nil {
+		return nil
+	}
+	if t.TenantID == "" {
+		t.TenantID = "default"
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	if t.ID == "" {
+		t.ID = randOSTemplateID()
+	}
+	if t.CreatedAt.IsZero() {
+		t.CreatedAt = now
+	}
+	t.UpdatedAt = now
+	m.osTemplates[t.ID] = t
+	return nil
+}
+
+// ListOSTemplates 返回 OS 安装模板（按创建时间升序；深拷贝）；tenantID 非空时按租户过滤。
+func (m *MemoryStore) ListOSTemplates(tenantID string) []*OSTemplate {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*OSTemplate, 0, len(m.osTemplates))
+	for _, t := range m.osTemplates {
+		if tenantID != "" && t.TenantID != tenantID {
+			continue
+		}
+		cp := *t
+		out = append(out, &cp)
+	}
+	for i := 1; i < len(out); i++ {
+		j := i
+		for j > 0 && out[j].CreatedAt.Before(out[j-1].CreatedAt) {
+			out[j], out[j-1] = out[j-1], out[j]
+			j--
+		}
+	}
+	return out
+}
+
+// GetOSTemplate 按 ID 返回单个 OS 安装模板（深拷贝；不存在返回 nil）。
+func (m *MemoryStore) GetOSTemplate(id string) *OSTemplate {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	t, ok := m.osTemplates[id]
+	if !ok {
+		return nil
+	}
+	cp := *t
+	return &cp
+}
+
+// DeleteOSTemplate 删除 OS 安装模板，返回是否删除成功（不存在返回 false）。
+func (m *MemoryStore) DeleteOSTemplate(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.osTemplates[id]; !ok {
+		return false
+	}
+	delete(m.osTemplates, id)
+	return true
+}
+
+// ============================================================================
+// task 100 中间件部署模板：SaveMiddlewareTemplate / ListMiddlewareTemplates / GetMiddlewareTemplate / DeleteMiddlewareTemplate
+// ============================================================================
+
+// randMiddlewareTemplateID 生成随机中间件部署模板 ID（16 字节十六进制，crypto/rand 密码学安全）。
+func randMiddlewareTemplateID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("mw-tmpl-%d", time.Now().UnixNano())
+	}
+	return "mw-tmpl-" + hex.EncodeToString(b)
+}
+
+// SaveMiddlewareTemplate 创建或更新中间件部署模板（按 ID 幂等）。
+// ID 为空时分配随机 ID；TenantID 为空时归一为 default；
+// CreatedAt 为空时填当前时间；UpdatedAt 始终刷新。
+func (m *MemoryStore) SaveMiddlewareTemplate(t *MiddlewareTemplate) error {
+	if t == nil {
+		return nil
+	}
+	if t.TenantID == "" {
+		t.TenantID = "default"
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	if t.ID == "" {
+		t.ID = randMiddlewareTemplateID()
+	}
+	if t.CreatedAt.IsZero() {
+		t.CreatedAt = now
+	}
+	t.UpdatedAt = now
+	m.middlewareTemplates[t.ID] = t
+	return nil
+}
+
+// ListMiddlewareTemplates 返回中间件部署模板（按创建时间升序；深拷贝）；tenantID 非空时按租户过滤。
+func (m *MemoryStore) ListMiddlewareTemplates(tenantID string) []*MiddlewareTemplate {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*MiddlewareTemplate, 0, len(m.middlewareTemplates))
+	for _, t := range m.middlewareTemplates {
+		if tenantID != "" && t.TenantID != tenantID {
+			continue
+		}
+		cp := *t
+		out = append(out, &cp)
+	}
+	for i := 1; i < len(out); i++ {
+		j := i
+		for j > 0 && out[j].CreatedAt.Before(out[j-1].CreatedAt) {
+			out[j], out[j-1] = out[j-1], out[j]
+			j--
+		}
+	}
+	return out
+}
+
+// GetMiddlewareTemplate 按 ID 返回单个中间件部署模板（深拷贝；不存在返回 nil）。
+func (m *MemoryStore) GetMiddlewareTemplate(id string) *MiddlewareTemplate {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	t, ok := m.middlewareTemplates[id]
+	if !ok {
+		return nil
+	}
+	cp := *t
+	return &cp
+}
+
+// DeleteMiddlewareTemplate 删除中间件部署模板，返回是否删除成功（不存在返回 false）。
+func (m *MemoryStore) DeleteMiddlewareTemplate(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.middlewareTemplates[id]; !ok {
+		return false
+	}
+	delete(m.middlewareTemplates, id)
+	return true
 }

@@ -1,6 +1,6 @@
 module opsmesh
 
-go 1.25.0
+go 1.26.0
 
 // 外部依赖（沙箱无 Go/无网络，不会执行 go mod tidy）：
 // 请在本机执行 `go mod tidy` 拉取并生成 go.sum 后再构建。

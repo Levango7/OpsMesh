@@ -103,8 +103,16 @@ type Config struct {
 	// 空=不推送；非空时 critical 告警通过 HTTP POST 推送到此地址。
 	AlertWebhookURL string
 	// M7 告警通知类型：generic（默认，直接 POST Alert JSON）/ feishu（飞书卡片）/ dingtalk（钉钉 markdown）。
-	// 仅当 AlertWebhookURL 非空时生效。
+	// 仅当 AlertWebhookURL 非空时生效。B7 扩展：Webhook URL 含 slack.com 自动走 Slack Block Kit，
+	// 含 qyapi.weixin.qq.com 自动走企业微信 markdown（此时 AlertNotifierType 被忽略）。
 	AlertNotifierType string
+	// B7 告警邮件通道：SMTP 配置。Host/Port/From/To 任一为空视为关闭邮件通道（跳过发送）。
+	AlertEmailHost string // SMTP 服务器地址（如 smtp.example.com）
+	AlertEmailPort int    // SMTP 端口（如 25/465/587）
+	AlertEmailUser string // SMTP 用户名（空=匿名发送）
+	AlertEmailPass string // SMTP 密码（推荐 env OPSMESH_ALERT_EMAIL_PASS）
+	AlertEmailFrom string // 发件人地址
+	AlertEmailTo   string // 收件人列表（逗号分隔）
 	// B1 自动纳管推送：SSH 配置（空=关闭 SSH 自动推送，仅返回 bootstrap 文本）。
 	// 推送时在候选设备上通过 SSH 执行 bootstrap 命令，自动安装 agent。
 	ProvisionSSHUser string // SSH 用户（默认 "root"）
@@ -129,7 +137,10 @@ type Config struct {
 	// M4-4B 日志检索后端选择：memory（默认，环形缓冲） | sql（MySQL） | loki（Grafana Loki） | es（Elasticsearch）。
 	// 与 Store（控制面持久化后端）解耦：Store 管 agent/device 状态，LogBackend 管日志检索。
 	// loki/es 模式下日志由 agent 经 promtail/filebeat 直接推送，控制面仅做查询（Append 为 noop）。
-	LogBackend   string // memory | sql | loki | es（默认 memory）
+	// LogStore 为 --log-store flag 的对应字段，与 LogBackend 同值（--log-store 作为 --log-backend 的别名，
+	// 显式设置 --log-store 时覆盖 LogBackend；保持 --log-backend 向后兼容）。
+	LogStore     string // memory | sql | loki | es（默认 memory）；--log-store flag 对应字段，与 LogBackend 同步
+	LogBackend   string // memory | sql | loki | es（默认 memory）；--log-backend flag 对应字段（与 LogStore 别名）
 	LokiEndpoint string // Loki API endpoint（如 http://loki:3100）；--log-backend=loki 时生效
 	ESEndpoint   string // Elasticsearch endpoint（如 http://es:9200）；--log-backend=es 时生效
 	ESIndex      string // Elasticsearch 索引名（默认 opsmesh-logs）；--log-backend=es 时生效
@@ -179,6 +190,12 @@ type Config struct {
 	// 反向代理信任（安全运行于 LB/网关后时）：开启后 clientIP 信任 X-Forwarded-For 首段取真实客户端 IP；
 	// 默认 false=仅用 RemoteAddr（防止客户端伪造 XFF 绕过登录限流/审计）；仅当确有可信反代前置时才开启。
 	TrustProxy bool
+	// Cookie Secure 标志（task 112）：控制 at/rt HttpOnly Cookie 的 Secure 属性。
+	// true=Cookie 仅经 HTTPS 传输（浏览器不会在明文 HTTP 连接上回传），防中间人窃取会话；
+	// false=Cookie 亦经 HTTP 传输（内网明文部署/本地开发场景需要，否则会话丢失）。
+	// 语义优先级：显式 --cookie-secure=true → true；否则回退到 TLSCert 非空（HTTPS 直连时自动启用）；
+	// 生产模式（--production=true）下默认 true（HTTPS 反代终止 TLS 时控制面虽收 HTTP，但对外是 HTTPS，须显式开启）。
+	CookieSecure bool
 }
 
 // Load 解析 flag 并用环境变量兜底，返回 *Config。
@@ -225,8 +242,14 @@ func Load() *Config {
 	archiveAgeMin := flag.Int("archive-age-min", 1440, "F5 离线超龄自动归档阈值（分钟）；agent 最后心跳早于该时长的设备自动 retired（<=0 关闭）")
 	provisionSecret := flag.String("provision-secret", "", "B1 自动纳管 install token 的 HMAC 签名密钥；空则本实例随机生成（多副本需一致）")
 	advertiseAddr := flag.String("advertise-addr", "", "B1 自动纳管控制面对外 HTTP 地址（拼接 bootstrap 安装命令）；空则回退 127.0.0.1:<http-port>（仅本机开发）")
-	alertWebhookURL := flag.String("alert-webhook-url", "", "M7 告警 Webhook 推送 URL（POST JSON critical 告警到此地址）；空=不推送")
-	alertNotifierType := flag.String("alert-notifier-type", "generic", "M7 告警通知类型：generic(直接POST Alert JSON)/feishu(飞书卡片)/dingtalk(钉钉markdown)")
+	alertWebhookURL := flag.String("alert-webhook-url", "", "M7 告警 Webhook 推送 URL（POST JSON 告警到此地址）；空=不推送。B7：URL 含 slack.com 走 Slack Block Kit，含 qyapi.weixin.qq.com 走企业微信 markdown")
+	alertNotifierType := flag.String("alert-notifier-type", "generic", "M7 告警通知类型：generic(直接POST Alert JSON)/feishu(飞书卡片)/dingtalk(钉钉markdown)；B7：Webhook URL 域名可识别时自动覆盖此值")
+	alertEmailHost := flag.String("alert-email-host", "", "B7 告警邮件 SMTP 主机（如 smtp.example.com）；空=关闭邮件通道（或 env OPSMESH_ALERT_EMAIL_HOST）")
+	alertEmailPort := flag.Int("alert-email-port", 25, "B7 告警邮件 SMTP 端口（默认 25；或 env OPSMESH_ALERT_EMAIL_PORT）")
+	alertEmailUser := flag.String("alert-email-user", "", "B7 告警邮件 SMTP 用户名（空=匿名发送；或 env OPSMESH_ALERT_EMAIL_USER）")
+	alertEmailPass := flag.String("alert-email-pass", "", "B7 告警邮件 SMTP 密码（推荐 env OPSMESH_ALERT_EMAIL_PASS）")
+	alertEmailFrom := flag.String("alert-email-from", "", "B7 告警邮件发件人地址（如 opsmesh@example.com；或 env OPSMESH_ALERT_EMAIL_FROM）")
+	alertEmailTo := flag.String("alert-email-to", "", "B7 告警邮件收件人列表（逗号分隔；或 env OPSMESH_ALERT_EMAIL_TO）")
 	provisionSSHUser := flag.String("provision-ssh-user", "root", "B1 SSH 自动推送：SSH 用户")
 	provisionSSHKey := flag.String("provision-ssh-key", "", "B1 SSH 自动推送：SSH 私钥路径（空=关闭 SSH 推送）")
 	provisionSSHKP := flag.String("provision-ssh-key-pass", "", "B1 SSH 自动推送：SSH 密钥密码（推荐 OPSMESH_PROVISION_SSH_KEY_PASS 环境变量）")
@@ -236,6 +259,9 @@ func Load() *Config {
 	jwtSecret := flag.String("jwt-secret", "", "用户中心 JWT 签发密钥（HS256）；空=随机生成（重启后旧 token 失效）（或 env OPSMESH_JWT_SECRET）")
 	// M4-4B 日志检索后端：memory（默认） | sql | loki | es。
 	logBackend := flag.String("log-backend", "memory", "日志检索后端: memory | sql | loki | es（M4-4B；loki/es 模式下日志由 agent 直接推送，控制面仅查询）")
+	// --log-store 作为 --log-backend 的别名（task 97）：显式设置 --log-store 时覆盖 log-backend，
+	// 保持 --log-backend 向后兼容；env OPSMESH_LOG_STORE 同样兜底。
+	logStore := flag.String("log-store", "memory", "日志后端选择: memory | sql | loki | es（--log-backend 别名，task 97；显式设置时覆盖 --log-backend；或 env OPSMESH_LOG_STORE）")
 	lokiEndpoint := flag.String("loki-endpoint", "", "Loki API endpoint（如 http://loki:3100）；--log-backend=loki 时生效（或 env OPSMESH_LOKI_ENDPOINT）")
 	esEndpoint := flag.String("es-endpoint", "", "Elasticsearch endpoint（如 http://es:9200）；--log-backend=es 时生效（或 env OPSMESH_ES_ENDPOINT）")
 	esIndex := flag.String("es-index", "opsmesh-logs", "Elasticsearch 索引名（--log-backend=es 时生效，默认 opsmesh-logs；或 env OPSMESH_ES_INDEX）")
@@ -260,6 +286,10 @@ func Load() *Config {
 	// P2 安全运行于反向代理/LB 后：开启后 clientIP 信任 X-Forwarded-For 首段；默认 false 仅用 RemoteAddr，
 	// 防止客户端伪造 XFF 绕过登录限流与审计。仅当确有可信反代（如 APISIX/Nginx 注入真实 IP）前置时启用。
 	trustProxy := flag.Bool("trust-proxy", false, "信任反向代理：开启后 clientIP 取 X-Forwarded-For 首段（仅当有可信 LB/网关前置时启用）；默认 false=仅用 RemoteAddr 防 XFF 伪造绕过限流；或 env OPSMESH_TRUST_PROXY")
+	// task 112 Cookie Secure：控制 at/rt HttpOnly Cookie 的 Secure 属性。true=仅经 HTTPS 传输；
+	// 默认 false（明文内网/本地开发需要）；生产模式（--production=true）下默认 true（除非显式 false）。
+	// 或 env OPSMESH_COOKIE_SECURE。
+	cookieSecure := flag.Bool("cookie-secure", false, "Cookie Secure 标志：true=at/rt Cookie 仅经 HTTPS 传输（防中间人窃取）；默认 false（明文内网/开发需要）；生产模式默认 true（HTTPS 反代终止 TLS 时须显式开启）；或 env OPSMESH_COOKIE_SECURE")
 	flag.Parse()
 
 	// 记录被显式设置的 flag，用于"flag 优先、env 兜底"的正确语义（P1-8 修复：原实现 env 会覆盖显式 flag）。
@@ -343,6 +373,12 @@ func Load() *Config {
 		AdvertiseAddr:          val("advertise-addr", *advertiseAddr, "OPSMESH_ADVERTISE_ADDR"),
 		AlertWebhookURL:        val("alert-webhook-url", *alertWebhookURL, "OPSMESH_ALERT_WEBHOOK_URL"),
 		AlertNotifierType:      val("alert-notifier-type", *alertNotifierType, "OPSMESH_ALERT_NOTIFIER_TYPE"),
+		AlertEmailHost:         val("alert-email-host", *alertEmailHost, "OPSMESH_ALERT_EMAIL_HOST"),
+		AlertEmailPort:         valInt("alert-email-port", *alertEmailPort, "OPSMESH_ALERT_EMAIL_PORT"),
+		AlertEmailUser:         val("alert-email-user", *alertEmailUser, "OPSMESH_ALERT_EMAIL_USER"),
+		AlertEmailPass:         val("alert-email-pass", *alertEmailPass, "OPSMESH_ALERT_EMAIL_PASS"),
+		AlertEmailFrom:         val("alert-email-from", *alertEmailFrom, "OPSMESH_ALERT_EMAIL_FROM"),
+		AlertEmailTo:           val("alert-email-to", *alertEmailTo, "OPSMESH_ALERT_EMAIL_TO"),
 		ProvisionSSHUser:       val("provision-ssh-user", *provisionSSHUser, "OPSMESH_PROVISION_SSH_USER"),
 		ProvisionSSHKey:        val("provision-ssh-key", *provisionSSHKey, "OPSMESH_PROVISION_SSH_KEY"),
 		ProvisionSSHKP:         val("provision-ssh-key-pass", *provisionSSHKP, "OPSMESH_PROVISION_SSH_KEY_PASS"),
@@ -350,10 +386,12 @@ func Load() *Config {
 		JWTPublicKey:           val("jwt-public-key", *jwtPublicKey, "OPSMESH_JWT_PUBLIC_KEY"),
 		JWTIssuer:              val("jwt-issuer", *jwtIssuer, "OPSMESH_JWT_ISSUER"),
 		JWTSecret:              val("jwt-secret", *jwtSecret, "OPSMESH_JWT_SECRET"),
+		LogStore:               val("log-store", *logStore, "OPSMESH_LOG_STORE"),
 		LogBackend:             val("log-backend", *logBackend, "OPSMESH_LOG_BACKEND"),
 		LokiEndpoint:           val("loki-endpoint", *lokiEndpoint, "OPSMESH_LOKI_ENDPOINT"),
 		ESEndpoint:             val("es-endpoint", *esEndpoint, "OPSMESH_ES_ENDPOINT"),
 		ESIndex:                val("es-index", *esIndex, "OPSMESH_ES_INDEX"),
+
 		MultiSchema:            valBool("multi-schema", *multiSchema, "OPSMESH_MULTI_SCHEMA"),
 		SchemaPrefix:           val("schema-prefix", *schemaPrefix, "OPSMESH_SCHEMA_PREFIX"),
 		FederationPeers:        parseFederationPeers(val("federation-peers", *federationPeers, "OPSMESH_FEDERATION_PEERS")),
@@ -367,7 +405,15 @@ func Load() *Config {
 		AgentFileRootWhitelist: val("agent-file-root-whitelist", *agentFileRootWhitelist, "OPSMESH_AGENT_FILE_ROOT_WHITELIST"),
 		GRPCRequireSignature:   valBool("grpc-require-signature", *grpcRequireSignature, "OPSMESH_GRPC_REQUIRE_SIGNATURE"),
 		TrustProxy:             valBool("trust-proxy", *trustProxy, "OPSMESH_TRUST_PROXY"),
+		CookieSecure:           valBool("cookie-secure", *cookieSecure, "OPSMESH_COOKIE_SECURE"),
 	}
+	// task 97 --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
+	// 使现有 LogBackend 校验/路由逻辑无缝复用；最终 LogStore 与 LogBackend 保持同值。
+	// 优先级：显式 --log-store > 显式 --log-backend > env > 默认 "memory"。
+	if explicit["log-store"] {
+		cfg.LogBackend = cfg.LogStore
+	}
+	cfg.LogStore = cfg.LogBackend
 	// A4 生产模式：默认开启 require-auth（除非显式关闭），并强告警 memory store。
 	if cfg.Production && !explicit["require-auth"] {
 		cfg.RequireAuth = true
@@ -389,6 +435,12 @@ func Load() *Config {
 		cfg.GRPCRequireSignature = false
 	} else if cfg.Production && !explicit["grpc-require-signature"] {
 		cfg.GRPCRequireSignature = true
+	}
+	// task 112 Cookie Secure：生产模式但未显式设置 --cookie-secure 时默认开启（HTTPS 反代终止 TLS
+	// 时控制面虽收 HTTP，但对外是 HTTPS，Cookie 须 Secure 防中间人窃取）。开发/演示模式保持 false
+	//（明文 HTTP 下 Secure Cookie 会被浏览器拒绝回传，导致会话丢失）。
+	if cfg.Production && !explicit["cookie-secure"] {
+		cfg.CookieSecure = true
 	}
 	if cfg.Production && cfg.PublicRegister {
 		fmt.Fprintln(os.Stderr, "[config] 警告：生产模式开启 --public-register=true，公开注册开放但新用户须管理员审批（建议生产关闭 --public-register=false）")
@@ -587,8 +639,10 @@ func (c *Config) Validate() error {
 	if c.FederationPort > 0 && (c.FederationTLSCert == "" || c.FederationTLSKey == "") {
 		return fmt.Errorf("--federation-port>0 但 --federation-tls-cert/key 为空（独立 mTLS 监听需要服务端证书）")
 	}
+	// P1-6 联邦通道硬化校验（task 97 强校验）：启用联邦但缺失共享密钥时直接拒绝启动，
+	// 防止跨不可信网段伪造租户身份头（原告警改为 fail-fast）。
 	if len(c.FederationPeers) > 0 && c.FederationSecret == "" {
-		fmt.Fprintln(os.Stderr, "[config] 警告：联邦已启用但 --federation-secret 为空，转发的身份头未签名，跨不可信网段存在伪造风险")
+		return fmt.Errorf("federation-secret is required when federation-peers is set")
 	}
 	return nil
 }

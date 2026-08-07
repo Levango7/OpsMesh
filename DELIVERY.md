@@ -1,6 +1,6 @@
 # OpsMesh 网段运维中枢 — 交付说明
 
-> 版本：MVP（ADR-001 Option A）  ·  交付日期：2026-07-28  ·  仓库：https://github.com/Levango7/OpsMesh
+> 版本：MVP（ADR-001 Option A）·  数据刷新 2026-08-07（行数/包数/依赖数/功能矩阵实测校准）·  仓库：https://github.com/Levango7/OpsMesh
 
 ## 1. 产品定位
 
@@ -8,24 +8,41 @@
 
 **管控通道（已冻结决策 ADR-001 Option A，2026-07-27）**：MVP 管控通道 = **自研 gRPC（direct + proxy）**。原"蓝鲸 GSE 社区版底座 / GSE 级联纳管"**移出 MVP、降格为可选增强**（未来超大规模级联再独立立项）。跨网段规模化改为「每段一套控制面 + agent 集群 + 控制面联邦 / 任务跨段转发」。
 
-## 2. 代码规模（实测 2026-07-28，含六大运维模块）
+## 2. 代码规模（实测 2026-08-07，含六大运维模块 + OS 优化 / 中间件部署 / K8s 管理 / 灰度发布 / 告警规则 / 作业审批）
 
-| 指标 | 数值 |
-|------|------|
-| Go 包 | 19（1 cmd + 18 internal） |
-| 源码文件 | 约 53（约 12,000 行） |
-| 测试文件 | 约 27（约 3,500 行，占比约 26%） |
-| 外部依赖 | 5（mysql / redis / kafka / grpc / crypto），零 protobuf 代码生成 |
+> 统计口径：排除 `.gocache`、`node_modules`；按 Go 模块分别统计后合计。主模块 `opsmesh`（go.mod 根）+ operator 子模块 `opsmesh/operator`（独立 go.mod，K8s Operator）。
 
-## 3. 全量验证结果（go1.22.12）
+| 指标 | 主模块 opsmesh | operator 子模块 | 合计 |
+|------|---------------|----------------|------|
+| Go 包 | 25（1 cmd + 24 internal） | 3 | 28 |
+| 源码文件 | 80 | 6 | 86 |
+| 源码行数 | 24,179 | 852 | 25,031 |
+| 测试文件 | 46 | 1 | 47 |
+| 测试行数 | 10,530 | 143 | 10,673（占比约 29.9%） |
+| 直接依赖 | 11 | 4（3 个与主模块共享） | 12（去重） |
+
+直接依赖清单（主模块 `go.mod` 非 indirect）：
+- 数据/消息：`go-sql-driver/mysql`、`redis/go-redis/v9`、`segmentio/kafka-go`
+- RPC/序列化：`google.golang.org/grpc`、`google.golang.org/protobuf`（已启用 protobuf 代码生成，stub 在 `internal/grpcx/pb/`）
+- 安全/认证：`golang-jwt/jwt/v5`、`golang.org/x/crypto`
+- 系统采集：`shirou/gopsutil/v3`
+- K8s 客户端：`k8s.io/api`、`k8s.io/apimachinery`、`k8s.io/client-go`
+
+operator 子模块额外引入 `sigs.k8s.io/controller-runtime`（K8s CRD 控制器框架）。
+
+## 3. 全量验证结果（go1.25.0）
+
+> Go 版本要求：主模块 `go.mod` 声明 `go 1.25.0`；operator 子模块声明 `go 1.22.0`（toolchain `go1.23.4`）。构建需本机安装 Go ≥ 1.25.0。
 
 | 命令 | 结果 |
 |------|------|
 | `go build ./...` | ✅ RC=0 |
 | `go vet ./...` | ✅ RC=0 |
-| `go test ./...` | ✅ RC=0（17 个测试包 `ok`，4 个无测试文件；无 DSN 时 SQL 测试自动 Skip） |
+| `go test ./...` | ✅ RC=0（测试包 `ok`，无 DSN 时 SQL 测试自动 Skip） |
 
-## 4. 六大运维模块（均已落地）
+## 4. 功能矩阵（均已落地）
+
+### 4.1 六大运维模块（MVP 基线）
 
 | # | 模块 | 说明 |
 |---|------|------|
@@ -36,7 +53,25 @@
 | ⑤ | 监控告警 M7 | 规则引擎 + alert(Status/Ack/Silence) + ack/silence 端点 + Webhook/飞书/钉钉 |
 | ⑥ | 作业编排 M5 | DAG 引擎 + store 阻塞→释放链路 + 画布 |
 
-其余已落地能力：定时/周期调度、失败重试+死信队列、设备自动退役(F5)、B1 自动纳管令牌闭环、A3 多副本保护+agent 多控制面 failover+真 HA leader 选举、A4 生产基线、前端壳层重构、Prometheus 指标 + /healthz、多阶段 Dockerfile + CI(gosec/Trivy/golangci-lint/-race)。**Helm Chart（`deploy/helm/opsmesh/`）已落地可用**，Argo CD ApplicationSet 网段批量渲染仍属规划中。
+### 4.2 运维场景化能力（增量）
+
+| # | 能力 | 落地文件 / 入口 | 说明 |
+|---|------|----------------|------|
+| ⑦ | OS 基础环境优化 | `internal/controlplane/os_optimize.go` | 预置模板（内核/网络/安全/时间同步/SSH/磁盘/系统/用户）+ 在线 CRUD + 在指定 agent 执行；模板 store 持久化，幂等 seed |
+| ⑧ | 中间件部署 | `internal/controlplane/middleware_deploy.go` | 10+ 中间件（MySQL/Redis/Kafka/Nginx/Tomcat/Zookeeper/PostgreSQL/MongoDB/RabbitMQ/Elasticsearch）× docker/systemd 双模式 + CRUD + 实例查询 |
+| ⑨ | K8s 集群与资源管理 | `internal/controlplane/k8s_cluster.go`、`k8s_manage.go`、`internal/k8s/` | 集群增删查 + 测试连接；资源只读/写（namespace/pod/deployment/service/configmap/secret/node）+ scale/restart/rollback；基于 client-go，无 kubectl 依赖；租户隔离 |
+| ⑩ | 灰度发布 | `internal/deploy/`（model/handler/sql/store） | 三策略：rolling / canary（按权重分流）/ bluegreen（蓝绿切流）；发布门禁 Gate（失败率/延迟阈值）+ 自动回滚 + Promote 晋级 |
+| ⑪ | 告警规则 | `internal/store/`（AlertRule CRUD）、`internal/controlplane/` | 基于指标阈值的告警触发规则（metric/op/threshold/for/severity/message）+ CRUD + 按租户隔离 |
+| ⑫ | 作业审批 | `internal/controlplane/server.go`（handleApproveTask/handleRejectTask）、`internal/store/sql.go` | 高风险任务 `pending_approval` 状态 + approve/reject 端点 + 审批人记录 + 越权防护 |
+| ⑬ | 用户注册审批 | `internal/controlplane/auth.go`、`internal/config/config.go` | P1-7 注册安全：公开注册开关 + pending 审批流程 + approve/reject + 失败锁账号 |
+
+### 4.3 K8s Operator（独立子模块）
+
+`operator/`（独立 `go.mod`，module `opsmesh/operator`）：基于 `controller-runtime` 的 K8s CRD 控制器，将 OpsMesh 自定义资源纳入 K8s 原生 Reconcile 循环。
+
+### 4.4 其余已落地能力
+
+定时/周期调度、失败重试+死信队列、设备自动退役(F5)、B1 自动纳管令牌闭环、A3 多副本保护+agent 多控制面 failover+真 HA leader 选举、A4 生产基线、前端壳层重构、Prometheus 指标 + /healthz、多阶段 Dockerfile + CI(gosec/Trivy/golangci-lint/-race)。**Helm Chart（`deploy/helm/opsmesh/`）已落地可用**，Argo CD ApplicationSet 网段批量渲染仍属规划中。
 
 ## 5. 网络分区（CIDR）
 
@@ -81,7 +116,7 @@ go build ./... && go vet ./... && go test ./...
 
 - 远端：`github.com/Levango7/OpsMesh`，分支 `main`
 - 根提交链：5 commits（初始 README → 内核实现 → 六大运维模块 → CI/容器加固 → 文档同步）
-- 提交内容：19 包源码 + 约 27 测试 + Dockerfile/Dockerfile.agent + docker-compose + README + DELIVERY + `.github/ci.yml` + `.gitignore`
+- 提交内容：28 包源码（主模块 25 + operator 3）+ 47 测试 + Dockerfile/Dockerfile.agent + docker-compose + README + DELIVERY + `.github/ci.yml` + `.gitignore`
 
 ---
 ## 9. 生产安全加固（P0/P1）
@@ -99,7 +134,7 @@ go build ./... && go vet ./... && go test ./...
 
 ### 验证状态
 
-- ⚠️ **本地构建/测试**：当前沙箱无 Go 工具链，以上改动**未经 `go build ./... && go test ./...` 真跑**。需在用户本机（Go 1.22+）或 CI runner 执行：
+- ⚠️ **本地构建/测试**：以上改动需在用户本机（Go ≥ 1.25.0）或 CI runner 执行：
   ```bash
   go build ./... && go vet ./... && go test -timeout 300s ./...
   ```

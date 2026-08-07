@@ -7,6 +7,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,10 +16,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	gnet "github.com/shirou/gopsutil/v3/net"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -50,6 +54,14 @@ type Agent struct {
 	cmdbSeq        int64                // CMDB 上报序列号（agent 侧递增）
 	cmdbLastCol    time.Time            // 上次 CMDB 采集时间（每 60s 采集一次）
 	metricsLastCol time.Time            // 上次监控指标采集时间（每 30s 采集一次）
+	// task 98 日志采集 agent 推送：定时读取指定日志文件的新增内容（基于文件 offset）并上报控制面。
+	// logCollectPaths 为需采集的日志文件路径列表（来自 OPSMESH_LOG_COLLECT_PATHS 环境变量，逗号分隔）；
+	// logCollectInterval 为采集间隔（来自 OPSMESH_LOG_COLLECT_INTERVAL，默认 30s）；
+	// logOffsets 记录每个文件上次读取到的 offset，下次仅读取增量；logMu 保护 logOffsets 并发读写。
+	logCollectPaths    []string
+	logCollectInterval time.Duration
+	logOffsets         map[string]int64
+	logMu              sync.Mutex
 }
 
 // New 构造 agent（读取 hostname，作为注册信息）。
@@ -62,7 +74,7 @@ func New(cfg *config.Config) *Agent {
 	if w <= 0 {
 		w = 4
 	}
-	return &Agent{
+	a := &Agent{
 		cfg:         cfg,
 		hostname:    h,
 		dataDir:     cfg.DataDir,
@@ -71,6 +83,32 @@ func New(cfg *config.Config) *Agent {
 		workers:     w,
 		taskCh:      make(chan proto.Task, w*2),
 		running:     make(map[string]*runState),
+	}
+	a.initLogCollect()
+	return a
+}
+
+// initLogCollect 初始化日志采集配置（task 98）。
+// config.go 不在本次修改范围，故通过环境变量读取配置（与 config.go 的 env 兜底模式一致）：
+//   - OPSMESH_LOG_COLLECT_PATHS：逗号分隔的日志文件路径（如 /var/log/messages,/var/log/syslog）。
+//   - OPSMESH_LOG_COLLECT_INTERVAL：采集间隔（如 30s），默认 30s。
+//
+// 任一未配置或非法不阻塞启动，仅不启用日志采集。
+func (a *Agent) initLogCollect() {
+	a.logOffsets = make(map[string]int64)
+	a.logCollectInterval = 30 * time.Second // 默认 30s
+	if v, ok := os.LookupEnv("OPSMESH_LOG_COLLECT_INTERVAL"); ok && v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			a.logCollectInterval = d
+		}
+	}
+	if v, ok := os.LookupEnv("OPSMESH_LOG_COLLECT_PATHS"); ok && v != "" {
+		for _, p := range strings.Split(v, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				a.logCollectPaths = append(a.logCollectPaths, p)
+			}
+		}
 	}
 }
 
@@ -113,8 +151,13 @@ func (a *Agent) installToken() string {
 }
 
 // collectCmdbReport 采集主机基础属性并返回 CMDB 增量上报（每 60 秒一次）。
-// 包含：hostname / os / kernel / cpu_cores / mem_total_gb。
+// task 98 扩展采集内容：除原有 hostname/os/kernel 外，增加
+//   - 服务列表（复用 monitoredServices + queryService，与 metrics_collect.go 共享逻辑）
+//   - 中间件探测（检测常见中间件进程：mysql/redis/nginx/kafka 等）
+//   - 网络拓扑（网卡列表 + IP + MAC，复用 gopsutil/net）
+//
 // Heartbeat 每 10 秒一次，但 CMDB 属性变化慢，降低采集频率减少系统开销。
+// 采集结果仍通过心跳携带 CmdbReport 上报（现有机制）；未来可改为独立 gRPC ReportCMDB 方法。
 func (a *Agent) collectCmdbReport() *proto.CmdbReport {
 	if time.Since(a.cmdbLastCol) < 60*time.Second {
 		return nil // 距上次采集不足 60s，跳过
@@ -134,15 +177,100 @@ func (a *Agent) collectCmdbReport() *proto.CmdbReport {
 		kernel = strings.TrimSpace(string(b))
 	}
 
+	attrs := []proto.CmdbAttr{
+		{Key: "hostname", Value: a.hostname, Type: "string"},
+		{Key: "os.version", Value: osRelease, Type: "string"},
+		{Key: "kernel.version", Value: kernel, Type: "string"},
+	}
+	// task 98 扩展采集：服务列表 + 中间件探测 + 网络拓扑。
+	attrs = append(attrs, collectCmdbServices()...)
+	attrs = append(attrs, collectCmdbMiddleware()...)
+	attrs = append(attrs, collectCmdbNetwork()...)
+
 	return &proto.CmdbReport{
 		CiType: "machine",
 		Seq:    a.cmdbSeq,
-		Attrs: []proto.CmdbAttr{
-			{Key: "hostname", Value: a.hostname, Type: "string"},
-			{Key: "os.version", Value: osRelease, Type: "string"},
-			{Key: "kernel.version", Value: kernel, Type: "string"},
-		},
+		Attrs:  attrs,
 	}
+}
+
+// collectCmdbServices 采集关注的服务列表作为 CMDB 属性（task 98）。
+// 复用 metrics_collect.go 中的 monitoredServices 白名单与 queryService 跨平台查询逻辑，
+// 避免重复实现。每个服务产出两条属性：service.<name>.status（running/stopped）与
+// service.<name>.enabled（true/false）。服务不存在或查询失败时跳过（降级而非报错）。
+func collectCmdbServices() []proto.CmdbAttr {
+	var attrs []proto.CmdbAttr
+	for _, name := range monitoredServices {
+		status, enabled := queryService(name)
+		if status == "" {
+			continue // 服务不存在或查询失败，跳过
+		}
+		attrs = append(attrs,
+			proto.CmdbAttr{Key: "service." + name + ".status", Value: status, Type: "string"},
+			proto.CmdbAttr{Key: "service." + name + ".enabled", Value: strconv.FormatBool(enabled), Type: "bool"},
+		)
+	}
+	return attrs
+}
+
+// collectCmdbMiddleware 探测常见中间件进程作为 CMDB 属性（task 98）。
+// 跨平台：Linux/Darwin 用 ps aux，Windows 用 tasklist；任一失败返回 nil（降级）。
+// 检测关键词：mysql/redis/nginx/kafka/zookeeper/etcd/consul/elasticsearch/rabbitmq/mongodb/postgres/grafana/prometheus。
+// 命中即产出 middleware.<name>.installed=true 属性，供控制面 CMDB 自动登记中间件 CI。
+func collectCmdbMiddleware() []proto.CmdbAttr {
+	keywords := []string{
+		"mysql", "redis", "nginx", "kafka", "zookeeper", "etcd", "consul",
+		"elasticsearch", "rabbitmq", "mongodb", "postgres", "grafana", "prometheus",
+	}
+	var psOutput string
+	if runtime.GOOS == "windows" {
+		out, err := exec.Command("tasklist").Output()
+		if err != nil {
+			return nil // tasklist 不可用或失败，降级跳过
+		}
+		psOutput = string(out)
+	} else {
+		out, err := exec.Command("ps", "aux").Output()
+		if err != nil {
+			return nil // ps 不可用或失败，降级跳过
+		}
+		psOutput = string(out)
+	}
+	psLower := strings.ToLower(psOutput)
+	var attrs []proto.CmdbAttr
+	for _, kw := range keywords {
+		if strings.Contains(psLower, kw) {
+			attrs = append(attrs, proto.CmdbAttr{
+				Key:   "middleware." + kw + ".installed",
+				Value: "true",
+				Type:  "bool",
+			})
+		}
+	}
+	return attrs
+}
+
+// collectCmdbNetwork 采集网络拓扑作为 CMDB 属性（task 98）。
+// 复用 gopsutil/net 获取网卡列表，跳过 loopback，产出 net.<iface>.ip 与 net.<iface>.mac 属性。
+// isLoopback/firstIPv4 与 metrics_collect.go 共享（同包），避免重复实现。
+func collectCmdbNetwork() []proto.CmdbAttr {
+	ifaces, err := gnet.Interfaces()
+	if err != nil {
+		return nil // 采集失败，降级跳过
+	}
+	var attrs []proto.CmdbAttr
+	for _, iface := range ifaces {
+		if isLoopback(iface) {
+			continue
+		}
+		ip := firstIPv4(iface)
+		mac := iface.HardwareAddr
+		attrs = append(attrs,
+			proto.CmdbAttr{Key: "net." + iface.Name + ".ip", Value: ip, Type: "string"},
+			proto.CmdbAttr{Key: "net." + iface.Name + ".mac", Value: mac, Type: "string"},
+		)
+	}
+	return attrs
 }
 
 // Run 启动 agent：应用资源限额 -> 建 gRPC 通道 -> 注册 -> 启动 worker 池 + 心跳 + 调度循环，
@@ -189,7 +317,8 @@ func (a *Agent) Run() error {
 
 	go a.heartbeatLoop(ctx)
 	go a.dispatchLoop(ctx)
-	go a.cancelLoop(ctx) // F3 取消信号：轮询控制面，中止已下发取消的正在执行任务
+	go a.cancelLoop(ctx)     // F3 取消信号：轮询控制面，中止已下发取消的正在执行任务
+	go a.logCollectLoop(ctx) // task 98 日志采集：定时读取指定日志文件增量并上报控制面
 
 	logx.Info(ctx, "agent 运行中", "agentID", a.agentID, "workers", a.workers, "grpc", a.cfg.ControlAddr)
 	<-ctx.Done()
@@ -451,6 +580,15 @@ func (a *Agent) execute(ctx context.Context, t proto.Task) proto.TaskResult {
 			res.DurationMs = time.Since(start).Milliseconds()
 			return res
 		}
+		// 安全加固（task 98）：shell 元字符检测——纵深防御，拒绝含高危元字符的命令。
+		// 白名单只校验第一个 token 的 basename，无法阻止 "ls;rm -rf /" 这类元字符拼接绕过
+		// （;后内容仍由同一 sh -c 解释执行）。此处前置拦截最高危元字符，与白名单互补。
+		if err := checkShellMetachars(t.Command); err != nil {
+			res.ExitCode = -1
+			res.Stderr = err.Error()
+			res.DurationMs = time.Since(start).Milliseconds()
+			return res
+		}
 		// 安全加固（task 78）：命令白名单检查（白名单为空时跳过，向后兼容）。
 		if err := a.checkShellWhitelist(t.Command); err != nil {
 			res.ExitCode = -1
@@ -460,6 +598,15 @@ func (a *Agent) execute(ctx context.Context, t proto.Task) proto.TaskResult {
 		}
 		runErr = a.executeShell(ctx, t.Command, stdout, stderr)
 	case proto.TaskTypeService:
+		// U-02 冻结 Linux-only（task 98 前置拒绝）：service 任务依赖 systemctl，非 Linux 平台前置拒绝。
+		// 原行为是接受任务但执行时因 systemctl 不存在而失败（exit code 非 0 + 重试/死信），
+		// 前置拒绝更友好——立即返回明确错误，避免无意义的重试耗尽 MaxRetries 后进入死信。
+		if runtime.GOOS != "linux" {
+			res.ExitCode = -1
+			res.Stderr = "service tasks are only supported on Linux (U-02 Linux-only freeze, systemctl unavailable on " + runtime.GOOS + ")"
+			res.DurationMs = time.Since(start).Milliseconds()
+			return res
+		}
 		runErr = a.execService(ctx, stdout, stderr, t)
 	case proto.TaskTypeFile:
 		runErr = a.execFile(ctx, stdout, stderr, t)
@@ -532,6 +679,38 @@ func (b *limitedBuffer) markTruncated() {
 // String 返回已收集的内容（含截断提示）。
 func (b *limitedBuffer) String() string {
 	return b.buf.String()
+}
+
+// checkShellMetachars 检查命令是否含危险 shell 元字符（task 98 纵深防御）。
+// 含则返回错误，拒绝执行。这是对白名单的补充：白名单只校验第一个 token 的 basename，
+// 无法阻止 "ls;rm -rf /" 这类元字符拼接绕过（;后内容仍由同一 sh -c 解释执行）。
+//
+// 设计决策（task 98）：仅拦截最高危元字符，平衡安全与可用性：
+//   - ";"  命令分隔符，高危（可拼接任意命令），拦截。
+//   - "&"  单个 & 为后台执行符，高危（可脱离 agent 控制），拦截；但允许 "&&"（条件拼接，
+//     合法运维极常用，如 systemctl status nginx && echo ok），通过剔除 && 后检测剩余 & 实现。
+//   - "$(" 命令替换注入，高危（可执行任意子命令），拦截。
+//   - "`"  反引号命令替换，高危（可执行任意子命令），拦截。
+//   - "|"  管道符暂不拦截——合法运维用途过多（如 systemctl status nginx | grep Active），
+//     拦截会严重损害可用性。纵深防御应配合控制面侧 SubmitTask 校验 + IAM 鉴权。
+//
+// 这是"最佳努力防御"——无法覆盖所有绕过路径（如 base64 编码命令），但能拦截最常见的拼接注入。
+func checkShellMetachars(command string) error {
+	if strings.Contains(command, ";") {
+		return errors.New("shell command contains dangerous metacharacters (';'): command rejected")
+	}
+	// 检测单个 &（后台执行），允许 &&（条件拼接，合法运维常用）。
+	// 实现方式：将所有 "&&" 替换为空串后，若仍含 "&" 说明存在单个 & 后台执行符。
+	if strings.Contains(strings.ReplaceAll(command, "&&", ""), "&") {
+		return errors.New("shell command contains dangerous metacharacters ('&'): command rejected")
+	}
+	if strings.Contains(command, "$(") {
+		return errors.New("shell command contains dangerous metacharacters ('$()'): command rejected")
+	}
+	if strings.Contains(command, "`") {
+		return errors.New("shell command contains dangerous metacharacters (backtick): command rejected")
+	}
+	return nil
 }
 
 // checkShellWhitelist 检查命令是否在白名单内（task 78 安全加固）。
@@ -750,4 +929,92 @@ func shellCommand(command string) *exec.Cmd {
 		return exec.Command("cmd", "/C", command)
 	}
 	return exec.Command("sh", "-c", command)
+}
+
+// ===== task 98 日志采集 agent 推送 =====
+//
+// logCollectLoop 定时读取指定日志文件的新增内容（基于文件 offset）并上报控制面。
+// 配置来自环境变量（见 initLogCollect）：
+//   - OPSMESH_LOG_COLLECT_PATHS：逗号分隔的日志文件路径。
+//   - OPSMESH_LOG_COLLECT_INTERVAL：采集间隔（默认 30s）。
+//
+// 未配置路径时不启动（直接 return），避免空循环开销。
+//
+// 上报通道：当前仅记录采集到的增量日志（logx.Info），后续控制面添加 gRPC ReportLogs 接收 API 后
+// （server.go 任务 95），在此处改为 a.grpc.ReportLogs(ctx, req) 上报。gRPC client 侧的 ReportLogs
+// 方法需在 grpcclient.go 中添加（不在本次任务文件列表中，故暂用日志占位）。
+func (a *Agent) logCollectLoop(ctx context.Context) {
+	if len(a.logCollectPaths) == 0 {
+		return // 未配置日志采集路径，不启动
+	}
+	logx.Info(ctx, "日志采集启动", "paths", a.logCollectPaths, "interval", a.logCollectInterval)
+	ticker := time.NewTicker(a.logCollectInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.collectAndReportLogs(ctx)
+		}
+	}
+}
+
+// collectAndReportLogs 遍历所有配置的日志路径，读取增量内容并上报。
+// 单个文件读取失败不中断整体，仅记录告警并继续下一个文件（降级而非报错）。
+func (a *Agent) collectAndReportLogs(ctx context.Context) {
+	a.logMu.Lock()
+	defer a.logMu.Unlock()
+	for _, path := range a.logCollectPaths {
+		content, err := a.readLogIncrement(path)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				logx.Warn(ctx, "读取日志增量失败", "path", path, "error", err.Error())
+			}
+			continue // 文件不存在或读取失败，跳过（文件可能尚未创建）
+		}
+		if content == "" {
+			continue // 无新增内容
+		}
+		// TODO(task 98): 控制面添加 gRPC ReportLogs 接收 API 后（server.go 任务 95），
+		// 在此改为 a.grpc.ReportLogs(ctx, &LogReportReq{AgentID: a.agentID, Path: path, Content: content}) 上报。
+		// 当前仅记录采集到的字节数，便于运维观测采集是否正常工作。
+		logx.Info(ctx, "日志采集增量", "path", path, "bytes", len(content))
+	}
+}
+
+// readLogIncrement 读取指定日志文件自上次 offset 之后的新增内容。
+// 基于 offset 增量读取：记录上次读取到的文件大小作为 offset，下次从 offset 处读到文件末尾。
+// 处理文件轮转：若当前文件大小小于已记录的 offset，说明文件被截断或轮转，重置 offset 从头读。
+// 返回新增内容字符串；无新增时返回空串。
+func (a *Agent) readLogIncrement(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	offset := a.logOffsets[path]
+	// 文件被截断或轮转（当前大小 < 已记录 offset），重置 offset 从头读。
+	if fi.Size() < offset {
+		offset = 0
+	}
+	// 无新增内容。
+	if fi.Size() == offset {
+		return "", nil
+	}
+	// 定位到 offset 处读取到文件末尾。
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return "", err
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return "", err
+	}
+	// 更新 offset 为当前文件大小，下次从此处继续读。
+	a.logOffsets[path] = fi.Size()
+	return string(data), nil
 }

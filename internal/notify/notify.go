@@ -1,0 +1,330 @@
+// Package notify 告警通知核心：聚合/抑制 + 多通道推送（Webhook/Email/Slack/企业微信）。
+//
+// 本文件实现 B7 告警通知增强：
+//   - AlertAggregator：同源告警聚合（5 分钟窗口）+ 级别抑制（critical 抑制同源 warning）
+//   - Slack 通道：Webhook URL 含 slack.com 域名时自动识别，Block Kit 格式
+//   - 企业微信通道：Webhook URL 含 qyapi.weixin.qq.com 域名时自动识别，markdown 格式
+//   - Email 通道：net/smtp 发送，配置缺失时跳过
+package notify
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"net/smtp"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	"opsmesh/internal/proto"
+)
+
+// ============================================================================
+// 告警聚合与抑制
+// ============================================================================
+
+// AggregateWindow 同源告警聚合窗口（5 分钟）：相同 metric+device 在窗口内只推送一次。
+const AggregateWindow = 5 * time.Minute
+
+// aggregatorEntry 聚合缓存条目：记录最近一次推送时间与已推送的最高级别。
+type aggregatorEntry struct {
+	lastPushed time.Time
+	severity   string // 已推送的最高级别（critical > warning）
+}
+
+// AlertAggregator 告警聚合器：防告警风暴。
+//   - 同源聚合：相同 metric+device 在 AggregateWindow 内只推送一次。
+//   - 级别抑制：高级别（critical）已触发时抑制同源低级别（warning）。
+//
+// 用 sync.RWMutex 保护 entries 并发安全（notifyLoop 单 goroutine 调用，
+// 但 Cleanup 可能由独立 goroutine 周期执行，故需互斥保护）。
+type AlertAggregator struct {
+	mu      sync.RWMutex
+	entries map[string]aggregatorEntry // key: metric+":"+deviceID
+}
+
+// NewAlertAggregator 构造聚合器。
+func NewAlertAggregator() *AlertAggregator {
+	return &AlertAggregator{entries: make(map[string]aggregatorEntry)}
+}
+
+// severityRank 返回级别排序：critical=2, warning=1, 其他=0。
+func severityRank(s string) int {
+	switch s {
+	case "critical":
+		return 2
+	case "warning":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// aggregateKey 返回告警的聚合键：metric+":"+deviceID。
+// metric 为空时回退到 message（兼容未设置 metric 的旧告警，如 task dead-letter）。
+func aggregateKey(a *proto.Alert) string {
+	metric := a.Metric
+	if metric == "" {
+		metric = a.Message
+	}
+	return metric + ":" + a.DeviceID
+}
+
+// Allow 判断告警是否应被推送（true=推送，false=抑制/聚合跳过）。
+// 放行时同时更新聚合缓存（记录推送时间与级别）。
+//
+// 规则：
+//  1. 同源键不存在或已过期（超出 AggregateWindow）→ 放行
+//  2. 同源键在窗口内且当前级别 <= 已推送级别 → 抑制（false）
+//  3. 同源键在窗口内但当前级别更高 → 放行（升级告警不应被聚合吞掉）
+func (ag *AlertAggregator) Allow(a *proto.Alert, now time.Time) bool {
+	key := aggregateKey(a)
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
+	if e, exists := ag.entries[key]; exists {
+		// 同源聚合：窗口内只推送一次。
+		if now.Sub(e.lastPushed) < AggregateWindow {
+			// 级别抑制：当前告警级别 <= 已推送级别时抑制。
+			if severityRank(a.Severity) <= severityRank(e.severity) {
+				return false
+			}
+			// 当前级别更高，放行并更新（升级告警透传）。
+		}
+	}
+	// 放行：更新缓存。
+	ag.entries[key] = aggregatorEntry{lastPushed: now, severity: a.Severity}
+	return true
+}
+
+// Cleanup 清理过期条目（lastPushed 早于 cutoff）。周期调用防止内存泄漏。
+func (ag *AlertAggregator) Cleanup(cutoff time.Time) {
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
+	for k, e := range ag.entries {
+		if e.lastPushed.Before(cutoff) {
+			delete(ag.entries, k)
+		}
+	}
+}
+
+// ============================================================================
+// Slack 通道（Block Kit 格式）
+// ============================================================================
+
+// slackBlockKit 构造 Slack Block Kit 消息体（JSON serializable）。
+// 文档：https://api.slack.com/messaging/webhooks
+func slackBlockKit(a *proto.Alert) map[string]interface{} {
+	emoji := "⚠️"
+	if a.Severity == "critical" {
+		emoji = "🔴"
+	}
+	return map[string]interface{}{
+		"blocks": []map[string]interface{}{
+			{
+				"type": "header",
+				"text": map[string]interface{}{
+					"type": "plain_text",
+					"text": emoji + " OpsMesh 告警",
+				},
+			},
+			{
+				"type": "section",
+				"text": map[string]interface{}{
+					"type": "mrkdwn",
+					"text": fmt.Sprintf(
+						"*严重级别*: %s\n*设备*: %s\n*Agent*: %s\n*时间*: %s\n\n%s",
+						a.Severity, a.DeviceID, a.AgentID,
+						a.CreatedAt.Format("2006-01-02 15:04:05"),
+						a.Message,
+					),
+				},
+			},
+		},
+	}
+}
+
+// ============================================================================
+// 企业微信通道（markdown 格式）
+// ============================================================================
+
+// wecomMarkdown 构造企业微信群机器人 markdown 消息体（JSON serializable）。
+// 文档：https://developer.work.weixin.qq.com/document/path/91770
+func wecomMarkdown(a *proto.Alert) map[string]interface{} {
+	emoji := "⚠️"
+	if a.Severity == "critical" {
+		emoji = "🔴"
+	}
+	return map[string]interface{}{
+		"msgtype": "markdown",
+		"markdown": map[string]interface{}{
+			"content": fmt.Sprintf(
+				"## %s OpsMesh 告警\n\n"+
+					"> **严重级别**: %s\n"+
+					"> **设备**: %s\n"+
+					"> **Agent**: %s\n"+
+					"> **时间**: %s\n\n"+
+					"%s",
+				emoji, a.Severity, a.DeviceID, a.AgentID,
+				a.CreatedAt.Format("2006-01-02 15:04:05"),
+				a.Message,
+			),
+		},
+	}
+}
+
+// ============================================================================
+// 通道识别与 Webhook 分发
+// ============================================================================
+
+// DetectChannelByURL 根据 webhook URL 域名自动识别通道：
+//   - slack.com → "slack"
+//   - qyapi.weixin.qq.com → "wecom"（企业微信）
+//   - 其他/解析失败 → ""（回退到显式 notifierType）
+func DetectChannelByURL(webhookURL string) string {
+	if webhookURL == "" {
+		return ""
+	}
+	u, err := url.Parse(webhookURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	host := strings.ToLower(u.Host)
+	if strings.Contains(host, "slack.com") {
+		return "slack"
+	}
+	if strings.Contains(host, "qyapi.weixin.qq.com") {
+		return "wecom"
+	}
+	return ""
+}
+
+// PostWebhook 按 URL 域名自动识别通道 / 显式 notifierType 分发 Webhook 推送。
+// 支持通道：generic / feishu / dingtalk / slack / wecom。
+// URL 域名识别优先，无法识别时回退到 notifierType（generic/feishu/dingtalk）。
+func PostWebhook(notifierType, webhookURL string, a *proto.Alert) error {
+	if webhookURL == "" || a == nil {
+		return nil
+	}
+	ch := DetectChannelByURL(webhookURL)
+	if ch == "" {
+		ch = notifierType
+	}
+	switch ch {
+	case "slack":
+		return postJSON(webhookURL, slackBlockKit(a))
+	case "wecom":
+		return postJSON(webhookURL, wecomMarkdown(a))
+	default:
+		return PostByType(ch, webhookURL, a) // generic / feishu / dingtalk
+	}
+}
+
+// ============================================================================
+// Email 通道（net/smtp）
+// ============================================================================
+
+// EmailConfig 邮件通道配置。必填字段（Host/Port/From/To）任一为空时视为未配置，SendEmail 跳过。
+type EmailConfig struct {
+	Host string // SMTP 服务器地址（如 smtp.example.com）
+	Port int    // SMTP 端口（如 25/465/587）
+	User string // SMTP 用户名（认证用；空=匿名发送）
+	Pass string // SMTP 密码（认证用）
+	From string // 发件人地址（如 opsmesh@example.com）
+	To   string // 收件人列表（逗号分隔，如 ops1@example.com,ops2@example.com）
+}
+
+// Enabled 返回邮件通道是否已配置（必填字段非空）。
+func (c *EmailConfig) Enabled() bool {
+	return c != nil && c.Host != "" && c.Port > 0 && c.From != "" && c.To != ""
+}
+
+// SendEmail 通过 SMTP 发送告警邮件。配置缺失（!Enabled）或 alert 为 nil 时跳过（返回 nil）。
+// 超时 10s（net/smtp 无原生 context 支持，用 goroutine + select 模拟）。
+func SendEmail(cfg *EmailConfig, a *proto.Alert) error {
+	if !cfg.Enabled() || a == nil {
+		return nil
+	}
+	recipients := strings.Split(cfg.To, ",")
+	for i := range recipients {
+		recipients[i] = strings.TrimSpace(recipients[i])
+	}
+	subject := fmt.Sprintf("[OpsMesh 告警][%s] %s", a.Severity, a.DeviceID)
+	body := fmt.Sprintf(
+		"告警ID: %s\n严重级别: %s\n设备: %s\nAgent: %s\n时间: %s\n\n消息:\n%s",
+		a.AlertID, a.Severity, a.DeviceID, a.AgentID,
+		a.CreatedAt.Format("2006-01-02 15:04:05"),
+		a.Message,
+	)
+	msg := buildRFC822(cfg.From, recipients, subject, body)
+	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	var auth smtp.Auth
+	if cfg.User != "" {
+		auth = smtp.PlainAuth("", cfg.User, cfg.Pass, cfg.Host)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- smtp.SendMail(addr, auth, cfg.From, recipients, []byte(msg))
+	}()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			return fmt.Errorf("notify: send email: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("notify: send email timeout (%s)", addr)
+	}
+}
+
+// buildRFC822 构造 RFC 822 邮件正文（含必要头：From/To/Subject/MIME/Content-Type）。
+func buildRFC822(from string, to []string, subject, body string) string {
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "From: %s\r\n", from)
+	fmt.Fprintf(&buf, "To: %s\r\n", strings.Join(to, ", "))
+	fmt.Fprintf(&buf, "Subject: %s\r\n", subject)
+	buf.WriteString("MIME-Version: 1.0\r\n")
+	buf.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+	buf.WriteString("\r\n")
+	buf.WriteString(body)
+	return buf.String()
+}
+
+// ============================================================================
+// 多通道统一推送
+// ============================================================================
+
+// Channels 多通道配置（Webhook + Email）。任一通道配置缺失时自动跳过。
+type Channels struct {
+	NotifierType string       // Webhook 显式类型（generic/feishu/dingtalk）；URL 无法识别域名时回退到此值
+	WebhookURL   string       // Webhook URL（空=关闭 Webhook 通道）
+	Email        *EmailConfig // 邮件通道配置（nil 或 !Enabled=关闭邮件通道）
+}
+
+// Push 通过所有已配置通道推送告警。任一通道失败不影响其他通道，所有错误聚合返回。
+// 无任何通道配置时返回 nil（静默跳过）。
+func (c *Channels) Push(a *proto.Alert) error {
+	if a == nil {
+		return nil
+	}
+	var errs []string
+	// Webhook 推送。
+	if c.WebhookURL != "" {
+		if err := PostWebhook(c.NotifierType, c.WebhookURL, a); err != nil {
+			errs = append(errs, fmt.Sprintf("webhook: %v", err))
+		}
+	}
+	// 邮件推送。
+	if c.Email != nil && c.Email.Enabled() {
+		if err := SendEmail(c.Email, a); err != nil {
+			errs = append(errs, fmt.Sprintf("email: %v", err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("notify: push errors: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}

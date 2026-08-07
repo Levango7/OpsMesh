@@ -35,8 +35,18 @@ func newAuthTestServer(t *testing.T) *Server {
 
 // loginAsAdmin 用预定义 admin 账号登录，返回 Authorization 头值。
 // 用于需要鉴权的用户管理 API 测试。
+//
+// 安全债 85 + 任务 96 回归修复：预置 admin 带 MustChangePassword=true，登录时
+// auth.go 不签发 access token（仅签发一次性 changePasswordToken），导致 resp.Token
+// 为空。此 helper 代表"已完成首登改密的管理员"，故在登录前先经 store 直接清除
+// MustChangePassword 标记（传入原 PasswordHash 保持密码不变，仅清标），使登录
+// 走正常签发路径。首登改密前的拦截行为（不下发 at、受保护 API 403）由
+// TestLoginReturnsMustChangePassword / TestMustChangePasswordBlocksProtectedAPI
+// 等专门用例覆盖，不走此 helper。
 func loginAsAdmin(t *testing.T, s *Server) string {
 	t.Helper()
+	// 先清除 MustChangePassword 标记（密码哈希不变），模拟"已改密"状态。
+	clearMustChangeFlag(s, "admin")
 	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "admin123"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -51,13 +61,15 @@ func loginAsAdmin(t *testing.T, s *Server) string {
 	if resp.Token == "" {
 		t.Fatal("login token is empty")
 	}
-	// 模拟管理员已完成首次登录强制改密（安全债 85 服务端落地后，mustChangePassword 用户
-	// 仅能访问 /change-password，须先改密方可调用受保护 API）。此 helper 代表"改密后的管理员"，
-	// 使下游 16+ 鉴权用例保持有效；首次登录改密前的拦截行为由专门的测试用例覆盖。
-	if u := s.store.GetUserByUsername("admin"); u != nil {
+	return "Bearer " + resp.Token
+}
+
+// clearMustChangeFlag 清除指定用户的 MustChangePassword 标记（密码哈希不变），
+// 用于需要"已改密"状态的测试用例。安全债 85 + 任务 96 回归适配。
+func clearMustChangeFlag(s *Server, username string) {
+	if u := s.store.GetUserByUsername(username); u != nil && u.MustChangePassword {
 		s.store.ChangePassword(u.ID, u.PasswordHash)
 	}
-	return "Bearer " + resp.Token
 }
 
 // doWithAuth 构造携带 Authorization 头的请求。
@@ -192,8 +204,12 @@ func TestAuthRegisterShortPassword(t *testing.T) {
 // ----------------------------------------------------------------------------
 
 // TestAuthLogin 正确密码 → 200 + token。
+// 安全债 85 + 任务 96：预置 admin 带 mustChangePassword=true，登录不签发 access token。
+// 此用例验证"已改密用户正确密码 → 200 + token"，先清标模拟改密后状态。
+// 未改密用户的登录响应由 TestLoginReturnsMustChangePassword 覆盖。
 func TestAuthLogin(t *testing.T) {
 	s := newAuthTestServer(t)
+	clearMustChangeFlag(s, "admin")
 	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "admin123"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -311,6 +327,7 @@ func TestListUsers(t *testing.T) {
 func TestListUsersNoPermission(t *testing.T) {
 	s := newAuthTestServer(t)
 	// operator 登录（operator 组不含 user/role，故无 user:read 权限）。
+	clearMustChangeFlag(s, "operator")
 	body, _ := json.Marshal(map[string]string{"username": "operator", "password": "operator123"})
 	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
 	loginRec := httptest.NewRecorder()
@@ -801,6 +818,7 @@ func TestRejectUser(t *testing.T) {
 func TestApproveUserNoPermission(t *testing.T) {
 	s := newAuthTestServerNonDemo(t)
 	// operator 登录（无 user:approve 权限）。
+	clearMustChangeFlag(s, "operator")
 	body, _ := json.Marshal(map[string]string{"username": "operator", "password": "operator123"})
 	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
 	loginRec := httptest.NewRecorder()
@@ -936,8 +954,9 @@ func TestChangePasswordNoToken(t *testing.T) {
 // P1 服务端强制改密（requirePermission 拦截未改密用户）
 // ----------------------------------------------------------------------------
 
-// TestMustChangePasswordBlocksProtectedAPI 验证未改密用户（mustChangePassword=true）调用受保护 API 被拒（403），
-// 仅能访问 /change-password（P1 服务端强制改密落地后，弱口令不再能长期在线操作）。
+// TestMustChangePasswordBlocksProtectedAPI 验证未改密用户（mustChangePassword=true）登录时
+// 不签发 access token（任务 96 安全核心：弱口令用户无法持有效 at 访问受保护 API）。
+// 仅签发一次性 changePasswordToken，受保护 API 因无 at 自然被 401 拦截。
 func TestMustChangePasswordBlocksProtectedAPI(t *testing.T) {
 	s := newAuthTestServer(t)
 	// 直接登录预设 admin（不改密，mustChangePassword=true）；不走 loginAsAdmin（后者会清标）。
@@ -950,17 +969,24 @@ func TestMustChangePasswordBlocksProtectedAPI(t *testing.T) {
 	}
 	var resp authResponse
 	_ = json.NewDecoder(rec.Body).Decode(&resp)
-	auth := "Bearer " + resp.Token
-	// 受保护 API（需 user:read）应被拒（403 MUST_CHANGE_PASSWORD）。
-	listReq := doWithAuth(http.MethodGet, "/api/v1/users", auth, nil)
+	// 任务 96：mustChangePassword=true 时不签发 access token。
+	if resp.Token != "" {
+		t.Fatalf("must-change user should not receive access token; got token=%q", resp.Token)
+	}
+	if resp.ChangePasswordToken == "" {
+		t.Fatal("must-change user should receive changePasswordToken")
+	}
+	// 无 access token 访问受保护 API → 401（empty bearer token），天然拦截。
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
 	listRec := httptest.NewRecorder()
 	s.handleListUsers(listRec, listReq)
-	if listRec.Code != http.StatusForbidden {
-		t.Fatalf("protected API for must-change user = %d, want 403; body=%s", listRec.Code, listRec.Body.String())
+	if listRec.Code != http.StatusUnauthorized {
+		t.Fatalf("protected API without token = %d, want 401; body=%s", listRec.Code, listRec.Body.String())
 	}
 }
 
 // TestMustChangePasswordCanChangeThenAccess 验证未改密用户改密后受保护 API 立即可用。
+// 流程（任务 96）：登录获取 changePasswordToken → 用 cpt 改密 → 改密响应返回正式 at → 用 at 访问受保护 API。
 func TestMustChangePasswordCanChangeThenAccess(t *testing.T) {
 	s := newAuthTestServer(t)
 	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "admin123"})
@@ -969,15 +995,27 @@ func TestMustChangePasswordCanChangeThenAccess(t *testing.T) {
 	s.handleAuthLogin(rec, req)
 	var resp authResponse
 	_ = json.NewDecoder(rec.Body).Decode(&resp)
-	auth := "Bearer " + resp.Token
-	// 改密（old=admin123, new=Admin@2025 满足强口令）。
-	cpReq := doWithAuth(http.MethodPost, "/api/v1/auth/change-password", auth, map[string]string{"oldPassword": "admin123", "newPassword": "Admin@2025"})
+	// 改密（用 changePasswordToken 鉴权，old=admin123, new=Admin@2025 满足强口令）。
+	cpReq := doWithAuth(http.MethodPost, "/api/v1/auth/change-password", "", map[string]string{
+		"oldPassword":         "admin123",
+		"newPassword":         "Admin@2025",
+		"changePasswordToken": resp.ChangePasswordToken,
+	})
 	cpRec := httptest.NewRecorder()
 	s.handleAuthChangePassword(cpRec, cpReq)
 	if cpRec.Code != http.StatusOK {
 		t.Fatalf("change password = %d, want 200; body=%s", cpRec.Code, cpRec.Body.String())
 	}
-	// 改密后受保护 API 可用（403 → 200）。
+	// 改密成功后签发正式 access token。
+	var cpResp authResponse
+	if err := json.NewDecoder(cpRec.Body).Decode(&cpResp); err != nil {
+		t.Fatalf("decode change-password resp: %v", err)
+	}
+	if cpResp.Token == "" {
+		t.Fatal("change password response token empty")
+	}
+	auth := "Bearer " + cpResp.Token
+	// 改密后受保护 API 可用（401 → 200）。
 	listReq := doWithAuth(http.MethodGet, "/api/v1/users", auth, nil)
 	listRec := httptest.NewRecorder()
 	s.handleListUsers(listRec, listReq)
@@ -1015,8 +1053,11 @@ func TestUserFromTokenRevokesNonActive(t *testing.T) {
 // =============================================================================
 
 // TestAuthLogin_SetsHttpOnlyCookie 验证登录成功时下发 HttpOnly Cookie（opsmesh_token）。
+// 安全债 85 + 任务 96：预置 admin 带 mustChangePassword=true 时不签发 token/Cookie。
+// 此用例验证"已改密用户登录下发 Cookie"，先清标模拟改密后状态。
 func TestAuthLogin_SetsHttpOnlyCookie(t *testing.T) {
 	s := newAuthTestServer(t)
+	clearMustChangeFlag(s, "admin")
 	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "admin123"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
 	rec := httptest.NewRecorder()

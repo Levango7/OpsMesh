@@ -1,4 +1,4 @@
-// auth.go 实现用户中心 HTTP handler：注册/登录/查询当前用户 + 用户/角色/权限 CRUD。
+// auth.go 实现用户中心的核心鉴权 helper 与中间件。
 //
 // 与 server.go 中已有的"网关注入身份"模式（authctx.FromHTTPHeader）互补：
 //   - 网关注入模式：内核不自鉴权，身份由前置网关（APISIX/IAM）注入 X-Tenant-ID 等头；
@@ -17,14 +17,20 @@
 //   - JWT 密钥来自 config.JWTSecret（空=随机生成，重启后旧 token 失效）；
 //   - 用户管理 API 需认证 + 权限校验（user:read/user:write/user:delete）；
 //   - 错误响应统一 {"error": "message"} 格式。
+//
+// 文件拆分（按 handler 域）：
+//   - auth.go：核心 helper（Cookie/刷新令牌/改密令牌/密码哈希/loginGuard）+ 鉴权中间件（userFromToken/requirePermission/requireProd）；
+//   - auth_login.go：注册/登录/登出/刷新/当前用户/改密 handler；
+//   - auth_users.go：用户管理 handler（CRUD + 审批/拒绝）；
+//   - auth_roles.go：角色管理 handler（CRUD）；
+//   - auth_perms.go：权限查询 handler。
 package controlplane
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"io"
-	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -32,7 +38,6 @@ import (
 	"time"
 
 	"opsmesh/internal/authctx"
-	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 
 	"golang.org/x/crypto/bcrypt"
@@ -41,6 +46,7 @@ import (
 // 双 HttpOnly Cookie 令牌方案（同源最简单且安全）：
 //   - at（access token）：短期 JWT（15min），仅标识身份，XSS 窃取后利用窗口极小；
 //   - rt（refresh token）：长期不透明随机串（7d），服务端可吊销/旋转，用于静默续期。
+//
 // 两者均为 HttpOnly + SameSite=Lax（防 XSS 读取 / 防 CSRF 跨站携带），同源由浏览器自动携带。
 const (
 	accessTokenCookieName  = "opsmesh_at"
@@ -50,6 +56,8 @@ const (
 )
 
 // setCookie 统一的 HttpOnly Cookie 写入（Path=/、SameSite=Lax；HTTPS 部署才置 Secure）。
+// task 112 Cookie Secure：优先用 cfg.CookieSecure（HTTPS 反代终止 TLS 时显式开启），
+// 回退到 TLSCert 非空（控制面直连 HTTPS 时自动启用），二者任一为 true 即置 Secure。
 func (s *Server) setCookie(w http.ResponseWriter, name, value string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,
@@ -58,8 +66,19 @@ func (s *Server) setCookie(w http.ResponseWriter, name, value string, maxAge int
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   s.cfg.TLSCert != "", // HTTPS 部署才置 Secure（明文 http 内网下不设，否则会话丢失）
+		Secure:   s.cookieSecure(),
 	})
+}
+
+// cookieSecure 决定 Cookie 的 Secure 属性（task 112）。
+// 优先级：cfg.CookieSecure 显式 true → true；否则回退到 TLSCert 非空（HTTPS 直连自动启用）。
+// 这样既支持 HTTPS 反代终止 TLS（控制面收 HTTP 但对外 HTTPS，须显式 --cookie-secure=true），
+// 又保持原有 TLSCert 兜底语义（控制面自身持证直连 HTTPS 时自动 Secure）。
+func (s *Server) cookieSecure() bool {
+	if s.cfg == nil {
+		return false
+	}
+	return s.cfg.CookieSecure || s.cfg.TLSCert != ""
 }
 
 // setAccessCookie 下发短期访问令牌（at）HttpOnly Cookie。
@@ -85,78 +104,142 @@ func (s *Server) clearAuthCookies(w http.ResponseWriter) {
 }
 
 // ============================================================================
-// 刷新令牌存储（服务端状态，支持吊销与旋转）—— MVP 采用进程内存储。
-// 多副本/重启场景应替换为 DB/Redis（接口稳定，后续平滑替换）。
+// 刷新令牌存储（task 112：从进程内全局 map 改为 store 持久化）。
+//
+// 原实现（MVP）使用进程内 map 存 refresh token，多副本 HA 部署下登录态随机失效
+// （登录请求落到副本 A，刷新请求落到副本 B 时 rt 不存在 → 401）。现改为经
+// store.RefreshTokenStore 接口持久化（MemoryStore / SQLStore 均已实现，task 111），
+// 多副本共享同一 MySQL 时跨副本续期一致。
+//
+// 安全设计（与 install_tokens 同范式，P1-F7 明文不落库）：
+//   - 库存/内存只存 token 的 SHA-256 摘要（TokenHash），不存明文；
+//   - DeviceFP（设备指纹）绑定签发设备，防 token 跨设备重放；
+//   - 旋转：consume 校验通过即 DeleteRefreshToken，旧 rt 立即作废防重放。
 // ============================================================================
 
-// refreshSession 刷新令牌会话记录。
-type refreshSession struct {
-	UserID    string
-	ExpiresAt time.Time
+// hashRefreshToken 计算 refresh token 明文的 SHA-256 摘要（hex 编码）。
+// 库存/内存只存摘要，不存明文——DB 只读账号/备份泄露不等于活体 refresh token 泄露（P1-F7）。
+func hashRefreshToken(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
 }
 
-var refreshTokens = struct {
-	sync.Mutex
-	m map[string]*refreshSession
-}{m: make(map[string]*refreshSession)}
+// deviceFingerprint 从请求头 X-Device-FP 提取设备指纹（task 112 设备绑定）。
+// 前端可传 User-Agent 摘要或随机 UUID（同设备稳定即可）。空串表示不校验设备
+// （向后兼容：旧客户端不传头时 DeviceFP 为空，签发时存空，验证时不校验）。
+func deviceFingerprint(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	return strings.TrimSpace(r.Header.Get("X-Device-FP"))
+}
 
-// createRefreshToken 生成并存储一个刷新令牌 ID（crypto/rand，32 字节十六进制）。
-func createRefreshToken(userID string) (string, error) {
+// createRefreshToken 生成并持久化一个刷新令牌（crypto/rand，32 字节十六进制）。
+// 返回明文 token（仅下发给客户端 Cookie），库内只存其 SHA-256 摘要。
+// deviceFP 绑定签发设备（空串=不校验设备，向后兼容旧客户端）。
+func (s *Server) createRefreshToken(userID, deviceFP string) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	id := hex.EncodeToString(b)
-	refreshTokens.Lock()
-	refreshTokens.m[id] = &refreshSession{UserID: userID, ExpiresAt: time.Now().Add(refreshTokenExpiry)}
-	refreshTokens.Unlock()
+	// 持久化：存摘要 + UserID + DeviceFP + 过期时间，不存明文。
+	if err := s.store.SaveRefreshToken(&store.RefreshToken{
+		TokenHash: hashRefreshToken(id),
+		UserID:    userID,
+		TenantID:  "default", // 用户中心为平台级，统一 default 租户
+		DeviceFP:  deviceFP,
+		ExpiresAt: time.Now().Add(refreshTokenExpiry),
+	}); err != nil {
+		return "", err
+	}
 	return id, nil
 }
 
 // consumeRefreshToken 校验并消费刷新令牌（一次性：校验通过即删除，实现旋转）。
-// 无效/过期/已消费返回 (nil, false)。
-func consumeRefreshToken(id string) (*refreshSession, bool) {
-	refreshTokens.Lock()
-	defer refreshTokens.Unlock()
-	rs, ok := refreshTokens.m[id]
-	if !ok {
+// deviceFP 为请求携带的设备指纹，与存储的 DeviceFP 比对防跨设备重放。
+// 无效/过期/已消费/设备指纹不匹配返回 (nil, false)。
+func (s *Server) consumeRefreshToken(id, deviceFP string) (*store.RefreshToken, bool) {
+	hash := hashRefreshToken(id)
+	rt := s.store.GetRefreshToken(hash)
+	if rt == nil {
 		return nil, false
 	}
-	delete(refreshTokens.m, id) // 旋转：旧 rt 立即作废，防重放
-	if time.Now().After(rs.ExpiresAt) {
+	// 旋转：旧 rt 立即作废，防重放（无论后续校验是否通过均删除）。
+	s.store.DeleteRefreshToken(hash)
+	if time.Now().After(rt.ExpiresAt) {
 		return nil, false
 	}
-	return rs, true
+	// 设备绑定校验（task 112）：存储的 DeviceFP 非空且请求携带了 DeviceFP 时，两者必须匹配。
+	// 存储 DeviceFP 为空（旧客户端签发时未绑定）或请求未携带 DeviceFP 时不校验（向后兼容）。
+	if rt.DeviceFP != "" && deviceFP != "" && rt.DeviceFP != deviceFP {
+		return nil, false
+	}
+	return rt, true
 }
 
 // revokeRefreshToken 吊销指定刷新令牌（登出时调用）。
-func revokeRefreshToken(id string) {
-	refreshTokens.Lock()
-	delete(refreshTokens.m, id)
-	refreshTokens.Unlock()
+func (s *Server) revokeRefreshToken(id string) {
+	s.store.DeleteRefreshToken(hashRefreshToken(id))
 }
 
-// revokeUserRefreshTokens 吊销某用户全部刷新令牌（禁用/删除账号时收回全部会话）。
-func revokeUserRefreshTokens(userID string) {
-	refreshTokens.Lock()
-	for k, v := range refreshTokens.m {
-		if v.UserID == userID {
-			delete(refreshTokens.m, k)
-		}
-	}
-	refreshTokens.Unlock()
+// purgeExpiredRefreshTokens 清理过期刷新令牌（task 112：store 持久化后改为 no-op）。
+//
+// 原进程内 map 实现需周期扫描清理防内存无限增长；改用 store 持久化后：
+//   - MemoryStore：consumeRefreshToken 校验过期时已 DeleteRefreshToken 顺带清理；
+//   - SQLStore：可由 DB 定时任务或后续扩展 store 层批量清理接口处理；
+//   - 本函数保留 no-op 签名以兼容 server.go startRefreshSweep 调用，避免破坏现有启动流程。
+func (s *Server) purgeExpiredRefreshTokens() {
+	// no-op：store 持久化后过期清理由 consumeRefreshToken 顺带完成（校验过期即删除）。
 }
 
-// purgeExpiredRefreshTokens 清理过期刷新令牌，防内存无限增长（由 startRefreshSweep 周期调用）。
-func purgeExpiredRefreshTokens() {
-	now := time.Now()
-	refreshTokens.Lock()
-	for k, v := range refreshTokens.m {
-		if now.After(v.ExpiresAt) {
-			delete(refreshTokens.m, k)
-		}
+// ============================================================================
+// 改密令牌存储（安全债 85 + 任务 96）：mustChangePassword=true 用户登录时不签发
+// access token，仅签发一次性短时效 changePasswordToken（5min），仅可用于
+// /api/v1/auth/change-password。改密成功后才签发正式 at+rt。
+// ============================================================================
+
+const changePasswordTokenExpiry = 5 * time.Minute
+
+// changePasswordSession 改密令牌会话记录。
+type changePasswordSession struct {
+	UserID    string
+	ExpiresAt time.Time
+}
+
+var changePasswordTokens = struct {
+	sync.Mutex
+	m map[string]*changePasswordSession
+}{m: make(map[string]*changePasswordSession)}
+
+// createChangePasswordToken 生成并存储一个一次性改密令牌（crypto/rand，32 字节十六进制）。
+// 有效期 5 分钟，仅用于 /api/v1/auth/change-password。
+func createChangePasswordToken(userID string) (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
 	}
-	refreshTokens.Unlock()
+	id := hex.EncodeToString(b)
+	changePasswordTokens.Lock()
+	changePasswordTokens.m[id] = &changePasswordSession{UserID: userID, ExpiresAt: time.Now().Add(changePasswordTokenExpiry)}
+	changePasswordTokens.Unlock()
+	return id, nil
+}
+
+// consumeChangePasswordToken 校验并消费改密令牌（一次性：校验通过即删除，防重放）。
+// 无效/过期/已消费返回 (nil, false)。
+func consumeChangePasswordToken(id string) (*changePasswordSession, bool) {
+	changePasswordTokens.Lock()
+	defer changePasswordTokens.Unlock()
+	cs, ok := changePasswordTokens.m[id]
+	if !ok {
+		return nil, false
+	}
+	delete(changePasswordTokens.m, id) // 一次性：消费即删除，防重放
+	if time.Now().After(cs.ExpiresAt) {
+		return nil, false
+	}
+	return cs, true
 }
 
 // randHexID 生成随机十六进制 ID（16 字节，crypto/rand 密码学安全）。
@@ -170,9 +253,14 @@ func randHexID(prefix string) string {
 	return prefix + "-" + hex.EncodeToString(b)
 }
 
-// hashPassword 用 bcrypt 哈希密码（DefaultCost=10）。
+// hashPassword 用 bcrypt 哈希密码。
+// 使用 cost=12（生产推荐基线，DefaultCost=10 偏低）。
+// 注意：现有用户密码哈希可能用 cost=10 生成，bcrypt.CompareHashAndPassword
+// 会自动适配不同 cost，因此无需迁移旧哈希；新哈希与改密后哈希均使用 cost=12。
+const bcryptCost = 12
+
 func hashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	if err != nil {
 		return "", err
 	}
@@ -391,286 +479,18 @@ func (s *Server) issueUserToken(u *store.User) (string, error) {
 
 // authResponse 登录/注册成功响应体。
 // MustChangePassword（安全债 85）：当用户首登须改密时为 true，前端据此弹出改密对话框。
+// ChangePasswordToken（任务 96）：MustChangePassword=true 时签发的一次性短时效 token（5min），
+// 仅用于 /api/v1/auth/change-password；此时不下发 access token（Token 字段为空、不下发 at Cookie），
+// 改密成功后才签发正式 at + rt。
 type authResponse struct {
-	Token              string      `json:"token"`
-	User               *store.User `json:"user"`
-	MustChangePassword bool        `json:"mustChangePassword"`
+	Token               string      `json:"token"`
+	User                *store.User `json:"user"`
+	MustChangePassword  bool        `json:"mustChangePassword"`
+	ChangePasswordToken string      `json:"changePasswordToken,omitempty"`
 }
 
 // ============================================================================
-// 认证 handler：register / login / me
-// ============================================================================
-
-// handleAuthRegister 处理 POST /api/v1/auth/register：用户注册。
-// 请求体：{username, password, email?}；密码最短 6 字符，bcrypt 哈希后存库。
-//
-// 注册安全（P1-7）：
-//   - --public-register=false 时返回 403 拒绝公开注册（仅管理员可经 POST /api/v1/users 创建）；
-//   - --allow-public-register=true 时新用户 Status="active" 并立即签发 token（仅演示/内网受信环境）；
-//   - 否则（默认 --allow-public-register=false）新用户 Status="pending"，不签发 token，
-//     返回 201 {"message": "registration submitted, pending admin approval"}，须管理员审批后激活。
-//
-// 用户名重复返回 409。
-func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-	// P1-7 注册安全：--public-register=false 时关闭公开注册接口。
-	if !s.cfg.PublicRegister {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "public registration is disabled"})
-		return
-	}
-	// P1-4 限流：按客户端 IP 令牌桶约束注册频率，防滥用/枚举。
-	if !s.loginGuard.allow(clientIP(r, s.cfg.TrustProxy)) {
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
-		return
-	}
-	var body struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Email    string `json:"email"`
-	}
-	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
-		return
-	}
-	if body.Username == "" || body.Password == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
-		return
-	}
-	if msg := validateStrongPassword(body.Password); msg != "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
-		return
-	}
-	// 用户名重复校验。
-	if existing := s.store.GetUserByUsername(body.Username); existing != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
-		return
-	}
-	hash, err := hashPassword(body.Password)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "password hash failed: " + err.Error()})
-		return
-	}
-	// P1-7 注册安全：只有显式 --allow-public-register=true 时才免审批（Status=active + 立即签发 token）。
-	// 否则所有注册（包括 demo 模式）都走 pending 审批流程（默认安全基线）。
-	initialStatus := "pending"
-	if s.cfg.AllowPublicRegister {
-		initialStatus = "active"
-	}
-	u := &store.User{
-		ID:           randHexID("user"),
-		Username:     body.Username,
-		Email:        body.Email,
-		PasswordHash: hash,
-		Status:       initialStatus,
-		RoleIDs:      []string{"role-viewer"}, // 注册用户默认 viewer 角色
-	}
-	if s.store.CreateUser(u) == nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
-		return
-	}
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: u.ID, Action: "user_register", Target: u.ID, Detail: "username=" + u.Username + " status=" + initialStatus,
-	})
-	// 只有 --allow-public-register=true 时才立即签发 token；否则返回 pending 提示。
-	if s.cfg.AllowPublicRegister {
-		token, err := s.issueUserToken(u)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token sign failed: " + err.Error()})
-			return
-		}
-		rt, err := createRefreshToken(u.ID)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "refresh token gen failed: " + err.Error()})
-			return
-		}
-		s.setAuthCookies(w, token, rt) // task 94：at+rt 双 HttpOnly Cookie 下发
-		writeJSON(w, http.StatusCreated, authResponse{Token: token, User: u})
-		return
-	}
-	// 默认：不签发 token，返回待审批提示。
-	writeJSON(w, http.StatusCreated, map[string]string{
-		"message": "registration submitted, pending admin approval",
-		"userId":  u.ID,
-		"status":  u.Status,
-	})
-}
-
-// handleAuthLogin 处理 POST /api/v1/auth/login：用户登录。
-// 请求体：{username, password}；校验 bcrypt 哈希后签发 JWT。
-// 成功返回 200 {token, user}；用户名不存在/密码错误返回 401。
-func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-	// P1-4 限流：按客户端 IP 令牌桶约束登录频率，防撞库与 DoS。
-	if !s.loginGuard.allow(clientIP(r, s.cfg.TrustProxy)) {
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
-		return
-	}
-	var body struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
-		return
-	}
-	if body.Username == "" || body.Password == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
-		return
-	}
-	// P1-4 防爆破：账号处于锁定态时直接拒绝，避免继续尝试。
-	if s.loginGuard.locked(body.Username) {
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "account temporarily locked due to too many failed attempts, try later"})
-		return
-	}
-	u := s.store.GetUserByUsername(body.Username)
-	if u == nil {
-		// 用户名不存在也计入限流计数窗口（不暴露账号是否存在，同样走锁定逻辑防枚举）。
-		s.loginGuard.recordFail(body.Username)
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
-		return
-	}
-	if !verifyPassword(u.PasswordHash, body.Password) {
-		s.loginGuard.recordFail(body.Username)
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
-		return
-	}
-	// P1-7 注册安全：密码已校验通过后再检查 Status，根据状态返回差异化提示。
-	// 顺序保证：未持正确密码的攻击者无法探测账号状态（防枚举）。
-	if u.Status != "active" {
-		switch u.Status {
-		case "pending":
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "account pending admin approval"})
-		case "disabled":
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "account disabled"})
-		case "rejected":
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "account registration rejected"})
-		default:
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "account not active"})
-		}
-		return
-	}
-	// 登录成功：清除失败计数（解锁）。
-	s.loginGuard.resetFail(body.Username)
-	token, err := s.issueUserToken(u)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token sign failed: " + err.Error()})
-		return
-	}
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: u.ID, Action: "user_login", Target: u.ID, Detail: "username=" + u.Username,
-	})
-	// 双 Cookie：at（短寿命，JS 不可读）+ rt（长寿命，服务端可吊销/旋转）。
-	rt, err := createRefreshToken(u.ID)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "refresh token gen failed: " + err.Error()})
-		return
-	}
-	s.setAuthCookies(w, token, rt)
-	// 安全债 85：返回 mustChangePassword 标记，前端据此弹出改密对话框。
-	writeJSON(w, http.StatusOK, authResponse{Token: token, User: u, MustChangePassword: u.MustChangePassword})
-}
-
-// handleAuthLogout 处理 POST /api/v1/auth/logout：登出并清除会话 Cookie（task 94）。
-// JWT 为无状态令牌，服务端不做黑名单（MVP）；清除 HttpOnly Cookie 即终止浏览器会话，
-// 前端同时清空内存 token。token 自然过期由 jwtTokenExpiry（24h）约束。
-func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-	if u, err := s.userFromToken(r); err == nil {
-		s.store.Audit(&proto.AuditEvent{
-			TenantID: "default", UserID: u.ID, Action: "user_logout", Target: u.ID, Detail: "username=" + u.Username,
-		})
-	}
-	// 吊销请求携带的 rt，并清除 at+rt Cookie（服务端状态失效 + 浏览器会话终止）。
-	if ck, ckErr := r.Cookie(refreshTokenCookieName); ckErr == nil && strings.TrimSpace(ck.Value) != "" {
-		revokeRefreshToken(ck.Value)
-	}
-	s.clearAuthCookies(w)
-	writeJSON(w, http.StatusOK, map[string]string{"message": "logged out"})
-}
-
-// handleAuthRefresh 处理 POST /api/v1/auth/refresh：用 rt Cookie 静默换取新 at+rt（旋转）。
-// 同源 HttpOnly rt 由浏览器自动携带；成功重置 at（短寿命）+ 新 rt，旧 rt 立即失效（防重放）。
-// 缺失/无效/过期 rt → 401 并清除 Cookie（前端据此跳转登录）。
-func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-	ck, err := r.Cookie(refreshTokenCookieName)
-	if err != nil || strings.TrimSpace(ck.Value) == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing refresh token"})
-		return
-	}
-	sess, ok := consumeRefreshToken(ck.Value)
-	if !ok {
-		s.clearAuthCookies(w)
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired refresh token"})
-		return
-	}
-	u := s.store.GetUser(sess.UserID)
-	if u == nil || u.Status != "active" {
-		s.clearAuthCookies(w)
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "user not active"})
-		return
-	}
-	at, err := s.issueUserToken(u)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token sign failed: " + err.Error()})
-		return
-	}
-	rt, err := createRefreshToken(u.ID)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "refresh token gen failed: " + err.Error()})
-		return
-	}
-	s.setAuthCookies(w, at, rt)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"user": u})
-}
-
-// handleAuthMe 处理 GET /api/v1/auth/me：返回当前登录用户信息。
-// 从 Authorization: Bearer <token> 提取用户 ID，查库返回最新用户信息。
-// 无 token / token 无效 / 用户不存在 → 401。
-func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-	u, err := s.userFromToken(r)
-	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
-		return
-	}
-	// 展开角色 → 有效权限集合，供前端侧栏按权限过滤功能入口（与 requireProd 闸同源）。
-	// 取并集去重；role_ids 解析失败或角色不存在时跳过该角色，不阻断主流程。
-	eff := make([]string, 0, 16)
-	seen := make(map[string]bool, 16)
-	for _, rid := range u.RoleIDs {
-		role := s.store.GetRole(rid)
-		if role == nil {
-			continue
-		}
-		for _, p := range role.Permissions {
-			if !seen[p] {
-				seen[p] = true
-				eff = append(eff, p)
-			}
-		}
-	}
-	u.EffectivePermissions = eff
-	writeJSON(w, http.StatusOK, u)
-}
-
-// ============================================================================
-// 改密 handler（安全债 85）：POST /api/v1/auth/change-password
+// 强口令校验（安全债 85）：跨域 helper，供 auth_login.go 与 auth_users.go 共用。
 // ============================================================================
 
 // changePasswordMinLen 改密新密码最短长度（强口令基线：8 字符）。
@@ -705,63 +525,9 @@ func validateStrongPassword(pw string) string {
 	return ""
 }
 
-// handleAuthChangePassword 处理 POST /api/v1/auth/change-password：用户改密（安全债 85）。
-// 请求体：{oldPassword, newPassword}；鉴权：须携带当前用户有效 token。
-// 流程：从 token 提取用户 → 校验旧密码 → 校验新密码强度 → bcrypt 哈希 → 落库 → 清除 mustChangePassword。
-// 新密码强度：≥8 字符且含大小写字母与数字。新旧相同拒绝（防无效改密）。
-func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-	u, err := s.userFromToken(r)
-	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
-		return
-	}
-	var body struct {
-		OldPassword string `json:"oldPassword"`
-		NewPassword string `json:"newPassword"`
-	}
-	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
-		return
-	}
-	if body.OldPassword == "" || body.NewPassword == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "oldPassword and newPassword are required"})
-		return
-	}
-	// 旧密码校验：与当前 PasswordHash 比对，失败返回 401（防越权改密）。
-	if !verifyPassword(u.PasswordHash, body.OldPassword) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "old password incorrect"})
-		return
-	}
-	// 新旧相同拒绝（防无效改密绕过强制改密）。
-	if body.OldPassword == body.NewPassword {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "new password must differ from old password"})
-		return
-	}
-	// 新密码强度校验。
-	if msg := validateStrongPassword(body.NewPassword); msg != "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
-		return
-	}
-	// bcrypt 哈希新密码。
-	newHash, err := hashPassword(body.NewPassword)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "password hash failed: " + err.Error()})
-		return
-	}
-	// 落库：写入新哈希并清除 must_change_password 标记。
-	if !s.store.ChangePassword(u.ID, newHash) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
-		return
-	}
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: u.ID, Action: "user_change_password", Target: u.ID, Detail: "username=" + u.Username,
-	})
-	writeJSON(w, http.StatusOK, map[string]string{"message": "password changed"})
-}
+// ============================================================================
+// 鉴权中间件：userFromToken / extractBearer / requirePermission
+// ============================================================================
 
 // userFromToken 从请求的 Authorization: Bearer <token> 提取并验签 JWT，返回对应用户。
 // 用于 /api/v1/auth/me 与用户管理 API 的鉴权。
@@ -850,6 +616,7 @@ var rolePermCache = store.RolePermissions()
 //   - 网关注入 X-User-Roles（角色名）：展开为权限集合后校验（authorizeByRoles）。
 //   - demo 模式且无任何身份头：放行，保持本地一键体验的宽松语义（与 requireTenantContext 一致）。
 //   - 其余：401。
+//
 // 返回 (user, ok)；ok=false 时已写入响应，调用方应直接 return。
 func (s *Server) requireProd(w http.ResponseWriter, r *http.Request, required string) (*store.User, bool) {
 	// 1. 联邦入站：verifyFederationRequest 已验签 HMAC，信任 peer（用户 RBAC 已在来源侧执行）。
@@ -895,435 +662,4 @@ func (s *Server) authorizeByRoles(w http.ResponseWriter, r *http.Request, requir
 	}
 	writeJSON(w, http.StatusForbidden, map[string]string{"error": "permission denied: " + required})
 	return nil, false
-}
-
-// ============================================================================
-// 用户管理 handler：/api/v1/users
-// ============================================================================
-
-// handleUsers 统一处理 /api/v1/users：
-//   - GET：列出全部用户（需 user:read 权限）
-//   - POST：创建用户（需 user:write 权限）
-func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.handleListUsers(w, r)
-	case http.MethodPost:
-		s.handleCreateUser(w, r)
-	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-	}
-}
-
-// handleListUsers 处理 GET /api/v1/users：列出全部用户（需 user:read 权限）。
-func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requirePermission(w, r, "user:read"); !ok {
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"users": s.store.ListUsers()})
-}
-
-// handleCreateUser 处理 POST /api/v1/users：创建用户（需 user:write 权限）。
-// 请求体：{username, password, email?, role_ids?}；密码最短 6 字符，bcrypt 哈希后存库。
-func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
-	caller, ok := s.requirePermission(w, r, "user:write")
-	if !ok {
-		return
-	}
-	var body struct {
-		Username string   `json:"username"`
-		Password string   `json:"password"`
-		Email    string   `json:"email"`
-		RoleIDs  []string `json:"role_ids"`
-	}
-	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
-		return
-	}
-	if body.Username == "" || body.Password == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
-		return
-	}
-	if msg := validateStrongPassword(body.Password); msg != "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
-		return
-	}
-	// P3 角色引用校验：role_ids 若存在须全部指向真实角色，避免写入无效角色引用。
-	for _, rid := range body.RoleIDs {
-		if rid != "" && s.store.GetRole(rid) == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown role id: " + rid})
-			return
-		}
-	}
-	if s.store.GetUserByUsername(body.Username) != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
-		return
-	}
-	hash, err := hashPassword(body.Password)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "password hash failed: " + err.Error()})
-		return
-	}
-	u := &store.User{
-		ID:           randHexID("user"),
-		Username:     body.Username,
-		Email:        body.Email,
-		PasswordHash: hash,
-		Status:       "active",
-		RoleIDs:      body.RoleIDs,
-	}
-	if s.store.CreateUser(u) == nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
-		return
-	}
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "user_create", Target: u.ID, Detail: "username=" + u.Username,
-	})
-	writeJSON(w, http.StatusCreated, u)
-}
-
-// handleUserRouting 分派 /api/v1/users/{id} 子路径：
-//   - PUT /api/v1/users/{id}：更新用户（需 user:write 权限）
-//   - DELETE /api/v1/users/{id}：删除用户（需 user:delete 权限）
-//   - POST /api/v1/users/{id}/approve：审批用户（需 user:approve 权限，P1-7 注册安全）
-//   - POST /api/v1/users/{id}/reject：拒绝用户（需 user:approve 权限，P1-7 注册安全）
-func (s *Server) handleUserRouting(w http.ResponseWriter, r *http.Request) {
-	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/users/")
-	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user id required"})
-		return
-	}
-	// 解析 {id} 或 {id}/approve 或 {id}/reject。
-	id := rest
-	subAction := ""
-	if idx := strings.Index(rest, "/"); idx > 0 {
-		id = rest[:idx]
-		subAction = rest[idx+1:]
-	}
-	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user id required"})
-		return
-	}
-	// 子路径分发（approve/reject）。
-	if subAction != "" {
-		switch subAction {
-		case "approve":
-			s.handleApproveUser(w, r, id)
-			return
-		case "reject":
-			s.handleRejectUser(w, r, id)
-			return
-		default:
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + subAction})
-			return
-		}
-	}
-	// 主路径分发（PUT/DELETE）。
-	switch r.Method {
-	case http.MethodPut:
-		s.handleUpdateUser(w, r, id)
-	case http.MethodDelete:
-		s.handleDeleteUser(w, r, id)
-	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-	}
-}
-
-// handleApproveUser 处理 POST /api/v1/users/{id}/approve：管理员审批用户注册（P1-7 注册安全）。
-// 将用户 Status 从 "pending" 改为 "active"；仅 pending 状态可审批，其他状态返回 409。
-// 鉴权：需 user:approve 权限（admin 角色自动拥有）。
-func (s *Server) handleApproveUser(w http.ResponseWriter, r *http.Request, id string) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-	caller, ok := s.requirePermission(w, r, "user:approve")
-	if !ok {
-		return
-	}
-	existing := s.store.GetUser(id)
-	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
-		return
-	}
-	if existing.Status != "pending" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "user is not pending (current status: " + existing.Status + ")"})
-		return
-	}
-	existing.Status = "active"
-	if !s.store.UpdateUser(existing) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
-		return
-	}
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "user_approve", Target: id, Detail: "approved user " + existing.Username,
-	})
-	writeJSON(w, http.StatusOK, s.store.GetUser(id))
-}
-
-// handleRejectUser 处理 POST /api/v1/users/{id}/reject：管理员拒绝用户注册（P1-7 注册安全）。
-// 将用户 Status 改为 "rejected"；仅 pending 状态可拒绝，其他状态返回 409。
-// 鉴权：需 user:approve 权限（admin 角色自动拥有）。
-// 请求体可选：{reason?: "拒绝原因"}，记录到审计日志。
-func (s *Server) handleRejectUser(w http.ResponseWriter, r *http.Request, id string) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-	caller, ok := s.requirePermission(w, r, "user:approve")
-	if !ok {
-		return
-	}
-	var body struct {
-		Reason string `json:"reason"`
-	}
-	// 请求体可选；解析失败时记录日志（兼容空 body 调用）。
-	if err := decodeJSONBody(w, r, &body); err != nil && err != io.EOF {
-		log.Printf("controlplane: handleApproveUser 解析请求体失败: %v", err)
-	}
-	existing := s.store.GetUser(id)
-	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
-		return
-	}
-	if existing.Status != "pending" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "user is not pending (current status: " + existing.Status + ")"})
-		return
-	}
-	existing.Status = "rejected"
-	if !s.store.UpdateUser(existing) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
-		return
-	}
-	detail := "rejected user " + existing.Username
-	if body.Reason != "" {
-		detail += " reason: " + body.Reason
-	}
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "user_reject", Target: id, Detail: detail,
-	})
-	writeJSON(w, http.StatusOK, s.store.GetUser(id))
-}
-
-// handleUpdateUser 处理 PUT /api/v1/users/{id}：更新用户 email/roles/status（需 user:write 权限）。
-// 请求体：{email?, role_ids?, status?}；仅更新非空字段。
-func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request, id string) {
-	caller, ok := s.requirePermission(w, r, "user:write")
-	if !ok {
-		return
-	}
-	var body struct {
-		Email   string   `json:"email"`
-		RoleIDs []string `json:"role_ids"`
-		Status  string   `json:"status"`
-	}
-	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
-		return
-	}
-	// P2 状态变更需更高权限：仅 user:write 不能激活/禁用账号，须 user:approve（与 P1-7 审批模型一致），
-	// 防止低权限用户自行把 Status 置 active/rejected 绕过审批流。
-	if body.Status != "" {
-		if _, ok := s.requirePermission(w, r, "user:approve"); !ok {
-			return
-		}
-	}
-	existing := s.store.GetUser(id)
-	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
-		return
-	}
-	if body.Email != "" {
-		existing.Email = body.Email
-	}
-	if body.RoleIDs != nil {
-		existing.RoleIDs = body.RoleIDs
-	}
-	if body.Status != "" {
-		existing.Status = body.Status
-	}
-	if !s.store.UpdateUser(existing) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
-		return
-	}
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "user_update", Target: id, Detail: "updated via HTTP",
-	})
-	writeJSON(w, http.StatusOK, s.store.GetUser(id))
-}
-
-// handleDeleteUser 处理 DELETE /api/v1/users/{id}：删除用户（需 user:delete 权限）。
-func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request, id string) {
-	caller, ok := s.requirePermission(w, r, "user:delete")
-	if !ok {
-		return
-	}
-	if s.store.GetUser(id) == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
-		return
-	}
-	if !s.store.DeleteUser(id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
-		return
-	}
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "user_delete", Target: id, Detail: "deleted via HTTP",
-	})
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// ============================================================================
-// 角色管理 handler：/api/v1/roles
-// ============================================================================
-
-// handleRoles 统一处理 /api/v1/roles：
-//   - GET：列出全部角色（需 role:read 权限，但为简化前端展示，登录用户均可查看）
-//   - POST：创建角色（需 role:write 权限）
-func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.handleListRoles(w, r)
-	case http.MethodPost:
-		s.handleCreateRole(w, r)
-	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-	}
-}
-
-// handleListRoles 处理 GET /api/v1/roles：列出全部角色。
-// 鉴权：仅需有效 token（登录用户均可查看角色列表，便于前端角色选择下拉框）。
-func (s *Server) handleListRoles(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.userFromToken(r); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"roles": s.store.ListRoles()})
-}
-
-// handleCreateRole 处理 POST /api/v1/roles：创建角色（需 role:write 权限）。
-// 请求体：{name, description, permissions[]}。
-func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
-	caller, ok := s.requirePermission(w, r, "role:write")
-	if !ok {
-		return
-	}
-	var body struct {
-		Name        string   `json:"name"`
-		Description string   `json:"description"`
-		Permissions []string `json:"permissions"`
-	}
-	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
-		return
-	}
-	if body.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "role name is required"})
-		return
-	}
-	role := &store.Role{
-		ID:          randHexID("role"),
-		Name:        body.Name,
-		Description: body.Description,
-		Permissions: body.Permissions,
-	}
-	if s.store.CreateRole(role) == nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "role name already exists"})
-		return
-	}
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "role_create", Target: role.ID, Detail: "name=" + role.Name,
-	})
-	writeJSON(w, http.StatusCreated, role)
-}
-
-// handleRoleRouting 分派 /api/v1/roles/{id} 子路径：
-//   - PUT /api/v1/roles/{id}：更新角色（需 role:write 权限）
-//   - DELETE /api/v1/roles/{id}：删除角色（需 role:delete 权限）
-func (s *Server) handleRoleRouting(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/api/v1/roles/")
-	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "role id required"})
-		return
-	}
-	switch r.Method {
-	case http.MethodPut:
-		s.handleUpdateRole(w, r, id)
-	case http.MethodDelete:
-		s.handleDeleteRole(w, r, id)
-	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-	}
-}
-
-// handleUpdateRole 处理 PUT /api/v1/roles/{id}：更新角色 description/permissions（需 role:write 权限）。
-func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request, id string) {
-	caller, ok := s.requirePermission(w, r, "role:write")
-	if !ok {
-		return
-	}
-	var body struct {
-		Description string   `json:"description"`
-		Permissions []string `json:"permissions"`
-	}
-	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
-		return
-	}
-	existing := s.store.GetRole(id)
-	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "role not found"})
-		return
-	}
-	if body.Description != "" {
-		existing.Description = body.Description
-	}
-	if body.Permissions != nil {
-		existing.Permissions = body.Permissions
-	}
-	if !s.store.UpdateRole(existing) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "role not found"})
-		return
-	}
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "role_update", Target: id, Detail: "updated via HTTP",
-	})
-	writeJSON(w, http.StatusOK, s.store.GetRole(id))
-}
-
-// handleDeleteRole 处理 DELETE /api/v1/roles/{id}：删除角色（需 role:delete 权限）。
-func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request, id string) {
-	caller, ok := s.requirePermission(w, r, "role:delete")
-	if !ok {
-		return
-	}
-	if s.store.GetRole(id) == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "role not found"})
-		return
-	}
-	if !s.store.DeleteRole(id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "role not found"})
-		return
-	}
-	s.store.Audit(&proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "role_delete", Target: id, Detail: "deleted via HTTP",
-	})
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// ============================================================================
-// 权限查询 handler：/api/v1/permissions
-// ============================================================================
-
-// handlePermissions 处理 GET /api/v1/permissions：返回全部预定义权限。
-// 鉴权：仅需有效 token（登录用户均可查看权限列表，便于前端权限选择）。
-func (s *Server) handlePermissions(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-	if _, err := s.userFromToken(r); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"permissions": s.store.ListPermissions()})
 }

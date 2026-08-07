@@ -3,6 +3,7 @@
 // Loki 是 Grafana 出品的日志聚合系统，使用 LogQL 查询语言。
 // 本适配层仅实现查询接口（Query）：将 OpsMesh Query 翻译为 LogQL，
 // 调用 Loki /loki/api/v1/query_range HTTP API，解析 stream 结果为 Entry 切片。
+// Keyword 翻译为 LogQL regex 管道 |~（对接 Loki 倒排索引实现全文本检索）。
 // Append 为 noop——日志由 agent 通过 promtail / loki-push 直接推送至 Loki，
 // 控制面仅做查询检索（与 Memory/SQL 后端写入语义解耦，避免控制面成为日志写入瓶颈）。
 package logstore
@@ -48,7 +49,7 @@ func (s *LokiStore) Append(_ context.Context, _ *Entry) error { return nil }
 //
 // 翻译规则：
 //   - TenantID/DeviceID/AgentID/Level/Source → LogQL 流标签选择器 {app="opsmesh", tenant_id="t1", ...}
-//   - Keyword → 日志管道 |= "keyword"
+//   - Keyword → 日志管道 |~ "keyword"（LogQL regex 全文检索，对接 Loki 倒排索引）
 //   - From/To → query_range 的 start/end 参数（unix nano）；未指定时回退最近 24h
 //   - Limit → query_range 的 limit（受 maxQueryLimit 约束）
 //   - Offset → 客户端切片（请求 limit+offset 条，丢弃前 offset 条）
@@ -151,8 +152,11 @@ func (s *LokiStore) Query(ctx context.Context, q Query) ([]Entry, error) {
 
 // buildLogQL 翻译 OpsMesh Query 为 LogQL。
 //
-// 例：{app="opsmesh", tenant_id="t1", agent_id="a1", level="error"} |= "boom"
+// 例：{app="opsmesh", tenant_id="t1", agent_id="a1", level="error"} |~ "boom"
 // 标签顺序固定（app 在前），便于测试与缓存命中。
+// Keyword 用 |~（LogQL regex 管道）对接 Loki 倒排索引实现全文本检索，
+// 比 |=（精确子串匹配）更强大：支持正则元字符（如 .*error.*、timeout|refused）。
+// 对纯字面量 keyword，|~ 退化为子串匹配，语义与 |= 一致（向后兼容）。
 func (s *LokiStore) buildLogQL(q Query) string {
 	labels := []string{fmt.Sprintf(`app=%q`, s.labelApp)}
 	if q.TenantID != "" {
@@ -172,7 +176,9 @@ func (s *LokiStore) buildLogQL(q Query) string {
 	}
 	expr := "{" + strings.Join(labels, ", ") + "}"
 	if q.Keyword != "" {
-		expr += fmt.Sprintf(` |= %q`, q.Keyword)
+		// |~ 为 LogQL 正则匹配管道，对接 Loki 倒排索引实现全文本检索。
+		// 用户传入的 keyword 被原样作为正则表达式；纯字面量时退化为子串匹配。
+		expr += fmt.Sprintf(` |~ %q`, q.Keyword)
 	}
 	return expr
 }

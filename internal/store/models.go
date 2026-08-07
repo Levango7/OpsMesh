@@ -14,14 +14,14 @@ import "time"
 // User 用户实体。PasswordHash 为 bcrypt 哈希（绝不存明文）。
 // RoleIDs 为该用户绑定的角色 ID 列表（用户经角色间接获得权限）。
 type User struct {
-	ID                string    `json:"id"`
-	Username          string    `json:"username"`
-	Email             string    `json:"email"`
-	PasswordHash      string    `json:"-"`                // bcrypt 哈希；JSON 序列化时不输出（防泄露）
-	Status            string    `json:"status"`           // "active" | "pending" | "rejected" | "disabled"（P1-7：pending=待管理员审批）
-	RoleIDs           []string  `json:"roleIDs"`
-	CreatedAt         time.Time `json:"createdAt"`
-	MustChangePassword bool     `json:"mustChangePassword"` // 强制改密标记：预置弱口令用户首登须改密（安全债 85）
+	ID                 string    `json:"id"`
+	Username           string    `json:"username"`
+	Email              string    `json:"email"`
+	PasswordHash       string    `json:"-"`      // bcrypt 哈希；JSON 序列化时不输出（防泄露）
+	Status             string    `json:"status"` // "active" | "pending" | "rejected" | "disabled"（P1-7：pending=待管理员审批）
+	RoleIDs            []string  `json:"roleIDs"`
+	CreatedAt          time.Time `json:"createdAt"`
+	MustChangePassword bool      `json:"mustChangePassword"` // 强制改密标记：预置弱口令用户首登须改密（安全债 85）
 	// EffectivePermissions 为角色展开后的有效权限集合（由 /auth/me 计算填充，非持久化字段）。
 	// 供前端侧栏按权限过滤功能入口，与后端 RBAC 闸（requireProd）同源，杜绝定义漂移。
 	EffectivePermissions []string `json:"permissions"`
@@ -64,4 +64,113 @@ type K8sCluster struct {
 	Status     string    `json:"status"`     // online/offline/unknown
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
+// AlertRule 告警规则实体（task 100）：定义基于指标阈值的告警触发条件。
+//
+// 由控制面告警引擎周期评估：对每条 Enabled 的规则，按 Metric 取设备最新指标，
+// 经 Op（> / < / >= / <= / == / !=）与 Threshold 比对，持续 ForDuration 满足
+// 则产出一条 Alert（M7）。规则按租户隔离，删除即从评估清单移除。
+//
+// 字段说明：
+//   - ID：规则唯一标识（CreateAlertRule 时由 store 分配随机 ID）；
+//   - TenantID：所属租户（隔离；空值保存时归一为 default）；
+//   - Metric：指标名（如 "cpu_usage"、"disk_usage"），与 DeviceMetrics 字段对齐；
+//   - Op：比较运算符（> / < / >= / <= / == / !=）；
+//   - Threshold：阈值（指标值经 Op 比对越线即触发）；
+//   - ForDuration：持续满足时长（秒），避免瞬时抖动误报；
+//   - Severity：告警级别（warning / critical），产出 Alert 时写入；
+//   - Message：告警消息模板（产出 Alert.Message）；
+//   - Enabled：是否启用（false 时跳过评估）；
+//   - CreatedAt：创建时间戳。
+type AlertRule struct {
+	ID          string    `json:"id"`
+	TenantID    string    `json:"tenantID"`
+	Metric      string    `json:"metric"`
+	Op          string    `json:"op"`
+	Threshold   float64   `json:"threshold"`
+	ForDuration int       `json:"forDuration"`
+	Severity    string    `json:"severity"`
+	Message     string    `json:"message"`
+	Enabled     bool      `json:"enabled"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
+// OSTemplate OS 安装模板实体（task 100）：裸机/虚拟机自动安装操作系统的模板配置。
+//
+// 用于 B1 自动纳管闭环的「裸机→OS→agent」全自动安装链路：
+//   - 模板定义 OS 类型（centos/ubuntu/...）、安装源（kickstart/preseed URL）、
+//     最小化配置（分区/网络/账户）等；
+//   - Provision 时按设备元信息匹配模板，经 IPMI/PXE 推送安装；
+//   - 模板按租户隔离，敏感字段（如 rootPasswordHash）由 API 层脱敏。
+//
+// 字段说明：
+//   - ID：模板唯一标识（SaveOSTemplate 时由 store 分配随机 ID）；
+//   - TenantID：所属租户（隔离；空值保存时归一为 default）；
+//   - Name：模板展示名（用户输入，如 "centos-7-minimal"）；
+//   - OS：OS 类型（centos/ubuntu/debian/...）；
+//   - Version：OS 版本（如 "7"、"22.04"）；
+//   - Arch：CPU 架构（amd64/arm64）；
+//   - InstallURL：安装源 URL（kickstart/preseed 配置文件 URL）；
+//   - Config：模板配置 JSON（分区/网络/账户等，敏感字段由 API 层脱敏）；
+//   - CreatedAt / UpdatedAt：创建/更新时间戳。
+type OSTemplate struct {
+	ID         string    `json:"id"`
+	TenantID   string    `json:"tenantId"`
+	Name       string    `json:"name"`
+	OS         string    `json:"os"`
+	Version    string    `json:"version"`
+	Arch       string    `json:"arch"`
+	InstallURL string    `json:"installUrl"`
+	Config     string    `json:"config"` // 模板配置 JSON（敏感，API 层负责脱敏）
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
+// MiddlewareTemplate 中间件部署模板实体（task 100）：定义中间件（如 MySQL/Redis/Kafka）
+// 的标准化部署配置模板，供「应用编排→中间件实例化」复用。
+//
+// 字段说明：
+//   - ID：模板唯一标识（SaveMiddlewareTemplate 时由 store 分配随机 ID）；
+//   - TenantID：所属租户（隔离；空值保存时归一为 default）；
+//   - Name：模板展示名（如 "mysql-8.0-single"）；
+//   - Type：中间件类型（mysql/redis/kafka/nginx/...）；
+//   - Version：中间件版本（如 "8.0.35"）；
+//   - Config：部署配置 JSON（端口/内存/副本数/持久化等，敏感字段由 API 层脱敏）；
+//   - CreatedAt / UpdatedAt：创建/更新时间戳。
+type MiddlewareTemplate struct {
+	ID        string    `json:"id"`
+	TenantID  string    `json:"tenantId"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	Version   string    `json:"version"`
+	Config    string    `json:"config"` // 部署配置 JSON（敏感，API 层负责脱敏）
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// RefreshToken 刷新令牌实体（task 111）：用于 access token 过期后的无感续期。
+//
+// 安全设计（与 install_tokens 同范式）：
+//   - TokenHash 为 refresh token 的 SHA-256 摘要（hex），库存/内存只存摘要，
+//     不存明文 token——DB 只读账号/备份泄露不等于活体 refresh token 泄露（P1-F7）；
+//   - DeviceFP 为设备指纹（User-Agent + IP 段等），用于校验 refresh token 仅在
+//     原签发设备上使用，防 token 跨设备重放；
+//   - ExpiresAt 为 refresh token 过期时间（通常远长于 access token，如 7d）；
+//   - CreatedAt 为签发时间戳。
+//
+// 字段说明：
+//   - TokenHash：token 的 SHA-256 摘要（主键；JSON 序列化时不输出，防泄露）；
+//   - UserID：所属用户 ID（登录态归属）；
+//   - TenantID：所属租户（隔离；空值保存时归一为 default）；
+//   - DeviceFP：签发设备指纹（防跨设备重放；空串表示不校验设备）；
+//   - ExpiresAt：过期时间戳；
+//   - CreatedAt：签发时间戳。
+type RefreshToken struct {
+	TokenHash string    `json:"-"` // SHA-256 摘要（主键；不序列化，防泄露）
+	UserID    string    `json:"userId"`
+	TenantID  string    `json:"tenantId"`
+	DeviceFP  string    `json:"deviceFp"` // 设备指纹（防跨设备重放；空=不校验）
+	ExpiresAt time.Time `json:"expiresAt"`
+	CreatedAt time.Time `json:"createdAt"`
 }

@@ -30,6 +30,15 @@ jobs:
       - name: Test (unit, memory store, -race + coverage)
         # -race 启用竞态检测（H11）；-coverprofile 产出覆盖率（H12）；-timeout 120s 防单测挂死（问题8）。
         run: go test -race -timeout 120s -coverprofile=coverage.out ./...
+      - name: 覆盖率门禁（整体 ≥40%，task 108）
+        # task 108：整体覆盖率门禁。从 coverage.out 提取 total 行百分比，低于 40% 则 CI 失败。
+        # awk 做浮点比较避免依赖 bc；gsub 去掉 % 号。
+        run: |
+          go tool cover -func=coverage.out > coverage.func.txt
+          total=$(awk '/^total:/ {gsub("%","",$NF); print $NF}' coverage.func.txt)
+          echo "整体覆盖率: ${total}%"
+          awk -v t="$total" -v th=40 'BEGIN { if (t+0 < th) { printf "ERROR: 整体覆盖率 %.2f%% < %d%%\n", t, th; exit 1 } else { printf "OK: 整体覆盖率 %.2f%% >= %d%%\n", t, th } }'
+
       - name: 上传覆盖率到 Codecov (H12)
         uses: codecov/codecov-action@v4
         with:
@@ -75,8 +84,18 @@ jobs:
         run: until (echo > /dev/tcp/127.0.0.1/3306) 2>/dev/null; do sleep 2; done
       - name: Wait for Redis
         run: until (echo > /dev/tcp/127.0.0.1/6379) 2>/dev/null; do sleep 2; done
-      - name: Run SQL/Redis store integration tests
-        run: go test -race -timeout 300s -v ./internal/store/...
+      - name: Run SQL/Redis store integration tests (含覆盖率，task 108)
+        # task 108：加 -coverprofile 产出 store 包覆盖率，供后续 ≥60% 门禁消费。
+        # 真实 mysql+redis 后端下 SQL store 用例全跑，store 包覆盖率比 build-test（仅 memory，32.9%）显著更高。
+        run: go test -race -timeout 300s -v -coverprofile=store.cover.out ./internal/store/...
+      - name: 覆盖率门禁（store 包 ≥60%，task 108）
+        # task 108：store 包覆盖率门禁。从 store.cover.out 提取 total 行百分比，低于 60% 则 CI 失败。
+        # 放 integration job（有真实后端）而非 build-test：store 包完整覆盖依赖 SQL+redis，build-test 无 DSN 仅 32.9%。
+        # awk 做浮点比较避免依赖 bc；gsub 去掉 % 号。
+        run: |
+          store_total=$(go tool cover -func=store.cover.out | awk '/^total:/ {gsub("%","",$NF); print $NF}')
+          echo "store 包覆盖率: ${store_total}%"
+          awk -v t="$store_total" -v th=60 'BEGIN { if (t+0 < th) { printf "ERROR: store 包覆盖率 %.2f%% < %d%%\n", t, th; exit 1 } else { printf "OK: store 包覆盖率 %.2f%% >= %d%%\n", t, th } }'
 
   security:
     runs-on: ubuntu-latest
@@ -194,3 +213,25 @@ jobs:
           fi
           git add charts/opsmesh-controlplane/values.yaml
           git commit -m "ci: pin opsmesh-binary to ${TAG}" && git push
+
+  # Release：推送 v* tag 时触发 goreleaser 跨平台发布（linux/amd64+arm64）。
+  # 产物：tar.gz 归档 + sha256 checksums + SBOM（配置见 .goreleaser.yml）。
+  # 仅在 build-test/integration/security 全绿后执行，避免发布未验证产物。
+  # fetch-depth: 0 取全量历史，goreleaser 据此生成 changelog。
+  release:
+    needs: [build-test, integration, security]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
