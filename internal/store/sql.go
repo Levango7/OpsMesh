@@ -539,4 +539,3 @@ func (s *SQLStore) IsLeader() bool {
 }
 
 // CancelledTaskIDs 返回该 agent 当前 cancelled 状态的任务 ID（F3 取消信号下发用）。
-

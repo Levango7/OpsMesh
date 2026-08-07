@@ -59,9 +59,9 @@ test_*.html
 screenshots/
 opsmesh.exe~
 
-# 测试/构建产物
-coverage
-coverage/
-tmp/
-store
+# 测试/构建产物（仅根目录）
+/coverage
+/coverage/
+/tmp/
+/store
 

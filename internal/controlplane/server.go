@@ -841,7 +841,6 @@ func (s *Server) verifyFederationRequest(r *http.Request) error {
 	return nil
 }
 
-
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -989,7 +988,6 @@ func (s *Server) autoProvisionLoop(ctx context.Context) {
 		}
 	}
 }
-
 
 // writeJSON 统一写出 JSON 响应。
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
@@ -1222,4 +1220,3 @@ func isPrivateIP(ip net.IP) bool {
 	}
 	return false
 }
-
