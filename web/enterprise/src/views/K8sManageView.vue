@@ -21,7 +21,7 @@
             :columns="clusterCols"
             :rows="store.clusters"
             row-key="id"
-            empty-text="暂无集群"
+            :empty-text="$t('k8s.noClusters')"
           >
             <template #cell-name="{ row }"><b>{{ row.name }}</b><br><code>{{ row.id }}</code></template>
             <template #cell-server="{ value }"><code>{{ value || '-' }}</code></template>
@@ -84,7 +84,7 @@
             :columns="resourceCols"
             :rows="store.resources"
             :row-key="resourceRowKey"
-            empty-text="暂无资源"
+            :empty-text="$t('k8s.noResources')"
           >
             <template #cell-name="{ value }"><code>{{ value }}</code></template>
             <template #cell-status="{ value }">
@@ -182,7 +182,7 @@
         </header>
         <div class="modal-body">
           <p class="muted">{{ $t('k8s.scaleHint') }}</p>
-          <p>当前副本数: {{ scaleTarget?.replicas || 0 }} ｜ 可用: {{ scaleTarget?.availableReplicas || 0 }}</p>
+          <p>{{ $t('k8s.scaleCurrent', { replicas: scaleTarget?.replicas || 0, available: scaleTarget?.availableReplicas || 0 }) }}</p>
           <div class="field">
             <label>{{ $t('k8s.targetReplicas') }}</label>
             <input v-model.number="scaleReplicas" type="number" min="0" />
@@ -202,6 +202,7 @@
 // K8s 管理 — 集群 CRUD + 测试连接 + 资源管理（Pod/Deployment/Service/ConfigMap/Secret/Node）
 import { computed, onMounted, ref } from 'vue'
 import { useK8sStore } from '@/stores/k8s'
+import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
@@ -210,13 +211,13 @@ const store = useK8sStore()
 
 const resourceTypes = ['pods', 'deployments', 'services', 'configmaps', 'secrets', 'nodes']
 
-const clusterCols = [
-  { key: 'name', title: '集群', slot: 'cell-name' },
-  { key: 'server', title: 'API Server', slot: 'cell-server' },
-  { key: 'status', title: '状态', slot: 'cell-status' },
-  { key: 'createdAt', title: '创建时间', slot: 'cell-createdAt' },
-  { key: 'actions', title: '操作', slot: 'cell-actions', width: '220px' }
-]
+const clusterCols = computed(() => [
+  { key: 'name', title: t('k8s.col.cluster'), slot: 'cell-name' },
+  { key: 'server', title: t('k8s.col.server'), slot: 'cell-server' },
+  { key: 'status', title: t('k8s.col.status'), slot: 'cell-status' },
+  { key: 'createdAt', title: t('k8s.col.createdAt'), slot: 'cell-createdAt' },
+  { key: 'actions', title: t('k8s.col.action'), slot: 'cell-actions', width: '220px' }
+])
 
 // 按资源类型动态切换列定义
 const resourceCols = computed(() => {
@@ -224,55 +225,55 @@ const resourceCols = computed(() => {
     case 'pods':
       return [
         { key: 'name', title: 'Pod', slot: 'cell-name' },
-        { key: 'namespace', title: 'NS' },
-        { key: 'status', title: '状态', slot: 'cell-status' },
-        { key: 'podIP', title: 'Pod IP' },
-        { key: 'nodeIP', title: 'Node IP' },
-        { key: 'restarts', title: '重启' },
-        { key: 'age', title: 'Age' },
-        { key: 'actions', title: '操作', slot: 'cell-actions', width: '160px' }
+        { key: 'namespace', title: t('k8s.col.namespace') },
+        { key: 'status', title: t('k8s.col.status'), slot: 'cell-status' },
+        { key: 'podIP', title: t('k8s.col.podIP') },
+        { key: 'nodeIP', title: t('k8s.col.nodeIP') },
+        { key: 'restarts', title: t('k8s.col.restarts') },
+        { key: 'age', title: t('k8s.col.age') },
+        { key: 'actions', title: t('k8s.col.action'), slot: 'cell-actions', width: '160px' }
       ]
     case 'deployments':
       return [
         { key: 'name', title: 'Deployment', slot: 'cell-name' },
-        { key: 'namespace', title: 'NS' },
-        { key: 'replicas', title: '副本' },
-        { key: 'availableReplicas', title: '可用' },
-        { key: 'image', title: '镜像', slot: 'cell-image' },
-        { key: 'actions', title: '操作', slot: 'cell-actions', width: '140px' }
+        { key: 'namespace', title: t('k8s.col.namespace') },
+        { key: 'replicas', title: t('k8s.col.replicas') },
+        { key: 'availableReplicas', title: t('k8s.col.available') },
+        { key: 'image', title: t('k8s.col.image'), slot: 'cell-image' },
+        { key: 'actions', title: t('k8s.col.action'), slot: 'cell-actions', width: '140px' }
       ]
     case 'services':
       return [
         { key: 'name', title: 'Service', slot: 'cell-name' },
-        { key: 'namespace', title: 'NS' },
-        { key: 'type', title: '类型' },
-        { key: 'clusterIP', title: 'Cluster IP', slot: 'cell-clusterIP' },
-        { key: 'externalIP', title: 'External IP', slot: 'cell-externalIP' },
-        { key: 'ports', title: '端口', slot: 'cell-ports' }
+        { key: 'namespace', title: t('k8s.col.namespace') },
+        { key: 'type', title: t('k8s.col.type') },
+        { key: 'clusterIP', title: t('k8s.col.clusterIP'), slot: 'cell-clusterIP' },
+        { key: 'externalIP', title: t('k8s.col.externalIP'), slot: 'cell-externalIP' },
+        { key: 'ports', title: t('k8s.col.ports'), slot: 'cell-ports' }
       ]
     case 'configmaps':
       return [
         { key: 'name', title: 'ConfigMap', slot: 'cell-name' },
-        { key: 'namespace', title: 'NS' },
-        { key: 'dataKeys', title: '数据键', slot: 'cell-dataKeys' }
+        { key: 'namespace', title: t('k8s.col.namespace') },
+        { key: 'dataKeys', title: t('k8s.col.dataKeys'), slot: 'cell-dataKeys' }
       ]
     case 'secrets':
       return [
         { key: 'name', title: 'Secret', slot: 'cell-name' },
-        { key: 'namespace', title: 'NS' },
-        { key: 'type', title: '类型' },
-        { key: 'dataKeys', title: '数据键', slot: 'cell-dataKeys' }
+        { key: 'namespace', title: t('k8s.col.namespace') },
+        { key: 'type', title: t('k8s.col.type') },
+        { key: 'dataKeys', title: t('k8s.col.dataKeys'), slot: 'cell-dataKeys' }
       ]
     case 'nodes':
       return [
         { key: 'name', title: 'Node', slot: 'cell-name' },
-        { key: 'status', title: '状态', slot: 'cell-status' },
-        { key: 'roles', title: '角色', slot: 'cell-roles' },
-        { key: 'version', title: '版本' },
-        { key: 'internalIP', title: '内部 IP' },
-        { key: 'externalIP', title: '外部 IP' },
-        { key: 'cpu', title: 'CPU' },
-        { key: 'memory', title: '内存' }
+        { key: 'status', title: t('k8s.col.status'), slot: 'cell-status' },
+        { key: 'roles', title: t('k8s.col.roles'), slot: 'cell-roles' },
+        { key: 'version', title: t('k8s.col.version') },
+        { key: 'internalIP', title: t('k8s.col.internalIP') },
+        { key: 'externalIP', title: t('k8s.col.externalIPNode') },
+        { key: 'cpu', title: t('k8s.col.cpu') },
+        { key: 'memory', title: t('k8s.col.memory') }
       ]
     default:
       return []
@@ -292,8 +293,8 @@ function clusterStatus(s) {
   return 'info'
 }
 function clusterStatusText(s) {
-  if (s === 'online') return '在线'
-  if (s === 'offline') return '离线'
+  if (s === 'online') return t('k8s.online')
+  if (s === 'offline') return t('k8s.offline')
   return s || '-'
 }
 function podStatus(s) {
@@ -332,21 +333,21 @@ function openAddCluster() {
 
 async function confirmAdd() {
   if (!addForm.value.name || !addForm.value.server || !addForm.value.kubeconfig) {
-    addMsg.value = '请填写完整：名称 / API Server / Kubeconfig'; addOk.value = false; return
+    addMsg.value = t('k8s.addFormIncomplete'); addOk.value = false; return
   }
   adding.value = true
-  addMsg.value = '提交中…'; addOk.value = true
+  addMsg.value = t('k8s.submitting'); addOk.value = true
   try {
     const r = await store.createCluster(addForm.value.name, addForm.value.server, addForm.value.kubeconfig)
     if (r.s >= 200 && r.s < 300 && r.j) {
-      addMsg.value = '集群添加成功'; addOk.value = true
+      addMsg.value = t('k8s.addClusterSuccess'); addOk.value = true
       await store.fetchClusters()
       setTimeout(() => { addOpen.value = false }, 1200)
     } else {
-      addMsg.value = '集群添加失败: [' + (r.s || '?') + '] ' + (r.j?.error || r.j?.message || ''); addOk.value = false
+      addMsg.value = t('k8s.addFailHttp', { code: (r.s || '?'), msg: (r.j?.error || r.j?.message || '') }); addOk.value = false
     }
   } catch (e) {
-    addMsg.value = '集群添加失败: ' + (e.j?.error || e.message || e); addOk.value = false
+    addMsg.value = t('k8s.addFailError', { msg: (e.j?.error || e.message || e) }); addOk.value = false
   } finally {
     adding.value = false
   }
@@ -354,7 +355,7 @@ async function confirmAdd() {
 
 // ---- 删除集群 ----
 async function onDelete(id) {
-  if (!confirm('确认删除此集群？仅移除本系统中的注册，不会影响实际集群。')) return
+  if (!confirm(t('k8s.deleteClusterConfirm'))) return
   try {
     const r = await store.removeCluster(id)
     if (r.s === 204 || (r.s >= 200 && r.s < 300)) {
@@ -364,10 +365,10 @@ async function onDelete(id) {
         store.resources = []
       }
     } else {
-      alert('删除失败: HTTP ' + r.s)
+      alert(t('k8s.deleteFailHttp', { code: r.s }))
     }
   } catch (e) {
-    alert('删除失败: ' + (e.j?.error || e.message || e))
+    alert(t('k8s.deleteFailError', { msg: (e.j?.error || e.message || e) }))
   }
 }
 
@@ -377,12 +378,12 @@ async function onTest(id) {
     const r = await store.testCluster(id)
     if (r.s >= 200 && r.s < 300 && r.j) {
       const ok = r.j.status === 'ok' || r.j.status === 'online' || r.j.status === 'success'
-      alert((ok ? '连接成功' : '连接失败') + (r.j.message ? '\n' + r.j.message : ''))
+      alert((ok ? t('k8s.testSuccess') : t('k8s.testFail')) + (r.j.message ? '\n' + r.j.message : ''))
     } else {
-      alert('连接失败: HTTP ' + r.s)
+      alert(t('k8s.testFailHttp', { code: r.s }))
     }
   } catch (e) {
-    alert('连接失败: ' + (e.j?.error || e.message || e))
+    alert(t('k8s.testFailError', { msg: (e.j?.error || e.message || e) }))
   }
 }
 
@@ -396,7 +397,7 @@ async function onViewLogs(row) {
   logsTarget.value = row
   logsOpen.value = true
   logsForm.value = { tailLines: 100, container: '' }
-  logsContent.value = '加载中…'
+  logsContent.value = t('k8s.logsLoading')
   await fetchLogs()
 }
 
@@ -412,22 +413,22 @@ async function fetchLogs() {
     )
     logsContent.value = (data && data.logs) || data || '—'
   } catch (e) {
-    logsContent.value = '日志拉取失败: ' + (e.j?.error || e.message || e)
+    logsContent.value = t('k8s.logsFetchFail', { msg: (e.j?.error || e.message || e) })
   }
 }
 
 // ---- 删除 Pod ----
 async function onDeletePod(row) {
-  if (!confirm('确认删除此 Pod？删除后将由控制器自动重建。')) return
+  if (!confirm(t('k8s.deletePodConfirm'))) return
   try {
     const r = await store.removePod(store.currentClusterID, row.namespace, row.name)
     if (r.s === 204 || (r.s >= 200 && r.s < 300)) {
       store.fetchResources()
     } else {
-      alert('删除失败: HTTP ' + r.s)
+      alert(t('k8s.deleteFailHttp', { code: r.s }))
     }
   } catch (e) {
-    alert('删除失败: ' + (e.j?.error || e.message || e))
+    alert(t('k8s.deleteFailError', { msg: (e.j?.error || e.message || e) }))
   }
 }
 
@@ -449,10 +450,10 @@ function onScale(row) {
 async function confirmScale() {
   if (!scaleTarget.value) return
   if (!Number.isInteger(scaleReplicas.value) || scaleReplicas.value < 0) {
-    scaleMsg.value = '副本数必须为非负整数'; scaleOk.value = false; return
+    scaleMsg.value = t('k8s.scaleReplicasInvalid'); scaleOk.value = false; return
   }
   scaling.value = true
-  scaleMsg.value = '提交中…'; scaleOk.value = true
+  scaleMsg.value = t('k8s.submitting'); scaleOk.value = true
   try {
     const r = await store.scaleDeployment(
       store.currentClusterID,
@@ -461,15 +462,15 @@ async function confirmScale() {
       scaleReplicas.value
     )
     if (r.s >= 200 && r.s < 300 && r.j) {
-      scaleMsg.value = '扩缩容成功: ' + (r.j.name || '') + ' → ' + (r.j.replicas != null ? r.j.replicas : scaleReplicas.value)
+      scaleMsg.value = t('k8s.scaleSuccess', { name: (r.j.name || ''), replicas: (r.j.replicas != null ? r.j.replicas : scaleReplicas.value) })
       scaleOk.value = true
       store.fetchResources()
       setTimeout(() => { scaleOpen.value = false }, 1200)
     } else {
-      scaleMsg.value = '扩缩容失败: [' + (r.s || '?') + '] ' + (r.j?.error || r.j?.message || ''); scaleOk.value = false
+      scaleMsg.value = t('k8s.scaleFailHttp', { code: (r.s || '?'), msg: (r.j?.error || r.j?.message || '') }); scaleOk.value = false
     }
   } catch (e) {
-    scaleMsg.value = '扩缩容失败: ' + (e.j?.error || e.message || e); scaleOk.value = false
+    scaleMsg.value = t('k8s.scaleFailError', { msg: (e.j?.error || e.message || e) }); scaleOk.value = false
   } finally {
     scaling.value = false
   }
@@ -477,17 +478,17 @@ async function confirmScale() {
 
 // ---- 重启 Deployment ----
 async function onRestart(row) {
-  if (!confirm('确认重启此 Deployment？将通过滚动更新触发 Pod 重建。')) return
+  if (!confirm(t('k8s.restartConfirm'))) return
   try {
     const r = await store.restartDeployment(store.currentClusterID, row.namespace, row.name)
     if (r.s >= 200 && r.s < 300 && r.j) {
-      alert('重启已触发: ' + (r.j.restartedAt || ''))
+      alert(t('k8s.restartTriggered', { msg: (r.j.restartedAt || '') }))
       store.fetchResources()
     } else {
-      alert('重启失败: HTTP ' + r.s)
+      alert(t('k8s.restartFailHttp', { code: r.s }))
     }
   } catch (e) {
-    alert('重启失败: ' + (e.j?.error || e.message || e))
+    alert(t('k8s.restartFailError', { msg: (e.j?.error || e.message || e) }))
   }
 }
 

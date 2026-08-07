@@ -17,11 +17,18 @@ import (
 )
 
 func main() {
+	os.Exit(runMain())
+}
+
+// runMain 是 main 的可测试核心：返回进程退出码而非直接 os.Exit，
+// 便于单测在主测试进程内安全驱动 --version / --health 等短路分支并断言返回码。
+// controlplane/agent 分支会阻塞（启动服务器/agent 主循环），仅由真实二进制入口调用。
+func runMain() int {
 	// --version 必须在 config.Load 之前短路，否则 flag.Parse 会因未知 flag 退出。
 	for _, a := range os.Args[1:] {
 		if a == "--version" || a == "-version" {
-			fmt.Printf("opsmesh %s (commit=%s date=%s)\n", version.Version, version.Commit, version.Date)
-			return
+			fmt.Print(versionString())
+			return 0
 		}
 	}
 
@@ -30,7 +37,7 @@ func main() {
 	// 退出码：HTTP 200 → 0（健康），否则 → 1（不健康/不可达）。
 	for _, a := range os.Args[1:] {
 		if a == "--health" || a == "-health" {
-			os.Exit(runHealth())
+			return runHealth()
 		}
 	}
 
@@ -39,7 +46,7 @@ func main() {
 	// 启动期配置校验：明显非法配置立即失败，而非运行期诡异出错（P0-3 健壮性）。
 	if err := cfg.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "[config] 校验失败: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	switch cfg.Mode {
@@ -48,19 +55,26 @@ func main() {
 		srv := controlplane.NewServer(cfg)
 		if err := srv.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "[controlplane] 启动失败: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "agent":
 		// U-05 agent 模式：向控制面注册并托管本段网络内的自动化任务。
 		ag := agent.New(cfg)
 		if err := ag.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "[agent] 启动失败: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "未知 --mode=%q（应为 controlplane 或 agent）\n", cfg.Mode)
-		os.Exit(1)
+		return 1
 	}
+	return 0
+}
+
+// versionString 返回 --version 子命令的标准输出（单行）。
+// 提取为独立函数便于单测精确断言输出格式，避免依赖 stdout 捕获。
+func versionString() string {
+	return fmt.Sprintf("opsmesh %s (commit=%s date=%s)\n", version.Version, version.Commit, version.Date)
 }
 
 // runHealth 实现 --health 子命令：对 localhost:{httpPort}/healthz 发 GET，

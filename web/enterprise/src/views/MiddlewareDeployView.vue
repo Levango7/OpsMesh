@@ -27,7 +27,7 @@
             :columns="tplColumns"
             :rows="store.templates"
             row-key="id"
-            empty-text="暂无模板"
+            :empty-text="$t('mwdep.noTemplates')"
           >
             <template #cell-id="{ value }"><code>{{ value }}</code></template>
             <template #cell-category="{ value }">
@@ -64,7 +64,7 @@
             :columns="insColumns"
             :rows="store.instances"
             row-key="id"
-            empty-text="暂无已部署实例"
+            :empty-text="$t('mwdep.noInstances')"
           >
             <template #cell-id="{ value }"><code>{{ value }}</code></template>
             <template #cell-deployType="{ value }">
@@ -107,7 +107,7 @@
         <p>{{ tpl.description || '—' }}</p>
         <div v-if="tpl.params && tpl.params.length" class="params-section">
           <h4>{{ $t('mwdep.detailParams') }}</h4>
-          <DataTable :columns="paramCols" :rows="tpl.params" row-key="name" empty-text="无参数">
+          <DataTable :columns="paramCols" :rows="tpl.params" row-key="name" :empty-text="$t('mwdep.noParams')">
             <template #cell-name="{ value }"><code>{{ value }}</code></template>
             <template #cell-required="{ value }">
               <StatusBadge v-if="value" status="failed" :text="$t('mwdep.param.required')" />
@@ -191,7 +191,7 @@
         </header>
         <div class="modal-body">
           <p class="muted">{{ $t('mwdep.uninstallHint') }}</p>
-          <p>实例 ID: <code>{{ uninstallTarget?.id }}</code></p>
+          <p>{{ $t('mwdep.instanceIdLabel') }} <code>{{ uninstallTarget?.id }}</code></p>
           <div class="btnbar">
             <button class="danger" @click="confirmUninstall" :disabled="uninstalling">{{ $t('mwdep.uninstallConfirmBtn') }}</button>
             <button class="outline" @click="uninstallOpen = false">{{ $t('mwdep.uninstallCancel') }}</button>
@@ -213,6 +213,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useMiddlewareStore } from '@/stores/middleware'
 import { getMiddlewareTemplate } from '@/api/middleware'
 import { getTaskDetail } from '@/api/task'
+import { t, currentLang } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
@@ -223,24 +224,24 @@ const store = useMiddlewareStore()
 // 分类列表（与个人版对齐）
 const categories = ['all', 'database', 'cache', 'message', 'web', 'search', 'storage', 'service', 'monitor']
 
-const tplColumns = [
+const tplColumns = computed(() => [
   { key: 'id', title: 'ID', slot: 'cell-id' },
-  { key: 'name', title: '名称' },
-  { key: 'category', title: '分类', slot: 'cell-category' },
-  { key: 'version', title: '版本' },
-  { key: 'deployTypes', title: '部署方式', slot: 'cell-deployTypes' },
-  { key: 'risk', title: '风险', slot: 'cell-risk' },
-  { key: 'actions', title: '操作', slot: 'cell-actions', width: '160px' }
-]
-const insColumns = [
-  { key: 'id', title: '实例 ID', slot: 'cell-id' },
-  { key: 'templateID', title: '模板' },
-  { key: 'agentID', title: '设备' },
-  { key: 'deployType', title: '部署方式', slot: 'cell-deployType' },
-  { key: 'status', title: '状态', slot: 'cell-status' },
-  { key: 'createdAt', title: '创建时间', slot: 'cell-createdAt' },
-  { key: 'actions', title: '操作', slot: 'cell-actions', width: '90px' }
-]
+  { key: 'name', title: t('mwdep.col.name') },
+  { key: 'category', title: t('mwdep.col.category'), slot: 'cell-category' },
+  { key: 'version', title: t('mwdep.col.version') },
+  { key: 'deployTypes', title: t('mwdep.col.deployTypes'), slot: 'cell-deployTypes' },
+  { key: 'risk', title: t('mwdep.col.risk'), slot: 'cell-risk' },
+  { key: 'actions', title: t('mwdep.col.action'), slot: 'cell-actions', width: '160px' }
+])
+const insColumns = computed(() => [
+  { key: 'id', title: t('mwdep.instance.col.id'), slot: 'cell-id' },
+  { key: 'templateID', title: t('mwdep.instance.col.template') },
+  { key: 'agentID', title: t('mwdep.instance.col.agent') },
+  { key: 'deployType', title: t('mwdep.instance.col.deployType'), slot: 'cell-deployType' },
+  { key: 'status', title: t('mwdep.instance.col.status'), slot: 'cell-status' },
+  { key: 'createdAt', title: t('mwdep.instance.col.createdAt'), slot: 'cell-createdAt' },
+  { key: 'actions', title: t('mwdep.instance.col.action'), slot: 'cell-actions', width: '90px' }
+])
 const paramCols = [
   { key: 'name', title: 'Name', slot: 'cell-name' },
   { key: 'type', title: 'Type' },
@@ -269,7 +270,7 @@ function canUninstall(s) {
 function fmtTime(s) {
   if (!s) return ''
   const d = new Date(s)
-  return isNaN(d.getTime()) ? s : d.toLocaleString('zh-CN', { hour12: false })
+  return isNaN(d.getTime()) ? s : d.toLocaleString(currentLang.value === 'en' ? 'en-US' : 'zh-CN', { hour12: false })
 }
 
 function onView(id) { store.fetchDetail(id) }
@@ -313,46 +314,46 @@ function closeDeploy() {
 
 async function confirmDeploy() {
   if (!deployTpl.value || !deployTpl.value.id) {
-    deployMsg.value = '部署失败: no template'; deployOk.value = false; return
+    deployMsg.value = t('mwdep.deployFailNoTemplate'); deployOk.value = false; return
   }
   if (!deployForm.value.deployType) {
-    deployMsg.value = '请先选择部署方式'; deployOk.value = false; return
+    deployMsg.value = t('mwdep.noDeployType'); deployOk.value = false; return
   }
   if (!deployForm.value.agentID) {
-    deployMsg.value = '请先选择目标设备'; deployOk.value = false; return
+    deployMsg.value = t('mwdep.noAgent'); deployOk.value = false; return
   }
   // 校验参数
   const params = {}
   for (const p of (deployTpl.value.params || [])) {
     const v = deployForm.value.params[p.name]
     if (p.required && (v == null || v === '')) {
-      deployMsg.value = '参数校验失败：' + p.name + ' 必填'; deployOk.value = false; return
+      deployMsg.value = t('mwdep.paramRequired', { name: p.name }); deployOk.value = false; return
     }
     if (v != null && v !== '' && /port/i.test(p.name)) {
       const n = Number(v)
       if (!Number.isInteger(n) || n < 1 || n > 65535) {
-        deployMsg.value = '参数校验失败：' + p.name + ' 端口必须是 1-65535 的整数'; deployOk.value = false; return
+        deployMsg.value = t('mwdep.paramPortInvalid', { name: p.name }); deployOk.value = false; return
       }
     }
     params[p.name] = v != null ? v : ''
   }
 
   deploying.value = true
-  deployMsg.value = '提交中…'; deployOk.value = true
+  deployMsg.value = t('mwdep.submitting'); deployOk.value = true
   deployLog.value = ''
   try {
     const r = await store.deploy(deployTpl.value.id, deployForm.value.agentID, deployForm.value.deployType, params)
     if (r.s < 400 && r.j) {
       const taskId = r.j.taskID || r.j.id || r.j.taskId || ''
-      deployMsg.value = '部署任务已创建，ID: ' + (taskId || JSON.stringify(r.j))
+      deployMsg.value = t('mwdep.deployTaskCreated', { id: (taskId || JSON.stringify(r.j)) })
       deployOk.value = true
       if (taskId) startDeployPoll(taskId)
     } else {
-      deployMsg.value = '部署失败: [' + (r.s || '?') + '] ' + (r.j ? JSON.stringify(r.j) : '')
+      deployMsg.value = t('mwdep.deployFailHttp', { code: (r.s || '?'), msg: (r.j ? JSON.stringify(r.j) : '') })
       deployOk.value = false
     }
   } catch (e) {
-    deployMsg.value = '部署失败: ' + (e.j?.error || e.message || e)
+    deployMsg.value = t('mwdep.deployFailError', { msg: (e.j?.error || e.message || e) })
     deployOk.value = false
   } finally {
     deploying.value = false
@@ -363,32 +364,32 @@ function startDeployPoll(taskId) {
   if (deployTimer) clearInterval(deployTimer)
   let count = 0
   const max = 40
-  deployLog.value = '轮询中…\n'
+  deployLog.value = t('mwdep.pollingStart')
   deployTimer = setInterval(async () => {
     count++
     try {
       const task = await getTaskDetail(taskId)
       const st = task?.status || ''
       const output = String(task?.output || '')
-      const label = { pending: '等待中', running: '执行中', completed: '已完成', failed: '失败' }[st] || st
+      const label = t('mwdep.taskStatus.' + st) || st
       deployLog.value = '⏳ [' + label + ']\n' + output
       if (st === 'completed' || st === 'failed' || count >= max) {
         clearInterval(deployTimer); deployTimer = null
         if (st === 'completed') {
-          deployLog.value += '\n✓ 部署成功'
-          deployMsg.value = '部署成功 (task: ' + taskId + ')'; deployOk.value = true
+          deployLog.value += '\n' + t('mwdep.deploySuccessLog')
+          deployMsg.value = t('mwdep.deploySuccessTask', { id: taskId }); deployOk.value = true
           store.fetchInstances()
         } else if (st === 'failed') {
-          deployLog.value += '\n✗ 部署失败'
-          deployMsg.value = '部署失败 (task: ' + taskId + ')'; deployOk.value = false
+          deployLog.value += '\n' + t('mwdep.deployFailLog')
+          deployMsg.value = t('mwdep.deployFailTask', { id: taskId }); deployOk.value = false
         } else {
-          deployLog.value += '\n⚠ 轮询超时'
+          deployLog.value += '\n' + t('mwdep.pollTimeout')
         }
       }
     } catch (e) {
       if (count >= max) {
         clearInterval(deployTimer); deployTimer = null
-        deployLog.value += '\n⚠ 轮询超时'
+        deployLog.value += '\n' + t('mwdep.pollTimeout')
       }
     }
   }, 3000)
@@ -415,21 +416,21 @@ async function confirmUninstall() {
   const ins = uninstallTarget.value
   if (!ins || !ins.id) return
   uninstalling.value = true
-  uninstallMsg.value = '卸载中…'; uninstallOk.value = true
+  uninstallMsg.value = t('mwdep.uninstalling'); uninstallOk.value = true
   uninstallLog.value = ''
   try {
     const r = await store.uninstall(ins.id, ins.agentID || ins.agentId, ins.deployType || ins.deploy_type)
     if (r.s < 400 && r.j) {
       const taskId = r.j.taskID || r.j.id || r.j.taskId || ''
-      uninstallMsg.value = '卸载任务已创建，ID: ' + (taskId || JSON.stringify(r.j))
+      uninstallMsg.value = t('mwdep.uninstallTaskCreated', { id: (taskId || JSON.stringify(r.j)) })
       uninstallOk.value = true
       if (taskId) startUninstallPoll(taskId)
     } else {
-      uninstallMsg.value = '卸载失败: [' + (r.s || '?') + '] ' + (r.j ? JSON.stringify(r.j) : '')
+      uninstallMsg.value = t('mwdep.uninstallFailHttp', { code: (r.s || '?'), msg: (r.j ? JSON.stringify(r.j) : '') })
       uninstallOk.value = false
     }
   } catch (e) {
-    uninstallMsg.value = '卸载失败: ' + (e.j?.error || e.message || e)
+    uninstallMsg.value = t('mwdep.uninstallFailError', { msg: (e.j?.error || e.message || e) })
     uninstallOk.value = false
   } finally {
     uninstalling.value = false
@@ -440,32 +441,32 @@ function startUninstallPoll(taskId) {
   if (uninstallTimer) clearInterval(uninstallTimer)
   let count = 0
   const max = 40
-  uninstallLog.value = '轮询中…\n'
+  uninstallLog.value = t('mwdep.pollingStart')
   uninstallTimer = setInterval(async () => {
     count++
     try {
       const task = await getTaskDetail(taskId)
       const st = task?.status || ''
       const output = String(task?.output || '')
-      const label = { pending: '等待中', running: '执行中', completed: '已完成', failed: '失败' }[st] || st
+      const label = t('mwdep.taskStatus.' + st) || st
       uninstallLog.value = '⏳ [' + label + ']\n' + output
       if (st === 'completed' || st === 'failed' || count >= max) {
         clearInterval(uninstallTimer); uninstallTimer = null
         if (st === 'completed') {
-          uninstallLog.value += '\n✓ 卸载成功'
-          uninstallMsg.value = '卸载成功 (task: ' + taskId + ')'; uninstallOk.value = true
+          uninstallLog.value += '\n' + t('mwdep.uninstallSuccessLog')
+          uninstallMsg.value = t('mwdep.uninstallSuccessTask', { id: taskId }); uninstallOk.value = true
           store.fetchInstances()
         } else if (st === 'failed') {
-          uninstallLog.value += '\n✗ 卸载失败'
-          uninstallMsg.value = '卸载失败 (task: ' + taskId + ')'; uninstallOk.value = false
+          uninstallLog.value += '\n' + t('mwdep.uninstallFailLog')
+          uninstallMsg.value = t('mwdep.uninstallFailTask', { id: taskId }); uninstallOk.value = false
         } else {
-          uninstallLog.value += '\n⚠ 轮询超时'
+          uninstallLog.value += '\n' + t('mwdep.pollTimeout')
         }
       }
     } catch (e) {
       if (count >= max) {
         clearInterval(uninstallTimer); uninstallTimer = null
-        uninstallLog.value += '\n⚠ 轮询超时'
+        uninstallLog.value += '\n' + t('mwdep.pollTimeout')
       }
     }
   }, 3000)

@@ -1,20 +1,20 @@
 <template>
   <div>
-    <h2>作业编排</h2>
-    <p class="muted">DAG 作业流编辑器：节点表示步骤，边表示依赖。支持自动布局、保存、运行、定时调度。</p>
+    <h2>{{ $t('workflows.title') }}</h2>
+    <p class="muted">{{ $t('workflows.subtitle') }}</p>
 
     <div class="flowbar">
       <div class="field">
-        <label>作业流</label>
+        <label>{{ $t('workflows.workflow_label') }}</label>
         <select v-model="selectedId" @change="onOpen">
-          <option value="">（新建空白作业流）</option>
+          <option value="">{{ $t('workflows.new_blank') }}</option>
           <option v-for="w in store.list" :key="w.id" :value="w.id">
             #{{ w.id }} {{ w.name }} [{{ w.status }}]
           </option>
         </select>
       </div>
       <div class="field">
-        <label>采集端</label>
+        <label>{{ $t('workflows.agent_label') }}</label>
         <select v-model="store.current.agentID">
           <option v-for="a in agents" :key="a.agentID" :value="a.agentID">
             {{ a.agentID }} ({{ a.hostname }})
@@ -22,23 +22,23 @@
         </select>
       </div>
       <div class="field">
-        <label>名称</label>
-        <input v-model="store.current.name" placeholder="作业流名称" />
+        <label>{{ $t('workflows.name_label') }}</label>
+        <input v-model="store.current.name" :placeholder="$t('workflows.name_placeholder')" />
       </div>
       <div class="field">
-        <label>Cron</label>
+        <label>{{ $t('workflows.cron_label') }}</label>
         <input v-model="store.current.cron" placeholder="*/5 * * * *" />
       </div>
     </div>
 
     <div class="btnbar">
-      <button class="primary" @click="onSave">💾 保存</button>
-      <button class="teal" @click="onRun" :disabled="!store.current.id">▶ 运行</button>
-      <button @click="onSchedule" :disabled="!store.current.id">⏰ 定时</button>
-      <button @click="store.addNode()">＋ 添加步骤</button>
-      <button @click="store.autoLayout()">⊞ 自动布局</button>
-      <button @click="loadDemo">📋 载入示例</button>
-      <button @click="store.reset()">✕ 清空</button>
+      <button class="primary" @click="onSave">{{ $t('workflows.save_btn') }}</button>
+      <button class="teal" @click="onRun" :disabled="!store.current.id">{{ $t('workflows.run_btn') }}</button>
+      <button @click="onSchedule" :disabled="!store.current.id">{{ $t('workflows.schedule_btn') }}</button>
+      <button @click="store.addNode()">{{ $t('workflows.add_step_btn') }}</button>
+      <button @click="store.autoLayout()">{{ $t('workflows.auto_layout_btn') }}</button>
+      <button @click="loadDemo">{{ $t('workflows.load_demo_btn') }}</button>
+      <button @click="store.reset()">{{ $t('workflows.clear_btn') }}</button>
     </div>
 
     <p v-if="store.msg" :class="['msg', store.error ? 'err' : 'ok']">{{ store.msg }}</p>
@@ -80,7 +80,7 @@
         <rect class="card" width="170" height="66" rx="10" ry="10" />
         <rect width="4" height="66" rx="2" :fill="typeColor(n.type)" />
         <text x="14" y="24" class="ntitle">{{ n.name || n.id }}</text>
-        <text x="14" y="44" class="ncmd">▸ {{ (n.command || '(无命令)').slice(0, 20) }}</text>
+        <text x="14" y="44" class="ncmd">▸ {{ (n.command || noCommandText).slice(0, 20) }}</text>
         <rect :x="170 - 48" y="9" width="40" height="16" rx="8" :fill="typeSoft(n.type)" />
         <text :x="170 - 28" y="21" class="ntype" :fill="typeColor(n.type)">{{ n.type }}</text>
       </g>
@@ -88,14 +88,14 @@
 
     <!-- 节点编辑器 -->
     <div v-if="currentNode" class="node-editor">
-      <h4>编辑节点 {{ currentNode.id }}</h4>
+      <h4>{{ $t('workflows.edit_node_title', { id: currentNode.id }) }}</h4>
       <div class="row">
         <div class="field">
-          <label>名称</label>
+          <label>{{ $t('workflows.name_label') }}</label>
           <input v-model="currentNode.name" />
         </div>
         <div class="field">
-          <label>类型</label>
+          <label>{{ $t('workflows.type_label') }}</label>
           <select v-model="currentNode.type">
             <option value="shell">shell</option>
             <option value="file">file</option>
@@ -104,14 +104,14 @@
         </div>
       </div>
       <div class="field">
-        <label>命令</label>
+        <label>{{ $t('workflows.command_label') }}</label>
         <input v-model="currentNode.command" style="width: 70%" />
       </div>
       <div class="field">
-        <label>依赖（逗号分隔的节点 id）</label>
+        <label>{{ $t('workflows.depends_label') }}</label>
         <input :value="(currentNode.dependsOn || []).join(', ')" @change="onDepsChange" />
       </div>
-      <button class="danger xs" @click="store.deleteNode(currentNode.id)">删除节点</button>
+      <button class="danger xs" @click="store.deleteNode(currentNode.id)">{{ $t('workflows.delete_node_btn') }}</button>
     </div>
   </div>
 </template>
@@ -120,6 +120,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useWorkflowStore } from '@/stores/workflow'
 import { getAgents } from '@/api/device'
+import { t } from '@/i18n'
 
 const store = useWorkflowStore()
 const agents = ref([])
@@ -131,6 +132,8 @@ const TYPE_COLOR = { shell: '#6366f1', file: '#0d9488', service: '#d97706' }
 const TYPE_SOFT = { shell: '#eceaff', file: '#d8f3ef', service: '#fef3e2' }
 function typeColor(t) { return TYPE_COLOR[t] || '#6366f1' }
 function typeSoft(t) { return TYPE_SOFT[t] || '#eceaff' }
+
+const noCommandText = t('workflows.no_command')
 
 const currentNode = computed(() =>
   store.current.dag.find((n) => n.id === store.selectedNode) || null
@@ -154,7 +157,7 @@ async function onOpen() {
   await store.open(selectedId.value)
 }
 async function onSave() {
-  try { await store.save(); store.msg = '已保存 #' + store.current.id; store.error = '' }
+  try { await store.save(); store.msg = t('workflows.saved_msg', { id: store.current.id }); store.error = '' }
   catch (_) { /* 错误已记录 */ }
 }
 async function onRun() {
@@ -164,23 +167,23 @@ async function onRun() {
   } catch (_) { /* */ }
 }
 async function onSchedule() {
-  const cron = prompt('Cron 表达式：', store.current.cron || '*/5 * * * *')
+  const cron = prompt(t('workflows.cron_prompt'), store.current.cron || '*/5 * * * *')
   if (!cron) return
   try {
     const r = await store.schedule(cron)
-    store.msg = `已设置定时: ${r.j.cron || '(无)'}`; store.error = ''
+    store.msg = t('workflows.schedule_set_msg', { cron: r.j.cron || t('workflows.none') }); store.error = ''
   } catch (_) { /* */ }
 }
 function loadDemo() {
   store.reset()
-  store.current.name = '示例-nginx发布'
+  store.current.name = t('workflows.demo_name')
   store.current.dag = [
-    { id: 'n1', name: '拉取镜像', type: 'shell', command: 'docker pull nginx:latest', path: '', dependsOn: [] },
-    { id: 'n2', name: '停旧容器', type: 'shell', command: 'docker stop nginx', path: '', dependsOn: ['n1'] },
-    { id: 'n3', name: '起新容器', type: 'service', command: 'nginx', path: '', dependsOn: ['n2'] }
+    { id: 'n1', name: t('workflows.demo_step_pull'), type: 'shell', command: 'docker pull nginx:latest', path: '', dependsOn: [] },
+    { id: 'n2', name: t('workflows.demo_step_stop'), type: 'shell', command: 'docker stop nginx', path: '', dependsOn: ['n1'] },
+    { id: 'n3', name: t('workflows.demo_step_start'), type: 'service', command: 'nginx', path: '', dependsOn: ['n2'] }
   ]
   store.autoLayout()
-  store.msg = '已载入示例作业流（尚未保存）'; store.error = ''
+  store.msg = t('workflows.demo_loaded_msg'); store.error = ''
 }
 
 onMounted(async () => {

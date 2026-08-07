@@ -1,48 +1,48 @@
 <template>
   <div>
-    <h2>部署中心</h2>
-    <p class="muted">登记部署计划，触发执行或回滚。部署会派发为任务到目标设备。</p>
+    <h2>{{ $t('deploys.title') }}</h2>
+    <p class="muted">{{ $t('deploys.subtitle') }}</p>
 
     <div class="row">
       <!-- 左：登记 -->
       <div class="col">
         <div class="card">
-          <h3>登记部署</h3>
+          <h3>{{ $t('deploys.register_title') }}</h3>
           <form @submit.prevent="onCreate">
             <div class="field">
-              <label>名称</label>
+              <label>{{ $t('deploys.name_label') }}</label>
               <input v-model="form.name" required />
             </div>
             <div class="row">
               <div class="field">
-                <label>类型</label>
+                <label>{{ $t('deploys.type_label') }}</label>
                 <select v-model="form.type">
                   <option value="script">script</option>
                   <option value="git">git</option>
                 </select>
               </div>
               <div class="field">
-                <label>目标设备（逗号分隔）</label>
+                <label>{{ $t('deploys.target_ids_label') }}</label>
                 <input v-model="form.target_ids" placeholder="dev-10.0.0.1, dev-10.0.0.2" />
               </div>
             </div>
             <div class="field">
-              <label>仓库 URL</label>
+              <label>{{ $t('deploys.repo_url_label') }}</label>
               <input v-model="form.repo_url" placeholder="https://git.example.com/ops/nginx-deploy.git" />
             </div>
             <div class="row">
               <div class="field">
-                <label>路径</label>
+                <label>{{ $t('deploys.path_label') }}</label>
                 <input v-model="form.path" />
               </div>
               <div class="field">
-                <label>内容（script 用）</label>
+                <label>{{ $t('deploys.content_label') }}</label>
                 <input v-model="form.content" />
               </div>
             </div>
             <div class="btnbar">
-              <button type="submit" class="primary">登记部署</button>
-              <button type="button" @click="loadDemo">📋 示例</button>
+              <button type="submit" class="primary">{{ $t('deploys.register_btn') }}</button>
+              <button type="button" @click="loadDemo">{{ $t('deploys.demo_btn') }}</button>
             </div>
             <p v-if="store.msg" :class="['msg', store.error ? 'err' : 'ok']">{{ store.msg }}</p>
           </form>
@@ -54,9 +54,9 @@
         <div class="card">
           <div class="flowbar">
             <div class="field">
-              <label>状态</label>
+              <label>{{ $t('deploys.status_label') }}</label>
               <select v-model="store.statusFilter" @change="store.fetchList()">
-                <option value="">全部</option>
+                <option value="">{{ $t('common.all') }}</option>
                 <option value="created">created</option>
                 <option value="running">running</option>
                 <option value="success">success</option>
@@ -64,12 +64,12 @@
                 <option value="rolledback">rolledback</option>
               </select>
             </div>
-            <button @click="store.fetchList()">↻ 刷新</button>
+            <button @click="store.fetchList()">↻ {{ $t('common.refresh') }}</button>
           </div>
 
           <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
-          <DataTable :columns="columns" :rows="store.list" row-key="id" empty-text="暂无部署任务">
+          <DataTable :columns="columns" :rows="store.list" row-key="id" :empty-text="$t('deploys.empty')">
             <template #cell-id="{ value }"><code>{{ value }}</code></template>
             <template #cell-target_ids="{ value }"><code>{{ (value || '').replace(/,/g, ', ') }}</code></template>
             <template #cell-status="{ value }">
@@ -78,7 +78,7 @@
             <template #cell-actions="{ row }">
               <button class="xs" @click.stop="onExec(row.id)">▶</button>
               <button class="xs outline" @click.stop="onRollback(row.id)">↩</button>
-              <button class="xs outline" @click.stop="onOpen(row.id)">详情</button>
+              <button class="xs outline" @click.stop="onOpen(row.id)">{{ $t('deploys.detail_btn') }}</button>
             </template>
           </DataTable>
         </div>
@@ -87,15 +87,15 @@
 
     <DetailDrawer :open="!!store.current" :title="drawerTitle" @close="store.current = null">
       <div v-if="store.current">
-        <p>类型: {{ store.current.type }} ｜ 状态: <StatusBadge :status="store.current.status" :text="store.current.status" /></p>
-        <p>目标设备: <code>{{ (store.current.target_ids || '').replace(/,/g, ', ') }}</code></p>
-        <p v-if="store.current.repo_url">仓库: <code>{{ store.current.repo_url }}</code></p>
-        <p v-if="store.current.path">路径: <code>{{ store.current.path }}</code></p>
-        <p v-if="store.current.content">内容: <code>{{ store.current.content }}</code></p>
+        <p>{{ $t('deploys.type_label') }}: {{ store.current.type }} ｜ {{ $t('deploys.status_label') }}: <StatusBadge :status="store.current.status" :text="store.current.status" /></p>
+        <p>{{ $t('deploys.target_ids_label') }}: <code>{{ (store.current.target_ids || '').replace(/,/g, ', ') }}</code></p>
+        <p v-if="store.current.repo_url">{{ $t('deploys.repo_url_label') }}: <code>{{ store.current.repo_url }}</code></p>
+        <p v-if="store.current.path">{{ $t('deploys.path_label') }}: <code>{{ store.current.path }}</code></p>
+        <p v-if="store.current.content">{{ $t('deploys.content_label') }}: <code>{{ store.current.content }}</code></p>
         <p class="muted">
-          创建人: {{ store.current.created_by }} ｜ 创建: {{ fmtTime(store.current.created_at) }} ｜ 更新: {{ fmtTime(store.current.updated_at) }}
+          {{ $t('deploys.created_by_label') }}: {{ store.current.created_by }} ｜ {{ $t('deploys.created_label') }}: {{ fmtTime(store.current.created_at) }} ｜ {{ $t('deploys.updated_label') }}: {{ fmtTime(store.current.updated_at) }}
         </p>
-        <p v-if="store.current.task_ids">派发任务: <code>{{ (store.current.task_ids || '').replace(/,/g, ', ') }}</code></p>
+        <p v-if="store.current.task_ids">{{ $t('deploys.task_ids_label') }}: <code>{{ (store.current.task_ids || '').replace(/,/g, ', ') }}</code></p>
       </div>
     </DetailDrawer>
   </div>
@@ -104,6 +104,7 @@
 <script setup>
 import { computed, onMounted, reactive } from 'vue'
 import { useDeployStore } from '@/stores/deploy'
+import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
@@ -116,14 +117,14 @@ const form = reactive({
 
 const columns = [
   { key: 'id', title: 'ID', slot: 'cell-id' },
-  { key: 'name', title: '名称' },
-  { key: 'type', title: '类型' },
-  { key: 'target_ids', title: '目标设备', slot: 'cell-target_ids' },
-  { key: 'status', title: '状态', slot: 'cell-status' },
-  { key: 'actions', title: '操作', slot: 'cell-actions', width: '140px' }
+  { key: 'name', title: t('deploys.name_label') },
+  { key: 'type', title: t('deploys.type_label') },
+  { key: 'target_ids', title: t('deploys.target_ids_label'), slot: 'cell-target_ids' },
+  { key: 'status', title: t('deploys.status_label'), slot: 'cell-status' },
+  { key: 'actions', title: t('deploys.actions_label'), slot: 'cell-actions', width: '140px' }
 ]
 const drawerTitle = computed(() =>
-  store.current ? `部署 #${store.current.id} · ${store.current.name}` : ''
+  store.current ? t('deploys.drawer_title', { id: store.current.id, name: store.current.name }) : ''
 )
 
 function fmtTime(s) {
@@ -138,7 +139,7 @@ function loadDemo() {
   form.content = ''
   form.path = ''
   form.target_ids = 'dev-10.0.0.1, dev-10.0.0.2'
-  store.msg = '已载入示例，可改后点「登记部署」'; store.error = ''
+  store.msg = t('deploys.demo_loaded_msg'); store.error = ''
 }
 async function onCreate() {
   try {
@@ -148,11 +149,11 @@ async function onCreate() {
   } catch (e) { store.msg = 'error: ' + (e.j?.error || e.message); store.error = 'create' }
 }
 async function onExec(id) {
-  try { const r = await store.execute(id); store.msg = `[${r.s}] ${r.j.error || '已触发执行 #' + id}`; store.error = r.s >= 400 ? 'exec' : '' }
+  try { const r = await store.execute(id); store.msg = `[${r.s}] ${r.j.error || t('deploys.executed_msg', { id })}`; store.error = r.s >= 400 ? 'exec' : '' }
   catch (e) { store.msg = 'error: ' + (e.j?.error || e.message); store.error = 'exec' }
 }
 async function onRollback(id) {
-  try { const r = await store.rollback(id); store.msg = `[${r.s}] ${r.j.error || '已回滚 #' + id}`; store.error = r.s >= 400 ? 'rb' : '' }
+  try { const r = await store.rollback(id); store.msg = `[${r.s}] ${r.j.error || t('deploys.rolled_back_msg', { id })}`; store.error = r.s >= 400 ? 'rb' : '' }
   catch (e) { store.msg = 'error: ' + (e.j?.error || e.message); store.error = 'rb' }
 }
 async function onOpen(id) { await store.open(id) }

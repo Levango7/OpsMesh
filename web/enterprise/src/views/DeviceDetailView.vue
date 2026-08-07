@@ -4,7 +4,7 @@
     <div class="detail-topbar">
       <div class="topbar-left">
         <button class="xs outline" @click="goBack">
-          <span style="display:inline-flex;align-items:center;gap:4px;"><Icon name="arrow-left" :size="14" /> {{ $t('common.back') || '返回' }}</span>
+          <span style="display:inline-flex;align-items:center;gap:4px;"><Icon name="arrow-left" :size="14" /> {{ $t('common.back') }}</span>
         </button>
         <h2>{{ $t('device_detail.title') }}</h2>
         <code v-if="metrics">{{ metrics.deviceID }}</code>
@@ -160,7 +160,7 @@
           :columns="netCols"
           :rows="network"
           row-key="name"
-          empty-text="无网卡"
+          :empty-text="$t('device_detail.no_nic')"
         >
           <template #cell-status="{ value }">
             <StatusBadge :status="netStatus(value)" :text="value || '—'" />
@@ -207,6 +207,7 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
+import { t } from '@/i18n'
 import MetricsCard from '@/components/MetricsCard.vue'
 import ProgressRing from '@/components/ProgressRing.vue'
 import DataTable from '@/components/DataTable.vue'
@@ -265,13 +266,13 @@ const services = computed(() => metrics.value?.services || [])
 
 // 网络表格列定义
 const netCols = [
-  { key: 'name', title: '网卡' },
+  { key: 'name', title: t('device_detail.col_nic') },
   { key: 'ip', title: 'IP' },
   { key: 'mac', title: 'MAC' },
-  { key: 'status', title: '状态', slot: 'cell-status' },
-  { key: 'speed', title: '速率', slot: 'cell-speed' },
-  { key: 'rxBytes', title: '接收', slot: 'cell-rxBytes' },
-  { key: 'txBytes', title: '发送', slot: 'cell-txBytes' }
+  { key: 'status', title: t('device_detail.col_status'), slot: 'cell-status' },
+  { key: 'speed', title: t('device_detail.col_speed'), slot: 'cell-speed' },
+  { key: 'rxBytes', title: t('device_detail.col_rx'), slot: 'cell-rxBytes' },
+  { key: 'txBytes', title: t('device_detail.col_tx'), slot: 'cell-txBytes' }
 ]
 
 // === 工具函数 ===
@@ -295,9 +296,9 @@ function fmtUptime(sec) {
   const hours = Math.floor((s % 86400) / 3600)
   const mins = Math.floor((s % 3600) / 60)
   const parts = []
-  if (days > 0) parts.push(days + '天')
-  if (hours > 0 || days > 0) parts.push(hours + '小时')
-  parts.push(mins + '分钟')
+  if (days > 0) parts.push(days + t('device_detail.uptime_day'))
+  if (hours > 0 || days > 0) parts.push(hours + t('device_detail.uptime_hour'))
+  parts.push(mins + t('device_detail.uptime_minute'))
   return parts.join('')
 }
 

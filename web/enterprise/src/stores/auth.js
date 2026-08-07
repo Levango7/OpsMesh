@@ -16,6 +16,14 @@ export const useAuthStore = defineStore('auth', () => {
   // 是否已登录：以 user 是否存在为准（会话由 Cookie 维持，前端不存令牌）。
   const isLoggedIn = computed(() => !!user.value)
 
+  // 会话初始化就绪标志：fetchMe() 完成后 resolve。
+  // 路由守卫需 await ready 后再判断 isLoggedIn，避免冷启动时序竞争
+  // （user 初始为 null → 守卫误判未登录 → 已登录用户被重定向到 /login）。
+  let _readyResolve
+  const ready = new Promise((resolve) => { _readyResolve = resolve })
+  // 是否已完成首次会话恢复（同步可读，便于守卫与 App.vue 快速判断）
+  const initialized = ref(false)
+
   // 当前用户有效权限集合（来自 /auth/me 的 permissions 字段，由后端按角色展开）。
   const permissions = computed(() => user.value?.permissions || [])
 
@@ -63,9 +71,14 @@ export const useAuthStore = defineStore('auth', () => {
 
   // 拉取当前用户信息（从 Cookie 恢复会话；at 过期时由 request.js 静默刷新后重试）。
   // 仅当 at/rt 均不存在（确无会话）时跳过，避免冷启动对匿名用户发起无意义 401。
+  // 完成后 resolve ready Promise，路由守卫据此解除阻塞。
   async function fetchMe() {
     const c = document.cookie
-    if (!c.includes('opsmesh_at') && !c.includes('opsmesh_rt')) return null
+    if (!c.includes('opsmesh_at') && !c.includes('opsmesh_rt')) {
+      initialized.value = true
+      _readyResolve()
+      return null
+    }
     try {
       const me = await authApi.me()
       user.value = me
@@ -73,6 +86,9 @@ export const useAuthStore = defineStore('auth', () => {
     } catch (e) {
       if (e.s === 401) user.value = null
       return null
+    } finally {
+      initialized.value = true
+      _readyResolve()
     }
   }
 
@@ -99,5 +115,5 @@ export const useAuthStore = defineStore('auth', () => {
   }
   setUnauthorizedHandler(onUnauthorized)
 
-  return { user, loading, error, isLoggedIn, permissions, hasPerm, login, register, fetchMe, logout, clearSession }
+  return { user, loading, error, isLoggedIn, permissions, hasPerm, login, register, fetchMe, logout, clearSession, ready, initialized }
 })

@@ -2,16 +2,71 @@
 
 本文件记录 OpsMesh 所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
-## [Unreleased] — 2026-08-07
+## [Unreleased] — 2026-08-08
 
-### 文档完善：README flag 全量说明 + API 参考 + 部署指南
+### P0：严重问题修复（5 项，阻塞生产发布）
 
-#### 新增
-- **`docs/api-reference.md`**：完整 API 参考文档，覆盖全部 HTTP REST 端点（认证/用户/角色/权限/设备/agent/任务/告警/部署/编排/CMDB/OS 优化/中间件/K8s/审计/日志/联邦/SSE/bootstrap）与 gRPC API，每端点含方法、路径、请求体、响应体、示例
-- **`docs/deployment-guide.md`**：完整部署指南，覆盖 docker-compose 一键启动、Docker 镜像、Systemd service、Helm Chart（values.yaml/values-production.yaml 配置对照）、K8s Operator（CRD）、生产环境检查清单（安全/性能/高可用/可观测）、多租户 schema 隔离部署、联邦 mTLS 部署
+#### 修复
+- **`web/enterprise/src/api/auth.js`**：添加缺失的 logout API 方法（清除前端 token + 调用后端 logout 端点）
+- **README.md + docs/deployment-guide.md**：补充企业版前端独立部署说明（npm run build → 静态文件部署到 Nginx/CDN）
+- **`deploy/helm/opsmesh/templates/agent-daemonset.yaml`**：agent 数据卷从 emptyDir 改为 hostPath（重启不丢失 agent.id）
+- **`deploy/helm/opsmesh/values.yaml` + `values-production.yaml`**：镜像 tag 从 "0.1" 修正为 "latest"（与 CI 推送的 :sha tag 一致）
+- **`internal/store/sql_templates.go`**：移除 UTF-8 BOM（导致 MySQL 首字节乱码）
 
-#### 变更
-- **`README.md` 配置参考全量补全**：原 38 条 flag 说明扩充为 **75 条全量 flag**，按功能分组（基础/存储/安全/网络/告警/日志/调度/纳管八大组），每条含 Flag、类型、默认值、环境变量、说明五列；与 `internal/config/config.go` 中 flag 定义逐一对应
+### P1：重要问题修复（10 项，影响质量）
+
+#### i18n 全面覆盖
+- **12 个 Vue 组件**：TasksView/AlertsView/DevicesView/DeviceDetailView/CMDBView/WorkflowsView/DeploysView/LogsView/UsersView/K8sManageView/MiddlewareDeployView/OSOptimizeView — 所有硬编码中文提取到 i18n（zh.json/en.json 从 459 键扩展到 629 键，结构完全对称）
+- **DataTable/Pagination 组件**：空状态文本、翻页按钮 i18n 化
+- **MiddlewareDeployView**：fmtTime 从硬编码 'zh-CN' 改为动态 locale（随 i18n 语言切换）
+
+#### 路由守卫 + i18n 回退
+- **auth.js**：添加 ready Promise + initialized flag，解决路由守卫竞态条件
+- **router/index.js**：守卫改为 async，await auth.ready
+- **main.js + App.vue**：启动时调用 fetchMe，移除重复调用
+- **i18n/index.js**：添加 FALLBACK_LANG='zh' 回退机制（缺失键回退到中文）
+
+#### API 文档修正
+- **docs/api-reference.md**：修正 4 处不一致（/readyz 端点缺失、/metrics 端口、/healthz 格式、/api/v1/me 字段名）
+
+#### 测试补全
+- **前端测试**：新增 vitest + @vue/test-utils + jsdom，88 个测试（auth 28 + i18n 22 + DataTable 20 + Pagination 18）
+- **internal/k8s 测试**：覆盖率 14.8% → 90.9%（30 个测试，Clientset 字段改为 Interface 接口支持 fake 注入）
+- **internal/orchestration 测试**：覆盖率 30.1% → 71.2%（17 个新测试）
+- **cmd/opsmesh 测试**：覆盖率 0% → 73.9%（20 个测试，重构提取 runMain()/versionString()）
+
+#### 可观测性
+- **Helm ServiceMonitor + PrometheusRule**：新增两个监控模板 + 3 条告警规则（agent 离线 / 任务失败率高 / 队列堆积）
+- **/healthz 深度检查 + /readyz**：healthz 增加 store ping 深度检查，新增 /readyz 就绪探针端点
+- **metrics 指标扩充**：HTTP 延迟直方图 + HTTP 计数器 + Go runtime 指标（零依赖手写，不引入 prometheus 客户端库）
+
+### P2：次要问题修复（10 项，技术债务清理）
+
+#### 代码质量
+- **flow.js 拆分**：2714 行 / 106 导出的单体 JS 文件按业务域拆分为 13 个模块 + barrel re-export（零风险，main.js 无需修改）
+- **app.legacy.js 删除**：64.8KB 完全未引用死代码清除（零引用确认后删除）
+
+#### 部署加固
+- **operator/Dockerfile**：Go 版本从 1.22 对齐到 1.26（与主 Dockerfile/go.mod 一致）
+- **systemd hardening**：两个 service 文件添加 19 条安全指令（NoNewPrivileges/ProtectSystem/ProtectHome/PrivateTmp/ProtectKernelTunables/ProtectKernelModules/ProtectControlGroups/RestrictAddressFamilies/RestrictNamespaces/SystemCallFilter 等）
+- **Helm Ingress + HPA 模板**：新增 templates/ingress.yaml 和 templates/hpa.yaml，对接 values.yaml 中已有的 ingress 和 autoscaling 配置段（生产环境 HPA 默认开启：minReplicas=2, maxReplicas=10）
+
+#### 供应链安全
+- **cosign 镜像签名**：CI image job 新增条件性 cosign sign 步骤（需 COSIGN_PRIVATE_KEY secret，未配置时自动跳过）
+- **Base image digest pinning**：3 个 Dockerfile 添加 digest pinning 最佳实践注释 + 新建 docs/image-pinning.md 指南
+
+#### 测试补全
+- **internal/tlsutil 测试**：覆盖率 0% → 91.7%（17 个测试，覆盖 ServerCreds/ClientCreds/HTTPClientTLSConfig/HTTPServerTLSConfig 全部 4 个导出函数）
+
+#### 文档
+- **README 架构图**：更新 ASCII 架构图，新增企业版 Vue3 前端、K8s Operator、联邦 mTLS、SSE 实时推送、多租户 Schema 隔离、ELK/Loki 日志集成、Prometheus 监控告警等；通信模型表格补充 SSE/联邦/Metrics 三行
+
+#### 验证
+- `go build ./...` ✅
+- `go vet ./...` ✅
+- `go test -timeout 300s ./...` ✅
+- `npm run build` ✅
+- `npx vitest run` ✅ 88/88 通过
 
 ---
 

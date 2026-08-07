@@ -195,9 +195,8 @@ function onVisibility() {
 }
 
 onMounted(() => {
-  // 已登录时拉取当前用户信息 + 启动轮询
+  // 已登录时启动轮询；fetchMe 已在 main.js 启动，此处仅触发数据轮询
   if (authStore.isLoggedIn) {
-    authStore.fetchMe()
     deviceStore.fetchDevices()
     alertStore.fetchAlerts()
     document.addEventListener('visibilitychange', onVisibility)

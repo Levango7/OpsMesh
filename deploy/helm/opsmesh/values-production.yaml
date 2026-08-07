@@ -53,8 +53,13 @@ controlplane:
     limits:
       cpu: 2000m
       memory: 2Gi
+  # 生产启用 HPA：2~10 副本按 CPU 自动扩缩
   autoscaling:
-    enabled: false
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    # targetMemoryUtilizationPercentage: 80  # 可选
   nodeSelector: {}
   affinity:
     podAntiAffinity:
@@ -166,3 +171,14 @@ podAnnotations:
   prometheus.io/scrape: "true"
   prometheus.io/port: "9091"
 podLabels: {}
+
+## @section Observability
+observability:
+  # 生产启用 ServiceMonitor（需集群已部署 Prometheus Operator）
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+  # 生产启用 PrometheusRule 内置告警
+  prometheusRule:
+    enabled: true

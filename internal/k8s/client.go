@@ -32,11 +32,12 @@ import (
 //   - Name：集群名（仅用于日志/错误信息，不参与连接）；
 //   - Server：API Server 地址（从 kubeconfig 解析得到，便于 API 层展示）；
 //   - Clientset：k8s.io/client-go/kubernetes 的标准 Clientset，覆盖 CoreV1/AppsV1 等内置资源；
+//     字段类型为 kubernetes.Interface 便于测试注入 fake.NewSimpleClientset()；
 //   - Config：底层 rest.Config，调用方可据此构造 DynamicClient / DiscoveryClient 等扩展客户端。
 type K8sClient struct {
 	Name      string
 	Server    string
-	Clientset *kubernetes.Clientset
+	Clientset kubernetes.Interface
 	Config    *rest.Config
 }
 

@@ -160,7 +160,7 @@ async function onSave() {
     form.value = null
     await fetchUsers()
   } catch (e) {
-    formError.value = e.j?.error || '保存失败'
+    formError.value = e.j?.error || t('users.save_failed')
   }
 }
 
@@ -170,7 +170,7 @@ async function onDelete(row) {
     await authApi.deleteUser(row.id)
     await fetchUsers()
   } catch (e) {
-    window.alert(e.j?.error || '删除失败')
+    window.alert(e.j?.error || t('users.delete_failed'))
   }
 }
 

@@ -1,33 +1,33 @@
 <template>
   <div>
-    <h2>监控告警</h2>
-    <p class="muted">实时告警列表，支持确认（ack）与静默（silence）操作。</p>
+    <h2>{{ $t('alerts.title') }}</h2>
+    <p class="muted">{{ $t('alerts.subtitle') }}</p>
 
     <div class="stats">
       <div class="stat rose">
         <div class="stat-v">{{ store.critical.length }}</div>
-        <div class="stat-l">严重 Critical</div>
+        <div class="stat-l">{{ $t('alerts.stat_critical') }}</div>
       </div>
       <div class="stat amber">
         <div class="stat-v">{{ store.warning.length }}</div>
-        <div class="stat-l">警告 Warning</div>
+        <div class="stat-l">{{ $t('alerts.stat_warning') }}</div>
       </div>
       <div class="stat indigo">
         <div class="stat-v">{{ store.list.length }}</div>
-        <div class="stat-l">活跃总数</div>
+        <div class="stat-l">{{ $t('alerts.stat_active') }}</div>
       </div>
       <div class="stat teal">
         <div class="stat-v">{{ ackedCount }}</div>
-        <div class="stat-l">已处理</div>
+        <div class="stat-l">{{ $t('alerts.stat_handled') }}</div>
       </div>
     </div>
 
     <div class="flowbar">
-      <button @click="store.fetchAlerts()">↻ 刷新</button>
+      <button @click="store.fetchAlerts()">↻ {{ $t('common.refresh') }}</button>
     </div>
 
     <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-    <div v-else-if="!store.list.length" class="muted"><Icon name="success" :size="14" /> 暂无告警，一切正常</div>
+    <div v-else-if="!store.list.length" class="muted"><Icon name="success" :size="14" /> {{ $t('alerts.empty') }}</div>
 
     <div
       v-for="a in store.list"
@@ -39,17 +39,17 @@
         <b>[{{ a.severity }}]</b>
         <StatusBadge :status="alertStatus(a)" :text="alertStatusText(a)" />
       </div>
-      设备 {{ a.deviceID }} ｜ Agent {{ a.agentID }}
-      <small v-if="a.comment" class="muted"><br />备注：{{ a.comment }}</small>
+      {{ $t('alerts.device_label') }} {{ a.deviceID }} ｜ {{ $t('alerts.agent_label') }} {{ a.agentID }}
+      <small v-if="a.comment" class="muted"><br />{{ $t('alerts.comment_label') }}{{ a.comment }}</small>
       <br />{{ a.message }}
       <br /><small class="muted">{{ fmtTime(a.createdAt) }}</small>
       <div class="alert-actions">
         <template v-if="(a.status || 'firing') === 'firing'">
-          <button class="xs" @click="onAck(a.alertID)">✓ 确认</button>
-          <button class="xs outline" @click="onSilence(a.alertID)">🔕 静默</button>
+          <button class="xs" @click="onAck(a.alertID)">{{ $t('alerts.ack') }}</button>
+          <button class="xs outline" @click="onSilence(a.alertID)">{{ $t('alerts.silence') }}</button>
         </template>
         <span v-else class="muted" style="font-size:12px">
-          处理人：{{ a.acknowledgedBy || '—' }}<template v-if="a.status === 'silenced' && a.silencedUntil"> · 至 {{ a.silencedUntil }}</template>
+          {{ $t('alerts.handler') }}{{ a.acknowledgedBy || '—' }}<template v-if="a.status === 'silenced' && a.silencedUntil">{{ $t('alerts.silenced_until') }}{{ a.silencedUntil }}</template>
         </span>
       </div>
     </div>
@@ -59,6 +59,7 @@
 <script setup>
 import { computed, onMounted } from 'vue'
 import { useAlertStore } from '@/stores/alert'
+import { t } from '@/i18n'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
 
@@ -74,7 +75,7 @@ function alertStatus(a) {
 }
 function alertStatusText(a) {
   const s = a.status || 'firing'
-  return s === 'acknowledged' ? '已确认' : s === 'silenced' ? '已静默' : '待处理'
+  return s === 'acknowledged' ? t('alerts.status_acknowledged') : s === 'silenced' ? t('alerts.status_silenced') : t('alerts.status_firing')
 }
 function fmtTime(s) {
   if (!s) return ''
@@ -82,15 +83,15 @@ function fmtTime(s) {
   return isNaN(d.getTime()) ? s : d.toLocaleString('zh-CN', { hour12: false })
 }
 async function onAck(id) {
-  try { await store.ack(id) } catch (e) { alert('确认失败：' + (e.j?.error || e.s)) }
+  try { await store.ack(id) } catch (e) { alert(t('alerts.ack_failed') + (e.j?.error || e.s)) }
 }
 async function onSilence(id) {
-  const dur = prompt('静默时长（分钟，留空=24 小时）：', '1440')
+  const dur = prompt(t('alerts.silence_duration_prompt'), '1440')
   if (dur === null) return
   let minutes = parseInt(dur, 10); if (isNaN(minutes) || minutes <= 0) minutes = 1440
-  const comment = prompt('处理备注（可选）：', '') || ''
+  const comment = prompt(t('alerts.silence_comment_prompt'), '') || ''
   try { await store.silence(id, { durationMinutes: minutes, comment }) }
-  catch (e) { alert('静默失败：' + (e.j?.error || e.s)) }
+  catch (e) { alert(t('alerts.silence_failed') + (e.j?.error || e.s)) }
 }
 
 onMounted(() => { if (!store.list.length) store.fetchAlerts() })

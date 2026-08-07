@@ -5,20 +5,20 @@
 
     <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
-    <div v-if="store.loading && !segments.length" class="muted">加载中…</div>
+    <div v-if="store.loading && !segments.length" class="muted">{{ $t('common.loading') }}</div>
     <div v-else-if="!segments.length" class="muted">
-      暂无纳管设备。设备接入网段后会被自动发现并纳管。
+      {{ $t('devices.empty') }}
     </div>
 
     <div v-for="seg in segments" :key="seg.name" class="seg-block">
-      <h3>网段 {{ seg.name }}（{{ seg.devices.length }} 台设备）</h3>
+      <h3>{{ $t('devices.segment', { name: seg.name, n: seg.devices.length }) }}</h3>
       <DataTable
         :columns="columns"
         :rows="seg.devices"
         row-key="deviceID"
         :clickable="true"
         :row-class="rowClass"
-        empty-text="该网段暂无设备"
+        :empty-text="$t('devices.segment_empty')"
         @row-click="openDevice"
       >
         <template #cell-deviceID="{ value }"><code>{{ value }}</code></template>
@@ -45,14 +45,14 @@
 
     <DetailDrawer :open="!!store.current" :title="drawerTitle" @close="store.closeDrawer()">
       <div v-if="store.current">
-        <p>IP: {{ dev.ip }} ｜ 采集端: {{ dev.agentID }} ｜ 租户: {{ dev.tenantID }}</p>
-        <p>状态: {{ dev.state }} ｜ 任务态: {{ dev.taskState }}</p>
+        <p>{{ $t('devices.ip_label') }}: {{ dev.ip }} ｜ {{ $t('devices.agent_label') }}: {{ dev.agentID }} ｜ {{ $t('devices.tenant_label') }}: {{ dev.tenantID }}</p>
+        <p>{{ $t('devices.state_label') }}: {{ dev.state }} ｜ {{ $t('devices.task_state_label') }}: {{ dev.taskState }}</p>
         <p v-if="dev.lastResult" :class="['msg', dev.lastResult === 'failed' ? 'err' : 'ok']">
           LastResult: {{ dev.lastResult }} @ {{ fmtTime(dev.lastResultAt) }}
         </p>
         <div class="btnbar">
           <button v-if="dev.state === 'discovered'" class="primary" @click="provision">
-            推送 Agent 纳管
+            {{ $t('devices.provision') }}
           </button>
           <button class="outline" @click="goDetail(dev.deviceID)">
             {{ $t('devices.view_metrics') }}
@@ -62,13 +62,13 @@
           </button>
         </div>
 
-        <h4>任务</h4>
-        <DataTable :columns="taskCols" :rows="store.current.tasks || []" row-key="taskID" empty-text="无任务">
+        <h4>{{ $t('devices.tasks_title') }}</h4>
+        <DataTable :columns="taskCols" :rows="store.current.tasks || []" row-key="taskID" :empty-text="$t('devices.no_tasks')">
           <template #cell-taskID="{ value }"><code>{{ value }}</code></template>
         </DataTable>
 
-        <h4>最近结果</h4>
-        <DataTable :columns="resultCols" :rows="(store.current.results || []).slice(0, 5)" empty-text="无结果">
+        <h4>{{ $t('devices.recent_results') }}</h4>
+        <DataTable :columns="resultCols" :rows="(store.current.results || []).slice(0, 5)" :empty-text="$t('devices.no_results')">
           <template #cell-taskID="{ value }"><code>{{ value }}</code></template>
           <template #cell-stdout="{ value }"><code>{{ value }}</code></template>
         </DataTable>
@@ -82,6 +82,7 @@
 import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
+import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
@@ -92,26 +93,26 @@ const store = useDeviceStore()
 
 // 表格列定义：含 hostname / segment / state / os 字段 + 操作列
 const columns = [
-  { key: 'hostname', title: '主机名' },
+  { key: 'hostname', title: t('devices.col_hostname') },
   { key: 'deviceID', title: 'DeviceID', slot: 'cell-deviceID' },
-  { key: 'segment', title: '网段' },
-  { key: 'ip', title: 'IP' },
-  { key: 'state', title: '状态', slot: 'cell-state' },
+  { key: 'segment', title: t('devices.col_segment') },
+  { key: 'ip', title: t('devices.col_ip') },
+  { key: 'state', title: t('devices.col_state'), slot: 'cell-state' },
   { key: 'os', title: 'OS' },
-  { key: 'agentID', title: '采集端' },
-  { key: 'taskState', title: '任务态' },
+  { key: 'agentID', title: t('devices.col_agent') },
+  { key: 'taskState', title: t('devices.col_task_state') },
   { key: 'lastResult', title: 'LastResult', slot: 'cell-lastResult' },
-  { key: 'actions', title: '操作', slot: 'cell-actions', width: '160px' }
+  { key: 'actions', title: t('devices.col_actions'), slot: 'cell-actions', width: '160px' }
 ]
 const taskCols = [
   { key: 'taskID', title: 'ID', slot: 'cell-taskID' },
-  { key: 'type', title: '类型' },
-  { key: 'status', title: '状态' }
+  { key: 'type', title: t('devices.col_type') },
+  { key: 'status', title: t('devices.col_status') }
 ]
 const resultCols = [
-  { key: 'taskID', title: '任务', slot: 'cell-taskID' },
-  { key: 'exitCode', title: '退出码' },
-  { key: 'stdout', title: '输出', slot: 'cell-stdout' }
+  { key: 'taskID', title: t('devices.col_task'), slot: 'cell-taskID' },
+  { key: 'exitCode', title: t('devices.col_exit_code') },
+  { key: 'stdout', title: t('devices.col_output'), slot: 'cell-stdout' }
 ]
 
 // 网段分组：每个设备注入 segment 字段，便于表格直接展示
@@ -122,7 +123,7 @@ const segments = computed(() =>
   }))
 )
 const dev = computed(() => (store.current && store.current.device) || {})
-const drawerTitle = computed(() => '设备 ' + (dev.value.deviceID || ''))
+const drawerTitle = computed(() => t('devices.drawer_title_prefix') + (dev.value.deviceID || ''))
 
 function rowClass(row) {
   return row.lastResult === 'failed' ? 'fail-row' : ''

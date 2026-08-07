@@ -1,0 +1,18 @@
+{{- if .Values.observability.serviceMonitor.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "opsmesh.controlplane.serviceName" . }}
+  labels:
+    {{- include "opsmesh.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "opsmesh.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: controlplane
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.observability.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.observability.serviceMonitor.scrapeTimeout | default "10s" }}
+{{- end -}}

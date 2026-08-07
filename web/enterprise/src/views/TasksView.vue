@@ -1,23 +1,23 @@
 <template>
   <div>
-    <h2>任务下发</h2>
-    <p class="muted">向采集端下发 shell / file / service 任务，支持按状态过滤与取消。</p>
+    <h2>{{ $t('tasks.title') }}</h2>
+    <p class="muted">{{ $t('tasks.subtitle') }}</p>
 
     <div class="card" v-if="authStore.hasPerm('task:write')">
-      <h3>下发任务</h3>
+      <h3>{{ $t('tasks.dispatch_form_title') }}</h3>
       <form @submit.prevent="onSubmit">
         <div class="row">
           <div class="field">
-            <label>采集端</label>
+            <label>{{ $t('tasks.agent') }}</label>
             <select v-model="form.agentID" required>
-              <option value="">（请选择）</option>
+              <option value="">{{ $t('tasks.please_select') }}</option>
               <option v-for="a in agents" :key="a.agentID" :value="a.agentID">
                 {{ a.agentID }} ({{ a.hostname }})
               </option>
             </select>
           </div>
           <div class="field">
-            <label>类型</label>
+            <label>{{ $t('tasks.type') }}</label>
             <select v-model="form.type">
               <option value="shell">shell</option>
               <option value="file">file</option>
@@ -26,35 +26,35 @@
           </div>
         </div>
         <div class="field">
-          <label>命令</label>
-          <input v-model="form.command" placeholder="如 uptime / systemctl status nginx" style="width: 60%" />
+          <label>{{ $t('tasks.command') }}</label>
+          <input v-model="form.command" :placeholder="$t('tasks.command_placeholder')" style="width: 60%" />
         </div>
         <div class="row">
           <div class="field">
-            <label>路径</label>
-            <input v-model="form.path" placeholder="（可选）" />
+            <label>{{ $t('tasks.path') }}</label>
+            <input v-model="form.path" :placeholder="$t('tasks.optional')" />
           </div>
           <div class="field">
-            <label>内容</label>
-            <input v-model="form.content" placeholder="（可选，file 类型用）" />
+            <label>{{ $t('tasks.content') }}</label>
+            <input v-model="form.content" :placeholder="$t('tasks.content_placeholder')" />
           </div>
         </div>
         <div class="btnbar">
-          <button type="submit" class="primary">下发</button>
+          <button type="submit" class="primary">{{ $t('tasks.submit') }}</button>
         </div>
         <p v-if="msg" :class="['msg', msgOk ? 'ok' : 'err']">{{ msg }}</p>
       </form>
     </div>
     <div v-else class="card">
-      <p class="muted">当前账号无下发权限（需 task:write）。</p>
+      <p class="muted">{{ $t('tasks.no_permission') }}</p>
     </div>
 
     <div class="card">
       <div class="flowbar">
         <div class="field">
-          <label>状态过滤</label>
+          <label>{{ $t('tasks.status_filter') }}</label>
           <select v-model="store.statusFilter" @change="store.fetchTasks()">
-            <option value="">全部</option>
+            <option value="">{{ $t('common.all') }}</option>
             <option value="pending">pending</option>
             <option value="running">running</option>
             <option value="done">done</option>
@@ -62,12 +62,12 @@
             <option value="canceled">canceled</option>
           </select>
         </div>
-        <button @click="store.fetchTasks()">↻ 刷新</button>
+        <button @click="store.fetchTasks()">↻ {{ $t('common.refresh') }}</button>
       </div>
 
       <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
-      <DataTable :columns="columns" :rows="store.list" row-key="taskID" empty-text="暂无任务">
+      <DataTable :columns="columns" :rows="store.list" row-key="taskID" :empty-text="$t('tasks.empty')">
         <template #cell-taskID="{ value }"><code>{{ value }}</code></template>
         <template #cell-command="{ value }"><code>{{ value }}</code></template>
         <template #cell-status="{ value }">
@@ -78,7 +78,7 @@
             v-if="(row.status === 'pending' || row.status === 'running') && authStore.hasPerm('task:cancel')"
             class="xs outline"
             @click.stop="onCancel(row.taskID)"
-          >取消</button>
+          >{{ $t('tasks.cancel') }}</button>
           <span v-else class="muted">—</span>
         </template>
       </DataTable>
@@ -91,6 +91,7 @@ import { onMounted, ref } from 'vue'
 import { useTaskStore } from '@/stores/task'
 import { useAuthStore } from '@/stores/auth'
 import { getAgents } from '@/api/device'
+import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
@@ -104,11 +105,11 @@ const msgOk = ref(false)
 
 const columns = [
   { key: 'taskID', title: 'TaskID', slot: 'cell-taskID' },
-  { key: 'agentID', title: '采集端' },
-  { key: 'type', title: '类型' },
-  { key: 'command', title: '命令', slot: 'cell-command' },
-  { key: 'status', title: '状态', slot: 'cell-status' },
-  { key: 'actions', title: '操作', slot: 'cell-actions', width: '90px' }
+  { key: 'agentID', title: t('tasks.col_agent') },
+  { key: 'type', title: t('tasks.col_type') },
+  { key: 'command', title: t('tasks.col_command'), slot: 'cell-command' },
+  { key: 'status', title: t('tasks.col_status'), slot: 'cell-status' },
+  { key: 'actions', title: t('tasks.col_actions'), slot: 'cell-actions', width: '90px' }
 ]
 
 async function onSubmit() {
@@ -118,7 +119,7 @@ async function onSubmit() {
     msgOk.value = r.s < 400
     if (r.s < 400) form.value.command = ''
   } catch (e) {
-    msg.value = '下发失败: ' + (e.j?.error || e.message)
+    msg.value = t('tasks.dispatch_failed') + (e.j?.error || e.message)
     msgOk.value = false
   }
 }

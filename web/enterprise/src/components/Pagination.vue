@@ -2,14 +2,15 @@
   <div class="pager">
     <span class="info">{{ info }}</span>
     <div class="btns">
-      <button class="xs outline" :disabled="!hasPrev" @click="$emit('prev')">‹ 上一页</button>
-      <button class="xs outline" :disabled="!hasNext" @click="$emit('next')">下一页 ›</button>
+      <button class="xs outline" :disabled="!hasPrev" @click="$emit('prev')">{{ $t('common.prev') }}</button>
+      <button class="xs outline" :disabled="!hasNext" @click="$emit('next')">{{ $t('common.next') }}</button>
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed } from 'vue'
+import { t } from '@/i18n'
 const props = defineProps({
   page: { type: Number, default: 1 },
   pageSize: { type: Number, default: 0 },
@@ -18,7 +19,7 @@ const props = defineProps({
 defineEmits(['prev', 'next'])
 const hasPrev = computed(() => props.page > 1)
 const hasNext = computed(() => props.pageSize >= props.limit)
-const info = computed(() => `第 ${props.page} 页（本页 ${props.pageSize} 条）`)
+const info = computed(() => t('common.page', { n: props.page, m: props.pageSize }))
 </script>
 
 <style scoped>

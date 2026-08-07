@@ -25,7 +25,7 @@
         :columns="columns"
         :rows="store.templates"
         row-key="id"
-        empty-text="暂无模板"
+        :empty-text="$t('osopt.noTemplates')"
       >
         <template #cell-id="{ value }"><code>{{ value }}</code></template>
         <template #cell-category="{ value }">
@@ -61,7 +61,7 @@
         <pre class="code-block">{{ tpl.commands || '' }}</pre>
         <div v-if="tpl.params && tpl.params.length" class="params-section">
           <h4>{{ $t('mwdep.detailParams') }}</h4>
-          <DataTable :columns="paramCols" :rows="tpl.params" row-key="name" empty-text="无参数">
+          <DataTable :columns="paramCols" :rows="tpl.params" row-key="name" :empty-text="$t('osopt.noParams')">
             <template #cell-name="{ value }"><code>{{ value }}</code></template>
             <template #cell-required="{ value }">
               <StatusBadge v-if="value" status="failed" :text="$t('mwdep.param.required')" />
@@ -129,6 +129,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useOSOptimizeStore } from '@/stores/os-optimize'
 import { getOSTemplate } from '@/api/os-optimize'
 import { getTaskDetail } from '@/api/task'
+import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
@@ -139,13 +140,13 @@ const store = useOSOptimizeStore()
 // 分类列表（与个人版对齐：内核/网络/安全/时间/SSH/磁盘/系统/用户/存储/服务/监控）
 const categories = ['all', 'kernel', 'network', 'security', 'time', 'ssh', 'disk', 'system', 'user', 'storage', 'service', 'monitor']
 
-const columns = [
+const columns = computed(() => [
   { key: 'id', title: 'ID', slot: 'cell-id' },
-  { key: 'name', title: '名称' },
-  { key: 'category', title: '分类', slot: 'cell-category' },
-  { key: 'risk', title: '风险', slot: 'cell-risk' },
-  { key: 'actions', title: '操作', slot: 'cell-actions', width: '160px' }
-]
+  { key: 'name', title: t('osopt.col.name') },
+  { key: 'category', title: t('osopt.col.category'), slot: 'cell-category' },
+  { key: 'risk', title: t('osopt.col.risk'), slot: 'cell-risk' },
+  { key: 'actions', title: t('osopt.col.action'), slot: 'cell-actions', width: '160px' }
+])
 const paramCols = [
   { key: 'name', title: 'Name', slot: 'cell-name' },
   { key: 'type', title: 'Type' },
@@ -207,10 +208,10 @@ function closeExec() {
 
 async function confirmExec() {
   if (!execTpl.value || !execTpl.value.id) {
-    execMsg.value = '执行失败: no template'; execOk.value = false; return
+    execMsg.value = t('osopt.execFailNoTemplate'); execOk.value = false; return
   }
   if (!execForm.value.agentID) {
-    execMsg.value = '请先选择目标设备'; execOk.value = false; return
+    execMsg.value = t('osopt.noAgent'); execOk.value = false; return
   }
   // 收集参数
   let params = []
@@ -219,13 +220,13 @@ async function confirmExec() {
     for (const p of execTpl.value.params) {
       const v = execForm.value.params[p.name]
       if (p.required && (v == null || v === '')) {
-        execMsg.value = '参数校验失败：' + p.name + ' 必填'; execOk.value = false; return
+        execMsg.value = t('osopt.paramRequired', { name: p.name }); execOk.value = false; return
       }
       // 端口范围校验
       if (v != null && v !== '' && /port/i.test(p.name)) {
         const n = Number(v)
         if (!Number.isInteger(n) || n < 1 || n > 65535) {
-          execMsg.value = '参数校验失败：' + p.name + ' 端口必须是 1-65535 的整数'; execOk.value = false; return
+          execMsg.value = t('osopt.paramPortInvalid', { name: p.name }); execOk.value = false; return
         }
       }
       params.push(v != null ? String(v) : '')
@@ -235,21 +236,21 @@ async function confirmExec() {
   }
 
   executing.value = true
-  execMsg.value = '提交中…'; execOk.value = true
+  execMsg.value = t('osopt.submitting'); execOk.value = true
   execLog.value = ''
   try {
     const r = await store.execute(execTpl.value.id, execForm.value.agentID, params)
     if (r.s < 400 && r.j) {
       const taskId = r.j.taskID || r.j.id || r.j.taskId || ''
-      execMsg.value = '任务已创建，ID: ' + (taskId || JSON.stringify(r.j))
+      execMsg.value = t('osopt.execTaskCreated', { id: (taskId || JSON.stringify(r.j)) })
       execOk.value = true
       if (taskId) startPoll(taskId)
     } else {
-      execMsg.value = '执行失败: [' + (r.s || '?') + '] ' + (r.j ? JSON.stringify(r.j) : '')
+      execMsg.value = t('osopt.execFailHttp', { code: (r.s || '?'), msg: (r.j ? JSON.stringify(r.j) : '') })
       execOk.value = false
     }
   } catch (e) {
-    execMsg.value = '执行失败: ' + (e.j?.error || e.message || e)
+    execMsg.value = t('osopt.execFailError', { msg: (e.j?.error || e.message || e) })
     execOk.value = false
   } finally {
     executing.value = false
@@ -261,31 +262,31 @@ function startPoll(taskId) {
   if (execTimer) clearInterval(execTimer)
   let count = 0
   const max = 40
-  execLog.value = '轮询中…\n'
+  execLog.value = t('osopt.pollingStart')
   execTimer = setInterval(async () => {
     count++
     try {
       const task = await getTaskDetail(taskId)
       const st = task?.status || ''
       const output = String(task?.output || '')
-      const label = { pending: '等待中', running: '执行中', completed: '已完成', failed: '失败' }[st] || st
+      const label = t('osopt.taskStatus.' + st) || st
       execLog.value = '⏳ [' + label + ']\n' + output
       if (st === 'completed' || st === 'failed' || count >= max) {
         clearInterval(execTimer); execTimer = null
         if (st === 'completed') {
-          execLog.value += '\n✓ 执行成功'
-          execMsg.value = '执行成功 (task: ' + taskId + ')'; execOk.value = true
+          execLog.value += '\n' + t('osopt.execSuccessLog')
+          execMsg.value = t('osopt.execSuccessTask', { id: taskId }); execOk.value = true
         } else if (st === 'failed') {
-          execLog.value += '\n✗ 执行失败'
-          execMsg.value = '执行失败 (task: ' + taskId + ')'; execOk.value = false
+          execLog.value += '\n' + t('osopt.execFailLog')
+          execMsg.value = t('osopt.execFailTask', { id: taskId }); execOk.value = false
         } else {
-          execLog.value += '\n⚠ 轮询超时，请手动查看任务状态'
+          execLog.value += '\n' + t('osopt.pollTimeout')
         }
       }
     } catch (e) {
       if (count >= max) {
         clearInterval(execTimer); execTimer = null
-        execLog.value += '\n⚠ 轮询超时'
+        execLog.value += '\n' + t('osopt.pollTimeoutShort')
       }
     }
   }, 3000)

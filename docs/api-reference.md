@@ -3,6 +3,7 @@
 本文档完整描述 OpsMesh 控制面 HTTP REST API（端口 8080）与 gRPC API（端口 9090）。
 
 - **Base URL**：`http://<controlplane-host>:8080`
+- **Metrics 端点**：`http://<controlplane-host>:9091/metrics`（独立端口，非 8080）
 - **API 版本**：`v1`（路径前缀 `/api/v1`）
 - **内容类型**：`application/json`（除 SSE 流为 `text/event-stream`、二进制下载外）
 - **请求体上限**：1 MiB（`http.MaxBytesReader`，超出返回 413）
@@ -79,27 +80,55 @@
 
 ### GET /healthz
 
-健康检查（K8s liveness/readiness 探针）。
+深度健康检查（K8s liveness 探针，P1-C2 增强）。含 Store 连接深度检查，2 秒超时保护。
 
-- **响应**：`200 OK`，体 `ok`
+- **响应**：
+  - 正常：`200 OK`，`Content-Type: application/json`
+
+```json
+{
+  "status": "ok",
+  "checks": {"store": "ok"}
+}
+```
+
+  - Store 不可用：`503 Service Unavailable`
+
+```json
+{
+  "status": "unhealthy",
+  "error": "store unavailable"
+}
+```
+
+### GET /readyz
+
+就绪检查（K8s readiness 探针，P1-C2 新增）。与 liveness 的区别：失败时从 Service endpoints 摘除但不重启容器。
+就绪条件：Store 连接可用 + 本实例持有 leader 租约（避免非 leader 副本接写流量造成脑裂/抖动）。2 秒超时保护。
+
+- **响应**：
+  - 就绪：`200 OK`，`{"status": "ready"}`
+  - 未就绪：`503 Service Unavailable`，`{"status": "not_ready", "reason": "..."}`
 
 ### GET /metrics
 
-Prometheus 文本格式指标。受 `--metrics-allow-cidr` 白名单控制。
+Prometheus 文本格式指标。**监听在独立端口 9091**（非主 8080 端口），受 `--metrics-allow-cidr` 白名单控制（白名单非空时仅允许授权来源，否则 403）。
 
+- **请求**：`GET http://<controlplane-host>:9091/metrics`
 - **响应**：`200 OK`，`Content-Type: text/plain; version=0.0.4`
 
 ### GET /api/v1/me
 
-返回当前请求身份信息（解析 `X-Tenant-ID` / `X-User-Id` / `X-User-Roles` 头）。
+返回当前请求身份信息（解析 `X-Tenant-ID` / `X-User-Id` / `X-User-Roles` 头；内核不自鉴权，身份由前置网关注入）。
 
 - **响应示例**：
 
 ```json
 {
-  "tenant_id": "t1",
-  "user_id": "u-001",
-  "roles": ["admin", "ops"]
+  "tenantID": "t1",
+  "userID": "u-001",
+  "roles": ["admin", "ops"],
+  "mode": "gateway-injected"
 }
 ```
 

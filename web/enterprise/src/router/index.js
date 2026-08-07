@@ -42,8 +42,12 @@ const router = createRouter({
 })
 
 // 全局前置守卫：未登录时重定向到 /login（public 路由除外）
-router.beforeEach((to) => {
+// async 化：等待 auth store 完成首次会话恢复（fetchMe）后再判断 isLoggedIn，
+// 避免冷启动时序竞争——刷新已登录页面时 user 初始为 null，若同步判断会误重定向到 /login。
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
+  // 等待会话恢复完成（首次导航）；后续导航 ready 已 resolve，无额外开销
+  await auth.ready
   if (!to.meta.public && !auth.isLoggedIn) {
     return { name: 'login' }
   }

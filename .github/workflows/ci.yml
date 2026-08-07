@@ -194,6 +194,25 @@ jobs:
           image-ref: ${{ secrets.REGISTRY }}/opsmesh-binary:${{ github.sha }}
           severity: HIGH,CRITICAL
           exit-code: "1"
+      # P2-4 供应链安全：对推送的镜像做 cosign 签名（key-based，非 keyless/OIDC）。
+      # 条件守卫：registry secret 已配置（steps.check.outputs.skip != 'true'）且
+      # COSIGN_PRIVATE_KEY secret 已配置（env.COSIGN_PRIVATE_KEY != ''）。
+      # 若 COSIGN_PRIVATE_KEY 未配置，本步骤自动跳过，不影响 CI 流水线（与 image job 整体跳过机制一致）。
+      # --tlog-upload=false：不上传透明日志（内网/无 OIDC 场景）；COSIGN_EXPERIMENTAL=1 启用非交互签名。
+      - name: cosign 签名镜像（供应链安全，P2-4）
+        if: steps.check.outputs.skip != 'true' && env.COSIGN_PRIVATE_KEY != ''
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          IMAGE: ${{ secrets.REGISTRY }}/opsmesh-binary:${{ github.sha }}
+        run: |
+          echo "Signing image: ${IMAGE}"
+          # 安装 cosign
+          curl -sSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64
+          chmod +x /usr/local/bin/cosign
+          # 签名镜像（keyless 模式需要 OIDC，这里用 key-based 签名）
+          COSIGN_EXPERIMENTAL=1 cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false ${IMAGE}
+          echo "Image signed successfully"
       # E4 闭环：构建后把镜像 tag 钉死写回 GitOps chart（消除"发布流程手动替换"的部署脆弱点）。
       # 原 chart global.image.tag 硬编码 "0.1"，CI 却推 :sha，原样部署会去拉不存在的 :0.1。
       # 此处克隆独立 gitops 仓库，用 yq 把 tag 覆写为本Commit sha（与推送的 :sha 一致），

@@ -400,7 +400,8 @@ func TestHandleAlertRouting_AckAndSilence(t *testing.T) {
 // handleHealthz（P2-12 健康检查）
 // =============================================================================
 
-// TestHandleHealthz_Happy 验证 GET /healthz 返回 200 + {"status":"ok"}。
+// TestHandleHealthz_Happy 验证 GET /healthz 返回 200 + {"status":"ok","checks":{"store":"ok"}}。
+// P1-C2 增强：深度健康检查，新增 checks.store 字段。向后兼容：status 字段仍为 "ok"。
 func TestHandleHealthz_Happy(t *testing.T) {
 	s := newExtraTestServer()
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -409,12 +410,20 @@ func TestHandleHealthz_Happy(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d, want 200", rec.Code)
 	}
-	var resp map[string]string
+	// 响应含嵌套 checks 对象，用 map[string]interface{} 解析。
+	var resp map[string]interface{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if resp["status"] != "ok" {
 		t.Fatalf("status=%q, want ok", resp["status"])
+	}
+	checks, ok := resp["checks"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("checks 字段缺失或类型错误: %v", resp["checks"])
+	}
+	if checks["store"] != "ok" {
+		t.Fatalf("checks.store=%q, want ok", checks["store"])
 	}
 }
 
@@ -428,6 +437,78 @@ func TestHandleHealthz_MethodNotAllowed(t *testing.T) {
 		t.Fatalf("status=%d, want 405", rec.Code)
 	}
 }
+
+// =============================================================================
+// handleReadyz（P1-C2 就绪检查）
+// =============================================================================
+//
+// /readyz 用于 K8s readiness probe：检查 Store 连接 + leader 选举状态。
+// 与 /healthz（liveness）的区别：readiness 失败只摘流量不重启容器。
+
+// TestHandleReadyz_Happy 验证 GET /readyz 在 store 可用且为 leader 时返回 200 + {"status":"ready"}。
+// newExtraTestServer 使用 MemoryStore，恒为 leader，故 happy path 直接通过。
+func TestHandleReadyz_Happy(t *testing.T) {
+	s := newExtraTestServer()
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	s.handleReadyz(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["status"] != "ready" {
+		t.Fatalf("status=%q, want ready", resp["status"])
+	}
+}
+
+// TestHandleReadyz_MethodNotAllowed 验证非 GET 方法返回 405。
+func TestHandleReadyz_MethodNotAllowed(t *testing.T) {
+	s := newExtraTestServer()
+	req := httptest.NewRequest(http.MethodPost, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	s.handleReadyz(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status=%d, want 405", rec.Code)
+	}
+}
+
+// TestHandleReadyz_NotLeader 验证非 leader 实例返回 503 + not_ready。
+// 用自定义 mock store 模拟 IsLeader()=false，验证 readyz 摘流量行为。
+func TestHandleReadyz_NotLeader(t *testing.T) {
+	s := newExtraTestServer()
+	// 用 mock store 替换：IsLeader 返回 false 模拟非 leader 副本。
+	// 嵌入真实 store 接口，仅覆盖 IsLeader/RenewLeadership；pingStore 类型断言
+	// 不匹配已知实现走 default 分支返回 nil（视为可用），从而隔离 leader 检查路径。
+	s.store = &notLeaderMockStore{Store: s.store}
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	s.handleReadyz(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d, want 503; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["status"] != "not_ready" {
+		t.Fatalf("status=%q, want not_ready", resp["status"])
+	}
+	if resp["reason"] != "not leader" {
+		t.Fatalf("reason=%q, want 'not leader'", resp["reason"])
+	}
+}
+
+// notLeaderMockStore 包装真实 store，仅覆盖 IsLeader/RenewLeadership 返回 false，
+// 用于测试非 leader 副本的 /readyz 行为。其他方法经嵌入接口转发到真实 store。
+type notLeaderMockStore struct {
+	store.Store
+}
+
+func (m *notLeaderMockStore) IsLeader() bool                         { return false }
+func (m *notLeaderMockStore) RenewLeadership(ttl time.Duration) bool { return false }
 
 // =============================================================================
 // handleAutoProvision（B1 自动纳管触发）

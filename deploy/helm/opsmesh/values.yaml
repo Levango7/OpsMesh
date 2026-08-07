@@ -65,6 +65,10 @@ controlplane:
   # Pod 水平自动扩缩容（可选）
   autoscaling:
     enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    # targetMemoryUtilizationPercentage: 80  # 可选
   # 节点选择器/亲和/容忍
   nodeSelector: {}
   affinity: {}
@@ -176,3 +180,14 @@ ingress:
 ## @section Observability
 podAnnotations: {}
 podLabels: {}
+
+## @section Observability
+observability:
+  # Prometheus Operator ServiceMonitor（控制面 /metrics:9091 采集）
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+  # Prometheus Operator PrometheusRule（内置告警规则：agent 离线 / 任务失败率高 / 队列堆积）
+  prometheusRule:
+    enabled: false

@@ -1,0 +1,43 @@
+{{- if .Values.observability.prometheusRule.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "opsmesh.controlplane.serviceName" . }}
+  labels:
+    {{- include "opsmesh.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: opsmesh.rules
+      rules:
+        # agent 离线：在线 agent 数低于期望持续 5m
+        # expected 默认 1，按集群规模调整 expr 中的阈值
+        - alert: OpsMeshAgentsOffline
+          expr: opsmesh_agents_total < 1
+          for: 5m
+          labels:
+            severity: critical
+            component: agent
+          annotations:
+            summary: "OpsMesh agents offline"
+            description: "在线 agent 数 ({{ $value }}) 低于期望 (1) 已持续 5m，请检查 agent DaemonSet 状态与网络注册。"
+        # 任务失败率高：5m 内失败率 > 30%
+        - alert: OpsMeshTaskFailureRateHigh
+          expr: rate(opsmesh_tasks_total{status="failed"}[5m]) / rate(opsmesh_tasks_total[5m]) > 0.3
+          for: 5m
+          labels:
+            severity: warning
+            component: controlplane
+          annotations:
+            summary: "OpsMesh task failure rate high"
+            description: "任务失败率超过 30% 已持续 5m，请排查任务日志与 agent 执行环境。"
+        # 队列堆积：队列深度 > 100 持续 5m
+        - alert: OpsMeshTaskQueueBacklog
+          expr: opsmesh_task_queue_depth > 100
+          for: 5m
+          labels:
+            severity: warning
+            component: controlplane
+          annotations:
+            summary: "OpsMesh task queue backlog"
+            description: "任务队列深度超过 100 已持续 5m，请检查调度器吞吐与 agent 容量。"
+{{- end -}}

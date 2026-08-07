@@ -14,7 +14,7 @@
       </thead>
       <tbody>
         <tr v-if="!rows || rows.length === 0">
-          <td :colspan="columns.length" class="empty">{{ emptyText }}</td>
+          <td :colspan="columns.length" class="empty">{{ emptyText || $t('common.no_data') }}</td>
         </tr>
         <tr
           v-for="(row, idx) in rows"
@@ -39,7 +39,7 @@ defineProps({
   rowKey: { type: String, default: '' },
   clickable: { type: Boolean, default: false },
   rowClass: { type: Function, default: null },
-  emptyText: { type: String, default: '暂无数据' }
+  emptyText: { type: String, default: '' }
 })
 defineEmits(['row-click'])
 

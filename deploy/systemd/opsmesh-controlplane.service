@@ -14,5 +14,45 @@ LimitNOFILE=65536
 User=opsmesh
 Group=opsmesh
 
+# --- 安全加固 (Security Hardening) ---
+# 禁止进程及其子进程获取新特权，阻断提权攻击路径
+NoNewPrivileges=true
+# 将 /usr、/boot、/etc 设为只读（仅 /etc 受 ProtectSystem=strict 控制可写受控路径）
+ProtectSystem=strict
+# controlplane 持久化状态目录，需可写
+ReadWritePaths=/var/lib/opsmesh
+# 使 /home、/root、/run/user 对服务不可见
+ProtectHome=true
+# 私有 /tmp 与 /var/tmp，与其他服务隔离，自动清理
+PrivateTmp=true
+# 私有 /dev，仅暴露伪设备（null、zero、random 等）
+PrivateDevices=true
+# /proc/sys、/sys 设为只读，防止篡改内核可调参数
+ProtectKernelTunables=true
+# 禁止加载/卸载内核模块
+ProtectKernelModules=true
+# cgroup v1/v2 层级树设为只读
+ProtectControlGroups=true
+# 仅允许 IPv4、IPv6 与 Unix 域套接字
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# 禁止创建任意类型的新命名空间
+RestrictNamespaces=true
+# 禁止提升实时调度优先级，避免实时锁死 CPU
+RestrictRealtime=true
+# 禁止设置 SUID/SGID 文件位
+RestrictSUIDSGID=true
+# 锁定进程 personality，禁止切换执行域
+LockPersonality=true
+# 允许内存段可写可执行（JIT/mmap 需要）
+MemoryDenyWriteExecute=false
+# 清空能力边界集，丢弃所有 Linux capabilities
+CapabilityBoundingSet=
+# 清空环境能力集，不继承任何 capability
+AmbientCapabilities=
+# 仅允许本机系统调用架构
+SystemCallArchitectures=native
+# 限制系统调用集合为 @system-service 白名单
+SystemCallFilter=@system-service
+
 [Install]
 WantedBy=multi-user.target
