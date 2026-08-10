@@ -87,18 +87,19 @@ import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
+import { fmtTime } from '@/composables/useFormatTime'
 
 const router = useRouter()
 const store = useDeviceStore()
 
 // 表格列定义：含 hostname / segment / state / os 字段 + 操作列
 const columns = [
-  { key: 'hostname', title: t('devices.col_hostname') },
+  { key: 'hostname', title: t('devices.col_hostname'), sortable: true },
   { key: 'deviceID', title: 'DeviceID', slot: 'cell-deviceID' },
   { key: 'segment', title: t('devices.col_segment') },
   { key: 'ip', title: t('devices.col_ip') },
-  { key: 'state', title: t('devices.col_state'), slot: 'cell-state' },
-  { key: 'os', title: 'OS' },
+  { key: 'state', title: t('devices.col_state'), slot: 'cell-state', sortable: true },
+  { key: 'os', title: 'OS', sortable: true },
   { key: 'agentID', title: t('devices.col_agent') },
   { key: 'taskState', title: t('devices.col_task_state') },
   { key: 'lastResult', title: 'LastResult', slot: 'cell-lastResult' },
@@ -148,11 +149,7 @@ async function provision() {
   if (!dev.value.deviceID) return
   await store.provision(dev.value.deviceID)
 }
-function fmtTime(s) {
-  if (!s) return ''
-  const d = new Date(s)
-  return isNaN(d.getTime()) ? s : d.toLocaleString('zh-CN', { hour12: false })
-}
+
 
 onMounted(() => { if (!store.total) store.fetchDevices() })
 </script>

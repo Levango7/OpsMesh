@@ -13,6 +13,7 @@ import (
 	"crypto/hmac"
 	cryptoRand "crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -92,8 +93,25 @@ type Server struct {
 	// （重启后旧 token 失效，仅开发/单实例适用）。
 	jwtSecret []byte
 
-	// loginGuard 登录/注册防爆破 + 限流（P1-4，进程内）。多副本 HA 下建议后续换 Redis 共享。
+	// P0-G3 kubeconfig 静态加密密钥（AES-256-GCM，来自 config.EncryptionKey base64 解码）。
+	// k8s_cluster.go 的 encryptKubeconfig/decryptKubeconfig 用此密钥对 kubeconfig 做加解密。
+	// 空=未配置（非生产模式），加解密退化为明文透传（保持 demo 兼容）；生产模式由 config.Validate 强制非空。
+	encryptionKey []byte
+
+	// loginGuard 登录/注册防爆破 + 限流（P1-4）。
+	// B-6：失败计数 + 账号锁定经 SessionStore 共享（多副本 HA 下任一副本触发锁定后其他副本也拒绝）；
+	// IP 令牌桶限流保留进程内（多副本各自限流，副本数 N 时实际阈值 N*burst，可接受）。
 	loginGuard *loginGuard
+
+	// B-6 会话状态存储（JWT 黑名单/限流计数/改密令牌）。
+	// 默认 InProcessSessionStore（单副本/demo）；多副本 HA 配置 --session-store=redis:// 时用 RedisSessionStore。
+	// 登出时 jti 加入黑名单，userFromToken 校验时检查；多副本经 Redis 共享使登出全局生效。
+	sessionStore store.SessionStore
+
+	// C-4 DeviceFP deadline：超过此时刻签发的 refresh token 必须绑定 DeviceFP（非空）。
+	// 零值=不强制（向后兼容）；非零=渐进式强制设备绑定。
+	// 由 NewServer 从 cfg.DeviceFPDeadline 初始化。
+	deviceFPDeadline time.Time
 
 	// clusterMgr K8s 多集群连接管理器（Phase 3）。
 	// 由 NewServer 构造；用户创建/更新集群时 AddCluster，删除时 RemoveCluster，测试连接时 TestCluster。
@@ -119,7 +137,18 @@ func (s *Server) startRefreshSweep(interval time.Duration) {
 func NewServer(cfg *config.Config) *Server {
 	// Kafka brokers/topic 经参数传入事件总线（避免 os.Setenv 并发不安全，P1-5）。
 	bus := events.New(cfg.EventBus, cfg.KafkaBrokers, cfg.KafkaTopic)
-	st := selectStore(cfg, bus)
+	st, storeErr := selectStore(cfg, bus)
+	if storeErr != nil {
+		// P0-G3 安全加固：静默回退改 fail-fast。
+		// 生产模式（cfg.Production == true）：MySQL 初始化失败直接 Fatal，避免静默回退 memory
+		// 导致数据丢失/分裂（多副本 memory store 各自独立，写入互不可见）。
+		if cfg.Production {
+			log.Fatalf("[controlplane] 持久化后端初始化失败（生产模式 fail-fast，不回退 memory）: %v", storeErr)
+		}
+		// 非生产模式（开发/demo/测试）：打 Warning 后回退 memory，保持本地体验兼容。
+		logx.Warn(context.Background(), "持久化后端初始化失败，非生产模式回退 memory（生产模式将 fail-fast）", "err", storeErr)
+		st = store.NewMemoryStore().WithSecret(cfg.ProvisionSecret).WithBus(bus).WithDemo(cfg.Demo)
+	}
 	s := &Server{
 		cfg:           cfg,
 		store:         st,
@@ -186,9 +215,38 @@ func NewServer(cfg *config.Config) *Server {
 			log.Fatalf("[controlplane] JWT 密钥随机生成失败: %v", err)
 		}
 	}
-	// P1-4 登录/注册防爆破 + 限流守卫（进程内；多副本建议后续换 Redis）。
-	s.loginGuard = newLoginGuard()
-	// P2 启动守卫回收，防止 ips/fails map 在长运行中无界增长（内存泄漏）。
+	// P0-G3 kubeconfig 加密密钥：base64 解码 config.EncryptionKey 为 32 字节 AES-256 密钥。
+	// 空=未配置（非生产模式，Validate 已保证生产非空），加解密退化为明文透传保持 demo 兼容。
+	if cfg.EncryptionKey != "" {
+		key, decErr := base64.StdEncoding.DecodeString(cfg.EncryptionKey)
+		if decErr != nil {
+			log.Fatalf("[controlplane] --encryption-key base64 解码失败: %v", decErr)
+		}
+		if len(key) != 32 {
+			log.Fatalf("[controlplane] --encryption-key 解码后须为 32 字节（AES-256），实际 %d 字节", len(key))
+		}
+		s.encryptionKey = key
+	} else if !cfg.Production {
+		logx.Warn(context.Background(), "未配置 --encryption-key，kubeconfig 将明文存储（仅开发/demo 适用，生产必须配置）", nil)
+	}
+	// B-6 会话状态存储：根据 --session-store 选择 Redis 或进程内实现。
+	// 多副本 HA 须配置 redis://，否则登出/限流/改密令牌不跨副本共享。
+	ss, ssErr := selectSessionStore(cfg)
+	if ssErr != nil {
+		// Redis 初始化失败：生产模式 fail-fast，非生产回退进程内（保持本地体验兼容）。
+		if cfg.Production {
+			log.Fatalf("[controlplane] 会话状态后端初始化失败（生产模式 fail-fast）: %v", ssErr)
+		}
+		logx.Warn(context.Background(), "会话状态后端初始化失败，非生产模式回退进程内", "err", ssErr)
+		ss = store.NewInProcessSessionStore()
+	}
+	s.sessionStore = ss
+	// C-4 DeviceFP deadline：从 config 初始化，consumeRefreshToken 据此强制 DeviceFP 非空。
+	s.deviceFPDeadline = cfg.DeviceFPDeadline
+	// P1-4 登录/注册防爆破 + 限流守卫。
+	// B-6：失败计数 + 账号锁定经 SessionStore 共享；IP 令牌桶限流保留进程内。
+	s.loginGuard = newLoginGuard(ss)
+	// P2 启动守卫回收，防止 ips map 在长运行中无界增长（内存泄漏）。
 	s.loginGuard.startSweep(10 * time.Minute)
 	s.startRefreshSweep(time.Hour) // 周期清理过期刷新令牌，防内存增长
 	// Phase 3 K8s 多集群连接管理器：构造空管理器，用户创建集群时 AddCluster。
@@ -196,8 +254,14 @@ func NewServer(cfg *config.Config) *Server {
 	// task 92 重启恢复连接：控制面重启后 ClusterManager 为空，按库内集群配置重建连接。
 	// AddCluster 仅解析 kubeconfig 构造 Clientset，不发起网络请求，启动轻量；
 	// 连通性由用户「测试连接」或资源 API 按需刷新，恢复失败仅告警不阻断启动。
+	// P0-G3：store 中 kubeconfig 为加密存储，恢复连接前需解密为明文传给 AddCluster。
 	for _, kc := range st.ListK8sClusters("") {
-		if err := s.clusterMgr.AddCluster(kc.ID, kc.Kubeconfig); err != nil {
+		plain, decErr := s.decryptKubeconfig(kc.Kubeconfig)
+		if decErr != nil {
+			logx.Warn(context.Background(), "K8s 集群重启恢复连接解密 kubeconfig 失败", decErr, "clusterID", kc.ID)
+			continue
+		}
+		if err := s.clusterMgr.AddCluster(kc.ID, plain); err != nil {
 			logx.Warn(context.Background(), "K8s 集群重启恢复连接失败", err, "clusterID", kc.ID)
 		}
 	}
@@ -205,6 +269,11 @@ func NewServer(cfg *config.Config) *Server {
 	// 使模板支持在线 CRUD；store 为空时 API 回退到内存常量（向后兼容）。
 	s.seedPresetOSTemplates()
 	s.seedPresetMiddlewareTemplates()
+	// P1-G4 默认 admin 随机密码：非 demo 模式下，若 admin 仍用弱口令 admin123，
+	// 替换为随机口令并打印日志。demo 模式保持 admin123（本地体验兼容）。
+	if !cfg.Demo {
+		rotateDefaultAdminPassword(st)
+	}
 	return s
 }
 
@@ -280,27 +349,58 @@ func (d *storeDispatcher) TaskStates(ids []string, tenantID string) map[string]s
 // selectStore 按配置选择后端：--store=mysql 且 DSN 非空时启用 SQLStore，否则 MemoryStore。
 // 同时注入事件总线（P1-5），使 store 层状态变更可经 Kafka 等真实消费。
 // M4-4C：--multi-schema=true 时使用 MultiSchemaStore（每租户独立 schema），而非单个 SQLStore。
-func selectStore(cfg *config.Config, bus events.Bus) store.Store {
+//
+// P0-G3 安全加固：静默回退改 fail-fast。
+//   - 返回 (store.Store, error)：MySQL/MultiSchema 初始化失败时返回 nil, error（不回退 memory）。
+//   - 调用方按 cfg.Production 决策：生产模式 log.Fatal（fail-fast），非生产打 Warning 后回退 memory（保持 demo 兼容）。
+//   - 无 cfg.Store == "mysql" 时仍用 MemoryStore（这是正常行为，不是回退，返回 nil error）。
+func selectStore(cfg *config.Config, bus events.Bus) (store.Store, error) {
 	if cfg.Store == "mysql" && cfg.MySQLDSN != "" {
 		if cfg.MultiSchema {
 			ms, err := store.NewMultiSchemaStore(cfg.MySQLDSN, cfg.RedisAddr, store.DefaultSchemaNamer(cfg.SchemaPrefix))
 			if err != nil {
-				logx.Error(context.Background(), "Multi-schema store 初始化失败，回退 memory", err)
-				return store.NewMemoryStore().WithSecret(cfg.ProvisionSecret).WithBus(bus).WithDemo(cfg.Demo)
+				return nil, fmt.Errorf("multi-schema store 初始化失败: %w", err)
 			}
 			logx.Info(context.Background(), "持久化后端=mysql(multi-schema)", "reason", "M4-4C 多租户 schema 隔离")
-			return ms.WithBus(bus).WithSecret(cfg.ProvisionSecret).WithDemo(cfg.Demo)
+			return ms.WithBus(bus).WithSecret(cfg.ProvisionSecret).WithDemo(cfg.Demo), nil
 		}
 		ss, err := store.NewSQLStore(cfg.MySQLDSN, cfg.RedisAddr)
 		if err != nil {
-			logx.Error(context.Background(), "MySQL store 初始化失败，回退 memory", err)
-			return store.NewMemoryStore().WithSecret(cfg.ProvisionSecret).WithBus(bus).WithDemo(cfg.Demo)
+			return nil, fmt.Errorf("mysql store 初始化失败: %w", err)
 		}
 		logx.Info(context.Background(), "持久化后端=mysql", "reason", "U-04 数据本地化")
-		return ss.WithBus(bus).WithSecret(cfg.ProvisionSecret).WithDemo(cfg.Demo)
+		return ss.WithBus(bus).WithSecret(cfg.ProvisionSecret).WithDemo(cfg.Demo), nil
 	}
 	logx.Info(context.Background(), "持久化后端=memory", "reason", "默认，无外部依赖")
-	return store.NewMemoryStore().WithSecret(cfg.ProvisionSecret).WithBus(bus).WithDemo(cfg.Demo)
+	return store.NewMemoryStore().WithSecret(cfg.ProvisionSecret).WithBus(bus).WithDemo(cfg.Demo), nil
+}
+
+// selectSessionStore 按 cfg.SessionStore 选择会话状态后端（B-6 多副本共享）。
+//
+//   - cfg.SessionStore 为空（默认）：InProcessSessionStore（进程内 map，单副本/demo 零依赖）；
+//   - cfg.SessionStore="redis://host:port"：RedisSessionStore（多副本 HA 共享 JWT 黑名单/限流/改密令牌）。
+//
+// Redis 初始化失败时返回 error（不回退进程内），由调用方按 cfg.Production 决策：
+// 生产模式 fail-fast，非生产回退进程内（保持本地体验兼容）。
+func selectSessionStore(cfg *config.Config) (store.SessionStore, error) {
+	if cfg.SessionStore == "" {
+		logx.Info(context.Background(), "会话状态后端=进程内", "reason", "默认，单副本/demo 零依赖")
+		return store.NewInProcessSessionStore(), nil
+	}
+	// 解析 "redis://host:port" 格式。
+	if !strings.HasPrefix(cfg.SessionStore, "redis://") {
+		return nil, fmt.Errorf("非法 --session-store=%q（须为 redis://host:port 格式）", cfg.SessionStore)
+	}
+	addr := strings.TrimPrefix(cfg.SessionStore, "redis://")
+	if addr == "" {
+		return nil, fmt.Errorf("非法 --session-store=%q（host:port 不可为空）", cfg.SessionStore)
+	}
+	rs, err := store.NewRedisSessionStore(addr, "opsmesh:", 5*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("redis session store 初始化失败: %w", err)
+	}
+	logx.Info(context.Background(), "会话状态后端=redis", "addr", addr, "reason", "B-6 多副本 HA 共享")
+	return rs, nil
 }
 
 // newCMDBHandler 按 store 类型创建 CMDB 处理器：MySQL 时使用 SQLCiStore，否则 MemoryCiStore。
@@ -380,6 +480,15 @@ func (s *Server) securityHeadersMiddleware(h http.Handler) http.Handler {
 		// B1 修复 6：CSP nonce-based 收紧。
 		// 每请求生成 16 字节随机 nonce（hex 编码 32 字符），注入 CSP 头。
 		// 前端改造完成后移除 'unsafe-inline'，仅保留 'self' + 'nonce-{nonce}'。
+		//
+		// P1-G5 安全加固（CSP nonce 收紧）：
+		// TODO(security): 当前仍保留 'unsafe-inline'，因为前端有 141+ 个 inline onclick 事件处理器，
+		// 一次性全部移除需要大规模重构（改为 addEventListener + nonce-based inline script）。
+		// 这是临时妥协，后续应分阶段收紧：
+		//   1. Phase 1: 为所有 <script> 标签添加 nonce="{nonce}" 属性（内嵌仪表盘模板）。
+		//   2. Phase 2: 将 inline onclick 改为 addEventListener，移除 'unsafe-inline'。
+		//   3. Phase 3: 评估改用 'unsafe-hashes' 只允许特定 inline handler（CSP Level 3）。
+		// 在彻底移除 'unsafe-inline' 前，nonce 主要起防御纵深作用（nonce 化的 script 即使被注入也无法执行）。
 		nonceBytes := make([]byte, 16)
 		if _, err := cryptoRand.Read(nonceBytes); err != nil {
 			// 随机数生成失败（极罕见）：回退到固定 nonce（仅影响 CSP 强度，不阻断请求）。
@@ -388,6 +497,72 @@ func (s *Server) securityHeadersMiddleware(h http.Handler) http.Handler {
 		nonce := hex.EncodeToString(nonceBytes)
 		w.Header().Set("Content-Security-Policy",
 			fmt.Sprintf("default-src 'self'; script-src 'self' 'unsafe-inline' 'nonce-%s'; style-src 'self' 'unsafe-inline' 'nonce-%s'; img-src 'self' data:; connect-src 'self'", nonce, nonce))
+		h.ServeHTTP(w, r)
+	})
+}
+
+// csrfOriginCheck 是 CSRF Origin 校验中间件（P1-G4 安全加固）。
+// 对状态变更方法（POST/PUT/DELETE/PATCH）校验 Origin 头，防跨站提交。
+//
+// 校验规则：
+//   - demo 模式（s.cfg.Demo == true）：跳过校验（保持本地体验）。
+//   - 非状态变更方法（GET/HEAD/OPTIONS 等）：直接放行。
+//   - Origin 头为空：放行（同源请求或非浏览器客户端如 curl/agent，不破坏程序化调用）。
+//   - Origin 非空：解析其 host:port，与 s.cfg.AdvertiseAddr 的 host:port 比对；
+//     不匹配 → 403 Forbidden（疑似跨站 CSRF）。
+//   - AdvertiseAddr 为空：跳过校验（开发模式未配置，回退本机；生产模式应由 config.Validate 强制配置）。
+//
+// 设计取舍：采用 Origin 头而非 Referer，因 Origin 在跨站 POST 中始终存在且不含路径，
+// 比 Referer 更稳定（Referer 可能被 Referrer-Policy=no-referrer 剥离）。
+func (s *Server) csrfOriginCheck(h http.Handler) http.Handler {
+	// 预解析 AdvertiseAddr 的 host:port，避免每请求重复解析。
+	// advertiseHost 为空表示未配置或解析失败，此时跳过校验（向后兼容）。
+	advertiseHost := ""
+	if s.cfg != nil && s.cfg.AdvertiseAddr != "" {
+		if u, err := url.Parse(s.cfg.AdvertiseAddr); err == nil && u.Host != "" {
+			advertiseHost = u.Host
+		}
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 仅状态变更方法校验；GET/HEAD/OPTIONS 等读方法无 CSRF 风险。
+		method := r.Method
+		if method != http.MethodPost && method != http.MethodPut &&
+			method != http.MethodDelete && method != http.MethodPatch {
+			h.ServeHTTP(w, r)
+			return
+		}
+		// demo 模式跳过（保持本地体验）。
+		if s.cfg != nil && s.cfg.Demo {
+			h.ServeHTTP(w, r)
+			return
+		}
+		// AdvertiseAddr 未配置：跳过校验（开发模式兼容；生产应由 Validate 强制配置）。
+		if advertiseHost == "" {
+			h.ServeHTTP(w, r)
+			return
+		}
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			// Origin 为空：同源请求或非浏览器客户端（curl/agent），放行不破坏程序化调用。
+			h.ServeHTTP(w, r)
+			return
+		}
+		// 解析 Origin 头（格式 http(s)://host:port），提取 host:port 比对。
+		ou, err := url.Parse(origin)
+		if err != nil || ou.Host == "" {
+			// Origin 格式非法：保守拒绝（浏览器发的 Origin 应总是合法 URL）。
+			jsonError(w, http.StatusForbidden, "invalid Origin header")
+			return
+		}
+		if ou.Host != advertiseHost {
+			// Origin host 与 AdvertiseAddr host 不匹配：疑似跨站 CSRF，拒绝。
+			s.store.Audit(&proto.AuditEvent{
+				TenantID: "default", UserID: clientIP(r, s.cfg.TrustProxy), Action: "csrf_origin_rejected", Target: r.URL.Path,
+				Detail: fmt.Sprintf("origin=%s expected_host=%s remote=%s", origin, advertiseHost, r.RemoteAddr),
+			})
+			jsonError(w, http.StatusForbidden, "origin not allowed")
+			return
+		}
 		h.ServeHTTP(w, r)
 	})
 }
@@ -673,7 +848,8 @@ func (s *Server) Start() error {
 		Handler: s.httpMetricsMiddleware( // P1-C3 HTTP 指标（计数 + 延迟直方图）
 			recoveryMiddleware( // P0-2 兜底盘
 				s.securityHeadersMiddleware( // H5 安全头 + B1 CSP nonce
-					&jsonErrorMux{inner: mux}))), // B1 404 JSON
+					s.csrfOriginCheck( // P1-G4 CSRF Origin 校验（状态变更方法）
+						&jsonErrorMux{inner: mux})))), // B1 404 JSON
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -782,6 +958,14 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
 		// task 81 gRPC agent 身份绑定：按 config.GRPCRequireSignature 启用签名验证。
 		// demo 模式下 config 已强制关闭（cfg.GRPCRequireSignature=false），此处直接透传。
 		requireSignature: s.cfg != nil && s.cfg.GRPCRequireSignature,
+		// P0 安全加固：传入预共享签名密钥（--grpc-signature-key）。
+		// 非空时 verifyAgentSignature 优先使用此密钥验签，Register 不再下发密钥。
+		signatureKey: func() string {
+			if s.cfg != nil {
+				return s.cfg.GRPCSignatureKey
+			}
+			return ""
+		}(),
 	})
 	return gs, lis
 }
@@ -1042,12 +1226,50 @@ func (s *Server) pingStore(ctx context.Context) error {
 	}
 }
 
+// verifyBootstrapToken 校验 agent 分发端点（/install.sh、/bin/opsmesh-agent）的访问令牌。
+// P0-G1 安全加固：原端点完全开放，任何人可下载 agent 二进制与安装脚本，存在供应链投毒风险。
+//
+// 校验规则：
+//   - demo 模式（s.cfg.Demo == true）：放宽，不要求 token（保持本地一键体验）。
+//   - 否则接受 ?token=xxx 查询参数 或 Authorization: Bearer xxx 头，
+//     与 s.cfg.ProvisionSecret 做 hmac.Equal 常量时间比对，防时序侧信道。
+//   - 无 token 或 token 不匹配 → 401 Unauthorized。
+//
+// 返回 true 表示放行，false 表示已写入 401 响应（调用方应直接 return）。
+func (s *Server) verifyBootstrapToken(w http.ResponseWriter, r *http.Request) bool {
+	if s.cfg != nil && s.cfg.Demo {
+		return true // demo 模式放宽：本地体验不要求 token
+	}
+	// 期望 token：ProvisionSecret。空配置时拒绝所有非 demo 访问（防误配开放）。
+	expected := ""
+	if s.cfg != nil {
+		expected = s.cfg.ProvisionSecret
+	}
+	// 提取请求 token：优先 Authorization: Bearer，回退 ?token= 查询参数。
+	got := ""
+	if tok, err := extractBearer(r); err == nil && tok != "" {
+		got = tok
+	} else if q := r.URL.Query().Get("token"); q != "" {
+		got = q
+	}
+	if expected == "" || got == "" || !hmac.Equal([]byte(got), []byte(expected)) {
+		jsonError(w, http.StatusUnauthorized, "bootstrap token required (Authorization: Bearer <secret> or ?token=<secret>)")
+		return false
+	}
+	return true
+}
+
 // handleInstallSh 处理 GET /install.sh：下发 agent 自举安装脚本（B1 bootstrap）。
 // 脚本由 provision.InstallScript 按 --advertise-addr 动态生成（内嵌下载地址），
 // 配合 bootstrap 命令 `curl -sSL <addr>/install.sh | sh -s -- --token=<tok>` 完成 agent 安装与注册。
+//
+// P0-G1 安全加固：原端点完全开放，现加 token 校验（demo 模式放宽）。
 func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.verifyBootstrapToken(w, r) {
 		return
 	}
 	// P1-5 访问审计：install.sh 是 bootstrap 端点，保持开放但审计访问来源供溯源。
@@ -1064,9 +1286,14 @@ func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 
 // handleServeAgent 处理 GET /bin/opsmesh-agent：分发 agent 二进制本体（双模式同体），
 // 供 install.sh 脚本下载安装。
+//
+// P0-G1 安全加固：原端点完全开放，现加 token 校验（demo 模式放宽）。
 func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.verifyBootstrapToken(w, r) {
 		return
 	}
 	// P1-5 访问审计：agent 二进制分发端点，保持开放但审计下载来源供溯源。

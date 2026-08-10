@@ -18,6 +18,11 @@
 package controlplane
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	cryptoRand "crypto/rand"
+	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -28,13 +33,88 @@ import (
 )
 
 // k8sTenantFromRequest 提取请求归属租户（task 88 K8s 租户隔离）。
-// 优先取网关注入的 X-Tenant-ID；缺省归一为 default（与 store 层 SaveK8sCluster 空租户归一一致），
-// 使无网关的本地/demo 部署行为不变。
-func k8sTenantFromRequest(r *http.Request) string {
+// 优先取网关注入的 X-Tenant-ID；缺头时：
+//   - requireAuth=true：返回空串（由调用方 handler 拒绝 401，防绕过网关伪造租户）；
+//   - requireAuth=false：归一为 default（与 store 层 SaveK8sCluster 空租户归一一致，保持 demo 兼容）。
+//
+// P1-G3 修复：原实现缺头静默归一 default，绕过租户闸门（requireAuth 下缺头应 401 而非 default）。
+func (s *Server) k8sTenantFromRequest(r *http.Request) string {
 	if t := authctx.FromHTTPHeader(r.Header).TenantID; t != "" {
 		return t
 	}
+	if s.requireAuth {
+		return "" // requireAuth 下缺头：返回空，由 handler 判断 401
+	}
 	return "default"
+}
+
+// encryptKubeconfig 用 AES-256-GCM 加密 kubeconfig 明文，返回 base64(nonce+ciphertext)。
+// 安全语义：DB 泄露时加密后的 kubeconfig 不可直接还原，需同时拿到加密密钥才能解密。
+//
+// 行为：
+//   - 空串透传（空 kubeconfig 不加密）；
+//   - encryptionKey 未配置（非生产模式）：明文透传（保持 demo 兼容，NewServer 已告警）；
+//   - encryptionKey 已配置：AES-GCM 加密，base64 编码返回。
+func (s *Server) encryptKubeconfig(plaintext string) (string, error) {
+	if plaintext == "" {
+		return "", nil
+	}
+	if len(s.encryptionKey) == 0 {
+		return plaintext, nil // 未配置加密密钥：明文透传（非生产/demo 兼容）
+	}
+	block, err := aes.NewCipher(s.encryptionKey)
+	if err != nil {
+		return "", fmt.Errorf("kubeconfig 加密失败（AES 初始化）: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("kubeconfig 加密失败（GCM 初始化）: %w", err)
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := cryptoRand.Read(nonce); err != nil {
+		return "", fmt.Errorf("kubeconfig 加密失败（nonce 生成）: %w", err)
+	}
+	// Seal 把 nonce 作为 dst 前缀追加，结果 = nonce + ciphertext + gcmTag。
+	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
+	return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+// decryptKubeconfig 用 AES-256-GCM 解密 base64(nonce+ciphertext)，返回 kubeconfig 明文。
+// 用于从 store 读取加密 kubeconfig 后还原为明文（传给 ClusterManager.AddCluster/TestCluster）。
+//
+// 行为：
+//   - 空串透传（空 kubeconfig 不解密）；
+//   - encryptionKey 未配置（非生产模式）：明文透传（store 中即为明文）；
+//   - encryptionKey 已配置：base64 解码 → AES-GCM 解密 → 返回明文。
+func (s *Server) decryptKubeconfig(encrypted string) (string, error) {
+	if encrypted == "" {
+		return "", nil
+	}
+	if len(s.encryptionKey) == 0 {
+		return encrypted, nil // 未配置加密密钥：明文透传
+	}
+	data, err := base64.StdEncoding.DecodeString(encrypted)
+	if err != nil {
+		return "", fmt.Errorf("kubeconfig 解密失败（base64 解码）: %w", err)
+	}
+	block, err := aes.NewCipher(s.encryptionKey)
+	if err != nil {
+		return "", fmt.Errorf("kubeconfig 解密失败（AES 初始化）: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("kubeconfig 解密失败（GCM 初始化）: %w", err)
+	}
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		return "", fmt.Errorf("kubeconfig 解密失败：密文长度 %d < nonce 长度 %d", len(data), nonceSize)
+	}
+	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", fmt.Errorf("kubeconfig 解密失败（GCM 验签）: %w", err)
+	}
+	return string(plaintext), nil
 }
 
 // k8sClusterKubeconfigMasked 是 kubeconfig 脱敏后的占位符。
@@ -82,8 +162,14 @@ func (s *Server) handleListK8sClusters(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "k8s:read"); !ok {
 		return
 	}
+	// P1-G3 租户兜底：requireAuth 下缺租户头 → 401（防绕过网关伪造租户）。
+	tenant := s.k8sTenantFromRequest(r)
+	if tenant == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+		return
+	}
 	// task 88 租户隔离：仅返回当前租户的集群。
-	clusters := s.store.ListK8sClusters(k8sTenantFromRequest(r))
+	clusters := s.store.ListK8sClusters(tenant)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"clusters": maskK8sClusters(clusters)})
 }
 
@@ -99,6 +185,12 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	// P1-G3 租户兜底：requireAuth 下缺租户头 → 401。
+	tenant := s.k8sTenantFromRequest(r)
+	if tenant == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+		return
+	}
 	var body struct {
 		Name       string `json:"name"`
 		Server     string `json:"server"`
@@ -112,11 +204,17 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and kubeconfig are required"})
 		return
 	}
+	// P0-G3：kubeconfig 存入 store 前做 AES-GCM 加密，DB 泄露时不直接暴露集群凭据。
+	encrypted, err := s.encryptKubeconfig(body.Kubeconfig)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "kubeconfig encryption failed"})
+		return
+	}
 	c := &store.K8sCluster{
 		Name:       body.Name,
-		TenantID:   k8sTenantFromRequest(r), // task 88 租户归属
+		TenantID:   tenant, // task 88 租户归属
 		Server:     body.Server,
-		Kubeconfig: body.Kubeconfig,
+		Kubeconfig: encrypted, // 加密后存 store
 		Status:     "unknown",
 	}
 	// task 92：持久化失败直接返回 500，不再假装保存成功。
@@ -125,13 +223,14 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// 尝试建立 client-go 连接：成功标记 online，失败标记 offline（仍保存配置，用户可后续 test 重试）。
+	// AddCluster 需要明文 kubeconfig 解析 REST config，用 body.Kubeconfig（明文）而非加密值。
 	if s.clusterMgr != nil {
 		if err := s.clusterMgr.AddCluster(c.ID, body.Kubeconfig); err != nil {
 			c.Status = "offline"
 		} else {
 			c.Status = "online"
 		}
-		// 状态回写失败不阻断（连接已建立或已标记），仅记日志。
+		// 状态回写：c.Kubeconfig 已是加密值，直接存 store。
 		if err := s.store.SaveK8sCluster(c); err != nil {
 			logx.Error(r.Context(), "K8s 集群状态回写失败", err, "clusterID", c.ID)
 		}
@@ -198,9 +297,15 @@ func (s *Server) handleDeleteK8sCluster(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
+	// P1-G3 租户兜底：requireAuth 下缺租户头 → 401。
+	tenant := s.k8sTenantFromRequest(r)
+	if tenant == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+		return
+	}
 	existing := s.store.GetK8sCluster(id)
 	// task 88 租户隔离：集群不存在或归属其他租户时按 not found 拒绝（不泄露存在性）。
-	if existing == nil || existing.TenantID != k8sTenantFromRequest(r) {
+	if existing == nil || existing.TenantID != tenant {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
 		return
 	}
@@ -233,9 +338,15 @@ func (s *Server) handleTestK8sCluster(w http.ResponseWriter, r *http.Request, id
 	if _, ok := s.requirePermission(w, r, "k8s:read"); !ok {
 		return
 	}
+	// P1-G3 租户兜底：requireAuth 下缺租户头 → 401。
+	tenant := s.k8sTenantFromRequest(r)
+	if tenant == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+		return
+	}
 	existing := s.store.GetK8sCluster(id)
 	// task 88 租户隔离：集群不存在或归属其他租户时按 not found 拒绝。
-	if existing == nil || existing.TenantID != k8sTenantFromRequest(r) {
+	if existing == nil || existing.TenantID != tenant {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
 		return
 	}
@@ -244,10 +355,17 @@ func (s *Server) handleTestK8sCluster(w http.ResponseWriter, r *http.Request, id
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "cluster manager not initialized"})
 		return
 	}
-	err := s.clusterMgr.TestCluster(id, existing.Kubeconfig)
+	// P0-G3：store 中 kubeconfig 为加密存储，TestCluster 需明文解析 REST config，先解密。
+	plain, err := s.decryptKubeconfig(existing.Kubeconfig)
+	if err != nil {
+		logx.Error(r.Context(), "K8s 集群 kubeconfig 解密失败", err, "clusterID", id)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "kubeconfig decryption failed"})
+		return
+	}
+	err = s.clusterMgr.TestCluster(id, plain)
 	if err != nil {
 		existing.Status = "offline"
-		_ = s.store.SaveK8sCluster(existing)
+		_ = s.store.SaveK8sCluster(existing) // existing.Kubeconfig 仍为加密值，直接回写
 		// task 92：原始错误可能泄漏 API Server 地址等内部信息，仅记日志，前端给通用文案。
 		logx.Error(r.Context(), "K8s 集群测试连接失败", err, "clusterID", id)
 		writeJSON(w, http.StatusOK, map[string]string{

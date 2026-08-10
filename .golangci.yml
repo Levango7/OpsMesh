@@ -43,6 +43,7 @@ linters:
     - durationcheck   # duration 乘以常量应显式 cast
     - prealloc        # 切片预分配建议（性能）
     - gosec           # 安全静态分析（task 91：此前 exclude-rules 引用但 enable 漏配，现补齐）
+    - unconvert       # 检查不必要的类型转换（如 int(x) 当 x 已是 int），提升代码整洁度（P2-1 仓库卫生补齐至 25 linter）
 
 linters-settings:
   errcheck:

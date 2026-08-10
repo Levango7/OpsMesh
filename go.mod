@@ -2,10 +2,7 @@ module opsmesh
 
 go 1.26.0
 
-// 外部依赖（沙箱无 Go/无网络，不会执行 go mod tidy）：
-// 请在本机执行 `go mod tidy` 拉取并生成 go.sum 后再构建。
-// M3-3A：引入 protobuf 工具链（google.golang.org/protobuf + timestamppb），
-// 生成 stub 在 internal/grpcx/pb/，与手写 ServiceDesc + JSON codec 并存（兼容期）。
+
 require (
 	github.com/go-sql-driver/mysql v1.8.1
 	github.com/golang-jwt/jwt/v5 v5.3.1

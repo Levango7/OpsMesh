@@ -4,7 +4,7 @@
 // M3-3A protobuf 生成 stub：file descriptor + msgTypes 注册表。
 // 本文件提供 ProtoReflect() 所需的 msgTypes 数组。
 // 真实 protoc-gen-go 会生成完整的 FileDescriptor 布隆码；此处用最小 MessageInfo
-// 占位（GoType 齐全，足以支撑 JSON codec 兼容期与 grpc ServiceDesc 注册）。
+// 占位（GoType 齐全，足以支撑 JSON codec 正式契约与 grpc ServiceDesc 注册）。
 // 真实 buf generate 会覆盖为完整布隆码（含 Desc 字段）。
 
 package pbv1
@@ -22,13 +22,13 @@ type Timestamp = timestamppb.Timestamp
 
 const (
 	// Registration_ServiceName 服务全名，与 internal/grpcx 手写 ServiceDesc 同名。
-	// 兼容期两条路径注册同一服务名，客户端无需感知服务端走哪条路径。
+	// JSON codec 为正式契约；此 stub 保留供 buf breaking 守护和未来迁移使用，两条路径注册同一服务名，客户端无需感知服务端走哪条路径。
 	Registration_ServiceName = "opsmesh.v1.Registration"
 )
 
 // file_opsmesh_v1_registration_proto_msgTypes 是所有消息的 MessageInfo 数组。
 // 索引与消息定义顺序一致（AgentInfo=0, CmdbAttr=1, ...）。
-// 兼容期主路径走 JSON codec，不依赖 protobuf 反射序列化；真实 buf generate 会填充完整 descriptor。
+// JSON codec 为正式契约；主路径走 JSON codec，不依赖 protobuf 反射序列化；真实 buf generate 会填充完整 descriptor。
 var file_opsmesh_v1_registration_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 
 func init() {
@@ -51,7 +51,7 @@ func init() {
 
 // newMessageInfo 构造一个只含 GoReflectType 的 MessageInfo。
 // 真实 protoc-gen-go 会同时填充 Desc（protoreflect.MessageDescriptor）；此处省略 Desc
-// 因为兼容期不走 protobuf 二进制序列化（走 JSON codec），ProtoReflect 仅需不 panic 即可。
+// 因为 JSON codec 为正式契约，不走 protobuf 二进制序列化，ProtoReflect 仅需不 panic 即可。
 // 真实 buf generate 会覆盖本文件为完整实现。
 // 兼容性修复（M4-4C 临时）：protobuf v1.33.0 的字段名为 GoReflectType（非 GoType）。
 func newMessageInfo(goType any) protoimpl.MessageInfo {

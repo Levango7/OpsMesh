@@ -1,9 +1,32 @@
 <!DOCTYPE html>
+<!-- DEPRECATED: 此原生 JS 前端已标记为 deprecated，将在 v0.4.0 版本移除。
+     请迁移至 Vue3 企业版前端（web/enterprise/）。
+     Deprecated since: v0.2.0 | Removal target: v0.4.0 -->
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OpsMesh 网段运维中枢</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%236366f1'/><circle cx='10' cy='11' r='2.6' fill='white'/><circle cx='22' cy='11' r='2.6' fill='white'/><circle cx='16' cy='22' r='2.6' fill='white'/><path d='M10 11 L16 22 L22 11' stroke='white' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>">
-<link rel="stylesheet" href="/assets/app.css"></head><body>
+<link rel="stylesheet" href="/assets/app.css">
+<style>
+  /* DEPRECATED 横幅样式（v0.2.0 起标记，v0.4.0 移除） */
+  #opsmesh-deprecated-banner {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 8px 16px;
+    background: #b08a00; color: #fff;
+    font-size: 13px; line-height: 1.4; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    box-shadow: 0 1px 3px rgba(0,0,0,.2);
+  }
+  #opsmesh-deprecated-banner strong { font-weight: 600; }
+  #opsmesh-deprecated-banner a { color: #fff; text-decoration: underline; cursor: pointer; }
+  #opsmesh-deprecated-banner .opsmesh-deprecated-close { margin-left: 12px; padding: 2px 8px; border: 1px solid rgba(255,255,255,.6); border-radius: 4px; cursor: pointer; font-size: 12px; }
+  body { padding-top: 36px; }
+</style>
+</head><body>
+<div id="opsmesh-deprecated-banner" role="alert" aria-label="此前端已弃用">
+  <span><strong>⚠️ Deprecated</strong> · 此原生 JS 个人版前端自 <strong>v0.2.0</strong> 起进入弃用期，计划在 <strong>v0.4.0</strong> 移除。请迁移至 <a href="/enterprise/" title="Vue3 企业版前端">Vue3 企业版前端</a>。</span>
+  <span class="opsmesh-deprecated-close" onclick="var b=document.getElementById('opsmesh-deprecated-banner');if(b){b.style.display='none';document.body.style.paddingTop='0';}" title="暂时关闭横幅">关闭</span>
+</div>
 
 <!-- ============ 登录/注册页 ============ -->
 <div id="authPage" class="auth-page" style="display:none">

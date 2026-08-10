@@ -498,6 +498,10 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* 覆盖 tokens.css 全局 .col 的等宽布局，改为左 38 / 右 62 */
+.row .col:nth-child(1) { flex: 38; }
+.row .col:nth-child(2) { flex: 62; }
+
 .poll-err {
   padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
   background: var(--fail-soft); border: 1px solid var(--fail-bg);

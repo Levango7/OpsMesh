@@ -1,6 +1,7 @@
 // 告警 store
 import { defineStore } from 'pinia'
 import { getAlerts, ackAlert, silenceAlert } from '@/api/alert'
+import { t } from '@/i18n'
 
 export const useAlertStore = defineStore('alert', {
   state: () => ({
@@ -18,16 +19,26 @@ export const useAlertStore = defineStore('alert', {
       try {
         this.list = await getAlerts() || []
       } catch (e) {
-        this.error = e.j?.error || '告警列表拉取失败'
+        this.error = e.j?.error || t('error.alertListFailed')
       } finally {
         this.loading = false
       }
     },
     async ack(id) {
-      const r = await ackAlert(id); await this.fetchAlerts(); return r
+      try {
+        const r = await ackAlert(id); await this.fetchAlerts(); return r
+      } catch (e) {
+        this.error = e.j?.error || t('error.alertAckFailed')
+        throw e
+      }
     },
     async silence(id, body) {
-      const r = await silenceAlert(id, body); await this.fetchAlerts(); return r
+      try {
+        const r = await silenceAlert(id, body); await this.fetchAlerts(); return r
+      } catch (e) {
+        this.error = e.j?.error || t('error.alertSilenceFailed')
+        throw e
+      }
     }
   }
 })

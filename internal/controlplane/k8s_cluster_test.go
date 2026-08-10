@@ -33,11 +33,13 @@ import (
 //   - clusterMgr = nil（跳过 client-go 连接，创建集群时 Status 保持 "unknown"）。
 func newK8sTestServer() *Server {
 	st := store.NewMemoryStore()
+	ss := store.NewInProcessSessionStore()
 	return &Server{
-		store:      st,
-		cfg:        &config.Config{TaskMaxRetries: 3},
-		jwtSecret:  []byte("test-jwt-secret-for-k8s-cluster-test-32b!"),
-		loginGuard: newLoginGuard(),
+		store:        st,
+		cfg:          &config.Config{TaskMaxRetries: 3},
+		jwtSecret:    []byte("test-jwt-secret-for-k8s-cluster-test-32b!"),
+		sessionStore: ss,
+		loginGuard:   newLoginGuard(ss),
 		// clusterMgr 故意留 nil：测试不依赖真实 K8s 集群，handleCreateK8sCluster 检测 nil 后跳过连接。
 	}
 }

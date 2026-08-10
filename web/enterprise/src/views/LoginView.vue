@@ -91,7 +91,7 @@ async function onSubmit() {
   loading.value = true
   try {
     await authStore.login(username.value, password.value)
-    router.push('/devices')
+    router.push('/overview')
   } catch (e) {
     error.value = e.j?.error || t('login.invalid_credentials')
   } finally {
@@ -131,7 +131,7 @@ function toggleLang() {
 
 .auth-card {
   position: relative; z-index: 1;
-  width: 380px; max-width: 92vw;
+  width: 420px; max-width: 92vw;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);

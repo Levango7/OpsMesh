@@ -22,6 +22,46 @@ import (
 	"opsmesh/internal/proto"
 )
 
+// claimEpochCond 返回 SubmitResult UPDATE 语句的 claim_epoch 校验片段。
+// A-1 防双跑：epoch > 0 时追加 AND claim_epoch=? 校验持有者令牌；
+// epoch == 0 时返回空串（兼容旧 agent/测试，跳过校验）。
+func claimEpochCond(epoch int64) string {
+	if epoch > 0 {
+		return ` AND claim_epoch=?`
+	}
+	return ""
+}
+
+// claimEpochArgs 返回 SubmitResult UPDATE 语句的参数列表（taskID + 可选 claim_epoch）。
+// 与 claimEpochCond 配对使用：epoch > 0 时追加 epoch 参数。
+func claimEpochArgs(taskID string, epoch int64) []interface{} {
+	if epoch > 0 {
+		return []interface{}{taskID, epoch}
+	}
+	return []interface{}{taskID}
+}
+
+// checkLeaderFence A-2 leader fencing：校验当前实例是否仍持有有效租约。
+// fencing 通过返回 true；失败返回 false，且若自认 leader 时打日志告警并主动放弃 leader。
+// 用于 ReclaimStaleTasks/FireDueSchedules/RetireStaleDevices 等 leader 周期协调任务，
+// 防止 HA 双主窗口下旧 leader 仍执行写操作（租约已过期但 IsLeader 缓存未刷新）。
+func (s *SQLStore) checkLeaderFence(ctx context.Context, op string) bool {
+	var fenced bool
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM leader_lease WHERE id=1 AND holder=? AND expires_at > NOW())`,
+		s.instanceID).Scan(&fenced); err != nil {
+		log.Printf("[store] %s fencing 检查失败: %v", op, err)
+		return false
+	}
+	if !fenced && s.IsLeader() {
+		log.Printf("[store] %s fencing 失败：自认 leader 但租约不匹配/过期，主动放弃 leader", op)
+		s.mu.Lock()
+		s.isLeader = false
+		s.mu.Unlock()
+	}
+	return fenced
+}
+
 // ApproveTask 审批通过任务（task 100）：将 pending_approval 状态翻转回 pending，
 // 记录审批人/审批时间。仅 pending_approval 状态可审批；其他状态返回 false。
 // tenantID 非空时校验任务归属，越权返回 false。
@@ -148,6 +188,8 @@ ON DUPLICATE KEY UPDATE
 	// 状态守卫（幂等，task 82）：仅接受任务处于 running 时的上报——防止迟到上报把已取消任务翻回，
 	// 防止重复失败上报反复累计 retry_count 造成假死信。UPDATE 附带 AND status='running' 防并发窗口；
 	// RowsAffected==0 表示状态被并发改写 → 跳过后续事件/告警。
+	// A-1 防双跑：UPDATE 附带 AND claim_epoch=? 校验持有者令牌，拒绝旧持有者（任务被回收重派后）上报。
+	// res.ClaimEpoch > 0 时校验（新 agent 填充）；= 0 时跳过（兼容旧 agent/测试）。
 	var tid, tenantID, status string
 	var rc, mr int
 	accepted := false
@@ -157,24 +199,32 @@ ON DUPLICATE KEY UPDATE
 		if status != "running" {
 			log.Printf("[store] SubmitResult 忽略非 running 任务 %s (status=%s exitCode=%d)", res.TaskID, status, res.ExitCode)
 		} else if success {
-			if r, uerr := s.db.ExecContext(ctx, `UPDATE tasks SET status='done' WHERE task_id=? AND status='running'`, res.TaskID); uerr != nil {
+			if r, uerr := s.db.ExecContext(ctx,
+				`UPDATE tasks SET status='done' WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch),
+				claimEpochArgs(res.TaskID, res.ClaimEpoch)...); uerr != nil {
 				log.Printf("[store] SubmitResult done 更新失败 %s: %v", res.TaskID, uerr)
 			} else if n, _ := r.RowsAffected(); n > 0 {
 				accepted = true
+			} else if res.ClaimEpoch > 0 {
+				log.Printf("[store] SubmitResult 拒绝旧持有者上报 %s (claim_epoch=%d 不匹配)", res.TaskID, res.ClaimEpoch)
 			}
 		} else if rc < mr {
 			r, uerr := s.db.ExecContext(ctx,
-				`UPDATE tasks SET status='pending', claimed_by=NULL, claimed_at=NULL, retry_count=retry_count+1 WHERE task_id=? AND status='running'`,
-				res.TaskID)
+				`UPDATE tasks SET status='pending', claimed_by=NULL, claimed_at=NULL, retry_count=retry_count+1 WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch),
+				claimEpochArgs(res.TaskID, res.ClaimEpoch)...)
 			if uerr != nil {
 				log.Printf("[store] SubmitResult retry 更新失败 %s: %v", res.TaskID, uerr)
 			} else if n, _ := r.RowsAffected(); n > 0 {
 				accepted = true
 				s.publish(events.Event{Action: "task_retry", Target: res.TaskID, TenantID: tenantID,
 					Detail: fmt.Sprintf("retry %d/%d", rc+1, mr), Level: events.LevelWarn})
+			} else if res.ClaimEpoch > 0 {
+				log.Printf("[store] SubmitResult 拒绝旧持有者重试 %s (claim_epoch=%d 不匹配)", res.TaskID, res.ClaimEpoch)
 			}
 		} else {
-			r, uerr := s.db.ExecContext(ctx, `UPDATE tasks SET status='failed', dead_letter=1 WHERE task_id=? AND status='running'`, res.TaskID)
+			r, uerr := s.db.ExecContext(ctx,
+				`UPDATE tasks SET status='failed', dead_letter=1 WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch),
+				claimEpochArgs(res.TaskID, res.ClaimEpoch)...)
 			if uerr != nil {
 				log.Printf("[store] SubmitResult dead-letter 更新失败 %s: %v", res.TaskID, uerr)
 			} else if n, _ := r.RowsAffected(); n > 0 {
@@ -188,6 +238,8 @@ ON DUPLICATE KEY UPDATE
 					Message:   fmt.Sprintf("task %s dead-letter after %d retries (exitCode=%d)", res.TaskID, rc, res.ExitCode),
 					CreatedAt: time.Now().UTC(),
 				})
+			} else if res.ClaimEpoch > 0 {
+				log.Printf("[store] SubmitResult 拒绝旧持有者死信 %s (claim_epoch=%d 不匹配)", res.TaskID, res.ClaimEpoch)
 			}
 		}
 	}
@@ -398,6 +450,8 @@ func (s *SQLStore) CreateTask(t *proto.Task) *proto.Task {
 }
 
 // ClaimTask 原子领取该 agent 的下一条 pending 任务（FOR UPDATE 行锁保证多副本不双领，P1-1）。
+// A-1 防双跑：领取时 claim_epoch=claim_epoch+1，返回的 Task 带 ClaimEpoch；
+// agent 上报结果时携带 ClaimEpoch，SubmitResult 校验持有者是否仍为当前 epoch。
 
 func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -412,10 +466,11 @@ func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 	var taskID, typ, command string
 	var tenantID, content, path sql.NullString
 	var createdAt time.Time
+	var claimEpoch int64
 	if err := tx.QueryRowContext(ctx,
-		`SELECT task_id, tenant_id, type, command, content, path, created_at FROM tasks
+		`SELECT task_id, tenant_id, type, command, content, path, created_at, claim_epoch FROM tasks
 		 WHERE agent_id=? AND (status IS NULL OR status='pending') AND (schedule IS NULL OR schedule='') ORDER BY created_at LIMIT 1 FOR UPDATE`,
-		agentID).Scan(&taskID, &tenantID, &typ, &command, &content, &path, &createdAt); err != nil {
+		agentID).Scan(&taskID, &tenantID, &typ, &command, &content, &path, &createdAt, &claimEpoch); err != nil {
 		if err == sql.ErrNoRows {
 			return nil
 		}
@@ -423,7 +478,7 @@ func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 		return nil
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE tasks SET status='running', claimed_by='controlplane', claimed_at=? WHERE task_id=?`,
+		`UPDATE tasks SET status='running', claimed_by='controlplane', claimed_at=?, claim_epoch=claim_epoch+1 WHERE task_id=?`,
 		time.Now().UTC(), taskID); err != nil {
 		log.Printf("[store] ClaimTask 更新失败 %s: %v", taskID, err)
 		return nil
@@ -436,12 +491,17 @@ func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 		TaskID: taskID, AgentID: agentID, TenantID: tenantID.String, Type: typ, Command: command,
 		Content: content.String, Path: path.String,
 		Status: "running", CreatedAt: createdAt, ClaimedBy: "controlplane", ClaimedAt: time.Now().UTC(),
+		ClaimEpoch: claimEpoch + 1,
 	}
 }
 
 // ReclaimStaleTasks 复位超期未完成的 running 任务为 pending（P0-1 任务必达）。
 // agent 经 ClaimTask 领取（claimed_at 写当前时间）后若失联、超过 maxAge 仍未上报结果，
 // 该任务将永远卡在 running；此处周期性调用把它复位，重新进入调度队列。
+//
+// A-1 防双跑：增加 agent 心跳校验——仅当任务的 claimed_by 对应 agent 心跳也超时（last_seen < cutoff）
+// 才回收。心跳正常的 agent 仍可能在执行长任务，不回收避免双跑。
+// A-2 leader fencing：仅当前 leader_lease 持有者可执行回收，防 HA 双主窗口下重复回收。
 
 func (s *SQLStore) ReclaimStaleTasks(maxAge time.Duration) int {
 	if maxAge <= 0 {
@@ -449,9 +509,16 @@ func (s *SQLStore) ReclaimStaleTasks(maxAge time.Duration) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	// A-2 leader fencing：非有效租约持有者跳过，防双主同时回收。
+	if !s.checkLeaderFence(ctx, "ReclaimStaleTasks") {
+		return 0
+	}
+	cutoff := time.Now().UTC().Add(-maxAge)
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE tasks SET status='pending', claimed_by=NULL, claimed_at=NULL WHERE status='running' AND claimed_at < ?`,
-		time.Now().UTC().Add(-maxAge))
+		`UPDATE tasks SET status='pending', claimed_by=NULL, claimed_at=NULL
+		 WHERE status='running' AND claimed_at < ?
+		   AND NOT EXISTS (SELECT 1 FROM agents a WHERE a.agent_id = tasks.claimed_by AND a.last_seen > ?)`,
+		cutoff, cutoff)
 	if err != nil {
 		log.Printf("[store] ReclaimStaleTasks 失败: %v", err)
 		return 0
@@ -464,19 +531,36 @@ func (s *SQLStore) ReclaimStaleTasks(maxAge time.Duration) int {
 // 对到点（cron 匹配 now 且 last_fired_at 早于本分钟）的模板派生一个 pending 实例并回写 last_fired_at。
 // 返回本批次派生的实例数（F4 定时/周期调度；控制面 scheduleLoop 周期调用）。
 // 注意：SQL 路径依赖 live MySQL，仅在 CI 集成测试（env 门控）中真正运行。
+//
+// B-2 派生原子化：SELECT→INSERT→UPDATE 包在同一事务内，失败 Rollback，
+// 避免派生实例已写入但 last_fired_at 未回写导致下一轮重复派生。
+// A-2 leader fencing：仅当前 leader_lease 持有者可派生，防 HA 双主窗口下重复派生。
 
 func (s *SQLStore) FireDueSchedules(now time.Time) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	// A-2 leader fencing：非有效租约持有者跳过，防双主同时派生。
+	if !s.checkLeaderFence(ctx, "FireDueSchedules") {
+		return 0
+	}
 	minuteStart := now.Truncate(time.Minute)
-	rows, err := s.db.QueryContext(ctx,
+	// B-2 派生原子化：整批 SELECT→INSERT→UPDATE 包在单事务内，失败 Rollback。
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		log.Printf("[store] FireDueSchedules begin 失败: %v", err)
+		return 0
+	}
+	defer tx.Rollback()
+	// FOR UPDATE 锁模板行：并发事务串行化，先到者更新 last_fired_at 后，
+	// 后到者重新读到 last_fired_at >= minuteStart 跳过，避免重复派生。
+	rows, err := tx.QueryContext(ctx,
 		`SELECT task_id, agent_id, tenant_id, type, command, content, path, max_retries, schedule, last_fired_at
-		 FROM tasks WHERE (parent_id IS NULL OR parent_id='') AND schedule <> '' AND (status IS NULL OR status='pending')`)
+		 FROM tasks WHERE (parent_id IS NULL OR parent_id='') AND schedule <> '' AND (status IS NULL OR status='pending')
+		 FOR UPDATE`)
 	if err != nil {
 		log.Printf("[store] FireDueSchedules 查询失败: %v", err)
 		return 0
 	}
-	defer rows.Close()
 	type tpl struct {
 		id, agentID, tenantID, typ, command, content, path, schedule string
 		maxRetries                                                   int
@@ -503,17 +587,18 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 		}
 		due = append(due, tp)
 	}
+	rows.Close()
 	fired := 0
 	for _, tp := range due {
 		instID := fmt.Sprintf("task-%d-%s", now.UnixNano(), tp.id)
-		if _, err := s.db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO tasks (task_id, agent_id, tenant_id, type, command, content, path, status, retry_count, max_retries, schedule, parent_id, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, '', ?, ?)`,
 			instID, tp.agentID, tp.tenantID, tp.typ, tp.command, tp.content, tp.path, tp.maxRetries, tp.id, now.UTC()); err != nil {
 			log.Printf("[store] FireDueSchedules 派生实例失败 %s: %v", instID, err)
 			continue
 		}
-		if _, err := s.db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE tasks SET last_fired_at=? WHERE task_id=?`, now.UTC(), tp.id); err != nil {
 			log.Printf("[store] FireDueSchedules 回写 last_fired_at 失败 %s: %v", tp.id, err)
 			continue
@@ -521,6 +606,10 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 		fired++
 		s.publish(events.Event{Action: "schedule_fire", Target: instID, TenantID: tp.tenantID,
 			Detail: "parent=" + tp.id + " cron=" + tp.schedule, Level: events.LevelInfo})
+	}
+	if err := tx.Commit(); err != nil {
+		log.Printf("[store] FireDueSchedules commit 失败: %v", err)
+		return 0
 	}
 	return fired
 }

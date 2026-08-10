@@ -139,6 +139,22 @@
     "group": "Group",
     "empty": "No permissions"
   },
+  "error": {
+    "deviceListFailed": "Failed to fetch device list",
+    "deviceDetailFailed": "Failed to fetch device detail",
+    "deviceMetricsFailed": "Failed to fetch device metrics",
+    "alertListFailed": "Failed to fetch alert list",
+    "alertAckFailed": "Failed to ack alert",
+    "alertSilenceFailed": "Failed to silence alert",
+    "taskListFailed": "Failed to fetch task list",
+    "k8sClustersFailed": "Failed to fetch K8s cluster list",
+    "k8sResourcesFailed": "Failed to fetch K8s resource list",
+    "mwTemplatesFailed": "Failed to fetch middleware template list",
+    "mwDetailFailed": "Failed to fetch middleware template detail",
+    "loginFailed": "Login failed",
+    "registerFailed": "Register failed",
+    "noPermission": "No permission to access this page"
+  },
   "common": {
     "loading": "Loading…",
     "no_data": "No data",
@@ -151,6 +167,8 @@
     "cancel": "Cancel",
     "close": "Close",
     "confirm": "Confirm",
+    "ok": "OK",
+    "error": "Error",
     "yes": "Yes",
     "no": "No",
     "all": "All",
@@ -284,7 +302,9 @@
     "ack_failed": "Ack failed: ",
     "silence_duration_prompt": "Silence duration (minutes, empty=24h): ",
     "silence_comment_prompt": "Comment (optional): ",
-    "silence_failed": "Silence failed: "
+    "silence_failed": "Silence failed: ",
+    "silence_duration_title": "Silence Alert",
+    "silence_comment_title": "Silence Comment"
   },
   "cmdb": {
     "title": "CMDB",
@@ -327,6 +347,7 @@
     "delete_node_btn": "Delete Node",
     "saved_msg": "Saved #{id}",
     "cron_prompt": "Cron expression: ",
+    "cron_title": "Set Schedule",
     "schedule_set_msg": "Schedule set: {cron}",
     "none": "(none)",
     "demo_name": "demo-nginx-deploy",
@@ -358,7 +379,9 @@
     "drawer_title": "Deploy #{id} · {name}",
     "demo_loaded_msg": "Demo loaded, edit and click \"Register Deploy\"",
     "executed_msg": "Execution triggered #{id}",
-    "rolled_back_msg": "Rolled back #{id}"
+    "rolled_back_msg": "Rolled back #{id}",
+    "execute": "Deploy",
+    "rollback": "Rollback"
   },
   "logs": {
     "title": "Logs",

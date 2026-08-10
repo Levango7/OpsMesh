@@ -200,7 +200,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	// changePasswordToken（5min），仅可用于 /api/v1/auth/change-password。改密成功后才签发
 	// 正式 at+rt。避免弱口令用户持有效 at 长期访问受保护 API。
 	if u.MustChangePassword {
-		cpt, err := createChangePasswordToken(u.ID)
+		cpt, err := s.createChangePasswordToken(u.ID)
 		if err != nil {
 			log.Printf("controlplane: handleAuthLogin 生成改密令牌失败: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
@@ -231,8 +231,8 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAuthLogout 处理 POST /api/v1/auth/logout：登出并清除会话 Cookie（task 94）。
-// JWT 为无状态令牌，服务端不做黑名单（MVP）；清除 HttpOnly Cookie 即终止浏览器会话，
-// 前端同时清空内存 token。token 自然过期由 jwtTokenExpiry（24h）约束。
+// P1-G4：登出时将 access token 的 jti 加入吊销黑名单，使 token 立即失效
+// （而非等 15min 自然过期）。同时吊销 refresh token 并清除 HttpOnly Cookie。
 func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -243,6 +243,8 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 			TenantID: "default", UserID: u.ID, Action: "user_logout", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 		})
 	}
+	// P1-G4 吊销 access token：jti 加入黑名单，使登出后 token 立即失效。
+	s.revokeAccessTokenFromRequest(r)
 	// 吊销请求携带的 rt，并清除 at+rt Cookie（服务端状态失效 + 浏览器会话终止）。
 	if ck, ckErr := r.Cookie(refreshTokenCookieName); ckErr == nil && strings.TrimSpace(ck.Value) != "" {
 		s.revokeRefreshToken(ck.Value)
@@ -377,12 +379,12 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 	var u *store.User
 	firstLoginChange := false
 	if body.ChangePasswordToken != "" {
-		cs, ok := consumeChangePasswordToken(body.ChangePasswordToken)
+		userID, ok := s.consumeChangePasswordToken(body.ChangePasswordToken)
 		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired change password token"})
 			return
 		}
-		user := s.store.GetUser(cs.UserID)
+		user := s.store.GetUser(userID)
 		if user == nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired change password token"})
 			return

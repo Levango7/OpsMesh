@@ -5,6 +5,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authApi } from '@/api/auth'
 import { setUnauthorizedHandler } from '@/api/request'
+import { t } from '@/i18n'
 
 export const useAuthStore = defineStore('auth', () => {
   // 当前用户对象 {id, username, email, status, role_ids, permissions, ...}
@@ -46,7 +47,7 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = j.user || null
       return j
     } catch (e) {
-      error.value = e.j?.error || '登录失败'
+      error.value = e.j?.error || t('error.loginFailed')
       throw e
     } finally {
       loading.value = false
@@ -62,7 +63,7 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = j.user || null
       return j
     } catch (e) {
-      error.value = e.j?.error || '注册失败'
+      error.value = e.j?.error || t('error.registerFailed')
       throw e
     } finally {
       loading.value = false

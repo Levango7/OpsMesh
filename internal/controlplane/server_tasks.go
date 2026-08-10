@@ -7,6 +7,8 @@ package controlplane
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -31,6 +33,56 @@ func sanitizeAuditDetail(s string) string {
 		s = s[:200] + "..."
 	}
 	return s
+}
+
+// maxCommandLen 控制面侧命令长度上限（P0 安全加固纵深防御）。
+// 超过此长度的命令几乎不可能是合法运维操作，更可能是注入载荷或二进制 blob。
+const maxCommandLen = 4096
+
+// validateCommand 控制面侧命令内容校验（P0 安全加固纵深防御）。
+// 与 agent 端 checkShellMetachars 保持一致的元字符拦截策略，在控制面侧提前拦截，
+// 避免恶意命令进入任务队列后被 agent 拉取执行（即使 agent 端校验被绕过或未启用白名单）。
+//
+// 校验项：
+//   - 非空（调用方应已校验，此处兜底）。
+//   - 长度 <= maxCommandLen（4096），防超长命令撑爆存储/日志或携带二进制载荷。
+//   - 不含危险 shell 元字符：换行符 \n \r、分号 ;、命令替换 $() `、单个 &（后台执行）。
+//     管道符 | 暂不拦截（与 agent 端策略一致，合法运维用途多）；如需拦截可在此扩展。
+//
+// 注意：这是纵深防御的第一道闸（控制面侧），不替代 agent 端 checkShellMetachars。
+// 两端均拦截可降低单点绕过风险：控制面被攻陷时 agent 端兜底，agent 端有 bug 时控制面侧兜底。
+func validateCommand(command string) error {
+	if command == "" {
+		return errors.New("command is empty")
+	}
+	if len(command) > maxCommandLen {
+		return fmt.Errorf("command too long (max %d bytes, got %d)", maxCommandLen, len(command))
+	}
+	// 与 agent 端 checkShellMetachars 一致的元字符拦截。
+	if strings.Contains(command, "\n") {
+		return errors.New("command contains newline metacharacter ('\\n'): rejected")
+	}
+	if strings.Contains(command, "\r") {
+		return errors.New("command contains carriage return metacharacter ('\\r'): rejected")
+	}
+	if strings.Contains(command, ";") {
+		return errors.New("command contains command separator metacharacter (';'): rejected")
+	}
+	if strings.Contains(command, "$(") {
+		return errors.New("command contains command substitution metacharacter ('$()'): rejected")
+	}
+	if strings.Contains(command, "`") {
+		return errors.New("command contains backtick metacharacter: rejected")
+	}
+	// 检测单个 &（后台执行），允许合法模式 &&、>&、&>（与 agent 端逻辑一致）。
+	cmd := command
+	cmd = strings.ReplaceAll(cmd, ">&", "")
+	cmd = strings.ReplaceAll(cmd, "&>", "")
+	cmd = strings.ReplaceAll(cmd, "&&", "")
+	if strings.Contains(cmd, "&") {
+		return errors.New("command contains background operator metacharacter ('&'): rejected")
+	}
+	return nil
 }
 
 // handleCreateTask 处理 POST /api/v1/tasks：内部下发入口（P0-2）。
@@ -71,6 +123,16 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Type == "" {
 		body.Type = "shell"
+	}
+	// P0 安全加固纵深防御：控制面侧命令内容校验。
+	// 仅对 shell 类型任务校验 command（file 类型任务的 command 字段无 shell 语义）。
+	// 与 agent 端 checkShellMetachars 保持一致的元字符拦截策略，在控制面侧提前拦截，
+	// 避免恶意命令进入任务队列。校验失败返回 400 Bad Request。
+	if body.Type == "shell" {
+		if err := validateCommand(body.Command); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "command validation failed: " + err.Error()})
+			return
+		}
 	}
 	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
 	targetTenant := actx.TenantID
@@ -306,6 +368,14 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.Type == "" {
 		body.Type = "shell"
+	}
+	// P0 安全加固纵深防御：控制面侧命令内容校验（与 handleCreateTask 一致）。
+	// 批量下发影响面更大，更应在控制面侧提前拦截恶意命令。
+	if body.Type == "shell" {
+		if err := validateCommand(body.Command); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "command validation failed: " + err.Error()})
+			return
+		}
 	}
 	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
 	targetTenant := actx.TenantID

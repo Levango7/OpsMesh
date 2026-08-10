@@ -1,6 +1,7 @@
 // 设备 store — 网段分组设备列表 + 详情 + 监控指标
 import { defineStore } from 'pinia'
 import { getDevices, getDevice, provisionDevice, getMetrics } from '@/api/device'
+import { t } from '@/i18n'
 
 export const useDeviceStore = defineStore('device', {
   state: () => ({
@@ -25,7 +26,7 @@ export const useDeviceStore = defineStore('device', {
       try {
         this.segments = await getDevices() || {}
       } catch (e) {
-        this.error = e.j?.error || '设备列表拉取失败'
+        this.error = e.j?.error || t('error.deviceListFailed')
       } finally {
         this.loading = false
       }
@@ -34,7 +35,7 @@ export const useDeviceStore = defineStore('device', {
       try {
         this.current = await getDevice(id)
       } catch (e) {
-        this.error = e.j?.error || '设备详情拉取失败'
+        this.error = e.j?.error || t('error.deviceDetailFailed')
       }
     },
     async provision(id) {
@@ -48,7 +49,7 @@ export const useDeviceStore = defineStore('device', {
       try {
         this.metrics = await getMetrics(id)
       } catch (e) {
-        this.metricsError = e.j?.error || '监控指标拉取失败'
+        this.metricsError = e.j?.error || t('error.deviceMetricsFailed')
         this.metrics = null
       } finally {
         this.metricsLoading = false

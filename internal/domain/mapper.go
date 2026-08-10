@@ -68,7 +68,7 @@ func TaskFromProto(t *proto.Task) *Task {
 	return &Task{
 		TaskID: t.TaskID, AgentID: t.AgentID, TenantID: t.TenantID,
 		Type: t.Type, Command: t.Command, Content: t.Content, Path: t.Path,
-		Status: t.Status, ClaimedBy: t.ClaimedBy, ClaimedAt: t.ClaimedAt, CreatedAt: t.CreatedAt,
+		Status: t.Status, ClaimedBy: t.ClaimedBy, ClaimedAt: t.ClaimedAt, ClaimEpoch: t.ClaimEpoch, CreatedAt: t.CreatedAt,
 		RetryCount: t.RetryCount, MaxRetries: t.MaxRetries, DeadLetter: t.DeadLetter,
 		Schedule: t.Schedule, ParentID: t.ParentID, LastFiredAt: t.LastFiredAt, DependsOn: t.DependsOn,
 	}
@@ -82,7 +82,7 @@ func TaskToProto(t *Task) *proto.Task {
 	return &proto.Task{
 		TaskID: t.TaskID, AgentID: t.AgentID, TenantID: t.TenantID,
 		Type: t.Type, Command: t.Command, Content: t.Content, Path: t.Path,
-		Status: t.Status, ClaimedBy: t.ClaimedBy, ClaimedAt: t.ClaimedAt, CreatedAt: t.CreatedAt,
+		Status: t.Status, ClaimedBy: t.ClaimedBy, ClaimedAt: t.ClaimedAt, ClaimEpoch: t.ClaimEpoch, CreatedAt: t.CreatedAt,
 		RetryCount: t.RetryCount, MaxRetries: t.MaxRetries, DeadLetter: t.DeadLetter,
 		Schedule: t.Schedule, ParentID: t.ParentID, LastFiredAt: t.LastFiredAt, DependsOn: t.DependsOn,
 	}
@@ -96,6 +96,7 @@ func TaskResultFromProto(r *proto.TaskResult) *TaskResult {
 	return &TaskResult{
 		TaskID: r.TaskID, AgentID: r.AgentID, ExitCode: r.ExitCode,
 		Stdout: r.Stdout, Stderr: r.Stderr, DurationMs: r.DurationMs, FinishedAt: r.FinishedAt,
+		ClaimEpoch: r.ClaimEpoch,
 	}
 }
 

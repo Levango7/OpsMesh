@@ -562,6 +562,8 @@ func (m *MemoryStore) TasksByParent(parentID string) []*proto.Task {
 
 // ClaimTask 原子领取该 agent 的下一条 pending 任务（pending→running），返回被领取的任务。
 // 并发调用时由同一把锁保证同一任务只被领取一次（HA 协调，P1-1）。返回值为锁内拷贝。
+// A-1 防双跑：领取时 ClaimEpoch++，返回的 Task 带 ClaimEpoch；
+// agent 上报结果时携带 ClaimEpoch，SubmitResult 校验持有者是否仍为当前 epoch。
 func (m *MemoryStore) ClaimTask(agentID string) *proto.Task {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -575,6 +577,7 @@ func (m *MemoryStore) ClaimTask(agentID string) *proto.Task {
 			t.Status = "running"
 			t.ClaimedAt = time.Now()
 			t.ClaimedBy = "controlplane"
+			t.ClaimEpoch++
 			// 返回锁内拷贝：调用方（gRPC 层）在锁外读取/序列化，避免与 SubmitResult 锁内修改构成 data race。
 			c := *t
 			return &c
@@ -620,6 +623,10 @@ func (m *MemoryStore) PendingDepth() int {
 // agent 经 ClaimTask 领取（写 ClaimedAt）后若失联、超过 maxAge 仍未上报结果，
 // 该任务将永远卡在 running；此处周期性调用把它复位，重新进入调度队列。
 // 在持锁下遍历并就地修改切片元素，未增删 map key，并发安全。
+//
+// A-1 防双跑：增加 agent 心跳校验——仅当任务的 ClaimedBy 对应 agent 心跳也超时
+// （LastSeen < cutoff）才回收。心跳正常的 agent 仍可能在执行长任务，不回收避免双跑。
+// MemoryStore 单进程无 HA，不需要 leader fencing（A-2 仅 SQLStore 需要）。
 func (m *MemoryStore) ReclaimStaleTasks(maxAge time.Duration) int {
 	if maxAge <= 0 {
 		return 0
@@ -630,12 +637,17 @@ func (m *MemoryStore) ReclaimStaleTasks(maxAge time.Duration) int {
 	cutoff := time.Now().Add(-maxAge)
 	for _, ts := range m.tasks {
 		for _, t := range ts {
-			if t.Status == "running" && !t.ClaimedAt.IsZero() && t.ClaimedAt.Before(cutoff) {
-				t.Status = "pending"
-				t.ClaimedAt = time.Time{}
-				t.ClaimedBy = ""
-				n++
+			if t.Status != "running" || t.ClaimedAt.IsZero() || !t.ClaimedAt.Before(cutoff) {
+				continue
 			}
+			// A-1 防双跑：agent 心跳正常（LastSeen >= cutoff）则不回收，避免长任务被误回收双跑。
+			if a, ok := m.agents[t.ClaimedBy]; ok && !a.LastSeen.Before(cutoff) {
+				continue
+			}
+			t.Status = "pending"
+			t.ClaimedAt = time.Time{}
+			t.ClaimedBy = ""
+			n++
 		}
 	}
 	return n
@@ -730,6 +742,8 @@ func (m *MemoryStore) addTaskLocked(t *proto.Task) {
 // F2 失败重试 / 死信：失败且未达上限 → 复位 pending（RetryCount++）重新入队；
 // 已达上限 → 置 failed 且标记 DeadLetter（死信，需人工处置）并产出 critical 告警（M7）。
 // 状态守卫（幂等）：仅接受任务处于 running 时的上报；其他状态的迟到上报被忽略（结果记录不受影响）。
+// A-1 防双跑：res.ClaimEpoch > 0 时校验持有者令牌，拒绝旧持有者（任务被回收重派后）上报；
+// res.ClaimEpoch == 0 时跳过校验（兼容旧 agent/测试）。
 func (m *MemoryStore) SubmitResult(res *proto.TaskResult) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -746,6 +760,12 @@ func (m *MemoryStore) SubmitResult(res *proto.TaskResult) {
 		// 防止重复失败上报反复累计 retry_count 造成假死信。
 		if t.Status != "running" {
 			log.Printf("store: memory SubmitResult 忽略非 running 任务 %s (status=%s exitCode=%d)", t.TaskID, t.Status, res.ExitCode)
+			return
+		}
+		// A-1 防双跑：claim_epoch 校验——拒绝旧持有者上报（任务被回收重派后 epoch 已 +1）。
+		// res.ClaimEpoch > 0 时校验（新 agent 填充）；= 0 时跳过（兼容旧 agent/测试）。
+		if res.ClaimEpoch > 0 && t.ClaimEpoch != res.ClaimEpoch {
+			log.Printf("store: memory SubmitResult 拒绝旧持有者上报 %s (claim_epoch=%d != %d)", t.TaskID, res.ClaimEpoch, t.ClaimEpoch)
 			return
 		}
 		if success {

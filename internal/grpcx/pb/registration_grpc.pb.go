@@ -4,7 +4,7 @@
 // M3-3A protobuf 生成 stub：gRPC 服务接口 + ServiceDesc + 客户端 stub。
 // 本文件由 proto/scripts/gen.sh (buf generate) 产出，提交到仓库以支持无 Docker 环境编译。
 //
-// 兼容期：本 RegistrationServer 接口与 internal/grpcx.RegistrationServer 并存。
+// JSON codec 为正式契约；此 stub 保留供 buf breaking 守护和未来迁移使用。
 // 现有 controlplane/grpc.go 实现 grpcx.RegistrationServer（手写路径，默认）；
 // 切换到生成 stub 时用 grpcx.NewStubAdapter 把 grpcx.RegistrationServer 桥接到本接口。
 
@@ -22,7 +22,7 @@ import (
 
 // RegistrationServer 是生成 stub 的服务端接口（protoc-gen-go-grpc 输出）。
 // 与 internal/grpcx.RegistrationServer 方法集一致，但消息类型用本包 pbv1 类型。
-// 兼容期由 grpcx.StubAdapter 桥接：StubAdapter 实现 pbv1.RegistrationServer，
+// JSON codec 为正式契约；StubAdapter 桥接保留供未来迁移使用：StubAdapter 实现 pbv1.RegistrationServer，
 // 内部把 pbv1 消息转为 internal/proto 消息后委托给 grpcx.RegistrationServer。
 type RegistrationServer interface {
 	Register(context.Context, *AgentInfo) (*RegisterResp, error)
@@ -34,7 +34,7 @@ type RegistrationServer interface {
 }
 
 // UnimplementedRegistrationServer 必须被嵌入以获得 forward 兼容（新方法默认返回 Unimplemented）。
-// 兼容期 grpcx.StubAdapter 显式实现全部 6 方法，不嵌入本结构体；
+// JSON codec 为正式契约；grpcx.StubAdapter 显式实现全部 6 方法，不嵌入本结构体；
 // 保留本结构体以符合 protoc-gen-go-grpc 标准输出格式，供未来直接实现 pbv1.RegistrationServer 时使用。
 type UnimplementedRegistrationServer struct{}
 
@@ -58,7 +58,7 @@ func (UnimplementedRegistrationServer) PollCancels(context.Context, *PollCancels
 }
 
 // RegisterRegistrationServer 把 srv 注册到 gRPC server，用生成的 ServiceDesc。
-// 兼容期 controlplane 调用 gs.RegisterService(&pbv1.Registration_ServiceDesc, grpcx.NewStubAdapter(impl))。
+// JSON codec 为正式契约；controlplane 可调用 gs.RegisterService(&pbv1.Registration_ServiceDesc, grpcx.NewStubAdapter(impl)) 完成迁移。
 func RegisterRegistrationServer(s *grpc.Server, srv RegistrationServer) {
 	s.RegisterService(&Registration_ServiceDesc, srv)
 }
@@ -67,7 +67,7 @@ func RegisterRegistrationServer(s *grpc.Server, srv RegistrationServer) {
 
 // Registration_ServiceDesc 是生成的 gRPC 服务描述符。
 // 与 internal/grpcx.Registration_ServiceDesc 同名同方法集，但 Handler 解码 pbv1 消息。
-// 兼容期两条 ServiceDesc 并存；切换时只需在 server.go 改 RegisterService 的参数。
+// JSON codec 为正式契约；此 ServiceDesc 保留供 buf breaking 守护和未来迁移使用，切换时只需在 server.go 改 RegisterService 的参数。
 var Registration_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: Registration_ServiceName,
 	HandlerType: (*RegistrationServer)(nil),
@@ -178,7 +178,7 @@ func _Registration_PollCancels_Handler(srv interface{}, ctx context.Context, dec
 // ===== 客户端 stub =====
 
 // RegistrationClient 是生成的 gRPC 客户端接口。
-// 兼容期 agent 侧仍走 internal/agent/grpcclient.go（手写 JSON codec）；
+// JSON codec 为正式契约；agent 侧走 internal/agent/grpcclient.go（手写 JSON codec）；
 // 切换到生成 stub 时用 NewRegistrationClient(conn) 构造客户端，走 protobuf codec。
 type RegistrationClient interface {
 	Register(ctx context.Context, in *AgentInfo, opts ...grpc.CallOption) (*RegisterResp, error)

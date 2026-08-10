@@ -244,6 +244,7 @@ func TestValidate_ProductionWithTLS(t *testing.T) {
 	c.Production = true
 	c.TLSCert = "tls.crt"
 	c.JWTSecret = "0123456789abcdef0123456789abcdef"
+	c.EncryptionKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=" // 32 字节 base64
 	if err := c.Validate(); err != nil {
 		t.Fatalf("production + TLS + JWT 应通过: %v", err)
 	}
@@ -406,6 +407,7 @@ func TestValidate_ProductionFullConfig(t *testing.T) {
 	c.Production = true
 	c.TLSCert = "tls.crt"
 	c.JWTSecret = "0123456789abcdef0123456789abcdef"
+	c.EncryptionKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=" // 32 字节 base64
 	c.Store = "mysql"
 	c.MySQLDSN = "u:p@tcp(db:3306)/ops_device"
 	c.Replicas = 3

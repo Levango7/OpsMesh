@@ -114,18 +114,30 @@
       <button class="danger xs" @click="store.deleteNode(currentNode.id)">{{ $t('workflows.delete_node_btn') }}</button>
     </div>
   </div>
+
+  <!-- Cron 定时输入（替代 prompt） -->
+  <PromptModal
+    v-model="cronModal.show"
+    :title="$t('workflows.cron_title')"
+    :message="$t('workflows.cron_prompt')"
+    :default-value="store.current.cron || '*/5 * * * *'"
+    placeholder="*/5 * * * *"
+    @confirm="onCronConfirm"
+  />
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useWorkflowStore } from '@/stores/workflow'
 import { getAgents } from '@/api/device'
 import { t } from '@/i18n'
+import PromptModal from '@/components/PromptModal.vue'
 
 const store = useWorkflowStore()
 const agents = ref([])
 const selectedId = ref('')
 const canvasRef = ref(null)
+const cronModal = reactive({ show: false })
 
 const NODE_W = 170, NODE_H = 66
 const TYPE_COLOR = { shell: '#6366f1', file: '#0d9488', service: '#d97706' }
@@ -158,21 +170,23 @@ async function onOpen() {
 }
 async function onSave() {
   try { await store.save(); store.msg = t('workflows.saved_msg', { id: store.current.id }); store.error = '' }
-  catch (_) { /* 错误已记录 */ }
+  catch (e) { console.error('save workflow failed:', e) }
 }
 async function onRun() {
   try {
     const r = await store.run()
     store.msg = `[${r.s}] ${JSON.stringify(r.j)}`; store.error = r.s >= 400 ? 'run' : ''
-  } catch (_) { /* */ }
+  } catch (e) { console.error('run workflow failed:', e) }
 }
 async function onSchedule() {
-  const cron = prompt(t('workflows.cron_prompt'), store.current.cron || '*/5 * * * *')
+  cronModal.show = true
+}
+async function onCronConfirm(cron) {
   if (!cron) return
   try {
     const r = await store.schedule(cron)
     store.msg = t('workflows.schedule_set_msg', { cron: r.j.cron || t('workflows.none') }); store.error = ''
-  } catch (_) { /* */ }
+  } catch (e) { console.error('schedule workflow failed:', e) }
 }
 function loadDemo() {
   store.reset()
@@ -188,7 +202,7 @@ function loadDemo() {
 
 onMounted(async () => {
   store.fetchList()
-  try { agents.value = await getAgents() || [] } catch (_) { /* */ }
+  try { agents.value = await getAgents() || [] } catch (e) { console.error('fetch agents failed:', e) }
   if (agents.value.length) store.current.agentID = agents.value[0].agentID
 })
 </script>

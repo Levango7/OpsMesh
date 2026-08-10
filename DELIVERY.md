@@ -30,9 +30,9 @@
 
 operator 子模块额外引入 `sigs.k8s.io/controller-runtime`（K8s CRD 控制器框架）。
 
-## 3. 全量验证结果（go1.25.0）
+## 3. 全量验证结果（go1.26.0）
 
-> Go 版本要求：主模块 `go.mod` 声明 `go 1.25.0`；operator 子模块声明 `go 1.22.0`（toolchain `go1.23.4`）。构建需本机安装 Go ≥ 1.25.0。
+> Go 版本要求：主模块 `go.mod` 声明 `go 1.26.0`；operator 子模块声明 `go 1.22.0`（toolchain `go1.23.4`）。构建需本机安装 Go ≥ 1.26.0。
 
 | 命令 | 结果 |
 |------|------|
@@ -115,7 +115,7 @@ go build ./... && go vet ./... && go test ./...
 ## 8. 仓库
 
 - 远端：`github.com/Levango7/OpsMesh`，分支 `main`
-- 根提交链：5 commits（初始 README → 内核实现 → 六大运维模块 → CI/容器加固 → 文档同步）
+- 根提交链：54 commits（初始 README → 内核实现 → 六大运维模块 → CI/容器加固 → 文档同步）
 - 提交内容：28 包源码（主模块 25 + operator 3）+ 47 测试 + Dockerfile/Dockerfile.agent + docker-compose + README + DELIVERY + `.github/ci.yml` + `.gitignore`
 
 ---
@@ -134,7 +134,7 @@ go build ./... && go vet ./... && go test ./...
 
 ### 验证状态
 
-- ⚠️ **本地构建/测试**：以上改动需在用户本机（Go ≥ 1.25.0）或 CI runner 执行：
+- ⚠️ **本地构建/测试**：以上改动需在用户本机（Go ≥ 1.26.0）或 CI runner 执行：
   ```bash
   go build ./... && go vet ./... && go test -timeout 300s ./...
   ```

@@ -272,6 +272,12 @@ type RefreshTokenStore interface {
 	// DeleteRefreshToken 按 TokenHash 删除 refresh token（登出/吊销/过期清理用）。
 	// 返回是否删除成功（不存在返回 false）。
 	DeleteRefreshToken(tokenHash string) bool
+	// ConsumeRefreshToken 原子消费 refresh token：读取并立即删除，返回被消费的 token。
+	// 多副本并发下同一 token 只能被消费一次（原子 Get+Delete），防重放。
+	// 不存在返回 (nil, false)。调用方拿到后自行校验过期/设备指纹。
+	// P1-G4：原 consumeRefreshToken 的 Get→Delete 两步在并发下可被双消费，
+	// 此方法将读取+删除收敛为单次原子操作（MemoryStore 用互斥锁，SQLStore 用事务）。
+	ConsumeRefreshToken(tokenHash string) (*RefreshToken, bool)
 }
 
 // Store 控制面注册表的可插拔持久化组合接口。

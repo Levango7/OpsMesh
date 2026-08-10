@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"opsmesh/internal/config"
 	"opsmesh/internal/store"
@@ -25,11 +26,13 @@ import (
 func newAuthTestServer(t *testing.T) *Server {
 	t.Helper()
 	st := store.NewMemoryStore()
+	ss := store.NewInProcessSessionStore()
 	return &Server{
-		store:      st,
-		cfg:        &config.Config{TaskMaxRetries: 3, Demo: true, PublicRegister: true, AllowPublicRegister: true},
-		jwtSecret:  []byte("test-jwt-secret-for-auth-test-32bytes!"),
-		loginGuard: newLoginGuard(),
+		store:        st,
+		cfg:          &config.Config{TaskMaxRetries: 3, Demo: true, PublicRegister: true, AllowPublicRegister: true},
+		jwtSecret:    []byte("test-jwt-secret-for-auth-test-32bytes!"),
+		sessionStore: ss,
+		loginGuard:   newLoginGuard(ss),
 	}
 }
 
@@ -586,11 +589,13 @@ func TestListPermissionsNoToken(t *testing.T) {
 func newAuthTestServerNonDemo(t *testing.T) *Server {
 	t.Helper()
 	st := store.NewMemoryStore()
+	ss := store.NewInProcessSessionStore()
 	return &Server{
-		store:      st,
-		cfg:        &config.Config{TaskMaxRetries: 3, Demo: false, PublicRegister: true},
-		jwtSecret:  []byte("test-jwt-secret-for-auth-test-32bytes!"),
-		loginGuard: newLoginGuard(),
+		store:        st,
+		cfg:          &config.Config{TaskMaxRetries: 3, Demo: false, PublicRegister: true},
+		jwtSecret:    []byte("test-jwt-secret-for-auth-test-32bytes!"),
+		sessionStore: ss,
+		loginGuard:   newLoginGuard(ss),
 	}
 }
 
@@ -629,11 +634,13 @@ func TestAuthRegisterPending(t *testing.T) {
 // 验证 P1-7 注册安全修复：demo 模式不再隐式免审批，须显式 --allow-public-register=true 才免审批。
 func TestAuthRegisterDemoPending(t *testing.T) {
 	st := store.NewMemoryStore()
+	ss := store.NewInProcessSessionStore()
 	s := &Server{
-		store:      st,
-		cfg:        &config.Config{TaskMaxRetries: 3, Demo: true, PublicRegister: true, AllowPublicRegister: false},
-		jwtSecret:  []byte("test-jwt-secret-for-auth-test-32bytes!"),
-		loginGuard: newLoginGuard(),
+		store:        st,
+		cfg:          &config.Config{TaskMaxRetries: 3, Demo: true, PublicRegister: true, AllowPublicRegister: false},
+		jwtSecret:    []byte("test-jwt-secret-for-auth-test-32bytes!"),
+		sessionStore: ss,
+		loginGuard:   newLoginGuard(ss),
 	}
 	body, _ := json.Marshal(map[string]string{"username": "demopending", "password": "Pass1234", "email": "dp@test.com"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
@@ -667,11 +674,13 @@ func TestAuthRegisterDemoPending(t *testing.T) {
 // 验证 AllowPublicRegister 是免审批的唯一控制（与 demo 模式解耦）。
 func TestAuthRegisterNonDemoAllowPublicRegister(t *testing.T) {
 	st := store.NewMemoryStore()
+	ss := store.NewInProcessSessionStore()
 	s := &Server{
-		store:      st,
-		cfg:        &config.Config{TaskMaxRetries: 3, Demo: false, PublicRegister: true, AllowPublicRegister: true},
-		jwtSecret:  []byte("test-jwt-secret-for-auth-test-32bytes!"),
-		loginGuard: newLoginGuard(),
+		store:        st,
+		cfg:          &config.Config{TaskMaxRetries: 3, Demo: false, PublicRegister: true, AllowPublicRegister: true},
+		jwtSecret:    []byte("test-jwt-secret-for-auth-test-32bytes!"),
+		sessionStore: ss,
+		loginGuard:   newLoginGuard(ss),
 	}
 	body, _ := json.Marshal(map[string]string{"username": "allowreg", "password": "Pass1234", "email": "ar@test.com"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
@@ -698,11 +707,13 @@ func TestAuthRegisterNonDemoAllowPublicRegister(t *testing.T) {
 // TestAuthRegisterPublicDisabled PublicRegister=false → 403。
 func TestAuthRegisterPublicDisabled(t *testing.T) {
 	st := store.NewMemoryStore()
+	ss := store.NewInProcessSessionStore()
 	s := &Server{
-		store:      st,
-		cfg:        &config.Config{TaskMaxRetries: 3, Demo: false, PublicRegister: false},
-		jwtSecret:  []byte("test-jwt-secret-for-auth-test-32bytes!"),
-		loginGuard: newLoginGuard(),
+		store:        st,
+		cfg:          &config.Config{TaskMaxRetries: 3, Demo: false, PublicRegister: false},
+		jwtSecret:    []byte("test-jwt-secret-for-auth-test-32bytes!"),
+		sessionStore: ss,
+		loginGuard:   newLoginGuard(ss),
 	}
 	body, _ := json.Marshal(map[string]string{"username": "newuser", "password": "Pass1234"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
@@ -929,7 +940,7 @@ func TestChangePasswordWeakNew(t *testing.T) {
 		{"same as old", "admin123"},
 	}
 	for _, c := range cases {
-		s.loginGuard = newLoginGuard() // 重置限流器，避免连续请求被 IP 令牌桶限流（429）掩盖业务校验结果
+		s.loginGuard = newLoginGuard(s.sessionStore) // 重置限流器，避免连续请求被 IP 令牌桶限流（429）掩盖业务校验结果
 		req := doWithAuth(http.MethodPost, "/api/v1/auth/change-password", auth, map[string]string{"oldPassword": "admin123", "newPassword": c.newPwd})
 		rec := httptest.NewRecorder()
 		s.handleAuthChangePassword(rec, req)
@@ -1134,5 +1145,131 @@ func TestAuthLogout_ClearsCookie(t *testing.T) {
 	}
 	if ck.MaxAge != -1 && ck.MaxAge != 0 {
 		t.Errorf("登出 Cookie MaxAge 应为负值（立即过期），得到 %d", ck.MaxAge)
+	}
+}
+
+// ============================================================================
+// C-4 DeviceFP deadline 测试：超过 deadline 后签发的 refresh token 必须绑定 DeviceFP（非空）。
+// ============================================================================
+
+// TestConsumeRefreshToken_DeviceFPDeadlineNotEnforced 验证 deadline 零值时不强制 DeviceFP（向后兼容）。
+func TestConsumeRefreshToken_DeviceFPDeadlineNotEnforced(t *testing.T) {
+	s := newAuthTestServer(t)
+	// deviceFPDeadline 零值（默认）：不强制 DeviceFP。
+
+	// 创建不带 DeviceFP 的 refresh token（模拟旧客户端）。
+	rt, err := s.createRefreshToken("user-1", "")
+	if err != nil {
+		t.Fatalf("创建 refresh token 失败: %v", err)
+	}
+
+	// 消费应成功（deadline 零值时不强制）。
+	if _, ok := s.consumeRefreshToken(rt, ""); !ok {
+		t.Fatal("deadline 零值时，DeviceFP 为空的 token 应可消费（向后兼容）")
+	}
+}
+
+// TestConsumeRefreshToken_DeviceFPDeadlineEnforced 验证超过 deadline 后 DeviceFP 为空被拒绝。
+func TestConsumeRefreshToken_DeviceFPDeadlineEnforced(t *testing.T) {
+	s := newAuthTestServer(t)
+	// 设置 deadline 为过去时间：所有新签发的 token 都受 deadline 约束。
+	s.deviceFPDeadline = time.Now().Add(-time.Hour)
+
+	// 创建不带 DeviceFP 的 refresh token（模拟旧客户端，但 deadline 已过）。
+	rt, err := s.createRefreshToken("user-1", "")
+	if err != nil {
+		t.Fatalf("创建 refresh token 失败: %v", err)
+	}
+
+	// 消费应失败（deadline 后签发的 token 必须 DeviceFP 非空）。
+	if _, ok := s.consumeRefreshToken(rt, ""); ok {
+		t.Fatal("deadline 后签发的 token DeviceFP 为空应被拒绝")
+	}
+}
+
+// TestConsumeRefreshToken_DeviceFPDeadlineWithFP 验证超过 deadline 后带 DeviceFP 的 token 正常工作。
+func TestConsumeRefreshToken_DeviceFPDeadlineWithFP(t *testing.T) {
+	s := newAuthTestServer(t)
+	// 设置 deadline 为过去时间：所有新签发的 token 都受 deadline 约束。
+	s.deviceFPDeadline = time.Now().Add(-time.Hour)
+
+	// 创建带 DeviceFP 的 refresh token（新客户端）。
+	rt, err := s.createRefreshToken("user-1", "device-fp-123")
+	if err != nil {
+		t.Fatalf("创建 refresh token 失败: %v", err)
+	}
+
+	// 消费应成功（DeviceFP 非空且匹配）。
+	if sess, ok := s.consumeRefreshToken(rt, "device-fp-123"); !ok || sess == nil {
+		t.Fatal("deadline 后签发的 token DeviceFP 非空且匹配应可消费")
+	}
+}
+
+// TestConsumeRefreshToken_DeviceFPDeadlineBefore 验证 deadline 前签发的 token 不受约束。
+func TestConsumeRefreshToken_DeviceFPDeadlineBefore(t *testing.T) {
+	s := newAuthTestServer(t)
+
+	// 先创建不带 DeviceFP 的 refresh token（模拟 deadline 前签发的旧 token）。
+	rt, err := s.createRefreshToken("user-1", "")
+	if err != nil {
+		t.Fatalf("创建 refresh token 失败: %v", err)
+	}
+
+	// 然后设置 deadline 为未来时间（token 的 CreatedAt 在 deadline 之前）。
+	s.deviceFPDeadline = time.Now().Add(time.Hour)
+
+	// 消费应成功（token 在 deadline 前签发，不受约束）。
+	if _, ok := s.consumeRefreshToken(rt, ""); !ok {
+		t.Fatal("deadline 前签发的 token 应不受 deadline 约束（向后兼容）")
+	}
+}
+
+// ============================================================================
+// B-6 SessionStore 集成测试：验证 Server 通过 SessionStore 接口操作黑名单/改密令牌。
+// ============================================================================
+
+// TestAuthLogout_TokenRevokedViaSessionStore 验证登出后 token 经 SessionStore 黑名单拒绝。
+func TestAuthLogout_TokenRevokedViaSessionStore(t *testing.T) {
+	s := newAuthTestServer(t)
+	auth := loginAsAdmin(t, s)
+
+	// 登出。
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	req.Header.Set("Authorization", auth)
+	rec := httptest.NewRecorder()
+	s.handleAuthLogout(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("logout = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// 登出后用同一 token 访问 /auth/me 应被拒绝（token has been revoked）。
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req2.Header.Set("Authorization", auth)
+	rec2 := httptest.NewRecorder()
+	s.handleAuthMe(rec2, req2)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("登出后 token 应被拒绝，得到 %d，want 401; body=%s", rec2.Code, rec2.Body.String())
+	}
+}
+
+// TestChangePasswordTokenViaSessionStore 验证改密令牌经 SessionStore 一次性消费。
+func TestChangePasswordTokenViaSessionStore(t *testing.T) {
+	s := newAuthTestServer(t)
+
+	// 创建改密令牌。
+	cpt, err := s.createChangePasswordToken("user-1")
+	if err != nil {
+		t.Fatalf("创建改密令牌失败: %v", err)
+	}
+
+	// 首次消费应成功。
+	userID, ok := s.consumeChangePasswordToken(cpt)
+	if !ok || userID != "user-1" {
+		t.Fatalf("首次消费应返回 (user-1, true)，得到 (%s, %v)", userID, ok)
+	}
+
+	// 重复消费应失败（一次性）。
+	if _, ok := s.consumeChangePasswordToken(cpt); ok {
+		t.Fatal("改密令牌不应被重复消费")
 	}
 }

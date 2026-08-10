@@ -13,6 +13,8 @@
 package authctx
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -28,6 +30,7 @@ type JWTClaims struct {
 	Roles       []string  // roles：角色 ID 列表
 	Permissions []string  // permissions：权限字符串列表（展开后的最终权限）
 	TenantID    string    // tenant_id：租户 ID（多租户隔离键）
+	JTI         string    // jti：JWT 唯一 ID（用于吊销/blacklist，P1-G4）
 	ExpiresAt   time.Time // exp：过期时间
 }
 
@@ -59,9 +62,19 @@ func SignJWT(claims JWTClaims, secret []byte) (string, error) {
 	if claims.ExpiresAt.IsZero() {
 		claims.ExpiresAt = time.Now().Add(24 * time.Hour)
 	}
+	// P1-G4 JWT 吊销：为每个 token 生成唯一 jti（JWT ID），登出时加入 blacklist。
+	// 调用方未填 JTI 时用 crypto/rand 生成 16 字节 hex（32 字符，碰撞概率可忽略）。
+	if claims.JTI == "" {
+		b := make([]byte, 16)
+		if _, err := rand.Read(b); err != nil {
+			return "", fmt.Errorf("authctx: 生成 JWT jti 失败: %w", err)
+		}
+		claims.JTI = hex.EncodeToString(b)
+	}
 	now := time.Now()
 	signer := jwtSigner{
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        claims.JTI, // 标准 JWT jti 字段，用于吊销
 			Subject:   claims.UserID,
 			ExpiresAt: jwt.NewNumericDate(claims.ExpiresAt),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -116,6 +129,7 @@ func ParseHSJWT(tokenStr string, secret []byte) (JWTClaims, error) {
 		Roles:       signer.Roles,
 		Permissions: signer.Permissions,
 		TenantID:    signer.TenantID,
+		JTI:         signer.ID, // 标准 JWT jti 字段，用于吊销校验
 	}
 	if signer.ExpiresAt != nil {
 		out.ExpiresAt = signer.ExpiresAt.Time

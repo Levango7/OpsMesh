@@ -5,16 +5,17 @@
 // 本文件由 proto/scripts/gen.sh (buf generate) 产出，提交到仓库以支持无 Docker 环境编译。
 // 重新生成会覆盖本文件；手工修改会在下次生成时丢失。
 //
-// 兼容期：本包消息与 internal/proto（JSON 友好结构体）并存，由 internal/grpcx/stub.go 互转。
+// JSON codec 为正式契约；此 stub 保留供 buf breaking 守护和未来迁移使用，本包消息与 internal/proto（JSON 友好结构体）由 internal/grpcx/stub.go 互转。
 // 服务端/客户端默认仍走 internal/grpcx 手写 ServiceDesc + JSONCodec；生成 stub 经
 // grpcx.StubAdapter 桥接后可灰度切换到 protobuf codec。
 
 package pbv1
 
 import (
+	unsafe "unsafe" // 用于 MessageStateOf 的 unsafe.Pointer 转换（M4-4C 兼容性修复）
+
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	unsafe "unsafe" // 用于 MessageStateOf 的 unsafe.Pointer 转换（M4-4C 兼容性修复）
 
 	_ "google.golang.org/protobuf/types/known/timestamppb" // 注册 google.protobuf.Timestamp
 )
@@ -23,29 +24,27 @@ import (
 // 生成代码直接传 typed pointer；各调用点已改为 unsafe.Pointer(x) 恢复兼容。
 // 重新生成代码时若 protoc-gen-go 版本匹配可移除转换。
 
-
-
 // ===== 消息结构体 =====
 // 每个消息嵌入 protoimpl.MessageState（v2 API 标准模式），实现 proto.Message 接口。
-// 字段标签同时带 protobuf（真实序列化）和 json（JSON codec 兼容期复用）。
+// 字段标签同时带 protobuf（真实序列化）和 json（JSON codec 正式契约复用）。
 
 // AgentInfo agent 注册/心跳时上报的元信息。
 type AgentInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	Hostname      string                 `protobuf:"bytes,2,opt,name=hostname,proto3" json:"hostname,omitempty"`
-	Segment       string                 `protobuf:"bytes,3,opt,name=segment,proto3" json:"segment,omitempty"`
-	TenantId      string                 `protobuf:"bytes,4,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	Addr          string                 `protobuf:"bytes,5,opt,name=addr,proto3" json:"addr,omitempty"`
-	GrpcPort      int32                  `protobuf:"varint,6,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
-	MetricsPort   int32                  `protobuf:"varint,7,opt,name=metrics_port,json=metricsPort,proto3" json:"metrics_port,omitempty"`
-	Status        string                 `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"`
-	Load          int32                  `protobuf:"varint,9,opt,name=load,proto3" json:"load,omitempty"`
-	LastSeen      *Timestamp             `protobuf:"bytes,10,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
-	InstallToken  string                 `protobuf:"bytes,11,opt,name=install_token,json=installToken,proto3" json:"install_token,omitempty"`
-	OnboardDeviceId string               `protobuf:"bytes,12,opt,name=onboard_device_id,json=onboardDeviceId,proto3" json:"onboard_device_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	AgentId         string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Hostname        string                 `protobuf:"bytes,2,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	Segment         string                 `protobuf:"bytes,3,opt,name=segment,proto3" json:"segment,omitempty"`
+	TenantId        string                 `protobuf:"bytes,4,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Addr            string                 `protobuf:"bytes,5,opt,name=addr,proto3" json:"addr,omitempty"`
+	GrpcPort        int32                  `protobuf:"varint,6,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
+	MetricsPort     int32                  `protobuf:"varint,7,opt,name=metrics_port,json=metricsPort,proto3" json:"metrics_port,omitempty"`
+	Status          string                 `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"`
+	Load            int32                  `protobuf:"varint,9,opt,name=load,proto3" json:"load,omitempty"`
+	LastSeen        *Timestamp             `protobuf:"bytes,10,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
+	InstallToken    string                 `protobuf:"bytes,11,opt,name=install_token,json=installToken,proto3" json:"install_token,omitempty"`
+	OnboardDeviceId string                 `protobuf:"bytes,12,opt,name=onboard_device_id,json=onboardDeviceId,proto3" json:"onboard_device_id,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *AgentInfo) Reset()         { *x = AgentInfo{} }
@@ -184,9 +183,9 @@ func (x *TaskResult) ProtoReflect() protoreflect.Message {
 
 // RegisterResp 控制面注册返回的响应。
 type RegisterResp struct {
-	state         protoimpl.MessageState  `protogen:"open.v1"`
-	AgentId       string                  `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	ControlConfig map[string]int32        `protobuf:"bytes,2,rep,name=control_config,json=controlConfig,proto3" json:"control_config,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"varint,2,opt,name=value,proto3"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	ControlConfig map[string]int32       `protobuf:"bytes,2,rep,name=control_config,json=controlConfig,proto3" json:"control_config,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"varint,2,opt,name=value,proto3"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -349,10 +348,10 @@ func (x *PollCancelsReq) ProtoReflect() protoreflect.Message {
 
 // PollCancelsResp 控制面返回的已取消任务 ID 列表。
 type PollCancelsResp struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	CancelledTaskIds  []string               `protobuf:"bytes,1,rep,name=cancelled_task_ids,json=cancelledTaskIds,proto3" json:"cancelled_task_ids,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	CancelledTaskIds []string               `protobuf:"bytes,1,rep,name=cancelled_task_ids,json=cancelledTaskIds,proto3" json:"cancelled_task_ids,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *PollCancelsResp) Reset()         { *x = PollCancelsResp{} }

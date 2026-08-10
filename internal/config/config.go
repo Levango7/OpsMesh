@@ -134,6 +134,12 @@ type Config struct {
 	// 空=随机生成（重启后旧 token 失效，仅开发/单实例适用）；生产多副本须注入一致密钥。
 	JWTSecret string // HS256 对称密钥；空=随机生成（重启后旧 token 失效）
 
+	// P0-G3 kubeconfig 静态加密密钥（AES-256-GCM）：base64 编码的 32 字节密钥。
+	// 控制面存入 store 前对 K8s 集群 kubeconfig 做 AES-GCM 加密，DB 泄露时不直接暴露集群凭据。
+	// 空（默认）=不加密（明文存储，仅开发/demo 适用）；生产模式（--production=true）必须显式配置。
+	// 建议生成：openssl rand 32 | base64（输出 44 字符 base64，解码后 32 字节 AES-256 密钥）。
+	EncryptionKey string // base64 编码的 32 字节 AES-256 密钥；空=不加密（非生产）
+
 	// M4-4B 日志检索后端选择：memory（默认，环形缓冲） | sql（MySQL） | loki（Grafana Loki） | es（Elasticsearch）。
 	// 与 Store（控制面持久化后端）解耦：Store 管 agent/device 状态，LogBackend 管日志检索。
 	// loki/es 模式下日志由 agent 经 promtail/filebeat 直接推送，控制面仅做查询（Append 为 noop）。
@@ -187,6 +193,15 @@ type Config struct {
 	//   - 生产模式（--production=true）下默认开启（除非显式 --grpc-require-signature=false）。
 	//   - 已启用 mTLS（--tls-cert + --client-ca 均非空）时可不开启（mTLS 本身提供身份绑定）。
 	GRPCRequireSignature bool
+	// P0 安全加固：gRPC agent 身份绑定的预共享 HMAC 签名密钥。
+	// 此前签名密钥由控制面在 Register 响应中下发给 agent，但注册不硬（任何人可注册）时
+	// 攻击者可注册获取密钥后伪造签名，使签名形同虚设。改为预共享方式：
+	//   - 控制面与 agent 两侧通过 --grpc-signature-key 手动配置同一密钥。
+	//   - Register 响应不再返回签名密钥（Secret 字段始终为空）。
+	//   - verifyAgentSignature 优先使用此预共享密钥验签；为空时回退到 store.AgentSecret（向后兼容已注册 agent）。
+	//   - agent 端优先使用此预共享密钥签名；为空时不签名（向后兼容，但日志警告）。
+	// 空=未配置预共享密钥（回退到旧的 store.AgentSecret 机制，向后兼容）。
+	GRPCSignatureKey string
 	// 反向代理信任（安全运行于 LB/网关后时）：开启后 clientIP 信任 X-Forwarded-For 首段取真实客户端 IP；
 	// 默认 false=仅用 RemoteAddr（防止客户端伪造 XFF 绕过登录限流/审计）；仅当确有可信反代前置时才开启。
 	TrustProxy bool
@@ -196,6 +211,19 @@ type Config struct {
 	// 语义优先级：显式 --cookie-secure=true → true；否则回退到 TLSCert 非空（HTTPS 直连时自动启用）；
 	// 生产模式（--production=true）下默认 true（HTTPS 反代终止 TLS 时控制面虽收 HTTP，但对外是 HTTPS，须显式开启）。
 	CookieSecure bool
+
+	// B-6 多副本会话状态共享：SessionStore 后端选择。
+	// 空（默认）=进程内 map（InProcessSessionStore，单副本/demo 零依赖）；
+	// "redis://host:port"=Redis 后端（RedisSessionStore，多副本 HA 共享 JWT 黑名单/限流计数/改密令牌）。
+	// 多副本 HA 部署（replicas>1）应配置此项，否则登出后 access token 在其他副本仍有效。
+	SessionStore string // "" | redis://host:port
+
+	// C-4 DeviceFP deadline：refresh token 设备指纹强制非空的截止时间。
+	// 零值（默认）=不强制（向后兼容，DeviceFP 为空时跳过设备绑定校验）；
+	// 非零=该时刻之后签发的 refresh token 必须绑定 DeviceFP（非空），否则 consumeRefreshToken 拒绝。
+	// 用于渐进式强制设备绑定：deadline 前允许旧客户端不传 DeviceFP，deadline 后强制要求。
+	// 格式：RFC3339（如 "2026-09-01T00:00:00Z"）；或 env OPSMESH_DEVICE_FP_DEADLINE。
+	DeviceFPDeadline time.Time
 }
 
 // Load 解析 flag 并用环境变量兜底，返回 *Config。
@@ -257,6 +285,7 @@ func Load() *Config {
 	jwtPublicKey := flag.String("jwt-public-key", "", "M3-2A JWT 验签公钥 PEM 文件路径（RS256）；空=关闭 JWT 验签回退头注入模式（或 env OPSMESH_JWT_PUBLIC_KEY）")
 	jwtIssuer := flag.String("jwt-issuer", "", "M3-2A 预期 JWT issuer（iss claim）；非空时校验 iss 必须匹配（或 env OPSMESH_JWT_ISSUER）")
 	jwtSecret := flag.String("jwt-secret", "", "用户中心 JWT 签发密钥（HS256）；空=随机生成（重启后旧 token 失效）（或 env OPSMESH_JWT_SECRET）")
+	encryptionKey := flag.String("encryption-key", "", "P0-G3 kubeconfig AES-256-GCM 加密密钥（base64 编码 32 字节）；空=不加密（仅开发/demo，生产必须配置）；或 env OPSMESH_ENCRYPTION_KEY")
 	// M4-4B 日志检索后端：memory（默认） | sql | loki | es。
 	logBackend := flag.String("log-backend", "memory", "日志检索后端: memory | sql | loki | es（M4-4B；loki/es 模式下日志由 agent 直接推送，控制面仅查询）")
 	// --log-store 作为 --log-backend 的别名（task 97）：显式设置 --log-store 时覆盖 log-backend，
@@ -283,6 +312,8 @@ func Load() *Config {
 	agentFileRootWhitelist := flag.String("agent-file-root-whitelist", "", "安全加固：agent 文件任务允许的根目录白名单（逗号分隔，如 /var/opsmesh/files,/etc/opsmesh）；空=不限制根目录（仍拒绝 ../ 路径遍历与符号链接）；非空=目标路径必须落在某个根目录之下；或 env OPSMESH_AGENT_FILE_ROOT_WHITELIST")
 	// task 81 gRPC agent 身份绑定：强制要求 agent 请求携带 HMAC 签名。
 	grpcRequireSignature := flag.Bool("grpc-require-signature", false, "gRPC agent 身份绑定：强制要求 agent 在 PullTasks/ReportResult/PollCancels/Heartbeat 携带 HMAC 签名（防冒领任务/伪造上报）；demo 模式强制关闭；生产模式默认开启（除非显式 false）；或 env OPSMESH_GRPC_REQUIRE_SIGNATURE")
+	// P0 安全加固：gRPC 签名预共享密钥（控制面与 agent 两侧手动配置同一密钥）。
+	grpcSignatureKey := flag.String("grpc-signature-key", "", "P0 安全加固：gRPC agent 身份绑定的预共享 HMAC 签名密钥（控制面与 agent 两侧须配置同一密钥）；Register 响应不再下发密钥，改用预共享方式防注册不硬时密钥外泄；空=回退到 store.AgentSecret（向后兼容）；或 env OPSMESH_GRPC_SIGNATURE_KEY")
 	// P2 安全运行于反向代理/LB 后：开启后 clientIP 信任 X-Forwarded-For 首段；默认 false 仅用 RemoteAddr，
 	// 防止客户端伪造 XFF 绕过登录限流与审计。仅当确有可信反代（如 APISIX/Nginx 注入真实 IP）前置时启用。
 	trustProxy := flag.Bool("trust-proxy", false, "信任反向代理：开启后 clientIP 取 X-Forwarded-For 首段（仅当有可信 LB/网关前置时启用）；默认 false=仅用 RemoteAddr 防 XFF 伪造绕过限流；或 env OPSMESH_TRUST_PROXY")
@@ -290,6 +321,12 @@ func Load() *Config {
 	// 默认 false（明文内网/本地开发需要）；生产模式（--production=true）下默认 true（除非显式 false）。
 	// 或 env OPSMESH_COOKIE_SECURE。
 	cookieSecure := flag.Bool("cookie-secure", false, "Cookie Secure 标志：true=at/rt Cookie 仅经 HTTPS 传输（防中间人窃取）；默认 false（明文内网/开发需要）；生产模式默认 true（HTTPS 反代终止 TLS 时须显式开启）；或 env OPSMESH_COOKIE_SECURE")
+	// B-6 多副本会话状态共享：SessionStore 后端选择。
+	// 空=进程内（默认，单副本/demo）；"redis://host:port"=Redis（多副本 HA 共享登出/限流/改密令牌）。
+	sessionStore := flag.String("session-store", "", "B-6 会话状态后端：空=进程内 map（单副本/demo 默认） | redis://host:port（多副本 HA 共享 JWT 黑名单/限流/改密令牌）；或 env OPSMESH_SESSION_STORE")
+	// C-4 DeviceFP deadline：该时刻之后签发的 refresh token 必须绑定 DeviceFP（非空）。
+	// 空（默认）=不强制（向后兼容）；RFC3339 格式（如 2026-09-01T00:00:00Z）。
+	deviceFPDeadline := flag.String("device-fp-deadline", "", "C-4 DeviceFP 强制非空截止时间：该时刻之后签发的 refresh token 必须绑定设备指纹（非空），之前向后兼容；空=不强制（默认）；RFC3339 格式（如 2026-09-01T00:00:00Z）；或 env OPSMESH_DEVICE_FP_DEADLINE")
 	flag.Parse()
 
 	// 记录被显式设置的 flag，用于"flag 优先、env 兜底"的正确语义（P1-8 修复：原实现 env 会覆盖显式 flag）。
@@ -386,6 +423,7 @@ func Load() *Config {
 		JWTPublicKey:           val("jwt-public-key", *jwtPublicKey, "OPSMESH_JWT_PUBLIC_KEY"),
 		JWTIssuer:              val("jwt-issuer", *jwtIssuer, "OPSMESH_JWT_ISSUER"),
 		JWTSecret:              val("jwt-secret", *jwtSecret, "OPSMESH_JWT_SECRET"),
+		EncryptionKey:          val("encryption-key", *encryptionKey, "OPSMESH_ENCRYPTION_KEY"),
 		LogStore:               val("log-store", *logStore, "OPSMESH_LOG_STORE"),
 		LogBackend:             val("log-backend", *logBackend, "OPSMESH_LOG_BACKEND"),
 		LokiEndpoint:           val("loki-endpoint", *lokiEndpoint, "OPSMESH_LOKI_ENDPOINT"),
@@ -404,8 +442,11 @@ func Load() *Config {
 		AgentShellWhitelist:    val("agent-shell-whitelist", *agentShellWhitelist, "OPSMESH_AGENT_SHELL_WHITELIST"),
 		AgentFileRootWhitelist: val("agent-file-root-whitelist", *agentFileRootWhitelist, "OPSMESH_AGENT_FILE_ROOT_WHITELIST"),
 		GRPCRequireSignature:   valBool("grpc-require-signature", *grpcRequireSignature, "OPSMESH_GRPC_REQUIRE_SIGNATURE"),
+		GRPCSignatureKey:       val("grpc-signature-key", *grpcSignatureKey, "OPSMESH_GRPC_SIGNATURE_KEY"),
 		TrustProxy:             valBool("trust-proxy", *trustProxy, "OPSMESH_TRUST_PROXY"),
 		CookieSecure:           valBool("cookie-secure", *cookieSecure, "OPSMESH_COOKIE_SECURE"),
+		SessionStore:           val("session-store", *sessionStore, "OPSMESH_SESSION_STORE"),
+		DeviceFPDeadline:       parseDeviceFPDeadline(val("device-fp-deadline", *deviceFPDeadline, "OPSMESH_DEVICE_FP_DEADLINE")),
 	}
 	// task 97 --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
 	// 使现有 LogBackend 校验/路由逻辑无缝复用；最终 LogStore 与 LogBackend 保持同值。
@@ -531,6 +572,21 @@ func parseFederationPeers(s string) []string {
 	return out
 }
 
+// parseDeviceFPDeadline 解析 DeviceFP deadline（RFC3339 格式）。
+// 输入空串返回零值（不强制，向后兼容）；解析失败返回零值并打印告警（不 fail-fast，保持启动友好）。
+func parseDeviceFPDeadline(s string) time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[config] 警告：--device-fp-deadline 解析失败（应为 RFC3339 格式，如 2026-09-01T00:00:00Z），忽略（不强制设备绑定）: "+err.Error())
+		return time.Time{}
+	}
+	return t
+}
+
 // Validate 启动期配置校验：把明显的非法配置在启动即失败，而非运行期诡异出错（P0-3 健壮性）。
 // 返回 error 时调用方应 os.Exit(1)。
 func (c *Config) Validate() error {
@@ -592,6 +648,11 @@ func (c *Config) Validate() error {
 	if c.Production && len([]byte(c.JWTSecret)) < 32 {
 		return fmt.Errorf("生产模式 --jwt-secret 长度不足（%d 字节 < 32）：需强随机 256-bit 对称密钥（建议 openssl rand -hex 32）", len([]byte(c.JWTSecret)))
 	}
+	// P0-G3 生产模式必须配置 kubeconfig 加密密钥：DB 泄露时明文 kubeconfig = 所有 K8s 集群沦陷。
+	// 密钥须为 base64 编码的 32 字节（AES-256）；非生产模式允许空（明文存储，保持 demo 兼容）。
+	if c.Production && c.EncryptionKey == "" {
+		return fmt.Errorf("生产模式（--production=true）必须配置 --encryption-key（或 OPSMESH_ENCRYPTION_KEY）：kubeconfig 明文存储不满足等保三级要求；建议 openssl rand 32 | base64 生成 32 字节 AES-256 密钥")
+	}
 	// M4-4B 日志检索后端校验：非法值或缺失必要 endpoint 直接 fail-fast。
 	switch c.LogBackend {
 	case "memory", "sql", "loki", "es":
@@ -646,6 +707,21 @@ func (c *Config) Validate() error {
 	// 防止跨不可信网段伪造租户身份头（原告警改为 fail-fast）。
 	if len(c.FederationPeers) > 0 && c.FederationSecret == "" {
 		return fmt.Errorf("federation-secret is required when federation-peers is set")
+	}
+	// B-6 多副本会话状态共享校验：session-store 格式须为 "redis://host:port"。
+	// 多副本 HA（replicas>1）但未配置 session-store 时告警（不 fail-fast，保持单副本 memory store 兼容）。
+	if c.SessionStore != "" {
+		if !strings.HasPrefix(c.SessionStore, "redis://") {
+			return fmt.Errorf("非法 --session-store=%q（须为 redis://host:port 格式）", c.SessionStore)
+		}
+		// 去除 "redis://" 前缀后须非空（如 "redis://" 不合法）。
+		if strings.TrimPrefix(c.SessionStore, "redis://") == "" {
+			return fmt.Errorf("非法 --session-store=%q（host:port 不可为空）", c.SessionStore)
+		}
+	}
+	if c.Replicas > 1 && c.SessionStore == "" && c.Store == "memory" {
+		// memory store 多副本本身已在上方校验拒绝，此处补充 mysql store 多副本未配置 session-store 的告警。
+		fmt.Fprintln(os.Stderr, "[config] 警告：多副本（replicas>1）但未配置 --session-store，登出/限流/改密令牌将不跨副本共享（建议 --session-store=redis://host:port）")
 	}
 	return nil
 }

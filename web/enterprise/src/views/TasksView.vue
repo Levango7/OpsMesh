@@ -124,11 +124,11 @@ async function onSubmit() {
   }
 }
 async function onCancel(id) {
-  try { await store.cancel(id) } catch (_) { /* 错误已由 store 记录 */ }
+  try { await store.cancel(id) } catch (e) { console.error('cancel task failed:', e) }
 }
 
 onMounted(async () => {
-  try { agents.value = await getAgents() || [] } catch (_) { /* 忽略 */ }
+  try { agents.value = await getAgents() || [] } catch (e) { console.error('fetch agents failed:', e) }
   store.fetchTasks()
 })
 </script>

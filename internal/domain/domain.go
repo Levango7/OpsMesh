@@ -70,16 +70,19 @@ type Device struct {
 // Task 下发给 agent 的自动化任务。
 // Task 对外暴露的任务模型（显式 json tag 与外部 API 契约一致）。
 type Task struct {
-	TaskID      string    `json:"taskID"`
-	AgentID     string    `json:"agentID"`
-	TenantID    string    `json:"tenantID"`
-	Type        string    `json:"type"`    // shell / service / file（见 proto.TaskType* 常量）
-	Command     string    `json:"command"` // shell: 命令; service: start|stop|restart|status
-	Content     string    `json:"content"` // file 类型：写入文件的内容
-	Path        string    `json:"path"`    // file 类型：目标路径; service 类型：服务名（可选）
-	Status      string    `json:"status"`  // pending / running / done / failed / cancelled
-	ClaimedBy   string    `json:"claimedBy"`
-	ClaimedAt   time.Time `json:"claimedAt"`
+	TaskID    string    `json:"taskID"`
+	AgentID   string    `json:"agentID"`
+	TenantID  string    `json:"tenantID"`
+	Type      string    `json:"type"`    // shell / service / file（见 proto.TaskType* 常量）
+	Command   string    `json:"command"` // shell: 命令; service: start|stop|restart|status
+	Content   string    `json:"content"` // file 类型：写入文件的内容
+	Path      string    `json:"path"`    // file 类型：目标路径; service 类型：服务名（可选）
+	Status    string    `json:"status"`  // pending / running / done / failed / cancelled
+	ClaimedBy string    `json:"claimedBy"`
+	ClaimedAt time.Time `json:"claimedAt"`
+	// ClaimEpoch 任务所有权令牌（A-1 防双跑）：每次 ClaimTask 时 +1，
+	// SubmitResult 校验持有者是否仍为当前 epoch，拒绝旧持有者上报防双跑。
+	ClaimEpoch  int64     `json:"claimEpoch"`
 	CreatedAt   time.Time `json:"createdAt"`
 	RetryCount  int       `json:"retryCount"` // F2 重试累计
 	MaxRetries  int       `json:"maxRetries"` // F2 重试上限
@@ -99,6 +102,8 @@ type TaskResult struct {
 	Stderr     string    `json:"stderr"`
 	DurationMs int64     `json:"durationMs"`
 	FinishedAt time.Time `json:"finishedAt"`
+	// ClaimEpoch 任务所有权令牌（A-1 防双跑）：上报时携带，store 校验持有者是否仍为当前 epoch。
+	ClaimEpoch int64 `json:"claimEpoch"`
 }
 
 // AuditEvent 内核产出的审计事件（U-04 等保三级：操作 100% 留痕，显式 json tag）。

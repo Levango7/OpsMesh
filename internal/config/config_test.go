@@ -8,18 +8,18 @@ import (
 // base 返回一份合理的控制面默认配置，避免每个用例重复样板。
 func base() *Config {
 	return &Config{
-		Mode:           "controlplane",
-		HTTPPort:       8080,
-		GRPCPort:       9090,
-		MetricsPort:     9091,
-		Store:          "memory",
-		TaskTimeout:    120 * time.Second,
-		ShutdownTimeout: 15 * time.Second,
+		Mode:              "controlplane",
+		HTTPPort:          8080,
+		GRPCPort:          9090,
+		MetricsPort:       9091,
+		Store:             "memory",
+		TaskTimeout:       120 * time.Second,
+		ShutdownTimeout:   15 * time.Second,
 		WorkerConcurrency: 4,
-		TaskLeaseSec:   300,
-		Replicas:       1,
-		TaskMaxRetries: 3,
-		LogBackend:     "memory", // M4-4B 默认日志后端
+		TaskLeaseSec:      300,
+		Replicas:          1,
+		TaskMaxRetries:    3,
+		LogBackend:        "memory", // M4-4B 默认日志后端
 	}
 }
 
@@ -58,7 +58,7 @@ func TestValidate_ProductionRejectsNoTLS(t *testing.T) {
 	c.Production = true
 	c.Store = "memory"
 	c.Replicas = 1 // 单副本不触发多副本拒绝
-	c.TLSCert = ""  // 无 TLS 证书
+	c.TLSCert = "" // 无 TLS 证书
 	// production + 无 TLS 应被拒绝（H6 等保三级要求）。
 	if err := c.Validate(); err == nil {
 		t.Fatal("production + 无 TLS 应被拒绝，但 Validate 通过了")
@@ -170,7 +170,8 @@ func TestValidate_ProductionControlplaneRequiresJWTSecret(t *testing.T) {
 	c2 := base()
 	c2.Production = true
 	c2.TLSCert = "tls.crt"
-	c2.JWTSecret = "0123456789abcdef0123456789abcdef" // 32 字节
+	c2.JWTSecret = "0123456789abcdef0123456789abcdef"                 // 32 字节
+	c2.EncryptionKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=" // 32 字节 base64
 	if err := c2.Validate(); err != nil {
 		t.Fatalf("production + 合法 jwt-secret 应通过: %v", err)
 	}
@@ -195,8 +196,72 @@ func TestValidate_ProductionJWTSecretLength(t *testing.T) {
 	c2 := base()
 	c2.Production = true
 	c2.TLSCert = "tls.crt"
-	c2.JWTSecret = "0123456789abcdef0123456789abcdef" // 32 字节
+	c2.JWTSecret = "0123456789abcdef0123456789abcdef"                 // 32 字节
+	c2.EncryptionKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=" // 32 字节 base64
 	if err := c2.Validate(); err != nil {
 		t.Fatalf("production + 32 字节 jwt-secret 应通过: %v", err)
+	}
+}
+
+// ============================================================================
+// B-6 / C-4 新选项校验测试
+// ============================================================================
+
+// TestValidate_SessionStoreFormat 验证 --session-store 格式校验。
+func TestValidate_SessionStoreFormat(t *testing.T) {
+	// 合法格式：redis://host:port
+	c := base()
+	c.SessionStore = "redis://localhost:6379"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("redis://localhost:6379 应通过: %v", err)
+	}
+
+	// 非法格式：非 redis:// 前缀
+	c2 := base()
+	c2.SessionStore = "mysql://localhost:3306"
+	if err := c2.Validate(); err == nil {
+		t.Fatal("非 redis:// 前缀应被拒绝")
+	}
+
+	// 非法格式：redis:// 无 host:port
+	c3 := base()
+	c3.SessionStore = "redis://"
+	if err := c3.Validate(); err == nil {
+		t.Fatal("redis:// 无 host:port 应被拒绝")
+	}
+
+	// 空（默认）应通过
+	c4 := base()
+	c4.SessionStore = ""
+	if err := c4.Validate(); err != nil {
+		t.Fatalf("空 session-store 应通过: %v", err)
+	}
+}
+
+// TestParseDeviceFPDeadline 验证 --device-fp-deadline 解析。
+func TestParseDeviceFPDeadline(t *testing.T) {
+	// 空串返回零值。
+	if d := parseDeviceFPDeadline(""); !d.IsZero() {
+		t.Fatal("空串应返回零值")
+	}
+
+	// 合法 RFC3339 应解析成功。
+	d := parseDeviceFPDeadline("2026-09-01T00:00:00Z")
+	if d.IsZero() {
+		t.Fatal("合法 RFC3339 应解析成功")
+	}
+	if d.Year() != 2026 || d.Month() != 9 || d.Day() != 1 {
+		t.Fatalf("解析结果应为 2026-09-01，得到 %v", d)
+	}
+
+	// 非法格式返回零值（不 panic）。
+	if d := parseDeviceFPDeadline("not-a-date"); !d.IsZero() {
+		t.Fatal("非法格式应返回零值")
+	}
+
+	// 带空格的输入应 TrimSpace 后解析。
+	d2 := parseDeviceFPDeadline("  2026-09-01T00:00:00Z  ")
+	if d2.IsZero() {
+		t.Fatal("带空格的合法 RFC3339 应解析成功")
 	}
 }

@@ -76,8 +76,8 @@
               <StatusBadge :status="value" :text="value" />
             </template>
             <template #cell-actions="{ row }">
-              <button class="xs" @click.stop="onExec(row.id)">▶</button>
-              <button class="xs outline" @click.stop="onRollback(row.id)">↩</button>
+              <button class="xs" @click.stop="onExec(row.id)">▶ {{ $t('deploys.execute') }}</button>
+              <button class="xs outline" @click.stop="onRollback(row.id)">↩ {{ $t('deploys.rollback') }}</button>
               <button class="xs outline" @click.stop="onOpen(row.id)">{{ $t('deploys.detail_btn') }}</button>
             </template>
           </DataTable>
@@ -109,6 +109,7 @@ import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
+import { fmtTime } from '@/composables/useFormatTime'
 
 const store = useDeployStore()
 const form = reactive({
@@ -127,11 +128,7 @@ const drawerTitle = computed(() =>
   store.current ? t('deploys.drawer_title', { id: store.current.id, name: store.current.name }) : ''
 )
 
-function fmtTime(s) {
-  if (!s) return ''
-  const d = new Date(s)
-  return isNaN(d.getTime()) ? s : d.toLocaleString('zh-CN', { hour12: false })
-}
+
 function loadDemo() {
   form.name = 'deploy-nginx'
   form.type = 'script'

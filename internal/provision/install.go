@@ -10,6 +10,10 @@ import (
 // 脚本自举流程：解析 --token → 探测 OS/arch → 从 ${ADVERTISE}/bin/opsmesh-agent 下载 agent 二进制
 // → 写入 install.token（agent 启动读取完成注册）→ 注册为 systemd 服务并启动
 // → agent 携带 token 回控制面注册，完成 B1 自动纳管闭环。
+//
+// P0-G2 安全加固：systemd ExecStart 不再包含 --install-token 参数（即使指向文件路径也移除），
+// 避免 ps 透露 token 文件位置；agent 启动时通过 --data-dir 自动查找 install.token 文件
+// （见 agent.go installToken() 方法，优先读 <dataDir>/install.token）。
 func InstallScript(advertise, version string) string {
 	if advertise == "" {
 		advertise = "http://127.0.0.1:8080"
@@ -40,8 +44,11 @@ echo "[opsmesh] downloading agent from $ADVERTISE/bin/opsmesh-agent ..."
 curl -fsSL "$ADVERTISE/bin/opsmesh-agent" -o "$AGENT_BIN"
 chmod +x "$AGENT_BIN"
 mkdir -p "$DATA_DIR"
+# P0-G2: token 写入文件（0600），agent 启动时从 <dataDir>/install.token 读取，
+# 不再通过命令行 --install-token 传递，避免 ps/auditd 泄露 token 文件路径。
 echo -n "$TOKEN" > "$DATA_DIR/install.token"
-echo "[opsmesh] token written to $DATA_DIR/install.token"
+chmod 600 "$DATA_DIR/install.token"
+echo "[opsmesh] token written to $DATA_DIR/install.token (mode 0600)"
 if command -v systemctl >/dev/null 2>&1 && [ "$(id -u)" = "0" ]; then
   cat > /etc/systemd/system/opsmesh-agent.service <<UNIT
 [Unit]
@@ -49,7 +56,7 @@ Description=OpsMesh Agent
 After=network.target
 
 [Service]
-ExecStart=$AGENT_BIN --control-addrs=$ADVERTISE --data-dir=$DATA_DIR --install-token=$DATA_DIR/install.token
+ExecStart=$AGENT_BIN --control-addrs=$ADVERTISE --data-dir=$DATA_DIR
 Restart=always
 User=root
 
@@ -62,7 +69,7 @@ UNIT
   echo "[opsmesh] started via systemd"
 else
   echo "[opsmesh] systemd 不可用，后台启动（调试）:"
-  "$AGENT_BIN" --control-addrs="$ADVERTISE" --data-dir="$DATA_DIR" --install-token="$DATA_DIR/install.token" &
+  "$AGENT_BIN" --control-addrs="$ADVERTISE" --data-dir="$DATA_DIR" &
   echo "[opsmesh] agent started (pid $!)"
 fi
 echo "[opsmesh] bootstrap done. agent will register with token."

@@ -1164,3 +1164,13 @@ func (m *MultiSchemaStore) DeleteRefreshToken(tokenHash string) bool {
 	}
 	return s.DeleteRefreshToken(tokenHash)
 }
+
+// ConsumeRefreshToken 原子消费 refresh token（路由到全局 store，P1-G4）。
+// token_hash 为全局唯一主键，跨 schema 查询需全局视角，与 Save/Get/Delete 同模式。
+func (m *MultiSchemaStore) ConsumeRefreshToken(tokenHash string) (*RefreshToken, bool) {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil, false
+	}
+	return s.ConsumeRefreshToken(tokenHash)
+}

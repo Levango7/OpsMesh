@@ -92,5 +92,5 @@ func New(kind, brokers, topic string) Bus {
 	return stampingBus{inner: inner}
 }
 
-// newKafkaBus 默认构建下返回 nil；kafka.go（//go:build kafka）提供真实实现（接收 brokers/topic 参数）。
-func newKafkaBus(brokers, topic string) Bus { return nil }
+// newKafkaBus 声明移至 kafka_stub.go（//go:build !kafka）与 kafka.go（//go:build kafka），
+// 两者互斥避免 -tags kafka 下重复声明（原于此处的事件.go 默认声明与 kafka.go 冲突）。

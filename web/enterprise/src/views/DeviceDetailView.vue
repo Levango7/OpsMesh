@@ -15,7 +15,7 @@
           {{ autoRefresh ? $t('device_detail.auto_refresh_on') : $t('device_detail.auto_refresh_off') }}
         </span>
         <span v-if="metrics" class="muted collected">
-          {{ $t('device_detail.collected_at') }}: {{ fmtTime(metrics.collectedAt) }}
+          {{ $t('device_detail.collected_at') }}: {{ fmtTime(metrics.collectedAt, '—') }}
         </span>
         <button class="xs outline" :disabled="store.metricsLoading" @click="refresh">
           <span style="display:inline-flex;align-items:center;gap:4px;">
@@ -213,6 +213,7 @@ import ProgressRing from '@/components/ProgressRing.vue'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
+import { fmtTime } from '@/composables/useFormatTime'
 
 const route = useRoute()
 const router = useRouter()
@@ -302,12 +303,6 @@ function fmtUptime(sec) {
   return parts.join('')
 }
 
-// 时间格式化
-function fmtTime(s) {
-  if (!s) return '—'
-  const d = new Date(s)
-  return isNaN(d.getTime()) ? s : d.toLocaleString('zh-CN', { hour12: false })
-}
 
 // 进度条颜色：按阈值返回 CSS 变量
 function barColor(pct) {

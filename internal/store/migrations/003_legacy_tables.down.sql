@@ -1,0 +1,17 @@
+-- 003_legacy_tables.down.sql — 003_legacy_tables.sql 的回滚占位（G5 / C-1）
+--
+-- 本文件为 003_legacy_tables.sql 的回滚迁移占位，为未来 down 迁移框架留接口。
+-- 当前 runMigrations 仅执行正向迁移（NNN_*.sql），不执行回滚；
+-- migrationFiles 显式跳过 .down.sql 文件，不参与正向迁移执行。
+--
+-- 003_legacy_tables.sql 包含 alert_rules / os_templates / middleware_templates /
+-- refresh_tokens 四张表的 CREATE TABLE IF NOT EXISTS，历史上由 Go 代码
+-- initSchemaExtra 创建，G5 / B-7 治理后正式纳入版本化迁移框架。
+--
+-- 真实回滚需谨慎：
+--   - DROP TABLE alert_rules / os_templates / middleware_templates / refresh_tokens
+--     会丢失对应业务数据，仅在开发/测试环境使用。
+--   - 注意：这四张表同时在 001_initial.sql 中定义，001 的回滚占位亦应一并 DROP，
+--     避免回滚后表残留导致 schema 不一致。
+--
+-- 占位文件，无实际 SQL 语句。

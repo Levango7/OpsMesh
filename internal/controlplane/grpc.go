@@ -52,6 +52,11 @@ type grpcServerImpl struct {
 	// true=PullTasks/ReportResult/PollCancels/Heartbeat 入口校验 agent-signature metadata，
 	// 签名不匹配或 timestamp 超过 5 分钟则拒绝（防冒领任务/伪造上报）。
 	requireSignature bool
+	// P0 安全加固：gRPC agent 身份绑定的预共享 HMAC 签名密钥。
+	// 非空时 verifyAgentSignature 优先使用此密钥验签（而非 store.AgentSecret），
+	// Register 响应不再返回签名密钥（Secret 始终为空），防注册不硬时密钥外泄。
+	// 为空时回退到 store.AgentSecret（向后兼容已注册 agent 的旧机制）。
+	signatureKey string
 }
 
 // Register 注册：调用 store.Register，返回分配到的 agentID 与控制面下发配置。
@@ -124,17 +129,26 @@ func (g *grpcServerImpl) Register(ctx context.Context, info *proto.AgentInfo) (*
 		})
 	}
 
+	// P0 安全加固：requireSignature 开启但未配置预共享密钥（signatureKey 为空）时，
+	// 回退到 store.AgentSecret 机制——但 Register 不再下发密钥，新注册 agent 无法获取密钥，
+	// 后续签名验证将全部失败。此处日志警告提示运维配置 --grpc-signature-key。
+	if g.requireSignature && g.signatureKey == "" {
+		logx.Warn(ctx, "gRPC 签名验证已启用但未配置预共享密钥（--grpc-signature-key），"+
+			"新注册 agent 将无法签名，请配置预共享密钥或在 agent 侧配置相同密钥", "agentID", registered.AgentID)
+	}
+
 	return &grpcx.RegisterResp{
 		AgentID: registered.AgentID,
 		ControlConfig: map[string]int{
 			"heartbeatInterval": 10, // 与 agent 心跳周期一致
 			"taskPollInterval":  15, // 与 agent 任务轮询周期一致
 		},
-		// task 81 gRPC agent 身份绑定：随注册响应下发该 agent 的 HMAC 签名密钥。
-		// agent 收到后保存，后续 PullTasks/ReportResult/PollCancels/Heartbeat 请求在 metadata 中
-		// 携带 agent-signature = HMAC-SHA256(secret, timestamp+agentID)。
-		// 仅在控制面启用 requireSignature 时下发（demo/未启用时为空，agent 不签名）。
-		Secret: g.store.AgentSecret(registered.AgentID),
+		// P0 安全加固：Register 响应不再返回签名密钥。
+		// 此前在响应中下发 store.AgentSecret(agentID)，但注册不硬（任何人可注册）时
+		// 攻击者可注册获取密钥后伪造签名，使签名形同虚设。改为预共享方式：
+		// 控制面与 agent 两侧通过 --grpc-signature-key 手动配置同一密钥。
+		// Secret 字段始终为空，agent 应从自身配置读取预共享密钥。
+		Secret: "",
 	}, nil
 }
 
@@ -173,7 +187,8 @@ func (g *grpcServerImpl) checkAgentTenant(ctx context.Context, agentID string) e
 //   - agent-timestamp：签名生成时刻（Unix 秒，十进制字符串）
 //   - agent-signature：HMAC-SHA256(secret, timestamp + agentID) 的 hex 编码
 //
-// 控制面用该 agentID 对应的 store.AgentSecret(agentID) 重新计算 HMAC 并与 metadata 中的签名比对。
+// 控制面用预共享密钥（signatureKey，优先）或 store.AgentSecret(agentID)（回退）重新计算 HMAC
+// 并与 metadata 中的签名比对。
 // 校验项：签名缺失 / timestamp 缺失或非法 / timestamp 超过 5 分钟偏移 / 签名不匹配 → Unauthenticated。
 // requireSignature 关闭时直接放行（向后兼容 demo/未启用 --grpc-require-signature 的部署）。
 // agent 不存在或未生成 secret 时：requireSignature 开启则拒绝（未注册 agent 不应有签名），
@@ -208,11 +223,15 @@ func (g *grpcServerImpl) verifyAgentSignature(ctx context.Context, agentID strin
 		return status.Error(codes.Unauthenticated, fmt.Sprintf("agent-timestamp out of skew (max %v): got %v, now %v", agentSignatureMaxSkew, tsTime, now))
 	}
 
-	// 取该 agent 的 secret
-	secret := g.store.AgentSecret(agentID)
+	// P0 安全加固：优先使用预共享密钥（signatureKey），为空时回退到 store.AgentSecret（向后兼容）。
+	// 预共享密钥模式下所有 agent 共用同一密钥，密钥不随 Register 响应下发，防注册不硬时密钥外泄。
+	secret := g.signatureKey
 	if secret == "" {
-		// agent 未注册或未生成 secret：requireSignature 开启时拒绝（未注册 agent 不应能签名）
-		return status.Error(codes.Unauthenticated, fmt.Sprintf("agent %q has no signing secret (not registered or secret not generated)", agentID))
+		secret = g.store.AgentSecret(agentID)
+	}
+	if secret == "" {
+		// agent 未注册或未生成 secret 且未配置预共享密钥：requireSignature 开启时拒绝
+		return status.Error(codes.Unauthenticated, fmt.Sprintf("agent %q has no signing secret (not registered, secret not generated, and no pre-shared --grpc-signature-key configured)", agentID))
 	}
 
 	// 重新计算 HMAC-SHA256(secret, timestamp + agentID) 并比对

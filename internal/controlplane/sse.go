@@ -64,10 +64,12 @@ const sseDefaultTenant = "default"
 // 设置标准 SSE 响应头，订阅事件总线，循环写事件帧 + flush。
 // 客户端断开（r.Context().Done()）时自动取消订阅并释放资源。
 //
-// 鉴权（H6 SSE 租户隔离）：
-//   - requireAuth=true：从 X-Tenant-ID / Authorization Bearer 提取租户，缺失 → 401；
-//   - requireAuth=false 且 demo=true：缺失身份头 → 填充 "default" 租户（本地体验）；
-//   - requireAuth=false 且 demo=false：缺失身份头 → 视为全局订阅（兼容旧单租户部署）。
+// 鉴权（H6 SSE 租户隔离 + P1-G3 Cookie JWT 对齐）：
+//   - 优先从 X-Tenant-ID 头提取租户；
+//   - 头缺失时回退到 Authorization Bearer / HttpOnly Cookie JWT（与 requireTenantContext 一致）；
+//   - requireAuth=true：两种来源均无租户 → 401；
+//   - requireAuth=false 且 demo=true：均无身份 → 填充 "default" 租户（本地体验）；
+//   - requireAuth=false 且 demo=false：均无身份 → 视为全局订阅（兼容旧单租户部署）。
 //
 // 租户过滤：收到的事件若 TenantID 非空且与当前订阅者租户不匹配则丢弃，
 // 不跨租户广播（防止 A 租户订阅者收到 B 租户的任务/告警事件）。
@@ -79,6 +81,12 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 	// 提取网关注入的身份上下文（X-Tenant-ID / Authorization Bearer）。
 	actx := authctx.FromHTTPHeader(r.Header)
 	tenant := actx.TenantID
+	// P1-G3 SSE 鉴权对齐 Cookie JWT：头缺失时回退到 Bearer/Cookie JWT 提取租户
+	// （与 requireTenantContext 一致，支持用户中心登录后浏览器经 Cookie 直连 SSE）。
+	if tenant == "" {
+		tokenTenant, _ := s.tenantFromBearer(r)
+		tenant = tokenTenant
+	}
 	if s.requireAuth && tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
 		return

@@ -67,8 +67,14 @@ func (s *Server) handleK8sResourceRouting(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "cluster manager not initialized"})
 		return
 	}
+	// P1-G3 租户兜底：requireAuth 下缺租户头 → 401（防绕过网关伪造租户）。
+	tenant := s.k8sTenantFromRequest(r)
+	if tenant == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+		return
+	}
 	// task 88 租户隔离：校验集群归属当前租户，防跨租户操作集群资源（不泄露存在性）。
-	if c := s.store.GetK8sCluster(clusterID); c == nil || c.TenantID != k8sTenantFromRequest(r) {
+	if c := s.store.GetK8sCluster(clusterID); c == nil || c.TenantID != tenant {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
 		return
 	}
@@ -302,7 +308,7 @@ func (s *Server) handleDeletePod(w http.ResponseWriter, r *http.Request, client 
 		return
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_pod_delete", Target: ns + "/" + name,
+		TenantID: s.k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_pod_delete", Target: ns + "/" + name,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -369,7 +375,7 @@ func (s *Server) handleScaleDeployment(w http.ResponseWriter, r *http.Request, c
 		return
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_deployment_scale", Target: ns + "/" + name,
+		TenantID: s.k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_deployment_scale", Target: ns + "/" + name,
 		Detail: fmt.Sprintf("replicas=%d", body.Replicas),
 	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -398,7 +404,7 @@ func (s *Server) handleRestartDeployment(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_deployment_restart", Target: ns + "/" + name,
+		TenantID: s.k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_deployment_restart", Target: ns + "/" + name,
 		Detail: "restartedAt=" + now,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "restarted", "restartedAt": now})
@@ -482,7 +488,7 @@ func (s *Server) handleRollbackDeployment(w http.ResponseWriter, r *http.Request
 	}
 
 	s.store.Audit(&proto.AuditEvent{
-		TenantID: k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_deployment_rollback", Target: ns + "/" + name,
+		TenantID: s.k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_deployment_rollback", Target: ns + "/" + name,
 		Detail: fmt.Sprintf("from revision %d to %d", currentRev, targetRev),
 	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{

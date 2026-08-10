@@ -57,11 +57,14 @@ test_*.html
 *_result.json
 .puppeteer-profile/
 screenshots/
-opsmesh.exe~
+# 临时二进制残留（编辑器/构建中断产生的 .exe~ 文件）
+*.exe~
 
 # 测试/构建产物（仅根目录）
 /coverage
 /coverage/
+cover
+coverage.out
 /tmp/
 /store
 

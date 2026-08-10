@@ -54,14 +54,41 @@
       </div>
     </div>
   </div>
+
+  <!-- 静默时长输入（替代 prompt） -->
+  <PromptModal
+    v-model="durationModal.show"
+    :title="$t('alerts.silence_duration_title')"
+    :message="$t('alerts.silence_duration_prompt')"
+    :default-value="'1440'"
+    placeholder="1440"
+    @confirm="onDurationConfirm"
+  />
+  <!-- 静默备注输入（替代 prompt） -->
+  <PromptModal
+    v-model="commentModal.show"
+    :title="$t('alerts.silence_comment_title')"
+    :message="$t('alerts.silence_comment_prompt')"
+    @confirm="onCommentConfirm"
+  />
+  <!-- 错误提示（替代 alert） -->
+  <ConfirmModal
+    v-model="confirmState.show"
+    :title="confirmState.title"
+    :message="confirmState.message"
+    info
+  />
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, reactive, onMounted } from 'vue'
 import { useAlertStore } from '@/stores/alert'
 import { t } from '@/i18n'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
+import PromptModal from '@/components/PromptModal.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
+import { fmtTime } from '@/composables/useFormatTime'
 
 const store = useAlertStore()
 
@@ -77,21 +104,43 @@ function alertStatusText(a) {
   const s = a.status || 'firing'
   return s === 'acknowledged' ? t('alerts.status_acknowledged') : s === 'silenced' ? t('alerts.status_silenced') : t('alerts.status_firing')
 }
-function fmtTime(s) {
-  if (!s) return ''
-  const d = new Date(s)
-  return isNaN(d.getTime()) ? s : d.toLocaleString('zh-CN', { hour12: false })
+
+// 错误提示弹窗（替代 alert）
+const confirmState = reactive({ show: false, title: '', message: '' })
+function showConfirm(title, message) {
+  confirmState.title = title
+  confirmState.message = message
+  confirmState.show = true
 }
+
+// 静默流程：先输入时长，再输入备注，最后调用 API
+const durationModal = reactive({ show: false, id: null })
+const commentModal = reactive({ show: false, id: null, duration: 1440 })
+
 async function onAck(id) {
-  try { await store.ack(id) } catch (e) { alert(t('alerts.ack_failed') + (e.j?.error || e.s)) }
+  try { await store.ack(id) }
+  catch (e) { showConfirm(t('common.error'), t('alerts.ack_failed') + (e.j?.error || e.s)) }
 }
-async function onSilence(id) {
-  const dur = prompt(t('alerts.silence_duration_prompt'), '1440')
-  if (dur === null) return
-  let minutes = parseInt(dur, 10); if (isNaN(minutes) || minutes <= 0) minutes = 1440
-  const comment = prompt(t('alerts.silence_comment_prompt'), '') || ''
-  try { await store.silence(id, { durationMinutes: minutes, comment }) }
-  catch (e) { alert(t('alerts.silence_failed') + (e.j?.error || e.s)) }
+
+function onSilence(id) {
+  durationModal.id = id
+  durationModal.show = true
+}
+
+function onDurationConfirm(value) {
+  let minutes = parseInt(value, 10)
+  if (isNaN(minutes) || minutes <= 0) minutes = 1440
+  commentModal.id = durationModal.id
+  commentModal.duration = minutes
+  commentModal.show = true
+}
+
+async function onCommentConfirm(value) {
+  const comment = value || ''
+  const id = commentModal.id
+  const duration = commentModal.duration
+  try { await store.silence(id, { durationMinutes: duration, comment }) }
+  catch (e) { showConfirm(t('common.error'), t('alerts.silence_failed') + (e.j?.error || e.s)) }
 }
 
 onMounted(() => { if (!store.list.length) store.fetchAlerts() })

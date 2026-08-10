@@ -17,6 +17,7 @@ import {
   getK8sSecrets,
   getK8sNodes
 } from '@/api/k8s'
+import { t } from '@/i18n'
 
 export const useK8sStore = defineStore('k8s', {
   state: () => ({
@@ -47,7 +48,7 @@ export const useK8sStore = defineStore('k8s', {
           this.clusters = []
         }
       } catch (e) {
-        this.error = e.j?.error || 'K8s 集群列表拉取失败'
+        this.error = e.j?.error || t('error.k8sClustersFailed')
       } finally {
         this.loading = false
       }
@@ -97,7 +98,7 @@ export const useK8sStore = defineStore('k8s', {
             this.resources = []
         }
       } catch (e) {
-        this.error = e.j?.error || 'K8s 资源列表拉取失败'
+        this.error = e.j?.error || t('error.k8sResourcesFailed')
         this.resources = []
       } finally {
         this.resourcesLoading = false

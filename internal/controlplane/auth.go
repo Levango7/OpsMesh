@@ -161,21 +161,37 @@ func (s *Server) createRefreshToken(userID, deviceFP string) (string, error) {
 // consumeRefreshToken 校验并消费刷新令牌（一次性：校验通过即删除，实现旋转）。
 // deviceFP 为请求携带的设备指纹，与存储的 DeviceFP 比对防跨设备重放。
 // 无效/过期/已消费/设备指纹不匹配返回 (nil, false)。
+//
+// P1-G4 原子消费：原实现为 Get→Delete→校验三步，多副本并发下同一 rt 可被双消费
+// （副本 A Get 后、Delete 前，副本 B 也 Get 到同一 rt）。现改为调用
+// store.ConsumeRefreshToken 原子读取+删除，保证同一 rt 仅被消费一次。
+//
+// C-4 DeviceFP deadline：超过 cfg.DeviceFPDeadline 之后签发的 refresh token 必须绑定
+// DeviceFP（非空）。deadline 前保持向后兼容（DeviceFP 为空时跳过设备绑定校验）；
+// deadline 后 DeviceFP 为空则拒绝（强制设备绑定，防 token 跨设备重放）。
+// deadline 零值=不强制（完全向后兼容）。
 func (s *Server) consumeRefreshToken(id, deviceFP string) (*store.RefreshToken, bool) {
 	hash := hashRefreshToken(id)
-	rt := s.store.GetRefreshToken(hash)
-	if rt == nil {
+	// 原子消费：读取+删除在单次互斥操作内完成，防并发双消费（P1-G4）。
+	rt, ok := s.store.ConsumeRefreshToken(hash)
+	if !ok || rt == nil {
 		return nil, false
 	}
-	// 旋转：旧 rt 立即作废，防重放（无论后续校验是否通过均删除）。
-	s.store.DeleteRefreshToken(hash)
 	if time.Now().After(rt.ExpiresAt) {
+		return nil, false
+	}
+	// C-4 DeviceFP deadline 强制非空：超过 deadline 且存储的 DeviceFP 为空时拒绝。
+	// 用于渐进式强制设备绑定：deadline 前允许旧客户端不传 DeviceFP（向后兼容），
+	// deadline 后强制要求新签发的 refresh token 必须绑定 DeviceFP。
+	// deadline 零值=不强制（完全向后兼容，原有行为）。
+	if !s.deviceFPDeadline.IsZero() && rt.CreatedAt.After(s.deviceFPDeadline) && rt.DeviceFP == "" {
 		return nil, false
 	}
 	// 设备绑定校验（task 112）：存储的 DeviceFP 非空且请求携带了 DeviceFP 时，两者必须匹配。
 	// 存储 DeviceFP 为空（旧客户端签发时未绑定）或请求未携带 DeviceFP 时不校验（向后兼容）。
 	// 注：DeviceFP 为空时跳过校验，兼容旧客户端签发的 token（未绑定设备指纹）。
 	// 新签发的 refresh token 均绑定 DeviceFP，旧 token 旋转后自动获得绑定。
+	// C-4：deadline 后签发的 token 已在上方强制 DeviceFP 非空，此处校验必然执行。
 	if rt.DeviceFP != "" && deviceFP != "" && rt.DeviceFP != deviceFP {
 		return nil, false
 	}
@@ -187,84 +203,84 @@ func (s *Server) revokeRefreshToken(id string) {
 	s.store.DeleteRefreshToken(hashRefreshToken(id))
 }
 
+// revokeAccessTokenFromRequest 从请求中提取 access token，解析 jti 并加入吊销黑名单（P1-G4）。
+// 登出时调用，使 access token 在过期前立即失效（而非等 15min 自然过期）。
+// token 缺失/无效时静默跳过（不阻断登出流程）。
+// B-6：黑名单经 SessionStore 共享，多副本下登出全局生效（Redis 后端时）。
+func (s *Server) revokeAccessTokenFromRequest(r *http.Request) {
+	if s.sessionStore == nil {
+		return
+	}
+	// 提取 token：优先 Authorization: Bearer，回退 HttpOnly Cookie（与 userFromToken 一致）。
+	tokenStr, err := extractBearer(r)
+	if err != nil {
+		if ck, ckErr := r.Cookie(accessTokenCookieName); ckErr == nil && strings.TrimSpace(ck.Value) != "" {
+			tokenStr = ck.Value
+		} else {
+			return
+		}
+	}
+	claims, err := authctx.ParseHSJWT(tokenStr, s.jwtSecret)
+	if err != nil {
+		return // token 无效/过期，无需吊销（已自然失效）
+	}
+	// 计算剩余 TTL：token 过期时间 - 当前时间。已过期的 token 无需吊销。
+	ttl := time.Until(claims.ExpiresAt)
+	if ttl <= 0 {
+		return
+	}
+	s.sessionStore.Blacklist(claims.JTI, ttl)
+}
+
 // purgeExpiredRefreshTokens 清理过期刷新令牌（task 112：store 持久化后改为 no-op）。
 //
 // 原进程内 map 实现需周期扫描清理防内存无限增长；改用 store 持久化后：
 //   - MemoryStore：consumeRefreshToken 校验过期时已 DeleteRefreshToken 顺带清理；
 //   - SQLStore：可由 DB 定时任务或后续扩展 store 层批量清理接口处理；
 //   - 本函数保留 no-op 签名以兼容 server.go startRefreshSweep 调用，避免破坏现有启动流程。
+//
+// P1-G4：顺带清理 JWT 吊销黑名单与改密令牌的过期条目（token 自然过期后条目无意义）。
+// B-6：经 SessionStore 接口清理，InProcess 主动清理 map，Redis 靠 TTL 自动过期（no-op）。
 func (s *Server) purgeExpiredRefreshTokens() {
 	// no-op：store 持久化后过期清理由 consumeRefreshToken 顺带完成（校验过期即删除）。
+	// P1-G4/B-6：清理 token blacklist 与改密令牌过期条目，防无界增长。
+	if s.sessionStore != nil {
+		s.sessionStore.PurgeBlacklist()
+		s.sessionStore.PurgeChangePasswordTokens()
+	}
 }
 
 // ============================================================================
 // 改密令牌存储（安全债 85 + 任务 96）：mustChangePassword=true 用户登录时不签发
 // access token，仅签发一次性短时效 changePasswordToken（5min），仅可用于
 // /api/v1/auth/change-password。改密成功后才签发正式 at+rt。
+//
+// B-6 多副本共享：原进程内 map 改为经 SessionStore 接口存储，多副本下任一副本签发
+// 的改密令牌在其他副本也可消费（Redis 后端时）。
 // ============================================================================
 
 const changePasswordTokenExpiry = 5 * time.Minute
 
-// changePasswordSession 改密令牌会话记录。
-type changePasswordSession struct {
-	UserID    string
-	ExpiresAt time.Time
-}
-
-var changePasswordTokens = struct {
-	sync.Mutex
-	m map[string]*changePasswordSession
-}{m: make(map[string]*changePasswordSession)}
-
 // createChangePasswordToken 生成并存储一个一次性改密令牌（crypto/rand，32 字节十六进制）。
 // 有效期 5 分钟，仅用于 /api/v1/auth/change-password。
-func createChangePasswordToken(userID string) (string, error) {
+// B-6：经 SessionStore 持久化，多副本共享。
+func (s *Server) createChangePasswordToken(userID string) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	id := hex.EncodeToString(b)
-	changePasswordTokens.Lock()
-	changePasswordTokens.m[id] = &changePasswordSession{UserID: userID, ExpiresAt: time.Now().Add(changePasswordTokenExpiry)}
-	changePasswordTokens.Unlock()
+	if err := s.sessionStore.CreateChangePasswordToken(id, userID, changePasswordTokenExpiry); err != nil {
+		return "", err
+	}
 	return id, nil
 }
 
 // consumeChangePasswordToken 校验并消费改密令牌（一次性：校验通过即删除，防重放）。
-// 无效/过期/已消费返回 (nil, false)。
-func consumeChangePasswordToken(id string) (*changePasswordSession, bool) {
-	changePasswordTokens.Lock()
-	defer changePasswordTokens.Unlock()
-	cs, ok := changePasswordTokens.m[id]
-	if !ok {
-		return nil, false
-	}
-	delete(changePasswordTokens.m, id) // 一次性：消费即删除，防重放
-	if time.Now().After(cs.ExpiresAt) {
-		return nil, false
-	}
-	return cs, true
-}
-
-// changePasswordTokenSweepExpiry 改密令牌过期清理阈值：令牌过期超过此时长后由 sweep 回收。
-// 取 10 分钟。consumeChangePasswordToken 消费时已即时删除；此处仅兜底清理未被消费的过期残留，
-// 约束 changePasswordTokens map 在长运行中的最长滞留（≤ changePasswordTokenExpiry + 此阈值），
-// 防无界增长（内存泄漏）。阈值 > 0 确保不会误清理仍在有效期内的令牌。
-const changePasswordTokenSweepExpiry = 10 * time.Minute
-
-// purgeExpiredChangePasswordTokens 清理过期改密令牌（过期超过 changePasswordTokenSweepExpiry 的）。
-// 由 loginGuard.sweep 周期调用，防 changePasswordTokens map 在长运行中无界增长。
-// 加锁保护，与 createChangePasswordToken/consumeChangePasswordToken 互斥。
-func purgeExpiredChangePasswordTokens() {
-	changePasswordTokens.Lock()
-	defer changePasswordTokens.Unlock()
-	now := time.Now()
-	for id, cs := range changePasswordTokens.m {
-		// cs.ExpiresAt 为过期时刻；now.Sub(cs.ExpiresAt) 为已过期时长，超过阈值则回收。
-		if now.Sub(cs.ExpiresAt) > changePasswordTokenSweepExpiry {
-			delete(changePasswordTokens.m, id)
-		}
-	}
+// 返回关联的 userID；无效/过期/已消费返回 ("", false)。
+// B-6：经 SessionStore 原子消费，多副本下同一令牌仅被消费一次。
+func (s *Server) consumeChangePasswordToken(id string) (string, bool) {
+	return s.sessionStore.ConsumeChangePasswordToken(id)
 }
 
 // randHexID 生成随机十六进制 ID（16 字节，crypto/rand 密码学安全）。
@@ -300,13 +316,67 @@ func verifyPassword(hash, password string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
+// rotateDefaultAdminPassword 在非 demo 模式下，若默认 admin 仍使用弱口令 "admin123"，
+// 则生成随机密码替换并打印到日志（一次性提示管理员复制）。返回是否执行了替换。
+//
+// P1-G4 安全加固：默认 admin 弱口令 "admin123" 靠 mustChangePassword 兜底，但若管理员
+// 忽略改密提示，弱口令将持续可登。改为首次启动时生成随机口令（16 字节 hex），即使管理员
+// 不改密，攻击者也无法用已知弱口令登录。随机密码仅打印一次到日志，须妥善保管。
+//
+// 幂等性：仅当 admin 当前密码仍是 "admin123"（bcrypt 比对命中）时才重置，避免覆盖管理员
+// 已修改的密码。MemoryStore 每次启动都是新实例（admin 始终是 admin123），每次都重置；
+// SQLStore 持久化，重启后 admin 已是随机口令，bcrypt 比对不命中，不重复重置。
+//
+// 保留 MustChangePassword=true：ChangePassword 会清除该标记，随后用 UpdateUser 恢复，
+// 确保首登仍强制改密（与安全债 85 一致）。
+func rotateDefaultAdminPassword(st store.Store) bool {
+	u := st.GetUserByUsername("admin")
+	if u == nil {
+		return false
+	}
+	// 仅当仍是默认弱口令 admin123 时才重置（避免覆盖管理员已改的密码）。
+	if !verifyPassword(u.PasswordHash, "admin123") {
+		return false
+	}
+	// 生成随机密码：16 字节 hex（32 字符，crypto/rand 密码学安全）。
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		log.Printf("[controlplane] 生成随机 admin 密码失败: %v", err)
+		return false
+	}
+	password := hex.EncodeToString(b)
+	hash, err := hashPassword(password)
+	if err != nil {
+		log.Printf("[controlplane] 哈希随机 admin 密码失败: %v", err)
+		return false
+	}
+	// ChangePassword 写入新哈希但会清除 MustChangePassword 标记。
+	if !st.ChangePassword(u.ID, hash) {
+		log.Printf("[controlplane] 更新 admin 随机密码失败")
+		return false
+	}
+	// 恢复 MustChangePassword=true（首登仍强制改密），同时保留原有 email/roles/status。
+	cp := *u
+	cp.MustChangePassword = true
+	st.UpdateUser(&cp)
+	// 一次性打印随机密码到日志，提示管理员复制（后续重启不重复打印，因密码已非 admin123）。
+	log.Printf("[controlplane] ============================================================")
+	log.Printf("[controlplane] 安全提示：默认 admin 密码已替换为随机口令（首登仍须改密）。")
+	log.Printf("[controlplane]   一次性随机密码（请立即复制并登录后修改）: %s", password)
+	log.Printf("[controlplane] ============================================================")
+	return true
+}
+
 // ============================================================================
-// loginGuard 登录/注册防爆破 + 限流（P1-4，进程内实现）。
+// loginGuard 登录/注册防爆破 + 限流（P1-4）。
 //   - 限流：按客户端 IP 令牌桶，约束单位时间登录/注册尝试次数，防撞库与 DoS。
 //   - 防爆破：按用户名累计失败次数，超阈值临时锁定账号，挫败密码爆破。
 //
-// 设计为进程内（单副本足够）；多副本 HA 部署下各副本独立计数，建议后续以 Redis
-// 共享计数（接口此处保持稳定即可平滑替换）。
+// B-6 多副本共享：
+//   - IP 令牌桶限流保留进程内（多副本各自限流，副本数 N 时实际阈值 N*burst，可接受；
+//     令牌桶算法依赖 tokens/last 时序状态，难以用 Redis 原子操作精确实现）。
+//   - 失败计数 + 账号锁定经 SessionStore 共享（多副本下任一副本触发锁定后其他副本也拒绝；
+//     撞库攻击者无法在不同副本上各消耗 loginMaxFails 次配额）。
 // ============================================================================
 
 const (
@@ -319,9 +389,9 @@ const (
 
 type loginGuard struct {
 	mu    sync.Mutex
-	ips   map[string]*rateRec // 客户端 IP -> 限流令牌桶
-	fails map[string]*failRec // 用户名 -> 失败计数记录
+	ips   map[string]*rateRec // 客户端 IP -> 限流令牌桶（进程内，多副本各自限流）
 	done  chan struct{}       // stopSweep 关闭此 chan 通知 sweep goroutine 退出
+	store store.SessionStore  // B-6：失败计数 + 账号锁定经 SessionStore 共享
 }
 
 type rateRec struct {
@@ -329,21 +399,20 @@ type rateRec struct {
 	last   time.Time
 }
 
-type failRec struct {
-	count       int
-	firstAt     time.Time
-	lockedUntil time.Time
-}
-
-func newLoginGuard() *loginGuard {
+func newLoginGuard(ss store.SessionStore) *loginGuard {
+	if ss == nil {
+		// 兜底：测试或未初始化场景用进程内 store，避免 nil panic。
+		ss = store.NewInProcessSessionStore()
+	}
 	return &loginGuard{
 		ips:   make(map[string]*rateRec),
-		fails: make(map[string]*failRec),
 		done:  make(chan struct{}),
+		store: ss,
 	}
 }
 
 // allow 按 IP 令牌桶判断本次尝试是否被限流（true=放行）。
+// IP 令牌桶保留进程内（多副本各自限流，可接受）。
 func (g *loginGuard) allow(ip string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -366,40 +435,39 @@ func (g *loginGuard) allow(ip string) bool {
 	return true
 }
 
+// failKey 拼接失败计数的 SessionStore key。
+func loginFailKey(username string) string {
+	return "fail:user:" + username
+}
+
+// lockKey 拼接账号锁定的 SessionStore key。
+func loginLockKey(username string) string {
+	return "lock:user:" + username
+}
+
 // recordFail 记录一次账号失败尝试；返回是否触发锁定。
+// B-6：失败计数经 SessionStore 共享，多副本下累计失败次数全局一致。
 func (g *loginGuard) recordFail(username string) bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	now := time.Now()
-	rec, ok := g.fails[username]
-	if !ok || now.Sub(rec.firstAt) > loginFailWindow {
-		rec = &failRec{count: 0, firstAt: now}
-		g.fails[username] = rec
-	}
-	rec.count++
-	if rec.count >= loginMaxFails {
-		rec.lockedUntil = now.Add(loginLockDur)
+	count := g.store.IncrRateLimit(loginFailKey(username), loginFailWindow)
+	if count >= loginMaxFails {
+		// 触发锁定：将锁定标记加入 SessionStore 黑名单，ttl=锁定时长。
+		// 多副本下任一副本触发锁定后，其他副本的 locked 检查也会命中。
+		g.store.Blacklist(loginLockKey(username), loginLockDur)
 		return true
 	}
 	return false
 }
 
 // locked 判断账号当前是否处于锁定状态。
+// B-6：锁定状态经 SessionStore 共享，多副本下任一副本触发锁定后其他副本也拒绝。
 func (g *loginGuard) locked(username string) bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	rec, ok := g.fails[username]
-	if !ok {
-		return false
-	}
-	return time.Now().Before(rec.lockedUntil)
+	return g.store.IsBlacklisted(loginLockKey(username))
 }
 
 // resetFail 登录成功后清除该账号失败计数（解锁）。
+// B-6：经 SessionStore 共享，多副本下任一副本登录成功后其他副本也清除计数。
 func (g *loginGuard) resetFail(username string) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	delete(g.fails, username)
+	g.store.ResetRateLimit(loginFailKey(username))
 }
 
 // startSweep 启动后台回收 goroutine，定期清理过期限流令牌桶与已解锁且超窗的失败计数，
@@ -437,10 +505,10 @@ func (g *loginGuard) stopSweep() {
 
 // sweep 清理过期条目：
 //   - ips：令牌已回满（无待补充）且超过 1 小时无新活动 → 回收；
-//   - fails：当前未锁定且失败窗口已过的失败计数 → 回收；
-//   - changePasswordTokens：过期超过 changePasswordTokenSweepExpiry 的改密令牌 → 回收。
 //
-// changePasswordTokens 使用独立锁，在 g.mu 释放后清理，避免持 g.mu 时嵌套加锁。
+// B-6：失败计数 + 账号锁定 + 改密令牌已迁入 SessionStore，过期清理由 SessionStore 负责
+// （InProcess 在 PurgeBlacklist/PurgeChangePasswordTokens 中清理，Redis 靠 TTL 自动过期）。
+// 此处仅清理进程内 ips 令牌桶。
 func (g *loginGuard) sweep() {
 	g.mu.Lock()
 	now := time.Now()
@@ -449,14 +517,7 @@ func (g *loginGuard) sweep() {
 			delete(g.ips, ip)
 		}
 	}
-	for user, rec := range g.fails {
-		if now.After(rec.lockedUntil) && now.Sub(rec.firstAt) > loginFailWindow {
-			delete(g.fails, user)
-		}
-	}
 	g.mu.Unlock()
-	// 清理过期改密令牌（独立锁，g.mu 已释放）。
-	purgeExpiredChangePasswordTokens()
 }
 
 // clientIP 提取客户端真实 IP。
@@ -515,8 +576,20 @@ func (s *Server) userRoleNames(u *store.User) []string {
 	return out
 }
 
+// ============================================================================
+// JWT access token 吊销黑名单（P1-G4 + B-6）。
+//
+// 登出时 access token 仍在 15min 有效期内持续可用（无状态 JWT 无法主动失效）。
+// 此黑名单记录已登出的 jti（JWT ID），userFromToken 校验时检查 jti 是否在黑名单。
+//
+// B-6 多副本共享：黑名单经 SessionStore 持久化，多副本下登出全局生效。
+//   - InProcessSessionStore：进程内 map（单副本/demo 默认）；
+//   - RedisSessionStore：Redis 后端（多副本 HA 共享，登出后所有副本立即拒绝该 token）。
+// ============================================================================
+
 // issueUserToken 为用户签发 JWT token。
 // claims 包含：用户 ID/用户名/角色 ID/权限/租户/过期时间。
+// P1-G4：SignJWT 自动生成 jti（JWT ID），用于登出吊销。
 func (s *Server) issueUserToken(u *store.User) (string, error) {
 	claims := authctx.JWTClaims{
 		UserID:      u.ID,
@@ -598,6 +671,11 @@ func (s *Server) userFromToken(r *http.Request) (*store.User, error) {
 	claims, err := authctx.ParseHSJWT(tokenStr, s.jwtSecret)
 	if err != nil {
 		return nil, err
+	}
+	// P1-G4 JWT 吊销：登出时 jti 加入黑名单，校验时检查。
+	// B-6：黑名单经 SessionStore 共享，多副本下登出全局生效（Redis 后端时）。
+	if s.sessionStore != nil && s.sessionStore.IsBlacklisted(claims.JTI) {
+		return nil, errors.New("token has been revoked")
 	}
 	u := s.store.GetUser(claims.UserID)
 	if u == nil {

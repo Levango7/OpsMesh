@@ -73,18 +73,35 @@
         </div>
       </form>
     </DetailDrawer>
+
+    <!-- 删除确认（替代 confirm） -->
+    <ConfirmModal
+      v-model="deleteConfirm.show"
+      :title="$t('users.delete')"
+      :message="$t('users.confirm_delete')"
+      @confirm="onDeleteConfirm"
+    />
+    <!-- 错误提示（替代 alert） -->
+    <ConfirmModal
+      v-model="errorConfirm.show"
+      :title="$t('common.error')"
+      :message="errorConfirm.message"
+      info
+    />
   </div>
 </template>
 
 <script setup>
 // 用户管理页 — 列表 + 新增/编辑/删除，复用 DataTable / DetailDrawer / StatusBadge
-import { ref, onMounted } from 'vue'
+import { reactive, ref, onMounted } from 'vue'
 import { authApi } from '@/api/auth'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
+import { fmtTime } from '@/composables/useFormatTime'
 
 const users = ref([])
 const roles = ref([])
@@ -92,12 +109,17 @@ const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
 
+// 删除确认弹窗（替代 confirm）
+const deleteConfirm = reactive({ show: false, row: null })
+// 错误提示弹窗（替代 alert）
+const errorConfirm = reactive({ show: false, message: '' })
+
 const columns = [
-  { key: 'username', title: t('users.username'), slot: 'cell-username' },
+  { key: 'username', title: t('users.username'), slot: 'cell-username', sortable: true },
   { key: 'email', title: t('users.email') },
-  { key: 'status', title: t('users.status'), slot: 'cell-status' },
-  { key: 'role_ids', title: t('users.roles'), slot: 'cell-role_ids' },
-  { key: 'created_at', title: t('users.created_at'), slot: 'cell-created_at' },
+  { key: 'status', title: t('users.status'), slot: 'cell-status', sortable: true },
+  { key: 'role_ids', title: t('users.roles'), slot: 'cell-role_ids', sortable: true },
+  { key: 'created_at', title: t('users.created_at'), slot: 'cell-created_at', sortable: true },
   { key: 'actions', title: t('users.actions'), slot: 'cell-actions', width: '90px' }
 ]
 
@@ -165,20 +187,22 @@ async function onSave() {
 }
 
 async function onDelete(row) {
-  if (!window.confirm(t('users.confirm_delete'))) return
+  deleteConfirm.row = row
+  deleteConfirm.show = true
+}
+
+async function onDeleteConfirm() {
+  const row = deleteConfirm.row
+  if (!row) return
   try {
     await authApi.deleteUser(row.id)
     await fetchUsers()
   } catch (e) {
-    window.alert(e.j?.error || t('users.delete_failed'))
+    errorConfirm.message = e.j?.error || t('users.delete_failed')
+    errorConfirm.show = true
   }
 }
 
-function fmtTime(s) {
-  if (!s) return ''
-  const d = new Date(s)
-  return isNaN(d.getTime()) ? s : d.toLocaleString('zh-CN', { hour12: false })
-}
 
 onMounted(() => {
   fetchUsers()

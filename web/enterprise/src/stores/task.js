@@ -1,6 +1,7 @@
 // 任务 store
 import { defineStore } from 'pinia'
 import { getTasks, createTask, cancelTask } from '@/api/task'
+import { t } from '@/i18n'
 
 export const useTaskStore = defineStore('task', {
   state: () => ({
@@ -15,7 +16,7 @@ export const useTaskStore = defineStore('task', {
       try {
         this.list = await getTasks(this.statusFilter) || []
       } catch (e) {
-        this.error = e.j?.error || '任务列表拉取失败'
+        this.error = e.j?.error || t('error.taskListFailed')
       } finally {
         this.loading = false
       }

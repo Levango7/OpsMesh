@@ -76,3 +76,22 @@ func (m *MemoryStore) DeleteRefreshToken(tokenHash string) bool {
 	delete(m.refreshTokens, tokenHash)
 	return true
 }
+
+// ConsumeRefreshToken 原子消费 refresh token：读取并立即删除（互斥锁保护，单次原子完成）。
+// 多副本并发下同一 token 只能被消费一次，防重放（P1-G4）。
+// 不存在返回 (nil, false)。返回深拷贝避免外部修改破坏内部状态。
+func (m *MemoryStore) ConsumeRefreshToken(tokenHash string) (*RefreshToken, bool) {
+	if tokenHash == "" {
+		return nil, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt, ok := m.refreshTokens[tokenHash]
+	if !ok {
+		return nil, false
+	}
+	// 原子读取+删除：在持锁期间完成 Get+Delete，并发安全。
+	delete(m.refreshTokens, tokenHash)
+	cp := *rt
+	return &cp, true
+}

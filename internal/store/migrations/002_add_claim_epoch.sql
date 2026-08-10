@@ -1,0 +1,15 @@
+-- 002_add_claim_epoch.sql — 任务所有权令牌（claim_epoch）防双跑（A-1）
+--
+-- 问题：ReclaimStaleTasks 仅按 claimed_at 超时回收 running 任务，不校验 agent 心跳，
+--   慢 agent 的长任务会被回收重派，导致同一任务被两个 agent 同时执行（双跑）。
+--
+-- 方案：tasks 表增加 claim_epoch 列，作为任务所有权令牌（单调递增整数）：
+--   - ClaimTask 时 claim_epoch=claim_epoch+1，返回的 Task 带 ClaimEpoch；
+--   - agent 上报结果时携带 ClaimEpoch，SubmitResult 校验 WHERE claim_epoch=?，
+--     RowsAffected=0 表示持有者已易主（任务被回收重派），拒绝旧持有者上报；
+--   - ReclaimStaleTasks 复位时 claim_epoch 不变（新领取时再 +1），但增加
+--     agent 心跳校验（排除心跳正常的慢 agent，防长任务被误回收双跑）。
+--
+-- 兼容性：BIGINT NOT NULL DEFAULT 0，老任务 claim_epoch=0，不影响现有逻辑；
+--   新 agent 填充 ClaimEpoch 后启用严格校验，旧 agent 不填充时跳过校验（向后兼容）。
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claim_epoch BIGINT NOT NULL DEFAULT 0;

@@ -1,0 +1,17 @@
+-- 001_initial.down.sql — 001_initial.sql 的回滚占位（G5 / C-1）
+--
+-- 本文件为 001_initial.sql 的回滚迁移占位，为未来 down 迁移框架留接口。
+-- 当前 runMigrations 仅执行正向迁移（NNN_*.sql），不执行回滚；
+-- migrationFiles 显式跳过 .down.sql 文件，不参与正向迁移执行。
+--
+-- 001_initial.sql 包含历史上 initSchema 的全部 CREATE TABLE IF NOT EXISTS，
+-- 涉及 agents / devices / tasks / task_results / audit_log / leader_lease /
+-- install_tokens / users / roles / permissions / alerts / ci_types / ci_items /
+-- ci_relations / ci_attr_templates / k8s_clusters / alert_rules / os_templates /
+-- middleware_templates / refresh_tokens 共 20 张表。
+--
+-- 真实回滚需谨慎：DROP TABLE 会丢失全部业务数据，仅在开发/测试环境使用，
+-- 且须按依赖反序 DROP（先 DROP 引用方再 DROP 被引用方）。生产环境回滚应通过
+-- 备份恢复 + 增量反向迁移，而非直接 DROP。
+--
+-- 占位文件，无实际 SQL 语句。

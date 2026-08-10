@@ -152,39 +152,32 @@ agent 侧 `grpcclient` 在每次 RPC 调用时重新 `Dial` 控制面，引入�
 
 ## 3. 前端演进方向
 
-### 3.1 现状
+### 3.1 现状与收敛策略
 
-仪表盘为原生 JS 单文件约 986 行，承载设备/任务双表、详情抽屉、5s 轮询、纳管操作等全部前端逻辑，无模块化、无类型、无构建、无 Lint。优点是零依赖、单文件即用，契合个人版轻量定位；缺点是规模化后维护成本陡增。
+仪表盘原有原生 JS 单文件约 986 行，承载设备/任务双表、详情抽屉、5s 轮询、纳管操作等全部前端逻辑，无模块化、无类型、无构建、无 Lint。该版本零依赖、单文件即用，但规模化后维护成本陡增。
 
-### 3.2 演进路径
+**前端收敛策略**（与 `README.md` "前端收敛策略" 子节一致）：
 
-分三阶段渐进演进，保留原生 JS 版作为轻量个人版长期维护：
+| 前端 | 状态 | 说明 |
+|---|---|---|
+| Vue3 企业版 (`web/enterprise/`) | ✅ 主线 | 唯一维护的前端，所有新功能优先在此开发 |
+| 原生 JS 个人版 (`internal/controlplane/web/`) | ⚠️ Deprecated | 自 v0.2.0 起进入弃用期，计划在 v0.4.0 移除。期间仅修 P0 bug，不新增功能 |
 
-#### 3.2.1 Phase 1：模块化拆分
+新部署请直接使用 Vue3 企业版前端；现有个人版用户参考 `web/enterprise/` 功能对照表迁移。
 
-将单文件按职责拆分为多模块，引入 ESLint 统一代码风格：
+### 3.2 演进路径（Vue3 企业版主线）
 
-| 模块 | 职责 |
+Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人版不再纳入演进路径，仅维持 P0 修复至 v0.4.0 移除（详见第 9 章收敛与弃用策略）。
+
+| 阶段 | 目标 |
 |---|---|
-| `api.js` | REST 调用封装、租户头注入、错误处理 |
-| `render.js` | 表格/抽屉/状态徽章渲染 |
-| `flow.js` | 纳管流程、任务下发编排 |
-| `poll.js` | 轮询调度、刷新策略 |
-| `main.js` | 入口与模块装配 |
-
-构建产物仍可打包为单文件，保持个人版零依赖体验。
-
-#### 3.2.2 Phase 2：引入 TypeScript
-
-在 Phase 1 模块化基础上引入 TypeScript，`allowJs` 渐进迁移：新文件用 `.ts`，旧文件保持 `.js` 逐步替换。重点为 API 响应类型、任务状态枚举、渲染函数签名。
-
-#### 3.2.3 Phase 3：迁移 Vue 3 + Vite
-
-迁移至 Vue 3 + Vite + Pinia + Vue Router，与企业版技术栈对齐，获得组件复用、响应式状态、路由、HMR。**保留原生 JS 版作为轻量个人版**长期维护（见第 9 章分叉策略）。
+| Phase 1 | 组件化拆分与设计系统固化（见 3.3），建立可复用组件库基线 |
+| Phase 2 | 实时推送替代轮询（见 3.4），SSE 优先 |
+| Phase 3 | 类型与测试基线：TypeScript 全覆盖 + Vitest/jsdom，CI 覆盖率门禁 ≥ 60% |
 
 ### 3.3 设计系统
 
-固化当前浅色靛蓝主题为设计 token（颜色、间距、圆角、阴影、字号），提取可复用组件库（表格、抽屉、徽章、表单、按钮）。设计 token 以 JSON/CSS 变量形式管理，企业版与个人版共享同一套 token 保证视觉一致。
+固化当前浅色靛蓝主题为设计 token（颜色、间距、圆角、阴影、字号），提取可复用组件库（表格、抽屉、徽章、表单、按钮）。设计 token 以 JSON/CSS 变量形式管理，作为 Vue3 企业版前端唯一的视觉契约。
 
 ### 3.4 实时推送
 
@@ -459,8 +452,8 @@ agent 侧 `grpcclient` 在每次 RPC 调用时重新 `Dial` 控制面，引入�
 | 里程碑 | 时间窗 | 主题 | 关键交付 |
 |---|---|---|---|
 | M1 | 1–2 周 | P0 修复与交付补全 | 本次 P0 修复完成、`docker-compose.yaml`、`goreleaser`、`golangci-lint` 全量门禁 |
-| M2 | 1 个月 | 测试与工程化基线 | 测试覆盖率 ≥ 70%、Helm Chart、前端 Phase 1 模块化拆分、Store 接口拆分 |
-| M3 | 2–3 个月 | 前端现代化与协议标准化 | 前端 Vue 3 迁移、protobuf 引入、JWT 验签、SSE 实时推送 |
+| M2 | 1 个月 | 测试与工程化基线 | 测试覆盖率 ≥ 70%、Helm Chart、前端 Phase 1 组件化与设计系统、Store 接口拆分 |
+| M3 | 2–3 个月 | 前端主线增强与协议标准化 | 前端 Vue 3 主线增强（SSE/类型/测试基线）、protobuf 引入、JWT 验签 |
 | M4 | 远期 | 规模化与生态 | K8s operator、控制面联邦、多租户 schema 隔离、ELK/Loki 集成 |
 
 ### 8.2 M1 详细目标
@@ -478,14 +471,14 @@ agent 侧 `grpcclient` 在每次 RPC 调用时重新 `Dial` 控制面，引入�
 |---|---|
 | 测试补全 | Go 行覆盖率 ≥ 70%，关键包 ≥ 85%，CI 阻断 |
 | Helm Chart | `deploy/helm/opsmesh/` 含 controlplane/agent/mysql/redis 模板 + values-production.yaml |
-| 前端模块化 | 单文件拆分为 api/render/flow/poll/main + ESLint |
+| 前端组件化 | Vue3 企业版组件库基线（表格/抽屉/徽章/表单/按钮）+ 设计 token 固化 |
 | Store 接口拆分 | 巨型接口拆分为领域小接口，消费方按需依赖 |
 
 ### 8.4 M3 详细目标
 
 | 工作项 | 验收标准 |
 |---|---|
-| 前端 Vue 3 迁移 | Vue 3 + Vite + Pinia，保留原生 JS 个人版 |
+| 前端 Vue 3 主线增强 | Vue 3 + Vite + Pinia 持续演进（SSE/类型/测试基线）；原生 JS 个人版按 v0.4.0 移除计划收敛，仅修 P0 bug |
 | protobuf 引入 | buf 工具链，生成 stub 替换手写 ServiceDesc，breaking 检查入 CI |
 | JWT 验签 | 内核侧支持网关公钥验签，不纯依赖头注入 |
 | SSE 实时推送 | 任务/告警/设备事件推送替代轮询 |
@@ -501,44 +494,50 @@ agent 侧 `grpcclient` 在每次 RPC 调用时重新 `Dial` 控制面，引入�
 
 ---
 
-## 9. 个人版与企业版分叉策略
+## 9. 前端收敛与个人版弃用策略
 
-### 9.1 分叉动机
+### 9.1 策略定位
 
-结合用户偏好（轻量原生 JS 个人版 + Vue 企业版）与部署场景差异，设计两版本分叉策略，共享内核、分叉前端与部署形态：
+OpsMesh 前端采取**收敛而非分叉**策略：Vue3 企业版为唯一主线，原生 JS 个人版进入弃用期并计划移除。此策略与 `README.md` "前端收敛策略" 子节完全一致，取代早期"个人版与企业版长期并行分叉"的设想。
 
-| 维度 | 个人版 | 企业版 |
+| 前端 | 状态 | 说明 |
 |---|---|---|
-| 定位 | 个人/小团队，单机零依赖开箱即用 | 企业/多租户，规模化生产部署 |
-| 存储后端 | SQLite + MemoryStore | PostgreSQL/MySQL + Redis |
-| 消息队列 | 无（noop 事件总线） | Kafka/NATS |
-| 前端 | 原生 JS（Phase 1 模块化后打包单文件） | Vue 3 + Vite + Pinia |
-| 部署形态 | 单二进制，零依赖启动 | Helm + GitOps，多副本 HA |
-| 高可用 | 单实例（MemoryStore 恒为 leader） | 多副本 leader 选举 + agent failover |
-| 安全 | 基础 TLS，require-auth 可关 | mTLS 强制 + JWT 验签 + 等保三级 |
-| 交付 | goreleaser 二进制 + systemd | Helm Chart + Argo CD + operator |
+| Vue3 企业版 (`web/enterprise/`) | ✅ 主线 | 唯一维护的前端，所有新功能优先在此开发 |
+| 原生 JS 个人版 (`internal/controlplane/web/`) | ⚠️ Deprecated | 自 v0.2.0 起进入弃用期，计划在 v0.4.0 移除。期间仅修 P0 bug，不新增功能 |
 
-### 9.2 共享与分叉边界
+### 9.2 弃用期维护边界
+
+| 项 | 规则 |
+|---|---|
+| 个人版新增功能 | 不接受（原 Phase 1 模块化、TypeScript、Vue 3 迁移等演进路径全部取消） |
+| 个人版 P0 bug | 修复至 v0.4.0 移除 |
+| 个人版 P1/P2 issue | 仅记录，不修 |
+| 迁移支持 | 提供 `web/enterprise/` 功能对照表，协助现有个人版用户迁移 |
+| 移除节点 | v0.4.0：删除 `internal/controlplane/web/` 原生 JS 代码，控制面 B/S 仪表盘由 Vue3 企业版产物托管或 Go 模板轻量渲染 |
+
+### 9.3 内核与部署形态
+
+前端收敛不影响内核与部署形态的按需切换。内核（Go）仍共享同一 codebase，通过 `--store`/`--production` 等 flag 切换形态；部署形态按场景选择（单二进制 / Helm / systemd / operator），与前端版本正交。
 
 | 层 | 策略 |
 |---|---|
-| 内核（Go） | 共享同一 codebase，通过 `--store`/`--production` 等 flag 切换形态，编译标签控制可选依赖（如 kafka） |
+| 内核（Go） | 共享同一 codebase，通过 flag 切换形态，编译标签控制可选依赖（如 kafka） |
 | domain | 共享富领域模型 |
-| store | 共享接口，个人版默认 MemoryStore + SQLite，企业版默认 SQLStore + Redis |
-| 前端 | 分叉：`web/personal/`（原生 JS）与 `web/enterprise/`（Vue 3），共享设计 token |
-| 部署 | 分叉：个人版 systemd/binary，企业版 Helm/GitOps/operator |
-| 文档 | 共享 `README.md`，分叉部署指南（`docs/deploy-personal.md` / `docs/deploy-enterprise.md`） |
+| store | 共享接口，默认实现按 `--store` 选择（memory / mysql 等） |
+| 前端 | **收敛**：Vue3 企业版唯一主线，原生 JS 个人版 deprecated → v0.4.0 移除 |
+| 部署 | 按场景选择：单二进制 / Helm / systemd / operator，与前端版本正交 |
+| 文档 | 共享 `README.md`，部署指南按场景分（`docs/deploy-personal.md` / `docs/deploy-enterprise.md`） |
 
-### 9.3 演进节奏
+### 9.4 演进节奏
 
-个人版与企业版同步演进内核，前端按各自节奏：
+Vue3 企业版按里程碑持续演进；原生 JS 个人版仅维持 P0 修复至 v0.4.0 移除，不再有独立演进节奏。
 
-| 里程碑 | 个人版 | 企业版 |
+| 里程碑 | Vue3 企业版主线 | 原生 JS 个人版 |
 |---|---|---|
-| M1 | 二进制分发 + systemd | docker-compose + goreleaser |
-| M2 | 前端模块化拆分 | Helm Chart + 前端模块化 |
-| M3 | 原生 JS 持续优化 | Vue 3 迁移 + protobuf + SSE |
-| M4 | SQLite 优化 | operator + 联邦 + schema 隔离 + ELK/Loki |
+| M1 | 组件库基线 | 仅修 P0 bug |
+| M2 | 设计系统固化 + 测试基线 | 仅修 P0 bug |
+| M3 | SSE 实时推送 + 类型全覆盖 | 仅修 P0 bug |
+| M4 | operator 集成 + 多集群管理 | v0.4.0 移除 |
 
 ---
 
@@ -547,5 +546,5 @@ agent 侧 `grpcclient` 在每次 RPC 调用时重新 `Dial` 控制面，引入�
 本文档中所有"计划/目标/演进/远期"措辞均为规划意图，不代表已实现能力。已实现能力以 `README.md` 功能矩阵与 `DELIVERY.md` 交付说明为准。具体而言：
 
 - Helm Chart、`docker-compose.yaml`：README 已提及且仓库已提供（已交付，见 5.3）。Argo CD ApplicationSet、`goreleaser`、systemd unit：仍为 M1/M2 计划交付物，仓库未提供或未完善
-- Store 接口拆分、DDD 实质化、protobuf、Vue 3 迁移、SSE、operator、schema 隔离：均为演进规划，当前未实现。联邦（控制面跨网段任务转发 mTLS + HMAC 签名验签，P1-6）已于 2026-08-02 落地
+- Store 接口拆分、DDD 实质化、protobuf、Vue 3 主线增强（SSE/类型/测试基线）、operator、schema 隔离：均为演进规划，当前未实现。Vue3 企业版前端（`web/enterprise/`）已交付为主线；原生 JS 个人版弃用策略已定（deprecated since v0.2.0，removal target v0.4.0），不属演进规划。联邦（控制面跨网段任务转发 mTLS + HMAC 签名验签，P1-6）已于 2026-08-02 落地
 - 安全加固项（命令白名单、JWT 验签、SSRF 校验、CSP 收紧等）：均为规划，当前未实现

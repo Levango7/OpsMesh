@@ -94,6 +94,7 @@ import { useAlertStore } from '@/stores/alert'
 import { useWorkflowStore } from '@/stores/workflow'
 import Icon from '@/components/Icon.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
+import { fmtTime } from '@/composables/useFormatTime'
 
 const deviceStore = useDeviceStore()
 const alertStore = useAlertStore()
@@ -162,11 +163,6 @@ const capabilities = [
 // 近期告警（最多 6 条）
 const recentAlerts = computed(() => (alertStore.list || []).slice(0, 6))
 
-function fmtTime(s) {
-  if (!s) return ''
-  const d = new Date(s)
-  return isNaN(d.getTime()) ? s : d.toLocaleString('zh-CN', { hour12: false })
-}
 
 onMounted(() => {
   if (!deviceStore.total) deviceStore.fetchDevices()

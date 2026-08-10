@@ -469,9 +469,12 @@ func TestGRPCHeartbeat_MetricsAutoDeviceID(t *testing.T) {
 
 // TestGRPCAgentSignature_VerifyAndReject task 81 端到端：启用 requireSignature 后，
 // 携带正确签名的请求放行，无签名/错误签名/过期签名被拒绝。
+// P0 安全加固：Register 不再返回签名密钥，改用预共享密钥（signatureKey）。
 func TestGRPCAgentSignature_VerifyAndReject(t *testing.T) {
 	st := store.NewMemoryStore()
-	srvImpl := &grpcServerImpl{store: st, requireAuth: false, requireSignature: true}
+	// P0 安全加固：使用预共享密钥（--grpc-signature-key），Register 不再下发密钥。
+	const sharedSecret = "opsmesh-test-shared-signature-key"
+	srvImpl := &grpcServerImpl{store: st, requireAuth: false, requireSignature: true, signatureKey: sharedSecret}
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -494,21 +497,18 @@ func TestGRPCAgentSignature_VerifyAndReject(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// 注册 agent（Register 不校验签名，返回 secret）
+	// 注册 agent（Register 不校验签名，P0 安全加固后不再返回 secret，改用预共享密钥）
 	regResp := &grpcx.RegisterResp{}
 	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/Register",
 		&proto.AgentInfo{Segment: "seg-a"}, regResp, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	agentID := regResp.AgentID
-	secret := regResp.Secret
-	if secret == "" {
-		t.Fatal("Register should return non-empty secret when requireSignature enabled")
+	// P0 安全加固：Register 响应不再包含签名密钥，使用预共享密钥。
+	if regResp.Secret != "" {
+		t.Fatal("Register should NOT return secret after P0 hardening (pre-shared key mode)")
 	}
-	// store 中应能查到同一 secret
-	if got := st.AgentSecret(agentID); got != secret {
-		t.Fatalf("store.AgentSecret = %q, want %q", got, secret)
-	}
+	secret := sharedSecret
 
 	// helper：构造签名 metadata
 	signCtx := func(base context.Context, sec, aid string, ts int64) context.Context {
@@ -552,8 +552,9 @@ func TestGRPCAgentSignature_VerifyAndReject(t *testing.T) {
 		t.Fatal("PullTasks with expired timestamp should fail")
 	}
 
-	// 5) 冒充其他 agentID（用 agent-1 的 secret 签 agent-2）→ 拒绝
-	// 先注册第二个 agent 拿到其 agentID（但用第一个的 secret 签名）
+	// 5) 错误密钥签名（用非预共享密钥签 agent-2 的请求）→ 拒绝
+	// P0 安全加固：预共享密钥模式下所有 agent 共用同一密钥，"用 agent1 密钥签 agent2"不再
+	// 构成冒充（密钥相同）。改为验证"用错误密钥签名被拒绝"——这才是预共享模式下的防御语义。
 	regResp2 := &grpcx.RegisterResp{}
 	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/Register",
 		&proto.AgentInfo{Segment: "seg-b"}, regResp2, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
@@ -562,11 +563,11 @@ func TestGRPCAgentSignature_VerifyAndReject(t *testing.T) {
 	if regResp2.AgentID == agentID {
 		t.Fatal("second agent should have different ID")
 	}
-	// 用 agent1 的 secret 签 agent2 的请求 → 签名不匹配（secret 不同）
-	forgeCtx := signCtx(ctx, secret, regResp2.AgentID, time.Now().Unix())
+	// 用错误的密钥（非预共享密钥）签 agent2 的请求 → 签名不匹配
+	forgeCtx := signCtx(ctx, "wrong-secret-not-the-shared-key", regResp2.AgentID, time.Now().Unix())
 	if err := conn.Invoke(forgeCtx, "/opsmesh.v1.Registration/PullTasks",
 		&grpcx.PullTasksReq{AgentID: regResp2.AgentID}, &grpcx.PullTasksResp{}, grpc.ForceCodec(grpcx.JSONCodec)); err == nil {
-		t.Fatal("PullTasks with forged signature (agent1 secret for agent2) should fail")
+		t.Fatal("PullTasks with wrong secret should fail")
 	}
 
 	// 6) PollCancels 也校验签名
@@ -621,7 +622,7 @@ func TestGRPCAgentSignature_DisabledByDefault(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// 注册（requireSignature=false 时 Register 仍下发 secret，但 agent 不签名也能通过）
+	// 注册（requireSignature=false 时不需要签名，P0 安全加固后 Register 不再下发 secret）
 	regResp := &grpcx.RegisterResp{}
 	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/Register",
 		&proto.AgentInfo{Segment: "seg-a"}, regResp, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {

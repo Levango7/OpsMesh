@@ -8,6 +8,7 @@ import {
   uninstallMiddleware
 } from '@/api/middleware'
 import { getDevices } from '@/api/device'
+import { t } from '@/i18n'
 
 export const useMiddlewareStore = defineStore('middleware', {
   state: () => ({
@@ -26,7 +27,7 @@ export const useMiddlewareStore = defineStore('middleware', {
       try {
         this.templates = await getMiddlewareTemplates(this.category) || []
       } catch (e) {
-        this.error = e.j?.error || '中间件模板列表拉取失败'
+        this.error = e.j?.error || t('error.mwTemplatesFailed')
       } finally {
         this.loading = false
       }
@@ -45,7 +46,7 @@ export const useMiddlewareStore = defineStore('middleware', {
       try {
         this.current = await getMiddlewareTemplate(id)
       } catch (e) {
-        this.error = e.j?.error || '中间件模板详情拉取失败'
+        this.error = e.j?.error || t('error.mwDetailFailed')
       }
     },
     async fetchDevices() {

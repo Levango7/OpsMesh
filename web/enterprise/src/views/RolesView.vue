@@ -73,6 +73,7 @@ import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
+import { fmtTime } from '@/composables/useFormatTime'
 
 const roles = ref([])
 const permissions = ref([])
@@ -162,11 +163,6 @@ async function onDelete(row) {
   }
 }
 
-function fmtTime(s) {
-  if (!s) return ''
-  const d = new Date(s)
-  return isNaN(d.getTime()) ? s : d.toLocaleString('zh-CN', { hour12: false })
-}
 
 onMounted(() => {
   fetchRoles()

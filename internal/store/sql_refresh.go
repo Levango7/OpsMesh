@@ -90,3 +90,46 @@ func (s *SQLStore) DeleteRefreshToken(tokenHash string) bool {
 	n, _ := res.RowsAffected()
 	return n > 0
 }
+
+// ConsumeRefreshToken 原子消费 refresh token：3：事务内 SELECT ... FOR UPDATE + DELETE，防多副本并发双消费（P1-G4）。
+//
+// 用单事务 + SELECT ... FOR UPDATE 保证读取时即持排他锁，并发请求被阻塞至持锁事务提交；
+// 持锁事务 DELETE 后校验 RowsAffected，确保行确实被删除（belt-and-suspenders）。
+// 其余并发请求在获得锁后 SELECT 不到该行（已被删除），直接返回 (nil, false)。
+//
+// DB 不可用或 token 不存在返回 (nil, false)，不 panic。
+func (s *SQLStore) ConsumeRefreshToken(tokenHash string) (*RefreshToken, bool) {
+	if tokenHash == "" {
+		return nil, false
+	}
+	if s.db == nil {
+		return nil, false
+	}
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false
+	}
+	defer tx.Rollback() // 提交后 Rollback 为 no-op
+	// 事务内读取：SELECT ... FOR UPDATE 持排他锁，并发请求被阻塞至持锁事务提交。
+	row := tx.QueryRowContext(ctx,
+		`SELECT token_hash, user_id, tenant_id, device_fp, expires_at, created_at FROM refresh_tokens WHERE token_hash=? FOR UPDATE`, tokenHash)
+	rt := scanRefreshToken(row)
+	if rt == nil {
+		return nil, false
+	}
+	// 事务内删除：DELETE 后校验 RowsAffected，确保行确实被删除（belt-and-suspenders）。
+	res, err := tx.ExecContext(ctx, `DELETE FROM refresh_tokens WHERE token_hash=?`, tokenHash)
+	if err != nil {
+		return nil, false
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		// 行已被并发事务消费，回滚并返回失败
+		return nil, false
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false
+	}
+	return rt, true
+}

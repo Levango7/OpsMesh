@@ -389,6 +389,10 @@ func (s *SQLStore) RetireStaleDevices(maxAge time.Duration) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	// A-2 leader fencing：非有效租约持有者跳过，防双主同时归档。
+	if !s.checkLeaderFence(ctx, "RetireStaleDevices") {
+		return 0
+	}
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE devices d LEFT JOIN agents a ON d.agent_id=a.agent_id
 		SET d.retired=1, d.state='offline'

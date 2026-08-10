@@ -394,14 +394,29 @@ func (a *Agent) register() error {
 		cancel()
 		if err == nil {
 			a.agentID = resp.AgentID
-			// task 81 gRPC agent 身份绑定：保存控制面下发的 HMAC 签名密钥。
+			// task 81 gRPC agent 身份绑定：设置 HMAC 签名密钥。
 			// 后续 PullTasks/ReportResult/PollCancels/Heartbeat 请求在 metadata 中携带签名，
 			// 控制面据此验证 agent 身份，不再纯信任 agent 自报的 AgentID。
-			// resp.Secret 为空表示控制面未启用签名验证（demo 模式或未配置 --grpc-require-signature），agent 不签名。
-			if resp.Secret != "" {
+			//
+			// P0 安全加固：优先使用预共享密钥（--grpc-signature-key），Register 响应不再下发密钥。
+			//   - 配置了 cfg.GRPCSignatureKey → 使用预共享密钥签名（推荐，防注册不硬时密钥外泄）。
+			//   - 未配置但 resp.Secret 非空 → 回退到响应下发密钥（向后兼容旧控制面）。
+			//   - 两者都为空 → 不签名（控制面未启用签名验证，demo 模式或未配置 --grpc-require-signature）。
+			signed := false
+			if a.cfg.GRPCSignatureKey != "" {
+				a.grpc.SetSecret(a.cfg.GRPCSignatureKey)
+				signed = true
+			} else if resp.Secret != "" {
 				a.grpc.SetSecret(resp.Secret)
+				signed = true
 			}
-			logx.Info(ctx, "注册成功", "agentID", a.agentID, "segment", a.cfg.Segment, "grpc", a.cfg.ControlAddr, "signed", resp.Secret != "")
+			if !signed && a.cfg.GRPCRequireSignature {
+				// 控制面要求签名但 agent 既无预共享密钥也未从响应获取密钥：
+				// 后续请求将被控制面拒绝。日志警告提示运维配置 --grpc-signature-key。
+				logx.Warn(ctx, "控制面启用签名验证但 agent 未配置预共享密钥（--grpc-signature-key），"+
+					"后续请求将被拒绝，请配置预共享密钥", "agentID", a.agentID)
+			}
+			logx.Info(ctx, "注册成功", "agentID", a.agentID, "segment", a.cfg.Segment, "grpc", a.cfg.ControlAddr, "signed", signed)
 			return nil
 		}
 		// 安全（P1-F5）：Unauthenticated（install token 无效/过期/已被消费）属不可重试错误，
@@ -591,9 +606,10 @@ func (a *Agent) worker(ctx context.Context) {
 // execute 本地执行任务，按 Type 分派执行器（shell / service / file，见 proto.TaskType* 常量）。
 // 使用传入的 ctx（worker 已绑定 taskTimeout 与取消信号，F3 取消时 ctx 被取消、命令立即中断）。
 // 安全加固（task 78）：stdout/stderr 用 LimitedBuffer 限制 10MB，避免 cat 大文件耗尽 agent 内存。
+// A-1 防双跑：res.ClaimEpoch = t.ClaimEpoch，上报时携带持有者令牌，store 校验持有者是否仍为当前 epoch。
 func (a *Agent) execute(ctx context.Context, t proto.Task) proto.TaskResult {
 	start := time.Now()
-	res := proto.TaskResult{TaskID: t.TaskID, AgentID: a.agentID, FinishedAt: time.Now()}
+	res := proto.TaskResult{TaskID: t.TaskID, AgentID: a.agentID, ClaimEpoch: t.ClaimEpoch, FinishedAt: time.Now()}
 
 	_ = ctx // ctx 由 shell/service/file 执行器经 exec.CommandContext 消费（取消信号直达子进程）
 
@@ -718,6 +734,8 @@ func (b *limitedBuffer) String() string {
 // 无法阻止 "ls;rm -rf /" 这类元字符拼接绕过（;后内容仍由同一 sh -c 解释执行）。
 //
 // 设计决策（task 98）：仅拦截最高危元字符，平衡安全与可用性：
+//   - "\n" "\r"  换行/回车符，高危（可拼接任意命令，如 "ls\nrm -rf /"），拦截。
+//     此前漏检换行符导致 "ls\nrm -rf /" 可绕过白名单首 token 校验，P0 安全加固补齐。
 //   - ";"  命令分隔符，高危（可拼接任意命令），拦截。
 //   - "&"  单个 & 为后台执行符，高危（可脱离 agent 控制），拦截；但允许以下合法模式：
 //     "&&"（条件拼接，合法运维常用，如 systemctl status nginx && echo ok）、
@@ -727,9 +745,18 @@ func (b *limitedBuffer) String() string {
 //   - "`"  反引号命令替换，高危（可执行任意子命令），拦截。
 //   - "|"  管道符暂不拦截——合法运维用途过多（如 systemctl status nginx | grep Active），
 //     拦截会严重损害可用性。纵深防御应配合控制面侧 SubmitTask 校验 + IAM 鉴权。
+//     如需拦截管道符，可在控制面侧 validateCommand 中按部署策略决定（可配置化演进）。
 //
 // 这是"最佳努力防御"——无法覆盖所有绕过路径（如 base64 编码命令），但能拦截最常见的拼接注入。
 func checkShellMetachars(command string) error {
+	// P0 安全加固：拦截换行/回车符，防 "ls\nrm -rf /" 绕过白名单首 token 校验。
+	// 换行符在 sh -c 中等价于命令分隔符，可拼接任意命令，与 ";" 同属高危。
+	if strings.Contains(command, "\n") {
+		return errors.New("shell command contains dangerous metacharacters (newline '\\n'): command rejected")
+	}
+	if strings.Contains(command, "\r") {
+		return errors.New("shell command contains dangerous metacharacters (carriage return '\\r'): command rejected")
+	}
 	if strings.Contains(command, ";") {
 		return errors.New("shell command contains dangerous metacharacters (';'): command rejected")
 	}
@@ -756,11 +783,18 @@ func checkShellMetachars(command string) error {
 
 // checkShellWhitelist 检查命令是否在白名单内（task 78 安全加固）。
 // 白名单为空时放行所有命令（向后兼容，demo/受信内网环境）。
-// 白名单非空时，取命令第一个 token 的 basename，检查是否匹配白名单中某个前缀。
+// 白名单非空时，取命令第一个 token 的 basename，检查是否匹配白名单中某个条目。
+//
+// 匹配规则（P0 安全加固修正，防前缀过宽绕过）：
+//   - 条目以 "*" 结尾（如 "system*"）→ 前缀匹配：base 以 "system" 开头即放行（覆盖 systemctl/systemd-analyze 等）。
+//   - 条目不含 "*" → 精确匹配：base 必须完全等于条目（如 "ls" 仅匹配 "ls"，不匹配 "lsusb"）。
+//   - 条目中间含 "*" 视为普通字符（仅尾部 "*" 是通配符标记）。
+//
+// 此前用 HasPrefix 做前缀匹配，导致白名单 "ls" 会放行 "lsusb"/"lsof" 等非预期命令，存在过宽风险。
+//
 // 注意：这是最佳努力防御，无法完全阻止 "ls;rm -rf /" 这类 shell 元字符拼接绕过
-// （;后内容仍由同一 sh -c 解释执行）。纵深防御应配合控制面侧 SubmitTask 校验 + IAM 鉴权 +
-// 限制为非交互式单命令下发（无 sh -c 元字符）。本检查覆盖"第一个程序名不在白名单"的常见误用与
-// 控制面被攻陷后下发任意命令的场景。
+// （;后内容仍由同一 sh -c 解释执行）。纵深防御应配合 checkShellMetachars 元字符拦截 +
+// 控制面侧 SubmitTask 校验 + IAM 鉴权 + 限制为非交互式单命令下发（无 sh -c 元字符）。
 func (a *Agent) checkShellWhitelist(command string) error {
 	wl := a.cfg.AgentShellWhitelist
 	if wl == "" {
@@ -772,17 +806,28 @@ func (a *Agent) checkShellWhitelist(command string) error {
 	}
 	first := fields[0]
 	base := filepath.Base(first) // 取 basename（如 /bin/ls -> ls）
-	for _, prefix := range strings.Split(wl, ",") {
-		prefix = strings.TrimSpace(prefix)
-		if prefix == "" {
+	for _, entry := range strings.Split(wl, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
 			continue
 		}
-		// 精确匹配或前缀匹配（如白名单 "system" 允许 "systemctl"）
-		if base == prefix || strings.HasPrefix(base, prefix) {
-			return nil
+		// P0 安全加固：精确匹配为主，前缀匹配仅当条目以 "*" 结尾时启用。
+		// "ls" 仅匹配 "ls"，"system*" 匹配 "systemctl" 等以 "system" 开头的命令。
+		if strings.HasSuffix(entry, "*") {
+			prefix := strings.TrimSuffix(entry, "*")
+			if prefix == "" {
+				continue // "*" 单独无意义，跳过
+			}
+			if strings.HasPrefix(base, prefix) {
+				return nil
+			}
+		} else {
+			if base == entry {
+				return nil
+			}
 		}
 	}
-	return fmt.Errorf("command %q not in shell whitelist (allowed prefixes: %s)", base, wl)
+	return fmt.Errorf("command %q not in shell whitelist (allowed entries: %s)", base, wl)
 }
 
 // executeShell 启动 shell 子进程并等待其结束或 ctx 取消（task 78 安全加固）。

@@ -137,7 +137,12 @@ type Task struct {
 	Status    string    `json:"status"`    // pending / running / done / failed / cancelled（P0-1 生命周期，空串按 pending 处理）
 	ClaimedBy string    `json:"claimedBy"` // 领取该任务的 worker 标识（HA 协调，P1-1）
 	ClaimedAt time.Time `json:"claimedAt"` // 领取时间（P1-1）
-	CreatedAt time.Time `json:"createdAt"`
+	// ClaimEpoch 任务所有权令牌（A-1 防双跑）：每次 ClaimTask 时 +1。
+	// agent 上报结果时携带 ClaimEpoch，SubmitResult 校验 WHERE claim_epoch=?，
+	// RowsAffected=0 表示持有者已易主（任务被回收重派），拒绝旧持有者上报防双跑。
+	// 值为 0 表示未设置（旧 agent / 测试），SubmitResult 跳过校验向后兼容。
+	ClaimEpoch int64     `json:"claimEpoch"`
+	CreatedAt  time.Time `json:"createdAt"`
 	// F2 失败重试 / 死信（P2 业务闭环）：RetryCount 累计重试，达 MaxRetries 置 failed（死信）。
 	RetryCount int  `json:"retryCount"`
 	MaxRetries int  `json:"maxRetries"`
@@ -178,6 +183,10 @@ type TaskResult struct {
 	Stderr     string    `json:"stderr"`
 	DurationMs int64     `json:"durationMs"` // 执行耗时毫秒（P2-1 观测指标）
 	FinishedAt time.Time `json:"finishedAt"`
+	// ClaimEpoch 任务所有权令牌（A-1 防双跑）：上报时携带领取时拿到的 ClaimEpoch，
+	// store 校验持有者是否仍为当前 epoch，拒绝旧持有者上报防双跑。
+	// 值为 0 表示未设置（旧 agent / 测试），store 跳过校验向后兼容。
+	ClaimEpoch int64 `json:"claimEpoch"`
 }
 
 // Alert 状态（M7 监控告警）。

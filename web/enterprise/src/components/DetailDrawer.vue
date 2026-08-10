@@ -23,7 +23,7 @@ defineEmits(['close'])
 <style scoped>
 .drawer {
   position: fixed; top: 0; right: 0;
-  width: 460px; max-width: 92vw; height: 100%;
+  width: min(460px, 92vw); height: 100%;
   background: var(--surface); border-left: 1px solid var(--border);
   box-shadow: -8px 0 30px rgba(31,37,64,.14);
   padding: 22px; overflow: auto; z-index: 40;

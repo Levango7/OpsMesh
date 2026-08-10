@@ -2,10 +2,16 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"embed"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
+	"path"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +23,9 @@ import (
 	"opsmesh/internal/events"
 	"opsmesh/internal/proto"
 )
+
+//go:embed migrations/*.sql
+var migrationFS embed.FS
 
 // SQLStore 基于 MySQL + Redis 的持久化实现（U-04 数据本地化，私有部署）。
 //   - MySQL 为权威存储（四张表：agents / devices / tasks / task_results）。
@@ -123,8 +132,8 @@ func NewSQLStore(dsn, redisAddr string) (*SQLStore, error) {
 	instID := fmt.Sprintf("%s-%d-%d", host, os.Getpid(), time.Now().UnixNano())
 
 	s := &SQLStore{db: db, rdb: rdb, instanceID: instID, secret: mustRandHex(32), deviceMetrics: make(map[string]*proto.DeviceMetrics), agentSecretCache: make(map[string]string)}
-	if err := s.initSchema(); err != nil {
-		log.Printf("[store] 建表失败（运行期可能不可用）: %v", err)
+	if err := s.runMigrations(); err != nil {
+		log.Printf("[store] 迁移失败（运行期可能不可用）: %v", err)
 	}
 	return s, nil
 }
@@ -141,132 +150,225 @@ func ensureParseTime(dsn string) string {
 	return dsn + "?parseTime=true"
 }
 
-// initSchema 幂等建表（CREATE TABLE IF NOT EXISTS）。
+// migrationFile 描述一个待应用的迁移文件。
+type migrationFile struct {
+	version int    // 从文件名前缀解析的版本号（001 → 1）
+	name    string // 文件名（如 001_initial.sql）
+	content string // SQL 文件全文
+}
 
-func (s *SQLStore) initSchema() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+// runMigrations 执行版本化 schema 迁移。
+//
+// 流程：
+//  1. 确保 schema_migrations 表存在（用于记录已应用版本号）。
+//  2. 读取已应用版本号集合。
+//  3. 从 embed.FS 读取 migrations/*.sql，按版本号升序排序。
+//  4. 对每个未应用的迁移：BEGIN TX → 逐条执行 SQL → INSERT schema_migrations → COMMIT；
+//     任一语句失败则回滚整批并返回错误。
+//  5. applyLegacyColumnFixups：兼容老库的增量补列/补索引（历史遗留，待后续转为正式迁移）。
+//  6. seedRBAC：幂等预置默认权限/角色/用户。
+//
+// 幂等性：已应用的迁移在 step 4 被跳过；step 5/6 内部均为 IF NOT EXISTS 语义。
+// 事务边界：每个迁移文件独立事务，保证 schema_migrations 记录与表结构变更原子化。
+func (s *SQLStore) runMigrations() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS agents (
-			agent_id VARCHAR(64) PRIMARY KEY,
-			hostname VARCHAR(255),
-			segment VARCHAR(64),
-			tenant_id VARCHAR(64),
-			addr VARCHAR(255),
-			grpc_port INT,
-			metrics_port INT,
-			status VARCHAR(16),
-			load INT,
-			last_seen DATETIME
-		)`,
-		`CREATE TABLE IF NOT EXISTS devices (
-			device_id VARCHAR(64) PRIMARY KEY,
-			segment VARCHAR(64),
-			tenant_id VARCHAR(64),
-			ip VARCHAR(64),
-			agent_id VARCHAR(64),
-			state VARCHAR(16),
-			task_state VARCHAR(16),
-			managed BOOLEAN DEFAULT 0,
-			last_result VARCHAR(16),
-			last_result_at DATETIME,
-			retired BOOLEAN DEFAULT 0
-		)`,
-		`CREATE TABLE IF NOT EXISTS tasks (
-			task_id VARCHAR(64) PRIMARY KEY,
-			agent_id VARCHAR(64),
-			tenant_id VARCHAR(64),
-			type VARCHAR(32),
-			command TEXT,
-			content MEDIUMTEXT,
-			path VARCHAR(512),
-			status VARCHAR(16),
-			claimed_by VARCHAR(64),
-			claimed_at DATETIME,
-			created_at DATETIME,
-			retry_count INT DEFAULT 0,
-			max_retries INT DEFAULT 0,
-			dead_letter BOOLEAN DEFAULT 0,
-			schedule VARCHAR(64),
-			parent_id VARCHAR(64),
-			last_fired_at DATETIME,
-			depends_on TEXT
-		)`,
-		`CREATE TABLE IF NOT EXISTS task_results (
-			task_id VARCHAR(64) PRIMARY KEY,
-			agent_id VARCHAR(64),
-			exit_code INT,
-			stdout MEDIUMTEXT,
-			stderr MEDIUMTEXT,
-			finished_at DATETIME
-		)`,
-		`CREATE TABLE IF NOT EXISTS schema_migrations (
-			version INT PRIMARY KEY,
-			applied_at DATETIME
-		)`,
-		`CREATE TABLE IF NOT EXISTS audit_log (
-			id BIGINT AUTO_INCREMENT PRIMARY KEY,
-			tenant_id VARCHAR(64),
-			user_id VARCHAR(64),
-			action VARCHAR(64),
-			target VARCHAR(128),
-			detail TEXT,
-			created_at DATETIME
-		)`,
-		// A3 选主租约表：单行（id=1）记录当前 leader 实例与租约过期时间。
-		// 多副本控制面通过原子 INSERT ... ON DUPLICATE KEY UPDATE 抢占/续租。
-		`CREATE TABLE IF NOT EXISTS leader_lease (
-			id INT PRIMARY KEY DEFAULT 1,
-			holder VARCHAR(128),
-			expires_at DATETIME,
-			updated_at DATETIME
-		)`,
-		// B1 自动纳管：一次性、限时 install token 登记表（HMAC 签名，密钥来自 ProvisionSecret）。
-		// 多副本控制面共享同一 MySQL，故 token 落库以实现跨副本消费一致性。
-		`CREATE TABLE IF NOT EXISTS install_tokens (
-			token VARCHAR(512) PRIMARY KEY,
-			device_id VARCHAR(64),
-			tenant_id VARCHAR(64),
-			expires_at DATETIME,
-			consumed BOOLEAN DEFAULT 0
-		)`,
-		// P0-1 用户中心（RBAC）：users / roles / permissions 三表。
-		// 用户名唯一索引兜底（CreateUser 重复校验 + INSERT 失败均返回 nil）。
-		`CREATE TABLE IF NOT EXISTS users (
-			id VARCHAR(64) PRIMARY KEY,
-			username VARCHAR(64) NOT NULL UNIQUE,
-			email VARCHAR(255),
-			password_hash VARCHAR(255),
-			status VARCHAR(16) DEFAULT 'active',
-			role_ids JSON,
-			created_at DATETIME
-		)`,
-		`CREATE TABLE IF NOT EXISTS roles (
-			id VARCHAR(64) PRIMARY KEY,
-			name VARCHAR(64) NOT NULL UNIQUE,
-			description VARCHAR(255),
-			permissions JSON,
-			created_at DATETIME
-		)`,
-		`CREATE TABLE IF NOT EXISTS permissions (
-			id VARCHAR(64) PRIMARY KEY,
-			name VARCHAR(64) NOT NULL UNIQUE,
-			description VARCHAR(255),
-			group_name VARCHAR(64)
-		)`,
+	// 1. 确保 schema_migrations 表存在（复用历史定义，sql.go 原 initSchema 已建此表）。
+	//    G5 / C-1：增加 checksum 列记录迁移文件 sha256 摘要，启动时校验防篡改。
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version INT PRIMARY KEY,
+		applied_at DATETIME,
+		checksum VARCHAR(64) NOT NULL DEFAULT ''
+	)`); err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
 	}
-	for _, q := range stmts {
-		if _, err := s.db.ExecContext(ctx, q); err != nil {
-			return fmt.Errorf("exec %q: %w", q, err)
+	// 兼容老库：schema_migrations 已存在但缺 checksum 列时补列（G5 / C-1）。
+	s.alterColumnIfMissing(ctx, "schema_migrations", "checksum", "VARCHAR(64) NOT NULL DEFAULT ''")
+
+	// 2. 读取已应用版本号及其 checksum。
+	applied, err := s.appliedMigrations(ctx)
+	if err != nil {
+		return fmt.Errorf("read applied migrations: %w", err)
+	}
+
+	// 3. 读取嵌入的迁移文件并按版本号排序。
+	files, err := migrationFiles()
+	if err != nil {
+		return fmt.Errorf("list migration files: %w", err)
+	}
+
+	// 3.5 G5 / C-1 防篡改校验：已应用迁移的 checksum 必须与当前文件 sha256 一致，
+	//     不一致则拒绝启动（避免迁移文件被静默篡改导致 schema 漂移）。
+	for _, mf := range files {
+		recorded, ok := applied[mf.version]
+		if !ok {
+			continue
+		}
+		expected := sha256Hex(mf.content)
+		if recorded.checksum != "" && recorded.checksum != expected {
+			return fmt.Errorf("migration %d (%s) checksum mismatch: recorded=%s expected=%s (迁移文件已被篡改，拒绝启动)",
+				mf.version, mf.name, recorded.checksum, expected)
 		}
 	}
-	// 记录当前 schema 版本（P2-11：为后续演进留迁移锚点）。
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO schema_migrations (version, applied_at) VALUES (1, ?)
-		 ON DUPLICATE KEY UPDATE applied_at=VALUES(applied_at)`, time.Now().UTC()); err != nil {
-		log.Printf("[store] 写入 schema_migrations 失败（非致命）: %v", err)
+
+	// 4. 逐个执行未应用的迁移（事务化）。
+	for _, mf := range files {
+		if _, ok := applied[mf.version]; ok {
+			continue
+		}
+		if err := s.applyMigration(ctx, mf); err != nil {
+			return fmt.Errorf("apply migration %d (%s): %w", mf.version, mf.name, err)
+		}
+		log.Printf("[store] 迁移 %d (%s) 已应用 (checksum=%s)", mf.version, mf.name, sha256Hex(mf.content))
 	}
+
+	// 5. 兼容老库增量补列/补索引（历史遗留，待后续转为正式 002+ 迁移）。
+	s.applyLegacyColumnFixups(ctx)
+
+	// 6. 数据 seed：幂等预置默认权限/角色/用户（与 MemoryStore 一致，保 HA 多副本身份一致）。
+	if err := s.seedRBAC(ctx); err != nil {
+		log.Printf("[store] seedRBAC 失败（非致命）: %v", err)
+	}
+	return nil
+}
+
+// migrationRecord 描述一个已应用迁移的版本记录（含 checksum，G5 / C-1）。
+type migrationRecord struct {
+	version  int
+	checksum string
+}
+
+// appliedMigrations 返回 schema_migrations 表中已记录的版本号及其 checksum。
+// G5 / C-1：返回 map[version] -> migrationRecord，供 runMigrations 校验防篡改。
+func (s *SQLStore) appliedMigrations(ctx context.Context) (map[int]migrationRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT version, checksum FROM schema_migrations`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	applied := make(map[int]migrationRecord)
+	for rows.Next() {
+		var r migrationRecord
+		if err := rows.Scan(&r.version, &r.checksum); err != nil {
+			return nil, err
+		}
+		applied[r.version] = r
+	}
+	return applied, rows.Err()
+}
+
+// migrationFiles 从 embed.FS 读取 migrations/*.sql，解析文件名前缀版本号，按版本升序排序。
+// 文件名约定：NNN_description.sql，其中 NNN 为零填充版本号（001、002...）。
+//
+// G5 / C-1：跳过 NNN_*.down.sql 回滚占位文件（仅作为未来回滚接口的占位，
+// 不参与正向迁移执行；embed 指令 migrations/*.sql 会同时嵌入 .down.sql，
+// 此处显式过滤避免被误当作正向迁移）。
+func migrationFiles() ([]migrationFile, error) {
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		return nil, err
+	}
+	var files []migrationFile
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		// 跳过回滚占位文件（.down.sql）。
+		if strings.HasSuffix(e.Name(), ".down.sql") {
+			continue
+		}
+		base := strings.TrimSuffix(e.Name(), ".sql")
+		// 解析开头连续数字部分作为版本号。
+		i := 0
+		for i < len(base) && base[i] >= '0' && base[i] <= '9' {
+			i++
+		}
+		if i == 0 {
+			return nil, fmt.Errorf("migration file %q 缺少版本号前缀", e.Name())
+		}
+		v, err := strconv.Atoi(base[:i])
+		if err != nil {
+			return nil, fmt.Errorf("parse version %q from %q: %w", base[:i], e.Name(), err)
+		}
+		content, err := migrationFS.ReadFile(path.Join("migrations", e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, migrationFile{version: v, name: e.Name(), content: string(content)})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].version < files[j].version })
+	return files, nil
+}
+
+// applyMigration 在单个事务中执行一个迁移文件的全部 SQL，并记录版本号与 checksum
+// 到 schema_migrations。任一语句失败则回滚整批，保证 schema_migrations 记录与表结构
+// 变更原子化。
+//
+// G5 / C-1：执行前计算迁移文件内容的 sha256 摘要，执行后随版本号一并存入
+// schema_migrations.checksum 列，供后续启动时校验防篡改。
+func (s *SQLStore) applyMigration(ctx context.Context, mf migrationFile) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() // Commit 后 Rollback 为 no-op；失败时回滚。
+
+	for _, stmt := range splitSQLStatements(mf.content) {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("exec stmt: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations (version, applied_at, checksum) VALUES (?, ?, ?)`,
+		mf.version, time.Now().UTC(), sha256Hex(mf.content)); err != nil {
+		return fmt.Errorf("record migration: %w", err)
+	}
+	return tx.Commit()
+}
+
+// sha256Hex 返回给定内容的 sha256 摘要的十六进制小写表示（64 字符）。
+// 用于 schema_migrations.checksum 列记录迁移文件指纹，启动时校验防篡改（G5 / C-1）。
+func sha256Hex(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
+}
+
+// splitSQLStatements 将多语句 SQL 文件按分号拆分为可逐条 Exec 的语句列表。
+// 跳过空行与 -- 行注释；不处理块注释/字符串内分号（当前迁移文件仅含简单 DDL，无需）。
+func splitSQLStatements(content string) []string {
+	var stmts []string
+	var buf strings.Builder
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "--") {
+			continue
+		}
+		buf.WriteString(line)
+		buf.WriteString("\n")
+		if strings.HasSuffix(trimmed, ";") {
+			stmt := strings.TrimSpace(buf.String())
+			if stmt != "" {
+				stmts = append(stmts, stmt)
+			}
+			buf.Reset()
+		}
+	}
+	if buf.Len() > 0 {
+		stmt := strings.TrimSpace(buf.String())
+		if stmt != "" {
+			stmts = append(stmts, stmt)
+		}
+	}
+	return stmts
+}
+
+// applyLegacyColumnFixups 兼容老库的增量补列/补索引。
+//
+// 历史上 initSchema 通过 alterColumnIfMissing/createIndexIfMissing 为已存在但缺列/缺索引
+// 的老库补结构。迁移框架上线后，新库由 001_initial.sql 一次性建齐；老库仍需这些补丁
+// 才能升级到最新结构。此处保留全部补丁逻辑，待后续以 002+ 正式迁移形式纳入后可移除。
+func (s *SQLStore) applyLegacyColumnFixups(ctx context.Context) {
 	// 增量迁移：为已存在但缺 tenant_id 的 tasks 表补列（MySQL 不支持 ADD COLUMN IF NOT EXISTS，
 	// 故检查 information_schema 后按需 ALTER，重复列名错误忽略）。
 	var cnt int
@@ -308,25 +410,6 @@ func (s *SQLStore) initSchema() error {
 		s.alterColumnIfMissing(ctx, "leader_lease", "expires_at", "DATETIME")
 		s.alterColumnIfMissing(ctx, "leader_lease", "updated_at", "DATETIME")
 	}
-	// 告警表（M7）。
-	if _, err := s.db.ExecContext(ctx, `
-	CREATE TABLE IF NOT EXISTS alerts (
-		id BIGINT AUTO_INCREMENT PRIMARY KEY,
-		tenant_id VARCHAR(64),
-		device_id VARCHAR(64),
-		agent_id VARCHAR(64),
-		severity VARCHAR(16),
-		message TEXT,
-		created_at DATETIME,
-		alert_id VARCHAR(64),
-		status VARCHAR(16),
-		acknowledged_by VARCHAR(64),
-		silenced_until DATETIME,
-		comment TEXT,
-		updated_at DATETIME
-	)`); err != nil {
-		log.Printf("[store] 建 alerts 表失败（非致命）: %v", err)
-	}
 	// 告警状态扩展（M7 ack/silence）：向后兼容补列（老表缺列不报错）。
 	s.alterColumnIfMissing(ctx, "alerts", "alert_id", "VARCHAR(64)")
 	s.alterColumnIfMissing(ctx, "alerts", "status", "VARCHAR(16)")
@@ -334,87 +417,11 @@ func (s *SQLStore) initSchema() error {
 	s.alterColumnIfMissing(ctx, "alerts", "silenced_until", "DATETIME")
 	s.alterColumnIfMissing(ctx, "alerts", "comment", "TEXT")
 	s.alterColumnIfMissing(ctx, "alerts", "updated_at", "DATETIME")
-	// CMDB 表（Phase 1）：CI 类型字典、CI 实例、CI 关系。
-	if _, err := s.db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS ci_types (
-			id INT AUTO_INCREMENT PRIMARY KEY,
-			name VARCHAR(64) NOT NULL UNIQUE,
-			display_name VARCHAR(64),
-			builtin BOOLEAN DEFAULT 1,
-			created_at DATETIME
-		)`); err != nil {
-		log.Printf("[store] 建 ci_types 表失败（非致命）: %v", err)
-	}
-	if _, err := s.db.ExecContext(ctx, `
-	CREATE TABLE IF NOT EXISTS ci_items (
-		id VARCHAR(64) PRIMARY KEY,
-		ci_type VARCHAR(64) NOT NULL,
-		tenant_id VARCHAR(64) NOT NULL,
-		name VARCHAR(255) NOT NULL,
-		status VARCHAR(32) DEFAULT 'active',
-		approval_status VARCHAR(16) DEFAULT 'approved',
-		attrs JSON,
-		source VARCHAR(32) DEFAULT 'manual',
-		agent_id VARCHAR(64),
-		device_id VARCHAR(64),
-		version INT DEFAULT 1,
-		created_at DATETIME,
-		updated_at DATETIME
-	)`); err != nil {
-		log.Printf("[store] 建 ci_items 表失败（非致命）: %v", err)
-	}
 	// Phase-3 轻量审批流：ci_items 增补审批状态列（向后兼容，默认 approved）。
 	s.alterColumnIfMissing(ctx, "ci_items", "approval_status", "VARCHAR(16) DEFAULT 'approved'")
-	if _, err := s.db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS ci_relations (
-			id BIGINT AUTO_INCREMENT PRIMARY KEY,
-			source_ci_id VARCHAR(64) NOT NULL,
-			target_ci_id VARCHAR(64) NOT NULL,
-			relation_type VARCHAR(32) NOT NULL,
-			tenant_id VARCHAR(64),
-			attributes JSON,
-			created_at DATETIME,
-			UNIQUE KEY uq_rel (source_ci_id, target_ci_id, relation_type)
-		)`); err != nil {
-		log.Printf("[store] 建 ci_relations 表失败（非致命）: %v", err)
-	}
-	if _, err := s.db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS ci_attr_templates (
-			id INT AUTO_INCREMENT PRIMARY KEY,
-			ci_type VARCHAR(64) NOT NULL,
-			attr_key VARCHAR(64) NOT NULL,
-			label VARCHAR(128) NOT NULL,
-			attr_type VARCHAR(32) DEFAULT 'string',
-			required BOOLEAN DEFAULT 0,
-			default_value TEXT,
-			tenant_id VARCHAR(64),
-			created_at DATETIME,
-			UNIQUE KEY uq_tmpl (ci_type, attr_key)
-		)`); err != nil {
-		log.Printf("[store] 建 ci_attr_templates 表失败（非致命）: %v", err)
-	}
-	// P0-1 用户中心：幂等 seed 默认权限/角色/用户（与 MemoryStore 一致，保 HA 多副本身份一致）。
-	if err := s.seedRBAC(ctx); err != nil {
-		log.Printf("[store] seedRBAC 失败（非致命）: %v", err)
-	}
-	// Phase 3 K8s 集群管理：k8s_clusters 表（clusterID/name/server/kubeconfig/status）。
-	// Kubeconfig 为敏感内容（TEXT 列），API 层负责脱敏后返回前端。
-	if _, err := s.db.ExecContext(ctx, `
-	CREATE TABLE IF NOT EXISTS k8s_clusters (
-		id VARCHAR(64) PRIMARY KEY,
-		tenant_id VARCHAR(64),
-		name VARCHAR(255) NOT NULL,
-		server VARCHAR(255),
-		kubeconfig TEXT,
-		status VARCHAR(16) DEFAULT 'unknown',
-		created_at DATETIME,
-		updated_at DATETIME
-	)`); err != nil {
-		log.Printf("[store] 建 k8s_clusters 表失败（非致命）: %v", err)
-	}
 	// task 88 租户隔离：存量 k8s_clusters 表补 tenant_id 列（全新库由 CREATE TABLE 保证）。
 	s.alterColumnIfMissing(ctx, "k8s_clusters", "tenant_id", "VARCHAR(64)")
-	// task 100/111 建表（详见 sql_legacy.go initSchemaExtra）
+	// task 100/111 增量补列/补索引（详见 sql_legacy.go initSchemaExtra）。
 	s.initSchemaExtra(ctx)
 	// 工程债治理：补二级索引，避免 ClaimTask 的 FOR UPDATE 全表扫描加锁，
 	// 以及按租户分页查询（tenant_id + created_at DESC）回表全扫。
@@ -422,7 +429,15 @@ func (s *SQLStore) initSchema() error {
 	s.createIndexIfMissing(ctx, "tasks", "idx_tasks_tenant_created", "(tenant_id, created_at DESC)")
 	s.createIndexIfMissing(ctx, "tasks", "idx_tasks_agent", "(agent_id, status)")
 	s.createIndexIfMissing(ctx, "audit_log", "idx_audit_tenant_created", "(tenant_id, created_at DESC)")
-	return nil
+}
+
+// initSchema 幂等建表（CREATE TABLE IF NOT EXISTS）。
+//
+// Deprecated: 由 runMigrations 替代，保留供向后兼容。新代码应直接调用 runMigrations。
+// 本函数现在仅转发到 runMigrations，原建表/补列/索引逻辑已分别移入
+// migrations/001_initial.sql 与 applyLegacyColumnFixups。
+func (s *SQLStore) initSchema() error {
+	return s.runMigrations()
 }
 
 // createIndexIfMissing 当索引不存在时 CREATE INDEX（MySQL 无 CREATE INDEX IF NOT EXISTS）。
