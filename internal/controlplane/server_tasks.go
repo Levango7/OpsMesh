@@ -525,10 +525,6 @@ func (s *Server) handleTaskResult(w http.ResponseWriter, r *http.Request, id str
 // B1 修复 10：作业审批 API
 // ============================================================================
 
-// 任务审批状态常量。
-const (
-	taskStatusPendingApproval = "pending_approval" // 待审批（审批后才可执行）
-)
 
 // handleApproveTask 处理 POST /api/v1/tasks/{id}/approve：审批通过任务。
 // 将 pending_approval 状态的任务翻为 pending，使其可被 agent 领取执行。

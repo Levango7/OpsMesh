@@ -1,6 +1,6 @@
 # OpsMesh 网段运维中枢 — 交付说明
 
-> 版本：MVP（ADR-001 Option A）·  数据刷新 2026-08-07（行数/包数/依赖数/功能矩阵实测校准）·  仓库：https://github.com/Levango7/OpsMesh
+> 版本：MVP（ADR-001 Option A）·  数据刷新 2026-08-11（行数/包数/依赖数/功能矩阵实测校准）·  仓库：https://github.com/Levango7/OpsMesh
 
 ## 1. 产品定位
 
@@ -8,17 +8,17 @@
 
 **管控通道（已冻结决策 ADR-001 Option A，2026-07-27）**：MVP 管控通道 = **自研 gRPC（direct + proxy）**。原"蓝鲸 GSE 社区版底座 / GSE 级联纳管"**移出 MVP、降格为可选增强**（未来超大规模级联再独立立项）。跨网段规模化改为「每段一套控制面 + agent 集群 + 控制面联邦 / 任务跨段转发」。
 
-## 2. 代码规模（实测 2026-08-07，含六大运维模块 + OS 优化 / 中间件部署 / K8s 管理 / 灰度发布 / 告警规则 / 作业审批）
+## 2. 代码规模（实测 2026-08-11，含六大运维模块 + OS 优化 / 中间件部署 / K8s 管理 / 灰度发布 / 告警规则 / 作业审批）
 
 > 统计口径：排除 `.gocache`、`node_modules`；按 Go 模块分别统计后合计。主模块 `opsmesh`（go.mod 根）+ operator 子模块 `opsmesh/operator`（独立 go.mod，K8s Operator）。
 
 | 指标 | 主模块 opsmesh | operator 子模块 | 合计 |
 |------|---------------|----------------|------|
 | Go 包 | 25（1 cmd + 24 internal） | 3 | 28 |
-| 源码文件 | 80 | 6 | 86 |
-| 源码行数 | 24,179 | 852 | 25,031 |
-| 测试文件 | 46 | 1 | 47 |
-| 测试行数 | 10,530 | 143 | 10,673（占比约 29.9%） |
+| 源码文件 | 102 | 6 | 108 |
+| 源码行数 | 27,213 | 852 | 28,065 |
+| 测试文件 | 61 | 1 | 62 |
+| 测试行数 | 17,275 | 143 | 17,418（占比约 38.3%） |
 | 直接依赖 | 11 | 4（3 个与主模块共享） | 12（去重） |
 
 直接依赖清单（主模块 `go.mod` 非 indirect）：
@@ -115,8 +115,8 @@ go build ./... && go vet ./... && go test ./...
 ## 8. 仓库
 
 - 远端：`github.com/Levango7/OpsMesh`，分支 `main`
-- 根提交链：54 commits（初始 README → 内核实现 → 六大运维模块 → CI/容器加固 → 文档同步）
-- 提交内容：28 包源码（主模块 25 + operator 3）+ 47 测试 + Dockerfile/Dockerfile.agent + docker-compose + README + DELIVERY + `.github/ci.yml` + `.gitignore`
+- 根提交链：55 commits（初始 README → 内核实现 → 六大运维模块 → CI/容器加固 → 文档同步）
+- 提交内容：28 包源码（主模块 25 + operator 3）+ 62 测试 + Dockerfile/Dockerfile.agent + docker-compose + README + DELIVERY + `.github/ci.yml` + `.gitignore`
 
 ---
 ## 9. 生产安全加固（P0/P1）

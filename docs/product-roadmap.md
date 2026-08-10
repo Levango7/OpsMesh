@@ -26,7 +26,7 @@ OpsMesh 是**私有化单中心 B/S 自动化部署与运维平台**，核心差
 | 作业编排 | DAG 引擎 + store 阻塞→释放链路 + 画布 |
 | 平台基线 | 多副本 HA leader 选举、agent 多控制面 failover、租户行级隔离、gRPC TLS/mTLS、审计 100% 留痕、Prometheus 指标、多阶段 Dockerfile + CI |
 
-代码规模实测：19 个 Go 包、36 个源码文件（约 6,848 行）、21 个测试文件（约 2,372 行，占比 25.7%）、外部依赖 5 个（mysql/redis/kafka/grpc/crypto），零 protobuf 代码生成。
+代码规模实测：28 个 Go 包（主模块 25 + operator 3）、108 个源码文件（约 28,065 行）、62 个测试文件（约 17,418 行，占比 38.3%）、外部依赖 12 个（去重），protobuf 代码生成已启用（internal/grpcx/pb/）。
 
 ### 1.3 现存问题总结
 
@@ -38,7 +38,7 @@ MVP 功能完成度高，但面向生产规模化仍存在以下结构性短板�
 | 供应链风险 | `kafka-go` 须钉 `v0.4.48`（最后兼容 Go 1.22 版本），`v0.4.49+` 要求 Go ≥ 1.23，升级窗口受限 | 中 |
 | 纵深防御缺失 | agent shell 命令无白名单、file 路径无白名单、bootstrap token 编码未防 shell 注入、webhook/autoProvision URL 无 SSRF 校验 | 高 |
 | 测试覆盖不足 | `sql.go` 约 57KB 仅 1 个测试；12 个 HTTP handler 无测试；8 个后台 loop 无测试；前端零测试 | 高 |
-| 前端工程化弱 | 仪表盘为原生 JS 单文件约 986 行，无模块化/类型/构建/Lint | 中 |
+| 前端工程化弱 | 仪表盘为原生 JS 单文件约 986 行，无模块化/类型/构建/Lint（已通过 Vue3 企业版解决，原生 JS 个人版标记 Deprecated） | 中 |
 | 架构内聚不足 | Store 巨型接口（40+ 方法）违反接口隔离原则（ISP）；`domain` 包仅有数据结构无业务行为；Registry 仅一对一转发 store；agent 每次 RPC 重新 Dial | 中 |
 | 交付物缺口 | `docker-compose.yaml` 与 Helm Chart（`deploy/helm/opsmesh/`）现已提供；`goreleaser` 配置、systemd unit、Argo CD GitOps 仓库仍为规划/待完善 | 低 |
 
@@ -105,7 +105,7 @@ MVP 功能完成度高，但面向生产规模化仍存在以下结构性短板�
 
 #### 2.3.1 现状与问题
 
-当前 `internal/grpcx` 手写 `ServiceDesc` + JSON codec，消息类型为手写结构体。零 protobuf 代码生成虽降低了 MVP 依赖复杂度，但规模化后面临：
+当前 `internal/grpcx` 手写 `ServiceDesc` + JSON codec，消息类型为手写结构体。protobuf 代码生成已启用，stub 在 internal/grpcx/pb/，但规模化后仍面临：
 
 - 无 schema 演进与向后兼容保障
 - 无反射能力，跨语言客户端需手写协议
@@ -546,5 +546,5 @@ Vue3 企业版按里程碑持续演进；原生 JS 个人版仅维持 P0 修复�
 本文档中所有"计划/目标/演进/远期"措辞均为规划意图，不代表已实现能力。已实现能力以 `README.md` 功能矩阵与 `DELIVERY.md` 交付说明为准。具体而言：
 
 - Helm Chart、`docker-compose.yaml`：README 已提及且仓库已提供（已交付，见 5.3）。Argo CD ApplicationSet、`goreleaser`、systemd unit：仍为 M1/M2 计划交付物，仓库未提供或未完善
-- Store 接口拆分、DDD 实质化、protobuf、Vue 3 主线增强（SSE/类型/测试基线）、operator、schema 隔离：均为演进规划，当前未实现。Vue3 企业版前端（`web/enterprise/`）已交付为主线；原生 JS 个人版弃用策略已定（deprecated since v0.2.0，removal target v0.4.0），不属演进规划。联邦（控制面跨网段任务转发 mTLS + HMAC 签名验签，P1-6）已于 2026-08-02 落地
+- Store 接口拆分、DDD 实质化：均为演进规划，当前未实现。已实现项：protobuf 代码生成已启用（internal/grpcx/pb/）、operator 已交付、schema 隔离已有 --multi-schema flag、SSE 已实现 /api/v1/events/stream、Vue 3 主线已交付（web/enterprise/）。Vue3 企业版前端（`web/enterprise/`）已交付为主线；原生 JS 个人版弃用策略已定（deprecated since v0.2.0，removal target v0.4.0），不属演进规划。联邦（控制面跨网段任务转发 mTLS + HMAC 签名验签，P1-6）已于 2026-08-02 落地
 - 安全加固项（命令白名单、JWT 验签、SSRF 校验、CSP 收紧等）：均为规划，当前未实现

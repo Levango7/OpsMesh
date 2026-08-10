@@ -118,18 +118,25 @@ type Server struct {
 	clusterMgr *k8s.ClusterManager
 }
 
-// NewServer 构造控制面服务。按 cfg.Store 选择持久化后端（默认 memory），并初始化事件总线与指标。
 // startRefreshSweep 周期清理过期刷新令牌（task 112：store 持久化后改为 no-op，
 // 过期清理由 consumeRefreshToken 顺带完成；保留 sweep 机制以兼容未来 store 层扩展批量清理）。
-func (s *Server) startRefreshSweep(interval time.Duration) {
+//
+// 退出机制：goroutine 通过 select 监听 ctx.Done() 与 ticker.C，ctx 取消时优雅退出并 Stop ticker，
+// 避免 goroutine 泄漏。调用方（Start）在收到终止信号时取消 ctx 即可让 goroutine 退出。
+func (s *Server) startRefreshSweep(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = time.Hour
 	}
 	go func() {
 		t := time.NewTicker(interval)
 		defer t.Stop()
-		for range t.C {
-			s.purgeExpiredRefreshTokens()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				s.purgeExpiredRefreshTokens()
+			}
 		}
 	}()
 }
@@ -248,7 +255,7 @@ func NewServer(cfg *config.Config) *Server {
 	s.loginGuard = newLoginGuard(ss)
 	// P2 启动守卫回收，防止 ips map 在长运行中无界增长（内存泄漏）。
 	s.loginGuard.startSweep(10 * time.Minute)
-	s.startRefreshSweep(time.Hour) // 周期清理过期刷新令牌，防内存增长
+	// startRefreshSweep 移至 Start() 中调用（需要 ctx 以支持优雅退出，避免 goroutine 泄漏）。
 	// Phase 3 K8s 多集群连接管理器：构造空管理器，用户创建集群时 AddCluster。
 	s.clusterMgr = k8s.NewClusterManager()
 	// task 92 重启恢复连接：控制面重启后 ClusterManager 为空，按库内集群配置重建连接。
@@ -872,6 +879,7 @@ func (s *Server) Start() error {
 	go s.autoProvisionLoop(ctx)    // B1 自动纳管：--discover + --auto-provision 时周期扫描网段并推送 agent
 	go s.deployReconcileLoop(ctx)  // M3 部署对账：周期把 running 部署按底层任务结果翻终态（仅 leader）
 	go s.workflowScheduleLoop(ctx) // M5 作业编排：周期按 cron 触发 active 工作流并 reconcile 运行态（仅 leader）
+	s.startRefreshSweep(ctx, time.Hour) // 周期清理过期刷新令牌 + blacklist，ctx 取消时优雅退出
 
 	errCh := make(chan error, 3)
 	go func() {
@@ -905,6 +913,9 @@ func (s *Server) Start() error {
 	} else {
 		logx.Info(ctx, "控制面已启动", "http", s.httpPort, "grpc", s.grpcPort, "metrics", s.metricsPort)
 	}
+	// 优雅退出清理：无论正常收信号还是 server 异常返回，都停止 loginGuard 的 sweep goroutine，
+	// 避免 goroutine 泄漏。startRefreshSweep 的 goroutine 由 ctx 取消自动退出（defer stop() 取消 ctx）。
+	defer s.loginGuard.stopSweep()
 	select {
 	case <-ctx.Done():
 		logx.Info(ctx, "收到终止信号，优雅退出", "window", s.shutdownWait.String())

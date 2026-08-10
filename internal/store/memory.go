@@ -337,11 +337,6 @@ func bcryptHash(password string) (string, error) {
 	return string(hash), nil
 }
 
-// bcryptCompare 包装 bcrypt.CompareHashAndPassword，返回是否匹配。
-// 用于登录校验：哈希与明文密码比对。
-func bcryptCompare(hash, password string) bool {
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
-}
 
 // WithSecret 注入 B1 install token 的 HMAC 签名密钥（空则保留构造时随机密钥）。
 // 多副本控制面共享同一 MySQL 时须注入一致密钥，否则互不相认。

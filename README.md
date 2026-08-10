@@ -170,7 +170,7 @@ mysql -e "CREATE DATABASE IF NOT EXISTS ops_device"
 
 ### Kubernetes 部署（Helm Chart，已提供）
 
-仓库已自带完整 Helm Chart（`deploy/helm/opsmesh/`，含 `Chart.yaml` / `values.yaml` / `values-production.yaml` / `templates/` 全套 14 个模板），可一键部署控制面 + agent DaemonSet + MySQL + Redis：
+仓库已自带完整 Helm Chart（`deploy/helm/opsmesh/`，含 `Chart.yaml` / `values.yaml` / `values-production.yaml` / `templates/` 全套 17 个模板），可一键部署控制面 + agent DaemonSet + MySQL + Redis：
 
 ```bash
 # 开发/体验：单副本 + memory store
@@ -355,6 +355,20 @@ Agent 端多控制面 failover：`--control-addrs="cp1:9090,cp2:9090"`，客户�
 | POST | `/api/v1/provision/auto` | 自动纳管：按网段批量签发 install token |
 | GET | `/api/v1/agents` | agent 清单 |
 | GET | `/api/v1/me` | 当前身份信息（解析 X-Tenant-ID / X-User-Id / X-User-Roles） |
+| POST | `/api/v1/auth/register` | 用户中心：注册（受 --public-register / --allow-public-register 控制） |
+| POST | `/api/v1/auth/login` | 用户中心：登录（签发 AT/RT，P1-3 防爆破） |
+| GET | `/api/v1/auth/me` | 用户中心：当前登录用户信息 |
+| POST | `/api/v1/auth/logout` | 用户中心：登出（吊销 RT） |
+| POST | `/api/v1/auth/refresh` | 用户中心：刷新 AT（凭 RT） |
+| GET/POST | `/api/v1/users` | RBAC CRUD：用户列表 / 创建用户 |
+| GET/POST | `/api/v1/roles` | RBAC CRUD：角色列表 / 创建角色 |
+| GET/POST | `/api/v1/permissions` | RBAC CRUD：权限列表 / 创建权限 |
+| GET/POST | `/api/v1/os-templates` | OS 优化模板：列表 / 创建模板 |
+| GET/POST | `/api/v1/middleware-templates` | 中间件部署：模板列表 / 创建模板 |
+| GET/POST | `/api/v1/middleware-instances` | 中间件部署：实例列表 / 创建实例 |
+| GET/POST | `/api/v1/k8s/clusters` | K8s 集群管理：集群列表 / 接入集群 |
+| GET | `/api/v1/events/stream` | SSE 实时推送：任务状态/告警/设备上下线事件流 |
+| GET/POST | `/api/v1/alert-rules` | 告警规则：列表 / 创建规则 |
 | GET | `/api/v1/tasks` | 任务列表（支持 `?status=pending` 过滤） |
 | POST | `/api/v1/tasks` | 下发任务（单条，租户隔离 + 审计） |
 | POST | `/api/v1/tasks/batch` | 批量下发（逐台查找 agent + 租户校验） |
@@ -367,6 +381,7 @@ Agent 端多控制面 failover：`--control-addrs="cp1:9090,cp2:9090"`，客户�
 | \* | `/api/v1/deploys/*` | 服务部署：计划 / fan-out 执行 / Reconcile / Rollback（M3） |
 | GET | `/api/v1/logs` | 日志检索：双后端(Memory/SQL) + offset 分页（M6） |
 | GET | `/healthz` | 健康检查 |
+| GET | `/readyz` | 就绪探针（依赖 store/redis 就绪后才返回 200，K8s readinessProbe 用） |
 | GET | `/metrics` | Prometheus 文本指标 |
 | GET | `/install.sh` | agent bootstrap 脚本（curl ... \| sh -s -- --token=<tok>） |
 | GET | `/bin/opsmesh-agent` | agent 二进制下载（纳管 bootstrap 拉取） |
@@ -389,7 +404,7 @@ Agent 端多控制面 failover：`--control-addrs="cp1:9090,cp2:9090"`，客户�
 
 ## 配置参考
 
-OpsMesh 启动参数共 **75 个 flag**，全部支持"命令行 flag 优先、环境变量兜底"语义（同名环境变量前缀 `OPSMESH_`）。下表按功能分组列出全部 flag。完整定义见 `internal/config/config.go`。
+OpsMesh 启动参数共 **79 个 flag**，全部支持"命令行 flag 优先、环境变量兜底"语义（同名环境变量前缀 `OPSMESH_`）。下表按功能分组列出全部 flag。完整定义见 `internal/config/config.go`。
 
 ### 基础配置
 
@@ -443,6 +458,10 @@ OpsMesh 启动参数共 **75 个 flag**，全部支持"命令行 flag 优先、�
 | `--agent-shell-whitelist` | string | "" | OPSMESH_AGENT_SHELL_WHITELIST | 安全加固：agent shell 任务允许的命令前缀列表（逗号分隔，如 ls,cat,echo,ping,systemctl,docker,kubectl）；空=不限制 |
 | `--agent-file-root-whitelist` | string | "" | OPSMESH_AGENT_FILE_ROOT_WHITELIST | 安全加固：agent 文件任务允许的根目录白名单（逗号分隔）；空=不限制根目录（仍拒绝 ../ 路径遍历与符号链接） |
 | `--metrics-allow-cidr` | string | "" | OPSMESH_METRICS_ALLOW_CIDR | P1-5 metrics(/metrics) 访问控制：逗号分隔 CIDR 白名单；空=不限制（生产建议内网监控网段，如 10.0.0.0/8） |
+| `--encryption-key` | string | "" | OPSMESH_ENCRYPTION_KEY | P0-G3 kubeconfig AES-256-GCM 加密密钥（32 字节，hex/base64 均可）；空=关闭 kubeconfig 落盘加密（明文存储）；多副本须一致 |
+| `--grpc-signature-key` | string | "" | OPSMESH_GRPC_SIGNATURE_KEY | gRPC agent 身份绑定预共享 HMAC 签名密钥；非空时 agent 在 PullTasks/ReportResult/PollCancels/Heartbeat 携带 HMAC-SHA256 签名，服务端验签防伪造；与 --grpc-require-signature 配合使用 |
+| `--session-store` | string | memory | OPSMESH_SESSION_STORE | 会话状态后端：memory（默认，单进程内存，重启丢会话） \| redis（经 --redis-addr 持久化，多副本共享会话）；生产多副本建议 redis |
+| `--device-fp-deadline` | duration | 0 | OPSMESH_DEVICE_FP_DEADLINE | DeviceFP 强制非空截止时间；>0 时设备指纹为空的纳管请求在该时长后强制拒绝（防 agent 裸注册绕过指纹采集）；0=不强制 |
 
 ### 网络配置
 
@@ -526,7 +545,7 @@ Webhook 通道（generic/feishu/dingtalk/slack/企业微信）与邮件通道（
 | `--provision-ssh-key-pass` | string | "" | OPSMESH_PROVISION_SSH_KEY_PASS | B1 SSH 自动推送：SSH 密钥密码（推荐 env 注入） |
 | `--provision-ssh-known-hosts` | string | "" | OPSMESH_PROVISION_SSH_KNOWN_HOSTS | B1 SSH KnownHosts 文件路径（等保加固）；空=InsecureIgnoreHostKey（生产务必配置） |
 
-> 共 **75 个 flag**，覆盖基础/存储/安全/网络/告警/日志/调度/纳管八大领域。所有 flag 均支持同名 `OPSMESH_*` 环境变量兜底，命令行显式设置优先级最高。
+> 共 **79 个 flag**，覆盖基础/存储/安全/网络/告警/日志/调度/纳管八大领域。所有 flag 均支持同名 `OPSMESH_*` 环境变量兜底，命令行显式设置优先级最高。
 
 ---
 

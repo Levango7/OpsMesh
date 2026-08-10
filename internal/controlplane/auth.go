@@ -562,19 +562,6 @@ func (s *Server) userPermissions(u *store.User) []string {
 	return out
 }
 
-// userRoleNames 返回用户绑定的角色名列表（用于 JWT claims，便于前端展示）。
-func (s *Server) userRoleNames(u *store.User) []string {
-	if u == nil || len(u.RoleIDs) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(u.RoleIDs))
-	for _, rid := range u.RoleIDs {
-		if r := s.store.GetRole(rid); r != nil {
-			out = append(out, r.Name)
-		}
-	}
-	return out
-}
 
 // ============================================================================
 // JWT access token 吊销黑名单（P1-G4 + B-6）。
