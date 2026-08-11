@@ -1,4 +1,3 @@
-
 // http.go 提供 OTel HTTP 中间件，为每个 HTTP 请求自动创建 span 并记录 method/path/status/latency。
 // M1-1 控制面 HTTP 埋点：从请求头提取 W3C Trace Context（traceparent），使上游 trace 贯穿。
 package otelx
@@ -12,7 +11,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/semconv/v1.21.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -65,10 +63,10 @@ func HTTPMiddleware(handlerName string, next http.Handler) http.Handler {
 		ctx, span := tracer.Start(ctx, spanName,
 			trace.WithSpanKind(trace.SpanKindServer),
 			trace.WithAttributes(
-				semconv.HTTPMethodKey.String(r.Method),
-				semconv.HTTPRouteKey.String(path),
-				semconv.HTTPSchemeKey.String(schemeOf(r)),
-				semconv.NetHostPortKey.Int(portOf(r)),
+				attribute.String("http.method", r.Method),
+				attribute.String("http.route", path),
+				attribute.String("http.scheme", schemeOf(r)),
+				attribute.Int("net.host.port", portOf(r)),
 			),
 		)
 		defer span.End()
@@ -84,7 +82,7 @@ func HTTPMiddleware(handlerName string, next http.Handler) http.Handler {
 		// 记录状态码与延迟。
 		elapsed := time.Since(start)
 		span.SetAttributes(
-			semconv.HTTPStatusCodeKey.Int(rec.status),
+			attribute.Int("http.status_code", rec.status),
 			attribute.Int("http.duration_ms", int(elapsed.Milliseconds())),
 		)
 		// 状态码 >=500 标记 Error。

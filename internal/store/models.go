@@ -174,3 +174,78 @@ type RefreshToken struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 	CreatedAt time.Time `json:"createdAt"`
 }
+
+// SilenceRule 静默/抑制规则实体（task 241 M2 集成）。
+//
+// 在 [StartAt, EndAt] 时间窗口内，对 Labels 匹配 MatchLabels 的告警事件进行抑制。
+// MatchLabels 中每个键值对都需在事件 Labels 中存在且相等（AND 语义）；
+// 空 MatchLabels 表示匹配该租户下所有事件。
+//
+// 字段说明：
+//   - ID：静默规则唯一标识（CreateSilence 时由 store 分配随机 ID）；
+//   - TenantID：所属租户（隔离；空值保存时归一为 default）；
+//   - MatchLabels：匹配标签键值对（AND 语义，如 {"severity":"critical","deviceID":"dev-1"}）；
+//   - StartAt / EndAt：静默起止时间（零值表示不限）；
+//   - CreatedBy：创建人；
+//   - Reason：静默原因；
+//   - CreatedAt：创建时间戳。
+type SilenceRule struct {
+	ID          string            `json:"id"`
+	TenantID    string            `json:"tenantID"`
+	MatchLabels map[string]string `json:"matchLabels"`
+	StartAt     time.Time         `json:"startAt"`
+	EndAt       time.Time         `json:"endAt"`
+	CreatedBy   string            `json:"createdBy"`
+	Reason      string            `json:"reason"`
+	CreatedAt   time.Time         `json:"createdAt"`
+}
+
+// NotifyChannel 通知渠道实体（task 241 M2 集成）。
+//
+// 定义一个通知渠道（钉钉/企业微信/飞书/Slack/邮件/Webhook）的配置，
+// 告警规则通过 NotifyChannels 引用渠道 ID 列表，触发时经 Notifier 推送。
+//
+// 字段说明：
+//   - ID：渠道唯一标识（CreateNotifyChannel 时由 store 分配随机 ID）；
+//   - TenantID：所属租户（隔离；空值保存时归一为 default）；
+//   - Name：渠道展示名（如 "运维钉钉群"）；
+//   - Type：渠道类型（dingtalk/wecom/feishu/slack/email/webhook）；
+//   - Config：渠道配置 JSON（webhook URL/secret/SMTP 等，敏感字段由 API 层脱敏）；
+//   - Enabled：是否启用（false 时跳过推送）；
+//   - CreatedAt / UpdatedAt：创建/更新时间戳。
+type NotifyChannel struct {
+	ID        string    `json:"id"`
+	TenantID  string    `json:"tenantID"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	Config    string    `json:"config"` // 渠道配置 JSON（敏感，API 层负责脱敏）
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// NotifyTemplate 通知模板实体（task 241 M2 集成）。
+//
+// 定义通知消息的标题/正文模板（Go text/template 变量替换），
+// 渠道推送时按模板渲染产出消息正文。
+//
+// 字段说明：
+//   - ID：模板唯一标识（CreateNotifyTemplate 时由 store 分配随机 ID）；
+//   - TenantID：所属租户（隔离；空值保存时归一为 default）；
+//   - Name：模板展示名；
+//   - Type：模板类型（alert/task/device/system）；
+//   - Title：模板标题（支持变量替换）；
+//   - Body：模板正文（支持变量替换）；
+//   - Format：正文格式（markdown/text/html）；
+//   - CreatedAt / UpdatedAt：创建/更新时间戳。
+type NotifyTemplate struct {
+	ID        string    `json:"id"`
+	TenantID  string    `json:"tenantID"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	Format    string    `json:"format"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}

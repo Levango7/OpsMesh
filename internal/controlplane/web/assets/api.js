@@ -556,3 +556,471 @@ export function getK8sSecrets(clusterID, namespace) {
 export function getK8sNodes(clusterID) {
   return authGet('/api/v1/k8s/clusters/' + encodeURIComponent(clusterID) + '/nodes');
 }
+
+// ============================================================
+// task 241 M2 集成：告警规则引擎 + 静默规则 + 通知渠道 + 通知模板 API
+// ============================================================
+//
+// 告警规则引擎（alertengine.AlertRule 多条件）：
+//   GET    /api/v1/alert-rules-engine           → 200 [AlertRule]
+//   POST   /api/v1/alert-rules-engine           → 201 AlertRule
+//   GET    /api/v1/alert-rules-engine/{id}      → 200 AlertRule
+//   PUT    /api/v1/alert-rules-engine/{id}      → 200 AlertRule
+//   DELETE /api/v1/alert-rules-engine/{id}      → 200 {status}
+//
+// 静默规则：
+//   GET    /api/v1/alert-silences               → 200 [SilenceRule]
+//   POST   /api/v1/alert-silences               → 201 SilenceRule
+//   DELETE /api/v1/alert-silences/{id}          → 200 {status}
+//
+// 通知渠道：
+//   GET    /api/v1/notify-channels              → 200 [NotifyChannel]
+//   POST   /api/v1/notify-channels              → 201 NotifyChannel
+//   PUT    /api/v1/notify-channels/{id}         → 200 NotifyChannel
+//   DELETE /api/v1/notify-channels/{id}         → 200 {status}
+//   POST   /api/v1/notify-channels/{id}/test    → 200 {status}
+//
+// 通知模板：
+//   GET    /api/v1/notify-templates             → 200 [NotifyTemplate]
+//   POST   /api/v1/notify-templates             → 201 NotifyTemplate
+//   PUT    /api/v1/notify-templates/{id}        → 200 NotifyTemplate
+//   DELETE /api/v1/notify-templates/{id}        → 200 {status}
+// ============================================================
+
+// ---------- 告警规则引擎（多条件） ----------
+// 列出告警规则
+export function getAlertRulesEngine() {
+  return authGet('/api/v1/alert-rules-engine');
+}
+
+// 创建告警规则
+export async function createAlertRuleEngine(body) {
+  return await request('/api/v1/alert-rules-engine', jsonBody(body));
+}
+
+// 获取单条告警规则
+export function getAlertRuleEngine(id) {
+  return authGet('/api/v1/alert-rules-engine/' + encodeURIComponent(id));
+}
+
+// 更新告警规则
+export async function updateAlertRuleEngine(id, body) {
+  return await request('/api/v1/alert-rules-engine/' + encodeURIComponent(id), jsonMethod('PUT', body));
+}
+
+// 删除告警规则：返回 {s, j}
+export function deleteAlertRuleEngine(id) {
+  const h = {};
+  const token = getToken();
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  return fetch('/api/v1/alert-rules-engine/' + encodeURIComponent(id), { method: 'DELETE', headers: h })
+    .then(function (r) { return { s: r.status, j: null }; });
+}
+
+// ---------- 静默规则 ----------
+// 列出静默规则
+export function getAlertSilences() {
+  return authGet('/api/v1/alert-silences');
+}
+
+// 创建静默规则
+export async function createAlertSilence(body) {
+  return await request('/api/v1/alert-silences', jsonBody(body));
+}
+
+// 删除静默规则
+export function deleteAlertSilence(id) {
+  const h = {};
+  const token = getToken();
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  return fetch('/api/v1/alert-silences/' + encodeURIComponent(id), { method: 'DELETE', headers: h })
+    .then(function (r) { return { s: r.status, j: null }; });
+}
+
+// ---------- 通知渠道 ----------
+// 列出通知渠道
+export function getNotifyChannels() {
+  return authGet('/api/v1/notify-channels');
+}
+
+// 创建通知渠道
+export async function createNotifyChannel(body) {
+  return await request('/api/v1/notify-channels', jsonBody(body));
+}
+
+// 更新通知渠道
+export async function updateNotifyChannel(id, body) {
+  return await request('/api/v1/notify-channels/' + encodeURIComponent(id), jsonMethod('PUT', body));
+}
+
+// 删除通知渠道
+export function deleteNotifyChannel(id) {
+  const h = {};
+  const token = getToken();
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  return fetch('/api/v1/notify-channels/' + encodeURIComponent(id), { method: 'DELETE', headers: h })
+    .then(function (r) { return { s: r.status, j: null }; });
+}
+
+// 测试通知渠道
+export function testNotifyChannel(id) {
+  return authPost('/api/v1/notify-channels/' + encodeURIComponent(id) + '/test');
+}
+
+// ---------- 通知模板 ----------
+// 列出通知模板
+export function getNotifyTemplates() {
+  return authGet('/api/v1/notify-templates');
+}
+
+// 创建通知模板
+export async function createNotifyTemplate(body) {
+  return await request('/api/v1/notify-templates', jsonBody(body));
+}
+
+// 更新通知模板
+export async function updateNotifyTemplate(id, body) {
+  return await request('/api/v1/notify-templates/' + encodeURIComponent(id), jsonMethod('PUT', body));
+}
+
+// 删除通知模板
+export function deleteNotifyTemplate(id) {
+  const h = {};
+  const token = getToken();
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  return fetch('/api/v1/notify-templates/' + encodeURIComponent(id), { method: 'DELETE', headers: h })
+    .then(function (r) { return { s: r.status, j: null }; });
+}
+
+// ============================================================
+// task 242 M3 集成：Helm 应用商店 API + 集群监控仪表盘 API
+// ============================================================
+//
+// Helm 仓库管理：
+//   GET    /api/v1/helm/repos                  → 200 {repos: [ChartRepo]}
+//   POST   /api/v1/helm/repos                  → 201 ChartRepo
+//   DELETE /api/v1/helm/repos/{name}           → 200 {status}
+//
+// Helm Chart 搜索：
+//   GET    /api/v1/helm/charts/search?q=xxx    → 200 {charts: [ChartInfo], query}
+//   GET    /api/v1/helm/repos/{name}/charts    → 200 {charts: [ChartInfo]}
+//
+// Helm Release 管理：
+//   GET    /api/v1/helm/releases?namespace=xxx → 200 {releases: [Release]}
+//   POST   /api/v1/helm/releases               → 201 Release
+//   PUT    /api/v1/helm/releases/{name}        → 200 Release（body: {namespace, chart, values?}）
+//   DELETE /api/v1/helm/releases/{name}?namespace=xxx → 200 {status}
+//   POST   /api/v1/helm/releases/{name}/rollback → 200 Release（body: {namespace, revision?}）
+//   GET    /api/v1/helm/releases/{name}/history?namespace=xxx → 200 {history: [Release], name}
+//
+// Helm 应用商店：
+//   GET    /api/v1/helm/catalog                → 200 {items, categories, stats}
+//   GET    /api/v1/helm/catalog?category=xxx   → 200 {items, category}
+//   GET    /api/v1/helm/catalog?q=xxx          → 200 {items, query}
+//
+// 集群监控仪表盘：
+//   GET    /api/v1/k8s/clusters/{id}/dashboard → 200 ClusterDashboard
+//   GET    /api/v1/k8s/clusters/{id}/nodes/{node}/metrics → 200 {name, roles, cpu, memory}
+//   GET    /api/v1/k8s/clusters/{id}/health    → 200 ClusterHealth
+// ============================================================
+
+// ---------- Helm 仓库管理 ----------
+// 列出所有 Helm 仓库
+export function getHelmRepos() {
+  return authGet('/api/v1/helm/repos');
+}
+
+// 添加 Helm 仓库
+export async function addHelmRepo(body) {
+  return await request('/api/v1/helm/repos', jsonBody(body));
+}
+
+// 删除 Helm 仓库
+export function deleteHelmRepo(name) {
+  const h = {};
+  const token = getToken();
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  return fetch('/api/v1/helm/repos/' + encodeURIComponent(name), { method: 'DELETE', headers: h })
+    .then(function (r) { return { s: r.status, j: null }; });
+}
+
+// 列出仓库内所有 chart
+export function getHelmRepoCharts(name) {
+  return authGet('/api/v1/helm/repos/' + encodeURIComponent(name) + '/charts');
+}
+
+// ---------- Helm Chart 搜索 ----------
+// 搜索 chart（跨所有仓库）
+export function searchHelmCharts(q) {
+  return authGet('/api/v1/helm/charts/search?q=' + encodeURIComponent(q));
+}
+
+// ---------- Helm Release 管理 ----------
+// 列出 release（namespace 空则列所有 namespace）
+export function getHelmReleases(namespace) {
+  const qs = namespace ? '?namespace=' + encodeURIComponent(namespace) : '';
+  return authGet('/api/v1/helm/releases' + qs);
+}
+
+// 安装 release
+export async function installHelmRelease(body) {
+  return await request('/api/v1/helm/releases', jsonBody(body));
+}
+
+// 升级 release
+export async function upgradeHelmRelease(name, body) {
+  return await request('/api/v1/helm/releases/' + encodeURIComponent(name), jsonMethod('PUT', body));
+}
+
+// 卸载 release
+export function uninstallHelmRelease(name, namespace) {
+  const h = {};
+  const token = getToken();
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  const qs = namespace ? '?namespace=' + encodeURIComponent(namespace) : '';
+  return fetch('/api/v1/helm/releases/' + encodeURIComponent(name) + qs, { method: 'DELETE', headers: h })
+    .then(function (r) { return { s: r.status, j: null }; });
+}
+
+// 回滚 release
+export async function rollbackHelmRelease(name, body) {
+  return await request('/api/v1/helm/releases/' + encodeURIComponent(name) + '/rollback', jsonBody(body));
+}
+
+// 获取 release 历史
+export function getHelmReleaseHistory(name, namespace) {
+  const qs = namespace ? '?namespace=' + encodeURIComponent(namespace) : '';
+  return authGet('/api/v1/helm/releases/' + encodeURIComponent(name) + '/history' + qs);
+}
+
+// ---------- Helm 应用商店目录 ----------
+// 获取预置应用目录（category 或 q 可选）
+export function getHelmCatalog(category, q) {
+  const qs = [];
+  if (category) qs.push('category=' + encodeURIComponent(category));
+  if (q) qs.push('q=' + encodeURIComponent(q));
+  const query = qs.length ? '?' + qs.join('&') : '';
+  return authGet('/api/v1/helm/catalog' + query);
+}
+
+// ---------- 集群监控仪表盘 ----------
+// 获取集群仪表盘汇总
+export function getK8sClusterDashboard(clusterID) {
+  return authGet('/api/v1/k8s/clusters/' + encodeURIComponent(clusterID) + '/dashboard');
+}
+
+// 获取节点指标
+export function getK8sNodeMetrics(clusterID, nodeName) {
+  return authGet('/api/v1/k8s/clusters/' + encodeURIComponent(clusterID) + '/nodes/' + encodeURIComponent(nodeName) + '/metrics');
+}
+
+// 获取集群健康检查
+export function getK8sClusterHealth(clusterID) {
+  return authGet('/api/v1/k8s/clusters/' + encodeURIComponent(clusterID) + '/health');
+}
+
+// ============================================================
+// task 243 M5 集成：批量运维 / 灰度发布 / 定时任务 / 审批 API
+//
+// 批量运维：
+//   POST   /api/v1/tasks/batch-exec          → 201 {batchID, tasks:[]}
+//   GET    /api/v1/tasks/batch/{id}          → 200 批量状态
+//   POST   /api/v1/tasks/canary              → 201 {canaryID, phases:[]}
+//   GET    /api/v1/tasks/canary/{id}         → 200 灰度状态
+//   POST   /api/v1/tasks/canary/{id}/advance → 200 推进下一阶段
+//
+// 定时任务：
+//   POST   /api/v1/schedules                 → 201 ScheduleEntry
+//   GET    /api/v1/schedules                 → 200 [ScheduleEntry]
+//   PUT    /api/v1/schedules/{id}            → 200 ScheduleEntry
+//   DELETE /api/v1/schedules/{id}            → 200
+//   POST   /api/v1/schedules/{id}/pause      → 200 ScheduleEntry
+//   POST   /api/v1/schedules/{id}/resume     → 200 ScheduleEntry
+//
+// 审批：
+//   GET    /api/v1/approval/flows            → 200 [ApprovalFlow]
+//   POST   /api/v1/approval/flows            → 201 ApprovalFlow
+//   PUT    /api/v1/approval/flows/{id}       → 200 ApprovalFlow
+//   DELETE /api/v1/approval/flows/{id}       → 200
+//   GET    /api/v1/approval/requests         → 200 [ApprovalRequest]
+//   POST   /api/v1/approval/requests         → 201 ApprovalRequest
+//   GET    /api/v1/approval/requests/{id}    → 200 ApprovalRequest
+//   POST   /api/v1/approval/requests/{id}/approve → 200
+//   POST   /api/v1/approval/requests/{id}/reject  → 200
+//   POST   /api/v1/approval/requests/{id}/cancel  → 200
+//   GET    /api/v1/approval/pending          → 200 [ApprovalRequest]
+//   GET    /api/v1/approval/requests/{id}/history → 200 History
+// ============================================================
+
+// ---------- 批量运维 ----------
+// 批量执行
+export async function batchExec(body) {
+  return await request('/api/v1/tasks/batch-exec', jsonBody(body));
+}
+
+// 查询批量状态
+export function getBatchStatus(batchID) {
+  return authGet('/api/v1/tasks/batch/' + encodeURIComponent(batchID));
+}
+
+// ---------- 灰度发布 ----------
+// 创建灰度发布
+export async function createCanary(body) {
+  return await request('/api/v1/tasks/canary', jsonBody(body));
+}
+
+// 查询灰度状态
+export function getCanaryStatus(canaryID) {
+  return authGet('/api/v1/tasks/canary/' + encodeURIComponent(canaryID));
+}
+
+// 推进灰度到下一阶段
+export function advanceCanary(canaryID) {
+  return authPost('/api/v1/tasks/canary/' + encodeURIComponent(canaryID) + '/advance');
+}
+
+// ---------- 定时任务管理 ----------
+// 列表定时任务
+export function getSchedules(status) {
+  const qs = status ? '?status=' + encodeURIComponent(status) : '';
+  return authGet('/api/v1/schedules' + qs);
+}
+
+// 创建定时任务
+export async function createSchedule(body) {
+  return await request('/api/v1/schedules', jsonBody(body));
+}
+
+// 更新定时任务
+export async function updateSchedule(id, body) {
+  return await request('/api/v1/schedules/' + encodeURIComponent(id), jsonMethod('PUT', body));
+}
+
+// 删除定时任务
+export function deleteSchedule(id) {
+  const h = {};
+  const token = getToken();
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  return fetch('/api/v1/schedules/' + encodeURIComponent(id), { method: 'DELETE', headers: h })
+    .then(function (r) { return { s: r.status, j: null }; });
+}
+
+// 暂停定时任务
+export function pauseSchedule(id) {
+  return authPost('/api/v1/schedules/' + encodeURIComponent(id) + '/pause');
+}
+
+// 恢复定时任务
+export function resumeSchedule(id) {
+  return authPost('/api/v1/schedules/' + encodeURIComponent(id) + '/resume');
+}
+
+// ---------- 审批流管理 ----------
+// 列表审批流
+export function getApprovalFlows() {
+  return authGet('/api/v1/approval/flows');
+}
+
+// 创建审批流
+export async function createApprovalFlow(body) {
+  return await request('/api/v1/approval/flows', jsonBody(body));
+}
+
+// 更新审批流
+export async function updateApprovalFlow(id, body) {
+  return await request('/api/v1/approval/flows/' + encodeURIComponent(id), jsonMethod('PUT', body));
+}
+
+// 删除审批流
+export function deleteApprovalFlow(id) {
+  const h = {};
+  const token = getToken();
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  return fetch('/api/v1/approval/flows/' + encodeURIComponent(id), { method: 'DELETE', headers: h })
+    .then(function (r) { return { s: r.status, j: null }; });
+}
+
+// ---------- 审批请求 ----------
+// 列表审批请求（status 可选过滤）
+export function getApprovalRequests(status) {
+  const qs = status ? '?status=' + encodeURIComponent(status) : '';
+  return authGet('/api/v1/approval/requests' + qs);
+}
+
+// 提交审批请求
+export async function submitApprovalRequest(body) {
+  return await request('/api/v1/approval/requests', jsonBody(body));
+}
+
+// 审批请求详情
+export function getApprovalRequest(id) {
+  return authGet('/api/v1/approval/requests/' + encodeURIComponent(id));
+}
+
+// 审批通过
+export async function approveApprovalRequest(id, comment) {
+  return await request('/api/v1/approval/requests/' + encodeURIComponent(id) + '/approve', jsonBody({ comment: comment || '' }));
+}
+
+// 审批拒绝
+export async function rejectApprovalRequest(id, comment) {
+  return await request('/api/v1/approval/requests/' + encodeURIComponent(id) + '/reject', jsonBody({ comment: comment || '' }));
+}
+
+// 取消审批
+export async function cancelApprovalRequest(id) {
+  return await request('/api/v1/approval/requests/' + encodeURIComponent(id) + '/cancel', jsonBody({}));
+}
+
+// 待我审批列表
+export function getPendingApprovals() {
+  return authGet('/api/v1/approval/pending');
+}
+
+// 审批历史
+export function getApprovalHistory(id) {
+  return authGet('/api/v1/approval/requests/' + encodeURIComponent(id) + '/history');
+}
+
+// ---------- 网络拓扑与诊断（task 244 M6 集成） ----------
+// GET /api/v1/network/topology[?refresh=true] — 返回网络拓扑图（节点=设备/agent，边=连通性+延迟）
+// GET /api/v1/network/topology/cache         — 返回最近一次缓存的拓扑（不触发探测）
+// POST /api/v1/network/diagnose              — 发起网络诊断任务（ping/traceroute/tcping/nslookup/curl）
+// GET /api/v1/network/diagnose/{taskId}      — 查询诊断任务结果
+// POST /api/v1/network/connectivity          — 批量连通性检测
+
+// 获取网络拓扑（refresh=true 强制刷新缓存并重新探测）
+export function getNetworkTopology(refresh) {
+  const q = refresh ? '?refresh=true' : '';
+  return authGet('/api/v1/network/topology' + q);
+}
+
+// 获取缓存的网络拓扑（不触发探测）
+export function getNetworkTopologyCache() {
+  return authGet('/api/v1/network/topology/cache');
+}
+
+// 发起网络诊断任务，返回 { taskId }
+export async function diagnoseNetwork(agentId, tool, target, options) {
+  const body = {
+    agentId: agentId,
+    tool: tool,
+    target: target,
+    options: options || {},
+  };
+  return await request('/api/v1/network/diagnose', jsonBody(body));
+}
+
+// 查询诊断任务结果（轮询用）
+export function getDiagnoseResult(taskId) {
+  return authGet('/api/v1/network/diagnose/' + encodeURIComponent(taskId));
+}
+
+// 批量连通性检测
+export async function checkConnectivity(sourceAgentId, targets) {
+  const body = {
+    sourceAgentId: sourceAgentId,
+    targets: targets || [],
+  };
+  return await request('/api/v1/network/connectivity', jsonBody(body));
+}

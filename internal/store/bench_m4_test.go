@@ -221,12 +221,12 @@ func BenchmarkMemoryStore_Snapshot_TenantFilter(b *testing.B) {
 		tenant := fmt.Sprintf("tenant-%d", t)
 		for i := 0; i < devicesPerTenant; i++ {
 			m.UpsertDevice(&proto.DeviceInfo{
-				DeviceID:  fmt.Sprintf("dev-t%d-%d", t, i),
-				Segment:   "seg-a",
-				TenantID:  tenant,
-				IP:        "10.0.0.1",
-				State:     "online",
-				Managed:   true,
+				DeviceID: fmt.Sprintf("dev-t%d-%d", t, i),
+				Segment:  "seg-a",
+				TenantID: tenant,
+				IP:       "10.0.0.1",
+				State:    "online",
+				Managed:  true,
 			})
 		}
 	}

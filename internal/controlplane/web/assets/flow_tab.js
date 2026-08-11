@@ -12,10 +12,17 @@ import { loadFlows } from './flow_workflow.js';
 import { pollDeploys } from './flow_deploys.js';
 import { pollAlertsFull } from './flow_alerts.js';
 import { loadAudits } from './flow_audits.js';
+import { loadAlertRulesPage, loadNotifyConfig } from './flow_m2.js';
+import { loadHelmPage } from './flow_helm.js';
+import { loadClusterDashboardPage } from './flow_dashboard.js';
+import { loadBatchPage } from './flow_batch.js';
+import { loadSchedulesPage } from './flow_schedules.js';
+import { loadApprovalPage } from './flow_approval.js';
+import { loadNetworkTopology } from './flow_network.js';
 
 // ---------- 标签切换 ----------
 export function switchTab(name) {
-  ['home', 'ops', 'cmdb', 'osopt', 'mwdep', 'k8s', 'deploy', 'flow', 'logs', 'alerts', 'users', 'roles', 'permission', 'audits', 'settings', 'docs'].forEach(function (t) {
+  ['home', 'ops', 'cmdb', 'osopt', 'mwdep', 'k8s', 'helm', 'dashboard', 'network', 'deploy', 'flow', 'logs', 'alerts', 'alertrules', 'notify', 'batch', 'schedules', 'approval', 'users', 'roles', 'permission', 'audits', 'settings', 'docs'].forEach(function (t) {
     const p = document.getElementById('tab-' + t); if (p) p.classList.toggle('active', t === name);
     const b = document.getElementById('tab-' + t + '-btn'); if (b) b.classList.toggle('active', t === name);
   });
@@ -24,11 +31,20 @@ export function switchTab(name) {
   if (name === 'osopt') { loadOSTemplates(); }
   if (name === 'mwdep') { loadMiddlewareTemplates(); loadMiddlewareInstances(); }
   if (name === 'k8s') { loadK8sClusters(); }
+  if (name === 'helm') { loadHelmPage(); }
+  if (name === 'dashboard') { loadClusterDashboardPage(); }
+  if (name === 'network') { loadNetworkTopology(); }
   if (name === 'flow') { loadFlows(); }
   if (name === 'deploy') { pollDeploys(); }
   if (name === 'alerts') { pollAlertsFull(); }
+  if (name === 'alertrules') { loadAlertRulesPage(); }
+  if (name === 'notify') { loadNotifyConfig(); }
   if (name === 'home') { paintStats(); }
+
   if (name === 'audits') { loadAudits(); }
+  if (name === 'batch') { loadBatchPage(); }
+  if (name === 'schedules') { loadSchedulesPage(); }
+  if (name === 'approval') { loadApprovalPage(); }
   // 用户/角色/权限管理：通过 window 兼容层调用（避免 flow.js → main.js 循环依赖）
   if (name === 'users' && typeof window.pollUsers === 'function') { window.pollUsers(); }
   if (name === 'roles' && typeof window.pollRoles === 'function') { window.pollRoles(); }

@@ -30,3 +30,10 @@ export * from './flow_middleware.js';
 export * from './flow_k8s.js';
 export * from './flow_logs.js';
 export * from './flow_users.js';
+export * from './flow_m2.js'; // task 241 M2 集成：告警规则引擎 + 静默 + 通知渠道 + 通知模板
+export * from './flow_helm.js'; // task 242 M3 集成：Helm 应用商店
+export * from './flow_dashboard.js'; // task 242 M3 集成：集群监控仪表盘
+export * from './flow_batch.js'; // task 243 M5 集成：批量运维 + 灰度发布
+export * from './flow_schedules.js'; // task 243 M5 集成：定时任务管理
+export * from './flow_approval.js'; // task 243 M5 集成：审批管理
+export * from './flow_network.js'; // task 244 M6 集成：网络拓扑 + 诊断 + 连通性检测

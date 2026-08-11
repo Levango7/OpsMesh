@@ -57,6 +57,13 @@ type SQLStore struct {
 	// task 81 gRPC agent 身份绑定：agentID -> HMAC 签名密钥缓存（避免每次请求都查 MySQL）。
 	// 权威存储在 agents.secret 列；此处仅缓存已查询过的 agent 密钥（首次查询后填充）。
 	agentSecretCache map[string]string
+
+	// task 241 M2 集成：静默规则 / 通知渠道 / 通知模板 内存缓存。
+	// 权威存储在 MySQL（后续 migration）；当前用内存 map 实现 API 闭环，多副本 HA 下数据分裂
+	// 由后续 migration 解决（与 alertRules 同范式 TODO）。
+	silences        map[string]*SilenceRule
+	notifyChannels  map[string]*NotifyChannel
+	notifyTemplates map[string]*NotifyTemplate
 }
 
 func (s *SQLStore) DB() *sql.DB { return s.db }
@@ -130,7 +137,7 @@ func NewSQLStore(dsn, redisAddr string) (*SQLStore, error) {
 	}
 	instID := fmt.Sprintf("%s-%d-%d", host, os.Getpid(), time.Now().UnixNano())
 
-	s := &SQLStore{db: db, rdb: rdb, instanceID: instID, secret: mustRandHex(32), deviceMetrics: make(map[string]*metricsRing), agentSecretCache: make(map[string]string)}
+	s := &SQLStore{db: db, rdb: rdb, instanceID: instID, secret: mustRandHex(32), deviceMetrics: make(map[string]*metricsRing), agentSecretCache: make(map[string]string), silences: make(map[string]*SilenceRule), notifyChannels: make(map[string]*NotifyChannel), notifyTemplates: make(map[string]*NotifyTemplate)}
 	if err := s.runMigrations(); err != nil {
 		log.Printf("[store] 迁移失败（运行期可能不可用）: %v", err)
 	}

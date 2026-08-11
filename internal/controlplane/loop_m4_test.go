@@ -9,8 +9,8 @@
 //   - archiveLoop         (F5 离线超龄归档)    — 注入超龄设备，RetireStaleDevices 标记 retired
 //   - reclaimLoop         (P0-1 任务租约回收)  — 注入超期 running 任务，ReclaimStaleTasks 复位 pending
 //   - cancelLoop          (F3 取消超时任务)    — controlplane 侧对应 workflowScheduleLoop（M5 作业编排）；
-//                              agent 侧 cancelLoop 位于 internal/agent 包，此处验证 controlplane 第 8 个 loop
-//                              workflowScheduleLoop 的 ListActive 行为 + 启停。
+//     agent 侧 cancelLoop 位于 internal/agent 包，此处验证 controlplane 第 8 个 loop
+//     workflowScheduleLoop 的 ListActive 行为 + 启停。
 //
 // 测试核心：每个 loop 同时验证 (1) context cancel 正常退出不泄漏 goroutine；(2) 注入数据后底层行为正确。
 // 对硬编码长 ticker（10s~60s）的 loop，行为断言直接调用 loop 内调用的 store 方法（loop 行为的核心），

@@ -54,6 +54,10 @@ import (
 	"opsmesh/internal/provision"
 	"opsmesh/internal/store"
 	"opsmesh/internal/tlsutil"
+	"opsmesh/internal/alertengine"
+	"opsmesh/internal/approval"
+	"opsmesh/internal/cron"
+	"opsmesh/internal/helm"
 )
 
 // Server 控制面服务（HTTP + gRPC + metrics）。
@@ -126,6 +130,38 @@ type Server struct {
 	// M1-2 API 限流器：按 IP 令牌桶限流，超过阈值返回 429 Too Many Requests。
 	// nil=禁用限流（CBRateLimitPerSec<=0，向后兼容）。
 	rateLimiter *rateLimiter
+
+	// task 241 M2 集成：告警规则引擎 + 静默器 + 聚合器 + 通知管理器。
+	// alertEngine 持有 alertengine.AlertRule 集合，周期评估设备指标触发告警事件；
+	// alertSilencer 按标签匹配 + 时间窗口抑制告警事件；
+	// alertAggregator 按 groupBy 字段聚合告警事件（避免告警风暴）；
+	// alertNotifier 多渠道推送（钉钉/企业微信/飞书/Slack/邮件/Webhook）+ 模板渲染 + 重试 + 去重。
+	// 全部在 NewServer 构造；nil=未启用 M2 告警引擎（向后兼容，仅依赖 notifyLoop 推送）。
+	alertEngine    *alertengine.Engine
+	alertSilencer  *alertengine.Silencer
+	alertAggregator *alertengine.Aggregator
+	alertNotifier  *notify.Notifier
+
+	// task 242 M3 集成：Helm 应用商店（仓库管理 + Release 管理 + 预置目录）。
+	// helmRepo 管理 Chart 仓库集合（add/remove/list/search），helmRelease 管理 Release 生命周期
+	// （install/upgrade/rollback/uninstall/list/history）；两者通过 helm CLI 调用 helm 命令行。
+	// nil=未启用 Helm 应用商店（向后兼容）；当前实现总是构造，helm CLI 不存在时 API 返回 503。
+	helmRepo    *helm.RepoManager
+	helmRelease *helm.ReleaseManager
+
+	// task 243 M5 集成：批量运维/灰度发布 + 定时任务管理 + 审批引擎。
+	// batches 持有批量/灰度发布的内存索引（重启后丢失，任务实例本身在 store 中持久化）。
+	// scheduleMgr 维护定时任务元数据（ScheduleEntry CRUD + 暂停/恢复）。
+	// approvalEngine 持有审批流定义与审批请求状态机（来自 internal/approval 包）。
+	batches       *batchStore
+	scheduleMgr   *cron.Manager
+	approvalEngine *approval.Engine
+
+	// task 244 M6 集成：网络拓扑缓存。
+	// networkTopologyCache 持有最近一次探测的拓扑数据 + 5 分钟过期时间，
+	// 由 handleNetworkTopology 在 ?refresh=true 时刷新，handleNetworkTopologyCache 读取。
+	// 内存缓存（重启后丢失），不持久化到 store（拓扑数据时效性强，无需持久化）。
+	networkTopologyCache *NetworkTopologyCache
 }
 
 // startRefreshSweep 周期清理过期刷新令牌（task 112：store 持久化后改为 no-op，
@@ -211,6 +247,14 @@ func NewServer(cfg *config.Config) *Server {
 				To:   cfg.AlertEmailTo,
 			},
 		},
+		// task 241 M2 集成：初始化告警规则引擎 + 静默器 + 聚合器 + 通知管理器。
+		// 引擎使用 NoopMetricsProvider（无指标源时）；后续可注入基于 store.DeviceMetrics 的 Provider。
+		// 聚合器按 deviceID + severity 分组，每组最多 100 条。
+		// 通知管理器启用 5 分钟去重 + 默认重试策略。
+		alertEngine:     alertengine.NewEngine(nil, nil, nil),
+		alertSilencer:   alertengine.NewSilencer(nil),
+		alertAggregator: alertengine.NewAggregator([]string{"deviceID", "severity"}, 100),
+		alertNotifier:   notify.NewNotifier(notify.WithDedup(5*time.Minute), notify.WithRetry(nil)),
 	}
 	if cfg.Demo {
 		// 演示模式（P0-5）：主动播种 demo 拓扑，让 6 大模块在无真实 agent 时也能完整演示。
@@ -326,6 +370,32 @@ func NewServer(cfg *config.Config) *Server {
 		s.rateLimiter = newRateLimiter(cfg.CBRateLimitPerSec, 10*time.Minute)
 		logx.Info(context.Background(), "API 限流已启用", "ratePerSec", cfg.CBRateLimitPerSec)
 	}
+	// task 242 M3 集成：Helm 应用商店（RepoManager + ReleaseManager）。
+	// kubeconfig 留空，helm CLI 使用 KUBECONFIG 环境变量或 ~/.kube/config 默认路径；
+	// helm 二进制不存在时构造仍成功，API 调用时返回 503 友好错误（不阻断启动）。
+	s.helmRepo = helm.NewRepoManager(nil)
+	s.helmRelease = helm.NewReleaseManager("")
+	// 启动时从 helm CLI 已配置的仓库同步到内存索引（helm repo list）。
+	// helm 未安装/无仓库时返回错误，仅打 Warning 不阻断启动。
+	if err := s.helmRepo.LoadFromHelm(); err != nil {
+		logx.Warn(context.Background(), "Helm 仓库加载失败（helm 未安装或不可用）", "err", err)
+	}
+	// task 243 M5 集成：批量运维/灰度发布 + 定时任务管理 + 审批引擎。
+	// batches 内存索引（重启后丢失，任务实例本身在 store 持久化）。
+	// scheduleMgr 维护 ScheduleEntry 元数据；approvalEngine 来自 internal/approval 包。
+	// 预置审批流（DefaultFlows）在引擎构造后注入，使新租户开箱可用。
+	s.batches = newBatchStore()
+	s.scheduleMgr = cron.NewManager()
+	s.approvalEngine = approval.New()
+	for _, f := range approval.DefaultFlows {
+		cp := *f
+		cp.TenantID = "default" // 预置流模板实例化为 default 租户
+		if err := s.approvalEngine.CreateFlow(&cp); err != nil {
+			logx.Warn(context.Background(), "预置审批流注入失败", "err", err, "flowID", f.ID)
+		}
+	}
+	// task 244 M6 集成：初始化网络拓扑缓存（空缓存，首次查询时触发探测）。
+	s.networkTopologyCache = &NetworkTopologyCache{}
 	return s
 }
 
@@ -902,6 +972,52 @@ func (s *Server) Start() error {
 	// B1 修复 9：告警规则 CRUD API。
 	mux.HandleFunc("/api/v1/alert-rules", s.handleAlertRules)
 	mux.HandleFunc("/api/v1/alert-rules/", s.handleAlertRuleRouting) // 子路径：{id} DELETE 删除
+	// task 241 M2 集成：告警规则引擎（多条件）+ 静默规则 + 通知渠道 + 通知模板 API。
+	// 走独立路由 /api/v1/alert-rules-engine 避免与旧版 alert-rules 冲突（向后兼容）。
+	mux.HandleFunc("/api/v1/alert-rules-engine", s.handleAlertRulesEngine)
+	mux.HandleFunc("/api/v1/alert-rules-engine/", s.handleAlertRuleEngineRouting) // 子路径：{id} GET/PUT/DELETE
+	mux.HandleFunc("/api/v1/alert-silences", s.handleAlertSilences)
+	mux.HandleFunc("/api/v1/alert-silences/", s.handleAlertSilenceRouting) // 子路径：{id} DELETE
+	mux.HandleFunc("/api/v1/notify-channels", s.handleNotifyChannels)
+	mux.HandleFunc("/api/v1/notify-channels/", s.handleNotifyChannelRouting) // 子路径：{id} PUT/DELETE、{id}/test POST
+	mux.HandleFunc("/api/v1/notify-templates", s.handleNotifyTemplates)
+	mux.HandleFunc("/api/v1/notify-templates/", s.handleNotifyTemplateRouting) // 子路径：{id} PUT/DELETE
+
+	// task 242 M3 集成：Helm 应用商店 API（仓库/Chart/Release/Catalog）。
+	// helm CLI 不存在时各 API 返回 503，不阻断控制面启动。
+	mux.HandleFunc("/api/v1/helm/repos", s.handleHelmRepos)
+	mux.HandleFunc("/api/v1/helm/repos/", s.handleHelmRepoRouting)               // 子路径：{name} DELETE、{name}/charts GET
+	mux.HandleFunc("/api/v1/helm/charts/search", s.handleHelmChartSearch)         // ?q=xxx 搜索 chart
+	mux.HandleFunc("/api/v1/helm/releases", s.handleHelmReleases)
+	mux.HandleFunc("/api/v1/helm/releases/", s.handleHelmReleaseRouting)          // 子路径：{name} PUT/DELETE、{name}/rollback、{name}/history
+	mux.HandleFunc("/api/v1/helm/catalog", s.handleHelmCatalog)                   // 预置应用目录
+
+	// task 243 M5 集成：批量运维/灰度发布 + 定时任务管理 + 审批 API。
+	// 批量执行走 /api/v1/tasks/batch-exec（避免与既有 /api/v1/tasks/batch 冲突）；
+	// 批量状态查询走 /api/v1/tasks/batch/{id}；灰度发布走 /api/v1/tasks/canary[/{id}|/{id}/advance]。
+	// 定时任务管理走 /api/v1/schedules[/{id}|/{id}/pause|/{id}/resume]。
+	// 审批 API 走 /api/v1/approval/{flows,requests,pending}。
+	mux.HandleFunc("/api/v1/tasks/batch-exec", s.handleBatchExec) // POST 批量执行（M5 增强）
+	mux.HandleFunc("/api/v1/tasks/batch/", s.handleBatchRouting)  // GET 批量状态查询
+	mux.HandleFunc("/api/v1/tasks/canary", s.handleCanaryCreate)  // POST 灰度发布
+	mux.HandleFunc("/api/v1/tasks/canary/", s.handleCanaryRouting) // GET 灰度状态 / POST advance
+	mux.HandleFunc("/api/v1/schedules", s.handleSchedules)        // GET 列表 / POST 创建定时任务
+	mux.HandleFunc("/api/v1/schedules/", s.handleScheduleRouting)  // 子路径：{id} GET/PUT/DELETE、{id}/pause、{id}/resume
+	mux.HandleFunc("/api/v1/approval/flows", s.handleApprovalFlows)         // GET 列表 / POST 创建审批流
+	mux.HandleFunc("/api/v1/approval/flows/", s.handleApprovalFlowRouting)  // 子路径：{id} GET/PUT/DELETE
+	mux.HandleFunc("/api/v1/approval/requests", s.handleApprovalRequests)   // GET 列表 / POST 提交审批请求
+	mux.HandleFunc("/api/v1/approval/requests/", s.handleApprovalRequestRouting) // 子路径：{id} GET、{id}/approve|reject|cancel|history
+	mux.HandleFunc("/api/v1/approval/pending", s.handleApprovalPending)     // GET 待我审批列表
+
+	// task 244 M6 集成：网络拓扑发现 + 网络诊断工具 + 连通性检测 API。
+	// 拓扑探测结果缓存 5 分钟（networkTopologyCache），?refresh=true 强制刷新；
+	// 诊断命令通过下发 shell task 到指定 agent 执行（复用现有任务机制）；
+	// 连通性检测对每个 target 发起 tcping/ping 检测，同步等待最多 5 秒收集结果。
+	mux.HandleFunc("/api/v1/network/topology", s.handleNetworkTopology)           // GET 拓扑图（?refresh=true 强制刷新）
+	mux.HandleFunc("/api/v1/network/topology/cache", s.handleNetworkTopologyCache) // GET 缓存拓扑（不触发探测）
+	mux.HandleFunc("/api/v1/network/diagnose", s.handleNetworkDiagnose)            // POST 发起诊断任务
+	mux.HandleFunc("/api/v1/network/diagnose/", s.handleNetworkDiagnoseResult)     // GET 子路径：{taskId}
+	mux.HandleFunc("/api/v1/network/connectivity", s.handleNetworkConnectivity)    // POST 批量连通性检测
 
 	// B1 修复 4：用 jsonErrorMux 包装 mux，将 404 统一为 JSON 格式。
 	// P1-C3：httpMetricsMiddleware 包在最外层，记录所有请求（含 panic 转的 500）的计数与延迟。
@@ -936,6 +1052,7 @@ func (s *Server) Start() error {
 	go s.scheduleLoop(ctx)              // F4 定时/周期调度：周期派生到点模板任务的 pending 实例（仅 leader）
 	go s.archiveLoop(ctx)               // F5 ��线超龄自动归档（仅 leader）
 	go s.notifyLoop(ctx)                // M7 告警 Webhook 推送：周期检查新 critical 告警并推送到 webhook URL
+	go s.alertEngineLoop(ctx)           // task 241 M2 告警评估循环：alertengine.Engine + Silencer + Aggregator + Notifier
 	go s.autoProvisionLoop(ctx)         // B1 自动纳管：--discover + --auto-provision 时周期扫描网段并推送 agent
 	go s.deployReconcileLoop(ctx)       // M3 部署对账：周期把 running 部署按底层任务结果翻终态（仅 leader）
 	go s.workflowScheduleLoop(ctx)      // M5 作业编排：周期按 cron 触发 active 工作流并 reconcile 运行态（仅 leader）

@@ -42,6 +42,34 @@ import {
   loadK8sDeployments, scaleDeployment, closeK8sScaleModal, confirmScaleDeployment, restartDeployment,
   loadK8sServices, loadK8sConfigMaps, loadK8sSecrets, loadK8sNodes,
   showChangePasswordModal,
+  // task 241 M2 集成：告警规则引擎 + 静默 + 通知渠道 + 通知模板
+  loadAlertRulesEngine, showCreateAlertRuleModal, showEditAlertRuleModal, closeAlertRuleModal, deleteAlertRuleEngineConfirm,
+  loadAlertSilences, showCreateSilenceModal, closeAlertSilenceModal, deleteAlertSilenceConfirm,
+  loadNotifyChannels, showCreateChannelModal, showEditChannelModal, closeNotifyChannelModal, deleteNotifyChannelConfirm, testNotifyChannelSend,
+  loadNotifyTemplates, showCreateTemplateModal, showEditTemplateModal, closeNotifyTemplateModal, deleteNotifyTemplateConfirm,
+  loadAlertRulesPage, loadNotifyConfig,
+  // task 242 M3 集成：Helm 应用商店 + 集群监控仪表盘
+  loadHelmPage, loadHelmCatalog, filterHelmCategory, searchHelmCatalog,
+  showHelmInstallModal, closeHelmInstallModal, confirmHelmInstall,
+  loadHelmRepos, showAddHelmRepoModal, closeAddHelmRepoModal, confirmAddHelmRepo,
+  deleteHelmRepoConfirm, viewHelmRepoCharts,
+  loadHelmReleases, onHelmReleaseNamespaceKeyDown,
+  upgradeHelmReleasePrompt, rollbackHelmReleasePrompt, viewHelmReleaseHistory, uninstallHelmReleaseConfirm,
+  loadClusterDashboardPage, onDashboardClusterSelectChange, loadClusterDashboard,
+  loadClusterHealth, loadDashboardNodes, viewNodeMetrics,
+  // task 243 M5 集成：批量运维 + 灰度发布 + 定时任务 + 审批
+  loadBatchPage, submitBatchExec, pollBatchStatus,
+  submitCanary, onCanaryStrategyChange, pollCanaryStatus, advanceCanary,
+  loadSchedulesPage, showCreateScheduleModal, confirmCreateSchedule,
+  showEditScheduleModal, confirmEditSchedule, pauseSchedule, resumeSchedule, deleteScheduleConfirm,
+  loadApprovalPage, switchApprovalTab,
+  loadApprovalFlows, showCreateFlowModal, confirmCreateFlow, showEditFlowModal, confirmEditFlow, deleteFlowConfirm,
+  loadPendingApprovals, approveRequest, rejectRequest, cancelRequest,
+  loadApprovalHistoryList, viewRequestHistory,
+  // task 244 M6 集成：网络拓扑 + 诊断 + 连通性检测
+  loadNetworkTopology, refreshNetworkTopology, zoomNetworkTopo, resetNetworkTopo,
+  showDiagnoseModal, closeDiagnoseModal, onDiagnoseToolChange, executeDiagnose,
+  showConnectivityModal, closeConnectivityModal, executeConnectivity,
 } from './flow.js';
 import { icon } from './icons.js';
 import { initTheme, toggleTheme, getTheme, setTheme } from './theme.js';
@@ -152,6 +180,104 @@ w.loadK8sServices = loadK8sServices;
 w.loadK8sConfigMaps = loadK8sConfigMaps;
 w.loadK8sSecrets = loadK8sSecrets;
 w.loadK8sNodes = loadK8sNodes;
+
+// task 241 M2 集成：告警规则引擎 + 静默 + 通知渠道 + 通知模板
+w.loadAlertRulesEngine = loadAlertRulesEngine;
+w.showCreateAlertRuleModal = showCreateAlertRuleModal;
+w.showEditAlertRuleModal = showEditAlertRuleModal;
+w.editAlertRuleEngine = showEditAlertRuleModal; // 列表 onclick 别名
+w.closeAlertRuleModal = closeAlertRuleModal;
+w.deleteAlertRuleEngineConfirm = deleteAlertRuleEngineConfirm;
+w.loadAlertSilences = loadAlertSilences;
+w.showCreateSilenceModal = showCreateSilenceModal;
+w.closeAlertSilenceModal = closeAlertSilenceModal;
+w.deleteAlertSilenceConfirm = deleteAlertSilenceConfirm;
+w.loadNotifyChannels = loadNotifyChannels;
+w.showCreateChannelModal = showCreateChannelModal;
+w.showEditChannelModal = showEditChannelModal;
+w.editNotifyChannel = showEditChannelModal; // 列表 onclick 别名
+w.closeNotifyChannelModal = closeNotifyChannelModal;
+w.deleteNotifyChannelConfirm = deleteNotifyChannelConfirm;
+w.testNotifyChannelSend = testNotifyChannelSend;
+w.loadNotifyTemplates = loadNotifyTemplates;
+w.showCreateTemplateModal = showCreateTemplateModal;
+w.showEditTemplateModal = showEditTemplateModal;
+w.editNotifyTemplate = showEditTemplateModal; // 列表 onclick 别名
+w.closeNotifyTemplateModal = closeNotifyTemplateModal;
+w.deleteNotifyTemplateConfirm = deleteNotifyTemplateConfirm;
+w.loadAlertRulesPage = loadAlertRulesPage;
+w.loadNotifyConfig = loadNotifyConfig;
+
+// task 242 M3 集成：Helm 应用商店 + 集群监控仪表盘
+w.loadHelmPage = loadHelmPage;
+w.loadHelmCatalog = loadHelmCatalog;
+w.filterHelmCategory = filterHelmCategory;
+w.searchHelmCatalog = searchHelmCatalog;
+w.showHelmInstallModal = showHelmInstallModal;
+w.closeHelmInstallModal = closeHelmInstallModal;
+w.confirmHelmInstall = confirmHelmInstall;
+w.loadHelmRepos = loadHelmRepos;
+w.showAddHelmRepoModal = showAddHelmRepoModal;
+w.closeAddHelmRepoModal = closeAddHelmRepoModal;
+w.confirmAddHelmRepo = confirmAddHelmRepo;
+w.deleteHelmRepoConfirm = deleteHelmRepoConfirm;
+w.viewHelmRepoCharts = viewHelmRepoCharts;
+w.loadHelmReleases = loadHelmReleases;
+w.onHelmReleaseNamespaceKeyDown = onHelmReleaseNamespaceKeyDown;
+w.upgradeHelmReleasePrompt = upgradeHelmReleasePrompt;
+w.rollbackHelmReleasePrompt = rollbackHelmReleasePrompt;
+w.viewHelmReleaseHistory = viewHelmReleaseHistory;
+w.uninstallHelmReleaseConfirm = uninstallHelmReleaseConfirm;
+w.loadClusterDashboardPage = loadClusterDashboardPage;
+w.onDashboardClusterSelectChange = onDashboardClusterSelectChange;
+w.loadClusterDashboard = loadClusterDashboard;
+w.loadClusterHealth = loadClusterHealth;
+w.loadDashboardNodes = loadDashboardNodes;
+w.viewNodeMetrics = viewNodeMetrics;
+
+// task 243 M5 集成：批量运维 + 灰度发布 + 定时任务 + 审批
+w.loadBatchPage = loadBatchPage;
+w.submitBatchExec = submitBatchExec;
+w.pollBatchStatus = pollBatchStatus;
+w.submitCanary = submitCanary;
+w.onCanaryStrategyChange = onCanaryStrategyChange;
+w.pollCanaryStatus = pollCanaryStatus;
+w.advanceCanary = advanceCanary;
+w.loadSchedulesPage = loadSchedulesPage;
+w.showCreateScheduleModal = showCreateScheduleModal;
+w.confirmCreateSchedule = confirmCreateSchedule;
+w.showEditScheduleModal = showEditScheduleModal;
+w.confirmEditSchedule = confirmEditSchedule;
+w.pauseSchedule = pauseSchedule;
+w.resumeSchedule = resumeSchedule;
+w.deleteScheduleConfirm = deleteScheduleConfirm;
+w.loadApprovalPage = loadApprovalPage;
+w.switchApprovalTab = switchApprovalTab;
+w.loadApprovalFlows = loadApprovalFlows;
+w.showCreateFlowModal = showCreateFlowModal;
+w.confirmCreateFlow = confirmCreateFlow;
+w.showEditFlowModal = showEditFlowModal;
+w.confirmEditFlow = confirmEditFlow;
+w.deleteFlowConfirm = deleteFlowConfirm;
+w.loadPendingApprovals = loadPendingApprovals;
+w.approveRequest = approveRequest;
+w.rejectRequest = rejectRequest;
+w.cancelRequest = cancelRequest;
+w.loadApprovalHistoryList = loadApprovalHistoryList;
+w.viewRequestHistory = viewRequestHistory;
+
+// task 244 M6 集成：网络拓扑 + 诊断 + 连通性检测
+w.loadNetworkTopology = loadNetworkTopology;
+w.refreshNetworkTopology = refreshNetworkTopology;
+w.zoomNetworkTopo = zoomNetworkTopo;
+w.resetNetworkTopo = resetNetworkTopo;
+w.showDiagnoseModal = showDiagnoseModal;
+w.closeDiagnoseModal = closeDiagnoseModal;
+w.onDiagnoseToolChange = onDiagnoseToolChange;
+w.executeDiagnose = executeDiagnose;
+w.showConnectivityModal = showConnectivityModal;
+w.closeConnectivityModal = closeConnectivityModal;
+w.executeConnectivity = executeConnectivity;
 
 // ---------- 主题 / 语言 ----------
 w.toggleTheme = toggleTheme;
@@ -663,6 +789,8 @@ function initStaticIcons() {
     'navIconOsOpt': 'osopt',
     'navIconMwDep': 'mwdep',
     'navIconK8s': 'k8s',
+    'navIconHelm': 'helm',
+    'navIconDashboard': 'dashboard',
     // pane-intro
     'introIconHome': 'home', 'introIconOps': 'ops', 'introIconCmdb': 'cmdb',
     'introIconFlow': 'flow', 'introIconDeploy': 'deploy', 'introIconLogs': 'logs',
@@ -671,6 +799,8 @@ function initStaticIcons() {
     'introIconOsOpt': 'osopt',
     'introIconMwDep': 'mwdep',
     'introIconK8s': 'k8s',
+    'introIconHelm': 'helm',
+    'introIconDashboard': 'dashboard',
     // 上下文
     'ctxIcon': 'context',
     // 按钮
@@ -856,6 +986,48 @@ function applyI18nToDOM() {
   setText('k8sScaleReplicasLabel', t('k8s.targetReplicas'));
   setText('k8sScaleCancelBtn', t('k8s.cancel'));
   setText('k8sScaleConfirmBtn', t('k8s.confirm'));
+
+  // task 242 M3 集成：Helm 应用商店 + 集群监控仪表盘 i18n 绑定
+  setText('tab-helm-btn', t('nav.helm'), true);
+  setText('tab-dashboard-btn', t('nav.dashboard'), true);
+  setHTML('helmTitle', t('helm.title'));
+  setHTML('helmDesc', t('helm.desc'));
+  setText('helmCatalogTitle', t('helm.catalog'));
+  setText('helmCatalogHint', t('helm.installTitle'));
+  setText('helmSearchBtn', t('common.search'));
+  setText('helmCatalogRefreshBtn', t('common.refresh'));
+  const helmSearchI = document.getElementById('helmSearchInput');
+  if (helmSearchI) helmSearchI.placeholder = t('helm.searchPlaceholder');
+  setText('helmReposTitle', t('helm.repos'));
+  setText('helmReposHint', t('helm.repos'));
+  setText('helmReposRefreshBtn', t('common.refresh'));
+  setText('helmAddRepoBtn', t('helm.addRepo'));
+  setText('helmReleasesTitle', t('helm.releases'));
+  setText('helmReleasesHint', t('helm.releases'));
+  setText('helmReleasesRefreshBtn', t('common.refresh'));
+  const helmRelNsI = document.getElementById('helmReleaseNamespaceInput');
+  if (helmRelNsI) helmRelNsI.placeholder = t('helm.releaseNamespaceHint');
+  // Helm 安装弹窗
+  setText('helmInstallNamespaceLabel', t('helm.namespace'));
+  setText('helmInstallNameLabel', t('helm.releaseName'));
+  setText('helmInstallChartLabel', t('helm.chart'));
+  setText('helmInstallVersionLabel', t('helm.version'));
+  setText('helmInstallValuesLabel', t('helm.values'));
+  setText('helmInstallValuesHint', t('helm.valuesHint'));
+  setText('helmInstallCancelBtn', t('helm.cancel'));
+  setText('helmInstallConfirmBtn', t('helm.confirm'));
+  // Helm 添加仓库弹窗
+  setText('helmAddRepoTitle', t('helm.addRepo'));
+  setText('helmAddRepoNameLabel', t('helm.repoName'));
+  setText('helmAddRepoUrlLabel', t('helm.repoUrl'));
+  setText('helmAddRepoTypeLabel', t('helm.repoType'));
+  setText('helmAddRepoCancelBtn', t('helm.cancel'));
+  setText('helmAddRepoConfirmBtn', t('helm.confirm'));
+  // 集群仪表盘
+  setHTML('dashboardTitle', t('dashboard.title'));
+  setHTML('dashboardDesc', t('dashboard.desc'));
+  setText('dashboardSelectClusterLabel', t('dashboard.selectCluster'));
+  setText('dashboardRefreshBtn', t('common.refresh'));
   // 系统设置 / 文档
   setText('settingsTitle', t('settings.title'));
   setText('settingsDesc', t('settings.desc'));

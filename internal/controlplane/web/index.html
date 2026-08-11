@@ -116,12 +116,20 @@
   <button class="tab" id="tab-osopt-btn" onclick="switchTab('osopt')"><span class="icon" id="navIconOsOpt"></span>OS 优化</button>
   <button class="tab" id="tab-mwdep-btn" onclick="switchTab('mwdep')"><span class="icon" id="navIconMwDep"></span>中间件部署</button>
   <button class="tab" id="tab-k8s-btn" onclick="switchTab('k8s')"><span class="icon" id="navIconK8s"></span>K8s 管理</button>
+  <button class="tab" id="tab-helm-btn" onclick="switchTab('helm')"><span class="icon" id="navIconHelm"></span>Helm 应用商店</button>
+  <button class="tab" id="tab-dashboard-btn" onclick="switchTab('dashboard')"><span class="icon" id="navIconDashboard"></span>集群仪表盘</button>
+  <button class="tab" id="tab-network-btn" onclick="switchTab('network')"><span class="icon" id="navIconNetwork"></span>网络拓扑</button>
   <div class="navgroup" id="navGroupDelivery">交付中心</div>
   <button class="tab" id="tab-deploy-btn" onclick="switchTab('deploy')"><span class="icon" id="navIconDeploy"></span>部署中心</button>
   <button class="tab" id="tab-flow-btn" onclick="switchTab('flow')"><span class="icon" id="navIconFlow"></span>作业编排</button>
+  <button class="tab" id="tab-batch-btn" onclick="switchTab('batch')"><span class="icon" id="navIconBatch"></span>批量运维</button>
+  <button class="tab" id="tab-schedules-btn" onclick="switchTab('schedules')"><span class="icon" id="navIconSchedules"></span>定时任务</button>
+  <button class="tab" id="tab-approval-btn" onclick="switchTab('approval')"><span class="icon" id="navIconApproval"></span>审批管理</button>
   <div class="navgroup" id="navGroupObservability">可观测性</div>
   <button class="tab" id="tab-logs-btn" onclick="switchTab('logs')"><span class="icon" id="navIconLogs"></span>日志检索</button>
   <button class="tab" id="tab-alerts-btn" onclick="switchTab('alerts')"><span class="icon" id="navIconAlerts"></span>监控告警</button>
+  <button class="tab" id="tab-alertrules-btn" onclick="switchTab('alertrules')"><span class="icon" id="navIconAlertRules"></span>告警规则</button>
+  <button class="tab" id="tab-notify-btn" onclick="switchTab('notify')"><span class="icon" id="navIconNotify"></span>通知配置</button>
   <div class="navgroup" id="navGroupSystem">系统管理</div>
   <button class="tab" id="tab-users-btn" onclick="switchTab('users')"><span class="icon" id="navIconUsers"></span>用户中心</button>
   <button class="tab" id="tab-roles-btn" onclick="switchTab('roles')"><span class="icon" id="navIconRoles"></span>角色管理</button>
@@ -652,6 +660,88 @@
   <div class="page-note" id="note-alerts"></div>
 </div>
 
+<!-- ============ 告警规则（task 241 M2 集成） ============ -->
+<div id="tab-alertrules" class="pane">
+  <div class="pane-intro">
+    <div class="ico" style="background:var(--rose-soft);color:var(--rose)"><span class="icon" id="introIconAlertRules"></span></div>
+    <div class="txt">
+      <h3 id="introAlertRulesTitle">告警规则</h3>
+      <p id="introAlertRulesDesc">配置基于指标阈值的多条件告警规则。支持 AND/OR/NOT 逻辑组合、持续时长评估、严重度分级、通知渠道选择。</p>
+    </div>
+    <span class="hint-link" onclick="loadAlertRulesPage()" id="introAlertRulesRefresh">刷新</span>
+  </div>
+
+  <!-- 告警规则列表 -->
+  <div class="row-single">
+    <div class="card accent-rose">
+      <div class="filter-bar">
+        <h3 style="margin:0">告警规则列表</h3>
+        <button onclick="showCreateAlertRuleModal()" class="primary">+ 创建规则</button>
+        <button onclick="loadAlertRulesEngine()" class="ghost">刷新</button>
+      </div>
+      <div id="alertRulesList"><p class="muted">加载中…</p></div>
+    </div>
+  </div>
+
+  <!-- 静默规则 -->
+  <div class="row-single">
+    <div class="card">
+      <div class="filter-bar">
+        <h3 style="margin:0">静默规则</h3>
+        <button onclick="showCreateSilenceModal()" class="primary">+ 创建静默</button>
+        <button onclick="loadAlertSilences()" class="ghost">刷新</button>
+      </div>
+      <p class="field-hint">按标签匹配 + 时间窗口抑制告警事件。</p>
+      <div id="alertSilencesList"><p class="muted">加载中…</p></div>
+    </div>
+  </div>
+  <div class="page-note" id="note-alertrules"></div>
+</div>
+
+<!-- ============ 通知配置（task 241 M2 集成） ============ -->
+<div id="tab-notify" class="pane">
+  <div class="pane-intro">
+    <div class="ico" style="background:var(--teal-soft);color:var(--teal)"><span class="icon" id="introIconNotify"></span></div>
+    <div class="txt">
+      <h3 id="introNotifyTitle">通知配置</h3>
+      <p id="introNotifyDesc">配置告警通知推送渠道：钉钉/企业微信/飞书/Slack/邮件/Webhook。支持测试发送与消息模板管理。</p>
+    </div>
+    <span class="hint-link" onclick="loadNotifyConfig()" id="introNotifyRefresh">刷新</span>
+  </div>
+
+  <!-- 通知渠道 -->
+  <div class="row-single">
+    <div class="card accent-teal">
+      <div class="filter-bar">
+        <h3 style="margin:0">通知渠道</h3>
+        <button onclick="showCreateChannelModal()" class="primary">+ 添加渠道</button>
+        <button onclick="loadNotifyChannels()" class="ghost">刷新</button>
+      </div>
+      <div id="notifyChannelsList"><p class="muted">加载中…</p></div>
+    </div>
+  </div>
+
+  <!-- 通知模板 -->
+  <div class="row-single">
+    <div class="card">
+      <div class="filter-bar">
+        <h3 style="margin:0">通知模板</h3>
+        <button onclick="showCreateTemplateModal()" class="primary">+ 创建模板</button>
+        <button onclick="loadNotifyTemplates()" class="ghost">刷新</button>
+      </div>
+      <p class="field-hint">配置通知消息标题/正文模板，支持 Go text/template 变量替换。</p>
+      <div id="notifyTemplatesList"><p class="muted">加载中…</p></div>
+    </div>
+  </div>
+  <div class="page-note" id="note-notify"></div>
+</div>
+
+<!-- 弹窗容器（task 241 M2 集成） -->
+<div id="alertRuleModal" style="display:none"></div>
+<div id="alertSilenceModal" style="display:none"></div>
+<div id="notifyChannelModal" style="display:none"></div>
+<div id="notifyTemplateModal" style="display:none"></div>
+
 <!-- ============ 用户中心 ============ -->
 <div id="tab-users" class="pane">
   <div class="pane-intro">
@@ -954,6 +1044,174 @@
   <div class="page-note" id="note-k8s"></div>
 </div>
 
+<!-- ============ Helm 应用商店 ============ -->
+<div id="tab-helm" class="pane">
+  <div class="pane-intro">
+    <div class="ico" style="background:var(--indigo-soft);color:var(--indigo)"><span class="icon" id="introIconHelm"></span></div>
+    <div class="txt">
+      <h3 id="helmTitle">Helm 应用商店</h3>
+      <p id="helmDesc">基于 Helm 的应用商店：预置常用应用目录、仓库管理、Release 生命周期管理。</p>
+    </div>
+  </div>
+
+  <!-- 应用目录 -->
+  <div class="row-single">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div>
+          <h4 id="helmCatalogTitle" style="margin:0 0 4px 0">应用目录</h4>
+          <p class="field-hint" id="helmCatalogHint" style="margin:0">点击应用卡片即可安装。</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="text" id="helmSearchInput" class="form-control" placeholder="搜索应用…" style="width:220px" onkeydown="if(event.key==='Enter')searchHelmCatalog()">
+          <button class="btn btn-primary btn-sm" onclick="searchHelmCatalog()" id="helmSearchBtn">搜索</button>
+          <button class="btn btn-sm" onclick="loadHelmCatalog()" id="helmCatalogRefreshBtn">刷新</button>
+        </div>
+      </div>
+      <div id="helmCategoryBar" style="margin-bottom:12px"></div>
+      <div id="helmCatalogGrid"><p class="muted">加载中…</p></div>
+    </div>
+  </div>
+
+  <!-- 仓库管理 -->
+  <div class="row-single">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div>
+          <h4 id="helmReposTitle" style="margin:0 0 4px 0">仓库管理</h4>
+          <p class="field-hint" id="helmReposHint" style="margin:0">管理 Helm Chart 仓库。</p>
+        </div>
+        <div>
+          <button class="btn btn-sm" onclick="loadHelmRepos()" style="margin-right:6px" id="helmReposRefreshBtn">刷新</button>
+          <button class="btn btn-primary btn-sm" onclick="showAddHelmRepoModal()" id="helmAddRepoBtn">添加仓库</button>
+        </div>
+      </div>
+      <div id="helmRepoList"><p class="muted">加载中…</p></div>
+    </div>
+  </div>
+
+  <!-- Release 管理 -->
+  <div class="row-single">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div>
+          <h4 id="helmReleasesTitle" style="margin:0 0 4px 0">Release 管理</h4>
+          <p class="field-hint" id="helmReleasesHint" style="margin:0">已安装的 Helm Release 列表。</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="text" id="helmReleaseNamespaceInput" class="form-control" placeholder="namespace 过滤" style="width:180px" onkeydown="onHelmReleaseNamespaceKeyDown(event)">
+          <button class="btn btn-sm" onclick="loadHelmReleases()" id="helmReleasesRefreshBtn">刷新</button>
+        </div>
+      </div>
+      <div id="helmReleaseList"><p class="muted">加载中…</p></div>
+    </div>
+  </div>
+  <div class="page-note" id="note-helm"></div>
+</div>
+
+<!-- ============ Helm 安装应用对话框 ============ -->
+<div id="helmInstallModal" class="dev-modal-overlay">
+  <div class="dev-modal" role="dialog" aria-modal="true" style="max-width:700px">
+    <div class="dev-modal-header">
+      <h3 id="helmInstallTitle">安装应用</h3>
+      <button class="close-btn" onclick="closeHelmInstallModal()" aria-label="关闭">✕</button>
+    </div>
+    <div class="dev-modal-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <label><span id="helmInstallNamespaceLabel">命名空间</span></label>
+          <input type="text" id="helmInstallNamespace" class="form-control" placeholder="default" value="default">
+        </div>
+        <div>
+          <label><span id="helmInstallNameLabel">Release 名称</span></label>
+          <input type="text" id="helmInstallName" class="form-control" placeholder="my-release">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <label><span id="helmInstallChartLabel">Chart</span></label>
+          <input type="text" id="helmInstallChart" class="form-control" placeholder="bitnami/mysql">
+        </div>
+        <div>
+          <label><span id="helmInstallVersionLabel">版本</span></label>
+          <input type="text" id="helmInstallVersion" class="form-control" placeholder="留空取最新">
+        </div>
+      </div>
+      <div style="margin-bottom:12px">
+        <label><span id="helmInstallValuesLabel">Values (JSON)</span></label>
+        <div class="field-hint" id="helmInstallValuesHint" style="margin-bottom:4px">可选，JSON 格式覆盖默认值</div>
+        <textarea id="helmInstallValues" class="form-control" rows="8" style="font-family:monospace;font-size:12px;resize:vertical" placeholder='{"auth": {"rootPassword": "change-me"}}'></textarea>
+      </div>
+      <div id="helmInstallMsg" class="msg" style="margin-top:12px"></div>
+      <div style="margin-top:16px;text-align:right">
+        <button class="btn btn-sm" onclick="closeHelmInstallModal()" id="helmInstallCancelBtn">取消</button>
+        <button class="btn btn-primary btn-sm" onclick="confirmHelmInstall()" id="helmInstallConfirmBtn" style="margin-left:8px">确认安装</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Helm 添加仓库对话框 ============ -->
+<div id="helmAddRepoModal" class="dev-modal-overlay">
+  <div class="dev-modal" role="dialog" aria-modal="true">
+    <div class="dev-modal-header">
+      <h3 id="helmAddRepoTitle">添加仓库</h3>
+      <button class="close-btn" onclick="closeAddHelmRepoModal()" aria-label="关闭">✕</button>
+    </div>
+    <div class="dev-modal-body">
+      <div style="margin-bottom:12px">
+        <label><span id="helmAddRepoNameLabel">仓库名</span></label>
+        <input type="text" id="helmAddRepoName" class="form-control" placeholder="bitnami">
+      </div>
+      <div style="margin-bottom:12px">
+        <label><span id="helmAddRepoUrlLabel">URL</span></label>
+        <input type="text" id="helmAddRepoUrl" class="form-control" placeholder="https://charts.bitnami.com/bitnami">
+      </div>
+      <div style="margin-bottom:12px">
+        <label><span id="helmAddRepoTypeLabel">类型</span></label>
+        <select id="helmAddRepoType" class="form-control">
+          <option value="http">HTTP/HTTPS</option>
+          <option value="oci">OCI</option>
+        </select>
+      </div>
+      <div id="helmAddRepoMsg" class="msg" style="margin-top:12px"></div>
+      <div style="margin-top:16px;text-align:right">
+        <button class="btn btn-sm" onclick="closeAddHelmRepoModal()" id="helmAddRepoCancelBtn">取消</button>
+        <button class="btn btn-primary btn-sm" onclick="confirmAddHelmRepo()" id="helmAddRepoConfirmBtn" style="margin-left:8px">确认添加</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 集群监控仪表盘 ============ -->
+<div id="tab-dashboard" class="pane">
+  <div class="pane-intro">
+    <div class="ico" style="background:var(--indigo-soft);color:var(--indigo)"><span class="icon" id="introIconDashboard"></span></div>
+    <div class="txt">
+      <h3 id="dashboardTitle">集群仪表盘</h3>
+      <p id="dashboardDesc">集群资源使用率、节点状态、Pod 分布、Deployment 健康一览。</p>
+    </div>
+  </div>
+
+  <div class="row-single">
+    <div class="card">
+      <div style="display:grid;grid-template-columns:1fr auto;gap:12px;margin-bottom:16px;align-items:end">
+        <div>
+          <label><span id="dashboardSelectClusterLabel">选择集群</span></label>
+          <select id="dashboardClusterSelect" class="form-control" onchange="onDashboardClusterSelectChange()">
+            <option value="">— 请选择 —</option>
+          </select>
+        </div>
+        <div>
+          <button class="btn btn-primary btn-sm" onclick="loadClusterDashboard()" id="dashboardRefreshBtn">刷新</button>
+        </div>
+      </div>
+      <div id="clusterDashboardContent"><p class="muted">未选择集群</p></div>
+    </div>
+  </div>
+  <div class="page-note" id="note-dashboard"></div>
+</div>
+
 <!-- ============ K8s 添加集群对话框 ============ -->
 <div id="k8sAddClusterModal" class="dev-modal-overlay">
   <div class="dev-modal" role="dialog" aria-modal="true">
@@ -1031,6 +1289,276 @@
         <button class="btn btn-sm" onclick="closeK8sScaleModal()" id="k8sScaleCancelBtn">取消</button>
         <button class="btn btn-primary btn-sm" onclick="confirmScaleDeployment()" id="k8sScaleConfirmBtn" style="margin-left:8px">确认</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 批量运维 ============ -->
+<div id="tab-batch" class="pane">
+  <div class="pane-intro">
+    <div class="ico" style="background:var(--accent-soft);color:var(--accent)"><span class="icon" id="introIconBatch"></span></div>
+    <div class="txt">
+      <h3 id="batchTitle">批量运维</h3>
+      <p id="batchDesc">选择多台设备批量执行同一任务，支持灰度发布策略</p>
+    </div>
+  </div>
+  <div class="row-single">
+    <div class="card">
+      <h4>批量执行</h4>
+      <div class="form-group">
+        <label>设备 ID 列表</label>
+        <textarea id="batchDeviceIds" class="form-control" rows="3" placeholder="输入设备 ID，逗号或换行分隔"></textarea>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+        <div class="form-group">
+          <label>任务类型</label>
+          <select id="batchTaskType" class="form-control">
+            <option value="shell">shell</option>
+            <option value="service">service</option>
+            <option value="file">file</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>命令</label>
+          <input type="text" id="batchCommand" class="form-control" placeholder="如：systemctl restart nginx">
+        </div>
+        <div class="form-group">
+          <label>超时（秒）</label>
+          <input type="number" id="batchTimeout" class="form-control" value="0">
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="submitBatchExec()">批量执行</button>
+      <div id="batchDetail" style="margin-top:16px"></div>
+    </div>
+  </div>
+  <div class="row-single">
+    <div class="card">
+      <h4>灰度发布</h4>
+      <div class="form-group">
+        <label>设备 ID 列表</label>
+        <textarea id="canaryDeviceIds" class="form-control" rows="3" placeholder="输入设备 ID，逗号或换行分隔"></textarea>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+        <div class="form-group">
+          <label>任务类型</label>
+          <select id="canaryTaskType" class="form-control">
+            <option value="shell">shell</option>
+            <option value="service">service</option>
+            <option value="file">file</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>命令</label>
+          <input type="text" id="canaryCommand" class="form-control" placeholder="如：systemctl restart nginx">
+        </div>
+        <div class="form-group">
+          <label>发布策略</label>
+          <select id="canaryStrategy" class="form-control" onchange="onCanaryStrategyChange()">
+            <option value="percentage">按比例</option>
+            <option value="group">按分组</option>
+            <option value="label">按标签</option>
+          </select>
+        </div>
+      </div>
+      <div id="canaryPercentageRow" class="form-group">
+        <label>比例（%）</label>
+        <input type="number" id="canaryPercentage" class="form-control" value="10" min="1" max="100">
+      </div>
+      <div id="canaryGroupsRow" class="form-group" style="display:none">
+        <label>分组</label>
+        <input type="text" id="canaryGroups" class="form-control" placeholder="分组名，逗号分隔">
+      </div>
+      <div id="canaryLabelsRow" class="form-group" style="display:none">
+        <label>标签</label>
+        <input type="text" id="canaryLabels" class="form-control" placeholder="key=value，逗号分隔">
+      </div>
+      <button class="btn btn-primary" onclick="submitCanary()">开始灰度</button>
+      <div id="canaryDetail" style="margin-top:16px"></div>
+    </div>
+  </div>
+  <div class="row-single">
+    <div class="card">
+      <h4>执行历史</h4>
+      <div id="batchHistoryList"><p class="muted">暂无批量执行记录</p></div>
+    </div>
+  </div>
+  <div class="page-note" id="note-batch"></div>
+</div>
+
+<!-- ============ 定时任务 ============ -->
+<div id="tab-schedules" class="pane">
+  <div class="pane-intro">
+    <div class="ico" style="background:var(--teal-soft);color:var(--teal)"><span class="icon" id="introIconSchedules"></span></div>
+    <div class="txt">
+      <h3 id="schedulesTitle">定时任务</h3>
+      <p id="schedulesDesc">基于 cron 表达式的定时任务调度，支持暂停/恢复</p>
+    </div>
+  </div>
+  <div class="row-single">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h4>定时任务列表</h4>
+        <button class="btn btn-primary btn-sm" onclick="showCreateScheduleModal()">创建定时任务</button>
+      </div>
+      <div id="schedulesList"><p class="muted">加载中…</p></div>
+    </div>
+  </div>
+  <div class="page-note" id="note-schedules"></div>
+</div>
+
+<!-- ============ 审批管理 ============ -->
+<div id="tab-approval" class="pane">
+  <div class="pane-intro">
+    <div class="ico" style="background:var(--rose-soft);color:var(--rose)"><span class="icon" id="introIconApproval"></span></div>
+    <div class="txt">
+      <h3 id="approvalTitle">审批管理</h3>
+      <p id="approvalDesc">审批流配置、待我审批、审批历史</p>
+    </div>
+  </div>
+  <div class="row-single">
+    <div class="card">
+      <div style="display:flex;gap:8px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:8px">
+        <button class="btn btn-sm" id="approvalTab-flows" onclick="switchApprovalTab('flows')">审批流配置</button>
+        <button class="btn btn-sm" id="approvalTab-pending" onclick="switchApprovalTab('pending')">待我审批</button>
+        <button class="btn btn-sm" id="approvalTab-history" onclick="switchApprovalTab('history')">审批历史</button>
+      </div>
+      <div id="approvalFlowsPanel" style="display:none">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+          <button class="btn btn-primary btn-sm" onclick="showCreateFlowModal()">创建审批流</button>
+        </div>
+        <div id="approvalFlowsList"><p class="muted">加载中…</p></div>
+      </div>
+      <div id="approvalPendingPanel">
+        <div id="approvalPendingList"><p class="muted">加载中…</p></div>
+      </div>
+      <div id="approvalHistoryPanel" style="display:none">
+        <div id="approvalHistoryList"><p class="muted">加载中…</p></div>
+      </div>
+    </div>
+  </div>
+  <div class="page-note" id="note-approval"></div>
+</div>
+
+<!-- ============ 网络拓扑 ============ -->
+<div id="tab-network" class="pane">
+  <div class="pane-intro">
+    <div class="ico" style="background:var(--teal-soft);color:var(--teal)"><span class="icon" id="introIconNetwork"></span></div>
+    <div class="txt">
+      <h3 id="networkTitle">网络拓扑</h3>
+      <p id="networkDesc">网络拓扑发现、网络诊断工具（ping/traceroute/tcping/nslookup/curl）、连通性检测</p>
+    </div>
+  </div>
+  <div class="row-single">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h4>网络拓扑图</h4>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-sm" onclick="loadNetworkTopology()" id="networkLoadBtn">加载</button>
+          <button class="btn btn-primary btn-sm" onclick="refreshNetworkTopology()" id="networkRefreshBtn">刷新拓扑</button>
+        </div>
+      </div>
+      <div id="networkTopologyGraph" style="min-height:520px"><p class="muted">点击「加载」查看网络拓扑</p></div>
+    </div>
+  </div>
+  <div class="row-2col" style="margin-top:16px">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h4>网络诊断</h4>
+        <button class="btn btn-primary btn-sm" onclick="showDiagnoseModal()">发起诊断</button>
+      </div>
+      <p class="muted">支持 ping / traceroute / tcping / nslookup / curl 五种诊断工具，通过指定 Agent 执行。</p>
+    </div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h4>连通性检测</h4>
+        <button class="btn btn-primary btn-sm" onclick="showConnectivityModal()">批量检测</button>
+      </div>
+      <p class="muted">从指定 Agent 向多个目标发起 TCP/Ping 连通性检测，批量返回结果。</p>
+    </div>
+  </div>
+  <div class="page-note" id="note-network"></div>
+</div>
+
+<!-- ============ 网络诊断弹窗 ============ -->
+<div id="networkDiagnoseModal" class="dev-modal-overlay" style="display:none">
+  <div class="dev-modal" role="dialog" aria-modal="true">
+    <div class="dev-modal-header">
+      <h3>网络诊断</h3>
+      <button class="close-btn" onclick="closeDiagnoseModal()" aria-label="关闭">✕</button>
+    </div>
+    <div class="dev-modal-body">
+      <form id="diagnoseForm" onsubmit="event.preventDefault(); executeDiagnose()">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div>
+            <label>Agent</label>
+            <select id="diagnoseAgentSelect" class="form-control" required>
+              <option value="">加载中…</option>
+            </select>
+          </div>
+          <div>
+            <label>诊断工具</label>
+            <select id="diagnoseTool" class="form-control" onchange="onDiagnoseToolChange()" required>
+              <option value="ping">Ping</option>
+              <option value="traceroute">Traceroute</option>
+              <option value="tcping">TCPing</option>
+              <option value="nslookup">NSLookup</option>
+              <option value="curl">Curl</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-bottom:12px">
+          <label>目标地址（IP / 域名 / URL）</label>
+          <input type="text" id="diagnoseTarget" class="form-control" placeholder="如 10.0.0.2 或 example.com" required>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+          <div id="diagnoseCountGroup">
+            <label>次数（1-100）</label>
+            <input type="number" id="diagnoseCount" class="form-control" value="4" min="1" max="100">
+          </div>
+          <div>
+            <label>超时（秒，1-30）</label>
+            <input type="number" id="diagnoseTimeout" class="form-control" value="5" min="1" max="30">
+          </div>
+          <div id="diagnosePortGroup" style="display:none">
+            <label>端口</label>
+            <input type="number" id="diagnosePort" class="form-control" placeholder="80" min="1" max="65535">
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:16px">
+          <button type="button" class="btn" onclick="closeDiagnoseModal()">取消</button>
+          <button type="submit" class="btn btn-primary">执行诊断</button>
+        </div>
+      </form>
+      <div id="diagnoseResult"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 连通性检测弹窗 ============ -->
+<div id="networkConnectivityModal" class="dev-modal-overlay" style="display:none">
+  <div class="dev-modal" role="dialog" aria-modal="true">
+    <div class="dev-modal-header">
+      <h3>连通性检测</h3>
+      <button class="close-btn" onclick="closeConnectivityModal()" aria-label="关闭">✕</button>
+    </div>
+    <div class="dev-modal-body">
+      <form id="connectivityForm" onsubmit="event.preventDefault(); executeConnectivity()">
+        <div style="margin-bottom:12px">
+          <label>源 Agent</label>
+          <select id="connectivityAgentSelect" class="form-control" required>
+            <option value="">加载中…</option>
+          </select>
+        </div>
+        <div style="margin-bottom:12px">
+          <label>目标列表（每行一个，格式：IP 或 IP:端口）</label>
+          <textarea id="connectivityTargets" class="form-control" rows="6" placeholder="10.0.0.2&#10;10.0.0.3:80&#10;example.com:443" required></textarea>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:16px">
+          <button type="button" class="btn" onclick="closeConnectivityModal()">取消</button>
+          <button type="submit" class="btn btn-primary">执行检测</button>
+        </div>
+      </form>
+      <div id="connectivityResult"></div>
     </div>
   </div>
 </div>

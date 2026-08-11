@@ -1,6 +1,5 @@
 package discovery
 
-
 import (
 	"context"
 	"errors"

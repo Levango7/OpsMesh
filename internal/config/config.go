@@ -3,6 +3,7 @@
 package config
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
@@ -122,6 +123,19 @@ type Config struct {
 	AlertEmailPass string // SMTP 密码（推荐 env OPSMESH_ALERT_EMAIL_PASS）
 	AlertEmailFrom string // 发件人地址
 	AlertEmailTo   string // 收件人列表（逗号分隔）
+	// M2-2 通知渠道扩展：多渠道配置（钉钉/企业微信/飞书/Slack/邮件）。
+	// 通过 --notify-channels-config 指定 JSON 配置文件加载，或通过 OPSMESH_NOTIFY_CHANNELS_CONFIG 环境变量指定路径。
+	// 文件格式：{"channels": [{"type":"dingtalk","webhook_url":"...","secret":"..."}, ...]}
+	// 与现有 AlertWebhookURL/AlertEmail* 字段互补：M2-2 渠道由 notify.Notifier 统一调度，
+	// 旧字段走 notify.Channels.Push（向后兼容，不破坏现有逻辑）。
+	NotifyChannelsConfigFile string // M2-2 通知渠道 JSON 配置文件路径（空=不加载多渠道配置）
+	NotifyChannels           []NotifyChannelConfig // M2-2 解析后的渠道配置列表（由配置文件加载）
+	// M2-2 通知去重 TTL（分钟）：相同消息在 TTL 内只发送一次。<=0 表示关闭去重。
+	NotifyDedupTTLMin int // M2-2 去重 TTL（分钟，默认 5；0=关闭）
+	// M2-2 通知重试：发送失败时按指数退避重试。
+	NotifyRetryMaxAttempts int           // M2-2 最大重试次数（含首次，默认 3；0=不重试）
+	NotifyRetryInterval    time.Duration // M2-2 重试基础间隔（默认 5s）
+	NotifyRetryBackoff     float64       // M2-2 退避系数（默认 2.0）
 	// B1 自动纳管推送：SSH 配置（空=关闭 SSH 自动推送，仅返回 bootstrap 文本）。
 	// 推送时在候选设备上通过 SSH 执行 bootstrap 命令，自动安装 agent。
 	ProvisionSSHUser string // SSH 用户（默认 "root"）
@@ -315,6 +329,12 @@ func Load() *Config {
 	alertEmailPass := flag.String("alert-email-pass", "", "B7 告警邮件 SMTP 密码（推荐 env OPSMESH_ALERT_EMAIL_PASS）")
 	alertEmailFrom := flag.String("alert-email-from", "", "B7 告警邮件发件人地址（如 opsmesh@example.com；或 env OPSMESH_ALERT_EMAIL_FROM）")
 	alertEmailTo := flag.String("alert-email-to", "", "B7 告警邮件收件人列表（逗号分隔；或 env OPSMESH_ALERT_EMAIL_TO）")
+	// M2-2 通知渠道扩展配置。
+	notifyChannelsConfig := flag.String("notify-channels-config", "", "M2-2 通知渠道 JSON 配置文件路径（多渠道：钉钉/企业微信/飞书/Slack/邮件）；空=不加载（或 env OPSMESH_NOTIFY_CHANNELS_CONFIG）")
+	notifyDedupTTLMin := flag.Int("notify-dedup-ttl-min", 5, "M2-2 通知去重 TTL（分钟）；相同消息在 TTL 内只发送一次；0=关闭去重（或 env OPSMESH_NOTIFY_DEDUP_TTL_MIN）")
+	notifyRetryMaxAttempts := flag.Int("notify-retry-max-attempts", 3, "M2-2 通知重试最大尝试次数（含首次）；0=不重试（或 env OPSMESH_NOTIFY_RETRY_MAX_ATTEMPTS）")
+	notifyRetryInterval := flag.Duration("notify-retry-interval", 5*time.Second, "M2-2 通知重试基础间隔（或 env OPSMESH_NOTIFY_RETRY_INTERVAL）")
+	notifyRetryBackoff := flag.Float64("notify-retry-backoff", 2.0, "M2-2 通知重试退避系数（1.0=固定间隔，2.0=指数退避；或 env OPSMESH_NOTIFY_RETRY_BACKOFF）")
 	provisionSSHUser := flag.String("provision-ssh-user", "root", "B1 SSH 自动推送：SSH 用户")
 	provisionSSHKey := flag.String("provision-ssh-key", "", "B1 SSH 自动推送：SSH 私钥路径（空=关闭 SSH 推送）")
 	provisionSSHKP := flag.String("provision-ssh-key-pass", "", "B1 SSH 自动推送：SSH 密钥密码（推荐 OPSMESH_PROVISION_SSH_KEY_PASS 环境变量）")
@@ -411,6 +431,12 @@ func Load() *Config {
 		}
 		return durationEnv(envKey, fv)
 	}
+	valFloat64 := func(name string, fv float64, envKey string) float64 {
+		if explicit[name] {
+			return fv
+		}
+		return float64Env(envKey, fv)
+	}
 
 	cfg := &Config{
 		Mode:                   val("mode", *mode, "OPSMESH_MODE"),
@@ -464,6 +490,11 @@ func Load() *Config {
 		AlertEmailPass:         val("alert-email-pass", *alertEmailPass, "OPSMESH_ALERT_EMAIL_PASS"),
 		AlertEmailFrom:         val("alert-email-from", *alertEmailFrom, "OPSMESH_ALERT_EMAIL_FROM"),
 		AlertEmailTo:           val("alert-email-to", *alertEmailTo, "OPSMESH_ALERT_EMAIL_TO"),
+		NotifyChannelsConfigFile: val("notify-channels-config", *notifyChannelsConfig, "OPSMESH_NOTIFY_CHANNELS_CONFIG"),
+		NotifyDedupTTLMin:        valInt("notify-dedup-ttl-min", *notifyDedupTTLMin, "OPSMESH_NOTIFY_DEDUP_TTL_MIN"),
+		NotifyRetryMaxAttempts:   valInt("notify-retry-max-attempts", *notifyRetryMaxAttempts, "OPSMESH_NOTIFY_RETRY_MAX_ATTEMPTS"),
+		NotifyRetryInterval:      valDur("notify-retry-interval", *notifyRetryInterval, "OPSMESH_NOTIFY_RETRY_INTERVAL"),
+		NotifyRetryBackoff:       valFloat64("notify-retry-backoff", *notifyRetryBackoff, "OPSMESH_NOTIFY_RETRY_BACKOFF"),
 		ProvisionSSHUser:       val("provision-ssh-user", *provisionSSHUser, "OPSMESH_PROVISION_SSH_USER"),
 		ProvisionSSHKey:        val("provision-ssh-key", *provisionSSHKey, "OPSMESH_PROVISION_SSH_KEY"),
 		ProvisionSSHKP:         val("provision-ssh-key-pass", *provisionSSHKP, "OPSMESH_PROVISION_SSH_KEY_PASS"),
@@ -576,6 +607,16 @@ func Load() *Config {
 	if cfg.Production && cfg.JWTPublicKey == "" {
 		fmt.Fprintln(os.Stderr, "[config] 提示：生产模式未配置 --jwt-public-key，仅依赖网关注入的 X-Tenant-ID 头（建议启用 JWT 二次验签作为纵深防御）")
 	}
+	// M2-2 通知渠道配置文件加载：--notify-channels-config 指定 JSON 文件路径。
+	// 加载失败时 fail-fast（启动期发现问题而非运行期诡异失败）。
+	if cfg.NotifyChannelsConfigFile != "" {
+		chs, err := LoadNotifyChannelsConfig(cfg.NotifyChannelsConfigFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[config] 加载通知渠道配置文件失败: %v\n", err)
+		} else {
+			cfg.NotifyChannels = chs
+		}
+	}
 	return cfg
 }
 
@@ -609,6 +650,16 @@ func envInt(key string, def int) int {
 func boolEnv(key string, def bool) bool {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		return v == "true" || v == "1"
+	}
+	return def
+}
+
+// float64Env 解析 float64 环境变量，未设置或非法时返回默认。
+func float64Env(key string, def float64) float64 {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
 	}
 	return def
 }
@@ -794,5 +845,81 @@ func (c *Config) Validate() error {
 		// memory store 多副本本身已在上方校验拒绝，此处补充 mysql store 多副本未配置 session-store 的告警。
 		fmt.Fprintln(os.Stderr, "[config] 警告：多副本（replicas>1）但未配置 --session-store，登出/限流/改密令牌将不跨副本共享（建议 --session-store=redis://host:port）")
 	}
+	// M2-2 通知渠道配置校验：每个渠道 type 必须合法，必填字段非空。
+	for i, ch := range c.NotifyChannels {
+		switch ch.Type {
+		case "dingtalk", "wechat", "feishu", "slack":
+			if ch.WebhookURL == "" {
+				return fmt.Errorf("notify-channels[%d] type=%q 缺少 webhook_url", i, ch.Type)
+			}
+		case "email":
+			if ch.SMTPHost == "" || ch.SMTPPort <= 0 || ch.From == "" || len(ch.To) == 0 {
+				return fmt.Errorf("notify-channels[%d] type=email 配置不完整（需 smtp_host/smtp_port/from/to）", i)
+			}
+		default:
+			return fmt.Errorf("notify-channels[%d] 非法 type=%q（应为 dingtalk/wechat/feishu/slack/email）", i, ch.Type)
+		}
+	}
 	return nil
+}
+
+// ============================================================================
+// M2-2 通知渠道配置
+// ============================================================================
+
+// NotifyChannelConfig 通知渠道配置（M2-2）。
+//
+// 支持类型（Type 字段）：
+//   - dingtalk：钉钉群机器人 webhook（需 WebhookURL，可选 Secret 加签）
+//   - wechat：企业微信群机器人 webhook（需 WebhookURL）
+//   - feishu：飞书群机器人 webhook（需 WebhookURL，可选 Secret 加签）
+//   - slack：Slack incoming webhook（需 WebhookURL，可选 Channel 指定频道）
+//   - email：邮件 SMTP（需 SMTPHost/SMTPPort/From/To）
+//
+// JSON 配置文件格式（--notify-channels-config 指定路径）：
+//
+//	{
+//	  "channels": [
+//	    {"type": "dingtalk", "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=xxx", "secret": "SECxxx"},
+//	    {"type": "feishu", "webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/xxx", "secret": "xxx"},
+//	    {"type": "wechat", "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"},
+//	    {"type": "slack", "webhook_url": "https://hooks.slack.com/services/xxx", "channel": "#ops"},
+//	    {"type": "email", "smtp_host": "smtp.example.com", "smtp_port": 25, "username": "u", "password": "p", "from": "ops@example.com", "to": ["ops1@example.com", "ops2@example.com"]}
+//	  ]
+//	}
+type NotifyChannelConfig struct {
+	Type       string   `json:"type"`        // dingtalk / wechat / feishu / slack / email
+	WebhookURL string   `json:"webhook_url"` // webhook URL（dingtalk/wechat/feishu/slack 用）
+	Secret     string   `json:"secret"`      // 加签密钥（dingtalk/feishu 用）
+	Channel    string   `json:"channel"`     // Slack 频道（slack 用）
+	SMTPHost   string   `json:"smtp_host"`   // SMTP 主机（email 用）
+	SMTPPort   int      `json:"smtp_port"`   // SMTP 端口（email 用）
+	Username   string   `json:"username"`    // SMTP 用户名（email 用）
+	Password   string   `json:"password"`    // SMTP 密码（email 用）
+	From       string   `json:"from"`        // 发件人（email 用）
+	To         []string `json:"to"`          // 收件人列表（email 用）
+}
+
+// notifyChannelsFile JSON 配置文件顶层结构。
+type notifyChannelsFile struct {
+	Channels []NotifyChannelConfig `json:"channels"`
+}
+
+// LoadNotifyChannelsConfig 从 JSON 配置文件加载通知渠道配置。
+//
+// 文件格式见 NotifyChannelConfig 文档。文件不存在或解析失败时返回 error。
+// 空文件（无 channels）返回空切片 + nil（不视为错误，仅表示无渠道配置）。
+func LoadNotifyChannelsConfig(path string) ([]NotifyChannelConfig, error) {
+	if path == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("读取通知渠道配置文件 %q 失败: %w", path, err)
+	}
+	var f notifyChannelsFile
+	if err := json.Unmarshal(data, &f); err != nil {
+		return nil, fmt.Errorf("解析通知渠道配置文件 %q 失败: %w", path, err)
+	}
+	return f.Channels, nil
 }

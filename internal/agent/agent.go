@@ -964,6 +964,11 @@ func checkShellMetachars(command string) error {
 //   - 条目不含 "*" → 精确匹配：base 必须完全等于条目（如 "ls" 仅匹配 "ls"，不匹配 "lsusb"）。
 //   - 条目中间含 "*" 视为普通字符（仅尾部 "*" 是通配符标记）。
 //
+// task 244 M6 集成：网络诊断命令（ping/traceroute/tracert/nslookup/curl/nc/powershell）
+// 被加入内置白名单，即使 --agent-shell-whitelist 未显式包含这些命令也放行。
+// 设计理由：网络诊断是运维平台核心能力，命令经控制面侧 validateCommand 校验 +
+// checkShellMetachars 元字符拦截后风险可控；若管理员需禁用，可在控制面侧禁用网络诊断 API。
+//
 // 此前用 HasPrefix 做前缀匹配，导致白名单 "ls" 会放行 "lsusb"/"lsof" 等非预期命令，存在过宽风险。
 //
 // 注意：这是最佳努力防御，无法完全阻止 "ls;rm -rf /" 这类 shell 元字符拼接绕过
@@ -980,6 +985,12 @@ func (a *Agent) checkShellWhitelist(command string) error {
 	}
 	first := fields[0]
 	base := filepath.Base(first) // 取 basename（如 /bin/ls -> ls）
+	// task 244 M6 集成：网络诊断命令内置白名单（即使 --agent-shell-whitelist 未包含也放行）。
+	// 覆盖 ping/traceroute/tracert/nslookup/curl/nc/powershell 等网络诊断工具，
+	// 使网络拓扑探测/诊断/连通性检测在白名单启用时仍可正常工作。
+	if isNetworkDiagnoseCommand(base) {
+		return nil
+	}
 	for _, entry := range strings.Split(wl, ",") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
@@ -1002,6 +1013,32 @@ func (a *Agent) checkShellWhitelist(command string) error {
 		}
 	}
 	return fmt.Errorf("command %q not in shell whitelist (allowed entries: %s)", base, wl)
+}
+
+// isNetworkDiagnoseCommand 判断命令 basename 是否为网络诊断命令（task 244 M6 集成）。
+//
+// 网络诊断命令内置白名单，即使 --agent-shell-whitelist 未显式包含也放行：
+//   - ping / ping6：ICMP 探测（Linux/Windows/macOS 通用）
+//   - traceroute / tracert：路由追踪（Linux: traceroute, Windows: tracert）
+//   - nslookup / dig / host：DNS 查询
+//   - curl / wget：HTTP 探测
+//   - nc / netcat：TCP 连通性检测
+//   - powershell：Windows PowerShell（用于 Test-NetConnection 等）
+//
+// 这些命令由控制面侧 network API 构造并经 validateCommand + checkShellMetachars 双重校验，
+// 命令参数（target/count/timeout/port）已在控制面侧范围校验，风险可控。
+func isNetworkDiagnoseCommand(base string) bool {
+	switch base {
+	case "ping", "ping6",
+		"traceroute", "tracert",
+		"nslookup", "dig", "host",
+		"curl", "wget",
+		"nc", "netcat",
+		"powershell":
+		return true
+	default:
+		return false
+	}
 }
 
 // executeShell 启动 shell 子进程并等待其结束或 ctx 取消（task 78 安全加固）。

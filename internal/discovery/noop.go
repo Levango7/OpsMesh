@@ -1,6 +1,5 @@
 package discovery
 
-
 import "context"
 
 // NoopDiscovery 默认不启用服务发现时的 no-op 实现。

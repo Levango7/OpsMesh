@@ -284,6 +284,57 @@ type RefreshTokenStore interface {
 	ConsumeRefreshToken(tokenHash string) (*RefreshToken, bool)
 }
 
+// SilenceStore 静默规则领域（task 241 M2 集成）：告警事件按标签匹配 + 时间窗口抑制。
+//
+// 与 AlertStore.SilenceAlert（单条告警静默）解耦——SilenceRule 是基于标签匹配的
+// 批量静默规则，可一次抑制同标签的所有告警事件（如"所有 critical 告警静默 1h"）。
+type SilenceStore interface {
+	// CreateSilence 创建静默规则。ID 为空时由 store 分配随机 ID；
+	// TenantID 为空时归一为 default。返回持久化后的规则（含分配的 ID）。
+	CreateSilence(*SilenceRule) *SilenceRule
+	// DeleteSilence 删除静默规则，返回是否删除成功（不存在或租户不匹配返回 false）。
+	DeleteSilence(id, tenantID string) bool
+	// ListSilences 返回静默规则；tenantID 非空时按租户过滤。
+	ListSilences(tenantID string) []*SilenceRule
+}
+
+// NotifyChannelStore 通知渠道领域（task 241 M2 集成）：CRUD。
+//
+// 渠道定义通知推送目标（钉钉/企业微信/飞书/Slack/邮件/Webhook），
+// 告警规则通过 NotifyChannels 引用渠道 ID 列表。
+// Config 为敏感内容（含 webhook URL/secret/SMTP 密码等），API 层负责脱敏。
+type NotifyChannelStore interface {
+	// CreateNotifyChannel 创建通知渠道。ID 为空时由 store 分配随机 ID；
+	// TenantID 为空时归一为 default。返回持久化后的渠道（含分配的 ID）。
+	CreateNotifyChannel(*NotifyChannel) *NotifyChannel
+	// UpdateNotifyChannel 更新通知渠道。不存在返回 false。
+	UpdateNotifyChannel(*NotifyChannel) bool
+	// DeleteNotifyChannel 删除通知渠道，返回是否删除成功（不存在或租户不匹配返回 false）。
+	DeleteNotifyChannel(id, tenantID string) bool
+	// GetNotifyChannel 按 ID 返回单个通知渠道（不存在返回 nil）。
+	GetNotifyChannel(id string) *NotifyChannel
+	// ListNotifyChannels 返回通知渠道；tenantID 非空时按租户过滤。
+	ListNotifyChannels(tenantID string) []*NotifyChannel
+}
+
+// NotifyTemplateStore 通知模板领域（task 241 M2 集成）：CRUD。
+//
+// 模板定义通知消息的标题/正文（Go text/template 变量替换），
+// 渠道推送时按模板渲染产出消息正文。
+type NotifyTemplateStore interface {
+	// CreateNotifyTemplate 创建通知模板。ID 为空时由 store 分配随机 ID；
+	// TenantID 为空时归一为 default。返回持久化后的模板（含分配的 ID）。
+	CreateNotifyTemplate(*NotifyTemplate) *NotifyTemplate
+	// UpdateNotifyTemplate 更新通知模板。不存在返回 false。
+	UpdateNotifyTemplate(*NotifyTemplate) bool
+	// DeleteNotifyTemplate 删除通知模板，返回是否删除成功（不存在或租户不匹配返回 false）。
+	DeleteNotifyTemplate(id, tenantID string) bool
+	// GetNotifyTemplate 按 ID 返回单个通知模板（不存在返回 nil）。
+	GetNotifyTemplate(id string) *NotifyTemplate
+	// ListNotifyTemplates 返回通知模板；tenantID 非空时按租户过滤。
+	ListNotifyTemplates(tenantID string) []*NotifyTemplate
+}
+
 // Store 控制面注册表的可插拔持久化组合接口。
 // 由 12 个领域小接口组合而成（M2-1A 拆分 + 用户中心扩展 + K8s 集群管理 + OS/中间件模板 + 刷新令牌），
 // 方法签名刻意与旧版内存 Registry 保持一致，便于平滑替换。
@@ -304,6 +355,9 @@ type Store interface {
 	K8sClusterStore   // K8s 集群管理：CRUD（Phase 3）
 	TemplateStore     // OS/中间件部署模板：CRUD（task 100）
 	RefreshTokenStore // 刷新令牌：续期/吊销（task 111）
+	SilenceStore      // 静默规则：标签匹配 + 时间窗口抑制（task 241 M2）
+	NotifyChannelStore    // 通知渠道：CRUD（task 241 M2）
+	NotifyTemplateStore   // 通知模板：CRUD（task 241 M2）
 
 	// WithDemo 设置是否开启演示模式（P0-5）：开启时每个 agent 注册预置 uname -a 示例任务。
 	WithDemo(bool) Store
@@ -312,31 +366,37 @@ type Store interface {
 // 编译期断言：确保 MemoryStore / SQLStore 实现各领域小接口。
 // 任一方法缺失会在编译期立刻暴露（而非运行期），降低后续拆分消费方时的回归风险。
 var (
-	_ DeviceStore       = (*MemoryStore)(nil)
-	_ TaskStore         = (*MemoryStore)(nil)
-	_ AlertStore        = (*MemoryStore)(nil)
-	_ AuditStore        = (*MemoryStore)(nil)
-	_ TokenStore        = (*MemoryStore)(nil)
-	_ LeaderStore       = (*MemoryStore)(nil)
-	_ UserStore         = (*MemoryStore)(nil)
-	_ RoleStore         = (*MemoryStore)(nil)
-	_ PermissionStore   = (*MemoryStore)(nil)
-	_ K8sClusterStore   = (*MemoryStore)(nil)
-	_ TemplateStore     = (*MemoryStore)(nil)
-	_ RefreshTokenStore = (*MemoryStore)(nil)
-	_ Store             = (*MemoryStore)(nil)
+	_ DeviceStore         = (*MemoryStore)(nil)
+	_ TaskStore           = (*MemoryStore)(nil)
+	_ AlertStore          = (*MemoryStore)(nil)
+	_ AuditStore          = (*MemoryStore)(nil)
+	_ TokenStore          = (*MemoryStore)(nil)
+	_ LeaderStore         = (*MemoryStore)(nil)
+	_ UserStore           = (*MemoryStore)(nil)
+	_ RoleStore           = (*MemoryStore)(nil)
+	_ PermissionStore     = (*MemoryStore)(nil)
+	_ K8sClusterStore     = (*MemoryStore)(nil)
+	_ TemplateStore       = (*MemoryStore)(nil)
+	_ RefreshTokenStore   = (*MemoryStore)(nil)
+	_ SilenceStore        = (*MemoryStore)(nil)
+	_ NotifyChannelStore  = (*MemoryStore)(nil)
+	_ NotifyTemplateStore = (*MemoryStore)(nil)
+	_ Store               = (*MemoryStore)(nil)
 
-	_ DeviceStore       = (*SQLStore)(nil)
-	_ TaskStore         = (*SQLStore)(nil)
-	_ AlertStore        = (*SQLStore)(nil)
-	_ AuditStore        = (*SQLStore)(nil)
-	_ TokenStore        = (*SQLStore)(nil)
-	_ LeaderStore       = (*SQLStore)(nil)
-	_ UserStore         = (*SQLStore)(nil)
-	_ RoleStore         = (*SQLStore)(nil)
-	_ PermissionStore   = (*SQLStore)(nil)
-	_ K8sClusterStore   = (*SQLStore)(nil)
-	_ TemplateStore     = (*SQLStore)(nil)
-	_ RefreshTokenStore = (*SQLStore)(nil)
-	_ Store             = (*SQLStore)(nil)
+	_ DeviceStore         = (*SQLStore)(nil)
+	_ TaskStore           = (*SQLStore)(nil)
+	_ AlertStore          = (*SQLStore)(nil)
+	_ AuditStore          = (*SQLStore)(nil)
+	_ TokenStore          = (*SQLStore)(nil)
+	_ LeaderStore         = (*SQLStore)(nil)
+	_ UserStore           = (*SQLStore)(nil)
+	_ RoleStore           = (*SQLStore)(nil)
+	_ PermissionStore     = (*SQLStore)(nil)
+	_ K8sClusterStore     = (*SQLStore)(nil)
+	_ TemplateStore       = (*SQLStore)(nil)
+	_ RefreshTokenStore   = (*SQLStore)(nil)
+	_ SilenceStore        = (*SQLStore)(nil)
+	_ NotifyChannelStore  = (*SQLStore)(nil)
+	_ NotifyTemplateStore = (*SQLStore)(nil)
+	_ Store               = (*SQLStore)(nil)
 )

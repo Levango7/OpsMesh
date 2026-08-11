@@ -56,11 +56,11 @@ type CircuitBreaker struct {
 	cfg Config
 
 	mu            sync.Mutex
-	state         string // 当前状态（StateClosed/StateOpen/StateHalfOpen）
-	failureCount  int    // Closed 状态下连续失败计数（成功即清零）
+	state         string    // 当前状态（StateClosed/StateOpen/StateHalfOpen）
+	failureCount  int       // Closed 状态下连续失败计数（成功即清零）
 	openedAt      time.Time // 进入 Open 状态的时刻（用于判断是否已过 RecoveryTimeout）
-	halfOpenCalls int    // HalfOpen 状态下已发放的探测调用数
-	halfOpenSucc  int    // HalfOpen 状态下已成功的探测数（达到 HalfOpenMaxCalls 即转 Closed）
+	halfOpenCalls int       // HalfOpen 状态下已发放的探测调用数
+	halfOpenSucc  int       // HalfOpen 状态下已成功的探测数（达到 HalfOpenMaxCalls 即转 Closed）
 }
 
 // New 构造熔断器实例。

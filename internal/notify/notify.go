@@ -347,3 +347,166 @@ func (c *Channels) Push(a *proto.Alert) error {
 	}
 	return nil
 }
+
+// ============================================================================
+// Notifier：多渠道 + 模板 + 重试 + 去重 集成（M2-2）
+// ============================================================================
+
+// Notifier 通知管理器：集成多渠道推送、模板渲染、重试策略、消息去重。
+//
+// 设计：
+//   - channels：已配置的渠道列表（Channel 接口实例）；空=无渠道，Notify 静默返回 nil。
+//   - templates：模板存储；Notify 可按 templateID 渲染消息（NotifyWithTemplate）。
+//   - dedup：去重器；nil=关闭去重。IsDuplicate 返回 true 时 Notify 跳过发送。
+//   - retry：重试策略；nil=不重试（单次发送）。
+//
+// 并发安全：channels 在构造后不变（启动期一次性注入）；templates/dedup 内部自带互斥。
+type Notifier struct {
+	channels  []Channel       // 已配置渠道列表
+	templates *TemplateStore  // 模板存储（nil=无模板）
+	dedup     *Deduplicator   // 去重器（nil=关闭去重）
+	retry     *RetryPolicy    // 重试策略（nil=不重试）
+}
+
+// NotifierOption Notifier 构造选项（函数选项模式）。
+type NotifierOption func(*Notifier)
+
+// WithChannels 注入渠道列表。
+func WithChannels(chs ...Channel) NotifierOption {
+	return func(n *Notifier) { n.channels = append(n.channels, chs...) }
+}
+
+// WithTemplates 注入模板存储。
+func WithTemplates(t *TemplateStore) NotifierOption {
+	return func(n *Notifier) { n.templates = t }
+}
+
+// WithDedup 启用去重（ttl <= 0 时使用默认 5 分钟）。
+func WithDedup(ttl time.Duration) NotifierOption {
+	return func(n *Notifier) { n.dedup = NewDeduplicator(ttl) }
+}
+
+// WithRetry 启用重试（policy 为 nil 时使用 DefaultRetryPolicy）。
+func WithRetry(policy *RetryPolicy) NotifierOption {
+	return func(n *Notifier) {
+		if policy == nil {
+			policy = &DefaultRetryPolicy
+		}
+		n.retry = policy
+	}
+}
+
+// NewNotifier 构造 Notifier。默认无渠道、无模板、无去重、无重试（通过选项注入）。
+func NewNotifier(opts ...NotifierOption) *Notifier {
+	n := &Notifier{}
+	for _, opt := range opts {
+		opt(n)
+	}
+	return n
+}
+
+// AddChannel 追加渠道（运行期动态添加，如热加载配置）。
+func (n *Notifier) AddChannel(ch Channel) {
+	if ch != nil {
+		n.channels = append(n.channels, ch)
+	}
+}
+
+// Channels 返回已配置渠道列表（只读，修改不影响内部）。
+func (n *Notifier) Channels() []Channel {
+	return n.channels
+}
+
+// Templates 返回模板存储（可能为 nil）。
+func (n *Notifier) Templates() *TemplateStore {
+	return n.templates
+}
+
+// Notify 通过所有渠道推送消息。集成去重与重试。
+//
+// 行为：
+//   - msg 为 nil → 静默返回 nil
+//   - 去重启用且 IsDuplicate(msg)=true → 跳过发送，返回 nil
+//   - 无渠道 → 静默返回 nil
+//   - 每个渠道独立发送（失败不影响其他渠道）；重试启用时按 RetryPolicy 重试
+//   - 所有渠道失败 → 聚合错误返回；部分失败 → 聚合错误返回；全部成功 → nil
+func (n *Notifier) Notify(msg *Message) error {
+	if msg == nil {
+		return nil
+	}
+	// 去重检查（滑动窗口语义）。
+	if n.dedup != nil && n.dedup.IsDuplicate(msg) {
+		return nil
+	}
+	return n.sendToAll(msg)
+}
+
+// NotifyWithTemplate 按 templateID 渲染模板后推送。
+//
+// 渲染失败 → 返回 error（不发送）。
+// 渲染成功 → 走 Notify 流程（去重 + 多渠道 + 重试）。
+func (n *Notifier) NotifyWithTemplate(templateID string, data interface{}) error {
+	if n.templates == nil {
+		return fmt.Errorf("notify: no template store configured")
+	}
+	msg, err := n.templates.RenderByID(templateID, data)
+	if err != nil {
+		return err
+	}
+	return n.Notify(msg)
+}
+
+// sendToAll 向所有渠道发送消息（带可选重试）。错误聚合返回。
+func (n *Notifier) sendToAll(msg *Message) error {
+	if len(n.channels) == 0 {
+		return nil
+	}
+	var errs []string
+	for i, ch := range n.channels {
+		var err error
+		if n.retry != nil {
+			err = SendWithRetry(ch, msg, n.retry)
+		} else {
+			err = ch.Send(msg)
+		}
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("channel[%d]: %v", i, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("notify: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// CleanupDedup 触发去重器清理过期条目。去重未启用时返回 0。
+// 应由调用方周期调用（如每分钟一次）防止内存泄漏。
+func (n *Notifier) CleanupDedup() int {
+	if n.dedup == nil {
+		return 0
+	}
+	return n.dedup.Cleanup()
+}
+
+// AlertToMessage 将 proto.Alert 转换为通用 Message（便于走 Notifier.Notify 流程）。
+//
+// 转换规则：
+//   - Title: "[OpsMesh][<severity>] <deviceID>"
+//   - Body: 渲染告警字段为 markdown 正文
+//   - Format: "markdown"
+//   - Severity/Source/Timestamp: 从 alert 提取
+//   - Data: 原 alert 指针（供渠道定制渲染）
+func AlertToMessage(a *proto.Alert) *Message {
+	if a == nil {
+		return nil
+	}
+	return &Message{
+		Title:    fmt.Sprintf("[OpsMesh][%s] %s", a.Severity, a.DeviceID),
+		Body:     fmt.Sprintf("**严重级别**: %s\n**设备**: %s\n**Agent**: %s\n**时间**: %s\n\n%s", a.Severity, a.DeviceID, a.AgentID, a.CreatedAt.Format("2006-01-02 15:04:05"), a.Message),
+		Format:   "markdown",
+		Severity: a.Severity,
+		Source:   a.DeviceID,
+		Timestamp: a.CreatedAt,
+		Data:     a,
+	}
+}

@@ -813,18 +813,22 @@ func (m *MultiSchemaStore) IsLeader() bool {
 
 // 编译期断言：MultiSchemaStore 实现 Store 接口。
 var (
-	_ DeviceStore     = (*MultiSchemaStore)(nil)
-	_ TaskStore       = (*MultiSchemaStore)(nil)
-	_ AlertStore      = (*MultiSchemaStore)(nil)
-	_ AuditStore      = (*MultiSchemaStore)(nil)
-	_ TokenStore      = (*MultiSchemaStore)(nil)
-	_ LeaderStore     = (*MultiSchemaStore)(nil)
-	_ UserStore       = (*MultiSchemaStore)(nil)
-	_ RoleStore       = (*MultiSchemaStore)(nil)
-	_ PermissionStore = (*MultiSchemaStore)(nil)
-	_ K8sClusterStore = (*MultiSchemaStore)(nil)
-	_ TemplateStore   = (*MultiSchemaStore)(nil)
-	_ Store           = (*MultiSchemaStore)(nil)
+	_ DeviceStore         = (*MultiSchemaStore)(nil)
+	_ TaskStore           = (*MultiSchemaStore)(nil)
+	_ AlertStore          = (*MultiSchemaStore)(nil)
+	_ AuditStore          = (*MultiSchemaStore)(nil)
+	_ TokenStore          = (*MultiSchemaStore)(nil)
+	_ LeaderStore         = (*MultiSchemaStore)(nil)
+	_ UserStore           = (*MultiSchemaStore)(nil)
+	_ RoleStore           = (*MultiSchemaStore)(nil)
+	_ PermissionStore     = (*MultiSchemaStore)(nil)
+	_ K8sClusterStore     = (*MultiSchemaStore)(nil)
+	_ TemplateStore       = (*MultiSchemaStore)(nil)
+	_ RefreshTokenStore   = (*MultiSchemaStore)(nil)
+	_ SilenceStore        = (*MultiSchemaStore)(nil)
+	_ NotifyChannelStore  = (*MultiSchemaStore)(nil)
+	_ NotifyTemplateStore = (*MultiSchemaStore)(nil)
+	_ Store               = (*MultiSchemaStore)(nil)
 )
 
 // ============================================================================
@@ -1187,4 +1191,126 @@ func (m *MultiSchemaStore) ConsumeRefreshToken(tokenHash string) (*RefreshToken,
 		return nil, false
 	}
 	return s.ConsumeRefreshToken(tokenHash)
+}
+
+// ============================================================================
+// task 241 M2 集成：SilenceRule / NotifyChannel / NotifyTemplate
+// 路由到全局 store（与 RefreshToken 同模式：ID 为全局唯一主键）。
+// ============================================================================
+
+// CreateSilence 创建静默规则（路由到全局 store）。
+func (m *MultiSchemaStore) CreateSilence(sr *SilenceRule) *SilenceRule {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.CreateSilence(sr)
+}
+
+// DeleteSilence 删除静默规则（路由到全局 store）。
+func (m *MultiSchemaStore) DeleteSilence(id, tenantID string) bool {
+	s, err := m.globalStore()
+	if err != nil {
+		return false
+	}
+	return s.DeleteSilence(id, tenantID)
+}
+
+// ListSilences 返回静默规则（路由到全局 store）。
+func (m *MultiSchemaStore) ListSilences(tenantID string) []*SilenceRule {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.ListSilences(tenantID)
+}
+
+// CreateNotifyChannel 创建通知渠道（路由到全局 store）。
+func (m *MultiSchemaStore) CreateNotifyChannel(c *NotifyChannel) *NotifyChannel {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.CreateNotifyChannel(c)
+}
+
+// UpdateNotifyChannel 更新通知渠道（路由到全局 store）。
+func (m *MultiSchemaStore) UpdateNotifyChannel(c *NotifyChannel) bool {
+	s, err := m.globalStore()
+	if err != nil {
+		return false
+	}
+	return s.UpdateNotifyChannel(c)
+}
+
+// DeleteNotifyChannel 删除通知渠道（路由到全局 store）。
+func (m *MultiSchemaStore) DeleteNotifyChannel(id, tenantID string) bool {
+	s, err := m.globalStore()
+	if err != nil {
+		return false
+	}
+	return s.DeleteNotifyChannel(id, tenantID)
+}
+
+// GetNotifyChannel 按 ID 返回单个通知渠道（路由到全局 store）。
+func (m *MultiSchemaStore) GetNotifyChannel(id string) *NotifyChannel {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.GetNotifyChannel(id)
+}
+
+// ListNotifyChannels 返回通知渠道（路由到全局 store）。
+func (m *MultiSchemaStore) ListNotifyChannels(tenantID string) []*NotifyChannel {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.ListNotifyChannels(tenantID)
+}
+
+// CreateNotifyTemplate 创建通知模板（路由到全局 store）。
+func (m *MultiSchemaStore) CreateNotifyTemplate(t *NotifyTemplate) *NotifyTemplate {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.CreateNotifyTemplate(t)
+}
+
+// UpdateNotifyTemplate 更新通知模板（路由到全局 store）。
+func (m *MultiSchemaStore) UpdateNotifyTemplate(t *NotifyTemplate) bool {
+	s, err := m.globalStore()
+	if err != nil {
+		return false
+	}
+	return s.UpdateNotifyTemplate(t)
+}
+
+// DeleteNotifyTemplate 删除通知模板（路由到全局 store）。
+func (m *MultiSchemaStore) DeleteNotifyTemplate(id, tenantID string) bool {
+	s, err := m.globalStore()
+	if err != nil {
+		return false
+	}
+	return s.DeleteNotifyTemplate(id, tenantID)
+}
+
+// GetNotifyTemplate 按 ID 返回单个通知模板（路由到全局 store）。
+func (m *MultiSchemaStore) GetNotifyTemplate(id string) *NotifyTemplate {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.GetNotifyTemplate(id)
+}
+
+// ListNotifyTemplates 返回通知模板（路由到全局 store）。
+func (m *MultiSchemaStore) ListNotifyTemplates(tenantID string) []*NotifyTemplate {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.ListNotifyTemplates(tenantID)
 }

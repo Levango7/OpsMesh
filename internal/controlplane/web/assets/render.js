@@ -1178,6 +1178,12 @@ export function renderDocs() {
     + api('GET', '/middleware-templates/{id}', '中间件模板详情')
     + api('POST', '/middleware-templates/{id}/deploy', '部署中间件到指定设备')
     + api('GET', '/middleware-instances', '已部署中间件实例列表')
+    + '<h4>网络拓扑与诊断</h4>'
+    + api('GET', '/network/topology', '网络拓扑图（?refresh=true 强制刷新）')
+    + api('GET', '/network/topology/cache', '缓存的拓扑（不触发探测）')
+    + api('POST', '/network/diagnose', '发起网络诊断（ping/traceroute/tcping/nslookup/curl）')
+    + api('GET', '/network/diagnose/{taskId}', '查询诊断任务结果')
+    + api('POST', '/network/connectivity', '批量连通性检测')
     : '<p>All APIs are prefixed with <code>/api/v1</code>; auth required (Cookie or Bearer Token).</p>'
     + '<h4>Auth</h4>'
     + api('POST', '/auth/login', 'Login, returns token')
@@ -1233,7 +1239,13 @@ export function renderDocs() {
     + api('GET', '/middleware-templates', 'List middleware templates (optional ?category= filter)')
     + api('GET', '/middleware-templates/{id}', 'Middleware template detail')
     + api('POST', '/middleware-templates/{id}/deploy', 'Deploy middleware to a device')
-    + api('GET', '/middleware-instances', 'List deployed middleware instances');
+    + api('GET', '/middleware-instances', 'List deployed middleware instances')
+    + '<h4>Network Topology & Diagnose</h4>'
+    + api('GET', '/network/topology', 'Network topology (?refresh=true to force refresh)')
+    + api('GET', '/network/topology/cache', 'Cached topology (no probe)')
+    + api('POST', '/network/diagnose', 'Run network diagnose (ping/traceroute/tcping/nslookup/curl)')
+    + api('GET', '/network/diagnose/{taskId}', 'Query diagnose task result')
+    + api('POST', '/network/connectivity', 'Batch connectivity check');
   html += panel('docs-panel-api', '<h3>' + esc(t('docs.api')) + '</h3>' + apiBody);
 
   // 架构
