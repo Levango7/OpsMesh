@@ -734,7 +734,6 @@ func TestMemoryStore_AgentSecret(t *testing.T) {
 	}
 }
 
-
 // TestMemoryStore_SubmitResult_StateGuard 验证 task 82 状态守卫（幂等）：
 // 仅 running 任务接受上报；pending/cancelled 的迟到/重复上报被忽略（结果记录保留），
 // 防止 cancelled 被翻回 done、防止重复失败上报累计重试造成假死信。

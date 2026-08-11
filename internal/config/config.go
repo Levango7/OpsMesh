@@ -21,6 +21,15 @@ type Config struct {
 	// A3 多控制面 failover：逗号分隔的多个控制面地址，agent 依次重试（HA 真多副本前置）。
 	// 为空时回退使用 ControlAddr 单地址（向后兼容）。
 	ControlAddrs string
+	// M1-3 服务发现：逗号分隔的多个控制面地址（与 --control-addrs 同义，作为服务发现入口）。
+	// 优先级：--controlplane-endpoints > --control-addrs > --control-addr。
+	// 非空时启用 internal/discovery 包的 StaticDiscovery + Balancer（round-robin/failover），
+	// agent 通过 balancer 选择控制面实例，连接失败时自动 failover 到下一个。
+	// 为空时回退到 ControlAddrs / ControlAddr（向后兼容）。
+	ControlplaneEndpoints string
+	// M1-3 负载均衡策略：round-robin（轮询）| failover（主备切换，默认）。
+	// 单控制面地址时退化为始终用该地址（不破坏现有行为）。
+	LBStrategy string
 	Segment      string // agent 所属网段（U-02 分桶键）
 	HTTPPort     int    // 控制面 HTTP(B/S) 端口（约定 8080）
 	GRPCPort     int    // gRPC 端口（约定 9090，真实 gRPC 注册通道）
@@ -218,12 +227,34 @@ type Config struct {
 	// 多副本 HA 部署（replicas>1）应配置此项，否则登出后 access token 在其他副本仍有效。
 	SessionStore string // "" | redis://host:port
 
+	// M1-1 OpenTelemetry 链路追踪：可选启用，endpoint 为空时 no-op（零开销，不破坏现有功能）。
+	//   - OTELEndpoint：OTLP gRPC 导出地址（如 "jaeger:4317" 或 "otel-collector:4317"）；空=不启用。
+	//   - OTELServiceName：服务名标识（如 "opsmesh-controlplane" / "opsmesh-agent"）；空=回退 "opsmesh"。
+	//   - OTELStdout：是否导出到 stderr（调试用）；与 Endpoint 互斥，Stdout 优先。
+	// 启用后控制面 HTTP + agent gRPC 自动埋点，trace_id 贯穿 agent→控制面→store。
+	OTELEndpoint    string // OTLP gRPC 导出地址（空=不启用）
+	OTELServiceName string // 服务名（空=回退 "opsmesh"）
+	OTELStdout      bool   // 导出到 stderr（调试用）
+
 	// C-4 DeviceFP deadline：refresh token 设备指纹强制非空的截止时间。
 	// 零值（默认）=不强制（向后兼容，DeviceFP 为空时跳过设备绑定校验）；
 	// 非零=该时刻之后签发的 refresh token 必须绑定 DeviceFP（非空），否则 consumeRefreshToken 拒绝。
 	// 用于渐进式强制设备绑定：deadline 前允许旧客户端不传 DeviceFP，deadline 后强制要求。
 	// 格式：RFC3339（如 "2026-09-01T00:00:00Z"）；或 env OPSMESH_DEVICE_FP_DEADLINE。
 	DeviceFPDeadline time.Time
+
+	// M1-2 熔断器（Circuit Breaker）配置：
+	//   - CBFailureThreshold：连续失败多少次后熔断该设备/通道。<=0 表示禁用熔断器（透传，向后兼容）。
+	//     agent 端按 deviceID（即 agentID）隔离，控制面按 IP/tenant 限流。
+	//   - CBRecoveryTimeout：熔断后等待多久才进入 HalfOpen 半开探测。默认 30s。
+	//   - CBHalfOpenMaxCalls：HalfOpen 状态下允许的最大并发探测调用数。默认 1。
+	//   - CBRateLimitPerSec：控制面 API 限流阈值（每秒每 IP/tenant 最大请求数）。<=0 表示禁用 API 限流。
+	// 典型用法：agent 配置 --cb-failure-threshold=5 --cb-recovery-timeout=30s；
+	// 控制面配置 --cb-rate-limit-per-sec=100 限流 API。
+	CBFailureThreshold int           // 连续失败 N 次后熔断（默认 5；0=禁用）
+	CBRecoveryTimeout  time.Duration // 熔断后等待时间（默认 30s）
+	CBHalfOpenMaxCalls int           // 半开状态最大探测调用数（默认 1）
+	CBRateLimitPerSec  int           // 控制面 API 限流阈值（每秒每 IP/tenant；0=禁用）
 }
 
 // Load 解析 flag 并用环境变量兜底，返回 *Config。
@@ -232,6 +263,12 @@ func Load() *Config {
 	addr := flag.String("addr", "127.0.0.1", "agent 自身地址（占位）")
 	controlAddr := flag.String("control-addr", "http://127.0.0.1:8080", "控制面 HTTP 地址（agent 用）；单地址兼容写法")
 	controlAddrs := flag.String("control-addrs", "", "A3 多控制面地址（逗号分隔，如 cp1:9090,cp2:9090）；agent 依次重试实现 HA failover；空则回退 --control-addr")
+	// M1-3 服务发现：--controlplane-endpoints 作为 --control-addrs 的别名（语义同，作为服务发现入口）。
+	// 优先级：--controlplane-endpoints > --control-addrs > --control-addr。
+	// 显式设置 --controlplane-endpoints 时覆盖 --control-addrs；或 env OPSMESH_CONTROLPLANE_ENDPOINTS。
+	controlplaneEndpoints := flag.String("controlplane-endpoints", "", "M1-3 服务发现：多控制面地址（逗号分隔，如 cp1:9090,cp2:9090）；与 --control-addrs 同义，作为服务发现入口；优先级高于 --control-addrs；空则回退 --control-addrs/--control-addr；或 env OPSMESH_CONTROLPLANE_ENDPOINTS")
+	// M1-3 负载均衡策略：round-robin | failover（默认 failover，向后兼容现有 A3 多控制面依次重试行为）。
+	lbStrategy := flag.String("lb-strategy", "failover", "M1-3 负载均衡策略：round-robin（轮询）| failover（主备切换，默认）；单控制面地址时退化为始终用该地址；或 env OPSMESH_LB_STRATEGY")
 	segment := flag.String("segment", "default", "agent 所属网段")
 	httpPort := flag.Int("http-port", 8080, "控制面 HTTP(B/S) 端口（约定 8080）")
 	grpcPort := flag.Int("grpc-port", 9090, "gRPC 端口（约定 9090）")
@@ -327,6 +364,15 @@ func Load() *Config {
 	// C-4 DeviceFP deadline：该时刻之后签发的 refresh token 必须绑定 DeviceFP（非空）。
 	// 空（默认）=不强制（向后兼容）；RFC3339 格式（如 2026-09-01T00:00:00Z）。
 	deviceFPDeadline := flag.String("device-fp-deadline", "", "C-4 DeviceFP 强制非空截止时间：该时刻之后签发的 refresh token 必须绑定设备指纹（非空），之前向后兼容；空=不强制（默认）；RFC3339 格式（如 2026-09-01T00:00:00Z）；或 env OPSMESH_DEVICE_FP_DEADLINE")
+	// M1-1 OpenTelemetry 链路追踪：可选启用，endpoint 为空时 no-op。
+	otelEndpoint := flag.String("otel-endpoint", "", "M1-1 OTel OTLP gRPC 导出地址（如 jaeger:4317 或 otel-collector:4317）；空=不启用追踪（no-op，零开销）；或 env OPSMESH_OTEL_ENDPOINT")
+	otelServiceName := flag.String("otel-service-name", "", "M1-1 OTel 服务名标识（如 opsmesh-controlplane / opsmesh-agent）；空=回退 opsmesh；或 env OPSMESH_OTEL_SERVICE_NAME")
+	otelStdout := flag.Bool("otel-stdout", false, "M1-1 OTel 导出到 stderr（调试用，与 --otel-endpoint 互斥，stdout 优先）；或 env OPSMESH_OTEL_STDOUT")
+	// M1-2 熔断器（Circuit Breaker）配置。
+	cbFailureThreshold := flag.Int("cb-failure-threshold", 5, "M1-2 熔断器：连续失败 N 次后熔断该设备/通道；0=禁用熔断器（透传，向后兼容）；agent 端按 deviceID 隔离，控制面按 IP/tenant 限流；或 env OPSMESH_CB_FAILURE_THRESHOLD")
+	cbRecoveryTimeout := flag.Duration("cb-recovery-timeout", 30*time.Second, "M1-2 熔断器：熔断后等待多久才进入 HalfOpen 半开探测；或 env OPSMESH_CB_RECOVERY_TIMEOUT")
+	cbHalfOpenMaxCalls := flag.Int("cb-half-open-max-calls", 1, "M1-2 熔断器：HalfOpen 状态下允许的最大并发探测调用数；或 env OPSMESH_CB_HALF_OPEN_MAX_CALLS")
+	cbRateLimitPerSec := flag.Int("cb-rate-limit-per-sec", 0, "M1-2 控制面 API 限流阈值：每秒每 IP/tenant 最大请求数；0=禁用 API 限流（向后兼容）；或 env OPSMESH_CB_RATE_LIMIT_PER_SEC")
 	flag.Parse()
 
 	// 记录被显式设置的 flag，用于"flag 优先、env 兜底"的正确语义（P1-8 修复：原实现 env 会覆盖显式 flag）。
@@ -371,6 +417,8 @@ func Load() *Config {
 		Addr:                   val("addr", *addr, "OPSMESH_ADDR"),
 		ControlAddr:            val("control-addr", *controlAddr, "OPSMESH_CONTROL_ADDR"),
 		ControlAddrs:           val("control-addrs", *controlAddrs, "OPSMESH_CONTROL_ADDRS"),
+		ControlplaneEndpoints:  val("controlplane-endpoints", *controlplaneEndpoints, "OPSMESH_CONTROLPLANE_ENDPOINTS"),
+		LBStrategy:             val("lb-strategy", *lbStrategy, "OPSMESH_LB_STRATEGY"),
 		Segment:                val("segment", *segment, "OPSMESH_SEGMENT"),
 		HTTPPort:               valInt("http-port", *httpPort, "OPSMESH_HTTP_PORT"),
 		GRPCPort:               valInt("grpc-port", *grpcPort, "OPSMESH_GRPC_PORT"),
@@ -447,6 +495,13 @@ func Load() *Config {
 		CookieSecure:           valBool("cookie-secure", *cookieSecure, "OPSMESH_COOKIE_SECURE"),
 		SessionStore:           val("session-store", *sessionStore, "OPSMESH_SESSION_STORE"),
 		DeviceFPDeadline:       parseDeviceFPDeadline(val("device-fp-deadline", *deviceFPDeadline, "OPSMESH_DEVICE_FP_DEADLINE")),
+		OTELEndpoint:           val("otel-endpoint", *otelEndpoint, "OPSMESH_OTEL_ENDPOINT"),
+		OTELServiceName:        val("otel-service-name", *otelServiceName, "OPSMESH_OTEL_SERVICE_NAME"),
+		OTELStdout:             valBool("otel-stdout", *otelStdout, "OPSMESH_OTEL_STDOUT"),
+		CBFailureThreshold:     valInt("cb-failure-threshold", *cbFailureThreshold, "OPSMESH_CB_FAILURE_THRESHOLD"),
+		CBRecoveryTimeout:      valDur("cb-recovery-timeout", *cbRecoveryTimeout, "OPSMESH_CB_RECOVERY_TIMEOUT"),
+		CBHalfOpenMaxCalls:     valInt("cb-half-open-max-calls", *cbHalfOpenMaxCalls, "OPSMESH_CB_HALF_OPEN_MAX_CALLS"),
+		CBRateLimitPerSec:      valInt("cb-rate-limit-per-sec", *cbRateLimitPerSec, "OPSMESH_CB_RATE_LIMIT_PER_SEC"),
 	}
 	// task 97 --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
 	// 使现有 LogBackend 校验/路由逻辑无缝复用；最终 LogStore 与 LogBackend 保持同值。
@@ -455,6 +510,22 @@ func Load() *Config {
 		cfg.LogBackend = cfg.LogStore
 	}
 	cfg.LogStore = cfg.LogBackend
+	// M1-3 服务发现：--controlplane-endpoints 作为 --control-addrs 的别名（语义同，作为服务发现入口）。
+	// 显式设置 --controlplane-endpoints（或 OPSMESH_CONTROLPLANE_ENDPOINTS）时覆盖 ControlAddrs，
+	// 使现有 ControlAddrs 路由逻辑（agent.go 中解析多地址 failover）无缝复用；
+	// 最终 ControlplaneEndpoints 与 ControlAddrs 保持同值（便于调用方统一读取 ControlAddrs）。
+	// 优先级：显式 --controlplane-endpoints > 显式 --control-addrs > env > 回退 --control-addr。
+	if cfg.ControlplaneEndpoints != "" {
+		cfg.ControlAddrs = cfg.ControlplaneEndpoints
+	}
+	cfg.ControlplaneEndpoints = cfg.ControlAddrs
+	// M1-3 负载均衡策略校验：非法值回退到默认 failover（不 fail-fast，保持启动友好）。
+	switch cfg.LBStrategy {
+	case "round-robin", "roundrobin", "rr", "failover", "fo", "":
+	default:
+		fmt.Fprintln(os.Stderr, "[config] 警告：非法 --lb-strategy="+cfg.LBStrategy+"（应为 round-robin | failover），回退到默认 failover")
+		cfg.LBStrategy = "failover"
+	}
 	// A4 生产模式：默认开启 require-auth（除非显式关闭），并强告警 memory store。
 	if cfg.Production && !explicit["require-auth"] {
 		cfg.RequireAuth = true

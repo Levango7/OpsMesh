@@ -174,6 +174,10 @@ type Task struct {
 
 // AuditEvent 内核产出的审计事件（U-04 等保三级：操作 100% 留痕）。
 // 内核从“只消费网关注入身份”升级为“同时产出审计事件”，供审计/合规检索。
+//
+// M1-4 分布式可观测性：TraceID 字段关联 OTel trace_id，
+// 使审计日志可与链路追踪/日志/SSE 事件跨域关联检索。
+// omitempty 保证旧 JSON 反序列化不受影响（向后兼容）。
 type AuditEvent struct {
 	TenantID  string    `json:"tenantID"`
 	UserID    string    `json:"userID"`
@@ -181,6 +185,9 @@ type AuditEvent struct {
 	Target    string    `json:"target"` // agentID / taskID
 	Detail    string    `json:"detail"`
 	CreatedAt time.Time `json:"createdAt"`
+	// TraceID 关联 OTel 链路追踪的 trace_id（32 字符 hex），空串表示无关联（向后兼容）。
+	// 由控制面 handler / gRPC handler 在构造 AuditEvent 时从 ctx 提取注入。
+	TraceID string `json:"traceID,omitempty"`
 }
 
 // TaskResult agent 上报的任务执行结果。

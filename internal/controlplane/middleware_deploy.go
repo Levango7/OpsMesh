@@ -585,7 +585,8 @@ func (s *Server) handleCreateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	if caller != nil {
 		userID = caller.ID
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: userID, Action: "mw_template_create", Target: st.ID, Detail: sanitizeAuditDetail("name=" + tpl.Name),
 	})
 	if s.bus != nil {
@@ -594,7 +595,7 @@ func (s *Server) handleCreateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 			Action: "mw_template_create", Target: st.ID, Detail: sanitizeAuditDetail("name=" + tpl.Name), Level: events.LevelInfo,
 		})
 	}
-	s.publishEvent("mw_template_changed", actx.TenantID, map[string]string{"id": st.ID, "op": "create"})
+	s.publishEvent(r.Context(), "mw_template_changed", actx.TenantID, map[string]string{"id": st.ID, "op": "create"})
 	writeJSON(w, http.StatusCreated, saved)
 }
 
@@ -646,7 +647,8 @@ func (s *Server) handleUpdateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	if caller != nil {
 		userID = caller.ID
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: userID, Action: "mw_template_update", Target: id, Detail: sanitizeAuditDetail("name=" + tpl.Name),
 	})
 	if s.bus != nil {
@@ -655,7 +657,7 @@ func (s *Server) handleUpdateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 			Action: "mw_template_update", Target: id, Detail: sanitizeAuditDetail("name=" + tpl.Name), Level: events.LevelInfo,
 		})
 	}
-	s.publishEvent("mw_template_changed", actx.TenantID, map[string]string{"id": id, "op": "update"})
+	s.publishEvent(r.Context(), "mw_template_changed", actx.TenantID, map[string]string{"id": id, "op": "update"})
 	writeJSON(w, http.StatusOK, saved)
 }
 
@@ -688,7 +690,8 @@ func (s *Server) handleDeleteMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	if caller != nil {
 		userID = caller.ID
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: userID, Action: "mw_template_delete", Target: id, Detail: sanitizeAuditDetail("name=" + existing.Name),
 	})
 	if s.bus != nil {
@@ -697,7 +700,7 @@ func (s *Server) handleDeleteMiddlewareTemplate(w http.ResponseWriter, r *http.R
 			Action: "mw_template_delete", Target: id, Detail: sanitizeAuditDetail("name=" + existing.Name), Level: events.LevelInfo,
 		})
 	}
-	s.publishEvent("mw_template_changed", actx.TenantID, map[string]string{"id": id, "op": "delete"})
+	s.publishEvent(r.Context(), "mw_template_changed", actx.TenantID, map[string]string{"id": id, "op": "delete"})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -835,7 +838,8 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		Command:    command,
 		MaxRetries: s.cfg.TaskMaxRetries,
 	})
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: targetTenant,
 		UserID:   actx.UserID,
 		Action:   "deploy_middleware",
@@ -854,7 +858,8 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	}
 	// M3-2B SSE：通知前端新部署任务已创建。
 	// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
-	s.publishEvent("task_status", targetTenant, map[string]string{
+	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	s.publishEvent(r.Context(), "task_status", targetTenant, map[string]string{
 		"taskID":  task.TaskID,
 		"status":  task.Status,
 		"agentID": body.AgentID,
@@ -1068,7 +1073,8 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		Command:    command,
 		MaxRetries: s.cfg.TaskMaxRetries,
 	})
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: targetTenant,
 		UserID:   actx.UserID,
 		Action:   "uninstall_middleware",
@@ -1087,7 +1093,8 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 	}
 	// M3-2B SSE：通知前端卸载任务已创建。
 	// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
-	s.publishEvent("task_status", targetTenant, map[string]string{
+	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	s.publishEvent(r.Context(), "task_status", targetTenant, map[string]string{
 		"taskID":  task.TaskID,
 		"status":  task.Status,
 		"agentID": body.AgentID,

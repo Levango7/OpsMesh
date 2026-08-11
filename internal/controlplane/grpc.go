@@ -23,6 +23,7 @@ import (
 	"opsmesh/internal/logstore"
 	"opsmesh/internal/logx"
 	"opsmesh/internal/metrics"
+	"opsmesh/internal/otelx"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 )
@@ -76,7 +77,8 @@ func (g *grpcServerImpl) Register(ctx context.Context, info *proto.AgentInfo) (*
 		devID, tokTenant, tokOK := g.store.ConsumeToken(info.InstallToken)
 		if !tokOK {
 			// U-04：认证失败也要留痕（B1 token 校验失败属认证事件）。
-			g.store.Audit(&proto.AuditEvent{TenantID: "", Action: "register_token_rejected", Target: dom.AgentID, Detail: "invalid or expired install token"})
+			// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+			g.audit(ctx, &proto.AuditEvent{TenantID: "", Action: "register_token_rejected", Target: dom.AgentID, Detail: "invalid or expired install token"})
 			return nil, status.Error(codes.Unauthenticated, "invalid or expired install token")
 		}
 		dom.OnboardDeviceID = devID
@@ -121,8 +123,9 @@ func (g *grpcServerImpl) Register(ctx context.Context, info *proto.AgentInfo) (*
 
 	// M3-2B SSE：通知前端新 agent/设备已上线（设备表实时追加）
 	// H6 租户隔离：携带 registered.TenantID，仅同租户订阅者收到。
+	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
 	if g.srv != nil {
-		g.srv.publishEvent("device_online", registered.TenantID, map[string]string{
+		g.srv.publishEvent(ctx, "device_online", registered.TenantID, map[string]string{
 			"agentID":  registered.AgentID,
 			"hostname": registered.Hostname,
 			"segment":  registered.Segment,
@@ -251,6 +254,20 @@ func computeAgentSignature(secret, timestamp, agentID string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
+// audit M1-4 分布式可观测性：gRPC handler 的审计日志 helper，
+// 从 ctx 提取 OTel trace_id 注入 AuditEvent.TraceID，然后转发到 store.Audit。
+// 与 Server.audit 对齐，使 gRPC 路径产出的审计日志也关联 trace_id。
+// e 为 nil 时直接返回（容错）。
+func (g *grpcServerImpl) audit(ctx context.Context, e *proto.AuditEvent) {
+	if e == nil {
+		return
+	}
+	if e.TraceID == "" {
+		e.TraceID = otelx.TraceIDFromContext(ctx)
+	}
+	g.store.Audit(e)
+}
+
 // Heartbeat 心跳：转发到 store.Heartbeat；若携带监控指标则缓存到 store。
 func (g *grpcServerImpl) Heartbeat(ctx context.Context, req *grpcx.HeartbeatReq) (*grpcx.Empty, error) {
 	if err := g.checkAgentTenant(ctx, req.AgentID); err != nil {
@@ -339,6 +356,7 @@ func (g *grpcServerImpl) ReportResult(ctx context.Context, res *proto.TaskResult
 	// 内部判定），前端收到 alert_new 即刷新告警面板。冗余刷新可接受（前端刷新幂等）。
 	// H6 租户隔离：事件归属租户取自 agent 注册时的 TenantID（agent 不可伪造，由 Register 盖章），
 	// 仅同租户订阅者收到；agent 不存在时 tenant 留空（兼容旧数据/无网关降级）。
+	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
 	if g.srv != nil {
 		agentTenant := ""
 		if a := g.store.Agent(res.AgentID); a != nil {
@@ -348,14 +366,14 @@ func (g *grpcServerImpl) ReportResult(ctx context.Context, res *proto.TaskResult
 		if dr.ExitCode != 0 {
 			status = "failed"
 		}
-		g.srv.publishEvent("task_status", agentTenant, map[string]interface{}{
+		g.srv.publishEvent(ctx, "task_status", agentTenant, map[string]interface{}{
 			"taskID":   dr.TaskID,
 			"status":   status,
 			"agentID":  res.AgentID,
 			"exitCode": dr.ExitCode,
 		})
 		if dr.ExitCode != 0 {
-			g.srv.publishEvent("alert_new", agentTenant, map[string]string{
+			g.srv.publishEvent(ctx, "alert_new", agentTenant, map[string]string{
 				"taskID": dr.TaskID,
 				"action": "dead_letter_check",
 			})
@@ -387,8 +405,9 @@ func (g *grpcServerImpl) CancelTask(ctx context.Context, req *grpcx.CancelTaskRe
 	}
 	// M3-2B SSE：通知前端任务已取消（gRPC 通道，agent 侧或编排系统触发）
 	// H6 租户隔离：携带 tenant，仅同租户订阅者收到。
+	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
 	if g.srv != nil {
-		g.srv.publishEvent("task_status", tenant, map[string]string{
+		g.srv.publishEvent(ctx, "task_status", tenant, map[string]string{
 			"taskID": req.TaskID,
 			"status": "cancelled",
 		})

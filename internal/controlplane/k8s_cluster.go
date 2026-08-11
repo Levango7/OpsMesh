@@ -235,7 +235,8 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 			logx.Error(r.Context(), "K8s 集群状态回写失败", err, "clusterID", c.ID)
 		}
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: c.TenantID, UserID: caller.ID, Action: "k8s_cluster_create", Target: c.ID, Detail: sanitizeAuditDetail("name=" + c.Name),
 	})
 	writeJSON(w, http.StatusCreated, maskK8sCluster(c))
@@ -317,7 +318,8 @@ func (s *Server) handleDeleteK8sCluster(w http.ResponseWriter, r *http.Request, 
 	if s.clusterMgr != nil {
 		s.clusterMgr.RemoveCluster(id)
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: existing.TenantID, UserID: caller.ID, Action: "k8s_cluster_delete", Target: id, Detail: sanitizeAuditDetail("name=" + existing.Name),
 	})
 	w.WriteHeader(http.StatusNoContent)

@@ -1,4 +1,3 @@
-
 // backup.go 实现 opsmesh backup / restore 子命令的数据导出/导入逻辑。
 //
 // 设计目标：
@@ -61,15 +60,15 @@ const (
 
 // BackupMeta 备份文件元信息（写在 BackupData.Meta，用于 restore 时校验来源/版本/时间窗）。
 type BackupMeta struct {
-	Version        string    `json:"version"`        // opsmesh 内核版本（version.Version）
-	CreatedAt      time.Time `json:"createdAt"`      // 备份生成时间
-	Format         string    `json:"format"`         // json | sql
-	IncludeAudits  bool      `json:"includeAudits"`  // 是否包含审计
-	IncludeConfig  bool      `json:"includeConfig"`  // 是否包含配置
-	TaskWindowDays int       `json:"taskWindowDays"` // 任务时间窗（天）
-	AlertWindowDays int      `json:"alertWindowDays"` // 告警时间窗（天）
-	AuditWindowDays int      `json:"auditWindowDays"` // 审计时间窗（天）
-	Counts         BackupCounts `json:"counts"`       // 各类数据条数（供 restore 前预览/校验）
+	Version         string       `json:"version"`         // opsmesh 内核版本（version.Version）
+	CreatedAt       time.Time    `json:"createdAt"`       // 备份生成时间
+	Format          string       `json:"format"`          // json | sql
+	IncludeAudits   bool         `json:"includeAudits"`   // 是否包含审计
+	IncludeConfig   bool         `json:"includeConfig"`   // 是否包含配置
+	TaskWindowDays  int          `json:"taskWindowDays"`  // 任务时间窗（天）
+	AlertWindowDays int          `json:"alertWindowDays"` // 告警时间窗（天）
+	AuditWindowDays int          `json:"auditWindowDays"` // 审计时间窗（天）
+	Counts          BackupCounts `json:"counts"`          // 各类数据条数（供 restore 前预览/校验）
 }
 
 // BackupCounts 各类数据条数（备份生成时统计，restore 前可预览规模）。
@@ -94,17 +93,17 @@ type BackupCounts struct {
 //   - Audits：审计事件（仅 --include-audits 时填充）；
 //   - Config：运行配置（仅 --include-config 时填充，含敏感字段）。
 type BackupData struct {
-	Meta        BackupMeta           `json:"meta"`
-	Devices     []proto.DeviceInfo   `json:"devices"`
-	Agents      []*proto.AgentInfo   `json:"agents"`
-	Tasks       []*proto.Task        `json:"tasks"`
-	Alerts      []*proto.Alert       `json:"alerts"`
-	AlertRules  []*store.AlertRule   `json:"alertRules"`
-	Users       []*store.User        `json:"users"`
-	Roles       []*store.Role        `json:"roles"`
-	Permissions []*store.Permission  `json:"permissions"`
-	Audits      []*proto.AuditEvent  `json:"audits,omitempty"`
-	Config      *config.Config       `json:"config,omitempty"`
+	Meta        BackupMeta          `json:"meta"`
+	Devices     []proto.DeviceInfo  `json:"devices"`
+	Agents      []*proto.AgentInfo  `json:"agents"`
+	Tasks       []*proto.Task       `json:"tasks"`
+	Alerts      []*proto.Alert      `json:"alerts"`
+	AlertRules  []*store.AlertRule  `json:"alertRules"`
+	Users       []*store.User       `json:"users"`
+	Roles       []*store.Role       `json:"roles"`
+	Permissions []*store.Permission `json:"permissions"`
+	Audits      []*proto.AuditEvent `json:"audits,omitempty"`
+	Config      *config.Config      `json:"config,omitempty"`
 }
 
 // ExportOptions backup 子命令导出选项。
@@ -142,14 +141,14 @@ type ImportOptions struct {
 
 // ImportResult 导入结果统计（restore 后返回，供 CLI 输出汇总）。
 type ImportResult struct {
-	Devices     int `json:"devices"`
-	Agents      int `json:"agents"`
-	Tasks       int `json:"tasks"`
-	Alerts      int `json:"alerts"`
-	AlertRules  int `json:"alertRules"`
-	Users       int `json:"users"`
-	Roles       int `json:"roles"`
-	Skipped     int `json:"skipped"` // 因已存在且 Overwrite=false 跳过的条数
+	Devices    int `json:"devices"`
+	Agents     int `json:"agents"`
+	Tasks      int `json:"tasks"`
+	Alerts     int `json:"alerts"`
+	AlertRules int `json:"alertRules"`
+	Users      int `json:"users"`
+	Roles      int `json:"roles"`
+	Skipped    int `json:"skipped"` // 因已存在且 Overwrite=false 跳过的条数
 }
 
 // ExportBackup 从 Store 读取数据并写入 w（按 opts.Format 选择 JSON 或 SQL dump）。
@@ -557,7 +556,7 @@ func writeSQLDump(data *BackupData, w io.Writer) error {
 	return bw.Flush()
 }
 
-// sqlStr 把字符串转义为 SQL 字面量（单引号包裹，内部单引号转义为 ''）。
+// sqlStr 把字符串转义为 SQL 字面量（单引号包裹，内部单引号转义为 ”）。
 func sqlStr(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }

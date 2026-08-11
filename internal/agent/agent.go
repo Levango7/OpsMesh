@@ -24,12 +24,17 @@ import (
 
 	gnet "github.com/shirou/gopsutil/v3/net"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"opsmesh/internal/circuitbreaker"
 	"opsmesh/internal/config"
+	"opsmesh/internal/discovery"
 	"opsmesh/internal/grpcx"
 	"opsmesh/internal/logx"
+	"opsmesh/internal/otelx"
 	"opsmesh/internal/proto"
 )
 
@@ -63,6 +68,15 @@ type Agent struct {
 	logCollectInterval time.Duration
 	logOffsets         map[string]int64
 	logMu              sync.Mutex
+	// M1-1 OTel 链路追踪：TracerProvider 优雅关闭函数。
+	// 由 New 调用 otelx.Init 构造；Run 优雅退出时调用以 flush 残留 span。
+	// nil=未启用 OTel（endpoint 空且 stdout=false），退出时跳过。
+	otelShutdown otelx.ShutdownFunc
+	// M1-2 熔断器：按 deviceID（即 agentID）隔离的熔断器集合。
+	// 由 New 构造；worker 执行任务前经熔断器放行，连续失败 N 次后熔断该设备，
+	// 跳过任务执行并返回 "circuit breaker open" 错误，熔断恢复后自动重新执行。
+	// cbSet 为 nil 表示禁用熔断器（CBFailureThreshold<=0），worker 直接执行。
+	cbSet *circuitbreaker.BreakerSet
 }
 
 // New 构造 agent（读取 hostname，作为注册信息）。
@@ -87,7 +101,48 @@ func New(cfg *config.Config) *Agent {
 		metricsHistory: NewMetricsHistory(MetricsHistoryDefaultCap), // 环形缓冲：默认 2h/240 条
 	}
 	a.initLogCollect()
+	// M1-1 OTel 链路追踪初始化：endpoint 为空且 stdout=false 时 no-op（零开销）。
+	// 服务名默认 "opsmesh-agent"（未配置时由 otelx 回退 "opsmesh"）。
+	// 启用后 agent gRPC 调用 + 心跳 + 任务执行自动埋点，trace_id 贯穿 agent→控制面→store。
+	otelShutdown, otelErr := otelx.Init(otelx.Config{
+		Endpoint:    cfg.OTELEndpoint,
+		ServiceName: firstNonEmptyAgent(cfg.OTELServiceName, "opsmesh-agent"),
+		Stdout:      cfg.OTELStdout,
+	})
+	if otelErr != nil {
+		log.Fatalf("[agent] OTel 初始化失败: %v", otelErr)
+	}
+	a.otelShutdown = otelShutdown
+	if cfg.OTELEndpoint != "" || cfg.OTELStdout {
+		logx.Info(context.Background(), "OTel 链路追踪已启用", "endpoint", cfg.OTELEndpoint, "stdout", cfg.OTELStdout, "service", cfg.OTELServiceName)
+	}
+	// M1-2 熔断器初始化：CBFailureThreshold>0 时启用，按 deviceID（即 agentID）隔离。
+	// 禁用时 cbSet 为 nil，worker 直接执行任务（零开销，向后兼容）。
+	if cfg.CBFailureThreshold > 0 {
+		a.cbSet = circuitbreaker.NewBreakerSet(circuitbreaker.Config{
+			FailureThreshold: cfg.CBFailureThreshold,
+			RecoveryTimeout:  cfg.CBRecoveryTimeout,
+			HalfOpenMaxCalls: cfg.CBHalfOpenMaxCalls,
+			OnStateChange: func(name, from, to string) {
+				logx.Info(context.Background(), "熔断器状态变更", "device", name, "from", from, "to", to)
+			},
+		})
+		logx.Info(context.Background(), "熔断器已启用",
+			"failureThreshold", cfg.CBFailureThreshold,
+			"recoveryTimeout", cfg.CBRecoveryTimeout,
+			"halfOpenMaxCalls", cfg.CBHalfOpenMaxCalls)
+	}
 	return a
+}
+
+// firstNonEmptyAgent 返回第一个非空字符串，全空返回空串。用于服务名默认值回退。
+func firstNonEmptyAgent(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // initLogCollect 初始化日志采集配置（task 98）。
@@ -111,6 +166,20 @@ func (a *Agent) initLogCollect() {
 				a.logCollectPaths = append(a.logCollectPaths, p)
 			}
 		}
+	}
+}
+
+// shutdownOTel M1-1 OTel 优雅关闭：flush 残留 span 到导出器。
+// 未启用 OTel（otelShutdown 为 nil 或 no-op）时直接返回，零开销。
+// 用 5s 超时避免退出窗口耗尽在 OTel flush 上。
+func (a *Agent) shutdownOTel() {
+	if a.otelShutdown == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := a.otelShutdown(ctx); err != nil {
+		log.Printf("agent: OTel shutdown 失败: %v", err)
 	}
 }
 
@@ -316,8 +385,8 @@ func (a *Agent) Run() error {
 	// U-02 冻结 Linux-only：非 Linux 能跑 shell，但 service(systemctl)/rlimit 不可用。
 	logx.Info(context.Background(), "agent 能力矩阵", "os", runtime.GOOS, "note", capabilityNote(runtime.GOOS))
 
-	// A3 多控制面 failover：优先用逗号分隔的 --control-addrs，
-	// 为空则回退单地址 --control-addr（向后兼容）。
+	// A3 多控制面 failover：优先用逗号分隔的 --control-addrs（M1-3 后也接受 --controlplane-endpoints，
+	// config.Load 已合并到 ControlAddrs），为空则回退单地址 --control-addr（向后兼容）。
 	addrs := strings.Split(a.cfg.ControlAddrs, ",")
 	trimmed := make([]string, 0, len(addrs))
 	for _, ad := range addrs {
@@ -335,6 +404,12 @@ func (a *Agent) Run() error {
 	}
 	a.grpc = cli
 	defer cli.Close()
+	// M1-3 服务发现：用 StaticDiscovery 加载多控制面地址，按 --lb-strategy 构造 balancer，
+	// 注入 gRPC 客户端。单地址时 Failover 退化为始终用该地址（不破坏现有行为）。
+	a.setupDiscoveryBalancer(trimmed)
+	// M1-1 OTel 优雅关闭：flush 残留 span 到导出器。defer 在 cli.Close() 之后注册，
+	// 故执行顺序为先 shutdownOTel（flush span）再 cli.Close（关 gRPC），确保 span 上报完成。
+	defer a.shutdownOTel()
 
 	if err := a.register(); err != nil {
 		return err
@@ -364,6 +439,34 @@ func (a *Agent) Run() error {
 // 平台相关实现见 rlimit_unix.go（linux/darwin）与 rlimit_other.go（windows 等无 POSIX rlimit 的平台）。
 func (a *Agent) applyRlimits() {
 	setRlimits(a)
+}
+
+// setupDiscoveryBalancer M1-3 服务发现：用 StaticDiscovery 加载多控制面地址，
+// 按 --lb-strategy 构造 balancer 并注入 gRPC 客户端。
+//
+// 逻辑：
+//  1. 用 StaticDiscovery 从 addrs 构造控制面实例列表（服务名 "opsmesh-controlplane"）。
+//  2. 用 List 获取实例列表，按 cfg.LBStrategy 构造 balancer（round-robin/failover）。
+//  3. 通过 SetBalancer 注入 GRPCClient，invoke 后续优先走 balancer 路径。
+//
+// 单地址时 Failover 退化为始终用该地址（不破坏现有行为）。
+// addrs 为空时不注入 balancer（回退到 addrs failover，向后兼容）。
+func (a *Agent) setupDiscoveryBalancer(addrs []string) {
+	if len(addrs) == 0 || a.grpc == nil {
+		return
+	}
+	// 用逗号拼接的地址列表构造 StaticDiscovery（与 NewStaticDiscoveryFromAddrs 签名匹配）。
+	joined := strings.Join(addrs, ",")
+	disc := discovery.NewStaticDiscoveryFromAddrs("opsmesh-controlplane", joined)
+	instances, err := disc.List(context.Background(), "opsmesh-controlplane")
+	if err != nil || len(instances) == 0 {
+		// 静态实现不应出错，但防御性处理：不注入 balancer，回退到 addrs failover。
+		return
+	}
+	balancer := discovery.NewBalancer(a.cfg.LBStrategy, instances)
+	a.grpc.SetBalancer(balancer)
+	logx.Info(context.Background(), "M1-3 服务发现已启用",
+		"instances", len(instances), "lb-strategy", a.cfg.LBStrategy)
 }
 
 // capabilityNote 返回目标机能力矩阵提示（B4：显式能力边界，避免“能注册但半数任务类型必挂”错觉）。
@@ -434,6 +537,7 @@ func (a *Agent) register() error {
 
 // heartbeatLoop 每 10s 经 gRPC Heartbeat 发送一次心跳（ctx 取消即退出）。
 // 监控指标采集频率独立：每 30s 采集一次（cpu.Percent 等需要采样间隔，频繁调用消耗 CPU）。
+// M1-1 OTel：每次心跳创建 span（agent.heartbeat），trace_id 经 gRPC metadata 贯穿到控制面。
 func (a *Agent) heartbeatLoop(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -442,6 +546,8 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// M1-1 OTel：为每次心跳创建 span，trace_id 贯穿 agent→控制面。
+			spanCtx, span := otelx.StartSpan(ctx, "agent.heartbeat")
 			req := &grpcx.HeartbeatReq{AgentID: a.agentID, Status: "online", Load: 1}
 			// CMDB 增量上报：每 60 秒采集一次机器属性并附带在心跳中。
 			if report := a.collectCmdbReport(); report != nil {
@@ -452,14 +558,16 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 			if metrics := a.collectDeviceMetrics(); metrics != nil {
 				req.Metrics = metrics
 			}
-			cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			cctx, cancel := context.WithTimeout(spanCtx, 5*time.Second)
 			err := a.grpc.Heartbeat(cctx, req)
 			cancel()
 			if err != nil {
-				logx.Error(ctx, "心跳失败", err, "agentID", a.agentID)
+				logx.Error(spanCtx, "心跳失败", err, "agentID", a.agentID)
+				span.End()
 				continue
 			}
-			logx.Info(ctx, "心跳 ok", "agentID", a.agentID)
+			logx.Info(spanCtx, "心跳 ok", "agentID", a.agentID)
+			span.End()
 		}
 	}
 }
@@ -591,17 +699,59 @@ func (a *Agent) claimTask(ctx context.Context) (*proto.Task, error) {
 // worker 从任务队列取任务并执行、上报（ctx 取消即退出）。
 // F3 取消信号：执行前登记任务控制句柄，结束后注销；若执行期间被控制面取消，
 // 则丢弃结果不再回写 store（避免把 cancelled 任务误翻成 done/failed/死信）。
+// M1-2 熔断器：通过熔断器 Execute 包裹任务执行（按 deviceID=agentID 隔离）。
+// 熔断中（Open 状态）Execute 返回 ErrCircuitOpen，跳过任务执行，构造 "circuit breaker open"
+// 错误结果上报控制面；熔断恢复（HalfOpen 探测成功→Closed）后自动重新执行任务。
+// 禁用模式（CBFailureThreshold<=0，cbSet=nil）下直接执行，零开销向后兼容。
 func (a *Agent) worker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case t := <-a.taskCh:
-			taskCtx, cancel := context.WithTimeout(ctx, a.taskTimeout)
-			a.addRunning(t.TaskID, cancel)
-			res := a.execute(taskCtx, t)
-			cancelled := a.delRunning(t.TaskID)
-			cancel() // 释放 timer（cancelLoop 已可能触发过，幂等）
+			// M1-2 熔断器：按 deviceID（即 agentID）隔离。
+			// deviceID 取 t.AgentID（任务所属设备）；空时回退 a.agentID（自身）。
+			deviceID := t.AgentID
+			if deviceID == "" {
+				deviceID = a.agentID
+			}
+			var res proto.TaskResult
+			var cancelled bool
+			if a.cbSet != nil {
+				// 通过熔断器执行：Execute 内部处理 Open→HalfOpen→Closed 状态机。
+				cbErr := a.cbSet.Execute(deviceID, func() error {
+					taskCtx, cancel := context.WithTimeout(ctx, a.taskTimeout)
+					a.addRunning(t.TaskID, cancel)
+					res = a.execute(taskCtx, t)
+					cancelled = a.delRunning(t.TaskID)
+					cancel()
+					if cancelled {
+						return nil // 取消不算失败，避免误熔断
+					}
+					if res.ExitCode != 0 {
+						return fmt.Errorf("task exit code %d", res.ExitCode)
+					}
+					return nil
+				})
+				if cbErr == circuitbreaker.ErrCircuitOpen {
+					logx.Warn(ctx, "熔断器开启，跳过任务执行", "taskID", t.TaskID, "deviceID", deviceID)
+					res = proto.TaskResult{
+						TaskID:     t.TaskID,
+						AgentID:    a.agentID,
+						ClaimEpoch: t.ClaimEpoch,
+						ExitCode:   -1,
+						Stderr:     "circuit breaker open for device " + deviceID,
+						FinishedAt: time.Now(),
+					}
+				}
+			} else {
+				// 禁用模式：直接执行，零开销向后兼容。
+				taskCtx, cancel := context.WithTimeout(ctx, a.taskTimeout)
+				a.addRunning(t.TaskID, cancel)
+				res = a.execute(taskCtx, t)
+				cancelled = a.delRunning(t.TaskID)
+				cancel()
+			}
 			if cancelled {
 				logx.Info(ctx, "任务已取消，丢弃执行结果", "taskID", t.TaskID)
 				continue
@@ -615,11 +765,20 @@ func (a *Agent) worker(ctx context.Context) {
 // 使用传入的 ctx（worker 已绑定 taskTimeout 与取消信号，F3 取消时 ctx 被取消、命令立即中断）。
 // 安全加固（task 78）：stdout/stderr 用 LimitedBuffer 限制 10MB，避免 cat 大文件耗尽 agent 内存。
 // A-1 防双跑：res.ClaimEpoch = t.ClaimEpoch，上报时携带持有者令牌，store 校验持有者是否仍为当前 epoch。
+// M1-1 OTel：为任务执行创建 span（agent.execute），记录 task.id/type/exit_code/duration，
+// trace_id 贯穿 agent→控制面（ReportResult 经 gRPC 客户端拦截器注入 trace context）。
 func (a *Agent) execute(ctx context.Context, t proto.Task) proto.TaskResult {
+	// M1-1 OTel：为任务执行创建 span，记录任务属性。
+	// spanCtx 继承 ctx 的取消信号（taskTimeout + F3 取消），执行器用 spanCtx 使取消信号直达子进程。
+	ctx, span := otelx.StartSpan(ctx, "agent.execute")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("task.id", t.TaskID),
+		attribute.String("task.type", t.Type),
+	)
+
 	start := time.Now()
 	res := proto.TaskResult{TaskID: t.TaskID, AgentID: a.agentID, ClaimEpoch: t.ClaimEpoch, FinishedAt: time.Now()}
-
-	_ = ctx // ctx 由 shell/service/file 执行器经 exec.CommandContext 消费（取消信号直达子进程）
 
 	stdout := newLimitedBuffer(maxOutputBytes)
 	stderr := newLimitedBuffer(maxOutputBytes)
@@ -682,10 +841,17 @@ func (a *Agent) execute(ctx context.Context, t proto.Task) proto.TaskResult {
 			res.ExitCode = -1
 			res.Stderr += "\n" + runErr.Error()
 		}
+		// M1-1 OTel：执行失败时记录错误到 span。
+		otelx.RecordError(span, runErr)
 	} else {
 		res.ExitCode = 0
 	}
 	res.DurationMs = time.Since(start).Milliseconds()
+	// M1-1 OTel：记录退出码与执行耗时到 span。
+	span.SetAttributes(
+		attribute.Int("task.exit_code", res.ExitCode),
+		attribute.Int("task.duration_ms", int(res.DurationMs)),
+	)
 	return res
 }
 

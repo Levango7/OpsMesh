@@ -156,13 +156,15 @@ func (s *Server) handleAckAlert(w http.ResponseWriter, r *http.Request, id strin
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "alert not found or tenant mismatch"})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{TenantID: actx.TenantID, UserID: actx.UserID, Action: "ack_alert", Target: id, Detail: "acknowledged via HTTP"})
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{TenantID: actx.TenantID, UserID: actx.UserID, Action: "ack_alert", Target: id, Detail: "acknowledged via HTTP"})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{TenantID: actx.TenantID, UserID: actx.UserID, Action: "ack_alert", Target: id, Level: events.LevelInfo})
 	}
 	// M3-2B SSE：通知前端告警状态已变更（告警面板刷新）
 	// H6 租户隔离：携带 actx.TenantID，仅同租户订阅者收到。
-	s.publishEvent("alert_new", actx.TenantID, map[string]string{
+	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	s.publishEvent(r.Context(), "alert_new", actx.TenantID, map[string]string{
 		"alertID": id,
 		"action":  "ack",
 	})
@@ -199,13 +201,15 @@ func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id s
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "alert not found or tenant mismatch"})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{TenantID: actx.TenantID, UserID: actx.UserID, Action: "silence_alert", Target: id, Detail: sanitizeAuditDetail(fmt.Sprintf("silenced %dm: %s", body.DurationMinutes, body.Comment))})
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{TenantID: actx.TenantID, UserID: actx.UserID, Action: "silence_alert", Target: id, Detail: sanitizeAuditDetail(fmt.Sprintf("silenced %dm: %s", body.DurationMinutes, body.Comment))})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{TenantID: actx.TenantID, UserID: actx.UserID, Action: "silence_alert", Target: id, Level: events.LevelInfo})
 	}
 	// M3-2B SSE：通知前端告警已静默（告警面板刷新）
 	// H6 租户隔离：携带 actx.TenantID，仅同租户订阅者收到。
-	s.publishEvent("alert_new", actx.TenantID, map[string]string{
+	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	s.publishEvent(r.Context(), "alert_new", actx.TenantID, map[string]string{
 		"alertID": id,
 		"action":  "silence",
 	})
@@ -312,7 +316,8 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 	rule.CreatedAt = time.Now()
 	rule.CreatedBy = actx.UserID
 	s.saveAlertRule(&rule)
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "create_alert_rule", Target: rule.ID,
 		Detail: sanitizeAuditDetail(fmt.Sprintf("metric=%s op=%s threshold=%g severity=%s", rule.Metric, rule.Op, rule.Threshold, rule.Severity)),
 	})
@@ -347,7 +352,8 @@ func (s *Server) deleteAlertRule(w http.ResponseWriter, r *http.Request, id stri
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found or tenant mismatch"})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "delete_alert_rule", Target: id,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})

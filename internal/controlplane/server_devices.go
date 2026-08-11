@@ -208,13 +208,15 @@ func (s *Server) handleRetireDevice(w http.ResponseWriter, r *http.Request, id s
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found or tenant mismatch"})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: tenant, UserID: actx.UserID, Action: "retire_device", Target: id, Detail: "retired via HTTP",
 	})
 
 	// M3-2B SSE：通知前端设备已下线（设备表移除/置灰）
 	// H6 租户隔离：携带 tenant，仅同租户订阅者收到。
-	s.publishEvent("device_offline", tenant, map[string]string{
+	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	s.publishEvent(r.Context(), "device_offline", tenant, map[string]string{
 		"deviceID": id,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "retired", "deviceID": id})
@@ -277,7 +279,8 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id stri
 			}
 		}(sshAddr, bootstrap, id)
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: tenant, UserID: actx.UserID, Action: "provision_agent", Target: id, Detail: "token issued via HTTP",
 	})
 	writeJSON(w, http.StatusOK, map[string]string{

@@ -104,7 +104,8 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: u.ID, Action: "user_register", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username + " status=" + initialStatus),
 	})
 	// 只有 --allow-public-register=true 时才立即签发 token；否则返回 pending 提示。
@@ -193,7 +194,8 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	// 登录成功：清除失败计数（解锁）。
 	s.loginGuard.resetFail(body.Username)
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: u.ID, Action: "user_login", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 	})
 	// 任务 96：mustChangePassword=true 时不签发 access token（at），仅签发一次性短时效
@@ -239,7 +241,8 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if u, err := s.userFromToken(r); err == nil {
-		s.store.Audit(&proto.AuditEvent{
+		// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+		s.audit(r.Context(), &proto.AuditEvent{
 			TenantID: "default", UserID: u.ID, Action: "user_logout", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 		})
 	}
@@ -426,7 +429,8 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: u.ID, Action: "user_change_password", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 	})
 	// 首登强制改密场景：改密成功后签发正式 at+rt，前端据此进入正常会话。

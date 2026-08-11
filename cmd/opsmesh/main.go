@@ -150,8 +150,8 @@ var backupFlagSpecs = map[string]bool{ // flag 名 -> 是否带值（false=布�
 
 // restoreFlagSpecs 定义 restore 子命令特有 flag。
 var restoreFlagSpecs = map[string]bool{
-	"input":    true,
-	"dry-run":  false,
+	"input":     true,
+	"dry-run":   false,
 	"overwrite": false,
 }
 

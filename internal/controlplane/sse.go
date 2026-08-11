@@ -28,22 +28,31 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
 	"opsmesh/internal/authctx"
+	"opsmesh/internal/otelx"
 )
 
 // SSEEvent 是推送给前端的事件信封。
 // Type 为事件类型（task_status / alert_new / device_online / device_offline），
 // TenantID 为事件归属租户（空表示全局事件，如 hello；非空时仅下发到同租户订阅者），
 // Data 为业务载荷（任意可 JSON 序列化结构）。
+//
+// M1-4 分布式可观测性：TraceID 字段携带 OTel trace_id，
+// 使前端可关联后端链路追踪/日志/审计日志，端到端可观测。
+// omitempty 保证旧客户端不感知新字段（向后兼容）。
 type SSEEvent struct {
 	Type     string      `json:"type"`
 	TenantID string      `json:"tenantID,omitempty"`
 	Data     interface{} `json:"data"`
+	// TraceID 关联 OTel 链路追踪的 trace_id（32 字符 hex），空串表示无关联（向后兼容）。
+	// 由 publishEvent 从 ctx 自动提取注入，调用方无需手动设置。
+	TraceID string `json:"traceID,omitempty"`
 }
 
 // sseSubscriberBuf 每个订阅者的缓冲通道容量。
@@ -175,13 +184,21 @@ func (s *Server) unsubscribeEvents(ch chan SSEEvent) {
 // tenantID 为事件归属租户（空表示全局事件，所有订阅者均接收；
 // 非空时由 handleEventsStream 按租户过滤，跨租户订阅者不会收到），
 // data 为业务载荷（任意可 JSON 序列化结构）。
-func (s *Server) publishEvent(typ string, tenantID string, data interface{}) {
+//
+// M1-4 分布式可观测性：从 ctx 提取 OTel trace_id 注入 SSEEvent.TraceID，
+// 使 SSE 事件与后端链路追踪/日志/审计日志关联。ctx 无有效 span 时 TraceID 为空（向后兼容）。
+func (s *Server) publishEvent(ctx context.Context, typ string, tenantID string, data interface{}) {
 	s.eventMu.RLock()
 	defer s.eventMu.RUnlock()
 	if len(s.eventSubs) == 0 {
 		return // 无订阅者，快速返回（避免构造事件开销）
 	}
-	ev := SSEEvent{Type: typ, TenantID: tenantID, Data: data}
+	ev := SSEEvent{
+		Type:     typ,
+		TenantID: tenantID,
+		Data:     data,
+		TraceID:  otelx.TraceIDFromContext(ctx),
+	}
 	for ch := range s.eventSubs {
 		select {
 		case ch <- ev:

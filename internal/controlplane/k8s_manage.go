@@ -307,7 +307,8 @@ func (s *Server) handleDeletePod(w http.ResponseWriter, r *http.Request, client 
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "delete pod failed: " + err.Error()})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: s.k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_pod_delete", Target: ns + "/" + name,
 	})
 	w.WriteHeader(http.StatusNoContent)
@@ -374,7 +375,8 @@ func (s *Server) handleScaleDeployment(w http.ResponseWriter, r *http.Request, c
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update scale failed: " + err.Error()})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: s.k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_deployment_scale", Target: ns + "/" + name,
 		Detail: fmt.Sprintf("replicas=%d", body.Replicas),
 	})
@@ -403,7 +405,8 @@ func (s *Server) handleRestartDeployment(w http.ResponseWriter, r *http.Request,
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "restart deployment failed: " + err.Error()})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: s.k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_deployment_restart", Target: ns + "/" + name,
 		Detail: "restartedAt=" + now,
 	})
@@ -487,7 +490,8 @@ func (s *Server) handleRollbackDeployment(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: s.k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_deployment_rollback", Target: ns + "/" + name,
 		Detail: fmt.Sprintf("from revision %d to %d", currentRev, targetRev),
 	})

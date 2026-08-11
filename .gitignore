@@ -68,3 +68,7 @@ coverage.out
 /tmp/
 /store
 
+
+# Playwright test results
+web/enterprise/test-results/
+web/enterprise/playwright-report/

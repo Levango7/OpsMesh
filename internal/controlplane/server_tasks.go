@@ -150,7 +150,8 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		MaxRetries:       s.cfg.TaskMaxRetries,  // F2 失败重试上限随任务下发（store 层按策略重入队/死信）
 		ApprovalRequired: body.ApprovalRequired, // B1 修复 10：高风险任务需审批
 	})
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: targetTenant,
 		UserID:   actx.UserID,
 		Action:   "create_task",
@@ -169,7 +170,8 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 	// M3-2B SSE：通知前端新任务已创建（前端任务表追加一行 pending）
 	// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
-	s.publishEvent("task_status", targetTenant, map[string]string{
+	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	s.publishEvent(r.Context(), "task_status", targetTenant, map[string]string{
 		"taskID":  task.TaskID,
 		"status":  task.Status,
 		"agentID": body.AgentID,
@@ -402,7 +404,8 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 			MaxRetries:       s.cfg.TaskMaxRetries,  // F2 批量下发同样带重试上限
 			ApprovalRequired: body.ApprovalRequired, // B1 修复 10：批量下发也支持审批
 		})
-		s.store.Audit(&proto.AuditEvent{
+		// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+		s.audit(r.Context(), &proto.AuditEvent{
 			TenantID: targetTenant,
 			UserID:   actx.UserID,
 			Action:   "create_task",
@@ -418,7 +421,8 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 		created = append(created, task.TaskID)
 		// M3-2B SSE：批量下发也逐条推送 task_status（前端实时追加任务行）
 		// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
-		s.publishEvent("task_status", targetTenant, map[string]string{
+		// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+		s.publishEvent(r.Context(), "task_status", targetTenant, map[string]string{
 			"taskID":  task.TaskID,
 			"status":  task.Status,
 			"agentID": tid,
@@ -477,7 +481,8 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request, id str
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not cancellable (not found / not pending|running / tenant mismatch)"})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: tenant, UserID: actx.UserID, Action: "cancel_task", Target: id, Detail: "cancelled via HTTP",
 	})
 	if s.bus != nil {
@@ -487,7 +492,8 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request, id str
 	}
 	// M3-2B SSE：通知前端任务已取消（任务表对应行状态翻 cancelled）
 	// H6 租户隔离：携带 tenant，仅同租户订阅者收到。
-	s.publishEvent("task_status", tenant, map[string]string{
+	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	s.publishEvent(r.Context(), "task_status", tenant, map[string]string{
 		"taskID": id,
 		"status": "cancelled",
 	})
@@ -539,7 +545,8 @@ func (s *Server) handleApproveTask(w http.ResponseWriter, r *http.Request, id st
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not found, not pending_approval, or tenant mismatch"})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "approve_task", Target: id,
 		Detail: "approved via HTTP",
 	})
@@ -549,7 +556,8 @@ func (s *Server) handleApproveTask(w http.ResponseWriter, r *http.Request, id st
 		})
 	}
 	// M3-2B SSE：通知前端任务已审批通过。
-	s.publishEvent("task_status", actx.TenantID, map[string]string{
+	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	s.publishEvent(r.Context(), "task_status", actx.TenantID, map[string]string{
 		"taskID": id,
 		"status": "pending",
 	})
@@ -577,7 +585,8 @@ func (s *Server) handleRejectTask(w http.ResponseWriter, r *http.Request, id str
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not found, not pending_approval, or tenant mismatch"})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "reject_task", Target: id,
 		Detail: sanitizeAuditDetail("rejected via HTTP: " + body.Reason),
 	})
@@ -587,7 +596,8 @@ func (s *Server) handleRejectTask(w http.ResponseWriter, r *http.Request, id str
 		})
 	}
 	// M3-2B SSE：通知前端任务已审批拒绝。
-	s.publishEvent("task_status", actx.TenantID, map[string]string{
+	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	s.publishEvent(r.Context(), "task_status", actx.TenantID, map[string]string{
 		"taskID": id,
 		"status": "rejected",
 	})

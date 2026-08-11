@@ -21,7 +21,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"opsmesh/internal/discovery"
 	"opsmesh/internal/grpcx"
+	"opsmesh/internal/otelx"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/tlsutil"
 )
@@ -33,6 +35,9 @@ import (
 // B-4 连接复用：conns 按 target 地址缓存长连接，invoke 复用而非每次 Dial+Close。
 // 连接仅在 Close() 或被标记 stale（Invoke 返回连接错误）时关闭并从 map 移除。
 // gRPC 内置 WithConnectParams Backoff 提供指数退避重连，应用层 evictConn 兜底淘汰坏连接。
+//
+// M1-3 服务发现集成：可选持有 discovery.Balancer，invoke 优先通过 balancer 选择控制面实例，
+// 连接失败时调用 Failover.MarkFailed 触发主→备切换。balancer 为 nil 时回退到 addrs failover（向后兼容）。
 type GRPCClient struct {
 	addrs    []string // 候选控制面地址（host:grpcPort），按序 failover
 	creds    credentials.TransportCredentials
@@ -45,6 +50,9 @@ type GRPCClient struct {
 	// mu 保护 conns 并发读写（invoke/heartbeat/pull/report/cancel 多 goroutine 并发调用）。
 	mu    sync.Mutex
 	conns map[string]*grpc.ClientConn
+	// M1-3 服务发现：可选的负载均衡器，非 nil 时 invoke 优先通过 balancer 选择控制面实例。
+	// balancer 为 nil 时回退到 addrs failover（向后兼容，不破坏现有单控制面行为）。
+	balancer discovery.Balancer
 }
 
 // SetSecret task 81：设置 agent 的 HMAC 签名密钥（由 Register 响应下发）。
@@ -111,11 +119,28 @@ func NewGRPCClient(addrs []string, tlsCert, tlsKey, tlsCA string, grpcPort int) 
 	}, nil
 }
 
+// SetBalancer M1-3 服务发现：设置负载均衡器。
+// 设置后 invoke 优先通过 balancer 选择控制面实例，连接失败时触发主→备切换。
+// 传 nil 清除 balancer，回退到 addrs failover（向后兼容）。
+// 线程安全：仅在初始化阶段调用一次（agent.Run 启动前），invoke 只读 balancer 字段。
+func (c *GRPCClient) SetBalancer(b discovery.Balancer) {
+	c.balancer = b
+}
+
 // invoke 对每个候选地址尝试一次 RPC：短超时（5s）以便快速 failover 到下一个控制面。
 // 全部失败则返回最后一个错误。
 // B-4 连接复用：通过 getConn 复用已缓存的长连接，不再每次 Dial+Close。
 // 连接错误时 evictConn 淘汰坏连接，下次 invoke 重新创建（应用层兜底，配合 gRPC 内置 Backoff 重连）。
+//
+// M1-3 服务发现：如果 balancer 非 nil，优先通过 balancer 选择控制面实例；
+// 连接失败时调用 Failover.MarkFailed 触发主→备切换，最多尝试实例总数次。
+// balancer 为 nil 时回退到 addrs failover（向后兼容）。
 func (c *GRPCClient) invoke(ctx context.Context, method string, req, resp interface{}) error {
+	// M1-3 服务发现路径：balancer 非 nil 时优先使用。
+	if c.balancer != nil {
+		return c.invokeWithBalancer(ctx, method, req, resp)
+	}
+	// 回退路径：addrs failover（向后兼容，不破坏现有单控制面行为）。
 	var lastErr error
 	for _, a := range c.addrs {
 		target, err := grpcTarget(a, c.grpcPort)
@@ -147,9 +172,82 @@ func (c *GRPCClient) invoke(ctx context.Context, method string, req, resp interf
 	return lastErr
 }
 
+// invokeWithBalancer M1-3 服务发现路径：通过 balancer 选择控制面实例。
+//
+// 逻辑：
+//  1. 调用 balancer.Next() 获取当前实例（主）。
+//  2. 解析实例地址为 gRPC target，建立连接并 Invoke。
+//  3. 成功返回；失败时如果是连接级错误，淘汰坏连接并调用 Failover.MarkFailed 切换到备。
+//  4. 最多尝试实例总数次（避免无限循环），全部失败返回最后一个错误。
+//
+// Failover 语义：MarkFailed 切换 current 到下一个实例；无备可用时重置到主（配合 gRPC Backoff 重连）。
+// RoundRobin 语义：每次 Next 轮询到下一个实例（不显式 MarkFailed）。
+func (c *GRPCClient) invokeWithBalancer(ctx context.Context, method string, req, resp interface{}) error {
+	// 探测 balancer 实例总数，限定最大尝试次数（避免无限循环）。
+	// Failover.Len() 返回实例数；RoundRobin 无 Len 方法时用默认 3 次（保守上限）。
+	maxAttempts := 3
+	if fl, ok := c.balancer.(interface{ Len() int }); ok {
+		if n := fl.Len(); n > 0 {
+			maxAttempts = n
+		}
+	}
+	var lastErr error
+	for i := 0; i < maxAttempts; i++ {
+		svc, err := c.balancer.Next(ctx)
+		if err != nil {
+			lastErr = err
+			break
+		}
+		// 构造控制面地址：Addr 已含端口时直接用，否则拼 Port。
+		addr := svc.Addr
+		if svc.Port > 0 && !strings.Contains(addr, ":") {
+			addr = fmt.Sprintf("%s:%d", addr, svc.Port)
+		}
+		target, terr := grpcTarget(addr, c.grpcPort)
+		if terr != nil {
+			lastErr = terr
+			continue
+		}
+		ac, cancel := context.WithTimeout(ctx, 5*time.Second)
+		conn, gerr := c.getConn(target)
+		if gerr != nil {
+			cancel()
+			lastErr = gerr
+			c.markBalancerFailed()
+			continue
+		}
+		ierr := conn.Invoke(ac, method, req, resp, grpc.ForceCodec(grpcx.JSONCodec))
+		cancel()
+		if ierr == nil {
+			return nil
+		}
+		lastErr = ierr
+		// 连接级错误：淘汰坏连接 + 触发 balancer 主→备切换。
+		if isConnError(ierr) {
+			c.evictConn(target)
+			c.markBalancerFailed()
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("无可用控制面地址")
+	}
+	return lastErr
+}
+
+// markBalancerFailed M1-3 服务发现：通知 balancer 当前实例失败，触发主→备切换。
+// 仅对 Failover 类型 balancer 生效（RoundRobin 无 MarkFailed 方法，每次 Next 自动轮询）。
+func (c *GRPCClient) markBalancerFailed() {
+	if mf, ok := c.balancer.(interface{ MarkFailed() (discovery.Service, error) }); ok {
+		_, _ = mf.MarkFailed()
+	}
+}
+
 // getConn B-4 连接复用：从缓存取目标地址的长连接，不存在则 Dial 创建并缓存。
 // DialContext 非阻塞（无 WithBlock），立即返回；实际连接在首次 Invoke 时惰性建立。
 // 用 context.Background() 而非带超时的 ctx：Dial 不阻塞，超时无意义，连接建立由 Invoke 的 ctx 控制。
+//
+// M1-1 OTel：Dial 时附加 GRPCClientUnaryInterceptor，使每次 invoke 自动创建 client span
+// 并注入 W3C trace context 到 metadata，控制面服务端拦截器提取后接续 trace。
 func (c *GRPCClient) getConn(target string) (*grpc.ClientConn, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -166,6 +264,9 @@ func (c *GRPCClient) getConn(target string) (*grpc.ClientConn, error) {
 				MaxDelay:   5 * time.Second,
 			},
 		}),
+		// M1-1 OTel gRPC 客户端拦截器：为每次 RPC 创建 client span 并注入 trace context。
+		// 与 signContext（task 81 签名）兼容：两者操作不同 metadata key，互不冲突。
+		grpc.WithChainUnaryInterceptor(otelx.GRPCClientUnaryInterceptor("opsmesh-agent")),
 	)
 	if err != nil {
 		return nil, err

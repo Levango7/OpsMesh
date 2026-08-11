@@ -49,6 +49,7 @@ import (
 	"opsmesh/internal/metrics"
 	"opsmesh/internal/notify"
 	"opsmesh/internal/orchestration"
+	"opsmesh/internal/otelx"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/provision"
 	"opsmesh/internal/store"
@@ -116,6 +117,15 @@ type Server struct {
 	// clusterMgr K8s 多集群连接管理器（Phase 3）。
 	// 由 NewServer 构造；用户创建/更新集群时 AddCluster，删除时 RemoveCluster，测试连接时 TestCluster。
 	clusterMgr *k8s.ClusterManager
+
+	// M1-1 OTel 链路追踪：TracerProvider 优雅关闭函数。
+	// 由 NewServer 调用 otelx.Init 构造；Start 优雅退出时调用以 flush 残留 span。
+	// nil=未启用 OTel（endpoint 空且 stdout=false），退出时跳过。
+	otelShutdown otelx.ShutdownFunc
+
+	// M1-2 API 限流器：按 IP 令牌桶限流，超过阈值返回 429 Too Many Requests。
+	// nil=禁用限流（CBRateLimitPerSec<=0，向后兼容）。
+	rateLimiter *rateLimiter
 }
 
 // startRefreshSweep 周期清理过期刷新令牌（task 112：store 持久化后改为 no-op，
@@ -139,6 +149,20 @@ func (s *Server) startRefreshSweep(ctx context.Context, interval time.Duration) 
 			}
 		}
 	}()
+}
+
+// shutdownOTel M1-1 OTel 优雅关闭：flush 残留 span 到导出器。
+// 未启用 OTel（otelShutdown 为 nil 或 no-op）时直接返回，零开销。
+// 用 5s 超时避免退出窗口耗尽在 OTel flush 上（BatchSpanProcessor 批量上报）。
+func (s *Server) shutdownOTel() {
+	if s.otelShutdown == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.otelShutdown(ctx); err != nil {
+		log.Printf("controlplane: OTel shutdown 失败: %v", err)
+	}
 }
 
 func NewServer(cfg *config.Config) *Server {
@@ -281,7 +305,38 @@ func NewServer(cfg *config.Config) *Server {
 	if !cfg.Demo {
 		rotateDefaultAdminPassword(st)
 	}
+	// M1-1 OTel 链路追踪初始化：endpoint 为空且 stdout=false 时 no-op（零开销）。
+	// 服务名默认 "opsmesh-controlplane"（未配置时由 otelx 回退 "opsmesh"）。
+	// 启用后控制面 HTTP + gRPC 自动埋点，trace_id 贯穿 agent→控制面→store。
+	otelShutdown, otelErr := otelx.Init(otelx.Config{
+		Endpoint:    cfg.OTELEndpoint,
+		ServiceName: firstNonEmpty(cfg.OTELServiceName, "opsmesh-controlplane"),
+		Stdout:      cfg.OTELStdout,
+	})
+	if otelErr != nil {
+		log.Fatalf("[controlplane] OTel 初始化失败: %v", otelErr)
+	}
+	s.otelShutdown = otelShutdown
+	if cfg.OTELEndpoint != "" || cfg.OTELStdout {
+		logx.Info(context.Background(), "OTel 链路追踪已启用", "endpoint", cfg.OTELEndpoint, "stdout", cfg.OTELStdout, "service", cfg.OTELServiceName)
+	}
+	// M1-2 API 限流器：CBRateLimitPerSec>0 时启用，按 IP 令牌桶限流。
+	// 超过阈值返回 429 Too Many Requests。禁用时 rateLimiter=nil，中间件透传。
+	if cfg.CBRateLimitPerSec > 0 {
+		s.rateLimiter = newRateLimiter(cfg.CBRateLimitPerSec, 10*time.Minute)
+		logx.Info(context.Background(), "API 限流已启用", "ratePerSec", cfg.CBRateLimitPerSec)
+	}
 	return s
+}
+
+// firstNonEmpty 返回第一个非空字符串，全空返回空串。用于服务名默认值回退。
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // newDeployHandler 构造 M3 部署处理器：按 store 类型选 SQL/Memory 后端，
@@ -563,7 +618,7 @@ func (s *Server) csrfOriginCheck(h http.Handler) http.Handler {
 		}
 		if ou.Host != advertiseHost {
 			// Origin host 与 AdvertiseAddr host 不匹配：疑似跨站 CSRF，拒绝。
-			s.store.Audit(&proto.AuditEvent{
+			s.audit(r.Context(), &proto.AuditEvent{
 				TenantID: "default", UserID: clientIP(r, s.cfg.TrustProxy), Action: "csrf_origin_rejected", Target: r.URL.Path,
 				Detail: fmt.Sprintf("origin=%s expected_host=%s remote=%s", origin, advertiseHost, r.RemoteAddr),
 			})
@@ -850,13 +905,18 @@ func (s *Server) Start() error {
 
 	// B1 修复 4：用 jsonErrorMux 包装 mux，将 404 统一为 JSON 格式。
 	// P1-C3：httpMetricsMiddleware 包在最外层，记录所有请求（含 panic 转的 500）的计数与延迟。
+	// M1-1：otelx.HTTPMiddleware 为每个请求创建 span 并从请求头提取 W3C Trace Context，
+	// 置于 recoveryMiddleware 之内使 panic 被捕获后 span 仍能正常 End()，置于 securityHeaders 之外
+	// 使 span 覆盖完整业务逻辑（安全头注入不影响 span 边界）。
 	httpSrv := &http.Server{
 		Addr: fmt.Sprintf(":%d", s.httpPort),
 		Handler: s.httpMetricsMiddleware( // P1-C3 HTTP 指标（计数 + 延迟直方图）
 			recoveryMiddleware( // P0-2 兜底盘
-				s.securityHeadersMiddleware( // H5 安全头 + B1 CSP nonce
-					s.csrfOriginCheck( // P1-G4 CSRF Origin 校验（状态变更方法）
-						&jsonErrorMux{inner: mux})))), // B1 404 JSON
+				otelx.HTTPMiddleware("opsmesh-controlplane", // M1-1 OTel HTTP 自动埋点
+					s.rateLimitMiddleware( // M1-2 API 限流（429 Too Many Requests）
+						s.securityHeadersMiddleware( // H5 安全头 + B1 CSP nonce
+							s.csrfOriginCheck( // P1-G4 CSRF Origin 校验（状态变更方法）
+								&jsonErrorMux{inner: mux})))))), // B1 404 JSON
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -916,6 +976,9 @@ func (s *Server) Start() error {
 	// 优雅退出清理：无论正常收信号还是 server 异常返回，都停止 loginGuard 的 sweep goroutine，
 	// 避免 goroutine 泄漏。startRefreshSweep 的 goroutine 由 ctx 取消自动退出（defer stop() 取消 ctx）。
 	defer s.loginGuard.stopSweep()
+	// M1-1 OTel 优雅关闭：flush 残留 span 到导出器（OTLP gRPC batch / stdout）。
+	// 用独立超时（5s）避免退出窗口耗尽在 OTel flush 上；未启用时为 no-op。
+	defer s.shutdownOTel()
 	select {
 	case <-ctx.Done():
 		logx.Info(ctx, "收到终止信号，优雅退出", "window", s.shutdownWait.String())
@@ -954,8 +1017,12 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
 		opts = append(opts, grpc.Creds(creds))
 		logx.Info(context.Background(), "gRPC 已启用 TLS", "mtls", s.clientCA != "")
 	}
-	// P0-2 兜底盘：拦截 unary handler panic，避免单 RPC 击穿整个 gRPC server。
-	opts = append(opts, grpc.UnaryInterceptor(grpcRecoveryInterceptor))
+	// P0-2 兜底盘 + M1-1 OTel gRPC 服务端拦截器（链式组合）：
+	//   - grpcRecoveryInterceptor 在外：拦截 unary handler panic，避免单 RPC 击穿整个 gRPC server。
+	//   - otelx.GRPCServerUnaryInterceptor 在内：从 metadata 提取 W3C trace context 并创建 server span，
+	//     使 agent→控制面 gRPC 调用的 trace_id 贯穿。panic 被 recovery 捕获后 span 仍能 End()。
+	otelInterceptor := otelx.GRPCServerUnaryInterceptor("opsmesh-controlplane")
+	opts = append(opts, grpc.ChainUnaryInterceptor(grpcRecoveryInterceptor, otelInterceptor))
 	gs := grpc.NewServer(opts...)
 	gs.RegisterService(&grpcx.Registration_ServiceDesc, &grpcServerImpl{
 		store:       s.store,
@@ -1284,7 +1351,8 @@ func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// P1-5 访问审计：install.sh 是 bootstrap 端点，保持开放但审计访问来源供溯源。
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: clientIP(r, s.cfg.TrustProxy), Action: "bootstrap_install_sh", Target: "/install.sh",
 		Detail: "remote=" + r.RemoteAddr,
 	})
@@ -1308,7 +1376,8 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// P1-5 访问审计：agent 二进制分发端点，保持开放但审计下载来源供溯源。
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: clientIP(r, s.cfg.TrustProxy), Action: "bootstrap_serve_agent", Target: "/bin/opsmesh-agent",
 		Detail: "remote=" + r.RemoteAddr,
 	})
@@ -1382,7 +1451,8 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: tenant, UserID: actx.UserID, Action: "auto_provision", Target: strings.Join(cidrs, ","),
 		Detail: fmt.Sprintf("scanned=%d registered=%d provisioned=%d sshPushed=%d", sum.Scanned, sum.Registered, sum.Provisioned, sum.SSHPushed),
 	})
@@ -1646,4 +1716,122 @@ func isPrivateIP(ip net.IP) bool {
 		}
 	}
 	return false
+}
+
+// ============================================================================
+// M1-2 API 限流（控制面熔断）
+// ============================================================================
+
+// rateLimiter 按 IP 令牌桶限流器。
+// 每个 IP 维护一个独立的令牌桶，按 ratePerSec 速率补充令牌，桶容量=ratePerSec（允许 1s 突发）。
+// 超过桶容量时拒绝请求（返回 429）。sweepInterval 周期清理空闲 IP 条目防内存泄漏。
+type rateLimiter struct {
+	mu            sync.Mutex
+	buckets       map[string]*tokenBucket
+	ratePerSec    int
+	sweepInterval time.Duration
+}
+
+// tokenBucket 令牌桶。lastRefill 为上次补充时刻，tokens 为当前令牌数（浮点支持分数补充）。
+type tokenBucket struct {
+	tokens     float64
+	lastRefill time.Time
+}
+
+// newRateLimiter 构造限流器。ratePerSec 为每秒允许的请求数；sweepInterval 为清理周期。
+func newRateLimiter(ratePerSec int, sweepInterval time.Duration) *rateLimiter {
+	rl := &rateLimiter{
+		buckets:       make(map[string]*tokenBucket),
+		ratePerSec:    ratePerSec,
+		sweepInterval: sweepInterval,
+	}
+	go rl.sweepLoop()
+	return rl
+}
+
+// allow 检查 IP 是否允许放行。true=放行并消耗一个令牌；false=拒绝（429）。
+func (rl *rateLimiter) allow(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	b, ok := rl.buckets[ip]
+	if !ok {
+		// 首次访问：满桶（容量=ratePerSec），允许 1s 突发。
+		b = &tokenBucket{tokens: float64(rl.ratePerSec), lastRefill: now}
+		rl.buckets[ip] = b
+	}
+	// 按经过时间补充令牌。
+	elapsed := now.Sub(b.lastRefill).Seconds()
+	b.tokens += elapsed * float64(rl.ratePerSec)
+	if b.tokens > float64(rl.ratePerSec) {
+		b.tokens = float64(rl.ratePerSec) // 上限=桶容量
+	}
+	b.lastRefill = now
+	if b.tokens >= 1 {
+		b.tokens -= 1
+		return true
+	}
+	return false
+}
+
+// sweepLoop 周期清理超过 sweepInterval 未访问的 IP 条目，防内存泄漏。
+func (rl *rateLimiter) sweepLoop() {
+	ticker := time.NewTicker(rl.sweepInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		rl.mu.Lock()
+		now := time.Now()
+		for ip, b := range rl.buckets {
+			if now.Sub(b.lastRefill) > rl.sweepInterval {
+				delete(rl.buckets, ip)
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
+
+// rateLimitMiddleware API 限流中间件。按客户端 IP 令牌桶限流，超阈值返回 429。
+// rateLimiter=nil 时透传（禁用限流，向后兼容）。
+// 健康检查端点（/healthz, /readyz）不限流，避免 K8s 探针被限流误杀。
+func (s *Server) rateLimitMiddleware(h http.Handler) http.Handler {
+	if s.rateLimiter == nil {
+		return h
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 健康检查端点不限流，避免 K8s liveness/readiness 探针被限流误杀 Pod。
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+			h.ServeHTTP(w, r)
+			return
+		}
+		ip := clientIP(r, s.cfg.TrustProxy)
+		if !s.rateLimiter.allow(ip) {
+			w.Header().Set("Retry-After", "1")
+			jsonError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// ============================================================================
+// M1-4 分布式可观测性：审计日志关联 trace_id
+// ============================================================================
+
+// audit 是审计日志写入 helper：从 ctx 提取 OTel trace_id 注入 AuditEvent.TraceID，
+// 然后转发到 store.Audit。M1-4 分布式可观测性：使审计日志与链路追踪/日志/SSE 事件关联。
+//
+// 用法（替代直接 s.store.Audit）：
+//
+//	s.audit(r.Context(), &proto.AuditEvent{TenantID: ..., Action: ..., ...})
+//
+// ctx 无有效 span 时 TraceID 为空串（向后兼容，不破坏无 OTel 场景）。
+// e 为 nil 时直接返回（与 store.Audit 一致的容错）。
+func (s *Server) audit(ctx context.Context, e *proto.AuditEvent) {
+	if e == nil {
+		return
+	}
+	if e.TraceID == "" {
+		e.TraceID = otelx.TraceIDFromContext(ctx)
+	}
+	s.store.Audit(e)
 }

@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"bufio"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"opsmesh/internal/config"
+	"opsmesh/internal/otelx"
 	"opsmesh/internal/store"
 )
 
@@ -125,7 +127,7 @@ func TestSSE_EventPushFormat(t *testing.T) {
 	// 从另一 goroutine 发布事件（模拟服务端状态变更）
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		s.publishEvent("task_status", "", map[string]string{
+		s.publishEvent(context.Background(), "task_status", "", map[string]string{
 			"taskID":  "task-123",
 			"status":  "running",
 			"agentID": "agent-456",
@@ -183,7 +185,7 @@ func TestSSE_BroadcastToMultiple(t *testing.T) {
 	}
 
 	// 发布一条 alert_new 事件，两个订阅者都应收到（tenantID 为空 = 全局事件）
-	s.publishEvent("alert_new", "", map[string]string{"alertID": "alert-789"})
+	s.publishEvent(context.Background(), "alert_new", "", map[string]string{"alertID": "alert-789"})
 
 	f1, err := readSSEFrame(br1)
 	if err != nil {
@@ -268,7 +270,7 @@ func TestSSE_PublishEvent_NoSubscribers(t *testing.T) {
 	// 无订阅者，直接发布（不应 panic / 阻塞）
 	done := make(chan struct{})
 	go func() {
-		s.publishEvent("task_status", "", map[string]string{"taskID": "x"})
+		s.publishEvent(context.Background(), "task_status", "", map[string]string{"taskID": "x"})
 		close(done)
 	}()
 	select {
@@ -305,12 +307,12 @@ func TestSSE_TenantIsolation(t *testing.T) {
 	}
 
 	// 发布 tenantB 的事件 —— tenantA 订阅者不应收到
-	s.publishEvent("task_status", "tenantB", map[string]string{
+	s.publishEvent(context.Background(), "task_status", "tenantB", map[string]string{
 		"taskID": "task-b",
 		"status": "running",
 	})
 	// 发布 tenantA 的事件 —— tenantA 订阅者应收到
-	s.publishEvent("task_status", "tenantA", map[string]string{
+	s.publishEvent(context.Background(), "task_status", "tenantA", map[string]string{
 		"taskID": "task-a",
 		"status": "running",
 	})
@@ -361,5 +363,98 @@ func TestSSE_DemoFillsDefaultTenant(t *testing.T) {
 	}
 	if !strings.Contains(frame, "event: hello") {
 		t.Fatalf("demo mode should allow connection (got frame: %q)", frame)
+	}
+}
+
+// ============================================================================
+// M1-4 分布式可观测性：SSE 事件携带 trace_id
+// ============================================================================
+
+// TestSSE_EventCarriesTraceID 验证 publishEvent 从 ctx 提取 trace_id 注入 SSEEvent.TraceID。
+// 这是 M1-4 的核心保证：SSE 事件与后端链路追踪关联。
+func TestSSE_EventCarriesTraceID(t *testing.T) {
+	s := newSSETestServer()
+	ts := httptest.NewServer(http.HandlerFunc(s.handleEventsStream))
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL)
+	if err != nil {
+		t.Fatalf("GET SSE: %v", err)
+	}
+	defer resp.Body.Close()
+
+	br := bufio.NewReader(resp.Body)
+	if _, err := readSSEFrame(br); err != nil {
+		t.Fatalf("read hello: %v", err)
+	}
+
+	// 初始化 OTel 并创建带 span 的 ctx，使 publishEvent 能提取 trace_id。
+	shutdown, otelErr := otelx.Init(otelx.Config{Stdout: true})
+	if otelErr != nil {
+		t.Fatalf("otelx.Init 失败: %v", otelErr)
+	}
+	defer shutdown(context.Background())
+
+	spanCtx, span := otelx.StartSpan(context.Background(), "sse-test-span")
+	defer span.End()
+	expectedTraceID := otelx.TraceIDFromContext(spanCtx)
+	if expectedTraceID == "" {
+		t.Fatal("OTel TraceID 为空")
+	}
+
+	// 用带 span 的 ctx 发布事件，SSEEvent 应携带 trace_id。
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		s.publishEvent(spanCtx, "task_status", "", map[string]string{
+			"taskID": "trace-task",
+		})
+	}()
+
+	frame, err := readSSEFrame(br)
+	if err != nil {
+		t.Fatalf("read event frame: %v", err)
+	}
+	// data 行应包含 traceID 字段，且值为期望的 trace_id。
+	if !strings.Contains(frame, `"traceID":"`+expectedTraceID+`"`) {
+		t.Fatalf("SSE 事件未携带正确的 trace_id: %q, want traceID=%q", frame, expectedTraceID)
+	}
+}
+
+// TestSSE_EventNoTraceIDWhenNoSpan 验证 ctx 无 span 时 SSEEvent.TraceID 为空（向后兼容）。
+// 旧客户端不感知 traceID 字段（omitempty），不破坏现有行为。
+func TestSSE_EventNoTraceIDWhenNoSpan(t *testing.T) {
+	s := newSSETestServer()
+	ts := httptest.NewServer(http.HandlerFunc(s.handleEventsStream))
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL)
+	if err != nil {
+		t.Fatalf("GET SSE: %v", err)
+	}
+	defer resp.Body.Close()
+
+	br := bufio.NewReader(resp.Body)
+	if _, err := readSSEFrame(br); err != nil {
+		t.Fatalf("read hello: %v", err)
+	}
+
+	// 用 context.Background()（无 span）发布事件，SSEEvent.TraceID 应为空。
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		s.publishEvent(context.Background(), "task_status", "", map[string]string{
+			"taskID": "no-trace-task",
+		})
+	}()
+
+	frame, err := readSSEFrame(br)
+	if err != nil {
+		t.Fatalf("read event frame: %v", err)
+	}
+	// 无 span 时 traceID 字段应不存在（omitempty）或为空。
+	if strings.Contains(frame, `"traceID":"`) && !strings.Contains(frame, `"traceID":""`) {
+		// 包含非空 traceID 时才报错（空串由 omitempty 不输出，或输出空串均可接受）。
+		if !strings.Contains(frame, `"traceID":""`) {
+			t.Fatalf("无 span 时 SSE 事件不应携带非空 trace_id: %q", frame)
+		}
 	}
 }

@@ -316,7 +316,8 @@ func (s *Server) handleFederationForwardTask(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	// 本地审计留痕（U-04 等保三级：跨网段操作必须可追溯）。
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID,
 		UserID:   actx.UserID,
 		Action:   "federation_forward_task",

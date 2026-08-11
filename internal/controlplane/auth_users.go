@@ -96,7 +96,8 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "user_create", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 	})
 	writeJSON(w, http.StatusCreated, u)
@@ -175,7 +176,8 @@ func (s *Server) handleApproveUser(w http.ResponseWriter, r *http.Request, id st
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "user_approve", Target: id, Detail: sanitizeAuditDetail("approved user " + existing.Username),
 	})
 	writeJSON(w, http.StatusOK, s.store.GetUser(id))
@@ -219,7 +221,8 @@ func (s *Server) handleRejectUser(w http.ResponseWriter, r *http.Request, id str
 	if body.Reason != "" {
 		detail += " reason: " + body.Reason
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "user_reject", Target: id, Detail: sanitizeAuditDetail(detail),
 	})
 	writeJSON(w, http.StatusOK, s.store.GetUser(id))
@@ -267,7 +270,8 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request, id str
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "user_update", Target: id, Detail: "updated via HTTP",
 	})
 	writeJSON(w, http.StatusOK, s.store.GetUser(id))
@@ -287,7 +291,8 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request, id str
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
-	s.store.Audit(&proto.AuditEvent{
+	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "user_delete", Target: id, Detail: "deleted via HTTP",
 	})
 	w.WriteHeader(http.StatusNoContent)
