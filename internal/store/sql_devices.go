@@ -407,17 +407,21 @@ func (s *SQLStore) RetireStaleDevices(maxAge time.Duration) int {
 	return int(n)
 }
 
-// StoreDeviceMetrics 缓存设备最新监控指标（agent 心跳上报，仅保留最新值）。
-// 高频时序数据落库应由 Prometheus 承担，控制面仅缓存最新值供 GET /api/v1/devices/{id}/metrics 查询。
+// StoreDeviceMetrics 缓存设备监控指标（agent 心跳上报，追加到环形缓冲保留最近 N 条历史，task 223）。
+// 高频时序数据落库应由 Prometheus 承担，控制面仅缓存最近 2h 历史供 GET /api/v1/devices/{id}/metrics?range=2h 查询。
 
 func (s *SQLStore) StoreDeviceMetrics(deviceID string, metrics *proto.DeviceMetrics) {
 	if deviceID == "" || metrics == nil {
 		return
 	}
-	cp := *metrics
 	s.mu.Lock()
-	s.deviceMetrics[deviceID] = &cp
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	r, ok := s.deviceMetrics[deviceID]
+	if !ok || r == nil {
+		r = newMetricsRing(metricsRingDefaultCap)
+		s.deviceMetrics[deviceID] = r
+	}
+	r.add(metrics)
 }
 
 // DeviceMetrics 返回设备最新监控指标缓存（无数据时返回 nil）。
@@ -425,12 +429,25 @@ func (s *SQLStore) StoreDeviceMetrics(deviceID string, metrics *proto.DeviceMetr
 func (s *SQLStore) DeviceMetrics(deviceID string) *proto.DeviceMetrics {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	v, ok := s.deviceMetrics[deviceID]
-	if !ok || v == nil {
+	r, ok := s.deviceMetrics[deviceID]
+	if !ok || r == nil {
 		return nil
 	}
-	cp := *v
-	return &cp
+	return r.latest()
+}
+
+// DeviceMetricsHistory 返回设备监控指标历史时序（环形缓冲查询，task 223）。
+// since 为零值时返回全部已存储历史；否则返回 CollectedAt >= since 的快照（按时间升序）。
+// 无数据时返回 nil。
+
+func (s *SQLStore) DeviceMetricsHistory(deviceID string, since time.Time) []proto.DeviceMetrics {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.deviceMetrics[deviceID]
+	if !ok || r == nil {
+		return nil
+	}
+	return r.since(since)
 }
 
 func (s *SQLStore) cacheAgent(a *proto.AgentInfo) {

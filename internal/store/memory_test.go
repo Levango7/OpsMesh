@@ -577,12 +577,13 @@ func TestMemoryStore_DeviceMetrics(t *testing.T) {
 		t.Fatalf("DeviceMetrics(dev-1) = %+v, want nil", got)
 	}
 	metrics := &proto.DeviceMetrics{
-		DeviceID: "dev-1",
-		Hostname: "web-01",
-		OS:       "linux",
-		Arch:     "amd64",
-		CPU:      proto.CPUMetrics{Cores: 4, Usage: 12.5, Model: "Intel Xeon"},
-		Memory:   proto.MemMetrics{Total: 8192, Used: 2048, Available: 6144, Usage: 25.0},
+		DeviceID:    "dev-1",
+		Hostname:    "web-01",
+		OS:          "linux",
+		Arch:        "amd64",
+		CPU:         proto.CPUMetrics{Cores: 4, Usage: 12.5, Model: "Intel Xeon"},
+		Memory:      proto.MemMetrics{Total: 8192, Used: 2048, Available: 6144, Usage: 25.0},
+		CollectedAt: time.Now(),
 	}
 	m.StoreDeviceMetrics("dev-1", metrics)
 	got := m.DeviceMetrics("dev-1")
@@ -606,6 +607,74 @@ func TestMemoryStore_DeviceMetrics(t *testing.T) {
 	// 上述空 deviceID 不应写入新键，dev-1 仍可读。
 	if got := m.DeviceMetrics("dev-1"); got == nil {
 		t.Fatal("StoreDeviceMetrics(dev-1, nil) 误清了已有缓存")
+	}
+}
+
+// TestMemoryStore_DeviceMetricsHistory 环形缓冲历史时序查询（task 223）。
+// 覆盖：多次写入后历史按时间升序返回、since 过滤、覆写最旧、深拷贝、无数据返回 nil。
+func TestMemoryStore_DeviceMetricsHistory(t *testing.T) {
+	m := NewMemoryStore()
+	// 初始无数据。
+	if got := m.DeviceMetricsHistory("dev-1", time.Time{}); got != nil {
+		t.Fatalf("初始 DeviceMetricsHistory = %+v, want nil", got)
+	}
+	base := time.Now()
+	// 写入 3 条历史。
+	for i := 0; i < 3; i++ {
+		m.StoreDeviceMetrics("dev-1", &proto.DeviceMetrics{
+			DeviceID:    "dev-1",
+			CPU:         proto.CPUMetrics{Cores: i + 1, Usage: float64(i * 10)},
+			CollectedAt: base.Add(time.Duration(i) * time.Second),
+		})
+	}
+	// 查全部：3 条升序。
+	all := m.DeviceMetricsHistory("dev-1", time.Time{})
+	if len(all) != 3 {
+		t.Fatalf("History 全量 = %d 条, want 3", len(all))
+	}
+	for i, s := range all {
+		if s.CPU.Cores != i+1 {
+			t.Fatalf("all[%d].CPU.Cores = %d, want %d", i, s.CPU.Cores, i+1)
+		}
+	}
+	// since 过滤：base+1s 之后应有 2 条（i=1,2）。
+	got := m.DeviceMetricsHistory("dev-1", base.Add(1*time.Second))
+	if len(got) != 2 {
+		t.Fatalf("Since(base+1s) = %d 条, want 2", len(got))
+	}
+	// DeviceMetrics() 仍返回最新值（向后兼容）。
+	latest := m.DeviceMetrics("dev-1")
+	if latest == nil || latest.CPU.Cores != 3 {
+		t.Fatalf("DeviceMetrics() Latest = %+v, want Cores=3", latest)
+	}
+	// 深拷贝：修改返回值不影响内部。
+	all[0].CPU.Cores = 999
+	if m.DeviceMetrics("dev-1").CPU.Cores != 3 {
+		t.Fatal("深拷贝失效：外部修改污染了内部缓存")
+	}
+}
+
+// TestMemoryStore_DeviceMetricsHistory_Overwrite 环形缓冲满后覆写最旧（task 223）。
+func TestMemoryStore_DeviceMetricsHistory_Overwrite(t *testing.T) {
+	// 直接构造小容量环形缓冲验证覆写逻辑。
+	r := newMetricsRing(3)
+	base := time.Now()
+	for i := 0; i < 5; i++ {
+		r.add(&proto.DeviceMetrics{
+			DeviceID:    "dev-1",
+			CPU:         proto.CPUMetrics{Cores: i + 1},
+			CollectedAt: base.Add(time.Duration(i) * time.Second),
+		})
+	}
+	all := r.since(time.Time{})
+	if len(all) != 3 {
+		t.Fatalf("覆写后 History = %d 条, want 3", len(all))
+	}
+	// 应保留最后 3 条：Cores=3,4,5。
+	for i, s := range all {
+		if s.CPU.Cores != i+3 {
+			t.Fatalf("all[%d].CPU.Cores = %d, want %d", i, s.CPU.Cores, i+3)
+		}
 	}
 }
 

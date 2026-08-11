@@ -21,7 +21,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"opsmesh/internal/events"
-	"opsmesh/internal/proto"
+
 )
 
 //go:embed migrations/*.sql
@@ -50,10 +50,10 @@ type SQLStore struct {
 	leaseUntil time.Time  // 当前租约过期时间（UTC）
 	secret     string     // B1 install token 的 HMAC 签名密钥（WithSecret 注入；空则构造时随机）
 
-	// 设备实时监控指标缓存：deviceID -> 最新指标。
-	// 高频时序数据落库应由 Prometheus/InfluxDB 承担，控制面仅缓存最新值供 API 查询，
+	// 设备实时监控指标缓存：deviceID -> 环形缓冲（保留最近 N 条历史，task 223）。
+	// 高频时序数据落库应由 Prometheus/InfluxDB 承担，控制面仅缓存最近 2h 历史供 API 查询，
 	// 避免给 MySQL 写入压力（每 30s/agent 一次写）。
-	deviceMetrics map[string]*proto.DeviceMetrics
+	deviceMetrics map[string]*metricsRing
 
 	// task 81 gRPC agent 身份绑定：agentID -> HMAC 签名密钥缓存（避免每次请求都查 MySQL）。
 	// 权威存储在 agents.secret 列；此处仅缓存已查询过的 agent 密钥（首次查询后填充）。
@@ -131,7 +131,7 @@ func NewSQLStore(dsn, redisAddr string) (*SQLStore, error) {
 	}
 	instID := fmt.Sprintf("%s-%d-%d", host, os.Getpid(), time.Now().UnixNano())
 
-	s := &SQLStore{db: db, rdb: rdb, instanceID: instID, secret: mustRandHex(32), deviceMetrics: make(map[string]*proto.DeviceMetrics), agentSecretCache: make(map[string]string)}
+	s := &SQLStore{db: db, rdb: rdb, instanceID: instID, secret: mustRandHex(32), deviceMetrics: make(map[string]*metricsRing), agentSecretCache: make(map[string]string)}
 	if err := s.runMigrations(); err != nil {
 		log.Printf("[store] 迁移失败（运行期可能不可用）: %v", err)
 	}

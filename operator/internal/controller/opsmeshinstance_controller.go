@@ -33,8 +33,22 @@ import (
 )
 
 const (
+	// opsmeshFinalizer is applied to every OpsMeshInstance CR so the
+	// reconciler gets a chance to tear down managed child resources
+	// (Deployment, DaemonSet, StatefulSet, Service) before the CR itself
+	// is removed from the cluster.
+	opsmeshFinalizer = "opsmesh.levango.com/finalizer"
+
 	// conditionTypeReady is the rollup condition reported on the CR status.
 	conditionTypeReady = "Ready"
+
+	// conditionTypeProgressing is True while the reconciler is actively
+	// driving managed resources toward the desired state.
+	conditionTypeProgressing = "Progressing"
+
+	// conditionTypeError is True when the most recent reconcile pass
+	// failed; Message carries the error detail.
+	conditionTypeError = "Error"
 
 	// conditionTypeControlPlane tracks the control-plane Deployment health.
 	conditionTypeControlPlane = "ControlPlaneReady"
@@ -79,9 +93,34 @@ func (r *OpsMeshInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// Track per-resource conditions; we always patch the status at the end.
 	conditions := newConditionTracker(&instance)
 
+	// ---------------------------------------------------------------------
+	// Deletion path: if the CR is being deleted, run the finalizer cleanup
+	// (Deployment -> DaemonSet -> StatefulSet -> Service) and then drop the
+	// finalizer so the API server can garbage-collect the CR.
+	// ---------------------------------------------------------------------
+	if !instance.DeletionTimestamp.IsZero() {
+		return r.reconcileDelete(ctx, &instance, conditions)
+	}
+
+	// ---------------------------------------------------------------------
+	// Creation path: ensure the finalizer is present so we get a chance to
+	// clean up on deletion.
+	// ---------------------------------------------------------------------
+	if !controllerutil.ContainsFinalizer(&instance, opsmeshFinalizer) {
+		controllerutil.AddFinalizer(&instance, opsmeshFinalizer)
+		if err := r.Update(ctx, &instance); err != nil {
+			conditions.set(conditionTypeError, metav1.ConditionTrue, "FinalizerAddFailed", err.Error())
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, conditions.flush(ctx, r, err)
+		}
+	}
+
+	// Mark Progressing=True while we drive managed resources toward spec.
+	conditions.set(conditionTypeProgressing, metav1.ConditionTrue, "Reconciling", "reconciling managed resources")
+
 	// 1. Reconcile the headless Service fronting the control plane.
 	if err := r.reconcileService(ctx, &instance); err != nil {
 		conditions.set(conditionTypeService, metav1.ConditionFalse, "ReconcileError", err.Error())
+		conditions.set(conditionTypeError, metav1.ConditionTrue, "ServiceFailed", err.Error())
 		conditions.set(conditionTypeReady, metav1.ConditionFalse, "ServiceFailed", err.Error())
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, conditions.flush(ctx, r, err)
 	}
@@ -90,6 +129,7 @@ func (r *OpsMeshInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// 2. Reconcile the control-plane Deployment.
 	if err := r.reconcileDeployment(ctx, &instance); err != nil {
 		conditions.set(conditionTypeControlPlane, metav1.ConditionFalse, "ReconcileError", err.Error())
+		conditions.set(conditionTypeError, metav1.ConditionTrue, "ControlPlaneFailed", err.Error())
 		conditions.set(conditionTypeReady, metav1.ConditionFalse, "ControlPlaneFailed", err.Error())
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, conditions.flush(ctx, r, err)
 	}
@@ -98,6 +138,7 @@ func (r *OpsMeshInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// 3. Reconcile the node-agent DaemonSet.
 	if err := r.reconcileDaemonSet(ctx, &instance); err != nil {
 		conditions.set(conditionTypeAgent, metav1.ConditionFalse, "ReconcileError", err.Error())
+		conditions.set(conditionTypeError, metav1.ConditionTrue, "AgentFailed", err.Error())
 		conditions.set(conditionTypeReady, metav1.ConditionFalse, "AgentFailed", err.Error())
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, conditions.flush(ctx, r, err)
 	}
@@ -107,6 +148,7 @@ func (r *OpsMeshInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if instance.Spec.MySQL.Enabled || instance.Spec.Store == "mysql" {
 		if err := r.reconcileMySQLStatefulSet(ctx, &instance); err != nil {
 			conditions.set(conditionTypeMySQL, metav1.ConditionFalse, "ReconcileError", err.Error())
+			conditions.set(conditionTypeError, metav1.ConditionTrue, "MySQLFailed", err.Error())
 			conditions.set(conditionTypeReady, metav1.ConditionFalse, "MySQLFailed", err.Error())
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, conditions.flush(ctx, r, err)
 		}
@@ -119,6 +161,7 @@ func (r *OpsMeshInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if instance.Spec.Redis.Enabled {
 		if err := r.reconcileRedisStatefulSet(ctx, &instance); err != nil {
 			conditions.set(conditionTypeRedis, metav1.ConditionFalse, "ReconcileError", err.Error())
+			conditions.set(conditionTypeError, metav1.ConditionTrue, "RedisFailed", err.Error())
 			conditions.set(conditionTypeReady, metav1.ConditionFalse, "RedisFailed", err.Error())
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, conditions.flush(ctx, r, err)
 		}
@@ -127,11 +170,100 @@ func (r *OpsMeshInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		conditions.remove(conditionTypeRedis)
 	}
 
-	// 6. All resources reconciled -> mark Ready.
+	// 6. All resources reconciled -> mark Ready=True, Progressing=False, Error=False.
 	conditions.set(conditionTypeReady, metav1.ConditionTrue, "AllResourcesReconciled", "all managed resources in sync")
+	conditions.set(conditionTypeProgressing, metav1.ConditionFalse, "Reconciled", "all managed resources in sync")
+	conditions.set(conditionTypeError, metav1.ConditionFalse, "NoError", "reconcile succeeded")
 
 	// Requeue periodically so we self-heal drift even without watch events.
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, conditions.flush(ctx, r, nil)
+}
+
+// reconcileDelete runs the graceful teardown sequence when an
+// OpsMeshInstance is being deleted. The order is intentional:
+//  1. Deployment  (stop the control plane so no new reconciles are issued)
+//  2. DaemonSet   (stop the node agents)
+//  3. StatefulSet (stop MySQL/Redis backing stores)
+//  4. Service     (drop the headless Service last)
+//
+// Once every managed resource is gone, the finalizer is removed so the
+// API server can garbage-collect the CR.
+func (r *OpsMeshInstanceReconciler) reconcileDelete(
+	ctx context.Context,
+	instance *opsmeshv1alpha1.OpsMeshInstance,
+	conditions *conditionTracker,
+) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+	logger.Info("OpsMeshInstance is being deleted; running finalizer cleanup")
+
+	// 1. Delete the control-plane Deployment.
+	if err := r.deleteManaged(ctx, instance, &appsv1.Deployment{}, instance.Name+"-control-plane"); err != nil {
+		conditions.set(conditionTypeError, metav1.ConditionTrue, "DeploymentDeleteFailed", err.Error())
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, conditions.flush(ctx, r, err)
+	}
+
+	// 2. Delete the node-agent DaemonSet.
+	if err := r.deleteManaged(ctx, instance, &appsv1.DaemonSet{}, instance.Name+"-agent"); err != nil {
+		conditions.set(conditionTypeError, metav1.ConditionTrue, "DaemonSetDeleteFailed", err.Error())
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, conditions.flush(ctx, r, err)
+	}
+
+	// 3. Delete the MySQL StatefulSet if it was enabled.
+	if instance.Spec.MySQL.Enabled || instance.Spec.Store == "mysql" {
+		if err := r.deleteManaged(ctx, instance, &appsv1.StatefulSet{}, instance.Name+"-mysql"); err != nil {
+			conditions.set(conditionTypeError, metav1.ConditionTrue, "MySQLDeleteFailed", err.Error())
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, conditions.flush(ctx, r, err)
+		}
+	}
+
+	// 4. Delete the Redis StatefulSet if it was enabled.
+	if instance.Spec.Redis.Enabled {
+		if err := r.deleteManaged(ctx, instance, &appsv1.StatefulSet{}, instance.Name+"-redis"); err != nil {
+			conditions.set(conditionTypeError, metav1.ConditionTrue, "RedisDeleteFailed", err.Error())
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, conditions.flush(ctx, r, err)
+		}
+	}
+
+	// 5. Delete the headless Service.
+	if err := r.deleteManaged(ctx, instance, &corev1.Service{}, instance.Name+"-control-plane"); err != nil {
+		conditions.set(conditionTypeError, metav1.ConditionTrue, "ServiceDeleteFailed", err.Error())
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, conditions.flush(ctx, r, err)
+	}
+
+	// 6. All managed resources are gone -> drop the finalizer.
+	controllerutil.RemoveFinalizer(instance, opsmeshFinalizer)
+	if err := r.Update(ctx, instance); err != nil {
+		conditions.set(conditionTypeError, metav1.ConditionTrue, "FinalizerRemoveFailed", err.Error())
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, conditions.flush(ctx, r, err)
+	}
+	logger.Info("finalizer removed; OpsMeshInstance deletion complete")
+
+	conditions.set(conditionTypeReady, metav1.ConditionFalse, "Deleting", "OpsMeshInstance is being deleted")
+	conditions.set(conditionTypeProgressing, metav1.ConditionFalse, "Deleting", "teardown complete")
+	conditions.set(conditionTypeError, metav1.ConditionFalse, "NoError", "teardown succeeded")
+	return ctrl.Result{}, conditions.flush(ctx, r, nil)
+}
+
+// deleteManaged deletes the managed child resource of the given kind and
+// name in instance.Namespace. NotFound is treated as success so the
+// teardown is idempotent across reconcile passes.
+func (r *OpsMeshInstanceReconciler) deleteManaged(
+	ctx context.Context,
+	instance *opsmeshv1alpha1.OpsMeshInstance,
+	obj client.Object,
+	name string,
+) error {
+	key := types.NamespacedName{Name: name, Namespace: instance.Namespace}
+	if err := r.Get(ctx, key, obj); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("get %T %s: %w", obj, name, err)
+	}
+	if err := r.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete %T %s: %w", obj, name, err)
+	}
+	return nil
 }
 
 // reconcileService creates or updates the headless Service for instance.

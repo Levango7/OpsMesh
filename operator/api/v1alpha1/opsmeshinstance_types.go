@@ -1,11 +1,52 @@
 package v1alpha1
 
 import (
+	"time"
+
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+
+// Condition types reported on OpsMeshInstance.Status.Conditions.
+const (
+	// ConditionTypeReady is the rollup condition: True when every managed
+	// resource is in sync with the desired spec.
+	ConditionTypeReady = "Ready"
+
+	// ConditionTypeProgressing is True while the reconciler is actively
+	// driving managed resources toward the desired state.
+	ConditionTypeProgressing = "Progressing"
+
+	// ConditionTypeError is True when the most recent reconcile pass
+	// failed; Message carries the error detail.
+	ConditionTypeError = "Error"
+)
+
+// SetCondition merges the supplied metav1.Condition into Status.Conditions,
+// updating LastTransitionTime when the status flips. It is a thin wrapper
+// around meta.SetStatusCondition so callers can stay within the v1alpha1
+// package without importing apimachinery/meta directly.
+func (s *OpsMeshInstanceStatus) SetCondition(condition metav1.Condition) {
+	if condition.LastTransitionTime.IsZero() {
+		condition.LastTransitionTime = metav1.NewTime(time.Now())
+	}
+	meta.SetStatusCondition(&s.Conditions, condition)
+}
+
+// GetCondition returns the condition of the given type if present, or nil
+// when no such condition has been recorded yet.
+func (s *OpsMeshInstanceStatus) GetCondition(conditionType string) *metav1.Condition {
+	return meta.FindStatusCondition(s.Conditions, conditionType)
+}
+
+// RemoveCondition drops the condition of the given type from Status.Conditions.
+// It is a no-op when the condition is absent.
+func (s *OpsMeshInstanceStatus) RemoveCondition(conditionType string) {
+	meta.RemoveStatusCondition(&s.Conditions, conditionType)
+}
 
 // MySQLSpec defines the desired state of the embedded MySQL StatefulSet.
 type MySQLSpec struct {

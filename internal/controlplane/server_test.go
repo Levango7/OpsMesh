@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"opsmesh/internal/config"
 	"opsmesh/internal/proto"
@@ -304,5 +305,125 @@ func TestHandleDeviceMetrics_TenantIsolation(t *testing.T) {
 	s.handleDeviceRouting(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("same-tenant access = %d, want 200", rec.Code)
+	}
+}
+
+// TestHandleDeviceMetrics_RangeQuery 测试 GET /api/v1/devices/{id}/metrics?range=2h 返回历史时序（task 223）。
+// 覆盖：合法 range 返回 MetricsSeries、非法 range 400、无历史 404、不带 range 保持现有行为。
+func TestHandleDeviceMetrics_RangeQuery(t *testing.T) {
+	st := store.NewMemoryStore()
+	a := st.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1", Hostname: "web-01"})
+	deviceID := "dev-" + a.AgentID
+	// 注入 3 条历史指标（最近 10 分钟内，确保 range=15m 能查到）。
+	base := time.Now().Add(-10 * time.Minute) // 最早一条在 10 分钟前
+	for i := 0; i < 3; i++ {
+		st.StoreDeviceMetrics(deviceID, &proto.DeviceMetrics{
+			DeviceID:    deviceID,
+			CPU:         proto.CPUMetrics{Cores: 4, Usage: float64(10 + i*5)},
+			CollectedAt: base.Add(time.Duration(i) * 5 * time.Minute),
+		})
+	}
+
+	s := &Server{store: st, requireAuth: false, cfg: &config.Config{Demo: true}}
+
+	// 1) ?range=2h 返回 MetricsSeries，含 3 条样本。
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/devices/"+deviceID+"/metrics?range=2h", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
+	rec := httptest.NewRecorder()
+	s.handleDeviceRouting(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("range=2h = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var series proto.MetricsSeries
+	if err := json.Unmarshal(rec.Body.Bytes(), &series); err != nil {
+		t.Fatalf("json decode MetricsSeries: %v", err)
+	}
+	if series.DeviceID != deviceID {
+		t.Fatalf("series.DeviceID = %q, want %q", series.DeviceID, deviceID)
+	}
+	if series.Range != "2h" {
+		t.Fatalf("series.Range = %q, want 2h", series.Range)
+	}
+	if len(series.Samples) != 3 {
+		t.Fatalf("series.Samples = %d 条, want 3", len(series.Samples))
+	}
+	// 样本应按时间升序。
+	for i := 1; i < len(series.Samples); i++ {
+		if series.Samples[i].CollectedAt.Before(series.Samples[i-1].CollectedAt) {
+			t.Fatalf("samples[%d] 早于 samples[%d]，应升序", i, i-1)
+		}
+	}
+
+	// 2) ?range=15m 返回部分历史（只有最近 1-2 条在 15 分钟内）。
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/devices/"+deviceID+"/metrics?range=15m", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
+	rec = httptest.NewRecorder()
+	s.handleDeviceRouting(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("range=15m = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	series = proto.MetricsSeries{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &series); err != nil {
+		t.Fatalf("json decode: %v", err)
+	}
+	if len(series.Samples) == 0 {
+		t.Fatal("range=15m 返回 0 条，应至少有 1 条最近指标")
+	}
+
+	// 3) 非法 range -> 400。
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/devices/"+deviceID+"/metrics?range=999h", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
+	rec = httptest.NewRecorder()
+	s.handleDeviceRouting(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("非法 range = %d, want 400", rec.Code)
+	}
+
+	// 4) 不带 range 保持现有行为，返回最新值（DeviceMetrics 而非 MetricsSeries）。
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/devices/"+deviceID+"/metrics", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
+	rec = httptest.NewRecorder()
+	s.handleDeviceRouting(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("无 range = %d, want 200", rec.Code)
+	}
+	var dm proto.DeviceMetrics
+	if err := json.Unmarshal(rec.Body.Bytes(), &dm); err != nil {
+		t.Fatalf("json decode DeviceMetrics: %v", err)
+	}
+	if dm.DeviceID != deviceID {
+		t.Fatalf("DeviceMetrics.DeviceID = %q, want %q", dm.DeviceID, deviceID)
+	}
+	// 最新一条 Usage 应为 20（10+2*5）。
+	if dm.CPU.Usage != 20 {
+		t.Fatalf("最新 CPU.Usage = %v, want 20", dm.CPU.Usage)
+	}
+}
+
+// TestParseMetricsRange 验证 range 参数解析（task 223）。
+func TestParseMetricsRange(t *testing.T) {
+	cases := []struct {
+		input string
+		ok    bool
+	}{
+		{"15m", true}, {"1h", true}, {"2h", true}, {"6h", true}, {"24h", true},
+		{"2H", true},  // 大小写不敏感
+		{"", false},   // 空
+		{"3h", false}, // 不支持
+		{"abc", false},
+	}
+	for _, c := range cases {
+		_, ok := parseMetricsRange(c.input)
+		if ok != c.ok {
+			t.Errorf("parseMetricsRange(%q) ok = %v, want %v", c.input, ok, c.ok)
+		}
+	}
+	// 合法 range 返回的 since 应在过去。
+	since, ok := parseMetricsRange("2h")
+	if !ok {
+		t.Fatal("parseMetricsRange(2h) ok=false, want true")
+	}
+	if !since.Before(time.Now()) {
+		t.Fatal("since 应在过去")
 	}
 }

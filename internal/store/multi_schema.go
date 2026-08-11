@@ -442,6 +442,20 @@ func (m *MultiSchemaStore) DeviceMetrics(deviceID string) *proto.DeviceMetrics {
 	return s.DeviceMetrics(deviceID)
 }
 
+// DeviceMetricsHistory 返回设备监控指标历史时序（环形缓冲查询，task 223）：
+// 经 deviceTenant 反查租户路由后转发到子 store。
+func (m *MultiSchemaStore) DeviceMetricsHistory(deviceID string, since time.Time) []proto.DeviceMetrics {
+	tenant := m.lookupDeviceTenant(deviceID)
+	if tenant == "" {
+		return nil
+	}
+	s, err := m.storeFor(tenant)
+	if err != nil {
+		return nil
+	}
+	return s.DeviceMetricsHistory(deviceID, since)
+}
+
 // ============================================================================
 // TaskStore 实现（12 方法）
 // ============================================================================

@@ -51,9 +51,10 @@ type MemoryStore struct {
 	usersByName map[string]*User // username -> user（登录 O(1) 直查）
 	roles       map[string]*Role // id -> role
 	permissions []*Permission    // 预定义权限列表（只读）
-	// 设备实时监控指标：deviceID -> 最新指标（agent 心跳上报，仅保留最新值）。
-	// 历史时序由 Prometheus 负责，这里只缓存最近一次采集结果供 API 查询。
-	deviceMetrics map[string]*proto.DeviceMetrics
+	// 设备实时监控指标：deviceID -> 环形缓冲（保留最近 N 条历史快照，task 223）。
+	// 默认 2h/240 条（30s 采样间隔），供 GET /api/v1/devices/{id}/metrics?range=2h 查询历史时序。
+	// DeviceMetrics() 返回最新值（向后兼容），DeviceMetricsHistory() 返回历史序列。
+	deviceMetrics map[string]*metricsRing
 	// K8s 集群配置（Phase 3）：clusterID -> 集群配置。
 	// 与 deviceMetrics 同样由 m.mu 保护并发安全；Kubeconfig 为敏感内容，API 层负责脱敏。
 	k8sClusters map[string]*K8sCluster
@@ -223,7 +224,7 @@ func NewMemoryStore() *MemoryStore {
 		usersByName:         make(map[string]*User),
 		roles:               make(map[string]*Role),
 		secret:              mustRandHex(32),
-		deviceMetrics:       make(map[string]*proto.DeviceMetrics),
+		deviceMetrics:       make(map[string]*metricsRing),
 		k8sClusters:         make(map[string]*K8sCluster),
 		agentSecrets:        make(map[string]string),
 		alertRules:          make(map[string]*AlertRule),
@@ -336,7 +337,6 @@ func bcryptHash(password string) (string, error) {
 	}
 	return string(hash), nil
 }
-
 
 // WithSecret 注入 B1 install token 的 HMAC 签名密钥（空则保留构造时随机密钥）。
 // 多副本控制面共享同一 MySQL 时须注入一致密钥，否则互不相认。
@@ -1289,28 +1289,45 @@ func (m *MemoryStore) Snapshot(tenantID string) map[string][]proto.DeviceInfo {
 	return out
 }
 
-// StoreDeviceMetrics 存储设备最新监控指标（agent 心跳上报，仅保留最新值）。
+// StoreDeviceMetrics 存储设备监控指标（agent 心跳上报，追加到环形缓冲保留最近 N 条历史）。
 // deviceID 为空或 metrics 为 nil 时直接返回。深拷贝入参避免外部并发修改。
+// 环形缓冲默认容量 240 条（2h * 120 samples/h，30s 采样间隔），满后覆写最旧。
 func (m *MemoryStore) StoreDeviceMetrics(deviceID string, metrics *proto.DeviceMetrics) {
 	if deviceID == "" || metrics == nil {
 		return
 	}
-	cp := *metrics
 	m.mu.Lock()
-	m.deviceMetrics[deviceID] = &cp
-	m.mu.Unlock()
+	defer m.mu.Unlock()
+	r, ok := m.deviceMetrics[deviceID]
+	if !ok || r == nil {
+		r = newMetricsRing(metricsRingDefaultCap)
+		m.deviceMetrics[deviceID] = r
+	}
+	r.add(metrics) // 在 m.mu 锁内执行，metricsRing 自身无锁，由外层 m.mu 统一保护
 }
 
 // DeviceMetrics 返回设备最新监控指标（无数据时返回 nil）。返回深拷贝避免外部并发修改。
 func (m *MemoryStore) DeviceMetrics(deviceID string) *proto.DeviceMetrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	v, ok := m.deviceMetrics[deviceID]
-	if !ok || v == nil {
+	r, ok := m.deviceMetrics[deviceID]
+	if !ok || r == nil {
 		return nil
 	}
-	cp := *v
-	return &cp
+	return r.latest()
+}
+
+// DeviceMetricsHistory 返回设备监控指标历史时序（环形缓冲查询，task 223）。
+// since 为零值时返回全部已存储历史；否则返回 CollectedAt >= since 的快照（按时间升序）。
+// 无数据时返回 nil。返回深拷贝避免外部并发修改。
+func (m *MemoryStore) DeviceMetricsHistory(deviceID string, since time.Time) []proto.DeviceMetrics {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	r, ok := m.deviceMetrics[deviceID]
+	if !ok || r == nil {
+		return nil
+	}
+	return r.since(since)
 }
 
 // ============================================================================
@@ -1610,4 +1627,84 @@ func (m *MemoryStore) DeleteMiddlewareTemplate(id string) bool {
 	}
 	delete(m.middlewareTemplates, id)
 	return true
+}
+
+// ============================================================================
+// task 223 设备监控指标环形缓冲：metricsRing
+// ============================================================================
+
+// metricsRingDefaultCap 环形缓冲默认容量：2h * 120 samples/h（30s 采样间隔）= 240 条。
+// 每条 DeviceMetrics 约 1KB，总 ~240KB/设备。
+const metricsRingDefaultCap = 240
+
+// metricsRing 设备监控指标环形缓冲：保留最近 N 条历史快照（task 223）。
+// 用 slice + head index 实现，O(1) 追加 O(n) 读取。
+// 自身无线程安全，由外层 MemoryStore.mu（或 SQLStore.mu）统一保护并发。
+type metricsRing struct {
+	samples  []proto.DeviceMetrics // 环形缓冲 slice（固定容量，覆写最旧）
+	head     int                   // 下一个写入位置（0..capacity-1）
+	size     int                   // 当前已写入数量（<= capacity）
+	capacity int                   // 缓冲容量
+}
+
+// newMetricsRing 创建环形缓冲。capacity<=0 时用 metricsRingDefaultCap（240）。
+func newMetricsRing(capacity int) *metricsRing {
+	if capacity <= 0 {
+		capacity = metricsRingDefaultCap
+	}
+	return &metricsRing{
+		samples:  make([]proto.DeviceMetrics, capacity),
+		capacity: capacity,
+	}
+}
+
+// add 追加一条指标快照到环形缓冲（O(1)）。m 为 nil 时直接返回。
+// 深拷贝入参避免外部并发修改污染缓冲。
+func (r *metricsRing) add(m *proto.DeviceMetrics) {
+	if r == nil || m == nil {
+		return
+	}
+	cp := *m
+	r.samples[r.head] = cp
+	r.head = (r.head + 1) % r.capacity
+	if r.size < r.capacity {
+		r.size++
+	}
+}
+
+// latest 返回最近一条指标快照（无数据时返回 nil）。返回深拷贝。
+func (r *metricsRing) latest() *proto.DeviceMetrics {
+	if r == nil || r.size == 0 {
+		return nil
+	}
+	// head 指向下一个写入位置，最新一条在 (head-1+capacity)%capacity。
+	idx := (r.head - 1 + r.capacity) % r.capacity
+	cp := r.samples[idx]
+	return &cp
+}
+
+// since 返回 CollectedAt >= since 的所有快照（按时间升序）。
+// since 为零值时返回全部已存储快照。无数据时返回 nil。返回深拷贝。
+func (r *metricsRing) since(t time.Time) []proto.DeviceMetrics {
+	if r == nil || r.size == 0 {
+		return nil
+	}
+	// 最早一条的位置：若 size<capacity，从 0 开始；否则从 head 开始（head 指向最旧）。
+	start := 0
+	if r.size == r.capacity {
+		start = r.head
+	}
+	out := make([]proto.DeviceMetrics, 0, r.size)
+	for i := 0; i < r.size; i++ {
+		idx := (start + i) % r.capacity
+		s := r.samples[idx]
+		if !t.IsZero() && s.CollectedAt.Before(t) {
+			continue
+		}
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

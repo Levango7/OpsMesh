@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-
 // MemoryLogStore 内存环形缓冲实现（并发安全，O(1) 追加 / O(n) 检索）。
 // MVP 默认后端；进程重启即丢，生产应切 SQL（U-04 数据本地化）。
 type MemoryLogStore struct {

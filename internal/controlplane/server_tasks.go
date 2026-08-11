@@ -525,7 +525,6 @@ func (s *Server) handleTaskResult(w http.ResponseWriter, r *http.Request, id str
 // B1 修复 10：作业审批 API
 // ============================================================================
 
-
 // handleApproveTask 处理 POST /api/v1/tasks/{id}/approve：审批通过任务。
 // 将 pending_approval 状态的任务翻为 pending，使其可被 agent 领取执行。
 func (s *Server) handleApproveTask(w http.ResponseWriter, r *http.Request, id string) {

@@ -56,7 +56,7 @@ type DeviceInfo struct {
 }
 
 // DeviceMetrics 设备实时监控指标（agent 采集，心跳上报，控制面缓存最新值）。
-// 仅保留最新值（不做历史时序——历史时序是 Prometheus/InfluxDB 的职责）。
+// 同时保留最近 N 小时历史快照（环形缓冲，默认 2h/240 条），供 GET /api/v1/devices/{id}/metrics?range=2h 查询。
 // agent 每 30 秒采集一次（心跳每 10 秒一次，但采集频率独立降低以减少系统开销）。
 type DeviceMetrics struct {
 	DeviceID     string        `json:"deviceID"`
@@ -73,6 +73,15 @@ type DeviceMetrics struct {
 	Services     []ServiceInfo `json:"services"`
 	ProcessCount int           `json:"processCount"`
 	CollectedAt  time.Time     `json:"collectedAt"`
+}
+
+// MetricsSeries 设备监控指标历史时序数据（环形缓冲查询结果）。
+// 用于 GET /api/v1/devices/{id}/metrics?range=2h 返回历史序列而非仅最新值。
+// Samples 按时间升序排列（最早在前，最新在后）；空表示该时间窗内无数据。
+type MetricsSeries struct {
+	DeviceID string          `json:"deviceID"` // 设备 ID
+	Range    string          `json:"range"`    // 查询范围原始参数（如 "2h"），便于前端回显
+	Samples  []DeviceMetrics `json:"samples"`  // 历史指标快照（按 CollectedAt 升序）
 }
 
 // CPUMetrics CPU 指标。

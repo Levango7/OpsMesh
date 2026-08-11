@@ -54,6 +54,7 @@ type Agent struct {
 	cmdbSeq        int64                // CMDB 上报序列号（agent 侧递增）
 	cmdbLastCol    time.Time            // 上次 CMDB 采集时间（每 60s 采集一次）
 	metricsLastCol time.Time            // 上次监控指标采集时间（每 30s 采集一次）
+	metricsHistory *MetricsHistory      // 监控指标历史环形缓冲（默认 2h/240 条，本地保留供扩展查询）
 	// task 98 日志采集 agent 推送：定时读取指定日志文件的新增内容（基于文件 offset）并上报控制面。
 	// logCollectPaths 为需采集的日志文件路径列表（来自 OPSMESH_LOG_COLLECT_PATHS 环境变量，逗号分隔）；
 	// logCollectInterval 为采集间隔（来自 OPSMESH_LOG_COLLECT_INTERVAL，默认 30s）；
@@ -75,14 +76,15 @@ func New(cfg *config.Config) *Agent {
 		w = 4
 	}
 	a := &Agent{
-		cfg:         cfg,
-		hostname:    h,
-		dataDir:     cfg.DataDir,
-		agentID:     loadOrCreateAgentID(cfg.DataDir, h), // P0-2 身份持久化：重启沿用稳定 ID
-		taskTimeout: cfg.TaskTimeout,
-		workers:     w,
-		taskCh:      make(chan proto.Task, w*2),
-		running:     make(map[string]*runState),
+		cfg:            cfg,
+		hostname:       h,
+		dataDir:        cfg.DataDir,
+		agentID:        loadOrCreateAgentID(cfg.DataDir, h), // P0-2 身份持久化：重启沿用稳定 ID
+		taskTimeout:    cfg.TaskTimeout,
+		workers:        w,
+		taskCh:         make(chan proto.Task, w*2),
+		running:        make(map[string]*runState),
+		metricsHistory: NewMetricsHistory(MetricsHistoryDefaultCap), // 环形缓冲：默认 2h/240 条
 	}
 	a.initLogCollect()
 	return a
@@ -464,12 +466,18 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 
 // collectDeviceMetrics 采集系统监控指标（每 30s 一次，节流避免高频采集消耗 CPU）。
 // 返回 nil 表示本轮跳过（距上次采集不足 30s）。deviceID 用 dev-<agentID> 与控制面 DeviceInfo 对齐。
+// 采集成功时同时追加到本地环形缓冲（metricsHistory），保留最近 2h 历史供扩展查询。
 func (a *Agent) collectDeviceMetrics() *proto.DeviceMetrics {
 	if time.Since(a.metricsLastCol) < 30*time.Second {
 		return nil // 距上次采集不足 30s，跳过
 	}
 	a.metricsLastCol = time.Now()
-	return CollectMetrics("dev-" + a.agentID)
+	m := CollectMetrics("dev-" + a.agentID)
+	// 追加到本地环形缓冲（断网恢复后可重传 / 本地查询；当前心跳仅上报最新值，控制面侧也维护环形缓冲）。
+	if m != nil && a.metricsHistory != nil {
+		a.metricsHistory.Add(m)
+	}
+	return m
 }
 
 // dispatchLoop 每 15s 触发一次 drainTasks：尽量把当前所有 pending 任务领取并投入 worker 队列，

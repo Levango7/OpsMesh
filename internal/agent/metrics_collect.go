@@ -7,7 +7,8 @@
 // 设计取舍：
 //   - 仅采集常见运维相关服务（sshd/nginx/mysql/docker/redis/opsmesh 等），不列全部服务，
 //     避免输出过长且无关服务干扰运维视线。
-//   - DeviceMetrics 只保留最新值（历史时序是 Prometheus 的事），控制面缓存供 API 查询。
+//   - DeviceMetrics 同时保留最新值与最近 N 小时历史快照（环形缓冲，默认 2h/240 条），
+//     控制面缓存供 API 查询（GET /api/v1/devices/{id}/metrics?range=2h）。
 package agent
 
 import (
@@ -15,6 +16,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -26,6 +28,115 @@ import (
 
 	"opsmesh/internal/proto"
 )
+
+// MetricsHistoryDefaultCap 环形缓冲默认容量：2h * 120 samples/h（30s 采样间隔）= 240 条。
+// 每条 DeviceMetrics 约 1KB，总 ~240KB/设备。
+const MetricsHistoryDefaultCap = 240
+
+// MetricsHistory 环形缓冲：保存最近 N 小时的设备指标快照。
+// 用 slice + head index 实现，O(1) 追加 O(n) 读取。
+// 默认保留 2 小时历史（240 条，30s 采样间隔），可经 NewMetricsHistory(capacity) 自定义。
+// 线程安全：所有方法内部加锁，可被采集 goroutine 与查询 goroutine 并发访问。
+type MetricsHistory struct {
+	samples  []proto.DeviceMetrics // 环形缓冲 slice（固定容量，覆写最旧）
+	head     int                   // 下一个写入位置（0..capacity-1）
+	size     int                   // 当前已写入数量（<= capacity）
+	capacity int                   // 缓冲容量
+	mu       sync.Mutex            // 保护 samples/head/size 并发读写
+}
+
+// NewMetricsHistory 创建环形缓冲。capacity<=0 时用 MetricsHistoryDefaultCap（240）。
+func NewMetricsHistory(capacity int) *MetricsHistory {
+	if capacity <= 0 {
+		capacity = MetricsHistoryDefaultCap
+	}
+	return &MetricsHistory{
+		samples:  make([]proto.DeviceMetrics, capacity),
+		capacity: capacity,
+	}
+}
+
+// Add 追加一条指标快照到环形缓冲（O(1)）。m 为 nil 时直接返回（不写空记录）。
+// 深拷贝入参避免外部并发修改污染缓冲。
+func (h *MetricsHistory) Add(m *proto.DeviceMetrics) {
+	if h == nil || m == nil {
+		return
+	}
+	cp := *m
+	h.mu.Lock()
+	h.samples[h.head] = cp
+	h.head = (h.head + 1) % h.capacity
+	if h.size < h.capacity {
+		h.size++
+	}
+	h.mu.Unlock()
+}
+
+// Latest 返回最近一条指标快照（无数据时返回 nil）。返回深拷贝避免外部修改污染缓冲。
+func (h *MetricsHistory) Latest() *proto.DeviceMetrics {
+	if h == nil {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.size == 0 {
+		return nil
+	}
+	// head 指向下一个写入位置，最新一条在 (head-1+capacity)%capacity。
+	idx := (h.head - 1 + h.capacity) % h.capacity
+	cp := h.samples[idx]
+	return &cp
+}
+
+// Since 返回 CollectedAt >= since 的所有快照（按时间升序）。
+// since 为零值时返回全部已存储快照。无数据时返回 nil。
+// 返回深拷贝避免外部修改污染缓冲。
+func (h *MetricsHistory) Since(since time.Time) []proto.DeviceMetrics {
+	if h == nil {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.size == 0 {
+		return nil
+	}
+	// 最早一条的位置：若 size<capacity，从 0 开始；否则从 head 开始（head 指向最旧）。
+	start := 0
+	if h.size == h.capacity {
+		start = h.head
+	}
+	out := make([]proto.DeviceMetrics, 0, h.size)
+	for i := 0; i < h.size; i++ {
+		idx := (start + i) % h.capacity
+		s := h.samples[idx]
+		if !since.IsZero() && s.CollectedAt.Before(since) {
+			continue
+		}
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// Size 返回当前已存储的样本数（<= capacity）。
+func (h *MetricsHistory) Size() int {
+	if h == nil {
+		return 0
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.size
+}
+
+// Cap 返回环形缓冲容量。
+func (h *MetricsHistory) Cap() int {
+	if h == nil {
+		return 0
+	}
+	return h.capacity
+}
 
 // monitoredServices 是关注的服务名白名单（常见运维相关服务）。
 // 仅采集这些服务的状态，避免列全部服务导致输出过长且干扰运维视线。

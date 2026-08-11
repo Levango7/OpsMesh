@@ -562,7 +562,6 @@ func (s *Server) userPermissions(u *store.User) []string {
 	return out
 }
 
-
 // ============================================================================
 // JWT access token 吊销黑名单（P1-G4 + B-6）。
 //

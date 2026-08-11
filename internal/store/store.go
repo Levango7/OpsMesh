@@ -47,6 +47,10 @@ type DeviceStore interface {
 	StoreDeviceMetrics(deviceID string, metrics *proto.DeviceMetrics)
 	// DeviceMetrics 返回设备最新监控指标（无数据时返回 nil）。
 	DeviceMetrics(deviceID string) *proto.DeviceMetrics
+	// DeviceMetricsHistory 返回设备监控指标历史时序（环形缓冲查询，task 223）。
+	// since 为零值时返回全部已存储历史；否则返回 CollectedAt >= since 的快照（按时间升序）。
+	// 无数据时返回 nil。控制面 GET /api/v1/devices/{id}/metrics?range=2h 调用此方法。
+	DeviceMetricsHistory(deviceID string, since time.Time) []proto.DeviceMetrics
 	// AgentSecret 返回该 agent 的 HMAC 签名密钥（task 81 gRPC 身份绑定）。
 	// 由 Register 时为每个 agent 随机生成 32 字节 hex 串并落库；agent 拉任务/上报/轮询取消时
 	// 用此密钥计算 HMAC-SHA256(secret, timestamp+agentID) 签名，控制面据此验证 agent 身份，
