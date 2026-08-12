@@ -207,4 +207,40 @@
 
 ---
 
+## 3. 关于序列化：protobuf 与手JSON codec 双轨并存（补充说明，v0.4.0）
+
+OpsMesh 目前同时存在两套序列化路径（`internal/grpcx/codec.go` 的 JSONCodec + `internal/grpcx/pb/` 的 protobuf stub）。这一节澄清它们的关系、现状约束与未来迁移方案，避免新人读代码时困惑。
+
+### 3.1 现状矩阵
+
+| 通道 | 现状 | 说明 |
+|---|---|---|
+| `agent↔控制面` 注册/心跳/拉任务/上报/PollCancels | **JSON codec**（自定义 `__v` 版本字段） | 历史决策：不依赖 protoc，底层仅依赖 `google.golang.org/grpc` 稳定 API。已经把 `__v=1` 字段作为版本协商门槛，未来协议变更会被对端主动拒绝。 |
+| protobuf `pb/` 目录 | **已存在但尚未启用** | pb stub 是前期 CI `buf lint/breaking` 保护下生成的契约守护，不是实际通信结构。 |
+
+### 3.2 为什么不立即切换
+
+| 成本 | 说明 |
+|---|---|
+| 已生效的 `__v` 版本协商 | JSON codec 在协议层主动拒绝不兼容报文，效果并不比 protobuf 弱；只是体积小、可读性好。 |
+| agent 少量契约字段 | 当前 agent ↔ 控制面只是几个扁平结构（AgentInfo/Task/TaskResult 等），protobuf 的强类型/紧凑格式优势不明显。 |
+| 迁移面 | 切换需要同步 agent、控制面、proxy、联邦转发、CI。至少需要一个迭代专注切换 + 向前兼容期。 |
+
+### 3.3 迁移路径（若未来决定全部切 protobuf）
+
+1. **把 `proto/opsmesh/` 下 `buf.yaml` / `buf.gen.yaml` 补全**，明确 go/out 目录与 stub 插槽。
+2. **双轨共存期**：JSONCodec 仍注册，通过 codec name 路由（"json" vs "proto"），控制面支持两种；agent 可选 `--codec=json|proto`，默认仍 json。
+3. **灰度**：先在联邦/控制面对接启用 proto，观察 1 个迭代；再切 agent 默认值；最后删除 JSONCodec 注册。
+4. **契约守护保留**：CI 中的 `buf breaking --against main` 继续生效。
+
+### 3.4 决定不予切换的条件
+
+- AgentInfo/Task 字段数量在增量阶段仍小；
+- 没有跨语言 agent（如 Python agent）需求；
+- protobuf 生成器升级对 CI 的维护成本超过可读性收益。
+
+目前三条都满足，因此**双轨并存是当前正确的选择**。若第 2 条/第 3 条反转（出现 Python agent / protoc 工具链成熟且成本下降），再按 §3.3 迁移。
+
+---
+
 *本文档为架构选型分析，不涉及代码改动。结论基于 OpsMesh 的 6 项硬约束与各语言技术特性。*

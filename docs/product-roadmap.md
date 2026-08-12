@@ -35,11 +35,11 @@ MVP 功能完成度高，但面向生产规模化仍存在以下结构性短板�
 | 问题类别 | 具体表现 | 风险等级 |
 |---|---|---|
 | 文档脱节 | `README.md` 与 `DELIVERY.md` 曾对 Helm Chart 描述为"规划中"，与仓库实际（Helm Chart 已提供）不符；Argo CD GitOps 仍属规划中 | 低（已部分纠正：2026-08-02 修订 README/DELIVERY 消除 Helm 矛盾） |
-| 供应链风险 | `kafka-go` 须钉 `v0.4.48`（最后兼容 Go 1.22 版本），`v0.4.49+` 要求 Go ≥ 1.23，升级窗口受限 | 中 |
+| 供应链风险 | （已随 Go 1.26.0 升级解除）kafka-go 历史版本限制已失效，可按 go.mod 自由演进 | 低（已消除） |
 | 纵深防御缺失 | agent shell 命令无白名单、file 路径无白名单、bootstrap token 编码未防 shell 注入、webhook/autoProvision URL 无 SSRF 校验 | 高 |
 | 测试覆盖不足 | `sql.go` 约 57KB 仅 1 个测试；12 个 HTTP handler 无测试；8 个后台 loop 无测试；前端零测试 | 高 |
-| 前端工程化弱 | 仪表盘为原生 JS 单文件约 986 行，无模块化/类型/构建/Lint（已通过 Vue3 企业版解决，原生 JS 个人版标记 Deprecated） | 中 |
-| 架构内聚不足 | Store 巨型接口（40+ 方法）违反接口隔离原则（ISP）；`domain` 包仅有数据结构无业务行为；Registry 仅一对一转发 store；agent 每次 RPC 重新 Dial | 中 |
+| 前端工程化弱 | 仪表盘曾以原生 JS 单文件约 986 行交付（已通过 v0.4.0 收敛为极简引导页；业务全部由 Vue3 企业版接管） | 低（已收敛） |
+| 架构内聚不足 | Store 曾暴露单一巨型接口聚合 40+ 方法。**当前已拆为 15 个领域子接口**（`store.go` 中 Device/Task/Alert/Audit/Token/Leader/User/Role/Permission/K8sCluster/Template/RefreshToken/Silence/NotifyChannel/NotifyTemplate + 编译期断言），仅存留门店：`Registry` 仍是一对一转发、`domain` 包缺业务行为、agent 每次 RPC 重新 Dial | 低（Store 部分已解决） |
 | 交付物缺口 | `docker-compose.yaml` 与 Helm Chart（`deploy/helm/opsmesh/`）现已提供；`goreleaser` 配置、systemd unit、Argo CD GitOps 仓库仍为规划/待完善 | 低 |
 
 ---

@@ -72,3 +72,6 @@ coverage.out
 # Playwright test results
 web/enterprise/test-results/
 web/enterprise/playwright-report/
+
+# InsCode 工具自身目录
+.inscode/

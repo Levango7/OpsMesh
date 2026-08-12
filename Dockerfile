@@ -11,7 +11,8 @@
 FROM golang:1.26-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+# 构建期校验模块完整性（防供应链投毒 / go.sum 漂移，task 安全 P2-5）
+RUN go mod verify && go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /opsmesh ./cmd/opsmesh
 

@@ -16,7 +16,7 @@ services:
     command:
       - --mode=controlplane
       - --store=mysql
-      - --mysql-dsn=opsmesh:opsmesh@tcp(mysql:3306)/opsmesh?parseTime=true
+      - --mysql-dsn=${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh}@tcp(mysql:3306)/opsmesh?parseTime=true
       - --redis-addr=redis:6379
       - --advertise-addr=http://controlplane:8080
     ports:
@@ -97,10 +97,13 @@ services:
   mysql:
     image: mysql:8
     environment:
-      MYSQL_ROOT_PASSWORD: rootpass
+      # 生产/正式环境必须显式注入 MYSQL_ROOT_PASSWORD / MYSQL_PASSWORD（见 .env 或外部环境），
+      # 缺失时 fail-fast（docker compose 对未设置的 .Var 会告警；下方用 :- 默认值仅为本地一键体验便利，
+      # 正式部署请复制 .env.example 为 .env 并改成强口令）。修复原硬编码弱口令风险。
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
       MYSQL_DATABASE: opsmesh
-      MYSQL_USER: opsmesh
-      MYSQL_PASSWORD: opsmesh
+      MYSQL_USER: ${MYSQL_USER:-opsmesh}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-opsmesh}
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:

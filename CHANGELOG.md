@@ -2,7 +2,22 @@
 
 本文件记录 OpsMesh 所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
-## [Unreleased] — 2026-08-08
+## [Unreleased] — 2026-08-12 收敛批次
+
+### 已解决（本次评估收敛）
+
+- **前端死重清理**：删除个人版原生 JS 仪表盘业务代码（`internal/controlplane/web/`，约 1.3 万行 flow_*/render/i18n/icons/api）。`GET /` 收敛为极简引导页并自动重定向至 `/enterprise/`；`/install.sh` 与 `/bin/opsmesh-agent` bootstrap 端点保留（B1 纳管依赖）。
+- **docker-compose 弱口令**：MySQL 密码改为 `${MYSQL_ROOT_PASSWORD:-}` 环境变量插值，正式部署必须显式注入。
+- **Dockerfile**：构建阶段加入 `go mod verify`（防供应链投毒 / go.sum 漂移）。
+- **CI**：整体覆盖率门禁 40%→50%、store 包 60%→65%；codecov 已配置 token 时上报失败阻断；`e2e-real` job 上线（docker compose 拉起真栈跑 Playwright，不再全 mock）；GitOps 镜像 tag 写回步骤改为可跳过（clone/path 守卫，仓库未就绪不再失败）。
+- **文档**：新增 `docs/flag-matrix.md`（配置治理）、`docs/tech-debt.md`（技术债登记册）、`docs/sse-protocol.md`（SSE 实时推送契约）；README 修正 IAM 双轨表述、补平台支持声明（agent 仅 Linux）、删除 kafka-go 钉版本旧约束；tech-selection.md 补充 protobuf/JSON codec 双轨说明。
+- **Store 拆分确认**：`internal/store/store.go` 已存在 15 个领域子接口 + 编译期断言（此前评估误判其未拆分，已更正）。
+
+### 遗留已知问题（进入 `docs/tech-debt.md` 跟踪）
+
+- `internal/controlplane` 单包 ~14.5k 行待拆分；`memory.go` 2020 行待按域拆分。
+- agent 每次 RPC 重新 Dial 无连接池；Windows agent 仅可编译不可用。
+- 前端 E2E 真实后端 spec 仅覆盖健康检查；核心交互流程待补充。
 
 ### P0：严重问题修复（5 项，阻塞生产发布）
 

@@ -110,6 +110,8 @@
 
 ## 快速启动（零依赖，30 秒）
 
+> **平台支持**：控制面支持 Linux / Windows / macOS；**agent 仅正式支持 Linux**（任务执行依赖 shell/systemctl/rlimit，Windows 仅可编译、未提供执行能力，详见 `internal/agent/exec_other.go`）。
+
 ```bash
 # 1. 编译
 go build -o opsmesh ./cmd/opsmesh
@@ -218,7 +220,11 @@ Chart 要点：
 
 ## IAM 与租户隔离
 
-OpsMesh 内核**不自研登录/SSO/用户管理**，而是采用 **网关注入身份头** 的经典 Sidecar 模式：
+OpsMesh 提供**两条身份路径**，按部署形态二选一（两者可同时启用，网关头优先）：
+
+**路径 A · 内置用户中心（默认主线）**：OpsMesh 自带注册/登录/RBAC（用户/角色/权限三表），登录签发 JWT 双 Token（at/rt HttpOnly Cookie），企业版前端开箱即用。适合无独立网关的中小规模私有化部署。
+
+**路径 B · 网关注入身份头（企业集成）**：已有 APISIX/Envoy 统一认证网关时，由网关校验后注入身份头，OpsMesh 内核直接消费：
 
 ```
 客户端 → APISIX / Envoy (auth 校验) → OpsMesh 控制面
@@ -572,7 +578,7 @@ docker build -t opsmesh:latest .
 
 ### go.sum 注意事项
 
-kafka-go 须钉 `v0.4.48`（最后兼容 Go 1.22 的版本；`v0.4.49+` 要求 Go ≥ 1.23）。
+kafka-go 版本已随 Go 升级放开（当前 v0.4.48+），仓库使用 Go 1.26.0，上个兼容限制已失效。
 运行 `go test -tags kafka` 前确保已 `go mod tidy`。
 
 > **构建说明**：`go.mod` 直接 `require kafka-go`，默认 `go build` 即编译 kafka-go 包（无 build tag 排除）。
@@ -588,10 +594,9 @@ OpsMesh 控制面内置的 B/S 仪表盘为 Go 模板渲染（`/`），适合轻
 
 | 前端 | 状态 | 说明 |
 |------|------|------|
-| Vue3 企业版 (`web/enterprise/`) | ✅ 主线 | 唯一维护的前端，所有新功能优先在此开发 |
-| 原生 JS 个人版 (`internal/controlplane/web/`) | ⚠️ Deprecated | 自 v0.2.0 起进入弃用期，计划在 v0.4.0 移除。期间仅修 P0 bug，不新增功能 |
+| Vue3 企业版 (`web/enterprise/`) | ✅ 主线 | 唯一维护的前端，所有新功能在此开发 |
 
-**迁移建议**：新部署请直接使用 Vue3 企业版前端。现有个人版用户请参考 `web/enterprise/` 的功能对照表进行迁移。
+> 原生 JS 个人版（`internal/controlplane/web/`）已于 v0.4.0 起收敛为极简引导页；GET / 会重定向到 `/enterprise/`。业务功能已全部迁移到 Vue3 企业版前端。
 
 | 项 | 说明 |
 |---|---|

@@ -36,21 +36,21 @@ jobs:
         # 不含 -race/-cover：与主 Test 步骤解耦，失败不阻塞主覆盖率门禁，仅验证 kafka 标签构建与测试通过。
         # 依赖 github.com/segmentio/kafka-go（已在 go.mod）；测试用不可达 broker mock，无需真实 Kafka 容器。
         run: go test -tags kafka -timeout 120s ./internal/events/...
-      - name: 覆盖率门禁（整体 ≥40%，task 108）
-        # task 108：整体覆盖率门禁。从 coverage.out 提取 total 行百分比，低于 40% 则 CI 失败。
-        # awk 做浮点比较避免依赖 bc；gsub 去掉 % 号。
+      - name: 覆盖率门禁（整体 ≥50%，原为 40%）
+        # task 108：整体覆盖率门禁提升。从 coverage.out 提取 total 行百分比，低于 50% 则 CI 失败。
         run: |
           go tool cover -func=coverage.out > coverage.func.txt
           total=$(awk '/^total:/ {gsub("%","",$NF); print $NF}' coverage.func.txt)
           echo "整体覆盖率: ${total}%"
-          awk -v t="$total" -v th=40 'BEGIN { if (t+0 < th) { printf "ERROR: 整体覆盖率 %.2f%% < %d%%\n", t, th; exit 1 } else { printf "OK: 整体覆盖率 %.2f%% >= %d%%\n", t, th } }'
+          awk -v t="$total" -v th=50 'BEGIN { if (t+0 < th) { printf "ERROR: 整体覆盖率 %.2f%% < %d%%\n", t, th; exit 1 } else { printf "OK: 整体覆盖率 %.2f%% >= %d%%\n", t, th } }'
 
       - name: 上传覆盖率到 Codecov (H12)
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.out
-          # 未配 CODECOV_TOKEN 时不让 CI 失败（仅跳过上报），保证 fork/无 token PR 可跑。
-          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+          # 已配置 CODECOV_TOKEN 时，上报失败阻断 CI；未配置 token（fork/无 secret PR）则不失败。
+          fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
 
   # E1：SQL 后端集成测试 —— 默认 build-test 中 SQL Store 测试因无 DSN 被 Skip，
   # 此处起 mysql:8 + redis:7 真实后端，激活 OPSMESH_TEST_* 集成测试（报告 P1 缺口）。
@@ -94,14 +94,11 @@ jobs:
         # task 108：加 -coverprofile 产出 store 包覆盖率，供后续 ≥60% 门禁消费。
         # 真实 mysql+redis 后端下 SQL store 用例全跑，store 包覆盖率比 build-test（仅 memory，32.9%）显著更高。
         run: go test -race -timeout 300s -v -coverprofile=store.cover.out ./internal/store/...
-      - name: 覆盖率门禁（store 包 ≥60%，task 108）
-        # task 108：store 包覆盖率门禁。从 store.cover.out 提取 total 行百分比，低于 60% 则 CI 失败。
-        # 放 integration job（有真实后端）而非 build-test：store 包完整覆盖依赖 SQL+redis，build-test 无 DSN 仅 32.9%。
-        # awk 做浮点比较避免依赖 bc；gsub 去掉 % 号。
+      - name: 覆盖率门禁（store 包 ≥65%，原为 60%）
         run: |
           store_total=$(go tool cover -func=store.cover.out | awk '/^total:/ {gsub("%","",$NF); print $NF}')
           echo "store 包覆盖率: ${store_total}%"
-          awk -v t="$store_total" -v th=60 'BEGIN { if (t+0 < th) { printf "ERROR: store 包覆盖率 %.2f%% < %d%%\n", t, th; exit 1 } else { printf "OK: store 包覆盖率 %.2f%% >= %d%%\n", t, th } }'
+          awk -v t="$store_total" -v th=65 'BEGIN { if (t+0 < th) { printf "ERROR: store 包覆盖率 %.2f%% < %d%%\n", t, th; exit 1 } else { printf "OK: store 包覆盖率 %.2f%% >= %d%%\n", t, th } }'
 
   security:
     runs-on: ubuntu-latest
@@ -219,17 +216,9 @@ jobs:
           # 签名镜像（keyless 模式需要 OIDC，这里用 key-based 签名）
           COSIGN_EXPERIMENTAL=1 cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false ${IMAGE}
           echo "Image signed successfully"
-      # E4 闭环：构建后把镜像 tag 钉死写回 GitOps chart（消除"发布流程手动替换"的部署脆弱点）。
-      # 原 chart global.image.tag 硬编码 "0.1"，CI 却推 :sha，原样部署会去拉不存在的 :0.1。
-      # 此处克隆独立 gitops 仓库，用 yq 把 tag 覆写为本Commit sha（与推送的 :sha 一致），
-      # 并加守卫：写回后不得再含占位符 "0.1"，否则失败（证明写回真发生）。
-      # 需仓库配置 secret：GITOPS_REPO（git@.../opsmesh-gitops.git）、GITOPS_PAT（可写 PAT）。
-      # 若未配置这两个 secret，本步骤自动跳过（仅跳过写回，不影响镜像构建推送）。
-      # TODO(H19): charts/opsmesh-controlplane/values.yaml 位于独立 GitOps 仓库，
-      # 需先建立该 chart 仓库（含 opsmesh-controlplane chart 及 values.yaml）后本步骤方能生效。
-      # 在 chart 仓库建立前，本步骤即使 secret 齐全也会因 clone 路径不存在而失败——
-      # 故 chart 仓库的建立是本闭环的前置依赖（保留步骤以维持 E4 闭环设计完整性）。
-      - name: 钉死镜像 tag 写回 GitOps values（E4 闭环）
+      # E4 闭环：构建后把镜像 tag 钉死写回 GitOps chart。若 GitOps 仓库未就绪则安全跳过（不再失败）。
+      # 启用条件：secrets.GITOPS_REPO 与 secrets.GITOPS_PAT 均已配置，且仓库中 charts/opsmesh-controlplane/values.yaml 存在。
+      - name: 钉死镜像 tag 写回 GitOps values（E4，可选）
         if: steps.check.outputs.skip != 'true' && env.GITOPS_REPO != '' && env.GITOPS_PAT != ''
         env:
           TAG: ${{ github.sha }}
@@ -237,22 +226,30 @@ jobs:
           GITOPS_REPO: ${{ secrets.GITOPS_REPO }}
           GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
         run: |
-          echo "pinned tag = ${TAG}"
-          echo "digest    = ${DIGEST}"
+          echo "pinned tag = ${TAG}, digest = ${DIGEST}"
           command -v yq >/dev/null 2>&1 || {
             curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
             chmod +x /usr/local/bin/yq
           }
           git config --global user.email "ci@opsmesh"
           git config --global user.name "OpsMesh CI"
-          git clone "https://${GITOPS_PAT}@${GITOPS_REPO}" /tmp/gitops
+          if ! git clone --depth 1 "https://${GITOPS_PAT}@${GITOPS_REPO}" /tmp/gitops; then
+            echo "::warning::GitOps 仓库 clone 失败（未创建或无权限），跳过写回"
+            exit 0
+          fi
           cd /tmp/gitops
+          if [ ! -f charts/opsmesh-controlplane/values.yaml ]; then
+            echo "::warning::charts/opsmesh-controlplane/values.yaml 不存在，跳过（待 chart 仓库初始化）"
+            exit 0
+          fi
           yq -i '.global.image.tag = strenv(TAG)' charts/opsmesh-controlplane/values.yaml
           if grep -q 'tag: *"0.1"' charts/opsmesh-controlplane/values.yaml; then
-            echo "ERROR: image tag 写回失败，仍含占位符 0.1"; exit 1
+            echo "::error::image tag 写回后仍含占位符 0.1"
+            exit 1
           fi
           git add charts/opsmesh-controlplane/values.yaml
-          git commit -m "ci: pin opsmesh-binary to ${TAG}" && git push
+          git commit -m "ci: pin opsmesh-binary to ${TAG}" || exit 0
+          git push || { echo "::warning::git push 失败，跳过"; exit 0; }
 
   # Release：推送 v* tag 时触发 goreleaser 跨平台发布（linux/amd64+arm64）。
   # 产物：tar.gz 归档 + sha256 checksums + SBOM（配置见 .goreleaser.yml）。
@@ -302,3 +299,46 @@ jobs:
       - name: Test
         run: npx vitest run
         working-directory: web/enterprise
+      # Playwright mock 用例（现有 5 个 spec，覆盖页面渲染与交互）
+      - name: E2E (mock)
+        run: npx playwright test
+        working-directory: web/enterprise
+
+  # 真实后端 E2E：docker compose 拉起整栈（controlplane+mysql+redis+agent），
+  # 用 playwright.real.config.js 跑 e2e-real/，不 mock 任何 API。
+  # 不阻塞 frontend job；失败告警提示有人改坏了真实前后端契约。
+  e2e-real:
+    name: E2E (real backend)
+    runs-on: ubuntu-latest
+    needs: [build-test, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/enterprise/package-lock.json
+      - name: 启动整栈（docker compose）
+        env:
+          MYSQL_ROOT_PASSWORD: ciroot
+          MYSQL_USER: opsmesh
+          MYSQL_PASSWORD: opsmesh
+          OPSMESH_JWT_SECRET: ci-e2e-jwt-secret-key-min-32-bytes-0123456789abcdef
+        run: docker compose up -d --wait
+      - name: 健康检查
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/healthz; then exit 0; fi
+            sleep 2
+          done
+          echo "controlplane 未在 60s 内就绪"; docker compose logs; exit 1
+      - name: 跑真实后端 E2E
+        env:
+          E2E_BASE_URL: http://127.0.0.1:8080
+        run: |
+          cd web/enterprise
+          npm ci
+          npx playwright test --config playwright.real.config.js
+      - name: 清理
+        if: always()
+        run: docker compose down -v
