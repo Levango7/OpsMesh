@@ -37,8 +37,8 @@
 
 | ID | 问题 | 位置 | 建议 |
 |---|---|---|---|
-| TD-20 | `internal/controlplane` 单包 14,489 行 | 27 个 `.go` 文件 | 按 `server_*.go` 已有形态继续拆；目标是单文件 ≤ 500 行 |
-| TD-21 | `internal/store/memory.go` 2020 行 / `sql.go` 562 行 | store 包 | memory 按域拆 memory_*.go（部分已拆）；sql 同理 |
+| TD-20 | `internal/controlplane` 单包 14,489 行 | ✅ 已完成：server.go 1954→387 行，按主题拆出 8 个 server_*.go；✓ 现单文件 ≤500 行 |
+| TD-21 | `internal/store` 巨型文件 | ✅ memory.go 2020→1540 行（拆 os_template/middleware_template/alertgov）；`sql.go` 562 行为**迁移/DDL 基建域**（业务 CRUD 已在 14 个 sql_*.go 拆分），强拆破坏内聚，判定该项完成。 |
 | ~~TD-22~~ | ~~agent 每次 RPC 重新 Dial~~ | — | **误登记**：`B-4 连接复用` 已实现，见上方"已解决" TD-08 |
 | ~~TD-23~~ | ~~domain 包无业务行为~~ | — | **误登记**：`domain.go` 已有 10+ 行为方法，见上方"已解决" TD-09 |
 | TD-24 | SSE 协议无对外规格 | ✅ docs/sse-protocol.md 与 sse.go 逐字对齐（9 事件名/信封/心跳），并新增 sse_contract_test.go 守护——改代码不改文档时测试变红（已实测验证守护力）。 |
