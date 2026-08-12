@@ -160,8 +160,8 @@ agent 侧 `grpcclient` 在每次 RPC 调用时重新 `Dial` 控制面，引入�
 
 | 前端 | 状态 | 说明 |
 |---|---|---|
-| Vue3 企业版 (`web/enterprise/`) | ✅ 主线 | 唯一维护的前端，所有新功能优先在此开发 |
-| 原生 JS 个人版 (`internal/controlplane/web/`) | ⚠️ Deprecated | 自 v0.2.0 起进入弃用期，计划在 v0.4.0 移除。期间仅修 P0 bug，不新增功能 |
+| Vue3 企业版 (`web/enterprise/`) | ✅ 主线 | 唯一维护的前端，所有新功能在此开发 |
+| 原生 JS 个人版 (`internal/controlplane/web/`) | ✅ 已收敛 | 业务 JS（1.3 万行）已移除，`GET /` 为引导页重定向 `/enterprise/`（v0.6.1 落地）；bootstrap 端点（/install.sh）保留 |
 
 新部署请直接使用 Vue3 企业版前端；现有个人版用户参考 `web/enterprise/` 功能对照表迁移。
 
@@ -502,8 +502,8 @@ OpsMesh 前端采取**收敛而非分叉**策略：Vue3 企业版为唯一主线
 
 | 前端 | 状态 | 说明 |
 |---|---|---|
-| Vue3 企业版 (`web/enterprise/`) | ✅ 主线 | 唯一维护的前端，所有新功能优先在此开发 |
-| 原生 JS 个人版 (`internal/controlplane/web/`) | ⚠️ Deprecated | 自 v0.2.0 起进入弃用期，计划在 v0.4.0 移除。期间仅修 P0 bug，不新增功能 |
+| Vue3 企业版 (`web/enterprise/`) | ✅ 主线 | 唯一维护的前端，所有新功能在此开发 |
+| 原生 JS 个人版 (`internal/controlplane/web/`) | ✅ 已收敛 | 业务 JS（1.3 万行）已移除，`GET /` 为引导页重定向 `/enterprise/`（v0.6.1 落地）；bootstrap 端点（/install.sh）保留 |
 
 ### 9.2 弃用期维护边界
 
@@ -526,7 +526,7 @@ OpsMesh 前端采取**收敛而非分叉**策略：Vue3 企业版为唯一主线
 | store | 共享接口，默认实现按 `--store` 选择（memory / mysql 等） |
 | 前端 | **收敛**：Vue3 企业版唯一主线，原生 JS 个人版 deprecated → v0.4.0 移除 |
 | 部署 | 按场景选择：单二进制 / Helm / systemd / operator，与前端版本正交 |
-| 文档 | 共享 `README.md`，部署指南按场景分（`docs/deploy-personal.md` / `docs/deploy-enterprise.md`） |
+| 文档 | 共享 `README.md`，部署指南见 `docs/deployment-guide.md`（含控制面/agent/企业版前端各场景） |
 
 ### 9.4 演进节奏
 
@@ -563,5 +563,5 @@ Vue3 企业版按里程碑持续演进；原生 JS 个人版仅维持 P0 修复�
 本文档中所有"计划/目标/演进/远期"措辞均为规划意图，不代表已实现能力。已实现能力以 `README.md` 功能矩阵与 `DELIVERY.md` 交付说明为准。具体而言：
 
 - Helm Chart、`docker-compose.yaml`：README 已提及且仓库已提供（已交付，见 5.3）。Argo CD ApplicationSet、`goreleaser`、systemd unit：仍为 M1/M2 计划交付物，仓库未提供或未完善
-- Store 接口拆分、DDD 实质化：均为演进规划，当前未实现。已实现项：protobuf 代码生成已启用（internal/grpcx/pb/）、operator 已交付、schema 隔离已有 --multi-schema flag、SSE 已实现 /api/v1/events/stream、Vue 3 主线已交付（web/enterprise/）。Vue3 企业版前端（`web/enterprise/`）已交付为主线；原生 JS 个人版弃用策略已定（deprecated since v0.2.0，removal target v0.4.0），不属演进规划。联邦（控制面跨网段任务转发 mTLS + HMAC 签名验签，P1-6）已于 2026-08-02 落地
+- Store 接口拆分已实施（`store.go` 15 个领域小接口 + 编译期断言）、DDD 实质化（`domain.go` 已有 Cancel/CanRetry/TransitionToProvisioning/Acknowledge 等行为方法）、server.go/巨型 memory.go 按域拆分均已落地（见 tech-debt.md TD-20/TD-21/11/24）。已实现项：protobuf 代码生成已启用（internal/grpcx/pb/）、operator 已交付、schema 隔离已有 --multi-schema flag、SSE 已实现 /api/v1/events/stream（契约文档+守护测试见 docs/sse-protocol.md）、Vue 3 主线已交付（web/enterprise/）。个人版前端已按收敛策略落地：`internal/controlplane/web/` 收敛为极简引导页（GET / 重定向 /enterprise/），1.3 万行业务 JS 已移除。联邦（控制面跨网段任务转发 mTLS + HMAC 签名验签，P1-6）已于 2026-08-02 落地
 - 安全加固项（命令白名单、JWT 验签、SSRF 校验、CSP 收紧等）：均为规划，当前未实现

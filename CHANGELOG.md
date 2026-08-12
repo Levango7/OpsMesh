@@ -6,6 +6,7 @@
 
 ### 已解决（本次评估收敛）
 
+- **kafka-go 依赖升级**：v0.4.48 → v0.4.51（go 1.26 环境已无兼容限制；普通构建 + `-tags kafka` 构建 + events 测试全绿）
 - **前端死重清理**：删除个人版原生 JS 仪表盘业务代码（`internal/controlplane/web/`，约 1.3 万行 flow_*/render/i18n/icons/api）。`GET /` 收敛为极简引导页并自动重定向至 `/enterprise/`；`/install.sh` 与 `/bin/opsmesh-agent` bootstrap 端点保留（B1 纳管依赖）。
 - **docker-compose 弱口令**：MySQL 密码改为 `${MYSQL_ROOT_PASSWORD:-}` 环境变量插值，正式部署必须显式注入。
 - **Dockerfile**：构建阶段加入 `go mod verify`（防供应链投毒 / go.sum 漂移）。
