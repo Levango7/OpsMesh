@@ -29,7 +29,7 @@
 | ID | 问题 | 现状 / 下一步 |
 |---|---|---|
 | TD-10 | 前端 E2E 只有 mock，无真实后端联调 | 已补 `playwright.real.config.js` + `e2e-real/health.spec.js` + CI `e2e-real` job（docker compose 起栈）；**待**：把登录、创建任务、SSE 推送等核心流程补充真实 spec |
-| TD-11 | Store 消费方仍多依赖完整 Store 接口 | 已具备领域接口；**待**：handler/loop 按需要从 `Store` 改用子接口（如 `TokenStore`、`TaskStore`），进一步降低耦合 |
+| TD-11 | Store 消费方仍多依赖完整 Store 接口 | ✅ 核查发现 M2-1B 早已落地：Registry 薄转发层已删（registry.go 仅留 package 占位），消费方直连子接口；仅 factory 的类型断言分发保留完整 Store，属合理用途。无进一步工作。 |
 
 ---
 
@@ -41,7 +41,7 @@
 | TD-21 | `internal/store/memory.go` 2020 行 / `sql.go` 562 行 | store 包 | memory 按域拆 memory_*.go（部分已拆）；sql 同理 |
 | ~~TD-22~~ | ~~agent 每次 RPC 重新 Dial~~ | — | **误登记**：`B-4 连接复用` 已实现，见上方"已解决" TD-08 |
 | ~~TD-23~~ | ~~domain 包无业务行为~~ | — | **误登记**：`domain.go` 已有 10+ 行为方法，见上方"已解决" TD-09 |
-| TD-24 | SSE 协议无对外规格 | `internal/controlplane/sse.go` | ✅ 已新增 `docs/sse-protocol.md`；待前后端按契约加一致性测试 |
+| TD-24 | SSE 协议无对外规格 | ✅ docs/sse-protocol.md 与 sse.go 逐字对齐（9 事件名/信封/心跳），并新增 sse_contract_test.go 守护——改代码不改文档时测试变红（已实测验证守护力）。 |
 | TD-25 | protobuf 与 JSON codec 双轨 | `internal/grpcx/` | ✅ 已在 `docs/tech-selection.md` §3 写清取舍与迁移路径 |
 | TD-26 | Roadmap 演进目标无验收标准 | `docs/product-roadmap.md` | ✅ 已补 DoD 表（见 roadmap 附录） |
 | TD-27 | Windows agent 假支持 | `internal/agent/exec_other.go` | ✅ README 已声明"agent 仅 Linux"；如需 Windows 支持须专项立项 |

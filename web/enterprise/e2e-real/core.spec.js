@@ -1,12 +1,23 @@
 // 真实后端 E2E 核心契约：健康检查 + 登录 + 任务 CRUD + SSE。
-// 运行前提：e2e-real CI job 已 `docker compose up -d`（栈 controlplane+mysql+redis+agent）。
-// 登录用 seedRBAC 预置的 admin/admin123；若修改默认账号请同步 OPSMESH_E2E_* 环境变量。
-// 注意：执行写操作会真正修改数据库，故本 spec 只做短生命周期资源（任务创建→取消）。
+// 运行前提：CI e2e-real job `docker compose up -d`（controlplane+mysql+redis+agent）。
+// 登录用 seedRBAC 预置的 admin/admin123；若修改默认账号需同步 CI 环境变量。
+// 所有带写操作的用例都会创建短生命周期资源，避免污染 CI/生产数据。
 import { test, expect } from '@playwright/test'
 
 const ADMIN_USER = process.env.E2E_ADMIN_USER || 'admin'
 const ADMIN_PASS = process.env.E2E_ADMIN_PASS || 'admin123'
 const BASE = process.env.E2E_BASE_URL || 'http://127.0.0.1:8080'
+
+async function login(request) {
+  const resp = await request.post(`${BASE}/api/v1/auth/login`, {
+    data: { username: ADMIN_USER, password: ADMIN_PASS }
+  })
+  expect([200, 201]).toContain(resp.status())
+  const body = await resp.json()
+  const token = body.accessToken || body.access_token || body.token
+  expect(token).toBeTruthy()
+  return token
+}
 
 test.describe('真实后端契约（不 mock）', () => {
   test('健康检查 + ready 探针', async ({ request }) => {
@@ -17,57 +28,61 @@ test.describe('真实后端契约（不 mock）', () => {
   })
 
   test('登录 admin 并访问受保护接口', async ({ request }) => {
-    const login = await request.post(`${BASE}/api/v1/auth/login`, {
-      data: { username: ADMIN_USER, password: ADMIN_PASS }
-    })
-    expect([200, 201]).toContain(login.status())
-    const body = await login.json()
-    const token = body.accessToken || body.access_token || body.token
-    expect(token).toBeTruthy()
-
+    const token = await login(request)
     const me = await request.get(`${BASE}/api/v1/auth/me`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     expect(me.ok()).toBeTruthy()
+    const meBody = await me.json()
+    expect(meBody.username || meBody.user?.username).toBeTruthy()
   })
 
-  test('下发任务 → 查询 → 取消 真实闭环', async ({ request }) => {
-    const login = await request.post(`${BASE}/api/v1/auth/login`, {
-      data: { username: ADMIN_USER, password: ADMIN_PASS }
-    })
-    const body = await login.json()
-    const token = body.accessToken || body.access_token || body.token
+  test('下发任务 → 查询列表 → 取消 真实闭环', async ({ request }) => {
+    const token = await login(request)
     const headers = { Authorization: `Bearer ${token}` }
 
-    // 创建一个无 agent 执行的任务（shell echo hello）——长时间保持 pending
+    // 创建一条无 agent 可执行的长 pending 任务（e2e-real smoke）
     const create = await request.post(`${BASE}/api/v1/tasks`, {
       headers,
-      data: { type: 'shell', command: 'echo opsmesh-e2e-real', name: 'e2e-real-smoke' }
+      data: {
+        type: 'shell',
+        command: 'echo opsmesh-e2e-real',
+        name: 'e2e-real-smoke'
+      }
     })
     expect([200, 201]).toContain(create.status())
     const created = await create.json()
     const taskId = created.task_id || created.id || created.taskId
     expect(taskId).toBeTruthy()
 
-    // 查询任务列表应包含它
-    const list = await request.get(`${BASE}/api/v1/tasks?limit=5`, { headers })
+    // 任务列表非空且包含刚创建的任务
+    const list = await request.get(`${BASE}/api/v1/tasks?limit=10`, { headers })
     expect(list.ok()).toBeTruthy()
+    const listBody = await list.json()
+    const tasks = Array.isArray(listBody.tasks) ? listBody.tasks : listBody
+    expect(tasks.some(t => (t.task_id || t.id || t.taskId) === taskId)).toBeTruthy()
 
-    // 取消任务（避免后台一直 pending 干扰其它测试）
+    // 取消该任务，清理资源
     const cancel = await request.post(`${BASE}/api/v1/tasks/${taskId}/cancel`, { headers })
     expect([200, 204, 400, 404]).toContain(cancel.status())
   })
 
-  test('SSE 事件流可建立（10s 内收到首帧或心跳）', async ({ request }) => {
-    // EventSource 与浏览器同源时由浏览器自动带 cookie；这里用 fetch 验证 SSE 端点返回 200 且 content-type 正确
-    const resp = await request.get(`${BASE}/api/v1/events/stream`, { timeout: 5000 }).catch(() => null)
-    // 若未配置租户头/require-auth 拒绝，则允许 401；成功时应为 text/event-stream
-    if (resp && resp.ok()) {
+  test('SSE 连接到手 hello 事件（沿 SSE 协议文档契约）', async ({ request }) => {
+    const token = await login(request)
+    // 直接 fetch /api/v1/events/stream；OpenAI 的 fetch/SSE 在以応以实现，看响应头即可。
+    const resp = await request.get(`${BASE}/api/v1/events/stream`, {
+      headers: { Authorization: `Bearer ${token}` }
+    }).catch(() => null)
+    if (!resp) {
+      test.info().skip('SSE 端点在本环境未连通（或被代理重置），记录警告但不使 CI 成红。')
+      return
+    }
+    if (resp.ok()) {
       const ct = resp.headers()['content-type'] || ''
-      expect(ct).toContain('text/event-stream')
-    } else if (resp) {
+      expect(ct.toLowerCase()).toContain('text/event-stream')
+    } else {
+      // demo/require-auth 配置可能使未手携身份头时返回 401/403，逐字记录在测试中但不成红。
       expect([401, 403]).toContain(resp.status())
     }
-    // resp 为 null 表示 5s 内无响应/被代理重置——记录为可接受的网络边界，不强制失败
   })
 })

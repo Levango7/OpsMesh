@@ -1,8 +1,6 @@
-# SSE 协议说明（实时推送）
+# SSE 实时推送协议（与 `internal/controlplane/sse.go` 逐字对齐）
 
-## 概述
-
-OpsMesh 在控制面提供 SSE（Server-Sent Events）实时推送，用于任务状态变更、告警触发/确认、设备上下线等事件。本协议独立于版本管理，控制面与企业版前端按此契约解析。
+> 本协议由代码导出实情生成，且由 `internal/controlplane/sse_contract_test.go` 的一致性用例守护——文档与代码出现漂移时 CI 会失败。修改事件名/字段前请先改代码与测试。
 
 ## 端点
 
@@ -10,76 +8,58 @@ OpsMesh 在控制面提供 SSE（Server-Sent Events）实时推送，用于任�
 GET /api/v1/events/stream
 ```
 
-### 请求头
+- `Content-Type: text/event-stream`
+- 身份：require-auth 开启时缺失 `X-Tenant-ID`/`Authorization: Bearer` → 401；demo 模式缺失则注入 `default` 租户。
+- 代理配置提示：Nginx 需 `proxy_buffering off;`，否则事件会被缓冲延迟。
 
-| 头 | 必需 | 用途 |
-|---|---|---|
-| `X-Tenant-ID` | 是（require-auth 开启时） | 租户隔离，缺则 401 |
-| `Accept: text/event-stream` | 是 | 声明 SSE |
-| `Cache-Control: no-cache` | 是 | 防代理缓存 |
+## 握手与心跳
 
-### 响应头
+- 连接建立后服务端立即下发握手帧：`event: hello`、`data: {}`。
+- 每 15s 发送注释帧 `: ping\n\n` 保活（不触发浏览器 message 事件，仅防止代理空闲断连）。
+- 当前实现**不支持 Last-Event-ID 断点续传**（事件为易失态快照，重连重新订阅即可）。如需历史回溯请走各资源的查询 API。
 
-```
-HTTP/1.1 200 OK
-Content-Type: text/event-stream; charset=utf-8
-Cache-Control: no-cache
-Connection: keep-alive
-```
+## 信封结构（data 行 JSON）
 
-## 事件格式
-
-```
-id: <event-id>
-event: <event-type>
-data: <JSON-string>
-
+```json
+{
+  "type": "task_status",
+  "tenantID": "t1",
+  "data": { "taskID": "xxx", "status": "running" },
+  "traceID": "可选，32 字符 hex"
+}
 ```
 
 字段规则：
-- `id` 是递增数字，客户端断线重连时以 `Last-Event-ID` 头带最后成功收到的 id，服务端应从此 id 之后重发（若支持）。
-- `event` 描述事件类型，见下方枚举。
-- `data` 是紧凑 JSON，总长度 ≤ 16KiB；字段名使用 snake_case。
+- `type`：事件类型（固定枚举，见下表）
+- `tenantID`：事件归属租户；`omitempty`（hello 等全局事件为空）。非空时服务端仅下发给同租户订阅者，跨租户事件直接丢弃。
+- `data`：业务载荷，任意 JSON 对象。
+- `traceID`：OTel trace_id（可选），用于关联后端日志/审计。
 
-## 事件类型枚举
+> **注意**：本协议字段名为 Go 结构体 tag 直出（`tenantID`/`traceID`/`taskID`），并非下划线式，与 REST API 部分端点的命名习惯不同——以本表为准。
 
-| event | 说明 | data 关键字段 |
+## 事件类型枚举（全量 9 种）
+
+| type | 触发点 | data 关键字段 |
 |---|---|---|
-| `task.status` | 任务状态变更 | `task_id`、`status`、`agent_id`、`tenant_id`、`updated_at` |
-| `task.result` | 任务执行完成上报 | `task_id`、`exit_code`、`stdout_len`、`stderr_len` |
-| `alert.fire` | 新告警触发 | `alert_id`、`severity`、`metric`、`value`、`threshold`、`rule_id` |
-| `alert.ack` | 告警被确认 | `alert_id`、`ack_by` |
-| `alert.silence` | 告警被静默 | `alert_id`、`until` |
-| `device.online` | 设备上线 | `device_id`、`segment`、`addr` |
-| `device.offline` | 设备离线 | `device_id`、`last_seen` |
-| `device.retired` | 设备退役/归档 | `device_id`、`archived_at` |
+| `hello` | 连接建立握手 | `{}` |
+| `task_status` | 任务创建 / 领取 / 取消 / 上报结果 | `taskID`、`status`、`agentID` |
+| `alert_new` | 新告警产生 / ack / silence（列表变更即触发） | `alertID`、`severity`、`ruleID` |
+| `device_online` | agent Register 上线 | `deviceID`、`segment`、`addr` |
+| `device_offline` | 设备退役 / 离线归档 | `deviceID`、`lastSeen` |
+| `approval_status` | 作业审批通过/拒绝 | `requestID`、`action` |
+| `schedule_status` | 定时任务触发/暂停/恢复 | `scheduleID`、`action` |
+| `os_template_changed` | OS 优化模板增删改 | `templateID`、`action` |
+| `mw_template_changed` | 中间件模板增删改 | `templateID`、`action` |
 
-## 心跳
+## 慢消费者策略
 
-服务端每 15s 发送注释行保活（防代理空闲断连）：
+每个订阅者独立 buffered chan（容量 16）。`publishEvent` 非阻塞广播：
+- 缓冲未满：写入；
+- 缓冲已满：丢弃该事件（保护广播不被单个慢客户端拖垮）。
 
-```
-: keepalive
-
-```
-
-企业版前端应忽略以 `:` 开头的注释行。
-
-## 重连策略
-
-- 网络层异常（TCP 断开 / 5xx / 超时）时，企业版前端按默认 SSE 重连机制自动重连，间隔为浏览器默认值（Chrome 约 3s）。
-- 若服务端主动回复 `204 No Content`，表示该租户无数据，前端应延迟 10s 后再重连。
-- 若要断点续传，客户端在重连请求头加 `Last-Event-ID: <id>`。
-
-## 错误响应
-
-| HTTP | 场景 | 行为 |
-|---|---|---|
-| 401 | 缺少 `X-Tenant-ID` 且 `--require-auth=true` | 不要自动重连，修复身份后手动刷新页面 |
-| 429 | 单租户 SSE 连接数超过上限（默认 32） | 退避重连 |
-| 500 | 内部异常 | 前端按指数退避重连 |
+前端若实现"告警角标"等关键场景，应配合轮询兜底，SSE 只作为加速路径。
 
 ## 安全
 
-- 事件 `data` 中的所有字段在写入前均按 `tenant_id` 强制过滤，跨租户事件不会进入 SSE 流。
-- SSE 连接计入审计（`Action=subscribe_sse`），审计点位于控制面 `sse.go`。
+- 跨租户事件在 SSE 通道强制过滤（`publishEvent` 携带 tenantID，handler 只放行匹配项）；
+- SSE 订阅计入审计（`Action=subscribe_sse`，见 `sse.go`）。
