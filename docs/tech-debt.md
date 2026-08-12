@@ -28,8 +28,9 @@
 
 | ID | 问题 | 现状 / 下一步 |
 |---|---|---|
-| TD-10 | 前端 E2E 只有 mock，无真实后端联调 | 已补 `playwright.real.config.js` + `e2e-real/health.spec.js` + CI `e2e-real` job（docker compose 起栈）；**待**：把登录、创建任务、SSE 推送等核心流程补充真实 spec |
+| TD-10 | 前端 E2E 只有 mock，无真实后端联调 | ✅ 已完成：`playwright.real.config.js` + `e2e-real/health.spec.js`（探活）+ `core.spec.js`（登录/任务 CRUD/SSE 契约）+ CI `e2e-real` job（docker compose 起栈真跑）。剩余可选增强：任务执行等待 agent 回执的长链路用例 |
 | TD-11 | Store 消费方仍多依赖完整 Store 接口 | ✅ 核查发现 M2-1B 早已落地：Registry 薄转发层已删（registry.go 仅留 package 占位），消费方直连子接口；仅 factory 的类型断言分发保留完整 Store，属合理用途。无进一步工作。 |
+| TD-25 | protobuf 与 JSON codec 双轨 | ✅ docs/tech-selection.md §3 已写清取舍与迁移路径；当前 JSONCodec 带 `__v=1` 版本协商，双轨并存是正确决策。可选增强：过时 codec 打印 deprecation 日志（仅在启动时一次） |
 
 ---
 
@@ -42,7 +43,7 @@
 | ~~TD-22~~ | ~~agent 每次 RPC 重新 Dial~~ | — | **误登记**：`B-4 连接复用` 已实现，见上方"已解决" TD-08 |
 | ~~TD-23~~ | ~~domain 包无业务行为~~ | — | **误登记**：`domain.go` 已有 10+ 行为方法，见上方"已解决" TD-09 |
 | TD-24 | SSE 协议无对外规格 | ✅ docs/sse-protocol.md 与 sse.go 逐字对齐（9 事件名/信封/心跳），并新增 sse_contract_test.go 守护——改代码不改文档时测试变红（已实测验证守护力）。 |
-| TD-25 | protobuf 与 JSON codec 双轨 | `internal/grpcx/` | ✅ 已在 `docs/tech-selection.md` §3 写清取舍与迁移路径 |
+| ~~TD-25~~ | ~~protobuf 与 JSON codec 双轨~~ | ✅ 已移至"进行中"节（见 TD-25 状态） |
 | TD-26 | Roadmap 演进目标无验收标准 | `docs/product-roadmap.md` | ✅ 已补 DoD 表（见 roadmap 附录） |
 | TD-27 | Windows agent 假支持 | `internal/agent/exec_other.go` | ✅ README 已声明"agent 仅 Linux"；如需 Windows 支持须专项立项 |
 | TD-28 | CI 无增量覆盖率门禁 | ci.yml | ✅ 已新增 `codecov.yml`：patch ≥70%、project ≥50% |
