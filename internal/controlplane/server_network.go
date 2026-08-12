@@ -1,4 +1,3 @@
-
 // server_network.go task 244 M6 集成：网络拓扑发现 + 网络诊断工具 + 连通性检测 API。
 //
 // 与现有任务机制的关系：
@@ -56,10 +55,10 @@ type NetworkTopologyCache struct {
 
 // NetworkTopology 网络拓扑数据结构。
 type NetworkTopology struct {
-	Nodes      []NetworkNode `json:"nodes"`
-	Edges      []NetworkEdge `json:"edges"`
-	GeneratedAt time.Time    `json:"generatedAt"`
-	TenantID   string        `json:"tenantID"`
+	Nodes       []NetworkNode `json:"nodes"`
+	Edges       []NetworkEdge `json:"edges"`
+	GeneratedAt time.Time     `json:"generatedAt"`
+	TenantID    string        `json:"tenantID"`
 }
 
 // NetworkNode 拓扑节点（设备/agent）。
@@ -326,20 +325,22 @@ func buildPingCommand(target string, count, timeout int, os string) string {
 // parsePingOutput 解析 ping 命令输出，提取平均延迟（ms）、丢包率（%）、是否可达。
 //
 // Linux ping 输出示例：
-//   PING 10.0.0.2 (10.0.0.2) 56(84) bytes of data.
-//   ...
-//   --- 10.0.0.2 ping statistics ---
-//   3 packets transmitted, 3 received, 0% packet loss, time 2002ms
-//   rtt min/avg/max/mdev = 0.123/0.234/0.345/0.056 ms
+//
+//	PING 10.0.0.2 (10.0.0.2) 56(84) bytes of data.
+//	...
+//	--- 10.0.0.2 ping statistics ---
+//	3 packets transmitted, 3 received, 0% packet loss, time 2002ms
+//	rtt min/avg/max/mdev = 0.123/0.234/0.345/0.056 ms
 //
 // Windows ping 输出示例：
-//   Pinging 10.0.0.2 with 32 bytes of data:
-//   Reply from 10.0.0.2: bytes=32 time=1ms TTL=64
-//   ...
-//   Ping statistics for 10.0.0.2:
-//       Packets: Sent = 3, Received = 3, Lost = 0 (0% loss),
-//   Approximate round trip times in milli-seconds:
-//       Minimum = 1ms, Maximum = 1ms, Average = 1ms
+//
+//	Pinging 10.0.0.2 with 32 bytes of data:
+//	Reply from 10.0.0.2: bytes=32 time=1ms TTL=64
+//	...
+//	Ping statistics for 10.0.0.2:
+//	    Packets: Sent = 3, Received = 3, Lost = 0 (0% loss),
+//	Approximate round trip times in milli-seconds:
+//	    Minimum = 1ms, Maximum = 1ms, Average = 1ms
 func parsePingOutput(stdout string, exitCode int, os string) (latency float64, loss float64, alive bool) {
 	latency = -1
 	loss = 100
@@ -425,10 +426,10 @@ func parsePingOutputWindows(stdout string, exitCode int) (latency float64, loss 
 
 // diagnoseRequest 网络诊断请求体。
 type diagnoseRequest struct {
-	AgentID string            `json:"agentId"`
-	Tool    string            `json:"tool"`    // ping / traceroute / tcping / nslookup / curl
-	Target  string            `json:"target"`  // 目标地址（IP/域名/URL）
-	Options diagnoseOptions   `json:"options"`
+	AgentID string          `json:"agentId"`
+	Tool    string          `json:"tool"`   // ping / traceroute / tcping / nslookup / curl
+	Target  string          `json:"target"` // 目标地址（IP/域名/URL）
+	Options diagnoseOptions `json:"options"`
 }
 
 // diagnoseOptions 网络诊断可选参数。
@@ -667,8 +668,8 @@ func buildDiagnoseCommand(tool, target string, opts diagnoseOptions, os string) 
 
 // connectivityRequest 连通性检测请求体。
 type connectivityRequest struct {
-	SourceAgentID string                `json:"sourceAgentId"`
-	Targets       []connectivityTarget  `json:"targets"`
+	SourceAgentID string               `json:"sourceAgentId"`
+	Targets       []connectivityTarget `json:"targets"`
 }
 
 // connectivityTarget 连通性检测目标。

@@ -305,7 +305,7 @@ func TestHandleFederationDevices(t *testing.T) {
 		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
 	}
 	var result struct {
-		Local []proto.DeviceInfo             `json:"local"`
+		Local []proto.DeviceInfo                `json:"local"`
 		Peers map[string]map[string]interface{} `json:"peers"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {

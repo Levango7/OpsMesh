@@ -81,8 +81,8 @@ func TestHandleDeviceDetail(t *testing.T) {
 		t.Fatalf("status=%d, body=%s", w.Code, w.Body.String())
 	}
 	var dd struct {
-		Device  *domain.Device      `json:"device"`
-		Tasks   []*domain.Task      `json:"tasks"`
+		Device  *domain.Device       `json:"device"`
+		Tasks   []*domain.Task       `json:"tasks"`
 		Results []*domain.TaskResult `json:"results"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&dd); err != nil {

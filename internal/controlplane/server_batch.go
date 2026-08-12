@@ -1,4 +1,3 @@
-
 // server_batch.go 实现 M5 批量运维 API：
 //   - POST /api/v1/tasks/batch-exec   批量执行（多设备 + 同一任务）
 //   - GET  /api/v1/tasks/batch/{id}   批量任务状态查询
@@ -33,53 +32,53 @@ import (
 
 // batchTask 单次批量执行记录。
 type batchTask struct {
-	BatchID   string              // 批次 ID
-	TenantID  string              // 租户
-	TaskType  string              // 任务类型
-	Command   string              // 命令
-	Timeout   int                 // 超时（秒）
-	CreatedAt time.Time           // 创建时间
-	CreatedBy string              // 创建人
-	Tasks     []batchTaskItem     // 每设备任务详情
+	BatchID   string          // 批次 ID
+	TenantID  string          // 租户
+	TaskType  string          // 任务类型
+	Command   string          // 命令
+	Timeout   int             // 超时（秒）
+	CreatedAt time.Time       // 创建时间
+	CreatedBy string          // 创建人
+	Tasks     []batchTaskItem // 每设备任务详情
 }
 
 // batchTaskItem 批量中单设备任务状态。
 type batchTaskItem struct {
-	DeviceID string    // 设备 ID
-	TaskID   string    // 任务 ID
-	Status   string    // 任务状态（pending/running/done/failed/cancelled）
-	Error    string    // 失败原因（如设备不存在）
+	DeviceID string // 设备 ID
+	TaskID   string // 任务 ID
+	Status   string // 任务状态（pending/running/done/failed/cancelled）
+	Error    string // 失败原因（如设备不存在）
 }
 
 // canaryRelease 灰度发布记录。
 type canaryRelease struct {
-	CanaryID  string            // 灰度 ID
-	TenantID  string            // 租户
-	TaskType  string            // 任务类型
-	Command   string            // 命令
-	Strategy  string            // 策略：percentage/group/label
-	Percentage int              // 比例（strategy=percentage 时有效）
-	Groups    []string          // 分组（strategy=group 时有效）
-	Labels    map[string]string // 标签（strategy=label 时有效）
-	CreatedAt time.Time
-	CreatedBy string
-	Phases    []canaryPhase     // 各阶段执行情况
+	CanaryID   string            // 灰度 ID
+	TenantID   string            // 租户
+	TaskType   string            // 任务类型
+	Command    string            // 命令
+	Strategy   string            // 策略：percentage/group/label
+	Percentage int               // 比例（strategy=percentage 时有效）
+	Groups     []string          // 分组（strategy=group 时有效）
+	Labels     map[string]string // 标签（strategy=label 时有效）
+	CreatedAt  time.Time
+	CreatedBy  string
+	Phases     []canaryPhase // 各阶段执行情况
 }
 
 // canaryPhase 灰度发布单阶段。
 type canaryPhase struct {
-	Phase     int               // 阶段序号（1-based）
-	DeviceIDs []string          // 本阶段设备
-	Status    string            // 阶段状态：pending/running/done/failed/aborted
-	Tasks     []batchTaskItem   // 本阶段每设备任务
-	StartedAt time.Time
+	Phase      int             // 阶段序号（1-based）
+	DeviceIDs  []string        // 本阶段设备
+	Status     string          // 阶段状态：pending/running/done/failed/aborted
+	Tasks      []batchTaskItem // 本阶段每设备任务
+	StartedAt  time.Time
 	FinishedAt time.Time
 }
 
 // batchStore 批量/灰度内存索引（Server 持有）。
 type batchStore struct {
-	mu      sync.RWMutex
-	batches map[string]*batchTask
+	mu       sync.RWMutex
+	batches  map[string]*batchTask
 	canaries map[string]*canaryRelease
 }
 
@@ -528,13 +527,13 @@ func (s *Server) handleCanaryStatus(w http.ResponseWriter, r *http.Request, id s
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"canaryID":   c.CanaryID,
-		"strategy":   c.Strategy,
-		"taskType":   c.TaskType,
-		"command":    c.Command,
-		"createdAt":  c.CreatedAt,
-		"createdBy":  c.CreatedBy,
-		"phases":     phases,
+		"canaryID":  c.CanaryID,
+		"strategy":  c.Strategy,
+		"taskType":  c.TaskType,
+		"command":   c.Command,
+		"createdAt": c.CreatedAt,
+		"createdBy": c.CreatedBy,
+		"phases":    phases,
 	})
 }
 

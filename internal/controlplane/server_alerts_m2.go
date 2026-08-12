@@ -1,4 +1,3 @@
-
 // server_alerts_m2.go task 241 M2 集成：告警规则/静默/通知渠道/通知模板 API +
 // 告警评估循环（alertengine.Engine + Silencer + Aggregator + Notifier）。
 //

@@ -26,14 +26,14 @@ import (
 // 全程不依赖 mysql/redis（memory store），在沙箱内可完整验证。
 func TestE2E_TaskLifecycle(t *testing.T) {
 	cfg := &config.Config{
-		Mode:          "controlplane",
-		Store:         "memory",
-		Demo:          false,
-		EventBus:      "noop",
-		RequireAuth:   false,
-		GRPCPort:      0, // 系统分配，读回真实端口
-		HTTPPort:      0,
-		MetricsPort:   0,
+		Mode:           "controlplane",
+		Store:          "memory",
+		Demo:           false,
+		EventBus:       "noop",
+		RequireAuth:    false,
+		GRPCPort:       0, // 系统分配，读回真实端口
+		HTTPPort:       0,
+		MetricsPort:    0,
 		TaskMaxRetries: 3,
 	}
 	s := NewServer(cfg)
@@ -141,11 +141,11 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 
 	// 5) 上报结果
 	if err := cli.ReportResult(ctx, &proto.TaskResult{
-		TaskID:    tk.TaskID,
-		AgentID:   agentID,
-		ExitCode:  exitCode,
-		Stdout:    stdout.String(),
-		Stderr:    stderr.String(),
+		TaskID:     tk.TaskID,
+		AgentID:    agentID,
+		ExitCode:   exitCode,
+		Stdout:     stdout.String(),
+		Stderr:     stderr.String(),
 		DurationMs: 1,
 	}); err != nil {
 		t.Fatalf("ReportResult: %v", err)

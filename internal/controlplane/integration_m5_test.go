@@ -98,7 +98,7 @@ func TestM5_ApprovalFlowsAPI(t *testing.T) {
 	}
 	var resp struct {
 		Flows []*approval.ApprovalFlow `json:"flows"`
-		Total int                     `json:"total"`
+		Total int                      `json:"total"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)

@@ -15,7 +15,6 @@ import (
 	"opsmesh/internal/otelx"
 )
 
-
 // Start 启动 HTTP(B/S)、gRPC(9090)、metrics(9091) 三个监听，并在收到 SIGTERM/SIGINT 时优雅退出。
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
@@ -102,34 +101,34 @@ func (s *Server) Start() error {
 	// task 242 M3 集成：Helm 应用商店 API（仓库/Chart/Release/Catalog）。
 	// helm CLI 不存在时各 API 返回 503，不阻断控制面启动。
 	mux.HandleFunc("/api/v1/helm/repos", s.handleHelmRepos)
-	mux.HandleFunc("/api/v1/helm/repos/", s.handleHelmRepoRouting)               // 子路径：{name} DELETE、{name}/charts GET
-	mux.HandleFunc("/api/v1/helm/charts/search", s.handleHelmChartSearch)         // ?q=xxx 搜索 chart
+	mux.HandleFunc("/api/v1/helm/repos/", s.handleHelmRepoRouting)        // 子路径：{name} DELETE、{name}/charts GET
+	mux.HandleFunc("/api/v1/helm/charts/search", s.handleHelmChartSearch) // ?q=xxx 搜索 chart
 	mux.HandleFunc("/api/v1/helm/releases", s.handleHelmReleases)
-	mux.HandleFunc("/api/v1/helm/releases/", s.handleHelmReleaseRouting)          // 子路径：{name} PUT/DELETE、{name}/rollback、{name}/history
-	mux.HandleFunc("/api/v1/helm/catalog", s.handleHelmCatalog)                   // 预置应用目录
+	mux.HandleFunc("/api/v1/helm/releases/", s.handleHelmReleaseRouting) // 子路径：{name} PUT/DELETE、{name}/rollback、{name}/history
+	mux.HandleFunc("/api/v1/helm/catalog", s.handleHelmCatalog)          // 预置应用目录
 
 	// task 243 M5 集成：批量运维/灰度发布 + 定时任务管理 + 审批 API。
 	// 批量执行走 /api/v1/tasks/batch-exec（避免与既有 /api/v1/tasks/batch 冲突）；
 	// 批量状态查询走 /api/v1/tasks/batch/{id}；灰度发布走 /api/v1/tasks/canary[/{id}|/{id}/advance]。
 	// 定时任务管理走 /api/v1/schedules[/{id}|/{id}/pause|/{id}/resume]。
 	// 审批 API 走 /api/v1/approval/{flows,requests,pending}。
-	mux.HandleFunc("/api/v1/tasks/batch-exec", s.handleBatchExec) // POST 批量执行（M5 增强）
-	mux.HandleFunc("/api/v1/tasks/batch/", s.handleBatchRouting)  // GET 批量状态查询
-	mux.HandleFunc("/api/v1/tasks/canary", s.handleCanaryCreate)  // POST 灰度发布
-	mux.HandleFunc("/api/v1/tasks/canary/", s.handleCanaryRouting) // GET 灰度状态 / POST advance
-	mux.HandleFunc("/api/v1/schedules", s.handleSchedules)        // GET 列表 / POST 创建定时任务
-	mux.HandleFunc("/api/v1/schedules/", s.handleScheduleRouting)  // 子路径：{id} GET/PUT/DELETE、{id}/pause、{id}/resume
-	mux.HandleFunc("/api/v1/approval/flows", s.handleApprovalFlows)         // GET 列表 / POST 创建审批流
-	mux.HandleFunc("/api/v1/approval/flows/", s.handleApprovalFlowRouting)  // 子路径：{id} GET/PUT/DELETE
-	mux.HandleFunc("/api/v1/approval/requests", s.handleApprovalRequests)   // GET 列表 / POST 提交审批请求
+	mux.HandleFunc("/api/v1/tasks/batch-exec", s.handleBatchExec)                // POST 批量执行（M5 增强）
+	mux.HandleFunc("/api/v1/tasks/batch/", s.handleBatchRouting)                 // GET 批量状态查询
+	mux.HandleFunc("/api/v1/tasks/canary", s.handleCanaryCreate)                 // POST 灰度发布
+	mux.HandleFunc("/api/v1/tasks/canary/", s.handleCanaryRouting)               // GET 灰度状态 / POST advance
+	mux.HandleFunc("/api/v1/schedules", s.handleSchedules)                       // GET 列表 / POST 创建定时任务
+	mux.HandleFunc("/api/v1/schedules/", s.handleScheduleRouting)                // 子路径：{id} GET/PUT/DELETE、{id}/pause、{id}/resume
+	mux.HandleFunc("/api/v1/approval/flows", s.handleApprovalFlows)              // GET 列表 / POST 创建审批流
+	mux.HandleFunc("/api/v1/approval/flows/", s.handleApprovalFlowRouting)       // 子路径：{id} GET/PUT/DELETE
+	mux.HandleFunc("/api/v1/approval/requests", s.handleApprovalRequests)        // GET 列表 / POST 提交审批请求
 	mux.HandleFunc("/api/v1/approval/requests/", s.handleApprovalRequestRouting) // 子路径：{id} GET、{id}/approve|reject|cancel|history
-	mux.HandleFunc("/api/v1/approval/pending", s.handleApprovalPending)     // GET 待我审批列表
+	mux.HandleFunc("/api/v1/approval/pending", s.handleApprovalPending)          // GET 待我审批列表
 
 	// task 244 M6 集成：网络拓扑发现 + 网络诊断工具 + 连通性检测 API。
 	// 拓扑探测结果缓存 5 分钟（networkTopologyCache），?refresh=true 强制刷新；
 	// 诊断命令通过下发 shell task 到指定 agent 执行（复用现有任务机制）；
 	// 连通性检测对每个 target 发起 tcping/ping 检测，同步等待最多 5 秒收集结果。
-	mux.HandleFunc("/api/v1/network/topology", s.handleNetworkTopology)           // GET 拓扑图（?refresh=true 强制刷新）
+	mux.HandleFunc("/api/v1/network/topology", s.handleNetworkTopology)            // GET 拓扑图（?refresh=true 强制刷新）
 	mux.HandleFunc("/api/v1/network/topology/cache", s.handleNetworkTopologyCache) // GET 缓存拓扑（不触发探测）
 	mux.HandleFunc("/api/v1/network/diagnose", s.handleNetworkDiagnose)            // POST 发起诊断任务
 	mux.HandleFunc("/api/v1/network/diagnose/", s.handleNetworkDiagnoseResult)     // GET 子路径：{taskId}

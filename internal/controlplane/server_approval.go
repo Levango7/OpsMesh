@@ -1,4 +1,3 @@
-
 // server_approval.go 实现 M5 审批 API：
 //   - GET    /api/v1/approval/flows             列表审批流
 //   - POST   /api/v1/approval/flows             创建审批流

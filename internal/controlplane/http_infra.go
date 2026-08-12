@@ -9,6 +9,9 @@ import (
 	"opsmesh/internal/authctx"
 )
 
+// maxBodyBytes 限制请求体大小（P1-3 防 DoS：拒绝超大 body 直接 413，避免 JSON 解析拖垮内存）。
+const maxBodyBytes = 1 << 20 // 1 MiB
+
 // decodeJSONBody 在 MaxBytesReader 约束下解析 JSON 请求体（P1-3 请求体大小限制）。
 // 替换所有裸 json.NewDecoder(r.Body).Decode 调用，统一防超大请求体。
 // 注意：仅做大小限制，不启用 DisallowUnknownFields，避免破坏前端多传字段的既有兼容行为。

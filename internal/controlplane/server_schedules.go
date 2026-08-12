@@ -1,4 +1,3 @@
-
 // server_schedules.go 实现 M5 定时任务管理 API：
 //   - POST   /api/v1/schedules            创建定时任务
 //   - GET    /api/v1/schedules            列表定时任务
@@ -78,11 +77,11 @@ func (s *Server) scheduleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entry := &cron.ScheduleEntry{
-		TaskID:   body.TaskID,
-		TenantID: actx.TenantID,
-		Name:     body.Name,
-		CronExpr: body.CronExpr,
-		Status:   cron.EntryActive,
+		TaskID:    body.TaskID,
+		TenantID:  actx.TenantID,
+		Name:      body.Name,
+		CronExpr:  body.CronExpr,
+		Status:    cron.EntryActive,
 		CreatedBy: actx.UserID,
 	}
 	created, err := s.scheduleMgr.Create(entry)

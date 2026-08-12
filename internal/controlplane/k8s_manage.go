@@ -988,7 +988,7 @@ func (s *Server) handleNodeMetrics(w http.ResponseWriter, r *http.Request, clien
 
 // ClusterHealth 是集群健康检查响应结构。
 type ClusterHealth struct {
-	Status     string            `json:"status"`     // healthy / degraded / unhealthy
+	Status     string            `json:"status"` // healthy / degraded / unhealthy
 	Nodes      NodeSummary       `json:"nodes"`
 	Pods       PodSummary        `json:"pods"`
 	Components []ComponentHealth `json:"components"`
