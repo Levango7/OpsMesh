@@ -18,6 +18,9 @@
 | TD-05 | CI GitOps 写回步骤必失败 | `.github/workflows/ci.yml` 新增 clone/path 守卫，仓库未就绪时安全跳过（`::warning::`） |
 | TD-06 | kafka-go 钉版本说明过期 | README/roadmap 已删除"必须钉 v0.4.48"的旧约束 |
 | TD-07 | 双前端描述不一致 | README 删去"Deprecated v0.2→v0.4"表述，改为"已收敛为引导页" |
+| TD-08 | TD-22 误登记：agent "每次 RPC 重新 Dial" | **误登记**：`grpcclient.go` 的 `B-4 连接复用` 已实现（conns 按 target 缓存长连接 + 错误淘汰重 Dial），从债务清单移除 |
+| TD-09 | TD-23 误登记：domain "无业务行为" | **误登记**：`domain.go` 已有 Cancel/CanRetry/MarkDead/TransitionToProvisioning/Acknowledge/Silence 等 10+ 行为方法，从债务清单移除 |
+| TD-30 | operator Go 版本与主模块割裂 | `operator/go.mod` 从 go 1.22 对齐至 go 1.26.0，`go mod tidy && go build` 已验证通过 |
 
 ---
 
@@ -36,14 +39,14 @@
 |---|---|---|---|
 | TD-20 | `internal/controlplane` 单包 14,489 行 | 27 个 `.go` 文件 | 按 `server_*.go` 已有形态继续拆；目标是单文件 ≤ 500 行 |
 | TD-21 | `internal/store/memory.go` 2020 行 / `sql.go` 562 行 | store 包 | memory 按域拆 memory_*.go（部分已拆）；sql 同理 |
-| TD-22 | agent 每次 RPC 重新 Dial 无连接池 | `internal/agent/grpcclient.go` | 引入 gRPC 连接复用 + 指数退避 |
-| TD-23 | `domain` 包只有 struct，无业务行为 | `internal/domain/` | 补充校验/聚合方法；否则与 proto Task 等强耦合 |
-| TD-24 | SSE 协议无对外规格 | `internal/controlplane/sse.go` | 新增 `docs/sse-protocol.md`（事件名/字段/重连策略/Last-Event-ID 兼容矩阵） |
-| TD-25 | protobuf 与 JSON codec 双轨 | `internal/grpcx/` | 在 `docs/tech-selection.md` 写清取舍与迁移路径；codec 加 deprecation 警告日志 |
-| TD-26 | Roadmap 文档的"演进目标"无验收标准 | `docs/product-roadmap.md` | 每条补 DoD：影响哪些包、估计改动量、性能预算、迁移兼容性 |
-| TD-27 | Windows agent 假支持 | `internal/agent/exec_other.go` 仅兜底 | 明确 README / `--help` 说明 agent 仅支持 Linux；或补 Windows 实现 |
-| TD-28 | CI coverage 门禁刚提到 50%/65%，未配增量门禁 | ci.yml | 后续接 `codecov.yml` 的 patch coverage 门槛 |
-| TD-29 | `operator` 模块 Go 版本（1.22）与主模块（1.26）不一致 | `operator/go.mod` | 同步到 1.26，Dockerfile 基础镜像对齐 |
+| ~~TD-22~~ | ~~agent 每次 RPC 重新 Dial~~ | — | **误登记**：`B-4 连接复用` 已实现，见上方"已解决" TD-08 |
+| ~~TD-23~~ | ~~domain 包无业务行为~~ | — | **误登记**：`domain.go` 已有 10+ 行为方法，见上方"已解决" TD-09 |
+| TD-24 | SSE 协议无对外规格 | `internal/controlplane/sse.go` | ✅ 已新增 `docs/sse-protocol.md`；待前后端按契约加一致性测试 |
+| TD-25 | protobuf 与 JSON codec 双轨 | `internal/grpcx/` | ✅ 已在 `docs/tech-selection.md` §3 写清取舍与迁移路径 |
+| TD-26 | Roadmap 演进目标无验收标准 | `docs/product-roadmap.md` | ✅ 已补 DoD 表（见 roadmap 附录） |
+| TD-27 | Windows agent 假支持 | `internal/agent/exec_other.go` | ✅ README 已声明"agent 仅 Linux"；如需 Windows 支持须专项立项 |
+| TD-28 | CI 无增量覆盖率门禁 | ci.yml | ✅ 已新增 `codecov.yml`：patch ≥70%、project ≥50% |
+| ~~TD-29~~ | operator Go 版本与主模块不一致 | `operator/go.mod` | ✅ 已对齐 go 1.26.0，`go mod tidy && go build` 通过（见 TD-30） |
 
 ---
 

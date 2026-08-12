@@ -1,8 +1,6 @@
 module opsmesh/operator
 
-go 1.22.0
-
-toolchain go1.23.4
+go 1.26.0
 
 require (
 	k8s.io/api v0.30.0
