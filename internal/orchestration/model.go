@@ -177,6 +177,6 @@ type WorkflowRun struct {
 	TenantID   string            `json:"tenantID"`
 	StartedAt  time.Time         `json:"startedAt"`
 	FinishedAt time.Time         `json:"finishedAt"`
-	Status     string            `json:"status"`      // running / success / failed
-	NodeStates map[string]string `json:"nodeStates"`  // nodeID -> status (pending/running/done/failed)
+	Status     string            `json:"status"`     // running / success / failed
+	NodeStates map[string]string `json:"nodeStates"` // nodeID -> status (pending/running/done/failed)
 }

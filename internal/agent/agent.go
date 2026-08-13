@@ -715,50 +715,50 @@ func (a *Agent) worker(ctx context.Context) {
 			if deviceID == "" {
 				deviceID = a.agentID
 			}
-		var res proto.TaskResult
-		var cancelled bool
-		// P2-B2 节点级超时（任务 261）：任务自带 Timeout>0 时覆盖全局 taskTimeout，0=用全局。
-		taskTimeout := taskTimeoutFor(t, a.taskTimeout)
-		if a.cbSet != nil {
-			// 通过熔断器执行：Execute 内部处理 Open→HalfOpen→Closed 状态机。
-			cbErr := a.cbSet.Execute(deviceID, func() error {
+			var res proto.TaskResult
+			var cancelled bool
+			// P2-B2 节点级超时（任务 261）：任务自带 Timeout>0 时覆盖全局 taskTimeout，0=用全局。
+			taskTimeout := taskTimeoutFor(t, a.taskTimeout)
+			if a.cbSet != nil {
+				// 通过熔断器执行：Execute 内部处理 Open→HalfOpen→Closed 状态机。
+				cbErr := a.cbSet.Execute(deviceID, func() error {
+					taskCtx, cancel := context.WithTimeout(ctx, taskTimeout)
+					a.addRunning(t.TaskID, cancel)
+					res = a.execute(taskCtx, t)
+					cancelled = a.delRunning(t.TaskID)
+					cancel()
+					if cancelled {
+						return nil // 取消不算失败，避免误熔断
+					}
+					if res.ExitCode != 0 {
+						return fmt.Errorf("task exit code %d", res.ExitCode)
+					}
+					return nil
+				})
+				if cbErr == circuitbreaker.ErrCircuitOpen {
+					logx.Warn(ctx, "熔断器开启，跳过任务执行", "taskID", t.TaskID, "deviceID", deviceID)
+					res = proto.TaskResult{
+						TaskID:     t.TaskID,
+						AgentID:    a.agentID,
+						ClaimEpoch: t.ClaimEpoch,
+						ExitCode:   -1,
+						Stderr:     "circuit breaker open for device " + deviceID,
+						FinishedAt: time.Now(),
+					}
+				}
+			} else {
+				// 禁用模式：直接执行，零开销向后兼容。
 				taskCtx, cancel := context.WithTimeout(ctx, taskTimeout)
 				a.addRunning(t.TaskID, cancel)
 				res = a.execute(taskCtx, t)
 				cancelled = a.delRunning(t.TaskID)
 				cancel()
-				if cancelled {
-					return nil // 取消不算失败，避免误熔断
-				}
-				if res.ExitCode != 0 {
-					return fmt.Errorf("task exit code %d", res.ExitCode)
-				}
-				return nil
-			})
-			if cbErr == circuitbreaker.ErrCircuitOpen {
-				logx.Warn(ctx, "熔断器开启，跳过任务执行", "taskID", t.TaskID, "deviceID", deviceID)
-				res = proto.TaskResult{
-					TaskID:     t.TaskID,
-					AgentID:    a.agentID,
-					ClaimEpoch: t.ClaimEpoch,
-					ExitCode:   -1,
-					Stderr:     "circuit breaker open for device " + deviceID,
-					FinishedAt: time.Now(),
-				}
 			}
-		} else {
-			// 禁用模式：直接执行，零开销向后兼容。
-			taskCtx, cancel := context.WithTimeout(ctx, taskTimeout)
-			a.addRunning(t.TaskID, cancel)
-			res = a.execute(taskCtx, t)
-			cancelled = a.delRunning(t.TaskID)
-			cancel()
-		}
-		if cancelled {
-			logx.Info(ctx, "任务已取消，丢弃执行结果", "taskID", t.TaskID)
-			continue
-		}
-		a.reportResult(ctx, t, res)
+			if cancelled {
+				logx.Info(ctx, "任务已取消，丢弃执行结果", "taskID", t.TaskID)
+				continue
+			}
+			a.reportResult(ctx, t, res)
 		}
 	}
 }
@@ -766,6 +766,7 @@ func (a *Agent) worker(ctx context.Context) {
 // taskTimeoutFor 计算任务的实际超时（P2-B2 节点级超时，任务 261）：
 //   - 任务自带 Timeout>0 时按此值（秒）覆盖全局 taskTimeout；
 //   - Timeout=0 时回退全局 taskTimeout（向后兼容旧任务/旧 agent）。
+//
 // 抽成独立函数便于单测覆盖节点级 vs 全局回退两条路径。
 func taskTimeoutFor(t proto.Task, global time.Duration) time.Duration {
 	if t.Timeout > 0 {
@@ -773,7 +774,6 @@ func taskTimeoutFor(t proto.Task, global time.Duration) time.Duration {
 	}
 	return global
 }
-
 
 // execute 本地执行任务，按 Type 分派执行器（shell / service / file，见 proto.TaskType* 常量）。
 // 使用传入的 ctx（worker 已绑定 taskTimeout 与取消信号，F3 取消时 ctx 被取消、命令立即中断）。

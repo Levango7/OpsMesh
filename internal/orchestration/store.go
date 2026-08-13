@@ -9,7 +9,7 @@ import (
 
 // 工作流存储错误（与 cmdb/deploy 同构）。
 var (
-	ErrWFNotFound     = fmt.Errorf("workflow not found")
+	ErrWFNotFound       = fmt.Errorf("workflow not found")
 	ErrWFTenantMismatch = fmt.Errorf("workflow tenant mismatch")
 )
 
@@ -28,10 +28,10 @@ type WorkflowStore interface {
 
 // MemoryWorkflowStore 内存实现（默认后端，无外部依赖）。
 type MemoryWorkflowStore struct {
-	mu    sync.RWMutex
-	items map[int64]*WorkflowDef
-	runs  map[int64]*WorkflowRun // key = run.ID
-	seq   int64
+	mu     sync.RWMutex
+	items  map[int64]*WorkflowDef
+	runs   map[int64]*WorkflowRun // key = run.ID
+	seq    int64
 	runSeq int64
 }
 
