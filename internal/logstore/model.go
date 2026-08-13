@@ -24,7 +24,8 @@ type Query struct {
 	AgentID  string    // 可选
 	Level    string    // 可选（info/warn/error）
 	Source   string    // 可选
-	Keyword  string    // 可选：message LIKE
+	Keyword  string    // 可选：message LIKE（向后兼容）
+	Q        string    // 可选：结构化查询语法（KQL/Lucene 风格，非空时优先于 Keyword）
 	From     time.Time // 可选：起始
 	To       time.Time // 可选：结束
 	Limit    int       // 可选：默认 200，上限 1000

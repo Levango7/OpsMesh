@@ -29,6 +29,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 func (h *Handler) Store() LogStore { return h.ls }
 
 // handleLogs 处理 GET 查询 / POST 追加。
+//
+// GET 支持查询参数：
+//   - deviceID / agentID / level / source / keyword（向后兼容，message LIKE）
+//   - q：结构化查询语法（KQL/Lucene 风格，非空时优先于 keyword）
+//   - from / to：RFC3339 时间窗
+//   - limit / offset：分页
+//
+// q 参数解析失败时返回 400 Bad Request（语法错误不应视为服务端故障）。
 func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 	actx := authctx.FromHTTPHeader(r.Header)
 	switch r.Method {
@@ -39,6 +47,7 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 		q.Level = r.URL.Query().Get("level")
 		q.Source = r.URL.Query().Get("source")
 		q.Keyword = r.URL.Query().Get("keyword")
+		q.Q = r.URL.Query().Get("q")
 		if f := r.URL.Query().Get("from"); f != "" {
 			if t, err := time.Parse(time.RFC3339, f); err == nil {
 				q.From = t
@@ -54,6 +63,15 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 		}
 		if o := r.URL.Query().Get("offset"); o != "" {
 			fmt.Sscanf(o, "%d", &q.Offset)
+		}
+		// 结构化查询语法预校验：q 非空时解析失败返回 400（语法错误，非服务端故障）。
+		if q.Q != "" {
+			if _, err := ParseQuery(q.Q); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{
+					"error": fmt.Sprintf("invalid query syntax: %v", err),
+				})
+				return
+			}
 		}
 		entries, err := h.ls.Query(r.Context(), q)
 		if err != nil {

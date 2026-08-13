@@ -69,13 +69,13 @@ func TestStubAdapterRegister(t *testing.T) {
 	adapter := NewStubAdapter(fake)
 
 	in := &pb.AgentInfo{
-		AgentId:    "a1",
-		Hostname:   "host-a",
-		Segment:    "seg-a",
-		TenantId:   "t1",
-		GrpcPort:   9090,
-		Load:       7,
-		Status:     "online",
+		AgentId:      "a1",
+		Hostname:     "host-a",
+		Segment:      "seg-a",
+		TenantId:     "t1",
+		GrpcPort:     9090,
+		Load:         7,
+		Status:       "online",
 		InstallToken: "tok-123",
 	}
 	resp, err := adapter.Register(context.Background(), in)

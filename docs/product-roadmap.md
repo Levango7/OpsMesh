@@ -413,14 +413,16 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 | 阶段 | 目标 |
 |---|---|
 | 现状 | 计划 + fan-out 执行 + Reconcile + Rollback |
-| 计划 | 蓝绿发布策略、金丝雀发布策略（按比例/按标签灰度）、发布门禁（健康检查通过才推进）、自动回滚触发条件 |
+| ✅ 已实现 | 蓝绿发布策略（`internal/deploy` StrategyBlueGreen）、金丝雀发布策略（StrategyCanary 按比例/按标签灰度，`/api/v1/tasks/canary`）、发布门禁（Gate 失败率/延迟阈值，过门禁才推进）、自动回滚触发条件（AutoRollback + Promote 晋级） |
+| 计划 | 多集群联邦发布、灰度指标自适应推进 |
 
 ### 7.4 监控告警
 
 | 阶段 | 目标 |
 |---|---|
 | 现状 | 规则引擎 + alert + Ack/Silence + Webhook/飞书/钉钉 |
-| 计划 | 阈值规则完善、异常检测规则（基于基线偏离）、告警通道扩展（邮件/Slack/企业微信）、告警聚合与抑制（防风暴） |
+| ✅ 已实现 | 告警通道扩展（邮件/Slack/企业微信，`internal/notify` 多通道 + `--notify-channels-config` 配置）、告警聚合与抑制（防风暴：同源 5 分钟窗口去重 + critical 抑制同源 warning） |
+| 计划 | 阈值规则完善、异常检测规则（基于基线偏离） |
 
 ### 7.5 日志检索
 
@@ -564,4 +566,4 @@ Vue3 企业版按里程碑持续演进；原生 JS 个人版仅维持 P0 修复�
 
 - Helm Chart、`docker-compose.yaml`：README 已提及且仓库已提供（已交付，见 5.3）。Argo CD ApplicationSet、`goreleaser`、systemd unit：仍为 M1/M2 计划交付物，仓库未提供或未完善
 - Store 接口拆分已实施（`store.go` 15 个领域小接口 + 编译期断言）、DDD 实质化（`domain.go` 已有 Cancel/CanRetry/TransitionToProvisioning/Acknowledge 等行为方法）、server.go/巨型 memory.go 按域拆分均已落地（见 tech-debt.md TD-20/TD-21/11/24）。已实现项：protobuf 代码生成已启用（internal/grpcx/pb/）、operator 已交付、schema 隔离已有 --multi-schema flag、SSE 已实现 /api/v1/events/stream（契约文档+守护测试见 docs/sse-protocol.md）、Vue 3 主线已交付（web/enterprise/）。个人版前端已按收敛策略落地：`internal/controlplane/web/` 收敛为极简引导页（GET / 重定向 /enterprise/），1.3 万行业务 JS 已移除。联邦（控制面跨网段任务转发 mTLS + HMAC 签名验签，P1-6）已于 2026-08-02 落地
-- 安全加固项：agent shell 命令白名单（✅ 已实现 checkShellWhitelist）、file 路径白名单（✅ 已实现 checkFileRootWhitelist）、JWT 验签（✅ 已实现 --jwt-public-key RS256 验签）、SSRF 校验（⚠️ 规划中，webhook URL/autoProvision CIDR 未校验）、CSP 收紧（⚠️ 部分，有 CSP 但保留 unsafe-inline 因前端有 inline onclick）、TLS 证书热重载（❌ 规划中）、Vault/KMS 集成（❌ 远期规划）
+- 安全加固项：agent shell 命令白名单（✅ 已实现 checkShellWhitelist）、file 路径白名单（✅ 已实现 checkFileRootWhitelist）、JWT 验签（✅ 已实现 --jwt-public-key RS256 验签）、SSRF 校验（✅ 已实现 ValidateWebhookURL 私有IP拦截 + ValidateCIDR 白名单 + autoProvision CIDR 校验）、CSP 收紧（✅ 已实现 script-src 去除 unsafe-inline，前端 inline onclick 已迁移到 addEventListener）、TLS 证书热重载（❌ 规划中）、Vault/KMS 集成（❌ 远期规划）

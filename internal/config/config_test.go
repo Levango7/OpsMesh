@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -263,5 +265,42 @@ func TestParseDeviceFPDeadline(t *testing.T) {
 	d2 := parseDeviceFPDeadline("  2026-09-01T00:00:00Z  ")
 	if d2.IsZero() {
 		t.Fatal("带空格的合法 RFC3339 应解析成功")
+	}
+}
+
+// ============================================================================
+// task 254 P2-3 告警抑制集成：--inhibit-rules-file 校验测试
+// ============================================================================
+
+// TestValidate_InhibitRulesFile_Empty 验证空 InhibitRulesFile 通过校验（向后兼容）。
+func TestValidate_InhibitRulesFile_Empty(t *testing.T) {
+	c := base()
+	c.InhibitRulesFile = ""
+	if err := c.Validate(); err != nil {
+		t.Fatalf("空 InhibitRulesFile 应通过: %v", err)
+	}
+}
+
+// TestValidate_InhibitRulesFile_Exists 验证 InhibitRulesFile 指向存在的文件通过校验。
+func TestValidate_InhibitRulesFile_Exists(t *testing.T) {
+	// 创建临时文件
+	path := filepath.Join(t.TempDir(), "inhibit_rules.json")
+	if err := os.WriteFile(path, []byte("[]"), 0644); err != nil {
+		t.Fatalf("创建临时文件失败: %v", err)
+	}
+
+	c := base()
+	c.InhibitRulesFile = path
+	if err := c.Validate(); err != nil {
+		t.Fatalf("存在的 InhibitRulesFile 应通过: %v", err)
+	}
+}
+
+// TestValidate_InhibitRulesFile_NotExists 验证 InhibitRulesFile 指向不存在的文件被拒绝。
+func TestValidate_InhibitRulesFile_NotExists(t *testing.T) {
+	c := base()
+	c.InhibitRulesFile = filepath.Join(t.TempDir(), "nonexistent.json")
+	if err := c.Validate(); err == nil {
+		t.Fatal("不存在的 InhibitRulesFile 应被拒绝")
 	}
 }

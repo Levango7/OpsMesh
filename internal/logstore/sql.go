@@ -3,6 +3,7 @@ package logstore
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -70,6 +71,18 @@ func (s *SQLLogStore) Append(ctx context.Context, e *Entry) error {
 }
 
 // Query 按条件检索；结果按时间倒序（最新在前），LIMIT 受 maxQueryLimit 约束。
+//
+// 当 q.Q 非空时采用策略 A（内存过滤，避免将 AST 转 SQL WHERE 引入注入风险）：
+//   - 先解析 q.Q 为 AST（Q 优先于 Keyword，清空 Keyword）
+//   - SQL 层仅按基础条件（tenant/device/agent/level/source/from/to）粗筛，
+//     LIMIT 取 maxQueryLimit（1000）作为粗筛上限，不使用 SQL OFFSET
+//   - 在内存中按 ts DESC 顺序用 AST 逐条过滤，跳过 Offset 条后收集 Limit 条
+//   - 代价：当基础条件命中超过 maxQueryLimit 条且 AST 过滤率较高时，
+//     返回结果可能不足 Limit；MVP 阶段可接受（私有部署日志量可控）
+//
+// 当 q.Q 为空时，保持原有 SQL WHERE + LIMIT + OFFSET 行为（向后兼容）。
+//
+// ParseQuery 失败时返回包装错误，handler 层应映射为 400 Bad Request。
 func (s *SQLLogStore) Query(ctx context.Context, q Query) ([]Entry, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -81,6 +94,22 @@ func (s *SQLLogStore) Query(ctx context.Context, q Query) ([]Entry, error) {
 	if limit > maxQueryLimit {
 		limit = maxQueryLimit
 	}
+	if q.Offset < 0 {
+		q.Offset = 0
+	}
+
+	// 结构化查询语法：q.Q 非空时解析为 AST（策略 A：内存过滤）。
+	var qnode QueryNode
+	if q.Q != "" {
+		var err error
+		qnode, err = ParseQuery(q.Q)
+		if err != nil {
+			return nil, fmt.Errorf("解析结构化查询失败: %w", err)
+		}
+		// Q 优先于 Keyword，清空 Keyword 以避免 SQL LIKE 重复过滤 message。
+		q.Keyword = ""
+	}
+
 	var where []string
 	var args []interface{}
 	if q.TenantID != "" {
@@ -115,16 +144,23 @@ func (s *SQLLogStore) Query(ctx context.Context, q Query) ([]Entry, error) {
 		where = append(where, "ts <= ?")
 		args = append(args, q.To)
 	}
-	if q.Offset < 0 {
-		q.Offset = 0
+
+	// 策略 A：qnode 非空时，SQL 层粗筛 maxQueryLimit 条（不用 OFFSET），
+	// 再在内存中用 AST 过滤 + Offset + Limit。
+	sqlLimit := limit
+	useSQLOffset := q.Offset > 0
+	if qnode != nil {
+		sqlLimit = maxQueryLimit
+		useSQLOffset = false
 	}
+
 	query := "SELECT id, tenant_id, device_id, agent_id, task_id, ts, level, source, message FROM log_entries"
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
 	query += " ORDER BY ts DESC LIMIT ?"
-	args = append(args, limit)
-	if q.Offset > 0 {
+	args = append(args, sqlLimit)
+	if useSQLOffset {
 		query += " OFFSET ?"
 		args = append(args, q.Offset)
 	}
@@ -134,7 +170,9 @@ func (s *SQLLogStore) Query(ctx context.Context, q Query) ([]Entry, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]Entry, 0, limit)
+
+	// 读取所有行（已按 ts DESC 排序）。
+	all := make([]Entry, 0, sqlLimit)
 	for rows.Next() {
 		var e Entry
 		var ts time.Time
@@ -142,9 +180,33 @@ func (s *SQLLogStore) Query(ctx context.Context, q Query) ([]Entry, error) {
 			return nil, err
 		}
 		e.Timestamp = ts
-		out = append(out, e)
+		all = append(all, e)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 策略 A：内存中用 AST 过滤 + Offset + Limit。
+	if qnode != nil {
+		out := make([]Entry, 0, limit)
+		skipped := 0
+		for i := range all { // all 已按 ts DESC
+			if !qnode.Match(&all[i]) {
+				continue
+			}
+			if skipped < q.Offset {
+				skipped++
+				continue
+			}
+			out = append(out, all[i])
+			if len(out) >= limit {
+				break
+			}
+		}
+		return out, nil
+	}
+
+	return all, nil
 }
 
 // Close SQL 后端不关闭共享 *sql.DB。

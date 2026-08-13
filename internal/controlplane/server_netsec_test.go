@@ -74,9 +74,9 @@ func TestValidateWebhookURL_Loopback(t *testing.T) {
 // TestValidateWebhookURL_Metadata 云元数据地址被拒（169.254.169.254）。
 func TestValidateWebhookURL_Metadata(t *testing.T) {
 	cases := []string{
-		"http://169.254.169.254/latest/meta-data/", // AWS 元数据
+		"http://169.254.169.254/latest/meta-data/",   // AWS 元数据
 		"http://169.254.169.254/computeMetadata/v1/", // GCP 元数据
-		"http://169.254.1.1/hook", // 链路本地其他地址
+		"http://169.254.1.1/hook",                    // 链路本地其他地址
 	}
 	for _, url := range cases {
 		if err := ValidateWebhookURL(url, false); err == nil {

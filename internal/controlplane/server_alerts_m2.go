@@ -683,6 +683,32 @@ func (s *Server) evaluateAlertsOnce(ctx context.Context) {
 	if len(filtered) == 0 {
 		return
 	}
+	// task 254 P2-3 告警抑制：alertInhibitor 非 nil 时，对每个事件构造 proto.Alert 检查是否被抑制。
+	// 被抑制的事件跳过通知但记录审计 + 写入 store（仍可在 /api/v1/alerts 列表可见，只是不触发通知）。
+	// 未被抑制的事件进入聚合/通知流程，并在 notifyAlertGroup 中调用 TrackActive 跟踪活跃告警。
+	// alertInhibitor 为 nil 时跳过抑制检查（向后兼容）。
+	if s.alertInhibitor != nil {
+		var notInhibited []*alertengine.AlertEvent
+		for _, ev := range filtered {
+			alert := alertEventToAlert(ev)
+			if s.alertInhibitor.IsInhibited(alert) {
+				// 被抑制的告警仍记录到 store，只是不触发通知
+				s.store.AddAlert(alert)
+				// 记录审计：告警被抑制（便于运维溯源为何告警未通知）
+				s.audit(ctx, &proto.AuditEvent{
+					TenantID: ev.TenantID, Action: "alert_inhibited", Target: alert.AlertID,
+					Detail: sanitizeAuditDetail(fmt.Sprintf("ruleID=%s deviceID=%s severity=%s message=%s", ev.RuleID, ev.DeviceID, ev.Severity, ev.Message)),
+				})
+				logx.Info(ctx, "告警被抑制，跳过通知", "alertID", alert.AlertID, "ruleID", ev.RuleID, "deviceID", ev.DeviceID)
+				continue
+			}
+			notInhibited = append(notInhibited, ev)
+		}
+		filtered = notInhibited
+	}
+	if len(filtered) == 0 {
+		return
+	}
 	// 聚合
 	groups := s.alertAggregator.Aggregate(filtered)
 	// 推送每个聚合组
@@ -731,17 +757,14 @@ func (s *Server) notifyAlertGroup(ctx context.Context, g *alertengine.AlertGroup
 	}
 	// 写入 store 使其在 /api/v1/alerts 列表可见
 	for _, ev := range g.Events {
-		alert := &proto.Alert{
-			AlertID:   "alert-eng-" + ev.RuleID + "-" + ev.DeviceID + "-" + ev.FiredAt.Format("20060102150405"),
-			TenantID:  ev.TenantID,
-			DeviceID:  ev.DeviceID,
-			AgentID:   "",
-			Severity:  ev.Severity,
-			Message:   ev.Message,
-			Status:    proto.AlertStatusFiring,
-			CreatedAt: ev.FiredAt,
-		}
+		alert := alertEventToAlert(ev)
 		s.store.AddAlert(alert)
+		// task 254 P2-3 告警抑制：跟踪活跃告警（供后续抑制判定）。
+		// alertInhibitor 为 nil 时跳过（向后兼容）。
+		// 仅对未被抑制的 firing 告警跟踪（被抑制的告警在 evaluateAlertsOnce 中已被过滤，不会到达此处）。
+		if s.alertInhibitor != nil {
+			s.alertInhibitor.TrackActive(alert)
+		}
 		// 发布 SSE 事件通知前端
 		s.publishEvent(ctx, "alert_new", ev.TenantID, map[string]string{
 			"alertID":  alert.AlertID,
@@ -755,6 +778,33 @@ func (s *Server) notifyAlertGroup(ctx context.Context, g *alertengine.AlertGroup
 // ============================================================================
 // 辅助函数
 // ============================================================================
+
+// alertEventToAlert 将 alertengine.AlertEvent 转换为 proto.Alert。
+//
+// 用于：
+//   - AlertInhibitor.IsInhibited 检查（需要 proto.Alert 提取标签）。
+//   - AlertInhibitor.TrackActive 跟踪活跃告警。
+//   - 写入 store.AddAlert 使告警在 /api/v1/alerts 列表可见。
+//
+// Metric 从 ev.Labels["metric"] 提取（若规则 buildEvent 时注入了 metric 标签）；
+// 未注入时 Metric 为空，AlertInhibitor 的 alertLabels 会得到空 metric（不影响 device_id/severity/status 匹配）。
+// AlertID 拼接规则与原 notifyAlertGroup 内联构造一致，保持向后兼容。
+func alertEventToAlert(ev *alertengine.AlertEvent) *proto.Alert {
+	if ev == nil {
+		return nil
+	}
+	return &proto.Alert{
+		AlertID:   "alert-eng-" + ev.RuleID + "-" + ev.DeviceID + "-" + ev.FiredAt.Format("20060102150405"),
+		TenantID:  ev.TenantID,
+		DeviceID:  ev.DeviceID,
+		AgentID:   "",
+		Severity:  ev.Severity,
+		Message:   ev.Message,
+		Metric:    ev.Labels["metric"], // 从 Labels 提取 metric（若有），否则为空
+		Status:    proto.AlertStatusFiring,
+		CreatedAt: ev.FiredAt,
+	}
+}
 
 // randHex 生成 n 字节随机十六进制串（用于 ID 生成）。
 func randHex(n int) string {

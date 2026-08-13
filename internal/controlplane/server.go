@@ -117,6 +117,15 @@ type Server struct {
 	alertAggregator *alertengine.Aggregator
 	alertNotifier   *notify.Notifier
 
+	// task 254 P2-3 集成：告警抑制器（基于活跃告警状态的动态抑制）。
+	// alertInhibitor 持有抑制规则与活跃告警集合，告警评估前检查 IsInhibited 跳过通知，
+	// 评估后对 firing 告警调用 TrackActive，告警恢复时调用 RemoveActive。
+	// 与 alertSilencer 的区别：
+	//   - alertSilencer：基于时间窗口的静态抑制（运维主动配置静默规则）。
+	//   - alertInhibitor：基于活跃告警状态的动态抑制（父告警存在时自动抑制子告警）。
+	// nil=未启用告警抑制（向后兼容，--inhibit-rules-file 为空时），评估流程跳过抑制检查。
+	alertInhibitor *alertengine.AlertInhibitor
+
 	// task 242 M3 集成：Helm 应用商店（仓库管理 + Release 管理 + 预置目录）。
 	// helmRepo 管理 Chart 仓库集合（add/remove/list/search），helmRelease 管理 Release 生命周期
 	// （install/upgrade/rollback/uninstall/list/history）；两者通过 helm CLI 调用 helm 命令行。
@@ -371,6 +380,17 @@ func NewServer(cfg *config.Config) *Server {
 	}
 	// task 244 M6 集成：初始化网络拓扑缓存（空缓存，首次查询时触发探测）。
 	s.networkTopologyCache = &NetworkTopologyCache{}
+	// task 254 P2-3 集成：告警抑制器（--inhibit-rules-file 非空时加载规则构造 AlertInhibitor）。
+	// 加载失败时 fail-fast（启动期发现问题而非运行期诡异失败）。
+	// nil=未启用告警抑制（向后兼容，--inhibit-rules-file 为空时），评估流程跳过抑制检查。
+	if cfg.InhibitRulesFile != "" {
+		rules, loadErr := alertengine.LoadInhibitRules(cfg.InhibitRulesFile)
+		if loadErr != nil {
+			log.Fatalf("[controlplane] 加载告警抑制规则文件失败: %v", loadErr)
+		}
+		s.alertInhibitor = alertengine.NewAlertInhibitor(rules)
+		logx.Info(context.Background(), "告警抑制已启用", "rulesFile", cfg.InhibitRulesFile, "rulesCount", len(rules))
+	}
 	return s
 }
 

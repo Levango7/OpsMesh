@@ -31,6 +31,7 @@
 | TD-28 | CI 无增量覆盖率门禁 | ✅ 已新增 `codecov.yml`：patch ≥70%、project ≥50%（位置：ci.yml） |
 | TD-29 | operator Go 版本与主模块不一致 | ✅ `operator/go.mod` 已对齐 go 1.26.0，`go mod tidy && go build` 通过（见 TD-30） |
 | TD-30 | operator Go 版本与主模块割裂 | `operator/go.mod` 从 go 1.22 对齐至 go 1.26.0，`go mod tidy && go build` 已验证通过 |
+| TD-42 | CSP 保留 `unsafe-inline` | `script-src` 已去除 `unsafe-inline`（任务 250 落地：前端 inline onclick 改用 addEventListener + server_middleware.go CSP 去掉 unsafe-inline） |
 
 ---
 
@@ -45,10 +46,6 @@
 ## 待启动（仍真实存在，按优先级）
 
 所有已识别技术债均已解决或明确不做（见下方）。
-
-| ID | 问题 | 位置 | 建议 |
-|---|---|---|---|
-| TD-42 | CSP 保留 `unsafe-inline` | 前端有 141+ 个 inline `onclick` 事件处理器，CSP 暂无法完全收紧 | 计划：前端迁移到 `addEventListener` 后去除 `unsafe-inline`。当前 CSP 已设置但有 `unsafe-inline` 豁免 |
 
 ---
 

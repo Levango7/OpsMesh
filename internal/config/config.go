@@ -282,6 +282,14 @@ type Config struct {
 	//     防止运维误配置或攻击者构造请求扫描任意网段（如 169.254.169.254 元数据网段）。
 	WebhookAllowPrivate   bool   // 允许内网 webhook URL（SSRF 防护，默认 false）
 	ProvisionCIDRWhitelist string // autoProvision CIDR 白名单（逗号分隔，空=不限制）
+
+	// task 254 P2-3 告警抑制集成：告警抑制规则 JSON 文件路径。
+	// 空（默认）=不启用告警抑制（向后兼容，alertInhibitor 为 nil，评估流程跳过抑制检查）；
+	// 非空=NewServer 启动时调用 alertengine.LoadInhibitRules 加载规则并构造 AlertInhibitor，
+	// 告警评估前先过抑制规则（父告警活跃时抑制子告警，避免告警风暴）。
+	// 文件格式见 alertengine.LoadInhibitRules 文档（顶层 JSON 数组，snake_case 字段）。
+	// Validate 校验文件存在；加载失败 fail-fast。
+	InhibitRulesFile string // 告警抑制规则 JSON 文件路径（空=不启用）
 }
 
 // Load 解析 flag 并用环境变量兜底，返回 *Config。
@@ -409,6 +417,8 @@ func Load() *Config {
 	// task 248 SSRF 防护配置。
 	webhookAllowPrivate := flag.Bool("webhook-allow-private", false, "task 248 SSRF 防护：允许内网 webhook URL（私网/loopback/链路本地）；默认 false=拒绝内网 webhook（安全基线，防 SSRF 访问云元数据/内网服务）；true=放行内网 webhook（内网部署场景，如钉钉/飞书内网网关）；或 env OPSMESH_WEBHOOK_ALLOW_PRIVATE")
 	provisionCidrWhitelist := flag.String("provision-cidr-whitelist", "", "task 248 SSRF 防护：autoProvision 扫描网段白名单（逗号分隔的 CIDR 列表，如 10.30.0.0/24,10.31.0.0/24）；空=不校验（向后兼容）；非空=扫描前校验目标 CIDR 必须完全落在白名单内，防扫描任意网段；或 env OPSMESH_PROVISION_CIDR_WHITELIST")
+	// task 254 P2-3 告警抑制集成：--inhibit-rules-file 指定抑制规则 JSON 文件路径。
+	inhibitRulesFile := flag.String("inhibit-rules-file", "", "task 254 告警抑制规则 JSON 文件路径（空=不启用告警抑制，向后兼容）；非空时加载规则构造 AlertInhibitor，告警评估前先过抑制规则（父告警活跃时抑制子告警）；文件格式见 alertengine.LoadInhibitRules 文档；或 env OPSMESH_INHIBIT_RULES_FILE")
 	flag.Parse()
 
 	// 记录被显式设置的 flag，用于"flag 优先、env 兜底"的正确语义（P1-8 修复：原实现 env 会覆盖显式 flag）。
@@ -551,6 +561,7 @@ func Load() *Config {
 		CBRateLimitPerSec:      valInt("cb-rate-limit-per-sec", *cbRateLimitPerSec, "OPSMESH_CB_RATE_LIMIT_PER_SEC"),
 		WebhookAllowPrivate:    valBool("webhook-allow-private", *webhookAllowPrivate, "OPSMESH_WEBHOOK_ALLOW_PRIVATE"),
 		ProvisionCIDRWhitelist: val("provision-cidr-whitelist", *provisionCidrWhitelist, "OPSMESH_PROVISION_CIDR_WHITELIST"),
+		InhibitRulesFile:       val("inhibit-rules-file", *inhibitRulesFile, "OPSMESH_INHIBIT_RULES_FILE"),
 	}
 	// task 97 --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
 	// 使现有 LogBackend 校验/路由逻辑无缝复用；最终 LogStore 与 LogBackend 保持同值。
@@ -890,6 +901,14 @@ func (c *Config) Validate() error {
 			if _, _, err := net.ParseCIDR(item); err != nil {
 				return fmt.Errorf("非法 --provision-cidr-whitelist 项 %q: %w", item, err)
 			}
+		}
+	}
+	// task 254 P2-3 告警抑制集成：--inhibit-rules-file 非空时校验文件存在/可读。
+	// 启动期 fail-fast，避免运行期 alertEngineLoop 才发现文件不可访问。
+	// 空值跳过校验（向后兼容，不启用告警抑制）。
+	if c.InhibitRulesFile != "" {
+		if _, err := os.Stat(c.InhibitRulesFile); err != nil {
+			return fmt.Errorf("--inhibit-rules-file=%q 文件不存在或不可访问: %w", c.InhibitRulesFile, err)
 		}
 	}
 	return nil

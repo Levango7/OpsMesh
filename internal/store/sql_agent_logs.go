@@ -1,4 +1,3 @@
-
 package store
 
 import "opsmesh/internal/proto"

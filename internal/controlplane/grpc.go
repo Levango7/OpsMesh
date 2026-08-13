@@ -503,9 +503,9 @@ func (g *grpcServerImpl) ReportLogs(ctx context.Context, req *grpcx.ReportLogsRe
 	// M3-2B SSE：通知前端有新日志到达（前端日志面板可刷新）。
 	if g.srv != nil {
 		g.srv.publishEvent(ctx, "agent_logs", tenantID, map[string]interface{}{
-			"agentID":  agentID,
-			"logName":  req.Report.LogName,
-			"lines":    len(req.Report.Lines),
+			"agentID": agentID,
+			"logName": req.Report.LogName,
+			"lines":   len(req.Report.Lines),
 		})
 	}
 

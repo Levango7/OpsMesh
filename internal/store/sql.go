@@ -64,7 +64,6 @@ type SQLStore struct {
 	// 检索侧由 logstore.SQLLogStore 走独立表/连接池承担；此处仅承接上报并暂存供 API 查询。
 	// 由 s.mu 保护并发安全。
 	agentLogs []proto.LogReport
-
 }
 
 func (s *SQLStore) DB() *sql.DB { return s.db }
