@@ -23,6 +23,11 @@ func NewHandler(store CiStore) *Handler {
 	return &Handler{store: store}
 }
 
+// Store 返回底层 CiStore，供 CMDBCollector 等内部组件复用 CMDB CRUD 能力。
+// 外部消费方不应通过此方法绕过 handler 路由层写 CI（仍走 HTTP API）；
+// 仅限控制面内部 collector/ reconciler 等需要直接操作 CI 的场景。
+func (h *Handler) Store() CiStore { return h.store }
+
 // RegisterRoutes 注入 CMDB 路由到 mux。
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/cmdb/ci", h.handleCIs)

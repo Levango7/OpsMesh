@@ -669,6 +669,13 @@ func (s *Server) evaluateAlertsOnce(ctx context.Context) {
 				continue
 			}
 			allEvents = append(allEvents, events...)
+			// P2-B4 异常检测：anomalyEngine 非 nil 时，对设备指标调用 Evaluate。
+			// 异常时产生 AnomalyAlert 并转换为 AlertEvent 加入 allEvents，
+			// 经后续静默/聚合/通知链统一处理（与规则告警一致流程）。
+			if s.anomalyEngine != nil {
+				anomalyEvents := s.evaluateAnomalyForDevice(d.DeviceID)
+				allEvents = append(allEvents, anomalyEvents...)
+			}
 		}
 	}
 	if len(allEvents) == 0 {
@@ -716,6 +723,57 @@ func (s *Server) evaluateAlertsOnce(ctx context.Context) {
 	for _, g := range groups {
 		s.notifyAlertGroup(ctx, g)
 	}
+}
+
+// evaluateAnomalyForDevice P2-B4 异常检测：对单台设备的指标调用 anomalyEngine.Evaluate。
+//
+// 从 store 取设备最新指标（DeviceMetrics），提取 cpu_usage/mem_usage 等指标值，
+// 调用 anomalyEngine.Evaluate 评估，异常时将 AnomalyAlert 转换为 AlertEvent 返回。
+//
+// 转换语义：
+//   - RuleID：anomalyAlert.RuleID
+//   - Severity：anomalyAlert.Severity
+//   - Message：包含指标名、值、Z-Score 的人读消息
+//   - Labels：ruleID/deviceID/severity/metric（metric 供 AlertInhibitor 标签匹配）
+//   - Values：{metricName: value}
+//
+// 无指标数据（agent 未上报）时返回空切片（跳过该设备）。
+func (s *Server) evaluateAnomalyForDevice(deviceID string) []*alertengine.AlertEvent {
+	metrics := s.store.DeviceMetrics(deviceID)
+	if metrics == nil {
+		return nil
+	}
+	// 提取指标名→值映射。当前覆盖 cpu_usage/mem_usage；后续可扩展 disk/net 等。
+	metricValues := map[string]float64{
+		"cpu_usage": metrics.CPU.Usage,
+		"mem_usage": metrics.Memory.Usage,
+	}
+	var events []*alertengine.AlertEvent
+	for metricName, value := range metricValues {
+		alert := s.anomalyEngine.Evaluate(metricName, deviceID, value)
+		if alert == nil {
+			continue
+		}
+		ev := &alertengine.AlertEvent{
+			RuleID:   alert.RuleID,
+			TenantID: "default",
+			DeviceID: deviceID,
+			Severity: alert.Severity,
+			Message: fmt.Sprintf("异常检测触发：指标 %s=%.2f 偏离基线（均值=%.2f, 标准差=%.2f, Z-Score=%.2f）",
+				alert.MetricName, alert.Value, alert.Mean, alert.StdDev, alert.ZScore),
+			Labels: map[string]string{
+				"ruleID":   alert.RuleID,
+				"deviceID": deviceID,
+				"severity": alert.Severity,
+				"metric":   alert.MetricName,
+				"tenantID": "default",
+			},
+			FiredAt: alert.Timestamp,
+			Values:  map[string]float64{alert.MetricName: alert.Value},
+		}
+		events = append(events, ev)
+	}
+	return events
 }
 
 // notifyAlertGroup 推送一个聚合告警组：构造 Message → Notifier.Notify + 写入 store.AddAlert。

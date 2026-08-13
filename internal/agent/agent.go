@@ -77,6 +77,10 @@ type Agent struct {
 	// 跳过任务执行并返回 "circuit breaker open" 错误，熔断恢复后自动重新执行。
 	// cbSet 为 nil 表示禁用熔断器（CBFailureThreshold<=0），worker 直接执行。
 	cbSet *circuitbreaker.BreakerSet
+	// P2-B4 task 270 日志采集推送：agent 端尾随日志文件批量推送到 Loki/ES。
+	// 由 Run 在 cfg.LogPushEnabled=true 时构造并启动 goroutine；nil=未启用。
+	// 退出时调用 Stop 触发剩余缓冲 flush。
+	logPusher *LogPusher
 }
 
 // New 构造 agent（读取 hostname，作为注册信息）。
@@ -429,9 +433,32 @@ func (a *Agent) Run() error {
 	go a.cancelLoop(ctx)     // F3 取消信号：轮询控制面，中止已下发取消的正在执行任务
 	go a.logCollectLoop(ctx) // task 98 日志采集：定时读取指定日志文件增量并上报控制面
 
+	// P2-B4 task 270 日志采集推送：构造 LogPusher 并启动（cfg.LogPushEnabled=true 时）。
+	// 失败仅告警不阻塞启动（向后兼容，运维可后续修复配置后重启）。
+	if a.cfg.LogPushEnabled {
+		pusher, err := NewLogPusher(a.cfg.LogPushFiles, a.cfg.LogPushPattern,
+			a.cfg.LogPushEndpoint, a.cfg.LogPushBackend, a.cfg.Segment, a.hostname)
+		if err != nil {
+			logx.Warn(ctx, "LogPusher 构造失败，日志推送未启用", "error", err.Error())
+		} else {
+			a.logPusher = pusher
+			go func() {
+				if err := pusher.Run(ctx); err != nil {
+					logx.Warn(ctx, "LogPusher 退出异常", "error", err.Error())
+				}
+			}()
+		}
+	}
+
 	logx.Info(ctx, "agent 运行中", "agentID", a.agentID, "workers", a.workers, "grpc", a.cfg.ControlAddr)
 	<-ctx.Done()
 	logx.Info(ctx, "agent 收到终止信号，退出", "agentID", a.agentID)
+	// P2-B4 task 270：退出前 Stop LogPusher，触发剩余缓冲 flush（尽力而为，不阻塞退出）。
+	if a.logPusher != nil {
+		if err := a.logPusher.Stop(); err != nil {
+			logx.Warn(ctx, "LogPusher Stop 失败", "error", err.Error())
+		}
+	}
 	return nil
 }
 

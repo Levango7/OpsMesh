@@ -133,6 +133,12 @@ type Server struct {
 	// nil=未启用告警抑制（向后兼容，--inhibit-rules-file 为空时），评估流程跳过抑制检查。
 	alertInhibitor *alertengine.AlertInhibitor
 
+	// P2-B4 异常检测引擎：基于基线偏离的告警规则（滑动窗口 Z-Score + EWMA 突变检测）。
+	// 由 NewServer 在 cfg.AnomalyDetection=true 时构造；alertEngineLoop 对设备指标调用 Evaluate，
+	// 异常时产生 AnomalyAlert 并转换为 AlertEvent 进入现有告警链（静默/聚合/通知）。
+	// nil=未启用异常检测（向后兼容，--anomaly-detection=false 时），评估流程跳过异常检测。
+	anomalyEngine *alertengine.AnomalyEngine
+
 	// task 242 M3 集成：Helm 应用商店（仓库管理 + Release 管理 + 预置目录）。
 	// helmRepo 管理 Chart 仓库集合（add/remove/list/search），helmRelease 管理 Release 生命周期
 	// （install/upgrade/rollback/uninstall/list/history）；两者通过 helm CLI 调用 helm 命令行。
@@ -158,6 +164,11 @@ type Server struct {
 	// buildGRPC 创建并赋值，server_lifecycle.go 的 Start 优雅退出时调用 Close 释放 watcher。
 	// nil=未启用热重载（向后兼容，证书更新需重启服务）。
 	tlsReloader *tlsutil.CertificateReloader
+
+	// cmdbCollector CMDB 定时采集器（task 271）：周期从 agent 上报的设备指标采集
+	// 主机/服务元信息，更新 CMDB CI。由 NewServer 构造，Start 启动 goroutine 运行 Run(ctx)。
+	// nil=未启用（向后兼容，仅手动 POST /api/v1/cmdb/collect 时返回 503）。
+	cmdbCollector *CMDBCollector
 }
 
 // startRefreshSweep 周期清理过期刷新令牌（task 112：store 持久化后改为 no-op，
@@ -424,6 +435,10 @@ func NewServer(cfg *config.Config) *Server {
 	}
 	// task 244 M6 集成：初始化网络拓扑缓存（空缓存，首次查询时触发探测）。
 	s.networkTopologyCache = &NetworkTopologyCache{}
+	// task 271 CMDB 采集自动化：构造定时采集器（interval 5 分钟，跨租户采集 tenantID=""）。
+	// Start 启动 goroutine 运行 Run(ctx) 周期采集；POST /api/v1/cmdb/collect 手动触发。
+	// cmdbHandler.Store() 暴露 CiStore 供 collector 直接 CRUD CI（不经过 HTTP 路由层）。
+	s.cmdbCollector = NewCMDBCollector(st, s.cmdbHandler.Store(), 5*time.Minute, "")
 	// task 254 P2-3 集成：告警抑制器（--inhibit-rules-file 非空时加载规则构造 AlertInhibitor）。
 	// 加载失败时 fail-fast（启动期发现问题而非运行期诡异失败）。
 	// nil=未启用告警抑制（向后兼容，--inhibit-rules-file 为空时），评估流程跳过抑制检查。
@@ -434,6 +449,38 @@ func NewServer(cfg *config.Config) *Server {
 		}
 		s.alertInhibitor = alertengine.NewAlertInhibitor(rules)
 		logx.Info(context.Background(), "告警抑制已启用", "rulesFile", cfg.InhibitRulesFile, "rulesCount", len(rules))
+	}
+	// P2-B4 异常检测引擎：--anomaly-detection=true 时构造 AnomalyEngine。
+	// 引擎构造后由 alertEngineLoop 在评估周期对设备指标调用 Evaluate，
+	// 异常时产生 AnomalyAlert 并转换为 AlertEvent 进入现有告警链。
+	// nil=未启用异常检测（向后兼容，--anomaly-detection=false 时），评估流程跳过异常检测。
+	// 默认预置两条规则：cpu_usage 与 mem_usage 的 baseline 检测（运维可后续通过 API 增删）。
+	if cfg.AnomalyDetection {
+		s.anomalyEngine = alertengine.NewAnomalyEngine()
+		// 预置默认异常检测规则：cpu_usage 与 mem_usage 的 baseline 检测。
+		// WindowSize/Threshold 来自 config，使运维可通过 flag 调参。
+		s.anomalyEngine.AddRule(&alertengine.AnomalyRule{
+			ID:         "anomaly-cpu-usage-default",
+			MetricName: "cpu_usage",
+			DeviceID:   "", // 所有设备
+			Detector:   "baseline",
+			WindowSize: cfg.AnomalyWindowSize,
+			Threshold:  cfg.AnomalyThreshold,
+			Severity:   "warning",
+			TenantID:   "default",
+		})
+		s.anomalyEngine.AddRule(&alertengine.AnomalyRule{
+			ID:         "anomaly-mem-usage-default",
+			MetricName: "mem_usage",
+			DeviceID:   "",
+			Detector:   "baseline",
+			WindowSize: cfg.AnomalyWindowSize,
+			Threshold:  cfg.AnomalyThreshold,
+			Severity:   "warning",
+			TenantID:   "default",
+		})
+		logx.Info(context.Background(), "异常检测已启用",
+			"windowSize", cfg.AnomalyWindowSize, "threshold", cfg.AnomalyThreshold)
 	}
 	return s
 }

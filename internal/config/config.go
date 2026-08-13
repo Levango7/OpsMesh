@@ -302,6 +302,25 @@ type Config struct {
 	// 文件格式见 alertengine.LoadInhibitRules 文档（顶层 JSON 数组，snake_case 字段）。
 	// Validate 校验文件存在；加载失败 fail-fast。
 	InhibitRulesFile string // 告警抑制规则 JSON 文件路径（空=不启用）
+
+	// P2-B4 异常检测：基于基线偏离的告警规则。
+	// 启用后 NewServer 构造 AnomalyEngine，alertEngineLoop 对设备指标调用 Evaluate，
+	// 异常时产生 AnomalyAlert 并经现有告警链（静默/聚合/通知）推送。
+	// 默认关闭（向后兼容，anomalyEngine 为 nil，评估流程跳过异常检测）。
+	AnomalyDetection  bool    // --anomaly-detection 启用异常检测（默认 false）
+	AnomalyWindowSize int     // --anomaly-window-size 基线窗口大小（默认 100）
+	AnomalyThreshold  float64 // --anomaly-threshold Z-Score 阈值（默认 3.0）
+
+	// P2-B4 task 270 日志采集推送：agent 端尾随日志文件（tail -f），批量推送到 Loki/ES。
+	// 启用后 agent 构造 LogPusher（internal/agent/log_push.go），对 LogPushFiles 中的文件
+	// 尾随采集，按 LogPushPattern 正则过滤后批量推送到 LogPushEndpoint。
+	// 默认关闭（向后兼容，LogPushEnabled=false 时不启动 LogPusher）。
+	// LogPushFiles 为逗号分隔的文件路径，Validate 中 split 为 []string。
+	LogPushEnabled  bool     // --log-push-enabled 启用日志推送（默认 false）
+	LogPushFiles    []string // --log-push-files 日志文件列表（逗号分隔）
+	LogPushPattern  string   // --log-push-pattern 正则过滤（空=不过滤）
+	LogPushEndpoint string   // --log-push-endpoint 推送目标（如 http://loki:3100/loki/api/v1/push）
+	LogPushBackend  string   // --log-push-backend 后端类型：loki|es（默认 loki）
 }
 
 // Load 解析 flag 并用环境变量兜底，返回 *Config。
@@ -438,6 +457,16 @@ func Load() *Config {
 	provisionCidrWhitelist := flag.String("provision-cidr-whitelist", "", "task 248 SSRF 防护：autoProvision 扫描网段白名单（逗号分隔的 CIDR 列表，如 10.30.0.0/24,10.31.0.0/24）；空=不校验（向后兼容）；非空=扫描前校验目标 CIDR 必须完全落在白名单内，防扫描任意网段；或 env OPSMESH_PROVISION_CIDR_WHITELIST")
 	// task 254 P2-3 告警抑制集成：--inhibit-rules-file 指定抑制规则 JSON 文件路径。
 	inhibitRulesFile := flag.String("inhibit-rules-file", "", "task 254 告警抑制规则 JSON 文件路径（空=不启用告警抑制，向后兼容）；非空时加载规则构造 AlertInhibitor，告警评估前先过抑制规则（父告警活跃时抑制子告警）；文件格式见 alertengine.LoadInhibitRules 文档；或 env OPSMESH_INHIBIT_RULES_FILE")
+	// P2-B4 异常检测：基于基线偏离的告警规则（滑动窗口 Z-Score + EWMA 突变检测）。
+	anomalyDetection := flag.Bool("anomaly-detection", false, "P2-B4 启用异常检测（基线偏离告警）：启用后构造 AnomalyEngine，对设备指标评估异常并产生告警；默认 false（向后兼容）；或 env OPSMESH_ANOMALY_DETECTION")
+	anomalyWindowSize := flag.Int("anomaly-window-size", 100, "P2-B4 异常检测基线窗口大小（滑动窗口数据点数，默认 100）；或 env OPSMESH_ANOMALY_WINDOW_SIZE")
+	anomalyThreshold := flag.Float64("anomaly-threshold", 3.0, "P2-B4 异常检测 Z-Score 阈值（默认 3.0 即 3σ，约 99.7% 置信区间）；或 env OPSMESH_ANOMALY_THRESHOLD")
+	// P2-B4 task 270 日志采集推送：agent 端尾随日志文件，批量推送到 Loki/ES。
+	logPushEnabled := flag.Bool("log-push-enabled", false, "P2-B4 启用日志采集推送：agent 尾随日志文件（tail -f）批量推送到 Loki/ES；默认 false（向后兼容）；或 env OPSMESH_LOG_PUSH_ENABLED")
+	logPushFiles := flag.String("log-push-files", "", "P2-B4 日志采集文件列表（逗号分隔，如 /var/log/syslog,/var/log/app.log）；或 env OPSMESH_LOG_PUSH_FILES")
+	logPushPattern := flag.String("log-push-pattern", "", "P2-B4 日志采集正则过滤（空=不过滤，全部推送；如 ^ERROR 仅推送 ERROR 行）；或 env OPSMESH_LOG_PUSH_PATTERN")
+	logPushEndpoint := flag.String("log-push-endpoint", "", "P2-B4 日志推送目标 endpoint（Loki /api/v1/push 或 ES /_bulk，如 http://loki:3100/loki/api/v1/push）；或 env OPSMESH_LOG_PUSH_ENDPOINT")
+	logPushBackend := flag.String("log-push-backend", "loki", "P2-B4 日志推送后端类型：loki | es（默认 loki）；或 env OPSMESH_LOG_PUSH_BACKEND")
 	flag.Parse()
 
 	// 记录被显式设置的 flag，用于"flag 优先、env 兜底"的正确语义（P1-8 修复：原实现 env 会覆盖显式 flag）。
@@ -587,6 +616,14 @@ func Load() *Config {
 		WebhookAllowPrivate:    valBool("webhook-allow-private", *webhookAllowPrivate, "OPSMESH_WEBHOOK_ALLOW_PRIVATE"),
 		ProvisionCIDRWhitelist: val("provision-cidr-whitelist", *provisionCidrWhitelist, "OPSMESH_PROVISION_CIDR_WHITELIST"),
 		InhibitRulesFile:       val("inhibit-rules-file", *inhibitRulesFile, "OPSMESH_INHIBIT_RULES_FILE"),
+		AnomalyDetection:       valBool("anomaly-detection", *anomalyDetection, "OPSMESH_ANOMALY_DETECTION"),
+		AnomalyWindowSize:      valInt("anomaly-window-size", *anomalyWindowSize, "OPSMESH_ANOMALY_WINDOW_SIZE"),
+		AnomalyThreshold:       valFloat64("anomaly-threshold", *anomalyThreshold, "OPSMESH_ANOMALY_THRESHOLD"),
+		LogPushEnabled:         valBool("log-push-enabled", *logPushEnabled, "OPSMESH_LOG_PUSH_ENABLED"),
+		LogPushFiles:           parseLogPushFiles(val("log-push-files", *logPushFiles, "OPSMESH_LOG_PUSH_FILES")),
+		LogPushPattern:         val("log-push-pattern", *logPushPattern, "OPSMESH_LOG_PUSH_PATTERN"),
+		LogPushEndpoint:        val("log-push-endpoint", *logPushEndpoint, "OPSMESH_LOG_PUSH_ENDPOINT"),
+		LogPushBackend:         val("log-push-backend", *logPushBackend, "OPSMESH_LOG_PUSH_BACKEND"),
 	}
 	// task 97 --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
 	// 使现有 LogBackend 校验/路由逻辑无缝复用；最终 LogStore 与 LogBackend 保持同值。
@@ -731,6 +768,27 @@ func durationEnv(key string, def time.Duration) time.Duration {
 // parseFederationPeers 解析逗号分隔的 peer 地址列表为 []string，去除空白项与首尾空格。
 // 输入空串返回 nil（不启用联邦），保证 NewServer 中 `if cfg.FederationPeers != nil` 判空可用。
 func parseFederationPeers(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// parseLogPushFiles 解析逗号分隔的日志采集文件路径列表为 []string，去除空白项与首尾空格。
+// 输入空串返回 nil（不启用日志推送），保证 agent 中 `if len(cfg.LogPushFiles) > 0` 判空可用。
+// 与 parseFederationPeers 同结构，独立保留以备未来差异化校验（如路径绝对值检查）。
+func parseLogPushFiles(s string) []string {
 	if s == "" {
 		return nil
 	}
@@ -934,6 +992,21 @@ func (c *Config) Validate() error {
 	if c.InhibitRulesFile != "" {
 		if _, err := os.Stat(c.InhibitRulesFile); err != nil {
 			return fmt.Errorf("--inhibit-rules-file=%q 文件不存在或不可访问: %w", c.InhibitRulesFile, err)
+		}
+	}
+	// P2-B4 task 270 日志采集推送校验：启用时 endpoint/files 必填，backend 必须合法。
+	// 启动期 fail-fast，避免运行期 LogPusher 构造失败导致采集不生效。
+	if c.LogPushEnabled {
+		if len(c.LogPushFiles) == 0 {
+			return fmt.Errorf("--log-push-enabled=true 但 --log-push-files 为空（需指定至少一个日志文件）")
+		}
+		if c.LogPushEndpoint == "" {
+			return fmt.Errorf("--log-push-enabled=true 但 --log-push-endpoint 为空（需指定 Loki/ES 推送地址）")
+		}
+		switch c.LogPushBackend {
+		case "loki", "es":
+		default:
+			return fmt.Errorf("非法 --log-push-backend=%q（应为 loki | es）", c.LogPushBackend)
 		}
 	}
 	return nil

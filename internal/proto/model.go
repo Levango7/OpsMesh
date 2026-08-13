@@ -274,3 +274,14 @@ type LogReport struct {
 	Lines       []LogLine `json:"lines"`       // 日志行批次
 	CollectedAt time.Time `json:"collectedAt"` // 本批次采集时刻
 }
+
+// LogPushConfig 日志推送配置（P2-B4 task 270：agent 从控制面或命令行获取）。
+// agent 据此构造 LogPusher，对 Files 列表中的文件尾随（tail -f）采集，
+// 按 Pattern 正则过滤后批量推送到 Endpoint（Loki /api/v1/push 或 ES /_bulk）。
+// Backend 取 "loki" | "es"，决定推送报文格式与 endpoint 路径拼接。
+type LogPushConfig struct {
+	Files    []string `json:"files"`    // 要采集的文件列表（绝对路径或相对 agent 工作目录）
+	Pattern  string   `json:"pattern"`  // 正则过滤（空=不过滤，全部推送）
+	Endpoint string   `json:"endpoint"` // 推送目标完整 URL（如 http://loki:3100/loki/api/v1/push）
+	Backend  string   `json:"backend"`  // 后端类型：loki | es
+}
