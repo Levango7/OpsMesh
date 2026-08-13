@@ -213,20 +213,20 @@ func TestParseQuery_NotOperator(t *testing.T) {
 
 func TestParseQuery_InvalidSyntax(t *testing.T) {
 	cases := []string{
-		"",                       // 空串
-		"   ",                    // 仅空白
-		"level",                  // 缺操作符
-		"level=",                 // 缺值
-		"=error",                 // 缺字段
-		"level=error AND",        // AND 后无表达式
-		"level=error OR",         // OR 后无表达式
-		"(level=error",           // 括号未闭合
-		"level=error)",           // 多余右括号
-		"foo=bar",                // 未知字段
-		`message="panic"`,        // message 用 = 不允许
-		`message!="panic"`,       // message 用 != 不允许
+		"",                               // 空串
+		"   ",                            // 仅空白
+		"level",                          // 缺操作符
+		"level=",                         // 缺值
+		"=error",                         // 缺字段
+		"level=error AND",                // AND 后无表达式
+		"level=error OR",                 // OR 后无表达式
+		"(level=error",                   // 括号未闭合
+		"level=error)",                   // 多余右括号
+		"foo=bar",                        // 未知字段
+		`message="panic"`,                // message 用 = 不允许
+		`message!="panic"`,               // message 用 != 不允许
 		"level=error AND AND level=warn", // 双 AND
-		"level~error AND",        // 末尾悬空
+		"level~error AND",                // 末尾悬空
 	}
 	for i, s := range cases {
 		_, err := ParseQuery(s)
@@ -266,9 +266,9 @@ func TestParseQuery_OperatorPrecedence(t *testing.T) {
 		e    Entry
 		want bool
 	}{
-		{mkEntry("warn", "dev-99", "", "", "", ""), true},   // warn 命中左分支
-		{mkEntry("error", "dev-1", "", "", "", ""), true},   // 右分支全命中
-		{mkEntry("error", "dev-2", "", "", "", ""), false},  // device 不匹配
+		{mkEntry("warn", "dev-99", "", "", "", ""), true},  // warn 命中左分支
+		{mkEntry("error", "dev-1", "", "", "", ""), true},  // 右分支全命中
+		{mkEntry("error", "dev-2", "", "", "", ""), false}, // device 不匹配
 		{mkEntry("info", "dev-1", "", "", "", ""), false},
 	}
 	for i, c := range cases {

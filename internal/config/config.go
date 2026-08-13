@@ -30,11 +30,11 @@ type Config struct {
 	ControlplaneEndpoints string
 	// M1-3 负载均衡策略：round-robin（轮询）| failover（主备切换，默认）。
 	// 单控制面地址时退化为始终用该地址（不破坏现有行为）。
-	LBStrategy string
-	Segment      string // agent 所属网段（U-02 分桶键）
-	HTTPPort     int    // 控制面 HTTP(B/S) 端口（约定 8080）
-	GRPCPort     int    // gRPC 端口（约定 9090，真实 gRPC 注册通道）
-	MetricsPort  int    // metrics 端口（约定 9091）
+	LBStrategy  string
+	Segment     string // agent 所属网段（U-02 分桶键）
+	HTTPPort    int    // 控制面 HTTP(B/S) 端口（约定 8080）
+	GRPCPort    int    // gRPC 端口（约定 9090，真实 gRPC 注册通道）
+	MetricsPort int    // metrics 端口（约定 9091）
 	// U-04 数据本地化：持久化后端选择。
 	Store       string // 持久化后端: memory（默认） | mysql
 	MySQLDSN    string // MySQL DSN（--store=mysql 时生效），如 user:pass@tcp(host:3306)/ops_device
@@ -128,7 +128,7 @@ type Config struct {
 	// 文件格式：{"channels": [{"type":"dingtalk","webhook_url":"...","secret":"..."}, ...]}
 	// 与现有 AlertWebhookURL/AlertEmail* 字段互补：M2-2 渠道由 notify.Notifier 统一调度，
 	// 旧字段走 notify.Channels.Push（向后兼容，不破坏现有逻辑）。
-	NotifyChannelsConfigFile string // M2-2 通知渠道 JSON 配置文件路径（空=不加载多渠道配置）
+	NotifyChannelsConfigFile string                // M2-2 通知渠道 JSON 配置文件路径（空=不加载多渠道配置）
 	NotifyChannels           []NotifyChannelConfig // M2-2 解析后的渠道配置列表（由配置文件加载）
 	// M2-2 通知去重 TTL（分钟）：相同消息在 TTL 内只发送一次。<=0 表示关闭去重。
 	NotifyDedupTTLMin int // M2-2 去重 TTL（分钟，默认 5；0=关闭）
@@ -280,7 +280,7 @@ type Config struct {
 	//     空（默认）=不校验（向后兼容，由调用方决定是否启用白名单）；
 	//     非空=autoProvision handler 扫描前校验目标 CIDR 必须完全落在白名单内，
 	//     防止运维误配置或攻击者构造请求扫描任意网段（如 169.254.169.254 元数据网段）。
-	WebhookAllowPrivate   bool   // 允许内网 webhook URL（SSRF 防护，默认 false）
+	WebhookAllowPrivate    bool   // 允许内网 webhook URL（SSRF 防护，默认 false）
 	ProvisionCIDRWhitelist string // autoProvision CIDR 白名单（逗号分隔，空=不限制）
 
 	// task 254 P2-3 告警抑制集成：告警抑制规则 JSON 文件路径。
@@ -465,75 +465,75 @@ func Load() *Config {
 	}
 
 	cfg := &Config{
-		Mode:                   val("mode", *mode, "OPSMESH_MODE"),
-		Addr:                   val("addr", *addr, "OPSMESH_ADDR"),
-		ControlAddr:            val("control-addr", *controlAddr, "OPSMESH_CONTROL_ADDR"),
-		ControlAddrs:           val("control-addrs", *controlAddrs, "OPSMESH_CONTROL_ADDRS"),
-		ControlplaneEndpoints:  val("controlplane-endpoints", *controlplaneEndpoints, "OPSMESH_CONTROLPLANE_ENDPOINTS"),
-		LBStrategy:             val("lb-strategy", *lbStrategy, "OPSMESH_LB_STRATEGY"),
-		Segment:                val("segment", *segment, "OPSMESH_SEGMENT"),
-		HTTPPort:               valInt("http-port", *httpPort, "OPSMESH_HTTP_PORT"),
-		GRPCPort:               valInt("grpc-port", *grpcPort, "OPSMESH_GRPC_PORT"),
-		MetricsPort:            valInt("metrics-port", *metricsPort, "OPSMESH_METRICS_PORT"),
-		Store:                  val("store", *store, "OPSMESH_STORE"),
-		MySQLDSN:               val("mysql-dsn", *mysqlDSN, "OPSMESH_MYSQL_DSN"),
-		RedisAddr:              val("redis-addr", *redisAddr, "OPSMESH_REDIS_ADDR"),
-		RequireAuth:            valBool("require-auth", *requireAuth, "OPSMESH_REQUIRE_AUTH"),
-		TaskTimeout:            valDur("task-timeout", *taskTimeout, "OPSMESH_TASK_TIMEOUT"),
-		ShutdownTimeout:        valDur("shutdown-timeout", *shutdownTimeout, "OPSMESH_SHUTDOWN_TIMEOUT"),
-		TLSCert:                val("tls-cert", *tlsCert, "OPSMESH_TLS_CERT"),
-		TLSKey:                 val("tls-key", *tlsKey, "OPSMESH_TLS_KEY"),
-		ClientCA:               val("client-ca", *clientCA, "OPSMESH_CLIENT_CA"),
-		Discover:               valBool("discover", *discover, "OPSMESH_DISCOVER"),
-		SegmentCIDR:            val("segment-cidr", *segmentCIDR, "OPSMESH_SEGMENT_CIDR"),
-		AutoProvision:          valBool("auto-provision", *autoProvision, "OPSMESH_AUTO_PROVISION"),
-		MaxProcs:               valInt("max-procs", *maxProcs, "OPSMESH_MAX_PROCS"),
-		MaxFiles:               valInt("max-files", *maxFiles, "OPSMESH_MAX_FILES"),
-		MaxMemoryMB:            valInt64("max-memory-mb", *maxMemoryMB, "OPSMESH_MAX_MEMORY_MB"),
-		WorkerConcurrency:      valInt("worker-concurrency", *workerConcurrency, "OPSMESH_WORKER_CONCURRENCY"),
-		EventBus:               val("event-bus", *eventBus, "OPSMESH_EVENT_BUS"),
-		KafkaBrokers:           val("kafka-brokers", *kafkaBrokers, "OPSMESH_KAFKA_BROKERS"),
-		KafkaTopic:             val("kafka-topic", *kafkaTopic, "OPSMESH_KAFKA_TOPIC"),
-		DataDir:                val("data-dir", *dataDir, "OPSMESH_DATA_DIR"),
-		Demo:                   valBool("demo", *demo, "OPSMESH_DEMO"),
-		InstallToken:           val("install-token", *installToken, "OPSMESH_INSTALL_TOKEN"),
-		TaskLeaseSec:           valInt("task-lease-sec", *taskLeaseSec, "OPSMESH_TASK_LEASE_SEC"),
-		Replicas:               valInt("replicas", *replicas, "OPSMESH_REPLICAS"),
-		Production:             valBool("production", *production, "OPSMESH_PRODUCTION"),
-		PublicRegister:         valBool("public-register", *publicRegister, "OPSMESH_PUBLIC_REGISTER"),
-		AllowPublicRegister:    valBool("allow-public-register", *allowPublicRegister, "OPSMESH_ALLOW_PUBLIC_REGISTER"),
-		TaskMaxRetries:         valInt("task-max-retries", *taskMaxRetries, "OPSMESH_TASK_MAX_RETRIES"),
-		LeaderTTLSec:           valInt("leader-ttl-sec", *leaderTTLSec, "OPSMESH_LEADER_TTL_SEC"),
-		LeaderTickSec:          valInt("leader-tick-sec", *leaderTickSec, "OPSMESH_LEADER_TICK_SEC"),
-		ArchiveAgeMin:          valInt("archive-age-min", *archiveAgeMin, "OPSMESH_ARCHIVE_AGE_MIN"),
-		ProvisionSecret:        val("provision-secret", *provisionSecret, "OPSMESH_PROVISION_SECRET"),
-		AdvertiseAddr:          val("advertise-addr", *advertiseAddr, "OPSMESH_ADVERTISE_ADDR"),
-		AlertWebhookURL:        val("alert-webhook-url", *alertWebhookURL, "OPSMESH_ALERT_WEBHOOK_URL"),
-		AlertNotifierType:      val("alert-notifier-type", *alertNotifierType, "OPSMESH_ALERT_NOTIFIER_TYPE"),
-		AlertEmailHost:         val("alert-email-host", *alertEmailHost, "OPSMESH_ALERT_EMAIL_HOST"),
-		AlertEmailPort:         valInt("alert-email-port", *alertEmailPort, "OPSMESH_ALERT_EMAIL_PORT"),
-		AlertEmailUser:         val("alert-email-user", *alertEmailUser, "OPSMESH_ALERT_EMAIL_USER"),
-		AlertEmailPass:         val("alert-email-pass", *alertEmailPass, "OPSMESH_ALERT_EMAIL_PASS"),
-		AlertEmailFrom:         val("alert-email-from", *alertEmailFrom, "OPSMESH_ALERT_EMAIL_FROM"),
-		AlertEmailTo:           val("alert-email-to", *alertEmailTo, "OPSMESH_ALERT_EMAIL_TO"),
+		Mode:                     val("mode", *mode, "OPSMESH_MODE"),
+		Addr:                     val("addr", *addr, "OPSMESH_ADDR"),
+		ControlAddr:              val("control-addr", *controlAddr, "OPSMESH_CONTROL_ADDR"),
+		ControlAddrs:             val("control-addrs", *controlAddrs, "OPSMESH_CONTROL_ADDRS"),
+		ControlplaneEndpoints:    val("controlplane-endpoints", *controlplaneEndpoints, "OPSMESH_CONTROLPLANE_ENDPOINTS"),
+		LBStrategy:               val("lb-strategy", *lbStrategy, "OPSMESH_LB_STRATEGY"),
+		Segment:                  val("segment", *segment, "OPSMESH_SEGMENT"),
+		HTTPPort:                 valInt("http-port", *httpPort, "OPSMESH_HTTP_PORT"),
+		GRPCPort:                 valInt("grpc-port", *grpcPort, "OPSMESH_GRPC_PORT"),
+		MetricsPort:              valInt("metrics-port", *metricsPort, "OPSMESH_METRICS_PORT"),
+		Store:                    val("store", *store, "OPSMESH_STORE"),
+		MySQLDSN:                 val("mysql-dsn", *mysqlDSN, "OPSMESH_MYSQL_DSN"),
+		RedisAddr:                val("redis-addr", *redisAddr, "OPSMESH_REDIS_ADDR"),
+		RequireAuth:              valBool("require-auth", *requireAuth, "OPSMESH_REQUIRE_AUTH"),
+		TaskTimeout:              valDur("task-timeout", *taskTimeout, "OPSMESH_TASK_TIMEOUT"),
+		ShutdownTimeout:          valDur("shutdown-timeout", *shutdownTimeout, "OPSMESH_SHUTDOWN_TIMEOUT"),
+		TLSCert:                  val("tls-cert", *tlsCert, "OPSMESH_TLS_CERT"),
+		TLSKey:                   val("tls-key", *tlsKey, "OPSMESH_TLS_KEY"),
+		ClientCA:                 val("client-ca", *clientCA, "OPSMESH_CLIENT_CA"),
+		Discover:                 valBool("discover", *discover, "OPSMESH_DISCOVER"),
+		SegmentCIDR:              val("segment-cidr", *segmentCIDR, "OPSMESH_SEGMENT_CIDR"),
+		AutoProvision:            valBool("auto-provision", *autoProvision, "OPSMESH_AUTO_PROVISION"),
+		MaxProcs:                 valInt("max-procs", *maxProcs, "OPSMESH_MAX_PROCS"),
+		MaxFiles:                 valInt("max-files", *maxFiles, "OPSMESH_MAX_FILES"),
+		MaxMemoryMB:              valInt64("max-memory-mb", *maxMemoryMB, "OPSMESH_MAX_MEMORY_MB"),
+		WorkerConcurrency:        valInt("worker-concurrency", *workerConcurrency, "OPSMESH_WORKER_CONCURRENCY"),
+		EventBus:                 val("event-bus", *eventBus, "OPSMESH_EVENT_BUS"),
+		KafkaBrokers:             val("kafka-brokers", *kafkaBrokers, "OPSMESH_KAFKA_BROKERS"),
+		KafkaTopic:               val("kafka-topic", *kafkaTopic, "OPSMESH_KAFKA_TOPIC"),
+		DataDir:                  val("data-dir", *dataDir, "OPSMESH_DATA_DIR"),
+		Demo:                     valBool("demo", *demo, "OPSMESH_DEMO"),
+		InstallToken:             val("install-token", *installToken, "OPSMESH_INSTALL_TOKEN"),
+		TaskLeaseSec:             valInt("task-lease-sec", *taskLeaseSec, "OPSMESH_TASK_LEASE_SEC"),
+		Replicas:                 valInt("replicas", *replicas, "OPSMESH_REPLICAS"),
+		Production:               valBool("production", *production, "OPSMESH_PRODUCTION"),
+		PublicRegister:           valBool("public-register", *publicRegister, "OPSMESH_PUBLIC_REGISTER"),
+		AllowPublicRegister:      valBool("allow-public-register", *allowPublicRegister, "OPSMESH_ALLOW_PUBLIC_REGISTER"),
+		TaskMaxRetries:           valInt("task-max-retries", *taskMaxRetries, "OPSMESH_TASK_MAX_RETRIES"),
+		LeaderTTLSec:             valInt("leader-ttl-sec", *leaderTTLSec, "OPSMESH_LEADER_TTL_SEC"),
+		LeaderTickSec:            valInt("leader-tick-sec", *leaderTickSec, "OPSMESH_LEADER_TICK_SEC"),
+		ArchiveAgeMin:            valInt("archive-age-min", *archiveAgeMin, "OPSMESH_ARCHIVE_AGE_MIN"),
+		ProvisionSecret:          val("provision-secret", *provisionSecret, "OPSMESH_PROVISION_SECRET"),
+		AdvertiseAddr:            val("advertise-addr", *advertiseAddr, "OPSMESH_ADVERTISE_ADDR"),
+		AlertWebhookURL:          val("alert-webhook-url", *alertWebhookURL, "OPSMESH_ALERT_WEBHOOK_URL"),
+		AlertNotifierType:        val("alert-notifier-type", *alertNotifierType, "OPSMESH_ALERT_NOTIFIER_TYPE"),
+		AlertEmailHost:           val("alert-email-host", *alertEmailHost, "OPSMESH_ALERT_EMAIL_HOST"),
+		AlertEmailPort:           valInt("alert-email-port", *alertEmailPort, "OPSMESH_ALERT_EMAIL_PORT"),
+		AlertEmailUser:           val("alert-email-user", *alertEmailUser, "OPSMESH_ALERT_EMAIL_USER"),
+		AlertEmailPass:           val("alert-email-pass", *alertEmailPass, "OPSMESH_ALERT_EMAIL_PASS"),
+		AlertEmailFrom:           val("alert-email-from", *alertEmailFrom, "OPSMESH_ALERT_EMAIL_FROM"),
+		AlertEmailTo:             val("alert-email-to", *alertEmailTo, "OPSMESH_ALERT_EMAIL_TO"),
 		NotifyChannelsConfigFile: val("notify-channels-config", *notifyChannelsConfig, "OPSMESH_NOTIFY_CHANNELS_CONFIG"),
 		NotifyDedupTTLMin:        valInt("notify-dedup-ttl-min", *notifyDedupTTLMin, "OPSMESH_NOTIFY_DEDUP_TTL_MIN"),
 		NotifyRetryMaxAttempts:   valInt("notify-retry-max-attempts", *notifyRetryMaxAttempts, "OPSMESH_NOTIFY_RETRY_MAX_ATTEMPTS"),
 		NotifyRetryInterval:      valDur("notify-retry-interval", *notifyRetryInterval, "OPSMESH_NOTIFY_RETRY_INTERVAL"),
 		NotifyRetryBackoff:       valFloat64("notify-retry-backoff", *notifyRetryBackoff, "OPSMESH_NOTIFY_RETRY_BACKOFF"),
-		ProvisionSSHUser:       val("provision-ssh-user", *provisionSSHUser, "OPSMESH_PROVISION_SSH_USER"),
-		ProvisionSSHKey:        val("provision-ssh-key", *provisionSSHKey, "OPSMESH_PROVISION_SSH_KEY"),
-		ProvisionSSHKP:         val("provision-ssh-key-pass", *provisionSSHKP, "OPSMESH_PROVISION_SSH_KEY_PASS"),
-		ProvisionSSHKnownHosts: val("provision-ssh-known-hosts", *provisionSSHKnownHosts, "OPSMESH_PROVISION_SSH_KNOWN_HOSTS"),
-		JWTPublicKey:           val("jwt-public-key", *jwtPublicKey, "OPSMESH_JWT_PUBLIC_KEY"),
-		JWTIssuer:              val("jwt-issuer", *jwtIssuer, "OPSMESH_JWT_ISSUER"),
-		JWTSecret:              val("jwt-secret", *jwtSecret, "OPSMESH_JWT_SECRET"),
-		EncryptionKey:          val("encryption-key", *encryptionKey, "OPSMESH_ENCRYPTION_KEY"),
-		LogStore:               val("log-store", *logStore, "OPSMESH_LOG_STORE"),
-		LogBackend:             val("log-backend", *logBackend, "OPSMESH_LOG_BACKEND"),
-		LokiEndpoint:           val("loki-endpoint", *lokiEndpoint, "OPSMESH_LOKI_ENDPOINT"),
-		ESEndpoint:             val("es-endpoint", *esEndpoint, "OPSMESH_ES_ENDPOINT"),
-		ESIndex:                val("es-index", *esIndex, "OPSMESH_ES_INDEX"),
+		ProvisionSSHUser:         val("provision-ssh-user", *provisionSSHUser, "OPSMESH_PROVISION_SSH_USER"),
+		ProvisionSSHKey:          val("provision-ssh-key", *provisionSSHKey, "OPSMESH_PROVISION_SSH_KEY"),
+		ProvisionSSHKP:           val("provision-ssh-key-pass", *provisionSSHKP, "OPSMESH_PROVISION_SSH_KEY_PASS"),
+		ProvisionSSHKnownHosts:   val("provision-ssh-known-hosts", *provisionSSHKnownHosts, "OPSMESH_PROVISION_SSH_KNOWN_HOSTS"),
+		JWTPublicKey:             val("jwt-public-key", *jwtPublicKey, "OPSMESH_JWT_PUBLIC_KEY"),
+		JWTIssuer:                val("jwt-issuer", *jwtIssuer, "OPSMESH_JWT_ISSUER"),
+		JWTSecret:                val("jwt-secret", *jwtSecret, "OPSMESH_JWT_SECRET"),
+		EncryptionKey:            val("encryption-key", *encryptionKey, "OPSMESH_ENCRYPTION_KEY"),
+		LogStore:                 val("log-store", *logStore, "OPSMESH_LOG_STORE"),
+		LogBackend:               val("log-backend", *logBackend, "OPSMESH_LOG_BACKEND"),
+		LokiEndpoint:             val("loki-endpoint", *lokiEndpoint, "OPSMESH_LOKI_ENDPOINT"),
+		ESEndpoint:               val("es-endpoint", *esEndpoint, "OPSMESH_ES_ENDPOINT"),
+		ESIndex:                  val("es-index", *esIndex, "OPSMESH_ES_INDEX"),
 
 		MultiSchema:            valBool("multi-schema", *multiSchema, "OPSMESH_MULTI_SCHEMA"),
 		SchemaPrefix:           val("schema-prefix", *schemaPrefix, "OPSMESH_SCHEMA_PREFIX"),

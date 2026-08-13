@@ -156,11 +156,11 @@ func TestMemoryQuery_InvalidQReturnsError(t *testing.T) {
 	seedForQ(t, ls)
 
 	cases := []string{
-		"level=",       // 缺值
-		"foo=bar",      // 未知字段
+		"level=",          // 缺值
+		"foo=bar",         // 未知字段
 		"level=error AND", // AND 后无表达式
-		"(level=error", // 括号未闭合
-		`message="x"`,  // message 用 = 不允许
+		"(level=error",    // 括号未闭合
+		`message="x"`,     // message 用 = 不允许
 	}
 	for _, q := range cases {
 		_, err := ls.Query(ctx, Query{TenantID: "t1", Q: q})
@@ -310,8 +310,8 @@ func TestHandler_QueryParamInvalidReturns400(t *testing.T) {
 	seedForQ(t, ls)
 
 	cases := []string{
-		"q=level%3D",          // level=
-		"q=foo%3Dbar",         // 未知字段
+		"q=level%3D",            // level=
+		"q=foo%3Dbar",           // 未知字段
 		"q=level%3Derror%20AND", // AND 后无表达式
 	}
 	for _, c := range cases {

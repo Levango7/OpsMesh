@@ -3,6 +3,7 @@ package orchestration
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -37,6 +38,18 @@ func (s *SQLWorkflowStore) initSchema(ctx context.Context) error {
 			updated_at DATETIME
 		)`); err != nil {
 		return fmt.Errorf("建 workflow_defs 表失败: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS workflow_runs (
+			id BIGINT AUTO_INCREMENT PRIMARY KEY,
+			workflow_id BIGINT NOT NULL,
+			tenant_id VARCHAR(64) NOT NULL,
+			started_at DATETIME NOT NULL,
+			finished_at DATETIME,
+			status VARCHAR(16) NOT NULL,
+			node_states MEDIUMTEXT
+		)`); err != nil {
+		return fmt.Errorf("建 workflow_runs 表失败: %w", err)
 	}
 	return nil
 }
@@ -178,4 +191,82 @@ func nullTime(t time.Time) interface{} {
 		return nil
 	}
 	return t
+}
+
+// CreateRun 创建一条工作流运行记录（MySQL 后端）。NodeStates 序列化为 JSON 存入 node_states 列。
+func (s *SQLWorkflowStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
+	if run.StartedAt.IsZero() {
+		run.StartedAt = time.Now()
+	}
+	if run.Status == "" {
+		run.Status = StatusRunning
+	}
+	statesJSON, err := json.Marshal(run.NodeStates)
+	if err != nil {
+		return fmt.Errorf("WorkflowStore.CreateRun marshal nodeStates: %w", err)
+	}
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO workflow_runs (workflow_id, tenant_id, started_at, finished_at, status, node_states)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		run.WorkflowID, run.TenantID, run.StartedAt, nullTime(run.FinishedAt), run.Status, string(statesJSON))
+	if err != nil {
+		return fmt.Errorf("WorkflowStore.CreateRun: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	run.ID = id
+	return nil
+}
+
+// ListRuns 列出指定工作流的运行历史（按 ID 升序），支持租户隔离（MySQL 后端）。
+func (s *SQLWorkflowStore) ListRuns(ctx context.Context, workflowID int64, tenantID string) ([]WorkflowRun, error) {
+	q := `SELECT id, workflow_id, tenant_id, started_at, finished_at, status, node_states FROM workflow_runs WHERE workflow_id=?`
+	args := []interface{}{workflowID}
+	if tenantID != "" {
+		q += ` AND tenant_id=?`
+		args = append(args, tenantID)
+	}
+	q += ` ORDER BY id`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("WorkflowStore.ListRuns: %w", err)
+	}
+	defer rows.Close()
+	var out []WorkflowRun
+	for rows.Next() {
+		var r WorkflowRun
+		var finishedAt sql.NullTime
+		var nodeStates sql.NullString
+		if err := rows.Scan(&r.ID, &r.WorkflowID, &r.TenantID, &r.StartedAt, &finishedAt, &r.Status, &nodeStates); err != nil {
+			return nil, fmt.Errorf("WorkflowStore.ListRuns scan: %w", err)
+		}
+		if finishedAt.Valid {
+			r.FinishedAt = finishedAt.Time
+		}
+		if nodeStates.Valid && nodeStates.String != "" {
+			if err := json.Unmarshal([]byte(nodeStates.String), &r.NodeStates); err != nil {
+				return nil, fmt.Errorf("WorkflowStore.ListRuns unmarshal nodeStates: %w", err)
+			}
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// UpdateRun 更新一条已存在的工作流运行记录（MySQL 后端）。不存在时返回 ErrWFNotFound。
+func (s *SQLWorkflowStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
+	statesJSON, err := json.Marshal(run.NodeStates)
+	if err != nil {
+		return fmt.Errorf("WorkflowStore.UpdateRun marshal nodeStates: %w", err)
+	}
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE workflow_runs SET started_at=?, finished_at=?, status=?, node_states=? WHERE id=?`,
+		run.StartedAt, nullTime(run.FinishedAt), run.Status, string(statesJSON), run.ID)
+	if err != nil {
+		return fmt.Errorf("WorkflowStore.UpdateRun: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrWFNotFound
+	}
+	return nil
 }

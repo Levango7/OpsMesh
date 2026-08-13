@@ -401,6 +401,9 @@ func (s *SQLStore) applyLegacyColumnFixups(ctx context.Context) {
 	s.alterColumnIfMissing(ctx, "tasks", "retry_count", "INT DEFAULT 0")
 	s.alterColumnIfMissing(ctx, "tasks", "max_retries", "INT DEFAULT 0")
 	s.alterColumnIfMissing(ctx, "tasks", "dead_letter", "BOOLEAN DEFAULT 0")
+	// P2-B2 节点级超时与重试（任务 261）：tasks 表增加 timeout / retry_delay 列。
+	s.alterColumnIfMissing(ctx, "tasks", "timeout", "INT DEFAULT 0")
+	s.alterColumnIfMissing(ctx, "tasks", "retry_delay", "INT DEFAULT 0")
 	s.alterColumnIfMissing(ctx, "tasks", "schedule", "VARCHAR(64)")
 	s.alterColumnIfMissing(ctx, "tasks", "parent_id", "VARCHAR(64)")
 	s.alterColumnIfMissing(ctx, "tasks", "last_fired_at", "DATETIME")

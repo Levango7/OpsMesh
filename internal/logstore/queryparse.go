@@ -1,4 +1,3 @@
-
 // Package logstore: queryparse.go 提供 KQL/Lucene 风格的日志查询语法解析器。
 //
 // 支持的语法示例：
@@ -186,10 +185,10 @@ func ApplyQuery(entries []Entry, q QueryNode) []Entry {
 type tokenKind int
 
 const (
-	tokEOF tokenKind = iota
-	tokIdent   // 字段名 / 值（不带引号）
-	tokString  // 带引号字符串
-	tokOp      // 操作符 = != ~ !~
+	tokEOF    tokenKind = iota
+	tokIdent            // 字段名 / 值（不带引号）
+	tokString           // 带引号字符串
+	tokOp               // 操作符 = != ~ !~
 	tokAnd
 	tokOr
 	tokNot

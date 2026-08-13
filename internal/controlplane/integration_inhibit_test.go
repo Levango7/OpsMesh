@@ -101,15 +101,15 @@ func newInhibitTestServer(t *testing.T, inhibitor *alertengine.AlertInhibitor) *
 	t.Helper()
 	st := store.NewMemoryStore().WithDemo(true)
 	s := &Server{
-		store:          st,
-		cfg:            &config.Config{Demo: true},
-		requireAuth:    false,
-		eventSubs:      make(map[chan SSEEvent]struct{}),
-		alertEngine:    alertengine.NewEngine(nil, nil, nil),
-		alertSilencer:  alertengine.NewSilencer(nil),
+		store:           st,
+		cfg:             &config.Config{Demo: true},
+		requireAuth:     false,
+		eventSubs:       make(map[chan SSEEvent]struct{}),
+		alertEngine:     alertengine.NewEngine(nil, nil, nil),
+		alertSilencer:   alertengine.NewSilencer(nil),
 		alertAggregator: alertengine.NewAggregator([]string{"deviceID", "severity"}, 100),
-		alertNotifier:  notify.NewNotifier(notify.WithDedup(5 * time.Minute)),
-		alertInhibitor: inhibitor,
+		alertNotifier:   notify.NewNotifier(notify.WithDedup(5 * time.Minute)),
+		alertInhibitor:  inhibitor,
 	}
 	return s
 }
@@ -447,15 +447,15 @@ func TestNewServer_InhibitRulesFileLoading(t *testing.T) {
 
 	// 构造 config（demo 模式，避免生产校验）
 	cfg := &config.Config{
-		Mode:              "controlplane",
-		HTTPPort:          8080,
-		GRPCPort:          9090,
-		MetricsPort:       9091,
-		Store:             "memory",
-		Demo:              true,
-		InhibitRulesFile:  path,
-		TaskLeaseSec:      300,
-		LogBackend:        "memory",
+		Mode:             "controlplane",
+		HTTPPort:         8080,
+		GRPCPort:         9090,
+		MetricsPort:      9091,
+		Store:            "memory",
+		Demo:             true,
+		InhibitRulesFile: path,
+		TaskLeaseSec:     300,
+		LogBackend:       "memory",
 	}
 
 	// 验证 Validate 通过（文件存在）
@@ -494,15 +494,15 @@ func TestNewServer_InhibitRulesFileLoading(t *testing.T) {
 // TestNewServer_NoInhibitRulesFile 验证 InhibitRulesFile 为空时 alertInhibitor 为 nil（向后兼容）。
 func TestNewServer_NoInhibitRulesFile(t *testing.T) {
 	cfg := &config.Config{
-		Mode:              "controlplane",
-		HTTPPort:          8080,
-		GRPCPort:          9090,
-		MetricsPort:       9091,
-		Store:             "memory",
-		Demo:              true,
-		InhibitRulesFile:  "", // 空=不启用
-		TaskLeaseSec:      300,
-		LogBackend:        "memory",
+		Mode:             "controlplane",
+		HTTPPort:         8080,
+		GRPCPort:         9090,
+		MetricsPort:      9091,
+		Store:            "memory",
+		Demo:             true,
+		InhibitRulesFile: "", // 空=不启用
+		TaskLeaseSec:     300,
+		LogBackend:       "memory",
 	}
 
 	s := NewServer(cfg)

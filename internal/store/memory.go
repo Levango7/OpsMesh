@@ -697,6 +697,8 @@ func (m *MemoryStore) FireDueSchedules(now time.Time) int {
 				Status:     "pending",
 				ParentID:   t.TaskID,
 				MaxRetries: t.MaxRetries,
+				Timeout:    t.Timeout,    // P2-B2 继承模板的节点级超时
+				RetryDelay: t.RetryDelay, // P2-B2 继承模板的重试间隔
 				CreatedAt:  now,
 			}
 			m.seq++

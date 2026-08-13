@@ -59,7 +59,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     schedule VARCHAR(64),
     parent_id VARCHAR(64),
     last_fired_at DATETIME,
-    depends_on TEXT
+    depends_on TEXT,
+    timeout INT DEFAULT 0,
+    retry_delay INT DEFAULT 0
 );
 
 -- task_results：任务执行结果

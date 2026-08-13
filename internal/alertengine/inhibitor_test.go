@@ -43,7 +43,7 @@ type fakeClock struct {
 	t time.Time
 }
 
-func (f *fakeClock) now() time.Time { return f.t }
+func (f *fakeClock) now() time.Time          { return f.t }
 func (f *fakeClock) advance(d time.Duration) { f.t = f.t.Add(d) }
 
 // ============================================================================

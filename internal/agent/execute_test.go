@@ -84,3 +84,29 @@ func TestExecute_Service(t *testing.T) {
 		t.Fatal("result 应携带 TaskID")
 	}
 }
+
+// TestTaskTimeoutFor 验证 P2-B2 节点级超时（任务 261）：
+//   - 任务 Timeout>0 时覆盖全局 taskTimeout；
+//   - Timeout=0 时回退全局 taskTimeout（向后兼容）。
+func TestTaskTimeoutFor(t *testing.T) {
+	global := 30 * time.Second
+	cases := []struct {
+		name   string
+		taskTO int
+		want   time.Duration
+	}{
+		{"task_timeout_overrides_global", 10, 10 * time.Second},
+		{"task_zero_falls_back_global", 0, global},
+		{"task_large_timeout", 3600, 3600 * time.Second},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tk := proto.Task{Timeout: c.taskTO}
+			got := taskTimeoutFor(tk, global)
+			if got != c.want {
+				t.Errorf("taskTimeoutFor(Timeout=%d, global=%v) = %v, want %v",
+					c.taskTO, global, got, c.want)
+			}
+		})
+	}
+}

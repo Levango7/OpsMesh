@@ -156,6 +156,12 @@ type Task struct {
 	RetryCount int  `json:"retryCount"`
 	MaxRetries int  `json:"maxRetries"`
 	DeadLetter bool `json:"deadLetter"` // 重试耗尽后置 true，表示进入死信（需人工处置）
+	// P2-B2 节点级超时与重试（任务 261）：
+	//   - Timeout 任务超时（秒，0=不超时）。agent 端按此强制终止超时任务，覆盖全局 taskTimeout。
+	//   - RetryDelay 两次重试之间的等待间隔（秒，0=立即重试）。store SubmitResult 失败重试时记录，
+	//     控制面调度器扫描到期的 pending 任务重新入队（避免失败后立即重试造成雪崩）。
+	Timeout    int `json:"timeout,omitempty"`
+	RetryDelay int `json:"retryDelay,omitempty"`
 	// F3 任务取消：控制面 CancelTask 置 cancelled，未起动的 pending 不会被执行。
 	// F4 定时/周期调度：Schedule 为 5 字段 cron 表达式（空=不调度），派生实例写 ParentID + LastFiredAt。
 	Schedule    string    `json:"schedule"`
@@ -261,10 +267,10 @@ type LogLine struct {
 // 控制面校验 agent 身份（HMAC 签名）后按 agent 归属租户落库（行级隔离，agent 不可伪造租户）。
 // TenantID 由控制面按 agent 注册时盖章回填（agent 自报不信任），agent 端可留空。
 type LogReport struct {
-	AgentID     string    `json:"agentID"`              // 上报 agent 的 ID（控制面据此查归属租户）
-	TenantID    string    `json:"tenantID"`             // 留空：控制面按 agent 归属回填（agent 不可伪造）
-	Hostname    string    `json:"hostname"`             // agent 主机名（便于检索展示）
-	LogName     string    `json:"logName"`              // 日志文件名/标识（如 /var/log/syslog）
-	Lines       []LogLine `json:"lines"`                // 日志行批次
-	CollectedAt time.Time `json:"collectedAt"`          // 本批次采集时刻
+	AgentID     string    `json:"agentID"`     // 上报 agent 的 ID（控制面据此查归属租户）
+	TenantID    string    `json:"tenantID"`    // 留空：控制面按 agent 归属回填（agent 不可伪造）
+	Hostname    string    `json:"hostname"`    // agent 主机名（便于检索展示）
+	LogName     string    `json:"logName"`     // 日志文件名/标识（如 /var/log/syslog）
+	Lines       []LogLine `json:"lines"`       // 日志行批次
+	CollectedAt time.Time `json:"collectedAt"` // 本批次采集时刻
 }

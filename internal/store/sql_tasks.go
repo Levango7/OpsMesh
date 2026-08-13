@@ -437,12 +437,14 @@ func (s *SQLStore) CreateTask(t *proto.Task) *proto.Task {
 		t.CreatedAt = time.Now().UTC()
 	}
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO tasks (task_id, agent_id, tenant_id, type, command, content, path, status, retry_count, max_retries, dead_letter, schedule, parent_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO tasks (task_id, agent_id, tenant_id, type, command, content, path, status, retry_count, max_retries, dead_letter, schedule, parent_id, created_at, timeout, retry_delay)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE type=VALUES(type), command=VALUES(command), content=VALUES(content),
-		   path=VALUES(path), status=VALUES(status), schedule=VALUES(schedule), parent_id=VALUES(parent_id), max_retries=VALUES(max_retries)`,
+		   path=VALUES(path), status=VALUES(status), schedule=VALUES(schedule), parent_id=VALUES(parent_id),
+		   max_retries=VALUES(max_retries), timeout=VALUES(timeout), retry_delay=VALUES(retry_delay)`,
 		t.TaskID, t.AgentID, t.TenantID, t.Type, t.Command, t.Content, t.Path, t.Status,
-		t.RetryCount, t.MaxRetries, t.DeadLetter, t.Schedule, t.ParentID, t.CreatedAt); err != nil {
+		t.RetryCount, t.MaxRetries, t.DeadLetter, t.Schedule, t.ParentID, t.CreatedAt,
+		t.Timeout, t.RetryDelay); err != nil {
 		log.Printf("[store] CreateTask 失败 %s: %v", t.TaskID, err)
 	}
 	s.publish(events.Event{Action: "create_task", Target: t.TaskID, TenantID: t.TenantID, Detail: t.Command, Level: events.LevelInfo})
@@ -467,10 +469,11 @@ func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 	var tenantID, content, path sql.NullString
 	var createdAt time.Time
 	var claimEpoch int64
+	var timeout, retryDelay int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT task_id, tenant_id, type, command, content, path, created_at, claim_epoch FROM tasks
+		`SELECT task_id, tenant_id, type, command, content, path, created_at, claim_epoch, timeout, retry_delay FROM tasks
 		 WHERE agent_id=? AND (status IS NULL OR status='pending') AND (schedule IS NULL OR schedule='') ORDER BY created_at LIMIT 1 FOR UPDATE`,
-		agentID).Scan(&taskID, &tenantID, &typ, &command, &content, &path, &createdAt, &claimEpoch); err != nil {
+		agentID).Scan(&taskID, &tenantID, &typ, &command, &content, &path, &createdAt, &claimEpoch, &timeout, &retryDelay); err != nil {
 		if err == sql.ErrNoRows {
 			return nil
 		}
@@ -492,6 +495,8 @@ func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 		Content: content.String, Path: path.String,
 		Status: "running", CreatedAt: createdAt, ClaimedBy: "controlplane", ClaimedAt: time.Now().UTC(),
 		ClaimEpoch: claimEpoch + 1,
+		Timeout:    timeout,    // P2-B2 节点级超时（agent 端按此强制终止，0=用全局 taskTimeout）
+		RetryDelay: retryDelay, // P2-B2 重试间隔（供 agent 端日志/上下文展示）
 	}
 }
 
@@ -554,7 +559,7 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 	// FOR UPDATE 锁模板行：并发事务串行化，先到者更新 last_fired_at 后，
 	// 后到者重新读到 last_fired_at >= minuteStart 跳过，避免重复派生。
 	rows, err := tx.QueryContext(ctx,
-		`SELECT task_id, agent_id, tenant_id, type, command, content, path, max_retries, schedule, last_fired_at
+		`SELECT task_id, agent_id, tenant_id, type, command, content, path, max_retries, schedule, last_fired_at, timeout, retry_delay
 		 FROM tasks WHERE (parent_id IS NULL OR parent_id='') AND schedule <> '' AND (status IS NULL OR status='pending')
 		 FOR UPDATE`)
 	if err != nil {
@@ -563,14 +568,14 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 	}
 	type tpl struct {
 		id, agentID, tenantID, typ, command, content, path, schedule string
-		maxRetries                                                   int
+		maxRetries, timeout, retryDelay                              int
 		lastFiredAt                                                  time.Time
 	}
 	due := make([]tpl, 0)
 	for rows.Next() {
 		var tp tpl
 		var lf sql.NullTime
-		if err := rows.Scan(&tp.id, &tp.agentID, &tp.tenantID, &tp.typ, &tp.command, &tp.content, &tp.path, &tp.maxRetries, &tp.schedule, &lf); err != nil {
+		if err := rows.Scan(&tp.id, &tp.agentID, &tp.tenantID, &tp.typ, &tp.command, &tp.content, &tp.path, &tp.maxRetries, &tp.schedule, &lf, &tp.timeout, &tp.retryDelay); err != nil {
 			log.Printf("[store] FireDueSchedules 扫描失败: %v", err)
 			continue
 		}
@@ -592,9 +597,9 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 	for _, tp := range due {
 		instID := fmt.Sprintf("task-%d-%s", now.UnixNano(), tp.id)
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO tasks (task_id, agent_id, tenant_id, type, command, content, path, status, retry_count, max_retries, schedule, parent_id, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, '', ?, ?)`,
-			instID, tp.agentID, tp.tenantID, tp.typ, tp.command, tp.content, tp.path, tp.maxRetries, tp.id, now.UTC()); err != nil {
+			`INSERT INTO tasks (task_id, agent_id, tenant_id, type, command, content, path, status, retry_count, max_retries, schedule, parent_id, created_at, timeout, retry_delay)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, '', ?, ?, ?, ?)`,
+			instID, tp.agentID, tp.tenantID, tp.typ, tp.command, tp.content, tp.path, tp.maxRetries, tp.id, now.UTC(), tp.timeout, tp.retryDelay); err != nil {
 			log.Printf("[store] FireDueSchedules 派生实例失败 %s: %v", instID, err)
 			continue
 		}
