@@ -377,6 +377,15 @@ func (c *GRPCClient) PollCancels(ctx context.Context, agentID string) ([]string,
 	return resp.CancelledTaskIDs, nil
 }
 
+// ReportLogs task 247：通过 gRPC ReportLogs 方法上报采集的日志批次到控制面。
+// 控制面校验 HMAC 签名后按 agent 归属租户落库（行级隔离）。report.AgentID 为签名身份。
+func (c *GRPCClient) ReportLogs(ctx context.Context, report *proto.LogReport) error {
+	resp := &grpcx.Empty{}
+	req := &grpcx.ReportLogsReq{Report: *report}
+	ctx = c.signContext(ctx, report.AgentID) // task 81：附加 HMAC 签名
+	return c.invoke(ctx, "/opsmesh.v1.Registration/ReportLogs", req, resp)
+}
+
 // Close B-4 连接复用：关闭所有缓存的长连接。agent shutdown 时由 agent.go 调用。
 func (c *GRPCClient) Close() error {
 	c.mu.Lock()

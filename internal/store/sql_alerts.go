@@ -20,16 +20,18 @@ import (
 func scanAlertRule(row rowScanner) *AlertRule {
 	var r AlertRule
 	var createdAt time.Time
+	var createdBy sql.NullString
 	if err := row.Scan(&r.ID, &r.TenantID, &r.Metric, &r.Op, &r.Threshold,
-		&r.ForDuration, &r.Severity, &r.Message, &r.Enabled, &createdAt); err != nil {
+		&r.ForDuration, &r.Severity, &r.Message, &r.Enabled, &createdAt, &createdBy); err != nil {
 		return nil
 	}
 	r.CreatedAt = createdAt
+	r.CreatedBy = createdBy.String
 	return &r
 }
 
-// alertRuleColumns alert_rules 表查询的列列表。
-const alertRuleColumns = `id, tenant_id, metric, op, threshold, for_duration, severity, message, enabled, created_at`
+// alertRuleColumns alert_rules 表查询的列列表（含 created_by，task 246 M2 持久化）。
+const alertRuleColumns = `id, tenant_id, metric, op, threshold, for_duration, severity, message, enabled, created_at, created_by`
 
 // CreateAlertRule 创建告警规则（task 100）：ID 为空时由 store 分配随机 ID；
 // TenantID 为空时归一为 default。返回持久化后的规则（含分配的 ID）。
@@ -49,13 +51,13 @@ func (s *SQLStore) CreateAlertRule(r *AlertRule) *AlertRule {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO alert_rules (id, tenant_id, metric, op, threshold, for_duration, severity, message, enabled, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO alert_rules (id, tenant_id, metric, op, threshold, for_duration, severity, message, enabled, created_at, created_by)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), metric=VALUES(metric), op=VALUES(op),
 		   threshold=VALUES(threshold), for_duration=VALUES(for_duration), severity=VALUES(severity),
-		   message=VALUES(message), enabled=VALUES(enabled)`,
+		   message=VALUES(message), enabled=VALUES(enabled), created_by=VALUES(created_by)`,
 		r.ID, r.TenantID, r.Metric, r.Op, r.Threshold, r.ForDuration, r.Severity, r.Message,
-		boolToInt(r.Enabled), r.CreatedAt); err != nil {
+		boolToInt(r.Enabled), r.CreatedAt, nullString(r.CreatedBy)); err != nil {
 		log.Printf("[store] CreateAlertRule 失败: %v", err)
 		return nil
 	}

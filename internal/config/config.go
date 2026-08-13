@@ -269,6 +269,19 @@ type Config struct {
 	CBRecoveryTimeout  time.Duration // 熔断后等待时间（默认 30s）
 	CBHalfOpenMaxCalls int           // 半开状态最大探测调用数（默认 1）
 	CBRateLimitPerSec  int           // 控制面 API 限流阈值（每秒每 IP/tenant；0=禁用）
+
+	// task 248 SSRF 防护：
+	//   - WebhookAllowPrivate：是否允许 webhook URL 指向内网地址（私网/loopback/链路本地）。
+	//     默认 false（安全基线，拒绝内网 webhook，防 SSRF 攻击云元数据/内网服务）；
+	//     true=放行内网 webhook（用于内网部署场景，如钉钉/飞书内网网关）。
+	//     仅影响通知渠道 CRUD（createNotifyChannel/updateNotifyChannel）保存前校验，
+	//     不影响启动期 AlertWebhookURL 校验（后者恒拒私网，由 validateURLSSRF 控制）。
+	//   - ProvisionCIDRWhitelist：autoProvision 扫描网段白名单（逗号分隔的 CIDR 列表）。
+	//     空（默认）=不校验（向后兼容，由调用方决定是否启用白名单）；
+	//     非空=autoProvision handler 扫描前校验目标 CIDR 必须完全落在白名单内，
+	//     防止运维误配置或攻击者构造请求扫描任意网段（如 169.254.169.254 元数据网段）。
+	WebhookAllowPrivate   bool   // 允许内网 webhook URL（SSRF 防护，默认 false）
+	ProvisionCIDRWhitelist string // autoProvision CIDR 白名单（逗号分隔，空=不限制）
 }
 
 // Load 解析 flag 并用环境变量兜底，返回 *Config。
@@ -393,6 +406,9 @@ func Load() *Config {
 	cbRecoveryTimeout := flag.Duration("cb-recovery-timeout", 30*time.Second, "M1-2 熔断器：熔断后等待多久才进入 HalfOpen 半开探测；或 env OPSMESH_CB_RECOVERY_TIMEOUT")
 	cbHalfOpenMaxCalls := flag.Int("cb-half-open-max-calls", 1, "M1-2 熔断器：HalfOpen 状态下允许的最大并发探测调用数；或 env OPSMESH_CB_HALF_OPEN_MAX_CALLS")
 	cbRateLimitPerSec := flag.Int("cb-rate-limit-per-sec", 0, "M1-2 控制面 API 限流阈值：每秒每 IP/tenant 最大请求数；0=禁用 API 限流（向后兼容）；或 env OPSMESH_CB_RATE_LIMIT_PER_SEC")
+	// task 248 SSRF 防护配置。
+	webhookAllowPrivate := flag.Bool("webhook-allow-private", false, "task 248 SSRF 防护：允许内网 webhook URL（私网/loopback/链路本地）；默认 false=拒绝内网 webhook（安全基线，防 SSRF 访问云元数据/内网服务）；true=放行内网 webhook（内网部署场景，如钉钉/飞书内网网关）；或 env OPSMESH_WEBHOOK_ALLOW_PRIVATE")
+	provisionCidrWhitelist := flag.String("provision-cidr-whitelist", "", "task 248 SSRF 防护：autoProvision 扫描网段白名单（逗号分隔的 CIDR 列表，如 10.30.0.0/24,10.31.0.0/24）；空=不校验（向后兼容）；非空=扫描前校验目标 CIDR 必须完全落在白名单内，防扫描任意网段；或 env OPSMESH_PROVISION_CIDR_WHITELIST")
 	flag.Parse()
 
 	// 记录被显式设置的 flag，用于"flag 优先、env 兜底"的正确语义（P1-8 修复：原实现 env 会覆盖显式 flag）。
@@ -533,6 +549,8 @@ func Load() *Config {
 		CBRecoveryTimeout:      valDur("cb-recovery-timeout", *cbRecoveryTimeout, "OPSMESH_CB_RECOVERY_TIMEOUT"),
 		CBHalfOpenMaxCalls:     valInt("cb-half-open-max-calls", *cbHalfOpenMaxCalls, "OPSMESH_CB_HALF_OPEN_MAX_CALLS"),
 		CBRateLimitPerSec:      valInt("cb-rate-limit-per-sec", *cbRateLimitPerSec, "OPSMESH_CB_RATE_LIMIT_PER_SEC"),
+		WebhookAllowPrivate:    valBool("webhook-allow-private", *webhookAllowPrivate, "OPSMESH_WEBHOOK_ALLOW_PRIVATE"),
+		ProvisionCIDRWhitelist: val("provision-cidr-whitelist", *provisionCidrWhitelist, "OPSMESH_PROVISION_CIDR_WHITELIST"),
 	}
 	// task 97 --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
 	// 使现有 LogBackend 校验/路由逻辑无缝复用；最终 LogStore 与 LogBackend 保持同值。
@@ -858,6 +876,20 @@ func (c *Config) Validate() error {
 			}
 		default:
 			return fmt.Errorf("notify-channels[%d] 非法 type=%q（应为 dingtalk/wechat/feishu/slack/email）", i, ch.Type)
+		}
+	}
+	// task 248 SSRF 防护：autoProvision CIDR 白名单格式校验（每项必须是合法 CIDR）。
+	// 启动期 fail-fast，避免运行期 autoProvision handler 才发现白名单配置错误。
+	// 空白名单不校验（向后兼容）。
+	if c.ProvisionCIDRWhitelist != "" {
+		for _, item := range strings.Split(c.ProvisionCIDRWhitelist, ",") {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			if _, _, err := net.ParseCIDR(item); err != nil {
+				return fmt.Errorf("非法 --provision-cidr-whitelist 项 %q: %w", item, err)
+			}
 		}
 	}
 	return nil

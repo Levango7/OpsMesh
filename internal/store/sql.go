@@ -21,6 +21,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"opsmesh/internal/events"
+	"opsmesh/internal/proto"
 )
 
 //go:embed migrations/*.sql
@@ -58,12 +59,12 @@ type SQLStore struct {
 	// 权威存储在 agents.secret 列；此处仅缓存已查询过的 agent 密钥（首次查询后填充）。
 	agentSecretCache map[string]string
 
-	// task 241 M2 集成：静默规则 / 通知渠道 / 通知模板 内存缓存。
-	// 权威存储在 MySQL（后续 migration）；当前用内存 map 实现 API 闭环，多副本 HA 下数据分裂
-	// 由后续 migration 解决（与 alertRules 同范式 TODO）。
-	silences        map[string]*SilenceRule
-	notifyChannels  map[string]*NotifyChannel
-	notifyTemplates map[string]*NotifyTemplate
+	// task 247 agent 日志上报：已落库的 LogReport 批次列表（内存暂存）。
+	// agent 上报日志的高频写入不宜直接落 MySQL（每 30s/agent 一次写），
+	// 检索侧由 logstore.SQLLogStore 走独立表/连接池承担；此处仅承接上报并暂存供 API 查询。
+	// 由 s.mu 保护并发安全。
+	agentLogs []proto.LogReport
+
 }
 
 func (s *SQLStore) DB() *sql.DB { return s.db }
@@ -137,7 +138,7 @@ func NewSQLStore(dsn, redisAddr string) (*SQLStore, error) {
 	}
 	instID := fmt.Sprintf("%s-%d-%d", host, os.Getpid(), time.Now().UnixNano())
 
-	s := &SQLStore{db: db, rdb: rdb, instanceID: instID, secret: mustRandHex(32), deviceMetrics: make(map[string]*metricsRing), agentSecretCache: make(map[string]string), silences: make(map[string]*SilenceRule), notifyChannels: make(map[string]*NotifyChannel), notifyTemplates: make(map[string]*NotifyTemplate)}
+	s := &SQLStore{db: db, rdb: rdb, instanceID: instID, secret: mustRandHex(32), deviceMetrics: make(map[string]*metricsRing), agentSecretCache: make(map[string]string)}
 	if err := s.runMigrations(); err != nil {
 		log.Printf("[store] 迁移失败（运行期可能不可用）: %v", err)
 	}
@@ -427,6 +428,9 @@ func (s *SQLStore) applyLegacyColumnFixups(ctx context.Context) {
 	s.alterColumnIfMissing(ctx, "ci_items", "approval_status", "VARCHAR(16) DEFAULT 'approved'")
 	// task 88 租户隔离：存量 k8s_clusters 表补 tenant_id 列（全新库由 CREATE TABLE 保证）。
 	s.alterColumnIfMissing(ctx, "k8s_clusters", "tenant_id", "VARCHAR(64)")
+	// task 246 M2 告警治理：alert_rules 表补 created_by 列（全新库由 005_m2_alert_governance.sql 保证）。
+	// 兼容老库（MySQL < 8.0 不支持 ADD COLUMN IF NOT EXISTS，005 迁移可能失败）。
+	s.alterColumnIfMissing(ctx, "alert_rules", "created_by", "VARCHAR(64)")
 	// task 100/111 增量补列/补索引（详见 sql_legacy.go initSchemaExtra）。
 	s.initSchemaExtra(ctx)
 	// 工程债治理：补二级索引，避免 ClaimTask 的 FOR UPDATE 全表扫描加锁，

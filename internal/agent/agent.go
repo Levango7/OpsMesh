@@ -1237,9 +1237,8 @@ func shellCommand(command string) *exec.Cmd {
 //
 // 未配置路径时不启动（直接 return），避免空循环开销。
 //
-// 上报通道：当前仅记录采集到的增量日志（logx.Info），后续控制面添加 gRPC ReportLogs 接收 API 后
-// （server.go 任务 95），在此处改为 a.grpc.ReportLogs(ctx, req) 上报。gRPC client 侧的 ReportLogs
-// 方法需在 grpcclient.go 中添加（不在本次任务文件列表中，故暂用日志占位）。
+// 上报通道：task 247 经 gRPC ReportLogs 上报到控制面（见 collectAndReportLogs）。
+// 控制面校验 HMAC 签名后按 agent 归属租户落库（行级隔离）。
 func (a *Agent) logCollectLoop(ctx context.Context) {
 	if len(a.logCollectPaths) == 0 {
 		return // 未配置日志采集路径，不启动
@@ -1257,8 +1256,10 @@ func (a *Agent) logCollectLoop(ctx context.Context) {
 	}
 }
 
-// collectAndReportLogs 遍历所有配置的日志路径，读取增量内容并上报。
+// collectAndReportLogs 遍历所有配置的日志路径，读取增量内容并经 gRPC ReportLogs 上报控制面。
 // 单个文件读取失败不中断整体，仅记录告警并继续下一个文件（降级而非报错）。
+// 上报失败记录日志但不中断循环（agent 不因上报失败崩溃，下次循环重试）。
+// task 247：每条日志按行切分，启发式解析级别（ERROR/WARN/INFO/DEBUG），封装为 LogReport 批次上报。
 func (a *Agent) collectAndReportLogs(ctx context.Context) {
 	a.logMu.Lock()
 	defer a.logMu.Unlock()
@@ -1273,10 +1274,77 @@ func (a *Agent) collectAndReportLogs(ctx context.Context) {
 		if content == "" {
 			continue // 无新增内容
 		}
-		// TODO(task 98): 控制面添加 gRPC ReportLogs 接收 API 后（server.go 任务 95），
-		// 在此改为 a.grpc.ReportLogs(ctx, &LogReportReq{AgentID: a.agentID, Path: path, Content: content}) 上报。
-		// 当前仅记录采集到的字节数，便于运维观测采集是否正常工作。
-		logx.Info(ctx, "日志采集增量", "path", path, "bytes", len(content))
+		// 按行切分并封装为 LogReport 批次上报。
+		lines := parseLogLines(content)
+		if len(lines) == 0 {
+			continue
+		}
+		report := &proto.LogReport{
+			AgentID:     a.agentID,
+			Hostname:    a.hostname,
+			LogName:     filepath.Base(path), // 用文件名作为日志标识（如 syslog / app.log）
+			Lines:       lines,
+			CollectedAt: time.Now(),
+		}
+		// task 247：经 gRPC ReportLogs 上报到控制面。
+		// 短超时（5s）避免控制面不可达时阻塞采集循环；失败仅记录日志，不中断后续文件采集。
+		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		rerr := a.grpc.ReportLogs(cctx, report)
+		cancel()
+		if rerr != nil {
+			logx.Warn(ctx, "日志上报失败", "path", path, "bytes", len(content), "lines", len(lines), "error", rerr.Error())
+			continue // 上报失败不中断，下次循环重试
+		}
+		logx.Info(ctx, "日志采集增量已上报", "path", path, "bytes", len(content), "lines", len(lines))
+	}
+}
+
+// parseLogLines 把日志增量内容按行切分为 LogLine 切片（task 247）。
+// 启发式解析级别：行首以 ERROR/FATAL → error，WARN/WARNING → warn，DEBUG/TRACE → debug，其余 → info。
+// 空行跳过；行尾换行已由 Split 去除。Timestamp 用采集时刻（无法从行首解析时间戳的降级方案）。
+func parseLogLines(content string) []proto.LogLine {
+	trimmed := strings.TrimRight(content, "\r\n")
+	if trimmed == "" {
+		return nil
+	}
+	rawLines := strings.Split(trimmed, "\n")
+	now := time.Now()
+	out := make([]proto.LogLine, 0, len(rawLines))
+	for _, raw := range rawLines {
+		line := strings.TrimRight(raw, "\r")
+		if line == "" {
+			continue
+		}
+		out = append(out, proto.LogLine{
+			Timestamp: now,
+			Level:     parseLogLevel(line),
+			Message:   line,
+		})
+	}
+	return out
+}
+
+// parseLogLevel 启发式从日志行首解析级别（task 247）。
+// 识别常见前缀：ERROR/ERR/FATAL → error，WARN/WARNING → warn，DEBUG/TRACE → debug，其余 → info。
+// 大小写不敏感；仅检查行首前缀（避免误匹配行中部的关键字）。
+func parseLogLevel(line string) string {
+	// 取行首第一个空白分隔的 token 做级别判定（如 "ERROR 2024-01-01 ..." 的 ERROR）。
+	upper := strings.ToUpper(strings.TrimSpace(line))
+	// 取前缀 token（截止第一个空白）。
+	end := strings.IndexAny(upper, " \t")
+	token := upper
+	if end > 0 {
+		token = upper[:end]
+	}
+	switch {
+	case strings.HasPrefix(token, "ERROR") || strings.HasPrefix(token, "ERR") || strings.HasPrefix(token, "FATAL"):
+		return "error"
+	case strings.HasPrefix(token, "WARN") || strings.HasPrefix(token, "WARNING"):
+		return "warn"
+	case strings.HasPrefix(token, "DEBUG") || strings.HasPrefix(token, "TRACE"):
+		return "debug"
+	default:
+		return "info"
 	}
 }
 

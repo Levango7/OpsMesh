@@ -124,6 +124,10 @@ type AlertStore interface {
 	ListAlertRules(tenantID string) []*AlertRule
 	// DeleteAlertRule 删除告警规则（task 100），返回是否删除成功（不存在返回 false）。
 	DeleteAlertRule(id string) bool
+	// GetAlertRule 按 ID 返回单个告警规则（task 246 M2 持久化补全；不存在返回 nil）。
+	GetAlertRule(id string) *AlertRule
+	// UpdateAlertRule 更新告警规则（task 246 M2 持久化补全）。不存在返回 false。
+	UpdateAlertRule(*AlertRule) bool
 }
 
 // AuditStore 审计领域（U-04 等保三级留痕）：记录、全量、按条件检索。
@@ -296,6 +300,8 @@ type SilenceStore interface {
 	DeleteSilence(id, tenantID string) bool
 	// ListSilences 返回静默规则；tenantID 非空时按租户过滤。
 	ListSilences(tenantID string) []*SilenceRule
+	// GetSilence 按 ID 返回单个静默规则（task 246 M2 持久化补全；不存在返回 nil）。
+	GetSilence(id string) *SilenceRule
 }
 
 // NotifyChannelStore 通知渠道领域（task 241 M2 集成）：CRUD。
@@ -335,6 +341,25 @@ type NotifyTemplateStore interface {
 	ListNotifyTemplates(tenantID string) []*NotifyTemplate
 }
 
+// AgentLogStore agent 日志上报领域（task 247）：agent 经 gRPC ReportLogs 上报的日志批次落库。
+//
+// 与 logstore.LogStore（M6 日志检索后端）解耦——本接口仅承接 agent 上报的 LogReport 批次，
+// 按 agent 归属租户落库（行级隔离，调用方强制赋值 tenantID，禁止 agent 自报覆盖）；
+// logstore.LogStore 负责检索侧（Query/Append），两者可经控制面 handler 桥接。
+//
+// MemoryStore 用内存 slice 暂存（按 tenantID + logName 分组）；
+// SQLStore 同样用内存 slice 暂存（agent 上报日志的高频写入不宜直接落 MySQL，
+// 检索侧由 logstore.SQLLogStore 走独立表/连接池承担）。
+type AgentLogStore interface {
+	// SaveLogs 把 agent 上报的日志批次落库。tenantID 为 agent 归属租户（由控制面回填，agent 不可伪造）；
+	// report 为上报批次（AgentID/LogName/Lines 等）。report 为 nil 时直接返回。
+	SaveLogs(tenantID string, report *proto.LogReport) error
+	// AgentLogs 查询已落库的 agent 日志（task 247）；tenantID 非空时按租户过滤，
+	// agentID 非空时按 agent 过滤，logName 非空时按日志标识过滤。
+	// 供 HTTP API GET /api/v1/agent-logs 检索。返回深拷贝避免外部并发修改。
+	AgentLogs(tenantID, agentID, logName string) []proto.LogReport
+}
+
 // Store 控制面注册表的可插拔持久化组合接口。
 // 由 12 个领域小接口组合而成（M2-1A 拆分 + 用户中心扩展 + K8s 集群管理 + OS/中间件模板 + 刷新令牌），
 // 方法签名刻意与旧版内存 Registry 保持一致，便于平滑替换。
@@ -358,6 +383,7 @@ type Store interface {
 	SilenceStore      // 静默规则：标签匹配 + 时间窗口抑制（task 241 M2）
 	NotifyChannelStore    // 通知渠道：CRUD（task 241 M2）
 	NotifyTemplateStore   // 通知模板：CRUD（task 241 M2）
+	AgentLogStore         // agent 日志上报：落库 + 检索（task 247）
 
 	// WithDemo 设置是否开启演示模式（P0-5）：开启时每个 agent 注册预置 uname -a 示例任务。
 	WithDemo(bool) Store
@@ -381,6 +407,7 @@ var (
 	_ SilenceStore        = (*MemoryStore)(nil)
 	_ NotifyChannelStore  = (*MemoryStore)(nil)
 	_ NotifyTemplateStore = (*MemoryStore)(nil)
+	_ AgentLogStore       = (*MemoryStore)(nil)
 	_ Store               = (*MemoryStore)(nil)
 
 	_ DeviceStore         = (*SQLStore)(nil)
@@ -398,5 +425,6 @@ var (
 	_ SilenceStore        = (*SQLStore)(nil)
 	_ NotifyChannelStore  = (*SQLStore)(nil)
 	_ NotifyTemplateStore = (*SQLStore)(nil)
+	_ AgentLogStore       = (*SQLStore)(nil)
 	_ Store               = (*SQLStore)(nil)
 )

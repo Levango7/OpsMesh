@@ -1074,6 +1074,31 @@ func (m *MultiSchemaStore) DeleteAlertRule(id string) bool {
 	return false
 }
 
+// GetAlertRule 按 ID 返回单个告警规则（task 246 M2 持久化补全）。
+// 遍历所有 schema 查找（与 DeleteAlertRule 同模式：规则 ID 跨 schema 唯一性弱）。
+func (m *MultiSchemaStore) GetAlertRule(id string) *AlertRule {
+	for _, s := range m.allStores() {
+		if r := s.GetAlertRule(id); r != nil {
+			return r
+		}
+	}
+	return nil
+}
+
+// UpdateAlertRule 更新告警规则（task 246 M2 持久化补全）。
+// 遍历所有 schema 尝试更新（与 DeleteAlertRule 同模式）。
+func (m *MultiSchemaStore) UpdateAlertRule(r *AlertRule) bool {
+	if r == nil {
+		return false
+	}
+	for _, s := range m.allStores() {
+		if s.UpdateAlertRule(r) {
+			return true
+		}
+	}
+	return false
+}
+
 // ============================================================================
 // task 100 OS/中间件部署模板：TemplateStore 实现（路由到全局 store，与 K8sClusterStore 同模式）
 // ============================================================================
@@ -1223,6 +1248,15 @@ func (m *MultiSchemaStore) ListSilences(tenantID string) []*SilenceRule {
 		return nil
 	}
 	return s.ListSilences(tenantID)
+}
+
+// GetSilence 按 ID 返回单个静默规则（task 246 M2 持久化补全；路由到全局 store）。
+func (m *MultiSchemaStore) GetSilence(id string) *SilenceRule {
+	s, err := m.globalStore()
+	if err != nil {
+		return nil
+	}
+	return s.GetSilence(id)
 }
 
 // CreateNotifyChannel 创建通知渠道（路由到全局 store）。

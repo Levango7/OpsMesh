@@ -210,9 +210,8 @@ func newLogHandler(st store.Store, cfg *config.Config) *logstore.Handler {
 // B1 修复 5+6：安全头补全 + CSP nonce 收紧
 //   - HSTS：仅 HTTPS 部署（s.tlsCert != ""）时注入 Strict-Transport-Security
 //   - Permissions-Policy：禁用 camera/microphone/geolocation
-//   - CSP nonce：每请求生成随机 nonce 并注入 CSP（为后续前端改造做准备）；
-//     由于前端有 141+ 个 inline onclick 事件处理器，暂保留 'unsafe-inline' 向后兼容。
-//     后续收紧计划：前端改造为 addEventListener + nonce-based inline script/style 后，
-//     移除 'unsafe-inline'，仅保留 'self' + 'nonce-{nonce}'。
+//   - CSP nonce：每请求生成随机 nonce 并注入 CSP；
+//     script-src 已移除 'unsafe-inline'（个人版引导页 + 企业版 Vue3 产物均无 inline script），
+//     仅保留 'self' + 'nonce-{nonce}'。style-src 仍保留 'unsafe-inline'（Vue :style 绑定需要）。
 //
 // /healthz 也被包裹但 CSP 对其无副作用（返回 text/plain，无脚本/HTML 解析）。

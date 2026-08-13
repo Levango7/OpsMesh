@@ -361,6 +361,13 @@ func (s *Server) createNotifyChannel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	// task 248 SSRF 防护：保存前校验 webhook URL，防通知渠道被利用做 SSRF
+	// （如配置 webhookURL=http://169.254.169.254/latest/meta-data/ 访问云元数据）。
+	// 校验失败返回 400 + 错误信息（不泄露内部校验细节，仅返回安全错误）。
+	if err := validateNotifyChannelWebhook(&c, s.cfg.WebhookAllowPrivate); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("webhook URL SSRF validation failed: %v", err)})
+		return
+	}
 	c.TenantID = actx.TenantID
 	created := s.store.CreateNotifyChannel(&c)
 	s.audit(r.Context(), &proto.AuditEvent{
@@ -408,6 +415,11 @@ func (s *Server) updateNotifyChannel(w http.ResponseWriter, r *http.Request, id 
 	var c store.NotifyChannel
 	if err := decodeJSONBody(w, r, &c); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	// task 248 SSRF 防护：更新前校验 webhook URL（与 createNotifyChannel 一致）。
+	if err := validateNotifyChannelWebhook(&c, s.cfg.WebhookAllowPrivate); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("webhook URL SSRF validation failed: %v", err)})
 		return
 	}
 	c.ID = id
@@ -813,6 +825,43 @@ func buildChannel(c *store.NotifyChannel) (notify.Channel, error) {
 		return notify.NewDingTalkChannel(cfg["webhookURL"], ""), nil
 	default:
 		return nil, fmt.Errorf("unsupported channel type: %s", c.Type)
+	}
+}
+
+// validateNotifyChannelWebhook 校验通知渠道的 webhook URL 防 SSRF（task 248）。
+//
+// 对 webhook 类型渠道（dingtalk/wechat/feishu/slack/webhook/generic），
+// 从 Config JSON 提取 webhookURL 字段并调用 ValidateWebhookURL 校验：
+//   - 协议必须 http/https
+//   - 默认拒绝私网/loopback/链路本地/云元数据地址
+//   - allowPrivate=true 时放行内网（内网部署场景）
+//
+// email 类型渠道无 URL，跳过校验。
+// 校验失败返回 error（调用方应返回 400 + 错误信息）。
+func validateNotifyChannelWebhook(c *store.NotifyChannel, allowPrivate bool) error {
+	// 仅 webhook 类型渠道需要校验 URL。
+	switch c.Type {
+	case "dingtalk", "wecom", "wechat", "feishu", "lark", "slack", "webhook", "generic":
+		// 提取 Config JSON 中的 webhookURL 字段。
+		var cfg map[string]string
+		if c.Config != "" {
+			if err := json.Unmarshal([]byte(c.Config), &cfg); err != nil {
+				return fmt.Errorf("parse channel config for SSRF validation: %w", err)
+			}
+		}
+		webhookURL := cfg["webhookURL"]
+		if webhookURL == "" {
+			// webhookURL 为空由上游 store 层校验（CreateNotifyChannel/UpdateNotifyChannel），
+			// 此处不重复校验空值，仅校验非空 URL 的 SSRF 安全性。
+			return nil
+		}
+		return ValidateWebhookURL(webhookURL, allowPrivate)
+	case "email":
+		// email 渠道无 URL，跳过 SSRF 校验。
+		return nil
+	default:
+		// 未知类型由 buildChannel 上游校验，此处放行（不阻塞未知类型校验流程）。
+		return nil
 	}
 }
 

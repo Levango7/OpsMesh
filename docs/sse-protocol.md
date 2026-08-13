@@ -37,7 +37,7 @@ GET /api/v1/events/stream
 
 > **注意**：本协议字段名为 Go 结构体 tag 直出（`tenantID`/`traceID`/`taskID`），并非下划线式，与 REST API 部分端点的命名习惯不同——以本表为准。
 
-## 事件类型枚举（全量 9 种）
+## 事件类型枚举（全量 10 种）
 
 | type | 触发点 | data 关键字段 |
 |---|---|---|
@@ -50,6 +50,7 @@ GET /api/v1/events/stream
 | `schedule_status` | 定时任务触发/暂停/恢复 | `scheduleID`、`action` |
 | `os_template_changed` | OS 优化模板增删改 | `templateID`、`action` |
 | `mw_template_changed` | 中间件模板增删改 | `templateID`、`action` |
+| `agent_logs` | agent 日志上报到达（task 247） | `agentID`、`logName`、`lines` |
 
 ## 慢消费者策略
 

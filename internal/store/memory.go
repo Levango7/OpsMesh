@@ -85,6 +85,11 @@ type MemoryStore struct {
 	// task 241 M2 集成：通知模板（标题/正文 text/template 变量替换）。
 	// key 为 NotifyTemplate.ID；由 m.mu 保护并发安全。
 	notifyTemplates map[string]*NotifyTemplate
+	// task 247 agent 日志上报：已落库的 LogReport 批次列表。
+	// 按 tenantID + logName 分组检索（线性遍历，MVP 内存后端够用；
+	// 生产高频场景应由 logstore.SQLLogStore / Loki / ES 承担检索侧）。
+	// 由 m.mu 保护并发安全。
+	agentLogs []proto.LogReport
 }
 
 // tokenMeta B1 install token 元数据：一次性、限时，消费后标记 consumed。
@@ -1468,6 +1473,37 @@ func (m *MemoryStore) DeleteAlertRule(id string) bool {
 		return false
 	}
 	delete(m.alertRules, id)
+	return true
+}
+
+// GetAlertRule 按 ID 返回单个告警规则（task 246 M2 持久化补全；不存在返回 nil）。
+// 返回深拷贝避免外部并发修改破坏内部状态。
+func (m *MemoryStore) GetAlertRule(id string) *AlertRule {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	r, ok := m.alertRules[id]
+	if !ok {
+		return nil
+	}
+	cp := *r
+	return &cp
+}
+
+// UpdateAlertRule 更新告警规则（task 246 M2 持久化补全）。不存在返回 false。
+// 保留原 CreatedAt（与 UpdateNotifyChannel 范式一致）。
+func (m *MemoryStore) UpdateAlertRule(r *AlertRule) bool {
+	if r == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	old, ok := m.alertRules[r.ID]
+	if !ok {
+		return false
+	}
+	stored := *r
+	stored.CreatedAt = old.CreatedAt // 保留原创建时间
+	m.alertRules[r.ID] = &stored
 	return true
 }
 

@@ -246,3 +246,25 @@ type CmdbReport struct {
 	Seq    int64      `json:"seq"`    // 顺序号（控制面去重）
 	Attrs  []CmdbAttr `json:"attrs"`  // 属性列表
 }
+
+// LogLine agent 采集的单行日志（task 247 agent 日志上报 gRPC API）。
+// Timestamp 为日志行产生时间（agent 侧解析或采集时刻）；Level 为日志级别；
+// Message 为日志正文（已去除行尾换行）。
+type LogLine struct {
+	Timestamp time.Time `json:"timestamp"` // 日志行产生时间
+	Level     string    `json:"level"`     // INFO / WARN / ERROR / DEBUG
+	Message   string    `json:"message"`   // 日志正文
+}
+
+// LogReport agent 经 gRPC ReportLogs 上报到控制面的日志批次（task 247）。
+// agent 侧 logCollectLoop 周期读取配置的日志文件增量，按行切分后封装为 LogReport 上报；
+// 控制面校验 agent 身份（HMAC 签名）后按 agent 归属租户落库（行级隔离，agent 不可伪造租户）。
+// TenantID 由控制面按 agent 注册时盖章回填（agent 自报不信任），agent 端可留空。
+type LogReport struct {
+	AgentID     string    `json:"agentID"`              // 上报 agent 的 ID（控制面据此查归属租户）
+	TenantID    string    `json:"tenantID"`             // 留空：控制面按 agent 归属回填（agent 不可伪造）
+	Hostname    string    `json:"hostname"`             // agent 主机名（便于检索展示）
+	LogName     string    `json:"logName"`              // 日志文件名/标识（如 /var/log/syslog）
+	Lines       []LogLine `json:"lines"`                // 日志行批次
+	CollectedAt time.Time `json:"collectedAt"`          // 本批次采集时刻
+}

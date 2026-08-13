@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -432,4 +433,81 @@ func (g *grpcServerImpl) PollCancels(ctx context.Context, req *grpcx.PollCancels
 	}
 	ids := g.store.CancelledTaskIDs(req.AgentID)
 	return &grpcx.PollCancelsResp{CancelledTaskIDs: ids}, nil
+}
+
+// ReportLogs task 247 agent 日志上报：接收 agent 采集的日志批次并落库。
+// 校验 agent 身份（HMAC 签名）与租户归属后，按 agent 注册时盖章的 TenantID 回填 report.TenantID
+// （agent 不可伪造租户），再经 store.SaveLogs 落库（行级隔离）。
+// 同时把每行日志经 logstore.Handler.Append 转发到 M6 日志检索后端（若注入），供统一检索。
+// 上报失败不中断 agent 循环（agent 侧仅记录日志），此处返回错误供 agent 决策重试/跳过。
+func (g *grpcServerImpl) ReportLogs(ctx context.Context, req *grpcx.ReportLogsReq) (*grpcx.Empty, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "nil request")
+	}
+	agentID := req.Report.AgentID
+	if agentID == "" {
+		return nil, status.Error(codes.InvalidArgument, "agentID required")
+	}
+	// task 81：校验 HMAC 签名，确保请求来自授权 agent（防冒充上报日志）。
+	if err := g.verifyAgentSignature(ctx, agentID); err != nil {
+		return nil, err
+	}
+	// H2：校验租户归属，防跨租户上报。
+	if err := g.checkAgentTenant(ctx, agentID); err != nil {
+		return nil, err
+	}
+	// 按 agent 归属回填 TenantID（agent 自报不信任，行级隔离由控制面盖章）。
+	// agent 不存在时 tenant 留空（兼容无网关降级 / 旧数据）。
+	tenantID := req.Report.TenantID
+	if a := g.store.Agent(agentID); a != nil {
+		tenantID = a.TenantID
+	}
+	// 落库到 store（MemoryStore/SQLStore 内存暂存，供 GET /api/v1/agent-logs 检索）。
+	report := req.Report
+	report.TenantID = tenantID
+	if err := g.store.SaveLogs(tenantID, &report); err != nil {
+		logx.Error(ctx, "agent 日志落库失败", err, "agentID", agentID, "logName", req.Report.LogName)
+		return nil, status.Error(codes.Internal, fmt.Sprintf("save logs failed: %v", err))
+	}
+
+	// M6 日志检索桥接：把每行日志转发到 logstore 后端（若注入），供 /api/v1/logs 统一检索。
+	// 与 ReportResult 的 RecordTaskResult 模式一致：source=agent，level 取自 LogLine.Level。
+	if g.logs != nil && len(req.Report.Lines) > 0 {
+		ls := g.logs.Store()
+		deviceID := "dev-" + agentID
+		for _, line := range req.Report.Lines {
+			lvl := strings.ToLower(line.Level)
+			if lvl == "" {
+				lvl = "info"
+			}
+			_ = ls.Append(ctx, &logstore.Entry{
+				TenantID:  tenantID,
+				DeviceID:  deviceID,
+				AgentID:   agentID,
+				Timestamp: line.Timestamp,
+				Level:     lvl,
+				Source:    "agent",
+				Message:   line.Message,
+			})
+		}
+	}
+
+	// U-04 等保三级留痕：agent 日志上报记审计事件。
+	g.audit(ctx, &proto.AuditEvent{
+		TenantID: tenantID,
+		Action:   "report_logs",
+		Target:   agentID,
+		Detail:   fmt.Sprintf("logName=%s lines=%d", req.Report.LogName, len(req.Report.Lines)),
+	})
+
+	// M3-2B SSE：通知前端有新日志到达（前端日志面板可刷新）。
+	if g.srv != nil {
+		g.srv.publishEvent(ctx, "agent_logs", tenantID, map[string]interface{}{
+			"agentID":  agentID,
+			"logName":  req.Report.LogName,
+			"lines":    len(req.Report.Lines),
+		})
+	}
+
+	return &grpcx.Empty{}, nil
 }

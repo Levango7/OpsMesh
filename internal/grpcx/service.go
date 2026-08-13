@@ -64,8 +64,14 @@ type PollCancelsResp struct {
 	CancelledTaskIDs []string `json:"cancelledTaskIDs"`
 }
 
+// ReportLogsReq task 247 agent 日志上报请求：携带一个 LogReport 批次。
+// 控制面校验 agent 身份（HMAC 签名）后按 agent 归属租户落库（行级隔离）。
+type ReportLogsReq struct {
+	Report proto.LogReport `json:"report"`
+}
+
 // RegistrationServer 是 gRPC 注册通道的服务端接口，由控制面实现。
-// 四个方法一一对应 agent↔控制面 的 注册 / 心跳 / 拉任务 / 上报结果。
+// 六个方法一一对应 agent↔控制面 的 注册 / 心跳 / 拉任务 / 上报结果 / 取消 / 轮询取消 / 日志上报。
 type RegistrationServer interface {
 	Register(ctx context.Context, req *proto.AgentInfo) (*RegisterResp, error)
 	Heartbeat(ctx context.Context, req *HeartbeatReq) (*Empty, error)
@@ -73,6 +79,7 @@ type RegistrationServer interface {
 	ReportResult(ctx context.Context, req *proto.TaskResult) (*Empty, error)
 	CancelTask(ctx context.Context, req *CancelTaskReq) (*Empty, error)
 	PollCancels(ctx context.Context, req *PollCancelsReq) (*PollCancelsResp, error)
+	ReportLogs(ctx context.Context, req *ReportLogsReq) (*Empty, error)
 }
 
 // Registration_ServiceDesc 手写 ServiceDesc，无需 protoc 生成。
@@ -87,6 +94,7 @@ var Registration_ServiceDesc = grpc.ServiceDesc{
 		{MethodName: "ReportResult", Handler: _Registration_ReportResult_Handler},
 		{MethodName: "CancelTask", Handler: _Registration_CancelTask_Handler},
 		{MethodName: "PollCancels", Handler: _Registration_PollCancels_Handler},
+		{MethodName: "ReportLogs", Handler: _Registration_ReportLogs_Handler},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "opsmesh/registration",
@@ -198,6 +206,24 @@ func _Registration_PollCancels_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RegistrationServer).PollCancels(ctx, req.(*PollCancelsReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Registration_ReportLogs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReportLogsReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RegistrationServer).ReportLogs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/opsmesh.v1.Registration/ReportLogs",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RegistrationServer).ReportLogs(ctx, req.(*ReportLogsReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }

@@ -30,16 +30,18 @@ func (s *Server) securityHeadersMiddleware(h http.Handler) http.Handler {
 		}
 		// B1 修复 6：CSP nonce-based 收紧。
 		// 每请求生成 16 字节随机 nonce（hex 编码 32 字符），注入 CSP 头。
-		// 前端改造完成后移除 'unsafe-inline'，仅保留 'self' + 'nonce-{nonce}'。
 		//
-		// P1-G5 安全加固（CSP nonce 收紧）：
-		// TODO(security): 当前仍保留 'unsafe-inline'，因为前端有 141+ 个 inline onclick 事件处理器，
-		// 一次性全部移除需要大规模重构（改为 addEventListener + nonce-based inline script）。
-		// 这是临时妥协，后续应分阶段收紧：
-		//   1. Phase 1: 为所有 <script> 标签添加 nonce="{nonce}" 属性（内嵌仪表盘模板）。
-		//   2. Phase 2: 将 inline onclick 改为 addEventListener，移除 'unsafe-inline'。
-		//   3. Phase 3: 评估改用 'unsafe-hashes' 只允许特定 inline handler（CSP Level 3）。
-		// 在彻底移除 'unsafe-inline' 前，nonce 主要起防御纵深作用（nonce 化的 script 即使被注入也无法执行）。
+		// P1-G5 安全加固（CSP 收紧 — 已完成）：
+		// 个人版前端已在 v0.6.1 收敛为引导页（internal/controlplane/web/index.html），
+		// 业务 JS 已删除，仅剩外部 <script type="module" src="/assets/main.js">，无 inline script。
+		// 企业版前端是 Vue3+Vite 编译产物（web/enterprise/dist/），<script> 均为外部 src 引用，
+		// Vue 的 @click 编译为 addEventListener（非 inline onclick），无 inline script。
+		// → script-src 已移除 'unsafe-inline'，仅保留 'self' + 'nonce-{nonce}'（nonce 作防御纵深）。
+		//
+		// style-src 仍保留 'unsafe-inline'：企业版 Vue 组件使用 :style 绑定（运行时注入 inline style，
+		// 如 ProgressRing/MetricsCard/DataTable 等 7 处），个人版引导页亦有 inline <style> 块。
+		// style 的 inline 安全风险显著低于 script（无法执行代码），保留是可接受的安全取舍。
+		// 后续若需进一步收紧 style-src，可将 :style 绑定改为 class 切换 + 预定义 CSS 变量。
 		nonceBytes := make([]byte, 16)
 		if _, err := cryptoRand.Read(nonceBytes); err != nil {
 			// 随机数生成失败（极罕见）：回退到固定 nonce（仅影响 CSP 强度，不阻断请求）。
@@ -47,7 +49,7 @@ func (s *Server) securityHeadersMiddleware(h http.Handler) http.Handler {
 		}
 		nonce := hex.EncodeToString(nonceBytes)
 		w.Header().Set("Content-Security-Policy",
-			fmt.Sprintf("default-src 'self'; script-src 'self' 'unsafe-inline' 'nonce-%s'; style-src 'self' 'unsafe-inline' 'nonce-%s'; img-src 'self' data:; connect-src 'self'", nonce, nonce))
+			fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self' 'unsafe-inline' 'nonce-%s'; img-src 'self' data:; connect-src 'self'", nonce, nonce))
 		h.ServeHTTP(w, r)
 	})
 }

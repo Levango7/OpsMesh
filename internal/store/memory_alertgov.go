@@ -70,6 +70,25 @@ func (m *MemoryStore) DeleteSilence(id, tenantID string) bool {
 	return true
 }
 
+// GetSilence 按 ID 返回单个静默规则（task 246 M2 持久化补全；不存在返回 nil）。
+// 返回深拷贝（含 MatchLabels）避免外部并发修改破坏内部状态。
+func (m *MemoryStore) GetSilence(id string) *SilenceRule {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	r, ok := m.silences[id]
+	if !ok {
+		return nil
+	}
+	cp := *r
+	if r.MatchLabels != nil {
+		cp.MatchLabels = make(map[string]string, len(r.MatchLabels))
+		for k, v := range r.MatchLabels {
+			cp.MatchLabels[k] = v
+		}
+	}
+	return &cp
+}
+
 // ListSilences 返回静默规则；tenantID 非空时按租户过滤。按创建时间升序返回深拷贝。
 func (m *MemoryStore) ListSilences(tenantID string) []*SilenceRule {
 	m.mu.RLock()

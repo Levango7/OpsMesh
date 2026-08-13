@@ -17,19 +17,20 @@ func TestRegistrationServiceDesc(t *testing.T) {
 	if sd.HandlerType != (*RegistrationServer)(nil) {
 		t.Fatal("HandlerType must be *RegistrationServer")
 	}
-	if len(sd.Methods) != 6 {
-		t.Fatalf("Methods = %d, want 6 (Register/Heartbeat/PullTasks/ReportResult/CancelTask/PollCancels)", len(sd.Methods))
+	if len(sd.Methods) != 7 {
+		t.Fatalf("Methods = %d, want 7 (Register/Heartbeat/PullTasks/ReportResult/CancelTask/PollCancels/ReportLogs)", len(sd.Methods))
 	}
 	if len(sd.Streams) != 0 {
 		t.Fatalf("Streams = %d, want 0 (内核只产生数据，不消费流)", len(sd.Streams))
 	}
 	want := map[string]bool{
-		"Register":    true,
-		"Heartbeat":   true,
-		"PullTasks":   true,
+		"Register":     true,
+		"Heartbeat":    true,
+		"PullTasks":    true,
 		"ReportResult": true,
-		"CancelTask":  true,
-		"PollCancels": true,
+		"CancelTask":   true,
+		"PollCancels":  true,
+		"ReportLogs":   true,
 	}
 	for _, m := range sd.Methods {
 		if !want[m.MethodName] {

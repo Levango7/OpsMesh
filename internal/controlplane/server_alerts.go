@@ -21,6 +21,7 @@ import (
 	"opsmesh/internal/logx"
 	"opsmesh/internal/notify"
 	"opsmesh/internal/proto"
+	"opsmesh/internal/store"
 )
 
 // notifyLoop M7/B7 告警通知推送：每 10s 检查是否有新的 firing 告警（critical + warning 均推送），
@@ -360,14 +361,16 @@ func (s *Server) deleteAlertRule(w http.ResponseWriter, r *http.Request, id stri
 }
 
 // alertRuleStore 进程内告警规则存储（按租户隔离）。
-// 后续可迁移到 store.Store 接口持久化；当前内存实现满足 API 闭环需求。
+// task 246 M2 持久化：已迁移到 store.AlertRule 接口（s.store.CreateAlertRule/
+// ListAlertRules/DeleteAlertRule），本结构体仅保留供向后兼容引用（如测试），
+// 实际不再使用。MemoryStore 行为不变（内存），SQLStore 持久化到 MySQL。
 type alertRuleStore struct {
 	mu    sync.RWMutex
 	rules map[string]*AlertRule // key: rule.ID
 }
 
-// TODO(tech-debt): globalAlertRules 应迁移到 store.AlertRule 持久化，
-// 当前进程内全局存储在多副本 HA 下会数据分裂。
+// TODO(tech-debt): globalAlertRules 已废弃，保留供向后兼容（部分测试可能引用）。
+// 新代码应通过 s.store 调用 store.AlertRule 接口。
 var globalAlertRules = &alertRuleStore{rules: make(map[string]*AlertRule)}
 
 func (s *alertRuleStore) list(tenantID string) []*AlertRule {
@@ -399,17 +402,97 @@ func (s *alertRuleStore) remove(id, tenantID string) bool {
 	return true
 }
 
+// parseForDurationSecs 把 controlplane.AlertRule.ForDuration 字符串（如 "5m"、"30s"、"1h"）
+// 解析为秒数，存入 store.AlertRule.ForDuration（int）。解析失败返回 0（立即触发）。
+func parseForDurationSecs(s string) int {
+	if s == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0
+	}
+	return int(d.Seconds())
+}
+
+// formatForDurationSecs 把 store.AlertRule.ForDuration（秒）格式化为 controlplane.AlertRule.ForDuration
+// 字符串（如 "300s"）。保留秒级精度，避免 "5m0s" 等非简洁格式。
+func formatForDurationSecs(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%ds", n)
+}
+
+// cpAlertRuleToStore 把 controlplane.AlertRule 转换为 store.AlertRule。
+// ForDuration 字符串 → 秒数；CreatedBy 透传。
+func cpAlertRuleToStore(r *AlertRule) *store.AlertRule {
+	if r == nil {
+		return nil
+	}
+	return &store.AlertRule{
+		ID:          r.ID,
+		TenantID:    r.TenantID,
+		Metric:      r.Metric,
+		Op:          r.Op,
+		Threshold:   r.Threshold,
+		ForDuration: parseForDurationSecs(r.ForDuration),
+		Severity:    r.Severity,
+		Message:     r.Message,
+		Enabled:     r.Enabled,
+		CreatedAt:   r.CreatedAt,
+		CreatedBy:   r.CreatedBy,
+	}
+}
+
+// storeAlertRuleToCP 把 store.AlertRule 转换为 controlplane.AlertRule。
+// ForDuration 秒数 → 字符串；CreatedBy 透传。
+func storeAlertRuleToCP(r *store.AlertRule) *AlertRule {
+	if r == nil {
+		return nil
+	}
+	return &AlertRule{
+		ID:          r.ID,
+		TenantID:    r.TenantID,
+		Metric:      r.Metric,
+		Op:          r.Op,
+		Threshold:   r.Threshold,
+		ForDuration: formatForDurationSecs(r.ForDuration),
+		Severity:    r.Severity,
+		Message:     r.Message,
+		Enabled:     r.Enabled,
+		CreatedAt:   r.CreatedAt,
+		CreatedBy:   r.CreatedBy,
+	}
+}
+
 // listAlertRulesForTenant 返回指定租户的告警规则列表。
+// task 246 M2 持久化：通过 store.ListAlertRules 读取（MemoryStore 内存 / SQLStore MySQL）。
 func (s *Server) listAlertRulesForTenant(tenantID string) []*AlertRule {
-	return globalAlertRules.list(tenantID)
+	storeRules := s.store.ListAlertRules(tenantID)
+	out := make([]*AlertRule, 0, len(storeRules))
+	for _, sr := range storeRules {
+		out = append(out, storeAlertRuleToCP(sr))
+	}
+	return out
 }
 
 // saveAlertRule 保存告警规则。
+// task 246 M2 持久化：通过 store.CreateAlertRule 写入（MemoryStore 内存 / SQLStore MySQL）。
 func (s *Server) saveAlertRule(rule *AlertRule) {
-	globalAlertRules.save(rule)
+	s.store.CreateAlertRule(cpAlertRuleToStore(rule))
 }
 
 // removeAlertRule 删除告警规则（校验租户归属）。
+// task 246 M2 持久化：通过 store.DeleteAlertRule 删除。
+// 注意：store.DeleteAlertRule 不校验租户归属，需先 GetAlertRule 校验。
 func (s *Server) removeAlertRule(id, tenantID string) bool {
-	return globalAlertRules.remove(id, tenantID)
+	existing := s.store.GetAlertRule(id)
+	if existing == nil {
+		return false
+	}
+	if tenantID != "" && existing.TenantID != tenantID {
+		return false
+	}
+	return s.store.DeleteAlertRule(id)
 }

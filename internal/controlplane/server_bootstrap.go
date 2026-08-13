@@ -148,6 +148,20 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 			logx.Warn(r.Context(), "AdvertiseAddr SSRF 校验失败（仅警告，控制面常部署内网）", "url", s.cfg.AdvertiseAddr, "err", err)
 		}
 	}
+	// task 248 SSRF 防护：autoProvision CIDR 白名单校验。
+	// 白名单非空时，每个目标 CIDR 必须完全落在白名单内，防止运维误配置或攻击者构造请求
+	// 扫描任意网段（如 169.254.169.254 元数据网段获取云凭据，或扫描内网其他网段做内网探测）。
+	// 白名单为空时不校验（向后兼容）。校验失败返回 403 Forbidden。
+	if s.cfg.ProvisionCIDRWhitelist != "" {
+		allowedCIDRs := strings.Split(s.cfg.ProvisionCIDRWhitelist, ",")
+		for _, cidr := range cidrs {
+			if err := ValidateCIDR(cidr, allowedCIDRs); err != nil {
+				logx.Warn(r.Context(), "autoProvision CIDR 白名单校验失败", "cidr", cidr, "err", err)
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": fmt.Sprintf("CIDR %q not allowed by provision-cidr-whitelist: %v", cidr, err)})
+				return
+			}
+		}
+	}
 	sum, err := provision.AutoProvision(r.Context(), provision.Deps{
 		UpsertDevice: s.store.UpsertDevice,
 		Provision:    s.store.Provision,
@@ -176,11 +190,28 @@ func (s *Server) autoProvisionLoop(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		if s.store.IsLeader() && s.cfg.SegmentCIDR != "" {
-			if _, err := provision.AutoProvision(ctx, provision.Deps{
-				UpsertDevice: s.store.UpsertDevice,
-				Provision:    s.store.Provision,
-			}, s.cfg, []string{s.cfg.SegmentCIDR}, ""); err != nil {
-				log.Printf("controlplane: autoProvisionLoop 自动纳管失败: %v", err)
+			// task 248 SSRF 防护：后台循环同样校验 CIDR 白名单。
+			// 白名单非空时 --segment-cidr 必须在白名单内，否则跳过本轮扫描并告警
+			// （不 fail-fast，避免后台循环崩溃；配置错误应由启动期 Validate 兜底）。
+			if s.cfg.ProvisionCIDRWhitelist != "" {
+				allowedCIDRs := strings.Split(s.cfg.ProvisionCIDRWhitelist, ",")
+				if err := ValidateCIDR(s.cfg.SegmentCIDR, allowedCIDRs); err != nil {
+					log.Printf("controlplane: autoProvisionLoop CIDR 白名单校验失败，跳过本轮: %v", err)
+				} else {
+					if _, err := provision.AutoProvision(ctx, provision.Deps{
+						UpsertDevice: s.store.UpsertDevice,
+						Provision:    s.store.Provision,
+					}, s.cfg, []string{s.cfg.SegmentCIDR}, ""); err != nil {
+						log.Printf("controlplane: autoProvisionLoop 自动纳管失败: %v", err)
+					}
+				}
+			} else {
+				if _, err := provision.AutoProvision(ctx, provision.Deps{
+					UpsertDevice: s.store.UpsertDevice,
+					Provision:    s.store.Provision,
+				}, s.cfg, []string{s.cfg.SegmentCIDR}, ""); err != nil {
+					log.Printf("controlplane: autoProvisionLoop 自动纳管失败: %v", err)
+				}
 			}
 		}
 		select {

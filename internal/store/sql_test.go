@@ -3,6 +3,7 @@ package store
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -330,7 +331,7 @@ func TestScanAlertRule_Happy(t *testing.T) {
 	created := time.Date(2026, 4, 10, 9, 15, 0, 0, time.UTC)
 	row := &mockRowScanner{vals: []interface{}{
 		"ar-1", "t1", "cpu_usage", ">", 90.5,
-		5, "critical", "CPU 超过 90.5%", true, created,
+		5, "critical", "CPU 超过 90.5%", true, created, sql.NullString{Valid: true, String: "user-1"},
 	}}
 	r := scanAlertRule(row)
 	if r == nil {
@@ -347,6 +348,9 @@ func TestScanAlertRule_Happy(t *testing.T) {
 	}
 	if !r.CreatedAt.Equal(created) {
 		t.Fatalf("CreatedAt 错误: got=%v want=%v", r.CreatedAt, created)
+	}
+	if r.CreatedBy != "user-1" {
+		t.Fatalf("CreatedBy 错误: got=%q want=%q", r.CreatedBy, "user-1")
 	}
 }
 

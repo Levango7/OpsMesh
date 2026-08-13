@@ -82,7 +82,8 @@ type K8sCluster struct {
 //   - Severity：告警级别（warning / critical），产出 Alert 时写入；
 //   - Message：告警消息模板（产出 Alert.Message）；
 //   - Enabled：是否启用（false 时跳过评估）；
-//   - CreatedAt：创建时间戳。
+//   - CreatedAt：创建时间戳；
+//   - CreatedBy：创建人（task 246 M2 持久化，由 controlplane 迁移 globalAlertRules 时填充）。
 type AlertRule struct {
 	ID          string    `json:"id"`
 	TenantID    string    `json:"tenantID"`
@@ -94,6 +95,7 @@ type AlertRule struct {
 	Message     string    `json:"message"`
 	Enabled     bool      `json:"enabled"`
 	CreatedAt   time.Time `json:"createdAt"`
+	CreatedBy   string    `json:"createdBy"`
 }
 
 // OSTemplate OS 安装模板实体（task 100）：裸机/虚拟机自动安装操作系统的模板配置。

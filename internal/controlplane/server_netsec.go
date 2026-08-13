@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -338,3 +339,155 @@ func (s *Server) pingStore(ctx context.Context) error {
 //   - 无 token 或 token 不匹配 → 401 Unauthorized。
 //
 // 返回 true 表示放行，false 表示已写入 401 响应（调用方应直接 return）。
+
+// ============================================================================
+// task 248 SSRF 防护：webhook URL 校验 + autoProvision CIDR 白名单校验
+// ============================================================================
+//
+// 与 server_security.go 中 validateURLSSRF 的关系：
+//   - validateURLSSRF：旧版无参 SSRF 校验（无 allowPrivate 选项，恒拒私网），
+//     供 notifyLoop 启动期校验 AlertWebhookURL 与 AdvertiseAddr（仅警告）。
+//   - ValidateWebhookURL：新版带 allowPrivate 参数，支持内网部署场景显式放行私网，
+//     供通知渠道 CRUD（createNotifyChannel/updateNotifyChannel）保存前校验。
+//   - isPrivateIP：复用 server_security.go 中已有的实现（task 248 已增强为拒 0.0.0.0/8）。
+//
+// DNS 解析超时：5 秒（task 248 要求合理默认值，避免恶意域名拖垮 API）。
+
+// ssrfDNSTimeout 是 SSRF 校验中 DNS 解析的超时时间（task 248：5 秒合理默认）。
+// 通过 context.WithTimeout 控制 net.LookupIP，避免恶意域名解析拖垮 API。
+const ssrfDNSTimeout = 5 * time.Second
+
+// ValidateWebhookURL 校验 webhook URL 防止 SSRF 攻击（task 248）。
+//
+// 规则：
+//   - 协议必须是 http 或 https（拒绝 file://、gopher://、dict:// 等危险协议）
+//   - 主机名非空
+//   - 解析主机名：若是 IP 字面量直接校验；若是域名做 DNS 解析后校验每个返回 IP
+//   - 默认拒绝私网/loopback/链路本地/云元数据地址（isPrivateIP）
+//   - allowPrivate=true 时放行私网地址（用于内网部署场景，如钉钉/飞书内网网关）
+//
+// 拒绝的地址范围（isPrivateIP）：
+//   - 127.0.0.0/8（loopback）
+//   - 10.0.0.0/8（私网 A）
+//   - 172.16.0.0/12（私网 B）
+//   - 192.168.0.0/16（私网 C）
+//   - 169.254.0.0/16（链路本地 + 云元数据 169.254.169.254）
+//   - 0.0.0.0/8（本网/未指定）
+//   - ::1（IPv6 loopback）
+//   - fe80::/10（IPv6 link-local）
+//   - fc00::/7（IPv6 ULA 私网）
+//
+// DNS 解析超时 5 秒（ssrfDNSTimeout），避免恶意域名拖垮 API。
+//
+// 返回 nil 表示安全，非 nil error 描述拒绝原因（调用方应返回 400 + 错误信息）。
+func ValidateWebhookURL(rawURL string, allowPrivate bool) error {
+	u, err := neturl.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	// 1. 协议白名单：仅允许 http/https（拒绝 file/gopher/dict/ftp 等可触发 SSRF/RFI 的协议）。
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("scheme %q not allowed (only http/https)", u.Scheme)
+	}
+	// 2. 主机名非空校验。
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("empty host in URL")
+	}
+	// 3. 解析主机名：IP 字面量直接校验；域名做 DNS 解析后校验每个 IP。
+	//    若 allowPrivate=true 则跳过私网校验（内网部署场景）。
+	if allowPrivate {
+		return nil // 显式允许内网：仅校验协议 + 主机非空，不做 IP 校验
+	}
+	// 先尝试 IP 字面量（避免触发 DNS 解析，性能优化）。
+	if ip := net.ParseIP(host); ip != nil {
+		if isPrivateIP(ip) {
+			return fmt.Errorf("host %q is private/loopback/metadata address %s", host, ip)
+		}
+		return nil
+	}
+	// 域名：DNS 解析（带 5 秒超时），校验每个返回 IP。
+	// 任一 IP 落入私网即拒绝（防 DNS rebinding：域名解析到内网地址）。
+	resolver := net.DefaultResolver
+	lookupCtx, cancel := context.WithTimeout(context.Background(), ssrfDNSTimeout)
+	defer cancel()
+	ips, err := resolver.LookupIP(lookupCtx, "ip", host)
+	if err != nil {
+		return fmt.Errorf("cannot resolve host %q: %w", host, err)
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("host %q resolved to no IP addresses", host)
+	}
+	for _, ip := range ips {
+		if isPrivateIP(ip) {
+			return fmt.Errorf("host %q resolves to private/loopback/metadata address %s", host, ip)
+		}
+	}
+	return nil
+}
+
+// ValidateCIDR 校验目标 CIDR 是否在允许的白名单内（task 248 autoProvision 网段校验）。
+//
+// 用于 autoProvision 扫描前校验目标网段，防止运维误配置或攻击者构造请求扫描任意网段
+// （如扫描 169.254.169.254 所在网段获取云元数据，或扫描内网其他网段做内网探测）。
+//
+// 规则：
+//   - allowedCIDRs 为空时不校验（向后兼容，由调用方决定是否启用白名单）
+//   - 目标 CIDR 必须是合法 CIDR 表示（如 10.30.0.0/24）
+//   - 目标 CIDR 的网络地址必须包含在任一允许的 CIDR 范围内
+//   - 不在白名单内则返回错误（调用方应返回 403 + 错误信息）
+//
+// 注意：此处比较的是 CIDR 网段而非单个 IP——目标 CIDR 必须完全落在某个允许的 CIDR 内，
+// 避免目标 CIDR 范围超出白名单（如允许 10.0.0.0/16 但目标 10.0.0.0/8 应被拒，因 10.1.0.0 不在 10.0.0.0/16 内）。
+// 实现：检查目标 CIDR 的起始 IP 与结束 IP 是否都在某个允许的 CIDR 内。
+func ValidateCIDR(cidr string, allowedCIDRs []string) error {
+	// 白名单为空：不校验（向后兼容，调用方决定是否启用）。
+	if len(allowedCIDRs) == 0 {
+		return nil
+	}
+	// 解析目标 CIDR。
+	_, targetNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return fmt.Errorf("invalid target CIDR %q: %w", cidr, err)
+	}
+	// 解析白名单 CIDR 列表。
+	var allowedNets []*net.IPNet
+	for _, allowed := range allowedCIDRs {
+		allowed = strings.TrimSpace(allowed)
+		if allowed == "" {
+			continue
+		}
+		_, n, err := net.ParseCIDR(allowed)
+		if err != nil {
+			return fmt.Errorf("invalid allowed CIDR %q: %w", allowed, err)
+		}
+		allowedNets = append(allowedNets, n)
+	}
+	if len(allowedNets) == 0 {
+		return fmt.Errorf("allowed CIDR whitelist is empty after parsing")
+	}
+	// 检查目标 CIDR 是否完全落在某个允许的 CIDR 内。
+	// 即：目标网段的起始 IP 与结束 IP 都在同一个允许的 CIDR 内。
+	targetStart, targetEnd := cidrRange(targetNet)
+	for _, allowed := range allowedNets {
+		if allowed.Contains(targetStart) && allowed.Contains(targetEnd) {
+			return nil
+		}
+	}
+	return fmt.Errorf("target CIDR %q not within any allowed CIDR in whitelist", cidr)
+}
+
+// cidrRange 返回 CIDR 网段的起始 IP 与结束 IP（用于 ValidateCIDR 范围包含校验）。
+// 起始 IP = 网络地址；结束 IP = 广播地址（网络地址 | 掩码反码）。
+func cidrRange(n *net.IPNet) (net.IP, net.IP) {
+	ip := n.IP
+	mask := n.Mask
+	start := make(net.IP, len(ip))
+	copy(start, ip)
+	end := make(net.IP, len(ip))
+	for i := 0; i < len(ip); i++ {
+		end[i] = ip[i] | ^mask[i]
+	}
+	return start, end
+}
