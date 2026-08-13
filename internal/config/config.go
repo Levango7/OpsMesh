@@ -47,6 +47,18 @@ type Config struct {
 	TLSCert  string // 服务端证书 / 客户端证书 文件路径
 	TLSKey   string // 私钥 文件路径
 	ClientCA string // 服务端要求客户端 CA（mTLS）；或客户端校验服务端 CA
+	// P2-B3 TLS 证书热重载：启用 fsnotify 监听证书文件变更，自动重载无需重启。
+	// 仅当 TLSCert/TLSKey 非空时生效；关闭时证书更新需重启服务。
+	TLSWatch bool // --tls-watch 启用证书文件热重载（默认 false）
+
+	// P2-B3 密钥管理外置（task 265）：支持从环境变量/JSON文件/HashiCorp Vault 读取密钥。
+	// 空字符串=不启用密钥外置（向后兼容，密钥直接从 config 字段读取）。
+	// 启用后告警通道等敏感字段可使用 ${key} 引用语法从 provider 解析（task 266）。
+	SecretProvider string // --secret-provider 密钥来源：env|file|vault|chain:env,file（空=不启用）
+	SecretFile     string // --secret-file JSON 密钥文件路径（--secret-provider=file 时生效）
+	VaultAddr      string // --vault-addr Vault API 地址（如 https://vault:8200）
+	VaultToken     string // --vault-token Vault 访问令牌（推荐 env OPSMESH_VAULT_TOKEN 更安全）
+	VaultMount     string // --vault-mount Vault KV v2 挂载路径（默认 "secret"）
 
 	// 真实网段发现（P0-2）。默认关闭：采用“agent 即设备”的 MVP 降级纳管；
 	// 开启后控制面按 SegmentCIDR 做存活扫描，为每台存活主机创建真实 DeviceInfo。
@@ -318,6 +330,13 @@ func Load() *Config {
 	tlsCert := flag.String("tls-cert", "", "gRPC TLS 证书路径（P1-6；空=关闭）")
 	tlsKey := flag.String("tls-key", "", "gRPC TLS 私钥路径")
 	clientCA := flag.String("client-ca", "", "服务端要求客户端 CA（mTLS）/ 客户端校验服务端 CA")
+	tlsWatch := flag.Bool("tls-watch", false, "启用 TLS 证书文件热重载（fsnotify 监听，无需重启）")
+	// P2-B3 密钥管理外置（task 265）：从环境变量/JSON文件/HashiCorp Vault 读取密钥。
+	secretProvider := flag.String("secret-provider", "", "密钥来源：env|file|vault|chain:env,file（空=不启用密钥外置，向后兼容）；或 env OPSMESH_SECRET_PROVIDER")
+	secretFile := flag.String("secret-file", "", "JSON 密钥文件路径（--secret-provider=file 时生效）；或 env OPSMESH_SECRET_FILE")
+	vaultAddr := flag.String("vault-addr", "", "Vault API 地址（如 https://vault:8200）；或 env OPSMESH_VAULT_ADDR")
+	vaultToken := flag.String("vault-token", "", "Vault 访问令牌（env OPSMESH_VAULT_TOKEN 更安全，避免命令行暴露）；或 env OPSMESH_VAULT_TOKEN")
+	vaultMount := flag.String("vault-mount", "secret", "Vault KV v2 挂载路径（默认 secret）；或 env OPSMESH_VAULT_MOUNT")
 	discover := flag.Bool("discover", false, "开启真实网段发现（P0-2）；关闭时采用 agent 即设备的 MVP 降级纳管")
 	segmentCIDR := flag.String("segment-cidr", "", "待扫描网段（P0-2，如 10.30.0.0/24）；开启 --discover 时生效")
 	autoProvision := flag.Bool("auto-provision", false, "B1 自动纳管：discover 扫描到存活主机后自动登记候选设备并（配置 --provision-ssh-key 时）推送 agent")
@@ -484,6 +503,12 @@ func Load() *Config {
 		TLSCert:                  val("tls-cert", *tlsCert, "OPSMESH_TLS_CERT"),
 		TLSKey:                   val("tls-key", *tlsKey, "OPSMESH_TLS_KEY"),
 		ClientCA:                 val("client-ca", *clientCA, "OPSMESH_CLIENT_CA"),
+		TLSWatch:                 valBool("tls-watch", *tlsWatch, "OPSMESH_TLS_WATCH"),
+		SecretProvider:           val("secret-provider", *secretProvider, "OPSMESH_SECRET_PROVIDER"),
+		SecretFile:               val("secret-file", *secretFile, "OPSMESH_SECRET_FILE"),
+		VaultAddr:                val("vault-addr", *vaultAddr, "OPSMESH_VAULT_ADDR"),
+		VaultToken:               val("vault-token", *vaultToken, "OPSMESH_VAULT_TOKEN"),
+		VaultMount:               val("vault-mount", *vaultMount, "OPSMESH_VAULT_MOUNT"),
 		Discover:                 valBool("discover", *discover, "OPSMESH_DISCOVER"),
 		SegmentCIDR:              val("segment-cidr", *segmentCIDR, "OPSMESH_SEGMENT_CIDR"),
 		AutoProvision:            valBool("auto-provision", *autoProvision, "OPSMESH_AUTO_PROVISION"),

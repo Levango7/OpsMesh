@@ -25,7 +25,8 @@
     "logs": "日志检索",
     "users": "用户中心",
     "roles": "角色管理",
-    "permissions": "权限管理"
+    "permissions": "权限管理",
+    "secrets": "密钥管理"
   },
   "topbar": {
     "devices": "设备",
@@ -738,5 +739,38 @@
       "cpu": "CPU",
       "memory": "内存"
     }
+  },
+  "secrets": {
+    "title": "密钥管理",
+    "subtitle": "查看密钥提供者状态、测试连接、配置 Vault 地址",
+    "provider_status": "提供者状态",
+    "provider_type": "Provider",
+    "enabled": "已启用",
+    "disabled": "未启用",
+    "vault_addr": "Vault 地址",
+    "vault_mount": "Mount 路径",
+    "vault_token": "Token",
+    "vault_token_hint": "Vault 访问令牌（推荐从环境变量注入，此处仅用于测试）",
+    "secret_file": "密钥文件",
+    "vault_config": "Vault 配置",
+    "test_connection": "测试连接",
+    "testing": "测试中…",
+    "test_success": "连接成功（延迟 {ms} ms）",
+    "test_fail": "连接失败：",
+    "test_fail_http": "连接失败: [{code}] {msg}",
+    "test_fail_error": "连接失败: {msg}",
+    "need_addr": "请输入 Vault 地址",
+    "keys_title": "密钥列表",
+    "no_keys": "暂无密钥",
+    "loading": "加载中…",
+    "fetch_status_failed": "获取状态失败：",
+    "help_title": "帮助说明",
+    "help_ref_format": "在配置中使用 ${key} 引用密钥，运行时由 provider 解析替换为真实值。",
+    "help_ref_example": "${vault:notify/dingtalk#webhook_url}\n${notify/dingtalk/webhook_url}\n${OPSMESH_DB_PASSWORD}",
+    "help_providers": "支持的 Provider",
+    "help_env": "从环境变量读取（适合 K8s Secret 注入）",
+    "help_file": "从 JSON 文件读取（适合本地开发/CI 流水线）",
+    "help_vault": "从 HashiCorp Vault KV v2 引擎读取（适合生产环境）",
+    "help_chain": "链式查找：按顺序依次尝试多个 provider，第一个命中者胜出"
   }
 }

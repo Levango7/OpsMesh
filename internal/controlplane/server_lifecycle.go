@@ -134,6 +134,12 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/network/diagnose/", s.handleNetworkDiagnoseResult)     // GET 子路径：{taskId}
 	mux.HandleFunc("/api/v1/network/connectivity", s.handleNetworkConnectivity)    // POST 批量连通性检测
 
+	// task 267 密钥管理 API：查看 provider 状态 + 测试连接 + 列出密钥 key。
+	// status/keys 不返回 Vault token 与密钥值（安全考虑）；test 端点做 SSRF 校验。
+	mux.HandleFunc("/api/v1/secrets/status", s.handleSecretsStatus) // GET 当前 provider 配置概览
+	mux.HandleFunc("/api/v1/secrets/test", s.handleSecretsTest)     // POST 测试 Vault 连接
+	mux.HandleFunc("/api/v1/secrets/keys", s.handleSecretsKeys)     // GET 密钥 key 列表（仅名称 + provider）
+
 	// B1 修复 4：用 jsonErrorMux 包装 mux，将 404 统一为 JSON 格式。
 	// P1-C3：httpMetricsMiddleware 包在最外层，记录所有请求（含 panic 转的 500）的计数与延迟。
 	// M1-1：otelx.HTTPMiddleware 为每个请求创建 span 并从请求头提取 W3C Trace Context，
@@ -211,6 +217,9 @@ func (s *Server) Start() error {
 	// M1-1 OTel 优雅关闭：flush 残留 span 到导出器（OTLP gRPC batch / stdout）。
 	// 用独立超时（5s）避免退出窗口耗尽在 OTel flush 上；未启用时为 no-op。
 	defer s.shutdownOTel()
+	// P2-B3 TLS 证书热重载器优雅关闭：关闭 fsnotify watcher 与退出 watchLoop goroutine。
+	// 未启用热重载时 tlsReloader 为 nil，shutdownTLSReloader 为 no-op。
+	defer s.shutdownTLSReloader()
 	select {
 	case <-ctx.Done():
 		logx.Info(ctx, "收到终止信号，优雅退出", "window", s.shutdownWait.String())

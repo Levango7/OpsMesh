@@ -6,6 +6,8 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -13,12 +15,14 @@ import (
 	"net"
 	"net/http"
 	neturl "net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
 	"opsmesh/internal/grpcx"
@@ -35,12 +39,42 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
 	}
 	var opts []grpc.ServerOption
 	if s.tlsCert != "" && s.tlsKey != "" {
-		creds, err := tlsutil.ServerCreds(s.tlsCert, s.tlsKey, s.clientCA)
-		if err != nil {
-			log.Fatalf("[controlplane] gRPC TLS 加载失败: %v", err)
+		// P2-B3 TLS 证书热重载：--tls-watch=true 时启用 fsnotify 监听证书文件变更，
+		// 无需重启服务即可更新 TLS 配置。否则走原 ServerCreds 路径（启动时一次性加载）。
+		if s.cfg != nil && s.cfg.TLSWatch {
+			reloader, err := tlsutil.NewCertificateReloader(s.tlsCert, s.tlsKey)
+			if err != nil {
+				log.Fatalf("[controlplane] gRPC TLS 热重载初始化失败: %v", err)
+			}
+			s.tlsReloader = reloader
+			tlsCfg := &tls.Config{
+				GetCertificate: reloader.GetCertificate,
+				MinVersion:     tls.VersionTLS12,
+			}
+			// mTLS：clientCA 非空时要求客户端持证。
+			if s.clientCA != "" {
+				pool := x509.NewCertPool()
+				b, err := os.ReadFile(s.clientCA)
+				if err != nil {
+					log.Fatalf("[controlplane] gRPC TLS 热重载模式读取 clientCA 失败: %v", err)
+				}
+				if !pool.AppendCertsFromPEM(b) {
+					log.Fatalf("[controlplane] gRPC TLS 热重载模式解析 clientCA 失败")
+				}
+				tlsCfg.ClientCAs = pool
+				tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+			}
+			creds := credentials.NewTLS(tlsCfg)
+			opts = append(opts, grpc.Creds(creds))
+			logx.Info(context.Background(), "gRPC 已启用 TLS（热重载模式）", "mtls", s.clientCA != "", "cert", s.tlsCert, "key", s.tlsKey)
+		} else {
+			creds, err := tlsutil.ServerCreds(s.tlsCert, s.tlsKey, s.clientCA)
+			if err != nil {
+				log.Fatalf("[controlplane] gRPC TLS 加载失败: %v", err)
+			}
+			opts = append(opts, grpc.Creds(creds))
+			logx.Info(context.Background(), "gRPC 已启用 TLS", "mtls", s.clientCA != "")
 		}
-		opts = append(opts, grpc.Creds(creds))
-		logx.Info(context.Background(), "gRPC 已启用 TLS", "mtls", s.clientCA != "")
 	}
 	// P0-2 兜底盘 + M1-1 OTel gRPC 服务端拦截器（链式组合）：
 	//   - grpcRecoveryInterceptor 在外：拦截 unary handler panic，避免单 RPC 击穿整个 gRPC server。

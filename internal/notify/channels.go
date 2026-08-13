@@ -1,4 +1,3 @@
-
 // Package notify 通知渠道扩展（M2-2）。
 //
 // 本文件实现统一的 Channel 接口与 5 个具体渠道：
@@ -15,7 +14,6 @@
 //   - Message 同时兼容通用通知（Title/Body）与告警语义（Severity/Source/Timestamp）。
 package notify
 
-
 import (
 	"bytes"
 	"context"
@@ -27,6 +25,8 @@ import (
 	"net/smtp"
 	"strings"
 	"time"
+
+	"opsmesh/internal/secrets"
 )
 
 // ============================================================================
@@ -439,16 +439,16 @@ func buildRFC822WithFormat(from string, to []string, subject, body, format strin
 // ChannelConfig 渠道配置（与 config.go 的 NotifyChannelConfig 解耦，notify 包内部使用）。
 // 由 Notifier 通过 NewChannel 工厂转换为具体 Channel 实例。
 type ChannelConfig struct {
-	Type        string   // dingtalk / wechat / feishu / slack / email
-	WebhookURL  string   // webhook URL（dingtalk/wechat/feishu/slack 用）
-	Secret      string   // 加签密钥（dingtalk/feishu 用）
-	Channel     string   // Slack 频道（slack 用）
-	SMTPHost    string   // SMTP 主机（email 用）
-	SMTPPort    int      // SMTP 端口（email 用）
-	Username    string   // SMTP 用户名（email 用）
-	Password    string   // SMTP 密码（email 用）
-	From        string   // 发件人（email 用）
-	To          []string // 收件人列表（email 用）
+	Type       string   // dingtalk / wechat / feishu / slack / email
+	WebhookURL string   // webhook URL（dingtalk/wechat/feishu/slack 用）
+	Secret     string   // 加签密钥（dingtalk/feishu 用）
+	Channel    string   // Slack 频道（slack 用）
+	SMTPHost   string   // SMTP 主机（email 用）
+	SMTPPort   int      // SMTP 端口（email 用）
+	Username   string   // SMTP 用户名（email 用）
+	Password   string   // SMTP 密码（email 用）
+	From       string   // 发件人（email 用）
+	To         []string // 收件人列表（email 用）
 }
 
 // NewChannel 渠道工厂：按 type 构造具体 Channel 实例。
@@ -482,4 +482,100 @@ func NewChannel(cfg ChannelConfig) (Channel, error) {
 func marshalPayloadForTest(v interface{}) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// ============================================================================
+// 密钥外置构造函数（task 266）
+//
+// 提供 WithSecret 后缀的渠道构造函数，支持从 SecretProvider 解析 ${key} 格式密钥引用。
+// 设计原则：
+//   - 向后兼容：provider 为 nil 或参数为明文时，行为与原版 NewXxxChannel 完全一致。
+//   - 解析失败时返回 error（fail-fast），避免运行期用引用串当密钥导致鉴权失败。
+//   - 仅解析密钥相关参数（webhookURL/secret），非敏感参数（如 Slack channel 名）不解析。
+// ============================================================================
+
+// NewDingTalkChannelWithSecret 构造钉钉渠道，支持密钥引用解析。
+// webhookURL/secret 为 ${key} 格式时从 provider 解析，明文直接使用。
+// provider 为 nil 时退化为明文直接使用（向后兼容）。
+// 解析失败（如 provider 返回错误）时返回 error，避免误把引用串当密钥。
+func NewDingTalkChannelWithSecret(webhookURL, secret string, provider secrets.SecretProvider) (*DingTalkChannel, error) {
+	resolvedURL, err := secrets.ResolveSecret(webhookURL, provider)
+	if err != nil {
+		return nil, fmt.Errorf("notify: 解析钉钉 webhookURL 失败: %w", err)
+	}
+	resolvedSecret, err := secrets.ResolveSecret(secret, provider)
+	if err != nil {
+		return nil, fmt.Errorf("notify: 解析钉钉 secret 失败: %w", err)
+	}
+	return NewDingTalkChannel(resolvedURL, resolvedSecret), nil
+}
+
+// NewWeChatWorkChannelWithSecret 构造企业微信渠道，支持密钥引用解析。
+// webhookURL 为 ${key} 格式时从 provider 解析，明文直接使用。
+// provider 为 nil 时退化为明文直接使用（向后兼容）。
+func NewWeChatWorkChannelWithSecret(webhookURL string, provider secrets.SecretProvider) (*WeChatWorkChannel, error) {
+	resolvedURL, err := secrets.ResolveSecret(webhookURL, provider)
+	if err != nil {
+		return nil, fmt.Errorf("notify: 解析企业微信 webhookURL 失败: %w", err)
+	}
+	return NewWeChatWorkChannel(resolvedURL), nil
+}
+
+// NewFeishuChannelWithSecret 构造飞书渠道，支持密钥引用解析。
+// webhookURL/secret 为 ${key} 格式时从 provider 解析，明文直接使用。
+// provider 为 nil 时退化为明文直接使用（向后兼容）。
+func NewFeishuChannelWithSecret(webhookURL, secret string, provider secrets.SecretProvider) (*FeishuChannel, error) {
+	resolvedURL, err := secrets.ResolveSecret(webhookURL, provider)
+	if err != nil {
+		return nil, fmt.Errorf("notify: 解析飞书 webhookURL 失败: %w", err)
+	}
+	resolvedSecret, err := secrets.ResolveSecret(secret, provider)
+	if err != nil {
+		return nil, fmt.Errorf("notify: 解析飞书 secret 失败: %w", err)
+	}
+	return NewFeishuChannel(resolvedURL, resolvedSecret), nil
+}
+
+// NewSlackChannelWithSecret 构造 Slack 渠道，支持密钥引用解析。
+// webhookURL 为 ${key} 格式时从 provider 解析，明文直接使用。
+// channel 为非敏感参数（频道名），不参与解析，直接透传。
+// provider 为 nil 时退化为明文直接使用（向后兼容）。
+func NewSlackChannelWithSecret(webhookURL, channel string, provider secrets.SecretProvider) (*SlackChannel, error) {
+	resolvedURL, err := secrets.ResolveSecret(webhookURL, provider)
+	if err != nil {
+		return nil, fmt.Errorf("notify: 解析 Slack webhookURL 失败: %w", err)
+	}
+	return NewSlackChannel(resolvedURL, channel), nil
+}
+
+// NewChannelWithSecret 渠道工厂（密钥外置版）：按 type 构造具体 Channel 实例，
+// 对密钥相关字段（webhookURL/secret）通过 SecretProvider 解析 ${key} 引用。
+//
+// 与 NewChannel 的差异：密钥参数经 ResolveSecret 解析；非敏感参数（Slack channel）直接透传。
+// provider 为 nil 时退化为 NewChannel（向后兼容）。
+// email 渠道的 password 也参与解析（SMTP 密码属于敏感信息）。
+func NewChannelWithSecret(cfg ChannelConfig, provider secrets.SecretProvider) (Channel, error) {
+	switch cfg.Type {
+	case "dingtalk":
+		return NewDingTalkChannelWithSecret(cfg.WebhookURL, cfg.Secret, provider)
+	case "wechat", "wecom":
+		return NewWeChatWorkChannelWithSecret(cfg.WebhookURL, provider)
+	case "feishu", "lark":
+		return NewFeishuChannelWithSecret(cfg.WebhookURL, cfg.Secret, provider)
+	case "slack":
+		return NewSlackChannelWithSecret(cfg.WebhookURL, cfg.Channel, provider)
+	case "email":
+		// SMTP 密码属于敏感信息，支持密钥引用解析。
+		resolvedPass, err := secrets.ResolveSecret(cfg.Password, provider)
+		if err != nil {
+			return nil, fmt.Errorf("notify: 解析 email password 失败: %w", err)
+		}
+		ch := NewEmailChannel(cfg.SMTPHost, cfg.SMTPPort, cfg.Username, resolvedPass, cfg.From, cfg.To)
+		if !ch.Enabled() {
+			return nil, fmt.Errorf("notify: email channel config incomplete (host/port/from/to required)")
+		}
+		return ch, nil
+	default:
+		return nil, fmt.Errorf("notify: unknown channel type %q", cfg.Type)
+	}
 }

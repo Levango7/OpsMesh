@@ -25,7 +25,8 @@
     "logs": "Logs",
     "users": "Users",
     "roles": "Roles",
-    "permissions": "Permissions"
+    "permissions": "Permissions",
+    "secrets": "Secrets"
   },
   "topbar": {
     "devices": "Devices",
@@ -738,5 +739,38 @@
       "cpu": "CPU",
       "memory": "Memory"
     }
+  },
+  "secrets": {
+    "title": "Secret Management",
+    "subtitle": "View secret provider status, test connection, configure Vault address",
+    "provider_status": "Provider Status",
+    "provider_type": "Provider",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "vault_addr": "Vault Address",
+    "vault_mount": "Mount Path",
+    "vault_token": "Token",
+    "vault_token_hint": "Vault access token (recommend injecting from env var, here only for testing)",
+    "secret_file": "Secret File",
+    "vault_config": "Vault Config",
+    "test_connection": "Test Connection",
+    "testing": "Testing...",
+    "test_success": "Connection OK (latency {ms} ms)",
+    "test_fail": "Connection failed: ",
+    "test_fail_http": "Connection failed: [{code}] {msg}",
+    "test_fail_error": "Connection failed: {msg}",
+    "need_addr": "Please enter Vault address",
+    "keys_title": "Secret Keys",
+    "no_keys": "No secrets",
+    "loading": "Loading...",
+    "fetch_status_failed": "Fetch status failed: ",
+    "help_title": "Help",
+    "help_ref_format": "Use ${key} in config to reference secrets; provider resolves them at runtime.",
+    "help_ref_example": "${vault:notify/dingtalk#webhook_url}\n${notify/dingtalk/webhook_url}\n${OPSMESH_DB_PASSWORD}",
+    "help_providers": "Supported Providers",
+    "help_env": "Read from environment variables (suitable for K8s Secret injection)",
+    "help_file": "Read from JSON file (suitable for local dev/CI pipeline)",
+    "help_vault": "Read from HashiCorp Vault KV v2 engine (suitable for production)",
+    "help_chain": "Chain lookup: try multiple providers in order, first hit wins"
   }
 }

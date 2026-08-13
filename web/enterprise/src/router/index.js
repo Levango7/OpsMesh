@@ -33,7 +33,9 @@ const routes = [
   // 系统管理
   { path: '/users', name: 'users', component: () => import('@/views/UsersView.vue'), meta: { title: '用户中心', group: '系统管理', icon: 'users', requirePerm: 'user:read' } },
   { path: '/roles', name: 'roles', component: () => import('@/views/RolesView.vue'), meta: { title: '角色管理', group: '系统管理', icon: 'roles', requirePerm: 'role:read' } },
-  { path: '/permissions', name: 'permissions', component: () => import('@/views/PermissionsView.vue'), meta: { title: '权限管理', group: '系统管理', icon: 'permissions', requirePerm: 'role:read' } }
+  { path: '/permissions', name: 'permissions', component: () => import('@/views/PermissionsView.vue'), meta: { title: '权限管理', group: '系统管理', icon: 'permissions', requirePerm: 'role:read' } },
+  // task 267 密钥管理：查看 provider 状态 + 测试连接 + 配置 Vault 地址
+  { path: '/secrets', name: 'secrets', component: () => import('@/views/secrets/SecretsView.vue'), meta: { title: '密钥管理', group: '系统管理', icon: 'key', requirePerm: 'role:read' } }
 ]
 
 const router = createRouter({

@@ -148,7 +148,8 @@ const navGroups = [
     items: [
       { name: 'users', icon: 'users', labelKey: 'nav.users', required: 'user:read' },
       { name: 'roles', icon: 'roles', labelKey: 'nav.roles', required: 'role:read' },
-      { name: 'permissions', icon: 'permissions', labelKey: 'nav.permissions', required: 'role:read' }
+      { name: 'permissions', icon: 'permissions', labelKey: 'nav.permissions', required: 'role:read' },
+      { name: 'secrets', icon: 'task', labelKey: 'nav.secrets', required: 'role:read' }
     ]
   }
 ]

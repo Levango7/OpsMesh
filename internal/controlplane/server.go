@@ -31,6 +31,7 @@ import (
 	"opsmesh/internal/orchestration"
 	"opsmesh/internal/otelx"
 	"opsmesh/internal/proto"
+	"opsmesh/internal/secrets"
 	"opsmesh/internal/store"
 	"opsmesh/internal/tlsutil"
 )
@@ -117,6 +118,12 @@ type Server struct {
 	alertAggregator *alertengine.Aggregator
 	alertNotifier   *notify.Notifier
 
+	// task 266 告警通道密钥外置：SecretProvider 实例（env/file/vault/chain）。
+	// 由 NewServer 调用 secrets.FromConfig 构造；nil=未启用密钥外置（向后兼容）。
+	// 注入到 alertNotifier 与 buildChannel，使渠道构造支持 ${key} 格式密钥引用解析。
+	// 构造失败时：生产模式 fail-fast，非生产模式打 Warning 继续（保持本地体验兼容）。
+	secretProvider secrets.SecretProvider
+
 	// task 254 P2-3 集成：告警抑制器（基于活跃告警状态的动态抑制）。
 	// alertInhibitor 持有抑制规则与活跃告警集合，告警评估前检查 IsInhibited 跳过通知，
 	// 评估后对 firing 告警调用 TrackActive，告警恢复时调用 RemoveActive。
@@ -146,6 +153,11 @@ type Server struct {
 	// 由 handleNetworkTopology 在 ?refresh=true 时刷新，handleNetworkTopologyCache 读取。
 	// 内存缓存（重启后丢失），不持久化到 store（拓扑数据时效性强，无需持久化）。
 	networkTopologyCache *NetworkTopologyCache
+
+	// P2-B3 TLS 证书热重载器（仅当 cfg.TLSWatch=true 且 TLSCert/TLSKey 非空时构造）。
+	// buildGRPC 创建并赋值，server_lifecycle.go 的 Start 优雅退出时调用 Close 释放 watcher。
+	// nil=未启用热重载（向后兼容，证书更新需重启服务）。
+	tlsReloader *tlsutil.CertificateReloader
 }
 
 // startRefreshSweep 周期清理过期刷新令牌（task 112：store 持久化后改为 no-op，
@@ -182,6 +194,18 @@ func (s *Server) shutdownOTel() {
 	defer cancel()
 	if err := s.otelShutdown(ctx); err != nil {
 		log.Printf("controlplane: OTel shutdown 失败: %v", err)
+	}
+}
+
+// shutdownTLSReloader P2-B3 TLS 证书热重载器优雅关闭。
+// 未启用热重载（tlsReloader 为 nil）时直接返回，零开销。
+// 关闭 fsnotify watcher 与退出 watchLoop goroutine，避免资源泄漏。
+func (s *Server) shutdownTLSReloader() {
+	if s.tlsReloader == nil {
+		return
+	}
+	if err := s.tlsReloader.Close(); err != nil {
+		log.Printf("controlplane: TLS reloader 关闭失败: %v", err)
 	}
 }
 
@@ -239,6 +263,26 @@ func NewServer(cfg *config.Config) *Server {
 		alertSilencer:   alertengine.NewSilencer(nil),
 		alertAggregator: alertengine.NewAggregator([]string{"deviceID", "severity"}, 100),
 		alertNotifier:   notify.NewNotifier(notify.WithDedup(5*time.Minute), notify.WithRetry(nil)),
+	}
+	// task 266 告警通道密钥外置：根据 cfg.SecretProvider 构造 SecretProvider 并注入到 alertNotifier。
+	// cfg.SecretProvider 为空时 FromConfig 返回 (nil, nil)，不启用密钥外置（向后兼容）。
+	// 构造失败时：生产模式 fail-fast（避免运行期渠道鉴权失败），非生产模式打 Warning 继续。
+	secretProvider, spErr := secrets.FromConfig(cfg)
+	if spErr != nil {
+		if cfg.Production {
+			log.Fatalf("[controlplane] 密钥提供者初始化失败（生产模式 fail-fast）: %v", spErr)
+		}
+		logx.Warn(context.Background(), "密钥提供者初始化失败，非生产模式继续（告警通道密钥引用将无法解析）", "err", spErr)
+	}
+	if secretProvider != nil {
+		s.secretProvider = secretProvider
+		// 重新构造 alertNotifier 并注入 SecretProvider（保留原有 Dedup+Retry 选项）。
+		s.alertNotifier = notify.NewNotifier(
+			notify.WithDedup(5*time.Minute),
+			notify.WithRetry(nil),
+			notify.WithSecretProvider(secretProvider),
+		)
+		logx.Info(context.Background(), "告警通道密钥外置已启用", "provider", secretProvider.Name())
 	}
 	if cfg.Demo {
 		// 演示模式（P0-5）：主动播种 demo 拓扑，让 6 大模块在无真实 agent 时也能完整演示。

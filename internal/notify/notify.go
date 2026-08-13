@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"opsmesh/internal/proto"
+	"opsmesh/internal/secrets"
 )
 
 // ============================================================================
@@ -359,13 +360,15 @@ func (c *Channels) Push(a *proto.Alert) error {
 //   - templates：模板存储；Notify 可按 templateID 渲染消息（NotifyWithTemplate）。
 //   - dedup：去重器；nil=关闭去重。IsDuplicate 返回 true 时 Notify 跳过发送。
 //   - retry：重试策略；nil=不重试（单次发送）。
+//   - secretProvider：密钥提供者（task 266）；nil=不启用密钥外置，BuildChannel 退化为明文构造。
 //
 // 并发安全：channels 在构造后不变（启动期一次性注入）；templates/dedup 内部自带互斥。
 type Notifier struct {
-	channels  []Channel       // 已配置渠道列表
-	templates *TemplateStore  // 模板存储（nil=无模板）
-	dedup     *Deduplicator   // 去重器（nil=关闭去重）
-	retry     *RetryPolicy    // 重试策略（nil=不重试）
+	channels       []Channel              // 已配置渠道列表
+	templates      *TemplateStore         // 模板存储（nil=无模板）
+	dedup          *Deduplicator          // 去重器（nil=关闭去重）
+	retry          *RetryPolicy           // 重试策略（nil=不重试）
+	secretProvider secrets.SecretProvider // 密钥提供者（nil=不启用密钥外置）
 }
 
 // NotifierOption Notifier 构造选项（函数选项模式）。
@@ -396,6 +399,13 @@ func WithRetry(policy *RetryPolicy) NotifierOption {
 	}
 }
 
+// WithSecretProvider 注入密钥提供者（task 266）。
+// provider 为 nil 时无操作（保持向后兼容，BuildChannel 退化为明文构造）。
+// 注入后 BuildChannel 会用 WithSecret 版本构造渠道，解析 ${key} 格式密钥引用。
+func WithSecretProvider(provider secrets.SecretProvider) NotifierOption {
+	return func(n *Notifier) { n.secretProvider = provider }
+}
+
 // NewNotifier 构造 Notifier。默认无渠道、无模板、无去重、无重试（通过选项注入）。
 func NewNotifier(opts ...NotifierOption) *Notifier {
 	n := &Notifier{}
@@ -420,6 +430,23 @@ func (n *Notifier) Channels() []Channel {
 // Templates 返回模板存储（可能为 nil）。
 func (n *Notifier) Templates() *TemplateStore {
 	return n.templates
+}
+
+// SecretProvider 返回已注入的密钥提供者（可能为 nil）。
+// 调用方（如 controlplane.buildChannel）据此决定用 WithSecret 版本还是原版构造渠道。
+func (n *Notifier) SecretProvider() secrets.SecretProvider {
+	return n.secretProvider
+}
+
+// BuildChannel 按渠道配置构造 Channel 实例（task 266）。
+// secretProvider 非空时用 NewChannelWithSecret 解析 ${key} 密钥引用；
+// 为空时退化为 NewChannel（明文构造，向后兼容）。
+// 用于将 Notifier 的 secretProvider 透传到渠道构造流程，避免调用方单独持有 provider。
+func (n *Notifier) BuildChannel(cfg ChannelConfig) (Channel, error) {
+	if n.secretProvider != nil {
+		return NewChannelWithSecret(cfg, n.secretProvider)
+	}
+	return NewChannel(cfg)
 }
 
 // Notify 通过所有渠道推送消息。集成去重与重试。
@@ -501,12 +528,12 @@ func AlertToMessage(a *proto.Alert) *Message {
 		return nil
 	}
 	return &Message{
-		Title:    fmt.Sprintf("[OpsMesh][%s] %s", a.Severity, a.DeviceID),
-		Body:     fmt.Sprintf("**严重级别**: %s\n**设备**: %s\n**Agent**: %s\n**时间**: %s\n\n%s", a.Severity, a.DeviceID, a.AgentID, a.CreatedAt.Format("2006-01-02 15:04:05"), a.Message),
-		Format:   "markdown",
-		Severity: a.Severity,
-		Source:   a.DeviceID,
+		Title:     fmt.Sprintf("[OpsMesh][%s] %s", a.Severity, a.DeviceID),
+		Body:      fmt.Sprintf("**严重级别**: %s\n**设备**: %s\n**Agent**: %s\n**时间**: %s\n\n%s", a.Severity, a.DeviceID, a.AgentID, a.CreatedAt.Format("2006-01-02 15:04:05"), a.Message),
+		Format:    "markdown",
+		Severity:  a.Severity,
+		Source:    a.DeviceID,
 		Timestamp: a.CreatedAt,
-		Data:     a,
+		Data:      a,
 	}
 }

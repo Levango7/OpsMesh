@@ -35,6 +35,7 @@ import (
 	"opsmesh/internal/logx"
 	"opsmesh/internal/notify"
 	"opsmesh/internal/proto"
+	"opsmesh/internal/secrets"
 	"opsmesh/internal/store"
 )
 
@@ -482,7 +483,7 @@ func (s *Server) testNotifyChannel(w http.ResponseWriter, r *http.Request, id st
 		body.Body = fmt.Sprintf("来自渠道 %s（类型 %s）的测试通知，发送时间 %s", c.Name, c.Type, time.Now().Format("2006-01-02 15:04:05"))
 	}
 	// 构造渠道实例并发送
-	ch, err := buildChannel(c)
+	ch, err := buildChannel(c, s.secretProvider)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -844,7 +845,9 @@ func maskSensitiveConfig(configJSON string) string {
 
 // buildChannel 根据 NotifyChannel 构造 notify.Channel 实例。
 // Config 为 JSON 字符串，按渠道 Type 解析对应配置。
-func buildChannel(c *store.NotifyChannel) (notify.Channel, error) {
+// provider 非空时用 WithSecret 版本构造渠道，解析 ${key} 格式密钥引用（task 266）；
+// 为空时退化为明文构造（向后兼容）。
+func buildChannel(c *store.NotifyChannel, provider secrets.SecretProvider) (notify.Channel, error) {
 	var cfg map[string]string
 	if c.Config != "" {
 		if err := json.Unmarshal([]byte(c.Config), &cfg); err != nil {
@@ -853,13 +856,13 @@ func buildChannel(c *store.NotifyChannel) (notify.Channel, error) {
 	}
 	switch c.Type {
 	case "dingtalk":
-		return notify.NewDingTalkChannel(cfg["webhookURL"], cfg["secret"]), nil
+		return notify.NewDingTalkChannelWithSecret(cfg["webhookURL"], cfg["secret"], provider)
 	case "wecom", "wechat":
-		return notify.NewWeChatWorkChannel(cfg["webhookURL"]), nil
+		return notify.NewWeChatWorkChannelWithSecret(cfg["webhookURL"], provider)
 	case "feishu", "lark":
-		return notify.NewFeishuChannel(cfg["webhookURL"], cfg["secret"]), nil
+		return notify.NewFeishuChannelWithSecret(cfg["webhookURL"], cfg["secret"], provider)
 	case "slack":
-		return notify.NewSlackChannel(cfg["webhookURL"], cfg["channel"]), nil
+		return notify.NewSlackChannelWithSecret(cfg["webhookURL"], cfg["channel"], provider)
 	case "email":
 		port := 25
 		if p := cfg["port"]; p != "" {
@@ -869,10 +872,15 @@ func buildChannel(c *store.NotifyChannel) (notify.Channel, error) {
 		if t := cfg["to"]; t != "" {
 			to = strings.Split(t, ",")
 		}
-		return notify.NewEmailChannel(cfg["host"], port, cfg["user"], cfg["pass"], cfg["from"], to), nil
+		// SMTP 密码属于敏感信息，支持密钥引用解析。
+		resolvedPass, err := secrets.ResolveSecret(cfg["pass"], provider)
+		if err != nil {
+			return nil, fmt.Errorf("resolve email password: %w", err)
+		}
+		return notify.NewEmailChannel(cfg["host"], port, cfg["user"], resolvedPass, cfg["from"], to), nil
 	case "webhook", "generic":
 		// 通用 webhook 复用钉钉渠道（发送 markdown 消息，适用于大多数 webhook 接收器）
-		return notify.NewDingTalkChannel(cfg["webhookURL"], ""), nil
+		return notify.NewDingTalkChannelWithSecret(cfg["webhookURL"], "", provider)
 	default:
 		return nil, fmt.Errorf("unsupported channel type: %s", c.Type)
 	}
