@@ -360,6 +360,38 @@ type AgentLogStore interface {
 	AgentLogs(tenantID, agentID, logName string) []proto.LogReport
 }
 
+// QuotaConfig 租户资源配额配置（P2-B5 多租户资源配额与计费）。
+//
+// 每个字段表示该租户对应资源允许的最大数量；0 表示不限制（无限配额）。
+// 由 QuotaManager 在 CheckDevice/CheckTask/CheckAlert 时读取，
+// 与 store 中当前用量比较，超额返回 ErrQuotaExceeded。
+//
+// 设计要点：
+//   - 定义在 store 包而非 controlplane 包，避免 store→controlplane 循环依赖；
+//   - 字段均为值类型，浅拷贝即深拷贝，便于并发安全返回拷贝；
+//   - JSON 标签用于 API 响应序列化（GET /api/v1/quotas/{tenantID}）。
+type QuotaConfig struct {
+	MaxDevices int `json:"maxDevices"` // 最大设备数（0=不限）
+	MaxTasks   int `json:"maxTasks"`   // 最大任务数（0=不限）
+	MaxAlerts  int `json:"maxAlerts"`  // 最大告警数（0=不限）
+}
+
+// QuotaStore 配额配置存储（P2-B5 多租户资源配额）。
+//
+// 与 DeviceStore/TaskStore/AlertStore 等领域小接口同构：
+//   - GetQuota 返回租户配额配置（未设置返回 nil + nil error，由调用方回退默认配额）；
+//   - SetQuota 设置/更新租户配额（按 tenantID 幂等 upsert）。
+//
+// MemoryStore 用 map 内存存储；SQLStore 用 quota_configs 表持久化（migrations/006_quota_configs.sql）。
+// 配额检查（CheckDevice/CheckTask/CheckAlert）在 controlplane.QuotaManager 中实现，
+// 结合 QuotaStore 读取配额 + DeviceStore/TaskStore/AlertStore 读取当前用量做比较。
+type QuotaStore interface {
+	// GetQuota 返回租户配额配置（不存在返回 nil，由调用方回退默认配额）。
+	GetQuota(tenantID string) (*QuotaConfig, error)
+	// SetQuota 设置或更新租户配额（按 tenantID 幂等 upsert）。返回持久化错误。
+	SetQuota(tenantID string, cfg *QuotaConfig) error
+}
+
 // Store 控制面注册表的可插拔持久化组合接口。
 // 由 12 个领域小接口组合而成（M2-1A 拆分 + 用户中心扩展 + K8s 集群管理 + OS/中间件模板 + 刷新令牌），
 // 方法签名刻意与旧版内存 Registry 保持一致，便于平滑替换。
@@ -384,6 +416,7 @@ type Store interface {
 	NotifyChannelStore    // 通知渠道：CRUD（task 241 M2）
 	NotifyTemplateStore   // 通知模板：CRUD（task 241 M2）
 	AgentLogStore         // agent 日志上报：落库 + 检索（task 247）
+	QuotaStore            // 租户配额：Get/Set（P2-B5 多租户资源配额）
 
 	// WithDemo 设置是否开启演示模式（P0-5）：开启时每个 agent 注册预置 uname -a 示例任务。
 	WithDemo(bool) Store
@@ -408,6 +441,7 @@ var (
 	_ NotifyChannelStore  = (*MemoryStore)(nil)
 	_ NotifyTemplateStore = (*MemoryStore)(nil)
 	_ AgentLogStore       = (*MemoryStore)(nil)
+	_ QuotaStore          = (*MemoryStore)(nil)
 	_ Store               = (*MemoryStore)(nil)
 
 	_ DeviceStore         = (*SQLStore)(nil)
@@ -426,5 +460,6 @@ var (
 	_ NotifyChannelStore  = (*SQLStore)(nil)
 	_ NotifyTemplateStore = (*SQLStore)(nil)
 	_ AgentLogStore       = (*SQLStore)(nil)
+	_ QuotaStore          = (*SQLStore)(nil)
 	_ Store               = (*SQLStore)(nil)
 )

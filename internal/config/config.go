@@ -321,6 +321,17 @@ type Config struct {
 	LogPushPattern  string   // --log-push-pattern 正则过滤（空=不过滤）
 	LogPushEndpoint string   // --log-push-endpoint 推送目标（如 http://loki:3100/loki/api/v1/push）
 	LogPushBackend  string   // --log-push-backend 后端类型：loki|es（默认 loki）
+
+	// P2-B5 多租户资源配额与计费（task 274）：
+	//   - QuotaEnabled：是否启用配额检查（设备/任务/告警创建前校验是否超额）。
+	//     默认 false（向后兼容，不启用配额检查）；true 时 QuotaManager.CheckDevice/CheckTask/CheckAlert
+	//     在创建路径拦截超额请求返回 ErrQuotaExceeded。
+	//   - QuotaMaxDevices/QuotaMaxTasks/QuotaMaxAlerts：默认配额（未显式设置配额的租户回退到此值）。
+	//     0=不限（默认，向后兼容）；非 0 时作为新租户的默认上限。
+	QuotaEnabled    bool // --quota-enabled 启用配额检查（默认 false）
+	QuotaMaxDevices int  // --quota-max-devices 默认最大设备数（0=不限）
+	QuotaMaxTasks   int  // --quota-max-tasks 默认最大任务数（0=不限）
+	QuotaMaxAlerts  int  // --quota-max-alerts 默认最大告警数（0=不限）
 }
 
 // Load 解析 flag 并用环境变量兜底，返回 *Config。
@@ -467,6 +478,13 @@ func Load() *Config {
 	logPushPattern := flag.String("log-push-pattern", "", "P2-B4 日志采集正则过滤（空=不过滤，全部推送；如 ^ERROR 仅推送 ERROR 行）；或 env OPSMESH_LOG_PUSH_PATTERN")
 	logPushEndpoint := flag.String("log-push-endpoint", "", "P2-B4 日志推送目标 endpoint（Loki /api/v1/push 或 ES /_bulk，如 http://loki:3100/loki/api/v1/push）；或 env OPSMESH_LOG_PUSH_ENDPOINT")
 	logPushBackend := flag.String("log-push-backend", "loki", "P2-B4 日志推送后端类型：loki | es（默认 loki）；或 env OPSMESH_LOG_PUSH_BACKEND")
+	// P2-B5 多租户资源配额与计费（task 274）：租户级资源配额（设备数/任务数/告警数上限）。
+	// 启用后 QuotaManager 在设备/任务/告警创建路径校验是否超额，超额返回 ErrQuotaExceeded。
+	// 默认配额用于未显式设置配额的租户（0=不限，向后兼容）。
+	quotaEnabled := flag.Bool("quota-enabled", false, "P2-B5 启用租户资源配额检查（设备/任务/告警创建前校验是否超额）；默认 false（向后兼容，不启用配额检查）；或 env OPSMESH_QUOTA_ENABLED")
+	quotaMaxDevices := flag.Int("quota-max-devices", 0, "P2-B5 默认最大设备数（未显式设置配额的租户回退到此值；0=不限，默认）；或 env OPSMESH_QUOTA_MAX_DEVICES")
+	quotaMaxTasks := flag.Int("quota-max-tasks", 0, "P2-B5 默认最大任务数（未显式设置配额的租户回退到此值；0=不限，默认）；或 env OPSMESH_QUOTA_MAX_TASKS")
+	quotaMaxAlerts := flag.Int("quota-max-alerts", 0, "P2-B5 默认最大告警数（未显式设置配额的租户回退到此值；0=不限，默认）；或 env OPSMESH_QUOTA_MAX_ALERTS")
 	flag.Parse()
 
 	// 记录被显式设置的 flag，用于"flag 优先、env 兜底"的正确语义（P1-8 修复：原实现 env 会覆盖显式 flag）。
@@ -624,6 +642,10 @@ func Load() *Config {
 		LogPushPattern:         val("log-push-pattern", *logPushPattern, "OPSMESH_LOG_PUSH_PATTERN"),
 		LogPushEndpoint:        val("log-push-endpoint", *logPushEndpoint, "OPSMESH_LOG_PUSH_ENDPOINT"),
 		LogPushBackend:         val("log-push-backend", *logPushBackend, "OPSMESH_LOG_PUSH_BACKEND"),
+		QuotaEnabled:           valBool("quota-enabled", *quotaEnabled, "OPSMESH_QUOTA_ENABLED"),
+		QuotaMaxDevices:        valInt("quota-max-devices", *quotaMaxDevices, "OPSMESH_QUOTA_MAX_DEVICES"),
+		QuotaMaxTasks:          valInt("quota-max-tasks", *quotaMaxTasks, "OPSMESH_QUOTA_MAX_TASKS"),
+		QuotaMaxAlerts:         valInt("quota-max-alerts", *quotaMaxAlerts, "OPSMESH_QUOTA_MAX_ALERTS"),
 	}
 	// task 97 --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
 	// 使现有 LogBackend 校验/路由逻辑无缝复用；最终 LogStore 与 LogBackend 保持同值。

@@ -25,13 +25,19 @@ type Dispatcher interface {
 
 // Handler 是 M3 部署中心的 HTTP 处理器。
 type Handler struct {
-	store DeployStore
-	disp  Dispatcher
+	store      DeployStore
+	disp       Dispatcher
+	autoAdvance *AutoAdvanceManager // 灰度自动推进管理器（可选，nil=未启用）
 }
 
 // NewHandler 构造部署处理器。
 func NewHandler(store DeployStore, disp Dispatcher) *Handler {
 	return &Handler{store: store, disp: disp}
+}
+
+// SetAutoAdvance 注入灰度自动推进管理器（可选，启用后 /auto-advance API 可用）。
+func (h *Handler) SetAutoAdvance(m *AutoAdvanceManager) {
+	h.autoAdvance = m
 }
 
 // Store 暴露底层存储（供 controlplane 后台 reconcile 调用）。
@@ -140,6 +146,16 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 			}
 			dt, _ := h.store.Get(r.Context(), id, actx.TenantID)
 			writeJSON(w, http.StatusOK, dt)
+			return
+		case "auto-advance", "auto-advance/status":
+			// 灰度自动推进：POST 启动 / GET status 查询 / DELETE 停止。
+			if h.autoAdvance == nil {
+				writeJSON(w, http.StatusNotImplemented, map[string]string{
+					"error": "auto-advance not enabled on this handler",
+				})
+				return
+			}
+			h.autoAdvance.ServeHTTP(w, r, id, actx.TenantID, parts[1])
 			return
 		default:
 			http.Error(w, "not found", http.StatusNotFound)
@@ -463,6 +479,75 @@ func evaluateGate(gate GateConfig, done, failed, total int) bool {
 func (h *Handler) autoRollback(ctx context.Context, dt *DeployTask) error {
 	dt.Status = StatusRolledBack
 	dt.UpdatedAt = time.Now()
+	return h.store.Update(ctx, dt)
+}
+
+// AdvanceCanary 扩大金丝雀灰度比例：更新 CanaryWeight 并派发新增目标。
+//
+// 由 AutoAdvanceManager 通过 AdvanceFunc 回调注入，实现"达标自动扩大灰度"。
+// newWeight 为目标灰度比例（[1,100]），需大于当前 CanaryWeight 才有效。
+// 仅 canary/gated 状态可推进；派发新增目标后状态保持 canary（仍在灰度阶段）。
+func (h *Handler) AdvanceCanary(ctx context.Context, deployID int64, tenantID string, newWeight int) error {
+	dt, err := h.store.Get(ctx, deployID, tenantID)
+	if err != nil {
+		return err
+	}
+	if dt.EffectiveStrategy() != StrategyCanary {
+		return fmt.Errorf("deploy %d strategy %s not canary, cannot advance", deployID, dt.EffectiveStrategy())
+	}
+	if dt.Status != StatusCanary && dt.Status != StatusGated {
+		return fmt.Errorf("deploy %d cannot advance from status %s", deployID, dt.Status)
+	}
+	if newWeight <= 0 || newWeight > canaryWeightMax {
+		return fmt.Errorf("new_weight %d out of range [1,100]", newWeight)
+	}
+	if newWeight <= dt.EffectiveCanaryWeight() {
+		return fmt.Errorf("new_weight %d <= current %d, no advance", newWeight, dt.EffectiveCanaryWeight())
+	}
+
+	all := SplitIDs(dt.TargetIDs)
+	done := SplitIDs(dt.CanaryTargets)
+	doneSet := make(map[string]bool, len(done))
+	for _, d := range done {
+		doneSet[d] = true
+	}
+	// 按新比例选取目标（确定性，与 Execute 一致）。
+	newTargets := selectCanaryTargets(all, newWeight)
+	if len(newTargets) == 0 {
+		return fmt.Errorf("no targets selected for new_weight %d", newWeight)
+	}
+	// 找出新增目标（不在已派发集合中的）。
+	var added []string
+	for _, t := range newTargets {
+		if !doneSet[t] {
+			added = append(added, t)
+		}
+	}
+	// 派发新增目标。
+	taskIDs := SplitIDs(dt.TaskIDs)
+	for _, tid := range added {
+		dev := h.disp.Device(tid)
+		if dev == nil || dev.AgentID == "" {
+			continue
+		}
+		t := &proto.Task{
+			AgentID:  dev.AgentID,
+			TenantID: dt.TenantID,
+			Type:     deployTypeToTaskType(dt.Type),
+			Command:  dt.RepoURL,
+			Content:  dt.Content,
+			Path:     dt.Path,
+			Status:   "pending",
+		}
+		created := h.disp.CreateTask(t)
+		if created != nil && created.TaskID != "" {
+			taskIDs = append(taskIDs, created.TaskID)
+		}
+	}
+	dt.TaskIDs = strings.Join(taskIDs, ",")
+	dt.CanaryWeight = newWeight
+	dt.CanaryTargets = strings.Join(newTargets, ",")
+	dt.Status = StatusCanary // 仍在灰度阶段，等待下一轮评估
 	return h.store.Update(ctx, dt)
 }
 

@@ -401,8 +401,9 @@ func (p *LogPusher) buildLokiPayload(batch []LogEntry) ([]byte, string) {
 // buildESBulk 构造 Elasticsearch _bulk NDJSON 报文。
 //
 // 每条日志两行：
-//   {"index": {"_index": "opsmesh-logs"}}
-//   {"@timestamp": "...", "host": "...", "tenant": "...", "file": "...", "message": "..."}
+//
+//	{"index": {"_index": "opsmesh-logs"}}
+//	{"@timestamp": "...", "host": "...", "tenant": "...", "file": "...", "message": "..."}
 //
 // 索引名固定 opsmesh-logs（与 config.ESIndex 默认一致；如需自定义可在 endpoint 路径中体现）。
 func (p *LogPusher) buildESBulk(batch []LogEntry) ([]byte, string) {

@@ -674,6 +674,28 @@ func (m *MultiSchemaStore) SilenceAlert(id, tenantID, by string, until time.Time
 }
 
 // ============================================================================
+// QuotaStore 实现（P2-B5 多租户资源配额，2 方法）
+// ============================================================================
+
+// GetQuota 返回租户配额配置：直接用 tenantID 路由。
+func (m *MultiSchemaStore) GetQuota(tenantID string) (*QuotaConfig, error) {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return nil, nil
+	}
+	return s.GetQuota(tenantID)
+}
+
+// SetQuota 设置或更新租户配额：直接用 tenantID 路由。
+func (m *MultiSchemaStore) SetQuota(tenantID string, cfg *QuotaConfig) error {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return err
+	}
+	return s.SetQuota(tenantID, cfg)
+}
+
+// ============================================================================
 // AuditStore 实现（3 方法）
 // ============================================================================
 

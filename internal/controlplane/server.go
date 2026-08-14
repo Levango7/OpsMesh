@@ -169,6 +169,16 @@ type Server struct {
 	// 主机/服务元信息，更新 CMDB CI。由 NewServer 构造，Start 启动 goroutine 运行 Run(ctx)。
 	// nil=未启用（向后兼容，仅手动 POST /api/v1/cmdb/collect 时返回 503）。
 	cmdbCollector *CMDBCollector
+
+	// cmdbApprovalMgr CMDB 变更审批管理器（task 275）：CI 创建/修改/删除走审批流，
+	// 审批通过后才执行实际变更。由 NewServer 构造，路由 /api/v1/cmdb/changes/*。
+	cmdbApprovalMgr *CMDBApprovalManager
+
+	// P2-B5 多租户资源配额管理器（task 274）：租户级资源配额检查 + 用量统计。
+	// 由 NewServer 在 cfg.QuotaEnabled=true 时构造；nil=未启用配额检查（向后兼容）。
+	// 启用后设备/任务/告警创建路径调用 CheckDevice/CheckTask/CheckAlert 校验是否超额。
+	// API 路由 /api/v1/quotas[/{tenantID}] 在 server_lifecycle.go Start 中注册。
+	quotaMgr *QuotaManager
 }
 
 // startRefreshSweep 周期清理过期刷新令牌（task 112：store 持久化后改为 no-op，
@@ -439,6 +449,9 @@ func NewServer(cfg *config.Config) *Server {
 	// Start 启动 goroutine 运行 Run(ctx) 周期采集；POST /api/v1/cmdb/collect 手动触发。
 	// cmdbHandler.Store() 暴露 CiStore 供 collector 直接 CRUD CI（不经过 HTTP 路由层）。
 	s.cmdbCollector = NewCMDBCollector(st, s.cmdbHandler.Store(), 5*time.Minute, "")
+	// task 275 CMDB 变更审批：构造审批管理器，CI 创建/修改/删除走审批流。
+	// 路由 /api/v1/cmdb/changes/*；审批通过后调用 cmdbHandler.Store() 执行实际 CRUD。
+	s.cmdbApprovalMgr = NewCMDBApprovalManager(st, s.cmdbHandler.Store())
 	// task 254 P2-3 集成：告警抑制器（--inhibit-rules-file 非空时加载规则构造 AlertInhibitor）。
 	// 加载失败时 fail-fast（启动期发现问题而非运行期诡异失败）。
 	// nil=未启用告警抑制（向后兼容，--inhibit-rules-file 为空时），评估流程跳过抑制检查。
@@ -481,6 +494,21 @@ func NewServer(cfg *config.Config) *Server {
 		})
 		logx.Info(context.Background(), "异常检测已启用",
 			"windowSize", cfg.AnomalyWindowSize, "threshold", cfg.AnomalyThreshold)
+	}
+	// P2-B5 多租户资源配额（task 274）：构造 QuotaManager。
+	// 始终构造（即使 cfg.QuotaEnabled=false），使 API /api/v1/quotas 可查询用量；
+	// enabled 标志由 cfg.QuotaEnabled 控制，false 时 Check 方法直接放行（向后兼容）。
+	// 默认配额来自 cfg.QuotaMaxDevices/QuotaMaxTasks/QuotaMaxAlerts（0=不限）。
+	s.quotaMgr = NewQuotaManager(st, cfg.QuotaEnabled, &store.QuotaConfig{
+		MaxDevices: cfg.QuotaMaxDevices,
+		MaxTasks:   cfg.QuotaMaxTasks,
+		MaxAlerts:  cfg.QuotaMaxAlerts,
+	})
+	if cfg.QuotaEnabled {
+		logx.Info(context.Background(), "多租户资源配额已启用",
+			"defaultMaxDevices", cfg.QuotaMaxDevices,
+			"defaultMaxTasks", cfg.QuotaMaxTasks,
+			"defaultMaxAlerts", cfg.QuotaMaxAlerts)
 	}
 	return s
 }

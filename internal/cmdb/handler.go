@@ -410,14 +410,14 @@ func parseCICSV(r *http.Request) ([]CiItem, string) {
 	var out []CiItem
 	for _, row := range rows[1:] {
 		it := CiItem{
-			ID:        get(row, "id"),
-			CiType:    get(row, "ciType"),
-			Name:      get(row, "name"),
-			Status:    get(row, "status"),
-			Source:    get(row, "source"),
-			AgentID:   get(row, "agentID"),
-			DeviceID:  get(row, "deviceID"),
-			Attrs:     csvAttrsToMap(get(row, "attrs")),
+			ID:       get(row, "id"),
+			CiType:   get(row, "ciType"),
+			Name:     get(row, "name"),
+			Status:   get(row, "status"),
+			Source:   get(row, "source"),
+			AgentID:  get(row, "agentID"),
+			DeviceID: get(row, "deviceID"),
+			Attrs:    csvAttrsToMap(get(row, "attrs")),
 		}
 		it.ApprovalStatus = get(row, "approvalStatus")
 		out = append(out, it)
@@ -456,13 +456,13 @@ func (h *Handler) HandleReport(ctx context.Context, agentID string, report *prot
 	}
 	if ci == nil {
 		ci = &CiItem{
-			ID:       fmt.Sprintf("ci-%s-%d", agentID, time.Now().UnixNano()),
-			CiType:   report.CiType,
-			Name:     agentID,
-			Status:   "active",
-			Source:   "agent",
-			AgentID:  agentID,
-			Attrs:    make(map[string]string),
+			ID:      fmt.Sprintf("ci-%s-%d", agentID, time.Now().UnixNano()),
+			CiType:  report.CiType,
+			Name:    agentID,
+			Status:  "active",
+			Source:  "agent",
+			AgentID: agentID,
+			Attrs:   make(map[string]string),
 		}
 	}
 	for _, attr := range report.Attrs {

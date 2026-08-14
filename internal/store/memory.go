@@ -85,6 +85,9 @@ type MemoryStore struct {
 	// task 241 M2 集成：通知模板（标题/正文 text/template 变量替换）。
 	// key 为 NotifyTemplate.ID；由 m.mu 保护并发安全。
 	notifyTemplates map[string]*NotifyTemplate
+	// P2-B5 多租户资源配额：tenantID -> 配额配置。
+	// 由 m.mu 保护并发安全；未设置配额的租户在 QuotaManager 中回退到默认配额。
+	quotaConfigs map[string]*QuotaConfig
 	// task 247 agent 日志上报：已落库的 LogReport 批次列表。
 	// 按 tenantID + logName 分组检索（线性遍历，MVP 内存后端够用；
 	// 生产高频场景应由 logstore.SQLLogStore / Loki / ES 承担检索侧）。
@@ -246,8 +249,9 @@ func NewMemoryStore() *MemoryStore {
 		middlewareTemplates: make(map[string]*MiddlewareTemplate),
 		refreshTokens:       make(map[string]*RefreshToken),
 		silences:            make(map[string]*SilenceRule),
-		notifyChannels:      make(map[string]*NotifyChannel),
+		notifyChannels: make(map[string]*NotifyChannel),
 		notifyTemplates:     make(map[string]*NotifyTemplate),
+		quotaConfigs:        make(map[string]*QuotaConfig),
 	}
 	m.seedRBAC()
 	return m
@@ -1572,6 +1576,44 @@ func (r *metricsRing) since(t time.Time) []proto.DeviceMetrics {
 		return nil
 	}
 	return out
+}
+
+// ============================================================================
+// P2-B5 多租户资源配额：QuotaConfig 存储（quotaConfigs map）
+// ============================================================================
+
+// GetQuota 返回租户配额配置（未设置返回 nil + nil error，由调用方回退默认配额）。
+// 返回深拷贝避免外部并发修改破坏内部状态。
+func (m *MemoryStore) GetQuota(tenantID string) (*QuotaConfig, error) {
+	if tenantID == "" {
+		return nil, nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	cfg, ok := m.quotaConfigs[tenantID]
+	if !ok {
+		return nil, nil
+	}
+	cp := *cfg
+	return &cp, nil
+}
+
+// SetQuota 设置或更新租户配额（按 tenantID 幂等 upsert）。
+// cfg 为 nil 时等价于删除该租户配额（回退到默认配额）。
+// 返回深拷贝避免外部继续修改 cfg 影响 store 内部状态。
+func (m *MemoryStore) SetQuota(tenantID string, cfg *QuotaConfig) error {
+	if tenantID == "" {
+		return fmt.Errorf("tenantID must not be empty")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if cfg == nil {
+		delete(m.quotaConfigs, tenantID)
+		return nil
+	}
+	stored := *cfg
+	m.quotaConfigs[tenantID] = &stored
+	return nil
 }
 
 // ============================================================================

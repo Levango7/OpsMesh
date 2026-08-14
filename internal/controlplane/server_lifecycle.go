@@ -142,6 +142,14 @@ func (s *Server) Start() error {
 
 	// task 271 CMDB 采集自动化：POST 手动触发全量采集（返回 {collected, failed}）。
 	mux.HandleFunc("/api/v1/cmdb/collect", s.handleCMDBCollect)
+	// task 275 CMDB 变更审批流：CI 创建/修改/删除走审批，审批通过后才执行实际变更。
+	mux.HandleFunc("/api/v1/cmdb/changes", s.handleCMDBChanges)       // GET 列表 / POST 提交变更申请
+	mux.HandleFunc("/api/v1/cmdb/changes/", s.handleCMDBChangeRouting) // 子路径：{id} GET、{id}/approve|reject POST
+
+	// P2-B5 多租户资源配额（task 274）：GET/PUT/DELETE /api/v1/quotas[/{tenantID}]。
+	// 始终注册（即使未启用配额检查，也可查询用量统计）；handler 内部按 s.quotaMgr.Enabled() 决定行为。
+	mux.HandleFunc("/api/v1/quotas", s.handleQuotas)
+	mux.HandleFunc("/api/v1/quotas/", s.handleQuotaRouting) // 子路径：{tenantID} GET/PUT/DELETE
 
 	// B1 修复 4：用 jsonErrorMux 包装 mux，将 404 统一为 JSON 格式。
 	// P1-C3：httpMetricsMiddleware 包在最外层，记录所有请求（含 panic 转的 500）的计数与延迟。

@@ -69,8 +69,8 @@ func TestExecute_Timeout(t *testing.T) {
 		t.Fatalf("超时命令应非零退出，得到 ExitCode=0")
 	}
 	// 平台差异：Linux 上被信号杀死 ExitCode=-1；Windows 上 killed 进程返回 1。
-	// 关键断言是“被超时打断而非跑完”，用耗时上界判定更稳（超时设为 50ms）。
-	if res.DurationMs > 1000 {
+	// 关键断言是"被超时打断而非跑完"，用耗时上界判定更稳（超时 50ms + taskkill 同步开销，阈值 1500ms < sleep 2s）。
+	if res.DurationMs > 1500 {
 		t.Fatalf("超时命令应在 ~50ms 内被中断，实际耗时 %dms", res.DurationMs)
 	}
 }
