@@ -48,7 +48,7 @@ func NewMemoryWithIndex(cap int) *MemoryLogStore {
 // db 来自 store.SQLStore.DB()（与控制面共享同一连接池，不在本包内关闭）。
 func NewSQL(db *sql.DB) (*SQLLogStore, error) {
 	s := &SQLLogStore{db: db}
-	if err := s.initSchema(context.TODO()); err != nil {
+	if err := s.initSchema(nil); err != nil {
 		return nil, err
 	}
 	return s, nil
