@@ -295,12 +295,13 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 
 ### 5.4 GitOps
 
-建立 `opsmesh-gitops` 仓库 + Argo CD ApplicationSet，按网段批量渲染控制面与 agent 部署：
+✅ **已交付**：`deploy/gitops/` 已落地，含 ApplicationSet + AppProject + 网段 values 示例。
 
 | 组件 | 说明 |
 |---|---|
-| `opsmesh-gitops/` | Helm Charts（controlplane / middleware）+ 网段 values 目录 |
-| ApplicationSet | 按 CIDR 网段列表生成 Application，每段一套控制面 + agent 集群 |
+| `deploy/gitops/applicationset.yaml` | ApplicationSet（list generator），按网段枚举渲染 Application，共用 Helm Chart + 网段 overlay |
+| `deploy/gitops/projects/opsmesh.yaml` | AppProject，限定源仓库与目标 namespace，RBAC 权限 |
+| `deploy/gitops/segments/` | 网段 values overlay 目录（example-segment.yaml + production-segment.yaml） |
 
 ### 5.5 二进制分发
 

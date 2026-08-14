@@ -1,0 +1,174 @@
+# 生产网段配置 — 生产环境
+# 与 applicationset.yaml 中 element: segment=production 对应
+# 本文件作为 Helm values overlay，叠加在 deploy/helm/opsmesh/values.yaml 之上。
+# 生产环境强制开启 TLS/鉴权/Cookie Secure，并采用高可用副本与资源配额。
+
+# ─────────────────────────────────────────────────────────────
+# 网段元数据（GitOps 自用，不传给 Helm Chart）
+# ─────────────────────────────────────────────────────────────
+segment:
+  name: production
+  cidr: 10.10.0.0/16
+
+# ─────────────────────────────────────────────────────────────
+# 全局配置
+# ─────────────────────────────────────────────────────────────
+global:
+  # 生产镜像仓库前缀（私有仓库）；空表示使用 Docker Hub
+  # 建议填私有仓库以加速拉取并规避公网限流
+  imageRegistry: ""
+  # 私有仓库凭证（如启用）
+  # imagePullSecrets:
+  # - name: opsmesh-registry
+  # 存储类：生产建议指定高性能 StorageClass（如 ssd / nfs-ssd）
+  storageClass: ""
+
+# ─────────────────────────────────────────────────────────────
+# 控制面配置（生产级高可用 + hardening）
+# ─────────────────────────────────────────────────────────────
+controlplane:
+  # 副本数：3 副本保证控制面高可用，单节点故障不中断调度
+  replicaCount: 3
+  # 持久化后端：生产必须 mysql，多副本数据一致性
+  store: mysql
+  # 生产模式：开启强约束与审计日志
+  production: true
+  # 强制租户头：网关缺失 X-Tenant-ID 即拒绝，防止跨租户越权
+  requireAuth: true
+  # Cookie Secure：生产 HTTPS，Cookie 仅经加密通道传输
+  cookieSecure: true
+  # 镜像 tag：生产固定到不可变 sha，避免 latest 漂移导致未审核变更上线
+  # 建议由 CI 在发布时写回具体 sha（如 sha256:abcd1234...）
+  image:
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  # gRPC TLS / mTLS：生产强制开启，证书以 Secret 形式预置
+  tls:
+    enabled: true
+    # 证书 Secret 名，需在 namespace opsmesh-production 中预先创建
+    # 包含键：tls.crt / tls.key / ca.crt
+    secretName: opsmesh-tls
+  # 任务租约：生产适当放大，避免长任务被误调度
+  taskLeaseSec: 600
+  taskMaxRetries: 5
+  # 资源：生产高配额，保障并发任务调度
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 1Gi
+    limits:
+      cpu: 4000m
+      memory: 4Gi
+  # 水平自动扩缩容：生产开启，应对负载峰值
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  # 告警 Webhook：生产必须配置，告警路由到运维通道
+  alertWebhookURL: ""
+  alertNotifierType: generic
+  # JWT 签发密钥：生产必须显式注入（长度≥32 字节），勿写入本文件明文
+  # 建议经 External Secrets / Sealed Secrets 注入，或 helm.parameters 引用 K8s Secret
+  jwtSecret: ""
+  # B1 自动纳管 install token HMAC 密钥：生产必须显式注入
+  provisionSecret: ""
+
+# ─────────────────────────────────────────────────────────────
+# MySQL 配置（生产数据本地化）
+# ─────────────────────────────────────────────────────────────
+mysql:
+  enabled: true
+  persistence:
+    # 生产数据卷：按数据规模评估，建议 100Gi 起
+    size: 100Gi
+    # 生产指定高性能 StorageClass
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+# ─────────────────────────────────────────────────────────────
+# Redis 配置（状态缓存）
+# ─────────────────────────────────────────────────────────────
+redis:
+  enabled: true
+  persistence:
+    size: 20Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+# ─────────────────────────────────────────────────────────────
+# Agent 配置
+# ─────────────────────────────────────────────────────────────
+agent:
+  enabled: true
+  # agent.segment 由 ApplicationSet 透传为 production，此处可省略
+  # segment: production
+  # 生产关闭演示模式，避免预置示例任务污染
+  demo: false
+  # 生产提高并发度，匹配控制面资源
+  workerConcurrency: 8
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ─────────────────────────────────────────────────────────────
+# TLS 配置：生产强制开启
+# ─────────────────────────────────────────────────────────────
+tls:
+  enabled: true
+
+# ─────────────────────────────────────────────────────────────
+# 联邦 peers 配置：跨网段协同
+# ─────────────────────────────────────────────────────────────
+federation:
+  enabled: true
+  # 联邦 peers：列出其他网段控制面地址，用于跨网段任务调度与状态同步
+  # 地址需为对端控制面 gRPC 入口（含端口），TLS 建议开启 mTLS 双向认证
+  peers:
+  - name: example
+    address: "opsmesh-controlplane.opsmesh-example.svc.cluster.local:9090"
+  # - name: staging
+  #   address: "opsmesh-controlplane.opsmesh-staging.svc.cluster.local:9090"
+
+# ─────────────────────────────────────────────────────────────
+# 可观测性：生产开启 Prometheus 采集与告警规则
+# ─────────────────────────────────────────────────────────────
+observability:
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+  prometheusRule:
+    enabled: true
+
+# ─────────────────────────────────────────────────────────────
+# Ingress：生产对外暴露（按需开启）
+# ─────────────────────────────────────────────────────────────
+ingress:
+  enabled: false
+  # className: nginx
+  # hosts:
+  # - host: opsmesh.example.com
+  #   paths:
+  #   - path: /
+  #     pathType: Prefix
+  # tls:
+  # - hosts:
+  #   - opsmesh.example.com
+  #   secretName: opsmesh-ingress-tls

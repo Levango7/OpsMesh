@@ -1,0 +1,90 @@
+# Argo CD ApplicationSet：OpsMesh 多网段运维平台
+# 文档：https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/
+#
+# 本清单使用 list generator 显式枚举所有网段，每个网段渲染出一个独立 Application，
+# 共用同一份 Helm Chart（deploy/helm/opsmesh），通过各自 segments/<segment>-segment.yaml
+# 进行 values overlay，实现「一份 Chart + N 份网段配置」的多网段部署。
+#
+# 变更流程：
+#   1. 在 segments/ 下新增/修改 <segment>-segment.yaml
+#   2. 在下方 generators[0].list.elements 中新增/修改对应 element
+#   3. 提交 PR，合并后 Argo CD 自动同步
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: opsmesh-multi-segment
+  namespace: argocd
+  # ApplicationSet 自身归属 argocd 命名空间，由 Argo CD 控制器管理
+  annotations:
+    # 仓库地址与路径，便于审计与工具巡检
+    opsmesh.io/source-repo: https://github.com/Levango7/OpsMesh.git
+    opsmesh.io/chart-path: deploy/helm/opsmesh
+spec:
+  # generators：网段清单。list generator 为每个 element 渲染一个 Application。
+  # 新增网段只需在此追加一项，并在 segments/ 下放置对应 values 文件。
+  generators:
+  - list:
+      elements:
+      # 示例网段：开发/演示环境，低副本、低资源、TLS 关闭
+      - segment: example
+        cidr: 10.0.1.0/24
+        namespace: opsmesh-example
+        valuesFile: segments/example-segment.yaml
+      # 生产网段：高可用、TLS 强制开启、联邦 peers 配置
+      - segment: production
+        cidr: 10.10.0.0/16
+        namespace: opsmesh-production
+        valuesFile: segments/production-segment.yaml
+  # template：每个 element 按本模板渲染出一个 Application
+  template:
+    metadata:
+      # Application 名称：opsmesh-<segment>，如 opsmesh-example
+      name: 'opsmesh-{{segment}}'
+      # 标注网段元数据，便于 Argo CD UI 分组与告警路由
+      labels:
+        app.kubernetes.io/name: opsmesh
+        app.kubernetes.io/instance: 'opsmesh-{{segment}}'
+        opsmesh.io/segment: '{{segment}}'
+      annotations:
+        opsmesh.io/cidr: '{{cidr}}'
+    spec:
+      # 归属 AppProject：见 projects/opsmesh.yaml，限定源仓库与目标 namespace
+      project: opsmesh
+      source:
+        # OpsMesh 单一 Git 仓库，Chart 与 overlay 同源，避免多仓库版本漂移
+        repoURL: 'https://github.com/Levango7/OpsMesh.git'
+        # 跟踪默认分支；生产建议固定到 release tag（如 v0.1.0）以避免未审核变更自动下发
+        targetRevision: HEAD
+        # 共享 Helm Chart 路径
+        path: deploy/helm/opsmesh
+        helm:
+          # valueFiles 按顺序叠加，后者覆盖前者：
+          #   values.yaml   —— Chart 默认值（开发/体验环境基线）
+          #   segments/<segment>-segment.yaml —— 网段 overlay（覆盖差异字段）
+          valueFiles:
+          - values.yaml
+          - 'segments/{{valuesFile}}'
+          # 网段标识透传给 Helm，供 agent 模板写入 agent.segment
+          parameters:
+          - name: agent.segment
+            value: '{{segment}}'
+      destination:
+        # 目标集群：in-cluster（Argo CD 所在集群）；多集群场景可改为已注册的集群 URL
+        server: 'https://kubernetes.default.svc'
+        # 目标命名空间：opsmesh-<segment>，由 CreateNamespace=true 自动创建
+        namespace: '{{namespace}}'
+      syncPolicy:
+        # 自动同步：Git 即期望状态，检测到漂移或新提交即自动收敛
+        automated:
+          prune: true       # 删除 Git 中已移除的资源（避免遗留）
+          selfHeal: true    # 检测到手动 kubectl 改动时自动回滚到 Git 状态
+        syncOptions:
+        - CreateNamespace=true  # 命名空间不存在时自动创建
+        - ServerSideApply=true  # 服务端 apply，避免大对象客户端侧 patch 失败
+        # 失败重试：网络抖动/临时不可调度时自动重试，避免人工介入
+        retry:
+          limit: 5
+          delay: 30s
+          backoff:
+            factor: 2
+            maxDuration: 5m

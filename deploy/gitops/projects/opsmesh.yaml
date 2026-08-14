@@ -1,0 +1,47 @@
+# Argo CD AppProject：OpsMesh GitOps 项目隔离
+# 文档：https://argo-cd.readthedocs.io/en/stable/operator-manual/app_project/
+#
+# AppProject 限定本项目的 Application 只能从指定源仓库同步、只能部署到指定 namespace，
+# 并声明可操作的集群级资源白名单与 RBAC 角色，是 GitOps 多租户隔离的边界。
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: opsmesh
+  namespace: argocd
+  # AppProject 自身归属 argocd 命名空间
+  annotations:
+    opsmesh.io/description: OpsMesh 多网段运维平台 GitOps 项目
+spec:
+  # 项目描述（Argo CD UI 展示）
+  description: OpsMesh 多网段运维平台
+  # 允许的源仓库：仅 OpsMesh 官方仓库，防止外部 Chart 注入
+  sourceRepos:
+  - 'https://github.com/Levango7/OpsMesh.git'
+  # 允许的部署目标：in-cluster 的 opsmesh-* 命名空间
+  # 通配符 opsmesh-* 与 applicationset.yaml 中 namespace: opsmesh-<segment> 对齐
+  destinations:
+  - server: 'https://kubernetes.default.svc'
+    namespace: 'opsmesh-*'
+  # 集群级资源白名单：允许创建 Namespace（配合 syncOptions.CreateNamespace=true）
+  # 其余集群级资源（ClusterRole/CRD 等）默认禁止，需按需显式放开
+  clusterResourceWhitelist:
+  - group: ''
+    kind: Namespace
+  # 命名空间级资源黑名单：禁止操作 Secret 的写操作（凭证由外部密钥管理注入，
+  # 避免 GitOps 流程误删/覆盖业务密钥）。如需放开可改用 clusterResourceBlacklist
+  # namespaceResourceBlacklist:
+  # - group: ''
+  #   kind: Secret
+  # RBAC 角色：GitOps 自动同步机器人，仅授予本项目 applications 的 sync 权限
+  roles:
+  - name: opsmesh-bot
+    description: OpsMesh GitOps 自动同步机器人
+    # 策略语法：p, <subject>, <resource>, <action>, <object>, <effect>
+    # proj:opsmesh:opsmesh-bot 表示本项目下的 opsmesh-bot 角色
+    # 允许对 opsmesh/* 下所有 Application 执行 sync 操作
+    policies:
+    - p, proj:opsmesh:opsmesh-bot, applications, sync, opsmesh/*, allow
+    # 关联的 JWT token，供 CI/外部系统触发 sync 时使用
+    # tokens:
+    # - iat: 1700000000
+    #   exp: 1800000000
