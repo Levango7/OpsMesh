@@ -30,8 +30,8 @@ func TestFlowValidateSuccess(t *testing.T) {
 
 func TestFlowValidateErrors(t *testing.T) {
 	cases := []struct {
-		name string
-		modify func(*ApprovalFlow)
+		name       string
+		modify     func(*ApprovalFlow)
 		wantSubstr string
 	}{
 		{"missing ID", func(f *ApprovalFlow) { f.ID = "" }, "ID is required"},

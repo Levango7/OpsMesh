@@ -306,12 +306,7 @@ func LoadInhibitRules(path string) ([]InhibitRule, error) {
 	}
 	rules := make([]InhibitRule, len(raws))
 	for i, r := range raws {
-		rules[i] = InhibitRule{
-			Name:        r.Name,
-			SourceMatch: r.SourceMatch,
-			TargetMatch: r.TargetMatch,
-			Equal:       r.Equal,
-		}
+		rules[i] = InhibitRule(r)
 	}
 	return rules, nil
 }

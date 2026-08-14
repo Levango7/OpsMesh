@@ -2,14 +2,12 @@ package grpcx
 
 import (
 	"testing"
-
-	"google.golang.org/grpc"
 )
 
 // TestRegistrationServiceDesc 校验手写 ServiceDesc 的完整性（无 protoc 的契约护栏）。
 func TestRegistrationServiceDesc(t *testing.T) {
 	sd := Registration_ServiceDesc
-	var _ grpc.ServiceDesc = sd // 编译期类型断言
+	var _ = sd // 编译期类型断言
 
 	if sd.ServiceName != "opsmesh.v1.Registration" {
 		t.Fatalf("ServiceName = %q, want opsmesh.v1.Registration", sd.ServiceName)

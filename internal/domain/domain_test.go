@@ -25,7 +25,7 @@ func TestTask_Cancel(t *testing.T) {
 	cases := []struct {
 		name    string
 		status  string
-		wantErr error // nil 表示期望成功；非 nil 表示期望该 sentinel error
+		wantErr error  // nil 表示期望成功；非 nil 表示期望该 sentinel error
 		want    string // 期望转换后的状态（wantErr==nil 时校验）
 	}{
 		{"pending→cancelled", TaskStatusPending, nil, TaskStatusCancelled},
@@ -101,11 +101,11 @@ func TestTask_CanRetry(t *testing.T) {
 func TestTask_IsLeaseExpired(t *testing.T) {
 	now := time.Now()
 	cases := []struct {
-		name     string
-		status   string
-		claimed  time.Time
-		maxAge   time.Duration
-		want     bool
+		name    string
+		status  string
+		claimed time.Time
+		maxAge  time.Duration
+		want    bool
 	}{
 		{"running 且超时", TaskStatusRunning, now.Add(-2 * time.Minute), time.Minute, true},
 		{"running 且未超时", TaskStatusRunning, now.Add(-30 * time.Second), time.Minute, false},
@@ -355,10 +355,10 @@ func TestAlert_Silence(t *testing.T) {
 func TestAlert_IsExpired(t *testing.T) {
 	now := time.Now()
 	cases := []struct {
-		name         string
-		status       string
+		name          string
+		status        string
 		silencedUntil time.Time
-		want         bool
+		want          bool
 	}{
 		{"silenced+已过期", AlertStatusSilenced, now.Add(-time.Minute), true},
 		{"silenced+未过期", AlertStatusSilenced, now.Add(time.Hour), false},

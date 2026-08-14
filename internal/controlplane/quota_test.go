@@ -35,14 +35,14 @@ func seedDevicesForQuota(st *store.MemoryStore, tenantID string, n int) {
 	for i := 0; i < n; i++ {
 		quotaDeviceSeq++
 		st.UpsertDevice(&proto.DeviceInfo{
-			DeviceID:  "dev-" + tenantID + "-" + itoa(quotaDeviceSeq),
-			Segment:   "seg-test",
-			TenantID:  tenantID,
-			IP:        "10.0.0.1",
-			AgentID:   "agent-test",
-			State:     "online",
-			Managed:   true,
-			Hostname:  "host-" + itoa(quotaDeviceSeq),
+			DeviceID: "dev-" + tenantID + "-" + itoa(quotaDeviceSeq),
+			Segment:  "seg-test",
+			TenantID: tenantID,
+			IP:       "10.0.0.1",
+			AgentID:  "agent-test",
+			State:    "online",
+			Managed:  true,
+			Hostname: "host-" + itoa(quotaDeviceSeq),
 		})
 	}
 }

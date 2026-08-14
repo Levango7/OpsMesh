@@ -4,9 +4,9 @@
 //   - 内核（控制面）【不】自行实现登录 / 鉴权 / 用户表 / 密码哈希；
 //   - 登录、SSO、MFA、RBAC 由前置网关（APISIX / 蓝鲸 IAM）完成；
 //   - 网关校验 JWT/OIDC 后，把身份注入到请求头 / gRPC metadata：
-//       X-Tenant-ID  / x-tenant-id   —— 租户（行级隔离键）
-//       X-User-Id   / x-user-id     —— 用户（审计留痕）
-//       X-User-Roles/ x-user-roles  —— 角色（逗号分隔，垂直越权防护辅助）
+//     X-Tenant-ID  / x-tenant-id   —— 租户（行级隔离键）
+//     X-User-Id   / x-user-id     —— 用户（审计留痕）
+//     X-User-Roles/ x-user-roles  —— 角色（逗号分隔，垂直越权防护辅助）
 //   - 内核只消费这些头，并据此做"行级租户隔离"与"审计留痕"。
 //
 // 缺失头时（开发 / 单机模式，无网关）视为单一隐式租户，放行全部——
@@ -50,6 +50,7 @@ const (
 // 生产环境必须在可信网关（APISIX/Envoy/蓝鲸 IAM）后部署，网关负责：
 //   - 校验调用方 JWT/OIDC 后剥离客户端自带的 X-Tenant-ID，再重注入经鉴权的真实租户；
 //   - 拒绝直连控制面（绕过网关）的请求（网络策略 / mTLS 双向认证）。
+//
 // 直接暴露控制面将允许任意客户端伪造租户头越权（任意声明属于任何租户），
 // 故 --require-auth=true 时控制面会拒绝缺失租户头的请求（见 server.go / grpc.go）。
 func FromHTTPHeader(h http.Header) Context {
@@ -126,8 +127,8 @@ type JWTConfig struct {
 
 // JWT claim 键约定（与网关 / IAM 签发的 token 对齐）。
 const (
-	claimTenantID = "tenant_id"
-	claimUserID   = "user_id"
+	claimTenantID  = "tenant_id"
+	claimUserID    = "user_id"
 	claimUserRoles = "user_roles" // 字符串数组或逗号分隔字符串，两种均兼容
 )
 

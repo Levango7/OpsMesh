@@ -4,8 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"google.golang.org/grpc"
-
 	pb "opsmesh/internal/grpcx/pb" // 包名为 pbv1，用 pb 别名引用（M4-4C 兼容性修复）
 	"opsmesh/internal/proto"
 )
@@ -224,5 +222,5 @@ func TestPbServiceDescConsistency(t *testing.T) {
 		t.Fatal("两条路径都不应有流式方法")
 	}
 	// 编译期类型断言：pbDesc 是 grpc.ServiceDesc。
-	var _ grpc.ServiceDesc = pbDesc
+	var _ = pbDesc
 }

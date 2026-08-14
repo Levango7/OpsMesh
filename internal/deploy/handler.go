@@ -25,10 +25,10 @@ type Dispatcher interface {
 
 // Handler 是 M3 部署中心的 HTTP 处理器。
 type Handler struct {
-	store      DeployStore
-	disp       Dispatcher
-	autoAdvance *AutoAdvanceManager // 灰度自动推进管理器（可选，nil=未启用）
-	fed        *FederationCoordinator // 多集群联邦发布协调器（task 280，默认内存后端开箱即用）
+	store       DeployStore
+	disp        Dispatcher
+	autoAdvance *AutoAdvanceManager    // 灰度自动推进管理器（可选，nil=未启用）
+	fed         *FederationCoordinator // 多集群联邦发布协调器（task 280，默认内存后端开箱即用）
 }
 
 // NewHandler 构造部署处理器。
@@ -611,7 +611,7 @@ func deployTypeToTaskType(dt string) string {
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 // =============================================================================

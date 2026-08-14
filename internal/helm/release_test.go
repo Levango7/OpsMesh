@@ -196,7 +196,7 @@ func TestReleaseManager_Rollback_Explicit(t *testing.T) {
 
 func TestReleaseManager_Rollback_AutoPrev(t *testing.T) {
 	mock := newMockReturn(map[string]string{
-		"history": historyJSONSample,
+		"history":  historyJSONSample,
 		"rollback": "ok",
 		"status":   statusJSONSample,
 	})

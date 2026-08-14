@@ -82,7 +82,7 @@ type CMDBChangeRequest struct {
 //
 // 线程安全：mu 保护 pending/all 两张 map 的并发读写。
 type CMDBApprovalManager struct {
-	store   store.Store // 审计日志
+	store   store.Store  // 审计日志
 	ciStore cmdb.CiStore // CI CRUD
 	mu      sync.RWMutex
 	pending map[string]*CMDBChangeRequest // key=changeID，待审批

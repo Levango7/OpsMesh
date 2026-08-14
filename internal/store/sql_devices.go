@@ -87,8 +87,8 @@ ON DUPLICATE KEY UPDATE
 	if a.OnboardDeviceID != "" {
 		// 先查候选设备当前租户，校验一致性后再翻转（agent 租户空=单租户放行）。
 		var curTenant string
-		if err := s.db.QueryRowContext(ctx, `SELECT tenant_id FROM devices WHERE device_id=?`, a.OnboardDeviceID).Scan(&curTenant); err != nil && err != sql.ErrNoRows {
-			log.Printf("[store] Register onboard 查询候选设备 %s 租户失败: %v", a.OnboardDeviceID, err)
+		if qerr := s.db.QueryRowContext(ctx, `SELECT tenant_id FROM devices WHERE device_id=?`, a.OnboardDeviceID).Scan(&curTenant); qerr != nil && qerr != sql.ErrNoRows {
+			log.Printf("[store] Register onboard 查询候选设备 %s 租户失败: %v", a.OnboardDeviceID, qerr)
 		}
 		if a.TenantID != "" && curTenant != "" && curTenant != a.TenantID {
 			log.Printf("[store] Register onboard 拒绝跨租户翻转 %s（device tenant=%q, agent tenant=%q）", a.OnboardDeviceID, curTenant, a.TenantID)

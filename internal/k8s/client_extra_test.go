@@ -75,7 +75,7 @@ func TestNewK8sClient_ValidKubeconfig(t *testing.T) {
 		t.Fatal("Server 不应为空")
 	}
 	// forceSecureTLS 应已关闭 insecure-skip-tls-verify。
-	if c.Config.TLSClientConfig.Insecure {
+	if c.Config.Insecure {
 		t.Fatal("forceSecureTLS 应将 Insecure 置为 false")
 	}
 }
@@ -94,7 +94,7 @@ func TestNewK8sClientFromPath_Valid(t *testing.T) {
 	if c.Clientset == nil {
 		t.Fatal("Clientset 不应为 nil")
 	}
-	if c.Config.TLSClientConfig.Insecure {
+	if c.Config.Insecure {
 		t.Fatal("forceSecureTLS 应将 Insecure 置为 false")
 	}
 }

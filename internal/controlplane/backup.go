@@ -187,9 +187,7 @@ func ExportBackup(ctx context.Context, st store.Store, cfg *config.Config, opts 
 	}
 	sort.Strings(segs)
 	for _, s := range segs {
-		for _, d := range snap[s] {
-			devices = append(devices, d)
-		}
+		devices = append(devices, snap[s]...)
 	}
 	data.Devices = devices
 

@@ -1,4 +1,3 @@
-
 // manager.go 提供显式定时任务管理（ScheduleEntry CRUD + 暂停/恢复）。
 //
 // 与 schedule.go 的 Scheduler 协同：
@@ -22,9 +21,9 @@ import (
 type EntryStatus string
 
 const (
-	EntryActive   EntryStatus = "active"   // 活跃（按 cron 派生）
-	EntryPaused   EntryStatus = "paused"   // 暂停（不派生）
-	EntryDeleted  EntryStatus = "deleted"  // 已删除（软删，保留历史）
+	EntryActive  EntryStatus = "active"  // 活跃（按 cron 派生）
+	EntryPaused  EntryStatus = "paused"  // 暂停（不派生）
+	EntryDeleted EntryStatus = "deleted" // 已删除（软删，保留历史）
 )
 
 // ScheduleEntry 定时任务元数据。
@@ -32,17 +31,17 @@ const (
 // 与 proto.Task 模板关联：TaskID 指向 store 中的模板任务（Schedule 字段非空）。
 // NextRunAt 由 NextRun 计算填充，供 API 层展示"下次执行时间"。
 type ScheduleEntry struct {
-	ID         string       // entry ID（全局唯一，由 Manager 分配）
-	TaskID     string       // 关联的模板任务 ID（store 中的 Task）
-	TenantID   string       // 租户 ID
-	Name       string       // 任务名称（用户可读）
-	CronExpr   string       // cron 表达式（5 字段）
-	Status     EntryStatus  // 状态：active/paused/deleted
-	CreatedAt  time.Time    // 创建时间
-	UpdatedAt  time.Time    // 最近更新时间
-	LastRunAt  time.Time    // 上次执行时间
-	NextRunAt  time.Time    // 下次预计执行时间（由 NextRun 计算）
-	CreatedBy  string       // 创建人 userID
+	ID        string      // entry ID（全局唯一，由 Manager 分配）
+	TaskID    string      // 关联的模板任务 ID（store 中的 Task）
+	TenantID  string      // 租户 ID
+	Name      string      // 任务名称（用户可读）
+	CronExpr  string      // cron 表达式（5 字段）
+	Status    EntryStatus // 状态：active/paused/deleted
+	CreatedAt time.Time   // 创建时间
+	UpdatedAt time.Time   // 最近更新时间
+	LastRunAt time.Time   // 上次执行时间
+	NextRunAt time.Time   // 下次预计执行时间（由 NextRun 计算）
+	CreatedBy string      // 创建人 userID
 }
 
 // Validate 校验 entry 合法性。

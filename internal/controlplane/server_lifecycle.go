@@ -143,7 +143,7 @@ func (s *Server) Start() error {
 	// task 271 CMDB 采集自动化：POST 手动触发全量采集（返回 {collected, failed}）。
 	mux.HandleFunc("/api/v1/cmdb/collect", s.handleCMDBCollect)
 	// task 275 CMDB 变更审批流：CI 创建/修改/删除走审批，审批通过后才执行实际变更。
-	mux.HandleFunc("/api/v1/cmdb/changes", s.handleCMDBChanges)       // GET 列表 / POST 提交变更申请
+	mux.HandleFunc("/api/v1/cmdb/changes", s.handleCMDBChanges)        // GET 列表 / POST 提交变更申请
 	mux.HandleFunc("/api/v1/cmdb/changes/", s.handleCMDBChangeRouting) // 子路径：{id} GET、{id}/approve|reject POST
 
 	// P2-B5 多租户资源配额（task 274）：GET/PUT/DELETE /api/v1/quotas[/{tenantID}]。

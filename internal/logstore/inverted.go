@@ -494,13 +494,13 @@ func scoredToIDs(hits []scoredDoc) []int64 {
 // Base 提供基础过滤（TenantID/DeviceID/AgentID/Level/Source/From/To），
 // Base.Keyword 与 Base.Q 在搜索时被忽略（文本检索由本结构字段驱动）。
 type FullTextQuery struct {
-	Base     Query   // 基础过滤条件
-	Term     string  // 单 term 搜索
-	Phrase   string  // 短语查询
+	Base     Query    // 基础过滤条件
+	Term     string   // 单 term 搜索
+	Phrase   string   // 短语查询
 	And      []string // 布尔 AND：同时包含所有 term
 	Or       []string // 布尔 OR：包含任一 term
-	Not      string  // 布尔 NOT：不包含此 term
-	Wildcard string  // 通配符查询（* 任意序列，? 单字符）
+	Not      string   // 布尔 NOT：不包含此 term
+	Wildcard string   // 通配符查询（* 任意序列，? 单字符）
 	Limit    int
 }
 

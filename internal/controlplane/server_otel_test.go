@@ -78,10 +78,8 @@ func TestOTelHTTPMiddlewareWithStdout(t *testing.T) {
 // TestOTelConfigPropagation 验证 config 的 OTel 字段正确解析。
 func TestOTelConfigPropagation(t *testing.T) {
 	cfg := &config.Config{
-		Mode:            "controlplane",
 		OTELEndpoint:    "jaeger:4317",
 		OTELServiceName: "opsmesh-controlplane",
-		OTELStdout:      false,
 	}
 	if cfg.OTELEndpoint != "jaeger:4317" {
 		t.Errorf("OTELEndpoint = %q, 期望 'jaeger:4317'", cfg.OTELEndpoint)

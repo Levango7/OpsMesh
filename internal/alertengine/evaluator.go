@@ -1,6 +1,5 @@
 package alertengine
 
-
 import (
 	"sync"
 	"time"

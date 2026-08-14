@@ -67,42 +67,42 @@ func TestDefaultSchemaNamer_SQLInjection(t *testing.T) {
 	namer := DefaultSchemaNamer("opsmesh_tenant_")
 	// 各种 SQL 注入尝试。
 	malicious := []string{
-		"t'1",                       // 单引号
-		"t;1",                       // 分号
-		"t--1",                      // SQL 注释
-		"t 1",                       // 空格
-		"t.a",                       // 点号
-		"t; DROP TABLE agents; --",  // 完整注入
-		"t\"1",                      // 双引号
-		"t`1",                       // 反引号
-		"t-1",                       // 减号
-		"t+1",                       // 加号
-		"t/1",                       // 斜杠
-		"t\\1",                      // 反斜杠
-		"t(1)",                      // 括号
-		"t=1",                       // 等号
-		"tenant@host",               // @ 符号
-		"t*1",                       // 星号
-		"t%1",                       // 百分号
-		"t#1",                       // 井号
-		"t!1",                       // 感叹号
-		"t~1",                       // 波浪号
-		"t^1",                       // 脱字符
-		"t&1",                       // & 符号
-		"t|1",                       // 竖线
-		"t<1",                       // 小于号
-		"t>1",                       // 大于号
-		"t,1",                       // 逗号
-		"t:1",                       // 冒号
-		"t?1",                       // 问号
-		"t[1]",                      // 方括号
-		"t{1}",                      // 花括号
-		"t\n1",                      // 换行
-		"t\t1",                      // 制表符
-		"t\r1",                      // 回车
-		"t\x001",                    // 空字节
-		"t\x1b1",                    // ESC
-		"t€1",                       // Unicode
+		"t'1",                      // 单引号
+		"t;1",                      // 分号
+		"t--1",                     // SQL 注释
+		"t 1",                      // 空格
+		"t.a",                      // 点号
+		"t; DROP TABLE agents; --", // 完整注入
+		"t\"1",                     // 双引号
+		"t`1",                      // 反引号
+		"t-1",                      // 减号
+		"t+1",                      // 加号
+		"t/1",                      // 斜杠
+		"t\\1",                     // 反斜杠
+		"t(1)",                     // 括号
+		"t=1",                      // 等号
+		"tenant@host",              // @ 符号
+		"t*1",                      // 星号
+		"t%1",                      // 百分号
+		"t#1",                      // 井号
+		"t!1",                      // 感叹号
+		"t~1",                      // 波浪号
+		"t^1",                      // 脱字符
+		"t&1",                      // & 符号
+		"t|1",                      // 竖线
+		"t<1",                      // 小于号
+		"t>1",                      // 大于号
+		"t,1",                      // 逗号
+		"t:1",                      // 冒号
+		"t?1",                      // 问号
+		"t[1]",                     // 方括号
+		"t{1}",                     // 花括号
+		"t\n1",                     // 换行
+		"t\t1",                     // 制表符
+		"t\r1",                     // 回车
+		"t\x001",                   // 空字节
+		"t\x1b1",                   // ESC
+		"t€1",                      // Unicode
 		"t中1",                      // 中文
 	}
 	for _, tenant := range malicious {
@@ -822,8 +822,8 @@ func TestMultiSchemaStore_TasksByParentRouting(t *testing.T) {
 	tasks := m.TasksByParent(parent.TaskID)
 	// 模板任务本身没有 parent_id，所以 TasksByParent 返回空（除非有派生实例）。
 	// 这里只验证不 panic 且返回 nil/空（路由成功）。
-	if tasks == nil {
-		// 模板任务没有派生实例，返回 nil 是合理的。
+	if len(tasks) > 0 {
+		t.Fatalf("模板任务不应有派生实例，实际返回 %d 条", len(tasks))
 	}
 }
 

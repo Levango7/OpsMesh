@@ -27,10 +27,10 @@ func testRSAKey(t *testing.T) (*rsa.PrivateKey, *rsa.PublicKey) {
 func issueJWT(t *testing.T, priv *rsa.PrivateKey, issuer string, expiresAt time.Time, tenantID, userID string, roles []string) string {
 	t.Helper()
 	claims := jwt.MapClaims{
-		"iss": issuer,
-		"exp": expiresAt.Unix(),
-		"iat": time.Now().Unix(),
-		"nbf": time.Now().Unix(),
+		"iss":         issuer,
+		"exp":         expiresAt.Unix(),
+		"iat":         time.Now().Unix(),
+		"nbf":         time.Now().Unix(),
 		claimTenantID: tenantID,
 		claimUserID:   userID,
 	}
@@ -50,10 +50,10 @@ func issueJWT(t *testing.T, priv *rsa.PrivateKey, issuer string, expiresAt time.
 func issueJWTStringRoles(t *testing.T, priv *rsa.PrivateKey, issuer string, expiresAt time.Time, tenantID, userID, roles string) string {
 	t.Helper()
 	claims := jwt.MapClaims{
-		"iss": issuer,
-		"exp": expiresAt.Unix(),
-		"iat": time.Now().Unix(),
-		"nbf": time.Now().Unix(),
+		"iss":          issuer,
+		"exp":          expiresAt.Unix(),
+		"iat":          time.Now().Unix(),
+		"nbf":          time.Now().Unix(),
 		claimTenantID:  tenantID,
 		claimUserID:    userID,
 		claimUserRoles: roles,

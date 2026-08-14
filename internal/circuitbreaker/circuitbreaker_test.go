@@ -323,9 +323,10 @@ func TestConcurrentSafety(t *testing.T) {
 					}
 					return nil
 				})
-				if err == nil {
+				switch err {
+				case nil:
 					atomic.AddInt64(&successCount, 1)
-				} else if err == ErrCircuitOpen {
+				case ErrCircuitOpen:
 					atomic.AddInt64(&openCount, 1)
 				}
 			}

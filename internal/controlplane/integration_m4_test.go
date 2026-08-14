@@ -58,31 +58,6 @@ func newIntegrationServer(demo bool) *Server {
 	return s
 }
 
-// doJSON 发起一次 JSON HTTP 调用并返回 recorder。method/path/body 可空。
-// 携带可选的 X-Tenant-ID / Authorization / X-User-Roles 头。
-func doJSON(method, path string, body interface{}, tenantID, auth string, roles ...string) *httptest.ResponseRecorder {
-	var r *bytes.Reader
-	if body != nil {
-		b, _ := json.Marshal(body)
-		r = bytes.NewReader(b)
-	} else {
-		r = bytes.NewReader(nil)
-	}
-	req := httptest.NewRequest(method, path, r)
-	req.Header.Set("Content-Type", "application/json")
-	if tenantID != "" {
-		req.Header.Set("X-Tenant-ID", tenantID)
-	}
-	if auth != "" {
-		req.Header.Set("Authorization", auth)
-	}
-	if len(roles) > 0 && roles[0] != "" {
-		req.Header.Set("X-User-Roles", roles[0])
-	}
-	rec := httptest.NewRecorder()
-	return rec
-}
-
 // login 用户登录，返回 "Bearer <token>"。失败 t.Fatalf。
 func login(t *testing.T, s *Server, username, password string) string {
 	t.Helper()

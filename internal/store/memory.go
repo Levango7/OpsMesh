@@ -249,7 +249,7 @@ func NewMemoryStore() *MemoryStore {
 		middlewareTemplates: make(map[string]*MiddlewareTemplate),
 		refreshTokens:       make(map[string]*RefreshToken),
 		silences:            make(map[string]*SilenceRule),
-		notifyChannels: make(map[string]*NotifyChannel),
+		notifyChannels:      make(map[string]*NotifyChannel),
 		notifyTemplates:     make(map[string]*NotifyTemplate),
 		quotaConfigs:        make(map[string]*QuotaConfig),
 	}

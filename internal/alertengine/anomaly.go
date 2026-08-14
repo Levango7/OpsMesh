@@ -323,7 +323,7 @@ type baselineAdapter struct {
 }
 
 func (a *baselineAdapter) Stats() (float64, float64) {
-	return a.BaselineDetector.stats2()
+	return a.stats2()
 }
 
 // ewmaAdapter EWMADetector 已天然满足 detector 接口，包装仅为统一构造路径。

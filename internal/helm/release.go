@@ -1,4 +1,3 @@
-
 // release.go 实现 Helm Release 管理：安装/升级/回滚/卸载/列表/历史/详情。
 //
 // 设计要点：
@@ -13,7 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -42,16 +40,16 @@ const (
 
 // Release 描述一个 Helm Release 实例。
 type Release struct {
-	Name      string                 `json:"name"      yaml:"name"`
-	Namespace string                 `json:"namespace" yaml:"namespace"`
-	Chart     string                 `json:"chart"     yaml:"chart"`         // chart 名（不含版本）
-	Version   string                 `json:"version"   yaml:"version"`       // chart 版本
-	AppVersion string                `json:"appVersion,omitempty" yaml:"appVersion,omitempty"`
-	Status    string                 `json:"status"    yaml:"status"`
-	Revision  int                    `json:"revision"  yaml:"revision"`
-	Values    map[string]interface{} `json:"values,omitempty" yaml:"values,omitempty"`
-	CreatedAt time.Time              `json:"createdAt" yaml:"createdAt"`
-	UpdatedAt time.Time              `json:"updatedAt" yaml:"updatedAt"`
+	Name       string                 `json:"name"      yaml:"name"`
+	Namespace  string                 `json:"namespace" yaml:"namespace"`
+	Chart      string                 `json:"chart"     yaml:"chart"`   // chart 名（不含版本）
+	Version    string                 `json:"version"   yaml:"version"` // chart 版本
+	AppVersion string                 `json:"appVersion,omitempty" yaml:"appVersion,omitempty"`
+	Status     string                 `json:"status"    yaml:"status"`
+	Revision   int                    `json:"revision"  yaml:"revision"`
+	Values     map[string]interface{} `json:"values,omitempty" yaml:"values,omitempty"`
+	CreatedAt  time.Time              `json:"createdAt" yaml:"createdAt"`
+	UpdatedAt  time.Time              `json:"updatedAt" yaml:"updatedAt"`
 	// Description 来自 history 的描述（如 "Install complete"）。
 	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 }
@@ -298,25 +296,25 @@ func validateReleaseArgs(namespace, name, chart string) error {
 
 // listReleaseJSON 是 helm list -o json 的元素结构。
 type listReleaseJSON struct {
-	Name        string `json:"name"`
-	Namespace   string `json:"namespace"`
-	Revision    int    `json:"revision"`
-	Updated     string `json:"updated"`
-	Status      string `json:"status"`
-	Chart       string `json:"chart"`        // "mysql-9.10.0" 格式
+	Name         string `json:"name"`
+	Namespace    string `json:"namespace"`
+	Revision     int    `json:"revision"`
+	Updated      string `json:"updated"`
+	Status       string `json:"status"`
+	Chart        string `json:"chart"` // "mysql-9.10.0" 格式
 	ChartVersion string `json:"chart_version"`
-	AppVersion  string `json:"app_version"`
+	AppVersion   string `json:"app_version"`
 }
 
 // historyReleaseJSON 是 helm history -o json 的元素结构。
 type historyReleaseJSON struct {
-	Revision    int    `json:"revision"`
-	Updated     string `json:"updated"`
-	Status      string `json:"status"`
-	Chart       string `json:"chart"`
+	Revision     int    `json:"revision"`
+	Updated      string `json:"updated"`
+	Status       string `json:"status"`
+	Chart        string `json:"chart"`
 	ChartVersion string `json:"chart_version"`
-	AppVersion  string `json:"app_version"`
-	Description string `json:"description"`
+	AppVersion   string `json:"app_version"`
+	Description  string `json:"description"`
 }
 
 // statusJSON 是 helm status -o json 的结构（仅提取需要的字段）。
@@ -353,15 +351,15 @@ func parseListJSON(raw string) ([]*Release, error) {
 			chartVer = it.ChartVersion
 		}
 		out = append(out, &Release{
-			Name:        it.Name,
-			Namespace:   it.Namespace,
-			Chart:       chartName,
-			Version:     chartVer,
-			AppVersion:  it.AppVersion,
-			Status:      it.Status,
-			Revision:    it.Revision,
-			UpdatedAt:   parseHelmTime(it.Updated),
-			CreatedAt:   parseHelmTime(it.Updated),
+			Name:       it.Name,
+			Namespace:  it.Namespace,
+			Chart:      chartName,
+			Version:    chartVer,
+			AppVersion: it.AppVersion,
+			Status:     it.Status,
+			Revision:   it.Revision,
+			UpdatedAt:  parseHelmTime(it.Updated),
+			CreatedAt:  parseHelmTime(it.Updated),
 		})
 	}
 	return out, nil
@@ -464,7 +462,3 @@ func parseHelmTime(s string) time.Time {
 	return time.Time{}
 }
 
-// ensurePathJoin 工具函数：拼接路径（保留给 render.go 使用）。
-func ensurePathJoin(parts ...string) string {
-	return filepath.Join(parts...)
-}

@@ -175,7 +175,7 @@ const searchBitnamiJSON = `[
 
 func TestRepoManager_ListCharts(t *testing.T) {
 	mock := newMockReturn(map[string]string{
-		"repo add":         "",
+		"repo add":             "",
 		"search repo bitnami/": searchBitnamiJSON,
 	})
 	m := NewRepoManagerWithCLI(mock)
@@ -255,8 +255,8 @@ func TestRepoManager_SearchCharts_EmptyKeyword(t *testing.T) {
 func TestRepoManager_GetChart(t *testing.T) {
 	const chartJSON = `{"name":"mysql","version":"9.10.0","appVersion":"8.0.32","description":"MySQL","keywords":["mysql"],"home":"https://x","icon":"https://i","maintainers":[{"name":"Bitnami"}]}`
 	mock := newMockReturn(map[string]string{
-		"repo add":    "",
-		"show chart":  chartJSON,
+		"repo add":   "",
+		"show chart": chartJSON,
 	})
 	m := NewRepoManagerWithCLI(mock)
 	_ = m.AddRepo(&ChartRepo{Name: "bitnami", URL: "https://x"})

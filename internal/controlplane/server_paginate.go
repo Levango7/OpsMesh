@@ -120,7 +120,7 @@ func paginateJSONHandler(h http.Handler) http.Handler {
 				rc.status = http.StatusOK
 			}
 			w.WriteHeader(rc.status)
-			w.Write(rc.body.Bytes())
+			_, _ = w.Write(rc.body.Bytes())
 			return
 		}
 		// 解析 JSON 数组并分页
@@ -133,7 +133,7 @@ func paginateJSONHandler(h http.Handler) http.Handler {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(rc.status)
-			w.Write(rc.body.Bytes())
+			_, _ = w.Write(rc.body.Bytes())
 			return
 		}
 		total := len(arr)

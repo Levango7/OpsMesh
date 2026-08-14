@@ -14,14 +14,14 @@ func TestCanTransition(t *testing.T) {
 		{StatusPending, StatusRejected, true},
 		{StatusPending, StatusTimeout, true},
 		{StatusPending, StatusCancelled, true},
-		{StatusPending, StatusPending, false},     // 自转
-		{StatusApproved, StatusPending, false},    // 终态出发
-		{StatusApproved, StatusRejected, false},   // 终态间
-		{StatusRejected, StatusApproved, false},   // 终态间
-		{StatusTimeout, StatusCancelled, false},   // 终态间
-		{StatusCancelled, StatusApproved, false},  // 终态间
-		{StatusPending, "unknown", false},         // 未知目标
-		{"unknown", StatusApproved, false},        // 未知源
+		{StatusPending, StatusPending, false},    // 自转
+		{StatusApproved, StatusPending, false},   // 终态出发
+		{StatusApproved, StatusRejected, false},  // 终态间
+		{StatusRejected, StatusApproved, false},  // 终态间
+		{StatusTimeout, StatusCancelled, false},  // 终态间
+		{StatusCancelled, StatusApproved, false}, // 终态间
+		{StatusPending, "unknown", false},        // 未知目标
+		{"unknown", StatusApproved, false},       // 未知源
 	}
 	for _, c := range cases {
 		got := CanTransition(c.from, c.to)

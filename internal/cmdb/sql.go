@@ -254,7 +254,7 @@ func scanCI(s scanner) (*CiItem, error) {
 	}
 	ci.Attrs = make(map[string]string)
 	if attrsStr.Valid && attrsStr.String != "" {
-		json.Unmarshal([]byte(attrsStr.String), &ci.Attrs)
+		_ = json.Unmarshal([]byte(attrsStr.String), &ci.Attrs)
 	}
 	return &ci, nil
 }
@@ -430,7 +430,7 @@ func scanRelation(s scanner) (*CiRelation, error) {
 	}
 	rel.Attrs = make(map[string]string)
 	if attrsJSON.Valid && attrsJSON.String != "" {
-		json.Unmarshal([]byte(attrsJSON.String), &rel.Attrs)
+		_ = json.Unmarshal([]byte(attrsJSON.String), &rel.Attrs)
 	}
 	return &rel, nil
 }

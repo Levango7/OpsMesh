@@ -283,6 +283,7 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 	if err != nil {
 		return
 	}
+	defer rows.Close()
 	type rec struct {
 		id   string
 		deps string
@@ -290,12 +291,11 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 	var blocked []rec
 	for rows.Next() {
 		var r rec
-		if err := rows.Scan(&r.id, &r.deps); err != nil {
+		if serr := rows.Scan(&r.id, &r.deps); serr != nil {
 			continue
 		}
 		blocked = append(blocked, r)
 	}
-	rows.Close()
 	if len(blocked) == 0 {
 		return
 	}
@@ -305,6 +305,7 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 	if err != nil {
 		return
 	}
+	defer all.Close()
 	byID := make(map[string]*proto.Task)
 	for all.Next() {
 		var id, st string
@@ -313,7 +314,6 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 		}
 		byID[id] = &proto.Task{TaskID: id, Status: st}
 	}
-	all.Close()
 
 	for _, b := range blocked {
 		var deps []string
@@ -566,6 +566,7 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 		log.Printf("[store] FireDueSchedules 查询失败: %v", err)
 		return 0
 	}
+	defer rows.Close()
 	type tpl struct {
 		id, agentID, tenantID, typ, command, content, path, schedule string
 		maxRetries, timeout, retryDelay                              int
@@ -592,7 +593,6 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 		}
 		due = append(due, tp)
 	}
-	rows.Close()
 	fired := 0
 	for _, tp := range due {
 		instID := fmt.Sprintf("task-%d-%s", now.UnixNano(), tp.id)

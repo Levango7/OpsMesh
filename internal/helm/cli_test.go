@@ -232,10 +232,10 @@ func TestWithEnv(t *testing.T) {
 
 func TestCLI_EffectiveTimeout(t *testing.T) {
 	tests := []struct {
-		name    string
-		cli     *CLI
-		custom  time.Duration
-		want    time.Duration
+		name   string
+		cli    *CLI
+		custom time.Duration
+		want   time.Duration
 	}{
 		{"custom overrides default", NewCLI(""), 60 * time.Second, 60 * time.Second},
 		{"use cli timeout", NewCLI("", WithTimeout(120*time.Second)), 0, 120 * time.Second},

@@ -115,9 +115,10 @@ func (h *Handler) getWorkflow(w http.ResponseWriter, r *http.Request, id int64, 
 	wf, err := h.store.Get(r.Context(), id, tenantID)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if err == ErrWFNotFound {
+		switch err {
+		case ErrWFNotFound:
 			status = http.StatusNotFound
-		} else if err == ErrWFTenantMismatch {
+		case ErrWFTenantMismatch:
 			status = http.StatusForbidden
 		}
 		writeJSON(w, status, map[string]string{"error": err.Error()})
@@ -136,9 +137,10 @@ func (h *Handler) updateWorkflow(w http.ResponseWriter, r *http.Request, id int6
 	wf, err := h.store.Get(r.Context(), id, tenantID)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if err == ErrWFNotFound {
+		switch err {
+		case ErrWFNotFound:
 			status = http.StatusNotFound
-		} else if err == ErrWFTenantMismatch {
+		case ErrWFTenantMismatch:
 			status = http.StatusForbidden
 		}
 		writeJSON(w, status, map[string]string{"error": err.Error()})
@@ -187,12 +189,12 @@ func (h *Handler) runWorkflow(w http.ResponseWriter, r *http.Request, id int64, 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	wf, err := h.store.Get(r.Context(), id, tenantID)
-	if err != nil {
+	if _, err := h.store.Get(r.Context(), id, tenantID); err != nil {
 		status := http.StatusInternalServerError
-		if err == ErrWFNotFound {
+		switch err {
+		case ErrWFNotFound:
 			status = http.StatusNotFound
-		} else if err == ErrWFTenantMismatch {
+		case ErrWFTenantMismatch:
 			status = http.StatusForbidden
 		}
 		writeJSON(w, status, map[string]string{"error": err.Error()})
@@ -202,7 +204,7 @@ func (h *Handler) runWorkflow(w http.ResponseWriter, r *http.Request, id int64, 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	wf, _ = h.store.Get(r.Context(), id, tenantID)
+	wf, _ := h.store.Get(r.Context(), id, tenantID)
 	writeJSON(w, http.StatusOK, wf)
 }
 
@@ -505,9 +507,10 @@ func (h *Handler) scheduleWorkflow(w http.ResponseWriter, r *http.Request, id in
 	wf, err := h.store.Get(r.Context(), id, tenantID)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if err == ErrWFNotFound {
+		switch err {
+		case ErrWFNotFound:
 			status = http.StatusNotFound
-		} else if err == ErrWFTenantMismatch {
+		case ErrWFTenantMismatch:
 			status = http.StatusForbidden
 		}
 		writeJSON(w, status, map[string]string{"error": err.Error()})
@@ -529,12 +532,13 @@ func (h *Handler) scheduleWorkflow(w http.ResponseWriter, r *http.Request, id in
 		return
 	}
 	if err := h.SetCron(r.Context(), wf.ID, tenantID, body.Cron); err != nil {
-		status := http.StatusInternalServerError
-		if err == ErrWFNotFound {
+		var status int
+		switch err {
+		case ErrWFNotFound:
 			status = http.StatusNotFound
-		} else if err == ErrWFTenantMismatch {
+		case ErrWFTenantMismatch:
 			status = http.StatusForbidden
-		} else {
+		default:
 			status = http.StatusBadRequest
 		}
 		writeJSON(w, status, map[string]string{"error": err.Error()})
@@ -552,9 +556,10 @@ func (h *Handler) statusWorkflow(w http.ResponseWriter, r *http.Request, id int6
 	wf, err := h.store.Get(r.Context(), id, tenantID)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if err == ErrWFNotFound {
+		switch err {
+		case ErrWFNotFound:
 			status = http.StatusNotFound
-		} else if err == ErrWFTenantMismatch {
+		case ErrWFTenantMismatch:
 			status = http.StatusForbidden
 		}
 		writeJSON(w, status, map[string]string{"error": err.Error()})

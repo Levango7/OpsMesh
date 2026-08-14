@@ -21,7 +21,6 @@
 package controlplane
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -813,15 +812,3 @@ func (s *Server) handleNetworkConnectivity(w http.ResponseWriter, r *http.Reques
 // 辅助：JSON 解析（避免重复 decodeJSONBody 错误处理）
 // ============================================================================
 
-// decodeDiagnoseBody 解析诊断请求体（额外校验 JSON 格式）。
-//
-// 注：decodeJSONBody 已在 server.go 中实现，此处仅做包装以便扩展。
-func decodeDiagnoseBody(r *http.Request) (*diagnoseRequest, error) {
-	var req diagnoseRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		return nil, err
-	}
-	return &req, nil
-}

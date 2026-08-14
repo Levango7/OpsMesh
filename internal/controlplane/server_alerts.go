@@ -14,7 +14,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"opsmesh/internal/events"
@@ -358,48 +357,6 @@ func (s *Server) deleteAlertRule(w http.ResponseWriter, r *http.Request, id stri
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "delete_alert_rule", Target: id,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
-}
-
-// alertRuleStore 进程内告警规则存储（按租户隔离）。
-// task 246 M2 持久化：已迁移到 store.AlertRule 接口（s.store.CreateAlertRule/
-// ListAlertRules/DeleteAlertRule），本结构体仅保留供向后兼容引用（如测试），
-// 实际不再使用。MemoryStore 行为不变（内存），SQLStore 持久化到 MySQL。
-type alertRuleStore struct {
-	mu    sync.RWMutex
-	rules map[string]*AlertRule // key: rule.ID
-}
-
-// TODO(tech-debt): globalAlertRules 已废弃，保留供向后兼容（部分测试可能引用）。
-// 新代码应通过 s.store 调用 store.AlertRule 接口。
-var globalAlertRules = &alertRuleStore{rules: make(map[string]*AlertRule)}
-
-func (s *alertRuleStore) list(tenantID string) []*AlertRule {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]*AlertRule, 0)
-	for _, r := range s.rules {
-		if tenantID == "" || r.TenantID == tenantID {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-func (s *alertRuleStore) save(rule *AlertRule) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.rules[rule.ID] = rule
-}
-
-func (s *alertRuleStore) remove(id, tenantID string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r, ok := s.rules[id]
-	if !ok || (tenantID != "" && r.TenantID != tenantID) {
-		return false
-	}
-	delete(s.rules, id)
-	return true
 }
 
 // parseForDurationSecs 把 controlplane.AlertRule.ForDuration 字符串（如 "5m"、"30s"、"1h"）

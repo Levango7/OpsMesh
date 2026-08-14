@@ -683,7 +683,7 @@ func extractBearer(r *http.Request) (string, error) {
 	}
 	const prefix = "Bearer "
 	if len(v) < len(prefix) || !strings.EqualFold(v[:len(prefix)], prefix) {
-		return "", errors.New("Authorization header is not Bearer format")
+		return "", errors.New("authorization header is not Bearer format")
 	}
 	token := strings.TrimSpace(v[len(prefix):])
 	if token == "" {

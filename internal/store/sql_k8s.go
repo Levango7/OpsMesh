@@ -31,20 +31,20 @@ func scanK8sCluster(row rowScanner) *K8sCluster {
 
 // ListK8sClusters 返回 K8s 集群配置（按创建时间升序）；tenantID 非空时仅返回同租户集群（task 88 租户隔离）。
 func (s *SQLStore) ListK8sClusters(tenantID string) []*K8sCluster {
-	q := 
-`
+	q :=
+		`
 SELECT id, tenant_id, name, server, kubeconfig, status, created_at, updated_at FROM k8s_clusters
 `
 	var args []interface{}
 	if tenantID != "" {
-		q += 
-`
+		q +=
+			`
  WHERE tenant_id=?
 `
 		args = append(args, tenantID)
 	}
-	q += 
-`
+	q +=
+		`
  ORDER BY created_at ASC
 `
 	rows, err := s.db.QueryContext(context.Background(), q, args...)

@@ -1,4 +1,3 @@
-
 // quota.go — P2-B5 多租户资源配额与计费（task 274）。
 //
 // 实现租户级资源配额管理：
@@ -25,7 +24,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 
 	"opsmesh/internal/authctx"
 	"opsmesh/internal/proto"
@@ -44,7 +42,6 @@ var ErrQuotaExceeded = errors.New("quota exceeded")
 // 默认配额（defaultQuota）用于未显式设置配额的租户（来自 config）。
 // enabled 控制是否启用配额检查（false 时所有 Check 方法直接放行，向后兼容）。
 type QuotaManager struct {
-	mu           sync.RWMutex
 	store        store.Store // 用于查询当前用量 + 读写配额配置
 	defaultQuota *store.QuotaConfig
 	enabled      bool

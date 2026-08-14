@@ -1,4 +1,3 @@
-
 // render.go 实现 Chart 模板渲染：调用 helm template 生成 Kubernetes manifest，
 // 并解析多文档 YAML 为 RenderedTemplate 列表。
 //
@@ -17,21 +16,21 @@ import (
 
 // RenderOptions 是模板渲染选项。
 type RenderOptions struct {
-	Namespace    string                 // -n 参数（目标命名空间）
-	ReleaseName  string                 // release 名（必填，helm template 第一个位置参数）
-	Values       map[string]interface{} // 覆盖值（写入临时 JSON 文件通过 -f 传递）
-	ValuesFiles  []string               // 额外 -f 文件路径列表
-	SetPairs     []string               // --set KEY=VALUE 列表
-	Kubeconfig   string                 // --kubeconfig（仅用于 OCI 拉取鉴权，本地 template 通常不需要）
-	IncludeCRDs  bool                   // --include-crds
-	APIVersions  []string               // --api-version（如 ["monitoring.coreos.com/v1"]）
+	Namespace   string                 // -n 参数（目标命名空间）
+	ReleaseName string                 // release 名（必填，helm template 第一个位置参数）
+	Values      map[string]interface{} // 覆盖值（写入临时 JSON 文件通过 -f 传递）
+	ValuesFiles []string               // 额外 -f 文件路径列表
+	SetPairs    []string               // --set KEY=VALUE 列表
+	Kubeconfig  string                 // --kubeconfig（仅用于 OCI 拉取鉴权，本地 template 通常不需要）
+	IncludeCRDs bool                   // --include-crds
+	APIVersions []string               // --api-version（如 ["monitoring.coreos.com/v1"]）
 }
 
 // RenderedTemplate 是渲染后的单个 Kubernetes 资源。
 type RenderedTemplate struct {
-	Name    string `json:"name"    yaml:"name"`    // 来源文件路径（如 "mysql/templates/primary/statefulset.yaml"）
-	Content string `json:"content" yaml:"content"` // 完整 YAML 内容（含 Source 注释）
-	Kind    string `json:"kind"    yaml:"kind"`    // 资源类型（Deployment/Service/ConfigMap 等）
+	Name       string `json:"name"    yaml:"name"`    // 来源文件路径（如 "mysql/templates/primary/statefulset.yaml"）
+	Content    string `json:"content" yaml:"content"` // 完整 YAML 内容（含 Source 注释）
+	Kind       string `json:"kind"    yaml:"kind"`    // 资源类型（Deployment/Service/ConfigMap 等）
 	APIVersion string `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
 	// ResourceName 是 metadata.name 的值（从 YAML 内容提取）。
 	ResourceName string `json:"resourceName,omitempty" yaml:"resourceName,omitempty"`
@@ -337,10 +336,10 @@ func unquoteYAML(s string) string {
 
 // RenderStats 是渲染结果的统计信息。
 type RenderStats struct {
-	Total       int            // 总资源数
-	ByKind      map[string]int // 按类型统计
-	WithSource  int            // 有 Source 注释的资源数
-	WithoutSource int          // 无 Source 注释的资源数
+	Total         int            // 总资源数
+	ByKind        map[string]int // 按类型统计
+	WithSource    int            // 有 Source 注释的资源数
+	WithoutSource int            // 无 Source 注释的资源数
 }
 
 // Stats 计算渲染结果的统计信息。

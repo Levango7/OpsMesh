@@ -52,7 +52,7 @@ func TestTopoOrderFanIn(t *testing.T) {
 	for i, id := range order {
 		pos[id] = i
 	}
-	if !(pos["a"] < pos["c"] && pos["b"] < pos["c"]) {
+	if pos["a"] >= pos["c"] || pos["b"] >= pos["c"] {
 		t.Fatalf("fan-in order wrong: %v", order)
 	}
 }

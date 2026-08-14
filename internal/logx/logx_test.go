@@ -83,4 +83,3 @@ func TestInfoWithTrace(t *testing.T) {
 	Warn(ctx, "test warn", "key", "value")
 	Error(ctx, "test error", errors.New("err"), "key", "value")
 }
-

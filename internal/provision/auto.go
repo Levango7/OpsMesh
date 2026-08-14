@@ -21,18 +21,20 @@ type Deps struct {
 
 // Summary 自动纳管编排结果汇总。
 type Summary struct {
-	Scanned    int      `json:"scanned"`
-	Registered int      `json:"registered"`
-	Provisioned int     `json:"provisioned"`
-	SSHPushed  int      `json:"sshPushed"`
-	Failures   []string `json:"failures,omitempty"`
+	Scanned     int      `json:"scanned"`
+	Registered  int      `json:"registered"`
+	Provisioned int      `json:"provisioned"`
+	SSHPushed   int      `json:"sshPushed"`
+	Failures    []string `json:"failures,omitempty"`
 }
 
 // AutoProvision 执行 B1 自动纳管编排闭环：
-//   for 每段 CIDR：discover.Sweep 存活扫描
-//     → 存活主机登记为候选设备（State=discovered，Managed=false）
-//     → 为设备签发一次性 install token（Provision）
-//     → 若配置 SSH 私钥，通过 SSH 自动推送 bootstrap 完成 agent 安装
+//
+//	for 每段 CIDR：discover.Sweep 存活扫描
+//	  → 存活主机登记为候选设备（State=discovered，Managed=false）
+//	  → 为设备签发一次性 install token（Provision）
+//	  → 若配置 SSH 私钥，通过 SSH 自动推送 bootstrap 完成 agent 安装
+//
 // tenantID 为空时视为单租户（开发模式）。
 //
 // 设计要点：
@@ -99,21 +101,21 @@ func AutoProvision(ctx context.Context, deps Deps, cfg *config.Config, cidrs []s
 			sum.Provisioned++
 			mu.Unlock()
 
-		if cfg.ProvisionSSHKey == "" {
-			continue // 未配置 SSH 私钥：仅签发 token，等待用户手动 curl|sh 或 agent 自助纳管
-		}
-		// M12 生产环境强制 known_hosts：拒绝 InsecureIgnoreHostKey SSH 推送（MITM 防护）。
-		// 生产模式下 known_hosts 为空时直接跳过 SSH 推送并记录失败，避免供应链 RCE 风险。
-		if cfg.Production && cfg.ProvisionSSHKnownHosts == "" {
-			mu.Lock()
-			sum.Failures = append(sum.Failures, fmt.Sprintf("ssh %s: 生产模式拒绝 InsecureIgnoreHostKey（MITM 风险），请配置 --provision-ssh-known-hosts", ip))
-			mu.Unlock()
-			continue
-		}
+			if cfg.ProvisionSSHKey == "" {
+				continue // 未配置 SSH 私钥：仅签发 token，等待用户手动 curl|sh 或 agent 自助纳管
+			}
+			// M12 生产环境强制 known_hosts：拒绝 InsecureIgnoreHostKey SSH 推送（MITM 防护）。
+			// 生产模式下 known_hosts 为空时直接跳过 SSH 推送并记录失败，避免供应链 RCE 风险。
+			if cfg.Production && cfg.ProvisionSSHKnownHosts == "" {
+				mu.Lock()
+				sum.Failures = append(sum.Failures, fmt.Sprintf("ssh %s: 生产模式拒绝 InsecureIgnoreHostKey（MITM 风险），请配置 --provision-ssh-known-hosts", ip))
+				mu.Unlock()
+				continue
+			}
 			bootstrap := fmt.Sprintf("curl -sSL %s/install.sh | sh -s -- --token=%s", advertise, token)
 			sshAddr := fmt.Sprintf("%s:22", ip)
 			go func(addr, cmd, dev string) {
-				sshSem <- struct{}{}        // task 93：并发限流（最多 8 个并行 SSH 推送）
+				sshSem <- struct{}{} // task 93：并发限流（最多 8 个并行 SSH 推送）
 				defer func() { <-sshSem }()
 				out, e := PushAndExec(context.Background(), addr, cfg.ProvisionSSHUser, cfg.ProvisionSSHKey, cfg.ProvisionSSHKP, cfg.ProvisionSSHKnownHosts, cmd)
 				if e != nil {

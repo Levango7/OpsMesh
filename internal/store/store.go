@@ -406,17 +406,17 @@ type Store interface {
 	AuditStore
 	TokenStore
 	LeaderStore
-	UserStore         // 用户中心：注册/登录/CRUD
-	RoleStore         // 角色管理：CRUD
-	PermissionStore   // 权限列表：只读
-	K8sClusterStore   // K8s 集群管理：CRUD（Phase 3）
-	TemplateStore     // OS/中间件部署模板：CRUD（task 100）
-	RefreshTokenStore // 刷新令牌：续期/吊销（task 111）
-	SilenceStore      // 静默规则：标签匹配 + 时间窗口抑制（task 241 M2）
-	NotifyChannelStore    // 通知渠道：CRUD（task 241 M2）
-	NotifyTemplateStore   // 通知模板：CRUD（task 241 M2）
-	AgentLogStore         // agent 日志上报：落库 + 检索（task 247）
-	QuotaStore            // 租户配额：Get/Set（P2-B5 多租户资源配额）
+	UserStore           // 用户中心：注册/登录/CRUD
+	RoleStore           // 角色管理：CRUD
+	PermissionStore     // 权限列表：只读
+	K8sClusterStore     // K8s 集群管理：CRUD（Phase 3）
+	TemplateStore       // OS/中间件部署模板：CRUD（task 100）
+	RefreshTokenStore   // 刷新令牌：续期/吊销（task 111）
+	SilenceStore        // 静默规则：标签匹配 + 时间窗口抑制（task 241 M2）
+	NotifyChannelStore  // 通知渠道：CRUD（task 241 M2）
+	NotifyTemplateStore // 通知模板：CRUD（task 241 M2）
+	AgentLogStore       // agent 日志上报：落库 + 检索（task 247）
+	QuotaStore          // 租户配额：Get/Set（P2-B5 多租户资源配额）
 
 	// WithDemo 设置是否开启演示模式（P0-5）：开启时每个 agent 注册预置 uname -a 示例任务。
 	WithDemo(bool) Store

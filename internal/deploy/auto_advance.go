@@ -188,7 +188,7 @@ func (m *AutoAdvanceManager) monitorLoop(ctx context.Context, deployID int64, st
 	defer ticker.Stop()
 
 	// 首次立即检查一次（不等首个 tick）。
-	m.checkAndAdvance(ctx, deployID, st)
+	_ = m.checkAndAdvance(ctx, deployID, st)
 
 	for {
 		select {
@@ -204,7 +204,7 @@ func (m *AutoAdvanceManager) monitorLoop(ctx context.Context, deployID int64, st
 			if isTerminalStatus(dt.Status) {
 				return
 			}
-			m.checkAndAdvance(ctx, deployID, st)
+			_ = m.checkAndAdvance(ctx, deployID, st)
 		}
 	}
 }

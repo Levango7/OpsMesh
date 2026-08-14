@@ -1,4 +1,3 @@
-
 // Package notify 通知模板（M2-2）。
 //
 // 本文件实现通知模板：标题/正文支持 Go text/template 变量替换（{{.AlertName}} 等），
@@ -27,11 +26,11 @@ import (
 //   - Body：模板正文（支持变量替换）。
 //   - Format：正文格式（"markdown"/"text"/"html"）；渲染后填入 Message.Format。
 type Template struct {
-	ID    string // 模板唯一标识
-	Name  string // 模板名称
-	Type  string // alert / task / device / system
-	Title string // 模板标题（支持变量替换）
-	Body  string // 模板正文（支持变量替换）
+	ID     string // 模板唯一标识
+	Name   string // 模板名称
+	Type   string // alert / task / device / system
+	Title  string // 模板标题（支持变量替换）
+	Body   string // 模板正文（支持变量替换）
 	Format string // markdown / text / html
 }
 

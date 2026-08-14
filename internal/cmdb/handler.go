@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -48,7 +49,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 // handleCIs 处理 GET/POST /api/v1/cmdb/ci。
@@ -472,9 +473,15 @@ func (h *Handler) HandleReport(ctx context.Context, agentID string, report *prot
 		now := time.Now()
 		ci.CreatedAt = now
 		ci.UpdatedAt = now
-		h.store.CreateCI(ctx, ci)
+		if err := h.store.CreateCI(ctx, ci); err != nil {
+			log.Printf("[cmdb] HandleReport CreateCI 失败: %v", err)
+			return
+		}
 	} else {
-		h.store.UpdateCI(ctx, ci)
+		if err := h.store.UpdateCI(ctx, ci); err != nil {
+			log.Printf("[cmdb] HandleReport UpdateCI 失败: %v", err)
+			return
+		}
 	}
 }
 

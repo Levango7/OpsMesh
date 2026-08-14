@@ -43,7 +43,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // handleAsset 服务前端静态资源（E2 前端独立化：web/assets/* 经 embed.FS 打包）。
@@ -78,5 +78,5 @@ func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 	// 静态资源不缓存：go:embed 在编译期打包，重新编译后文件内容变化但 URL 不变，
 	// 若浏览器缓存旧版本（如旧 main.js 无 showAuthPage），与新 HTML 不匹配会导致页面空白。
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	w.Write(data)
+	_, _ = w.Write(data)
 }

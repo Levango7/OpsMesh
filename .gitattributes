@@ -1,0 +1,25 @@
+# OpsMesh .gitattributes — 行尾统一为 LF
+#
+# 背景：Windows 本地 core.autocrlf=true 会把 checkout 变成 CRLF，
+# 导致本地 gofmt/golangci-lint 报 "File is not properly formatted"
+# 噪音（CI Linux checkout 是 LF 无此问题）。强制 Go/YAML/Makefile 类
+# 文件以 LF 入库+检出，彻底消除本地与 CI 的格式差异。
+
+* text=auto
+
+# Go 源码：强制 LF（gofmt/golangci-lint 契约）
+*.go text eol=lf
+
+# CI/配置/脚本：LF（bash 脚本 CRLF 会直接坏掉）
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Makefile text eol=lf
+*.md text eol=lf
+
+# 二进制与构建产物：不转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary

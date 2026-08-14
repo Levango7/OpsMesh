@@ -10,11 +10,11 @@ import (
 // MemoryCiStore 内存实现 CMDB 存储（单机 MVP）。
 type MemoryCiStore struct {
 	mu        sync.RWMutex
-	types     map[string]CiType              // name -> type
-	items     map[string]CiItem              // id -> item
-	rels      map[int64]CiRelation           // id -> relation
+	types     map[string]CiType    // name -> type
+	items     map[string]CiItem    // id -> item
+	rels      map[int64]CiRelation // id -> relation
 	relSeq    int64
-	templates map[int]CiAttrTemplate         // id -> template
+	templates map[int]CiAttrTemplate // id -> template
 	tmplSeq   int
 	seq       int
 }
@@ -194,7 +194,7 @@ func (s *MemoryCiStore) DeleteCI(_ context.Context, id, tenantID string) error {
 
 func (s *MemoryCiStore) GetCIHistory(_ context.Context, ciID, tenantID string, limit int) ([]CiItem, error) {
 	// MVP：memory 只返回当前版本（不含历史）
-	item, err := s.GetCI(nil, ciID, tenantID)
+	item, err := s.GetCI(context.TODO(), ciID, tenantID)
 	if err != nil {
 		return nil, err
 	}

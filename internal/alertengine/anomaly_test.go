@@ -49,11 +49,9 @@ func TestBaselineDetector_Anomaly(t *testing.T) {
 	d := NewBaselineDetector(100, 3.0)
 	// 灌入基线：100 ± 0.5 的轻微波动，使 stdDev > 0
 	for i := 0; i < 100; i++ {
-		v := 100.0 + 0.5*float64(i%2-0) // 在 100 和 100.5 之间交替
+		v := 100.5
 		if i%2 == 0 {
 			v = 100.0
-		} else {
-			v = 100.5
 		}
 		d.Add(v)
 	}

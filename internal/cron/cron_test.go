@@ -20,12 +20,12 @@ func TestMatch_Basic(t *testing.T) {
 	// 2026-07-26 是周日（dow=0/7）
 	now := time.Date(2026, 7, 26, 10, 30, 0, 0, time.UTC)
 	mustMatch(t, "* * * * *", now, true)
-	mustMatch(t, "30 10 26 7 0", now, true)   // 精确匹配
-	mustMatch(t, "30 10 26 7 7", now, true)   // 周 7=周日 等价 0
-	mustMatch(t, "31 10 26 7 *", now, false)  // 分不匹配
-	mustMatch(t, "30 11 26 7 *", now, false)  // 时不匹配
-	mustMatch(t, "30 10 27 7 *", now, false)  // 日不匹配
-	mustMatch(t, "30 10 26 8 *", now, false)  // 月不匹配
+	mustMatch(t, "30 10 26 7 0", now, true)  // 精确匹配
+	mustMatch(t, "30 10 26 7 7", now, true)  // 周 7=周日 等价 0
+	mustMatch(t, "31 10 26 7 *", now, false) // 分不匹配
+	mustMatch(t, "30 11 26 7 *", now, false) // 时不匹配
+	mustMatch(t, "30 10 27 7 *", now, false) // 日不匹配
+	mustMatch(t, "30 10 26 8 *", now, false) // 月不匹配
 	mustMatch(t, "30 10 26 7 1", now, false) // 周不匹配（周一）
 }
 

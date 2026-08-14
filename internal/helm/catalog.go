@@ -1,4 +1,3 @@
-
 // catalog.go 实现预置应用商店，提供 20+ 常用 Helm 应用的目录定义与查询能力。
 //
 // 设计要点：
@@ -34,10 +33,10 @@ type CatalogItem struct {
 	ID            string                 `json:"id"            yaml:"id"`
 	Name          string                 `json:"name"          yaml:"name"`
 	Category      CatalogCategory        `json:"category"      yaml:"category"`
-	Chart         string                 `json:"chart"         yaml:"chart"`         // chart 名称
-	Repo          string                 `json:"repo"          yaml:"repo"`         // 仓库名
-	Version       string                 `json:"version"       yaml:"version"`       // 推荐版本
-	Icon          string                 `json:"icon"          yaml:"icon"`          // 图标 URL
+	Chart         string                 `json:"chart"         yaml:"chart"`   // chart 名称
+	Repo          string                 `json:"repo"          yaml:"repo"`    // 仓库名
+	Version       string                 `json:"version"       yaml:"version"` // 推荐版本
+	Icon          string                 `json:"icon"          yaml:"icon"`    // 图标 URL
 	Description   string                 `json:"description"   yaml:"description"`
 	DefaultValues map[string]interface{} `json:"defaultValues,omitempty" yaml:"defaultValues,omitempty"`
 	// Maintainer 维护者（仅展示用）。
@@ -504,7 +503,7 @@ func SearchCatalog(keyword string) []*CatalogItem {
 
 // CatalogStats 是目录统计信息。
 type CatalogStats struct {
-	Total     int                    // 总条目数
+	Total      int                     // 总条目数
 	ByCategory map[CatalogCategory]int // 按分类统计
 }
 

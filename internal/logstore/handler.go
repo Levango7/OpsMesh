@@ -59,10 +59,10 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if l := r.URL.Query().Get("limit"); l != "" {
-			fmt.Sscanf(l, "%d", &q.Limit)
+			_, _ = fmt.Sscanf(l, "%d", &q.Limit)
 		}
 		if o := r.URL.Query().Get("offset"); o != "" {
-			fmt.Sscanf(o, "%d", &q.Offset)
+			_, _ = fmt.Sscanf(o, "%d", &q.Offset)
 		}
 		// 结构化查询语法预校验：q 非空时解析失败返回 400（语法错误，非服务端故障）。
 		if q.Q != "" {
@@ -142,5 +142,5 @@ func (h *Handler) RecordTaskResult(ctx context.Context, tenantID, agentID, taskI
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }

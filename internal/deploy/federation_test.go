@@ -183,8 +183,8 @@ func TestFederationDeploy_Valid(t *testing.T) {
 	s := NewMemoryFederationStore()
 
 	cases := []struct {
-		name string
-		mut  func(*FederationDeploy)
+		name    string
+		mut     func(*FederationDeploy)
 		wantErr bool
 	}{
 		{"valid", func(f *FederationDeploy) {}, false},

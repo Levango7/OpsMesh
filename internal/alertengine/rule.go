@@ -13,7 +13,6 @@ package alertengine
 //	Engine.Evaluate(deviceID) 遍历启用规则 → MatchRule 逐条件比对 →
 //	Evaluator.ShouldFire 判断持续时长 → 触发 AlertEvent → 可选 Silencer 抑制 / Aggregator 聚合。
 
-
 import (
 	"errors"
 	"time"
@@ -44,12 +43,12 @@ const (
 
 // 支持的比较算子。
 const (
-	OpGT  = ">"  // 大于
-	OpLT  = "<"  // 小于
-	OpGE  = ">=" // 大于等于
-	OpLE  = "<=" // 小于等于
-	OpEQ  = "==" // 等于
-	OpNE  = "!=" // 不等于
+	OpGT = ">"  // 大于
+	OpLT = "<"  // 小于
+	OpGE = ">=" // 大于等于
+	OpLE = "<=" // 小于等于
+	OpEQ = "==" // 等于
+	OpNE = "!=" // 不等于
 )
 
 // ErrRuleNotFound 规则不存在时返回。
@@ -74,18 +73,18 @@ type Condition struct {
 // 多个 Condition 按 Logic 组合；当组合结果持续满足 Duration 时间，
 // 引擎对该设备产出一条 AlertEvent。Duration<=0 表示立即触发（无持续时长要求）。
 type AlertRule struct {
-	ID            string        // 规则唯一 ID（租户内唯一）
-	Name          string        // 规则名（展示用）
-	TenantID      string        // 所属租户
-	Enabled       bool          // 是否启用
-	Conditions    []Condition   // 条件列表（至少 1 条）
-	Logic         LogicOp       // 条件组合算子（AND/OR/NOT）
-	Duration      time.Duration // 持续时长（条件需持续满足多久才触发）；<=0 立即触发
-	Severity      string        // critical/warning/info
-	NotifyChannels []string     // 通知渠道 ID 列表
-	SilenceID     string        // 关联的静默规则 ID（可选）
-	CreatedAt     time.Time     // 创建时间
-	UpdatedAt     time.Time     // 最近更新时间
+	ID             string        // 规则唯一 ID（租户内唯一）
+	Name           string        // 规则名（展示用）
+	TenantID       string        // 所属租户
+	Enabled        bool          // 是否启用
+	Conditions     []Condition   // 条件列表（至少 1 条）
+	Logic          LogicOp       // 条件组合算子（AND/OR/NOT）
+	Duration       time.Duration // 持续时长（条件需持续满足多久才触发）；<=0 立即触发
+	Severity       string        // critical/warning/info
+	NotifyChannels []string      // 通知渠道 ID 列表
+	SilenceID      string        // 关联的静默规则 ID（可选）
+	CreatedAt      time.Time     // 创建时间
+	UpdatedAt      time.Time     // 最近更新时间
 }
 
 // AlertEvent 规则触发产出的告警事件。

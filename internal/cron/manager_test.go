@@ -11,10 +11,10 @@ func TestManager_CreateAndGet(t *testing.T) {
 	m.SetNow(func() time.Time { return fixedNow })
 
 	e, err := m.Create(&ScheduleEntry{
-		TaskID:   "task-1",
-		TenantID: "default",
-		Name:     "每5分钟健康检查",
-		CronExpr: "*/5 * * * *",
+		TaskID:    "task-1",
+		TenantID:  "default",
+		Name:      "每5分钟健康检查",
+		CronExpr:  "*/5 * * * *",
 		CreatedBy: "alice",
 	})
 	if err != nil {

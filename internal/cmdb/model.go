@@ -15,25 +15,25 @@ type CiType struct {
 	ID          int       `json:"id"`
 	Name        string    `json:"name"`        // machine / os / service / app / cluster
 	DisplayName string    `json:"displayName"` // 物理机 / 操作系统 / 系统服务 / 应用 / 集群
-	Builtin     bool      `json:"builtin"`      // 系统内置不可删
+	Builtin     bool      `json:"builtin"`     // 系统内置不可删
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
 // CiItem CI 实例。
 type CiItem struct {
-	ID            string            `json:"id"`            // ci-<ulid>
-	CiType        string            `json:"ciType"`        // ci_types.name
-	TenantID      string            `json:"tenantID"`      // 行级隔离
-	Name          string            `json:"name"`          // 展示名（hostname）
-	Status        string            `json:"status"`        // active / archived / deleted
+	ID             string            `json:"id"`             // ci-<ulid>
+	CiType         string            `json:"ciType"`         // ci_types.name
+	TenantID       string            `json:"tenantID"`       // 行级隔离
+	Name           string            `json:"name"`           // 展示名（hostname）
+	Status         string            `json:"status"`         // active / archived / deleted
 	ApprovalStatus string            `json:"approvalStatus"` // Phase-3：pending / approved / rejected，默认 approved
-	Attrs         map[string]string `json:"attrs"`         // 扁平化属性
-	Source        string            `json:"source"`        // manual / agent / discover / api / import
-	AgentID       string            `json:"agentID"`       // 上报 agent
-	DeviceID      string            `json:"deviceID"`      // 关联 device
-	Version       int               `json:"version"`       // 乐观锁
-	CreatedAt     time.Time         `json:"createdAt"`
-	UpdatedAt     time.Time         `json:"updatedAt"`
+	Attrs          map[string]string `json:"attrs"`          // 扁平化属性
+	Source         string            `json:"source"`         // manual / agent / discover / api / import
+	AgentID        string            `json:"agentID"`        // 上报 agent
+	DeviceID       string            `json:"deviceID"`       // 关联 device
+	Version        int               `json:"version"`        // 乐观锁
+	CreatedAt      time.Time         `json:"createdAt"`
+	UpdatedAt      time.Time         `json:"updatedAt"`
 }
 
 // CiAttrTemplate CI 属性模板：定义某类型 CI 可用的属性集合。

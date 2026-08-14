@@ -153,7 +153,6 @@ func TestReconcileDetectsFailed(t *testing.T) {
 	}
 }
 
-
 // TestValidateRepoURL 验证 task 87：RepoURL 命令注入防护。
 func TestValidateRepoURL(t *testing.T) {
 	// 合法仓库地址应通过。

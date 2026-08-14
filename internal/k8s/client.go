@@ -170,5 +170,5 @@ func forceSecureTLS(config *rest.Config) {
 	if config == nil {
 		return
 	}
-	config.TLSClientConfig.Insecure = false
+	config.Insecure = false
 }

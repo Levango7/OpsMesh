@@ -20,7 +20,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/smtp"
 	"strings"
@@ -475,13 +474,6 @@ func NewChannel(cfg ChannelConfig) (Channel, error) {
 	default:
 		return nil, fmt.Errorf("notify: unknown channel type %q", cfg.Type)
 	}
-}
-
-// MarshalPayloadForTest 仅测试用：将渠道 payload 序列化为 JSON 字符串，便于断言。
-// 不在生产路径调用。保留小写 marshalPayload 命名以避免导出污染。
-func marshalPayloadForTest(v interface{}) string {
-	b, _ := json.Marshal(v)
-	return string(b)
 }
 
 // ============================================================================

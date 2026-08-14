@@ -1,4 +1,3 @@
-
 // Package approval 实现运维操作的审批流程核心引擎。
 //
 // 功能特性：
@@ -63,12 +62,12 @@ type ApprovalFlow struct {
 
 // ApprovalStep 审批步骤定义。
 type ApprovalStep struct {
-	ID        string          // 步骤 ID（流内唯一）
-	Name      string          // 步骤名称
-	Order     int             // 步骤顺序（1=第一级，2=第二级...）
-	Mode      StepMode        // 审批模式：sequential/countersign/anyof
-	Approvers []string        // 审批人 userID 列表
-	Timeout   time.Duration   // 审批超时（<=0 表示不超时）
+	ID        string        // 步骤 ID（流内唯一）
+	Name      string        // 步骤名称
+	Order     int           // 步骤顺序（1=第一级，2=第二级...）
+	Mode      StepMode      // 审批模式：sequential/countersign/anyof
+	Approvers []string      // 审批人 userID 列表
+	Timeout   time.Duration // 审批超时（<=0 表示不超时）
 }
 
 // Validate 校验审批流定义合法性。

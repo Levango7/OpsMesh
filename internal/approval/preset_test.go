@@ -21,7 +21,7 @@ func TestShouldRequireApproval(t *testing.T) {
 		{TriggerDeploy, RiskHigh, true},
 		{TriggerDeploy, RiskMedium, false},
 		{TriggerDeploy, RiskLow, false},
-		{"unknown", RiskHigh, true},  // 未知触发类型仅高危
+		{"unknown", RiskHigh, true}, // 未知触发类型仅高危
 		{"unknown", RiskLow, false},
 		{"unknown", RiskMedium, false},
 	}

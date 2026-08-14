@@ -783,13 +783,13 @@ func (s *Server) notifyAlertGroup(ctx context.Context, g *alertengine.AlertGroup
 	}
 	// 构造消息正文（聚合组内事件摘要）
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("告警组 %s（共 %d 条）：\n", g.Key, len(g.Events)))
+	fmt.Fprintf(&sb, "告警组 %s（共 %d 条）：\n", g.Key, len(g.Events))
 	for i, ev := range g.Events {
 		if i >= 10 {
-			sb.WriteString(fmt.Sprintf("\n... 还有 %d 条", len(g.Events)-10))
+			fmt.Fprintf(&sb, "\n... 还有 %d 条", len(g.Events)-10)
 			break
 		}
-		sb.WriteString(fmt.Sprintf("\n- [%s] %s（设备 %s，规则 %s）", ev.Severity, ev.Message, ev.DeviceID, ev.RuleID))
+		fmt.Fprintf(&sb, "\n- [%s] %s（设备 %s，规则 %s）", ev.Severity, ev.Message, ev.DeviceID, ev.RuleID)
 	}
 	// 取组内最高严重度作为消息 Severity
 	severity := "info"
@@ -924,7 +924,7 @@ func buildChannel(c *store.NotifyChannel, provider secrets.SecretProvider) (noti
 	case "email":
 		port := 25
 		if p := cfg["port"]; p != "" {
-			fmt.Sscanf(p, "%d", &port)
+			_, _ = fmt.Sscanf(p, "%d", &port)
 		}
 		var to []string
 		if t := cfg["to"]; t != "" {

@@ -171,9 +171,7 @@ func validateRepoURL(u string) error {
 	if strings.ContainsAny(u, repoURLUnsafeChars) {
 		return errInvalid("repo_url contains shell metacharacters and is rejected for safety")
 	}
-	if !(strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://") ||
-		strings.HasPrefix(u, "git://") || strings.HasPrefix(u, "ssh://") ||
-		strings.HasPrefix(u, "git@") || strings.HasPrefix(u, "/")) {
+	if !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "git://") && !strings.HasPrefix(u, "ssh://") && !strings.HasPrefix(u, "git@") && !strings.HasPrefix(u, "/") {
 		return errInvalid("repo_url must start with http(s)://, git://, ssh://, git@, or /")
 	}
 	return nil
@@ -226,36 +224,36 @@ type FederationDeploy struct {
 	Status    string `json:"status"`
 	// Template 为成员子部署的模板（不含 TargetIDs，由各 Member.TargetIDs 覆盖）。
 	// 协调器为每个成员克隆 Template + Member.TargetIDs 创建子 DeployTask。
-	Template    DeployTask   `json:"template"`
-	Members     []FederationMember `json:"members"`
-	Gate        *GateConfig  `json:"gate,omitempty"`         // 联邦级门禁（nil=用默认门禁）
-	AutoRollback bool       `json:"auto_rollback,omitempty"` // 任一成员失败时自动回滚已成功成员
-	CreatedAt   time.Time   `json:"created_at"`
-	UpdatedAt   time.Time   `json:"updated_at"`
+	Template     DeployTask         `json:"template"`
+	Members      []FederationMember `json:"members"`
+	Gate         *GateConfig        `json:"gate,omitempty"`          // 联邦级门禁（nil=用默认门禁）
+	AutoRollback bool               `json:"auto_rollback,omitempty"` // 任一成员失败时自动回滚已成功成员
+	CreatedAt    time.Time          `json:"created_at"`
+	UpdatedAt    time.Time          `json:"updated_at"`
 }
 
 // FederationMember 联邦发布的单个成员（一个集群/分组的子部署）。
 type FederationMember struct {
-	ClusterID string `json:"cluster_id"`           // 集群/分组标识（如 k8s-prod-1）
-	Name      string `json:"name"`                 // 成员展示名
-	TargetIDs string `json:"target_ids"`           // 该成员的目标设备 ID（逗号分隔）
-	Order     int    `json:"order"`                // 推进顺序（0=首批，越大越后；sequential 模式按此逐个推进）
-	Weight    int    `json:"weight,omitempty"`     // 灰度权重（parallel 模式按比例派发，[0,100]）
+	ClusterID string `json:"cluster_id"`       // 集群/分组标识（如 k8s-prod-1）
+	Name      string `json:"name"`             // 成员展示名
+	TargetIDs string `json:"target_ids"`       // 该成员的目标设备 ID（逗号分隔）
+	Order     int    `json:"order"`            // 推进顺序（0=首批，越大越后；sequential 模式按此逐个推进）
+	Weight    int    `json:"weight,omitempty"` // 灰度权重（parallel 模式按比例派发，[0,100]）
 	// DeployID 为协调器派发后回填的子 DeployTask.ID（0=未派发）。
 	DeployID int64  `json:"deploy_id,omitempty"`
-	Status   string `json:"status,omitempty"`      // 成员级状态（复用 Status* 常量）
-	Error    string `json:"error,omitempty"`       // 成员级错误信息
+	Status   string `json:"status,omitempty"` // 成员级状态（复用 Status* 常量）
+	Error    string `json:"error,omitempty"`  // 成员级错误信息
 }
 
 // FederationStatus 联邦级发布状态聚合视图（GET /api/v1/deploys/federation/{id}/status 返回）。
 type FederationStatus struct {
-	ID            int64              `json:"id"`
-	OverallStatus string             `json:"overall_status"` // 联邦级状态（FedStatus*）
-	TotalMembers  int                `json:"total_members"`
-	DoneMembers   int                `json:"done_members"`   // 已成功成员数
-	FailedMembers int                `json:"failed_members"` // 失败成员数
-	PendingMembers int               `json:"pending_members"` // 未派发成员数
-	Members       []FederationMember `json:"members"`
+	ID             int64              `json:"id"`
+	OverallStatus  string             `json:"overall_status"` // 联邦级状态（FedStatus*）
+	TotalMembers   int                `json:"total_members"`
+	DoneMembers    int                `json:"done_members"`    // 已成功成员数
+	FailedMembers  int                `json:"failed_members"`  // 失败成员数
+	PendingMembers int                `json:"pending_members"` // 未派发成员数
+	Members        []FederationMember `json:"members"`
 }
 
 // EffectiveMode 返回生效的推进模式（空串回退 sequential，向后兼容）。

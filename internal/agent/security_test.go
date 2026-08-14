@@ -131,7 +131,7 @@ func TestLimitedBuffer_Basic(t *testing.T) {
 	}
 	// 继续写入应被丢弃
 	b.Write([]byte("dropped"))
-	if !strings.Contains(b.String(), "dropped") {
-		// dropped 应被丢弃，不在输出中
+	if strings.Contains(b.String(), "dropped") {
+		t.Fatalf("写入超限后 dropped 应被丢弃，实际出现在输出中")
 	}
 }

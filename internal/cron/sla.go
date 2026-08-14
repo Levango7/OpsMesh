@@ -1,4 +1,3 @@
-
 // sla.go 提供 cron 任务 SLA 监控能力：
 //   - SLA 定义任务预期完成时间（Deadline）与告警阈值；
 //   - Monitor 跟踪任务执行时长，超时触发告警回调；
@@ -34,11 +33,11 @@ type SLABreachEvent struct {
 //
 // 线程安全：通过 mu 保护 tasks 与 fired 索引。
 type SLAMonitor struct {
-	mu     sync.Mutex
-	tasks  map[string]*SLAConfig // taskID -> 配置（含 StartedAt）
-	fired  map[string]string     // taskID -> 已触发事件（"warn"/"breach"），避免重复告警
+	mu       sync.Mutex
+	tasks    map[string]*SLAConfig // taskID -> 配置（含 StartedAt）
+	fired    map[string]string     // taskID -> 已触发事件（"warn"/"breach"），避免重复告警
 	onBreach func(SLABreachEvent)
-	now    func() time.Time
+	now      func() time.Time
 }
 
 // NewSLAMonitor 构造 SLA 监控器。onBreach 为告警回调（nil=不告警）。

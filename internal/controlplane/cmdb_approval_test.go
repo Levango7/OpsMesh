@@ -383,7 +383,7 @@ func TestApproveChange_UpdateAndDelete(t *testing.T) {
 		TenantID: "tenant-a", Action: "create", CIType: "machine",
 		Requester: "alice",
 		Changes: map[string]interface{}{
-			"name": "host-up",
+			"name":  "host-up",
 			"attrs": map[string]string{"ip": "10.0.0.10"},
 		},
 	})
@@ -402,7 +402,7 @@ func TestApproveChange_UpdateAndDelete(t *testing.T) {
 		TenantID: "tenant-a", Action: "update", CIType: "machine", CIID: ciID,
 		Requester: "alice",
 		Changes: map[string]interface{}{
-			"name": "host-up-renamed",
+			"name":  "host-up-renamed",
 			"attrs": map[string]string{"ip": "10.0.0.20"},
 		},
 	})
