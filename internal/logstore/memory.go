@@ -10,14 +10,20 @@ import (
 
 // MemoryLogStore 内存环形缓冲实现（并发安全，O(1) 追加 / O(n) 检索）。
 // MVP 默认后端；进程重启即丢，生产应切 SQL（U-04 数据本地化）。
+//
+// index 字段为可选倒排索引：通过 NewMemoryWithIndex 启用。
+// 启用后 Append 同步加入索引（含环形裁剪同步移除），
+// 全文本检索通过 SearchFullText 方法；Query 保持原有逻辑（向后兼容）。
 type MemoryLogStore struct {
-	mu  sync.RWMutex
-	buf []Entry
-	cap int
-	seq int64
+	mu    sync.RWMutex
+	buf   []Entry
+	cap   int
+	seq   int64
+	index *InvertedIndex // 可选倒排索引（nil 表示未启用）
 }
 
 // Append 写入一条日志，自动补时间戳与单调递增 ID，超出容量丢弃最旧。
+// 若启用倒排索引，同步加入索引；环形裁剪时同步移除被丢弃的文档。
 func (m *MemoryLogStore) Append(_ context.Context, e *Entry) error {
 	if e == nil {
 		return nil
@@ -33,7 +39,18 @@ func (m *MemoryLogStore) Append(_ context.Context, e *Entry) error {
 	m.buf = append(m.buf, cp)
 	if len(m.buf) > m.cap {
 		// 环形裁剪：丢弃超出部分（保留最新 cap 条）。
+		dropped := m.buf[:len(m.buf)-m.cap]
 		m.buf = m.buf[len(m.buf)-m.cap:]
+		// 同步从倒排索引移除被丢弃的文档。
+		if m.index != nil {
+			for i := range dropped {
+				m.index.Remove(dropped[i].ID)
+			}
+		}
+	}
+	// 同步加入倒排索引。
+	if m.index != nil {
+		m.index.Add(cp.ID, cp.Message)
 	}
 	return nil
 }
@@ -100,6 +117,78 @@ func (m *MemoryLogStore) Query(_ context.Context, q Query) ([]Entry, error) {
 
 // Close 内存后端无可释放资源。
 func (m *MemoryLogStore) Close() error { return nil }
+
+// SearchFullText 全文本检索（需启用倒排索引，即通过 NewMemoryWithIndex 构造）。
+//
+// 支持六种搜索模式（按优先级依次判断，互斥）：
+//   - Phrase：短语查询（位置连续）
+//   - And：布尔 AND（同时包含所有 term）
+//   - Or：布尔 OR（包含任一 term）
+//   - Not：布尔 NOT（不包含此 term）
+//   - Wildcard：通配符查询（* 任意序列，? 单字符）
+//   - Term：单 term 搜索
+//
+// 返回结果按 TF-IDF 降序排列，并经 Base 基础条件（TenantID/DeviceID 等）过滤。
+// 未启用索引时返回 ErrIndexDisabled。
+func (m *MemoryLogStore) SearchFullText(_ context.Context, q FullTextQuery) ([]Entry, error) {
+	if m.index == nil {
+		return nil, ErrIndexDisabled
+	}
+	// 按优先级选择搜索模式。
+	var docIDs []int64
+	switch {
+	case q.Phrase != "":
+		docIDs = m.index.SearchPhrase(q.Phrase)
+	case len(q.And) > 0:
+		docIDs = m.index.SearchAnd(q.And)
+	case len(q.Or) > 0:
+		docIDs = m.index.SearchOr(q.Or)
+	case q.Not != "":
+		docIDs = m.index.SearchNot(q.Not)
+	case q.Wildcard != "":
+		docIDs = m.index.SearchWildcard(q.Wildcard)
+	case q.Term != "":
+		docIDs = m.index.Search(q.Term)
+	default:
+		return nil, ErrEmptyQuery
+	}
+	if len(docIDs) == 0 {
+		return []Entry{}, nil
+	}
+	// 基础条件过滤：忽略 Base.Keyword 与 Base.Q（文本检索由本结构字段驱动）。
+	base := q.Base
+	base.Keyword = ""
+	base.Q = ""
+	limit := q.Limit
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > maxQueryLimit {
+		limit = maxQueryLimit
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	// 建 id -> entry 映射，按 TF-IDF 排序的 docIDs 顺序取命中。
+	entryMap := make(map[int64]Entry, len(m.buf))
+	for i := range m.buf {
+		entryMap[m.buf[i].ID] = m.buf[i]
+	}
+	out := make([]Entry, 0, limit)
+	for _, id := range docIDs {
+		e, ok := entryMap[id]
+		if !ok {
+			continue
+		}
+		if !matchEntry(e, base) {
+			continue
+		}
+		out = append(out, e)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
 
 // matchEntry 判定单条日志是否命中查询条件。
 func matchEntry(e Entry, q Query) bool {

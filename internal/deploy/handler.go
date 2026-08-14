@@ -28,12 +28,30 @@ type Handler struct {
 	store      DeployStore
 	disp       Dispatcher
 	autoAdvance *AutoAdvanceManager // 灰度自动推进管理器（可选，nil=未启用）
+	fed        *FederationCoordinator // 多集群联邦发布协调器（task 280，默认内存后端开箱即用）
 }
 
 // NewHandler 构造部署处理器。
+//
+// task 280：默认启用联邦发布协调器（内存后端 + 自身作为 DeployExecutor），开箱即用。
+// controlplane 可后续调用 SetFederationStore 替换为 SQL 后端（持久化）。
 func NewHandler(store DeployStore, disp Dispatcher) *Handler {
-	return &Handler{store: store, disp: disp}
+	h := &Handler{store: store, disp: disp}
+	h.fed = NewFederationCoordinator(NewMemoryFederationStore(), h)
+	return h
 }
+
+// SetFederationStore 替换联邦发布存储后端（controlplane 在选择 SQL 后端时调用）。
+// 协调器的 DeployExecutor 仍为 h 自身，仅替换存储。
+func (h *Handler) SetFederationStore(s FederationStore) {
+	if s == nil {
+		return
+	}
+	h.fed = NewFederationCoordinator(s, h)
+}
+
+// Federation 暴露联邦发布协调器（供 controlplane 后台 ReconcileAll 调用）。
+func (h *Handler) Federation() *FederationCoordinator { return h.fed }
 
 // SetAutoAdvance 注入灰度自动推进管理器（可选，启用后 /auto-advance API 可用）。
 func (h *Handler) SetAutoAdvance(m *AutoAdvanceManager) {
@@ -44,9 +62,15 @@ func (h *Handler) SetAutoAdvance(m *AutoAdvanceManager) {
 func (h *Handler) Store() DeployStore { return h.store }
 
 // RegisterRoutes 注入 M3 部署路由到 mux（对齐 系统设计 3.2.M3 接口清单）。
+//
+// task 280：同时注册多集群联邦发布路由（/api/v1/deploys/federation*），复用同一 mux。
+// 联邦路由以 /api/v1/deploys/federation 前缀注册，ServeMux 最长前缀匹配优先于
+// /api/v1/deploys/，故 controlplane 无需改动即可获得联邦 API。
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/deploys", h.handleDeploys)
 	mux.HandleFunc("/api/v1/deploys/", h.handleDeployByID)
+	mux.HandleFunc("/api/v1/deploys/federation", h.handleFederationDeploys)
+	mux.HandleFunc("/api/v1/deploys/federation/", h.handleFederationDeployByID)
 }
 
 // handleDeploys POST 创建 / GET 列表。
@@ -589,3 +613,210 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
 }
+
+// =============================================================================
+// 多集群联邦发布 HTTP API（task 280）
+// =============================================================================
+//
+// 路由（由 RegisterRoutes 注册，复用 deployMux，controlplane 无需改动）：
+//   - POST   /api/v1/deploys/federation          创建联邦发布计划
+//   - GET    /api/v1/deploys/federation          列出联邦发布计划（?status= 过滤）
+//   - GET    /api/v1/deploys/federation/{id}     查询联邦发布详情
+//   - POST   /api/v1/deploys/federation/{id}/execute  启动联邦发布（派发首批成员）
+//   - POST   /api/v1/deploys/federation/{id}/promote  推进到下一批成员
+//   - POST   /api/v1/deploys/federation/{id}/rollback 回滚全部已派发成员
+//   - GET    /api/v1/deploys/federation/{id}/status   联邦级状态聚合视图
+
+// handleFederationDeploys POST 创建 / GET 列表。
+func (h *Handler) handleFederationDeploys(w http.ResponseWriter, r *http.Request) {
+	if h.fed == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "federation not enabled"})
+		return
+	}
+	actx := authctx.FromHTTPHeader(r.Header)
+	switch r.Method {
+	case http.MethodPost:
+		var f FederationDeploy
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 请求体限 1MiB
+		if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid JSON: %v", err)})
+			return
+		}
+		f.TenantID = actx.TenantID
+		if f.TenantID == "" {
+			f.TenantID = "default"
+		}
+		f.CreatedBy = actx.UserID
+		if f.CreatedBy == "" {
+			f.CreatedBy = "local"
+		}
+		created, err := h.fed.Store().Create(r.Context(), &f)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusCreated, created)
+	case http.MethodGet:
+		status := r.URL.Query().Get("status")
+		list, err := h.fed.Store().List(r.Context(), actx.TenantID, status)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if list == nil {
+			list = []FederationDeploy{}
+		}
+		writeJSON(w, http.StatusOK, list)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleFederationDeployByID GET 详情 / {id}/execute|promote|rollback|status。
+func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Request) {
+	if h.fed == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "federation not enabled"})
+		return
+	}
+	actx := authctx.FromHTTPHeader(r.Header)
+	// 路径：/api/v1/deploys/federation/{id} 或 /api/v1/deploys/federation/{id}/{action}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/deploys/federation/")
+	parts := strings.SplitN(rest, "/", 2)
+	idStr := parts[0]
+	if idStr == "" || strings.Contains(idStr, "/") {
+		http.Error(w, "invalid federation id", http.StatusBadRequest)
+		return
+	}
+	var id int64
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+		http.Error(w, "invalid federation id", http.StatusBadRequest)
+		return
+	}
+
+	// 子操作。
+	if len(parts) == 2 {
+		switch parts[1] {
+		case "execute":
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if err := h.fed.Start(r.Context(), id, actx.TenantID); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			f, _ := h.fed.Store().Get(r.Context(), id, actx.TenantID)
+			writeJSON(w, http.StatusOK, f)
+			return
+		case "promote":
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if err := h.fed.Promote(r.Context(), id, actx.TenantID); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			f, _ := h.fed.Store().Get(r.Context(), id, actx.TenantID)
+			writeJSON(w, http.StatusOK, f)
+			return
+		case "rollback":
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if err := h.fed.Rollback(r.Context(), id, actx.TenantID); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			f, _ := h.fed.Store().Get(r.Context(), id, actx.TenantID)
+			writeJSON(w, http.StatusOK, f)
+			return
+		case "status":
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			st, err := h.fed.Status(r.Context(), id, actx.TenantID)
+			if err != nil {
+				if err == ErrFedNotFound {
+					writeJSON(w, http.StatusNotFound, map[string]string{"error": "federation not found"})
+					return
+				}
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, st)
+			return
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+	}
+
+	// 默认：GET 详情。
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	f, err := h.fed.Store().Get(r.Context(), id, actx.TenantID)
+	if err != nil {
+		if err == ErrFedNotFound {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "federation not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, f)
+}
+
+// =============================================================================
+// DeployExecutor 实现（task 280）：Handler 自身作为联邦协调器的成员子部署派发器
+// =============================================================================
+
+// CreateAndExecute 创建子部署（克隆 template + targetIDs）并立即执行，返回子部署 ID。
+// 联邦协调器为每个 FederationMember 调用此方法派发子 DeployTask。
+func (h *Handler) CreateAndExecute(ctx context.Context, template *DeployTask, targetIDs, tenantID string) (int64, error) {
+	if template == nil {
+		return 0, errInvalid("nil template")
+	}
+	dt := *template // 浅拷贝足够（字段均为值类型或可共享指针，子部署独立）
+	dt.ID = 0
+	dt.TargetIDs = targetIDs
+	dt.TenantID = tenantID
+	dt.Status = "" // 让 store.Create 置为 created
+	dt.TaskIDs = ""
+	dt.CanaryTargets = ""
+	dt.StableTargets = ""
+	created, err := h.store.Create(ctx, &dt)
+	if err != nil {
+		return 0, err
+	}
+	if err := h.Execute(ctx, created.ID, tenantID); err != nil {
+		return 0, err
+	}
+	return created.ID, nil
+}
+
+// MemberStatus 查询子部署状态（返回 Status* 常量）。
+func (h *Handler) MemberStatus(ctx context.Context, deployID int64, tenantID string) (string, error) {
+	dt, err := h.store.Get(ctx, deployID, tenantID)
+	if err != nil {
+		return "", err
+	}
+	return dt.Status, nil
+}
+
+// PromoteMember 晋级成员子部署（canary/gated -> promoting/success）。
+func (h *Handler) PromoteMember(ctx context.Context, deployID int64, tenantID string) error {
+	return h.Promote(ctx, deployID, tenantID)
+}
+
+// RollbackMember 回滚成员子部署。
+func (h *Handler) RollbackMember(ctx context.Context, deployID int64, tenantID string) error {
+	return h.Rollback(ctx, deployID, tenantID)
+}
+
+// 编译期断言：Handler 实现 DeployExecutor 接口。
+var _ DeployExecutor = (*Handler)(nil)

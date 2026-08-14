@@ -322,7 +322,13 @@
     "version_label": "版本",
     "relations_title": "关系拓扑（{n}）",
     "no_relations": "无关系",
-    "attrs_parse_failed": "属性 JSON 解析失败: "
+    "attrs_parse_failed": "属性 JSON 解析失败: ",
+    "graph_mode_force": "力导向图",
+    "graph_mode_topology": "网络拓扑",
+    "graph_mode_list": "列表",
+    "graph_legend_type": "类型",
+    "graph_legend_rel": "关系",
+    "graph_empty": "暂无关系数据"
   },
   "workflows": {
     "title": "作业编排",

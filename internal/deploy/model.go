@@ -178,3 +178,207 @@ func validateRepoURL(u string) error {
 	}
 	return nil
 }
+
+// =============================================================================
+// 多集群联邦发布（task 280）：跨集群灰度协调器 + 联邦级发布状态
+// =============================================================================
+//
+// 设计目标：把一个部署任务跨多个集群（或多个目标分组）协调发布。每个集群/分组称为
+// 一个 FederationMember，FederationCoordinator 按 Order（顺序）+ Weight（灰度权重）在各成员
+// 上推进子部署，并聚合联邦级发布状态。典型场景：跨 IDC/K8s 集群灰度——先在首批集群灰度验证，
+// 门禁通过后按顺序推进到后续集群，任一集群失败可自动回滚已成功集群。
+//
+// 与单集群灰度（canary/bluegreen）的关系：单集群灰度在 DeployTask 内按 CanaryWeight 分流目标；
+// 联邦发布在集群间协调，每个成员内部仍可独立配置灰度策略，两层正交组合。
+
+// 联邦发布状态常量（对齐 系统设计 3.2.M3 联邦扩展，与单部署状态机正交）。
+const (
+	FedStatusPending    = "fed_pending"    // 已创建，待执行（未派发任何成员）
+	FedStatusRunning    = "fed_running"    // 进行中：部分成员已派发（rolling 全量推进）
+	FedStatusCanary     = "fed_canary"     // 灰度阶段：首批成员灰度中，等待门禁评估
+	FedStatusGated      = "fed_gated"      // 门禁通过：首批成员达标，可 Promote 推进下一批
+	FedStatusPromoting  = "fed_promoting"  // 晋级中：正在推进到更多成员
+	FedStatusSuccess    = "fed_success"    // 全部成员成功
+	FedStatusFailed     = "fed_failed"     // 失败：某成员失败且不可继续
+	FedStatusRolledBack = "fed_rolledback" // 已回滚：已派发成员全部回滚
+)
+
+// 联邦推进模式常量。
+const (
+	FedModeSequential = "sequential" // 顺序推进：按 Order 逐个集群推进，前一个成功后才推进下一个（默认，最稳）
+	FedModeParallel   = "parallel"   // 并行推进：按 Weight 比例同时派发多个集群，门禁通过后全量
+)
+
+// fedOrderBounds Order 取值范围（>=0，0 为首批）。
+const fedOrderMin = 0
+
+// FederationDeploy 多集群联邦发布计划。
+//
+// 一个联邦发布包含多个 FederationMember（各集群/分组的子部署），协调器按 Mode + Member.Order/Weight
+// 推进。每个成员对应一个独立 DeployTask（由协调器通过 DeployExecutor 派发），成员级状态复用
+// 单部署 Status* 常量，联邦级状态用 FedStatus* 常量聚合。
+type FederationDeploy struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	TenantID  string `json:"tenant_id"`
+	CreatedBy string `json:"created_by"`
+	Mode      string `json:"mode,omitempty"` // sequential / parallel（空=sequential）
+	Status    string `json:"status"`
+	// Template 为成员子部署的模板（不含 TargetIDs，由各 Member.TargetIDs 覆盖）。
+	// 协调器为每个成员克隆 Template + Member.TargetIDs 创建子 DeployTask。
+	Template    DeployTask   `json:"template"`
+	Members     []FederationMember `json:"members"`
+	Gate        *GateConfig  `json:"gate,omitempty"`         // 联邦级门禁（nil=用默认门禁）
+	AutoRollback bool       `json:"auto_rollback,omitempty"` // 任一成员失败时自动回滚已成功成员
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
+}
+
+// FederationMember 联邦发布的单个成员（一个集群/分组的子部署）。
+type FederationMember struct {
+	ClusterID string `json:"cluster_id"`           // 集群/分组标识（如 k8s-prod-1）
+	Name      string `json:"name"`                 // 成员展示名
+	TargetIDs string `json:"target_ids"`           // 该成员的目标设备 ID（逗号分隔）
+	Order     int    `json:"order"`                // 推进顺序（0=首批，越大越后；sequential 模式按此逐个推进）
+	Weight    int    `json:"weight,omitempty"`     // 灰度权重（parallel 模式按比例派发，[0,100]）
+	// DeployID 为协调器派发后回填的子 DeployTask.ID（0=未派发）。
+	DeployID int64  `json:"deploy_id,omitempty"`
+	Status   string `json:"status,omitempty"`      // 成员级状态（复用 Status* 常量）
+	Error    string `json:"error,omitempty"`       // 成员级错误信息
+}
+
+// FederationStatus 联邦级发布状态聚合视图（GET /api/v1/deploys/federation/{id}/status 返回）。
+type FederationStatus struct {
+	ID            int64              `json:"id"`
+	OverallStatus string             `json:"overall_status"` // 联邦级状态（FedStatus*）
+	TotalMembers  int                `json:"total_members"`
+	DoneMembers   int                `json:"done_members"`   // 已成功成员数
+	FailedMembers int                `json:"failed_members"` // 失败成员数
+	PendingMembers int               `json:"pending_members"` // 未派发成员数
+	Members       []FederationMember `json:"members"`
+}
+
+// EffectiveMode 返回生效的推进模式（空串回退 sequential，向后兼容）。
+func (f *FederationDeploy) EffectiveMode() string {
+	if f.Mode == "" {
+		return FedModeSequential
+	}
+	return f.Mode
+}
+
+// ResolvedFedGate 返回生效的联邦门禁配置（nil 时回退默认值）。
+func (f *FederationDeploy) ResolvedFedGate() GateConfig {
+	if f.Gate != nil {
+		g := *f.Gate
+		if g.SuccessRate == 0 && g.MaxFailRate == 0 && g.MinSuccessCount == 0 {
+			g.SuccessRate = defaultGateSuccessRate
+		}
+		return g
+	}
+	return GateConfig{SuccessRate: defaultGateSuccessRate, MaxFailRate: defaultGateMaxFailRate}
+}
+
+// Valid 校验联邦发布计划关键字段（创建时调用）。
+func (f *FederationDeploy) Valid() error {
+	if f.Name == "" {
+		return errInvalid("name required")
+	}
+	switch f.Mode {
+	case "", FedModeSequential, FedModeParallel:
+	default:
+		return errInvalid("mode must be sequential/parallel")
+	}
+	if len(f.Members) == 0 {
+		return errInvalid("members required")
+	}
+	seenCluster := make(map[string]bool, len(f.Members))
+	for i := range f.Members {
+		m := &f.Members[i]
+		if m.ClusterID == "" {
+			return errInvalid("member.cluster_id required")
+		}
+		if seenCluster[m.ClusterID] {
+			return errInvalid("duplicate member.cluster_id: " + m.ClusterID)
+		}
+		seenCluster[m.ClusterID] = true
+		if m.TargetIDs == "" {
+			return errInvalid("member.target_ids required for " + m.ClusterID)
+		}
+		if m.Order < fedOrderMin {
+			return errInvalid("member.order must be >= 0")
+		}
+		if m.Weight < canaryWeightMin || m.Weight > canaryWeightMax {
+			return errInvalid("member.weight must be in [0,100]")
+		}
+	}
+	// 模板校验：复用 DeployTask.Valid（但 TargetIDs 由成员覆盖，此处临时置空校验其余字段）。
+	tpl := f.Template
+	tpl.TargetIDs = f.Members[0].TargetIDs // 借首个成员目标通过非空校验
+	if err := tpl.Valid(); err != nil {
+		return err
+	}
+	if f.Gate != nil {
+		if f.Gate.SuccessRate < 0 || f.Gate.SuccessRate > 100 {
+			return errInvalid("gate.success_rate must be in [0,100]")
+		}
+		if f.Gate.MaxFailRate < 0 || f.Gate.MaxFailRate > 100 {
+			return errInvalid("gate.max_fail_rate must be in [0,100]")
+		}
+	}
+	return nil
+}
+
+// firstBatchMembers 返回首批应派发的成员：
+//   - sequential：Order 最小的一组（同 Order 值的成员并行派发，不同 Order 逐批推进）。
+//   - parallel：全部成员（按 Weight 比例由协调器在派发时体现，此处返回全部供并行派发）。
+func (f *FederationDeploy) firstBatchMembers() []FederationMember {
+	if f.EffectiveMode() == FedModeParallel {
+		return f.Members
+	}
+	minOrder := -1
+	for i := range f.Members {
+		if minOrder == -1 || f.Members[i].Order < minOrder {
+			minOrder = f.Members[i].Order
+		}
+	}
+	var out []FederationMember
+	for i := range f.Members {
+		if f.Members[i].Order == minOrder {
+			out = append(out, f.Members[i])
+		}
+	}
+	return out
+}
+
+// nextBatchMembers 返回 order 大于 doneMaxOrder 的下一批成员（sequential 推进用）。
+// doneMaxOrder 为已派发成员中的最大 Order。无后续成员时返回 nil。
+func (f *FederationDeploy) nextBatchMembers(doneMaxOrder int) []FederationMember {
+	nextOrder := -1
+	for i := range f.Members {
+		o := f.Members[i].Order
+		if o > doneMaxOrder && (nextOrder == -1 || o < nextOrder) {
+			nextOrder = o
+		}
+	}
+	if nextOrder == -1 {
+		return nil
+	}
+	var out []FederationMember
+	for i := range f.Members {
+		if f.Members[i].Order == nextOrder {
+			out = append(out, f.Members[i])
+		}
+	}
+	return out
+}
+
+// maxDispatchedOrder 返回已派发（DeployID>0）成员中的最大 Order，无已派发成员返回 -1。
+func (f *FederationDeploy) maxDispatchedOrder() int {
+	maxOrder := -1
+	for i := range f.Members {
+		if f.Members[i].DeployID > 0 && f.Members[i].Order > maxOrder {
+			maxOrder = f.Members[i].Order
+		}
+	}
+	return maxOrder
+}

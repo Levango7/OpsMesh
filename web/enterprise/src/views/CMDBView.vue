@@ -69,11 +69,32 @@
                 <code>{{ k }}</code>={{ v }}&nbsp;
               </template>
             </p>
-            <h4>{{ $t('cmdb.relations_title', { n: (store.graph.relations || []).length }) }}</h4>
-            <div v-if="!(store.graph.relations || []).length" class="muted">{{ $t('cmdb.no_relations') }}</div>
-            <div v-for="(r, i) in (store.graph.relations || [])" :key="i" class="rel">
-              <b>{{ r.relationType }}</b> → {{ r.targetName }}
-              <small class="muted">({{ r.targetType }})</small>
+            <!-- 视图切换：力导向图 / 网络拓扑 / 关系列表 -->
+            <div class="graph-tabs">
+              <button
+                v-for="m in graphModes"
+                :key="m.key"
+                :class="['graph-tab', graphMode === m.key ? 'active' : '']"
+                @click="graphMode = m.key"
+              >{{ m.label }}</button>
+            </div>
+            <!-- 力导向 / 拓扑视图：RelationGraph 组件 -->
+            <RelationGraph
+              v-if="graphMode !== 'list'"
+              :graph="store.graph"
+              :mode="graphMode"
+              :width="520"
+              :height="420"
+              @node-click="onGraphNodeClick"
+            />
+            <!-- 列表视图（保留原有文本列表） -->
+            <div v-else class="graph-list">
+              <h4>{{ $t('cmdb.relations_title', { n: (store.graph.relations || []).length }) }}</h4>
+              <div v-if="!(store.graph.relations || []).length" class="muted">{{ $t('cmdb.no_relations') }}</div>
+              <div v-for="(r, i) in (store.graph.relations || [])" :key="i" class="rel">
+                <b>{{ r.relationType }}</b> → {{ r.targetName }}
+                <small class="muted">({{ r.targetType }})</small>
+              </div>
             </div>
           </div>
         </div>
@@ -83,13 +104,28 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useCmdbStore } from '@/stores/cmdb'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
+import RelationGraph from '@/components/RelationGraph.vue'
 
 const store = useCmdbStore()
 const form = reactive({ ciType: '', name: '', attrsRaw: '' })
+
+// 关系图视图模式：force 力导向 / topology 网络拓扑 / list 列表
+const graphMode = ref('force')
+const graphModes = computed(() => [
+  { key: 'force', label: t('cmdb.graph_mode_force') },
+  { key: 'topology', label: t('cmdb.graph_mode_topology') },
+  { key: 'list', label: t('cmdb.graph_mode_list') }
+])
+// 图谱节点点击：若点击的是非中心 CI，切换到该 CI 的关系图
+function onGraphNodeClick(node) {
+  if (!node || !node.id) return
+  if (store.graph && store.graph.centerCI && node.id === store.graph.centerCI.id) return
+  store.openGraph(node.id)
+}
 
 const ciCols = [
   { key: 'id', title: 'ID', slot: 'cell-id' },
@@ -132,4 +168,13 @@ onMounted(() => { store.fetchTypes() })
   background: var(--teal-soft); border-radius: 0 8px 8px 0;
 }
 .rel b { color: var(--teal); }
+.graph-tabs { display: flex; gap: 6px; margin: 10px 0; }
+.graph-tab {
+  padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface-2); color: var(--text-2); cursor: pointer;
+  font-size: 12.5px; transition: .12s;
+}
+.graph-tab:hover { background: var(--bg-soft); color: var(--text); }
+.graph-tab.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 600; }
+.graph-list { margin-top: 6px; }
 </style>

@@ -30,6 +30,20 @@ func NewMemory(cap int) *MemoryLogStore {
 	return &MemoryLogStore{buf: make([]Entry, 0, cap), cap: cap}
 }
 
+// NewMemoryWithIndex 构造启用倒排索引的内存后端。
+// Append 同步加入索引；SearchFullText 提供全文本检索（短语/布尔/通配符/TF-IDF）。
+// cap 为最大保留条数（<=0 取默认 5000）；环形裁剪同步移除索引中旧文档。
+func NewMemoryWithIndex(cap int) *MemoryLogStore {
+	if cap <= 0 {
+		cap = 5000
+	}
+	return &MemoryLogStore{
+		buf:   make([]Entry, 0, cap),
+		cap:   cap,
+		index: NewInvertedIndex(),
+	}
+}
+
 // NewSQL 构造 MySQL 后端（U-04 数据本地化，私有部署）。
 // db 来自 store.SQLStore.DB()（与控制面共享同一连接池，不在本包内关闭）。
 func NewSQL(db *sql.DB) (*SQLLogStore, error) {
