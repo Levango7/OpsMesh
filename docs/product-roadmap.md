@@ -266,7 +266,7 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 
 ### 5.2 docker-compose 一键体验
 
-补 `docker-compose.yaml`（README 已提及但需完善交付物）：
+✅ **已交付**：`docker-compose.yaml` 已落地，含 controlplane + mysql + redis + agent 四服务，healthcheck + 安全配置注释。
 
 | 服务 | 说明 |
 |---|---|
@@ -304,7 +304,7 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 
 ### 5.5 二进制分发
 
-引入 `goreleaser` 跨平台构建：
+✅ **已交付**：`.goreleaser.yml` 已落地，goreleaser v2 跨平台构建。
 
 | 目标 | 产物 |
 |---|---|
@@ -315,11 +315,11 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 
 ### 5.6 systemd 裸机部署
 
-提供 `deploy/systemd/` unit 文件，支持裸机/VM 部署：
+✅ **已交付**：`deploy/systemd/` unit 文件已落地，支持裸机/VM 部署。
 
 | 文件 | 说明 |
 |---|---|
-| `opsmesh-controlplane.service` | 控制面服务，Restart=always，依赖网络就绪 |
+| `opsmesh-controlplane.service` | 控制面服务，Restart=always，依赖网络就绪，含完整安全加固（NoNewPrivileges/ProtectSystem/PrivateTmp 等） |
 | `opsmesh-agent.service` | agent 服务，环境变量注入控制面地址与 token |
 | `opsmesh-controlplane.env` | 环境变量模板（OPSMESH_STORE、DSN、TLS 路径等） |
 
@@ -438,14 +438,16 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 | 阶段 | 目标 |
 |---|---|
 | 现状 | 行级隔离（tenant_id 列 + 查询过滤） |
-| 计划 | 重租户演进到 schema 级隔离（每租户独立 schema/库），支持租户级资源配额与计费 |
+| ✅ 已实现 | schema 级隔离（`--multi-schema` flag，每租户独立 schema/库）、租户级资源配额与计费（`internal/controlplane/quota.go` 配额管理 + 计费 API） |
+| 计划 | — |
 
 ### 7.7 联邦
 
 | 阶段 | 目标 |
 |---|---|
 | 现状 | 单中心，跨网段规模化靠每段一套控制面 |
-| 计划 | 跨网段控制面联邦、任务跨段转发、联邦级设备/任务视图（`DELIVERY.md` 提及的未来方向） |
+| ✅ 已实现 | 跨网段控制面联邦（mTLS + HMAC 签名验签，P1-6 落地）、任务跨段转发、多集群联邦发布（`federation.go` FederationCoordinator 跨集群灰度协调 + 联邦级发布状态 API）、联邦级设备/任务视图 |
+| 计划 | — |
 
 ---
 
