@@ -399,8 +399,8 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 | 阶段 | 目标 |
 |---|---|
 | 现状 | Phase1 已有模型 + CRUD + SQL + 采集 |
-| ✅ 已实现 | 采集自动化（定时采集主机/服务元信息） |
-| 计划 | 关系图谱可视化（设备依赖/网络拓扑）、变更审批（CMDB 变更走审批流） |
+| ✅ 已实现 | 采集自动化（定时采集主机/服务元信息）、关系图谱可视化（力导向图+网络拓扑，`RelationGraph.vue`）、变更审批（CMDB 变更走审批流） |
+| 计划 | — |
 
 ### 7.2 作业编排
 
@@ -414,8 +414,8 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 | 阶段 | 目标 |
 |---|---|
 | 现状 | 计划 + fan-out 执行 + Reconcile + Rollback |
-| ✅ 已实现 | 蓝绿发布策略（`internal/deploy` StrategyBlueGreen）、金丝雀发布策略（StrategyCanary 按比例/按标签灰度，`/api/v1/tasks/canary`）、发布门禁（Gate 失败率/延迟阈值，过门禁才推进）、自动回滚触发条件（AutoRollback + Promote 晋级） |
-| 计划 | 多集群联邦发布、灰度指标自适应推进 |
+| ✅ 已实现 | 蓝绿发布策略（`internal/deploy` StrategyBlueGreen）、金丝雀发布策略（StrategyCanary 按比例/按标签灰度，`/api/v1/tasks/canary`）、发布门禁（Gate 失败率/延迟阈值，过门禁才推进）、自动回滚触发条件（AutoRollback + Promote 拥级）、多集群联邦发布（`federation.go` FederationCoordinator 跨集群灰度协调 + 联邦级发布状态 API）、灰度指标自适应推进（`auto_advance.go` 基于异常率/延迟自动推进灰度） |
+| 计划 | — |
 
 ### 7.4 监控告警
 
@@ -430,8 +430,8 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 | 阶段 | 目标 |
 |---|---|
 | 现状 | logstore 双后端（Memory/SQL）+ offset 分页 |
-| ✅ 已实现 | 日志采集 agent 端推送 |
-| 计划 | 对接 ELK / Loki 后端、全文本检索（倒排索引）、查询语法（Lucene/KQL 风格） |
+| ✅ 已实现 | 日志采集 agent 端推送、全文本检索（倒排索引 `inverted.go`：中英文分词 + TF-IDF 排序 + 短语/布尔/通配符查询 + `SearchFullText` 集成）、查询语法（Lucene/KQL 风格） |
+| 计划 | 对接 ELK / Loki 后端 |
 
 ### 7.6 多租户
 
@@ -570,3 +570,4 @@ Vue3 企业版按里程碑持续演进；原生 JS 个人版仅维持 P0 修复�
 - Store 接口拆分已实施（`store.go` 15 个领域小接口 + 编译期断言）、DDD 实质化（`domain.go` 已有 Cancel/CanRetry/TransitionToProvisioning/Acknowledge 等行为方法）、server.go/巨型 memory.go 按域拆分均已落地（见 tech-debt.md TD-20/TD-21/11/24）。已实现项：protobuf 代码生成已启用（internal/grpcx/pb/）、operator 已交付、schema 隔离已有 --multi-schema flag、SSE 已实现 /api/v1/events/stream（契约文档+守护测试见 docs/sse-protocol.md）、Vue 3 主线已交付（web/enterprise/）。个人版前端已按收敛策略落地：`internal/controlplane/web/` 收敛为极简引导页（GET / 重定向 /enterprise/），1.3 万行业务 JS 已移除。联邦（控制面跨网段任务转发 mTLS + HMAC 签名验签，P1-6）已于 2026-08-02 落地
 - 安全加固项：agent shell 命令白名单（✅ 已实现 checkShellWhitelist）、file 路径白名单（✅ 已实现 checkFileRootWhitelist）、JWT 验签（✅ 已实现 --jwt-public-key RS256 验签）、SSRF 校验（✅ 已实现 ValidateWebhookURL 私有IP拦截 + ValidateCIDR 白名单 + autoProvision CIDR 校验）、CSP 收紧（✅ 已实现 script-src 去除 unsafe-inline，前端 inline onclick 已迁移到 addEventListener）、TLS 证书热重载（✅ 已实现 --tls-watch fsnotify 监听+热重载）、Vault/KMS 集成（✅ 已实现 internal/secrets 包 Env/File/Vault/Chain provider + --secret-provider 配置 + 告警通道密钥外置）
 - P2 Batch 3 安全加固深化（2026-08-14 落地）：TLS 证书热重载（--tls-watch，fsnotify 监听+graceful reload）、Vault/KMS 密钥管理（internal/secrets 包，Env/File/Vault/Chain provider + ResolveSecret 引用解析）、告警通道密钥外置（notify WithSecret 构造 + ${vault:key} 引用格式）、前端密钥管理 UI（SecretsView.vue + /api/v1/secrets/* API）
+- P2 Batch 6 可视化与检索增强（2026-08-14 落地）：CMDB 关系图谱可视化（`RelationGraph.vue` 纯 SVG 力导向图+网络拓扑布局，CI 类型颜色+关系类型线型+拖拽缩放平移+图例+节点详情面板，集成到 CMDBView 三视图切换）、全文本检索倒排索引（`internal/logstore/inverted.go` 中英文混合分词+TF-IDF 排序+短语/布尔/通配符查询+并发安全，`SearchFullText` 集成到 MemoryLogStore）、多集群联邦发布（`internal/deploy/federation.go` FederationStore+FederationCoordinator 跨集群灰度协调 Start/Promote/Reconcile/Rollback/Status + 联邦级发布状态 REST API）
