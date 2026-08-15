@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -350,9 +351,20 @@ func (m *MemoryStore) seedRBAC() {
 
 // bcryptHash 包装 bcrypt.GenerateFromPassword，避免 memory.go 直接依赖 bcrypt 包
 // （集中在此函数便于后续替换哈希算法或调整成本因子）。
-// 成本因子使用 bcrypt.DefaultCost（10），兼顾安全与性能。
+// 成本因子默认 bcrypt.DefaultCost（10），兼顾安全与性能。
+//
+// 测试加速：CI -race 全量跑 400+ 测试时每个测试都 NewMemoryStore → seedRBAC
+// → 3 次 bcrypt cost=10，纯哈希开销可达 120s+ 导致超时。
+// 测试进程可设 OPSMESH_TEST_BCRYPT_COST=4（仅测试用，生产不设置），
+// 将 seed 成本降至 MinCost 附近，大幅提速且不改变哈希格式/校验语义。
 func bcryptHash(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	cost := bcrypt.DefaultCost
+	if v := os.Getenv("OPSMESH_TEST_BCRYPT_COST"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= bcrypt.MinCost && n <= 31 {
+			cost = n
+		}
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), cost)
 	if err != nil {
 		return "", err
 	}

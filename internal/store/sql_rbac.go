@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
 )
 
 // rowScanner 兼容 *sql.Row 与 *sql.Rows 的 Scan 接口。
@@ -331,7 +330,7 @@ func (s *SQLStore) seedRBAC(ctx context.Context) error {
 		{"user-viewer", "viewer", "viewer123", "viewer@opsmesh.local", []string{"role-viewer"}},
 	}
 	for _, us := range specs {
-		hash, err := bcrypt.GenerateFromPassword([]byte(us.password), bcrypt.DefaultCost)
+		hash, err := bcryptHash(us.password)
 		if err != nil {
 			return err
 		}

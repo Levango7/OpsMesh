@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -24,7 +25,11 @@ var reDocEventRow = regexp.MustCompile("\\|\\s*`(?P<name>[a-z0-9_]+)`")
 
 func TestSSEContract_CodeVsDocAlignment(t *testing.T) {
 	// 1. 从本包源码收集 publishEvent 字面量事件名。
-	entries, err := os.ReadDir(".")
+	// 用 runtime.Caller 定位包目录而非依赖 cwd（编译后二进制从任意目录
+	// 运行也能工作，避免 os.ReadDir(".") 读到错误目录导致契约测试失效）。
+	_, thisFile, _, _ := runtime.Caller(0)
+	pkgDir := filepath.Dir(thisFile)
+	entries, err := os.ReadDir(pkgDir)
 	if err != nil {
 		t.Fatalf("读取包目录失败: %v", err)
 	}
@@ -48,8 +53,8 @@ func TestSSEContract_CodeVsDocAlignment(t *testing.T) {
 		t.Fatalf("未扫到任何 publishEvent 字面量事件名（scanned=%d events=%d），契约测试失效", scanned, len(codeEvents))
 	}
 
-	// 2. 从 docs/sse-protocol.md 提取事件枚举表。
-	docPath := filepath.Join("..", "..", "docs", "sse-protocol.md")
+	// 2. 从 docs/sse-protocol.md 提取事件枚举表（仓库根 docs/，由包目录上溯两级）。
+	docPath := filepath.Join(filepath.Dir(filepath.Dir(pkgDir)), "docs", "sse-protocol.md")
 	doc, err := os.ReadFile(docPath)
 	if err != nil {
 		t.Fatalf("读取 %s 失败: %v", docPath, err)

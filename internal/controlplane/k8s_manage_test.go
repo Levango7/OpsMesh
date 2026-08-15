@@ -76,10 +76,12 @@ func TestFormatAge_Days(t *testing.T) {
 
 func TestFormatAge_FutureTime(t *testing.T) {
 	// 未来时间取绝对值，应返回正数秒。
+	// 注意：-race 下 time.Since(t) 与构造时间之间可能消耗几十 ms，
+	// 10s 会被截断成 9s（int() 截断），故断言用 9s-10s 容忍区间而非精确 10s。
 	now := time.Now()
 	got := formatAge(now.Add(10 * time.Second))
-	if got != "10s" {
-		t.Fatalf("got=%q, want 10s", got)
+	if got != "10s" && got != "9s" {
+		t.Fatalf("got=%q, want 10s (或 -race 下 9s)", got)
 	}
 }
 

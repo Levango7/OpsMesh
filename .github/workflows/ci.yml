@@ -29,8 +29,11 @@ jobs:
         run: test -z "$(gofmt -l .)"
       - name: Test (unit, memory store, -race + coverage)
         # -race 启用竞态检测（H11）；-coverprofile 产出覆盖率（H12）。
-        # 超时从 120s 放宽到 300s：controlplane 非 race 实测 82s，
-        # -race 开销约 2-5 倍，120s 在 CI 慢机器上必然超时（此前反复失败根因）。
+        # OPSMESH_TEST_BCRYPT_COST=4：400+ 测试每个都 NewMemoryStore→seedRBAC
+        # 3 次 bcrypt cost=10，-race 下纯哈希 120s+ 曾致超时；测试进程降 cost 提速
+        # （生产不设置此变量，仍用默认 cost 10，见 internal/store/memory.go）。
+        env:
+          OPSMESH_TEST_BCRYPT_COST: "4"
         run: go test -race -timeout 300s -coverprofile=coverage.out ./...
       - name: Test (kafka tag, B-3 审计 WAL 兜底)
         # B-3：审计事件是合规关键数据，kafka 路径被 //go:build kafka 门控，默认构建零覆盖。
@@ -83,6 +86,8 @@ jobs:
       # 真实后端 DSN：激活 sql_test.go 中 Skip 的集成用例（租户隔离 + schema 自举建表）。
       OPSMESH_TEST_MYSQL_DSN: "opsmesh:opsmesh@tcp(127.0.0.1:3306)/opsmesh?parseTime=true"
       OPSMESH_TEST_REDIS_ADDR: "127.0.0.1:6379"
+      # 测试 seed bcrypt 降 cost（与 build-test 一致，见 internal/store/memory.go）。
+      OPSMESH_TEST_BCRYPT_COST: "4"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
