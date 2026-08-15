@@ -15,7 +15,6 @@ import (
 	"log"
 	"strings"
 	"time"
-
 )
 
 // rowScanner 兼容 *sql.Row 与 *sql.Rows 的 Scan 接口。
