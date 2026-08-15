@@ -88,6 +88,11 @@ func (g *grpcServerImpl) Register(ctx context.Context, info *proto.AgentInfo) (*
 		dom.OnboardDeviceID = "" // 安全（P0-F1）：无 token 时显式清空，agent 自报该字段一律不信任
 		if actx.TenantID != "" {
 			dom.TenantID = actx.TenantID // 网关注入租户盖章（agent 不可伪造）
+		} else if g.cfg != nil && g.cfg.Demo {
+			// demo 兜底：与 dashboard/SSE 一致——demo 模式下无网关租户时填 default。
+			// 否则裸注册 agent 落 tenant=""，被 handleAgents("default") 过滤导致
+			// 控制面看板/API 永远看不到该 agent（e2e-real firstAgentID 空列表根因）。
+			dom.TenantID = sseDefaultTenant // "default"
 		}
 	}
 	if g.requireAuth && dom.TenantID == "" {
