@@ -6,16 +6,42 @@ import { test, expect } from '@playwright/test'
 
 const ADMIN_USER = process.env.E2E_ADMIN_USER || 'admin'
 const ADMIN_PASS = process.env.E2E_ADMIN_PASS || 'admin123'
+const E2E_NEW_PASS = process.env.E2E_NEW_PASS || 'e2e-real-pass-2026'
 const BASE = process.env.E2E_BASE_URL || 'http://127.0.0.1:8080'
 
+// login 返回正式 access token。
+// 兼容首登强制改密（安全债 85）：seed 的 admin 带 MustChangePassword=true，
+// 登录返回 {mustChangePassword:true, changePasswordToken} 而非 token。
+// 此时先走 /auth/change-password（old=admin123, new=E2E_NEW_PASS）清除标记，
+// 再用新密码重新登录拿正式 token——模拟真实用户首登改密流程。
 async function login(request) {
-  const resp = await request.post(`${BASE}/api/v1/auth/login`, {
+  let resp = await request.post(`${BASE}/api/v1/auth/login`, {
     data: { username: ADMIN_USER, password: ADMIN_PASS }
   })
   expect([200, 201]).toContain(resp.status())
-  const body = await resp.json()
-  const token = body.accessToken || body.access_token || body.token
-  expect(token).toBeTruthy()
+  let body = await resp.json()
+
+  if (body.mustChangePassword || body.changePasswordToken) {
+    const cpt = body.changePasswordToken
+    expect(cpt).toBeTruthy()
+    const change = await request.post(`${BASE}/api/v1/auth/change-password`, {
+      data: {
+        oldPassword: ADMIN_PASS,
+        newPassword: E2E_NEW_PASS,
+        changePasswordToken: cpt
+      }
+    })
+    expect([200, 201]).toContain(change.status())
+
+    resp = await request.post(`${BASE}/api/v1/auth/login`, {
+      data: { username: ADMIN_USER, password: E2E_NEW_PASS }
+    })
+    expect([200, 201]).toContain(resp.status())
+    body = await resp.json()
+  }
+
+  const token = body.token
+  expect(token, '登录应返回 access token').toBeTruthy()
   return token
 }
 
