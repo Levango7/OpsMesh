@@ -11,7 +11,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          go-version: "1.26.6"
       - name: Download modules
         run: go mod download
       - name: Verify modules
@@ -94,7 +94,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          go-version: "1.26.6"
       - name: Wait for MySQL
         run: until (echo > /dev/tcp/127.0.0.1/3306) 2>/dev/null; do sleep 2; done
       - name: Wait for Redis
@@ -116,7 +116,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          go-version: "1.26.6"
       - name: gosec (SAST 静态安全扫描)
         # 用 go install 而非 securego/gosec 容器 action：容器镜像内置 Go 1.24，
         # 无法解析 go.mod 的 1.26（报 "go.mod requires go >= 1.26.0"）。
@@ -287,7 +287,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          go-version: "1.26.6"
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: latest
