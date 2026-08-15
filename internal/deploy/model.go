@@ -171,9 +171,9 @@ func validateRepoURL(u string) error {
 	if strings.ContainsAny(u, repoURLUnsafeChars) {
 		return errInvalid("repo_url contains shell metacharacters and is rejected for safety")
 	}
-	if !(strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://") ||
-		strings.HasPrefix(u, "git://") || strings.HasPrefix(u, "ssh://") ||
-		strings.HasPrefix(u, "git@") || strings.HasPrefix(u, "/")) {
+	if !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") &&
+		!strings.HasPrefix(u, "git://") && !strings.HasPrefix(u, "ssh://") &&
+		!strings.HasPrefix(u, "git@") && !strings.HasPrefix(u, "/") {
 		return errInvalid("repo_url must start with http(s)://, git://, ssh://, git@, or /")
 	}
 	return nil

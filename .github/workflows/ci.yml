@@ -21,7 +21,7 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: golangci-lint (H10 聚合静态分析)
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           # 默认读取仓库根 .golangci.yml；args 限定扫描范围为全仓。
           args: ./...
