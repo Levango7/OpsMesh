@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS agents (
     grpc_port INT,
     metrics_port INT,
     status VARCHAR(16),
-    load INT,
+    `load` INT,
     last_seen DATETIME
 );
 

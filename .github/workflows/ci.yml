@@ -118,9 +118,12 @@ jobs:
         with:
           go-version: "1.26"
       - name: gosec (SAST 静态安全扫描)
-        uses: securego/gosec@v2.22.5
-        with:
-          args: ./...
+        # 用 go install 而非 securego/gosec 容器 action：容器镜像内置 Go 1.24，
+        # 无法解析 go.mod 的 1.26（报 "go.mod requires go >= 1.26.0"）。
+        # go install 复用 setup-go 的 Go 1.26 工具链，与 go.mod 一致。
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.25.0
+          "$(go env GOPATH)/bin/gosec" -quiet ./...
       - name: govulncheck（task 91：官方 Go 漏洞数据库扫描）
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4

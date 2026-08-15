@@ -49,26 +49,23 @@ func (s *SQLStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 
 	var err error
 	if hasSecretCol {
-		_, err = s.db.ExecContext(ctx, `
-INSERT INTO agents (agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, load, last_seen, secret)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON DUPLICATE KEY UPDATE
-	hostname=VALUES(hostname), segment=VALUES(segment), tenant_id=VALUES(tenant_id), addr=VALUES(addr),
-	grpc_port=VALUES(grpc_port), metrics_port=VALUES(metrics_port),
-	status=VALUES(status), load=VALUES(load), last_seen=VALUES(last_seen)
-`, a.AgentID, a.Hostname, a.Segment, a.TenantID, a.Addr, a.GRPCPort, a.MetricsPort, a.Status, 1, now, agentSecret)
+		_, err = s.db.ExecContext(ctx,
+			"INSERT INTO agents (agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, `load`, last_seen, secret) " +
+			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+			"ON DUPLICATE KEY UPDATE hostname=VALUES(hostname), segment=VALUES(segment), tenant_id=VALUES(tenant_id), " +
+			"addr=VALUES(addr), grpc_port=VALUES(grpc_port), metrics_port=VALUES(metrics_port), " +
+			"status=VALUES(status), `load`=VALUES(`load`), last_seen=VALUES(last_seen)", a.AgentID, a.Hostname, a.Segment, a.TenantID, a.Addr, a.GRPCPort, a.MetricsPort, a.Status, 1, now, agentSecret)
 		if err != nil {
 			log.Printf("[store] Register upsert agents 失败 %s: %v", a.AgentID, err)
 		}
 	} else {
-		_, err = s.db.ExecContext(ctx, `
-INSERT INTO agents (agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, load, last_seen)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON DUPLICATE KEY UPDATE
-	hostname=VALUES(hostname), segment=VALUES(segment), tenant_id=VALUES(tenant_id), addr=VALUES(addr),
-	grpc_port=VALUES(grpc_port), metrics_port=VALUES(metrics_port),
-	status=VALUES(status), load=VALUES(load), last_seen=VALUES(last_seen)
-`, a.AgentID, a.Hostname, a.Segment, a.TenantID, a.Addr, a.GRPCPort, a.MetricsPort, a.Status, 1, now)
+		_, err = s.db.ExecContext(ctx,
+			"INSERT INTO agents (agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, `load`, last_seen) " +
+			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+			"ON DUPLICATE KEY UPDATE hostname=VALUES(hostname), segment=VALUES(segment), tenant_id=VALUES(tenant_id), " +
+			"addr=VALUES(addr), grpc_port=VALUES(grpc_port), metrics_port=VALUES(metrics_port), " +
+			"status=VALUES(status), `load`=VALUES(`load`), last_seen=VALUES(last_seen)",
+			a.AgentID, a.Hostname, a.Segment, a.TenantID, a.Addr, a.GRPCPort, a.MetricsPort, a.Status, 1, now)
 		if err != nil {
 			log.Printf("[store] Register upsert agents 失败 %s: %v", a.AgentID, err)
 		}
@@ -144,7 +141,7 @@ func (s *SQLStore) Heartbeat(agentID, status string, load int) bool {
 	defer cancel()
 
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE agents SET status=?, load=?, last_seen=? WHERE agent_id=?`,
+		"UPDATE agents SET status=?, `load`=?, last_seen=? WHERE agent_id=?",
 		status, load, time.Now().UTC(), agentID)
 	if err != nil {
 		log.Printf("[store] Heartbeat 更新失败 %s: %v", agentID, err)
@@ -271,7 +268,7 @@ func (s *SQLStore) Agents(tenantID string) []*proto.AgentInfo {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	q := `SELECT agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, load, last_seen FROM agents`
+	q := "SELECT agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, `load`, last_seen FROM agents"
 	var args []interface{}
 	if tenantID != "" {
 		q += ` WHERE tenant_id=?`
@@ -305,7 +302,7 @@ func (s *SQLStore) Agent(id string) *proto.AgentInfo {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	row := s.db.QueryRowContext(ctx,
-		`SELECT agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, load, last_seen FROM agents WHERE agent_id=?`, id)
+		"SELECT agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, `load`, last_seen FROM agents WHERE agent_id=?", id)
 	var a proto.AgentInfo
 	var lastSeen time.Time
 	if err := row.Scan(&a.AgentID, &a.Hostname, &a.Segment, &a.TenantID, &a.Addr,

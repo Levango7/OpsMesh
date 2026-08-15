@@ -11,8 +11,16 @@ lint:
   # 除默认忽略外，本模块允许：
   # - DIRECTORY_SAME_PACKAGE：所有 .proto 在 opsmesh/v1/ 下同包，符合版本化目录约定。
   # - PACKAGE_VERSION_SUFFIX：包名 opsmesh.v1 已带版本后缀。
+  # - 命名风格类规则（SERVICE_SUFFIX / RPC_*_STANDARD_NAME / RPC_REQUEST_RESPONSE_UNIQUE）：
+  #   proto 契约已冻结——agent 端直接调用 /opsmesh.v1.Registration/Register 等方法路径，
+  #   重命名 Service/RPC/消息会破坏 gRPC 方法契约与所有已部署 agent 兼容性。
+  #   buf STANDARD 的其余正确性规则（字段下划线命名/枚举前缀/唯一性等）仍强制。
   except:
     - DIRECTORY_SAME_PACKAGE
+    - SERVICE_SUFFIX
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+    - RPC_REQUEST_RESPONSE_UNIQUE
 breaking:
   use:
     - FILE

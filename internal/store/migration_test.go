@@ -178,7 +178,9 @@ func newTestSQLStore(t *testing.T) (*SQLStore, func()) {
 }
 
 // stripDBName 从 DSN 中去掉 dbname，保留 ?params，用于连 mysql 不指定库。
-// user:pass@tcp(host:port)/dbname?params → user:pass@tcp(host:port)?params
+// user:pass@tcp(host:port)/dbname?params → user:pass@tcp(host:port)/?params
+// 注意：go-sql-driver 要求 dbname 分隔符 "/" 必须存在（空库名也要保留），
+// 否则报 "missing the slash separating the database name"。
 func stripDBName(dsn string) string {
 	idx := strings.LastIndex(dsn, "/")
 	if idx == -1 {
@@ -188,9 +190,9 @@ func stripDBName(dsn string) string {
 	tail := dsn[idx+1:] // dbname?params
 	qIdx := strings.Index(tail, "?")
 	if qIdx == -1 {
-		return head
+		return head + "/"
 	}
-	return head + tail[qIdx:]
+	return head + "/" + tail[qIdx:]
 }
 
 // withDBName 将 DSN 中的 dbname 替换为指定名称。
