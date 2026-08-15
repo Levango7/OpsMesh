@@ -358,7 +358,9 @@ jobs:
           MYSQL_USER: opsmesh
           MYSQL_PASSWORD: opsmesh
           OPSMESH_JWT_SECRET: ci-e2e-jwt-secret-key-min-32-bytes-0123456789abcdef
-        run: docker compose up -d --wait
+        # --build 强制重建镜像：不重建会复用上次运行缓存的旧 opsmesh/agent:dev，
+        # 导致 balancer 端口修复（9cf3762）不生效、agent 误连 HTTP 8080。
+        run: docker compose up -d --build --wait
       - name: 健康检查
         run: |
           for i in $(seq 1 30); do
