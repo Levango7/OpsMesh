@@ -171,6 +171,7 @@ linters:
         path: internal/grpcx/service\.go
     paths:
       - .*\.gen\.go$
+      - .*\.pb\.go$
       - vendor
       - docs
       - third_party$
@@ -194,6 +195,7 @@ formatters:
     generated: lax
     paths:
       - .*\.gen\.go$
+      - .*\.pb\.go$
       - vendor
       - docs
       - third_party$
