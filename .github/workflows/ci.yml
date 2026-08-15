@@ -28,8 +28,10 @@ jobs:
       - name: Gofmt
         run: test -z "$(gofmt -l .)"
       - name: Test (unit, memory store, -race + coverage)
-        # -race 启用竞态检测（H11）；-coverprofile 产出覆盖率（H12）；-timeout 120s 防单测挂死（问题8）。
-        run: go test -race -timeout 120s -coverprofile=coverage.out ./...
+        # -race 启用竞态检测（H11）；-coverprofile 产出覆盖率（H12）。
+        # 超时从 120s 放宽到 300s：controlplane 非 race 实测 82s，
+        # -race 开销约 2-5 倍，120s 在 CI 慢机器上必然超时（此前反复失败根因）。
+        run: go test -race -timeout 300s -coverprofile=coverage.out ./...
       - name: Test (kafka tag, B-3 审计 WAL 兜底)
         # B-3：审计事件是合规关键数据，kafka 路径被 //go:build kafka 门控，默认构建零覆盖。
         # 此 step 显式传 -tags kafka 激活 internal/events/kafka*.go，跑 WAL 兜底/失败计数/重试测试。
