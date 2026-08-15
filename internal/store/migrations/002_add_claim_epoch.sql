@@ -12,4 +12,7 @@
 --
 -- 兼容性：BIGINT NOT NULL DEFAULT 0，老任务 claim_epoch=0，不影响现有逻辑；
 --   新 agent 填充 ClaimEpoch 后启用严格校验，旧 agent 不填充时跳过校验（向后兼容）。
-ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claim_epoch BIGINT NOT NULL DEFAULT 0;
+--
+-- 注意：不能写 "ADD COLUMN IF NOT EXISTS"（MariaDB 语法，MySQL 8 不支持会报 1064）。
+-- 幂等由 migration 记录表保证（每个版本号只应用一次），无需 IF NOT EXISTS。
+ALTER TABLE tasks ADD COLUMN claim_epoch BIGINT NOT NULL DEFAULT 0;

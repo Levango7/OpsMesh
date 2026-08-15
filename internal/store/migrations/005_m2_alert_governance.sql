@@ -21,7 +21,7 @@
 --   - 所有表均按 tenant_id 隔离，索引 idx_tenant 加速按租户过滤。
 
 -- alert_rules 补 created_by 列（记录规则创建人）。
-ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS created_by VARCHAR(64);
+ALTER TABLE alert_rules ADD COLUMN created_by VARCHAR(64);
 
 -- alert_silences：静默规则表（基于标签匹配 + 时间窗口抑制告警事件）。
 CREATE TABLE IF NOT EXISTS alert_silences (

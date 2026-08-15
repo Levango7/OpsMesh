@@ -10,8 +10,8 @@
 -- 兼容性：VARCHAR(64) NULL，老记录 trace_id=NULL，不影响现有逻辑；
 --   新审计记录 trace_id 可空（无 OTel 场景）或 32 字符 hex（有 OTel 场景）。
 --   索引 idx_audit_trace 加速按 trace_id 检索（高基数索引，仅在有审计检索需求时启用）。
-ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS trace_id VARCHAR(64);
+ALTER TABLE audit_log ADD COLUMN trace_id VARCHAR(64);
 
 -- 按 trace_id 检索索引（M1-4：从 trace_id 反查同链路全部审计事件）。
 -- CREATE INDEX IF NOT EXISTS 在 MySQL 8.0+ 支持；老版本由 createIndexIfMissing 兜底。
-CREATE INDEX IF NOT EXISTS idx_audit_trace ON audit_log (trace_id);
+CREATE INDEX idx_audit_trace ON audit_log (trace_id);
