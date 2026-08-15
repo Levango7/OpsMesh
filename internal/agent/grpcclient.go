@@ -198,12 +198,13 @@ func (c *GRPCClient) invokeWithBalancer(ctx context.Context, method string, req,
 			lastErr = err
 			break
 		}
-		// 构造控制面地址：Addr 已含端口时直接用，否则拼 Port。
-		addr := svc.Addr
-		if svc.Port > 0 && !strings.Contains(addr, ":") {
-			addr = fmt.Sprintf("%s:%d", addr, svc.Port)
-		}
-		target, terr := grpcTarget(addr, c.grpcPort)
+		// 构造控制面地址：优先用 svc.ID（保留原始地址含 scheme，如 http://cp:8080），
+		// 交由 grpcTarget 正确转换——HTTP 地址会剥离端口并拼上 gRPC 端口（grpcPort）。
+		// 修复：原实现用 svc.Addr + svc.Port 拼接，而 StaticDiscovery 的 Port 来自
+		// control-addr 的 HTTP 端口（如 8080），拼成 "cp:8080" 后 grpcTarget 视为
+		// 显式端口予以尊重，agent 误连 HTTP 8080（收到 HTTP/1.1 响应，注册全失败）。
+		// 无 scheme 的 host:port（多控制面 A3，如 cp1:9090）由 grpcTarget 尊重显式端口。
+		target, terr := grpcTarget(svc.ID, c.grpcPort)
 		if terr != nil {
 			lastErr = terr
 			continue
