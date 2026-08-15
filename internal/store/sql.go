@@ -138,10 +138,32 @@ func NewSQLStore(dsn, redisAddr string) (*SQLStore, error) {
 	instID := fmt.Sprintf("%s-%d-%d", host, os.Getpid(), time.Now().UnixNano())
 
 	s := &SQLStore{db: db, rdb: rdb, instanceID: instID, secret: mustRandHex(32), deviceMetrics: make(map[string]*metricsRing), agentSecretCache: make(map[string]string)}
-	if err := s.runMigrations(); err != nil {
-		log.Printf("[store] 迁移失败（运行期可能不可用）: %v", err)
+	// 启动时序竞态防护：MySQL 容器可能尚未就绪（compose 起栈时 mysql 与 controlplane
+	// 并发启动，Ping 失败不阻塞是 MVP 延迟连接语义）。迁移+seedRBAC 依赖 schema 存在，
+	// 此处最多等待 30s（10 次 × 3s 退避），MySQL 就绪后重试，避免 admin 用户/表缺失
+	// 导致运行期 401/404（曾致 e2e-real 登录失败）。
+	if err := s.initWithRetry(); err != nil {
+		log.Printf("[store] 迁移+seedRBAC 最终失败（运行期可能不可用）: %v", err)
 	}
 	return s, nil
+}
+
+// initWithRetry 重试执行 runMigrations（内含 seedRBAC），等待 MySQL 就绪。
+// runMigrations 内部 step 6 已调用 seedRBAC（幂等），无需重复调用。
+func (s *SQLStore) initWithRetry() error {
+	const maxAttempts = 10
+	const delay = 3 * time.Second
+	var lastErr error
+	for i := 0; i < maxAttempts; i++ {
+		if err := s.runMigrations(); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			log.Printf("[store] 迁移失败（第 %d/%d 次，%.0fs 后重试）: %v", i+1, maxAttempts, delay.Seconds(), err)
+		}
+		time.Sleep(delay)
+	}
+	return lastErr
 }
 
 // ensureParseTime 在 DSN 中保证 parseTime=true，便于 time.Time 直接 Scan。

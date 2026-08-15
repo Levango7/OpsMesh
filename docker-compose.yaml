@@ -110,7 +110,11 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpass"]
+      # 用环境变量密码（CMD-SHELL 才能展开 ${MYSQL_ROOT_PASSWORD}）。
+      # 曾硬编码 -prootpass：与外部注入的 MYSQL_ROOT_PASSWORD 不一致时
+      # healthcheck 永远失败 → controlplane 的 service_healthy 依赖永不满足，
+      # 与 store 启动竞态叠加导致 seedRBAC 未执行、admin 用户缺失。
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 10s
       timeout: 5s
       start_period: 30s
