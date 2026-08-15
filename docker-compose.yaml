@@ -19,6 +19,9 @@ services:
       - --mysql-dsn=${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh}@tcp(mysql:3306)/opsmesh?parseTime=true
       - --redis-addr=redis:6379
       - --advertise-addr=http://controlplane:8080
+      # --demo：保持默认 admin/admin123 可登录（非 demo 模式会随机化 admin 密码，
+      # 导致 e2e-real 登录 401）。compose 本就是开发/演示用途（README 已注明非生产）。
+      - --demo
     ports:
       - "8080:8080"   # HTTP API / Web UI
       - "9090:9090"   # gRPC

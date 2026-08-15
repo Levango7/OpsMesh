@@ -105,7 +105,7 @@ INSERT INTO devices (device_id, segment, tenant_id, ip, agent_id, state, task_st
 VALUES (?, ?, ?, ?, ?, 'online', 'idle', 1, ?, ?, ?)
 ON DUPLICATE KEY UPDATE
 	segment=VALUES(segment), tenant_id=VALUES(tenant_id), ip=VALUES(ip), state=VALUES(state), task_state=VALUES(task_state), managed=1, hostname=VALUES(hostname), os=VALUES(os), arch=VALUES(arch)
-`, "dev-"+a.AgentID, a.Segment, a.TenantID, a.Addr, a.AgentID, "online", "idle", a.Hostname, a.OS, a.Arch)
+`, "dev-"+a.AgentID, a.Segment, a.TenantID, a.Addr, a.AgentID, a.Hostname, a.OS, a.Arch)
 	}
 	if err != nil {
 		log.Printf("[store] Register insert devices 失败 %s: %v", a.AgentID, err)
