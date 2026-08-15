@@ -133,7 +133,7 @@ test.describe('真实后端契约（不 mock）', () => {
     expect(list.ok()).toBeTruthy()
     const listBody = await list.json()
     const tasks = Array.isArray(listBody.tasks) ? listBody.tasks : listBody
-    expect(tasks.some(t => (t.task_id || t.id || t.taskId) === taskId)).toBeTruthy()
+    expect(tasks.some(t => (t.taskID || t.task_id || t.id) === taskId)).toBeTruthy()
 
     // 取消该任务，清理资源
     const cancel = await request.post(`${BASE}/api/v1/tasks/${taskId}/cancel`, { headers })
