@@ -6,7 +6,7 @@ import { test, expect } from '@playwright/test'
 
 const ADMIN_USER = process.env.E2E_ADMIN_USER || 'admin'
 const ADMIN_PASS = process.env.E2E_ADMIN_PASS || 'admin123'
-const E2E_NEW_PASS = process.env.E2E_NEW_PASS || 'e2e-real-pass-2026'
+const E2E_NEW_PASS = process.env.E2E_NEW_PASS || 'E2eRealPass2026'
 const BASE = process.env.E2E_BASE_URL || 'http://127.0.0.1:8080'
 
 // login 返回正式 access token。
@@ -14,30 +14,53 @@ const BASE = process.env.E2E_BASE_URL || 'http://127.0.0.1:8080'
 // 登录返回 {mustChangePassword:true, changePasswordToken} 而非 token。
 // 此时先走 /auth/change-password（old=admin123, new=E2E_NEW_PASS）清除标记，
 // 再用新密码重新登录拿正式 token——模拟真实用户首登改密流程。
+//
+// 用例间密码状态：第一个改密用例会把 admin 密码永久改为 E2E_NEW_PASS，
+// 后续用例用 admin123 登录会 401。helper 先试 E2E_NEW_PASS（已改密场景），
+// 401 再回退 admin123 + 首登改密流程（新库场景）。
+// 429 = loginGuard 限流（每 IP 10 突发 + 3s 补 1），等令牌桶补充后重试。
 async function login(request) {
-  let resp = await request.post(`${BASE}/api/v1/auth/login`, {
-    data: { username: ADMIN_USER, password: ADMIN_PASS }
-  })
-  expect([200, 201]).toContain(resp.status())
-  let body = await resp.json()
-
-  if (body.mustChangePassword || body.changePasswordToken) {
-    const cpt = body.changePasswordToken
-    expect(cpt).toBeTruthy()
-    const change = await request.post(`${BASE}/api/v1/auth/change-password`, {
-      data: {
-        oldPassword: ADMIN_PASS,
-        newPassword: E2E_NEW_PASS,
-        changePasswordToken: cpt
-      }
+  async function tryLogin(pw) {
+    let resp = await request.post(`${BASE}/api/v1/auth/login`, {
+      data: { username: ADMIN_USER, password: pw }
     })
-    expect([200, 201]).toContain(change.status())
+    if (resp.status() === 429) {
+      await new Promise(r => setTimeout(r, 4000))
+      resp = await request.post(`${BASE}/api/v1/auth/login`, {
+        data: { username: ADMIN_USER, password: pw }
+      })
+    }
+    return resp
+  }
 
-    resp = await request.post(`${BASE}/api/v1/auth/login`, {
-      data: { username: ADMIN_USER, password: E2E_NEW_PASS }
-    })
+  let resp = await tryLogin(E2E_NEW_PASS)
+  let body = null
+
+  if (resp.status() === 200) {
+    body = await resp.json()
+    // 新密码成功：可能仍带 mustChangePassword（极端），正常应直接有 token。
+  } else if (resp.status() === 401) {
+    // 未改密（新库）：走 admin123 首登强制改密。
+    resp = await tryLogin(ADMIN_PASS)
     expect([200, 201]).toContain(resp.status())
     body = await resp.json()
+    if (body.mustChangePassword || body.changePasswordToken) {
+      const cpt = body.changePasswordToken
+      expect(cpt).toBeTruthy()
+      const change = await request.post(`${BASE}/api/v1/auth/change-password`, {
+        data: {
+          oldPassword: ADMIN_PASS,
+          newPassword: E2E_NEW_PASS,
+          changePasswordToken: cpt
+        }
+      })
+      expect([200, 201]).toContain(change.status())
+      resp = await tryLogin(E2E_NEW_PASS)
+      expect([200, 201]).toContain(resp.status())
+      body = await resp.json()
+    }
+  } else {
+    expect([200, 201]).toContain(resp.status())
   }
 
   const token = body.token
