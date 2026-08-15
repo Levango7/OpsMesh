@@ -366,6 +366,13 @@ jobs:
             sleep 2
           done
           echo "controlplane 未在 60s 内就绪"; docker compose logs; exit 1
+      - name: 确认 agent 容器注册（诊断用，不阻断）
+        run: |
+          docker compose ps
+          echo "--- agent 日志 ---"
+          docker compose logs agent 2>&1 | tail -30
+          echo "--- controlplane 日志尾部 ---"
+          docker compose logs controlplane 2>&1 | tail -20
       - name: 跑真实后端 E2E
         env:
           E2E_BASE_URL: http://127.0.0.1:8080
@@ -373,7 +380,13 @@ jobs:
           cd web/enterprise
           npm ci
           npx playwright install --with-deps chromium
-          npx playwright test --config playwright.real.config.js
+          npx playwright test --config playwright.real.config.js || {
+            echo "=== E2E 失败，转储容器状态与日志 ==="
+            docker compose ps
+            docker compose logs agent 2>&1 | tail -40
+            docker compose logs controlplane 2>&1 | tail -40
+            exit 1
+          }
       - name: 清理
         if: always()
         run: docker compose down -v

@@ -13,6 +13,10 @@ const ADMIN_PASS = process.env.E2E_ADMIN_PASS || 'admin123'
 const E2E_NEW_PASS = process.env.E2E_NEW_PASS || 'E2eRealPass2026'
 const BASE = process.env.E2E_BASE_URL || 'http://127.0.0.1:8080'
 
+// 文件级 token 缓存：每个 spec 只真实登录一次（多用例共享），
+// 避免连续登录打满 loginGuard 令牌桶（每 IP 10 突发 + 3s 补 1）触发 429。
+let cachedToken = null
+
 // 真实栈下 agent 拉任务间隔约 2s + 执行 + 上报，单任务 5s 内通常完成。
 // 给到 30s 总等待，覆盖 CI 慢机器 + agent 首次注册延迟。
 const TASK_TIMEOUT = 30_000
@@ -24,12 +28,15 @@ const POLL_INTERVAL = 1_000
 // 401 再回退 admin123 + 首登改密流程（新库场景）。
 // 429 = loginGuard 限流（每 IP 10 突发 + 3s 补 1），等令牌桶补充后重试。
 async function login(request) {
+  if (cachedToken) return cachedToken
   async function tryLogin(pw) {
     let resp = await request.post(`${BASE}/api/v1/auth/login`, {
       data: { username: ADMIN_USER, password: pw }
     })
-    if (resp.status() === 429) {
-      await new Promise(r => setTimeout(r, 4000))
+    // 429 = loginGuard 限流（每 IP 10 突发 + 3s 补 1）。多用例连续登录会打满
+    // 令牌桶，最多重试 3 次、每次等 5s（桶补充约需 3s/令牌）。
+    for (let attempt = 0; attempt < 3 && resp.status() === 429; attempt++) {
+      await new Promise(r => setTimeout(r, 5000))
       resp = await request.post(`${BASE}/api/v1/auth/login`, {
         data: { username: ADMIN_USER, password: pw }
       })
@@ -68,19 +75,29 @@ async function login(request) {
 
   const token = body.token
   expect(token, '登录应返回 access token').toBeTruthy()
+  cachedToken = token
   return token
 }
 
+// firstAgentID 等待 agent 注册完成（compose 起栈后 agent 需数秒注册+心跳，
+// 立即查询会拿到空列表）。最长等 30s（每 2s 轮询），覆盖 CI 慢机器。
 async function firstAgentID(request, token) {
   const headers = { Authorization: `Bearer ${token}` }
-  const resp = await request.get(`${BASE}/api/v1/agents`, { headers })
-  expect(resp.ok()).toBeTruthy()
-  const body = await resp.json()
-  const agents = Array.isArray(body.agents) ? body.agents : (Array.isArray(body) ? body : [])
-  expect(agents.length).toBeGreaterThan(0)
-  const id = agents[0].agentID || agents[0].agent_id || agents[0].id
-  expect(id).toBeTruthy()
-  return { id, headers }
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    const resp = await request.get(`${BASE}/api/v1/agents`, { headers }).catch(() => null)
+    if (resp && resp.ok()) {
+      const body = await resp.json()
+      const agents = Array.isArray(body.agents) ? body.agents : (Array.isArray(body) ? body : [])
+      if (agents.length > 0) {
+        const id = agents[0].agentID || agents[0].agent_id || agents[0].id
+        expect(id).toBeTruthy()
+        return { id, headers }
+      }
+    }
+    await new Promise(r => setTimeout(r, 2000))
+  }
+  throw new Error('30s 内未等到 agent 注册（检查 compose 中 agent 容器日志）')
 }
 
 // pollTaskStatus 轮询列表 API 直到任务进入终态，返回 { status } 或 null（超时）。

@@ -3,11 +3,16 @@
 // 登录用 seedRBAC 预置的 admin/admin123；若修改默认账号需同步 CI 环境变量。
 // 所有带写操作的用例都会创建短生命周期资源，避免污染 CI/生产数据。
 import { test, expect } from '@playwright/test'
+import http from 'node:http'
 
 const ADMIN_USER = process.env.E2E_ADMIN_USER || 'admin'
 const ADMIN_PASS = process.env.E2E_ADMIN_PASS || 'admin123'
 const E2E_NEW_PASS = process.env.E2E_NEW_PASS || 'E2eRealPass2026'
 const BASE = process.env.E2E_BASE_URL || 'http://127.0.0.1:8080'
+
+// 文件级 token 缓存：每个 spec 只真实登录一次（多用例共享），
+// 避免连续登录打满 loginGuard 令牌桶（每 IP 10 突发 + 3s 补 1）触发 429。
+let cachedToken = null
 
 // login 返回正式 access token。
 // 兼容首登强制改密（安全债 85）：seed 的 admin 带 MustChangePassword=true，
@@ -20,12 +25,15 @@ const BASE = process.env.E2E_BASE_URL || 'http://127.0.0.1:8080'
 // 401 再回退 admin123 + 首登改密流程（新库场景）。
 // 429 = loginGuard 限流（每 IP 10 突发 + 3s 补 1），等令牌桶补充后重试。
 async function login(request) {
+  if (cachedToken) return cachedToken
   async function tryLogin(pw) {
     let resp = await request.post(`${BASE}/api/v1/auth/login`, {
       data: { username: ADMIN_USER, password: pw }
     })
-    if (resp.status() === 429) {
-      await new Promise(r => setTimeout(r, 4000))
+    // 429 = loginGuard 限流（每 IP 10 突发 + 3s 补 1）。多用例连续登录会打满
+    // 令牌桶，最多重试 3 次、每次等 5s（桶补充约需 3s/令牌）。
+    for (let attempt = 0; attempt < 3 && resp.status() === 429; attempt++) {
+      await new Promise(r => setTimeout(r, 5000))
       resp = await request.post(`${BASE}/api/v1/auth/login`, {
         data: { username: ADMIN_USER, password: pw }
       })
@@ -65,6 +73,7 @@ async function login(request) {
 
   const token = body.token
   expect(token, '登录应返回 access token').toBeTruthy()
+  cachedToken = token
   return token
 }
 
@@ -118,20 +127,34 @@ test.describe('真实后端契约（不 mock）', () => {
 
   test('SSE 连接到手 hello 事件（沿 SSE 协议文档契约）', async ({ request }) => {
     const token = await login(request)
-    // 直接 fetch /api/v1/events/stream；OpenAI 的 fetch/SSE 在以応以实现，看响应头即可。
-    const resp = await request.get(`${BASE}/api/v1/events/stream`, {
-      headers: { Authorization: `Bearer ${token}` }
-    }).catch(() => null)
+    // SSE 是长连接：Playwright request.get 会等响应体读完而挂起（60s 超时）。
+    // 用 Node http 手动请求，收到响应头（含 text/event-stream）即断开连接。
+    const { promise, destroy } = await new Promise(resolve => {
+      const mod = http
+      const url = new URL(`${BASE}/api/v1/events/stream`)
+      const req = mod.request({
+        hostname: url.hostname,
+        port: url.port || 80,
+        path: url.pathname + url.search,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
+        timeout: 5000
+      }, res => {
+        resolve({ promise: Promise.resolve({ status: res.statusCode, ct: res.headers['content-type'] || '' }), destroy: () => req.destroy() })
+      })
+      req.on('timeout', () => req.destroy())
+      req.on('error', () => resolve({ promise: Promise.resolve(null), destroy: () => {} }))
+      req.end()
+    })
+    const resp = await promise
     if (!resp) {
-      test.info().skip('SSE 端点在本环境未连通（或被代理重置），记录警告但不使 CI 成红。')
+      test.info().skip('SSE 端点未连通（或被代理重置），记录警告不使 CI 成红。')
       return
     }
-    if (resp.ok()) {
-      const ct = resp.headers()['content-type'] || ''
-      expect(ct.toLowerCase()).toContain('text/event-stream')
+    if (resp.status >= 200 && resp.status < 300) {
+      expect(resp.ct.toLowerCase()).toContain('text/event-stream')
     } else {
-      // demo/require-auth 配置可能使未手携身份头时返回 401/403，逐字记录在测试中但不成红。
-      expect([401, 403]).toContain(resp.status())
+      expect([401, 403]).toContain(resp.status)
     }
   })
 })
