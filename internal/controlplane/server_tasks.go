@@ -112,6 +112,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		TenantID         string `json:"tenantID"`
 		Schedule         string `json:"schedule"`         // F4 可选：5 字段 cron，设定则成为模板任务（周期派生实例）
 		ApprovalRequired bool   `json:"approvalRequired"` // B1 修复 10：高风险任务需审批后才可执行
+		MaxRetries       *int   `json:"maxRetries"`       // F2 可选：单任务重试上限覆盖（nil=用全局默认）
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -141,13 +142,22 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "agent not found or tenant mismatch"})
 		return
 	}
+	// F2 失败重试上限随任务下发（store 层按策略重入队/死信）。
+	// 单任务可经 body.maxRetries 覆盖（如测试用 0 即一次失败进死信）；nil 用全局默认。
+	maxRetries := s.cfg.TaskMaxRetries
+	if body.MaxRetries != nil {
+		maxRetries = *body.MaxRetries
+		if maxRetries < 0 {
+			maxRetries = 0
+		}
+	}
 	task := s.store.CreateTask(&proto.Task{
 		AgentID:          body.AgentID,
 		TenantID:         targetTenant,
 		Type:             body.Type,
 		Command:          body.Command,
-		Schedule:         body.Schedule,         // F4 模板任务（cron）随创建下传
-		MaxRetries:       s.cfg.TaskMaxRetries,  // F2 失败重试上限随任务下发（store 层按策略重入队/死信）
+		Schedule:         body.Schedule, // F4 模板任务（cron）随创建下传
+		MaxRetries:       maxRetries,
 		ApprovalRequired: body.ApprovalRequired, // B1 修复 10：高风险任务需审批
 	})
 	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。

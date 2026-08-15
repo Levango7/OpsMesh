@@ -125,7 +125,7 @@ test.describe('真实后端契约（不 mock）', () => {
     })
     expect([200, 201]).toContain(create.status())
     const created = await create.json()
-    const taskId = created.task_id || created.id || created.taskId
+    const taskId = created.taskID || created.task_id || created.id
     expect(taskId).toBeTruthy()
 
     // 任务列表非空且包含刚创建的任务
