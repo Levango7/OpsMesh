@@ -28,8 +28,8 @@ func parseQuantity(s string) resource.Quantity {
 // labelsForOpsMesh returns the common labels every managed resource carries.
 func labelsForOpsMesh(name string) map[string]string {
 	return map[string]string{
-		"app.kubernetes.io/name":     "opsmesh",
-		"app.kubernetes.io/instance": name,
+		"app.kubernetes.io/name":       "opsmesh",
+		"app.kubernetes.io/instance":   name,
 		"app.kubernetes.io/managed-by": "opsmesh-operator",
 	}
 }
@@ -56,13 +56,13 @@ func controlPlaneDeployment(cr *opsmeshv1alpha1.OpsMeshInstance) *appsv1.Deploym
 	}
 	if cr.Spec.MySQL.Enabled {
 		env = append(env, corev1.EnvVar{
-			Name: "OPSMESH_MYSQL_HOST",
+			Name:  "OPSMESH_MYSQL_HOST",
 			Value: cr.Name + "-mysql",
 		})
 	}
 	if cr.Spec.Redis.Enabled {
 		env = append(env, corev1.EnvVar{
-			Name: "OPSMESH_REDIS_HOST",
+			Name:  "OPSMESH_REDIS_HOST",
 			Value: cr.Name + "-redis",
 		})
 	}
@@ -85,8 +85,8 @@ func controlPlaneDeployment(cr *opsmeshv1alpha1.OpsMeshInstance) *appsv1.Deploym
 								{ContainerPort: 8080, Name: "http"},
 								{ContainerPort: 9090, Name: "grpc"},
 							},
-							Env:   env,
-							EnvFrom: nil,
+							Env:             env,
+							EnvFrom:         nil,
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
@@ -123,7 +123,7 @@ func agentDaemonSet(cr *opsmeshv1alpha1.OpsMeshInstance) *appsv1.DaemonSet {
 							Image: cr.Spec.AgentImage,
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: boolPtr(true),
-				},
+							},
 							Env: []corev1.EnvVar{
 								{Name: "OPSMESH_CONTROL_PLANE", Value: fmt.Sprintf("%s-control-plane.%s.svc:9090", cr.Name, cr.Namespace)},
 								{Name: "OPSMESH_SEGMENT_CIDR", Value: cr.Spec.SegmentCIDR},
