@@ -50,21 +50,21 @@ func (s *SQLStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 	var err error
 	if hasSecretCol {
 		_, err = s.db.ExecContext(ctx,
-			"INSERT INTO agents (agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, `load`, last_seen, secret) " +
-			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
-			"ON DUPLICATE KEY UPDATE hostname=VALUES(hostname), segment=VALUES(segment), tenant_id=VALUES(tenant_id), " +
-			"addr=VALUES(addr), grpc_port=VALUES(grpc_port), metrics_port=VALUES(metrics_port), " +
-			"status=VALUES(status), `load`=VALUES(`load`), last_seen=VALUES(last_seen)", a.AgentID, a.Hostname, a.Segment, a.TenantID, a.Addr, a.GRPCPort, a.MetricsPort, a.Status, 1, now, agentSecret)
+			"INSERT INTO agents (agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, `load`, last_seen, secret) "+
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "+
+				"ON DUPLICATE KEY UPDATE hostname=VALUES(hostname), segment=VALUES(segment), tenant_id=VALUES(tenant_id), "+
+				"addr=VALUES(addr), grpc_port=VALUES(grpc_port), metrics_port=VALUES(metrics_port), "+
+				"status=VALUES(status), `load`=VALUES(`load`), last_seen=VALUES(last_seen)", a.AgentID, a.Hostname, a.Segment, a.TenantID, a.Addr, a.GRPCPort, a.MetricsPort, a.Status, 1, now, agentSecret)
 		if err != nil {
 			log.Printf("[store] Register upsert agents 失败 %s: %v", a.AgentID, err)
 		}
 	} else {
 		_, err = s.db.ExecContext(ctx,
-			"INSERT INTO agents (agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, `load`, last_seen) " +
-			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
-			"ON DUPLICATE KEY UPDATE hostname=VALUES(hostname), segment=VALUES(segment), tenant_id=VALUES(tenant_id), " +
-			"addr=VALUES(addr), grpc_port=VALUES(grpc_port), metrics_port=VALUES(metrics_port), " +
-			"status=VALUES(status), `load`=VALUES(`load`), last_seen=VALUES(last_seen)",
+			"INSERT INTO agents (agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, `load`, last_seen) "+
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "+
+				"ON DUPLICATE KEY UPDATE hostname=VALUES(hostname), segment=VALUES(segment), tenant_id=VALUES(tenant_id), "+
+				"addr=VALUES(addr), grpc_port=VALUES(grpc_port), metrics_port=VALUES(metrics_port), "+
+				"status=VALUES(status), `load`=VALUES(`load`), last_seen=VALUES(last_seen)",
 			a.AgentID, a.Hostname, a.Segment, a.TenantID, a.Addr, a.GRPCPort, a.MetricsPort, a.Status, 1, now)
 		if err != nil {
 			log.Printf("[store] Register upsert agents 失败 %s: %v", a.AgentID, err)
