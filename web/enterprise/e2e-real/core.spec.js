@@ -77,6 +77,20 @@ async function login(request) {
   return token
 }
 
+// firstAgentID 取第一个已注册 agent 的 ID（agent_lifecycle.spec 已确保注册完成，
+// 且本 spec 文件在 agent_lifecycle 之后运行，无需等待）。
+async function firstAgentID(request, token) {
+  const headers = { Authorization: `Bearer ${token}` }
+  const resp = await request.get(`${BASE}/api/v1/agents`, { headers })
+  expect(resp.ok()).toBeTruthy()
+  const body = await resp.json()
+  const agents = Array.isArray(body.agents) ? body.agents : (Array.isArray(body) ? body : [])
+  expect(agents.length).toBeGreaterThan(0)
+  const id = agents[0].agentID || agents[0].agent_id || agents[0].id
+  expect(id).toBeTruthy()
+  return { id, headers }
+}
+
 test.describe('真实后端契约（不 mock）', () => {
   test('健康检查 + ready 探针', async ({ request }) => {
     for (const p of ['/healthz', '/readyz']) {
@@ -97,12 +111,13 @@ test.describe('真实后端契约（不 mock）', () => {
 
   test('下发任务 → 查询列表 → 取消 真实闭环', async ({ request }) => {
     const token = await login(request)
-    const headers = { Authorization: `Bearer ${token}` }
+    const { id: agentID, headers } = await firstAgentID(request, token)
 
-    // 创建一条无 agent 可执行的长 pending 任务（e2e-real smoke）
+    // 创建一条 shell 任务（API 要求 agentID + command 非空，否则 400）
     const create = await request.post(`${BASE}/api/v1/tasks`, {
       headers,
       data: {
+        agentID,
         type: 'shell',
         command: 'echo opsmesh-e2e-real',
         name: 'e2e-real-smoke'
