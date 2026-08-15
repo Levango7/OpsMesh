@@ -75,7 +75,8 @@ func TestMonitoredServices_Whitelist(t *testing.T) {
 	}
 }
 
-// TestQueryService_Nonexistent 不存在的服务应返回空 status（不 panic）。
+// TestQueryService_Nonexistent 不存在的服务不应 panic（状态值因平台而异：
+// systemd 对 unit 文件不存在的服务返回 stopped/inactive，其它平台可能返回空串）。
 func TestQueryService_Nonexistent(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -83,8 +84,8 @@ func TestQueryService_Nonexistent(t *testing.T) {
 		}
 	}()
 	status, _ := queryService("definitely-nonexistent-service-xyz")
-	if status != "" {
-		t.Fatalf("nonexistent service status = %q, want empty", status)
+	if status == "running" {
+		t.Fatalf("nonexistent service status = %q, want anything but running", status)
 	}
 }
 
