@@ -331,8 +331,12 @@ jobs:
         working-directory: web/enterprise
       # Playwright mock 用例（现有 5 个 spec，覆盖页面渲染与交互）
       # 必须先 playwright install 下载浏览器，否则 CI 上浏览器二进制不存在（78 用例全挂）。
+      # PLAYWRIGHT_DOWNLOAD_HOST 用 npmmirror 镜像：cdn.playwright.dev 偶发卡死
+      # （曾 30+ 分钟无进展，GitHub 网络抖动）。
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        run: |
+          export PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/
+          timeout 300 npx playwright install --with-deps chromium || { echo "浏览器下载超时（网络问题），重试一次"; timeout 300 npx playwright install --with-deps chromium; }
         working-directory: web/enterprise
       - name: E2E (mock)
         run: npx playwright test
@@ -381,7 +385,8 @@ jobs:
         run: |
           cd web/enterprise
           npm ci
-          npx playwright install --with-deps chromium
+          export PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/
+          timeout 300 npx playwright install --with-deps chromium || { echo "浏览器下载超时（网络问题），重试一次"; timeout 300 npx playwright install --with-deps chromium; }
           npx playwright test --config playwright.real.config.js || {
             echo "=== E2E 失败，转储容器状态与日志 ==="
             docker compose ps
