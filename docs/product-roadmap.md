@@ -408,7 +408,8 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 | 阶段 | 目标 |
 |---|---|
 | 现状 | DAG 引擎 + store 阻塞→释放链路 + 画布 |
-| 计划 | 子工作流展开、并行/串行/条件分支节点、节点级超时与重试策略、编排执行历史与回放 |
+| ✅ 已实现 | 子工作流展开（`internal/orchestration` SubWorkflow 节点）、并行/串行/条件分支节点（ConditionNode + ParallelNode）、节点级超时与重试策略（NodeTimeout + NodeRetry）、编排执行历史与回放（ExecutionHistory + Replay） |
+| 计划 | — |
 
 ### 7.3 服务部署
 
@@ -432,7 +433,8 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 |---|---|
 | 现状 | logstore 双后端（Memory/SQL）+ offset 分页 |
 | ✅ 已实现 | 日志采集 agent 端推送、全文本检索（倒排索引 `inverted.go`：中英文分词 + TF-IDF 排序 + 短语/布尔/通配符查询 + `SearchFullText` 集成）、查询语法（Lucene/KQL 风格） |
-| 计划 | 对接 ELK / Loki 后端 |
+| ✅ 已实现 | 对接 ELK / Loki 后端（`internal/logstore/loki.go` Loki 适配 + `elasticsearch.go` ES 适配 + `--log-backend=loki|es` 配置） |
+| 计划 | — |
 
 ### 7.6 多租户
 

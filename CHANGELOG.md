@@ -2,6 +2,30 @@
 
 本文件记录 OpsMesh 所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.7.0] — 2026-08-16
+
+### P2 Batch 6：可视化与检索增强
+- **CMDB 关系图谱可视化**（`web/enterprise/src/components/RelationGraph.vue`）：纯 SVG 力导向图 + 网络拓扑布局，CI 类型颜色 + 关系类型线型 + 拖拽缩放平移 + 图例 + 节点详情面板，集成到 CMDBView 三视图切换
+- **全文本检索倒排索引**（`internal/logstore/inverted.go`）：中英文混合分词 + TF-IDF 排序 + 短语/布尔/通配符查询 + 并发安全，`SearchFullText` 集成到 MemoryLogStore
+- **多集群联邦发布**（`internal/deploy/federation.go`）：FederationStore + FederationCoordinator 跨集群灰度协调 Start/Promote/Reconcile/Rollback/Status + 联邦级发布状态 REST API
+
+### P2 Batch 7：交付物补全
+- **Argo CD GitOps 仓库**（`deploy/gitops/`）：ApplicationSet 多网段批量渲染 + AppProject 隔离 + 网段 values 示例（example/production）
+
+### 文档同步
+- roadmap 7.2 作业编排标记已实现（子工作流/条件分支/超时重试/执行历史）
+- roadmap 7.5 日志检索标记 ELK/Loki 对接已实现
+- roadmap 5.2/5.4/5.5/5.6/7.6/7.7 标记已交付
+
+### 验证
+- `go build ./...` ✅
+- `go vet ./...` ✅
+- `go test -timeout 300s ./...` ✅ 全绿
+- `npm run build` ✅
+- `npx vitest run` ✅ 527 测试全绿
+
+---
+
 ## [Unreleased] — 2026-08-16 CI 全绿里程碑批次
 
 ### 里程碑：GitHub Actions 8/8 job 全绿（首次真正全绿）
