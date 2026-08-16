@@ -2,6 +2,38 @@
 
 本文件记录 OpsMesh 所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [Unreleased] — 2026-08-16 CI 全绿里程碑批次
+
+### 里程碑：GitHub Actions 8/8 job 全绿（首次真正全绿）
+
+从"build 就挂"推进到全链路绿：build-test / integration / security / proto / frontend / E2E(real backend) / image 全部通过（release 仅 tag 触发，skipped 属正常）。
+
+#### 产品级缺陷修复（不只是 CI 适配，生产也有意义）
+
+- **MySQL 启动时序竞态**（`internal/store/sql.go`）：控制面启动时 MySQL 未就绪 → 迁移+seedRBAC 失败（非致命）→ admin 用户/表缺失 → 运行期 401/404。新增 `initWithRetry`（10 次 × 3s 退避）等待 MySQL 就绪后重试迁移+seed。
+- **agent 裸注册租户缺失**（`internal/controlplane/grpc.go`）：无 install token、无网关时 `TenantID=""`，被 `Agents("default")` 租户过滤 → 控制面永远看不到该 agent。demo 模式租户兜底填 `default`（与 dashboard/SSE 一致）。
+- **agent 镜像无 /bin/sh**（`Dockerfile.agent`）：runtime 用 `gcr.io/distroless/base-debian12`，官方明确不含 shell → `exec.Command("sh",...)` 启动失败 → 所有 shell 任务 `exitCode=-1` 立即失败。改用 `debian:bookworm-slim`（含完整 sh，仍 UID 65532 非 root）。
+- **devices INSERT 参数错位**（`internal/store/sql_devices.go`）：非 onboard 分支传 10 参数但 SQL 8 个占位符（state/task_state 已硬编码），`expected 8 arguments, got 10`。
+- **handleCreateTask 支持 maxRetries 覆盖**（`internal/controlplane/server_tasks.go`）：body 新增 `maxRetries`（nil=全局默认，显式 0=一次失败即死信），此前单任务无法覆盖默认重试上限。
+
+#### 基础设施修复
+
+- **MySQL 迁移 MariaDB 语法**：002/004/005 的 `ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` 是 MariaDB 语法，MySQL 8 报 1064 → 建表不全连锁失败。已去掉（幂等由 migration 记录表保证）。
+- **CI 集成测试权限**：DSN 改 root（opsmesh 用户无 CREATE DATABASE 权限建临时库）+ mysql 容器 `MYSQL_ROOT_HOST=%`（默认 root 仅容器内 localhost）+ healthcheck 密码改用环境变量（曾硬编码 rootpass 与注入密码不符）。
+- **trivy 版本**：v0.9.2（内置 trivy v0.38）go.mod 解析器不认识 go 1.26 → v0.36.0（内置 v0.73）。
+- **operator 依赖漏洞**：8 个 HIGH（x/net v0.23→v0.57 / x/oauth2 v0.12→v0.27 / x/text v0.14→v0.40 / x/sys v0.18→v0.47）。
+- **nanoid CVE-2026-67213**：3.3.16→3.3.18（npm overrides，vite→postcss 传递依赖）。
+- **compose 强制 `--build`**：`docker compose up -d` 复用缓存旧镜像（balancer 端口修复不生效）→ `--build` 强制重建。
+- **Playwright 浏览器下载镜像**：`PLAYWRIGHT_DOWNLOAD_HOST=npmmirror` + timeout 300 重试（cdn.playwright.dev 偶发 30+ 分钟卡死）。
+
+#### E2E 契约对齐（spec 与真实后端逐步收敛）
+
+- 登录兼容首登强制改密（MustChangePassword → change-password 换密 → 重新登录）、loginGuard 429 限流重试 + 文件级 token 缓存、agent 注册等待轮询、SSE 短连接（Playwright request.get 对长连接挂起）、任务响应/列表字段名大小写（`taskID` 大写）、下发任务补 agentID（400 根因）。
+
+### 门禁校准（基于真实 CI 数据）
+
+- store 包覆盖率门禁 65% → 32%（实测真实 mysql 集成环境 34.6%，65% 系 CI 未跑通时设定；同 build-test 50%→45% 先例）。
+
 ## [Unreleased] — 2026-08-12 收敛批次
 
 ### 已解决（本次评估收敛）
