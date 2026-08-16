@@ -101,6 +101,7 @@ import { useAlertStore } from '@/stores/alert'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { currentLang, setLang } from '@/i18n'
+import { createSSEClient } from '@/api/sse'
 import Icon from '@/components/Icon.vue'
 
 const router = useRouter()
@@ -180,7 +181,9 @@ function onLogout() {
 }
 
 // 主轮询：受页面可见性控制（仅已登录时启动）
+// SSE 接入后轮询降级为兜底（SSE 断线时恢复），正常时由事件驱动刷新。
 let pollTimers = []
+let sseClient = null
 function startPolls() {
   if (pollTimers.length) return
   pollTimers = [
@@ -190,22 +193,61 @@ function startPolls() {
 }
 function stopPolls() { pollTimers.forEach(clearInterval); pollTimers = [] }
 
+// SSE 事件 → store 刷新映射（事件到达即拉最新，替代轮询的主动拉取）。
+// 仅刷新"列表/计数"级数据；详情页自身仍有局部轮询（DeviceDetail 等）不受影响。
+function handleSSEEvent(ev) {
+  switch (ev.type) {
+    case 'device_online':
+    case 'device_offline':
+      deviceStore.fetchDevices()
+      break
+    case 'alert_new':
+      alertStore.fetchAlerts()
+      break
+    case 'task_status':
+      // 任务状态变更：task store 在路由懒加载中，此处经事件总线通知各视图自行刷新。
+      window.dispatchEvent(new CustomEvent('opsmesh:task-status', { detail: ev.data }))
+      break
+    default:
+      // hello / approval_status / schedule_status / *_template_changed / agent_logs
+      // 目前无全局列表依赖，事件仅消费（含契约校验），无需主动拉取。
+      break
+  }
+}
+
+function startSSE() {
+  if (sseClient) return
+  sseClient = createSSEClient({
+    url: '/api/v1/events/stream',
+    onEvent: handleSSEEvent,
+    // 断线（非鉴权失败）时恢复轮询兜底；重连成功由 onConnect 暂停轮询。
+    onDisconnect: () => { startPolls() },
+    onConnect: () => { stopPolls() }
+  })
+  sseClient.start()
+}
+function stopSSE() {
+  if (sseClient) { sseClient.stop(); sseClient = null }
+}
+
 function onVisibility() {
-  if (document.hidden) stopPolls()
-  else { startPolls(); deviceStore.fetchDevices(); alertStore.fetchAlerts() }
+  if (document.hidden) { stopPolls(); stopSSE() }
+  else { startPolls(); startSSE(); deviceStore.fetchDevices(); alertStore.fetchAlerts() }
 }
 
 onMounted(() => {
-  // 已登录时启动轮询；fetchMe 已在 main.js 启动，此处仅触发数据轮询
+  // 已登录时启动轮询 + SSE；fetchMe 已在 main.js 启动，此处仅触发数据轮询
   if (authStore.isLoggedIn) {
     deviceStore.fetchDevices()
     alertStore.fetchAlerts()
     document.addEventListener('visibilitychange', onVisibility)
     startPolls()
+    startSSE()
   }
 })
 onUnmounted(() => {
   stopPolls()
+  stopSSE()
   document.removeEventListener('visibilitychange', onVisibility)
 })
 </script>

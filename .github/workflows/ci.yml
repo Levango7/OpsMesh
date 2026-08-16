@@ -387,7 +387,9 @@ jobs:
           npm ci
           export PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/
           timeout 300 npx playwright install --with-deps chromium || { echo "浏览器下载超时（网络问题），重试一次"; timeout 300 npx playwright install --with-deps chromium; }
-          npx playwright test --config playwright.real.config.js || {
+          # --grep-invert "安全契约"：安全场景需 e2e-sec compose（require-auth+mTLS），
+          # 由独立 e2e-sec job 跑（docker-compose.e2e-sec.yaml），避免本 job 缺 require-auth 误判。
+          npx playwright test --config playwright.real.config.js --grep-invert "安全契约" || {
             echo "=== E2E 失败，转储容器状态与日志 ==="
             docker compose ps
             docker compose logs agent 2>&1 | tail -40
@@ -397,3 +399,76 @@ jobs:
       - name: 清理
         if: always()
         run: docker compose down -v
+
+  # e2e-sec：安全场景（roadmap 4.5）——require-auth / 租户越权 / 任务取消 / mTLS。
+  # 独立 compose：controlplane 开 --require-auth + gRPC mTLS，agent 带客户端证书。
+  # 证书用 openssl 生成（CA/server/client 三件套）挂载到容器。
+  e2e-sec:
+    name: E2E (security)
+    runs-on: ubuntu-latest
+    needs: [build-test, frontend]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/enterprise/package-lock.json
+      - name: 生成测试证书（CA + server + client，mTLS 用）
+        run: |
+          mkdir -p e2e-certs
+          cd e2e-certs
+          # CA（自签）
+          openssl genrsa -out ca.key 2048
+          openssl req -x509 -new -key ca.key -days 30 -subj "/CN=opsmesh-e2e-ca" -out ca.crt
+          # server 证书（SAN 含 controlplane 服务名 + localhost）
+          openssl genrsa -out server.key 2048
+          openssl req -new -key server.key -subj "/CN=controlplane" -out server.csr
+          printf "subjectAltName=DNS:controlplane,DNS:localhost,IP:127.0.0.1\n" > san.cnf
+          openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 30 \
+            -extfile san.cnf -out server.crt
+          # client 证书（agent 用）
+          openssl genrsa -out client.key 2048
+          openssl req -new -key client.key -subj "/CN=opsmesh-agent" -out client.csr
+          openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 30 -out client.crt
+          ls -la
+      - name: 启动安全栈（docker compose e2e-sec）
+        env:
+          MYSQL_ROOT_PASSWORD: ciroot
+          MYSQL_USER: opsmesh
+          MYSQL_PASSWORD: opsmesh
+          OPSMESH_JWT_SECRET: ci-e2e-sec-jwt-secret-key-min-32-bytes-0123456789abcdef
+        run: docker compose -f docker-compose.e2e-sec.yaml up -d --build --wait
+      - name: 健康检查
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/healthz; then exit 0; fi
+            sleep 2
+          done
+          echo "controlplane 未在 60s 内就绪"; docker compose -f docker-compose.e2e-sec.yaml logs; exit 1
+      - name: 确认 agent mTLS 注册（诊断用，不阻断）
+        run: |
+          docker compose -f docker-compose.e2e-sec.yaml ps
+          echo "--- agent 日志 ---"
+          docker compose -f docker-compose.e2e-sec.yaml logs agent 2>&1 | tail -20
+          echo "--- controlplane 日志尾部 ---"
+          docker compose -f docker-compose.e2e-sec.yaml logs controlplane 2>&1 | tail -15
+      - name: 跑安全 E2E（--grep 安全契约）
+        env:
+          E2E_BASE_URL: http://127.0.0.1:8080
+          E2E_CERTS_DIR: ../../e2e-certs
+        run: |
+          cd web/enterprise
+          npm ci
+          export PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/
+          timeout 300 npx playwright install --with-deps chromium || { echo "浏览器下载超时（网络问题），重试一次"; timeout 300 npx playwright install --with-deps chromium; }
+          npx playwright test --config playwright.real.config.js --grep "安全契约" || {
+            echo "=== 安全 E2E 失败，转储容器状态与日志 ==="
+            docker compose -f docker-compose.e2e-sec.yaml ps
+            docker compose -f docker-compose.e2e-sec.yaml logs agent 2>&1 | tail -40
+            docker compose -f docker-compose.e2e-sec.yaml logs controlplane 2>&1 | tail -40
+            exit 1
+          }
+      - name: 清理
+        if: always()
+        run: docker compose -f docker-compose.e2e-sec.yaml down -v

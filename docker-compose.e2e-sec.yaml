@@ -1,0 +1,89 @@
+# 安全 E2E 专用栈（roadmap 4.5）：require-auth / 租户越权 / mTLS / 任务取消。
+# 与 docker-compose.yaml 的区别：
+#   - controlplane 开启 --require-auth（缺失身份拒绝 401）
+#   - controlplane 开启 gRPC mTLS（--tls-cert/key + --client-ca 要求客户端证书）
+#   - agent 携带客户端证书注册（mTLS 双向认证通过）
+# 证书由 CI e2e-sec job 用 openssl 生成后挂载（见 .github/workflows/ci.yml e2e-sec 段）。
+# 注意：本项目复用主 compose 的 mysql/redis/controlplane/agent 镜像（build 一次即可）。
+
+services:
+  controlplane:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: opsmesh/controlplane:dev
+    command:
+      - --mode=controlplane
+      - --store=mysql
+      - --mysql-dsn=${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh}@tcp(mysql:3306)/opsmesh?parseTime=true
+      - --redis-addr=redis:6379
+      - --advertise-addr=http://controlplane:8080
+      - --demo
+      # ── 安全 E2E 专项 ──
+      - --require-auth
+      - --tls-cert=/certs/server.crt
+      - --tls-key=/certs/server.key
+      - --client-ca=/certs/ca.crt
+    ports:
+      - "8080:8080"   # HTTP API（require-auth 生效）
+      - "9090:9090"   # gRPC（mTLS 生效）
+      - "9091:9091"   # Prometheus metrics
+    environment:
+      OPSMESH_JWT_SECRET: ${OPSMESH_JWT_SECRET:-ci-e2e-sec-jwt-secret-key-min-32-bytes-0123456789abcdef}
+      OPSMESH_COOKIE_SECURE: "false"
+      OPSMESH_PUBLIC_REGISTER: "false"
+    volumes:
+      - ./e2e-certs:/certs:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/opsmesh", "--health"]
+      interval: 5s
+      timeout: 3s
+      start_period: 20s
+      retries: 12
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_ROOT_HOST: "%"
+      MYSQL_DATABASE: opsmesh
+      MYSQL_USER: opsmesh
+      MYSQL_PASSWORD: opsmesh
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
+
+  redis:
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    image: opsmesh/agent:dev
+    command:
+      - --mode=agent
+      - --control-addr=http://controlplane:8080
+      - --segment=default
+      # mTLS：携带客户端证书访问控制面 9090（无证书会被拒——见 security.spec.js mTLS 用例）
+      - --tls-cert=/certs/client.crt
+      - --tls-key=/certs/client.key
+      - --client-ca=/certs/ca.crt
+    volumes:
+      - ./e2e-certs:/certs:ro
+    depends_on:
+      controlplane:
+        condition: service_healthy

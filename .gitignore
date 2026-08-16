@@ -75,3 +75,4 @@ web/enterprise/playwright-report/
 
 # InsCode 工具自身目录
 .inscode/
+e2e-certs

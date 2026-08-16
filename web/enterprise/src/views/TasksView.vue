@@ -87,7 +87,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useTaskStore } from '@/stores/task'
 import { useAuthStore } from '@/stores/auth'
 import { getAgents } from '@/api/device'
@@ -130,7 +130,16 @@ async function onCancel(id) {
 onMounted(async () => {
   try { agents.value = await getAgents() || [] } catch (e) { console.error('fetch agents failed:', e) }
   store.fetchTasks()
+  // SSE 实时推送：任务状态变更（创建/领取/取消/回执）到达即刷新列表（App.vue 事件总线）。
+  window.addEventListener('opsmesh:task-status', onTaskStatus)
 })
+onUnmounted(() => {
+  window.removeEventListener('opsmesh:task-status', onTaskStatus)
+})
+
+function onTaskStatus() {
+  store.fetchTasks()
+}
 </script>
 
 <style scoped>
