@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"sync"
 
 	"google.golang.org/grpc/encoding"
 )
@@ -48,7 +50,18 @@ func init() {
 //   - Unmarshal：先校验 __v 字段存在且等于 CodecVersion，再 json.Unmarshal 到目标。
 type jsonCodec struct{}
 
+// jsonCodecDeprecationOnce 保证 deprecation 警告只在首次 Marshal/Unmarshal 时打印一次
+// （DoD：仅在迁移期打印，避免每次 RPC 刷屏）。迁移到标准 protobuf codec 后移除本日志。
+var jsonCodecDeprecationOnce sync.Once
+
+func warnJSONCodecDeprecated() {
+	jsonCodecDeprecationOnce.Do(func() {
+		log.Printf("grpcx: JSON codec 为过渡方案（__v=%d 版本协商），迁移到标准 protobuf codec 后将移除（见 docs/tech-selection.md §3）", CodecVersion)
+	})
+}
+
 func (jsonCodec) Marshal(v interface{}) ([]byte, error) {
+	warnJSONCodecDeprecated()
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
@@ -57,6 +70,7 @@ func (jsonCodec) Marshal(v interface{}) ([]byte, error) {
 }
 
 func (jsonCodec) Unmarshal(data []byte, v interface{}) error {
+	warnJSONCodecDeprecated()
 	if err := checkVersion(data); err != nil {
 		return err
 	}

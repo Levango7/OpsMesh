@@ -5,12 +5,14 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"expvar"
 	"fmt"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
@@ -23,6 +25,7 @@ import (
 
 	"opsmesh/internal/discovery"
 	"opsmesh/internal/grpcx"
+	"opsmesh/internal/logx"
 	"opsmesh/internal/otelx"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/tlsutil"
@@ -33,6 +36,10 @@ import (
 // 任一成功即返回（HA 真多副本前置：单控制面宕机不影响 agent 注册/心跳/拉任务）。
 //
 // B-4 连接复用：conns 按 target 地址缓存长连接，invoke 复用而非每次 Dial+Close。
+
+// expvarOnce 保护 expvar 全局注册表只注册一次（多次 NewGRPCClient 不 panic）。
+var expvarOnce sync.Once
+
 // 连接仅在 Close() 或被标记 stale（Invoke 返回连接错误）时关闭并从 map 移除。
 // gRPC 内置 WithConnectParams Backoff 提供指数退避重连，应用层 evictConn 兜底淘汰坏连接。
 //
@@ -53,6 +60,10 @@ type GRPCClient struct {
 	// M1-3 服务发现：可选的负载均衡器，非 nil 时 invoke 优先通过 balancer 选择控制面实例。
 	// balancer 为 nil 时回退到 addrs failover（向后兼容，不破坏现有单控制面行为）。
 	balancer discovery.Balancer
+	// connFailures 连接故障累计（DoD：agent 连接健壮性——故障指标化）。
+	// evictConn 每次淘汰坏连接时 +1；经 expvar 暴露（http://agent:port/debug/vars）
+	// 供运维观测控制面连接稳定性（断线率）。
+	connFailures *atomic.Int64
 }
 
 // SetSecret task 81：设置 agent 的 HMAC 签名密钥（由 Register 响应下发）。
@@ -111,11 +122,22 @@ func NewGRPCClient(addrs []string, tlsCert, tlsKey, tlsCA string, grpcPort int) 
 	} else {
 		creds = insecure.NewCredentials()
 	}
+	// DoD：agent 连接健壮性——故障指标化。暴露 connFailures 到 expvar（/debug/vars），
+	// 供 Prometheus/运维抓取观测控制面连接稳定性（断线率）。expvar 是包级全局注册表，
+	// 多次 NewGRPCClient（单测/多实例）会重复注册同名 panic——用 Once 只注册一次，
+	// 闭包捕获各自实例的计数器（sync.Once 注册后新实例通过指针闭包共享可见性）。
+	connFailures := new(atomic.Int64)
+	expvarOnce.Do(func() {
+		expvar.Publish("agent_grpc_conn_failures", expvar.Func(func() any {
+			return connFailures.Load()
+		}))
+	})
 	return &GRPCClient{
-		addrs:    addrs,
-		creds:    creds,
-		grpcPort: grpcPort,
-		conns:    make(map[string]*grpc.ClientConn),
+		addrs:        addrs,
+		creds:        creds,
+		grpcPort:     grpcPort,
+		conns:        make(map[string]*grpc.ClientConn),
+		connFailures: connFailures,
 	}, nil
 }
 
@@ -287,6 +309,9 @@ func (c *GRPCClient) evictConn(target string) {
 		conn.Close()
 		delete(c.conns, target)
 	}
+	c.connFailures.Add(1)
+	logx.Warn(context.Background(), "gRPC 连接故障（已淘汰重建）",
+		"target", target, "failures", c.connFailures.Load())
 }
 
 // isConnError 判断错误是否为连接级错误（需淘汰重连）。

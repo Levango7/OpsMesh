@@ -557,9 +557,9 @@ Vue3 企业版按里程碑持续演进；原生 JS 个人版仅维持 P0 修复�
 | Store 接口拆分 | ① `store.go` 保留 15 个子接口及编译期断言；② controlplane/store 内至少 3 个消费方从 `Store` 改用领域子接口；③ `go build/test` 全绿 |
 | controlplane 单包拆分 | ① 无 >500 行的单文件；② `go test ./internal/controlplane/...` 全过；③ README 功能矩阵不变 |
 | Registry 去除或强化 | 若选 A：无独立 registry 文件，消费方直接引子接口；若选 B：Registry 有明确编排/缓存职责并有单测覆盖 |
-| agent 连接健壮性 | 已具备 B-4 连接复用（见 TD-08），后续仅补：断线日志分级 + 故障指标化 |
-| 前端 SSE 契约一致 | ① `docs/sse-protocol.md` 与 `sse.go` 字段/事件名一致，有契约性单测；② 前端 `api/request.js` 对 SSE 字段名做静态校验或契约测试 |
-| protobuf/JSON codec 收敛 | ① 明确留用 JSON codec 的原因已在 tech-selection §3 记录；② grpcx/codec.go 中新增 deprecation 警告日志（仅在迁移期打印） |
+| agent 连接健壮性 | 已具备 B-4 连接复用（见 TD-08）；✅ 断线日志分级（evictConn WARN）+ 故障指标化（`agent_grpc_conn_failures` expvar /debug/vars）已落地 |
+| 前端 SSE 契约一致 | ① `docs/sse-protocol.md` 与 `sse.go` 字段/事件名一致，有契约性单测；② **待做**：前端当前为 5s 轮询、尚未消费 SSE（见 §3.4 实时推送演进），接入后再补 `request.js` 对 SSE 字段名的静态校验/契约测试 |
+| protobuf/JSON codec 收敛 | ① 明确留用 JSON codec 的原因已在 tech-selection §3 记录；✅ ② grpcx/codec.go 新增 deprecation 警告日志（sync.Once 仅打印一次，迁移期有效） |
 | e2e-real 真实后端 | ① `e2e-real/` 至少覆盖健康检查、登录、任务创建/取消、SSE 可见性；② CI `e2e-real` job 在 push 时通过 |
 | operator Go 版本对齐 | `operator/go.mod` 与根模块一致，`go mod tidy && go build` 通过（本迭代已落地） |
 
