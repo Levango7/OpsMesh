@@ -20,9 +20,9 @@ import (
 func newNetworkTestServer() *Server {
 	st := store.NewMemoryStore()
 	return &Server{
-		store:                 st,
-		cfg:                   &config.Config{TaskMaxRetries: 3, Demo: true},
-		networkTopologyCache:  &NetworkTopologyCache{},
+		store:                st,
+		cfg:                  &config.Config{TaskMaxRetries: 3, Demo: true},
+		networkTopologyCache: &NetworkTopologyCache{},
 	}
 }
 
