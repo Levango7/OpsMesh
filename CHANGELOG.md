@@ -12,6 +12,45 @@
 ### P2 Batch 7：交付物补全
 - **Argo CD GitOps 仓库**（`deploy/gitops/`）：ApplicationSet 多网段批量渲染 + AppProject 隔离 + 网段 values 示例（example/production）
 
+### Phase1：文档体系建立
+
+完成 13 个核心设计文档（共约 19,385 行），覆盖产品/架构/数据库/接口/安全/UI/模块/功能/测试/运维/AI/多系统/部署场景全维度。
+
+#### 第一批核心文档（5 个，245KB）
+- **docs/product-design.md**（457 行）：产品定位/目标用户/功能矩阵/竞品对比/商业模式/适用场景/非功能需求/路线图
+- **docs/architecture.md**（925 行）：架构构图/分层设计/模块依赖/Store 接口拆分/数据流/技术选型/扩展点/容量规划/高可用/多租户
+- **docs/database-design.md**（1163 行）：ER 图/29 张表结构详解/索引设计/分库分表/数据生命周期/迁移策略/容量估算
+- **docs/api-specification.md**（1368 行）：OpenAPI 3.0 规范/错误码标准/认证规范/版本管理/分页过滤/SSE/gRPC/限流/幂等性
+- **docs/security-mechanism.md**（1173 行）：认证/授权/传输安全/输入安全/SSRF/密钥管理/审计/租户隔离/联邦安全/Agent 安全/部署检查清单
+
+#### 第二批设计文档（5 个）
+- **docs/ui-design.md**（764 行）：设计系统/组件库/页面布局/交互规范/主题切换/i18n/无障碍/双前端策略
+- **docs/module-design.md**（1508 行）：30 个 internal 包详细设计，按 7 个领域分组，每包 6 维度
+- **docs/feature-design.md**（2246 行）：18 个功能模块详细设计，每模块 7 子节（概述/用例/流程图/业务规则/边界条件/配置项/API）
+- **docs/test-specification.md**（968 行）：测试策略/分层测试/覆盖率目标/CI 矩阵/E2E/性能/安全测试
+- **docs/operations.md**（2131 行）：部署/配置/监控/告警/日志/备份/扩缩容/故障排查/巡检/SOP
+
+#### 第三批扩展文档（3 个）
+- **docs/ai-design.md**（1779 行）：AI 能力总览/异常检测/智能告警/根因分析/容量预测/AIOps Copilot/智能编排/日志分析/模型管理/数据管道/AI 安全治理/性能成本/集成架构/路线图
+- **docs/multi-os-support.md**（2182 行）：当前支持状态/目标支持矩阵（18 系统）/平台抽象层/11 个系统详细方案/跨平台 CI/Agent 构建/平台配置/已知限制/路线图
+- **docs/deployment-scenarios.md**（2719 行）：12 个部署场景（单机房/异地多机房/多数据中心/电信资源池/混合云/公有云/私有云/边缘/国产化/容器化/高安全/灾备）+ 对比选型 + 自动化
+
+### Phase4：测试覆盖率提升
+
+#### 低覆盖包补全（6 个包）
+- **grpcx**：48.9% → 99.5%（新增 `grpcx_extra_test.go`，761 行）
+- **otelx**：58.0% → 97.2%（新增 `otelx_extra_test.go`，514 行）
+- **secrets**：61.3% → 96.4%（新增 `secrets_extra_test.go`）
+- **authctx**：62.6% → 93.1%（新增 `authctx_extra_test.go`）
+- **cmdb**：41.5% → 95.4%（新增 `cmdb_extra_test.go` 970 行 + `sql_test.go`）
+- **deploy**：60.1% → 81.0%（新增 `deploy_coverage_test.go`，1622 行）
+
+#### store 包覆盖率提升
+- **store**：49.8% → 57.5% → **75.7%**（超过 70% 目标）
+  - `store_extra_test.go`：MemoryStore 边缘路径/redis_session/multi_schema
+  - `store_extra2/3/4_test.go`：SQLStore 纯函数/scan 函数/IsLeader/DeviceMetrics/早期返回路径/MultiSchemaStore 错误路径
+  - `store_extra5_test.go`（530 行）：使用不可达 DB（127.0.0.1:1）测试 SQL 方法错误路径，覆盖 GetUser/UpdateUser/DeleteUser/CreateRole 等 40+ 个 SQL 方法
+
 ### 文档同步
 - roadmap 7.2 作业编排标记已实现（子工作流/条件分支/超时重试/执行历史）
 - roadmap 7.5 日志检索标记 ELK/Loki 对接已实现
