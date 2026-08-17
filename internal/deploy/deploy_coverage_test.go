@@ -1561,7 +1561,7 @@ func TestFederationDeploy_Valid_Boundaries(t *testing.T) {
 	f9 := &FederationDeploy{
 		Name: "x", Mode: FedModeSequential,
 		Template: DeployTask{Name: "", Type: TypeScript}, // 缺 name
-		Members: []FederationMember{{ClusterID: "a", TargetIDs: "d1", Order: 0, Weight: 100}},
+		Members:  []FederationMember{{ClusterID: "a", TargetIDs: "d1", Order: 0, Weight: 100}},
 	}
 	if err := f9.Valid(); err == nil {
 		t.Fatal("invalid template should fail")
@@ -1570,8 +1570,8 @@ func TestFederationDeploy_Valid_Boundaries(t *testing.T) {
 	f10 := &FederationDeploy{
 		Name: "x", Mode: FedModeSequential,
 		Template: DeployTask{Name: "svc", Type: TypeScript},
-		Members: []FederationMember{{ClusterID: "a", TargetIDs: "d1", Order: 0, Weight: 100}},
-		Gate:    &GateConfig{SuccessRate: 150},
+		Members:  []FederationMember{{ClusterID: "a", TargetIDs: "d1", Order: 0, Weight: 100}},
+		Gate:     &GateConfig{SuccessRate: 150},
 	}
 	if err := f10.Valid(); err == nil {
 		t.Fatal("gate success_rate > 100 should fail")
@@ -1579,8 +1579,8 @@ func TestFederationDeploy_Valid_Boundaries(t *testing.T) {
 	f11 := &FederationDeploy{
 		Name: "x", Mode: FedModeSequential,
 		Template: DeployTask{Name: "svc", Type: TypeScript},
-		Members: []FederationMember{{ClusterID: "a", TargetIDs: "d1", Order: 0, Weight: 100}},
-		Gate:    &GateConfig{MaxFailRate: -1},
+		Members:  []FederationMember{{ClusterID: "a", TargetIDs: "d1", Order: 0, Weight: 100}},
+		Gate:     &GateConfig{MaxFailRate: -1},
 	}
 	if err := f11.Valid(); err == nil {
 		t.Fatal("gate max_fail_rate < 0 should fail")

@@ -34,7 +34,7 @@ func NewStubAdapter(inner RegistrationServer) *StubAdapter {
 	return &StubAdapter{inner: inner}
 }
 
-// 编译期断言：StubAdapter 实现 pb.RegistrationServer 全部 6 方法。
+// 编译期断言：StubAdapter 实现 pb.RegistrationServer 全部 7 方法。
 var _ pb.RegistrationServer = (*StubAdapter)(nil)
 
 // Register 实现 pb.RegistrationServer.Register。
@@ -93,6 +93,15 @@ func (a *StubAdapter) PollCancels(ctx context.Context, req *pb.PollCancelsReq) (
 		return nil, err
 	}
 	return &pb.PollCancelsResp{CancelledTaskIds: resp.CancelledTaskIDs}, nil
+}
+
+// ReportLogs 实现 pb.RegistrationServer.ReportLogs。
+func (a *StubAdapter) ReportLogs(ctx context.Context, req *pb.ReportLogsReq) (*pb.Empty, error) {
+	_, err := a.inner.ReportLogs(ctx, &ReportLogsReq{Report: *LogReportLegacy(req.Report)})
+	if err != nil {
+		return nil, err
+	}
+	return &pb.Empty{}, nil
 }
 
 // ===== 互转函数：pb -> internal/proto（Legacy 后缀，表示"转回手写路径消息"）=====
@@ -194,6 +203,37 @@ func CmdbReportLegacy(src *pb.CmdbReport) *proto.CmdbReport {
 	}
 }
 
+// LogLineLegacy 把生成 stub 的 LogLine 转为手写路径的 proto.LogLine。
+func LogLineLegacy(src *pb.LogLine) proto.LogLine {
+	if src == nil {
+		return proto.LogLine{}
+	}
+	return proto.LogLine{
+		Timestamp: tsLegacy(src.Timestamp),
+		Level:     src.Level,
+		Message:   src.Message,
+	}
+}
+
+// LogReportLegacy 把生成 stub 的 LogReport 转为手写路径的 proto.LogReport。
+func LogReportLegacy(src *pb.LogReport) *proto.LogReport {
+	if src == nil {
+		return nil
+	}
+	lines := make([]proto.LogLine, 0, len(src.Lines))
+	for _, l := range src.Lines {
+		lines = append(lines, LogLineLegacy(l))
+	}
+	return &proto.LogReport{
+		AgentID:     src.AgentId,
+		TenantID:    src.TenantId,
+		Hostname:    src.Hostname,
+		LogName:     src.LogName,
+		Lines:       lines,
+		CollectedAt: tsLegacy(src.CollectedAt),
+	}
+}
+
 // ===== 互转函数：internal/proto/grpcx -> pb（ToProto 后缀）=====
 
 // AgentInfoToProto 把手写路径的 proto.AgentInfo 转为生成 stub 的 pb.AgentInfo。
@@ -272,6 +312,37 @@ func RegisterRespToProto(src *RegisterResp) *pb.RegisterResp {
 	return &pb.RegisterResp{
 		AgentId:       src.AgentID,
 		ControlConfig: cfg,
+	}
+}
+
+// LogLineToProto 把手写路径的 proto.LogLine 转为生成 stub 的 pb.LogLine。
+func LogLineToProto(src *proto.LogLine) *pb.LogLine {
+	if src == nil {
+		return nil
+	}
+	return &pb.LogLine{
+		Timestamp: tsToProto(src.Timestamp),
+		Level:     src.Level,
+		Message:   src.Message,
+	}
+}
+
+// LogReportToProto 把手写路径的 proto.LogReport 转为生成 stub 的 pb.LogReport。
+func LogReportToProto(src *proto.LogReport) *pb.LogReport {
+	if src == nil {
+		return nil
+	}
+	lines := make([]*pb.LogLine, 0, len(src.Lines))
+	for i := range src.Lines {
+		lines = append(lines, LogLineToProto(&src.Lines[i]))
+	}
+	return &pb.LogReport{
+		AgentId:     src.AgentID,
+		TenantId:    src.TenantID,
+		Hostname:    src.Hostname,
+		LogName:     src.LogName,
+		Lines:       lines,
+		CollectedAt: tsToProto(src.CollectedAt),
 	}
 }
 

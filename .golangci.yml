@@ -34,10 +34,10 @@ linters:
   settings:
     errcheck:
       check-type-assertions: true
-      # check-blank 关闭：仓库大量 `_ =` 是**有意忽略**（defer rollback、
-      # 事件发布失败可容忍、无订阅者时发布等），v1 激进配置把它也当债报，
-      # 导致 CI 从未真正能绿。保留 check-type-assertions 抓真实漏检。
-      check-blank: false
+      # check-blank 启用（task 337）：`_ =` 形式忽略返回值必须显式豁免，
+      # 避免静默吞错。设计上可忽略的调用通过 exclude-functions 精细豁免，
+      # 其余 `_ =` 必须有正当理由（已在 exclusions.rules 中按路径/text 豁免）。
+      check-blank: true
       # exclude-functions：按函数豁免"设计上可忽略返回值"的调用——
       #   events.Bus.Publish：事件总线发布失败是可容忍的（noop/log 后端恒成功，
       #     调用方不因发布失败中断主流程）；
@@ -104,6 +104,18 @@ linters:
       - linters:
           - errcheck
         text: "tx.Rollback"
+      # G104（Errors unhandled）精细豁免（task 337）：原 ci.yml gosec 整类排除 G104，
+      # 现下放至 golangci-lint 做精细控制。以下路径/模式为设计上可忽略返回值的调用，
+      # 与 errcheck exclude-functions 对齐（events.Bus.Publish / bufio/io 写入 / defer Rollback）。
+      # 测试文件已通过 _test\.go 规则整体放宽 gosec，此处只覆盖生产代码。
+      - linters:
+          - gosec
+        text: "G104"
+        path: internal/events/bus\.go
+      - linters:
+          - gosec
+        text: "G104"
+        path: internal/store/sql\.go
       # G202: SQL 字符串拼接——仓库 SQL 均用参数占位符（? + args），
       # 拼接的只是固定 SQL 片段（WHERE 子句结构），无用户输入直接入 SQL，安全。
       - linters:

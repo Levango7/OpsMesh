@@ -395,7 +395,7 @@ operator/
 ### CRD Spec
 
 ```yaml
-apiVersion: ops.opsmesh.io/v1alpha1
+apiVersion: opsmesh.io/v1alpha1
 kind: OpsMeshInstance
 metadata:
   name: my-opsmesh
@@ -432,7 +432,7 @@ make deploy IMG=opsmesh/operator:latest
 
 ```bash
 kubectl apply -f - <<EOF
-apiVersion: ops.opsmesh.io/v1alpha1
+apiVersion: opsmesh.io/v1alpha1
 kind: OpsMeshInstance
 metadata:
   name: prod-instance

@@ -19,7 +19,7 @@ spec:
             component: agent
           annotations:
             summary: "OpsMesh agents offline"
-            description: "在线 agent 数 ({{ $value }}) 低于期望 (1) 已持续 5m，请检查 agent DaemonSet 状态与网络注册。"
+            description: "在线 agent 数 ({{ "{{ $value }}" }}) 低于期望 (1) 已持续 5m，请检查 agent DaemonSet 状态与网络注册。"
         # 任务失败率高：5m 内失败率 > 30%
         - alert: OpsMeshTaskFailureRateHigh
           expr: rate(opsmesh_tasks_total{status="failed"}[5m]) / rate(opsmesh_tasks_total[5m]) > 0.3

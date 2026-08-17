@@ -26,15 +26,16 @@ import (
 // 全程不依赖 mysql/redis（memory store），在沙箱内可完整验证。
 func TestE2E_TaskLifecycle(t *testing.T) {
 	cfg := &config.Config{
-		Mode:           "controlplane",
-		Store:          "memory",
-		Demo:           false,
-		EventBus:       "noop",
-		RequireAuth:    false,
-		GRPCPort:       0, // 系统分配，读回真实端口
-		HTTPPort:       0,
-		MetricsPort:    0,
-		TaskMaxRetries: 3,
+		Mode:                "controlplane",
+		Store:               "memory",
+		Demo:                false,
+		EventBus:            "noop",
+		RequireAuth:         false,
+		TrustGatewayHeaders: true, // P0-2 安全加固：e2e 测试用 X-User-Roles 头注入身份，需显式开启信任
+		GRPCPort:            0,    // 系统分配，读回真实端口
+		HTTPPort:            0,
+		MetricsPort:         0,
+		TaskMaxRetries:      3,
 	}
 	s := NewServer(cfg)
 

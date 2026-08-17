@@ -41,12 +41,14 @@ import (
 // demo=true 时放行 RBAC 闸（聚焦业务链路）；demo=false 时走真实权限校验（RBAC 专项）。
 // 安全债 85：预置 admin/operator/viewer 带 MustChangePassword=true，登录不签发 access token。
 // 集成测试聚焦业务链路，统一清除该标记模拟"已改密"状态（首登改密拦截由 auth_test 专门覆盖）。
+// P0-2 安全加固：demo=false 时启用 TrustGatewayHeaders=true，使 X-User-Roles 头注入路径生效
+// （RBAC 专项测试用网关注入身份而非 JWT，需显式开启信任；生产模式强制 false 由 config.Load 保障）。
 func newIntegrationServer(demo bool) *Server {
 	st := store.NewMemoryStore()
 	ss := store.NewInProcessSessionStore()
 	s := &Server{
 		store:        st,
-		cfg:          &config.Config{TaskMaxRetries: 3, Demo: demo, PublicRegister: true, AllowPublicRegister: true},
+		cfg:          &config.Config{TaskMaxRetries: 3, Demo: demo, PublicRegister: true, AllowPublicRegister: true, TrustGatewayHeaders: !demo},
 		jwtSecret:    []byte("test-jwt-secret-for-integration-m4-32bytes!"),
 		sessionStore: ss,
 		loginGuard:   newLoginGuard(ss),

@@ -134,9 +134,10 @@ jobs:
         #   G118 goroutine Background context（设计正确）/ G124 cookie Secure 由配置控制 /
         #   G202 参数化 SQL 误报 / G204 agent/helm 执行命令职责 / G304 配置路径文件读取 /
         #   G704 TODO 标记 / G705 embed 静态资源 / G101 cookie 名称常量。
-        #   G104（Errors unhandled）与 golangci-lint 的 errcheck 完全重叠，且 gosec 无法
-        #   按函数精确豁免（errcheck 已做 check-blank 关闭 + exclude-functions 精细豁免），
-        #   错误检查以 errcheck 为唯一权威，故整类排除。
+        #   G104（Errors unhandled）task 337 起从整类排除改为精细控制：gosec 命令行
+        #   不支持按路径/函数豁免，故 G104 错误检查以 golangci-lint 的 errcheck + gosec
+        #   为权威（.golangci.yml 中按 path/text 精细豁免设计上可忽略的调用），
+        #   gosec 独立扫描仍保留 G104 整类排除以避免与 errcheck 重复告警。
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@v2.25.0
           "$(go env GOPATH)/bin/gosec" -quiet \
@@ -240,8 +241,8 @@ jobs:
           IMAGE: ${{ secrets.REGISTRY }}/opsmesh-binary:${{ github.sha }}
         run: |
           echo "Signing image: ${IMAGE}"
-          # 安装 cosign
-          curl -sSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64
+          # 安装 cosign（task 337：钉死 v2.2.4，防 latest 供应链漂移）
+          curl -sSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
           chmod +x /usr/local/bin/cosign
           # 签名镜像（keyless 模式需要 OIDC，这里用 key-based 签名）
           COSIGN_EXPERIMENTAL=1 cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false ${IMAGE}
@@ -258,7 +259,8 @@ jobs:
         run: |
           echo "pinned tag = ${TAG}, digest = ${DIGEST}"
           command -v yq >/dev/null 2>&1 || {
-            curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
+            # task 337：钉死 yq v4.40.5，防 latest 供应链漂移
+            curl -sSL https://github.com/mikefarah/yq/releases/download/v4.40.5/yq_linux_amd64 -o /usr/local/bin/yq
             chmod +x /usr/local/bin/yq
           }
           git config --global user.email "ci@opsmesh"
@@ -281,10 +283,75 @@ jobs:
           git commit -m "ci: pin opsmesh-binary to ${TAG}" || exit 0
           git push || { echo "::warning::git push 失败，跳过"; exit 0; }
 
+  # E4/P0-7：agent 镜像构建/推送 —— 与 image job 对称，构建 Dockerfile.agent 推送 opsmesh-agent。
+  # Helm Chart（deploy/helm/opsmesh/values*.yaml）引用 opsmesh/opsmesh-agent:tag，
+  # 若 CI 不构建则部署必 ErrImagePull。tag 与 controlplane 一致（github.sha），保证可追溯。
+  # 同样依赖 REGISTRY/REGISTRY_USER/REGISTRY_TOKEN secret，未配置则自动跳过（与 image job 一致）。
+  image-agent:
+    runs-on: ubuntu-latest
+    needs: security
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check registry secret
+        id: check
+        env:
+          REGISTRY: ${{ secrets.REGISTRY }}
+        run: |
+          if [ -z "$REGISTRY" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "REGISTRY secret not set, skipping agent image build/push"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v4
+      - name: 登录镜像仓库
+        if: steps.check.outputs.skip != 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ secrets.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+      - name: 构建并推送 agent 镜像（钉死 digest）
+        if: steps.check.outputs.skip != 'true'
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.agent
+          push: true
+          # repository 名 opsmesh-agent 必须与 deploy/helm/opsmesh/values*.yaml
+          # 的 agent.image.repository 逐字一致（去掉 imageRegistry 前缀后）。
+          tags: ${{ secrets.REGISTRY }}/opsmesh-agent:${{ github.sha }}
+      - name: Trivy 镜像扫描（agent）
+        if: steps.check.outputs.skip != 'true'
+        uses: aquasecurity/trivy-action@v0.36.0  # task 91：钉死版本，防 @master 供应链漂移
+        with:
+          image-ref: ${{ secrets.REGISTRY }}/opsmesh-agent:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+      # P2-4 供应链安全：agent 镜像同样做 cosign 签名，与 controlplane image job 对称。
+      - name: cosign 签名镜像（agent，供应链安全，P2-4）
+        if: steps.check.outputs.skip != 'true' && env.COSIGN_PRIVATE_KEY != ''
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          IMAGE: ${{ secrets.REGISTRY }}/opsmesh-agent:${{ github.sha }}
+        run: |
+          echo "Signing image: ${IMAGE}"
+          # task 337：钉死 cosign v2.2.4，防 latest 供应链漂移
+          curl -sSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
+          chmod +x /usr/local/bin/cosign
+          COSIGN_EXPERIMENTAL=1 cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false ${IMAGE}
+          echo "Image signed successfully"
+
   # Release：推送 v* tag 时触发 goreleaser 跨平台发布（linux/amd64+arm64）。
   # 产物：tar.gz 归档 + sha256 checksums + SBOM（配置见 .goreleaser.yml）。
   # 仅在 build-test/integration/security 全绿后执行，避免发布未验证产物。
   # fetch-depth: 0 取全量历史，goreleaser 据此生成 changelog。
+  # task 337：安装 syft（SBOM 生成依赖）+ 钉死 goreleaser 版本 + cosign 签名产物。
   release:
     needs: [build-test, integration, security]
     if: startsWith(github.ref, 'refs/tags/v')
@@ -296,12 +363,47 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.26.6"
+      - name: 安装 syft（SBOM 生成依赖，task 337）
+        # .goreleaser.yml 声明 sboms.artifacts: archive，goreleaser 调用 syft 生成 SBOM。
+        # 钉死 syft v1.11.0，防 latest 供应链漂移。
+        run: |
+          curl -sSL https://github.com/anchore/syft/releases/download/v1.11.0/syft_1.11.0_linux_amd64.tar.gz \
+            -o /tmp/syft.tar.gz
+          tar -xzf /tmp/syft.tar.gz -C /tmp syft
+          sudo mv /tmp/syft /usr/local/bin/syft
+          syft version
       - uses: goreleaser/goreleaser-action@v7
         with:
-          version: latest
+          # task 337：钉死 goreleaser v2.4.8，防 latest 供应链漂移
+          version: v2.4.8
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # task 337：对 goreleaser 产物做 cosign 签名（供应链安全）。
+      # 签名 checksums.txt + 所有 tar.gz 归档 + SBOM 文件，生成 .sig 签名文件并上传到 Release。
+      # 条件守卫：COSIGN_PRIVATE_KEY secret 已配置时才签名，否则跳过（不影响发布）。
+      # --tlog-upload=false：不上传透明日志（内网/无 OIDC 场景）；
+      # cosign attach signature 把签名附加到 GitHub Release 资产。
+      - name: cosign 签名 goreleaser 产物（task 337）
+        if: env.COSIGN_PRIVATE_KEY != ''
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 安装 cosign（钉死 v2.2.4）
+          curl -sSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
+          chmod +x /usr/local/bin/cosign
+          # goreleaser 产物在 dist/ 目录下
+          echo "=== 签名 goreleaser 产物 ==="
+          for f in dist/checksums.txt dist/*.tar.gz dist/*.sbom.*; do
+            [ -f "$f" ] || continue
+            echo "签名: $f"
+            COSIGN_EXPERIMENTAL=1 cosign sign-blob --key env://COSIGN_PRIVATE_KEY \
+              --tlog-upload=false --output-signature "${f}.sig" "$f"
+          done
+          echo "=== 签名完成 ==="
+          ls -la dist/*.sig 2>/dev/null || echo "无签名文件生成"
 
   # G3/B-5：前端 CI —— Vue3 Enterprise（web/enterprise）。
   # npm ci 严格按 lockfile 安装；lint 静态检查；build 产出生产包；vitest run 跑单测（非 watch 模式）。

@@ -123,9 +123,35 @@ message PollCancelsResp {
   repeated string cancelled_task_ids = 1;
 }
 
+// LogLine agent 采集的单行日志（task 247 agent 日志上报 gRPC API）。
+// 字段语义对齐 internal/proto.LogLine（JSON 友好结构体），由 grpcx.LogLineToProto/Legacy 互转。
+message LogLine {
+  google.protobuf.Timestamp timestamp = 1;  // 日志行产生时间
+  string level = 2;                          // INFO / WARN / ERROR / DEBUG
+  string message = 3;                        // 日志正文（已去除行尾换行）
+}
+
+// LogReport agent 经 gRPC ReportLogs 上报到控制面的日志批次（task 247）。
+// 字段语义对齐 internal/proto.LogReport，由 grpcx.LogReportToProto/Legacy 互转。
+// TenantID 由控制面按 agent 归属回填（agent 不可伪造），agent 端可留空。
+message LogReport {
+  string agent_id = 1;                       // 上报 agent 的 ID（控制面据此查归属租户）
+  string tenant_id = 2;                      // 留空：控制面按 agent 归属回填
+  string hostname = 3;                       // agent 主机名（便于检索展示）
+  string log_name = 4;                       // 日志文件名/标识（如 /var/log/syslog）
+  repeated LogLine lines = 5;                // 日志行批次
+  google.protobuf.Timestamp collected_at = 6;  // 本批次采集时刻
+}
+
+// ReportLogsReq task 247 agent 日志上报请求：携带一个 LogReport 批次。
+// 控制面校验 agent 身份（HMAC 签名）后按 agent 归属租户落库（行级隔离）。
+message ReportLogsReq {
+  LogReport report = 1;
+}
+
 // Registration agent↔控制面 的注册通道服务。
 // 服务名 opsmesh.v1.Registration（带版本前缀，破坏性变更可灰度）。
-// 六个一元方法，无流式方法 —— 与 internal/grpcx.RegistrationServer 接口一一对应。
+// 七个一元方法，无流式方法 —— 与 internal/grpcx.RegistrationServer 接口一一对应。
 service Registration {
   rpc Register(AgentInfo) returns (RegisterResp);
   rpc Heartbeat(HeartbeatReq) returns (Empty);
@@ -133,4 +159,5 @@ service Registration {
   rpc ReportResult(TaskResult) returns (Empty);
   rpc CancelTask(CancelTaskReq) returns (Empty);
   rpc PollCancels(PollCancelsReq) returns (PollCancelsResp);
+  rpc ReportLogs(ReportLogsReq) returns (Empty);
 }

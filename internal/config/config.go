@@ -14,6 +14,19 @@ import (
 	"time"
 )
 
+// defaultAgentShellWhitelist 是 agent shell 白名单的预置安全默认值（P0-2+3 安全加固）。
+// 仅含只读诊断/查询命令，不含任何可修改系统状态或执行任意代码的命令（如 sh/bash/rm/mv/curl/wget/nc/python/perl）。
+// 跨平台覆盖：Linux/macOS 通用（ls/cat/echo/date/whoami/hostname/pwd/free/df/uptime/top/ps/netstat/ss）
+// + Windows（ipconfig/systeminfo）。网络诊断命令（ping/traceroute/curl 等）由 agent 端
+// isNetworkDiagnoseCommand 内置白名单放行，不在此列（避免与该机制重复）。
+// 当 --agent-shell-whitelist 未显式设置且 --agent-shell-whitelist-default=true（默认）时使用。
+const defaultAgentShellWhitelist = "ls,cat,echo,date,whoami,hostname,pwd,free,df,uptime,top,ps,netstat,ss,ipconfig,systeminfo"
+
+// DefaultAgentShellWhitelist 返回 agent shell 白名单的预置安全默认值（导出，供测试/外部包引用）。
+func DefaultAgentShellWhitelist() string {
+	return defaultAgentShellWhitelist
+}
+
 // Config 启动时解析出的运行参数。地址/端口全部走 flag，不硬编码任何密钥。
 type Config struct {
 	Mode        string // controlplane | agent
@@ -220,6 +233,13 @@ type Config struct {
 	//     空（默认）=不限制根目录（仍拒绝 ../ 路径遍历与符号链接）；非空=目标路径必须落在某个根目录之下。
 	AgentShellWhitelist    string
 	AgentFileRootWhitelist string
+	// P0-2+3 安全加固：agent shell 白名单默认开启。
+	// true（默认）=当 --agent-shell-whitelist 未显式设置时，自动填充一组安全的只读诊断命令白名单
+	//  （见 defaultAgentShellWhitelist），避免 agent 侧默认放行所有命令的 RCE 风险。
+	// false=保持原行为（未显式 --agent-shell-whitelist 时不限制，向后兼容 demo/受信内网）。
+	// 显式设置 --agent-shell-whitelist=... 时本字段被忽略（用户自定义优先）；
+	// 显式设置 --agent-shell-whitelist=""（显式空）时尊重用户意图（不限制）。
+	AgentShellWhitelistDefault bool
 
 	// task 81 gRPC agent 身份绑定：是否强制要求 agent 在 PullTasks/ReportResult/PollCancels/Heartbeat
 	// 请求中携带 HMAC 签名（agent-signature metadata）。开启后，控制面用该 agentID 对应的 secret 重新
@@ -240,6 +260,12 @@ type Config struct {
 	// 反向代理信任（安全运行于 LB/网关后时）：开启后 clientIP 信任 X-Forwarded-For 首段取真实客户端 IP；
 	// 默认 false=仅用 RemoteAddr（防止客户端伪造 XFF 绕过登录限流/审计）；仅当确有可信反代前置时才开启。
 	TrustProxy bool
+	// P0-2 安全加固：是否信任网关注入的 X-User-Roles 头作为身份来源。
+	// 默认 false（安全基线）：忽略 X-User-Roles 头，要求请求携带 Bearer token/Cookie 或经联邦验签；
+	//   这避免非生产模式下客户端自称 admin 即得 admin 权限的越权路径。
+	// true=信任 X-User-Roles 头（仅当确有可信网关（如 APISIX/IAM）前置剥离并注入该头时启用）；
+	//   生产模式（--production=true）下强制 false（即使显式 true 也覆盖），杜绝生产环境信任客户端可伪造的头。
+	TrustGatewayHeaders bool
 	// Cookie Secure 标志（task 112）：控制 at/rt HttpOnly Cookie 的 Secure 属性。
 	// true=Cookie 仅经 HTTPS 传输（浏览器不会在明文 HTTP 连接上回传），防中间人窃取会话；
 	// false=Cookie 亦经 HTTP 传输（内网明文部署/本地开发场景需要，否则会话丢失）。
@@ -437,6 +463,10 @@ func Load() *Config {
 	// 安全加固（task 78）：agent 侧命令白名单与文件任务根目录白名单。
 	agentShellWhitelist := flag.String("agent-shell-whitelist", "", "安全加固：agent shell 任务允许的命令前缀列表（逗号分隔，如 ls,cat,echo,ping,systemctl,docker,kubectl）；空=不限制（向后兼容，demo/受信内网）；非空=仅当命令第一个词匹配某前缀时放行；或 env OPSMESH_AGENT_SHELL_WHITELIST")
 	agentFileRootWhitelist := flag.String("agent-file-root-whitelist", "", "安全加固：agent 文件任务允许的根目录白名单（逗号分隔，如 /var/opsmesh/files,/etc/opsmesh）；空=不限制根目录（仍拒绝 ../ 路径遍历与符号链接）；非空=目标路径必须落在某个根目录之下；或 env OPSMESH_AGENT_FILE_ROOT_WHITELIST")
+	// P0-2+3 安全加固：agent shell 白名单默认开启。
+	// true（默认）=--agent-shell-whitelist 未显式设置时自动填充 defaultAgentShellWhitelist（只读诊断命令）；
+	// false=保持原行为（未显式设置时不限制）。显式 --agent-shell-whitelist=... 时本 flag 被忽略。
+	agentShellWhitelistDefault := flag.Bool("agent-shell-whitelist-default", true, "P0-2+3 安全加固：agent shell 白名单默认开启；true（默认）=未显式设置 --agent-shell-whitelist 时自动填充只读诊断命令白名单（ls/cat/echo/date/whoami/hostname/pwd/free/df/uptime/top/ps/netstat/ss/ipconfig/systeminfo）；false=保持原行为（不限制）；显式 --agent-shell-whitelist 时本 flag 被忽略；或 env OPSMESH_AGENT_SHELL_WHITELIST_DEFAULT")
 	// task 81 gRPC agent 身份绑定：强制要求 agent 请求携带 HMAC 签名。
 	grpcRequireSignature := flag.Bool("grpc-require-signature", false, "gRPC agent 身份绑定：强制要求 agent 在 PullTasks/ReportResult/PollCancels/Heartbeat 携带 HMAC 签名（防冒领任务/伪造上报）；demo 模式强制关闭；生产模式默认开启（除非显式 false）；或 env OPSMESH_GRPC_REQUIRE_SIGNATURE")
 	// P0 安全加固：gRPC 签名预共享密钥（控制面与 agent 两侧手动配置同一密钥）。
@@ -444,6 +474,10 @@ func Load() *Config {
 	// P2 安全运行于反向代理/LB 后：开启后 clientIP 信任 X-Forwarded-For 首段；默认 false 仅用 RemoteAddr，
 	// 防止客户端伪造 XFF 绕过登录限流与审计。仅当确有可信反代（如 APISIX/Nginx 注入真实 IP）前置时启用。
 	trustProxy := flag.Bool("trust-proxy", false, "信任反向代理：开启后 clientIP 取 X-Forwarded-For 首段（仅当有可信 LB/网关前置时启用）；默认 false=仅用 RemoteAddr 防 XFF 伪造绕过限流；或 env OPSMESH_TRUST_PROXY")
+	// P0-2 安全加固：信任网关注入的 X-User-Roles 头作为身份来源。
+	// 默认 false（安全基线，防客户端自称 admin 越权）；true=信任该头（仅当有可信网关前置剥离/注入时启用）；
+	// 生产模式（--production=true）下强制 false（即使显式 true 也覆盖），杜绝生产信任客户端可伪造的头。
+	trustGatewayHeaders := flag.Bool("trust-gateway-headers", false, "信任网关注入的 X-User-Roles 头：开启后 requireProd 走 authorizeByRoles 路径信任头中角色；默认 false=忽略该头（防客户端自称 admin 越权）；生产模式强制 false；或 env OPSMESH_TRUST_GATEWAY_HEADERS")
 	// task 112 Cookie Secure：控制 at/rt HttpOnly Cookie 的 Secure 属性。true=仅经 HTTPS 传输；
 	// 默认 false（明文内网/本地开发需要）；生产模式（--production=true）下默认 true（除非显式 false）。
 	// 或 env OPSMESH_COOKIE_SECURE。
@@ -618,9 +652,11 @@ func Load() *Config {
 		FederationPort:         valInt("federation-port", *federationPort, "OPSMESH_FEDERATION_PORT"),
 		AgentShellWhitelist:    val("agent-shell-whitelist", *agentShellWhitelist, "OPSMESH_AGENT_SHELL_WHITELIST"),
 		AgentFileRootWhitelist: val("agent-file-root-whitelist", *agentFileRootWhitelist, "OPSMESH_AGENT_FILE_ROOT_WHITELIST"),
+		AgentShellWhitelistDefault: valBool("agent-shell-whitelist-default", *agentShellWhitelistDefault, "OPSMESH_AGENT_SHELL_WHITELIST_DEFAULT"),
 		GRPCRequireSignature:   valBool("grpc-require-signature", *grpcRequireSignature, "OPSMESH_GRPC_REQUIRE_SIGNATURE"),
 		GRPCSignatureKey:       val("grpc-signature-key", *grpcSignatureKey, "OPSMESH_GRPC_SIGNATURE_KEY"),
 		TrustProxy:             valBool("trust-proxy", *trustProxy, "OPSMESH_TRUST_PROXY"),
+		TrustGatewayHeaders:    valBool("trust-gateway-headers", *trustGatewayHeaders, "OPSMESH_TRUST_GATEWAY_HEADERS"),
 		CookieSecure:           valBool("cookie-secure", *cookieSecure, "OPSMESH_COOKIE_SECURE"),
 		SessionStore:           val("session-store", *sessionStore, "OPSMESH_SESSION_STORE"),
 		DeviceFPDeadline:       parseDeviceFPDeadline(val("device-fp-deadline", *deviceFPDeadline, "OPSMESH_DEVICE_FP_DEADLINE")),
@@ -700,6 +736,21 @@ func Load() *Config {
 	//（明文 HTTP 下 Secure Cookie 会被浏览器拒绝回传，导致会话丢失）。
 	if cfg.Production && !explicit["cookie-secure"] {
 		cfg.CookieSecure = true
+	}
+	// P0-2 安全加固：生产模式强制不信任网关注入的 X-User-Roles 头（即使显式 --trust-gateway-headers=true
+	// 也覆盖为 false）。生产环境要求身份经 Bearer token/联邦验签/mTLS 等密码学手段验证，杜绝信任客户端
+	// 可伪造的头（非生产模式下若显式开启则尊重，用于内网部署有可信网关前置的场景）。
+	if cfg.Production && cfg.TrustGatewayHeaders {
+		fmt.Fprintln(os.Stderr, "[config] 警告：生产模式强制关闭 --trust-gateway-headers（X-User-Roles 头可被客户端伪造，生产身份须经 Bearer token/联邦验签/mTLS 验证）；已覆盖为 false")
+		cfg.TrustGatewayHeaders = false
+	}
+	// P0-2+3 安全加固：agent shell 白名单默认开启。
+	// 当 --agent-shell-whitelist 未显式设置（且 env OPSMESH_AGENT_SHELL_WHITELIST 也未设置）且
+	// --agent-shell-whitelist-default=true（默认）时，自动填充 defaultAgentShellWhitelist（只读诊断命令）。
+	// 显式设置 --agent-shell-whitelist=...（含显式空）时尊重用户意图，不填充默认。
+	// 这避免 agent 侧默认放行所有命令的 RCE 风险，同时保持向后兼容（用户显式 "" 可关闭白名单）。
+	if cfg.AgentShellWhitelist == "" && cfg.AgentShellWhitelistDefault && !explicit["agent-shell-whitelist"] {
+		cfg.AgentShellWhitelist = defaultAgentShellWhitelist
 	}
 	if cfg.Production && cfg.PublicRegister {
 		fmt.Fprintln(os.Stderr, "[config] 警告：生产模式开启 --public-register=true，公开注册开放但新用户须管理员审批（建议生产关闭 --public-register=false）")

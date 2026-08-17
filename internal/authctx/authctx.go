@@ -12,10 +12,11 @@
 // 缺失头时（开发 / 单机模式，无网关）视为单一隐式租户，放行全部——
 // 这是 MVP 单租户（U-02 多团队逻辑隔离）的合理降级，不是越权。
 //
-// M3-2A JWT 验签（可选启用）：当配置了网关 RSA 公钥时，FromRequest 优先从
+// M3-2A JWT 验签（可选启用）：当配置了网关 RSA 公钥时，FromRequest 强制从
 // Authorization: Bearer <token> 提取并 RS256 验签，从 claims 取 tenant_id/
 // user_id/user_roles，作为"网关注入 + 内核二次校验"的纵深防御。
-// 未配置公钥时回退到 FromHTTPHeader 头注入模式（向后兼容）。
+// 启用 JWT 验签时必须携带有效 token，未携带或验签失败均返回错误（401），
+// 不再回退到头注入模式以防越权。未配置公钥时才回退到头注入模式（向后兼容）。
 package authctx
 
 import (
@@ -133,7 +134,8 @@ const (
 )
 
 // ErrNoJWTToken 表示请求未携带 Authorization: Bearer <token> 头。
-// 调用方可据此决定是否回退到头注入模式（FromRequest 已内置回退）。
+// 当 JWT 验签启用（Enabled && PublicKey!=nil）时，FromRequest 返回此错误，
+// 调用方应据此拒绝请求（401），不再回退到头注入模式以防越权。
 var ErrNoJWTToken = errors.New("authctx: 未携带 Authorization Bearer token")
 
 // LoadJWTPublicKey 从 PEM 文件加载 RSA 公钥。
@@ -214,7 +216,8 @@ func FromJWT(h http.Header, publicKey *rsa.PublicKey, issuer string) (Context, e
 	return c, nil
 }
 
-// FromRequest 按配置选择身份提取路径：JWT 验签优先，未配置或无 token 时回退头注入。
+// FromRequest 按配置选择身份提取路径：JWT 验签启用时强制走 JWT 路径，
+// 未启用时回退到头注入模式（MVP 兼容）。
 //
 // 推荐用法（server.go / grpc.go 入口）：
 //
@@ -222,20 +225,23 @@ func FromJWT(h http.Header, publicKey *rsa.PublicKey, issuer string) (Context, e
 //	c, err := authctx.FromRequest(r.Header, jwtCfg)
 //	if err != nil { /* 401 */ }
 //
-// 行为矩阵：
-//   - Enabled && PublicKey!=nil && 携带有效 token → 返回 JWT 提取的 Context, nil
-//   - Enabled && PublicKey!=nil && token 验签失败 → 返回零值, error（调用方应 401）
-//   - Enabled && PublicKey!=nil && 未携带 token → 回退 FromHTTPHeader, nil（兼容网关仅注入头场景）
-//   - !Enabled || PublicKey==nil → 直接 FromHTTPHeader, nil（MVP 头注入模式）
+// 行为矩阵（M3-2B 安全加固：JWT 启用时禁止无 token 回退头注入）：
+//   - Enabled && PublicKey!=nil && 携带有效 token   → 返回 JWT 提取的 Context, nil
+//   - Enabled && PublicKey!=nil && token 验签失败   → 返回零值, error（调用方应 401）
+//   - Enabled && PublicKey!=nil && 未携带 token     → 返回零值, ErrNoJWTToken（调用方应 401，不回退头注入）
+//   - Enabled && PublicKey!=nil && Authorization 非 Bearer 格式 → 返回零值, error（调用方应 401）
+//   - !Enabled || PublicKey==nil                   → 直接 FromHTTPHeader, nil（MVP 头注入模式）
+//
+// 安全语义：当 JWT 验签启用时，必须携带有效 Bearer token，攻击者无法通过省略
+// Authorization 头并伪造 X-Tenant-ID 头来绕过身份校验。
 func FromRequest(h http.Header, cfg JWTConfig) (Context, error) {
 	if cfg.Enabled && cfg.PublicKey != nil {
-		// 仅当携带 Authorization 头时走 JWT 路径，否则回退头注入（兼容混合部署）。
-		if _, err := extractBearerToken(h); err == nil {
-			return FromJWT(h, cfg.PublicKey, cfg.Issuer)
-		}
-		// 未携带 token：回退头注入模式（不视为错误，便于渐进迁移）。
-		return FromHTTPHeader(h), nil
+		// JWT 验签启用：强制走 JWT 路径，不回退头注入模式。
+		// - 携带有效 token → FromJWT 验签并提取 claims
+		// - token 验签失败 / 非 Bearer 格式 / 未携带 token → 返回 error，调用方应 401
+		return FromJWT(h, cfg.PublicKey, cfg.Issuer)
 	}
+	// 未启用 JWT 验签：回退头注入模式（MVP 兼容，需在可信网关后部署）。
 	return FromHTTPHeader(h), nil
 }
 

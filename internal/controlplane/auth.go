@@ -739,7 +739,9 @@ func getRolePermCache() map[string][]string {
 //   - 联邦入站（X-Federation-Forwarded=1）：必须经 verifyFederationRequest 验签 HMAC 通过，
 //     信任来自可信控制面 peer 的请求（用户级 RBAC 已在来源控制面执行）；验签失败 → 403。
 //   - Authorization: Bearer（或 opsmesh_at Cookie）：走 JWT 路径（requirePermission）。
-//   - 网关注入 X-User-Roles（角色名）：展开为权限集合后校验（authorizeByRoles）。
+//   - 网关注入 X-User-Roles（角色名）：仅当 cfg.TrustGatewayHeaders=true 时才信任该头并展开为权限
+//     集合后校验（authorizeByRoles）；否则该头被忽略，继续走 demo/拒绝路径。生产模式强制 false
+//     （见 config.go），杜绝客户端自称 admin 即得 admin 权限的越权路径。
 //   - demo 模式且无任何身份头：放行，保持本地一键体验的宽松语义（与 requireTenantContext 一致）。
 //   - 其余：401。
 //
@@ -765,8 +767,10 @@ func (s *Server) requireProd(w http.ResponseWriter, r *http.Request, required st
 	if hasBearer || hasCookie {
 		return s.requirePermission(w, r, required)
 	}
-	// 3. 网关注入路径：X-User-Roles 携带角色名。
-	if strings.TrimSpace(r.Header.Get("X-User-Roles")) != "" {
+	// 3. 网关注入路径：仅当显式开启 TrustGatewayHeaders 时才信任 X-User-Roles 头。
+	//    P0-2 安全加固：默认 false（生产模式强制 false），防客户端伪造 X-User-Roles: admin 越权。
+	//    若未开启则该头被忽略，继续向下走 demo 模式或拒绝路径。
+	if s.cfg != nil && s.cfg.TrustGatewayHeaders && strings.TrimSpace(r.Header.Get("X-User-Roles")) != "" {
 		return s.authorizeByRoles(w, r, required)
 	}
 	// 4. demo 模式宽松放行（无身份，自动填充 default/demo）。

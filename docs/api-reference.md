@@ -1,6 +1,6 @@
 # OpsMesh API 参考文档
 
-本文档完整描述 OpsMesh 控制面 HTTP REST API（端口 8080）与 gRPC API（端口 9090）。
+本文档完整描述 OpsMesh 控制面 HTTP REST API（端口 8080）与 gRPC API（端口 9090），覆盖 `internal/controlplane/` 下所有 `server_*.go` 注册的 HTTP 路由（含 helm、approval、schedules、secrets、quotas、os-templates、middleware-templates、k8s/clusters、k8s/resources、network、notify、alert-rules-engine 等模块）。
 
 - **Base URL**：`http://<controlplane-host>:8080`
 - **Metrics 端点**：`http://<controlplane-host>:9091/metrics`（独立端口，非 8080）
@@ -9,6 +9,7 @@
 - **请求体上限**：1 MiB（`http.MaxBytesReader`，超出返回 413）
 - **租户隔离**：所有业务接口通过 `X-Tenant-ID` 头做行级隔离；`--require-auth=true` 时缺失该头返回 401
 - **认证**：`Authorization: Bearer <jwt>` 或 HttpOnly Cookie `at`（access token）；管理类接口需对应角色
+- **权限模型**：写操作普遍要求 `<module>:write`，读操作要求 `<module>:read`，审批类要求 `<module>:approve`；admin 角色拥有 `*` 通配权限
 
 ## 目录
 
@@ -20,13 +21,25 @@
 - [设备 API](#设备-api)
 - [Agent API](#agent-api)
 - [任务 API](#任务-api)
+- [批量运维与灰度发布 API](#批量运维与灰度发布-api)
+- [定时任务管理 API](#定时任务管理-api)
 - [告警 API](#告警-api)
+- [告警规则引擎 API](#告警规则引擎-api)
+- [告警静默 API](#告警静默-api)
+- [通知渠道 API](#通知渠道-api)
+- [通知模板 API](#通知模板-api)
 - [部署 API](#部署-api)
+- [Helm 应用商店 API](#helm-应用商店-api)
 - [作业编排 API](#作业编排-api)
+- [审批 API](#审批-api)
 - [CMDB API](#cmdb-api)
+- [CMDB 采集与变更审批 API](#cmdb-采集与变更审批-api)
 - [OS 优化 API](#os-优化-api)
 - [中间件部署 API](#中间件部署-api)
 - [K8s 管理 API](#k8s-管理-api)
+- [网络拓扑与诊断 API](#网络拓扑与诊断-api)
+- [密钥管理 API](#密钥管理-api)
+- [租户配额 API](#租户配额-api)
 - [审计 API](#审计-api)
 - [日志 API](#日志-api)
 - [联邦 API](#联邦-api)
@@ -549,6 +562,236 @@ agent 清单。
 
 ---
 
+## 批量运维与灰度发布 API
+
+M5 增强：批量执行（多设备 + 同一任务，返回 batchID + 每设备任务详情）与灰度发布（按比例/分组/标签分阶段执行）。状态仅内存索引（重启后丢失，可通过 batchID 查询活跃批次），任务实例本身持久化在 store 中。
+
+### POST /api/v1/tasks/batch-exec
+
+批量执行同一任务到多台设备。每台设备经 `lookupAgent` 解析 + 租户校验，逐台创建任务并审计。
+
+- **认证**：需 `task:write` 权限
+- **请求体**：
+
+```json
+{
+  "deviceIDs": ["d-001", "d-002"],
+  "taskType": "shell",
+  "command": "uptime",
+  "content": "",
+  "path": "",
+  "timeout": 120
+}
+```
+
+- `taskType`：`shell` | `service` | `file`（默认 `shell`）
+- `command`：必填；`taskType=shell` 时经 `validateCommand` 校验
+- **响应**：`201 Created`
+
+```json
+{
+  "batchID": "batch-3f2a1b8c9d0e",
+  "tasks": [
+    {"deviceID": "d-001", "taskID": "t-001", "status": "pending"},
+    {"deviceID": "d-002", "status": "failed", "error": "agent not found or tenant mismatch"}
+  ]
+}
+```
+
+### GET /api/v1/tasks/batch/{id}
+
+查询批量任务状态（实时刷新每个子任务状态）。
+
+- **认证**：需 `task:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "batchID": "batch-3f2a1b8c9d0e",
+  "taskType": "shell",
+  "command": "uptime",
+  "createdAt": "2026-08-17T09:00:00Z",
+  "createdBy": "u-001",
+  "tasks": [
+    {"deviceID": "d-001", "taskID": "t-001", "status": "done"}
+  ]
+}
+```
+
+- 不存在：`404`；租户不匹配：`403`
+
+### POST /api/v1/tasks/canary
+
+创建灰度发布。按策略划分阶段，立即执行第一阶段，其余阶段标记 pending（手动 advance 或后续自动推进）。
+
+- **认证**：需 `task:write` 权限
+- **请求体**：
+
+```json
+{
+  "deviceIDs": ["d-001", "d-002", "d-003", "d-004"],
+  "taskType": "shell",
+  "command": "deploy.sh",
+  "strategy": "percentage",
+  "percentage": 25
+}
+```
+
+- `strategy`：`percentage`（按比例分两阶段）/ `group`（按分组多阶段）/ `label`（按标签单阶段）
+- `percentage`：1-100，strategy=percentage 时有效，默认 10
+- `groups`：string[]，strategy=group 时有效，按组数等分 deviceIDs
+- `labels`：map<string,string>，strategy=label 时有效（实际筛选由调用方在 deviceIDs 中完成）
+- **响应**：`201 Created`
+
+```json
+{
+  "canaryID": "canary-1a2b3c4d5e6f",
+  "phases": [
+    {"phase": 1, "deviceIDs": ["d-001"], "status": "running"},
+    {"phase": 2, "deviceIDs": ["d-002", "d-003", "d-004"], "status": "pending"}
+  ]
+}
+```
+
+### GET /api/v1/tasks/canary/{id}
+
+查询灰度发布状态（实时刷新各阶段任务状态）。
+
+- **认证**：需 `task:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "canaryID": "canary-1a2b3c4d5e6f",
+  "strategy": "percentage",
+  "taskType": "shell",
+  "command": "deploy.sh",
+  "createdAt": "2026-08-17T09:00:00Z",
+  "createdBy": "u-001",
+  "phases": [
+    {
+      "phase": 1,
+      "deviceIDs": ["d-001"],
+      "status": "done",
+      "tasks": [{"deviceID": "d-001", "taskID": "t-001", "status": "done"}],
+      "startedAt": "2026-08-17T09:00:00Z",
+      "finishedAt": "2026-08-17T09:00:05Z"
+    }
+  ]
+}
+```
+
+### POST /api/v1/tasks/canary/{id}/advance
+
+推进灰度到下一 pending 阶段。
+
+- **认证**：需 `task:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，`{"canaryID": "canary-...", "phase": 2, "status": "running"}`
+- 无 pending 阶段：`400`，`{"error": "no pending phase to advance"}`
+
+---
+
+## 定时任务管理 API
+
+M5 定时任务管理：基于 `internal/cron.Manager`，对已有任务附加 cron 表达式实现周期触发。Server 持有 `*cron.Manager` 实例。
+
+### GET /api/v1/schedules
+
+定时任务列表（按租户过滤）。
+
+- **认证**：需 `schedule:read` 权限
+- **查询参数**：`status`（active/paused/error）
+- **响应**：`200 OK`
+
+```json
+{
+  "schedules": [
+    {
+      "id": "sch-001",
+      "taskID": "t-template-001",
+      "name": "每5分钟健康检查",
+      "cronExpr": "*/5 * * * *",
+      "status": "active",
+      "tenantID": "t1",
+      "createdBy": "u-001"
+    }
+  ],
+  "total": 1
+}
+```
+
+### POST /api/v1/schedules
+
+创建定时任务（绑定到已有模板任务，模板任务须设置 Schedule 字段）。
+
+- **认证**：需 `schedule:write` 权限
+- **请求体**：
+
+```json
+{
+  "taskID": "t-template-001",
+  "name": "每5分钟健康检查",
+  "cronExpr": "*/5 * * * *"
+}
+```
+
+- `taskID`：必填，指向已存在的模板任务
+- `cronExpr`：5 字段标准 cron 表达式
+- **响应**：`201 Created`，返回完整 `ScheduleEntry`
+
+### GET /api/v1/schedules/{id}
+
+定时任务详情。
+
+- **认证**：需 `schedule:read` 权限
+- **响应**：`200 OK`，返回 `ScheduleEntry`
+- 不存在：`404`；租户不匹配：`403`
+
+### PUT /api/v1/schedules/{id}
+
+更新定时任务（名称、cron 表达式、状态）。
+
+- **认证**：需 `schedule:write` 权限
+- **请求体**：
+
+```json
+{
+  "name": "每10分钟健康检查",
+  "cronExpr": "*/10 * * * *",
+  "status": "active"
+}
+```
+
+- **响应**：`200 OK`，返回更新后的 `ScheduleEntry`
+
+### DELETE /api/v1/schedules/{id}
+
+删除定时任务。
+
+- **认证**：需 `schedule:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted", "id": "sch-001"}`
+
+### POST /api/v1/schedules/{id}/pause
+
+暂停定时任务。
+
+- **认证**：需 `schedule:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回状态为 `paused` 的 `ScheduleEntry`
+- 同时发布 SSE 事件 `schedule_status`，data: `{"scheduleID":"sch-001","status":"paused"}`
+
+### POST /api/v1/schedules/{id}/resume
+
+恢复定时任务。
+
+- **认证**：需 `schedule:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回状态为 `active` 的 `ScheduleEntry`
+- 同时发布 SSE 事件 `schedule_status`，data: `{"scheduleID":"sch-001","status":"active"}`
+
+---
+
 ## 告警 API
 
 ### GET /api/v1/alerts
@@ -613,6 +856,242 @@ agent 清单。
 
 ---
 
+## 告警规则引擎 API
+
+M2 多条件告警规则引擎：基于 `alertengine.Engine`，支持多条件 + 逻辑组合（AND/OR/NOT）+ 持续时长 + 通知渠道选择 + 静默关联。走独立路由 `/api/v1/alert-rules-engine` 以与旧版单条件 `/api/v1/alert-rules` 向后兼容。
+
+### GET /api/v1/alert-rules-engine
+
+列出当前租户的多条件告警规则。
+
+- **认证**：需 `alert:read` 权限
+- **响应**：`200 OK`，返回 `AlertRule[]`
+
+```json
+[
+  {
+    "id": "ar-eng-3f2a1b8c",
+    "tenantID": "t1",
+    "name": "CPU 与内存双高",
+    "conditions": [
+      {"metric": "cpu_usage", "op": ">", "threshold": 0.9},
+      {"metric": "mem_usage", "op": ">", "threshold": 0.85}
+    ],
+    "logic": "AND",
+    "duration": 300000000000,
+    "severity": "critical",
+    "notifyChannels": ["ch-001"],
+    "silenceID": "",
+    "labels": {"team": "sre"}
+  }
+]
+```
+
+### POST /api/v1/alert-rules-engine
+
+创建多条件告警规则。
+
+- **认证**：需 `alert:write` 权限
+- **请求体**：同上 `AlertRule`（`id` 未提供时自动生成 `ar-eng-<8hex>`，`tenantID` 由请求上下文注入）
+- **响应**：`201 Created`，返回完整 `AlertRule`
+
+### GET /api/v1/alert-rules-engine/{id}
+
+获取单条规则详情。
+
+- **认证**：需 `alert:read` 权限
+- **响应**：`200 OK`，返回 `AlertRule`
+- 不存在或跨租户：`404`
+
+### PUT /api/v1/alert-rules-engine/{id}
+
+更新规则。
+
+- **认证**：需 `alert:write` 权限
+- **请求体**：完整 `AlertRule`（`id` 取路径参数，`tenantID` 由请求上下文注入）
+- **响应**：`200 OK`，返回更新后的 `AlertRule`
+
+### DELETE /api/v1/alert-rules-engine/{id}
+
+删除规则。
+
+- **认证**：需 `alert:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted", "id": "ar-eng-3f2a1b8c"}`
+- 不存在或跨租户：`404`
+
+---
+
+## 告警静默 API
+
+M2 静默规则：基于标签匹配 + 时间窗口抑制。`store.SilenceRule` 持久化，`alertengine.Silencer` 内存索引同步注入使评估循环立即生效。
+
+### GET /api/v1/alert-silences
+
+列出当前租户的静默规则。
+
+- **认证**：需 `alert:read` 权限
+- **响应**：`200 OK`，返回 `SilenceRule[]`
+
+```json
+[
+  {
+    "id": "sil-001",
+    "tenantID": "t1",
+    "matchLabels": {"severity": "warning"},
+    "startAt": "2026-08-17T09:00:00Z",
+    "endAt": "2026-08-17T10:00:00Z",
+    "createdBy": "u-001",
+    "reason": "维护窗口静默"
+  }
+]
+```
+
+### POST /api/v1/alert-silences
+
+创建静默规则（同步注入 `alertengine.Silencer`）。
+
+- **认证**：需 `alert:write` 权限
+- **请求体**：同上 `SilenceRule`（`tenantID`、`createdBy` 由请求上下文注入）
+- **响应**：`201 Created`，返回完整 `SilenceRule`
+
+### DELETE /api/v1/alert-silences/{id}
+
+删除静默规则（同步从 `alertengine.Silencer` 移除）。
+
+- **认证**：需 `alert:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted", "id": "sil-001"}`
+- 不存在或跨租户：`404`
+
+---
+
+## 通知渠道 API
+
+M2 通知渠道：支持 webhook / 钉钉 / 飞书 / 企微 / SMTP / Slack 等。`Config` 字段在列表/创建返回时脱敏（`secret/password/token/pass/apiKey/api_key` 替换为 `***`）。Webhook URL 经 SSRF 校验（`validateNotifyChannelWebhook`，受 `--webhook-allow-private` 控制）。
+
+### GET /api/v1/notify-channels
+
+通知渠道列表（Config 脱敏）。
+
+- **认证**：需 `alert:read` 权限
+- **响应**：`200 OK`，返回 `NotifyChannel[]`
+
+```json
+[
+  {
+    "id": "ch-001",
+    "tenantID": "t1",
+    "name": "SRE 钉钉群",
+    "type": "dingtalk",
+    "enabled": true,
+    "config": "{\"token\":\"***\"}"
+  }
+]
+```
+
+### POST /api/v1/notify-channels
+
+创建通知渠道。
+
+- **认证**：需 `alert:write` 权限
+- **请求体**：`NotifyChannel`（`tenantID` 由请求上下文注入）
+- **响应**：`201 Created`，返回脱敏后的 `NotifyChannel`
+- Webhook SSRF 校验失败：`400`，`{"error": "webhook URL SSRF validation failed: ..."}`
+
+### PUT /api/v1/notify-channels/{id}
+
+更新渠道。
+
+- **认证**：需 `alert:write` 权限
+- **请求体**：完整 `NotifyChannel`
+- **响应**：`200 OK`，返回更新后的 `NotifyChannel`
+- 不存在：`404`
+
+### DELETE /api/v1/notify-channels/{id}
+
+删除渠道。
+
+- **认证**：需 `alert:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted", "id": "ch-001"}`
+- 不存在或跨租户：`404`
+
+### POST /api/v1/notify-channels/{id}/test
+
+测试发送一条通知到指定渠道（不进入聚合 / 静默 / 抑制链路）。
+
+- **认证**：需 `alert:read` 权限
+- **请求体**（可选）：
+
+```json
+{
+  "title": "测试通知",
+  "body": "这是一条测试通知"
+}
+```
+
+- 缺省使用内置测试消息：`title="OpsMesh 测试通知"`，`body="来自渠道 <name>（类型 <type>）的测试通知，发送时间 <now>"`
+- **响应**：`200 OK`
+
+```json
+{"status": "ok", "message": "test notification sent"}
+```
+
+- 发送失败：`200 OK`，`{"status": "fail", "error": "..."}`
+- 渠道不存在或跨租户：`404`；渠道配置错误：`400`
+
+---
+
+## 通知模板 API
+
+M2 通知模板：按事件类型 / 严重度定制通知正文（Markdown / 纯文本 / HTML）。
+
+### GET /api/v1/notify-templates
+
+通知模板列表。
+
+- **认证**：需 `alert:read` 权限
+- **响应**：`200 OK`，返回 `NotifyTemplate[]`
+
+```json
+[
+  {
+    "id": "tpl-001",
+    "tenantID": "t1",
+    "name": "critical 告警模板",
+    "type": "alert",
+    "format": "markdown",
+    "titleTmpl": "[CRITICAL] {{.DeviceID}}",
+    "bodyTmpl": "设备 {{.DeviceID}} 触发 {{.Metric}} = {{.Value}}"
+  }
+]
+```
+
+### POST /api/v1/notify-templates
+
+创建通知模板。
+
+- **认证**：需 `alert:write` 权限
+- **请求体**：同上 `NotifyTemplate`（`tenantID` 由请求上下文注入）
+- **响应**：`201 Created`，返回完整 `NotifyTemplate`
+
+### PUT /api/v1/notify-templates/{id}
+
+更新模板。
+
+- **认证**：需 `alert:write` 权限
+- **请求体**：完整 `NotifyTemplate`
+- **响应**：`200 OK`，返回更新后的 `NotifyTemplate`
+- 不存在：`404`
+
+### DELETE /api/v1/notify-templates/{id}
+
+删除模板。
+
+- **认证**：需 `alert:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted", "id": "tpl-001"}`
+- 不存在或跨租户：`404`
+
+---
+
 ## 部署 API
 
 M3 部署中心：计划 + fan-out 执行 + Reconcile + Rollback。
@@ -667,6 +1146,250 @@ M3 部署中心：计划 + fan-out 执行 + Reconcile + Rollback。
 回滚部署。
 
 - **响应**：`200 OK`，`{"message": "回滚已触发", "rollback_id": "dp-001-rb"}`
+
+### GET /api/v1/deploys/federation
+
+列出联邦发布计划（task 280 多集群联邦发布，复用 deployMux）。
+
+- **认证**：需 `deploy:read` 权限
+- **查询参数**：`status`（planning/running/success/failed/rolled_back）
+- **响应**：`200 OK`，返回 `FederationDeploy[]`
+- 联邦未启用：`501 Not Implemented`，`{"error": "federation not enabled"}`
+
+### POST /api/v1/deploys/federation
+
+创建联邦发布计划（跨多集群成员的统一部署）。
+
+- **认证**：需 `deploy:write` 权限
+- **请求体**：`FederationDeploy`（`tenantID`、`createdBy` 由请求上下文注入）
+
+```json
+{
+  "name": "nginx 跨集群发布",
+  "members": [
+    {"clusterID": "k8s-001", "weight": 50},
+    {"clusterID": "k8s-002", "weight": 50}
+  ],
+  "deployID": "dp-001",
+  "strategy": "canary"
+}
+```
+
+- **响应**：`201 Created`，返回完整 `FederationDeploy`
+
+### GET /api/v1/deploys/federation/{id}
+
+查询联邦发布详情。
+
+- **认证**：需 `deploy:read` 权限
+- **响应**：`200 OK`，返回 `FederationDeploy`
+- 不存在：`404`
+
+### POST /api/v1/deploys/federation/{id}/execute
+
+启动联邦发布（派发首批成员）。
+
+- **认证**：需 `deploy:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回更新后的 `FederationDeploy`
+
+### POST /api/v1/deploys/federation/{id}/promote
+
+推进到下一批成员（按 weight 分批）。
+
+- **认证**：需 `deploy:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回更新后的 `FederationDeploy`
+
+### POST /api/v1/deploys/federation/{id}/rollback
+
+回滚全部已派发成员。
+
+- **认证**：需 `deploy:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回更新后的 `FederationDeploy`
+
+### GET /api/v1/deploys/federation/{id}/status
+
+联邦级状态聚合视图（各成员集群执行状态汇总）。
+
+- **认证**：需 `deploy:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "id": 1,
+  "overall": "running",
+  "members": [
+    {"clusterID": "k8s-001", "status": "success", "progress": 100},
+    {"clusterID": "k8s-002", "status": "running", "progress": 50}
+  ]
+}
+```
+
+- 不存在：`404`，`{"error": "federation not found"}`
+
+---
+
+## Helm 应用商店 API
+
+M3 集成：Helm 仓库 / Chart / Release / 预置目录管理。后端依赖 `internal/helm` 包（`RepoManager` / `ReleaseManager` / `DefaultCatalog`），HTTP 层仅做参数解析与错误转换。helm CLI 不存在时各端点返回 `503`，不阻断控制面启动。
+
+### GET /api/v1/helm/repos
+
+列出所有已注册的 Helm 仓库。
+
+- **认证**：需 `helm:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "repos": [
+    {"name": "bitnami", "url": "https://charts.bitnami.com/bitnami", "type": "https"}
+  ]
+}
+```
+
+- helm 未初始化：`503`，`{"error": "helm not initialized"}`
+
+### POST /api/v1/helm/repos
+
+添加 Helm 仓库。
+
+- **认证**：需 `helm:write` 权限
+- **请求体**：
+
+```json
+{
+  "name": "bitnami",
+  "url": "https://charts.bitnami.com/bitnami",
+  "type": "https"
+}
+```
+
+- `name`、`url`：必填
+- `type`：仓库类型（`https` / `oci` / `local`，可空）
+- **响应**：`201 Created`，返回 `ChartRepo`
+
+### DELETE /api/v1/helm/repos/{name}
+
+删除 Helm 仓库。
+
+- **认证**：需 `helm:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted", "name": "bitnami"}`
+- 仓库不存在：`404`；helm CLI 不存在：`503`
+
+### GET /api/v1/helm/repos/{name}/charts
+
+列出指定仓库的所有 chart。
+
+- **认证**：需 `helm:read` 权限
+- **响应**：`200 OK`，`{"charts": [...]}`
+
+### GET /api/v1/helm/charts/search
+
+跨仓库搜索 chart。
+
+- **认证**：需 `helm:read` 权限
+- **查询参数**：`q`（必填，关键词）
+- **响应**：`200 OK`，`{"charts": [...], "query": "nginx"}`
+- 缺 `q`：`400`，`{"error": "q parameter required"}`
+
+### GET /api/v1/helm/releases
+
+列出 release。
+
+- **认证**：需 `helm:read` 权限
+- **查询参数**：`namespace`（空则列所有 namespace）
+- **响应**：`200 OK`，`{"releases": [...]}`
+
+### POST /api/v1/helm/releases
+
+安装 release。
+
+- **认证**：需 `helm:write` 权限
+- **请求体**：
+
+```json
+{
+  "namespace": "default",
+  "name": "my-nginx",
+  "chart": "bitnami/nginx",
+  "values": {"service": {"type": "LoadBalancer"}}
+}
+```
+
+- `namespace`、`name`、`chart`：必填
+- **响应**：`201 Created`，返回 `Release`
+
+### PUT /api/v1/helm/releases/{name}
+
+升级 release。
+
+- **认证**：需 `helm:write` 权限
+- **请求体**：
+
+```json
+{
+  "namespace": "default",
+  "chart": "bitnami/nginx",
+  "values": {"service": {"type": "ClusterIP"}}
+}
+```
+
+- `namespace`、`chart`：必填
+- **响应**：`200 OK`，返回更新后的 `Release`
+
+### DELETE /api/v1/helm/releases/{name}
+
+卸载 release。
+
+- **认证**：需 `helm:write` 权限
+- **查询参数**：`namespace`（必填）
+- **响应**：`200 OK`，`{"status": "uninstalled", "name": "my-nginx"}`
+- 缺 `namespace`：`400`
+
+### POST /api/v1/helm/releases/{name}/rollback
+
+回滚 release 到指定版本（省略 `revision` 则回滚到上一版本）。
+
+- **认证**：需 `helm:write` 权限
+- **请求体**：
+
+```json
+{
+  "namespace": "default",
+  "revision": 2
+}
+```
+
+- `namespace`：必填
+- **响应**：`200 OK`，返回回滚后的 `Release`
+
+### GET /api/v1/helm/releases/{name}/history
+
+获取 release 历史。
+
+- **认证**：需 `helm:read` 权限
+- **查询参数**：`namespace`（必填）
+- **响应**：`200 OK`，`{"history": [...], "name": "my-nginx"}`
+
+### GET /api/v1/helm/catalog
+
+预置应用目录（`helm.DefaultCatalog` 静态目录）。
+
+- **认证**：需 `helm:read` 权限
+- **查询参数**：`category`（按分类过滤）、`q`（搜索关键词）
+- **响应**：`200 OK`
+
+```json
+{
+  "categories": ["web", "database", "queue"],
+  "charts": [
+    {"name": "nginx", "category": "web", "version": "1.25", "description": "Nginx web server"}
+  ]
+}
+```
 
 ---
 
@@ -731,6 +1454,142 @@ M5 作业编排：DAG 创建 / 触发 / 状态查询。
 ### GET /api/v1/workflows/{id}/runs
 
 工作流执行历史。
+
+---
+
+## 审批 API
+
+M5 审批中心：审批流定义 + 审批请求生命周期。依赖 `internal/approval.Engine`，Server 持有 `*approval.Engine` 实例。所有写操作触发审计 + 事件总线发布；审批状态变更同步发布 SSE 事件 `approval_status`。
+
+### GET /api/v1/approval/flows
+
+列出审批流（按租户过滤）。
+
+- **认证**：需 `approval:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "flows": [
+    {
+      "id": "flow-001",
+      "tenantID": "t1",
+      "name": "上线审批",
+      "steps": [
+        {"order": 1, "approver": "u-002", "name": "主管审批"}
+      ]
+    }
+  ],
+  "total": 1
+}
+```
+
+### POST /api/v1/approval/flows
+
+创建审批流。
+
+- **认证**：需 `approval:write` 权限
+- **请求体**：`ApprovalFlow`（`id` 未提供时自动生成 `flow-<8hex>`，`tenantID` 由请求上下文注入）
+- **响应**：`201 Created`，返回完整 `ApprovalFlow`
+
+### GET /api/v1/approval/flows/{id}
+
+审批流详情。
+
+- **认证**：需 `approval:read` 权限
+- **响应**：`200 OK`，返回 `ApprovalFlow`
+- 不存在：`404`；跨租户：`403`
+
+### PUT /api/v1/approval/flows/{id}
+
+更新审批流。
+
+- **认证**：需 `approval:write` 权限
+- **请求体**：完整 `ApprovalFlow`（`id` 取路径参数）
+- **响应**：`200 OK`，返回更新后的 `ApprovalFlow`
+
+### DELETE /api/v1/approval/flows/{id}
+
+删除审批流。
+
+- **认证**：需 `approval:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted", "id": "flow-001"}`
+
+### GET /api/v1/approval/requests
+
+列出审批请求。
+
+- **认证**：需 `approval:read` 权限
+- **查询参数**：`status`（pending/approved/rejected/cancelled）
+- **响应**：`200 OK`，`{"requests": [...], "total": N}`
+
+### POST /api/v1/approval/requests
+
+提交审批请求。
+
+- **认证**：需 `approval:write` 权限
+- **请求体**：`ApprovalRequest`（`id` 自动生成 `apr-<8hex>`，`operator` 默认取当前用户，`status` 默认 `pending`）
+
+```json
+{
+  "flowID": "flow-001",
+  "triggerType": "deploy",
+  "target": "dp-001",
+  "payload": {"name": "nginx 滚动升级"}
+}
+```
+
+- **响应**：`201 Created`，返回完整 `ApprovalRequest`
+
+### GET /api/v1/approval/requests/{id}
+
+审批请求详情。
+
+- **认证**：需 `approval:read` 权限
+- **响应**：`200 OK`，返回 `ApprovalRequest`
+- 不存在：`404`；跨租户：`403`
+
+### POST /api/v1/approval/requests/{id}/approve
+
+审批通过（推进到下一审批节点或最终通过）。
+
+- **认证**：需 `approval:approve` 权限
+- **请求体**：`{"comment": "同意，可上线"}`
+- **响应**：`200 OK`，`{"status": "approved", "id": "apr-001"}`
+- 同时发布 SSE 事件 `approval_status`，data: `{"requestID":"apr-001","status":"approved"}`
+
+### POST /api/v1/approval/requests/{id}/reject
+
+审批拒绝。
+
+- **认证**：需 `approval:approve` 权限
+- **请求体**：`{"comment": "风险过大，驳回"}`
+- **响应**：`200 OK`，`{"status": "rejected", "id": "apr-001"}`
+- 同时发布 SSE 事件 `approval_status`，data: `{"requestID":"apr-001","status":"rejected"}`
+
+### POST /api/v1/approval/requests/{id}/cancel
+
+取消审批请求（提交者主动撤销）。
+
+- **认证**：需 `approval:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，`{"status": "cancelled", "id": "apr-001"}`
+- 同时发布 SSE 事件 `approval_status`，data: `{"requestID":"apr-001","status":"cancelled"}`
+
+### GET /api/v1/approval/requests/{id}/history
+
+审批历史（每步审批节点 + 操作人 + 时间 + 备注）。
+
+- **认证**：需 `approval:read` 权限
+- **响应**：`200 OK`，返回 `ApprovalHistory[]`
+- 跨租户：`403`
+
+### GET /api/v1/approval/pending
+
+待我审批列表（按当前 `X-User-Id` 过滤，再按租户隔离）。
+
+- **认证**：需 `approval:read` 权限
+- **响应**：`200 OK`，`{"pending": [...], "total": N}`
 
 ---
 
@@ -844,6 +1703,101 @@ CI 实例详情。
 ### GET /api/v1/cmdb/attr-templates/{id}
 
 属性模板详情。
+
+---
+
+## CMDB 采集与变更审批 API
+
+M2/M3 增强：CI 自动采集 + 变更审批流。CI 创建/修改/删除走审批，审批通过后才执行实际变更。
+
+### POST /api/v1/cmdb/collect
+
+手动触发全量采集（不经过 leader 校验，适合运维干预场景；定时采集仅 leader 副本执行）。
+
+- **认证**：需 `cmdb:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`
+
+```json
+{
+  "collected": 12,
+  "failed": 0
+}
+```
+
+- 采集器未初始化：`503`，`{"error": "cmdb collector not initialized"}`
+- 采集失败：`500`
+
+### GET /api/v1/cmdb/changes
+
+列出变更申请。
+
+- **认证**：需 `cmdb:read` 权限
+- **查询参数**：`status`（pending/approved/rejected/cancelled，省略返回全部）
+- **响应**：`200 OK`
+
+```json
+{
+  "changes": [
+    {
+      "id": "chg-001",
+      "tenantID": "t1",
+      "requester": "u-001",
+      "operation": "create",
+      "ciType": "host",
+      "ciName": "web-01",
+      "payload": {"ip": "10.30.0.5"},
+      "status": "pending",
+      "createdAt": "2026-08-17T09:00:00Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+### POST /api/v1/cmdb/changes
+
+提交变更申请（CI 创建/修改/删除均经此端点进入审批流）。
+
+- **认证**：需 `cmdb:write` 权限
+- **请求体**：`CMDBChangeRequest`（`tenantID`、`requester` 由请求上下文注入）
+
+```json
+{
+  "operation": "create",
+  "ciType": "host",
+  "ciName": "web-01",
+  "payload": {"ip": "10.30.0.5", "cpu_cores": 8}
+}
+```
+
+- **响应**：`201 Created`，返回完整 `CMDBChangeRequest`
+
+### GET /api/v1/cmdb/changes/{id}
+
+变更详情。
+
+- **认证**：需 `cmdb:read` 权限
+- **响应**：`200 OK`，返回 `CMDBChangeRequest`
+- 不存在：`404`；跨租户：`403`
+
+### POST /api/v1/cmdb/changes/{id}/approve
+
+审批通过变更（执行实际 CI 变更）。
+
+- **认证**：需 `cmdb:approve` 权限
+- **请求体**：`{"comment": "同意"}`
+- **响应**：`200 OK`，`{"status": "approved", "id": "chg-001"}`
+- 跨租户：`403`
+
+### POST /api/v1/cmdb/changes/{id}/reject
+
+驳回变更。
+
+- **认证**：需 `cmdb:approve` 权限
+- **请求体**：`{"comment": "IP 已被占用"}`
+- **响应**：`200 OK`，`{"status": "rejected", "id": "chg-001"}`
+- 跨租户：`403`
 
 ---
 
@@ -1012,6 +1966,277 @@ Phase 3 K8s 多集群管理（client-go 集成）。
 - `GET /api/v1/k8s/clusters/{id}/deployments/{name}?namespace=xxx` — Deployment 详情
 - `GET /api/v1/k8s/clusters/{id}/services?namespace=xxx` — Service 列表
 - `GET /api/v1/k8s/clusters/{id}/configmaps?namespace=xxx` — ConfigMap 列表
+
+---
+
+## 网络拓扑与诊断 API
+
+M6 集成：网络拓扑发现 + 网络诊断工具 + 批量连通性检测。诊断命令（ping/traceroute/tcping/nslookup/curl）通过下发 shell task 到指定 agent 执行，复用现有任务机制；结果经 `/api/v1/network/diagnose/{taskId}` 或 `/api/v1/tasks/{id}/result` 查询。拓扑探测结果缓存 5 分钟。
+
+### GET /api/v1/network/topology
+
+返回网络拓扑图（节点=设备/agent，边=连通性+延迟）。
+
+- **认证**：需 `device:read` 权限
+- **查询参数**：`refresh`（`true` 强制刷新，忽略缓存重新探测）
+- **响应**：`200 OK`
+
+```json
+{
+  "nodes": [
+    {"id": "d-001", "hostname": "host-1", "ip": "10.30.0.5", "status": "online", "os": "linux", "segment": "seg-a"}
+  ],
+  "edges": [
+    {"source": "d-001", "target": "d-002", "latencyMs": 0.234, "loss": 0, "alive": true}
+  ],
+  "generatedAt": "2026-08-17T09:00:00Z",
+  "tenantID": "t1"
+}
+```
+
+- 探测策略：对在线设备两两组合下发 ping，同步等待最多 3 秒收集结果；未完成的不阻塞，下次刷新补齐
+
+### GET /api/v1/network/topology/cache
+
+返回最近一次缓存的拓扑（不触发探测）。
+
+- **认证**：需 `device:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "nodes": [...],
+  "edges": [...],
+  "generatedAt": "2026-08-17T09:00:00Z",
+  "tenantID": "t1",
+  "cached": true
+}
+```
+
+- 无缓存：`200 OK`，`{"nodes": [], "edges": [], "generatedAt": "0001-01-01T00:00:00Z", "cached": false}`
+
+### POST /api/v1/network/diagnose
+
+发起网络诊断任务。
+
+- **认证**：需 `task:write` 权限
+- **请求体**：
+
+```json
+{
+  "agentId": "a-001",
+  "tool": "ping",
+  "target": "10.30.0.2",
+  "options": {"count": 4, "timeout": 5, "port": 0}
+}
+```
+
+- `agentId`、`target`：必填
+- `tool`：`ping` / `traceroute` / `tcping` / `nslookup` / `curl`
+- `options.count`：1-100，默认 4
+- `options.timeout`：1-30 秒，默认 5
+- `options.port`：`tool=tcping` 时必填
+- 命令构造按 agent.OS 区分 Linux/Windows（如 Windows ping 用 `-n`/`-w`，traceroute 用 `tracert`，tcping 用 PowerShell `Test-NetConnection`）
+- **响应**：`202 Accepted`
+
+```json
+{"taskId": "t-001"}
+```
+
+- agent 不存在或跨租户：`404`
+
+### GET /api/v1/network/diagnose/{taskId}
+
+查询诊断任务结果（复用 `store.TaskResult`）。
+
+- **认证**：需 `task:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "taskId": "t-001",
+  "exitCode": 0,
+  "stdout": "PING 10.30.0.2 ... 3 packets transmitted, 3 received, 0% packet loss",
+  "stderr": "",
+  "durationMs": 2002,
+  "finishedAt": "2026-08-17T09:00:02Z",
+  "pending": false
+}
+```
+
+- 任务仍在执行：`200 OK`，`{"taskId": "t-001", "status": "running", "pending": true}`
+- 任务不存在：`404`；跨租户：`403`
+
+### POST /api/v1/network/connectivity
+
+批量连通性检测（对每个 target 发起 tcping/ping，同步等待最多 5 秒收集结果）。
+
+- **认证**：需 `task:write` 权限
+- **请求体**：
+
+```json
+{
+  "sourceAgentId": "a-001",
+  "targets": [
+    {"ip": "10.30.0.2", "port": 22},
+    {"ip": "10.30.0.3"}
+  ]
+}
+```
+
+- `targets[].port` > 0 时用 tcping（`nc -zv` / `Test-NetConnection`），否则用 ping
+- **响应**：`200 OK`
+
+```json
+{
+  "results": [
+    {"target": "10.30.0.2", "alive": true, "latencyMs": 0},
+    {"target": "10.30.0.3", "alive": true, "latencyMs": 0.234}
+  ]
+}
+```
+
+- source agent 不存在或跨租户：`404`
+
+---
+
+## 密钥管理 API
+
+P2 安全增强：密钥 provider（env / file / vault / chain）配置概览 + 连接测试 + key 枚举。所有端点不返回 Vault token 与密钥值（仅 key 名称 + 来源 provider）。
+
+### GET /api/v1/secrets/status
+
+返回当前 provider 配置概览（不包含 Vault token）。
+
+- **认证**：需 `secrets:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "provider": "chain:env,file,vault",
+  "enabled": true,
+  "addr": "https://vault.example.com:8200",
+  "mount": "secret",
+  "file": "/etc/opsmesh/secrets.json"
+}
+```
+
+- `enabled`：`cfg.SecretProvider` 非空时为 true
+- `addr` / `mount`：仅 vault/chain:*vault 时非空
+- `file`：仅 file/chain:*file 时非空
+
+### POST /api/v1/secrets/test
+
+测试 Vault provider 连接（构造临时 `VaultProvider` 发起一次轻量探测）。
+
+- **认证**：需 `secrets:write` 权限
+- **请求体**：
+
+```json
+{
+  "addr": "https://vault.example.com:8200",
+  "token": "s.xxxxxxxx",
+  "mount": "secret"
+}
+```
+
+- `addr`：必填；`token` 为空时回退环境变量 `OPSMESH_VAULT_TOKEN`；`mount` 默认 `secret`
+- SSRF 校验：拒绝私网/环回/元数据地址（`validateURLSSRF`）
+- **响应**：`200 OK`
+
+```json
+{"ok": true, "latencyMs": 42}
+```
+
+- SSRF 拦截 / token 缺失 / Vault 不可达：`200 OK`，`{"ok": false, "latencyMs": N, "error": "..."}`
+- 注：探测到 404 也视为 Vault 可达（`ok: true`）
+
+### GET /api/v1/secrets/keys
+
+返回密钥 key 列表（仅名称 + 来源 provider，不含值）。
+
+- **认证**：需 `secrets:read` 权限
+- **响应**：`200 OK`
+
+```json
+[
+  {"key": "DB_PASSWORD", "provider": "env"},
+  {"key": "a/b", "provider": "file"},
+  {"key": "api_key", "provider": "file"}
+]
+```
+
+- 数据来源：
+  - `env` provider：扫描 `OPSMESH_` 前缀环境变量
+  - `file` provider：从 `cfg.SecretFile` 加载 JSON 并扁平化 key 路径（如 `{"a":{"b":"v"}}` → `a/b`）
+  - `vault` provider：KV v2 不支持全量 list，返回空（前端展示"暂无密钥"）
+  - `chain:` 多 provider 合并按 key 去重（优先级高者保留）
+- 未配置 provider：`200 OK`，`[]`
+
+---
+
+## 租户配额 API
+
+P2-B5 多租户资源配额：限制每租户的设备数 / 任务数 / 告警数上限，超额拒绝（创建路径返回 `429` 或 `403`）。配额为 0 表示不限；未设置配额的租户使用默认配额（来自 `--quota-max-devices` / `--quota-max-tasks` / `--quota-max-alerts`）。
+
+### GET /api/v1/quotas
+
+列出当前租户配额 + 用量（管理端用）。
+
+- **认证**：需 `quota:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "enabled": true,
+  "current": {
+    "quota": {"maxDevices": 100, "maxTasks": 1000, "maxAlerts": 50},
+    "usage": {"devices": 12, "tasks": 34, "alerts": 3}
+  }
+}
+```
+
+- 未启用配额检查：`200 OK`，`{"enabled": false, "quotas": []}`
+
+### GET /api/v1/quotas/{tenantID}
+
+获取指定租户配额 + 当前用量。
+
+- **认证**：需 `quota:read` 权限；非 admin 用户仅能查看自己租户的配额（跨租户访问返回 `403`）
+- **响应**：`200 OK`，返回 `QuotaUsage`
+
+```json
+{
+  "quota": {"maxDevices": 100, "maxTasks": 1000, "maxAlerts": 50},
+  "usage": {"devices": 12, "tasks": 34, "alerts": 3}
+}
+```
+
+### PUT /api/v1/quotas/{tenantID}
+
+设置租户配额（仅 admin 角色可跨租户设置）。
+
+- **认证**：需 `quota:write` 权限 + admin 角色
+- **请求体**：
+
+```json
+{
+  "maxDevices": 200,
+  "maxTasks": 2000,
+  "maxAlerts": 100
+}
+```
+
+- 各字段为 0 表示不限；负数返回 `400`
+- **响应**：`200 OK`，返回更新后的 `QuotaConfig`
+- 非 admin：`403`，`{"error": "admin role required to set quota"}`
+
+### DELETE /api/v1/quotas/{tenantID}
+
+清除租户配额（回退到默认配额）。
+
+- **认证**：需 `quota:write` 权限 + admin 角色
+- **响应**：`200 OK`，`{"status": "deleted", "tenantID": "t1"}`
 
 ---
 

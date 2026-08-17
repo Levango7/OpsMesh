@@ -36,28 +36,35 @@
 
 ### 模块清单
 
+> **编号体系说明**：本文档使用 **F1–F18** 标注 18 个功能模块（Feature module）。这与 `README.md` / `docs/module-design.md` 中的 **M** 编号（功能演进项，如 M3 部署中心、M5 作业编排、M7 监控告警）以及 `docs/product-roadmap.md` 第 8 章的 **M1–M4** 里程碑编号相互独立，不冲突、不复用。三套编号体系对照：
+> - **F1–F18**：功能模块（本文档专用，覆盖全部 18 个功能域）
+> - **M1–M7**：功能演进项（`README.md` API 速查表 / flag 说明 / `module-design.md`，表示已落地的演进能力）
+> - **M1–M4**：里程碑（`product-roadmap.md` 第 8 章，表示规划阶段）
+>
+> **成熟度说明**：本文档描述的 18 个功能模块均为 **✅ 功能完整（CI 验证中）**，不标注"生产可用"。CI 集成测试/安全扫描/lint/race 检测需 GitHub Actions runner 真跑，当前标记「阻塞·待外部」（详见 `DELIVERY.md` §7）。
+
 表：18 个功能模块清单
 
 | 编号 | 模块 | 域 | 源码目录 |
 |------|------|----|----------|
-| M1 | 设备纳管 | 设备 | `internal/discover`、`internal/agent`、`internal/controlplane` |
-| M2 | 任务执行 | 任务 | `internal/agent`、`internal/controlplane` |
-| M3 | 配置下发 | 任务 | `internal/agent`（file 执行器） |
-| M4 | 服务管理 | 任务 | `internal/agent`（service 执行器） |
-| M5 | 状态监控 | 观测 | `internal/metrics`、`internal/agent` |
-| M6 | 告警管理 | 告警 | `internal/notify`、`internal/controlplane` |
-| M7 | CMDB | 配置库 | `internal/cmdb` |
-| M8 | 作业编排 | 编排 | `internal/dag`、`internal/orchestration` |
-| M9 | 部署管理 | 部署 | `internal/deploy` |
-| M10 | K8s 管理 | 集群 | `internal/controlplane`（client-go 集成） |
-| M11 | 日志检索 | 观测 | `internal/logstore` |
-| M12 | 中间件部署 | 部署 | `internal/controlplane`（模板库） |
-| M13 | OS 优化 | 部署 | `internal/controlplane`（模板库） |
-| M14 | 多租户 | 安全 | `internal/store`、`internal/authctx` |
-| M15 | 用户权限 | 安全 | `internal/controlplane`（RBAC） |
-| M16 | 联邦 | 网络 | `internal/controlplane`（FederationManager） |
-| M17 | 密钥管理 | 安全 | `internal/controlplane`（SecretProvider Chain） |
-| M18 | SSE 实时推送 | 事件 | `internal/events`、`internal/controlplane` |
+| F1 | 设备纳管 | 设备 | `internal/discover`、`internal/agent`、`internal/controlplane` |
+| F2 | 任务执行 | 任务 | `internal/agent`、`internal/controlplane` |
+| F3 | 配置下发 | 任务 | `internal/agent`（file 执行器） |
+| F4 | 服务管理 | 任务 | `internal/agent`（service 执行器） |
+| F5 | 状态监控 | 观测 | `internal/metrics`、`internal/agent` |
+| F6 | 告警管理 | 告警 | `internal/notify`、`internal/controlplane` |
+| F7 | CMDB | 配置库 | `internal/cmdb` |
+| F8 | 作业编排 | 编排 | `internal/dag`、`internal/orchestration` |
+| F9 | 部署管理 | 部署 | `internal/deploy` |
+| F10 | K8s 管理 | 集群 | `internal/controlplane`（client-go 集成） |
+| F11 | 日志检索 | 观测 | `internal/logstore` |
+| F12 | 中间件部署 | 部署 | `internal/controlplane`（模板库） |
+| F13 | OS 优化 | 部署 | `internal/controlplane`（模板库） |
+| F14 | 多租户 | 安全 | `internal/store`、`internal/authctx` |
+| F15 | 用户权限 | 安全 | `internal/controlplane`（RBAC） |
+| F16 | 联邦 | 网络 | `internal/controlplane`（FederationManager） |
+| F17 | 密钥管理 | 安全 | `internal/controlplane`（SecretProvider Chain） |
+| F18 | SSE 实时推送 | 事件 | `internal/events`、`internal/controlplane` |
 
 ---
 
@@ -2146,11 +2153,11 @@ SSE 实时推送模块基于事件总线与 EventSource，替代前端 5s 轮询
 ┌─────────────────────────────────────────────────────┐
 │                    基础设施层                       │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐          │
-│  │ M14 多租户│  │ M15 用户 │  │ M17 密钥 │          │
+│  │ F14 多租户│  │ F15 用户 │  │ F17 密钥 │          │
 │  │          │  │   权限   │  │   管理   │          │
 │  └──────────┘  └──────────┘  └──────────┘          │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐          │
-│  │ M18 SSE  │  │ M16 联邦 │  │  事件总线 │          │
+│  │ F18 SSE  │  │ F16 联邦 │  │  事件总线 │          │
 │  └──────────┘  └──────────┘  └──────────┘          │
 └─────────────────────────────────────────────────────┘
                         │
@@ -2158,11 +2165,11 @@ SSE 实时推送模块基于事件总线与 EventSource，替代前端 5s 轮询
 ┌─────────────────────────────────────────────────────┐
 │                    核心能力层                       │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐          │
-│  │ M1 设备  │  │ M2 任务  │  │ M5 状态  │          │
+│  │ F1 设备  │  │ F2 任务  │  │ F5 状态  │          │
 │  │   纳管   │  │   执行   │  │   监控   │          │
 │  └──────────┘  └──────────┘  └──────────┘          │
 │  ┌──────────┐  ┌──────────┐                        │
-│  │ M3 配置  │  │ M4 服务 │                        │
+│  │ F3 配置  │  │ F4 服务 │                        │
 │  │   下发   │  │   管理   │                        │
 │  └──────────┘  └──────────┘                        │
 └─────────────────────────────────────────────────────┘
@@ -2171,14 +2178,14 @@ SSE 实时推送模块基于事件总线与 EventSource，替代前端 5s 轮询
 ┌─────────────────────────────────────────────────────┐
 │                    业务编排层                       │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐          │
-│  │ M7 CMDB  │  │ M8 作业  │  │ M9 部署  │          │
+│  │ F7 CMDB  │  │ F8 作业  │  │ F9 部署  │          │
 │  │          │  │   编排   │  │   管理   │          │
 │  └──────────┘  └──────────┘  └──────────┘          │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐          │
-│  │ M10 K8s  │  │ M11 日志 │  │ M6 告警  │          │
+│  │ F10 K8s  │  │ F11 日志 │  │ F6 告警  │          │
 │  └──────────┘  └──────────┘  └──────────┘          │
 │  ┌──────────┐  ┌──────────┐                        │
-│  │ M12 中间 │  │ M13 OS  │                        │
+│  │ F12 中间 │  │ F13 OS  │                        │
 │  │   件     │  │   优化   │                        │
 │  └──────────┘  └──────────┘                        │
 └─────────────────────────────────────────────────────┘
@@ -2186,18 +2193,18 @@ SSE 实时推送模块基于事件总线与 EventSource，替代前端 5s 轮询
 
 ### 附录 B：配置项分组对照
 
-表：79 个 flag 分组对照表
+表：116 个 flag 分组对照表
 
 | 分组 | 数量 | 涵盖模块 |
 |------|------|----------|
 | 基础配置 | 9 | 全局 |
-| 存储配置 | 6 | M14 多租户、全模块 |
-| 安全配置 | 16 | M14、M15、M16、M17 |
-| 网络配置 | 6 | M16 联邦 |
-| 告警配置 | 8 | M6 告警 |
-| 日志配置 | 5 | M11 日志 |
-| K8s/调度配置 | 13 | M2 任务、M5 监控、M8 编排、M18 SSE |
-| 纳管配置 | 11 | M1 设备纳管 |
+| 存储配置 | 6 | F14 多租户、全模块 |
+| 安全配置 | 16 | F14、F15、F16、F17 |
+| 网络配置 | 6 | F16 联邦 |
+| 告警配置 | 8 | F6 告警 |
+| 日志配置 | 5 | F11 日志 |
+| K8s/调度配置 | 13 | F2 任务、F5 监控、F8 编排、F18 SSE |
+| 纳管配置 | 11 | F1 设备纳管 |
 | 其他 | 5 | 全局 |
 
 ### 附录 C：API 端点统计
@@ -2206,24 +2213,24 @@ SSE 实时推送模块基于事件总线与 EventSource，替代前端 5s 轮询
 
 | 模块 | HTTP 端点数 | gRPC 方法数 |
 |------|-------------|-------------|
-| M1 设备纳管 | 8 | 1 |
-| M2 任务执行 | 5 | 4 |
-| M3 配置下发 | 3 | 2 |
-| M4 服务管理 | 3 | 0 |
-| M5 状态监控 | 7 | 1 |
-| M6 告警管理 | 6 | 0 |
-| M7 CMDB | 11 | 0 |
-| M8 作业编排 | 5 | 0 |
-| M9 部署管理 | 4 | 0 |
-| M10 K8s 管理 | 12 | 0 |
-| M11 日志检索 | 2 | 0 |
-| M12 中间件部署 | 5 | 0 |
-| M13 OS 优化 | 3 | 0 |
-| M14 多租户 | 2 | 0 |
-| M15 用户权限 | 13 | 0 |
-| M16 联邦 | 3 | 0 |
-| M17 密钥管理 | 0 | 0 |
-| M18 SSE 实时推送 | 1 | 0 |
+| F1 设备纳管 | 8 | 1 |
+| F2 任务执行 | 5 | 4 |
+| F3 配置下发 | 3 | 2 |
+| F4 服务管理 | 3 | 0 |
+| F5 状态监控 | 7 | 1 |
+| F6 告警管理 | 6 | 0 |
+| F7 CMDB | 11 | 0 |
+| F8 作业编排 | 5 | 0 |
+| F9 部署管理 | 4 | 0 |
+| F10 K8s 管理 | 12 | 0 |
+| F11 日志检索 | 2 | 0 |
+| F12 中间件部署 | 5 | 0 |
+| F13 OS 优化 | 3 | 0 |
+| F14 多租户 | 2 | 0 |
+| F15 用户权限 | 13 | 0 |
+| F16 联邦 | 3 | 0 |
+| F17 密钥管理 | 0 | 0 |
+| F18 SSE 实时推送 | 1 | 0 |
 | **合计** | **93** | **8** |
 
 ### 附录 D：相关文档索引

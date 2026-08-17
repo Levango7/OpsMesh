@@ -1,0 +1,12 @@
+# config/default is the top-level kustomize overlay applied by `make deploy`.
+# It pulls in the CRD, RBAC, manager Deployment/Service and the target Namespace.
+# Note: we intentionally do NOT set `namespace:` here so that cluster-scoped
+# resources (the CRD) are not rewritten; each namespaced resource declares its
+# own namespace explicitly.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../crd/bases
+  - ../rbac
+  - ../manager
+  - ../samples/namespace.yaml

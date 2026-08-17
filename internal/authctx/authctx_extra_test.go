@@ -583,21 +583,192 @@ func TestFromJWT_MissingClaims(t *testing.T) {
 // ============================================================================
 
 // TestFromRequest_JWTEnabledButMalformedAuth 启用 JWT 但 Authorization 头格式非法
-// （非 Bearer）时，extractBearerToken 返回 error，FromRequest 回退到头注入模式
-// （设计行为：仅当携带有效 Bearer token 时才走 JWT 路径，否则头注入兼容混合部署）。
+// （非 Bearer）时，FromRequest 应返回 error（M3-2B 安全加固）。
+// 修复前：回退到头注入模式，攻击者可用非 Bearer 格式绕过 JWT 验签。
+// 修复后：返回 error，调用方应 401。
 func TestFromRequest_JWTEnabledButMalformedAuth(t *testing.T) {
 	_, pub := testRSAKey(t)
 	cfg := JWTConfig{PublicKey: pub, Issuer: "opsmesh-gw", Enabled: true}
 	h := http.Header{}
 	h.Set("Authorization", "Basic abc") // 非 Bearer 格式
+	h.Set("X-Tenant-ID", "t-evil")
+	h.Set("X-User-Id", "u-evil")
+	c, err := FromRequest(h, cfg)
+	if err == nil {
+		t.Fatal("非 Bearer 格式应返回 error，不应回退头注入（越权风险）")
+	}
+	// 返回的 Context 应为零值，不应泄露头注入的身份。
+	if c.TenantID != "" || c.UserID != "" {
+		t.Fatalf("非 Bearer 格式时 Context 应为零值，不应泄露头注入身份，got %+v", c)
+	}
+}
+
+// ============================================================================
+// authctx.go: FromRequest 行为矩阵（M3-2B 安全加固：JWT 启用时禁止无 token 回退）
+// ============================================================================
+//
+// 本组测试系统性验证修复后的 FromRequest 行为矩阵：
+//   - Enabled && PublicKey!=nil && 携带有效 token   → JWT 提取的 Context, nil
+//   - Enabled && PublicKey!=nil && token 验签失败   → 零值, error
+//   - Enabled && PublicKey!=nil && 未携带 token     → 零值, ErrNoJWTToken
+//   - Enabled && PublicKey!=nil && 非 Bearer 格式   → 零值, error
+//   - !Enabled || PublicKey==nil                   → FromHTTPHeader, nil
+
+// TestFromRequest_Matrix_JWTEnabled_ValidToken 启用 JWT 且携带有效 token → 返回 JWT 提取的 Context。
+func TestFromRequest_Matrix_JWTEnabled_ValidToken(t *testing.T) {
+	priv, pub := testRSAKey(t)
+	tok := issueJWT(t, priv, "opsmesh-gw", time.Now().Add(1*time.Hour), "t-jwt", "u-jwt", []string{"admin", "ops"})
+	cfg := JWTConfig{PublicKey: pub, Issuer: "opsmesh-gw", Enabled: true}
+
+	h := http.Header{}
+	setBearer(h, tok)
+	// 同时设置头注入（应被 JWT 路径覆盖，证明走了 JWT 而非头注入）。
 	h.Set("X-Tenant-ID", "t-header")
 	h.Set("X-User-Id", "u-header")
+
 	c, err := FromRequest(h, cfg)
 	if err != nil {
-		t.Fatalf("非 Bearer 格式应回退头注入不报错: %v", err)
+		t.Fatalf("有效 token 应验签通过: %v", err)
+	}
+	if c.TenantID != "t-jwt" || c.UserID != "u-jwt" {
+		t.Fatalf("应走 JWT 路径提取身份，got %+v", c)
+	}
+	if !sliceEqual(c.Roles, []string{"admin", "ops"}) {
+		t.Fatalf("Roles = %v, want [admin ops]", c.Roles)
+	}
+}
+
+// TestFromRequest_Matrix_JWTEnabled_InvalidToken 启用 JWT 且 token 验签失败 → 返回错误。
+func TestFromRequest_Matrix_JWTEnabled_InvalidToken(t *testing.T) {
+	priv1, _ := testRSAKey(t)
+	_, pub2 := testRSAKey(t) // 不同密钥对，验签必失败
+	tok := issueJWT(t, priv1, "opsmesh-gw", time.Now().Add(1*time.Hour), "t1", "u1", nil)
+	cfg := JWTConfig{PublicKey: pub2, Issuer: "opsmesh-gw", Enabled: true}
+
+	h := http.Header{}
+	setBearer(h, tok)
+	h.Set("X-Tenant-ID", "t-evil") // 即使有头注入也不应回退
+
+	c, err := FromRequest(h, cfg)
+	if err == nil {
+		t.Fatal("token 验签失败应返回 error，不应回退头注入")
+	}
+	if c.TenantID != "" || c.UserID != "" {
+		t.Fatalf("验签失败时 Context 应为零值，不应泄露头注入身份，got %+v", c)
+	}
+}
+
+// TestFromRequest_Matrix_JWTEnabled_NoToken 启用 JWT 且未携带 token → 返回 ErrNoJWTToken。
+// 这是本次安全加固的核心：修复前会回退头注入，攻击者可伪造任意租户身份。
+func TestFromRequest_Matrix_JWTEnabled_NoToken(t *testing.T) {
+	_, pub := testRSAKey(t)
+	cfg := JWTConfig{PublicKey: pub, Issuer: "opsmesh-gw", Enabled: true}
+
+	h := http.Header{}
+	// 攻击者伪造头注入但省略 Authorization 头。
+	h.Set("X-Tenant-ID", "t-evil")
+	h.Set("X-User-Id", "u-evil")
+	h.Set("X-User-Roles", "admin")
+
+	c, err := FromRequest(h, cfg)
+	if err == nil {
+		t.Fatal("未携带 token 必须返回 error，不应回退头注入（越权风险）")
+	}
+	if !errors.Is(err, ErrNoJWTToken) {
+		t.Fatalf("应返回 ErrNoJWTToken，got %v", err)
+	}
+	if c.TenantID != "" || c.UserID != "" || c.Roles != nil {
+		t.Fatalf("Context 应为零值，不应泄露头注入身份，got %+v", c)
+	}
+}
+
+// TestFromRequest_Matrix_JWTEnabled_NonBearerFormat 启用 JWT 且 Authorization 非 Bearer 格式 → 返回错误。
+func TestFromRequest_Matrix_JWTEnabled_NonBearerFormat(t *testing.T) {
+	_, pub := testRSAKey(t)
+	cfg := JWTConfig{PublicKey: pub, Issuer: "opsmesh-gw", Enabled: true}
+
+	h := http.Header{}
+	h.Set("Authorization", "Basic abc")
+	h.Set("X-Tenant-ID", "t-evil")
+
+	c, err := FromRequest(h, cfg)
+	if err == nil {
+		t.Fatal("非 Bearer 格式应返回 error")
+	}
+	if c.TenantID != "" {
+		t.Fatalf("Context 应为零值，got %+v", c)
+	}
+}
+
+// TestFromRequest_Matrix_JWTDisabled_FallbackHeader 未启用 JWT → 回退头注入模式（保持兼容）。
+func TestFromRequest_Matrix_JWTDisabled_FallbackHeader(t *testing.T) {
+	_, pub := testRSAKey(t)
+	cfg := JWTConfig{PublicKey: pub, Issuer: "opsmesh-gw", Enabled: false}
+
+	h := http.Header{}
+	h.Set("X-Tenant-ID", "t-header")
+	h.Set("X-User-Id", "u-header")
+	h.Set("X-User-Roles", "admin,ops")
+
+	c, err := FromRequest(h, cfg)
+	if err != nil {
+		t.Fatalf("未启用 JWT 不应报错: %v", err)
 	}
 	if c.TenantID != "t-header" || c.UserID != "u-header" {
-		t.Fatalf("应回退头注入，got %+v", c)
+		t.Fatalf("应走头注入，got %+v", c)
+	}
+	if !sliceEqual(c.Roles, []string{"admin", "ops"}) {
+		t.Fatalf("Roles = %v, want [admin ops]", c.Roles)
+	}
+}
+
+// TestFromRequest_Matrix_NilPublicKey_FallbackHeader PublicKey==nil → 回退头注入模式。
+// 防御性测试：配置装配错误（Enabled=true 但 PublicKey=nil）不应导致 panic 或拒绝服务。
+func TestFromRequest_Matrix_NilPublicKey_FallbackHeader(t *testing.T) {
+	cfg := JWTConfig{PublicKey: nil, Issuer: "", Enabled: true}
+	h := http.Header{}
+	h.Set("X-Tenant-ID", "t1")
+	h.Set("X-User-Id", "u1")
+
+	c, err := FromRequest(h, cfg)
+	if err != nil {
+		t.Fatalf("nil 公钥应安全回退头注入: %v", err)
+	}
+	if c.TenantID != "t1" || c.UserID != "u1" {
+		t.Fatalf("回退头注入失败: %+v", c)
+	}
+}
+
+// TestFromRequest_SecurityBypassAttack 模拟真实攻击场景：
+// 攻击者知道目标租户 ID，尝试不带 token 仅通过伪造 X-Tenant-ID 头越权访问。
+// 修复前：FromRequest 回退头注入，攻击者以 t-victim 身份成功访问。
+// 修复后：FromRequest 返回 ErrNoJWTToken，调用方应 401 拒绝。
+func TestFromRequest_SecurityBypassAttack(t *testing.T) {
+	_, pub := testRSAKey(t)
+	cfg := JWTConfig{PublicKey: pub, Issuer: "opsmesh-gw", Enabled: true}
+
+	// 攻击者构造的请求：无 Authorization 头，伪造受害租户的头注入。
+	attackHeader := http.Header{}
+	attackHeader.Set("X-Tenant-ID", "t-victim")
+	attackHeader.Set("X-User-Id", "u-attacker")
+	attackHeader.Set("X-User-Roles", "admin")
+
+	c, err := FromRequest(attackHeader, cfg)
+	if err == nil {
+		t.Fatal("攻击场景：未携带 token 但伪造头注入必须被拒绝（返回 error）")
+	}
+	if !errors.Is(err, ErrNoJWTToken) {
+		t.Fatalf("应返回 ErrNoJWTToken，got %v", err)
+	}
+	// 关键断言：返回的 Context 不得包含攻击者伪造的身份。
+	if c.TenantID == "t-victim" {
+		t.Fatal("严重越权：返回的 Context 包含攻击者伪造的 t-victim 租户身份")
+	}
+	if c.UserID == "u-attacker" {
+		t.Fatal("严重越权：返回的 Context 包含攻击者伪造的 u-attacker 用户身份")
+	}
+	if c.HasRole("admin") {
+		t.Fatal("严重越权：返回的 Context 包含攻击者伪造的 admin 角色")
 	}
 }
 

@@ -136,6 +136,15 @@ func New(cfg *config.Config) *Agent {
 			"recoveryTimeout", cfg.CBRecoveryTimeout,
 			"halfOpenMaxCalls", cfg.CBHalfOpenMaxCalls)
 	}
+	// P0-2+3 安全加固：shell 白名单状态启动日志（运维可见性）。
+	// 白名单非空时打印生效的白名单（含默认填充的 defaultAgentShellWhitelist）；
+	// 白名单为空时打印警告（agent 放行所有命令，仅 demo/受信内网推荐）。
+	if cfg.AgentShellWhitelist != "" {
+		logx.Info(context.Background(), "agent shell 白名单已启用",
+			"whitelist", cfg.AgentShellWhitelist)
+	} else {
+		logx.Info(context.Background(), "agent shell 白名单未启用（放行所有命令，仅 demo/受信内网推荐；生产建议 --agent-shell-whitelist-default=true 或显式配置）")
+	}
 	return a
 }
 

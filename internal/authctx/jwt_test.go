@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -218,25 +219,32 @@ func TestFromJWT_NilPublicKey(t *testing.T) {
 // FromRequest 回退逻辑
 // ----------------------------------------------------------------------------
 
-// TestFromRequest_NoTokenFallbackHeader 启用 JWT 但未携带 token 时回退头注入模式。
-func TestFromRequest_NoTokenFallbackHeader(t *testing.T) {
+// TestFromRequest_NoTokenReturnsError 启用 JWT 但未携带 token 时必须返回错误（M3-2B 安全加固）。
+// 修复前：回退到头注入模式，攻击者可伪造 X-Tenant-ID 越权。
+// 修复后：返回 ErrNoJWTToken，调用方应 401。
+func TestFromRequest_NoTokenReturnsError(t *testing.T) {
 	_, pub := testRSAKey(t)
 	cfg := JWTConfig{PublicKey: pub, Issuer: "opsmesh-gw", Enabled: true}
 
 	h := http.Header{}
-	h.Set("X-Tenant-ID", "t-fallback")
-	h.Set("X-User-Id", "u-fallback")
+	// 攻击者伪造头注入但省略 Authorization 头。
+	h.Set("X-Tenant-ID", "t-evil")
+	h.Set("X-User-Id", "u-evil")
 	h.Set("X-User-Roles", "admin,ops")
 
 	c, err := FromRequest(h, cfg)
-	if err != nil {
-		t.Fatalf("回退头注入不应报错: %v", err)
+	if err == nil {
+		t.Fatal("启用 JWT 但未携带 token 必须返回 error，不应回退头注入（越权风险）")
 	}
-	if c.TenantID != "t-fallback" || c.UserID != "u-fallback" {
-		t.Fatalf("回退头注入失败: %+v", c)
+	if !errors.Is(err, ErrNoJWTToken) {
+		t.Fatalf("应返回 ErrNoJWTToken，got %v", err)
 	}
-	if len(c.Roles) != 2 || c.Roles[0] != "admin" || c.Roles[1] != "ops" {
-		t.Fatalf("Roles = %v", c.Roles)
+	// 返回的 Context 应为零值，不应泄露头注入的身份。
+	if c.TenantID != "" || c.UserID != "" {
+		t.Fatalf("未携带 token 时 Context 应为零值，不应泄露头注入身份，got %+v", c)
+	}
+	if c.Roles != nil {
+		t.Fatalf("Roles 应为 nil，got %v", c.Roles)
 	}
 }
 

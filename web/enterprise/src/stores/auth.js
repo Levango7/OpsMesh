@@ -29,12 +29,12 @@ export const useAuthStore = defineStore('auth', () => {
   const permissions = computed(() => user.value?.permissions || [])
 
   // 是否拥有某权限：required 为空表示无权限门槛（始终可见）；
-  // 若权限集合为空（如 demo 模式未下发权限）则放宽——展示全部入口，避免误隐藏。
+  // 若权限集合为空（如未下发权限/匿名会话）则一律拒绝——避免前端权限门控形同虚设。
   // 与后端 requireProd 闸同源，侧栏/操作按当前用户权限严格过滤（UI 权限门控）。
   function hasPerm(required) {
     if (!required) return true
     const ps = permissions.value
-    if (ps.length === 0) return true
+    if (ps.length === 0) return false
     return ps.includes(required)
   }
 

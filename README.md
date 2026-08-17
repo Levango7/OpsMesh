@@ -72,6 +72,8 @@
 
 ## 功能矩阵
 
+> 成熟度图例：✅ 功能完整（CI 验证中） ｜ 详见 `DELIVERY.md` §7 CI 状态。CI 集成测试/安全扫描/lint/race 检测需 GitHub Actions runner 真跑，当前标记「阻塞·待外部」。
+
 | 领域 | 功能 | 状态 |
 |---|---|---|
 | **任务** | Shell 命令执行 | ✅ |
@@ -349,6 +351,8 @@ Agent 端多控制面 failover：`--control-addrs="cp1:9090,cp2:9090"`，客户�
 
 ## HTTP API 速查
 
+> **M 编号说明**：下表中的 M 编号（M2 CMDB、M3 服务部署、M5 作业编排、M6 日志检索、M7 告警等）为**功能演进项**编号，与 `docs/feature-design.md` 的 **F1–F18** 功能模块编号、`docs/product-roadmap.md` 第 8 章的 **M1–M4** 里程碑编号相互独立。
+
 ### 仪表盘
 
 | 方法 | 路径 | 说明 |
@@ -410,7 +414,7 @@ Agent 端多控制面 failover：`--control-addrs="cp1:9090,cp2:9090"`，客户�
 
 ## 配置参考
 
-OpsMesh 启动参数共 **79 个 flag**，全部支持"命令行 flag 优先、环境变量兜底"语义（同名环境变量前缀 `OPSMESH_`）。下表按功能分组列出全部 flag。完整定义见 `internal/config/config.go`。
+OpsMesh 启动参数共 **116 个 flag**，全部支持"命令行 flag 优先、环境变量兜底"语义（同名环境变量前缀 `OPSMESH_`）。下表按功能分组列出全部 flag。完整定义见 `internal/config/config.go`。
 
 ### 基础配置
 
@@ -551,7 +555,7 @@ Webhook 通道（generic/feishu/dingtalk/slack/企业微信）与邮件通道（
 | `--provision-ssh-key-pass` | string | "" | OPSMESH_PROVISION_SSH_KEY_PASS | B1 SSH 自动推送：SSH 密钥密码（推荐 env 注入） |
 | `--provision-ssh-known-hosts` | string | "" | OPSMESH_PROVISION_SSH_KNOWN_HOSTS | B1 SSH KnownHosts 文件路径（等保加固）；空=InsecureIgnoreHostKey（生产务必配置） |
 
-> 共 **79 个 flag**，覆盖基础/存储/安全/网络/告警/日志/调度/纳管八大领域。所有 flag 均支持同名 `OPSMESH_*` 环境变量兜底，命令行显式设置优先级最高。
+> 共 **116 个 flag**，覆盖基础/存储/安全/网络/告警/日志/调度/纳管八大领域。所有 flag 均支持同名 `OPSMESH_*` 环境变量兜底，命令行显式设置优先级最高。
 
 ---
 

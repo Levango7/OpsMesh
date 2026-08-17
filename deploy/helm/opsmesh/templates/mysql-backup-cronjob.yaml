@@ -1,10 +1,10 @@
 # OpsMesh MySQL 定期备份 CronJob
 # - 每天 02:00 执行 mysqldump --single-transaction（InnoDB 一致性快照，不锁表）
-# - gzip 压缩写入专用 PVC（{{ fullname }}-mysql-backup）
+# - gzip 压缩写入专用 PVC（{{ include "opsmesh.fullname" . }}-mysql-backup）
 # - 保留策略双重保险：
 #   1) successfulJobsHistoryLimit=7 保留最近 7 个成功 Job 历史
 #   2) 容器内 find -mtime +7 -delete 清理 7 天前的备份文件
-# - 凭证复用 {{ fullname }}-secret 的 mysql-root-password
+# - 凭证复用 {{ include "opsmesh.fullname" . }}-secret 的 mysql-root-password
 # - 启用条件：mysql.enabled && controlplane.store==mysql && mysql.backup.enabled
 {{- if and .Values.mysql.enabled (eq .Values.controlplane.store "mysql") .Values.mysql.backup.enabled -}}
 ---

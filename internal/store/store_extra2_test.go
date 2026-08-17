@@ -358,14 +358,14 @@ func TestRandSQLTemplateID(t *testing.T) {
 func TestScanSilence_Success(t *testing.T) {
 	now := time.Now()
 	row := &mockRowScanner{vals: []interface{}{
-		"silence-1",         // ID
-		"t1",                // TenantID
-		[]byte(`{"k":"v"}`), // matchLabelsJSON
-		sql.NullTime{Time: now, Valid: true},          // StartAt
+		"silence-1",                          // ID
+		"t1",                                 // TenantID
+		[]byte(`{"k":"v"}`),                  // matchLabelsJSON
+		sql.NullTime{Time: now, Valid: true}, // StartAt
 		sql.NullTime{Time: now.Add(time.Hour), Valid: true}, // EndAt
-		sql.NullString{String: "admin", Valid: true},  // CreatedBy
-		"test reason",                                  // Reason
-		sql.NullTime{Time: now, Valid: true},          // CreatedAt
+		sql.NullString{String: "admin", Valid: true},        // CreatedBy
+		"test reason",                        // Reason
+		sql.NullTime{Time: now, Valid: true}, // CreatedAt
 	}}
 	r := scanSilence(row)
 	if r == nil {
@@ -448,8 +448,8 @@ func TestScanNotifyTemplate_Success(t *testing.T) {
 		"Title",     // Title
 		"Body",      // Body
 		sql.NullString{String: "markdown", Valid: true}, // Format
-		now,         // CreatedAt
-		now,         // UpdatedAt
+		now, // CreatedAt
+		now, // UpdatedAt
 	}}
 	tpl := scanNotifyTemplate(row)
 	if tpl == nil {
