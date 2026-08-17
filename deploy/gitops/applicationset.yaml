@@ -1,9 +1,20 @@
 # Argo CD ApplicationSet：OpsMesh 多网段运维平台
 # 文档：https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/
+# 兼容：Argo CD v2.5+（ApplicationSet v1alpha1 已 GA）
 #
 # 本清单使用 list generator 显式枚举所有网段，每个网段渲染出一个独立 Application，
 # 共用同一份 Helm Chart（deploy/helm/opsmesh），通过各自 segments/<segment>-segment.yaml
 # 进行 values overlay，实现「一份 Chart + N 份网段配置」的多网段部署。
+#
+# 每个渲染出的 Application 内部由 Helm Chart 同时部署 controlplane 与 agent 两个组件：
+#   - controlplane（Deployment）：控制面，负责任务调度/选主/纳管，对应 templates/controlplane-*.yaml
+#   - agent（DaemonSet）：数据面 agent，按节点驻留执行任务，对应 templates/agent-*.yaml
+#   二者协同构成该网段的 OpsMesh 运行时。controlplane 与 agent 必须在同一 Helm release 内
+#   部署：agent 的 --control-addr 由模板绑定 release 名（opsmesh.controlplane.serviceName），
+#   且 config.val() 采用「显式 flag 优先、env 兜底」语义（P1-8），环境变量无法覆写，
+#   故拆分为两个独立 release 会破坏 agent→controlplane 服务发现。每网段单 Application 是
+#   当前 Chart 结构下唯一正确的 GitOps 拓扑；controlplane/agent 的差异化配置通过 values
+#   overlay（segments/<segment>-segment.yaml）内的 controlplane.* 与 agent.* 字段独立管理。
 #
 # 变更流程：
 #   1. 在 segments/ 下新增/修改 <segment>-segment.yaml
@@ -19,6 +30,8 @@ metadata:
     # 仓库地址与路径，便于审计与工具巡检
     opsmesh.io/source-repo: https://github.com/Levango7/OpsMesh.git
     opsmesh.io/chart-path: deploy/helm/opsmesh
+    # 组件清单：每个 Application 渲染出的组件（controlplane + agent + 中间件）
+    opsmesh.io/components: controlplane,agent,mysql,redis
 spec:
   # generators：网段清单。list generator 为每个 element 渲染一个 Application。
   # 新增网段只需在此追加一项，并在 segments/ 下放置对应 values 文件。
@@ -61,10 +74,13 @@ spec:
           # valueFiles 按顺序叠加，后者覆盖前者：
           #   values.yaml   —— Chart 默认值（开发/体验环境基线）
           #   segments/<segment>-segment.yaml —— 网段 overlay（覆盖差异字段）
+          #   overlay 内 controlplane.* 与 agent.* 字段分别管理两个组件的配置
           valueFiles:
           - values.yaml
           - 'segments/{{valuesFile}}'
-          # 网段标识透传给 Helm，供 agent 模板写入 agent.segment
+          # 网段标识透传给 Helm，供 agent 模板写入 agent.segment（agent DaemonSet 的 --segment 参数）
+          # controlplane 相关配置（replicaCount/store/tls/资源等）由 values overlay 的 controlplane.* 字段管理
+          # agent 相关配置（workerConcurrency/taskTimeout/资源等）由 values overlay 的 agent.* 字段管理
           parameters:
           - name: agent.segment
             value: '{{segment}}'
