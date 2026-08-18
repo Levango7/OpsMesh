@@ -33,7 +33,7 @@
 | `--tls-cert` / `--tls-key` / `--client-ca` | agent↔控制面通信加密；生产强制 |
 | `--http-port` / `--grpc-port` | 进程对外端口契约 |
 
-其余 60+ 项皆为 **Advanced**，详见 README 配置参考表。
+其余 104 项皆为 **Advanced**，详见 README 配置参考表。
 
 ---
 

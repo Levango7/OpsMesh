@@ -42,7 +42,7 @@ MVP 功能完成度高，但面向生产规模化仍存在以下结构性短板�
 | 测试覆盖不足 | `sql.go` 约 57KB 仅 1 个测试；12 个 HTTP handler 无测试；8 个后台 loop 无测试；前端零测试 | 高 |
 | 前端工程化弱 | 仪表盘曾以原生 JS 单文件约 986 行交付（已通过 v0.4.0 收敛为极简引导页；业务全部由 Vue3 企业版接管） | 低（已收敛） |
 | 架构内聚不足 | Store 曾暴露单一巨型接口聚合 40+ 方法。**当前已拆为 15 个领域子接口**（`store.go` 中 Device/Task/Alert/Audit/Token/Leader/User/Role/Permission/K8sCluster/Template/RefreshToken/Silence/NotifyChannel/NotifyTemplate + 编译期断言），仅存留门店：`Registry` 仍是一对一转发、`domain` 包缺业务行为、agent 每次 RPC 重新 Dial | 低（Store 部分已解决） |
-| 交付物缺口 | `docker-compose.yaml`、Helm Chart（`deploy/helm/opsmesh/`）、`.goreleaser.yml`、`deploy/systemd/` unit 均已交付；Argo CD GitOps 仓库仍为规划 | 低 |
+| 交付物缺口 | `docker-compose.yaml`、Helm Chart（`deploy/helm/opsmesh/`）、`.goreleaser.yml`、`deploy/systemd/` unit、`deploy/gitops/`（ApplicationSet+AppProject+网段示例）均已交付；Argo CD 网段批量渲染仍为规划 | 低 |
 
 ---
 
@@ -589,7 +589,7 @@ Vue3 企业版按里程碑持续演进；原生 JS 个人版仅维持 P0 修复�
 | 4.3 | SQL 集成测试 | ✅ CI mysql/redis service container 全跑（integration job，store 覆盖率 34.6% 已纳入门禁 32%） |
 | 4.4 | 并发测试 | ⚠️ 部分覆盖（-race 全量跑）；专项并发用例（leader 续租、ClaimTask 原子性）可继续补 |
 | 4.5 | 安全 E2E | ✅ 本批次落地：require-auth / 越权 / 取消全链路 / mTLS（e2e-sec job） |
-| 5.x | 交付物缺口 | ✅ goreleaser、systemd unit、Helm Chart、compose 均已交付；⚠️ Argo CD GitOps 仓库仍为规划 |
+| 5.x | 交付物缺口 | ✅ goreleaser、systemd unit、Helm Chart、compose、GitOps（ApplicationSet+AppProject+网段示例）均已交付；⚠️ Argo CD 网段批量渲染仍为规划 |
 | 7.x | 功能演进（CMDB/作业编排/部署/告警/日志/多租户/联邦） | ✅ MVP 能力已交付（README 功能矩阵）；深化项（如联邦跨网段任务转发 P1-6）已于 2026-08-02 落地，M2+ 深化待立项 |
 | 8.x | 里程碑 | 8.1 时间线按 M1 已交付部分推进；M2-M4 为规划 |
 
@@ -601,7 +601,7 @@ Vue3 企业版按里程碑持续演进；原生 JS 个人版仅维持 P0 修复�
 
 本文档中所有"计划/目标/演进/远期"措辞均为规划意图，不代表已实现能力。已实现能力以 `README.md` 功能矩阵与 `DELIVERY.md` 交付说明为准。具体而言：
 
-- Helm Chart、`docker-compose.yaml`、`.goreleaser.yml`、`deploy/systemd/` unit：均已交付（见 5.3/5.5/5.6）。Argo CD ApplicationSet：仍为规划中交付物
+- Helm Chart、`docker-compose.yaml`、`.goreleaser.yml`、`deploy/systemd/` unit、`deploy/gitops/`（ApplicationSet+AppProject+网段示例）：均已交付（见 5.3/5.5/5.6）。Argo CD 网段批量渲染：仍为规划中深化能力
 - Store 接口拆分已实施（`store.go` 15 个领域小接口 + 编译期断言）、DDD 实质化（`domain.go` 已有 Cancel/CanRetry/TransitionToProvisioning/Acknowledge 等行为方法）、server.go/巨型 memory.go 按域拆分均已落地（见 tech-debt.md TD-20/TD-21/11/24）。已实现项：protobuf 代码生成已启用（internal/grpcx/pb/）、operator 已交付、schema 隔离已有 --multi-schema flag、SSE 已实现 /api/v1/events/stream（契约文档+守护测试见 docs/sse-protocol.md）、Vue 3 主线已交付（web/enterprise/）。个人版前端已按收敛策略落地：`internal/controlplane/web/` 收敛为极简引导页（GET / 重定向 /enterprise/），1.3 万行业务 JS 已移除。联邦（控制面跨网段任务转发 mTLS + HMAC 签名验签，P1-6）已于 2026-08-02 落地
 - 安全加固项：agent shell 命令白名单（✅ 已实现 checkShellWhitelist）、file 路径白名单（✅ 已实现 checkFileRootWhitelist）、JWT 验签（✅ 已实现 --jwt-public-key RS256 验签）、SSRF 校验（✅ 已实现 ValidateWebhookURL 私有IP拦截 + ValidateCIDR 白名单 + autoProvision CIDR 校验）、CSP 收紧（✅ 已实现 script-src 去除 unsafe-inline，前端 inline onclick 已迁移到 addEventListener）、TLS 证书热重载（✅ 已实现 --tls-watch fsnotify 监听+热重载）、Vault/KMS 集成（✅ 已实现 internal/secrets 包 Env/File/Vault/Chain provider + --secret-provider 配置 + 告警通道密钥外置）
 - P2 Batch 3 安全加固深化（2026-08-14 落地）：TLS 证书热重载（--tls-watch，fsnotify 监听+graceful reload）、Vault/KMS 密钥管理（internal/secrets 包，Env/File/Vault/Chain provider + ResolveSecret 引用解析）、告警通道密钥外置（notify WithSecret 构造 + ${vault:key} 引用格式）、前端密钥管理 UI（SecretsView.vue + /api/v1/secrets/* API）

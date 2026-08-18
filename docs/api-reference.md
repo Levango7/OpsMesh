@@ -2414,6 +2414,7 @@ gRPC 服务监听 9090 端口（JSON codec），agent 通过此通道注册/心�
 | `ReportResult` | `{agent_id, task_id, status, exit_code, stdout, stderr}` | `{accepted}` | 上报任务执行结果（成功/失败/重试/死信） |
 | `CancelTask` | `{agent_id, task_id}` | `{cancelled}` | 取消指定任务（服务端按租户隔离） |
 | `PollCancels` | `{agent_id}` | `{task_ids: []}` | agent 轮询本机被取消的任务 ID（每 2s） |
+| `ReportLogs` | `{agent_id, log_name, lines[]}` | `{accepted}` | agent 上报任务执行日志（task 247 日志采集，含 timestamp/level/message） |
 
 ### gRPC 安全
 

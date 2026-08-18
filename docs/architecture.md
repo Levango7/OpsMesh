@@ -126,7 +126,7 @@ OpsMesh 采用四层架构：表现层、API 层、领域层、基础设施层�
 
 职责边界：
 - HTTP 路由注册：仪表盘、设备、任务、告警、审计、CMDB、作业流、部署、日志、用户中心、RBAC、配额、联邦等 116 个 flag 控制的全部端点
-- gRPC 服务实现：`Registration` 服务的 Register/Heartbeat/PullTasks/ReportResult/CancelTask/PollCancels 六方法
+- gRPC 服务实现：`Registration` 服务的 Register/Heartbeat/PullTasks/ReportResult/CancelTask/PollCancels/ReportLogs 七方法
 - 中间件链：鉴权（JWT/头注入）→ 限流（IP 令牌桶）→ 审计切面 → 租户隔离 → CORS → 请求日志
 - 后台 loop：leaderLoop / notifyLoop / autoProvisionLoop / reconcileLoop / scheduleLoop / archiveLoop / reclaimLoop / cancelLoop / alertEngineLoop / cmdbCollector.Run
 - SSE 推送：`eventSubs` 订阅者集合 + 非阻塞广播（慢消费者丢事件防拖垮）
