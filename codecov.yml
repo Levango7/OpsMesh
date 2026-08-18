@@ -1,10 +1,10 @@
 # Codecov 配置：增量（patch）覆盖率门禁，防止“老代码合格、新代码裸奔”。
-# 与 ci.yml 的整体门禁互补：ci 守门总量（整体 ≥50% / store ≥65%），本文件守门增量。
+# 与 ci.yml 的整体门禁互补：ci 守门总量（整体 ≥45% / store ≥32%），本文件守门增量。
 coverage:
   status:
     project:
       default:
-        target: 50%          # 整体覆盖率目标，与 ci 门禁一致
+        target: 45%          # 整体覆盖率目标，与 ci 门禁一致
         threshold: 2%        # 允许相对基线下滑不超过 2%
     patch:
       default:

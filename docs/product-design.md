@@ -133,7 +133,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | 🟡 已交付待完善 | 0 | — |
 | 🔵 规划中 | 0 | — |
 
-> **结论**：v0.7.0 基线下，用户要求的 18 个功能模块全部已交付生产可用，无规划中或待完善项。深化能力（如等保三级审计 6 月留存、Vault/KMS 远期轮转）见 §8 路线图。
+> **结论**：v0.7.0 基线下，用户要求的 18 个核心运维功能模块全部已交付生产可用，无规划中或待完善项。AI 增强能力（AI-03~AI-14 共 12 项，见 `docs/ai-design.md`）为独立规划线，不在此 18 模块范围内。其他深化能力（如等保三级审计 6 月留存、Vault/KMS 远期轮转）见 §8 路线图。
 
 ---
 
@@ -164,7 +164,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | CMDB | 内置 Phase1 + 关系图谱 + 采集 | 无 | 无 | 强（核心组件） | 云资产自动同步 | 云资产自动同步 |
 | 日志检索 | 内置 + Loki/ES 适配 + 全文本倒排 | 无 | 无 | 日志平台独立 | 云日志服务 | 云日志服务 |
 | 告警 | 规则引擎 + 异常检测 + 多通道 + 聚合抑制 | 无 | 无 | 监控平台独立 | 云监控 | 云监控 |
-| 学习曲线 | 单二进制 30 秒起步，79 flag 渐进 | 低（YAML + SSH） | 中（YAML + master） | 高（多组件 + CMDB） | 低（云控制台） | 低（云控制台） |
+| 学习曲线 | 单二进制 30 秒起步，116 flag 渐进 | 低（YAML + SSH） | 中（YAML + master） | 高（多组件 + CMDB） | 低（云控制台） | 低（云控制台） |
 | License | 私有（内部项目） | 开源 GPL | 开源 Apache | 开源 MIT（社区版受限） | 商业 | 商业 |
 
 ### 4.3 优势与劣势总结
@@ -180,7 +180,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 
 **OpsMesh 劣势**：
 1. **生态广度不及 Ansible**：Ansible Galaxy 模块生态庞大，OpsMesh 模块自研为主。
-2. **学习曲线在 79 flag**：虽渐进但全量配置心智负担，需文档引导（已有 `flag-matrix.md`）。
+2. **学习曲线在 116 flag**：虽渐进但全量配置心智负担，需文档引导（已有 `flag-matrix.md`）。
 3. **License 私有**：非开源，社区贡献受限，与开源竞品相比生态扩散慢。
 4. **云原生场景不及阿里/腾讯**：OpsMesh 不绑定云，云原生集成（云监控/云日志/云资产自动同步）需自配。
 5. **品牌与案例积累不及蓝鲸**：蓝鲸在腾讯内部大规模验证，OpsMesh 案例积累尚在早期。
@@ -435,7 +435,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | `DELIVERY.md` | 交付说明 + 代码规模 + 验证结果 + 功能矩阵 |
 | `docs/product-roadmap.md` | 产品方向与演进路线图（详细） |
 | `docs/api-reference.md` | HTTP REST + gRPC API 完整参考 |
-| `docs/flag-matrix.md` | 79 个 flag 全量配置矩阵 |
+| `docs/flag-matrix.md` | 116 个 flag 全量配置矩阵 |
 | `docs/deployment-guide.md` | 部署指南（控制面/agent/前端各场景） |
 | `docs/sse-protocol.md` | SSE 事件流契约 |
 | `docs/tech-selection.md` | 技术选型决策记录 |

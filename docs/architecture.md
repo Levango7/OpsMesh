@@ -125,7 +125,7 @@ OpsMesh 采用四层架构：表现层、API 层、领域层、基础设施层�
 位于 `internal/controlplane/`，是控制面的"薄编排层"。`Server` 结构体聚合各功能 Handler 与基础设施依赖，`NewServer` 完成全部构造，`Start` 启动 HTTP/gRPC/Metrics 三监听器与后台 loop。
 
 职责边界：
-- HTTP 路由注册：仪表盘、设备、任务、告警、审计、CMDB、作业流、部署、日志、用户中心、RBAC、配额、联邦等 79 个 flag 控制的全部端点
+- HTTP 路由注册：仪表盘、设备、任务、告警、审计、CMDB、作业流、部署、日志、用户中心、RBAC、配额、联邦等 116 个 flag 控制的全部端点
 - gRPC 服务实现：`Registration` 服务的 Register/Heartbeat/PullTasks/ReportResult/CancelTask/PollCancels 六方法
 - 中间件链：鉴权（JWT/头注入）→ 限流（IP 令牌桶）→ 审计切面 → 租户隔离 → CORS → 请求日志
 - 后台 loop：leaderLoop / notifyLoop / autoProvisionLoop / reconcileLoop / scheduleLoop / archiveLoop / reclaimLoop / cancelLoop / alertEngineLoop / cmdbCollector.Run
@@ -177,7 +177,7 @@ OpsMesh 采用四层架构：表现层、API 层、领域层、基础设施层�
 | 包 | 职责 |
 |---|---|
 | `grpcx` | gRPC 通道封装（JSON codec + pb stub 双轨） |
-| `config` | 79 个 flag + 环境变量兜底 + 生产模式校验 |
+| `config` | 116 个 flag + 环境变量兜底 + 生产模式校验 |
 | `tlsutil` | TLS 证书热重载 + 联邦 mTLS 配置 |
 | `secrets` | SecretProvider（env/file/vault/chain） |
 | `otelx` | OpenTelemetry 链路追踪初始化 |
@@ -450,7 +450,7 @@ stateDiagram-v2
 | 事件总线 | noop/log/kafka 可插拔 | 默认 noop 零开销；log 供调试；kafka 供规模化异步解耦 |
 | 日志后端 | Memory/SQL/Loki/ES 可插拔 | 默认 Memory 零依赖；SQL 持久化；Loki/ES 对接外部栈 |
 | 链路追踪 | OpenTelemetry | HTTP + gRPC 自动埋点；trace_id 贯穿 agent→控制面→store；endpoint 空时 no-op |
-| 配置 | 79 个 flag + env 兜底 | 命令行 flag 优先、`OPSMESH_` 前缀环境变量兜底；生产模式 fail-fast 校验 |
+| 配置 | 116 个 flag + env 兜底 | 命令行 flag 优先、`OPSMESH_` 前缀环境变量兜底；生产模式 fail-fast 校验 |
 | 部署 | 单二进制 + Helm + systemd + docker-compose | 单二进制 30 秒体验；Helm Chart 17 模板生产部署；systemd 裸机；compose 一键 |
 
 ### 6.2 Go 不可替代性论证

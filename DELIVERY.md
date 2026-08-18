@@ -1,6 +1,6 @@
 # OpsMesh 网段运维中枢 — 交付说明
 
-> 版本：MVP（ADR-001 Option A）·  数据刷新 2026-08-11（行数/包数/依赖数/功能矩阵实测校准）·  仓库：https://github.com/Levango7/OpsMesh
+> 版本：MVP（ADR-001 Option A）·  数据刷新 2026-08-19（行数/包数/依赖数/功能矩阵实测校准）·  仓库：https://github.com/Levango7/OpsMesh
 
 ## 1. 产品定位
 
@@ -8,17 +8,17 @@
 
 **管控通道（已冻结决策 ADR-001 Option A，2026-07-27）**：MVP 管控通道 = **自研 gRPC（direct + proxy）**。原"蓝鲸 GSE 社区版底座 / GSE 级联纳管"**移出 MVP、降格为可选增强**（未来超大规模级联再独立立项）。跨网段规模化改为「每段一套控制面 + agent 集群 + 控制面联邦 / 任务跨段转发」。
 
-## 2. 代码规模（实测 2026-08-12 更新，含六轮重构收敛 + 个人版前端移除）
+## 2. 代码规模（实测 2026-08-19 更新，含六轮重构收敛 + 个人版前端移除）
 
 > 统计口径：排除 `.gocache`、`node_modules`、`internal/controlplane/web/`（个人版前端已于收敛为引导页，不再计入 Go 源码）；按 Go 模块分别统计后合计。主模块 `opsmesh`（go.mod 根）+ operator 子模块 `opsmesh/operator`（独立 go.mod，K8s Operator）。
 
 | 指标 | 主模块 opsmesh | operator 子模块 | 合计 |
 |------|---------------|----------------|------|
-| Go 包 | 30（1 cmd + 29 internal） | 3 | 33 |
-| 源码文件 | 155 | 6 | 161 |
-| 源码行数 | 43,573 | 1,141 | 44,714 |
-| 测试文件 | 96 | 1 | 97 |
-| 测试行数 | 29,654 | 164 | 29,818（占比约 39.8%） |
+| Go 包 | 32（1 cmd + 31 internal） | 3 | 35 |
+| 源码文件 | 173 | 6 | 179 |
+| 源码行数 | 49,705 | 1,003 | 50,708 |
+| 测试文件 | 163 | 1 | 164 |
+| 测试行数 | 57,308 | 143 | 57,451（占比约 53.1%） |
 | 直接依赖 | 11 | 4（3 个与主模块共享） | 12（去重） |
 
 > 数值较 2026-08-11 版本增长：新增 SSE 契约守护测试、e2e-real spec、OS/中间件模板拆域等；同时个人版前端 1.3 万行 JS 已从仓库移除（不计入 Go 口径）。
@@ -117,8 +117,8 @@ go build ./... && go vet ./... && go test ./...
 ## 8. 仓库
 
 - 远端：`github.com/Levango7/OpsMesh`，分支 `main`
-- 根提交链：55 commits（初始 README → 内核实现 → 六大运维模块 → CI/容器加固 → 文档同步）
-- 提交内容：28 包源码（主模块 25 + operator 3）+ 62 测试 + Dockerfile/Dockerfile.agent + docker-compose + README + DELIVERY + `.github/ci.yml` + `.gitignore`
+- 根提交链：129 commits（初始 README → 内核实现 → 六大运维模块 → CI/容器加固 → 文档同步）
+- 提交内容：35 包源码（主模块 32 + operator 3）+ 164 测试 + Dockerfile/Dockerfile.agent + docker-compose + README + DELIVERY + `.github/ci.yml` + `.gitignore`
 
 ---
 ## 9. 生产安全加固（P0/P1）
