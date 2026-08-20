@@ -147,6 +147,28 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           govulncheck ./...
+      - name: Dockerfile base image digest 校验（P2-2 供应链安全）
+        # 检查 Dockerfile 中的 FROM 行是否钉死 digest（@sha256:）。
+        # Renovate 会自动创建 PR 钉死 digest（见 .github/renovate.json）。
+        # 此步骤为 warn 级别（::warning::），不阻断 CI（初始状态无 digest）。
+        # 待 Renovate PR 合入后可改为 error 级别强制门禁。
+        run: |
+          echo "检查 Dockerfile base image digest 钉死状态..."
+          missing=0
+          for f in Dockerfile Dockerfile.agent operator/Dockerfile; do
+            while IFS= read -r line; do
+              if echo "$line" | grep -qE '^\s*FROM\s+' && ! echo "$line" | grep -q '@sha256:'; then
+                image=$(echo "$line" | sed -E 's/^\s*FROM\s+//; s/\s+AS\s+.*//I')
+                echo "::warning file=$f::base image 未钉死 digest: $image（Renovate 会自动创建 PR 钉死）"
+                missing=$((missing + 1))
+              fi
+            done < "$f"
+          done
+          if [ "$missing" -gt 0 ]; then
+            echo "⚠️  $missing 个 base image 未钉死 digest（Renovate PR 合入后自动修复）"
+          else
+            echo "✅ 所有 base image 已钉死 digest"
+          fi
       - name: Trivy 文件系统扫描
         uses: aquasecurity/trivy-action@v0.36.0  # task 91：钉死版本，防 @master 供应链漂移
         with:

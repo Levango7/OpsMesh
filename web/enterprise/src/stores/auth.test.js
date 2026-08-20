@@ -236,10 +236,10 @@ describe('useAuthStore', () => {
       expect(store.hasPerm(undefined)).toBe(true)
     })
 
-    it('用户权限集合为空时放宽返回 true（避免误隐藏）', () => {
+    it('用户权限集合为空时一律拒绝返回 false（安全加固，避免权限门控形同虚设）', () => {
       const store = useAuthStore()
       store.user = { id: 1, permissions: [] }
-      expect(store.hasPerm('task:write')).toBe(true)
+      expect(store.hasPerm('task:write')).toBe(false)
     })
 
     it('用户拥有所需权限时返回 true', () => {
@@ -255,11 +255,11 @@ describe('useAuthStore', () => {
       expect(store.hasPerm('task:write')).toBe(false)
     })
 
-    it('user 为 null 时 permissions 为空数组，hasPerm 放宽返回 true', () => {
+    it('user 为 null 时 permissions 为空数组，hasPerm 拒绝返回 false', () => {
       const store = useAuthStore()
       store.user = null
-      // permissions 为 [] → 放宽
-      expect(store.hasPerm('task:write')).toBe(true)
+      // permissions 为 [] → 一律拒绝（安全加固）
+      expect(store.hasPerm('task:write')).toBe(false)
     })
   })
 

@@ -4,10 +4,10 @@
 # agent 角色需 sh 执行 shell/service 任务，请用 Dockerfile.agent（base-debian12 含 sh）。
 # 多阶段构建：build 阶段拉取依赖并编译静态二进制，runtime 阶段用 distroless 精简镜像。
 # syntax=docker/dockerfile:1.6
-# P2-5 安全建议：生产环境应钉死 base image digest，防止供应链投毒。
-# 格式：FROM golang:1.26-bookworm@sha256:<digest> AS build
-# 获取 digest：docker build --pull=always 或 crane digest golang:1.26-bookworm
-# CI 中可用 Renovate/Dependabot 自动更新 digest。
+# P2-2 供应链安全：base image digest 由 Renovate 自动钉死（见 .github/renovate.json）。
+# Renovate 会检测 FROM 行并自动创建 PR 添加 @sha256:<digest>，合入后即钉死。
+# CI 中有 digest 校验步骤（ci.yml security job）检查钉死状态。
+# 手动钉死：crane digest golang:1.26-bookworm → FROM golang:1.26-bookworm@sha256:<digest> AS build
 FROM golang:1.26-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -16,9 +16,8 @@ RUN go mod verify && go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /opsmesh ./cmd/opsmesh
 
-# P2-5 安全建议：distroless 镜像也应钉死 digest。
-# 格式：FROM gcr.io/distroless/static-debian12@sha256:<digest> AS runtime
-# 获取 digest：crane digest gcr.io/distroless/static-debian12
+# P2-2 供应链安全：distroless 镜像 digest 同样由 Renovate 自动钉死。
+# 手动钉死：crane digest gcr.io/distroless/static-debian12 → FROM gcr.io/distroless/static-debian12@sha256:<digest> AS runtime
 FROM gcr.io/distroless/static-debian12 AS runtime
 # distroless static-debian12 内置 nonroot 用户（UID/GID 65532），以非 root 运行（H16）。
 USER nonroot:nonroot

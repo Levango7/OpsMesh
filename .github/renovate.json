@@ -1,0 +1,19 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "dockerfile": {
+    "enabled": true,
+    "pinDigests": true
+  },
+  "packageRules": [
+    {
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["golang", "gcr.io/distroless/static-debian12", "gcr.io/distroless/static-debian12:nonroot", "debian"],
+      "pinDigests": true,
+      "description": "Auto-pin base image digests for supply-chain security (P2-2)"
+    }
+  ],
+  "labels": ["security", "supply-chain", "digest-pinning"],
+  "prHourlyLimit": 2,
+  "prConcurrentLimit": 3
+}

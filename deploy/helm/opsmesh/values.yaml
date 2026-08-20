@@ -83,7 +83,8 @@ agent:
   enabled: true
   image:
     repository: opsmesh/opsmesh-agent
-    tag: "0.1"
+    # 镜像 tag：开发环境用 latest；生产环境用 --set agent.image.tag=<sha> 或 GitOps 写回
+    tag: "latest"
     pullPolicy: IfNotPresent
   # agent 所属网段
   segment: default

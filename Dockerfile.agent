@@ -6,7 +6,7 @@
 # （含完整 sh），仍以非 root（UID 65532）运行保持最小权限。
 # 多阶段构建：build 阶段拉取依赖并编译静态二进制，runtime 阶段用精简镜像。
 # syntax=docker/dockerfile:1.6
-# P2-5 安全建议：生产环境应钉死 base image digest，防止供应链投毒。
+# P2-2 供应链安全：base image digest 由 Renovate 自动钉死（见 .github/renovate.json）。
 FROM golang:1.26-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./

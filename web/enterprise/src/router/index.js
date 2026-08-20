@@ -1,41 +1,43 @@
 // 路由表 — 概览 + 运维 + 资产 + 交付 + 观测 + 系统管理 + 登录/注册
 import { createRouter, createWebHistory } from 'vue-router'
+import { watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { t, currentLang } from '@/i18n'
 
 const routes = [
   // 公共路由：登录 / 注册
-  { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue'), meta: { public: true, title: '登录' } },
-  { path: '/register', name: 'register', component: () => import('@/views/RegisterView.vue'), meta: { public: true, title: '注册' } },
+  { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue'), meta: { public: true, title: 'login.title' } },
+  { path: '/register', name: 'register', component: () => import('@/views/RegisterView.vue'), meta: { public: true, title: 'register.title' } },
 
   // 概览
   { path: '/', redirect: '/overview' },
-  { path: '/overview', name: 'overview', component: () => import('@/views/OverviewView.vue'), meta: { title: '总览', group: '概览', icon: 'home', requirePerm: '' } },
+  { path: '/overview', name: 'overview', component: () => import('@/views/OverviewView.vue'), meta: { title: 'nav.home', group: '概览', icon: 'home', requirePerm: '' } },
 
   // 运维管理
-  { path: '/devices', name: 'devices', component: () => import('@/views/DevicesView.vue'), meta: { title: '设备纳管', group: '运维管理', icon: 'device', requirePerm: 'device:read' } },
-  { path: '/devices/:id', name: 'device-detail', component: () => import('@/views/DeviceDetailView.vue'), meta: { title: '设备详情', group: '运维管理', icon: 'device', requirePerm: 'device:read' } },
-  { path: '/tasks', name: 'tasks', component: () => import('@/views/TasksView.vue'), meta: { title: '任务下发', group: '运维管理', icon: 'task', requirePerm: 'task:read' } },
-  { path: '/alerts', name: 'alerts', component: () => import('@/views/AlertsView.vue'), meta: { title: '监控告警', group: '运维管理', icon: 'alerts', requirePerm: 'alert:read' } },
-  { path: '/os-optimize', name: 'os-optimize', component: () => import('@/views/OSOptimizeView.vue'), meta: { title: 'OS 优化', group: '运维管理', icon: 'task', requirePerm: 'task:read' } },
-  { path: '/middleware', name: 'middleware', component: () => import('@/views/MiddlewareDeployView.vue'), meta: { title: '中间件部署', group: '运维管理', icon: 'deploy', requirePerm: 'deploy:read' } },
-  { path: '/k8s', name: 'k8s', component: () => import('@/views/K8sManageView.vue'), meta: { title: 'K8s 管理', group: '运维管理', icon: 'device', requirePerm: 'device:read' } },
+  { path: '/devices', name: 'devices', component: () => import('@/views/DevicesView.vue'), meta: { title: 'nav.devices', group: '运维管理', icon: 'device', requirePerm: 'device:read' } },
+  { path: '/devices/:id', name: 'device-detail', component: () => import('@/views/DeviceDetailView.vue'), meta: { title: 'device_detail.title', group: '运维管理', icon: 'device', requirePerm: 'device:read' } },
+  { path: '/tasks', name: 'tasks', component: () => import('@/views/TasksView.vue'), meta: { title: 'nav.tasks', group: '运维管理', icon: 'task', requirePerm: 'task:read' } },
+  { path: '/alerts', name: 'alerts', component: () => import('@/views/AlertsView.vue'), meta: { title: 'nav.alerts', group: '运维管理', icon: 'alerts', requirePerm: 'alert:read' } },
+  { path: '/os-optimize', name: 'os-optimize', component: () => import('@/views/OSOptimizeView.vue'), meta: { title: 'nav.osopt', group: '运维管理', icon: 'task', requirePerm: 'task:read' } },
+  { path: '/middleware', name: 'middleware', component: () => import('@/views/MiddlewareDeployView.vue'), meta: { title: 'nav.mwdep', group: '运维管理', icon: 'deploy', requirePerm: 'deploy:read' } },
+  { path: '/k8s', name: 'k8s', component: () => import('@/views/K8sManageView.vue'), meta: { title: 'nav.k8s', group: '运维管理', icon: 'device', requirePerm: 'device:read' } },
 
   // 资产配置
-  { path: '/cmdb', name: 'cmdb', component: () => import('@/views/CMDBView.vue'), meta: { title: '配置项 CMDB', group: '资产配置', icon: 'cmdb', requirePerm: 'cmdb:read' } },
+  { path: '/cmdb', name: 'cmdb', component: () => import('@/views/CMDBView.vue'), meta: { title: 'nav.cmdb', group: '资产配置', icon: 'cmdb', requirePerm: 'cmdb:read' } },
 
   // 交付中心
-  { path: '/workflows', name: 'workflows', component: () => import('@/views/WorkflowsView.vue'), meta: { title: '作业编排', group: '交付中心', icon: 'flow', requirePerm: 'workflow:read' } },
-  { path: '/deploys', name: 'deploys', component: () => import('@/views/DeploysView.vue'), meta: { title: '部署中心', group: '交付中心', icon: 'deploy', requirePerm: 'deploy:read' } },
+  { path: '/workflows', name: 'workflows', component: () => import('@/views/WorkflowsView.vue'), meta: { title: 'nav.workflows', group: '交付中心', icon: 'flow', requirePerm: 'workflow:read' } },
+  { path: '/deploys', name: 'deploys', component: () => import('@/views/DeploysView.vue'), meta: { title: 'nav.deploys', group: '交付中心', icon: 'deploy', requirePerm: 'deploy:read' } },
 
   // 可观测性
-  { path: '/logs', name: 'logs', component: () => import('@/views/LogsView.vue'), meta: { title: '日志检索', group: '可观测性', icon: 'logs', requirePerm: 'log:read' } },
+  { path: '/logs', name: 'logs', component: () => import('@/views/LogsView.vue'), meta: { title: 'nav.logs', group: '可观测性', icon: 'logs', requirePerm: 'log:read' } },
 
   // 系统管理
-  { path: '/users', name: 'users', component: () => import('@/views/UsersView.vue'), meta: { title: '用户中心', group: '系统管理', icon: 'users', requirePerm: 'user:read' } },
-  { path: '/roles', name: 'roles', component: () => import('@/views/RolesView.vue'), meta: { title: '角色管理', group: '系统管理', icon: 'roles', requirePerm: 'role:read' } },
-  { path: '/permissions', name: 'permissions', component: () => import('@/views/PermissionsView.vue'), meta: { title: '权限管理', group: '系统管理', icon: 'permissions', requirePerm: 'role:read' } },
+  { path: '/users', name: 'users', component: () => import('@/views/UsersView.vue'), meta: { title: 'nav.users', group: '系统管理', icon: 'users', requirePerm: 'user:read' } },
+  { path: '/roles', name: 'roles', component: () => import('@/views/RolesView.vue'), meta: { title: 'nav.roles', group: '系统管理', icon: 'roles', requirePerm: 'role:read' } },
+  { path: '/permissions', name: 'permissions', component: () => import('@/views/PermissionsView.vue'), meta: { title: 'nav.permissions', group: '系统管理', icon: 'permissions', requirePerm: 'role:read' } },
   // task 267 密钥管理：查看 provider 状态 + 测试连接 + 配置 Vault 地址
-  { path: '/secrets', name: 'secrets', component: () => import('@/views/secrets/SecretsView.vue'), meta: { title: '密钥管理', group: '系统管理', icon: 'key', requirePerm: 'role:read' } }
+  { path: '/secrets', name: 'secrets', component: () => import('@/views/secrets/SecretsView.vue'), meta: { title: 'nav.secrets', group: '系统管理', icon: 'key', requirePerm: 'role:read' } }
 ]
 
 const router = createRouter({
@@ -67,8 +69,18 @@ router.beforeEach(async (to) => {
   return true
 })
 
-router.afterEach((to) => {
-  document.title = to.meta.title ? `${to.meta.title} · OpsMesh 企业版` : 'OpsMesh 企业版'
+// document.title 跟随当前语言：afterEach 设置初始 title，
+// watch currentLang 确保语言切换时 title 同步更新（afterEach 仅在路由变更时触发）。
+function updateTitle(to) {
+  const pageTitle = to.meta.title ? t(to.meta.title) : ''
+  const appTitle = t('app.title')
+  document.title = pageTitle ? `${pageTitle} · ${appTitle}` : appTitle
+}
+router.afterEach(updateTitle)
+// 语言切换时重新设置当前路由的 title（afterEach 不会因语言变化而重新触发）
+watch(currentLang, () => {
+  const route = router.currentRoute.value
+  if (route) updateTitle(route)
 })
 
 export default router
