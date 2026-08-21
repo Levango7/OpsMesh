@@ -36,9 +36,10 @@ export async function anonymousPage(browser) {
 }
 
 // 通过 UI 执行登录流程（用于 auth.spec.js 测试登录本身）
+// 使用 data-testid 定位（语言无关，防 i18n 切换导致测试失败）
 export async function loginViaUI(page, { username = 'admin', password = 'admin123' } = {}) {
   await page.goto(routes.login)
-  await page.getByPlaceholder('用户名').fill(username)
-  await page.getByPlaceholder('密码').fill(password)
-  await page.getByRole('button', { name: /登录/ }).click()
+  await page.getByTestId('login-username').fill(username)
+  await page.getByTestId('login-password').fill(password)
+  await page.getByTestId('login-submit').click()
 }

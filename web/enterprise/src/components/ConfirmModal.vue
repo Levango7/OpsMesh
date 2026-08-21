@@ -1,15 +1,15 @@
 <template>
   <Teleport to="body">
     <transition name="modal">
-      <div v-if="modelValue" class="modal-overlay" @click.self="onCancel">
+      <div v-if="modelValue" class="modal-overlay" data-testid="confirm-modal" @click.self="onCancel">
         <div class="modal-box">
           <h3 class="modal-title">{{ title }}</h3>
           <p class="modal-message">{{ message }}</p>
           <div class="modal-actions">
-            <button v-if="!info" class="outline" @click="onCancel">
+            <button v-if="!info" class="outline" @click="onCancel" data-testid="confirm-modal-cancel">
               {{ cancelText || $t('common.cancel') }}
             </button>
-            <button class="primary" @click="onConfirm">
+            <button class="primary" @click="onConfirm" data-testid="confirm-modal-confirm">
               {{ confirmText || (info ? $t('common.ok') : $t('common.confirm')) }}
             </button>
           </div>

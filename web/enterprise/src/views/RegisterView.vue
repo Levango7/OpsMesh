@@ -18,7 +18,7 @@
       </div>
 
       <!-- 表单 -->
-      <form class="auth-form" @submit.prevent="onSubmit">
+      <form class="auth-form" data-testid="register-form" @submit.prevent="onSubmit">
         <div class="field">
           <label>{{ $t('register.username') }}</label>
           <input
@@ -27,6 +27,7 @@
             autocomplete="username"
             :placeholder="$t('register.username')"
             :disabled="loading"
+            data-testid="register-username"
           />
         </div>
         <div class="field">
@@ -37,6 +38,7 @@
             autocomplete="new-password"
             :placeholder="$t('register.password')"
             :disabled="loading"
+            data-testid="register-password"
           />
         </div>
         <div class="field">
@@ -47,19 +49,20 @@
             autocomplete="email"
             :placeholder="$t('register.email')"
             :disabled="loading"
+            data-testid="register-email"
           />
         </div>
 
-        <div v-if="error" class="err-msg">
+        <div v-if="error" class="err-msg" data-testid="register-error">
           <Icon name="warning" :size="14" />
           <span>{{ error }}</span>
         </div>
-        <div v-if="success" class="ok-msg">
+        <div v-if="success" class="ok-msg" data-testid="register-success">
           <Icon name="success" :size="14" />
           <span>{{ success }}</span>
         </div>
 
-        <button type="submit" class="primary submit-btn" :disabled="loading">
+        <button type="submit" class="primary submit-btn" :disabled="loading" data-testid="register-submit">
           <Icon v-if="loading" name="refresh" :size="16" class="spin" />
           <Icon v-else name="register" :size="16" />
           <span>{{ loading ? $t('register.loading') : $t('register.submit') }}</span>
@@ -68,7 +71,7 @@
 
       <!-- 切换到登录 -->
       <div class="auth-switch">
-        <router-link to="/login">{{ $t('register.to_login') }}</router-link>
+        <router-link to="/login" data-testid="register-to-login">{{ $t('register.to_login') }}</router-link>
       </div>
 
       <!-- 顶栏小工具：主题 + 语言 -->

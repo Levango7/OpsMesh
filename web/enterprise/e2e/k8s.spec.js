@@ -1,18 +1,8 @@
 // E2E: K8s 集群管理 — 集群列表 / 添加 / 删除 / 测试连接 / 资源查看 / 错误处理
+// 断言策略：优先 data-testid（语言无关），数据值（集群名/资源名）保留文本断言。
 import { test, expect } from '@playwright/test'
 import { mockApi, setAuthCookies } from './fixtures/mock-api.js'
 import { routes } from './fixtures/helpers.js'
-
-// helper：通过文本定位 select 元素（Vue label 未用 for/id 关联）
-function selectByLabel(page, labelText) {
-  return page.locator('.field', { has: page.locator('label', { hasText: labelText }) }).locator('select')
-}
-function inputByLabel(page, labelText) {
-  return page.locator('.field', { has: page.locator('label', { hasText: labelText }) }).locator('input')
-}
-function textareaByLabel(page, labelText) {
-  return page.locator('.field', { has: page.locator('label', { hasText: labelText }) }).locator('textarea')
-}
 
 test.describe('K8s 管理', () => {
 
@@ -20,7 +10,7 @@ test.describe('K8s 管理', () => {
     await setAuthCookies(context)
     await mockApi(page, { authed: true })
     await page.goto(routes.k8s)
-    await expect(page.getByRole('heading', { name: 'K8s 管理' })).toBeVisible()
+    await expect(page.getByTestId('k8s-title')).toBeVisible()
     // mock 集群名称应出现（b 标签中，用 exact 匹配避免与 option 冲突）
     await expect(page.getByText('prod-cluster', { exact: true })).toBeVisible()
     await expect(page.getByText('staging-cluster', { exact: true })).toBeVisible()
@@ -38,9 +28,9 @@ test.describe('K8s 管理', () => {
     // 状态：在线/离线
     await expect(page.getByText('在线', { exact: true })).toBeVisible()
     await expect(page.getByText('离线', { exact: true })).toBeVisible()
-    // 操作按钮
-    await expect(page.getByRole('button', { name: '测试' })).toHaveCount(2)
-    await expect(page.getByRole('button', { name: '删除' })).toHaveCount(2)
+    // 操作按钮（data-testid）
+    await expect(page.getByTestId('k8s-test-btn')).toHaveCount(2)
+    await expect(page.getByTestId('k8s-delete-cluster-btn')).toHaveCount(2)
   })
 
   test.describe('添加集群', () => {
@@ -48,13 +38,12 @@ test.describe('K8s 管理', () => {
       await setAuthCookies(context)
       await mockApi(page, { authed: true })
       await page.goto(routes.k8s)
-      await page.getByRole('button', { name: '添加集群' }).click()
-      // 对话框标题（modal-mask 内的 modal-head h3）
-      await expect(page.locator('.modal-mask h3', { hasText: '添加集群' })).toBeVisible({ timeout: 5_000 })
-      // 表单字段
-      await expect(inputByLabel(page, '集群名称')).toBeVisible()
-      await expect(inputByLabel(page, 'API Server')).toBeVisible()
-      await expect(textareaByLabel(page, 'Kubeconfig')).toBeVisible()
+      await page.getByTestId('k8s-add-cluster-btn').click()
+      // 对话框（data-testid）与表单字段
+      await expect(page.getByTestId('k8s-add-modal')).toBeVisible({ timeout: 5_000 })
+      await expect(page.getByTestId('k8s-add-name')).toBeVisible()
+      await expect(page.getByTestId('k8s-add-server')).toBeVisible()
+      await expect(page.getByTestId('k8s-add-kubeconfig')).toBeVisible()
     })
 
     test('完整填写并提交，调用 POST /k8s/clusters', async ({ page, context }) => {
@@ -72,13 +61,12 @@ test.describe('K8s 管理', () => {
         }
       })
       await page.goto(routes.k8s)
-      await page.getByRole('button', { name: '添加集群' }).click()
-      await inputByLabel(page, '集群名称').fill('new-cluster')
-      await inputByLabel(page, 'API Server').fill('https://1.2.3.4:6443')
-      await textareaByLabel(page, 'Kubeconfig').fill('apiVersion: v1\nclusters:\n- cluster:\n    server: https://1.2.3.4:6443')
+      await page.getByTestId('k8s-add-cluster-btn').click()
+      await page.getByTestId('k8s-add-name').fill('new-cluster')
+      await page.getByTestId('k8s-add-server').fill('https://1.2.3.4:6443')
+      await page.getByTestId('k8s-add-kubeconfig').fill('apiVersion: v1\nclusters:\n- cluster:\n    server: https://1.2.3.4:6443')
       // 点击对话框中的确认按钮
-      const modal = page.locator('.modal-mask').first()
-      await modal.getByRole('button', { name: '确认' }).click()
+      await page.getByTestId('k8s-add-confirm').click()
       await expect.poll(() => createCalled, { timeout: 5_000 }).toBe(true)
       expect(capturedBody).toMatchObject({ name: 'new-cluster', server: 'https://1.2.3.4:6443' })
     })
@@ -87,10 +75,9 @@ test.describe('K8s 管理', () => {
       await setAuthCookies(context)
       await mockApi(page, { authed: true })
       await page.goto(routes.k8s)
-      await page.getByRole('button', { name: '添加集群' }).click()
-      const modal = page.locator('.modal-mask').first()
-      await modal.getByRole('button', { name: '确认' }).click()
-      // 应显示"请填写完整"提示
+      await page.getByTestId('k8s-add-cluster-btn').click()
+      await page.getByTestId('k8s-add-confirm').click()
+      // 应显示"请填写完整"提示（文案本身即断言对象）
       await expect(page.getByText(/请填写完整/)).toBeVisible({ timeout: 5_000 })
     })
 
@@ -103,12 +90,11 @@ test.describe('K8s 管理', () => {
         }
       })
       await page.goto(routes.k8s)
-      await page.getByRole('button', { name: '添加集群' }).click()
-      await inputByLabel(page, '集群名称').fill('test')
-      await inputByLabel(page, 'API Server').fill('https://1.2.3.4:6443')
-      await textareaByLabel(page, 'Kubeconfig').fill('invalid')
-      const modal = page.locator('.modal-mask').first()
-      await modal.getByRole('button', { name: '确认' }).click()
+      await page.getByTestId('k8s-add-cluster-btn').click()
+      await page.getByTestId('k8s-add-name').fill('test')
+      await page.getByTestId('k8s-add-server').fill('https://1.2.3.4:6443')
+      await page.getByTestId('k8s-add-kubeconfig').fill('invalid')
+      await page.getByTestId('k8s-add-confirm').click()
       await expect(page.locator('.msg.err')).toBeVisible({ timeout: 5_000 })
     })
   })
@@ -134,7 +120,7 @@ test.describe('K8s 管理', () => {
       })
       // staging 集群的删除按钮
       const stagingRow = page.locator('tr', { hasText: 'staging-cluster' })
-      await stagingRow.getByRole('button', { name: '删除' }).click()
+      await stagingRow.getByTestId('k8s-delete-cluster-btn').click()
       await expect.poll(() => deleteCalled, { timeout: 5_000 }).toBe(true)
     })
 
@@ -153,7 +139,7 @@ test.describe('K8s 管理', () => {
       await page.goto(routes.k8s)
       page.once('dialog', async (dialog) => { await dialog.dismiss() })
       const stagingRow = page.locator('tr', { hasText: 'staging-cluster' })
-      await stagingRow.getByRole('button', { name: '删除' }).click()
+      await stagingRow.getByTestId('k8s-delete-cluster-btn').click()
       // 等待一小段时间确认未调用
       await page.waitForTimeout(1000)
       expect(deleteCalled).toBe(false)
@@ -170,7 +156,7 @@ test.describe('K8s 管理', () => {
         await dialog.accept()
       })
       const prodRow = page.locator('tr', { hasText: 'prod-cluster' })
-      await prodRow.getByRole('button', { name: '测试' }).click()
+      await prodRow.getByTestId('k8s-test-btn').click()
       await page.waitForTimeout(500)
     })
 
@@ -183,7 +169,7 @@ test.describe('K8s 管理', () => {
         await dialog.accept()
       })
       const stagingRow = page.locator('tr', { hasText: 'staging-cluster' })
-      await stagingRow.getByRole('button', { name: '测试' }).click()
+      await stagingRow.getByTestId('k8s-test-btn').click()
       await page.waitForTimeout(500)
     })
   })
@@ -193,8 +179,8 @@ test.describe('K8s 管理', () => {
       await setAuthCookies(context)
       await mockApi(page, { authed: true })
       await page.goto(routes.k8s)
-      // 选择 prod-cluster
-      await selectByLabel(page, '选择集群').selectOption('c-prod')
+      // 选择 prod-cluster（data-testid）
+      await page.getByTestId('k8s-cluster-select').selectOption('c-prod')
       // 等待资源加载
       await expect(page.getByText('nginx-7b8f-x4k2z', { exact: true })).toBeVisible({ timeout: 5_000 })
       await expect(page.getByText('api-6c9d-mn8pq', { exact: true })).toBeVisible()
@@ -204,15 +190,15 @@ test.describe('K8s 管理', () => {
       await setAuthCookies(context)
       await mockApi(page, { authed: true })
       await page.goto(routes.k8s)
-      await selectByLabel(page, '选择集群').selectOption('c-prod')
+      await page.getByTestId('k8s-cluster-select').selectOption('c-prod')
       // 默认 pods
       await expect(page.getByText('nginx-7b8f-x4k2z', { exact: true })).toBeVisible({ timeout: 5_000 })
-      // 切换到 deployments
-      await page.getByRole('button', { name: 'Deployment', exact: true }).click()
+      // 切换到 deployments（data-testid tab）
+      await page.getByTestId('k8s-tab-deployments').click()
       await expect(page.getByText('nginx-deploy', { exact: true })).toBeVisible({ timeout: 5_000 })
       await expect(page.getByText('api-deploy', { exact: true })).toBeVisible()
       // 切换到 nodes
-      await page.getByRole('button', { name: 'Node', exact: true }).click()
+      await page.getByTestId('k8s-tab-nodes').click()
       await expect(page.getByText('node-1', { exact: true })).toBeVisible({ timeout: 5_000 })
       await expect(page.getByText('node-2', { exact: true })).toBeVisible()
     })
@@ -221,21 +207,21 @@ test.describe('K8s 管理', () => {
       await setAuthCookies(context)
       await mockApi(page, { authed: true })
       await page.goto(routes.k8s)
-      await selectByLabel(page, '选择集群').selectOption('c-prod')
-      await expect(page.getByRole('button', { name: '查看日志' })).toHaveCount(3)
+      await page.getByTestId('k8s-cluster-select').selectOption('c-prod')
+      await expect(page.getByTestId('k8s-view-logs-btn')).toHaveCount(3)
       // 删除按钮（红色样式）
       const podRows = page.locator('tr', { hasText: /nginx-7b8f|api-6c9d|worker-failed/ })
-      await expect(podRows.first().getByRole('button', { name: '删除' })).toBeVisible({ timeout: 5_000 })
+      await expect(podRows.first().getByTestId('k8s-delete-pod-btn')).toBeVisible({ timeout: 5_000 })
     })
 
     test('点击"查看日志"打开日志对话框', async ({ page, context }) => {
       await setAuthCookies(context)
       await mockApi(page, { authed: true })
       await page.goto(routes.k8s)
-      await selectByLabel(page, '选择集群').selectOption('c-prod')
-      await page.getByRole('button', { name: '查看日志' }).first().click()
-      // 日志对话框（modal-mask 内 h3 含"查看日志"）
-      await expect(page.locator('.modal-mask h3', { hasText: '查看日志' })).toBeVisible({ timeout: 5_000 })
+      await page.getByTestId('k8s-cluster-select').selectOption('c-prod')
+      await page.getByTestId('k8s-view-logs-btn').first().click()
+      // 日志对话框（data-testid）
+      await expect(page.getByTestId('k8s-logs-modal')).toBeVisible({ timeout: 5_000 })
       // 应显示日志内容
       await expect(page.locator('.logs-block')).toBeVisible()
     })
@@ -244,10 +230,10 @@ test.describe('K8s 管理', () => {
       await setAuthCookies(context)
       await mockApi(page, { authed: true })
       await page.goto(routes.k8s)
-      await selectByLabel(page, '选择集群').selectOption('c-prod')
-      await page.getByRole('button', { name: 'Deployment', exact: true }).click()
-      await expect(page.getByRole('button', { name: '扩缩容' })).toHaveCount(2)
-      await expect(page.getByRole('button', { name: '重启' })).toHaveCount(2)
+      await page.getByTestId('k8s-cluster-select').selectOption('c-prod')
+      await page.getByTestId('k8s-tab-deployments').click()
+      await expect(page.getByTestId('k8s-scale-btn')).toHaveCount(2)
+      await expect(page.getByTestId('k8s-restart-btn')).toHaveCount(2)
     })
 
     test('点击"扩缩容"打开对话框，提交后调用 scale API', async ({ page, context }) => {
@@ -265,17 +251,16 @@ test.describe('K8s 管理', () => {
         }
       })
       await page.goto(routes.k8s)
-      await selectByLabel(page, '选择集群').selectOption('c-prod')
-      await page.getByRole('button', { name: 'Deployment', exact: true }).click()
+      await page.getByTestId('k8s-cluster-select').selectOption('c-prod')
+      await page.getByTestId('k8s-tab-deployments').click()
       await expect(page.getByText('nginx-deploy', { exact: true })).toBeVisible({ timeout: 5_000 })
       // 点击 nginx-deploy 行的扩缩容
       const nginxRow = page.locator('tr', { hasText: 'nginx-deploy' })
-      await nginxRow.getByRole('button', { name: '扩缩容' }).click()
-      // 对话框中输入副本数
-      await expect(inputByLabel(page, '目标副本数')).toBeVisible({ timeout: 5_000 })
-      await inputByLabel(page, '目标副本数').fill('5')
-      const modal = page.locator('.modal-mask').first()
-      await modal.getByRole('button', { name: '确认' }).click()
+      await nginxRow.getByTestId('k8s-scale-btn').click()
+      // 对话框中输入副本数（data-testid）
+      await expect(page.getByTestId('k8s-scale-replicas')).toBeVisible({ timeout: 5_000 })
+      await page.getByTestId('k8s-scale-replicas').fill('5')
+      await page.getByTestId('k8s-scale-confirm').click()
       await expect.poll(() => scaleCalled, { timeout: 5_000 }).toBe(true)
       expect(capturedBody).toMatchObject({ replicas: 5 })
     })
@@ -293,12 +278,12 @@ test.describe('K8s 管理', () => {
         }
       })
       await page.goto(routes.k8s)
-      await selectByLabel(page, '选择集群').selectOption('c-prod')
-      await page.getByRole('button', { name: 'Deployment', exact: true }).click()
+      await page.getByTestId('k8s-cluster-select').selectOption('c-prod')
+      await page.getByTestId('k8s-tab-deployments').click()
       await expect(page.getByText('nginx-deploy', { exact: true })).toBeVisible({ timeout: 5_000 })
       page.once('dialog', async (dialog) => { await dialog.accept() })
       const nginxRow = page.locator('tr', { hasText: 'nginx-deploy' })
-      await nginxRow.getByRole('button', { name: '重启' }).click()
+      await nginxRow.getByTestId('k8s-restart-btn').click()
       await expect.poll(() => restartCalled, { timeout: 5_000 }).toBe(true)
     })
 
@@ -316,12 +301,12 @@ test.describe('K8s 管理', () => {
         }
       })
       await page.goto(routes.k8s)
-      await selectByLabel(page, '选择集群').selectOption('c-prod')
+      await page.getByTestId('k8s-cluster-select').selectOption('c-prod')
       // 等待初始 pods 加载（override 返回 ns-pod）
       await expect(page.getByText('ns-pod', { exact: true })).toBeVisible({ timeout: 5_000 })
-      // 输入命名空间并回车
-      await page.getByPlaceholder(/输入命名空间/).fill('opsmesh')
-      await page.getByPlaceholder(/输入命名空间/).press('Enter')
+      // 输入命名空间并回车（data-testid）
+      await page.getByTestId('k8s-namespace-input').fill('opsmesh')
+      await page.getByTestId('k8s-namespace-input').press('Enter')
       await expect.poll(() => lastNsParam, { timeout: 5_000 }).toBe('opsmesh')
     })
   })
@@ -339,7 +324,7 @@ test.describe('K8s 管理', () => {
       await expect(page.locator('.poll-err')).toBeVisible({ timeout: 5_000 })
     })
 
-    test('集群列表为空时显示"暂无集群"', async ({ page, context }) => {
+    test('集群列表为空时显示空状态', async ({ page, context }) => {
       await setAuthCookies(context)
       await mockApi(page, {
         authed: true,
@@ -348,7 +333,7 @@ test.describe('K8s 管理', () => {
         }
       })
       await page.goto(routes.k8s)
-      await expect(page.getByText(/暂无集群/)).toBeVisible({ timeout: 5_000 })
+      await expect(page.getByTestId('dt-empty')).toBeVisible({ timeout: 5_000 })
     })
 
     test('资源加载失败时显示错误提示', async ({ page, context }) => {
@@ -360,7 +345,7 @@ test.describe('K8s 管理', () => {
         }
       })
       await page.goto(routes.k8s)
-      await selectByLabel(page, '选择集群').selectOption('c-prod')
+      await page.getByTestId('k8s-cluster-select').selectOption('c-prod')
       await expect(page.locator('.poll-err')).toBeVisible({ timeout: 5_000 })
     })
 

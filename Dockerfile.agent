@@ -8,6 +8,8 @@
 # syntax=docker/dockerfile:1.6
 # P2-2 供应链安全：base image digest 由 Renovate 自动钉死（见 .github/renovate.json）。
 FROM golang:1.26-bookworm AS build
+# 国内网络环境 proxy.golang.org 不可达，走 goproxy.cn 公共代理（CI 同样可用）。
+ENV GOPROXY=https://goproxy.cn,direct
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

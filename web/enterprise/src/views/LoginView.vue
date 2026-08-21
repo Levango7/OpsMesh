@@ -18,7 +18,7 @@
       </div>
 
       <!-- 表单 -->
-      <form class="auth-form" @submit.prevent="onSubmit">
+      <form class="auth-form" data-testid="login-form" @submit.prevent="onSubmit">
         <div class="field">
           <label>{{ $t('login.username') }}</label>
           <input
@@ -27,6 +27,7 @@
             autocomplete="username"
             :placeholder="$t('login.username')"
             :disabled="loading"
+            data-testid="login-username"
           />
         </div>
         <div class="field">
@@ -37,15 +38,16 @@
             autocomplete="current-password"
             :placeholder="$t('login.password')"
             :disabled="loading"
+            data-testid="login-password"
           />
         </div>
 
-        <div v-if="error" class="err-msg">
+        <div v-if="error" class="err-msg" data-testid="login-error">
           <Icon name="warning" :size="14" />
           <span>{{ error }}</span>
         </div>
 
-        <button type="submit" class="primary submit-btn" :disabled="loading">
+        <button type="submit" class="primary submit-btn" :disabled="loading" data-testid="login-submit">
           <Icon v-if="loading" name="refresh" :size="16" class="spin" />
           <Icon v-else name="login" :size="16" />
           <span>{{ loading ? $t('login.loading') : $t('login.submit') }}</span>

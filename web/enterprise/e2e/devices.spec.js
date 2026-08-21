@@ -1,4 +1,5 @@
 // E2E: 设备纳管流程 — 列表 / 详情 / 纳管 / 错误处理
+// 断言策略：优先 data-testid（语言无关），数据值（主机名/IP/OS）保留文本断言。
 import { test, expect } from '@playwright/test'
 import { mockApi, setAuthCookies } from './fixtures/mock-api.js'
 import { routes } from './fixtures/helpers.js'
@@ -9,9 +10,9 @@ test.describe('设备纳管', () => {
     await setAuthCookies(context)
     await mockApi(page, { authed: true })
     await page.goto(routes.devices)
-    // 标题
-    await expect(page.getByRole('heading', { name: '设备纳管' })).toBeVisible()
-    // 网段分组标题（h3）
+    // 页面标题（data-testid）
+    await expect(page.getByTestId('devices-title')).toBeVisible()
+    // 网段分组标题（h3，数据值断言）
     await expect(page.getByRole('heading', { name: /10\.0\.1\.0\/24/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: /10\.0\.2\.0\/24/ })).toBeVisible()
     // 设备主机名出现在表格中
@@ -39,9 +40,8 @@ test.describe('设备纳管', () => {
     await setAuthCookies(context)
     await mockApi(page, { authed: true })
     await page.goto(routes.devices)
-    // 第一行的"详情"按钮
-    const detailBtn = page.getByRole('button', { name: '详情' }).first()
-    await detailBtn.click()
+    // 第一行的"详情"按钮（data-testid）
+    await page.getByTestId('device-detail-btn').first().click()
     await expect(page).toHaveURL(/\/devices\/dev-001$/)
   })
 
@@ -49,8 +49,7 @@ test.describe('设备纳管', () => {
     await setAuthCookies(context)
     await mockApi(page, { authed: true })
     await page.goto(routes.devices)
-    const dispatchBtn = page.getByRole('button', { name: '下发任务' }).first()
-    await dispatchBtn.click()
+    await page.getByTestId('device-dispatch-btn').first().click()
     await expect(page).toHaveURL(/\/tasks\?device=dev-001$/)
   })
 
@@ -73,7 +72,7 @@ test.describe('设备纳管', () => {
       await page.goto(routes.devices)
       // web-node-2 是 discovered 状态，点击对应行打开抽屉
       await page.getByText('web-node-2').click()
-      await expect(page.getByRole('button', { name: /推送 Agent 纳管/ })).toBeVisible({ timeout: 5_000 })
+      await expect(page.getByTestId('device-provision-btn')).toBeVisible({ timeout: 5_000 })
     })
 
     test('点击"推送 Agent 纳管"触发 provision API', async ({ page, context }) => {
@@ -90,7 +89,7 @@ test.describe('设备纳管', () => {
       })
       await page.goto(routes.devices)
       await page.getByText('web-node-2').click()
-      await page.getByRole('button', { name: /推送 Agent 纳管/ }).click()
+      await page.getByTestId('device-provision-btn').click()
       // 等待 provision 调用
       await expect.poll(() => provisionCalled, { timeout: 5_000 }).toBe(true)
     })
@@ -101,7 +100,7 @@ test.describe('设备纳管', () => {
       await page.goto(routes.devices)
       // web-node-1 是 managed 状态
       await page.getByText('web-node-1').click()
-      await expect(page.getByRole('button', { name: /推送 Agent 纳管/ })).toHaveCount(0)
+      await expect(page.getByTestId('device-provision-btn')).toHaveCount(0)
     })
   })
 
@@ -128,7 +127,7 @@ test.describe('设备纳管', () => {
         }
       })
       await page.goto(routes.devices)
-      await expect(page.getByText(/暂无纳管设备/)).toBeVisible({ timeout: 5_000 })
+      await expect(page.getByTestId('devices-empty')).toBeVisible({ timeout: 5_000 })
     })
 
     test('网络错误（连接拒绝）时显示错误提示', async ({ page, context }) => {

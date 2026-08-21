@@ -1,12 +1,12 @@
 <template>
   <div>
-    <h2>{{ $t('devices.title') }}</h2>
+    <h2 data-testid="devices-title">{{ $t('devices.title') }}</h2>
     <p class="muted">{{ $t('devices.subtitle') }}</p>
 
     <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
     <div v-if="store.loading && !segments.length" class="muted">{{ $t('common.loading') }}</div>
-    <div v-else-if="!segments.length" class="muted">
+    <div v-else-if="!segments.length" class="muted" data-testid="devices-empty">
       {{ $t('devices.empty') }}
     </div>
 
@@ -32,10 +32,10 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions" @click.stop>
-            <button class="xs primary" @click="goDetail(row.deviceID)" :title="$t('devices.detail')">
+            <button class="xs primary" @click="goDetail(row.deviceID)" :title="$t('devices.detail')" data-testid="device-detail-btn">
               {{ $t('devices.detail') }}
             </button>
-            <button class="xs outline" @click="dispatchTask(row.deviceID)" :title="$t('devices.dispatch_task')">
+            <button class="xs outline" @click="dispatchTask(row.deviceID)" :title="$t('devices.dispatch_task')" data-testid="device-dispatch-btn">
               {{ $t('devices.dispatch_task') }}
             </button>
           </div>
@@ -51,7 +51,7 @@
           {{ $t('devices.col_last_result') }}: {{ dev.lastResult }} @ {{ fmtTime(dev.lastResultAt) }}
         </p>
         <div class="btnbar">
-          <button v-if="dev.state === 'discovered'" class="primary" @click="provision">
+          <button v-if="dev.state === 'discovered'" class="primary" @click="provision" data-testid="device-provision-btn">
             {{ $t('devices.provision') }}
           </button>
           <button class="outline" @click="goDetail(dev.deviceID)">

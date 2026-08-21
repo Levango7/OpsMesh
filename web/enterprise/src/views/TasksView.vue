@@ -1,15 +1,15 @@
 <template>
   <div>
-    <h2>{{ $t('tasks.title') }}</h2>
+    <h2 data-testid="tasks-title">{{ $t('tasks.title') }}</h2>
     <p class="muted">{{ $t('tasks.subtitle') }}</p>
 
     <div class="card" v-if="authStore.hasPerm('task:write')">
-      <h3>{{ $t('tasks.dispatch_form_title') }}</h3>
+      <h3 data-testid="task-form-title">{{ $t('tasks.dispatch_form_title') }}</h3>
       <form @submit.prevent="onSubmit">
         <div class="row">
           <div class="field">
             <label>{{ $t('tasks.agent') }}</label>
-            <select v-model="form.agentID" required>
+            <select v-model="form.agentID" required data-testid="task-agent-select">
               <option value="">{{ $t('tasks.please_select') }}</option>
               <option v-for="a in agents" :key="a.agentID" :value="a.agentID">
                 {{ a.agentID }} ({{ a.hostname }})
@@ -18,7 +18,7 @@
           </div>
           <div class="field">
             <label>{{ $t('tasks.type') }}</label>
-            <select v-model="form.type">
+            <select v-model="form.type" data-testid="task-type-select">
               <option value="shell">shell</option>
               <option value="file">file</option>
               <option value="service">service</option>
@@ -27,7 +27,7 @@
         </div>
         <div class="field">
           <label>{{ $t('tasks.command') }}</label>
-          <input v-model="form.command" :placeholder="$t('tasks.command_placeholder')" style="width: 60%" />
+          <input v-model="form.command" :placeholder="$t('tasks.command_placeholder')" style="width: 60%" data-testid="task-command-input" />
         </div>
         <div class="row">
           <div class="field">
@@ -40,7 +40,7 @@
           </div>
         </div>
         <div class="btnbar">
-          <button type="submit" class="primary">{{ $t('tasks.submit') }}</button>
+          <button type="submit" class="primary" data-testid="task-submit-btn">{{ $t('tasks.submit') }}</button>
         </div>
         <p v-if="msg" :class="['msg', msgOk ? 'ok' : 'err']">{{ msg }}</p>
       </form>
@@ -53,7 +53,7 @@
       <div class="flowbar">
         <div class="field">
           <label>{{ $t('tasks.status_filter') }}</label>
-          <select v-model="store.statusFilter" @change="store.fetchTasks()">
+          <select v-model="store.statusFilter" @change="store.fetchTasks()" data-testid="task-status-filter">
             <option value="">{{ $t('common.all') }}</option>
             <option value="pending">pending</option>
             <option value="running">running</option>
@@ -78,6 +78,7 @@
             v-if="(row.status === 'pending' || row.status === 'running') && authStore.hasPerm('task:cancel')"
             class="xs outline"
             @click.stop="onCancel(row.taskID)"
+            data-testid="task-cancel-btn"
           >{{ $t('tasks.cancel') }}</button>
           <span v-else class="muted">—</span>
         </template>

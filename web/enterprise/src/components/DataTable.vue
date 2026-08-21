@@ -24,7 +24,7 @@
       </thead>
       <tbody>
         <tr v-if="!sortedRows || sortedRows.length === 0">
-          <td :colspan="columns.length" class="empty">{{ emptyText || $t('common.no_data') }}</td>
+          <td :colspan="columns.length" class="empty" data-testid="dt-empty">{{ emptyText || $t('common.no_data') }}</td>
         </tr>
         <tr
           v-for="(row, idx) in sortedRows"

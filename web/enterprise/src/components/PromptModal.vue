@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <transition name="modal">
-      <div v-if="modelValue" class="modal-overlay" @click.self="onCancel">
+      <div v-if="modelValue" class="modal-overlay" :data-testid="testId" @click.self="onCancel">
         <div class="modal-box">
           <h3 class="modal-title">{{ title }}</h3>
           <p v-if="message" class="modal-message">{{ message }}</p>
@@ -9,14 +9,15 @@
             ref="inputRef"
             v-model="inputValue"
             class="modal-input"
+            data-testid="prompt-modal-input"
             :placeholder="placeholder"
             @keyup.enter="onConfirm"
           />
           <div class="modal-actions">
-            <button class="outline" @click="onCancel">
+            <button class="outline" @click="onCancel" data-testid="prompt-modal-cancel">
               {{ cancelText || $t('common.cancel') }}
             </button>
-            <button class="primary" @click="onConfirm">
+            <button class="primary" @click="onConfirm" data-testid="prompt-modal-confirm">
               {{ confirmText || $t('common.confirm') }}
             </button>
           </div>
@@ -39,7 +40,9 @@ const props = defineProps({
   placeholder: { type: String, default: '' },
   defaultValue: { type: String, default: '' },
   confirmText: { type: String, default: '' },
-  cancelText: { type: String, default: '' }
+  cancelText: { type: String, default: '' },
+  // 同一页面存在多个 PromptModal 时传入不同 testId，便于 e2e 精确定位
+  testId: { type: String, default: 'prompt-modal' }
 })
 
 const emit = defineEmits(['update:modelValue', 'confirm', 'cancel'])

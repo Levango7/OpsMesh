@@ -1,15 +1,8 @@
 // E2E: 任务下发流程 — 列表 / 下发 / 取消 / 状态过滤 / 错误处理
+// 断言策略：优先 data-testid（语言无关），数据值（任务ID/命令）保留文本断言。
 import { test, expect } from '@playwright/test'
 import { mockApi, setAuthCookies } from './fixtures/mock-api.js'
 import { routes } from './fixtures/helpers.js'
-
-// helper：通过文本定位 select 元素（Vue label 未用 for/id 关联，getByLabel 不可靠）
-function selectByLabel(page, labelText) {
-  return page.locator('.field', { has: page.locator('label', { hasText: labelText }) }).locator('select')
-}
-function inputByLabel(page, labelText) {
-  return page.locator('.field', { has: page.locator('label', { hasText: labelText }) }).locator('input')
-}
 
 test.describe('任务下发', () => {
 
@@ -17,7 +10,7 @@ test.describe('任务下发', () => {
     await setAuthCookies(context)
     await mockApi(page, { authed: true })
     await page.goto(routes.tasks)
-    await expect(page.getByRole('heading', { name: '任务下发' })).toBeVisible()
+    await expect(page.getByTestId('tasks-title')).toBeVisible()
     // 任务表格中出现 mock 任务（用 exact 匹配避免与 agentID 冲突）
     await expect(page.getByText('t-001', { exact: true })).toBeVisible()
     await expect(page.getByText('t-002', { exact: true })).toBeVisible()
@@ -31,15 +24,12 @@ test.describe('任务下发', () => {
     await setAuthCookies(context)
     await mockApi(page, { authed: true })
     await page.goto(routes.tasks)
-    await expect(page.getByRole('heading', { name: '下发任务' })).toBeVisible()
-    // 采集端 select
-    await expect(selectByLabel(page, '采集端')).toBeVisible()
-    // 类型 select
-    await expect(selectByLabel(page, '类型')).toBeVisible()
-    // 命令 input
-    await expect(inputByLabel(page, '命令')).toBeVisible()
-    // 下发按钮
-    await expect(page.getByRole('button', { name: '下发' })).toBeVisible()
+    await expect(page.getByTestId('task-form-title')).toBeVisible()
+    // 采集端 select / 类型 select / 命令 input / 下发按钮（data-testid）
+    await expect(page.getByTestId('task-agent-select')).toBeVisible()
+    await expect(page.getByTestId('task-type-select')).toBeVisible()
+    await expect(page.getByTestId('task-command-input')).toBeVisible()
+    await expect(page.getByTestId('task-submit-btn')).toBeVisible()
   })
 
   test('采集端下拉框加载 agent 列表', async ({ page, context }) => {
@@ -47,7 +37,7 @@ test.describe('任务下发', () => {
     await mockApi(page, { authed: true })
     await page.goto(routes.tasks)
     // 检查 select 的 option 值（option 在未打开下拉时 Playwright 认为 hidden，故用 evaluate）
-    const options = await selectByLabel(page, '采集端').evaluate((sel) =>
+    const options = await page.getByTestId('task-agent-select').evaluate((sel) =>
       Array.from(sel.options).map((o) => o.value)
     )
     expect(options).toContain('agent-001')
@@ -58,7 +48,7 @@ test.describe('任务下发', () => {
     await setAuthCookies(context)
     await mockApi(page, { authed: true })
     await page.goto(routes.tasks)
-    const options = await selectByLabel(page, '类型').evaluate((sel) =>
+    const options = await page.getByTestId('task-type-select').evaluate((sel) =>
       Array.from(sel.options).map((o) => o.value)
     )
     expect(options).toEqual(expect.arrayContaining(['shell', 'file', 'service']))
@@ -70,12 +60,12 @@ test.describe('任务下发', () => {
       await mockApi(page, { authed: true })
       await page.goto(routes.tasks)
       // 选择采集端
-      await selectByLabel(page, '采集端').selectOption('agent-001')
+      await page.getByTestId('task-agent-select').selectOption('agent-001')
       // 类型默认 shell
       // 填写命令
-      await inputByLabel(page, '命令').fill('ls -la')
+      await page.getByTestId('task-command-input').fill('ls -la')
       // 提交
-      await page.getByRole('button', { name: '下发' }).click()
+      await page.getByTestId('task-submit-btn').click()
       // 应显示成功消息（包含 [200]）
       await expect(page.locator('.msg.ok')).toBeVisible({ timeout: 5_000 })
     })
@@ -95,9 +85,9 @@ test.describe('任务下发', () => {
         }
       })
       await page.goto(routes.tasks)
-      await selectByLabel(page, '采集端').selectOption('agent-001')
-      await inputByLabel(page, '命令').fill('uptime')
-      await page.getByRole('button', { name: '下发' }).click()
+      await page.getByTestId('task-agent-select').selectOption('agent-001')
+      await page.getByTestId('task-command-input').fill('uptime')
+      await page.getByTestId('task-submit-btn').click()
       await expect.poll(() => createCalled, { timeout: 5_000 }).toBe(true)
       expect(capturedBody).toMatchObject({ agentID: 'agent-001', command: 'uptime' })
     })
@@ -111,9 +101,9 @@ test.describe('任务下发', () => {
         }
       })
       await page.goto(routes.tasks)
-      await selectByLabel(page, '采集端').selectOption('agent-001')
-      await inputByLabel(page, '命令').fill('test')
-      await page.getByRole('button', { name: '下发' }).click()
+      await page.getByTestId('task-agent-select').selectOption('agent-001')
+      await page.getByTestId('task-command-input').fill('test')
+      await page.getByTestId('task-submit-btn').click()
       await expect(page.locator('.msg.err')).toBeVisible({ timeout: 5_000 })
     })
   })
@@ -125,10 +115,10 @@ test.describe('任务下发', () => {
       await page.goto(routes.tasks)
       // t-002 是 running，应有取消按钮
       const t002Row = page.locator('tr', { hasText: 't-002' })
-      await expect(t002Row.getByRole('button', { name: '取消' })).toBeVisible()
+      await expect(t002Row.getByTestId('task-cancel-btn')).toBeVisible()
       // t-003 是 pending，也应有取消按钮
       const t003Row = page.locator('tr', { hasText: 't-003' })
-      await expect(t003Row.getByRole('button', { name: '取消' })).toBeVisible()
+      await expect(t003Row.getByTestId('task-cancel-btn')).toBeVisible()
     })
 
     test('completed 任务行不显示"取消"按钮', async ({ page, context }) => {
@@ -136,7 +126,7 @@ test.describe('任务下发', () => {
       await mockApi(page, { authed: true })
       await page.goto(routes.tasks)
       const t001Row = page.locator('tr', { hasText: 't-001' })
-      await expect(t001Row.getByRole('button', { name: '取消' })).toHaveCount(0)
+      await expect(t001Row.getByTestId('task-cancel-btn')).toHaveCount(0)
     })
 
     test('点击取消按钮调用 cancel API', async ({ page, context }) => {
@@ -153,7 +143,7 @@ test.describe('任务下发', () => {
       })
       await page.goto(routes.tasks)
       const t002Row = page.locator('tr', { hasText: 't-002' })
-      await t002Row.getByRole('button', { name: '取消' }).click()
+      await t002Row.getByTestId('task-cancel-btn').click()
       await expect.poll(() => cancelCalled, { timeout: 5_000 }).toBe(true)
     })
   })
@@ -163,7 +153,7 @@ test.describe('任务下发', () => {
       await setAuthCookies(context)
       await mockApi(page, { authed: true })
       await page.goto(routes.tasks)
-      const options = await selectByLabel(page, '状态过滤').evaluate((sel) =>
+      const options = await page.getByTestId('task-status-filter').evaluate((sel) =>
         Array.from(sel.options).map((o) => o.value)
       )
       expect(options).toEqual(expect.arrayContaining(['', 'pending', 'running', 'done', 'failed', 'canceled']))
@@ -183,7 +173,7 @@ test.describe('任务下发', () => {
         }
       })
       await page.goto(routes.tasks)
-      await selectByLabel(page, '状态过滤').selectOption('running')
+      await page.getByTestId('task-status-filter').selectOption('running')
       await expect.poll(() => lastStatusParam, { timeout: 5_000 }).toBe('running')
     })
   })
@@ -210,7 +200,7 @@ test.describe('任务下发', () => {
         }
       })
       await page.goto(routes.tasks)
-      await expect(page.getByText(/暂无任务/)).toBeVisible({ timeout: 5_000 })
+      await expect(page.getByTestId('dt-empty')).toBeVisible({ timeout: 5_000 })
     })
   })
 
@@ -230,10 +220,9 @@ test.describe('任务下发', () => {
         }
       })
       await page.goto(routes.tasks)
-      // 应显示"当前账号无下发权限"提示
-      await expect(page.getByText(/无下发权限/)).toBeVisible({ timeout: 5_000 })
-      // 不应显示下发按钮
-      await expect(page.getByRole('button', { name: '下发' })).toHaveCount(0)
+      // 不应显示下发表单与下发按钮
+      await expect(page.getByTestId('task-form-title')).toHaveCount(0)
+      await expect(page.getByTestId('task-submit-btn')).toHaveCount(0)
     })
   })
 })

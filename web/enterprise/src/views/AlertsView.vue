@@ -1,6 +1,6 @@
 <template>
   <div>
-    <h2>{{ $t('alerts.title') }}</h2>
+    <h2 data-testid="alerts-title">{{ $t('alerts.title') }}</h2>
     <p class="muted">{{ $t('alerts.subtitle') }}</p>
 
     <div class="stats">
@@ -23,11 +23,11 @@
     </div>
 
     <div class="flowbar">
-      <button @click="store.fetchAlerts()">↻ {{ $t('common.refresh') }}</button>
+      <button @click="store.fetchAlerts()" data-testid="alerts-refresh-btn">↻ {{ $t('common.refresh') }}</button>
     </div>
 
     <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-    <div v-else-if="!store.list.length" class="muted"><Icon name="success" :size="14" /> {{ $t('alerts.empty') }}</div>
+    <div v-else-if="!store.list.length" class="muted" data-testid="alerts-empty"><Icon name="success" :size="14" /> {{ $t('alerts.empty') }}</div>
 
     <div
       v-for="a in store.list"
@@ -45,8 +45,8 @@
       <br /><small class="muted">{{ fmtTime(a.createdAt) }}</small>
       <div class="alert-actions">
         <template v-if="(a.status || 'firing') === 'firing'">
-          <button class="xs" @click="onAck(a.alertID)">{{ $t('alerts.ack') }}</button>
-          <button class="xs outline" @click="onSilence(a.alertID)">{{ $t('alerts.silence') }}</button>
+          <button class="xs" @click="onAck(a.alertID)" data-testid="alert-ack-btn">{{ $t('alerts.ack') }}</button>
+          <button class="xs outline" @click="onSilence(a.alertID)" data-testid="alert-silence-btn">{{ $t('alerts.silence') }}</button>
         </template>
         <span v-else class="muted" style="font-size:12px">
           {{ $t('alerts.handler') }}{{ a.acknowledgedBy || '—' }}<template v-if="a.status === 'silenced' && a.silencedUntil">{{ $t('alerts.silenced_until') }}{{ a.silencedUntil }}</template>
@@ -58,6 +58,7 @@
   <!-- 静默时长输入（替代 prompt） -->
   <PromptModal
     v-model="durationModal.show"
+    test-id="silence-duration-modal"
     :title="$t('alerts.silence_duration_title')"
     :message="$t('alerts.silence_duration_prompt')"
     :default-value="'1440'"
@@ -67,6 +68,7 @@
   <!-- 静默备注输入（替代 prompt） -->
   <PromptModal
     v-model="commentModal.show"
+    test-id="silence-comment-modal"
     :title="$t('alerts.silence_comment_title')"
     :message="$t('alerts.silence_comment_prompt')"
     @confirm="onCommentConfirm"

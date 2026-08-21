@@ -1,6 +1,6 @@
 <template>
   <div>
-    <h2>{{ $t('k8s.title') }}</h2>
+    <h2 data-testid="k8s-title">{{ $t('k8s.title') }}</h2>
     <p class="muted">{{ $t('k8s.desc') }}</p>
 
     <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
@@ -11,7 +11,7 @@
         <div class="card">
           <div class="flowbar">
             <h3 style="margin: 0">{{ $t('k8s.clusters') }}</h3>
-            <button class="xs primary" @click="openAddCluster">{{ $t('k8s.addCluster') }}</button>
+            <button class="xs primary" @click="openAddCluster" data-testid="k8s-add-cluster-btn">{{ $t('k8s.addCluster') }}</button>
             <button class="xs outline" @click="store.fetchClusters()">↻ {{ $t('common.refresh') }}</button>
           </div>
           <p class="hint">{{ $t('k8s.clustersHint') }}</p>
@@ -31,9 +31,9 @@
             <template #cell-createdAt="{ value }">{{ value || '-' }}</template>
             <template #cell-actions="{ row }">
               <div class="row-actions" @click.stop>
-                <button class="xs outline" @click="onTest(row.id)">{{ $t('k8s.test') }}</button>
+                <button class="xs outline" @click="onTest(row.id)" data-testid="k8s-test-btn">{{ $t('k8s.test') }}</button>
                 <button class="xs primary" @click="onManage(row.id)">{{ $t('k8s.resources') }}</button>
-                <button class="xs outline" style="color: var(--fail); border-color: var(--fail)" @click="onDelete(row.id)">{{ $t('k8s.delete') }}</button>
+                <button class="xs outline" style="color: var(--fail); border-color: var(--fail)" @click="onDelete(row.id)" data-testid="k8s-delete-cluster-btn">{{ $t('k8s.delete') }}</button>
               </div>
             </template>
           </DataTable>
@@ -48,7 +48,7 @@
           <div class="flowbar">
             <div class="field">
               <label>{{ $t('k8s.selectCluster') }}</label>
-              <select v-model="store.currentClusterID" @change="onClusterChange">
+              <select v-model="store.currentClusterID" @change="onClusterChange" data-testid="k8s-cluster-select">
                 <option value="">— {{ $t('k8s.selectCluster') }} —</option>
                 <option v-for="c in store.clusters" :key="c.id" :value="c.id">
                   {{ c.name }}{{ c.server ? ' (' + c.server + ')' : '' }}
@@ -60,6 +60,7 @@
               <input
                 v-model="nsInput"
                 :placeholder="$t('k8s.namespaceHint')"
+                data-testid="k8s-namespace-input"
                 @keyup.enter="onNsChange"
               />
             </div>
@@ -73,6 +74,7 @@
               :key="rt"
               class="res-tab"
               :class="{ active: store.resourceType === rt }"
+              :data-testid="'k8s-tab-' + rt"
               @click="store.setResourceType(rt)"
             >{{ $t('k8s.' + rt) }}</button>
           </div>
@@ -105,12 +107,12 @@
             <template #cell-actions="{ row }">
               <div class="row-actions" @click.stop>
                 <template v-if="store.resourceType === 'pods'">
-                  <button class="xs outline" @click="onViewLogs(row)">{{ $t('k8s.viewLogs') }}</button>
-                  <button class="xs outline" style="color: var(--fail); border-color: var(--fail)" @click="onDeletePod(row)">{{ $t('k8s.delete') }}</button>
+                  <button class="xs outline" @click="onViewLogs(row)" data-testid="k8s-view-logs-btn">{{ $t('k8s.viewLogs') }}</button>
+                  <button class="xs outline" style="color: var(--fail); border-color: var(--fail)" @click="onDeletePod(row)" data-testid="k8s-delete-pod-btn">{{ $t('k8s.delete') }}</button>
                 </template>
                 <template v-else-if="store.resourceType === 'deployments'">
-                  <button class="xs outline" @click="onScale(row)">{{ $t('k8s.scale') }}</button>
-                  <button class="xs outline" @click="onRestart(row)">{{ $t('k8s.restart') }}</button>
+                  <button class="xs outline" @click="onScale(row)" data-testid="k8s-scale-btn">{{ $t('k8s.scale') }}</button>
+                  <button class="xs outline" @click="onRestart(row)" data-testid="k8s-restart-btn">{{ $t('k8s.restart') }}</button>
                 </template>
                 <span v-else class="muted">—</span>
               </div>
@@ -121,7 +123,7 @@
     </div>
 
     <!-- 添加集群对话框 -->
-    <div v-if="addOpen" class="modal-mask" @click.self="addOpen = false">
+    <div v-if="addOpen" class="modal-mask" data-testid="k8s-add-modal" @click.self="addOpen = false">
       <div class="modal">
         <header class="modal-head">
           <h3>{{ $t('k8s.addCluster') }}</h3>
@@ -130,18 +132,18 @@
         <div class="modal-body">
           <div class="field">
             <label>{{ $t('k8s.clusterName') }}</label>
-            <input v-model="addForm.name" required />
+            <input v-model="addForm.name" required data-testid="k8s-add-name" />
           </div>
           <div class="field">
             <label>{{ $t('k8s.server') }}</label>
-            <input v-model="addForm.server" placeholder="https://1.2.3.4:6443" required />
+            <input v-model="addForm.server" placeholder="https://1.2.3.4:6443" required data-testid="k8s-add-server" />
           </div>
           <div class="field">
             <label>{{ $t('k8s.kubeconfig') }}</label>
-            <textarea v-model="addForm.kubeconfig" rows="8" :placeholder="$t('k8s.kubeconfigHint')"></textarea>
+            <textarea v-model="addForm.kubeconfig" rows="8" :placeholder="$t('k8s.kubeconfigHint')" data-testid="k8s-add-kubeconfig"></textarea>
           </div>
           <div class="btnbar">
-            <button class="primary" @click="confirmAdd" :disabled="adding">{{ $t('k8s.confirm') }}</button>
+            <button class="primary" @click="confirmAdd" :disabled="adding" data-testid="k8s-add-confirm">{{ $t('k8s.confirm') }}</button>
             <button class="outline" @click="addOpen = false">{{ $t('k8s.cancel') }}</button>
           </div>
           <p v-if="addMsg" :class="['msg', addOk ? 'ok' : 'err']">{{ addMsg }}</p>
@@ -150,7 +152,7 @@
     </div>
 
     <!-- Pod 日志对话框 -->
-    <div v-if="logsOpen" class="modal-mask" @click.self="logsOpen = false">
+    <div v-if="logsOpen" class="modal-mask" data-testid="k8s-logs-modal" @click.self="logsOpen = false">
       <div class="modal modal-lg">
         <header class="modal-head">
           <h3>{{ $t('k8s.viewLogs') }} · <code>{{ logsTarget?.name }}</code></h3>
@@ -174,7 +176,7 @@
     </div>
 
     <!-- 扩缩容对话框 -->
-    <div v-if="scaleOpen" class="modal-mask" @click.self="scaleOpen = false">
+    <div v-if="scaleOpen" class="modal-mask" data-testid="k8s-scale-modal" @click.self="scaleOpen = false">
       <div class="modal modal-sm">
         <header class="modal-head">
           <h3>{{ $t('k8s.scale') }} · <code>{{ scaleTarget?.name }}</code></h3>
@@ -185,10 +187,10 @@
           <p>{{ $t('k8s.scaleCurrent', { replicas: scaleTarget?.replicas || 0, available: scaleTarget?.availableReplicas || 0 }) }}</p>
           <div class="field">
             <label>{{ $t('k8s.targetReplicas') }}</label>
-            <input v-model.number="scaleReplicas" type="number" min="0" />
+            <input v-model.number="scaleReplicas" type="number" min="0" data-testid="k8s-scale-replicas" />
           </div>
           <div class="btnbar">
-            <button class="primary" @click="confirmScale" :disabled="scaling">{{ $t('k8s.confirm') }}</button>
+            <button class="primary" @click="confirmScale" :disabled="scaling" data-testid="k8s-scale-confirm">{{ $t('k8s.confirm') }}</button>
             <button class="outline" @click="scaleOpen = false">{{ $t('k8s.cancel') }}</button>
           </div>
           <p v-if="scaleMsg" :class="['msg', scaleOk ? 'ok' : 'err']">{{ scaleMsg }}</p>

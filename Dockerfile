@@ -9,6 +9,8 @@
 # CI 中有 digest 校验步骤（ci.yml security job）检查钉死状态。
 # 手动钉死：crane digest golang:1.26-bookworm → FROM golang:1.26-bookworm@sha256:<digest> AS build
 FROM golang:1.26-bookworm AS build
+# 国内网络环境 proxy.golang.org 不可达，走 goproxy.cn 公共代理（CI 同样可用）。
+ENV GOPROXY=https://goproxy.cn,direct
 WORKDIR /src
 COPY go.mod go.sum ./
 # 构建期校验模块完整性（防供应链投毒 / go.sum 漂移，task 安全 P2-5）

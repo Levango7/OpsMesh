@@ -1,4 +1,5 @@
 // E2E: 监控告警流程 — 列表 / 统计 / ack / silence / 错误处理
+// 断言策略：优先 data-testid（语言无关），数据值（告警消息/设备ID）保留文本断言。
 import { test, expect } from '@playwright/test'
 import { mockApi, setAuthCookies } from './fixtures/mock-api.js'
 import { routes } from './fixtures/helpers.js'
@@ -12,7 +13,7 @@ test.describe('监控告警', () => {
 
   test('页面正常加载，显示告警列表', async ({ page }) => {
     await page.goto(routes.alerts)
-    await expect(page.getByRole('heading', { name: '监控告警' })).toBeVisible()
+    await expect(page.getByTestId('alerts-title')).toBeVisible()
     // mock 告警的消息文本应出现
     await expect(page.getByText('磁盘使用率 > 90%')).toBeVisible()
     await expect(page.getByText('CPU 使用率 > 80%')).toBeVisible()
@@ -44,9 +45,9 @@ test.describe('监控告警', () => {
 
   test('firing 状态告警显示"确认"和"静默"按钮', async ({ page }) => {
     await page.goto(routes.alerts)
-    // a-001 / a-002 是 firing，应有确认+静默
-    await expect(page.getByRole('button', { name: /确认/ })).toHaveCount(2)
-    await expect(page.getByRole('button', { name: /静默/ })).toHaveCount(2)
+    // a-001 / a-002 是 firing，应有确认+静默（data-testid）
+    await expect(page.getByTestId('alert-ack-btn')).toHaveCount(2)
+    await expect(page.getByTestId('alert-silence-btn')).toHaveCount(2)
   })
 
   test('acknowledged 状态告警不显示操作按钮，显示处理人', async ({ page }) => {
@@ -70,7 +71,7 @@ test.describe('监控告警', () => {
       })
       await page.goto(routes.alerts)
       // a-001 是 critical，对应第一个确认按钮
-      await page.getByRole('button', { name: /确认/ }).first().click()
+      await page.getByTestId('alert-ack-btn').first().click()
       await expect.poll(() => ackCalled, { timeout: 5_000 }).toBe(true)
     })
 
@@ -83,18 +84,19 @@ test.describe('监控告警', () => {
         }
       })
       await page.goto(routes.alerts)
-      await page.getByRole('button', { name: /确认/ }).first().click()
-      // 应弹出错误对话框（ConfirmModal .modal-overlay），message 含"确认失败"
-      await expect(page.locator('.modal-message', { hasText: '确认失败' })).toBeVisible({ timeout: 5_000 })
+      await page.getByTestId('alert-ack-btn').first().click()
+      // 应弹出错误对话框（ConfirmModal），message 含"确认失败"
+      await expect(page.getByTestId('confirm-modal')).toBeVisible({ timeout: 5_000 })
+      await expect(page.getByTestId('confirm-modal')).toContainText('确认失败')
     })
   })
 
   test.describe('静默告警 (silence)', () => {
     test('点击"静默"打开时长输入对话框', async ({ page }) => {
       await page.goto(routes.alerts)
-      await page.getByRole('button', { name: /静默/ }).first().click()
-      // 应出现静默时长输入对话框
-      await expect(page.getByText(/静默时长/)).toBeVisible({ timeout: 5_000 })
+      await page.getByTestId('alert-silence-btn').first().click()
+      // 应出现静默时长输入对话框（PromptModal，testId 区分于备注对话框）
+      await expect(page.getByTestId('silence-duration-modal')).toBeVisible({ timeout: 5_000 })
     })
 
     test('静默流程：输入时长 → 输入备注 → 调用 silence API', async ({ page, context }) => {
@@ -113,13 +115,13 @@ test.describe('监控告警', () => {
       })
       await page.goto(routes.alerts)
       // 1. 点击静默 → 打开时长对话框
-      await page.getByRole('button', { name: /静默/ }).first().click()
-      await expect(page.locator('.modal-overlay .modal-title', { hasText: '静默告警' })).toBeVisible({ timeout: 5_000 })
+      await page.getByTestId('alert-silence-btn').first().click()
+      await expect(page.getByTestId('silence-duration-modal')).toBeVisible({ timeout: 5_000 })
       // 2. 时长对话框：默认 1440，直接确认
-      await page.locator('.modal-overlay .modal-actions button.primary').first().click()
-      // 3. 备注对话框出现：直接确认（空备注）
-      await expect(page.locator('.modal-overlay .modal-title', { hasText: '处理备注' })).toBeVisible({ timeout: 5_000 })
-      await page.locator('.modal-overlay .modal-actions button.primary').first().click()
+      await page.getByTestId('silence-duration-modal').getByTestId('prompt-modal-confirm').click()
+      // 3. 备注对话框出现（独立 testId，不受时长对话框离场动画影响）
+      await expect(page.getByTestId('silence-comment-modal')).toBeVisible({ timeout: 5_000 })
+      await page.getByTestId('silence-comment-modal').getByTestId('prompt-modal-confirm').click()
       // 4. 应调用 silence API
       await expect.poll(() => silenceCalled, { timeout: 5_000 }).toBe(true)
       expect(capturedBody).toMatchObject({ durationMinutes: 1440 })
@@ -134,11 +136,13 @@ test.describe('监控告警', () => {
         }
       })
       await page.goto(routes.alerts)
-      await page.getByRole('button', { name: /静默/ }).first().click()
-      await page.locator('.modal-overlay .modal-actions button.primary').first().click()
-      await expect(page.locator('.modal-overlay .modal-title', { hasText: '处理备注' })).toBeVisible({ timeout: 5_000 })
-      await page.locator('.modal-overlay .modal-actions button.primary').first().click()
-      await expect(page.locator('.modal-message', { hasText: '静默失败' })).toBeVisible({ timeout: 5_000 })
+      await page.getByTestId('alert-silence-btn').first().click()
+      await page.getByTestId('silence-duration-modal').getByTestId('prompt-modal-confirm').click()
+      // 备注对话框（独立 testId，不受时长对话框离场动画影响）
+      await expect(page.getByTestId('silence-comment-modal')).toBeVisible({ timeout: 5_000 })
+      await page.getByTestId('silence-comment-modal').getByTestId('prompt-modal-confirm').click()
+      await expect(page.getByTestId('confirm-modal')).toBeVisible({ timeout: 5_000 })
+      await expect(page.getByTestId('confirm-modal')).toContainText('静默失败')
     })
   })
 
@@ -163,8 +167,8 @@ test.describe('监控告警', () => {
       await page.goto(routes.alerts)
       // 初次加载应已 fetch
       const initialCount = fetchCount
-      // 点击刷新
-      await page.getByRole('button', { name: /刷新/ }).click()
+      // 点击刷新（data-testid）
+      await page.getByTestId('alerts-refresh-btn').click()
       await expect.poll(() => fetchCount, { timeout: 5_000 }).toBeGreaterThan(initialCount)
       // 新告警应出现
       await expect(page.getByText('新告警')).toBeVisible()
@@ -184,7 +188,7 @@ test.describe('监控告警', () => {
       await expect(page.locator('.poll-err')).toBeVisible({ timeout: 5_000 })
     })
 
-    test('告警列表为空时显示"暂无告警"空状态', async ({ page, context }) => {
+    test('告警列表为空时显示空状态', async ({ page, context }) => {
       await setAuthCookies(context)
       await mockApi(page, {
         authed: true,
@@ -193,7 +197,7 @@ test.describe('监控告警', () => {
         }
       })
       await page.goto(routes.alerts)
-      await expect(page.getByText(/暂无告警/)).toBeVisible({ timeout: 5_000 })
+      await expect(page.getByTestId('alerts-empty')).toBeVisible({ timeout: 5_000 })
     })
 
     test('网络错误时显示错误提示', async ({ page, context }) => {

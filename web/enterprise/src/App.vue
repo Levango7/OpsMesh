@@ -40,11 +40,11 @@
         <!-- 用户信息 -->
         <div class="user-info">
           <span class="user-avatar"><Icon name="users" :size="16" /></span>
-          <span class="user-name">{{ authStore.user?.username || '—' }}</span>
+          <span class="user-name" data-testid="topbar-username">{{ authStore.user?.username || '—' }}</span>
         </div>
 
         <!-- 退出 -->
-        <button class="icon-btn danger" @click="onLogout" :title="$t('topbar.logout')">
+        <button class="icon-btn danger" @click="onLogout" :title="$t('topbar.logout')" data-testid="topbar-logout">
           <Icon name="logout" :size="18" />
         </button>
       </div>
