@@ -165,18 +165,20 @@ describe('useAuthStore', () => {
   })
 
   describe('fetchMe 动作', () => {
-    it('无会话 Cookie 时跳过请求，直接标记 initialized', async () => {
+    it('无会话时后端返回 401，清空 user 并标记 initialized', async () => {
       document.cookie = ''
+      authApi.me.mockRejectedValueOnce({ s: 401, j: { error: 'unauthorized' } })
+
       const store = useAuthStore()
       const result = await store.fetchMe()
 
-      expect(authApi.me).not.toHaveBeenCalled()
+      expect(authApi.me).toHaveBeenCalled()
       expect(result).toBeNull()
       expect(store.initialized).toBe(true)
       expect(store.user).toBeNull()
     })
 
-    it('有 at Cookie 时从后端恢复会话', async () => {
+    it('有会话时从后端恢复用户信息', async () => {
       document.cookie = 'opsmesh_at=token123; path=/'
       const mockMe = { id: 1, username: 'admin', permissions: ['task:write'] }
       authApi.me.mockResolvedValueOnce(mockMe)
@@ -190,7 +192,7 @@ describe('useAuthStore', () => {
       expect(store.initialized).toBe(true)
     })
 
-    it('有 rt Cookie 时也会尝试恢复会话', async () => {
+    it('会话有效时恢复用户信息（仅 rt 也存在）', async () => {
       document.cookie = 'opsmesh_rt=refresh456; path=/'
       const mockMe = { id: 2, username: 'guest' }
       authApi.me.mockResolvedValueOnce(mockMe)
@@ -201,9 +203,10 @@ describe('useAuthStore', () => {
       expect(authApi.me).toHaveBeenCalled()
       expect(result).toEqual(mockMe)
       expect(store.user).toEqual(mockMe)
+      expect(store.initialized).toBe(true)
     })
 
-    it('恢复会话返回 401 时清空 user', async () => {
+    it('会话过期（401）时清空 user', async () => {
       document.cookie = 'opsmesh_at=expired; path=/'
       authApi.me.mockRejectedValueOnce({ s: 401, j: { error: 'unauthorized' } })
 
@@ -212,6 +215,20 @@ describe('useAuthStore', () => {
 
       expect(result).toBeNull()
       expect(store.user).toBeNull()
+      expect(store.initialized).toBe(true)
+    })
+
+    it('其他错误（如 500）时保留现有 user 并标记 initialized', async () => {
+      document.cookie = 'opsmesh_at=token; path=/'
+      const existingUser = { id: 1, username: 'admin' }
+      authApi.me.mockRejectedValueOnce({ s: 500, j: { error: 'server error' } })
+
+      const store = useAuthStore()
+      store.user = existingUser
+      const result = await store.fetchMe()
+
+      expect(result).toBeNull()
+      expect(store.user).toEqual(existingUser)
       expect(store.initialized).toBe(true)
     })
   })

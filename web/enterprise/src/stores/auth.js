@@ -74,12 +74,6 @@ export const useAuthStore = defineStore('auth', () => {
   // 仅当 at/rt 均不存在（确无会话）时跳过，避免冷启动对匿名用户发起无意义 401。
   // 完成后 resolve ready Promise，路由守卫据此解除阻塞。
   async function fetchMe() {
-    const c = document.cookie
-    if (!c.includes('opsmesh_at') && !c.includes('opsmesh_rt')) {
-      initialized.value = true
-      _readyResolve()
-      return null
-    }
     try {
       const me = await authApi.me()
       user.value = me

@@ -151,9 +151,11 @@ export class SSEClient {
           buf += decoder.decode(value, { stream: true })
           // 按帧边界切分（空行分隔；保留尾部未完成数据到下一块）
           let idx
-          while ((idx = buf.search(/\r?\n\r?\n/)) !== -1) {
+          let match
+          while ((match = buf.match(/\r?\n\r?\n/)) !== null) {
+            const idx = match.index
             const frameEnd = buf.slice(0, idx)
-            buf = buf.slice(idx + 2) // 吃掉 \n\n（或 \r\n\r\n 的第二个 \n）
+            buf = buf.slice(idx + match[0].length)
             this._dispatchFrame(frameEnd)
           }
         }
