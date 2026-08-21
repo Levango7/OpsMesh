@@ -215,12 +215,14 @@
     "col_ip": "IP",
     "col_agent": "采集端",
     "col_state": "状态",
+    "col_os": "操作系统",
     "col_task_state": "任务态",
     "col_last_result": "LastResult",
     "col_actions": "操作",
     "col_type": "类型",
     "col_status": "状态",
     "col_task": "任务",
+    "col_id": "ID",
     "col_exit_code": "退出码",
     "col_output": "输出"
   },
@@ -288,7 +290,8 @@
     "col_type": "类型",
     "col_command": "命令",
     "col_status": "状态",
-    "col_actions": "操作"
+    "col_actions": "操作",
+    "col_task_id": "任务ID"
   },
   "alerts": {
     "title": "监控告警",

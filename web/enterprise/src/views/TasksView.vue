@@ -104,7 +104,7 @@ const msg = ref('')
 const msgOk = ref(false)
 
 const columns = [
-  { key: 'taskID', title: 'TaskID', slot: 'cell-taskID' },
+  { key: 'taskID', title: t('tasks.col_task_id'), slot: 'cell-taskID' },
   { key: 'agentID', title: t('tasks.col_agent') },
   { key: 'type', title: t('tasks.col_type') },
   { key: 'command', title: t('tasks.col_command'), slot: 'cell-command' },

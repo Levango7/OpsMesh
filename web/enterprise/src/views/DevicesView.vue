@@ -48,7 +48,7 @@
         <p>{{ $t('devices.ip_label') }}: {{ dev.ip }} ｜ {{ $t('devices.agent_label') }}: {{ dev.agentID }} ｜ {{ $t('devices.tenant_label') }}: {{ dev.tenantID }}</p>
         <p>{{ $t('devices.state_label') }}: {{ dev.state }} ｜ {{ $t('devices.task_state_label') }}: {{ dev.taskState }}</p>
         <p v-if="dev.lastResult" :class="['msg', dev.lastResult === 'failed' ? 'err' : 'ok']">
-          LastResult: {{ dev.lastResult }} @ {{ fmtTime(dev.lastResultAt) }}
+          {{ $t('devices.col_last_result') }}: {{ dev.lastResult }} @ {{ fmtTime(dev.lastResultAt) }}
         </p>
         <div class="btnbar">
           <button v-if="dev.state === 'discovered'" class="primary" @click="provision">
@@ -95,18 +95,18 @@ const store = useDeviceStore()
 // 表格列定义：含 hostname / segment / state / os 字段 + 操作列
 const columns = [
   { key: 'hostname', title: t('devices.col_hostname'), sortable: true },
-  { key: 'deviceID', title: 'DeviceID', slot: 'cell-deviceID' },
+  { key: 'deviceID', title: t('devices.col_device_id'), slot: 'cell-deviceID' },
   { key: 'segment', title: t('devices.col_segment') },
   { key: 'ip', title: t('devices.col_ip') },
   { key: 'state', title: t('devices.col_state'), slot: 'cell-state', sortable: true },
-  { key: 'os', title: 'OS', sortable: true },
+  { key: 'os', title: t('devices.col_os'), sortable: true },
   { key: 'agentID', title: t('devices.col_agent') },
   { key: 'taskState', title: t('devices.col_task_state') },
-  { key: 'lastResult', title: 'LastResult', slot: 'cell-lastResult' },
+  { key: 'lastResult', title: t('devices.col_last_result'), slot: 'cell-lastResult' },
   { key: 'actions', title: t('devices.col_actions'), slot: 'cell-actions', width: '160px' }
 ]
 const taskCols = [
-  { key: 'taskID', title: 'ID', slot: 'cell-taskID' },
+  { key: 'taskID', title: t('devices.col_id'), slot: 'cell-taskID' },
   { key: 'type', title: t('devices.col_type') },
   { key: 'status', title: t('devices.col_status') }
 ]

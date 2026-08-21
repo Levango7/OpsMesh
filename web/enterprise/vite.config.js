@@ -14,9 +14,9 @@ export default defineConfig({
   server: {
     port: 5174,
     proxy: {
-      // 后端 REST API 代理到本地控制面
+      // 后端 REST API 代理到本地控制面（可用 VITE_API_PROXY_TARGET 覆盖，方便联调不同后端地址）
       '/api': {
-        target: 'http://localhost:8080',
+        target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:8080',
         changeOrigin: true
       }
     }

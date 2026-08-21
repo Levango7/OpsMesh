@@ -27,7 +27,7 @@ export default [
     },
     rules: {
       'vue/multi-word-component-names': 'off',
-      'vue/no-v-html': 'off',
+      'vue/no-v-html': 'error', // 当前项目无 v-html 使用，恢复为 error 防未来误用引入 XSS
       'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
       'vue/attributes-order': 'off',
       'vue/order-in-components': 'off',

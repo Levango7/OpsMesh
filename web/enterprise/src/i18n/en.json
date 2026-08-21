@@ -215,12 +215,14 @@
     "col_ip": "IP",
     "col_agent": "Agent",
     "col_state": "State",
+    "col_os": "OS",
     "col_task_state": "TaskState",
     "col_last_result": "LastResult",
     "col_actions": "Actions",
     "col_type": "Type",
     "col_status": "Status",
     "col_task": "Task",
+    "col_id": "ID",
     "col_exit_code": "Exit Code",
     "col_output": "Output"
   },
@@ -288,7 +290,8 @@
     "col_type": "Type",
     "col_command": "Command",
     "col_status": "Status",
-    "col_actions": "Actions"
+    "col_actions": "Actions",
+    "col_task_id": "TaskID"
   },
   "alerts": {
     "title": "Alerts",
