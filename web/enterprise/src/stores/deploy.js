@@ -1,6 +1,7 @@
 // 部署 store
 import { defineStore } from 'pinia'
 import { getDeploys, createDeploy, executeDeploy, rollbackDeploy, getDeploy } from '@/api/deploy'
+import { t } from '@/i18n'
 
 export const useDeployStore = defineStore('deploy', {
   state: () => ({
@@ -15,7 +16,7 @@ export const useDeployStore = defineStore('deploy', {
     async fetchList() {
       this.loading = true; this.error = ''
       try { this.list = await getDeploys(this.statusFilter) || [] }
-      catch (e) { this.error = e.j?.error || '部署列表拉取失败' }
+      catch (e) { this.error = e.j?.error || t('error.deployListFailed') }
       finally { this.loading = false }
     },
     async create(body) {
@@ -29,7 +30,7 @@ export const useDeployStore = defineStore('deploy', {
     },
     async open(id) {
       try { this.current = await getDeploy(id) }
-      catch (e) { this.error = e.j?.error || '部署详情拉取失败' }
+      catch (e) { this.error = e.j?.error || t('error.deployDetailFailed') }
     }
   }
 })

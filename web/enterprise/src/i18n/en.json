@@ -154,7 +154,15 @@
     "mwDetailFailed": "Failed to fetch middleware template detail",
     "loginFailed": "Login failed",
     "registerFailed": "Register failed",
-    "noPermission": "No permission to access this page"
+    "noPermission": "No permission to access this page",
+    "workflowListFailed": "Failed to fetch workflow list",
+    "workflowDetailFailed": "Failed to fetch workflow",
+    "workflowSaveFailed": "Save failed",
+    "workflowRunFailed": "Run failed",
+    "workflowStatusFailed": "Failed to fetch workflow status",
+    "workflowScheduleFailed": "Failed to set schedule",
+    "deployListFailed": "Failed to fetch deploy list",
+    "deployDetailFailed": "Failed to fetch deploy detail"
   },
   "common": {
     "loading": "Loading…",

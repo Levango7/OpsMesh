@@ -26,6 +26,12 @@ function redirectToLogin() {
 
 let refreshing = null
 
+// 导出刷新函数供 SSE 等非 axios 路径复用（P1-3：SSE 401 时触发刷新后重连）
+export function refreshToken() {
+  if (!refreshing) refreshing = postEmpty('/auth/refresh')
+  return refreshing.finally(() => { refreshing = null })
+}
+
 // 请求拦截器：双 Cookie 由浏览器自动携带，无需手动附加 Authorization。
 http.interceptors.request.use((config) => config)
 

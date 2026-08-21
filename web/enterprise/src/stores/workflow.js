@@ -4,6 +4,7 @@ import {
   getWorkflows, getWorkflow, createWorkflow, updateWorkflow,
   runWorkflow, getWorkflowStatus, scheduleWorkflow
 } from '@/api/workflow'
+import { t } from '@/i18n'
 
 export const useWorkflowStore = defineStore('workflow', {
   state: () => ({
@@ -20,7 +21,7 @@ export const useWorkflowStore = defineStore('workflow', {
   actions: {
     async fetchList() {
       try { this.list = await getWorkflows() || [] }
-      catch (e) { this.error = e.j?.error || '作业流列表拉取失败' }
+      catch (e) { this.error = e.j?.error || t('error.workflowListFailed') }
     },
     async open(id) {
       if (!id) { this.reset(); return }
@@ -32,7 +33,7 @@ export const useWorkflowStore = defineStore('workflow', {
         }
         this.nodePos = {}
         this.autoLayout()
-      } catch (e) { this.error = e.j?.error || '作业流拉取失败' }
+      } catch (e) { this.error = e.j?.error || t('error.workflowDetailFailed') }
     },
     reset() {
       this.current = { id: 0, name: '', agentID: '', cron: '', dag: [], status: 'draft' }
@@ -91,19 +92,19 @@ export const useWorkflowStore = defineStore('workflow', {
         this.msg = `[${r.s}] ${JSON.stringify(r.j)}`
         await this.fetchList()
         return r
-      } catch (e) { this.error = e.j?.error || '保存失败'; throw e }
+      } catch (e) { this.error = e.j?.error || t('error.workflowSaveFailed'); throw e }
     },
     async run() {
       try { return await runWorkflow(this.current.id) }
-      catch (e) { this.error = e.j?.error || '运行失败'; throw e }
+      catch (e) { this.error = e.j?.error || t('error.workflowRunFailed'); throw e }
     },
     async fetchStatus() {
       try { this.status = await getWorkflowStatus(this.current.id) || {} }
-      catch (e) { this.error = e.j?.error || '运行态拉取失败' }
+      catch (e) { this.error = e.j?.error || t('error.workflowStatusFailed') }
     },
     async schedule(cron) {
       try { return await scheduleWorkflow(this.current.id, cron) }
-      catch (e) { this.error = e.j?.error || '定时设置失败'; throw e }
+      catch (e) { this.error = e.j?.error || t('error.workflowScheduleFailed'); throw e }
     }
   }
 })

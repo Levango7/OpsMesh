@@ -154,7 +154,15 @@
     "mwDetailFailed": "中间件模板详情拉取失败",
     "loginFailed": "登录失败",
     "registerFailed": "注册失败",
-    "noPermission": "无权限访问该页面"
+    "noPermission": "无权限访问该页面",
+    "workflowListFailed": "作业流列表拉取失败",
+    "workflowDetailFailed": "作业流拉取失败",
+    "workflowSaveFailed": "保存失败",
+    "workflowRunFailed": "运行失败",
+    "workflowStatusFailed": "运行态拉取失败",
+    "workflowScheduleFailed": "定时设置失败",
+    "deployListFailed": "部署列表拉取失败",
+    "deployDetailFailed": "部署详情拉取失败"
   },
   "common": {
     "loading": "加载中…",
