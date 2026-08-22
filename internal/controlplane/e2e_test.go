@@ -74,7 +74,9 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 	}
 	waitUp(fmt.Sprintf("http://127.0.0.1:%d/healthz", httpPort))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	// 真实拉起 gRPC/HTTP + 本地 exec，高负载下（多包并行测试）各环节累计可达数十秒；
+	// 60s 只是最外层兜底，不影响正常路径的验证语义。
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	// 1) 真实 agent 客户端注册

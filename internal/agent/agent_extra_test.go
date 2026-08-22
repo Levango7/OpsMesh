@@ -171,9 +171,21 @@ func TestShutdownOTel_Noop(t *testing.T) {
 
 // --- collectCmdbReport 节流 ---
 
+// skipServiceProbe 在测试期间清空服务采集白名单。
+// collectCmdbServices 在 Windows 上对每个白名单服务 spawn 一次 sc query（各 2s 超时），
+// 本组测试只验证节流/Seq 逻辑，服务探测另有 NoPanic 测试覆盖；
+// 清空白名单避免高负载下 21 次子进程拖慢甚至拖过 60s 节流窗口导致 flaky。
+func skipServiceProbe(t *testing.T) {
+	t.Helper()
+	saved := monitoredServices
+	monitoredServices = nil
+	t.Cleanup(func() { monitoredServices = saved })
+}
+
 func TestCollectCmdbReport_Throttle(t *testing.T) {
+	skipServiceProbe(t)
 	a := &Agent{hostname: "h", cfg: &config.Config{}}
-	// 首次调用应返回非 nil（距上次采集 >= 60s）
+	// 首次调用应返回非 nil（零值 cmdbLastCol 距今远超 60s）
 	r1 := a.collectCmdbReport()
 	if r1 == nil {
 		t.Fatal("首次采集应返回非 nil")
@@ -184,7 +196,9 @@ func TestCollectCmdbReport_Throttle(t *testing.T) {
 	if r1.Seq != 1 {
 		t.Fatalf("Seq 应为 1，得到 %d", r1.Seq)
 	}
-	// 紧接的第二次应被节流
+	// 采集本身可能耗时，以"采集刚结束"为基准验证节流（cmdbLastCol 记录的是采集开始时刻，
+	// 极端情况下采集超 60s 会让窗口提前过期）。
+	a.cmdbLastCol = time.Now()
 	r2 := a.collectCmdbReport()
 	if r2 != nil {
 		t.Fatal("距上次不足 60s 应返回 nil（节流）")
@@ -192,6 +206,7 @@ func TestCollectCmdbReport_Throttle(t *testing.T) {
 }
 
 func TestCollectCmdbReport_SeqIncrement(t *testing.T) {
+	skipServiceProbe(t)
 	a := &Agent{hostname: "h", cfg: &config.Config{}}
 	// 模拟上次采集时间已过 60s
 	a.cmdbLastCol = time.Now().Add(-70 * time.Second)
