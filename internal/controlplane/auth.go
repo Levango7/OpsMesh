@@ -292,6 +292,8 @@ func (s *Server) consumeChangePasswordToken(id string) (string, bool) {
 func randHexID(prefix string) string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
+		// panic 合理：crypto/rand 失败意味着系统随机数生成器不可用（如 /dev/urandom 不可读），
+		// 这是不可恢复的系统级错误，无法降级处理。正常环境下不会触发。
 		panic(fmt.Sprintf("crypto/rand failed: %v", err))
 	}
 	return prefix + "-" + hex.EncodeToString(b)

@@ -37,10 +37,16 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 		MetricsPort:         0,
 		TaskMaxRetries:      3,
 	}
-	s := NewServer(cfg)
+	s, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 
 	// 真实 gRPC server（与运行中的二进制同款 buildGRPC）
-	gs, glis := s.buildGRPC()
+	gs, glis, err := s.buildGRPC()
+	if err != nil {
+		t.Fatalf("buildGRPC: %v", err)
+	}
 	go func() { _ = gs.Serve(glis) }()
 	grpcPort := glis.Addr().(*net.TCPAddr).Port
 

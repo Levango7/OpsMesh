@@ -11,6 +11,7 @@ import (
 	"context"
 	cryptoRand "crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -230,16 +231,16 @@ func (s *Server) shutdownTLSReloader() {
 	}
 }
 
-func NewServer(cfg *config.Config) *Server {
+func NewServer(cfg *config.Config) (*Server, error) {
 	// Kafka brokers/topic 经参数传入事件总线（避免 os.Setenv 并发不安全）。
 	bus := events.New(cfg.EventBus, cfg.KafkaBrokers, cfg.KafkaTopic)
 	st, storeErr := selectStore(cfg, bus)
 	if storeErr != nil {
 		// 安全加固：静默回退改 fail-fast。
-		// 生产模式（cfg.Production == true）：MySQL 初始化失败直接 Fatal，避免静默回退 memory
+		// 生产模式（cfg.Production == true）：MySQL 初始化失败直接返回错误，避免静默回退 memory
 		// 导致数据丢失/分裂（多副本 memory store 各自独立，写入互不可见）。
 		if cfg.Production {
-			log.Fatalf("[controlplane] 持久化后端初始化失败（生产模式 fail-fast，不回退 memory）: %v", storeErr)
+			return nil, fmt.Errorf("持久化后端初始化失败（生产模式 fail-fast）: %w", storeErr)
 		}
 		// 非生产模式（开发/demo/测试）：打 Warning 后回退 memory，保持本地体验兼容。
 		logx.Warn(context.Background(), "持久化后端初始化失败，非生产模式回退 memory（生产模式将 fail-fast）", "err", storeErr)
@@ -291,7 +292,7 @@ func NewServer(cfg *config.Config) *Server {
 	secretProvider, spErr := secrets.FromConfig(cfg)
 	if spErr != nil {
 		if cfg.Production {
-			log.Fatalf("[controlplane] 密钥提供者初始化失败（生产模式 fail-fast）: %v", spErr)
+			return nil, fmt.Errorf("密钥提供者初始化失败: %w", spErr)
 		}
 		logx.Warn(context.Background(), "密钥提供者初始化失败，非生产模式继续（告警通道密钥引用将无法解析）", "err", spErr)
 	}
@@ -327,7 +328,7 @@ func NewServer(cfg *config.Config) *Server {
 	// 硬化：传入共享 HMAC 密钥 + 出站 mTLS 配置（nil 表示明文联邦）。
 	fedClientTLS, err := tlsutil.HTTPClientTLSConfig(cfg.FederationTLSCert, cfg.FederationTLSKey, cfg.FederationCA)
 	if err != nil {
-		log.Fatalf("[controlplane] 联邦客户端 TLS 配置失败: %v", err)
+		return nil, fmt.Errorf("联邦客户端 TLS 配置失败: %w", err)
 	}
 	s.fed = NewFederationManager(cfg.FederationPeers, st, cfg.FederationSecret, fedClientTLS)
 	// 用户中心 JWT 密钥：优先用 config.JWTSecret，空则随机生成 32 字节（重启后旧 token 失效）。
@@ -336,7 +337,7 @@ func NewServer(cfg *config.Config) *Server {
 	} else {
 		s.jwtSecret = make([]byte, 32)
 		if _, err := cryptoRand.Read(s.jwtSecret); err != nil {
-			log.Fatalf("[controlplane] JWT 密钥随机生成失败: %v", err)
+			return nil, fmt.Errorf("JWT 密钥随机生成失败: %w", err)
 		}
 	}
 	// kubeconfig 加密密钥：base64 解码 config.EncryptionKey 为 32 字节 AES-256 密钥。
@@ -344,10 +345,10 @@ func NewServer(cfg *config.Config) *Server {
 	if cfg.EncryptionKey != "" {
 		key, decErr := base64.StdEncoding.DecodeString(cfg.EncryptionKey)
 		if decErr != nil {
-			log.Fatalf("[controlplane] --encryption-key base64 解码失败: %v", decErr)
+			return nil, fmt.Errorf("--encryption-key base64 解码失败: %w", decErr)
 		}
 		if len(key) != 32 {
-			log.Fatalf("[controlplane] --encryption-key 解码后须为 32 字节（AES-256），实际 %d 字节", len(key))
+			return nil, fmt.Errorf("--encryption-key 解码后须为 32 字节（AES-256），实际 %d 字节", len(key))
 		}
 		s.encryptionKey = key
 	} else if !cfg.Production {
@@ -359,7 +360,7 @@ func NewServer(cfg *config.Config) *Server {
 	if ssErr != nil {
 		// Redis 初始化失败：生产模式 fail-fast，非生产回退进程内（保持本地体验兼容）。
 		if cfg.Production {
-			log.Fatalf("[controlplane] 会话状态后端初始化失败（生产模式 fail-fast）: %v", ssErr)
+			return nil, fmt.Errorf("会话状态后端初始化失败: %w", ssErr)
 		}
 		logx.Warn(context.Background(), "会话状态后端初始化失败，非生产模式回退进程内", "err", ssErr)
 		ss = store.NewInProcessSessionStore()
@@ -407,7 +408,7 @@ func NewServer(cfg *config.Config) *Server {
 		Stdout:      cfg.OTELStdout,
 	})
 	if otelErr != nil {
-		log.Fatalf("[controlplane] OTel 初始化失败: %v", otelErr)
+		return nil, fmt.Errorf("OTel 初始化失败: %w", otelErr)
 	}
 	s.otelShutdown = otelShutdown
 	if cfg.OTELEndpoint != "" || cfg.OTELStdout {
@@ -458,7 +459,7 @@ func NewServer(cfg *config.Config) *Server {
 	if cfg.InhibitRulesFile != "" {
 		rules, loadErr := alertengine.LoadInhibitRules(cfg.InhibitRulesFile)
 		if loadErr != nil {
-			log.Fatalf("[controlplane] 加载告警抑制规则文件失败: %v", loadErr)
+			return nil, fmt.Errorf("加载告警抑制规则文件失败: %w", loadErr)
 		}
 		s.alertInhibitor = alertengine.NewAlertInhibitor(rules)
 		logx.Info(context.Background(), "告警抑制已启用", "rulesFile", cfg.InhibitRulesFile, "rulesCount", len(rules))
@@ -510,7 +511,7 @@ func NewServer(cfg *config.Config) *Server {
 			"defaultMaxTasks", cfg.QuotaMaxTasks,
 			"defaultMaxAlerts", cfg.QuotaMaxAlerts)
 	}
-	return s
+	return s, nil
 }
 
 // firstNonEmpty 返回第一个非空字符串，全空返回空串。用于服务名默认值回退。

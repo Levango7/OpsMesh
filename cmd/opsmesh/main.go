@@ -67,7 +67,11 @@ func runMain() int {
 	switch cfg.Mode {
 	case "controlplane":
 		// 控制面模式：HTTP(B/S) 8080 + gRPC 9090（真实注册通道） + metrics 9091。
-		srv := controlplane.NewServer(cfg)
+		srv, err := controlplane.NewServer(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[controlplane] 初始化失败: %v\n", err)
+			return 1
+		}
 		if err := srv.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "[controlplane] 启动失败: %v\n", err)
 			return 1

@@ -69,8 +69,9 @@ type Agent struct {
 	logOffsets         map[string]int64
 	logMu              sync.Mutex
 	// OTel 链路追踪：TracerProvider 优雅关闭函数。
-	// 由 New 调用 otelx.Init 构造；Run 优雅退出时调用以 flush 残留 span。
-	// nil=未启用 OTel（endpoint 空且 stdout=false），退出时跳过。
+	// 由 Run 调用 otelx.Init 构造（初始化失败时返回 error 而非 fatal）；
+	// Run 优雅退出时调用以 flush 残留 span。
+	// nil=未启用 OTel（endpoint 空且 stdout=false）或 Run 尚未执行 OTel 初始化，退出时跳过。
 	otelShutdown otelx.ShutdownFunc
 	// 熔断器：按 deviceID（即 agentID）隔离的熔断器集合。
 	// 由 New 构造；worker 执行任务前经熔断器放行，连续失败 N 次后熔断该设备，
@@ -105,21 +106,9 @@ func New(cfg *config.Config) *Agent {
 		metricsHistory: NewMetricsHistory(MetricsHistoryDefaultCap), // 环形缓冲：默认 2h/240 条
 	}
 	a.initLogCollect()
-	// OTel 链路追踪初始化：endpoint 为空且 stdout=false 时 no-op（零开销）。
-	// 服务名默认 "opsmesh-agent"（未配置时由 otelx 回退 "opsmesh"）。
-	// 启用后 agent gRPC 调用 + 心跳 + 任务执行自动埋点，trace_id 贯穿 agent→控制面→store。
-	otelShutdown, otelErr := otelx.Init(otelx.Config{
-		Endpoint:    cfg.OTELEndpoint,
-		ServiceName: firstNonEmptyAgent(cfg.OTELServiceName, "opsmesh-agent"),
-		Stdout:      cfg.OTELStdout,
-	})
-	if otelErr != nil {
-		log.Fatalf("[agent] OTel 初始化失败: %v", otelErr)
-	}
-	a.otelShutdown = otelShutdown
-	if cfg.OTELEndpoint != "" || cfg.OTELStdout {
-		logx.Info(context.Background(), "OTel 链路追踪已启用", "endpoint", cfg.OTELEndpoint, "stdout", cfg.OTELStdout, "service", cfg.OTELServiceName)
-	}
+	// OTel 链路追踪初始化已移至 Run() 方法：New() 返回 *Agent 无法返回 error，
+	// 而 OTel 初始化失败属于可向调用方透传的错误，故在 Run()（返回 error）中执行，
+	// 失败时由 main.go 的 `if err := ag.Run(); err != nil` 统一处理。
 	// 熔断器初始化：CBFailureThreshold>0 时启用，按 deviceID（即 agentID）隔离。
 	// 禁用时 cbSet 为 nil，worker 直接执行任务（零开销，向后兼容）。
 	if cfg.CBFailureThreshold > 0 {
@@ -397,6 +386,23 @@ func (a *Agent) Run() error {
 	// 显式打印目标机能力矩阵，避免“能注册但半数任务类型必挂”的错觉。
 	// 冻结 Linux-only：非 Linux 能跑 shell，但 service(systemctl)/rlimit 不可用。
 	logx.Info(context.Background(), "agent 能力矩阵", "os", runtime.GOOS, "note", capabilityNote(runtime.GOOS))
+
+	// OTel 链路追踪初始化：endpoint 为空且 stdout=false 时 no-op（零开销）。
+	// 服务名默认 "opsmesh-agent"（未配置时由 otelx 回退 "opsmesh"）。
+	// 启用后 agent gRPC 调用 + 心跳 + 任务执行自动埋点，trace_id 贯穿 agent→控制面→store。
+	// 初始化失败时返回 error（由 main.go 统一处理），而非 log.Fatalf 强制退出。
+	otelShutdown, otelErr := otelx.Init(otelx.Config{
+		Endpoint:    a.cfg.OTELEndpoint,
+		ServiceName: firstNonEmptyAgent(a.cfg.OTELServiceName, "opsmesh-agent"),
+		Stdout:      a.cfg.OTELStdout,
+	})
+	if otelErr != nil {
+		return fmt.Errorf("OTel 初始化失败: %w", otelErr)
+	}
+	a.otelShutdown = otelShutdown
+	if a.cfg.OTELEndpoint != "" || a.cfg.OTELStdout {
+		logx.Info(context.Background(), "OTel 链路追踪已启用", "endpoint", a.cfg.OTELEndpoint, "stdout", a.cfg.OTELStdout, "service", a.cfg.OTELServiceName)
+	}
 
 	// 多控制面 failover：优先用逗号分隔的 --control-addrs（后也接受 --controlplane-endpoints，
 	// config.Load 已合并到 ControlAddrs），为空则回退单地址 --control-addr（向后兼容）。

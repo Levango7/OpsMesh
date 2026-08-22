@@ -32,10 +32,10 @@ import (
 	"opsmesh/internal/tlsutil"
 )
 
-func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
+func (s *Server) buildGRPC() (*grpc.Server, net.Listener, error) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.grpcPort))
 	if err != nil {
-		log.Fatalf("[controlplane] gRPC 监听失败 %d: %v", s.grpcPort, err)
+		return nil, nil, fmt.Errorf("gRPC 监听失败 %d: %w", s.grpcPort, err)
 	}
 	var opts []grpc.ServerOption
 	if s.tlsCert != "" && s.tlsKey != "" {
@@ -44,7 +44,7 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
 		if s.cfg != nil && s.cfg.TLSWatch {
 			reloader, err := tlsutil.NewCertificateReloader(s.tlsCert, s.tlsKey)
 			if err != nil {
-				log.Fatalf("[controlplane] gRPC TLS 热重载初始化失败: %v", err)
+				return nil, nil, fmt.Errorf("gRPC TLS 热重载初始化失败: %w", err)
 			}
 			s.tlsReloader = reloader
 			tlsCfg := &tls.Config{
@@ -56,10 +56,10 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
 				pool := x509.NewCertPool()
 				b, err := os.ReadFile(s.clientCA)
 				if err != nil {
-					log.Fatalf("[controlplane] gRPC TLS 热重载模式读取 clientCA 失败: %v", err)
+					return nil, nil, fmt.Errorf("gRPC TLS 热重载模式读取 clientCA 失败: %w", err)
 				}
 				if !pool.AppendCertsFromPEM(b) {
-					log.Fatalf("[controlplane] gRPC TLS 热重载模式解析 clientCA 失败")
+					return nil, nil, fmt.Errorf("gRPC TLS 热重载模式解析 clientCA 失败")
 				}
 				tlsCfg.ClientCAs = pool
 				tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
@@ -70,7 +70,7 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
 		} else {
 			creds, err := tlsutil.ServerCreds(s.tlsCert, s.tlsKey, s.clientCA)
 			if err != nil {
-				log.Fatalf("[controlplane] gRPC TLS 加载失败: %v", err)
+				return nil, nil, fmt.Errorf("gRPC TLS 加载失败: %w", err)
 			}
 			opts = append(opts, grpc.Creds(creds))
 			logx.Info(context.Background(), "gRPC 已启用 TLS", "mtls", s.clientCA != "")
@@ -104,7 +104,7 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
 			return ""
 		}(),
 	})
-	return gs, lis
+	return gs, lis, nil
 }
 
 // grpcRecoveryInterceptor 兜底盘：拦截任何 unary handler 内的 panic，避免单个 RPC panic
@@ -185,10 +185,10 @@ func (s *Server) buildFederationServer() (*http.Server, net.Listener, error) {
 }
 
 // buildMetrics 构造 metrics HTTP server 与监听，渲染零依赖 Prometheus 文本指标。
-func (s *Server) buildMetrics() (*http.Server, net.Listener) {
+func (s *Server) buildMetrics() (*http.Server, net.Listener, error) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.metricsPort))
 	if err != nil {
-		log.Fatalf("[controlplane] metrics 监听失败 %d: %v", s.metricsPort, err)
+		return nil, nil, fmt.Errorf("metrics 监听失败 %d: %w", s.metricsPort, err)
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
@@ -203,7 +203,7 @@ func (s *Server) buildMetrics() (*http.Server, net.Listener) {
 		s.metrics.SetAgents(len(s.store.Agents("")))
 		fmt.Fprint(w, s.metrics.Render())
 	})
-	return &http.Server{Handler: recoveryMiddleware(mux), ReadHeaderTimeout: 5 * time.Second}, lis
+	return &http.Server{Handler: recoveryMiddleware(mux), ReadHeaderTimeout: 5 * time.Second}, lis, nil
 }
 
 // handleDevices 处理 GET /api/v1/devices，按网关注入租户返回 segment -> 设备 列表。

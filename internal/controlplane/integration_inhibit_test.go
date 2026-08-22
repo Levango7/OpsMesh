@@ -464,7 +464,10 @@ func TestNewServer_InhibitRulesFileLoading(t *testing.T) {
 	}
 
 	// 调用 NewServer 构造 Server
-	s := NewServer(cfg)
+	s, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 	if s.alertInhibitor == nil {
 		t.Fatal("NewServer 应从 InhibitRulesFile 加载规则并构造 alertInhibitor")
 	}
@@ -505,7 +508,10 @@ func TestNewServer_NoInhibitRulesFile(t *testing.T) {
 		LogBackend:       "memory",
 	}
 
-	s := NewServer(cfg)
+	s, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 	if s.alertInhibitor != nil {
 		t.Fatal("InhibitRulesFile 为空时 alertInhibitor 应为 nil（向后兼容）")
 	}

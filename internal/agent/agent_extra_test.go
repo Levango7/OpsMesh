@@ -878,9 +878,10 @@ func TestNew_Extra(t *testing.T) {
 	if a.metricsHistory == nil {
 		t.Fatal("metricsHistory 不应为 nil")
 	}
-	// otelShutdown 应为 noop（endpoint 空且 stdout=false）
-	if a.otelShutdown == nil {
-		t.Fatal("otelShutdown 不应为 nil（noop 也应非 nil）")
+	// otelShutdown 在 New() 后为 nil（OTel 初始化已移至 Run() 方法中，
+	// 使初始化失败能向调用方透传 error 而非 log.Fatalf 进程退出）。
+	if a.otelShutdown != nil {
+		t.Fatal("otelShutdown 在 New() 后应为 nil（OTel 初始化已移至 Run()）")
 	}
 	// 禁用熔断器时 cbSet 应为 nil
 	if a.cbSet != nil {

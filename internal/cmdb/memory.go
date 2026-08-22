@@ -192,9 +192,9 @@ func (s *MemoryCiStore) DeleteCI(_ context.Context, id, tenantID string) error {
 	return nil
 }
 
-func (s *MemoryCiStore) GetCIHistory(_ context.Context, ciID, tenantID string, limit int) ([]CiItem, error) {
+func (s *MemoryCiStore) GetCIHistory(ctx context.Context, ciID, tenantID string, limit int) ([]CiItem, error) {
 	// MVP：memory 只返回当前版本（不含历史）
-	item, err := s.GetCI(context.TODO(), ciID, tenantID)
+	item, err := s.GetCI(ctx, ciID, tenantID)
 	if err != nil {
 		return nil, err
 	}

@@ -4,7 +4,7 @@
 > 最后更新：2026-08-17
 > 适用范围：OpsMesh 控制面（controlplane）+ Agent + 联邦通道
 > 编写依据：源码审计 + 等保三级要求 + OWASP Top 10 防护对照
-> 配套文档：[security-issues.md](./security-issues.md)（已知漏洞与处置）、[deployment-guide.md](./deployment-guide.md)
+> 配套文档：[tech-debt.md](./tech-debt.md)（技术债追踪）、[deployment-guide.md](./deployment-guide.md)
 
 ---
 

@@ -168,12 +168,18 @@ func (s *Server) Start() error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	grpcSrv, grpcLis := s.buildGRPC()
-	metricsSrv, metricsLis := s.buildMetrics()
+	grpcSrv, grpcLis, err := s.buildGRPC()
+	if err != nil {
+		return fmt.Errorf("gRPC 建造失败: %w", err)
+	}
+	metricsSrv, metricsLis, err := s.buildMetrics()
+	if err != nil {
+		return fmt.Errorf("metrics 建造失败: %w", err)
+	}
 	// 联邦独立 mTLS 监听（端口 >0 且已启用联邦时生效；否则返回 nil）。
 	fedSrv, fedLis, fedErr := s.buildFederationServer()
 	if fedErr != nil {
-		log.Fatalf("[controlplane] 联邦 mTLS 监听构建失败: %v", fedErr)
+		return fmt.Errorf("联邦 mTLS 监听构建失败: %w", fedErr)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

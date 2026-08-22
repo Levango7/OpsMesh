@@ -332,6 +332,8 @@ func (m *MemoryStore) seedRBAC() {
 		hash, err := bcryptHash(us.password)
 		if err != nil {
 			// bcrypt 失败属于环境异常（成本因子超限等），构造期 panic 暴露问题。
+			// log.Panicf 合理：bcrypt 哈希失败意味着密码哈希算法不可用（如 bcrypt 库损坏），
+			// 这是不可恢复的初始化错误。seedRBAC 在构造时调用，失败时程序无法安全启动。
 			log.Panicf("[store] 预填充用户 %q 的 bcrypt 哈希失败: %v", us.name, err)
 		}
 		u := &User{
@@ -397,6 +399,8 @@ func randHex(n int) string {
 func mustRandHex(n int) string {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
+		// log.Panicf 合理：crypto/rand 不可用意味着系统随机数生成器故障，
+		// 无法生成安全的 HMAC 签名密钥，这是不可恢复的系统级错误。
 		log.Panicf("[store] crypto/rand 不可用，无法生成安全密钥: %v", err)
 	}
 	return hex.EncodeToString(b)
