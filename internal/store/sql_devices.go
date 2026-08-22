@@ -220,6 +220,9 @@ func (s *SQLStore) Snapshot(tenantID string) map[string][]proto.DeviceInfo {
 		}
 		out[d.Segment] = append(out[d.Segment], d)
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] Snapshot 遍历失败: %v", err)
+	}
 	return out
 }
 
@@ -292,6 +295,9 @@ func (s *SQLStore) Agents(tenantID string) []*proto.AgentInfo {
 		}
 		a.LastSeen = lastSeen
 		out = append(out, &a)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] Agents 遍历失败: %v", err)
 	}
 	return out
 }

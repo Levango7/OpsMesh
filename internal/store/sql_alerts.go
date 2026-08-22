@@ -88,6 +88,9 @@ func (s *SQLStore) ListAlertRules(tenantID string) []*AlertRule {
 			out = append(out, r)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] ListAlertRules 遍历失败: %v", err)
+	}
 	return out
 }
 
@@ -158,6 +161,9 @@ func (s *SQLStore) Alerts(tenantID string) []*proto.Alert {
 		a.Comment = comment.String
 		a.UpdatedAt = updatedAt
 		out = append(out, &a)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] Alerts 遍历失败: %v", err)
 	}
 	return out
 }

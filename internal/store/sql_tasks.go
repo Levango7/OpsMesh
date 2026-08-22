@@ -140,6 +140,9 @@ func (s *SQLStore) GetTasks(agentID string) []*proto.Task {
 		t.CreatedAt = createdAt
 		out = append(out, &t)
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] GetTasks 遍历失败 %s: %v", agentID, err)
+	}
 	return out
 }
 
@@ -163,6 +166,9 @@ func (s *SQLStore) TasksByParent(parentID string) []*proto.Task {
 			continue
 		}
 		out = append(out, &t)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] TasksByParent 遍历失败 %s: %v", parentID, err)
 	}
 	return out
 }
@@ -296,6 +302,10 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 		}
 		blocked = append(blocked, r)
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] releaseDeps 查询 blocked 任务遍历失败 %s: %v", agentID, err)
+		return
+	}
 	if len(blocked) == 0 {
 		return
 	}
@@ -313,6 +323,10 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 			continue
 		}
 		byID[id] = &proto.Task{TaskID: id, Status: st}
+	}
+	if err := all.Err(); err != nil {
+		log.Printf("[store] releaseDeps 查询任务状态遍历失败 %s: %v", agentID, err)
+		return
 	}
 
 	for _, b := range blocked {
@@ -364,6 +378,9 @@ func (s *SQLStore) AllTasks(tenantID string) []*proto.Task {
 		t.CreatedAt = createdAt
 		out = append(out, &t)
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] AllTasks 遍历失败: %v", err)
+	}
 	return out
 }
 
@@ -411,6 +428,9 @@ func (s *SQLStore) Results(agentID string) []*proto.TaskResult {
 		}
 		r.FinishedAt = finishedAt
 		out = append(out, &r)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] Results 遍历失败 %s: %v", agentID, err)
 	}
 	return out
 }
@@ -593,6 +613,10 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 		}
 		due = append(due, tp)
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] FireDueSchedules 遍历失败: %v", err)
+		return 0
+	}
 	fired := 0
 	for _, tp := range due {
 		instID := fmt.Sprintf("task-%d-%s", now.UnixNano(), tp.id)
@@ -688,6 +712,9 @@ func (s *SQLStore) CancelledTaskIDs(agentID string) []string {
 			continue
 		}
 		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] CancelledTaskIDs 遍历失败 %s: %v", agentID, err)
 	}
 	return out
 }

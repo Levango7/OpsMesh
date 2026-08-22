@@ -75,6 +75,9 @@ func (s *SQLStore) Audits() []*proto.AuditEvent {
 		e.CreatedAt = createdAt
 		out = append(out, &e)
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] Audits 遍历失败: %v", err)
+	}
 	return out
 }
 
@@ -136,6 +139,9 @@ func (s *SQLStore) QueryAudits(tenant, action string, since, until time.Time, li
 		}
 		e.CreatedAt = createdAt
 		out = append(out, &e)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] QueryAudits 遍历失败: %v", err)
 	}
 	return out
 }

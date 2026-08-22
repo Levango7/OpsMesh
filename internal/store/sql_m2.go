@@ -158,6 +158,9 @@ func (s *SQLStore) ListSilences(tenantID string) []*SilenceRule {
 			out = append(out, r)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] ListSilences 遍历失败: %v", err)
+	}
 	return out
 }
 
@@ -293,6 +296,9 @@ func (s *SQLStore) ListNotifyChannels(tenantID string) []*NotifyChannel {
 		if c := scanNotifyChannel(rows); c != nil {
 			out = append(out, c)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] ListNotifyChannels 遍历失败: %v", err)
 	}
 	return out
 }
@@ -431,6 +437,9 @@ func (s *SQLStore) ListNotifyTemplates(tenantID string) []*NotifyTemplate {
 		if t := scanNotifyTemplate(rows); t != nil {
 			out = append(out, t)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] ListNotifyTemplates 遍历失败: %v", err)
 	}
 	return out
 }

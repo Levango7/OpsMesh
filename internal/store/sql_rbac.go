@@ -92,6 +92,9 @@ func (s *SQLStore) ListUsers() []*User {
 			out = append(out, u)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] ListUsers 遍历失败: %v", err)
+	}
 	return out
 }
 
@@ -174,6 +177,9 @@ func (s *SQLStore) ListRoles() []*Role {
 			out = append(out, r)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] ListRoles 遍历失败: %v", err)
+	}
 	return out
 }
 
@@ -232,6 +238,9 @@ func (s *SQLStore) ListPermissions() []*Permission {
 			continue
 		}
 		out = append(out, &p)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] ListPermissions 遍历失败: %v", err)
 	}
 	return out
 }

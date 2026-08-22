@@ -12,9 +12,8 @@ BINARY_WIN = opsmesh.exe
 MAIN = ./cmd/opsmesh
 
 # 环境变量配置（生产环境必须设置 OPSMESH_JWT_SECRET）
-# ?= 表示如果环境变量已设置则用环境变量，否则用默认值
-# 默认值用于开发/demo，生产环境通过环境变量覆盖
-OPSMESH_JWT_SECRET ?= opsmesh-demo-jwt-secret-2026
+# 安全基线（P2 修复）：不再内置 demo 默认密钥。未设置 OPSMESH_JWT_SECRET 时
+# 二进制自动生成随机密钥（重启后会话失效），杜绝弱密钥被误带入生产。
 ALLOW_PUBLIC_REGISTER ?= false
 
 # 前端
@@ -58,8 +57,9 @@ ci: vet test build
 # 启动控制面（demo 模式）
 .PHONY: run
 run: build
-	# 需设置 OPSMESH_JWT_SECRET 环境变量，ALLOW_PUBLIC_REGISTER 默认为空
-	./$(BINARY_WIN) --mode=controlplane --store=memory --demo --allow-public-register=$(ALLOW_PUBLIC_REGISTER) --jwt-secret=$(OPSMESH_JWT_SECRET) --http-port=8080 --grpc-port=9090
+	# JWT 密钥从环境变量 OPSMESH_JWT_SECRET 读取（config 内置 env 兜底）；
+	# 未设置时自动生成随机密钥（重启后旧 token 失效），不再内置 demo 默认值。
+	./$(BINARY_WIN) --mode=controlplane --store=memory --demo --allow-public-register=$(ALLOW_PUBLIC_REGISTER) --http-port=8080 --grpc-port=9090
 
 # 启动 agent（task 97：修正 flag 名称 --controlplane → --control-addr）
 .PHONY: run-agent

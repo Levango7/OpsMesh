@@ -58,6 +58,9 @@ SELECT id, tenant_id, name, server, kubeconfig, status, created_at, updated_at F
 			out = append(out, c)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] ListK8sClusters 遍历失败: %v", err)
+	}
 	return out
 }
 

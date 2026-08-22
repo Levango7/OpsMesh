@@ -95,6 +95,9 @@ func (s *SQLStore) ListOSTemplates(tenantID string) []*OSTemplate {
 			out = append(out, t)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] ListOSTemplates 遍历失败: %v", err)
+	}
 	return out
 }
 
@@ -192,6 +195,9 @@ func (s *SQLStore) ListMiddlewareTemplates(tenantID string) []*MiddlewareTemplat
 		if t := scanMiddlewareTemplate(rows); t != nil {
 			out = append(out, t)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] ListMiddlewareTemplates 遍历失败: %v", err)
 	}
 	return out
 }

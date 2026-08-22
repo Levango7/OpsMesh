@@ -216,7 +216,7 @@ Chart 要点：
    ```
    密钥存于 Secret 键 `jwt-secret`：首次安装为空值时会**随机生成并固化**；`helm upgrade` **不轮换**（通过 `lookup` 复用已存在 Secret）。因此 upgrade 后 token 不会意外失效——若要换密钥，请先 `kubectl delete secret`（对应 Secret）再 upgrade，让新值进模板。
 
-> `Makefile` 与 `start.bat` 演示默认值（`opsmesh-demo-jwt-secret-2026`）仅限本地演示，生产务必显式注入强随机密钥。
+> `Makefile` 与 `start.bat` 不再内置 demo 默认密钥（P2 安全修复）：未设置 `OPSMESH_JWT_SECRET` 时二进制自动生成随机密钥（重启后旧 token 失效），生产务必显式注入强随机密钥。
 
 ---
 

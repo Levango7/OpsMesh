@@ -276,16 +276,26 @@ func ExportBackup(ctx context.Context, st store.Store, cfg *config.Config, opts 
 }
 
 // ExportBackupFile 是 ExportBackup 的文件包装：创建/截断 output 文件后导出。
+// 写盘错误必须显式检查：bufio.Flush 与 f.Close 的错误若被 defer 吞掉，
+// 磁盘写满/配额超限时会静默产出截断的备份文件（灾备恢复时才发现，为时已晚）。
 func ExportBackupFile(ctx context.Context, st store.Store, cfg *config.Config, opts ExportOptions, output string) (*BackupData, error) {
 	f, err := os.Create(output)
 	if err != nil {
 		return nil, fmt.Errorf("创建备份文件 %q 失败: %w", output, err)
 	}
-	defer f.Close()
 	// 用 bufio.Writer 缓冲写入，避免大备份逐行 syscall 影响性能。
 	bw := bufio.NewWriter(f)
-	defer bw.Flush()
-	return ExportBackup(ctx, st, cfg, opts, bw)
+	data, exportErr := ExportBackup(ctx, st, cfg, opts, bw)
+	if flushErr := bw.Flush(); flushErr != nil && exportErr == nil {
+		exportErr = flushErr
+	}
+	if closeErr := f.Close(); closeErr != nil && exportErr == nil {
+		exportErr = closeErr
+	}
+	if exportErr != nil {
+		return nil, fmt.Errorf("备份导出到 %q 失败: %w", output, exportErr)
+	}
+	return data, nil
 }
 
 // ImportBackup 从 r 读取 JSON 备份并导入 Store（按 opts 决策 dry-run/overwrite）。
@@ -452,7 +462,6 @@ func ImportBackupFile(ctx context.Context, st store.Store, opts ImportOptions, i
 // SQL dump 导入需用 mysql 客户端：mysql -u<user> -p<pwd> <dump.sql。
 func writeSQLDump(data *BackupData, w io.Writer) error {
 	bw := bufio.NewWriter(w)
-	defer bw.Flush()
 
 	fmt.Fprintf(bw, "-- opsmesh backup SQL dump\n")
 	fmt.Fprintf(bw, "-- version: %s\n", data.Meta.Version)
