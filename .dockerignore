@@ -1,0 +1,51 @@
+# OpsMesh .dockerignore — 精简 Docker 构建上下文（P2：原 ~250MB → ~10MB）
+#
+# Docker 构建（Dockerfile / Dockerfile.agent）只做 `go mod download` + `go build ./cmd/opsmesh`，
+# runtime 阶段仅拷贝二进制。因此构建只需要：
+#   - go.mod / go.sum
+#   - Go 源码（cmd/、internal/）
+#   - 两处 go:embed 资源（均在 internal/ 内，不受下列排除影响）：
+#       internal/controlplane/web    （//go:embed web，前端静态资源）
+#       internal/store/migrations    （//go:embed migrations/*.sql）
+#
+# 顶层 web/（Vue 源码 + node_modules）不参与 go build：前端由 CI 的 frontend job 独立构建，
+# 其产物经 internal/controlplane/web 内嵌，故此处整体排除以大幅缩减上下文。
+
+# ── 版本控制 / IDE / 工具目录 ──
+.git
+.gitignore
+.gitattributes
+.zcode
+.inscode
+.idea
+.vscode
+
+# ── 依赖目录（Go 构建不需要任何 node_modules）──
+node_modules
+**/node_modules
+
+# ── 顶层前端（Vue 源码 / 构建产物 / 测试报告，均不参与 go build）──
+web
+
+# ── 文档与截图 ──
+docs
+ui-screenshots
+
+# ── CI / 部署清单（构建镜像本身不需要）──
+.github
+deploy
+operator
+docker-compose*.yaml
+Dockerfile
+Dockerfile.agent
+.dockerignore
+
+# ── protobuf 源（生成的 Go 代码已提交在 internal/grpcx/pb）──
+proto
+
+# ── 运行时数据 / 构建产物 / 杂项 ──
+data
+*.log
+*.exe
+opsmesh
+opsmesh.exe
