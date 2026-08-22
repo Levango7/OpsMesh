@@ -1,6 +1,6 @@
 // server_audits.go 审计相关 HTTP handler。
 //
-// 从 server.go 拆分而来（task 114：按路由域拆分巨型 server.go）。
+// 从 server.go 拆分而来（按路由域拆分巨型 server.go）。
 // 仅包含审计检索端点 handleAudits，逻辑未做任何修改。
 package controlplane
 
@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// handleAudits 处理 GET /api/v1/audits：按租户/动作/时间窗检索审计事件（P0-4 审计可查；U-04 等保三级留痕必须可检索）。
+// handleAudits 处理 GET /api/v1/audits：按租户/动作/时间窗检索审计事件（审计可查；等保三级留痕必须可检索）。
 // 查询参数：tenant（requireAuth 时强制取自身租户）、action、from/to（RFC3339）、limit（默认 100，上限 1000）。
 func (s *Server) handleAudits(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

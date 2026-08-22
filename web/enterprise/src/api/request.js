@@ -26,7 +26,7 @@ function redirectToLogin() {
 
 let refreshing = null
 
-// 导出刷新函数供 SSE 等非 axios 路径复用（P1-3：SSE 401 时触发刷新后重连）
+// 导出刷新函数供 SSE 等非 axios 路径复用（SSE 401 时触发刷新后重连）
 export function refreshToken() {
   if (!refreshing) refreshing = postEmpty('/auth/refresh')
   return refreshing.finally(() => { refreshing = null })

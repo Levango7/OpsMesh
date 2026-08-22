@@ -21,9 +21,9 @@ controlplane:
     pullPolicy: IfNotPresent
   # 控制面副本数；>1 时务必设置 store=mysql，否则 memory 多副本数据分裂
   replicaCount: 1
-  # 持久化后端：memory（默认零依赖） | mysql（U-04 数据本地化，多副本必需）
+  # 持久化后端：memory（默认零依赖） | mysql（数据本地化，多副本必需）
   store: memory
-  # 生产模式（A4）：默认开启 require-auth，并对 store=memory 强告警
+  # 生产模式：默认开启 require-auth，并对 store=memory 强告警
   production: false
   # 要求网关注入 X-Tenant-ID，缺失则拒绝（生产 hardening）
   requireAuth: false
@@ -38,17 +38,17 @@ controlplane:
   taskLeaseSec: 300
   # 任务失败重试上限；超出置 failed（死信）
   taskMaxRetries: 3
-  # A3 选主租约秒
+  # 选主租约秒
   leaderTTLSec: 15
   leaderTickSec: 5
   # F5 离线超龄自动归档阈值（分钟）
   archiveAgeMin: 1440
-  # B1 自动纳管 install token 的 HMAC 签名密钥；空则本实例随机生成（多副本需一致）
+  # 自动纳管 install token 的 HMAC 签名密钥；空则本实例随机生成（多副本需一致）
   provisionSecret: ""
   # 用户中心 JWT 签发密钥（HS256，多副本必须一致）。空=helm 首次安装随机生成并固化。
   # 生产务必 --set 注入，长度≥32 字节。
   jwtSecret: ""
-  # Cookie Secure 标志（task 112）：控制 at/rt HttpOnly Cookie 的 Secure 属性。
+  # Cookie Secure 标志：控制 at/rt HttpOnly Cookie 的 Secure 属性。
   # true=Cookie 仅经 HTTPS 传输（防中间人窃取会话）；false=Cookie 亦经 HTTP 传输（明文内网/本地开发需要）。
   # 开发默认 false；生产模式（production=true）下代码侧会自动回退 true，但建议显式设置以便审计。
   cookieSecure: false
@@ -118,7 +118,7 @@ agent:
     enabled: true
   extraEnv: []
 
-## @section MySQL（U-04 数据本地化）
+## @section MySQL（数据本地化）
 mysql:
   enabled: true
   image: mysql:8

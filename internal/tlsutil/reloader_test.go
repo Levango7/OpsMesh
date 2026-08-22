@@ -1,4 +1,4 @@
-// Package tlsutil 的 CertificateReloader 单元测试（P2-B3）。
+// Package tlsutil 的 CertificateReloader 单元测试。
 //
 // 测试策略：动态生成自签证书写入临时目录，覆盖 BasicLoad / HotReload / ReloadFailureKeepsOld / Close 四个场景。
 // 复用 tlsutil_test.go 中的 generateTestCert 风格，但此处需要写入指定路径（覆盖式）以模拟证书替换，

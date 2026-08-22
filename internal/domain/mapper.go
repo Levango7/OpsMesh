@@ -15,7 +15,7 @@ func AgentFromProto(a *proto.AgentInfo) *Agent {
 		TenantID: a.TenantID, Addr: a.Addr, GRPCPort: a.GRPCPort,
 		MetricsPort: a.MetricsPort, Status: a.Status, Load: a.Load, LastSeen: a.LastSeen,
 		OS: a.OS, Arch: a.Arch,
-		// 安全（P0-F1）：OnboardDeviceID 为服务端内部字段，绝不从线上 agent 自报拷贝——
+		// 安全：OnboardDeviceID 为服务端内部字段，绝不从线上 agent 自报拷贝——
 		// 仅由 gRPC Register 经 ConsumeToken 校验后回填。入站防腐层必须剔除，防跨租户设备劫持。
 	}
 }
@@ -112,7 +112,7 @@ func AuditFromProto(e *proto.AuditEvent) *AuditEvent {
 }
 
 // AlertFromProto 入站：传输层 Alert -> 领域 Alert。
-// M2-1C：补 Status/AcknowledgedBy/SilencedUntil/Comment/UpdatedAt 状态字段映射，
+// 补 Status/AcknowledgedBy/SilencedUntil/Comment/UpdatedAt 状态字段映射，
 // 使领域 Alert 可承载 Acknowledge/Silence 状态机行为。
 func AlertFromProto(a *proto.Alert) *Alert {
 	if a == nil {
@@ -127,7 +127,7 @@ func AlertFromProto(a *proto.Alert) *Alert {
 }
 
 // AlertToProto 出站：领域 Alert -> 传输层 Alert。
-// M2-1C：补状态字段映射，使 store 层 ack/silence 后的状态可经 HTTP/gRPC 边界完整传出。
+// 补状态字段映射，使 store 层 ack/silence 后的状态可经 HTTP/gRPC 边界完整传出。
 func AlertToProto(a *Alert) *proto.Alert {
 	if a == nil {
 		return nil

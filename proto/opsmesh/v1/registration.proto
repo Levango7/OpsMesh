@@ -123,7 +123,7 @@ message PollCancelsResp {
   repeated string cancelled_task_ids = 1;
 }
 
-// LogLine agent 采集的单行日志（task 247 agent 日志上报 gRPC API）。
+// LogLine agent 采集的单行日志（agent 日志上报 gRPC API）。
 // 字段语义对齐 internal/proto.LogLine（JSON 友好结构体），由 grpcx.LogLineToProto/Legacy 互转。
 message LogLine {
   google.protobuf.Timestamp timestamp = 1;  // 日志行产生时间
@@ -131,7 +131,7 @@ message LogLine {
   string message = 3;                        // 日志正文（已去除行尾换行）
 }
 
-// LogReport agent 经 gRPC ReportLogs 上报到控制面的日志批次（task 247）。
+// LogReport agent 经 gRPC ReportLogs 上报到控制面的日志批次。
 // 字段语义对齐 internal/proto.LogReport，由 grpcx.LogReportToProto/Legacy 互转。
 // TenantID 由控制面按 agent 归属回填（agent 不可伪造），agent 端可留空。
 message LogReport {
@@ -143,7 +143,7 @@ message LogReport {
   google.protobuf.Timestamp collected_at = 6;  // 本批次采集时刻
 }
 
-// ReportLogsReq task 247 agent 日志上报请求：携带一个 LogReport 批次。
+// ReportLogsReq agent 日志上报请求：携带一个 LogReport 批次。
 // 控制面校验 agent 身份（HMAC 签名）后按 agent 归属租户落库（行级隔离）。
 message ReportLogsReq {
   LogReport report = 1;

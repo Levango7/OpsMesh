@@ -21,14 +21,14 @@ import (
 //   - handleRetireDevice    （F5 退役设备）
 //   - handleAckAlert        （M7 告警确认）
 //   - handleSilenceAlert    （M7 告警静默）
-//   - handleHealthz         （P2-12 健康检查）
-//   - handleAutoProvision   （B1 自动纳管触发）
-//   - handleProvision       （B1 纳管签发，错误 case；happy path 见 server_test.go）
+//   - handleHealthz         （健康检查）
+//   - handleAutoProvision   （自动纳管触发）
+//   - handleProvision       （纳管签发，错误 case；happy path 见 server_test.go）
 //   - handleMe              （当前租户解析）
-//   - handleBatchCreateTasks（P0-3 批量下发，错误 case；happy path 见 endpoint_test.go）
-//   - handleAudits          （P0-4 审计检索，补充 case；happy path 见 endpoint_test.go）
-//   - handleApproveTask     （task 100 审批通过）
-//   - handleRejectTask      （task 100 审批拒绝）
+//   - handleBatchCreateTasks（批量下发，错误 case；happy path 见 endpoint_test.go）
+//   - handleAudits          （审计检索，补充 case；happy path 见 endpoint_test.go）
+//   - handleApproveTask     （审批通过）
+//   - handleRejectTask      （审批拒绝）
 //
 // 测试模式：直接装配 Server{reg: NewRegistryWithStore(MemoryStore)}，用 httptest 发请求，
 // 注入 X-Tenant-ID 等网关头，断言 HTTP status code 与响应体。每个 handler 至少一个 happy path
@@ -37,7 +37,7 @@ import (
 // newExtraTestServer 构造一个最小测试控制面（无 demo 预置任务、无 auth、无总线），便于精确断言。
 // 与 endpoint_test.go 的 newTestServer（开 demo 预置任务）区分开，避免预置告警/任务干扰断言。
 // cfg.Demo=true 仅用于认证放宽（未携带 X-Tenant-ID 头时自动填充默认租户），不播种预置任务
-// （store 未 WithDemo(true)），H6 认证防御后非 demo 模式会拒绝空租户头。
+// （store 未 WithDemo(true)），认证防御后非 demo 模式会拒绝空租户头。
 func newExtraTestServer() *Server {
 	st := store.NewMemoryStore()
 	return &Server{
@@ -397,11 +397,11 @@ func TestHandleAlertRouting_AckAndSilence(t *testing.T) {
 }
 
 // =============================================================================
-// handleHealthz（P2-12 健康检查）
+// handleHealthz（健康检查）
 // =============================================================================
 
 // TestHandleHealthz_Happy 验证 GET /healthz 返回 200 + {"status":"ok","checks":{"store":"ok"}}。
-// P1-C2 增强：深度健康检查，新增 checks.store 字段。向后兼容：status 字段仍为 "ok"。
+// 增强：深度健康检查，新增 checks.store 字段。向后兼容：status 字段仍为 "ok"。
 func TestHandleHealthz_Happy(t *testing.T) {
 	s := newExtraTestServer()
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -439,7 +439,7 @@ func TestHandleHealthz_MethodNotAllowed(t *testing.T) {
 }
 
 // =============================================================================
-// handleReadyz（P1-C2 就绪检查）
+// handleReadyz（就绪检查）
 // =============================================================================
 //
 // /readyz 用于 K8s readiness probe：检查 Store 连接 + leader 选举状态。
@@ -511,7 +511,7 @@ func (m *notLeaderMockStore) IsLeader() bool                         { return fa
 func (m *notLeaderMockStore) RenewLeadership(ttl time.Duration) bool { return false }
 
 // =============================================================================
-// handleAutoProvision（B1 自动纳管触发）
+// handleAutoProvision（自动纳管触发）
 // =============================================================================
 //
 // 注意：handleAutoProvision 内部调用 provision.AutoProvision -> discover.Sweep 做真实 TCP 存活扫描。
@@ -593,7 +593,7 @@ func TestHandleAutoProvision_RequireAuth(t *testing.T) {
 }
 
 // =============================================================================
-// handleProvision 错误 case（B1 纳管签发；happy path 见 server_test.go TestHandleProvision_ReturnsToken）
+// handleProvision 错误 case（纳管签发；happy path 见 server_test.go TestHandleProvision_ReturnsToken）
 // =============================================================================
 
 // TestHandleProvision_NotFound 验证为不存在的设备签发返回 404。
@@ -687,7 +687,7 @@ func TestHandleMe_MethodNotAllowed(t *testing.T) {
 }
 
 // =============================================================================
-// handleBatchCreateTasks 错误 case（P0-3 批量下发；happy path 见 endpoint_test.go）
+// handleBatchCreateTasks 错误 case（批量下发；happy path 见 endpoint_test.go）
 // =============================================================================
 
 // TestHandleBatchCreateTasks_EmptyTargets 验证空 targets 返回 400。
@@ -779,7 +779,7 @@ func TestHandleBatchCreateTasks_MethodNotAllowed(t *testing.T) {
 }
 
 // =============================================================================
-// handleAudits 补充 case（P0-4 审计检索；happy path 见 endpoint_test.go）
+// handleAudits 补充 case（审计检索；happy path 见 endpoint_test.go）
 // =============================================================================
 
 // TestHandleAudits_RequireAuth 验证 requireAuth 且无身份时返回 401。
@@ -878,7 +878,7 @@ func TestHandleAudits_MethodNotAllowed(t *testing.T) {
 }
 
 // =============================================================================
-// handleApproveTask（task 100 审批通过）
+// handleApproveTask（审批通过）
 // =============================================================================
 //
 // pending_approval 状态的任务经 ApproveTask 翻转为 pending（进入 ClaimTask 队列）。
@@ -977,7 +977,7 @@ func TestHandleApproveTask_RequireAuth(t *testing.T) {
 }
 
 // =============================================================================
-// handleRejectTask（task 100 审批拒绝）
+// handleRejectTask（审批拒绝）
 // =============================================================================
 
 // TestHandleRejectTask_Happy 验证拒绝 pending_approval 任务成功，状态翻 rejected。

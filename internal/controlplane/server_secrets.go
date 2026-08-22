@@ -1,4 +1,4 @@
-// server_secrets.go — 密钥管理 HTTP handler（task 267）。
+// server_secrets.go — 密钥管理 HTTP handler。
 //
 // 暴露 3 个端点供前端密钥管理页面调用：
 //   - GET  /api/v1/secrets/status → 当前 provider 类型、是否启用、Vault 地址、Mount 路径、密钥文件路径
@@ -10,7 +10,7 @@
 //   - keys 仅返回 key 名称与来源 provider，不返回密钥值。
 //   - test 端点对 Vault 地址做 SSRF 校验（复用 validateURLSSRF），拒绝私网/环回地址。
 //
-// 后端依赖 internal/secrets 包（task 265）：NewVaultProvider 构造 Vault client；
+// 后端依赖 internal/secrets 包：NewVaultProvider 构造 Vault client；
 // 本 handler 不在 Server 结构中新增字段，每次请求时按 cfg 现场构造（轻量），
 // 保持 server.go 改动最小化。
 package controlplane

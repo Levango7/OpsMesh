@@ -19,7 +19,7 @@
 
 ### 1.3 顶层架构
 
-OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构（U-05）：
+OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构：
 
 - 控制面（`--mode=controlplane`）：HTTP 8080（B/S 仪表盘 + REST API）+ gRPC 9090（agent 通道）+ metrics 9091
 - 数据面（`--mode=agent`）：经 gRPC 9090 注册 / 心跳 / 拉任务 / 上报结果，本地 `os/exec` 执行任务
@@ -39,7 +39,7 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构（U-05�
 | 3 | store | 核心 | 可插拔持久化抽象 + Memory/SQL/MultiSchema 实现 | `Store`/`MemoryStore`/`SQLStore`/`MultiSchemaStore`/`SessionStore` | proto | ✓✓ |
 | 4 | domain | 核心 | 纯领域模型 + 状态机行为 + 防腐映射 | `Task`/`Device`/`Alert`/`Agent` | — | ✓✓ |
 | 5 | config | 核心 | 统一配置：flag + env 兜底 | `Config` | — | ✓✓ |
-| 6 | provision | 运维 | B1 自动纳管 SSH 推送 agent | `PushAndExec` | — | ✓ |
+| 6 | provision | 运维 | 自动纳管 SSH 推送 agent | `PushAndExec` | — | ✓ |
 | 7 | deploy | 运维 | M3 部署中心：滚动/金丝雀/蓝绿 + 联邦 | `Handler`/`DeployTask`/`Dispatcher` | authctx/proto | ✓✓ |
 | 8 | helm | 运维 | Helm Release 生命周期管理（CLI 适配） | `ReleaseManager`/`RepoManager`/`Release` | — | ✓✓ |
 | 9 | k8s | 运维 | K8s 多集群连接管理（client-go 封装） | `K8sClient`/`ClusterManager` | k8s.io/client-go | ✓ |
@@ -89,8 +89,8 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构（U-05�
 **核心数据结构**
 
 - `Server`：含 `cfg`/`store`/`bus`/`metrics`/`cmdbHandler`/`logHandler`/`deployHandler`/`orchHandler`/`alertEngine`/`alertSilencer`/`alertAggregator`/`alertNotifier`/`alertInhibitor`/`anomalyEngine`/`helmRepo`/`helmRelease`/`batches`/`scheduleMgr`/`approvalEngine`/`clusterMgr`/`quotaMgr`/`fed`/`tlsReloader`/`cmdbCollector`/`cmdbApprovalMgr`/`loginGuard`/`sessionStore`/`rateLimiter`/`eventSubs`/`jwtSecret`/`encryptionKey` 等字段
-- `SSEEvent`：M3-2B 实时推送事件信封
-- `FederationManager`：M4-4D 联邦管理器
+- `SSEEvent`：实时推送事件信封
+- `FederationManager`：联邦管理器
 - `NetworkTopologyCache`：网络拓扑缓存（5 分钟过期）
 - `QuotaManager`：多租户资源配额管理器
 - `CMDBCollector`/`CMDBApprovalManager`：CMDB 定时采集 / 变更审批
@@ -121,7 +121,7 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构（U-05�
 
 **职责描述**
 
-数据面 agent 运行时，与控制面共用同一份二进制（U-05）。经真实 gRPC(9090) 完成四条通道：注册 / 心跳 / 拉任务 / 上报结果（+ 轮询取消 + 日志上报）。本地 `os/exec` 执行 shell/service/file 三类任务，worker 池消费任务队列。采集主机监控指标（每 30s）+ CMDB 属性（每 60s）+ 日志增量（按 offset）经心跳上报。
+数据面 agent 运行时，与控制面共用同一份二进制。经真实 gRPC(9090) 完成四条通道：注册 / 心跳 / 拉任务 / 上报结果（+ 轮询取消 + 日志上报）。本地 `os/exec` 执行 shell/service/file 三类任务，worker 池消费任务队列。采集主机监控指标（每 30s）+ CMDB 属性（每 60s）+ 日志增量（按 offset）经心跳上报。
 
 **关键接口**
 
@@ -165,7 +165,7 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构（U-05�
 
 **职责描述**
 
-可插拔持久化抽象层。M2-1A 将原 37 方法巨型 `Store` 接口按领域拆为 9 个小接口（DeviceStore / TaskStore / AlertStore / AuditStore / TokenStore / LeaderStore / UserStore / RoleStore / PermissionStore / K8sClusterStore / TemplateStore），`Store` 保留为它们的组合接口向后兼容。提供三种实现：`MemoryStore`（默认内存）、`SQLStore`（MySQL + Redis 缓存）、`MultiSchemaStore`（每租户独立 schema）。
+可插拔持久化抽象层。将原 37 方法巨型 `Store` 接口按领域拆为 9 个小接口（DeviceStore / TaskStore / AlertStore / AuditStore / TokenStore / LeaderStore / UserStore / RoleStore / PermissionStore / K8sClusterStore / TemplateStore），`Store` 保留为它们的组合接口向后兼容。提供三种实现：`MemoryStore`（默认内存）、`SQLStore`（MySQL + Redis 缓存）、`MultiSchemaStore`（每租户独立 schema）。
 
 **关键接口**
 
@@ -220,7 +220,7 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构（U-05�
 
 **职责描述**
 
-纯领域模型层（DDD 分层中的 domain 层），与 proto（gRPC/HTTP 传输层）解耦。proto 负责线上格式，domain 负责业务语义。防腐层（ACL）由 `mapper.go` 提供，在 gRPC/HTTP 边界做 proto ↔ domain 转换。M2-1C 把不变的业务规则下沉到领域实体，handler 退化为薄编排层。
+纯领域模型层（DDD 分层中的 domain 层），与 proto（gRPC/HTTP 传输层）解耦。proto 负责线上格式，domain 负责业务语义。防腐层（ACL）由 `mapper.go` 提供，在 gRPC/HTTP 边界做 proto ↔ domain 转换。把不变的业务规则下沉到领域实体，handler 退化为薄编排层。
 
 **关键接口**
 
@@ -287,7 +287,7 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构（U-05�
   - 日志后端：`LogStore`/`LogBackend`/`LokiEndpoint`/`ESEndpoint`/`ESIndex`
   - OTel：`OTELEndpoint`/`OTELServiceName`/`OTELStdout`
   - 安全加固：`AgentShellWhitelist`/`AgentFileRootWhitelist`/`MetricsAllowCIDR`/`PublicRegister`/`AllowPublicRegister`/`RequireAuth`
-- `NotifyChannelConfig`：M2-2 通知渠道配置
+- `NotifyChannelConfig`：通知渠道配置
 
 **关键算法**
 
@@ -313,7 +313,7 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构（U-05�
 
 **职责描述**
 
-B1 自动纳管推送能力：通过 SSH 在候选设备上自动安装 OpsMesh agent，完成"网段发现 → SSH 推送 → agent 注册 → 设备纳管"闭环。支持 KnownHosts 主机指纹校验（等保生产必须配置）+ 私钥密码 + 10 分钟硬超时。
+自动纳管推送能力：通过 SSH 在候选设备上自动安装 OpsMesh agent，完成"网段发现 → SSH 推送 → agent 注册 → 设备纳管"闭环。支持 KnownHosts 主机指纹校验（等保生产必须配置）+ 私钥密码 + 10 分钟硬超时。
 
 **关键接口**
 
@@ -461,7 +461,7 @@ K8s 集群客户端连接与多集群管理（Phase 3）。封装 client-go 连�
 
 **职责描述**
 
-网段存活扫描（P0-2 真实纳管）。用标准库 `net` 对 segment CIDR 做并发受限的 TCP-connect 探测，返回存活主机 IP。ICMP 需原始套接字（特权），故默认用 TCP-connect 探测（非特权、可控）。这是产品核心差异点"服务部署后整段网络打通、设备自动纳管"的真实兑现路径。
+网段存活扫描（真实纳管）。用标准库 `net` 对 segment CIDR 做并发受限的 TCP-connect 探测，返回存活主机 IP。ICMP 需原始套接字（特权），故默认用 TCP-connect 探测（非特权、可控）。这是产品核心差异点"服务部署后整段网络打通、设备自动纳管"的真实兑现路径。
 
 **关键接口**
 
@@ -495,7 +495,7 @@ K8s 集群客户端连接与多集群管理（Phase 3）。封装 client-go 连�
 
 **职责描述**
 
-服务注册发现抽象与多种实现（M1-3）。解耦 agent 与控制面地址获取方式：agent 不再硬编码控制面地址，而是通过 `ServiceDiscovery` 接口动态获取控制面实例列表。配合 `Balancer` 接口实现多控制面负载均衡（round-robin/failover）。
+服务注册发现抽象与多种实现。解耦 agent 与控制面地址获取方式：agent 不再硬编码控制面地址，而是通过 `ServiceDiscovery` 接口动态获取控制面实例列表。配合 `Balancer` 接口实现多控制面负载均衡（round-robin/failover）。
 
 **关键接口**
 
@@ -633,7 +633,7 @@ K8s 集群客户端连接与多集群管理（Phase 3）。封装 client-go 连�
 
 **职责描述**
 
-可插拔事件总线（审计/告警），内核产出的事件统一经 `Bus` 发布（P1-5）。默认 noop/log 实现零依赖；Kafka 生产者置于 `//go:build kafka` 编译标签，默认构建不引入重依赖。事件信封含 `SchemaVersion`，跨版本演进的锚点。
+可插拔事件总线（审计/告警），内核产出的事件统一经 `Bus` 发布。默认 noop/log 实现零依赖；Kafka 生产者置于 `//go:build kafka` 编译标签，默认构建不引入重依赖。事件信封含 `SchemaVersion`，跨版本演进的锚点。
 
 **关键接口**
 
@@ -713,7 +713,7 @@ M6 日志检索：集中采集 agent / 任务 / 系统日志，支持按租户 /
 
 **职责描述**
 
-结构化日志（slog JSON）与 request/gRPC 级别的 traceID 透传（P1-2）。替代散落的 `log.Printf`，满足可检索 / 可关联 / 可接采集器。M1-4 分布式可观测性：`Trace(ctx)` 优先从 OTel span context 提取真实 trace_id，使日志与 OTel 链路追踪自动关联。
+结构化日志（slog JSON）与 request/gRPC 级别的 traceID 透传。替代散落的 `log.Printf`，满足可检索 / 可关联 / 可接采集器。分布式可观测性：`Trace(ctx)` 优先从 OTel span context 提取真实 trace_id，使日志与 OTel 链路追踪自动关联。
 
 **关键接口**
 
@@ -745,7 +745,7 @@ M6 日志检索：集中采集 agent / 任务 / 系统日志，支持按租户 /
 
 **职责描述**
 
-零依赖的可观测指标（计数器/直方图/仪表盘），以 Prometheus 文本格式暴露于控制面 metrics 端口（P2-1）。刻意不引入 prometheus 客户端，避免 go.sum 负担。P1-C3 扩充：HTTP 请求延迟直方图 + HTTP 请求计数器 + Go runtime 指标。
+零依赖的可观测指标（计数器/直方图/仪表盘），以 Prometheus 文本格式暴露于控制面 metrics 端口。刻意不引入 prometheus 客户端，避免 go.sum 负担。扩充：HTTP 请求延迟直方图 + HTTP 请求计数器 + Go runtime 指标。
 
 **关键接口**
 
@@ -784,7 +784,7 @@ M6 日志检索：集中采集 agent / 任务 / 系统日志，支持按租户 /
 
 **职责描述**
 
-封装 OpenTelemetry SDK 初始化与 helper，提供 gRPC + HTTP 自动埋点能力。M1-1 链路追踪集成：支持导出到 OTLP gRPC（Jaeger/OTLP collector）与 stdout（调试用）。endpoint 为空且 stdout=false 时 no-op（不启用追踪，零开销），保证 OTel 可选不破坏现有功能。
+封装 OpenTelemetry SDK 初始化与 helper，提供 gRPC + HTTP 自动埋点能力。链路追踪集成：支持导出到 OTLP gRPC（Jaeger/OTLP collector）与 stdout（调试用）。endpoint 为空且 stdout=false 时 no-op（不启用追踪，零开销），保证 OTel 可选不破坏现有功能。
 
 **关键接口**
 
@@ -829,7 +829,7 @@ M6 日志检索：集中采集 agent / 任务 / 系统日志，支持按租户 /
 
 **职责描述**
 
-"网关注入的身份上下文"的提取与校验。设计原则（U-04 等保三级 + 复用底座，非自研登录）：内核不自行实现登录/鉴权/用户表/密码哈希；登录/SSO/MFA/RBAC 由前置网关完成，网关校验 JWT/OIDC 后把身份注入到请求头/gRPC metadata，内核只消费这些头。M3-2A JWT 验签（可选启用）：配置网关 RSA 公钥时，`FromRequest` 优先从 Authorization Bearer token 提取并 RS256 验签。
+"网关注入的身份上下文"的提取与校验。设计原则（等保三级 + 复用底座，非自研登录）：内核不自行实现登录/鉴权/用户表/密码哈希；登录/SSO/MFA/RBAC 由前置网关完成，网关校验 JWT/OIDC 后把身份注入到请求头/gRPC metadata，内核只消费这些头。JWT 验签（可选启用）：配置网关 RSA 公钥时，`FromRequest` 优先从 Authorization Bearer token 提取并 RS256 验签。
 
 **关键接口**
 
@@ -872,7 +872,7 @@ M6 日志检索：集中采集 agent / 任务 / 系统日志，支持按租户 /
 
 **职责描述**
 
-统一密钥管理抽象层（task 265）。支持 3 种密钥来源：`EnvProvider`（环境变量）/ `FileProvider`（JSON 文件）/ `VaultProvider`（HashiCorp Vault KV v2）。通过 `ChainProvider` 可按优先级依次尝试多个 provider。`ResolveSecret` 辅助函数支持 `${provider:key}` 引用语法，向后兼容明文配置。
+统一密钥管理抽象层。支持 3 种密钥来源：`EnvProvider`（环境变量）/ `FileProvider`（JSON 文件）/ `VaultProvider`（HashiCorp Vault KV v2）。通过 `ChainProvider` 可按优先级依次尝试多个 provider。`ResolveSecret` 辅助函数支持 `${provider:key}` 引用语法，向后兼容明文配置。
 
 **关键接口**
 
@@ -913,7 +913,7 @@ M6 日志检索：集中采集 agent / 任务 / 系统日志，支持按租户 /
 
 **职责描述**
 
-gRPC 传输层 TLS / mTLS 凭证的构造助手（P1-6）+ TLS 证书热重载（P2-B3）。内核默认不启用 TLS（仅内网友好网络）；等保三级生产环境建议开启 mTLS。H3 安全加固：强制 TLS 1.2+，禁用 SSLv3/TLSv1.0/TLSv1.1 等弱协议版本。
+gRPC 传输层 TLS / mTLS 凭证的构造助手+ TLS 证书热重载。内核默认不启用 TLS（仅内网友好网络）；等保三级生产环境建议开启 mTLS。安全加固：强制 TLS 1.2+，禁用 SSLv3/TLSv1.0/TLSv1.1 等弱协议版本。
 
 **关键接口**
 
@@ -954,7 +954,7 @@ gRPC 传输层 TLS / mTLS 凭证的构造助手（P1-6）+ TLS 证书热重载�
 
 **职责描述**
 
-gRPC 服务描述 + JSON codec + 消息信封。手写 `ServiceDesc`，无需 protoc 生成。服务名 `opsmesh.v1.Registration`（带版本前缀，破坏性变更可灰度，P2-3）。七个一元方法对应 agent↔控制面 的 注册 / 心跳 / 拉任务 / 上报结果 / 取消 / 轮询取消 / 日志上报。task 81 gRPC agent 身份绑定：控制面为每个 agent 生成 HMAC 签名密钥，agent 后续请求携带签名防冒领。
+gRPC 服务描述 + JSON codec + 消息信封。手写 `ServiceDesc`，无需 protoc 生成。服务名 `opsmesh.v1.Registration`（带版本前缀，破坏性变更可灰度）。七个一元方法对应 agent↔控制面 的 注册 / 心跳 / 拉任务 / 上报结果 / 取消 / 轮询取消 / 日志上报。gRPC agent 身份绑定：控制面为每个 agent 生成 HMAC 签名密钥，agent 后续请求携带签名防冒领。
 
 **关键接口**
 
@@ -1254,7 +1254,7 @@ M5 作业编排中心：DAG 展开 + 子工作流递归 + 条件分支求值 + c
 
 **职责描述**
 
-控制面与 agent 之间共享的数据类型（JSON 友好）。U-05 同一份二进制，控制面与 agent 复用这些结构。设计上刻意只使用 JSON（不引入 protobuf 工具链）：gRPC 9090 走 JSON codec 传输，HTTP 仅 B/S 仪表盘。
+控制面与 agent 之间共享的数据类型（JSON 友好）。同一份二进制，控制面与 agent 复用这些结构。设计上刻意只使用 JSON（不引入 protobuf 工具链）：gRPC 9090 走 JSON codec 传输，HTTP 仅 B/S 仪表盘。
 
 **关键接口**
 
@@ -1295,7 +1295,7 @@ M5 作业编排中心：DAG 展开 + 子工作流递归 + 条件分支求值 + c
 
 **职责描述**
 
-暴露 OpsMesh 内核版本，供 `--version` 与镜像标签使用（P2-3）。`Commit` / `Date` 由 CI 通过 `-ldflags "-X opsmesh/internal/version.Commit=..."` 注入。
+暴露 OpsMesh 内核版本，供 `--version` 与镜像标签使用。`Commit` / `Date` 由 CI 通过 `-ldflags "-X opsmesh/internal/version.Commit=..."` 注入。
 
 **关键接口**
 
@@ -1417,7 +1417,7 @@ OpsMesh 包依赖遵循"核心 → 领域 → 基础"自顶向下分层，避免
 
 - **DDD 分层**：domain（纯领域模型）← proto（传输层）← handler（编排层）← store（持久化层）
 - **防腐层（ACL）**：跨包边界定义小接口，避免反向依赖（见 4.2）
-- **接口拆分**：M2-1A 将巨型 Store 接口按领域拆为 9 个小接口，消费方可按需依赖最小接口
+- **接口拆分**：将巨型 Store 接口按领域拆为 9 个小接口，消费方可按需依赖最小接口
 
 ### 5.2 并发安全策略
 
@@ -1436,19 +1436,19 @@ OpsMesh 包依赖遵循"核心 → 领域 → 基础"自顶向下分层，避免
 
 ### 5.4 安全基座
 
-- **U-04 等保三级**：行级租户隔离 + 操作 100% 留痕 + 身份上下文网关注入
-- **P0-G3 安全加固**：kubeconfig AES-256-GCM 加密 + 生产模式 fail-fast + JWT 验签
+- **等保三级**：行级租户隔离 + 操作 100% 留痕 + 身份上下文网关注入
+- **安全加固**：kubeconfig AES-256-GCM 加密 + 生产模式 fail-fast + JWT 验签
 - **H3 TLS 强制**：TLS 1.2+ + 禁用弱协议版本 + mTLS 双向认证
-- **task 85 kubeconfig 安全**：拒绝 exec/auth-provider 凭据插件 + 强制关闭 insecure-skip-tls-verify
+- **kubeconfig 安全**：拒绝 exec/auth-provider 凭据插件 + 强制关闭 insecure-skip-tls-verify
 - **F16 / M12 SSH 安全**：KnownHosts 主机指纹校验 + 未配置时显眼警告
-- **H5 安全头**：CSP nonce + HSTS + Permissions-Policy
+- **安全头**：CSP nonce + HSTS + Permissions-Policy
 
 ### 5.5 可观测性
 
-- **M1-1 链路追踪**：OTel SDK + gRPC/HTTP 自动埋点 + W3C Trace Context 透传
-- **M1-4 分布式可观测**：日志/SSE 事件/审计日志自动关联 OTel trace_id
-- **P2-1 指标**：零依赖 Prometheus 文本格式 + HTTP 请求延迟直方图 + Go runtime 指标
-- **P1-5 事件总线**：noop/log/kafka 三实现 + 事件信封含 SchemaVersion 跨版本演进
+- **链路追踪**：OTel SDK + gRPC/HTTP 自动埋点 + W3C Trace Context 透传
+- **分布式可观测**：日志/SSE 事件/审计日志自动关联 OTel trace_id
+- **指标**：零依赖 Prometheus 文本格式 + HTTP 请求延迟直方图 + Go runtime 指标
+- **事件总线**：noop/log/kafka 三实现 + 事件信封含 SchemaVersion 跨版本演进
 
 ## 第6章 附录
 
@@ -1481,17 +1481,17 @@ OpsMesh 包依赖遵循"核心 → 领域 → 基础"自顶向下分层，避免
 
 | 术语 | 含义 |
 |------|------|
-| U-02 | 网段自动纳管：服务部署后整段网络打通，设备自动纳管 |
-| U-04 | 数据本地化 + 等保三级：私有部署 + 行级租户隔离 + 操作留痕 |
-| U-05 | 双模式单二进制：控制面与 agent 共用同一份二进制，通过 --mode 切换 |
-| P0-1 | 任务必达：agent 失联复位 + 重试 + 死信 |
-| P0-2 | 真实网段发现：discover 扫描 + 候选设备 + provision 推送 |
-| P0-3 | 进程资源限额：RLIMIT_NPROC/NOFILE/AS + 任务超时 |
-| P1-1 | HA 领取：多副本控制面并发领取同一任务只会被一个副本领取 |
-| P1-5 | 事件总线：noop/log/kafka 三实现 |
-| P1-6 | TLS/mTLS：gRPC 传输层凭证 + 联邦通道硬化 |
-| M2-1A | Store 接口拆分：巨型接口按领域拆为 9 个小接口 |
-| M2-1C | DDD 实质化：领域实体承载业务行为（状态机/重试判定/纳管翻转） |
+| | 网段自动纳管：服务部署后整段网络打通，设备自动纳管 |
+| | 数据本地化 + 等保三级：私有部署 + 行级租户隔离 + 操作留痕 |
+| | 双模式单二进制：控制面与 agent 共用同一份二进制，通过 --mode 切换 |
+| | 任务必达：agent 失联复位 + 重试 + 死信 |
+| | 真实网段发现：discover 扫描 + 候选设备 + provision 推送 |
+| | 进程资源限额：RLIMIT_NPROC/NOFILE/AS + 任务超时 |
+| | HA 领取：多副本控制面并发领取同一任务只会被一个副本领取 |
+| | 事件总线：noop/log/kafka 三实现 |
+| | TLS/mTLS：gRPC 传输层凭证 + 联邦通道硬化 |
+| | Store 接口拆分：巨型接口按领域拆为 9 个小接口 |
+| | DDD 实质化：领域实体承载业务行为（状态机/重试判定/纳管翻转） |
 | M3 | 部署中心：滚动/金丝雀/蓝绿 + 门禁 + 自动回滚 |
 | M5 | 作业编排：DAG 展开 + 子工作流 + 条件分支 |
 | M6 | 日志检索：Memory/SQL/Loki/ES + 倒排索引 |

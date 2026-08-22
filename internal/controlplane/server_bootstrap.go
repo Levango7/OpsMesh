@@ -1,4 +1,4 @@
-// server_bootstrap.go — B1 纳管 bootstrap：install.sh 分发 + agent 二进制分发 + 自动纳管
+// server_bootstrap.go — 纳管 bootstrap：install.sh 分发 + agent 二进制分发 + 自动纳管
 package controlplane
 
 import (
@@ -46,7 +46,7 @@ func (s *Server) verifyBootstrapToken(w http.ResponseWriter, r *http.Request) bo
 // 脚本由 provision.InstallScript 按 --advertise-addr 动态生成（内嵌下载地址），
 // 配合 bootstrap 命令 `curl -sSL <addr>/install.sh | sh -s -- --token=<tok>` 完成 agent 安装与注册。
 //
-// P0-G1 安全加固：原端点完全开放，现加 token 校验（demo 模式放宽）。
+// 安全加固：原端点完全开放，现加 token 校验（demo 模式放宽）。
 func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -55,8 +55,8 @@ func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 	if !s.verifyBootstrapToken(w, r) {
 		return
 	}
-	// P1-5 访问审计：install.sh 是 bootstrap 端点，保持开放但审计访问来源供溯源。
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 访问审计：install.sh 是 bootstrap 端点，保持开放但审计访问来源供溯源。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: clientIP(r, s.cfg.TrustProxy), Action: "bootstrap_install_sh", Target: "/install.sh",
 		Detail: "remote=" + r.RemoteAddr,
@@ -71,7 +71,7 @@ func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 // handleServeAgent 处理 GET /bin/opsmesh-agent：分发 agent 二进制本体（双模式同体），
 // 供 install.sh 脚本下载安装。
 //
-// P0-G1 安全加固：原端点完全开放，现加 token 校验（demo 模式放宽）。
+// 安全加固：原端点完全开放，现加 token 校验（demo 模式放宽）。
 func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -80,8 +80,8 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 	if !s.verifyBootstrapToken(w, r) {
 		return
 	}
-	// P1-5 访问审计：agent 二进制分发端点，保持开放但审计下载来源供溯源。
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 访问审计：agent 二进制分发端点，保持开放但审计下载来源供溯源。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: clientIP(r, s.cfg.TrustProxy), Action: "bootstrap_serve_agent", Target: "/bin/opsmesh-agent",
 		Detail: "remote=" + r.RemoteAddr,
@@ -109,7 +109,7 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleAutoProvision 处理 POST /api/v1/provision/auto：手动触发 B1 自动纳管编排。
+// handleAutoProvision 处理 POST /api/v1/provision/auto：手动触发 自动纳管编排。
 // body: {"cidrs":["10.30.0.0/24"], "tenantID":"t1"}；cidrs 缺省时回退 --segment-cidr。
 func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -135,20 +135,20 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 	if len(cidrs) == 0 && s.cfg.SegmentCIDR != "" {
 		cidrs = []string{s.cfg.SegmentCIDR}
 	}
-	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	// 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
 	tenant := actx.TenantID
 	if len(cidrs) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no cidrs provided (body.cidrs or --segment-cidr)"})
 		return
 	}
-	// B1 修复 7：SSRF 校验 advertise URL（仅警告不阻止，控制面常部署内网）。
+	// 修复 7：SSRF 校验 advertise URL（仅警告不阻止，控制面常部署内网）。
 	// advertise URL 是控制面自身地址（运维配置），非用户可控，SSRF 校验仅做安全审计告警。
 	if s.cfg.AdvertiseAddr != "" {
 		if err := validateURLSSRF(s.cfg.AdvertiseAddr); err != nil {
 			logx.Warn(r.Context(), "AdvertiseAddr SSRF 校验失败（仅警告，控制面常部署内网）", "url", s.cfg.AdvertiseAddr, "err", err)
 		}
 	}
-	// task 248 SSRF 防护：autoProvision CIDR 白名单校验。
+	// SSRF 防护：autoProvision CIDR 白名单校验。
 	// 白名单非空时，每个目标 CIDR 必须完全落在白名单内，防止运维误配置或攻击者构造请求
 	// 扫描任意网段（如 169.254.169.254 元数据网段获取云凭据，或扫描内网其他网段做内网探测）。
 	// 白名单为空时不校验（向后兼容）。校验失败返回 403 Forbidden。
@@ -170,7 +170,7 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: tenant, UserID: actx.UserID, Action: "auto_provision", Target: strings.Join(cidrs, ","),
 		Detail: fmt.Sprintf("scanned=%d registered=%d provisioned=%d sshPushed=%d", sum.Scanned, sum.Registered, sum.Provisioned, sum.SSHPushed),
@@ -178,7 +178,7 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sum)
 }
 
-// autoProvisionLoop 后台周期执行 B1 自动纳管：仅当 --discover && --auto-provision 开启时，
+// autoProvisionLoop 后台周期执行 自动纳管：仅当 --discover && --auto-provision 开启时，
 // 每隔 discoverInterval 对 --segment-cidr 做存活扫描→登记候选设备→（配置 SSH key 时）推送 agent。
 // 仅 leader 执行（避免多副本重复推送）。
 func (s *Server) autoProvisionLoop(ctx context.Context) {
@@ -190,7 +190,7 @@ func (s *Server) autoProvisionLoop(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		if s.store.IsLeader() && s.cfg.SegmentCIDR != "" {
-			// task 248 SSRF 防护：后台循环同样校验 CIDR 白名单。
+			// SSRF 防护：后台循环同样校验 CIDR 白名单。
 			// 白名单非空时 --segment-cidr 必须在白名单内，否则跳过本轮扫描并告警
 			// （不 fail-fast，避免后台循环崩溃；配置错误应由启动期 Validate 兜底）。
 			if s.cfg.ProvisionCIDRWhitelist != "" {

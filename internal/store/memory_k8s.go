@@ -35,7 +35,7 @@ func (m *MemoryStore) ListK8sClusters(tenantID string) []*K8sCluster {
 	defer m.mu.RUnlock()
 	out := make([]*K8sCluster, 0, len(m.k8sClusters))
 	for _, c := range m.k8sClusters {
-		// task 88 租户隔离：tenantID 非空时仅返回同租户集群（空=不过滤，仅内部调用）。
+		// 租户隔离：tenantID 非空时仅返回同租户集群（空=不过滤，仅内部调用）。
 		if tenantID != "" && c.TenantID != tenantID {
 			continue
 		}
@@ -77,7 +77,7 @@ func (m *MemoryStore) SaveK8sCluster(c *K8sCluster) error {
 	if c == nil {
 		return nil
 	}
-	// task 88 租户隔离：空租户归一为 default（与 deploy 模块一致）。
+	// 租户隔离：空租户归一为 default（与 deploy 模块一致）。
 	if c.TenantID == "" {
 		c.TenantID = "default"
 	}

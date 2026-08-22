@@ -1,6 +1,6 @@
 # OpsMesh 产品设计文档
 
-> 版本：v0.7.0  ·  编制日期：2026-08-17  ·  适用基线：MVP（ADR-001 Option A）+ P0/P1/P2 加固
+> 版本：v0.7.0  ·  编制日期：2026-08-17  ·  适用基线：MVP（自研 gRPC 管控通道）+ 安全加固
 >
 > 本文档基于 `README.md`、`DELIVERY.md`、`docs/product-roadmap.md` 与 `docs/api-reference.md` 编制，描述 OpsMesh 的产品定位、目标用户、功能矩阵、竞品对比、商业模式、适用场景、非功能需求与路线图。已实现能力以 `README.md` 功能矩阵为准，规划项以 `product-roadmap.md` 为准。
 
@@ -18,7 +18,7 @@ OpsMesh 是**私有化单中心 B/S 自动化部署与运维平台**，又称"�
 
 | 问题 | 传统工具表现 | OpsMesh 方案 |
 |---|---|---|
-| 网段割裂下的统一纳管 | Ansible 需逐台配置 inventory；SaltStack master 单点；蓝鲸依赖 CMDB 预录入 | 服务部署到某网段后，整段设备自动纳管（B1 令牌闭环 + TCP 存活扫描） |
+| 网段割裂下的统一纳管 | Ansible 需逐台配置 inventory；SaltStack master 单点；蓝鲸依赖 CMDB 预录入 | 服务部署到某网段后，整段设备自动纳管（令牌闭环 + TCP 存活扫描） |
 | 大规模并行任务执行 | Ansible SSH 慢且无状态；SaltStack 消息总线易积压 | gRPC 长连接 + agent worker 池并发执行，每 agent 默认 4 并发可调 |
 | 任务生命周期完整性 | 多数工具只有成功/失败两态 | pending → running → done/failed/cancelled/dead_letter 五态 + 重试 + 死信 + 取消 + 定时调度 |
 | 私有化数据合规 | 云运维产品数据出机房 | 单二进制私有部署，MySQL 数据本地化，100% 审计留痕，等保三级对照 |
@@ -94,7 +94,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 
 | 功能模块 | 能力描述 | 成熟度 | 落地文件 / 入口 |
 |---|---|---|---|
-| 设备纳管 | 网段 TCP 存活扫描 + 候选设备登记 + B1 令牌闭环自动纳管 + 设备退役归档 | ✅ | `internal/discover/`、`internal/controlplane/provision.go` |
+| 设备纳管 | 网段 TCP 存活扫描 + 候选设备登记 + 令牌闭环自动纳管 + 设备退役归档 | ✅ | `internal/discover/`、`internal/controlplane/provision.go` |
 | 任务执行 | Shell 命令 / 系统服务管理 / 文件分发（原子写入 + rename）/ 超时自动中止 / 批量下发 | ✅ | `internal/agent/`、`internal/controlplane/tasks.go` |
 | 配置下发 | 文件分发 + CMDB 配置项驱动 + OS 优化模板 | ✅ | `internal/controlplane/os_optimize.go` |
 | 服务管理 | systemctl start/stop/restart/status + 中间件部署（10+ 中间件 × docker/systemd） | ✅ | `internal/controlplane/middleware_deploy.go` |
@@ -291,7 +291,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | 取消信号轮询间隔 | 2s | ✅ 已实现 | `cancelLoop` + PollCancels |
 | agent RLIMIT_NPROC | 默认 256，可调 `--max-procs` | ✅ 已实现 | fork 炸弹防护 |
 | agent RLIMIT_NOFILE | 默认 4096，可调 `--max-files` | ✅ 已实现 | fd 耗尽防护 |
-| gRPC 连接复用 | 长连接池 + 淘汰重建 + 断线指标化 | ✅ 已实现 | B-4 conns + expvar `agent_grpc_conn_failures` |
+| gRPC 连接复用 | 长连接池 + 淘汰重建 + 断线指标化 | ✅ 已实现 | conns + expvar `agent_grpc_conn_failures` |
 
 ### 7.2 可用性指标
 
@@ -312,7 +312,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | 租户隔离 | 行级 + schema 级 | ✅ 已实现 | tenant_id 列 + `--multi-schema` |
 | RBAC | 三表 + 种子 + JWT 双 Token | ✅ 已实现 | `sql_rbac.go` + `auth.go` |
 | 通信加密 | gRPC TLS / mTLS | ✅ 已实现 | `--tls-cert/key` + `--client-ca` |
-| 联邦通道 | mTLS + HMAC 签名验签 + ±5min 防重放 | ✅ 已实现 | P1-6 |
+| 联邦通道 | mTLS + HMAC 签名验签 + ±5min 防重放 | ✅ 已实现 | |
 | 审计留痕 | 100% | ✅ 已实现 | AuditEvent → audit_log |
 | 登录防爆破 | 令牌桶 + 5 次锁 15min | ✅ 已实现 | `loginGuard` |
 | 请求体限流 | 1 MiB | ✅ 已实现 | `MaxBytesReader` |
@@ -359,7 +359,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 
 ## 第8章 路线图
 
-> 当前版本：**v0.7.0**（2026-08-17 基线，含 MVP + P0/P1/P2 加固）
+> 当前版本：**v0.7.0**（2026-08-17 基线，含 MVP + 安全加固）
 >
 > 已实现能力以 `README.md` 功能矩阵为准；规划项以 `product-roadmap.md` 为准，所有"计划/目标"措辞均为规划意图。
 
@@ -368,7 +368,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | 类别 | 已实现能力 |
 |---|---|
 | 运维执行 | Shell / 服务管理 / 文件分发 / 批量下发 / 重试 + 死信 / 取消（pending 拦截 + running 强杀）/ 定时周期调度 / 作业审批 |
-| 设备纳管 | 网段 TCP 发现 + B1 令牌闭环自动纳管 + 设备退役归档 |
+| 设备纳管 | 网段 TCP 发现 + 令牌闭环自动纳管 + 设备退役归档 |
 | CMDB | Phase1 模型 + CRUD + SQL + 采集 + 关系图谱可视化 + 变更审批 |
 | 作业编排 | DAG 引擎 + 子工作流 + 并行/串行/条件分支 + 节点级超时重试 + 执行历史回放 |
 | 服务部署 | 计划 + fan-out + Reconcile + Rollback + 蓝绿/金丝雀/滚动 + 发布门禁 + 自动回滚 + 多集群联邦发布 + 灰度自适应推进 |
@@ -381,13 +381,13 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | RBAC | 三表 + JWT 双 Token + 网关注入双路径 |
 | 联邦 | mTLS + HMAC 签名验签 + 跨网段任务转发 + 联邦级发布协调 |
 | 密钥管理 | Env/File/Vault/Chain + 前端 UI + kubeconfig 加密 |
-| 安全加固 | P0/P1/P2 全部落地（见 §7.3） |
+| 安全加固 | 安全加固 全部落地（见 §7.3） |
 | 平台基线 | 多副本 HA + agent failover + Prometheus + 审计 100% + 兜底恢复 |
 | 交付物 | 单二进制 + docker-compose + Helm Chart + systemd + goreleaser + Argo CD GitOps |
 | 前端 | Vue3 企业版主线 + SSE 实时推送 + 契约守护测试 |
 | 代码规模 | 33 Go 包 / 161 源码文件 / 44,714 行 / 97 测试文件 / 29,818 测试行（占比 39.8%） |
 
-### 8.2 短期规划（M1-M2，1-2 个月）
+### 8.2 短期规划（1-2 个月）
 
 | 工作项 | 验收标准 | 优先级 |
 |---|---|---|
@@ -450,8 +450,8 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | 控制面（controlplane） | OpsMesh 中心服务，HTTP :8080 + gRPC :9090 + Metrics :9091 |
 | agent | 部署在被纳管设备上的常驻进程，gRPC 长连接到控制面 |
 | 联邦（federation） | 多控制面跨网段协作，mTLS + HMAC 签名验签 |
-| B1 令牌闭环 | install token 一次性 + 限时 + HMAC 签名，agent 首次注册自动纳管 |
+| 令牌闭环 | install token 一次性 + 限时 + HMAC 签名，agent 首次注册自动纳管 |
 | 死信（dead_letter） | 任务失败且重试耗尽后的状态，产出 critical 告警 |
-| ADR-001 Option A | 管控通道决策：自研 gRPC（direct + proxy），蓝鲸 GSE 移出 MVP |
+| 自研 gRPC 管控通道 | 管控通道决策：自研 gRPC（direct + proxy），蓝鲸 GSE 移出 MVP |
 | DoD | Definition of Done，演进目标可验收标准 |
 | 等保三级 | 信息安全等级保护三级，要求审计 6 月留存 + 数据本地化 + RBAC + 加密 |

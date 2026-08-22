@@ -6,7 +6,7 @@ import (
 )
 
 // ============================================================================
-// task 248 SSRF 防护测试：ValidateWebhookURL + ValidateCIDR
+// SSRF 防护测试：ValidateWebhookURL + ValidateCIDR
 // ============================================================================
 //
 // 测试策略：
@@ -117,7 +117,7 @@ func TestValidateWebhookURL_AllowPrivate(t *testing.T) {
 	}
 }
 
-// TestValidateWebhookURL_ZeroNetwork 0.0.0.0/8 本网地址被拒（task 248 增强）。
+// TestValidateWebhookURL_ZeroNetwork 0.0.0.0/8 本网地址被拒（增强）。
 func TestValidateWebhookURL_ZeroNetwork(t *testing.T) {
 	cases := []string{
 		"http://0.0.0.0/webhook",
@@ -248,7 +248,7 @@ func TestValidateCIDR_AllowlistWithSpaces(t *testing.T) {
 	}
 }
 
-// TestIsPrivateIP 增强后的 isPrivateIP 覆盖测试（task 248：0.0.0.0/8 增强）。
+// TestIsPrivateIP 增强后的 isPrivateIP 覆盖测试（0.0.0.0/8 增强）。
 func TestIsPrivateIP(t *testing.T) {
 	private := []string{
 		"10.0.0.1",

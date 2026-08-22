@@ -1,4 +1,4 @@
-// http_infra.go — HTTP 基础设施：请求体限制与租户上下文解析（P1-3 防 DoS + 租户隔离）。
+// http_infra.go — HTTP 基础设施：请求体限制与租户上下文解析（防 DoS + 租户隔离）。
 package controlplane
 
 import (
@@ -9,10 +9,10 @@ import (
 	"opsmesh/internal/authctx"
 )
 
-// maxBodyBytes 限制请求体大小（P1-3 防 DoS：拒绝超大 body 直接 413，避免 JSON 解析拖垮内存）。
+// maxBodyBytes 限制请求体大小（防 DoS：拒绝超大 body 直接 413，避免 JSON 解析拖垮内存）。
 const maxBodyBytes = 1 << 20 // 1 MiB
 
-// decodeJSONBody 在 MaxBytesReader 约束下解析 JSON 请求体（P1-3 请求体大小限制）。
+// decodeJSONBody 在 MaxBytesReader 约束下解析 JSON 请求体（请求体大小限制）。
 // 替换所有裸 json.NewDecoder(r.Body).Decode 调用，统一防超大请求体。
 // 注意：仅做大小限制，不启用 DisallowUnknownFields，避免破坏前端多传字段的既有兼容行为。
 func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) error {
@@ -20,9 +20,9 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) error
 	return json.NewDecoder(r.Body).Decode(v)
 }
 
-// requireTenantContext 提取并校验网关注入的租户身份上下文（H6 认证防御）。
+// requireTenantContext 提取并校验网关注入的租户身份上下文（认证防御）。
 //
-// 行为矩阵（B1 修复 1+2：增加 Bearer token 回退与交叉校验）：
+// 行为矩阵（修复 1+2：增加 Bearer token 回退与交叉校验）：
 //   - 头非空（X-Tenant-ID 已注入）：
 //   - token 也携带 tenant_id 且一致 → 返回 actx, true
 //   - token 也携带 tenant_id 但不一致 → 403 Forbidden（防绕过网关伪造租户头）
@@ -37,7 +37,7 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) error
 // 调用方应在 ok=false 时直接 return（响应已写入）。
 func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (authctx.Context, bool) {
 	actx := authctx.FromHTTPHeader(r.Header)
-	// B1 修复 1+2：从 Bearer token/Cookie 提取 tenant_id 作为回退/交叉校验。
+	// 修复 1+2：从 Bearer token/Cookie 提取 tenant_id 作为回退/交叉校验。
 	tokenTenant, tokenUser := s.tenantFromBearer(r)
 	if actx.TenantID != "" {
 		// 头非空：若 token 也携带 tenant_id，校验两者一致，防绕过网关伪造租户头。
@@ -73,12 +73,12 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 }
 
 // tenantFromBearer 从 Authorization: Bearer <token> 或 HttpOnly Cookie 中提取 tenant_id/user_id。
-// 用于 requireTenantContext 的 token 回退与交叉校验（B1 修复 1+2）。
+// 用于 requireTenantContext 的 token 回退与交叉校验（修复 1+2）。
 // token 缺失/无效时返回空串（不阻断，由调用方决定后续行为）。
 func (s *Server) tenantFromBearer(r *http.Request) (tenantID, userID string) {
 	tokenStr, err := extractBearer(r)
 	if err != nil {
-		// 回退 HttpOnly Cookie（与 userFromToken 一致，task 94 双 Cookie 方案）。
+		// 回退 HttpOnly Cookie（与 userFromToken 一致，双 Cookie 方案）。
 		if ck, ckErr := r.Cookie(accessTokenCookieName); ckErr == nil && strings.TrimSpace(ck.Value) != "" {
 			tokenStr = ck.Value
 		} else {

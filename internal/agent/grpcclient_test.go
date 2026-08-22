@@ -9,7 +9,7 @@ func TestGRPCTarget(t *testing.T) {
 		want string
 	}{
 		{"http://127.0.0.1:8080", 9090, "127.0.0.1:9090"},
-		{"cp1.example:9090", 9090, "cp1.example:9090"}, // A3 多控制面 host:port 形式
+		{"cp1.example:9090", 9090, "cp1.example:9090"}, // 多控制面 host:port 形式
 		{"cp2:9091", 9090, "cp2:9091"},                 // 显式端口优先
 		{"http://[::1]:8080", 9090, "[::1]:9090"},
 		{"hostonly", 9090, "hostonly:9090"},

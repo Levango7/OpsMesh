@@ -1,4 +1,4 @@
-// Package discover 提供网段存活扫描（P0-2 真实纳管）。
+// Package discover 提供网段存活扫描（真实纳管）。
 //
 // 不依赖任何外部包：用标准库 net 对 segment CIDR 做并发受限的 TCP-connect 探测，
 // 返回存活主机 IP。ICMP 需原始套接字（特权），故默认用 TCP-connect 探测（非特权、可控）。

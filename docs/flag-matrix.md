@@ -27,7 +27,7 @@
 | `--mysql-dsn` | store=mysql 命脉，空则拒绝启动 |
 | `--production` | 一键切换整套安全基线（TLS 强制 / require-auth / cookie-secure / grpc 签名） |
 | `--jwt-secret` | 用户中心会话命脉；多副本必须一致 |
-| `--provision-secret` | B1 纳管 install token 签名密钥；多副本必须一致 |
+| `--provision-secret` | 纳管 install token 签名密钥；多副本必须一致 |
 | `--advertise-addr` | 拼接 bootstrap URL；错则 agent 拿不到安装脚本 |
 | `--require-auth` | 是否信任网关注入身份头；生产默认 true |
 | `--tls-cert` / `--tls-key` / `--client-ca` | agent↔控制面通信加密；生产强制 |

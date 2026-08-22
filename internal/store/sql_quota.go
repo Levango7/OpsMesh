@@ -1,6 +1,6 @@
-// sql_quota.go P2-B5 多租户资源配额 SQL 持久化：quota_configs 表。
+// sql_quota.go 多租户资源配额 SQL 持久化：quota_configs 表。
 //
-// 替换原内存 map 实现（task 274），改为基于 MySQL 的持久化：
+// 替换原内存 map 实现，改为基于 MySQL 的持久化：
 //   - quota_configs：租户级资源配额配置（MaxDevices/MaxTasks/MaxAlerts）。
 //
 // 设计要点（与 sql_m2.go 风格一致）：

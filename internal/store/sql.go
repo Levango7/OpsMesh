@@ -27,7 +27,7 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
-// SQLStore 基于 MySQL + Redis 的持久化实现（U-04 数据本地化，私有部署）。
+// SQLStore 基于 MySQL + Redis 的持久化实现（数据本地化，私有部署）。
 //   - MySQL 为权威存储（四张表：agents / devices / tasks / task_results）。
 //   - Redis 作 agent/device 状态缓存（MVP 仅写缓存，读取仍走 MySQL；
 //     生产可改为读 Redis 以减 MySQL 压力，见各方法注释）。
@@ -35,31 +35,31 @@ var migrationFS embed.FS
 // 即便运行期连不上库，也不会让 go build 失败：连接错误只在运行期日志提示并返回零值，
 // 不会 panic。
 //
-// A3 真 HA：多副本控制面共享同一 MySQL；通过 leader_lease 表做分布式选主，
+// 真 HA：多副本控制面共享同一 MySQL；通过 leader_lease 表做分布式选主，
 // 仅 leader 执行周期性协调任务（reclaim / schedule / provision / 离线归档），
 // 避免重复派生/回收。每个进程实例持唯一 instanceID 参与抢占。
 type SQLStore struct {
 	db   *sql.DB
 	rdb  *redis.Client
-	bus  events.Bus // 事件总线（P1-5）；可 nil（测试/默认 noop）
-	demo bool       // 演示模式（P0-5）：开启时注册预置 uname -a
+	bus  events.Bus // 事件总线；可 nil（测试/默认 noop）
+	demo bool       // 演示模式：开启时注册预置 uname -a
 
-	instanceID string     // 本进程实例唯一标识（A3 选主参与方）
+	instanceID string     // 本进程实例唯一标识（选主参与方）
 	mu         sync.Mutex // 保护 isLeader / leaseUntil / deviceMetrics 的读写
 	isLeader   bool       // 本实例当前是否自认为 leader
 	leaseUntil time.Time  // 当前租约过期时间（UTC）
 	secret     string     // B1 install token 的 HMAC 签名密钥（WithSecret 注入；空则构造时随机）
 
-	// 设备实时监控指标缓存：deviceID -> 环形缓冲（保留最近 N 条历史，task 223）。
+	// 设备实时监控指标缓存：deviceID -> 环形缓冲（保留最近 N 条历史）。
 	// 高频时序数据落库应由 Prometheus/InfluxDB 承担，控制面仅缓存最近 2h 历史供 API 查询，
 	// 避免给 MySQL 写入压力（每 30s/agent 一次写）。
 	deviceMetrics map[string]*metricsRing
 
-	// task 81 gRPC agent 身份绑定：agentID -> HMAC 签名密钥缓存（避免每次请求都查 MySQL）。
+	// gRPC agent 身份绑定：agentID -> HMAC 签名密钥缓存（避免每次请求都查 MySQL）。
 	// 权威存储在 agents.secret 列；此处仅缓存已查询过的 agent 密钥（首次查询后填充）。
 	agentSecretCache map[string]string
 
-	// task 247 agent 日志上报：已落库的 LogReport 批次列表（内存暂存）。
+	// agent 日志上报：已落库的 LogReport 批次列表（内存暂存）。
 	// agent 上报日志的高频写入不宜直接落 MySQL（每 30s/agent 一次写），
 	// 检索侧由 logstore.SQLLogStore 走独立表/连接池承担；此处仅承接上报并暂存供 API 查询。
 	// 由 s.mu 保护并发安全。
@@ -76,7 +76,7 @@ func (s *SQLStore) WithBus(b events.Bus) *SQLStore {
 	return s
 }
 
-// WithDemo 设置演示模式（P0-5）：开启时 Register 预置 uname -a 示例任务。
+// WithDemo 设置演示模式：开启时 Register 预置 uname -a 示例任务。
 // 线程安全：必须在 Start/首次并发访问前调用，非并发安全。
 
 func (s *SQLStore) WithDemo(b bool) Store {
@@ -130,7 +130,7 @@ func NewSQLStore(dsn, redisAddr string) (*SQLStore, error) {
 		rdb = redis.NewClient(&redis.Options{Addr: redisAddr})
 	}
 
-	// A3 选主：生成本进程唯一实例 ID（hostname + pid + 纳秒），用于 leader_lease 抢占标识。
+	// 选主：生成本进程唯一实例 ID（hostname + pid + 纳秒），用于 leader_lease 抢占标识。
 	host, herr := os.Hostname()
 	if herr != nil || host == "" {
 		host = "opsmesh"
@@ -203,7 +203,7 @@ func (s *SQLStore) runMigrations() error {
 	defer cancel()
 
 	// 1. 确保 schema_migrations 表存在（复用历史定义，sql.go 原 initSchema 已建此表）。
-	//    G5 / C-1：增加 checksum 列记录迁移文件 sha256 摘要，启动时校验防篡改。
+	//    G5 / ：增加 checksum 列记录迁移文件 sha256 摘要，启动时校验防篡改。
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INT PRIMARY KEY,
 		applied_at DATETIME,
@@ -211,7 +211,7 @@ func (s *SQLStore) runMigrations() error {
 	)`); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
-	// 兼容老库：schema_migrations 已存在但缺 checksum 列时补列（G5 / C-1）。
+	// 兼容老库：schema_migrations 已存在但缺 checksum 列时补列（G5 /）。
 	s.alterColumnIfMissing(ctx, "schema_migrations", "checksum", "VARCHAR(64) NOT NULL DEFAULT ''")
 
 	// 2. 读取已应用版本号及其 checksum。
@@ -226,7 +226,7 @@ func (s *SQLStore) runMigrations() error {
 		return fmt.Errorf("list migration files: %w", err)
 	}
 
-	// 3.5 G5 / C-1 防篡改校验：已应用迁移的 checksum 必须与当前文件 sha256 一致，
+	// 3.5 G5 / 防篡改校验：已应用迁移的 checksum 必须与当前文件 sha256 一致，
 	//     不一致则拒绝启动（避免迁移文件被静默篡改导致 schema 漂移）。
 	for _, mf := range files {
 		recorded, ok := applied[mf.version]
@@ -261,14 +261,14 @@ func (s *SQLStore) runMigrations() error {
 	return nil
 }
 
-// migrationRecord 描述一个已应用迁移的版本记录（含 checksum，G5 / C-1）。
+// migrationRecord 描述一个已应用迁移的版本记录（含 checksum，G5 /）。
 type migrationRecord struct {
 	version  int
 	checksum string
 }
 
 // appliedMigrations 返回 schema_migrations 表中已记录的版本号及其 checksum。
-// G5 / C-1：返回 map[version] -> migrationRecord，供 runMigrations 校验防篡改。
+// G5 / ：返回 map[version] -> migrationRecord，供 runMigrations 校验防篡改。
 func (s *SQLStore) appliedMigrations(ctx context.Context) (map[int]migrationRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT version, checksum FROM schema_migrations`)
 	if err != nil {
@@ -289,7 +289,7 @@ func (s *SQLStore) appliedMigrations(ctx context.Context) (map[int]migrationReco
 // migrationFiles 从 embed.FS 读取 migrations/*.sql，解析文件名前缀版本号，按版本升序排序。
 // 文件名约定：NNN_description.sql，其中 NNN 为零填充版本号（001、002...）。
 //
-// G5 / C-1：跳过 NNN_*.down.sql 回滚占位文件（仅作为未来回滚接口的占位，
+// G5 / ：跳过 NNN_*.down.sql 回滚占位文件（仅作为未来回滚接口的占位，
 // 不参与正向迁移执行；embed 指令 migrations/*.sql 会同时嵌入 .down.sql，
 // 此处显式过滤避免被误当作正向迁移）。
 func migrationFiles() ([]migrationFile, error) {
@@ -333,7 +333,7 @@ func migrationFiles() ([]migrationFile, error) {
 // 到 schema_migrations。任一语句失败则回滚整批，保证 schema_migrations 记录与表结构
 // 变更原子化。
 //
-// G5 / C-1：执行前计算迁移文件内容的 sha256 摘要，执行后随版本号一并存入
+// G5 / ：执行前计算迁移文件内容的 sha256 摘要，执行后随版本号一并存入
 // schema_migrations.checksum 列，供后续启动时校验防篡改。
 func (s *SQLStore) applyMigration(ctx context.Context, mf migrationFile) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -356,7 +356,7 @@ func (s *SQLStore) applyMigration(ctx context.Context, mf migrationFile) error {
 }
 
 // sha256Hex 返回给定内容的 sha256 摘要的十六进制小写表示（64 字符）。
-// 用于 schema_migrations.checksum 列记录迁移文件指纹，启动时校验防篡改（G5 / C-1）。
+// 用于 schema_migrations.checksum 列记录迁移文件指纹，启动时校验防篡改（G5 /）。
 func sha256Hex(content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:])
@@ -407,7 +407,7 @@ func (s *SQLStore) applyLegacyColumnFixups(ctx context.Context) {
 			log.Printf("[store] 迁移 tasks.tenant_id 失败（非致命）: %v", err)
 		}
 	}
-	// 后续列迁移（F2/F3/F4/F5/B1/B2 新增字段）统一走 alterColumnIfMissing，避免破坏已存在库。
+	// 后续列迁移（F2/F3/F4/F5/B1/新增字段）统一走 alterColumnIfMissing，避免破坏已存在库。
 	s.alterColumnIfMissing(ctx, "devices", "managed", "BOOLEAN DEFAULT 0")
 	s.alterColumnIfMissing(ctx, "devices", "last_result", "VARCHAR(16)")
 	s.alterColumnIfMissing(ctx, "devices", "last_result_at", "DATETIME")
@@ -416,14 +416,14 @@ func (s *SQLStore) applyLegacyColumnFixups(ctx context.Context) {
 	s.alterColumnIfMissing(ctx, "devices", "hostname", "VARCHAR(255)")
 	s.alterColumnIfMissing(ctx, "devices", "os", "VARCHAR(32)")
 	s.alterColumnIfMissing(ctx, "devices", "arch", "VARCHAR(32)")
-	// 安全债 85：users 表增加 must_change_password 列，预置弱口令首登强制改密。
+	// 安全债：users 表增加 must_change_password 列，预置弱口令首登强制改密。
 	s.alterColumnIfMissing(ctx, "users", "must_change_password", "BOOLEAN DEFAULT 0")
-	// task 81 gRPC agent 身份绑定：agents 表增加 secret 列存储 HMAC 签名密钥。
+	// gRPC agent 身份绑定：agents 表增加 secret 列存储 HMAC 签名密钥。
 	s.alterColumnIfMissing(ctx, "agents", "secret", "VARCHAR(64)")
 	s.alterColumnIfMissing(ctx, "tasks", "retry_count", "INT DEFAULT 0")
 	s.alterColumnIfMissing(ctx, "tasks", "max_retries", "INT DEFAULT 0")
 	s.alterColumnIfMissing(ctx, "tasks", "dead_letter", "BOOLEAN DEFAULT 0")
-	// P2-B2 节点级超时与重试（任务 261）：tasks 表增加 timeout / retry_delay 列。
+	// 节点级超时与重试：tasks 表增加 timeout / retry_delay 列。
 	s.alterColumnIfMissing(ctx, "tasks", "timeout", "INT DEFAULT 0")
 	s.alterColumnIfMissing(ctx, "tasks", "retry_delay", "INT DEFAULT 0")
 	s.alterColumnIfMissing(ctx, "tasks", "schedule", "VARCHAR(64)")
@@ -450,12 +450,12 @@ func (s *SQLStore) applyLegacyColumnFixups(ctx context.Context) {
 	s.alterColumnIfMissing(ctx, "alerts", "updated_at", "DATETIME")
 	// Phase-3 轻量审批流：ci_items 增补审批状态列（向后兼容，默认 approved）。
 	s.alterColumnIfMissing(ctx, "ci_items", "approval_status", "VARCHAR(16) DEFAULT 'approved'")
-	// task 88 租户隔离：存量 k8s_clusters 表补 tenant_id 列（全新库由 CREATE TABLE 保证）。
+	// 租户隔离：存量 k8s_clusters 表补 tenant_id 列（全新库由 CREATE TABLE 保证）。
 	s.alterColumnIfMissing(ctx, "k8s_clusters", "tenant_id", "VARCHAR(64)")
-	// task 246 M2 告警治理：alert_rules 表补 created_by 列（全新库由 005_m2_alert_governance.sql 保证）。
+	// M2 告警治理：alert_rules 表补 created_by 列（全新库由 005_m2_alert_governance.sql 保证）。
 	// 兼容老库（MySQL < 8.0 不支持 ADD COLUMN IF NOT EXISTS，005 迁移可能失败）。
 	s.alterColumnIfMissing(ctx, "alert_rules", "created_by", "VARCHAR(64)")
-	// task 100/111 增量补列/补索引（详见 sql_legacy.go initSchemaExtra）。
+	// /111 增量补列/补索引（详见 sql_legacy.go initSchemaExtra）。
 	s.initSchemaExtra(ctx)
 	// 工程债治理：补二级索引，避免 ClaimTask 的 FOR UPDATE 全表扫描加锁，
 	// 以及按租户分页查询（tenant_id + created_at DESC）回表全扫。

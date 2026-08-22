@@ -1,4 +1,4 @@
-// client_extra_test.go 补充 internal/k8s 包的正常路径测试（task 152）。
+// client_extra_test.go 补充 internal/k8s 包的正常路径测试。
 //
 // 覆盖范围：
 //   - K8sClient 正常构造（valid kubeconfig 内容与文件路径）

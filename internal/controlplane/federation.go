@@ -1,4 +1,4 @@
-// Package controlplane 联邦管理器（M4-4D 控制面联邦）。
+// Package controlplane 联邦管理器（控制面联邦）。
 //
 // 设计目标：把多个独立部署的 OpsMesh 控制面（典型场景：跨网段/跨 IDC/跨 K8s 集群）
 // 互联为联邦，使运维人员可从任一控制面：
@@ -53,7 +53,7 @@ type PeerStatus struct {
 // 不持有自己的 goroutine（健康检查按调用即时执行），可被多个 HTTP handler 并发调用
 // （http.Client 内部线程安全）。
 //
-// P1-6 硬化：
+// 硬化：
 //   - tlsConfig：非空时出站请求走 mTLS（呈现客户端证书 + 校验证书链），防伪 peer/MITM；
 //   - secret：非空时对转发的身份头做 HMAC 签名 + 时间戳，peer 侧验签防跨段伪造与重放。
 type FederationManager struct {
@@ -65,7 +65,7 @@ type FederationManager struct {
 }
 
 // NewFederationManager 构造联邦管理器。peers 为空时返回 nil（调用方据此跳过联邦路由注册）。
-// localStore 用于 FederatedDevices 聚合本地设备列表；secret/tlsConfig 为 P1-6 硬化参数（可空）。
+// localStore 用于 FederatedDevices 聚合本地设备列表；secret/tlsConfig 为 硬化参数（可空）。
 func NewFederationManager(peers []string, localStore store.Store, secret string, tlsConfig *tls.Config) *FederationManager {
 	if len(peers) == 0 {
 		return nil
@@ -138,7 +138,7 @@ func (f *FederationManager) ForwardTask(ctx context.Context, peerURL string, tas
 			req.Header.Set(h, v)
 		}
 	}
-	// P1-6 / task 83 对身份头 + 请求体做 HMAC 签名 + 时间戳，peer 侧验签防伪造、重放与任务体篡改。
+	// / 对身份头 + 请求体做 HMAC 签名 + 时间戳，peer 侧验签防伪造、重放与任务体篡改。
 	f.signFederationRequest(req, body)
 	resp, err := f.httpClient.Do(req)
 	if err != nil {
@@ -156,7 +156,7 @@ func (f *FederationManager) ForwardTask(ctx context.Context, peerURL string, tas
 	return &created, nil
 }
 
-// signFederationRequest 对出站联邦请求的身份头与请求体做 HMAC 签名 + 时间戳（P1-6 / task 83）。
+// signFederationRequest 对出站联邦请求的身份头与请求体做 HMAC 签名 + 时间戳。
 // 计算覆盖 method + path + 时间戳 + 三个身份头 + sha256(body) 摘要，peer 侧按同一规则验签；
 // body 摘要防止中间人在签名合法的情况下篡改转发的任务体（GET 请求 body 传 nil，即空体摘要）。
 // 仅在管理器配置了共享密钥时签名；未配置则跳过（向后兼容明文联邦，但启动已告警）。
@@ -168,7 +168,7 @@ func (f *FederationManager) signFederationRequest(req *http.Request, body []byte
 	tenant := req.Header.Get("X-Tenant-ID")
 	user := req.Header.Get("X-User-Id")
 	roles := req.Header.Get("X-User-Roles")
-	// task 83：body 摘要纳入签名，防中间人篡改转发任务体（body 为 nil 时即空体摘要）。
+	// ：body 摘要纳入签名，防中间人篡改转发任务体（body 为 nil 时即空体摘要）。
 	bodyDigest := sha256.Sum256(body)
 	mac := hmac.New(sha256.New, []byte(f.secret))
 	mac.Write([]byte(strings.Join([]string{req.Method, req.URL.Path, ts, tenant, user, roles, hex.EncodeToString(bodyDigest[:])}, "|")))
@@ -224,7 +224,7 @@ func (f *FederationManager) fetchPeerDevices(ctx context.Context, peerURL, tenan
 	if tenantID != "" {
 		req.Header.Set("X-Tenant-ID", tenantID)
 	}
-	// P1-6 / task 83 对身份头做 HMAC 签名（GET 无 body，传 nil），peer 侧验签防伪造与重放。
+	// / 对身份头做 HMAC 签名（GET 无 body，传 nil），peer 侧验签防伪造与重放。
 	f.signFederationRequest(req, nil)
 	resp, err := f.httpClient.Do(req)
 	if err != nil {
@@ -315,8 +315,8 @@ func (s *Server) handleFederationForwardTask(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
-	// 本地审计留痕（U-04 等保三级：跨网段操作必须可追溯）。
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 本地审计留痕（等保三级：跨网段操作必须可追溯）。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID,
 		UserID:   actx.UserID,

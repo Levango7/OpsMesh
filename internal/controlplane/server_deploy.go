@@ -1,6 +1,6 @@
 // server_deploy.go 部署对账与工作流调度后台循环。
 //
-// 从 server.go 拆分而来（task 114：按路由域拆分巨型 server.go）。
+// 从 server.go 拆分而来（按路由域拆分巨型 server.go）。
 // 部署/工作流的 HTTP handler 由 deploy/orchestration 包各自注册（见 server.go Start），
 // 此处仅保留控制面侧的后台对账循环，逻辑未做任何修改。
 package controlplane

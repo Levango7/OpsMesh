@@ -1,4 +1,4 @@
-// sse.go — M3-2B SSE 实时推送
+// sse.go — SSE 实时推送
 //
 // 设计目标：替代前端 5s 轮询，控制面主动推送任务状态变更/告警/设备上下线到浏览器。
 // 端点：GET /api/v1/events/stream（text/event-stream）。
@@ -16,7 +16,7 @@
 //	data: {"type":"task_status","tenantID":"t1","data":{"taskID":"xxx","status":"running","agentID":"yyy"}}\n\n
 //
 // 慢消费者策略：每个订阅者 buffered chan(16)，publishEvent 非阻塞广播；
-// 缓冲满则丢弃该事件（避免一个慢客户端拖垮广播，M3-2B 设计取舍）。
+// 缓冲满则丢弃该事件（避免一个慢客户端拖垮广播，设计取舍）。
 //
 // 连接保活：每 15s 发送 SSE 注释帧 ": ping\n\n"（不触发客户端 message 事件，仅保活）。
 // 客户端断开（ctx.Done）时 unsubscribe 并 close chan，防止泄漏。
@@ -43,7 +43,7 @@ import (
 // TenantID 为事件归属租户（空表示全局事件，如 hello；非空时仅下发到同租户订阅者），
 // Data 为业务载荷（任意可 JSON 序列化结构）。
 //
-// M1-4 分布式可观测性：TraceID 字段携带 OTel trace_id，
+// 分布式可观测性：TraceID 字段携带 OTel trace_id，
 // 使前端可关联后端链路追踪/日志/审计日志，端到端可观测。
 // omitempty 保证旧客户端不感知新字段（向后兼容）。
 type SSEEvent struct {
@@ -73,7 +73,7 @@ const sseDefaultTenant = "default"
 // 设置标准 SSE 响应头，订阅事件总线，循环写事件帧 + flush。
 // 客户端断开（r.Context().Done()）时自动取消订阅并释放资源。
 //
-// 鉴权（H6 SSE 租户隔离 + P1-G3 Cookie JWT 对齐）：
+// 鉴权（H6 SSE 租户隔离 + Cookie JWT 对齐）：
 //   - 优先从 X-Tenant-ID 头提取租户；
 //   - 头缺失时回退到 Authorization Bearer / HttpOnly Cookie JWT（与 requireTenantContext 一致）；
 //   - requireAuth=true：两种来源均无租户 → 401；
@@ -90,7 +90,7 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 	// 提取网关注入的身份上下文（X-Tenant-ID / Authorization Bearer）。
 	actx := authctx.FromHTTPHeader(r.Header)
 	tenant := actx.TenantID
-	// P1-G3 SSE 鉴权对齐 Cookie JWT：头缺失时回退到 Bearer/Cookie JWT 提取租户
+	// SSE 鉴权对齐 Cookie JWT：头缺失时回退到 Bearer/Cookie JWT 提取租户
 	// （与 requireTenantContext 一致，支持用户中心登录后浏览器经 Cookie 直连 SSE）。
 	if tenant == "" {
 		tokenTenant, _ := s.tenantFromBearer(r)
@@ -138,7 +138,7 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 				return // 通道被关闭（服务端主动关闭订阅）
 			}
 			// 租户隔离：事件归属租户非空且与当前订阅者不匹配则丢弃，
-			// 不跨租户下发（H6 防跨租户信息泄露）。
+			// 不跨租户下发（防跨租户信息泄露）。
 			// 订阅者租户为空（旧单租户/无网关降级）时放行全部，保持向后兼容。
 			if ev.TenantID != "" && tenant != "" && ev.TenantID != tenant {
 				continue
@@ -185,7 +185,7 @@ func (s *Server) unsubscribeEvents(ch chan SSEEvent) {
 // 非空时由 handleEventsStream 按租户过滤，跨租户订阅者不会收到），
 // data 为业务载荷（任意可 JSON 序列化结构）。
 //
-// M1-4 分布式可观测性：从 ctx 提取 OTel trace_id 注入 SSEEvent.TraceID，
+// 分布式可观测性：从 ctx 提取 OTel trace_id 注入 SSEEvent.TraceID，
 // 使 SSE 事件与后端链路追踪/日志/审计日志关联。ctx 无有效 span 时 TraceID 为空（向后兼容）。
 func (s *Server) publishEvent(ctx context.Context, typ string, tenantID string, data interface{}) {
 	s.eventMu.RLock()
@@ -202,7 +202,7 @@ func (s *Server) publishEvent(ctx context.Context, typ string, tenantID string, 
 	for ch := range s.eventSubs {
 		select {
 		case ch <- ev:
-		default: // 慢消费者，丢弃（M3-2B 设计取舍：保广播延迟，弃个别事件）
+		default: // 慢消费者，丢弃（设计取舍：保广播延迟，弃个别事件）
 		}
 	}
 }

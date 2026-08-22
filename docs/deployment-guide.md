@@ -512,7 +512,7 @@ Operator 会自动 Reconcile 出控制面 Deployment、agent DaemonSet、MySQL/R
 
 ## 多租户部署
 
-M4-4C 多租户 schema 隔离：每租户路由到独立 MySQL schema（database），物理级数据隔离。
+多租户 schema 隔离：每租户路由到独立 MySQL schema（database），物理级数据隔离。
 
 ### 启用方式
 
@@ -541,7 +541,7 @@ M4-4C 多租户 schema 隔离：每租户路由到独立 MySQL schema（database
 
 ## 联邦部署
 
-M4-4D 控制面联邦：企业多终端环境按网段割裂为多个控制面，联邦支持跨网段任务转发与联邦设备视图。联邦通道硬化为 mTLS + HMAC 签名，防伪造/防重放。
+控制面联邦：企业多终端环境按网段割裂为多个控制面，联邦支持跨网段任务转发与联邦设备视图。联邦通道硬化为 mTLS + HMAC 签名，防伪造/防重放。
 
 ### 拓扑
 

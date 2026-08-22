@@ -1,4 +1,4 @@
-// bench_m4_test.go M4-5 性能基准测试：MemoryStore 关键路径并发读写性能。
+// bench_m4_test.go 性能基准测试：MemoryStore 关键路径并发读写性能。
 //
 // 覆盖：
 //   - BenchmarkMemoryStore_UpsertDevice    并发 UpsertDevice（写写并发）

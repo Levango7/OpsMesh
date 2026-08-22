@@ -19,7 +19,7 @@ func TestTraceRoundTrip(t *testing.T) {
 	}
 }
 
-// TestTraceFromOTelSpan 验证 M1-4：Trace(ctx) 优先从 OTel span context 提取 trace_id。
+// TestTraceFromOTelSpan 验证 ：Trace(ctx) 优先从 OTel span context 提取 trace_id。
 // 当 ctx 携带有效 OTel span 时，Trace 返回 span 的 TraceID（32 字符 hex），
 // 而非 WithTrace 显式注入的 fallback 值。
 func TestTraceFromOTelSpan(t *testing.T) {
@@ -75,7 +75,7 @@ func TestTraceWithSpanAndFallback(t *testing.T) {
 }
 
 // TestInfoWithTrace 验证 Info 日志携带 traceID 字段。
-// 这是 M1-4 的核心保证：日志自动关联 trace_id，无需调用方手动添加。
+// 这是 的核心保证：日志自动关联 trace_id，无需调用方手动添加。
 func TestInfoWithTrace(t *testing.T) {
 	// 仅验证不 panic + 不阻塞，日志内容校验由集成测试覆盖。
 	ctx := WithTrace(context.Background(), "log-trace-456")

@@ -1,4 +1,4 @@
-// sql_rbac.go 实现 SQLStore 的 UserStore / RoleStore / PermissionStore 三个子接口（P0-1 生产就绪）。
+// sql_rbac.go 实现 SQLStore 的 UserStore / RoleStore / PermissionStore 三个子接口（生产就绪）。
 //
 // 生产 HA 模式强制 --store=mysql（config.Validate 拒绝 memory+replicas>1），用户中心
 // （登录/注册/用户角色管理）必须在此真实落地，否则控制面一碰鉴权即 panic。
@@ -23,7 +23,7 @@ type rowScanner interface {
 }
 
 // scanUser 从一行扫描出 *User（role_ids 为 JSON 文本列）。无行或扫描失败返回 nil。
-// 安全债 85：扫描 must_change_password 列（旧库无此列时回退 false，向后兼容）。
+// 安全债：扫描 must_change_password 列（旧库无此列时回退 false，向后兼容）。
 func scanUser(row rowScanner) *User {
 	var u User
 	var roleIDsJSON []byte
@@ -61,7 +61,7 @@ func scanRole(row rowScanner) *Role {
 // UserStore：用户中心用户领域（6 方法）
 // ============================================================================
 
-// userColumns users 表查询的列列表（含 must_change_password，安全债 85）。
+// userColumns users 表查询的列列表（含 must_change_password，安全债）。
 const userColumns = `id, username, email, password_hash, status, role_ids, created_at, must_change_password`
 
 // GetUser 按 ID 返回单用户（不存在返回 nil）。
@@ -129,7 +129,7 @@ func (s *SQLStore) UpdateUser(u *User) bool {
 	return n > 0
 }
 
-// ChangePassword 改密（安全债 85）：写入新 bcrypt 哈希并清除 must_change_password 标记。
+// ChangePassword 改密（安全债）：写入新 bcrypt 哈希并清除 must_change_password 标记。
 // 与 UpdateUser 分离，避免误覆盖 PasswordHash。用户不存在返回 false。
 func (s *SQLStore) ChangePassword(userID, newPasswordHash string) bool {
 	res, err := s.db.ExecContext(context.Background(),
@@ -326,7 +326,7 @@ func (s *SQLStore) seedRBAC(ctx context.Context) error {
 		}
 	}
 	// 3. 默认用户（bcrypt 哈希；与 memory.go 保持一致）。
-	// 安全债 85：预置弱口令首登强制改密（must_change_password=1）。
+	// 安全债：预置弱口令首登强制改密（must_change_password=1）。
 	// 用 INSERT ... ON DUPLICATE KEY UPDATE 同步标记，保证老库升级后 admin 也会被标记。
 	type userSpec struct {
 		id, name, password, email string

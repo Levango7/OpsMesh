@@ -1,4 +1,4 @@
-# M3-3A protobuf 引入：proto/ 目录
+# protobuf 引入：proto/ 目录
 
 本目录定义 agent↔控制面 注册通道的 protobuf IDL 契约，配合 `internal/grpcx/pb/` 生成的 Go stub，
 作为手写 `grpc.ServiceDesc` + JSON codec 路径的**并行替代**（兼容期两条路径并存，灰度切换）。

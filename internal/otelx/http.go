@@ -1,5 +1,5 @@
 // http.go 提供 OTel HTTP 中间件，为每个 HTTP 请求自动创建 span 并记录 method/path/status/latency。
-// M1-1 控制面 HTTP 埋点：从请求头提取 W3C Trace Context（traceparent），使上游 trace 贯穿。
+// 控制面 HTTP 埋点：从请求头提取 W3C Trace Context（traceparent），使上游 trace 贯穿。
 package otelx
 
 import (

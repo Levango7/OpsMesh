@@ -1,4 +1,4 @@
-// bench_m4_test.go M4-5 性能基准测试：关键 API Handler 性能基准。
+// bench_m4_test.go 性能基准测试：关键 API Handler 性能基准。
 //
 // 覆盖：
 //   - BenchmarkHandleListDevices    GET /api/v1/devices 性能

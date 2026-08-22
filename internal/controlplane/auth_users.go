@@ -96,7 +96,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "user_create", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 	})
@@ -106,8 +106,8 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 // handleUserRouting 分派 /api/v1/users/{id} 子路径：
 //   - PUT /api/v1/users/{id}：更新用户（需 user:write 权限）
 //   - DELETE /api/v1/users/{id}：删除用户（需 user:delete 权限）
-//   - POST /api/v1/users/{id}/approve：审批用户（需 user:approve 权限，P1-7 注册安全）
-//   - POST /api/v1/users/{id}/reject：拒绝用户（需 user:approve 权限，P1-7 注册安全）
+//   - POST /api/v1/users/{id}/approve：审批用户（需 user:approve 权限，注册安全）
+//   - POST /api/v1/users/{id}/reject：拒绝用户（需 user:approve 权限，注册安全）
 func (s *Server) handleUserRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/users/")
 	if rest == "" {
@@ -150,7 +150,7 @@ func (s *Server) handleUserRouting(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleApproveUser 处理 POST /api/v1/users/{id}/approve：管理员审批用户注册（P1-7 注册安全）。
+// handleApproveUser 处理 POST /api/v1/users/{id}/approve：管理员审批用户注册（注册安全）。
 // 将用户 Status 从 "pending" 改为 "active"；仅 pending 状态可审批，其他状态返回 409。
 // 鉴权：需 user:approve 权限（admin 角色自动拥有）。
 func (s *Server) handleApproveUser(w http.ResponseWriter, r *http.Request, id string) {
@@ -176,14 +176,14 @@ func (s *Server) handleApproveUser(w http.ResponseWriter, r *http.Request, id st
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "user_approve", Target: id, Detail: sanitizeAuditDetail("approved user " + existing.Username),
 	})
 	writeJSON(w, http.StatusOK, s.store.GetUser(id))
 }
 
-// handleRejectUser 处理 POST /api/v1/users/{id}/reject：管理员拒绝用户注册（P1-7 注册安全）。
+// handleRejectUser 处理 POST /api/v1/users/{id}/reject：管理员拒绝用户注册（注册安全）。
 // 将用户 Status 改为 "rejected"；仅 pending 状态可拒绝，其他状态返回 409。
 // 鉴权：需 user:approve 权限（admin 角色自动拥有）。
 // 请求体可选：{reason?: "拒绝原因"}，记录到审计日志。
@@ -221,7 +221,7 @@ func (s *Server) handleRejectUser(w http.ResponseWriter, r *http.Request, id str
 	if body.Reason != "" {
 		detail += " reason: " + body.Reason
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "user_reject", Target: id, Detail: sanitizeAuditDetail(detail),
 	})
@@ -245,7 +245,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request, id str
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	// P2 状态变更需更高权限：仅 user:write 不能激活/禁用账号，须 user:approve（与 P1-7 审批模型一致），
+	// 状态变更需更高权限：仅 user:write 不能激活/禁用账号，须 user:approve（与 审批模型一致），
 	// 防止低权限用户自行把 Status 置 active/rejected 绕过审批流。
 	if body.Status != "" {
 		if _, ok := s.requirePermission(w, r, "user:approve"); !ok {
@@ -270,7 +270,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request, id str
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "user_update", Target: id, Detail: "updated via HTTP",
 	})
@@ -291,7 +291,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request, id str
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "user_delete", Target: id, Detail: "deleted via HTTP",
 	})

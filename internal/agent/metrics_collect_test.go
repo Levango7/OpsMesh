@@ -116,7 +116,7 @@ func TestCollectDeviceMetrics_Throttle(t *testing.T) {
 var _ = proto.DeviceMetrics{}
 
 // ============================================================================
-// task 223 MetricsHistory 环形缓冲单元测试
+// MetricsHistory 环形缓冲单元测试
 // ============================================================================
 
 // TestMetricsHistory_AddAndLatest 验证环形缓冲追加与读取最新值。

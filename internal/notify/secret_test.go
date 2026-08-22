@@ -1,4 +1,4 @@
-// secret_test.go task 266 告警通道密钥外置测试。
+// secret_test.go 告警通道密钥外置测试。
 //
 // 覆盖：
 //   - ResolveSecret 对明文/引用的处理（与 secrets 包的单元测试互补，此处验证 notify 集成路径）。

@@ -1,6 +1,6 @@
 # OpsMesh 架构设计文档
 
-> 版本：v1.0 · 编制日期：2026-08-17 · 基线：MVP（ADR-001 Option A）+ M2 演进落地
+> 版本：v1.0 · 编制日期：2026-08-17 · 基线：MVP（自研 gRPC 管控通道）+ M2 演进落地
 >
 > 本文档描述 OpsMesh 控制面、Agent、Store、前端与联邦的整体架构、分层职责、模块依赖、数据流、技术选型、扩展点、容量规划、高可用与多租户设计。已实现能力以 `README.md` 功能矩阵为准，规划项以 `docs/product-roadmap.md` 为准。
 
@@ -165,7 +165,7 @@ OpsMesh 采用四层架构：表现层、API 层、领域层、基础设施层�
 - worker pool 并发执行 shell/systemctl/文件分发任务
 - `exec.CommandContext` 超时自动中止 + rlimit 资源限额
 - cancelLoop 每 2s 轮询 PollCancels，命中即取消 worker context
-- gRPC 客户端长连接池（B-4）+ 多控制面 failover 轮询重连
+- gRPC 客户端长连接池 + 多控制面 failover 轮询重连
 - 平台支持：Linux 正式支持；Windows/macOS 仅可编译，未提供执行能力
 
 #### 2.4.3 k8s（多集群连接管理）
@@ -264,7 +264,7 @@ graph TB
 
 ### 4.1 拆分背景
 
-原 `Store` 接口聚合 40+ 方法，违反接口隔离原则（ISP）。M2-1A 演进将其拆为 17 个领域小接口，`Store` 保留为组合接口向后兼容。编译期断言确保 `MemoryStore` 与 `SQLStore` 均实现全部小接口。
+原 `Store` 接口聚合 40+ 方法，违反接口隔离原则（ISP）。演进将其拆为 17 个领域小接口，`Store` 保留为组合接口向后兼容。编译期断言确保 `MemoryStore` 与 `SQLStore` 均实现全部小接口。
 
 ### 4.2 领域小接口清单
 
@@ -613,7 +613,7 @@ channels.Register("sms", &SMSChannel{apiURL: cfg.SMSAPIURL})
 | MySQL 连接数 | > max_connections | 调连接池 + 读写分离（远期） |
 | MySQL 写入 | 审计/任务回执写入瓶颈 | 审计分表/分库 + 异步批量写入；任务回执经事件总线异步 |
 | Redis 内存 | SessionStore + 状态缓存增长 | 调 maxmemory + LRU 淘汰 + 分片 |
-| gRPC 连接数 | fd 上限 | 调 ulimit + 连接复用（B-4 长连接池） |
+| gRPC 连接数 | fd 上限 | 调 ulimit + 连接复用（长连接池） |
 | 告警通知 | SMTP/Webhook 限速 | 多通道并行 + 限速器 + 聚合去重降量 |
 | 单网段设备数 | > 10,000 | 拆分网段 + 联邦多控制面 |
 
@@ -674,7 +674,7 @@ sequenceDiagram
 
 Agent 端经 `--control-addrs="cp1:9090,cp2:9090"` 配置多控制面地址，客户端按序重连：
 
-- B-4 长连接池：进程启动建立一次 `grpc.ClientConn`，所有 RPC 复用
+- 长连接池：进程启动建立一次 `grpc.ClientConn`，所有 RPC 复用
 - 连接断开后自动重连而非每次新建
 - 多地址按序重试，实现 HA failover
 - 断线日志分级（evictConn WARN）+ 故障指标化（`agent_grpc_conn_failures` expvar）
@@ -797,7 +797,7 @@ OpsMesh 自带注册/登录/RBAC（用户/角色/权限三表），登录签发 
                 └─ X-User-Roles: admin,ops
 ```
 
-#### 10.2.3 B1 令牌闭环例外
+#### 10.2.3 令牌闭环例外
 
 Agent 首次注册时携带一次性 install token（HMAC-SHA256 签名），服务端 `ConsumeToken` 校验通过后从 token 中提取租户，不依赖网关身份头（新安装的 agent 尚不知道其网关租户身份）。
 
@@ -850,7 +850,7 @@ Agent 首次注册时携带一次性 install token（HMAC-SHA256 签名），服
 | Agent shell 白名单 | ✅ 已支持 | `--agent-shell-whitelist` |
 | Agent file 根目录白名单 | ✅ 已支持 | `--agent-file-root-whitelist` |
 | 联邦 mTLS + HMAC | ✅ 已支持 | `--federation-tls-*` + `--federation-secret` |
-| TLS 证书热重载 | ✅ 已支持 | `--tls-watch`（P2-B3） |
+| TLS 证书热重载 | ✅ 已支持 | `--tls-watch` |
 
 ---
 
@@ -897,7 +897,7 @@ Agent 首次注册时携带一次性 install token（HMAC-SHA256 签名），服
 | 文档 | 说明 |
 |---|---|
 | `README.md` | 项目总览、功能矩阵、快速启动、生产部署、API 速查、配置参考 |
-| `DELIVERY.md` | 交付说明、ADR 决策记录 |
+| `DELIVERY.md` | 交付说明与关键决策记录 |
 | `docs/product-roadmap.md` | 产品方向与演进路线图、里程碑规划、DoD 验收标准 |
 | `docs/tech-selection.md` | 技术选型分析：Go 是否不可替代、混合编程方案、工作量估算 |
 | `docs/deployment-guide.md` | 部署指南（控制面/agent/企业版前端各场景） |
@@ -921,5 +921,5 @@ Agent 首次注册时携带一次性 install token（HMAC-SHA256 签名），服
 | 行级隔离 | 业务表含 tenant_id 列，查询自动过滤 |
 | Schema 隔离 | 每租户独立 MySQL schema，物理隔离 |
 | SSE | Server-Sent Events，控制面实时推送事件到前端 |
-| B1 令牌闭环 | agent 首次注册经 install token 提取租户，不依赖网关身份头 |
+| 令牌闭环 | agent 首次注册经 install token 提取租户，不依赖网关身份头 |
 | DeviceFP | 设备指纹，refresh token 仅在原签发设备使用防重放 |

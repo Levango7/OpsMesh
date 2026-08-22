@@ -1,4 +1,4 @@
-// Package events 提供可插拔事件总线（审计/告警），内核产出的事件统一经 Bus 发布（P1-5）。
+// Package events 提供可插拔事件总线（审计/告警），内核产出的事件统一经 Bus 发布。
 // 默认 noop / log 实现零依赖；Kafka 生产者置于 //go:build kafka 编译标签（见 kafka.go），
 // 默认构建不引入重依赖，避免 go.sum 负担。
 package events
@@ -73,7 +73,7 @@ func (s stampingBus) Publish(ctx context.Context, e Event) error {
 }
 
 // New 按名称构造 Bus：noop | log | kafka。brokers/topic 仅 kafka 分支使用，
-// 经参数传递（替代 os.Setenv，避免并发不安全，P1-5）。返回的 Bus 统一经
+// 经参数传递（替代 os.Setenv，避免并发不安全）。返回的 Bus 统一经
 // stampingBus 包装，确保发布时自动加盖契约版本（工程3）。
 func New(kind, brokers, topic string) Bus {
 	var inner Bus

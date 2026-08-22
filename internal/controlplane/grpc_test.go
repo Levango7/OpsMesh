@@ -77,7 +77,7 @@ func TestGRPCRegistrationLoop(t *testing.T) {
 		t.Fatalf("PullTasks returned %d, want 1", len(ptResp.Tasks))
 	}
 
-	// 二次拉取应返回 0：同一任务已被原子领取，不会双发（P1-1 HA 协调）。
+	// 二次拉取应返回 0：同一任务已被原子领取，不会双发（HA 协调）。
 	ptResp2 := &grpcx.PullTasksResp{}
 	if err := conn.Invoke(rctx, "/opsmesh.v1.Registration/PullTasks",
 		&grpcx.PullTasksReq{AgentID: regResp.AgentID}, ptResp2, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
@@ -248,7 +248,7 @@ func TestGRPCCancelReachesWorker(t *testing.T) {
 	}
 }
 
-// TestGRPCRegister_ConsumesToken B1 端到端：带 install token 注册，服务端消费 token 并翻转候选设备。
+// TestGRPCRegister_ConsumesToken 端到端：带 install token 注册，服务端消费 token 并翻转候选设备。
 func TestGRPCRegister_ConsumesToken(t *testing.T) {
 	st := store.NewMemoryStore().WithSecret("opsmesh-test-secret")
 	srvImpl := &grpcServerImpl{store: st, requireAuth: false}
@@ -467,12 +467,12 @@ func TestGRPCHeartbeat_MetricsAutoDeviceID(t *testing.T) {
 	}
 }
 
-// TestGRPCAgentSignature_VerifyAndReject task 81 端到端：启用 requireSignature 后，
+// TestGRPCAgentSignature_VerifyAndReject 端到端：启用 requireSignature 后，
 // 携带正确签名的请求放行，无签名/错误签名/过期签名被拒绝。
-// P0 安全加固：Register 不再返回签名密钥，改用预共享密钥（signatureKey）。
+// 安全加固：Register 不再返回签名密钥，改用预共享密钥（signatureKey）。
 func TestGRPCAgentSignature_VerifyAndReject(t *testing.T) {
 	st := store.NewMemoryStore()
-	// P0 安全加固：使用预共享密钥（--grpc-signature-key），Register 不再下发密钥。
+	// 安全加固：使用预共享密钥（--grpc-signature-key），Register 不再下发密钥。
 	const sharedSecret = "opsmesh-test-shared-signature-key"
 	srvImpl := &grpcServerImpl{store: st, requireAuth: false, requireSignature: true, signatureKey: sharedSecret}
 
@@ -497,16 +497,16 @@ func TestGRPCAgentSignature_VerifyAndReject(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// 注册 agent（Register 不校验签名，P0 安全加固后不再返回 secret，改用预共享密钥）
+	// 注册 agent（Register 不校验签名，安全加固后不再返回 secret，改用预共享密钥）
 	regResp := &grpcx.RegisterResp{}
 	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/Register",
 		&proto.AgentInfo{Segment: "seg-a"}, regResp, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	agentID := regResp.AgentID
-	// P0 安全加固：Register 响应不再包含签名密钥，使用预共享密钥。
+	// 安全加固：Register 响应不再包含签名密钥，使用预共享密钥。
 	if regResp.Secret != "" {
-		t.Fatal("Register should NOT return secret after P0 hardening (pre-shared key mode)")
+		t.Fatal("Register should NOT return secret after hardening (pre-shared key mode)")
 	}
 	secret := sharedSecret
 
@@ -553,7 +553,7 @@ func TestGRPCAgentSignature_VerifyAndReject(t *testing.T) {
 	}
 
 	// 5) 错误密钥签名（用非预共享密钥签 agent-2 的请求）→ 拒绝
-	// P0 安全加固：预共享密钥模式下所有 agent 共用同一密钥，"用 agent1 密钥签 agent2"不再
+	// 安全加固：预共享密钥模式下所有 agent 共用同一密钥，"用 agent1 密钥签 agent2"不再
 	// 构成冒充（密钥相同）。改为验证"用错误密钥签名被拒绝"——这才是预共享模式下的防御语义。
 	regResp2 := &grpcx.RegisterResp{}
 	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/Register",
@@ -595,7 +595,7 @@ func TestGRPCAgentSignature_VerifyAndReject(t *testing.T) {
 	}
 }
 
-// TestGRPCAgentSignature_DisabledByDefault task 81：requireSignature=false（默认）时，
+// TestGRPCAgentSignature_DisabledByDefault ：requireSignature=false（默认）时，
 // 无签名请求放行（向后兼容 demo/未启用 --grpc-require-signature 的部署）。
 func TestGRPCAgentSignature_DisabledByDefault(t *testing.T) {
 	st := store.NewMemoryStore().WithDemo(true)
@@ -622,7 +622,7 @@ func TestGRPCAgentSignature_DisabledByDefault(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// 注册（requireSignature=false 时不需要签名，P0 安全加固后 Register 不再下发 secret）
+	// 注册（requireSignature=false 时不需要签名，安全加固后 Register 不再下发 secret）
 	regResp := &grpcx.RegisterResp{}
 	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/Register",
 		&proto.AgentInfo{Segment: "seg-a"}, regResp, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {

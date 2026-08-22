@@ -1,4 +1,4 @@
-// server_otel_test.go 测试 M1-1 OTel 链路追踪在控制面中的集成。
+// server_otel_test.go 测试 OTel 链路追踪在控制面中的集成。
 // 验证：HTTP 中间件创建 span、配置传递、未启用时 no-op、W3C Trace Context 提取。
 package controlplane
 

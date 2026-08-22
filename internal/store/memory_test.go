@@ -21,7 +21,7 @@ func TestMemoryStore_RegisterAssignsID(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_LeaderAlwaysTrue A3 单实例（MemoryStore）恒为 leader，
+// TestMemoryStore_LeaderAlwaysTrue 单实例（MemoryStore）恒为 leader，
 // RenewLeadership 任意 ttl 均返回 true，IsLeader 恒 true。
 func TestMemoryStore_LeaderAlwaysTrue(t *testing.T) {
 	m := NewMemoryStore()
@@ -201,7 +201,7 @@ func TestMemoryStore_SubmitResult(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_TaskLifecycle 验证 P0-1 修复：SubmitResult 后任务不再被重复下发。
+// TestMemoryStore_TaskLifecycle 验证 修复：SubmitResult 后任务不再被重复下发。
 func TestMemoryStore_TaskLifecycle(t *testing.T) {
 	m := NewMemoryStore().WithDemo(true)
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a"})
@@ -215,7 +215,7 @@ func TestMemoryStore_TaskLifecycle(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_CreateTask 验证 P0-2 内部下发入口：分配 ID、status=pending、可被拉取。
+// TestMemoryStore_CreateTask 验证 内部下发入口：分配 ID、status=pending、可被拉取。
 func TestMemoryStore_CreateTask(t *testing.T) {
 	m := NewMemoryStore().WithDemo(true)
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
@@ -231,7 +231,7 @@ func TestMemoryStore_CreateTask(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_Audit 验证 P2-10 审计产出：事件被记录且补默时间。
+// TestMemoryStore_Audit 验证 审计产出：事件被记录且补默时间。
 func TestMemoryStore_Audit(t *testing.T) {
 	m := NewMemoryStore()
 	m.Audit(&proto.AuditEvent{TenantID: "t1", Action: "register", Target: "agent-1"})
@@ -243,7 +243,7 @@ func TestMemoryStore_Audit(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_ClaimTask 验证 P1-1 原子领取：首次领取翻转 running，二次返回 nil（不双领）。
+// TestMemoryStore_ClaimTask 验证 原子领取：首次领取翻转 running，二次返回 nil（不双领）。
 func TestMemoryStore_ClaimTask(t *testing.T) {
 	m := NewMemoryStore().WithDemo(true)
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a"})
@@ -264,7 +264,7 @@ func TestMemoryStore_ClaimTask(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_UpsertDevice 验证 P0-2 真实纳管：设备可写入并按 deviceID 幂等更新。
+// TestMemoryStore_UpsertDevice 验证 真实纳管：设备可写入并按 deviceID 幂等更新。
 func TestMemoryStore_UpsertDevice(t *testing.T) {
 	m := NewMemoryStore()
 	m.UpsertDevice(&proto.DeviceInfo{DeviceID: "dev-10.30.0.5", Segment: "seg-a", TenantID: "t1", IP: "10.30.0.5", AgentID: "agent-x", State: "online", TaskState: "idle"})
@@ -284,7 +284,7 @@ func TestMemoryStore_UpsertDevice(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_PendingDepth 验证 P2-1 队列深度：注册后=1，领取后=0。
+// TestMemoryStore_PendingDepth 验证 队列深度：注册后=1，领取后=0。
 func TestMemoryStore_PendingDepth(t *testing.T) {
 	m := NewMemoryStore().WithDemo(true)
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a"})
@@ -341,7 +341,7 @@ func TestMemoryStore_QueryMethods(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_Agent 验证 P2-17：O(1) 直查 + 深拷贝隔离。
+// TestMemoryStore_Agent 验证 ：O(1) 直查 + 深拷贝隔离。
 // 返回副本被篡改不应影响内部存储，未知 id 必须返回 nil。
 func TestMemoryStore_Agent(t *testing.T) {
 	m := NewMemoryStore()
@@ -387,7 +387,7 @@ func TestMemoryStore_EventPublish(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_ReclaimStaleTasks 验证 P0-1 任务必达：超期 running 任务被复位 pending 重调度。
+// TestMemoryStore_ReclaimStaleTasks 验证 任务必达：超期 running 任务被复位 pending 重调度。
 func TestMemoryStore_ReclaimStaleTasks(t *testing.T) {
 	m := NewMemoryStore()
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
@@ -416,7 +416,7 @@ func TestMemoryStore_ReclaimStaleTasks(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_QueryAudits 验证 P0-4 审计可查：租户隔离 + 动作过滤 + 倒序 + limit。
+// TestMemoryStore_QueryAudits 验证 审计可查：租户隔离 + 动作过滤 + 倒序 + limit。
 func TestMemoryStore_QueryAudits(t *testing.T) {
 	m := NewMemoryStore()
 	m.Audit(&proto.AuditEvent{TenantID: "t1", Action: "register", Target: "a1", CreatedAt: time.Now().Add(-time.Hour)})
@@ -441,7 +441,7 @@ func TestMemoryStore_QueryAudits(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_Provision B1 自动纳管：签发一次性 install token，标记设备 provisioning。
+// TestMemoryStore_Provision 自动纳管：签发一次性 install token，标记设备 provisioning。
 func TestMemoryStore_Provision(t *testing.T) {
 	m := NewMemoryStore().WithSecret("opsmesh-test-secret")
 	m.UpsertDevice(&proto.DeviceInfo{
@@ -538,7 +538,7 @@ func TestMemoryStore_Register_Onboard(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_Register_Onboard_TenantMismatch 安全回归（P0-F1 纵深防御）：
+// TestMemoryStore_Register_Onboard_TenantMismatch 安全回归（纵深防御）：
 // 候选设备租户与 agent 租户不一致时，store 层拒绝翻转（即便上层漏校验也拦得住）。
 func TestMemoryStore_Register_Onboard_TenantMismatch(t *testing.T) {
 	m := NewMemoryStore()
@@ -610,7 +610,7 @@ func TestMemoryStore_DeviceMetrics(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_DeviceMetricsHistory 环形缓冲历史时序查询（task 223）。
+// TestMemoryStore_DeviceMetricsHistory 环形缓冲历史时序查询。
 // 覆盖：多次写入后历史按时间升序返回、since 过滤、覆写最旧、深拷贝、无数据返回 nil。
 func TestMemoryStore_DeviceMetricsHistory(t *testing.T) {
 	m := NewMemoryStore()
@@ -654,7 +654,7 @@ func TestMemoryStore_DeviceMetricsHistory(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_DeviceMetricsHistory_Overwrite 环形缓冲满后覆写最旧（task 223）。
+// TestMemoryStore_DeviceMetricsHistory_Overwrite 环形缓冲满后覆写最旧。
 func TestMemoryStore_DeviceMetricsHistory_Overwrite(t *testing.T) {
 	// 直接构造小容量环形缓冲验证覆写逻辑。
 	r := newMetricsRing(3)
@@ -700,7 +700,7 @@ func TestMemoryStore_Register_FillsDeviceMeta(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_AgentSecret task 81：Register 时为每个 agent 生成 HMAC 签名密钥，
+// TestMemoryStore_AgentSecret ：Register 时为每个 agent 生成 HMAC 签名密钥，
 // AgentSecret 可查到；不同 agent 密钥不同；复用已注册 agent 不重置密钥。
 func TestMemoryStore_AgentSecret(t *testing.T) {
 	m := NewMemoryStore()
@@ -734,7 +734,7 @@ func TestMemoryStore_AgentSecret(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_SubmitResult_StateGuard 验证 task 82 状态守卫（幂等）：
+// TestMemoryStore_SubmitResult_StateGuard 验证 状态守卫（幂等）：
 // 仅 running 任务接受上报；pending/cancelled 的迟到/重复上报被忽略（结果记录保留），
 // 防止 cancelled 被翻回 done、防止重复失败上报累计重试造成假死信。
 func TestMemoryStore_SubmitResult_StateGuard(t *testing.T) {

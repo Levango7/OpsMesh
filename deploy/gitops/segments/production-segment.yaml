@@ -71,7 +71,7 @@ controlplane:
   # JWT 签发密钥：生产必须显式注入（长度≥32 字节），勿写入本文件明文
   # 建议经 External Secrets / Sealed Secrets 注入，或 helm.parameters 引用 K8s Secret
   jwtSecret: ""
-  # B1 自动纳管 install token HMAC 密钥：生产必须显式注入
+  # 自动纳管 install token HMAC 密钥：生产必须显式注入
   provisionSecret: ""
 
 # ─────────────────────────────────────────────────────────────

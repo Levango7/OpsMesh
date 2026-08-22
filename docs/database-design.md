@@ -316,12 +316,12 @@ erDiagram
 | `segment` | `VARCHAR(64)` | NULL | NULL | 网段/分片标识，用于 `Snapshot` 分组 |
 | `tenant_id` | `VARCHAR(64)` | NULL | NULL | 租户隔离键 |
 | `addr` | `VARCHAR(255)` | NULL | NULL | Agent 地址（IP:port） |
-| `grpc_port` | `INT` | NULL | NULL | gRPC 端口（task 81） |
+| `grpc_port` | `INT` | NULL | NULL | gRPC 端口 |
 | `metrics_port` | `INT` | NULL | NULL | Metrics 端口 |
 | `status` | `VARCHAR(16)` | NULL | NULL | 在线状态：`online` / `offline` 等 |
 | `load` | `INT` | NULL | NULL | 负载（并发任务数，注册时置 1） |
 | `last_seen` | `DATETIME` | NULL | NULL | 最近心跳时间（`Heartbeat` 刷新） |
-| `secret` | `VARCHAR(64)` | NULL | NULL | HMAC 签名密钥（task 81 gRPC 身份绑定，注册时随机 32 字节 hex） |
+| `secret` | `VARCHAR(64)` | NULL | NULL | HMAC 签名密钥（gRPC 身份绑定，注册时随机 32 字节 hex） |
 
 来源：`migrations/001_initial.sql`；`secret` 列由 `applyLegacyColumnFixups` 兼容老库补列。
 
@@ -336,7 +336,7 @@ erDiagram
 | `agent_id` | `VARCHAR(64)` | NULL | NULL | 关联 agent（逻辑外键 → `agents.agent_id`） |
 | `state` | `VARCHAR(16)` | NULL | NULL | 设备状态：`online` / `offline` / `provisioning` |
 | `task_state` | `VARCHAR(16)` | NULL | NULL | 任务态：`idle` / `running` / `done` |
-| `managed` | `BOOLEAN` | NULL | 0 | 是否已纳管（B1 翻转候选设备时置 1） |
+| `managed` | `BOOLEAN` | NULL | 0 | 是否已纳管（翻转候选设备时置 1） |
 | `last_result` | `VARCHAR(16)` | NULL | NULL | 最近任务结果：`success` / `failed` |
 | `last_result_at` | `DATETIME` | NULL | NULL | 最近任务结果时间 |
 | `retired` | `BOOLEAN` | NULL | 0 | 是否退役（F5，退出活跃清单但仍可查归档） |
@@ -381,8 +381,8 @@ erDiagram
 | `depends_on` | `TEXT` | NULL | NULL | 依赖任务 ID JSON 数组（M5 DAG） |
 | `timeout` | `INT` | NULL | 0 | 节点级超时秒数（0=用全局 `taskTimeout`） |
 | `retry_delay` | `INT` | NULL | 0 | 重试间隔秒数 |
-| `claim_epoch` | `BIGINT` | NOT NULL | 0 | 所有权令牌（A-1 防双跑，`ClaimTask` 时 +1） |
-| `approval_required` | `BOOLEAN` | NULL | 0 | 是否需审批（task 100） |
+| `claim_epoch` | `BIGINT` | NOT NULL | 0 | 所有权令牌（防双跑，`ClaimTask` 时 +1） |
+| `approval_required` | `BOOLEAN` | NULL | 0 | 是否需审批 |
 | `approved_by` | `VARCHAR(64)` | NULL | NULL | 审批人 |
 | `approved_at` | `DATETIME` | NULL | NULL | 审批时间 |
 
@@ -503,7 +503,7 @@ erDiagram
 | `status` | `VARCHAR(16)` | NULL | `active` | 状态 |
 | `role_ids` | `JSON` | NULL | NULL | 角色 ID 数组 |
 | `created_at` | `DATETIME` | NULL | NULL | 创建时间 |
-| `must_change_password` | `BOOLEAN` | NULL | 0 | 首登强制改密标记（安全债 85） |
+| `must_change_password` | `BOOLEAN` | NULL | 0 | 首登强制改密标记（安全债） |
 
 来源：`migrations/001_initial.sql`；`must_change_password` 由 `applyLegacyColumnFixups` 兼容补列。`seedRBAC` 预置 `admin / operator / viewer` 三用户（弱口令 + `must_change_password=1`）。
 
@@ -534,7 +534,7 @@ erDiagram
 
 | 字段 | 类型 | 约束 | 默认 | 说明 |
 | --- | --- | --- | --- | --- |
-| `token_hash` | `VARCHAR(64)` | PRIMARY KEY | — | 明文 token 的 SHA-256 摘要（P1-F7 明文不落库） |
+| `token_hash` | `VARCHAR(64)` | PRIMARY KEY | — | 明文 token 的 SHA-256 摘要（明文不落库） |
 | `user_id` | `VARCHAR(64)` | NULL | NULL | 关联用户 |
 | `tenant_id` | `VARCHAR(64)` | NULL | NULL | 租户隔离键 |
 | `device_fp` | `VARCHAR(255)` | NULL | NULL | 设备指纹（防跨设备重放） |
@@ -548,7 +548,7 @@ erDiagram
 
 | 字段 | 类型 | 约束 | 默认 | 说明 |
 | --- | --- | --- | --- | --- |
-| `token` | `VARCHAR(512)` | PRIMARY KEY | — | token 的 SHA-256 摘要（P1-F7 明文不落库） |
+| `token` | `VARCHAR(512)` | PRIMARY KEY | — | token 的 SHA-256 摘要（明文不落库） |
 | `device_id` | `VARCHAR(64)` | NULL | NULL | 关联设备 |
 | `tenant_id` | `VARCHAR(64)` | NULL | NULL | 租户隔离键 |
 | `expires_at` | `DATETIME` | NULL | NULL | 过期时间（默认 15min） |
@@ -571,7 +571,7 @@ erDiagram
 | `target` | `VARCHAR(128)` | NULL | NULL | 操作目标 |
 | `detail` | `TEXT` | NULL | NULL | 详情 |
 | `created_at` | `DATETIME` | NULL | NULL | 时间 |
-| `trace_id` | `VARCHAR(64)` | NULL | NULL | OTel 链路追踪 ID（M1-4，004 迁移补列） |
+| `trace_id` | `VARCHAR(64)` | NULL | NULL | OTel 链路追踪 ID（004 迁移补列） |
 
 索引：`idx_audit_trace (trace_id)`（004 迁移）、`idx_audit_tenant_created (tenant_id, created_at DESC)`（`applyLegacyColumnFixups` 补）。
 来源：`migrations/001_initial.sql` + `004_add_audit_trace_id.sql`。
@@ -810,7 +810,7 @@ erDiagram
 | --- | --- | --- | --- | --- |
 | `version` | `INT` | PRIMARY KEY | — | 迁移版本号（文件名前缀 001/002/...） |
 | `applied_at` | `DATETIME` | NULL | NULL | 应用时间 |
-| `checksum` | `VARCHAR(64)` | NOT NULL | `''` | 迁移文件 sha256 摘要（G5/C-1 防篡改） |
+| `checksum` | `VARCHAR(64)` | NOT NULL | `''` | 迁移文件 sha256 摘要（防篡改） |
 
 来源：`internal/store/sql.go` `runMigrations` 运行期 `CREATE TABLE IF NOT EXISTS`。`checksum` 列由 `alterColumnIfMissing` 兼容老库补列。
 
@@ -837,7 +837,7 @@ erDiagram
 | --- | --- | --- | --- | --- |
 | `tasks` | `idx_tasks_tenant_created` | `(tenant_id, created_at DESC)` | `applyLegacyColumnFixups` | 按租户分页查询任务列表（`AllTasks` 端点），避免回表全扫 |
 | `tasks` | `idx_tasks_agent` | `(agent_id, status)` | `applyLegacyColumnFixups` | `ClaimTask` 的 `WHERE agent_id=? AND status='pending' ORDER BY created_at LIMIT 1 FOR UPDATE` 加速，避免全表扫描加锁 |
-| `audit_log` | `idx_audit_trace` | `(trace_id)` | `004_add_audit_trace_id.sql` | M1-4 按 trace_id 反查同链路全部审计事件 |
+| `audit_log` | `idx_audit_trace` | `(trace_id)` | `004_add_audit_trace_id.sql` | 按 trace_id 反查同链路全部审计事件 |
 | `audit_log` | `idx_audit_tenant_created` | `(tenant_id, created_at DESC)` | `applyLegacyColumnFixups` | `QueryAudits` 按租户+时间窗分页检索 |
 | `refresh_tokens` | `idx_refresh_tokens_user` | `(user_id)` | `initSchemaExtra` | 按用户列出全部 refresh token（吊销/审计） |
 | `refresh_tokens` | `idx_refresh_tokens_expires` | `(expires_at)` | `initSchemaExtra` | 过期清理扫描 |
@@ -864,7 +864,7 @@ erDiagram
 
 ## 第 5 章 分库分表策略
 
-### 5.1 多租户 Schema 隔离（M4-4C）
+### 5.1 多租户 Schema 隔离
 
 实现位置：`internal/store/multi_schema.go` `MultiSchemaStore`。
 
@@ -943,7 +943,7 @@ WHERE (d.retired IS NULL OR d.retired=0)
 
 归档设备不出现在 `Snapshot` 活跃清单（`WHERE retired=0`），但仍可通过 `Device(id)` 直查归档详情。
 
-### 6.3 失联任务回收（P0-1）
+### 6.3 失联任务回收
 
 `ReclaimStaleTasks(maxAge)` 由 leader 周期执行：
 
@@ -954,7 +954,7 @@ WHERE status='running' AND claimed_at < NOW() - INTERVAL maxAge SECOND
                   WHERE a.agent_id = tasks.claimed_by AND a.last_seen > NOW() - INTERVAL maxAge SECOND)
 ```
 
-A-1 防双跑：增加 agent 心跳校验，心跳正常的慢 agent 不回收，避免长任务被误回收双跑。
+防双跑：增加 agent 心跳校验，心跳正常的慢 agent 不回收，避免长任务被误回收双跑。
 
 ---
 
@@ -969,7 +969,7 @@ A-1 防双跑：增加 agent 心跳校验，心跳正常的慢 agent 不回收�
 1. 确保 `schema_migrations` 表存在（运行期 `CREATE TABLE IF NOT EXISTS`）；
 2. 读取已应用版本号及 checksum（`SELECT version, checksum FROM schema_migrations`）；
 3. 从 `embed.FS` 读取 `migrations/*.sql`，按文件名前缀版本号升序排序；
-4. **防篡改校验**（G5/C-1）：已应用迁移的 checksum 必须与当前文件 sha256 一致，不一致则拒绝启动；
+4. **防篡改校验**：已应用迁移的 checksum 必须与当前文件 sha256 一致，不一致则拒绝启动；
 5. 对每个未应用的迁移：`BEGIN TX` → 逐条执行 SQL → `INSERT schema_migrations` → `COMMIT`；任一语句失败则回滚整批；
 6. `applyLegacyColumnFixups`：兼容老库的增量补列/补索引（历史遗留，待后续转为正式迁移）；
 7. `seedRBAC`：幂等预置默认权限/角色/用户。
@@ -984,12 +984,12 @@ A-1 防双跑：增加 agent 心跳校验，心跳正常的慢 agent 不回收�
 | --- | --- | --- |
 | 001 | `001_initial.sql` | 初始 schema 快照，20 张表 `CREATE TABLE IF NOT EXISTS` |
 | 001↓ | `001_initial.down.sql` | 回滚占位（无实际 SQL，未来 down 框架留接口） |
-| 002 | `002_add_claim_epoch.sql` | `ALTER TABLE tasks ADD COLUMN claim_epoch BIGINT NOT NULL DEFAULT 0`（A-1 防双跑） |
+| 002 | `002_add_claim_epoch.sql` | `ALTER TABLE tasks ADD COLUMN claim_epoch BIGINT NOT NULL DEFAULT 0`（防双跑） |
 | 003 | `003_legacy_tables.sql` | 历史 Go 代码建表的 4 张表（alert_rules/os_templates/middleware_templates/refresh_tokens）正式纳入迁移框架 |
 | 003↓ | `003_legacy_tables.down.sql` | 回滚占位 |
-| 004 | `004_add_audit_trace_id.sql` | `ALTER TABLE audit_log ADD COLUMN trace_id` + `CREATE INDEX idx_audit_trace`（M1-4） |
+| 004 | `004_add_audit_trace_id.sql` | `ALTER TABLE audit_log ADD COLUMN trace_id` + `CREATE INDEX idx_audit_trace` |
 | 005 | `005_m2_alert_governance.sql` | M2 告警治理：alert_silences / notify_channels / notify_templates 三张表 + alert_rules 补 created_by 列 |
-| 006 | `006_quota_configs.sql` | P2-B5 配额：quota_configs 表 |
+| 006 | `006_quota_configs.sql` | 配额：quota_configs 表 |
 
 ### 7.2 幂等建表
 
@@ -1125,11 +1125,11 @@ MySQL 容器可能尚未就绪（compose 起栈时 mysql 与 controlplane 并发
 | 迁移文件 | 对应 Go 代码 | 说明 |
 | --- | --- | --- |
 | `001_initial.sql` | `sql.go` 历史 `initSchema` | 初始 schema 快照逐字提取 |
-| `002_add_claim_epoch.sql` | `sql_tasks.go` `ClaimTask` / `SubmitResult` | A-1 防双跑所有权令牌 |
+| `002_add_claim_epoch.sql` | `sql_tasks.go` `ClaimTask` / `SubmitResult` | 防双跑所有权令牌 |
 | `003_legacy_tables.sql` | `sql_legacy.go` `initSchemaExtra` | 历史四张表正式纳入迁移框架 |
-| `004_add_audit_trace_id.sql` | `sql_audits.go` `Audit` / `QueryAudits` | M1-4 OTel 链路关联 |
+| `004_add_audit_trace_id.sql` | `sql_audits.go` `Audit` / `QueryAudits` | OTel 链路关联 |
 | `005_m2_alert_governance.sql` | `sql_m2.go` | M2 告警治理持久化 |
-| `006_quota_configs.sql` | `sql_quota.go` | P2-B5 多租户配额 |
+| `006_quota_configs.sql` | `sql_quota.go` | 多租户配额 |
 | —（运行期） | `sql.go` `runMigrations` | `schema_migrations` 表 + checksum 校验 |
 | —（兼容补丁） | `sql.go` `applyLegacyColumnFixups` + `sql_legacy.go` `initSchemaExtra` | 老库增量补列/补索引 |
 | —（独立模块） | `orchestration/sql.go` | `workflow_defs` / `workflow_runs` |

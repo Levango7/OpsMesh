@@ -1,4 +1,4 @@
-// integration_inhibit_test.go — task 254 P2-3 告警抑制集成测试。
+// integration_inhibit_test.go — 告警抑制集成测试。
 //
 // 验证 AlertInhibitor 已正确集成到告警处理链：
 //   - alertEventToAlert 转换函数正确性。

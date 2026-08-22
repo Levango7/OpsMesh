@@ -1,6 +1,6 @@
 # SSE 实时推送协议（与 `internal/controlplane/sse.go` 逐字对齐）
 
-> 本协议由代码导出实情生成，且由 `internal/controlplane/sse_contract_test.go` 的一致性用例守护——文档与代码出现漂移时 CI 会失败。修改事件名/字段前请先改代码与测试。
+> 本协议依据代码实际实现整理，且由 `internal/controlplane/sse_contract_test.go` 的一致性用例守护——文档与代码出现漂移时 CI 会失败。修改事件名/字段前请先改代码与测试。
 
 ## 端点
 
@@ -50,7 +50,7 @@ GET /api/v1/events/stream
 | `schedule_status` | 定时任务触发/暂停/恢复 | `scheduleID`、`action` |
 | `os_template_changed` | OS 优化模板增删改 | `templateID`、`action` |
 | `mw_template_changed` | 中间件模板增删改 | `templateID`、`action` |
-| `agent_logs` | agent 日志上报到达（task 247） | `agentID`、`logName`、`lines` |
+| `agent_logs` | agent 日志上报到达 | `agentID`、`logName`、`lines` |
 
 ## 慢消费者策略
 

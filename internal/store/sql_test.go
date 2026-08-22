@@ -366,7 +366,7 @@ func TestScanAlertRule_ScanError(t *testing.T) {
 // ============================================================================
 
 func TestUserColumns_ContainsMustChangePassword(t *testing.T) {
-	// 安全债 85：userColumns 必须含 must_change_password 列，否则 scanUser 列错位。
+	// 安全债：userColumns 必须含 must_change_password 列，否则 scanUser 列错位。
 	if !strings.Contains(userColumns, "must_change_password") {
 		t.Fatal("userColumns 缺少 must_change_password 列")
 	}
@@ -421,7 +421,7 @@ func TestRandAlertRuleID_Uniqueness(t *testing.T) {
 //	OPSMESH_TEST_REDIS_ADDR=127.0.0.1:6379 \
 //	go test ./internal/store/ -run TestSQLStore -v
 //
-// 验证 U-04 数据本地化下，SQLStore 的租户隔离与 MemoryStore 行为一致。
+// 验证 数据本地化下，SQLStore 的租户隔离与 MemoryStore 行为一致。
 func TestSQLStore_TenantIsolation(t *testing.T) {
 	dsn := os.Getenv("OPSMESH_TEST_MYSQL_DSN")
 	if dsn == "" {

@@ -23,7 +23,7 @@ import (
 // newPeerTestServer 构造一个模拟 peer 控制面的 httptest.Server，复用真实 Server 的 handler。
 // 这样 peer 侧的任务创建/设备列表/健康检查走真实代码路径，测试更接近生产。
 // cfg.Demo=true：demo 模式放宽认证，便于测试在不显式注入网关头时调用 peer handler
-// （H6 认证防御后非 demo 模式会拒绝空租户头）。
+// （认证防御后非 demo 模式会拒绝空租户头）。
 func newPeerTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	st := store.NewMemoryStore()
@@ -58,7 +58,7 @@ func TestFederationManager_ForwardTask(t *testing.T) {
 	_ = peerAgents
 	// 直接从 peer 的 store 取 agent ID（白盒：peer 用的是真实 Server，agent ID 由 Register 分配）。
 	// 改用 HTTP 拉取设备视图反推 agent ID（黑盒，更稳健）。
-	// H6 认证防御：peer 启用 demo 模式，但 agent 属于 t1 租户，需带 X-Tenant-ID 头才能查到。
+	// 认证防御：peer 启用 demo 模式，但 agent 属于 t1 租户，需带 X-Tenant-ID 头才能查到。
 	devReq, _ := http.NewRequest(http.MethodGet, peer.URL+"/api/v1/devices", nil)
 	devReq.Header.Set("X-Tenant-ID", "t1")
 	resp, err := peer.Client().Do(devReq)
@@ -111,7 +111,7 @@ func TestFederationManager_FederatedDevices(t *testing.T) {
 	localStore.Register(&proto.AgentInfo{Segment: "local-seg", TenantID: "t1", Hostname: "local-agent"})
 
 	fed := NewFederationManager([]string{peer1.URL, peer2URL}, localStore, "", nil)
-	// H6 认证防御：传 t1 租户，peer 侧 demo 模式但 agent 属于 t1，需带 X-Tenant-ID 才能查到。
+	// 认证防御：传 t1 租户，peer 侧 demo 模式但 agent 属于 t1，需带 X-Tenant-ID 才能查到。
 	result := fed.FederatedDevices(context.Background(), "t1")
 
 	// local 部分应有至少 1 台设备。
@@ -189,12 +189,12 @@ func TestHandleFederationPeers(t *testing.T) {
 
 	s := &Server{
 		store: store.NewMemoryStore(),
-		cfg:   &config.Config{FederationPeers: []string{peer.URL}, Demo: true}, // task 96：Demo 放行 requireProd
+		cfg:   &config.Config{FederationPeers: []string{peer.URL}, Demo: true}, // ：Demo 放行 requireProd
 		fed:   NewFederationManager([]string{peer.URL}, store.NewMemoryStore(), "", nil),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/federation/peers", nil)
-	req.Header.Set("X-Tenant-ID", "t1") // task 96：新增 requireTenantContext 需要租户头
+	req.Header.Set("X-Tenant-ID", "t1") // 新增 requireTenantContext 需要租户头
 	rec := httptest.NewRecorder()
 	s.handleFederationPeers(rec, req)
 	if rec.Code != http.StatusOK {
@@ -217,12 +217,12 @@ func TestHandleFederationForwardTask(t *testing.T) {
 
 	s := &Server{
 		store: store.NewMemoryStore(),
-		cfg:   &config.Config{FederationPeers: []string{peer.URL}, Demo: true}, // task 96：Demo 放行 requireProd
+		cfg:   &config.Config{FederationPeers: []string{peer.URL}, Demo: true}, // ：Demo 放行 requireProd
 		fed:   NewFederationManager([]string{peer.URL}, store.NewMemoryStore(), "", nil),
 	}
 
 	// 取 peer 上 agent ID（黑盒：通过 /api/v1/devices 反推）。
-	// H6 认证防御：peer 启用 demo 模式，但 agent 属于 t1 租户，需带 X-Tenant-ID 头才能查到。
+	// 认证防御：peer 启用 demo 模式，但 agent 属于 t1 租户，需带 X-Tenant-ID 头才能查到。
 	devReq, _ := http.NewRequest(http.MethodGet, peer.URL+"/api/v1/devices", nil)
 	devReq.Header.Set("X-Tenant-ID", "t1")
 	resp, err := peer.Client().Do(devReq)
@@ -359,7 +359,7 @@ func TestNewFederationManager_NilForEmptyPeers(t *testing.T) {
 	}
 }
 
-// TestVerifyFederationRequest_BodyTampering 验证 task 83：联邦签名覆盖请求体。
+// TestVerifyFederationRequest_BodyTampering 验证 ：联邦签名覆盖请求体。
 // 合法签名请求通过且 body 被复原（下游 decodeJSONBody 可读）；
 // body 被篡改（签名不变）时必须拒绝——防中间人在签名合法的情况下改任务体。
 func TestVerifyFederationRequest_BodyTampering(t *testing.T) {

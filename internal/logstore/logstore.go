@@ -18,7 +18,7 @@ type LogStore interface {
 	Close() error
 }
 
-// maxQueryLimit 单次检索硬上限，防止无 limit 时全表返回（U-04 私有部署防爆）。
+// maxQueryLimit 单次检索硬上限，防止无 limit 时全表返回（私有部署防爆）。
 const maxQueryLimit = 1000
 
 // NewMemory 构造内存环形缓冲后端（默认；无外部依赖即可运行）。
@@ -44,7 +44,7 @@ func NewMemoryWithIndex(cap int) *MemoryLogStore {
 	}
 }
 
-// NewSQL 构造 MySQL 后端（U-04 数据本地化，私有部署）。
+// NewSQL 构造 MySQL 后端（数据本地化，私有部署）。
 // db 来自 store.SQLStore.DB()（与控制面共享同一连接池，不在本包内关闭）。
 func NewSQL(db *sql.DB) (*SQLLogStore, error) {
 	s := &SQLLogStore{db: db}

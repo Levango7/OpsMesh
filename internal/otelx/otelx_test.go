@@ -1,5 +1,5 @@
 // otelx_test.go 测试 otelx 包的 OTel SDK 初始化与中间件。
-// M1-1 验证：no-op 模式零开销、stdout 模式可导出、HTTP 中间件创建 span、gRPC 拦截器注入/提取 trace context。
+// 验证：no-op 模式零开销、stdout 模式可导出、HTTP 中间件创建 span、gRPC 拦截器注入/提取 trace context。
 package otelx
 
 import (
@@ -301,7 +301,7 @@ func TestStatusRecorder(t *testing.T) {
 }
 
 // ============================================================================
-// M1-4 分布式可观测性：TraceIDFromContext / SpanIDFromContext
+// 分布式可观测性：TraceIDFromContext / SpanIDFromContext
 // ============================================================================
 
 // TestTraceIDFromContext_NoSpan 验证 ctx 无 span 时返回空串（向后兼容）。
@@ -372,7 +372,7 @@ func TestTraceIDFromContext_NoopMode(t *testing.T) {
 }
 
 // TestTraceIDFromContext_Propagation 验证 trace_id 经 gRPC metadata 注入/提取后保持一致。
-// 这是 M1-4 trace_id 贯穿 agent→控制面→store 的核心保证。
+// 这是 trace_id 贯穿 agent→控制面→store 的核心保证。
 func TestTraceIDFromContext_Propagation(t *testing.T) {
 	shutdown, err := Init(Config{Stdout: true})
 	if err != nil {

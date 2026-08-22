@@ -1,4 +1,4 @@
-// quota_test.go — P2-B5 多租户资源配额与计费测试（task 274）。
+// quota_test.go — 多租户资源配额与计费测试。
 //
 // 覆盖 QuotaManager 的核心行为：
 //   - SetQuota/GetQuota 配额设置/获取
@@ -217,7 +217,7 @@ func TestQuotaManager_Usage(t *testing.T) {
 
 	// 注入测试数据。
 	seedDevicesForQuota(st, "t1", 7)
-	seedTasks(st, "t1", 13) // Register 会自动创建 1 台占位设备（store U-02 行为），故设备数 = 7+1 = 8
+	seedTasks(st, "t1", 13) // Register 会自动创建 1 台占位设备（store 行为），故设备数 = 7+1 = 8
 	seedAlerts(st, "t1", 5)
 
 	// 查询用量。

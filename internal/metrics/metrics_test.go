@@ -29,7 +29,7 @@ func TestMetricsRender(t *testing.T) {
 	}
 }
 
-// TestHTTPMetrics 验证 P1-C3 HTTP 请求计数器与延迟直方图输出格式（P1-C3）。
+// TestHTTPMetrics 验证 HTTP 请求计数器与延迟直方图输出格式。
 func TestHTTPMetrics(t *testing.T) {
 	m := New()
 	// 模拟 3 次 GET /api/v1/devices 200，耗时分别 0.001s/0.05s/2s
@@ -65,7 +65,7 @@ func TestHTTPMetrics(t *testing.T) {
 	}
 }
 
-// TestRuntimeMetrics 验证 P1-C3 Go runtime 指标输出（P1-C3）。
+// TestRuntimeMetrics 验证 Go runtime 指标输出。
 func TestRuntimeMetrics(t *testing.T) {
 	m := New()
 	out := m.Render()

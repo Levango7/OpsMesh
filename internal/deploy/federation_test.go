@@ -1,4 +1,4 @@
-// federation_test.go 测试多集群联邦发布协调器（task 280）：存储 CRUD、计划校验、
+// federation_test.go 测试多集群联邦发布协调器：存储 CRUD、计划校验、
 // Start/Promote/Reconcile/Rollback/Status 状态流转（sequential/parallel）、自动回滚、HTTP API 集成。
 package deploy
 

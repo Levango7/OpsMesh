@@ -58,7 +58,7 @@ const (
 )
 
 // setCookie 统一的 HttpOnly Cookie 写入（Path=/、SameSite=Lax；HTTPS 部署才置 Secure）。
-// task 112 Cookie Secure：优先用 cfg.CookieSecure（HTTPS 反代终止 TLS 时显式开启），
+// Cookie Secure：优先用 cfg.CookieSecure（HTTPS 反代终止 TLS 时显式开启），
 // 回退到 TLSCert 非空（控制面直连 HTTPS 时自动启用），二者任一为 true 即置 Secure。
 func (s *Server) setCookie(w http.ResponseWriter, name, value string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{
@@ -72,7 +72,7 @@ func (s *Server) setCookie(w http.ResponseWriter, name, value string, maxAge int
 	})
 }
 
-// cookieSecure 决定 Cookie 的 Secure 属性（task 112）。
+// cookieSecure 决定 Cookie 的 Secure 属性。
 // 优先级：cfg.CookieSecure 显式 true → true；否则回退到 TLSCert 非空（HTTPS 直连自动启用）。
 // 这样既支持 HTTPS 反代终止 TLS（控制面收 HTTP 但对外 HTTPS，须显式 --cookie-secure=true），
 // 又保持原有 TLSCert 兜底语义（控制面自身持证直连 HTTPS 时自动 Secure）。
@@ -106,27 +106,27 @@ func (s *Server) clearAuthCookies(w http.ResponseWriter) {
 }
 
 // ============================================================================
-// 刷新令牌存储（task 112：从进程内全局 map 改为 store 持久化）。
+// 刷新令牌存储（从进程内全局 map 改为 store 持久化）。
 //
 // 原实现（MVP）使用进程内 map 存 refresh token，多副本 HA 部署下登录态随机失效
 // （登录请求落到副本 A，刷新请求落到副本 B 时 rt 不存在 → 401）。现改为经
-// store.RefreshTokenStore 接口持久化（MemoryStore / SQLStore 均已实现，task 111），
+// store.RefreshTokenStore 接口持久化（MemoryStore / SQLStore 均已实现），
 // 多副本共享同一 MySQL 时跨副本续期一致。
 //
-// 安全设计（与 install_tokens 同范式，P1-F7 明文不落库）：
+// 安全设计（与 install_tokens 同范式，明文不落库）：
 //   - 库存/内存只存 token 的 SHA-256 摘要（TokenHash），不存明文；
 //   - DeviceFP（设备指纹）绑定签发设备，防 token 跨设备重放；
 //   - 旋转：consume 校验通过即 DeleteRefreshToken，旧 rt 立即作废防重放。
 // ============================================================================
 
 // hashRefreshToken 计算 refresh token 明文的 SHA-256 摘要（hex 编码）。
-// 库存/内存只存摘要，不存明文——DB 只读账号/备份泄露不等于活体 refresh token 泄露（P1-F7）。
+// 库存/内存只存摘要，不存明文——DB 只读账号/备份泄露不等于活体 refresh token 泄露。
 func hashRefreshToken(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
 }
 
-// deviceFingerprint 从请求头 X-Device-FP 提取设备指纹（task 112 设备绑定）。
+// deviceFingerprint 从请求头 X-Device-FP 提取设备指纹（设备绑定）。
 // 前端可传 User-Agent 摘要或随机 UUID（同设备稳定即可）。空串表示不校验设备
 // （向后兼容：旧客户端不传头时 DeviceFP 为空，签发时存空，验证时不校验）。
 func deviceFingerprint(r *http.Request) string {
@@ -162,17 +162,17 @@ func (s *Server) createRefreshToken(userID, deviceFP string) (string, error) {
 // deviceFP 为请求携带的设备指纹，与存储的 DeviceFP 比对防跨设备重放。
 // 无效/过期/已消费/设备指纹不匹配返回 (nil, false)。
 //
-// P1-G4 原子消费：原实现为 Get→Delete→校验三步，多副本并发下同一 rt 可被双消费
+// 原子消费：原实现为 Get→Delete→校验三步，多副本并发下同一 rt 可被双消费
 // （副本 A Get 后、Delete 前，副本 B 也 Get 到同一 rt）。现改为调用
 // store.ConsumeRefreshToken 原子读取+删除，保证同一 rt 仅被消费一次。
 //
-// C-4 DeviceFP deadline：超过 cfg.DeviceFPDeadline 之后签发的 refresh token 必须绑定
+// DeviceFP deadline：超过 cfg.DeviceFPDeadline 之后签发的 refresh token 必须绑定
 // DeviceFP（非空）。deadline 前保持向后兼容（DeviceFP 为空时跳过设备绑定校验）；
 // deadline 后 DeviceFP 为空则拒绝（强制设备绑定，防 token 跨设备重放）。
 // deadline 零值=不强制（完全向后兼容）。
 func (s *Server) consumeRefreshToken(id, deviceFP string) (*store.RefreshToken, bool) {
 	hash := hashRefreshToken(id)
-	// 原子消费：读取+删除在单次互斥操作内完成，防并发双消费（P1-G4）。
+	// 原子消费：读取+删除在单次互斥操作内完成，防并发双消费。
 	rt, ok := s.store.ConsumeRefreshToken(hash)
 	if !ok || rt == nil {
 		return nil, false
@@ -180,18 +180,18 @@ func (s *Server) consumeRefreshToken(id, deviceFP string) (*store.RefreshToken, 
 	if time.Now().After(rt.ExpiresAt) {
 		return nil, false
 	}
-	// C-4 DeviceFP deadline 强制非空：超过 deadline 且存储的 DeviceFP 为空时拒绝。
+	// DeviceFP deadline 强制非空：超过 deadline 且存储的 DeviceFP 为空时拒绝。
 	// 用于渐进式强制设备绑定：deadline 前允许旧客户端不传 DeviceFP（向后兼容），
 	// deadline 后强制要求新签发的 refresh token 必须绑定 DeviceFP。
 	// deadline 零值=不强制（完全向后兼容，原有行为）。
 	if !s.deviceFPDeadline.IsZero() && rt.CreatedAt.After(s.deviceFPDeadline) && rt.DeviceFP == "" {
 		return nil, false
 	}
-	// 设备绑定校验（task 112）：存储的 DeviceFP 非空且请求携带了 DeviceFP 时，两者必须匹配。
+	// 设备绑定校验：存储的 DeviceFP 非空且请求携带了 DeviceFP 时，两者必须匹配。
 	// 存储 DeviceFP 为空（旧客户端签发时未绑定）或请求未携带 DeviceFP 时不校验（向后兼容）。
 	// 注：DeviceFP 为空时跳过校验，兼容旧客户端签发的 token（未绑定设备指纹）。
 	// 新签发的 refresh token 均绑定 DeviceFP，旧 token 旋转后自动获得绑定。
-	// C-4：deadline 后签发的 token 已在上方强制 DeviceFP 非空，此处校验必然执行。
+	// ：deadline 后签发的 token 已在上方强制 DeviceFP 非空，此处校验必然执行。
 	if rt.DeviceFP != "" && deviceFP != "" && rt.DeviceFP != deviceFP {
 		return nil, false
 	}
@@ -203,10 +203,10 @@ func (s *Server) revokeRefreshToken(id string) {
 	s.store.DeleteRefreshToken(hashRefreshToken(id))
 }
 
-// revokeAccessTokenFromRequest 从请求中提取 access token，解析 jti 并加入吊销黑名单（P1-G4）。
+// revokeAccessTokenFromRequest 从请求中提取 access token，解析 jti 并加入吊销黑名单。
 // 登出时调用，使 access token 在过期前立即失效（而非等 15min 自然过期）。
 // token 缺失/无效时静默跳过（不阻断登出流程）。
-// B-6：黑名单经 SessionStore 共享，多副本下登出全局生效（Redis 后端时）。
+// 黑名单经 SessionStore 共享，多副本下登出全局生效（Redis 后端时）。
 func (s *Server) revokeAccessTokenFromRequest(r *http.Request) {
 	if s.sessionStore == nil {
 		return
@@ -232,18 +232,18 @@ func (s *Server) revokeAccessTokenFromRequest(r *http.Request) {
 	s.sessionStore.Blacklist(claims.JTI, ttl)
 }
 
-// purgeExpiredRefreshTokens 清理过期刷新令牌（task 112：store 持久化后改为 no-op）。
+// purgeExpiredRefreshTokens 清理过期刷新令牌（store 持久化后改为 no-op）。
 //
 // 原进程内 map 实现需周期扫描清理防内存无限增长；改用 store 持久化后：
 //   - MemoryStore：consumeRefreshToken 校验过期时已 DeleteRefreshToken 顺带清理；
 //   - SQLStore：可由 DB 定时任务或后续扩展 store 层批量清理接口处理；
 //   - 本函数保留 no-op 签名以兼容 server.go startRefreshSweep 调用，避免破坏现有启动流程。
 //
-// P1-G4：顺带清理 JWT 吊销黑名单与改密令牌的过期条目（token 自然过期后条目无意义）。
-// B-6：经 SessionStore 接口清理，InProcess 主动清理 map，Redis 靠 TTL 自动过期（no-op）。
+// 顺带清理 JWT 吊销黑名单与改密令牌的过期条目（token 自然过期后条目无意义）。
+// 经 SessionStore 接口清理，InProcess 主动清理 map，Redis 靠 TTL 自动过期（no-op）。
 func (s *Server) purgeExpiredRefreshTokens() {
 	// no-op：store 持久化后过期清理由 consumeRefreshToken 顺带完成（校验过期即删除）。
-	// P1-G4/B-6：清理 token blacklist 与改密令牌过期条目，防无界增长。
+	// /：清理 token blacklist 与改密令牌过期条目，防无界增长。
 	if s.sessionStore != nil {
 		s.sessionStore.PurgeBlacklist()
 		s.sessionStore.PurgeChangePasswordTokens()
@@ -251,11 +251,11 @@ func (s *Server) purgeExpiredRefreshTokens() {
 }
 
 // ============================================================================
-// 改密令牌存储（安全债 85 + 任务 96）：mustChangePassword=true 用户登录时不签发
+// 改密令牌存储（安全债）：mustChangePassword=true 用户登录时不签发
 // access token，仅签发一次性短时效 changePasswordToken（5min），仅可用于
 // /api/v1/auth/change-password。改密成功后才签发正式 at+rt。
 //
-// B-6 多副本共享：原进程内 map 改为经 SessionStore 接口存储，多副本下任一副本签发
+// 多副本共享：原进程内 map 改为经 SessionStore 接口存储，多副本下任一副本签发
 // 的改密令牌在其他副本也可消费（Redis 后端时）。
 // ============================================================================
 
@@ -263,7 +263,7 @@ const changePasswordTokenExpiry = 5 * time.Minute
 
 // createChangePasswordToken 生成并存储一个一次性改密令牌（crypto/rand，32 字节十六进制）。
 // 有效期 5 分钟，仅用于 /api/v1/auth/change-password。
-// B-6：经 SessionStore 持久化，多副本共享。
+// 经 SessionStore 持久化，多副本共享。
 func (s *Server) createChangePasswordToken(userID string) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -278,7 +278,7 @@ func (s *Server) createChangePasswordToken(userID string) (string, error) {
 
 // consumeChangePasswordToken 校验并消费改密令牌（一次性：校验通过即删除，防重放）。
 // 返回关联的 userID；无效/过期/已消费返回 ("", false)。
-// B-6：经 SessionStore 原子消费，多副本下同一令牌仅被消费一次。
+// 经 SessionStore 原子消费，多副本下同一令牌仅被消费一次。
 func (s *Server) consumeChangePasswordToken(id string) (string, bool) {
 	return s.sessionStore.ConsumeChangePasswordToken(id)
 }
@@ -319,7 +319,7 @@ func verifyPassword(hash, password string) bool {
 // rotateDefaultAdminPassword 在非 demo 模式下，若默认 admin 仍使用弱口令 "admin123"，
 // 则生成随机密码替换并打印到日志（一次性提示管理员复制）。返回是否执行了替换。
 //
-// P1-G4 安全加固：默认 admin 弱口令 "admin123" 靠 mustChangePassword 兜底，但若管理员
+// 安全加固：默认 admin 弱口令 "admin123" 靠 mustChangePassword 兜底，但若管理员
 // 忽略改密提示，弱口令将持续可登。改为首次启动时生成随机口令（16 字节 hex），即使管理员
 // 不改密，攻击者也无法用已知弱口令登录。随机密码仅打印一次到日志，须妥善保管。
 //
@@ -328,7 +328,7 @@ func verifyPassword(hash, password string) bool {
 // SQLStore 持久化，重启后 admin 已是随机口令，bcrypt 比对不命中，不重复重置。
 //
 // 保留 MustChangePassword=true：ChangePassword 会清除该标记，随后用 UpdateUser 恢复，
-// 确保首登仍强制改密（与安全债 85 一致）。
+// 确保首登仍强制改密（与安全债一致）。
 func rotateDefaultAdminPassword(st store.Store) bool {
 	u := st.GetUserByUsername("admin")
 	if u == nil {
@@ -368,11 +368,11 @@ func rotateDefaultAdminPassword(st store.Store) bool {
 }
 
 // ============================================================================
-// loginGuard 登录/注册防爆破 + 限流（P1-4）。
+// loginGuard 登录/注册防爆破 + 限流。
 //   - 限流：按客户端 IP 令牌桶，约束单位时间登录/注册尝试次数，防撞库与 DoS。
 //   - 防爆破：按用户名累计失败次数，超阈值临时锁定账号，挫败密码爆破。
 //
-// B-6 多副本共享：
+// 多副本共享：
 //   - IP 令牌桶限流保留进程内（多副本各自限流，副本数 N 时实际阈值 N*burst，可接受；
 //     令牌桶算法依赖 tokens/last 时序状态，难以用 Redis 原子操作精确实现）。
 //   - 失败计数 + 账号锁定经 SessionStore 共享（多副本下任一副本触发锁定后其他副本也拒绝；
@@ -391,7 +391,7 @@ type loginGuard struct {
 	mu    sync.Mutex
 	ips   map[string]*rateRec // 客户端 IP -> 限流令牌桶（进程内，多副本各自限流）
 	done  chan struct{}       // stopSweep 关闭此 chan 通知 sweep goroutine 退出
-	store store.SessionStore  // B-6：失败计数 + 账号锁定经 SessionStore 共享
+	store store.SessionStore  // 失败计数 + 账号锁定经 SessionStore 共享
 }
 
 type rateRec struct {
@@ -446,7 +446,7 @@ func loginLockKey(username string) string {
 }
 
 // recordFail 记录一次账号失败尝试；返回是否触发锁定。
-// B-6：失败计数经 SessionStore 共享，多副本下累计失败次数全局一致。
+// 失败计数经 SessionStore 共享，多副本下累计失败次数全局一致。
 func (g *loginGuard) recordFail(username string) bool {
 	count := g.store.IncrRateLimit(loginFailKey(username), loginFailWindow)
 	if count >= loginMaxFails {
@@ -459,13 +459,13 @@ func (g *loginGuard) recordFail(username string) bool {
 }
 
 // locked 判断账号当前是否处于锁定状态。
-// B-6：锁定状态经 SessionStore 共享，多副本下任一副本触发锁定后其他副本也拒绝。
+// 锁定状态经 SessionStore 共享，多副本下任一副本触发锁定后其他副本也拒绝。
 func (g *loginGuard) locked(username string) bool {
 	return g.store.IsBlacklisted(loginLockKey(username))
 }
 
 // resetFail 登录成功后清除该账号失败计数（解锁）。
-// B-6：经 SessionStore 共享，多副本下任一副本登录成功后其他副本也清除计数。
+// 经 SessionStore 共享，多副本下任一副本登录成功后其他副本也清除计数。
 func (g *loginGuard) resetFail(username string) {
 	g.store.ResetRateLimit(loginFailKey(username))
 }
@@ -506,7 +506,7 @@ func (g *loginGuard) stopSweep() {
 // sweep 清理过期条目：
 //   - ips：令牌已回满（无待补充）且超过 1 小时无新活动 → 回收；
 //
-// B-6：失败计数 + 账号锁定 + 改密令牌已迁入 SessionStore，过期清理由 SessionStore 负责
+// 失败计数 + 账号锁定 + 改密令牌已迁入 SessionStore，过期清理由 SessionStore 负责
 // （InProcess 在 PurgeBlacklist/PurgeChangePasswordTokens 中清理，Redis 靠 TTL 自动过期）。
 // 此处仅清理进程内 ips 令牌桶。
 func (g *loginGuard) sweep() {
@@ -563,19 +563,19 @@ func (s *Server) userPermissions(u *store.User) []string {
 }
 
 // ============================================================================
-// JWT access token 吊销黑名单（P1-G4 + B-6）。
+// JWT access token 吊销黑名单（+）。
 //
 // 登出时 access token 仍在 15min 有效期内持续可用（无状态 JWT 无法主动失效）。
 // 此黑名单记录已登出的 jti（JWT ID），userFromToken 校验时检查 jti 是否在黑名单。
 //
-// B-6 多副本共享：黑名单经 SessionStore 持久化，多副本下登出全局生效。
+// 多副本共享：黑名单经 SessionStore 持久化，多副本下登出全局生效。
 //   - InProcessSessionStore：进程内 map（单副本/demo 默认）；
 //   - RedisSessionStore：Redis 后端（多副本 HA 共享，登出后所有副本立即拒绝该 token）。
 // ============================================================================
 
 // issueUserToken 为用户签发 JWT token。
 // claims 包含：用户 ID/用户名/角色 ID/权限/租户/过期时间。
-// P1-G4：SignJWT 自动生成 jti（JWT ID），用于登出吊销。
+// ：SignJWT 自动生成 jti（JWT ID），用于登出吊销。
 func (s *Server) issueUserToken(u *store.User) (string, error) {
 	claims := authctx.JWTClaims{
 		UserID:      u.ID,
@@ -589,8 +589,8 @@ func (s *Server) issueUserToken(u *store.User) (string, error) {
 }
 
 // authResponse 登录/注册成功响应体。
-// MustChangePassword（安全债 85）：当用户首登须改密时为 true，前端据此弹出改密对话框。
-// ChangePasswordToken（任务 96）：MustChangePassword=true 时签发的一次性短时效 token（5min），
+// MustChangePassword（安全债）：当用户首登须改密时为 true，前端据此弹出改密对话框。
+// ChangePasswordToken：MustChangePassword=true 时签发的一次性短时效 token（5min），
 // 仅用于 /api/v1/auth/change-password；此时不下发 access token（Token 字段为空、不下发 at Cookie），
 // 改密成功后才签发正式 at + rt。
 type authResponse struct {
@@ -601,13 +601,13 @@ type authResponse struct {
 }
 
 // ============================================================================
-// 强口令校验（安全债 85）：跨域 helper，供 auth_login.go 与 auth_users.go 共用。
+// 强口令校验（安全债）：跨域 helper，供 auth_login.go 与 auth_users.go 共用。
 // ============================================================================
 
 // changePasswordMinLen 改密新密码最短长度（强口令基线：8 字符）。
 const changePasswordMinLen = 8
 
-// validateStrongPassword 强口令校验（安全债 85）：至少 8 字符，包含大小写字母与数字。
+// validateStrongPassword 强口令校验（安全债）：至少 8 字符，包含大小写字母与数字。
 // 返回不满足时的可读提示（满足返回空串）。
 func validateStrongPassword(pw string) string {
 	if len(pw) < changePasswordMinLen {
@@ -646,7 +646,7 @@ func validateStrongPassword(pw string) string {
 func (s *Server) userFromToken(r *http.Request) (*store.User, error) {
 	tokenStr, err := extractBearer(r)
 	if err != nil {
-		// task 94：Bearer 头缺失时回退 HttpOnly Cookie（前端不再持久化 token 到
+		// ：Bearer 头缺失时回退 HttpOnly Cookie（前端不再持久化 token 到
 		// localStorage，刷新后靠 Cookie 保持会话；两路均走同一 ParseHSJWT 校验）。
 		if ck, ckErr := r.Cookie(accessTokenCookieName); ckErr == nil && strings.TrimSpace(ck.Value) != "" {
 			tokenStr = ck.Value
@@ -658,8 +658,8 @@ func (s *Server) userFromToken(r *http.Request) (*store.User, error) {
 	if err != nil {
 		return nil, err
 	}
-	// P1-G4 JWT 吊销：登出时 jti 加入黑名单，校验时检查。
-	// B-6：黑名单经 SessionStore 共享，多副本下登出全局生效（Redis 后端时）。
+	// JWT 吊销：登出时 jti 加入黑名单，校验时检查。
+	// 黑名单经 SessionStore 共享，多副本下登出全局生效（Redis 后端时）。
 	if s.sessionStore != nil && s.sessionStore.IsBlacklisted(claims.JTI) {
 		return nil, errors.New("token has been revoked")
 	}
@@ -667,7 +667,7 @@ func (s *Server) userFromToken(r *http.Request) (*store.User, error) {
 	if u == nil {
 		return nil, errors.New("user not found")
 	}
-	// P1 吊销：非 active 用户（disabled/rejected/pending/空）既有的有效签名 token 立即失效，
+	// 吊销：非 active 用户（disabled/rejected/pending/空）既有的有效签名 token 立即失效，
 	// 使管理员禁用/删除账号后无需等待 24h 过期即收回访问。
 	if u.Status != "active" {
 		return nil, errors.New("user account is not active")
@@ -701,7 +701,7 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, requi
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return nil, false
 	}
-	// P1 强制改密：标记 MustChangePassword 的用户只能访问 /api/v1/auth/change-password
+	// 强制改密：标记 MustChangePassword 的用户只能访问 /api/v1/auth/change-password
 	// （该端点走 userFromToken，不经此处），其余受保护 API 一律拒绝，避免弱口令长期在线。
 	if u.MustChangePassword {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "password change required (MUST_CHANGE_PASSWORD)"})
@@ -718,7 +718,7 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, requi
 }
 
 // ============================================================================
-// 统一产品级 RBAC 闸（B3：权限控制无疏漏）—— 兼容两种身份来源。
+// 统一产品级 RBAC 闸（权限控制无疏漏）—— 兼容两种身份来源。
 // ============================================================================
 
 // getRolePermCache 返回角色名→权限集合映射（取自 store.RolePermissions()）。
@@ -768,7 +768,7 @@ func (s *Server) requireProd(w http.ResponseWriter, r *http.Request, required st
 		return s.requirePermission(w, r, required)
 	}
 	// 3. 网关注入路径：仅当显式开启 TrustGatewayHeaders 时才信任 X-User-Roles 头。
-	//    P0-2 安全加固：默认 false（生产模式强制 false），防客户端伪造 X-User-Roles: admin 越权。
+	//    安全加固：默认 false（生产模式强制 false），防客户端伪造 X-User-Roles: admin 越权。
 	//    若未开启则该头被忽略，继续向下走 demo 模式或拒绝路径。
 	if s.cfg != nil && s.cfg.TrustGatewayHeaders && strings.TrimSpace(r.Header.Get("X-User-Roles")) != "" {
 		return s.authorizeByRoles(w, r, required)

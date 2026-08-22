@@ -28,7 +28,7 @@ type Summary struct {
 	Failures    []string `json:"failures,omitempty"`
 }
 
-// AutoProvision 执行 B1 自动纳管编排闭环：
+// AutoProvision 执行 自动纳管编排闭环：
 //
 //	for 每段 CIDR：discover.Sweep 存活扫描
 //	  → 存活主机登记为候选设备（State=discovered，Managed=false）
@@ -50,7 +50,7 @@ func AutoProvision(ctx context.Context, deps Deps, cfg *config.Config, cidrs []s
 		return nil, fmt.Errorf("provision: 依赖未注入（UpsertDevice/Provision）")
 	}
 	var mu sync.Mutex
-	// task 93 供应链加固：生产模式强制 advertise 为 HTTPS——agent 二进制经 HTTP 明文下载
+	// 供应链加固：生产模式强制 advertise 为 HTTPS——agent 二进制经 HTTP 明文下载
 	// 可被中间人篡改（供应链 RCE）。advertise 为空回退本机回环地址（仅本地调试）时同样拒绝。
 	advertise := cfg.AdvertiseAddr
 	if advertise == "" {
@@ -62,7 +62,7 @@ func AutoProvision(ctx context.Context, deps Deps, cfg *config.Config, cidrs []s
 	if !strings.HasPrefix(advertise, "https://") {
 		fmt.Fprintln(os.Stderr, "[provision] 警告：advertise 非 HTTPS（"+advertise+"），agent 二进制明文传输存在中间人篡改风险；生产环境务必配置 HTTPS")
 	}
-	// task 93 SSH 连接风暴防护：推送并发上限（信号量限流），避免大网段扫描后同时发起大量 SSH 连接。
+	// SSH 连接风暴防护：推送并发上限（信号量限流），避免大网段扫描后同时发起大量 SSH 连接。
 	sshSem := make(chan struct{}, 8)
 	for _, cidr := range cidrs {
 		alive, err := discover.Sweep(ctx, cidr, []int{22, 9100}, 64, 800*time.Millisecond)
@@ -115,7 +115,7 @@ func AutoProvision(ctx context.Context, deps Deps, cfg *config.Config, cidrs []s
 			bootstrap := fmt.Sprintf("curl -sSL %s/install.sh | sh -s -- --token=%s", advertise, token)
 			sshAddr := fmt.Sprintf("%s:22", ip)
 			go func(addr, cmd, dev string) {
-				sshSem <- struct{}{} // task 93：并发限流（最多 8 个并行 SSH 推送）
+				sshSem <- struct{}{} // 并发限流（最多 8 个并行 SSH 推送）
 				defer func() { <-sshSem }()
 				out, e := PushAndExec(context.Background(), addr, cfg.ProvisionSSHUser, cfg.ProvisionSSHKey, cfg.ProvisionSSHKP, cfg.ProvisionSSHKnownHosts, cmd)
 				if e != nil {

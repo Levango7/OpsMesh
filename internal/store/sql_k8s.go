@@ -1,4 +1,4 @@
-// sql_k8s.go 实现 SQLStore 的 K8sClusterStore 子接口（Phase 3 K8s 集群管理，P0-1 生产就绪）。
+// sql_k8s.go 实现 SQLStore 的 K8sClusterStore 子接口（Phase 3 K8s 集群管理，生产就绪）。
 //
 // 表结构：k8s_clusters（id/name/server/kubeconfig/status/created_at/updated_at）。
 // initSchema 中幂等建表（CREATE TABLE IF NOT EXISTS）+ alterColumnIfMissing 兼容旧库。
@@ -29,7 +29,7 @@ func scanK8sCluster(row rowScanner) *K8sCluster {
 	return &c
 }
 
-// ListK8sClusters 返回 K8s 集群配置（按创建时间升序）；tenantID 非空时仅返回同租户集群（task 88 租户隔离）。
+// ListK8sClusters 返回 K8s 集群配置（按创建时间升序）；tenantID 非空时仅返回同租户集群（租户隔离）。
 func (s *SQLStore) ListK8sClusters(tenantID string) []*K8sCluster {
 	q :=
 		`
@@ -82,7 +82,7 @@ func (s *SQLStore) SaveK8sCluster(c *K8sCluster) error {
 	if c == nil {
 		return nil
 	}
-	// task 88 租户隔离：空租户归一为 default（与 MemoryStore 一致）。
+	// 租户隔离：空租户归一为 default（与 MemoryStore 一致）。
 	if c.TenantID == "" {
 		c.TenantID = "default"
 	}
@@ -98,14 +98,14 @@ func (s *SQLStore) SaveK8sCluster(c *K8sCluster) error {
 	}
 	c.UpdatedAt = now
 	// INSERT ... ON DUPLICATE KEY UPDATE 实现 upsert（按 id 幂等）。
-	// task 88：tenant_id 仅插入不更新，防 upsert 改写集群租户归属。
+	// ：tenant_id 仅插入不更新，防 upsert 改写集群租户归属。
 	if _, err := s.db.ExecContext(context.Background(),
 		`INSERT INTO k8s_clusters (id, tenant_id, name, server, kubeconfig, status, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE name=VALUES(name), server=VALUES(server), kubeconfig=VALUES(kubeconfig),
 		 status=VALUES(status), updated_at=VALUES(updated_at)`,
 		c.ID, c.TenantID, c.Name, c.Server, c.Kubeconfig, c.Status, c.CreatedAt, c.UpdatedAt); err != nil {
-		// task 92：DB 持久化失败上抛错误（调用方据此返回非 2xx，不再假装成功）。
+		// ：DB 持久化失败上抛错误（调用方据此返回非 2xx，不再假装成功）。
 		log.Printf("k8s: SaveK8sCluster 失败: %v", err)
 		return fmt.Errorf("k8s: save cluster: %w", err)
 	}

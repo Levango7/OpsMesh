@@ -1,6 +1,6 @@
 // Package notify 告警通知核心：聚合/抑制 + 多通道推送（Webhook/Email/Slack/企业微信）。
 //
-// 本文件实现 B7 告警通知增强：
+// 本文件实现 告警通知增强：
 //   - AlertAggregator：同源告警聚合（5 分钟窗口）+ 级别抑制（critical 抑制同源 warning）
 //   - Slack 通道：Webhook URL 含 slack.com 域名时自动识别，Block Kit 格式
 //   - 企业微信通道：Webhook URL 含 qyapi.weixin.qq.com 域名时自动识别，markdown 格式
@@ -350,7 +350,7 @@ func (c *Channels) Push(a *proto.Alert) error {
 }
 
 // ============================================================================
-// Notifier：多渠道 + 模板 + 重试 + 去重 集成（M2-2）
+// Notifier：多渠道 + 模板 + 重试 + 去重 集成
 // ============================================================================
 
 // Notifier 通知管理器：集成多渠道推送、模板渲染、重试策略、消息去重。
@@ -360,7 +360,7 @@ func (c *Channels) Push(a *proto.Alert) error {
 //   - templates：模板存储；Notify 可按 templateID 渲染消息（NotifyWithTemplate）。
 //   - dedup：去重器；nil=关闭去重。IsDuplicate 返回 true 时 Notify 跳过发送。
 //   - retry：重试策略；nil=不重试（单次发送）。
-//   - secretProvider：密钥提供者（task 266）；nil=不启用密钥外置，BuildChannel 退化为明文构造。
+//   - secretProvider：密钥提供者；nil=不启用密钥外置，BuildChannel 退化为明文构造。
 //
 // 并发安全：channels 在构造后不变（启动期一次性注入）；templates/dedup 内部自带互斥。
 type Notifier struct {
@@ -399,7 +399,7 @@ func WithRetry(policy *RetryPolicy) NotifierOption {
 	}
 }
 
-// WithSecretProvider 注入密钥提供者（task 266）。
+// WithSecretProvider 注入密钥提供者。
 // provider 为 nil 时无操作（保持向后兼容，BuildChannel 退化为明文构造）。
 // 注入后 BuildChannel 会用 WithSecret 版本构造渠道，解析 ${key} 格式密钥引用。
 func WithSecretProvider(provider secrets.SecretProvider) NotifierOption {
@@ -438,7 +438,7 @@ func (n *Notifier) SecretProvider() secrets.SecretProvider {
 	return n.secretProvider
 }
 
-// BuildChannel 按渠道配置构造 Channel 实例（task 266）。
+// BuildChannel 按渠道配置构造 Channel 实例。
 // secretProvider 非空时用 NewChannelWithSecret 解析 ${key} 密钥引用；
 // 为空时退化为 NewChannel（明文构造，向后兼容）。
 // 用于将 Notifier 的 secretProvider 透传到渠道构造流程，避免调用方单独持有 provider。

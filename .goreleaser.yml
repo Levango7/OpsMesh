@@ -3,7 +3,7 @@
 # 跨平台发布：linux/amd64 + linux/arm64（agent 部署到 ARM 网段设备）。
 # 产物：tar.gz 归档 + sha256 checksums + SBOM（syft 生成，CI 需装 syft）。
 # 版本注入：通过 -ldflags -X 写入 internal/version.{Version,Commit,Date}，
-#           与 cmd/opsmesh --version 输出对齐（U-05）。
+#           与 cmd/opsmesh --version 输出对齐。
 #
 # 触发方式：git tag v* → goreleaser release（CI 中由 release job 调用）。
 # 本地验证：goreleaser check（语法校验，不实际构建）。

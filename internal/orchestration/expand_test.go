@@ -341,7 +341,7 @@ func TestEvalCondition_NotEqual(t *testing.T) {
 }
 
 // TestExpand_TimeoutRetryPassthrough 验证 expandNodes 把节点级 Timeout/RetryCount/RetryDelay
-// 正确传递给底层任务（P2-B2 任务 261）。
+// 正确传递给底层任务。
 // 节点 n1: timeout=30, retryCount=2, retryDelay=5 → 任务 Timeout=30, MaxRetries=2, RetryDelay=5
 // 节点 n2: 全 0（默认）→ 任务全 0（用全局配置）
 func TestExpand_TimeoutRetryPassthrough(t *testing.T) {

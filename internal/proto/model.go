@@ -1,5 +1,5 @@
 // Package proto 定义控制面与 agent 之间共享的数据类型（JSON 友好）。
-// U-05: 同一份二进制，控制面与 agent 复用这些结构。
+// 同一份二进制，控制面与 agent 复用这些结构。
 // 设计上刻意只使用 JSON（不引入 protobuf 工具链）：gRPC 9090 走 JSON codec 传输，HTTP 仅 B/S 仪表盘。
 package proto
 
@@ -9,15 +9,15 @@ import "time"
 type AgentInfo struct {
 	AgentID     string    `json:"agentID"`     // 控制面分配的唯一 ID
 	Hostname    string    `json:"hostname"`    // agent 所在主机名（os.Hostname）
-	Segment     string    `json:"segment"`     // 所属网段（U-02 跨网段代理纳管的关键分桶键）
-	TenantID    string    `json:"tenantID"`    // 所属租户（U-04 行级隔离键；由网关注入，agent 不可伪造）
+	Segment     string    `json:"segment"`     // 所属网段（跨网段代理纳管的关键分桶键）
+	TenantID    string    `json:"tenantID"`    // 所属租户（行级隔离键；由网关注入，agent 不可伪造）
 	Addr        string    `json:"addr"`        // agent 自身地址（占位，gRPC/metrics 用）
 	GRPCPort    int       `json:"grpcPort"`    // agent gRPC 端口（约定 9090）
 	MetricsPort int       `json:"metricsPort"` // agent metrics 端口（约定 9091）
 	Status      string    `json:"status"`      // online / offline
 	Load        int       `json:"load"`        // 负载（MVP 仅示例）
 	LastSeen    time.Time `json:"lastSeen"`    // 最近一次心跳时间
-	// B1 自动纳管闭环：agent 经 bootstrap 安装后携带一次性 install token 注册。
+	// 自动纳管闭环：agent 经 bootstrap 安装后携带一次性 install token 注册。
 	// InstallToken 由控制面 Provision 发放（HMAC 签名、一次性、限时），agent 不可伪造。
 	InstallToken string `json:"installToken"`
 	// OnboardDeviceID 为内部字段（由 gRPC Register 校验 token 后回填，不依赖 agent 自报）：
@@ -28,25 +28,25 @@ type AgentInfo struct {
 	Arch string `json:"arch"` // CPU 架构：amd64 / arm64
 }
 
-// DeviceInfo 被纳管的网段内设备（U-02：服务部署后整段网络打通，设备自动纳管）。
+// DeviceInfo 被纳管的网段内设备（服务部署后整段网络打通，设备自动纳管）。
 // MVP 降级：默认采用“agent 即设备”——agent 注册时落一个代表其自身主机的 DeviceInfo（真实 IP/Hostname）。
 // 开启 --discover 时，控制面按真实网段扫描（internal/discover）为每个存活主机创建 DeviceInfo，
-// 这才是产品“整段网络自动纳管”的完整兑现路径（见 P0-2）。
+// 这才是产品“整段网络自动纳管”的完整兑现路径（见）。
 //
-// B1 自动纳管闭环：网段发现的开放端口主机记为 Managed=false / State="discovered" 的候选设备
+// 自动纳管闭环：网段发现的开放端口主机记为 Managed=false / State="discovered" 的候选设备
 // （发现 ≠ 纳管，需经 provision 推送 agent 才能真正纳管）；agent 主动注册的设备才 Managed=true。
-// B2 失败回写：LastResult/LastResultAt 记录该设备最近一次任务结果，供看板高亮异常设备。
+// 失败回写：LastResult/LastResultAt 记录该设备最近一次任务结果，供看板高亮异常设备。
 type DeviceInfo struct {
 	DeviceID     string    `json:"deviceID"`
 	Segment      string    `json:"segment"`
 	TenantID     string    `json:"tenantID"`     // 所属租户（取自纳管该设备的 agent）
 	IP           string    `json:"ip"`           // agent 上报的地址作为占位 IP
 	AgentID      string    `json:"agentID"`      // 纳管该设备的 agent（discovered 候选为空）
-	State        string    `json:"state"`        // online / offline / discovered（B1 候选）/ provisioning（B1 推送中）
+	State        string    `json:"state"`        // online / offline / discovered（候选）/ provisioning（推送中）
 	TaskState    string    `json:"taskState"`    // idle / running / done
-	Managed      bool      `json:"managed"`      // true=agent 已注册纳管；false=网段发现候选（待装 agent，B1）
-	LastResult   string    `json:"lastResult"`   // success / failed（B2 失败回写看板）
-	LastResultAt time.Time `json:"lastResultAt"` // B2 最近结果时间
+	Managed      bool      `json:"managed"`      // true=agent 已注册纳管；false=网段发现候选（待装 agent）
+	LastResult   string    `json:"lastResult"`   // success / failed（失败回写看板）
+	LastResultAt time.Time `json:"lastResultAt"` // 最近结果时间
 	Retired      bool      `json:"retired"`      // F5 设备退役：true=已退役/下线，不出现在活跃清单
 	// 设备基础元信息（agent 注册时上报，设备列表/详情展示用）。
 	// 与 DeviceMetrics 区别：这里是相对静态的设备属性，DeviceMetrics 是动态实时指标。
@@ -138,25 +138,25 @@ const (
 type Task struct {
 	TaskID    string    `json:"taskID"`
 	AgentID   string    `json:"agentID"`
-	TenantID  string    `json:"tenantID"`  // 任务所属租户（P0-2 下发入口写入，用于租户归属校验）
+	TenantID  string    `json:"tenantID"`  // 任务所属租户（下发入口写入，用于租户归属校验）
 	Type      string    `json:"type"`      // shell / service / file（见 TaskType* 常量）
 	Command   string    `json:"command"`   // shell: 命令; service: start|stop|restart|status
 	Content   string    `json:"content"`   // file 类型：写入文件的内容
 	Path      string    `json:"path"`      // file 类型：目标路径; service 类型：服务名（可选）
-	Status    string    `json:"status"`    // pending / running / done / failed / cancelled（P0-1 生命周期，空串按 pending 处理）
-	ClaimedBy string    `json:"claimedBy"` // 领取该任务的 worker 标识（HA 协调，P1-1）
-	ClaimedAt time.Time `json:"claimedAt"` // 领取时间（P1-1）
-	// ClaimEpoch 任务所有权令牌（A-1 防双跑）：每次 ClaimTask 时 +1。
+	Status    string    `json:"status"`    // pending / running / done / failed / cancelled（生命周期，空串按 pending 处理）
+	ClaimedBy string    `json:"claimedBy"` // 领取该任务的 worker 标识（HA 协调）
+	ClaimedAt time.Time `json:"claimedAt"` // 领取时间
+	// ClaimEpoch 任务所有权令牌（防双跑）：每次 ClaimTask 时 +1。
 	// agent 上报结果时携带 ClaimEpoch，SubmitResult 校验 WHERE claim_epoch=?，
 	// RowsAffected=0 表示持有者已易主（任务被回收重派），拒绝旧持有者上报防双跑。
 	// 值为 0 表示未设置（旧 agent / 测试），SubmitResult 跳过校验向后兼容。
 	ClaimEpoch int64     `json:"claimEpoch"`
 	CreatedAt  time.Time `json:"createdAt"`
-	// F2 失败重试 / 死信（P2 业务闭环）：RetryCount 累计重试，达 MaxRetries 置 failed（死信）。
+	// F2 失败重试 / 死信（业务闭环）：RetryCount 累计重试，达 MaxRetries 置 failed（死信）。
 	RetryCount int  `json:"retryCount"`
 	MaxRetries int  `json:"maxRetries"`
 	DeadLetter bool `json:"deadLetter"` // 重试耗尽后置 true，表示进入死信（需人工处置）
-	// P2-B2 节点级超时与重试（任务 261）：
+	// 节点级超时与重试：
 	//   - Timeout 任务超时（秒，0=不超时）。agent 端按此强制终止超时任务，覆盖全局 taskTimeout。
 	//   - RetryDelay 两次重试之间的等待间隔（秒，0=立即重试）。store SubmitResult 失败重试时记录，
 	//     控制面调度器扫描到期的 pending 任务重新入队（避免失败后立即重试造成雪崩）。
@@ -169,7 +169,7 @@ type Task struct {
 	LastFiredAt time.Time `json:"lastFiredAt"`
 	// M5 作业编排占位（完整版 DAG）：DependsOn 为前置任务 ID，MVP 仅记录不执行。
 	DependsOn []string `json:"dependsOn"`
-	// 任务审批（task 100）：高风险任务下发前需管理员审批。
+	// 任务审批：高风险任务下发前需管理员审批。
 	//   - ApprovalRequired=true 时 CreateTask 将状态置为 pending_approval（不进入 ClaimTask 队列）；
 	//   - ApproveTask 翻转 pending_approval → pending（ApprovedBy/ApprovedAt 记录审批信息）；
 	//   - RejectTask  翻转 pending_approval → rejected（驳回，永不进入队列）。
@@ -178,10 +178,10 @@ type Task struct {
 	ApprovedAt       time.Time `json:"approvedAt"`
 }
 
-// AuditEvent 内核产出的审计事件（U-04 等保三级：操作 100% 留痕）。
+// AuditEvent 内核产出的审计事件（等保三级：操作 100% 留痕）。
 // 内核从“只消费网关注入身份”升级为“同时产出审计事件”，供审计/合规检索。
 //
-// M1-4 分布式可观测性：TraceID 字段关联 OTel trace_id，
+// 分布式可观测性：TraceID 字段关联 OTel trace_id，
 // 使审计日志可与链路追踪/日志/SSE 事件跨域关联检索。
 // omitempty 保证旧 JSON 反序列化不受影响（向后兼容）。
 type AuditEvent struct {
@@ -203,9 +203,9 @@ type TaskResult struct {
 	ExitCode   int       `json:"exitCode"` // 0 成功；-1 表示 agent 侧错误
 	Stdout     string    `json:"stdout"`
 	Stderr     string    `json:"stderr"`
-	DurationMs int64     `json:"durationMs"` // 执行耗时毫秒（P2-1 观测指标）
+	DurationMs int64     `json:"durationMs"` // 执行耗时毫秒（观测指标）
 	FinishedAt time.Time `json:"finishedAt"`
-	// ClaimEpoch 任务所有权令牌（A-1 防双跑）：上报时携带领取时拿到的 ClaimEpoch，
+	// ClaimEpoch 任务所有权令牌（防双跑）：上报时携带领取时拿到的 ClaimEpoch，
 	// store 校验持有者是否仍为当前 epoch，拒绝旧持有者上报防双跑。
 	// 值为 0 表示未设置（旧 agent / 测试），store 跳过校验向后兼容。
 	ClaimEpoch int64 `json:"claimEpoch"`
@@ -253,7 +253,7 @@ type CmdbReport struct {
 	Attrs  []CmdbAttr `json:"attrs"`  // 属性列表
 }
 
-// LogLine agent 采集的单行日志（task 247 agent 日志上报 gRPC API）。
+// LogLine agent 采集的单行日志（agent 日志上报 gRPC API）。
 // Timestamp 为日志行产生时间（agent 侧解析或采集时刻）；Level 为日志级别；
 // Message 为日志正文（已去除行尾换行）。
 type LogLine struct {
@@ -262,7 +262,7 @@ type LogLine struct {
 	Message   string    `json:"message"`   // 日志正文
 }
 
-// LogReport agent 经 gRPC ReportLogs 上报到控制面的日志批次（task 247）。
+// LogReport agent 经 gRPC ReportLogs 上报到控制面的日志批次。
 // agent 侧 logCollectLoop 周期读取配置的日志文件增量，按行切分后封装为 LogReport 上报；
 // 控制面校验 agent 身份（HMAC 签名）后按 agent 归属租户落库（行级隔离，agent 不可伪造租户）。
 // TenantID 由控制面按 agent 注册时盖章回填（agent 自报不信任），agent 端可留空。
@@ -275,7 +275,7 @@ type LogReport struct {
 	CollectedAt time.Time `json:"collectedAt"` // 本批次采集时刻
 }
 
-// LogPushConfig 日志推送配置（P2-B4 task 270：agent 从控制面或命令行获取）。
+// LogPushConfig 日志推送配置（agent 从控制面或命令行获取）。
 // agent 据此构造 LogPusher，对 Files 列表中的文件尾随（tail -f）采集，
 // 按 Pattern 正则过滤后批量推送到 Endpoint（Loki /api/v1/push 或 ES /_bulk）。
 // Backend 取 "loki" | "es"，决定推送报文格式与 endpoint 路径拼接。

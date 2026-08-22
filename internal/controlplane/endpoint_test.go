@@ -15,7 +15,7 @@ import (
 
 // newTestServer 构造一个无总线/无指标的测试控制面（白盒，直接装配 Registry）。
 // cfg.Demo=true：demo 模式放宽认证，未携带 X-Tenant-ID 头时自动填充默认租户，
-// 便于测试在不显式注入网关头的情况下调用 handler（H6 认证防御后非 demo 模式会拒绝空租户头）。
+// 便于测试在不显式注入网关头的情况下调用 handler（认证防御后非 demo 模式会拒绝空租户头）。
 func newTestServer() *Server {
 	st := store.NewMemoryStore().WithDemo(true)
 	return &Server{
@@ -122,7 +122,7 @@ func TestHandleDeviceDetail_NotFound(t *testing.T) {
 	}
 }
 
-// TestHandleBatchCreateTasks 验证 P0-3 批量下发：一次请求向多台 agent 下发同一任务模板。
+// TestHandleBatchCreateTasks 验证 批量下发：一次请求向多台 agent 下发同一任务模板。
 func TestHandleBatchCreateTasks(t *testing.T) {
 	s := newTestServer()
 	a1 := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
@@ -156,7 +156,7 @@ func TestHandleBatchCreateTasks(t *testing.T) {
 	}
 }
 
-// TestHandleAudits 验证 P0-4 审计检索：按 action 过滤返回审计事件。
+// TestHandleAudits 验证 审计检索：按 action 过滤返回审计事件。
 func TestHandleAudits(t *testing.T) {
 	s := newTestServer()
 	s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})

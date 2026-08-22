@@ -1,4 +1,4 @@
-// Package notify 通知渠道扩展（M2-2）。
+// Package notify 通知渠道扩展。
 //
 // 本文件实现统一的 Channel 接口与 5 个具体渠道：
 //   - DingTalkChannel：钉钉群机器人 webhook（可选加签 secret）
@@ -477,7 +477,7 @@ func NewChannel(cfg ChannelConfig) (Channel, error) {
 }
 
 // ============================================================================
-// 密钥外置构造函数（task 266）
+// 密钥外置构造函数
 //
 // 提供 WithSecret 后缀的渠道构造函数，支持从 SecretProvider 解析 ${key} 格式密钥引用。
 // 设计原则：

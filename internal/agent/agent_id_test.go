@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestLoadOrCreateAgentID_Persistent 验证 P0-2 身份持久化：同目录二次加载读取同一文件，ID 稳定。
+// TestLoadOrCreateAgentID_Persistent 验证 身份持久化：同目录二次加载读取同一文件，ID 稳定。
 func TestLoadOrCreateAgentID_Persistent(t *testing.T) {
 	dir := t.TempDir()
 	id1 := loadOrCreateAgentID(dir, "host-x")

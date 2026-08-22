@@ -1,6 +1,6 @@
 //go:build kafka
 
-// kafka_test.go 测试 Kafka 生产者的 WAL 兜底机制（B-3 审计合规）。
+// kafka_test.go 测试 Kafka 生产者的 WAL 兜底机制（审计合规）。
 //
 // 测试策略：不依赖真实 Kafka broker（CI 无 broker 容器），分两层：
 //  1. 单元层：直接构造 kafkaWAL，注入 mock send 闭包模拟 broker 故障/恢复，
@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-// TestKafkaWAL_FallbackPublish 验证 broker 不可用时事件落盘 WAL 文件（B-3 审计合规核心）。
+// TestKafkaWAL_FallbackPublish 验证 broker 不可用时事件落盘 WAL 文件（审计合规核心）。
 //
 // 场景：mock send 总是返回 error（broker 故障），调用 Write 后：
 //   - WAL 目录下应有 1 个 .json 文件
@@ -84,7 +84,7 @@ func TestKafkaWAL_FallbackPublish(t *testing.T) {
 	}
 }
 
-// TestKafkaWAL_FailedCount 验证失败计数器递增（B-3 metrics/告警）。
+// TestKafkaWAL_FailedCount 验证失败计数器递增（metrics/告警）。
 //
 // 场景：连续调用 IncFailed 5 次，FailedCount 应从 0 → 5。
 // 验证计数器单调递增、线程安全（atomic.Int64 保证）。
@@ -125,7 +125,7 @@ func TestKafkaWAL_FailedCount(t *testing.T) {
 	}
 }
 
-// TestKafkaWAL_Retry 验证 broker 恢复后 WAL 事件被重试发送并删除文件（B-3 at-least-once）。
+// TestKafkaWAL_Retry 验证 broker 恢复后 WAL 事件被重试发送并删除文件（at-least-once）。
 //
 // 场景分两阶段：
 //  1. broker 故障：Write 落盘 → RetryOnce 应失败（succeeded=0, failed=1），文件保留

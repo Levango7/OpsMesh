@@ -1,4 +1,4 @@
-// security_p02_test.go — P0-2+3 安全加固 config 测试：
+// security_defaults_test.go — 安全加固 config 测试：
 //   - TrustGatewayHeaders 默认 false + Production 强制 false
 //   - AgentShellWhitelist 默认填充（agent shell 白名单默认开启）
 package config
@@ -9,7 +9,7 @@ import (
 )
 
 // =============================================================================
-// 修复1：TrustGatewayHeaders 默认 false + Production 强制 false
+// TrustGatewayHeaders 默认 false + Production 强制 false
 // =============================================================================
 
 // TestLoad_TrustGatewayHeadersDefaultFalse 验证 TrustGatewayHeaders 默认 false（安全基线）。
@@ -61,7 +61,7 @@ func TestValidate_TrustGatewayHeadersNoConstraint(t *testing.T) {
 }
 
 // =============================================================================
-// 修复3：AgentShellWhitelist 默认填充（agent shell 白名单默认开启）
+// AgentShellWhitelist 默认填充（agent shell 白名单默认开启）
 // =============================================================================
 
 // TestLoad_AgentShellWhitelistDefaultFilled 验证未显式设置 --agent-shell-whitelist 时

@@ -1,6 +1,6 @@
-// sql_m2.go task 246 M2 告警治理 SQL 持久化：静默规则 / 通知渠道 / 通知模板 / 告警规则补全。
+// sql_m2.go M2 告警治理 SQL 持久化：静默规则 / 通知渠道 / 通知模板 / 告警规则补全。
 //
-// 替换原内存 map 实现（task 241），改为基于 MySQL 的持久化：
+// 替换原内存 map 实现，改为基于 MySQL 的持久化：
 //   - alert_silences：基于标签匹配 + 时间窗口的批量静默规则（SilenceRule）。
 //   - notify_channels：通知渠道（钉钉/企业微信/飞书/Slack/邮件/Webhook）配置。
 //   - notify_templates：通知消息模板（Go text/template 变量替换）。

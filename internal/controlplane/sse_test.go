@@ -14,7 +14,7 @@ import (
 	"opsmesh/internal/store"
 )
 
-// 本文件为 M3-2B SSE 实时推送的单元测试。
+// 本文件为 SSE 实时推送的单元测试。
 //
 // 覆盖范围：
 //   - handleEventsStream 响应头（Content-Type / Cache-Control / Connection / X-Accel-Buffering）
@@ -281,7 +281,7 @@ func TestSSE_PublishEvent_NoSubscribers(t *testing.T) {
 	}
 }
 
-// TestSSE_TenantIsolation 验证 H6 租户隔离：A 租户订阅者不会收到 B 租户的事件。
+// TestSSE_TenantIsolation 验证 租户隔离：A 租户订阅者不会收到 B 租户的事件。
 // 发布 tenantB 的 task_status 事件，tenantA 订阅者不应收到（应继续等待心跳或阻塞）。
 func TestSSE_TenantIsolation(t *testing.T) {
 	s := newSSETestServer()
@@ -367,11 +367,11 @@ func TestSSE_DemoFillsDefaultTenant(t *testing.T) {
 }
 
 // ============================================================================
-// M1-4 分布式可观测性：SSE 事件携带 trace_id
+// 分布式可观测性：SSE 事件携带 trace_id
 // ============================================================================
 
 // TestSSE_EventCarriesTraceID 验证 publishEvent 从 ctx 提取 trace_id 注入 SSEEvent.TraceID。
-// 这是 M1-4 的核心保证：SSE 事件与后端链路追踪关联。
+// 这是 的核心保证：SSE 事件与后端链路追踪关联。
 func TestSSE_EventCarriesTraceID(t *testing.T) {
 	s := newSSETestServer()
 	ts := httptest.NewServer(http.HandlerFunc(s.handleEventsStream))

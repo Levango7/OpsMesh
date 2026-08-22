@@ -1,6 +1,6 @@
 // Package deploy 实现 M3 部署中心（BD-03）：服务部署任务的生命周期管理
 // （创建 → 执行 → 成功/失败/回滚），执行动作经 Dispatcher 防腐接口派发到
-// M4 自动化执行引擎（复用底层任务通道）。双后端（Memory / SQL，U-04 数据本地化）。
+// M4 自动化执行引擎（复用底层任务通道）。双后端（Memory / SQL，数据本地化）。
 package deploy
 
 import (
@@ -47,7 +47,7 @@ const (
 	canaryWeightMax = 100
 )
 
-// repoURLUnsafeChars 是禁止出现在 RepoURL 中的 shell 元字符（task 87 命令注入防护）。
+// repoURLUnsafeChars 是禁止出现在 RepoURL 中的 shell 元字符（命令注入防护）。
 // RepoURL 在 Execute 时被原样作为 shell 任务的 Command 下发给 agent（以 sh -c 执行），
 // 值中若含以下字符即可拼接/截断命令造成目标机 RCE，故一律拒绝。
 const repoURLUnsafeChars = " \t\n\r;&|`$\"'<>(){}[]*?!\\#~"
@@ -57,7 +57,7 @@ type DeployTask struct {
 	ID        int64  `json:"id"`
 	Name      string `json:"name"`
 	Type      string `json:"type"`       // script / file / k8s
-	RepoURL   string `json:"repo_url"`   // Git(E-03) manifest 仓库地址（script/k8s 用）
+	RepoURL   string `json:"repo_url"`   // Git() manifest 仓库地址（script/k8s 用）
 	Content   string `json:"content"`    // file 类型写入内容 / k8s manifest 内联（可选）
 	Path      string `json:"path"`       // file 类型目标路径（可选）
 	TargetIDs string `json:"target_ids"` // 目标设备 ID（逗号/空格分隔）
@@ -136,7 +136,7 @@ func (d *DeployTask) Valid() error {
 	if d.TargetIDs == "" {
 		return errInvalid("target_ids required")
 	}
-	// task 87：RepoURL 非空时校验为安全的仓库地址，防命令注入。
+	// ：RepoURL 非空时校验为安全的仓库地址，防命令注入。
 	if d.RepoURL != "" {
 		if err := validateRepoURL(d.RepoURL); err != nil {
 			return err
@@ -165,7 +165,7 @@ func (d *DeployTask) Valid() error {
 	return nil
 }
 
-// validateRepoURL 校验 RepoURL 为安全的仓库地址（task 87 命令注入防护）。
+// validateRepoURL 校验 RepoURL 为安全的仓库地址（命令注入防护）。
 // 要求不含 shell 元字符，且以 http(s):// / git:// / ssh:// / git@ / 绝对路径 开头。
 func validateRepoURL(u string) error {
 	if strings.ContainsAny(u, repoURLUnsafeChars) {
@@ -180,7 +180,7 @@ func validateRepoURL(u string) error {
 }
 
 // =============================================================================
-// 多集群联邦发布（task 280）：跨集群灰度协调器 + 联邦级发布状态
+// 多集群联邦发布：跨集群灰度协调器 + 联邦级发布状态
 // =============================================================================
 //
 // 设计目标：把一个部署任务跨多个集群（或多个目标分组）协调发布。每个集群/分组称为

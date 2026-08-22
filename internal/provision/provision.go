@@ -1,4 +1,4 @@
-// Package provision 提供 B1 自动纳管推送能力：通过 SSH 在候选设备上自动安装 OpsMesh agent。
+// Package provision 提供 自动纳管推送能力：通过 SSH 在候选设备上自动安装 OpsMesh agent。
 package provision
 
 import (

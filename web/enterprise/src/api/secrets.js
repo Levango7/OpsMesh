@@ -1,4 +1,4 @@
-// 密钥管理 API（task 267）
+// 密钥管理 API
 // 契约：
 //   GET  /api/v1/secrets/status → 200 {provider, enabled, addr, mount, file}
 //   POST /api/v1/secrets/test   {addr, token, mount} → 200 {ok, latencyMs, error}

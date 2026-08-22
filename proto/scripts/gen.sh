@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# M3-3A protobuf Go stub 生成脚本。
+# protobuf Go stub 生成脚本。
 # 用 Docker 镜像 bufbuild/buf 生成，无需本机安装 buf/protoc/protoc-gen-go。
 #
 # 用法：

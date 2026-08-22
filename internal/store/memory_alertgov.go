@@ -70,7 +70,7 @@ func (m *MemoryStore) DeleteSilence(id, tenantID string) bool {
 	return true
 }
 
-// GetSilence 按 ID 返回单个静默规则（task 246 M2 持久化补全；不存在返回 nil）。
+// GetSilence 按 ID 返回单个静默规则（M2 持久化补全；不存在返回 nil）。
 // 返回深拷贝（含 MatchLabels）避免外部并发修改破坏内部状态。
 func (m *MemoryStore) GetSilence(id string) *SilenceRule {
 	m.mu.RLock()

@@ -1,4 +1,4 @@
-// cmd/opsmesh 入口逻辑单测（task 154 / P1-B3）。
+// cmd/opsmesh 入口逻辑单测。
 //
 // 覆盖三条关键路径：
 //  1. --health 子命令：httptest mock 端点，直接调用同包 runHealth 验证各退出码；
@@ -245,7 +245,7 @@ func TestRunHealth_DefaultPort(t *testing.T) {
 	// 不传 --http-port 时 runHealth 默认连 8080。
 	// 此处不绑定 8080（避免与真实环境冲突），仅验证默认值会触发连接失败 → 1，
 	// 间接证明默认端口 8080 被使用（若默认值改变，断言仍成立但语义需复核）。
-	// 环境加固（P2）：若本机 8080 已被其它服务占用（如开发机上的容器），
+	// 环境加固：若本机 8080 已被其它服务占用（如开发机上的容器），
 	// 连接会成功而非失败，断言失去意义——此时跳过而非误报。
 	if conn, err := net.DialTimeout("tcp", "localhost:8080", 500*time.Millisecond); err == nil {
 		conn.Close()

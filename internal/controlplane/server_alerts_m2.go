@@ -1,4 +1,4 @@
-// server_alerts_m2.go task 241 M2 集成：告警规则/静默/通知渠道/通知模板 API +
+// server_alerts_m2.go M2 集成：告警规则/静默/通知渠道/通知模板 API +
 // 告警评估循环（alertengine.Engine + Silencer + Aggregator + Notifier）。
 //
 // 与 server_alerts.go 的关系：
@@ -362,7 +362,7 @@ func (s *Server) createNotifyChannel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	// task 248 SSRF 防护：保存前校验 webhook URL，防通知渠道被利用做 SSRF
+	// SSRF 防护：保存前校验 webhook URL，防通知渠道被利用做 SSRF
 	// （如配置 webhookURL=http://169.254.169.254/latest/meta-data/ 访问云元数据）。
 	// 校验失败返回 400 + 错误信息（不泄露内部校验细节，仅返回安全错误）。
 	if err := validateNotifyChannelWebhook(&c, s.cfg.WebhookAllowPrivate); err != nil {
@@ -418,7 +418,7 @@ func (s *Server) updateNotifyChannel(w http.ResponseWriter, r *http.Request, id 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	// task 248 SSRF 防护：更新前校验 webhook URL（与 createNotifyChannel 一致）。
+	// SSRF 防护：更新前校验 webhook URL（与 createNotifyChannel 一致）。
 	if err := validateNotifyChannelWebhook(&c, s.cfg.WebhookAllowPrivate); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("webhook URL SSRF validation failed: %v", err)})
 		return
@@ -669,7 +669,7 @@ func (s *Server) evaluateAlertsOnce(ctx context.Context) {
 				continue
 			}
 			allEvents = append(allEvents, events...)
-			// P2-B4 异常检测：anomalyEngine 非 nil 时，对设备指标调用 Evaluate。
+			// 异常检测：anomalyEngine 非 nil 时，对设备指标调用 Evaluate。
 			// 异常时产生 AnomalyAlert 并转换为 AlertEvent 加入 allEvents，
 			// 经后续静默/聚合/通知链统一处理（与规则告警一致流程）。
 			if s.anomalyEngine != nil {
@@ -691,7 +691,7 @@ func (s *Server) evaluateAlertsOnce(ctx context.Context) {
 	if len(filtered) == 0 {
 		return
 	}
-	// task 254 P2-3 告警抑制：alertInhibitor 非 nil 时，对每个事件构造 proto.Alert 检查是否被抑制。
+	// 告警抑制：alertInhibitor 非 nil 时，对每个事件构造 proto.Alert 检查是否被抑制。
 	// 被抑制的事件跳过通知但记录审计 + 写入 store（仍可在 /api/v1/alerts 列表可见，只是不触发通知）。
 	// 未被抑制的事件进入聚合/通知流程，并在 notifyAlertGroup 中调用 TrackActive 跟踪活跃告警。
 	// alertInhibitor 为 nil 时跳过抑制检查（向后兼容）。
@@ -725,7 +725,7 @@ func (s *Server) evaluateAlertsOnce(ctx context.Context) {
 	}
 }
 
-// evaluateAnomalyForDevice P2-B4 异常检测：对单台设备的指标调用 anomalyEngine.Evaluate。
+// evaluateAnomalyForDevice 异常检测：对单台设备的指标调用 anomalyEngine.Evaluate。
 //
 // 从 store 取设备最新指标（DeviceMetrics），提取 cpu_usage/mem_usage 等指标值，
 // 调用 anomalyEngine.Evaluate 评估，异常时将 AnomalyAlert 转换为 AlertEvent 返回。
@@ -818,7 +818,7 @@ func (s *Server) notifyAlertGroup(ctx context.Context, g *alertengine.AlertGroup
 	for _, ev := range g.Events {
 		alert := alertEventToAlert(ev)
 		s.store.AddAlert(alert)
-		// task 254 P2-3 告警抑制：跟踪活跃告警（供后续抑制判定）。
+		// 告警抑制：跟踪活跃告警（供后续抑制判定）。
 		// alertInhibitor 为 nil 时跳过（向后兼容）。
 		// 仅对未被抑制的 firing 告警跟踪（被抑制的告警在 evaluateAlertsOnce 中已被过滤，不会到达此处）。
 		if s.alertInhibitor != nil {
@@ -903,7 +903,7 @@ func maskSensitiveConfig(configJSON string) string {
 
 // buildChannel 根据 NotifyChannel 构造 notify.Channel 实例。
 // Config 为 JSON 字符串，按渠道 Type 解析对应配置。
-// provider 非空时用 WithSecret 版本构造渠道，解析 ${key} 格式密钥引用（task 266）；
+// provider 非空时用 WithSecret 版本构造渠道，解析 ${key} 格式密钥引用；
 // 为空时退化为明文构造（向后兼容）。
 func buildChannel(c *store.NotifyChannel, provider secrets.SecretProvider) (notify.Channel, error) {
 	var cfg map[string]string
@@ -944,7 +944,7 @@ func buildChannel(c *store.NotifyChannel, provider secrets.SecretProvider) (noti
 	}
 }
 
-// validateNotifyChannelWebhook 校验通知渠道的 webhook URL 防 SSRF（task 248）。
+// validateNotifyChannelWebhook 校验通知渠道的 webhook URL 防 SSRF。
 //
 // 对 webhook 类型渠道（dingtalk/wechat/feishu/slack/webhook/generic），
 // 从 Config JSON 提取 webhookURL 字段并调用 ValidateWebhookURL 校验：

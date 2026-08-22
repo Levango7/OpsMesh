@@ -1,5 +1,5 @@
 // Package otelx 封装 OpenTelemetry SDK 初始化与 helper，提供 gRPC + HTTP 自动埋点能力。
-// M1-1 链路追踪集成：支持导出到 OTLP gRPC（Jaeger/OTLP collector）与 stdout（调试用）。
+// 链路追踪集成：支持导出到 OTLP gRPC（Jaeger/OTLP collector）与 stdout（调试用）。
 // endpoint 为空且 stdout=false 时 no-op（不启用追踪，零开销），保证 OTel 可选不破坏现有功能。
 //
 // 设计要点：
@@ -152,7 +152,7 @@ func Enabled() bool {
 }
 
 // TraceIDFromContext 从 ctx 提取当前 span 的 trace_id（32 字符 hex 串）。
-// M1-4 分布式可观测性：供日志/SSE 事件/审计日志关联 trace_id 使用。
+// 分布式可观测性：供日志/SSE 事件/审计日志关联 trace_id 使用。
 //
 // 行为：
 //   - ctx 无 span 或 span 无效（no-op 模式 / 未启用追踪）：返回空串。

@@ -16,7 +16,7 @@ import (
 type RegisterResp struct {
 	AgentID       string         `json:"agentID"`
 	ControlConfig map[string]int `json:"controlConfig"` // heartbeatInterval / taskPollInterval
-	// task 81 gRPC agent 身份绑定：控制面为该 agent 生成的 HMAC 签名密钥（32 字节 hex）。
+	// gRPC agent 身份绑定：控制面为该 agent 生成的 HMAC 签名密钥（32 字节 hex）。
 	// agent 收到后保存，后续 PullTasks/ReportResult/PollCancels/Heartbeat 请求在 gRPC metadata
 	// 中携带 agent-signature = HMAC-SHA256(secret, timestamp+agentID)，控制面据此验证 agent 身份，
 	// 不再纯信任 agent 自报的 AgentID（防冒领任务/伪造上报）。
@@ -64,7 +64,7 @@ type PollCancelsResp struct {
 	CancelledTaskIDs []string `json:"cancelledTaskIDs"`
 }
 
-// ReportLogsReq task 247 agent 日志上报请求：携带一个 LogReport 批次。
+// ReportLogsReq agent 日志上报请求：携带一个 LogReport 批次。
 // 控制面校验 agent 身份（HMAC 签名）后按 agent 归属租户落库（行级隔离）。
 type ReportLogsReq struct {
 	Report proto.LogReport `json:"report"`
@@ -83,7 +83,7 @@ type RegistrationServer interface {
 }
 
 // Registration_ServiceDesc 手写 ServiceDesc，无需 protoc 生成。
-// 服务名 opsmesh.v1.Registration（带版本前缀，破坏性变更可灰度，P2-3），四个一元方法，无流式方法。
+// 服务名 opsmesh.v1.Registration（带版本前缀，破坏性变更可灰度），四个一元方法，无流式方法。
 var Registration_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "opsmesh.v1.Registration",
 	HandlerType: (*RegistrationServer)(nil),

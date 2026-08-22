@@ -9,14 +9,14 @@ import (
 	"strconv"
 )
 
-// setProcessGroup 在非 POSIX 平台（如 Windows）是 noop（task 78 安全加固）。
+// setProcessGroup 在非 POSIX 平台（如 Windows）是 noop（安全加固）。
 // Windows 不支持 syscall.SysProcAttr.Setpgid；取消时改用 taskkill /T /F /PID 杀进程树。
 func setProcessGroup(cmd *exec.Cmd) {
 	// Windows 与其他非 POSIX 平台均无 Setpgid 等价物，noop。
 	_ = cmd
 }
 
-// killProcessGroup 在 Windows 上同步执行 taskkill /T /F /PID 杀进程树（task 78 安全加固）。
+// killProcessGroup 在 Windows 上同步执行 taskkill /T /F /PID 杀进程树（安全加固）。
 // /T 表示杀进程树（含子进程），/F 表示强制终止。
 // 同步等待 taskkill 返回，确保子进程被终止后再继续：
 // Windows 上 cmd.Wait() 会等待 stdout/stderr pipe 关闭，而子进程（如 cmd /C sleep 2 中的 sleep.exe）

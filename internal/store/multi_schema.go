@@ -1,4 +1,4 @@
-// multi_schema.go 实现 M4-4C 多租户 schema 隔离。
+// multi_schema.go 实现 多租户 schema 隔离。
 //
 // 设计目标：每个租户路由到独立的 MySQL schema（database），实现物理级数据隔离。
 // 相比行级隔离（tenant_id 列），schema 隔离提供更强的隔离边界：
@@ -188,7 +188,7 @@ func (m *MultiSchemaStore) WithSecret(secret string) *MultiSchemaStore {
 	return m
 }
 
-// WithDemo 设置演示模式（P0-5）：传播到所有已创建的 schema 及后续创建的 schema。
+// WithDemo 设置演示模式：传播到所有已创建的 schema 及后续创建的 schema。
 func (m *MultiSchemaStore) WithDemo(b bool) Store {
 	m.mu.Lock()
 	m.demo = b
@@ -388,7 +388,7 @@ func (m *MultiSchemaStore) Agent(id string) *proto.AgentInfo {
 	return s.Agent(id)
 }
 
-// AgentSecret 返回该 agent 的 HMAC 签名密钥（task 81 gRPC 身份绑定）。
+// AgentSecret 返回该 agent 的 HMAC 签名密钥（gRPC 身份绑定）。
 // 经 agentTenant 反查租户路由到对应 schema 的 store，再委托其 AgentSecret。
 // agent 不存在或未生成密钥时返回空串。
 func (m *MultiSchemaStore) AgentSecret(agentID string) string {
@@ -442,7 +442,7 @@ func (m *MultiSchemaStore) DeviceMetrics(deviceID string) *proto.DeviceMetrics {
 	return s.DeviceMetrics(deviceID)
 }
 
-// DeviceMetricsHistory 返回设备监控指标历史时序（环形缓冲查询，task 223）：
+// DeviceMetricsHistory 返回设备监控指标历史时序（环形缓冲查询）：
 // 经 deviceTenant 反查租户路由后转发到子 store。
 func (m *MultiSchemaStore) DeviceMetricsHistory(deviceID string, since time.Time) []proto.DeviceMetrics {
 	tenant := m.lookupDeviceTenant(deviceID)
@@ -674,7 +674,7 @@ func (m *MultiSchemaStore) SilenceAlert(id, tenantID, by string, until time.Time
 }
 
 // ============================================================================
-// QuotaStore 实现（P2-B5 多租户资源配额，2 方法）
+// QuotaStore 实现（多租户资源配额，2 方法）
 // ============================================================================
 
 // GetQuota 返回租户配额配置：直接用 tenantID 路由。
@@ -935,7 +935,7 @@ func (m *MultiSchemaStore) DeleteUser(id string) bool {
 	return s.DeleteUser(id)
 }
 
-// ChangePassword 改密（安全债 85，路由到全局 store）。
+// ChangePassword 改密（安全债，路由到全局 store）。
 func (m *MultiSchemaStore) ChangePassword(userID, newPasswordHash string) bool {
 	s, err := m.globalStore()
 	if err != nil {
@@ -1002,7 +1002,7 @@ func (m *MultiSchemaStore) ListPermissions() []*Permission {
 // K8sClusterStore 实现（Phase 3，路由到全局 store）
 // ============================================================================
 
-// ListK8sClusters 返回 K8s 集群配置（路由到全局 store；tenantID 过滤，task 88）。
+// ListK8sClusters 返回 K8s 集群配置（路由到全局 store；tenantID 过滤）。
 func (m *MultiSchemaStore) ListK8sClusters(tenantID string) []*K8sCluster {
 	s, err := m.globalStore()
 	if err != nil {
@@ -1020,7 +1020,7 @@ func (m *MultiSchemaStore) GetK8sCluster(id string) *K8sCluster {
 	return s.GetK8sCluster(id)
 }
 
-// SaveK8sCluster 创建或更新集群配置（路由到全局 store），返回持久化错误（task 92）。
+// SaveK8sCluster 创建或更新集群配置（路由到全局 store），返回持久化错误。
 func (m *MultiSchemaStore) SaveK8sCluster(c *K8sCluster) error {
 	s, err := m.globalStore()
 	if err != nil {
@@ -1039,7 +1039,7 @@ func (m *MultiSchemaStore) DeleteK8sCluster(id string) bool {
 }
 
 // ============================================================================
-// task 100 任务审批：ApproveTask / RejectTask（按 tenantID 路由，与 CancelTask 同模式）
+// 任务审批：ApproveTask / RejectTask（按 tenantID 路由，与 CancelTask 同模式）
 // ============================================================================
 
 // ApproveTask 审批通过任务：直接用 tenantID 路由。
@@ -1061,7 +1061,7 @@ func (m *MultiSchemaStore) RejectTask(id, tenantID, approvedBy string) bool {
 }
 
 // ============================================================================
-// task 100 告警规则：CreateAlertRule / ListAlertRules / DeleteAlertRule
+// 告警规则：CreateAlertRule / ListAlertRules / DeleteAlertRule
 // ============================================================================
 
 // CreateAlertRule 创建告警规则：从 r.TenantID 路由（与 AddAlert 同模式）。
@@ -1096,7 +1096,7 @@ func (m *MultiSchemaStore) DeleteAlertRule(id string) bool {
 	return false
 }
 
-// GetAlertRule 按 ID 返回单个告警规则（task 246 M2 持久化补全）。
+// GetAlertRule 按 ID 返回单个告警规则（M2 持久化补全）。
 // 遍历所有 schema 查找（与 DeleteAlertRule 同模式：规则 ID 跨 schema 唯一性弱）。
 func (m *MultiSchemaStore) GetAlertRule(id string) *AlertRule {
 	for _, s := range m.allStores() {
@@ -1107,7 +1107,7 @@ func (m *MultiSchemaStore) GetAlertRule(id string) *AlertRule {
 	return nil
 }
 
-// UpdateAlertRule 更新告警规则（task 246 M2 持久化补全）。
+// UpdateAlertRule 更新告警规则（M2 持久化补全）。
 // 遍历所有 schema 尝试更新（与 DeleteAlertRule 同模式）。
 func (m *MultiSchemaStore) UpdateAlertRule(r *AlertRule) bool {
 	if r == nil {
@@ -1122,7 +1122,7 @@ func (m *MultiSchemaStore) UpdateAlertRule(r *AlertRule) bool {
 }
 
 // ============================================================================
-// task 100 OS/中间件部署模板：TemplateStore 实现（路由到全局 store，与 K8sClusterStore 同模式）
+// OS/中间件部署模板：TemplateStore 实现（路由到全局 store，与 K8sClusterStore 同模式）
 // ============================================================================
 
 // SaveOSTemplate 创建或更新 OS 安装模板（路由到全局 store）。
@@ -1198,7 +1198,7 @@ func (m *MultiSchemaStore) DeleteMiddlewareTemplate(id string) bool {
 }
 
 // ============================================================================
-// task 111 刷新令牌：SaveRefreshToken / GetRefreshToken / DeleteRefreshToken
+// 刷新令牌：SaveRefreshToken / GetRefreshToken / DeleteRefreshToken
 // 路由到全局 store（token_hash 为全局唯一主键，跨 schema 查询需全局视角，
 // 与 K8sCluster/Template 同模式）。
 // ============================================================================
@@ -1230,7 +1230,7 @@ func (m *MultiSchemaStore) DeleteRefreshToken(tokenHash string) bool {
 	return s.DeleteRefreshToken(tokenHash)
 }
 
-// ConsumeRefreshToken 原子消费 refresh token（路由到全局 store，P1-G4）。
+// ConsumeRefreshToken 原子消费 refresh token（路由到全局 store）。
 // token_hash 为全局唯一主键，跨 schema 查询需全局视角，与 Save/Get/Delete 同模式。
 func (m *MultiSchemaStore) ConsumeRefreshToken(tokenHash string) (*RefreshToken, bool) {
 	s, err := m.globalStore()
@@ -1241,7 +1241,7 @@ func (m *MultiSchemaStore) ConsumeRefreshToken(tokenHash string) (*RefreshToken,
 }
 
 // ============================================================================
-// task 241 M2 集成：SilenceRule / NotifyChannel / NotifyTemplate
+// M2 集成：SilenceRule / NotifyChannel / NotifyTemplate
 // 路由到全局 store（与 RefreshToken 同模式：ID 为全局唯一主键）。
 // ============================================================================
 
@@ -1272,7 +1272,7 @@ func (m *MultiSchemaStore) ListSilences(tenantID string) []*SilenceRule {
 	return s.ListSilences(tenantID)
 }
 
-// GetSilence 按 ID 返回单个静默规则（task 246 M2 持久化补全；路由到全局 store）。
+// GetSilence 按 ID 返回单个静默规则（M2 持久化补全；路由到全局 store）。
 func (m *MultiSchemaStore) GetSilence(id string) *SilenceRule {
 	s, err := m.globalStore()
 	if err != nil {

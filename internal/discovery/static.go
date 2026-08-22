@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// StaticDiscovery 静态配置的服务发现实现（M1-3）。
+// StaticDiscovery 静态配置的服务发现实现。
 //
 // 语义：
 //   - 从配置加载一组固定的服务实例（如多控制面地址），无注册中心依赖。

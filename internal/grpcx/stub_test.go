@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	pb "opsmesh/internal/grpcx/pb" // 包名为 pbv1，用 pb 别名引用（M4-4C 兼容性修复）
+	pb "opsmesh/internal/grpcx/pb" // 包名为 pbv1，用 pb 别名引用（兼容性修复）
 	"opsmesh/internal/proto"
 )
 
@@ -195,7 +195,7 @@ func TestStubAdapterPollCancels(t *testing.T) {
 
 // TestPbServiceDescConsistency 验证生成 stub 的 ServiceDesc 与手写 ServiceDesc 同名且 pb 方法集为 legacy 子集。
 // 兼容期两条路径保持契约一致，否则切换会破坏客户端。
-// task 247：legacy 手写路径可先行添加新方法（如 ReportLogs），pb 路径待 protoc 重新生成后跟上；
+// ：legacy 手写路径可先行添加新方法（如 ReportLogs），pb 路径待 protoc 重新生成后跟上；
 // 故校验放宽为 pb ⊆ legacy（pb 的每个方法都能在 legacy 找到对应），而非严格相等。
 func TestPbServiceDescConsistency(t *testing.T) {
 	pbDesc := pb.Registration_ServiceDesc

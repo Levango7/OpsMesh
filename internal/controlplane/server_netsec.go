@@ -39,7 +39,7 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
 	}
 	var opts []grpc.ServerOption
 	if s.tlsCert != "" && s.tlsKey != "" {
-		// P2-B3 TLS 证书热重载：--tls-watch=true 时启用 fsnotify 监听证书文件变更，
+		// TLS 证书热重载：--tls-watch=true 时启用 fsnotify 监听证书文件变更，
 		// 无需重启服务即可更新 TLS 配置。否则走原 ServerCreds 路径（启动时一次性加载）。
 		if s.cfg != nil && s.cfg.TLSWatch {
 			reloader, err := tlsutil.NewCertificateReloader(s.tlsCert, s.tlsKey)
@@ -76,7 +76,7 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
 			logx.Info(context.Background(), "gRPC 已启用 TLS", "mtls", s.clientCA != "")
 		}
 	}
-	// P0-2 兜底盘 + M1-1 OTel gRPC 服务端拦截器（链式组合）：
+	// 兜底盘 + OTel gRPC 服务端拦截器（链式组合）：
 	//   - grpcRecoveryInterceptor 在外：拦截 unary handler panic，避免单 RPC 击穿整个 gRPC server。
 	//   - otelx.GRPCServerUnaryInterceptor 在内：从 metadata 提取 W3C trace context 并创建 server span，
 	//     使 agent→控制面 gRPC 调用的 trace_id 贯穿。panic 被 recovery 捕获后 span 仍能 End()。
@@ -91,11 +91,11 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
 		metrics:     s.metrics,
 		cmdb:        s.cmdbHandler,
 		logs:        s.logHandler,
-		srv:         s, // M3-2B：注入 Server 引用，使 gRPC handler 可发布 SSE 事件
-		// task 81 gRPC agent 身份绑定：按 config.GRPCRequireSignature 启用签名验证。
+		srv:         s, // 注入 Server 引用，使 gRPC handler 可发布 SSE 事件
+		// gRPC agent 身份绑定：按 config.GRPCRequireSignature 启用签名验证。
 		// demo 模式下 config 已强制关闭（cfg.GRPCRequireSignature=false），此处直接透传。
 		requireSignature: s.cfg != nil && s.cfg.GRPCRequireSignature,
-		// P0 安全加固：传入预共享签名密钥（--grpc-signature-key）。
+		// 安全加固：传入预共享签名密钥（--grpc-signature-key）。
 		// 非空时 verifyAgentSignature 优先使用此密钥验签，Register 不再下发密钥。
 		signatureKey: func() string {
 			if s.cfg != nil {
@@ -108,7 +108,7 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener) {
 }
 
 // grpcRecoveryInterceptor 兜底盘：拦截任何 unary handler 内的 panic，避免单个 RPC panic
-// 击穿 gRPC 默认行为（整个 server 崩溃），转为 Internal 状态码 + 结构化日志（P0-2）。
+// 击穿 gRPC 默认行为（整个 server 崩溃），转为 Internal 状态码 + 结构化日志。
 func grpcRecoveryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -121,7 +121,7 @@ func grpcRecoveryInterceptor(ctx context.Context, req interface{}, info *grpc.Un
 	return handler(ctx, req)
 }
 
-// metricsAllowed 判断客户端是否为 metrics 端点授权来源（P1-5 CIDR 白名单）。
+// metricsAllowed 判断客户端是否为 metrics 端点授权来源（CIDR 白名单）。
 // 白名单为空（默认）= 允许全部（向后兼容 MVP）；非空时仅允许命中白名单的 IP。
 func (s *Server) metricsAllowed(remoteAddr string) bool {
 	if strings.TrimSpace(s.cfg.MetricsAllowCIDR) == "" {
@@ -151,7 +151,7 @@ func (s *Server) metricsAllowed(remoteAddr string) bool {
 	return false
 }
 
-// buildFederationServer 构造联邦独立 mTLS 监听（P1-6）。
+// buildFederationServer 构造联邦独立 mTLS 监听。
 // 仅暴露联邦入站端点（任务创建 / 设备视图），强制对端持证（RequireAndVerifyClientCert）。
 // 端口 ≤0 或未启用联邦时返回 (nil, nil, nil)（不启用独立监听，复用主 HTTP）。
 func (s *Server) buildFederationServer() (*http.Server, net.Listener, error) {
@@ -167,7 +167,7 @@ func (s *Server) buildFederationServer() (*http.Server, net.Listener, error) {
 		return nil, nil, fmt.Errorf("federation listen: %w", err)
 	}
 	mux := http.NewServeMux()
-	// 仅暴露联邦必需的入站端点；两者均已内置 P1-6 联邦签名验签。
+	// 仅暴露联邦必需的入站端点；两者均已内置 联邦签名验签。
 	mux.HandleFunc("/api/v1/tasks", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			s.handleCreateTask(w, r)
@@ -184,7 +184,7 @@ func (s *Server) buildFederationServer() (*http.Server, net.Listener, error) {
 	return srv, lis, nil
 }
 
-// buildMetrics 构造 metrics HTTP server 与监听，渲染零依赖 Prometheus 文本指标（P2-1）。
+// buildMetrics 构造 metrics HTTP server 与监听，渲染零依赖 Prometheus 文本指标。
 func (s *Server) buildMetrics() (*http.Server, net.Listener) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.metricsPort))
 	if err != nil {
@@ -192,7 +192,7 @@ func (s *Server) buildMetrics() (*http.Server, net.Listener) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		// P1-5 metrics 访问控制：白名单非空时仅允许授权来源，否则 403。
+		// metrics 访问控制：白名单非空时仅允许授权来源，否则 403。
 		if !s.metricsAllowed(r.RemoteAddr) {
 			ctx := logx.WithTrace(r.Context(), "metrics")
 			logx.Warn(ctx, "metrics 访问被拒（不在 CIDR 白名单）", "remote", r.RemoteAddr)
@@ -207,7 +207,7 @@ func (s *Server) buildMetrics() (*http.Server, net.Listener) {
 }
 
 // handleDevices 处理 GET /api/v1/devices，按网关注入租户返回 segment -> 设备 列表。
-// verifyFederationRequest 校验入站请求的联邦签名（P1-6 / task 83）。
+// verifyFederationRequest 校验入站请求的联邦签名。
 // 仅当请求携带 X-Federation-Forwarded 标记（由本集群转发管理器设置）时才验签；
 // 未携带则视为普通网关注入请求，返回 nil（不改变既有网关鉴权路径）。
 // 签名覆盖 method + path + 时间戳 + 身份头 + sha256(body)，防任务体被中间人篡改；
@@ -236,7 +236,7 @@ func (s *Server) verifyFederationRequest(r *http.Request) error {
 	tenant := r.Header.Get("X-Tenant-ID")
 	user := r.Header.Get("X-User-Id")
 	roles := r.Header.Get("X-User-Roles")
-	// task 83：请求体纳入签名覆盖（sha256(body) 摘要），防中间人篡改转发任务体。
+	// 请求体纳入签名覆盖（sha256(body) 摘要），防中间人篡改转发任务体。
 	// 读取 body 参与验签后以 NopCloser 复原，保证下游 decodeJSONBody 仍能读取；
 	// 限读 maxBodyBytes+1 防超大请求体内存攻击（超限即拒绝，不复原）。
 	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
@@ -257,7 +257,7 @@ func (s *Server) verifyFederationRequest(r *http.Request) error {
 	return nil
 }
 
-// handleHealthz 深度健康检查（K8s liveness 探针，P1-C2 增强）。
+// handleHealthz 深度健康检查（K8s liveness 探针，增强）。
 //
 // 旧实现仅返回 {"status":"ok"} 无任何实际检查，无法真正反映服务健康状态。
 // 现增加 Store 连接深度检查：
@@ -289,7 +289,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleReadyz 就绪检查（K8s readiness 探针，P1-C2 新增）。
+// handleReadyz 就绪检查（K8s readiness 探针，新增）。
 //
 // 与 liveness（/healthz）的区别：
 //   - liveness 探测进程是否存活（失败 → 重启容器）；
@@ -329,7 +329,7 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
-// pingStore 对底层 Store 做轻量连通性检查（P1-C2 健康检查支撑）。
+// pingStore 对底层 Store 做轻量连通性检查（健康检查支撑）。
 //
 // Store 接口未定义 Ping 方法（保持接口精简），此处按具体实现类型分发：
 //   - *store.SQLStore：调用 DB().PingContext（database/sql 内置轻量探活，不发 SQL）；
@@ -364,7 +364,7 @@ func (s *Server) pingStore(ctx context.Context) error {
 }
 
 // verifyBootstrapToken 校验 agent 分发端点（/install.sh、/bin/opsmesh-agent）的访问令牌。
-// P0-G1 安全加固：原端点完全开放，任何人可下载 agent 二进制与安装脚本，存在供应链投毒风险。
+// 安全加固：原端点完全开放，任何人可下载 agent 二进制与安装脚本，存在供应链投毒风险。
 //
 // 校验规则：
 //   - demo 模式（s.cfg.Demo == true）：放宽，不要求 token（保持本地一键体验）。
@@ -375,7 +375,7 @@ func (s *Server) pingStore(ctx context.Context) error {
 // 返回 true 表示放行，false 表示已写入 401 响应（调用方应直接 return）。
 
 // ============================================================================
-// task 248 SSRF 防护：webhook URL 校验 + autoProvision CIDR 白名单校验
+// SSRF 防护：webhook URL 校验 + autoProvision CIDR 白名单校验
 // ============================================================================
 //
 // 与 server_security.go 中 validateURLSSRF 的关系：
@@ -383,15 +383,15 @@ func (s *Server) pingStore(ctx context.Context) error {
 //     供 notifyLoop 启动期校验 AlertWebhookURL 与 AdvertiseAddr（仅警告）。
 //   - ValidateWebhookURL：新版带 allowPrivate 参数，支持内网部署场景显式放行私网，
 //     供通知渠道 CRUD（createNotifyChannel/updateNotifyChannel）保存前校验。
-//   - isPrivateIP：复用 server_security.go 中已有的实现（task 248 已增强为拒 0.0.0.0/8）。
+//   - isPrivateIP：复用 server_security.go 中已有的实现（已增强为拒 0.0.0.0/8）。
 //
-// DNS 解析超时：5 秒（task 248 要求合理默认值，避免恶意域名拖垮 API）。
+// DNS 解析超时：5 秒（要求合理默认值，避免恶意域名拖垮 API）。
 
-// ssrfDNSTimeout 是 SSRF 校验中 DNS 解析的超时时间（task 248：5 秒合理默认）。
+// ssrfDNSTimeout 是 SSRF 校验中 DNS 解析的超时时间（5 秒合理默认）。
 // 通过 context.WithTimeout 控制 net.LookupIP，避免恶意域名解析拖垮 API。
 const ssrfDNSTimeout = 5 * time.Second
 
-// ValidateWebhookURL 校验 webhook URL 防止 SSRF 攻击（task 248）。
+// ValidateWebhookURL 校验 webhook URL 防止 SSRF 攻击。
 //
 // 规则：
 //   - 协议必须是 http 或 https（拒绝 file://、gopher://、dict:// 等危险协议）
@@ -461,7 +461,7 @@ func ValidateWebhookURL(rawURL string, allowPrivate bool) error {
 	return nil
 }
 
-// ValidateCIDR 校验目标 CIDR 是否在允许的白名单内（task 248 autoProvision 网段校验）。
+// ValidateCIDR 校验目标 CIDR 是否在允许的白名单内（autoProvision 网段校验）。
 //
 // 用于 autoProvision 扫描前校验目标网段，防止运维误配置或攻击者构造请求扫描任意网段
 // （如扫描 169.254.169.254 所在网段获取云元数据，或扫描内网其他网段做内网探测）。

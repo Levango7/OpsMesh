@@ -1,4 +1,4 @@
-// federation.go 实现多集群联邦发布协调器（task 280）：跨集群灰度协调 + 联邦级发布状态聚合。
+// federation.go 实现多集群联邦发布协调器：跨集群灰度协调 + 联邦级发布状态聚合。
 //
 // 设计要点：
 //   - FederationCoordinator 与具体派发实现解耦，通过 DeployExecutor 接口注入派发/晋级/回滚/状态查询

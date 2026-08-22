@@ -9,7 +9,7 @@
 //   - 创建/修改/删除 CI 需审批通过才生效，审批人可批准或驳回；
 //   - 复用现有 ApproveTask/RejectTask 模式（pending → approved/rejected 状态机）；
 //   - 审批通过后调用 cmdb.CiStore 的 CRUD 方法执行实际变更；
-//   - 全程记录审计日志（U-04 等保三级留痕）。
+//   - 全程记录审计日志（等保三级留痕）。
 //
 // 与 cmdb/handler.go 中已有的单 CI 审批端点（/api/v1/cmdb/ci/{id}/approve）的区别：
 //   - handler.go 的审批是单 CI 实例级别的审批状态翻转（CI 已落库，仅改 approvalStatus 字段）；

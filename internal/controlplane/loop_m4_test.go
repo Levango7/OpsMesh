@@ -1,13 +1,13 @@
-// Package controlplane 后台 loop 行为断言测试（M4-2）。
+// Package controlplane 后台 loop 行为断言测试。
 //
 // 在 loop_test.go（启停验证）基础上，为 8 个后台 loop 补齐"注入测试数据 → 验证 loop 行为"的断言：
-//   - leaderLoop          (A3 选主续租)        — 续租后 IsLeader/RenewLeadership 返回 true
+//   - leaderLoop          (选主续租)        — 续租后 IsLeader/RenewLeadership 返回 true
 //   - notifyLoop          (M7 告警 Webhook)    — 注入 firing 告警，alertChannels.Push 推送到 httptest.Server
-//   - autoProvisionLoop   (B1 自动纳管)        — SegmentCIDR 留空时不扫描（无设备被 upsert）
+//   - autoProvisionLoop   (自动纳管)        — SegmentCIDR 留空时不扫描（无设备被 upsert）
 //   - deployReconcileLoop (M3 部署对账)        — 空部署 store 下 ReconcileAll 无错误返回 0
 //   - scheduleLoop        (F4 定时调度)        — 注入到点模板任务，FireDueSchedules 派生 pending 实例
 //   - archiveLoop         (F5 离线超龄归档)    — 注入超龄设备，RetireStaleDevices 标记 retired
-//   - reclaimLoop         (P0-1 任务租约回收)  — 注入超期 running 任务，ReclaimStaleTasks 复位 pending
+//   - reclaimLoop         (任务租约回收)  — 注入超期 running 任务，ReclaimStaleTasks 复位 pending
 //   - cancelLoop          (F3 取消超时任务)    — controlplane 侧对应 workflowScheduleLoop（M5 作业编排）；
 //     agent 侧 cancelLoop 位于 internal/agent 包，此处验证 controlplane 第 8 个 loop
 //     workflowScheduleLoop 的 ListActive 行为 + 启停。
@@ -41,7 +41,7 @@ func newLoopM4Server() *Server {
 	return s
 }
 
-// --- leaderLoop (A3 选主续租) ---
+// --- leaderLoop (选主续租) ---
 
 // TestLoopM4_LeaderLoop_RenewsLeadership 验证 leaderLoop 启动后经一次续租 tick，
 // store.IsLeader()==true 且 RenewLeadership 返回 true（单副本 MemoryStore 恒为 leader），
@@ -144,7 +144,7 @@ func TestLoopM4_NotifyLoop_PushesFiringAlert(t *testing.T) {
 	runLoopExpectImmediateReturn(t, "notifyLoop(no-channels)", s2.notifyLoop)
 }
 
-// --- autoProvisionLoop (B1 自动纳管) ---
+// --- autoProvisionLoop (自动纳管) ---
 
 // TestLoopM4_AutoProvisionLoop_NoScanWhenCIDREmpty 验证开启 Discover+AutoProvision 但 SegmentCIDR 留空时，
 // autoProvisionLoop 循环条件 `IsLeader() && SegmentCIDR != ""` 为 false，不执行扫描（无设备被 upsert），
@@ -330,7 +330,7 @@ func TestLoopM4_ArchiveLoop_RetiresStaleDevice(t *testing.T) {
 	}
 }
 
-// --- reclaimLoop (P0-1 任务租约回收) ---
+// --- reclaimLoop (任务租约回收) ---
 
 // TestLoopM4_ReclaimLoop_ReclaimsStaleTask 验证 reclaimLoop 行为：
 // 注入一个超期 running 任务（ClaimedAt 早于租约阈值，ClaimedBy 对应 agent 心跳也超时），

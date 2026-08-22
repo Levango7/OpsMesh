@@ -33,7 +33,7 @@ services:
       # ── 安全相关 flag 环境变量映射（config.go 中对应 flag）──
       # 开发/演示环境默认值见各项注释；生产部署请改用 Helm chart + values-production.yaml。
       #
-      # Cookie Secure（task 112，--cookie-secure）：控制 at/rt HttpOnly Cookie 的 Secure 属性。
+      # Cookie Secure（--cookie-secure）：控制 at/rt HttpOnly Cookie 的 Secure 属性。
       # 开发默认 false（明文 HTTP 下 Secure Cookie 会被浏览器拒绝回传，导致会话丢失）；
       # 生产 HTTPS 环境务必 true（防中间人窃取会话）。
       OPSMESH_COOKIE_SECURE: ${OPSMESH_COOKIE_SECURE:-false}

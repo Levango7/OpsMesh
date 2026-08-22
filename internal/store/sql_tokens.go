@@ -41,7 +41,7 @@ func (s *SQLStore) Provision(deviceID, host, tenantID string) (token, bootstrap 
 
 // issueToken 在已持 ctx 下签发一个一次性 install token（HMAC(deviceID|tenantID|expiry|nonce)），
 // 落 install_tokens 表（ON DUPLICATE 重置消费态，幂等重推）。
-// 安全（P1-F7）：token 列只存 SHA-256 摘要，不存明文 token——DB 只读账号/备份泄露不等于活体 token 泄露。
+// 安全：token 列只存 SHA-256 摘要，不存明文 token——DB 只读账号/备份泄露不等于活体 token 泄露。
 
 func (s *SQLStore) issueToken(ctx context.Context, deviceID, tenantID string, ttl time.Duration) (string, error) {
 	if s.secret == "" {
@@ -63,7 +63,7 @@ func (s *SQLStore) issueToken(ctx context.Context, deviceID, tenantID string, tt
 	return tok, nil
 }
 
-// IssueToken 生成并登记一个一次性 install token（B1）。
+// IssueToken 生成并登记一个一次性 install token。
 
 func (s *SQLStore) IssueToken(deviceID, tenantID string, ttl time.Duration) (token string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -75,7 +75,7 @@ func (s *SQLStore) IssueToken(deviceID, tenantID string, ttl time.Duration) (tok
 }
 
 // ConsumeToken 校验并消费 token：限时、未用过才返回设备与租户并置 consumed；否则返回 ok=false。
-// 安全（P0-F2）：原子条件 UPDATE（consumed=0 AND 未过期）+ RowsAffected==1 判定，
+// 安全：原子条件 UPDATE（consumed=0 AND 未过期）+ RowsAffected==1 判定，
 // 消除 check-then-act TOCTOU 竞态，多副本并发下同一 token 只会被消费一次。
 
 func (s *SQLStore) ConsumeToken(token string) (deviceID, tenantID string, ok bool) {
@@ -85,7 +85,7 @@ func (s *SQLStore) ConsumeToken(token string) (deviceID, tenantID string, ok boo
 	if !verifyTokenMAC(s.secret, token) {
 		return "", "", false
 	}
-	hash := hashToken(token) // P1-F7：库存摘要，按摘要匹配
+	hash := hashToken(token) // 库存摘要，按摘要匹配
 	// 原子抢占：仅当未被消费且未过期时翻转 consumed=0→1，RowsAffected==1 即消费成功。
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE install_tokens SET consumed=1 WHERE token=? AND consumed=0 AND expires_at > ?`,

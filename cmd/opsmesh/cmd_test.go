@@ -1,4 +1,4 @@
-// cmd/opsmesh 入口逻辑补充单测（task 290 / P2-B6）。
+// cmd/opsmesh 入口逻辑补充单测。
 //
 // 补测重点：
 //  1. filterSubcmdArgs 纯函数：子命令名移除、特有 flag 过滤（带值/布尔/等号/单横线）、未知 flag 透传；

@@ -1,9 +1,9 @@
 // sql_alerts.go 实现 SQLStore 的 AlertStore 子接口（告警 + 告警规则 CRUD）。
 //
 // 涵盖：Alerts/AddAlert/Alert/AckAlert/SilenceAlert/addAlert helper +
-// task 100 新增的 CreateAlertRule/ListAlertRules/DeleteAlertRule/scanAlertRule。
+// 新增的 CreateAlertRule/ListAlertRules/DeleteAlertRule/scanAlertRule。
 //
-// 表结构：alerts（告警事件）、alert_rules（task 100，sql.go initSchema 中幂等建表）。
+// 表结构：alerts（告警事件）、alert_rules（sql.go initSchema 中幂等建表）。
 package store
 
 import (
@@ -30,10 +30,10 @@ func scanAlertRule(row rowScanner) *AlertRule {
 	return &r
 }
 
-// alertRuleColumns alert_rules 表查询的列列表（含 created_by，task 246 M2 持久化）。
+// alertRuleColumns alert_rules 表查询的列列表（含 created_by，M2 持久化）。
 const alertRuleColumns = `id, tenant_id, metric, op, threshold, for_duration, severity, message, enabled, created_at, created_by`
 
-// CreateAlertRule 创建告警规则（task 100）：ID 为空时由 store 分配随机 ID；
+// CreateAlertRule 创建告警规则：ID 为空时由 store 分配随机 ID；
 // TenantID 为空时归一为 default。返回持久化后的规则（含分配的 ID）。
 func (s *SQLStore) CreateAlertRule(r *AlertRule) *AlertRule {
 	if r == nil {
@@ -65,7 +65,7 @@ func (s *SQLStore) CreateAlertRule(r *AlertRule) *AlertRule {
 	return &cp
 }
 
-// ListAlertRules 返回告警规则（task 100）；tenantID 非空时按租户过滤。按创建时间升序返回。
+// ListAlertRules 返回告警规则；tenantID 非空时按租户过滤。按创建时间升序返回。
 func (s *SQLStore) ListAlertRules(tenantID string) []*AlertRule {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -94,7 +94,7 @@ func (s *SQLStore) ListAlertRules(tenantID string) []*AlertRule {
 	return out
 }
 
-// DeleteAlertRule 删除告警规则（task 100），返回是否删除成功（不存在返回 false）。
+// DeleteAlertRule 删除告警规则，返回是否删除成功（不存在返回 false）。
 func (s *SQLStore) DeleteAlertRule(id string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -237,4 +237,4 @@ func (s *SQLStore) SilenceAlert(id, tenantID, by string, until time.Time, commen
 	return n > 0
 }
 
-// Audit 记录一条审计事件（U-04 等保三级：操作 100% 留痕）。
+// Audit 记录一条审计事件（等保三级：操作 100% 留痕）。

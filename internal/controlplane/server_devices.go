@@ -1,6 +1,6 @@
 // server_devices.go 设备相关 HTTP handler。
 //
-// 从 server.go 拆分而来（task 114：按路由域拆分巨型 server.go）。
+// 从 server.go 拆分而来（按路由域拆分巨型 server.go）。
 // 包含设备列表/详情/退役/纳管等端点，逻辑未做任何修改。
 package controlplane
 
@@ -22,7 +22,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	// P1-6 联邦入站验签：带转发标记的请求必须验签，防跨不可信网段伪造租户身份。
+	// 联邦入站验签：带转发标记的请求必须验签，防跨不可信网段伪造租户身份。
 	if err := s.verifyFederationRequest(r); err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
@@ -35,7 +35,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snap := s.store.Snapshot(actx.TenantID)
-	// B1 修复 3：分页（向后兼容：不传 page 返回全量 map）。
+	// 修复 3：分页（向后兼容：不传 page 返回全量 map）。
 	page, pageSize := parsePagination(r.URL.Query())
 	if page == 0 {
 		writeJSON(w, http.StatusOK, snap)
@@ -60,7 +60,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleAgents 处理 GET /api/v1/agents，按网关注入租户返回已注册 agent 列表（供前端下拉框，P1-4）。
+// handleAgents 处理 GET /api/v1/agents，按网关注入租户返回已注册 agent 列表（供前端下拉框）。
 func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -79,7 +79,7 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 			"status":   a.Status,
 		})
 	}
-	// B1 修复 3：分页（向后兼容：不传 page 返回全量）。
+	// 修复 3：分页（向后兼容：不传 page 返回全量）。
 	page, pageSize := parsePagination(r.URL.Query())
 	if page == 0 {
 		writeJSON(w, http.StatusOK, out)
@@ -161,7 +161,7 @@ func (s *Server) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dd)
 }
 
-// lookupAgent 按 agentID 直接查（O(1) 直查，P2-17 修复线性扫描）。
+// lookupAgent 按 agentID 直接查（O(1) 直查，修复线性扫描）。
 func (s *Server) lookupAgent(id string) *proto.AgentInfo {
 	return s.store.Agent(id)
 }
@@ -169,7 +169,7 @@ func (s *Server) lookupAgent(id string) *proto.AgentInfo {
 // handleDeviceRouting 统一分派 /api/v1/devices/{id}... 子路径：
 //   - GET    /api/v1/devices/{id}：设备详情（设备+任务+结果）
 //   - DELETE /api/v1/devices/{id}：退役/下线设备（F5）
-//   - POST   /api/v1/devices/{id}/provision：触发自动纳管推送（B1）
+//   - POST   /api/v1/devices/{id}/provision：触发自动纳管推送
 //   - GET    /api/v1/devices/{id}/metrics：返回设备最新监控指标
 func (s *Server) handleDeviceRouting(w http.ResponseWriter, r *http.Request) {
 	idAndRest := strings.TrimPrefix(r.URL.Path, "/api/v1/devices/")
@@ -208,21 +208,21 @@ func (s *Server) handleRetireDevice(w http.ResponseWriter, r *http.Request, id s
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found or tenant mismatch"})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: tenant, UserID: actx.UserID, Action: "retire_device", Target: id, Detail: "retired via HTTP",
 	})
 
-	// M3-2B SSE：通知前端设备已下线（设备表移除/置灰）
-	// H6 租户隔离：携带 tenant，仅同租户订阅者收到。
-	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	// SSE：通知前端设备已下线（设备表移除/置灰）
+	// 租户隔离：携带 tenant，仅同租户订阅者收到。
+	// 携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
 	s.publishEvent(r.Context(), "device_offline", tenant, map[string]string{
 		"deviceID": id,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "retired", "deviceID": id})
 }
 
-// handleProvision 处理 POST /api/v1/devices/{id}/provision：触发自动纳管（B1）。
+// handleProvision 处理 POST /api/v1/devices/{id}/provision：触发自动纳管。
 // 签发一次性 install token + 构造可直接复制粘贴的 bootstrap curl|sh 命令，
 // 经此命令在候选设备上安装 agent 后，agent 携带 token 回注册完成闭环。
 func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id string) {
@@ -246,7 +246,7 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id stri
 	token, _, err := s.store.Provision(id, dev.IP, tenant)
 	if err != nil {
 		// TOCTOU 窗口补偿：store 层可能返回"device not found"（设备在本 handler 前置校验
-		// 与 Provision 之间被删除）。安全（P2-F12）：映射为 404 而非 500。
+		// 与 Provision 之间被删除）。安全：映射为 404 而非 500。
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "not found") {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": errMsg})
@@ -255,7 +255,7 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id stri
 		}
 		return
 	}
-	// 安全（P1-F4）：bootstrap 地址用运维显式配置的 advertise-addr，绝不能用请求方可控的 r.Host
+	// 安全：bootstrap 地址用运维显式配置的 advertise-addr，绝不能用请求方可控的 r.Host
 	// （Host 头注入可让 bootstrap 指向攻击者服务器→供应链 RCE）。空则回退本机（仅开发）。
 	advertise := strings.TrimRight(s.cfg.AdvertiseAddr, "/")
 	if advertise == "" {
@@ -279,7 +279,7 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id stri
 			}
 		}(sshAddr, bootstrap, id)
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: tenant, UserID: actx.UserID, Action: "provision_agent", Target: id, Detail: "token issued via HTTP",
 	})

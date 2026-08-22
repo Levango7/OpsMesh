@@ -31,7 +31,7 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 		Demo:                false,
 		EventBus:            "noop",
 		RequireAuth:         false,
-		TrustGatewayHeaders: true, // P0-2 安全加固：e2e 测试用 X-User-Roles 头注入身份，需显式开启信任
+		TrustGatewayHeaders: true, // 安全加固：e2e 测试用 X-User-Roles 头注入身份，需显式开启信任
 		GRPCPort:            0,    // 系统分配，读回真实端口
 		HTTPPort:            0,
 		MetricsPort:         0,
@@ -93,7 +93,7 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 	agentID := regResp.AgentID
 
 	// 2) 经 HTTP API 下发任务（验证 HTTP 入口 + agent 校验）
-	// H6 认证防御：非 demo 模式下必须携带 X-Tenant-ID 头，否则 400。
+	// 认证防御：非 demo 模式下必须携带 X-Tenant-ID 头，否则 400。
 	createBody := fmt.Sprintf(
 		`{"agentID":%q,"type":"shell","command":"echo hello-opsmesh-e2e"}`,
 		agentID)
@@ -102,7 +102,7 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 		strings.NewReader(createBody))
 	creq.Header.Set("Content-Type", "application/json")
 	creq.Header.Set("X-Tenant-ID", "t1")
-	creq.Header.Set("X-User-Roles", "admin") // task 96：requireProd 网关注入路径放行（cache key 为短名）
+	creq.Header.Set("X-User-Roles", "admin") // ：requireProd 网关注入路径放行（cache key 为短名）
 	cresp, err := http.DefaultClient.Do(creq)
 	if err != nil {
 		t.Fatalf("create task: %v", err)
@@ -156,7 +156,7 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 	greq, _ := http.NewRequest(http.MethodGet,
 		fmt.Sprintf("http://127.0.0.1:%d/api/v1/tasks", httpPort), nil)
 	greq.Header.Set("X-Tenant-ID", "t1")
-	greq.Header.Set("X-User-Roles", "admin") // task 96：requireProd 网关注入路径放行
+	greq.Header.Set("X-User-Roles", "admin") // ：requireProd 网关注入路径放行
 	gresp, err := http.DefaultClient.Do(greq)
 	if err != nil {
 		t.Fatalf("list tasks: %v", err)

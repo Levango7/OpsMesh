@@ -1,8 +1,8 @@
 // Package metrics 提供零依赖的可观测指标（计数器/直方图/仪表盘），
-// 以 Prometheus 文本格式暴露于控制面 metrics 端口（P2-1）。
+// 以 Prometheus 文本格式暴露于控制面 metrics 端口。
 // 刻意不引入 prometheus 客户端，避免 go.sum 负担（沙箱无 Go，默认构建须干净）。
 //
-// P1-C3 扩充：
+// 扩充：
 //   - HTTP 请求延迟直方图（opsmesh_http_request_duration_seconds_bucket/sum/count）
 //   - HTTP 请求计数器（opsmesh_http_requests_total）
 //   - Go runtime 指标（go_goroutines / go_memstats_* / go_gc_duration_seconds / process_start_time_seconds）
@@ -50,7 +50,7 @@ type M struct {
 	durSum float64
 	durMax float64
 
-	// P1-C3 HTTP 指标。
+	// HTTP 指标。
 	// httpReqs: (method|path|status) -> count；httpHist: 同 key -> 直方图统计。
 	// key 形如 "GET|/api/v1/devices|200"，避免高基数（路径已归一化）。
 	httpReqs map[string]uint64
@@ -103,7 +103,7 @@ func httpKey(method, path, status string) string {
 	return method + "|" + path + "|" + status
 }
 
-// IncHTTPRequest 累加 HTTP 请求计数（P1-C3）。
+// IncHTTPRequest 累加 HTTP 请求计数。
 // method/path/status 由中间件归一化后传入（路径已替换数字 ID 为 :id）。
 func (m *M) IncHTTPRequest(method, path, status string) {
 	m.mu.Lock()
@@ -111,7 +111,7 @@ func (m *M) IncHTTPRequest(method, path, status string) {
 	m.httpReqs[httpKey(method, path, status)]++
 }
 
-// ObserveHTTPRequestDuration 记录一次 HTTP 请求耗时（秒），更新直方图桶（P1-C3）。
+// ObserveHTTPRequestDuration 记录一次 HTTP 请求耗时（秒），更新直方图桶。
 // 桶边界与 prometheus.DefBuckets 一致；耗时 > 最大桶上界落入 +Inf 桶。
 func (m *M) ObserveHTTPRequestDuration(method, path, status string, seconds float64) {
 	m.mu.Lock()
@@ -174,7 +174,7 @@ func (m *M) Render() string {
 	return string(b)
 }
 
-// appendHTTPMetrics 输出 HTTP 请求计数器与延迟直方图（P1-C3）。
+// appendHTTPMetrics 输出 HTTP 请求计数器与延迟直方图。
 // 调用方已持锁，无需再锁。
 func (m *M) appendHTTPMetrics(b []byte) []byte {
 	// 1. HTTP 请求计数器（按 key 排序保证输出稳定，便于测试断言）。
@@ -241,7 +241,7 @@ func formatBucketLabel(le float64) string {
 	return strconv.FormatFloat(le, 'g', -1, 64)
 }
 
-// appendRuntimeMetrics 输出 Go runtime 与 process 指标（P1-C3）。
+// appendRuntimeMetrics 输出 Go runtime 与 process 指标。
 // 等价于 prometheus.NewGoCollector() + NewProcessCollector()，但零依赖：
 // 实时采集 runtime.MemStats + runtime.NumGoroutine + os.Getpid。
 // 调用方已持锁，无需再锁。

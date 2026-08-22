@@ -89,7 +89,7 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid JSON: %v", err)})
 			return
 		}
-		// 强制租户隔离：忽略客户端自报的 tenant_id，以网关注入为准（U-04 等保三级）。
+		// 强制租户隔离：忽略客户端自报的 tenant_id，以网关注入为准（等保三级）。
 		e.TenantID = actx.TenantID
 		if e.Timestamp.IsZero() {
 			e.Timestamp = time.Now()

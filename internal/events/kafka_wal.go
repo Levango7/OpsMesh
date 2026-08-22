@@ -1,6 +1,6 @@
 //go:build kafka
 
-// kafka_wal.go 实现 Kafka 生产者的本地 WAL（Write-Ahead Log）兜底（B-3 审计合规）。
+// kafka_wal.go 实现 Kafka 生产者的本地 WAL（Write-Ahead Log）兜底（审计合规）。
 //
 // 设计动机：审计事件是合规关键数据，原 Publish 同步阻塞无重试，broker 故障时仅 log 后丢弃，
 // 违反合规要求。本 WAL 在 Publish 失败时把事件落盘到 data/kafka-wal/ 目录，

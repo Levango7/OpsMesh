@@ -4,14 +4,14 @@
 // MongoDB/RabbitMQ/Elasticsearch）的部署模板，每个模板支持 docker 容器化与 systemd
 // 裸机两种部署方式，通过：
 //   - GET    /api/v1/middleware-templates          列出所有模板（可选 ?category= 过滤）
-//   - POST   /api/v1/middleware-templates          创建新模板（task 104 CRUD）
+//   - POST   /api/v1/middleware-templates          创建新模板（CRUD）
 //   - GET    /api/v1/middleware-templates/{id}     获取模板详情
-//   - PUT    /api/v1/middleware-templates/{id}     更新模板（task 104 CRUD）
-//   - DELETE /api/v1/middleware-templates/{id}     删除模板（task 104 CRUD）
+//   - PUT    /api/v1/middleware-templates/{id}     更新模板（CRUD）
+//   - DELETE /api/v1/middleware-templates/{id}     删除模板（CRUD）
 //   - POST   /api/v1/middleware-templates/{id}/deploy 在指定 agent 上部署
 //   - GET    /api/v1/middleware-instances          查询已部署实例（从任务历史推导）
 //
-// 设计要点（task 104：模板从内存常量改为 store 持久化，支持在线 CRUD）：
+// 设计要点（模板从内存常量改为 store 持久化，支持在线 CRUD）：
 //   - 预置模板仍以内存常量 middlewareTemplates 维护（版本随代码升级），启动时
 //     seedPresetMiddlewareTemplates 将其幂等写入 store（按 ID 去重，已存在不覆盖）。
 //   - API 从 store 读取模板列表/详情；store 为空时回退到内存常量（向后兼容）。
@@ -504,7 +504,7 @@ func middlewareTemplateByID(id string) *MiddlewareTemplate {
 
 // handleMiddlewareTemplates 处理 /api/v1/middleware-templates：
 //   - GET：列出所有模板（从 store 读取，store 为空回退预置；可选 category/risk 过滤）
-//   - POST：创建新模板（task 104 CRUD，需 middleware:write 权限）
+//   - POST：创建新模板（CRUD，需 middleware:write 权限）
 //
 // 该路由注册在精确路径 /api/v1/middleware-templates（无尾斜杠）。
 func (s *Server) handleMiddlewareTemplates(w http.ResponseWriter, r *http.Request) {
@@ -545,7 +545,7 @@ func (s *Server) handleListMiddlewareTemplatesGet(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleCreateMiddlewareTemplate 处理 POST /api/v1/middleware-templates：创建新中间件模板（task 104 CRUD）。
+// handleCreateMiddlewareTemplate 处理 POST /api/v1/middleware-templates：创建新中间件模板（CRUD）。
 // 请求体即 MiddlewareTemplate JSON；ID 为空时由 store 分配随机 ID。
 // 需 middleware:write 权限；创建后审计 + 事件总线 + SSE 通知。
 func (s *Server) handleCreateMiddlewareTemplate(w http.ResponseWriter, r *http.Request) {
@@ -585,7 +585,7 @@ func (s *Server) handleCreateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	if caller != nil {
 		userID = caller.ID
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: userID, Action: "mw_template_create", Target: st.ID, Detail: sanitizeAuditDetail("name=" + tpl.Name),
 	})
@@ -599,7 +599,7 @@ func (s *Server) handleCreateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusCreated, saved)
 }
 
-// handleUpdateMiddlewareTemplate 处理 PUT /api/v1/middleware-templates/{id}：更新中间件模板（task 104 CRUD）。
+// handleUpdateMiddlewareTemplate 处理 PUT /api/v1/middleware-templates/{id}：更新中间件模板（CRUD）。
 // 需 middleware:write 权限；不存在返回 404。
 func (s *Server) handleUpdateMiddlewareTemplate(w http.ResponseWriter, r *http.Request, id string) {
 	if err := s.verifyFederationRequest(r); err != nil {
@@ -647,7 +647,7 @@ func (s *Server) handleUpdateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	if caller != nil {
 		userID = caller.ID
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: userID, Action: "mw_template_update", Target: id, Detail: sanitizeAuditDetail("name=" + tpl.Name),
 	})
@@ -661,7 +661,7 @@ func (s *Server) handleUpdateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, saved)
 }
 
-// handleDeleteMiddlewareTemplate 处理 DELETE /api/v1/middleware-templates/{id}：删除中间件模板（task 104 CRUD）。
+// handleDeleteMiddlewareTemplate 处理 DELETE /api/v1/middleware-templates/{id}：删除中间件模板（CRUD）。
 // 需 middleware:write 权限；不存在返回 404；删除成功返回 204。
 func (s *Server) handleDeleteMiddlewareTemplate(w http.ResponseWriter, r *http.Request, id string) {
 	actx, ok := s.requireTenantContext(w, r)
@@ -690,7 +690,7 @@ func (s *Server) handleDeleteMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	if caller != nil {
 		userID = caller.ID
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: userID, Action: "mw_template_delete", Target: id, Detail: sanitizeAuditDetail("name=" + existing.Name),
 	})
@@ -817,12 +817,12 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	// shell 元字符校验（task 86）：占位符替换前拒绝含元字符的值，防命令注入。
+	// shell 元字符校验：占位符替换前拒绝含元字符的值，防命令注入。
 	if err := validateShellSafeValues(body.Params); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	// 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
 	targetTenant := actx.TenantID
 	agent := s.lookupAgent(body.AgentID)
 	if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
@@ -838,7 +838,7 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		Command:    command,
 		MaxRetries: s.cfg.TaskMaxRetries,
 	})
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: targetTenant,
 		UserID:   actx.UserID,
@@ -856,9 +856,9 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	if s.metrics != nil {
 		s.metrics.SetQueueDepth(s.store.PendingDepth())
 	}
-	// M3-2B SSE：通知前端新部署任务已创建。
-	// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
-	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	// SSE：通知前端新部署任务已创建。
+	// 租户隔离：携带 targetTenant，仅同租户订阅者收到。
+	// 携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
 	s.publishEvent(r.Context(), "task_status", targetTenant, map[string]string{
 		"taskID":  task.TaskID,
 		"status":  task.Status,
@@ -897,8 +897,8 @@ func (s *Server) handleMiddlewareInstances(w http.ResponseWriter, r *http.Reques
 
 // handleMiddlewareTemplateDetail 统一分派 /api/v1/middleware-templates/{id}... 子路径：
 //   - GET    /api/v1/middleware-templates/{id}：模板详情
-//   - PUT    /api/v1/middleware-templates/{id}：更新模板（task 104 CRUD）
-//   - DELETE /api/v1/middleware-templates/{id}：删除模板（task 104 CRUD）
+//   - PUT    /api/v1/middleware-templates/{id}：更新模板（CRUD）
+//   - DELETE /api/v1/middleware-templates/{id}：删除模板（CRUD）
 //   - POST   /api/v1/middleware-templates/{id}/deploy：在指定 agent 上部署
 //
 // 注意：/api/v1/middleware-templates（无尾斜杠）由 handleMiddlewareTemplates 处理；
@@ -1048,7 +1048,7 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 			body.Params[p.Name] = p.Default
 		}
 	}
-	// 类型语义校验 + shell 元字符校验（task 86）：与 deploy 同规则，防卸载路径命令注入。
+	// 类型语义校验 + shell 元字符校验：与 deploy 同规则，防卸载路径命令注入。
 	if err := validateMiddlewareParams(tpl.Params, body.Params); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -1057,7 +1057,7 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	// 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
 	targetTenant := actx.TenantID
 	agent := s.lookupAgent(body.AgentID)
 	if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
@@ -1073,7 +1073,7 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		Command:    command,
 		MaxRetries: s.cfg.TaskMaxRetries,
 	})
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: targetTenant,
 		UserID:   actx.UserID,
@@ -1091,9 +1091,9 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 	if s.metrics != nil {
 		s.metrics.SetQueueDepth(s.store.PendingDepth())
 	}
-	// M3-2B SSE：通知前端卸载任务已创建。
-	// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
-	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	// SSE：通知前端卸载任务已创建。
+	// 租户隔离：携带 targetTenant，仅同租户订阅者收到。
+	// 携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
 	s.publishEvent(r.Context(), "task_status", targetTenant, map[string]string{
 		"taskID":  task.TaskID,
 		"status":  task.Status,
@@ -1137,7 +1137,7 @@ func (s *Server) handleMiddlewareInstanceRouting(w http.ResponseWriter, r *http.
 }
 
 // ============================================================================
-// task 104：中间件模板 store 持久化适配（转换 + seed + 查询回退）
+// 中间件模板 store 持久化适配（转换 + seed + 查询回退）
 // ============================================================================
 
 // middlewareTemplateToStore 将 controlplane.MiddlewareTemplate 转换为 store.MiddlewareTemplate。

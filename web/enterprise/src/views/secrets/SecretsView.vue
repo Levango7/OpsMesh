@@ -110,7 +110,7 @@
 </template>
 
 <script setup>
-// 密钥管理页面（task 267）：
+// 密钥管理页面：
 //   - 提供者状态卡片：显示当前 provider 类型、连接状态、Vault 地址、Mount 路径、密钥文件路径
 //   - Vault 配置表单：地址 / Token（密码框）/ Mount，"测试连接"按钮
 //   - 密钥列表：表格显示 key 名称与来源 provider（不显示值，安全考虑）

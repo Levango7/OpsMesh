@@ -119,10 +119,10 @@ rclone copy "/backup/${MYSQL_DATABASE}-${TS}.sql.gz" \
 
 | 监控项 | 方法 | 告警阈值 |
 |---|---|---|
-| Job 成功 | `kube_job_status_succeeded{job_name=~"opsmesh-mysql-backup.*"}` | 最近 25 小时内无成功 → P1 |
-| Job 失败 | `kube_job_status_failed` | 单次 Failed → P2；连续 2 次 Failed → P1 |
+| Job 成功 | `kube_job_status_succeeded{job_name=~"opsmesh-mysql-backup.*"}` | 最近 25 小时内无成功 → |
+| Job 失败 | `kube_job_status_failed` | 单次 Failed → ；连续 2 次 Failed → |
 | 备份体积 | PVC 已用容量 `kubelet_volume_stats_used_bytes` | 较昨日下降 >50% → P2（疑似空库/中断） |
-| 备份龄期 | 最近成功 Job 的 `status.completionTime` | 距今 >26h → P1 |
+| 备份龄期 | 最近成功 Job 的 `status.completionTime` | 距今 >26h → |
 
 Prometheus 告警规则示例：
 

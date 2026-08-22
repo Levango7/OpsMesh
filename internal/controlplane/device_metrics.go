@@ -1,7 +1,7 @@
 // device_metrics.go 处理 GET /api/v1/devices/{id}/metrics：返回设备监控指标。
 //
 // 监控指标由 agent 端采集（internal/agent/metrics_collect.go），经心跳上报到控制面，
-// 控制面环形缓冲保留最近 2h 历史快照（store.metricsRing，task 223）。
+// 控制面环形缓冲保留最近 2h 历史快照（store.metricsRing）。
 //
 // 查询模式：
 //   - 不带 range 参数：返回最新值（向后兼容现有行为）。

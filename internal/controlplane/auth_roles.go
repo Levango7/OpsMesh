@@ -73,7 +73,7 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "role name already exists"})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "role_create", Target: role.ID, Detail: sanitizeAuditDetail("name=" + role.Name),
 	})
@@ -129,7 +129,7 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request, id str
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "role not found"})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "role_update", Target: id, Detail: "updated via HTTP",
 	})
@@ -150,7 +150,7 @@ func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request, id str
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "role not found"})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "role_delete", Target: id, Detail: "deleted via HTTP",
 	})

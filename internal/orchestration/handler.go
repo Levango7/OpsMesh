@@ -325,9 +325,9 @@ func (h *Handler) expandNodes(ctx context.Context, wf *WorkflowDef, nodes []Work
 				Path:       n.Path,
 				DependsOn:  deps,
 				ParentID:   parent,
-				Timeout:    n.Timeout,    // P2-B2 节点级超时（秒，0=不超时，agent 端覆盖全局 taskTimeout）
-				MaxRetries: n.RetryCount, // P2-B2 节点级重试上限（失败后由 store SubmitResult 重试）
-				RetryDelay: n.RetryDelay, // P2-B2 重试间隔（秒，0=立即重试）
+				Timeout:    n.Timeout,    // 节点级超时（秒，0=不超时，agent 端覆盖全局 taskTimeout）
+				MaxRetries: n.RetryCount, // 节点级重试上限（失败后由 store SubmitResult 重试）
+				RetryDelay: n.RetryDelay, // 重试间隔（秒，0=立即重试）
 			})
 		case NodeWorkflow:
 			if condSkip[n.ID] {

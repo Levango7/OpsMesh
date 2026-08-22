@@ -955,7 +955,7 @@ func (x *PollCancelsResp) GetCancelledTaskIds() []string {
 	return nil
 }
 
-// LogLine agent 采集的单行日志（task 247 agent 日志上报 gRPC API）。
+// LogLine agent 采集的单行日志（agent 日志上报 gRPC API）。
 // 字段语义对齐 internal/proto.LogLine（JSON 友好结构体），由 grpcx.LogLineToProto/Legacy 互转。
 type LogLine struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1017,7 +1017,7 @@ func (x *LogLine) GetMessage() string {
 	return ""
 }
 
-// LogReport agent 经 gRPC ReportLogs 上报到控制面的日志批次（task 247）。
+// LogReport agent 经 gRPC ReportLogs 上报到控制面的日志批次。
 // 字段语义对齐 internal/proto.LogReport，由 grpcx.LogReportToProto/Legacy 互转。
 // TenantID 由控制面按 agent 归属回填（agent 不可伪造），agent 端可留空。
 type LogReport struct {
@@ -1104,7 +1104,7 @@ func (x *LogReport) GetCollectedAt() *timestamppb.Timestamp {
 	return nil
 }
 
-// ReportLogsReq task 247 agent 日志上报请求：携带一个 LogReport 批次。
+// ReportLogsReq agent 日志上报请求：携带一个 LogReport 批次。
 // 控制面校验 agent 身份（HMAC 签名）后按 agent 归属租户落库（行级隔离）。
 type ReportLogsReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`

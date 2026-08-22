@@ -2,7 +2,7 @@ package agent
 
 import "testing"
 
-// TestCapabilityNote B4：显式能力矩阵——Linux 全能力，非 Linux 仅 shell 且明示 service/rlimit 不可用。
+// TestCapabilityNote ：显式能力矩阵——Linux 全能力，非 Linux 仅 shell 且明示 service/rlimit 不可用。
 func TestCapabilityNote(t *testing.T) {
 	lin := capabilityNote("linux")
 	if !contains(lin, "全能力") || !contains(lin, "systemctl") {

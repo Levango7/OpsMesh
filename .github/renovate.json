@@ -10,7 +10,7 @@
       "matchDatasources": ["docker"],
       "matchPackageNames": ["golang", "gcr.io/distroless/static-debian12", "gcr.io/distroless/static-debian12:nonroot", "debian"],
       "pinDigests": true,
-      "description": "Auto-pin base image digests for supply-chain security (P2-2)"
+      "description": "Auto-pin base image digests for supply-chain security ()"
     }
   ],
   "labels": ["security", "supply-chain", "digest-pinning"],

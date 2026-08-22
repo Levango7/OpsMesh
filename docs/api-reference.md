@@ -93,7 +93,7 @@
 
 ### GET /healthz
 
-深度健康检查（K8s liveness 探针，P1-C2 增强）。含 Store 连接深度检查，2 秒超时保护。
+深度健康检查（K8s liveness 探针，增强）。含 Store 连接深度检查，2 秒超时保护。
 
 - **响应**：
   - 正常：`200 OK`，`Content-Type: application/json`
@@ -116,7 +116,7 @@
 
 ### GET /readyz
 
-就绪检查（K8s readiness 探针，P1-C2 新增）。与 liveness 的区别：失败时从 Service endpoints 摘除但不重启容器。
+就绪检查（K8s readiness 探针，新增）。与 liveness 的区别：失败时从 Service endpoints 摘除但不重启容器。
 就绪条件：Store 连接可用 + 本实例持有 leader 租约（避免非 leader 副本接写流量造成脑裂/抖动）。2 秒超时保护。
 
 - **响应**：
@@ -246,7 +246,7 @@ Prometheus 文本格式指标。**监听在独立端口 9091**（非主 8080 端
 
 ### POST /api/v1/auth/change-password
 
-修改当前用户密码（安全债 85：预置弱口令强制改密）。
+修改当前用户密码（安全债：预置弱口令强制改密）。
 
 - **请求体**：
 
@@ -403,7 +403,7 @@ Prometheus 文本格式指标。**监听在独立端口 9091**（非主 8080 端
 
 ### POST /api/v1/devices/{id}/provision
 
-**B1 纳管**：签发一次性 install token（15 分钟有效），返回 bootstrap 安装命令。
+**纳管**：签发一次性 install token（15 分钟有效），返回 bootstrap 安装命令。
 
 - **响应**：
 
@@ -831,7 +831,7 @@ M5 定时任务管理：基于 `internal/cron.Manager`，对已有任务附加 c
 
 ### GET /api/v1/alert-rules
 
-告警规则列表（B1 修复 9）。
+告警规则列表（修复 9）。
 
 ### POST /api/v1/alert-rules
 
@@ -1149,7 +1149,7 @@ M3 部署中心：计划 + fan-out 执行 + Reconcile + Rollback。
 
 ### GET /api/v1/deploys/federation
 
-列出联邦发布计划（task 280 多集群联邦发布，复用 deployMux）。
+列出联邦发布计划（多集群联邦发布，复用 deployMux）。
 
 - **认证**：需 `deploy:read` 权限
 - **查询参数**：`status`（planning/running/success/failed/rolled_back）
@@ -2102,7 +2102,7 @@ M6 集成：网络拓扑发现 + 网络诊断工具 + 批量连通性检测。�
 
 ## 密钥管理 API
 
-P2 安全增强：密钥 provider（env / file / vault / chain）配置概览 + 连接测试 + key 枚举。所有端点不返回 Vault token 与密钥值（仅 key 名称 + 来源 provider）。
+安全增强：密钥 provider（env / file / vault / chain）配置概览 + 连接测试 + key 枚举。所有端点不返回 Vault token 与密钥值（仅 key 名称 + 来源 provider）。
 
 ### GET /api/v1/secrets/status
 
@@ -2177,7 +2177,7 @@ P2 安全增强：密钥 provider（env / file / vault / chain）配置概览 + 
 
 ## 租户配额 API
 
-P2-B5 多租户资源配额：限制每租户的设备数 / 任务数 / 告警数上限，超额拒绝（创建路径返回 `429` 或 `403`）。配额为 0 表示不限；未设置配额的租户使用默认配额（来自 `--quota-max-devices` / `--quota-max-tasks` / `--quota-max-alerts`）。
+多租户资源配额：限制每租户的设备数 / 任务数 / 告警数上限，超额拒绝（创建路径返回 `429` 或 `403`）。配额为 0 表示不限；未设置配额的租户使用默认配额（来自 `--quota-max-devices` / `--quota-max-tasks` / `--quota-max-alerts`）。
 
 ### GET /api/v1/quotas
 
@@ -2244,7 +2244,7 @@ P2-B5 多租户资源配额：限制每租户的设备数 / 任务数 / 告警�
 
 ### GET /api/v1/audits
 
-审计事件检索（P0-4，100% 留痕）。
+审计事件检索（100% 留痕）。
 
 - **查询参数**：
   - `tenant` — 租户过滤
@@ -2321,7 +2321,7 @@ M6 日志检索：双后端（Memory/SQL/Loki/ES）+ offset 分页。
 
 ## 联邦 API
 
-M4-4D 控制面联邦：仅当 `--federation-peers` 非空时注册。联邦通道硬化为 mTLS + HMAC 签名。
+控制面联邦：仅当 `--federation-peers` 非空时注册。联邦通道硬化为 mTLS + HMAC 签名。
 
 ### GET /api/v1/federation/peers
 
@@ -2362,7 +2362,7 @@ M4-4D 控制面联邦：仅当 `--federation-peers` 非空时注册。联邦通�
 
 ### GET /api/v1/events/stream
 
-M3-2B SSE 实时推送（替代 5s 轮询）。推送设备状态变更、任务状态变更、告警产出等事件。
+SSE 实时推送（替代 5s 轮询）。推送设备状态变更、任务状态变更、告警产出等事件。
 
 - **响应**：`Content-Type: text/event-stream`，长连接
 
@@ -2414,7 +2414,7 @@ gRPC 服务监听 9090 端口（JSON codec），agent 通过此通道注册/心�
 | `ReportResult` | `{agent_id, task_id, status, exit_code, stdout, stderr}` | `{accepted}` | 上报任务执行结果（成功/失败/重试/死信） |
 | `CancelTask` | `{agent_id, task_id}` | `{cancelled}` | 取消指定任务（服务端按租户隔离） |
 | `PollCancels` | `{agent_id}` | `{task_ids: []}` | agent 轮询本机被取消的任务 ID（每 2s） |
-| `ReportLogs` | `{agent_id, log_name, lines[]}` | `{accepted}` | agent 上报任务执行日志（task 247 日志采集，含 timestamp/level/message） |
+| `ReportLogs` | `{agent_id, log_name, lines[]}` | `{accepted}` | agent 上报任务执行日志（日志采集，含 timestamp/level/message） |
 
 ### gRPC 安全
 

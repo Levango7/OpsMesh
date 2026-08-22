@@ -1,4 +1,4 @@
-// multi_schema_test.go 测试 M4-4C 多租户 schema 隔离。
+// multi_schema_test.go 测试 多租户 schema 隔离。
 //
 // 测试策略：
 //   - 纯逻辑测试（无需 MySQL）：SchemaNamer 的 SQL 注入防护、dsnForSchema 的 DSN 改写；

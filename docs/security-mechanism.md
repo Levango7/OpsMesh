@@ -1,9 +1,9 @@
 # OpsMesh 网络安全机制文档
 
-> 文档版本：v1.0  
-> 最后更新：2026-08-17  
-> 适用范围：OpsMesh 控制面（controlplane）+ Agent + 联邦通道  
-> 编写依据：源码审计 + 等保三级要求 + OWASP Top 10 防护对照  
+> 文档版本：v1.0
+> 最后更新：2026-08-17
+> 适用范围：OpsMesh 控制面（controlplane）+ Agent + 联邦通道
+> 编写依据：源码审计 + 等保三级要求 + OWASP Top 10 防护对照
 > 配套文档：[security-issues.md](./security-issues.md)（已知漏洞与处置）、[deployment-guide.md](./deployment-guide.md)
 
 ---
@@ -23,7 +23,7 @@ OpsMesh 采用"网关注入 + 内核二次校验"的纵深防御模型，并内�
 
 - **密钥强制非空**：`len(secret) == 0` 返回 error，防配置遗漏导致任何人可伪造 token。
 - **默认过期 24h**：`ExpiresAt.IsZero()` 时填充 `now + 24h`，避免永不过期 token 泄露后无法失效。
-- **jti 自动生成**：`crypto/rand` 生成 16 字节 hex（32 字符），用于登出吊销（P1-G4）。
+- **jti 自动生成**：`crypto/rand` 生成 16 字节 hex（32 字符），用于登出吊销。
 - **iat/nbf 自动填充**：签发时刻，防回旋攻击。
 - **算法固定 HS256**：`jwt.SigningMethodHS256`，防 `alg=none` 降级攻击。
 
@@ -96,7 +96,7 @@ func hashPassword(password string) (string, error) {
 
 - `HttpOnly: true`：防 XSS 读取。
 - `SameSite: http.SameSiteLaxMode`：防 CSRF 跨站携带。
-- `Secure: s.cookieSecure()`：HTTPS 部署才置 Secure（task 112）。
+- `Secure: s.cookieSecure()`：HTTPS 部署才置 Secure。
 - `Path: "/"`：同源由浏览器自动携带。
 
 `cookieSecure`（`auth.go:79`）优先级：`cfg.CookieSecure` 显式 true → true；否则回退 `TLSCert` 非空（HTTPS 直连自动启用）。
@@ -106,14 +106,14 @@ func hashPassword(password string) (string, error) {
 `createRefreshToken`（`auth.go:142`）：
 
 - `crypto/rand` 生成 32 字节十六进制 token。
-- **明文不落库**：库内只存 SHA-256 摘要（`hashRefreshToken`，`auth.go:124`），DB 泄露不等于活体 refresh token 泄露（P1-F7）。
-- 持久化 `TokenHash + UserID + TenantID + DeviceFP + ExpiresAt`，多副本共享同一 MySQL 时跨副本续期一致（task 112）。
+- **明文不落库**：库内只存 SHA-256 摘要（`hashRefreshToken`，`auth.go:124`），DB 泄露不等于活体 refresh token 泄露。
+- 持久化 `TokenHash + UserID + TenantID + DeviceFP + ExpiresAt`，多副本共享同一 MySQL 时跨副本续期一致。
 
 `consumeRefreshToken`（`auth.go:173`）：
 
-- **原子消费**：`store.ConsumeRefreshToken` 读取+删除在单次互斥操作内完成，防并发双消费（P1-G4）。
+- **原子消费**：`store.ConsumeRefreshToken` 读取+删除在单次互斥操作内完成，防并发双消费。
 - **过期校验**：`time.Now().After(rt.ExpiresAt)` 拒绝过期 token。
-- **C-4 DeviceFP deadline**：超过 `cfg.DeviceFPDeadline` 之后签发的 refresh token 必须绑定 DeviceFP（非空），deadline 前保持向后兼容。
+- **DeviceFP deadline**：超过 `cfg.DeviceFPDeadline` 之后签发的 refresh token 必须绑定 DeviceFP（非空），deadline 前保持向后兼容。
 - **设备绑定校验**：存储的 DeviceFP 非空且请求携带 DeviceFP 时，两者必须匹配，防 token 跨设备重放。
 
 ### 1.7 JWT 吊销
@@ -129,7 +129,7 @@ func hashPassword(password string) (string, error) {
 
 `userFromToken`（`auth.go:646`）校验时检查 `sessionStore.IsBlacklisted(claims.JTI)`，命中则拒绝（`"token has been revoked"`）。
 
-**B-6 多副本共享**：黑名单经 `SessionStore` 接口持久化，InProcess 为进程内 map（单副本/demo），Redis 后端时多副本 HA 共享，登出后所有副本立即拒绝该 token。
+**多副本共享**：黑名单经 `SessionStore` 接口持久化，InProcess 为进程内 map（单副本/demo），Redis 后端时多副本 HA 共享，登出后所有副本立即拒绝该 token。
 
 #### 1.7.2 非活跃用户即时吊销
 
@@ -219,7 +219,7 @@ if u.Status != "active" {
 | operator | role-operator | device/task/alert/cmdb/deploy/workflow/log/audit/os/middleware/provision 的 read + write/execute，**不含** k8s:write/delete、user/role/federation 的写权限 |
 | viewer | role-viewer | 全部资源的 read 权限 |
 
-`seedRBAC`（`sql_rbac.go:286`）幂等预置权限/角色/用户，启动时自动执行。预置用户 admin/operator/viewer 均标记 `must_change_password=1`，首登强制改密（安全债 85）。
+`seedRBAC`（`sql_rbac.go:286`）幂等预置权限/角色/用户，启动时自动执行。预置用户 admin/operator/viewer 均标记 `must_change_password=1`，首登强制改密（安全债）。
 
 #### 2.1.3 权限展开
 
@@ -264,13 +264,13 @@ if body.Status != "" {
 }
 ```
 
-仅 `user:write` 不能激活/禁用账号，须 `user:approve`（与 P1-7 审批模型一致），防低权限用户自行把 Status 置 active/rejected 绕过审批流。
+仅 `user:write` 不能激活/禁用账号，须 `user:approve`（与 审批模型一致），防低权限用户自行把 Status 置 active/rejected 绕过审批流。
 
 ### 2.3 租户隔离
 
 #### 2.3.1 requireTenantContext
 
-`requireTenantContext`（`internal/controlplane/http_infra.go:38`）行为矩阵（B1 修复 1+2）：
+`requireTenantContext`（`internal/controlplane/http_infra.go:38`）行为矩阵（修复 1+2）：
 
 | X-Tenant-ID 头 | Bearer token tenant_id | 行为 |
 |----------------|----------------------|------|
@@ -339,7 +339,7 @@ func (s *Server) isAdmin(actx authctx.Context) bool {
 - `HTTPServerTLSConfig`（`tlsutil.go:104`）：联邦入站 HTTP 服务端。
 - 热重载模式（`server_netsec.go:50`）：`tlsCfg.MinVersion = tls.VersionTLS12`。
 
-**H3 加固**：禁用 SSLv3/TLSv1.0/TLSv1.1 等弱协议版本；不显式设置 CipherSuites，保留 Go 默认强套件（Go 1.17+ 默认已排除不安全套件）。
+**加固**：禁用 SSLv3/TLSv1.0/TLSv1.1 等弱协议版本；不显式设置 CipherSuites，保留 Go 默认强套件（Go 1.17+ 默认已排除不安全套件）。
 
 ### 3.2 mTLS gRPC
 
@@ -387,7 +387,7 @@ img-src 'self' data:;
 connect-src 'self'
 ```
 
-**P1-G5 收紧**：
+**收紧**：
 
 - `script-src` 已移除 `'unsafe-inline'`，仅保留 `'self' + 'nonce-{nonce}'`（个人版前端 v0.6.1 收敛为引导页，企业版 Vue3+Vite 编译产物 `<script>` 均为外部 src 引用）。
 - `style-src` 保留 `'unsafe-inline'`：企业版 Vue 组件使用 `:style` 绑定（运行时注入 inline style），style 的 inline 安全风险显著低于 script，保留是可接受的安全取舍。
@@ -432,7 +432,7 @@ qerr := s.db.QueryRowContext(ctx, `SELECT secret FROM agents WHERE agent_id=?`, 
 
 #### 4.2.1 控制面侧校验
 
-`validateCommand`（`server_tasks.go:42`）控制面侧命令内容校验（P0 安全加固纵深防御）：
+`validateCommand`（`server_tasks.go:42`）控制面侧命令内容校验（安全加固纵深防御）：
 
 - 非空校验。
 - 长度 ≤ `maxCommandLen = 4096`，防超长命令撑爆存储/日志或携带二进制载荷。
@@ -445,7 +445,7 @@ qerr := s.db.QueryRowContext(ctx, `SELECT secret FROM agents WHERE agent_id=?`, 
 
 - 白名单为空时放行所有命令（向后兼容，demo/受信内网环境）。
 - 白名单非空时，取命令第一个 token 的 basename，检查是否匹配白名单条目。
-- **匹配规则**（P0 安全加固修正，防前缀过宽绕过）：
+- **匹配规则**（安全加固修正，防前缀过宽绕过）：
   - 条目以 `*` 结尾（如 `system*`）→ 前缀匹配。
   - 条目不含 `*` → 精确匹配（`ls` 仅匹配 `ls`，不匹配 `lsusb`）。
 - **网络诊断命令内置白名单**：`isNetworkDiagnoseCommand`（`agent.go:1071`）放行 ping/traceroute/tracert/nslookup/dig/host/curl/wget/nc/netcat/powershell，即使 `--agent-shell-whitelist` 未显式包含。
@@ -518,7 +518,7 @@ Access token 与 refresh token 均设置 `HttpOnly: true`，防 XSS 读取 token
 
 ### 4.5 请求体大小限制
 
-`maxBodyBytes = 1 << 20`（1 MiB，`http_infra.go:13`），`decodeJSONBody`（`http_infra.go:18`）使用 `http.MaxBytesReader` 约束请求体大小，防超大 body 直接 413，避免 JSON 解析拖垮内存（P1-3 防 DoS）。
+`maxBodyBytes = 1 << 20`（1 MiB，`http_infra.go:13`），`decodeJSONBody`（`http_infra.go:18`）使用 `http.MaxBytesReader` 约束请求体大小，防超大 body 直接 413，避免 JSON 解析拖垮内存（防 DoS）。
 
 联邦验签同样限读 `maxBodyBytes+1` 防超大请求体内存攻击（`server_netsec.go:242`）。
 
@@ -537,7 +537,7 @@ Access token 与 refresh token 均设置 `HttpOnly: true`，防 XSS 读取 token
 | 172.16.0.0/12 | IPv4 私网 B | 内网地址 |
 | 192.168.0.0/16 | IPv4 私网 C | 内网地址 |
 | 169.254.0.0/16 | 链路本地 + 云元数据 | 含 169.254.169.254 云元数据端点 |
-| 0.0.0.0/8 | 本网/未指定 | task 248 增强，防 0.x.x.x 绕过 SSRF 校验访问本机网络栈 |
+| 0.0.0.0/8 | 本网/未指定 | 增强，防 0.x.x.x 绕过 SSRF 校验访问本机网络栈 |
 | ::1 | IPv6 loopback | IPv6 环回 |
 | fe80::/10 | IPv6 link-local | IPv6 链路本地 |
 | fc00::/7 | IPv6 ULA | IPv6 私网 |
@@ -662,7 +662,7 @@ echo -n "$TOKEN" > "$DATA_DIR/install.token"
 chmod 600 "$DATA_DIR/install.token"
 ```
 
-**P0-G2 安全加固**：systemd `ExecStart` 不再包含 `--install-token` 参数（即使指向文件路径也移除），避免 ps 透露 token 文件位置；agent 启动时通过 `--data-dir` 自动查找 `install.token` 文件。
+**安全加固**：systemd `ExecStart` 不再包含 `--install-token` 参数（即使指向文件路径也移除），避免 ps 透露 token 文件位置；agent 启动时通过 `--data-dir` 自动查找 `install.token` 文件。
 
 `agent.go:207` agent 端写入 agent ID 文件同样使用 `0o600` 权限。
 
@@ -742,7 +742,7 @@ CREATE INDEX idx_audit_trace ON audit_log (trace_id);
 
 ### 7.5 检索
 
-`QueryAudits`（`sql_audits.go:84`）按租户/动作/时间窗过滤审计事件（P0-4 审计可查；U-04 等保三级留痕必须可检索）：
+`QueryAudits`（`sql_audits.go:84`）按租户/动作/时间窗过滤审计事件（审计可查；等保三级留痕必须可检索）：
 
 - `tenant`/`action` 为空表示不限。
 - `since`/`until` 为零值表示不限。
@@ -820,7 +820,7 @@ CREATE INDEX idx_audit_trace ON audit_log (trace_id);
 2. **密钥检查**：`cfg.FederationSecret == ""` 返回 error（已由 `Validate` 强制非空）。
 3. **签名头提取**：`X-Federation-Ts`（时间戳）+ `X-Federation-Sig`（签名）。
 4. **时间戳校验**：`federationSigMaxSkew = 5 * 60`（±5min），防重放。
-5. **请求体纳入签名**：`sha256(body)` 摘要防中间人篡改转发任务体（task 83）。
+5. **请求体纳入签名**：`sha256(body)` 摘要防中间人篡改转发任务体。
 6. **签名计算**：`HMAC-SHA256(secret, method|path|ts|tenant|user|roles|sha256(body))`。
 7. **常量时间比对**：`hmac.Equal` 防时序侧信道。
 
@@ -864,7 +864,7 @@ if r.Header.Get("X-Federation-Forwarded") == "1" {
 
 - peer 地址必须是合法 URL（含 scheme + host），fail-fast。
 - `--federation-port>0` 但 `--federation-tls-cert/key` 为空 → 拒绝（独立 mTLS 监听需要服务端证书）。
-- 启用联邦但缺失共享密钥 → 拒绝（task 97 强校验，防跨不可信网段伪造租户身份头）。
+- 启用联邦但缺失共享密钥 → 拒绝（强校验，防跨不可信网段伪造租户身份头）。
 
 ---
 
@@ -886,7 +886,7 @@ dom.TenantID = tokTenant // token 权威：纳管设备归属以 token 内租户
 
 - `ConsumeToken` 一次性消费，校验通过即标记 consumed，防重放。
 - token 权威：纳管设备归属以 token 内租户为准，agent 不可伪造所属租户。
-- 无 token 时 `OnboardDeviceID` 显式清空（P0-F1），agent 自报该字段一律不信任。
+- 无 token 时 `OnboardDeviceID` 显式清空，agent 自报该字段一律不信任。
 
 ### 10.2 SSH known_hosts 强制
 
@@ -926,7 +926,7 @@ dom.TenantID = tokTenant // token 权威：纳管设备归属以 token 内租户
 
 ### 10.7 输出截断
 
-`maxOutputBytes = 10 * 1024 * 1024`（10MB，`agent.go:900`），`limitedBuffer`（`agent.go:904`）限制单个任务 stdout/stderr 内存占用，超过即截断并追加提示 `...[output truncated at 10MB]...`，避免 cat 大文件耗尽 agent 内存（task 78）。
+`maxOutputBytes = 10 * 1024 * 1024`（10MB，`agent.go:900`），`limitedBuffer`（`agent.go:904`）限制单个任务 stdout/stderr 内存占用，超过即截断并追加提示 `...[output truncated at 10MB]...`，避免 cat 大文件耗尽 agent 内存。
 
 ### 10.8 gRPC HMAC 签名
 
@@ -958,7 +958,7 @@ dom.TenantID = tokTenant // token 权威：纳管设备归属以 token 内租户
 - 与 `cfg.ProvisionSecret` 做 `hmac.Equal` 常量时间比对，防时序侧信道。
 - 无 token 或 token 不匹配 → 401 Unauthorized。
 
-P0-G1 安全加固：原端点完全开放，任何人可下载 agent 二进制与安装脚本，存在供应链投毒风险。
+安全加固：原端点完全开放，任何人可下载 agent 二进制与安装脚本，存在供应链投毒风险。
 
 ---
 

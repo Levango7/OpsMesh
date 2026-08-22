@@ -1,5 +1,5 @@
 // Package grpcx 提供「自定义 JSON codec + 手写 grpc.ServiceDesc」的真实 gRPC 传输层。
-// U-05: 在 9090 上承载 agent↔控制面 的注册/心跳/拉任务/上报结果四条通道，
+// 在 9090 上承载 agent↔控制面 的注册/心跳/拉任务/上报结果四条通道，
 // 不依赖 protobuf 代码生成（无 protoc），仅依赖 google.golang.org/grpc 稳定 API。
 package grpcx
 

@@ -50,7 +50,7 @@ func TestMapper_NilSafe(t *testing.T) {
 	}
 }
 
-// TestMapper_AgentFromProto_StripsOnboardDeviceID 安全回归（P0-F1）：
+// TestMapper_AgentFromProto_StripsOnboardDeviceID 安全回归：
 // agent 在线上自报的 OnboardDeviceID 绝不进入 domain（跨租户设备劫持防护），
 // 该字段只能由 gRPC Register 经 ConsumeToken 校验后回填。
 func TestMapper_AgentFromProto_StripsOnboardDeviceID(t *testing.T) {

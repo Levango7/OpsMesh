@@ -1,4 +1,4 @@
-// memory_middleware_template.go — 中间件部署模板的 memory 持久化（task 100）。
+// memory_middleware_template.go — 中间件部署模板的 memory 持久化。
 package store
 
 import (
@@ -91,14 +91,14 @@ func (m *MemoryStore) DeleteMiddlewareTemplate(id string) bool {
 }
 
 // ============================================================================
-// task 223 设备监控指标环形缓冲：metricsRing
+// 设备监控指标环形缓冲：metricsRing
 // ============================================================================
 
 // metricsRingDefaultCap 环形缓冲默认容量：2h * 120 samples/h（30s 采样间隔）= 240 条。
 // 每条 DeviceMetrics 约 1KB，总 ~240KB/设备。
 const metricsRingDefaultCap = 240
 
-// metricsRing 设备监控指标环形缓冲：保留最近 N 条历史快照（task 223）。
+// metricsRing 设备监控指标环形缓冲：保留最近 N 条历史快照。
 // 用 slice + head index 实现，O(1) 追加 O(n) 读取。
 // 自身无线程安全，由外层 MemoryStore.mu（或 SQLStore.mu）统一保护并发。
 type metricsRing struct {

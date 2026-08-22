@@ -1,7 +1,7 @@
-// Package logx 提供结构化日志（slog JSON）与 request/gRPC 级别的 traceID 透传（P1-2）。
+// Package logx 提供结构化日志（slog JSON）与 request/gRPC 级别的 traceID 透传。
 // 替代散落的 log.Printf，满足：可检索、可关联、可接采集器。仅依赖标准库 log/slog。
 //
-// M1-4 分布式可观测性：Trace(ctx) 优先从 OTel span context 提取真实 trace_id，
+// 分布式可观测性：Trace(ctx) 优先从 OTel span context 提取真实 trace_id，
 // 使日志与 OTel 链路追踪自动关联；ctx 无有效 span 时回退到 WithTrace 显式注入的 traceID，
 // 再回退到空串（向后兼容，不破坏无 OTel 场景）。
 package logx
@@ -27,7 +27,7 @@ func WithTrace(ctx context.Context, traceID string) context.Context {
 
 // Trace 从 context 取 traceID（无则空串）。
 //
-// M1-4 优先级：
+// 优先级：
 //  1. OTel span context 的 TraceID（真实分布式 trace_id，与 Jaeger/OTLP 对齐）；
 //  2. WithTrace 显式注入的 traceID（fallback，用于无 OTel 场景的手动关联）；
 //  3. 空串（无任何 trace 信息）。

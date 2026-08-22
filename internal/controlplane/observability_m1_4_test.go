@@ -1,4 +1,4 @@
-// observability_m1_4_test.go — M1-4 分布式可观测性测试
+// observability_m1_4_test.go — 分布式可观测性测试
 //
 // 验证 trace_id 贯穿 agent→控制面→store，日志关联 trace_id，
 // SSE 事件携带 trace_id，审计日志关联 trace_id。
@@ -25,7 +25,7 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// newM14TestServer 构造一个最小可用的控制面 Server 供 M1-4 测试用。
+// newM14TestServer 构造一个最小可用的控制面 Server 供 测试用。
 // 使用 MemoryStore，关闭鉴权（便于直接调用 handler）。
 func newM14TestServer() *Server {
 	s := &Server{
@@ -37,7 +37,7 @@ func newM14TestServer() *Server {
 }
 
 // TestAuditHelper_InjectsTraceID 验证 s.audit(ctx, e) 从 ctx 提取 trace_id 注入 e.TraceID。
-// 这是 M1-4 审计日志关联 trace_id 的核心保证。
+// 这是 审计日志关联 trace_id 的核心保证。
 func TestAuditHelper_InjectsTraceID(t *testing.T) {
 	s := newM14TestServer()
 
@@ -222,7 +222,7 @@ func TestHTTPHandlerAuditCarriesTraceID(t *testing.T) {
 }
 
 // TestTraceIDEndToEnd 验证 trace_id 贯穿 agent→控制面→store 全链路。
-// 这是 M1-4 的端到端验证：agent 创建 span → gRPC metadata 注入 → 控制面提取 → 审计日志持久化。
+// 这是 的端到端验证：agent 创建 span → gRPC metadata 注入 → 控制面提取 → 审计日志持久化。
 func TestTraceIDEndToEnd(t *testing.T) {
 	s := newM14TestServer()
 

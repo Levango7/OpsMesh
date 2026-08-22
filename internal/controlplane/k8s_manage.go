@@ -67,13 +67,13 @@ func (s *Server) handleK8sResourceRouting(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "cluster manager not initialized"})
 		return
 	}
-	// P1-G3 租户兜底：requireAuth 下缺租户头 → 401（防绕过网关伪造租户）。
+	// 租户兜底：requireAuth 下缺租户头 → 401（防绕过网关伪造租户）。
 	tenant := s.k8sTenantFromRequest(r)
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
 	}
-	// task 88 租户隔离：校验集群归属当前租户，防跨租户操作集群资源（不泄露存在性）。
+	// 租户隔离：校验集群归属当前租户，防跨租户操作集群资源（不泄露存在性）。
 	if c := s.store.GetK8sCluster(clusterID); c == nil || c.TenantID != tenant {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
 		return
@@ -288,7 +288,7 @@ func (s *Server) handlePodLogs(w http.ResponseWriter, r *http.Request, client *k
 		return
 	}
 	defer stream.Close()
-	const maxPodLogBytes = 2 << 20 // task 92：2MB 上限，防超大日志打爆控制面内存
+	const maxPodLogBytes = 2 << 20 // ：2MB 上限，防超大日志打爆控制面内存
 	data, err := io.ReadAll(io.LimitReader(stream, maxPodLogBytes))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "read pod logs failed: " + err.Error()})
@@ -311,7 +311,7 @@ func (s *Server) handleDeletePod(w http.ResponseWriter, r *http.Request, client 
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "delete pod failed: " + err.Error()})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: s.k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_pod_delete", Target: ns + "/" + name,
 	})
@@ -379,7 +379,7 @@ func (s *Server) handleScaleDeployment(w http.ResponseWriter, r *http.Request, c
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update scale failed: " + err.Error()})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: s.k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_deployment_scale", Target: ns + "/" + name,
 		Detail: fmt.Sprintf("replicas=%d", body.Replicas),
@@ -409,7 +409,7 @@ func (s *Server) handleRestartDeployment(w http.ResponseWriter, r *http.Request,
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "restart deployment failed: " + err.Error()})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: s.k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_deployment_restart", Target: ns + "/" + name,
 		Detail: "restartedAt=" + now,
@@ -494,7 +494,7 @@ func (s *Server) handleRollbackDeployment(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: s.k8sTenantFromRequest(r), UserID: caller.ID, Action: "k8s_deployment_rollback", Target: ns + "/" + name,
 		Detail: fmt.Sprintf("from revision %d to %d", currentRev, targetRev),
@@ -701,7 +701,7 @@ func formatAge(t time.Time) string {
 }
 
 // ============================================================================
-// task 242 M3 集成：集群监控仪表盘 API
+// M3 集成：集群监控仪表盘 API
 // ============================================================================
 //
 // API 端点（{id} 为集群 ID，由 handleK8sClusterRouting → handleK8sResourceRouting 分发）：

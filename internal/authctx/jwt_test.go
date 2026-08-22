@@ -219,7 +219,7 @@ func TestFromJWT_NilPublicKey(t *testing.T) {
 // FromRequest 回退逻辑
 // ----------------------------------------------------------------------------
 
-// TestFromRequest_NoTokenReturnsError 启用 JWT 但未携带 token 时必须返回错误（M3-2B 安全加固）。
+// TestFromRequest_NoTokenReturnsError 启用 JWT 但未携带 token 时必须返回错误（安全加固）。
 // 修复前：回退到头注入模式，攻击者可伪造 X-Tenant-ID 越权。
 // 修复后：返回 ErrNoJWTToken，调用方应 401。
 func TestFromRequest_NoTokenReturnsError(t *testing.T) {

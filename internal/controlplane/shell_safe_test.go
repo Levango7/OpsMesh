@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestValidateShellSafeValues_RejectsInjection 验证 task 86：含 shell 元字符的参数值被拒绝。
+// TestValidateShellSafeValues_RejectsInjection 验证 ：含 shell 元字符的参数值被拒绝。
 func TestValidateShellSafeValues_RejectsInjection(t *testing.T) {
 	cases := []struct {
 		name, value string

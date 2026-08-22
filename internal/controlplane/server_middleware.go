@@ -22,22 +22,22 @@ func (s *Server) securityHeadersMiddleware(h http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		// B1 修复 5：Permissions-Policy 禁用敏感设备权限。
+		// 修复 5：Permissions-Policy 禁用敏感设备权限。
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		// B1 修复 5：HSTS 仅 HTTPS 部署时注入（tlsCert 非空表示启用了 TLS）。
+		// 修复 5：HSTS 仅 HTTPS 部署时注入（tlsCert 非空表示启用了 TLS）。
 		if s.tlsCert != "" {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
-		// B1 修复 6：CSP nonce-based 收紧。
+		// 修复 6：CSP nonce-based 收紧。
 		// 每请求生成 16 字节随机 nonce（hex 编码 32 字符），注入 CSP 头。
-		//
-		// P1-G5 安全加固（CSP 收紧 — 已完成）：
+
+		// 安全加固（CSP 收紧 — 已完成）：
 		// 个人版前端已在 v0.6.1 收敛为引导页（internal/controlplane/web/index.html），
 		// 业务 JS 已删除，仅剩外部 <script type="module" src="/assets/main.js">，无 inline script。
 		// 企业版前端是 Vue3+Vite 编译产物（web/enterprise/dist/），<script> 均为外部 src 引用，
 		// Vue 的 @click 编译为 addEventListener（非 inline onclick），无 inline script。
 		// → script-src 已移除 'unsafe-inline'，仅保留 'self' + 'nonce-{nonce}'（nonce 作防御纵深）。
-		//
+
 		// style-src 仍保留 'unsafe-inline'：企业版 Vue 组件使用 :style 绑定（运行时注入 inline style，
 		// 如 ProgressRing/MetricsCard/DataTable 等 7 处），个人版引导页亦有 inline <style> 块。
 		// style 的 inline 安全风险显著低于 script（无法执行代码），保留是可接受的安全取舍。
@@ -54,7 +54,7 @@ func (s *Server) securityHeadersMiddleware(h http.Handler) http.Handler {
 	})
 }
 
-// csrfOriginCheck 是 CSRF Origin 校验中间件（P1-G4 安全加固）。
+// csrfOriginCheck 是 CSRF Origin 校验中间件（安全加固）。
 // 对状态变更方法（POST/PUT/DELETE/PATCH）校验 Origin 头，防跨站提交。
 //
 // 校验规则：
@@ -121,7 +121,7 @@ func (s *Server) csrfOriginCheck(h http.Handler) http.Handler {
 }
 
 // recoveryMiddleware 兜底盘：捕获任何 handler 内的 panic，避免单请求崩溃拖垮整个 HTTP 服务
-// （P0-2 致命短板——internal/ 生产代码零 recover，某 handler 未预期 panic 会击穿 net/http 默认
+// （致命短板——internal/ 生产代码零 recover，某 handler 未预期 panic 会击穿 net/http 默认
 // recover 仅打印日志但仍返回 200 空响应，掩盖故障且无 trace）。此处返回 500 + 结构化错误 + traceID，
 // 并交由 logx 落结构化日志。
 func recoveryMiddleware(h http.Handler) http.Handler {
@@ -149,10 +149,10 @@ func recoveryMiddleware(h http.Handler) http.Handler {
 }
 
 // ============================================================================
-// P1-C3：HTTP 指标中间件（请求计数器 + 延迟直方图）
+// ：HTTP 指标中间件（请求计数器 + 延迟直方图）
 // ============================================================================
 
-// httpMetricsMiddleware 记录 HTTP 请求指标到 s.metrics（P1-C3）：
+// httpMetricsMiddleware 记录 HTTP 请求指标到 s.metrics：
 //   - opsmesh_http_requests_total{method,path,status}
 //   - opsmesh_http_request_duration_seconds_bucket/sum/count{method,path,status}
 //
@@ -195,7 +195,7 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
-// normalizePath 归一化 URL 路径，避免 metrics 标签高基数（P1-C3）。
+// normalizePath 归一化 URL 路径，避免 metrics 标签高基数。
 // 规则：纯数字路径段替换为 :id（设备/任务/用户等资源 ID），
 // 版本段（v1/v2 含字母）不受影响。
 // 例：/api/v1/devices/123 -> /api/v1/devices/:id

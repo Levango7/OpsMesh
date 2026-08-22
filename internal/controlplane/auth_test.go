@@ -21,7 +21,7 @@ import (
 
 // newAuthTestServer 构造测试用 Server：memory store + 固定 jwtSecret。
 // 固定 jwtSecret 避免随机性导致测试不稳定。
-// P1-7 注册安全：测试默认启用 demo 模式 + AllowPublicRegister=true（注册即激活 + 立即签发 token），
+// 注册安全：测试默认启用 demo 模式 + AllowPublicRegister=true（注册即激活 + 立即签发 token），
 // 保持原有测试行为不变；pending 审批行为由独立测试用例覆盖（TestAuthRegisterDemoPending/TestAuthRegisterPending）。
 func newAuthTestServer(t *testing.T) *Server {
 	t.Helper()
@@ -39,7 +39,7 @@ func newAuthTestServer(t *testing.T) *Server {
 // loginAsAdmin 用预定义 admin 账号登录，返回 Authorization 头值。
 // 用于需要鉴权的用户管理 API 测试。
 //
-// 安全债 85 + 任务 96 回归修复：预置 admin 带 MustChangePassword=true，登录时
+// 安全债回归修复：预置 admin 带 MustChangePassword=true，登录时
 // auth.go 不签发 access token（仅签发一次性 changePasswordToken），导致 resp.Token
 // 为空。此 helper 代表"已完成首登改密的管理员"，故在登录前先经 store 直接清除
 // MustChangePassword 标记（传入原 PasswordHash 保持密码不变，仅清标），使登录
@@ -68,7 +68,7 @@ func loginAsAdmin(t *testing.T, s *Server) string {
 }
 
 // clearMustChangeFlag 清除指定用户的 MustChangePassword 标记（密码哈希不变），
-// 用于需要"已改密"状态的测试用例。安全债 85 + 任务 96 回归适配。
+// 用于需要"已改密"状态的测试用例。安全债回归适配。
 func clearMustChangeFlag(s *Server, username string) {
 	if u := s.store.GetUserByUsername(username); u != nil && u.MustChangePassword {
 		s.store.ChangePassword(u.ID, u.PasswordHash)
@@ -97,7 +97,7 @@ func doWithAuth(method, path, auth string, body interface{}) *http.Request {
 func TestPredefinedData(t *testing.T) {
 	s := newAuthTestServer(t)
 
-	// 预定义权限：应有 34 个（新增 provision/k8s/middleware 等 RBAC 权限，task 96）。
+	// 预定义权限：应有 34 个（新增 provision/k8s/middleware 等 RBAC 权限）。
 	perms := s.store.ListPermissions()
 	if len(perms) != 34 {
 		t.Fatalf("permissions count = %d, want 34", len(perms))
@@ -207,7 +207,7 @@ func TestAuthRegisterShortPassword(t *testing.T) {
 // ----------------------------------------------------------------------------
 
 // TestAuthLogin 正确密码 → 200 + token。
-// 安全债 85 + 任务 96：预置 admin 带 mustChangePassword=true，登录不签发 access token。
+// 安全债：预置 admin 带 mustChangePassword=true，登录不签发 access token。
 // 此用例验证"已改密用户正确密码 → 200 + token"，先清标模拟改密后状态。
 // 未改密用户的登录响应由 TestLoginReturnsMustChangePassword 覆盖。
 func TestAuthLogin(t *testing.T) {
@@ -582,7 +582,7 @@ func TestListPermissionsNoToken(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
-// P1-7 注册安全：公开注册开关 + pending 审批流程
+// 注册安全：公开注册开关 + pending 审批流程
 // ----------------------------------------------------------------------------
 
 // newAuthTestServerNonDemo 构造非 demo 模式测试 Server（PublicRegister=true 但新用户 pending）。
@@ -631,7 +631,7 @@ func TestAuthRegisterPending(t *testing.T) {
 }
 
 // TestAuthRegisterDemoPending demo 模式但 AllowPublicRegister=false → 201 + 待审批提示（无 token）。
-// 验证 P1-7 注册安全修复：demo 模式不再隐式免审批，须显式 --allow-public-register=true 才免审批。
+// 验证 注册安全修复：demo 模式不再隐式免审批，须显式 --allow-public-register=true 才免审批。
 func TestAuthRegisterDemoPending(t *testing.T) {
 	st := store.NewMemoryStore()
 	ss := store.NewInProcessSessionStore()
@@ -847,7 +847,7 @@ func TestApproveUserNoPermission(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
-// 安全债 85：预置弱口令强制改密（mustChangePassword 标记 + change-password API）
+// 安全债：预置弱口令强制改密（mustChangePassword 标记 + change-password API）
 // ----------------------------------------------------------------------------
 
 // TestPresetUsersMustChangePassword 验证预置 admin/operator/viewer 都带 mustChangePassword=true。
@@ -963,11 +963,11 @@ func TestChangePasswordNoToken(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
-// P1 服务端强制改密（requirePermission 拦截未改密用户）
+// 服务端强制改密（requirePermission 拦截未改密用户）
 // ----------------------------------------------------------------------------
 
 // TestMustChangePasswordBlocksProtectedAPI 验证未改密用户（mustChangePassword=true）登录时
-// 不签发 access token（任务 96 安全核心：弱口令用户无法持有效 at 访问受保护 API）。
+// 不签发 access token（安全核心：弱口令用户无法持有效 at 访问受保护 API）。
 // 仅签发一次性 changePasswordToken，受保护 API 因无 at 自然被 401 拦截。
 func TestMustChangePasswordBlocksProtectedAPI(t *testing.T) {
 	s := newAuthTestServer(t)
@@ -981,7 +981,7 @@ func TestMustChangePasswordBlocksProtectedAPI(t *testing.T) {
 	}
 	var resp authResponse
 	_ = json.NewDecoder(rec.Body).Decode(&resp)
-	// 任务 96：mustChangePassword=true 时不签发 access token。
+	// ：mustChangePassword=true 时不签发 access token。
 	if resp.Token != "" {
 		t.Fatalf("must-change user should not receive access token; got token=%q", resp.Token)
 	}
@@ -998,7 +998,7 @@ func TestMustChangePasswordBlocksProtectedAPI(t *testing.T) {
 }
 
 // TestMustChangePasswordCanChangeThenAccess 验证未改密用户改密后受保护 API 立即可用。
-// 流程（任务 96）：登录获取 changePasswordToken → 用 cpt 改密 → 改密响应返回正式 at → 用 at 访问受保护 API。
+// 流程：登录获取 changePasswordToken → 用 cpt 改密 → 改密响应返回正式 at → 用 at 访问受保护 API。
 func TestMustChangePasswordCanChangeThenAccess(t *testing.T) {
 	s := newAuthTestServer(t)
 	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "admin123"})
@@ -1036,7 +1036,7 @@ func TestMustChangePasswordCanChangeThenAccess(t *testing.T) {
 	}
 }
 
-// TestUserFromTokenRevokesNonActive 验证被禁用用户的既有有效签名 token 立即失效（P1 吊销）：
+// TestUserFromTokenRevokesNonActive 验证被禁用用户的既有有效签名 token 立即失效（吊销）：
 // 管理员禁用账号后无需等待 24h 过期即收回访问。
 func TestUserFromTokenRevokesNonActive(t *testing.T) {
 	s := newAuthTestServer(t)
@@ -1061,11 +1061,11 @@ func TestUserFromTokenRevokesNonActive(t *testing.T) {
 }
 
 // =============================================================================
-// task 94：HttpOnly Cookie 会话（JWT 存储加固）
+// ：HttpOnly Cookie 会话（JWT 存储加固）
 // =============================================================================
 
 // TestAuthLogin_SetsHttpOnlyCookie 验证登录成功时下发 HttpOnly Cookie（opsmesh_token）。
-// 安全债 85 + 任务 96：预置 admin 带 mustChangePassword=true 时不签发 token/Cookie。
+// 安全债：预置 admin 带 mustChangePassword=true 时不签发 token/Cookie。
 // 此用例验证"已改密用户登录下发 Cookie"，先清标模拟改密后状态。
 func TestAuthLogin_SetsHttpOnlyCookie(t *testing.T) {
 	s := newAuthTestServer(t)
@@ -1149,7 +1149,7 @@ func TestAuthLogout_ClearsCookie(t *testing.T) {
 }
 
 // ============================================================================
-// C-4 DeviceFP deadline 测试：超过 deadline 后签发的 refresh token 必须绑定 DeviceFP（非空）。
+// DeviceFP deadline 测试：超过 deadline 后签发的 refresh token 必须绑定 DeviceFP（非空）。
 // ============================================================================
 
 // TestConsumeRefreshToken_DeviceFPDeadlineNotEnforced 验证 deadline 零值时不强制 DeviceFP（向后兼容）。
@@ -1225,7 +1225,7 @@ func TestConsumeRefreshToken_DeviceFPDeadlineBefore(t *testing.T) {
 }
 
 // ============================================================================
-// B-6 SessionStore 集成测试：验证 Server 通过 SessionStore 接口操作黑名单/改密令牌。
+// SessionStore 集成测试：验证 Server 通过 SessionStore 接口操作黑名单/改密令牌。
 // ============================================================================
 
 // TestAuthLogout_TokenRevokedViaSessionStore 验证登出后 token 经 SessionStore 黑名单拒绝。

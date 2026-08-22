@@ -1,4 +1,4 @@
-// quota.go — P2-B5 多租户资源配额与计费（task 274）。
+// quota.go — 多租户资源配额与计费。
 //
 // 实现租户级资源配额管理：
 //   - 限制每租户的设备数/任务数/告警数上限，超额拒绝（返回 ErrQuotaExceeded）；
@@ -329,7 +329,7 @@ func (s *Server) setQuota(w http.ResponseWriter, r *http.Request, tenantID strin
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	// 记审计日志（M1-4 携带 trace_id）。
+	// 记审计日志（携带 trace_id）。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "set_quota", Target: tenantID,
 		Detail: fmt.Sprintf("maxDevices=%d maxTasks=%d maxAlerts=%d", cfg.MaxDevices, cfg.MaxTasks, cfg.MaxAlerts),

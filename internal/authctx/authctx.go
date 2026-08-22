@@ -1,6 +1,6 @@
 // Package authctx 定义"网关注入的身份上下文"的提取与校验。
 //
-// 设计原则（U-04 等保三级 + 复用底座，非自研登录）：
+// 设计原则（等保三级 + 复用底座，非自研登录）：
 //   - 内核（控制面）【不】自行实现登录 / 鉴权 / 用户表 / 密码哈希；
 //   - 登录、SSO、MFA、RBAC 由前置网关（APISIX / 蓝鲸 IAM）完成；
 //   - 网关校验 JWT/OIDC 后，把身份注入到请求头 / gRPC metadata：
@@ -10,9 +10,9 @@
 //   - 内核只消费这些头，并据此做"行级租户隔离"与"审计留痕"。
 //
 // 缺失头时（开发 / 单机模式，无网关）视为单一隐式租户，放行全部——
-// 这是 MVP 单租户（U-02 多团队逻辑隔离）的合理降级，不是越权。
+// 这是 MVP 单租户（多团队逻辑隔离）的合理降级，不是越权。
 //
-// M3-2A JWT 验签（可选启用）：当配置了网关 RSA 公钥时，FromRequest 强制从
+// JWT 验签（可选启用）：当配置了网关 RSA 公钥时，FromRequest 强制从
 // Authorization: Bearer <token> 提取并 RS256 验签，从 claims 取 tenant_id/
 // user_id/user_roles，作为"网关注入 + 内核二次校验"的纵深防御。
 // 启用 JWT 验签时必须携带有效 token，未携带或验签失败均返回错误（401），
@@ -47,7 +47,7 @@ const (
 
 // FromHTTPHeader 从 HTTP 头提取身份上下文（前置网关已校验 JWT 并注入）。
 //
-// 安全警告（H1）：本函数不校验头来源真实性，仅机械读取 X-Tenant-ID 等头。
+// 安全警告：本函数不校验头来源真实性，仅机械读取 X-Tenant-ID 等头。
 // 生产环境必须在可信网关（APISIX/Envoy/蓝鲸 IAM）后部署，网关负责：
 //   - 校验调用方 JWT/OIDC 后剥离客户端自带的 X-Tenant-ID，再重注入经鉴权的真实租户；
 //   - 拒绝直连控制面（绕过网关）的请求（网络策略 / mTLS 双向认证）。
@@ -113,7 +113,7 @@ func (c Context) HasRole(role string) bool {
 }
 
 // ============================================================================
-// M3-2A JWT 验签（网关公钥 RS256）
+// JWT 验签（网关公钥 RS256）
 // ============================================================================
 
 // JWTConfig 是 JWT 验签的可选配置，由调用方（如 server.go）从 config.Config 装配。
@@ -225,7 +225,7 @@ func FromJWT(h http.Header, publicKey *rsa.PublicKey, issuer string) (Context, e
 //	c, err := authctx.FromRequest(r.Header, jwtCfg)
 //	if err != nil { /* 401 */ }
 //
-// 行为矩阵（M3-2B 安全加固：JWT 启用时禁止无 token 回退头注入）：
+// 行为矩阵（安全加固：JWT 启用时禁止无 token 回退头注入）：
 //   - Enabled && PublicKey!=nil && 携带有效 token   → 返回 JWT 提取的 Context, nil
 //   - Enabled && PublicKey!=nil && token 验签失败   → 返回零值, error（调用方应 401）
 //   - Enabled && PublicKey!=nil && 未携带 token     → 返回零值, ErrNoJWTToken（调用方应 401，不回退头注入）

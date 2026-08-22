@@ -11,7 +11,7 @@
 #   - agent（DaemonSet）：数据面 agent，按节点驻留执行任务，对应 templates/agent-*.yaml
 #   二者协同构成该网段的 OpsMesh 运行时。controlplane 与 agent 必须在同一 Helm release 内
 #   部署：agent 的 --control-addr 由模板绑定 release 名（opsmesh.controlplane.serviceName），
-#   且 config.val() 采用「显式 flag 优先、env 兜底」语义（P1-8），环境变量无法覆写，
+#   且 config.val() 采用「显式 flag 优先、env 兜底」语义，环境变量无法覆写，
 #   故拆分为两个独立 release 会破坏 agent→controlplane 服务发现。每网段单 Application 是
 #   当前 Chart 结构下唯一正确的 GitOps 拓扑；controlplane/agent 的差异化配置通过 values
 #   overlay（segments/<segment>-segment.yaml）内的 controlplane.* 与 agent.* 字段独立管理。

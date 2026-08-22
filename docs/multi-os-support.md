@@ -53,7 +53,7 @@
 
 #### 1.2.3 渐进扩展（Progressive Extension）
 
-按优先级 P0 → P3 分阶段落地，每阶段须满足"构建通过 + CI 矩阵覆盖 + 至少一个发行版端到端验证"三条件方可进入下一阶段。不允许一次性合入多平台支持而无法验证。
+按优先级 → P3 分阶段落地，每阶段须满足"构建通过 + CI 矩阵覆盖 + 至少一个发行版端到端验证"三条件方可进入下一阶段。不允许一次性合入多平台支持而无法验证。
 
 #### 1.2.4 显式能力矩阵（Explicit Capability Matrix）
 
@@ -92,7 +92,7 @@ Agent 启动时显式打印本机能力矩阵（已在 `internal/agent/agent.go`
 | procd | OpenWrt Process Daemon | OpenWrt init 与服务管理守护进程 |
 | musl | musl libc | Alpine 使用的轻量 C 库 |
 | glibc | GNU C Library | 主流 Linux 发行版使用的 C 库 |
-| P0/P1/P2/P3 | Priority 0/1/2/3 | 支持优先级，P0 最高（必须），P3 最低（尽力） |
+| 安全加固/P3 | Priority 0/1/2/3 | 支持优先级，最高（必须），P3 最低（尽力） |
 
 ---
 
@@ -108,14 +108,14 @@ OpsMesh 当前（v1.0 基线）已支持的平台矩阵如下。能力列含义�
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | Linux | amd64 | ✓ | ✓ | ✓（systemctl） | ✓ | △（yum/apt 探测中） | ✓（systemctl） | ✓（unix.Setrlimit） | ✓（Setpgid+SIGTERM） | ✓ | ✓ |
 | Linux | arm64 | ✓ | ✓ | ✓（systemctl） | ✓ | △ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| macOS | amd64 | ✓ | ✓ | ✗（U-02 冻结） | ✓ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| macOS | amd64 | ✓ | ✓ | ✗（冻结） | ✓ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
 | macOS | arm64 | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
-| Windows | amd64 | ✓ | ✓（cmd /C） | ✗（U-02 冻结） | ✓ | ✗ | △（sc query 只读） | ✗（job object 未实现） | △（taskkill /T /F） | ✓ | ✓ |
+| Windows | amd64 | ✓ | ✓（cmd /C） | ✗（冻结） | ✓ | ✗ | △（sc query 只读） | ✗（job object 未实现） | △（taskkill /T /F） | ✓ | ✓ |
 | Windows | arm64 | ✓ | ✓ | ✗ | ✓ | ✗ | △ | ✗ | △ | ✓ | ✓ |
 
 > 说明：
 >
-> - **Service 任务**：依赖 `systemctl`，当前显式拒绝非 Linux 平台（见 `internal/agent/agent.go:860`，U-02 Linux-only freeze）。Windows 的 `sc query` 仅用于 CMDB 服务状态采集（只读），不接受 service 类任务下发。
+> - **Service 任务**：依赖 `systemctl`，当前显式拒绝非 Linux 平台（见 `internal/agent/agent.go:860`，Linux-only freeze）。Windows 的 `sc query` 仅用于 CMDB 服务状态采集（只读），不接受 service 类任务下发。
 > - **资源限额**：Linux/Darwin 经 `golang.org/x/sys/unix.Setrlimit` 设置 NPROC/NOFILE/AS；Windows 无对应系统调用，跳过（等保纵深防御在控制面/IAM 侧兜底）。
 > - **进程组 kill**：Linux/Darwin 经 `Setpgid=true` + `syscall.Kill(-pid, SIGTERM)`；Windows 经 `taskkill /T /F /PID` 杀进程树；其他非 POSIX 平台 noop。
 > - **包管理**：当前未实现统一的包管理抽象，仅 `internal/deploy/` 在部署编排中按发行版探测 yum/apt，尚未暴露为 Agent 能力。
@@ -198,40 +198,40 @@ builds:
 
 下表是 OpsMesh 计划支持的完整 OS/发行版/架构矩阵，按优先级排列。优先级含义：
 
-- **P0**：必须支持，CI 矩阵覆盖 + 端到端验证 + 发布产物；
-- **P1**：应支持，CI 矩阵覆盖 + 至少单元测试；
-- **P2**：可支持，交叉编译通过 + 手工验证；
+- ****：必须支持，CI 矩阵覆盖 + 端到端验证 + 发布产物；
+- ****：应支持，CI 矩阵覆盖 + 至少单元测试；
+- ****：可支持，交叉编译通过 + 手工验证；
 - **P3**：尽力支持，社区贡献或按需启用。
 
 #### 表：完整目标支持矩阵表
 
 | 系统 | 发行版 | 架构 | 优先级 | 场景 | 阶段 |
 |---|---|---|---|---|---|
-| Linux | CentOS 7/8/9 | amd64/arm64 | P0 | 企业服务器 | Phase 1 |
-| Linux | RHEL 7/8/9 | amd64/arm64 | P0 | 企业服务器 | Phase 1 |
-| Linux | Ubuntu 20.04/22.04/24.04 | amd64/arm64 | P0 | 云服务器 | Phase 1 |
-| Linux | Debian 11/12 | amd64/arm64 | P1 | 通用服务器 | Phase 1 |
-| Linux | SUSE/SLES 15 | amd64/arm64 | P1 | 企业服务器 | Phase 2 |
-| Linux | Amazon Linux 2/2023 | amd64/arm64 | P1 | AWS | Phase 2 |
-| Linux | Alpine 3.18+ | amd64/arm64 | P2 | 容器 | Phase 2 |
-| Linux | openEuler 22.03+ | amd64/arm64 | P1 | 国产化 | Phase 3 |
-| Linux | 统信 UOS | amd64/arm64 | P1 | 国产化 | Phase 3 |
-| Linux | 中标麒麟 | amd64/arm64 | P1 | 国产化 | Phase 3 |
-| Linux | openKylin | amd64/arm64 | P2 | 国产化 | Phase 3 |
-| AIX | 7.2/7.3 | ppc64 | P2 | 传统企业 | Phase 4 |
-| Solaris | 11.4 | sparc64/x86_64 | P2 | 传统企业 | Phase 4 |
-| FreeBSD | 13/14 | amd64/arm64 | P2 | 网络/存储 | Phase 4 |
-| macOS | 12+ | amd64/arm64 | P0 | 开发/运维终端 | Phase 1 |
-| Windows | Server 2016+ | amd64 | P0 | 企业服务器 | Phase 1 |
-| Windows | 10/11 | amd64 | P1 | 运维终端 | Phase 1 |
-| HarmonyOS | 5.0+ | arm64 | P2 | IoT/边缘 | Phase 5 |
+| Linux | CentOS 7/8/9 | amd64/arm64 | | 企业服务器 | Phase 1 |
+| Linux | RHEL 7/8/9 | amd64/arm64 | | 企业服务器 | Phase 1 |
+| Linux | Ubuntu 20.04/22.04/24.04 | amd64/arm64 | | 云服务器 | Phase 1 |
+| Linux | Debian 11/12 | amd64/arm64 | | 通用服务器 | Phase 1 |
+| Linux | SUSE/SLES 15 | amd64/arm64 | | 企业服务器 | Phase 2 |
+| Linux | Amazon Linux 2/2023 | amd64/arm64 | | AWS | Phase 2 |
+| Linux | Alpine 3.18+ | amd64/arm64 | | 容器 | Phase 2 |
+| Linux | openEuler 22.03+ | amd64/arm64 | | 国产化 | Phase 3 |
+| Linux | 统信 UOS | amd64/arm64 | | 国产化 | Phase 3 |
+| Linux | 中标麒麟 | amd64/arm64 | | 国产化 | Phase 3 |
+| Linux | openKylin | amd64/arm64 | | 国产化 | Phase 3 |
+| AIX | 7.2/7.3 | ppc64 | | 传统企业 | Phase 4 |
+| Solaris | 11.4 | sparc64/x86_64 | | 传统企业 | Phase 4 |
+| FreeBSD | 13/14 | amd64/arm64 | | 网络/存储 | Phase 4 |
+| macOS | 12+ | amd64/arm64 | | 开发/运维终端 | Phase 1 |
+| Windows | Server 2016+ | amd64 | | 企业服务器 | Phase 1 |
+| Windows | 10/11 | amd64 | | 运维终端 | Phase 1 |
+| HarmonyOS | 5.0+ | arm64 | | IoT/边缘 | Phase 5 |
 | OpenWrt | 21.02+ | mips/arm | P3 | 网络设备 | Phase 5 |
 
 ### 3.2 优先级与场景说明
 
 #### 3.2.1 P0（必须支持）
 
-P0 平台是 OpsMesh 私有化交付的最小集，覆盖 90% 企业服务器与开发终端：
+平台是 OpsMesh 私有化交付的最小集，覆盖 90% 企业服务器与开发终端：
 
 - **CentOS/RHEL 7/8/9**：企业 Linux 事实标准，systemd + SELinux，yum/dnf 包管理；
 - **Ubuntu 20.04/22.04/24.04**：云服务器主流，systemd + apparmor，apt 包管理；
@@ -240,7 +240,7 @@ P0 平台是 OpsMesh 私有化交付的最小集，覆盖 90% 企业服务器与
 
 #### 3.2.2 P1（应支持）
 
-P1 平台扩展企业覆盖面，CI 矩阵覆盖但允许部分能力降级：
+平台扩展企业覆盖面，CI 矩阵覆盖但允许部分能力降级：
 
 - **Debian 11/12**：Ubuntu 上游，apt/dpkg，与 Ubuntu 共享实现；
 - **SUSE/SLES 15**：欧洲企业主流，zypper + AppArmor；
@@ -250,7 +250,7 @@ P1 平台扩展企业覆盖面，CI 矩阵覆盖但允许部分能力降级：
 
 #### 3.2.3 P2（可支持）
 
-P2 平台为长尾场景，交叉编译通过 + 手工验证即可：
+平台为长尾场景，交叉编译通过 + 手工验证即可：
 
 - **Alpine 3.18+**：容器场景，musl libc，apk + OpenRC，需注意 musl 与 glibc 差异；
 - **openKylin**：国产化社区版，与麒麟商业版共享实现；
@@ -598,7 +598,7 @@ Linux 发行版经 `/etc/os-release`（LSB 标准化）探测，关键字段：
 
 | 能力 | 不可用场景 | 降级行为 |
 |---|---|---|
-| Service | macOS/Windows/Alpine（OpenRC） | service 任务前置拒绝（U-02 模式），返回明确错误 |
+| Service | macOS/Windows/Alpine（OpenRC） | service 任务前置拒绝（模式），返回明确错误 |
 | Rlimit | Windows | 跳过进程限额，控制面/IAM 侧兜底 |
 | Package | macOS/Windows | 包管理任务拒绝，提示用 brew/手动安装 |
 | Firewall | 无 firewalld/ufw 的最小系统 | 跳过防火墙配置，记录警告 |
@@ -1296,7 +1296,7 @@ OpenWrt 21.02+ 是嵌入式网络设备主流固件（路由器/网关），使�
 
 ### 6.1 CI 构建矩阵设计
 
-CI 矩阵须覆盖所有 P0/P1 平台的构建 + 单元测试，P2 平台的交叉编译验证。当前 `.github/workflows/ci.yml` 仅在 `ubuntu-latest` 单 runner 上构建，须扩展为多 runner 矩阵。
+CI 矩阵须覆盖所有 /平台的构建 + 单元测试，平台的交叉编译验证。当前 `.github/workflows/ci.yml` 仅在 `ubuntu-latest` 单 runner 上构建，须扩展为多 runner 矩阵。
 
 #### 表：CI 构建矩阵设计表
 
@@ -1308,7 +1308,7 @@ CI 矩阵须覆盖所有 P0/P1 平台的构建 + 单元测试，P2 平台的交�
 | build-darwin-arm64 | macos-14 | darwin | arm64 | 0 | macOS Apple Silicon 构建 | push/PR |
 | build-windows-amd64 | windows-latest | windows | amd64 | 0 | Windows 构建 + 测试 | push/PR |
 | build-windows-arm64 | windows-latest | windows | arm64 | 0 | Windows ARM 构建 | push/PR |
-| cross-compile-p2 | ubuntu-latest | aix/solaris/freebsd | ppc64/amd64/arm64 | 0 | P2 平台交叉编译验证 | push/PR |
+| cross-compile-p2 | ubuntu-latest | aix/solaris/freebsd | ppc64/amd64/arm64 | 0 | 平台交叉编译验证 | push/PR |
 | integration-linux | ubuntu-latest + mysql + redis | linux | amd64 | 0 | SQL 集成测试 | push/PR |
 | e2e-linux | ubuntu-latest | linux | amd64 | 0 | 端到端测试（docker-compose） | push/PR |
 | e2e-windows | windows-latest | windows | amd64 | 0 | Windows 端到端 | release |
@@ -1316,7 +1316,7 @@ CI 矩阵须覆盖所有 P0/P1 平台的构建 + 单元测试，P2 平台的交�
 
 ### 6.2 交叉编译策略
 
-P2/P3 平台无原生 CI runner，须交叉编译验证构建通过：
+/P3 平台无原生 CI runner，须交叉编译验证构建通过：
 
 ```yaml
 # 命令示例：交叉编译验证矩阵（GitHub Actions）
@@ -1348,7 +1348,7 @@ cross-compile-p2:
 
 #### 6.3.1 单元测试
 
-单元测试在所有 P0 平台 runner 上执行，须覆盖：
+单元测试在所有 平台 runner 上执行，须覆盖：
 
 - 平台无关逻辑：在任一 runner 上跑全量；
 - 平台特定逻辑：经 `//go:build` 标签隔离，仅在对应平台 runner 上跑；
@@ -1862,7 +1862,7 @@ log-collect-paths: "/var/log/system.log"
 - AIX 7.2/7.3 ppc64 支持（installp + SRC + errpt）；
 - Solaris 11.4 amd64 支持（IPS + SMF + ZFS）；
 - FreeBSD 13/14 amd64/arm64 支持（pkg + rc.d + Jails）；
-- P2 平台交叉编译 CI 验证。
+- 平台交叉编译 CI 验证。
 
 **关键工作**：
 

@@ -32,12 +32,12 @@ import (
 	"opsmesh/internal/store"
 )
 
-// k8sTenantFromRequest 提取请求归属租户（task 88 K8s 租户隔离）。
+// k8sTenantFromRequest 提取请求归属租户（K8s 租户隔离）。
 // 优先取网关注入的 X-Tenant-ID；缺头时：
 //   - requireAuth=true：返回空串（由调用方 handler 拒绝 401，防绕过网关伪造租户）；
 //   - requireAuth=false：归一为 default（与 store 层 SaveK8sCluster 空租户归一一致，保持 demo 兼容）。
 //
-// P1-G3 修复：原实现缺头静默归一 default，绕过租户闸门（requireAuth 下缺头应 401 而非 default）。
+// 修复：原实现缺头静默归一 default，绕过租户闸门（requireAuth 下缺头应 401 而非 default）。
 func (s *Server) k8sTenantFromRequest(r *http.Request) string {
 	if t := authctx.FromHTTPHeader(r.Header).TenantID; t != "" {
 		return t
@@ -162,13 +162,13 @@ func (s *Server) handleListK8sClusters(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "k8s:read"); !ok {
 		return
 	}
-	// P1-G3 租户兜底：requireAuth 下缺租户头 → 401（防绕过网关伪造租户）。
+	// 租户兜底：requireAuth 下缺租户头 → 401（防绕过网关伪造租户）。
 	tenant := s.k8sTenantFromRequest(r)
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
 	}
-	// task 88 租户隔离：仅返回当前租户的集群。
+	// 租户隔离：仅返回当前租户的集群。
 	clusters := s.store.ListK8sClusters(tenant)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"clusters": maskK8sClusters(clusters)})
 }
@@ -185,7 +185,7 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	// P1-G3 租户兜底：requireAuth 下缺租户头 → 401。
+	// 租户兜底：requireAuth 下缺租户头 → 401。
 	tenant := s.k8sTenantFromRequest(r)
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
@@ -204,7 +204,7 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and kubeconfig are required"})
 		return
 	}
-	// P0-G3：kubeconfig 存入 store 前做 AES-GCM 加密，DB 泄露时不直接暴露集群凭据。
+	// ：kubeconfig 存入 store 前做 AES-GCM 加密，DB 泄露时不直接暴露集群凭据。
 	encrypted, err := s.encryptKubeconfig(body.Kubeconfig)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "kubeconfig encryption failed"})
@@ -212,12 +212,12 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 	}
 	c := &store.K8sCluster{
 		Name:       body.Name,
-		TenantID:   tenant, // task 88 租户归属
+		TenantID:   tenant, // 租户归属
 		Server:     body.Server,
 		Kubeconfig: encrypted, // 加密后存 store
 		Status:     "unknown",
 	}
-	// task 92：持久化失败直接返回 500，不再假装保存成功。
+	// 持久化失败直接返回 500，不再假装保存成功。
 	if err := s.store.SaveK8sCluster(c); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save cluster failed"})
 		return
@@ -235,7 +235,7 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 			logx.Error(r.Context(), "K8s 集群状态回写失败", err, "clusterID", c.ID)
 		}
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: c.TenantID, UserID: caller.ID, Action: "k8s_cluster_create", Target: c.ID, Detail: sanitizeAuditDetail("name=" + c.Name),
 	})
@@ -298,14 +298,14 @@ func (s *Server) handleDeleteK8sCluster(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
-	// P1-G3 租户兜底：requireAuth 下缺租户头 → 401。
+	// 租户兜底：requireAuth 下缺租户头 → 401。
 	tenant := s.k8sTenantFromRequest(r)
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
 	}
 	existing := s.store.GetK8sCluster(id)
-	// task 88 租户隔离：集群不存在或归属其他租户时按 not found 拒绝（不泄露存在性）。
+	// 租户隔离：集群不存在或归属其他租户时按 not found 拒绝（不泄露存在性）。
 	if existing == nil || existing.TenantID != tenant {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
 		return
@@ -318,7 +318,7 @@ func (s *Server) handleDeleteK8sCluster(w http.ResponseWriter, r *http.Request, 
 	if s.clusterMgr != nil {
 		s.clusterMgr.RemoveCluster(id)
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: existing.TenantID, UserID: caller.ID, Action: "k8s_cluster_delete", Target: id, Detail: sanitizeAuditDetail("name=" + existing.Name),
 	})
@@ -340,14 +340,14 @@ func (s *Server) handleTestK8sCluster(w http.ResponseWriter, r *http.Request, id
 	if _, ok := s.requirePermission(w, r, "k8s:read"); !ok {
 		return
 	}
-	// P1-G3 租户兜底：requireAuth 下缺租户头 → 401。
+	// 租户兜底：requireAuth 下缺租户头 → 401。
 	tenant := s.k8sTenantFromRequest(r)
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
 	}
 	existing := s.store.GetK8sCluster(id)
-	// task 88 租户隔离：集群不存在或归属其他租户时按 not found 拒绝。
+	// 租户隔离：集群不存在或归属其他租户时按 not found 拒绝。
 	if existing == nil || existing.TenantID != tenant {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
 		return
@@ -357,7 +357,7 @@ func (s *Server) handleTestK8sCluster(w http.ResponseWriter, r *http.Request, id
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "cluster manager not initialized"})
 		return
 	}
-	// P0-G3：store 中 kubeconfig 为加密存储，TestCluster 需明文解析 REST config，先解密。
+	// ：store 中 kubeconfig 为加密存储，TestCluster 需明文解析 REST config，先解密。
 	plain, err := s.decryptKubeconfig(existing.Kubeconfig)
 	if err != nil {
 		logx.Error(r.Context(), "K8s 集群 kubeconfig 解密失败", err, "clusterID", id)
@@ -368,7 +368,7 @@ func (s *Server) handleTestK8sCluster(w http.ResponseWriter, r *http.Request, id
 	if err != nil {
 		existing.Status = "offline"
 		_ = s.store.SaveK8sCluster(existing) // existing.Kubeconfig 仍为加密值，直接回写
-		// task 92：原始错误可能泄漏 API Server 地址等内部信息，仅记日志，前端给通用文案。
+		// 原始错误可能泄漏 API Server 地址等内部信息，仅记日志，前端给通用文案。
 		logx.Error(r.Context(), "K8s 集群测试连接失败", err, "clusterID", id)
 		writeJSON(w, http.StatusOK, map[string]string{
 			"status":  "offline",

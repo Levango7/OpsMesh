@@ -1,4 +1,4 @@
-// redis_session.go 实现 SessionStore 接口的 Redis 后端（B-6 多副本会话状态共享）。
+// redis_session.go 实现 SessionStore 接口的 Redis 后端（多副本会话状态共享）。
 //
 // 背景：InProcessSessionStore 的三类状态（JWT 黑名单/限流计数/改密令牌）均为进程内 map，
 // 多副本 HA 部署下：

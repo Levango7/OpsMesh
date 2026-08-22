@@ -1,4 +1,4 @@
-// Package notify 通知模板（M2-2）。
+// Package notify 通知模板。
 //
 // 本文件实现通知模板：标题/正文支持 Go text/template 变量替换（{{.AlertName}} 等），
 // 渲染后产出 *Message 供渠道发送。TemplateStore 提供按 ID/Type 管理多模板的能力。

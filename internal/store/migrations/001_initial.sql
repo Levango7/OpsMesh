@@ -11,7 +11,7 @@
 --     （createIndexIfMissing）逻辑保留在 Go 代码 runMigrations 末尾调用，
 --     作为向后兼容补丁；后续新增列应直接以 002_xxx.sql 迁移形式纳入。
 
--- agents：agent 注册信息（task 81 gRPC 身份绑定 secret 列）
+-- agents：agent 注册信息（gRPC 身份绑定 secret 列）
 CREATE TABLE IF NOT EXISTS agents (
     agent_id VARCHAR(64) PRIMARY KEY,
     hostname VARCHAR(255),
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     created_at DATETIME
 );
 
--- leader_lease：A3 选主租约表（单行 id=1）
+-- leader_lease：选主租约表（单行 id=1）
 CREATE TABLE IF NOT EXISTS leader_lease (
     id INT PRIMARY KEY DEFAULT 1,
     holder VARCHAR(128),
@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS leader_lease (
     updated_at DATETIME
 );
 
--- install_tokens：B1 自动纳管 install token 登记表
+-- install_tokens：自动纳管 install token 登记表
 CREATE TABLE IF NOT EXISTS install_tokens (
     token VARCHAR(512) PRIMARY KEY,
     device_id VARCHAR(64),
@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS install_tokens (
     consumed BOOLEAN DEFAULT 0
 );
 
--- users：P0-1 用户中心
+-- users：用户中心
 CREATE TABLE IF NOT EXISTS users (
     id VARCHAR(64) PRIMARY KEY,
     username VARCHAR(64) NOT NULL UNIQUE,
@@ -211,7 +211,7 @@ CREATE TABLE IF NOT EXISTS k8s_clusters (
     updated_at DATETIME
 );
 
--- alert_rules：task 100 告警规则
+-- alert_rules：告警规则
 CREATE TABLE IF NOT EXISTS alert_rules (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64),
@@ -225,7 +225,7 @@ CREATE TABLE IF NOT EXISTS alert_rules (
     created_at DATETIME
 );
 
--- os_templates：task 100 OS 安装模板
+-- os_templates：OS 安装模板
 CREATE TABLE IF NOT EXISTS os_templates (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64),
@@ -239,7 +239,7 @@ CREATE TABLE IF NOT EXISTS os_templates (
     updated_at DATETIME
 );
 
--- middleware_templates：task 100 中间件部署模板
+-- middleware_templates：中间件部署模板
 CREATE TABLE IF NOT EXISTS middleware_templates (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64),
@@ -251,7 +251,7 @@ CREATE TABLE IF NOT EXISTS middleware_templates (
     updated_at DATETIME
 );
 
--- refresh_tokens：task 111 刷新令牌
+-- refresh_tokens：刷新令牌
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     token_hash VARCHAR(64) PRIMARY KEY,
     user_id VARCHAR(64),

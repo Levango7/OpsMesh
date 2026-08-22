@@ -4,38 +4,38 @@
 
 ## [0.7.0] — 2026-08-16
 
-### P2 Batch 6：可视化与检索增强
+### 可视化与检索增强
 - **CMDB 关系图谱可视化**（`web/enterprise/src/components/RelationGraph.vue`）：纯 SVG 力导向图 + 网络拓扑布局，CI 类型颜色 + 关系类型线型 + 拖拽缩放平移 + 图例 + 节点详情面板，集成到 CMDBView 三视图切换
 - **全文本检索倒排索引**（`internal/logstore/inverted.go`）：中英文混合分词 + TF-IDF 排序 + 短语/布尔/通配符查询 + 并发安全，`SearchFullText` 集成到 MemoryLogStore
 - **多集群联邦发布**（`internal/deploy/federation.go`）：FederationStore + FederationCoordinator 跨集群灰度协调 Start/Promote/Reconcile/Rollback/Status + 联邦级发布状态 REST API
 
-### P2 Batch 7：交付物补全
+### 交付物补全
 - **Argo CD GitOps 仓库**（`deploy/gitops/`）：ApplicationSet 多网段批量渲染 + AppProject 隔离 + 网段 values 示例（example/production）
 
-### Phase1：文档体系建立
+### 文档体系建立
 
 完成 13 个核心设计文档（共约 19,385 行），覆盖产品/架构/数据库/接口/安全/UI/模块/功能/测试/运维/AI/多系统/部署场景全维度。
 
-#### 第一批核心文档（5 个，245KB）
+#### 核心文档（5 个，245KB）
 - **docs/product-design.md**（457 行）：产品定位/目标用户/功能矩阵/竞品对比/商业模式/适用场景/非功能需求/路线图
 - **docs/architecture.md**（925 行）：架构构图/分层设计/模块依赖/Store 接口拆分/数据流/技术选型/扩展点/容量规划/高可用/多租户
 - **docs/database-design.md**（1163 行）：ER 图/29 张表结构详解/索引设计/分库分表/数据生命周期/迁移策略/容量估算
 - **docs/api-specification.md**（1368 行）：OpenAPI 3.0 规范/错误码标准/认证规范/版本管理/分页过滤/SSE/gRPC/限流/幂等性
 - **docs/security-mechanism.md**（1173 行）：认证/授权/传输安全/输入安全/SSRF/密钥管理/审计/租户隔离/联邦安全/Agent 安全/部署检查清单
 
-#### 第二批设计文档（5 个）
+#### 设计文档（5 个）
 - **docs/ui-design.md**（764 行）：设计系统/组件库/页面布局/交互规范/主题切换/i18n/无障碍/双前端策略
 - **docs/module-design.md**（1508 行）：30 个 internal 包详细设计，按 7 个领域分组，每包 6 维度
 - **docs/feature-design.md**（2246 行）：18 个功能模块详细设计，每模块 7 子节（概述/用例/流程图/业务规则/边界条件/配置项/API）
 - **docs/test-specification.md**（968 行）：测试策略/分层测试/覆盖率目标/CI 矩阵/E2E/性能/安全测试
 - **docs/operations.md**（2131 行）：部署/配置/监控/告警/日志/备份/扩缩容/故障排查/巡检/SOP
 
-#### 第三批扩展文档（3 个）
+#### 扩展文档（3 个）
 - **docs/ai-design.md**（1779 行）：AI 能力总览/异常检测/智能告警/根因分析/容量预测/AIOps Copilot/智能编排/日志分析/模型管理/数据管道/AI 安全治理/性能成本/集成架构/路线图
 - **docs/multi-os-support.md**（2182 行）：当前支持状态/目标支持矩阵（18 系统）/平台抽象层/11 个系统详细方案/跨平台 CI/Agent 构建/平台配置/已知限制/路线图
 - **docs/deployment-scenarios.md**（2719 行）：12 个部署场景（单机房/异地多机房/多数据中心/电信资源池/混合云/公有云/私有云/边缘/国产化/容器化/高安全/灾备）+ 对比选型 + 自动化
 
-### Phase4：测试覆盖率提升
+### 测试覆盖率提升
 
 #### 低覆盖包补全（6 个包）
 - **grpcx**：48.9% → 99.5%（新增 `grpcx_extra_test.go`，761 行）
@@ -65,7 +65,7 @@
 
 ---
 
-## [Unreleased] — 2026-08-16 CI 全绿里程碑批次
+## [Unreleased] — 2026-08-16 CI 全绿
 
 ### 里程碑：GitHub Actions 8/8 job 全绿（首次真正全绿）
 
@@ -93,16 +93,16 @@
 
 - 登录兼容首登强制改密（MustChangePassword → change-password 换密 → 重新登录）、loginGuard 429 限流重试 + 文件级 token 缓存、agent 注册等待轮询、SSE 短连接（Playwright request.get 对长连接挂起）、任务响应/列表字段名大小写（`taskID` 大写）、下发任务补 agentID（400 根因）。
 
-### 门禁校准（基于真实 CI 数据）
+### 覆盖率门禁调整（基于真实 CI 数据）
 
 - store 包覆盖率门禁 65% → 32%（实测真实 mysql 集成环境 34.6%，65% 系 CI 未跑通时设定；同 build-test 50%→45% 先例）。
 
-## [Unreleased] — 2026-08-12 收敛批次
+## [Unreleased] — 2026-08-12
 
-### 已解决（本次评估收敛）
+### 已解决
 
 - **kafka-go 依赖升级**：v0.4.48 → v0.4.51（go 1.26 环境已无兼容限制；普通构建 + `-tags kafka` 构建 + events 测试全绿）
-- **前端死重清理**：删除个人版原生 JS 仪表盘业务代码（`internal/controlplane/web/`，约 1.3 万行 flow_*/render/i18n/icons/api）。`GET /` 收敛为极简引导页并自动重定向至 `/enterprise/`；`/install.sh` 与 `/bin/opsmesh-agent` bootstrap 端点保留（B1 纳管依赖）。
+- **前端死重清理**：删除个人版原生 JS 仪表盘业务代码（`internal/controlplane/web/`，约 1.3 万行 flow_*/render/i18n/icons/api）。`GET /` 收敛为极简引导页并自动重定向至 `/enterprise/`；`/install.sh` 与 `/bin/opsmesh-agent` bootstrap 端点保留（纳管依赖）。
 - **docker-compose 弱口令**：MySQL 密码改为 `${MYSQL_ROOT_PASSWORD:-}` 环境变量插值，正式部署必须显式注入。
 - **Dockerfile**：构建阶段加入 `go mod verify`（防供应链投毒 / go.sum 漂移）。
 - **CI**：整体覆盖率门禁 40%→50%、store 包 60%→65%；codecov 已配置 token 时上报失败阻断；`e2e-real` job 上线（docker compose 拉起真栈跑 Playwright，不再全 mock）；GitOps 镜像 tag 写回步骤改为可跳过（clone/path 守卫，仓库未就绪不再失败）。
@@ -115,7 +115,7 @@
 - agent 每次 RPC 重新 Dial 无连接池；Windows agent 仅可编译不可用。
 - 前端 E2E 真实后端 spec 仅覆盖健康检查；核心交互流程待补充。
 
-### P0：严重问题修复（5 项，阻塞生产发布）
+### 严重问题修复（5 项，阻塞生产发布）
 
 #### 修复
 - **`web/enterprise/src/api/auth.js`**：添加缺失的 logout API 方法（清除前端 token + 调用后端 logout 端点）
@@ -124,7 +124,7 @@
 - **`deploy/helm/opsmesh/values.yaml` + `values-production.yaml`**：镜像 tag 从 "0.1" 修正为 "latest"（与 CI 推送的 :sha tag 一致）
 - **`internal/store/sql_templates.go`**：移除 UTF-8 BOM（导致 MySQL 首字节乱码）
 
-### P1：重要问题修复（10 项，影响质量）
+### 重要问题修复（10 项，影响质量）
 
 #### i18n 全面覆盖
 - **12 个 Vue 组件**：TasksView/AlertsView/DevicesView/DeviceDetailView/CMDBView/WorkflowsView/DeploysView/LogsView/UsersView/K8sManageView/MiddlewareDeployView/OSOptimizeView — 所有硬编码中文提取到 i18n（zh.json/en.json 从 459 键扩展到 629 键，结构完全对称）
@@ -151,7 +151,7 @@
 - **/healthz 深度检查 + /readyz**：healthz 增加 store ping 深度检查，新增 /readyz 就绪探针端点
 - **metrics 指标扩充**：HTTP 延迟直方图 + HTTP 计数器 + Go runtime 指标（零依赖手写，不引入 prometheus 客户端库）
 
-### P2：次要问题修复（10 项，技术债务清理）
+### 次要问题修复（10 项，技术债务清理）
 
 #### 代码质量
 - **flow.js 拆分**：2714 行 / 106 导出的单体 JS 文件按业务域拆分为 13 个模块 + barrel re-export（零风险，main.js 无需修改）

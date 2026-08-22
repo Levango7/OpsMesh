@@ -1,4 +1,4 @@
-// security_p02_test.go — P0-2+3 安全加固 agent 测试：
+// shell_whitelist_test.go — 安全加固 agent 测试：
 //   - 默认白名单（defaultAgentShellWhitelist）放行只读诊断命令、拒绝危险命令
 //   - checkShellWhitelist 与默认白名单的集成行为
 package agent
@@ -58,7 +58,7 @@ func TestCheckShellWhitelist_DefaultWhitelistRejectsDangerous(t *testing.T) {
 }
 
 // TestCheckShellWhitelist_DefaultWhitelistNetworkDiagnoseStillAllowed 验证默认白名单启用后
-// 网络诊断命令（ping/curl 等）仍被内置白名单放行（task 244 M6 集成不破坏）。
+// 网络诊断命令（ping/curl 等）仍被内置白名单放行（M6 集成不破坏）。
 func TestCheckShellWhitelist_DefaultWhitelistNetworkDiagnoseStillAllowed(t *testing.T) {
 	a := &Agent{cfg: &config.Config{AgentShellWhitelist: config.DefaultAgentShellWhitelist()}}
 	// 网络诊断命令由 isNetworkDiagnoseCommand 内置白名单放行，不受 --agent-shell-whitelist 影响。

@@ -31,11 +31,11 @@ import (
 	"opsmesh/internal/tlsutil"
 )
 
-// GRPCClient 封装到控制面 9090 的真实 gRPC 注册通道（JSON codec，U-05）。
-// A3 多控制面 failover：持有候选地址列表，每次 RPC 依次尝试各控制面，
+// GRPCClient 封装到控制面 9090 的真实 gRPC 注册通道（JSON codec）。
+// 多控制面 failover：持有候选地址列表，每次 RPC 依次尝试各控制面，
 // 任一成功即返回（HA 真多副本前置：单控制面宕机不影响 agent 注册/心跳/拉任务）。
 //
-// B-4 连接复用：conns 按 target 地址缓存长连接，invoke 复用而非每次 Dial+Close。
+// 连接复用：conns 按 target 地址缓存长连接，invoke 复用而非每次 Dial+Close。
 
 // expvarOnce 保护 expvar 全局注册表只注册一次（多次 NewGRPCClient 不 panic）。
 var expvarOnce sync.Once
@@ -43,21 +43,21 @@ var expvarOnce sync.Once
 // 连接仅在 Close() 或被标记 stale（Invoke 返回连接错误）时关闭并从 map 移除。
 // gRPC 内置 WithConnectParams Backoff 提供指数退避重连，应用层 evictConn 兜底淘汰坏连接。
 //
-// M1-3 服务发现集成：可选持有 discovery.Balancer，invoke 优先通过 balancer 选择控制面实例，
+// 服务发现集成：可选持有 discovery.Balancer，invoke 优先通过 balancer 选择控制面实例，
 // 连接失败时调用 Failover.MarkFailed 触发主→备切换。balancer 为 nil 时回退到 addrs failover（向后兼容）。
 type GRPCClient struct {
 	addrs    []string // 候选控制面地址（host:grpcPort），按序 failover
 	creds    credentials.TransportCredentials
 	grpcPort int
-	// task 81 gRPC agent 身份绑定：agent 的 HMAC 签名密钥（由 Register 响应下发）。
+	// gRPC agent 身份绑定：agent 的 HMAC 签名密钥（由 Register 响应下发）。
 	// 非空时，invoke 在每次请求的 gRPC metadata 中携带 agent-signature 与 agent-timestamp，
 	// 控制面据此验证 agent 身份。空=未启用签名（demo 模式或控制面未下发 secret）。
 	secret string
-	// B-4 连接复用：按 target 地址缓存的长连接池。
+	// 连接复用：按 target 地址缓存的长连接池。
 	// mu 保护 conns 并发读写（invoke/heartbeat/pull/report/cancel 多 goroutine 并发调用）。
 	mu    sync.Mutex
 	conns map[string]*grpc.ClientConn
-	// M1-3 服务发现：可选的负载均衡器，非 nil 时 invoke 优先通过 balancer 选择控制面实例。
+	// 服务发现：可选的负载均衡器，非 nil 时 invoke 优先通过 balancer 选择控制面实例。
 	// balancer 为 nil 时回退到 addrs failover（向后兼容，不破坏现有单控制面行为）。
 	balancer discovery.Balancer
 	// connFailures 连接故障累计（DoD：agent 连接健壮性——故障指标化）。
@@ -66,7 +66,7 @@ type GRPCClient struct {
 	connFailures *atomic.Int64
 }
 
-// SetSecret task 81：设置 agent 的 HMAC 签名密钥（由 Register 响应下发）。
+// SetSecret ：设置 agent 的 HMAC 签名密钥（由 Register 响应下发）。
 // 注册成功后由 agent.go 调用。线程安全：仅在注册成功后调用一次，后续 invoke 只读。
 func (c *GRPCClient) SetSecret(secret string) {
 	c.secret = secret
@@ -74,7 +74,7 @@ func (c *GRPCClient) SetSecret(secret string) {
 
 // grpcTarget 从控制面地址解析出 gRPC 拨号目标，规则：
 //   - 带 scheme（http://host:port）：剥离 scheme 与 URL 中的端口，统一拼上
-//     控制面实际 gRPC 端口（cfg.GRPCPort，约定 9090，便于非默认端口部署，P0-2）。
+//     控制面实际 gRPC 端口（cfg.GRPCPort，约定 9090，便于非默认端口部署）。
 //   - 无 scheme 的 host:port：尊重显式端口（多控制面各自端口，A3 failover）。
 //   - 纯 host：拼上全局 gRPC 端口（grpcPort<=0 用默认 9090）。
 func grpcTarget(controlAddr string, grpcPort int) (string, error) {
@@ -106,8 +106,8 @@ func grpcTarget(controlAddr string, grpcPort int) (string, error) {
 
 // NewGRPCClient 构造支持多地址 failover 的 gRPC 客户端。
 // addrs 为候选控制面地址（host:grpcPort 或带 scheme 的 HTTP 地址），至少一个。
-// tlsCert/tlsKey/tlsCA 为空时使用 insecure；非空时按 mTLS 配置拨号（P1-6）。
-// B-4：连接按需建立并缓存复用（见 invoke/getConn），Close() 时统一关闭。
+// tlsCert/tlsKey/tlsCA 为空时使用 insecure；非空时按 mTLS 配置拨号。
+// 连接按需建立并缓存复用（见 invoke/getConn），Close() 时统一关闭。
 func NewGRPCClient(addrs []string, tlsCert, tlsKey, tlsCA string, grpcPort int) (*GRPCClient, error) {
 	if len(addrs) == 0 {
 		return nil, fmt.Errorf("至少需要一个控制面地址")
@@ -141,7 +141,7 @@ func NewGRPCClient(addrs []string, tlsCert, tlsKey, tlsCA string, grpcPort int) 
 	}, nil
 }
 
-// SetBalancer M1-3 服务发现：设置负载均衡器。
+// SetBalancer 服务发现：设置负载均衡器。
 // 设置后 invoke 优先通过 balancer 选择控制面实例，连接失败时触发主→备切换。
 // 传 nil 清除 balancer，回退到 addrs failover（向后兼容）。
 // 线程安全：仅在初始化阶段调用一次（agent.Run 启动前），invoke 只读 balancer 字段。
@@ -151,14 +151,14 @@ func (c *GRPCClient) SetBalancer(b discovery.Balancer) {
 
 // invoke 对每个候选地址尝试一次 RPC：短超时（5s）以便快速 failover 到下一个控制面。
 // 全部失败则返回最后一个错误。
-// B-4 连接复用：通过 getConn 复用已缓存的长连接，不再每次 Dial+Close。
+// 连接复用：通过 getConn 复用已缓存的长连接，不再每次 Dial+Close。
 // 连接错误时 evictConn 淘汰坏连接，下次 invoke 重新创建（应用层兜底，配合 gRPC 内置 Backoff 重连）。
 //
-// M1-3 服务发现：如果 balancer 非 nil，优先通过 balancer 选择控制面实例；
+// 服务发现：如果 balancer 非 nil，优先通过 balancer 选择控制面实例；
 // 连接失败时调用 Failover.MarkFailed 触发主→备切换，最多尝试实例总数次。
 // balancer 为 nil 时回退到 addrs failover（向后兼容）。
 func (c *GRPCClient) invoke(ctx context.Context, method string, req, resp interface{}) error {
-	// M1-3 服务发现路径：balancer 非 nil 时优先使用。
+	// 服务发现路径：balancer 非 nil 时优先使用。
 	if c.balancer != nil {
 		return c.invokeWithBalancer(ctx, method, req, resp)
 	}
@@ -194,7 +194,7 @@ func (c *GRPCClient) invoke(ctx context.Context, method string, req, resp interf
 	return lastErr
 }
 
-// invokeWithBalancer M1-3 服务发现路径：通过 balancer 选择控制面实例。
+// invokeWithBalancer 服务发现路径：通过 balancer 选择控制面实例。
 //
 // 逻辑：
 //  1. 调用 balancer.Next() 获取当前实例（主）。
@@ -257,7 +257,7 @@ func (c *GRPCClient) invokeWithBalancer(ctx context.Context, method string, req,
 	return lastErr
 }
 
-// markBalancerFailed M1-3 服务发现：通知 balancer 当前实例失败，触发主→备切换。
+// markBalancerFailed 服务发现：通知 balancer 当前实例失败，触发主→备切换。
 // 仅对 Failover 类型 balancer 生效（RoundRobin 无 MarkFailed 方法，每次 Next 自动轮询）。
 func (c *GRPCClient) markBalancerFailed() {
 	if mf, ok := c.balancer.(interface {
@@ -267,11 +267,11 @@ func (c *GRPCClient) markBalancerFailed() {
 	}
 }
 
-// getConn B-4 连接复用：从缓存取目标地址的长连接，不存在则 Dial 创建并缓存。
+// getConn 连接复用：从缓存取目标地址的长连接，不存在则 Dial 创建并缓存。
 // DialContext 非阻塞（无 WithBlock），立即返回；实际连接在首次 Invoke 时惰性建立。
 // 用 context.Background() 而非带超时的 ctx：Dial 不阻塞，超时无意义，连接建立由 Invoke 的 ctx 控制。
 //
-// M1-1 OTel：Dial 时附加 GRPCClientUnaryInterceptor，使每次 invoke 自动创建 client span
+// OTel：Dial 时附加 GRPCClientUnaryInterceptor，使每次 invoke 自动创建 client span
 // 并注入 W3C trace context 到 metadata，控制面服务端拦截器提取后接续 trace。
 func (c *GRPCClient) getConn(target string) (*grpc.ClientConn, error) {
 	c.mu.Lock()
@@ -289,8 +289,8 @@ func (c *GRPCClient) getConn(target string) (*grpc.ClientConn, error) {
 				MaxDelay:   5 * time.Second,
 			},
 		}),
-		// M1-1 OTel gRPC 客户端拦截器：为每次 RPC 创建 client span 并注入 trace context。
-		// 与 signContext（task 81 签名）兼容：两者操作不同 metadata key，互不冲突。
+		// OTel gRPC 客户端拦截器：为每次 RPC 创建 client span 并注入 trace context。
+		// 与 signContext（签名）兼容：两者操作不同 metadata key，互不冲突。
 		grpc.WithChainUnaryInterceptor(otelx.GRPCClientUnaryInterceptor("opsmesh-agent")),
 	)
 	if err != nil {
@@ -300,7 +300,7 @@ func (c *GRPCClient) getConn(target string) (*grpc.ClientConn, error) {
 	return conn, nil
 }
 
-// evictConn B-4 连接淘汰：关闭并从缓存移除指定地址的连接。
+// evictConn 连接淘汰：关闭并从缓存移除指定地址的连接。
 // 在 Invoke 返回连接级错误时调用，下次 invoke 会经 getConn 重新 Dial。
 func (c *GRPCClient) evictConn(target string) {
 	c.mu.Lock()
@@ -333,7 +333,7 @@ func isConnError(err error) bool {
 	return false
 }
 
-// signContext task 81 gRPC agent 身份绑定：为请求 ctx 附加 HMAC 签名 metadata。
+// signContext gRPC agent 身份绑定：为请求 ctx 附加 HMAC 签名 metadata。
 // 当 client 持有 secret 且 agentID 非空时，计算 agent-signature = HMAC-SHA256(secret, timestamp+agentID)
 // 并附加 agent-signature / agent-timestamp 到 outgoing metadata。
 // secret 为空（未启用签名）或 agentID 为空（无身份）时原样返回 ctx（向后兼容）。
@@ -362,15 +362,15 @@ func (c *GRPCClient) Register(ctx context.Context, info *proto.AgentInfo) (*grpc
 // Heartbeat 通过 gRPC Heartbeat 方法上报心跳。
 func (c *GRPCClient) Heartbeat(ctx context.Context, req *grpcx.HeartbeatReq) error {
 	resp := &grpcx.Empty{}
-	ctx = c.signContext(ctx, req.AgentID) // task 81：附加 HMAC 签名
+	ctx = c.signContext(ctx, req.AgentID) // 附加 HMAC 签名
 	return c.invoke(ctx, "/opsmesh.v1.Registration/Heartbeat", req, resp)
 }
 
-// PullTasks 通过 gRPC PullTasks 方法拉取本 agent 的待执行任务（内部为原子领取，P1-1）。
+// PullTasks 通过 gRPC PullTasks 方法拉取本 agent 的待执行任务（内部为原子领取）。
 func (c *GRPCClient) PullTasks(ctx context.Context, agentID string) ([]proto.Task, error) {
 	resp := &grpcx.PullTasksResp{}
 	req := &grpcx.PullTasksReq{AgentID: agentID}
-	ctx = c.signContext(ctx, agentID) // task 81：附加 HMAC 签名
+	ctx = c.signContext(ctx, agentID) // 附加 HMAC 签名
 	if err := c.invoke(ctx, "/opsmesh.v1.Registration/PullTasks", req, resp); err != nil {
 		return nil, err
 	}
@@ -380,17 +380,17 @@ func (c *GRPCClient) PullTasks(ctx context.Context, agentID string) ([]proto.Tas
 // ReportResult 通过 gRPC ReportResult 方法上报任务执行结果。
 func (c *GRPCClient) ReportResult(ctx context.Context, res *proto.TaskResult) error {
 	resp := &grpcx.Empty{}
-	ctx = c.signContext(ctx, res.AgentID) // task 81：附加 HMAC 签名
+	ctx = c.signContext(ctx, res.AgentID) // 附加 HMAC 签名
 	return c.invoke(ctx, "/opsmesh.v1.Registration/ReportResult", res, resp)
 }
 
 // CancelTask 通过 gRPC CancelTask 方法取消指定任务（F3）。
-// B-1：CancelTask 参数为 taskID+tenantID（无 agentID），用 tenantID 作为签名身份。
+// ：CancelTask 参数为 taskID+tenantID（无 agentID），用 tenantID 作为签名身份。
 // 控制面 verifyAgentSignature 会校验签名，确保取消请求来自授权 agent。
 func (c *GRPCClient) CancelTask(ctx context.Context, taskID, tenantID string) error {
 	resp := &grpcx.Empty{}
 	req := &grpcx.CancelTaskReq{TaskID: taskID, TenantID: tenantID}
-	ctx = c.signContext(ctx, tenantID) // B-1：附加 HMAC 签名（用 tenantID 作为签名身份）
+	ctx = c.signContext(ctx, tenantID) // 附加 HMAC 签名（用 tenantID 作为签名身份）
 	return c.invoke(ctx, "/opsmesh.v1.Registration/CancelTask", req, resp)
 }
 
@@ -398,23 +398,23 @@ func (c *GRPCClient) CancelTask(ctx context.Context, taskID, tenantID string) er
 func (c *GRPCClient) PollCancels(ctx context.Context, agentID string) ([]string, error) {
 	resp := &grpcx.PollCancelsResp{}
 	req := &grpcx.PollCancelsReq{AgentID: agentID}
-	ctx = c.signContext(ctx, agentID) // task 81：附加 HMAC 签名
+	ctx = c.signContext(ctx, agentID) // 附加 HMAC 签名
 	if err := c.invoke(ctx, "/opsmesh.v1.Registration/PollCancels", req, resp); err != nil {
 		return nil, err
 	}
 	return resp.CancelledTaskIDs, nil
 }
 
-// ReportLogs task 247：通过 gRPC ReportLogs 方法上报采集的日志批次到控制面。
+// ReportLogs ：通过 gRPC ReportLogs 方法上报采集的日志批次到控制面。
 // 控制面校验 HMAC 签名后按 agent 归属租户落库（行级隔离）。report.AgentID 为签名身份。
 func (c *GRPCClient) ReportLogs(ctx context.Context, report *proto.LogReport) error {
 	resp := &grpcx.Empty{}
 	req := &grpcx.ReportLogsReq{Report: *report}
-	ctx = c.signContext(ctx, report.AgentID) // task 81：附加 HMAC 签名
+	ctx = c.signContext(ctx, report.AgentID) // 附加 HMAC 签名
 	return c.invoke(ctx, "/opsmesh.v1.Registration/ReportLogs", req, resp)
 }
 
-// Close B-4 连接复用：关闭所有缓存的长连接。agent shutdown 时由 agent.go 调用。
+// Close 连接复用：关闭所有缓存的长连接。agent shutdown 时由 agent.go 调用。
 func (c *GRPCClient) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

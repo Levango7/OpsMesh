@@ -13,7 +13,7 @@ import (
 )
 
 // Dispatcher 是 M3 派发底层任务到执行引擎（M4）的防腐接口。
-// 由 controlplane 用 Registry 适配实现，避免 deploy 包反向依赖 controlplane（P2-18 贯穿边界）。
+// 由 controlplane 用 Registry 适配实现，避免 deploy 包反向依赖 controlplane（贯穿边界）。
 type Dispatcher interface {
 	// CreateTask 派发一个底层自动化任务（复用 M4 任务引擎）。
 	CreateTask(t *proto.Task) *proto.Task
@@ -28,12 +28,12 @@ type Handler struct {
 	store       DeployStore
 	disp        Dispatcher
 	autoAdvance *AutoAdvanceManager    // 灰度自动推进管理器（可选，nil=未启用）
-	fed         *FederationCoordinator // 多集群联邦发布协调器（task 280，默认内存后端开箱即用）
+	fed         *FederationCoordinator // 多集群联邦发布协调器（默认内存后端开箱即用）
 }
 
 // NewHandler 构造部署处理器。
 //
-// task 280：默认启用联邦发布协调器（内存后端 + 自身作为 DeployExecutor），开箱即用。
+// 默认启用联邦发布协调器（内存后端 + 自身作为 DeployExecutor），开箱即用。
 // controlplane 可后续调用 SetFederationStore 替换为 SQL 后端（持久化）。
 func NewHandler(store DeployStore, disp Dispatcher) *Handler {
 	h := &Handler{store: store, disp: disp}
@@ -63,7 +63,7 @@ func (h *Handler) Store() DeployStore { return h.store }
 
 // RegisterRoutes 注入 M3 部署路由到 mux（对齐 系统设计 3.2.M3 接口清单）。
 //
-// task 280：同时注册多集群联邦发布路由（/api/v1/deploys/federation*），复用同一 mux。
+// 同时注册多集群联邦发布路由（/api/v1/deploys/federation*），复用同一 mux。
 // 联邦路由以 /api/v1/deploys/federation 前缀注册，ServeMux 最长前缀匹配优先于
 // /api/v1/deploys/，故 controlplane 无需改动即可获得联邦 API。
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -79,7 +79,7 @@ func (h *Handler) handleDeploys(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var dt DeployTask
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // task 87：请求体限 1MiB，防超大 Content 打爆内存/存储
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 请求体限 1MiB，防超大 Content 打爆内存/存储
 		if err := json.NewDecoder(r.Body).Decode(&dt); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid JSON: %v", err)})
 			return
@@ -615,7 +615,7 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 }
 
 // =============================================================================
-// 多集群联邦发布 HTTP API（task 280）
+// 多集群联邦发布 HTTP API
 // =============================================================================
 //
 // 路由（由 RegisterRoutes 注册，复用 deployMux，controlplane 无需改动）：
@@ -772,7 +772,7 @@ func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Requ
 }
 
 // =============================================================================
-// DeployExecutor 实现（task 280）：Handler 自身作为联邦协调器的成员子部署派发器
+// DeployExecutor 实现：Handler 自身作为联邦协调器的成员子部署派发器
 // =============================================================================
 
 // CreateAndExecute 创建子部署（克隆 template + targetIDs）并立即执行，返回子部署 ID。

@@ -1,4 +1,4 @@
-// log_push_test.go 测试 LogPusher（P2-B4 task 270）。
+// log_push_test.go 测试 LogPusher。
 //
 // 覆盖：
 //   - NewLogPusher 构造与参数校验。

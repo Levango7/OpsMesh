@@ -1,6 +1,6 @@
-// sql_templates.go 实现 SQLStore 的 TemplateStore 子接口（OS/中间件部署模板领域 task 100，P0-1 生产就绪）。
+// sql_templates.go 实现 SQLStore 的 TemplateStore 子接口（OS/中间件部署模板领域 ，生产就绪）。
 //
-// 涵盖：OSTemplate CRUD（kickstart/preseed 安装模板，B1 自动纳管裸机→OS→agent 链路）、
+// 涵盖：OSTemplate CRUD（kickstart/preseed 安装模板，自动纳管裸机→OS→agent 链路）、
 // MiddlewareTemplate CRUD（MySQL/Redis/Kafka/... 标准化部署配置，应用编排复用）。
 //
 // 设计要点（与 sql_k8s.go 风格一致）：
@@ -8,7 +8,7 @@
 //   - TenantID 为空时归一为 default；CreatedAt 为空时填当前时间；UpdatedAt 始终刷新；
 //   - Config 为敏感内容（含 root 密码/连接串等），API 层负责脱敏后返回前端；
 //   - DB 不可用时返回零值（nil/false/error），不 panic，与 SQLStore 其他方法一致；
-//   - 持久化失败上抛错误（task 92 范式：DB 失败不再假装成功）。
+//   - 持久化失败上抛错误（范式：DB 失败不再假装成功）。
 //
 // 表结构：os_templates / middleware_templates；initSchema 中幂等建表 + alterColumnIfMissing 兼容旧库。
 package store
@@ -21,7 +21,7 @@ import (
 )
 
 // ============================================================================
-// task 100 OS 安装模板：SaveOSTemplate / ListOSTemplates / GetOSTemplate / DeleteOSTemplate
+// OS 安装模板：SaveOSTemplate / ListOSTemplates / GetOSTemplate / DeleteOSTemplate
 // ============================================================================
 
 // scanOSTemplate 从一行扫描出 *OSTemplate。
@@ -123,7 +123,7 @@ func (s *SQLStore) DeleteOSTemplate(id string) bool {
 }
 
 // ============================================================================
-// task 100 中间件部署模板：SaveMiddlewareTemplate / ListMiddlewareTemplates / GetMiddlewareTemplate / DeleteMiddlewareTemplate
+// 中间件部署模板：SaveMiddlewareTemplate / ListMiddlewareTemplates / GetMiddlewareTemplate / DeleteMiddlewareTemplate
 // ============================================================================
 
 // scanMiddlewareTemplate 从一行扫描出 *MiddlewareTemplate。

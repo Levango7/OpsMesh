@@ -7,7 +7,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
-// TestValidateKubeConfigSafety_ExecRejected 验证 task 85：含 exec 凭据插件的 kubeconfig 被拒绝。
+// TestValidateKubeConfigSafety_ExecRejected 验证 ：含 exec 凭据插件的 kubeconfig 被拒绝。
 func TestValidateKubeConfigSafety_ExecRejected(t *testing.T) {
 	cfg := clientcmdapi.NewConfig()
 	cfg.AuthInfos["evil"] = &clientcmdapi.AuthInfo{

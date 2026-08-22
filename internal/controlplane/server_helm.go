@@ -1,4 +1,4 @@
-// server_helm.go task 242 M3 集成：Helm 应用商店 API（仓库/Chart/Release/Catalog）。
+// server_helm.go M3 集成：Helm 应用商店 API（仓库/Chart/Release/Catalog）。
 //
 // 与 internal/helm/ 包的关系：
 //   - helm.RepoManager 提供 AddRepo/RemoveRepo/ListRepos/ListCharts/SearchCharts/GetChart；

@@ -9,7 +9,7 @@ import (
 )
 
 // MemoryLogStore 内存环形缓冲实现（并发安全，O(1) 追加 / O(n) 检索）。
-// MVP 默认后端；进程重启即丢，生产应切 SQL（U-04 数据本地化）。
+// MVP 默认后端；进程重启即丢，生产应切 SQL（数据本地化）。
 //
 // index 字段为可选倒排索引：通过 NewMemoryWithIndex 启用。
 // 启用后 Append 同步加入索引（含环形裁剪同步移除），

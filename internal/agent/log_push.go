@@ -1,4 +1,4 @@
-// Package agent 内的 log_push.go 实现 P2-B4 task 270 日志采集 agent 端推送。
+// Package agent 内的 log_push.go 实现 日志采集 agent 端推送。
 //
 // LogPusher 尾随（tail -f）一组日志文件，按可选正则过滤后批量推送到后端：
 //   - Loki：POST JSON 到 /loki/api/v1/push（流式格式）。

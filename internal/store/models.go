@@ -18,10 +18,10 @@ type User struct {
 	Username           string    `json:"username"`
 	Email              string    `json:"email"`
 	PasswordHash       string    `json:"-"`      // bcrypt 哈希；JSON 序列化时不输出（防泄露）
-	Status             string    `json:"status"` // "active" | "pending" | "rejected" | "disabled"（P1-7：pending=待管理员审批）
+	Status             string    `json:"status"` // "active" | "pending" | "rejected" | "disabled"（pending=待管理员审批）
 	RoleIDs            []string  `json:"roleIDs"`
 	CreatedAt          time.Time `json:"createdAt"`
-	MustChangePassword bool      `json:"mustChangePassword"` // 强制改密标记：预置弱口令用户首登须改密（安全债 85）
+	MustChangePassword bool      `json:"mustChangePassword"` // 强制改密标记：预置弱口令用户首登须改密（安全债）
 	// EffectivePermissions 为角色展开后的有效权限集合（由 /auth/me 计算填充，非持久化字段）。
 	// 供前端侧栏按权限过滤功能入口，与后端 RBAC 闸（requireProd）同源，杜绝定义漂移。
 	EffectivePermissions []string `json:"permissions"`
@@ -57,7 +57,7 @@ type Permission struct {
 // 安全要点：Kubeconfig 含集群凭据，绝不原样返回给前端；API 层负责脱敏。
 type K8sCluster struct {
 	ID         string    `json:"id"`
-	TenantID   string    `json:"tenantId"` // 所属租户（task 88 租户隔离；空值保存时归一为 default）
+	TenantID   string    `json:"tenantId"` // 所属租户（租户隔离；空值保存时归一为 default）
 	Name       string    `json:"name"`
 	Server     string    `json:"server"`     // API Server 地址
 	Kubeconfig string    `json:"kubeconfig"` // kubeconfig 内容（YAML，敏感）
@@ -66,7 +66,7 @@ type K8sCluster struct {
 	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
-// AlertRule 告警规则实体（task 100）：定义基于指标阈值的告警触发条件。
+// AlertRule 告警规则实体：定义基于指标阈值的告警触发条件。
 //
 // 由控制面告警引擎周期评估：对每条 Enabled 的规则，按 Metric 取设备最新指标，
 // 经 Op（> / < / >= / <= / == / !=）与 Threshold 比对，持续 ForDuration 满足
@@ -83,7 +83,7 @@ type K8sCluster struct {
 //   - Message：告警消息模板（产出 Alert.Message）；
 //   - Enabled：是否启用（false 时跳过评估）；
 //   - CreatedAt：创建时间戳；
-//   - CreatedBy：创建人（task 246 M2 持久化，由 controlplane 迁移 globalAlertRules 时填充）。
+//   - CreatedBy：创建人（M2 持久化，由 controlplane 迁移 globalAlertRules 时填充）。
 type AlertRule struct {
 	ID          string    `json:"id"`
 	TenantID    string    `json:"tenantID"`
@@ -98,9 +98,9 @@ type AlertRule struct {
 	CreatedBy   string    `json:"createdBy"`
 }
 
-// OSTemplate OS 安装模板实体（task 100）：裸机/虚拟机自动安装操作系统的模板配置。
+// OSTemplate OS 安装模板实体：裸机/虚拟机自动安装操作系统的模板配置。
 //
-// 用于 B1 自动纳管闭环的「裸机→OS→agent」全自动安装链路：
+// 用于 自动纳管闭环的「裸机→OS→agent」全自动安装链路：
 //   - 模板定义 OS 类型（centos/ubuntu/...）、安装源（kickstart/preseed URL）、
 //     最小化配置（分区/网络/账户）等；
 //   - Provision 时按设备元信息匹配模板，经 IPMI/PXE 推送安装；
@@ -129,7 +129,7 @@ type OSTemplate struct {
 	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
-// MiddlewareTemplate 中间件部署模板实体（task 100）：定义中间件（如 MySQL/Redis/Kafka）
+// MiddlewareTemplate 中间件部署模板实体：定义中间件（如 MySQL/Redis/Kafka）
 // 的标准化部署配置模板，供「应用编排→中间件实例化」复用。
 //
 // 字段说明：
@@ -151,11 +151,11 @@ type MiddlewareTemplate struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// RefreshToken 刷新令牌实体（task 111）：用于 access token 过期后的无感续期。
+// RefreshToken 刷新令牌实体：用于 access token 过期后的无感续期。
 //
 // 安全设计（与 install_tokens 同范式）：
 //   - TokenHash 为 refresh token 的 SHA-256 摘要（hex），库存/内存只存摘要，
-//     不存明文 token——DB 只读账号/备份泄露不等于活体 refresh token 泄露（P1-F7）；
+//     不存明文 token——DB 只读账号/备份泄露不等于活体 refresh token 泄露；
 //   - DeviceFP 为设备指纹（User-Agent + IP 段等），用于校验 refresh token 仅在
 //     原签发设备上使用，防 token 跨设备重放；
 //   - ExpiresAt 为 refresh token 过期时间（通常远长于 access token，如 7d）；
@@ -177,7 +177,7 @@ type RefreshToken struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// SilenceRule 静默/抑制规则实体（task 241 M2 集成）。
+// SilenceRule 静默/抑制规则实体（M2 集成）。
 //
 // 在 [StartAt, EndAt] 时间窗口内，对 Labels 匹配 MatchLabels 的告警事件进行抑制。
 // MatchLabels 中每个键值对都需在事件 Labels 中存在且相等（AND 语义）；
@@ -202,7 +202,7 @@ type SilenceRule struct {
 	CreatedAt   time.Time         `json:"createdAt"`
 }
 
-// NotifyChannel 通知渠道实体（task 241 M2 集成）。
+// NotifyChannel 通知渠道实体（M2 集成）。
 //
 // 定义一个通知渠道（钉钉/企业微信/飞书/Slack/邮件/Webhook）的配置，
 // 告警规则通过 NotifyChannels 引用渠道 ID 列表，触发时经 Notifier 推送。
@@ -226,7 +226,7 @@ type NotifyChannel struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// NotifyTemplate 通知模板实体（task 241 M2 集成）。
+// NotifyTemplate 通知模板实体（M2 集成）。
 //
 // 定义通知消息的标题/正文模板（Go text/template 变量替换），
 // 渠道推送时按模板渲染产出消息正文。

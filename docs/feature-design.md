@@ -90,7 +90,7 @@
 
 ### 1.3 流程图
 
-图：B1 自动纳管流程图
+图：自动纳管流程图
 
 ```text
 ┌──────────────┐
@@ -1573,7 +1573,7 @@ POST /api/v1/os-templates/{id}/execute
 | UC-TN-03 | 配额限制 | 系统 | 每租户设备/任务/告警数上限校验 |
 | UC-TN-04 | RBAC 头注入 | 网关 | X-Tenant-ID/X-User-Id/X-User-Roles 注入 |
 | UC-TN-05 | 越权拒绝 | 系统 | 缺失 X-Tenant-ID + require-auth → 401 |
-| UC-TN-06 | B1 令牌闭环 | Agent | install token 携带租户，不依赖网关头 |
+| UC-TN-06 | 令牌闭环 | Agent | install token 携带租户，不依赖网关头 |
 
 ### 14.3 流程图
 
@@ -1618,7 +1618,7 @@ schema 前缀: --schema-prefix (默认 opsmesh_tenant_)
 - **BR-TN-03**：`--multi-schema=true` 时每租户路由独立 MySQL schema（schema 名 = `--schema-prefix` + tenantID）。
 - **BR-TN-04**：schema 隔离仅 `--store=mysql` 时生效，memory 模式不支持。
 - **BR-TN-05**：配额限制每租户设备数/任务数/告警数，超限返回 429。
-- **BR-TN-06**：B1 令牌闭环例外：agent 首次注册携带 install token，从 token 提取租户，不依赖网关头。
+- **BR-TN-06**：令牌闭环例外：agent 首次注册携带 install token，从 token 提取租户，不依赖网关头。
 - **BR-TN-07**：审计事件按 tenant_id 隔离，查询时自动过滤。
 - **BR-TN-08**：联邦转发须携带原租户身份头，peer 控制面按原租户隔离。
 
@@ -1668,15 +1668,15 @@ schema 前缀: --schema-prefix (默认 opsmesh_tenant_)
 
 | 用例 ID | 名称 | 主参与者 | 主流程 |
 |---------|------|----------|--------|
-| UC-U-01 | 用户注册 | 用户 | POST /auth/register → status=pending → 等待审批 |
-| UC-U-02 | 注册审批 | 管理员 | POST /users/{id} → status=active |
-| UC-U-03 | 用户登录 | 用户 | POST /auth/login → 签发 AT/RT Cookie |
-| UC-U-04 | Token 刷新 | 前端 | POST /auth/refresh → 旋转 AT/RT |
-| UC-U-05 | 用户登出 | 用户 | POST /auth/logout → 撤销 RT |
-| UC-U-06 | 修改密码 | 用户 | POST /auth/change-password |
-| UC-U-07 | 创建角色 | 管理员 | POST /roles → 绑定权限 |
-| UC-U-08 | 角色分配 | 管理员 | PUT /users/{id} → 绑定角色 |
-| UC-U-09 | 网关注入身份 | 网关 | 注入 X-Tenant-ID/X-User-Id/X-User-Roles |
+| UC-| 用户注册 | 用户 | POST /auth/register → status=pending → 等待审批 |
+| UC-| 注册审批 | 管理员 | POST /users/{id} → status=active |
+| UC-| 用户登录 | 用户 | POST /auth/login → 签发 AT/RT Cookie |
+| UC-| Token 刷新 | 前端 | POST /auth/refresh → 旋转 AT/RT |
+| UC-| 用户登出 | 用户 | POST /auth/logout → 撤销 RT |
+| UC-| 修改密码 | 用户 | POST /auth/change-password |
+| UC-| 创建角色 | 管理员 | POST /roles → 绑定权限 |
+| UC-| 角色分配 | 管理员 | PUT /users/{id} → 绑定角色 |
+| UC-| 网关注入身份 | 网关 | 注入 X-Tenant-ID/X-User-Id/X-User-Roles |
 
 ### 15.3 流程图
 
@@ -1738,16 +1738,16 @@ AT 过期 → POST /auth/refresh (凭 RT) → 旋转 AT + RT
 
 ### 15.4 业务规则
 
-- **BR-U-01**：用户/角色/权限三表，预置 24 条默认权限 + admin 角色 + 默认 admin 用户。
-- **BR-U-02**：JWT 签发密钥为 `--jwt-secret`（HS256），多副本须一致，生产强制 ≥32 字节。
-- **BR-U-03**：AT 短期（1h），RT 长期（7d），均经 HttpOnly Cookie 下发。
-- **BR-U-04**：登录防爆破：令牌桶限流（每 IP 10 突发 / 每 3s 补 1）+ 连续失败 5 次锁 15min。
-- **BR-U-05**：用户名不存在场景同样计入限流，避免账号枚举。
-- **BR-U-06**：注册受 `--public-register` 控制（false 时关闭公开注册，仅管理员可创建）。
-- **BR-U-07**：`--allow-public-register=true` 时注册即激活并签发 token（仅演示/内网受信）。
-- **BR-U-08**：Token 刷新旋转 AT + RT，旧 RT 撤销。
-- **BR-U-09**：网关注入身份头路径与内置用户中心可同时启用，网关头优先。
-- **BR-U-10**：`--cookie-secure=true` 时 Cookie 仅经 HTTPS 传输，生产模式默认 true。
+- **BR-**：用户/角色/权限三表，预置 24 条默认权限 + admin 角色 + 默认 admin 用户。
+- **BR-**：JWT 签发密钥为 `--jwt-secret`（HS256），多副本须一致，生产强制 ≥32 字节。
+- **BR-**：AT 短期（1h），RT 长期（7d），均经 HttpOnly Cookie 下发。
+- **BR-**：登录防爆破：令牌桶限流（每 IP 10 突发 / 每 3s 补 1）+ 连续失败 5 次锁 15min。
+- **BR-**：用户名不存在场景同样计入限流，避免账号枚举。
+- **BR-**：注册受 `--public-register` 控制（false 时关闭公开注册，仅管理员可创建）。
+- **BR-**：`--allow-public-register=true` 时注册即激活并签发 token（仅演示/内网受信）。
+- **BR-**：Token 刷新旋转 AT + RT，旧 RT 撤销。
+- **BR-**：网关注入身份头路径与内置用户中心可同时启用，网关头优先。
+- **BR-**：`--cookie-secure=true` 时 Cookie 仅经 HTTPS 传输，生产模式默认 true。
 
 ### 15.5 边界条件
 

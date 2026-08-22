@@ -1,4 +1,4 @@
-// secrets_extra_test.go — 补全 internal/secrets 包测试覆盖率（task 325）。
+// secrets_extra_test.go — 补全 internal/secrets 包测试覆盖率。
 //
 // 重点覆盖 factory.go 中 FromConfig/buildChain/buildSingle/buildVault 四个工厂函数
 // （原覆盖率为 0%），并补充 provider.go 与 vault.go 的边界分支。

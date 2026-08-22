@@ -1,4 +1,4 @@
-// grpcclient_discovery_test.go M1-3 服务发现集成测试。
+// grpcclient_discovery_test.go 服务发现集成测试。
 package agent
 
 import (

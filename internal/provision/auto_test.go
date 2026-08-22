@@ -21,7 +21,7 @@ func noopDeps() Deps {
 	}
 }
 
-// TestAutoProvision_ProductionRequiresHTTPS 验证 task 93：
+// TestAutoProvision_ProductionRequiresHTTPS 验证 ：
 // 生产模式下 advertise 非 HTTPS 时整轮纳管被拒绝（防 agent 二进制明文下载被篡改）。
 func TestAutoProvision_ProductionRequiresHTTPS(t *testing.T) {
 	cfg := &config.Config{Production: true, AdvertiseAddr: "http://10.30.0.1:8080", HTTPPort: 8080}

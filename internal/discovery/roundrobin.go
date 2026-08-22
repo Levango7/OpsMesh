@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 )
 
-// RoundRobin 轮询负载均衡器（M1-3）。
+// RoundRobin 轮询负载均衡器。
 //
 // 语义：每次 Next 返回下一个健康实例，均匀分配负载到各实例。
 // 当实例列表更新（Update）时，重置计数器到 0（避免越界）。

@@ -15,7 +15,7 @@ const BASE = process.env.E2E_BASE_URL || 'http://127.0.0.1:8080'
 let cachedToken = null
 
 // login 返回正式 access token。
-// 兼容首登强制改密（安全债 85）：seed 的 admin 带 MustChangePassword=true，
+// 兼容首登强制改密（安全债）：seed 的 admin 带 MustChangePassword=true，
 // 登录返回 {mustChangePassword:true, changePasswordToken} 而非 token。
 // 此时先走 /auth/change-password（old=admin123, new=E2E_NEW_PASS）清除标记，
 // 再用新密码重新登录拿正式 token——模拟真实用户首登改密流程。

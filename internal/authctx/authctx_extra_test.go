@@ -583,7 +583,7 @@ func TestFromJWT_MissingClaims(t *testing.T) {
 // ============================================================================
 
 // TestFromRequest_JWTEnabledButMalformedAuth 启用 JWT 但 Authorization 头格式非法
-// （非 Bearer）时，FromRequest 应返回 error（M3-2B 安全加固）。
+// （非 Bearer）时，FromRequest 应返回 error（安全加固）。
 // 修复前：回退到头注入模式，攻击者可用非 Bearer 格式绕过 JWT 验签。
 // 修复后：返回 error，调用方应 401。
 func TestFromRequest_JWTEnabledButMalformedAuth(t *testing.T) {
@@ -604,7 +604,7 @@ func TestFromRequest_JWTEnabledButMalformedAuth(t *testing.T) {
 }
 
 // ============================================================================
-// authctx.go: FromRequest 行为矩阵（M3-2B 安全加固：JWT 启用时禁止无 token 回退）
+// authctx.go: FromRequest 行为矩阵（安全加固：JWT 启用时禁止无 token 回退）
 // ============================================================================
 //
 // 本组测试系统性验证修复后的 FromRequest 行为矩阵：

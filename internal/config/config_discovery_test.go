@@ -1,11 +1,11 @@
-// config_discovery_test.go M1-3 服务发现配置测试。
+// config_discovery_test.go 服务发现配置测试。
 package config
 
 import (
 	"testing"
 )
 
-// TestConfig_DiscoveryFields 验证 M1-3 服务发现相关字段存在且默认值合理。
+// TestConfig_DiscoveryFields 验证 服务发现相关字段存在且默认值合理。
 func TestConfig_DiscoveryFields(t *testing.T) {
 	c := &Config{}
 	// 默认值：空字符串（未配置多控制面，回退到 ControlAddr）

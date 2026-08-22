@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// SQLLogStore MySQL 后端（U-04 数据本地化，私有部署）。
+// SQLLogStore MySQL 后端（数据本地化，私有部署）。
 // 复用控制面 SQLStore 的 *sql.DB（共享连接池），自身不关闭该连接。
 type SQLLogStore struct {
 	db *sql.DB

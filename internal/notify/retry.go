@@ -1,4 +1,4 @@
-// Package notify 通知重试（M2-2）。
+// Package notify 通知重试。
 //
 // 本文件实现通知重试策略：发送失败时按指数退避重试，达到最大次数后放弃并返回最后一次错误。
 // 重试间隔 = Interval * Backoff^(attempt-1)（attempt 从 1 开始）。

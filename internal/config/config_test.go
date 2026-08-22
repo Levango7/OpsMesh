@@ -21,7 +21,7 @@ func base() *Config {
 		TaskLeaseSec:      300,
 		Replicas:          1,
 		TaskMaxRetries:    3,
-		LogBackend:        "memory", // M4-4B 默认日志后端
+		LogBackend:        "memory", // 默认日志后端
 	}
 }
 
@@ -32,7 +32,7 @@ func TestValidate_OK(t *testing.T) {
 	}
 }
 
-// TestValidate_MemoryMultiReplica A3：memory store 配多副本必须被拒绝（数据分裂）。
+// TestValidate_MemoryMultiReplica ：memory store 配多副本必须被拒绝（数据分裂）。
 func TestValidate_MemoryMultiReplica(t *testing.T) {
 	c := base()
 	c.Store = "memory"
@@ -42,7 +42,7 @@ func TestValidate_MemoryMultiReplica(t *testing.T) {
 	}
 }
 
-// TestValidate_MysqlMultiReplica A4：mysql store + 多副本是 HA 合法组合。
+// TestValidate_MysqlMultiReplica ：mysql store + 多副本是 HA 合法组合。
 func TestValidate_MysqlMultiReplica(t *testing.T) {
 	c := base()
 	c.Store = "mysql"
@@ -53,7 +53,7 @@ func TestValidate_MysqlMultiReplica(t *testing.T) {
 	}
 }
 
-// TestValidate_ProductionRejectsNoTLS H6 等保加固：生产模式 + 无 TLS 证书应被 Validate 拒绝
+// TestValidate_ProductionRejectsNoTLS 等保加固：生产模式 + 无 TLS 证书应被 Validate 拒绝
 // （Production=true 且 TLSCert="" 直接返回 error，避免 agent↔控制面明文通信）。
 func TestValidate_ProductionRejectsNoTLS(t *testing.T) {
 	c := base()
@@ -61,13 +61,13 @@ func TestValidate_ProductionRejectsNoTLS(t *testing.T) {
 	c.Store = "memory"
 	c.Replicas = 1 // 单副本不触发多副本拒绝
 	c.TLSCert = "" // 无 TLS 证书
-	// production + 无 TLS 应被拒绝（H6 等保三级要求）。
+	// production + 无 TLS 应被拒绝（等保三级要求）。
 	if err := c.Validate(); err == nil {
 		t.Fatal("production + 无 TLS 应被拒绝，但 Validate 通过了")
 	}
 }
 
-// TestValidate_ModeAndStore A4：非法 mode 与 mysql 缺 DSN 必须拒绝。
+// TestValidate_ModeAndStore ：非法 mode 与 mysql 缺 DSN 必须拒绝。
 func TestValidate_ModeAndStore(t *testing.T) {
 	c := base()
 	c.Mode = "bogus"
@@ -83,7 +83,7 @@ func TestValidate_ModeAndStore(t *testing.T) {
 	}
 }
 
-// TestLoad_ProductionEnablesRequireAuth A4：生产模式默认开启 require-auth（除非显式关闭）。
+// TestLoad_ProductionEnablesRequireAuth ：生产模式默认开启 require-auth（除非显式关闭）。
 func TestLoad_ProductionEnablesRequireAuth(t *testing.T) {
 	// 直接构造 Load 等价逻辑：production 且无显式 require-auth 时翻 true。
 	c := base()
@@ -98,7 +98,7 @@ func TestLoad_ProductionEnablesRequireAuth(t *testing.T) {
 	}
 }
 
-// TestValidate_LogBackend M4-4B：非法 log-backend 必须被拒绝。
+// TestValidate_LogBackend ：非法 log-backend 必须被拒绝。
 func TestValidate_LogBackend(t *testing.T) {
 	c := base()
 	c.LogBackend = "bogus"
@@ -107,7 +107,7 @@ func TestValidate_LogBackend(t *testing.T) {
 	}
 }
 
-// TestValidate_LogBackendLokiMissingEndpoint M4-4B：log-backend=loki 但缺 endpoint 必须被拒绝。
+// TestValidate_LogBackendLokiMissingEndpoint ：log-backend=loki 但缺 endpoint 必须被拒绝。
 func TestValidate_LogBackendLokiMissingEndpoint(t *testing.T) {
 	c := base()
 	c.LogBackend = "loki"
@@ -117,7 +117,7 @@ func TestValidate_LogBackendLokiMissingEndpoint(t *testing.T) {
 	}
 }
 
-// TestValidate_LogBackendLokiOK M4-4B：log-backend=loki + endpoint 合法。
+// TestValidate_LogBackendLokiOK ：log-backend=loki + endpoint 合法。
 func TestValidate_LogBackendLokiOK(t *testing.T) {
 	c := base()
 	c.LogBackend = "loki"
@@ -127,7 +127,7 @@ func TestValidate_LogBackendLokiOK(t *testing.T) {
 	}
 }
 
-// TestValidate_LogBackendESMissingEndpoint M4-4B：log-backend=es 但缺 endpoint 必须被拒绝。
+// TestValidate_LogBackendESMissingEndpoint ：log-backend=es 但缺 endpoint 必须被拒绝。
 func TestValidate_LogBackendESMissingEndpoint(t *testing.T) {
 	c := base()
 	c.LogBackend = "es"
@@ -137,7 +137,7 @@ func TestValidate_LogBackendESMissingEndpoint(t *testing.T) {
 	}
 }
 
-// TestValidate_LogBackendESMissingIndex M4-4B：log-backend=es 但缺 index 必须被拒绝。
+// TestValidate_LogBackendESMissingIndex ：log-backend=es 但缺 index 必须被拒绝。
 func TestValidate_LogBackendESMissingIndex(t *testing.T) {
 	c := base()
 	c.LogBackend = "es"
@@ -148,7 +148,7 @@ func TestValidate_LogBackendESMissingIndex(t *testing.T) {
 	}
 }
 
-// TestValidate_LogBackendESOK M4-4B：log-backend=es + endpoint + index 合法。
+// TestValidate_LogBackendESOK ：log-backend=es + endpoint + index 合法。
 func TestValidate_LogBackendESOK(t *testing.T) {
 	c := base()
 	c.LogBackend = "es"
@@ -206,7 +206,7 @@ func TestValidate_ProductionJWTSecretLength(t *testing.T) {
 }
 
 // ============================================================================
-// B-6 / C-4 新选项校验测试
+// / 新选项校验测试
 // ============================================================================
 
 // TestValidate_SessionStoreFormat 验证 --session-store 格式校验。
@@ -269,7 +269,7 @@ func TestParseDeviceFPDeadline(t *testing.T) {
 }
 
 // ============================================================================
-// task 254 P2-3 告警抑制集成：--inhibit-rules-file 校验测试
+// 告警抑制集成：--inhibit-rules-file 校验测试
 // ============================================================================
 
 // TestValidate_InhibitRulesFile_Empty 验证空 InhibitRulesFile 通过校验（向后兼容）。

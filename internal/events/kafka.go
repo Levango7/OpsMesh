@@ -19,11 +19,11 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-// newKafkaBus 由调用方传入 brokers/topic（参数传递，避免 os.Setenv 竞态，P1-5）；
+// newKafkaBus 由调用方传入 brokers/topic（参数传递，避免 os.Setenv 竞态）；
 // 未配置时返回 nil（调用方回退 noop）。
 //
 // 不启用 WAL（wal 字段为 nil）：保持向后兼容，原 New(kind,...) 路径无 WAL 兜底。
-// 需 WAL 兜底时用 NewKafkaBusWithWAL 显式构造（B-3 审计合规）。
+// 需 WAL 兜底时用 NewKafkaBusWithWAL 显式构造（审计合规）。
 func newKafkaBus(brokers, topic string) Bus {
 	clean := strings.Split(brokers, ",")
 	filtered := clean[:0]
@@ -44,7 +44,7 @@ func newKafkaBus(brokers, topic string) Bus {
 //   - w：底层 kafka-go Writer（同步阻塞发送）
 //   - wal：本地 WAL 兜底（nil 表示不启用，向后兼容原 newKafkaBus 路径）
 //
-// Publish 行为（B-3 审计合规）：
+// Publish 行为（审计合规）：
 //  1. stamp 加盖契约版本 → JSON 序列化
 //  2. 调 w.WriteMessages 同步发送
 //  3. 成功 → 返回 nil
@@ -58,7 +58,7 @@ type kafkaBus struct {
 	wal *kafkaWAL
 }
 
-// Publish 发布事件到 Kafka，失败时落盘 WAL 兜底（B-3 审计合规）。
+// Publish 发布事件到 Kafka，失败时落盘 WAL 兜底（审计合规）。
 //
 // 关键设计：即使 WAL 启用，Publish 仍返回 err（而非吞掉错误返回 nil）。
 // 原因：调用方（如 stampingBus）据 err 决定是否告警/降级，吞掉会破坏上层错误处理语义。
@@ -86,7 +86,7 @@ func (k *kafkaBus) Publish(ctx context.Context, e Event) error {
 	return nil
 }
 
-// NewKafkaBusWithWAL 构造启用 WAL 兜底的 Kafka Bus（B-3 审计合规）。
+// NewKafkaBusWithWAL 构造启用 WAL 兜底的 Kafka Bus（审计合规）。
 //
 // 参数：
 //   - brokers：逗号分隔的 broker 地址列表（同 newKafkaBus）
@@ -139,7 +139,7 @@ func (k *kafkaBus) StopWAL() {
 	}
 }
 
-// FailedCount 返回累计 Publish 失败次数（B-3 metrics/告警）。
+// FailedCount 返回累计 Publish 失败次数（metrics/告警）。
 //
 // WAL 未启用时返回 0（无 WAL 即无失败计数语义）。
 func (k *kafkaBus) FailedCount() int64 {

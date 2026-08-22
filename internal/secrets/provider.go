@@ -1,4 +1,4 @@
-// Package secrets 提供统一的密钥管理抽象层（task 265）。
+// Package secrets 提供统一的密钥管理抽象层。
 //
 // 支持 3 种密钥来源：
 //   - EnvProvider：从环境变量读取（适合 K8s Secret 注入）
@@ -8,7 +8,7 @@
 // 通过 ChainProvider 可按优先级依次尝试多个 provider。
 // ResolveSecret 辅助函数支持 ${provider:key} 引用语法，向后兼容明文配置。
 //
-// 为后续告警通道密钥外置（task 266）提供基础。
+// 为后续告警通道密钥外置提供基础。
 package secrets
 
 import (

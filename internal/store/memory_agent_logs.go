@@ -3,10 +3,10 @@ package store
 import "opsmesh/internal/proto"
 
 // ============================================================================
-// task 247 agent 日志上报：SaveLogs / AgentLogs
+// agent 日志上报：SaveLogs / AgentLogs
 // ============================================================================
 
-// SaveLogs task 247：把 agent 上报的日志批次落库到内存 slice。
+// SaveLogs ：把 agent 上报的日志批次落库到内存 slice。
 // tenantID 为 agent 归属租户（由控制面 gRPC handler 按 agent 注册时盖章回填，agent 不可伪造）；
 // 强制覆盖 report.TenantID 以保证行级隔离。report 为 nil 时直接返回。
 // 深拷贝 report 及其 Lines 避免外部并发修改破坏内部状态。
@@ -27,7 +27,7 @@ func (m *MemoryStore) SaveLogs(tenantID string, report *proto.LogReport) error {
 	return nil
 }
 
-// AgentLogs task 247：查询已落库的 agent 日志批次。
+// AgentLogs ：查询已落库的 agent 日志批次。
 // tenantID 非空时按租户过滤（行级隔离），agentID 非空时按 agent 过滤，
 // logName 非空时按日志标识过滤。返回深拷贝避免外部并发修改。
 func (m *MemoryStore) AgentLogs(tenantID, agentID, logName string) []proto.LogReport {

@@ -8,7 +8,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// setRlimits 应用 POSIX 进程资源限额（P0-3）。所有选项为 0 时不限制。
+// setRlimits 应用 POSIX 进程资源限额。所有选项为 0 时不限制。
 // 注意：RLIMIT_AS 设置过低可能导致进程被杀；作为等保/多租户隔离的纵深防御，默认不开启。
 //
 // Go 1.26 兼容：Linux 平台的 RLIMIT_NPROC 已从 syscall 包移除（syscall 仅保留

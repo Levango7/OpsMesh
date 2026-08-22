@@ -36,12 +36,12 @@ type MemoryStore struct {
 	// 与 m.tasks 同由 m.mu 保护并发安全。
 	tasksByID map[string]*proto.Task
 	results   map[string][]*proto.TaskResult // agentID -> 上报结果
-	audits    []*proto.AuditEvent            // 审计事件（U-04 留痕）
+	audits    []*proto.AuditEvent            // 审计事件（留痕）
 	alerts    []*proto.Alert                 // 告警事件（M7）
 	seq       int                            // 自增序号，用于生成 agentID
-	bus       events.Bus                     // 事件总线（P1-5）；可 nil（测试/默认 noop）
-	demo      bool                           // 演示模式（P0-5）：开启时注册预置 uname -a
-	// B1 自动纳管闭环：install token 的 HMAC 签名密钥与已签发 token 登记表。
+	bus       events.Bus                     // 事件总线；可 nil（测试/默认 noop）
+	demo      bool                           // 演示模式：开启时注册预置 uname -a
+	// 自动纳管闭环：install token 的 HMAC 签名密钥与已签发 token 登记表。
 	// secret 为空时由 NewMemoryStore 随机生成（单实例 MVP）；多副本须一致（经 WithSecret 注入）。
 	secret string
 	tokens map[string]*tokenMeta // token -> 元数据（一次性、限时）
@@ -52,44 +52,44 @@ type MemoryStore struct {
 	usersByName map[string]*User // username -> user（登录 O(1) 直查）
 	roles       map[string]*Role // id -> role
 	permissions []*Permission    // 预定义权限列表（只读）
-	// 设备实时监控指标：deviceID -> 环形缓冲（保留最近 N 条历史快照，task 223）。
+	// 设备实时监控指标：deviceID -> 环形缓冲（保留最近 N 条历史快照）。
 	// 默认 2h/240 条（30s 采样间隔），供 GET /api/v1/devices/{id}/metrics?range=2h 查询历史时序。
 	// DeviceMetrics() 返回最新值（向后兼容），DeviceMetricsHistory() 返回历史序列。
 	deviceMetrics map[string]*metricsRing
 	// K8s 集群配置（Phase 3）：clusterID -> 集群配置。
 	// 与 deviceMetrics 同样由 m.mu 保护并发安全；Kubeconfig 为敏感内容，API 层负责脱敏。
 	k8sClusters map[string]*K8sCluster
-	// task 81 gRPC agent 身份绑定：agentID -> HMAC 签名密钥（32 字节 hex）。
+	// gRPC agent 身份绑定：agentID -> HMAC 签名密钥（32 字节 hex）。
 	// 由 Register 时为每个 agent 随机生成；agent 拉任务/上报/轮询取消时用此密钥签名，
 	// 控制面据此验证 agent 身份，不再纯信任 agent 自报的 AgentID。
 	agentSecrets map[string]string
-	// task 100 告警规则：ruleID -> 规则。由 m.mu 保护并发安全。
+	// 告警规则：ruleID -> 规则。由 m.mu 保护并发安全。
 	// 控制面告警引擎周期评估 Enabled 规则，按 Metric/Op/Threshold 比对设备最新指标，
 	// 持续 ForDuration 满足则产出 Alert（M7）。
 	alertRules map[string]*AlertRule
-	// task 100 OS 安装模板：templateID -> 模板。由 m.mu 保护并发安全。
-	// 用于 B1 自动纳管闭环的「裸机→OS→agent」全自动安装链路；Config 为敏感内容，API 层负责脱敏。
+	// OS 安装模板：templateID -> 模板。由 m.mu 保护并发安全。
+	// 用于 自动纳管闭环的「裸机→OS→agent」全自动安装链路；Config 为敏感内容，API 层负责脱敏。
 	osTemplates map[string]*OSTemplate
-	// task 100 中间件部署模板：templateID -> 模板。由 m.mu 保护并发安全。
+	// 中间件部署模板：templateID -> 模板。由 m.mu 保护并发安全。
 	// 供「应用编排→中间件实例化」复用；Config 为敏感内容，API 层负责脱敏。
 	middlewareTemplates map[string]*MiddlewareTemplate
-	// task 111 刷新令牌：tokenHash -> refresh token。由 m.mu 保护并发安全。
-	// key 为明文 token 的 SHA-256 摘要（P1-F7 明文不落库）；value 为元信息。
+	// 刷新令牌：tokenHash -> refresh token。由 m.mu 保护并发安全。
+	// key 为明文 token 的 SHA-256 摘要（明文不落库）；value 为元信息。
 	// 用于 access token 过期后的无感续期；登出/吊销时按摘要删除。
 	refreshTokens map[string]*RefreshToken
-	// task 241 M2 集成：静默规则（按标签匹配 + 时间窗口抑制告警事件）。
+	// M2 集成：静默规则（按标签匹配 + 时间窗口抑制告警事件）。
 	// key 为 SilenceRule.ID；由 m.mu 保护并发安全。
 	silences map[string]*SilenceRule
-	// task 241 M2 集成：通知渠道（钉钉/企业微信/飞书/Slack/邮件/Webhook）。
+	// M2 集成：通知渠道（钉钉/企业微信/飞书/Slack/邮件/Webhook）。
 	// key 为 NotifyChannel.ID；由 m.mu 保护并发安全。Config 为敏感内容，API 层负责脱敏。
 	notifyChannels map[string]*NotifyChannel
-	// task 241 M2 集成：通知模板（标题/正文 text/template 变量替换）。
+	// M2 集成：通知模板（标题/正文 text/template 变量替换）。
 	// key 为 NotifyTemplate.ID；由 m.mu 保护并发安全。
 	notifyTemplates map[string]*NotifyTemplate
-	// P2-B5 多租户资源配额：tenantID -> 配额配置。
+	// 多租户资源配额：tenantID -> 配额配置。
 	// 由 m.mu 保护并发安全；未设置配额的租户在 QuotaManager 中回退到默认配额。
 	quotaConfigs map[string]*QuotaConfig
-	// task 247 agent 日志上报：已落库的 LogReport 批次列表。
+	// agent 日志上报：已落库的 LogReport 批次列表。
 	// 按 tenantID + logName 分组检索（线性遍历，MVP 内存后端够用；
 	// 生产高频场景应由 logstore.SQLLogStore / Loki / ES 承担检索侧）。
 	// 由 m.mu 保护并发安全。
@@ -111,11 +111,11 @@ func (m *MemoryStore) WithBus(b events.Bus) *MemoryStore {
 	return m
 }
 
-// WithDemo 设置演示模式（P0-5）：开启时 Register 预置 uname -a 示例任务。
+// WithDemo 设置演示模式：开启时 Register 预置 uname -a 示例任务。
 // 线程安全：必须在 Start/首次并发访问前调用，非并发安全。
 func (m *MemoryStore) WithDemo(b bool) Store {
 	m.demo = b
-	// 演示模式（P0-5）：仅 --demo 开启时预置示例告警，避免污染生产。
+	// 演示模式：仅 --demo 开启时预置示例告警，避免污染生产。
 	// 让 M7 监控告警 tab 在本地预览中即可见、可操作（确认/静默）。
 	if b {
 		now := time.Now()
@@ -316,7 +316,7 @@ func (m *MemoryStore) seedRBAC() {
 
 	// 3. 预定义用户（密码 bcrypt 哈希）。
 	// bcrypt 哈希失败时 panic（构造期失败优于运行期诡异出错）。
-	// 安全债 85：预置弱口令（admin123/operator123/viewer123）首登强制改密，
+	// 安全债：预置弱口令（admin123/operator123/viewer123）首登强制改密，
 	// MustChangePassword=true 标记由 auth.go 登录响应返回前端，弹出改密对话框；
 	// 改密成功后由 change-password API 清除标记。避免弱口令被遗忘长期可登。
 	type userSpec struct {
@@ -342,7 +342,7 @@ func (m *MemoryStore) seedRBAC() {
 			Status:             "active",
 			RoleIDs:            us.roleIDs,
 			CreatedAt:          now,
-			MustChangePassword: true, // 预置弱口令强制改密（安全债 85）
+			MustChangePassword: true, // 预置弱口令强制改密（安全债）
 		}
 		m.users[u.ID] = u
 		m.usersByName[u.Username] = u
@@ -403,7 +403,7 @@ func mustRandHex(n int) string {
 }
 
 // hashToken 对完整 token 取 SHA-256 摘要（hex）。
-// 安全（P1-F7）：库存/内存只存摘要，不存明文 token——DB 只读账号/备份泄露不等于活体 token 泄露。
+// 安全：库存/内存只存摘要，不存明文 token——DB 只读账号/备份泄露不等于活体 token 泄露。
 func hashToken(tok string) string {
 	sum := sha256.Sum256([]byte(tok))
 	return hex.EncodeToString(sum[:])
@@ -426,9 +426,9 @@ func verifyTokenMAC(secret, token string) bool {
 	return hmac.Equal([]byte(expected), []byte(sigHex))
 }
 
-// issueTokenLocked B1 签发一个一次性 install token（HMAC(deviceID|tenantID|expiry|nonce)），
+// issueTokenLocked 签发一个一次性 install token（HMAC(deviceID|tenantID|expiry|nonce)），
 // 调用方须持 m.mu（写锁）。token 格式：hex(hmac) + "." + payload，payload 明文含设备/租户/过期/随机串。
-// 库存键为 token 的 SHA-256 摘要（P1-F7 明文不落库）。
+// 库存键为 token 的 SHA-256 摘要（明文不落库）。
 func (m *MemoryStore) issueTokenLocked(deviceID, tenantID string, ttl time.Duration) (string, error) {
 	if m.secret == "" {
 		m.secret = mustRandHex(32) // 兜底，正常构造时已置随机密钥
@@ -457,16 +457,16 @@ func (m *MemoryStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 	}
 	a.LastSeen = time.Now()
 	m.agents[a.AgentID] = a
-	// task 81 gRPC agent 身份绑定：为每个 agent 生成 HMAC 签名密钥（仅首次注册时生成，复用已有 agent 不重置）。
+	// gRPC agent 身份绑定：为每个 agent 生成 HMAC 签名密钥（仅首次注册时生成，复用已有 agent 不重置）。
 	// agent 拉任务/上报/轮询取消时用此密钥签名，控制面据此验证 agent 身份，不再纯信任 agent 自报的 AgentID。
 	if _, ok := m.agentSecrets[a.AgentID]; !ok {
 		m.agentSecrets[a.AgentID] = mustRandHex(32)
 	}
 
-	// B1 自动纳管闭环：若携带 OnboardDeviceID（由 gRPC Register 校验 install token 后回填），
+	// 自动纳管闭环：若携带 OnboardDeviceID（由 gRPC Register 校验 install token 后回填），
 	// 说明这是「已发现候选设备」经 provision 推送 agent 后回注册——翻转该候选设备为已纳管，
 	// 不再新建占位设备。token 校验已在服务侧 ConsumeToken 完成，此处相信已盖章的 OnboardDeviceID。
-	// 安全（P0-F1 纵深防御）：翻转前校验候选设备租户与 agent 租户一致（防越权翻转）。
+	// 安全（纵深防御）：翻转前校验候选设备租户与 agent 租户一致（防越权翻转）。
 	if a.OnboardDeviceID != "" {
 	outer:
 		for _, devs := range m.segments {
@@ -484,7 +484,7 @@ func (m *MemoryStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 			}
 		}
 	} else {
-		// U-02：把 agent 落到对应 segment 桶（整段网络纳管，自动生成占位设备）。
+		// 把 agent 落到对应 segment 桶（整段网络纳管，自动生成占位设备）。
 		exists := false
 		for _, d := range m.segments[a.Segment] {
 			if d.AgentID == a.AgentID {
@@ -509,7 +509,7 @@ func (m *MemoryStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 				AgentID:   a.AgentID,
 				State:     "online",
 				TaskState: "idle",
-				Managed:   true, // agent 主动注册 = 真正纳管（B1 闭环：discovered 候选才 false）
+				Managed:   true, // agent 主动注册 = 真正纳管（闭环：discovered 候选才 false）
 				Hostname:  a.Hostname,
 				OS:        a.OS,
 				Arch:      a.Arch,
@@ -517,7 +517,7 @@ func (m *MemoryStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 		}
 	}
 
-	// 演示模式（P0-5）：仅 --demo 开启时预置一条 uname -a 示例任务，避免污染生产。
+	// 演示模式：仅 --demo 开启时预置一条 uname -a 示例任务，避免污染生产。
 	if m.demo && len(m.tasks[a.AgentID]) == 0 {
 		t := &proto.Task{
 			TaskID:    "task-" + a.AgentID + "-1",
@@ -530,9 +530,9 @@ func (m *MemoryStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 		}
 		m.addTaskLocked(t)
 	}
-	// 事件驱动：注册事件经总线发布（审计/告警可接 Kafka，P1-5）。
+	// 事件驱动：注册事件经总线发布（审计/告警可接 Kafka）。
 	m.publish(events.Event{Action: "register", Target: a.AgentID, TenantID: a.TenantID, Level: events.LevelInfo})
-	// 审计留痕（U-04 等保三级：注册 100% 入审计轨迹；统一在存储层产出，避免与 handler 重复）。
+	// 审计留痕（等保三级：注册 100% 入审计轨迹；统一在存储层产出，避免与 handler 重复）。
 	// 此处已持 m.mu 写锁，调用 appendAudit 而非 Audit，避免重入死锁。
 	m.appendAudit(&proto.AuditEvent{
 		TenantID: a.TenantID,
@@ -589,8 +589,8 @@ func (m *MemoryStore) TasksByParent(parentID string) []*proto.Task {
 }
 
 // ClaimTask 原子领取该 agent 的下一条 pending 任务（pending→running），返回被领取的任务。
-// 并发调用时由同一把锁保证同一任务只被领取一次（HA 协调，P1-1）。返回值为锁内拷贝。
-// A-1 防双跑：领取时 ClaimEpoch++，返回的 Task 带 ClaimEpoch；
+// 并发调用时由同一把锁保证同一任务只被领取一次（HA 协调）。返回值为锁内拷贝。
+// 防双跑：领取时 ClaimEpoch++，返回的 Task 带 ClaimEpoch；
 // agent 上报结果时携带 ClaimEpoch，SubmitResult 校验持有者是否仍为当前 epoch。
 func (m *MemoryStore) ClaimTask(agentID string) *proto.Task {
 	m.mu.Lock()
@@ -614,7 +614,7 @@ func (m *MemoryStore) ClaimTask(agentID string) *proto.Task {
 	return nil
 }
 
-// UpsertDevice 写入/更新一台纳管设备（真实网段发现 P0-2 用；按 deviceID 幂等）。
+// UpsertDevice 写入/更新一台纳管设备（真实网段发现 用；按 deviceID 幂等）。
 func (m *MemoryStore) UpsertDevice(d *proto.DeviceInfo) {
 	if d == nil || d.DeviceID == "" {
 		return
@@ -632,7 +632,7 @@ func (m *MemoryStore) UpsertDevice(d *proto.DeviceInfo) {
 	m.segments[d.Segment] = append(m.segments[d.Segment], d)
 }
 
-// PendingDepth 返回当前 pending 任务总数（观测队列深度 P2-1）。
+// PendingDepth 返回当前 pending 任务总数（观测队列深度）。
 func (m *MemoryStore) PendingDepth() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -647,14 +647,14 @@ func (m *MemoryStore) PendingDepth() int {
 	return n
 }
 
-// ReclaimStaleTasks 复位超期未完成的 running 任务为 pending（P0-1 任务必达）。
+// ReclaimStaleTasks 复位超期未完成的 running 任务为 pending（任务必达）。
 // agent 经 ClaimTask 领取（写 ClaimedAt）后若失联、超过 maxAge 仍未上报结果，
 // 该任务将永远卡在 running；此处周期性调用把它复位，重新进入调度队列。
 // 在持锁下遍历并就地修改切片元素，未增删 map key，并发安全。
 //
-// A-1 防双跑：增加 agent 心跳校验——仅当任务的 ClaimedBy 对应 agent 心跳也超时
+// 防双跑：增加 agent 心跳校验——仅当任务的 ClaimedBy 对应 agent 心跳也超时
 // （LastSeen < cutoff）才回收。心跳正常的 agent 仍可能在执行长任务，不回收避免双跑。
-// MemoryStore 单进程无 HA，不需要 leader fencing（A-2 仅 SQLStore 需要）。
+// MemoryStore 单进程无 HA，不需要 leader fencing（仅 SQLStore 需要）。
 func (m *MemoryStore) ReclaimStaleTasks(maxAge time.Duration) int {
 	if maxAge <= 0 {
 		return 0
@@ -668,7 +668,7 @@ func (m *MemoryStore) ReclaimStaleTasks(maxAge time.Duration) int {
 			if t.Status != "running" || t.ClaimedAt.IsZero() || !t.ClaimedAt.Before(cutoff) {
 				continue
 			}
-			// A-1 防双跑：agent 心跳正常（LastSeen >= cutoff）则不回收，避免长任务被误回收双跑。
+			// 防双跑：agent 心跳正常（LastSeen >= cutoff）则不回收，避免长任务被误回收双跑。
 			if a, ok := m.agents[t.ClaimedBy]; ok && !a.LastSeen.Before(cutoff) {
 				continue
 			}
@@ -713,8 +713,8 @@ func (m *MemoryStore) FireDueSchedules(now time.Time) int {
 				Status:     "pending",
 				ParentID:   t.TaskID,
 				MaxRetries: t.MaxRetries,
-				Timeout:    t.Timeout,    // P2-B2 继承模板的节点级超时
-				RetryDelay: t.RetryDelay, // P2-B2 继承模板的重试间隔
+				Timeout:    t.Timeout,    // 继承模板的节点级超时
+				RetryDelay: t.RetryDelay, // 继承模板的重试间隔
 				CreatedAt:  now,
 			}
 			m.seq++
@@ -746,7 +746,7 @@ func (m *MemoryStore) CreateTask(t *proto.Task) *proto.Task {
 	if len(t.DependsOn) > 0 {
 		t.Status = "blocked"
 	}
-	// task 100 任务审批：高风险任务（ApprovalRequired=true）初始为 pending_approval，
+	// 任务审批：高风险任务（ApprovalRequired=true）初始为 pending_approval，
 	// 不进入 ClaimTask 队列（ClaimTask 仅领取 pending）；待 ApproveTask 翻转为 pending 后才可下发。
 	if t.ApprovalRequired && t.Status == "pending" {
 		t.Status = "pending_approval"
@@ -768,11 +768,11 @@ func (m *MemoryStore) addTaskLocked(t *proto.Task) {
 	m.tasksByID[t.TaskID] = t
 }
 
-// SubmitResult 接收 agent 上报的执行结果，按成功/失败处理任务终态，并同步设备看板（B2）。
+// SubmitResult 接收 agent 上报的执行结果，按成功/失败处理任务终态，并同步设备看板。
 // F2 失败重试 / 死信：失败且未达上限 → 复位 pending（RetryCount++）重新入队；
 // 已达上限 → 置 failed 且标记 DeadLetter（死信，需人工处置）并产出 critical 告警（M7）。
 // 状态守卫（幂等）：仅接受任务处于 running 时的上报；其他状态的迟到上报被忽略（结果记录不受影响）。
-// A-1 防双跑：res.ClaimEpoch > 0 时校验持有者令牌，拒绝旧持有者（任务被回收重派后）上报；
+// 防双跑：res.ClaimEpoch > 0 时校验持有者令牌，拒绝旧持有者（任务被回收重派后）上报；
 // res.ClaimEpoch == 0 时跳过校验（兼容旧 agent/测试）。
 func (m *MemoryStore) SubmitResult(res *proto.TaskResult) {
 	m.mu.Lock()
@@ -785,14 +785,14 @@ func (m *MemoryStore) SubmitResult(res *proto.TaskResult) {
 		if t.TaskID != res.TaskID {
 			continue
 		}
-		// 状态守卫（幂等，task 82）：仅接受任务处于 running 时的上报；
+		// 状态守卫（幂等）：仅接受任务处于 running 时的上报；
 		// 其他状态的迟到/重复上报一律忽略，防止已取消任务被翻回 done、
 		// 防止重复失败上报反复累计 retry_count 造成假死信。
 		if t.Status != "running" {
 			log.Printf("store: memory SubmitResult 忽略非 running 任务 %s (status=%s exitCode=%d)", t.TaskID, t.Status, res.ExitCode)
 			return
 		}
-		// A-1 防双跑：claim_epoch 校验——拒绝旧持有者上报（任务被回收重派后 epoch 已 +1）。
+		// 防双跑：claim_epoch 校验——拒绝旧持有者上报（任务被回收重派后 epoch 已 +1）。
 		// res.ClaimEpoch > 0 时校验（新 agent 填充）；= 0 时跳过（兼容旧 agent/测试）。
 		if res.ClaimEpoch > 0 && t.ClaimEpoch != res.ClaimEpoch {
 			log.Printf("store: memory SubmitResult 拒绝旧持有者上报 %s (claim_epoch=%d != %d)", t.TaskID, res.ClaimEpoch, t.ClaimEpoch)
@@ -825,7 +825,7 @@ func (m *MemoryStore) SubmitResult(res *proto.TaskResult) {
 	// M5 作业编排：本任务 done 后释放依赖它的 blocked 任务（依赖全部 done → pending）。
 	m.releaseDeps(res.AgentID, res.TaskID)
 
-	// 找到该 agent 所属网段，回写设备 TaskState + LastResult（B2 失败回写看板）。
+	// 找到该 agent 所属网段，回写设备 TaskState + LastResult（失败回写看板）。
 	seg := ""
 	if a, ok := m.agents[res.AgentID]; ok {
 		seg = a.Segment
@@ -1014,7 +1014,7 @@ func (m *MemoryStore) RetireDevice(id, tenantID string) bool {
 	return false
 }
 
-// Provision B1 自动纳管闭环：为「已发现候选设备」签发一次性、限时的 install token
+// Provision 自动纳管闭环：为「已发现候选设备」签发一次性、限时的 install token
 // （HMAC 签名，密钥来自 store 构造时注入的 ProvisionSecret），标记设备 provisioning，
 // 并返回 token 与 bootstrap 提示（curl|sh 经 token 安装 agent）。
 // deviceID 不存在时返回错误；device 已 managed 也允许重新签发（幂等重推）。
@@ -1083,10 +1083,10 @@ func (m *MemoryStore) ConsumeToken(token string) (deviceID, tenantID string, ok 
 	return tm.deviceID, tm.tenantID, true
 }
 
-// auditCap 审计事件环形上限，避免长周期运行无界增长导致 OOM（P2-15）。
+// auditCap 审计事件环形上限，避免长周期运行无界增长导致 OOM。
 const auditCap = 10000
 
-// Audit 记录一条审计事件（U-04 等保三级：操作 100% 留痕）。
+// Audit 记录一条审计事件（等保三级：操作 100% 留痕）。
 func (m *MemoryStore) Audit(e *proto.AuditEvent) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1114,7 +1114,7 @@ func (m *MemoryStore) Audits() []*proto.AuditEvent {
 	return out
 }
 
-// QueryAudits 按租户/动作/时间窗过滤审计事件（P0-4 审计可查；U-04 等保三级留痕必须可检索）。
+// QueryAudits 按租户/动作/时间窗过滤审计事件（审计可查；等保三级留痕必须可检索）。
 // tenant/action 为空表示不限；since/until 为零值表示不限；limit<=0 表示不限制（返回全部匹配）。
 // 返回按时间倒序（最新在前）。
 func (m *MemoryStore) QueryAudits(tenant, action string, since, until time.Time, limit int) []*proto.AuditEvent {
@@ -1215,7 +1215,7 @@ func (m *MemoryStore) Agents(tenantID string) []*proto.AgentInfo {
 	return out
 }
 
-// Agent 按 agentID 直接返回单台 agent（O(1) 直查；返回深拷贝避免 data race，P2-17）。
+// Agent 按 agentID 直接返回单台 agent（O(1) 直查；返回深拷贝避免 data race）。
 func (m *MemoryStore) Agent(id string) *proto.AgentInfo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1246,7 +1246,7 @@ func (m *MemoryStore) CancelledTaskIDs(agentID string) []string {
 	return out
 }
 
-// AgentSecret 返回该 agent 的 HMAC 签名密钥（task 81 gRPC 身份绑定）。
+// AgentSecret 返回该 agent 的 HMAC 签名密钥（gRPC 身份绑定）。
 // agent 不存在或未生成密钥时返回空串（调用方据此判断是否需要签名）。
 func (m *MemoryStore) AgentSecret(agentID string) string {
 	m.mu.RLock()
@@ -1352,7 +1352,7 @@ func (m *MemoryStore) DeviceMetrics(deviceID string) *proto.DeviceMetrics {
 	return r.latest()
 }
 
-// DeviceMetricsHistory 返回设备监控指标历史时序（环形缓冲查询，task 223）。
+// DeviceMetricsHistory 返回设备监控指标历史时序（环形缓冲查询）。
 // since 为零值时返回全部已存储历史；否则返回 CollectedAt >= since 的快照（按时间升序）。
 // 无数据时返回 nil。返回深拷贝避免外部并发修改。
 func (m *MemoryStore) DeviceMetricsHistory(deviceID string, since time.Time) []proto.DeviceMetrics {
@@ -1366,10 +1366,10 @@ func (m *MemoryStore) DeviceMetricsHistory(deviceID string, since time.Time) []p
 }
 
 // ============================================================================
-// task 100 任务审批：ApproveTask / RejectTask
+// 任务审批：ApproveTask / RejectTask
 // ============================================================================
 
-// ApproveTask 审批通过任务（task 100）：将 pending_approval 状态翻转回 pending，
+// ApproveTask 审批通过任务：将 pending_approval 状态翻转回 pending，
 // 记录审批人/审批时间。仅 pending_approval 状态可审批；其他状态返回 false。
 // tenantID 非空时校验任务归属，越权返回 false。
 // 性能：经 tasksByID 索引 O(1) 直查，避免遍历 m.tasks（原 O(N)）。
@@ -1394,7 +1394,7 @@ func (m *MemoryStore) ApproveTask(id, tenantID, approvedBy string) bool {
 	return true
 }
 
-// RejectTask 驳回任务（task 100）：将 pending_approval 状态置为 rejected，
+// RejectTask 驳回任务：将 pending_approval 状态置为 rejected，
 // 记录审批人/审批时间。被驳回任务永不进入 ClaimTask 队列。仅 pending_approval 状态可驳回。
 // tenantID 非空时校验任务归属，越权返回 false。
 // 性能：经 tasksByID 索引 O(1) 直查，避免遍历 m.tasks（原 O(N)）。
@@ -1420,7 +1420,7 @@ func (m *MemoryStore) RejectTask(id, tenantID, approvedBy string) bool {
 }
 
 // ============================================================================
-// task 100 告警规则：CreateAlertRule / ListAlertRules / DeleteAlertRule
+// 告警规则：CreateAlertRule / ListAlertRules / DeleteAlertRule
 // ============================================================================
 
 // randAlertRuleID 生成随机告警规则 ID（16 字节十六进制，crypto/rand 密码学安全）。
@@ -1434,7 +1434,7 @@ func randAlertRuleID() string {
 	return "alert-rule-" + hex.EncodeToString(b)
 }
 
-// CreateAlertRule 创建告警规则（task 100）：ID 为空时由 store 分配随机 ID；
+// CreateAlertRule 创建告警规则：ID 为空时由 store 分配随机 ID；
 // TenantID 为空时归一为 default。返回持久化后的规则（含分配的 ID）。
 func (m *MemoryStore) CreateAlertRule(r *AlertRule) *AlertRule {
 	if r == nil {
@@ -1459,7 +1459,7 @@ func (m *MemoryStore) CreateAlertRule(r *AlertRule) *AlertRule {
 	return &ret
 }
 
-// ListAlertRules 返回告警规则（task 100）；tenantID 非空时按租户过滤。
+// ListAlertRules 返回告警规则；tenantID 非空时按租户过滤。
 // 按创建时间升序返回深拷贝，避免外部修改破坏内部状态。
 func (m *MemoryStore) ListAlertRules(tenantID string) []*AlertRule {
 	m.mu.RLock()
@@ -1483,7 +1483,7 @@ func (m *MemoryStore) ListAlertRules(tenantID string) []*AlertRule {
 	return out
 }
 
-// DeleteAlertRule 删除告警规则（task 100），返回是否删除成功（不存在返回 false）。
+// DeleteAlertRule 删除告警规则，返回是否删除成功（不存在返回 false）。
 func (m *MemoryStore) DeleteAlertRule(id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1494,7 +1494,7 @@ func (m *MemoryStore) DeleteAlertRule(id string) bool {
 	return true
 }
 
-// GetAlertRule 按 ID 返回单个告警规则（task 246 M2 持久化补全；不存在返回 nil）。
+// GetAlertRule 按 ID 返回单个告警规则（M2 持久化补全；不存在返回 nil）。
 // 返回深拷贝避免外部并发修改破坏内部状态。
 func (m *MemoryStore) GetAlertRule(id string) *AlertRule {
 	m.mu.RLock()
@@ -1507,7 +1507,7 @@ func (m *MemoryStore) GetAlertRule(id string) *AlertRule {
 	return &cp
 }
 
-// UpdateAlertRule 更新告警规则（task 246 M2 持久化补全）。不存在返回 false。
+// UpdateAlertRule 更新告警规则（M2 持久化补全）。不存在返回 false。
 // 保留原 CreatedAt（与 UpdateNotifyChannel 范式一致）。
 func (m *MemoryStore) UpdateAlertRule(r *AlertRule) bool {
 	if r == nil {
@@ -1526,7 +1526,7 @@ func (m *MemoryStore) UpdateAlertRule(r *AlertRule) bool {
 }
 
 // ============================================================================
-// task 100 OS 安装模板：SaveOSTemplate / ListOSTemplates / GetOSTemplate / DeleteOSTemplate
+// OS 安装模板：SaveOSTemplate / ListOSTemplates / GetOSTemplate / DeleteOSTemplate
 // ============================================================================
 
 func newMetricsRing(capacity int) *metricsRing {
@@ -1591,7 +1591,7 @@ func (r *metricsRing) since(t time.Time) []proto.DeviceMetrics {
 }
 
 // ============================================================================
-// P2-B5 多租户资源配额：QuotaConfig 存储（quotaConfigs map）
+// 多租户资源配额：QuotaConfig 存储（quotaConfigs map）
 // ============================================================================
 
 // GetQuota 返回租户配额配置（未设置返回 nil + nil error，由调用方回退默认配额）。
@@ -1629,4 +1629,4 @@ func (m *MemoryStore) SetQuota(tenantID string, cfg *QuotaConfig) error {
 }
 
 // ============================================================================
-// task 241 M2 集成：SilenceRule / NotifyChannel / NotifyTemplate 存储
+// M2 集成：SilenceRule / NotifyChannel / NotifyTemplate 存储

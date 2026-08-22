@@ -14,7 +14,7 @@ import (
 	"opsmesh/internal/store"
 )
 
-// TestHandleCreateTask_TenantIsolation 验证 P0-2 下发入口的租户归属校验与审计产出。
+// TestHandleCreateTask_TenantIsolation 验证 下发入口的租户归属校验与审计产出。
 func TestHandleCreateTask_TenantIsolation(t *testing.T) {
 	st := store.NewMemoryStore()
 	// 注册两个不同租户的 agent
@@ -60,7 +60,7 @@ func TestHandleCreateTask_TenantIsolation(t *testing.T) {
 	}
 }
 
-// TestHandleDashboard_ServesEmbedded 验证 E2 前端独立化：HTML 从 Go 字符串抽离为
+// TestHandleDashboard_ServesEmbedded 验证 前端独立化：HTML 从 Go 字符串抽离为
 // embed.FS 静态资源（web/index.html + web/assets/app.css|main.js 等模块）。
 // GET / 返回 200 + text/html 且引用拆分后的资源；/assets/app.css 与 /assets/main.js
 // 各按扩展名设 Content-Type，且 main.js 作为 ES module 入口含 import 语句。
@@ -182,7 +182,7 @@ func TestHandleDashboard_RequireAuth(t *testing.T) {
 	}
 }
 
-// TestHandleProvision_ReturnsToken B1：handleProvision 返回 installToken 与 bootstrap 命令。
+// TestHandleProvision_ReturnsToken ：handleProvision 返回 installToken 与 bootstrap 命令。
 func TestHandleProvision_ReturnsToken(t *testing.T) {
 	st := store.NewMemoryStore().WithSecret("opsmesh-test-secret")
 	s := &Server{store: st, requireAuth: false, cfg: &config.Config{TaskMaxRetries: 3, Demo: true}}
@@ -308,7 +308,7 @@ func TestHandleDeviceMetrics_TenantIsolation(t *testing.T) {
 	}
 }
 
-// TestHandleDeviceMetrics_RangeQuery 测试 GET /api/v1/devices/{id}/metrics?range=2h 返回历史时序（task 223）。
+// TestHandleDeviceMetrics_RangeQuery 测试 GET /api/v1/devices/{id}/metrics?range=2h 返回历史时序。
 // 覆盖：合法 range 返回 MetricsSeries、非法 range 400、无历史 404、不带 range 保持现有行为。
 func TestHandleDeviceMetrics_RangeQuery(t *testing.T) {
 	st := store.NewMemoryStore()
@@ -400,7 +400,7 @@ func TestHandleDeviceMetrics_RangeQuery(t *testing.T) {
 	}
 }
 
-// TestParseMetricsRange 验证 range 参数解析（task 223）。
+// TestParseMetricsRange 验证 range 参数解析。
 func TestParseMetricsRange(t *testing.T) {
 	cases := []struct {
 		input string

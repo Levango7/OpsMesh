@@ -1,14 +1,14 @@
 # OpsMesh 网段运维中枢 — 交付说明
 
-> 版本：MVP（ADR-001 Option A）·  数据刷新 2026-08-19（行数/包数/依赖数/功能矩阵实测校准）·  仓库：https://github.com/Levango7/OpsMesh
+> 版本：MVP（自研 gRPC 管控通道）·  数据刷新 2026-08-19（行数/包数/依赖数/功能矩阵实测更新）·  仓库：https://github.com/Levango7/OpsMesh
 
 ## 1. 产品定位
 
 私有化单中心 B/S 自动化部署与运维平台。核心差异：服务部署后，**整段网络打通的设备自动纳管**，各设备可并行执行各自自动化任务。
 
-**管控通道（已冻结决策 ADR-001 Option A，2026-07-27）**：MVP 管控通道 = **自研 gRPC（direct + proxy）**。原"蓝鲸 GSE 社区版底座 / GSE 级联纳管"**移出 MVP、降格为可选增强**（未来超大规模级联再独立立项）。跨网段规模化改为「每段一套控制面 + agent 集群 + 控制面联邦 / 任务跨段转发」。
+**管控通道（已冻结决策：自研 gRPC，2026-07-27）**：MVP 管控通道 = **自研 gRPC（direct + proxy）**。原"蓝鲸 GSE 社区版底座 / GSE 级联纳管"**移出 MVP、降格为可选增强**（未来超大规模级联再独立立项）。跨网段规模化改为「每段一套控制面 + agent 集群 + 控制面联邦 / 任务跨段转发」。
 
-## 2. 代码规模（实测 2026-08-19 更新，含六轮重构收敛 + 个人版前端移除）
+## 2. 代码规模（实测 2026-08-19 更新，含多轮重构收敛 + 个人版前端移除）
 
 > 统计口径：排除 `.gocache`、`node_modules`、`internal/controlplane/web/`（个人版前端已于收敛为引导页，不再计入 Go 源码）；按 Go 模块分别统计后合计。主模块 `opsmesh`（go.mod 根）+ operator 子模块 `opsmesh/operator`（独立 go.mod，K8s Operator）。
 
@@ -65,7 +65,7 @@ operator 子模块额外引入 `sigs.k8s.io/controller-runtime`（K8s CRD 控制
 | ⑩ | 灰度发布 | `internal/deploy/`（model/handler/sql/store） | 三策略：rolling / canary（按权重分流）/ bluegreen（蓝绿切流）；发布门禁 Gate（失败率/延迟阈值）+ 自动回滚 + Promote 晋级 |
 | ⑪ | 告警规则 | `internal/store/`（AlertRule CRUD）、`internal/controlplane/` | 基于指标阈值的告警触发规则（metric/op/threshold/for/severity/message）+ CRUD + 按租户隔离 |
 | ⑫ | 作业审批 | `internal/controlplane/server.go`（handleApproveTask/handleRejectTask）、`internal/store/sql.go` | 高风险任务 `pending_approval` 状态 + approve/reject 端点 + 审批人记录 + 越权防护 |
-| ⑬ | 用户注册审批 | `internal/controlplane/auth.go`、`internal/config/config.go` | P1-7 注册安全：公开注册开关 + pending 审批流程 + approve/reject + 失败锁账号 |
+| ⑬ | 用户注册审批 | `internal/controlplane/auth.go`、`internal/config/config.go` | 注册安全：公开注册开关 + pending 审批流程 + approve/reject + 失败锁账号 |
 
 ### 4.3 K8s Operator（独立子模块）
 
@@ -73,7 +73,7 @@ operator 子模块额外引入 `sigs.k8s.io/controller-runtime`（K8s CRD 控制
 
 ### 4.4 其余已落地能力
 
-定时/周期调度、失败重试+死信队列、设备自动退役(F5)、B1 自动纳管令牌闭环、A3 多副本保护+agent 多控制面 failover+真 HA leader 选举、A4 生产基线、前端壳层重构、Prometheus 指标 + /healthz、多阶段 Dockerfile + CI(gosec/Trivy/golangci-lint/-race)。**Helm Chart（`deploy/helm/opsmesh/`）已落地可用**，Argo CD ApplicationSet 网段批量渲染仍属规划中。
+定时/周期调度、失败重试+死信队列、设备自动退役(F5)、自动纳管令牌闭环、多副本保护+agent 多控制面 failover+真 HA leader 选举、生产基线、前端壳层重构、Prometheus 指标 + /healthz、多阶段 Dockerfile + CI(gosec/Trivy/golangci-lint/-race)。**Helm Chart（`deploy/helm/opsmesh/`）已落地可用**，Argo CD ApplicationSet 网段批量渲染仍属规划中。
 
 ## 5. 网络分区（CIDR）
 
@@ -121,18 +121,18 @@ go build ./... && go vet ./... && go test ./...
 - 提交内容：35 包源码（主模块 32 + operator 3）+ 164 测试 + Dockerfile/Dockerfile.agent + docker-compose + README + DELIVERY + `.github/ci.yml` + `.gitignore`
 
 ---
-## 9. 生产安全加固（P0/P1）
+## 9. 生产安全加固
 
 在 MVP 基线之上，针对"上线即崩 / 越权 / 爆破 / 伪造"风险追加了企业级加固（代码位于 `internal/controlplane`、`internal/tlsutil`、`internal/store`）：
 
 | 编号 | 加固项 | 落地文件 / 入口 |
 |---|---|---|
-| P0-1 | RBAC 持久化三表 + 种子（修复 mysql 后端启动即 panic、HA 多副本身份一致） | `internal/store/sql.go`（`initSchema` 建表 + `seedRBAC`）、`internal/store/sql_rbac.go` |
-| P0-2 | HTTP / gRPC 兜底恢复（handler panic 不再拖垮控制面） | `internal/controlplane/server.go`（`recoveryMiddleware` + `grpcRecoveryInterceptor`） |
-| P1-2 | 请求体限流（1 MiB，统一 `decodeJSONBody`） | `internal/controlplane/server.go`（`MaxBytesReader`）、`auth.go` 全部解码调用 |
-| P1-3 | 登录防爆破 + 失败锁账号（令牌桶 + 5 次锁 15min） | `internal/controlplane/auth.go`（`loginGuard`） |
-| P1-5 | metrics CIDR 白名单 + bootstrap 端点审计 | `internal/controlplane/server.go`（`metricsAllowed`）、`config.go`（`--metrics-allow-cidr`） |
-| P1-6 | 联邦 mTLS + HMAC 转发签名验签（防伪造/重放） | `internal/controlplane/server.go`（`buildFederationServer`/`verifyFederationRequest`）、`federation.go`（`signFederationRequest`）、`tlsutil.go`（`HTTPServerTLSConfig`/`HTTPClientTLSConfig`）、`config.go`（6 个 `--federation-*` flag） |
+| | RBAC 持久化三表 + 种子（修复 mysql 后端启动即 panic、HA 多副本身份一致） | `internal/store/sql.go`（`initSchema` 建表 + `seedRBAC`）、`internal/store/sql_rbac.go` |
+| | HTTP / gRPC 兜底恢复（handler panic 不再拖垮控制面） | `internal/controlplane/server.go`（`recoveryMiddleware` + `grpcRecoveryInterceptor`） |
+| | 请求体限流（1 MiB，统一 `decodeJSONBody`） | `internal/controlplane/server.go`（`MaxBytesReader`）、`auth.go` 全部解码调用 |
+| | 登录防爆破 + 失败锁账号（令牌桶 + 5 次锁 15min） | `internal/controlplane/auth.go`（`loginGuard`） |
+| | metrics CIDR 白名单 + bootstrap 端点审计 | `internal/controlplane/server.go`（`metricsAllowed`）、`config.go`（`--metrics-allow-cidr`） |
+| | 联邦 mTLS + HMAC 转发签名验签（防伪造/重放） | `internal/controlplane/server.go`（`buildFederationServer`/`verifyFederationRequest`）、`federation.go`（`signFederationRequest`）、`tlsutil.go`（`HTTPServerTLSConfig`/`HTTPClientTLSConfig`）、`config.go`（6 个 `--federation-*` flag） |
 
 ### 验证状态
 

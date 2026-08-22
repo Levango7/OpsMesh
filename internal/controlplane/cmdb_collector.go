@@ -126,7 +126,7 @@ func (c *CMDBCollector) Collect(deviceID string, metrics *proto.DeviceMetrics) e
 		}
 	}
 
-	// 3. 记录审计日志（U-04 等保三级留痕）。
+	// 3. 记录审计日志（等保三级留痕）。
 	c.store.Audit(&proto.AuditEvent{
 		TenantID:  c.tenantID,
 		Action:    "cmdb_collect",

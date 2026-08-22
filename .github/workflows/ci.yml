@@ -20,7 +20,7 @@ jobs:
         run: go build ./...
       - name: Vet
         run: go vet ./...
-      - name: golangci-lint (H10 聚合静态分析)
+      - name: golangci-lint (聚合静态分析)
         uses: golangci/golangci-lint-action@v9
         with:
           # 默认读取仓库根 .golangci.yml；args 限定扫描范围为全仓。
@@ -28,15 +28,15 @@ jobs:
       - name: Gofmt
         run: test -z "$(gofmt -l .)"
       - name: Test (unit, memory store, -race + coverage)
-        # -race 启用竞态检测（H11）；-coverprofile 产出覆盖率（H12）。
+        # -race 启用竞态检测；-coverprofile 产出覆盖率。
         # OPSMESH_TEST_BCRYPT_COST=4：400+ 测试每个都 NewMemoryStore→seedRBAC
         # 3 次 bcrypt cost=10，-race 下纯哈希 120s+ 曾致超时；测试进程降 cost 提速
         # （生产不设置此变量，仍用默认 cost 10，见 internal/store/memory.go）。
         env:
           OPSMESH_TEST_BCRYPT_COST: "4"
         run: go test -race -timeout 300s -coverprofile=coverage.out ./...
-      - name: Test (kafka tag, B-3 审计 WAL 兜底)
-        # B-3：审计事件是合规关键数据，kafka 路径被 //go:build kafka 门控，默认构建零覆盖。
+      - name: Test (kafka tag, 审计 WAL 兜底)
+        # 审计事件是合规关键数据，kafka 路径被 //go:build kafka 门控，默认构建零覆盖。
         # 此 step 显式传 -tags kafka 激活 internal/events/kafka*.go，跑 WAL 兜底/失败计数/重试测试。
         # 不含 -race/-cover：与主 Test 步骤解耦，失败不阻塞主覆盖率门禁，仅验证 kafka 标签构建与测试通过。
         # 依赖 github.com/segmentio/kafka-go（已在 go.mod）；测试用不可达 broker mock，无需真实 Kafka 容器。
@@ -51,7 +51,7 @@ jobs:
           echo "整体覆盖率: ${total}%"
           awk -v t="$total" -v th=45 'BEGIN { if (t+0 < th) { printf "ERROR: 整体覆盖率 %.2f%% < %d%%\n", t, th; exit 1 } else { printf "OK: 整体覆盖率 %.2f%% >= %d%%\n", t, th } }'
 
-      - name: 上传覆盖率到 Codecov (H12)
+      - name: 上传覆盖率到 Codecov ()
         uses: codecov/codecov-action@v6
         with:
           files: ./coverage.out
@@ -59,8 +59,8 @@ jobs:
           # 已配置 CODECOV_TOKEN 时，上报失败阻断 CI；未配置 token（fork/无 secret PR）则不失败。
           fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
 
-  # E1：SQL 后端集成测试 —— 默认 build-test 中 SQL Store 测试因无 DSN 被 Skip，
-  # 此处起 mysql:8 + redis:7 真实后端，激活 OPSMESH_TEST_* 集成测试（报告 P1 缺口）。
+  # ：SQL 后端集成测试 —— 默认 build-test 中 SQL Store 测试因无 DSN 被 Skip，
+  # 此处起 mysql:8 + redis:7 真实后端，激活 OPSMESH_TEST_* 集成测试（报告 缺口）。
   integration:
     runs-on: ubuntu-latest
     needs: build-test
@@ -103,8 +103,8 @@ jobs:
         run: until (echo > /dev/tcp/127.0.0.1/3306) 2>/dev/null; do sleep 2; done
       - name: Wait for Redis
         run: until (echo > /dev/tcp/127.0.0.1/6379) 2>/dev/null; do sleep 2; done
-      - name: Run SQL/Redis store integration tests (含覆盖率，task 108)
-        # task 108：加 -coverprofile 产出 store 包覆盖率，供后续 ≥60% 门禁消费。
+      - name: Run SQL/Redis store integration tests (含覆盖率，)
+        # 加 -coverprofile 产出 store 包覆盖率，供后续 ≥60% 门禁消费。
         # 真实 mysql+redis 后端下 SQL store 用例全跑，store 包覆盖率比 build-test（仅 memory，32.9%）显著更高。
         run: go test -race -timeout 300s -v -coverprofile=store.cover.out ./internal/store/...
       - name: 覆盖率门禁（store 包 ≥32%，原为 65%）
@@ -134,7 +134,7 @@ jobs:
         #   G118 goroutine Background context（设计正确）/ G124 cookie Secure 由配置控制 /
         #   G202 参数化 SQL 误报 / G204 agent/helm 执行命令职责 / G304 配置路径文件读取 /
         #   G704 TODO 标记 / G705 embed 静态资源 / G101 cookie 名称常量。
-        #   G104（Errors unhandled）task 337 起从整类排除改为精细控制：gosec 命令行
+        #   G104（Errors unhandled）起从整类排除改为精细控制：gosec 命令行
         #   不支持按路径/函数豁免，故 G104 错误检查以 golangci-lint 的 errcheck + gosec
         #   为权威（.golangci.yml 中按 path/text 精细豁免设计上可忽略的调用），
         #   gosec 独立扫描仍保留 G104 整类排除以避免与 errcheck 重复告警。
@@ -143,11 +143,11 @@ jobs:
           "$(go env GOPATH)/bin/gosec" -quiet \
             -exclude=G103,G101,G104,G106,G115,G118,G124,G202,G204,G304,G704,G705 \
             ./...
-      - name: govulncheck（task 91：官方 Go 漏洞数据库扫描）
+      - name: govulncheck（官方 Go 漏洞数据库扫描）
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           govulncheck ./...
-      - name: Dockerfile base image digest 校验（P2-2 供应链安全）
+      - name: Dockerfile base image digest 校验（供应链安全）
         # 检查 Dockerfile 中的 FROM 行是否钉死 digest（@sha256:）。
         # Renovate 会自动创建 PR 钉死 digest（见 .github/renovate.json）。
         # 此步骤为 warn 级别（::warning::），不阻断 CI（初始状态无 digest）。
@@ -170,14 +170,14 @@ jobs:
             echo "✅ 所有 base image 已钉死 digest"
           fi
       - name: Trivy 文件系统扫描
-        uses: aquasecurity/trivy-action@v0.36.0  # task 91：钉死版本，防 @master 供应链漂移
+        uses: aquasecurity/trivy-action@v0.36.0  # ：钉死版本，防 @master 供应链漂移
         with:
           scan-type: fs
           scan-ref: .
           severity: HIGH,CRITICAL
           exit-code: "1"
 
-  # M3-3A protobuf 契约守护：lint（STANDARD 规则）+ breaking（FILE 策略，禁止删字段/改类型/改字段号）。
+  # protobuf 契约守护：lint（STANDARD 规则）+ breaking（FILE 策略，禁止删字段/改类型/改字段号）。
   # buf 用 Docker 镜像，无需本机安装。breaking 对比 main 分支（PR 时检测破坏性变更）。
   # 生成 stub（internal/grpcx/pb/*.go）已提交仓库，本 job 只校验 .proto 契约，不重新生成。
   proto:
@@ -201,7 +201,7 @@ jobs:
         if: github.ref != 'refs/heads/main'
         run: buf breaking --against ".git#branch=main,subdir=proto"
 
-  # E4：镜像构建/推送 —— 推送路径须与 Helm values 的镜像引用逐字一致，
+  # 镜像构建/推送 —— 推送路径须与 Helm values 的镜像引用逐字一致，
   # 否则 Argo CD 拉不到（registry.internal/opsmesh/opsmesh-binary:tag）。
   # 同时钉死 digest（不可变镜像），helm values.global.image.tag 在发布流程中替换为该 digest。
   # 注意：本 job 依赖仓库 secret REGISTRY/REGISTRY_USER/REGISTRY_TOKEN（私有镜像仓库凭证）。
@@ -245,17 +245,17 @@ jobs:
           tags: ${{ secrets.REGISTRY }}/opsmesh-binary:${{ github.sha }}
       - name: Trivy 镜像扫描
         if: steps.check.outputs.skip != 'true'
-        uses: aquasecurity/trivy-action@v0.36.0  # task 91：钉死版本，防 @master 供应链漂移
+        uses: aquasecurity/trivy-action@v0.36.0  # ：钉死版本，防 @master 供应链漂移
         with:
           image-ref: ${{ secrets.REGISTRY }}/opsmesh-binary:${{ github.sha }}
           severity: HIGH,CRITICAL
           exit-code: "1"
-      # P2-4 供应链安全：对推送的镜像做 cosign 签名（key-based，非 keyless/OIDC）。
+      # 供应链安全：对推送的镜像做 cosign 签名（key-based，非 keyless/OIDC）。
       # 条件守卫：registry secret 已配置（steps.check.outputs.skip != 'true'）且
       # COSIGN_PRIVATE_KEY secret 已配置（env.COSIGN_PRIVATE_KEY != ''）。
       # 若 COSIGN_PRIVATE_KEY 未配置，本步骤自动跳过，不影响 CI 流水线（与 image job 整体跳过机制一致）。
       # --tlog-upload=false：不上传透明日志（内网/无 OIDC 场景）；COSIGN_EXPERIMENTAL=1 启用非交互签名。
-      - name: cosign 签名镜像（供应链安全，P2-4）
+      - name: cosign 签名镜像（供应链安全）
         if: steps.check.outputs.skip != 'true' && env.COSIGN_PRIVATE_KEY != ''
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
@@ -263,13 +263,13 @@ jobs:
           IMAGE: ${{ secrets.REGISTRY }}/opsmesh-binary:${{ github.sha }}
         run: |
           echo "Signing image: ${IMAGE}"
-          # 安装 cosign（task 337：钉死 v2.2.4，防 latest 供应链漂移）
+          # 安装 cosign（钉死 v2.2.4，防 latest 供应链漂移）
           curl -sSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
           chmod +x /usr/local/bin/cosign
           # 签名镜像（keyless 模式需要 OIDC，这里用 key-based 签名）
           COSIGN_EXPERIMENTAL=1 cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false ${IMAGE}
           echo "Image signed successfully"
-      # E4 闭环：构建后把镜像 tag 钉死写回 GitOps chart。若 GitOps 仓库未就绪则安全跳过（不再失败）。
+      # 闭环：构建后把镜像 tag 钉死写回 GitOps chart。若 GitOps 仓库未就绪则安全跳过（不再失败）。
       # 启用条件：secrets.GITOPS_REPO 与 secrets.GITOPS_PAT 均已配置，且仓库中 charts/opsmesh-controlplane/values.yaml 存在。
       - name: 钉死镜像 tag 写回 GitOps values（E4，可选）
         if: steps.check.outputs.skip != 'true' && env.GITOPS_REPO != '' && env.GITOPS_PAT != ''
@@ -281,7 +281,7 @@ jobs:
         run: |
           echo "pinned tag = ${TAG}, digest = ${DIGEST}"
           command -v yq >/dev/null 2>&1 || {
-            # task 337：钉死 yq v4.40.5，防 latest 供应链漂移
+            # 钉死 yq v4.40.5，防 latest 供应链漂移
             curl -sSL https://github.com/mikefarah/yq/releases/download/v4.40.5/yq_linux_amd64 -o /usr/local/bin/yq
             chmod +x /usr/local/bin/yq
           }
@@ -305,7 +305,7 @@ jobs:
           git commit -m "ci: pin opsmesh-binary to ${TAG}" || exit 0
           git push || { echo "::warning::git push 失败，跳过"; exit 0; }
 
-  # E4/P0-7：agent 镜像构建/推送 —— 与 image job 对称，构建 Dockerfile.agent 推送 opsmesh-agent。
+  # E4/：agent 镜像构建/推送 —— 与 image job 对称，构建 Dockerfile.agent 推送 opsmesh-agent。
   # Helm Chart（deploy/helm/opsmesh/values*.yaml）引用 opsmesh/opsmesh-agent:tag，
   # 若 CI 不构建则部署必 ErrImagePull。tag 与 controlplane 一致（github.sha），保证可追溯。
   # 同样依赖 REGISTRY/REGISTRY_USER/REGISTRY_TOKEN secret，未配置则自动跳过（与 image job 一致）。
@@ -349,13 +349,13 @@ jobs:
           tags: ${{ secrets.REGISTRY }}/opsmesh-agent:${{ github.sha }}
       - name: Trivy 镜像扫描（agent）
         if: steps.check.outputs.skip != 'true'
-        uses: aquasecurity/trivy-action@v0.36.0  # task 91：钉死版本，防 @master 供应链漂移
+        uses: aquasecurity/trivy-action@v0.36.0  # ：钉死版本，防 @master 供应链漂移
         with:
           image-ref: ${{ secrets.REGISTRY }}/opsmesh-agent:${{ github.sha }}
           severity: HIGH,CRITICAL
           exit-code: "1"
-      # P2-4 供应链安全：agent 镜像同样做 cosign 签名，与 controlplane image job 对称。
-      - name: cosign 签名镜像（agent，供应链安全，P2-4）
+      # 供应链安全：agent 镜像同样做 cosign 签名，与 controlplane image job 对称。
+      - name: cosign 签名镜像（agent，供应链安全）
         if: steps.check.outputs.skip != 'true' && env.COSIGN_PRIVATE_KEY != ''
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
@@ -363,7 +363,7 @@ jobs:
           IMAGE: ${{ secrets.REGISTRY }}/opsmesh-agent:${{ github.sha }}
         run: |
           echo "Signing image: ${IMAGE}"
-          # task 337：钉死 cosign v2.2.4，防 latest 供应链漂移
+          # 钉死 cosign v2.2.4，防 latest 供应链漂移
           curl -sSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
           chmod +x /usr/local/bin/cosign
           COSIGN_EXPERIMENTAL=1 cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false ${IMAGE}
@@ -373,7 +373,7 @@ jobs:
   # 产物：tar.gz 归档 + sha256 checksums + SBOM（配置见 .goreleaser.yml）。
   # 仅在 build-test/integration/security 全绿后执行，避免发布未验证产物。
   # fetch-depth: 0 取全量历史，goreleaser 据此生成 changelog。
-  # task 337：安装 syft（SBOM 生成依赖）+ 钉死 goreleaser 版本 + cosign 签名产物。
+  # 安装 syft（SBOM 生成依赖）+ 钉死 goreleaser 版本 + cosign 签名产物。
   release:
     needs: [build-test, integration, security]
     if: startsWith(github.ref, 'refs/tags/v')
@@ -385,7 +385,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.26.6"
-      - name: 安装 syft（SBOM 生成依赖，task 337）
+      - name: 安装 syft（SBOM 生成依赖）
         # .goreleaser.yml 声明 sboms.artifacts: archive，goreleaser 调用 syft 生成 SBOM。
         # 钉死 syft v1.11.0，防 latest 供应链漂移。
         run: |
@@ -396,17 +396,17 @@ jobs:
           syft version
       - uses: goreleaser/goreleaser-action@v7
         with:
-          # task 337：钉死 goreleaser v2.4.8，防 latest 供应链漂移
+          # 钉死 goreleaser v2.4.8，防 latest 供应链漂移
           version: v2.4.8
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # task 337：对 goreleaser 产物做 cosign 签名（供应链安全）。
+      # 对 goreleaser 产物做 cosign 签名（供应链安全）。
       # 签名 checksums.txt + 所有 tar.gz 归档 + SBOM 文件，生成 .sig 签名文件并上传到 Release。
       # 条件守卫：COSIGN_PRIVATE_KEY secret 已配置时才签名，否则跳过（不影响发布）。
       # --tlog-upload=false：不上传透明日志（内网/无 OIDC 场景）；
       # cosign attach signature 把签名附加到 GitHub Release 资产。
-      - name: cosign 签名 goreleaser 产物（task 337）
+      - name: cosign 签名 goreleaser 产物
         if: env.COSIGN_PRIVATE_KEY != ''
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
@@ -427,7 +427,7 @@ jobs:
           echo "=== 签名完成 ==="
           ls -la dist/*.sig 2>/dev/null || echo "无签名文件生成"
 
-  # G3/B-5：前端 CI —— Vue3 Enterprise（web/enterprise）。
+  # 前端 CI —— Vue3 Enterprise（web/enterprise）。
   # npm ci 严格按 lockfile 安装；lint 静态检查；build 产出生产包；vitest run 跑单测（非 watch 模式）。
   # setup-node cache-dependency-path 钉死 web/enterprise/package-lock.json，缓存 npm 依赖加速 CI。
   # 与后端 build-test 解耦（无 needs），前端/后端可并行跑，互不阻塞。

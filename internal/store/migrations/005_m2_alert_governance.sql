@@ -1,6 +1,6 @@
 -- 005_m2_alert_governance.sql — M2 告警治理：静默规则 / 通知渠道 / 通知模板 持久化
 --
--- 任务 246：将 sql_m2.go 中 alertRules/silences/notifyChannels/notifyTemplates 的内存 map
+-- ：将 sql_m2.go 中 alertRules/silences/notifyChannels/notifyTemplates 的内存 map
 -- 实现升级为 SQL 持久化，使 --store=mysql 时重启不丢失，多副本 HA 下数据一致。
 --
 -- 本迁移新增三张表（alert_silences / notify_channels / notify_templates），

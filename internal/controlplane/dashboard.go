@@ -11,7 +11,7 @@ import (
 // handleDashboard 结构化 HTML 仪表盘（GET /）。
 // M-前端收敛：个人版原生 JS 仪表盘已收敛为极简引导页（web/index.html 重定向至企业版前端）。
 // 保留 GET / 的租户隔离/引导语义，避免旧书签 404；业务操作请使用企业版前端（/enterprise/）。
-// H6 认证防御：非 demo 模式下也拒绝空租户头，防越权伪造。
+// 认证防御：非 demo 模式下也拒绝空租户头，防越权伪造。
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -46,7 +46,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-// handleAsset 服务前端静态资源（E2 前端独立化：web/assets/* 经 embed.FS 打包）。
+// handleAsset 服务前端静态资源（前端独立化：web/assets/* 经 embed.FS 打包）。
 // 仅从嵌入的 webFS 读取 web/assets/ 下文件，不回退到宿主文件系统，杜绝路径穿越（../）。
 func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 	// r.URL.Path 形如 /assets/app.css /assets/app.js；embed.FS 以 web/ 为根，补前缀。

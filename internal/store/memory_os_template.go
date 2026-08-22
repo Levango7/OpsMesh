@@ -1,4 +1,4 @@
-// memory_os_template.go — OS 优化模板的 memory 持久化（task 100）。
+// memory_os_template.go — OS 优化模板的 memory 持久化。
 package store
 
 import (
@@ -90,7 +90,7 @@ func (m *MemoryStore) DeleteOSTemplate(id string) bool {
 }
 
 // ============================================================================
-// task 100 中间件部署模板：SaveMiddlewareTemplate / ListMiddlewareTemplates / GetMiddlewareTemplate / DeleteMiddlewareTemplate
+// 中间件部署模板：SaveMiddlewareTemplate / ListMiddlewareTemplates / GetMiddlewareTemplate / DeleteMiddlewareTemplate
 // ============================================================================
 
 // randMiddlewareTemplateID 生成随机中间件部署模板 ID（16 字节十六进制，crypto/rand 密码学安全）。

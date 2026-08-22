@@ -1,4 +1,4 @@
-// Package discovery 提供服务注册发现抽象与多种实现（M1-3）。
+// Package discovery 提供服务注册发现抽象与多种实现。
 //
 // 设计目标：
 //   - 解耦 agent 与控制面地址获取方式：agent 不再硬编码控制面地址，

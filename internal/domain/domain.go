@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// M2-1C 领域 sentinel error：状态机非法转换的精确错误。
+// 领域 sentinel error：状态机非法转换的精确错误。
 // 调用方（handler）可经 errors.Is 精确区分，映射到不同 HTTP 状态码（404 vs 409）。
 var (
 	ErrTaskAlreadyDone           = errors.New("task already done, cannot cancel")
@@ -22,7 +22,7 @@ var (
 	ErrAlertSilenced             = errors.New("alert silenced, acknowledge not allowed")
 )
 
-// Tenant 租户（U-04 行级隔离键）。
+// Tenant 租户（行级隔离键）。
 type Tenant struct {
 	ID string
 }
@@ -39,7 +39,7 @@ type Agent struct {
 	Status      string
 	Load        int
 	LastSeen    time.Time
-	// B1 自动纳管闭环：经 install token 校验后回填的候选设备 ID（不依赖 agent 自报）。
+	// 自动纳管闭环：经 install token 校验后回填的候选设备 ID（不依赖 agent 自报）。
 	// 非空时控制面 Register 把该「已发现候选设备」翻转 onboarded（Managed=true）。
 	OnboardDeviceID string
 	// 目标机基础元信息（agent 注册时上报）。
@@ -47,7 +47,7 @@ type Agent struct {
 	Arch string // CPU 架构：amd64 / arm64
 }
 
-// Device 被纳管的网段内设备（U-02：服务部署后整段网络打通，设备自动纳管）。
+// Device 被纳管的网段内设备（服务部署后整段网络打通，设备自动纳管）。
 // Device 是控制面对外暴露的设备模型（经防腐层从 proto 映射）。
 // 显式 json tag 与外部 API 契约一致（镜像 proto 的小写键），避免默认导出大写字段名导致前端取不到值。
 type Device struct {
@@ -56,10 +56,10 @@ type Device struct {
 	TenantID     string    `json:"tenantID"`
 	IP           string    `json:"ip"`
 	AgentID      string    `json:"agentID"`
-	State        string    `json:"state"` // online / offline / discovered（B1 候选）/ provisioning（B1 推送中）
+	State        string    `json:"state"` // online / offline / discovered（候选）/ provisioning（推送中）
 	TaskState    string    `json:"taskState"`
-	Managed      bool      `json:"managed"`    // true=agent 已注册纳管；false=网段发现候选（待装 agent，B1）
-	LastResult   string    `json:"lastResult"` // success / failed（B2 失败回写看板）
+	Managed      bool      `json:"managed"`    // true=agent 已注册纳管；false=网段发现候选（待装 agent）
+	LastResult   string    `json:"lastResult"` // success / failed（失败回写看板）
 	LastResultAt time.Time `json:"lastResultAt"`
 	Retired      bool      `json:"retired"`  // F5 设备退役
 	Hostname     string    `json:"hostname"` // 主机名
@@ -80,7 +80,7 @@ type Task struct {
 	Status    string    `json:"status"`  // pending / running / done / failed / cancelled
 	ClaimedBy string    `json:"claimedBy"`
 	ClaimedAt time.Time `json:"claimedAt"`
-	// ClaimEpoch 任务所有权令牌（A-1 防双跑）：每次 ClaimTask 时 +1，
+	// ClaimEpoch 任务所有权令牌（防双跑）：每次 ClaimTask 时 +1，
 	// SubmitResult 校验持有者是否仍为当前 epoch，拒绝旧持有者上报防双跑。
 	ClaimEpoch  int64     `json:"claimEpoch"`
 	CreatedAt   time.Time `json:"createdAt"`
@@ -102,11 +102,11 @@ type TaskResult struct {
 	Stderr     string    `json:"stderr"`
 	DurationMs int64     `json:"durationMs"`
 	FinishedAt time.Time `json:"finishedAt"`
-	// ClaimEpoch 任务所有权令牌（A-1 防双跑）：上报时携带，store 校验持有者是否仍为当前 epoch。
+	// ClaimEpoch 任务所有权令牌（防双跑）：上报时携带，store 校验持有者是否仍为当前 epoch。
 	ClaimEpoch int64 `json:"claimEpoch"`
 }
 
-// AuditEvent 内核产出的审计事件（U-04 等保三级：操作 100% 留痕，显式 json tag）。
+// AuditEvent 内核产出的审计事件（等保三级：操作 100% 留痕，显式 json tag）。
 type AuditEvent struct {
 	TenantID  string    `json:"tenantID"`
 	UserID    string    `json:"userID"`
@@ -118,7 +118,7 @@ type AuditEvent struct {
 
 // Alert 内核产出的告警事件（M7 监控告警，业务闭环最小数据源，显式 json tag）。
 //
-// M2-1C DDD 实质化：补 Status/AcknowledgedBy/SilencedUntil/Comment/UpdatedAt 状态字段，
+// DDD 实质化：补 Status/AcknowledgedBy/SilencedUntil/Comment/UpdatedAt 状态字段，
 // 使 Alert 成为富领域实体，承载 Acknowledge/Silence/IsExpired 状态机行为（见 behaviour.go）。
 type Alert struct {
 	AlertID   string    `json:"alertID"`
@@ -137,7 +137,7 @@ type Alert struct {
 }
 
 // =============================================================================
-// M2-1C DDD 实质化：领域实体业务行为（状态机 / 重试判定 / 纳管翻转 / 规则匹配）
+// DDD 实质化：领域实体业务行为（状态机 / 重试判定 / 纳管翻转 / 规则匹配）
 //
 // 此前 domain 仅是数据结构 + mapper，业务逻辑散落在 handler 和 store。现把不变的业务规则
 // 下沉到领域实体，handler 退化为薄编排层（解析请求 → 调领域方法 → 写响应）。
@@ -243,7 +243,7 @@ func (d *Device) CanRetire(maxAge time.Duration) bool {
 	return false
 }
 
-// TransitionToProvisioning 纳管状态翻转：仅 discovered 候选可翻 provisioning（B1 推送中）。
+// TransitionToProvisioning 纳管状态翻转：仅 discovered 候选可翻 provisioning（推送中）。
 // 已 managed（online/offline）或已 provisioning 返回 error（幂等拒绝）。
 // 调用方据此区分"首次推送"与"重复推送"，避免重复签发 install token。
 func (d *Device) TransitionToProvisioning() error {
@@ -261,7 +261,7 @@ func (d *Device) TransitionToProvisioning() error {
 }
 
 // IsOrphan 孤儿设备判定：网段发现候选（!Managed）且无 agent 绑定。
-// 这类设备需经 provision 推送 agent 才能真正纳管（B1 自动纳管闭环的输入）。
+// 这类设备需经 provision 推送 agent 才能真正纳管（自动纳管闭环的输入）。
 func (d *Device) IsOrphan() bool {
 	return !d.Managed && d.AgentID == ""
 }

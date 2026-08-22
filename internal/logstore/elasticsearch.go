@@ -1,4 +1,4 @@
-// Package logstore Elasticsearch 后端适配（M4-4B）。
+// Package logstore Elasticsearch 后端适配。
 //
 // Elasticsearch 是分布式搜索分析引擎，使用 DSL（JSON）查询。
 // 本适配层仅实现查询接口（Query）：将 OpsMesh Query 翻译为 ES bool query DSL，

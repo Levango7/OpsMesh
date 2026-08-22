@@ -1,4 +1,4 @@
-// handler_m4_test.go 为 M4-1 任务补齐此前无单测的 HTTP handler 单元测试。
+// handler_m4_test.go 为 任务补齐此前无单测的 HTTP handler 单元测试。
 //
 // 覆盖范围（10 个 handler，29 个用例）：
 //   - handleAlertRules         （GET 列表 / POST 创建告警规则）

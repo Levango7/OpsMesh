@@ -295,7 +295,7 @@
 
 | Flag | 默认值 | 说明 |
 |------|--------|------|
-| `--anomaly-detection` | false | 启用异常检测引擎（P2-B4） |
+| `--anomaly-detection` | false | 启用异常检测引擎 |
 | `--anomaly-window-size` | 100 | BaselineDetector 滑动窗口大小 |
 | `--anomaly-threshold` | 3.0 | Z-Score 阈值（3σ ≈ 99.7% 置信区间） |
 | `OPSMESH_ANOMALY_DETECTION` | — | 环境变量等价物 |
@@ -807,7 +807,7 @@ type RCAReport struct {
 
 ### 与配额系统的联动
 
-容量预测与 `QuotaManager`（P2-B5 多租户资源配额）联动：
+容量预测与 `QuotaManager`（多租户资源配额）联动：
 
 - 预测资源需求超出当前配额时，提前预警租户管理员
 - 扩容建议含**目标配额值**，经审批后由 `QuotaManager` 调整配额

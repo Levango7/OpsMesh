@@ -1,4 +1,4 @@
-// Package grpcx stub.go：M3-3A 生成 stub 适配层。
+// Package grpcx stub.go：生成 stub 适配层。
 //
 // StubAdapter 桥接「生成 stub 的 pb.RegistrationServer 接口」与「手写路径的 grpcx.RegistrationServer 接口」。
 // 兼容期 controlplane 仍实现 grpcx.RegistrationServer（手写路径，默认）；
@@ -15,7 +15,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pb "opsmesh/internal/grpcx/pb" // 包名为 pbv1，用 pb 别名引用（M4-4C 兼容性修复）
+	pb "opsmesh/internal/grpcx/pb" // 包名为 pbv1，用 pb 别名引用（兼容性修复）
 	"opsmesh/internal/proto"
 )
 

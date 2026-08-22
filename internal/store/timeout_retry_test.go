@@ -1,4 +1,4 @@
-// timeout_retry_test.go 验证 P2-B2 节点级超时与重试（任务 261）的 store 层透传：
+// timeout_retry_test.go 验证 节点级超时与重试的 store 层透传：
 //   - CreateTask 写入的 Timeout/RetryDelay/MaxRetries 经 ClaimTask 原样返回给 agent；
 //   - FireDueSchedules 派生实例继承模板的 Timeout/RetryDelay/MaxRetries。
 //
@@ -64,7 +64,7 @@ func TestMemoryStore_TaskTimeoutZeroBackcompat(t *testing.T) {
 }
 
 // TestMemoryStore_FireDueSchedulesInheritsTimeoutRetry 验证 FireDueSchedules 派生实例
-// 继承模板任务的 Timeout/RetryDelay/MaxRetries（P2-B2 节点级超时与重试）。
+// 继承模板任务的 Timeout/RetryDelay/MaxRetries（节点级超时与重试）。
 func TestMemoryStore_FireDueSchedulesInheritsTimeoutRetry(t *testing.T) {
 	st := NewMemoryStore().WithDemo(false)
 	tpl := st.CreateTask(&proto.Task{

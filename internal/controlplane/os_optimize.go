@@ -4,7 +4,7 @@
 // 通过 GET /api/v1/os-templates 列表、GET /api/v1/os-templates/{id} 详情、
 // POST /api/v1/os-templates/{id}/execute 在指定 agent 上执行（复用 task 下发通道）。
 //
-// 设计要点（task 104：模板从内存常量改为 store 持久化，支持在线 CRUD）：
+// 设计要点（模板从内存常量改为 store 持久化，支持在线 CRUD）：
 //   - 预置模板仍以内存常量 osTemplates 维护（版本随代码升级），启动时 seedPresetOSTemplates
 //     将其幂等写入 store（按 ID 去重，已存在不覆盖，保留用户在线修改）。
 //   - API 从 store 读取模板列表/详情；store 为空时回退到内存常量（向后兼容）。
@@ -683,7 +683,7 @@ func osTemplateByID(id string) *OSTemplate {
 
 // handleListOSTemplates 处理 /api/v1/os-templates：
 //   - GET：列出所有模板（从 store 读取，store 为空回退预置；可选 category/risk/os 过滤）
-//   - POST：创建新模板（task 104 CRUD，需 os:write 权限）
+//   - POST：创建新模板（CRUD，需 os:write 权限）
 func (s *Server) handleListOSTemplates(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -726,7 +726,7 @@ func (s *Server) handleListOSTemplatesGet(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleCreateOSTemplate 处理 POST /api/v1/os-templates：创建新 OS 模板（task 104 CRUD）。
+// handleCreateOSTemplate 处理 POST /api/v1/os-templates：创建新 OS 模板（CRUD）。
 // 请求体即 OSTemplate JSON；ID 为空时由 store 分配随机 ID。
 // 需 os:write 权限；创建后审计 + 事件总线 + SSE 通知。
 func (s *Server) handleCreateOSTemplate(w http.ResponseWriter, r *http.Request) {
@@ -768,7 +768,7 @@ func (s *Server) handleCreateOSTemplate(w http.ResponseWriter, r *http.Request) 
 	if caller != nil {
 		userID = caller.ID
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: userID, Action: "os_template_create", Target: st.ID, Detail: sanitizeAuditDetail("name=" + tpl.Name),
 	})
@@ -782,7 +782,7 @@ func (s *Server) handleCreateOSTemplate(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusCreated, saved)
 }
 
-// handleUpdateOSTemplate 处理 PUT /api/v1/os-templates/{id}：更新 OS 模板（task 104 CRUD）。
+// handleUpdateOSTemplate 处理 PUT /api/v1/os-templates/{id}：更新 OS 模板（CRUD）。
 // 请求体为 OSTemplate JSON；ID 路径参数与 body.ID 不一致时以路径为准。
 // 需 os:write 权限；不存在返回 404。
 func (s *Server) handleUpdateOSTemplate(w http.ResponseWriter, r *http.Request, id string) {
@@ -832,7 +832,7 @@ func (s *Server) handleUpdateOSTemplate(w http.ResponseWriter, r *http.Request, 
 	if caller != nil {
 		userID = caller.ID
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: userID, Action: "os_template_update", Target: id, Detail: sanitizeAuditDetail("name=" + tpl.Name),
 	})
@@ -846,7 +846,7 @@ func (s *Server) handleUpdateOSTemplate(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusOK, saved)
 }
 
-// handleDeleteOSTemplate 处理 DELETE /api/v1/os-templates/{id}：删除 OS 模板（task 104 CRUD）。
+// handleDeleteOSTemplate 处理 DELETE /api/v1/os-templates/{id}：删除 OS 模板（CRUD）。
 // 需 os:write 权限；不存在返回 404；删除成功返回 204。
 func (s *Server) handleDeleteOSTemplate(w http.ResponseWriter, r *http.Request, id string) {
 	actx, ok := s.requireTenantContext(w, r)
@@ -876,7 +876,7 @@ func (s *Server) handleDeleteOSTemplate(w http.ResponseWriter, r *http.Request, 
 	if caller != nil {
 		userID = caller.ID
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: userID, Action: "os_template_delete", Target: id, Detail: sanitizeAuditDetail("name=" + existing.Name),
 	})
@@ -978,7 +978,7 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		// shell 元字符校验（task 86）：占位符替换前拒绝含元字符的值，防命令注入。
+		// shell 元字符校验：占位符替换前拒绝含元字符的值，防命令注入。
 		if err := validateShellSafeValues(paramsMap); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -987,7 +987,7 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 	} else {
 		command = buildOSExecuteCommand(tpl.Commands, body.Params)
 	}
-	// H6 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	// 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
 	targetTenant := actx.TenantID
 	agent := s.lookupAgent(body.AgentID)
 	if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
@@ -1003,7 +1003,7 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 		Command:    command,
 		MaxRetries: s.cfg.TaskMaxRetries,
 	})
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: targetTenant,
 		UserID:   actx.UserID,
@@ -1021,9 +1021,9 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 	if s.metrics != nil {
 		s.metrics.SetQueueDepth(s.store.PendingDepth())
 	}
-	// M3-2B SSE：通知前端 OS 模板执行任务已创建。
-	// H6 租户隔离：携带 targetTenant，仅同租户订阅者收到。
-	// M1-4：携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
+	// SSE：通知前端 OS 模板执行任务已创建。
+	// 租户隔离：携带 targetTenant，仅同租户订阅者收到。
+	// 携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
 	s.publishEvent(r.Context(), "task_status", targetTenant, map[string]string{
 		"taskID":  task.TaskID,
 		"status":  task.Status,
@@ -1119,12 +1119,12 @@ func validatePath(path string) error {
 	return nil
 }
 
-// shellUnsafeChars 是禁止出现在模板参数值中的 shell 元字符（task 86 命令注入防护）。
+// shellUnsafeChars 是禁止出现在模板参数值中的 shell 元字符（命令注入防护）。
 // 模板参数经 renderMiddlewareScript/renderOSScript 原样替换进 shell 脚本，由 agent 以 sh -c 执行；
 // 值中若含以下字符即可截断/拼接命令造成目标机 RCE，故一律拒绝（含空格，防参数歧义）。
 const shellUnsafeChars = " ;&|$`\n\r\t<>(){}\"'\\*?[]!#~"
 
-// validateShellSafeValues 校验全部模板参数值不含 shell 元字符（task 86 命令注入防护）。
+// validateShellSafeValues 校验全部模板参数值不含 shell 元字符（命令注入防护）。
 // 对 values 中每个键值做检查，任一值含元字符即返回错误。
 // 调用点：middleware deploy/uninstall 与 OS 模板 execute 在渲染脚本前统一调用。
 func validateShellSafeValues(values map[string]string) error {
@@ -1138,8 +1138,8 @@ func validateShellSafeValues(values map[string]string) error {
 
 // handleOSTemplateRouting 统一分派 /api/v1/os-templates/{id}... 子路径：
 //   - GET    /api/v1/os-templates/{id}：模板详情
-//   - PUT    /api/v1/os-templates/{id}：更新模板（task 104 CRUD）
-//   - DELETE /api/v1/os-templates/{id}：删除模板（task 104 CRUD）
+//   - PUT    /api/v1/os-templates/{id}：更新模板（CRUD）
+//   - DELETE /api/v1/os-templates/{id}：删除模板（CRUD）
 //   - POST   /api/v1/os-templates/{id}/execute：在指定 agent 上执行模板
 //
 // 注意：/api/v1/os-templates（无尾斜杠）由 handleListOSTemplates 处理；
@@ -1179,7 +1179,7 @@ func (s *Server) handleOSTemplateRouting(w http.ResponseWriter, r *http.Request)
 }
 
 // ============================================================================
-// task 104：OS 模板 store 持久化适配（转换 + seed + 查询回退）
+// ：OS 模板 store 持久化适配（转换 + seed + 查询回退）
 // ============================================================================
 
 // osTemplateToStore 将 controlplane.OSTemplate 转换为 store.OSTemplate。

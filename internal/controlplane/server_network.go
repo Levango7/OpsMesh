@@ -1,4 +1,4 @@
-// server_network.go task 244 M6 集成：网络拓扑发现 + 网络诊断工具 + 连通性检测 API。
+// server_network.go M6 集成：网络拓扑发现 + 网络诊断工具 + 连通性检测 API。
 //
 // 与现有任务机制的关系：
 //   - 网络诊断命令（ping/traceroute/tcping/nslookup/curl）通过下发 shell task 到指定 agent 执行；

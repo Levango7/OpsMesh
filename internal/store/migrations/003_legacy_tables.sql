@@ -24,7 +24,7 @@
 --     已删除，仅保留 ALTER TABLE 补列与 CREATE INDEX 兼容逻辑。
 --   - 对应回滚占位见 003_legacy_tables.down.sql。
 
--- alert_rules：task 100 告警规则表
+-- alert_rules：告警规则表
 CREATE TABLE IF NOT EXISTS alert_rules (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64),
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS alert_rules (
     created_at DATETIME
 );
 
--- os_templates：task 100 OS 安装模板表
+-- os_templates：OS 安装模板表
 CREATE TABLE IF NOT EXISTS os_templates (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64),
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS os_templates (
     updated_at DATETIME
 );
 
--- middleware_templates：task 100 中间件部署模板表
+-- middleware_templates：中间件部署模板表
 CREATE TABLE IF NOT EXISTS middleware_templates (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64),
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS middleware_templates (
     updated_at DATETIME
 );
 
--- refresh_tokens：task 111 刷新令牌表
+-- refresh_tokens：刷新令牌表
 -- （tokenHash / user / tenant / deviceFP / expires / created）
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     token_hash VARCHAR(64) PRIMARY KEY,

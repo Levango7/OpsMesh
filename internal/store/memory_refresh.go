@@ -1,4 +1,4 @@
-// memory_refresh.go 实现 MemoryStore 的 RefreshTokenStore 子接口（task 111 刷新令牌）。
+// memory_refresh.go 实现 MemoryStore 的 RefreshTokenStore 子接口（刷新令牌）。
 //
 // 刷新令牌内存实现：
 //   - refreshTokens 字段在 MemoryStore struct 中定义（map[string]*RefreshToken）；
@@ -6,7 +6,7 @@
 //   - 本文件实现 Save/Get/Delete 方法，全部经 m.mu 互斥保护，并发安全。
 //
 // 设计要点（与 memory_k8s.go 风格一致）：
-//   - key 为 TokenHash（明文 token 的 SHA-256 摘要，P1-F7 明文不落库）；
+//   - key 为 TokenHash（明文 token 的 SHA-256 摘要，明文不落库）；
 //   - GetRefreshToken 返回深拷贝避免外部修改破坏内部状态；
 //   - SaveRefreshToken 按 TokenHash 幂等（map 覆盖即 upsert）；
 //   - memory 存储无持久化失败，SaveRefreshToken 恒返回 nil（除入参校验错误）。
@@ -78,7 +78,7 @@ func (m *MemoryStore) DeleteRefreshToken(tokenHash string) bool {
 }
 
 // ConsumeRefreshToken 原子消费 refresh token：读取并立即删除（互斥锁保护，单次原子完成）。
-// 多副本并发下同一 token 只能被消费一次，防重放（P1-G4）。
+// 多副本并发下同一 token 只能被消费一次，防重放。
 // 不存在返回 (nil, false)。返回深拷贝避免外部修改破坏内部状态。
 func (m *MemoryStore) ConsumeRefreshToken(tokenHash string) (*RefreshToken, bool) {
 	if tokenHash == "" {

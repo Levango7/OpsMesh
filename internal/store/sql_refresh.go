@@ -1,11 +1,11 @@
-// sql_refresh.go 实现 SQLStore 的 RefreshTokenStore 子接口（task 111 刷新令牌，P0-1 生产就绪）。
+// sql_refresh.go 实现 SQLStore 的 RefreshTokenStore 子接口（刷新令牌，生产就绪）。
 //
 // 表结构：refresh_tokens（token_hash/user_id/tenant_id/device_fp/expires_at/created_at）。
 // initSchema 中幂等建表（CREATE TABLE IF NOT EXISTS）+ alterColumnIfMissing 兼容旧库
 // + createIndexIfMissing 补二级索引（user_id / expires_at）。
 //
 // 设计要点（与 sql_k8s.go 风格一致）：
-//   - token_hash 为明文 token 的 SHA-256 摘要（P1-F7 明文不落库），作主键；
+//   - token_hash 为明文 token 的 SHA-256 摘要（明文不落库），作主键；
 //   - SaveRefreshToken 按 token_hash 幂等（INSERT ... ON DUPLICATE KEY UPDATE）；
 //   - DB 不可用时返回零值（nil/false），不 panic，与 SQLStore 其他方法一致；
 //   - 持久化失败上抛错误（调用方据此返回非 2xx，与 SaveK8sCluster 一致）。
@@ -38,7 +38,7 @@ func scanRefreshToken(row rowScanner) *RefreshToken {
 //   - TenantID 为空时归一为 default；
 //   - CreatedAt 为零值时填当前时间（新建场景）。
 //
-// 持久化失败上抛错误（task 92 范式：DB 失败不再假装成功）。
+// 持久化失败上抛错误（范式：DB 失败不再假装成功）。
 func (s *SQLStore) SaveRefreshToken(rt *RefreshToken) error {
 	if rt == nil {
 		return nil
@@ -55,7 +55,7 @@ func (s *SQLStore) SaveRefreshToken(rt *RefreshToken) error {
 		rt.CreatedAt = now
 	}
 	// INSERT ... ON DUPLICATE KEY UPDATE 实现 upsert（按 token_hash 幂等）。
-	// token_hash 为明文 token 的 SHA-256 摘要（P1-F7 明文不落库）。
+	// token_hash 为明文 token 的 SHA-256 摘要（明文不落库）。
 	if _, err := s.db.ExecContext(context.Background(),
 		`INSERT INTO refresh_tokens (token_hash, user_id, tenant_id, device_fp, expires_at, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)
@@ -91,7 +91,7 @@ func (s *SQLStore) DeleteRefreshToken(tokenHash string) bool {
 	return n > 0
 }
 
-// ConsumeRefreshToken 原子消费 refresh token：3：事务内 SELECT ... FOR UPDATE + DELETE，防多副本并发双消费（P1-G4）。
+// ConsumeRefreshToken 原子消费 refresh token：3：事务内 SELECT ... FOR UPDATE + DELETE，防多副本并发双消费。
 //
 // 用单事务 + SELECT ... FOR UPDATE 保证读取时即持排他锁，并发请求被阻塞至持锁事务提交；
 // 持锁事务 DELETE 后校验 RowsAffected，确保行确实被删除（belt-and-suspenders）。

@@ -1,4 +1,4 @@
-// Package tlsutil 的单元测试（P2-11 测试补全）。
+// Package tlsutil 的单元测试（测试补全）。
 // 测试中动态生成自签证书与 CA，避免提交二进制证书文件；测试结束自动清理临时文件。
 package tlsutil
 

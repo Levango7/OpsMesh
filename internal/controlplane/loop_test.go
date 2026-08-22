@@ -4,9 +4,9 @@
 //   - scheduleLoop          (F4 定时调度)
 //   - archiveLoop           (F5 离线超龄归档)
 //   - notifyLoop            (M7 告警 Webhook 推送)
-//   - reclaimLoop           (P0-1 任务租约回收)
-//   - leaderLoop            (A3 选主续租)
-//   - autoProvisionLoop     (B1 自动纳管)
+//   - reclaimLoop           (任务租约回收)
+//   - leaderLoop            (选主续租)
+//   - autoProvisionLoop     (自动纳管)
 //   - deployReconcileLoop   (M3 部署对账)
 //   - workflowScheduleLoop  (M5 作业编排调度)
 //

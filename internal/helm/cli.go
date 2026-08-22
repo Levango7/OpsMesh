@@ -1,7 +1,7 @@
 // Package helm 实现 Helm 应用商店核心能力，作为自包含包提供 chart 仓库管理、
 // 模板渲染、release 管理与预置应用商店。
 //
-// M3-1 Helm 应用商店核心包：
+// Helm 应用商店核心包：
 //   - cli.go：封装 helm 命令行调用，支持 --kubeconfig、超时、JSON 输出解析；
 //   - repo.go：Chart 仓库管理（add/remove/list/search/get）；
 //   - release.go：Release 管理（install/upgrade/rollback/uninstall/list/history/get）；

@@ -1,4 +1,4 @@
-// SecretsView 组件单元测试（task 267）
+// SecretsView 组件单元测试
 // 覆盖：
 //   - 组件能正确挂载
 //   - 调用 API 获取状态（getSecretProviderStatus + listSecretKeys）

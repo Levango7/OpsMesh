@@ -1,6 +1,6 @@
 @echo off
 rem OpsMesh 本地启动脚本（控制面）
-rem 安全说明（task 89 / P2 修复）：JWT 密钥与公开注册开关均从环境变量读取，避免硬编码泄露。
+rem 安全说明（修复）：JWT 密钥与公开注册开关均从环境变量读取，避免硬编码泄露。
 rem 不再内置 demo 兜底密钥：未设置 OPSMESH_JWT_SECRET 时二进制自动生成随机密钥（重启后会话失效）。
 cd /d F:\Nexus\OpsMesh
 

@@ -1,4 +1,4 @@
-// Package logstore Loki 后端适配（M4-4B）。
+// Package logstore Loki 后端适配。
 //
 // Loki 是 Grafana 出品的日志聚合系统，使用 LogQL 查询语言。
 // 本适配层仅实现查询接口（Query）：将 OpsMesh Query 翻译为 LogQL，

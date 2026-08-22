@@ -15,7 +15,7 @@
 //   - 心跳注释帧（: ping）不触发事件
 //   - 契约校验：信封字段缺失或事件 data 关键字段缺失 → console.warn + 丢弃（不崩）
 //   - 断线/异常时 onDisconnect 回调（调用方可降级到轮询）
-//   - 401 时尝试刷新 token 后重连（P1-3）；刷新失败则停止（由 request.js 拦截器跳登录）
+//   - 401 时尝试刷新 token 后重连；刷新失败则停止（由 request.js 拦截器跳登录）
 
 import { refreshToken } from './request'
 
@@ -111,7 +111,7 @@ export class SSEClient {
     this.stopped = false
     this.connected = false
     this._validateCount = 0 // 契约违规计数（测试/观测用）
-    this._refreshAttempted = false // P1-3：401 时是否已尝试过 token 刷新（防死循环）
+    this._refreshAttempted = false // ：401 时是否已尝试过 token 刷新（防死循环）
   }
 
   start() {
@@ -138,7 +138,7 @@ export class SSEClient {
       .then(async (resp) => {
         if (!resp.ok) {
           this.connected = false
-          // P1-3：401 时尝试刷新 token 后重连一次（at 过期场景）；
+          // ：401 时尝试刷新 token 后重连一次（at 过期场景）；
           // 刷新失败或已尝试过则停止重连，交 request.js 拦截器跳登录。
           if (resp.status === 401 && !this._refreshAttempted) {
             this._refreshAttempted = true
@@ -159,7 +159,7 @@ export class SSEClient {
         if (!resp.body) throw new Error('SSE: 无响应体')
         this.connected = true
         this.retryDelay = 1000 // 连接成功重置退避
-        this._refreshAttempted = false // P1-3：连接成功重置刷新标记，后续 401 可再次刷新
+        this._refreshAttempted = false // 连接成功重置刷新标记，后续 401 可再次刷新
         if (this.onConnect) this.onConnect()
         const reader = resp.body.getReader()
         const decoder = new TextDecoder()

@@ -2,7 +2,7 @@
 //
 // 涵盖：GetTasks/TasksByParent/SubmitResult/releaseDeps/AllTasks/Results/
 // CreateTask/ClaimTask/ReclaimStaleTasks/FireDueSchedules/PendingDepth/
-// TaskResult/CancelTask/CancelledTaskIDs + task 100 新增的 ApproveTask/RejectTask。
+// TaskResult/CancelTask/CancelledTaskIDs + 新增的 ApproveTask/RejectTask。
 //
 // 表结构：tasks、task_results、schedules（sql.go initSchema 中建表）。
 package store
@@ -23,7 +23,7 @@ import (
 )
 
 // claimEpochCond 返回 SubmitResult UPDATE 语句的 claim_epoch 校验片段。
-// A-1 防双跑：epoch > 0 时追加 AND claim_epoch=? 校验持有者令牌；
+// 防双跑：epoch > 0 时追加 AND claim_epoch=? 校验持有者令牌；
 // epoch == 0 时返回空串（兼容旧 agent/测试，跳过校验）。
 func claimEpochCond(epoch int64) string {
 	if epoch > 0 {
@@ -41,7 +41,7 @@ func claimEpochArgs(taskID string, epoch int64) []interface{} {
 	return []interface{}{taskID}
 }
 
-// checkLeaderFence A-2 leader fencing：校验当前实例是否仍持有有效租约。
+// checkLeaderFence leader fencing：校验当前实例是否仍持有有效租约。
 // fencing 通过返回 true；失败返回 false，且若自认 leader 时打日志告警并主动放弃 leader。
 // 用于 ReclaimStaleTasks/FireDueSchedules/RetireStaleDevices 等 leader 周期协调任务，
 // 防止 HA 双主窗口下旧 leader 仍执行写操作（租约已过期但 IsLeader 缓存未刷新）。
@@ -62,7 +62,7 @@ func (s *SQLStore) checkLeaderFence(ctx context.Context, op string) bool {
 	return fenced
 }
 
-// ApproveTask 审批通过任务（task 100）：将 pending_approval 状态翻转回 pending，
+// ApproveTask 审批通过任务：将 pending_approval 状态翻转回 pending，
 // 记录审批人/审批时间。仅 pending_approval 状态可审批；其他状态返回 false。
 // tenantID 非空时校验任务归属，越权返回 false。
 func (s *SQLStore) ApproveTask(id, tenantID, approvedBy string) bool {
@@ -88,7 +88,7 @@ func (s *SQLStore) ApproveTask(id, tenantID, approvedBy string) bool {
 	return n > 0
 }
 
-// RejectTask 驳回任务（task 100）：将 pending_approval 状态置为 rejected，
+// RejectTask 驳回任务：将 pending_approval 状态置为 rejected，
 // 记录审批人/审批时间。被驳回任务永不进入 ClaimTask 队列。仅 pending_approval 状态可驳回。
 // tenantID 非空时校验任务归属，越权返回 false。
 func (s *SQLStore) RejectTask(id, tenantID, approvedBy string) bool {
@@ -173,7 +173,7 @@ func (s *SQLStore) TasksByParent(parentID string) []*proto.Task {
 	return out
 }
 
-// SubmitResult 写入 task_results，按成功/失败处理任务终态（F2 重试/死信）并回写设备看板（B2）。
+// SubmitResult 写入 task_results，按成功/失败处理任务终态（F2 重试/死信）并回写设备看板。
 // 状态守卫（幂等）：仅接受任务处于 running 时的上报，防止迟到/重复上报破坏终态。
 
 func (s *SQLStore) SubmitResult(res *proto.TaskResult) {
@@ -191,10 +191,10 @@ ON DUPLICATE KEY UPDATE
 
 	success := res.ExitCode == 0
 	// 读取任务当前状态/重试计数/上限，决定终态。
-	// 状态守卫（幂等，task 82）：仅接受任务处于 running 时的上报——防止迟到上报把已取消任务翻回，
+	// 状态守卫（幂等）：仅接受任务处于 running 时的上报——防止迟到上报把已取消任务翻回，
 	// 防止重复失败上报反复累计 retry_count 造成假死信。UPDATE 附带 AND status='running' 防并发窗口；
 	// RowsAffected==0 表示状态被并发改写 → 跳过后续事件/告警。
-	// A-1 防双跑：UPDATE 附带 AND claim_epoch=? 校验持有者令牌，拒绝旧持有者（任务被回收重派后）上报。
+	// 防双跑：UPDATE 附带 AND claim_epoch=? 校验持有者令牌，拒绝旧持有者（任务被回收重派后）上报。
 	// res.ClaimEpoch > 0 时校验（新 agent 填充）；= 0 时跳过（兼容旧 agent/测试）。
 	var tid, tenantID, status string
 	var rc, mr int
@@ -255,7 +255,7 @@ ON DUPLICATE KEY UPDATE
 		return
 	}
 
-	// 回写设备 TaskState + LastResult（B2 失败回写看板）。
+	// 回写设备 TaskState + LastResult（失败回写看板）。
 	lastResult := "success"
 	taskState := "done"
 	if !success {
@@ -471,8 +471,8 @@ func (s *SQLStore) CreateTask(t *proto.Task) *proto.Task {
 	return t
 }
 
-// ClaimTask 原子领取该 agent 的下一条 pending 任务（FOR UPDATE 行锁保证多副本不双领，P1-1）。
-// A-1 防双跑：领取时 claim_epoch=claim_epoch+1，返回的 Task 带 ClaimEpoch；
+// ClaimTask 原子领取该 agent 的下一条 pending 任务（FOR UPDATE 行锁保证多副本不双领）。
+// 防双跑：领取时 claim_epoch=claim_epoch+1，返回的 Task 带 ClaimEpoch；
 // agent 上报结果时携带 ClaimEpoch，SubmitResult 校验持有者是否仍为当前 epoch。
 
 func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
@@ -515,18 +515,18 @@ func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 		Content: content.String, Path: path.String,
 		Status: "running", CreatedAt: createdAt, ClaimedBy: "controlplane", ClaimedAt: time.Now().UTC(),
 		ClaimEpoch: claimEpoch + 1,
-		Timeout:    timeout,    // P2-B2 节点级超时（agent 端按此强制终止，0=用全局 taskTimeout）
-		RetryDelay: retryDelay, // P2-B2 重试间隔（供 agent 端日志/上下文展示）
+		Timeout:    timeout,    // 节点级超时（agent 端按此强制终止，0=用全局 taskTimeout）
+		RetryDelay: retryDelay, // 重试间隔（供 agent 端日志/上下文展示）
 	}
 }
 
-// ReclaimStaleTasks 复位超期未完成的 running 任务为 pending（P0-1 任务必达）。
+// ReclaimStaleTasks 复位超期未完成的 running 任务为 pending（任务必达）。
 // agent 经 ClaimTask 领取（claimed_at 写当前时间）后若失联、超过 maxAge 仍未上报结果，
 // 该任务将永远卡在 running；此处周期性调用把它复位，重新进入调度队列。
 //
-// A-1 防双跑：增加 agent 心跳校验——仅当任务的 claimed_by 对应 agent 心跳也超时（last_seen < cutoff）
+// 防双跑：增加 agent 心跳校验——仅当任务的 claimed_by 对应 agent 心跳也超时（last_seen < cutoff）
 // 才回收。心跳正常的 agent 仍可能在执行长任务，不回收避免双跑。
-// A-2 leader fencing：仅当前 leader_lease 持有者可执行回收，防 HA 双主窗口下重复回收。
+// leader fencing：仅当前 leader_lease 持有者可执行回收，防 HA 双主窗口下重复回收。
 
 func (s *SQLStore) ReclaimStaleTasks(maxAge time.Duration) int {
 	if maxAge <= 0 {
@@ -534,7 +534,7 @@ func (s *SQLStore) ReclaimStaleTasks(maxAge time.Duration) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	// A-2 leader fencing：非有效租约持有者跳过，防双主同时回收。
+	// leader fencing：非有效租约持有者跳过，防双主同时回收。
 	if !s.checkLeaderFence(ctx, "ReclaimStaleTasks") {
 		return 0
 	}
@@ -557,19 +557,19 @@ func (s *SQLStore) ReclaimStaleTasks(maxAge time.Duration) int {
 // 返回本批次派生的实例数（F4 定时/周期调度；控制面 scheduleLoop 周期调用）。
 // 注意：SQL 路径依赖 live MySQL，仅在 CI 集成测试（env 门控）中真正运行。
 //
-// B-2 派生原子化：SELECT→INSERT→UPDATE 包在同一事务内，失败 Rollback，
+// 派生原子化：SELECT→INSERT→UPDATE 包在同一事务内，失败 Rollback，
 // 避免派生实例已写入但 last_fired_at 未回写导致下一轮重复派生。
-// A-2 leader fencing：仅当前 leader_lease 持有者可派生，防 HA 双主窗口下重复派生。
+// leader fencing：仅当前 leader_lease 持有者可派生，防 HA 双主窗口下重复派生。
 
 func (s *SQLStore) FireDueSchedules(now time.Time) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	// A-2 leader fencing：非有效租约持有者跳过，防双主同时派生。
+	// leader fencing：非有效租约持有者跳过，防双主同时派生。
 	if !s.checkLeaderFence(ctx, "FireDueSchedules") {
 		return 0
 	}
 	minuteStart := now.Truncate(time.Minute)
-	// B-2 派生原子化：整批 SELECT→INSERT→UPDATE 包在单事务内，失败 Rollback。
+	// 派生原子化：整批 SELECT→INSERT→UPDATE 包在单事务内，失败 Rollback。
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		log.Printf("[store] FireDueSchedules begin 失败: %v", err)
@@ -643,7 +643,7 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 	return fired
 }
 
-// UpsertDevice 写入/更新一台纳管设备（真实网段发现 P0-2 用；按 device_id 幂等）。
+// UpsertDevice 写入/更新一台纳管设备（真实网段发现 用；按 device_id 幂等）。
 
 func (s *SQLStore) PendingDepth() int {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

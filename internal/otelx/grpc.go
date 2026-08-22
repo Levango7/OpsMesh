@@ -1,5 +1,5 @@
 // grpc.go 提供 OTel gRPC 客户端/服务端拦截器，实现 gRPC metadata 注入/提取 trace context。
-// M1-1 agent gRPC 埋点：agent→控制面 gRPC 调用自动注入 traceparent，控制面提取后接续 trace。
+// agent gRPC 埋点：agent→控制面 gRPC 调用自动注入 traceparent，控制面提取后接续 trace。
 package otelx
 
 import (

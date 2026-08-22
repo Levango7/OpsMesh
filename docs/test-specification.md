@@ -1,6 +1,6 @@
 # OpsMesh 测试规范文档
 
-> 文档版本：v1.0 · 编制日期：2026-08-17 · 维护人：测试文档工程师
+> 文档版本：v1.0 · 编制日期：2026-08-17
 > 适用范围：OpsMesh 控制面（controlplane）+ Agent + Store + 前端（web/enterprise）+ CI 流水线
 > 编写依据：源码审计 + `.github/workflows/ci.yml` 实测 + `go test -cover ./...` 实测覆盖率（2026-08-17）
 > 配套文档：[architecture.md](./architecture.md)、[security-mechanism.md](./security-mechanism.md)、[tech-debt.md](./tech-debt.md)、[deployment-guide.md](./deployment-guide.md)
@@ -248,7 +248,7 @@ func TestAgentRegister_gRPC_Integration(t *testing.T) {
 go test -tags kafka -timeout 120s ./internal/events/...
 ```
 
-测试用不可达 broker mock，无需真实 Kafka 容器。覆盖：WAL 兜底、失败计数、重试退避（B-3 审计合规关键）。
+测试用不可达 broker mock，无需真实 Kafka 容器。覆盖：WAL 兜底、失败计数、重试退避（审计合规关键）。
 
 ### 2.3 E2E 测试
 
@@ -291,37 +291,37 @@ go test -tags kafka -timeout 120s ./internal/events/...
 
 | 包路径 | 当前覆盖率 | 目标覆盖率 | 达标 | 优先级 | 备注 |
 |--------|-----------|-----------|------|--------|------|
-| `cmd/opsmesh` | 87.8% | ≥85% | ✅ | P2 | 入口组装，main 路径难覆盖 |
-| `internal/agent` | 77.7% | ≥80% | ❌ | P1 | gRPC 客户端 + SSH 执行，补 bufconn 用例 |
-| `internal/alertengine` | 96.8% | ≥95% | ✅ | P2 | 已接近上限 |
-| `internal/approval` | 92.8% | ≥90% | ✅ | P1 | 审批流，已达标 |
-| `internal/authctx` | 62.6% | ≥85% | ❌ | P0 | JWT 签发/验签，安全关键，需重点补 |
-| `internal/circuitbreaker` | 95.5% | ≥95% | ✅ | P2 | 已达标 |
-| `internal/cmdb` | 41.5% | ≥70% | ❌ | P2 | CMDB 同步，缺集成测试 |
-| `internal/config` | 98.5% | ≥95% | ✅ | P1 | 已接近上限 |
-| `internal/controlplane` | 70.6% | ≥80% | ❌ | P1 | 单包最大，已拆 8 个 server_*.go，补 handler 测试 |
-| `internal/cron` | 79.9% | ≥80% | ❌ | P2 | 接近达标，补 clock 注入用例 |
-| `internal/dag` | 93.2% | ≥90% | ✅ | P1 | DAG 调度，已达标 |
-| `internal/deploy` | 60.1% | ≥75% | ❌ | P2 | 部署执行，补 mock executor |
-| `internal/discover` | 83.1% | ≥85% | ❌ | P2 | 接近达标 |
-| `internal/discovery` | 91.4% | ≥90% | ✅ | P2 | 已达标 |
-| `internal/domain` | 83.0% | ≥85% | ❌ | P1 | 领域模型，补状态机迁移用例 |
-| `internal/events` | 88.2% | ≥85% | ✅ | P0 | 审计事件，已达标 |
-| `internal/grpcx` | 48.9% | ≥75% | ❌ | P1 | gRPC 通用封装，补 bufconn + mTLS 用例 |
+| `cmd/opsmesh` | 87.8% | ≥85% | ✅ | | 入口组装，main 路径难覆盖 |
+| `internal/agent` | 77.7% | ≥80% | ❌ | | gRPC 客户端 + SSH 执行，补 bufconn 用例 |
+| `internal/alertengine` | 96.8% | ≥95% | ✅ | | 已接近上限 |
+| `internal/approval` | 92.8% | ≥90% | ✅ | | 审批流，已达标 |
+| `internal/authctx` | 62.6% | ≥85% | ❌ | | JWT 签发/验签，安全关键，需重点补 |
+| `internal/circuitbreaker` | 95.5% | ≥95% | ✅ | | 已达标 |
+| `internal/cmdb` | 41.5% | ≥70% | ❌ | | CMDB 同步，缺集成测试 |
+| `internal/config` | 98.5% | ≥95% | ✅ | | 已接近上限 |
+| `internal/controlplane` | 70.6% | ≥80% | ❌ | | 单包最大，已拆 8 个 server_*.go，补 handler 测试 |
+| `internal/cron` | 79.9% | ≥80% | ❌ | | 接近达标，补 clock 注入用例 |
+| `internal/dag` | 93.2% | ≥90% | ✅ | | DAG 调度，已达标 |
+| `internal/deploy` | 60.1% | ≥75% | ❌ | | 部署执行，补 mock executor |
+| `internal/discover` | 83.1% | ≥85% | ❌ | | 接近达标 |
+| `internal/discovery` | 91.4% | ≥90% | ✅ | | 已达标 |
+| `internal/domain` | 83.0% | ≥85% | ❌ | | 领域模型，补状态机迁移用例 |
+| `internal/events` | 88.2% | ≥85% | ✅ | | 审计事件，已达标 |
+| `internal/grpcx` | 48.9% | ≥75% | ❌ | | gRPC 通用封装，补 bufconn + mTLS 用例 |
 | `internal/grpcx/pb` | 0.0% | 豁免 | ⚪ | — | protobuf 生成代码，由 buf lint 守护 |
-| `internal/helm` | 70.0% | ≥80% | ❌ | P2 | Helm 渲染，补 template 单测 |
-| `internal/k8s` | 90.9% | ≥85% | ✅ | P2 | 已达标 |
-| `internal/logstore` | 83.5% | ≥85% | ❌ | P2 | 接近达标 |
+| `internal/helm` | 70.0% | ≥80% | ❌ | | Helm 渲染，补 template 单测 |
+| `internal/k8s` | 90.9% | ≥85% | ✅ | | 已达标 |
+| `internal/logstore` | 83.5% | ≥85% | ❌ | | 接近达标 |
 | `internal/logx` | 91.7% | ≥90% | ✅ | P3 | 已达标 |
 | `internal/metrics` | 98.6% | ≥95% | ✅ | P3 | 已接近上限 |
-| `internal/notify` | 82.3% | ≥85% | ❌ | P2 | 通知器，补 webhook/邮件 mock |
-| `internal/orchestration` | 72.5% | ≥80% | ❌ | P1 | 编排引擎，补任务链用例 |
+| `internal/notify` | 82.3% | ≥85% | ❌ | | 通知器，补 webhook/邮件 mock |
+| `internal/orchestration` | 72.5% | ≥80% | ❌ | | 编排引擎，补任务链用例 |
 | `internal/otelx` | 58.0% | ≥75% | ❌ | P3 | OTel 包装，可降优先级 |
 | `internal/proto` | — | — | ⚪ | — | 无测试文件，纯类型定义 |
-| `internal/provision` | 94.1% | ≥90% | ✅ | P1 | 已达标 |
-| `internal/secrets` | 61.3% | ≥80% | ❌ | P0 | 密钥管理，安全关键，需重点补 |
-| `internal/store` | 49.7%（memory） | ≥70%（含 SQL） | ❌ | P0 | CI 集成环境实测 34.6%（真实 mysql+redis），双轨都需补 |
-| `internal/tlsutil` | 87.3% | ≥85% | ✅ | P0 | mTLS 工具，已达标 |
+| `internal/provision` | 94.1% | ≥90% | ✅ | | 已达标 |
+| `internal/secrets` | 61.3% | ≥80% | ❌ | | 密钥管理，安全关键，需重点补 |
+| `internal/store` | 49.7%（memory） | ≥70%（含 SQL） | ❌ | | CI 集成环境实测 34.6%（真实 mysql+redis），双轨都需补 |
+| `internal/tlsutil` | 87.3% | ≥85% | ✅ | | mTLS 工具，已达标 |
 | `internal/version` | — | — | ⚪ | — | 无测试文件，编译期常量 |
 
 ### 3.2 整体覆盖率门禁
@@ -426,7 +426,7 @@ graph LR
 | 工具 | 作业 | 配置文件 | 关键规则 | 说明 |
 |------|------|---------|---------|------|
 | `go vet` | build-test | — | Go 内置 | 标准静态检查 |
-| `golangci-lint` | build-test | `.golangci.yml` | errcheck/govet/staticcheck/... | H10 聚合静态分析，args 限定 `./...` |
+| `golangci-lint` | build-test | `.golangci.yml` | errcheck/govet/staticcheck/... | 聚合静态分析，args 限定 `./...` |
 | `gofmt` | build-test | — | `test -z "$(gofmt -l .)"` | 格式一致性 |
 | `eslint` | frontend | `.eslintrc.cjs` | eslint-plugin-vue | 前端静态检查 |
 | `buf lint` | proto | `proto/buf.yaml` | STANDARD 规则集 | protobuf 契约守护 |
@@ -439,10 +439,10 @@ graph LR
 | 工具 | 作业 | 扫描范围 | 豁免项 | 说明 |
 |------|------|---------|--------|------|
 | `gosec` v2.25.0 | security | `./...` | G103/G101/G104/G106/G115/G118/G124/G202/G204/G304/G704/G705 | 见 ci.yml L132-144 各豁免理由 |
-| `govulncheck` v1.1.4 | security | `./...` | — | 官方 Go 漏洞数据库扫描（task 91） |
+| `govulncheck` v1.1.4 | security | `./...` | — | 官方 Go 漏洞数据库扫描 |
 | `trivy` v0.36.0 (fs) | security | `.` | severity < HIGH | 文件系统扫描，HIGH/CRITICAL 失败 |
 | `trivy` v0.36.0 (image) | image | 推送镜像 | severity < HIGH | 镜像扫描，钉死版本防供应链漂移 |
-| `cosign` | image | 推送镜像 | — | P2-4 供应链安全，key-based 签名（非 keyless） |
+| `cosign` | image | 推送镜像 | — | 供应链安全，key-based 签名（非 keyless） |
 
 **gosec 豁免理由摘要**：
 

@@ -1,6 +1,6 @@
 # OpsMesh 产品方向与演进路线图
 
-> 版本：v0.1（规划稿）  ·  编制日期：2026-08-01  ·  适用基线：MVP（ADR-001 Option A，2026-07-28 交付）
+> 版本：v0.1（规划稿）  ·  编制日期：2026-08-01  ·  适用基线：MVP（自研 gRPC 管控通道，2026-07-28 交付）
 >
 > 本文档基于 `README.md` 与 `DELIVERY.md` 描述的 MVP 现状，给出 OpsMesh 从 MVP 走向生产可用与规模化的演进方向。所有"计划/目标"措辞均为规划意图，不代表已实现能力；已实现能力以 `README.md` 功能矩阵为准。
 >
@@ -169,7 +169,7 @@ agent 侧 `grpcclient` 在每次 RPC 调用时重新 `Dial` 控制面，引入�
 
 ### 3.2 演进路径（Vue3 企业版主线）
 
-Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人版不再纳入演进路径，仅维持 P0 修复至 v0.4.0 移除（详见第 9 章收敛与弃用策略）。
+Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人版不再纳入演进路径，仅维持 修复至 v0.4.0 移除（详见第 9 章收敛与弃用策略）。
 
 | 阶段 | 目标 |
 |---|---|
@@ -451,7 +451,7 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 | 阶段 | 目标 |
 |---|---|
 | 现状 | 单中心，跨网段规模化靠每段一套控制面 |
-| ✅ 已实现 | 跨网段控制面联邦（mTLS + HMAC 签名验签，P1-6 落地）、任务跨段转发、多集群联邦发布（`federation.go` FederationCoordinator 跨集群灰度协调 + 联邦级发布状态 API）、联邦级设备/任务视图 |
+| ✅ 已实现 | 跨网段控制面联邦（mTLS + HMAC 签名验签，落地）、任务跨段转发、多集群联邦发布（`federation.go` FederationCoordinator 跨集群灰度协调 + 联邦级发布状态 API）、联邦级设备/任务视图 |
 | 计划 | — |
 
 ---
@@ -464,7 +464,7 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 
 | 里程碑 | 时间窗 | 主题 | 关键交付 |
 |---|---|---|---|
-| M1 | 1–2 周 | P0 修复与交付补全 | 本次 P0 修复完成、`docker-compose.yaml`、`goreleaser`、`golangci-lint` 全量门禁 |
+| M1 | 1–2 周 | 修复与交付补全 | 本次 修复完成、`docker-compose.yaml`、`goreleaser`、`golangci-lint` 全量门禁 |
 | M2 | 1 个月 | 测试与工程化基线 | 测试覆盖率 ≥ 70%、Helm Chart、前端 Phase 1 组件化与设计系统、Store 接口拆分 |
 | M3 | 2–3 个月 | 前端主线增强与协议标准化 | 前端 Vue 3 主线增强（SSE/类型/测试基线）、protobuf 引入、JWT 验签 |
 | M4 | 远期 | 规模化与生态 | K8s operator、控制面联邦、多租户 schema 隔离、ELK/Loki 集成 |
@@ -473,7 +473,7 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 
 | 工作项 | 验收标准 |
 |---|---|
-| P0 修复 | 完成本次审核发现的全部 P0 项 |
+| 修复 | 完成本次审核发现的全部 项 |
 | docker-compose | `docker compose up` 一键起 controlplane + mysql + redis + agent |
 | goreleaser | 跨平台构建 linux amd64/arm64，GitHub Release + checksums |
 | golangci-lint | 全量 lint 入 CI，零 warning |
@@ -491,7 +491,7 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 
 | 工作项 | 验收标准 |
 |---|---|
-| 前端 Vue 3 主线增强 | Vue 3 + Vite + Pinia 持续演进（SSE/类型/测试基线）；原生 JS 个人版按 v0.4.0 移除计划收敛，仅修 P0 bug |
+| 前端 Vue 3 主线增强 | Vue 3 + Vite + Pinia 持续演进（SSE/类型/测试基线）；原生 JS 个人版按 v0.4.0 移除计划收敛，仅修 bug |
 | protobuf 引入 | buf 工具链，生成 stub 替换手写 ServiceDesc，breaking 检查入 CI |
 | JWT 验签 | 内核侧支持网关公钥验签，不纯依赖头注入 |
 | SSE 实时推送 | 任务/告警/设备事件推送替代轮询 |
@@ -523,8 +523,8 @@ OpsMesh 前端采取**收敛而非分叉**策略：Vue3 企业版为唯一主线
 | 项 | 规则 |
 |---|---|
 | 个人版新增功能 | 不接受（原 Phase 1 模块化、TypeScript、Vue 3 迁移等演进路径全部取消） |
-| 个人版 P0 bug | 修复至 v0.4.0 移除 |
-| 个人版 P1/P2 issue | 仅记录，不修 |
+| 个人版 bug | 修复至 v0.4.0 移除 |
+| 个人版 /issue | 仅记录，不修 |
 | 迁移支持 | 提供 `web/enterprise/` 功能对照表，协助现有个人版用户迁移 |
 | 移除节点 | v0.4.0：删除 `internal/controlplane/web/` 原生 JS 代码，控制面 B/S 仪表盘由 Vue3 企业版产物托管或 Go 模板轻量渲染 |
 
@@ -543,13 +543,13 @@ OpsMesh 前端采取**收敛而非分叉**策略：Vue3 企业版为唯一主线
 
 ### 9.4 演进节奏
 
-Vue3 企业版按里程碑持续演进；原生 JS 个人版仅维持 P0 修复至 v0.4.0 移除，不再有独立演进节奏。
+Vue3 企业版按里程碑持续演进；原生 JS 个人版仅维持 修复至 v0.4.0 移除，不再有独立演进节奏。
 
 | 里程碑 | Vue3 企业版主线 | 原生 JS 个人版 |
 |---|---|---|
-| M1 | 组件库基线 | 仅修 P0 bug |
-| M2 | 设计系统固化 + 测试基线 | 仅修 P0 bug |
-| M3 | SSE 实时推送 + 类型全覆盖 | 仅修 P0 bug |
+| M1 | 组件库基线 | 仅修 bug |
+| M2 | 设计系统固化 + 测试基线 | 仅修 bug |
+| M3 | SSE 实时推送 + 类型全覆盖 | 仅修 bug |
 | M4 | operator 集成 + 多集群管理 | v0.4.0 移除 |
 
 ---
@@ -563,7 +563,7 @@ Vue3 企业版按里程碑持续演进；原生 JS 个人版仅维持 P0 修复�
 | Store 接口拆分 | ① `store.go` 保留 15 个子接口及编译期断言；② controlplane/store 内至少 3 个消费方从 `Store` 改用领域子接口；③ `go build/test` 全绿 |
 | controlplane 单包拆分 | ① 无 >500 行的单文件；② `go test ./internal/controlplane/...` 全过；③ README 功能矩阵不变 |
 | Registry 去除或强化 | 若选 A：无独立 registry 文件，消费方直接引子接口；若选 B：Registry 有明确编排/缓存职责并有单测覆盖 |
-| agent 连接健壮性 | 已具备 B-4 连接复用（见 TD-08）；✅ 断线日志分级（evictConn WARN）+ 故障指标化（`agent_grpc_conn_failures` expvar /debug/vars）已落地 |
+| agent 连接健壮性 | 已具备 连接复用（见 TD-08）；✅ 断线日志分级（evictConn WARN）+ 故障指标化（`agent_grpc_conn_failures` expvar /debug/vars）已落地 |
 | 前端 SSE 契约一致 | ✅ ① `docs/sse-protocol.md` 与 `sse.go` 字段/事件名一致，有契约性单测；✅ ② 前端 `api/sse.js` 内置 `EVENT_CONTRACT` 10 种事件契约表（运行时校验 + vitest 用例），`App.vue` 已接入 SSE 事件驱动刷新 |
 | protobuf/JSON codec 收敛 | ① 明确留用 JSON codec 的原因已在 tech-selection §3 记录；✅ ② grpcx/codec.go 新增 deprecation 警告日志（sync.Once 仅打印一次，迁移期有效） |
 | e2e-real 真实后端 | ① `e2e-real/` 至少覆盖健康检查、登录、任务创建/取消、SSE 可见性；② CI `e2e-real` job 在 push 时通过 |
@@ -575,23 +575,23 @@ Vue3 企业版按里程碑持续演进；原生 JS 个人版仅维持 P0 修复�
 
 ## 附录 C：演进项审计盘点（2026-08-16）
 
-> 对照 2-8 章逐项核查后的真实完成状态（任务 3 输出）。已实现以 README 功能矩阵为准。
+> 对照 2-8 章逐项核查后的真实完成状态（输出）。已实现以 README 功能矩阵为准。
 
 | 章节 | 演进项 | 审计结论 |
 |---|---|---|
 | 2.1 | Store 接口拆分 | ✅ 15 子接口 + 编译期断言 + 3+ 消费方（见 DoD） |
 | 2.2 | DDD 实质化 | ✅ domain 已有 10+ 行为方法（Cancel/CanRetry/TransitionToProvisioning/Acknowledge/Silence） |
 | 2.3 | gRPC 标准化 | ⚠️ **维持现状（有意为之）**：JSON codec + 版本协商是正式契约，tech-selection §3 已记录取舍；protobuf 代码生成已启用（internal/grpcx/pb/）供未来迁移。无进一步工作 |
-| 2.4 | 连接复用 | ✅ B-4 conns 长连接池 + 淘汰重建 + 断线指标化（expvar） |
+| 2.4 | 连接复用 | ✅ conns 长连接池 + 淘汰重建 + 断线指标化（expvar） |
 | 2.5 | Registry 去除或强化 | ✅ 薄转发层已删，消费方直连子接口 |
-| 3.4 | 前端 SSE 实时推送 | ✅ 本批次落地（见 DoD）：fetch 流式客户端 + 契约校验 + 事件驱动刷新 |
+| 3.4 | 前端 SSE 实时推送 | ✅ 已落地（见 DoD）：fetch 流式客户端 + 契约校验 + 事件驱动刷新 |
 | 4.2 | 单元测试补全 | ✅ 大部分已覆盖：controlplane 28 测试文件、52 个 handler 相关测试函数、2 个 loop 测试文件；剩余零星项见 tech-debt |
 | 4.3 | SQL 集成测试 | ✅ CI mysql/redis service container 全跑（integration job，store 覆盖率 34.6% 已纳入门禁 32%） |
 | 4.4 | 并发测试 | ⚠️ 部分覆盖（-race 全量跑）；专项并发用例（leader 续租、ClaimTask 原子性）可继续补 |
 | 4.5 | 安全 E2E | ✅ 本批次落地：require-auth / 越权 / 取消全链路 / mTLS（e2e-sec job） |
 | 5.x | 交付物缺口 | ✅ goreleaser、systemd unit、Helm Chart、compose、GitOps（ApplicationSet+AppProject+网段示例）均已交付；⚠️ Argo CD 网段批量渲染仍为规划 |
-| 7.x | 功能演进（CMDB/作业编排/部署/告警/日志/多租户/联邦） | ✅ MVP 能力已交付（README 功能矩阵）；深化项（如联邦跨网段任务转发 P1-6）已于 2026-08-02 落地，M2+ 深化待立项 |
-| 8.x | 里程碑 | 8.1 时间线按 M1 已交付部分推进；M2-M4 为规划 |
+| 7.x | 功能演进（CMDB/作业编排/部署/告警/日志/多租户/联邦） | ✅ MVP 能力已交付（README 功能矩阵）；深化项（如联邦跨网段任务转发）已于 2026-08-02 落地，M2+ 深化待立项 |
+| 8.x | 里程碑 | 8.1 时间线按 M1 已交付部分推进；为规划 |
 
 **结论**：roadmap 规划的 DoD 可验收项全部完成（SSE 实时推送、安全 E2E、codec 收敛、连接指标化）；剩余为明确标注的"维持现状（有意为之）"或"M2+ 立项规划"，无隐藏技术债。
 
@@ -602,7 +602,7 @@ Vue3 企业版按里程碑持续演进；原生 JS 个人版仅维持 P0 修复�
 本文档中所有"计划/目标/演进/远期"措辞均为规划意图，不代表已实现能力。已实现能力以 `README.md` 功能矩阵与 `DELIVERY.md` 交付说明为准。具体而言：
 
 - Helm Chart、`docker-compose.yaml`、`.goreleaser.yml`、`deploy/systemd/` unit、`deploy/gitops/`（ApplicationSet+AppProject+网段示例）：均已交付（见 5.3/5.5/5.6）。Argo CD 网段批量渲染：仍为规划中深化能力
-- Store 接口拆分已实施（`store.go` 15 个领域小接口 + 编译期断言）、DDD 实质化（`domain.go` 已有 Cancel/CanRetry/TransitionToProvisioning/Acknowledge 等行为方法）、server.go/巨型 memory.go 按域拆分均已落地（见 tech-debt.md TD-20/TD-21/11/24）。已实现项：protobuf 代码生成已启用（internal/grpcx/pb/）、operator 已交付、schema 隔离已有 --multi-schema flag、SSE 已实现 /api/v1/events/stream（契约文档+守护测试见 docs/sse-protocol.md）、Vue 3 主线已交付（web/enterprise/）。个人版前端已按收敛策略落地：`internal/controlplane/web/` 收敛为极简引导页（GET / 重定向 /enterprise/），1.3 万行业务 JS 已移除。联邦（控制面跨网段任务转发 mTLS + HMAC 签名验签，P1-6）已于 2026-08-02 落地
+- Store 接口拆分已实施（`store.go` 15 个领域小接口 + 编译期断言）、DDD 实质化（`domain.go` 已有 Cancel/CanRetry/TransitionToProvisioning/Acknowledge 等行为方法）、server.go/巨型 memory.go 按域拆分均已落地（见 tech-debt.md TD-20/TD-21/11/24）。已实现项：protobuf 代码生成已启用（internal/grpcx/pb/）、operator 已交付、schema 隔离已有 --multi-schema flag、SSE 已实现 /api/v1/events/stream（契约文档+守护测试见 docs/sse-protocol.md）、Vue 3 主线已交付（web/enterprise/）。个人版前端已按收敛策略落地：`internal/controlplane/web/` 收敛为极简引导页（GET / 重定向 /enterprise/），1.3 万行业务 JS 已移除。联邦（控制面跨网段任务转发 mTLS + HMAC 签名验签）已于 2026-08-02 落地
 - 安全加固项：agent shell 命令白名单（✅ 已实现 checkShellWhitelist）、file 路径白名单（✅ 已实现 checkFileRootWhitelist）、JWT 验签（✅ 已实现 --jwt-public-key RS256 验签）、SSRF 校验（✅ 已实现 ValidateWebhookURL 私有IP拦截 + ValidateCIDR 白名单 + autoProvision CIDR 校验）、CSP 收紧（✅ 已实现 script-src 去除 unsafe-inline，前端 inline onclick 已迁移到 addEventListener）、TLS 证书热重载（✅ 已实现 --tls-watch fsnotify 监听+热重载）、Vault/KMS 集成（✅ 已实现 internal/secrets 包 Env/File/Vault/Chain provider + --secret-provider 配置 + 告警通道密钥外置）
-- P2 Batch 3 安全加固深化（2026-08-14 落地）：TLS 证书热重载（--tls-watch，fsnotify 监听+graceful reload）、Vault/KMS 密钥管理（internal/secrets 包，Env/File/Vault/Chain provider + ResolveSecret 引用解析）、告警通道密钥外置（notify WithSecret 构造 + ${vault:key} 引用格式）、前端密钥管理 UI（SecretsView.vue + /api/v1/secrets/* API）
-- P2 Batch 6 可视化与检索增强（2026-08-14 落地）：CMDB 关系图谱可视化（`RelationGraph.vue` 纯 SVG 力导向图+网络拓扑布局，CI 类型颜色+关系类型线型+拖拽缩放平移+图例+节点详情面板，集成到 CMDBView 三视图切换）、全文本检索倒排索引（`internal/logstore/inverted.go` 中英文混合分词+TF-IDF 排序+短语/布尔/通配符查询+并发安全，`SearchFullText` 集成到 MemoryLogStore）、多集群联邦发布（`internal/deploy/federation.go` FederationStore+FederationCoordinator 跨集群灰度协调 Start/Promote/Reconcile/Rollback/Status + 联邦级发布状态 REST API）
+- Batch 3 安全加固深化（2026-08-14 落地）：TLS 证书热重载（--tls-watch，fsnotify 监听+graceful reload）、Vault/KMS 密钥管理（internal/secrets 包，Env/File/Vault/Chain provider + ResolveSecret 引用解析）、告警通道密钥外置（notify WithSecret 构造 + ${vault:key} 引用格式）、前端密钥管理 UI（SecretsView.vue + /api/v1/secrets/* API）
+- Batch 6 可视化与检索增强（2026-08-14 落地）：CMDB 关系图谱可视化（`RelationGraph.vue` 纯 SVG 力导向图+网络拓扑布局，CI 类型颜色+关系类型线型+拖拽缩放平移+图例+节点详情面板，集成到 CMDBView 三视图切换）、全文本检索倒排索引（`internal/logstore/inverted.go` 中英文混合分词+TF-IDF 排序+短语/布尔/通配符查询+并发安全，`SearchFullText` 集成到 MemoryLogStore）、多集群联邦发布（`internal/deploy/federation.go` FederationStore+FederationCoordinator 跨集群灰度协调 Start/Promote/Reconcile/Rollback/Status + 联邦级发布状态 REST API）

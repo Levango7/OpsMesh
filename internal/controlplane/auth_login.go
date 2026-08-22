@@ -25,7 +25,7 @@ import (
 // handleAuthRegister 处理 POST /api/v1/auth/register：用户注册。
 // 请求体：{username, password, email?}；密码最短 6 字符，bcrypt 哈希后存库。
 //
-// 注册安全（P1-7）：
+// 注册安全：
 //   - --public-register=false 时返回 403 拒绝公开注册（仅管理员可经 POST /api/v1/users 创建）；
 //   - --allow-public-register=true 时新用户 Status="active" 并立即签发 token（仅演示/内网受信环境）；
 //   - 否则（默认 --allow-public-register=false）新用户 Status="pending"，不签发 token，
@@ -37,12 +37,12 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	// P1-7 注册安全：--public-register=false 时关闭公开注册接口。
+	// 注册安全：--public-register=false 时关闭公开注册接口。
 	if !s.cfg.PublicRegister {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "public registration is disabled"})
 		return
 	}
-	// P1-4 限流：按客户端 IP 令牌桶约束注册频率，防滥用/枚举。
+	// 限流：按客户端 IP 令牌桶约束注册频率，防滥用/枚举。
 	if !s.loginGuard.allow(clientIP(r, s.cfg.TrustProxy)) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
@@ -85,7 +85,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
-	// P1-7 注册安全：只有显式 --allow-public-register=true 时才免审批（Status=active + 立即签发 token）。
+	// 注册安全：只有显式 --allow-public-register=true 时才免审批（Status=active + 立即签发 token）。
 	// 否则所有注册（包括 demo 模式）都走 pending 审批流程（默认安全基线）。
 	initialStatus := "pending"
 	if s.cfg.AllowPublicRegister {
@@ -104,7 +104,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: u.ID, Action: "user_register", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username + " status=" + initialStatus),
 	})
@@ -122,7 +122,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
-		s.setAuthCookies(w, token, rt) // task 94：at+rt 双 HttpOnly Cookie 下发
+		s.setAuthCookies(w, token, rt) // ：at+rt 双 HttpOnly Cookie 下发
 		writeJSON(w, http.StatusCreated, authResponse{Token: token, User: u})
 		return
 	}
@@ -142,7 +142,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	// P1-4 限流：按客户端 IP 令牌桶约束登录频率，防撞库与 DoS。
+	// 限流：按客户端 IP 令牌桶约束登录频率，防撞库与 DoS。
 	if !s.loginGuard.allow(clientIP(r, s.cfg.TrustProxy)) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
@@ -160,7 +160,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
 		return
 	}
-	// P1-4 防爆破：账号处于锁定态时直接拒绝，避免继续尝试。
+	// 防爆破：账号处于锁定态时直接拒绝，避免继续尝试。
 	if s.loginGuard.locked(body.Username) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "account temporarily locked due to too many failed attempts, try later"})
 		return
@@ -177,7 +177,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 		return
 	}
-	// P1-7 注册安全：密码已校验通过后再检查 Status，根据状态返回差异化提示。
+	// 注册安全：密码已校验通过后再检查 Status，根据状态返回差异化提示。
 	// 顺序保证：未持正确密码的攻击者无法探测账号状态（防枚举）。
 	if u.Status != "active" {
 		switch u.Status {
@@ -194,11 +194,11 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	// 登录成功：清除失败计数（解锁）。
 	s.loginGuard.resetFail(body.Username)
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: u.ID, Action: "user_login", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 	})
-	// 任务 96：mustChangePassword=true 时不签发 access token（at），仅签发一次性短时效
+	// ：mustChangePassword=true 时不签发 access token（at），仅签发一次性短时效
 	// changePasswordToken（5min），仅可用于 /api/v1/auth/change-password。改密成功后才签发
 	// 正式 at+rt。避免弱口令用户持有效 at 长期访问受保护 API。
 	if u.MustChangePassword {
@@ -232,8 +232,8 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, authResponse{Token: token, User: u})
 }
 
-// handleAuthLogout 处理 POST /api/v1/auth/logout：登出并清除会话 Cookie（task 94）。
-// P1-G4：登出时将 access token 的 jti 加入吊销黑名单，使 token 立即失效
+// handleAuthLogout 处理 POST /api/v1/auth/logout：登出并清除会话 Cookie。
+// 登出时将 access token 的 jti 加入吊销黑名单，使 token 立即失效
 // （而非等 15min 自然过期）。同时吊销 refresh token 并清除 HttpOnly Cookie。
 func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -241,12 +241,12 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if u, err := s.userFromToken(r); err == nil {
-		// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+		// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 		s.audit(r.Context(), &proto.AuditEvent{
 			TenantID: "default", UserID: u.ID, Action: "user_logout", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 		})
 	}
-	// P1-G4 吊销 access token：jti 加入黑名单，使登出后 token 立即失效。
+	// 吊销 access token：jti 加入黑名单，使登出后 token 立即失效。
 	s.revokeAccessTokenFromRequest(r)
 	// 吊销请求携带的 rt，并清除 at+rt Cookie（服务端状态失效 + 浏览器会话终止）。
 	if ck, ckErr := r.Cookie(refreshTokenCookieName); ckErr == nil && strings.TrimSpace(ck.Value) != "" {
@@ -260,7 +260,7 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 // 同源 HttpOnly rt 由浏览器自动携带；成功重置 at（短寿命）+ 新 rt，旧 rt 立即失效（防重放）。
 // 缺失/无效/过期 rt → 401 并清除 Cookie（前端据此跳转登录）。
 //
-// task 112 设备绑定：验证时校验请求的 X-Device-FP 与存储的 DeviceFP 一致，
+// 设备绑定：验证时校验请求的 X-Device-FP 与存储的 DeviceFP 一致，
 // 不匹配拒绝刷新（防 token 跨设备重放）；签发新 rt 时绑定当前设备指纹。
 func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -272,7 +272,7 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing refresh token"})
 		return
 	}
-	// task 112 设备绑定：consumeRefreshToken 校验请求的 DeviceFP 与存储一致。
+	// 设备绑定：consumeRefreshToken 校验请求的 DeviceFP 与存储一致。
 	sess, ok := s.consumeRefreshToken(ck.Value, deviceFingerprint(r))
 	if !ok {
 		s.clearAuthCookies(w)
@@ -336,10 +336,10 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============================================================================
-// 改密 handler（安全债 85）：POST /api/v1/auth/change-password
+// 改密 handler（安全债）：POST /api/v1/auth/change-password
 // ============================================================================
 
-// handleAuthChangePassword 处理 POST /api/v1/auth/change-password：用户改密（安全债 85 + 任务 96）。
+// handleAuthChangePassword 处理 POST /api/v1/auth/change-password：用户改密（安全债）。
 //
 // 支持两种鉴权场景：
 //  1. 首登强制改密（mustChangePassword=true）：请求体携带 changePasswordToken（登录时签发的一次性
@@ -358,7 +358,7 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	// P1-4 限流：按客户端 IP 令牌桶约束改密频率，防暴力破解旧密码。
+	// 限流：按客户端 IP 令牌桶约束改密频率，防暴力破解旧密码。
 	// 复用 loginGuard 的 IP 令牌桶（与登录/注册同维度），避免单独维护限流器。
 	if !s.loginGuard.allow(clientIP(r, s.cfg.TrustProxy)) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
@@ -429,7 +429,7 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
-	// M1-4：携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: u.ID, Action: "user_change_password", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 	})

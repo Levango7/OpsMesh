@@ -1,6 +1,6 @@
--- 006_quota_configs.sql — P2-B5 多租户资源配额：租户级资源配额配置持久化
+-- 006_quota_configs.sql — 多租户资源配额：租户级资源配额配置持久化
 --
--- 任务 274：将 controlplane.QuotaManager 中的内存 map 实现升级为 SQL 持久化，
+-- ：将 controlplane.QuotaManager 中的内存 map 实现升级为 SQL 持久化，
 -- 使 --store=mysql 时重启不丢失，多副本 HA 下配额配置一致。
 --
 -- 表结构说明：

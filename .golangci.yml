@@ -34,7 +34,7 @@ linters:
   settings:
     errcheck:
       check-type-assertions: true
-      # check-blank 启用（task 337）：`_ =` 形式忽略返回值必须显式豁免，
+      # check-blank 启用：`_ =` 形式忽略返回值必须显式豁免，
       # 避免静默吞错。设计上可忽略的调用通过 exclude-functions 精细豁免，
       # 其余 `_ =` 必须有正当理由（已在 exclusions.rules 中按路径/text 豁免）。
       check-blank: true
@@ -104,7 +104,7 @@ linters:
       - linters:
           - errcheck
         text: "tx.Rollback"
-      # G104（Errors unhandled）精细豁免（task 337）：原 ci.yml gosec 整类排除 G104，
+      # G104（Errors unhandled）精细豁免：原 ci.yml gosec 整类排除 G104，
       # 现下放至 golangci-lint 做精细控制。以下路径/模式为设计上可忽略返回值的调用，
       # 与 errcheck exclude-functions 对齐（events.Bus.Publish / bufio/io 写入 / defer Rollback）。
       # 测试文件已通过 _test\.go 规则整体放宽 gosec，此处只覆盖生产代码。

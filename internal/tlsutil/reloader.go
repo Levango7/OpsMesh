@@ -1,4 +1,4 @@
-// Package tlsutil 的证书热重载实现（P2-B3）。
+// Package tlsutil 的证书热重载实现。
 //
 // 设计目标：当证书文件被外部进程（certbot / k8s secret mount reload / 运维手动替换）变更时，
 // 控制面无需重启即可更新 TLS 配置，避免长连接中断与短暂不可用窗口。

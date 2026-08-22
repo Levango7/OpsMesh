@@ -5,7 +5,7 @@
 //   - GET  /api/v1/tasks/canary/{id}  灰度发布状态查询
 //
 // 与 server_tasks.go 中已有的 handleBatchCreateTasks 区别：
-//   - handleBatchCreateTasks 走旧 P0-3 路径，仅返回 created IDs；
+//   - handleBatchCreateTasks 走旧 路径，仅返回 created IDs；
 //   - 本文件实现 M5 增强版：返回 batchID + 每设备任务详情 + 状态聚合，
 //     支持灰度发布（按比例/按分组/按标签分阶段执行）。
 //

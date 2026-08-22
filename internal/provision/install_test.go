@@ -87,7 +87,7 @@ func TestInstallScript_AgentBinaryDownload(t *testing.T) {
 	}
 }
 
-// TestInstallScript_TokenFileHardening 验证 P0-G2 安全加固：
+// TestInstallScript_TokenFileHardening 验证：
 // token 写入文件（0600）而非通过命令行 --install-token 传递，避免 ps/auditd 泄露。
 func TestInstallScript_TokenFileHardening(t *testing.T) {
 	script := InstallScript("https://opsmesh.example.com", "v1")
@@ -100,12 +100,12 @@ func TestInstallScript_TokenFileHardening(t *testing.T) {
 	if !strings.Contains(script, "chmod 600") {
 		t.Fatal("脚本应 chmod 600 install.token 文件")
 	}
-	// P0-G2 加固：systemd ExecStart 行不应包含 --install-token 参数
+	// 加固：systemd ExecStart 行不应包含 --install-token 参数
 	// （注释中提及 --install-token 是允许的，仅检查 ExecStart 赋值行）
 	for _, line := range strings.Split(script, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "ExecStart=") && strings.Contains(trimmed, "--install-token") {
-			t.Fatalf("P0-G2 加固：ExecStart 行不应包含 --install-token 参数（避免 ps 泄露 token）: %s", trimmed)
+			t.Fatalf("加固：ExecStart 行不应包含 --install-token 参数（避免 ps 泄露 token）: %s", trimmed)
 		}
 	}
 }

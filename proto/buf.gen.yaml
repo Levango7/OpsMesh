@@ -1,4 +1,4 @@
-# M3-3A buf 代码生成配置。
+# buf 代码生成配置。
 # buf.gen.yaml v2：用 buf remote 插件（无需本机安装 protoc-gen-go/protoc-gen-go-grpc）。
 # 生成目标：../internal/grpcx/pb（相对 proto/ 目录），与手写 service.go 并存。
 # paths=source_relative：输出文件名与 .proto 同名（registration.pb.go / registration_grpc.pb.go）。

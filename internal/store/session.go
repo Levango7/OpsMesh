@@ -1,6 +1,6 @@
 // session.go 定义 SessionStore 接口及其进程内实现 InProcessSessionStore。
 //
-// 背景（B-6 多副本会话状态不共享）：
+// 背景（多副本会话状态不共享）：
 //   - 原 auth.go 中 tokenBlacklist（JWT 吊销黑名单）、changePasswordTokens（改密令牌）、
 //     loginGuard 的限流/失败计数均为进程内 map，多副本 HA 部署下登出后 access token
 //     在其他副本仍有效、改密令牌跨副本不可用、登录限流各副本独立计数。
@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-// SessionStore 会话状态存储接口（B-6 多副本共享）。
+// SessionStore 会话状态存储接口（多副本共享）。
 //
 // 抽象 auth.go 中原本进程内的三类状态：
 //  1. JWT access token 吊销黑名单（登出后 jti 加入黑名单，校验时检查）；

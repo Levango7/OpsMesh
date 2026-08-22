@@ -5,7 +5,7 @@ import (
 	"errors"
 )
 
-// Balancer 负载均衡器接口（M1-3）。
+// Balancer 负载均衡器接口。
 //
 // 实现需保证并发安全：agent 多 goroutine（heartbeat/dispatch/cancel）会并发调用 Next。
 // Next 返回的 Service 由调用方据此发起 gRPC 连接；连接失败时调用方应再次调用 Next 获取下一个实例。
