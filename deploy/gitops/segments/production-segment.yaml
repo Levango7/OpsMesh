@@ -37,10 +37,13 @@ controlplane:
   requireAuth: true
   # Cookie Secure：生产 HTTPS，Cookie 仅经加密通道传输
   cookieSecure: true
-  # 镜像 tag：生产固定到不可变 sha，避免 latest 漂移导致未审核变更上线
-  # 建议由 CI 在发布时写回具体 sha（如 sha256:abcd1234...）
+  # 镜像 tag：与 values-production.yaml 一致钉当前发布 0.7.0，禁止 latest
+  # （latest + IfNotPresent 下镜像被覆盖后节点不重拉，多节点可运行不同版本）。
+  # digest 为不可变引用的最终防线，建议由 CI 在发布时经本文件或 GitOps 仓库写回
+  # （opsmesh.image helper 中 digest 非空时优先于 tag）。
   image:
-    tag: "latest"
+    tag: "0.7.0"
+    digest: ""
     pullPolicy: IfNotPresent
   # gRPC TLS / mTLS：生产强制开启，证书以 Secret 形式预置
   tls:

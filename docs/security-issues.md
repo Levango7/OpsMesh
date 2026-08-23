@@ -70,7 +70,7 @@
 | --redis-addr | OPSMESH_REDIS_ADDR | ✅ 已支持 | "" |
 | --install-token | OPSMESH_INSTALL_TOKEN | ✅ 已支持 | "" |
 
-**结论**：所有 5 个关键密钥 flag 均支持环境变量注入，无需修改。
+**结论**：上述 8 个密钥类 flag 均支持环境变量注入，无需修改。
 
 ### 2.2 硬编码密钥检查
 

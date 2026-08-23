@@ -61,16 +61,22 @@ Service account name.
 {{- end -}}
 
 {{/*
-Image reference: optional registry prefix + repository:tag.
+Image reference: optional registry prefix + repository:tag（或 repository@digest）。
+digest 字段非空时优先使用 digest 引用（不可变镜像，供应链钉死），忽略 tag。
+digest 值须为完整形式 "sha256:<hex>"（由 CI 以 build-push-action digest 输出写回）。
 Usage: {{ include "opsmesh.image" (list . .Values.controlplane.image) }}
 */}}
 {{- define "opsmesh.image" -}}
 {{- $root := index . 0 -}}
 {{- $img := index . 1 -}}
+{{- $repo := $img.repository -}}
 {{- if $root.Values.global.imageRegistry -}}
-{{- printf "%s/%s:%s" $root.Values.global.imageRegistry $img.repository $img.tag -}}
+{{- $repo = printf "%s/%s" $root.Values.global.imageRegistry $img.repository -}}
+{{- end -}}
+{{- if $img.digest -}}
+{{- printf "%s@%s" $repo $img.digest -}}
 {{- else -}}
-{{- printf "%s:%s" $img.repository $img.tag -}}
+{{- printf "%s:%s" $repo $img.tag -}}
 {{- end -}}
 {{- end -}}
 

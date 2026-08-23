@@ -18,6 +18,9 @@ controlplane:
     repository: opsmesh/opsmesh
     # 镜像 tag：开发环境用 latest；生产环境用 --set controlplane.image.tag=<sha> 或 GitOps 写回
     tag: "latest"
+    # 镜像 digest（完整形式 "sha256:<hex>"）：非空时优先于 tag，引用不可变镜像。
+    # 由 CI（build-push-action digest 输出）经 GitOps 写回；digest 钉死后 tag 仅作可读标记。
+    digest: ""
     pullPolicy: IfNotPresent
   # 控制面副本数；>1 时务必设置 store=mysql，否则 memory 多副本数据分裂
   replicaCount: 1
@@ -85,6 +88,8 @@ agent:
     repository: opsmesh/opsmesh-agent
     # 镜像 tag：开发环境用 latest；生产环境用 --set agent.image.tag=<sha> 或 GitOps 写回
     tag: "latest"
+    # 镜像 digest（完整形式 "sha256:<hex>"）：非空时优先于 tag，引用不可变镜像。
+    digest: ""
     pullPolicy: IfNotPresent
   # agent 所属网段
   segment: default
@@ -92,7 +97,11 @@ agent:
   workerConcurrency: 4
   # agent 单任务执行超时
   taskTimeout: 120s
-  # agent 身份文件目录（agent.id 落盘于此，重启沿用）
+  # agent 身份文件目录（agent.id 落盘于此，重启沿用）。
+  # 注意：DaemonSet 使用 hostPath（DirectoryOrCreate 由 kubelet 以 root 创建），
+  # 且 K8s 的 fsGroup 对 hostPath 卷不生效——容器 runAsUser=65532 对该目录无写权限时，
+  # agent.id 落盘静默回退内存 ID（重启即换新 ID，控制面出现碎片化设备记录，不致命）。
+  # 需要身份持久化时：宿主机预建目录并 chown 65532:65532，或为 Pod 增加 initContainer chown。
   dataDir: /var/lib/opsmesh
   # 演示模式：每个 agent 注册预置示例任务（生产务必关闭）
   demo: false

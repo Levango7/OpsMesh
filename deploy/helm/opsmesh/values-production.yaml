@@ -18,6 +18,9 @@ controlplane:
     # 此处钉死 0.7.0（当前发布版本）；禁止改回 latest——latest 不可变追踪，
     # 滚回 / 审计 / 供应链溯源均失效。
     tag: "0.7.0"
+    # 镜像 digest（完整形式 "sha256:<hex>"）：生产强烈建议由 CI 经 GitOps 写回。
+    # 非空时优先于 tag 引用不可变镜像，实现部署内容位级可追溯。
+    digest: ""
     pullPolicy: IfNotPresent
   # 生产 3 副本 + leader 选举
   replicaCount: 3
@@ -83,6 +86,8 @@ agent:
     repository: opsmesh/opsmesh-agent
     # 与 controlplane 同版本发布（CHANGELOG 当前 0.7.0）；禁止 latest。
     tag: "0.7.0"
+    # 镜像 digest：同 controlplane，生产建议 CI 写回，非空优先于 tag。
+    digest: ""
     pullPolicy: IfNotPresent
   segment: default
   workerConcurrency: 8

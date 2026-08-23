@@ -150,6 +150,23 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           govulncheck ./...
+      # Helm chart 门禁：lint 语法 + 双 values（默认/生产 overlay）模板渲染冒烟
+      # + digest 钉死渲染回归断言。用 alpine/helm 钉版 docker 镜像，免安装步骤。
+      - name: Helm chart lint + 模板渲染冒烟
+        run: |
+          helm() { docker run --rm -v "$PWD:/apps" -w /apps alpine/helm:3.14.4 "$@"; }
+          helm lint deploy/helm/opsmesh
+          echo "--- 渲染：默认 values ---"
+          helm template deploy/helm/opsmesh > /dev/null
+          echo "--- 渲染：生产 values（HPA+replicas 互斥回归守护）---"
+          helm template deploy/helm/opsmesh -f deploy/helm/opsmesh/values-production.yaml > /dev/null
+          echo "--- 渲染：digest 钉死路径 ---"
+          out=$(helm template deploy/helm/opsmesh \
+            --set controlplane.image.digest=sha256:aaaa1111 \
+            --set agent.image.digest=sha256:bbbb2222)
+          echo "$out" | grep -q "image: opsmesh/opsmesh@sha256:aaaa1111" || { echo "::error::controlplane digest 引用渲染失效"; exit 1; }
+          echo "$out" | grep -q "image: opsmesh/opsmesh-agent@sha256:bbbb2222" || { echo "::error::agent digest 引用渲染失效"; exit 1; }
+          echo "✅ helm chart 门禁通过"
       - name: Dockerfile base image digest 校验（供应链安全）
         # 检查 Dockerfile 中的 FROM 行是否钉死 digest（@sha256:）。
         # Renovate 会自动创建 PR 钉死 digest（见 .github/renovate.json）。
@@ -266,6 +283,14 @@ jobs:
       # COSIGN_PRIVATE_KEY secret 已配置（env.COSIGN_PRIVATE_KEY != ''）。
       # 若 COSIGN_PRIVATE_KEY 未配置，本步骤自动跳过，不影响 CI 流水线（与 image job 整体跳过机制一致）。
       # --tlog-upload=false：不上传透明日志（内网/无 OIDC 场景）；COSIGN_EXPERIMENTAL=1 启用非交互签名。
+      # cosign 安装：官方 sigstore/cosign-installer action，钉死 commit（防 tag 重指向）。
+      # installer 内部链式校验：bootstrap 二进制以嵌入 sha256 校验，目标版本（v2.2.4）
+      # 经 verify-blob 密码学验签（keyless 或官方公钥）——消除"手填哈希"风险类别。
+      - name: 安装 cosign（官方 installer，钉死 commit）
+        if: steps.check.outputs.skip != 'true' && env.COSIGN_PRIVATE_KEY != ''
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
+        with:
+          cosign-release: 'v2.2.4'
       - name: cosign 签名镜像（供应链安全）
         if: steps.check.outputs.skip != 'true' && env.COSIGN_PRIVATE_KEY != ''
         env:
@@ -274,12 +299,8 @@ jobs:
           IMAGE: ${{ secrets.REGISTRY }}/opsmesh-binary:${{ github.sha }}
         run: |
           echo "Signing image: ${IMAGE}"
-          # 安装 cosign（钉死 v2.2.4，防 latest 供应链漂移）
-          curl -sSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
-          echo "a9f7a67c6e3a3c9c5f1b9d2f3e4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2  /usr/local/bin/cosign" | sha256sum -c - || { echo "cosign sha256 校验失败"; exit 1; }
-          chmod +x /usr/local/bin/cosign
           # 签名镜像（keyless 模式需要 OIDC，这里用 key-based 签名）
-          COSIGN_EXPERIMENTAL=1 cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false ${IMAGE}
+          cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false ${IMAGE}
           echo "Image signed successfully"
       # 闭环：构建后把镜像 tag 钉死写回 GitOps chart。若 GitOps 仓库未就绪则安全跳过（不再失败）。
       # 启用条件：secrets.GITOPS_REPO 与 secrets.GITOPS_PAT 均已配置，且仓库中 charts/opsmesh-controlplane/values.yaml 存在。
@@ -308,9 +329,15 @@ jobs:
             echo "::warning::charts/opsmesh-controlplane/values.yaml 不存在，跳过（待 chart 仓库初始化）"
             exit 0
           fi
-          yq -i '.global.image.tag = strenv(TAG)' charts/opsmesh-controlplane/values.yaml
+          # 同时写回 tag 与 digest：tag 作可读标记，digest 为不可变引用的最终防线
+          # （helm helper：digest 非空时优先于 tag 输出 repo@sha256:... 引用）。
+          yq -i '.global.image.tag = strenv(TAG) | .global.image.digest = strenv(DIGEST)' charts/opsmesh-controlplane/values.yaml
           if grep -q 'tag: *"0.1"' charts/opsmesh-controlplane/values.yaml; then
             echo "::error::image tag 写回后仍含占位符 0.1"
+            exit 1
+          fi
+          if grep -q 'tag: *"latest"' charts/opsmesh-controlplane/values.yaml; then
+            echo "::error::image tag 写回后仍为 latest"
             exit 1
           fi
           git add charts/opsmesh-controlplane/values.yaml
@@ -371,6 +398,12 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
       # 供应链安全：agent 镜像同样做 cosign 签名，与 controlplane image job 对称。
+      # 同 controlplane image job：官方 installer action 钉死 commit，内部链式校验。
+      - name: 安装 cosign（官方 installer，钉死 commit）
+        if: steps.check.outputs.skip != 'true' && env.COSIGN_PRIVATE_KEY != ''
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
+        with:
+          cosign-release: 'v2.2.4'
       - name: cosign 签名镜像（agent，供应链安全）
         if: steps.check.outputs.skip != 'true' && env.COSIGN_PRIVATE_KEY != ''
         env:
@@ -379,11 +412,7 @@ jobs:
           IMAGE: ${{ secrets.REGISTRY }}/opsmesh-agent:${{ github.sha }}
         run: |
           echo "Signing image: ${IMAGE}"
-          # 钉死 cosign v2.2.4，防 latest 供应链漂移
-          curl -sSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
-          echo "a9f7a67c6e3a3c9c5f1b9d2f3e4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2  /usr/local/bin/cosign" | sha256sum -c - || { echo "cosign sha256 校验失败"; exit 1; }
-          chmod +x /usr/local/bin/cosign
-          COSIGN_EXPERIMENTAL=1 cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false ${IMAGE}
+          cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false ${IMAGE}
           echo "Image signed successfully"
 
   # Release：推送 v* tag 时触发 goreleaser 跨平台发布（linux/amd64+arm64）。
@@ -427,6 +456,12 @@ jobs:
       # 条件守卫：COSIGN_PRIVATE_KEY secret 已配置时才签名，否则跳过（不影响发布）。
       # --tlog-upload=false：不上传透明日志（内网/无 OIDC 场景）；
       # cosign attach signature 把签名附加到 GitHub Release 资产。
+      # cosign 安装：官方 installer action，钉死 commit + 版本，内部链式校验（防供应链投毒）。
+      - name: 安装 cosign（官方 installer，钉死 commit）
+        if: env.COSIGN_PRIVATE_KEY != ''
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
+        with:
+          cosign-release: 'v2.2.4'
       - name: cosign 签名 goreleaser 产物
         if: env.COSIGN_PRIVATE_KEY != ''
         env:
@@ -434,16 +469,12 @@ jobs:
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 安装 cosign（钉死 v2.2.4）
-          curl -sSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
-          echo "a9f7a67c6e3a3c9c5f1b9d2f3e4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2  /usr/local/bin/cosign" | sha256sum -c - || { echo "cosign sha256 校验失败"; exit 1; }
-          chmod +x /usr/local/bin/cosign
           # goreleaser 产物在 dist/ 目录下
           echo "=== 签名 goreleaser 产物 ==="
           for f in dist/checksums.txt dist/*.tar.gz dist/*.sbom.*; do
             [ -f "$f" ] || continue
             echo "签名: $f"
-            COSIGN_EXPERIMENTAL=1 cosign sign-blob --key env://COSIGN_PRIVATE_KEY \
+            cosign sign-blob --key env://COSIGN_PRIVATE_KEY \
               --tlog-upload=false --output-signature "${f}.sig" "$f"
           done
           echo "=== 签名完成 ==="

@@ -22,6 +22,7 @@ import (
 
 	"opsmesh/internal/cmdb"
 	"opsmesh/internal/logx"
+	"opsmesh/internal/otelx"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 )
@@ -127,11 +128,14 @@ func (c *CMDBCollector) Collect(deviceID string, metrics *proto.DeviceMetrics) e
 	}
 
 	// 3. 记录审计日志（等保三级留痕）。
+	// hostname 为 agent 可控字符串，Detail 须经 sanitizeAuditDetail 脱敏
+	// （与全项目审计口径一致）；直调 store.Audit 时需自行补 TraceID。
 	c.store.Audit(&proto.AuditEvent{
 		TenantID:  c.tenantID,
 		Action:    "cmdb_collect",
 		Target:    deviceID,
-		Detail:    fmt.Sprintf("host=%s services=%d", hostname, len(metrics.Services)),
+		Detail:    sanitizeAuditDetail(fmt.Sprintf("host=%s services=%d", hostname, len(metrics.Services))),
+		TraceID:   otelx.TraceIDFromContext(ctx),
 		CreatedAt: now,
 	})
 	return nil
