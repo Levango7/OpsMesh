@@ -388,28 +388,46 @@ func TestMemoryStore_EventPublish(t *testing.T) {
 }
 
 // TestMemoryStore_ReclaimStaleTasks 验证 任务必达：超期 running 任务被复位 pending 重调度。
+// 心跳守卫：仅当 claimed_by 对应的 agent 也心跳超时时才回收，防止长任务被误回收双跑。
 func TestMemoryStore_ReclaimStaleTasks(t *testing.T) {
 	m := NewMemoryStore()
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
 	// 显式下发一条任务供领取（不依赖演示预置）
 	m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
-	// 领取使其变成 running（ClaimedAt=now）
-	if got := m.ClaimTask(a.AgentID); got == nil || got.Status != "running" {
+	// 领取使其变成 running（ClaimedAt=now，ClaimedBy=agentID）
+	got := m.ClaimTask(a.AgentID)
+	if got == nil || got.Status != "running" {
 		t.Fatalf("claim = %+v, want running", got)
 	}
-	// 模拟 agent 失联：把 ClaimedAt 拨到 1h 前
+	if got.ClaimedBy != a.AgentID {
+		t.Fatalf("ClaimedBy = %q, want agentID %q", got.ClaimedBy, a.AgentID)
+	}
+
+	// 情况 1：agent 心跳正常（LastSeen 最近），任务 ClaimedAt 超期 —— 不应回收（防双跑）
 	m.mu.Lock()
 	ts := m.tasks[a.AgentID]
 	ts[0].ClaimedAt = time.Now().Add(-time.Hour)
+	// LastSeen 保持为默认（注册时的 now），不修改
 	m.mu.Unlock()
-	// 超过租约（5min）应被回收
+	if n := m.ReclaimStaleTasks(5 * time.Minute); n != 0 {
+		t.Fatalf("healthy agent: ReclaimStaleTasks = %d, want 0 (heartbeat guard)", n)
+	}
+
+	// 情况 2：agent 真正失联（LastSeen 超时），任务 ClaimedAt 也超期 —— 应回收
+	m.mu.Lock()
+	// 把 agent 的 LastSeen 也拨到 1h 前
+	if ag, ok := m.agents[a.AgentID]; ok {
+		ag.LastSeen = time.Now().Add(-time.Hour)
+	}
+	m.mu.Unlock()
 	if n := m.ReclaimStaleTasks(5 * time.Minute); n != 1 {
-		t.Fatalf("ReclaimStaleTasks = %d, want 1", n)
+		t.Fatalf("offline agent: ReclaimStaleTasks = %d, want 1", n)
 	}
 	if got := m.GetTasks(a.AgentID); len(got) != 1 || got[0].Status != "pending" {
 		t.Fatalf("after reclaim GetTasks=%+v, want 1 pending", got)
 	}
-	// 未超期不应被回收（重新领取后 ClaimedAt=now）
+
+	// 情况 3：重新领取后 ClaimedAt=now，agent 在线 —— 不回收
 	m.ClaimTask(a.AgentID)
 	if n := m.ReclaimStaleTasks(5 * time.Minute); n != 0 {
 		t.Fatalf("fresh claim reclaimed = %d, want 0", n)

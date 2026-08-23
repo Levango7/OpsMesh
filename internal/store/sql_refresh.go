@@ -91,7 +91,23 @@ func (s *SQLStore) DeleteRefreshToken(tokenHash string) bool {
 	return n > 0
 }
 
-// ConsumeRefreshToken 原子消费 refresh token：3：事务内 SELECT ... FOR UPDATE + DELETE，防多副本并发双消费。
+// CleanupRefreshTokens 清理过期 refresh token，返回清理条数。
+// 仅 leader 周期调用，DB 不可用时返回 0。
+func (s *SQLStore) CleanupRefreshTokens() int {
+	if s.db == nil {
+		return 0
+	}
+	res, err := s.db.ExecContext(context.Background(),
+		`DELETE FROM refresh_tokens WHERE expires_at < ?`, time.Now().UTC())
+	if err != nil {
+		log.Printf("store: CleanupRefreshTokens 失败: %v", err)
+		return 0
+	}
+	n, _ := res.RowsAffected()
+	return int(n)
+}
+
+// ConsumeRefreshToken 原子消费 refresh token：事务内 SELECT ... FOR UPDATE + DELETE，防多副本并发双消费。
 //
 // 用单事务 + SELECT ... FOR UPDATE 保证读取时即持排他锁，并发请求被阻塞至持锁事务提交；
 // 持锁事务 DELETE 后校验 RowsAffected，确保行确实被删除（belt-and-suspenders）。

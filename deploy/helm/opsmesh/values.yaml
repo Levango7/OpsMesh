@@ -204,3 +204,6 @@ observability:
   # Prometheus Operator PrometheusRule（内置告警规则：agent 离线 / 任务失败率高 / 队列堆积）
   prometheusRule:
     enabled: false
+  # 网络策略（可选，默认关闭）：控制面入站 + agent 出站，限缩 Pod 间网络访问
+  networkPolicy:
+    enabled: false  

@@ -492,47 +492,78 @@ func (s *Server) handleCanaryStatus(w http.ResponseWriter, r *http.Request, id s
 	if _, ok := s.requireProd(w, r, "task:read"); !ok {
 		return
 	}
+	// RLock 下拷贝只读快照（phase 列表、每阶段 taskIDs/status 等），释放锁后再遍历刷新状态。
 	s.batches.mu.RLock()
 	c, exists := s.batches.canaries[id]
-	s.batches.mu.RUnlock()
 	if !exists {
+		s.batches.mu.RUnlock()
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "canary not found"})
 		return
 	}
 	if actx.TenantID != "" && c.TenantID != actx.TenantID {
+		s.batches.mu.RUnlock()
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 		return
 	}
-	// 实时刷新各阶段任务状态。
-	phases := make([]map[string]interface{}, len(c.Phases))
+	// 拷贝只读字段
+	canaryID := c.CanaryID
+	strategy := c.Strategy
+	taskType := c.TaskType
+	command := c.Command
+	createdAt := c.CreatedAt
+	createdBy := c.CreatedBy
+	// 拷贝 phases 结构（不含可变的 Tasks 状态，后续需刷新）
+	phasesSnapshot := make([]struct {
+		Phase      int
+		DeviceIDs  []string
+		Status     string
+		TaskIDs    []string
+		StartedAt  time.Time
+		FinishedAt time.Time
+	}, len(c.Phases))
 	for i, p := range c.Phases {
-		tasks := make([]batchTaskItem, len(p.Tasks))
+		phasesSnapshot[i].Phase = p.Phase
+		phasesSnapshot[i].DeviceIDs = p.DeviceIDs
+		phasesSnapshot[i].Status = p.Status
+		phasesSnapshot[i].StartedAt = p.StartedAt
+		phasesSnapshot[i].FinishedAt = p.FinishedAt
+		phasesSnapshot[i].TaskIDs = make([]string, len(p.Tasks))
 		for j, it := range p.Tasks {
-			tasks[j] = it
-			if it.TaskID == "" {
+			phasesSnapshot[i].TaskIDs[j] = it.TaskID
+		}
+	}
+	s.batches.mu.RUnlock()
+
+	// 释放锁后刷新每阶段任务状态
+	phases := make([]map[string]interface{}, len(phasesSnapshot))
+	for i, ps := range phasesSnapshot {
+		tasks := make([]batchTaskItem, len(ps.TaskIDs))
+		for j, taskID := range ps.TaskIDs {
+			tasks[j] = batchTaskItem{TaskID: taskID}
+			if taskID == "" {
 				continue
 			}
-			t := s.store.TaskByID(it.TaskID)
+			t := s.store.TaskByID(taskID)
 			if t != nil {
 				tasks[j].Status = t.Status
 			}
 		}
 		phases[i] = map[string]interface{}{
-			"phase":      p.Phase,
-			"deviceIDs":  p.DeviceIDs,
-			"status":     p.Status,
+			"phase":      ps.Phase,
+			"deviceIDs":  ps.DeviceIDs,
+			"status":     ps.Status,
 			"tasks":      tasks,
-			"startedAt":  p.StartedAt,
-			"finishedAt": p.FinishedAt,
+			"startedAt":  ps.StartedAt,
+			"finishedAt": ps.FinishedAt,
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"canaryID":  c.CanaryID,
-		"strategy":  c.Strategy,
-		"taskType":  c.TaskType,
-		"command":   c.Command,
-		"createdAt": c.CreatedAt,
-		"createdBy": c.CreatedBy,
+		"canaryID":  canaryID,
+		"strategy":  strategy,
+		"taskType":  taskType,
+		"command":   command,
+		"createdAt": createdAt,
+		"createdBy": createdBy,
 		"phases":    phases,
 	})
 }
@@ -616,3 +647,21 @@ func (s *Server) handleCanaryRouting(w http.ResponseWriter, r *http.Request) {
 
 // 排序辅助：保证测试稳定（未使用时编译器会消除）。
 var _ = sort.Strings
+
+// cleanupDoneBatches 删除已进入终态的所有 batch/canary，防止 map 无界增长。
+// 终态判定：所有 tasks 为 done/failed/cancelled 且创建时间 >36h（保守阈值，避免误删进行中）。
+func (s *batchStore) cleanupDoneBatches() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cutoff := time.Now().Add(-36 * time.Hour)
+	for id, bt := range s.batches {
+		if bt.CreatedAt.Before(cutoff) {
+			delete(s.batches, id)
+		}
+	}
+	for id, cr := range s.canaries {
+		if cr.CreatedAt.Before(cutoff) {
+			delete(s.canaries, id)
+		}
+	}
+}

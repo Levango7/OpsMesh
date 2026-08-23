@@ -605,11 +605,11 @@ func (m *MemoryStore) ClaimTask(agentID string) *proto.Task {
 		if t.ParentID == "" && t.Schedule != "" {
 			continue
 		}
-		if t.Status == "" || t.Status == "pending" {
-			t.Status = "running"
-			t.ClaimedAt = time.Now()
-			t.ClaimedBy = "controlplane"
-			t.ClaimEpoch++
+if t.Status == "" || t.Status == "pending" {
+				t.Status = "running"
+				t.ClaimedAt = time.Now()
+				t.ClaimedBy = agentID
+				t.ClaimEpoch++
 			// 返回锁内拷贝：调用方（gRPC 层）在锁外读取/序列化，避免与 SubmitResult 锁内修改构成 data race。
 			c := *t
 			return &c

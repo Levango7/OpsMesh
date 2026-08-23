@@ -286,6 +286,10 @@ type RefreshTokenStore interface {
 	// 原 consumeRefreshToken 的 Get→Delete 两步在并发下可被双消费，
 	// 此方法将读取+删除收敛为单次原子操作（MemoryStore 用互斥锁，SQLStore 用事务）。
 	ConsumeRefreshToken(tokenHash string) (*RefreshToken, bool)
+	// CleanupRefreshTokens 清理过期 refresh token（未过期则保留）。
+	// 用于登录防爆破等场景：过期 token 已无意义，但需保证幂等安全。
+	// 返回清理条数。仅 leader 周期调用。
+	CleanupRefreshTokens() int
 }
 
 // SilenceStore 静默规则领域（M2 集成）：告警事件按标签匹配 + 时间窗口抑制。

@@ -7,7 +7,9 @@ metadata:
     {{- include "opsmesh.labels" . | nindent 4 }}
     app.kubernetes.io/component: controlplane
 spec:
+  {{- if not .Values.controlplane.autoscaling.enabled }}
   replicas: {{ .Values.controlplane.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "opsmesh.selectorLabels" . | nindent 6 }}

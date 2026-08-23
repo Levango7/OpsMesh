@@ -94,7 +94,7 @@
 <script setup>
 // 应用根组件 — 顶栏 + 分组侧栏 + 内容 + 底栏
 // 已登录显示主布局；未登录仅渲染路由（登录/注册页全屏）
-import { onMounted, onUnmounted, computed } from 'vue'
+import { onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { useAlertStore } from '@/stores/alert'
@@ -176,6 +176,8 @@ function toggleLang() {
 
 // 退出登录
 function onLogout() {
+  stopPolls()
+  stopSSE()
   authStore.logout()
   router.push({ name: 'login' })
 }
@@ -236,7 +238,7 @@ function onVisibility() {
 }
 
 onMounted(() => {
-  // 已登录时启动轮询 + SSE；fetchMe 已在 main.js 启动，此处仅触发数据轮询
+  // 首屏挂载时：若已登录（极少见，仅非首次加载时可能），直接启动实时层
   if (authStore.isLoggedIn) {
     deviceStore.fetchDevices()
     alertStore.fetchAlerts()
@@ -245,6 +247,22 @@ onMounted(() => {
     startSSE()
   }
 })
+
+// 响应登录态变化：无论是 cold start 后的 fetchMe 完成，还是登录页 SPA 跳转，
+// isLoggedIn 变为 true 时都要启动 SSE/轮询/visibility 监听（幂等，已启动则忽略）。
+watch(
+  () => authStore.isLoggedIn,
+  (loggedIn) => {
+    if (loggedIn) {
+      deviceStore.fetchDevices()
+      alertStore.fetchAlerts()
+      document.addEventListener('visibilitychange', onVisibility)
+      startPolls()
+      startSSE()
+    }
+  }
+)
+
 onUnmounted(() => {
   stopPolls()
   stopSSE()

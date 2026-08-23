@@ -276,6 +276,7 @@ jobs:
           echo "Signing image: ${IMAGE}"
           # 安装 cosign（钉死 v2.2.4，防 latest 供应链漂移）
           curl -sSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
+          echo "a9f7a67c6e3a3c9c5f1b9d2f3e4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2  /usr/local/bin/cosign" | sha256sum -c - || { echo "cosign sha256 校验失败"; exit 1; }
           chmod +x /usr/local/bin/cosign
           # 签名镜像（keyless 模式需要 OIDC，这里用 key-based 签名）
           COSIGN_EXPERIMENTAL=1 cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false ${IMAGE}
@@ -380,6 +381,7 @@ jobs:
           echo "Signing image: ${IMAGE}"
           # 钉死 cosign v2.2.4，防 latest 供应链漂移
           curl -sSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
+          echo "a9f7a67c6e3a3c9c5f1b9d2f3e4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2  /usr/local/bin/cosign" | sha256sum -c - || { echo "cosign sha256 校验失败"; exit 1; }
           chmod +x /usr/local/bin/cosign
           COSIGN_EXPERIMENTAL=1 cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false ${IMAGE}
           echo "Image signed successfully"
@@ -434,6 +436,7 @@ jobs:
         run: |
           # 安装 cosign（钉死 v2.2.4）
           curl -sSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
+          echo "a9f7a67c6e3a3c9c5f1b9d2f3e4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2  /usr/local/bin/cosign" | sha256sum -c - || { echo "cosign sha256 校验失败"; exit 1; }
           chmod +x /usr/local/bin/cosign
           # goreleaser 产物在 dist/ 目录下
           echo "=== 签名 goreleaser 产物 ==="
@@ -445,6 +448,11 @@ jobs:
           done
           echo "=== 签名完成 ==="
           ls -la dist/*.sig 2>/dev/null || echo "无签名文件生成"
+          # 把 .sig 签名文件上传到 GitHub Release（goreleaser 已创建 Release，此处追加资产）
+          for f in dist/*.sig; do
+            [ -f "$f" ] || continue
+            gh release upload "${GITHUB_REF_NAME#v}" "$f" --clobber
+          done
 
   # 前端 CI —— Vue3 Enterprise（web/enterprise）。
   # npm ci 严格按 lockfile 安装；lint 静态检查；build 产出生产包；vitest run 跑单测（非 watch 模式）。

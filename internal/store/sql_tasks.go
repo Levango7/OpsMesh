@@ -501,8 +501,8 @@ func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 		return nil
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE tasks SET status='running', claimed_by='controlplane', claimed_at=?, claim_epoch=claim_epoch+1 WHERE task_id=?`,
-		time.Now().UTC(), taskID); err != nil {
+		`UPDATE tasks SET status='running', claimed_by=?, claimed_at=?, claim_epoch=claim_epoch+1 WHERE task_id=?`,
+		agentID, time.Now().UTC(), taskID); err != nil {
 		log.Printf("[store] ClaimTask 更新失败 %s: %v", taskID, err)
 		return nil
 	}
@@ -513,10 +513,10 @@ func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 	return &proto.Task{
 		TaskID: taskID, AgentID: agentID, TenantID: tenantID.String, Type: typ, Command: command,
 		Content: content.String, Path: path.String,
-		Status: "running", CreatedAt: createdAt, ClaimedBy: "controlplane", ClaimedAt: time.Now().UTC(),
+		Status: "running", CreatedAt: createdAt, ClaimedBy: agentID, ClaimedAt: time.Now().UTC(),
 		ClaimEpoch: claimEpoch + 1,
-		Timeout:    timeout,    // 节点级超时（agent 端按此强制终止，0=用全局 taskTimeout）
-		RetryDelay: retryDelay, // 重试间隔（供 agent 端日志/上下文展示）
+		Timeout:    timeout,
+		RetryDelay: retryDelay,
 	}
 }
 

@@ -59,6 +59,7 @@ type paginateResult struct {
 // parsePagination 从 query 参数解析 page/pageSize。
 // page 从 1 开始，pageSize 默认 20、上限 200。
 // page == 0 表示不分页（返回全量，向后兼容）。
+// 为防止 start=(page-1)*pageSize 整数溢出，page 上限 clamp 到 maxInt64/pageSize。
 func parsePagination(q url.Values) (page, pageSize int) {
 	pageStr := q.Get("page")
 	if pageStr == "" {
@@ -76,6 +77,15 @@ func parsePagination(q url.Values) (page, pageSize int) {
 	}
 	if pageSize > 200 {
 		pageSize = 200
+	}
+	// 防止 (page-1)*pageSize 溢出：page <= MaxInt64/pageSize + 1
+	const maxInt = (1 << 62) - 1 // 留足余量避免乘法溢出
+	maxPage := maxInt / pageSize
+	if maxPage < 1 {
+		maxPage = 1
+	}
+	if page > maxPage {
+		page = maxPage
 	}
 	return page, pageSize
 }

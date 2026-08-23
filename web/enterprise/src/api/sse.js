@@ -27,8 +27,8 @@ export const EVENT_CONTRACT = {
   alert_new: ['alertID', 'severity'],
   device_online: ['deviceID', 'segment'],
   device_offline: ['deviceID'],
-  approval_status: ['requestID', 'action'],
-  schedule_status: ['scheduleID', 'action'],
+  approval_status: ['requestID', 'status'],
+  schedule_status: ['scheduleID', 'status'],
   os_template_changed: ['templateID', 'action'],
   mw_template_changed: ['templateID', 'action'],
   agent_logs: ['agentID', 'logName', 'lines']
@@ -121,6 +121,7 @@ export class SSEClient {
 
   stop() {
     this.stopped = true
+    if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null }
     if (this.abort) this.abort.abort()
     this.abort = null
   }

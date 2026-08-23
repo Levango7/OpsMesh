@@ -20,7 +20,7 @@ OpsMesh 是**私有化单中心 B/S 自动化部署与运维平台**，又称"�
 |---|---|---|
 | 网段割裂下的统一纳管 | Ansible 需逐台配置 inventory；SaltStack master 单点；蓝鲸依赖 CMDB 预录入 | 服务部署到某网段后，整段设备自动纳管（令牌闭环 + TCP 存活扫描） |
 | 大规模并行任务执行 | Ansible SSH 慢且无状态；SaltStack 消息总线易积压 | gRPC 长连接 + agent worker 池并发执行，每 agent 默认 4 并发可调 |
-| 任务生命周期完整性 | 多数工具只有成功/失败两态 | pending → running → done/failed/cancelled/dead_letter 五态 + 重试 + 死信 + 取消 + 定时调度 |
+| 任务生命周期完整性 | 多数工具只有成功/失败两态 | pending → running → done/failed/cancelled（dead_letter 为标记非状态） + 重试 + 死信 + 取消 + 定时调度 |
 | 私有化数据合规 | 云运维产品数据出机房 | 单二进制私有部署，MySQL 数据本地化，100% 审计留痕，等保三级对照 |
 | 多租户隔离 | 多数开源工具无租户概念 | 行级隔离（tenant_id）+ schema 级隔离（`--multi-schema`）+ RBAC 三表 |
 | 异地多中心规模化 | 蓝鲸 GSE 级联复杂且社区版受限 | 每段一套控制面 + 控制面联邦（mTLS + HMAC 签名验签）跨网段任务转发 |
@@ -32,7 +32,7 @@ OpsMesh 是**私有化单中心 B/S 自动化部署与运维平台**，又称"�
 3. **完整任务生命周期**：重试 / 死信 / 取消（pending 拦截 + running 强杀）/ 定时周期 / 批量下发 / 作业审批，覆盖运维真实复杂度。
 4. **企业级安全基线**：gRPC TLS/mTLS、JWT 双 Token、登录防爆破、RBAC 持久化、审计 100% 留痕、metrics CIDR 白名单、联邦 mTLS + HMAC 签名验签、SSRF 校验、shell/file 白名单。
 5. **多形态交付**：单二进制 / docker-compose / Helm Chart / systemd unit / goreleaser 跨平台二进制 / Argo CD GitOps，覆盖裸机、VM、K8s、混合云。
-6. **可扩展架构**：Store 接口按领域拆分为 15 个子接口，事件总线可插拔（noop/log/kafka），日志后端可切换（memory/sql/loki/es），告警通道多形态（Webhook/飞书/钉钉/Slack/企业微信/邮件）。
+6. **可扩展架构**：Store 接口按领域拆分为 17 个子接口，事件总线可插拔（noop/log/kafka），日志后端可切换（memory/sql/loki/es），告警通道多形态（Webhook/飞书/钉钉/Slack/企业微信/邮件）。
 
 ### 1.4 与传统工具的根本差异
 
@@ -348,7 +348,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 
 | 指标 | 当前状态 | 说明 |
 |---|---|---|
-| Store 接口拆分 | ✅ 15 个领域子接口 + 编译期断言 | 消费方按需依赖，便于 mock 与替换 |
+| Store 接口拆分 | ✅ 17 个领域子接口 + 编译期断言 | 消费方按需依赖，便于 mock 与替换 |
 | 事件总线 | 可插拔（noop/log/kafka） | `--event-bus` |
 | 日志后端 | 可切换（memory/sql/loki/es） | `--log-backend` |
 | 告警通道 | 多形态（Webhook/飞书/钉钉/Slack/企业微信/邮件） | `--alert-notifier-type` + `--notify-channels-config` |

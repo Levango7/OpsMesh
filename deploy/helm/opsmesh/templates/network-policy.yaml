@@ -1,0 +1,85 @@
+# OpsMesh NetworkPolicy — 控制面入站/出站 + agent 出站
+# 默认拒绝所有入站，仅开放必要端口（8080 HTTP / 9090 gRPC / 9100 metrics）。
+# agent 侧仅出站（连接 controlplane），无入站端口暴露。
+{{- if .Values.observability.networkPolicy.enabled -}}
+---
+# 控制面入站：允许 ingress controller / LB 访问 8080，允许同类 pod 间 9090
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "opsmesh.fullname" . }}-controlplane
+  labels:
+    {{- include "opsmesh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controlplane
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "opsmesh.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: controlplane
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: 8080
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+  egress:
+    # 允许 DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # 允许访问 MySQL / Redis（集群内部）
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opsmesh
+      ports:
+        - port: 3306
+          protocol: TCP
+        - port: 6379
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+---
+# agent 出站：仅允许连接 controlplane + DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "opsmesh.fullname" . }}-agent
+  labels:
+    {{- include "opsmesh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "opsmesh.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: agent
+  policyTypes:
+    - Egress
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # controlplane gRPC + HTTP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opsmesh
+              app.kubernetes.io/component: controlplane
+      ports:
+        - port: 8080
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+{{- end }}

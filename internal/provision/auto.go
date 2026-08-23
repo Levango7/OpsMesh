@@ -64,6 +64,8 @@ func AutoProvision(ctx context.Context, deps Deps, cfg *config.Config, cidrs []s
 	}
 	// SSH 连接风暴防护：推送并发上限（信号量限流），避免大网段扫描后同时发起大量 SSH 连接。
 	sshSem := make(chan struct{}, 8)
+	// 等待所有 SSH goroutine 完成（防止函数返回后 goroutine 仍写 sum）
+	var wg sync.WaitGroup
 	for _, cidr := range cidrs {
 		alive, err := discover.Sweep(ctx, cidr, []int{22, 9100}, 64, 800*time.Millisecond)
 		if err != nil {
@@ -114,7 +116,9 @@ func AutoProvision(ctx context.Context, deps Deps, cfg *config.Config, cidrs []s
 			}
 			bootstrap := fmt.Sprintf("curl -sSL %s/install.sh | sh -s -- --token=%s", advertise, token)
 			sshAddr := fmt.Sprintf("%s:22", ip)
+			wg.Add(1)
 			go func(addr, cmd, dev string) {
+				defer wg.Done()
 				sshSem <- struct{}{} // 并发限流（最多 8 个并行 SSH 推送）
 				defer func() { <-sshSem }()
 				out, e := PushAndExec(context.Background(), addr, cfg.ProvisionSSHUser, cfg.ProvisionSSHKey, cfg.ProvisionSSHKP, cfg.ProvisionSSHKnownHosts, cmd)
@@ -130,5 +134,8 @@ func AutoProvision(ctx context.Context, deps Deps, cfg *config.Config, cidrs []s
 			}(sshAddr, bootstrap, devID)
 		}
 	}
+	// P1-4 修复：等待所有 SSH goroutine 完成后再返回，防止调用方 json.Marshal 与 goroutine 写竞争。
+	// WaitGroup 保证 sum 的最终状态完整（SSH 推送结果不被截断）。
+	wg.Wait()
 	return sum, nil
 }

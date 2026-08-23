@@ -1240,6 +1240,16 @@ func (m *MultiSchemaStore) ConsumeRefreshToken(tokenHash string) (*RefreshToken,
 	return s.ConsumeRefreshToken(tokenHash)
 }
 
+// CleanupRefreshTokens 清理过期 refresh token（路由到全局 store）。
+// 仅 leader 周期调用，返回清理条数。DB 不可用时返回 0。
+func (m *MultiSchemaStore) CleanupRefreshTokens() int {
+	s, err := m.globalStore()
+	if err != nil {
+		return 0
+	}
+	return s.CleanupRefreshTokens()
+}
+
 // ============================================================================
 // M2 集成：SilenceRule / NotifyChannel / NotifyTemplate
 // 路由到全局 store（与 RefreshToken 同模式：ID 为全局唯一主键）。

@@ -89,7 +89,7 @@ spec:
                 - /bin/sh
                 - -c
                 - |
-                  set -eu
+                  set -euo pipefail
                   TS=$(date -u +%Y%m%dT%H%M%SZ)
                   OUT="/backup/${MYSQL_DATABASE}-${TS}.sql.gz"
                   echo "[backup] start ts=${TS} dest=${OUT}"

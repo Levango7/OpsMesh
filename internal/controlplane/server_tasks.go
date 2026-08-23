@@ -318,6 +318,13 @@ func (s *Server) reclaimLoop(ctx context.Context) {
 			if n > 0 {
 				logx.Info(ctx, "任务租约回收", "reclaimed", n)
 			}
+			// P2-1：顺带清理终态 batch/canary，防止内存索引无界增长。
+			// 终态+36h 兜底删除，进行中批次不被误删。
+			s.batches.cleanupDoneBatches()
+			// P2-2：顺带清理过期 refresh token（登录防爆破 + 内存/DB 容量）。
+			if n := s.store.CleanupRefreshTokens(); n > 0 {
+				logx.Info(ctx, "refresh token 过期清理", "cleaned", n)
+			}
 		}
 	}
 }

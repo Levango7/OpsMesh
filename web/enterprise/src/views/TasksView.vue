@@ -59,7 +59,7 @@
             <option value="running">running</option>
             <option value="done">done</option>
             <option value="failed">failed</option>
-            <option value="canceled">canceled</option>
+            <option value="cancelled">cancelled</option>
           </select>
         </div>
         <button @click="store.fetchTasks()">↻ {{ $t('common.refresh') }}</button>

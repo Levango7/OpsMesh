@@ -165,7 +165,7 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构：
 
 **职责描述**
 
-可插拔持久化抽象层。将原 37 方法巨型 `Store` 接口按领域拆为 9 个小接口（DeviceStore / TaskStore / AlertStore / AuditStore / TokenStore / LeaderStore / UserStore / RoleStore / PermissionStore / K8sClusterStore / TemplateStore），`Store` 保留为它们的组合接口向后兼容。提供三种实现：`MemoryStore`（默认内存）、`SQLStore`（MySQL + Redis 缓存）、`MultiSchemaStore`（每租户独立 schema）。
+可插拔持久化抽象层。将原 37 方法巨型 `Store` 接口按领域拆为 17 个领域小接口（DeviceStore / TaskStore / AlertStore / AuditStore / TokenStore / LeaderStore / UserStore / RoleStore / PermissionStore / K8sClusterStore / TemplateStore），`Store` 保留为它们的组合接口向后兼容。提供三种实现：`MemoryStore`（默认内存）、`SQLStore`（MySQL + Redis 缓存）、`MultiSchemaStore`（每租户独立 schema）。
 
 **关键接口**
 
@@ -1417,7 +1417,7 @@ OpsMesh 包依赖遵循"核心 → 领域 → 基础"自顶向下分层，避免
 
 - **DDD 分层**：domain（纯领域模型）← proto（传输层）← handler（编排层）← store（持久化层）
 - **防腐层（ACL）**：跨包边界定义小接口，避免反向依赖（见 4.2）
-- **接口拆分**：将巨型 Store 接口按领域拆为 9 个小接口，消费方可按需依赖最小接口
+- **接口拆分**：将巨型 Store 接口按领域拆为 17 个领域小接口，消费方可按需依赖最小接口
 
 ### 5.2 并发安全策略
 
@@ -1490,7 +1490,7 @@ OpsMesh 包依赖遵循"核心 → 领域 → 基础"自顶向下分层，避免
 | | HA 领取：多副本控制面并发领取同一任务只会被一个副本领取 |
 | | 事件总线：noop/log/kafka 三实现 |
 | | TLS/mTLS：gRPC 传输层凭证 + 联邦通道硬化 |
-| | Store 接口拆分：巨型接口按领域拆为 9 个小接口 |
+| | Store 接口拆分：巨型接口按领域拆为 17 个领域小接口 |
 | | DDD 实质化：领域实体承载业务行为（状态机/重试判定/纳管翻转） |
 | M3 | 部署中心：滚动/金丝雀/蓝绿 + 门禁 + 自动回滚 |
 | M5 | 作业编排：DAG 展开 + 子工作流 + 条件分支 |

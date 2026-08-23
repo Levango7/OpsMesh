@@ -95,3 +95,19 @@ func (m *MemoryStore) ConsumeRefreshToken(tokenHash string) (*RefreshToken, bool
 	cp := *rt
 	return &cp, true
 }
+
+// CleanupRefreshTokens 清理过期 refresh token。
+// 仅删除 ExpiresAt < now 的条目，未过期的不动。
+func (m *MemoryStore) CleanupRefreshTokens() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	n := 0
+	for hash, rt := range m.refreshTokens {
+		if rt.ExpiresAt.Before(now) {
+			delete(m.refreshTokens, hash)
+			n++
+		}
+	}
+	return n
+}
