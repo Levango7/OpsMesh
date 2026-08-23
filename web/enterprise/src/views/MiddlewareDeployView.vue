@@ -209,7 +209,7 @@
 
 <script setup>
 // 中间件部署 — 模板列表 + 分类筛选 + 详情 + 部署 + 实例列表 + 卸载
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useMiddlewareStore } from '@/stores/middleware'
 import { getMiddlewareTemplate } from '@/api/middleware'
 import { getTaskDetail } from '@/api/task'
@@ -476,6 +476,13 @@ onMounted(() => {
   store.fetchTemplates()
   store.fetchInstances()
   store.fetchDevices()
+})
+
+// 组件卸载时清理轮询定时器：弹窗开着切路由会销毁组件，
+// 不清理则定时器继续打 GET /tasks/{id} 直到上限（幽灵轮询）。
+onUnmounted(() => {
+  if (deployTimer) { clearInterval(deployTimer); deployTimer = null }
+  if (uninstallTimer) { clearInterval(uninstallTimer); uninstallTimer = null }
 })
 </script>
 

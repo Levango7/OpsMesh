@@ -117,7 +117,7 @@ go build ./... && go vet ./... && go test ./...
 ## 8. 仓库
 
 - 远端：`github.com/Levango7/OpsMesh`，分支 `main`
-- 根提交链：129 commits（初始 README → 内核实现 → 六大运维模块 → CI/容器加固 → 文档同步）
+- 根提交链：以 `git rev-list --count HEAD` 实测为准（初始 README → 内核实现 → 六大运维模块 → CI/容器加固 → 文档同步，持续演进中）
 - 提交内容：35 包源码（主模块 32 + operator 3）+ 164 测试 + Dockerfile/Dockerfile.agent + docker-compose + README + DELIVERY + `.github/ci.yml` + `.gitignore`
 
 ---

@@ -140,6 +140,18 @@ mysql:
   nodeSelector: {}
   affinity: {}
   tolerations: []
+  # MySQL 定期备份（渲染 templates/mysql-backup-cronjob.yaml）。
+  # 启用条件：mysql.enabled && controlplane.store==mysql && mysql.backup.enabled。
+  # 默认开启：store=mysql 时每天 02:00 全库快照到专用 PVC，保留 7 天（DR 基线）。
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"        # 每天 02:00（节点本地时区）
+    retentionDays: 7             # 容器内 find -mtime 清理阈值
+    historyLimit: 7              # 保留最近 7 个成功 Job 历史
+    backoffLimit: 2
+    activeDeadlineSeconds: 1800  # 单次最多跑 30 分钟
+    storageSize: 20Gi
+    storageClass: ""             # 空=集群默认（回退 global.storageClass）
 
 ## @section Redis（状态缓存）
 redis:

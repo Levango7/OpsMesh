@@ -147,7 +147,11 @@ function dispatchTask(id) {
 
 async function provision() {
   if (!dev.value.deviceID) return
-  await store.provision(dev.value.deviceID)
+  try {
+    await store.provision(dev.value.deviceID)
+  } catch (e) {
+    store.error = e.j?.error || e.message || t('devices.provision_failed')
+  }
 }
 
 

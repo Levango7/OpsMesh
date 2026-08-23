@@ -196,6 +196,7 @@
     "empty": "暂无纳管设备。设备接入网段后会被自动发现并纳管。",
     "segment_empty": "该网段暂无设备",
     "provision": "推送 Agent 纳管",
+    "provision_failed": "纳管失败",
     "detail": "详情",
     "dispatch_task": "下发任务",
     "view_metrics": "查看监控",
@@ -285,6 +286,7 @@
     "status_filter": "状态过滤",
     "empty": "暂无任务",
     "cancel": "取消",
+    "confirm_cancel": "确认取消该任务？",
     "dispatch_failed": "下发失败: ",
     "col_agent": "采集端",
     "col_type": "类型",
@@ -399,7 +401,9 @@
     "executed_msg": "已触发执行 #{id}",
     "rolled_back_msg": "已回滚 #{id}",
     "execute": "执行",
-    "rollback": "回滚"
+    "rollback": "回滚",
+    "confirm_execute": "确认执行该部署？将在目标设备上执行操作。",
+    "confirm_rollback": "确认回滚该部署？将尝试恢复到部署前状态。"
   },
   "logs": {
     "title": "日志检索",

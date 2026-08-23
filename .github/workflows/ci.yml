@@ -2,6 +2,9 @@ name: ci
 on:
   push:
     branches: ["**"]
+    # tag 推送触发 release job（goreleaser 发布）。
+    # v* 时 build-test/integration/security 正常跑，release needs 全绿后执行。
+    tags: ["v*"]
   pull_request:
 
 jobs:
@@ -210,6 +213,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: security
     if: github.event_name == 'push'
+    # secrets 提升到 job 级 env：step 级 if 读不到本 step 的 env map（求值顺序在前），
+    # 若放在 step env 里则 env.COSIGN_PRIVATE_KEY 恒为空、签名步骤永远被跳过。
+    # 未配置 secret 时值为空串，step 的 != '' 守卫照常跳过，不阻塞流水线。
+    env:
+      COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+      COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+      GITOPS_REPO: ${{ secrets.GITOPS_REPO }}
+      GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
     steps:
       - uses: actions/checkout@v5
       - name: Check registry secret
@@ -313,6 +324,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: security
     if: github.event_name == 'push'
+    # 同 image job：cosign secret 提升到 job 级 env，保证 step 级 if 可读。
+    env:
+      COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+      COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
     steps:
       - uses: actions/checkout@v5
       - name: Check registry secret
@@ -378,6 +393,10 @@ jobs:
     needs: [build-test, integration, security]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # 同 image job：cosign secret 提升到 job 级 env，保证产物签名 step 的 if 可读。
+    env:
+      COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+      COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
     steps:
       - uses: actions/checkout@v5
         with:

@@ -25,7 +25,6 @@
 package controlplane
 
 import (
-	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -76,7 +75,7 @@ func (s *Server) addHelmRepo(w http.ResponseWriter, r *http.Request) {
 		URL  string `json:"url"`
 		Type string `json:"type"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
@@ -271,7 +270,7 @@ func (s *Server) installHelmRelease(w http.ResponseWriter, r *http.Request) {
 		Chart     string                 `json:"chart"`
 		Values    map[string]interface{} `json:"values"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
@@ -350,7 +349,7 @@ func (s *Server) upgradeHelmRelease(w http.ResponseWriter, r *http.Request, name
 		Chart     string                 `json:"chart"`
 		Values    map[string]interface{} `json:"values"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+	if err := decodeJSONBody(w, r, &req); err != nil && err != io.EOF {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
@@ -408,7 +407,7 @@ func (s *Server) rollbackHelmRelease(w http.ResponseWriter, r *http.Request, nam
 		Namespace string `json:"namespace"`
 		Revision  int    `json:"revision"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+	if err := decodeJSONBody(w, r, &req); err != nil && err != io.EOF {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}

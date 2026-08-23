@@ -29,7 +29,8 @@ export const useK8sStore = defineStore('k8s', {
     namespace: '',         // 当前命名空间过滤
     loading: false,
     resourcesLoading: false,
-    error: ''
+    error: '',
+    _fetchSeq: 0
   }),
   getters: {
     currentCluster: (s) => s.clusters.find((c) => c.id === s.currentClusterID) || null
@@ -76,6 +77,7 @@ export const useK8sStore = defineStore('k8s', {
         this.resources = []
         return
       }
+      const seq = ++this._fetchSeq
       this.resourcesLoading = true; this.error = ''
       const cid = this.currentClusterID
       const ns = this.namespace
@@ -83,25 +85,28 @@ export const useK8sStore = defineStore('k8s', {
         let data
         switch (this.resourceType) {
           case 'pods':
-            data = await getK8sPods(cid, ns); this.resources = (data && data.pods) || data || []; break
+            data = await getK8sPods(cid, ns); if (seq !== this._fetchSeq) return; this.resources = (data && data.pods) || data || []; break
           case 'deployments':
-            data = await getK8sDeployments(cid, ns); this.resources = (data && data.deployments) || data || []; break
+            data = await getK8sDeployments(cid, ns); if (seq !== this._fetchSeq) return; this.resources = (data && data.deployments) || data || []; break
           case 'services':
-            data = await getK8sServices(cid, ns); this.resources = (data && data.services) || data || []; break
+            data = await getK8sServices(cid, ns); if (seq !== this._fetchSeq) return; this.resources = (data && data.services) || data || []; break
           case 'configmaps':
-            data = await getK8sConfigMaps(cid, ns); this.resources = (data && data.configmaps) || data || []; break
+            data = await getK8sConfigMaps(cid, ns); if (seq !== this._fetchSeq) return; this.resources = (data && data.configmaps) || data || []; break
           case 'secrets':
-            data = await getK8sSecrets(cid, ns); this.resources = (data && data.secrets) || data || []; break
+            data = await getK8sSecrets(cid, ns); if (seq !== this._fetchSeq) return; this.resources = (data && data.secrets) || data || []; break
           case 'nodes':
-            data = await getK8sNodes(cid); this.resources = (data && data.nodes) || data || []; break
+            data = await getK8sNodes(cid); if (seq !== this._fetchSeq) return; this.resources = (data && data.nodes) || data || []; break
           default:
             this.resources = []
         }
       } catch (e) {
+        if (seq !== this._fetchSeq) return
         this.error = e.j?.error || t('error.k8sResourcesFailed')
         this.resources = []
       } finally {
-        this.resourcesLoading = false
+        if (seq === this._fetchSeq) {
+          this.resourcesLoading = false
+        }
       }
     },
     async fetchPodLogs(clusterID, ns, name, tailLines, container) {

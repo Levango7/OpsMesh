@@ -82,7 +82,7 @@ func (s *Server) handleSecretsTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req secretsTestRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, &req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}

@@ -595,7 +595,7 @@ func (s *Server) handleCreateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 			Action: "mw_template_create", Target: st.ID, Detail: sanitizeAuditDetail("name=" + tpl.Name), Level: events.LevelInfo,
 		})
 	}
-	s.publishEvent(r.Context(), "mw_template_changed", actx.TenantID, map[string]string{"id": st.ID, "op": "create"})
+	s.publishEvent(r.Context(), "mw_template_changed", actx.TenantID, map[string]string{"templateID": st.ID, "action": "create"})
 	writeJSON(w, http.StatusCreated, saved)
 }
 
@@ -657,7 +657,7 @@ func (s *Server) handleUpdateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 			Action: "mw_template_update", Target: id, Detail: sanitizeAuditDetail("name=" + tpl.Name), Level: events.LevelInfo,
 		})
 	}
-	s.publishEvent(r.Context(), "mw_template_changed", actx.TenantID, map[string]string{"id": id, "op": "update"})
+	s.publishEvent(r.Context(), "mw_template_changed", actx.TenantID, map[string]string{"templateID": id, "action": "update"})
 	writeJSON(w, http.StatusOK, saved)
 }
 
@@ -700,7 +700,7 @@ func (s *Server) handleDeleteMiddlewareTemplate(w http.ResponseWriter, r *http.R
 			Action: "mw_template_delete", Target: id, Detail: sanitizeAuditDetail("name=" + existing.Name), Level: events.LevelInfo,
 		})
 	}
-	s.publishEvent(r.Context(), "mw_template_changed", actx.TenantID, map[string]string{"id": id, "op": "delete"})
+	s.publishEvent(r.Context(), "mw_template_changed", actx.TenantID, map[string]string{"templateID": id, "action": "delete"})
 	w.WriteHeader(http.StatusNoContent)
 }
 

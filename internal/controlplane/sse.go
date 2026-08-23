@@ -3,12 +3,18 @@
 // 设计目标：替代前端 5s 轮询，控制面主动推送任务状态变更/告警/设备上下线到浏览器。
 // 端点：GET /api/v1/events/stream（text/event-stream）。
 //
-// 事件类型（event: <type>）：
-//   - task_status      任务状态变更（create / cancel / report_result / claim）
-//   - alert_new        告警列表变更（新告警产生 / ack / silence，前端据此刷新告警面板）
-//   - device_online    设备/agent 上线（Register）
-//   - device_offline   设备/agent 下线（退役 / 离线归档）
-//   - hello            连接建立握手（handler 首帧）
+// 事件类型（event: <type>，全量 10 种与 docs/sse-protocol.md 枚举表对齐，
+// 由 sse_contract_test.go 守护代码↔文档一致性）：
+//   - task_status           任务状态变更（create / claim / cancel / report_result）
+//   - alert_new             告警列表变更（新告警 / ack / silence，前端据此刷新告警面板）
+//   - device_online         设备/agent 上线（Register）
+//   - device_offline        设备/agent 下线（退役 / 离线归档）
+//   - approval_status       作业审批通过/拒绝/取消
+//   - schedule_status       定时任务触发/暂停/恢复
+//   - os_template_changed   OS 优化模板增删改（data: templateID + action）
+//   - mw_template_changed   中间件模板增删改（data: templateID + action）
+//   - agent_logs            agent 日志上报到达
+//   - hello                 连接建立握手（handler 首帧，不走 publishEvent）
 //
 // 信封格式（data 行为 SSEEvent JSON）：
 //

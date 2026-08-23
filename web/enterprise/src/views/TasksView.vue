@@ -40,7 +40,7 @@
           </div>
         </div>
         <div class="btnbar">
-          <button type="submit" class="primary" data-testid="task-submit-btn">{{ $t('tasks.submit') }}</button>
+          <button type="submit" class="primary" data-testid="task-submit-btn" :disabled="submitting">{{ submitting ? $t('common.loading') : $t('tasks.submit') }}</button>
         </div>
         <p v-if="msg" :class="['msg', msgOk ? 'ok' : 'err']">{{ msg }}</p>
       </form>
@@ -103,6 +103,7 @@ const agents = ref([])
 const form = ref({ agentID: '', type: 'shell', command: '', path: '', content: '' })
 const msg = ref('')
 const msgOk = ref(false)
+const submitting = ref(false)
 
 const columns = [
   { key: 'taskID', title: t('tasks.col_task_id'), slot: 'cell-taskID' },
@@ -114,6 +115,8 @@ const columns = [
 ]
 
 async function onSubmit() {
+  if (submitting.value) return
+  submitting.value = true
   try {
     const r = await store.create({ ...form.value })
     msg.value = `[${r.s}] ${JSON.stringify(r.j)}`
@@ -122,9 +125,12 @@ async function onSubmit() {
   } catch (e) {
     msg.value = t('tasks.dispatch_failed') + (e.j?.error || e.message)
     msgOk.value = false
+  } finally {
+    submitting.value = false
   }
 }
 async function onCancel(id) {
+  if (!confirm(t('tasks.confirm_cancel'))) return
   try { await store.cancel(id) } catch (e) { console.error('cancel task failed:', e) }
 }
 

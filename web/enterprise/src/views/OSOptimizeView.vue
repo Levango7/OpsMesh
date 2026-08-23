@@ -125,7 +125,7 @@
 
 <script setup>
 // OS 基础环境优化 — 模板列表 + 分类筛选 + 详情抽屉 + 执行对话框 + 日志轮询
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useOSOptimizeStore } from '@/stores/os-optimize'
 import { getOSTemplate } from '@/api/os-optimize'
 import { getTaskDetail } from '@/api/task'
@@ -295,6 +295,11 @@ function startPoll(taskId) {
 onMounted(() => {
   store.fetchTemplates()
   store.fetchDevices()
+})
+
+// 组件卸载时清理执行轮询定时器，防止切路由后幽灵轮询（同 MiddlewareDeployView）。
+onUnmounted(() => {
+  if (execTimer) { clearInterval(execTimer); execTimer = null }
 })
 </script>
 

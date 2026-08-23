@@ -196,6 +196,7 @@
     "empty": "No managed devices. Devices are auto-discovered once their network segment is enrolled.",
     "segment_empty": "No devices in this segment",
     "provision": "Provision Agent",
+    "provision_failed": "Provision failed",
     "detail": "Detail",
     "dispatch_task": "Dispatch",
     "view_metrics": "View Metrics",
@@ -285,6 +286,7 @@
     "status_filter": "Status Filter",
     "empty": "No tasks",
     "cancel": "Cancel",
+    "confirm_cancel": "Cancel this task?",
     "dispatch_failed": "Dispatch failed: ",
     "col_agent": "Agent",
     "col_type": "Type",
@@ -399,7 +401,9 @@
     "executed_msg": "Execution triggered #{id}",
     "rolled_back_msg": "Rolled back #{id}",
     "execute": "Deploy",
-    "rollback": "Rollback"
+    "rollback": "Rollback",
+    "confirm_execute": "Execute this deployment? Operations will run on target devices.",
+    "confirm_rollback": "Rollback this deployment? Will attempt to restore pre-deployment state."
   },
   "logs": {
     "title": "Logs",

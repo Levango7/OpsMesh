@@ -81,7 +81,8 @@ agent:
   enabled: true
   image:
     repository: opsmesh/opsmesh-agent
-    tag: "0.1"
+    # 与 controlplane 同版本发布（CHANGELOG 当前 0.7.0）；禁止 latest。
+    tag: "0.7.0"
     pullPolicy: IfNotPresent
   segment: default
   workerConcurrency: 8
@@ -129,6 +130,16 @@ mysql:
   nodeSelector: {}
   affinity: {}
   tolerations: []
+  # 生产备份：每天快照保留 14 天、PVC 30Gi（DR runbook RPO=24h 基线）。
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"
+    retentionDays: 14
+    historyLimit: 14
+    backoffLimit: 2
+    activeDeadlineSeconds: 1800
+    storageSize: 30Gi
+    storageClass: ""
 
 ## @section Redis
 redis:

@@ -132,9 +132,13 @@ func (g *grpcServerImpl) Register(ctx context.Context, info *proto.AgentInfo) (*
 	// 携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
 	if g.srv != nil {
 		g.srv.publishEvent(ctx, "device_online", registered.TenantID, map[string]string{
+			// 契约字段（sse-protocol.md / 前端 EVENT_CONTRACT）：deviceID + segment。
+			// 缺 deviceID 时前端 validateEventData 会丢弃事件，设备列表失去实时刷新。
+			"deviceID": registered.AgentID,
+			"segment":  registered.Segment,
+			// 扩展字段：向后兼容保留。
 			"agentID":  registered.AgentID,
 			"hostname": registered.Hostname,
-			"segment":  registered.Segment,
 		})
 	}
 

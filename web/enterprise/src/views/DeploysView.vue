@@ -146,10 +146,12 @@ async function onCreate() {
   } catch (e) { store.msg = 'error: ' + (e.j?.error || e.message); store.error = 'create' }
 }
 async function onExec(id) {
+  if (!confirm(t('deploys.confirm_execute'))) return
   try { const r = await store.execute(id); store.msg = `[${r.s}] ${r.j.error || t('deploys.executed_msg', { id })}`; store.error = r.s >= 400 ? 'exec' : '' }
   catch (e) { store.msg = 'error: ' + (e.j?.error || e.message); store.error = 'exec' }
 }
 async function onRollback(id) {
+  if (!confirm(t('deploys.confirm_rollback'))) return
   try { const r = await store.rollback(id); store.msg = `[${r.s}] ${r.j.error || t('deploys.rolled_back_msg', { id })}`; store.error = r.s >= 400 ? 'rb' : '' }
   catch (e) { store.msg = 'error: ' + (e.j?.error || e.message); store.error = 'rb' }
 }
