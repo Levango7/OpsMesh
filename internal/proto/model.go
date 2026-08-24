@@ -285,3 +285,24 @@ type LogPushConfig struct {
 	Endpoint string   `json:"endpoint"` // 推送目标完整 URL（如 http://loki:3100/loki/api/v1/push）
 	Backend  string   `json:"backend"`  // 后端类型：loki | es
 }
+
+// AgentConfig agent 运行时配置（控制面经 gRPC ConfigureAgent 下发，agent 热更新生效）。
+//
+// 涵盖日志采集增强（LogCollector）与监控指标采集频率：
+//   - LogCollectPaths   日志采集路径列表（支持 glob 通配符，如 /var/log/*.log）。
+//   - LogIncludeRules   日志白名单正则列表（匹配任一则保留；空=全保留）。
+//   - LogExcludeRules   日志黑名单正则列表（匹配任则丢弃；优先级高于 Include）。
+//   - LogMultilineRule  多行合并正则（匹配行作为新记录首行，不匹配行合并到上一条；空=不合并）。
+//   - LogRateLimit      日志采集限速（行/秒，<=0 不限速）。
+//   - MetricsInterval   监控指标采集间隔（秒，<=0 用默认 30s）。
+//
+// 控制面通过 ConfigureAgent gRPC 方法下发此配置，agent 收到后调用 LogCollector.UpdateConfig 热更新，
+// 无需重启 agent 进程即可调整采集策略（运维动态调参）。
+type AgentConfig struct {
+	LogCollectPaths  []string `json:"log_collect_paths"`
+	LogIncludeRules  []string `json:"log_include_rules"`
+	LogExcludeRules  []string `json:"log_exclude_rules"`
+	LogMultilineRule string   `json:"log_multiline_rule"`
+	LogRateLimit     int      `json:"log_rate_limit"`
+	MetricsInterval  int      `json:"metrics_interval"`
+}

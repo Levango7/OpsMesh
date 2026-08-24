@@ -251,3 +251,57 @@ type NotifyTemplate struct {
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
+
+// ============================================================================
+// P0.3 Store 接口扩展：服务发现 / 配置中心 / 密钥管理 领域数据模型。
+// 与现有 12 领域解耦，通过 ServiceDiscoveryStore / ConfigStore / SecretStore
+// 三个小接口暴露，组合进 Store（向后兼容，不破坏现有接口）。
+// ============================================================================
+
+// ServiceInstance 服务发现中的服务实例。
+// 一个服务可注册多个实例（按 ServiceID 唯一），按 ServiceName 聚合查询。
+// 心跳驱动健康状态：LastHeartbeat 超过阈值由 StaleServices 标记下线。
+type ServiceInstance struct {
+	ServiceID     string            `json:"serviceID"`     // 实例唯一标识（服务名+地址+端口或 UUID）
+	ServiceName   string            `json:"serviceName"`   // 服务逻辑名（按此聚合）
+	Address       string            `json:"address"`       // 实例地址（IP 或主机名）
+	Port          int               `json:"port"`          // 实例端口
+	Metadata      map[string]string `json:"metadata"`      // 实例元数据（权重/标签/region 等）
+	Status        string            `json:"status"`        // 健康状态：healthy/unhealthy/unknown
+	LastHeartbeat time.Time         `json:"lastHeartbeat"` // 最近一次心跳时间
+	TenantID      string            `json:"tenantID"`      // 所属租户（隔离）
+	CreatedAt     time.Time         `json:"createdAt"`     // 注册时间
+}
+
+// ConfigItem 配置中心的配置项。
+// 按 (TenantID, Key) 唯一；Version 单调递增，每次 SetConfig 产生新版本并写入历史。
+// Format 支持 json/yaml/toml/properties/text；Value 为配置原文（不脱敏）。
+type ConfigItem struct {
+	Key         string    `json:"key"`         // 配置键（按 / 分隔的命名空间路径，如 app/db/pool）
+	Value       string    `json:"value"`       // 配置值原文
+	Format      string    `json:"format"`      // 配置格式：json/yaml/toml/properties/text
+	Version     int       `json:"version"`     // 版本号（从 1 单调递增）
+	Description string    `json:"description"` // 配置说明
+	TenantID    string    `json:"tenantID"`    // 所属租户（隔离）
+	UpdatedBy   string    `json:"updatedBy"`   // 最后更新人（用户 ID）
+	UpdatedAt   time.Time `json:"updatedAt"`   // 最后更新时间
+}
+
+// SecretItem 密钥项（含明文值，仅在 SetSecret/GetSecret/RotateSecret 内部流转）。
+// API 层对外暴露时须转为 SecretMeta（脱去 Value）。KeyType 支持 aes/hmac/rsa/ecdsa/passphrase。
+type SecretItem struct {
+	Key     string `json:"key"`     // 密钥逻辑名（按 / 分隔路径，如 app/db/password）
+	Value   string `json:"value"`   // 密钥明文值（仅在内部流转；API 须脱敏）
+	KeyType string `json:"keyType"` // 密钥类型：aes/hmac/rsa/ecdsa/passphrase
+}
+
+// SecretMeta 密钥元信息（脱敏视图，对外暴露）。
+// 不含 Value；按 (TenantID, Key, Version) 唯一标识一个密钥版本。
+type SecretMeta struct {
+	Key       string    `json:"key"`       // 密钥逻辑名
+	KeyType   string    `json:"keyType"`   // 密钥类型
+	Version   int       `json:"version"`   // 版本号（从 1 单调递增；轮换产生新版本）
+	TenantID  string    `json:"tenantID"`  // 所属租户（隔离）
+	CreatedAt time.Time `json:"createdAt"` // 创建时间
+	UpdatedAt time.Time `json:"updatedAt"` // 最近一次轮换时间
+}

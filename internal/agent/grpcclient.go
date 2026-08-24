@@ -414,6 +414,24 @@ func (c *GRPCClient) ReportLogs(ctx context.Context, report *proto.LogReport) er
 	return c.invoke(ctx, "/opsmesh.v1.Registration/ReportLogs", req, resp)
 }
 
+// ConfigureAgent 通过 gRPC ConfigureAgent 方法向控制面下发 agent 运行时配置。
+//
+// agent v2.0 增强配置通道：控制面据此动态调整 agent 的日志采集策略（路径/过滤/多行/限速）
+// 与监控指标采集频率，agent 收到后热更新（LogCollector.UpdateConfig），无需重启进程。
+//
+// 简单实现：经已有 invoke 机制发送 ConfigureAgentReq，控制面校验 HMAC 签名（agentID 为签名身份）
+// 后将配置路由到对应 agent 的配置下发通道。控制面未实现该方法时返回 Unimplemented 错误，
+// agent 侧降级为沿用启动时配置（向后兼容，不阻塞启动）。
+func (c *GRPCClient) ConfigureAgent(ctx context.Context, agentID string, cfg *proto.AgentConfig) (*grpcx.ConfigureAgentResp, error) {
+	resp := &grpcx.ConfigureAgentResp{}
+	req := &grpcx.ConfigureAgentReq{AgentID: agentID, Config: *cfg}
+	ctx = c.signContext(ctx, agentID) // 附加 HMAC 签名
+	if err := c.invoke(ctx, "/opsmesh.v1.Registration/ConfigureAgent", req, resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
 // Close 连接复用：关闭所有缓存的长连接。agent shutdown 时由 agent.go 调用。
 func (c *GRPCClient) Close() error {
 	c.mu.Lock()

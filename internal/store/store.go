@@ -396,6 +396,66 @@ type QuotaStore interface {
 	SetQuota(tenantID string, cfg *QuotaConfig) error
 }
 
+// ServiceDiscoveryStore 服务发现领域：注册/反注册/实例查询/心跳/过期清理。
+// 按 (TenantID, ServiceID) 唯一标识一个服务实例；ServiceName 用于聚合查询。
+// 心跳驱动健康状态：LastHeartbeat 超过阈值由 StaleServices 标记下线。
+type ServiceDiscoveryStore interface {
+	// RegisterService 注册一个服务实例（按 ServiceID 幂等 upsert）。
+	// 已存在则更新 Address/Port/Metadata/Status/LastHeartbeat；不存在则新建。
+	RegisterService(inst *ServiceInstance) *ServiceInstance
+	// DeregisterService 反注册服务实例（按 tenantID + serviceID）。返回是否删除成功。
+	DeregisterService(tenantID, serviceID string) bool
+	// ServiceInstances 返回指定服务名下的全部实例（按 tenantID 隔离）。
+	ServiceInstances(tenantID, serviceName string) []*ServiceInstance
+	// AllServices 返回全部服务实例（按 tenantID 隔离；空串=全部租户）。
+	AllServices(tenantID string) []*ServiceInstance
+	// HeartbeatService 服务实例心跳：刷新 LastHeartbeat 与 Status。返回是否已知该实例。
+	HeartbeatService(tenantID, serviceID, status string) bool
+	// StaleServices 返回最后心跳早于 maxAge 的不健康实例（按 tenantID 隔离）。
+	// 控制面周期调用以驱动健康检查 / 自动摘流。
+	StaleServices(tenantID string, maxAge time.Duration) []*ServiceInstance
+}
+
+// ConfigStore 配置中心领域：Get/Set/Delete/List + 版本历史 + 发布。
+// 按 (TenantID, Key) 唯一；每次 SetConfig 产生新版本并写入历史（ConfigHistory 查询）。
+// PublishConfig 用于配置变更的灰度/广播触发（MVP 仅标记版本，后续可联动事件总线）。
+type ConfigStore interface {
+	// GetConfig 按 (tenantID, key) 返回当前配置项；不存在返回 (nil, false)。
+	GetConfig(tenantID, key string) (*ConfigItem, bool)
+	// SetConfig 写入/更新配置（按 key 幂等）。已存在则 Version+1 并写入历史；不存在则 Version=1。
+	// 返回更新后的配置项。
+	SetConfig(item *ConfigItem) *ConfigItem
+	// DeleteConfig 删除配置（按 tenantID + key）。返回是否删除成功。
+	DeleteConfig(tenantID, key string) bool
+	// ListConfigs 列出指定租户的全部配置（按 key 升序）。
+	ListConfigs(tenantID string) []*ConfigItem
+	// ConfigHistory 返回指定配置的版本历史（按 version 升序；最多保留最近 N 条，N 由实现决定）。
+	ConfigHistory(tenantID, key string) []*ConfigItem
+	// PublishConfig 发布配置变更（标记当前版本为已发布；MVP 仅返回最新配置，后续可触发事件）。
+	// 不存在返回 (nil, false)。
+	PublishConfig(tenantID, key string) (*ConfigItem, bool)
+}
+
+// SecretStore 密钥管理领域：Get/Set/Delete/List + 轮换 + 版本历史。
+// 按 (TenantID, Key, Version) 唯一标识一个密钥版本；RotateSecret 产生新版本。
+// GetSecret 返回明文值（仅在内部流转；API 层须转为 SecretMeta 脱敏视图）。
+type SecretStore interface {
+	// GetSecret 按 (tenantID, key) 返回当前版本密钥明文项；不存在返回 (nil, false)。
+	GetSecret(tenantID, key string) (*SecretItem, bool)
+	// SetSecret 写入/轮换密钥（按 key 幂等）。已存在则 Version+1；不存在则 Version=1。
+	// 返回更新后的密钥元信息（脱敏视图，不含 Value）。
+	SetSecret(item *SecretItem, tenantID string) *SecretMeta
+	// DeleteSecret 删除密钥（按 tenantID + key，含全部历史版本）。返回是否删除成功。
+	DeleteSecret(tenantID, key string) bool
+	// ListSecrets 列出指定租户的全部密钥元信息（脱敏视图，按 key 升序）。
+	ListSecrets(tenantID string) []*SecretMeta
+	// RotateSecret 轮换密钥：用新值产生新版本。不存在则等价于 SetSecret。
+	// 返回新版本元信息。
+	RotateSecret(tenantID, key, newValue string) *SecretMeta
+	// SecretVersions 返回指定密钥的全部版本元信息（按 version 升序）。
+	SecretVersions(tenantID, key string) []*SecretMeta
+}
+
 // Store 控制面注册表的可插拔持久化组合接口。
 // 由 12 个领域小接口组合而成（拆分 + 用户中心扩展 + K8s 集群管理 + OS/中间件模板 + 刷新令牌），
 // 方法签名刻意与旧版内存 Registry 保持一致，便于平滑替换。
@@ -421,6 +481,9 @@ type Store interface {
 	NotifyTemplateStore // 通知模板：CRUD（M2）
 	AgentLogStore       // agent 日志上报：落库 + 检索
 	QuotaStore          // 租户配额：Get/Set（多租户资源配额）
+	ServiceDiscoveryStore // P0.3 服务发现：注册/心跳/实例查询
+	ConfigStore           // P0.3 配置中心：Get/Set/版本历史/发布
+	SecretStore           // P0.3 密钥管理：Get/Set/轮换/版本历史
 
 	// WithDemo 设置是否开启演示模式：开启时每个 agent 注册预置 uname -a 示例任务。
 	WithDemo(bool) Store
@@ -446,6 +509,9 @@ var (
 	_ NotifyTemplateStore = (*MemoryStore)(nil)
 	_ AgentLogStore       = (*MemoryStore)(nil)
 	_ QuotaStore          = (*MemoryStore)(nil)
+	_ ServiceDiscoveryStore = (*MemoryStore)(nil)
+	_ ConfigStore           = (*MemoryStore)(nil)
+	_ SecretStore           = (*MemoryStore)(nil)
 	_ Store               = (*MemoryStore)(nil)
 
 	_ DeviceStore         = (*SQLStore)(nil)
@@ -465,5 +531,8 @@ var (
 	_ NotifyTemplateStore = (*SQLStore)(nil)
 	_ AgentLogStore       = (*SQLStore)(nil)
 	_ QuotaStore          = (*SQLStore)(nil)
+	_ ServiceDiscoveryStore = (*SQLStore)(nil)
+	_ ConfigStore           = (*SQLStore)(nil)
+	_ SecretStore           = (*SQLStore)(nil)
 	_ Store               = (*SQLStore)(nil)
 )

@@ -64,6 +64,16 @@ type SQLStore struct {
 	// 检索侧由 logstore.SQLLogStore 走独立表/连接池承担；此处仅承接上报并暂存供 API 查询。
 	// 由 s.mu 保护并发安全。
 	agentLogs []proto.LogReport
+
+	// P0.3 服务发现 / 配置中心 / 密钥管理 桩实现缓存。
+	// TODO(p0.3): 接入 MySQL 持久化表（services / configs / config_history / secrets / secret_versions）。
+	// MVP 用内存 map 做缓存，保证接口齐全 + go build 通过；由 s.mu 保护并发安全。
+	services       map[string]*ServiceInstance
+	configs        map[string]*ConfigItem
+	configHistory  map[string][]*ConfigItem
+	secrets        map[string]*SecretItem
+	secretMetas    map[string]*SecretMeta
+	secretVersions map[string][]*SecretMeta
 }
 
 func (s *SQLStore) DB() *sql.DB { return s.db }
@@ -137,7 +147,18 @@ func NewSQLStore(dsn, redisAddr string) (*SQLStore, error) {
 	}
 	instID := fmt.Sprintf("%s-%d-%d", host, os.Getpid(), time.Now().UnixNano())
 
-	s := &SQLStore{db: db, rdb: rdb, instanceID: instID, secret: mustRandHex(32), deviceMetrics: make(map[string]*metricsRing), agentSecretCache: make(map[string]string)}
+	s := &SQLStore{
+		db: db, rdb: rdb, instanceID: instID, secret: mustRandHex(32),
+		deviceMetrics:    make(map[string]*metricsRing),
+		agentSecretCache: make(map[string]string),
+		// P0.3 桩实现缓存初始化（TODO: 接入 MySQL 持久化表）。
+		services:       make(map[string]*ServiceInstance),
+		configs:        make(map[string]*ConfigItem),
+		configHistory:  make(map[string][]*ConfigItem),
+		secrets:        make(map[string]*SecretItem),
+		secretMetas:    make(map[string]*SecretMeta),
+		secretVersions: make(map[string][]*SecretMeta),
+	}
 	// 启动时序竞态防护：MySQL 容器可能尚未就绪（compose 起栈时 mysql 与 controlplane
 	// 并发启动，Ping 失败不阻塞是 MVP 延迟连接语义）。迁移+seedRBAC 依赖 schema 存在，
 	// 此处最多等待 30s（10 次 × 3s 退避），MySQL 就绪后重试，避免 admin 用户/表缺失

@@ -70,6 +70,19 @@ type ReportLogsReq struct {
 	Report proto.LogReport `json:"report"`
 }
 
+// ConfigureAgentReq 控制面向 agent 下发运行时配置的请求（agent v2.0 增强配置通道）。
+// agent 收到后调用 LogCollector.UpdateConfig 热更新日志采集策略，无需重启进程。
+// AgentID 为目标 agent 身份（控制面据此路由到对应 agent 的配置下发通道）。
+type ConfigureAgentReq struct {
+	AgentID string             `json:"agentID"`
+	Config  proto.AgentConfig  `json:"config"`
+}
+
+// ConfigureAgentResp 配置下发响应。Applied=true 表示 agent 已应用新配置。
+type ConfigureAgentResp struct {
+	Applied bool `json:"applied"`
+}
+
 // RegistrationServer 是 gRPC 注册通道的服务端接口，由控制面实现。
 // 六个方法一一对应 agent↔控制面 的 注册 / 心跳 / 拉任务 / 上报结果 / 取消 / 轮询取消 / 日志上报。
 type RegistrationServer interface {

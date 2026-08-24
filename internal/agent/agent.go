@@ -82,6 +82,12 @@ type Agent struct {
 	// 由 Run 在 cfg.LogPushEnabled=true 时构造并启动 goroutine；nil=未启用。
 	// 退出时调用 Stop 触发剩余缓冲 flush。
 	logPusher *LogPusher
+	// 增强日志采集器（agent v2.0）：多路径/多行合并/过滤/限速/热更新。
+	// 由 Run 在配置了日志采集路径（logCollectPaths 非空）时构造并启动 goroutine；nil=未启用。
+	// 退出时调用 Stop 等待采集 goroutine 退出。与 logPusher 互补：
+	//   - logPusher：尾随文件批量推送到 Loki/ES（外部存储）。
+	//   - logCollector：增量采集经 gRPC 上报到控制面（控制面落库）。
+	logCollector *LogCollector
 }
 
 // New 构造 agent（读取 hostname，作为注册信息）。
@@ -465,6 +471,29 @@ func (a *Agent) Run() error {
 		}
 	}
 
+	// 增强日志采集器（agent v2.0）：多路径/多行合并/过滤/限速/热更新。
+	// 配置了日志采集路径（logCollectPaths 非空）时构造并启动 LogCollector，
+	// 采集到的记录经 gRPC ReportLogs 上报到控制面。与 logCollectLoop（基于环境变量的简单增量上报）
+	// 互补：logCollector 提供更完整的采集能力（过滤/多行/限速/热更新）。
+	// 失败仅告警不阻塞启动（向后兼容）。
+	if len(a.logCollectPaths) > 0 && a.grpc != nil {
+		lcCfg := LogCollectConfig{
+			Paths:    a.logCollectPaths,
+			Interval: a.logCollectInterval,
+		}
+		lc, err := NewLogCollector(lcCfg, a.makeLogCollectPushFn())
+		if err != nil {
+			logx.Warn(ctx, "LogCollector 构造失败，增强日志采集未启用", "error", err.Error())
+		} else {
+			a.logCollector = lc
+			go func() {
+				if err := lc.Start(ctx); err != nil {
+					logx.Warn(ctx, "LogCollector 退出异常", "error", err.Error())
+				}
+			}()
+		}
+	}
+
 	logx.Info(ctx, "agent 运行中", "agentID", a.agentID, "workers", a.workers, "grpc", a.cfg.ControlAddr)
 	<-ctx.Done()
 	logx.Info(ctx, "agent 收到终止信号，退出", "agentID", a.agentID)
@@ -472,6 +501,12 @@ func (a *Agent) Run() error {
 	if a.logPusher != nil {
 		if err := a.logPusher.Stop(); err != nil {
 			logx.Warn(ctx, "LogPusher Stop 失败", "error", err.Error())
+		}
+	}
+	// 退出前 Stop LogCollector，等待采集 goroutine 退出（尽力而为，不阻塞退出）。
+	if a.logCollector != nil {
+		if err := a.logCollector.Stop(); err != nil {
+			logx.Warn(ctx, "LogCollector Stop 失败", "error", err.Error())
 		}
 	}
 	return nil
@@ -1285,6 +1320,57 @@ func shellCommand(command string) *exec.Cmd {
 }
 
 // ===== 日志采集 agent 推送 =====
+//
+// makeLogCollectPushFn 构造 LogCollector 的上报回调：把采集到的多行记录批量经 gRPC ReportLogs
+// 上报到控制面。每条 CollectedLog 按其 Content 切分（多行合并后的正文）封装为 LogLine，
+// 同一文件的记录合并为单个 LogReport 批次上报（减少 gRPC 调用次数）。
+//
+// 上报失败返回 error（LogCollector tick 会记录告警但不中断后续采集）。
+// 控制面校验 HMAC 签名后按 agent 归属租户落库（行级隔离）。
+func (a *Agent) makeLogCollectPushFn() LogCollectPushFunc {
+	return func(ctx context.Context, records []CollectedLog) error {
+		if len(records) == 0 || a.grpc == nil {
+			return nil
+		}
+		// 按文件分组，减少 gRPC 调用次数。
+		groups := make(map[string][]CollectedLog)
+		order := make([]string, 0)
+		for _, r := range records {
+			if _, ok := groups[r.File]; !ok {
+				order = append(order, r.File)
+			}
+			groups[r.File] = append(groups[r.File], r)
+		}
+		for _, file := range order {
+			recs := groups[file]
+			lines := make([]proto.LogLine, 0, len(recs))
+			now := time.Now()
+			for _, r := range recs {
+				lines = append(lines, proto.LogLine{
+					Timestamp: r.Timestamp,
+					Level:     parseLogLevel(r.StartLine),
+					Message:   r.Content,
+				})
+			}
+			report := &proto.LogReport{
+				AgentID:     a.agentID,
+				Hostname:    a.hostname,
+				LogName:     filepath.Base(file),
+				Lines:       lines,
+				CollectedAt: now,
+			}
+			// 短超时（5s）避免控制面不可达时阻塞采集循环。
+			cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			rerr := a.grpc.ReportLogs(cctx, report)
+			cancel()
+			if rerr != nil {
+				return rerr
+			}
+		}
+		return nil
+	}
+}
+
 //
 // logCollectLoop 定时读取指定日志文件的新增内容（基于文件 offset）并上报控制面。
 // 配置来自环境变量（见 initLogCollect）：
