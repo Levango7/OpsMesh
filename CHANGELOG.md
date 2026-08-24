@@ -1,6 +1,59 @@
 # Changelog
 
-本文件记录 OpsMesh 所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
+本文件记录 OpsMesh 所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [Semantic Versioning](https://semver.org/)。
+
+> 当前最新已发布版本：`v0.7.0`（2026-08-16）。`[Unreleased]` 段累积未发布变更，下一个发布版本号待定（按实际演进预计 `v0.8.0`；若按文档同步批次独立发版可记为 `v0.5.0`，由发布流程最终确定）。
+
+## [Unreleased] — 2026-08-24 文档全面同步批次
+
+### 文档同步
+- **README.md**：功能矩阵扩展为 14 个功能域（设备管理 / 任务执行 / 监控告警 / CMDB / 日志检索 / 编排部署 / OS 优化 / 中间件部署 / K8s 管理 / 用户中心 / 审计日志 / 联邦 / SSE 实时推送 / 工作流），对齐 `docs/feature-design.md` F1–F18 与 `docs/product-roadmap.md` M1–M4
+- **README.md**：新增「技术栈」章节（Go 1.26 + Vue3 + Vite + Pinia + MySQL + Redis + gRPC + OTel）与「internal 包职责（30 个）」章节，按 7 个领域分组列出全部 internal 包
+- **README.md**：明确 `internal/discover`（设备发现，控制面→网段找设备）与 `internal/discovery`（控制面服务发现 + 负载均衡，agent→控制面 failover）的边界
+- **README.md**：快速启动补充 docker-compose / Helm / systemd 三种部署方式
+- **README.md**：开发指引补全 30 个 internal 包（新增 alertengine / approval / circuitbreaker / discovery / helm / k8s / otelx / provision / secrets）
+- **DELIVERY.md**：代码规模刷新至 2026-08-24（179 源码 + 167 测试 = 346 Go 文件，84 前端文件，34 包），功能交付清单对齐 14 个功能域
+- **docs/api-reference.md**：补全 `GET /api/v1/devices/{id}/metrics`（设备监控指标，支持 `?range=15m|1h|2h|6h|24h` 历史时序）
+- **docs/api-reference.md**：K8s 资源管理章节补全 15 个端点（namespace / pod / deployment + scale/restart/rollback / service / configmap / secret / node / dashboard / health）
+- **docs/tech-debt.md**：新增 TD-50~TD-54（controlplane 覆盖率 / helm 覆盖率 / discover-discovery 边界 / 文档同步 / 版本发布流程）
+
+### 安全
+- **第三轮终审 P0/P1/P2 修复**（`35e2375`）：security/deploy/store 多处安全漏洞与部署阻断修复
+- **refresh token 过期清理**（`5199f4e`）：周期清理过期刷新令牌 + blacklist，避免 goroutine 泄漏
+- **demo JWT 默认密钥移除**（`f0fc51e`）：未设置 `OPSMESH_JWT_SECRET` 时二进制自动生成随机密钥（重启后旧 token 失效），生产务必显式注入
+- **rows.Err() 补齐 20 处**（`f0fc51e`）：SQL 迭代错误路径覆盖
+- **Dockerfile digest 钉死**（`af9a914`）：base image 摘要固定，防供应链漂移
+
+### 前端
+- **HttpOnly Cookie 会话恢复**（`3af70a7`，P0）：修复 SSE 帧分割边界残留
+- **SSE 401 刷新重连**（`612d59b`，P1）：URL 编码统一 + i18n 错误消息
+- **列标题 i18n 化**（`20629b2`，P2）：vite 代理环境变量 + eslint 恢复 no-v-html + 移除 msw
+- **E2E 断言改用 data-testid**（`85d4d2f`）：替代中文文案，防语言切换失败
+
+### 质量
+- **去 AI 化全面收尾**（`9014081`）：注释 / 标识符 / 文档清理 + TestExecute_Timeout 阈值修复
+- **log.Fatalf → return error**（`e3f9324`，P1）：错误处理规范化
+- **flaky 测试根治**（`08827f8`）：CMDB 节流测试与采集耗时解耦 + E2E 超时预算放宽
+- **store 覆盖率 75.7%**（`3e86452`）：BadDB 方法覆盖 SQL 错误路径（49.8% → 57.5% → 75.7%）
+- **6 个低覆盖包补全**（`17708be`）：grpcx 99.5% / otelx 97.2% / secrets 96.4% / authctx 93.1% / cmdb 95.4% / deploy 81.0%
+
+### 部署
+- **.dockerignore 补全**（`bf25730`）：构建上下文 ~250MB → 215KB
+- **HPA replicas 冲突修复**（`5199f4e`）：Helm Chart HPA 与 Deployment replicas 去冲突
+- **NetworkPolicy 补全**（`5199f4e`）：Helm Chart 网络策略加固
+- **pipefail 补全**（`5199f4e`）：CI shell 脚本 pipefail 加固
+- **toolchain 锁定 go1.26.6**（`d78d01b`）：解决多版本冲突
+
+### CI
+- **CI release 触发/secret 复用修复**（`cb2f58a`）：审计遗留问题修复
+- **SSE 契约/canceled 拼写修正**（`5199f4e`）：五态 dead_letter 修正
+
+### 验证
+- `go build ./...` ✅
+- `go vet ./...` ✅
+- `go test -timeout 300s ./...` ✅
+
+---
 
 ## [0.7.0] — 2026-08-16
 

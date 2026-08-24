@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -204,7 +205,11 @@ func (h *Handler) runWorkflow(w http.ResponseWriter, r *http.Request, id int64, 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	wf, _ := h.store.Get(r.Context(), id, tenantID)
+	wf, gerr := h.store.Get(r.Context(), id, tenantID)
+	if gerr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": gerr.Error()})
+		return
+	}
 	writeJSON(w, http.StatusOK, wf)
 }
 
@@ -639,8 +644,11 @@ func (h *Handler) Reconcile(ctx context.Context, id int64, tenantID string) erro
 	// 终态时更新最近一条 WorkflowRun 的 Status 与 FinishedAt。
 	// 非终态（running）不更新历史记录，保持 Trigger 时写入的初始快照。
 	if finalStatus != "" {
-		runs, _ := h.store.ListRuns(ctx, wf.ID, tenantID)
-		if len(runs) > 0 {
+		// 历史记录读取失败仅跳过终态回写，不影响工作流主状态。
+		runs, runsErr := h.store.ListRuns(ctx, wf.ID, tenantID)
+		if runsErr != nil {
+			log.Printf("[orchestration] ListRuns 失败 wf=%d: %v", wf.ID, runsErr)
+		} else if len(runs) > 0 {
 			latest := runs[len(runs)-1]
 			latest.Status = finalStatus
 			latest.FinishedAt = now
@@ -653,7 +661,9 @@ func (h *Handler) Reconcile(ctx context.Context, id int64, tenantID string) erro
 				}
 			}
 			latest.NodeStates = nodeStates
-			_ = h.store.UpdateRun(ctx, &latest)
+			if uerr := h.store.UpdateRun(ctx, &latest); uerr != nil {
+				log.Printf("[orchestration] UpdateRun 失败 run=%d: %v", latest.ID, uerr)
+			}
 		}
 	}
 	return nil

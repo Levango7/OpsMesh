@@ -333,7 +333,12 @@ func (p *LogPusher) flush() error {
 		return fmt.Errorf("推送请求失败: %w", err)
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		// 响应读取失败视为推送失败，回填缓冲区下次重试。
+		p.requeue(batch)
+		return fmt.Errorf("读取推送响应失败: %w", readErr)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// 非 2xx 视为失败，回填缓冲区下次重试。
 		p.requeue(batch)

@@ -97,12 +97,14 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	info, _ := f.Stat()
+	info, statErr := f.Stat()
+	if statErr != nil {
+		jsonError(w, http.StatusInternalServerError, "cannot stat agent binary")
+		return
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=opsmesh-agent")
-	if info != nil {
-		w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
-	}
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, f); err != nil {
 		log.Printf("controlplane: handleServeAgent 写 agent 二进制失败: %v", err)

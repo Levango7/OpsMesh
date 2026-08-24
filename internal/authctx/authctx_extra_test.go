@@ -81,7 +81,7 @@ func TestSignJWT_DefaultExpiry(t *testing.T) {
 		t.Fatalf("验签应成功: %v", err)
 	}
 	// 允许 ±2 分钟误差（签发与解析之间有耗时）。
-	approx24h := parsed.ExpiresAt.Sub(time.Now())
+	approx24h := time.Until(parsed.ExpiresAt)
 	if approx24h < 23*time.Hour || approx24h > 25*time.Hour {
 		t.Fatalf("默认过期应约 24h，got %v", approx24h)
 	}

@@ -32,6 +32,11 @@
 | TD-29 | operator Go 版本与主模块不一致 | ✅ `operator/go.mod` 已对齐 go 1.26.0，`go mod tidy && go build` 通过（见 TD-30） |
 | TD-30 | operator Go 版本与主模块割裂 | `operator/go.mod` 从 go 1.22 对齐至 go 1.26.0，`go mod tidy && go build` 已验证通过 |
 | TD-42 | CSP 保留 `unsafe-inline` | `script-src` 已去除 `unsafe-inline`（落地：前端 inline onclick 改用 addEventListener + server_middleware.go CSP 去掉 unsafe-inline） |
+| TD-50 | `internal/controlplane` 测试覆盖率不足 | ✅ 已完成：补充 `handler_extra_test.go` / `handler_m4_test.go` / `integration_m4_test.go` / `integration_m5_test.go` / `observability_m1_4_test.go` / `loop_m4_test.go` / `endpoint_test.go` / `command_validation_test.go` / `shell_safe_test.go` / `integration_inhibit_test.go` 等多个测试文件，controlplane 覆盖率提升至 56.9%（Batch2），按 `server_*.go` 主题拆分后单文件 ≤500 行可测性显著改善 |
+| TD-51 | Helm Chart 测试覆盖率不足 | ✅ 已完成：`deploy/helm/opsmesh/` 全套 17 个模板落地（含 ServiceMonitor / PrometheusRule / Ingress / HPA / NetworkPolicy / PodDisruptionBudget），`server_helm_extra_test.go` 补充 handler 测试；CI `image` job 把 chart `global.image.tag` 钉死为本 commit sha（含占位符守卫）；`helm` 包覆盖率经 `internal/helm/` catalog 测试覆盖 |
+| TD-52 | `internal/discover` 与 `internal/discovery` 包边界混淆 | ✅ 已完成：两包 `doc.go` 明确职责边界——`discover` = 设备发现（控制面→网段找设备，TCP 存活扫描），`discovery` = 控制面服务发现 + 负载均衡（agent→控制面 failover/round-robin）；README「internal 包职责」章节与「discover vs discovery 边界说明」表格明确区分，分属设备纳管域与 agent 高可用域，无相互依赖 |
+| TD-53 | 文档与代码不同步 | ✅ 已完成（2026-08-24 文档同步批次）：README 功能矩阵扩展为 14 个功能域 + 技术栈 + 30 个 internal 包职责 + discover/discovery 边界说明 + 三种部署方式；DELIVERY 代码规模刷新（346 Go 文件 / 84 前端文件 / 34 包）+ 14 功能域交付清单；api-reference 补全设备指标 + K8s 资源管理 15 端点；CHANGELOG 追加 [Unreleased] 段记录最近变更；tech-debt 登记 TD-50~TD-54 |
+| TD-54 | 版本发布流程缺失 | ✅ 已完成：CHANGELOG.md 采用 Keep a Changelog 格式 + Semantic Versioning；`internal/version/version.go` 暴露内核版本供 `--version` 与镜像标签；`.goreleaser.yml` 配置 GoReleaser 自动化发布；CI `release` job 由 tag 触发；Helm Chart `Chart.yaml` 版本与主版本同步；DELIVERY.md 记录仓库地址与提交链 |
 
 ---
 

@@ -18,6 +18,8 @@ package controlplane
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -342,7 +344,11 @@ func (s *Server) approvalApproveRequest(w http.ResponseWriter, r *http.Request, 
 	var body struct {
 		Comment string `json:"comment"`
 	}
-	_ = decodeJSONBody(w, r, &body)
+	// comment 为可选字段：空 body 视为空注释；非法 JSON 返回 400。
+	if derr := decodeJSONBody(w, r, &body); derr != nil && !errors.Is(derr, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
 	if err := s.approvalEngine.Approve(id, actx.UserID, body.Comment); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -374,7 +380,11 @@ func (s *Server) approvalRejectRequest(w http.ResponseWriter, r *http.Request, i
 	var body struct {
 		Comment string `json:"comment"`
 	}
-	_ = decodeJSONBody(w, r, &body)
+	// comment 为可选字段：空 body 视为空注释；非法 JSON 返回 400。
+	if derr := decodeJSONBody(w, r, &body); derr != nil && !errors.Is(derr, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
 	if err := s.approvalEngine.Reject(id, actx.UserID, body.Comment); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return

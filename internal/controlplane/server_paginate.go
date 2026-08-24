@@ -65,7 +65,9 @@ func parsePagination(q url.Values) (page, pageSize int) {
 	if pageStr == "" {
 		return 0, 0 // 不分页
 	}
-	page, _ = strconv.Atoi(pageStr)
+	if n, atoiErr := strconv.Atoi(pageStr); atoiErr == nil {
+		page = n
+	}
 	if page < 1 {
 		page = 1
 	}

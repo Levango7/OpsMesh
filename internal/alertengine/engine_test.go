@@ -1627,11 +1627,8 @@ func TestEWMADetector_Stats_PartialSpike(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		e.Add(100)
 	}
-	// 突然飙升
-	if !e.IsAnomaly(1000) {
-		// ewmaVar 可能为 0（恒定值），此时 IsAnomaly 返回 false，符合预期
-		// 引入波动后再测
-	}
+	// 恒定值基线下 ewmaVar 可能为 0，IsAnomaly 可能返回 false（符合预期），
+	// 故引入波动后再测。
 	// 引入波动
 	e2 := NewEWMADetector(0.5, 2.0)
 	for i := 0; i < 30; i++ {

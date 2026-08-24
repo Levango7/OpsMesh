@@ -118,6 +118,9 @@ func (s *SQLStore) DeleteK8sCluster(id string) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }

@@ -26,7 +26,10 @@ func (s *SQLStore) Provision(deviceID, host, tenantID string) (token, bootstrap 
 	if err != nil {
 		return "", "", fmt.Errorf("Provision 失败 %s: %w", deviceID, err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return "", "", fmt.Errorf("Provision rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return "", "", fmt.Errorf("device %s not found or tenant mismatch", deviceID)
 	}
@@ -94,8 +97,8 @@ func (s *SQLStore) ConsumeToken(token string) (deviceID, tenantID string, ok boo
 		log.Printf("[store] ConsumeToken 抢占失败: %v", err)
 		return "", "", false
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil || n == 0 {
 		return "", "", false // 已被消费 / 已过期 / 不存在
 	}
 	// 消费成功后读回设备与租户（token 行此时已唯一锁定为本实例）。
@@ -125,7 +128,11 @@ func (s *SQLStore) CleanupTokens(batch int) int {
 		log.Printf("[store] CleanupTokens 失败: %v", err)
 		return 0
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		log.Printf("[store] CleanupTokens RowsAffected: %v", rowsErr)
+		return 0
+	}
 	return int(n)
 }
 

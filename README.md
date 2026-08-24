@@ -53,13 +53,30 @@
                          └─────────────────────────────────────────┘
 ```
 
+### 技术栈
+
+| 层 | 选型 | 版本 / 说明 |
+|---|---|---|
+| 后端语言 | Go | 1.26（`go.mod` 声明 `go 1.26.0`，toolchain `go1.26.6`） |
+| HTTP / gRPC | `net/http` + `google.golang.org/grpc` | 自研 JSON codec + 手写 ServiceDesc，可选 protobuf 双轨 |
+| 持久化 | MySQL 8 + Redis 7 | `go-sql-driver/mysql` + `redis/go-redis/v9`；MemoryStore 零依赖兜底 |
+| 消息 / 事件 | `segmentio/kafka-go` | `//go:build kafka` 编译标签，默认构建不引入 |
+| 安全 | `golang-jwt/jwt/v5` + `golang.org/x/crypto` | JWT 双 Token + bcrypt + HMAC 签名 + AES-256-GCM |
+| K8s 客户端 | `k8s.io/client-go` | 多集群管理，无 kubectl 依赖 |
+| 可观测 | OTel + 自研 Prometheus 文本指标 | `otelx` HTTP/gRPC 自动埋点 + OTLP 导出；零依赖 metrics |
+| 系统采集 | `shirou/gopsutil/v3` | agent 负载上报 |
+| 前端 | Vue 3 + Vite + Pinia + Vue Router | 企业版 SPA（`web/enterprise/`），独立构建部署 |
+| 前端测试 | Vitest + @vue/test-utils + jsdom + Playwright | 单测 + E2E（含 e2e-real 真实后端联调） |
+| 部署 | Helm Chart + docker-compose + systemd | 三套部署形态，详见 [快速启动](#快速启动零依赖-30-秒) 与 [生产部署](#生产部署mysql--redis--tls--多副本) |
+| CI | GitHub Actions | build-test / integration / security / proto / frontend / E2E / image / release |
+
 ### 通信模型
 
 | 通道 | 协议 | 端口 | 用途 |
 |---|---|---|---|
 | 注册 | gRPC (JSON) | 9090 | agent 上报元信息，服务端盖章租户、分配 agentID |
 | 心跳 | gRPC (JSON) | 9090 | agent 每 10s 上报在线状态与负载 |
-| 拉任务 | gRPC (JSON) | 9090 | agent 原子领取 pending 任务（多副本安全） |
+| 拉任务 | gRPC (JSON) | 9090 | agent 原子领取下一条 pending 任务（多副本安全） |
 | 上报结果 | gRPC (JSON) | 9090 | 任务执行完毕回写 stdout/stderr/exitCode |
 | 取消信号 | gRPC (JSON) | 9090 | agent 轮询 PollCancels，立即中止正在执行的任务 |
 | 仪表盘 | HTTP | 8080 | B/S 看板：设备/任务/告警/审计/纳管操作 |
@@ -68,51 +85,138 @@
 | 联邦 | gRPC (mTLS) | 9090 | 跨控制面任务转发/设备视图同步 |
 | Metrics | HTTP | 9091 | Prometheus 指标采集（HTTP 延迟/Go runtime） |
 
+### internal 包职责（30 个）
+
+> 完整设计见 `docs/module-design.md`。下表按 7 个领域分组列出 30 个 internal 包的职责简述。
+
+#### 设备与纳管域
+
+| 包 | 职责 |
+|---|---|
+| `internal/agent` | agent 运行时：经 gRPC 注册/心跳/拉任务/上报结果，本地 worker 池执行 shell/svc/file 任务 |
+| `internal/discover` | **设备发现**：扫描指定网段（TCP 存活），发现可纳管设备（SSH/agent 已安装），返回设备清单供控制面注册 |
+| `internal/discovery` | **控制面服务发现 + 负载均衡**：agent 启动时发现控制面地址（静态/动态），经 balancer 做 failover/round-robin，实现多控制面 HA |
+| `internal/provision` | 自动纳管闭环：install token 签发/消费 + SSH 推送 bootstrap + 候选设备状态机 |
+| `internal/domain` | 纯领域模型（DDD）：与 proto 解耦，含 Cancel/CanRetry/MarkDead 等业务行为方法 + 防腐层 mapper |
+
+#### 控制面域
+
+| 包 | 职责 |
+|---|---|
+| `internal/controlplane` | 控制面核心：HTTP 路由 + gRPC server + Registry + dashboard + 14 个功能域 handler（按 `server_*.go` 拆分） |
+| `internal/config` | 统一配置：116 个 flag，命令行优先 + `OPSMESH_*` 环境变量兜底 |
+| `internal/authctx` | 网关注入身份提取：从 HTTP 头 / gRPC metadata 提取 X-Tenant-ID / X-User-Id / X-User-Roles |
+| `internal/grpcx` | 自研 gRPC 传输层：JSON codec + 手写 ServiceDesc，不依赖 protobuf 代码生成 |
+| `internal/tlsutil` | gRPC TLS / mTLS 工具 + 证书热重载（fsnotify watch，无需重启更新 TLS 配置） |
+| `internal/version` | 构建版本注入：`--version` 与镜像标签 |
+
+#### 任务与编排域
+
+| 包 | 职责 |
+|---|---|
+| `internal/cron` | 5 字段 cron 表达式求值（分 时 日 月 周），F4 定时/周期调度 |
+| `internal/dag` | DAG 引擎：拓扑排序（Kahn）+ 环检测 + 依赖就绪判定，M5 作业编排底座 |
+| `internal/orchestration` | 作业编排（M5）：DAG 调度 + store 阻塞→释放链路 + 画布 + 子工作流 + 条件分支 + 节点级超时重试 |
+| `internal/deploy` | 服务部署（M3）：计划 + fan-out 执行 + Reconcile + Rollback + 三策略（rolling/canary/bluegreen）+ 灰度自适应推进 + 多集群联邦发布 |
+| `internal/approval` | 审批引擎：审批流定义 + 请求提交 + approve/reject/cancel + 越权防护 |
+
+#### 运维能力域
+
+| 包 | 职责 |
+|---|---|
+| `internal/cmdb` | 配置库 CMDB（M2）：模型 + 实例 CRUD + SQL + 采集 + 关系图谱 + 变更审批 |
+| `internal/logstore` | 日志检索（M6）：双后端（Memory/SQL）+ 外部后端（Loki/ES）+ 倒排索引 + offset 分页 |
+| `internal/alertengine` | 告警规则引擎：多条件匹配 + 静默 + 抑制 + 聚合 + 通知分发 |
+| `internal/notify` | 通知渠道：Webhook / 飞书 / 钉钉 / 企业微信 / Slack / 邮件（SMTP）+ 通知模板 |
+| `internal/k8s` | K8s 多集群管理：client-go 封装 + ClusterManager + 资源 CRUD + scale/restart/rollback |
+| `internal/helm` | Helm 应用商店：仓库管理 + Chart 搜索 + Release 部署/回滚 + 预置 24 个应用目录 |
+
+#### 存储与安全域
+
+| 包 | 职责 |
+|---|---|
+| `internal/store` | Store 接口 + MemoryStore + SQLStore：15 个领域子接口 + 编译期双实现断言 + 多租户 schema 隔离 |
+| `internal/secrets` | 密钥管理：env/file/Vault/KMS 多 provider + 工厂模式 + SSRF 防护 |
+| `internal/circuitbreaker` | 通用熔断器：Closed → Open → HalfOpen 状态机，agent 任务执行 + 控制 API 限流降级 |
+
+#### 可观测与基础设施域
+
+| 包 | 职责 |
+|---|---|
+| `internal/logx` | 结构化日志（slog JSON）+ traceID 透传（优先 OTel span context，回退显式注入） |
+| `internal/metrics` | 零依赖 Prometheus 文本指标：计数器/直方图/仪表盘，不引入 prometheus 客户端库 |
+| `internal/otelx` | OTel 集成：HTTP/gRPC 自动埋点 + OTLP 导出 + W3C Trace Context 透传 |
+| `internal/events` | 可插拔事件总线：noop / log / kafka（kafka 走 `//go:build kafka` 编译标签） |
+| `internal/proto` | 共享数据类型：AgentInfo/DeviceInfo/Task 等，控制面与 agent 复用，JSON 友好 |
+
+#### discover vs discovery 边界说明
+
+> **常见混淆点**：`internal/discover` 与 `internal/discovery` 名字相似但职责完全不同，分属不同领域。
+
+| 包 | 领域 | 职责 | 调用方 | 触发时机 |
+|---|---|---|---|---|
+| `internal/discover` | 设备纳管 | **设备发现**：扫描网段（`--segment-cidr`），TCP 存活探测，返回可纳管设备清单 | 控制面 `autoProvisionLoop`（`--discover --auto-provision` 开启时） | 控制面启动后周期扫描，或 `POST /api/v1/provision/auto` 手动触发 |
+| `internal/discovery` | agent 高可用 | **控制面服务发现 + 负载均衡**：agent 启动时解析 `--control-addrs`（逗号分隔多地址），经 balancer（failover/round-robin/static）选择控制面端点 | agent 启动时 + gRPC 连接断开重连时 | agent 进程启动 + 连接故障切换 |
+
+简记：**discover 找设备（控制面→网段），discovery 找控制面（agent→控制面）**。两者均无相互依赖，分属控制面与 agent 两侧。
+
 ---
 
 ## 功能矩阵
 
 > 成熟度图例：✅ 功能完整（CI 验证中） ｜ 详见 `DELIVERY.md` §7 CI 状态。CI 集成测试/安全扫描/lint/race 检测需 GitHub Actions runner 真跑，当前标记「阻塞·待外部」。
+>
+> 14 个功能域对齐 `docs/feature-design.md` 的 F1–F18 功能模块编号与 `docs/product-roadmap.md` 的 M1–M4 里程碑编号，覆盖 OpsMesh 全部已落地能力。
+
+| # | 功能域 | 关键能力 | 状态 | 主入口 |
+|---|---|---|---|---|
+| 1 | **设备管理** | Agent 即设备（零依赖）/ 真实网段发现（TCP 存活扫描，`--discover`）/ 候选设备纳管（discovered → provisioning → onboarded）/ 设备退役（离线超龄自动归档）/ SSH 自动推送 bootstrap / 设备指纹采集 | ✅ | `internal/controlplane/server_devices.go`、`internal/discover/`、`internal/provision/` |
+| 2 | **任务执行** | Shell 命令 / 系统服务管理（systemctl）/ 文件分发（原子写入 + rename）/ 超时自动中止（exec.CommandContext）/ 失败重试 + 死信队列 / 任务取消（pending 拦截 + running 强杀）/ 定时周期调度（5 字段 cron）/ 批量下发 / 租约回收 / 审批门禁 | ✅ | `internal/controlplane/server_tasks.go`、`internal/agent/`、`internal/cron/` |
+| 3 | **监控告警** | 任务死信 → critical 告警 / 告警面板 + HTTP 查询 / 告警规则引擎（多条件 + 静默 + 抑制 + 聚合）/ Webhook/飞书/钉钉/企业微信/Slack/邮件多通道 / 告警规则 CRUD / 通知模板 | ✅ | `internal/controlplane/server_alerts.go`、`internal/alertengine/`、`internal/notify/` |
+| 4 | **CMDB** | 模型 + 实例 CRUD + SQL 持久化 + 采集自动化 / 关系图谱可视化（SVG 力导向图）/ 变更审批流 / 全文本检索倒排索引（TF-IDF + 短语/布尔/通配符） | ✅ | `internal/cmdb/`、`internal/controlplane/cmdb_*.go` |
+| 5 | **日志检索** | 双后端（Memory/SQL）+ 外部后端（Loki/ES）/ offset 分页 / 关键词 + 级别 + 时间窗过滤 / agent gRPC 上报日志 / 倒排索引 | ✅ | `internal/logstore/` |
+| 6 | **编排部署** | 服务部署计划 + fan-out 执行 + Reconcile + Rollback / 三策略（rolling/canary/bluegreen）/ 发布门禁（失败率/延迟阈值）+ 自动回滚 + Promote 拥级 / 灰度自适应推进 / 多集群联邦发布 | ✅ | `internal/deploy/`、`internal/controlplane/server_deploy.go` |
+| 7 | **OS 优化** | 14+ 预置模板（内核/网络/安全/时间同步/SSH/磁盘/系统/用户）/ 在线 CRUD / 在指定 agent 执行 / 模板 store 持久化 + 幂等 seed | ✅ | `internal/controlplane/os_optimize.go` |
+| 8 | **中间件部署** | 10+ 中间件（MySQL/Redis/Kafka/Nginx/Tomcat/Zookeeper/PostgreSQL/MongoDB/RabbitMQ/Elasticsearch）× docker/systemd 双模式 / CRUD + 实例查询 + 卸载 | ✅ | `internal/controlplane/middleware_deploy.go` |
+| 9 | **K8s 管理** | 多集群接入（client-go，无 kubectl 依赖）/ 集群增删查 + 测试连接 / 资源只读 + 写（namespace/pod/deployment/service/configmap/secret/node）/ scale/restart/rollback / 租户隔离 / kubeconfig AES-256-GCM 加密落盘 | ✅ | `internal/controlplane/k8s_cluster.go`、`k8s_manage.go`、`internal/k8s/` |
+| 10 | **用户中心** | 注册/登录/RBAC（用户/角色/权限三表）/ JWT 双 Token（at/rt HttpOnly Cookie）/ 防爆破 + 失败锁账号 / 注册审批 / 首登强制改密 / Refresh Token 持久化 + 设备指纹绑定 | ✅ | `internal/controlplane/auth*.go` |
+| 11 | **审计日志** | 100% 留痕（AuditEvent → audit_log / memory ring）/ 审计检索（租户/动作/时间窗过滤）/ 等保三级 ≥6 月导出 / bootstrap 端点审计 | ✅ | `internal/controlplane/server_audits.go` |
+| 12 | **联邦** | 跨网段任务转发 / 联邦设备视图聚合 / 独立 mTLS 监听 / HMAC 签名验签（防伪造/重放）/ 多集群联邦发布协调 | ✅ | `internal/controlplane/federation.go`、`internal/deploy/federation.go` |
+| 13 | **SSE 实时推送** | 任务状态/告警/设备上下线事件流 / 替代 5s 轮询 / 心跳保活 / 契约守护测试（9 事件名 + 信封 + 心跳） | ✅ | `internal/controlplane/sse.go`、`docs/sse-protocol.md` |
+| 14 | **工作流** | DAG 引擎（拓扑排序 + 环检测 + 依赖就绪判定）/ 子工作流展开 + 条件分支 + 节点级超时重试 + 执行历史回放 / 画布编辑 / cron 触发 + reconcile | ✅ | `internal/orchestration/`、`internal/dag/` |
+
+### 横切能力
 
 | 领域 | 功能 | 状态 |
 |---|---|---|
-| **任务** | Shell 命令执行 | ✅ |
-| | 系统服务管理 (systemctl start/stop/restart/status) | ✅ |
-| | 文件分发（原子写入 + rename） | ✅ |
-| | 超时自动中止 (exec.CommandContext) | ✅ |
-| | 失败重试（可配上限，超限进死信） | ✅ |
-| | 任务取消（pending 拦截 + running 强杀） | ✅ |
-| | 定时/周期调度（5 字段 cron） | ✅ |
-| | 批量下发 | ✅ |
-| **设备** | Agent 即设备（默认，零依赖） | ✅ |
-| | 真实网段发现 (TCP 存活扫描) | ✅ --discover |
-| | 候选设备纳管（discovered → provisioning → onboarded） | ✅ B1 |
-| | 设备退役（离线/超龄自动归档） | ✅ |
 | **HA** | 多副本 leader 选举 (leader_lease 表) | ✅ |
 | | 超期任务自动回收 (reclaimLoop) | ✅ |
 | | 多控制面 agent 端 failover (逗号分隔地址) | ✅ |
 | **安全** | 租户行级隔离 (TenantID 行锁) | ✅ |
 | | RBAC 头注入 (X-Tenant-ID / X-User-Id / X-User-Roles) | ✅ |
 | | 生产模式 (--production：require-auth 默认开) | ✅ |
-| | gRPC TLS / mTLS | ✅ |
-| | 审计 100% 留痕 (AuditEvent → audit_log / memory ring) | ✅ |
-| | 审计可查 (租户/动作/时间窗过滤) | ✅ |
-| **告警** | 任务死信 → critical 告警 | ✅ |
-| | 告警面板 / HTTP 查询 | ✅ |
+| | gRPC TLS / mTLS + HMAC 签名 | ✅ |
+| | CSP / SSRF / 限流 / 请求体 1 MiB 上限 | ✅ |
 | **观测** | Prometheus 文本指标 (agent/队列深度/duration) | ✅ |
-| | /healthz 健康检查 | ✅ |
+| | /healthz 深度检查 + /readyz 就绪探针 | ✅ |
+| | OTel 链路追踪（HTTP/gRPC 自动埋点 + OTLP 导出） | ✅ |
 | **事件** | 可插拔事件总线 (noop/log/kafka) | ✅ |
 | **部署** | 单二进制双模式 (--mode=controlplane|agent) | ✅ |
 | | 零依赖启动 (MemoryStore, 无 MySQL/Redis) | ✅ |
 | | 生产部署 (MySQL + Redis, 多副本) | ✅ |
 | | 容器镜像 (多阶段 Dockerfile) | ✅ |
-| | GitHub Actions CI (lint/test/security/image) | ✅ |
+| | Helm Chart / docker-compose / systemd 三套部署 | ✅ |
+| | GitHub Actions CI (lint/test/security/image/e2e-real) | ✅ |
 
 ---
 
 ## 快速启动（零依赖，30 秒）
 
 > **平台支持**：控制面支持 Linux / Windows / macOS；**agent 仅正式支持 Linux**（任务执行依赖 shell/systemctl/rlimit，Windows 仅可编译、未提供执行能力，详见 `internal/agent/exec_other.go`）。
+>
+> 三种部署方式按场景选择：**二进制直跑**（开发/体验）→ **docker-compose**（本地全栈）→ **Helm Chart**（K8s 生产）。systemd 部署见 [生产部署](#生产部署mysql--redis--tls--多副本) 章节末尾。
+
+### 方式一：二进制直跑（零依赖，开发体验）
 
 ```bash
 # 1. 编译
@@ -128,6 +232,43 @@ go build -o opsmesh ./cmd/opsmesh
 #    看到一个 agent 已上线，设备已纳管。
 ```
 
+### 方式二：docker-compose（本地全栈，含 MySQL + Redis）
+
+`docker-compose.yaml` 一键拉起 controlplane + agent + mysql + redis，适合本地联调与 E2E 测试：
+
+```bash
+# 设置必需的环境变量（安全修复：不再内置弱口令）
+export MYSQL_ROOT_PASSWORD=$(openssl rand -hex 16)
+export OPSMESH_JWT_SECRET=$(openssl rand -hex 32)
+export OPSMESH_PROVISION_SECRET=$(openssl rand -hex 32)
+
+# 启动全栈（--build 强制重建镜像，避免缓存旧版本）
+docker compose up -d --build
+
+# 查看状态
+docker compose ps
+# 控制面: http://localhost:8080
+# metrics: http://localhost:9091/metrics
+
+# 停止
+docker compose down
+```
+
+### 方式三：Helm Chart（K8s 生产部署）
+
+仓库自带完整 Helm Chart（`deploy/helm/opsmesh/`，含 17 个模板），一键部署控制面 + agent DaemonSet + MySQL + Redis：
+
+```bash
+# 开发/体验：单副本 + memory store
+helm install opsmesh ./deploy/helm/opsmesh -n opsmesh --create-namespace
+
+# 生产：3 副本 + mysql 持久化 + TLS + require-auth
+helm install opsmesh ./deploy/helm/opsmesh -n opsmesh --create-namespace \
+  -f deploy/helm/opsmesh/values-production.yaml \
+  --set controlplane.jwtSecret=$(openssl rand -hex 32) \
+  --set controlplane.provisionSecret=$(openssl rand -hex 32)
+```
+
 ### 演示模式
 
 控制面加 `--demo` 启动，每个 agent 注册时自动预置一条 `uname -a` 示例任务，即刻体验下发→执行→上报闭环：
@@ -139,10 +280,12 @@ go build -o opsmesh ./cmd/opsmesh
 ### 配置速查
 
 ```bash
-# 所有配置项
+# 所有配置项（116 个 flag）
 ./opsmesh --help
 # 查看版本
 ./opsmesh --version
+# 独立健康检查（供 docker-compose healthcheck，不依赖 curl/shell）
+./opsmesh --health --control-addr=http://127.0.0.1:8080
 ```
 
 ---
@@ -199,6 +342,48 @@ Chart 要点：
 > 旧版文档曾标注"Helm 规划中"，与当前仓库实际不符——现已纠正：Chart 已落地可用。Argo CD ApplicationSet 网段批量渲染仍属规划中能力。
 
 容器编排（非 Helm 路径）：`docker-compose.yaml`（controlplane + agent + mysql + redis 一键起）、`Dockerfile`（控制面多阶段）、`Dockerfile.agent`（agent 多阶段）。
+
+### systemd 部署（裸机/VM 生产）
+
+`deploy/systemd/` 提供 systemd unit 文件 + env 模板，适合裸机或 VM 部署（不含 K8s 的环境）：
+
+```bash
+# 1. 分发二进制
+sudo install -m 0755 opsmesh /usr/local/bin/opsmesh
+
+# 2. 准备配置（编辑 env 文件，填入实际 MySQL/Redis/TLS/JWT 参数）
+sudo cp deploy/systemd/opsmesh-controlplane.service /etc/systemd/system/
+sudo cp deploy/systemd/opsmesh-controlplane.env /etc/opsmesh/opsmesh-controlplane.env
+sudo $EDITOR /etc/opsmesh/opsmesh-controlplane.env
+# 关键项：
+#   OPSMESH_STORE=mysql
+#   OPSMESH_MYSQL_DSN=user:pass@tcp(mysql:3306)/ops_device?charset=utf8mb4
+#   OPSMESH_REDIS_ADDR=redis:6379
+#   OPSMESH_REPLICAS=2
+#   OPSMESH_PRODUCTION=true
+#   OPSMESH_JWT_SECRET=<openssl rand -hex 32>
+#   OPSMESH_PROVISION_SECRET=<openssl rand -hex 32>
+
+# 3. 启用并启动
+sudo systemctl daemon-reload
+sudo systemctl enable --now opsmesh-controlplane
+
+# 4. agent 端
+sudo cp deploy/systemd/opsmesh-agent.service /etc/systemd/system/
+sudo cp deploy/systemd/opsmesh-agent.env /etc/opsmesh/opsmesh-agent.env
+sudo $EDITOR /etc/opsmesh/opsmesh-agent.env
+# 关键项：
+#   OPSMESH_MODE=agent
+#   OPSMESH_SEGMENT=seg-a
+#   OPSMESH_CONTROL_ADDRS=cp1:9090,cp2:9090
+sudo systemctl enable --now opsmesh-agent
+
+# 5. 查看状态
+systemctl status opsmesh-controlplane
+journalctl -u opsmesh-controlplane -f
+```
+
+systemd unit 已含 19 条安全加固指令（NoNewPrivileges / ProtectSystem / ProtectHome / PrivateTmp / ProtectKernelTunables / ProtectKernelModules / ProtectControlGroups / RestrictAddressFamilies / RestrictNamespaces / SystemCallFilter 等），无需额外配置。
 
 ### JWT 密钥运维指引
 
@@ -699,29 +884,44 @@ server {
 
 ```
 cmd/opsmesh/              ← 入口 main：解析 --mode 分派 controlplane / agent
-internal/
+internal/                 ← 30 个包，按 7 个领域分组（详见上文"internal 包职责"）
 ├── agent/                ← agent 运行时（注册/心跳/worker 池/执行器）
+├── alertengine/          ← 告警规则引擎（多条件 + 静默 + 抑制 + 聚合）
+├── approval/             ← 审批引擎（审批流 + 请求 + approve/reject）
 ├── authctx/              ← HTTP 头 / gRPC metadata 身份提取
-├── cmdb/                 ← 配置库 CMDB（M2）：模型 + 实例 CRUD + SQL + 采集
-├── config/               ← 统一配置（flag + env 兜底）
-├── controlplane/         ← 控制面（HTTP 路由/gRPC server/Registry/dashboard）
+├── circuitbreaker/       ← 通用熔断器（Closed→Open→HalfOpen 状态机）
+├── cmdb/                 ← 配置库 CMDB（M2）：模型 + 实例 CRUD + SQL + 采集 + 关系图谱
+├── config/               ← 统一配置（116 个 flag + env 兜底）
+├── controlplane/         ← 控制面（HTTP 路由/gRPC server/Registry/dashboard + 14 个功能域 handler）
 ├── cron/                 ← 5 字段 cron 表达式匹配
-├── dag/                  ← DAG 引擎（M5 作业编排）：节点状态机 + 边触发 + 环检测
-├── deploy/               ← 服务部署（M3）：计划 + fan-out 执行 + Reconcile + Rollback
-├── discover/             ← TCP 存活扫描（网段发现）
-├── domain/               ← 纯领域模型 + 防腐层 mapper
+├── dag/                  ← DAG 引擎（M5 作业编排）：拓扑排序 + 环检测 + 依赖就绪判定
+├── deploy/               ← 服务部署（M3）：计划 + fan-out + Reconcile + Rollback + 灰度 + 联邦发布
+├── discover/             ← 设备发现：TCP 存活扫描网段（控制面→网段找设备）
+├── discovery/            ← 控制面服务发现 + 负载均衡（agent→控制面 failover/round-robin）
+├── domain/               ← 纯领域模型（DDD）+ 防腐层 mapper
 ├── events/               ← 可插拔事件总线（noop/log/kafka）
 ├── grpcx/                ← gRPC ServiceDesc / JSON codec / 消息类型
-├── logstore/             ← 日志检索（M6）：双后端(Memory/SQL) + 查询 API + offset 分页
-├── logx/                 ← slog 封装 + traceID
+├── helm/                 ← Helm 应用商店（仓库/Chart/Release + 24 个预置应用）
+├── k8s/                  ← K8s 多集群管理（client-go + ClusterManager + 资源 CRUD）
+├── logstore/             ← 日志检索（M6）：双后端(Memory/SQL) + Loki/ES + 倒排索引
+├── logx/                 ← slog 封装 + traceID（优先 OTel span）
 ├── metrics/              ← 零依赖 Prometheus 文本指标
-├── notify/               ← 通知渠道（M7）：Webhook / 飞书 / 钉钉
-├── orchestration/        ← 作业编排（M5）：DAG 调度 + store 阻塞→释放链路 + 画布
+├── notify/               ← 通知渠道：Webhook / 飞书 / 钉钉 / 企业微信 / Slack / 邮件
+├── orchestration/        ← 作业编排（M5）：DAG 调度 + 子工作流 + 条件分支 + 节点级超时重试
+├── otelx/                ← OTel 集成（HTTP/gRPC 自动埋点 + OTLP 导出）
 ├── proto/                ← 共享数据类型（AgentInfo/DeviceInfo/Task/…）
-├── store/                ← Store 接口 + MemoryStore + SQLStore
-├── tlsutil/              ← gRPC TLS / mTLS 工具
+├── provision/            ← 自动纳管闭环（install token + SSH 推送 + 候选设备状态机）
+├── secrets/              ← 密钥管理（env/file/Vault/KMS 多 provider）
+├── store/                ← Store 接口 + MemoryStore + SQLStore（15 个领域子接口）
+├── tlsutil/              ← gRPC TLS / mTLS 工具 + 证书热重载
 └── version/              ← 构建版本注入
+operator/                 ← K8s Operator 子模块（独立 go.mod，controller-runtime CRD）
+web/enterprise/           ← Vue3 企业版前端（独立构建部署）
+deploy/                   ← 部署资产：helm/ + systemd/ + docker-compose.yaml + Dockerfile*
+docs/                     ← 23 个设计文档（产品/架构/数据库/接口/安全/UI/模块/功能/测试/运维/AI/多系统/部署场景）
 ```
+
+> 包职责详细说明见上文 [internal 包职责](#internal-包职责30-个) 章节，完整设计见 `docs/module-design.md`。
 
 ---
 

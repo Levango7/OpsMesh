@@ -103,7 +103,10 @@ func (s *SQLStore) DeleteAlertRule(id string) bool {
 		log.Printf("[store] DeleteAlertRule 失败 %s: %v", id, err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
 
@@ -214,7 +217,10 @@ func (s *SQLStore) AckAlert(id, tenantID, by string) bool {
 		log.Printf("[store] AckAlert 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
 
@@ -233,7 +239,10 @@ func (s *SQLStore) SilenceAlert(id, tenantID, by string, until time.Time, commen
 		log.Printf("[store] SilenceAlert 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
 

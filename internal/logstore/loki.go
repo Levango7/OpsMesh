@@ -99,7 +99,10 @@ func (s *LokiStore) Query(ctx context.Context, q Query) ([]Entry, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("loki query_range: status=%d read body: %w", resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("loki query_range: status=%d body=%s", resp.StatusCode, string(body))
 	}
 
@@ -124,7 +127,10 @@ func (s *LokiStore) Query(ctx context.Context, q Query) ([]Entry, error) {
 			if len(v) < 2 {
 				continue
 			}
-			ts, _ := strconv.ParseInt(v[0], 10, 64)
+			ts, tsErr := strconv.ParseInt(v[0], 10, 64)
+			if tsErr != nil {
+				continue // 跳过时间戳非法的行
+			}
 			e := Entry{
 				TenantID:  tenantID,
 				DeviceID:  deviceID,

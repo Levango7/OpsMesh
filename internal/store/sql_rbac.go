@@ -125,7 +125,10 @@ func (s *SQLStore) UpdateUser(u *User) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
 
@@ -138,7 +141,10 @@ func (s *SQLStore) ChangePassword(userID, newPasswordHash string) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
 
@@ -148,7 +154,10 @@ func (s *SQLStore) DeleteUser(id string) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
 
@@ -205,7 +214,10 @@ func (s *SQLStore) UpdateRole(r *Role) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
 
@@ -215,7 +227,10 @@ func (s *SQLStore) DeleteRole(id string) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
 

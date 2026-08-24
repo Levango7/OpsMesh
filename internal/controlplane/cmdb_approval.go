@@ -19,7 +19,9 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -516,7 +518,11 @@ func (s *Server) cmdbChangeApprove(w http.ResponseWriter, r *http.Request, id st
 	var body struct {
 		Comment string `json:"comment"`
 	}
-	_ = decodeJSONBody(w, r, &body)
+	// comment 为可选字段：空 body 视为空注释；非法 JSON 返回 400。
+	if derr := decodeJSONBody(w, r, &body); derr != nil && !errors.Is(derr, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
 	if err := s.cmdbApprovalMgr.ApproveChange(id, actx.UserID, body.Comment); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -546,7 +552,11 @@ func (s *Server) cmdbChangeReject(w http.ResponseWriter, r *http.Request, id str
 	var body struct {
 		Comment string `json:"comment"`
 	}
-	_ = decodeJSONBody(w, r, &body)
+	// comment 为可选字段：空 body 视为空注释；非法 JSON 返回 400。
+	if derr := decodeJSONBody(w, r, &body); derr != nil && !errors.Is(derr, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
 	if err := s.cmdbApprovalMgr.RejectChange(id, actx.UserID, body.Comment); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return

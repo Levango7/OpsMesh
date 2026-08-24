@@ -241,6 +241,10 @@ func (h *Handler) writeCICSV(w http.ResponseWriter, items []CiItem) {
 		_ = cw.Write([]string{it.ID, it.CiType, it.Name, it.Status, it.ApprovalStatus, it.Source, it.AgentID, it.DeviceID, ciAttrsToCSV(it.Attrs)})
 	}
 	cw.Flush()
+	// 单行 Write 的错误由 Flush 后的 Error() 汇总返回（csv.Writer 语义）。
+	if flushErr := cw.Error(); flushErr != nil {
+		log.Printf("[cmdb] CI CSV 导出写响应失败: %v", flushErr)
+	}
 }
 
 // handleCIImport 处理 POST /api/v1/cmdb/ci/import。

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -31,9 +32,11 @@ func (s *SQLCiStore) seedTypes() {
 		{"app", "应用"},
 		{"cluster", "集群"},
 	} {
-		_, _ = s.db.ExecContext(ctx,
+		if _, err := s.db.ExecContext(ctx,
 			`INSERT IGNORE INTO ci_types (name, display_name, builtin, created_at) VALUES (?, ?, 1, NOW())`,
-			t.name, t.display)
+			t.name, t.display); err != nil {
+			log.Printf("[cmdb] seedTypes %s: %v", t.name, err)
+		}
 	}
 }
 
@@ -72,7 +75,7 @@ func (s *SQLCiStore) CreateCiType(ctx context.Context, t *CiType) error {
 	if err != nil {
 		return fmt.Errorf("CreateCiType: %w", err)
 	}
-	if id, _ := res.LastInsertId(); id > 0 {
+	if id, lidErr := res.LastInsertId(); lidErr == nil && id > 0 {
 		t.ID = int(id)
 	}
 	t.Builtin = false
@@ -152,7 +155,10 @@ func (s *SQLCiStore) UpdateCI(ctx context.Context, ci *CiItem) error {
 	if err != nil {
 		return fmt.Errorf("UpdateCI: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("UpdateCI rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return fmt.Errorf("CI %s not found", ci.ID)
 	}
@@ -166,7 +172,10 @@ func (s *SQLCiStore) DeleteCI(ctx context.Context, id, tenantID string) error {
 	if err != nil {
 		return fmt.Errorf("DeleteCI: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("DeleteCI rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return fmt.Errorf("CI %s not found", id)
 	}
@@ -211,7 +220,10 @@ func (s *SQLCiStore) SetApproval(ctx context.Context, id, tenantID, approvalStat
 	if err != nil {
 		return fmt.Errorf("SetApproval: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("SetApproval rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return fmt.Errorf("CI %s not found", id)
 	}
@@ -254,7 +266,10 @@ func scanCI(s scanner) (*CiItem, error) {
 	}
 	ci.Attrs = make(map[string]string)
 	if attrsStr.Valid && attrsStr.String != "" {
-		_ = json.Unmarshal([]byte(attrsStr.String), &ci.Attrs)
+		// attrs 解析失败时保留空 map：不让单行脏数据导致整条 CI 无法读取。
+		if uErr := json.Unmarshal([]byte(attrsStr.String), &ci.Attrs); uErr != nil {
+			ci.Attrs = make(map[string]string)
+		}
 	}
 	return &ci, nil
 }
@@ -271,7 +286,9 @@ func (s *SQLCiStore) CreateRelation(ctx context.Context, rel *CiRelation) error 
 	if err != nil {
 		return fmt.Errorf("CreateRelation: %w", err)
 	}
-	rel.ID, _ = res.LastInsertId()
+	if id, lidErr := res.LastInsertId(); lidErr == nil {
+		rel.ID = id
+	}
 	rel.CreatedAt = now
 	return nil
 }
@@ -283,7 +300,10 @@ func (s *SQLCiStore) DeleteRelation(ctx context.Context, id int64, tenantID stri
 	if err != nil {
 		return fmt.Errorf("DeleteRelation: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("DeleteRelation rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return fmt.Errorf("relation %d not found", id)
 	}
@@ -327,10 +347,11 @@ func (s *SQLCiStore) GetCIRelationGraph(ctx context.Context, ciID, tenantID stri
 	withTargets := make([]RelationWithTarget, 0, len(rels))
 	for _, rel := range rels {
 		var sourceName, targetName, targetType string
-		if src, _ := s.GetCI(ctx, rel.SourceCIID, ""); src != nil {
+		// 端点 CI 可能已被删除/越权，Get 失败按无名称展示（不阻断拓扑渲染）。
+		if src, srcErr := s.GetCI(ctx, rel.SourceCIID, ""); srcErr == nil && src != nil {
 			sourceName = src.Name
 		}
-		if tgt, _ := s.GetCI(ctx, rel.TargetCIID, ""); tgt != nil {
+		if tgt, tgtErr := s.GetCI(ctx, rel.TargetCIID, ""); tgtErr == nil && tgt != nil {
 			targetName = tgt.Name
 			targetType = tgt.CiType
 		}
@@ -354,7 +375,10 @@ func (s *SQLCiStore) CreateAttrTemplate(ctx context.Context, tmpl *CiAttrTemplat
 	if err != nil {
 		return fmt.Errorf("CreateAttrTemplate: %w", err)
 	}
-	id, _ := res.LastInsertId()
+	id, lidErr := res.LastInsertId()
+	if lidErr != nil {
+		return fmt.Errorf("CreateAttrTemplate last insert id: %w", lidErr)
+	}
 	tmpl.ID = int(id)
 	return nil
 }
@@ -398,7 +422,10 @@ func (s *SQLCiStore) UpdateAttrTemplate(ctx context.Context, tmpl *CiAttrTemplat
 	if err != nil {
 		return fmt.Errorf("UpdateAttrTemplate: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("UpdateAttrTemplate rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return fmt.Errorf("template %d not found", tmpl.ID)
 	}
@@ -412,7 +439,10 @@ func (s *SQLCiStore) DeleteAttrTemplate(ctx context.Context, id int, tenantID st
 	if err != nil {
 		return fmt.Errorf("DeleteAttrTemplate: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("DeleteAttrTemplate rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return fmt.Errorf("template %d not found", id)
 	}
@@ -430,7 +460,10 @@ func scanRelation(s scanner) (*CiRelation, error) {
 	}
 	rel.Attrs = make(map[string]string)
 	if attrsJSON.Valid && attrsJSON.String != "" {
-		_ = json.Unmarshal([]byte(attrsJSON.String), &rel.Attrs)
+		// attrs 解析失败时保留空 map：不让单行脏数据导致整条关系无法读取。
+		if uErr := json.Unmarshal([]byte(attrsJSON.String), &rel.Attrs); uErr != nil {
+			rel.Attrs = make(map[string]string)
+		}
 	}
 	return &rel, nil
 }

@@ -48,6 +48,15 @@ linters:
         - (*bufio.Writer).WriteString
         - (*bytes.Buffer).Write
         - (io.Writer).Write
+        # json.Marshal 仅在遇到 channel/func 等不支持类型时才报错；
+        # 仓库持久化/传输模型均为纯数据结构（map/slice/struct），序列化失败属不可能事件。
+        - encoding/json.Marshal
+        # HTTP 响应写回：状态码已发出后调用方无法补救（只能记日志），
+        # 与 std-error-handling 预设对 net/http 的处理一致。
+        - (*encoding/json.Encoder).Encode
+        - (net/http.ResponseWriter).Write
+        # csv.Writer 单行 Write 的错误在 Flush 后经 Error() 汇总检查（导出处已检查）。
+        - (*encoding/csv.Writer).Write
     govet:
       enable-all: true
       # shadow 是 Go 官方 vet 默认关闭的争议检查（err 变量遮蔽在闭包/作用域
@@ -94,7 +103,7 @@ linters:
       # 迁移到 grpc.NewClient 涉及连接语义变化，有意保留，另行跟踪。
       - linters:
           - staticcheck
-        text: "SA1019: grpc.DialContext is deprecated"
+        text: "SA1019: google.golang.org/grpc.DialContext is deprecated"
       # SA1012: logx.Trace 专项测试故意传 nil 验证不 panic（该用例即契约）。
       - linters:
           - staticcheck
@@ -104,6 +113,49 @@ linters:
       - linters:
           - errcheck
         text: "tx.Rollback"
+      # === errcheck 精细豁免（设计上可忽略返回值的调用，与 exclude-functions 配套）===
+      # agent 指标采集的服务探测：sc qc / systemctl is-enabled 退出码非 0 是常态
+      # （服务不存在/disabled 即非 0），输出内容仍需解析，错误本身无信息量。
+      - linters:
+          - errcheck
+        path: internal/agent/metrics_collect\.go
+        text: "os/exec"
+      # gRPC failover balancer 失败通知：MarkFailed 失败仅表示本次不切换主备，
+      # 下次 invoke 会再次触发，无补救动作可做。
+      - linters:
+          - errcheck
+        text: "MarkFailed"
+      # logstore 日志桥接（agent 日志上报 / 任务结果落地）：日志落地失败不影响主流程。
+      - linters:
+          - errcheck
+        text: "ls\\.Append"
+      # 静默规则引擎同步（store 已落库成功，内存索引同步失败下次重启自愈）。
+      - linters:
+          - errcheck
+        text: "alertSilencer\\."
+      # K8s 连接测试失败时回写 offline 状态：状态回写失败仅影响面板展示，
+      # 测试结果已正常返回给前端。
+      - linters:
+          - errcheck
+        path: internal/controlplane/k8s_cluster\.go
+        text: "SaveK8sCluster"
+      # 灰度自动推进后台循环：checkAndAdvance 内部已 recordError 记录并自监控终态退出。
+      - linters:
+          - errcheck
+        text: "checkAndAdvance"
+      # 工作流运行历史写入：历史记录失败不影响主流程（Trigger 主链路已成功）。
+      - linters:
+          - errcheck
+        text: "store\\.CreateRun"
+      # provision SSH 超时/取消时向远端发 SIGTERM：会话即将 Close，信号失败无意义。
+      - linters:
+          - errcheck
+        text: "session\\.Signal"
+      # 静态服务发现启动注册：纯内存 map 写入不会失败（接口保留给未来 etcd 后端）。
+      - linters:
+          - errcheck
+        path: internal/discovery/static\.go
+        text: "d\\.Register"
       # G104（Errors unhandled）精细豁免：原 ci.yml gosec 整类排除 G104，
       # 现下放至 golangci-lint 做精细控制。以下路径/模式为设计上可忽略返回值的调用，
       # 与 errcheck exclude-functions 对齐（events.Bus.Publish / bufio/io 写入 / defer Rollback）。

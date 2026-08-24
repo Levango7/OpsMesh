@@ -218,7 +218,9 @@ func TestServerStart_NilServer(t *testing.T) {
 	// Start 方法通常需要完整 Server，这里仅测试不 panic
 	// 实际 Start 会启动 HTTP server，不适合单元测试
 	s := &Server{store: store.NewMemoryStore(), cfg: &config.Config{}}
-	_ = s // 避免未使用警告
+	if s.store == nil || s.cfg == nil {
+		t.Fatal("server 字段应已就绪")
+	}
 }
 
 // =============================================================================

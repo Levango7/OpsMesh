@@ -334,23 +334,6 @@ func TestCanaryCreate_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-// setupCanary 创建一个灰度发布并返回 canaryID。
-func setupCanary(t *testing.T) *Server {
-	t.Helper()
-	s := newBatchTestServer()
-	s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "default"})
-	body := `{"deviceIDs":["d1","d2"],"command":"echo hi","strategy":"percentage","percentage":50}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/canary", strings.NewReader(body))
-	req.Header.Set("X-Tenant-ID", "default")
-	req.Header.Set("X-User-ID", "u1")
-	rec := httptest.NewRecorder()
-	s.handleCanaryCreate(rec, req)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("setup canary: %d body=%s", rec.Code, rec.Body.String())
-	}
-	return s
-}
-
 func TestCanaryStatus_NotFound(t *testing.T) {
 	s := newBatchTestServer()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/canary/nope", nil)

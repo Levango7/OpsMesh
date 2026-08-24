@@ -145,7 +145,10 @@ func (f *FederationManager) ForwardTask(ctx context.Context, peerURL string, tas
 		return nil, fmt.Errorf("peer %s unreachable: %w", peerURL, err)
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return nil, fmt.Errorf("read peer %s response: %w", peerURL, readErr)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("peer %s rejected task: status=%d body=%s", peerURL, resp.StatusCode, string(respBody))
 	}
@@ -231,7 +234,10 @@ func (f *FederationManager) fetchPeerDevices(ctx context.Context, peerURL, tenan
 		return nil, fmt.Errorf("peer %s unreachable: %w", peerURL, err)
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return nil, fmt.Errorf("read peer %s devices: %w", peerURL, readErr)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("peer %s status=%d body=%s", peerURL, resp.StatusCode, string(respBody))
 	}

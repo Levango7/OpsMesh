@@ -59,10 +59,16 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if l := r.URL.Query().Get("limit"); l != "" {
-			_, _ = fmt.Sscanf(l, "%d", &q.Limit)
+			if n, scanErr := fmt.Sscanf(l, "%d", &q.Limit); scanErr != nil || n != 1 {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid limit"})
+				return
+			}
 		}
 		if o := r.URL.Query().Get("offset"); o != "" {
-			_, _ = fmt.Sscanf(o, "%d", &q.Offset)
+			if n, scanErr := fmt.Sscanf(o, "%d", &q.Offset); scanErr != nil || n != 1 {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid offset"})
+				return
+			}
 		}
 		// 结构化查询语法预校验：q 非空时解析失败返回 400（语法错误，非服务端故障）。
 		if q.Q != "" {
@@ -121,6 +127,7 @@ func (h *Handler) RecordTaskResult(ctx context.Context, tenantID, agentID, taskI
 	}
 	ts := time.Now()
 	if stdout != "" {
+		// 落地失败不影响任务结果上报主流程。
 		_ = h.ls.Append(ctx, &Entry{
 			TenantID: tenantID, AgentID: agentID, TaskID: taskID,
 			Timestamp: ts, Level: "info", Source: "task", Message: stdout,

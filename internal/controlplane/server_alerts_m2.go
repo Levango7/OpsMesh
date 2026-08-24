@@ -924,7 +924,9 @@ func buildChannel(c *store.NotifyChannel, provider secrets.SecretProvider) (noti
 	case "email":
 		port := 25
 		if p := cfg["port"]; p != "" {
-			_, _ = fmt.Sscanf(p, "%d", &port)
+			if n, scanErr := fmt.Sscanf(p, "%d", &port); scanErr != nil || n != 1 {
+				port = 25
+			}
 		}
 		var to []string
 		if t := cfg["to"]; t != "" {

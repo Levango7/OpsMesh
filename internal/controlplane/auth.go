@@ -501,7 +501,7 @@ func (g *loginGuard) startSweep(interval time.Duration) {
 // stopSweep 通知 startSweep 启动的后台 goroutine 退出（关闭 done chan）。
 // 幂等：用 recover 容忍多次调用（重复 close 已关闭 chan 会 panic）。
 func (g *loginGuard) stopSweep() {
-	defer func() { _ = recover() }()
+	defer func() { recover() }() //nolint:errcheck // recover 返回值非 error，吞 panic 即为语义
 	close(g.done)
 }
 

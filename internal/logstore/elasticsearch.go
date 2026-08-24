@@ -83,7 +83,10 @@ func (s *ESStore) Query(ctx context.Context, q Query) ([]Entry, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("es search: status=%d read body: %w", resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("es search: status=%d body=%s", resp.StatusCode, string(b))
 	}
 

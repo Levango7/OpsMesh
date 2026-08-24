@@ -143,7 +143,11 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			dt, _ := h.store.Get(r.Context(), id, actx.TenantID)
+			dt, gerr := h.store.Get(r.Context(), id, actx.TenantID)
+			if gerr != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": gerr.Error()})
+				return
+			}
 			writeJSON(w, http.StatusOK, dt)
 			return
 		case "rollback":
@@ -155,7 +159,11 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			dt, _ := h.store.Get(r.Context(), id, actx.TenantID)
+			dt, gerr := h.store.Get(r.Context(), id, actx.TenantID)
+			if gerr != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": gerr.Error()})
+				return
+			}
 			writeJSON(w, http.StatusOK, dt)
 			return
 		case "promote":
@@ -168,7 +176,11 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			dt, _ := h.store.Get(r.Context(), id, actx.TenantID)
+			dt, gerr := h.store.Get(r.Context(), id, actx.TenantID)
+			if gerr != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": gerr.Error()})
+				return
+			}
 			writeJSON(w, http.StatusOK, dt)
 			return
 		case "auto-advance", "auto-advance/status":
@@ -705,7 +717,11 @@ func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Requ
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			f, _ := h.fed.Store().Get(r.Context(), id, actx.TenantID)
+			f, gerr := h.fed.Store().Get(r.Context(), id, actx.TenantID)
+			if gerr != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": gerr.Error()})
+				return
+			}
 			writeJSON(w, http.StatusOK, f)
 			return
 		case "promote":
@@ -717,7 +733,11 @@ func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Requ
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			f, _ := h.fed.Store().Get(r.Context(), id, actx.TenantID)
+			f, gerr := h.fed.Store().Get(r.Context(), id, actx.TenantID)
+			if gerr != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": gerr.Error()})
+				return
+			}
 			writeJSON(w, http.StatusOK, f)
 			return
 		case "rollback":
@@ -729,7 +749,11 @@ func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Requ
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			f, _ := h.fed.Store().Get(r.Context(), id, actx.TenantID)
+			f, gerr := h.fed.Store().Get(r.Context(), id, actx.TenantID)
+			if gerr != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": gerr.Error()})
+				return
+			}
 			writeJSON(w, http.StatusOK, f)
 			return
 		case "status":

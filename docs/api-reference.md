@@ -439,6 +439,50 @@ Prometheus 文本格式指标。**监听在独立端口 9091**（非主 8080 端
 }
 ```
 
+### GET /api/v1/devices/{id}/metrics
+
+设备监控指标（agent 采集 + 控制面环形缓冲）。由 agent 端 `internal/agent/metrics_collect.go` 每 30s 采集，经心跳上报到控制面，控制面 `store.metricsRing` 保留最近 2h 历史快照。
+
+- **认证**：需 `device:read` 权限
+- **租户隔离**：`require-auth` 时仅返回本租户设备指标（经 Device 归属校验）
+- **查询参数**：
+  - 无 `range`：返回最新值（`proto.DeviceMetrics`，向后兼容）
+  - `range=2h`：返回历史时序数据（`proto.MetricsSeries`），支持 `15m` / `1h` / `2h` / `6h` / `24h`
+- **响应（最新值）**：`200 OK`
+
+```json
+{
+  "cpu_percent": 12.5,
+  "mem_percent": 45.2,
+  "mem_used_mb": 1843,
+  "mem_total_mb": 4096,
+  "disk_percent": 60.1,
+  "load_1": 0.34,
+  "load_5": 0.42,
+  "load_15": 0.38,
+  "net_in_kb": 1234,
+  "net_out_kb": 567,
+  "collected_at": "2026-08-24T10:00:00Z"
+}
+```
+
+- **响应（历史时序）**：`200 OK`
+
+```json
+{
+  "device_id": "d-001",
+  "range": "2h",
+  "points": [
+    {"timestamp": "2026-08-24T08:00:00Z", "cpu_percent": 10.2, "mem_percent": 44.1},
+    {"timestamp": "2026-08-24T08:30:00Z", "cpu_percent": 15.8, "mem_percent": 45.0}
+  ],
+  "total": 240
+}
+```
+
+- **无数据**：`404 Not Found`（agent 未上报过指标，可能是刚注册尚未到首个 30s 采集周期）
+- **说明**：更长历史请查 Prometheus（控制面 `/metrics` 端点暴露 `opsmesh_device_cpu_percent` 等指标）
+
 ---
 
 ## Agent API
@@ -1957,15 +2001,44 @@ Phase 3 K8s 多集群管理（client-go 集成）。
 
 ### K8s 资源管理（经集群代理）
 
-以下端点经指定集群代理操作 K8s 资源：
+以下端点经指定集群代理操作 K8s 资源，均要求 `k8s:read`（读）/ `k8s:write`（写）权限，并做租户隔离（校验集群归属当前租户，不泄露存在性）。路径中 `{ns}` 为 namespace。
 
-- `GET /api/v1/k8s/clusters/{id}/pods?namespace=xxx` — Pod 列表
-- `GET /api/v1/k8s/clusters/{id}/pods/{name}/logs?namespace=xxx&container=&tailLines=` — Pod 日志
-- `DELETE /api/v1/k8s/clusters/{id}/pods/{name}?namespace=xxx` — 删除 Pod
-- `GET /api/v1/k8s/clusters/{id}/deployments?namespace=xxx` — Deployment 列表
-- `GET /api/v1/k8s/clusters/{id}/deployments/{name}?namespace=xxx` — Deployment 详情
-- `GET /api/v1/k8s/clusters/{id}/services?namespace=xxx` — Service 列表
-- `GET /api/v1/k8s/clusters/{id}/configmaps?namespace=xxx` — ConfigMap 列表
+#### Namespace
+
+- `GET /api/v1/k8s/clusters/{id}/namespaces` — Namespace 列表
+  - 响应：`{"namespaces": [{"name": "default", "status": "Active", "createdAt": "2026-08-01T00:00:00Z"}]}`
+
+#### Pod
+
+- `GET /api/v1/k8s/clusters/{id}/pods?namespace={ns}` — Pod 列表（`namespace` 为空时跨所有 namespace）
+  - 响应：`{"pods": [{"name": "app-xxx", "namespace": "default", "status": "Running", "podIP": "10.244.0.5", "nodeIP": "10.30.0.5", "restarts": 0, "age": "1h"}]}`
+- `GET /api/v1/k8s/clusters/{id}/pods/{ns}/{name}/logs?container=&tailLines=` — Pod 日志（`container` 多容器 pod 时必填；`tailLines` 限制返回行数）
+  - 响应：`{"logs": "..."}`
+- `DELETE /api/v1/k8s/clusters/{id}/pods/{ns}/{name}` — 删除 Pod
+
+#### Deployment
+
+- `GET /api/v1/k8s/clusters/{id}/deployments?namespace={ns}` — Deployment 列表
+- `GET /api/v1/k8s/clusters/{id}/deployments/{ns}/{name}` — Deployment 详情
+- `POST /api/v1/k8s/clusters/{id}/deployments/{ns}/{name}/scale` — 扩缩容
+  - 请求体：`{"replicas": 5}`
+- `POST /api/v1/k8s/clusters/{id}/deployments/{ns}/{name}/restart` — 重启（rolling restart）
+- `POST /api/v1/k8s/clusters/{id}/deployments/{ns}/{name}/rollback` — 回滚到上一版本
+
+#### Service / ConfigMap / Secret
+
+- `GET /api/v1/k8s/clusters/{id}/services?namespace={ns}` — Service 列表
+- `GET /api/v1/k8s/clusters/{id}/configmaps?namespace={ns}` — ConfigMap 列表
+- `GET /api/v1/k8s/clusters/{id}/secrets?namespace={ns}` — Secret 列表（仅返回元数据，不返回 `data`）
+
+#### Node
+
+- `GET /api/v1/k8s/clusters/{id}/nodes` — Node 列表（含角色、容量、可调度性）
+
+#### 集群概览
+
+- `GET /api/v1/k8s/clusters/{id}/dashboard` — 集群仪表盘概览（节点数 / Pod 数 / 健康度 / 资源使用率）
+- `GET /api/v1/k8s/clusters/{id}/health` — 集群健康检查（控制面 / 数据面 / 调度器 / etcd 状态）
 
 ---
 

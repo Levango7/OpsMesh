@@ -81,8 +81,10 @@ func NewCertificateReloader(certFile, keyFile string) (*CertificateReloader, err
 			return nil, err
 		}
 		if dir := filepath.Dir(p); dir != "" && dir != "." {
-			// 目录监听失败不致命（可能权限不足），仅跳过；文件本身监听已覆盖原地写入。
-			_ = watcher.Add(dir)
+			// 目录监听失败不致命（可能权限不足），仅记日志跳过；文件本身监听已覆盖原地写入。
+			if err := watcher.Add(dir); err != nil {
+				log.Printf("tlsutil: 监听证书父目录失败（跳过 rename 场景监听）: %v", err)
+			}
 		}
 	}
 

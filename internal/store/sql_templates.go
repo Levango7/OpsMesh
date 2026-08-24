@@ -118,7 +118,10 @@ func (s *SQLStore) DeleteOSTemplate(id string) bool {
 		log.Printf("[store] DeleteOSTemplate 失败 %s: %v", id, err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
 
@@ -219,6 +222,9 @@ func (s *SQLStore) DeleteMiddlewareTemplate(id string) bool {
 		log.Printf("[store] DeleteMiddlewareTemplate 失败 %s: %v", id, err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }

@@ -253,11 +253,12 @@ func collectNet(m *proto.DeviceMetrics) {
 	if err != nil {
 		return
 	}
-	// IOCounters 按网卡名索引，便于合并。
-	ioCounters, _ := gnet.IOCounters(true)
-	ioMap := make(map[string]gnet.IOCountersStat, len(ioCounters))
-	for _, io := range ioCounters {
-		ioMap[io.Name] = io
+	// IOCounters 按网卡名索引，便于合并；采集失败时仅缺收发字节，不影响网卡列表。
+	ioMap := make(map[string]gnet.IOCountersStat)
+	if ioCounters, ioErr := gnet.IOCounters(true); ioErr == nil {
+		for _, io := range ioCounters {
+			ioMap[io.Name] = io
+		}
 	}
 	for _, iface := range ifaces {
 		if isLoopback(iface) {

@@ -87,7 +87,10 @@ func (s *SQLStore) DeleteRefreshToken(tokenHash string) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
 
@@ -103,7 +106,11 @@ func (s *SQLStore) CleanupRefreshTokens() int {
 		log.Printf("store: CleanupRefreshTokens 失败: %v", err)
 		return 0
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		log.Printf("store: CleanupRefreshTokens RowsAffected: %v", rowsErr)
+		return 0
+	}
 	return int(n)
 }
 
@@ -139,8 +146,8 @@ func (s *SQLStore) ConsumeRefreshToken(tokenHash string) (*RefreshToken, bool) {
 	if err != nil {
 		return nil, false
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil || n == 0 {
 		// 行已被并发事务消费，回滚并返回失败
 		return nil, false
 	}

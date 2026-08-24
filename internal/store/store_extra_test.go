@@ -905,7 +905,8 @@ func TestRandHex_Default(t *testing.T) {
 		t.Fatalf("randHex(16) len = %d, want 32", len(s))
 	}
 	// 不同调用结果不同（极大概率）
-	if randHex(16) == randHex(16) {
+	a, b := randHex(16), randHex(16)
+	if a == b {
 		t.Fatal("两次 randHex 不应相同")
 	}
 }

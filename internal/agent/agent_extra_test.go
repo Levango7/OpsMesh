@@ -939,12 +939,9 @@ func TestClaimTask_NoTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &Agent{agentID: "test", grpc: cli}
-	// 不连真实服务器，invoke 会失败，claimTask 应返回 error
-	_, err = a.claimTask(context.Background())
-	if err == nil {
-		// 即使返回 nil 也 ok（可能连不上但返回 nil task）
-	}
-	// 不 panic 即可
+	// 不连真实服务器，invoke 会失败，claimTask 应返回 error；
+	// 即使连不上但返回 nil task（err == nil）也 ok。不 panic 即可。
+	_, _ = a.claimTask(context.Background())
 }
 
 // --- drainTasks ---

@@ -389,11 +389,6 @@ func TestTsLegacyNonNil(t *testing.T) {
 //  2. dec 失败 → 返回 dec 的 error。
 //  3. dec 成功 + interceptor != nil → 走拦截器路径。
 
-// noOpInterceptor 是一个简单的拦截器，直接调用 handler 并返回其结果。
-func noOpInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-	return handler(ctx, req)
-}
-
 // recordingInterceptor 记录被调用时的 FullMethod，用于验证拦截器路径确实被走。
 type recordingInterceptor struct {
 	called   bool
@@ -435,7 +430,7 @@ func TestRegisterHandler(t *testing.T) {
 
 	// 路径 3：dec 成功 + 拦截器。
 	rec := &recordingInterceptor{}
-	resp, err = _Registration_Register_Handler(fake, ctx, dec, rec.intercept)
+	_, err = _Registration_Register_Handler(fake, ctx, dec, rec.intercept)
 	if err != nil {
 		t.Fatalf("Register handler with interceptor: %v", err)
 	}
@@ -473,7 +468,7 @@ func TestHeartbeatHandler(t *testing.T) {
 	}
 
 	rec := &recordingInterceptor{}
-	resp, err = _Registration_Heartbeat_Handler(fake, ctx, dec, rec.intercept)
+	_, err = _Registration_Heartbeat_Handler(fake, ctx, dec, rec.intercept)
 	if err != nil {
 		t.Fatalf("Heartbeat handler with interceptor: %v", err)
 	}

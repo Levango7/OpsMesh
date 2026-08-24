@@ -70,7 +70,10 @@ func (s *SQLWorkflowStore) Create(ctx context.Context, wf *WorkflowDef) error {
 	if err != nil {
 		return fmt.Errorf("WorkflowStore.Create: %w", err)
 	}
-	id, _ := res.LastInsertId()
+	id, lidErr := res.LastInsertId()
+	if lidErr != nil {
+		return fmt.Errorf("WorkflowStore.Create last insert id: %w", lidErr)
+	}
 	wf.ID = id
 	wf.CreatedAt = now
 	wf.UpdatedAt = now
@@ -126,7 +129,10 @@ func (s *SQLWorkflowStore) Update(ctx context.Context, wf *WorkflowDef) error {
 	if err != nil {
 		return fmt.Errorf("WorkflowStore.Update: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("WorkflowStore.Update rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return ErrWFNotFound
 	}
@@ -139,7 +145,10 @@ func (s *SQLWorkflowStore) Delete(ctx context.Context, id int64, tenantID string
 	if err != nil {
 		return fmt.Errorf("WorkflowStore.Delete: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("WorkflowStore.Delete rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return ErrWFNotFound
 	}
@@ -212,7 +221,10 @@ func (s *SQLWorkflowStore) CreateRun(ctx context.Context, run *WorkflowRun) erro
 	if err != nil {
 		return fmt.Errorf("WorkflowStore.CreateRun: %w", err)
 	}
-	id, _ := res.LastInsertId()
+	id, lidErr := res.LastInsertId()
+	if lidErr != nil {
+		return fmt.Errorf("WorkflowStore.CreateRun last insert id: %w", lidErr)
+	}
 	run.ID = id
 	return nil
 }
@@ -264,7 +276,10 @@ func (s *SQLWorkflowStore) UpdateRun(ctx context.Context, run *WorkflowRun) erro
 	if err != nil {
 		return fmt.Errorf("WorkflowStore.UpdateRun: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("WorkflowStore.UpdateRun rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return ErrWFNotFound
 	}

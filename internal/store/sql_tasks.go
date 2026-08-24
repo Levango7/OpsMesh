@@ -80,7 +80,10 @@ func (s *SQLStore) ApproveTask(id, tenantID, approvedBy string) bool {
 		log.Printf("[store] ApproveTask 失败 %s: %v", id, err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	if n > 0 {
 		s.publish(events.Event{Action: "task_approved", Target: id, TenantID: tenantID,
 			Detail: "by=" + approvedBy, Level: events.LevelInfo})
@@ -106,7 +109,10 @@ func (s *SQLStore) RejectTask(id, tenantID, approvedBy string) bool {
 		log.Printf("[store] RejectTask 失败 %s: %v", id, err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	if n > 0 {
 		s.publish(events.Event{Action: "task_rejected", Target: id, TenantID: tenantID,
 			Detail: "by=" + approvedBy, Level: events.LevelWarn})
@@ -209,7 +215,7 @@ ON DUPLICATE KEY UPDATE
 				`UPDATE tasks SET status='done' WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch),
 				claimEpochArgs(res.TaskID, res.ClaimEpoch)...); uerr != nil {
 				log.Printf("[store] SubmitResult done 更新失败 %s: %v", res.TaskID, uerr)
-			} else if n, _ := r.RowsAffected(); n > 0 {
+			} else if n, raErr := r.RowsAffected(); raErr == nil && n > 0 {
 				accepted = true
 			} else if res.ClaimEpoch > 0 {
 				log.Printf("[store] SubmitResult 拒绝旧持有者上报 %s (claim_epoch=%d 不匹配)", res.TaskID, res.ClaimEpoch)
@@ -220,7 +226,7 @@ ON DUPLICATE KEY UPDATE
 				claimEpochArgs(res.TaskID, res.ClaimEpoch)...)
 			if uerr != nil {
 				log.Printf("[store] SubmitResult retry 更新失败 %s: %v", res.TaskID, uerr)
-			} else if n, _ := r.RowsAffected(); n > 0 {
+			} else if n, raErr := r.RowsAffected(); raErr == nil && n > 0 {
 				accepted = true
 				s.publish(events.Event{Action: "task_retry", Target: res.TaskID, TenantID: tenantID,
 					Detail: fmt.Sprintf("retry %d/%d", rc+1, mr), Level: events.LevelWarn})
@@ -233,7 +239,7 @@ ON DUPLICATE KEY UPDATE
 				claimEpochArgs(res.TaskID, res.ClaimEpoch)...)
 			if uerr != nil {
 				log.Printf("[store] SubmitResult dead-letter 更新失败 %s: %v", res.TaskID, uerr)
-			} else if n, _ := r.RowsAffected(); n > 0 {
+			} else if n, raErr := r.RowsAffected(); raErr == nil && n > 0 {
 				accepted = true
 				s.addAlert(ctx, &proto.Alert{
 					AlertID:   "alert-" + res.TaskID,
@@ -548,7 +554,11 @@ func (s *SQLStore) ReclaimStaleTasks(maxAge time.Duration) int {
 		log.Printf("[store] ReclaimStaleTasks 失败: %v", err)
 		return 0
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		log.Printf("[store] ReclaimStaleTasks RowsAffected: %v", rowsErr)
+		return 0
+	}
 	return int(n)
 }
 
@@ -689,7 +699,10 @@ func (s *SQLStore) CancelTask(id, tenantID string) bool {
 		log.Printf("[store] CancelTask 失败 %s: %v", id, err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
 

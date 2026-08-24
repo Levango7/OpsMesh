@@ -147,8 +147,8 @@ func (s *SQLStore) Heartbeat(agentID, status string, load int) bool {
 		log.Printf("[store] Heartbeat 更新失败 %s: %v", agentID, err)
 		return false
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil || n == 0 {
 		return false
 	}
 
@@ -378,7 +378,10 @@ func (s *SQLStore) RetireDevice(id, tenantID string) bool {
 		log.Printf("[store] RetireDevice 失败 %s: %v", id, err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
 
@@ -406,7 +409,11 @@ func (s *SQLStore) RetireStaleDevices(maxAge time.Duration) int {
 		log.Printf("[store] RetireStaleDevices 失败: %v", err)
 		return 0
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		log.Printf("[store] RetireStaleDevices RowsAffected: %v", rowsErr)
+		return 0
+	}
 	return int(n)
 }
 

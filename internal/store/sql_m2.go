@@ -131,7 +131,10 @@ func (s *SQLStore) DeleteSilence(id, tenantID string) bool {
 		log.Printf("[store] DeleteSilence 失败 %s: %v", id, err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
 
@@ -239,7 +242,10 @@ func (s *SQLStore) UpdateNotifyChannel(c *NotifyChannel) bool {
 		log.Printf("[store] UpdateNotifyChannel 失败 %s: %v", c.ID, err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	if n > 0 {
 		c.UpdatedAt = now
 	}
@@ -262,7 +268,10 @@ func (s *SQLStore) DeleteNotifyChannel(id, tenantID string) bool {
 		log.Printf("[store] DeleteNotifyChannel 失败 %s: %v", id, err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
 
@@ -380,7 +389,10 @@ func (s *SQLStore) UpdateNotifyTemplate(t *NotifyTemplate) bool {
 		log.Printf("[store] UpdateNotifyTemplate 失败 %s: %v", t.ID, err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	if n > 0 {
 		t.UpdatedAt = now
 	}
@@ -403,7 +415,10 @@ func (s *SQLStore) DeleteNotifyTemplate(id, tenantID string) bool {
 		log.Printf("[store] DeleteNotifyTemplate 失败 %s: %v", id, err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
 
@@ -473,6 +488,9 @@ func (s *SQLStore) UpdateAlertRule(r *AlertRule) bool {
 		log.Printf("[store] UpdateAlertRule 失败 %s: %v", r.ID, err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false
+	}
 	return n > 0
 }
