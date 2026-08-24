@@ -102,6 +102,12 @@ type MemoryStore struct {
 	secrets        map[string]*SecretItem      // tenantID|key -> 当前版本密钥明文
 	secretMetas    map[string]*SecretMeta      // tenantID|key -> 当前版本元信息（脱敏）
 	secretVersions map[string][]*SecretMeta    // tenantID|key -> 全部版本元信息（升序）
+	// Phase 1 工单管理：ticketID -> 工单。
+	// 由 m.mu 保护并发安全；按 tenantID 隔离。
+	tickets map[string]*Ticket
+	// Phase 1 SLO 管理：sloID -> SLO。
+	// 由 m.mu 保护并发安全；按 tenantID 隔离。
+	slos map[string]*SLO
 }
 
 // tokenMeta B1 install token 元数据：一次性、限时，消费后标记 consumed。
@@ -267,6 +273,8 @@ func NewMemoryStore() *MemoryStore {
 		secrets:             make(map[string]*SecretItem),
 		secretMetas:         make(map[string]*SecretMeta),
 		secretVersions:      make(map[string][]*SecretMeta),
+		tickets:             make(map[string]*Ticket),
+		slos:               make(map[string]*SLO),
 	}
 	m.seedRBAC()
 	return m

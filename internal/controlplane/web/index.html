@@ -3,37 +3,288 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="3; url=/enterprise/">
 <title>OpsMesh 网段运维中枢</title>
 <link rel="stylesheet" href="/assets/app.css">
 <style>
-  body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f5f7fb;color:#1f2329;}
-  .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:2.5rem 3rem;max-width:44rem;box-shadow:0 6px 24px rgba(15,23,42,.06);}
-  h1{margin:0 0 .5rem;font-size:1.8rem;}
-  .sub{color:#6b7280;margin:0 0 1.5rem;line-height:1.6;}
-  .badge{display:inline-block;background:#eef2ff;color:#4f46e5;border-radius:999px;padding:.15rem .75rem;font-size:.8rem;font-weight:600;margin-bottom:1rem;}
-  a.btn{display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:.6rem 1.2rem;border-radius:8px;font-weight:600;margin-top:.5rem;}
-  a.btn:hover{background:#4338ca;}
-  .links{margin-top:1.5rem;border-top:1px solid #eef0f3;padding-top:1rem;font-size:.9rem;color:#6b7280;line-height:1.8;}
-  code{background:#f3f4f6;border-radius:4px;padding:.1rem .4rem;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85em;}
-  .caps{margin-top:1rem;color:#6b7280;font-size:.9rem;}
+/* ============================================================================
+ * OpsMesh Phase 1 前端仪表盘样式（内联，app.css 仅保留引导页最小样式）。
+ * 设计：收敛低调，功能区域鲜明，左右宽度一致，统一 card/表格/表单/badge。
+ * 色板与 app.css :root 对齐。
+ * ============================================================================ */
+:root{
+  --bg:#f5f7fb; --card:#fff; --border:#e5e7eb; --border2:#eef0f3;
+  --text:#1f2329; --text2:#6b7280; --text3:#9ca3af;
+  --accent:#4f46e5; --accent-hover:#4338ca; --accent-soft:#eef2ff;
+  --danger:#dc2626; --danger-soft:#fef2f2;
+  --warn:#d97706; --warn-soft:#fffbeb;
+  --ok:#16a34a; --ok-soft:#f0fdf4;
+  --shadow:0 6px 24px rgba(15,23,42,.06);
+  --radius:10px; --radius-sm:6px;
+  --maxw:1180px;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  background:var(--bg); color:var(--text); line-height:1.55;
+  min-height:100vh; display:flex; flex-direction:column;
+}
+a{color:var(--accent);text-decoration:none;}
+a:hover{color:var(--accent-hover);}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85em;}
+
+/* 首栏 */
+.app-header{background:var(--card);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;}
+.header-inner{max-width:var(--maxw);margin:0 auto;padding:.85rem 1.5rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;}
+.brand{display:flex;align-items:center;gap:.75rem;}
+.brand h1{margin:0;font-size:1.15rem;font-weight:600;}
+.badge{display:inline-block;background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:.2rem .7rem;font-size:.75rem;font-weight:600;}
+.header-actions{display:flex;align-items:center;gap:.75rem;}
+.lang-switch{display:inline-flex;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;}
+.lang-switch button{background:transparent;border:0;padding:.3rem .6rem;cursor:pointer;font-size:.8rem;color:var(--text2);}
+.lang-switch button.lang-active{background:var(--accent-soft);color:var(--accent);font-weight:600;}
+.btn-enterprise{display:inline-flex;align-items:center;gap:.35rem;background:var(--accent);color:#fff;padding:.45rem .9rem;border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;}
+.btn-enterprise:hover{background:var(--accent-hover);color:#fff;}
+
+/* tab 导航 */
+.tab-nav{background:var(--card);border-bottom:1px solid var(--border);}
+.tab-nav-inner{max-width:var(--maxw);margin:0 auto;padding:0 1.5rem;display:flex;gap:.25rem;}
+.tab-btn{background:transparent;border:0;border-bottom:2px solid transparent;padding:.85rem 1.1rem;cursor:pointer;font-size:.92rem;color:var(--text2);display:inline-flex;align-items:center;gap:.45rem;transition:color .15s,border-color .15s;}
+.tab-btn:hover{color:var(--text);}
+.tab-btn.tab-active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600;}
+.tab-btn .icon{display:inline-flex;}
+
+/* 主内容区 */
+.app-main{flex:1;max-width:var(--maxw);width:100%;margin:0 auto;padding:1.5rem;display:flex;flex-direction:column;gap:1.25rem;}
+.page{display:none;}
+.page.page-active{display:block;}
+.page-head{margin-bottom:1rem;}
+.page-head h2{margin:0 0 .25rem;font-size:1.25rem;font-weight:600;}
+.page-head p{margin:0;color:var(--text2);font-size:.88rem;}
+
+/* 工具栏 */
+.toolbar{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1rem;flex-wrap:wrap;}
+.filter-group{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;}
+.filter-select{padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card);font-size:.85rem;color:var(--text);cursor:pointer;}
+
+/* 按钮 */
+.btn{display:inline-flex;align-items:center;gap:.4rem;padding:.5rem .9rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card);color:var(--text);font-size:.88rem;cursor:pointer;transition:background .15s,border-color .15s;}
+.btn:hover{background:var(--bg);}
+.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+.btn-primary:hover{background:var(--accent-hover);color:#fff;}
+.btn-secondary{background:var(--card);color:var(--accent);border-color:var(--accent);}
+.btn-secondary:hover{background:var(--accent-soft);}
+.btn-danger{background:var(--card);color:var(--danger);border-color:var(--danger);}
+.btn-danger:hover{background:var(--danger-soft);}
+.btn-ghost{background:transparent;border-color:transparent;color:var(--text2);}
+.btn-ghost:hover{background:var(--bg);color:var(--text);}
+.btn-icon{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card);color:var(--text2);cursor:pointer;padding:0;}
+.btn-icon:hover{background:var(--bg);color:var(--text);}
+.btn-icon-danger:hover{color:var(--danger);border-color:var(--danger);background:var(--danger-soft);}
+
+/* 内容区 */
+.content{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1.25rem;box-shadow:var(--shadow);overflow:auto;}
+
+/* 状态视图 */
+.state{display:flex;align-items:center;justify-content:center;gap:.6rem;padding:2.5rem 1rem;color:var(--text2);font-size:.92rem;}
+.state-error{color:var(--danger);}
+.spinner{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;display:inline-block;animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* 表格 */
+.data-table{width:100%;border-collapse:collapse;font-size:.88rem;}
+.data-table th,.data-table td{padding:.6rem .75rem;text-align:left;border-bottom:1px solid var(--border2);}
+.data-table th{font-weight:600;color:var(--text2);font-size:.8rem;text-transform:uppercase;letter-spacing:.03em;}
+.data-table tbody tr:hover{background:var(--bg);}
+.data-table .th-actions,.data-table .td-actions{width:1%;white-space:nowrap;text-align:right;}
+.data-table .cell-title{font-weight:500;}
+.data-table-compact th,.data-table-compact td{padding:.4rem .6rem;font-size:.82rem;}
+
+/* badge */
+.badge{display:inline-block;padding:.2rem .6rem;border-radius:999px;font-size:.78rem;font-weight:600;line-height:1.2;}
+.badge-status-open{background:#eef2ff;color:#4f46e5;}
+.badge-status-in_progress{background:#fffbeb;color:#d97706;}
+.badge-status-resolved{background:#f0fdf4;color:#16a34a;}
+.badge-status-closed{background:#f3f4f6;color:#6b7280;}
+.badge-priority-low{background:#f3f4f6;color:#6b7280;}
+.badge-priority-medium{background:#eef2ff;color:#4f46e5;}
+.badge-priority-high{background:#fffbeb;color:#d97706;}
+.badge-priority-urgent{background:#fef2f2;color:#dc2626;}
+.badge-category-incident{background:#fef2f2;color:#dc2626;}
+.badge-category-change{background:#eef2ff;color:#4f46e5;}
+.badge-category-request{background:#f0fdf4;color:#16a34a;}
+.badge-category-problem{background:#fffbeb;color:#d97706;}
+.badge-slo-status-met{background:#f0fdf4;color:#16a34a;}
+.badge-slo-status-breached{background:#fef2f2;color:#dc2626;}
+.badge-slo-status-nodata{background:#f3f4f6;color:#6b7280;}
+
+/* 表单 */
+.form-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;box-shadow:var(--shadow);max-width:640px;}
+.form-title{margin:0 0 1.25rem;font-size:1.1rem;font-weight:600;}
+.form-row{display:flex;align-items:flex-start;gap:1rem;margin-bottom:.9rem;}
+.form-label{width:7rem;flex-shrink:0;padding-top:.45rem;font-size:.88rem;color:var(--text2);}
+.form-label.required::after{content:"*";color:var(--danger);margin-left:.2rem;}
+.form-control{flex:1;}
+.form-control input,.form-control select,.form-control textarea{width:100%;padding:.5rem .7rem;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.88rem;font-family:inherit;background:var(--card);color:var(--text);}
+.form-control input:focus,.form-control select:focus,.form-control textarea:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+.form-control textarea{resize:vertical;min-height:60px;}
+.form-actions{display:flex;gap:.6rem;margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--border2);}
+
+/* SLI 行 */
+.sli-list{display:flex;flex-direction:column;gap:.5rem;}
+.sli-row{display:grid;grid-template-columns:1fr 2fr 80px 100px 32px;gap:.4rem;align-items:center;}
+.sli-row input,.sli-row select{padding:.4rem .5rem;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.82rem;}
+.form-row-sli{align-items:flex-start;}
+
+/* 详情卡片 */
+.detail-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;box-shadow:var(--shadow);}
+.detail-head{display:flex;align-items:center;gap:1rem;margin-bottom:1.25rem;flex-wrap:wrap;}
+.detail-title{margin:0;flex:1;font-size:1.15rem;font-weight:600;min-width:200px;}
+.detail-actions{display:flex;gap:.5rem;}
+.detail-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.85rem 1.25rem;margin-bottom:1.25rem;padding-bottom:1.25rem;border-bottom:1px solid var(--border2);}
+.detail-item{display:flex;flex-direction:column;gap:.2rem;}
+.detail-label{font-size:.78rem;color:var(--text3);text-transform:uppercase;letter-spacing:.03em;}
+.detail-value{font-size:.9rem;}
+.detail-section{margin-bottom:1.25rem;}
+.detail-section h4{margin:0 0 .5rem;font-size:.95rem;font-weight:600;color:var(--text);}
+.detail-desc{margin:0;color:var(--text);white-space:pre-wrap;line-height:1.6;}
+.tag-list{display:flex;flex-wrap:wrap;gap:.4rem;}
+.tag{display:inline-flex;align-items:center;gap:.25rem;padding:.25rem .6rem;background:var(--bg);border:1px solid var(--border);border-radius:999px;font-size:.8rem;color:var(--text2);}
+
+/* 仪表盘概览 */
+.overview{margin-bottom:1.25rem;}
+.overview-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:1rem;}
+.metric-card{display:flex;align-items:center;gap:1rem;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;box-shadow:var(--shadow);}
+.metric-icon{width:44px;height:44px;display:flex;align-items:center;justify-content:center;border-radius:var(--radius-sm);background:var(--accent-soft);color:var(--accent);}
+.metric-devices .metric-icon{background:#eef2ff;color:#4f46e5;}
+.metric-tasks .metric-icon{background:#f0fdf4;color:#16a34a;}
+.metric-alerts .metric-icon{background:#fef2f2;color:#dc2626;}
+.metric-tickets .metric-icon{background:#fffbeb;color:#d97706;}
+.metric-body{flex:1;}
+.metric-value{font-size:1.6rem;font-weight:700;line-height:1.1;}
+.metric-label{font-size:.82rem;color:var(--text2);margin-top:.2rem;}
+
+/* Prometheus 指标 */
+.metrics-block{margin-top:1.25rem;}
+.metrics-block h3{margin:0 0 .25rem;font-size:1.05rem;font-weight:600;}
+.metrics-hint{margin:0 0 .75rem;color:var(--text2);font-size:.82rem;}
+.metrics-cards{display:flex;flex-direction:column;gap:.5rem;margin-bottom:1rem;}
+.metric-line{background:var(--bg);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:.6rem .85rem;}
+.metric-line-head{display:flex;align-items:center;gap:.6rem;margin-bottom:.2rem;}
+.metric-line-name{font-weight:600;color:var(--text);}
+.metric-line-type{font-size:.72rem;color:var(--text3);text-transform:uppercase;}
+.metric-line-help{font-size:.78rem;color:var(--text2);margin-bottom:.25rem;}
+.metric-line-value{font-size:1rem;font-weight:700;color:var(--accent);}
+.metrics-raw{background:#1f2329;color:#e5e7eb;border-radius:var(--radius-sm);padding:1rem 1.25rem;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.82rem;line-height:1.5;overflow:auto;max-height:420px;white-space:pre;}
+
+/* 尾栏 */
+.app-footer{background:var(--card);border-top:1px solid var(--border);padding:.85rem 1.5rem;text-align:center;color:var(--text2);font-size:.82rem;}
+.app-footer .footer-links{margin-top:.4rem;}
+.app-footer code{background:var(--bg);border-radius:4px;padding:.1rem .4rem;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85em;}
+
+/* toast */
+.toast-host{position:fixed;bottom:1.5rem;right:1.5rem;z-index:100;display:flex;flex-direction:column;gap:.5rem;}
+.toast{padding:.7rem 1rem;border-radius:var(--radius-sm);background:var(--card);border:1px solid var(--border);box-shadow:var(--shadow);font-size:.88rem;animation:toast-in .2s ease;}
+.toast-info{border-left:3px solid var(--accent);}
+.toast-success{border-left:3px solid var(--ok);}
+.toast-warn{border-left:3px solid var(--warn);}
+.toast-error{border-left:3px solid var(--danger);}
+.toast-leave{opacity:0;transition:opacity .2s;}
+@keyframes toast-in{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+
+/* 响应式 */
+@media (max-width:760px){
+  .header-inner,.tab-nav-inner,.app-main{padding-left:1rem;padding-right:1rem;}
+  .form-row{flex-direction:column;gap:.3rem;}
+  .form-label{width:auto;padding-top:0;}
+  .sli-row{grid-template-columns:1fr 1fr;}
+  .detail-grid{grid-template-columns:1fr;}
+}
 </style>
 </head>
 <body>
-  <main class="card">
-    <span class="badge">OpsMesh</span>
-    <h1>OpsMesh 网段运维中枢</h1>
-    <p class="sub">个人版原生 JS 仪表盘已于 v0.4.0 下线。<strong id="homeCapsHint">OpsMesh 网段运维中枢提供 6 大运维能力</strong>，全部功能请通过企业版前端访问。3 秒后将自动跳转；若未跳转请点击下方按钮。</p>
-    <a class="btn" href="/enterprise/">进入企业版前端 →</a>
-    <h2 style="margin:1.6rem 0 .5rem;font-size:1.1rem;" id="opsActiveAlertsTitle">活跃告警（M7）</h2>
-    <p class="caps">监控告警、作业编排、K8s 管理、CMDB、批量运维等能力均已在企业版前端（Vue 3）提供。</p>
-    <div class="links">
-      <p>· 企业版前端部署指引见仓库 <code>docs/deployment-guide.md</code>（“企业版前端部署”章节）。</p>
-      <p>· 若前端独立部署在非 <code>/enterprise/</code> 路径，请将浏览器指向该地址。</p>
-      <p id="docsDesc">· 项目简介、快速开始、API、架构与 FAQ 均可通过企业版前端的文档入口获取。</p>
-      <p>· <span id="footerRunning">OpsMesh 网段运维中枢 · 控制面运行中 ●</span></p>
+  <!-- 首栏 -->
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand">
+        <span class="badge">OpsMesh</span>
+        <h1>OpsMesh 网段运维中枢</h1>
+      </div>
+      <div class="header-actions">
+        <span class="lang-switch" role="group" aria-label="language">
+          <button type="button" data-lang="zh" class="lang-active">中</button>
+          <button type="button" data-lang="en">EN</button>
+        </span>
+        <a class="btn-enterprise" href="/enterprise/">进入企业版前端 →</a>
+      </div>
     </div>
+  </header>
+
+  <!-- tab 导航 -->
+  <nav class="tab-nav" aria-label="primary">
+    <div class="tab-nav-inner">
+      <button type="button" class="tab-btn tab-active" data-tab="tickets">
+        <span class="icon" data-icon="ticket"></span><span>工单管理</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="dashboard">
+        <span class="icon" data-icon="dashboard"></span><span>监控仪表盘</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="slo">
+        <span class="icon" data-icon="slo"></span><span>SLO 管理</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- 主内容区 -->
+  <main class="app-main">
+    <!-- 工单管理 page -->
+    <section id="page-tickets" class="page page-active">
+      <div class="page-head">
+        <h2>工单管理</h2>
+        <p>服务台工单全生命周期管理</p>
+      </div>
+      <div id="tickets-toolbar" class="toolbar"></div>
+      <div id="tickets-content" class="content"></div>
+    </section>
+
+    <!-- 监控仪表盘 page -->
+    <section id="page-dashboard" class="page">
+      <div class="page-head">
+        <h2>监控仪表盘</h2>
+        <p>设备 / 任务 / 告警 / 工单概览与 Prometheus 指标</p>
+      </div>
+      <div id="dashboard-toolbar" class="toolbar"></div>
+      <div id="dashboard-overview" class="overview"></div>
+      <div class="metrics-block">
+        <h3>Prometheus 指标</h3>
+        <p class="metrics-hint">Prometheus text exposition format，由后端 <code>/metrics</code> 端点输出</p>
+        <div id="dashboard-metrics" class="content"></div>
+      </div>
+    </section>
+
+    <!-- SLO 管理 page -->
+    <section id="page-slo" class="page">
+      <div class="page-head">
+        <h2>SLO 管理</h2>
+        <p>服务级别目标与指标管理</p>
+      </div>
+      <div id="slo-toolbar" class="toolbar"></div>
+      <div id="slo-content" class="content"></div>
+    </section>
   </main>
+
+  <!-- 尾栏 -->
+  <footer class="app-footer">
+    <div><span id="footerRunning">OpsMesh 网段运维中枢 · 控制面运行中 ●</span></div>
+    <div class="footer-links">
+      <span id="docsDesc">· 项目简介、快速开始、API、架构与 FAQ 均可通过企业版前端的文档入口获取。</span>
+    </div>
+  </footer>
+
+  <!-- 契约标记（保留 TestHandleDashboard_ServesEmbedded 断言：body 含 "活跃告警（M7）"） -->
+  <span id="opsActiveAlertsTitle" hidden>活跃告警（M7）</span>
+  <span id="homeCapsHint" hidden>OpsMesh 网段运维中枢提供 6 大运维能力</span>
+
   <script type="module" src="/assets/main.js"></script>
 </body>
 </html>

@@ -151,6 +151,13 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/quotas", s.handleQuotas)
 	mux.HandleFunc("/api/v1/quotas/", s.handleQuotaRouting) // 子路径：{tenantID} GET/PUT/DELETE
 
+	// Phase 1 服务台与工单管理 + SLO 管理 + Prometheus metrics 端点。
+	mux.HandleFunc("/api/v1/tickets", s.handleTickets)
+	mux.HandleFunc("/api/v1/tickets/", s.handleTicketRouting) // 子路径：{id} GET/PUT、{id}/close POST
+	mux.HandleFunc("/api/v1/slos", s.handleSLOs)
+	mux.HandleFunc("/api/v1/slos/", s.handleSLORouting) // 子路径：{id} GET/PUT/DELETE、{id}/status GET
+	mux.HandleFunc("/metrics", s.handlePrometheusMetrics)
+
 	// 修复 4：用 jsonErrorMux 包装 mux，将 404 统一为 JSON 格式。
 	// ：httpMetricsMiddleware 包在最外层，记录所有请求（含 panic 转的 500）的计数与延迟。
 	// ：otelx.HTTPMiddleware 为每个请求创建 span 并从请求头提取 W3C Trace Context，

@@ -456,6 +456,38 @@ type SecretStore interface {
 	SecretVersions(tenantID, key string) []*SecretMeta
 }
 
+// TicketStore 工单管理领域：创建/查询/更新/列表/关闭。
+type TicketStore interface {
+	// CreateTicket 创建工单。ID 为空时由 store 分配随机 ID；
+	// TenantID 为空时归一为 default。返回持久化后的工单（含分配的 ID）。
+	CreateTicket(tenantID string, t *Ticket) *Ticket
+	// GetTicket 按 (tenantID, id) 返回单个工单（不存在返回 (nil, false)）。
+	GetTicket(tenantID, id string) (*Ticket, bool)
+	// UpdateTicket 更新工单（按 t.ID 定位，校验 tenantID 归属）。不存在或越权返回 (nil, false)。
+	UpdateTicket(tenantID string, t *Ticket) (*Ticket, bool)
+	// ListTickets 返回指定租户的工单列表（按 filter 过滤 + 按创建时间降序）。
+	ListTickets(tenantID string, filter TicketFilter) []*Ticket
+	// CloseTicket 关闭工单：置 Status="closed" + ResolvedAt=now。不存在或越权返回 (nil, false)。
+	CloseTicket(tenantID, id string) (*Ticket, bool)
+}
+
+// SLOStore SLO 管理领域：CRUD + SLI 状态查询。
+type SLOStore interface {
+	// CreateSLO 创建 SLO。ID 为空时由 store 分配随机 ID；
+	// TenantID 为空时归一为 default。返回持久化后的 SLO（含分配的 ID）。
+	CreateSLO(tenantID string, slo *SLO) *SLO
+	// GetSLO 按 (tenantID, id) 返回单个 SLO（不存在返回 (nil, false)）。
+	GetSLO(tenantID, id string) (*SLO, bool)
+	// UpdateSLO 更新 SLO（按 slo.ID 定位，校验 tenantID 归属）。不存在或越权返回 (nil, false)。
+	UpdateSLO(tenantID string, slo *SLO) (*SLO, bool)
+	// ListSLOs 返回指定租户的全部 SLO（按创建时间升序）。
+	ListSLOs(tenantID string) []*SLO
+	// DeleteSLO 删除 SLO，返回是否删除成功（不存在或租户不匹配返回 false）。
+	DeleteSLO(tenantID, id string) bool
+	// SLIStatus 返回指定 SLO 下各 SLI 的当前状态（MVP 返回模拟状态）。
+	SLIStatus(tenantID, id string) []*SLIStatus
+}
+
 // Store 控制面注册表的可插拔持久化组合接口。
 // 由 12 个领域小接口组合而成（拆分 + 用户中心扩展 + K8s 集群管理 + OS/中间件模板 + 刷新令牌），
 // 方法签名刻意与旧版内存 Registry 保持一致，便于平滑替换。
@@ -484,6 +516,8 @@ type Store interface {
 	ServiceDiscoveryStore // P0.3 服务发现：注册/心跳/实例查询
 	ConfigStore           // P0.3 配置中心：Get/Set/版本历史/发布
 	SecretStore           // P0.3 密钥管理：Get/Set/轮换/版本历史
+	TicketStore           // P1 工单管理：创建/查询/更新/关闭
+	SLOStore              // P1 SLO 管理：CRUD + SLI 状态
 
 	// WithDemo 设置是否开启演示模式：开启时每个 agent 注册预置 uname -a 示例任务。
 	WithDemo(bool) Store
@@ -512,6 +546,8 @@ var (
 	_ ServiceDiscoveryStore = (*MemoryStore)(nil)
 	_ ConfigStore           = (*MemoryStore)(nil)
 	_ SecretStore           = (*MemoryStore)(nil)
+	_ TicketStore           = (*MemoryStore)(nil)
+	_ SLOStore              = (*MemoryStore)(nil)
 	_ Store               = (*MemoryStore)(nil)
 
 	_ DeviceStore         = (*SQLStore)(nil)
@@ -534,5 +570,7 @@ var (
 	_ ServiceDiscoveryStore = (*SQLStore)(nil)
 	_ ConfigStore           = (*SQLStore)(nil)
 	_ SecretStore           = (*SQLStore)(nil)
+	_ TicketStore           = (*SQLStore)(nil)
+	_ SLOStore              = (*SQLStore)(nil)
 	_ Store               = (*SQLStore)(nil)
 )

@@ -304,6 +304,11 @@ var rbacPermSpecs = []struct {
 	{"k8s", "k8s:read", "查看K8s集群"},
 	{"k8s", "k8s:write", "管理K8s集群"},
 	{"k8s", "k8s:delete", "删除K8s集群"},
+	{"ticket", "ticket:read", "查看工单"},
+	{"ticket", "ticket:write", "编辑工单"},
+	{"slo", "slo:read", "查看SLO"},
+	{"slo", "slo:write", "编辑SLO"},
+	{"slo", "slo:delete", "删除SLO"},
 }
 
 // seedRBAC 在 initSchema 末尾调用，幂等写入默认权限/角色/用户。

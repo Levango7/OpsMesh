@@ -305,3 +305,67 @@ type SecretMeta struct {
 	CreatedAt time.Time `json:"createdAt"` // 创建时间
 	UpdatedAt time.Time `json:"updatedAt"` // 最近一次轮换时间
 }
+
+// ============================================================================
+// Phase 1 服务台与工单管理 / SLO 管理领域数据模型。
+// 与现有领域解耦，通过 TicketStore / SLOStore 两个小接口暴露，
+// 组合进 Store（向后兼容，不破坏现有接口）。
+// ============================================================================
+
+// Ticket 工单实体（Phase 1 服务台与工单管理）。
+type Ticket struct {
+	ID            string     `json:"id"`
+	TenantID      string     `json:"tenantID"`
+	Title         string     `json:"title"`
+	Description   string     `json:"description"`
+	Status        string     `json:"status"` // "open" | "in_progress" | "resolved" | "closed"
+	Priority      string     `json:"priority"` // "low" | "medium" | "high" | "urgent"
+	Category      string     `json:"category"` // "incident" | "change" | "request" | "problem"
+	AssigneeID    string     `json:"assigneeID"`
+	CreatorID     string     `json:"creatorID"`
+	RelatedDevice string     `json:"relatedDevice"`
+	RelatedTask   string     `json:"relatedTask"`
+	Tags          []string   `json:"tags"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+	ResolvedAt    *time.Time `json:"resolvedAt,omitempty"`
+}
+
+// TicketFilter 工单查询过滤条件。
+type TicketFilter struct {
+	Status     string
+	Priority   string
+	Category   string
+	AssigneeID string
+}
+
+// SLO 服务级别目标实体（Phase 1 SLO 管理）。
+type SLO struct {
+	ID          string    `json:"id"`
+	TenantID    string    `json:"tenantID"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	ServiceName string    `json:"serviceName"`
+	Target      float64   `json:"target"` // 如 99.9 表示 99.9%
+	Window      string    `json:"window"` // 如 "30d", "7d"
+	SLIs        []SLI     `json:"slis"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// SLI 服务级别指标。
+type SLI struct {
+	Name     string  `json:"name"`     // 如 "availability", "latency_p99"
+	Metric   string  `json:"metric"`   // Prometheus metric 表达式
+	Target   float64 `json:"target"`   // 目标值
+	Operator string  `json:"operator"` // ">=", "<=", ">", "<"
+}
+
+// SLIStatus SLI 当前状态。
+type SLIStatus struct {
+	SLIName       string    `json:"sliName"`
+	CurrentValue  float64   `json:"currentValue"`
+	TargetValue   float64   `json:"targetValue"`
+	Status        string    `json:"status"` // "met" | "breached" | "nodata"
+	LastEvaluated time.Time `json:"lastEvaluated"`
+}
