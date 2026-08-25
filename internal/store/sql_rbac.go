@@ -326,6 +326,12 @@ var rbacPermSpecs = []struct {
 	{"network", "network:write", "管理网络设备"},
 	{"automation", "automation:read", "查看自动化规则"},
 	{"automation", "automation:write", "管理自动化规则"},
+	{"webhook", "webhook:read", "查看 Webhook"},
+	{"webhook", "webhook:write", "管理 Webhook"},
+	{"script", "script:read", "查看自定义脚本"},
+	{"script", "script:write", "管理自定义脚本"},
+	{"gateway", "gateway:read", "查看 API 网关"},
+	{"gateway", "gateway:write", "管理 API 网关"},
 }
 
 // seedRBAC 在 initSchema 末尾调用，幂等写入默认权限/角色/用户。

@@ -180,6 +180,11 @@ type Server struct {
 	// 启用后设备/任务/告警创建路径调用 CheckDevice/CheckTask/CheckAlert 校验是否超额。
 	// API 路由 /api/v1/quotas[/{tenantID}] 在 server_lifecycle.go Start 中注册。
 	quotaMgr *QuotaManager
+
+	// Phase 5 API 网关运行期状态：路由规则 + 限流器 + 统计。
+	// 由 NewServer 构造；nil=未启用网关（向后兼容，handler 调用前由 ensureGateway 兜底）。
+	// 路由规则按 tenantID 隔离，进程级内存（重启后丢失，运行期配置）。
+	gateway *gatewayState
 }
 
 // startRefreshSweep 周期清理过期刷新令牌（store 持久化后改为 no-op，
@@ -285,6 +290,8 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		alertSilencer:   alertengine.NewSilencer(nil),
 		alertAggregator: alertengine.NewAggregator([]string{"deviceID", "severity"}, 100),
 		alertNotifier:   notify.NewNotifier(notify.WithDedup(5*time.Minute), notify.WithRetry(nil)),
+		// Phase 5 API 网关运行期状态（路由规则 + 限流器 + 统计）。
+		gateway: newGatewayState(),
 	}
 	// 告警通道密钥外置：根据 cfg.SecretProvider 构造 SecretProvider 并注入到 alertNotifier。
 	// cfg.SecretProvider 为空时 FromConfig 返回 (nil, nil)，不启用密钥外置（向后兼容）。

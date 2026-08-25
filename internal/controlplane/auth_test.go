@@ -97,10 +97,10 @@ func doWithAuth(method, path, auth string, body interface{}) *http.Request {
 func TestPredefinedData(t *testing.T) {
 	s := newAuthTestServer(t)
 
-	// 预定义权限：应有 56 个（新增 compliance/ha/backup 等 Phase 3 + network/automation Phase 4 RBAC 权限）。
+	// 预定义权限：应有 62 个（新增 compliance/ha/backup 等 Phase 3 + network/automation Phase 4 + webhook/script/gateway Phase 5 RBAC 权限）。
 	perms := s.store.ListPermissions()
-	if len(perms) != 56 {
-		t.Fatalf("permissions count = %d, want 56", len(perms))
+	if len(perms) != 62 {
+		t.Fatalf("permissions count = %d, want 62", len(perms))
 	}
 	// 检查关键权限存在。
 	permNames := make(map[string]bool)
@@ -122,8 +122,8 @@ func TestPredefinedData(t *testing.T) {
 	for _, r := range roles {
 		roleByName[r.Name] = r
 	}
-	if admin := roleByName["admin"]; admin == nil || len(admin.Permissions) != 56 {
-		t.Fatalf("admin role missing or permissions = %d, want 56", len(admin.Permissions))
+	if admin := roleByName["admin"]; admin == nil || len(admin.Permissions) != 62 {
+		t.Fatalf("admin role missing or permissions = %d, want 62", len(admin.Permissions))
 	}
 	if viewer := roleByName["viewer"]; viewer == nil {
 		t.Fatal("viewer role missing")
@@ -565,8 +565,8 @@ func TestListPermissions(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(resp.Permissions) != 56 {
-		t.Fatalf("permissions count = %d, want 56", len(resp.Permissions))
+	if len(resp.Permissions) != 62 {
+		t.Fatalf("permissions count = %d, want 62", len(resp.Permissions))
 	}
 }
 

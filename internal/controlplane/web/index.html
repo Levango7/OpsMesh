@@ -256,6 +256,15 @@ a:hover{color:var(--accent-hover);}
       <button type="button" class="tab-btn" data-tab="automation">
         <span class="icon" data-icon="automation"></span><span>自动化</span>
       </button>
+      <button type="button" class="tab-btn" data-tab="gateway" data-i18n="nav.gateway">
+        <span class="icon" data-icon="gateway"></span><span>API网关</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="webhook" data-i18n="nav.webhook">
+        <span class="icon" data-icon="webhook"></span><span>Webhook</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="script" data-i18n="nav.script">
+        <span class="icon" data-icon="script"></span><span>自定义脚本</span>
+      </button>
     </div>
   </nav>
 
@@ -374,6 +383,36 @@ a:hover{color:var(--accent-hover);}
       </div>
       <div id="automation-toolbar" class="toolbar"></div>
       <div id="automation-content" class="content"></div>
+    </section>
+
+    <!-- API 网关 page -->
+    <section id="page-gateway" class="page">
+      <div class="page-head">
+        <h2>API 网关管理</h2>
+        <p>路由管理 / 启用禁用 / 流量统计</p>
+      </div>
+      <div id="gateway-toolbar" class="toolbar"></div>
+      <div id="gateway-content" class="content"></div>
+    </section>
+
+    <!-- Webhook page -->
+    <section id="page-webhook" class="page">
+      <div class="page-head">
+        <h2>Webhook 管理</h2>
+        <p>事件订阅 / 投递记录 / 测试发送</p>
+      </div>
+      <div id="webhook-toolbar" class="toolbar"></div>
+      <div id="webhook-content" class="content"></div>
+    </section>
+
+    <!-- 自定义脚本 page -->
+    <section id="page-script" class="page">
+      <div class="page-head">
+        <h2>自定义脚本</h2>
+        <p>脚本管理 / 在线执行 / 执行历史</p>
+      </div>
+      <div id="script-toolbar" class="toolbar"></div>
+      <div id="script-content" class="content"></div>
     </section>
   </main>
 

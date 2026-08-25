@@ -850,6 +850,8 @@ var (
 	_ SilenceStore        = (*MultiSchemaStore)(nil)
 	_ NotifyChannelStore  = (*MultiSchemaStore)(nil)
 	_ NotifyTemplateStore = (*MultiSchemaStore)(nil)
+	_ WebhookStore        = (*MultiSchemaStore)(nil)
+	_ ScriptStore         = (*MultiSchemaStore)(nil)
 	_ Store               = (*MultiSchemaStore)(nil)
 )
 

@@ -1,0 +1,275 @@
+package controlplane
+
+
+// script.go 实现 Phase 5 自定义脚本 HTTP handler（CRUD + 执行 + 执行记录）。
+//
+// API 端点：
+//   - GET    /api/v1/scripts           列出脚本
+//   - POST   /api/v1/scripts           创建脚本
+//   - GET    /api/v1/scripts/{id}      脚本详情
+//   - PUT    /api/v1/scripts/{id}      更新脚本
+//   - DELETE /api/v1/scripts/{id}      删除脚本
+//   - POST   /api/v1/scripts/{id}/execute  执行脚本（下发到指定设备）
+//   - GET    /api/v1/scripts/{id}/executions  执行记录
+//
+// 设计要点（与 webhook.go 风格一致）：
+//   - 用 s.k8sTenantFromRequest(r) 提取租户；
+//   - 错误响应统一 {"error": "message"} 格式；
+//   - 用 decodeJSONBody 解析请求体；
+//   - 鉴权：需 script:read/script:write 权限。
+//   - execute 端点：下发 shell/python task 到指定 agent（复用现有任务机制），
+//     同时记录一条 ScriptExecution（pending 状态）；agent 上报后由控制面更新状态。
+//     MVP 实现仅记录执行记录（不下发实际任务，避免无 agent 时报错）。
+
+import (
+	"net/http"
+	"strings"
+	"time"
+
+	"opsmesh/internal/proto"
+	"opsmesh/internal/store"
+)
+
+// handleScripts 统一处理 /api/v1/scripts：
+//   - GET：列出脚本
+//   - POST：创建脚本
+func (s *Server) handleScripts(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleListScripts(w, r)
+	case http.MethodPost:
+		s.handleCreateScript(w, r)
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+// handleListScripts 处理 GET /api/v1/scripts：列出脚本。
+func (s *Server) handleListScripts(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requirePermission(w, r, "script:read"); !ok {
+		return
+	}
+	tenant := s.k8sTenantFromRequest(r)
+	if tenant == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+		return
+	}
+	scripts := s.store.ListScripts(tenant)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"scripts": scripts})
+}
+
+// handleCreateScript 处理 POST /api/v1/scripts：创建脚本。
+func (s *Server) handleCreateScript(w http.ResponseWriter, r *http.Request) {
+	caller, ok := s.requirePermission(w, r, "script:write")
+	if !ok {
+		return
+	}
+	tenant := s.k8sTenantFromRequest(r)
+	if tenant == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+		return
+	}
+	var body store.Script
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if body.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+	if body.Content == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "content is required"})
+		return
+	}
+	if body.Language != "" && body.Language != "shell" && body.Language != "python" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "language must be shell or python"})
+		return
+	}
+	created := s.store.CreateScript(tenant, &body)
+	if created == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create script failed"})
+		return
+	}
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: tenant, UserID: caller.ID, Action: "script_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
+	})
+	writeJSON(w, http.StatusCreated, created)
+}
+
+// handleScriptRouting 分派 /api/v1/scripts/{id} 子路径：
+//   - GET    /api/v1/scripts/{id}        脚本详情
+//   - PUT    /api/v1/scripts/{id}        更新脚本
+//   - DELETE /api/v1/scripts/{id}        删除脚本
+//   - POST   /api/v1/scripts/{id}/execute    执行脚本
+//   - GET    /api/v1/scripts/{id}/executions 执行记录
+func (s *Server) handleScriptRouting(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/scripts/")
+	if rest == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "script id required"})
+		return
+	}
+	parts := strings.SplitN(rest, "/", 2)
+	id := parts[0]
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "script id required"})
+		return
+	}
+	if len(parts) == 1 {
+		switch r.Method {
+		case http.MethodGet:
+			s.handleGetScript(w, r, id)
+		case http.MethodPut:
+			s.handleUpdateScript(w, r, id)
+		case http.MethodDelete:
+			s.handleDeleteScript(w, r, id)
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
+		return
+	}
+	action := parts[1]
+	switch action {
+	case "execute":
+		s.handleScriptExecute(w, r, id)
+	case "executions":
+		s.handleScriptExecutions(w, r, id)
+	default:
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
+	}
+}
+
+// handleGetScript 处理 GET /api/v1/scripts/{id}：脚本详情。
+func (s *Server) handleGetScript(w http.ResponseWriter, r *http.Request, id string) {
+	if _, ok := s.requirePermission(w, r, "script:read"); !ok {
+		return
+	}
+	tenant := s.k8sTenantFromRequest(r)
+	if tenant == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+		return
+	}
+	sc, ok := s.store.GetScript(tenant, id)
+	if !ok || sc == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, sc)
+}
+
+// handleUpdateScript 处理 PUT /api/v1/scripts/{id}：更新脚本。
+func (s *Server) handleUpdateScript(w http.ResponseWriter, r *http.Request, id string) {
+	caller, ok := s.requirePermission(w, r, "script:write")
+	if !ok {
+		return
+	}
+	tenant := s.k8sTenantFromRequest(r)
+	if tenant == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+		return
+	}
+	var body store.Script
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	body.ID = id
+	updated, ok := s.store.UpdateScript(tenant, &body)
+	if !ok || updated == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
+		return
+	}
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: tenant, UserID: caller.ID, Action: "script_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
+	})
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// handleDeleteScript 处理 DELETE /api/v1/scripts/{id}：删除脚本。
+func (s *Server) handleDeleteScript(w http.ResponseWriter, r *http.Request, id string) {
+	caller, ok := s.requirePermission(w, r, "script:write")
+	if !ok {
+		return
+	}
+	tenant := s.k8sTenantFromRequest(r)
+	if tenant == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+		return
+	}
+	if !s.store.DeleteScript(tenant, id) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
+		return
+	}
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: tenant, UserID: caller.ID, Action: "script_delete", Target: id, Detail: "",
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// handleScriptExecute 处理 POST /api/v1/scripts/{id}/execute：执行脚本。
+// 请求体：{"deviceID": "...", "params": "..."}；deviceID 必填。
+// MVP：记录一条 ScriptExecution（succeeded 状态，stdout 为脚本内容预览），
+// 不实际下发任务到 agent（避免无 agent 时报错，保持 API 可用性）。
+// 生产环境可扩展为下发 shell/python task 到指定 agent，agent 上报后更新状态。
+func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id string) {
+	caller, ok := s.requirePermission(w, r, "script:write")
+	if !ok {
+		return
+	}
+	tenant := s.k8sTenantFromRequest(r)
+	if tenant == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+		return
+	}
+	sc, ok := s.store.GetScript(tenant, id)
+	if !ok || sc == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
+		return
+	}
+	var body struct {
+		DeviceID string `json:"deviceID"`
+		Params   string `json:"params"`
+	}
+	// 请求体可选（GET 也允许，但 POST 推荐 JSON 体）。
+	_ = decodeJSONBody(w, r, &body)
+	if body.DeviceID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
+		return
+	}
+	// MVP：记录一条执行记录（succeeded 状态，stdout 为脚本内容预览）。
+	now := time.Now()
+	finishedAt := now
+	var exec *store.ScriptExecution
+	if ms, ok := s.store.(*store.MemoryStore); ok {
+		exec = ms.RecordScriptExecution(tenant, id, body.DeviceID, "succeeded",
+			"script executed (simulated): "+sc.Name, "", now, &finishedAt)
+	}
+	_ = caller
+	if exec == nil {
+		// 非 MemoryStore 后端：返回模拟结果不落库。
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"scriptID":  id,
+			"deviceID":  body.DeviceID,
+			"status":    "succeeded",
+			"stdout":    "script executed (simulated, not persisted): " + sc.Name,
+			"startedAt": now,
+			"finishedAt": finishedAt,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, exec)
+}
+
+// handleScriptExecutions 处理 GET /api/v1/scripts/{id}/executions：执行记录。
+func (s *Server) handleScriptExecutions(w http.ResponseWriter, r *http.Request, id string) {
+	if _, ok := s.requirePermission(w, r, "script:read"); !ok {
+		return
+	}
+	tenant := s.k8sTenantFromRequest(r)
+	if tenant == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+		return
+	}
+	executions := s.store.ListScriptExecutions(tenant, id)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"executions": executions})
+}

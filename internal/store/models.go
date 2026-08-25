@@ -556,3 +556,78 @@ type AutomationExecution struct {
 	StartedAt time.Time  `json:"startedAt"`
 	EndedAt   *time.Time `json:"endedAt,omitempty"`
 }
+
+// ============================================================================
+// Phase 5 扩展能力：Webhook + 自定义脚本
+// ============================================================================
+
+// Webhook Webhook 配置实体（Phase 5 扩展能力）。
+//
+// 用于事件驱动集成：当指定 Events（如 alert.created/ticket.closed）发生时，
+// 推送 HTTP POST 到 URL，BodyTemplate 渲染为请求体；Headers 附加自定义请求头。
+// RetryCount/RetryIntervalSec 控制失败重试；Enabled 控制是否生效。
+// 按 (TenantID, ID) 唯一标识，按 TenantID 隔离。
+type Webhook struct {
+	ID               string            `json:"id"`
+	TenantID         string            `json:"tenantID"`
+	Name             string            `json:"name"`
+	URL              string            `json:"url"`
+	Events           []string          `json:"events"`
+	Headers          map[string]string `json:"headers"`
+	BodyTemplate     string            `json:"bodyTemplate"`
+	Enabled          bool              `json:"enabled"`
+	RetryCount       int               `json:"retryCount"`
+	RetryIntervalSec int               `json:"retryIntervalSec"`
+	CreatedAt        time.Time         `json:"createdAt"`
+	UpdatedAt        time.Time         `json:"updatedAt"`
+}
+
+// WebhookDelivery Webhook 投递记录（Phase 5 扩展能力）。
+//
+// 每次推送（含重试）产生一条投递记录，记录响应状态码/响应体/错误信息/投递时间。
+// 按 (TenantID, ID) 唯一标识；WebhookID 关联到 Webhook.ID。
+type WebhookDelivery struct {
+	ID          string    `json:"id"`
+	TenantID    string    `json:"tenantID"`
+	WebhookID   string    `json:"webhookID"`
+	Event       string    `json:"event"`
+	Payload     string    `json:"payload"`
+	StatusCode  int       `json:"statusCode"`
+	Response    string    `json:"response"`
+	Error       string    `json:"error"`
+	DeliveredAt time.Time `json:"deliveredAt"`
+}
+
+// Script 自定义脚本实体（Phase 5 扩展能力）。
+//
+// 支持 shell/python 两种语言；Content 为脚本内容；Params 为参数模板；
+// TimeoutSec 控制执行超时；Enabled 控制是否允许执行。
+// 按 (TenantID, ID) 唯一标识，按 TenantID 隔离。
+type Script struct {
+	ID         string    `json:"id"`
+	TenantID   string    `json:"tenantID"`
+	Name       string    `json:"name"`
+	Language   string    `json:"language"` // shell|python
+	Content    string    `json:"content"`
+	Params     string    `json:"params"`
+	TimeoutSec int       `json:"timeoutSec"`
+	Enabled    bool      `json:"enabled"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
+// ScriptExecution 脚本执行记录（Phase 5 扩展能力）。
+//
+// 每次执行产生一条记录，记录标准输出/标准错误/状态/起止时间。
+// 按 (TenantID, ID) 唯一标识；ScriptID 关联到 Script.ID；DeviceID 为执行设备。
+type ScriptExecution struct {
+	ID         string     `json:"id"`
+	TenantID   string     `json:"tenantID"`
+	ScriptID   string     `json:"scriptID"`
+	DeviceID   string     `json:"deviceID"`
+	Status     string     `json:"status"` // pending/running/succeeded/failed
+	Stdout     string     `json:"stdout"`
+	Stderr     string     `json:"stderr"`
+	StartedAt  time.Time  `json:"startedAt"`
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+}

@@ -201,6 +201,46 @@ const RAW = {
   disable:
     '<rect x="2" y="6" width="20" height="12" rx="6"/>' +
     '<circle cx="8" cy="12" r="3" fill="currentColor" stroke="none"/>',
+  // Phase 5 tab 图标
+  gateway:
+    '<path d="M3 6h18M3 18h18"/>' +
+    '<circle cx="7" cy="6" r="1.6" fill="currentColor" stroke="none"/>' +
+    '<circle cx="17" cy="18" r="1.6" fill="currentColor" stroke="none"/>' +
+    '<path d="M7 8v6a2 2 0 0 0 2 2h6a2 2 0 0 1 2 2"/>',
+  webhook:
+    '<circle cx="6" cy="18" r="2.5"/>' +
+    '<circle cx="18" cy="6" r="2.5"/>' +
+    '<path d="M8 18h6a4 4 0 0 0 0-8H10a4 4 0 0 1 0-8h6"/>',
+  script:
+    '<rect x="4" y="3" width="16" height="18" rx="1.5"/>' +
+    '<path d="M8 7l-2 2 2 2M16 7l2 2-2 2M8 15h8"/>',
+  // Phase 5 操作图标
+  route:
+    '<path d="M5 19V5M5 19h14"/>' +
+    '<path d="M5 12h6l3-4 3 4h2"/>' +
+    '<circle cx="11" cy="12" r="1.2" fill="currentColor" stroke="none"/>' +
+    '<circle cx="14" cy="8" r="1.2" fill="currentColor" stroke="none"/>' +
+    '<circle cx="17" cy="12" r="1.2" fill="currentColor" stroke="none"/>',
+  send:
+    '<path d="M4 12l16-8-6 16-3-7-7-1z"/>' +
+    '<path d="M11 13l5-5"/>',
+  deliver:
+    '<rect x="3" y="6" width="13" height="12" rx="1"/>' +
+    '<path d="M16 9h4l2 3v3h-6"/>' +
+    '<circle cx="7" cy="18" r="1.8"/>' +
+    '<circle cx="18" cy="18" r="1.8"/>' +
+    '<path d="M7 9h6M7 12h4"/>',
+  code:
+    '<path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/>' +
+    '<path d="M13 6l-2 12"/>',
+  execute:
+    '<rect x="3" y="4" width="18" height="16" rx="1.5"/>' +
+    '<path d="M7 9l3 3-3 3M13 9l3 3-3 3"/>',
+  stats:
+    '<path d="M4 20V4M4 20h16"/>' +
+    '<rect x="7" y="12" width="3" height="6"/>' +
+    '<rect x="12" y="8" width="3" height="10"/>' +
+    '<rect x="17" y="14" width="3" height="4"/>',
 };
 
 // ICONS 对外暴露的图标字典（name -> raw inner SVG）。

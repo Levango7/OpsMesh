@@ -58,6 +58,19 @@ const state = {
   automationExecutions: [],
   automationSubTab: 'rules', // rules | executions
   automationEditingRule: null,
+  // Phase 5 状态
+  gatewayRoutes: [],
+  gatewayStats: null,
+  gatewaySubTab: 'routes', // routes | stats
+  gatewayEditingRoute: null,
+  webhooks: [],
+  webhookSubTab: 'list', // list | deliveries
+  webhookEditing: null,
+  webhookSelectedId: null,
+  scripts: [],
+  scriptSubTab: 'list', // list | executions
+  scriptEditing: null,
+  scriptSelectedId: null,
 };
 
 // ============================================================================
@@ -81,7 +94,7 @@ function sloContent() { return $('slo-content'); }
 // ============================================================================
 
 export function switchTab(tab) {
-  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push', 'compliance', 'ha', 'network-mgmt', 'automation'];
+  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push', 'compliance', 'ha', 'network-mgmt', 'automation', 'gateway', 'webhook', 'script'];
   if (validTabs.indexOf(tab) === -1) return;
   state.currentTab = tab;
   // 更新 tab 按钮激活态
@@ -108,6 +121,10 @@ export function switchTab(tab) {
   // Phase 4 懒加载
   if (tab === 'network-mgmt' && state.networkDevices.length === 0) loadNetworkDevices();
   if (tab === 'automation' && state.automationRules.length === 0) loadAutomationRules();
+  // Phase 5 懒加载
+  if (tab === 'gateway' && state.gatewayRoutes.length === 0) loadGatewayRoutes();
+  if (tab === 'webhook' && state.webhooks.length === 0) loadWebhooks();
+  if (tab === 'script' && state.scripts.length === 0) loadScripts();
 }
 
 // ============================================================================
@@ -907,6 +924,11 @@ export function init() {
   buildConfigPushToolbar();
   buildComplianceToolbar();
   buildHAToolbar();
+  buildNetworkToolbar();
+  buildAutomationToolbar();
+  buildGatewayToolbar();
+  buildWebhookToolbar();
+  buildScriptToolbar();
 
   // 绑定 tab 切换
   document.querySelectorAll('.tab-btn').forEach((btn) => {
@@ -931,6 +953,9 @@ function refreshCurrentPage() {
   buildHAToolbar();
   buildNetworkToolbar();
   buildAutomationToolbar();
+  buildGatewayToolbar();
+  buildWebhookToolbar();
+  buildScriptToolbar();
   // 重新加载当前页数据
   if (state.currentTab === 'tickets') loadTickets();
   else if (state.currentTab === 'dashboard') loadDashboardAll();
@@ -943,6 +968,9 @@ function refreshCurrentPage() {
   else if (state.currentTab === 'ha') refreshHASubTab();
   else if (state.currentTab === 'network-mgmt') refreshNetworkSubTab();
   else if (state.currentTab === 'automation') refreshAutomationSubTab();
+  else if (state.currentTab === 'gateway') refreshGatewaySubTab();
+  else if (state.currentTab === 'webhook') refreshWebhookSubTab();
+  else if (state.currentTab === 'script') refreshScriptSubTab();
 }
 
 // ============================================================================
@@ -1760,4 +1788,532 @@ function refreshAutomationSubTab() {
   if (sub === 'executions') {
     loadAutomationExecutions();
   }
+}
+
+// ============================================================================
+// Phase 5：扩展能力（API 网关 / Webhook / 自定义脚本）
+// ============================================================================
+
+// --- API 网关 ---
+
+function gatewayContent() { return $('gateway-content'); }
+
+// loadGatewayRoutes 加载网关路由列表（含子 tab 切换：路由列表 / 统计）。
+export async function loadGatewayRoutes() {
+  const content = gatewayContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 子 tab 切换条
+  const subTabs = [
+    { key: 'routes', label: t('gateway.routes'), onclick: () => { state.gatewaySubTab = 'routes'; refreshGatewaySubTab(); } },
+    { key: 'stats',  label: t('gateway.stats'),  onclick: () => { state.gatewaySubTab = 'stats';  refreshGatewaySubTab(); } },
+  ];
+  const subBar = render.el('div', { class: 'toolbar' });
+  subTabs.forEach((s) => {
+    subBar.appendChild(render.el('button', {
+      class: 'btn ' + (state.gatewaySubTab === s.key ? 'btn-secondary' : 'btn-ghost'),
+      onclick: s.onclick,
+    }, render.el('span', { text: s.label })));
+  });
+  content.appendChild(subBar);
+  const host = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  if (state.gatewaySubTab === 'stats') { loadGatewayStats(); return; }
+  // 路由列表
+  const listHost = render.el('div', { id: 'gateway-routes-list' });
+  host.appendChild(listHost);
+  render.renderLoading(listHost);
+  try {
+    const routes = await api.getGatewayRoutes();
+    state.gatewayRoutes = routes;
+    render.renderGatewayRoutesTable(listHost, routes, {
+      onEdit: (r) => editGatewayRoute(r),
+      onToggle: (r, action) => toggleGatewayRoute(r.id || r.name, action),
+      onDelete: (r) => deleteGatewayRoute(r.id || r.name),
+    });
+  } catch (err) {
+    render.renderError(listHost, t('gateway.routesLoadFailed') + ': ' + err.message);
+  }
+  // 创建路由表单
+  const formHost = render.el('div', { id: 'gateway-route-form', style: { marginTop: '1rem' } });
+  host.appendChild(formHost);
+  render.renderGatewayRouteForm(formHost, null, { onSubmit: (data) => createGatewayRoute(data) });
+}
+
+// loadGatewayStats 加载网关统计。
+export async function loadGatewayStats() {
+  const host = render.el('div', { id: 'gateway-stats-host', style: { marginTop: '1rem' } });
+  const content = gatewayContent();
+  if (!content) return;
+  content.appendChild(host);
+  render.renderLoading(host);
+  try {
+    const stats = await api.getGatewayStats();
+    state.gatewayStats = stats;
+    render.renderGatewayStats(host, stats);
+  } catch (err) {
+    render.renderError(host, t('gateway.routesLoadFailed') + ': ' + err.message);
+  }
+}
+
+// createGatewayRoute 创建网关路由。
+export async function createGatewayRoute(data) {
+  if (!data || !data.name) { render.renderToast(t('gateway.nameRequired'), 'warn'); return; }
+  if (!data.path) { render.renderToast(t('gateway.pathRequired'), 'warn'); return; }
+  if (!data.target) { render.renderToast(t('gateway.targetRequired'), 'warn'); return; }
+  try {
+    await api.createGatewayRoute(data);
+    render.renderToast(t('gateway.routeCreated'), 'success');
+    state.gatewaySubTab = 'routes';
+    loadGatewayRoutes();
+  } catch (err) {
+    render.renderToast(t('gateway.routeCreateFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// editGatewayRoute 编辑网关路由。
+export async function editGatewayRoute(route) {
+  if (!route) return;
+  state.gatewayEditingRoute = route;
+  const content = gatewayContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 返回按钮
+  const backBar = render.el('div', { class: 'toolbar' });
+  backBar.appendChild(render.el('button', {
+    class: 'btn btn-ghost',
+    onclick: () => { state.gatewayEditingRoute = null; state.gatewaySubTab = 'routes'; loadGatewayRoutes(); },
+  }, iconEl('back', 14), render.el('span', { text: t('gateway.routes') })));
+  content.appendChild(backBar);
+  const host = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  // 先尝试获取详情，失败则用列表数据
+  let detail = route;
+  try {
+    detail = await api.getGatewayRoute(route.id || route.name);
+  } catch (_) { /* 用列表数据 */ }
+  render.renderGatewayRouteForm(host, detail, { onSubmit: (data) => updateGatewayRoute(route.id || route.name, data) });
+}
+
+// updateGatewayRoute 更新网关路由。
+export async function updateGatewayRoute(id, data) {
+  if (!id) return;
+  if (!data || !data.name) { render.renderToast(t('gateway.nameRequired'), 'warn'); return; }
+  try {
+    await api.updateGatewayRoute(id, data);
+    render.renderToast(t('gateway.routeUpdated'), 'success');
+    state.gatewayEditingRoute = null;
+    state.gatewaySubTab = 'routes';
+    loadGatewayRoutes();
+  } catch (err) {
+    render.renderToast(t('gateway.routeUpdateFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// deleteGatewayRoute 删除网关路由。
+export async function deleteGatewayRoute(id) {
+  if (!id) return;
+  if (!window.confirm(t('gateway.deleteConfirm'))) return;
+  try {
+    await api.deleteGatewayRoute(id);
+    render.renderToast(t('gateway.routeDeleted'), 'success');
+    loadGatewayRoutes();
+  } catch (err) {
+    render.renderToast(t('gateway.routeDeleteFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// toggleGatewayRoute 启用/禁用网关路由。
+export async function toggleGatewayRoute(id, action) {
+  if (!id) return;
+  const act = action === 'disable' ? 'disable' : 'enable';
+  try {
+    await api.toggleGatewayRoute(id, act);
+    render.renderToast(act === 'enable' ? t('gateway.routeEnabledOk') : t('gateway.routeDisabledOk'), 'success');
+    loadGatewayRoutes();
+  } catch (err) {
+    render.renderToast((act === 'enable' ? t('gateway.routeEnableFailed') : t('gateway.routeDisableFailed')) + ': ' + err.message, 'error');
+  }
+}
+
+// buildGatewayToolbar 构建网关工具栏。
+export function buildGatewayToolbar() {
+  const toolbar = $('gateway-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => refreshGatewaySubTab() },
+      iconEl('refresh', 14), render.el('span', { text: t('common.refresh') })
+    )
+  );
+}
+
+// refreshGatewaySubTab 根据当前子 tab 重新渲染网关页。
+function refreshGatewaySubTab() {
+  loadGatewayRoutes();
+}
+
+// --- Webhook ---
+
+function webhookContent() { return $('webhook-content'); }
+
+// loadWebhooks 加载 Webhook 列表（含子 tab 切换：列表 / 投递记录）。
+export async function loadWebhooks() {
+  const content = webhookContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 子 tab 切换条
+  const subTabs = [
+    { key: 'list',       label: t('webhook.list'),       onclick: () => { state.webhookSubTab = 'list';       refreshWebhookSubTab(); } },
+    { key: 'deliveries', label: t('webhook.deliveries'), onclick: () => { state.webhookSubTab = 'deliveries'; refreshWebhookSubTab(); } },
+  ];
+  const subBar = render.el('div', { class: 'toolbar' });
+  subTabs.forEach((s) => {
+    subBar.appendChild(render.el('button', {
+      class: 'btn ' + (state.webhookSubTab === s.key ? 'btn-secondary' : 'btn-ghost'),
+      onclick: s.onclick,
+    }, render.el('span', { text: s.label })));
+  });
+  content.appendChild(subBar);
+  const host = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  if (state.webhookSubTab === 'deliveries') {
+    if (state.webhookSelectedId) { loadWebhookDeliveries(state.webhookSelectedId); return; }
+    render.renderEmpty(host, t('webhook.noDeliveries'));
+    return;
+  }
+  // Webhook 列表
+  const listHost = render.el('div', { id: 'webhooks-list' });
+  host.appendChild(listHost);
+  render.renderLoading(listHost);
+  try {
+    const webhooks = await api.getWebhooks();
+    state.webhooks = webhooks;
+    render.renderWebhooksTable(listHost, webhooks, {
+      onEdit: (w) => editWebhook(w),
+      onTest: (w) => testWebhookSend(w.id || w.name),
+      onDeliveries: (w) => { state.webhookSelectedId = w.id || w.name; state.webhookSubTab = 'deliveries'; refreshWebhookSubTab(); },
+      onDelete: (w) => deleteWebhook(w.id || w.name),
+    });
+  } catch (err) {
+    render.renderError(listHost, t('webhook.loadFailed') + ': ' + err.message);
+  }
+  // 创建 Webhook 表单
+  const formHost = render.el('div', { id: 'webhook-form', style: { marginTop: '1rem' } });
+  host.appendChild(formHost);
+  render.renderWebhookForm(formHost, null, { onSubmit: (data) => createWebhook(data) });
+}
+
+// createWebhook 创建 Webhook。
+export async function createWebhook(data) {
+  if (!data || !data.name) { render.renderToast(t('webhook.nameRequired'), 'warn'); return; }
+  if (!data.url) { render.renderToast(t('webhook.urlRequired'), 'warn'); return; }
+  if (!data.event) { render.renderToast(t('webhook.eventRequired'), 'warn'); return; }
+  try {
+    await api.createWebhook(data);
+    render.renderToast(t('webhook.created'), 'success');
+    state.webhookSubTab = 'list';
+    loadWebhooks();
+  } catch (err) {
+    render.renderToast(t('webhook.createFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// editWebhook 编辑 Webhook。
+export async function editWebhook(wh) {
+  if (!wh) return;
+  state.webhookEditing = wh;
+  const content = webhookContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 返回按钮
+  const backBar = render.el('div', { class: 'toolbar' });
+  backBar.appendChild(render.el('button', {
+    class: 'btn btn-ghost',
+    onclick: () => { state.webhookEditing = null; state.webhookSubTab = 'list'; loadWebhooks(); },
+  }, iconEl('back', 14), render.el('span', { text: t('webhook.list') })));
+  content.appendChild(backBar);
+  const host = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  // 先尝试获取详情，失败则用列表数据
+  let detail = wh;
+  try {
+    detail = await api.getWebhook(wh.id || wh.name);
+  } catch (_) { /* 用列表数据 */ }
+  render.renderWebhookForm(host, detail, { onSubmit: (data) => updateWebhook(wh.id || wh.name, data) });
+}
+
+// updateWebhook 更新 Webhook。
+export async function updateWebhook(id, data) {
+  if (!id) return;
+  if (!data || !data.name) { render.renderToast(t('webhook.nameRequired'), 'warn'); return; }
+  try {
+    await api.updateWebhook(id, data);
+    render.renderToast(t('webhook.updated'), 'success');
+    state.webhookEditing = null;
+    state.webhookSubTab = 'list';
+    loadWebhooks();
+  } catch (err) {
+    render.renderToast(t('webhook.updateFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// deleteWebhook 删除 Webhook。
+export async function deleteWebhook(id) {
+  if (!id) return;
+  if (!window.confirm(t('webhook.deleteConfirm'))) return;
+  try {
+    await api.deleteWebhook(id);
+    render.renderToast(t('webhook.deleted'), 'success');
+    loadWebhooks();
+  } catch (err) {
+    render.renderToast(t('webhook.deleteFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// testWebhookSend 测试发送 Webhook。
+export async function testWebhookSend(id) {
+  if (!id) return;
+  try {
+    const result = await api.testWebhook(id);
+    const msg = (result && (result.message || result.status)) || t('webhook.testSent');
+    render.renderToast(t('webhook.testSent') + ': ' + String(msg).slice(0, 100), 'success');
+  } catch (err) {
+    render.renderToast(t('webhook.testFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// loadWebhookDeliveries 加载 Webhook 投递记录。
+export async function loadWebhookDeliveries(id) {
+  if (!id) return;
+  const content = webhookContent();
+  if (!content) return;
+  const host = render.el('div', { id: 'webhook-deliveries-list', class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  render.renderLoading(host);
+  try {
+    const deliveries = await api.getWebhookDeliveries(id);
+    render.renderWebhookDeliveriesTable(host, deliveries);
+  } catch (err) {
+    render.renderError(host, t('webhook.deliveriesLoadFailed') + ': ' + err.message);
+  }
+}
+
+// buildWebhookToolbar 构建 Webhook 工具栏。
+export function buildWebhookToolbar() {
+  const toolbar = $('webhook-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => refreshWebhookSubTab() },
+      iconEl('refresh', 14), render.el('span', { text: t('common.refresh') })
+    )
+  );
+}
+
+// refreshWebhookSubTab 根据当前子 tab 重新渲染 Webhook 页。
+function refreshWebhookSubTab() {
+  loadWebhooks();
+}
+
+// --- 自定义脚本 ---
+
+function scriptContent() { return $('script-content'); }
+
+// loadScripts 加载脚本列表（含子 tab 切换：列表 / 执行历史）。
+export async function loadScripts() {
+  const content = scriptContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 子 tab 切换条
+  const subTabs = [
+    { key: 'list',       label: t('script.list'),       onclick: () => { state.scriptSubTab = 'list';       refreshScriptSubTab(); } },
+    { key: 'executions', label: t('script.executions'), onclick: () => { state.scriptSubTab = 'executions'; refreshScriptSubTab(); } },
+  ];
+  const subBar = render.el('div', { class: 'toolbar' });
+  subTabs.forEach((s) => {
+    subBar.appendChild(render.el('button', {
+      class: 'btn ' + (state.scriptSubTab === s.key ? 'btn-secondary' : 'btn-ghost'),
+      onclick: s.onclick,
+    }, render.el('span', { text: s.label })));
+  });
+  content.appendChild(subBar);
+  const host = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  if (state.scriptSubTab === 'executions') {
+    if (state.scriptSelectedId) { loadScriptExecutions(state.scriptSelectedId); return; }
+    render.renderEmpty(host, t('script.noExecutions'));
+    return;
+  }
+  // 脚本列表
+  const listHost = render.el('div', { id: 'scripts-list' });
+  host.appendChild(listHost);
+  render.renderLoading(listHost);
+  try {
+    const scripts = await api.getScripts();
+    state.scripts = scripts;
+    render.renderScriptsTable(listHost, scripts, {
+      onEdit: (s) => editScript(s),
+      onExecute: (s) => showScriptExecuteForm(s),
+      onExecutions: (s) => { state.scriptSelectedId = s.id || s.name; state.scriptSubTab = 'executions'; refreshScriptSubTab(); },
+      onDelete: (s) => deleteScript(s.id || s.name),
+    });
+  } catch (err) {
+    render.renderError(listHost, t('script.loadFailed') + ': ' + err.message);
+  }
+  // 创建脚本表单
+  const formHost = render.el('div', { id: 'script-form', style: { marginTop: '1rem' } });
+  host.appendChild(formHost);
+  render.renderScriptForm(formHost, null, { onSubmit: (data) => createScript(data) });
+}
+
+// createScript 创建脚本。
+export async function createScript(data) {
+  if (!data || !data.name) { render.renderToast(t('script.nameRequired'), 'warn'); return; }
+  if (!data.code) { render.renderToast(t('script.codeRequired'), 'warn'); return; }
+  try {
+    await api.createScript(data);
+    render.renderToast(t('script.created'), 'success');
+    state.scriptSubTab = 'list';
+    loadScripts();
+  } catch (err) {
+    render.renderToast(t('script.createFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// editScript 编辑脚本。
+export async function editScript(script) {
+  if (!script) return;
+  state.scriptEditing = script;
+  const content = scriptContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 返回按钮
+  const backBar = render.el('div', { class: 'toolbar' });
+  backBar.appendChild(render.el('button', {
+    class: 'btn btn-ghost',
+    onclick: () => { state.scriptEditing = null; state.scriptSubTab = 'list'; loadScripts(); },
+  }, iconEl('back', 14), render.el('span', { text: t('script.list') })));
+  content.appendChild(backBar);
+  const host = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  // 先尝试获取详情，失败则用列表数据
+  let detail = script;
+  try {
+    detail = await api.getScript(script.id || script.name);
+  } catch (_) { /* 用列表数据 */ }
+  render.renderScriptForm(host, detail, { onSubmit: (data) => updateScript(script.id || script.name, data) });
+}
+
+// updateScript 更新脚本。
+export async function updateScript(id, data) {
+  if (!id) return;
+  if (!data || !data.name) { render.renderToast(t('script.nameRequired'), 'warn'); return; }
+  if (!data.code) { render.renderToast(t('script.codeRequired'), 'warn'); return; }
+  try {
+    await api.updateScript(id, data);
+    render.renderToast(t('script.updated'), 'success');
+    state.scriptEditing = null;
+    state.scriptSubTab = 'list';
+    loadScripts();
+  } catch (err) {
+    render.renderToast(t('script.updateFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// deleteScript 删除脚本。
+export async function deleteScript(id) {
+  if (!id) return;
+  if (!window.confirm(t('script.deleteConfirm'))) return;
+  try {
+    await api.deleteScript(id);
+    render.renderToast(t('script.deleted'), 'success');
+    loadScripts();
+  } catch (err) {
+    render.renderToast(t('script.deleteFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// showScriptExecuteForm 显示脚本执行表单。
+export function showScriptExecuteForm(script) {
+  if (!script) return;
+  const content = scriptContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 返回按钮
+  const backBar = render.el('div', { class: 'toolbar' });
+  backBar.appendChild(render.el('button', {
+    class: 'btn btn-ghost',
+    onclick: () => { state.scriptSubTab = 'list'; loadScripts(); },
+  }, iconEl('back', 14), render.el('span', { text: t('script.list') })));
+  content.appendChild(backBar);
+  const host = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  render.renderScriptExecuteForm(host, script, { onExecute: (deviceId, params) => executeScriptOnDevice(script.id || script.name, deviceId, params) });
+}
+
+// executeScriptOnDevice 在设备上执行脚本。
+export async function executeScriptOnDevice(id, deviceId, params) {
+  if (!id) return;
+  if (!deviceId) { render.renderToast(t('script.deviceRequired'), 'warn'); return; }
+  try {
+    const result = await api.executeScript(id, { deviceId: deviceId, params: params || {} });
+    const msg = (result && (result.message || result.executionId || result.id)) || t('script.execSubmitted');
+    render.renderToast(t('script.execSubmitted') + ': ' + String(msg).slice(0, 100), 'success');
+  } catch (err) {
+    render.renderToast(t('script.execFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// loadScriptExecutions 加载脚本执行历史。
+export async function loadScriptExecutions(id) {
+  if (!id) return;
+  const content = scriptContent();
+  if (!content) return;
+  const host = render.el('div', { id: 'script-executions-list', class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  render.renderLoading(host);
+  try {
+    const execs = await api.getScriptExecutions(id);
+    render.renderScriptExecutionsTable(host, execs, {
+      onDetail: (e) => showScriptExecutionDetail(e),
+    });
+  } catch (err) {
+    render.renderError(host, t('script.executionsLoadFailed') + ': ' + err.message);
+  }
+}
+
+// showScriptExecutionDetail 显示脚本执行详情。
+export function showScriptExecutionDetail(exec) {
+  if (!exec) return;
+  const content = scriptContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 返回按钮
+  const backBar = render.el('div', { class: 'toolbar' });
+  backBar.appendChild(render.el('button', {
+    class: 'btn btn-ghost',
+    onclick: () => { state.scriptSubTab = 'executions'; refreshScriptSubTab(); },
+  }, iconEl('back', 14), render.el('span', { text: t('script.executions') })));
+  content.appendChild(backBar);
+  const host = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  render.renderScriptExecutionDetail(host, exec);
+}
+
+// buildScriptToolbar 构建脚本工具栏。
+export function buildScriptToolbar() {
+  const toolbar = $('script-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => refreshScriptSubTab() },
+      iconEl('refresh', 14), render.el('span', { text: t('common.refresh') })
+    )
+  );
+}
+
+// refreshScriptSubTab 根据当前子 tab 重新渲染脚本页。
+function refreshScriptSubTab() {
+  loadScripts();
 }

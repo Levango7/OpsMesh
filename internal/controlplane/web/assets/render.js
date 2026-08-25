@@ -1162,6 +1162,28 @@ export function renderApiEndpoints(container) {
     { method: 'POST',   path: '/api/v1/automation/rules/{id}/test',    desc: 'test automation rule' },
     { method: 'GET',    path: '/api/v1/automation/executions',         desc: 'list automation executions' },
     { method: 'GET',    path: '/api/v1/automation/executions/{id}',    desc: 'get automation execution' },
+    { method: 'GET',    path: '/api/v1/gateway/routes',                desc: 'list gateway routes' },
+    { method: 'POST',   path: '/api/v1/gateway/routes',                desc: 'create gateway route' },
+    { method: 'GET',    path: '/api/v1/gateway/routes/{id}',           desc: 'get gateway route' },
+    { method: 'PUT',    path: '/api/v1/gateway/routes/{id}',           desc: 'update gateway route' },
+    { method: 'DELETE', path: '/api/v1/gateway/routes/{id}',           desc: 'delete gateway route' },
+    { method: 'POST',   path: '/api/v1/gateway/routes/{id}/enable',    desc: 'enable gateway route' },
+    { method: 'POST',   path: '/api/v1/gateway/routes/{id}/disable',   desc: 'disable gateway route' },
+    { method: 'GET',    path: '/api/v1/gateway/stats',                 desc: 'get gateway stats' },
+    { method: 'GET',    path: '/api/v1/webhooks',                      desc: 'list webhooks' },
+    { method: 'POST',   path: '/api/v1/webhooks',                      desc: 'create webhook' },
+    { method: 'GET',    path: '/api/v1/webhooks/{id}',                 desc: 'get webhook' },
+    { method: 'PUT',    path: '/api/v1/webhooks/{id}',                 desc: 'update webhook' },
+    { method: 'DELETE', path: '/api/v1/webhooks/{id}',                 desc: 'delete webhook' },
+    { method: 'POST',   path: '/api/v1/webhooks/{id}/test',            desc: 'test webhook' },
+    { method: 'GET',    path: '/api/v1/webhooks/{id}/deliveries',      desc: 'list webhook deliveries' },
+    { method: 'GET',    path: '/api/v1/scripts',                       desc: 'list scripts' },
+    { method: 'POST',   path: '/api/v1/scripts',                       desc: 'create script' },
+    { method: 'GET',    path: '/api/v1/scripts/{id}',                  desc: 'get script' },
+    { method: 'PUT',    path: '/api/v1/scripts/{id}',                  desc: 'update script' },
+    { method: 'DELETE', path: '/api/v1/scripts/{id}',                  desc: 'delete script' },
+    { method: 'POST',   path: '/api/v1/scripts/{id}/execute',          desc: 'execute script on device' },
+    { method: 'GET',    path: '/api/v1/scripts/{id}/executions',       desc: 'list script executions' },
   ];
   const methodColor = { GET: 'badge-status-resolved', POST: 'badge-status-open', DELETE: 'badge-priority-urgent', PUT: 'badge-status-in_progress' };
   container.appendChild(el('table', { class: 'data-table data-table-compact' },
@@ -1903,6 +1925,424 @@ export function renderAutomationExecutionDetail(container, exec) {
   if (exec.output != null) {
     card.appendChild(el('div', { class: 'form-row' },
       el('label', { class: 'form-label', text: t('automation.execOutput') }),
+      el('pre', { class: 'form-control', style: { whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '.85rem' }, text: String(exec.output) })
+    ));
+  }
+  if (exec.error != null && exec.error !== '') {
+    card.appendChild(el('div', { class: 'form-row' },
+      el('label', { class: 'form-label', text: 'Error' }),
+      el('pre', { class: 'form-control', style: { whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '.85rem', color: 'var(--danger, #c0392b)' }, text: String(exec.error) })
+    ));
+  }
+  container.appendChild(card);
+}
+
+// ============================================================================
+// Phase 5：扩展能力渲染（API 网关 / Webhook / 自定义脚本）
+// ============================================================================
+
+// --- API 网关 ---
+
+// gatewayRouteStatusBadge 网关路由状态 badge。
+function gatewayRouteStatusBadge(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'enabled' || s === 'active') return badge(t('gateway.routeEnabled'), 'badge-status-resolved');
+  if (s === 'disabled' || s === 'inactive') return badge(t('gateway.routeDisabled'), 'badge-status-closed');
+  return badge(status || '-', 'badge-status-in_progress');
+}
+
+// renderGatewayStats 渲染网关统计卡片。
+export function renderGatewayStats(container, stats) {
+  container.innerHTML = '';
+  if (!stats) { renderEmpty(container); return; }
+  const cards = [
+    { label: t('gateway.statsTotal'),  value: stats.totalRequests != null ? stats.totalRequests : (stats.total || 0),     icon: 'stats' },
+    { label: t('gateway.statsActive'), value: stats.activeRoutes != null ? stats.activeRoutes : (stats.active || 0),       icon: 'route' },
+    { label: t('gateway.statsQps'),    value: stats.qps != null ? stats.qps : (stats.currentQps || 0),                     icon: 'dashboard' },
+    { label: t('gateway.statsErrors'), value: stats.totalErrors != null ? stats.totalErrors : (stats.errors || 0),         icon: 'alert' },
+  ];
+  const grid = el('div', { class: 'stats-grid', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', marginBottom: '1rem' } });
+  cards.forEach((c) => {
+    grid.appendChild(el('div', { class: 'stat-card content' },
+      el('div', { class: 'stat-card-head', style: { display: 'flex', alignItems: 'center', gap: '.5rem', color: 'var(--text-muted, #6b7280)' } },
+        iconEl(c.icon, 16),
+        el('span', { text: c.label })
+      ),
+      el('div', { class: 'stat-card-value', style: { fontSize: '1.5rem', fontWeight: '600', marginTop: '.5rem' }, text: String(c.value) })
+    ));
+  });
+  container.appendChild(grid);
+}
+
+// renderGatewayRoutesTable 渲染网关路由表格。
+// handlers: { onEdit(route), onToggle(route), onDelete(route) }
+export function renderGatewayRoutesTable(container, routes, handlers) {
+  container.innerHTML = '';
+  if (!routes || !routes.length) { renderEmpty(container, t('gateway.noRoutes')); return; }
+  container.appendChild(el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('gateway.routeName') }),
+        el('th', { text: t('gateway.routeMethod') }),
+        el('th', { text: t('gateway.routePath') }),
+        el('th', { text: t('gateway.routeTarget') }),
+        el('th', { text: t('gateway.routeStatus') }),
+        el('th', { class: 'th-actions', text: t('common.actions') })
+      )
+    ),
+    el('tbody', null,
+      routes.map((r) => {
+        const enabled = String(r.status || '').toLowerCase() === 'enabled' || String(r.status || '').toLowerCase() === 'active';
+        return el('tr', null,
+          el('td', { class: 'cell-title', text: r.name || r.id || '-' }),
+          el('td', null, el('span', { class: 'badge badge-status-in_progress', text: r.method || '*' })),
+          el('td', { class: 'mono', text: r.path || '-' }),
+          el('td', { class: 'mono', text: r.target || r.upstream || '-' }),
+          el('td', null, gatewayRouteStatusBadge(r.status)),
+          el('td', { class: 'td-actions' },
+            el('button', { class: 'btn btn-ghost', title: t('common.edit'), onclick: () => handlers.onEdit && handlers.onEdit(r) },
+              iconEl('edit', 14)
+            ),
+            enabled
+              ? el('button', { class: 'btn btn-ghost', title: t('gateway.disable'), onclick: () => handlers.onToggle && handlers.onToggle(r, 'disable') },
+                  iconEl('disable', 14)
+                )
+              : el('button', { class: 'btn btn-ghost', title: t('gateway.enable'), onclick: () => handlers.onToggle && handlers.onToggle(r, 'enable') },
+                  iconEl('enable', 14)
+                ),
+            el('button', { class: 'btn btn-ghost btn-icon-danger', title: t('common.delete'), onclick: () => handlers.onDelete && handlers.onDelete(r) },
+              iconEl('trash', 14)
+            )
+          )
+        );
+      })
+    )
+  ));
+}
+
+// renderGatewayRouteForm 渲染创建/编辑网关路由表单。
+// route: 编辑时传入现有路由，创建时传 null；handlers: { onSubmit(data) }
+export function renderGatewayRouteForm(container, route, handlers) {
+  container.innerHTML = '';
+  const isEdit = !!route;
+  const form = el('form', { class: 'form-card', onsubmit: (e) => {
+    e.preventDefault();
+    const data = {
+      name: form.elements.name.value.trim(),
+      method: form.elements.method.value.trim(),
+      path: form.elements.path.value.trim(),
+      target: form.elements.target.value.trim(),
+      description: form.elements.description.value.trim(),
+    };
+    handlers.onSubmit && handlers.onSubmit(data);
+  } });
+  form.appendChild(el('h3', { class: 'form-title', text: isEdit ? t('gateway.editRoute') : t('gateway.createRoute') }));
+  form.appendChild(fieldRow(t('gateway.routeName'), true,
+    el('input', { name: 'name', type: 'text', required: 'true', value: (route && route.name) || '', placeholder: 'user-api-route' })
+  ));
+  form.appendChild(fieldRow(t('gateway.routeMethod'), false,
+    el('input', { name: 'method', type: 'text', value: (route && route.method) || '*', placeholder: t('gateway.methodPlaceholder') })
+  ));
+  form.appendChild(fieldRow(t('gateway.routePath'), true,
+    el('input', { name: 'path', type: 'text', required: 'true', value: (route && route.path) || '', placeholder: t('gateway.pathPlaceholder') })
+  ));
+  form.appendChild(fieldRow(t('gateway.routeTarget'), true,
+    el('input', { name: 'target', type: 'text', required: 'true', value: (route && (route.target || route.upstream)) || '', placeholder: t('gateway.targetPlaceholder') })
+  ));
+  form.appendChild(fieldRow(t('common.description'), false,
+    el('input', { name: 'description', type: 'text', value: (route && route.description) || '', placeholder: t('common.description') })
+  ));
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' },
+      iconEl('check', 16), el('span', { text: isEdit ? t('gateway.editRoute') : t('gateway.createRoute') })
+    )
+  ));
+  container.appendChild(form);
+}
+
+// --- Webhook ---
+
+// webhookStatusBadge Webhook 状态 badge。
+function webhookStatusBadge(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'enabled' || s === 'active') return badge(t('webhook.enabled'), 'badge-status-resolved');
+  if (s === 'disabled' || s === 'inactive') return badge(t('webhook.disabled'), 'badge-status-closed');
+  return badge(status || '-', 'badge-status-in_progress');
+}
+
+// renderWebhooksTable 渲染 Webhook 列表表格。
+// handlers: { onEdit(wh), onTest(wh), onDeliveries(wh), onDelete(wh) }
+export function renderWebhooksTable(container, webhooks, handlers) {
+  container.innerHTML = '';
+  if (!webhooks || !webhooks.length) { renderEmpty(container, t('webhook.noWebhooks')); return; }
+  container.appendChild(el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('webhook.name') }),
+        el('th', { text: t('webhook.url') }),
+        el('th', { text: t('webhook.event') }),
+        el('th', { text: t('webhook.status') }),
+        el('th', { class: 'th-actions', text: t('common.actions') })
+      )
+    ),
+    el('tbody', null,
+      webhooks.map((w) => el('tr', null,
+        el('td', { class: 'cell-title', text: w.name || w.id || '-' }),
+        el('td', { class: 'mono', text: w.url || '-' }),
+        el('td', { class: 'mono', text: w.event || w.events || '-' }),
+        el('td', null, webhookStatusBadge(w.status)),
+        el('td', { class: 'td-actions' },
+          el('button', { class: 'btn btn-ghost', title: t('common.edit'), onclick: () => handlers.onEdit && handlers.onEdit(w) },
+            iconEl('edit', 14)
+          ),
+          el('button', { class: 'btn btn-ghost', title: t('webhook.test'), onclick: () => handlers.onTest && handlers.onTest(w) },
+            iconEl('send', 14)
+          ),
+          el('button', { class: 'btn btn-ghost', title: t('webhook.showDeliveries'), onclick: () => handlers.onDeliveries && handlers.onDeliveries(w) },
+            iconEl('deliver', 14)
+          ),
+          el('button', { class: 'btn btn-ghost btn-icon-danger', title: t('common.delete'), onclick: () => handlers.onDelete && handlers.onDelete(w) },
+            iconEl('trash', 14)
+          )
+        )
+      ))
+    )
+  ));
+}
+
+// renderWebhookForm 渲染创建/编辑 Webhook 表单。
+// wh: 编辑时传入现有 Webhook，创建时传 null；handlers: { onSubmit(data) }
+export function renderWebhookForm(container, wh, handlers) {
+  container.innerHTML = '';
+  const isEdit = !!wh;
+  const form = el('form', { class: 'form-card', onsubmit: (e) => {
+    e.preventDefault();
+    const data = {
+      name: form.elements.name.value.trim(),
+      url: form.elements.url.value.trim(),
+      event: form.elements.event.value.trim(),
+      secret: form.elements.secret.value.trim(),
+    };
+    handlers.onSubmit && handlers.onSubmit(data);
+  } });
+  form.appendChild(el('h3', { class: 'form-title', text: isEdit ? t('webhook.edit') : t('webhook.create') }));
+  form.appendChild(fieldRow(t('webhook.name'), true,
+    el('input', { name: 'name', type: 'text', required: 'true', value: (wh && wh.name) || '', placeholder: 'ticket-created-hook' })
+  ));
+  form.appendChild(fieldRow(t('webhook.url'), true,
+    el('input', { name: 'url', type: 'url', required: 'true', value: (wh && wh.url) || '', placeholder: t('webhook.urlPlaceholder') })
+  ));
+  form.appendChild(fieldRow(t('webhook.event'), true,
+    el('input', { name: 'event', type: 'text', required: 'true', value: (wh && (wh.event || (Array.isArray(wh.events) ? wh.events.join(',') : wh.events))) || '', placeholder: t('webhook.eventPlaceholder') })
+  ));
+  form.appendChild(fieldRow(t('webhook.secret'), false,
+    el('input', { name: 'secret', type: 'text', value: (wh && wh.secret) || '', placeholder: t('webhook.secretPlaceholder') })
+  ));
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' },
+      iconEl('check', 16), el('span', { text: isEdit ? t('webhook.edit') : t('webhook.create') })
+    )
+  ));
+  container.appendChild(form);
+}
+
+// renderWebhookDeliveriesTable 渲染 Webhook 投递记录表格。
+export function renderWebhookDeliveriesTable(container, deliveries) {
+  container.innerHTML = '';
+  if (!deliveries || !deliveries.length) { renderEmpty(container, t('webhook.noDeliveries')); return; }
+  container.appendChild(el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('webhook.deliveryId') }),
+        el('th', { text: t('webhook.deliveryStatus') }),
+        el('th', { text: t('webhook.deliveryAttempts') }),
+        el('th', { text: t('webhook.deliveryTime') }),
+        el('th', { text: t('webhook.deliveryResponse') })
+      )
+    ),
+    el('tbody', null,
+      deliveries.map((d) => {
+        const sc = d.statusCode || d.status || d.code;
+        const ok = Number(sc) >= 200 && Number(sc) < 300;
+        return el('tr', null,
+          el('td', { class: 'cell-title mono', text: d.id || d.deliveryID || '-' }),
+          el('td', null, badge(String(sc || '-'), ok ? 'badge-status-resolved' : 'badge-priority-urgent')),
+          el('td', { text: String(d.attempts != null ? d.attempts : (d.retryCount || 0)) }),
+          el('td', { text: formatTime(d.createdAt || d.time || d.deliveredAt) }),
+          el('td', { class: 'mono', text: String(d.response || d.body || '').slice(0, 80) })
+        );
+      })
+    )
+  ));
+}
+
+// --- 自定义脚本 ---
+
+// scriptStatusBadge 脚本状态 badge。
+function scriptStatusBadge(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'enabled' || s === 'active') return badge(t('script.enabled'), 'badge-status-resolved');
+  if (s === 'disabled' || s === 'inactive') return badge(t('script.disabled'), 'badge-status-closed');
+  return badge(status || '-', 'badge-status-in_progress');
+}
+
+// renderScriptsTable 渲染自定义脚本列表表格。
+// handlers: { onEdit(s), onExecute(s), onExecutions(s), onDelete(s) }
+export function renderScriptsTable(container, scripts, handlers) {
+  container.innerHTML = '';
+  if (!scripts || !scripts.length) { renderEmpty(container, t('script.noScripts')); return; }
+  container.appendChild(el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('script.name') }),
+        el('th', { text: t('script.runtime') }),
+        el('th', { text: t('script.desc2') }),
+        el('th', { text: t('script.status') }),
+        el('th', { class: 'th-actions', text: t('common.actions') })
+      )
+    ),
+    el('tbody', null,
+      scripts.map((s) => el('tr', null,
+        el('td', { class: 'cell-title', text: s.name || s.id || '-' }),
+        el('td', { class: 'mono', text: s.runtime || s.language || '-' }),
+        el('td', { text: s.description || '-' }),
+        el('td', null, scriptStatusBadge(s.status)),
+        el('td', { class: 'td-actions' },
+          el('button', { class: 'btn btn-ghost', title: t('common.edit'), onclick: () => handlers.onEdit && handlers.onEdit(s) },
+            iconEl('edit', 14)
+          ),
+          el('button', { class: 'btn btn-ghost', title: t('script.execute'), onclick: () => handlers.onExecute && handlers.onExecute(s) },
+            iconEl('execute', 14)
+          ),
+          el('button', { class: 'btn btn-ghost', title: t('script.showExecutions'), onclick: () => handlers.onExecutions && handlers.onExecutions(s) },
+            iconEl('history', 14)
+          ),
+          el('button', { class: 'btn btn-ghost btn-icon-danger', title: t('common.delete'), onclick: () => handlers.onDelete && handlers.onDelete(s) },
+            iconEl('trash', 14)
+          )
+        )
+      ))
+    )
+  ));
+}
+
+// renderScriptForm 渲染创建/编辑脚本表单（含代码编辑区）。
+// script: 编辑时传入现有脚本，创建时传 null；handlers: { onSubmit(data) }
+export function renderScriptForm(container, script, handlers) {
+  container.innerHTML = '';
+  const isEdit = !!script;
+  const form = el('form', { class: 'form-card', onsubmit: (e) => {
+    e.preventDefault();
+    const data = {
+      name: form.elements.name.value.trim(),
+      runtime: form.elements.runtime.value.trim(),
+      description: form.elements.description.value.trim(),
+      code: form.elements.code.value,
+    };
+    handlers.onSubmit && handlers.onSubmit(data);
+  } });
+  form.appendChild(el('h3', { class: 'form-title', text: isEdit ? t('script.edit') : t('script.create') }));
+  form.appendChild(fieldRow(t('script.name'), true,
+    el('input', { name: 'name', type: 'text', required: 'true', value: (script && script.name) || '', placeholder: 'check-disk-usage' })
+  ));
+  form.appendChild(fieldRow(t('script.runtime'), true,
+    el('input', { name: 'runtime', type: 'text', required: 'true', value: (script && (script.runtime || script.language)) || 'python3', placeholder: t('script.runtimePlaceholder') })
+  ));
+  form.appendChild(fieldRow(t('script.desc2'), false,
+    el('input', { name: 'description', type: 'text', value: (script && script.description) || '', placeholder: t('script.desc2') })
+  ));
+  form.appendChild(fieldRow(t('script.code'), true,
+    el('textarea', { name: 'code', rows: '10', required: 'true', placeholder: t('script.codePlaceholder'), style: { width: '100%', fontFamily: 'monospace', fontSize: '.85rem' } }, (script && script.code) || '')
+  ));
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' },
+      iconEl('check', 16), el('span', { text: isEdit ? t('script.edit') : t('script.create') })
+    )
+  ));
+  container.appendChild(form);
+}
+
+// renderScriptExecuteForm 渲染脚本执行表单（输入 deviceId + params）。
+// handlers: { onExecute(deviceId, params) }
+export function renderScriptExecuteForm(container, script, handlers) {
+  container.innerHTML = '';
+  const form = el('form', { class: 'form-card', onsubmit: (e) => {
+    e.preventDefault();
+    const deviceId = form.elements.deviceId.value.trim();
+    let params = {};
+    try { params = JSON.parse(form.elements.params.value || '{}'); } catch (_) { params = {}; }
+    handlers.onExecute && handlers.onExecute(deviceId, params);
+  } });
+  form.appendChild(el('h3', { class: 'form-title', text: t('script.executeOnDevice') + (script && script.name ? ' · ' + script.name : '') }));
+  form.appendChild(fieldRow(t('script.execDeviceId'), true,
+    el('input', { name: 'deviceId', type: 'text', required: 'true', placeholder: 'device-001' })
+  ));
+  form.appendChild(fieldRow(t('script.execParams'), false,
+    el('textarea', { name: 'params', rows: '4', placeholder: t('script.execParamsPlaceholder'), style: { width: '100%', fontFamily: 'monospace', fontSize: '.85rem' } }, '{}')
+  ));
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' },
+      iconEl('execute', 16), el('span', { text: t('script.execute') })
+    )
+  ));
+  container.appendChild(form);
+}
+
+// renderScriptExecutionsTable 渲染脚本执行历史表格。
+// handlers: { onDetail(exec) }
+export function renderScriptExecutionsTable(container, execs, handlers) {
+  container.innerHTML = '';
+  if (!execs || !execs.length) { renderEmpty(container, t('script.noExecutions')); return; }
+  container.appendChild(el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('script.execId') }),
+        el('th', { text: t('script.execStatus') }),
+        el('th', { text: t('script.execTime') }),
+        el('th', { text: t('script.execDuration') }),
+        el('th', { class: 'th-actions', text: t('common.actions') })
+      )
+    ),
+    el('tbody', null,
+      execs.map((e) => {
+        const s = String(e.status || '').toLowerCase();
+        const statusCls = s === 'success' || s === 'succeeded' ? 'badge-status-resolved'
+          : s === 'failed' || s === 'error' ? 'badge-priority-urgent'
+          : s === 'running' ? 'badge-status-in_progress'
+          : 'badge-status-closed';
+        return el('tr', null,
+          el('td', { class: 'cell-title mono', text: e.id || e.executionID || '-' }),
+          el('td', null, badge(e.status || '-', statusCls)),
+          el('td', { text: formatTime(e.createdAt || e.time || e.startedAt) }),
+          el('td', { text: e.duration != null ? (e.duration + 'ms') : '-' }),
+          el('td', { class: 'td-actions' },
+            el('button', { class: 'btn btn-ghost', title: t('script.execOutput'), onclick: () => handlers.onDetail && handlers.onDetail(e) },
+              iconEl('search', 14)
+            )
+          )
+        );
+      })
+    )
+  ));
+}
+
+// renderScriptExecutionDetail 渲染脚本执行详情。
+export function renderScriptExecutionDetail(container, exec) {
+  container.innerHTML = '';
+  if (!exec) { renderEmpty(container); return; }
+  const card = el('div', { class: 'content' });
+  card.appendChild(el('h3', { class: 'form-title', text: t('script.execOutput') }));
+  card.appendChild(el('div', { class: 'form-row' },
+    el('label', { class: 'form-label', text: t('script.execId') }),
+    el('div', { class: 'form-control mono', text: exec.id || exec.executionID || '-' })
+  ));
+  card.appendChild(el('div', { class: 'form-row' },
+    el('label', { class: 'form-label', text: t('script.execStatus') }),
+    el('div', { class: 'form-control' }, badge(exec.status || '-', 'badge-status-in_progress'))
+  ));
+  if (exec.output != null) {
+    card.appendChild(el('div', { class: 'form-row' },
+      el('label', { class: 'form-label', text: t('script.execOutput') }),
       el('pre', { class: 'form-control', style: { whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '.85rem' }, text: String(exec.output) })
     ));
   }

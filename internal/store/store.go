@@ -606,6 +606,40 @@ type SLOStore interface {
 	SLIStatus(tenantID, id string) []*SLIStatus
 }
 
+// WebhookStore P5 Webhook 管理：CRUD + 投递记录。
+type WebhookStore interface {
+	// CreateWebhook 创建 Webhook。ID 为空时由 store 分配随机 ID；
+	// TenantID 为空时归一为 default。返回持久化后的 Webhook（含分配的 ID）。
+	CreateWebhook(tenantID string, wh *Webhook) *Webhook
+	// GetWebhook 按 (tenantID, id) 返回单个 Webhook（不存在返回 (nil, false)）。
+	GetWebhook(tenantID, id string) (*Webhook, bool)
+	// UpdateWebhook 更新 Webhook（按 wh.ID 定位，校验 tenantID 归属）。不存在或越权返回 (nil, false)。
+	UpdateWebhook(tenantID string, wh *Webhook) (*Webhook, bool)
+	// ListWebhooks 返回指定租户的全部 Webhook（按创建时间降序）。
+	ListWebhooks(tenantID string) []*Webhook
+	// DeleteWebhook 删除 Webhook，返回是否删除成功（不存在或租户不匹配返回 false）。
+	DeleteWebhook(tenantID, id string) bool
+	// ListWebhookDeliveries 返回指定 Webhook 的投递记录（按投递时间降序）。
+	ListWebhookDeliveries(tenantID, webhookID string) []*WebhookDelivery
+}
+
+// ScriptStore P5 自定义脚本：CRUD + 执行记录。
+type ScriptStore interface {
+	// CreateScript 创建脚本。ID 为空时由 store 分配随机 ID；
+	// TenantID 为空时归一为 default。返回持久化后的脚本（含分配的 ID）。
+	CreateScript(tenantID string, s *Script) *Script
+	// GetScript 按 (tenantID, id) 返回单个脚本（不存在返回 (nil, false)）。
+	GetScript(tenantID, id string) (*Script, bool)
+	// UpdateScript 更新脚本（按 s.ID 定位，校验 tenantID 归属）。不存在或越权返回 (nil, false)。
+	UpdateScript(tenantID string, s *Script) (*Script, bool)
+	// ListScripts 返回指定租户的全部脚本（按创建时间降序）。
+	ListScripts(tenantID string) []*Script
+	// DeleteScript 删除脚本，返回是否删除成功（不存在或租户不匹配返回 false）。
+	DeleteScript(tenantID, id string) bool
+	// ListScriptExecutions 返回指定脚本的执行记录（按开始时间降序）。
+	ListScriptExecutions(tenantID, scriptID string) []*ScriptExecution
+}
+
 // Store 控制面注册表的可插拔持久化组合接口。
 // 由 12 个领域小接口组合而成（拆分 + 用户中心扩展 + K8s 集群管理 + OS/中间件模板 + 刷新令牌），
 // 方法签名刻意与旧版内存 Registry 保持一致，便于平滑替换。
@@ -643,6 +677,8 @@ type Store interface {
 	BackupStore           // P3 灾备备份：CRUD
 	NetworkStore          // P4 网络管理：设备 CRUD + 指标 + 配置下发
 	AutomationStore       // P4 自动化闭环：规则 CRUD + 启停 + 执行记录
+	WebhookStore          // P5 Webhook：CRUD + 投递记录
+	ScriptStore           // P5 自定义脚本：CRUD + 执行记录
 
 	// WithDemo 设置是否开启演示模式：开启时每个 agent 注册预置 uname -a 示例任务。
 	WithDemo(bool) Store
@@ -680,6 +716,8 @@ var (
 	_ BackupStore           = (*MemoryStore)(nil)
 	_ NetworkStore          = (*MemoryStore)(nil)
 	_ AutomationStore       = (*MemoryStore)(nil)
+	_ WebhookStore          = (*MemoryStore)(nil)
+	_ ScriptStore           = (*MemoryStore)(nil)
 	_ Store                 = (*MemoryStore)(nil)
 
 	_ DeviceStore           = (*SQLStore)(nil)
@@ -711,5 +749,7 @@ var (
 	_ BackupStore           = (*SQLStore)(nil)
 	_ NetworkStore          = (*SQLStore)(nil)
 	_ AutomationStore       = (*SQLStore)(nil)
+	_ WebhookStore          = (*SQLStore)(nil)
+	_ ScriptStore           = (*SQLStore)(nil)
 	_ Store                 = (*SQLStore)(nil)
 )

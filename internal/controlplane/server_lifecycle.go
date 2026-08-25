@@ -144,6 +144,15 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/automation/executions", s.handleAutomationExecutions)
 	mux.HandleFunc("/api/v1/automation/executions/", s.handleAutomationExecutionRouting) // 子路径：{id} GET
 
+	// Phase 5 扩展能力：API 网关 + Webhook + 自定义脚本。
+	mux.HandleFunc("/api/v1/gateway/routes", s.handleGatewayRoutes)
+	mux.HandleFunc("/api/v1/gateway/routes/", s.handleGatewayRouteRouting) // 子路径：{id} GET/PUT/DELETE、{id}/enable|disable POST
+	mux.HandleFunc("/api/v1/gateway/stats", s.handleGatewayStats)
+	mux.HandleFunc("/api/v1/webhooks", s.handleWebhooks)
+	mux.HandleFunc("/api/v1/webhooks/", s.handleWebhookRouting) // 子路径：{id} GET/PUT/DELETE、{id}/test|deliveries
+	mux.HandleFunc("/api/v1/scripts", s.handleScripts)
+	mux.HandleFunc("/api/v1/scripts/", s.handleScriptRouting) // 子路径：{id} GET/PUT/DELETE、{id}/execute|executions
+
 	// 密钥管理 API：查看 provider 状态 + 测试连接 + 列出密钥 key。
 	// status/keys 不返回 Vault token 与密钥值（安全考虑）；test 端点做 SSRF 校验。
 	mux.HandleFunc("/api/v1/secrets/status", s.handleSecretsStatus) // GET 当前 provider 配置概览

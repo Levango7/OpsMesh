@@ -101,6 +101,33 @@ export const testAutomationRule = flow.testAutomationRule;
 export const loadAutomationExecutions = flow.loadAutomationExecutions;
 export const showAutomationExecutionDetail = flow.showAutomationExecutionDetail;
 export const buildAutomationToolbar = flow.buildAutomationToolbar;
+// Phase 5 编排层
+export const loadGatewayRoutes = flow.loadGatewayRoutes;
+export const loadGatewayStats = flow.loadGatewayStats;
+export const createGatewayRoute = flow.createGatewayRoute;
+export const editGatewayRoute = flow.editGatewayRoute;
+export const updateGatewayRoute = flow.updateGatewayRoute;
+export const deleteGatewayRoute = flow.deleteGatewayRoute;
+export const toggleGatewayRoute = flow.toggleGatewayRoute;
+export const buildGatewayToolbar = flow.buildGatewayToolbar;
+export const loadWebhooks = flow.loadWebhooks;
+export const createWebhook = flow.createWebhook;
+export const editWebhook = flow.editWebhook;
+export const updateWebhook = flow.updateWebhook;
+export const deleteWebhook = flow.deleteWebhook;
+export const testWebhookSend = flow.testWebhookSend;
+export const loadWebhookDeliveries = flow.loadWebhookDeliveries;
+export const buildWebhookToolbar = flow.buildWebhookToolbar;
+export const loadScripts = flow.loadScripts;
+export const createScript = flow.createScript;
+export const editScript = flow.editScript;
+export const updateScript = flow.updateScript;
+export const deleteScript = flow.deleteScript;
+export const showScriptExecuteForm = flow.showScriptExecuteForm;
+export const executeScriptOnDevice = flow.executeScriptOnDevice;
+export const loadScriptExecutions = flow.loadScriptExecutions;
+export const showScriptExecutionDetail = flow.showScriptExecutionDetail;
+export const buildScriptToolbar = flow.buildScriptToolbar;
 
 // API 层
 export const ApiError = api.ApiError;
@@ -169,6 +196,28 @@ export const disableAutomationRuleApi = api.disableAutomationRule;
 export const testAutomationRuleApi = api.testAutomationRule;
 export const getAutomationExecutions = api.getAutomationExecutions;
 export const getAutomationExecution = api.getAutomationExecution;
+// Phase 5 API 层
+export const getGatewayRoutes = api.getGatewayRoutes;
+export const createGatewayRouteApi = api.createGatewayRoute;
+export const getGatewayRoute = api.getGatewayRoute;
+export const updateGatewayRouteApi = api.updateGatewayRoute;
+export const deleteGatewayRouteApi = api.deleteGatewayRoute;
+export const toggleGatewayRouteApi = api.toggleGatewayRoute;
+export const getGatewayStats = api.getGatewayStats;
+export const getWebhooks = api.getWebhooks;
+export const createWebhookApi = api.createWebhook;
+export const getWebhook = api.getWebhook;
+export const updateWebhookApi = api.updateWebhook;
+export const deleteWebhookApi = api.deleteWebhook;
+export const testWebhookApi = api.testWebhook;
+export const getWebhookDeliveries = api.getWebhookDeliveries;
+export const getScripts = api.getScripts;
+export const createScriptApi = api.createScript;
+export const getScript = api.getScript;
+export const updateScriptApi = api.updateScript;
+export const deleteScriptApi = api.deleteScript;
+export const executeScriptApi = api.executeScript;
+export const getScriptExecutions = api.getScriptExecutions;
 
 // 渲染层
 export const el = render.el;
@@ -221,6 +270,18 @@ export const renderAutomationRulesTable = render.renderAutomationRulesTable;
 export const renderAutomationRuleForm = render.renderAutomationRuleForm;
 export const renderAutomationExecutionsTable = render.renderAutomationExecutionsTable;
 export const renderAutomationExecutionDetail = render.renderAutomationExecutionDetail;
+// Phase 5 渲染层
+export const renderGatewayStats = render.renderGatewayStats;
+export const renderGatewayRoutesTable = render.renderGatewayRoutesTable;
+export const renderGatewayRouteForm = render.renderGatewayRouteForm;
+export const renderWebhooksTable = render.renderWebhooksTable;
+export const renderWebhookForm = render.renderWebhookForm;
+export const renderWebhookDeliveriesTable = render.renderWebhookDeliveriesTable;
+export const renderScriptsTable = render.renderScriptsTable;
+export const renderScriptForm = render.renderScriptForm;
+export const renderScriptExecuteForm = render.renderScriptExecuteForm;
+export const renderScriptExecutionsTable = render.renderScriptExecutionsTable;
+export const renderScriptExecutionDetail = render.renderScriptExecutionDetail;
 
 // i18n
 export const t = i18n.t;

@@ -501,3 +501,133 @@ export function getAutomationExecutions() {
 export function getAutomationExecution(id) {
   return requestJSON('GET', '/api/v1/automation/executions/' + encodeURIComponent(id));
 }
+
+// ============================================================================
+// Phase 5：扩展能力 API（API 网关 / Webhook / 自定义脚本）
+// ============================================================================
+
+// --- API 网关 ---
+
+// getGatewayRoutes 列出网关路由。GET /api/v1/gateway/routes
+export function getGatewayRoutes() {
+  return requestJSON('GET', '/api/v1/gateway/routes').then((d) => {
+    return Array.isArray(d) ? d : (d && d.routes ? d.routes : []);
+  });
+}
+
+// createGatewayRoute 创建网关路由。POST /api/v1/gateway/routes
+// body: {name, method, path, target, ...}
+export function createGatewayRoute(route) {
+  return requestJSON('POST', '/api/v1/gateway/routes', route);
+}
+
+// getGatewayRoute 获取网关路由详情。GET /api/v1/gateway/routes/{id}
+export function getGatewayRoute(id) {
+  return requestJSON('GET', '/api/v1/gateway/routes/' + encodeURIComponent(id));
+}
+
+// updateGatewayRoute 更新网关路由。PUT /api/v1/gateway/routes/{id}
+export function updateGatewayRoute(id, route) {
+  return requestJSON('PUT', '/api/v1/gateway/routes/' + encodeURIComponent(id), route);
+}
+
+// deleteGatewayRoute 删除网关路由。DELETE /api/v1/gateway/routes/{id}
+export function deleteGatewayRoute(id) {
+  return requestJSON('DELETE', '/api/v1/gateway/routes/' + encodeURIComponent(id));
+}
+
+// toggleGatewayRoute 启用/禁用网关路由。POST /api/v1/gateway/routes/{id}/enable|disable
+// action: 'enable' | 'disable'
+export function toggleGatewayRoute(id, action) {
+  return requestJSON('POST', '/api/v1/gateway/routes/' + encodeURIComponent(id) + '/' + (action === 'disable' ? 'disable' : 'enable'));
+}
+
+// getGatewayStats 获取网关统计。GET /api/v1/gateway/stats
+export function getGatewayStats() {
+  return requestJSON('GET', '/api/v1/gateway/stats');
+}
+
+// --- Webhook ---
+
+// getWebhooks 列出 Webhook。GET /api/v1/webhooks
+export function getWebhooks() {
+  return requestJSON('GET', '/api/v1/webhooks').then((d) => {
+    return Array.isArray(d) ? d : (d && d.webhooks ? d.webhooks : []);
+  });
+}
+
+// createWebhook 创建 Webhook。POST /api/v1/webhooks
+// body: {name, url, event, secret, ...}
+export function createWebhook(wh) {
+  return requestJSON('POST', '/api/v1/webhooks', wh);
+}
+
+// getWebhook 获取 Webhook 详情。GET /api/v1/webhooks/{id}
+export function getWebhook(id) {
+  return requestJSON('GET', '/api/v1/webhooks/' + encodeURIComponent(id));
+}
+
+// updateWebhook 更新 Webhook。PUT /api/v1/webhooks/{id}
+export function updateWebhook(id, wh) {
+  return requestJSON('PUT', '/api/v1/webhooks/' + encodeURIComponent(id), wh);
+}
+
+// deleteWebhook 删除 Webhook。DELETE /api/v1/webhooks/{id}
+export function deleteWebhook(id) {
+  return requestJSON('DELETE', '/api/v1/webhooks/' + encodeURIComponent(id));
+}
+
+// testWebhook 测试发送 Webhook。POST /api/v1/webhooks/{id}/test
+export function testWebhook(id) {
+  return requestJSON('POST', '/api/v1/webhooks/' + encodeURIComponent(id) + '/test');
+}
+
+// getWebhookDeliveries 获取 Webhook 投递记录。GET /api/v1/webhooks/{id}/deliveries
+export function getWebhookDeliveries(id) {
+  return requestJSON('GET', '/api/v1/webhooks/' + encodeURIComponent(id) + '/deliveries').then((d) => {
+    return Array.isArray(d) ? d : (d && d.deliveries ? d.deliveries : []);
+  });
+}
+
+// --- 自定义脚本 ---
+
+// getScripts 列出自定义脚本。GET /api/v1/scripts
+export function getScripts() {
+  return requestJSON('GET', '/api/v1/scripts').then((d) => {
+    return Array.isArray(d) ? d : (d && d.scripts ? d.scripts : []);
+  });
+}
+
+// createScript 创建自定义脚本。POST /api/v1/scripts
+// body: {name, runtime, code, description, ...}
+export function createScript(s) {
+  return requestJSON('POST', '/api/v1/scripts', s);
+}
+
+// getScript 获取自定义脚本详情。GET /api/v1/scripts/{id}
+export function getScript(id) {
+  return requestJSON('GET', '/api/v1/scripts/' + encodeURIComponent(id));
+}
+
+// updateScript 更新自定义脚本。PUT /api/v1/scripts/{id}
+export function updateScript(id, s) {
+  return requestJSON('PUT', '/api/v1/scripts/' + encodeURIComponent(id), s);
+}
+
+// deleteScript 删除自定义脚本。DELETE /api/v1/scripts/{id}
+export function deleteScript(id) {
+  return requestJSON('DELETE', '/api/v1/scripts/' + encodeURIComponent(id));
+}
+
+// executeScript 执行自定义脚本。POST /api/v1/scripts/{id}/execute
+// body: {deviceId, params}
+export function executeScript(id, body) {
+  return requestJSON('POST', '/api/v1/scripts/' + encodeURIComponent(id) + '/execute', body || {});
+}
+
+// getScriptExecutions 获取脚本执行历史。GET /api/v1/scripts/{id}/executions
+export function getScriptExecutions(id) {
+  return requestJSON('GET', '/api/v1/scripts/' + encodeURIComponent(id) + '/executions').then((d) => {
+    return Array.isArray(d) ? d : (d && d.executions ? d.executions : []);
+  });
+}

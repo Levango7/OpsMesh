@@ -132,6 +132,16 @@ type MemoryStore struct {
 	automationRules map[string]*AutomationRule
 	// Phase 4 自动化执行记录：executionID -> 执行记录。
 	automationExecutions map[string]*AutomationExecution
+	// Phase 5 Webhook 配置：webhookID -> Webhook。
+	// 由 m.mu 保护并发安全；按 tenantID 隔离。
+	webhooks map[string]*Webhook
+	// Phase 5 Webhook 投递记录：deliveryID -> 投递记录。
+	webhookDeliveries map[string]*WebhookDelivery
+	// Phase 5 自定义脚本：scriptID -> Script。
+	// 由 m.mu 保护并发安全；按 tenantID 隔离。
+	scripts map[string]*Script
+	// Phase 5 脚本执行记录：executionID -> 执行记录。
+	scriptExecutions map[string]*ScriptExecution
 }
 
 // tokenMeta B1 install token 元数据：一次性、限时，消费后标记 consumed。
@@ -309,6 +319,10 @@ func NewMemoryStore() *MemoryStore {
 		networkMetricsHistory: make(map[string][]*NetworkMetrics),
 		automationRules:     make(map[string]*AutomationRule),
 		automationExecutions: make(map[string]*AutomationExecution),
+		webhooks:            make(map[string]*Webhook),
+		webhookDeliveries:   make(map[string]*WebhookDelivery),
+		scripts:             make(map[string]*Script),
+		scriptExecutions:    make(map[string]*ScriptExecution),
 	}
 	m.seedRBAC()
 	return m
