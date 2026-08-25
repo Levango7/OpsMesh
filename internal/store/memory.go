@@ -108,6 +108,14 @@ type MemoryStore struct {
 	// Phase 1 SLO 管理：sloID -> SLO。
 	// 由 m.mu 保护并发安全；按 tenantID 隔离。
 	slos map[string]*SLO
+	// Phase 2 流量治理：policyID -> 策略。
+	trafficPolicies map[string]*TrafficPolicy
+	// Phase 2 CI/CD 流水线：templateID -> 模板。
+	pipelineTemplates map[string]*PipelineTemplate
+	// Phase 2 CI/CD 流水线：runID -> 运行记录。
+	pipelineRuns map[string]*PipelineRun
+	// Phase 2 ArgoCD 应用：appID -> 应用。
+	argocdApps map[string]*ArgoCDApp
 }
 
 // tokenMeta B1 install token 元数据：一次性、限时，消费后标记 consumed。
@@ -274,7 +282,11 @@ func NewMemoryStore() *MemoryStore {
 		secretMetas:         make(map[string]*SecretMeta),
 		secretVersions:      make(map[string][]*SecretMeta),
 		tickets:             make(map[string]*Ticket),
-		slos:               make(map[string]*SLO),
+		slos:                make(map[string]*SLO),
+		trafficPolicies:     make(map[string]*TrafficPolicy),
+		pipelineTemplates:   make(map[string]*PipelineTemplate),
+		pipelineRuns:        make(map[string]*PipelineRun),
+		argocdApps:          make(map[string]*ArgoCDApp),
 	}
 	m.seedRBAC()
 	return m

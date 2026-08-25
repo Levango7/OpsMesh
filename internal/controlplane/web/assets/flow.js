@@ -30,6 +30,15 @@ const state = {
   slos: [],
   metricsText: '',
   dashboardOverview: { devices: 0, tasks: 0, alerts: 0, openTickets: 0 },
+  // Phase 2 状态
+  trafficPolicies: [],
+  pipelineTemplates: [],
+  pipelineRuns: [],
+  argocdApps: [],
+  canaryReleases: [],
+  selectedCanaryId: null,
+  configVersions: [],
+  pipelineSubTab: 'templates', // templates | runs | argocd
 };
 
 // ============================================================================
@@ -53,14 +62,15 @@ function sloContent() { return $('slo-content'); }
 // ============================================================================
 
 export function switchTab(tab) {
-  if (tab !== 'tickets' && tab !== 'dashboard' && tab !== 'slo') return;
+  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push'];
+  if (validTabs.indexOf(tab) === -1) return;
   state.currentTab = tab;
   // 更新 tab 按钮激活态
   document.querySelectorAll('.tab-btn').forEach((btn) => {
     btn.classList.toggle('tab-active', btn.dataset.tab === tab);
   });
   // 更新 page section 可见性
-  ['tickets', 'dashboard', 'slo'].forEach((p) => {
+  validTabs.forEach((p) => {
     const root = $('page-' + p);
     if (root) root.classList.toggle('page-active', p === tab);
   });
@@ -68,6 +78,11 @@ export function switchTab(tab) {
   if (tab === 'tickets' && state.tickets.length === 0) loadTickets();
   if (tab === 'dashboard' && !state._dashboardLoaded) loadDashboardAll();
   if (tab === 'slo' && state.slos.length === 0) loadSLOs();
+  // Phase 2 懒加载
+  if (tab === 'traffic' && state.trafficPolicies.length === 0) loadTrafficPolicies();
+  if (tab === 'pipeline' && state.pipelineTemplates.length === 0) loadPipelineTemplates();
+  if (tab === 'canary' && state.canaryReleases.length === 0) loadCanaryReleases();
+  if (tab === 'config-push' && !state._configPushLoaded) loadConfigVersions();
 }
 
 // ============================================================================
@@ -406,6 +421,433 @@ export function buildDashboardToolbar() {
 }
 
 // ============================================================================
+// Phase 2：服务治理
+// ============================================================================
+
+function trafficContent() { return $('traffic-content'); }
+
+// loadTrafficPolicies 加载流量策略列表。
+export async function loadTrafficPolicies() {
+  const content = trafficContent();
+  if (!content) return;
+  render.renderLoading(content);
+  try {
+    const policies = await api.getTrafficPolicies();
+    state.trafficPolicies = policies;
+    render.renderTrafficTable(content, policies, {
+      onEnable: (id) => enableTrafficPolicy(id),
+      onDisable: (id) => disableTrafficPolicy(id),
+      onDelete: (id) => deleteTrafficPolicy(id),
+    });
+  } catch (err) {
+    render.renderError(content, t('traffic.loadFailed') + ': ' + err.message);
+  }
+}
+
+// createTrafficPolicy 打开创建流量策略表单。
+export function createTrafficPolicy() {
+  const content = trafficContent();
+  if (!content) return;
+  render.renderTrafficForm(content, {
+    onSubmit: async (data) => {
+      if (!data.name) { render.renderToast(t('traffic.nameRequired'), 'warn'); return; }
+      if (!data.service) { render.renderToast(t('traffic.serviceRequired'), 'warn'); return; }
+      try {
+        await api.createTrafficPolicy(data);
+        render.renderToast(t('traffic.created'), 'success');
+        loadTrafficPolicies();
+      } catch (err) {
+        render.renderToast(t('traffic.createFailed') + ': ' + err.message, 'error');
+      }
+    },
+    onCancel: () => loadTrafficPolicies(),
+  });
+}
+
+// enableTrafficPolicy 启用流量策略。
+export async function enableTrafficPolicy(id) {
+  try {
+    await api.enableTrafficPolicy(id);
+    render.renderToast(t('traffic.enabled'), 'success');
+    loadTrafficPolicies();
+  } catch (err) {
+    render.renderToast(t('traffic.enableFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// disableTrafficPolicy 禁用流量策略。
+export async function disableTrafficPolicy(id) {
+  try {
+    await api.disableTrafficPolicy(id);
+    render.renderToast(t('traffic.disabled'), 'success');
+    loadTrafficPolicies();
+  } catch (err) {
+    render.renderToast(t('traffic.disableFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// deleteTrafficPolicy 删除流量策略。
+export async function deleteTrafficPolicy(id) {
+  if (!window.confirm(t('traffic.confirmDelete'))) return;
+  try {
+    await api.deleteTrafficPolicy(id);
+    render.renderToast(t('traffic.deleted'), 'success');
+    loadTrafficPolicies();
+  } catch (err) {
+    render.renderToast(t('traffic.deleteFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// buildTrafficToolbar 构建服务治理工具栏。
+export function buildTrafficToolbar() {
+  const toolbar = $('traffic-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-primary', onclick: () => createTrafficPolicy() },
+      iconEl('plus', 16), render.el('span', { text: t('traffic.create') })
+    )
+  );
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => loadTrafficPolicies() },
+      iconEl('refresh', 14), render.el('span', { text: t('common.refresh') })
+    )
+  );
+}
+
+// ============================================================================
+// Phase 2：CI/CD 流水线
+// ============================================================================
+
+function pipelineContent() { return $('pipeline-content'); }
+
+// loadPipelineTemplates 加载流水线模板列表。
+export async function loadPipelineTemplates() {
+  const content = pipelineContent();
+  if (!content) return;
+  state.pipelineSubTab = 'templates';
+  render.renderLoading(content);
+  try {
+    const templates = await api.getPipelineTemplates();
+    state.pipelineTemplates = templates;
+    render.renderPipelineTemplates(content, templates, {
+      onRun: (id) => runPipeline(id),
+      onDelete: (id) => deletePipelineTemplate(id),
+    });
+  } catch (err) {
+    render.renderError(content, t('pipeline.loadFailed') + ': ' + err.message);
+  }
+}
+
+// loadPipelineRuns 加载流水线运行记录。
+export async function loadPipelineRuns() {
+  const content = pipelineContent();
+  if (!content) return;
+  state.pipelineSubTab = 'runs';
+  render.renderLoading(content);
+  try {
+    const runs = await api.getPipelineRuns();
+    state.pipelineRuns = runs;
+    render.renderPipelineRuns(content, runs);
+  } catch (err) {
+    render.renderError(content, t('pipeline.loadFailed') + ': ' + err.message);
+  }
+}
+
+// loadArgoCDApps 加载 ArgoCD 应用列表。
+export async function loadArgoCDApps() {
+  const content = pipelineContent();
+  if (!content) return;
+  state.pipelineSubTab = 'argocd';
+  render.renderLoading(content);
+  try {
+    const apps = await api.getArgoCDApps();
+    state.argocdApps = apps;
+    render.renderArgoCDApps(content, apps, {
+      onSync: (id) => syncArgoCDApp(id),
+      onDelete: (id) => deleteArgoCDApp(id),
+    });
+  } catch (err) {
+    render.renderError(content, t('pipeline.loadFailed') + ': ' + err.message);
+  }
+}
+
+// createPipelineTemplate 打开创建流水线模板表单。
+export function createPipelineTemplate() {
+  const content = pipelineContent();
+  if (!content) return;
+  render.renderPipelineTemplateForm(content, {
+    onSubmit: async (data) => {
+      if (!data.name) { render.renderToast(t('pipeline.nameRequired'), 'warn'); return; }
+      try {
+        await api.createPipelineTemplate(data);
+        render.renderToast(t('pipeline.created'), 'success');
+        loadPipelineTemplates();
+      } catch (err) {
+        render.renderToast(t('pipeline.createFailed') + ': ' + err.message, 'error');
+      }
+    },
+    onCancel: () => loadPipelineTemplates(),
+  });
+}
+
+// deletePipelineTemplate 删除流水线模板。
+export async function deletePipelineTemplate(id) {
+  if (!window.confirm(t('pipeline.confirmDelete'))) return;
+  try {
+    await api.deletePipelineTemplate(id);
+    render.renderToast(t('pipeline.deleted'), 'success');
+    loadPipelineTemplates();
+  } catch (err) {
+    render.renderToast(t('pipeline.deleteFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// runPipeline 触发流水线运行。
+export async function runPipeline(id) {
+  try {
+    await api.runPipeline(id);
+    render.renderToast(t('pipeline.running'), 'success');
+    loadPipelineRuns();
+  } catch (err) {
+    render.renderToast(t('pipeline.runFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// syncArgoCDApp 同步 ArgoCD 应用。
+export async function syncArgoCDApp(id) {
+  try {
+    await api.syncArgoCDApp(id);
+    render.renderToast(t('pipeline.argoSynced'), 'success');
+    loadArgoCDApps();
+  } catch (err) {
+    render.renderToast(t('pipeline.argoSyncFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// deleteArgoCDApp 删除 ArgoCD 应用。
+export async function deleteArgoCDApp(id) {
+  if (!window.confirm(t('pipeline.confirmDelete'))) return;
+  try {
+    await api.deleteArgoCDApp(id);
+    render.renderToast(t('pipeline.deleted'), 'success');
+    loadArgoCDApps();
+  } catch (err) {
+    render.renderToast(t('pipeline.deleteFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// buildPipelineToolbar 构建流水线工具栏（含子 tab 切换）。
+export function buildPipelineToolbar() {
+  const toolbar = $('pipeline-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  // 子 tab：模板 / 运行记录 / ArgoCD
+  const subTabs = [
+    { key: 'templates', label: t('pipeline.templates'), onclick: () => loadPipelineTemplates() },
+    { key: 'runs',      label: t('pipeline.runs'),      onclick: () => loadPipelineRuns() },
+    { key: 'argocd',    label: t('pipeline.argoApps'),  onclick: () => loadArgoCDApps() },
+  ];
+  const group = render.el('div', { class: 'filter-group' });
+  subTabs.forEach((s) => {
+    group.appendChild(
+      render.el('button', {
+        class: 'btn ' + (state.pipelineSubTab === s.key ? 'btn-secondary' : 'btn-ghost'),
+        onclick: s.onclick,
+      }, render.el('span', { text: s.label }))
+    );
+  });
+  toolbar.appendChild(group);
+  // 创建模板按钮（仅 templates 子 tab 显示）
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-primary', onclick: () => createPipelineTemplate() },
+      iconEl('plus', 16), render.el('span', { text: t('pipeline.create') })
+    )
+  );
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => refreshPipelineSubTab() },
+      iconEl('refresh', 14)
+    )
+  );
+}
+
+function refreshPipelineSubTab() {
+  if (state.pipelineSubTab === 'templates') loadPipelineTemplates();
+  else if (state.pipelineSubTab === 'runs') loadPipelineRuns();
+  else if (state.pipelineSubTab === 'argocd') loadArgoCDApps();
+  else loadPipelineTemplates();
+}
+
+// ============================================================================
+// Phase 2：灰度发布
+// ============================================================================
+
+function canaryContent() { return $('canary-content'); }
+
+// loadCanaryReleases 加载灰度发布列表 + 默认选中第一个。
+export async function loadCanaryReleases() {
+  const content = canaryContent();
+  if (!content) return;
+  render.renderLoading(content);
+  try {
+    const releases = await api.getCanaryReleases();
+    state.canaryReleases = releases;
+    renderCanaryView(content, releases);
+  } catch (err) {
+    render.renderError(content, t('canary.loadFailed') + ': ' + err.message);
+  }
+}
+
+// renderCanaryView 渲染灰度发布视图（列表 + 分割面板 + 指标）。
+function renderCanaryView(content, releases) {
+  content.innerHTML = '';
+  // 上半：列表
+  const listHost = render.el('div', { class: 'content', style: { marginBottom: '1rem' } });
+  render.renderCanaryList(listHost, releases, {
+    onSelect: (id) => selectCanary(id),
+  });
+  content.appendChild(listHost);
+  // 下半：分割面板 + 指标
+  const selected = releases.find((r) => r.id === state.selectedCanaryId) || releases[0];
+  if (selected) {
+    state.selectedCanaryId = selected.id;
+    const splitHost = render.el('div', { class: 'content', style: { marginBottom: '1rem' } });
+    render.renderCanarySplitPanel(splitHost, selected, {
+      onApply: (percent) => applyTrafficSplit(selected.id, percent),
+    });
+    content.appendChild(splitHost);
+    // 指标区
+    const metricsHost = render.el('div', { class: 'content' });
+    render.renderLoading(metricsHost);
+    content.appendChild(metricsHost);
+    api.getCanaryMetrics(selected.id)
+      .then((metrics) => render.renderCanaryMetrics(metricsHost, metrics))
+      .catch((err) => render.renderError(metricsHost, t('canary.metricsLoadFailed') + ': ' + err.message));
+  }
+}
+
+// selectCanary 选中某个灰度发布，重新渲染视图。
+function selectCanary(id) {
+  state.selectedCanaryId = id;
+  renderCanaryView(canaryContent(), state.canaryReleases);
+}
+
+// applyTrafficSplit 应用流量分割。
+export async function applyTrafficSplit(id, percent) {
+  try {
+    await api.setTrafficSplit(id, percent);
+    render.renderToast(t('canary.splitApplied') + ': ' + percent + '%', 'success');
+    // 更新本地状态中的 percent
+    const r = state.canaryReleases.find((x) => x.id === id);
+    if (r) r.percent = percent;
+    renderCanaryView(canaryContent(), state.canaryReleases);
+  } catch (err) {
+    render.renderToast(t('canary.splitFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// buildCanaryToolbar 构建灰度发布工具栏。
+export function buildCanaryToolbar() {
+  const toolbar = $('canary-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => loadCanaryReleases() },
+      iconEl('refresh', 14), render.el('span', { text: t('common.refresh') })
+    )
+  );
+}
+
+// ============================================================================
+// Phase 2：配置热推
+// ============================================================================
+
+function configPushContent() { return $('config-push-content'); }
+
+// loadConfigVersions 加载配置版本历史（默认空 key）。
+export async function loadConfigVersions(key) {
+  state._configPushLoaded = true;
+  const content = configPushContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 上：热推送表单
+  const hotpushHost = render.el('div', { class: 'content', style: { marginBottom: '1rem' } });
+  render.renderConfigHotpushForm(hotpushHost, {
+    onSubmit: (data) => hotpushConfig(data),
+  });
+  content.appendChild(hotpushHost);
+  // 中：灰度配置表单
+  const canaryHost = render.el('div', { class: 'content', style: { marginBottom: '1rem' } });
+  render.renderConfigCanaryForm(canaryHost, {
+    onSubmit: (data) => canaryConfigPush(data),
+  });
+  content.appendChild(canaryHost);
+  // 下：版本历史（含 Key 查询框）
+  const versionHost = render.el('div', { class: 'content' });
+  versionHost.appendChild(render.el('h3', { class: 'form-title', text: t('configPush.versions') }));
+  // Key 查询行
+  const queryRow = render.el('div', { class: 'form-row' },
+    render.el('label', { class: 'form-label', text: t('configPush.queryKey') }),
+    render.el('div', { class: 'form-control' },
+      (() => {
+        const input = render.el('input', { type: 'text', name: 'queryKey', value: key || '', placeholder: 'config key' });
+        input.addEventListener('change', () => loadConfigVersions(input.value));
+        return input;
+      })()
+    )
+  );
+  versionHost.appendChild(queryRow);
+  const versionsHost = render.el('div');
+  versionHost.appendChild(versionsHost);
+  render.renderLoading(versionsHost);
+  content.appendChild(versionHost);
+  try {
+    const versions = await api.getConfigVersions(key || '');
+    state.configVersions = versions;
+    render.renderConfigVersions(versionsHost, versions);
+  } catch (err) {
+    render.renderError(versionsHost, t('configPush.versionsLoadFailed') + ': ' + err.message);
+  }
+}
+
+// hotpushConfig 触发配置热推送。
+export async function hotpushConfig(data) {
+  if (!data.deviceID) { render.renderToast(t('configPush.deviceRequired'), 'warn'); return; }
+  if (!data.key) { render.renderToast(t('configPush.keyRequired'), 'warn'); return; }
+  try {
+    await api.hotpushConfig(data);
+    render.renderToast(t('configPush.hotpushed'), 'success');
+    loadConfigVersions(data.key);
+  } catch (err) {
+    render.renderToast(t('configPush.hotpushFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// canaryConfigPush 灰度配置发布。
+export async function canaryConfigPush(data) {
+  if (!data.devices || !data.devices.length) { render.renderToast(t('configPush.deviceRequired'), 'warn'); return; }
+  try {
+    await api.canaryConfig(data);
+    render.renderToast(t('configPush.canaryApplied'), 'success');
+    loadConfigVersions(data.key);
+  } catch (err) {
+    render.renderToast(t('configPush.canaryFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// buildConfigPushToolbar 构建配置热推工具栏。
+export function buildConfigPushToolbar() {
+  const toolbar = $('config-push-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => loadConfigVersions('') },
+      iconEl('refresh', 14), render.el('span', { text: t('common.refresh') })
+    )
+  );
+}
+
+// ============================================================================
 // 初始化
 // ============================================================================
 
@@ -434,6 +876,10 @@ export function init() {
   buildTicketsToolbar();
   buildSLOToolbar();
   buildDashboardToolbar();
+  buildTrafficToolbar();
+  buildPipelineToolbar();
+  buildCanaryToolbar();
+  buildConfigPushToolbar();
 
   // 绑定 tab 切换
   document.querySelectorAll('.tab-btn').forEach((btn) => {
@@ -450,8 +896,16 @@ function refreshCurrentPage() {
   buildTicketsToolbar();
   buildSLOToolbar();
   buildDashboardToolbar();
+  buildTrafficToolbar();
+  buildPipelineToolbar();
+  buildCanaryToolbar();
+  buildConfigPushToolbar();
   // 重新加载当前页数据
   if (state.currentTab === 'tickets') loadTickets();
   else if (state.currentTab === 'dashboard') loadDashboardAll();
   else if (state.currentTab === 'slo') loadSLOs();
+  else if (state.currentTab === 'traffic') loadTrafficPolicies();
+  else if (state.currentTab === 'pipeline') refreshPipelineSubTab();
+  else if (state.currentTab === 'canary') loadCanaryReleases();
+  else if (state.currentTab === 'config-push') loadConfigVersions('');
 }

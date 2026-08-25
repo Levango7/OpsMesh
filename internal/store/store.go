@@ -471,6 +471,39 @@ type TicketStore interface {
 	CloseTicket(tenantID, id string) (*Ticket, bool)
 }
 
+// TrafficStore 流量治理领域：CRUD + 启用/禁用。
+type TrafficStore interface {
+	CreatePolicy(tenantID string, p *TrafficPolicy) *TrafficPolicy
+	GetPolicy(tenantID, id string) (*TrafficPolicy, bool)
+	UpdatePolicy(tenantID string, p *TrafficPolicy) (*TrafficPolicy, bool)
+	ListPolicies(tenantID string) []*TrafficPolicy
+	DeletePolicy(tenantID, id string) bool
+	EnablePolicy(tenantID, id string) (*TrafficPolicy, bool)
+	DisablePolicy(tenantID, id string) (*TrafficPolicy, bool)
+}
+
+// PipelineStore CI/CD 流水线领域：模板 + 运行记录。
+type PipelineStore interface {
+	CreateTemplate(tenantID string, t *PipelineTemplate) *PipelineTemplate
+	GetTemplate(tenantID, id string) (*PipelineTemplate, bool)
+	ListTemplates(tenantID string) []*PipelineTemplate
+	DeleteTemplate(tenantID, id string) bool
+	CreateRun(tenantID string, r *PipelineRun) *PipelineRun
+	GetRun(tenantID, id string) (*PipelineRun, bool)
+	ListRuns(tenantID string, templateID string) []*PipelineRun
+	UpdateRun(tenantID string, r *PipelineRun) (*PipelineRun, bool)
+}
+
+// ArgoCDStore ArgoCD 应用管理领域。
+type ArgoCDStore interface {
+	CreateApp(tenantID string, a *ArgoCDApp) *ArgoCDApp
+	GetApp(tenantID, id string) (*ArgoCDApp, bool)
+	UpdateApp(tenantID string, a *ArgoCDApp) (*ArgoCDApp, bool)
+	ListApps(tenantID string) []*ArgoCDApp
+	DeleteApp(tenantID, id string) bool
+	SyncApp(tenantID, id string) (*ArgoCDApp, bool)
+}
+
 // SLOStore SLO 管理领域：CRUD + SLI 状态查询。
 type SLOStore interface {
 	// CreateSLO 创建 SLO。ID 为空时由 store 分配随机 ID；
@@ -518,6 +551,9 @@ type Store interface {
 	SecretStore           // P0.3 密钥管理：Get/Set/轮换/版本历史
 	TicketStore           // P1 工单管理：创建/查询/更新/关闭
 	SLOStore              // P1 SLO 管理：CRUD + SLI 状态
+	TrafficStore          // P2 流量治理：策略 CRUD + 启停
+	PipelineStore         // P2 CI/CD 流水线：模板 + 运行记录
+	ArgoCDStore           // P2 ArgoCD 应用：CRUD + 同步
 
 	// WithDemo 设置是否开启演示模式：开启时每个 agent 注册预置 uname -a 示例任务。
 	WithDemo(bool) Store
@@ -548,6 +584,9 @@ var (
 	_ SecretStore           = (*MemoryStore)(nil)
 	_ TicketStore           = (*MemoryStore)(nil)
 	_ SLOStore              = (*MemoryStore)(nil)
+	_ TrafficStore          = (*MemoryStore)(nil)
+	_ PipelineStore         = (*MemoryStore)(nil)
+	_ ArgoCDStore           = (*MemoryStore)(nil)
 	_ Store               = (*MemoryStore)(nil)
 
 	_ DeviceStore         = (*SQLStore)(nil)
@@ -572,5 +611,8 @@ var (
 	_ SecretStore           = (*SQLStore)(nil)
 	_ TicketStore           = (*SQLStore)(nil)
 	_ SLOStore              = (*SQLStore)(nil)
+	_ TrafficStore          = (*SQLStore)(nil)
+	_ PipelineStore         = (*SQLStore)(nil)
+	_ ArgoCDStore           = (*SQLStore)(nil)
 	_ Store               = (*SQLStore)(nil)
 )

@@ -309,6 +309,12 @@ var rbacPermSpecs = []struct {
 	{"slo", "slo:read", "查看SLO"},
 	{"slo", "slo:write", "编辑SLO"},
 	{"slo", "slo:delete", "删除SLO"},
+	{"traffic", "traffic:read", "查看流量策略"},
+	{"traffic", "traffic:write", "编辑流量策略"},
+	{"pipeline", "pipeline:read", "查看流水线"},
+	{"pipeline", "pipeline:write", "编辑流水线"},
+	{"argocd", "argocd:read", "查看ArgoCD应用"},
+	{"argocd", "argocd:write", "编辑ArgoCD应用"},
 }
 
 // seedRBAC 在 initSchema 末尾调用，幂等写入默认权限/角色/用户。

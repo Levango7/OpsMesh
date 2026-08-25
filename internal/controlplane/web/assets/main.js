@@ -43,6 +43,29 @@ export const deleteSLO = flow.deleteSLO;
 export const loadMetrics = flow.loadMetrics;
 export const loadDashboardOverview = flow.loadDashboardOverview;
 export const loadDashboardAll = flow.loadDashboardAll;
+// Phase 2 编排层
+export const loadTrafficPolicies = flow.loadTrafficPolicies;
+export const createTrafficPolicy = flow.createTrafficPolicy;
+export const enableTrafficPolicy = flow.enableTrafficPolicy;
+export const disableTrafficPolicy = flow.disableTrafficPolicy;
+export const deleteTrafficPolicy = flow.deleteTrafficPolicy;
+export const buildTrafficToolbar = flow.buildTrafficToolbar;
+export const loadPipelineTemplates = flow.loadPipelineTemplates;
+export const loadPipelineRuns = flow.loadPipelineRuns;
+export const loadArgoCDApps = flow.loadArgoCDApps;
+export const createPipelineTemplate = flow.createPipelineTemplate;
+export const deletePipelineTemplate = flow.deletePipelineTemplate;
+export const runPipeline = flow.runPipeline;
+export const syncArgoCDApp = flow.syncArgoCDApp;
+export const deleteArgoCDApp = flow.deleteArgoCDApp;
+export const buildPipelineToolbar = flow.buildPipelineToolbar;
+export const loadCanaryReleases = flow.loadCanaryReleases;
+export const applyTrafficSplit = flow.applyTrafficSplit;
+export const buildCanaryToolbar = flow.buildCanaryToolbar;
+export const loadConfigVersions = flow.loadConfigVersions;
+export const hotpushConfig = flow.hotpushConfig;
+export const canaryConfigPush = flow.canaryConfigPush;
+export const buildConfigPushToolbar = flow.buildConfigPushToolbar;
 
 // API 层
 export const ApiError = api.ApiError;
@@ -56,6 +79,27 @@ export const getSLO = api.getSLO;
 export const updateSLO = api.updateSLO;
 export const deleteSLOApi = api.deleteSLO;
 export const getSLOStatus = api.getSLOStatus;
+// Phase 2 API 层
+export const getTrafficPolicies = api.getTrafficPolicies;
+export const createTrafficPolicyApi = api.createTrafficPolicy;
+export const deleteTrafficPolicyApi = api.deleteTrafficPolicy;
+export const enableTrafficPolicyApi = api.enableTrafficPolicy;
+export const disableTrafficPolicyApi = api.disableTrafficPolicy;
+export const getPipelineTemplates = api.getPipelineTemplates;
+export const createPipelineTemplateApi = api.createPipelineTemplate;
+export const deletePipelineTemplateApi = api.deletePipelineTemplate;
+export const runPipelineApi = api.runPipeline;
+export const getPipelineRuns = api.getPipelineRuns;
+export const getArgoCDApps = api.getArgoCDApps;
+export const createArgoCDApp = api.createArgoCDApp;
+export const deleteArgoCDAppApi = api.deleteArgoCDApp;
+export const syncArgoCDAppApi = api.syncArgoCDApp;
+export const getCanaryReleases = api.getCanaryReleases;
+export const setTrafficSplit = api.setTrafficSplit;
+export const getCanaryMetrics = api.getCanaryMetrics;
+export const hotpushConfigApi = api.hotpushConfig;
+export const canaryConfigApi = api.canaryConfig;
+export const getConfigVersions = api.getConfigVersions;
 
 // 渲染层
 export const el = render.el;
@@ -70,6 +114,20 @@ export const renderSLODetail = render.renderSLODetail;
 export const renderDashboardOverview = render.renderDashboardOverview;
 export const renderMetricsText = render.renderMetricsText;
 export const parseMetrics = render.parseMetrics;
+// Phase 2 渲染层
+export const renderTrafficTable = render.renderTrafficTable;
+export const renderTrafficForm = render.renderTrafficForm;
+export const renderPipelineTemplates = render.renderPipelineTemplates;
+export const renderPipelineRuns = render.renderPipelineRuns;
+export const renderPipelineTemplateForm = render.renderPipelineTemplateForm;
+export const renderArgoCDApps = render.renderArgoCDApps;
+export const renderCanaryList = render.renderCanaryList;
+export const renderCanarySplitPanel = render.renderCanarySplitPanel;
+export const renderCanaryMetrics = render.renderCanaryMetrics;
+export const renderConfigHotpushForm = render.renderConfigHotpushForm;
+export const renderConfigCanaryForm = render.renderConfigCanaryForm;
+export const renderConfigVersions = render.renderConfigVersions;
+export const renderApiEndpoints = render.renderApiEndpoints;
 
 // i18n
 export const t = i18n.t;

@@ -232,6 +232,18 @@ a:hover{color:var(--accent-hover);}
       <button type="button" class="tab-btn" data-tab="slo">
         <span class="icon" data-icon="slo"></span><span>SLO 管理</span>
       </button>
+      <button type="button" class="tab-btn" data-tab="traffic">
+        <span class="icon" data-icon="traffic"></span><span>服务治理</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="pipeline">
+        <span class="icon" data-icon="pipeline"></span><span>CI/CD流水线</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="canary">
+        <span class="icon" data-icon="canary"></span><span>灰度发布</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="config-push">
+        <span class="icon" data-icon="config-push"></span><span>配置热推</span>
+      </button>
     </div>
   </nav>
 
@@ -270,6 +282,46 @@ a:hover{color:var(--accent-hover);}
       </div>
       <div id="slo-toolbar" class="toolbar"></div>
       <div id="slo-content" class="content"></div>
+    </section>
+
+    <!-- 服务治理 page -->
+    <section id="page-traffic" class="page">
+      <div class="page-head">
+        <h2>服务治理</h2>
+        <p>流量策略管理：超时 / 重试 / 熔断 / 限流</p>
+      </div>
+      <div id="traffic-toolbar" class="toolbar"></div>
+      <div id="traffic-content" class="content"></div>
+    </section>
+
+    <!-- CI/CD 流水线 page -->
+    <section id="page-pipeline" class="page">
+      <div class="page-head">
+        <h2>CI/CD 流水线</h2>
+        <p>流水线模板管理与运行记录</p>
+      </div>
+      <div id="pipeline-toolbar" class="toolbar"></div>
+      <div id="pipeline-content" class="content"></div>
+    </section>
+
+    <!-- 灰度发布 page -->
+    <section id="page-canary" class="page">
+      <div class="page-head">
+        <h2>灰度发布</h2>
+        <p>灰度发布流量分割与指标对比</p>
+      </div>
+      <div id="canary-toolbar" class="toolbar"></div>
+      <div id="canary-content" class="content"></div>
+    </section>
+
+    <!-- 配置热推 page -->
+    <section id="page-config-push" class="page">
+      <div class="page-head">
+        <h2>配置热推</h2>
+        <p>配置热推送 / 灰度配置 / 版本历史</p>
+      </div>
+      <div id="config-push-toolbar" class="toolbar"></div>
+      <div id="config-push-content" class="content"></div>
     </section>
   </main>
 

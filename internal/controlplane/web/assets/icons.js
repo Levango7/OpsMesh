@@ -61,6 +61,59 @@ const RAW = {
   tag:
     '<path d="M3 12l9-9 9 9-9 9-9-9z"/>' +
     '<circle cx="9" cy="9" r="1.2"/>',
+  // Phase 2 tab 图标
+  traffic:
+    '<path d="M3 6h18M3 12h12M3 18h18"/>' +
+    '<circle cx="17" cy="12" r="2"/>',
+  pipeline:
+    '<circle cx="6" cy="6" r="2.5"/>' +
+    '<circle cx="18" cy="6" r="2.5"/>' +
+    '<circle cx="6" cy="18" r="2.5"/>' +
+    '<circle cx="18" cy="18" r="2.5"/>' +
+    '<path d="M8.5 6h7M6 8.5v7M18 8.5v7M8 8l8 8"/>',
+  canary:
+    '<path d="M4 19V5M4 19h16"/>' +
+    '<path d="M7 16l3-5 3 3 4-7"/>' +
+    '<circle cx="7" cy="16" r="1.2"/>' +
+    '<circle cx="10" cy="11" r="1.2"/>' +
+    '<circle cx="13" cy="14" r="1.2"/>' +
+    '<circle cx="17" cy="7" r="1.2"/>',
+  'config-push':
+    '<rect x="3" y="4" width="18" height="6" rx="1"/>' +
+    '<rect x="3" y="14" width="18" height="6" rx="1"/>' +
+    '<path d="M7 7h.01M7 17h.01"/>' +
+    '<path d="M17 5l3 3-3 3M14 8h6"/>' +
+    '<path d="M17 15l3 3-3 3M14 18h6"/>',
+  // Phase 2 操作图标
+  play:
+    '<path d="M6 4l14 8-14 8V4z"/>',
+  pause:
+    '<path d="M8 4v16M16 4v16"/>',
+  sync:
+    '<path d="M4 12a8 8 0 0 1 13-5.3L20 8M20 4v4h-4"/>' +
+    '<path d="M20 12a8 8 0 0 1-13 5.3L4 16M4 20v-4h4"/>',
+  toggle_on:
+    '<rect x="2" y="6" width="20" height="12" rx="6"/>' +
+    '<circle cx="16" cy="12" r="3" fill="currentColor" stroke="none"/>',
+  toggle_off:
+    '<rect x="2" y="6" width="20" height="12" rx="6"/>' +
+    '<circle cx="8" cy="12" r="3" fill="currentColor" stroke="none"/>',
+  history:
+    '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/>' +
+    '<path d="M3 4v4h4"/>' +
+    '<path d="M12 8v4l3 2"/>',
+  rocket:
+    '<path d="M5 15c-1 1-1 4-1 4s3 0 4-1M9 11l4 4M14 6l4 4-7 7-4-1-1-4 8-6z"/>' +
+    '<circle cx="15" cy="9" r="1"/>',
+  sliders:
+    '<path d="M4 8h16M4 16h16"/>' +
+    '<circle cx="9" cy="8" r="2"/>' +
+    '<circle cx="15" cy="16" r="2"/>',
+  git:
+    '<circle cx="6" cy="6" r="2.5"/>' +
+    '<circle cx="6" cy="18" r="2.5"/>' +
+    '<circle cx="18" cy="12" r="2.5"/>' +
+    '<path d="M6 8.5v7M8 6h6a4 4 0 0 1 4 4"/>',
 };
 
 // ICONS 对外暴露的图标字典（name -> raw inner SVG）。

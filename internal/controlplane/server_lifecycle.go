@@ -156,6 +156,19 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/tickets/", s.handleTicketRouting) // 子路径：{id} GET/PUT、{id}/close POST
 	mux.HandleFunc("/api/v1/slos", s.handleSLOs)
 	mux.HandleFunc("/api/v1/slos/", s.handleSLORouting) // 子路径：{id} GET/PUT/DELETE、{id}/status GET
+	// Phase 2 路由：流量治理 / CI/CD 流水线 / ArgoCD / 灰度增强 / 配置热推送
+	mux.HandleFunc("/api/v1/traffic/policies", s.handleTrafficPolicies)
+	mux.HandleFunc("/api/v1/traffic/policies/", s.handleTrafficPolicyRouting) // 子路径：{id} GET/PUT/DELETE、{id}/enable|disable
+	mux.HandleFunc("/api/v1/pipeline/templates", s.handlePipelineTemplates)
+	mux.HandleFunc("/api/v1/pipeline/templates/", s.handlePipelineTemplate) // 子路径：{id} GET/PUT/DELETE、{id}/run
+	mux.HandleFunc("/api/v1/pipeline/runs", s.handlePipelineRuns)
+	mux.HandleFunc("/api/v1/pipeline/runs/", s.handlePipelineRun) // 子路径：{id} GET
+	mux.HandleFunc("/api/v1/argocd/apps", s.handleArgoCDApps)
+	mux.HandleFunc("/api/v1/argocd/apps/", s.handleArgoCDApp) // 子路径：{id} GET/PUT/DELETE、{id}/sync
+	mux.HandleFunc("/api/v1/canary/", s.handleCanaryEnhance) // 子路径：{id}/traffic-split、{id}/metrics
+	mux.HandleFunc("/api/v1/config/hotpush", s.handleConfigHotpush)
+	mux.HandleFunc("/api/v1/config/canary", s.handleConfigCanary)
+	mux.HandleFunc("/api/v1/config/versions", s.handleConfigVersions)
 	mux.HandleFunc("/metrics", s.handlePrometheusMetrics)
 
 	// 修复 4：用 jsonErrorMux 包装 mux，将 404 统一为 JSON 格式。

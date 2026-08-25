@@ -644,3 +644,508 @@ export function renderMetricsText(container, text) {
   // 原始文本（<pre> 保留格式，便于复制）。
   container.appendChild(el('pre', { class: 'metrics-raw', text: text }));
 }
+
+// ============================================================================
+// Phase 2：服务治理渲染
+// ============================================================================
+
+// renderTrafficTable 渲染流量策略列表表格。
+// handlers: { onEnable(id), onDisable(id), onDelete(id) }
+export function renderTrafficTable(container, policies, handlers) {
+  container.innerHTML = '';
+  if (!policies || policies.length === 0) {
+    renderEmpty(container, t('common.empty'));
+    return;
+  }
+  const table = el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('common.id') }),
+        el('th', { text: t('traffic.policyName') }),
+        el('th', { text: t('traffic.service') }),
+        el('th', { text: t('traffic.policyType') }),
+        el('th', { text: t('traffic.timeout') }),
+        el('th', { text: t('traffic.retries') }),
+        el('th', { text: t('common.status') }),
+        el('th', { class: 'th-actions', text: t('common.actions') })
+      )
+    ),
+    el('tbody', null,
+      policies.map((p) => {
+        const enabled = p.enabled !== false && p.status !== 'disabled';
+        return el('tr', null,
+          el('td', { class: 'mono', text: p.id }),
+          el('td', { class: 'cell-title', text: p.name }),
+          el('td', { text: p.service || '-' }),
+          el('td', null, el('span', { class: 'badge badge-priority-medium', text: t('traffic.type.' + (p.type || 'timeout'), p.type || '-') })),
+          el('td', { class: 'mono', text: String(p.timeout != null ? p.timeout : '-') }),
+          el('td', { class: 'mono', text: String(p.retries != null ? p.retries : '-') }),
+          el('td', null, el('span', { class: 'badge badge-status-' + (enabled ? 'resolved' : 'closed'), text: enabled ? t('common.enabled') : t('common.disabled') })),
+          el('td', { class: 'td-actions' },
+            enabled
+              ? el('button', { class: 'btn-icon', title: t('common.disable'), onclick: () => handlers.onDisable(p.id) }, iconEl('toggle_on', 14))
+              : el('button', { class: 'btn-icon', title: t('common.enable'), onclick: () => handlers.onEnable(p.id) }, iconEl('toggle_off', 14)),
+            el('button', { class: 'btn-icon btn-icon-danger', title: t('common.delete'), onclick: () => handlers.onDelete(p.id) }, iconEl('trash', 14))
+          )
+        );
+      })
+    )
+  );
+  container.appendChild(table);
+}
+
+// renderTrafficForm 渲染流量策略创建表单。
+// handlers: { onSubmit(data), onCancel() }
+export function renderTrafficForm(container, handlers) {
+  container.innerHTML = '';
+  const form = el('form', { class: 'form-card', onsubmit: (e) => { e.preventDefault(); handlers.onSubmit(collectTrafficForm(form)); } });
+
+  form.appendChild(el('h3', { class: 'form-title', text: t('traffic.create') }));
+
+  form.appendChild(fieldRow(t('traffic.policyName'), true,
+    el('input', { type: 'text', name: 'name', required: 'true', placeholder: t('traffic.nameRequired') })
+  ));
+  form.appendChild(fieldRow(t('traffic.service'), true,
+    el('input', { type: 'text', name: 'service', required: 'true', placeholder: t('traffic.serviceRequired') })
+  ));
+  form.appendChild(fieldRow(t('traffic.policyType'), false,
+    el('select', { name: 'type' },
+      ['timeout', 'retry', 'circuitbreaker', 'ratelimit'].map((tp) =>
+        el('option', { value: tp, text: t('traffic.type.' + tp) })
+      )
+    )
+  ));
+  form.appendChild(fieldRow(t('traffic.timeout'), false,
+    el('input', { type: 'number', name: 'timeout', min: '0', value: '3000' })
+  ));
+  form.appendChild(fieldRow(t('traffic.retries'), false,
+    el('input', { type: 'number', name: 'retries', min: '0', max: '10', value: '3' })
+  ));
+
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' }, iconEl('check', 16), el('span', { text: t('common.save') })),
+    el('button', { type: 'button', class: 'btn btn-ghost', onclick: () => handlers.onCancel() }, el('span', { text: t('common.cancel') }))
+  ));
+
+  container.appendChild(form);
+}
+
+function collectTrafficForm(form) {
+  const get = (name) => (form.elements[name] && form.elements[name].value) || '';
+  return {
+    name: get('name').trim(),
+    service: get('service').trim(),
+    type: get('type'),
+    timeout: parseInt(get('timeout'), 10) || 0,
+    retries: parseInt(get('retries'), 10) || 0,
+  };
+}
+
+// ============================================================================
+// Phase 2：CI/CD 流水线渲染
+// ============================================================================
+
+// renderPipelineTemplates 渲染流水线模板列表表格。
+// handlers: { onRun(id), onDelete(id) }
+export function renderPipelineTemplates(container, templates, handlers) {
+  container.innerHTML = '';
+  if (!templates || templates.length === 0) {
+    renderEmpty(container, t('common.empty'));
+    return;
+  }
+  const table = el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('common.id') }),
+        el('th', { text: t('pipeline.templateName') }),
+        el('th', { text: t('pipeline.description') }),
+        el('th', { text: t('pipeline.stages') }),
+        el('th', { text: t('common.createdAt') }),
+        el('th', { class: 'th-actions', text: t('common.actions') })
+      )
+    ),
+    el('tbody', null,
+      templates.map((tp) => el('tr', null,
+        el('td', { class: 'mono', text: tp.id }),
+        el('td', { class: 'cell-title', text: tp.name }),
+        el('td', { text: tp.description || '-' }),
+        el('td', { class: 'mono', text: String((tp.stages && tp.stages.length) || 0) }),
+        el('td', { class: 'mono', text: formatTime(tp.createdAt) }),
+        el('td', { class: 'td-actions' },
+          el('button', { class: 'btn-icon', title: t('pipeline.run'), onclick: () => handlers.onRun(tp.id) }, iconEl('play', 14)),
+          el('button', { class: 'btn-icon btn-icon-danger', title: t('common.delete'), onclick: () => handlers.onDelete(tp.id) }, iconEl('trash', 14))
+        )
+      ))
+    )
+  );
+  container.appendChild(table);
+}
+
+// renderPipelineRuns 渲染流水线运行记录表格。
+export function renderPipelineRuns(container, runs) {
+  container.innerHTML = '';
+  if (!runs || runs.length === 0) {
+    renderEmpty(container, t('common.empty'));
+    return;
+  }
+  const table = el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('pipeline.runId') }),
+        el('th', { text: t('pipeline.template') }),
+        el('th', { text: t('pipeline.status') }),
+        el('th', { text: t('pipeline.startedAt') }),
+        el('th', { text: t('pipeline.finishedAt') })
+      )
+    ),
+    el('tbody', null,
+      runs.map((r) => el('tr', null,
+        el('td', { class: 'mono', text: r.id }),
+        el('td', { class: 'cell-title', text: r.templateName || r.templateID || '-' }),
+        el('td', null, el('span', { class: 'badge badge-status-' + (r.status || 'open'), text: r.status || '-' })),
+        el('td', { class: 'mono', text: formatTime(r.startedAt || r.createdAt) }),
+        el('td', { class: 'mono', text: formatTime(r.finishedAt || r.updatedAt) })
+      ))
+    )
+  );
+  container.appendChild(table);
+}
+
+// renderPipelineTemplateForm 渲染流水线模板创建表单。
+// handlers: { onSubmit(data), onCancel() }
+export function renderPipelineTemplateForm(container, handlers) {
+  container.innerHTML = '';
+  const form = el('form', { class: 'form-card', onsubmit: (e) => { e.preventDefault(); handlers.onSubmit(collectPipelineTemplateForm(form)); } });
+
+  form.appendChild(el('h3', { class: 'form-title', text: t('pipeline.create') }));
+
+  form.appendChild(fieldRow(t('pipeline.templateName'), true,
+    el('input', { type: 'text', name: 'name', required: 'true', placeholder: t('pipeline.nameRequired') })
+  ));
+  form.appendChild(fieldRow(t('pipeline.description'), false,
+    el('textarea', { name: 'description', rows: '2' }, '')
+  ));
+  form.appendChild(fieldRow(t('pipeline.stages'), false,
+    el('textarea', { name: 'stages', rows: '4', placeholder: 'build -> test -> deploy' }, '')
+  ));
+
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' }, iconEl('check', 16), el('span', { text: t('common.save') })),
+    el('button', { type: 'button', class: 'btn btn-ghost', onclick: () => handlers.onCancel() }, el('span', { text: t('common.cancel') }))
+  ));
+
+  container.appendChild(form);
+}
+
+function collectPipelineTemplateForm(form) {
+  const get = (name) => (form.elements[name] && form.elements[name].value) || '';
+  const stagesText = get('stages').trim();
+  const stages = stagesText ? stagesText.split('->').map((s) => s.trim()).filter(Boolean) : [];
+  return {
+    name: get('name').trim(),
+    description: get('description'),
+    stages,
+  };
+}
+
+// renderArgoCDApps 渲染 ArgoCD 应用列表。
+// handlers: { onSync(id), onDelete(id) }
+export function renderArgoCDApps(container, apps, handlers) {
+  container.innerHTML = '';
+  if (!apps || apps.length === 0) {
+    renderEmpty(container, t('common.empty'));
+    return;
+  }
+  const table = el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('common.name') }),
+        el('th', { text: t('common.status') }),
+        el('th', { text: 'repo' }),
+        el('th', { text: 'target' }),
+        el('th', { class: 'th-actions', text: t('common.actions') })
+      )
+    ),
+    el('tbody', null,
+      apps.map((a) => el('tr', null,
+        el('td', { class: 'cell-title', text: a.name }),
+        el('td', null, el('span', { class: 'badge badge-status-' + (a.syncStatus === 'Synced' ? 'resolved' : 'in_progress'), text: a.syncStatus || '-' })),
+        el('td', { class: 'mono', text: a.repoURL || '-' }),
+        el('td', { class: 'mono', text: a.targetRevision || '-' }),
+        el('td', { class: 'td-actions' },
+          el('button', { class: 'btn-icon', title: t('pipeline.argoSync'), onclick: () => handlers.onSync(a.name || a.id) }, iconEl('sync', 14)),
+          el('button', { class: 'btn-icon btn-icon-danger', title: t('common.delete'), onclick: () => handlers.onDelete(a.name || a.id) }, iconEl('trash', 14))
+        )
+      ))
+    )
+  );
+  container.appendChild(table);
+}
+
+// ============================================================================
+// Phase 2：灰度发布渲染
+// ============================================================================
+
+// renderCanaryList 渲染灰度发布列表（带选择）。
+// handlers: { onSelect(id) }
+export function renderCanaryList(container, releases, handlers) {
+  container.innerHTML = '';
+  if (!releases || releases.length === 0) {
+    renderEmpty(container, t('common.empty'));
+    return;
+  }
+  const table = el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('common.id') }),
+        el('th', { text: t('common.name') }),
+        el('th', { text: t('common.service') }),
+        el('th', { text: t('canary.trafficPercent') }),
+        el('th', { text: t('common.status') }),
+        el('th', { class: 'th-actions', text: t('common.actions') })
+      )
+    ),
+    el('tbody', null,
+      releases.map((r) => el('tr', null,
+        el('td', { class: 'mono', text: r.id }),
+        el('td', { class: 'cell-title', text: r.name || '-' }),
+        el('td', { text: r.service || '-' }),
+        el('td', { class: 'mono', text: String(r.percent != null ? r.percent : 0) + '%' }),
+        el('td', null, el('span', { class: 'badge badge-status-' + (r.status || 'in_progress'), text: r.status || '-' })),
+        el('td', { class: 'td-actions' },
+          el('button', { class: 'btn-icon', title: t('canary.trafficSplit'), onclick: () => handlers.onSelect(r.id) }, iconEl('sliders', 14))
+        )
+      ))
+    )
+  );
+  container.appendChild(table);
+}
+
+// renderCanarySplitPanel 渲染流量分割面板（滑块 + 应用按钮）。
+// handlers: { onApply(percent) }
+export function renderCanarySplitPanel(container, release, handlers) {
+  container.innerHTML = '';
+  if (!release) { renderEmpty(container, t('canary.select')); return; }
+  const card = el('div', { class: 'detail-card' });
+  card.appendChild(el('h3', { class: 'detail-title', text: t('canary.trafficSplit') + ' · ' + (release.name || release.id) }));
+
+  const currentPercent = release.percent != null ? release.percent : 0;
+  const sliderRow = el('div', { class: 'form-row' },
+    el('label', { class: 'form-label', text: t('canary.trafficPercent') }),
+    el('div', { class: 'form-control' },
+      el('input', { type: 'range', name: 'percent', min: '0', max: '100', step: '1', value: String(currentPercent), style: { width: '60%', verticalAlign: 'middle' } }),
+      el('span', { class: 'mono', id: 'canaryPercentLabel', text: ' ' + currentPercent + '%', style: { marginLeft: '0.6rem' } })
+    )
+  );
+  card.appendChild(sliderRow);
+
+  // 滑块实时更新标签
+  const slider = sliderRow.querySelector('input[name=percent]');
+  const label = sliderRow.querySelector('#canaryPercentLabel');
+  slider.addEventListener('input', () => {
+    if (label) label.textContent = ' ' + slider.value + '%';
+  });
+
+  card.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'button', class: 'btn btn-primary', onclick: () => handlers.onApply(parseInt(slider.value, 10) || 0) },
+      iconEl('check', 16), el('span', { text: t('canary.applySplit') })
+    )
+  ));
+
+  container.appendChild(card);
+}
+
+// renderCanaryMetrics 渲染灰度指标对比表格。
+// metrics: { old: {qps, latency, errorRate}, new: {qps, latency, errorRate} }
+export function renderCanaryMetrics(container, metrics) {
+  container.innerHTML = '';
+  if (!metrics) { renderEmpty(container, t('common.empty')); return; }
+  const oldM = metrics.old || metrics.baseline || {};
+  const newM = metrics.new || metrics.canary || {};
+  const card = el('div', { class: 'detail-card' });
+  card.appendChild(el('h3', { class: 'detail-title', text: t('canary.metrics') }));
+  card.appendChild(el('table', { class: 'data-table data-table-compact' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('common.name') }),
+        el('th', { text: t('canary.oldVersion') }),
+        el('th', { text: t('canary.newVersion') })
+      )
+    ),
+    el('tbody', null,
+      el('tr', null,
+        el('td', { text: t('canary.metricQps') }),
+        el('td', { class: 'mono', text: formatNumber(oldM.qps) }),
+        el('td', { class: 'mono', text: formatNumber(newM.qps) })
+      ),
+      el('tr', null,
+        el('td', { text: t('canary.metricLatency') }),
+        el('td', { class: 'mono', text: formatNumber(oldM.latency) }),
+        el('td', { class: 'mono', text: formatNumber(newM.latency) })
+      ),
+      el('tr', null,
+        el('td', { text: t('canary.metricErrorRate') }),
+        el('td', { class: 'mono', text: formatNumber(oldM.errorRate) }),
+        el('td', { class: 'mono', text: formatNumber(newM.errorRate) })
+      )
+    )
+  ));
+  container.appendChild(card);
+}
+
+// ============================================================================
+// Phase 2：配置热推渲染
+// ============================================================================
+
+// renderConfigHotpushForm 渲染配置热推送表单。
+// handlers: { onSubmit(data) }
+export function renderConfigHotpushForm(container, handlers) {
+  container.innerHTML = '';
+  const form = el('form', { class: 'form-card', onsubmit: (e) => { e.preventDefault(); handlers.onSubmit(collectConfigHotpushForm(form)); } });
+
+  form.appendChild(el('h3', { class: 'form-title', text: t('configPush.hotpush') }));
+
+  form.appendChild(fieldRow(t('configPush.deviceID'), true,
+    el('input', { type: 'text', name: 'deviceID', required: 'true', placeholder: t('configPush.deviceRequired') })
+  ));
+  form.appendChild(fieldRow(t('configPush.configKey'), true,
+    el('input', { type: 'text', name: 'key', required: 'true', placeholder: t('configPush.keyRequired') })
+  ));
+  form.appendChild(fieldRow(t('configPush.configValue'), false,
+    el('textarea', { name: 'value', rows: '3' }, '')
+  ));
+  form.appendChild(fieldRow(t('configPush.configPath'), false,
+    el('input', { type: 'text', name: 'path', placeholder: '/etc/opsmesh/config.yaml' })
+  ));
+
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' }, iconEl('rocket', 16), el('span', { text: t('common.push') }))
+  ));
+
+  container.appendChild(form);
+}
+
+function collectConfigHotpushForm(form) {
+  const get = (name) => (form.elements[name] && form.elements[name].value) || '';
+  return {
+    deviceID: get('deviceID').trim(),
+    key: get('key').trim(),
+    value: get('value'),
+    path: get('path').trim(),
+  };
+}
+
+// renderConfigCanaryForm 渲染灰度配置发布表单。
+// handlers: { onSubmit(data) }
+export function renderConfigCanaryForm(container, handlers) {
+  container.innerHTML = '';
+  const form = el('form', { class: 'form-card', onsubmit: (e) => { e.preventDefault(); handlers.onSubmit(collectConfigCanaryForm(form)); } });
+
+  form.appendChild(el('h3', { class: 'form-title', text: t('configPush.canary') }));
+
+  form.appendChild(fieldRow(t('configPush.deviceList'), true,
+    el('input', { type: 'text', name: 'devices', required: 'true', placeholder: 'dev1, dev2, dev3' })
+  ));
+  form.appendChild(fieldRow(t('configPush.canaryPercent'), false,
+    el('input', { type: 'number', name: 'percent', min: '0', max: '100', value: '10' })
+  ));
+  form.appendChild(fieldRow(t('configPush.configKey'), false,
+    el('input', { type: 'text', name: 'key' })
+  ));
+  form.appendChild(fieldRow(t('configPush.configContent'), false,
+    el('textarea', { name: 'content', rows: '4' }, '')
+  ));
+
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' }, iconEl('check', 16), el('span', { text: t('common.apply') }))
+  ));
+
+  container.appendChild(form);
+}
+
+function collectConfigCanaryForm(form) {
+  const get = (name) => (form.elements[name] && form.elements[name].value) || '';
+  const devices = get('devices').split(',').map((s) => s.trim()).filter(Boolean);
+  return {
+    devices,
+    percent: parseInt(get('percent'), 10) || 0,
+    key: get('key').trim(),
+    content: get('content'),
+  };
+}
+
+// renderConfigVersions 渲染配置版本历史表格。
+export function renderConfigVersions(container, versions) {
+  container.innerHTML = '';
+  if (!versions || versions.length === 0) {
+    renderEmpty(container, t('common.empty'));
+    return;
+  }
+  const table = el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('common.version') }),
+        el('th', { text: t('configPush.configKey') }),
+        el('th', { text: t('common.value') }),
+        el('th', { text: t('common.createdAt') })
+      )
+    ),
+    el('tbody', null,
+      versions.map((v) => el('tr', null,
+        el('td', { class: 'mono', text: String(v.version != null ? v.version : (v.id || '-')) }),
+        el('td', { class: 'mono', text: v.key || '-' }),
+        el('td', { class: 'mono', text: String(v.value != null ? v.value : '-').slice(0, 60) }),
+        el('td', { class: 'mono', text: formatTime(v.createdAt || v.timestamp) })
+      ))
+    )
+  );
+  container.appendChild(table);
+}
+
+// ============================================================================
+// Phase 2：API 端点汇总（render 层提供，便于调试/文档展示）
+// ============================================================================
+
+// renderApiEndpoints 渲染 Phase 2 新增 API 端点列表。
+export function renderApiEndpoints(container) {
+  container.innerHTML = '';
+  const endpoints = [
+    { method: 'GET',    path: '/api/v1/traffic/policies',                desc: 'list traffic policies' },
+    { method: 'POST',   path: '/api/v1/traffic/policies',                desc: 'create traffic policy' },
+    { method: 'DELETE', path: '/api/v1/traffic/policies/{id}',           desc: 'delete traffic policy' },
+    { method: 'POST',   path: '/api/v1/traffic/policies/{id}/enable',    desc: 'enable traffic policy' },
+    { method: 'POST',   path: '/api/v1/traffic/policies/{id}/disable',   desc: 'disable traffic policy' },
+    { method: 'GET',    path: '/api/v1/pipeline/templates',              desc: 'list pipeline templates' },
+    { method: 'POST',   path: '/api/v1/pipeline/templates',              desc: 'create pipeline template' },
+    { method: 'DELETE', path: '/api/v1/pipeline/templates/{id}',         desc: 'delete pipeline template' },
+    { method: 'POST',   path: '/api/v1/pipeline/templates/{id}/run',     desc: 'trigger pipeline run' },
+    { method: 'GET',    path: '/api/v1/pipeline/runs',                   desc: 'list pipeline runs' },
+    { method: 'GET',    path: '/api/v1/argocd/apps',                     desc: 'list argocd apps' },
+    { method: 'POST',   path: '/api/v1/argocd/apps',                     desc: 'create argocd app' },
+    { method: 'DELETE', path: '/api/v1/argocd/apps/{id}',                desc: 'delete argocd app' },
+    { method: 'POST',   path: '/api/v1/argocd/apps/{id}/sync',           desc: 'sync argocd app' },
+    { method: 'GET',    path: '/api/v1/canary/releases',                 desc: 'list canary releases' },
+    { method: 'POST',   path: '/api/v1/canary/{id}/traffic-split',       desc: 'set canary traffic split' },
+    { method: 'GET',    path: '/api/v1/canary/{id}/metrics',             desc: 'get canary metrics' },
+    { method: 'POST',   path: '/api/v1/config/hotpush',                  desc: 'hotpush config' },
+    { method: 'POST',   path: '/api/v1/config/canary',                   desc: 'canary config' },
+    { method: 'GET',    path: '/api/v1/config/versions?key=',            desc: 'list config versions' },
+  ];
+  const methodColor = { GET: 'badge-status-resolved', POST: 'badge-status-open', DELETE: 'badge-priority-urgent', PUT: 'badge-status-in_progress' };
+  container.appendChild(el('table', { class: 'data-table data-table-compact' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: 'method' }),
+        el('th', { text: 'path' }),
+        el('th', { text: 'desc' })
+      )
+    ),
+    el('tbody', null,
+      endpoints.map((e) => el('tr', null,
+        el('td', null, el('span', { class: 'badge ' + (methodColor[e.method] || 'badge-status-closed'), text: e.method })),
+        el('td', { class: 'mono', text: e.path }),
+        el('td', { text: e.desc })
+      ))
+    )
+  ));
+}

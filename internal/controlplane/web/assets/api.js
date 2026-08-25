@@ -168,3 +168,139 @@ export async function getMetrics() {
   }
   return text;
 }
+
+// ============================================================================
+// Phase 2：流量治理 API
+// ============================================================================
+
+// getTrafficPolicies 列出流量策略。GET /api/v1/traffic/policies
+export function getTrafficPolicies() {
+  return requestJSON('GET', '/api/v1/traffic/policies').then((d) => {
+    return (d && d.policies) ? d.policies : (Array.isArray(d) ? d : []);
+  });
+}
+
+// createTrafficPolicy 创建流量策略。POST /api/v1/traffic/policies
+// body: {name, service, type, timeout, retries, ...}
+export function createTrafficPolicy(data) {
+  return requestJSON('POST', '/api/v1/traffic/policies', data);
+}
+
+// deleteTrafficPolicy 删除流量策略。DELETE /api/v1/traffic/policies/{id}
+export function deleteTrafficPolicy(id) {
+  return requestJSON('DELETE', '/api/v1/traffic/policies/' + encodeURIComponent(id));
+}
+
+// enableTrafficPolicy 启用流量策略。POST /api/v1/traffic/policies/{id}/enable
+export function enableTrafficPolicy(id) {
+  return requestJSON('POST', '/api/v1/traffic/policies/' + encodeURIComponent(id) + '/enable');
+}
+
+// disableTrafficPolicy 禁用流量策略。POST /api/v1/traffic/policies/{id}/disable
+export function disableTrafficPolicy(id) {
+  return requestJSON('POST', '/api/v1/traffic/policies/' + encodeURIComponent(id) + '/disable');
+}
+
+// ============================================================================
+// Phase 2：CI/CD 流水线 API
+// ============================================================================
+
+// getPipelineTemplates 列出流水线模板。GET /api/v1/pipeline/templates
+export function getPipelineTemplates() {
+  return requestJSON('GET', '/api/v1/pipeline/templates').then((d) => {
+    return (d && d.templates) ? d.templates : (Array.isArray(d) ? d : []);
+  });
+}
+
+// createPipelineTemplate 创建流水线模板。POST /api/v1/pipeline/templates
+export function createPipelineTemplate(data) {
+  return requestJSON('POST', '/api/v1/pipeline/templates', data);
+}
+
+// deletePipelineTemplate 删除流水线模板。DELETE /api/v1/pipeline/templates/{id}
+export function deletePipelineTemplate(id) {
+  return requestJSON('DELETE', '/api/v1/pipeline/templates/' + encodeURIComponent(id));
+}
+
+// runPipeline 触发流水线运行。POST /api/v1/pipeline/templates/{id}/run
+export function runPipeline(id) {
+  return requestJSON('POST', '/api/v1/pipeline/templates/' + encodeURIComponent(id) + '/run');
+}
+
+// getPipelineRuns 列出流水线运行记录。GET /api/v1/pipeline/runs
+export function getPipelineRuns() {
+  return requestJSON('GET', '/api/v1/pipeline/runs').then((d) => {
+    return (d && d.runs) ? d.runs : (Array.isArray(d) ? d : []);
+  });
+}
+
+// ============================================================================
+// Phase 2：ArgoCD 应用 API
+// ============================================================================
+
+// getArgoCDApps 列出 ArgoCD 应用。GET /api/v1/argocd/apps
+export function getArgoCDApps() {
+  return requestJSON('GET', '/api/v1/argocd/apps').then((d) => {
+    return (d && d.apps) ? d.apps : (Array.isArray(d) ? d : []);
+  });
+}
+
+// createArgoCDApp 创建 ArgoCD 应用。POST /api/v1/argocd/apps
+export function createArgoCDApp(data) {
+  return requestJSON('POST', '/api/v1/argocd/apps', data);
+}
+
+// deleteArgoCDApp 删除 ArgoCD 应用。DELETE /api/v1/argocd/apps/{id}
+export function deleteArgoCDApp(id) {
+  return requestJSON('DELETE', '/api/v1/argocd/apps/' + encodeURIComponent(id));
+}
+
+// syncArgoCDApp 同步 ArgoCD 应用。POST /api/v1/argocd/apps/{id}/sync
+export function syncArgoCDApp(id) {
+  return requestJSON('POST', '/api/v1/argocd/apps/' + encodeURIComponent(id) + '/sync');
+}
+
+// ============================================================================
+// Phase 2：灰度发布增强 API
+// ============================================================================
+
+// getCanaryReleases 列出灰度发布。GET /api/v1/canary/releases
+export function getCanaryReleases() {
+  return requestJSON('GET', '/api/v1/canary/releases').then((d) => {
+    return (d && d.releases) ? d.releases : (Array.isArray(d) ? d : []);
+  });
+}
+
+// setTrafficSplit 设置灰度流量分割百分比。POST /api/v1/canary/{id}/traffic-split
+export function setTrafficSplit(id, percent) {
+  return requestJSON('POST', '/api/v1/canary/' + encodeURIComponent(id) + '/traffic-split', { percent });
+}
+
+// getCanaryMetrics 获取灰度指标对比。GET /api/v1/canary/{id}/metrics
+export function getCanaryMetrics(id) {
+  return requestJSON('GET', '/api/v1/canary/' + encodeURIComponent(id) + '/metrics');
+}
+
+// ============================================================================
+// Phase 2：配置热推送 API
+// ============================================================================
+
+// hotpushConfig 配置热推送。POST /api/v1/config/hotpush
+// body: {deviceID, key, value, path}
+export function hotpushConfig(data) {
+  return requestJSON('POST', '/api/v1/config/hotpush', data);
+}
+
+// canaryConfig 灰度配置发布。POST /api/v1/config/canary
+// body: {devices, percent, content, key}
+export function canaryConfig(data) {
+  return requestJSON('POST', '/api/v1/config/canary', data);
+}
+
+// getConfigVersions 查询配置版本历史。GET /api/v1/config/versions?key=
+export function getConfigVersions(key) {
+  const q = key ? '?key=' + encodeURIComponent(key) : '';
+  return requestJSON('GET', '/api/v1/config/versions' + q).then((d) => {
+    return (d && d.versions) ? d.versions : (Array.isArray(d) ? d : []);
+  });
+}

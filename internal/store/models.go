@@ -369,3 +369,80 @@ type SLIStatus struct {
 	Status        string    `json:"status"` // "met" | "breached" | "nodata"
 	LastEvaluated time.Time `json:"lastEvaluated"`
 }
+
+// ============================================================================
+// Phase 2 微服务治理 + CI/CD 领域数据模型。
+// 与现有领域解耦，通过 TrafficStore / PipelineStore / ArgoCDStore
+// 三个小接口暴露，组合进 Store。
+// ============================================================================
+
+// TrafficPolicy 流量治理策略（Phase 2 微服务治理）。
+type TrafficPolicy struct {
+	ID            string            `json:"id"`
+	TenantID      string            `json:"tenantID"`
+	Name          string            `json:"name"`
+	ServiceName   string            `json:"serviceName"`
+	Type          string            `json:"type"`          // "canary","timeout","retry","circuit_breaker","mirror"
+	CanaryWeights map[string]int    `json:"canaryWeights"` // version -> weight%
+	MirrorPercent int               `json:"mirrorPercent"` // 镜像流量百分比
+	Timeout       string            `json:"timeout"`       // "5s"
+	Retries       int               `json:"retries"`
+	RetryTimeout  string            `json:"retryTimeout"`
+	MaxConns      int               `json:"maxConns"`  // circuit_breaker
+	MaxRequests   int               `json:"maxRequests"`
+	Status        string            `json:"status"`    // "active","inactive"
+	CreatedAt     time.Time         `json:"createdAt"`
+	UpdatedAt     time.Time         `json:"updatedAt"`
+}
+
+// PipelineTemplate CI/CD 流水线模板（Phase 2 CI/CD 流水线）。
+type PipelineTemplate struct {
+	ID          string          `json:"id"`
+	TenantID    string          `json:"tenantID"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Type        string          `json:"type"`    // "tekton","jenkins"
+	YAML        string          `json:"yaml"`    // pipeline 定义
+	Parameters  []PipelineParam `json:"parameters"`
+	CreatedAt   time.Time       `json:"createdAt"`
+	UpdatedAt   time.Time       `json:"updatedAt"`
+}
+
+// PipelineParam 流水线参数。
+type PipelineParam struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Default     string `json:"default"`
+	Required    bool   `json:"required"`
+}
+
+// PipelineRun 流水线执行记录。
+type PipelineRun struct {
+	ID           string            `json:"id"`
+	TenantID     string            `json:"tenantID"`
+	TemplateID   string            `json:"templateID"`
+	TemplateName string            `json:"templateName"`
+	Status       string            `json:"status"` // "pending","running","succeeded","failed","cancelled"
+	Parameters   map[string]string `json:"parameters"`
+	Logs         string            `json:"logs"`
+	StartedAt    *time.Time        `json:"startedAt,omitempty"`
+	FinishedAt   *time.Time        `json:"finishedAt,omitempty"`
+	CreatedAt    time.Time         `json:"createdAt"`
+}
+
+// ArgoCDApp ArgoCD 应用定义（Phase 2 CI/CD 流水线）。
+type ArgoCDApp struct {
+	ID             string    `json:"id"`
+	TenantID       string    `json:"tenantID"`
+	Name           string    `json:"name"`
+	Namespace      string    `json:"namespace"`
+	RepoURL        string    `json:"repoURL"`
+	Path           string    `json:"path"`
+	TargetRevision string    `json:"targetRevision"` // "main","HEAD"
+	ClusterURL     string    `json:"clusterURL"`     // K8s 集群 API 地址
+	SyncPolicy     string    `json:"syncPolicy"`     // "manual","auto"
+	Status         string    `json:"status"`         // "synced","outofsync","unknown"
+	HealthStatus   string    `json:"healthStatus"`   // "healthy","degraded","missing","unknown"
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
