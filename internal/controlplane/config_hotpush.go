@@ -1,6 +1,5 @@
 package controlplane
 
-
 // config_hotpush.go 实现 Phase 2 配置热推送 HTTP handler。
 //
 // API 端点：
@@ -90,11 +89,11 @@ func (s *Server) handleConfigHotpush(w http.ResponseWriter, r *http.Request) {
 		TenantID: tenant, UserID: caller.ID, Action: "config_hotpush", Target: body.Key, Detail: sanitizeAuditDetail("agent=" + body.AgentID + " path=" + body.Path),
 	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"configKey":    body.Key,
+		"configKey":     body.Key,
 		"configVersion": saved.Version,
-		"taskID":       created.TaskID,
-		"agentID":      body.AgentID,
-		"status":       "pushed",
+		"taskID":        created.TaskID,
+		"agentID":       body.AgentID,
+		"status":        "pushed",
 	})
 }
 
@@ -145,10 +144,10 @@ func (s *Server) handleConfigCanary(w http.ResponseWriter, r *http.Request) {
 	}
 	// 1. 保存配置版本
 	item := &store.ConfigItem{
-		Key:      body.Key,
-		Value:    body.Value,
-		Format:   body.Format,
-		TenantID: tenant,
+		Key:       body.Key,
+		Value:     body.Value,
+		Format:    body.Format,
+		TenantID:  tenant,
 		UpdatedBy: caller.ID,
 	}
 	if item.Format == "" {

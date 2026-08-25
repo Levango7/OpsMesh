@@ -1,6 +1,5 @@
 package controlplane
 
-
 // argocd.go 实现 Phase 2 ArgoCD 应用管理 HTTP handler。
 //
 // API 端点：

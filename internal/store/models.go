@@ -318,7 +318,7 @@ type Ticket struct {
 	TenantID      string     `json:"tenantID"`
 	Title         string     `json:"title"`
 	Description   string     `json:"description"`
-	Status        string     `json:"status"` // "open" | "in_progress" | "resolved" | "closed"
+	Status        string     `json:"status"`   // "open" | "in_progress" | "resolved" | "closed"
 	Priority      string     `json:"priority"` // "low" | "medium" | "high" | "urgent"
 	Category      string     `json:"category"` // "incident" | "change" | "request" | "problem"
 	AssigneeID    string     `json:"assigneeID"`
@@ -378,21 +378,21 @@ type SLIStatus struct {
 
 // TrafficPolicy 流量治理策略（Phase 2 微服务治理）。
 type TrafficPolicy struct {
-	ID            string            `json:"id"`
-	TenantID      string            `json:"tenantID"`
-	Name          string            `json:"name"`
-	ServiceName   string            `json:"serviceName"`
-	Type          string            `json:"type"`          // "canary","timeout","retry","circuit_breaker","mirror"
-	CanaryWeights map[string]int    `json:"canaryWeights"` // version -> weight%
-	MirrorPercent int               `json:"mirrorPercent"` // 镜像流量百分比
-	Timeout       string            `json:"timeout"`       // "5s"
-	Retries       int               `json:"retries"`
-	RetryTimeout  string            `json:"retryTimeout"`
-	MaxConns      int               `json:"maxConns"`  // circuit_breaker
-	MaxRequests   int               `json:"maxRequests"`
-	Status        string            `json:"status"`    // "active","inactive"
-	CreatedAt     time.Time         `json:"createdAt"`
-	UpdatedAt     time.Time         `json:"updatedAt"`
+	ID            string         `json:"id"`
+	TenantID      string         `json:"tenantID"`
+	Name          string         `json:"name"`
+	ServiceName   string         `json:"serviceName"`
+	Type          string         `json:"type"`          // "canary","timeout","retry","circuit_breaker","mirror"
+	CanaryWeights map[string]int `json:"canaryWeights"` // version -> weight%
+	MirrorPercent int            `json:"mirrorPercent"` // 镜像流量百分比
+	Timeout       string         `json:"timeout"`       // "5s"
+	Retries       int            `json:"retries"`
+	RetryTimeout  string         `json:"retryTimeout"`
+	MaxConns      int            `json:"maxConns"` // circuit_breaker
+	MaxRequests   int            `json:"maxRequests"`
+	Status        string         `json:"status"` // "active","inactive"
+	CreatedAt     time.Time      `json:"createdAt"`
+	UpdatedAt     time.Time      `json:"updatedAt"`
 }
 
 // PipelineTemplate CI/CD 流水线模板（Phase 2 CI/CD 流水线）。
@@ -401,8 +401,8 @@ type PipelineTemplate struct {
 	TenantID    string          `json:"tenantID"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
-	Type        string          `json:"type"`    // "tekton","jenkins"
-	YAML        string          `json:"yaml"`    // pipeline 定义
+	Type        string          `json:"type"` // "tekton","jenkins"
+	YAML        string          `json:"yaml"` // pipeline 定义
 	Parameters  []PipelineParam `json:"parameters"`
 	CreatedAt   time.Time       `json:"createdAt"`
 	UpdatedAt   time.Time       `json:"updatedAt"`

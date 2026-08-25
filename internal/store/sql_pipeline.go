@@ -6,7 +6,6 @@ package store
 // MVP 用内存桩实现，保证接口齐全 + go build 通过；DB 不可用时返回零值，
 // 不 panic，与 SQLStore 其他桩方法风格一致（参考 sql_slo.go）。
 
-
 // CreateTemplate 创建流水线模板（桩实现）。
 func (s *SQLStore) CreateTemplate(tenantID string, t *PipelineTemplate) *PipelineTemplate {
 	return nil

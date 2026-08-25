@@ -165,7 +165,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/pipeline/runs/", s.handlePipelineRun) // 子路径：{id} GET
 	mux.HandleFunc("/api/v1/argocd/apps", s.handleArgoCDApps)
 	mux.HandleFunc("/api/v1/argocd/apps/", s.handleArgoCDApp) // 子路径：{id} GET/PUT/DELETE、{id}/sync
-	mux.HandleFunc("/api/v1/canary/", s.handleCanaryEnhance) // 子路径：{id}/traffic-split、{id}/metrics
+	mux.HandleFunc("/api/v1/canary/", s.handleCanaryEnhance)  // 子路径：{id}/traffic-split、{id}/metrics
 	mux.HandleFunc("/api/v1/config/hotpush", s.handleConfigHotpush)
 	mux.HandleFunc("/api/v1/config/canary", s.handleConfigCanary)
 	mux.HandleFunc("/api/v1/config/versions", s.handleConfigVersions)

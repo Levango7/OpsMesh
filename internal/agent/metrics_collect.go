@@ -382,15 +382,20 @@ func queryServiceWindows(name string) (status string, enabled bool) {
 	// 查询启动类型（sc qc 输出含 START_TYPE）。
 	qctx, qcancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer qcancel()
-	qout, _ := exec.CommandContext(qctx, "sc", "qc", name).CombinedOutput()
-	for _, line := range strings.Split(string(qout), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "START_TYPE") {
-			// 格式：START_TYPE      : 2  AUTO_START
-			if strings.Contains(strings.ToUpper(line), "AUTO_START") {
-				enabled = true
+	qout, qerr := exec.CommandContext(qctx, "sc", "qc", name).CombinedOutput()
+	if qerr != nil {
+		// sc qc 失败（如服务不存在）不影响 status，仅 enabled 置 false
+		enabled = false
+	} else {
+		for _, line := range strings.Split(string(qout), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "START_TYPE") {
+				// 格式：START_TYPE      : 2  AUTO_START
+				if strings.Contains(strings.ToUpper(line), "AUTO_START") {
+					enabled = true
+				}
+				break
 			}
-			break
 		}
 	}
 	return status, enabled
@@ -423,9 +428,14 @@ func queryServiceLinux(name string) (status string, enabled bool) {
 	// 查询是否开机自启。
 	ectx, ecancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer ecancel()
-	eout, _ := exec.CommandContext(ectx, "systemctl", "is-enabled", name).Output()
-	es := strings.TrimSpace(string(eout))
-	enabled = es == "enabled" || es == "enabled-runtime" || es == "static"
+	eout, eerr := exec.CommandContext(ectx, "systemctl", "is-enabled", name).Output()
+	if eerr != nil {
+		// systemctl is-enabled 失败（如服务不存在）视为非开机自启
+		enabled = false
+	} else {
+		es := strings.TrimSpace(string(eout))
+		enabled = es == "enabled" || es == "enabled-runtime" || es == "static"
+	}
 	return status, enabled
 }
 

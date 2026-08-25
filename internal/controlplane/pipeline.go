@@ -1,6 +1,5 @@
 package controlplane
 
-
 // pipeline.go 实现 Phase 2 CI/CD 流水线 HTTP handler。
 //
 // API 端点：

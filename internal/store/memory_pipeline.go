@@ -12,7 +12,6 @@ package store
 //   - CreateTemplate 分配随机 ID（"pipeline-" + 16 字节 hex）；
 //   - CreateRun 分配随机 ID（"run-" + 16 字节 hex）；
 
-
 import (
 	"crypto/rand"
 	"encoding/hex"

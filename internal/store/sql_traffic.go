@@ -8,7 +8,6 @@ package store
 // MVP 用内存桩实现，保证接口齐全 + go build 通过；DB 不可用时返回零值，
 // 不 panic，与 SQLStore 其他桩方法风格一致（参考 sql_slo.go）。
 
-
 // CreatePolicy 创建流量策略（桩实现）。
 func (s *SQLStore) CreatePolicy(tenantID string, p *TrafficPolicy) *TrafficPolicy {
 	return nil

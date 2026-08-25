@@ -259,6 +259,7 @@ func (c *GRPCClient) invokeWithBalancer(ctx context.Context, method string, req,
 
 // markBalancerFailed 服务发现：通知 balancer 当前实例失败，触发主→备切换。
 // 仅对 Failover 类型 balancer 生效（RoundRobin 无 MarkFailed 方法，每次 Next 自动轮询）。
+// MarkFailed 失败仅表示本次不切换主备，下次 invoke 会再次触发，无补救动作可做。
 func (c *GRPCClient) markBalancerFailed() {
 	if mf, ok := c.balancer.(interface {
 		MarkFailed() (discovery.Service, error)

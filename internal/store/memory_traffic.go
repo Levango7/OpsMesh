@@ -12,7 +12,6 @@ package store
 //   - CreatePolicy 分配随机 ID（"traffic-" + 16 字节 hex）；
 //   - EnablePolicy/DisablePolicy 切换 Status 字段。
 
-
 import (
 	"crypto/rand"
 	"encoding/hex"

@@ -1,6 +1,5 @@
 package controlplane
 
-
 // canary_enhance.go 实现 Phase 2 灰度发布增强 HTTP handler。
 //
 // API 端点：
@@ -136,18 +135,18 @@ func (s *Server) handleCanaryMetrics(w http.ResponseWriter, r *http.Request, id 
 	}
 	// 返回模拟指标对比数据
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"canaryID":  id,
+		"canaryID": id,
 		"baseline": map[string]float64{
-			"errorRate":     0.5,
-			"p99LatencyMs":  120.0,
-			"qps":           1000.0,
-			"successRate":   99.5,
+			"errorRate":    0.5,
+			"p99LatencyMs": 120.0,
+			"qps":          1000.0,
+			"successRate":  99.5,
 		},
 		"canary": map[string]float64{
-			"errorRate":     0.3,
-			"p99LatencyMs":  115.0,
-			"qps":           300.0,
-			"successRate":   99.7,
+			"errorRate":    0.3,
+			"p99LatencyMs": 115.0,
+			"qps":          300.0,
+			"successRate":  99.7,
 		},
 		"percentage": canary.Percentage,
 		"comparedAt": time.Now(),

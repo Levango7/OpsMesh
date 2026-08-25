@@ -12,7 +12,6 @@ package store
 //   - CreateApp 分配随机 ID（"argocd-" + 16 字节 hex）；
 //   - SyncApp 将 Status 置为 "synced" 并刷新 HealthStatus。
 
-
 import (
 	"crypto/rand"
 	"encoding/hex"

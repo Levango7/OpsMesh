@@ -535,17 +535,17 @@ type Store interface {
 	AuditStore
 	TokenStore
 	LeaderStore
-	UserStore           // 用户中心：注册/登录/CRUD
-	RoleStore           // 角色管理：CRUD
-	PermissionStore     // 权限列表：只读
-	K8sClusterStore     // K8s 集群管理：CRUD（Phase 3）
-	TemplateStore       // OS/中间件部署模板：CRUD
-	RefreshTokenStore   // 刷新令牌：续期/吊销
-	SilenceStore        // 静默规则：标签匹配 + 时间窗口抑制（M2）
-	NotifyChannelStore  // 通知渠道：CRUD（M2）
-	NotifyTemplateStore // 通知模板：CRUD（M2）
-	AgentLogStore       // agent 日志上报：落库 + 检索
-	QuotaStore          // 租户配额：Get/Set（多租户资源配额）
+	UserStore             // 用户中心：注册/登录/CRUD
+	RoleStore             // 角色管理：CRUD
+	PermissionStore       // 权限列表：只读
+	K8sClusterStore       // K8s 集群管理：CRUD（Phase 3）
+	TemplateStore         // OS/中间件部署模板：CRUD
+	RefreshTokenStore     // 刷新令牌：续期/吊销
+	SilenceStore          // 静默规则：标签匹配 + 时间窗口抑制（M2）
+	NotifyChannelStore    // 通知渠道：CRUD（M2）
+	NotifyTemplateStore   // 通知模板：CRUD（M2）
+	AgentLogStore         // agent 日志上报：落库 + 检索
+	QuotaStore            // 租户配额：Get/Set（多租户资源配额）
 	ServiceDiscoveryStore // P0.3 服务发现：注册/心跳/实例查询
 	ConfigStore           // P0.3 配置中心：Get/Set/版本历史/发布
 	SecretStore           // P0.3 密钥管理：Get/Set/轮换/版本历史
@@ -562,23 +562,23 @@ type Store interface {
 // 编译期断言：确保 MemoryStore / SQLStore 实现各领域小接口。
 // 任一方法缺失会在编译期立刻暴露（而非运行期），降低后续拆分消费方时的回归风险。
 var (
-	_ DeviceStore         = (*MemoryStore)(nil)
-	_ TaskStore           = (*MemoryStore)(nil)
-	_ AlertStore          = (*MemoryStore)(nil)
-	_ AuditStore          = (*MemoryStore)(nil)
-	_ TokenStore          = (*MemoryStore)(nil)
-	_ LeaderStore         = (*MemoryStore)(nil)
-	_ UserStore           = (*MemoryStore)(nil)
-	_ RoleStore           = (*MemoryStore)(nil)
-	_ PermissionStore     = (*MemoryStore)(nil)
-	_ K8sClusterStore     = (*MemoryStore)(nil)
-	_ TemplateStore       = (*MemoryStore)(nil)
-	_ RefreshTokenStore   = (*MemoryStore)(nil)
-	_ SilenceStore        = (*MemoryStore)(nil)
-	_ NotifyChannelStore  = (*MemoryStore)(nil)
-	_ NotifyTemplateStore = (*MemoryStore)(nil)
-	_ AgentLogStore       = (*MemoryStore)(nil)
-	_ QuotaStore          = (*MemoryStore)(nil)
+	_ DeviceStore           = (*MemoryStore)(nil)
+	_ TaskStore             = (*MemoryStore)(nil)
+	_ AlertStore            = (*MemoryStore)(nil)
+	_ AuditStore            = (*MemoryStore)(nil)
+	_ TokenStore            = (*MemoryStore)(nil)
+	_ LeaderStore           = (*MemoryStore)(nil)
+	_ UserStore             = (*MemoryStore)(nil)
+	_ RoleStore             = (*MemoryStore)(nil)
+	_ PermissionStore       = (*MemoryStore)(nil)
+	_ K8sClusterStore       = (*MemoryStore)(nil)
+	_ TemplateStore         = (*MemoryStore)(nil)
+	_ RefreshTokenStore     = (*MemoryStore)(nil)
+	_ SilenceStore          = (*MemoryStore)(nil)
+	_ NotifyChannelStore    = (*MemoryStore)(nil)
+	_ NotifyTemplateStore   = (*MemoryStore)(nil)
+	_ AgentLogStore         = (*MemoryStore)(nil)
+	_ QuotaStore            = (*MemoryStore)(nil)
 	_ ServiceDiscoveryStore = (*MemoryStore)(nil)
 	_ ConfigStore           = (*MemoryStore)(nil)
 	_ SecretStore           = (*MemoryStore)(nil)
@@ -587,25 +587,25 @@ var (
 	_ TrafficStore          = (*MemoryStore)(nil)
 	_ PipelineStore         = (*MemoryStore)(nil)
 	_ ArgoCDStore           = (*MemoryStore)(nil)
-	_ Store               = (*MemoryStore)(nil)
+	_ Store                 = (*MemoryStore)(nil)
 
-	_ DeviceStore         = (*SQLStore)(nil)
-	_ TaskStore           = (*SQLStore)(nil)
-	_ AlertStore          = (*SQLStore)(nil)
-	_ AuditStore          = (*SQLStore)(nil)
-	_ TokenStore          = (*SQLStore)(nil)
-	_ LeaderStore         = (*SQLStore)(nil)
-	_ UserStore           = (*SQLStore)(nil)
-	_ RoleStore           = (*SQLStore)(nil)
-	_ PermissionStore     = (*SQLStore)(nil)
-	_ K8sClusterStore     = (*SQLStore)(nil)
-	_ TemplateStore       = (*SQLStore)(nil)
-	_ RefreshTokenStore   = (*SQLStore)(nil)
-	_ SilenceStore        = (*SQLStore)(nil)
-	_ NotifyChannelStore  = (*SQLStore)(nil)
-	_ NotifyTemplateStore = (*SQLStore)(nil)
-	_ AgentLogStore       = (*SQLStore)(nil)
-	_ QuotaStore          = (*SQLStore)(nil)
+	_ DeviceStore           = (*SQLStore)(nil)
+	_ TaskStore             = (*SQLStore)(nil)
+	_ AlertStore            = (*SQLStore)(nil)
+	_ AuditStore            = (*SQLStore)(nil)
+	_ TokenStore            = (*SQLStore)(nil)
+	_ LeaderStore           = (*SQLStore)(nil)
+	_ UserStore             = (*SQLStore)(nil)
+	_ RoleStore             = (*SQLStore)(nil)
+	_ PermissionStore       = (*SQLStore)(nil)
+	_ K8sClusterStore       = (*SQLStore)(nil)
+	_ TemplateStore         = (*SQLStore)(nil)
+	_ RefreshTokenStore     = (*SQLStore)(nil)
+	_ SilenceStore          = (*SQLStore)(nil)
+	_ NotifyChannelStore    = (*SQLStore)(nil)
+	_ NotifyTemplateStore   = (*SQLStore)(nil)
+	_ AgentLogStore         = (*SQLStore)(nil)
+	_ QuotaStore            = (*SQLStore)(nil)
 	_ ServiceDiscoveryStore = (*SQLStore)(nil)
 	_ ConfigStore           = (*SQLStore)(nil)
 	_ SecretStore           = (*SQLStore)(nil)
@@ -614,5 +614,5 @@ var (
 	_ TrafficStore          = (*SQLStore)(nil)
 	_ PipelineStore         = (*SQLStore)(nil)
 	_ ArgoCDStore           = (*SQLStore)(nil)
-	_ Store               = (*SQLStore)(nil)
+	_ Store                 = (*SQLStore)(nil)
 )
