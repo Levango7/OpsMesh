@@ -114,6 +114,49 @@ const RAW = {
     '<circle cx="6" cy="18" r="2.5"/>' +
     '<circle cx="18" cy="12" r="2.5"/>' +
     '<path d="M6 8.5v7M8 6h6a4 4 0 0 1 4 4"/>',
+  // Phase 3 tab 图标
+  compliance:
+    '<path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z"/>' +
+    '<path d="M9 12l2 2 4-4"/>',
+  ha:
+    '<path d="M3 12h4l2-5 4 10 2-5h6"/>' +
+    '<circle cx="3" cy="12" r="1.2" fill="currentColor" stroke="none"/>' +
+    '<circle cx="21" cy="12" r="1.2" fill="currentColor" stroke="none"/>',
+  // Phase 3 操作图标
+  shield:
+    '<path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z"/>',
+  scan:
+    '<path d="M4 4v4M4 4h4M20 4v4M20 4h-4M4 20v-4M4 20h4M20 20v-4M20 20h-4"/>' +
+    '<path d="M4 12h16"/>',
+  audit:
+    '<rect x="4" y="3" width="16" height="18" rx="1.5"/>' +
+    '<path d="M8 7h8M8 11h8M8 15h5"/>' +
+    '<circle cx="16" cy="16" r="2"/>' +
+    '<path d="M16 18v2"/>',
+  failover:
+    '<path d="M4 12a8 8 0 0 1 8-8"/>' +
+    '<path d="M12 4l2 2-2 2"/>' +
+    '<path d="M20 12a8 8 0 0 1-8 8"/>' +
+    '<path d="M12 20l-2-2 2-2"/>',
+  backup:
+    '<rect x="4" y="3" width="16" height="4" rx="1"/>' +
+    '<rect x="4" y="9" width="16" height="11" rx="1"/>' +
+    '<path d="M12 13v4M10 15h4"/>',
+  restore:
+    '<rect x="4" y="3" width="16" height="4" rx="1"/>' +
+    '<rect x="4" y="9" width="16" height="11" rx="1"/>' +
+    '<path d="M12 17v-4M9 14h6"/>',
+  heartbeat:
+    '<path d="M2 12h4l2-5 4 10 2-5h8"/>' +
+    '<circle cx="2" cy="12" r="1.2" fill="currentColor" stroke="none"/>' +
+    '<circle cx="22" cy="12" r="1.2" fill="currentColor" stroke="none"/>',
+  leader:
+    '<circle cx="12" cy="8" r="3"/>' +
+    '<path d="M12 11v7M9 18h6"/>',
+  download:
+    '<path d="M12 3v12"/>' +
+    '<path d="M7 10l5 5 5-5"/>' +
+    '<path d="M4 19h16"/>',
 };
 
 // ICONS 对外暴露的图标字典（name -> raw inner SVG）。

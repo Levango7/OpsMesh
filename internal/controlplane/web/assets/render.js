@@ -1127,9 +1127,24 @@ export function renderApiEndpoints(container) {
     { method: 'GET',    path: '/api/v1/canary/releases',                 desc: 'list canary releases' },
     { method: 'POST',   path: '/api/v1/canary/{id}/traffic-split',       desc: 'set canary traffic split' },
     { method: 'GET',    path: '/api/v1/canary/{id}/metrics',             desc: 'get canary metrics' },
-    { method: 'POST',   path: '/api/v1/config/hotpush',                  desc: 'hotpush config' },
-    { method: 'POST',   path: '/api/v1/config/canary',                   desc: 'canary config' },
-    { method: 'GET',    path: '/api/v1/config/versions?key=',            desc: 'list config versions' },
+    { method: 'POST', path: '/api/v1/config/hotpush',                  desc: 'hotpush config' },
+    { method: 'POST', path: '/api/v1/config/canary',                   desc: 'canary config' },
+    { method: 'GET',  path: '/api/v1/config/versions?key=',            desc: 'list config versions' },
+    { method: 'GET',  path: '/api/v1/compliance/rules',                desc: 'list compliance rules' },
+    { method: 'GET',  path: '/api/v1/compliance/rules/{id}',           desc: 'get compliance rule' },
+    { method: 'POST', path: '/api/v1/compliance/scan',                 desc: 'scan compliance' },
+    { method: 'GET',  path: '/api/v1/compliance/reports',              desc: 'list compliance reports' },
+    { method: 'GET',  path: '/api/v1/compliance/reports/{id}',         desc: 'get compliance report' },
+    { method: 'GET',  path: '/api/v1/audit/events?',                   desc: 'query audit events' },
+    { method: 'GET',  path: '/api/v1/audit/export?',                   desc: 'export audit logs' },
+    { method: 'GET',  path: '/api/v1/ha/status',                       desc: 'get ha status' },
+    { method: 'GET',  path: '/api/v1/ha/instances',                    desc: 'list ha instances' },
+    { method: 'POST', path: '/api/v1/ha/failover',                     desc: 'manual failover' },
+    { method: 'GET',  path: '/api/v1/ha/health',                       desc: 'get ha health' },
+    { method: 'POST', path: '/api/v1/backup/create',                   desc: 'create backup' },
+    { method: 'GET',  path: '/api/v1/backup/list',                     desc: 'list backups' },
+    { method: 'POST', path: '/api/v1/backup/restore',                  desc: 'restore backup' },
+    { method: 'DELETE', path: '/api/v1/backup/{id}',                   desc: 'delete backup' },
   ];
   const methodColor = { GET: 'badge-status-resolved', POST: 'badge-status-open', DELETE: 'badge-priority-urgent', PUT: 'badge-status-in_progress' };
   container.appendChild(el('table', { class: 'data-table data-table-compact' },
@@ -1148,4 +1163,364 @@ export function renderApiEndpoints(container) {
       ))
     )
   ));
+}
+
+// ============================================================================
+// Phase 3：安全合规渲染
+// ============================================================================
+
+// severityBadge 严重级别 badge。
+function severityBadge(level) {
+  const map = { low: 'badge-priority-low', medium: 'badge-priority-medium', high: 'badge-priority-high', critical: 'badge-priority-urgent' };
+  return badge(level || '-', map[level] || 'badge-priority-low');
+}
+
+// renderComplianceRulesTable 渲染合规规则表格。
+// handlers: { onSelect(rule) }
+export function renderComplianceRulesTable(container, rules, handlers) {
+  container.innerHTML = '';
+  if (!rules || !rules.length) { renderEmpty(container); return; }
+  container.appendChild(el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('compliance.ruleName') }),
+        el('th', { text: t('compliance.ruleCategory') }),
+        el('th', { text: t('compliance.severity') }),
+        el('th', { text: t('compliance.ruleDesc') }),
+        el('th', { class: 'th-actions', text: t('common.actions') })
+      )
+    ),
+    el('tbody', null,
+      rules.map((r) => el('tr', null,
+        el('td', { class: 'cell-title', text: r.name || r.id }),
+        el('td', null, badge(r.category || '-', 'badge-category-change')),
+        el('td', null, severityBadge(r.severity)),
+        el('td', { text: r.description || '-' }),
+        el('td', { class: 'td-actions' },
+          el('button', { class: 'btn btn-ghost', onclick: () => handlers.onSelect && handlers.onSelect(r) },
+            iconEl('search', 14), el('span', { text: t('compliance.ruleDetail') })
+          )
+        )
+      ))
+    )
+  ));
+}
+
+// renderComplianceRuleDetail 渲染合规规则详情。
+// handlers: { onBack() }
+export function renderComplianceRuleDetail(container, rule, handlers) {
+  container.innerHTML = '';
+  const card = el('div', { class: 'content' });
+  card.appendChild(el('h3', { class: 'form-title', text: rule.name || rule.id }));
+  card.appendChild(el('p', { class: 'metrics-hint', text: (rule.category || '-') + ' · ' + (rule.severity || '-') }));
+  if (rule.description) {
+    card.appendChild(el('div', { class: 'form-row' },
+      el('label', { class: 'form-label', text: t('compliance.ruleDesc') }),
+      el('div', { class: 'form-control', text: rule.description })
+    ));
+  }
+  if (rule.checkScript) {
+    card.appendChild(el('div', { class: 'form-row' },
+      el('label', { class: 'form-label', text: t('compliance.checkScript') }),
+      el('pre', { class: 'mono' }, rule.checkScript)
+    ));
+  }
+  if (rule.fixAdvice) {
+    card.appendChild(el('div', { class: 'form-row' },
+      el('label', { class: 'form-label', text: t('compliance.fixAdvice') }),
+      el('div', { class: 'form-control', text: rule.fixAdvice })
+    ));
+  }
+  card.appendChild(el('div', { class: 'form-actions' },
+    el('button', { class: 'btn btn-ghost', onclick: () => handlers.onBack && handlers.onBack() },
+      iconEl('back', 14), el('span', { text: t('common.back') })
+    )
+  ));
+  container.appendChild(card);
+}
+
+// renderComplianceScanForm 渲染合规扫描表单。
+// handlers: { onScan(deviceID) }
+export function renderComplianceScanForm(container, handlers) {
+  container.innerHTML = '';
+  const form = el('form', { class: 'form-card', onsubmit: (e) => { e.preventDefault(); handlers.onScan && handlers.onScan(form.elements.deviceID.value.trim()); } });
+  form.appendChild(el('h3', { class: 'form-title', text: t('compliance.scan') }));
+  form.appendChild(fieldRow(t('compliance.selectDevice'), true,
+    el('input', { type: 'text', name: 'deviceID', required: 'true', placeholder: 'device-id' })
+  ));
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' },
+      iconEl('scan', 16), el('span', { text: t('compliance.startScan') })
+    )
+  ));
+  container.appendChild(form);
+}
+
+// renderComplianceReport 渲染合规扫描报告。
+export function renderComplianceReport(container, report) {
+  container.innerHTML = '';
+  if (!report) { renderEmpty(container); return; }
+  const card = el('div', { class: 'content' });
+  card.appendChild(el('h3', { class: 'form-title', text: t('compliance.reportDetail') }));
+  // 概览行
+  const overview = el('div', { class: 'form-row' });
+  overview.appendChild(el('span', { class: 'badge badge-status-resolved', text: t('compliance.passedRules') + ': ' + (report.passedCount != null ? report.passedCount : '-') }));
+  overview.appendChild(el('span', { class: 'badge badge-priority-urgent', text: t('compliance.failedRules') + ': ' + (report.failedCount != null ? report.failedCount : '-') }));
+  if (report.score != null) {
+    overview.appendChild(el('span', { class: 'badge badge-status-open', text: t('compliance.score') + ': ' + report.score }));
+  }
+  card.appendChild(overview);
+  // 详细结果
+  const results = (report.results || report.items || []);
+  if (results.length) {
+    card.appendChild(el('h4', { text: t('compliance.result') }));
+    card.appendChild(el('table', { class: 'data-table data-table-compact' },
+      el('thead', null,
+        el('tr', null,
+          el('th', { text: t('compliance.ruleName') }),
+          el('th', { text: t('common.status') }),
+          el('th', { text: t('compliance.ruleDesc') })
+        )
+      ),
+      el('tbody', null,
+        results.map((it) => el('tr', null,
+          el('td', { class: 'cell-title', text: it.rule || it.name || it.id || '-' }),
+          el('td', null, badge(it.passed ? t('compliance.passed') : t('compliance.failed'),
+            it.passed ? 'badge-status-resolved' : 'badge-priority-urgent')),
+          el('td', { text: it.message || it.detail || '-' })
+        ))
+      )
+    ));
+  }
+  container.appendChild(card);
+}
+
+// renderComplianceReportsList 渲染合规报告列表。
+// handlers: { onView(report) }
+export function renderComplianceReportsList(container, reports, handlers) {
+  container.innerHTML = '';
+  if (!reports || !reports.length) { renderEmpty(container); return; }
+  container.appendChild(el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('common.id') }),
+        el('th', { text: t('compliance.score') }),
+        el('th', { text: t('compliance.passedRules') }),
+        el('th', { text: t('compliance.failedRules') }),
+        el('th', { text: t('common.createdAt') }),
+        el('th', { class: 'th-actions', text: t('common.actions') })
+      )
+    ),
+    el('tbody', null,
+      reports.map((r) => el('tr', null,
+        el('td', { class: 'cell-title mono', text: r.id || '-' }),
+        el('td', null, badge(r.score != null ? String(r.score) : '-', 'badge-status-open')),
+        el('td', { text: r.passedCount != null ? r.passedCount : '-' }),
+        el('td', { text: r.failedCount != null ? r.failedCount : '-' }),
+        el('td', { text: formatTime(r.createdAt || r.time) }),
+        el('td', { class: 'td-actions' },
+          el('button', { class: 'btn btn-ghost', onclick: () => handlers.onView && handlers.onView(r) },
+            iconEl('search', 14), el('span', { text: t('compliance.reportDetail') })
+          )
+        )
+      ))
+    )
+  ));
+}
+
+// renderAuditQueryForm 渲染审计日志查询表单。
+// handlers: { onQuery(params), onExport(params) }
+export function renderAuditQueryForm(container, handlers) {
+  container.innerHTML = '';
+  const form = el('form', { class: 'form-card', onsubmit: (e) => { e.preventDefault(); handlers.onQuery && handlers.onQuery(collectAuditQuery(form)); } });
+  form.appendChild(el('h3', { class: 'form-title', text: t('compliance.audit') }));
+  form.appendChild(fieldRow(t('compliance.auditFrom'), false,
+    el('input', { type: 'datetime-local', name: 'from' })
+  ));
+  form.appendChild(fieldRow(t('compliance.auditTo'), false,
+    el('input', { type: 'datetime-local', name: 'to' })
+  ));
+  form.appendChild(fieldRow(t('compliance.auditUser'), false,
+    el('input', { type: 'text', name: 'user', placeholder: 'user id' })
+  ));
+  form.appendChild(fieldRow(t('compliance.auditAction'), false,
+    el('input', { type: 'text', name: 'action', placeholder: 'login / create / delete …' })
+  ));
+  form.appendChild(fieldRow(t('compliance.auditLimit'), false,
+    el('input', { type: 'number', name: 'limit', min: '1', max: '1000', value: '100' })
+  ));
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' },
+      iconEl('search', 16), el('span', { text: t('compliance.query') })
+    ),
+    el('button', { type: 'button', class: 'btn btn-secondary', onclick: () => handlers.onExport && handlers.onExport(collectAuditQuery(form)) },
+      iconEl('download', 16), el('span', { text: t('compliance.export') })
+    )
+  ));
+  container.appendChild(form);
+}
+
+function collectAuditQuery(form) {
+  const get = (name) => (form.elements[name] && form.elements[name].value) || '';
+  return {
+    from: get('from').trim(),
+    to: get('to').trim(),
+    user: get('user').trim(),
+    action: get('action').trim(),
+    limit: get('limit').trim(),
+  };
+}
+
+// renderAuditEventsTable 渲染审计事件表格。
+export function renderAuditEventsTable(container, events) {
+  container.innerHTML = '';
+  if (!events || !events.length) { renderEmpty(container); return; }
+  container.appendChild(el('table', { class: 'data-table data-table-compact' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('compliance.auditTime') }),
+        el('th', { text: t('compliance.auditUser') }),
+        el('th', { text: t('compliance.auditAction') }),
+        el('th', { text: t('compliance.auditTarget') }),
+        el('th', { text: t('compliance.auditDetail') })
+      )
+    ),
+    el('tbody', null,
+      events.map((e) => el('tr', null,
+        el('td', { text: formatTime(e.createdAt || e.time) }),
+        el('td', { class: 'cell-title', text: e.userID || e.user || '-' }),
+        el('td', null, badge(e.action || '-', 'badge-category-change')),
+        el('td', { class: 'mono', text: e.target || '-' }),
+        el('td', { text: e.detail || '-' })
+      ))
+    )
+  ));
+}
+
+// ============================================================================
+// Phase 3：高可用渲染
+// ============================================================================
+
+// renderHAStatus 渲染 HA 状态卡片。
+export function renderHAStatus(container, status) {
+  container.innerHTML = '';
+  if (!status) { renderEmpty(container); return; }
+  const card = el('div', { class: 'content' });
+  card.appendChild(el('h3', { class: 'form-title', text: t('ha.status') }));
+  card.appendChild(el('div', { class: 'form-row' },
+    el('label', { class: 'form-label', text: t('ha.leader') }),
+    el('div', { class: 'form-control', text: status.leader || status.leaderID || '-' })
+  ));
+  if (status.mode) {
+    card.appendChild(el('div', { class: 'form-row' },
+      el('label', { class: 'form-label', text: 'Mode' }),
+      el('div', { class: 'form-control', text: status.mode })
+    ));
+  }
+  if (status.status) {
+    card.appendChild(el('div', { class: 'form-row' },
+      el('label', { class: 'form-label', text: t('common.status') }),
+      el('div', { class: 'form-control' }, badge(status.status, 'badge-status-resolved'))
+    ));
+  }
+  container.appendChild(card);
+}
+
+// renderHAInstancesTable 渲染 HA 实例列表。
+export function renderHAInstancesTable(container, instances) {
+  container.innerHTML = '';
+  if (!instances || !instances.length) { renderEmpty(container); return; }
+  container.appendChild(el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('common.id') }),
+        el('th', { text: t('ha.role') }),
+        el('th', { text: t('ha.isLeader') }),
+        el('th', { text: t('common.status') }),
+        el('th', { text: t('common.createdAt') })
+      )
+    ),
+    el('tbody', null,
+      instances.map((ins) => el('tr', null,
+        el('td', { class: 'cell-title mono', text: ins.id || ins.instanceID || '-' }),
+        el('td', null, badge(ins.role || '-', 'badge-category-change')),
+        el('td', null, ins.isLeader ? badge('Leader', 'badge-status-resolved') : el('span', { text: '-' })),
+        el('td', null, badge(ins.status || '-', ins.status === 'healthy' ? 'badge-status-resolved' : 'badge-priority-urgent')),
+        el('td', { text: formatTime(ins.createdAt || ins.joinedAt) })
+      ))
+    )
+  ));
+}
+
+// renderHAHealth 渲染 HA 健康状态。
+export function renderHAHealth(container, health) {
+  container.innerHTML = '';
+  if (!health) { renderEmpty(container); return; }
+  const card = el('div', { class: 'content' });
+  card.appendChild(el('h3', { class: 'form-title', text: t('ha.health') }));
+  const fields = ['status', 'leader', 'quorum', 'uptime', 'lastCheck'];
+  fields.forEach((f) => {
+    if (health[f] != null && health[f] !== '') {
+      card.appendChild(el('div', { class: 'form-row' },
+        el('label', { class: 'form-label', text: f }),
+        el('div', { class: 'form-control', text: String(health[f]) })
+      ));
+    }
+  });
+  container.appendChild(card);
+}
+
+// renderBackupsTable 渲染备份列表。
+// handlers: { onRestore(b), onDelete(b) }
+export function renderBackupsTable(container, backups, handlers) {
+  container.innerHTML = '';
+  if (!backups || !backups.length) { renderEmpty(container); return; }
+  container.appendChild(el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('ha.backupId') }),
+        el('th', { text: t('ha.backupType') }),
+        el('th', { text: t('ha.backupTime') }),
+        el('th', { text: t('ha.backupSize') }),
+        el('th', { class: 'th-actions', text: t('common.actions') })
+      )
+    ),
+    el('tbody', null,
+      backups.map((b) => el('tr', null,
+        el('td', { class: 'cell-title mono', text: b.id || '-' }),
+        el('td', null, badge(b.type || '-', 'badge-category-change')),
+        el('td', { text: formatTime(b.createdAt || b.time) }),
+        el('td', { text: b.size != null ? b.size : '-' }),
+        el('td', { class: 'td-actions' },
+          el('button', { class: 'btn btn-ghost', title: t('ha.restore'), onclick: () => handlers.onRestore && handlers.onRestore(b) },
+            iconEl('restore', 14)
+          ),
+          el('button', { class: 'btn btn-ghost btn-icon-danger', title: t('ha.deleteBackup'), onclick: () => handlers.onDelete && handlers.onDelete(b) },
+            iconEl('trash', 14)
+          )
+        )
+      ))
+    )
+  ));
+}
+
+// renderCreateBackupForm 渲染创建备份表单。
+// handlers: { onCreate(type) }
+export function renderCreateBackupForm(container, handlers) {
+  container.innerHTML = '';
+  const form = el('form', { class: 'form-card', onsubmit: (e) => { e.preventDefault(); handlers.onCreate && handlers.onCreate(form.elements.type.value.trim()); } });
+  form.appendChild(el('h3', { class: 'form-title', text: t('ha.createBackup') }));
+  form.appendChild(fieldRow(t('ha.backupType'), true,
+    el('select', { name: 'type', required: 'true' },
+      el('option', { value: 'full', text: 'full' }),
+      el('option', { value: 'incremental', text: 'incremental' }),
+      el('option', { value: 'config', text: 'config' })
+    )
+  ));
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' },
+      iconEl('backup', 16), el('span', { text: t('ha.createBackup') })
+    )
+  ));
+  container.appendChild(form);
 }

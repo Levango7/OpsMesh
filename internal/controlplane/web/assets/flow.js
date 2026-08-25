@@ -39,6 +39,16 @@ const state = {
   selectedCanaryId: null,
   configVersions: [],
   pipelineSubTab: 'templates', // templates | runs | argocd
+  // Phase 3 状态
+  complianceRules: [],
+  complianceReports: [],
+  complianceSubTab: 'rules', // rules | scan | audit
+  auditEvents: [],
+  haStatus: null,
+  haInstances: [],
+  haHealth: null,
+  backups: [],
+  haSubTab: 'status', // status | backup
 };
 
 // ============================================================================
@@ -62,7 +72,7 @@ function sloContent() { return $('slo-content'); }
 // ============================================================================
 
 export function switchTab(tab) {
-  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push'];
+  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push', 'compliance', 'ha'];
   if (validTabs.indexOf(tab) === -1) return;
   state.currentTab = tab;
   // 更新 tab 按钮激活态
@@ -83,6 +93,9 @@ export function switchTab(tab) {
   if (tab === 'pipeline' && state.pipelineTemplates.length === 0) loadPipelineTemplates();
   if (tab === 'canary' && state.canaryReleases.length === 0) loadCanaryReleases();
   if (tab === 'config-push' && !state._configPushLoaded) loadConfigVersions();
+  // Phase 3 懒加载
+  if (tab === 'compliance' && state.complianceRules.length === 0) loadComplianceRules();
+  if (tab === 'ha' && !state._haLoaded) loadHAStatus();
 }
 
 // ============================================================================
@@ -880,6 +893,8 @@ export function init() {
   buildPipelineToolbar();
   buildCanaryToolbar();
   buildConfigPushToolbar();
+  buildComplianceToolbar();
+  buildHAToolbar();
 
   // 绑定 tab 切换
   document.querySelectorAll('.tab-btn').forEach((btn) => {
@@ -900,6 +915,8 @@ function refreshCurrentPage() {
   buildPipelineToolbar();
   buildCanaryToolbar();
   buildConfigPushToolbar();
+  buildComplianceToolbar();
+  buildHAToolbar();
   // 重新加载当前页数据
   if (state.currentTab === 'tickets') loadTickets();
   else if (state.currentTab === 'dashboard') loadDashboardAll();
@@ -908,4 +925,382 @@ function refreshCurrentPage() {
   else if (state.currentTab === 'pipeline') refreshPipelineSubTab();
   else if (state.currentTab === 'canary') loadCanaryReleases();
   else if (state.currentTab === 'config-push') loadConfigVersions('');
+  else if (state.currentTab === 'compliance') refreshComplianceSubTab();
+  else if (state.currentTab === 'ha') refreshHASubTab();
+}
+
+// ============================================================================
+// Phase 3：安全合规
+// ============================================================================
+
+function complianceContent() { return $('compliance-content'); }
+
+// loadComplianceRules 加载合规规则列表（含子 tab 切换 + 扫描表单 + 审计查询）。
+export async function loadComplianceRules() {
+  const content = complianceContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 子 tab 切换条
+  const subTabs = [
+    { key: 'rules', label: t('compliance.rules'), onclick: () => { state.complianceSubTab = 'rules'; refreshComplianceSubTab(); } },
+    { key: 'scan',  label: t('compliance.scan'),  onclick: () => { state.complianceSubTab = 'scan';  refreshComplianceSubTab(); } },
+    { key: 'audit', label: t('compliance.audit'), onclick: () => { state.complianceSubTab = 'audit'; refreshComplianceSubTab(); } },
+  ];
+  const subBar = render.el('div', { class: 'toolbar' });
+  subTabs.forEach((s) => {
+    subBar.appendChild(render.el('button', {
+      class: 'btn ' + (state.complianceSubTab === s.key ? 'btn-secondary' : 'btn-ghost'),
+      onclick: s.onclick,
+    }, render.el('span', { text: s.label })));
+  });
+  content.appendChild(subBar);
+  // 规则列表区
+  const rulesHost = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(rulesHost);
+  if (state.complianceSubTab !== 'rules') { refreshComplianceSubTab(); return; }
+  render.renderLoading(rulesHost);
+  try {
+    const rules = await api.getComplianceRules();
+    state.complianceRules = rules;
+    render.renderComplianceRulesTable(rulesHost, rules, {
+      onSelect: (r) => showComplianceRuleDetail(r.id || r.name, r),
+    });
+  } catch (err) {
+    render.renderError(rulesHost, t('compliance.rulesLoadFailed') + ': ' + err.message);
+  }
+}
+
+// showComplianceRuleDetail 显示合规规则详情。
+export async function showComplianceRuleDetail(id, cached) {
+  const content = complianceContent();
+  if (!content) return;
+  const host = render.el('div', { class: 'content' });
+  content.innerHTML = '';
+  content.appendChild(host);
+  render.renderLoading(host);
+  try {
+    let rule = cached;
+    if (!rule || !rule.checkScript) rule = await api.getComplianceRule(id);
+    render.renderComplianceRuleDetail(host, rule, { onBack: () => loadComplianceRules() });
+  } catch (err) {
+    render.renderError(host, t('compliance.rulesLoadFailed') + ': ' + err.message);
+  }
+}
+
+// scanCompliance 对指定设备发起合规扫描并展示报告。
+export async function scanCompliance(deviceID) {
+  if (!deviceID) { render.renderToast(t('compliance.deviceRequired'), 'warn'); return; }
+  const content = complianceContent();
+  if (!content) return;
+  const reportHost = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(reportHost);
+  render.renderLoading(reportHost, t('compliance.scanning'));
+  try {
+    const report = await api.scanCompliance(deviceID);
+    render.renderComplianceReport(reportHost, report);
+    render.renderToast(t('compliance.scanDone'), 'success');
+    // 刷新报告列表
+    loadComplianceReports(true);
+  } catch (err) {
+    render.renderError(reportHost, t('compliance.scanFailed') + ': ' + err.message);
+  }
+}
+
+// loadComplianceReports 加载合规报告列表（silent=true 时不渲染，仅刷新 state）。
+export async function loadComplianceReports(silent) {
+  try {
+    const reports = await api.getComplianceReports();
+    state.complianceReports = reports;
+    if (!silent && state.complianceSubTab === 'scan') {
+      // 在扫描子 tab 下追加报告列表
+      const content = complianceContent();
+      if (!content) return;
+      const host = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+      content.appendChild(host);
+      render.renderComplianceReportsList(host, reports, {
+        onView: (r) => showComplianceReportDetail(r.id),
+      });
+    }
+  } catch (err) {
+    if (!silent) render.renderToast(t('compliance.reportsLoadFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// showComplianceReportDetail 显示合规报告详情。
+export async function showComplianceReportDetail(id) {
+  const content = complianceContent();
+  if (!content) return;
+  const host = render.el('div', { class: 'content' });
+  content.innerHTML = '';
+  content.appendChild(host);
+  render.renderLoading(host);
+  try {
+    const report = await api.getComplianceReport(id);
+    render.renderComplianceReport(host, report);
+  } catch (err) {
+    render.renderError(host, t('compliance.reportsLoadFailed') + ': ' + err.message);
+  }
+}
+
+// loadAuditEvents 查询审计事件。
+export async function loadAuditEvents(params) {
+  const content = complianceContent();
+  if (!content) return;
+  // 保留查询表单，追加结果区
+  let resultHost = $('audit-events-result');
+  if (!resultHost) {
+    resultHost = render.el('div', { id: 'audit-events-result', class: 'content', style: { marginTop: '1rem' } });
+    content.appendChild(resultHost);
+  }
+  render.renderLoading(resultHost);
+  try {
+    const events = await api.getAuditEvents(params);
+    state.auditEvents = events;
+    render.renderAuditEventsTable(resultHost, events);
+  } catch (err) {
+    render.renderError(resultHost, t('compliance.auditLoadFailed') + ': ' + err.message);
+  }
+}
+
+// exportAuditLogs 导出审计日志。
+export async function exportAuditLogs(params) {
+  try {
+    const data = await api.exportAuditLogs(params);
+    render.renderToast(t('compliance.export') + ' OK', 'success');
+    return data;
+  } catch (err) {
+    render.renderToast(t('compliance.exportFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// buildComplianceToolbar 构建合规工具栏。
+export function buildComplianceToolbar() {
+  const toolbar = $('compliance-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => refreshComplianceSubTab() },
+      iconEl('refresh', 14), render.el('span', { text: t('common.refresh') })
+    )
+  );
+}
+
+// refreshComplianceSubTab 根据当前子 tab 重新渲染合规页。
+function refreshComplianceSubTab() {
+  const sub = state.complianceSubTab;
+  if (sub === 'rules') { loadComplianceRules(); return; }
+  const content = complianceContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 子 tab 切换条
+  const subTabs = [
+    { key: 'rules', label: t('compliance.rules') },
+    { key: 'scan',  label: t('compliance.scan') },
+    { key: 'audit', label: t('compliance.audit') },
+  ];
+  const subBar = render.el('div', { class: 'toolbar' });
+  subTabs.forEach((s) => {
+    subBar.appendChild(render.el('button', {
+      class: 'btn ' + (sub === s.key ? 'btn-secondary' : 'btn-ghost'),
+      onclick: () => { state.complianceSubTab = s.key; refreshComplianceSubTab(); },
+    }, render.el('span', { text: s.label })));
+  });
+  content.appendChild(subBar);
+  if (sub === 'scan') {
+    // 扫描表单
+    const formHost = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+    content.appendChild(formHost);
+    render.renderComplianceScanForm(formHost, { onScan: (deviceID) => scanCompliance(deviceID) });
+    // 报告列表
+    loadComplianceReports();
+  } else if (sub === 'audit') {
+    // 审计查询表单
+    const formHost = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+    content.appendChild(formHost);
+    render.renderAuditQueryForm(formHost, {
+      onQuery: (params) => loadAuditEvents(params),
+      onExport: (params) => exportAuditLogs(params),
+    });
+  }
+}
+
+// ============================================================================
+// Phase 3：高可用 + 灾备恢复
+// ============================================================================
+
+function haContent() { return $('ha-content'); }
+
+// loadHAStatus 加载 HA 状态（含实例列表 + 健康 + 灾备）。
+export async function loadHAStatus() {
+  state._haLoaded = true;
+  const content = haContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 子 tab 切换条
+  const subTabs = [
+    { key: 'status', label: t('ha.status'), onclick: () => { state.haSubTab = 'status'; refreshHASubTab(); } },
+    { key: 'backup', label: t('ha.backup'), onclick: () => { state.haSubTab = 'backup'; refreshHASubTab(); } },
+  ];
+  const subBar = render.el('div', { class: 'toolbar' });
+  subTabs.forEach((s) => {
+    subBar.appendChild(render.el('button', {
+      class: 'btn ' + (state.haSubTab === s.key ? 'btn-secondary' : 'btn-ghost'),
+      onclick: s.onclick,
+    }, render.el('span', { text: s.label })));
+  });
+  content.appendChild(subBar);
+  if (state.haSubTab !== 'status') { refreshHASubTab(); return; }
+  // HA 状态卡片
+  const statusHost = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(statusHost);
+  render.renderLoading(statusHost);
+  try {
+    const status = await api.getHAStatus();
+    state.haStatus = status;
+    render.renderHAStatus(statusHost, status);
+  } catch (err) {
+    render.renderError(statusHost, t('ha.statusLoadFailed') + ': ' + err.message);
+  }
+  // failover 按钮
+  const foHost = render.el('div', { style: { marginTop: '1rem' } });
+  content.appendChild(foHost);
+  foHost.appendChild(render.el('button', {
+    class: 'btn btn-secondary',
+    onclick: () => failoverHA(),
+  }, iconEl('failover', 16), render.el('span', { text: t('ha.failover') })));
+  // 实例列表
+  const insHost = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(insHost);
+  render.renderLoading(insHost);
+  try {
+    const instances = await api.getHAInstances();
+    state.haInstances = instances;
+    render.renderHAInstancesTable(insHost, instances);
+  } catch (err) {
+    render.renderError(insHost, t('ha.statusLoadFailed') + ': ' + err.message);
+  }
+  // 健康状态
+  const healthHost = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(healthHost);
+  render.renderLoading(healthHost);
+  try {
+    const health = await api.getHAHealth();
+    state.haHealth = health;
+    render.renderHAHealth(healthHost, health);
+  } catch (err) {
+    render.renderError(healthHost, t('ha.healthLoadFailed') + ': ' + err.message);
+  }
+}
+
+// failoverHA 手动 failover。
+export async function failoverHA() {
+  if (!window.confirm(t('ha.failoverConfirm'))) return;
+  try {
+    await api.failoverHA();
+    render.renderToast(t('ha.failoverDone'), 'success');
+    loadHAStatus();
+  } catch (err) {
+    render.renderToast(t('ha.failoverFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// loadBackups 加载备份列表。
+export async function loadBackups() {
+  const content = haContent();
+  if (!content) return;
+  let host = $('ha-backups-list');
+  if (!host) {
+    host = render.el('div', { id: 'ha-backups-list', class: 'content', style: { marginTop: '1rem' } });
+    content.appendChild(host);
+  }
+  render.renderLoading(host);
+  try {
+    const backups = await api.listBackups();
+    state.backups = backups;
+    render.renderBackupsTable(host, backups, {
+      onRestore: (b) => restoreBackup(b.id),
+      onDelete: (b) => deleteBackup(b.id),
+    });
+  } catch (err) {
+    render.renderError(host, t('ha.backupsLoadFailed') + ': ' + err.message);
+  }
+}
+
+// createBackup 创建备份。
+export async function createBackup(type) {
+  if (!type) { render.renderToast(t('ha.typeRequired'), 'warn'); return; }
+  try {
+    await api.createBackup(type);
+    render.renderToast(t('ha.created'), 'success');
+    loadBackups();
+  } catch (err) {
+    render.renderToast(t('ha.createFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// restoreBackup 恢复备份。
+export async function restoreBackup(id) {
+  if (!id) return;
+  if (!window.confirm(t('ha.restoreConfirm'))) return;
+  try {
+    await api.restoreBackup(id);
+    render.renderToast(t('ha.restoreDone'), 'success');
+  } catch (err) {
+    render.renderToast(t('ha.restoreFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// deleteBackup 删除备份。
+export async function deleteBackup(id) {
+  if (!id) return;
+  if (!window.confirm(t('ha.deleteConfirm'))) return;
+  try {
+    await api.deleteBackup(id);
+    render.renderToast(t('ha.deleted'), 'success');
+    loadBackups();
+  } catch (err) {
+    render.renderToast(t('ha.deleteFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// buildHAToolbar 构建 HA 工具栏。
+export function buildHAToolbar() {
+  const toolbar = $('ha-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => refreshHASubTab() },
+      iconEl('refresh', 14), render.el('span', { text: t('common.refresh') })
+    )
+  );
+}
+
+// refreshHASubTab 根据当前子 tab 重新渲染 HA 页。
+function refreshHASubTab() {
+  const sub = state.haSubTab;
+  if (sub === 'status') { loadHAStatus(); return; }
+  const content = haContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 子 tab 切换条
+  const subTabs = [
+    { key: 'status', label: t('ha.status') },
+    { key: 'backup', label: t('ha.backup') },
+  ];
+  const subBar = render.el('div', { class: 'toolbar' });
+  subTabs.forEach((s) => {
+    subBar.appendChild(render.el('button', {
+      class: 'btn ' + (sub === s.key ? 'btn-secondary' : 'btn-ghost'),
+      onclick: () => { state.haSubTab = s.key; refreshHASubTab(); },
+    }, render.el('span', { text: s.label })));
+  });
+  content.appendChild(subBar);
+  if (sub === 'backup') {
+    // 创建备份表单
+    const formHost = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+    content.appendChild(formHost);
+    render.renderCreateBackupForm(formHost, { onCreate: (type) => createBackup(type) });
+    // 备份列表
+    loadBackups();
+  }
 }

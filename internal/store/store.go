@@ -504,6 +504,38 @@ type ArgoCDStore interface {
 	SyncApp(tenantID, id string) (*ArgoCDApp, bool)
 }
 
+// ComplianceStore P3 合规报告领域：CRUD。
+//
+// 由合规检查引擎扫描设备产出 ComplianceReport，按 (TenantID, ID) 唯一标识。
+// SaveReport 创建或更新报告（ID 为空时由 store 分配）；ListReports 按租户列出。
+type ComplianceStore interface {
+	// SaveReport 保存合规报告（ID 为空时由 store 分配随机 ID）。
+	// TenantID 为空时归一为 default。返回持久化后的报告（含分配的 ID）。
+	SaveReport(tenantID string, r *ComplianceReport) *ComplianceReport
+	// GetReport 按 (tenantID, id) 返回单个合规报告（不存在返回 (nil, false)）。
+	GetReport(tenantID, id string) (*ComplianceReport, bool)
+	// ListReports 返回指定租户的全部合规报告（按创建时间降序）。
+	ListReports(tenantID string) []*ComplianceReport
+	// DeleteReport 删除合规报告，返回是否删除成功（不存在或租户不匹配返回 false）。
+	DeleteReport(tenantID, id string) bool
+}
+
+// BackupStore P3 灾备备份领域：CRUD。
+//
+// 由灾备恢复 API 创建 BackupRecord，按 (TenantID, ID) 唯一标识。
+// CreateBackup 创建备份记录（ID 为空时由 store 分配）；ListBackups 按租户列出。
+type BackupStore interface {
+	// CreateBackup 创建备份记录（ID 为空时由 store 分配随机 ID）。
+	// TenantID 为空时归一为 default。返回持久化后的记录（含分配的 ID）。
+	CreateBackup(tenantID string, b *BackupRecord) *BackupRecord
+	// GetBackup 按 (tenantID, id) 返回单个备份记录（不存在返回 (nil, false)）。
+	GetBackup(tenantID, id string) (*BackupRecord, bool)
+	// ListBackups 返回指定租户的全部备份记录（按创建时间降序）。
+	ListBackups(tenantID string) []*BackupRecord
+	// DeleteBackup 删除备份记录，返回是否删除成功（不存在或租户不匹配返回 false）。
+	DeleteBackup(tenantID, id string) bool
+}
+
 // SLOStore SLO 管理领域：CRUD + SLI 状态查询。
 type SLOStore interface {
 	// CreateSLO 创建 SLO。ID 为空时由 store 分配随机 ID；
@@ -554,6 +586,8 @@ type Store interface {
 	TrafficStore          // P2 流量治理：策略 CRUD + 启停
 	PipelineStore         // P2 CI/CD 流水线：模板 + 运行记录
 	ArgoCDStore           // P2 ArgoCD 应用：CRUD + 同步
+	ComplianceStore       // P3 合规报告：CRUD
+	BackupStore           // P3 灾备备份：CRUD
 
 	// WithDemo 设置是否开启演示模式：开启时每个 agent 注册预置 uname -a 示例任务。
 	WithDemo(bool) Store
@@ -587,6 +621,8 @@ var (
 	_ TrafficStore          = (*MemoryStore)(nil)
 	_ PipelineStore         = (*MemoryStore)(nil)
 	_ ArgoCDStore           = (*MemoryStore)(nil)
+	_ ComplianceStore       = (*MemoryStore)(nil)
+	_ BackupStore           = (*MemoryStore)(nil)
 	_ Store                 = (*MemoryStore)(nil)
 
 	_ DeviceStore           = (*SQLStore)(nil)
@@ -614,5 +650,7 @@ var (
 	_ TrafficStore          = (*SQLStore)(nil)
 	_ PipelineStore         = (*SQLStore)(nil)
 	_ ArgoCDStore           = (*SQLStore)(nil)
+	_ ComplianceStore       = (*SQLStore)(nil)
+	_ BackupStore           = (*SQLStore)(nil)
 	_ Store                 = (*SQLStore)(nil)
 )

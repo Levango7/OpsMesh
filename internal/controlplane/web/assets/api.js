@@ -304,3 +304,99 @@ export function getConfigVersions(key) {
     return (d && d.versions) ? d.versions : (Array.isArray(d) ? d : []);
   });
 }
+
+// ============================================================================
+// Phase 3：安全合规 API（合规规则 / 合规扫描 / 合规报告 / 审计日志）
+// ============================================================================
+
+// getComplianceRules 获取合规规则列表。GET /api/v1/compliance/rules
+export function getComplianceRules() {
+  return requestJSON('GET', '/api/v1/compliance/rules').then((d) => {
+    return (d && d.rules) ? d.rules : (Array.isArray(d) ? d : []);
+  });
+}
+
+// getComplianceRule 获取单个合规规则详情。GET /api/v1/compliance/rules/{id}
+export function getComplianceRule(id) {
+  return requestJSON('GET', '/api/v1/compliance/rules/' + encodeURIComponent(id));
+}
+
+// scanCompliance 对指定设备发起合规扫描。POST /api/v1/compliance/scan
+export function scanCompliance(deviceID) {
+  return requestJSON('POST', '/api/v1/compliance/scan', { deviceID });
+}
+
+// getComplianceReports 获取合规报告列表。GET /api/v1/compliance/reports
+export function getComplianceReports() {
+  return requestJSON('GET', '/api/v1/compliance/reports').then((d) => {
+    return (d && d.reports) ? d.reports : (Array.isArray(d) ? d : []);
+  });
+}
+
+// getComplianceReport 获取单个合规报告详情。GET /api/v1/compliance/reports/{id}
+export function getComplianceReport(id) {
+  return requestJSON('GET', '/api/v1/compliance/reports/' + encodeURIComponent(id));
+}
+
+// getAuditEvents 查询审计事件。GET /api/v1/audit/events?{params}
+// params: { from, to, user, action, limit }
+export function getAuditEvents(params) {
+  const q = buildQuery(params);
+  return requestJSON('GET', '/api/v1/audit/events' + q).then((d) => {
+    return (d && d.events) ? d.events : (Array.isArray(d) ? d : []);
+  });
+}
+
+// exportAuditLogs 导出审计日志。GET /api/v1/audit/export?{params}
+export function exportAuditLogs(params) {
+  const q = buildQuery(params);
+  return requestJSON('GET', '/api/v1/audit/export' + q);
+}
+
+// ============================================================================
+// Phase 3：高可用 API（HA 状态 / failover / 灾备恢复）
+// ============================================================================
+
+// getHAStatus 获取 HA 状态。GET /api/v1/ha/status
+export function getHAStatus() {
+  return requestJSON('GET', '/api/v1/ha/status');
+}
+
+// getHAInstances 获取 HA 实例列表。GET /api/v1/ha/instances
+export function getHAInstances() {
+  return requestJSON('GET', '/api/v1/ha/instances').then((d) => {
+    return (d && d.instances) ? d.instances : (Array.isArray(d) ? d : []);
+  });
+}
+
+// failoverHA 触发手动 failover。POST /api/v1/ha/failover
+export function failoverHA() {
+  return requestJSON('POST', '/api/v1/ha/failover');
+}
+
+// getHAHealth 获取 HA 健康状态。GET /api/v1/ha/health
+export function getHAHealth() {
+  return requestJSON('GET', '/api/v1/ha/health');
+}
+
+// createBackup 创建备份。POST /api/v1/backup/create  body: {type}
+export function createBackup(type) {
+  return requestJSON('POST', '/api/v1/backup/create', { type });
+}
+
+// listBackups 列出备份。GET /api/v1/backup/list
+export function listBackups() {
+  return requestJSON('GET', '/api/v1/backup/list').then((d) => {
+    return (d && d.backups) ? d.backups : (Array.isArray(d) ? d : []);
+  });
+}
+
+// restoreBackup 恢复备份。POST /api/v1/backup/restore  body: {id}
+export function restoreBackup(id) {
+  return requestJSON('POST', '/api/v1/backup/restore', { id });
+}
+
+// deleteBackup 删除备份。DELETE /api/v1/backup/{id}
+export function deleteBackup(id) {
+  return requestJSON('DELETE', '/api/v1/backup/' + encodeURIComponent(id));
+}

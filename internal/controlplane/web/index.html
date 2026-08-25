@@ -244,6 +244,12 @@ a:hover{color:var(--accent-hover);}
       <button type="button" class="tab-btn" data-tab="config-push">
         <span class="icon" data-icon="config-push"></span><span>配置热推</span>
       </button>
+      <button type="button" class="tab-btn" data-tab="compliance">
+        <span class="icon" data-icon="compliance"></span><span>安全合规</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="ha">
+        <span class="icon" data-icon="ha"></span><span>高可用</span>
+      </button>
     </div>
   </nav>
 
@@ -322,6 +328,26 @@ a:hover{color:var(--accent-hover);}
       </div>
       <div id="config-push-toolbar" class="toolbar"></div>
       <div id="config-push-content" class="content"></div>
+    </section>
+
+    <!-- 安全合规 page -->
+    <section id="page-compliance" class="page">
+      <div class="page-head">
+        <h2>安全合规</h2>
+        <p>合规规则 / 合规扫描 / 审计日志查询</p>
+      </div>
+      <div id="compliance-toolbar" class="toolbar"></div>
+      <div id="compliance-content" class="content"></div>
+    </section>
+
+    <!-- 高可用 page -->
+    <section id="page-ha" class="page">
+      <div class="page-head">
+        <h2>高可用</h2>
+        <p>HA 状态 / 手动 failover / 灾备恢复</p>
+      </div>
+      <div id="ha-toolbar" class="toolbar"></div>
+      <div id="ha-content" class="content"></div>
     </section>
   </main>
 

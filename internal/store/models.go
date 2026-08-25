@@ -446,3 +446,38 @@ type ArgoCDApp struct {
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
+
+// ComplianceReport 合规检查报告（Phase 3 安全合规）。
+//
+// 由合规引擎扫描设备产出，按 (TenantID, ID) 唯一标识，按 TenantID 隔离。
+// Results 为各规则检查结果；Score 为汇总分数 0-100。
+type ComplianceReport struct {
+	ID        string             `json:"id"`
+	TenantID  string             `json:"tenantID"`
+	DeviceID  string             `json:"deviceID"`
+	Results   []ComplianceResult `json:"results"`
+	Score     int                `json:"score"`
+	CreatedAt time.Time          `json:"createdAt"`
+}
+
+// ComplianceResult 合规检查单条结果（Phase 3 安全合规）。
+type ComplianceResult struct {
+	RuleID    string    `json:"ruleId"`
+	Passed    bool      `json:"passed"`
+	Output    string    `json:"output"`
+	CheckedAt time.Time `json:"checkedAt"`
+}
+
+// BackupRecord 灾备备份记录（Phase 3 高可用）。
+//
+// 由灾备恢复 API 创建，按 (TenantID, ID) 唯一标识，按 TenantID 隔离。
+// Type 为备份类型（full/config/devices/tasks）；Status 为状态（creating/completed/failed）。
+type BackupRecord struct {
+	ID        string    `json:"id"`
+	TenantID  string    `json:"tenantID"`
+	Type      string    `json:"type"` // "full", "config", "devices", "tasks"
+	Status    string    `json:"status"`
+	Size      int64     `json:"size"`
+	Path      string    `json:"path"`
+	CreatedAt time.Time `json:"createdAt"`
+}

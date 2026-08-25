@@ -116,6 +116,12 @@ type MemoryStore struct {
 	pipelineRuns map[string]*PipelineRun
 	// Phase 2 ArgoCD 应用：appID -> 应用。
 	argocdApps map[string]*ArgoCDApp
+	// Phase 3 合规报告：reportID -> 报告。
+	// 由 m.mu 保护并发安全；按 tenantID 隔离。
+	complianceReports map[string]*ComplianceReport
+	// Phase 3 灾备备份：backupID -> 备份记录。
+	// 由 m.mu 保护并发安全；按 tenantID 隔离。
+	backups map[string]*BackupRecord
 }
 
 // tokenMeta B1 install token 元数据：一次性、限时，消费后标记 consumed。
@@ -287,6 +293,8 @@ func NewMemoryStore() *MemoryStore {
 		pipelineTemplates:   make(map[string]*PipelineTemplate),
 		pipelineRuns:        make(map[string]*PipelineRun),
 		argocdApps:          make(map[string]*ArgoCDApp),
+		complianceReports:   make(map[string]*ComplianceReport),
+		backups:             make(map[string]*BackupRecord),
 	}
 	m.seedRBAC()
 	return m

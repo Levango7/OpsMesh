@@ -66,6 +66,22 @@ export const loadConfigVersions = flow.loadConfigVersions;
 export const hotpushConfig = flow.hotpushConfig;
 export const canaryConfigPush = flow.canaryConfigPush;
 export const buildConfigPushToolbar = flow.buildConfigPushToolbar;
+// Phase 3 编排层
+export const loadComplianceRules = flow.loadComplianceRules;
+export const showComplianceRuleDetail = flow.showComplianceRuleDetail;
+export const scanCompliance = flow.scanCompliance;
+export const loadComplianceReports = flow.loadComplianceReports;
+export const showComplianceReportDetail = flow.showComplianceReportDetail;
+export const loadAuditEvents = flow.loadAuditEvents;
+export const exportAuditLogs = flow.exportAuditLogs;
+export const buildComplianceToolbar = flow.buildComplianceToolbar;
+export const loadHAStatus = flow.loadHAStatus;
+export const failoverHA = flow.failoverHA;
+export const loadBackups = flow.loadBackups;
+export const createBackup = flow.createBackup;
+export const restoreBackup = flow.restoreBackup;
+export const deleteBackup = flow.deleteBackup;
+export const buildHAToolbar = flow.buildHAToolbar;
 
 // API 层
 export const ApiError = api.ApiError;
@@ -100,6 +116,22 @@ export const getCanaryMetrics = api.getCanaryMetrics;
 export const hotpushConfigApi = api.hotpushConfig;
 export const canaryConfigApi = api.canaryConfig;
 export const getConfigVersions = api.getConfigVersions;
+// Phase 3 API 层
+export const getComplianceRules = api.getComplianceRules;
+export const getComplianceRule = api.getComplianceRule;
+export const scanComplianceApi = api.scanCompliance;
+export const getComplianceReports = api.getComplianceReports;
+export const getComplianceReport = api.getComplianceReport;
+export const getAuditEvents = api.getAuditEvents;
+export const exportAuditLogsApi = api.exportAuditLogs;
+export const getHAStatus = api.getHAStatus;
+export const getHAInstances = api.getHAInstances;
+export const failoverHAApi = api.failoverHA;
+export const getHAHealth = api.getHAHealth;
+export const createBackupApi = api.createBackup;
+export const listBackups = api.listBackups;
+export const restoreBackupApi = api.restoreBackup;
+export const deleteBackupApi = api.deleteBackup;
 
 // 渲染层
 export const el = render.el;
@@ -128,6 +160,19 @@ export const renderConfigHotpushForm = render.renderConfigHotpushForm;
 export const renderConfigCanaryForm = render.renderConfigCanaryForm;
 export const renderConfigVersions = render.renderConfigVersions;
 export const renderApiEndpoints = render.renderApiEndpoints;
+// Phase 3 渲染层
+export const renderComplianceRulesTable = render.renderComplianceRulesTable;
+export const renderComplianceRuleDetail = render.renderComplianceRuleDetail;
+export const renderComplianceScanForm = render.renderComplianceScanForm;
+export const renderComplianceReport = render.renderComplianceReport;
+export const renderComplianceReportsList = render.renderComplianceReportsList;
+export const renderAuditQueryForm = render.renderAuditQueryForm;
+export const renderAuditEventsTable = render.renderAuditEventsTable;
+export const renderHAStatus = render.renderHAStatus;
+export const renderHAInstancesTable = render.renderHAInstancesTable;
+export const renderHAHealth = render.renderHAHealth;
+export const renderBackupsTable = render.renderBackupsTable;
+export const renderCreateBackupForm = render.renderCreateBackupForm;
 
 // i18n
 export const t = i18n.t;

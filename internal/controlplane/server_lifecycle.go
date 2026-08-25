@@ -169,6 +169,22 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/config/hotpush", s.handleConfigHotpush)
 	mux.HandleFunc("/api/v1/config/canary", s.handleConfigCanary)
 	mux.HandleFunc("/api/v1/config/versions", s.handleConfigVersions)
+	// Phase 3 路由：安全合规 / 审计查询 / HA 管理 / 灾备恢复
+	mux.HandleFunc("/api/v1/compliance/rules", s.handleComplianceRules)
+	mux.HandleFunc("/api/v1/compliance/rules/", s.handleComplianceRuleRouting) // 子路径：{id} GET
+	mux.HandleFunc("/api/v1/compliance/scan", s.handleComplianceScan)         // POST 扫描设备合规状态
+	mux.HandleFunc("/api/v1/compliance/reports", s.handleComplianceReports)
+	mux.HandleFunc("/api/v1/compliance/reports/", s.handleComplianceReportRouting) // 子路径：{id} GET
+	mux.HandleFunc("/api/v1/audit/events", s.handleAuditEvents)                   // GET 查询审计事件
+	mux.HandleFunc("/api/v1/audit/export", s.handleAuditExport)                   // GET 导出审计日志
+	mux.HandleFunc("/api/v1/ha/status", s.handleHAStatus)                         // GET HA 状态
+	mux.HandleFunc("/api/v1/ha/instances", s.handleHAInstances)                   // GET 实例列表
+	mux.HandleFunc("/api/v1/ha/failover", s.handleHAFailover)                     // POST 手动切换 leader
+	mux.HandleFunc("/api/v1/ha/health", s.handleHAHealth)                         // GET 健康检查
+	mux.HandleFunc("/api/v1/backup/create", s.handleBackupCreate)                 // POST 创建备份
+	mux.HandleFunc("/api/v1/backup/list", s.handleBackupList)                     // GET 列出备份
+	mux.HandleFunc("/api/v1/backup/restore", s.handleBackupRestore)               // POST 恢复备份
+	mux.HandleFunc("/api/v1/backup/", s.handleBackupDeleteRouting)                // 子路径：{id} DELETE
 	mux.HandleFunc("/metrics", s.handlePrometheusMetrics)
 
 	// 修复 4：用 jsonErrorMux 包装 mux，将 404 统一为 JSON 格式。
