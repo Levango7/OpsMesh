@@ -49,6 +49,15 @@ const state = {
   haHealth: null,
   backups: [],
   haSubTab: 'status', // status | backup
+  // Phase 4 状态
+  networkDevices: [],
+  networkDiscovered: [],
+  networkSubTab: 'devices', // devices | discover | config
+  networkSelectedDevice: null,
+  automationRules: [],
+  automationExecutions: [],
+  automationSubTab: 'rules', // rules | executions
+  automationEditingRule: null,
 };
 
 // ============================================================================
@@ -72,7 +81,7 @@ function sloContent() { return $('slo-content'); }
 // ============================================================================
 
 export function switchTab(tab) {
-  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push', 'compliance', 'ha'];
+  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push', 'compliance', 'ha', 'network-mgmt', 'automation'];
   if (validTabs.indexOf(tab) === -1) return;
   state.currentTab = tab;
   // 更新 tab 按钮激活态
@@ -96,6 +105,9 @@ export function switchTab(tab) {
   // Phase 3 懒加载
   if (tab === 'compliance' && state.complianceRules.length === 0) loadComplianceRules();
   if (tab === 'ha' && !state._haLoaded) loadHAStatus();
+  // Phase 4 懒加载
+  if (tab === 'network-mgmt' && state.networkDevices.length === 0) loadNetworkDevices();
+  if (tab === 'automation' && state.automationRules.length === 0) loadAutomationRules();
 }
 
 // ============================================================================
@@ -917,6 +929,8 @@ function refreshCurrentPage() {
   buildConfigPushToolbar();
   buildComplianceToolbar();
   buildHAToolbar();
+  buildNetworkToolbar();
+  buildAutomationToolbar();
   // 重新加载当前页数据
   if (state.currentTab === 'tickets') loadTickets();
   else if (state.currentTab === 'dashboard') loadDashboardAll();
@@ -927,6 +941,8 @@ function refreshCurrentPage() {
   else if (state.currentTab === 'config-push') loadConfigVersions('');
   else if (state.currentTab === 'compliance') refreshComplianceSubTab();
   else if (state.currentTab === 'ha') refreshHASubTab();
+  else if (state.currentTab === 'network-mgmt') refreshNetworkSubTab();
+  else if (state.currentTab === 'automation') refreshAutomationSubTab();
 }
 
 // ============================================================================
@@ -1302,5 +1318,446 @@ function refreshHASubTab() {
     render.renderCreateBackupForm(formHost, { onCreate: (type) => createBackup(type) });
     // 备份列表
     loadBackups();
+  }
+}
+
+// ============================================================================
+// Phase 4：网络管理
+// ============================================================================
+
+function networkContent() { return $('network-content'); }
+
+// loadNetworkDevices 加载网络设备列表（含子 tab 切换：设备列表 / 网络发现 / 配置下发）。
+export async function loadNetworkDevices() {
+  const content = networkContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 子 tab 切换条
+  const subTabs = [
+    { key: 'devices',  label: t('network.devices'),  onclick: () => { state.networkSubTab = 'devices';  refreshNetworkSubTab(); } },
+    { key: 'discover', label: t('network.discover'), onclick: () => { state.networkSubTab = 'discover'; refreshNetworkSubTab(); } },
+    { key: 'config',   label: t('network.config'),   onclick: () => { state.networkSubTab = 'config';   refreshNetworkSubTab(); } },
+  ];
+  const subBar = render.el('div', { class: 'toolbar' });
+  subTabs.forEach((s) => {
+    subBar.appendChild(render.el('button', {
+      class: 'btn ' + (state.networkSubTab === s.key ? 'btn-secondary' : 'btn-ghost'),
+      onclick: s.onclick,
+    }, render.el('span', { text: s.label })));
+  });
+  content.appendChild(subBar);
+  const host = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  if (state.networkSubTab !== 'devices') { refreshNetworkSubTab(); return; }
+  // 设备列表 + 添加设备表单
+  const listHost = render.el('div', { id: 'network-devices-list' });
+  host.appendChild(listHost);
+  render.renderLoading(listHost);
+  try {
+    const devices = await api.getNetworkDevices();
+    state.networkDevices = devices;
+    render.renderNetworkDevicesTable(listHost, devices, {
+      onDetail: (d) => showNetworkDeviceDetail(d.id || d.name),
+      onDelete: (d) => deleteNetworkDevice(d.id || d.name),
+    });
+  } catch (err) {
+    render.renderError(listHost, t('network.devicesLoadFailed') + ': ' + err.message);
+  }
+  // 添加设备表单
+  const formHost = render.el('div', { id: 'network-device-form', style: { marginTop: '1rem' } });
+  host.appendChild(formHost);
+  render.renderNetworkDeviceForm(formHost, { onCreate: (data) => createNetworkDevice(data) });
+}
+
+// showNetworkDeviceDetail 显示网络设备详情（监控指标）。
+export async function showNetworkDeviceDetail(id) {
+  if (!id) return;
+  const content = networkContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 返回按钮
+  const backBar = render.el('div', { class: 'toolbar' });
+  backBar.appendChild(render.el('button', {
+    class: 'btn btn-ghost',
+    onclick: () => { state.networkSubTab = 'devices'; loadNetworkDevices(); },
+  }, iconEl('back', 14), render.el('span', { text: t('network.devices') })));
+  content.appendChild(backBar);
+  const host = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  render.renderLoading(host);
+  try {
+    const [device, metrics] = await Promise.all([
+      api.getNetworkDevice(id).catch(() => null),
+      api.getNetworkDeviceMetrics(id).catch(() => null),
+    ]);
+    // 设备基本信息
+    if (device) {
+      const infoCard = render.el('div', { class: 'content', style: { marginBottom: '1rem' } });
+      infoCard.appendChild(render.el('h3', { class: 'form-title', text: t('network.deviceDetail') }));
+      const fields = [
+        { label: t('network.deviceName'), value: device.name || device.id },
+        { label: t('network.deviceType'), value: device.type },
+        { label: t('network.deviceIP'), value: device.ip || device.managementIP },
+        { label: t('network.devicePort'), value: device.port },
+        { label: t('network.vendor'), value: device.vendor },
+        { label: t('network.model'), value: device.model },
+        { label: t('network.status'), value: device.status },
+      ];
+      fields.forEach((f) => {
+        if (f.value != null && f.value !== '') {
+          infoCard.appendChild(render.el('div', { class: 'form-row' },
+            render.el('label', { class: 'form-label', text: f.label }),
+            render.el('div', { class: 'form-control', text: String(f.value) })
+          ));
+        }
+      });
+      host.appendChild(infoCard);
+    }
+    // 监控指标
+    const metricsHost = render.el('div', { id: 'network-metrics' });
+    host.appendChild(metricsHost);
+    render.renderNetworkDeviceMetrics(metricsHost, metrics);
+  } catch (err) {
+    render.renderError(host, t('network.metricsLoadFailed') + ': ' + err.message);
+  }
+}
+
+// createNetworkDevice 创建网络设备。
+export async function createNetworkDevice(data) {
+  if (!data || !data.name) { render.renderToast(t('network.nameRequired'), 'warn'); return; }
+  if (!data.ip) { render.renderToast(t('network.ipRequired'), 'warn'); return; }
+  try {
+    await api.createNetworkDevice(data);
+    render.renderToast(t('network.deviceCreated'), 'success');
+    state.networkSubTab = 'devices';
+    loadNetworkDevices();
+  } catch (err) {
+    render.renderToast(t('network.deviceCreateFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// deleteNetworkDevice 删除网络设备。
+export async function deleteNetworkDevice(id) {
+  if (!id) return;
+  if (!window.confirm(t('network.deleteConfirm'))) return;
+  try {
+    await api.deleteNetworkDevice(id);
+    render.renderToast(t('network.deviceDeleted'), 'success');
+    loadNetworkDevices();
+  } catch (err) {
+    render.renderToast(t('network.deviceDeleteFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// discoverNetwork 执行网络发现。
+export async function discoverNetwork(subnet) {
+  if (!subnet) { render.renderToast(t('network.subnetRequired'), 'warn'); return; }
+  const host = $('network-discover-result');
+  if (host) render.renderLoading(host, t('network.discovering'));
+  try {
+    const devices = await api.discoverNetwork(subnet);
+    state.networkDiscovered = devices;
+    if (host) render.renderNetworkDiscoverResult(host, devices);
+    render.renderToast(t('network.discoverResult') + ': ' + (devices.length || 0), 'success');
+  } catch (err) {
+    if (host) render.renderError(host, t('network.discoverFailed') + ': ' + err.message);
+    render.renderToast(t('network.discoverFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// deployNetworkConfig 下发配置到网络设备。
+export async function deployNetworkConfig(deviceId, config) {
+  if (!deviceId) { render.renderToast(t('network.deviceRequired'), 'warn'); return; }
+  if (!config) { render.renderToast(t('network.configRequired'), 'warn'); return; }
+  render.renderToast(t('network.deploying'), 'info');
+  try {
+    await api.configNetworkDevice(deviceId, config);
+    render.renderToast(t('network.configDeployed'), 'success');
+  } catch (err) {
+    render.renderToast(t('network.configDeployFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// buildNetworkToolbar 构建网络管理工具栏。
+export function buildNetworkToolbar() {
+  const toolbar = $('network-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => refreshNetworkSubTab() },
+      iconEl('refresh', 14), render.el('span', { text: t('common.refresh') })
+    )
+  );
+}
+
+// refreshNetworkSubTab 根据当前子 tab 重新渲染网络管理页。
+function refreshNetworkSubTab() {
+  const sub = state.networkSubTab;
+  if (sub === 'devices') { loadNetworkDevices(); return; }
+  const content = networkContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 子 tab 切换条
+  const subTabs = [
+    { key: 'devices',  label: t('network.devices') },
+    { key: 'discover', label: t('network.discover') },
+    { key: 'config',   label: t('network.config') },
+  ];
+  const subBar = render.el('div', { class: 'toolbar' });
+  subTabs.forEach((s) => {
+    subBar.appendChild(render.el('button', {
+      class: 'btn ' + (sub === s.key ? 'btn-secondary' : 'btn-ghost'),
+      onclick: () => { state.networkSubTab = s.key; refreshNetworkSubTab(); },
+    }, render.el('span', { text: s.label })));
+  });
+  content.appendChild(subBar);
+  const host = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  if (sub === 'discover') {
+    // 网络发现表单 + 结果
+    render.renderNetworkDiscoverForm(host, { onDiscover: (subnet) => discoverNetwork(subnet) });
+    const resultHost = render.el('div', { id: 'network-discover-result', style: { marginTop: '1rem' } });
+    host.appendChild(resultHost);
+    if (state.networkDiscovered.length) {
+      render.renderNetworkDiscoverResult(resultHost, state.networkDiscovered);
+    }
+  } else if (sub === 'config') {
+    // 配置下发表单
+    render.renderNetworkConfigForm(host, state.networkDevices, { onDeploy: (id, cfg) => deployNetworkConfig(id, cfg) });
+  }
+}
+
+// ============================================================================
+// Phase 4：自动化闭环
+// ============================================================================
+
+function automationContent() { return $('automation-content'); }
+
+// loadAutomationRules 加载自动化规则列表（含子 tab 切换：规则列表 / 执行历史）。
+export async function loadAutomationRules() {
+  const content = automationContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 子 tab 切换条
+  const subTabs = [
+    { key: 'rules',       label: t('automation.rules'),       onclick: () => { state.automationSubTab = 'rules';       refreshAutomationSubTab(); } },
+    { key: 'executions',  label: t('automation.executions'),  onclick: () => { state.automationSubTab = 'executions';  refreshAutomationSubTab(); } },
+  ];
+  const subBar = render.el('div', { class: 'toolbar' });
+  subTabs.forEach((s) => {
+    subBar.appendChild(render.el('button', {
+      class: 'btn ' + (state.automationSubTab === s.key ? 'btn-secondary' : 'btn-ghost'),
+      onclick: s.onclick,
+    }, render.el('span', { text: s.label })));
+  });
+  content.appendChild(subBar);
+  const host = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  if (state.automationSubTab !== 'rules') { refreshAutomationSubTab(); return; }
+  // 规则列表 + 创建规则表单
+  const listHost = render.el('div', { id: 'automation-rules-list' });
+  host.appendChild(listHost);
+  render.renderLoading(listHost);
+  try {
+    const rules = await api.getAutomationRules();
+    state.automationRules = rules;
+    render.renderAutomationRulesTable(listHost, rules, {
+      onEdit: (r) => editAutomationRule(r),
+      onEnable: (r) => enableAutomationRule(r.id || r.name),
+      onDisable: (r) => disableAutomationRule(r.id || r.name),
+      onTest: (r) => testAutomationRule(r.id || r.name),
+      onDelete: (r) => deleteAutomationRule(r.id || r.name),
+    });
+  } catch (err) {
+    render.renderError(listHost, t('automation.rulesLoadFailed') + ': ' + err.message);
+  }
+  // 创建规则表单
+  const formHost = render.el('div', { id: 'automation-rule-form', style: { marginTop: '1rem' } });
+  host.appendChild(formHost);
+  render.renderAutomationRuleForm(formHost, null, { onSubmit: (data) => createAutomationRule(data) });
+}
+
+// createAutomationRule 创建自动化规则。
+export async function createAutomationRule(data) {
+  if (!data || !data.name) { render.renderToast(t('automation.nameRequired'), 'warn'); return; }
+  if (!data.trigger) { render.renderToast(t('automation.triggerRequired'), 'warn'); return; }
+  if (!data.action) { render.renderToast(t('automation.actionRequired'), 'warn'); return; }
+  try {
+    await api.createAutomationRule(data);
+    render.renderToast(t('automation.ruleCreated'), 'success');
+    state.automationSubTab = 'rules';
+    loadAutomationRules();
+  } catch (err) {
+    render.renderToast(t('automation.ruleCreateFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// editAutomationRule 编辑自动化规则。
+export async function editAutomationRule(rule) {
+  if (!rule) return;
+  state.automationEditingRule = rule;
+  const content = automationContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 返回按钮
+  const backBar = render.el('div', { class: 'toolbar' });
+  backBar.appendChild(render.el('button', {
+    class: 'btn btn-ghost',
+    onclick: () => { state.automationEditingRule = null; state.automationSubTab = 'rules'; loadAutomationRules(); },
+  }, iconEl('back', 14), render.el('span', { text: t('automation.rules') })));
+  content.appendChild(backBar);
+  const host = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  // 先尝试获取详情，失败则用列表数据
+  let detail = rule;
+  try {
+    detail = await api.getAutomationRule(rule.id || rule.name);
+  } catch (_) { /* 用列表数据 */ }
+  render.renderAutomationRuleForm(host, detail, { onSubmit: (data) => updateAutomationRule(rule.id || rule.name, data) });
+}
+
+// updateAutomationRule 更新自动化规则。
+export async function updateAutomationRule(id, data) {
+  if (!id) return;
+  if (!data || !data.name) { render.renderToast(t('automation.nameRequired'), 'warn'); return; }
+  try {
+    await api.updateAutomationRule(id, data);
+    render.renderToast(t('automation.ruleUpdated'), 'success');
+    state.automationEditingRule = null;
+    state.automationSubTab = 'rules';
+    loadAutomationRules();
+  } catch (err) {
+    render.renderToast(t('automation.ruleUpdateFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// deleteAutomationRule 删除自动化规则。
+export async function deleteAutomationRule(id) {
+  if (!id) return;
+  if (!window.confirm(t('automation.deleteConfirm'))) return;
+  try {
+    await api.deleteAutomationRule(id);
+    render.renderToast(t('automation.ruleDeleted'), 'success');
+    loadAutomationRules();
+  } catch (err) {
+    render.renderToast(t('automation.ruleDeleteFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// enableAutomationRule 启用自动化规则。
+export async function enableAutomationRule(id) {
+  if (!id) return;
+  try {
+    await api.enableAutomationRule(id);
+    render.renderToast(t('automation.ruleEnabled'), 'success');
+    loadAutomationRules();
+  } catch (err) {
+    render.renderToast(t('automation.ruleEnableFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// disableAutomationRule 禁用自动化规则。
+export async function disableAutomationRule(id) {
+  if (!id) return;
+  try {
+    await api.disableAutomationRule(id);
+    render.renderToast(t('automation.ruleDisabled'), 'success');
+    loadAutomationRules();
+  } catch (err) {
+    render.renderToast(t('automation.ruleDisableFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// testAutomationRule 测试自动化规则。
+export async function testAutomationRule(id) {
+  if (!id) return;
+  try {
+    const result = await api.testAutomationRule(id);
+    const output = (result && (result.output || result.message)) || JSON.stringify(result || {});
+    render.renderToast(t('automation.ruleTested') + ': ' + String(output).slice(0, 100), 'success');
+  } catch (err) {
+    render.renderToast(t('automation.ruleTestFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// loadAutomationExecutions 加载自动化执行历史。
+export async function loadAutomationExecutions() {
+  const content = automationContent();
+  if (!content) return;
+  let host = $('automation-executions-list');
+  if (!host) {
+    host = render.el('div', { id: 'automation-executions-list', class: 'content', style: { marginTop: '1rem' } });
+    content.appendChild(host);
+  }
+  render.renderLoading(host);
+  try {
+    const execs = await api.getAutomationExecutions();
+    state.automationExecutions = execs;
+    render.renderAutomationExecutionsTable(host, execs, {
+      onDetail: (e) => showAutomationExecutionDetail(e.id || e.executionID),
+    });
+  } catch (err) {
+    render.renderError(host, t('automation.executionsLoadFailed') + ': ' + err.message);
+  }
+}
+
+// showAutomationExecutionDetail 显示自动化执行详情。
+export async function showAutomationExecutionDetail(id) {
+  if (!id) return;
+  const content = automationContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 返回按钮
+  const backBar = render.el('div', { class: 'toolbar' });
+  backBar.appendChild(render.el('button', {
+    class: 'btn btn-ghost',
+    onclick: () => { state.automationSubTab = 'executions'; refreshAutomationSubTab(); },
+  }, iconEl('back', 14), render.el('span', { text: t('automation.executions') })));
+  content.appendChild(backBar);
+  const host = render.el('div', { class: 'content', style: { marginTop: '1rem' } });
+  content.appendChild(host);
+  render.renderLoading(host);
+  try {
+    const exec = await api.getAutomationExecution(id);
+    render.renderAutomationExecutionDetail(host, exec);
+  } catch (err) {
+    render.renderError(host, t('automation.executionsLoadFailed') + ': ' + err.message);
+  }
+}
+
+// buildAutomationToolbar 构建自动化工具栏。
+export function buildAutomationToolbar() {
+  const toolbar = $('automation-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => refreshAutomationSubTab() },
+      iconEl('refresh', 14), render.el('span', { text: t('common.refresh') })
+    )
+  );
+}
+
+// refreshAutomationSubTab 根据当前子 tab 重新渲染自动化页。
+function refreshAutomationSubTab() {
+  const sub = state.automationSubTab;
+  if (sub === 'rules') { loadAutomationRules(); return; }
+  const content = automationContent();
+  if (!content) return;
+  content.innerHTML = '';
+  // 子 tab 切换条
+  const subTabs = [
+    { key: 'rules',      label: t('automation.rules') },
+    { key: 'executions', label: t('automation.executions') },
+  ];
+  const subBar = render.el('div', { class: 'toolbar' });
+  subTabs.forEach((s) => {
+    subBar.appendChild(render.el('button', {
+      class: 'btn ' + (sub === s.key ? 'btn-secondary' : 'btn-ghost'),
+      onclick: () => { state.automationSubTab = s.key; refreshAutomationSubTab(); },
+    }, render.el('span', { text: s.label })));
+  });
+  content.appendChild(subBar);
+  if (sub === 'executions') {
+    loadAutomationExecutions();
   }
 }

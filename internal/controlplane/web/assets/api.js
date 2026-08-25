@@ -400,3 +400,104 @@ export function restoreBackup(id) {
 export function deleteBackup(id) {
   return requestJSON('DELETE', '/api/v1/backup/' + encodeURIComponent(id));
 }
+
+// ============================================================================
+// Phase 4：网络管理
+// ============================================================================
+
+// getNetworkDevices 列出网络设备。GET /api/v1/network/devices
+export function getNetworkDevices() {
+  return requestJSON('GET', '/api/v1/network/devices').then((d) => {
+    return Array.isArray(d) ? d : (d && d.devices ? d.devices : []);
+  });
+}
+
+// createNetworkDevice 创建网络设备。POST /api/v1/network/devices
+export function createNetworkDevice(data) {
+  return requestJSON('POST', '/api/v1/network/devices', data);
+}
+
+// getNetworkDevice 获取网络设备详情。GET /api/v1/network/devices/{id}
+export function getNetworkDevice(id) {
+  return requestJSON('GET', '/api/v1/network/devices/' + encodeURIComponent(id));
+}
+
+// deleteNetworkDevice 删除网络设备。DELETE /api/v1/network/devices/{id}
+export function deleteNetworkDevice(id) {
+  return requestJSON('DELETE', '/api/v1/network/devices/' + encodeURIComponent(id));
+}
+
+// getNetworkDeviceMetrics 获取网络设备监控指标。GET /api/v1/network/devices/{id}/metrics
+export function getNetworkDeviceMetrics(id) {
+  return requestJSON('GET', '/api/v1/network/devices/' + encodeURIComponent(id) + '/metrics');
+}
+
+// configNetworkDevice 下发配置到网络设备。POST /api/v1/network/devices/{id}/config
+export function configNetworkDevice(id, config) {
+  return requestJSON('POST', '/api/v1/network/devices/' + encodeURIComponent(id) + '/config', { config: config });
+}
+
+// discoverNetwork 网络发现（扫描子网）。POST /api/v1/network/discover  body: {subnet}
+export function discoverNetwork(subnet) {
+  return requestJSON('POST', '/api/v1/network/discover', { subnet: subnet }).then((d) => {
+    return Array.isArray(d) ? d : (d && d.devices ? d.devices : []);
+  });
+}
+
+// ============================================================================
+// Phase 4：自动化闭环
+// ============================================================================
+
+// getAutomationRules 列出自动化规则。GET /api/v1/automation/rules
+export function getAutomationRules() {
+  return requestJSON('GET', '/api/v1/automation/rules').then((d) => {
+    return Array.isArray(d) ? d : (d && d.rules ? d.rules : []);
+  });
+}
+
+// createAutomationRule 创建自动化规则。POST /api/v1/automation/rules
+export function createAutomationRule(data) {
+  return requestJSON('POST', '/api/v1/automation/rules', data);
+}
+
+// getAutomationRule 获取自动化规则详情。GET /api/v1/automation/rules/{id}
+export function getAutomationRule(id) {
+  return requestJSON('GET', '/api/v1/automation/rules/' + encodeURIComponent(id));
+}
+
+// updateAutomationRule 更新自动化规则。PUT /api/v1/automation/rules/{id}
+export function updateAutomationRule(id, data) {
+  return requestJSON('PUT', '/api/v1/automation/rules/' + encodeURIComponent(id), data);
+}
+
+// deleteAutomationRule 删除自动化规则。DELETE /api/v1/automation/rules/{id}
+export function deleteAutomationRule(id) {
+  return requestJSON('DELETE', '/api/v1/automation/rules/' + encodeURIComponent(id));
+}
+
+// enableAutomationRule 启用自动化规则。POST /api/v1/automation/rules/{id}/enable
+export function enableAutomationRule(id) {
+  return requestJSON('POST', '/api/v1/automation/rules/' + encodeURIComponent(id) + '/enable');
+}
+
+// disableAutomationRule 禁用自动化规则。POST /api/v1/automation/rules/{id}/disable
+export function disableAutomationRule(id) {
+  return requestJSON('POST', '/api/v1/automation/rules/' + encodeURIComponent(id) + '/disable');
+}
+
+// testAutomationRule 测试自动化规则。POST /api/v1/automation/rules/{id}/test
+export function testAutomationRule(id) {
+  return requestJSON('POST', '/api/v1/automation/rules/' + encodeURIComponent(id) + '/test');
+}
+
+// getAutomationExecutions 列出自动化执行历史。GET /api/v1/automation/executions
+export function getAutomationExecutions() {
+  return requestJSON('GET', '/api/v1/automation/executions').then((d) => {
+    return Array.isArray(d) ? d : (d && d.executions ? d.executions : []);
+  });
+}
+
+// getAutomationExecution 获取自动化执行详情。GET /api/v1/automation/executions/{id}
+export function getAutomationExecution(id) {
+  return requestJSON('GET', '/api/v1/automation/executions/' + encodeURIComponent(id));
+}

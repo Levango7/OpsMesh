@@ -101,7 +101,7 @@ func (s *Server) handleComplianceScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		DeviceID string                     `json:"deviceID"`
+		DeviceID string                        `json:"deviceID"`
 		Results  []compliance.ComplianceResult `json:"results"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {

@@ -536,6 +536,59 @@ type BackupStore interface {
 	DeleteBackup(tenantID, id string) bool
 }
 
+// NetworkStore 网络管理领域（Phase 4）：网络设备 CRUD + 监控指标 + 配置下发。
+//
+// 与 DeviceStore（纳管主机/agent）解耦——NetworkDevice 是网络拓扑中的网络设备
+// （switch/router/firewall/load_balancer），通过 SNMP/CLI 管理而非 agent。
+// 按 (TenantID, ID) 唯一标识，按 TenantID 隔离。
+type NetworkStore interface {
+	// CreateNetworkDevice 创建网络设备（ID 为空时由 store 分配随机 ID）。
+	// TenantID 为空时归一为 default。返回持久化后的设备（含分配的 ID）。
+	CreateNetworkDevice(tenantID string, d *NetworkDevice) *NetworkDevice
+	// GetNetworkDevice 按 (tenantID, id) 返回单个网络设备（不存在返回 (nil, false)）。
+	GetNetworkDevice(tenantID, id string) (*NetworkDevice, bool)
+	// ListNetworkDevices 返回指定租户的全部网络设备（按创建时间降序）。
+	ListNetworkDevices(tenantID string) []*NetworkDevice
+	// UpdateNetworkDevice 更新网络设备（按 d.ID 定位，校验 tenantID 归属）。不存在或越权返回 (nil, false)。
+	UpdateNetworkDevice(tenantID string, d *NetworkDevice) (*NetworkDevice, bool)
+	// DeleteNetworkDevice 删除网络设备，返回是否删除成功（不存在或租户不匹配返回 false）。
+	DeleteNetworkDevice(tenantID, id string) bool
+	// StoreNetworkMetrics 存储网络设备监控指标（按 deviceID 关联，保留最近 N 条历史）。
+	StoreNetworkMetrics(deviceID string, m *NetworkMetrics)
+	// GetNetworkMetrics 返回网络设备最近一次监控指标（不存在返回 nil）。
+	GetNetworkMetrics(deviceID string) *NetworkMetrics
+	// UpdateNetworkConfig 下发网络配置（更新 d.Config 字段，返回更新后的设备）。
+	UpdateNetworkConfig(tenantID, id, config string) (*NetworkDevice, bool)
+}
+
+// AutomationStore 自动化闭环领域（Phase 4）：规则 CRUD + 启用/禁用 + 执行记录。
+//
+// 规则由触发器（Trigger）+ 动作列表（Actions）组成"条件→动作"闭环。
+// 按 (TenantID, ID) 唯一标识，按 TenantID 隔离。
+type AutomationStore interface {
+	// CreateAutomationRule 创建自动化规则（ID 为空时由 store 分配随机 ID）。
+	// TenantID 为空时归一为 default。返回持久化后的规则（含分配的 ID）。
+	CreateAutomationRule(tenantID string, r *AutomationRule) *AutomationRule
+	// GetAutomationRule 按 (tenantID, id) 返回单个规则（不存在返回 (nil, false)）。
+	GetAutomationRule(tenantID, id string) (*AutomationRule, bool)
+	// ListAutomationRules 返回指定租户的全部规则（按创建时间降序）。
+	ListAutomationRules(tenantID string) []*AutomationRule
+	// UpdateAutomationRule 更新规则（按 r.ID 定位，校验 tenantID 归属）。不存在或越权返回 (nil, false)。
+	UpdateAutomationRule(tenantID string, r *AutomationRule) (*AutomationRule, bool)
+	// DeleteAutomationRule 删除规则，返回是否删除成功（不存在或租户不匹配返回 false）。
+	DeleteAutomationRule(tenantID, id string) bool
+	// EnableAutomationRule 启用规则（置 Enabled=true）。不存在或越权返回 (nil, false)。
+	EnableAutomationRule(tenantID, id string) (*AutomationRule, bool)
+	// DisableAutomationRule 禁用规则（置 Enabled=false）。不存在或越权返回 (nil, false)。
+	DisableAutomationRule(tenantID, id string) (*AutomationRule, bool)
+	// CreateAutomationExecution 创建执行记录（ID 为空时由 store 分配随机 ID）。
+	CreateAutomationExecution(tenantID string, e *AutomationExecution) *AutomationExecution
+	// GetAutomationExecution 按 (tenantID, id) 返回单条执行记录（不存在返回 (nil, false)）。
+	GetAutomationExecution(tenantID, id string) (*AutomationExecution, bool)
+	// ListAutomationExecutions 返回指定租户的执行记录列表（按开始时间降序，limit<=0 时返回全部）。
+	ListAutomationExecutions(tenantID string, limit int) []*AutomationExecution
+}
+
 // SLOStore SLO 管理领域：CRUD + SLI 状态查询。
 type SLOStore interface {
 	// CreateSLO 创建 SLO。ID 为空时由 store 分配随机 ID；
@@ -588,6 +641,8 @@ type Store interface {
 	ArgoCDStore           // P2 ArgoCD 应用：CRUD + 同步
 	ComplianceStore       // P3 合规报告：CRUD
 	BackupStore           // P3 灾备备份：CRUD
+	NetworkStore          // P4 网络管理：设备 CRUD + 指标 + 配置下发
+	AutomationStore       // P4 自动化闭环：规则 CRUD + 启停 + 执行记录
 
 	// WithDemo 设置是否开启演示模式：开启时每个 agent 注册预置 uname -a 示例任务。
 	WithDemo(bool) Store
@@ -623,6 +678,8 @@ var (
 	_ ArgoCDStore           = (*MemoryStore)(nil)
 	_ ComplianceStore       = (*MemoryStore)(nil)
 	_ BackupStore           = (*MemoryStore)(nil)
+	_ NetworkStore          = (*MemoryStore)(nil)
+	_ AutomationStore       = (*MemoryStore)(nil)
 	_ Store                 = (*MemoryStore)(nil)
 
 	_ DeviceStore           = (*SQLStore)(nil)
@@ -652,5 +709,7 @@ var (
 	_ ArgoCDStore           = (*SQLStore)(nil)
 	_ ComplianceStore       = (*SQLStore)(nil)
 	_ BackupStore           = (*SQLStore)(nil)
+	_ NetworkStore          = (*SQLStore)(nil)
+	_ AutomationStore       = (*SQLStore)(nil)
 	_ Store                 = (*SQLStore)(nil)
 )

@@ -122,6 +122,16 @@ type MemoryStore struct {
 	// Phase 3 灾备备份：backupID -> 备份记录。
 	// 由 m.mu 保护并发安全；按 tenantID 隔离。
 	backups map[string]*BackupRecord
+	// Phase 4 网络管理：networkDeviceID -> 网络设备。
+	// 由 m.mu 保护并发安全；按 tenantID 隔离。
+	networkDevices map[string]*NetworkDevice
+	// Phase 4 网络设备监控指标历史：deviceID -> 指标列表（最近 N 条）。
+	networkMetricsHistory map[string][]*NetworkMetrics
+	// Phase 4 自动化闭环：ruleID -> 自动化规则。
+	// 由 m.mu 保护并发安全；按 tenantID 隔离。
+	automationRules map[string]*AutomationRule
+	// Phase 4 自动化执行记录：executionID -> 执行记录。
+	automationExecutions map[string]*AutomationExecution
 }
 
 // tokenMeta B1 install token 元数据：一次性、限时，消费后标记 consumed。
@@ -295,6 +305,10 @@ func NewMemoryStore() *MemoryStore {
 		argocdApps:          make(map[string]*ArgoCDApp),
 		complianceReports:   make(map[string]*ComplianceReport),
 		backups:             make(map[string]*BackupRecord),
+		networkDevices:      make(map[string]*NetworkDevice),
+		networkMetricsHistory: make(map[string][]*NetworkMetrics),
+		automationRules:     make(map[string]*AutomationRule),
+		automationExecutions: make(map[string]*AutomationExecution),
 	}
 	m.seedRBAC()
 	return m

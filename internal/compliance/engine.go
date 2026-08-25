@@ -27,8 +27,8 @@ import "time"
 type ComplianceRule struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
-	Category    string `json:"category"`    // "cis", "pci_dss", "hipaa", "custom"
-	Severity    string `json:"severity"`    // "high", "medium", "low"
+	Category    string `json:"category"` // "cis", "pci_dss", "hipaa", "custom"
+	Severity    string `json:"severity"` // "high", "medium", "low"
 	Description string `json:"description"`
 	CheckScript string `json:"checkScript"` // 检查命令（shell）
 	Remediation string `json:"remediation"` // 修复建议

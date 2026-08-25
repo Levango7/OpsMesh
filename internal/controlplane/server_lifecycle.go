@@ -133,6 +133,16 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/network/diagnose", s.handleNetworkDiagnose)            // POST 发起诊断任务
 	mux.HandleFunc("/api/v1/network/diagnose/", s.handleNetworkDiagnoseResult)     // GET 子路径：{taskId}
 	mux.HandleFunc("/api/v1/network/connectivity", s.handleNetworkConnectivity)    // POST 批量连通性检测
+	// Phase 4 网络设备管理：设备 CRUD + 指标 + 配置下发 + 网络发现。
+	// 注意：/api/v1/network/topology 已由上方 server_network.go 注册，此处不重复。
+	mux.HandleFunc("/api/v1/network/devices", s.handleNetworkDevices)
+	mux.HandleFunc("/api/v1/network/devices/", s.handleNetworkDeviceRouting) // 子路径：{id} GET/DELETE、{id}/metrics GET、{id}/config POST
+	mux.HandleFunc("/api/v1/network/discover", s.handleNetworkDiscover)      // POST 网络发现
+	// Phase 4 自动化闭环：规则 CRUD + 启停 + 测试 + 执行历史。
+	mux.HandleFunc("/api/v1/automation/rules", s.handleAutomationRules)
+	mux.HandleFunc("/api/v1/automation/rules/", s.handleAutomationRuleRouting) // 子路径：{id} GET/PUT/DELETE、{id}/enable|disable|test POST
+	mux.HandleFunc("/api/v1/automation/executions", s.handleAutomationExecutions)
+	mux.HandleFunc("/api/v1/automation/executions/", s.handleAutomationExecutionRouting) // 子路径：{id} GET
 
 	// 密钥管理 API：查看 provider 状态 + 测试连接 + 列出密钥 key。
 	// status/keys 不返回 Vault token 与密钥值（安全考虑）；test 端点做 SSRF 校验。
@@ -172,19 +182,19 @@ func (s *Server) Start() error {
 	// Phase 3 路由：安全合规 / 审计查询 / HA 管理 / 灾备恢复
 	mux.HandleFunc("/api/v1/compliance/rules", s.handleComplianceRules)
 	mux.HandleFunc("/api/v1/compliance/rules/", s.handleComplianceRuleRouting) // 子路径：{id} GET
-	mux.HandleFunc("/api/v1/compliance/scan", s.handleComplianceScan)         // POST 扫描设备合规状态
+	mux.HandleFunc("/api/v1/compliance/scan", s.handleComplianceScan)          // POST 扫描设备合规状态
 	mux.HandleFunc("/api/v1/compliance/reports", s.handleComplianceReports)
 	mux.HandleFunc("/api/v1/compliance/reports/", s.handleComplianceReportRouting) // 子路径：{id} GET
-	mux.HandleFunc("/api/v1/audit/events", s.handleAuditEvents)                   // GET 查询审计事件
-	mux.HandleFunc("/api/v1/audit/export", s.handleAuditExport)                   // GET 导出审计日志
-	mux.HandleFunc("/api/v1/ha/status", s.handleHAStatus)                         // GET HA 状态
-	mux.HandleFunc("/api/v1/ha/instances", s.handleHAInstances)                   // GET 实例列表
-	mux.HandleFunc("/api/v1/ha/failover", s.handleHAFailover)                     // POST 手动切换 leader
-	mux.HandleFunc("/api/v1/ha/health", s.handleHAHealth)                         // GET 健康检查
-	mux.HandleFunc("/api/v1/backup/create", s.handleBackupCreate)                 // POST 创建备份
-	mux.HandleFunc("/api/v1/backup/list", s.handleBackupList)                     // GET 列出备份
-	mux.HandleFunc("/api/v1/backup/restore", s.handleBackupRestore)               // POST 恢复备份
-	mux.HandleFunc("/api/v1/backup/", s.handleBackupDeleteRouting)                // 子路径：{id} DELETE
+	mux.HandleFunc("/api/v1/audit/events", s.handleAuditEvents)                    // GET 查询审计事件
+	mux.HandleFunc("/api/v1/audit/export", s.handleAuditExport)                    // GET 导出审计日志
+	mux.HandleFunc("/api/v1/ha/status", s.handleHAStatus)                          // GET HA 状态
+	mux.HandleFunc("/api/v1/ha/instances", s.handleHAInstances)                    // GET 实例列表
+	mux.HandleFunc("/api/v1/ha/failover", s.handleHAFailover)                      // POST 手动切换 leader
+	mux.HandleFunc("/api/v1/ha/health", s.handleHAHealth)                          // GET 健康检查
+	mux.HandleFunc("/api/v1/backup/create", s.handleBackupCreate)                  // POST 创建备份
+	mux.HandleFunc("/api/v1/backup/list", s.handleBackupList)                      // GET 列出备份
+	mux.HandleFunc("/api/v1/backup/restore", s.handleBackupRestore)                // POST 恢复备份
+	mux.HandleFunc("/api/v1/backup/", s.handleBackupDeleteRouting)                 // 子路径：{id} DELETE
 	mux.HandleFunc("/metrics", s.handlePrometheusMetrics)
 
 	// 修复 4：用 jsonErrorMux 包装 mux，将 404 统一为 JSON 格式。

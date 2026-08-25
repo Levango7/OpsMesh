@@ -82,6 +82,25 @@ export const createBackup = flow.createBackup;
 export const restoreBackup = flow.restoreBackup;
 export const deleteBackup = flow.deleteBackup;
 export const buildHAToolbar = flow.buildHAToolbar;
+// Phase 4 编排层
+export const loadNetworkDevices = flow.loadNetworkDevices;
+export const showNetworkDeviceDetail = flow.showNetworkDeviceDetail;
+export const createNetworkDevice = flow.createNetworkDevice;
+export const deleteNetworkDevice = flow.deleteNetworkDevice;
+export const discoverNetwork = flow.discoverNetwork;
+export const deployNetworkConfig = flow.deployNetworkConfig;
+export const buildNetworkToolbar = flow.buildNetworkToolbar;
+export const loadAutomationRules = flow.loadAutomationRules;
+export const createAutomationRule = flow.createAutomationRule;
+export const editAutomationRule = flow.editAutomationRule;
+export const updateAutomationRule = flow.updateAutomationRule;
+export const deleteAutomationRule = flow.deleteAutomationRule;
+export const enableAutomationRule = flow.enableAutomationRule;
+export const disableAutomationRule = flow.disableAutomationRule;
+export const testAutomationRule = flow.testAutomationRule;
+export const loadAutomationExecutions = flow.loadAutomationExecutions;
+export const showAutomationExecutionDetail = flow.showAutomationExecutionDetail;
+export const buildAutomationToolbar = flow.buildAutomationToolbar;
 
 // API 层
 export const ApiError = api.ApiError;
@@ -132,6 +151,24 @@ export const createBackupApi = api.createBackup;
 export const listBackups = api.listBackups;
 export const restoreBackupApi = api.restoreBackup;
 export const deleteBackupApi = api.deleteBackup;
+// Phase 4 API 层
+export const getNetworkDevices = api.getNetworkDevices;
+export const createNetworkDeviceApi = api.createNetworkDevice;
+export const getNetworkDevice = api.getNetworkDevice;
+export const deleteNetworkDeviceApi = api.deleteNetworkDevice;
+export const getNetworkDeviceMetrics = api.getNetworkDeviceMetrics;
+export const configNetworkDevice = api.configNetworkDevice;
+export const discoverNetworkApi = api.discoverNetwork;
+export const getAutomationRules = api.getAutomationRules;
+export const createAutomationRuleApi = api.createAutomationRule;
+export const getAutomationRule = api.getAutomationRule;
+export const updateAutomationRuleApi = api.updateAutomationRule;
+export const deleteAutomationRuleApi = api.deleteAutomationRule;
+export const enableAutomationRuleApi = api.enableAutomationRule;
+export const disableAutomationRuleApi = api.disableAutomationRule;
+export const testAutomationRuleApi = api.testAutomationRule;
+export const getAutomationExecutions = api.getAutomationExecutions;
+export const getAutomationExecution = api.getAutomationExecution;
 
 // 渲染层
 export const el = render.el;
@@ -173,6 +210,17 @@ export const renderHAInstancesTable = render.renderHAInstancesTable;
 export const renderHAHealth = render.renderHAHealth;
 export const renderBackupsTable = render.renderBackupsTable;
 export const renderCreateBackupForm = render.renderCreateBackupForm;
+// Phase 4 渲染层
+export const renderNetworkDevicesTable = render.renderNetworkDevicesTable;
+export const renderNetworkDeviceForm = render.renderNetworkDeviceForm;
+export const renderNetworkDeviceMetrics = render.renderNetworkDeviceMetrics;
+export const renderNetworkDiscoverForm = render.renderNetworkDiscoverForm;
+export const renderNetworkDiscoverResult = render.renderNetworkDiscoverResult;
+export const renderNetworkConfigForm = render.renderNetworkConfigForm;
+export const renderAutomationRulesTable = render.renderAutomationRulesTable;
+export const renderAutomationRuleForm = render.renderAutomationRuleForm;
+export const renderAutomationExecutionsTable = render.renderAutomationExecutionsTable;
+export const renderAutomationExecutionDetail = render.renderAutomationExecutionDetail;
 
 // i18n
 export const t = i18n.t;

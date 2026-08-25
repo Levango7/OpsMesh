@@ -481,3 +481,78 @@ type BackupRecord struct {
 	Path      string    `json:"path"`
 	CreatedAt time.Time `json:"createdAt"`
 }
+
+// ============================================================================
+// Phase 4 网络管理 + 自动化闭环
+// ============================================================================
+
+// NetworkDevice 网络设备实体（Phase 4 网络管理）。
+//
+// 与 DeviceStore.DeviceInfo（纳管主机/agent）解耦——NetworkDevice 是网络拓扑中的
+// 网络设备（switch/router/firewall/load_balancer），通过 SNMP/CLI 管理而非 agent。
+// 按 (TenantID, ID) 唯一标识，按 TenantID 隔离。
+type NetworkDevice struct {
+	ID            string    `json:"id"`
+	TenantID      string    `json:"tenantID"`
+	Name          string    `json:"name"`
+	Type          string    `json:"type"` // switch/router/firewall/load_balancer
+	Vendor        string    `json:"vendor"`
+	Model         string    `json:"model"`
+	IP            string    `json:"ip"`
+	Mask          string    `json:"mask"`
+	Mac           string    `json:"mac"`
+	Location      string    `json:"location"`
+	SnmpCommunity string    `json:"snmpCommunity"`
+	Status        string    `json:"status"` // up/down/unknown/maintain
+	Config        string    `json:"config,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+// NetworkMetrics 网络设备监控指标（Phase 4 网络管理）。
+type NetworkMetrics struct {
+	DeviceID    string    `json:"deviceID"`
+	TenantID    string    `json:"tenantID"`
+	Timestamp   time.Time `json:"timestamp"`
+	CPUUsage    float64   `json:"cpuUsage"`
+	MemoryUsage float64   `json:"memoryUsage"`
+	Temperature float64   `json:"temperature"`
+	Uptime      int64     `json:"uptime"`
+}
+
+// AutomationRule 自动化规则实体（Phase 4 自动化闭环）。
+//
+// 触发器（Trigger）+ 动作列表（Actions）组成"条件→动作"闭环。
+// TriggerType: alert/metric_threshold/schedule/event。
+// ActionType: execute_task/send_notify/scale/restart/isolate。
+// 按 (TenantID, ID) 唯一标识，按 TenantID 隔离。
+type AutomationRule struct {
+	ID          string    `json:"id"`
+	TenantID    string    `json:"tenantID"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	TriggerType string    `json:"triggerType"`
+	TriggerParams map[string]string `json:"triggerParams"`
+	Actions     []AutomationAction `json:"actions"`
+	Enabled     bool      `json:"enabled"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// AutomationAction 自动化动作。
+type AutomationAction struct {
+	Type   string            `json:"type"` // execute_task/send_notify/scale/restart/isolate
+	Params map[string]string `json:"params"`
+}
+
+// AutomationExecution 自动化规则执行记录（Phase 4 自动化闭环）。
+type AutomationExecution struct {
+	ID        string     `json:"id"`
+	TenantID  string     `json:"tenantID"`
+	RuleID    string     `json:"ruleID"`
+	RuleName  string     `json:"ruleName"`
+	Status    string     `json:"status"` // pending/running/succeeded/failed/skipped
+	Detail    string     `json:"detail"`
+	StartedAt time.Time  `json:"startedAt"`
+	EndedAt   *time.Time `json:"endedAt,omitempty"`
+}
