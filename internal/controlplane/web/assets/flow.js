@@ -71,6 +71,17 @@ const state = {
   scriptSubTab: 'list', // list | executions
   scriptEditing: null,
   scriptSelectedId: null,
+  // Phase 6 状态（平台化管理）
+  tenants: [],
+  apikeys: [],
+  plugins: [],
+  billingPlans: [],
+  billingSubs: [],
+  billingInvoices: [],
+  billingSubTab: 'plans', // plans | subscriptions | invoices
+  platformConfig: null,
+  platformHealth: null,
+  platformMetrics: null,
 };
 
 // ============================================================================
@@ -94,7 +105,7 @@ function sloContent() { return $('slo-content'); }
 // ============================================================================
 
 export function switchTab(tab) {
-  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push', 'compliance', 'ha', 'network-mgmt', 'automation', 'gateway', 'webhook', 'script'];
+  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push', 'compliance', 'ha', 'network-mgmt', 'automation', 'gateway', 'webhook', 'script', 'tenant', 'apikey', 'plugin', 'billing', 'platform'];
   if (validTabs.indexOf(tab) === -1) return;
   state.currentTab = tab;
   // 更新 tab 按钮激活态
@@ -125,6 +136,12 @@ export function switchTab(tab) {
   if (tab === 'gateway' && state.gatewayRoutes.length === 0) loadGatewayRoutes();
   if (tab === 'webhook' && state.webhooks.length === 0) loadWebhooks();
   if (tab === 'script' && state.scripts.length === 0) loadScripts();
+  // Phase 6 懒加载
+  if (tab === 'tenant' && state.tenants.length === 0) loadTenants();
+  if (tab === 'apikey' && state.apikeys.length === 0) loadAPIKeys();
+  if (tab === 'plugin' && state.plugins.length === 0) loadPlugins();
+  if (tab === 'billing' && !state._billingLoaded) loadBilling();
+  if (tab === 'platform' && !state._platformLoaded) loadPlatform();
 }
 
 // ============================================================================
@@ -929,6 +946,11 @@ export function init() {
   buildGatewayToolbar();
   buildWebhookToolbar();
   buildScriptToolbar();
+  buildTenantToolbar();
+  buildAPIKeyToolbar();
+  buildPluginToolbar();
+  buildBillingToolbar();
+  buildPlatformToolbar();
 
   // 绑定 tab 切换
   document.querySelectorAll('.tab-btn').forEach((btn) => {
@@ -956,6 +978,11 @@ function refreshCurrentPage() {
   buildGatewayToolbar();
   buildWebhookToolbar();
   buildScriptToolbar();
+  buildTenantToolbar();
+  buildAPIKeyToolbar();
+  buildPluginToolbar();
+  buildBillingToolbar();
+  buildPlatformToolbar();
   // 重新加载当前页数据
   if (state.currentTab === 'tickets') loadTickets();
   else if (state.currentTab === 'dashboard') loadDashboardAll();
@@ -971,6 +998,11 @@ function refreshCurrentPage() {
   else if (state.currentTab === 'gateway') refreshGatewaySubTab();
   else if (state.currentTab === 'webhook') refreshWebhookSubTab();
   else if (state.currentTab === 'script') refreshScriptSubTab();
+  else if (state.currentTab === 'tenant') loadTenants();
+  else if (state.currentTab === 'apikey') loadAPIKeys();
+  else if (state.currentTab === 'plugin') loadPlugins();
+  else if (state.currentTab === 'billing') loadBilling();
+  else if (state.currentTab === 'platform') loadPlatform();
 }
 
 // ============================================================================
@@ -2316,4 +2348,601 @@ export function buildScriptToolbar() {
 // refreshScriptSubTab 根据当前子 tab 重新渲染脚本页。
 function refreshScriptSubTab() {
   loadScripts();
+}
+
+// ============================================================================
+// Phase 6：平台化管理（租户 / API Key / 插件市场 / 计费订阅 / 平台配置）
+// ============================================================================
+
+// --- 租户管理 ---
+
+function tenantContent() { return $('tenant-content'); }
+
+// loadTenants 加载租户列表。
+export async function loadTenants() {
+  const content = tenantContent();
+  if (!content) return;
+  render.renderLoading(content);
+  try {
+    const tenants = await api.getTenants();
+    state.tenants = tenants;
+    render.renderTenantPage(content, tenants, {
+      onEdit: (tn) => editTenant(tn),
+      onSuspend: (id) => suspendTenant(id),
+      onActivate: (id) => activateTenant(id),
+      onDelete: (id) => deleteTenant(id),
+    });
+  } catch (err) {
+    render.renderError(content, t('tenant.loadFailed') + ': ' + err.message);
+  }
+}
+
+// createTenant 打开创建租户表单。
+export function createTenant() {
+  const content = tenantContent();
+  if (!content) return;
+  render.renderTenantForm(content, null, {
+    onSubmit: async (data) => {
+      if (!data.name) { render.renderToast(t('tenant.nameRequired'), 'warn'); return; }
+      if (!data.code) { render.renderToast(t('tenant.codeRequired'), 'warn'); return; }
+      try {
+        await api.createTenant(data);
+        render.renderToast(t('tenant.created'), 'success');
+        loadTenants();
+      } catch (err) {
+        render.renderToast(t('tenant.createFailed') + ': ' + err.message, 'error');
+      }
+    },
+    onCancel: () => loadTenants(),
+  });
+}
+
+// editTenant 打开编辑租户表单（先拉详情）。
+export async function editTenant(tn) {
+  const content = tenantContent();
+  if (!content) return;
+  const id = tn && tn.id;
+  if (!id) { render.renderToast(t('tenant.loadFailed'), 'error'); return; }
+  render.renderLoading(content);
+  try {
+    const tenant = await api.getTenant(id);
+    render.renderTenantForm(content, tenant, {
+      onSubmit: async (data) => {
+        if (!data.name) { render.renderToast(t('tenant.nameRequired'), 'warn'); return; }
+        try {
+          await api.updateTenant(id, data);
+          render.renderToast(t('tenant.updated'), 'success');
+          loadTenants();
+        } catch (err) {
+          render.renderToast(t('tenant.updateFailed') + ': ' + err.message, 'error');
+        }
+      },
+      onCancel: () => loadTenants(),
+    });
+  } catch (err) {
+    render.renderError(content, t('tenant.loadFailed') + ': ' + err.message);
+  }
+}
+
+// suspendTenant 暂停租户。
+export async function suspendTenant(id) {
+  if (!window.confirm(t('tenant.confirmSuspend'))) return;
+  try {
+    await api.suspendTenant(id);
+    render.renderToast(t('tenant.suspendDone'), 'success');
+    loadTenants();
+  } catch (err) {
+    render.renderToast(t('tenant.suspendFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// activateTenant 激活租户。
+export async function activateTenant(id) {
+  try {
+    await api.activateTenant(id);
+    render.renderToast(t('tenant.activateDone'), 'success');
+    loadTenants();
+  } catch (err) {
+    render.renderToast(t('tenant.activateFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// deleteTenant 删除租户。
+export async function deleteTenant(id) {
+  if (!window.confirm(t('tenant.confirmDelete'))) return;
+  try {
+    await api.deleteTenant(id);
+    render.renderToast(t('tenant.deleted'), 'success');
+    loadTenants();
+  } catch (err) {
+    render.renderToast(t('tenant.deleteFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// buildTenantToolbar 构建租户工具栏。
+export function buildTenantToolbar() {
+  const toolbar = $('tenant-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-primary', onclick: () => createTenant() },
+      iconEl('plus', 16), render.el('span', { text: t('tenant.create') })
+    )
+  );
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => loadTenants() },
+      iconEl('refresh', 14), render.el('span', { text: t('common.refresh') })
+    )
+  );
+}
+
+// --- API Key 管理 ---
+
+function apikeyContent() { return $('apikey-content'); }
+
+// loadAPIKeys 加载 API Key 列表。
+export async function loadAPIKeys() {
+  const content = apikeyContent();
+  if (!content) return;
+  render.renderLoading(content);
+  try {
+    const apikeys = await api.getAPIKeys();
+    state.apikeys = apikeys;
+    render.renderAPIKeyPage(content, apikeys, {
+      onEdit: (k) => editAPIKey(k),
+      onToggle: (k) => toggleAPIKey(k),
+      onDelete: (id) => deleteAPIKey(id),
+    });
+  } catch (err) {
+    render.renderError(content, t('apikey.loadFailed') + ': ' + err.message);
+  }
+}
+
+// createAPIKey 打开创建 API Key 表单。
+export function createAPIKey() {
+  const content = apikeyContent();
+  if (!content) return;
+  render.renderAPIKeyForm(content, {
+    onSubmit: async (data) => {
+      if (!data.name) { render.renderToast(t('apikey.nameRequired'), 'warn'); return; }
+      try {
+        const result = await api.createAPIKey(data);
+        render.renderToast(t('apikey.created'), 'success');
+        // 显示生成的密钥
+        render.renderAPIKeyGenerated(content, result, {
+          onDone: () => loadAPIKeys(),
+        });
+      } catch (err) {
+        render.renderToast(t('apikey.createFailed') + ': ' + err.message, 'error');
+      }
+    },
+    onCancel: () => loadAPIKeys(),
+  });
+}
+
+// editAPIKey 打开编辑 API Key 表单（先拉详情）。
+export async function editAPIKey(k) {
+  const content = apikeyContent();
+  if (!content) return;
+  const id = k && k.id;
+  if (!id) { render.renderToast(t('apikey.loadFailed'), 'error'); return; }
+  render.renderLoading(content);
+  try {
+    const key = await api.getAPIKey(id);
+    // 复用表单（简化：仅允许编辑 name/scopes/expiresAt）
+    const form = render.el('form', { class: 'form-card', onsubmit: (e) => {
+      e.preventDefault();
+      const data = {
+        name: form.elements.name.value.trim(),
+        scopes: form.elements.scopes.value.trim(),
+        expiresAt: form.elements.expiresAt.value.trim(),
+      };
+      api.updateAPIKey(id, data)
+        .then(() => { render.renderToast(t('apikey.updated'), 'success'); loadAPIKeys(); })
+        .catch((err) => render.renderToast(t('apikey.updateFailed') + ': ' + err.message, 'error'));
+    } });
+    form.appendChild(render.el('h3', { class: 'form-title', text: t('apikey.edit') }));
+    form.appendChild(render.el('div', { class: 'form-row' },
+      render.el('label', { class: 'form-label required', text: t('apikey.keyName') }),
+      render.el('div', { class: 'form-control' },
+        render.el('input', { name: 'name', type: 'text', required: 'true', value: key.name || '' })
+      )
+    ));
+    form.appendChild(render.el('div', { class: 'form-row' },
+      render.el('label', { class: 'form-label', text: t('apikey.scopes') }),
+      render.el('div', { class: 'form-control' },
+        render.el('input', { name: 'scopes', type: 'text', value: Array.isArray(key.scopes) ? key.scopes.join(',') : (key.scopes || '') })
+      )
+    ));
+    form.appendChild(render.el('div', { class: 'form-row' },
+      render.el('label', { class: 'form-label', text: t('apikey.expiresAt') }),
+      render.el('div', { class: 'form-control' },
+        render.el('input', { name: 'expiresAt', type: 'text', value: key.expiresAt || '' })
+      )
+    ));
+    form.appendChild(render.el('div', { class: 'form-actions' },
+      render.el('button', { type: 'submit', class: 'btn btn-primary' },
+        iconEl('check', 16), render.el('span', { text: t('common.save') })
+      ),
+      render.el('button', { type: 'button', class: 'btn btn-ghost', onclick: () => loadAPIKeys() },
+        render.el('span', { text: t('common.cancel') })
+      )
+    ));
+    content.innerHTML = '';
+    content.appendChild(form);
+  } catch (err) {
+    render.renderError(content, t('apikey.loadFailed') + ': ' + err.message);
+  }
+}
+
+// toggleAPIKey 启用/禁用 API Key。
+export async function toggleAPIKey(k) {
+  const id = k && k.id;
+  if (!id) return;
+  const enabled = String(k.status || '').toLowerCase() !== 'disabled';
+  const action = enabled ? 'disable' : 'enable';
+  try {
+    await api.toggleAPIKey(id, action);
+    render.renderToast(enabled ? t('apikey.disabled') : t('apikey.enabled'), 'success');
+    loadAPIKeys();
+  } catch (err) {
+    render.renderToast((enabled ? t('apikey.disableFailed') : t('apikey.enableFailed')) + ': ' + err.message, 'error');
+  }
+}
+
+// deleteAPIKey 删除 API Key。
+export async function deleteAPIKey(id) {
+  if (!window.confirm(t('apikey.confirmDelete'))) return;
+  try {
+    await api.deleteAPIKey(id);
+    render.renderToast(t('apikey.deleted'), 'success');
+    loadAPIKeys();
+  } catch (err) {
+    render.renderToast(t('apikey.deleteFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// buildAPIKeyToolbar 构建 API Key 工具栏。
+export function buildAPIKeyToolbar() {
+  const toolbar = $('apikey-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-primary', onclick: () => createAPIKey() },
+      iconEl('plus', 16), render.el('span', { text: t('apikey.create') })
+    )
+  );
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => loadAPIKeys() },
+      iconEl('refresh', 14), render.el('span', { text: t('common.refresh') })
+    )
+  );
+}
+
+// --- 插件市场 ---
+
+function pluginContent() { return $('plugin-content'); }
+
+// loadPlugins 加载插件列表。
+export async function loadPlugins() {
+  const content = pluginContent();
+  if (!content) return;
+  render.renderLoading(content);
+  try {
+    const plugins = await api.getPlugins();
+    state.plugins = plugins;
+    render.renderPluginPage(content, plugins, {
+      onInstall: (id) => installPlugin(id),
+      onUninstall: (id) => uninstallPlugin(id),
+      onToggle: (p) => togglePlugin(p),
+      onDelete: (id) => deletePlugin(id),
+    });
+  } catch (err) {
+    render.renderError(content, t('plugin.loadFailed') + ': ' + err.message);
+  }
+}
+
+// createPlugin 打开插件注册表单。
+export function createPlugin() {
+  const content = pluginContent();
+  if (!content) return;
+  render.renderPluginForm(content, {
+    onSubmit: async (data) => {
+      if (!data.name) { render.renderToast(t('plugin.nameRequired'), 'warn'); return; }
+      try {
+        await api.createPlugin(data);
+        render.renderToast(t('plugin.registered'), 'success');
+        loadPlugins();
+      } catch (err) {
+        render.renderToast(t('plugin.registerFailed') + ': ' + err.message, 'error');
+      }
+    },
+    onCancel: () => loadPlugins(),
+  });
+}
+
+// installPlugin 安装插件。
+export async function installPlugin(id) {
+  try {
+    await api.installPlugin(id);
+    render.renderToast(t('plugin.installedDone'), 'success');
+    loadPlugins();
+  } catch (err) {
+    render.renderToast(t('plugin.installFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// uninstallPlugin 卸载插件。
+export async function uninstallPlugin(id) {
+  if (!window.confirm(t('plugin.confirmUninstall'))) return;
+  try {
+    await api.uninstallPlugin(id);
+    render.renderToast(t('plugin.uninstalledDone'), 'success');
+    loadPlugins();
+  } catch (err) {
+    render.renderToast(t('plugin.uninstallFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// togglePlugin 启用/禁用插件。
+export async function togglePlugin(p) {
+  const id = p && p.id;
+  if (!id) return;
+  const enabled = String(p.status || '').toLowerCase() !== 'disabled';
+  const action = enabled ? 'disable' : 'enable';
+  try {
+    await api.togglePlugin(id, action);
+    render.renderToast(enabled ? t('plugin.disabled') : t('plugin.enabled'), 'success');
+    loadPlugins();
+  } catch (err) {
+    render.renderToast((enabled ? t('plugin.disableFailed') : t('plugin.enableFailed')) + ': ' + err.message, 'error');
+  }
+}
+
+// deletePlugin 删除插件。
+export async function deletePlugin(id) {
+  if (!window.confirm(t('plugin.confirmDelete'))) return;
+  try {
+    await api.deletePlugin(id);
+    render.renderToast(t('plugin.deleted'), 'success');
+    loadPlugins();
+  } catch (err) {
+    render.renderToast(t('plugin.deleteFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// buildPluginToolbar 构建插件工具栏。
+export function buildPluginToolbar() {
+  const toolbar = $('plugin-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-primary', onclick: () => createPlugin() },
+      iconEl('plus', 16), render.el('span', { text: t('plugin.register') })
+    )
+  );
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => loadPlugins() },
+      iconEl('refresh', 14), render.el('span', { text: t('common.refresh') })
+    )
+  );
+}
+
+// --- 计费订阅 ---
+
+function billingContent() { return $('billing-content'); }
+
+// loadBilling 加载计费页（计划 + 订阅 + 账单）。
+export async function loadBilling() {
+  state._billingLoaded = true;
+  const content = billingContent();
+  if (!content) return;
+  render.renderLoading(content);
+  try {
+    const [plans, subs, invoices] = await Promise.all([
+      api.getBillingPlans(),
+      api.getSubscriptions(),
+      api.getInvoices(),
+    ]);
+    state.billingPlans = plans;
+    state.billingSubs = subs;
+    state.billingInvoices = invoices;
+    render.renderBillingPage(content, plans, subs, invoices, {
+      onCreatePlan: () => createBillingPlan(),
+      onEditPlan: (p) => editBillingPlan(p),
+      onDeletePlan: (id) => deleteBillingPlan(id),
+      onCreateSub: () => createSubscription(),
+      onEditSub: (s) => editSubscription(s),
+      onDeleteSub: (id) => deleteSubscription(id),
+    });
+  } catch (err) {
+    render.renderError(content, t('billing.plansLoadFailed') + ': ' + err.message);
+  }
+}
+
+// createBillingPlan 打开创建计费计划表单。
+export function createBillingPlan() {
+  const content = billingContent();
+  if (!content) return;
+  render.renderBillingPlanForm(content, null, {
+    onSubmit: async (data) => {
+      if (!data.name) { render.renderToast(t('billing.planNameRequired'), 'warn'); return; }
+      try {
+        await api.createBillingPlan(data);
+        render.renderToast(t('billing.planCreated'), 'success');
+        loadBilling();
+      } catch (err) {
+        render.renderToast(t('billing.planCreateFailed') + ': ' + err.message, 'error');
+      }
+    },
+    onCancel: () => loadBilling(),
+  });
+}
+
+// editBillingPlan 打开编辑计费计划表单。
+export async function editBillingPlan(p) {
+  const content = billingContent();
+  if (!content) return;
+  const id = p && p.id;
+  if (!id) return;
+  render.renderLoading(content);
+  try {
+    const plan = await api.getBillingPlan(id);
+    render.renderBillingPlanForm(content, plan, {
+      onSubmit: async (data) => {
+        if (!data.name) { render.renderToast(t('billing.planNameRequired'), 'warn'); return; }
+        try {
+          await api.updateBillingPlan(id, data);
+          render.renderToast(t('billing.planUpdated'), 'success');
+          loadBilling();
+        } catch (err) {
+          render.renderToast(t('billing.planUpdateFailed') + ': ' + err.message, 'error');
+        }
+      },
+      onCancel: () => loadBilling(),
+    });
+  } catch (err) {
+    render.renderError(content, t('billing.plansLoadFailed') + ': ' + err.message);
+  }
+}
+
+// deleteBillingPlan 删除计费计划。
+export async function deleteBillingPlan(id) {
+  if (!window.confirm(t('billing.planConfirmDelete'))) return;
+  try {
+    await api.deleteBillingPlan(id);
+    render.renderToast(t('billing.planDeleted'), 'success');
+    loadBilling();
+  } catch (err) {
+    render.renderToast(t('billing.planDeleteFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// createSubscription 打开创建订阅表单。
+export function createSubscription() {
+  const content = billingContent();
+  if (!content) return;
+  render.renderSubscriptionForm(content, null, {
+    onSubmit: async (data) => {
+      if (!data.tenantID) { render.renderToast(t('tenant.codeRequired'), 'warn'); return; }
+      try {
+        await api.createSubscription(data);
+        render.renderToast(t('billing.subCreated'), 'success');
+        loadBilling();
+      } catch (err) {
+        render.renderToast(t('billing.subCreateFailed') + ': ' + err.message, 'error');
+      }
+    },
+    onCancel: () => loadBilling(),
+  });
+}
+
+// editSubscription 打开编辑订阅表单。
+export async function editSubscription(s) {
+  const content = billingContent();
+  if (!content) return;
+  const id = s && s.id;
+  if (!id) return;
+  render.renderLoading(content);
+  try {
+    const sub = await api.getSubscription(id);
+    render.renderSubscriptionForm(content, sub, {
+      onSubmit: async (data) => {
+        try {
+          await api.updateSubscription(id, data);
+          render.renderToast(t('billing.subUpdated'), 'success');
+          loadBilling();
+        } catch (err) {
+          render.renderToast(t('billing.subUpdateFailed') + ': ' + err.message, 'error');
+        }
+      },
+      onCancel: () => loadBilling(),
+    });
+  } catch (err) {
+    render.renderError(content, t('billing.subsLoadFailed') + ': ' + err.message);
+  }
+}
+
+// deleteSubscription 删除订阅。
+export async function deleteSubscription(id) {
+  if (!window.confirm(t('billing.subConfirmDelete'))) return;
+  try {
+    await api.deleteSubscription(id);
+    render.renderToast(t('billing.subDeleted'), 'success');
+    loadBilling();
+  } catch (err) {
+    render.renderToast(t('billing.subDeleteFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// buildBillingToolbar 构建计费工具栏。
+export function buildBillingToolbar() {
+  const toolbar = $('billing-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-primary', onclick: () => createBillingPlan() },
+      iconEl('plus', 16), render.el('span', { text: t('billing.createPlan') })
+    )
+  );
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-secondary', onclick: () => createSubscription() },
+      iconEl('plus', 16), render.el('span', { text: t('billing.createSub') })
+    )
+  );
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => loadBilling() },
+      iconEl('refresh', 14), render.el('span', { text: t('common.refresh') })
+    )
+  );
+}
+
+// --- 平台配置 ---
+
+function platformContent() { return $('platform-content'); }
+
+// loadPlatform 加载平台配置页（配置 + 健康 + 指标）。
+export async function loadPlatform() {
+  state._platformLoaded = true;
+  const content = platformContent();
+  if (!content) return;
+  render.renderLoading(content);
+  try {
+    const [config, health, metrics] = await Promise.all([
+      api.getPlatformConfig().catch(() => null),
+      api.getPlatformHealth().catch(() => null),
+      api.getPlatformMetrics().catch(() => null),
+    ]);
+    state.platformConfig = config;
+    state.platformHealth = health;
+    state.platformMetrics = metrics;
+    render.renderPlatformPage(content, config, health, metrics, {
+      onSaveConfig: (data) => savePlatformConfig(data),
+    });
+  } catch (err) {
+    render.renderError(content, t('platform.configLoadFailed') + ': ' + err.message);
+  }
+}
+
+// savePlatformConfig 保存平台配置。
+export async function savePlatformConfig(data) {
+  try {
+    await api.updatePlatformConfig(data);
+    render.renderToast(t('platform.configSaved'), 'success');
+    state.platformConfig = data;
+  } catch (err) {
+    render.renderToast(t('platform.configSaveFailed') + ': ' + err.message, 'error');
+  }
+}
+
+// buildPlatformToolbar 构建平台配置工具栏。
+export function buildPlatformToolbar() {
+  const toolbar = $('platform-toolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = '';
+  toolbar.appendChild(
+    render.el('button', { class: 'btn btn-ghost', title: t('common.refresh'), onclick: () => loadPlatform() },
+      iconEl('refresh', 14), render.el('span', { text: t('common.refresh') })
+    )
+  );
 }

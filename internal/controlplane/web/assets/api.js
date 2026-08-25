@@ -631,3 +631,216 @@ export function getScriptExecutions(id) {
     return Array.isArray(d) ? d : (d && d.executions ? d.executions : []);
   });
 }
+
+// ============================================================================
+// Phase 6：平台化管理 API（租户 / API Key / 插件市场 / 计费订阅 / 平台配置）
+// ============================================================================
+
+// --- 租户管理 ---
+
+// getTenants 列出租户。GET /api/v1/tenants
+export function getTenants(filter = {}) {
+  return requestJSON('GET', '/api/v1/tenants' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.tenants ? d.tenants : []);
+  });
+}
+
+// createTenant 创建租户。POST /api/v1/tenants
+// body: {name, code, description, plan, ...}
+export function createTenant(data) {
+  return requestJSON('POST', '/api/v1/tenants', data);
+}
+
+// getTenant 获取租户详情。GET /api/v1/tenants/{id}
+export function getTenant(id) {
+  return requestJSON('GET', '/api/v1/tenants/' + encodeURIComponent(id));
+}
+
+// updateTenant 更新租户。PUT /api/v1/tenants/{id}
+export function updateTenant(id, data) {
+  return requestJSON('PUT', '/api/v1/tenants/' + encodeURIComponent(id), data);
+}
+
+// deleteTenant 删除租户。DELETE /api/v1/tenants/{id}
+export function deleteTenant(id) {
+  return requestJSON('DELETE', '/api/v1/tenants/' + encodeURIComponent(id));
+}
+
+// suspendTenant 暂停租户。POST /api/v1/tenants/{id}/suspend
+export function suspendTenant(id) {
+  return requestJSON('POST', '/api/v1/tenants/' + encodeURIComponent(id) + '/suspend');
+}
+
+// activateTenant 激活租户。POST /api/v1/tenants/{id}/activate
+export function activateTenant(id) {
+  return requestJSON('POST', '/api/v1/tenants/' + encodeURIComponent(id) + '/activate');
+}
+
+// --- API Key 管理 ---
+
+// getAPIKeys 列出 API Key。GET /api/v1/apikeys
+export function getAPIKeys(filter = {}) {
+  return requestJSON('GET', '/api/v1/apikeys' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.apikeys ? d.apikeys : (d && d.keys ? d.keys : []));
+  });
+}
+
+// createAPIKey 创建 API Key（后端生成 key 并返回）。POST /api/v1/apikeys
+// body: {name, scopes, expiresAt, ...}
+export function createAPIKey(data) {
+  return requestJSON('POST', '/api/v1/apikeys', data);
+}
+
+// getAPIKey 获取 API Key 详情。GET /api/v1/apikeys/{id}
+export function getAPIKey(id) {
+  return requestJSON('GET', '/api/v1/apikeys/' + encodeURIComponent(id));
+}
+
+// updateAPIKey 更新 API Key。PUT /api/v1/apikeys/{id}
+export function updateAPIKey(id, data) {
+  return requestJSON('PUT', '/api/v1/apikeys/' + encodeURIComponent(id), data);
+}
+
+// deleteAPIKey 删除 API Key。DELETE /api/v1/apikeys/{id}
+export function deleteAPIKey(id) {
+  return requestJSON('DELETE', '/api/v1/apikeys/' + encodeURIComponent(id));
+}
+
+// toggleAPIKey 启用/禁用 API Key。POST /api/v1/apikeys/{id}/enable|disable
+// action: 'enable' | 'disable'
+export function toggleAPIKey(id, action) {
+  return requestJSON('POST', '/api/v1/apikeys/' + encodeURIComponent(id) + '/' + (action === 'disable' ? 'disable' : 'enable'));
+}
+
+// --- 插件市场 ---
+
+// getPlugins 列出市场插件。GET /api/v1/marketplace/plugins
+export function getPlugins(filter = {}) {
+  return requestJSON('GET', '/api/v1/marketplace/plugins' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.plugins ? d.plugins : []);
+  });
+}
+
+// createPlugin 注册插件。POST /api/v1/marketplace/plugins
+// body: {name, version, description, source, ...}
+export function createPlugin(data) {
+  return requestJSON('POST', '/api/v1/marketplace/plugins', data);
+}
+
+// getPlugin 获取插件详情。GET /api/v1/marketplace/plugins/{id}
+export function getPlugin(id) {
+  return requestJSON('GET', '/api/v1/marketplace/plugins/' + encodeURIComponent(id));
+}
+
+// deletePlugin 删除插件。DELETE /api/v1/marketplace/plugins/{id}
+export function deletePlugin(id) {
+  return requestJSON('DELETE', '/api/v1/marketplace/plugins/' + encodeURIComponent(id));
+}
+
+// installPlugin 安装插件。POST /api/v1/marketplace/plugins/{id}/install
+export function installPlugin(id) {
+  return requestJSON('POST', '/api/v1/marketplace/plugins/' + encodeURIComponent(id) + '/install');
+}
+
+// uninstallPlugin 卸载插件。POST /api/v1/marketplace/plugins/{id}/uninstall
+export function uninstallPlugin(id) {
+  return requestJSON('POST', '/api/v1/marketplace/plugins/' + encodeURIComponent(id) + '/uninstall');
+}
+
+// togglePlugin 启用/禁用插件。POST /api/v1/marketplace/plugins/{id}/enable|disable
+// action: 'enable' | 'disable'
+export function togglePlugin(id, action) {
+  return requestJSON('POST', '/api/v1/marketplace/plugins/' + encodeURIComponent(id) + '/' + (action === 'disable' ? 'disable' : 'enable'));
+}
+
+// --- 计费订阅 ---
+
+// getBillingPlans 列出计费计划。GET /api/v1/billing/plans
+export function getBillingPlans(filter = {}) {
+  return requestJSON('GET', '/api/v1/billing/plans' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.plans ? d.plans : []);
+  });
+}
+
+// createBillingPlan 创建计费计划。POST /api/v1/billing/plans
+// body: {name, price, interval, features, ...}
+export function createBillingPlan(data) {
+  return requestJSON('POST', '/api/v1/billing/plans', data);
+}
+
+// getBillingPlan 获取计费计划详情。GET /api/v1/billing/plans/{id}
+export function getBillingPlan(id) {
+  return requestJSON('GET', '/api/v1/billing/plans/' + encodeURIComponent(id));
+}
+
+// updateBillingPlan 更新计费计划。PUT /api/v1/billing/plans/{id}
+export function updateBillingPlan(id, data) {
+  return requestJSON('PUT', '/api/v1/billing/plans/' + encodeURIComponent(id), data);
+}
+
+// deleteBillingPlan 删除计费计划。DELETE /api/v1/billing/plans/{id}
+export function deleteBillingPlan(id) {
+  return requestJSON('DELETE', '/api/v1/billing/plans/' + encodeURIComponent(id));
+}
+
+// getSubscriptions 列出订阅。GET /api/v1/billing/subscriptions
+export function getSubscriptions(filter = {}) {
+  return requestJSON('GET', '/api/v1/billing/subscriptions' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.subscriptions ? d.subscriptions : []);
+  });
+}
+
+// createSubscription 创建订阅。POST /api/v1/billing/subscriptions
+// body: {tenantID, planID, ...}
+export function createSubscription(data) {
+  return requestJSON('POST', '/api/v1/billing/subscriptions', data);
+}
+
+// getSubscription 获取订阅详情。GET /api/v1/billing/subscriptions/{id}
+export function getSubscription(id) {
+  return requestJSON('GET', '/api/v1/billing/subscriptions/' + encodeURIComponent(id));
+}
+
+// updateSubscription 更新订阅。PUT /api/v1/billing/subscriptions/{id}
+export function updateSubscription(id, data) {
+  return requestJSON('PUT', '/api/v1/billing/subscriptions/' + encodeURIComponent(id), data);
+}
+
+// deleteSubscription 删除订阅。DELETE /api/v1/billing/subscriptions/{id}
+export function deleteSubscription(id) {
+  return requestJSON('DELETE', '/api/v1/billing/subscriptions/' + encodeURIComponent(id));
+}
+
+// getInvoices 列出账单。GET /api/v1/billing/invoices
+export function getInvoices(filter = {}) {
+  return requestJSON('GET', '/api/v1/billing/invoices' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.invoices ? d.invoices : []);
+  });
+}
+
+// getInvoice 获取账单详情。GET /api/v1/billing/invoices/{id}
+export function getInvoice(id) {
+  return requestJSON('GET', '/api/v1/billing/invoices/' + encodeURIComponent(id));
+}
+
+// --- 平台配置 ---
+
+// getPlatformConfig 获取平台配置。GET /api/v1/platform/config
+export function getPlatformConfig() {
+  return requestJSON('GET', '/api/v1/platform/config');
+}
+
+// updatePlatformConfig 更新平台配置。PUT /api/v1/platform/config
+export function updatePlatformConfig(data) {
+  return requestJSON('PUT', '/api/v1/platform/config', data);
+}
+
+// getPlatformHealth 平台健康检查。GET /api/v1/platform/health
+export function getPlatformHealth() {
+  return requestJSON('GET', '/api/v1/platform/health');
+}
+
+// getPlatformMetrics 获取平台运行指标。GET /api/v1/platform/metrics
+export function getPlatformMetrics() {
+  return requestJSON('GET', '/api/v1/platform/metrics');
+}

@@ -1183,7 +1183,45 @@ export function renderApiEndpoints(container) {
     { method: 'PUT',    path: '/api/v1/scripts/{id}',                  desc: 'update script' },
     { method: 'DELETE', path: '/api/v1/scripts/{id}',                  desc: 'delete script' },
     { method: 'POST',   path: '/api/v1/scripts/{id}/execute',          desc: 'execute script on device' },
-    { method: 'GET',    path: '/api/v1/scripts/{id}/executions',       desc: 'list script executions' },
+    { method: 'GET',  path: '/api/v1/scripts/{id}/executions',       desc: 'list script executions' },
+    { method: 'GET',    path: '/api/v1/tenants',                     desc: 'list tenants' },
+    { method: 'POST',   path: '/api/v1/tenants',                     desc: 'create tenant' },
+    { method: 'GET',    path: '/api/v1/tenants/{id}',                desc: 'get tenant' },
+    { method: 'PUT',    path: '/api/v1/tenants/{id}',                desc: 'update tenant' },
+    { method: 'DELETE', path: '/api/v1/tenants/{id}',                desc: 'delete tenant' },
+    { method: 'POST',   path: '/api/v1/tenants/{id}/suspend',        desc: 'suspend tenant' },
+    { method: 'POST',   path: '/api/v1/tenants/{id}/activate',       desc: 'activate tenant' },
+    { method: 'GET',    path: '/api/v1/apikeys',                     desc: 'list api keys' },
+    { method: 'POST',   path: '/api/v1/apikeys',                     desc: 'create api key' },
+    { method: 'GET',    path: '/api/v1/apikeys/{id}',                desc: 'get api key' },
+    { method: 'PUT',    path: '/api/v1/apikeys/{id}',                desc: 'update api key' },
+    { method: 'DELETE', path: '/api/v1/apikeys/{id}',                desc: 'delete api key' },
+    { method: 'POST',   path: '/api/v1/apikeys/{id}/enable',         desc: 'enable api key' },
+    { method: 'POST',   path: '/api/v1/apikeys/{id}/disable',        desc: 'disable api key' },
+    { method: 'GET',    path: '/api/v1/marketplace/plugins',         desc: 'list marketplace plugins' },
+    { method: 'POST',   path: '/api/v1/marketplace/plugins',         desc: 'register plugin' },
+    { method: 'GET',    path: '/api/v1/marketplace/plugins/{id}',    desc: 'get plugin' },
+    { method: 'DELETE', path: '/api/v1/marketplace/plugins/{id}',    desc: 'delete plugin' },
+    { method: 'POST',   path: '/api/v1/marketplace/plugins/{id}/install',   desc: 'install plugin' },
+    { method: 'POST',   path: '/api/v1/marketplace/plugins/{id}/uninstall', desc: 'uninstall plugin' },
+    { method: 'POST',   path: '/api/v1/marketplace/plugins/{id}/enable',    desc: 'enable plugin' },
+    { method: 'POST',   path: '/api/v1/marketplace/plugins/{id}/disable',   desc: 'disable plugin' },
+    { method: 'GET',    path: '/api/v1/billing/plans',               desc: 'list billing plans' },
+    { method: 'POST',   path: '/api/v1/billing/plans',               desc: 'create billing plan' },
+    { method: 'GET',    path: '/api/v1/billing/plans/{id}',          desc: 'get billing plan' },
+    { method: 'PUT',    path: '/api/v1/billing/plans/{id}',          desc: 'update billing plan' },
+    { method: 'DELETE', path: '/api/v1/billing/plans/{id}',          desc: 'delete billing plan' },
+    { method: 'GET',    path: '/api/v1/billing/subscriptions',       desc: 'list subscriptions' },
+    { method: 'POST',   path: '/api/v1/billing/subscriptions',       desc: 'create subscription' },
+    { method: 'GET',    path: '/api/v1/billing/subscriptions/{id}',  desc: 'get subscription' },
+    { method: 'PUT',    path: '/api/v1/billing/subscriptions/{id}',  desc: 'update subscription' },
+    { method: 'DELETE', path: '/api/v1/billing/subscriptions/{id}',  desc: 'delete subscription' },
+    { method: 'GET',    path: '/api/v1/billing/invoices',            desc: 'list invoices' },
+    { method: 'GET',    path: '/api/v1/billing/invoices/{id}',       desc: 'get invoice' },
+    { method: 'GET',    path: '/api/v1/platform/config',             desc: 'get platform config' },
+    { method: 'PUT',    path: '/api/v1/platform/config',             desc: 'update platform config' },
+    { method: 'GET',    path: '/api/v1/platform/health',             desc: 'platform health check' },
+    { method: 'GET',    path: '/api/v1/platform/metrics',            desc: 'platform metrics' },
   ];
   const methodColor = { GET: 'badge-status-resolved', POST: 'badge-status-open', DELETE: 'badge-priority-urgent', PUT: 'badge-status-in_progress' };
   container.appendChild(el('table', { class: 'data-table data-table-compact' },
@@ -1935,6 +1973,611 @@ export function renderAutomationExecutionDetail(container, exec) {
     ));
   }
   container.appendChild(card);
+}
+
+// ============================================================================
+// Phase 6：平台化管理渲染（租户 / API Key / 插件市场 / 计费订阅 / 平台配置）
+// ============================================================================
+
+// --- 租户管理 ---
+
+// tenantStatusBadge 租户状态 badge。
+function tenantStatusBadge(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'active' || s === 'activated') return badge(t('tenant.active'), 'status-resolved');
+  if (s === 'suspended' || s === 'paused') return badge(t('tenant.suspended'), 'status-closed');
+  return badge(status || '-', 'status-in_progress');
+}
+
+// renderTenantPage 渲染租户表格。
+// handlers: { onEdit(t), onSuspend(id), onActivate(id), onDelete(id) }
+export function renderTenantPage(container, tenants, handlers) {
+  container.innerHTML = '';
+  if (!tenants || !tenants.length) { renderEmpty(container, t('tenant.list')); return; }
+  container.appendChild(el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('common.id') }),
+        el('th', { text: t('tenant.tenantName') }),
+        el('th', { text: t('tenant.tenantCode') }),
+        el('th', { text: t('tenant.plan') }),
+        el('th', { text: t('tenant.status') }),
+        el('th', { text: t('common.createdAt') }),
+        el('th', { class: 'th-actions', text: t('common.actions') })
+      )
+    ),
+    el('tbody', null,
+      tenants.map((tn) => {
+        const suspended = String(tn.status || '').toLowerCase() === 'suspended';
+        return el('tr', null,
+          el('td', { class: 'mono', text: tn.id }),
+          el('td', { class: 'cell-title', text: tn.name }),
+          el('td', { class: 'mono', text: tn.code || '-' }),
+          el('td', { text: tn.plan || '-' }),
+          el('td', null, tenantStatusBadge(tn.status)),
+          el('td', { class: 'mono', text: formatTime(tn.createdAt) }),
+          el('td', { class: 'td-actions' },
+            el('button', { class: 'btn btn-ghost', title: t('common.edit'), onclick: () => handlers.onEdit && handlers.onEdit(tn) },
+              iconEl('edit', 14)
+            ),
+            suspended
+              ? el('button', { class: 'btn btn-ghost', title: t('tenant.activate'), onclick: () => handlers.onActivate && handlers.onActivate(tn.id) },
+                  iconEl('toggle_off', 14))
+              : el('button', { class: 'btn btn-ghost', title: t('tenant.suspend'), onclick: () => handlers.onSuspend && handlers.onSuspend(tn.id) },
+                  iconEl('toggle_on', 14)),
+            el('button', { class: 'btn btn-ghost btn-icon-danger', title: t('common.delete'), onclick: () => handlers.onDelete && handlers.onDelete(tn.id) },
+              iconEl('trash', 14))
+          )
+        );
+      })
+    )
+  ));
+}
+
+// renderTenantForm 渲染租户创建/编辑表单。
+// tenant: 编辑时传入，创建时传 null；handlers: { onSubmit(data), onCancel() }
+export function renderTenantForm(container, tenant, handlers) {
+  container.innerHTML = '';
+  const isEdit = !!tenant;
+  const form = el('form', { class: 'form-card', onsubmit: (e) => {
+    e.preventDefault();
+    const data = {
+      name: form.elements.name.value.trim(),
+      code: form.elements.code.value.trim(),
+      plan: form.elements.plan.value.trim(),
+      description: form.elements.description.value.trim(),
+    };
+    handlers.onSubmit && handlers.onSubmit(data);
+  } });
+  form.appendChild(el('h3', { class: 'form-title', text: isEdit ? t('tenant.edit') : t('tenant.create') }));
+  form.appendChild(fieldRow(t('tenant.tenantName'), true,
+    el('input', { name: 'name', type: 'text', required: 'true', value: (tenant && tenant.name) || '', placeholder: t('tenant.nameRequired') })
+  ));
+  form.appendChild(fieldRow(t('tenant.tenantCode'), true,
+    el('input', { name: 'code', type: 'text', required: 'true', value: (tenant && tenant.code) || '', placeholder: 'acme-corp' })
+  ));
+  form.appendChild(fieldRow(t('tenant.plan'), false,
+    el('select', { name: 'plan' },
+      ['', 'free', 'pro', 'enterprise'].map((p) =>
+        el('option', { value: p, text: p || '-', selected: (tenant && tenant.plan === p) ? 'selected' : undefined })
+      )
+    )
+  ));
+  form.appendChild(fieldRow(t('common.description'), false,
+    el('input', { name: 'description', type: 'text', value: (tenant && tenant.description) || '', placeholder: t('common.description') })
+  ));
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' },
+      iconEl('check', 16), el('span', { text: t('common.save') })
+    ),
+    el('button', { type: 'button', class: 'btn btn-ghost', onclick: () => handlers.onCancel && handlers.onCancel() },
+      el('span', { text: t('common.cancel') })
+    )
+  ));
+  container.appendChild(form);
+}
+
+// --- API Key 管理 ---
+
+// apiKeyStatusBadge API Key 状态 badge。
+function apiKeyStatusBadge(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'enabled' || s === 'active') return badge(t('common.enabled'), 'status-resolved');
+  if (s === 'disabled' || s === 'inactive') return badge(t('common.disabled'), 'status-closed');
+  return badge(status || '-', 'status-in_progress');
+}
+
+// renderAPIKeyPage 渲染 API Key 表格。
+// handlers: { onEdit(k), onToggle(k), onDelete(id) }
+export function renderAPIKeyPage(container, apikeys, handlers) {
+  container.innerHTML = '';
+  if (!apikeys || !apikeys.length) { renderEmpty(container, t('apikey.list')); return; }
+  container.appendChild(el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('common.id') }),
+        el('th', { text: t('apikey.keyName') }),
+        el('th', { text: t('apikey.keyPrefix') }),
+        el('th', { text: t('apikey.scopes') }),
+        el('th', { text: t('common.status') }),
+        el('th', { text: t('apikey.expiresAt') }),
+        el('th', { text: t('apikey.lastUsedAt') }),
+        el('th', { class: 'th-actions', text: t('common.actions') })
+      )
+    ),
+    el('tbody', null,
+      apikeys.map((k) => {
+        const enabled = String(k.status || '').toLowerCase() !== 'disabled';
+        return el('tr', null,
+          el('td', { class: 'mono', text: k.id }),
+          el('td', { class: 'cell-title', text: k.name }),
+          el('td', { class: 'mono', text: k.prefix || (k.key ? String(k.key).slice(0, 8) + '…' : '-') }),
+          el('td', { class: 'mono', text: Array.isArray(k.scopes) ? k.scopes.join(',') : (k.scopes || '-') }),
+          el('td', null, apiKeyStatusBadge(k.status)),
+          el('td', { class: 'mono', text: formatTime(k.expiresAt) }),
+          el('td', { class: 'mono', text: formatTime(k.lastUsedAt) }),
+          el('td', { class: 'td-actions' },
+            el('button', { class: 'btn btn-ghost', title: t('common.edit'), onclick: () => handlers.onEdit && handlers.onEdit(k) },
+              iconEl('edit', 14)
+            ),
+            enabled
+              ? el('button', { class: 'btn-icon', title: t('common.disable'), onclick: () => handlers.onToggle && handlers.onToggle(k) },
+                  iconEl('toggle_on', 14))
+              : el('button', { class: 'btn-icon', title: t('common.enable'), onclick: () => handlers.onToggle && handlers.onToggle(k) },
+                  iconEl('toggle_off', 14)),
+            el('button', { class: 'btn-icon btn-icon-danger', title: t('common.delete'), onclick: () => handlers.onDelete && handlers.onDelete(k.id) },
+              iconEl('trash', 14))
+          )
+        );
+      })
+    )
+  ));
+}
+
+// renderAPIKeyForm 渲染创建 API Key 表单。
+// handlers: { onSubmit(data), onCancel() }
+export function renderAPIKeyForm(container, handlers) {
+  container.innerHTML = '';
+  const form = el('form', { class: 'form-card', onsubmit: (e) => {
+    e.preventDefault();
+    const data = {
+      name: form.elements.name.value.trim(),
+      scopes: form.elements.scopes.value.trim(),
+      expiresAt: form.elements.expiresAt.value.trim(),
+    };
+    handlers.onSubmit && handlers.onSubmit(data);
+  } });
+  form.appendChild(el('h3', { class: 'form-title', text: t('apikey.create') }));
+  form.appendChild(fieldRow(t('apikey.keyName'), true,
+    el('input', { name: 'name', type: 'text', required: 'true', placeholder: t('apikey.nameRequired') })
+  ));
+  form.appendChild(fieldRow(t('apikey.scopes'), false,
+    el('input', { name: 'scopes', type: 'text', placeholder: 'read,write,admin' })
+  ));
+  form.appendChild(fieldRow(t('apikey.expiresAt'), false,
+    el('input', { name: 'expiresAt', type: 'datetime-local' })
+  ));
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' },
+      iconEl('check', 16), el('span', { text: t('common.save') })
+    ),
+    el('button', { type: 'button', class: 'btn btn-ghost', onclick: () => handlers.onCancel && handlers.onCancel() },
+      el('span', { text: t('common.cancel') })
+    )
+  ));
+  container.appendChild(form);
+}
+
+// renderAPIKeyGenerated 渲染创建后生成的密钥展示（含复制按钮）。
+// handlers: { onDone() }
+export function renderAPIKeyGenerated(container, key, handlers) {
+  container.innerHTML = '';
+  const card = el('div', { class: 'form-card' });
+  card.appendChild(el('h3', { class: 'form-title', text: t('apikey.generatedKey') }));
+  card.appendChild(el('p', { class: 'metrics-hint', text: t('apikey.generatedHint') }));
+  const keyValue = (key && (key.key || key.apiKey || key.secret)) || String(key || '');
+  card.appendChild(el('div', { class: 'form-row' },
+    el('label', { class: 'form-label', text: t('apikey.generatedKey') }),
+    el('div', { class: 'form-control' },
+      el('pre', { style: { whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '.85rem', margin: '0 0 .5rem' }, text: keyValue })
+    )
+  ));
+  card.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'button', class: 'btn btn-primary', onclick: () => {
+      try { navigator.clipboard.writeText(keyValue); } catch (_) { /* 静默 */ }
+      renderToast(t('apikey.keyCopied'), 'success');
+    } }, iconEl('check', 16), el('span', { text: t('apikey.copyKey') })),
+    el('button', { type: 'button', class: 'btn btn-ghost', onclick: () => handlers.onDone && handlers.onDone() },
+      el('span', { text: t('common.back') })
+    )
+  ));
+  container.appendChild(card);
+}
+
+// --- 插件市场 ---
+
+// pluginInstallBadge 插件安装状态 badge。
+function pluginInstallBadge(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'installed') return badge(t('plugin.installed'), 'status-resolved');
+  if (s === 'notinstalled' || s === 'not_installed' || s === '' ) return badge(t('plugin.notInstalled'), 'status-closed');
+  return badge(status || '-', 'status-in_progress');
+}
+
+// renderPluginPage 渲染插件表格。
+// handlers: { onInstall(id), onUninstall(id), onToggle(p), onDelete(id) }
+export function renderPluginPage(container, plugins, handlers) {
+  container.innerHTML = '';
+  if (!plugins || !plugins.length) { renderEmpty(container, t('plugin.list')); return; }
+  container.appendChild(el('table', { class: 'data-table' },
+    el('thead', null,
+      el('tr', null,
+        el('th', { text: t('common.id') }),
+        el('th', { text: t('plugin.pluginName') }),
+        el('th', { text: t('plugin.version') }),
+        el('th', { text: t('plugin.source') }),
+        el('th', { text: t('plugin.installStatus') }),
+        el('th', { text: t('common.status') }),
+        el('th', { class: 'th-actions', text: t('common.actions') })
+      )
+    ),
+    el('tbody', null,
+      plugins.map((p) => {
+        const installed = String(p.installStatus || p.installed || '').toLowerCase() === 'installed';
+        const enabled = String(p.status || '').toLowerCase() !== 'disabled';
+        return el('tr', null,
+          el('td', { class: 'mono', text: p.id }),
+          el('td', { class: 'cell-title', text: p.name }),
+          el('td', { class: 'mono', text: p.version || '-' }),
+          el('td', { class: 'mono', text: p.source || '-' }),
+          el('td', null, pluginInstallBadge(p.installStatus || (installed ? 'installed' : 'notinstalled'))),
+          el('td', null, apiKeyStatusBadge(p.status)),
+          el('td', { class: 'td-actions' },
+            installed
+              ? el('button', { class: 'btn btn-ghost', title: t('plugin.uninstall'), onclick: () => handlers.onUninstall && handlers.onUninstall(p.id) },
+                  iconEl('trash', 14))
+              : el('button', { class: 'btn btn-ghost', title: t('plugin.install'), onclick: () => handlers.onInstall && handlers.onInstall(p.id) },
+                  iconEl('download', 14)),
+            installed
+              ? (enabled
+                  ? el('button', { class: 'btn-icon', title: t('common.disable'), onclick: () => handlers.onToggle && handlers.onToggle(p) },
+                      iconEl('toggle_on', 14))
+                  : el('button', { class: 'btn-icon', title: t('common.enable'), onclick: () => handlers.onToggle && handlers.onToggle(p) },
+                      iconEl('toggle_off', 14)))
+              : null,
+            el('button', { class: 'btn-icon btn-icon-danger', title: t('common.delete'), onclick: () => handlers.onDelete && handlers.onDelete(p.id) },
+              iconEl('trash', 14))
+          )
+        );
+      })
+    )
+  ));
+}
+
+// renderPluginForm 渲染插件注册表单。
+// handlers: { onSubmit(data), onCancel() }
+export function renderPluginForm(container, handlers) {
+  container.innerHTML = '';
+  const form = el('form', { class: 'form-card', onsubmit: (e) => {
+    e.preventDefault();
+    const data = {
+      name: form.elements.name.value.trim(),
+      version: form.elements.version.value.trim(),
+      source: form.elements.source.value.trim(),
+      description: form.elements.description.value.trim(),
+    };
+    handlers.onSubmit && handlers.onSubmit(data);
+  } });
+  form.appendChild(el('h3', { class: 'form-title', text: t('plugin.register') }));
+  form.appendChild(fieldRow(t('plugin.pluginName'), true,
+    el('input', { name: 'name', type: 'text', required: 'true', placeholder: t('plugin.nameRequired') })
+  ));
+  form.appendChild(fieldRow(t('plugin.version'), false,
+    el('input', { name: 'version', type: 'text', placeholder: '1.0.0' })
+  ));
+  form.appendChild(fieldRow(t('plugin.source'), false,
+    el('input', { name: 'source', type: 'text', placeholder: 'registry / git url' })
+  ));
+  form.appendChild(fieldRow(t('common.description'), false,
+    el('input', { name: 'description', type: 'text', placeholder: t('common.description') })
+  ));
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' },
+      iconEl('check', 16), el('span', { text: t('common.save') })
+    ),
+    el('button', { type: 'button', class: 'btn btn-ghost', onclick: () => handlers.onCancel && handlers.onCancel() },
+      el('span', { text: t('common.cancel') })
+    )
+  ));
+  container.appendChild(form);
+}
+
+// --- 计费订阅 ---
+
+// renderBillingPage 渲染计费页（计划 / 订阅 / 账单 三子区域）。
+// handlers: { onCreatePlan(), onEditPlan(p), onDeletePlan(id), onCreateSub(), onEditSub(s), onDeleteSub(id) }
+export function renderBillingPage(container, plans, subscriptions, invoices, handlers) {
+  container.innerHTML = '';
+  // 计划区
+  const plansHost = el('div', { class: 'content', style: { marginBottom: '1rem' } });
+  plansHost.appendChild(el('h3', { class: 'form-title', text: t('billing.plans') }));
+  if (!plans || !plans.length) {
+    plansHost.appendChild(el('div', { class: 'state state-empty', text: t('common.empty') }));
+  } else {
+    plansHost.appendChild(el('table', { class: 'data-table' },
+      el('thead', null,
+        el('tr', null,
+          el('th', { text: t('common.id') }),
+          el('th', { text: t('billing.planName') }),
+          el('th', { text: t('billing.price') }),
+          el('th', { text: t('billing.interval') }),
+          el('th', { class: 'th-actions', text: t('common.actions') })
+        )
+      ),
+      el('tbody', null,
+        plans.map((p) => el('tr', null,
+          el('td', { class: 'mono', text: p.id }),
+          el('td', { class: 'cell-title', text: p.name }),
+          el('td', { class: 'mono', text: String(p.price != null ? p.price : '-') }),
+          el('td', { text: p.interval || '-' }),
+          el('td', { class: 'td-actions' },
+            el('button', { class: 'btn btn-ghost', title: t('common.edit'), onclick: () => handlers.onEditPlan && handlers.onEditPlan(p) },
+              iconEl('edit', 14)),
+            el('button', { class: 'btn-icon btn-icon-danger', title: t('common.delete'), onclick: () => handlers.onDeletePlan && handlers.onDeletePlan(p.id) },
+              iconEl('trash', 14))
+          )
+        ))
+      )
+    ));
+  }
+  container.appendChild(plansHost);
+
+  // 订阅区
+  const subsHost = el('div', { class: 'content', style: { marginBottom: '1rem' } });
+  subsHost.appendChild(el('h3', { class: 'form-title', text: t('billing.subscriptions') }));
+  if (!subscriptions || !subscriptions.length) {
+    subsHost.appendChild(el('div', { class: 'state state-empty', text: t('common.empty') }));
+  } else {
+    subsHost.appendChild(el('table', { class: 'data-table' },
+      el('thead', null,
+        el('tr', null,
+          el('th', { text: t('common.id') }),
+          el('th', { text: t('billing.subTenant') }),
+          el('th', { text: t('billing.subPlan') }),
+          el('th', { text: t('billing.subStatus') }),
+          el('th', { text: t('billing.subStart') }),
+          el('th', { text: t('billing.subEnd') }),
+          el('th', { class: 'th-actions', text: t('common.actions') })
+        )
+      ),
+      el('tbody', null,
+        subscriptions.map((s) => el('tr', null,
+          el('td', { class: 'mono', text: s.id }),
+          el('td', { class: 'mono', text: s.tenantID || s.tenantId || '-' }),
+          el('td', { text: s.planID || s.planId || s.plan || '-' }),
+          el('td', null, badge(s.status || '-', 'status-in_progress')),
+          el('td', { class: 'mono', text: formatTime(s.startedAt || s.start) }),
+          el('td', { class: 'mono', text: formatTime(s.endedAt || s.end) }),
+          el('td', { class: 'td-actions' },
+            el('button', { class: 'btn btn-ghost', title: t('common.edit'), onclick: () => handlers.onEditSub && handlers.onEditSub(s) },
+              iconEl('edit', 14)),
+            el('button', { class: 'btn-icon btn-icon-danger', title: t('common.delete'), onclick: () => handlers.onDeleteSub && handlers.onDeleteSub(s.id) },
+              iconEl('trash', 14))
+          )
+        ))
+      )
+    ));
+  }
+  container.appendChild(subsHost);
+
+  // 账单区
+  const invHost = el('div', { class: 'content' });
+  invHost.appendChild(el('h3', { class: 'form-title', text: t('billing.invoices') }));
+  if (!invoices || !invoices.length) {
+    invHost.appendChild(el('div', { class: 'state state-empty', text: t('common.empty') }));
+  } else {
+    invHost.appendChild(el('table', { class: 'data-table' },
+      el('thead', null,
+        el('tr', null,
+          el('th', { text: t('billing.invoiceNo') }),
+          el('th', { text: t('billing.subTenant') }),
+          el('th', { text: t('billing.invoiceAmount') }),
+          el('th', { text: t('billing.invoiceStatus') }),
+          el('th', { text: t('billing.invoicePeriod') })
+        )
+      ),
+      el('tbody', null,
+        invoices.map((iv) => {
+          const paid = String(iv.status || '').toLowerCase() === 'paid';
+          return el('tr', null,
+            el('td', { class: 'mono', text: iv.id || iv.number || '-' }),
+            el('td', { class: 'mono', text: iv.tenantID || iv.tenantId || '-' }),
+            el('td', { class: 'mono', text: String(iv.amount != null ? iv.amount : '-') }),
+            el('td', null, badge(paid ? t('billing.paid') : t('billing.unpaid'), paid ? 'status-resolved' : 'status-closed')),
+            el('td', { class: 'mono', text: formatTime(iv.period || iv.createdAt) })
+          );
+        })
+      )
+    ));
+  }
+  container.appendChild(invHost);
+}
+
+// renderBillingPlanForm 渲染计费计划创建/编辑表单。
+// plan: 编辑时传入；handlers: { onSubmit(data), onCancel() }
+export function renderBillingPlanForm(container, plan, handlers) {
+  container.innerHTML = '';
+  const isEdit = !!plan;
+  const form = el('form', { class: 'form-card', onsubmit: (e) => {
+    e.preventDefault();
+    const data = {
+      name: form.elements.name.value.trim(),
+      price: parseFloat(form.elements.price.value) || 0,
+      interval: form.elements.interval.value.trim(),
+      features: form.elements.features.value.trim(),
+    };
+    handlers.onSubmit && handlers.onSubmit(data);
+  } });
+  form.appendChild(el('h3', { class: 'form-title', text: isEdit ? t('billing.editPlan') : t('billing.createPlan') }));
+  form.appendChild(fieldRow(t('billing.planName'), true,
+    el('input', { name: 'name', type: 'text', required: 'true', value: (plan && plan.name) || '', placeholder: t('billing.planNameRequired') })
+  ));
+  form.appendChild(fieldRow(t('billing.price'), false,
+    el('input', { name: 'price', type: 'number', min: '0', step: '0.01', value: String((plan && plan.price) != null ? (plan && plan.price) : 0) })
+  ));
+  form.appendChild(fieldRow(t('billing.interval'), false,
+    el('select', { name: 'interval' },
+      ['monthly', 'yearly', 'daily'].map((iv) =>
+        el('option', { value: iv, text: iv, selected: (plan && plan.interval === iv) ? 'selected' : undefined })
+      )
+    )
+  ));
+  form.appendChild(fieldRow(t('billing.features'), false,
+    el('input', { name: 'features', type: 'text', value: (plan && plan.features) || '', placeholder: 'feature1,feature2' })
+  ));
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' },
+      iconEl('check', 16), el('span', { text: t('common.save') })
+    ),
+    el('button', { type: 'button', class: 'btn btn-ghost', onclick: () => handlers.onCancel && handlers.onCancel() },
+      el('span', { text: t('common.cancel') })
+    )
+  ));
+  container.appendChild(form);
+}
+
+// renderSubscriptionForm 渲染订阅创建/编辑表单。
+// sub: 编辑时传入；handlers: { onSubmit(data), onCancel() }
+export function renderSubscriptionForm(container, sub, handlers) {
+  container.innerHTML = '';
+  const isEdit = !!sub;
+  const form = el('form', { class: 'form-card', onsubmit: (e) => {
+    e.preventDefault();
+    const data = {
+      tenantID: form.elements.tenantID.value.trim(),
+      planID: form.elements.planID.value.trim(),
+    };
+    handlers.onSubmit && handlers.onSubmit(data);
+  } });
+  form.appendChild(el('h3', { class: 'form-title', text: isEdit ? t('billing.editSub') : t('billing.createSub') }));
+  form.appendChild(fieldRow(t('billing.subTenant'), true,
+    el('input', { name: 'tenantID', type: 'text', required: 'true', value: (sub && (sub.tenantID || sub.tenantId)) || '', placeholder: 'tenant id' })
+  ));
+  form.appendChild(fieldRow(t('billing.subPlan'), true,
+    el('input', { name: 'planID', type: 'text', required: 'true', value: (sub && (sub.planID || sub.planId)) || '', placeholder: 'plan id' })
+  ));
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' },
+      iconEl('check', 16), el('span', { text: t('common.save') })
+    ),
+    el('button', { type: 'button', class: 'btn btn-ghost', onclick: () => handlers.onCancel && handlers.onCancel() },
+      el('span', { text: t('common.cancel') })
+    )
+  ));
+  container.appendChild(form);
+}
+
+// --- 平台配置 ---
+
+// healthStatusBadge 健康状态 badge。
+function healthStatusBadge(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'healthy' || s === 'ok' || s === 'up') return badge(t('platform.healthy'), 'status-resolved');
+  if (s === 'unhealthy' || s === 'down' || s === 'error') return badge(t('platform.unhealthy'), 'status-closed');
+  if (s === 'degraded' || s === 'warn') return badge(t('platform.degraded'), 'status-in_progress');
+  return badge(status || '-', 'status-in_progress');
+}
+
+// renderPlatformPage 渲染平台配置页（配置表单 + 健康状态 + 指标仪表盘）。
+// handlers: { onSaveConfig(data) }
+export function renderPlatformPage(container, config, health, metrics, handlers) {
+  container.innerHTML = '';
+  // 配置表单区
+  const configHost = el('div', { class: 'content', style: { marginBottom: '1rem' } });
+  configHost.appendChild(el('h3', { class: 'form-title', text: t('platform.config') }));
+  const form = el('form', { class: 'form-card', onsubmit: (e) => {
+    e.preventDefault();
+    const data = {};
+    for (let i = 0; i < form.elements.length; i++) {
+      const fe = form.elements[i];
+      if (fe.name) data[fe.name] = fe.value;
+    }
+    handlers.onSaveConfig && handlers.onSaveConfig(data);
+  } });
+  const cfg = (config && typeof config === 'object') ? config : {};
+  const cfgKeys = Object.keys(cfg);
+  if (!cfgKeys.length) {
+    form.appendChild(el('p', { class: 'metrics-hint', text: t('common.empty') }));
+  } else {
+    cfgKeys.forEach((k) => {
+      form.appendChild(fieldRow(k, false,
+        el('input', { name: k, type: 'text', value: String(cfg[k] != null ? cfg[k] : '') })
+      ));
+    });
+  }
+  form.appendChild(el('div', { class: 'form-actions' },
+    el('button', { type: 'submit', class: 'btn btn-primary' },
+      iconEl('check', 16), el('span', { text: t('platform.saveConfig') })
+    )
+  ));
+  configHost.appendChild(form);
+  container.appendChild(configHost);
+
+  // 健康检查区
+  const healthHost = el('div', { class: 'content', style: { marginBottom: '1rem' } });
+  healthHost.appendChild(el('h3', { class: 'form-title', text: t('platform.health') }));
+  const healthItems = (health && (health.components || health.checks || (Array.isArray(health) ? health : null))) || [];
+  if (health && !healthItems.length && health.status) {
+    healthHost.appendChild(el('div', { class: 'form-row' },
+      el('label', { class: 'form-label', text: t('platform.status') }),
+      el('div', { class: 'form-control' }, healthStatusBadge(health.status))
+    ));
+  } else if (healthItems.length) {
+    healthHost.appendChild(el('table', { class: 'data-table' },
+      el('thead', null,
+        el('tr', null,
+          el('th', { text: t('platform.component') }),
+          el('th', { text: t('platform.status') }),
+          el('th', { text: t('platform.latency') })
+        )
+      ),
+      el('tbody', null,
+        healthItems.map((c) => el('tr', null,
+          el('td', { class: 'cell-title', text: c.name || c.component || '-' }),
+          el('td', null, healthStatusBadge(c.status)),
+          el('td', { class: 'mono', text: String(c.latency != null ? c.latency : '-') })
+        ))
+      )
+    ));
+  } else {
+    healthHost.appendChild(el('div', { class: 'state state-empty', text: t('common.empty') }));
+  }
+  container.appendChild(healthHost);
+
+  // 指标区
+  const metricsHost = el('div', { class: 'content' });
+  metricsHost.appendChild(el('h3', { class: 'form-title', text: t('platform.metrics') }));
+  const mObj = (metrics && typeof metrics === 'object') ? metrics : {};
+  const mKeys = Object.keys(mObj);
+  if (mKeys.length) {
+    metricsHost.appendChild(el('table', { class: 'data-table' },
+      el('thead', null,
+        el('tr', null,
+          el('th', { text: t('platform.metricName') }),
+          el('th', { text: t('platform.metricValue') })
+        )
+      ),
+      el('tbody', null,
+        mKeys.map((mk) => el('tr', null,
+          el('td', { class: 'cell-title', text: mk }),
+          el('td', { class: 'mono', text: String(mObj[mk]) })
+        ))
+      )
+    ));
+  } else {
+    metricsHost.appendChild(el('div', { class: 'state state-empty', text: t('common.empty') }));
+  }
+  container.appendChild(metricsHost);
 }
 
 // ============================================================================

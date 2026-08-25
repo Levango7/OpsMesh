@@ -640,6 +640,82 @@ type ScriptStore interface {
 	ListScriptExecutions(tenantID, scriptID string) []*ScriptExecution
 }
 
+// TenantStore P6 租户管理：CRUD + 启停。
+type TenantStore interface {
+	// CreateTenant 创建租户。ID 为空时由 store 分配随机 ID。
+	// 返回持久化后的租户（含分配的 ID）。
+	CreateTenant(tenant *Tenant) *Tenant
+	// GetTenant 按 ID 返回单个租户（不存在返回 (nil, false)）。
+	GetTenant(id string) (*Tenant, bool)
+	// UpdateTenant 更新租户（按 tenant.ID 定位）。不存在返回 (nil, false)。
+	UpdateTenant(tenant *Tenant) (*Tenant, bool)
+	// ListTenants 返回全部租户（按创建时间升序）。
+	ListTenants() []*Tenant
+	// DeleteTenant 按 ID 删除租户。不存在返回 false。
+	DeleteTenant(id string) bool
+}
+
+// APIKeyStore P6 API Key 管理：CRUD + 启停。
+type APIKeyStore interface {
+	// CreateAPIKey 创建 API Key。ID 为空时由 store 分配随机 ID；
+	// TenantID 为空时归一为 default。返回持久化后的 API Key（含分配的 ID）。
+	CreateAPIKey(tenantID string, key *APIKey) *APIKey
+	// GetAPIKey 按 (tenantID, id) 返回单个 API Key（不存在返回 (nil, false)）。
+	GetAPIKey(tenantID, id string) (*APIKey, bool)
+	// UpdateAPIKey 更新 API Key（按 key.ID 定位，校验 tenantID 归属）。不存在或越权返回 (nil, false)。
+	UpdateAPIKey(tenantID string, key *APIKey) (*APIKey, bool)
+	// ListAPIKeys 返回指定租户的全部 API Key（按创建时间降序）。
+	// tenantID 为空串时返回全部租户的 API Key（供 platform.APIKeyManager.ValidateKey 全租户扫描）。
+	ListAPIKeys(tenantID string) []*APIKey
+	// DeleteAPIKey 删除 API Key，返回是否删除成功（不存在或租户不匹配返回 false）。
+	DeleteAPIKey(tenantID, id string) bool
+}
+
+// PluginStore P6 插件市场：CRUD + 安装/卸载。
+type PluginStore interface {
+	// CreatePlugin 创建插件。ID 为空时由 store 分配随机 ID。
+	// 返回持久化后的插件（含分配的 ID）。
+	CreatePlugin(plugin *Plugin) *Plugin
+	// GetPlugin 按 ID 返回单个插件（不存在返回 (nil, false)）。
+	GetPlugin(id string) (*Plugin, bool)
+	// UpdatePlugin 更新插件（按 plugin.ID 定位）。不存在返回 (nil, false)。
+	UpdatePlugin(plugin *Plugin) (*Plugin, bool)
+	// ListPlugins 返回全部插件（按创建时间升序）。
+	ListPlugins() []*Plugin
+	// DeletePlugin 按 ID 删除插件。不存在返回 false。
+	DeletePlugin(id string) bool
+}
+
+// BillingStore P6 计费：计划/订阅/账单 CRUD。
+type BillingStore interface {
+	// CreateBillingPlan 创建订阅计划。ID 为空时由 store 分配随机 ID。
+	CreateBillingPlan(plan *SubscriptionPlan) *SubscriptionPlan
+	// GetBillingPlan 按 ID 返回单个订阅计划（不存在返回 (nil, false)）。
+	GetBillingPlan(id string) (*SubscriptionPlan, bool)
+	// ListBillingPlans 返回全部订阅计划（按创建时间升序）。
+	ListBillingPlans() []*SubscriptionPlan
+	// UpdateBillingPlan 更新订阅计划（按 plan.ID 定位）。不存在返回 (nil, false)。
+	UpdateBillingPlan(plan *SubscriptionPlan) (*SubscriptionPlan, bool)
+	// DeleteBillingPlan 按 ID 删除订阅计划。不存在返回 false。
+	DeleteBillingPlan(id string) bool
+	// CreateSubscription 创建订阅。ID 为空时由 store 分配随机 ID。
+	CreateSubscription(sub *Subscription) *Subscription
+	// GetSubscription 按 ID 返回单个订阅（不存在返回 (nil, false)）。
+	GetSubscription(id string) (*Subscription, bool)
+	// ListSubscriptions 返回指定租户的全部订阅（按创建时间降序）。
+	ListSubscriptions(tenantID string) []*Subscription
+	// UpdateSubscription 更新订阅（按 sub.ID 定位）。不存在返回 (nil, false)。
+	UpdateSubscription(sub *Subscription) (*Subscription, bool)
+	// DeleteSubscription 按 ID 删除订阅。不存在返回 false。
+	DeleteSubscription(id string) bool
+	// CreateInvoice 创建账单。ID 为空时由 store 分配随机 ID。
+	CreateInvoice(inv *Invoice) *Invoice
+	// GetInvoice 按 ID 返回单个账单（不存在返回 (nil, false)）。
+	GetInvoice(id string) (*Invoice, bool)
+	// ListInvoices 返回指定租户的全部账单（按创建时间降序）。
+	ListInvoices(tenantID string) []*Invoice
+}
+
 // Store 控制面注册表的可插拔持久化组合接口。
 // 由 12 个领域小接口组合而成（拆分 + 用户中心扩展 + K8s 集群管理 + OS/中间件模板 + 刷新令牌），
 // 方法签名刻意与旧版内存 Registry 保持一致，便于平滑替换。
@@ -679,6 +755,10 @@ type Store interface {
 	AutomationStore       // P4 自动化闭环：规则 CRUD + 启停 + 执行记录
 	WebhookStore          // P5 Webhook：CRUD + 投递记录
 	ScriptStore           // P5 自定义脚本：CRUD + 执行记录
+	TenantStore           // P6 租户管理：CRUD
+	APIKeyStore           // P6 API Key 管理：CRUD
+	PluginStore           // P6 插件市场：CRUD
+	BillingStore          // P6 计费：计划/订阅/账单 CRUD
 
 	// WithDemo 设置是否开启演示模式：开启时每个 agent 注册预置 uname -a 示例任务。
 	WithDemo(bool) Store
@@ -718,6 +798,10 @@ var (
 	_ AutomationStore       = (*MemoryStore)(nil)
 	_ WebhookStore          = (*MemoryStore)(nil)
 	_ ScriptStore           = (*MemoryStore)(nil)
+	_ TenantStore           = (*MemoryStore)(nil)
+	_ APIKeyStore           = (*MemoryStore)(nil)
+	_ PluginStore           = (*MemoryStore)(nil)
+	_ BillingStore          = (*MemoryStore)(nil)
 	_ Store                 = (*MemoryStore)(nil)
 
 	_ DeviceStore           = (*SQLStore)(nil)
@@ -751,5 +835,9 @@ var (
 	_ AutomationStore       = (*SQLStore)(nil)
 	_ WebhookStore          = (*SQLStore)(nil)
 	_ ScriptStore           = (*SQLStore)(nil)
+	_ TenantStore           = (*SQLStore)(nil)
+	_ APIKeyStore           = (*SQLStore)(nil)
+	_ PluginStore           = (*SQLStore)(nil)
+	_ BillingStore          = (*SQLStore)(nil)
 	_ Store                 = (*SQLStore)(nil)
 )

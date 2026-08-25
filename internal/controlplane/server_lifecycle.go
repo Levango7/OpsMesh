@@ -153,6 +153,23 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/scripts", s.handleScripts)
 	mux.HandleFunc("/api/v1/scripts/", s.handleScriptRouting) // 子路径：{id} GET/PUT/DELETE、{id}/execute|executions
 
+	// Phase 6 平台化：租户管理 + API Key + 插件市场 + 计费 + 平台配置/健康/指标。
+	mux.HandleFunc("/api/v1/tenants", s.handleTenants)
+	mux.HandleFunc("/api/v1/tenants/", s.handleTenantRouting) // 子路径：{id} GET/PUT/DELETE、{id}/suspend|activate
+	mux.HandleFunc("/api/v1/apikeys", s.handleAPIKeys)
+	mux.HandleFunc("/api/v1/apikeys/", s.handleAPIKeyRouting) // 子路径：{id} GET/PUT/DELETE、{id}/enable|disable
+	mux.HandleFunc("/api/v1/marketplace/plugins", s.handleMarketplacePlugins)
+	mux.HandleFunc("/api/v1/marketplace/plugins/", s.handleMarketplacePluginRouting) // 子路径：{id} GET/DELETE、{id}/install|uninstall|enable|disable
+	mux.HandleFunc("/api/v1/billing/plans", s.handleBillingPlans)
+	mux.HandleFunc("/api/v1/billing/plans/", s.handleBillingPlanRouting)               // 子路径：{id} GET/PUT/DELETE
+	mux.HandleFunc("/api/v1/billing/subscriptions", s.handleBillingSubscriptions)       // GET 列表 / POST 创建
+	mux.HandleFunc("/api/v1/billing/subscriptions/", s.handleBillingSubscriptionRouting) // 子路径：{id} GET/PUT/DELETE
+	mux.HandleFunc("/api/v1/billing/invoices", s.handleBillingInvoices)                 // GET 列表
+	mux.HandleFunc("/api/v1/billing/invoices/", s.handleBillingInvoiceRouting)          // 子路径：{id} GET
+	mux.HandleFunc("/api/v1/platform/config", s.handlePlatformConfig)                   // GET/PUT 平台配置
+	mux.HandleFunc("/api/v1/platform/health", s.handlePlatformHealth)                   // GET 平台健康检查
+	mux.HandleFunc("/api/v1/platform/metrics", s.handlePlatformMetrics)                 // GET 平台指标汇总
+
 	// 密钥管理 API：查看 provider 状态 + 测试连接 + 列出密钥 key。
 	// status/keys 不返回 Vault token 与密钥值（安全考虑）；test 端点做 SSRF 校验。
 	mux.HandleFunc("/api/v1/secrets/status", s.handleSecretsStatus) // GET 当前 provider 配置概览

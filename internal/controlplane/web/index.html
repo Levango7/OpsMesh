@@ -265,6 +265,21 @@ a:hover{color:var(--accent-hover);}
       <button type="button" class="tab-btn" data-tab="script" data-i18n="nav.script">
         <span class="icon" data-icon="script"></span><span>自定义脚本</span>
       </button>
+      <button type="button" class="tab-btn" data-tab="tenant" data-i18n="nav.tenant">
+        <span class="icon" data-icon="tenant"></span><span>租户管理</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="apikey" data-i18n="nav.apikey">
+        <span class="icon" data-icon="apikey"></span><span>API Key</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="plugin" data-i18n="nav.plugin">
+        <span class="icon" data-icon="plugin"></span><span>插件市场</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="billing" data-i18n="nav.billing">
+        <span class="icon" data-icon="billing"></span><span>计费订阅</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="platform" data-i18n="nav.platform">
+        <span class="icon" data-icon="platform"></span><span>平台配置</span>
+      </button>
     </div>
   </nav>
 
@@ -413,6 +428,56 @@ a:hover{color:var(--accent-hover);}
       </div>
       <div id="script-toolbar" class="toolbar"></div>
       <div id="script-content" class="content"></div>
+    </section>
+
+    <!-- 租户管理 page -->
+    <section id="page-tenant" class="page">
+      <div class="page-head">
+        <h2>租户管理</h2>
+        <p>多租户隔离 / 创建 / 暂停 / 激活</p>
+      </div>
+      <div id="tenant-toolbar" class="toolbar"></div>
+      <div id="tenant-content" class="content"></div>
+    </section>
+
+    <!-- API Key 管理 page -->
+    <section id="page-apikey" class="page">
+      <div class="page-head">
+        <h2>API Key 管理</h2>
+        <p>访问密钥生成 / 启停 / 权限管理</p>
+      </div>
+      <div id="apikey-toolbar" class="toolbar"></div>
+      <div id="apikey-content" class="content"></div>
+    </section>
+
+    <!-- 插件市场 page -->
+    <section id="page-plugin" class="page">
+      <div class="page-head">
+        <h2>插件市场</h2>
+        <p>插件注册 / 安装 / 卸载 / 启停</p>
+      </div>
+      <div id="plugin-toolbar" class="toolbar"></div>
+      <div id="plugin-content" class="content"></div>
+    </section>
+
+    <!-- 计费订阅 page -->
+    <section id="page-billing" class="page">
+      <div class="page-head">
+        <h2>计费订阅</h2>
+        <p>计费计划 / 订阅管理 / 账单查询</p>
+      </div>
+      <div id="billing-toolbar" class="toolbar"></div>
+      <div id="billing-content" class="content"></div>
+    </section>
+
+    <!-- 平台配置 page -->
+    <section id="page-platform" class="page">
+      <div class="page-head">
+        <h2>平台配置</h2>
+        <p>平台全局配置 / 健康检查 / 运行指标</p>
+      </div>
+      <div id="platform-toolbar" class="toolbar"></div>
+      <div id="platform-content" class="content"></div>
     </section>
   </main>
 

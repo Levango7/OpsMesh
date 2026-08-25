@@ -142,6 +142,24 @@ type MemoryStore struct {
 	scripts map[string]*Script
 	// Phase 5 脚本执行记录：executionID -> 执行记录。
 	scriptExecutions map[string]*ScriptExecution
+	// Phase 6 租户管理：tenantID -> Tenant。
+	// 由 m.mu 保护并发安全。
+	tenants map[string]*Tenant
+	// Phase 6 API Key 管理：apiKeyID -> APIKey。
+	// 由 m.mu 保护并发安全；按 tenantID 隔离。
+	apiKeys map[string]*APIKey
+	// Phase 6 插件市场：pluginID -> Plugin。
+	// 由 m.mu 保护并发安全。
+	plugins map[string]*Plugin
+	// Phase 6 计费订阅计划：planID -> SubscriptionPlan。
+	// 由 m.mu 保护并发安全。
+	billingPlans map[string]*SubscriptionPlan
+	// Phase 6 计费订阅：subscriptionID -> Subscription。
+	// 由 m.mu 保护并发安全；按 tenantID 隔离。
+	subscriptions map[string]*Subscription
+	// Phase 6 计费账单：invoiceID -> Invoice。
+	// 由 m.mu 保护并发安全；按 tenantID 隔离。
+	invoices map[string]*Invoice
 }
 
 // tokenMeta B1 install token 元数据：一次性、限时，消费后标记 consumed。
@@ -323,6 +341,12 @@ func NewMemoryStore() *MemoryStore {
 		webhookDeliveries:   make(map[string]*WebhookDelivery),
 		scripts:             make(map[string]*Script),
 		scriptExecutions:    make(map[string]*ScriptExecution),
+		tenants:             make(map[string]*Tenant),
+		apiKeys:             make(map[string]*APIKey),
+		plugins:             make(map[string]*Plugin),
+		billingPlans:        make(map[string]*SubscriptionPlan),
+		subscriptions:       make(map[string]*Subscription),
+		invoices:            make(map[string]*Invoice),
 	}
 	m.seedRBAC()
 	return m

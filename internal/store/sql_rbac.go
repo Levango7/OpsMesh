@@ -332,6 +332,16 @@ var rbacPermSpecs = []struct {
 	{"script", "script:write", "管理自定义脚本"},
 	{"gateway", "gateway:read", "查看 API 网关"},
 	{"gateway", "gateway:write", "管理 API 网关"},
+	{"tenant", "tenant:read", "查看租户"},
+	{"tenant", "tenant:write", "管理租户"},
+	{"apikey", "apikey:read", "查看 API Key"},
+	{"apikey", "apikey:write", "管理 API Key"},
+	{"plugin", "plugin:read", "查看插件"},
+	{"plugin", "plugin:write", "管理插件"},
+	{"billing", "billing:read", "查看计费"},
+	{"billing", "billing:write", "管理计费"},
+	{"platform", "platform:read", "查看平台配置"},
+	{"platform", "platform:write", "管理平台配置"},
 }
 
 // seedRBAC 在 initSchema 末尾调用，幂等写入默认权限/角色/用户。

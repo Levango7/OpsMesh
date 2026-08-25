@@ -241,6 +241,29 @@ const RAW = {
     '<rect x="7" y="12" width="3" height="6"/>' +
     '<rect x="12" y="8" width="3" height="10"/>' +
     '<rect x="17" y="14" width="3" height="4"/>',
+  // Phase 6 tab 图标（平台化管理）
+  tenant:
+    '<rect x="3" y="8" width="18" height="13" rx="1"/>' +
+    '<path d="M3 8l9-5 9 5"/>' +
+    '<rect x="9" y="13" width="6" height="8"/>' +
+    '<path d="M7 21v-3M17 21v-3"/>',
+  apikey:
+    '<circle cx="8" cy="8" r="4"/>' +
+    '<path d="M11 11l9 9"/>' +
+    '<path d="M16 16l2-2M18 18l2-2"/>',
+  plugin:
+    '<path d="M9 3v4M15 3v4M9 17v4M15 17v4"/>' +
+    '<rect x="6" y="7" width="12" height="10" rx="1.5"/>' +
+    '<path d="M10 11h4"/>',
+  billing:
+    '<rect x="2" y="5" width="20" height="14" rx="2"/>' +
+    '<path d="M2 10h20"/>' +
+    '<path d="M6 15h4"/>',
+  platform:
+    '<rect x="3" y="4" width="18" height="16" rx="2"/>' +
+    '<circle cx="8" cy="10" r="1.5"/>' +
+    '<circle cx="16" cy="10" r="1.5"/>' +
+    '<path d="M8 14v2M16 14v2M12 12v4"/>',
 };
 
 // ICONS 对外暴露的图标字典（name -> raw inner SVG）。

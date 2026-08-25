@@ -631,3 +631,142 @@ type ScriptExecution struct {
 	StartedAt  time.Time  `json:"startedAt"`
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
 }
+
+// ============================================================================
+// Phase 6 平台化：租户 / API Key / 插件市场 / 计费
+// ============================================================================
+
+// TenantStatus 租户状态类型。
+// active：正常使用；suspended：暂停（超额/违规，可恢复）；disabled：停用（不可恢复）。
+type TenantStatus string
+
+const (
+	TenantStatusActive    TenantStatus = "active"
+	TenantStatusSuspended TenantStatus = "suspended"
+	TenantStatusDisabled  TenantStatus = "disabled"
+)
+
+// ResourceUsage 租户资源用量（实时统计）。
+// 由控制面周期填充，用于配额校验与计费。
+type ResourceUsage struct {
+	Devices     int `json:"devices"`     // 已纳管设备数
+	Tasks       int `json:"tasks"`       // 历史任务总数
+	ActiveTasks int `json:"activeTasks"` // 当前活跃任务数（pending+running）
+	Alerts      int `json:"alerts"`      // 活跃告警数
+	Agents      int `json:"agents"`      // 已注册 agent 数
+	Webhooks    int `json:"webhooks"`    // Webhook 数
+	APIKeys     int `json:"apiKeys"`     // API Key 数
+}
+
+// TenantQuota 租户资源配额。
+// 0 表示不限制（无限配额）；由 TenantManager.CheckQuota 校验。
+type TenantQuota struct {
+	MaxDevices     int `json:"maxDevices"`
+	MaxTasks       int `json:"maxTasks"`
+	MaxActiveTasks int `json:"maxActiveTasks"`
+	MaxAlerts      int `json:"maxAlerts"`
+	MaxAgents      int `json:"maxAgents"`
+	MaxWebhooks    int `json:"maxWebhooks"`
+	MaxAPIKeys     int `json:"maxAPIKeys"`
+}
+
+// Tenant 租户实体（Phase 6 平台化多租户隔离的核心载体）。
+//
+// 平台化支持多租户隔离：每个租户有独立的资源配额、API Key、订阅计划。
+// 由 TenantManager.ValidateTenant 校验合法性；CheckQuota 校验资源配额。
+type Tenant struct {
+	ID          string        `json:"id"`
+	Name        string        `json:"name"`        // 租户标识（唯一，URL-safe）
+	DisplayName string        `json:"displayName"` // 显示名称（人类可读）
+	Status      TenantStatus `json:"status"`      // active|suspended|disabled
+	Quota       TenantQuota  `json:"quota"`       // 资源配额
+	Usage       ResourceUsage `json:"usage"`      // 当前用量（实时统计）
+	CreatedAt   time.Time    `json:"createdAt"`
+	UpdatedAt   time.Time    `json:"updatedAt"`
+}
+
+// APIKey API Key 实体（Phase 6 程序化访问控制）。
+//
+// 用于 CI/CD 系统、自动化脚本、第三方集成等场景替代用户名/密码登录。
+// Key 字段存储 SHA-256 hash（明文仅在创建时返回一次）。
+type APIKey struct {
+	ID             string    `json:"id"`
+	TenantID       string    `json:"tenantID"`
+	Name           string    `json:"name"`     // 人类可读名称
+	Key            string    `json:"-"`        // SHA-256 hash；JSON 序列化时不输出（防泄露）
+	Scopes         []string  `json:"scopes"`   // 权限范围（如 ["device:read","task:write"]）
+	RateLimitPerSec int      `json:"rateLimitPerSec"` // 每秒限流（0=不限）
+	ExpiresAt      time.Time `json:"expiresAt"`       // 过期时间（零值=永不过期）
+	LastUsedAt     time.Time `json:"lastUsedAt"`      // 最后使用时间
+	Enabled        bool      `json:"enabled"`
+	CreatedAt      time.Time `json:"createdAt"`
+}
+
+// Plugin 插件实体（Phase 6 插件市场）。
+//
+// 支持三种类型：agent（扩展 agent 端）、controlplane（扩展控制面 API）、ui（扩展前端）。
+// DownloadURL 外链插件二进制/源码；Checksum（SHA-256）用于下载完整性校验。
+type Plugin struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Version     string    `json:"version"`
+	Description string    `json:"description"`
+	Author      string    `json:"author"`
+	Type        string    `json:"type"` // agent|controlplane|ui
+	DownloadURL string    `json:"downloadURL"`
+	Checksum    string    `json:"checksum"` // SHA-256
+	Installed   bool      `json:"installed"`
+	Enabled     bool      `json:"enabled"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
+// SubscriptionPlan 订阅计划实体（Phase 6 计费）。
+//
+// 定义价格/周期/功能/资源限额。Interval 为 monthly|yearly。
+// Price 单位为分（int），避免浮点精度问题。
+type SubscriptionPlan struct {
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Price         int      `json:"price"`     // 单位：分
+	Interval      string   `json:"interval"`  // monthly|yearly
+	Features      []string `json:"features"`  // 功能列表
+	ResourceLimits TenantQuota `json:"resourceLimits"` // 资源限额
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+// Subscription 订阅实体（Phase 6 计费）。
+//
+// 关联租户与计划，管理订阅生命周期。
+// Status: active|canceled|expired。
+type Subscription struct {
+	ID        string    `json:"id"`
+	TenantID  string    `json:"tenantID"`
+	PlanID    string    `json:"planID"`
+	Status    string    `json:"status"` // active|canceled|expired
+	StartedAt time.Time `json:"startedAt"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// InvoiceItem 账单明细项。
+type InvoiceItem struct {
+	Name      string `json:"name"`
+	Quantity  int    `json:"quantity"`
+	UnitPrice int    `json:"unitPrice"` // 单位：分
+	Amount    int    `json:"amount"`    // 单位：分
+}
+
+// Invoice 账单实体（Phase 6 计费）。
+//
+// 按订阅周期生成，记录消费明细。Status: pending|paid|overdue。
+type Invoice struct {
+	ID             string        `json:"id"`
+	TenantID       string        `json:"tenantID"`
+	SubscriptionID string        `json:"subscriptionID"`
+	Amount         int           `json:"amount"` // 单位：分
+	PeriodStart    time.Time     `json:"periodStart"`
+	PeriodEnd      time.Time     `json:"periodEnd"`
+	Status         string        `json:"status"` // pending|paid|overdue
+	Items          []InvoiceItem `json:"items"`
+	CreatedAt      time.Time     `json:"createdAt"`
+}
