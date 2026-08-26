@@ -4,10 +4,25 @@
 
 > 当前最新已发布版本：`v0.7.0`（2026-08-16）。`[Unreleased]` 段累积未发布变更，下一个发布版本号待定（按实际演进预计 `v0.8.0`；若按文档同步批次独立发版可记为 `v0.5.0`，由发布流程最终确定）。
 
+## [Unreleased] — 2026-08-27 技术债务清偿批次（测试覆盖率提升 + 编码修复 + 架构文档）
+
+### 测试覆盖率提升（Go 单元测试）
+- **internal/store**：50.9% → 74.6%，新增 `memory_crud_extra_test.go` 覆盖 apikey / argocd / automation / backup / billing / compliance / network / pipeline / plugin / slo / traffic 十一个此前零覆盖领域，以及 MultiSchemaStore 委托层（p03~p6）与 config/secret/discovery/script/tenant/ticket/webhook 缺口方法
+- **internal/alertengine**：96.8% → 99.8%，新增 `engine_extra_test.go`（11 个测试），覆盖 Z-Score/EWMA 基线检测、异常引擎多规则命中、抑制器、静默器、聚合管线
+- **internal/config**：98.0% → 99.7%，新增 6 个测试，覆盖 AllowStubStores 四象限矩阵、Production TLS/EncryptionKey 强制、flag 组合矩阵、env 兜底、Shell 白名单导出
+- **internal/provision**：94.3% → 98.1%，新增 `provision_extra_test.go`，覆盖纳管流程错误路径
+- **cmd/opsmesh**：24.3% → 98.0%，新增 10 个测试，覆盖 runMain 各 mode 失败分支（端口占用 / TLS 缺失 / 非法 DSN）、runBackup/runRestore 错误路径（导出写目录 / Store 初始化失败）
+
+### 编码修复
+- **移除 5 个文件头部 BOM**：`memory_discovery.go` / `memory_secret.go` / `sql_config.go` / `sql_discovery.go` / `sql_secret.go`。修复 Go 1.26 `go test -cover` 插桩与文件头 BOM 不兼容导致的 "invalid BOM in the middle of the file" 编译错误（纯编码规范化，零语义变更）
+
+### 架构文档
+- **README 架构图重绘**：Unicode 框线改纯 ASCII（`+-|/` 等），同步 internal 包数 30 → 36（补 automation / compliance / extension / network / platform / plugin），store 子接口 15 → 35，补全企业版 Vue3 前端 / K8s Operator / 联邦通道（--federation-peers）/ mTLS / Metrics / SSE / protobuf gRPC 双轨 / 多租户 schema 隔离 / API Key（`om_` 前缀）/ log_collect v2.0 / alertengine（Z-Score+EWMA）等组件
+
 ## [Unreleased] — 2026-08-26 第四轮质量审查修复批次（31 项）
 
 ### 安全加固
-- **API Key 认证体系**（H5）：platform 层新增 ValidateKey/HasScope + `ConstantTimeCompare` 恒时比较，controlplane 认证链支持 `Bearer opsmesh_` 前缀 API Key，PUT 白名单字段合并防篡改（M2）
+- **API Key 认证体系**（H5）：platform 层新增 ValidateKey/HasScope + `ConstantTimeCompare` 恒时比较，controlplane 认证链支持 `Bearer om_` 前缀 API Key，PUT 白名单字段合并防篡改（M2）
 - **Webhook SSRF 防护**（M1）：出站 URL 强制 scheme 白名单 + 私网/环回地址拦截（ValidateWebhookURL）
 - **审计补齐**（H9）：automation / network / gateway 共 12 处敏感操作补写审计事件
 - **跨租户越权修复**（H1）：handler 租户归属校验补全

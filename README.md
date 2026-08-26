@@ -9,49 +9,83 @@
 ## 架构概览
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                        控制面 (controlplane)                       │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────────┐  │
-│  │ HTTP :8080      │  │ gRPC :9090      │  │ Metrics :9091    │  │
-│  │ REST API + B/S  │  │ agent 通道      │  │ Prometheus 格式  │  │
-│  │ SSE 实时推送    │  │ mTLS（可选）    │  │ /metrics 端点    │  │
-│  └─────────────────┘  └─────────────────┘  └──────────────────┘  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐        │
-│  │MemoryStore│  │ SQLStore │  │ 多租户   │  │ 联邦     │        │
-│  │（零依赖） │  │MySQL+Redis│  │Schema隔离│  │gRPC mTLS │        │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘        │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ 功能模块：设备纳管 / 任务执行 / 告警监控 / 审计日志        │   │
-│  │           CMDB / 作业流(DAG) / 部署编排 / OS优化          │   │
-│  │           中间件部署 / K8s多集群管理 / 用户中心+RBAC      │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────┘
-       │ gRPC 9090 (mTLS)          │ HTTP 8080 (REST+SSE)
-       ▼                           ▼
-┌─────────────────────┐  ┌─────────────────────────────────────────┐
-│  Agent 集群          │  │  前端                                   │
-│  ┌──────┐ ┌──────┐  │  │  ┌──────────┐  ┌──────────────────┐    │
-│  │Agent1│ │Agent2│  │  │  │个人版    │  │企业版            │    │
-│  │shell │ │shell │  │  │  │(原生JS   │  │(Vue3+Vite+Pinia  │    │
-│  │svc   │ │svc   │  │  │  │ 嵌入二进制)│  │ +VueRouter+i18n) │    │
-│  │file  │ │file  │  │  │  └──────────┘  └──────────────────┘    │
-│  └──────┘ └──────┘  │  └─────────────────────────────────────────┘
-│  10.30.0.0/24        │
-└─────────────────────┘  ┌─────────────────────────────────────────┐
-                         │  运维生态                                │
-                         │  ┌──────────┐  ┌──────────┐             │
-                         │  │K8s       │  │日志集成  │             │
-                         │  │Operator  │  │ELK/Loki  │             │
-                         │  │(CRD)     │  │          │             │
-                         │  └──────────┘  └──────────┘             │
-                         │  ┌──────────┐  ┌──────────┐             │
-                         │  │Helm      │  │监控告警  │             │
-                         │  │Chart     │  │Prometheus│             │
-                         │  │+Ingress  │  │+AlertRule│             │
-                         │  │+HPA      │  │          │             │
-                         │  └──────────┘  └──────────┘             │
-                         └─────────────────────────────────────────┘
++----------------------------------------------------------------------------------------------------+
+|                                           客 户 端 层                                              |
+|                                                                                                    |
+|                 | 企业版前端 web/enterprise/ |   | 内嵌个人版引导页           |                    |
+|                 | Vue3 + Vite + Pinia        |   | internal/controlplane/web/ |                    |
+|                 | + VueRouter + i18n ;       |   | GET / 重定向 /enterprise/  |                    |
+|                 | SPA 独立构建部署           |   | bootstrap:                 |                    |
+|                 | (Nginx/CDN 托管 dist/)     |   | /install.sh                |                    |
++----------------------------------------------------------------------------------------------------+
+           |  HTTP :8080   REST API (/api/v1/**)  +  SSE 实时推送 (/api/v1/events/stream)
+           |  认证: JWT (at/rt HttpOnly Cookie) / Bearer om_xxxxxxxx API Key (RBAC scope)
+           v
++------------------------------------------------------------------+            +--------------------+
+|     控制面 controlplane ( cmd/opsmesh --mode=controlplane )      |            | 其它网段控制面     |
+|            | HTTP :8080        |   | gRPC :9090    |             |            |                    |
+|            | REST API + B/S    |   | agent 通道    |             |            |                    |
+|            | SSE events/stream |   | mTLS 生产强制 |             |            |                    |
+|            | Metrics :9091   |   | Federation :9092 |            |            |                    |
+|            | Prometheus 文本 |   | 联邦监听(可选)   |            |            |                    |
+|            | /metrics 端点   |   | 强制对端持证     |            |            |                    |
+|                                                                  |            |                    |
+|                      gRPC mTLS + HMAC 签名                       |            |                    |
+|                       (--federation-peers)                       |            | peer 联邦对端      |
+|    | grpcx 自研 gRPC            |   | tlsutil TLS/mTLS     |     |    <==>    | 跨段任务转发       |
+|    | JSON codec + protobuf 双轨 |   | 证书热重载(fsnotify) |     |            |                    |
+|    | (proto/ buf 代码生成)      |   | Production 强制 TLS  |     |            | 设备视图同步       |
+|                                                                  |            |                    |
+|        | alertengine           |   | orchestration+dag |         |            |                    |
+|        | Z-Score+EWMA 异常检测 |   | 作业流 DAG 编排   |         |            |                    |
+|     | deploy + cmdb           |   | logstore+k8s+helm     |      |            |                    |
+|     | 三策略部署 / 配置库图谱 |   | Loki+ES 日志 / 多集群 |      |            |                    |
+|      | automation+network    |   | API Key 认证           |      |            |                    |
+|      | 自动化闭环 / 网络拓扑 |   | Bearer om_* RBAC scope |      |            |                    |
+|                                                                  |            |                    |
+|     | MemoryStore 零依赖   |   | MultiSchemaStore 租户隔离 |     |            |                    |
+|     | SQLStore MySQL+Redis |   | SessionStore memory|redis |     |            |                    |
++------------------------------------------------------------------+            +--------------------+
+           |  gRPC :9090  Register/Heartbeat/PullTasks/ReportResult/CancelTask/ReportLogs
+           |  agent 侧 discovery: 多控制面 failover / round-robin
+           v
++----------------------------------------------------------------------------------------------------+
+|                   Agent 集群  ( 每台纳管设备一个 , cmd/opsmesh --mode=agent )                      |
+|                                                                                                    |
+|             | internal/agent worker pool     |   | log_collect 日志采集 v2.0      |                |
+|             | shell/svc(systemctl)/file 分发 |   | 多行合并 / 过滤规则 / 增量采集 |                |
+|             | exec.CommandContext 超时中止   |   | gRPC ReportLogs 上报           |                |
+|             | + rlimit ; cancelLoop 取消     |   | -> Loki / Elasticsearch 直推   |                |
+|                                                                                                    |
+|      网段 10.30.0.0/24  ...                                                                        |
++----------------------------------------------------------------------------------------------------+
+
+           |  Prometheus 抓取 :9091/metrics ; agent 日志直推 Loki/ES
+           |  K8s Operator 经 K8s API reconcile ; helm install 部署 Chart
+           v
++----------------------------------------------------------------------------------------------------+
+|                                           运 维 生 态                                              |
+|                                                                                                    |
+|  | K8s Operator (operator/)   |   | Prometheus             |   | Loki / Elasticsearch  |           |
+|  | OpsMeshInstance CRD        |   | 抓取 :9091 /metrics    |   | --log-backend=loki|es |           |
+|  | reconcile: CP Deployment + |   | HTTP 延迟 / Go runtime |   | agent 直推 +          |           |
+|  | agent DS + MySQL/Redis STS |   |                        |   | logstore 统一检索     |           |
+|  | Helm Chart          |   | docker-compose/systemd |                                              |
+|  | deploy/helm/opsmesh |   | 本地全栈 / 裸机 VM     |                                              |
+|  | Ingress + HPA       |   |                        |                                              |
++----------------------------------------------------------------------------------------------------+
 ```
+
+**图中组件速览**：
+
+- **客户端层**：企业版前端（`web/enterprise/`，Vue3 + Vite + Pinia + VueRouter + i18n，SPA 独立构建部署）；内嵌个人版引导页（`internal/controlplane/web/`，GET / 重定向 `/enterprise/`，保留 bootstrap 端点）
+- **四监听器**：HTTP :8080（REST API + B/S + SSE `/api/v1/events/stream` 实时推送）、gRPC :9090（agent 通道，mTLS 生产强制）、Metrics :9091（Prometheus `/metrics` 文本端点）、Federation :9092（可选独立 mTLS 联邦监听，强制对端持证）
+- **传输与安全**：`internal/grpcx` 自研 gRPC（JSON codec 与 protobuf 双轨，`proto/` buf 代码生成）；`internal/tlsutil` TLS/mTLS + 证书热重载（fsnotify，`--production` 强制 TLS）；认证走 JWT Cookie / Bearer `om_*` API Key / 网关头注入三条路径，RBAC 权限校验
+- **核心引擎**：`alertengine`（多条件规则 + Z-Score/EWMA 异常检测 + 静默/抑制/聚合）、`orchestration`+`dag`（作业流编排）、`deploy`+`cmdb`（三策略部署/配置库图谱）、`logstore`+`k8s`+`helm`（Loki+ES 日志检索/多集群管理）、`automation`+`network`(自动化闭环/网络拓扑)、API Key 认证引擎
+- **Store 层**：MemoryStore 零依赖兜底 / SQLStore（MySQL 8 + Redis 7）/ MultiSchemaStore 多租户 schema 隔离（`--multi-schema`）/ SessionStore（memory|redis）
+- **控制面联邦**：`--federation-peers` 声明对端，经 gRPC mTLS + HMAC 签名互联多个控制面（跨段任务转发 / 设备视图同步）
+- **Agent 集群**：worker pool 执行 shell/svc/file 任务；log_collect 日志采集 v2.0（多行合并/过滤规则/增量采集，经 gRPC ReportLogs 上报或直推 Loki/Elasticsearch）
+- **运维生态**：K8s Operator（`operator/`，OpsMeshInstance CRD 声明式拉起控制面 Deployment + agent DaemonSet + MySQL/Redis StatefulSet）；Prometheus 抓取 `:9091/metrics`；Loki/Elasticsearch 日志后端；Helm Chart / docker-compose / systemd 三套部署形态
 
 ### 技术栈
 
@@ -85,9 +119,9 @@
 | 联邦 | gRPC (mTLS) | 9090 | 跨控制面任务转发/设备视图同步 |
 | Metrics | HTTP | 9091 | Prometheus 指标采集（HTTP 延迟/Go runtime） |
 
-### internal 包职责（30 个）
+### internal 包职责（36 个）
 
-> 完整设计见 `docs/module-design.md`。下表按 7 个领域分组列出 30 个 internal 包的职责简述。
+> 完整设计见 `docs/module-design.md`。下表按 8 个领域分组列出 36 个 internal 包的职责简述。
 
 #### 设备与纳管域
 
@@ -106,7 +140,7 @@
 | `internal/controlplane` | 控制面核心：HTTP 路由 + gRPC server + Registry + dashboard + 14 个功能域 handler（按 `server_*.go` 拆分） |
 | `internal/config` | 统一配置：116 个 flag，命令行优先 + `OPSMESH_*` 环境变量兜底 |
 | `internal/authctx` | 网关注入身份提取：从 HTTP 头 / gRPC metadata 提取 X-Tenant-ID / X-User-Id / X-User-Roles |
-| `internal/grpcx` | 自研 gRPC 传输层：JSON codec + 手写 ServiceDesc，不依赖 protobuf 代码生成 |
+| `internal/grpcx` | 自研 gRPC 传输层：JSON codec + 手写 ServiceDesc + pb stub 双轨（`proto/` buf 代码生成） |
 | `internal/tlsutil` | gRPC TLS / mTLS 工具 + 证书热重载（fsnotify watch，无需重启更新 TLS 配置） |
 | `internal/version` | 构建版本注入：`--version` 与镜像标签 |
 
@@ -126,18 +160,29 @@
 |---|---|
 | `internal/cmdb` | 配置库 CMDB（M2）：模型 + 实例 CRUD + SQL + 采集 + 关系图谱 + 变更审批 |
 | `internal/logstore` | 日志检索（M6）：双后端（Memory/SQL）+ 外部后端（Loki/ES）+ 倒排索引 + offset 分页 |
-| `internal/alertengine` | 告警规则引擎：多条件匹配 + 静默 + 抑制 + 聚合 + 通知分发 |
+| `internal/alertengine` | 告警规则引擎：多条件匹配 + Z-Score/EWMA 异常检测 + 静默 + 抑制 + 聚合 + 通知分发 |
 | `internal/notify` | 通知渠道：Webhook / 飞书 / 钉钉 / 企业微信 / Slack / 邮件（SMTP）+ 通知模板 |
 | `internal/k8s` | K8s 多集群管理：client-go 封装 + ClusterManager + 资源 CRUD + scale/restart/rollback |
 | `internal/helm` | Helm 应用商店：仓库管理 + Chart 搜索 + Release 部署/回滚 + 预置 24 个应用目录 |
+| `internal/network` | 网络管理引擎：网络设备模型（switch/router/firewall/LB）+ 监控指标 + 拓扑邻接表 + 子网发现 |
+| `internal/automation` | 自动化闭环引擎：规则（条件→动作）+ 触发器（alert/metric_threshold/schedule/event）+ 动作（execute_task/send_notify/scale/restart/isolate）+ 规则引擎 Evaluate |
 
 #### 存储与安全域
 
 | 包 | 职责 |
 |---|---|
-| `internal/store` | Store 接口 + MemoryStore + SQLStore：15 个领域子接口 + 编译期双实现断言 + 多租户 schema 隔离 |
+| `internal/store` | Store 接口 + MemoryStore + SQLStore：35 个领域子接口 + 编译期双实现断言 + 多租户 schema 隔离（MultiSchemaStore） |
 | `internal/secrets` | 密钥管理：env/file/Vault/KMS 多 provider + 工厂模式 + SSRF 防护 |
 | `internal/circuitbreaker` | 通用熔断器：Closed → Open → HalfOpen 状态机，agent 任务执行 + 控制 API 限流降级 |
+| `internal/compliance` | 安全合规检查引擎：CIS Benchmark 基线规则（SSH 加固/防火墙/文件权限/密码策略等）+ 自定义规则 + 扫描编排（agent 执行、控制面聚合报告） |
+
+#### 平台化与扩展域
+
+| 包 | 职责 |
+|---|---|
+| `internal/platform` | 平台化业务引擎：租户管理 + API Key（`om_` 前缀 + SHA-256 hash）+ 插件市场 + 计费（计划/订阅/账单） |
+| `internal/plugin` | 插件框架：Plugin 接口 + Hook 扩展点 + HookHandler + Manager（注册/钩子触发/生命周期），不改核心代码扩展控制面行为 |
+| `internal/extension` | API 网关引擎：路由规则匹配（PathPrefix 前缀 + 方法白名单）+ 令牌桶限流 + 网关统计聚合 |
 
 #### 可观测与基础设施域
 
@@ -884,13 +929,15 @@ server {
 
 ```
 cmd/opsmesh/              ← 入口 main：解析 --mode 分派 controlplane / agent
-internal/                 ← 30 个包，按 7 个领域分组（详见上文"internal 包职责"）
-├── agent/                ← agent 运行时（注册/心跳/worker 池/执行器）
-├── alertengine/          ← 告警规则引擎（多条件 + 静默 + 抑制 + 聚合）
+internal/                 ← 36 个包，按 8 个领域分组（详见上文"internal 包职责"）
+├── agent/                ← agent 运行时（注册/心跳/worker 池/执行器 + log_collect 日志采集 v2.0）
+├── alertengine/          ← 告警规则引擎（多条件 + Z-Score/EWMA 异常检测 + 静默 + 抑制 + 聚合）
 ├── approval/             ← 审批引擎（审批流 + 请求 + approve/reject）
 ├── authctx/              ← HTTP 头 / gRPC metadata 身份提取
+├── automation/           ← 自动化闭环引擎（规则条件→动作 + 多类型触发器）
 ├── circuitbreaker/       ← 通用熔断器（Closed→Open→HalfOpen 状态机）
 ├── cmdb/                 ← 配置库 CMDB（M2）：模型 + 实例 CRUD + SQL + 采集 + 关系图谱
+├── compliance/           ← 安全合规检查引擎（CIS Benchmark 基线 + 扫描编排）
 ├── config/               ← 统一配置（116 个 flag + env 兜底）
 ├── controlplane/         ← 控制面（HTTP 路由/gRPC server/Registry/dashboard + 14 个功能域 handler）
 ├── cron/                 ← 5 字段 cron 表达式匹配
@@ -900,28 +947,33 @@ internal/                 ← 30 个包，按 7 个领域分组（详见上文"i
 ├── discovery/            ← 控制面服务发现 + 负载均衡（agent→控制面 failover/round-robin）
 ├── domain/               ← 纯领域模型（DDD）+ 防腐层 mapper
 ├── events/               ← 可插拔事件总线（noop/log/kafka）
+├── extension/            ← API 网关引擎（路由规则 + 令牌桶限流 + 网关统计）
 ├── grpcx/                ← gRPC ServiceDesc / JSON codec / 消息类型
 ├── helm/                 ← Helm 应用商店（仓库/Chart/Release + 24 个预置应用）
 ├── k8s/                  ← K8s 多集群管理（client-go + ClusterManager + 资源 CRUD）
 ├── logstore/             ← 日志检索（M6）：双后端(Memory/SQL) + Loki/ES + 倒排索引
 ├── logx/                 ← slog 封装 + traceID（优先 OTel span）
 ├── metrics/              ← 零依赖 Prometheus 文本指标
+├── network/              ← 网络管理引擎（设备模型 + 监控指标 + 拓扑 + 子网发现）
 ├── notify/               ← 通知渠道：Webhook / 飞书 / 钉钉 / 企业微信 / Slack / 邮件
 ├── orchestration/        ← 作业编排（M5）：DAG 调度 + 子工作流 + 条件分支 + 节点级超时重试
 ├── otelx/                ← OTel 集成（HTTP/gRPC 自动埋点 + OTLP 导出）
+├── platform/             ← 平台化业务引擎（租户/API Key/插件市场/计费）
+├── plugin/               ← 插件框架（Plugin/Hook/HookHandler/Manager）
 ├── proto/                ← 共享数据类型（AgentInfo/DeviceInfo/Task/…）
 ├── provision/            ← 自动纳管闭环（install token + SSH 推送 + 候选设备状态机）
 ├── secrets/              ← 密钥管理（env/file/Vault/KMS 多 provider）
-├── store/                ← Store 接口 + MemoryStore + SQLStore（15 个领域子接口）
+├── store/                ← Store 接口 + MemoryStore + SQLStore（35 个领域子接口）
 ├── tlsutil/              ← gRPC TLS / mTLS 工具 + 证书热重载
 └── version/              ← 构建版本注入
-operator/                 ← K8s Operator 子模块（独立 go.mod，controller-runtime CRD）
+operator/                 ← K8s Operator 子模块（独立 go.mod，controller-runtime OpsMeshInstance CRD）
+proto/                    ← protobuf API 定义（buf 管理，与 internal/grpcx 双轨）
 web/enterprise/           ← Vue3 企业版前端（独立构建部署）
 deploy/                   ← 部署资产：helm/ + systemd/ + docker-compose.yaml + Dockerfile*
-docs/                     ← 23 个设计文档（产品/架构/数据库/接口/安全/UI/模块/功能/测试/运维/AI/多系统/部署场景）
+docs/                     ← 24 篇设计文档（产品/架构/数据库/接口/安全/UI/模块/功能/测试/运维/AI/多系统/部署场景）
 ```
 
-> 包职责详细说明见上文 [internal 包职责](#internal-包职责30-个) 章节，完整设计见 `docs/module-design.md`。
+> 包职责详细说明见上文 [internal 包职责](#internal-包职责36-个) 章节，完整设计见 `docs/module-design.md`。
 
 ---
 

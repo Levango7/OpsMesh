@@ -1074,3 +1074,344 @@ func TestLoad_ProductionMemoryStoreWarning(t *testing.T) {
 		t.Fatalf("Store = %q, want memory", cfg.Store)
 	}
 }
+
+// =============================================================================
+// H2/H3 配套：AllowStubStores 边界矩阵（生产 SQL 桩存储须显式放行）
+// =============================================================================
+
+// prodReadyDefaults 为 c 补齐生产模式前置硬性要求（TLS / JWT / EncryptionKey），
+// 使 Validate 能穿透前序校验到达目标分支（如 AllowStubStores 校验）。
+// 仅对传入对象就地修改；调用方按需覆盖字段。
+func prodReadyDefaults(c *Config) {
+	c.Production = true
+	c.TLSCert = "tls.crt"
+	c.JWTSecret = "0123456789abcdef0123456789abcdef"                 // 32 字节
+	c.EncryptionKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=" // 32 字节 base64
+}
+
+// TestValidate_AllowStubStoresMatrix 覆盖 Production × Store × AllowStubStores 组合边界：
+// 生产 + mysql 后端未显式 --allow-stub-stores=true 时必须拒绝启动（fail-fast，防静默丢数据）；
+// 放行后通过；非生产与 memory 后端不受影响。
+func TestValidate_AllowStubStoresMatrix(t *testing.T) {
+	tests := []struct {
+		name        string
+		mutate      func(c *Config)
+		wantErr     bool
+		errContains string // 非空时断言错误消息包含该子串（strings.Contains 保持健壮）
+	}{
+		{
+			name: "prod_mysql_without_allow_stub_stores_rejected",
+			mutate: func(c *Config) {
+				prodReadyDefaults(c)
+				c.Store = "mysql"
+				c.MySQLDSN = "u:p@tcp(db:3306)/ops_device"
+				c.AllowStubStores = false
+			},
+			wantErr:     true,
+			errContains: "--allow-stub-stores",
+		},
+		{
+			name: "prod_mysql_with_allow_stub_stores_passes",
+			mutate: func(c *Config) {
+				prodReadyDefaults(c)
+				c.Store = "mysql"
+				c.MySQLDSN = "u:p@tcp(db:3306)/ops_device"
+				c.AllowStubStores = true
+			},
+			wantErr: false,
+		},
+		{
+			name: "dev_mysql_without_allow_stub_stores_passes",
+			mutate: func(c *Config) {
+				c.Production = false
+				c.Store = "mysql"
+				c.MySQLDSN = "u:p@tcp(db:3306)/ops_device"
+			},
+			wantErr: false,
+		},
+		{
+			name: "prod_memory_ignores_allow_stub_stores",
+			mutate: func(c *Config) {
+				prodReadyDefaults(c)
+				c.Store = "memory"
+				c.AllowStubStores = false
+			},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := base()
+			tt.mutate(c)
+			err := c.Validate()
+			if tt.wantErr && err == nil {
+				t.Fatalf("应被拒绝但通过了: %+v", c)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("应通过却被拒绝: %v", err)
+			}
+			if tt.wantErr && tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+				t.Fatalf("错误消息应包含 %q, got %q", tt.errContains, err.Error())
+			}
+		})
+	}
+}
+
+// =============================================================================
+// 生产模式 TLS 强制（等保三级）：错误消息与 agent 模式适用性
+// =============================================================================
+
+// TestValidate_ProductionTLSRequiredMessage 验证 Production=true 且 TLSCert=""
+// 时 Validate 直接拒绝（不再是告警），并断言错误消息指向 --tls-cert；
+// agent 模式同样适用；非生产模式保持开发降级放行。
+func TestValidate_ProductionTLSRequiredMessage(t *testing.T) {
+	// 控制面：production + 无 TLS → 拒绝且消息含 --tls-cert
+	c := base()
+	c.Production = true
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("production + 无 TLS 应被拒绝")
+	}
+	if !strings.Contains(err.Error(), "--tls-cert") {
+		t.Fatalf("错误消息应提示 --tls-cert, got %q", err.Error())
+	}
+
+	// agent 模式：production 同样强制持证
+	a := base()
+	a.Mode = "agent"
+	a.Production = true
+	a.TLSCert = ""
+	if err := a.Validate(); err == nil {
+		t.Fatal("agent 模式 production + 无 TLS 应被拒绝")
+	} else if !strings.Contains(err.Error(), "--tls-cert") {
+		t.Fatalf("agent 错误消息应提示 --tls-cert, got %q", err.Error())
+	}
+
+	// 非 production + 无 TLS → 开发降级放行
+	d := base()
+	d.Production = false
+	d.TLSCert = ""
+	if err := d.Validate(); err != nil {
+		t.Fatalf("非 production + 无 TLS 应通过: %v", err)
+	}
+}
+
+// TestValidate_ProductionRequiresEncryptionKey 覆盖生产模式 kubeconfig 加密密钥缺失分支：
+// Production=true 且 EncryptionKey="" 必须拒绝并提示 --encryption-key。
+func TestValidate_ProductionRequiresEncryptionKey(t *testing.T) {
+	c := base()
+	prodReadyDefaults(c)
+	c.EncryptionKey = "" // 聚焦本分支
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("production + 空 encryption-key 应被拒绝")
+	}
+	if !strings.Contains(err.Error(), "--encryption-key") {
+		t.Fatalf("错误消息应提示 --encryption-key, got %q", err.Error())
+	}
+
+	// 对照：非生产 + 空 encryption-key 放行（明文存储仅限开发/demo）
+	d := base()
+	d.Production = false
+	d.EncryptionKey = ""
+	if err := d.Validate(); err != nil {
+		t.Fatalf("非 production + 空 encryption-key 应通过: %v", err)
+	}
+}
+
+// =============================================================================
+// Validate flag 组合矩阵：Production × TLS × MultiSchema × Federation × RateLimit × AllowStubStores
+// =============================================================================
+
+// TestValidate_FlagCombinationMatrix 以表驱动方式覆盖关键 flag 交叉组合。
+// 每个用例从 base() 出发按 mutate 定制；wantErr 用例以 errContains 断言错误消息，
+// 确保拒绝发生在预期的校验分支而非更早的其他分支。
+func TestValidate_FlagCombinationMatrix(t *testing.T) {
+	const (
+		validJWT = "0123456789abcdef0123456789abcdef"                 // 32 字节 HS256 密钥
+		validEnc = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="     // 32 字节 AES-256 base64
+		validDSN = "u:p@tcp(db:3306)/ops_device"
+	)
+	tests := []struct {
+		name        string
+		mutate      func(c *Config)
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "dev_all_flags_off_passes",
+			mutate:  func(c *Config) {},
+			wantErr: false,
+		},
+		{
+			// 大满贯：生产全量合规组合一次性通过（MultiSchema/Federation/RateLimit/Stub 全开）。
+			name: "prod_full_stack_all_enabled_passes",
+			mutate: func(c *Config) {
+				prodReadyDefaults(c)
+				c.Store = "mysql"
+				c.MySQLDSN = validDSN
+				c.AllowStubStores = true
+				c.MultiSchema = true
+				c.SchemaPrefix = "opsmesh_tenant_"
+				c.FederationPeers = []string{"http://peer1:8080", "http://peer2:8080"}
+				c.FederationSecret = "shared-secret"
+				c.CBRateLimitPerSec = 100
+			},
+			wantErr: false,
+		},
+		{
+			// Production×TLS 交叉：缺证书在 TLS 强制分支被拒（早于 multi-schema/stub）。
+			name: "prod_without_tls_rejected_at_tls_gate",
+			mutate: func(c *Config) {
+				prodReadyDefaults(c)
+				c.TLSCert = ""
+				c.MultiSchema = true // 即使 multi-schema 也不该到达该校验
+			},
+			wantErr:     true,
+			errContains: "--tls-cert",
+		},
+		{
+			// MultiSchema×Store 交叉：multi-schema 仅支持 mysql，memory 后端直接拒绝。
+			name: "multischema_with_memory_store_rejected",
+			mutate: func(c *Config) {
+				c.MultiSchema = true
+				c.Store = "memory"
+			},
+			wantErr:     true,
+			errContains: "--multi-schema",
+		},
+		{
+			// MultiSchema×Production×AllowStubStores 三重交叉：
+			// multi-schema 校验通过后继续走到桩存储校验并被拒（顺序敏感）。
+			name: "prod_multischema_mysql_without_stubs_rejected",
+			mutate: func(c *Config) {
+				prodReadyDefaults(c)
+				c.Store = "mysql"
+				c.MySQLDSN = validDSN
+				c.MultiSchema = true
+				c.AllowStubStores = false
+			},
+			wantErr:     true,
+			errContains: "--allow-stub-stores",
+		},
+		{
+			// Federation×Production 交叉：生产 + 联邦 peer + 共享密钥合法放行。
+			name: "prod_federation_with_secret_passes",
+			mutate: func(c *Config) {
+				prodReadyDefaults(c)
+				c.FederationPeers = []string{"http://peer1:8080"}
+				c.FederationSecret = "shared-secret"
+			},
+			wantErr: false,
+		},
+		{
+			// Federation 密钥缺失：无论是否生产均 fail-fast（防伪造租户身份头）。
+			name: "federation_peers_missing_secret_rejected",
+			mutate: func(c *Config) {
+				c.FederationPeers = []string{"http://peer1:8080"}
+				c.FederationSecret = ""
+			},
+			wantErr:     true,
+			errContains: "federation-secret",
+		},
+		{
+			// RateLimit 单开：CBRateLimitPerSec>0 不影响 Validate 通过性（运行期才生效）。
+			name: "rate_limit_only_passes",
+			mutate: func(c *Config) {
+				c.CBRateLimitPerSec = 200
+			},
+			wantErr: false,
+		},
+		{
+			// RateLimit×Federation×MultiSchema 组合（非生产）：全部叠加仍放行。
+			name: "dev_ratelimit_federation_multischema_passes",
+			mutate: func(c *Config) {
+				c.CBRateLimitPerSec = 50
+				c.Store = "mysql"
+				c.MySQLDSN = validDSN
+				c.MultiSchema = true
+				c.FederationPeers = []string{"http://peer1:8080"}
+				c.FederationSecret = "s"
+			},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := base()
+			tt.mutate(c)
+			err := c.Validate()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("应被拒绝但通过了: %+v", c)
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Fatalf("错误消息应包含 %q, got %q", tt.errContains, err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("应通过却被拒绝: %v", err)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// DefaultAgentShellWhitelist 导出函数
+// =============================================================================
+
+// TestDefaultAgentShellWhitelistExported 覆盖导出包装函数：
+// 返回值必须与内部常量一致，且仅含只读诊断命令（不含可写系统状态的危险命令）。
+func TestDefaultAgentShellWhitelistExported(t *testing.T) {
+	got := DefaultAgentShellWhitelist()
+	if got != defaultAgentShellWhitelist {
+		t.Fatalf("DefaultAgentShellWhitelist() = %q, want %q", got, defaultAgentShellWhitelist)
+	}
+	for _, dangerous := range []string{"sh", "bash", "rm", "mv", "curl", "wget", "nc", "python"} {
+		for _, item := range strings.Split(got, ",") {
+			if strings.TrimSpace(item) == dangerous {
+				t.Fatalf("白名单不应包含危险命令 %q: %q", dangerous, got)
+			}
+		}
+	}
+}
+
+// =============================================================================
+// Load 显式 flag 优先级：valInt64 / valDur / valFloat64 的 explicit 分支
+// =============================================================================
+
+// TestLoad_ExplicitFlagOverridesEnv 验证显式 flag 严格优先于环境变量，
+// 覆盖 valInt64（--max-memory-mb）、valDur（--task-timeout）、valFloat64（--anomaly-threshold）
+// 三个取值闭包的 explicit 分支；并以 env-only 反向对照确认 env 兜底仍然生效。
+func TestLoad_ExplicitFlagOverridesEnv(t *testing.T) {
+	restore := clearOpsmeshEnv()
+	defer restore()
+
+	// env 设为与 flag 相反的值：flag 显式设置时应完全压过 env。
+	os.Setenv("OPSMESH_MAX_MEMORY_MB", "512")
+	os.Setenv("OPSMESH_TASK_TIMEOUT", "60s")
+	os.Setenv("OPSMESH_ANOMALY_THRESHOLD", "3.5")
+
+	cfg := loadForTest(
+		"--max-memory-mb=1024",
+		"--task-timeout=90s",
+		"--anomaly-threshold=2.5",
+	)
+	if cfg.MaxMemoryMB != 1024 {
+		t.Fatalf("MaxMemoryMB = %d, want 1024 (explicit flag overrides env)", cfg.MaxMemoryMB)
+	}
+	if cfg.TaskTimeout != 90*time.Second {
+		t.Fatalf("TaskTimeout = %v, want 90s (explicit flag overrides env)", cfg.TaskTimeout)
+	}
+	if cfg.AnomalyThreshold != 2.5 {
+		t.Fatalf("AnomalyThreshold = %v, want 2.5 (explicit flag overrides env)", cfg.AnomalyThreshold)
+	}
+
+	// 反向对照：不传 flag 时 env 兜底生效。
+	cfg2 := loadForTest()
+	if cfg2.MaxMemoryMB != 512 || cfg2.TaskTimeout != 60*time.Second || cfg2.AnomalyThreshold != 3.5 {
+		t.Fatalf("env fallback: MaxMemoryMB=%d TaskTimeout=%v AnomalyThreshold=%v, want 512/60s/3.5",
+			cfg2.MaxMemoryMB, cfg2.TaskTimeout, cfg2.AnomalyThreshold)
+	}
+}
