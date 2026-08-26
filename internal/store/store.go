@@ -6,11 +6,13 @@
 //
 // 接口拆分：原巨型 Store 接口按领域拆为 35 个小接口
 // （DeviceStore / TaskStore / AlertStore / AuditStore / TokenStore / LeaderStore /
-//  UserStore / RoleStore / PermissionStore / K8sClusterStore / TemplateStore / RefreshTokenStore /
-//  SilenceStore / NotifyChannelStore / NotifyTemplateStore / AgentLogStore / QuotaStore /
-//  ServiceDiscoveryStore / ConfigStore / SecretStore / TicketStore / SLOStore / TrafficStore /
-//  PipelineStore / ArgoCDStore / ComplianceStore / BackupStore / NetworkStore / AutomationStore /
-//  WebhookStore / ScriptStore / TenantStore / APIKeyStore / PluginStore / BillingStore），
+//
+//	UserStore / RoleStore / PermissionStore / K8sClusterStore / TemplateStore / RefreshTokenStore /
+//	SilenceStore / NotifyChannelStore / NotifyTemplateStore / AgentLogStore / QuotaStore /
+//	ServiceDiscoveryStore / ConfigStore / SecretStore / TicketStore / SLOStore / TrafficStore /
+//	PipelineStore / ArgoCDStore / ComplianceStore / BackupStore / NetworkStore / AutomationStore /
+//	WebhookStore / ScriptStore / TenantStore / APIKeyStore / PluginStore / BillingStore），
+//
 // Store 保留为它们的组合接口，向后兼容现有消费方。
 // 小接口本身即文档化领域边界；消费方可按需依赖最小接口，当前保留 Store
 // 组合接口向后兼容，后续可渐进迁移到小接口以降低耦合。

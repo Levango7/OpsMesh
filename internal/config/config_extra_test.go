@@ -414,8 +414,9 @@ func TestValidate_ProductionFullConfig(t *testing.T) {
 	c.Store = "mysql"
 	c.MySQLDSN = "u:p@tcp(db:3306)/ops_device"
 	c.Replicas = 3
-	// H2/H3 配套：生产 + mysql 后端默认拒绝启动（SQLStore 对 P1-P6 为桩），
-	// 须显式 AllowStubStores=true 才放行。本用例验证"完整 production 配置 + 显式放行"通过。
+	// H2/H3 配套：P1-P6 全部 15 个领域已实现 MySQL 持久化，stubStoreDomains 为空，
+	// 生产 + mysql 后端不再拒绝启动（无桩领域则无须放行门槛）。AllowStubStores=true 仍兼容放行。
+	// 本用例验证"完整 production 配置"通过。
 	c.AllowStubStores = true
 	if err := c.Validate(); err != nil {
 		t.Fatalf("production full config 应通过: %v", err)
@@ -1090,8 +1091,10 @@ func prodReadyDefaults(c *Config) {
 }
 
 // TestValidate_AllowStubStoresMatrix 覆盖 Production × Store × AllowStubStores 组合边界：
-// 生产 + mysql 后端未显式 --allow-stub-stores=true 时必须拒绝启动（fail-fast，防静默丢数据）；
-// 放行后通过；非生产与 memory 后端不受影响。
+// 现状：P1-P6 全部 15 个领域已实现 MySQL 持久化，stubStoreDomains 收敛为空字符串，
+// Validate 中的拒绝启动分支被跳过（无桩领域则无须放行门槛），故生产 + mysql 后端
+// 即使 AllowStubStores=false 也通过；非生产与 memory 后端不受影响。
+// 保留矩阵结构向后兼容：未来若新增桩领域（stubStoreDomains 非空），拒绝逻辑自动恢复。
 func TestValidate_AllowStubStoresMatrix(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -1100,15 +1103,14 @@ func TestValidate_AllowStubStoresMatrix(t *testing.T) {
 		errContains string // 非空时断言错误消息包含该子串（strings.Contains 保持健壮）
 	}{
 		{
-			name: "prod_mysql_without_allow_stub_stores_rejected",
+			name: "prod_mysql_without_allow_stub_stores_passes",
 			mutate: func(c *Config) {
 				prodReadyDefaults(c)
 				c.Store = "mysql"
 				c.MySQLDSN = "u:p@tcp(db:3306)/ops_device"
 				c.AllowStubStores = false
 			},
-			wantErr:     true,
-			errContains: "--allow-stub-stores",
+			wantErr: false, // P1-P6 全部持久化，无桩领域，无须放行门槛
 		},
 		{
 			name: "prod_mysql_with_allow_stub_stores_passes",
@@ -1228,8 +1230,8 @@ func TestValidate_ProductionRequiresEncryptionKey(t *testing.T) {
 // 确保拒绝发生在预期的校验分支而非更早的其他分支。
 func TestValidate_FlagCombinationMatrix(t *testing.T) {
 	const (
-		validJWT = "0123456789abcdef0123456789abcdef"                 // 32 字节 HS256 密钥
-		validEnc = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="     // 32 字节 AES-256 base64
+		validJWT = "0123456789abcdef0123456789abcdef"             // 32 字节 HS256 密钥
+		validEnc = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=" // 32 字节 AES-256 base64
 		validDSN = "u:p@tcp(db:3306)/ops_device"
 	)
 	tests := []struct {
@@ -1282,8 +1284,10 @@ func TestValidate_FlagCombinationMatrix(t *testing.T) {
 		},
 		{
 			// MultiSchema×Production×AllowStubStores 三重交叉：
-			// multi-schema 校验通过后继续走到桩存储校验并被拒（顺序敏感）。
-			name: "prod_multischema_mysql_without_stubs_rejected",
+			// 现状：P1-P6 全部持久化，stubStoreDomains 为空，桩存储拒绝分支被跳过，
+			// multi-schema + 生产 + mysql 即使 AllowStubStores=false 也通过。
+			// 未来若新增桩领域（stubStoreDomains 非空），拒绝逻辑自动恢复。
+			name: "prod_multischema_mysql_without_stubs_passes",
 			mutate: func(c *Config) {
 				prodReadyDefaults(c)
 				c.Store = "mysql"
@@ -1291,8 +1295,7 @@ func TestValidate_FlagCombinationMatrix(t *testing.T) {
 				c.MultiSchema = true
 				c.AllowStubStores = false
 			},
-			wantErr:     true,
-			errContains: "--allow-stub-stores",
+			wantErr: false,
 		},
 		{
 			// Federation×Production 交叉：生产 + 联邦 peer + 共享密钥合法放行。

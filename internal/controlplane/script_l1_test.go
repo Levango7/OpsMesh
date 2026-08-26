@@ -67,9 +67,9 @@ func TestHandleScriptExecute_DisabledScript409(t *testing.T) {
 	auth := loginAsAdmin(t, s)
 	// 先创建脚本（CreateScript 默认 Enabled=true），再 UpdateScript 显式禁用。
 	created := s.store.CreateScript("default", &store.Script{
-		Name:      "disabled-script",
-		Content:   "echo hi",
-		Language:  "shell",
+		Name:       "disabled-script",
+		Content:    "echo hi",
+		Language:   "shell",
 		TimeoutSec: 10,
 	})
 	if created == nil {
@@ -96,10 +96,10 @@ func TestHandleScriptExecute_EnabledScriptOK(t *testing.T) {
 	s := newScriptTestServer()
 	auth := loginAsAdmin(t, s)
 	created := s.store.CreateScript("default", &store.Script{
-		Name:      "enabled-script",
-		Content:   "echo hi",
-		Language:  "shell",
-		Enabled:   true,
+		Name:       "enabled-script",
+		Content:    "echo hi",
+		Language:   "shell",
+		Enabled:    true,
 		TimeoutSec: 10,
 	})
 	if created == nil {

@@ -587,7 +587,6 @@ func TestMemoryStore_NetworkDevices_CRUD_Metrics(t *testing.T) {
 		t.Fatal("cross-tenant get should fail")
 	}
 
-
 	// Metrics：nil 与空 deviceID 安全；写入可读；未知设备 nil。
 	m.StoreNetworkMetrics("", nil)
 	m.StoreNetworkMetrics(d.ID, nil)
@@ -1561,18 +1560,21 @@ func TestMemoryCloneServiceInstances_Helper(t *testing.T) {
 
 // TestStubGuard_JoinAndWarnDomains 覆盖 stub_guard.go 的展示辅助：
 // joinStubDomains 输出格式、WarnStubStoreDomains 不 panic、StubDomains 完整性。
+// 现状：P1-P6 全部 15 个领域已实现 MySQL 持久化，StubDomains 收敛为空，
+// joinStubDomains 返回空串、WarnStubStoreDomains 静默返回（不再告警）。
 func TestStubGuard_JoinAndWarnDomains(t *testing.T) {
 	got := joinStubDomains()
-	want := "ticket,slo,traffic,pipeline,argocd,compliance,backup,network,automation,webhook,script,tenant,apikey,plugin,billing"
+	want := ""
 	if got != want {
 		t.Fatalf("joinStubDomains() = %q, want %q", got, want)
 	}
-	if len(StubDomains) != 15 {
-		t.Fatalf("StubDomains count = %d, want 15", len(StubDomains))
+	if len(StubDomains) != 0 {
+		t.Fatalf("StubDomains count = %d, want 0 (P1-P6 全部已持久化)", len(StubDomains))
 	}
-	// 构造函数接线告警：不应 panic（限频逻辑由 StubNotImplemented 已覆盖）。
+	// 构造函数接线告警：StubDomains 为空时静默返回，不应 panic 也不应告警。
 	WarnStubStoreDomains("multi-schema-test")
 	// StubNotImplemented 限频：同 key 连续两次调用不 panic，且第二次走窗口内静默分支。
+	// 保留调用以覆盖限频逻辑（StubNotImplemented 本身与 StubDomains 解耦，仍可用）。
 	StubNotImplemented("test-domain", "TestMethod")
 	StubNotImplemented("test-domain", "TestMethod")
 }

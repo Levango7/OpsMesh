@@ -69,4 +69,3 @@ type Tenant struct {
 // 历史：原 TenantManager 租户管理引擎（ValidateTenant/CheckQuota）已作为 H7 平台
 // 死代码清理删除——controlplane tenant handler 直接调用 store.TenantStore 接口，
 // 校验逻辑在 handler 侧就近实现，不经 platform 层冗余封装。
-

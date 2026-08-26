@@ -1,32 +1,57 @@
 package store
 
 import (
-	"sort"
+	"context"
+	"database/sql"
+	"log"
 	"time"
 )
 
-// sql_secret.go SQLStore 对 SecretStore 接口的桩实现。
+// sql_secret.go 实现 SQLStore 的 SecretStore 子接口（P0.3 密钥管理，生产就绪）。
 //
-// TODO(p0.3): 接入 MySQL 持久化：
-//   - secrets 表：(tenant_id, key, version) PK + value（应用层加密后存储）+ key_type + created_at + updated_at
-//   - 当前版本通过 MAX(version) 子查询定位。
-//   - 生产环境 value 列须应用层加密（KMS/信封加密），DBA 不可见明文。
-// MVP 用内存 map 做缓存，保证接口齐全 + go build 通过。
+// 表结构：secrets（tenant_id/key_name/version 联合主键 + value + key_type + created_at + updated_at）。
+// 迁移文件 migrations/007_p03_secrets.sql 幂等建表。
+//
+// 设计要点（与 sql_k8s.go 风格一致）：
+//   - 每次写入都 INSERT 新版本行，version 单调递增（MAX(version)+1）；
+//   - GetSecret / ListSecrets 通过 MAX(version) 子查询定位当前版本；
+//   - 生产环境 value 列须应用层加密（KMS/信封加密），DBA 不可见明文；
+//   - DB 不可用时返回零值（nil/false/空 slice），不 panic。
 
-// GetSecret 按 (tenantID, key) 返回当前版本密钥明文项。
-// TODO(p0.3): SELECT * FROM secrets WHERE tenant_id=? AND key=? AND version=(SELECT MAX(version) ...)。
-func (s *SQLStore) GetSecret(tenantID, key string) (*SecretItem, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	item, ok := s.secrets[secretKey(tenantID, key)]
-	if !ok {
-		return nil, false
+// scanSecretMeta 从一行扫描出 *SecretMeta（不含 value，脱敏视图）。
+// 列顺序：tenant_id, key_name, key_type, version, created_at, updated_at。
+func scanSecretMeta(row rowScanner) *SecretMeta {
+	var m SecretMeta
+	var createdAt, updatedAt time.Time
+	if err := row.Scan(&m.TenantID, &m.Key, &m.KeyType, &m.Version, &createdAt, &updatedAt); err != nil {
+		return nil
 	}
-	return item, true
+	m.CreatedAt = createdAt
+	m.UpdatedAt = updatedAt
+	return &m
 }
 
-// SetSecret 写入/轮换密钥。
-// TODO(p0.3): INSERT INTO secrets(tenant_id, key, version, value, key_type, ...) VALUES(?, ?, MAX+1, encrypt(?), ?, ...)。
+// GetSecret 按 (tenantID, key) 返回当前版本密钥明文项。
+// 通过 MAX(version) 子查询定位当前版本；不存在返回 (nil, false)。
+func (s *SQLStore) GetSecret(tenantID, key string) (*SecretItem, bool) {
+	var value, keyType string
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT value, key_type FROM secrets
+		  WHERE tenant_id=? AND key_name=?
+		    AND version=(SELECT MAX(version) FROM secrets WHERE tenant_id=? AND key_name=?)`,
+		tenantID, key, tenantID, key).Scan(&value, &keyType)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, false
+		}
+		log.Printf("[store] GetSecret 查询失败 (tenant=%s key=%s): %v", tenantID, key, err)
+		return nil, false
+	}
+	return &SecretItem{Key: key, Value: value, KeyType: keyType}, true
+}
+
+// SetSecret 写入/轮换密钥：每次产生新版本行（MAX(version)+1）。
+// item==nil 返回 nil；空租户归一为 default；空 KeyType 默认 passphrase。
 func (s *SQLStore) SetSecret(item *SecretItem, tenantID string) *SecretMeta {
 	if item == nil {
 		return nil
@@ -37,87 +62,104 @@ func (s *SQLStore) SetSecret(item *SecretItem, tenantID string) *SecretMeta {
 	if item.KeyType == "" {
 		item.KeyType = "passphrase"
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sk := secretKey(tenantID, item.Key)
-	now := time.Now()
-	if oldMeta, ok := s.secretMetas[sk]; ok {
-		oldMeta.Version++
-		oldMeta.KeyType = item.KeyType
-		oldMeta.UpdatedAt = now
-		s.secrets[sk] = item
-		metaCopy := *oldMeta
-		s.secretVersions[sk] = append(s.secretVersions[sk], &metaCopy)
-		return oldMeta
+	// 查当前最大版本号（无历史则 0，新版本 = max+1）。
+	var maxVersion int
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT MAX(version) FROM secrets WHERE tenant_id=? AND key_name=?`,
+		tenantID, item.Key).Scan(&maxVersion); err != nil && err != sql.ErrNoRows {
+		log.Printf("[store] SetSecret 查询最大版本失败 (tenant=%s key=%s): %v", tenantID, item.Key, err)
+		return nil
 	}
-	meta := &SecretMeta{
+	newVersion := maxVersion + 1
+	now := time.Now().UTC()
+	if _, err := s.db.ExecContext(context.Background(),
+		`INSERT INTO secrets (tenant_id, key_name, version, value, key_type, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		tenantID, item.Key, newVersion, item.Value, item.KeyType, now, now); err != nil {
+		log.Printf("[store] SetSecret 插入失败 (tenant=%s key=%s version=%d): %v", tenantID, item.Key, newVersion, err)
+		return nil
+	}
+	return &SecretMeta{
 		Key:       item.Key,
 		KeyType:   item.KeyType,
-		Version:   1,
+		Version:   newVersion,
 		TenantID:  tenantID,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	s.secrets[sk] = item
-	s.secretMetas[sk] = meta
-	metaCopy := *meta
-	s.secretVersions[sk] = append(s.secretVersions[sk], &metaCopy)
-	return meta
 }
 
-// DeleteSecret 删除密钥（含全部历史版本）。
-// TODO(p0.3): DELETE FROM secrets WHERE tenant_id=? AND key=?。
+// DeleteSecret 删除密钥（含全部历史版本），返回是否删除成功。
 func (s *SQLStore) DeleteSecret(tenantID, key string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sk := secretKey(tenantID, key)
-	if _, ok := s.secrets[sk]; !ok {
+	res, err := s.db.ExecContext(context.Background(),
+		`DELETE FROM secrets WHERE tenant_id=? AND key_name=?`, tenantID, key)
+	if err != nil {
+		log.Printf("[store] DeleteSecret 失败 (tenant=%s key=%s): %v", tenantID, key, err)
 		return false
 	}
-	delete(s.secrets, sk)
-	delete(s.secretMetas, sk)
-	delete(s.secretVersions, sk)
-	return true
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		log.Printf("[store] DeleteSecret RowsAffected 失败 (tenant=%s key=%s): %v", tenantID, key, rowsErr)
+		return false
+	}
+	return n > 0
 }
 
-// ListSecrets 列出指定租户的全部密钥元信息（脱敏视图）。
-// TODO(p0.3): SELECT tenant_id, key, key_type, MAX(version), created_at, updated_at FROM secrets WHERE tenant_id=? GROUP BY ... ORDER BY key。
+// ListSecrets 列出指定租户的全部密钥元信息（脱敏视图，每个 key 仅返回最新版本）。
+// 通过 INNER JOIN MAX(version) 子查询取每个 (tenant_id, key_name) 的当前版本，按 key_name 升序。
 func (s *SQLStore) ListSecrets(tenantID string) []*SecretMeta {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var out []*SecretMeta
-	for _, meta := range s.secretMetas {
-		if meta.TenantID != tenantID {
-			continue
-		}
-		out = append(out, meta)
+	rows, err := s.db.QueryContext(context.Background(),
+		`SELECT s.tenant_id, s.key_name, s.key_type, s.version, s.created_at, s.updated_at
+		  FROM secrets s
+		  INNER JOIN (SELECT tenant_id, key_name, MAX(version) AS max_ver
+		               FROM secrets WHERE tenant_id=? GROUP BY tenant_id, key_name) m
+		    ON s.tenant_id=m.tenant_id AND s.key_name=m.key_name AND s.version=m.max_ver
+		 ORDER BY s.key_name`, tenantID)
+	if err != nil {
+		log.Printf("[store] ListSecrets 查询失败 (tenant=%s): %v", tenantID, err)
+		return nil
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	defer rows.Close()
+	out := make([]*SecretMeta, 0)
+	for rows.Next() {
+		if m := scanSecretMeta(rows); m != nil {
+			out = append(out, m)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] ListSecrets 遍历失败: %v", err)
+	}
 	return out
 }
 
-// RotateSecret 轮换密钥：用新值产生新版本。
-// TODO(p0.3): 等价于 SetSecret（INSERT 新版本行）。
+// RotateSecret 轮换密钥：用新值产生新版本，保留已有 KeyType。
+// 不存在则 KeyType 默认 passphrase。
 func (s *SQLStore) RotateSecret(tenantID, key, newValue string) *SecretMeta {
-	s.mu.Lock()
 	keyType := "passphrase"
-	if existing, ok := s.secrets[secretKey(tenantID, key)]; ok {
+	if existing, ok := s.GetSecret(tenantID, key); ok {
 		keyType = existing.KeyType
 	}
-	s.mu.Unlock()
 	return s.SetSecret(&SecretItem{Key: key, Value: newValue, KeyType: keyType}, tenantID)
 }
 
-// SecretVersions 返回指定密钥的全部版本元信息。
-// TODO(p0.3): SELECT tenant_id, key, key_type, version, created_at, updated_at FROM secrets WHERE tenant_id=? AND key=? ORDER BY version。
+// SecretVersions 返回指定密钥的全部版本元信息（按 version 升序）。
 func (s *SQLStore) SecretVersions(tenantID, key string) []*SecretMeta {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	versions := s.secretVersions[secretKey(tenantID, key)]
-	if len(versions) == 0 {
+	rows, err := s.db.QueryContext(context.Background(),
+		`SELECT tenant_id, key_name, key_type, version, created_at, updated_at
+		  FROM secrets WHERE tenant_id=? AND key_name=? ORDER BY version`, tenantID, key)
+	if err != nil {
+		log.Printf("[store] SecretVersions 查询失败 (tenant=%s key=%s): %v", tenantID, key, err)
 		return nil
 	}
-	out := make([]*SecretMeta, len(versions))
-	copy(out, versions)
+	defer rows.Close()
+	out := make([]*SecretMeta, 0)
+	for rows.Next() {
+		if m := scanSecretMeta(rows); m != nil {
+			out = append(out, m)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[store] SecretVersions 遍历失败: %v", err)
+	}
 	return out
 }

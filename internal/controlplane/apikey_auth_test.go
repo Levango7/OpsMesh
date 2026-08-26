@@ -1,13 +1,14 @@
 // apikey_auth_test.go 测试 H5 API Key 认证接入（requireProd 第 2.5 路 + authorizeByAPIKey）。
 //
 // 用例矩阵（FIXPLAN §2.3.4 防回归清单）：
-//   a) 有效 key + 匹配租户 + scope 足够        → 放行（caller=nil）
-//   b) 无效 key（不存在/格式错）               → 401 "invalid api key"
-//   c) 禁用 key（Enabled=false）               → 401
-//   d) 过期 key（ExpiresAt 早于 now）          → 401
-//   e) X-Tenant-ID 与 key 归属租户不一致       → 403 tenant mismatch（越权防线）
-//   f) scope 不足                              → 403 insufficient scope
-//   g) Scopes 为空的 key 放行全部（platform 向后兼容语义；将由 M2 收紧）
+//
+//	a) 有效 key + 匹配租户 + scope 足够        → 放行（caller=nil）
+//	b) 无效 key（不存在/格式错）               → 401 "invalid api key"
+//	c) 禁用 key（Enabled=false）               → 401
+//	d) 过期 key（ExpiresAt 早于 now）          → 401
+//	e) X-Tenant-ID 与 key 归属租户不一致       → 403 tenant mismatch（越权防线）
+//	f) scope 不足                              → 403 insufficient scope
+//	g) Scopes 为空的 key 放行全部（platform 向后兼容语义；将由 M2 收紧）
 //
 // 附加覆盖：X-API-Key 头路径、om_ 前缀优先于 JWT 分发、LastUsedAt 内存聚合计数。
 package controlplane

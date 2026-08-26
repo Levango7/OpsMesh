@@ -37,9 +37,9 @@ import (
 // allowedGatewayBackendSchemes 网关后端 scheme 白名单（L1 输入校验）。
 // 仅允许 http/https/grpc，拒绝 file:// / ftp:// / ws:// 等不安全或不支持协议。
 var allowedGatewayBackendSchemes = map[string]bool{
-	"http": true,
+	"http":  true,
 	"https": true,
-	"grpc": true,
+	"grpc":  true,
 }
 
 // validateGatewayTargetBackend 校验 targetBackend 格式（L1 输入校验）。

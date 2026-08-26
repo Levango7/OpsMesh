@@ -28,12 +28,12 @@ func TestMultiSchemaSmoke_PerTenantTicketIsolation(t *testing.T) {
 
 	// tenantA 创建工单。
 	tk := m.CreateTicket("tenantA", &Ticket{
-		ID:        "ticket-smoke-1",
-		TenantID:  "tenantA",
-		Title:     "smoke-isolation",
-		Priority:  "high",
-		Category:  "incident",
-		Status:    "open",
+		ID:       "ticket-smoke-1",
+		TenantID: "tenantA",
+		Title:    "smoke-isolation",
+		Priority: "high",
+		Category: "incident",
+		Status:   "open",
 	})
 	if tk == nil {
 		t.Fatal("CreateTicket(tenantA) 返回 nil，应成功")

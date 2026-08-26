@@ -500,4 +500,3 @@ func TestFilterSubcmdArgs_SubcmdAnywhere(t *testing.T) {
 		t.Fatalf("子命令名任意位置移除错误, got=%v want=%v", got, want)
 	}
 }
-

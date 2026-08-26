@@ -1,14 +1,18 @@
-
 // stub_guard.go SQLStore 桩方法的统一告警入口（H2 止血措施）。
 //
 // 背景：SQLStore 对 Phase 1-6 领域（ticket/slo/traffic/.../billing 共 15 个）
-// 的方法是未接入 MySQL 的桩。桩的接口签名绝大多数无 error 返回值
+// 的方法曾为未接入 MySQL 的桩。桩的接口签名绝大多数无 error 返回值
 // （改签名爆炸半径 >2000 行，见 docs/design/FIXPLAN-phase1-6.md §2.2.1），
 // 因此桩策略收敛为「返回约定零值 + 统一限频告警」，让失败可见而非假装成功：
 //   - Create 类一律返回 nil（杜绝「201 假成功 → GET 404 → 审计已记成功」链路）；
 //   - Get/Update/Delete/Enable/Disable 类返回 nil,false / false；
 //   - List 类返回非 nil 空切片（防上层 range panic）；
 //   - 每次进入桩方法先经 StubNotImplemented 打点告警。
+//
+// 现状（P1-P6 持久化落地后）：全部 15 个领域已实现真实 MySQL CRUD
+// （见 sql_p01.go ~ sql_p06.go 各 sql_*.go 文件），StubDomains 清单收敛为空，
+// WarnStubStoreDomains 在清单为空时静默返回（不再刷屏告警）。
+// StubNotImplemented 与 stubLastLog 限频机制保留，供未来可能的新领域桩过渡使用。
 //
 // 告警语义：每 (domain, method) 组合首次调用必打 WARN；之后同一 key 在
 // stubLogInterval 窗口内限频（60s 至多一条），避免高频路径刷屏。
@@ -57,19 +61,21 @@ func StubNotImplemented(domain, method string) {
 		"hint", "如需生产使用该领域请等待 MySQL 持久化落地，或显式 --allow-stub-stores 接受桩限制")
 }
 
-// StubDomains 未持久化领域清单（P1-P6 共 15 个），与 15 个 sql_*.go 桩文件一一对应。
-// 供 SQL/MultiSchema 构造函数启动告警使用；internal/config 的 Validate 错误信息
-// 维护了同一名单的字面量副本，两处新增领域时须同步更新。
-var StubDomains = []string{
-	"ticket", "slo", "traffic", "pipeline", "argocd",
-	"compliance", "backup", "network", "automation", "webhook",
-	"script", "tenant", "apikey", "plugin", "billing",
-}
+// StubDomains 未持久化领域清单。P1-P6 共 15 个领域已全部实现 MySQL 持久化
+// （sql_p01.go ~ sql_p06.go 真实 CRUD 落地），故清单收敛为空。
+// 保留变量本身供未来新领域桩过渡期使用；internal/config 的 stubStoreDomains
+// 常量维护了同一名单的字面量副本，两处新增/移除领域时须同步更新。
+var StubDomains = []string{}
 
 // WarnStubStoreDomains 构造函数接线：检测到 SQL 后端时输出一条总述性 WARN，
 // 声明 P1-P6 领域在该后端未持久化（H3 缓解：让空壳可见，而非运行期静默失效）。
 // component 为日志定位前缀（如 "sql" / "multi-schema"）；内存后端不调用本函数。
+// 现状：StubDomains 为空（P1-P6 全部持久化），本函数静默返回，不再刷屏告警。
 func WarnStubStoreDomains(component string) {
+	if len(StubDomains) == 0 {
+		// 全部领域已持久化，无桩领域可告警；静默返回避免无意义日志。
+		return
+	}
 	logx.Warn(context.Background(),
 		component+": 以下领域 P1-P6 在 SQL 后端未持久化（桩实现，写入返回零值）",
 		"domains", joinStubDomains(), "count", len(StubDomains),

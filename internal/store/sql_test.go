@@ -455,28 +455,28 @@ func TestSQLStore_TenantIsolation(t *testing.T) {
 //
 // 无 OPSMESH_TEST_MYSQL_DSN 时（CI build-test 默认），SQL store 真实集成测试
 // （TestSQLStore_TenantIsolation）经 t.Skip 跳过；本测试显式断言该环境变量未设置时
-// 跳过，并验证桩模式仍生效（StubDomains 非空，桩语义由 stub_semantics_test.go 锁定）。
-// 有 DSN 时（integration job），本测试不跳过，断言桩模式清单完整。
+// 跳过，并验证桩模式现状（P1-P6 全部持久化后 StubDomains 为空，桩语义测试已移除）。
+// 有 DSN 时（integration job），本测试不跳过，断言 StubDomains 仍为空（全部持久化）。
 //
-// 设计目的：锁定"无 DSN → 集成测试 skip → 桩语义由 stub_semantics_test.go 兜底"的
-// 测试分工契约，防止未来误删 t.Skip 导致 CI 在无 MySQL 时尝试连接而超时失败。
+// 设计目的：锁定"无 DSN → 集成测试 skip → P1-P6 持久化由 sql_p1p6_test.go 扫描函数测试兜底"
+// 的测试分工契约，防止未来误删 t.Skip 导致 CI 在无 MySQL 时尝试连接而超时失败。
 func TestSQLStore_StubModeSkipGuard(t *testing.T) {
 	dsn := os.Getenv("OPSMESH_TEST_MYSQL_DSN")
 	if dsn == "" {
-		// stub 模式：SQL store 集成测试被跳过，桩语义由 stub_semantics_test.go 保证。
-		t.Skip("OPSMESH_TEST_MYSQL_DSN not set; stub mode active (SQL store integration skipped, semantics guarded by stub_semantics_test.go)")
+		// stub 模式：SQL store 集成测试被跳过，P1-P6 持久化由 sql_p1p6_test.go 扫描函数测试保证。
+		t.Skip("OPSMESH_TEST_MYSQL_DSN not set; stub mode active (SQL store integration skipped, P1-P6 scan funcs guarded by sql_p1p6_test.go)")
 	}
-	// 有 DSN：断言桩模式清单仍完整（stub_semantics_test.go 已详测，此处仅守护非空）。
-	if len(StubDomains) == 0 {
-		t.Fatal("StubDomains empty; stub mode domain list must not be empty even with DSN")
+	// 有 DSN：断言 StubDomains 仍为空（P1-P6 全部已持久化，无桩领域）。
+	if len(StubDomains) != 0 {
+		t.Fatalf("StubDomains count = %d, want 0 (P1-P6 全部已持久化)", len(StubDomains))
 	}
 }
 
-// TestSQLStore_StubDomainsCount 锁定桩领域数量为 15（P1-P6）。
-// 防止新增领域漏更新 StubDomains 清单导致 SQL 后端静默失效（H3 缓解：让空壳可见）。
+// TestSQLStore_StubDomainsCount 锁定桩领域数量为 0（P1-P6 全部已持久化）。
+// 防止回退导致 StubDomains 清单非空（H3 缓解：让空壳可见，但现在已无空壳）。
 func TestSQLStore_StubDomainsCount(t *testing.T) {
-	const wantStubDomainCount = 15 // ticket/slo/traffic/pipeline/argocd/compliance/backup/network/automation/webhook/script/tenant/apikey/plugin/billing
+	const wantStubDomainCount = 0 // P1-P6 全部 15 个领域已实现 MySQL 持久化（sql_p01.go ~ sql_p06.go）
 	if len(StubDomains) != wantStubDomainCount {
-		t.Fatalf("StubDomains count = %d, want %d (新增领域须同步更新清单与下限)", len(StubDomains), wantStubDomainCount)
+		t.Fatalf("StubDomains count = %d, want %d (P1-P6 全部已持久化，清单应为空)", len(StubDomains), wantStubDomainCount)
 	}
 }

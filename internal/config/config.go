@@ -27,13 +27,13 @@ func DefaultAgentShellWhitelist() string {
 	return defaultAgentShellWhitelist
 }
 
-// stubStoreDomains SQL 后端尚未持久化的 P1-P6 领域清单（逗号分隔，共 15 个）。
+// stubStoreDomains SQL 后端尚未持久化的 P1-P6 领域清单（逗号分隔）。
 // 与 internal/store/stub_guard.go 的 StubDomains 保持一一对应；config 包不得
 // import store 包（避免配置层反向依赖存储实现），故此处维护字面量副本，
 // 两处新增/移除领域时必须同步更新（stub_guard.go StubDomains 注释已互相声明此约束）。
-const stubStoreDomains = "ticket,slo,traffic,pipeline,argocd," +
-	"compliance,backup,network,automation,webhook," +
-	"script,tenant,apikey,plugin,billing"
+// 现状：P1-P6 全部 15 个领域已实现 MySQL 持久化，清单收敛为空字符串；
+// Validate 中生产模式 + SQL 后端的拒绝启动逻辑据此跳过（无桩领域则无须放行门槛）。
+const stubStoreDomains = ""
 
 // Config 启动时解析出的运行参数。地址/端口全部走 flag，不硬编码任何密钥。
 type Config struct {
@@ -368,9 +368,11 @@ type Config struct {
 	QuotaMaxAlerts  int  // --quota-max-alerts 默认最大告警数（0=不限）
 
 	// H2/H3 配套开关：是否允许 SQL 后端继续使用 P1-P6 桩存储。
-	// 背景：SQLStore 对 15 个领域（见 stubStoreDomains 清单）为桩实现，写入不持久化；
+	// 背景：SQLStore 对 15 个领域（见 stubStoreDomains 清单）曾为桩实现，写入不持久化；
 	// 生产模式（--production=true）+ --store=mysql 时默认拒绝启动（fail-fast），
 	// 运维必须显式 --allow-stub-stores=true 确认接受桩限制后才放行。
+	// 现状：P1-P6 全部 15 个领域已实现真实 MySQL CRUD，stubStoreDomains 为空，
+	// Validate 中的拒绝启动分支被跳过，本开关保留向后兼容（未来新桩领域可复用）。
 	// memory 后端与 demo/开发模式不受影响；运行期由 store 层 stub_guard 限频告警兜底。
 	AllowStubStores bool // --allow-stub-stores 允许 SQL 后端桩存储（生产默认 false=拒绝启动）
 }
@@ -1000,11 +1002,14 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("--multi-schema=true 但 --store=%q（多 schema 隔离仅支持 mysql 后端）", c.Store)
 	}
 	// H2/H3 配套开关：生产模式 + SQL 后端默认拒绝启动（fail-fast）。
-	// 背景：SQLStore 对 P1-P6 共 15 个领域为桩实现（写入返回零值、不持久化），
+	// 背景：SQLStore 对 P1-P6 共 15 个领域曾为桩实现（写入返回零值、不持久化），
 	// 生产环境静默丢数据不可接受，须运维显式 --allow-stub-stores=true 确认接受后才放行；
-	// 放行后运行期由 store 层 stub_guard 限频 WARN 兜底。此时 DSN 必已非空
-	//（上方 --store=mysql 的 DSN 校验先行），无需重复校验。memory 后端不受影响。
-	if c.Production && c.Store == "mysql" && !c.AllowStubStores {
+	// 放行后运行期由 store 层 stub_guard 限频 WARN 兜底。
+	// 现状：P1-P6 全部 15 个领域已实现真实 MySQL CRUD（sql_p01.go ~ sql_p06.go），
+	// stubStoreDomains 收敛为空字符串，本拒绝逻辑跳过（无桩领域则无须放行门槛）。
+	// 保留分支与 AllowStubStores 开关向后兼容：未来若新增桩领域，仅需将域名加入
+	// stubStoreDomains 即可自动恢复拒绝启动行为，无须改动 Validate 代码。
+	if stubStoreDomains != "" && c.Production && c.Store == "mysql" && !c.AllowStubStores {
 		return fmt.Errorf("生产模式（--production=true）使用 SQL 后端（--store=mysql），但以下 P1-P6 领域尚未持久化（桩实现）：%s；请等待 MySQL 持久化落地，或显式设置 --allow-stub-stores=true（或 env OPSMESH_ALLOW_STUB_STORES）确认接受桩限制", stubStoreDomains)
 	}
 	// 控制面联邦：peer 地址必须是合法 URL（含 scheme + host），启动期 fail-fast 避免运行期诡异失败。

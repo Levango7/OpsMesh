@@ -30,8 +30,8 @@ import (
 	"opsmesh/internal/metrics"
 	"opsmesh/internal/notify"
 	"opsmesh/internal/orchestration"
-	"opsmesh/internal/platform"
 	"opsmesh/internal/otelx"
+	"opsmesh/internal/platform"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/secrets"
 	"opsmesh/internal/store"
@@ -87,7 +87,7 @@ type Server struct {
 	// apiKeyUsage API Key 使用计数（LastUsedAt 内存聚合 MVP）。
 	// key=APIKey.ID，value=成功认证累计次数；由 apiKeyUsageMu 保护。
 	// 设计约束（FIXPLAN §2.3.3）：仅内存累计、禁止每请求同步写 store（Memory 锁竞争/
-	 // MultiSchema 跨 schema 路由/SQL 写放大）；后台批量刷写 goroutine 本期不做，
+	// MultiSchema 跨 schema 路由/SQL 写放大）；后台批量刷写 goroutine 本期不做，
 	// 重启丢失计数可接受。nil map 时 recordAPIKeyUsage 静默跳过（容错未初始化的测试 Server）。
 	apiKeyUsageMu sync.Mutex
 	apiKeyUsage   map[string]int64

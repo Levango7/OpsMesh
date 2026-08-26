@@ -1,4 +1,3 @@
-
 // log_collect.go 实现增强日志采集器 LogCollector。
 //
 // 在 log_collectLoop（agent.go 既有基于环境变量的简单增量上报）之上提供更完整的采集能力：
@@ -64,12 +63,12 @@ type LogCollectStats struct {
 // Content 为合并后的正文（多行用 \n 连接）；LineCount 为合并前的原始行数；
 // Timestamp 为采集时刻（不解析日志行内时间戳，简化实现）。
 type CollectedLog struct {
-	File       string
-	Content    string
-	LineCount  int
-	Bytes      int
-	Timestamp  time.Time
-	StartLine  string // 合并记录的首行（便于级别解析/过滤展示）
+	File      string
+	Content   string
+	LineCount int
+	Bytes     int
+	Timestamp time.Time
+	StartLine string // 合并记录的首行（便于级别解析/过滤展示）
 }
 
 // LogCollectPushFunc 采集器上报回调：批量推送合并后的记录。
@@ -78,9 +77,9 @@ type LogCollectPushFunc func(ctx context.Context, records []CollectedLog) error
 
 // 默认参数。
 const (
-	defaultLogCollectInterval = 30 * time.Second       // 默认扫描间隔
-	logCollectReadLimit       = 1 << 20                // 单次读取上限 1MB（防 OOM）
-	logCollectMaxRecords      = 1000                   // 单次 tick 最多积累记录数（防 pushFn 批次过大）
+	defaultLogCollectInterval = 30 * time.Second // 默认扫描间隔
+	logCollectReadLimit       = 1 << 20          // 单次读取上限 1MB（防 OOM）
+	logCollectMaxRecords      = 1000             // 单次 tick 最多积累记录数（防 pushFn 批次过大）
 )
 
 // LogCollector 增强日志采集器。
@@ -96,18 +95,18 @@ const (
 //   - started    是否已 Start（防止重复启动）。
 //   - rateState  限速状态（滑动窗口内已发送行数与窗口起点）。
 type LogCollector struct {
-	mu        sync.RWMutex
-	config    LogCollectConfig
-	include   []*regexp.Regexp
-	exclude   []*regexp.Regexp
-	multiline *regexp.Regexp
-	offsets   map[string]int64
-	pushFn    LogCollectPushFunc
-	stopCh    chan struct{}
-	wg        sync.WaitGroup
-	stats     LogCollectStats
-	started   bool
-	rateMu    sync.Mutex
+	mu         sync.RWMutex
+	config     LogCollectConfig
+	include    []*regexp.Regexp
+	exclude    []*regexp.Regexp
+	multiline  *regexp.Regexp
+	offsets    map[string]int64
+	pushFn     LogCollectPushFunc
+	stopCh     chan struct{}
+	wg         sync.WaitGroup
+	stats      LogCollectStats
+	started    bool
+	rateMu     sync.Mutex
 	rateWindow time.Time
 	rateCount  int64
 }
@@ -353,12 +352,12 @@ func (lc *LogCollector) collectFile(
 			return
 		}
 		records = append(records, CollectedLog{
-			File:       file,
-			Content:    buf.String(),
-			LineCount:  bufLineCount,
-			Bytes:      bufBytes,
-			Timestamp:  time.Now(),
-			StartLine:  bufStartLine,
+			File:      file,
+			Content:   buf.String(),
+			LineCount: bufLineCount,
+			Bytes:     bufBytes,
+			Timestamp: time.Now(),
+			StartLine: bufStartLine,
 		})
 		buf.Reset()
 		bufLineCount = 0
@@ -548,7 +547,7 @@ func (lc *LogCollector) Stats() LogCollectStats {
 // 用 sentinel error + wrap 辅助方法，便于上层 errors.Is/As 识别与日志结构化。
 
 type logCollectError struct {
-	msg string
+	msg     string
 	wrapped error
 	details []any
 }
@@ -577,7 +576,7 @@ func (e *logCollectError) wrap(err error, details ...any) *logCollectError {
 }
 
 var (
-	errLogCollectPushFnNil       = &logCollectError{msg: "log_collect: pushFn 为 nil"}
+	errLogCollectPushFnNil        = &logCollectError{msg: "log_collect: pushFn 为 nil"}
 	errLogCollectMultilineCompile = &logCollectError{msg: "log_collect: multiline 正则编译失败"}
 	errLogCollectRuleCompile      = &logCollectError{msg: "log_collect: 过滤规则正则编译失败"}
 )

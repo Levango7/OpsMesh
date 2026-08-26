@@ -24,8 +24,8 @@ import (
 // allowedPluginTypes 插件类型白名单（L1 输入校验）。
 // 仅允许 data/logic/integration 三类，拒绝任意其他值防止下游分发逻辑误判。
 var allowedPluginTypes = map[string]bool{
-	"data":       true,
-	"logic":      true,
+	"data":        true,
+	"logic":       true,
 	"integration": true,
 }
 

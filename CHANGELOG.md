@@ -4,6 +4,31 @@
 
 > 当前最新已发布版本：`v0.7.0`（2026-08-16）。`[Unreleased]` 段累积未发布变更，下一个发布版本号待定（按实际演进预计 `v0.8.0`；若按文档同步批次独立发版可记为 `v0.5.0`，由发布流程最终确定）。
 
+## [Unreleased] — 2026-08-27 SQL 持久化全域落地（P0.3 + P1-P6 共 18 域）
+
+### SQL 持久化实现
+- **P0.3（3 域）**：secret / discovery / config — 迁移 007/008/009，sql_secret.go / sql_discovery.go / sql_config.go 从内存 map 重写为 MySQL CRUD
+- **P1（2 域）**：slo / ticket — 迁移 010，sql_slo.go / sql_ticket.go 从桩重写为 MySQL CRUD
+- **P2（3 域）**：argocd / pipeline / traffic — 迁移 011，sql_argocd.go / sql_pipeline.go / sql_traffic.go 从桩重写为 MySQL CRUD
+- **P3（2 域）**：backup / compliance — 迁移 012，sql_backup.go / sql_compliance.go 从桩重写为 MySQL CRUD
+- **P4（2 域）**：automation / network — 迁移 013，sql_automation.go / sql_network.go 从桩重写为 MySQL CRUD
+- **P5（2 域）**：script / webhook — 迁移 014，sql_script.go / sql_webhook.go 从桩重写为 MySQL CRUD
+- **P6（4 域）**：tenant / apikey / plugin / billing — 迁移 015，sql_tenant.go / sql_apikey.go / sql_plugin.go / sql_billing.go 从桩重写为 MySQL CRUD
+- **设计文档**：新增 `docs/sql-persistence-design.md`（15 域 22 张表完整设计 + 审核通过）
+
+### StubDomains 清理
+- `stub_guard.go` StubDomains 列表清空（全部 15 域已持久化）
+- `config.go` stubStoreDomains 常量清空，生产模式 + SQL 后端不再拒绝启动
+- 删除 `stub_semantics_test.go`（桩语义测试已过时）
+- 更新 `memory_crud_extra_test.go` / `sql_test.go` / `config_extra_test.go` 中 StubDomains 相关断言
+
+### 测试补强
+- 新增 `sql_p03_test.go`：P0.3 扫描函数测试（8 个）
+- 新增 `sql_p1p6_test.go`：P1-P6 扫描函数测试（57 个，覆盖全部 21 个 scan 函数）
+
+### 验证
+- `go build ./...` ✅ `go vet ./...` ✅ `go test ./...` ✅ 全绿无失败
+
 ## [Unreleased] — 2026-08-27 技术债务清偿批次（测试覆盖率提升 + 编码修复 + 架构文档）
 
 ### 测试覆盖率提升（Go 单元测试）
