@@ -19,7 +19,29 @@ import (
 // secretKey 拼装复合键。
 func secretKey(tenantID, key string) string { return tenantID + "|" + key }
 
+// cloneSecretItem 返回 item 的深拷贝。
+// SecretItem 字段均为值类型，浅拷贝即可；nil 返回 nil。
+// 用于读路径返回副本、写路径入 map 前拷贝，隔离外部修改对内部状态的影响。
+func cloneSecretItem(item *SecretItem) *SecretItem {
+	if item == nil {
+		return nil
+	}
+	cp := *item
+	return &cp
+}
+
+// cloneSecretMeta 返回 meta 的深拷贝。
+// SecretMeta 字段均为值类型，浅拷贝即可；nil 返回 nil。
+func cloneSecretMeta(meta *SecretMeta) *SecretMeta {
+	if meta == nil {
+		return nil
+	}
+	cp := *meta
+	return &cp
+}
+
 // GetSecret 按 (tenantID, key) 返回当前版本密钥明文项；不存在返回 (nil, false)。
+// 返回内部数据的深拷贝副本，外部修改不影响内部状态。
 func (m *MemoryStore) GetSecret(tenantID, key string) (*SecretItem, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -27,12 +49,12 @@ func (m *MemoryStore) GetSecret(tenantID, key string) (*SecretItem, bool) {
 	if !ok {
 		return nil, false
 	}
-	return item, true
+	return cloneSecretItem(item), true
 }
 
 // SetSecret 写入/轮换密钥（按 key 幂等）。已存在则 Version+1；不存在则 Version=1。
 // tenantID 从参数显式传入（与 SecretItem 无 TenantID 字段对应）。
-// 返回更新后的密钥元信息（脱敏视图，不含 Value）。
+// 返回更新后的密钥元信息（脱敏视图，不含 Value；深拷贝副本，外部修改不影响内部）。
 func (m *MemoryStore) SetSecret(item *SecretItem, tenantID string) *SecretMeta {
 	if item == nil {
 		return nil
@@ -52,12 +74,12 @@ func (m *MemoryStore) SetSecret(item *SecretItem, tenantID string) *SecretMeta {
 		oldMeta.Version++
 		oldMeta.KeyType = item.KeyType
 		oldMeta.UpdatedAt = now
-		// 更新明文值。
-		m.secrets[sk] = item
+		// 更新明文值（入 map 前拷贝，隔离外部修改）。
+		m.secrets[sk] = cloneSecretItem(item)
 		// 追加新版本元信息到历史（深拷贝）。
 		metaCopy := *oldMeta
 		m.secretVersions[sk] = append(m.secretVersions[sk], &metaCopy)
-		return oldMeta
+		return cloneSecretMeta(oldMeta)
 	}
 	// 新建。
 	meta := &SecretMeta{
@@ -68,11 +90,11 @@ func (m *MemoryStore) SetSecret(item *SecretItem, tenantID string) *SecretMeta {
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	m.secrets[sk] = item
+	m.secrets[sk] = cloneSecretItem(item)
 	m.secretMetas[sk] = meta
 	metaCopy := *meta
 	m.secretVersions[sk] = append(m.secretVersions[sk], &metaCopy)
-	return meta
+	return cloneSecretMeta(meta)
 }
 
 // DeleteSecret 删除密钥（按 tenantID + key，含全部历史版本）。返回是否删除成功。
@@ -90,6 +112,7 @@ func (m *MemoryStore) DeleteSecret(tenantID, key string) bool {
 }
 
 // ListSecrets 列出指定租户的全部密钥元信息（脱敏视图，按 key 升序）。
+// 返回深拷贝副本，外部修改不影响内部状态。
 func (m *MemoryStore) ListSecrets(tenantID string) []*SecretMeta {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -98,7 +121,7 @@ func (m *MemoryStore) ListSecrets(tenantID string) []*SecretMeta {
 		if meta.TenantID != tenantID {
 			continue
 		}
-		out = append(out, meta)
+		out = append(out, cloneSecretMeta(meta))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out
@@ -117,6 +140,7 @@ func (m *MemoryStore) RotateSecret(tenantID, key, newValue string) *SecretMeta {
 }
 
 // SecretVersions 返回指定密钥的全部版本元信息（按 version 升序）。
+// 返回深拷贝副本，外部修改不影响内部状态。
 func (m *MemoryStore) SecretVersions(tenantID, key string) []*SecretMeta {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -125,6 +149,8 @@ func (m *MemoryStore) SecretVersions(tenantID, key string) []*SecretMeta {
 		return nil
 	}
 	out := make([]*SecretMeta, len(versions))
-	copy(out, versions)
+	for i, v := range versions {
+		out[i] = cloneSecretMeta(v)
+	}
 	return out
 }

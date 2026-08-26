@@ -30,6 +30,7 @@ import (
 	"opsmesh/internal/metrics"
 	"opsmesh/internal/notify"
 	"opsmesh/internal/orchestration"
+	"opsmesh/internal/platform"
 	"opsmesh/internal/otelx"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/secrets"
@@ -74,6 +75,22 @@ type Server struct {
 	// 用于 auth.go 中登录/注册后签发 token。空时 NewServer 随机生成 32 字节密钥
 	// （重启后旧 token 失效，仅开发/单实例适用）。
 	jwtSecret []byte
+
+	// apiKeyMgr API Key 管理引擎（H5 认证接入，复用 internal/platform）。
+	// 由 NewServer 用 s.store 构造；authorizeByAPIKey 经 ValidateKey（SHA-256 hash 比对 +
+	// Enabled/过期校验）与 HasScope（resource:action 与 Scopes 同构直比）完成
+	// "Bearer om_*"/X-API-Key 凭据的认证与授权。
+	// nil=未构造（部分测试直构 Server 时可能为 nil）：此时 API Key 分支一律按无效 key 拒绝，
+	// 绝不因 nil panic 产生 500 而意外绕过认证闸。
+	apiKeyMgr *platform.APIKeyManager
+
+	// apiKeyUsage API Key 使用计数（LastUsedAt 内存聚合 MVP）。
+	// key=APIKey.ID，value=成功认证累计次数；由 apiKeyUsageMu 保护。
+	// 设计约束（FIXPLAN §2.3.3）：仅内存累计、禁止每请求同步写 store（Memory 锁竞争/
+	 // MultiSchema 跨 schema 路由/SQL 写放大）；后台批量刷写 goroutine 本期不做，
+	// 重启丢失计数可接受。nil map 时 recordAPIKeyUsage 静默跳过（容错未初始化的测试 Server）。
+	apiKeyUsageMu sync.Mutex
+	apiKeyUsage   map[string]int64
 
 	// kubeconfig 静态加密密钥（AES-256-GCM，来自 config.EncryptionKey base64 解码）。
 	// k8s_cluster.go 的 encryptKubeconfig/decryptKubeconfig 用此密钥对 kubeconfig 做加解密。
@@ -185,6 +202,9 @@ type Server struct {
 	// 由 NewServer 构造；nil=未启用网关（向后兼容，handler 调用前由 ensureGateway 兜底）。
 	// 路由规则按 tenantID 隔离，进程级内存（重启后丢失，运行期配置）。
 	gateway *gatewayState
+	// gatewayOnce 保证 ensureGateway 在并发调用下只构造一次 gateway 状态。
+	// 即使多个 handler goroutine 同时进入 ensureGateway，也只会赋值一次。
+	gatewayOnce sync.Once
 }
 
 // startRefreshSweep 周期清理过期刷新令牌（store 持久化后改为 no-op，
@@ -290,6 +310,10 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		alertSilencer:   alertengine.NewSilencer(nil),
 		alertAggregator: alertengine.NewAggregator([]string{"deviceID", "severity"}, 100),
 		alertNotifier:   notify.NewNotifier(notify.WithDedup(5*time.Minute), notify.WithRetry(nil)),
+		// H5 认证接入：API Key 管理引擎（复用 store，ValidateKey/HasScope 均为只读操作）。
+		apiKeyMgr: platform.NewAPIKeyManager(st),
+		// LastUsedAt 内存聚合计数（MVP：仅累计不落库，见 Server.apiKeyUsage 注释）。
+		apiKeyUsage: make(map[string]int64),
 		// Phase 5 API 网关运行期状态（路由规则 + 限流器 + 统计）。
 		gateway: newGatewayState(),
 	}

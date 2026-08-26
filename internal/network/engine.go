@@ -1,4 +1,3 @@
-
 // Package network 实现网络管理引擎：网络设备模型、监控指标、拓扑结构、网络发现。
 //
 // 设计要点：
@@ -15,6 +14,9 @@ import (
 	"strings"
 	"time"
 )
+
+// subnetMaxHosts 是 IPv4 /24 子网最大可用地址数（保留网络地址和广播地址）。
+const subnetMaxHosts = 254
 
 // DeviceType 网络设备类型。
 type DeviceType string
@@ -52,65 +54,65 @@ const (
 
 // Device 网络设备模型。
 type Device struct {
-	ID           string       `json:"id"`
-	TenantID     string       `json:"tenantID"`
-	Name         string       `json:"name"`
-	Type         DeviceType   `json:"type"`
-	Vendor       string       `json:"vendor"`       // 厂商：cisco/huawei/juniper/...
-	Model        string       `json:"model"`        // 型号
-	IP           string       `json:"ip"`           // 管理 IP
-	Mask         string       `json:"mask"`         // 子网掩码
-	Mac          string       `json:"mac"`          // MAC 地址
-	Location     string       `json:"location"`     // 物理位置
-	SnmpCommunity string      `json:"snmpCommunity"` // SNMP community（脱敏返回）
-	Status       DeviceStatus `json:"status"`
-	Interfaces   []Interface  `json:"interfaces"`
-	Config       string       `json:"config,omitempty"` // 当前配置（下发/备份）
-	CreatedAt    time.Time    `json:"createdAt"`
-	UpdatedAt    time.Time    `json:"updatedAt"`
+	ID            string       `json:"id"`
+	TenantID      string       `json:"tenantID"`
+	Name          string       `json:"name"`
+	Type          DeviceType   `json:"type"`
+	Vendor        string       `json:"vendor"`        // 厂商：cisco/huawei/juniper/...
+	Model         string       `json:"model"`         // 型号
+	IP            string       `json:"ip"`            // 管理 IP
+	Mask          string       `json:"mask"`          // 子网掩码
+	Mac           string       `json:"mac"`           // MAC 地址
+	Location      string       `json:"location"`      // 物理位置
+	SnmpCommunity string       `json:"snmpCommunity"` // SNMP community（脱敏返回）
+	Status        DeviceStatus `json:"status"`
+	Interfaces    []Interface  `json:"interfaces"`
+	Config        string       `json:"config,omitempty"` // 当前配置（下发/备份）
+	CreatedAt     time.Time    `json:"createdAt"`
+	UpdatedAt     time.Time    `json:"updatedAt"`
 }
 
 // Interface 网络接口。
 type Interface struct {
-	Name     string `json:"name"`     // 如 eth0, GigabitEthernet0/0/1
-	IP       string `json:"ip"`
-	Mask     string `json:"mask"`
-	Mac      string `json:"mac"`
-	Speed    int    `json:"speed"`    // Mbps
-	Status   string `json:"status"`   // up/down
-	Type     string `json:"type"`     // physical/vlan/loopback
-	VlanID   int    `json:"vlanID"`   // VLAN ID（type=vlan 时有效）
+	Name   string `json:"name"` // 如 eth0, GigabitEthernet0/0/1
+	IP     string `json:"ip"`
+	Mask   string `json:"mask"`
+	Mac    string `json:"mac"`
+	Speed  int    `json:"speed"`  // Mbps
+	Status string `json:"status"` // up/down
+	Type   string `json:"type"`   // physical/vlan/loopback
+	VlanID int    `json:"vlanID"` // VLAN ID（type=vlan 时有效）
 }
 
 // Metrics 网络设备监控指标。
 type Metrics struct {
-	DeviceID    string    `json:"deviceID"`
-	Timestamp   time.Time `json:"timestamp"`
-	CPUUsage    float64   `json:"cpuUsage"`    // %
-	MemoryUsage float64   `json:"memoryUsage"` // %
-	Temperature float64   `json:"temperature"` // ℃
-	Uptime      int64     `json:"uptime"`      // 秒
+	DeviceID    string            `json:"deviceID"`
+	Timestamp   time.Time         `json:"timestamp"`
+	CPUUsage    float64           `json:"cpuUsage"`    // %
+	MemoryUsage float64           `json:"memoryUsage"` // %
+	Temperature float64           `json:"temperature"` // ℃
+	Uptime      int64             `json:"uptime"`      // 秒
 	Interfaces  []InterfaceMetric `json:"interfaces"`
 }
 
 // InterfaceMetric 接口监控指标。
 type InterfaceMetric struct {
-	Name       string  `json:"name"`
-	InBytes    int64   `json:"inBytes"`
-	OutBytes   int64   `json:"outBytes"`
-	InPackets  int64   `json:"inPackets"`
-	OutPackets int64   `json:"outPackets"`
-	InErrors   int64   `json:"inErrors"`
-	OutErrors  int64   `json:"outErrors"`
-	Bandwidth  float64 `json:"bandwidth"` // Mbps
+	Name        string  `json:"name"`
+	InBytes     int64   `json:"inBytes"`
+	OutBytes    int64   `json:"outBytes"`
+	InPackets   int64   `json:"inPackets"`
+	OutPackets  int64   `json:"outPackets"`
+	InErrors    int64   `json:"inErrors"`
+	OutErrors   int64   `json:"outErrors"`
+	Bandwidth   float64 `json:"bandwidth"`   // Mbps
 	Utilization float64 `json:"utilization"` // %
 }
 
 // Topology 网络拓扑结构。
 type Topology struct {
-	TenantID  string  `json:"tenantID"`
-	Nodes     []Node  `json:"nodes"`
-	Links     []Link  `json:"links"`
+	TenantID  string    `json:"tenantID"`
+	Nodes     []Node    `json:"nodes"`
+	Links     []Link    `json:"links"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
@@ -118,15 +120,15 @@ type Topology struct {
 type Node struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
-	Type   string `json:"type"`   // device/segment/cloud
+	Type   string `json:"type"` // device/segment/cloud
 	IP     string `json:"ip"`
 	Status string `json:"status"`
 }
 
 // Link 拓扑链路。
 type Link struct {
-	From    string `json:"from"`    // 节点 ID
-	To      string `json:"to"`      // 节点 ID
+	From      string `json:"from"` // 节点 ID
+	To        string `json:"to"`   // 节点 ID
 	FromIface string `json:"fromIface"`
 	ToIface   string `json:"toIface"`
 	Bandwidth int    `json:"bandwidth"` // Mbps
@@ -188,7 +190,7 @@ func (e *Engine) Discover(req DiscoverRequest) DiscoverResult {
 	if hostBits <= 8 {
 		scanned = (1 << hostBits) - 2
 	} else {
-		scanned = 254
+		scanned = subnetMaxHosts
 	}
 	// 示例：返回 2 个示例设备（网关 + 一台主机）。
 	base := strings.TrimSuffix(req.Subnet, "/"+strconv.Itoa(ones))

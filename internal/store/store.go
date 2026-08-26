@@ -4,8 +4,13 @@
 //
 // 控制面通过 Store 接口与具体后端解耦；Registry 仅做薄转发。
 //
-// 接口拆分：原 37 方法巨型 Store 接口按领域拆为 6 个小接口
-// （DeviceStore / TaskStore / AlertStore / AuditStore / TokenStore / LeaderStore），
+// 接口拆分：原巨型 Store 接口按领域拆为 35 个小接口
+// （DeviceStore / TaskStore / AlertStore / AuditStore / TokenStore / LeaderStore /
+//  UserStore / RoleStore / PermissionStore / K8sClusterStore / TemplateStore / RefreshTokenStore /
+//  SilenceStore / NotifyChannelStore / NotifyTemplateStore / AgentLogStore / QuotaStore /
+//  ServiceDiscoveryStore / ConfigStore / SecretStore / TicketStore / SLOStore / TrafficStore /
+//  PipelineStore / ArgoCDStore / ComplianceStore / BackupStore / NetworkStore / AutomationStore /
+//  WebhookStore / ScriptStore / TenantStore / APIKeyStore / PluginStore / BillingStore），
 // Store 保留为它们的组合接口，向后兼容现有消费方。
 // 小接口本身即文档化领域边界；消费方可按需依赖最小接口，当前保留 Store
 // 组合接口向后兼容，后续可渐进迁移到小接口以降低耦合。
@@ -621,6 +626,11 @@ type WebhookStore interface {
 	DeleteWebhook(tenantID, id string) bool
 	// ListWebhookDeliveries 返回指定 Webhook 的投递记录（按投递时间降序）。
 	ListWebhookDeliveries(tenantID, webhookID string) []*WebhookDelivery
+	// RecordWebhookDelivery 记录一条 Webhook 投递记录（供 controlplane test handler 调用）。
+	// 返回深拷贝的投递记录；后端未持久化时返回 nil（调用方据此降级为模拟响应）。
+	// 提升至接口以消除 controlplane/webhook.go 中对 *MemoryStore 的类型断言，
+	// 让 SQLStore（桩）/MultiSchemaStore（委托路由）均走统一调用路径（M3）。
+	RecordWebhookDelivery(tenantID, webhookID, event, payload string, statusCode int, response, errStr string) *WebhookDelivery
 }
 
 // ScriptStore P5 自定义脚本：CRUD + 执行记录。
@@ -638,6 +648,12 @@ type ScriptStore interface {
 	DeleteScript(tenantID, id string) bool
 	// ListScriptExecutions 返回指定脚本的执行记录（按开始时间降序）。
 	ListScriptExecutions(tenantID, scriptID string) []*ScriptExecution
+	// RecordScriptExecution 记录一条脚本执行记录（供 controlplane execute handler 调用）。
+	// ID 为空时由 store 分配随机 ID；StartedAt 为零值时填当前时间。
+	// 返回深拷贝的执行记录；后端未持久化时返回 nil（调用方据此降级为模拟响应）。
+	// 提升至接口以消除 controlplane/script.go 中对 *MemoryStore 的类型断言，
+	// 让 SQLStore（桩）/MultiSchemaStore（委托路由）均走统一调用路径（M3）。
+	RecordScriptExecution(tenantID, scriptID, deviceID, status, stdout, stderr string, startedAt time.Time, finishedAt *time.Time) *ScriptExecution
 }
 
 // TenantStore P6 租户管理：CRUD + 启停。
@@ -717,7 +733,10 @@ type BillingStore interface {
 }
 
 // Store 控制面注册表的可插拔持久化组合接口。
-// 由 12 个领域小接口组合而成（拆分 + 用户中心扩展 + K8s 集群管理 + OS/中间件模板 + 刷新令牌），
+// 由 35 个领域小接口组合而成（拆分 6 + 用户中心扩展 5 + K8s 集群管理 1 + OS/中间件模板 1 +
+// 刷新令牌 1 + 静默/通知 3 + agent 日志 1 + 配额 1 + P0.3 服务发现/配置/密钥 3 +
+// P1 工单/SLO 2 + P2 流量/流水线/ArgoCD 3 + P3 合规/灾备 2 + P4 网络/自动化 2 +
+// P5 Webhook/脚本 2 + P6 租户/APIKey/插件/计费 4），
 // 方法签名刻意与旧版内存 Registry 保持一致，便于平滑替换。
 // 数据本地化，默认 memory；生产可切换 mysql（MySQL/Redis 私有部署）。
 //
@@ -840,4 +859,43 @@ var (
 	_ PluginStore           = (*SQLStore)(nil)
 	_ BillingStore          = (*SQLStore)(nil)
 	_ Store                 = (*SQLStore)(nil)
+
+	// MultiSchemaStore 全量断言：确保多租户 schema 隔离实现满足各领域小接口。
+	// 任一方法缺失会在编译期立刻暴露（M6：补齐第三组断言，与 MemoryStore/SQLStore 对齐）。
+	_ DeviceStore           = (*MultiSchemaStore)(nil)
+	_ TaskStore             = (*MultiSchemaStore)(nil)
+	_ AlertStore            = (*MultiSchemaStore)(nil)
+	_ AuditStore            = (*MultiSchemaStore)(nil)
+	_ TokenStore            = (*MultiSchemaStore)(nil)
+	_ LeaderStore           = (*MultiSchemaStore)(nil)
+	_ UserStore             = (*MultiSchemaStore)(nil)
+	_ RoleStore             = (*MultiSchemaStore)(nil)
+	_ PermissionStore       = (*MultiSchemaStore)(nil)
+	_ K8sClusterStore       = (*MultiSchemaStore)(nil)
+	_ TemplateStore         = (*MultiSchemaStore)(nil)
+	_ RefreshTokenStore     = (*MultiSchemaStore)(nil)
+	_ SilenceStore          = (*MultiSchemaStore)(nil)
+	_ NotifyChannelStore    = (*MultiSchemaStore)(nil)
+	_ NotifyTemplateStore   = (*MultiSchemaStore)(nil)
+	_ AgentLogStore         = (*MultiSchemaStore)(nil)
+	_ QuotaStore            = (*MultiSchemaStore)(nil)
+	_ ServiceDiscoveryStore = (*MultiSchemaStore)(nil)
+	_ ConfigStore           = (*MultiSchemaStore)(nil)
+	_ SecretStore           = (*MultiSchemaStore)(nil)
+	_ TicketStore           = (*MultiSchemaStore)(nil)
+	_ SLOStore              = (*MultiSchemaStore)(nil)
+	_ TrafficStore          = (*MultiSchemaStore)(nil)
+	_ PipelineStore         = (*MultiSchemaStore)(nil)
+	_ ArgoCDStore           = (*MultiSchemaStore)(nil)
+	_ ComplianceStore       = (*MultiSchemaStore)(nil)
+	_ BackupStore           = (*MultiSchemaStore)(nil)
+	_ NetworkStore          = (*MultiSchemaStore)(nil)
+	_ AutomationStore       = (*MultiSchemaStore)(nil)
+	_ WebhookStore          = (*MultiSchemaStore)(nil)
+	_ ScriptStore           = (*MultiSchemaStore)(nil)
+	_ TenantStore           = (*MultiSchemaStore)(nil)
+	_ APIKeyStore           = (*MultiSchemaStore)(nil)
+	_ PluginStore           = (*MultiSchemaStore)(nil)
+	_ BillingStore          = (*MultiSchemaStore)(nil)
+	_ Store                 = (*MultiSchemaStore)(nil)
 )

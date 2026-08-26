@@ -1,4 +1,3 @@
-
 // apikey.go 实现 API Key 管理引擎（平台化）。
 //
 // API Key 用于程序化访问控制面 API（替代用户名/密码登录），
@@ -17,6 +16,7 @@ package platform
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -43,6 +43,7 @@ func NewAPIKeyManager(s store.APIKeyStore) *APIKeyManager {
 // 返回 (prefix, hash)：
 //   - prefix：明文 key（"om_" + 32 位随机 hex，共 35 字符），仅在生成时返回，调用方须妥善保存；
 //   - hash：SHA-256(prefix) 的 hex 编码，用于持久化存储与校验。
+//
 // 熵源失败时返回错误（crypto/rand 不可用）。
 func GenerateAPIKey() (prefix string, hash string, err error) {
 	b := make([]byte, 16) // 16 字节 = 32 位 hex
@@ -66,6 +67,7 @@ func hashAPIKey(key string) string {
 //   - 解析 key 格式（om_ 前缀 + 32 位 hex）；
 //   - 计算 SHA-256(key)，与 store 中已存 hash 比对；
 //   - 校验 Enabled=true 且未过期。
+//
 // 返回匹配的 APIKey（不含明文 key）；无效返回错误。
 func (m *APIKeyManager) ValidateKey(key string) (*APIKey, error) {
 	if key == "" {
@@ -82,12 +84,16 @@ func (m *APIKeyManager) ValidateKey(key string) (*APIKey, error) {
 	// 由于 APIKeyStore 按 tenantID 隔离，这里需要遍历全部租户。
 	// 为避免 platform 包依赖 TenantStore，这里通过 ListAPIKeys("") 走全租户路径
 	// （MemoryStore 实现中 tenantID="" 返回全部）。
+	//
+	// L2 时序攻击加固：用 crypto/subtle.ConstantTimeCompare 替代 == 比较 hash。
+	// k.Key 字段存的是 SHA-256 hex hash（非明文），与本次计算的 hash 常时比较，
+	// 避免攻击者通过响应时间差异逐字节猜测 hash。
 	keys := m.store.ListAPIKeys("")
 	for _, k := range keys {
 		if k == nil {
 			continue
 		}
-		if k.Key == hash {
+		if subtle.ConstantTimeCompare([]byte(k.Key), []byte(hash)) == 1 {
 			if !k.Enabled {
 				return nil, errors.New("api key is disabled")
 			}

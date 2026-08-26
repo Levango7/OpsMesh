@@ -27,6 +27,14 @@ func DefaultAgentShellWhitelist() string {
 	return defaultAgentShellWhitelist
 }
 
+// stubStoreDomains SQL 后端尚未持久化的 P1-P6 领域清单（逗号分隔，共 15 个）。
+// 与 internal/store/stub_guard.go 的 StubDomains 保持一一对应；config 包不得
+// import store 包（避免配置层反向依赖存储实现），故此处维护字面量副本，
+// 两处新增/移除领域时必须同步更新（stub_guard.go StubDomains 注释已互相声明此约束）。
+const stubStoreDomains = "ticket,slo,traffic,pipeline,argocd," +
+	"compliance,backup,network,automation,webhook," +
+	"script,tenant,apikey,plugin,billing"
+
 // Config 启动时解析出的运行参数。地址/端口全部走 flag，不硬编码任何密钥。
 type Config struct {
 	Mode        string // controlplane | agent
@@ -358,6 +366,13 @@ type Config struct {
 	QuotaMaxDevices int  // --quota-max-devices 默认最大设备数（0=不限）
 	QuotaMaxTasks   int  // --quota-max-tasks 默认最大任务数（0=不限）
 	QuotaMaxAlerts  int  // --quota-max-alerts 默认最大告警数（0=不限）
+
+	// H2/H3 配套开关：是否允许 SQL 后端继续使用 P1-P6 桩存储。
+	// 背景：SQLStore 对 15 个领域（见 stubStoreDomains 清单）为桩实现，写入不持久化；
+	// 生产模式（--production=true）+ --store=mysql 时默认拒绝启动（fail-fast），
+	// 运维必须显式 --allow-stub-stores=true 确认接受桩限制后才放行。
+	// memory 后端与 demo/开发模式不受影响；运行期由 store 层 stub_guard 限频告警兜底。
+	AllowStubStores bool // --allow-stub-stores 允许 SQL 后端桩存储（生产默认 false=拒绝启动）
 }
 
 // Load 解析 flag 并用环境变量兜底，返回 *Config。
@@ -519,6 +534,8 @@ func Load() *Config {
 	quotaMaxDevices := flag.Int("quota-max-devices", 0, "默认最大设备数（未显式设置配额的租户回退到此值；0=不限，默认）；或 env OPSMESH_QUOTA_MAX_DEVICES")
 	quotaMaxTasks := flag.Int("quota-max-tasks", 0, "默认最大任务数（未显式设置配额的租户回退到此值；0=不限，默认）；或 env OPSMESH_QUOTA_MAX_TASKS")
 	quotaMaxAlerts := flag.Int("quota-max-alerts", 0, "默认最大告警数（未显式设置配额的租户回退到此值；0=不限，默认）；或 env OPSMESH_QUOTA_MAX_ALERTS")
+	// H2/H3 配套开关：SQL 后端桩存储放行开关（生产模式 + --store=mysql 时默认拒绝启动）。
+	allowStubStores := flag.Bool("allow-stub-stores", false, "H2/H3 止血：允许 SQL 后端继续使用 P1-P6 桩存储（15 个领域写入不持久化，见启动日志清单）；生产模式（--production=true）+ --store=mysql 时默认 false=拒绝启动，须显式 true 确认接受桩限制；memory 后端不受影响；或 env OPSMESH_ALLOW_STUB_STORES")
 	flag.Parse()
 
 	// 记录被显式设置的 flag，用于"flag 优先、env 兜底"的正确语义（修复：原实现 env 会覆盖显式 flag）。
@@ -682,6 +699,7 @@ func Load() *Config {
 		QuotaMaxDevices:            valInt("quota-max-devices", *quotaMaxDevices, "OPSMESH_QUOTA_MAX_DEVICES"),
 		QuotaMaxTasks:              valInt("quota-max-tasks", *quotaMaxTasks, "OPSMESH_QUOTA_MAX_TASKS"),
 		QuotaMaxAlerts:             valInt("quota-max-alerts", *quotaMaxAlerts, "OPSMESH_QUOTA_MAX_ALERTS"),
+		AllowStubStores:            valBool("allow-stub-stores", *allowStubStores, "OPSMESH_ALLOW_STUB_STORES"),
 	}
 	// --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
 	// 使现有 LogBackend 校验/路由逻辑无缝复用；最终 LogStore 与 LogBackend 保持同值。
@@ -980,6 +998,14 @@ func (c *Config) Validate() error {
 	// 多租户 schema 隔离：仅支持 mysql store（MultiSchemaStore 内部用 *SQLStore）。
 	if c.MultiSchema && c.Store != "mysql" {
 		return fmt.Errorf("--multi-schema=true 但 --store=%q（多 schema 隔离仅支持 mysql 后端）", c.Store)
+	}
+	// H2/H3 配套开关：生产模式 + SQL 后端默认拒绝启动（fail-fast）。
+	// 背景：SQLStore 对 P1-P6 共 15 个领域为桩实现（写入返回零值、不持久化），
+	// 生产环境静默丢数据不可接受，须运维显式 --allow-stub-stores=true 确认接受后才放行；
+	// 放行后运行期由 store 层 stub_guard 限频 WARN 兜底。此时 DSN 必已非空
+	//（上方 --store=mysql 的 DSN 校验先行），无需重复校验。memory 后端不受影响。
+	if c.Production && c.Store == "mysql" && !c.AllowStubStores {
+		return fmt.Errorf("生产模式（--production=true）使用 SQL 后端（--store=mysql），但以下 P1-P6 领域尚未持久化（桩实现）：%s；请等待 MySQL 持久化落地，或显式设置 --allow-stub-stores=true（或 env OPSMESH_ALLOW_STUB_STORES）确认接受桩限制", stubStoreDomains)
 	}
 	// 控制面联邦：peer 地址必须是合法 URL（含 scheme + host），启动期 fail-fast 避免运行期诡异失败。
 	for i, p := range c.FederationPeers {

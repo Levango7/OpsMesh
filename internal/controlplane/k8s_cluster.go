@@ -26,7 +26,6 @@ import (
 	"net/http"
 	"strings"
 
-	"opsmesh/internal/authctx"
 	"opsmesh/internal/logx"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
@@ -38,14 +37,12 @@ import (
 //   - requireAuth=false：归一为 default（与 store 层 SaveK8sCluster 空租户归一一致，保持 demo 兼容）。
 //
 // 修复：原实现缺头静默归一 default，绕过租户闸门（requireAuth 下缺头应 401 而非 default）。
-func (s *Server) k8sTenantFromRequest(r *http.Request) string {
-	if t := authctx.FromHTTPHeader(r.Header).TenantID; t != "" {
-		return t
+func (s *Server) k8sTenantFromRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return "", false
 	}
-	if s.requireAuth {
-		return "" // requireAuth 下缺头：返回空，由 handler 判断 401
-	}
-	return "default"
+	return actx.TenantID, true
 }
 
 // encryptKubeconfig 用 AES-256-GCM 加密 kubeconfig 明文，返回 base64(nonce+ciphertext)。
@@ -163,7 +160,10 @@ func (s *Server) handleListK8sClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 租户兜底：requireAuth 下缺租户头 → 401（防绕过网关伪造租户）。
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -186,7 +186,10 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// 租户兜底：requireAuth 下缺租户头 → 401。
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -299,7 +302,10 @@ func (s *Server) handleDeleteK8sCluster(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	// 租户兜底：requireAuth 下缺租户头 → 401。
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -341,7 +347,10 @@ func (s *Server) handleTestK8sCluster(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	// 租户兜底：requireAuth 下缺租户头 → 401。
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return

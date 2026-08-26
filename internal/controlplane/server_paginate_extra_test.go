@@ -259,3 +259,153 @@ func TestResponseCapture_WriteDefaultStatus(t *testing.T) {
 		t.Errorf("default status=%d, want 200", c.status)
 	}
 }
+
+// ============================================================================
+// M11 分页边界值守护：page=0/pageSize=0/page=-1/pageSize=100000 + 空 body POST→400
+// ============================================================================
+
+// TestParsePagination_Page0_ClampTo1 验证 page=0 被 clamp 到 1（page<1 归一为 1）。
+// page=0 在 API 语义上表示"不分页"，但 parsePagination 的契约是 page<1 一律 clamp 到 1，
+// 防止 start=(page-1)*pageSize 算出负数导致切片越界。
+func TestParsePagination_Page0_ClampTo1(t *testing.T) {
+	q := url.Values{}
+	q.Set("page", "0")
+	page, _ := parsePagination(q)
+	if page != 1 {
+		t.Errorf("page=0 should clamp to 1; got %d", page)
+	}
+}
+
+// TestParsePagination_PageSize0_Default20 验证 pageSize=0 回退到默认 20。
+// parsePagination 对 pageSize<=0 不接受，保持默认值 20（防零页大小导致除零/空页）。
+func TestParsePagination_PageSize0_Default20(t *testing.T) {
+	q := url.Values{}
+	q.Set("page", "1")
+	q.Set("pageSize", "0")
+	_, size := parsePagination(q)
+	if size != 20 {
+		t.Errorf("pageSize=0 should fall back to default 20; got %d", size)
+	}
+}
+
+// TestParsePagination_PageSizeHuge_ClampTo200 验证 pageSize=100000 被 clamp 到 200 上限。
+// 防止客户端请求超大页大小拖垮内存/DB。
+func TestParsePagination_PageSizeHuge_ClampTo200(t *testing.T) {
+	q := url.Values{}
+	q.Set("page", "1")
+	q.Set("pageSize", "100000")
+	_, size := parsePagination(q)
+	if size != 200 {
+		t.Errorf("pageSize=100000 should clamp to 200; got %d", size)
+	}
+}
+
+// TestParsePagination_PageSizeNegative_Default20 验证 pageSize=-1 回退到默认 20。
+func TestParsePagination_PageSizeNegative_Default20(t *testing.T) {
+	q := url.Values{}
+	q.Set("page", "1")
+	q.Set("pageSize", "-1")
+	_, size := parsePagination(q)
+	if size != 20 {
+		t.Errorf("pageSize=-1 should fall back to default 20; got %d", size)
+	}
+}
+
+// TestParsePagination_PageSizeOne 验证 pageSize=1 边界值（最小有效页大小）。
+func TestParsePagination_PageSizeOne(t *testing.T) {
+	q := url.Values{}
+	q.Set("page", "1")
+	q.Set("pageSize", "1")
+	_, size := parsePagination(q)
+	if size != 1 {
+		t.Errorf("pageSize=1 should be accepted; got %d", size)
+	}
+}
+
+// TestParsePagination_PageSizeTwoHundred 验证 pageSize=200 边界值（上限恰好 200）。
+func TestParsePagination_PageSizeTwoHundred(t *testing.T) {
+	q := url.Values{}
+	q.Set("page", "1")
+	q.Set("pageSize", "200")
+	_, size := parsePagination(q)
+	if size != 200 {
+		t.Errorf("pageSize=200 should be accepted; got %d", size)
+	}
+}
+
+// TestParsePagination_PageSizeTwoHundredOne 验证 pageSize=201 被 clamp 到 200（超上限 1）。
+func TestParsePagination_PageSizeTwoHundredOne(t *testing.T) {
+	q := url.Values{}
+	q.Set("page", "1")
+	q.Set("pageSize", "201")
+	_, size := parsePagination(q)
+	if size != 200 {
+		t.Errorf("pageSize=201 should clamp to 200; got %d", size)
+	}
+}
+
+// TestParsePagination_NonNumericPage 验证 page=abc 非数字时 clamp 到 1。
+// strconv.Atoi 失败时 page 保持 0，随后 page<1 clamp 到 1，防非法输入致错。
+func TestParsePagination_NonNumericPage(t *testing.T) {
+	q := url.Values{}
+	q.Set("page", "abc")
+	page, _ := parsePagination(q)
+	if page != 1 {
+		t.Errorf("page=abc should clamp to 1; got %d", page)
+	}
+}
+
+// TestParsePagination_NonNumericPageSize 验证 pageSize=xyz 非数字时回退默认 20。
+func TestParsePagination_NonNumericPageSize(t *testing.T) {
+	q := url.Values{}
+	q.Set("page", "1")
+	q.Set("pageSize", "xyz")
+	_, size := parsePagination(q)
+	if size != 20 {
+		t.Errorf("pageSize=xyz should fall back to default 20; got %d", size)
+	}
+}
+
+// TestPaginateJSONHandler_PostEmptyBodyBypass400 验证 POST 空 body 透传 inner 的 400。
+// paginateJSONHandler 对 POST 请求直接透传（不分页），inner handler 对空 body 返回 400
+// 时，paginate 透传 400。锁定 POST 透传路径不误吞 inner 错误码。
+func TestPaginateJSONHandler_PostEmptyBodyBypass400(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 模拟 inner handler 对空 body POST 返回 400。
+		if r.ContentLength == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "empty body"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	h := paginateJSONHandler(inner)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/x?page=1", nil) // 空 body
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400 (POST 空 body 应透传 inner 400); body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestPaginateJSONHandler_PageZeroStillPaginates 验证 page=0 经 clamp 后仍触发分页。
+// page=0 经 parsePagination clamp 到 1，paginateJSONHandler 捕获 inner 数组并分页返回。
+func TestPaginateJSONHandler_PageZeroStillPaginates(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, []int{1, 2, 3, 4, 5})
+	})
+	h := paginateJSONHandler(inner)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/x?page=0&pageSize=2", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200", rec.Code)
+	}
+	var resp paginateResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
+	}
+	// page=0 clamp 到 1，应返回第 1 页（前 2 个元素）。
+	if resp.Page != 1 || resp.PageSize != 2 || resp.Total != 5 {
+		t.Errorf("meta=%+v, want Page=1 PageSize=2 Total=5", resp)
+	}
+}

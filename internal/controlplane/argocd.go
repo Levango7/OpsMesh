@@ -11,7 +11,7 @@ package controlplane
 //   - POST   /api/v1/argocd/apps/{id}/sync 同步应用
 //
 // 设计要点（与 traffic.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(r) 提取租户；
+//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 argocd:read/argocd:write 权限。
@@ -43,7 +43,10 @@ func (s *Server) handleListArgoCDApps(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "argocd:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -58,7 +61,10 @@ func (s *Server) handleCreateArgoCDApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -127,7 +133,10 @@ func (s *Server) handleGetArgoCDApp(w http.ResponseWriter, r *http.Request, id s
 	if _, ok := s.requirePermission(w, r, "argocd:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -146,7 +155,10 @@ func (s *Server) handleUpdateArgoCDApp(w http.ResponseWriter, r *http.Request, i
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -174,7 +186,10 @@ func (s *Server) handleDeleteArgoCDApp(w http.ResponseWriter, r *http.Request, i
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -199,7 +214,10 @@ func (s *Server) handleSyncArgoCDApp(w http.ResponseWriter, r *http.Request, id 
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return

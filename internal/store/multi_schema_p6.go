@@ -1,4 +1,3 @@
-
 // multi_schema_p6.go MultiSchemaStore 对 Phase 6 四个新接口（TenantStore / APIKeyStore /
 // PluginStore / BillingStore）的委托实现。
 //
@@ -8,20 +7,27 @@
 //   - 路由失败返回零值（nil/false），与现有方法风格一致。
 package store
 
+import "strings"
+
 // ============================================================================
 // TenantStore 实现（5 方法）
 // ============================================================================
 
-// CreateTenant 创建租户：用 tenant.ID 路由（ID 为空时归一为 default）。
+// CreateTenant 创建租户：用 tenant.ID 路由。
+// M4：ID 为空时先预生成随机 ID 再按新 ID 路由——原实现把空 ID 归一为 default，
+// 会把新租户的数据错落进 default schema。路由层负责预生成后，底层
+// MemoryStore.CreateTenant 对非空 ID 不再改写，两侧职责无重叠；
+// 返回值携带分配后的 ID，调用方无感知（与 Memory 后端行为对齐）。
+// 注意：randTenantID 生成 "tenant-" + hex（含连字符），但 DefaultSchemaNamer 的
+// validateIdent 只允许 [a-zA-Z0-9_]，故把 "-" 替换为 "_" 以通过 schema 名校验。
 func (m *MultiSchemaStore) CreateTenant(tenant *Tenant) *Tenant {
 	if tenant == nil {
 		return nil
 	}
-	tenantID := tenant.ID
-	if tenantID == "" {
-		tenantID = "default"
+	if tenant.ID == "" {
+		tenant.ID = strings.ReplaceAll(randTenantID(), "-", "_")
 	}
-	s, err := m.storeFor(tenantID)
+	s, err := m.storeFor(tenant.ID)
 	if err != nil {
 		return nil
 	}
@@ -271,12 +277,23 @@ func (m *MultiSchemaStore) GetSubscription(id string) (*Subscription, bool) {
 }
 
 // ListSubscriptions 返回指定租户的全部订阅：用 tenantID 路由。
+// M5：tenantID 为空串时遍历全部租户 store 聚合（统一"空串=跨租户聚合"语义，
+// 照抄 ListAPIKeys("") 既有模式），避免空串走 storeFor("") 返回 errEmptyTenant 导致 nil。
+// 仅 admin 聚合视图使用（billing:read 为 admin-only）。
 func (m *MultiSchemaStore) ListSubscriptions(tenantID string) []*Subscription {
-	s, err := m.storeFor(tenantID)
-	if err != nil {
-		return nil
+	if tenantID != "" {
+		s, err := m.storeFor(tenantID)
+		if err != nil {
+			return nil
+		}
+		return s.ListSubscriptions(tenantID)
 	}
-	return s.ListSubscriptions(tenantID)
+	// 空串=全部租户聚合。
+	out := make([]*Subscription, 0)
+	for _, s := range m.allStores() {
+		out = append(out, s.ListSubscriptions("")...)
+	}
+	return out
 }
 
 // UpdateSubscription 更新订阅：用 sub.TenantID 路由。
@@ -328,10 +345,20 @@ func (m *MultiSchemaStore) GetInvoice(id string) (*Invoice, bool) {
 }
 
 // ListInvoices 返回指定租户的全部账单：用 tenantID 路由。
+// M5：tenantID 为空串时遍历全部租户 store 聚合（统一"空串=跨租户聚合"语义，
+// 照抄 ListAPIKeys("") 既有模式）。仅 admin 聚合视图使用。
 func (m *MultiSchemaStore) ListInvoices(tenantID string) []*Invoice {
-	s, err := m.storeFor(tenantID)
-	if err != nil {
-		return nil
+	if tenantID != "" {
+		s, err := m.storeFor(tenantID)
+		if err != nil {
+			return nil
+		}
+		return s.ListInvoices(tenantID)
 	}
-	return s.ListInvoices(tenantID)
+	// 空串=全部租户聚合。
+	out := make([]*Invoice, 0)
+	for _, s := range m.allStores() {
+		out = append(out, s.ListInvoices("")...)
+	}
+	return out
 }

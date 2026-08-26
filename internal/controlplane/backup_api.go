@@ -13,7 +13,7 @@ package controlplane
 //   - DELETE /api/v1/backup/         删除备份（子路径：{id}）
 //
 // 设计要点（与 traffic.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(r) 提取租户；
+//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 backup:read/backup:write 权限。
@@ -34,7 +34,10 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "backup:write"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -76,7 +79,10 @@ func (s *Server) handleBackupList(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "backup:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -97,7 +103,10 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "backup:write"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -127,6 +136,8 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		"backup":    rec,
 		"message":   "restore triggered; check backup status for progress",
 		"startedAt": time.Now(),
+		// M12 占位标记：实际恢复由后台任务异步执行，此响应仅确认请求已接受。
+		"simulated": true,
 	})
 }
 
@@ -149,7 +160,10 @@ func (s *Server) handleBackupDeleteRouting(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requirePermission(w, r, "backup:write"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return

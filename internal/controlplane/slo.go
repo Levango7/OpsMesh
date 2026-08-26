@@ -10,7 +10,7 @@
 //   - GET    /api/v1/slos/{id}/status 获取 SLI 状态
 //
 // 设计要点（与 ticket.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(r) 提取租户（复用现有方法，统一租户隔离行为）；
+//   - 用 s.k8sTenantFromRequest(w, r) 提取租户（复用现有方法，统一租户隔离行为）；
 //   - 错误响应统一 {"error": "message"} 格式，HTTP 状态码 400/404/500；
 //   - 用 decodeJSONBody 解析请求体（防 DoS 限制大小）；
 //   - 鉴权：需 slo:read/slo:write/slo:delete 权限（与现有 RBAC 一致）。
@@ -43,7 +43,10 @@ func (s *Server) handleListSLOs(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "slo:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -59,7 +62,10 @@ func (s *Server) handleCreateSLO(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -146,7 +152,10 @@ func (s *Server) handleGetSLO(w http.ResponseWriter, r *http.Request, id string)
 	if _, ok := s.requirePermission(w, r, "slo:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -166,7 +175,10 @@ func (s *Server) handleUpdateSLO(w http.ResponseWriter, r *http.Request, id stri
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -209,7 +221,10 @@ func (s *Server) handleDeleteSLO(w http.ResponseWriter, r *http.Request, id stri
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -233,7 +248,10 @@ func (s *Server) handleSLOStatus(w http.ResponseWriter, r *http.Request, id stri
 	if _, ok := s.requirePermission(w, r, "slo:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return

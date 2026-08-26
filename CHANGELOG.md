@@ -4,6 +4,47 @@
 
 > 当前最新已发布版本：`v0.7.0`（2026-08-16）。`[Unreleased]` 段累积未发布变更，下一个发布版本号待定（按实际演进预计 `v0.8.0`；若按文档同步批次独立发版可记为 `v0.5.0`，由发布流程最终确定）。
 
+## [Unreleased] — 2026-08-26 第四轮质量审查修复批次（31 项）
+
+### 安全加固
+- **API Key 认证体系**（H5）：platform 层新增 ValidateKey/HasScope + `ConstantTimeCompare` 恒时比较，controlplane 认证链支持 `Bearer opsmesh_` 前缀 API Key，PUT 白名单字段合并防篡改（M2）
+- **Webhook SSRF 防护**（M1）：出站 URL 强制 scheme 白名单 + 私网/环回地址拦截（ValidateWebhookURL）
+- **审计补齐**（H9）：automation / network / gateway 共 12 处敏感操作补写审计事件
+- **跨租户越权修复**（H1）：handler 租户归属校验补全
+- **Production 配置桩拒绝**：SQL 桩存储需显式 `AllowStubStores` 开启，生产配置校验强制拒绝
+
+### 正确性修复
+- **日志采集截断丢日志**（H8-C1）：offset 改为按实际处理量推进，单 tick 记录数上限 break 早退不再丢弃剩余行；`logCollectError` 补 `Is()` 支持 errors.Is 判别
+- **Store 读路径内部指针泄漏**（H8-C2）：config / secret / discovery 读路径锁内 clone 后返回，外部修改副本不再污染内部状态
+- **ensureGateway 并发竞态**（M7）：`sync.Once` 保护网关引擎单例初始化
+- **platform 死代码删除**（H7）：BillingManager / TenantManager / PluginManager 及其方法移除，保留类型别名与数据模型
+- **租户删除保护与级联清理**（L3）：`default` 租户删除返回 409；删除租户级联清理 APIKey / Webhook / Script 三域资源
+- **脚本执行防护**（L1）：timeoutSec clamp 至 [1,600]；禁用脚本 execute 返回 409；CreateScript 默认 `Enabled=true` 保持向后兼容
+
+### 输入校验
+- **marketplace 插件校验**（L1）：pluginType 白名单 `{data,logic,integration}` + downloadURL 仅允许 http/https scheme
+- **gateway 路由后端校验**（L1）：targetBackend scheme 白名单 `{http,https,grpc}` + host:port 格式校验
+- **ParseFloat 错误处理**（H6）与 BOM 文件编码问题（H10）、魔法数字常量化（L7）
+
+### 占位实现透明化
+- **simulated 标记**（M12）：backup restore / canary metrics / HA failover / compliance scan 四处占位响应显式携带 `simulated:true`
+- **平台配置假审计修正**（M12）：PUT 平台配置审计 Action 改 `platform_config_update_simulated` 后缀 + 响应体标记 simulated
+
+### Store 层治理
+- **统一桩入口 stub_guard.go**（M6）：15 个 SQL 域桩方法接入统一桩语义与告警计数
+- **Record 断言消除**（M3）：RecordWebhookDelivery / RecordScriptExecution 提升进 Store 接口，webhook/script handler 类型断言移除
+- **MultiSchemaStore 修复**（M4/M5）：随机租户 ID schema 名合法化（`-`→`_`）；ListSubscriptions/ListInvoices 空串聚合遍历 allStores
+- **读路径 clone 全覆盖**：memory_apikey 模式推广至 config/secret/discovery 域
+
+### 测试补强（+60 个测试用例）
+- **跨租户隔离矩阵**（M10）：apikey/billing 跨租户头断言 403；marketplace/tenant 设计行为文档化（全局市场/平台级管理不做租户校验）
+- **分页边界值守护**（M11）：page=0/pageSize=0/page=-1/pageSize=100000 clamp 行为锁定 + 空 body POST→400 透传验证
+- **桩语义锁定**（H11）：stub_semantics_test.go 固定 Create→nil / Get→(nil,false) / List→空切片 / Delete→false 契约 + StubDomains 完整性断言
+- **动态权限计数**（M9）：auth_test 三处硬编码 `72` 改为 `len(RolePermissions()["admin"])` 动态派生 + 下限守护 ≥60
+- **CI race job**（L6）：新增 ubuntu-latest `go test -race -count=3` 独立 job
+- **Phase0 清偿测试**（H8-C3/C4）：日志截断边界多轮分片拼接还原 + store clone 并发 race 断言
+- **审查文档归档**：docs/design/REVIEW-phase1-6.md（31 项发现）+ FIXPLAN-phase1-6.md（修复方案）
+
 ## [Unreleased] — 2026-08-24 文档全面同步批次
 
 ### 文档同步

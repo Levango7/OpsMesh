@@ -1,4 +1,3 @@
-
 // gateway.go 实现 API 网关引擎（Phase 5 扩展能力）。
 //
 // 提供路由规则匹配 + 令牌桶限流 + 网关统计聚合能力，供控制面 gateway handler 复用。
@@ -22,16 +21,16 @@ import (
 // TargetBackend 为后端服务地址（如 http://backend:8080）；Methods 为允许的 HTTP 方法列表
 // （空表示全部允许）；RateLimitPerSec 为每秒限流（0 表示不限流）；Enabled 控制规则是否生效。
 type RouteRule struct {
-	ID             string    `json:"id"`
-	TenantID       string    `json:"tenantID"`
-	Name           string    `json:"name"`
-	PathPrefix     string    `json:"pathPrefix"`
-	TargetBackend  string    `json:"targetBackend"`
-	Methods        []string  `json:"methods"`
-	RateLimitPerSec int      `json:"rateLimitPerSec"`
-	Enabled        bool      `json:"enabled"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	ID              string    `json:"id"`
+	TenantID        string    `json:"tenantID"`
+	Name            string    `json:"name"`
+	PathPrefix      string    `json:"pathPrefix"`
+	TargetBackend   string    `json:"targetBackend"`
+	Methods         []string  `json:"methods"`
+	RateLimitPerSec int       `json:"rateLimitPerSec"`
+	Enabled         bool      `json:"enabled"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 // GatewayStats API 网关统计聚合（由控制面统计端点查询返回）。

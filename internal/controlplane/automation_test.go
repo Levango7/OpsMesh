@@ -76,8 +76,8 @@ func TestHandleListAutomationRules_AfterCreate(t *testing.T) {
 	auth := loginAsAdmin(t, s)
 
 	s.store.CreateAutomationRule("default", &store.AutomationRule{
-		Name:        "cpu-alert-scale",
-		TriggerType: "metric_threshold",
+		Name:          "cpu-alert-scale",
+		TriggerType:   "metric_threshold",
 		TriggerParams: map[string]string{"metric": "cpu", "threshold": "90"},
 		Actions: []store.AutomationAction{
 			{Type: "scale", Params: map[string]string{"target": "web", "replicas": "+1"}},

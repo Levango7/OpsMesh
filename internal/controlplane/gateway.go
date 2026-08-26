@@ -1,6 +1,5 @@
 package controlplane
 
-
 // gateway.go 实现 Phase 5 API 网关 HTTP handler（路由规则 CRUD + 启停 + 统计）。
 //
 // API 端点：
@@ -14,7 +13,7 @@ package controlplane
 //   - GET    /api/v1/gateway/stats            网关统计
 //
 // 设计要点（与 automation.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(r) 提取租户；
+//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 gateway:read/gateway:write 权限。
@@ -24,13 +23,45 @@ package controlplane
 // 统计为内存计数器，进程级聚合（多副本各自统计，未做跨副本聚合）。
 
 import (
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"opsmesh/internal/extension"
+	"opsmesh/internal/proto"
 )
+
+// allowedGatewayBackendSchemes 网关后端 scheme 白名单（L1 输入校验）。
+// 仅允许 http/https/grpc，拒绝 file:// / ftp:// / ws:// 等不安全或不支持协议。
+var allowedGatewayBackendSchemes = map[string]bool{
+	"http": true,
+	"https": true,
+	"grpc": true,
+}
+
+// validateGatewayTargetBackend 校验 targetBackend 格式（L1 输入校验）。
+// 格式要求：scheme://host:port，scheme ∈ {http,https,grpc}，host:port 可被 net.SplitHostPort 解析。
+// 返回 ok=false 时 errmsg 为人类可读错误原因。
+func validateGatewayTargetBackend(target string) (ok bool, errmsg string) {
+	u, err := url.Parse(target)
+	if err != nil || u.Scheme == "" {
+		return false, "invalid targetBackend: parse failed"
+	}
+	if !allowedGatewayBackendSchemes[u.Scheme] {
+		return false, "invalid targetBackend scheme: " + u.Scheme + " (want http|https|grpc)"
+	}
+	// u.Host 应为 host:port 形式；net.SplitHostPort 强制校验端口存在且格式合法。
+	if u.Host == "" {
+		return false, "invalid targetBackend: missing host:port"
+	}
+	if _, _, err := net.SplitHostPort(u.Host); err != nil {
+		return false, "invalid targetBackend host:port: " + err.Error()
+	}
+	return true, ""
+}
 
 // gatewayRouteEntry 网关路由规则条目（含 RateLimiter 实例）。
 // RateLimiter 按 RateLimitPerSec 构造，运行期复用避免每次请求重建。
@@ -59,21 +90,23 @@ func newGatewayState() *gatewayState {
 }
 
 // ensureGateway 确保 s.gateway 已初始化（测试场景直接构造 Server{} 时兜底）。
-// 已初始化时直接返回；未初始化时构造一个空状态并赋值（并发安全：用 mu 保护赋值）。
-// 注意：本方法用 sync.Once 语义保证只构造一次，避免覆盖已初始化的状态。
+//
+// 并发安全：用 s.gatewayOnce.Do 保证只构造一次。即使多个 handler goroutine
+// 同时进入，sync.Once 也会让构造函数只执行一次，其余调用直接拿到已赋值的 s.gateway。
+// 不依赖外部 mu，避免与 gatewayState.mu 嵌套加锁。
 func (s *Server) ensureGateway() *gatewayState {
-	if s.gateway != nil {
-		return s.gateway
-	}
-	// 测试兜底：直接构造（单线程测试场景，无需 sync.Once）。
-	s.gateway = newGatewayState()
+	s.gatewayOnce.Do(func() {
+		if s.gateway == nil {
+			s.gateway = newGatewayState()
+		}
+	})
 	return s.gateway
 }
 
 // gatewayTenantFromRequest 提取请求归属租户（网关租户隔离）。
 // 复用 k8sTenantFromRequest 的逻辑。
-func (s *Server) gatewayTenantFromRequest(r *http.Request) string {
-	return s.k8sTenantFromRequest(r)
+func (s *Server) gatewayTenantFromRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
+	return s.k8sTenantFromRequest(w, r)
 }
 
 // handleGatewayRoutes 统一处理 /api/v1/gateway/routes：
@@ -95,9 +128,8 @@ func (s *Server) handleListGatewayRoutes(w http.ResponseWriter, r *http.Request)
 	if _, ok := s.requirePermission(w, r, "gateway:read"); !ok {
 		return
 	}
-	tenant := s.gatewayTenantFromRequest(r)
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	tenant, ok := s.gatewayTenantFromRequest(w, r)
+	if !ok {
 		return
 	}
 	gw := s.ensureGateway()
@@ -117,9 +149,8 @@ func (s *Server) handleCreateGatewayRoute(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	tenant := s.gatewayTenantFromRequest(r)
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	tenant, ok := s.gatewayTenantFromRequest(w, r)
+	if !ok {
 		return
 	}
 	var body extension.RouteRule
@@ -137,6 +168,11 @@ func (s *Server) handleCreateGatewayRoute(w http.ResponseWriter, r *http.Request
 	}
 	if body.TargetBackend == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "targetBackend is required"})
+		return
+	}
+	// L1 输入校验：targetBackend 格式 scheme://host:port，scheme ∈ {http,https,grpc}。
+	if ok, msg := validateGatewayTargetBackend(body.TargetBackend); !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
 	now := time.Now()
@@ -157,7 +193,10 @@ func (s *Server) handleCreateGatewayRoute(w http.ResponseWriter, r *http.Request
 		gw.routes[tenant] = make(map[string]*gatewayRouteEntry)
 	}
 	gw.routes[tenant][body.ID] = entry
-	_ = caller
+	// 审计：记录创建人（H9 写路径审计补齐，与 automation/webhook/slo 风格一致）。
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: tenant, UserID: caller.ID, Action: "gateway_route_create", Target: body.ID, Detail: sanitizeAuditDetail("name=" + body.Name),
+	})
 	writeJSON(w, http.StatusCreated, entry.rule)
 }
 
@@ -208,9 +247,8 @@ func (s *Server) handleGetGatewayRoute(w http.ResponseWriter, r *http.Request, i
 	if _, ok := s.requirePermission(w, r, "gateway:read"); !ok {
 		return
 	}
-	tenant := s.gatewayTenantFromRequest(r)
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	tenant, ok := s.gatewayTenantFromRequest(w, r)
+	if !ok {
 		return
 	}
 	gw := s.ensureGateway()
@@ -231,9 +269,8 @@ func (s *Server) handleUpdateGatewayRoute(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	tenant := s.gatewayTenantFromRequest(r)
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	tenant, ok := s.gatewayTenantFromRequest(w, r)
+	if !ok {
 		return
 	}
 	var body extension.RouteRule
@@ -260,7 +297,10 @@ func (s *Server) handleUpdateGatewayRoute(w http.ResponseWriter, r *http.Request
 		limiter: extension.NewRateLimiter(body.RateLimitPerSec),
 	}
 	tenantRoutes[id] = newEntry
-	_ = caller
+	// 审计：记录更新人（H9 写路径审计补齐，与 automation/webhook/slo 风格一致）。
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: tenant, UserID: caller.ID, Action: "gateway_route_update", Target: id, Detail: sanitizeAuditDetail("name=" + body.Name),
+	})
 	writeJSON(w, http.StatusOK, newEntry.rule)
 }
 
@@ -270,9 +310,8 @@ func (s *Server) handleDeleteGatewayRoute(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	tenant := s.gatewayTenantFromRequest(r)
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	tenant, ok := s.gatewayTenantFromRequest(w, r)
+	if !ok {
 		return
 	}
 	gw := s.ensureGateway()
@@ -284,7 +323,10 @@ func (s *Server) handleDeleteGatewayRoute(w http.ResponseWriter, r *http.Request
 		return
 	}
 	delete(tenantRoutes, id)
-	_ = caller
+	// 审计：记录删除人（H9 写路径审计补齐，与 automation/webhook/slo 风格一致）。
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: tenant, UserID: caller.ID, Action: "gateway_route_delete", Target: id,
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -294,9 +336,8 @@ func (s *Server) handleGatewayRouteToggle(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	tenant := s.gatewayTenantFromRequest(r)
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	tenant, ok := s.gatewayTenantFromRequest(w, r)
+	if !ok {
 		return
 	}
 	gw := s.ensureGateway()
@@ -310,7 +351,14 @@ func (s *Server) handleGatewayRouteToggle(w http.ResponseWriter, r *http.Request
 	}
 	entry.rule.Enabled = enable
 	entry.rule.UpdatedAt = time.Now()
-	_ = caller
+	// 审计：记录启停人（H9 写路径审计补齐，与 automation/webhook/slo 风格一致）。
+	auditAction := "gateway_route_enable"
+	if !enable {
+		auditAction = "gateway_route_disable"
+	}
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: tenant, UserID: caller.ID, Action: auditAction, Target: id,
+	})
 	writeJSON(w, http.StatusOK, entry.rule)
 }
 
@@ -319,9 +367,8 @@ func (s *Server) handleGatewayStats(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "gateway:read"); !ok {
 		return
 	}
-	tenant := s.gatewayTenantFromRequest(r)
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	tenant, ok := s.gatewayTenantFromRequest(w, r)
+	if !ok {
 		return
 	}
 	gw := s.ensureGateway()

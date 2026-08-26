@@ -226,3 +226,60 @@ func TestHandleTenantRouting_EmptyID(t *testing.T) {
 		t.Fatalf("status=%d, want 400", w.Code)
 	}
 }
+
+// TestHandleDeleteTenant_DefaultProtected 验证删除 "default" 租户返回 409（L3 平台租户保护）。
+func TestHandleDeleteTenant_DefaultProtected(t *testing.T) {
+	s := newTenantTestServer()
+	auth := loginAsAdmin(t, s)
+	// 确保 default 租户存在。
+	s.store.CreateTenant(&store.Tenant{ID: "default", Name: "default", Status: store.TenantStatusActive})
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/default", nil)
+	req.Header.Set("Authorization", auth)
+	w := httptest.NewRecorder()
+	s.handleTenantRouting(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status=%d, want 409; body=%s", w.Code, w.Body.String())
+	}
+	// 确认 default 租户仍存在。
+	if _, ok := s.store.GetTenant("default"); !ok {
+		t.Fatal("default tenant was deleted, should be protected")
+	}
+}
+
+// TestHandleDeleteTenant_CascadeCleansThreeDomains 验证删除非 default 租户级联清三域（L3）。
+func TestHandleDeleteTenant_CascadeCleansThreeDomains(t *testing.T) {
+	s := newTenantTestServer()
+	auth := loginAsAdmin(t, s)
+	// 构造一个非 default 租户 + 三域资源。
+	s.store.CreateTenant(&store.Tenant{ID: "t1", Name: "acme", Status: store.TenantStatusActive})
+	s.store.CreateAPIKey("t1", &store.APIKey{Name: "k1", Key: "hash1", Scopes: []string{"read"}})
+	s.store.CreateWebhook("t1", &store.Webhook{Name: "w1", URL: "https://example.com", Events: []string{"task.succeeded"}})
+	s.store.CreateScript("t1", &store.Script{Name: "sc1", Content: "echo hi", Language: "shell", TimeoutSec: 10})
+	// 前置断言：三域各有 1 条。
+	if len(s.store.ListAPIKeys("t1")) != 1 {
+		t.Fatalf("APIKeys before delete=%d, want 1", len(s.store.ListAPIKeys("t1")))
+	}
+	if len(s.store.ListWebhooks("t1")) != 1 {
+		t.Fatalf("Webhooks before delete=%d, want 1", len(s.store.ListWebhooks("t1")))
+	}
+	if len(s.store.ListScripts("t1")) != 1 {
+		t.Fatalf("Scripts before delete=%d, want 1", len(s.store.ListScripts("t1")))
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/t1", nil)
+	req.Header.Set("Authorization", auth)
+	w := httptest.NewRecorder()
+	s.handleTenantRouting(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	// 后置断言：三域被清空。
+	if len(s.store.ListAPIKeys("t1")) != 0 {
+		t.Fatalf("APIKeys after delete=%d, want 0 (cascade cleaned)", len(s.store.ListAPIKeys("t1")))
+	}
+	if len(s.store.ListWebhooks("t1")) != 0 {
+		t.Fatalf("Webhooks after delete=%d, want 0 (cascade cleaned)", len(s.store.ListWebhooks("t1")))
+	}
+	if len(s.store.ListScripts("t1")) != 0 {
+		t.Fatalf("Scripts after delete=%d, want 0 (cascade cleaned)", len(s.store.ListScripts("t1")))
+	}
+}

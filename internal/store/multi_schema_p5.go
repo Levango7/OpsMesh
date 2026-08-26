@@ -1,5 +1,6 @@
-
 package store
+
+import "time"
 
 // multi_schema_p5.go MultiSchemaStore 对 Phase 5 两个新接口（WebhookStore / ScriptStore）的委托实现。
 //
@@ -78,6 +79,16 @@ func (m *MultiSchemaStore) ListWebhookDeliveries(tenantID, webhookID string) []*
 	return s.ListWebhookDeliveries(tenantID, webhookID)
 }
 
+// RecordWebhookDelivery 记录一条 Webhook 投递记录：用 tenantID 路由到对应 schema 的 store。
+// 路由失败或底层 store 返回 nil 时返回 nil（controlplane 据此降级为模拟响应）。
+func (m *MultiSchemaStore) RecordWebhookDelivery(tenantID, webhookID, event, payload string, statusCode int, response, errStr string) *WebhookDelivery {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return nil
+	}
+	return s.RecordWebhookDelivery(tenantID, webhookID, event, payload, statusCode, response, errStr)
+}
+
 // ============================================================================
 // ScriptStore 实现（6 方法）
 // ============================================================================
@@ -143,4 +154,14 @@ func (m *MultiSchemaStore) ListScriptExecutions(tenantID, scriptID string) []*Sc
 		return nil
 	}
 	return s.ListScriptExecutions(tenantID, scriptID)
+}
+
+// RecordScriptExecution 记录一条脚本执行记录：用 tenantID 路由到对应 schema 的 store。
+// 路由失败或底层 store 返回 nil 时返回 nil（controlplane 据此降级为模拟响应）。
+func (m *MultiSchemaStore) RecordScriptExecution(tenantID, scriptID, deviceID, status, stdout, stderr string, startedAt time.Time, finishedAt *time.Time) *ScriptExecution {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return nil
+	}
+	return s.RecordScriptExecution(tenantID, scriptID, deviceID, status, stdout, stderr, startedAt, finishedAt)
 }

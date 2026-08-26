@@ -1,4 +1,4 @@
-﻿package store
+package store
 
 import (
 	"sort"
@@ -22,7 +22,19 @@ const configMaxHistory = 64
 // configKey 拼装复合键。
 func configKey(tenantID, key string) string { return tenantID + "|" + key }
 
+// cloneConfigItem 返回 item 的深拷贝。
+// ConfigItem 字段均为值类型（string/int/time.Time），浅拷贝即可；nil 返回 nil。
+// 用于读路径返回副本、写路径入 map 前拷贝，隔离外部修改对内部状态的影响。
+func cloneConfigItem(item *ConfigItem) *ConfigItem {
+	if item == nil {
+		return nil
+	}
+	cp := *item
+	return &cp
+}
+
 // GetConfig 按 (tenantID, key) 返回当前配置项；不存在返回 (nil, false)。
+// 返回内部数据的深拷贝副本，外部修改不影响内部状态。
 func (m *MemoryStore) GetConfig(tenantID, key string) (*ConfigItem, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -30,11 +42,11 @@ func (m *MemoryStore) GetConfig(tenantID, key string) (*ConfigItem, bool) {
 	if !ok {
 		return nil, false
 	}
-	return item, true
+	return cloneConfigItem(item), true
 }
 
 // SetConfig 写入/更新配置（按 key 幂等）。已存在则 Version+1 并把前版本写入历史；
-// 不存在则 Version=1。返回更新后的配置项。
+// 不存在则 Version=1。返回更新后的配置项（深拷贝副本，外部修改不影响内部）。
 func (m *MemoryStore) SetConfig(item *ConfigItem) *ConfigItem {
 	if item == nil {
 		return nil
@@ -60,15 +72,16 @@ func (m *MemoryStore) SetConfig(item *ConfigItem) *ConfigItem {
 		existing.UpdatedBy = item.UpdatedBy
 		existing.Version++
 		existing.UpdatedAt = now
-		return existing
+		return cloneConfigItem(existing)
 	}
-	// 新建。
+	// 新建：入 map 前拷贝，隔离外部对 item 的后续修改。
 	if item.Version == 0 {
 		item.Version = 1
 	}
 	item.UpdatedAt = now
-	m.configs[ck] = item
-	return item
+	cp := *item
+	m.configs[ck] = &cp
+	return cloneConfigItem(&cp)
 }
 
 // DeleteConfig 删除配置（按 tenantID + key，含版本历史）。返回是否删除成功。
@@ -85,6 +98,7 @@ func (m *MemoryStore) DeleteConfig(tenantID, key string) bool {
 }
 
 // ListConfigs 列出指定租户的全部配置（按 key 升序）。
+// 返回深拷贝副本，外部修改不影响内部状态。
 func (m *MemoryStore) ListConfigs(tenantID string) []*ConfigItem {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -93,7 +107,7 @@ func (m *MemoryStore) ListConfigs(tenantID string) []*ConfigItem {
 		if item.TenantID != tenantID {
 			continue
 		}
-		out = append(out, item)
+		out = append(out, cloneConfigItem(item))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out
@@ -102,6 +116,7 @@ func (m *MemoryStore) ListConfigs(tenantID string) []*ConfigItem {
 // ConfigHistory 返回指定配置的版本历史（按 version 升序）。
 // 注意：历史不含当前版本（当前版本在 GetConfig 中获取）；如需全量含当前版本，
 // 调用方可自行 append。这里保持与"版本历史"语义一致——历史=已过去的版本。
+// 返回深拷贝副本，外部修改不影响内部状态。
 func (m *MemoryStore) ConfigHistory(tenantID, key string) []*ConfigItem {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -111,12 +126,14 @@ func (m *MemoryStore) ConfigHistory(tenantID, key string) []*ConfigItem {
 	}
 	// 返回副本以避免外部修改影响内部状态。
 	out := make([]*ConfigItem, len(hist))
-	copy(out, hist)
+	for i, h := range hist {
+		out[i] = cloneConfigItem(h)
+	}
 	return out
 }
 
 // PublishConfig 发布配置变更（MVP 仅返回当前配置；后续可触发事件总线）。
-// 不存在返回 (nil, false)。
+// 不存在返回 (nil, false)。返回深拷贝副本，外部修改不影响内部状态。
 func (m *MemoryStore) PublishConfig(tenantID, key string) (*ConfigItem, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -124,5 +141,5 @@ func (m *MemoryStore) PublishConfig(tenantID, key string) (*ConfigItem, bool) {
 	if !ok {
 		return nil, false
 	}
-	return item, true
+	return cloneConfigItem(item), true
 }

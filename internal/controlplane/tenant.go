@@ -1,4 +1,5 @@
 package controlplane
+
 // tenant.go 实现 Phase 6 租户管理 HTTP handler（CRUD + 启停）。
 //
 // API 端点：
@@ -14,7 +15,6 @@ package controlplane
 //   - 鉴权：需 tenant:read/tenant:write 权限；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体。
-
 
 import (
 	"net/http"
@@ -150,17 +150,48 @@ func (s *Server) handleUpdateTenant(w http.ResponseWriter, r *http.Request, id s
 }
 
 // handleDeleteTenant 处理 DELETE /api/v1/tenants/{id}：删除租户。
+//
+// L3 级联清理加固：
+//   - 平台租户 "default" 拒绝删除（409 Conflict），防止误删平台根租户导致系统瘫痪；
+//   - 删除成功后对该租户的 APIKey/Webhook/Script 三域执行循环 Delete，
+//     避免租户删除后子资源成为孤儿（store 已有按 tenantID 的 delete 方法）；
+//   - 其余域（Device/Task/Alert/Agent/Subscription/Invoice/Plugin 等）暂未级联，
+//     列入 TODO 待后续补齐。
 func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request, id string) {
 	caller, ok := s.requirePermission(w, r, "tenant:write")
 	if !ok {
+		return
+	}
+	// L3 平台租户保护：禁止删除 "default" 租户。
+	if id == "default" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "cannot delete platform tenant 'default'"})
 		return
 	}
 	if !s.store.DeleteTenant(id) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
 		return
 	}
+	// L3 三域级联清理：APIKey/Webhook/Script。
+	// store 已有按 tenantID 的 List+Delete 方法，handler 侧聚合调用确保孤儿资源被清。
+	for _, k := range s.store.ListAPIKeys(id) {
+		if k != nil {
+			s.store.DeleteAPIKey(id, k.ID)
+		}
+	}
+	for _, wh := range s.store.ListWebhooks(id) {
+		if wh != nil {
+			s.store.DeleteWebhook(id, wh.ID)
+		}
+	}
+	for _, sc := range s.store.ListScripts(id) {
+		if sc != nil {
+			s.store.DeleteScript(id, sc.ID)
+		}
+	}
+	// TODO(L3-future): 级联清理 Device/Task/Alert/Agent/Subscription/Invoice/Plugin 等域。
+	// 当前 store 已有部分按 tenantID 的 List/Delete，待 handler 侧逐一补齐聚合调用。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "tenant_delete", Target: id, Detail: "",
+		TenantID: "default", UserID: caller.ID, Action: "tenant_delete", Target: id, Detail: "cascade:apikeys,webhooks,scripts",
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

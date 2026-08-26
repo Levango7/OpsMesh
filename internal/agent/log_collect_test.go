@@ -12,6 +12,8 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -498,5 +500,169 @@ func TestLogCollectorFileRotation(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("文件轮转后应能采集到新内容")
+	}
+}
+
+// makeFixedLine 构造固定宽度（含 \n）的日志行，内容含序号便于拼接验证。
+// width 为含换行符的目标字节数；内容不足用 'x' 右填充。
+func makeFixedLine(idx, width int) string {
+	s := fmt.Sprintf("line-%05d", idx)
+	if pad := width - 1 - len(s); pad > 0 {
+		s += strings.Repeat("x", pad)
+	}
+	return s
+}
+
+// drainCollectFile 重复调用 collectFile 直到 offset 到达文件末尾，
+// 拼接所有记录的 Content+\n 返回。用于截断算法的多轮分片拼接验证。
+func drainCollectFile(t *testing.T, lc *LogCollector, logFile string, payloadLen int64) string {
+	t.Helper()
+	var collected strings.Builder
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		records, _, err := lc.collectFile(logFile, nil, nil, nil, 0)
+		if err != nil {
+			t.Fatalf("collectFile 失败: %v", err)
+		}
+		for _, r := range records {
+			collected.WriteString(r.Content)
+			collected.WriteByte('\n')
+		}
+		lc.mu.RLock()
+		off := lc.offsets[logFile]
+		lc.mu.RUnlock()
+		if off >= payloadLen {
+			break
+		}
+	}
+	return collected.String()
+}
+
+// TestLogCollectTruncationHitLimitRecovery 验证截断算法在 hitLimit 时的正确性：
+// 当单 tick 记录数达到 logCollectMaxRecords 上限，offset 只推进到已处理位置，
+// 剩余行下次 collectFile 重读，多轮拼接后应还原原始 payload。
+//
+// 构造：1500 行 × 100 字节 = 150KB。logCollectMaxRecords=1000，
+// 第一轮处理 1000 行后 hitLimit，offset 推进到 100KB（非 150KB），
+// 第二轮从 100KB 读剩余 500 行，拼接还原。
+func TestLogCollectTruncationHitLimitRecovery(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "trunc.log")
+
+	const lineCount = 1500
+	const lineWidth = 100 // 含 \n
+	var sb strings.Builder
+	for i := 0; i < lineCount; i++ {
+		sb.WriteString(makeFixedLine(i, lineWidth))
+		sb.WriteByte('\n')
+	}
+	payload := sb.String()
+	if err := os.WriteFile(logFile, []byte(payload), 0o644); err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+
+	cfg := LogCollectConfig{Paths: []string{logFile}}
+	lc, err := NewLogCollector(cfg, func(_ context.Context, _ []CollectedLog) error { return nil })
+	if err != nil {
+		t.Fatalf("构造失败: %v", err)
+	}
+
+	got := drainCollectFile(t, lc, logFile, int64(len(payload)))
+	if got != payload {
+		t.Fatalf("hitLimit 回退后拼接内容与原始 payload 不一致: got len=%d, want len=%d", len(got), len(payload))
+	}
+}
+
+// TestLogCollectLargePayloadMultiRound 验证大 payload 分多次读取拼接还原：
+// payload 大于 logCollectReadLimit（1MB），需多轮读取，拼接后应还原原始内容。
+//
+// 构造：1024 行 × 2048 字节 = 2MB。logCollectReadLimit=1MB，
+// 需 2 轮读取（各 1MB=512 行），每轮 512 行 < 1000，不 hitLimit。
+// 选 2048 字节行使 1MB 恰为行整数倍，避免按字节截断拆分行。
+func TestLogCollectLargePayloadMultiRound(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "large.log")
+
+	const lineCount = 1024
+	const lineWidth = 2048 // 含 \n；1024*2048=2097152=2MB
+	var sb strings.Builder
+	for i := 0; i < lineCount; i++ {
+		sb.WriteString(makeFixedLine(i, lineWidth))
+		sb.WriteByte('\n')
+	}
+	payload := sb.String()
+	if err := os.WriteFile(logFile, []byte(payload), 0o644); err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+
+	cfg := LogCollectConfig{Paths: []string{logFile}}
+	lc, err := NewLogCollector(cfg, func(_ context.Context, _ []CollectedLog) error { return nil })
+	if err != nil {
+		t.Fatalf("构造失败: %v", err)
+	}
+
+	got := drainCollectFile(t, lc, logFile, int64(len(payload)))
+	if got != payload {
+		t.Fatalf("多轮读取拼接内容与原始 payload 不一致: got len=%d, want len=%d", len(got), len(payload))
+	}
+}
+
+// TestLogCollectPayloadExactBuffer 验证 payload 恰好等于缓冲上限的边界：
+// payload 长度 == logCollectReadLimit（1MB），单轮读取应完整处理，拼接还原。
+func TestLogCollectPayloadExactBuffer(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "exact.log")
+
+	// 构造恰好 1MB 的 payload：512 行 × 2048 字节 = 1MB。
+	const lineCount = 512
+	const lineWidth = 2048 // 含 \n；512*2048=1048576=1MB
+	var sb strings.Builder
+	for i := 0; i < lineCount; i++ {
+		sb.WriteString(makeFixedLine(i, lineWidth))
+		sb.WriteByte('\n')
+	}
+	payload := sb.String()
+	if len(payload) != logCollectReadLimit {
+		t.Fatalf("payload 长度应为 %d, 得到 %d", logCollectReadLimit, len(payload))
+	}
+	if err := os.WriteFile(logFile, []byte(payload), 0o644); err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+
+	cfg := LogCollectConfig{Paths: []string{logFile}}
+	lc, err := NewLogCollector(cfg, func(_ context.Context, _ []CollectedLog) error { return nil })
+	if err != nil {
+		t.Fatalf("构造失败: %v", err)
+	}
+
+	got := drainCollectFile(t, lc, logFile, int64(len(payload)))
+	if got != payload {
+		t.Fatalf("恰好等于缓冲时拼接内容与原始 payload 不一致: got len=%d, want len=%d", len(got), len(payload))
+	}
+}
+
+// TestLogCollectErrorIs 验证 logCollectError 的 Is 方法使 errors.Is 生效（C-4 正反用例）。
+func TestLogCollectErrorIs(t *testing.T) {
+	// 正：两个 *logCollectError sentinel 互相 errors.Is 应为 true（同类型）。
+	if !errors.Is(errLogCollectPushFnNil, errLogCollectMultilineCompile) {
+		t.Fatalf("errors.Is(同类型 sentinel) 应为 true")
+	}
+	// 正：wrap 后的新实例仍可被 errors.Is 识别为 *logCollectError。
+	wrapped := errLogCollectRuleCompile.wrap(errors.New("inner"), "rule", 0)
+	if !errors.Is(wrapped, errLogCollectPushFnNil) {
+		t.Fatalf("errors.Is(wrap 后实例, sentinel) 应为 true")
+	}
+	// 正：sentinel 对自身 wrap 实例也应为 true（反向匹配）。
+	if !errors.Is(errLogCollectPushFnNil, wrapped) {
+		t.Fatalf("errors.Is(sentinel, wrap 后实例) 应为 true")
+	}
+	// 反：非 *logCollectError 类型应返回 false。
+	other := errors.New("unrelated error")
+	if errors.Is(errLogCollectPushFnNil, other) {
+		t.Fatalf("errors.Is(对不同类型) 应为 false")
+	}
+	// 反：nil error 对 sentinel 应为 false。
+	if errors.Is(nil, errLogCollectPushFnNil) {
+		t.Fatalf("errors.Is(nil, sentinel) 应为 false")
 	}
 }

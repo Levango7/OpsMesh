@@ -326,10 +326,6 @@ func (lc *LogCollector) collectFile(
 	if err != nil {
 		return nil, fileStats{}, err
 	}
-	newOffset := offset + int64(len(data))
-	lc.mu.Lock()
-	lc.offsets[file] = newOffset
-	lc.mu.Unlock()
 
 	if len(data) == 0 {
 		return nil, fileStats{}, nil
@@ -345,6 +341,12 @@ func (lc *LogCollector) collectFile(
 	var bufLineCount int
 	var bufStartLine string
 	var bufBytes int
+
+	// 追踪已处理行在 data 中的字符偏移（含换行符估计），用于 hitLimit 时回退 offset。
+	// splitLines 去除行尾换行符，此处每行 +1 保守估计 \n；\r\n 场景偏移略小，
+	// 下次 tick 会多读几个已处理字节（幂等过滤，不重复入记录）。
+	var processedChars int
+	hitLimit := false
 
 	flushBuf := func() {
 		if buf.Len() == 0 {
@@ -366,6 +368,8 @@ func (lc *LogCollector) collectFile(
 
 	for _, line := range lines {
 		stats.lines++
+		// 累积已处理字符（行内容 + 换行符估计），用于 hitLimit 时回退 offset。
+		processedChars += len(line) + 1
 		// 过滤：Exclude 优先于 Include。
 		if matchAny(exclude, line) {
 			continue
@@ -397,10 +401,24 @@ func (lc *LogCollector) collectFile(
 		}
 		if len(records) >= logCollectMaxRecords {
 			flushBuf()
+			hitLimit = true
 			break // 单 tick 记录数上限，剩余下次 tick 再读
 		}
 	}
 	flushBuf()
+
+	// 推进 offset：先按实际处理量截取，offset 只推进实际读取量。
+	// hitLimit 时剩余行需下次 tick 重读，故只推进到已处理位置；
+	// 否则本次 data 全部处理完毕，推进到 data 末尾。
+	advance := len(data)
+	if hitLimit && processedChars < advance {
+		advance = processedChars
+		stats.bytes = int64(advance)
+	}
+	newOffset := offset + int64(advance)
+	lc.mu.Lock()
+	lc.offsets[file] = newOffset
+	lc.mu.Unlock()
 
 	return records, stats, nil
 }
@@ -544,6 +562,14 @@ func (e *logCollectError) Error() string {
 
 func (e *logCollectError) Unwrap() error {
 	return e.wrapped
+}
+
+// Is 使 errors.Is(err, ErrLogCollect) 对任意 *logCollectError 实例生效。
+// sentinel error（errLogCollectPushFnNil 等）均为 *logCollectError，
+// wrap 后的新实例也通过此方法匹配同一类型，便于上层统一识别采集器错误。
+func (e *logCollectError) Is(target error) bool {
+	_, ok := target.(*logCollectError)
+	return ok
 }
 
 func (e *logCollectError) wrap(err error, details ...any) *logCollectError {

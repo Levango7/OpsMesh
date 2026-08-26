@@ -1,6 +1,5 @@
 package controlplane
 
-
 // webhook.go 实现 Phase 5 Webhook 管理 HTTP handler（CRUD + 测试投递 + 投递记录）。
 //
 // API 端点：
@@ -13,10 +12,15 @@ package controlplane
 //   - GET    /api/v1/webhooks/{id}/deliveries  投递记录
 //
 // 设计要点（与 automation.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(r) 提取租户；
+//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 webhook:read/webhook:write 权限。
+//   - SSRF 防护：create/update 对 URL 复用 ValidateWebhookURL 校验（协议白名单 +
+//     私网/loopback/链路本地/云元数据拦截 + DNS rebinding 防护），allowPrivate 开关取
+//     s.cfg.WebhookAllowPrivate，与通知渠道 CRUD（server_alerts_m2.go 的
+//     createNotifyChannel/updateNotifyChannel → validateNotifyChannelWebhook）同一配置来源，
+//     消除同库双标（FIXPLAN-phase1-6.md M1）。
 //   - test 端点模拟发送：构造一条投递记录（StatusCode=200, Response="test"），
 //     不实际发起 HTTP 请求（避免 SSRF 风险，仅验证 Webhook 配置可达性占位）。
 
@@ -47,7 +51,10 @@ func (s *Server) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "webhook:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -62,7 +69,10 @@ func (s *Server) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -78,6 +88,14 @@ func (s *Server) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.URL == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "url is required"})
+		return
+	}
+	// SSRF 防护（M1 修复）：与 notify-channels 同源复用 ValidateWebhookURL——
+	// 拒绝 file:// 等非 http(s) 协议及私网/loopback/链路本地/云元数据地址；
+	// allowPrivate 取 s.cfg.WebhookAllowPrivate（与 createNotifyChannel 同一开关，
+	// 内网部署场景显式放行私网）。校验失败返回 400 + 明确错误信息。
+	if err := ValidateWebhookURL(body.URL, s.cfg.WebhookAllowPrivate); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid webhook url: " + err.Error()})
 		return
 	}
 	created := s.store.CreateWebhook(tenant, &body)
@@ -138,7 +156,10 @@ func (s *Server) handleGetWebhook(w http.ResponseWriter, r *http.Request, id str
 	if _, ok := s.requirePermission(w, r, "webhook:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -157,7 +178,10 @@ func (s *Server) handleUpdateWebhook(w http.ResponseWriter, r *http.Request, id 
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -166,6 +190,16 @@ func (s *Server) handleUpdateWebhook(w http.ResponseWriter, r *http.Request, id 
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
+	}
+	// SSRF 防护（M1 修复）：更新路径与创建路径同一校验语义，防止经 PUT 绕过
+	// 创建期防护注入 file:///内网地址。URL 为空时跳过（对齐 notify-channels 的
+	// validateNotifyChannelWebhook：空值交由上游契约处理，非空必须过 SSRF 校验）；
+	// allowPrivate 同样取 s.cfg.WebhookAllowPrivate，两端联动。
+	if body.URL != "" {
+		if err := ValidateWebhookURL(body.URL, s.cfg.WebhookAllowPrivate); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid webhook url: " + err.Error()})
+			return
+		}
 	}
 	body.ID = id
 	updated, ok := s.store.UpdateWebhook(tenant, &body)
@@ -185,7 +219,10 @@ func (s *Server) handleDeleteWebhook(w http.ResponseWriter, r *http.Request, id 
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -208,7 +245,10 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request, id st
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -221,13 +261,12 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request, id st
 	// 模拟投递：记录一条投递记录（不实际发起 HTTP 请求）。
 	event := "test.event"
 	payload := `{"event":"test.event","message":"webhook test delivery"}`
-	var delivery *store.WebhookDelivery
-	if ms, ok := s.store.(*store.MemoryStore); ok {
-		delivery = ms.RecordWebhookDelivery(tenant, id, event, payload, 200, "test ok", "")
-	}
+	// M3：直接经 Store 接口调用，消除对 *MemoryStore 的类型断言；
+	// SQLStore（桩）返回 nil 时降级为模拟响应（不落库），MultiSchemaStore 委托路由到 per-tenant store。
+	delivery := s.store.RecordWebhookDelivery(tenant, id, event, payload, 200, "test ok", "")
 	_ = caller
 	if delivery == nil {
-		// 非 MemoryStore 后端（如 SQLStore 桩）：返回模拟结果不落库。
+		// store 返回 nil（如 SQLStore 桩未持久化）：返回模拟结果不落库。
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"webhookID":  id,
 			"event":      event,
@@ -244,7 +283,10 @@ func (s *Server) handleWebhookDeliveries(w http.ResponseWriter, r *http.Request,
 	if _, ok := s.requirePermission(w, r, "webhook:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return

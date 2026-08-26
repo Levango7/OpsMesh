@@ -32,7 +32,10 @@ func (s *Server) handleConfigHotpush(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -109,7 +112,10 @@ func (s *Server) handleConfigCanary(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -194,7 +200,10 @@ func (s *Server) handleConfigVersions(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "cmdb:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return

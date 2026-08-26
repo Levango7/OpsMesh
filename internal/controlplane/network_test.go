@@ -391,3 +391,42 @@ func TestHandleNetworkDevices_NoAuth(t *testing.T) {
 		t.Fatalf("status=%d, want 401", w.Code)
 	}
 }
+
+// =============================================================================
+// 审计断言（H9 写路径审计补齐回归）
+// =============================================================================
+
+// TestHandleCreateNetworkDevice_AuditLogged 验证创建设备成功后写入审计日志，
+// 审计事件 Action="network_device_create"、Target=设备 ID、UserID=caller.ID。
+// 参考 automation_test.go 既有模式：loginAsAdmin + 触发写操作 + 断言 store.Audits()。
+func TestHandleCreateNetworkDevice_AuditLogged(t *testing.T) {
+	s := newNetworkDeviceTestServer()
+	auth := loginAsAdmin(t, s)
+
+	body := `{"name":"audit-dev","type":"router","ip":"10.0.0.1"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/network/devices", strings.NewReader(body))
+	req.Header.Set("Authorization", auth)
+	req.Header.Set("X-Tenant-ID", "default")
+	w := httptest.NewRecorder()
+	s.handleNetworkDevices(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status=%d, body=%s", w.Code, w.Body.String())
+	}
+	var dev store.NetworkDevice
+	if err := json.Unmarshal(w.Body.Bytes(), &dev); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// 断言审计日志含 network_device_create 事件，且 Target/UserID 正确。
+	audits := s.store.Audits()
+	var hit bool
+	for _, ev := range audits {
+		if ev.Action == "network_device_create" && ev.Target == dev.ID && ev.UserID != "" {
+			hit = true
+			break
+		}
+	}
+	if !hit {
+		t.Fatalf("audit log missing network_device_create for dev=%s; audits=%+v", dev.ID, audits)
+	}
+}

@@ -1,4 +1,5 @@
 package controlplane
+
 // marketplace.go 实现 Phase 6 插件市场 HTTP handler（CRUD + 安装/卸载 + 启停）。
 //
 // API 端点：
@@ -11,14 +12,22 @@ package controlplane
 //   - POST   /api/v1/marketplace/plugins/{id}/enable     启用插件
 //   - POST   /api/v1/marketplace/plugins/{id}/disable    禁用插件
 
-
 import (
 	"net/http"
+	"net/url"
 	"strings"
 
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 )
+
+// allowedPluginTypes 插件类型白名单（L1 输入校验）。
+// 仅允许 data/logic/integration 三类，拒绝任意其他值防止下游分发逻辑误判。
+var allowedPluginTypes = map[string]bool{
+	"data":       true,
+	"logic":      true,
+	"integration": true,
+}
 
 // handleMarketplacePlugins 统一处理 /api/v1/marketplace/plugins。
 func (s *Server) handleMarketplacePlugins(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +68,28 @@ func (s *Server) handleCreatePlugin(w http.ResponseWriter, r *http.Request) {
 	if body.Version == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "version is required"})
 		return
+	}
+	// L1 输入校验：pluginType 白名单 {data,logic,integration}。
+	if body.Type == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "type is required"})
+		return
+	}
+	if !allowedPluginTypes[body.Type] {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid type: " + body.Type + " (want data|logic|integration)"})
+		return
+	}
+	// L1 输入校验：downloadURL 仅允许 http/https scheme（防 file:// / ftp:// 等不安全协议）。
+	// 空URL允许（插件可能内嵌无外链下载）；非空时强制 scheme 白名单。
+	if body.DownloadURL != "" {
+		u, err := url.Parse(body.DownloadURL)
+		if err != nil || u.Scheme == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid downloadURL: parse failed"})
+			return
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid downloadURL scheme: " + u.Scheme + " (want http|https)"})
+			return
+		}
 	}
 	created := s.store.CreatePlugin(&body)
 	if created == nil {

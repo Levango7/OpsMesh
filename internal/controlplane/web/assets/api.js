@@ -697,6 +697,8 @@ export function getAPIKey(id) {
 }
 
 // updateAPIKey 更新 API Key。PUT /api/v1/apikeys/{id}
+// 安全：仅提交白名单可编辑字段 {name, scopes}。enabled 必须走 toggleAPIKey
+// （enable/disable 端点）；key/id 等敏感字段后端会强制保留 existing 值。
 export function updateAPIKey(id, data) {
   return requestJSON('PUT', '/api/v1/apikeys/' + encodeURIComponent(id), data);
 }

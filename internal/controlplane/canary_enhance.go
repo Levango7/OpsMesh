@@ -62,7 +62,10 @@ func (s *Server) handleCanaryTrafficSplit(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -116,7 +119,10 @@ func (s *Server) handleCanaryMetrics(w http.ResponseWriter, r *http.Request, id 
 	if _, ok := s.requirePermission(w, r, "task:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -150,5 +156,7 @@ func (s *Server) handleCanaryMetrics(w http.ResponseWriter, r *http.Request, id 
 		},
 		"percentage": canary.Percentage,
 		"comparedAt": time.Now(),
+		// M12 占位标记：指标数据为静态模拟值，非真实采集。
+		"simulated": true,
 	})
 }

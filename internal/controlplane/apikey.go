@@ -1,4 +1,5 @@
 package controlplane
+
 // apikey.go 实现 Phase 6 API Key 管理 HTTP handler（CRUD + 启停 + 生成）。
 //
 // API 端点：
@@ -9,7 +10,6 @@ package controlplane
 //   - DELETE /api/v1/apikeys/{id}   删除 API Key
 //   - POST   /api/v1/apikeys/{id}/enable   启用 API Key
 //   - POST   /api/v1/apikeys/{id}/disable  禁用 API Key
-
 
 import (
 	"net/http"
@@ -37,7 +37,10 @@ func (s *Server) handleListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "apikey:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -52,7 +55,10 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -131,7 +137,10 @@ func (s *Server) handleGetAPIKey(w http.ResponseWriter, r *http.Request, id stri
 	if _, ok := s.requirePermission(w, r, "apikey:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -145,14 +154,28 @@ func (s *Server) handleGetAPIKey(w http.ResponseWriter, r *http.Request, id stri
 }
 
 // handleUpdateAPIKey 处理 PUT /api/v1/apikeys/{id}。
+//
+// 安全：白名单字段合并，防止提权。请求体仅允许更新 Name 与 Scopes；
+// Enabled 必须走 /enable|/disable 端点（此处强制保留 existing.Enabled）；
+// Key（SHA-256 hash）/ ID / TenantID / CreatedAt 等敏感字段强制保留 existing 值。
+// Scopes 不允许清空（len==0 返 400），防止客户端把权限范围置空绕过校验。
 func (s *Server) handleUpdateAPIKey(w http.ResponseWriter, r *http.Request, id string) {
 	caller, ok := s.requirePermission(w, r, "apikey:write")
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+		return
+	}
+	// 先取 existing，不存在返 404。
+	existing, ok := s.store.GetAPIKey(tenant, id)
+	if !ok || existing == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 		return
 	}
 	var body store.APIKey
@@ -160,8 +183,19 @@ func (s *Server) handleUpdateAPIKey(w http.ResponseWriter, r *http.Request, id s
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
-	body.ID = id
-	updated, ok := s.store.UpdateAPIKey(tenant, &body)
+	// 白名单：scopes 不允许清空（防提权）。
+	if len(body.Scopes) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "scopes must not be empty"})
+		return
+	}
+	// 按白名单覆盖可编辑字段。
+	if body.Name != "" {
+		existing.Name = body.Name
+	}
+	existing.Scopes = body.Scopes
+	// 强制保留：Enabled / Key / ID / TenantID / CreatedAt 等忽略 PUT 值。
+	// （body.Key 因 json:"-" 标签始终为空，此处显式不动 existing.Key 即可。）
+	updated, ok := s.store.UpdateAPIKey(tenant, existing)
 	if !ok || updated == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 		return
@@ -178,7 +212,10 @@ func (s *Server) handleDeleteAPIKey(w http.ResponseWriter, r *http.Request, id s
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -199,7 +236,10 @@ func (s *Server) handleEnableAPIKey(w http.ResponseWriter, r *http.Request, id s
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -227,7 +267,10 @@ func (s *Server) handleDisableAPIKey(w http.ResponseWriter, r *http.Request, id 
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return

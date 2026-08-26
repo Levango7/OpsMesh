@@ -1,6 +1,5 @@
 package controlplane
 
-
 // script.go 实现 Phase 5 自定义脚本 HTTP handler（CRUD + 执行 + 执行记录）。
 //
 // API 端点：
@@ -13,7 +12,7 @@ package controlplane
 //   - GET    /api/v1/scripts/{id}/executions  执行记录
 //
 // 设计要点（与 webhook.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(r) 提取租户；
+//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 script:read/script:write 权限。
@@ -29,6 +28,22 @@ import (
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 )
+
+// clampScriptTimeout 将 timeoutSec clamp 至 [1,600] 秒（L1 输入校验）。
+// <1 视为 1 秒（最小执行窗口）；>600 截断为 600 秒（防 DoS 长时间占用 agent）。
+func clampScriptTimeout(sec int) int {
+	const (
+		minTimeoutSec = 1
+		maxTimeoutSec = 600
+	)
+	if sec < minTimeoutSec {
+		return minTimeoutSec
+	}
+	if sec > maxTimeoutSec {
+		return maxTimeoutSec
+	}
+	return sec
+}
 
 // handleScripts 统一处理 /api/v1/scripts：
 //   - GET：列出脚本
@@ -49,7 +64,10 @@ func (s *Server) handleListScripts(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "script:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -64,7 +82,10 @@ func (s *Server) handleCreateScript(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -86,6 +107,12 @@ func (s *Server) handleCreateScript(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "language must be shell or python"})
 		return
 	}
+	// L1 输入校验：timeoutSec clamp 至 [1,600] 秒。
+	// <1 视为默认 1 秒；>600 截断为 600 秒（防 DoS 长时间占用 agent）。
+	body.TimeoutSec = clampScriptTimeout(body.TimeoutSec)
+	// 新建脚本默认启用（Enabled=true）：用户创建脚本即为可执行，
+	// 禁用需显式 PUT 更新 Enabled=false。避免零值 false 导致 execute 全 409。
+	body.Enabled = true
 	created := s.store.CreateScript(tenant, &body)
 	if created == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create script failed"})
@@ -144,7 +171,10 @@ func (s *Server) handleGetScript(w http.ResponseWriter, r *http.Request, id stri
 	if _, ok := s.requirePermission(w, r, "script:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -163,7 +193,10 @@ func (s *Server) handleUpdateScript(w http.ResponseWriter, r *http.Request, id s
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -174,6 +207,8 @@ func (s *Server) handleUpdateScript(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	body.ID = id
+	// L1 输入校验：timeoutSec clamp 至 [1,600] 秒（与 create 路径一致）。
+	body.TimeoutSec = clampScriptTimeout(body.TimeoutSec)
 	updated, ok := s.store.UpdateScript(tenant, &body)
 	if !ok || updated == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
@@ -191,7 +226,10 @@ func (s *Server) handleDeleteScript(w http.ResponseWriter, r *http.Request, id s
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -216,7 +254,10 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -224,6 +265,12 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 	sc, ok := s.store.GetScript(tenant, id)
 	if !ok || sc == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
+		return
+	}
+	// L1 输入校验：禁用脚本拒绝执行，返回 409 Conflict。
+	// 已禁用脚本不应被下发到 agent，避免误触发；启用需先 POST /enable。
+	if !sc.Enabled {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "script is disabled, enable it before execution"})
 		return
 	}
 	var body struct {
@@ -239,20 +286,19 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 	// MVP：记录一条执行记录（succeeded 状态，stdout 为脚本内容预览）。
 	now := time.Now()
 	finishedAt := now
-	var exec *store.ScriptExecution
-	if ms, ok := s.store.(*store.MemoryStore); ok {
-		exec = ms.RecordScriptExecution(tenant, id, body.DeviceID, "succeeded",
-			"script executed (simulated): "+sc.Name, "", now, &finishedAt)
-	}
+	// M3：直接经 Store 接口调用，消除对 *MemoryStore 的类型断言；
+	// SQLStore（桩）返回 nil 时降级为模拟响应（不落库），MultiSchemaStore 委托路由到 per-tenant store。
+	exec := s.store.RecordScriptExecution(tenant, id, body.DeviceID, "succeeded",
+		"script executed (simulated): "+sc.Name, "", now, &finishedAt)
 	_ = caller
 	if exec == nil {
-		// 非 MemoryStore 后端：返回模拟结果不落库。
+		// store 返回 nil（如 SQLStore 桩未持久化）：返回模拟结果不落库。
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"scriptID":  id,
-			"deviceID":  body.DeviceID,
-			"status":    "succeeded",
-			"stdout":    "script executed (simulated, not persisted): " + sc.Name,
-			"startedAt": now,
+			"scriptID":   id,
+			"deviceID":   body.DeviceID,
+			"status":     "succeeded",
+			"stdout":     "script executed (simulated, not persisted): " + sc.Name,
+			"startedAt":  now,
 			"finishedAt": finishedAt,
 		})
 		return
@@ -265,7 +311,10 @@ func (s *Server) handleScriptExecutions(w http.ResponseWriter, r *http.Request, 
 	if _, ok := s.requirePermission(w, r, "script:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return

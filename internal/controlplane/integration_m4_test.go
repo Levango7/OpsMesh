@@ -699,10 +699,13 @@ func TestIntegrationM4_RBACNoTokenDenied(t *testing.T) {
 // 注意：clusterMgr 留 nil（NewServer 之外构造的 Server 默认 nil），跳过 client-go 真实连接，
 // 聚焦 HTTP 链路与 store 持久化验证。测试连接端点因 clusterMgr=nil 返回 500，此处跳过该步
 // （真实 K8s 连接测试由 k8s_cluster_test.go 单独覆盖）。
+//
+// 注意：X-Tenant-ID 头必须与 JWT tenant_id 一致（H1 交叉校验，mismatch → 403），
+// login() 签发的 JWT 中 tenant_id 恒为 "default"，故 tenant 固定为 default。
 func TestIntegrationM4_K8sClusterFullChain(t *testing.T) {
 	s := newIntegrationServer(false) // 关 Demo：K8s API 走 requirePermission 真实鉴权
 	// clusterMgr 故意留 nil：测试不依赖真实 K8s 集群。
-	const tenant = "t-k8s"
+	const tenant = "default"
 
 	// 1. admin 登录。
 	adminAuth := login(t, s, "admin", "admin123")
@@ -791,63 +794,43 @@ func TestIntegrationM4_K8sClusterFullChain(t *testing.T) {
 }
 
 // TestIntegrationM4_K8sClusterTenantIsolation 验证 K8s 集群租户隔离：
-// 租户 A 创建的集群，租户 B 列表不可见、删除被拒。
+// 他租户创建的集群，本租户列表不可见、删除按 not found 拒绝（不泄露存在性）。
+//
+// H1 收紧后的测试策略变更：login()/loginAsAdmin() 签发的 JWT 中 tenant_id 恒为 "default"
+// （用户中心为平台级身份），单 admin 无法再通过伪造 tenantA/tenantB 双租户头模拟两个租户
+// —— X-Tenant-ID 与 JWT claims 不一致会被 requireTenantContext 以 403 提前拒绝。
+// 因此改为：他租户（t-k8s-A）的集群经 store 直接注入，admin 以 default 身份发起 HTTP 访问，
+// 验证跨租户数据「不可见 + 不可操作」，隔离验证意图与旧版一致。
 func TestIntegrationM4_K8sClusterTenantIsolation(t *testing.T) {
 	s := newIntegrationServer(false)
-	const tenantA = "t-k8s-A"
-	const tenantB = "t-k8s-B"
+	const tenant = "default" // admin JWT 中 tenant_id 恒为 default，X-Tenant-ID 必须一致（H1 交叉校验）
+
+	// 他租户 t-k8s-A 的集群：H1 后无法再用 HTTP 以他租户身份创建，改为 store 直接注入。
+	s.store.SaveK8sCluster(&store.K8sCluster{ID: "cluster-A", TenantID: "t-k8s-A", Name: "cluster-A", Status: "unknown"})
 
 	// admin 登录。
 	adminAuth := login(t, s, "admin", "admin123")
 
-	// 租户 A 创建集群。
-	createBody, _ := json.Marshal(map[string]string{
-		"name":       "cluster-A",
-		"server":     "https://10.0.0.1:6443",
-		"kubeconfig": "apiVersion: v1",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/k8s/clusters", bytes.NewReader(createBody))
-	req.Header.Set("Content-Type", "application/json")
+	// 断言1：admin 集群列表不含他租户的 cluster-A（跨租户不可见）。
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/k8s/clusters", nil)
 	req.Header.Set("Authorization", adminAuth)
-	req.Header.Set("X-Tenant-ID", tenantA)
+	req.Header.Set("X-Tenant-ID", tenant)
 	rec := httptest.NewRecorder()
 	s.handleK8sClusters(rec, req)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("tenantA create cluster = %d; body=%s", rec.Code, rec.Body.String())
-	}
-	var clusterA store.K8sCluster
-	_ = json.Unmarshal(rec.Body.Bytes(), &clusterA)
-
-	// 租户 B 列表不含 A 的集群。
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/k8s/clusters", nil)
-	req.Header.Set("Authorization", adminAuth)
-	req.Header.Set("X-Tenant-ID", tenantB)
-	rec = httptest.NewRecorder()
-	s.handleK8sClusters(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("tenantB list = %d; body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("admin list = %d; body=%s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), clusterA.ID) {
-		t.Fatalf("租户 B 集群列表泄漏租户 A 的集群 %s", clusterA.ID)
+	if strings.Contains(rec.Body.String(), "cluster-A") {
+		t.Fatalf("admin 集群列表泄漏他租户集群 cluster-A; body=%s", rec.Body.String())
 	}
 
-	// 租户 B 删除 A 的集群 → 404（按 not found 拒绝，不泄露存在性）。
-	req = httptest.NewRequest(http.MethodDelete, "/api/v1/k8s/clusters/"+clusterA.ID, nil)
+	// 断言2：admin 删除他租户的 cluster-A → 404（跨租户不可操作，不泄露存在性）。
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/k8s/clusters/cluster-A", nil)
 	req.Header.Set("Authorization", adminAuth)
-	req.Header.Set("X-Tenant-ID", tenantB)
+	req.Header.Set("X-Tenant-ID", tenant)
 	rec = httptest.NewRecorder()
 	s.handleK8sClusterRouting(rec, req)
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("租户 B 删除 A 的集群 = %d, want 404; body=%s", rec.Code, rec.Body.String())
-	}
-
-	// 租户 A 删除自己的集群 → 204。
-	req = httptest.NewRequest(http.MethodDelete, "/api/v1/k8s/clusters/"+clusterA.ID, nil)
-	req.Header.Set("Authorization", adminAuth)
-	req.Header.Set("X-Tenant-ID", tenantA)
-	rec = httptest.NewRecorder()
-	s.handleK8sClusterRouting(rec, req)
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("租户 A 删除自己集群 = %d, want 204; body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("admin 删除他租户集群 = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
 }

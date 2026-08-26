@@ -1,4 +1,5 @@
 package controlplane
+
 // billing.go 实现 Phase 6 计费 HTTP handler（计划/订阅/账单 CRUD）。
 //
 // API 端点：
@@ -14,7 +15,6 @@ package controlplane
 //   - DELETE /api/v1/billing/subscriptions/{id}  删除订阅
 //   - GET    /api/v1/billing/invoices        列出账单
 //   - GET    /api/v1/billing/invoices/{id}   账单详情
-
 
 import (
 	"net/http"
@@ -175,7 +175,10 @@ func (s *Server) handleListSubscriptions(w http.ResponseWriter, r *http.Request)
 	if _, ok := s.requirePermission(w, r, "billing:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -190,7 +193,10 @@ func (s *Server) handleCreateSubscription(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -304,7 +310,10 @@ func (s *Server) handleBillingInvoices(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "billing:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return

@@ -50,6 +50,9 @@ type ComplianceReport struct {
 	Results   []ComplianceResult `json:"results"`
 	Score     int                `json:"score"` // 合规分数 0-100
 	CreatedAt time.Time          `json:"createdAt"`
+	// M12 占位标记：Scan 不实际执行 CheckScript，仅聚合传入结果。
+	// true 表示此报告由占位扫描生成（非 agent 实际执行检查）。
+	Simulated bool `json:"simulated"`
 }
 
 // Engine 合规检查引擎：持有规则目录，提供查询与扫描编排。
@@ -251,5 +254,7 @@ func (e *Engine) Scan(tenantID, deviceID string, results []ComplianceResult) *Co
 		Results:   results,
 		Score:     score,
 		CreatedAt: now,
+		// M12 占位标记：Scan 不实际执行 CheckScript，仅编排聚合传入结果。
+		Simulated: true,
 	}
 }

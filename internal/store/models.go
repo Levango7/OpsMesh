@@ -527,16 +527,16 @@ type NetworkMetrics struct {
 // ActionType: execute_task/send_notify/scale/restart/isolate。
 // 按 (TenantID, ID) 唯一标识，按 TenantID 隔离。
 type AutomationRule struct {
-	ID          string    `json:"id"`
-	TenantID    string    `json:"tenantID"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	TriggerType string    `json:"triggerType"`
-	TriggerParams map[string]string `json:"triggerParams"`
-	Actions     []AutomationAction `json:"actions"`
-	Enabled     bool      `json:"enabled"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID            string             `json:"id"`
+	TenantID      string             `json:"tenantID"`
+	Name          string             `json:"name"`
+	Description   string             `json:"description"`
+	TriggerType   string             `json:"triggerType"`
+	TriggerParams map[string]string  `json:"triggerParams"`
+	Actions       []AutomationAction `json:"actions"`
+	Enabled       bool               `json:"enabled"`
+	CreatedAt     time.Time          `json:"createdAt"`
+	UpdatedAt     time.Time          `json:"updatedAt"`
 }
 
 // AutomationAction 自动化动作。
@@ -678,11 +678,11 @@ type Tenant struct {
 	ID          string        `json:"id"`
 	Name        string        `json:"name"`        // 租户标识（唯一，URL-safe）
 	DisplayName string        `json:"displayName"` // 显示名称（人类可读）
-	Status      TenantStatus `json:"status"`      // active|suspended|disabled
-	Quota       TenantQuota  `json:"quota"`       // 资源配额
-	Usage       ResourceUsage `json:"usage"`      // 当前用量（实时统计）
-	CreatedAt   time.Time    `json:"createdAt"`
-	UpdatedAt   time.Time    `json:"updatedAt"`
+	Status      TenantStatus  `json:"status"`      // active|suspended|disabled
+	Quota       TenantQuota   `json:"quota"`       // 资源配额
+	Usage       ResourceUsage `json:"usage"`       // 当前用量（实时统计）
+	CreatedAt   time.Time     `json:"createdAt"`
+	UpdatedAt   time.Time     `json:"updatedAt"`
 }
 
 // APIKey API Key 实体（Phase 6 程序化访问控制）。
@@ -690,16 +690,16 @@ type Tenant struct {
 // 用于 CI/CD 系统、自动化脚本、第三方集成等场景替代用户名/密码登录。
 // Key 字段存储 SHA-256 hash（明文仅在创建时返回一次）。
 type APIKey struct {
-	ID             string    `json:"id"`
-	TenantID       string    `json:"tenantID"`
-	Name           string    `json:"name"`     // 人类可读名称
-	Key            string    `json:"-"`        // SHA-256 hash；JSON 序列化时不输出（防泄露）
-	Scopes         []string  `json:"scopes"`   // 权限范围（如 ["device:read","task:write"]）
-	RateLimitPerSec int      `json:"rateLimitPerSec"` // 每秒限流（0=不限）
-	ExpiresAt      time.Time `json:"expiresAt"`       // 过期时间（零值=永不过期）
-	LastUsedAt     time.Time `json:"lastUsedAt"`      // 最后使用时间
-	Enabled        bool      `json:"enabled"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID              string    `json:"id"`
+	TenantID        string    `json:"tenantID"`
+	Name            string    `json:"name"`            // 人类可读名称
+	Key             string    `json:"-"`               // SHA-256 hash；JSON 序列化时不输出（防泄露）
+	Scopes          []string  `json:"scopes"`          // 权限范围（如 ["device:read","task:write"]）
+	RateLimitPerSec int       `json:"rateLimitPerSec"` // 每秒限流（0=不限）
+	ExpiresAt       time.Time `json:"expiresAt"`       // 过期时间（零值=永不过期）
+	LastUsedAt      time.Time `json:"lastUsedAt"`      // 最后使用时间
+	Enabled         bool      `json:"enabled"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 // Plugin 插件实体（Phase 6 插件市场）。
@@ -725,13 +725,13 @@ type Plugin struct {
 // 定义价格/周期/功能/资源限额。Interval 为 monthly|yearly。
 // Price 单位为分（int），避免浮点精度问题。
 type SubscriptionPlan struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	Price         int      `json:"price"`     // 单位：分
-	Interval      string   `json:"interval"`  // monthly|yearly
-	Features      []string `json:"features"`  // 功能列表
+	ID             string      `json:"id"`
+	Name           string      `json:"name"`
+	Price          int         `json:"price"`          // 单位：分
+	Interval       string      `json:"interval"`       // monthly|yearly
+	Features       []string    `json:"features"`       // 功能列表
 	ResourceLimits TenantQuota `json:"resourceLimits"` // 资源限额
-	CreatedAt     time.Time `json:"createdAt"`
+	CreatedAt      time.Time   `json:"createdAt"`
 }
 
 // Subscription 订阅实体（Phase 6 计费）。

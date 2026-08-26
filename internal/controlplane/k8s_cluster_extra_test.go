@@ -72,8 +72,10 @@ func TestHandleTestK8sCluster_TenantMismatch_Extra(t *testing.T) {
 	req.Header.Set("X-Tenant-ID", "other")
 	rec := httptest.NewRecorder()
 	s.handleTestK8sCluster(rec, req, "c1")
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("tenant mismatch: %d, want 404", rec.Code)
+	// H1 交叉校验下，伪造他人租户头在进入 handler 业务逻辑前即被 403 拒绝
+	// （比旧版按租户过滤后的 404 更早、更强）。
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("tenant mismatch: %d, want 403", rec.Code)
 	}
 }
 

@@ -480,10 +480,10 @@ func TestHandleScriptExecutions(t *testing.T) {
 		t.Fatal("CreateScript returned nil")
 	}
 	// 先记录一条执行
-	ms := s.store.(*store.MemoryStore)
+	// M3：直接经 Store 接口调用，消除对 *MemoryStore 的类型断言。
 	now := time.Now()
 	finishedAt := now
-	ms.RecordScriptExecution("default", created.ID, "dev-01", "succeeded", "ok", "", now, &finishedAt)
+	s.store.RecordScriptExecution("default", created.ID, "dev-01", "succeeded", "ok", "", now, &finishedAt)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/scripts/"+created.ID+"/executions", nil)
 	req.Header.Set("Authorization", auth)

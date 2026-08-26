@@ -133,6 +133,8 @@ func (s *Server) handleHAFailover(w http.ResponseWriter, r *http.Request) {
 		"status":  "accepted",
 		"message": "failover triggered; new leader will be elected via leader_lease renewal",
 		"current": current,
+		// M12 占位标记：实际选主由 leader_lease 续租驱动，此端点不直接操作 lease 表。
+		"simulated": true,
 	})
 }
 

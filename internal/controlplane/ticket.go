@@ -1,4 +1,3 @@
-
 // ticket.go 实现 Phase 1 工单管理 HTTP handler。
 //
 // API 端点：
@@ -9,7 +8,7 @@
 //   - POST   /api/v1/tickets/{id}/close 关闭工单
 //
 // 设计要点（与 k8s_cluster.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(r) 提取租户（复用现有方法，统一租户隔离行为）；
+//   - 用 s.k8sTenantFromRequest(w, r) 提取租户（复用现有方法，统一租户隔离行为）；
 //   - 错误响应统一 {"error": "message"} 格式，HTTP 状态码 400/404/500；
 //   - 用 decodeJSONBody 解析请求体（防 DoS 限制大小）；
 //   - 鉴权：需 ticket:read/ticket:write 权限（与现有 RBAC 一致）。
@@ -27,8 +26,8 @@ import (
 // ticketTenantFromRequest 提取请求归属租户（工单租户隔离）。
 // 复用 k8sTenantFromRequest 的逻辑：优先取网关注入的 X-Tenant-ID；
 // 缺头时按 requireAuth 决定返回空串（401）或归一为 default（demo 兼容）。
-func (s *Server) ticketTenantFromRequest(r *http.Request) string {
-	return s.k8sTenantFromRequest(r)
+func (s *Server) ticketTenantFromRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
+	return s.k8sTenantFromRequest(w, r)
 }
 
 // handleTickets 统一处理 /api/v1/tickets：
@@ -50,9 +49,8 @@ func (s *Server) handleListTickets(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "ticket:read"); !ok {
 		return
 	}
-	tenant := s.ticketTenantFromRequest(r)
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	tenant, ok := s.ticketTenantFromRequest(w, r)
+	if !ok {
 		return
 	}
 	// 解析过滤参数（空串表示不过滤）。
@@ -74,9 +72,8 @@ func (s *Server) handleCreateTicket(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant := s.ticketTenantFromRequest(r)
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	tenant, ok := s.ticketTenantFromRequest(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -169,9 +166,8 @@ func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request, id stri
 	if _, ok := s.requirePermission(w, r, "ticket:read"); !ok {
 		return
 	}
-	tenant := s.ticketTenantFromRequest(r)
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	tenant, ok := s.ticketTenantFromRequest(w, r)
+	if !ok {
 		return
 	}
 	t, ok := s.store.GetTicket(tenant, id)
@@ -190,9 +186,8 @@ func (s *Server) handleUpdateTicket(w http.ResponseWriter, r *http.Request, id s
 	if !ok {
 		return
 	}
-	tenant := s.ticketTenantFromRequest(r)
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	tenant, ok := s.ticketTenantFromRequest(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -243,9 +238,8 @@ func (s *Server) handleCloseTicket(w http.ResponseWriter, r *http.Request, id st
 	if !ok {
 		return
 	}
-	tenant := s.ticketTenantFromRequest(r)
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	tenant, ok := s.ticketTenantFromRequest(w, r)
+	if !ok {
 		return
 	}
 	closed, ok := s.store.CloseTicket(tenant, id)

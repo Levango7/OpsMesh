@@ -414,6 +414,9 @@ func TestValidate_ProductionFullConfig(t *testing.T) {
 	c.Store = "mysql"
 	c.MySQLDSN = "u:p@tcp(db:3306)/ops_device"
 	c.Replicas = 3
+	// H2/H3 配套：生产 + mysql 后端默认拒绝启动（SQLStore 对 P1-P6 为桩），
+	// 须显式 AllowStubStores=true 才放行。本用例验证"完整 production 配置 + 显式放行"通过。
+	c.AllowStubStores = true
 	if err := c.Validate(); err != nil {
 		t.Fatalf("production full config 应通过: %v", err)
 	}

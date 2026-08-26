@@ -1,4 +1,5 @@
 package automation
+
 // Package automation 实现自动化闭环引擎：规则（条件→动作）、执行记录、规则引擎。
 //
 // 设计要点：
@@ -7,9 +8,9 @@ package automation
 //   - 动作类型：execute_task/send_notify/scale/restart/isolate；
 //   - 规则引擎 Evaluate 方法判定触发条件是否满足（MVP 桩实现）。
 
-
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -18,10 +19,10 @@ import (
 type TriggerType string
 
 const (
-	TriggerTypeAlert          TriggerType = "alert"           // 告警触发
+	TriggerTypeAlert           TriggerType = "alert"            // 告警触发
 	TriggerTypeMetricThreshold TriggerType = "metric_threshold" // 指标阈值触发
-	TriggerTypeSchedule       TriggerType = "schedule"        // 定时触发
-	TriggerTypeEvent          TriggerType = "event"           // 事件触发
+	TriggerTypeSchedule        TriggerType = "schedule"         // 定时触发
+	TriggerTypeEvent           TriggerType = "event"            // 事件触发
 )
 
 // AllTriggerTypes 返回全部预置触发器类型。
@@ -65,8 +66,8 @@ func ValidActionType(a ActionType) bool {
 
 // Trigger 触发器定义。
 type Trigger struct {
-	Type     TriggerType       `json:"type"`
-	Params   map[string]string `json:"params"` // 触发参数（如 metric=cpu, threshold=90）
+	Type   TriggerType       `json:"type"`
+	Params map[string]string `json:"params"` // 触发参数（如 metric=cpu, threshold=90）
 }
 
 // Action 动作定义。
@@ -108,7 +109,7 @@ type Execution struct {
 	Trigger   Trigger         `json:"trigger"`
 	Actions   []Action        `json:"actions"`
 	Status    ExecutionStatus `json:"status"`
-	Detail    string          `json:"detail"`    // 执行详情/错误信息
+	Detail    string          `json:"detail"` // 执行详情/错误信息
 	StartedAt time.Time       `json:"startedAt"`
 	EndedAt   *time.Time      `json:"endedAt,omitempty"`
 }
@@ -167,7 +168,13 @@ func (e *Engine) Evaluate(rule *Rule, ctx map[string]string) bool {
 		if !ok1 || !ok2 {
 			return false
 		}
-		return val >= thresh
+		v, err1 := strconv.ParseFloat(val, 64)
+		t, err2 := strconv.ParseFloat(thresh, 64)
+		if err1 != nil || err2 != nil {
+			// 解析失败：指标值/阈值非数字，不触发
+			return false
+		}
+		return v >= t
 	case TriggerTypeSchedule, TriggerTypeEvent:
 		return true
 	}

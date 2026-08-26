@@ -1,6 +1,5 @@
 package controlplane
 
-
 // network.go 实现 Phase 4 网络管理 HTTP handler（网络设备 CRUD + 拓扑 + 发现 + 指标 + 配置下发）。
 //
 // API 端点：
@@ -17,7 +16,7 @@ package controlplane
 // "网络拓扑发现/诊断/连通性"互补。
 //
 // 设计要点（与 traffic.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(r) 提取租户；
+//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 network:read/network:write 权限。
@@ -27,6 +26,7 @@ import (
 	"strings"
 
 	"opsmesh/internal/network"
+	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 )
 
@@ -52,7 +52,10 @@ func (s *Server) handleListNetworkDevices(w http.ResponseWriter, r *http.Request
 	if _, ok := s.requirePermission(w, r, "network:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -67,7 +70,10 @@ func (s *Server) handleCreateNetworkDevice(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -90,8 +96,10 @@ func (s *Server) handleCreateNetworkDevice(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create network device failed"})
 		return
 	}
-	// 审计：记录创建人
-	_ = caller
+	// 审计：记录创建人（H9 写路径审计补齐，与 automation/webhook/slo 风格一致）。
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: tenant, UserID: caller.ID, Action: "network_device_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
+	})
 	writeJSON(w, http.StatusCreated, created)
 }
 
@@ -139,7 +147,10 @@ func (s *Server) handleGetNetworkDevice(w http.ResponseWriter, r *http.Request, 
 	if _, ok := s.requirePermission(w, r, "network:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -154,10 +165,14 @@ func (s *Server) handleGetNetworkDevice(w http.ResponseWriter, r *http.Request, 
 
 // handleDeleteNetworkDevice 处理 DELETE /api/v1/network/devices/{id}：删除设备。
 func (s *Server) handleDeleteNetworkDevice(w http.ResponseWriter, r *http.Request, id string) {
-	if _, ok := s.requirePermission(w, r, "network:write"); !ok {
+	caller, ok := s.requirePermission(w, r, "network:write")
+	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -166,6 +181,10 @@ func (s *Server) handleDeleteNetworkDevice(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "network device not found"})
 		return
 	}
+	// 审计：记录删除人（H9 写路径审计补齐，与 automation/webhook/slo 风格一致）。
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: tenant, UserID: caller.ID, Action: "network_device_delete", Target: id,
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -178,7 +197,10 @@ func (s *Server) handleNetworkDeviceMetrics(w http.ResponseWriter, r *http.Reque
 	if _, ok := s.requirePermission(w, r, "network:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -199,10 +221,14 @@ func (s *Server) handleNetworkDeviceConfig(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if _, ok := s.requirePermission(w, r, "network:write"); !ok {
+	caller, ok := s.requirePermission(w, r, "network:write")
+	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -221,6 +247,10 @@ func (s *Server) handleNetworkDeviceConfig(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "network device not found"})
 		return
 	}
+	// 审计：记录配置下发人（H9 写路径审计补齐，与 automation/webhook/slo 风格一致）。
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: tenant, UserID: caller.ID, Action: "network_device_config", Target: id, Detail: sanitizeAuditDetail("config=" + body.Config),
+	})
 	writeJSON(w, http.StatusOK, updated)
 }
 
@@ -233,7 +263,10 @@ func (s *Server) handleNetworkDiscover(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "network:write"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return

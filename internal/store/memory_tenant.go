@@ -1,4 +1,3 @@
-
 // memory_tenant.go 实现 MemoryStore 的 TenantStore 子接口（Phase 6 租户管理）。
 //
 // 租户内存实现：

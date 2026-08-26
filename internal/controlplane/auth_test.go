@@ -75,6 +75,19 @@ func clearMustChangeFlag(s *Server, username string) {
 	}
 }
 
+// expectedPermCount 动态派生预期权限数（取自 store.RolePermissions()["admin"]，
+// 即 rbacPermSpecs 单一来源，与 seedRBAC 完全一致）。
+// 供 TestPredefinedData/TestListPermissions 复用，防止硬编码数字（如 72）与权限定义漂移：
+// 新增/删除权限时只需改 rbacPermSpecs，本 helper 自动跟随，无需同步修改测试断言。
+func expectedPermCount() int {
+	return len(store.RolePermissions()["admin"])
+}
+
+// minExpectedPermCount 是权限数下限守护阈值。
+// 当前 rbacPermSpecs 含 72 个权限（P1-P6 全域），下限取 60 留余量：
+// 若权限被误删导致 want < 60，下限守护触发失败，防止权限静默丢失致 RBAC 闸漏放行。
+const minExpectedPermCount = 60
+
 // doWithAuth 构造携带 Authorization 头的请求。
 func doWithAuth(method, path, auth string, body interface{}) *http.Request {
 	var r bytes.Reader
@@ -97,10 +110,15 @@ func doWithAuth(method, path, auth string, body interface{}) *http.Request {
 func TestPredefinedData(t *testing.T) {
 	s := newAuthTestServer(t)
 
-	// 预定义权限：应有 72 个（新增 compliance/ha/backup 等 Phase 3 + network/automation Phase 4 + webhook/script/gateway Phase 5 + tenant/apikey/plugin/billing/platform Phase 6 RBAC 权限）。
+	// 预定义权限：动态派生预期数量（取自 store.RolePermissions()["admin"] = rbacPermSpecs 单一来源），
+	// 防止硬编码数字与权限定义漂移。下限守护 minExpectedPermCount 防权限静默丢失。
+	wantPerms := expectedPermCount()
+	if wantPerms < minExpectedPermCount {
+		t.Fatalf("expected permission count %d < %d lower bound (silent loss suspected in rbacPermSpecs)", wantPerms, minExpectedPermCount)
+	}
 	perms := s.store.ListPermissions()
-	if len(perms) != 72 {
-		t.Fatalf("permissions count = %d, want 72", len(perms))
+	if len(perms) != wantPerms {
+		t.Fatalf("permissions count = %d, want %d (dynamically derived from rbacPermSpecs)", len(perms), wantPerms)
 	}
 	// 检查关键权限存在。
 	permNames := make(map[string]bool)
@@ -122,8 +140,8 @@ func TestPredefinedData(t *testing.T) {
 	for _, r := range roles {
 		roleByName[r.Name] = r
 	}
-	if admin := roleByName["admin"]; admin == nil || len(admin.Permissions) != 72 {
-		t.Fatalf("admin role missing or permissions = %d, want 72", len(admin.Permissions))
+	if admin := roleByName["admin"]; admin == nil || len(admin.Permissions) != wantPerms {
+		t.Fatalf("admin role missing or permissions = %d, want %d (dynamically derived from rbacPermSpecs)", len(admin.Permissions), wantPerms)
 	}
 	if viewer := roleByName["viewer"]; viewer == nil {
 		t.Fatal("viewer role missing")
@@ -565,8 +583,8 @@ func TestListPermissions(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(resp.Permissions) != 72 {
-		t.Fatalf("permissions count = %d, want 72", len(resp.Permissions))
+	if len(resp.Permissions) != expectedPermCount() {
+		t.Fatalf("permissions count = %d, want %d (dynamically derived from rbacPermSpecs)", len(resp.Permissions), expectedPermCount())
 	}
 }
 

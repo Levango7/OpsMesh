@@ -1,4 +1,3 @@
-
 package store
 
 // memory_automation.go 实现 MemoryStore 的 AutomationStore 子接口（Phase 4 自动化闭环）。

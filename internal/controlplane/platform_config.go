@@ -1,4 +1,5 @@
 package controlplane
+
 // platform_config.go 实现 Phase 6 平台配置/健康检查/指标 HTTP handler。
 //
 // API 端点：
@@ -6,7 +7,6 @@ package controlplane
 //   - PUT /api/v1/platform/config   更新平台配置
 //   - GET /api/v1/platform/health   平台健康检查
 //   - GET /api/v1/platform/metrics  平台指标汇总
-
 
 import (
 	"net/http"
@@ -30,21 +30,21 @@ type PlatformConfig struct {
 
 // PlatformHealth 平台健康检查视图。
 type PlatformHealth struct {
-	Status    string            `json:"status"`    // ok|degraded|down
+	Status     string            `json:"status"`     // ok|degraded|down
 	Components map[string]string `json:"components"` // 组件名→状态
-	Timestamp string            `json:"timestamp"`
+	Timestamp  string            `json:"timestamp"`
 }
 
 // PlatformMetrics 平台指标汇总视图。
 type PlatformMetrics struct {
-	Tenants   int `json:"tenants"`
-	Devices   int `json:"devices"`
-	Tasks     int `json:"tasks"`
-	Alerts    int `json:"alerts"`
-	APIKeys   int `json:"apiKeys"`
-	Plugins   int `json:"plugins"`
+	Tenants       int `json:"tenants"`
+	Devices       int `json:"devices"`
+	Tasks         int `json:"tasks"`
+	Alerts        int `json:"alerts"`
+	APIKeys       int `json:"apiKeys"`
+	Plugins       int `json:"plugins"`
 	Subscriptions int `json:"subscriptions"`
-	Invoices  int `json:"invoices"`
+	Invoices      int `json:"invoices"`
 }
 
 // handlePlatformConfig 处理 GET/PUT /api/v1/platform/config。
@@ -78,6 +78,9 @@ func (s *Server) handleGetPlatformConfig(w http.ResponseWriter, r *http.Request)
 }
 
 // handleUpdatePlatformConfig 处理 PUT /api/v1/platform/config。
+//
+// 假审计修正：本 handler 未实际落库配置（MVP 仅返回 echo），审计 Action 加 _simulated
+// 后缀以如实标记非真实持久化；响应体加 simulated:true 字段提示客户端此更新未落库。
 func (s *Server) handleUpdatePlatformConfig(w http.ResponseWriter, r *http.Request) {
 	caller, ok := s.requirePermission(w, r, "platform:write")
 	if !ok {
@@ -89,10 +92,15 @@ func (s *Server) handleUpdatePlatformConfig(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	body.UpdatedAt = time.Now().Format(time.RFC3339)
+	// 假审计修正：Action 加 _simulated 后缀，标记此更新未实际落库（MVP echo 占位）。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "platform_config_update", Target: "config", Detail: "",
+		TenantID: "default", UserID: caller.ID, Action: "platform_config_update_simulated", Target: "config", Detail: "echo placeholder, not persisted",
 	})
-	writeJSON(w, http.StatusOK, body)
+	// 响应体加 simulated:true，如实告知客户端此更新未持久化。
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"config":    body,
+		"simulated": true,
+	})
 }
 
 // handlePlatformHealth 处理 GET /api/v1/platform/health：平台健康检查。

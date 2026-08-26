@@ -13,7 +13,7 @@ package controlplane
 //   - GET    /api/v1/pipeline/runs/{id}           获取运行详情
 //
 // 设计要点（与 traffic.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(r) 提取租户；
+//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 pipeline:read/pipeline:write 权限。
@@ -46,7 +46,10 @@ func (s *Server) handleListPipelineTemplates(w http.ResponseWriter, r *http.Requ
 	if _, ok := s.requirePermission(w, r, "pipeline:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -61,7 +64,10 @@ func (s *Server) handleCreatePipelineTemplate(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -130,7 +136,10 @@ func (s *Server) handleGetPipelineTemplate(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requirePermission(w, r, "pipeline:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -150,7 +159,10 @@ func (s *Server) handleUpdatePipelineTemplate(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -189,7 +201,10 @@ func (s *Server) handleDeletePipelineTemplate(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -214,7 +229,10 @@ func (s *Server) handleRunPipelineTemplate(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -264,7 +282,10 @@ func (s *Server) handleListPipelineRuns(w http.ResponseWriter, r *http.Request) 
 	if _, ok := s.requirePermission(w, r, "pipeline:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return
@@ -298,7 +319,10 @@ func (s *Server) handlePipelineRun(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "pipeline:read"); !ok {
 		return
 	}
-	tenant := s.k8sTenantFromRequest(r)
+	tenant, ok := s.k8sTenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if tenant == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
 		return

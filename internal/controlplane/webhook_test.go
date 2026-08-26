@@ -3,8 +3,10 @@
 // 覆盖范围：
 //   - handleListWebhooks：空列表、创建后列表
 //   - handleCreateWebhook：正常创建、缺必填字段、无效 JSON
+//   - handleCreateWebhook SSRF 校验（M1）：file://、loopback、云元数据 URL 拒绝（400 不入库）、
+//     公网 IP 正例创建成功、WebhookAllowPrivate 开关与 notify-channels 同源联动
 //   - handleGetWebhook：正常获取、不存在
-//   - handleUpdateWebhook：正常更新、不存在
+//   - handleUpdateWebhook：正常更新、不存在、SSRF 恶意 URL 拒绝（防 PUT 绕过）
 //   - handleDeleteWebhook：正常删除、不存在
 //   - handleWebhookTest：正常测试投递、不存在
 //   - handleWebhookDeliveries：投递记录列表
@@ -15,7 +17,9 @@
 // 测试策略（与 ticket_test.go 风格一致）：
 //   - 白盒（package controlplane），直接装配 Server{store: MemoryStore, jwtSecret: 固定}；
 //   - 鉴权用例通过 admin 登录获取 token（requirePermission 校验 webhook:read/write）；
-//   - 用 httptest.NewRequest + httptest.NewRecorder 直接调用 handler，断言 status code 与响应体。
+//   - 用 httptest.NewRequest + httptest.NewRecorder 直接调用 handler，断言 status code 与响应体；
+//   - 走 create/update handler 的 URL 一律用 RFC5737 公网 IP 字面量（203.0.113.1），
+//     避免 SSRF 校验触发 DNS 解析导致离线环境不确定（同 server_netsec_test.go 实践）。
 package controlplane
 
 import (
@@ -122,7 +126,10 @@ func TestHandleCreateWebhook(t *testing.T) {
 	s := newWebhookTestServer()
 	auth := loginAsAdmin(t, s)
 
-	body := `{"name":"test-webhook","url":"http://example.com/hook","events":["alert.created"]}`
+	// URL 用 RFC5737 文档段公网 IP 字面量（203.0.113.1）：
+	// 创建路径已启用 ValidateWebhookURL SSRF 校验，IP 字面量不触发 DNS 解析，
+	// 测试在离线环境保持确定性（与 server_netsec_test.go 同一实践）。
+	body := `{"name":"test-webhook","url":"http://203.0.113.1/hook","events":["alert.created"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks", strings.NewReader(body))
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("Content-Type", "application/json")
@@ -154,7 +161,7 @@ func TestHandleCreateWebhook_MissingName(t *testing.T) {
 	s := newWebhookTestServer()
 	auth := loginAsAdmin(t, s)
 
-	body := `{"url":"http://example.com/hook"}`
+	body := `{"url":"http://203.0.113.1/hook"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks", strings.NewReader(body))
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("Content-Type", "application/json")
@@ -197,6 +204,120 @@ func TestHandleCreateWebhook_InvalidJSON(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// =============================================================================
+// handleCreateWebhook SSRF 校验（FIXPLAN-phase1-6.md M1 修复防回归）
+// ============================================================================
+
+// TestHandleCreateWebhook_SSRFRejected 表驱动验证恶意 URL 创建被拒（返回 400 且不入库）：
+//   - file:///etc/passwd：非 http(s) 协议被拒（协议白名单）；
+//   - http://127.0.0.1:8080：loopback 地址被拒；
+//   - http://169.254.169.254/latest/meta-data：云元数据（链路本地）地址被拒。
+//
+// 与 notify-channels 共用 ValidateWebhookURL + WebhookAllowPrivate=false 默认语义。
+func TestHandleCreateWebhook_SSRFRejected(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+	}{
+		{"file 协议被拒", "file:///etc/passwd"},
+		{"loopback 被拒", "http://127.0.0.1:8080/hook"},
+		{"云元数据被拒", "http://169.254.169.254/latest/meta-data"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := newWebhookTestServer()
+			auth := loginAsAdmin(t, s)
+
+			body := `{"name":"evil-webhook","url":"` + c.url + `"}`
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks", strings.NewReader(body))
+			req.Header.Set("Authorization", auth)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			s.handleWebhooks(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("url=%q: status=%d, want 400; body=%s", c.url, w.Code, w.Body.String())
+			}
+			var resp struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode error body: %v", err)
+			}
+			if !strings.Contains(resp.Error, "invalid webhook url") {
+				t.Fatalf("error=%q, want prefix \"invalid webhook url\"", resp.Error)
+			}
+			// 确认恶意 URL 未入库。
+			if hooks := s.store.ListWebhooks("default"); len(hooks) != 0 {
+				t.Fatalf("webhooks persisted=%d, want 0 (rejected URL must not be stored)", len(hooks))
+			}
+		})
+	}
+}
+
+// TestHandleCreateWebhook_ValidPublicIP 正例：合法公网 URL 创建成功返回 201 并入库。
+// 用 RFC5737 文档段公网 IP 字面量（203.0.113.1），不触发 DNS 解析，离线环境确定性通过
+// （与 server_netsec_test.go TestValidateWebhookURL_Happy 同一实践）。
+func TestHandleCreateWebhook_ValidPublicIP(t *testing.T) {
+	s := newWebhookTestServer()
+	auth := loginAsAdmin(t, s)
+
+	body := `{"name":"public-hook","url":"http://203.0.113.1/hook"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks", strings.NewReader(body))
+	req.Header.Set("Authorization", auth)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.handleWebhooks(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status=%d, want 201; body=%s", w.Code, w.Body.String())
+	}
+	var wh store.Webhook
+	if err := json.Unmarshal(w.Body.Bytes(), &wh); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if wh.ID == "" {
+		t.Fatal("ID is empty, want server-assigned")
+	}
+	got, ok := s.store.GetWebhook("default", wh.ID)
+	if !ok || got == nil || got.URL != "http://203.0.113.1/hook" {
+		t.Fatal("valid public webhook not persisted correctly after create")
+	}
+}
+
+// TestHandleCreateWebhook_AllowPrivateToggle 验证 allowPrivate 开关与 notify-channels 同源联动：
+//   - cfg.WebhookAllowPrivate=true 时私网 URL 放行（内网部署场景，同 createNotifyChannel）；
+//   - cfg.WebhookAllowPrivate=false 时同一 URL 被拒——证明两端由同一配置字段控制，
+//     不存在双标。
+func TestHandleCreateWebhook_AllowPrivateToggle(t *testing.T) {
+	privateURL := `{"name":"intranet-hook","url":"http://192.168.1.10/hook"}`
+
+	// allowPrivate=true：放行。
+	sOn := newWebhookTestServer()
+	sOn.cfg.WebhookAllowPrivate = true
+	authOn := loginAsAdmin(t, sOn)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks", strings.NewReader(privateURL))
+	req.Header.Set("Authorization", authOn)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	sOn.handleWebhooks(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("allowPrivate=true: status=%d, want 201; body=%s", w.Code, w.Body.String())
+	}
+
+	// allowPrivate=false：拒绝。
+	sOff := newWebhookTestServer()
+	authOff := loginAsAdmin(t, sOff)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/webhooks", strings.NewReader(privateURL))
+	req.Header.Set("Authorization", authOff)
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	sOff.handleWebhooks(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("allowPrivate=false: status=%d, want 400; body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -260,7 +381,7 @@ func TestHandleUpdateWebhook(t *testing.T) {
 		t.Fatal("CreateWebhook returned nil")
 	}
 
-	body := `{"name":"updated-name","url":"http://example.com/hook2"}`
+	body := `{"name":"updated-name","url":"http://203.0.113.1/hook2"}`
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/webhooks/"+created.ID, strings.NewReader(body))
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("Content-Type", "application/json")
@@ -277,8 +398,8 @@ func TestHandleUpdateWebhook(t *testing.T) {
 	if wh.Name != "updated-name" {
 		t.Fatalf("Name=%q, want updated-name", wh.Name)
 	}
-	if wh.URL != "http://example.com/hook2" {
-		t.Fatalf("URL=%q, want http://example.com/hook2", wh.URL)
+	if wh.URL != "http://203.0.113.1/hook2" {
+		t.Fatalf("URL=%q, want http://203.0.113.1/hook2", wh.URL)
 	}
 }
 
@@ -287,7 +408,7 @@ func TestHandleUpdateWebhook_NotFound(t *testing.T) {
 	s := newWebhookTestServer()
 	auth := loginAsAdmin(t, s)
 
-	body := `{"name":"updated-name","url":"http://example.com/hook"}`
+	body := `{"name":"updated-name","url":"http://203.0.113.1/hook"}`
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/webhooks/nonexistent", strings.NewReader(body))
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("Content-Type", "application/json")
@@ -296,6 +417,40 @@ func TestHandleUpdateWebhook_NotFound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status=%d, want 404", w.Code)
+	}
+}
+
+// TestHandleUpdateWebhook_SSRFRejected 验证更新路径同样执行 SSRF 校验（防 PUT 绕过）：
+// 先以合法公网 URL 创建，再 PUT file:/// 恶意 URL → 400，
+// 且原 Webhook 记录保持不变（恶意 URL 未落库）。
+func TestHandleUpdateWebhook_SSRFRejected(t *testing.T) {
+	s := newWebhookTestServer()
+	auth := loginAsAdmin(t, s)
+
+	created := s.store.CreateWebhook("default", &store.Webhook{Name: "update-ssrf", URL: "http://203.0.113.1/hook"})
+	if created == nil {
+		t.Fatal("CreateWebhook returned nil")
+	}
+
+	for _, evil := range []string{"file:///etc/passwd", "http://127.0.0.1:8080/hook", "http://169.254.169.254/latest/meta-data"} {
+		body := `{"name":"update-ssrf","url":"` + evil + `"}`
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/webhooks/"+created.ID, strings.NewReader(body))
+		req.Header.Set("Authorization", auth)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		s.handleWebhookRouting(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("evil=%q: status=%d, want 400; body=%s", evil, w.Code, w.Body.String())
+		}
+	}
+	// 原记录未被篡改：URL 保持创建时的合法值。
+	got, ok := s.store.GetWebhook("default", created.ID)
+	if !ok || got == nil {
+		t.Fatal("GetWebhook returned nil after rejected update")
+	}
+	if got.URL != "http://203.0.113.1/hook" {
+		t.Fatalf("URL=%q, want original http://203.0.113.1/hook (rejected update must not persist)", got.URL)
 	}
 }
 
@@ -405,8 +560,8 @@ func TestHandleWebhookDeliveries(t *testing.T) {
 		t.Fatal("CreateWebhook returned nil")
 	}
 	// 先记录一条投递
-	ms := s.store.(*store.MemoryStore)
-	ms.RecordWebhookDelivery("default", created.ID, "test.event", "{}", 200, "ok", "")
+	// M3：直接经 Store 接口调用，消除对 *MemoryStore 的类型断言。
+	s.store.RecordWebhookDelivery("default", created.ID, "test.event", "{}", 200, "ok", "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/webhooks/"+created.ID+"/deliveries", nil)
 	req.Header.Set("Authorization", auth)

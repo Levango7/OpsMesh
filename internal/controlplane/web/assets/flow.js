@@ -2529,13 +2529,17 @@ export async function editAPIKey(k) {
   render.renderLoading(content);
   try {
     const key = await api.getAPIKey(id);
-    // 复用表单（简化：仅允许编辑 name/scopes/expiresAt）
+    // 复用表单（仅允许编辑 name/scopes；启停用 enable/disable 端点，不在此提交）
     const form = render.el('form', { class: 'form-card', onsubmit: (e) => {
       e.preventDefault();
+      // 仅提交白名单可编辑字段（name/scopes）；enabled 走 enable/disable 端点。
+      const scopesRaw = form.elements.scopes.value.trim();
+      const scopes = scopesRaw
+        ? scopesRaw.split(',').map((s) => s.trim()).filter(Boolean)
+        : [];
       const data = {
         name: form.elements.name.value.trim(),
-        scopes: form.elements.scopes.value.trim(),
-        expiresAt: form.elements.expiresAt.value.trim(),
+        scopes: scopes,
       };
       api.updateAPIKey(id, data)
         .then(() => { render.renderToast(t('apikey.updated'), 'success'); loadAPIKeys(); })
@@ -2554,12 +2558,7 @@ export async function editAPIKey(k) {
         render.el('input', { name: 'scopes', type: 'text', value: Array.isArray(key.scopes) ? key.scopes.join(',') : (key.scopes || '') })
       )
     ));
-    form.appendChild(render.el('div', { class: 'form-row' },
-      render.el('label', { class: 'form-label', text: t('apikey.expiresAt') }),
-      render.el('div', { class: 'form-control' },
-        render.el('input', { name: 'expiresAt', type: 'text', value: key.expiresAt || '' })
-      )
-    ));
+
     form.appendChild(render.el('div', { class: 'form-actions' },
       render.el('button', { type: 'submit', class: 'btn btn-primary' },
         iconEl('check', 16), render.el('span', { text: t('common.save') })

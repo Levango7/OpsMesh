@@ -1,4 +1,3 @@
-
 // memory_script.go 实现 MemoryStore 的 ScriptStore 子接口（Phase 5 自定义脚本）。
 //
 // 脚本内存实现：
@@ -87,6 +86,11 @@ func (m *MemoryStore) CreateScript(tenantID string, s *Script) *Script {
 	}
 	if s.Language == "" {
 		s.Language = "shell"
+	}
+	// 新建脚本默认启用（Enabled=true）：创建即为可执行，
+	// 禁用需显式 UpdateScript 设 Enabled=false。避免零值 false 导致 execute 全部被拒。
+	if !s.Enabled {
+		s.Enabled = true
 	}
 	s.UpdatedAt = now
 	m.scripts[s.ID] = s
