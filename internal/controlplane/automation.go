@@ -19,17 +19,114 @@
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 automation:read/automation:write 权限。
+//   - 真实执行：通过 automationExecutor 接口执行动作（execute_task/send_notify/scale/restart/isolate）。
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"opsmesh/internal/automation"
+	"opsmesh/internal/events"
+	"opsmesh/internal/notify"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 )
 
+// automationExecutor 实现 automation.Executor 接口，将动作路由到 store/notifier。
+type automationExecutor struct {
+	store    store.Store
+	notifier *notify.Notifier
+	bus      events.Bus
+}
+
+// ExecuteTask 在指定设备上创建并下发 shell 任务。
+func (a *automationExecutor) ExecuteTask(tenantID, deviceID, command string, params map[string]string) (string, error) {
+	task := &proto.Task{
+		Type:    "shell",
+		Command: command,
+		AgentID: deviceID,
+		TenantID: tenantID,
+		Status:  "pending",
+	}
+	created := a.store.CreateTask(task)
+	if created == nil {
+		return "", fmt.Errorf("failed to create task for device %s", deviceID)
+	}
+	return created.TaskID, nil
+}
+
+// SendNotify 发送通知到指定通道。
+func (a *automationExecutor) SendNotify(tenantID, channel, message string, params map[string]string) error {
+	if a.notifier == nil {
+		return fmt.Errorf("notifier not configured")
+	}
+	msg := &notify.Message{
+		Title:     "自动化规则通知",
+		Body:      message,
+		Format:    "text",
+		Severity:  params["severity"],
+		Source:    tenantID,
+		Timestamp: time.Now(),
+		Data: map[string]string{
+			"channel": channel,
+			"tenant":  tenantID,
+		},
+	}
+	return a.notifier.Notify(msg)
+}
+
+// Scale 扩缩容：创建 scale 任务。
+func (a *automationExecutor) Scale(tenantID, service string, replicas int, params map[string]string) (string, error) {
+	task := &proto.Task{
+		Type:     "scale",
+		Command:  fmt.Sprintf("scale %s to %d replicas", service, replicas),
+		AgentID:  params["device_id"],
+		TenantID: tenantID,
+		Status:   "pending",
+	}
+	created := a.store.CreateTask(task)
+	if created == nil {
+		return "", fmt.Errorf("failed to create scale task for service %s", service)
+	}
+	return created.TaskID, nil
+}
+
+// Restart 重启：创建 restart 任务。
+func (a *automationExecutor) Restart(tenantID, target string, params map[string]string) (string, error) {
+	task := &proto.Task{
+		Type:     "restart",
+		Command:  fmt.Sprintf("restart %s", target),
+		AgentID:  params["device_id"],
+		TenantID: tenantID,
+		Status:   "pending",
+	}
+	created := a.store.CreateTask(task)
+	if created == nil {
+		return "", fmt.Errorf("failed to create restart task for target %s", target)
+	}
+	return created.TaskID, nil
+}
+
+// Isolate 隔离：创建 isolate 任务。
+func (a *automationExecutor) Isolate(tenantID, deviceID string, params map[string]string) (string, error) {
+	task := &proto.Task{
+		Type:     "isolate",
+		Command:  fmt.Sprintf("isolate device %s", deviceID),
+		AgentID:  deviceID,
+		TenantID: tenantID,
+		Status:   "pending",
+	}
+	created := a.store.CreateTask(task)
+	if created == nil {
+		return "", fmt.Errorf("failed to create isolate task for device %s", deviceID)
+	}
+	return created.TaskID, nil
+}
+
 // automationEngine 自动化规则引擎（包级单例，无状态，线程安全）。
+// 真实执行器通过 SetExecutor 注入，未注入时返回模拟记录（向后兼容）。
 var automationEngine = automation.NewEngine()
 
 // handleAutomationRules 统一处理 /api/v1/automation/rules：

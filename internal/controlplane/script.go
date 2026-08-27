@@ -246,9 +246,7 @@ func (s *Server) handleDeleteScript(w http.ResponseWriter, r *http.Request, id s
 
 // handleScriptExecute 处理 POST /api/v1/scripts/{id}/execute：执行脚本。
 // 请求体：{"deviceID": "...", "params": "..."}；deviceID 必填。
-// MVP：记录一条 ScriptExecution（succeeded 状态，stdout 为脚本内容预览），
-// 不实际下发任务到 agent（避免无 agent 时报错，保持 API 可用性）。
-// 生产环境可扩展为下发 shell/python task 到指定 agent，agent 上报后更新状态。
+// 真实执行：创建 Task(type=shell)→agent 领取→执行→回写结果。
 func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id string) {
 	caller, ok := s.requirePermission(w, r, "script:write")
 	if !ok {
@@ -283,27 +281,45 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	// MVP：记录一条执行记录（succeeded 状态，stdout 为脚本内容预览）。
-	now := time.Now()
-	finishedAt := now
-	// M3：直接经 Store 接口调用，消除对 *MemoryStore 的类型断言；
-	// SQLStore（桩）返回 nil 时降级为模拟响应（不落库），MultiSchemaStore 委托路由到 per-actx.TenantID store。
-	exec := s.store.RecordScriptExecution(actx.TenantID, id, body.DeviceID, "succeeded",
-		"script executed (simulated): "+sc.Name, "", now, &finishedAt)
-	_ = caller
-	if exec == nil {
-		// store 返回 nil（如 SQLStore 桩未持久化）：返回模拟结果不落库。
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"scriptID":   id,
-			"deviceID":   body.DeviceID,
-			"status":     "succeeded",
-			"stdout":     "script executed (simulated, not persisted): " + sc.Name,
-			"startedAt":  now,
-			"finishedAt": finishedAt,
-		})
+
+	// 真实执行：创建 shell 任务下发到指定 agent。
+	task := &proto.Task{
+		Type:     "shell",
+		Command:  sc.Content,
+		AgentID:  body.DeviceID,
+		TenantID: actx.TenantID,
+		Status:   "pending",
+	}
+	created := s.store.CreateTask(task)
+	if created == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create execution task"})
 		return
 	}
-	writeJSON(w, http.StatusOK, exec)
+
+	// 记录执行记录（初始状态 pending，agent 执行完毕后回写）。
+	now := time.Now()
+	exec := s.store.RecordScriptExecution(actx.TenantID, id, body.DeviceID, "pending",
+		"task created: "+created.TaskID, "", now, nil)
+	if exec == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to record execution"})
+		return
+	}
+
+	// 审计：记录执行人。
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "script_execute", Target: id,
+		Detail: sanitizeAuditDetail("deviceID=" + body.DeviceID + " taskID=" + created.TaskID),
+	})
+
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{
+		"executionID": exec.ID,
+		"taskID":      created.TaskID,
+		"scriptID":    id,
+		"deviceID":    body.DeviceID,
+		"status":      "pending",
+		"message":     "script execution task created, waiting for agent to execute",
+		"startedAt":   now,
+	})
 }
 
 // handleScriptExecutions 处理 GET /api/v1/scripts/{id}/executions：执行记录。

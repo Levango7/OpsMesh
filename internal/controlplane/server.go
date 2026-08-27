@@ -542,6 +542,12 @@ func NewServer(cfg *config.Config) (*Server, error) {
 			"defaultMaxTasks", cfg.QuotaMaxTasks,
 			"defaultMaxAlerts", cfg.QuotaMaxAlerts)
 	}
+	// 注入自动化执行器（真实执行：创建任务/发送通知/扩缩容/重启/隔离）。
+	automationEngine.SetExecutor(&automationExecutor{
+		store:    st,
+		notifier: s.alertNotifier,
+		bus:      bus,
+	})
 	return s, nil
 }
 

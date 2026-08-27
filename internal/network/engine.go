@@ -10,8 +10,8 @@ package network
 import (
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -169,8 +169,9 @@ func NewEngine() *Engine {
 
 // Discover 基于子网扫描发现网络设备。
 //
-// MVP 实现：校验 CIDR 合法性，返回示例设备（不实际发起扫描）。
-// 生产实现可接入 nmap/SNMP 扫描。
+// 实现：TCP Connect 扫描（socket 连接常用端口），替换 MVP 桩实现。
+// 扫描端口：22(SSH), 80(HTTP), 443(HTTPS), 3306(MySQL), 6379(Redis), 8080(HTTP-Alt), 9090(gRPC)。
+// 限制：单次扫描 ≤ 254 地址，超时 500ms/地址。
 func (e *Engine) Discover(req DiscoverRequest) DiscoverResult {
 	if req.Subnet == "" {
 		return DiscoverResult{Error: "subnet is required"}
@@ -186,44 +187,134 @@ func (e *Engine) Discover(req DiscoverRequest) DiscoverResult {
 		return DiscoverResult{Subnet: req.Subnet, Error: "invalid mask"}
 	}
 	hostBits := bits - ones
+	if hostBits > 8 {
+		hostBits = 8
+	}
+
+	// 常用端口扫描列表。
+	scanPorts := []int{22, 80, 443, 3306, 6379, 8080, 9090}
+	timeout := 500 * time.Millisecond
+
+	var devices []Device
 	scanned := 0
-	if hostBits <= 8 {
-		scanned = (1 << hostBits) - 2
-	} else {
-		scanned = subnetMaxHosts
-	}
-	// 示例：返回 2 个示例设备（网关 + 一台主机）。
-	base := strings.TrimSuffix(req.Subnet, "/"+strconv.Itoa(ones))
-	gatewayIP := ipnet.IP
-	if len(gatewayIP) >= 4 {
-		gatewayIP = net.IP(append([]byte(nil), gatewayIP...))
-		gatewayIP[3] = gatewayIP[3] + 1
-	}
-	devices := []Device{
-		{
-			ID:       "disc-gw-" + sanitizeCIDR(req.Subnet),
-			Name:     "gateway-" + base,
-			Type:     DeviceTypeRouter,
+
+	// 遍历子网内所有地址（跳过网络地址和广播地址）。
+	for ip := ipnet.IP.Mask(ipnet.Mask); ipnet.Contains(ip); incIP(ip) {
+		ipStr := ip.String()
+		// 跳过网络地址（最后一个字节为 0）。
+		if ip[3] == 0 {
+			continue
+		}
+		// 限制扫描数量。
+		if scanned >= subnetMaxHosts {
+			break
+		}
+		scanned++
+
+		// 并行扫描常用端口。
+		openPorts := scanPortsForHost(ipStr, scanPorts, timeout)
+		if len(openPorts) == 0 {
+			continue
+		}
+
+		// 有端口开放 → 发现设备。
+		device := Device{
+			ID:       "disc-" + sanitizeCIDR(ipStr),
+			Name:     inferDeviceName(ipStr, openPorts),
+			Type:     inferDeviceType(openPorts),
 			Vendor:   "unknown",
-			IP:       gatewayIP.String(),
+			IP:       ipStr,
 			Status:   DeviceStatusUp,
 			Location: "discovered",
-		},
-		{
-			ID:       "disc-sw-" + sanitizeCIDR(req.Subnet),
-			Name:     "switch-" + base,
-			Type:     DeviceTypeSwitch,
-			Vendor:   "unknown",
-			IP:       base,
-			Status:   DeviceStatusUnknown,
-			Location: "discovered",
-		},
+		}
+		devices = append(devices, device)
 	}
+
 	return DiscoverResult{
 		Subnet:  req.Subnet,
 		Devices: devices,
 		Scanned: scanned,
 		Found:   len(devices),
+	}
+}
+
+// scanPortsForHost 扫描指定主机的常用端口，返回开放端口列表。
+func scanPortsForHost(host string, ports []int, timeout time.Duration) []int {
+	var openPorts []int
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, port := range ports {
+		wg.Add(1)
+		go func(p int) {
+			defer wg.Done()
+			addr := fmt.Sprintf("%s:%d", host, p)
+			conn, err := net.DialTimeout("tcp", addr, timeout)
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+			mu.Lock()
+			openPorts = append(openPorts, p)
+			mu.Unlock()
+		}(port)
+	}
+	wg.Wait()
+	return openPorts
+}
+
+// inferDeviceName 根据开放端口推断设备名称。
+func inferDeviceName(ip string, ports []int) string {
+	hasSSH := false
+	hasHTTP := false
+	hasMySQL := false
+	hasRedis := false
+	for _, p := range ports {
+		switch p {
+		case 22:
+			hasSSH = true
+		case 80, 8080, 443:
+			hasHTTP = true
+		case 3306:
+			hasMySQL = true
+		case 6379:
+			hasRedis = true
+		}
+	}
+	switch {
+	case hasMySQL:
+		return "mysql-server-" + ip
+	case hasRedis:
+		return "redis-server-" + ip
+	case hasSSH && hasHTTP:
+		return "web-server-" + ip
+	case hasSSH:
+		return "linux-host-" + ip
+	case hasHTTP:
+		return "http-device-" + ip
+	default:
+		return "device-" + ip
+	}
+}
+
+// inferDeviceType 根据开放端口推断设备类型。
+func inferDeviceType(ports []int) DeviceType {
+	for _, p := range ports {
+		switch p {
+		case 3306, 6379:
+			return DeviceTypeSwitch
+		}
+	}
+	return DeviceTypeRouter
+}
+
+// incIP 将 IP 地址加 1（用于遍历子网）。
+func incIP(ip net.IP) {
+	for j := len(ip) - 1; j >= 0; j-- {
+		ip[j]++
+		if ip[j] > 0 {
+			break
+		}
 	}
 }
 

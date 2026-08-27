@@ -140,12 +140,38 @@ func ValidateRule(r *Rule) error {
 // 规则引擎
 // ============================================================================
 
-// Engine 自动化规则引擎（MVP 桩实现）。
-type Engine struct{}
+// Executor 定义自动化动作执行器接口（由控制面注入具体实现）。
+type Executor interface {
+	// ExecuteTask 在指定设备上执行任务，返回任务 ID 或错误。
+	ExecuteTask(tenantID, deviceID, command string, params map[string]string) (string, error)
+	// SendNotify 发送通知到指定通道。
+	SendNotify(tenantID, channel, message string, params map[string]string) error
+	// Scale 扩缩容指定服务。
+	Scale(tenantID, service string, replicas int, params map[string]string) (string, error)
+	// Restart 重启指定服务或设备。
+	Restart(tenantID, target string, params map[string]string) (string, error)
+	// Isolate 隔离指定设备。
+	Isolate(tenantID, deviceID string, params map[string]string) (string, error)
+}
+
+// Engine 自动化规则引擎。
+type Engine struct {
+	executor Executor
+}
 
 // NewEngine 构造自动化规则引擎。
 func NewEngine() *Engine {
 	return &Engine{}
+}
+
+// NewEngineWithExecutor 构造带执行器的自动化规则引擎。
+func NewEngineWithExecutor(exec Executor) *Engine {
+	return &Engine{executor: exec}
+}
+
+// SetExecutor 设置执行器（用于延迟注入，避免循环依赖）。
+func (e *Engine) SetExecutor(exec Executor) {
+	e.executor = exec
 }
 
 // Evaluate 评估规则是否应触发（MVP：始终返回 true 表示触发，生产实现应检查触发条件）。
@@ -181,7 +207,8 @@ func (e *Engine) Evaluate(rule *Rule, ctx map[string]string) bool {
 	return false
 }
 
-// Execute 执行规则的动作（MVP：返回成功执行记录，不实际执行）。
+// Execute 执行规则的动作。
+// 如果已注入 Executor，则执行真实动作；否则返回模拟记录（向后兼容）。
 func (e *Engine) Execute(rule *Rule) *Execution {
 	now := time.Now()
 	exec := &Execution{
@@ -196,7 +223,94 @@ func (e *Engine) Execute(rule *Rule) *Execution {
 	}
 	end := now
 	exec.EndedAt = &end
+
+	if e.executor == nil {
+		// 无执行器：返回模拟记录（向后兼容）。
+		exec.Detail = "simulated (no executor configured)"
+		return exec
+	}
+
+	// 真实执行：遍历所有动作，任一失败则标记 failed。
+	var details []string
+	for _, action := range rule.Actions {
+		detail, err := e.executeAction(rule.TenantID, action)
+		if err != nil {
+			exec.Status = ExecutionStatusFailed
+			details = append(details, fmt.Sprintf("%s failed: %v", action.Type, err))
+			break
+		}
+		details = append(details, detail)
+	}
+	exec.Detail = strings.Join(details, "; ")
 	return exec
+}
+
+// executeAction 执行单个动作。
+func (e *Engine) executeAction(tenantID string, action Action) (string, error) {
+	switch action.Type {
+	case ActionTypeExecuteTask:
+		deviceID := action.Params["device_id"]
+		command := action.Params["command"]
+		if deviceID == "" || command == "" {
+			return "", fmt.Errorf("execute_task requires device_id and command params")
+		}
+		taskID, err := e.executor.ExecuteTask(tenantID, deviceID, command, action.Params)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("execute_task: created task %s on device %s", taskID, deviceID), nil
+
+	case ActionTypeSendNotify:
+		channel := action.Params["channel"]
+		message := action.Params["message"]
+		if channel == "" || message == "" {
+			return "", fmt.Errorf("send_notify requires channel and message params")
+		}
+		if err := e.executor.SendNotify(tenantID, channel, message, action.Params); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("send_notify: sent to %s", channel), nil
+
+	case ActionTypeScale:
+		service := action.Params["service"]
+		replicas := 0
+		if r := action.Params["replicas"]; r != "" {
+			_, _ = fmt.Sscanf(r, "%d", &replicas)
+		}
+		if service == "" || replicas <= 0 {
+			return "", fmt.Errorf("scale requires service and replicas > 0 params")
+		}
+		taskID, err := e.executor.Scale(tenantID, service, replicas, action.Params)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("scale: service %s to %d replicas (task %s)", service, replicas, taskID), nil
+
+	case ActionTypeRestart:
+		target := action.Params["target"]
+		if target == "" {
+			return "", fmt.Errorf("restart requires target param")
+		}
+		taskID, err := e.executor.Restart(tenantID, target, action.Params)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("restart: target %s (task %s)", target, taskID), nil
+
+	case ActionTypeIsolate:
+		deviceID := action.Params["device_id"]
+		if deviceID == "" {
+			return "", fmt.Errorf("isolate requires device_id param")
+		}
+		taskID, err := e.executor.Isolate(tenantID, deviceID, action.Params)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("isolate: device %s (task %s)", deviceID, taskID), nil
+
+	default:
+		return "", fmt.Errorf("unknown action type: %s", action.Type)
+	}
 }
 
 // TestRule 测试规则（不实际执行，返回模拟执行记录）。

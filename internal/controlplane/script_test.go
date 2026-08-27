@@ -392,7 +392,7 @@ func TestHandleDeleteScript_NotFound(t *testing.T) {
 // handleScriptExecute（POST /api/v1/scripts/{id}/execute）
 // ============================================================================
 
-// TestHandleScriptExecute 验证正常执行返回 200 + 执行记录。
+// TestHandleScriptExecute 验证正常执行返回 202 + 执行记录（真实执行：创建 task 下发）。
 func TestHandleScriptExecute(t *testing.T) {
 	s := newScriptTestServer()
 	auth := loginAsAdmin(t, s)
@@ -409,21 +409,31 @@ func TestHandleScriptExecute(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.handleScriptRouting(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d, want 200; body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status=%d, want 202; body=%s", w.Code, w.Body.String())
 	}
-	var exec store.ScriptExecution
-	if err := json.Unmarshal(w.Body.Bytes(), &exec); err != nil {
+	var resp struct {
+		ExecutionID string `json:"executionID"`
+		TaskID      string `json:"taskID"`
+		ScriptID    string `json:"scriptID"`
+		DeviceID    string `json:"deviceID"`
+		Status      string `json:"status"`
+		Message     string `json:"message"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if exec.ScriptID != created.ID {
-		t.Fatalf("ScriptID=%q, want %q", exec.ScriptID, created.ID)
+	if resp.ScriptID != created.ID {
+		t.Fatalf("ScriptID=%q, want %q", resp.ScriptID, created.ID)
 	}
-	if exec.DeviceID != "dev-01" {
-		t.Fatalf("DeviceID=%q, want dev-01", exec.DeviceID)
+	if resp.DeviceID != "dev-01" {
+		t.Fatalf("DeviceID=%q, want dev-01", resp.DeviceID)
 	}
-	if exec.Status != "succeeded" {
-		t.Fatalf("Status=%q, want succeeded", exec.Status)
+	if resp.Status != "pending" {
+		t.Fatalf("Status=%q, want pending", resp.Status)
+	}
+	if resp.TaskID == "" {
+		t.Fatal("TaskID should not be empty")
 	}
 }
 
