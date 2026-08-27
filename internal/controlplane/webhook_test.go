@@ -501,12 +501,13 @@ func TestHandleDeleteWebhook_NotFound(t *testing.T) {
 // handleWebhookTest（POST /api/v1/webhooks/{id}/test）
 // ============================================================================
 
-// TestHandleWebhookTest 验证正常测试投递返回 200 + 投递记录。
+// TestHandleWebhookTest 验证 webhook 测试投递（SSRF 校验：私网地址返回 400）。
 func TestHandleWebhookTest(t *testing.T) {
 	s := newWebhookTestServer()
 	auth := loginAsAdmin(t, s)
 
-	created := s.store.CreateWebhook("default", &store.Webhook{Name: "test-hook", URL: "http://example.com/hook"})
+	// 使用私网地址（SSRF 校验应拒绝）。
+	created := s.store.CreateWebhook("default", &store.Webhook{Name: "test-hook", URL: "http://127.0.0.1:9999/hook"})
 	if created == nil {
 		t.Fatal("CreateWebhook returned nil")
 	}
@@ -516,18 +517,9 @@ func TestHandleWebhookTest(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.handleWebhookRouting(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d, want 200; body=%s", w.Code, w.Body.String())
-	}
-	var d store.WebhookDelivery
-	if err := json.Unmarshal(w.Body.Bytes(), &d); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if d.WebhookID != created.ID {
-		t.Fatalf("WebhookID=%q, want %q", d.WebhookID, created.ID)
-	}
-	if d.StatusCode != 200 {
-		t.Fatalf("StatusCode=%d, want 200", d.StatusCode)
+	// SSRF 校验应拒绝私网地址，返回 400。
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400 (SSRF blocked); body=%s", w.Code, w.Body.String())
 	}
 }
 

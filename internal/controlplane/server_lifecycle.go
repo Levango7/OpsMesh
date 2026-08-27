@@ -266,10 +266,11 @@ func (s *Server) Start() error {
 	go s.autoProvisionLoop(ctx)         // 自动纳管：--discover + --auto-provision 时周期扫描网段并推送 agent
 	go s.deployReconcileLoop(ctx)       // M3 部署对账：周期把 running 部署按底层任务结果翻终态（仅 leader）
 	go s.workflowScheduleLoop(ctx)      // M5 作业编排：周期按 cron 触发 active 工作流并 reconcile 运行态（仅 leader）
-	s.startRefreshSweep(ctx, time.Hour) // 周期清理过期刷新令牌 + blacklist，ctx 取消时优雅退出
+ 	s.startRefreshSweep(ctx, time.Hour) // 周期清理过期刷新令牌 + blacklist，ctx 取消时优雅退出
 	if s.cmdbCollector != nil {
 		go s.cmdbCollector.Run(ctx) // CMDB 定时采集：周期从设备指标更新 CMDB CI（仅 leader）
 	}
+	s.startPipelineExecutor(ctx, 10*time.Second) // pipeline 执行器：推进 pending→running→succeeded
 
 	errCh := make(chan error, 3)
 	go func() {

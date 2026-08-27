@@ -25,8 +25,11 @@
 //     不实际发起 HTTP 请求（避免 SSRF 风险，仅验证 Webhook 配置可达性占位）。
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
@@ -238,8 +241,7 @@ func (s *Server) handleDeleteWebhook(w http.ResponseWriter, r *http.Request, id 
 }
 
 // handleWebhookTest 处理 POST /api/v1/webhooks/{id}/test：测试投递。
-// 模拟发送一条事件（不实际发起 HTTP 请求，避免 SSRF 风险），
-// 记录一条投递记录（StatusCode=200, Response="test ok"）。
+// 真实投递：HTTP POST 到 webhook URL，记录真实响应（SSRF 校验）。
 func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request, id string) {
 	caller, ok := s.requirePermission(w, r, "webhook:write")
 	if !ok {
@@ -258,24 +260,67 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request, id st
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
 		return
 	}
-	// 模拟投递：记录一条投递记录（不实际发起 HTTP 请求）。
 	event := "test.event"
 	payload := `{"event":"test.event","message":"webhook test delivery"}`
-	// M3：直接经 Store 接口调用，消除对 *MemoryStore 的类型断言；
-	// SQLStore（桩）返回 nil 时降级为模拟响应（不落库），MultiSchemaStore 委托路由到 per-actx.TenantID store。
-	delivery := s.store.RecordWebhookDelivery(actx.TenantID, id, event, payload, 200, "test ok", "")
+
+	// SSRF 校验：拒绝私网/元数据地址。
+	if err := ValidateWebhookURL(wh.URL, false); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("webhook URL rejected: %v", err)})
+		return
+	}
+
+	// 真实投递：HTTP POST。
+	statusCode, respBody, err := deliverWebhook(wh.URL, event, payload)
+	if err != nil {
+		// 投递失败：记录失败状态。
+		delivery := s.store.RecordWebhookDelivery(actx.TenantID, id, event, payload, 0, err.Error(), err.Error())
+		_ = caller
+		_ = delivery
+		writeJSON(w, http.StatusBadGateway, map[string]interface{}{
+			"webhookID": id,
+			"event":     event,
+			"error":     fmt.Sprintf("delivery failed: %v", err),
+		})
+		return
+	}
+
+	// 投递成功：记录真实响应。
+	delivery := s.store.RecordWebhookDelivery(actx.TenantID, id, event, payload, statusCode, respBody, "")
 	_ = caller
 	if delivery == nil {
-		// store 返回 nil（如 SQLStore 桩未持久化）：返回模拟结果不落库。
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"webhookID":  id,
 			"event":      event,
-			"statusCode": 200,
-			"response":   "test ok (simulated, not persisted)",
+			"statusCode": statusCode,
+			"response":   respBody,
 		})
 		return
 	}
 	writeJSON(w, http.StatusOK, delivery)
+}
+
+// deliverWebhook 执行真实的 HTTP POST 投递。
+func deliverWebhook(rawURL, event, payload string) (int, string, error) {
+	req, err := http.NewRequest(http.MethodPost, rawURL, strings.NewReader(payload))
+	if err != nil {
+		return 0, "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "OpsMesh-Webhook/1.0")
+	req.Header.Set("X-OpsMesh-Event", event)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, "", fmt.Errorf("HTTP POST: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return resp.StatusCode, "", fmt.Errorf("read response: %w", err)
+	}
+	return resp.StatusCode, string(body), nil
 }
 
 // handleWebhookDeliveries 处理 GET /api/v1/webhooks/{id}/deliveries：投递记录。

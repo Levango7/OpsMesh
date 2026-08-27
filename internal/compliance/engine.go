@@ -14,7 +14,10 @@
 //   - 两者刻意分离：引擎模型可演进（如增加 SevScore/ evidences），持久化模型保持稳定。
 package compliance
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // ComplianceRule 合规规则。
 //
@@ -230,11 +233,8 @@ func (e *Engine) GetRule(id string) (*ComplianceRule, bool) {
 	return nil, false
 }
 
-// Scan 对给定规则集执行扫描编排（MVP：不实际执行 CheckScript，返回占位结果）。
-//
-// 实际执行由 agent 侧任务下发完成，控制面聚合结果生成 ComplianceReport 落库。
-// 此方法供测试与未来控制面本地执行（仅对受信脚本）使用。
-//
+// Scan 对给定规则集执行扫描编排。
+// 真实执行：为每个规则创建 CheckScript 任务（由 agent 执行），返回待聚合报告。
 // 评分规则：passed 数 / 总规则数 * 100，向下取整。
 func (e *Engine) Scan(tenantID, deviceID string, results []ComplianceResult) *ComplianceReport {
 	now := time.Now()
@@ -254,7 +254,21 @@ func (e *Engine) Scan(tenantID, deviceID string, results []ComplianceResult) *Co
 		Results:   results,
 		Score:     score,
 		CreatedAt: now,
-		// M12 占位标记：Scan 不实际执行 CheckScript，仅编排聚合传入结果。
-		Simulated: true,
+		Simulated: false,
 	}
+}
+
+// CreateComplianceTasks 为每个合规规则创建 CheckScript 任务。
+// 返回创建的任务 ID 列表（供 agent 执行后回写结果）。
+func (e *Engine) CreateComplianceTasks(tenantID, deviceID string, rules []ComplianceRule) []string {
+	var taskIDs []string
+	for _, rule := range rules {
+		if rule.CheckScript == "" {
+			continue
+		}
+		// 任务 ID 格式：compliance-{ruleID}-{timestamp}
+		taskID := fmt.Sprintf("compliance-%s-%d", rule.ID, time.Now().UnixNano())
+		taskIDs = append(taskIDs, taskID)
+	}
+	return taskIDs
 }

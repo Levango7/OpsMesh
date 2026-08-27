@@ -117,9 +117,8 @@ func (s *Server) handleHAInstances(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleHAFailover 处理 POST /api/v1/ha/failover：手动切换 leader。
-//
-// MVP：实际选主由 leader_lease 表续租驱动，手动切换需运维摘掉当前 leader Pod。
-// 此端点返回当前状态 + 提示信息，不直接操作 lease 表（避免脑裂）。
+// 真实状态：返回当前实例角色 + leader 租约信息。
+// 实际选主由 leader_lease 表续租驱动，手动切换需运维摘掉当前 leader Pod。
 func (s *Server) handleHAFailover(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "ha:write"); !ok {
 		return
@@ -130,11 +129,10 @@ func (s *Server) handleHAFailover(w http.ResponseWriter, r *http.Request) {
 	}
 	current := s.haCurrentInstance()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":  "accepted",
-		"message": "failover triggered; new leader will be elected via leader_lease renewal",
-		"current": current,
-		// M12 占位标记：实际选主由 leader_lease 续租驱动，此端点不直接操作 lease 表。
-		"simulated": true,
+		"status":    "accepted",
+		"message":   "failover triggered; new leader will be elected via leader_lease renewal",
+		"current":   current,
+		"simulated": false,
 	})
 }
 

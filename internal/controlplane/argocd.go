@@ -17,12 +17,19 @@
 //   - 鉴权：需 argocd:read/argocd:write 权限。
 
 import (
+	"context"
+	"fmt"
 	"net/http"
+	"os/exec"
 	"strings"
+	"time"
 
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 )
+
+// argoCDSyncTimeout 是 argocd app sync 命令的超时时间。
+const argoCDSyncTimeout = 60 * time.Second
 
 // handleArgoCDApps 统一处理 /api/v1/argocd/apps：
 //   - GET：列出应用
@@ -205,6 +212,7 @@ func (s *Server) handleDeleteArgoCDApp(w http.ResponseWriter, r *http.Request, i
 }
 
 // handleSyncArgoCDApp 处理 POST /api/v1/argocd/apps/{id}/sync：同步应用。
+// 真实执行：调用 argocd CLI 执行 app sync，更新状态。
 func (s *Server) handleSyncArgoCDApp(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -222,14 +230,54 @@ func (s *Server) handleSyncArgoCDApp(w http.ResponseWriter, r *http.Request, id 
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	a, ok := s.store.SyncApp(actx.TenantID, id)
+	a, ok := s.store.GetApp(actx.TenantID, id)
 	if !ok || a == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
 		return
 	}
+
+	// 真实同步：调用 argocd CLI。
+	if err := syncArgoCDApp(a); err != nil {
+		a.Status = "outofsync"
+		a.HealthStatus = "unknown"
+		now := time.Now()
+		a.UpdatedAt = now
+		s.store.UpdateApp(actx.TenantID, a)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("argocd sync failed: %v", err)})
+		return
+	}
+
+	a, ok = s.store.SyncApp(actx.TenantID, id)
+	if !ok || a == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "sync succeeded but failed to update status"})
+		return
+	}
+
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "argocd_app_sync", Target: id, Detail: sanitizeAuditDetail("name=" + a.Name),
 	})
 	writeJSON(w, http.StatusOK, a)
+}
+
+// syncArgoCDApp 调用 argocd CLI 执行 app sync。
+func syncArgoCDApp(a *store.ArgoCDApp) error {
+	if a.Name == "" {
+		return fmt.Errorf("app name is required")
+	}
+	args := []string{"app", "sync", a.Name}
+	if a.Namespace != "" {
+		args = append(args, "--namespace", a.Namespace)
+	}
+	if a.TargetRevision != "" {
+		args = append(args, "--revision", a.TargetRevision)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), argoCDSyncTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "argocd", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("argocd sync %q failed: %v (output: %s)", a.Name, err, string(output))
+	}
+	return nil
 }
 

@@ -564,8 +564,10 @@ type NetworkStore interface {
 	StoreNetworkMetrics(deviceID string, m *NetworkMetrics)
 	// GetNetworkMetrics 返回网络设备最近一次监控指标（不存在返回 nil）。
 	GetNetworkMetrics(deviceID string) *NetworkMetrics
-	// UpdateNetworkConfig 下发网络配置（更新 d.Config 字段，返回更新后的设备）。
+ 	// UpdateNetworkConfig 下发网络配置（更新 d.Config 字段，返回更新后的设备）。
 	UpdateNetworkConfig(tenantID, id, config string) (*NetworkDevice, bool)
+	// QueryNetworkMetrics 查询指定租户最近时间窗口内的聚合指标均值。
+	QueryNetworkMetrics(tenantID string, since time.Time) map[string]float64
 }
 
 // AutomationStore 自动化闭环领域（Phase 4）：规则 CRUD + 启用/禁用 + 执行记录。

@@ -24,7 +24,7 @@ package store
 
 import (
 	"context"
-
+	"database/sql"
 	"log"
 	"time"
 )
@@ -227,7 +227,34 @@ func (s *SQLStore) UpdateNetworkConfig(tenantID, id, config string) (*NetworkDev
 		log.Printf("[store] UpdateNetworkConfig 更新失败 (tenant=%s id=%s): %v", tenantID, id, err)
 		return nil, false
 	}
-	existing.Config = config
-	existing.UpdatedAt = now
-	return existing, true
+ 	existing.Config = config
+ 	existing.UpdatedAt = now
+ 	return existing, true
+ }
+
+// QueryNetworkMetrics 查询指定租户最近时间窗口内的聚合指标均值。
+func (s *SQLStore) QueryNetworkMetrics(tenantID string, since time.Time) map[string]float64 {
+	if s.db == nil {
+		return map[string]float64{"cpu_usage": 0, "memory_usage": 0, "temperature": 0}
+	}
+	query := `SELECT AVG(cpu_usage), AVG(memory_usage), AVG(temperature) FROM network_metrics WHERE tenant_id=? AND timestamp >= ?`
+	var cpuAvg, memAvg, tempAvg sql.NullFloat64
+	err := s.db.QueryRowContext(context.Background(), query, tenantID, since).Scan(&cpuAvg, &memAvg, &tempAvg)
+	if err != nil {
+		log.Printf("[store] QueryNetworkMetrics 查询失败: %v", err)
+		return map[string]float64{"cpu_usage": 0, "memory_usage": 0, "temperature": 0}
+	}
+	return map[string]float64{
+		"cpu_usage":    nullFloat(cpuAvg),
+		"memory_usage": nullFloat(memAvg),
+		"temperature":  nullFloat(tempAvg),
+	}
+}
+
+// nullFloat 从 sql.NullFloat64 提取值，NULL 返回 0。
+func nullFloat(n sql.NullFloat64) float64 {
+	if n.Valid {
+		return n.Float64
+	}
+	return 0
 }

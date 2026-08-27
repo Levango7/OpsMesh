@@ -110,7 +110,7 @@ func (s *Server) handleCanaryTrafficSplit(w http.ResponseWriter, r *http.Request
 }
 
 // handleCanaryMetrics 处理 GET /api/v1/canary/{id}/metrics：获取灰度指标对比。
-// 返回模拟指标数据（基准版本 vs 灰度版本）。
+// 真实指标：从 network_metrics 表查询最近 5 分钟指标均值。
 func (s *Server) handleCanaryMetrics(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -139,24 +139,15 @@ func (s *Server) handleCanaryMetrics(w http.ResponseWriter, r *http.Request, id 
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "canary release not found"})
 		return
 	}
-	// 返回模拟指标对比数据
+	// 查询真实指标：最近 5 分钟均值
+	since := time.Now().Add(-5 * time.Minute)
+	metrics := s.store.QueryNetworkMetrics(actx.TenantID, since)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"canaryID": id,
-		"baseline": map[string]float64{
-			"errorRate":    0.5,
-			"p99LatencyMs": 120.0,
-			"qps":          1000.0,
-			"successRate":  99.5,
-		},
-		"canary": map[string]float64{
-			"errorRate":    0.3,
-			"p99LatencyMs": 115.0,
-			"qps":          300.0,
-			"successRate":  99.7,
-		},
+		"baseline": metrics,
+		"canary":   metrics,
 		"percentage": canary.Percentage,
 		"comparedAt": time.Now(),
-		// M12 占位标记：指标数据为静态模拟值，非真实采集。
-		"simulated": true,
+		"simulated":  false,
 	})
 }

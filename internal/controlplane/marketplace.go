@@ -13,9 +13,16 @@ package controlplane
 //   - POST   /api/v1/marketplace/plugins/{id}/disable    禁用插件
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
@@ -176,6 +183,14 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request, id 
 	if !ok {
 		return
 	}
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		return
+	}
 	p, ok := s.store.GetPlugin(id)
 	if !ok || p == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "plugin not found"})
@@ -185,6 +200,15 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request, id 
 		writeJSON(w, http.StatusOK, p)
 		return
 	}
+
+	// 真实安装：下载插件→校验 SHA256→保存到插件目录。
+	if p.DownloadURL != "" {
+		if err := downloadAndVerifyPlugin(p); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("plugin download/verify failed: %v", err)})
+			return
+		}
+	}
+
 	p.Installed = true
 	p.Enabled = true
 	updated, ok := s.store.UpdatePlugin(p)
@@ -193,7 +217,7 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "plugin_install", Target: id, Detail: "",
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "plugin_install", Target: id, Detail: "",
 	})
 	writeJSON(w, http.StatusOK, updated)
 }
@@ -202,6 +226,14 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request, id 
 func (s *Server) handleUninstallPlugin(w http.ResponseWriter, r *http.Request, id string) {
 	caller, ok := s.requirePermission(w, r, "plugin:write")
 	if !ok {
+		return
+	}
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	p, ok := s.store.GetPlugin(id)
@@ -213,6 +245,15 @@ func (s *Server) handleUninstallPlugin(w http.ResponseWriter, r *http.Request, i
 		writeJSON(w, http.StatusOK, p)
 		return
 	}
+
+	// 真实卸载：删除插件文件。
+	if p.DownloadURL != "" {
+		if err := removePluginFiles(p); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("plugin removal failed: %v", err)})
+			return
+		}
+	}
+
 	p.Installed = false
 	p.Enabled = false
 	updated, ok := s.store.UpdatePlugin(p)
@@ -221,9 +262,61 @@ func (s *Server) handleUninstallPlugin(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "plugin_uninstall", Target: id, Detail: "",
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "plugin_uninstall", Target: id, Detail: "",
 	})
 	writeJSON(w, http.StatusOK, updated)
+}
+
+// downloadAndVerifyPlugin 下载插件并校验 SHA256。
+func downloadAndVerifyPlugin(p *store.Plugin) error {
+	// SSRF 校验：拒绝私网地址。
+	if err := ValidateWebhookURL(p.DownloadURL, false); err != nil {
+		return fmt.Errorf("download URL rejected: %w", err)
+	}
+
+	// 下载。
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Get(p.DownloadURL)
+	if err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download returned status %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 100<<20))
+	if err != nil {
+		return fmt.Errorf("read download: %w", err)
+	}
+
+	// 校验 SHA256。
+	if p.Checksum != "" {
+		sum := sha256.Sum256(data)
+		if !strings.EqualFold(hex.EncodeToString(sum[:]), p.Checksum) {
+			return fmt.Errorf("checksum mismatch: expected %s, got %s", p.Checksum, hex.EncodeToString(sum[:]))
+		}
+	}
+
+	// 保存到插件目录。
+	pluginDir := filepath.Join("data", "plugins", p.ID)
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		return fmt.Errorf("create plugin dir: %w", err)
+	}
+	pluginFile := filepath.Join(pluginDir, "plugin.bin")
+	if err := os.WriteFile(pluginFile, data, 0644); err != nil {
+		return fmt.Errorf("write plugin file: %w", err)
+	}
+	return nil
+}
+
+// removePluginFiles 删除插件文件。
+func removePluginFiles(p *store.Plugin) error {
+	pluginDir := filepath.Join("data", "plugins", p.ID)
+	if err := os.RemoveAll(pluginDir); err != nil {
+		return fmt.Errorf("remove plugin dir: %w", err)
+	}
+	return nil
 }
 
 // handleEnablePlugin 处理 POST /api/v1/marketplace/plugins/{id}/enable。

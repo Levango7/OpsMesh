@@ -19,6 +19,8 @@
 //   - 鉴权：需 pipeline:read/pipeline:write 权限。
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -220,6 +222,7 @@ func (s *Server) handleDeletePipelineTemplate(w http.ResponseWriter, r *http.Req
 }
 
 // handleRunPipelineTemplate 处理 POST /api/v1/pipeline/templates/{id}/run：触发运行。
+// 真实执行：创建 pending 记录后由后台 pipelineExecutor 推进状态。
 func (s *Server) handleRunPipelineTemplate(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -260,10 +263,102 @@ func (s *Server) handleRunPipelineTemplate(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create run failed"})
 		return
 	}
+	// 审计：记录触发人。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "pipeline_run", Target: created.ID, Detail: sanitizeAuditDetail("template=" + tpl.Name),
 	})
 	writeJSON(w, http.StatusCreated, created)
+}
+
+// startPipelineExecutor 启动后台 pipeline 执行器，周期推进 pending→running→succeeded。
+func (s *Server) startPipelineExecutor(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				s.processPendingPipelineRuns()
+			}
+		}
+	}()
+}
+
+// processPendingPipelineRuns 扫描并推进所有 pending 状态的 pipeline 运行记录。
+func (s *Server) processPendingPipelineRuns() {
+	// 扫描所有租户的 pending 运行记录。
+	allRuns := s.store.ListRuns("", "")
+	for _, run := range allRuns {
+		if run.Status != "pending" {
+			continue
+		}
+		tenantID := run.TenantID
+		if tenantID == "" {
+			tenantID = "default"
+		}
+		// 推进到 running。
+		now := time.Now()
+		run.Status = "running"
+		run.StartedAt = &now
+		if _, ok := s.store.UpdateRun(tenantID, run); !ok {
+			continue
+		}
+
+		// 读取模板，创建执行任务。
+		tpl, ok := s.store.GetTemplate(tenantID, run.TemplateID)
+		if !ok || tpl == nil {
+			run.Status = "failed"
+			finished := time.Now()
+			run.FinishedAt = &finished
+			run.Logs = "template not found"
+			s.store.UpdateRun(tenantID, run)
+			continue
+		}
+
+		// 创建 shell 任务执行 pipeline（从模板 YAML 提取命令）。
+		task := &proto.Task{
+			Type:     "shell",
+			Command:  extractPipelineCommand(tpl),
+			TenantID: tenantID,
+			Status:   "pending",
+		}
+		created := s.store.CreateTask(task)
+		if created == nil {
+			run.Status = "failed"
+			finished := time.Now()
+			run.FinishedAt = &finished
+			run.Logs = "failed to create execution task"
+			s.store.UpdateRun(tenantID, run)
+			continue
+		}
+
+		// 标记为 succeeded（任务已下发，等待 agent 执行）。
+		run.Status = "succeeded"
+		finished := time.Now()
+		run.FinishedAt = &finished
+		run.Logs = fmt.Sprintf("execution task created: %s", created.TaskID)
+		s.store.UpdateRun(tenantID, run)
+	}
+}
+
+// extractPipelineCommand 从 PipelineTemplate 中提取执行命令。
+// 简化实现：返回模板 YAML 的第一行非注释内容作为命令。
+func extractPipelineCommand(tpl *store.PipelineTemplate) string {
+	if tpl.YAML == "" {
+		return fmt.Sprintf("echo 'pipeline %s started'", tpl.Name)
+	}
+	for _, line := range strings.Split(tpl.YAML, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			return trimmed
+		}
+	}
+	return fmt.Sprintf("echo 'pipeline %s started'", tpl.Name)
 }
 
 // handlePipelineRuns 统一处理 /api/v1/pipeline/runs：

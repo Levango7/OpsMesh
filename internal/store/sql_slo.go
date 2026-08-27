@@ -17,8 +17,8 @@ package store
 
 import (
 	"context"
-
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 )
@@ -192,10 +192,8 @@ func (s *SQLStore) DeleteSLO(tenantID, id string) bool {
 
 // SLIStatus 返回指定 SLO 下各 SLI 的当前状态（MVP 返回模拟状态）。
 //
-// MVP 行为：
-//   - SLO 不存在或租户不匹配返回 nil；
-//   - 对每个 SLI 返回模拟状态：CurrentValue=99.5, Status="met"（满足目标），
-//     LastEvaluated=now。后续可接入 Prometheus 真实评估。
+// SLIStatus 计算 SLI 当前状态（真实计算：从 network_metrics 表查询最近 5 分钟指标）。
+// 对每个 SLI：查询最近 5 分钟指标均值，与 target 比较，返回 met/breached/nodata。
 func (s *SQLStore) SLIStatus(tenantID, id string) []*SLIStatus {
 	slo, ok := s.GetSLO(tenantID, id)
 	if !ok {
@@ -204,13 +202,88 @@ func (s *SQLStore) SLIStatus(tenantID, id string) []*SLIStatus {
 	now := time.Now().UTC()
 	out := make([]*SLIStatus, 0, len(slo.SLIs))
 	for _, sli := range slo.SLIs {
+		currentValue := s.querySLIMetric(sli.Metric, slo.ServiceName, tenantID)
+		status := evaluateSLI(currentValue, sli.Target, sli.Operator)
 		out = append(out, &SLIStatus{
 			SLIName:       sli.Name,
-			CurrentValue:  99.5, // MVP 模拟值
+			CurrentValue:  currentValue,
 			TargetValue:   sli.Target,
-			Status:        "met", // MVP 假定满足
+			Status:        status,
 			LastEvaluated: now,
 		})
 	}
 	return out
+}
+
+// querySLIMetric 查询指定指标最近 5 分钟的均值。
+// 如果无数据返回 -1（表示 nodata）。
+func (s *SQLStore) querySLIMetric(metricName, serviceName, tenantID string) float64 {
+	if s.db == nil {
+		return -1
+	}
+	// 列名映射：将 SLI metric 名映射到 network_metrics 列名。
+	column := metricColumn(metricName)
+	if column == "" {
+		return -1
+	}
+	since := time.Now().UTC().Add(-5 * time.Minute)
+	var avgValue float64
+	query := fmt.Sprintf(`SELECT AVG(%s) FROM network_metrics WHERE tenant_id=? AND timestamp >= ?`, column)
+	err := s.db.QueryRowContext(context.Background(), query, tenantID, since).Scan(&avgValue)
+	if err != nil {
+		log.Printf("[store] querySLIMetric %q 查询失败: %v", metricName, err)
+		return -1
+	}
+	return avgValue
+}
+
+// evaluateSLI 比较当前值与目标值，返回 met/breached/nodata。
+func evaluateSLI(current, target float64, operator string) string {
+	if current < 0 {
+		return "nodata"
+	}
+	switch operator {
+	case ">=":
+		if current >= target {
+			return "met"
+		}
+	case ">":
+		if current > target {
+			return "met"
+		}
+	case "<=":
+		if current <= target {
+			return "met"
+		}
+	case "<":
+		if current < target {
+			return "met"
+		}
+	case "==":
+		if current == target {
+			return "met"
+		}
+	default:
+		// 默认 >=
+		if current >= target {
+			return "met"
+		}
+	}
+	return "breached"
+}
+
+// metricColumn 将 SLI metric 名映射到 network_metrics 表列名。
+func metricColumn(metricName string) string {
+	switch metricName {
+	case "cpu_usage", "cpu":
+		return "cpu_usage"
+	case "memory_usage", "mem_usage", "memory":
+		return "memory_usage"
+	case "temperature", "temp":
+		return "temperature"
+	case "uptime":
+		return "uptime"
+	default:
+		return ""
+	}
 }

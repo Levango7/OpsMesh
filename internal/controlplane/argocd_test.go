@@ -17,6 +17,7 @@ package controlplane
 import (
 	"encoding/json"
 	"net/http"
+	"os/exec"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -326,7 +327,7 @@ func TestHandleDeleteArgoCDApp_NotFound(t *testing.T) {
 // handleSyncArgoCDApp（POST /api/v1/argocd/apps/{id}/sync）
 // =============================================================================
 
-// TestHandleSyncArgoCDApp 验证同步应用。
+// TestHandleSyncArgoCDApp 验证同步应用（argocd CLI 不可用时返回 500）。
 func TestHandleSyncArgoCDApp(t *testing.T) {
 	s := newArgoCDTestServer()
 	auth := loginAsAdmin(t, s)
@@ -341,6 +342,14 @@ func TestHandleSyncArgoCDApp(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.handleArgoCDApp(w, req)
 
+	// argocd CLI 不可用时返回 500（真实执行失败）。
+	if _, err := exec.LookPath("argocd"); err != nil {
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("without argocd CLI: status=%d, want 500; body=%s", w.Code, w.Body.String())
+		}
+		return
+	}
+	// argocd CLI 可用时返回 200。
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d, want 200; body=%s", w.Code, w.Body.String())
 	}

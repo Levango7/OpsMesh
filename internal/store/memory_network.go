@@ -184,3 +184,38 @@ func (m *MemoryStore) UpdateNetworkConfig(tenantID, id, config string) (*Network
 	d.UpdatedAt = time.Now()
 	return cloneNetworkDevice(d), true
 }
+
+// QueryNetworkMetrics 查询指定租户最近时间窗口内的聚合指标均值。
+func (m *MemoryStore) QueryNetworkMetrics(tenantID string, since time.Time) map[string]float64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var cpuSum, memSum, tempSum float64
+	var count int
+	for deviceID, hist := range m.networkMetricsHistory {
+		// 按租户过滤。
+		if d, ok := m.networkDevices[deviceID]; ok && d.TenantID != "" && d.TenantID != tenantID {
+			continue
+		}
+		for _, m := range hist {
+			if m.Timestamp.Before(since) {
+				continue
+			}
+			cpuSum += m.CPUUsage
+			memSum += m.MemoryUsage
+			tempSum += m.Temperature
+			count++
+		}
+	}
+	if count == 0 {
+		return map[string]float64{
+			"cpu_usage":    0,
+			"memory_usage": 0,
+			"temperature":  0,
+		}
+	}
+	return map[string]float64{
+		"cpu_usage":    cpuSum / float64(count),
+		"memory_usage": memSum / float64(count),
+		"temperature":  tempSum / float64(count),
+	}
+}

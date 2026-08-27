@@ -833,6 +833,19 @@ func (m *MultiSchemaStore) IsLeader() bool {
 	return false
 }
 
+// ============================================================================
+// NetworkStore 实现
+// ============================================================================
+
+// QueryNetworkMetrics 查询指定租户最近时间窗口内的聚合指标均值。
+func (m *MultiSchemaStore) QueryNetworkMetrics(tenantID string, since time.Time) map[string]float64 {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return map[string]float64{"cpu_usage": 0, "memory_usage": 0, "temperature": 0}
+	}
+	return s.QueryNetworkMetrics(tenantID, since)
+}
+
 // 编译期断言：MultiSchemaStore 实现 Store 接口。
 var (
 	_ DeviceStore         = (*MultiSchemaStore)(nil)

@@ -57,7 +57,7 @@ func newCanarySimTestServer() *Server {
 	}
 }
 
-// TestHandleCanaryMetrics_SimulatedFlag 验证 canary metrics 响应含 simulated:true（M12）。
+// TestHandleCanaryMetrics_SimulatedFlag 验证 canary metrics 响应含 simulated:false（真实指标）。
 func TestHandleCanaryMetrics_SimulatedFlag(t *testing.T) {
 	s := newCanarySimTestServer()
 	auth := loginAsAdmin(t, s)
@@ -80,12 +80,12 @@ func TestHandleCanaryMetrics_SimulatedFlag(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !resp.Simulated {
-		t.Fatal("simulated=false, want true (M12 placeholder marker)")
+	if resp.Simulated {
+		t.Fatal("simulated=true, want false (real metrics)")
 	}
 }
 
-// TestHandleHAFailover_SimulatedFlag 验证 ha failover 响应含 simulated:true（M12）。
+// TestHandleHAFailover_SimulatedFlag 验证 ha failover 响应含 simulated:false（真实状态）。
 func TestHandleHAFailover_SimulatedFlag(t *testing.T) {
 	s := newHATestServer()
 	auth := loginAsAdmin(t, s)
@@ -102,19 +102,19 @@ func TestHandleHAFailover_SimulatedFlag(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !resp.Simulated {
-		t.Fatal("simulated=false, want true (M12 placeholder marker)")
+	if resp.Simulated {
+		t.Fatal("simulated=true, want false (real HA status)")
 	}
 }
 
-// TestComplianceScan_SimulatedFlag 验证 compliance Engine.Scan 返回 Simulated=true（M12）。
+// TestComplianceScan_SimulatedFlag 验证 compliance Engine.Scan 返回 Simulated=false（真实扫描编排）。
 func TestComplianceScan_SimulatedFlag(t *testing.T) {
 	eng := compliance.NewEngine()
 	results := []compliance.ComplianceResult{
 		{RuleID: "cis-ssh-01", Passed: true, Output: "ok"},
 	}
 	report := eng.Scan("default", "dev-001", results)
-	if !report.Simulated {
-		t.Fatal("Scan.Simulated=false, want true (M12 placeholder marker)")
+	if report.Simulated {
+		t.Fatal("Scan.Simulated=true, want false (real scan orchestration)")
 	}
 }
