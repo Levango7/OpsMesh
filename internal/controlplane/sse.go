@@ -34,6 +34,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -103,7 +104,7 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 		tenant = tokenTenant
 	}
 	if s.requireAuth && tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
 		return
 	}
 	// demo 模式放宽：未携带身份头时填充默认租户，便于本地一键体验。
@@ -193,6 +194,12 @@ func (s *Server) unsubscribeEvents(ch chan SSEEvent) {
 //
 // 分布式可观测性：从 ctx 提取 OTel trace_id 注入 SSEEvent.TraceID，
 // 使 SSE 事件与后端链路追踪/日志/审计日志关联。ctx 无有效 span 时 TraceID 为空（向后兼容）。
+// PublishEvent 是 grpc.EventPublisher 接口的实现，将 SSE 事件发布委托给 publishEvent。
+// 使 grpc 包可通过该接口注入事件发布能力，解除对 controlplane.Server 的直接依赖。
+func (s *Server) PublishEvent(ctx context.Context, typ string, tenantID string, data interface{}) {
+	s.publishEvent(ctx, typ, tenantID, data)
+}
+
 func (s *Server) publishEvent(ctx context.Context, typ string, tenantID string, data interface{}) {
 	s.eventMu.RLock()
 	defer s.eventMu.RUnlock()

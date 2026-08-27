@@ -17,6 +17,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"encoding/json"
 	"errors"
 	"io"
@@ -41,7 +42,7 @@ func (s *Server) handleApprovalFlows(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.approvalCreateFlow(w, r)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -55,7 +56,7 @@ func (s *Server) approvalListFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	flows := s.approvalEngine.ListFlows(actx.TenantID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"flows": flows,
 		"total": len(flows),
 	})
@@ -72,7 +73,7 @@ func (s *Server) approvalCreateFlow(w http.ResponseWriter, r *http.Request) {
 	}
 	var f approval.ApprovalFlow
 	if err := decodeJSONBody(w, r, &f); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	if f.TenantID == "" {
@@ -82,7 +83,7 @@ func (s *Server) approvalCreateFlow(w http.ResponseWriter, r *http.Request) {
 		f.ID = genBatchID("flow")
 	}
 	if err := s.approvalEngine.CreateFlow(&f); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
@@ -95,14 +96,14 @@ func (s *Server) approvalCreateFlow(w http.ResponseWriter, r *http.Request) {
 			Action: "approval_flow_create", Target: f.ID, Level: events.LevelInfo,
 		})
 	}
-	writeJSON(w, http.StatusCreated, &f)
+	paginate.WriteJSON(w, http.StatusCreated, &f)
 }
 
 // handleApprovalFlowRouting 处理 /api/v1/approval/flows/{id}（GET/PUT/DELETE）。
 func (s *Server) handleApprovalFlowRouting(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/approval/flows/")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "flow id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "flow id required"})
 		return
 	}
 	switch r.Method {
@@ -113,7 +114,7 @@ func (s *Server) handleApprovalFlowRouting(w http.ResponseWriter, r *http.Reques
 	case http.MethodDelete:
 		s.approvalDeleteFlow(w, r, id)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -127,14 +128,14 @@ func (s *Server) approvalGetFlow(w http.ResponseWriter, r *http.Request, id stri
 	}
 	f, err := s.approvalEngine.GetFlow(id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
 	if actx.TenantID != "" && f.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 		return
 	}
-	writeJSON(w, http.StatusOK, f)
+	paginate.WriteJSON(w, http.StatusOK, f)
 }
 
 func (s *Server) approvalUpdateFlow(w http.ResponseWriter, r *http.Request, id string) {
@@ -147,7 +148,7 @@ func (s *Server) approvalUpdateFlow(w http.ResponseWriter, r *http.Request, id s
 	}
 	var f approval.ApprovalFlow
 	if err := decodeJSONBody(w, r, &f); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	f.ID = id
@@ -155,14 +156,14 @@ func (s *Server) approvalUpdateFlow(w http.ResponseWriter, r *http.Request, id s
 		f.TenantID = actx.TenantID
 	}
 	if err := s.approvalEngine.UpdateFlow(&f); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "approval_flow_update", Target: id,
 		Detail: "update approval flow",
 	})
-	writeJSON(w, http.StatusOK, &f)
+	paginate.WriteJSON(w, http.StatusOK, &f)
 }
 
 func (s *Server) approvalDeleteFlow(w http.ResponseWriter, r *http.Request, id string) {
@@ -174,7 +175,7 @@ func (s *Server) approvalDeleteFlow(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	if err := s.approvalEngine.DeleteFlow(id); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
@@ -187,7 +188,7 @@ func (s *Server) approvalDeleteFlow(w http.ResponseWriter, r *http.Request, id s
 			Action: "approval_flow_delete", Target: id, Level: events.LevelInfo,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
 }
 
 // ============================================================================
@@ -202,7 +203,7 @@ func (s *Server) handleApprovalRequests(w http.ResponseWriter, r *http.Request) 
 	case http.MethodPost:
 		s.approvalSubmitRequest(w, r)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -216,7 +217,7 @@ func (s *Server) approvalListRequests(w http.ResponseWriter, r *http.Request) {
 	}
 	status := r.URL.Query().Get("status")
 	reqs := s.approvalEngine.ListRequests(actx.TenantID, status)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"requests": reqs,
 		"total":    len(reqs),
 	})
@@ -232,7 +233,7 @@ func (s *Server) approvalSubmitRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	var req approval.ApprovalRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	if req.TenantID == "" {
@@ -248,7 +249,7 @@ func (s *Server) approvalSubmitRequest(w http.ResponseWriter, r *http.Request) {
 		req.Status = approval.StatusPending
 	}
 	if err := s.approvalEngine.Submit(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
@@ -262,14 +263,14 @@ func (s *Server) approvalSubmitRequest(w http.ResponseWriter, r *http.Request) {
 			Detail: sanitizeAuditDetail("approval: " + req.TriggerType),
 		})
 	}
-	writeJSON(w, http.StatusCreated, &req)
+	paginate.WriteJSON(w, http.StatusCreated, &req)
 }
 
 // handleApprovalRequestRouting 处理 /api/v1/approval/requests/{id}[/approve|/reject|/cancel|/history]。
 func (s *Server) handleApprovalRequestRouting(w http.ResponseWriter, r *http.Request) {
 	idAndRest := strings.TrimPrefix(r.URL.Path, "/api/v1/approval/requests/")
 	if idAndRest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "request id required"})
 		return
 	}
 	parts := strings.SplitN(idAndRest, "/", 2)
@@ -277,7 +278,7 @@ func (s *Server) handleApprovalRequestRouting(w http.ResponseWriter, r *http.Req
 	if len(parts) == 1 {
 		// GET /api/v1/approval/requests/{id}
 		if r.Method != http.MethodGet {
-			jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		s.approvalGetRequest(w, r, id)
@@ -286,30 +287,30 @@ func (s *Server) handleApprovalRequestRouting(w http.ResponseWriter, r *http.Req
 	switch parts[1] {
 	case "approve":
 		if r.Method != http.MethodPost {
-			jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		s.approvalApproveRequest(w, r, id)
 	case "reject":
 		if r.Method != http.MethodPost {
-			jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		s.approvalRejectRequest(w, r, id)
 	case "cancel":
 		if r.Method != http.MethodPost {
-			jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		s.approvalCancelRequest(w, r, id)
 	case "history":
 		if r.Method != http.MethodGet {
-			jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		s.approvalGetHistory(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
 	}
 }
 
@@ -323,14 +324,14 @@ func (s *Server) approvalGetRequest(w http.ResponseWriter, r *http.Request, id s
 	}
 	req, err := s.approvalEngine.GetRequest(id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
 	if actx.TenantID != "" && req.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 		return
 	}
-	writeJSON(w, http.StatusOK, req)
+	paginate.WriteJSON(w, http.StatusOK, req)
 }
 
 func (s *Server) approvalApproveRequest(w http.ResponseWriter, r *http.Request, id string) {
@@ -346,11 +347,11 @@ func (s *Server) approvalApproveRequest(w http.ResponseWriter, r *http.Request, 
 	}
 	// comment 为可选字段：空 body 视为空注释；非法 JSON 返回 400。
 	if derr := decodeJSONBody(w, r, &body); derr != nil && !errors.Is(derr, io.EOF) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 	if err := s.approvalEngine.Approve(id, actx.UserID, body.Comment); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
@@ -366,7 +367,7 @@ func (s *Server) approvalApproveRequest(w http.ResponseWriter, r *http.Request, 
 	s.publishEvent(r.Context(), "approval_status", actx.TenantID, map[string]string{
 		"requestID": id, "status": "approved",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "approved", "id": id})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "approved", "id": id})
 }
 
 func (s *Server) approvalRejectRequest(w http.ResponseWriter, r *http.Request, id string) {
@@ -382,11 +383,11 @@ func (s *Server) approvalRejectRequest(w http.ResponseWriter, r *http.Request, i
 	}
 	// comment 为可选字段：空 body 视为空注释；非法 JSON 返回 400。
 	if derr := decodeJSONBody(w, r, &body); derr != nil && !errors.Is(derr, io.EOF) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 	if err := s.approvalEngine.Reject(id, actx.UserID, body.Comment); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
@@ -402,7 +403,7 @@ func (s *Server) approvalRejectRequest(w http.ResponseWriter, r *http.Request, i
 	s.publishEvent(r.Context(), "approval_status", actx.TenantID, map[string]string{
 		"requestID": id, "status": "rejected",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "rejected", "id": id})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "rejected", "id": id})
 }
 
 func (s *Server) approvalCancelRequest(w http.ResponseWriter, r *http.Request, id string) {
@@ -414,7 +415,7 @@ func (s *Server) approvalCancelRequest(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	if err := s.approvalEngine.Cancel(id, actx.UserID); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
@@ -424,7 +425,7 @@ func (s *Server) approvalCancelRequest(w http.ResponseWriter, r *http.Request, i
 	s.publishEvent(r.Context(), "approval_status", actx.TenantID, map[string]string{
 		"requestID": id, "status": "cancelled",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "id": id})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "id": id})
 }
 
 func (s *Server) approvalGetHistory(w http.ResponseWriter, r *http.Request, id string) {
@@ -437,17 +438,17 @@ func (s *Server) approvalGetHistory(w http.ResponseWriter, r *http.Request, id s
 	}
 	h, err := s.approvalEngine.GetHistory(id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
 	// 租户隔离：通过请求归属校验（GetHistory 已校验请求存在）。
 	if actx.TenantID != "" {
 		if req, e2 := s.approvalEngine.GetRequest(id); e2 == nil && req.TenantID != actx.TenantID {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, h)
+	paginate.WriteJSON(w, http.StatusOK, h)
 }
 
 // ============================================================================
@@ -457,7 +458,7 @@ func (s *Server) approvalGetHistory(w http.ResponseWriter, r *http.Request, id s
 // handleApprovalPending 处理 GET /api/v1/approval/pending：待我审批列表。
 func (s *Server) handleApprovalPending(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -478,7 +479,7 @@ func (s *Server) handleApprovalPending(w http.ResponseWriter, r *http.Request) {
 		}
 		pending = filtered
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"pending": pending,
 		"total":   len(pending),
 	})

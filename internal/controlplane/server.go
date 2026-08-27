@@ -21,6 +21,7 @@ import (
 	"opsmesh/internal/cmdb"
 	"opsmesh/internal/config"
 	"opsmesh/internal/cron"
+	"opsmesh/internal/controlplane/factory"
 	"opsmesh/internal/deploy"
 	"opsmesh/internal/events"
 	"opsmesh/internal/helm"
@@ -259,7 +260,7 @@ func (s *Server) shutdownTLSReloader() {
 func NewServer(cfg *config.Config) (*Server, error) {
 	// Kafka brokers/topic 经参数传入事件总线（避免 os.Setenv 并发不安全）。
 	bus := events.New(cfg.EventBus, cfg.KafkaBrokers, cfg.KafkaTopic)
-	st, storeErr := selectStore(cfg, bus)
+	st, storeErr := factory.SelectStore(cfg, bus)
 	if storeErr != nil {
 		// 安全加固：静默回退改 fail-fast。
 		// 生产模式（cfg.Production == true）：MySQL 初始化失败直接返回错误，避免静默回退 memory
@@ -284,10 +285,10 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		shutdownWait:  cfg.ShutdownTimeout,
 		bus:           bus,
 		metrics:       metrics.New(),
-		cmdbHandler:   newCMDBHandler(st),
-		logHandler:    newLogHandler(st, cfg),
-		deployHandler: newDeployHandler(st),
-		orchHandler:   newOrchestrationHandler(st),
+		cmdbHandler:   factory.NewCMDBHandler(st),
+		logHandler:    factory.NewLogHandler(st, cfg),
+		deployHandler: factory.NewDeployHandler(st),
+		orchHandler:   factory.NewOrchestrationHandler(st),
 		eventSubs:     make(map[chan SSEEvent]struct{}), // SSE 订阅者集合
 		alertAggr:     notify.NewAlertAggregator(),      // 告警聚合器
 		alertChannels: &notify.Channels{ // 多通道（Webhook + Email）
@@ -387,7 +388,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	}
 	// 会话状态存储：根据 --session-store 选择 Redis 或进程内实现。
 	// 多副本 HA 须配置 redis://，否则登出/限流/改密令牌不跨副本共享。
-	ss, ssErr := selectSessionStore(cfg)
+	ss, ssErr := factory.SelectSessionStore(cfg)
 	if ssErr != nil {
 		// Redis 初始化失败：生产模式 fail-fast，非生产回退进程内（保持本地体验兼容）。
 		if cfg.Production {
@@ -435,7 +436,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// 启用后控制面 HTTP + gRPC 自动埋点，trace_id 贯穿 agent→控制面→store。
 	otelShutdown, otelErr := otelx.Init(otelx.Config{
 		Endpoint:    cfg.OTELEndpoint,
-		ServiceName: firstNonEmpty(cfg.OTELServiceName, "opsmesh-controlplane"),
+		ServiceName: factory.FirstNonEmpty(cfg.OTELServiceName, "opsmesh-controlplane"),
 		Stdout:      cfg.OTELStdout,
 	})
 	if otelErr != nil {

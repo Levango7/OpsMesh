@@ -1,4 +1,4 @@
-﻿package controlplane
+package controlplane
 
 // traffic.go 实现 Phase 2 流量治理 HTTP handler。
 //
@@ -18,6 +18,7 @@
 //   - 鉴权：需 traffic:read/traffic:write 权限。
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"net/http"
 	"strings"
 
@@ -34,7 +35,7 @@ func (s *Server) handleTrafficPolicies(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleCreateTrafficPolicy(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -48,11 +49,11 @@ func (s *Server) handleListTrafficPolicies(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	policies := s.store.ListPolicies(actx.TenantID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"policies": policies})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"policies": policies})
 }
 
 // handleCreateTrafficPolicy 处理 POST /api/v1/traffic/policies：创建策略。
@@ -66,26 +67,26 @@ func (s *Server) handleCreateTrafficPolicy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.TrafficPolicy
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
 	created := s.store.CreatePolicy(actx.TenantID, &body)
 	if created == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create policy failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create policy failed"})
 		return
 	}
 	// 审计：记录创建人
 	_ = caller
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handleTrafficPolicyRouting 分派 /api/v1/traffic/policies/{id} 子路径：
@@ -97,13 +98,13 @@ func (s *Server) handleCreateTrafficPolicy(w http.ResponseWriter, r *http.Reques
 func (s *Server) handleTrafficPolicyRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/traffic/policies/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "policy id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "policy id required"})
 		return
 	}
 	parts := strings.SplitN(rest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "policy id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "policy id required"})
 		return
 	}
 	if len(parts) == 1 {
@@ -115,7 +116,7 @@ func (s *Server) handleTrafficPolicyRouting(w http.ResponseWriter, r *http.Reque
 		case http.MethodDelete:
 			s.handleDeleteTrafficPolicy(w, r, id)
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 		return
 	}
@@ -126,7 +127,7 @@ func (s *Server) handleTrafficPolicyRouting(w http.ResponseWriter, r *http.Reque
 	case "disable":
 		s.handleDisableTrafficPolicy(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
 	}
 }
 
@@ -140,15 +141,15 @@ func (s *Server) handleGetTrafficPolicy(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	p, ok := s.store.GetPolicy(actx.TenantID, id)
 	if !ok || p == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, p)
+	paginate.WriteJSON(w, http.StatusOK, p)
 }
 
 // handleUpdateTrafficPolicy 处理 PUT /api/v1/traffic/policies/{id}：更新策略。
@@ -161,21 +162,21 @@ func (s *Server) handleUpdateTrafficPolicy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.TrafficPolicy
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	body.ID = id
 	updated, ok := s.store.UpdatePolicy(actx.TenantID, &body)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // handleDeleteTrafficPolicy 处理 DELETE /api/v1/traffic/policies/{id}：删除策略。
@@ -188,20 +189,20 @@ func (s *Server) handleDeleteTrafficPolicy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if !s.store.DeletePolicy(actx.TenantID, id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // handleEnableTrafficPolicy 处理 POST /api/v1/traffic/policies/{id}/enable：启用策略。
 func (s *Server) handleEnableTrafficPolicy(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if _, ok := s.requirePermission(w, r, "traffic:write"); !ok {
@@ -212,21 +213,21 @@ func (s *Server) handleEnableTrafficPolicy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	p, ok := s.store.EnablePolicy(actx.TenantID, id)
 	if !ok || p == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, p)
+	paginate.WriteJSON(w, http.StatusOK, p)
 }
 
 // handleDisableTrafficPolicy 处理 POST /api/v1/traffic/policies/{id}/disable：禁用策略。
 func (s *Server) handleDisableTrafficPolicy(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if _, ok := s.requirePermission(w, r, "traffic:write"); !ok {
@@ -237,14 +238,14 @@ func (s *Server) handleDisableTrafficPolicy(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	p, ok := s.store.DisablePolicy(actx.TenantID, id)
 	if !ok || p == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, p)
+	paginate.WriteJSON(w, http.StatusOK, p)
 }
 

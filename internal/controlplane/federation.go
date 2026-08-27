@@ -14,6 +14,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"bytes"
 	"context"
 	"crypto/hmac"
@@ -268,7 +269,7 @@ func (s *Server) handleFederationPeers(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireProd(w, r, "federation:read"); !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.fed.Peers())
+	paginate.WriteJSON(w, http.StatusOK, s.fed.Peers())
 }
 
 // handleFederationForwardTask 处理 POST /api/v1/federation/forward/task：转发任务到指定 peer。
@@ -295,20 +296,20 @@ func (s *Server) handleFederationForwardTask(w http.ResponseWriter, r *http.Requ
 		Task    proto.Task `json:"task"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.PeerURL == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "peerURL is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "peerURL is required"})
 		return
 	}
 	// 安全校验：peerURL 必须在配置的 peers 列表中，防止 SSRF（攻击者借联邦转发探内网其他服务）。
 	if !s.fed.isKnownPeer(body.PeerURL) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "peerURL not in configured federation peers"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "peerURL not in configured federation peers"})
 		return
 	}
 	if body.Task.AgentID == "" || body.Task.Command == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "task.agentID and task.command are required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "task.agentID and task.command are required"})
 		return
 	}
 	if body.Task.Type == "" {
@@ -318,7 +319,7 @@ func (s *Server) handleFederationForwardTask(w http.ResponseWriter, r *http.Requ
 	created, err := s.fed.ForwardTask(r.Context(), body.PeerURL, body.Task, r.Header)
 	if err != nil {
 		logx.Error(r.Context(), "联邦任务转发失败", err, "peer", body.PeerURL, "agentID", body.Task.AgentID)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
 	// 本地审计留痕（等保三级：跨网段操作必须可追溯）。
@@ -330,7 +331,7 @@ func (s *Server) handleFederationForwardTask(w http.ResponseWriter, r *http.Requ
 		Target:   created.TaskID,
 		Detail:   sanitizeAuditDetail(fmt.Sprintf("forwarded to %s, agentID=%s", body.PeerURL, body.Task.AgentID)),
 	})
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handleFederationDevices 处理 GET /api/v1/federation/devices：聚合本地 + 所有 peer 的设备视图。
@@ -355,7 +356,7 @@ func (s *Server) handleFederationDevices(w http.ResponseWriter, r *http.Request)
 	if s.requireAuth {
 		tenant = actx.TenantID // 强制租户隔离，忽略客户端伪造
 	}
-	writeJSON(w, http.StatusOK, s.fed.FederatedDevices(r.Context(), tenant))
+	paginate.WriteJSON(w, http.StatusOK, s.fed.FederatedDevices(r.Context(), tenant))
 }
 
 // isKnownPeer 判断 url 是否在配置的 peers 列表中（SSRF 防护）。

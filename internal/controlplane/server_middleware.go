@@ -2,6 +2,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	cryptoRand "crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -104,7 +105,7 @@ func (s *Server) csrfOriginCheck(h http.Handler) http.Handler {
 		ou, err := url.Parse(origin)
 		if err != nil || ou.Host == "" {
 			// Origin 格式非法：保守拒绝（浏览器发的 Origin 应总是合法 URL）。
-			jsonError(w, http.StatusForbidden, "invalid Origin header")
+			paginate.JSONError(w, http.StatusForbidden, "invalid Origin header")
 			return
 		}
 		if ou.Host != advertiseHost {
@@ -113,7 +114,7 @@ func (s *Server) csrfOriginCheck(h http.Handler) http.Handler {
 				TenantID: "default", UserID: clientIP(r, s.cfg.TrustProxy), Action: "csrf_origin_rejected", Target: r.URL.Path,
 				Detail: fmt.Sprintf("origin=%s expected_host=%s remote=%s", origin, advertiseHost, r.RemoteAddr),
 			})
-			jsonError(w, http.StatusForbidden, "origin not allowed")
+			paginate.JSONError(w, http.StatusForbidden, "origin not allowed")
 			return
 		}
 		h.ServeHTTP(w, r)

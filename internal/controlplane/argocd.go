@@ -1,4 +1,4 @@
-﻿package controlplane
+package controlplane
 
 // argocd.go 实现 Phase 2 ArgoCD 应用管理 HTTP handler。
 //
@@ -17,6 +17,7 @@
 //   - 鉴权：需 argocd:read/argocd:write 权限。
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"context"
 	"fmt"
 	"net/http"
@@ -41,7 +42,7 @@ func (s *Server) handleArgoCDApps(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleCreateArgoCDApp(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -55,11 +56,11 @@ func (s *Server) handleListArgoCDApps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	apps := s.store.ListApps(actx.TenantID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"apps": apps})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"apps": apps})
 }
 
 // handleCreateArgoCDApp 处理 POST /api/v1/argocd/apps：创建应用。
@@ -73,27 +74,27 @@ func (s *Server) handleCreateArgoCDApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.ArgoCDApp
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
 	created := s.store.CreateApp(actx.TenantID, &body)
 	if created == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create app failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create app failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "argocd_app_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handleArgoCDApp 分派 /api/v1/argocd/apps/{id} 子路径：
@@ -104,13 +105,13 @@ func (s *Server) handleCreateArgoCDApp(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleArgoCDApp(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/argocd/apps/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "app id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "app id required"})
 		return
 	}
 	parts := strings.SplitN(rest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "app id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "app id required"})
 		return
 	}
 	if len(parts) == 1 {
@@ -122,7 +123,7 @@ func (s *Server) handleArgoCDApp(w http.ResponseWriter, r *http.Request) {
 		case http.MethodDelete:
 			s.handleDeleteArgoCDApp(w, r, id)
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 		return
 	}
@@ -131,7 +132,7 @@ func (s *Server) handleArgoCDApp(w http.ResponseWriter, r *http.Request) {
 	case "sync":
 		s.handleSyncArgoCDApp(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
 	}
 }
 
@@ -145,15 +146,15 @@ func (s *Server) handleGetArgoCDApp(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	a, ok := s.store.GetApp(actx.TenantID, id)
 	if !ok || a == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, a)
+	paginate.WriteJSON(w, http.StatusOK, a)
 }
 
 // handleUpdateArgoCDApp 处理 PUT /api/v1/argocd/apps/{id}：更新应用。
@@ -167,24 +168,24 @@ func (s *Server) handleUpdateArgoCDApp(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.ArgoCDApp
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	body.ID = id
 	updated, ok := s.store.UpdateApp(actx.TenantID, &body)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "argocd_app_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // handleDeleteArgoCDApp 处理 DELETE /api/v1/argocd/apps/{id}：删除应用。
@@ -198,24 +199,24 @@ func (s *Server) handleDeleteArgoCDApp(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if !s.store.DeleteApp(actx.TenantID, id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "argocd_app_delete", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // handleSyncArgoCDApp 处理 POST /api/v1/argocd/apps/{id}/sync：同步应用。
 // 真实执行：调用 argocd CLI 执行 app sync，更新状态。
 func (s *Server) handleSyncArgoCDApp(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	caller, ok := s.requirePermission(w, r, "argocd:write")
@@ -227,12 +228,12 @@ func (s *Server) handleSyncArgoCDApp(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	a, ok := s.store.GetApp(actx.TenantID, id)
 	if !ok || a == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
 		return
 	}
 
@@ -243,20 +244,20 @@ func (s *Server) handleSyncArgoCDApp(w http.ResponseWriter, r *http.Request, id 
 		now := time.Now()
 		a.UpdatedAt = now
 		s.store.UpdateApp(actx.TenantID, a)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("argocd sync failed: %v", err)})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("argocd sync failed: %v", err)})
 		return
 	}
 
 	a, ok = s.store.SyncApp(actx.TenantID, id)
 	if !ok || a == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "sync succeeded but failed to update status"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "sync succeeded but failed to update status"})
 		return
 	}
 
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "argocd_app_sync", Target: id, Detail: sanitizeAuditDetail("name=" + a.Name),
 	})
-	writeJSON(w, http.StatusOK, a)
+	paginate.WriteJSON(w, http.StatusOK, a)
 }
 
 // syncArgoCDApp 调用 argocd CLI 执行 app sync。

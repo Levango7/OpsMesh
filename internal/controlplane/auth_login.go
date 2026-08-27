@@ -10,6 +10,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"log"
 	"net/http"
 	"strings"
@@ -34,17 +35,17 @@ import (
 // 用户名重复返回 409。
 func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	// 注册安全：--public-register=false 时关闭公开注册接口。
 	if !s.cfg.PublicRegister {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "public registration is disabled"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "public registration is disabled"})
 		return
 	}
 	// 限流：按客户端 IP 令牌桶约束注册频率，防滥用/枚举。
 	if !s.loginGuard.allow(clientIP(r, s.cfg.TrustProxy)) {
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
+		paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
 	}
 	var body struct {
@@ -54,20 +55,20 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		log.Printf("controlplane: handleAuthRegister 解析请求体失败: %v", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 	if body.Username == "" || body.Password == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
 		return
 	}
 	if msg := validateStrongPassword(body.Password); msg != "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
 	// 用户名重复校验。
 	if existing := s.store.GetUserByUsername(body.Username); existing != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
+		paginate.WriteJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
 		return
 	}
 	// 默认角色存在性校验：注册用户硬编码绑定 role-viewer，须确保该角色已 seed 入库。
@@ -76,13 +77,13 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 	// 此处前置校验快速失败暴露配置问题，返回 500 表明是服务端数据缺陷而非客户端错误。
 	if s.store.GetRole("role-viewer") == nil {
 		log.Printf("controlplane: handleAuthRegister 默认角色 role-viewer 不存在，注册中止")
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "default role not found"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "default role not found"})
 		return
 	}
 	hash, err := hashPassword(body.Password)
 	if err != nil {
 		log.Printf("controlplane: handleAuthRegister 哈希密码失败: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	// 注册安全：只有显式 --allow-public-register=true 时才免审批（Status=active + 立即签发 token）。
@@ -101,7 +102,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	// 注：store.CreateUser 内部也会校验用户名唯一性（兜底），此处提前检查以提供更友好的错误消息。
 	if s.store.CreateUser(u) == nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
+		paginate.WriteJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
@@ -113,21 +114,21 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		token, err := s.issueUserToken(u)
 		if err != nil {
 			log.Printf("controlplane: handleAuthRegister 签发 token 失败: %v", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
 		rt, err := s.createRefreshToken(u.ID, deviceFingerprint(r))
 		if err != nil {
 			log.Printf("controlplane: handleAuthRegister 生成刷新令牌失败: %v", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
 		s.setAuthCookies(w, token, rt) // ：at+rt 双 HttpOnly Cookie 下发
-		writeJSON(w, http.StatusCreated, authResponse{Token: token, User: u})
+		paginate.WriteJSON(w, http.StatusCreated, authResponse{Token: token, User: u})
 		return
 	}
 	// 默认：不签发 token，返回待审批提示。
-	writeJSON(w, http.StatusCreated, map[string]string{
+	paginate.WriteJSON(w, http.StatusCreated, map[string]string{
 		"message": "registration submitted, pending admin approval",
 		"userId":  u.ID,
 		"status":  u.Status,
@@ -139,12 +140,12 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 // 成功返回 200 {token, user}；用户名不存在/密码错误返回 401。
 func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	// 限流：按客户端 IP 令牌桶约束登录频率，防撞库与 DoS。
 	if !s.loginGuard.allow(clientIP(r, s.cfg.TrustProxy)) {
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
+		paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
 	}
 	var body struct {
@@ -153,28 +154,28 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		log.Printf("controlplane: handleAuthLogin 解析请求体失败: %v", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 	if body.Username == "" || body.Password == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
 		return
 	}
 	// 防爆破：账号处于锁定态时直接拒绝，避免继续尝试。
 	if s.loginGuard.locked(body.Username) {
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "account temporarily locked due to too many failed attempts, try later"})
+		paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "account temporarily locked due to too many failed attempts, try later"})
 		return
 	}
 	u := s.store.GetUserByUsername(body.Username)
 	if u == nil {
 		// 用户名不存在也计入限流计数窗口（不暴露账号是否存在，同样走锁定逻辑防枚举）。
 		s.loginGuard.recordFail(body.Username)
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 		return
 	}
 	if !verifyPassword(u.PasswordHash, body.Password) {
 		s.loginGuard.recordFail(body.Username)
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 		return
 	}
 	// 注册安全：密码已校验通过后再检查 Status，根据状态返回差异化提示。
@@ -182,13 +183,13 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if u.Status != "active" {
 		switch u.Status {
 		case "pending":
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "account pending admin approval"})
+			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "account pending admin approval"})
 		case "disabled":
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "account disabled"})
+			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "account disabled"})
 		case "rejected":
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "account registration rejected"})
+			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "account registration rejected"})
 		default:
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "account not active"})
+			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "account not active"})
 		}
 		return
 	}
@@ -205,10 +206,10 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		cpt, err := s.createChangePasswordToken(u.ID)
 		if err != nil {
 			log.Printf("controlplane: handleAuthLogin 生成改密令牌失败: %v", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
-		writeJSON(w, http.StatusOK, authResponse{
+		paginate.WriteJSON(w, http.StatusOK, authResponse{
 			User:                u,
 			MustChangePassword:  true,
 			ChangePasswordToken: cpt,
@@ -218,18 +219,18 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	token, err := s.issueUserToken(u)
 	if err != nil {
 		log.Printf("controlplane: handleAuthLogin 签发 token 失败: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	// 双 Cookie：at（短寿命，JS 不可读）+ rt（长寿命，服务端可吊销/旋转）。
 	rt, err := s.createRefreshToken(u.ID, deviceFingerprint(r))
 	if err != nil {
 		log.Printf("controlplane: handleAuthLogin 生成刷新令牌失败: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	s.setAuthCookies(w, token, rt)
-	writeJSON(w, http.StatusOK, authResponse{Token: token, User: u})
+	paginate.WriteJSON(w, http.StatusOK, authResponse{Token: token, User: u})
 }
 
 // handleAuthLogout 处理 POST /api/v1/auth/logout：登出并清除会话 Cookie。
@@ -237,7 +238,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 // （而非等 15min 自然过期）。同时吊销 refresh token 并清除 HttpOnly Cookie。
 func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if u, err := s.userFromToken(r); err == nil {
@@ -253,7 +254,7 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		s.revokeRefreshToken(ck.Value)
 	}
 	s.clearAuthCookies(w)
-	writeJSON(w, http.StatusOK, map[string]string{"message": "logged out"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"message": "logged out"})
 }
 
 // handleAuthRefresh 处理 POST /api/v1/auth/refresh：用 rt Cookie 静默换取新 at+rt（旋转）。
@@ -264,42 +265,42 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 // 不匹配拒绝刷新（防 token 跨设备重放）；签发新 rt 时绑定当前设备指纹。
 func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	ck, err := r.Cookie(refreshTokenCookieName)
 	if err != nil || strings.TrimSpace(ck.Value) == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing refresh token"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing refresh token"})
 		return
 	}
 	// 设备绑定：consumeRefreshToken 校验请求的 DeviceFP 与存储一致。
 	sess, ok := s.consumeRefreshToken(ck.Value, deviceFingerprint(r))
 	if !ok {
 		s.clearAuthCookies(w)
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired refresh token"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired refresh token"})
 		return
 	}
 	u := s.store.GetUser(sess.UserID)
 	if u == nil || u.Status != "active" {
 		s.clearAuthCookies(w)
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "user not active"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "user not active"})
 		return
 	}
 	at, err := s.issueUserToken(u)
 	if err != nil {
 		log.Printf("controlplane: handleAuthRefresh 签发 token 失败: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	// 签发新 rt 时绑定当前设备指纹（与 consume 时的 DeviceFP 一致，实现设备绑定旋转）。
 	rt, err := s.createRefreshToken(u.ID, deviceFingerprint(r))
 	if err != nil {
 		log.Printf("controlplane: handleAuthRefresh 生成刷新令牌失败: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	s.setAuthCookies(w, at, rt)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"user": u})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"user": u})
 }
 
 // handleAuthMe 处理 GET /api/v1/auth/me：返回当前登录用户信息。
@@ -307,12 +308,12 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 // 无 token / token 无效 / 用户不存在 → 401。
 func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	u, err := s.userFromToken(r)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
 	// 展开角色 → 有效权限集合，供前端侧栏按权限过滤功能入口（与 requireProd 闸同源）。
@@ -332,7 +333,7 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	u.EffectivePermissions = eff
-	writeJSON(w, http.StatusOK, u)
+	paginate.WriteJSON(w, http.StatusOK, u)
 }
 
 // ============================================================================
@@ -355,13 +356,13 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 // 新密码强度：≥8 字符且含大小写字母与数字。新旧相同拒绝（防无效改密）。
 func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	// 限流：按客户端 IP 令牌桶约束改密频率，防暴力破解旧密码。
 	// 复用 loginGuard 的 IP 令牌桶（与登录/注册同维度），避免单独维护限流器。
 	if !s.loginGuard.allow(clientIP(r, s.cfg.TrustProxy)) {
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
+		paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
 	}
 	var body struct {
@@ -371,11 +372,11 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		log.Printf("controlplane: handleAuthChangePassword 解析请求体失败: %v", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 	if body.OldPassword == "" || body.NewPassword == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "oldPassword and newPassword are required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "oldPassword and newPassword are required"})
 		return
 	}
 	// 鉴权：优先使用 changePasswordToken（首登强制改密场景），否则走 userFromToken（已登录主动改密）。
@@ -384,12 +385,12 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 	if body.ChangePasswordToken != "" {
 		userID, ok := s.consumeChangePasswordToken(body.ChangePasswordToken)
 		if !ok {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired change password token"})
+			paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired change password token"})
 			return
 		}
 		user := s.store.GetUser(userID)
 		if user == nil {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired change password token"})
+			paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired change password token"})
 			return
 		}
 		u = user
@@ -397,36 +398,36 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 	} else {
 		user, err := s.userFromToken(r)
 		if err != nil {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+			paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 			return
 		}
 		u = user
 	}
 	// 旧密码校验：与当前 PasswordHash 比对，失败返回 401（防越权改密）。
 	if !verifyPassword(u.PasswordHash, body.OldPassword) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "old password incorrect"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "old password incorrect"})
 		return
 	}
 	// 新旧相同拒绝（防无效改密绕过强制改密）。
 	if body.OldPassword == body.NewPassword {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "new password must differ from old password"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "new password must differ from old password"})
 		return
 	}
 	// 新密码强度校验。
 	if msg := validateStrongPassword(body.NewPassword); msg != "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
 	// bcrypt 哈希新密码。
 	newHash, err := hashPassword(body.NewPassword)
 	if err != nil {
 		log.Printf("controlplane: handleAuthChangePassword 哈希密码失败: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	// 落库：写入新哈希并清除 must_change_password 标记。
 	if !s.store.ChangePassword(u.ID, newHash) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
@@ -438,18 +439,18 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 		token, err := s.issueUserToken(u)
 		if err != nil {
 			log.Printf("controlplane: handleAuthChangePassword 签发 token 失败: %v", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
 		rt, err := s.createRefreshToken(u.ID, deviceFingerprint(r))
 		if err != nil {
 			log.Printf("controlplane: handleAuthChangePassword 生成刷新令牌失败: %v", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
 		s.setAuthCookies(w, token, rt)
-		writeJSON(w, http.StatusOK, authResponse{Token: token, User: u})
+		paginate.WriteJSON(w, http.StatusOK, authResponse{Token: token, User: u})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"message": "password changed"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"message": "password changed"})
 }

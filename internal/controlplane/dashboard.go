@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"opsmesh/internal/authctx"
+	"opsmesh/internal/controlplane/embed"
 )
 
 // handleDashboard 结构化 HTML 仪表盘（GET /）。
@@ -36,7 +37,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	data, err := webFS.ReadFile("web/index.html")
+	data, err := embed.WebFS.ReadFile("web/index.html")
 	if err != nil {
 		http.Error(w, "dashboard asset missing: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -56,7 +57,7 @@ func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	data, err := webFS.ReadFile(rel)
+	data, err := embed.WebFS.ReadFile(rel)
 	if err != nil {
 		http.NotFound(w, r)
 		return

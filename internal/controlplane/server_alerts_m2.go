@@ -21,6 +21,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -65,7 +66,7 @@ func (s *Server) handleAlertRulesEngine(w http.ResponseWriter, r *http.Request) 
 	case http.MethodPost:
 		s.createAlertRuleEngine(w, r)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -80,10 +81,10 @@ func (s *Server) listAlertRulesEngine(w http.ResponseWriter, r *http.Request) {
 	}
 	rules, err := s.alertEngine.ListRules(actx.TenantID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, rules)
+	paginate.WriteJSON(w, http.StatusOK, rules)
 }
 
 // createAlertRuleEngine 创建一条 alertengine.AlertRule。
@@ -97,7 +98,7 @@ func (s *Server) createAlertRuleEngine(w http.ResponseWriter, r *http.Request) {
 	}
 	var rule alertengine.AlertRule
 	if err := decodeJSONBody(w, r, &rule); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	// 生成 ID（若未提供）
@@ -106,14 +107,14 @@ func (s *Server) createAlertRuleEngine(w http.ResponseWriter, r *http.Request) {
 	}
 	rule.TenantID = actx.TenantID
 	if err := s.alertEngine.AddRule(&rule); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "create_alert_rule_engine", Target: rule.ID,
 		Detail: sanitizeAuditDetail(fmt.Sprintf("conditions=%d logic=%s severity=%s", len(rule.Conditions), rule.Logic, rule.Severity)),
 	})
-	writeJSON(w, http.StatusCreated, rule)
+	paginate.WriteJSON(w, http.StatusCreated, rule)
 }
 
 // handleAlertRuleEngineRouting 分派 /api/v1/alert-rules-engine/{id} 子路径：
@@ -123,7 +124,7 @@ func (s *Server) createAlertRuleEngine(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAlertRuleEngineRouting(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/alert-rules-engine/")
 	if id == "" {
-		jsonError(w, http.StatusBadRequest, "alert rule id required")
+		paginate.JSONError(w, http.StatusBadRequest, "alert rule id required")
 		return
 	}
 	switch r.Method {
@@ -134,7 +135,7 @@ func (s *Server) handleAlertRuleEngineRouting(w http.ResponseWriter, r *http.Req
 	case http.MethodDelete:
 		s.deleteAlertRuleEngine(w, r, id)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -149,14 +150,14 @@ func (s *Server) getAlertRuleEngine(w http.ResponseWriter, r *http.Request, id s
 	}
 	rule, err := s.alertEngine.GetRule(id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
 		return
 	}
 	if rule.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, rule)
+	paginate.WriteJSON(w, http.StatusOK, rule)
 }
 
 // updateAlertRuleEngine 更新一条 alertengine.AlertRule。
@@ -170,19 +171,19 @@ func (s *Server) updateAlertRuleEngine(w http.ResponseWriter, r *http.Request, i
 	}
 	var rule alertengine.AlertRule
 	if err := decodeJSONBody(w, r, &rule); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	rule.ID = id
 	rule.TenantID = actx.TenantID
 	if err := s.alertEngine.UpdateRule(&rule); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "update_alert_rule_engine", Target: id,
 	})
-	writeJSON(w, http.StatusOK, rule)
+	paginate.WriteJSON(w, http.StatusOK, rule)
 }
 
 // deleteAlertRuleEngine 删除一条 alertengine.AlertRule。
@@ -197,21 +198,21 @@ func (s *Server) deleteAlertRuleEngine(w http.ResponseWriter, r *http.Request, i
 	// 校验租户归属
 	rule, err := s.alertEngine.GetRule(id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
 		return
 	}
 	if rule.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
 		return
 	}
 	if err := s.alertEngine.DeleteRule(id); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "delete_alert_rule_engine", Target: id,
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
 }
 
 // ============================================================================
@@ -226,7 +227,7 @@ func (s *Server) handleAlertSilences(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.createAlertSilence(w, r)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -240,7 +241,7 @@ func (s *Server) listAlertSilences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	silences := s.store.ListSilences(actx.TenantID)
-	writeJSON(w, http.StatusOK, silences)
+	paginate.WriteJSON(w, http.StatusOK, silences)
 }
 
 // createAlertSilence 创建一条静默规则。
@@ -254,7 +255,7 @@ func (s *Server) createAlertSilence(w http.ResponseWriter, r *http.Request) {
 	}
 	var sr store.SilenceRule
 	if err := decodeJSONBody(w, r, &sr); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	sr.TenantID = actx.TenantID
@@ -276,21 +277,21 @@ func (s *Server) createAlertSilence(w http.ResponseWriter, r *http.Request) {
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "create_alert_silence", Target: created.ID,
 		Detail: sanitizeAuditDetail(fmt.Sprintf("reason=%s startAt=%s endAt=%s", created.Reason, created.StartAt.Format(time.RFC3339), created.EndAt.Format(time.RFC3339))),
 	})
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handleAlertSilenceRouting 分派 /api/v1/alert-silences/{id} 子路径：DELETE 删除。
 func (s *Server) handleAlertSilenceRouting(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/alert-silences/")
 	if id == "" {
-		jsonError(w, http.StatusBadRequest, "silence id required")
+		paginate.JSONError(w, http.StatusBadRequest, "silence id required")
 		return
 	}
 	switch r.Method {
 	case http.MethodDelete:
 		s.deleteAlertSilence(w, r, id)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -304,7 +305,7 @@ func (s *Server) deleteAlertSilence(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	if !s.store.DeleteSilence(id, actx.TenantID) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "silence not found or tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "silence not found or tenant mismatch"})
 		return
 	}
 	// 同步从 alertengine.Silencer 移除
@@ -312,7 +313,7 @@ func (s *Server) deleteAlertSilence(w http.ResponseWriter, r *http.Request, id s
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "delete_alert_silence", Target: id,
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
 }
 
 // ============================================================================
@@ -327,7 +328,7 @@ func (s *Server) handleNotifyChannels(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.createNotifyChannel(w, r)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -345,7 +346,7 @@ func (s *Server) listNotifyChannels(w http.ResponseWriter, r *http.Request) {
 	for _, c := range channels {
 		c.Config = maskSensitiveConfig(c.Config)
 	}
-	writeJSON(w, http.StatusOK, channels)
+	paginate.WriteJSON(w, http.StatusOK, channels)
 }
 
 // createNotifyChannel 创建一条通知渠道。
@@ -359,14 +360,14 @@ func (s *Server) createNotifyChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	var c store.NotifyChannel
 	if err := decodeJSONBody(w, r, &c); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	// SSRF 防护：保存前校验 webhook URL，防通知渠道被利用做 SSRF
 	// （如配置 webhookURL=http://169.254.169.254/latest/meta-data/ 访问云元数据）。
 	// 校验失败返回 400 + 错误信息（不泄露内部校验细节，仅返回安全错误）。
 	if err := validateNotifyChannelWebhook(&c, s.cfg.WebhookAllowPrivate); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("webhook URL SSRF validation failed: %v", err)})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("webhook URL SSRF validation failed: %v", err)})
 		return
 	}
 	c.TenantID = actx.TenantID
@@ -377,7 +378,7 @@ func (s *Server) createNotifyChannel(w http.ResponseWriter, r *http.Request) {
 	})
 	// 返回时脱敏
 	created.Config = maskSensitiveConfig(created.Config)
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handleNotifyChannelRouting 分派 /api/v1/notify-channels/{id} 子路径：
@@ -389,7 +390,7 @@ func (s *Server) handleNotifyChannelRouting(w http.ResponseWriter, r *http.Reque
 	parts := strings.SplitN(idAndRest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		jsonError(w, http.StatusBadRequest, "channel id required")
+		paginate.JSONError(w, http.StatusBadRequest, "channel id required")
 		return
 	}
 	switch {
@@ -400,7 +401,7 @@ func (s *Server) handleNotifyChannelRouting(w http.ResponseWriter, r *http.Reque
 	case len(parts) == 2 && parts[1] == "test" && r.Method == http.MethodPost:
 		s.testNotifyChannel(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
 	}
 }
 
@@ -415,24 +416,24 @@ func (s *Server) updateNotifyChannel(w http.ResponseWriter, r *http.Request, id 
 	}
 	var c store.NotifyChannel
 	if err := decodeJSONBody(w, r, &c); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	// SSRF 防护：更新前校验 webhook URL（与 createNotifyChannel 一致）。
 	if err := validateNotifyChannelWebhook(&c, s.cfg.WebhookAllowPrivate); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("webhook URL SSRF validation failed: %v", err)})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("webhook URL SSRF validation failed: %v", err)})
 		return
 	}
 	c.ID = id
 	c.TenantID = actx.TenantID
 	if !s.store.UpdateNotifyChannel(&c) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "channel not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "channel not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "update_notify_channel", Target: id,
 	})
-	writeJSON(w, http.StatusOK, c)
+	paginate.WriteJSON(w, http.StatusOK, c)
 }
 
 // deleteNotifyChannel 删除一条通知渠道。
@@ -445,13 +446,13 @@ func (s *Server) deleteNotifyChannel(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	if !s.store.DeleteNotifyChannel(id, actx.TenantID) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "channel not found or tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "channel not found or tenant mismatch"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "delete_notify_channel", Target: id,
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
 }
 
 // testNotifyChannel 测试发送一条通知到指定渠道。
@@ -466,7 +467,7 @@ func (s *Server) testNotifyChannel(w http.ResponseWriter, r *http.Request, id st
 	}
 	c := s.store.GetNotifyChannel(id)
 	if c == nil || c.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "channel not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "channel not found"})
 		return
 	}
 	var body struct {
@@ -485,7 +486,7 @@ func (s *Server) testNotifyChannel(w http.ResponseWriter, r *http.Request, id st
 	// 构造渠道实例并发送
 	ch, err := buildChannel(c, s.secretProvider)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	msg := &notify.Message{
@@ -497,9 +498,9 @@ func (s *Server) testNotifyChannel(w http.ResponseWriter, r *http.Request, id st
 		Timestamp: time.Now(),
 	}
 	if err := ch.Send(msg); err != nil {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "fail", "error": err.Error()})
+		paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "fail", "error": err.Error()})
 	} else {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "test notification sent"})
+		paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "test notification sent"})
 	}
 }
 
@@ -515,7 +516,7 @@ func (s *Server) handleNotifyTemplates(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.createNotifyTemplate(w, r)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -529,7 +530,7 @@ func (s *Server) listNotifyTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	templates := s.store.ListNotifyTemplates(actx.TenantID)
-	writeJSON(w, http.StatusOK, templates)
+	paginate.WriteJSON(w, http.StatusOK, templates)
 }
 
 // createNotifyTemplate 创建一条通知模板。
@@ -543,7 +544,7 @@ func (s *Server) createNotifyTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	var t store.NotifyTemplate
 	if err := decodeJSONBody(w, r, &t); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	t.TenantID = actx.TenantID
@@ -552,7 +553,7 @@ func (s *Server) createNotifyTemplate(w http.ResponseWriter, r *http.Request) {
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "create_notify_template", Target: created.ID,
 		Detail: sanitizeAuditDetail(fmt.Sprintf("name=%s type=%s format=%s", created.Name, created.Type, created.Format)),
 	})
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handleNotifyTemplateRouting 分派 /api/v1/notify-templates/{id} 子路径：
@@ -561,7 +562,7 @@ func (s *Server) createNotifyTemplate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleNotifyTemplateRouting(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/notify-templates/")
 	if id == "" {
-		jsonError(w, http.StatusBadRequest, "template id required")
+		paginate.JSONError(w, http.StatusBadRequest, "template id required")
 		return
 	}
 	switch r.Method {
@@ -570,7 +571,7 @@ func (s *Server) handleNotifyTemplateRouting(w http.ResponseWriter, r *http.Requ
 	case http.MethodDelete:
 		s.deleteNotifyTemplate(w, r, id)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -585,19 +586,19 @@ func (s *Server) updateNotifyTemplate(w http.ResponseWriter, r *http.Request, id
 	}
 	var t store.NotifyTemplate
 	if err := decodeJSONBody(w, r, &t); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	t.ID = id
 	t.TenantID = actx.TenantID
 	if !s.store.UpdateNotifyTemplate(&t) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "update_notify_template", Target: id,
 	})
-	writeJSON(w, http.StatusOK, t)
+	paginate.WriteJSON(w, http.StatusOK, t)
 }
 
 // deleteNotifyTemplate 删除一条通知模板。
@@ -610,13 +611,13 @@ func (s *Server) deleteNotifyTemplate(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	if !s.store.DeleteNotifyTemplate(id, actx.TenantID) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found or tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found or tenant mismatch"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "delete_notify_template", Target: id,
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
 }
 
 // ============================================================================

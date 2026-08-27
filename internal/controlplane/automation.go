@@ -1,4 +1,4 @@
-﻿package controlplane
+package controlplane
 
 // automation.go 实现 Phase 4 自动化闭环 HTTP handler（规则 CRUD + 启停 + 测试 + 执行历史）。
 //
@@ -22,6 +22,7 @@
 //   - 真实执行：通过 automationExecutor 接口执行动作（execute_task/send_notify/scale/restart/isolate）。
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"fmt"
 	"net/http"
 	"strings"
@@ -139,7 +140,7 @@ func (s *Server) handleAutomationRules(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleCreateAutomationRule(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -153,11 +154,11 @@ func (s *Server) handleListAutomationRules(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	rules := s.store.ListAutomationRules(actx.TenantID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"rules": rules})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"rules": rules})
 }
 
 // handleCreateAutomationRule 处理 POST /api/v1/automation/rules：创建规则。
@@ -171,30 +172,30 @@ func (s *Server) handleCreateAutomationRule(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.AutomationRule
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	// 校验规则合法性
 	tmp := automationRuleToDomain(&body)
 	if err := automation.ValidateRule(tmp); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	created := s.store.CreateAutomationRule(actx.TenantID, &body)
 	if created == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create automation rule failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create automation rule failed"})
 		return
 	}
 	// 审计：记录创建人（H9 写路径审计补齐，与 webhook/slo 风格一致）。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "automation_rule_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handleAutomationRuleRouting 分派 /api/v1/automation/rules/{id} 子路径：
@@ -207,13 +208,13 @@ func (s *Server) handleCreateAutomationRule(w http.ResponseWriter, r *http.Reque
 func (s *Server) handleAutomationRuleRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/automation/rules/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "rule id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "rule id required"})
 		return
 	}
 	parts := strings.SplitN(rest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "rule id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "rule id required"})
 		return
 	}
 	if len(parts) == 1 {
@@ -225,7 +226,7 @@ func (s *Server) handleAutomationRuleRouting(w http.ResponseWriter, r *http.Requ
 		case http.MethodDelete:
 			s.handleDeleteAutomationRule(w, r, id)
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 		return
 	}
@@ -238,7 +239,7 @@ func (s *Server) handleAutomationRuleRouting(w http.ResponseWriter, r *http.Requ
 	case "test":
 		s.handleTestAutomationRule(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
 	}
 }
 
@@ -252,15 +253,15 @@ func (s *Server) handleGetAutomationRule(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	rule, ok := s.store.GetAutomationRule(actx.TenantID, id)
 	if !ok || rule == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, rule)
+	paginate.WriteJSON(w, http.StatusOK, rule)
 }
 
 // handleUpdateAutomationRule 处理 PUT /api/v1/automation/rules/{id}：更新规则。
@@ -274,30 +275,30 @@ func (s *Server) handleUpdateAutomationRule(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.AutomationRule
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	body.ID = id
 	tmp := automationRuleToDomain(&body)
 	if err := automation.ValidateRule(tmp); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	updated, ok := s.store.UpdateAutomationRule(actx.TenantID, &body)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
 		return
 	}
 	// 审计：记录更新人（H9 写路径审计补齐）。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "automation_rule_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // handleDeleteAutomationRule 处理 DELETE /api/v1/automation/rules/{id}：删除规则。
@@ -311,24 +312,24 @@ func (s *Server) handleDeleteAutomationRule(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if !s.store.DeleteAutomationRule(actx.TenantID, id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
 		return
 	}
 	// 审计：记录删除人（H9 写路径审计补齐）。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "automation_rule_delete", Target: id,
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // handleEnableAutomationRule 处理 POST /api/v1/automation/rules/{id}/enable：启用规则。
 func (s *Server) handleEnableAutomationRule(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	caller, ok := s.requirePermission(w, r, "automation:write")
@@ -340,25 +341,25 @@ func (s *Server) handleEnableAutomationRule(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	rule, ok := s.store.EnableAutomationRule(actx.TenantID, id)
 	if !ok || rule == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
 		return
 	}
 	// 审计：记录启用人（H9 写路径审计补齐）。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "automation_rule_enable", Target: id,
 	})
-	writeJSON(w, http.StatusOK, rule)
+	paginate.WriteJSON(w, http.StatusOK, rule)
 }
 
 // handleDisableAutomationRule 处理 POST /api/v1/automation/rules/{id}/disable：禁用规则。
 func (s *Server) handleDisableAutomationRule(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	caller, ok := s.requirePermission(w, r, "automation:write")
@@ -370,25 +371,25 @@ func (s *Server) handleDisableAutomationRule(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	rule, ok := s.store.DisableAutomationRule(actx.TenantID, id)
 	if !ok || rule == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
 		return
 	}
 	// 审计：记录禁用人（H9 写路径审计补齐）。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "automation_rule_disable", Target: id,
 	})
-	writeJSON(w, http.StatusOK, rule)
+	paginate.WriteJSON(w, http.StatusOK, rule)
 }
 
 // handleTestAutomationRule 处理 POST /api/v1/automation/rules/{id}/test：测试规则。
 func (s *Server) handleTestAutomationRule(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if _, ok := s.requirePermission(w, r, "automation:write"); !ok {
@@ -399,12 +400,12 @@ func (s *Server) handleTestAutomationRule(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	rule, ok := s.store.GetAutomationRule(actx.TenantID, id)
 	if !ok || rule == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
 		return
 	}
 	// 测试规则（不实际执行）
@@ -413,13 +414,13 @@ func (s *Server) handleTestAutomationRule(w http.ResponseWriter, r *http.Request
 	// 落库执行记录
 	storeExec := automationExecToStore(exec, actx.TenantID)
 	s.store.CreateAutomationExecution(actx.TenantID, storeExec)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"execution": storeExec, "triggered": true})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"execution": storeExec, "triggered": true})
 }
 
 // handleAutomationExecutions 处理 GET /api/v1/automation/executions：执行历史。
 func (s *Server) handleAutomationExecutions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if _, ok := s.requirePermission(w, r, "automation:read"); !ok {
@@ -430,17 +431,17 @@ func (s *Server) handleAutomationExecutions(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	executions := s.store.ListAutomationExecutions(actx.TenantID, 100)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"executions": executions})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"executions": executions})
 }
 
 // handleAutomationExecutionRouting 分派 /api/v1/automation/executions/{id}：执行详情。
 func (s *Server) handleAutomationExecutionRouting(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if _, ok := s.requirePermission(w, r, "automation:read"); !ok {
@@ -451,20 +452,20 @@ func (s *Server) handleAutomationExecutionRouting(w http.ResponseWriter, r *http
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/automation/executions/")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "execution id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "execution id required"})
 		return
 	}
 	exec, ok := s.store.GetAutomationExecution(actx.TenantID, id)
 	if !ok || exec == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "execution not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "execution not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, exec)
+	paginate.WriteJSON(w, http.StatusOK, exec)
 }
 
 // ============================================================================

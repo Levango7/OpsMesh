@@ -1,4 +1,4 @@
-﻿package controlplane
+package controlplane
 
 // pipeline.go 实现 Phase 2 CI/CD 流水线 HTTP handler。
 //
@@ -19,6 +19,7 @@
 //   - 鉴权：需 pipeline:read/pipeline:write 权限。
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"context"
 	"fmt"
 	"net/http"
@@ -39,7 +40,7 @@ func (s *Server) handlePipelineTemplates(w http.ResponseWriter, r *http.Request)
 	case http.MethodPost:
 		s.handleCreatePipelineTemplate(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -53,11 +54,11 @@ func (s *Server) handleListPipelineTemplates(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	templates := s.store.ListTemplates(actx.TenantID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"templates": templates})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"templates": templates})
 }
 
 // handleCreatePipelineTemplate 处理 POST /api/v1/pipeline/templates：创建模板。
@@ -71,27 +72,27 @@ func (s *Server) handleCreatePipelineTemplate(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.PipelineTemplate
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
 	created := s.store.CreateTemplate(actx.TenantID, &body)
 	if created == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create template failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create template failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "pipeline_template_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handlePipelineTemplate 分派 /api/v1/pipeline/templates/{id} 子路径：
@@ -102,13 +103,13 @@ func (s *Server) handleCreatePipelineTemplate(w http.ResponseWriter, r *http.Req
 func (s *Server) handlePipelineTemplate(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/pipeline/templates/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "template id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "template id required"})
 		return
 	}
 	parts := strings.SplitN(rest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "template id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "template id required"})
 		return
 	}
 	if len(parts) == 1 {
@@ -120,7 +121,7 @@ func (s *Server) handlePipelineTemplate(w http.ResponseWriter, r *http.Request) 
 		case http.MethodDelete:
 			s.handleDeletePipelineTemplate(w, r, id)
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 		return
 	}
@@ -129,7 +130,7 @@ func (s *Server) handlePipelineTemplate(w http.ResponseWriter, r *http.Request) 
 	case "run":
 		s.handleRunPipelineTemplate(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
 	}
 }
 
@@ -143,15 +144,15 @@ func (s *Server) handleGetPipelineTemplate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	t, ok := s.store.GetTemplate(actx.TenantID, id)
 	if !ok || t == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+	paginate.WriteJSON(w, http.StatusOK, t)
 }
 
 // handleUpdatePipelineTemplate 处理 PUT /api/v1/pipeline/templates/{id}：更新模板。
@@ -166,35 +167,35 @@ func (s *Server) handleUpdatePipelineTemplate(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	existing, ok := s.store.GetTemplate(actx.TenantID, id)
 	if !ok || existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
 	}
 	var body store.PipelineTemplate
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	body.ID = id
 	body.TenantID = actx.TenantID
 	body.CreatedAt = existing.CreatedAt
 	if !s.store.DeleteTemplate(actx.TenantID, id) {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update template failed (delete step)"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "update template failed (delete step)"})
 		return
 	}
 	updated := s.store.CreateTemplate(actx.TenantID, &body)
 	if updated == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update template failed (create step)"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "update template failed (create step)"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "pipeline_template_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // handleDeletePipelineTemplate 处理 DELETE /api/v1/pipeline/templates/{id}：删除模板。
@@ -208,24 +209,24 @@ func (s *Server) handleDeletePipelineTemplate(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if !s.store.DeleteTemplate(actx.TenantID, id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "pipeline_template_delete", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // handleRunPipelineTemplate 处理 POST /api/v1/pipeline/templates/{id}/run：触发运行。
 // 真实执行：创建 pending 记录后由后台 pipelineExecutor 推进状态。
 func (s *Server) handleRunPipelineTemplate(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	caller, ok := s.requirePermission(w, r, "pipeline:write")
@@ -237,12 +238,12 @@ func (s *Server) handleRunPipelineTemplate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	tpl, ok := s.store.GetTemplate(actx.TenantID, id)
 	if !ok || tpl == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
 	}
 	var body struct {
@@ -260,14 +261,14 @@ func (s *Server) handleRunPipelineTemplate(w http.ResponseWriter, r *http.Reques
 	}
 	created := s.store.CreateRun(actx.TenantID, run)
 	if created == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create run failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create run failed"})
 		return
 	}
 	// 审计：记录触发人。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "pipeline_run", Target: created.ID, Detail: sanitizeAuditDetail("template=" + tpl.Name),
 	})
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // startPipelineExecutor 启动后台 pipeline 执行器，周期推进 pending→running→succeeded。
@@ -368,7 +369,7 @@ func (s *Server) handlePipelineRuns(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		s.handleListPipelineRuns(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -382,33 +383,33 @@ func (s *Server) handleListPipelineRuns(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	templateID := r.URL.Query().Get("templateID")
 	runs := s.store.ListRuns(actx.TenantID, templateID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"runs": runs})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"runs": runs})
 }
 
 // handlePipelineRun 处理 /api/v1/pipeline/runs/{id}：获取运行详情。
 func (s *Server) handlePipelineRun(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/pipeline/runs/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "run id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "run id required"})
 		return
 	}
 	parts := strings.SplitN(rest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "run id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "run id required"})
 		return
 	}
 	if len(parts) > 1 {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + parts[1]})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + parts[1]})
 		return
 	}
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if _, ok := s.requirePermission(w, r, "pipeline:read"); !ok {
@@ -419,14 +420,14 @@ func (s *Server) handlePipelineRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	run, ok := s.store.GetRun(actx.TenantID, id)
 	if !ok || run == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "run not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "run not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, run)
+	paginate.WriteJSON(w, http.StatusOK, run)
 }
 

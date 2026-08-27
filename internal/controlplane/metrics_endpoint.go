@@ -14,6 +14,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"fmt"
 	"net/http"
 
@@ -23,7 +24,7 @@ import (
 // handlePrometheusMetrics 处理 GET /metrics：输出 Prometheus text exposition format。
 func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	// 从 store 获取数据（空租户=全部租户）。

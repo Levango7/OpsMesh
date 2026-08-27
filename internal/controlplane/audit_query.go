@@ -1,4 +1,4 @@
-﻿package controlplane
+package controlplane
 
 // audit_query.go 实现 Phase 3 审计日志查询 HTTP handler。
 //
@@ -14,6 +14,7 @@
 //   - from/to 用 RFC3339 解析；limit 默认 100，上限 1000 防滥用。
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"net/http"
 	"strconv"
 	"time"
@@ -46,11 +47,11 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	q := r.URL.Query()
@@ -71,7 +72,7 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 	if from != "" {
 		t, err := time.Parse(time.RFC3339, from)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid 'from' time (use RFC3339): " + err.Error()})
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid 'from' time (use RFC3339): " + err.Error()})
 			return
 		}
 		since = t
@@ -79,7 +80,7 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 	if to != "" {
 		t, err := time.Parse(time.RFC3339, to)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid 'to' time (use RFC3339): " + err.Error()})
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid 'to' time (use RFC3339): " + err.Error()})
 			return
 		}
 		until = t
@@ -95,7 +96,7 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		events = filtered
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"events": events,
 		"count":  len(events),
 	})
@@ -114,11 +115,11 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	q := r.URL.Query()
@@ -138,7 +139,7 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	if from != "" {
 		t, err := time.Parse(time.RFC3339, from)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid 'from' time (use RFC3339): " + err.Error()})
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid 'from' time (use RFC3339): " + err.Error()})
 			return
 		}
 		since = t
@@ -146,12 +147,12 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	if to != "" {
 		t, err := time.Parse(time.RFC3339, to)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid 'to' time (use RFC3339): " + err.Error()})
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid 'to' time (use RFC3339): " + err.Error()})
 			return
 		}
 		until = t
 	}
 	events := s.store.QueryAudits(actx.TenantID, action, since, until, limit)
-	writeJSON(w, http.StatusOK, events)
+	paginate.WriteJSON(w, http.StatusOK, events)
 }
 

@@ -18,6 +18,8 @@ import (
 	"opsmesh/internal/grpcx"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
+
+	grpcserver "opsmesh/internal/controlplane/grpc"
 )
 
 // TestGRPCRegistrationLoop 是内核的端到端护栏：进程内起真实 gRPC server（9090，JSON codec，
@@ -25,7 +27,7 @@ import (
 // 并断言「服务端按网关注入租户盖章、租户隔离生效」。
 func TestGRPCRegistrationLoop(t *testing.T) {
 	st := store.NewMemoryStore().WithDemo(true)
-	srvImpl := &grpcServerImpl{store: st, requireAuth: false}
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: false}
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -124,7 +126,7 @@ func TestGRPCRegistrationLoop(t *testing.T) {
 // 且任务状态保持 cancelled（worker 不回写 store，避免误翻 done/死信）。
 func TestGRPCCancelReachesWorker(t *testing.T) {
 	st := store.NewMemoryStore()
-	srvImpl := &grpcServerImpl{store: st, requireAuth: false}
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: false}
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -251,7 +253,7 @@ func TestGRPCCancelReachesWorker(t *testing.T) {
 // TestGRPCRegister_ConsumesToken 端到端：带 install token 注册，服务端消费 token 并翻转候选设备。
 func TestGRPCRegister_ConsumesToken(t *testing.T) {
 	st := store.NewMemoryStore().WithSecret("opsmesh-test-secret")
-	srvImpl := &grpcServerImpl{store: st, requireAuth: false}
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: false}
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -327,7 +329,7 @@ func TestGRPCRegister_ConsumesToken(t *testing.T) {
 // store.DeviceMetrics 可读到 -> GET /api/v1/devices/{id}/metrics 返回。
 func TestGRPCHeartbeat_MetricsE2E(t *testing.T) {
 	st := store.NewMemoryStore()
-	srvImpl := &grpcServerImpl{store: st, requireAuth: false}
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: false}
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -417,7 +419,7 @@ func TestGRPCHeartbeat_MetricsE2E(t *testing.T) {
 // 控制面应自动用 dev-<agentID> 兜底（与 Register 创建的占位设备 ID 对齐）。
 func TestGRPCHeartbeat_MetricsAutoDeviceID(t *testing.T) {
 	st := store.NewMemoryStore()
-	srvImpl := &grpcServerImpl{store: st, requireAuth: false}
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: false}
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -474,7 +476,7 @@ func TestGRPCAgentSignature_VerifyAndReject(t *testing.T) {
 	st := store.NewMemoryStore()
 	// 安全加固：使用预共享密钥（--grpc-signature-key），Register 不再下发密钥。
 	const sharedSecret = "opsmesh-test-shared-signature-key"
-	srvImpl := &grpcServerImpl{store: st, requireAuth: false, requireSignature: true, signatureKey: sharedSecret}
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: false, RequireSignature: true, SignatureKey: sharedSecret}
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -599,7 +601,7 @@ func TestGRPCAgentSignature_VerifyAndReject(t *testing.T) {
 // 无签名请求放行（向后兼容 demo/未启用 --grpc-require-signature 的部署）。
 func TestGRPCAgentSignature_DisabledByDefault(t *testing.T) {
 	st := store.NewMemoryStore().WithDemo(true)
-	srvImpl := &grpcServerImpl{store: st, requireAuth: false, requireSignature: false}
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: false, RequireSignature: false}
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

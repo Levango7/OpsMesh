@@ -17,6 +17,7 @@ package controlplane
 //   - 用 decodeJSONBody 解析请求体。
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"net/http"
 	"strings"
 
@@ -34,7 +35,7 @@ func (s *Server) handleTenants(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleCreateTenant(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -44,7 +45,7 @@ func (s *Server) handleListTenants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenants := s.store.ListTenants()
-	writeJSON(w, http.StatusOK, map[string]interface{}{"tenants": tenants})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"tenants": tenants})
 }
 
 // handleCreateTenant 处理 POST /api/v1/tenants：创建租户。
@@ -55,11 +56,11 @@ func (s *Server) handleCreateTenant(w http.ResponseWriter, r *http.Request) {
 	}
 	var body store.Tenant
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
 	if body.Status == "" {
@@ -67,26 +68,26 @@ func (s *Server) handleCreateTenant(w http.ResponseWriter, r *http.Request) {
 	}
 	created := s.store.CreateTenant(&body)
 	if created == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create tenant failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create tenant failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "tenant_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handleTenantRouting 分派 /api/v1/tenants/{id} 子路径。
 func (s *Server) handleTenantRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/tenants/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant id required"})
 		return
 	}
 	parts := strings.SplitN(rest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant id required"})
 		return
 	}
 	if len(parts) == 1 {
@@ -98,7 +99,7 @@ func (s *Server) handleTenantRouting(w http.ResponseWriter, r *http.Request) {
 		case http.MethodDelete:
 			s.handleDeleteTenant(w, r, id)
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 		return
 	}
@@ -109,7 +110,7 @@ func (s *Server) handleTenantRouting(w http.ResponseWriter, r *http.Request) {
 	case "activate":
 		s.handleActivateTenant(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
 	}
 }
 
@@ -120,10 +121,10 @@ func (s *Server) handleGetTenant(w http.ResponseWriter, r *http.Request, id stri
 	}
 	t, ok := s.store.GetTenant(id)
 	if !ok || t == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+	paginate.WriteJSON(w, http.StatusOK, t)
 }
 
 // handleUpdateTenant 处理 PUT /api/v1/tenants/{id}：更新租户。
@@ -134,19 +135,19 @@ func (s *Server) handleUpdateTenant(w http.ResponseWriter, r *http.Request, id s
 	}
 	var body store.Tenant
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	body.ID = id
 	updated, ok := s.store.UpdateTenant(&body)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "tenant_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // handleDeleteTenant 处理 DELETE /api/v1/tenants/{id}：删除租户。
@@ -164,11 +165,11 @@ func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request, id s
 	}
 	// L3 平台租户保护：禁止删除 "default" 租户。
 	if id == "default" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "cannot delete platform tenant 'default'"})
+		paginate.WriteJSON(w, http.StatusConflict, map[string]string{"error": "cannot delete platform tenant 'default'"})
 		return
 	}
 	if !s.store.DeleteTenant(id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
 		return
 	}
 	// L3 三域级联清理：APIKey/Webhook/Script。
@@ -193,7 +194,7 @@ func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request, id s
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "tenant_delete", Target: id, Detail: "cascade:apikeys,webhooks,scripts",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // handleSuspendTenant 处理 POST /api/v1/tenants/{id}/suspend：暂停租户。
@@ -204,19 +205,19 @@ func (s *Server) handleSuspendTenant(w http.ResponseWriter, r *http.Request, id 
 	}
 	t, ok := s.store.GetTenant(id)
 	if !ok || t == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
 		return
 	}
 	t.Status = store.TenantStatusSuspended
 	updated, ok := s.store.UpdateTenant(t)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "suspend tenant failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "suspend tenant failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "tenant_suspend", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // handleActivateTenant 处理 POST /api/v1/tenants/{id}/activate：激活租户。
@@ -227,17 +228,17 @@ func (s *Server) handleActivateTenant(w http.ResponseWriter, r *http.Request, id
 	}
 	t, ok := s.store.GetTenant(id)
 	if !ok || t == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
 		return
 	}
 	t.Status = store.TenantStatusActive
 	updated, ok := s.store.UpdateTenant(t)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "activate tenant failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "activate tenant failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "tenant_activate", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }

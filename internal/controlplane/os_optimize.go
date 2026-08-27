@@ -15,6 +15,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -691,7 +692,7 @@ func (s *Server) handleListOSTemplates(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleCreateOSTemplate(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -723,7 +724,7 @@ func (s *Server) handleListOSTemplatesGet(w http.ResponseWriter, r *http.Request
 		}
 		out = append(out, t)
 	}
-	writeJSON(w, http.StatusOK, out)
+	paginate.WriteJSON(w, http.StatusOK, out)
 }
 
 // handleCreateOSTemplate 处理 POST /api/v1/os-templates：创建新 OS 模板（CRUD）。
@@ -731,7 +732,7 @@ func (s *Server) handleListOSTemplatesGet(w http.ResponseWriter, r *http.Request
 // 需 os:write 权限；创建后审计 + 事件总线 + SSE 通知。
 func (s *Server) handleCreateOSTemplate(w http.ResponseWriter, r *http.Request) {
 	if err := s.verifyFederationRequest(r); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -744,22 +745,22 @@ func (s *Server) handleCreateOSTemplate(w http.ResponseWriter, r *http.Request) 
 	}
 	var tpl OSTemplate
 	if err := decodeJSONBody(w, r, &tpl); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if tpl.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
 	if tpl.Commands == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "commands is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "commands is required"})
 		return
 	}
 	// 基本字段校验：risk 必须为 low/medium/high（空则归一为 low）。
 	tpl.Risk = normalizeRisk(tpl.Risk)
 	st := osTemplateToStore(&tpl, actx.TenantID)
 	if err := s.store.SaveOSTemplate(st); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save template failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save template failed: " + err.Error()})
 		return
 	}
 	// 回读以获取 store 分配的 ID/时间戳。
@@ -779,7 +780,7 @@ func (s *Server) handleCreateOSTemplate(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 	s.publishEvent(r.Context(), "os_template_changed", actx.TenantID, map[string]string{"templateID": st.ID, "action": "create"})
-	writeJSON(w, http.StatusCreated, saved)
+	paginate.WriteJSON(w, http.StatusCreated, saved)
 }
 
 // handleUpdateOSTemplate 处理 PUT /api/v1/os-templates/{id}：更新 OS 模板（CRUD）。
@@ -787,7 +788,7 @@ func (s *Server) handleCreateOSTemplate(w http.ResponseWriter, r *http.Request) 
 // 需 os:write 权限；不存在返回 404。
 func (s *Server) handleUpdateOSTemplate(w http.ResponseWriter, r *http.Request, id string) {
 	if err := s.verifyFederationRequest(r); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -800,15 +801,15 @@ func (s *Server) handleUpdateOSTemplate(w http.ResponseWriter, r *http.Request, 
 	}
 	var tpl OSTemplate
 	if err := decodeJSONBody(w, r, &tpl); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if tpl.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
 	if tpl.Commands == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "commands is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "commands is required"})
 		return
 	}
 	// 检查存在性（含回退预置模板：预置模板在 store 中已 seed，此处能查到）。
@@ -816,7 +817,7 @@ func (s *Server) handleUpdateOSTemplate(w http.ResponseWriter, r *http.Request, 
 	if existing == nil {
 		// 回退检查：若为预置模板 ID 且尚未 seed，允许"upsert"（首次写入 store）。
 		if preset := osTemplateByID(id); preset == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 			return
 		}
 	}
@@ -824,7 +825,7 @@ func (s *Server) handleUpdateOSTemplate(w http.ResponseWriter, r *http.Request, 
 	tpl.Risk = normalizeRisk(tpl.Risk)
 	st := osTemplateToStore(&tpl, actx.TenantID)
 	if err := s.store.SaveOSTemplate(st); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save template failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save template failed: " + err.Error()})
 		return
 	}
 	saved := osTemplateFromStore(s.store.GetOSTemplate(id))
@@ -843,7 +844,7 @@ func (s *Server) handleUpdateOSTemplate(w http.ResponseWriter, r *http.Request, 
 		})
 	}
 	s.publishEvent(r.Context(), "os_template_changed", actx.TenantID, map[string]string{"templateID": id, "action": "update"})
-	writeJSON(w, http.StatusOK, saved)
+	paginate.WriteJSON(w, http.StatusOK, saved)
 }
 
 // handleDeleteOSTemplate 处理 DELETE /api/v1/os-templates/{id}：删除 OS 模板（CRUD）。
@@ -861,7 +862,7 @@ func (s *Server) handleDeleteOSTemplate(w http.ResponseWriter, r *http.Request, 
 	if existing == nil {
 		// 回退检查：预置模板 ID 但未 seed → 视为不存在。
 		if osTemplateByID(id) == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 			return
 		}
 		// 预置模板未 seed，直接返回 204（内存中无法删除，但 store 中本就不存在）。
@@ -869,7 +870,7 @@ func (s *Server) handleDeleteOSTemplate(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if !s.store.DeleteOSTemplate(id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
 	}
 	userID := ""
@@ -893,7 +894,7 @@ func (s *Server) handleDeleteOSTemplate(w http.ResponseWriter, r *http.Request, 
 // handleOSTemplateByID 处理 GET /api/v1/os-templates/{id}：返回模板详情（从 store 读取，含回退）。
 func (s *Server) handleOSTemplateByID(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	_, ok := s.requireTenantContext(w, r)
@@ -905,10 +906,10 @@ func (s *Server) handleOSTemplateByID(w http.ResponseWriter, r *http.Request, id
 	}
 	t := s.getOSTemplateByID(id)
 	if t == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+	paginate.WriteJSON(w, http.StatusOK, t)
 }
 
 // handleExecuteOSTemplate 处理 POST /api/v1/os-templates/{id}/execute：在指定 agent 上执行模板。
@@ -916,11 +917,11 @@ func (s *Server) handleOSTemplateByID(w http.ResponseWriter, r *http.Request, id
 // 实现：将模板 Commands 通过 `set --` 注入位置参数后作为 shell task 下发，复用 store.CreateTask。
 func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if err := s.verifyFederationRequest(r); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -932,7 +933,7 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 	}
 	tpl := s.getOSTemplateByID(id)
 	if tpl == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
 	}
 	var body struct {
@@ -942,11 +943,11 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 		TenantID  string            `json:"tenantID"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	if body.AgentID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agentID is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "agentID is required"})
 		return
 	}
 	// 参数验证与 command 拼接：
@@ -967,7 +968,7 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 					continue
 				}
 				if p.Required {
-					writeJSON(w, http.StatusBadRequest, map[string]string{"error": "param required: " + p.Name})
+					paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "param required: " + p.Name})
 					return
 				}
 			}
@@ -975,12 +976,12 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 		}
 		// 类型与语义验证。
 		if err := validateOSParams(tpl.Params, paramsMap); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 		// shell 元字符校验：占位符替换前拒绝含元字符的值，防命令注入。
 		if err := validateShellSafeValues(paramsMap); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 		command = renderOSScript(tpl.Commands, paramsMap)
@@ -991,7 +992,7 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 	targetTenant := actx.TenantID
 	agent := s.lookupAgent(body.AgentID)
 	if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "agent not found or tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "agent not found or tenant mismatch"})
 		return
 	}
 	// 拼接最终 command：通过 `set --` 注入位置参数，使脚本内 $1/$2/... 可用。
@@ -1029,7 +1030,7 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 		"status":  task.Status,
 		"agentID": body.AgentID,
 	})
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusCreated, map[string]interface{}{
 		"task":         task,
 		"templateID":   id,
 		"templateName": tpl.Name,
@@ -1154,7 +1155,7 @@ func (s *Server) handleOSTemplateRouting(w http.ResponseWriter, r *http.Request)
 	parts := strings.SplitN(idAndRest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "template id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "template id required"})
 		return
 	}
 	switch {
@@ -1168,13 +1169,13 @@ func (s *Server) handleOSTemplateRouting(w http.ResponseWriter, r *http.Request)
 		case http.MethodDelete:
 			s.handleDeleteOSTemplate(w, r, id)
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 	case len(parts) == 2 && parts[1] == "execute":
 		// POST /api/v1/os-templates/{id}/execute
 		s.handleExecuteOSTemplate(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	}
 }
 

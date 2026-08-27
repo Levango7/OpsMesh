@@ -13,6 +13,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"context"
 
 	"fmt"
@@ -264,22 +265,22 @@ func (c *CMDBCollector) collectOnceIfLeader(ctx context.Context) {
 // 鉴权：需 cmdb:write 权限（requireProd 校验）。
 func (s *Server) handleCMDBCollect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed, use POST"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed, use POST"})
 		return
 	}
 	if _, ok := s.requireProd(w, r, "cmdb:write"); !ok {
 		return
 	}
 	if s.cmdbCollector == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "cmdb collector not initialized"})
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "cmdb collector not initialized"})
 		return
 	}
 	collected, failed, err := s.cmdbCollector.CollectAll()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]int{
+	paginate.WriteJSON(w, http.StatusOK, map[string]int{
 		"collected": collected,
 		"failed":    failed,
 	})

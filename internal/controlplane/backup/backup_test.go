@@ -7,12 +7,14 @@
 //  4. ImportBackup dry-run：验证只校验不写入；
 //  5. ImportBackup overwrite：验证覆盖已存在数据；
 //  6. Export→Import 往返：导出后导入到新 Store，验证数据一致。
-package controlplane
+package backup
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -22,8 +24,8 @@ import (
 	"opsmesh/internal/store"
 )
 
-// seedBackupStore 构造一个有数据的 MemoryStore，供导出测试使用。
-func seedBackupStore() *store.MemoryStore {
+// SeedBackupStore 构造一个有数据的 MemoryStore，供导出测试使用。
+func SeedBackupStore() *store.MemoryStore {
 	st := store.NewMemoryStore()
 	// 注册 2 个 agent（不同租户）
 	st.Register(&proto.AgentInfo{AgentID: "agent-1", Hostname: "h1", Segment: "seg-a", TenantID: "t1", Status: "online"})
@@ -46,7 +48,7 @@ func seedBackupStore() *store.MemoryStore {
 
 // TestExportBackup_JSON 验证 JSON 格式导出：Meta/Counts/数据条数正确。
 func TestExportBackup_JSON(t *testing.T) {
-	st := seedBackupStore()
+	st := SeedBackupStore()
 	cfg := &config.Config{Mode: "controlplane"}
 	var buf bytes.Buffer
 	opts := ExportOptions{Format: "json", IncludeAudits: true, IncludeConfig: true}
@@ -79,7 +81,7 @@ func TestExportBackup_JSON(t *testing.T) {
 	if data.Meta.Counts.AlertRules != 1 {
 		t.Fatalf("AlertRules = %d, want 1", data.Meta.Counts.AlertRules)
 	}
-	// 审计：seedBackupStore 产 1 条 + Register/CreateTask/AddAlert/CreateAlertRule 内核产出
+	// 审计：SeedBackupStore 产 1 条 + Register/CreateTask/AddAlert/CreateAlertRule 内核产出
 	if data.Meta.Counts.Audits < 1 {
 		t.Fatalf("Audits = %d, want >=1", data.Meta.Counts.Audits)
 	}
@@ -106,7 +108,7 @@ func TestExportBackup_JSON(t *testing.T) {
 
 // TestExportBackup_SQL 验证 SQL dump 格式：输出含 INSERT 语句。
 func TestExportBackup_SQL(t *testing.T) {
-	st := seedBackupStore()
+	st := SeedBackupStore()
 	cfg := &config.Config{Mode: "controlplane"}
 	var buf bytes.Buffer
 	opts := ExportOptions{Format: "sql"}
@@ -132,7 +134,7 @@ func TestExportBackup_SQL(t *testing.T) {
 
 // TestExportBackup_DefaultOptions 验证默认选项：format=json, 不含审计, 不含 config。
 func TestExportBackup_DefaultOptions(t *testing.T) {
-	st := seedBackupStore()
+	st := SeedBackupStore()
 	cfg := &config.Config{Mode: "controlplane"}
 	var buf bytes.Buffer
 	opts := ExportOptions{} // 全默认
@@ -163,7 +165,7 @@ func TestExportBackup_DefaultOptions(t *testing.T) {
 
 // TestImportBackup_DryRun 验证 dry-run：只校验不写入。
 func TestImportBackup_DryRun(t *testing.T) {
-	src := seedBackupStore()
+	src := SeedBackupStore()
 	// 导出到 buffer
 	var buf bytes.Buffer
 	data, err := ExportBackup(context.Background(), src, &config.Config{}, ExportOptions{IncludeAudits: true}, &buf)
@@ -198,7 +200,7 @@ func TestImportBackup_DryRun(t *testing.T) {
 
 // TestImportBackup_Normal 验证正常导入：数据写入新 store。
 func TestImportBackup_Normal(t *testing.T) {
-	src := seedBackupStore()
+	src := SeedBackupStore()
 	var buf bytes.Buffer
 	_, err := ExportBackup(context.Background(), src, &config.Config{}, ExportOptions{IncludeAudits: true}, &buf)
 	if err != nil {
@@ -232,7 +234,7 @@ func TestImportBackup_Normal(t *testing.T) {
 
 // TestImportBackup_Overwrite 验证 overwrite：已存在数据被覆盖。
 func TestImportBackup_Overwrite(t *testing.T) {
-	src := seedBackupStore()
+	src := SeedBackupStore()
 	var buf bytes.Buffer
 	_, err := ExportBackup(context.Background(), src, &config.Config{}, ExportOptions{}, &buf)
 	if err != nil {
@@ -268,7 +270,7 @@ func TestImportBackup_Overwrite(t *testing.T) {
 
 // TestExportImport_Roundtrip 验证导出→导入往返：导入到新 store 后数据一致。
 func TestExportImport_Roundtrip(t *testing.T) {
-	src := seedBackupStore()
+	src := SeedBackupStore()
 	var buf bytes.Buffer
 	data, err := ExportBackup(context.Background(), src, &config.Config{}, ExportOptions{IncludeAudits: true}, &buf)
 	if err != nil {
@@ -308,7 +310,7 @@ func TestImportBackup_BadJSON(t *testing.T) {
 
 // TestExportBackup_UnsupportedFormat 验证不支持的格式返回错误。
 func TestExportBackup_UnsupportedFormat(t *testing.T) {
-	st := seedBackupStore()
+	st := SeedBackupStore()
 	var buf bytes.Buffer
 	opts := ExportOptions{Format: "xml"}
 	_, err := ExportBackup(context.Background(), st, &config.Config{}, opts, &buf)
@@ -317,5 +319,102 @@ func TestExportBackup_UnsupportedFormat(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "xml") {
 		t.Fatalf("错误应提及不支持的格式 xml, got: %v", err)
+	}
+}
+
+// =============================================================================
+// NewStoreForCLI / ExportBackupFile / ImportBackupFile
+// =============================================================================
+
+// TestNewStoreForCLI_Memory 验证 cfg.Store 为空时返回 MemoryStore。
+func TestNewStoreForCLI_Memory(t *testing.T) {
+	cfg := &config.Config{Mode: "controlplane"}
+	st, err := NewStoreForCLI(cfg)
+	if err != nil {
+		t.Fatalf("NewStoreForCLI: %v", err)
+	}
+	if st == nil {
+		t.Fatal("store nil")
+	}
+}
+
+// TestExportBackupFile_Happy 验证导出到文件成功。
+func TestExportBackupFile_Happy(t *testing.T) {
+	st := SeedBackupStore()
+	cfg := &config.Config{Mode: "controlplane"}
+	tmpDir := t.TempDir()
+	outPath := filepath.Join(tmpDir, "backup.json")
+	opts := ExportOptions{Format: "json", IncludeAudits: true}
+	data, err := ExportBackupFile(context.Background(), st, cfg, opts, outPath)
+	if err != nil {
+		t.Fatalf("ExportBackupFile: %v", err)
+	}
+	if data.Meta.Counts.Agents != 2 {
+		t.Fatalf("agents=%d, want 2", data.Meta.Counts.Agents)
+	}
+	if _, err := os.Stat(outPath); err != nil {
+		t.Fatalf("backup file not created: %v", err)
+	}
+}
+
+// TestExportBackupFile_BadPath 验证非法路径返回错误。
+func TestExportBackupFile_BadPath(t *testing.T) {
+	st := SeedBackupStore()
+	cfg := &config.Config{Mode: "controlplane"}
+	opts := ExportOptions{Format: "json"}
+	if _, err := ExportBackupFile(context.Background(), st, cfg, opts, "/nonexistent/dir/backup.json"); err == nil {
+		t.Fatal("bad path: want error, got nil")
+	}
+}
+
+// TestImportBackupFile_Happy 验证从文件导入成功。
+func TestImportBackupFile_Happy(t *testing.T) {
+	// 先导出到文件。
+	srcSt := SeedBackupStore()
+	cfg := &config.Config{Mode: "controlplane"}
+	tmpDir := t.TempDir()
+	outPath := filepath.Join(tmpDir, "backup.json")
+	opts := ExportOptions{Format: "json", IncludeAudits: true}
+	if _, err := ExportBackupFile(context.Background(), srcSt, cfg, opts, outPath); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	// 从文件导入到新 store。
+	dstSt := store.NewMemoryStore()
+	data, res, err := ImportBackupFile(context.Background(), dstSt, ImportOptions{}, outPath)
+	if err != nil {
+		t.Fatalf("ImportBackupFile: %v", err)
+	}
+	if data.Meta.Counts.Agents != 2 {
+		t.Fatalf("agents=%d, want 2", data.Meta.Counts.Agents)
+	}
+	if res.Agents != 2 {
+		t.Fatalf("imported agents=%d, want 2", res.Agents)
+	}
+}
+
+// TestImportBackupFile_DryRun 验证 dry-run 只校验不写入。
+func TestImportBackupFile_DryRun(t *testing.T) {
+	srcSt := SeedBackupStore()
+	cfg := &config.Config{Mode: "controlplane"}
+	tmpDir := t.TempDir()
+	outPath := filepath.Join(tmpDir, "backup.json")
+	if _, err := ExportBackupFile(context.Background(), srcSt, cfg, ExportOptions{Format: "json"}, outPath); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	dstSt := store.NewMemoryStore()
+	_, res, err := ImportBackupFile(context.Background(), dstSt, ImportOptions{DryRun: true}, outPath)
+	if err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+	if res.Devices == 0 {
+		t.Fatal("dry-run: devices=0, want >0")
+	}
+}
+
+// TestImportBackupFile_BadPath 验证非法路径返回错误。
+func TestImportBackupFile_BadPath(t *testing.T) {
+	st := store.NewMemoryStore()
+	if _, _, err := ImportBackupFile(context.Background(), st, ImportOptions{}, "/nonexistent/backup.json"); err == nil {
+		t.Fatal("bad path: want error, got nil")
 	}
 }

@@ -1,4 +1,4 @@
-﻿package controlplane
+package controlplane
 
 // backup_api.go 实现 Phase 3 灾备恢复 HTTP handler。
 //
@@ -19,6 +19,7 @@
 //   - 鉴权：需 backup:read/backup:write 权限。
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"net/http"
 	"strings"
 	"time"
@@ -39,23 +40,23 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	var body struct {
 		Type string `json:"type"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	validTypes := map[string]bool{"full": true, "config": true, "devices": true, "tasks": true}
 	if !validTypes[body.Type] {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid type (must be full/config/devices/tasks)"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid type (must be full/config/devices/tasks)"})
 		return
 	}
 	rec := &store.BackupRecord{
@@ -65,13 +66,13 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	created := s.store.CreateBackup(actx.TenantID, rec)
 	if created == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create backup failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create backup failed"})
 		return
 	}
 	// MVP：同步标记为 completed（实际备份文件生成由后台任务异步执行）。
 	created.Status = "completed"
 	created.Size = 0
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handleBackupList 处理 GET /api/v1/backup/list：列出备份记录。
@@ -84,15 +85,15 @@ func (s *Server) handleBackupList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	backups := s.store.ListBackups(actx.TenantID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"backups": backups})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"backups": backups})
 }
 
 // handleBackupRestore 处理 POST /api/v1/backup/restore：恢复备份。
@@ -108,30 +109,30 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	var body struct {
 		ID string `json:"id"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.ID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "id is required"})
 		return
 	}
 	rec, ok := s.store.GetBackup(actx.TenantID, body.ID)
 	if !ok || rec == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "backup not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "backup not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"status":    "accepted",
 		"backup":    rec,
 		"message":   "restore triggered; check backup status for progress",
@@ -145,16 +146,16 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBackupDeleteRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/backup/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backup id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "backup id required"})
 		return
 	}
 	id := rest
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backup id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "backup id required"})
 		return
 	}
 	if r.Method != http.MethodDelete {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if _, ok := s.requirePermission(w, r, "backup:write"); !ok {
@@ -165,13 +166,13 @@ func (s *Server) handleBackupDeleteRouting(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if !s.store.DeleteBackup(actx.TenantID, id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "backup not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "backup not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 

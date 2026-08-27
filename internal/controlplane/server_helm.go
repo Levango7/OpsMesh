@@ -25,6 +25,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"io"
 	"net/http"
 	"strings"
@@ -44,7 +45,7 @@ func (s *Server) handleHelmRepos(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.addHelmRepo(w, r)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -54,11 +55,11 @@ func (s *Server) listHelmRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.helmRepo == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
 		return
 	}
 	repos := s.helmRepo.ListRepos()
-	writeJSON(w, http.StatusOK, map[string]interface{}{"repos": repos})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"repos": repos})
 }
 
 // addHelmRepo 添加 Helm 仓库。body: {name, url, type?}。
@@ -67,7 +68,7 @@ func (s *Server) addHelmRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.helmRepo == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
 		return
 	}
 	var req struct {
@@ -76,11 +77,11 @@ func (s *Server) addHelmRepo(w http.ResponseWriter, r *http.Request) {
 		Type string `json:"type"`
 	}
 	if err := decodeJSONBody(w, r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if req.Name == "" || req.URL == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and url required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name and url required"})
 		return
 	}
 	repo := &helm.ChartRepo{Name: req.Name, URL: req.URL, Type: helm.RepoType(req.Type)}
@@ -90,10 +91,10 @@ func (s *Server) addHelmRepo(w http.ResponseWriter, r *http.Request) {
 		if isHelmCLINotFound(err) {
 			status = http.StatusServiceUnavailable
 		}
-		writeJSON(w, status, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusCreated, repo)
+	paginate.WriteJSON(w, http.StatusCreated, repo)
 }
 
 // handleHelmRepoRouting 分派 /api/v1/helm/repos/{name} 子路径：
@@ -102,7 +103,7 @@ func (s *Server) addHelmRepo(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHelmRepoRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/helm/repos/")
 	if rest == "" {
-		jsonError(w, http.StatusBadRequest, "repo name required")
+		paginate.JSONError(w, http.StatusBadRequest, "repo name required")
 		return
 	}
 	parts := strings.SplitN(rest, "/", 2)
@@ -115,19 +116,19 @@ func (s *Server) handleHelmRepoRouting(w http.ResponseWriter, r *http.Request) {
 	case "":
 		// /api/v1/helm/repos/{name}
 		if r.Method != http.MethodDelete {
-			jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		s.deleteHelmRepo(w, r, name)
 	case "charts":
 		// /api/v1/helm/repos/{name}/charts
 		if r.Method != http.MethodGet {
-			jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		s.listHelmRepoCharts(w, r, name)
 	default:
-		jsonError(w, http.StatusNotFound, "unknown sub-path: "+sub)
+		paginate.JSONError(w, http.StatusNotFound, "unknown sub-path: "+sub)
 	}
 }
 
@@ -137,7 +138,7 @@ func (s *Server) deleteHelmRepo(w http.ResponseWriter, r *http.Request, name str
 		return
 	}
 	if s.helmRepo == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
 		return
 	}
 	if err := s.helmRepo.RemoveRepo(name); err != nil {
@@ -149,10 +150,10 @@ func (s *Server) deleteHelmRepo(w http.ResponseWriter, r *http.Request, name str
 		if strings.Contains(err.Error(), "不存在") {
 			status = http.StatusNotFound
 		}
-		writeJSON(w, status, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "name": name})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted", "name": name})
 }
 
 // listHelmRepoCharts 列出指定仓库的所有 chart。
@@ -161,7 +162,7 @@ func (s *Server) listHelmRepoCharts(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 	if s.helmRepo == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
 		return
 	}
 	charts, err := s.helmRepo.ListCharts(name)
@@ -173,10 +174,10 @@ func (s *Server) listHelmRepoCharts(w http.ResponseWriter, r *http.Request, name
 		if strings.Contains(err.Error(), "不存在") {
 			status = http.StatusNotFound
 		}
-		writeJSON(w, status, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"charts": charts})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"charts": charts})
 }
 
 // ============================================================================
@@ -189,12 +190,12 @@ func (s *Server) handleHelmChartSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.helmRepo == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
 		return
 	}
 	q := r.URL.Query().Get("q")
 	if q == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "q parameter required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "q parameter required"})
 		return
 	}
 	charts, err := s.helmRepo.SearchCharts(q)
@@ -203,10 +204,10 @@ func (s *Server) handleHelmChartSearch(w http.ResponseWriter, r *http.Request) {
 		if isHelmCLINotFound(err) {
 			status = http.StatusServiceUnavailable
 		}
-		writeJSON(w, status, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"charts": charts, "query": q})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"charts": charts, "query": q})
 }
 
 // ============================================================================
@@ -221,7 +222,7 @@ func (s *Server) handleHelmReleases(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.installHelmRelease(w, r)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -231,7 +232,7 @@ func (s *Server) listHelmReleases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.helmRelease == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
 		return
 	}
 	ns := r.URL.Query().Get("namespace")
@@ -249,10 +250,10 @@ func (s *Server) listHelmReleases(w http.ResponseWriter, r *http.Request) {
 		if isHelmCLINotFound(err) {
 			status = http.StatusServiceUnavailable
 		}
-		writeJSON(w, status, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"releases": releases})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"releases": releases})
 }
 
 // installHelmRelease 安装 release。body: {namespace, name, chart, values?}。
@@ -261,7 +262,7 @@ func (s *Server) installHelmRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.helmRelease == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
 		return
 	}
 	var req struct {
@@ -271,11 +272,11 @@ func (s *Server) installHelmRelease(w http.ResponseWriter, r *http.Request) {
 		Values    map[string]interface{} `json:"values"`
 	}
 	if err := decodeJSONBody(w, r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if req.Namespace == "" || req.Name == "" || req.Chart == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace, name, chart required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace, name, chart required"})
 		return
 	}
 	rel, err := s.helmRelease.Install(req.Namespace, req.Name, req.Chart, req.Values)
@@ -284,10 +285,10 @@ func (s *Server) installHelmRelease(w http.ResponseWriter, r *http.Request) {
 		if isHelmCLINotFound(err) {
 			status = http.StatusServiceUnavailable
 		}
-		writeJSON(w, status, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusCreated, rel)
+	paginate.WriteJSON(w, http.StatusCreated, rel)
 }
 
 // handleHelmReleaseRouting 分派 /api/v1/helm/releases/{name} 子路径：
@@ -298,7 +299,7 @@ func (s *Server) installHelmRelease(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHelmReleaseRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/helm/releases/")
 	if rest == "" {
-		jsonError(w, http.StatusBadRequest, "release name required")
+		paginate.JSONError(w, http.StatusBadRequest, "release name required")
 		return
 	}
 	parts := strings.SplitN(rest, "/", 2)
@@ -316,22 +317,22 @@ func (s *Server) handleHelmReleaseRouting(w http.ResponseWriter, r *http.Request
 		case http.MethodDelete:
 			s.uninstallHelmRelease(w, r, name)
 		default:
-			jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	case "rollback":
 		if r.Method != http.MethodPost {
-			jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		s.rollbackHelmRelease(w, r, name)
 	case "history":
 		if r.Method != http.MethodGet {
-			jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		s.helmReleaseHistory(w, r, name)
 	default:
-		jsonError(w, http.StatusNotFound, "unknown sub-path: "+sub)
+		paginate.JSONError(w, http.StatusNotFound, "unknown sub-path: "+sub)
 	}
 }
 
@@ -341,7 +342,7 @@ func (s *Server) upgradeHelmRelease(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 	if s.helmRelease == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
 		return
 	}
 	var req struct {
@@ -350,11 +351,11 @@ func (s *Server) upgradeHelmRelease(w http.ResponseWriter, r *http.Request, name
 		Values    map[string]interface{} `json:"values"`
 	}
 	if err := decodeJSONBody(w, r, &req); err != nil && err != io.EOF {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if req.Namespace == "" || req.Chart == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace and chart required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace and chart required"})
 		return
 	}
 	rel, err := s.helmRelease.Upgrade(req.Namespace, name, req.Chart, req.Values)
@@ -363,10 +364,10 @@ func (s *Server) upgradeHelmRelease(w http.ResponseWriter, r *http.Request, name
 		if isHelmCLINotFound(err) {
 			status = http.StatusServiceUnavailable
 		}
-		writeJSON(w, status, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, rel)
+	paginate.WriteJSON(w, http.StatusOK, rel)
 }
 
 // uninstallHelmRelease 卸载 release。query: ?namespace=xxx。
@@ -375,12 +376,12 @@ func (s *Server) uninstallHelmRelease(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 	if s.helmRelease == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
 		return
 	}
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace query parameter required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace query parameter required"})
 		return
 	}
 	if err := s.helmRelease.Uninstall(ns, name); err != nil {
@@ -388,10 +389,10 @@ func (s *Server) uninstallHelmRelease(w http.ResponseWriter, r *http.Request, na
 		if isHelmCLINotFound(err) {
 			status = http.StatusServiceUnavailable
 		}
-		writeJSON(w, status, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "uninstalled", "name": name})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "uninstalled", "name": name})
 }
 
 // rollbackHelmRelease 回滚 release。body: {namespace, revision?}（revision 省略则回滚到上一版本）。
@@ -400,7 +401,7 @@ func (s *Server) rollbackHelmRelease(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 	if s.helmRelease == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
 		return
 	}
 	var req struct {
@@ -408,11 +409,11 @@ func (s *Server) rollbackHelmRelease(w http.ResponseWriter, r *http.Request, nam
 		Revision  int    `json:"revision"`
 	}
 	if err := decodeJSONBody(w, r, &req); err != nil && err != io.EOF {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if req.Namespace == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace required"})
 		return
 	}
 	rel, err := s.helmRelease.Rollback(req.Namespace, name, req.Revision)
@@ -421,10 +422,10 @@ func (s *Server) rollbackHelmRelease(w http.ResponseWriter, r *http.Request, nam
 		if isHelmCLINotFound(err) {
 			status = http.StatusServiceUnavailable
 		}
-		writeJSON(w, status, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, rel)
+	paginate.WriteJSON(w, http.StatusOK, rel)
 }
 
 // helmReleaseHistory 获取 release 历史。query: ?namespace=xxx。
@@ -433,12 +434,12 @@ func (s *Server) helmReleaseHistory(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 	if s.helmRelease == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "helm not initialized"})
 		return
 	}
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace query parameter required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace query parameter required"})
 		return
 	}
 	history, err := s.helmRelease.History(ns, name)
@@ -447,10 +448,10 @@ func (s *Server) helmReleaseHistory(w http.ResponseWriter, r *http.Request, name
 		if isHelmCLINotFound(err) {
 			status = http.StatusServiceUnavailable
 		}
-		writeJSON(w, status, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"history": history, "name": name})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"history": history, "name": name})
 }
 
 // ============================================================================
@@ -469,14 +470,14 @@ func (s *Server) handleHelmCatalog(w http.ResponseWriter, r *http.Request) {
 	if q != "" {
 		// 搜索模式。
 		items := helm.SearchCatalog(q)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"items": items, "query": q})
+		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"items": items, "query": q})
 		return
 	}
 
 	if category != "" {
 		// 按分类过滤。
 		items := helm.ListByCategory(helm.CatalogCategory(category))
-		writeJSON(w, http.StatusOK, map[string]interface{}{"items": items, "category": category})
+		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"items": items, "category": category})
 		return
 	}
 
@@ -484,7 +485,7 @@ func (s *Server) handleHelmCatalog(w http.ResponseWriter, r *http.Request) {
 	items := helm.ListByCategory("")
 	categories := helm.ListCategories()
 	stats := helm.CatalogStatistics()
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"items":      items,
 		"categories": categories,
 		"stats":      stats,

@@ -28,6 +28,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -64,7 +65,7 @@ const k8sAPITimeout = 30 * time.Second
 //   - 未知 resource 返回 404。
 func (s *Server) handleK8sResourceRouting(w http.ResponseWriter, r *http.Request, clusterID, resource, sub string) {
 	if s.clusterMgr == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "cluster manager not initialized"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "cluster manager not initialized"})
 		return
 	}
 	// 租户兜底：requireAuth 下缺租户头 → 401（防绕过网关伪造租户）。
@@ -73,17 +74,17 @@ func (s *Server) handleK8sResourceRouting(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	// 租户隔离：校验集群归属当前租户，防跨租户操作集群资源（不泄露存在性）。
 	if c := s.store.GetK8sCluster(clusterID); c == nil || c.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
 		return
 	}
 	client, err := s.clusterMgr.GetClient(clusterID)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not connected: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not connected: " + err.Error()})
 		return
 	}
 	switch resource {
@@ -106,7 +107,7 @@ func (s *Server) handleK8sResourceRouting(w http.ResponseWriter, r *http.Request
 	case "health":
 		s.handleClusterHealth(w, r, client)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown resource: " + resource})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown resource: " + resource})
 	}
 }
 
@@ -117,7 +118,7 @@ func (s *Server) handleK8sResourceRouting(w http.ResponseWriter, r *http.Request
 func (s *Server) routePods(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient, sub string) {
 	if sub == "" {
 		if r.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
 		s.handleListPods(w, r, client)
@@ -125,14 +126,14 @@ func (s *Server) routePods(w http.ResponseWriter, r *http.Request, client *k8s.K
 	}
 	parts := strings.SplitN(sub, "/", 3)
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "pod namespace and name required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "pod namespace and name required"})
 		return
 	}
 	ns, name := parts[0], parts[1]
 	// /logs 子路径：获取 pod 日志。
 	if len(parts) == 3 && parts[2] == "logs" {
 		if r.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
 		s.handlePodLogs(w, r, client, ns, name)
@@ -141,13 +142,13 @@ func (s *Server) routePods(w http.ResponseWriter, r *http.Request, client *k8s.K
 	// {ns}/{name} 主路径：当前仅支持 DELETE。
 	if len(parts) == 2 {
 		if r.Method != http.MethodDelete {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
 		s.handleDeletePod(w, r, client, ns, name)
 		return
 	}
-	writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown pod sub-path: " + sub})
+	paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown pod sub-path: " + sub})
 }
 
 // routeDeployments 分发 deployment 子路径：
@@ -158,7 +159,7 @@ func (s *Server) routePods(w http.ResponseWriter, r *http.Request, client *k8s.K
 func (s *Server) routeDeployments(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient, sub string) {
 	if sub == "" {
 		if r.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
 		s.handleListDeployments(w, r, client)
@@ -166,7 +167,7 @@ func (s *Server) routeDeployments(w http.ResponseWriter, r *http.Request, client
 	}
 	parts := strings.SplitN(sub, "/", 3)
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deployment namespace and name required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deployment namespace and name required"})
 		return
 	}
 	ns, name := parts[0], parts[1]
@@ -174,28 +175,28 @@ func (s *Server) routeDeployments(w http.ResponseWriter, r *http.Request, client
 		switch parts[2] {
 		case "scale":
 			if r.Method != http.MethodPost {
-				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+				paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 				return
 			}
 			s.handleScaleDeployment(w, r, client, ns, name)
 			return
 		case "restart":
 			if r.Method != http.MethodPost {
-				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+				paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 				return
 			}
 			s.handleRestartDeployment(w, r, client, ns, name)
 			return
 		case "rollback":
 			if r.Method != http.MethodPost {
-				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+				paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 				return
 			}
 			s.handleRollbackDeployment(w, r, client, ns, name)
 			return
 		}
 	}
-	writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown deployment sub-path: " + sub})
+	paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown deployment sub-path: " + sub})
 }
 
 // handleListNamespaces 处理 GET /api/v1/k8s/clusters/{id}/namespaces：列出所有 namespace。
@@ -208,7 +209,7 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request, cl
 	defer cancel()
 	list, err := client.Clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list namespaces failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list namespaces failed: " + err.Error()})
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(list.Items))
@@ -223,7 +224,7 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request, cl
 			"createdAt": ns.CreationTimestamp.Time.UTC().Format(time.RFC3339),
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"namespaces": out})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"namespaces": out})
 }
 
 // handleListPods 处理 GET /api/v1/k8s/clusters/{id}/pods?namespace={ns}：列出 pod。
@@ -238,7 +239,7 @@ func (s *Server) handleListPods(w http.ResponseWriter, r *http.Request, client *
 	defer cancel()
 	list, err := client.Clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list pods failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list pods failed: " + err.Error()})
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(list.Items))
@@ -261,7 +262,7 @@ func (s *Server) handleListPods(w http.ResponseWriter, r *http.Request, client *
 			"age":       formatAge(pod.CreationTimestamp.Time),
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"pods": out})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"pods": out})
 }
 
 // handlePodLogs 处理 GET /api/v1/k8s/clusters/{id}/pods/{ns}/{name}/logs：获取 pod 日志。
@@ -287,17 +288,17 @@ func (s *Server) handlePodLogs(w http.ResponseWriter, r *http.Request, client *k
 	defer cancel()
 	stream, err := client.Clientset.CoreV1().Pods(ns).GetLogs(name, opts).Stream(ctx)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "get pod logs failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "get pod logs failed: " + err.Error()})
 		return
 	}
 	defer stream.Close()
 	const maxPodLogBytes = 2 << 20 // ：2MB 上限，防超大日志打爆控制面内存
 	data, err := io.ReadAll(io.LimitReader(stream, maxPodLogBytes))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "read pod logs failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "read pod logs failed: " + err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"logs": string(data)})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"logs": string(data)})
 }
 
 // handleDeletePod 处理 DELETE /api/v1/k8s/clusters/{id}/pods/{ns}/{name}：删除 pod。
@@ -311,7 +312,7 @@ func (s *Server) handleDeletePod(w http.ResponseWriter, r *http.Request, client 
 	ctx, cancel := context.WithTimeout(r.Context(), k8sAPITimeout)
 	defer cancel()
 	if err := client.Clientset.CoreV1().Pods(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "delete pod failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "delete pod failed: " + err.Error()})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
@@ -337,7 +338,7 @@ func (s *Server) handleListDeployments(w http.ResponseWriter, r *http.Request, c
 	defer cancel()
 	list, err := client.Clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list deployments failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list deployments failed: " + err.Error()})
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(list.Items))
@@ -354,7 +355,7 @@ func (s *Server) handleListDeployments(w http.ResponseWriter, r *http.Request, c
 			"image":             image,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"deployments": out})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"deployments": out})
 }
 
 // handleScaleDeployment 处理 POST /api/v1/k8s/clusters/{id}/deployments/{ns}/{name}/scale：扩缩容。
@@ -370,20 +371,20 @@ func (s *Server) handleScaleDeployment(w http.ResponseWriter, r *http.Request, c
 		Replicas int32 `json:"replicas"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), k8sAPITimeout)
 	defer cancel()
 	scale, err := client.Clientset.AppsV1().Deployments(ns).GetScale(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "get scale failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "get scale failed: " + err.Error()})
 		return
 	}
 	scale.Spec.Replicas = body.Replicas
 	updated, err := client.Clientset.AppsV1().Deployments(ns).UpdateScale(ctx, name, scale, metav1.UpdateOptions{})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update scale failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "update scale failed: " + err.Error()})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
@@ -395,7 +396,7 @@ func (s *Server) handleScaleDeployment(w http.ResponseWriter, r *http.Request, c
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "k8s_deployment_scale", Target: ns + "/" + name,
 		Detail: fmt.Sprintf("replicas=%d", body.Replicas),
 	})
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"name":     name,
 		"replicas": updated.Spec.Replicas,
 	})
@@ -417,7 +418,7 @@ func (s *Server) handleRestartDeployment(w http.ResponseWriter, r *http.Request,
 	defer cancel()
 	if _, err := client.Clientset.AppsV1().Deployments(ns).Patch(
 		ctx, name, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "restart deployment failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "restart deployment failed: " + err.Error()})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
@@ -429,7 +430,7 @@ func (s *Server) handleRestartDeployment(w http.ResponseWriter, r *http.Request,
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "k8s_deployment_restart", Target: ns + "/" + name,
 		Detail: "restartedAt=" + now,
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "restarted", "restartedAt": now})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "restarted", "restartedAt": now})
 }
 
 // handleRollbackDeployment 处理 POST /api/v1/k8s/clusters/{id}/deployments/{ns}/{name}/rollback：回滚到上一 revision。
@@ -454,21 +455,21 @@ func (s *Server) handleRollbackDeployment(w http.ResponseWriter, r *http.Request
 	// 1. 获取当前 deployment，读取 revision annotation。
 	dep, err := client.Clientset.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "get deployment failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "get deployment failed: " + err.Error()})
 		return
 	}
 	currentRevStr := dep.Annotations["deployment.kubernetes.io/revision"]
 	if currentRevStr == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deployment has no revision annotation"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deployment has no revision annotation"})
 		return
 	}
 	currentRev, err := strconv.ParseInt(currentRevStr, 10, 64)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "parse current revision failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "parse current revision failed: " + err.Error()})
 		return
 	}
 	if currentRev <= 1 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deployment is at initial revision, no history to rollback"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deployment is at initial revision, no history to rollback"})
 		return
 	}
 	targetRev := currentRev - 1
@@ -477,7 +478,7 @@ func (s *Server) handleRollbackDeployment(w http.ResponseWriter, r *http.Request
 	// 2. 列出 ReplicaSet，找到属于此 deployment 且 revision 为 targetRev 的 ReplicaSet。
 	rsList, err := client.Clientset.AppsV1().ReplicaSets(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list replicasets failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list replicasets failed: " + err.Error()})
 		return
 	}
 	var targetRS *appsv1.ReplicaSet
@@ -492,20 +493,20 @@ func (s *Server) handleRollbackDeployment(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if targetRS == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("replicaset with revision %d not found", targetRev)})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("replicaset with revision %d not found", targetRev)})
 		return
 	}
 
 	// 3. 将目标 ReplicaSet 的 template patch 回 deployment（StrategicMergePatch）。
 	templateBytes, err := json.Marshal(targetRS.Spec.Template)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "marshal template failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "marshal template failed: " + err.Error()})
 		return
 	}
 	patch := fmt.Sprintf(`{"spec":{"template":%s}}`, string(templateBytes))
 	if _, err := client.Clientset.AppsV1().Deployments(ns).Patch(
 		ctx, name, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "rollback deployment failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "rollback deployment failed: " + err.Error()})
 		return
 	}
 
@@ -518,7 +519,7 @@ func (s *Server) handleRollbackDeployment(w http.ResponseWriter, r *http.Request
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "k8s_deployment_rollback", Target: ns + "/" + name,
 		Detail: fmt.Sprintf("from revision %d to %d", currentRev, targetRev),
 	})
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"status":       "rolled back",
 		"fromRevision": currentRev,
 		"toRevision":   targetRev,
@@ -537,7 +538,7 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request, clie
 	defer cancel()
 	list, err := client.Clientset.CoreV1().Services(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list services failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list services failed: " + err.Error()})
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(list.Items))
@@ -568,7 +569,7 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request, clie
 			"ports":      ports,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"services": out})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"services": out})
 }
 
 // handleListConfigMaps 处理 GET /api/v1/k8s/clusters/{id}/configmaps?namespace={ns}：列出 configmap。
@@ -583,7 +584,7 @@ func (s *Server) handleListConfigMaps(w http.ResponseWriter, r *http.Request, cl
 	defer cancel()
 	list, err := client.Clientset.CoreV1().ConfigMaps(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list configmaps failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list configmaps failed: " + err.Error()})
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(list.Items))
@@ -599,7 +600,7 @@ func (s *Server) handleListConfigMaps(w http.ResponseWriter, r *http.Request, cl
 			"dataKeys":  keys,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"configmaps": out})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"configmaps": out})
 }
 
 // handleListSecrets 处理 GET /api/v1/k8s/clusters/{id}/secrets?namespace={ns}：列出 secret。
@@ -614,7 +615,7 @@ func (s *Server) handleListSecrets(w http.ResponseWriter, r *http.Request, clien
 	defer cancel()
 	list, err := client.Clientset.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list secrets failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list secrets failed: " + err.Error()})
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(list.Items))
@@ -631,7 +632,7 @@ func (s *Server) handleListSecrets(w http.ResponseWriter, r *http.Request, clien
 			"dataKeys":  keys,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"secrets": out})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"secrets": out})
 }
 
 // handleListNodes 处理 GET /api/v1/k8s/clusters/{id}/nodes：列出 node。
@@ -648,7 +649,7 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request, client 
 	defer cancel()
 	list, err := client.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list nodes failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list nodes failed: " + err.Error()})
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(list.Items))
@@ -694,7 +695,7 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request, client 
 			"memory":     memory.String(),
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"nodes": out})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"nodes": out})
 }
 
 // formatAge 将 K8s 资源的 CreationTimestamp 转为人类可读的"已运行时长"字符串。
@@ -744,7 +745,7 @@ func formatAge(t time.Time) string {
 func (s *Server) routeNodes(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient, sub string) {
 	if sub == "" {
 		if r.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
 		s.handleListNodes(w, r, client)
@@ -754,13 +755,13 @@ func (s *Server) routeNodes(w http.ResponseWriter, r *http.Request, client *k8s.
 	parts := strings.SplitN(sub, "/", 2)
 	if len(parts) == 2 && parts[1] == "metrics" {
 		if r.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
 		s.handleNodeMetrics(w, r, client, parts[0])
 		return
 	}
-	writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown node sub-path: " + sub})
+	paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown node sub-path: " + sub})
 }
 
 // ClusterDashboard 是集群仪表盘汇总响应结构。
@@ -815,7 +816,7 @@ func (s *Server) handleClusterDashboard(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), k8sAPITimeout)
@@ -927,7 +928,7 @@ func (s *Server) handleClusterDashboard(w http.ResponseWriter, r *http.Request, 
 		dash.Storage.UsagePercent = round2(dash.Storage.Used / dash.Storage.Total * 100)
 	}
 
-	writeJSON(w, http.StatusOK, dash)
+	paginate.WriteJSON(w, http.StatusOK, dash)
 }
 
 // handleNodeMetrics 处理 GET /api/v1/k8s/clusters/{id}/nodes/{node}/metrics：节点指标。
@@ -938,7 +939,7 @@ func (s *Server) handleNodeMetrics(w http.ResponseWriter, r *http.Request, clien
 		return
 	}
 	if nodeName == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "node name required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "node name required"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), k8sAPITimeout)
@@ -946,7 +947,7 @@ func (s *Server) handleNodeMetrics(w http.ResponseWriter, r *http.Request, clien
 
 	node, err := client.Clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "get node failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "get node failed: " + err.Error()})
 		return
 	}
 
@@ -997,7 +998,7 @@ func (s *Server) handleNodeMetrics(w http.ResponseWriter, r *http.Request, clien
 		roles = []string{"worker"}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"name":   node.Name,
 		"roles":  roles,
 		"cpu":    ResourceUsage{UsagePercent: cpuPercent, Total: round2(capCPU), Used: round2(usedCPU)},
@@ -1039,7 +1040,7 @@ func (s *Server) handleClusterHealth(w http.ResponseWriter, r *http.Request, cli
 		return
 	}
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), k8sAPITimeout)
@@ -1054,7 +1055,7 @@ func (s *Server) handleClusterHealth(w http.ResponseWriter, r *http.Request, cli
 		health.Checks = append(health.Checks, HealthCheck{
 			Name: "list-nodes", Passed: false, Message: err.Error(),
 		})
-		writeJSON(w, http.StatusOK, health)
+		paginate.WriteJSON(w, http.StatusOK, health)
 		return
 	}
 	for _, n := range nodeList.Items {
@@ -1131,7 +1132,7 @@ func (s *Server) handleClusterHealth(w http.ResponseWriter, r *http.Request, cli
 	}
 	// ComponentStatuses 在新版 K8s 已废弃，可能返回空列表；不视为错误。
 
-	writeJSON(w, http.StatusOK, health)
+	paginate.WriteJSON(w, http.StatusOK, health)
 }
 
 // round2 保留两位小数。

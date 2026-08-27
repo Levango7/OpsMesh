@@ -13,6 +13,7 @@ package controlplane
 //   - 鉴权：需 config:read/config:write 权限（复用 cmdb 领域权限）。
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"net/http"
 	"strconv"
 
@@ -25,7 +26,7 @@ import (
 // 行为：先 SetConfig 保存配置版本，再 CreateTask 下发 file 类型任务写配置文件。
 func (s *Server) handleConfigHotpush(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	caller, ok := s.requirePermission(w, r, "cmdb:write")
@@ -37,7 +38,7 @@ func (s *Server) handleConfigHotpush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body struct {
@@ -49,19 +50,19 @@ func (s *Server) handleConfigHotpush(w http.ResponseWriter, r *http.Request) {
 		Description string `json:"description"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.AgentID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agentID is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "agentID is required"})
 		return
 	}
 	if body.Key == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "key is required"})
 		return
 	}
 	if body.Path == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
 		return
 	}
 	// 1. 保存配置版本到 ConfigStore
@@ -91,7 +92,7 @@ func (s *Server) handleConfigHotpush(w http.ResponseWriter, r *http.Request) {
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "config_hotpush", Target: body.Key, Detail: sanitizeAuditDetail("agent=" + body.AgentID + " path=" + body.Path),
 	})
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"configKey":     body.Key,
 		"configVersion": saved.Version,
 		"taskID":        created.TaskID,
@@ -105,7 +106,7 @@ func (s *Server) handleConfigHotpush(w http.ResponseWriter, r *http.Request) {
 // 行为：保存配置版本，向指定设备批量下发 file 类型任务。
 func (s *Server) handleConfigCanary(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	caller, ok := s.requirePermission(w, r, "cmdb:write")
@@ -117,7 +118,7 @@ func (s *Server) handleConfigCanary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body struct {
@@ -129,23 +130,23 @@ func (s *Server) handleConfigCanary(w http.ResponseWriter, r *http.Request) {
 		Percentage int      `json:"percentage"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if len(body.AgentIDs) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agentIDs is required (non-empty)"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "agentIDs is required (non-empty)"})
 		return
 	}
 	if body.Key == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "key is required"})
 		return
 	}
 	if body.Path == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
 		return
 	}
 	if body.Percentage < 0 || body.Percentage > 100 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "percentage must be between 0 and 100"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "percentage must be between 0 and 100"})
 		return
 	}
 	// 1. 保存配置版本
@@ -181,7 +182,7 @@ func (s *Server) handleConfigCanary(w http.ResponseWriter, r *http.Request) {
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "config_canary", Target: body.Key, Detail: sanitizeAuditDetail("agents=" + strconv.Itoa(len(body.AgentIDs)) + " pct=" + strconv.Itoa(body.Percentage)),
 	})
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"configKey":     body.Key,
 		"configVersion": saved.Version,
 		"percentage":    body.Percentage,
@@ -194,7 +195,7 @@ func (s *Server) handleConfigCanary(w http.ResponseWriter, r *http.Request) {
 // 查询参数：?key=xxx（必填）
 func (s *Server) handleConfigVersions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if _, ok := s.requirePermission(w, r, "cmdb:read"); !ok {
@@ -205,16 +206,16 @@ func (s *Server) handleConfigVersions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	key := r.URL.Query().Get("key")
 	if key == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key query parameter is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "key query parameter is required"})
 		return
 	}
 	history := s.store.ConfigHistory(actx.TenantID, key)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"key":      key,
 		"versions": history,
 	})

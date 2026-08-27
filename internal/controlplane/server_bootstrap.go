@@ -2,6 +2,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"context"
 	"crypto/hmac"
 	"fmt"
@@ -36,7 +37,7 @@ func (s *Server) verifyBootstrapToken(w http.ResponseWriter, r *http.Request) bo
 		got = q
 	}
 	if expected == "" || got == "" || !hmac.Equal([]byte(got), []byte(expected)) {
-		jsonError(w, http.StatusUnauthorized, "bootstrap token required (Authorization: Bearer <secret> or ?token=<secret>)")
+		paginate.JSONError(w, http.StatusUnauthorized, "bootstrap token required (Authorization: Bearer <secret> or ?token=<secret>)")
 		return false
 	}
 	return true
@@ -49,7 +50,7 @@ func (s *Server) verifyBootstrapToken(w http.ResponseWriter, r *http.Request) bo
 // 安全加固：原端点完全开放，现加 token 校验（demo 模式放宽）。
 func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if !s.verifyBootstrapToken(w, r) {
@@ -74,7 +75,7 @@ func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 // 安全加固：原端点完全开放，现加 token 校验（demo 模式放宽）。
 func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if !s.verifyBootstrapToken(w, r) {
@@ -88,18 +89,18 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 	})
 	path, err := os.Executable()
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "cannot resolve agent binary")
+		paginate.JSONError(w, http.StatusInternalServerError, "cannot resolve agent binary")
 		return
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "cannot open agent binary")
+		paginate.JSONError(w, http.StatusInternalServerError, "cannot open agent binary")
 		return
 	}
 	defer f.Close()
 	info, statErr := f.Stat()
 	if statErr != nil {
-		jsonError(w, http.StatusInternalServerError, "cannot stat agent binary")
+		paginate.JSONError(w, http.StatusInternalServerError, "cannot stat agent binary")
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
@@ -115,7 +116,7 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 // body: {"cidrs":["10.30.0.0/24"], "tenantID":"t1"}；cidrs 缺省时回退 --segment-cidr。
 func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -130,7 +131,7 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 		TenantID string   `json:"tenantID"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil && r.ContentLength != 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid JSON: %v", err)})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid JSON: %v", err)})
 		return
 	}
 	cidrs := body.CIDRs
@@ -140,7 +141,7 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 	// 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
 	tenant := actx.TenantID
 	if len(cidrs) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no cidrs provided (body.cidrs or --segment-cidr)"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "no cidrs provided (body.cidrs or --segment-cidr)"})
 		return
 	}
 	// 修复 7：SSRF 校验 advertise URL（仅警告不阻止，控制面常部署内网）。
@@ -159,7 +160,7 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 		for _, cidr := range cidrs {
 			if err := ValidateCIDR(cidr, allowedCIDRs); err != nil {
 				logx.Warn(r.Context(), "autoProvision CIDR 白名单校验失败", "cidr", cidr, "err", err)
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": fmt.Sprintf("CIDR %q not allowed by provision-cidr-whitelist: %v", cidr, err)})
+				paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": fmt.Sprintf("CIDR %q not allowed by provision-cidr-whitelist: %v", cidr, err)})
 				return
 			}
 		}
@@ -169,7 +170,7 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 		Provision:    s.store.Provision,
 	}, s.cfg, cidrs, tenant)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
@@ -177,7 +178,7 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 		TenantID: tenant, UserID: actx.UserID, Action: "auto_provision", Target: strings.Join(cidrs, ","),
 		Detail: fmt.Sprintf("scanned=%d registered=%d provisioned=%d sshPushed=%d", sum.Scanned, sum.Registered, sum.Provisioned, sum.SSHPushed),
 	})
-	writeJSON(w, http.StatusOK, sum)
+	paginate.WriteJSON(w, http.StatusOK, sum)
 }
 
 // autoProvisionLoop 后台周期执行 自动纳管：仅当 --discover && --auto-provision 开启时，

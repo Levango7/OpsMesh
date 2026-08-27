@@ -28,6 +28,9 @@ import (
 	"opsmesh/internal/grpcx"
 	"opsmesh/internal/logx"
 	"opsmesh/internal/otelx"
+
+	grpcserver "opsmesh/internal/controlplane/grpc"
+	"opsmesh/internal/controlplane/paginate"
 	"opsmesh/internal/store"
 	"opsmesh/internal/tlsutil"
 )
@@ -83,21 +86,21 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener, error) {
 	otelInterceptor := otelx.GRPCServerUnaryInterceptor("opsmesh-controlplane")
 	opts = append(opts, grpc.ChainUnaryInterceptor(grpcRecoveryInterceptor, otelInterceptor))
 	gs := grpc.NewServer(opts...)
-	gs.RegisterService(&grpcx.Registration_ServiceDesc, &grpcServerImpl{
-		store:       s.store,
-		requireAuth: s.requireAuth,
-		cfg:         s.cfg,
-		bus:         s.bus,
-		metrics:     s.metrics,
-		cmdb:        s.cmdbHandler,
-		logs:        s.logHandler,
-		srv:         s, // 注入 Server 引用，使 gRPC handler 可发布 SSE 事件
+	gs.RegisterService(&grpcx.Registration_ServiceDesc, &grpcserver.GrpcServerImpl{
+		Store:       s.store,
+		RequireAuth: s.requireAuth,
+		Cfg:         s.cfg,
+		Bus:         s.bus,
+		Metrics:     s.metrics,
+		Cmdb:        s.cmdbHandler,
+		Logs:        s.logHandler,
+		Publisher:   s, // 注入 SSE 事件发布器，使 gRPC handler 可发布 SSE 事件
 		// gRPC agent 身份绑定：按 config.GRPCRequireSignature 启用签名验证。
 		// demo 模式下 config 已强制关闭（cfg.GRPCRequireSignature=false），此处直接透传。
-		requireSignature: s.cfg != nil && s.cfg.GRPCRequireSignature,
+		RequireSignature: s.cfg != nil && s.cfg.GRPCRequireSignature,
 		// 安全加固：传入预共享签名密钥（--grpc-signature-key）。
 		// 非空时 verifyAgentSignature 优先使用此密钥验签，Register 不再下发密钥。
-		signatureKey: func() string {
+		SignatureKey: func() string {
 			if s.cfg != nil {
 				return s.cfg.GRPCSignatureKey
 			}
@@ -173,11 +176,11 @@ func (s *Server) buildFederationServer() (*http.Server, net.Listener, error) {
 			s.handleCreateTask(w, r)
 			return
 		}
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	})
 	mux.HandleFunc("/api/v1/devices", s.handleDevices)
 	srv := &http.Server{
-		Handler:           recoveryMiddleware(s.securityHeadersMiddleware(&jsonErrorMux{inner: mux})),
+		Handler:           recoveryMiddleware(s.securityHeadersMiddleware(&paginate.JSONErrorMux{Inner: mux})),
 		TLSConfig:         tlsCfg,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -196,7 +199,7 @@ func (s *Server) buildMetrics() (*http.Server, net.Listener, error) {
 		if !s.metricsAllowed(r.RemoteAddr) {
 			ctx := logx.WithTrace(r.Context(), "metrics")
 			logx.Warn(ctx, "metrics 访问被拒（不在 CIDR 白名单）", "remote", r.RemoteAddr)
-			jsonError(w, http.StatusForbidden, "metrics access denied")
+			paginate.JSONError(w, http.StatusForbidden, "metrics access denied")
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
@@ -268,7 +271,7 @@ func (s *Server) verifyFederationRequest(r *http.Request) error {
 // 超时保护：健康检查总时长不超过 2 秒，避免探针超时拖垮 K8s 调度。
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	// 2 秒超时保护：探针不应阻塞 K8s 调度。
@@ -277,13 +280,13 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.pingStore(ctx); err != nil {
 		log.Printf("controlplane: healthz store ping 失败: %v", err)
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"status": "unhealthy",
 			"error":  "store unavailable",
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"status": "ok",
 		"checks": map[string]string{"store": "ok"},
 	})
@@ -302,7 +305,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 // 超时保护：同 /healthz，2 秒上限。
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	// 2 秒超时保护。
@@ -311,7 +314,7 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.pingStore(ctx); err != nil {
 		log.Printf("controlplane: readyz store ping 失败: %v", err)
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"status": "not_ready",
 			"reason": "store unavailable",
 		})
@@ -320,13 +323,13 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	// leader 选举检查：非 leader 副本不接写流量（A3 HA 设计）。
 	// MemoryStore 恒为 leader（单实例）；SQLStore 经 leader_lease 表原子抢占。
 	if !s.store.IsLeader() {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"status": "not_ready",
 			"reason": "not leader",
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
 // pingStore 对底层 Store 做轻量连通性检查（健康检查支撑）。

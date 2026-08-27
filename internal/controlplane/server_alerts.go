@@ -6,6 +6,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"context"
 	cryptoRand "crypto/rand"
 	"encoding/hex"
@@ -86,7 +87,7 @@ func (s *Server) notifyLoop(ctx context.Context) {
 // 修复 3：支持 page/pageSize 分页（向后兼容：不传 page 返回全量）。
 func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -98,9 +99,9 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	}
 	alerts := s.store.Alerts(actx.TenantID)
 	// 修复 3：分页（向后兼容：不传 page 返回全量）。
-	page, pageSize := parsePagination(r.URL.Query())
+	page, pageSize := paginate.ParsePagination(r.URL.Query())
 	if page == 0 {
-		writeJSON(w, http.StatusOK, alerts)
+		paginate.WriteJSON(w, http.StatusOK, alerts)
 		return
 	}
 	total := len(alerts)
@@ -112,7 +113,7 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	if end > total {
 		end = total
 	}
-	writeJSON(w, http.StatusOK, paginateResult{
+	paginate.WriteJSON(w, http.StatusOK, paginate.PaginateResult{
 		Data: alerts[start:end], Total: total, Page: page, PageSize: pageSize, HasMore: end < total,
 	})
 }
@@ -125,7 +126,7 @@ func (s *Server) handleAlertRouting(w http.ResponseWriter, r *http.Request) {
 	parts := strings.SplitN(idAndRest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		jsonError(w, http.StatusBadRequest, "alert id required")
+		paginate.JSONError(w, http.StatusBadRequest, "alert id required")
 		return
 	}
 	switch {
@@ -134,7 +135,7 @@ func (s *Server) handleAlertRouting(w http.ResponseWriter, r *http.Request) {
 	case len(parts) == 2 && parts[1] == "silence" && r.Method == http.MethodPost:
 		s.handleSilenceAlert(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
 	}
 }
 
@@ -149,11 +150,11 @@ func (s *Server) handleAckAlert(w http.ResponseWriter, r *http.Request, id strin
 		return
 	}
 	if s.store.Alert(id) == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "alert not found"})
 		return
 	}
 	if !s.store.AckAlert(id, actx.TenantID, actx.UserID) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "alert not found or tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "alert not found or tenant mismatch"})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
@@ -168,7 +169,7 @@ func (s *Server) handleAckAlert(w http.ResponseWriter, r *http.Request, id strin
 		"alertID": id,
 		"action":  "ack",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "acknowledged", "alertID": id})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "acknowledged", "alertID": id})
 }
 
 // handleSilenceAlert 处理 POST /api/v1/alerts/{id}/silence：静默告警（M7）。
@@ -189,7 +190,7 @@ func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id s
 		log.Printf("controlplane: handleSilenceAlert 解析请求体失败: %v", err)
 	}
 	if s.store.Alert(id) == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "alert not found"})
 		return
 	}
 	// 缺省静默 24h（与注释一致）；显式指定 DurationMinutes>0 时覆盖。
@@ -198,7 +199,7 @@ func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id s
 		until = time.Now().Add(time.Duration(body.DurationMinutes) * time.Minute)
 	}
 	if !s.store.SilenceAlert(id, actx.TenantID, actx.UserID, until, body.Comment) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "alert not found or tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "alert not found or tenant mismatch"})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
@@ -213,7 +214,7 @@ func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id s
 		"alertID": id,
 		"action":  "silence",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "silenced", "alertID": id})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "silenced", "alertID": id})
 }
 
 // ============================================================================
@@ -244,7 +245,7 @@ func (s *Server) handleAlertRules(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.createAlertRule(w, r)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -259,9 +260,9 @@ func (s *Server) listAlertRules(w http.ResponseWriter, r *http.Request) {
 	}
 	rules := s.listAlertRulesForTenant(actx.TenantID)
 	// 分页（向后兼容：不传 page 返回全量）。
-	page, pageSize := parsePagination(r.URL.Query())
+	page, pageSize := paginate.ParsePagination(r.URL.Query())
 	if page == 0 {
-		writeJSON(w, http.StatusOK, rules)
+		paginate.WriteJSON(w, http.StatusOK, rules)
 		return
 	}
 	total := len(rules)
@@ -273,7 +274,7 @@ func (s *Server) listAlertRules(w http.ResponseWriter, r *http.Request) {
 	if end > total {
 		end = total
 	}
-	writeJSON(w, http.StatusOK, paginateResult{
+	paginate.WriteJSON(w, http.StatusOK, paginate.PaginateResult{
 		Data: rules[start:end], Total: total, Page: page, PageSize: pageSize, HasMore: end < total,
 	})
 }
@@ -289,18 +290,18 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 	}
 	var rule AlertRule
 	if err := decodeJSONBody(w, r, &rule); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	if rule.Metric == "" || rule.Op == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "metric and op are required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "metric and op are required"})
 		return
 	}
 	// 校验 op 合法。
 	switch rule.Op {
 	case ">", ">=", "<", "<=", "==":
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "op must be one of >, >=, <, <=, =="})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "op must be one of >, >=, <, <=, =="})
 		return
 	}
 	if rule.Severity == "" {
@@ -308,7 +309,7 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 	}
 	ruleBytes := make([]byte, 8)
 	if _, err := cryptoRand.Read(ruleBytes); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate rule ID"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate rule ID"})
 		return
 	}
 	rule.ID = "ar-" + hex.EncodeToString(ruleBytes)
@@ -321,21 +322,21 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "create_alert_rule", Target: rule.ID,
 		Detail: sanitizeAuditDetail(fmt.Sprintf("metric=%s op=%s threshold=%g severity=%s", rule.Metric, rule.Op, rule.Threshold, rule.Severity)),
 	})
-	writeJSON(w, http.StatusCreated, rule)
+	paginate.WriteJSON(w, http.StatusCreated, rule)
 }
 
 // handleAlertRuleRouting 分派 /api/v1/alert-rules/{id} 子路径：DELETE 删除。
 func (s *Server) handleAlertRuleRouting(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/alert-rules/")
 	if id == "" {
-		jsonError(w, http.StatusBadRequest, "alert rule id required")
+		paginate.JSONError(w, http.StatusBadRequest, "alert rule id required")
 		return
 	}
 	switch r.Method {
 	case http.MethodDelete:
 		s.deleteAlertRule(w, r, id)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -349,14 +350,14 @@ func (s *Server) deleteAlertRule(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 	if !s.removeAlertRule(id, actx.TenantID) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found or tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found or tenant mismatch"})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "delete_alert_rule", Target: id,
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
 }
 
 // parseForDurationSecs 把 controlplane.AlertRule.ForDuration 字符串（如 "5m"、"30s"、"1h"）

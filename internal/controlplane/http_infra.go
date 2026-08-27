@@ -2,6 +2,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -42,7 +43,7 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 	if actx.TenantID != "" {
 		// 头非空：若 token 也携带 tenant_id，校验两者一致，防绕过网关伪造租户头。
 		if tokenTenant != "" && tokenTenant != actx.TenantID {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch between X-Tenant-ID header and JWT claims"})
+			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch between X-Tenant-ID header and JWT claims"})
 			return actx, false
 		}
 		return actx, true
@@ -56,7 +57,7 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 		return actx, true
 	}
 	if s.requireAuth {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
 		return actx, false
 	}
 	if s.cfg != nil && s.cfg.Demo {
@@ -68,7 +69,7 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 		return actx, true
 	}
 	// 非生产非 demo 模式：拒绝空租户头，防越权伪造。
-	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing X-Tenant-ID header (tenant context required)"})
+	paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "missing X-Tenant-ID header (tenant context required)"})
 	return actx, false
 }
 

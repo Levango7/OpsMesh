@@ -18,6 +18,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"crypto/aes"
 	"crypto/cipher"
 	cryptoRand "crypto/rand"
@@ -137,7 +138,7 @@ func (s *Server) handleK8sClusters(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleCreateK8sCluster(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -152,12 +153,12 @@ func (s *Server) handleListK8sClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	// 租户隔离：仅返回当前租户的集群。
 	clusters := s.store.ListK8sClusters(actx.TenantID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"clusters": maskK8sClusters(clusters)})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"clusters": maskK8sClusters(clusters)})
 }
 
 // handleCreateK8sCluster 处理 POST /api/v1/k8s/clusters：添加集群。
@@ -178,7 +179,7 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body struct {
@@ -187,17 +188,17 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 		Kubeconfig string `json:"kubeconfig"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.Name == "" || body.Kubeconfig == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and kubeconfig are required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name and kubeconfig are required"})
 		return
 	}
 	// ：kubeconfig 存入 store 前做 AES-GCM 加密，DB 泄露时不直接暴露集群凭据。
 	encrypted, err := s.encryptKubeconfig(body.Kubeconfig)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "kubeconfig encryption failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "kubeconfig encryption failed"})
 		return
 	}
 	c := &store.K8sCluster{
@@ -209,7 +210,7 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 	}
 	// 持久化失败直接返回 500，不再假装保存成功。
 	if err := s.store.SaveK8sCluster(c); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save cluster failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save cluster failed"})
 		return
 	}
 	// 尝试建立 client-go 连接：成功标记 online，失败标记 offline（仍保存配置，用户可后续 test 重试）。
@@ -229,7 +230,7 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: c.TenantID, UserID: caller.ID, Action: "k8s_cluster_create", Target: c.ID, Detail: sanitizeAuditDetail("name=" + c.Name),
 	})
-	writeJSON(w, http.StatusCreated, maskK8sCluster(c))
+	paginate.WriteJSON(w, http.StatusCreated, maskK8sCluster(c))
 }
 
 // handleK8sClusterRouting 分派 /api/v1/k8s/clusters/{id} 子路径：
@@ -245,7 +246,7 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleK8sClusterRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/k8s/clusters/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "cluster id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "cluster id required"})
 		return
 	}
 	// 按 / 切分：[id] / [id, resource] / [id, resource, sub...]。
@@ -253,7 +254,7 @@ func (s *Server) handleK8sClusterRouting(w http.ResponseWriter, r *http.Request)
 	parts := strings.SplitN(rest, "/", 3)
 	id := parts[0]
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "cluster id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "cluster id required"})
 		return
 	}
 	// 仅 /{id}：集群本身管理（DELETE）。
@@ -262,7 +263,7 @@ func (s *Server) handleK8sClusterRouting(w http.ResponseWriter, r *http.Request)
 		case http.MethodDelete:
 			s.handleDeleteK8sCluster(w, r, id)
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 		return
 	}
@@ -294,17 +295,17 @@ func (s *Server) handleDeleteK8sCluster(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	existing := s.store.GetK8sCluster(id)
 	// 租户隔离：集群不存在或归属其他租户时按 not found 拒绝（不泄露存在性）。
 	if existing == nil || existing.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
 		return
 	}
 	if !s.store.DeleteK8sCluster(id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
 		return
 	}
 	// 同步移除 ClusterManager 中的连接（若存在）。
@@ -327,7 +328,7 @@ func (s *Server) handleDeleteK8sCluster(w http.ResponseWriter, r *http.Request, 
 //   - 失败 → 更新 store 中 Status 为 offline，返回 offline + 错误信息。
 func (s *Server) handleTestK8sCluster(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if _, ok := s.requirePermission(w, r, "k8s:read"); !ok {
@@ -339,25 +340,25 @@ func (s *Server) handleTestK8sCluster(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	existing := s.store.GetK8sCluster(id)
 	// 租户隔离：集群不存在或归属其他租户时按 not found 拒绝。
 	if existing == nil || existing.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
 		return
 	}
 	// ClusterManager 未初始化时（理论上不会，NewServer 必构造）返回 500。
 	if s.clusterMgr == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "cluster manager not initialized"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "cluster manager not initialized"})
 		return
 	}
 	// ：store 中 kubeconfig 为加密存储，TestCluster 需明文解析 REST config，先解密。
 	plain, err := s.decryptKubeconfig(existing.Kubeconfig)
 	if err != nil {
 		logx.Error(r.Context(), "K8s 集群 kubeconfig 解密失败", err, "clusterID", id)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "kubeconfig decryption failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "kubeconfig decryption failed"})
 		return
 	}
 	err = s.clusterMgr.TestCluster(id, plain)
@@ -366,7 +367,7 @@ func (s *Server) handleTestK8sCluster(w http.ResponseWriter, r *http.Request, id
 		_ = s.store.SaveK8sCluster(existing) // existing.Kubeconfig 仍为加密值，直接回写
 		// 原始错误可能泄漏 API Server 地址等内部信息，仅记日志，前端给通用文案。
 		logx.Error(r.Context(), "K8s 集群测试连接失败", err, "clusterID", id)
-		writeJSON(w, http.StatusOK, map[string]string{
+		paginate.WriteJSON(w, http.StatusOK, map[string]string{
 			"status":  "offline",
 			"message": "连接失败（详见控制面日志）",
 		})
@@ -377,7 +378,7 @@ func (s *Server) handleTestK8sCluster(w http.ResponseWriter, r *http.Request, id
 	if err := s.store.SaveK8sCluster(existing); err != nil {
 		logx.Error(r.Context(), "K8s 集群状态回写失败", err, "clusterID", id)
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{
 		"status":  "online",
 		"message": "连接正常",
 	})

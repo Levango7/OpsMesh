@@ -1,4 +1,4 @@
-﻿package controlplane
+package controlplane
 
 // script.go 实现 Phase 5 自定义脚本 HTTP handler（CRUD + 执行 + 执行记录）。
 //
@@ -21,6 +21,7 @@
 //     MVP 实现仅记录执行记录（不下发实际任务，避免无 agent 时报错）。
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"net/http"
 	"strings"
 	"time"
@@ -55,7 +56,7 @@ func (s *Server) handleScripts(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleCreateScript(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -69,11 +70,11 @@ func (s *Server) handleListScripts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	scripts := s.store.ListScripts(actx.TenantID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"scripts": scripts})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"scripts": scripts})
 }
 
 // handleCreateScript 处理 POST /api/v1/scripts：创建脚本。
@@ -87,24 +88,24 @@ func (s *Server) handleCreateScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.Script
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
 	if body.Content == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "content is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "content is required"})
 		return
 	}
 	if body.Language != "" && body.Language != "shell" && body.Language != "python" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "language must be shell or python"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "language must be shell or python"})
 		return
 	}
 	// L1 输入校验：timeoutSec clamp 至 [1,600] 秒。
@@ -115,13 +116,13 @@ func (s *Server) handleCreateScript(w http.ResponseWriter, r *http.Request) {
 	body.Enabled = true
 	created := s.store.CreateScript(actx.TenantID, &body)
 	if created == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create script failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create script failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "script_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handleScriptRouting 分派 /api/v1/scripts/{id} 子路径：
@@ -133,13 +134,13 @@ func (s *Server) handleCreateScript(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleScriptRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/scripts/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "script id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "script id required"})
 		return
 	}
 	parts := strings.SplitN(rest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "script id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "script id required"})
 		return
 	}
 	if len(parts) == 1 {
@@ -151,7 +152,7 @@ func (s *Server) handleScriptRouting(w http.ResponseWriter, r *http.Request) {
 		case http.MethodDelete:
 			s.handleDeleteScript(w, r, id)
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 		return
 	}
@@ -162,7 +163,7 @@ func (s *Server) handleScriptRouting(w http.ResponseWriter, r *http.Request) {
 	case "executions":
 		s.handleScriptExecutions(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
 	}
 }
 
@@ -176,15 +177,15 @@ func (s *Server) handleGetScript(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	sc, ok := s.store.GetScript(actx.TenantID, id)
 	if !ok || sc == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, sc)
+	paginate.WriteJSON(w, http.StatusOK, sc)
 }
 
 // handleUpdateScript 处理 PUT /api/v1/scripts/{id}：更新脚本。
@@ -198,12 +199,12 @@ func (s *Server) handleUpdateScript(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.Script
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	body.ID = id
@@ -211,13 +212,13 @@ func (s *Server) handleUpdateScript(w http.ResponseWriter, r *http.Request, id s
 	body.TimeoutSec = clampScriptTimeout(body.TimeoutSec)
 	updated, ok := s.store.UpdateScript(actx.TenantID, &body)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "script_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // handleDeleteScript 处理 DELETE /api/v1/scripts/{id}：删除脚本。
@@ -231,17 +232,17 @@ func (s *Server) handleDeleteScript(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if !s.store.DeleteScript(actx.TenantID, id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "script_delete", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // handleScriptExecute 处理 POST /api/v1/scripts/{id}/execute：执行脚本。
@@ -257,18 +258,18 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	sc, ok := s.store.GetScript(actx.TenantID, id)
 	if !ok || sc == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
 		return
 	}
 	// L1 输入校验：禁用脚本拒绝执行，返回 409 Conflict。
 	// 已禁用脚本不应被下发到 agent，避免误触发；启用需先 POST /enable。
 	if !sc.Enabled {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "script is disabled, enable it before execution"})
+		paginate.WriteJSON(w, http.StatusConflict, map[string]string{"error": "script is disabled, enable it before execution"})
 		return
 	}
 	var body struct {
@@ -278,7 +279,7 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 	// 请求体可选（GET 也允许，但 POST 推荐 JSON 体）。
 	_ = decodeJSONBody(w, r, &body)
 	if body.DeviceID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
 
@@ -292,7 +293,7 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 	}
 	created := s.store.CreateTask(task)
 	if created == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create execution task"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create execution task"})
 		return
 	}
 
@@ -301,7 +302,7 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 	exec := s.store.RecordScriptExecution(actx.TenantID, id, body.DeviceID, "pending",
 		"task created: "+created.TaskID, "", now, nil)
 	if exec == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to record execution"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to record execution"})
 		return
 	}
 
@@ -311,7 +312,7 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 		Detail: sanitizeAuditDetail("deviceID=" + body.DeviceID + " taskID=" + created.TaskID),
 	})
 
-	writeJSON(w, http.StatusAccepted, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{
 		"executionID": exec.ID,
 		"taskID":      created.TaskID,
 		"scriptID":    id,
@@ -332,10 +333,10 @@ func (s *Server) handleScriptExecutions(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	executions := s.store.ListScriptExecutions(actx.TenantID, id)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"executions": executions})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"executions": executions})
 }
 

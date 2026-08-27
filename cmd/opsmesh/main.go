@@ -15,6 +15,7 @@ import (
 	"opsmesh/internal/agent"
 	"opsmesh/internal/config"
 	"opsmesh/internal/controlplane"
+	"opsmesh/internal/controlplane/backup"
 	"opsmesh/internal/version"
 )
 
@@ -249,13 +250,13 @@ func runBackup() int {
 		return 1
 	}
 
-	st, err := controlplane.NewStoreForCLI(cfg)
+	st, err := backup.NewStoreForCLI(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[backup] Store 初始化失败: %v\n", err)
 		return 1
 	}
 
-	opts := controlplane.ExportOptions{
+	opts := backup.ExportOptions{
 		Format:          *format,
 		IncludeConfig:   *includeConfig,
 		IncludeAudits:   *includeAudits,
@@ -263,7 +264,7 @@ func runBackup() int {
 		AlertWindowDays: *alertWindowDays,
 		AuditWindowDays: *auditWindowDays,
 	}
-	data, err := controlplane.ExportBackupFile(context.Background(), st, cfg, opts, *output)
+	data, err := backup.ExportBackupFile(context.Background(), st, cfg, opts, *output)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[backup] 导出失败: %v\n", err)
 		return 1
@@ -322,17 +323,17 @@ func runRestore() int {
 		return 1
 	}
 
-	st, err := controlplane.NewStoreForCLI(cfg)
+	st, err := backup.NewStoreForCLI(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[restore] Store 初始化失败: %v\n", err)
 		return 1
 	}
 
-	opts := controlplane.ImportOptions{
+	opts := backup.ImportOptions{
 		DryRun:    *dryRun,
 		Overwrite: *overwrite,
 	}
-	_, res, err := controlplane.ImportBackupFile(context.Background(), st, opts, *input)
+	_, res, err := backup.ImportBackupFile(context.Background(), st, opts, *input)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[restore] 导入失败: %v\n", err)
 		return 1

@@ -18,7 +18,7 @@
 //     导出时明文落盘，备份文件须按密钥管理（加密存储/受限访问）；
 //   - users.PasswordHash 为 bcrypt 哈希（json:"-" 不序列化），导出/导入均不携带密码哈希，
 //     restore 后用户密码需重置（导入用户记录但密码为空，登录会失败 → 须管理员重置）。
-package controlplane
+package backup
 
 import (
 	"bufio"
@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"opsmesh/internal/config"
+	"opsmesh/internal/controlplane/factory"
 	"opsmesh/internal/events"
 	"opsmesh/internal/logx"
 	"opsmesh/internal/proto"
@@ -39,7 +40,7 @@ import (
 	"opsmesh/internal/version"
 )
 
-// NewStoreForCLI 为 backup/restore 等 CLI 子命令初始化 Store（复用控制面 selectStore 逻辑）。
+// NewStoreForCLI 为 backup/restore 等 CLI 子命令初始化 Store（复用控制面 SelectStore 逻辑）。
 //
 // 与 NewServer 不同：不启动 HTTP/gRPC/metrics，仅初始化持久化后端后返回，
 // 供短生命周期 CLI 命令（backup/restore）直接读写 Store。
@@ -48,7 +49,7 @@ import (
 // 避免 backup 误读空 memory store 产出空备份。
 func NewStoreForCLI(cfg *config.Config) (store.Store, error) {
 	bus := events.New(cfg.EventBus, cfg.KafkaBrokers, cfg.KafkaTopic)
-	return selectStore(cfg, bus)
+	return factory.SelectStore(cfg, bus)
 }
 
 // 默认时间窗（天）。
@@ -155,7 +156,7 @@ type ImportResult struct {
 //
 // 参数：
 //   - ctx：上下文（目前仅用于日志，未来可加超时/取消）；
-//   - st：Store 读取源（复用控制面 selectStore 初始化结果）；
+//   - st：Store 读取源（复用控制面 SelectStore 初始化结果）；
 //   - cfg：运行配置（opts.IncludeConfig=true 时写入 BackupData.Config）；
 //   - opts：导出选项；
 //   - w：输出目标（文件/stdout）。
@@ -563,7 +564,7 @@ func writeSQLDump(data *BackupData, w io.Writer) error {
 	return bw.Flush()
 }
 
-// sqlStr 把字符串转义为 SQL 字面量（单引号包裹，内部单引号转义为 ”）。
+// sqlStr 把字符串转义为 SQL 字面量（单引号包裹，内部单引号转义为 ''）。
 func sqlStr(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }

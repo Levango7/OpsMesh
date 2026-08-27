@@ -20,6 +20,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"errors"
 	"fmt"
 	"net/http"
@@ -218,7 +219,7 @@ func (s *Server) handleQuotas(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		s.listQuotas(w, r)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -229,7 +230,7 @@ func (s *Server) handleQuotas(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleQuotaRouting(w http.ResponseWriter, r *http.Request) {
 	tenantID := strings.TrimPrefix(r.URL.Path, "/api/v1/quotas/")
 	if tenantID == "" {
-		jsonError(w, http.StatusBadRequest, "tenantID required")
+		paginate.JSONError(w, http.StatusBadRequest, "tenantID required")
 		return
 	}
 	switch r.Method {
@@ -240,7 +241,7 @@ func (s *Server) handleQuotaRouting(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		s.deleteQuota(w, r, tenantID)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -256,15 +257,15 @@ func (s *Server) listQuotas(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.quotaMgr == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"enabled": false, "quotas": []interface{}{}})
+		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"enabled": false, "quotas": []interface{}{}})
 		return
 	}
 	usage, err := s.quotaMgr.Usage(actx.TenantID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"enabled": s.quotaMgr.Enabled(),
 		"current": usage,
 	})
@@ -282,19 +283,19 @@ func (s *Server) getQuota(w http.ResponseWriter, r *http.Request, tenantID strin
 	}
 	// 租户隔离：非 admin 用户仅能查看自己租户的配额。
 	if actx.TenantID != tenantID && !s.isAdmin(actx) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cannot view other tenant quota"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "cannot view other tenant quota"})
 		return
 	}
 	if s.quotaMgr == nil {
-		writeJSON(w, http.StatusOK, &QuotaUsage{Quota: &store.QuotaConfig{}})
+		paginate.WriteJSON(w, http.StatusOK, &QuotaUsage{Quota: &store.QuotaConfig{}})
 		return
 	}
 	usage, err := s.quotaMgr.Usage(tenantID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, usage)
+	paginate.WriteJSON(w, http.StatusOK, usage)
 }
 
 // setQuota 设置租户配额（PUT /api/v1/quotas/{tenantID}）。
@@ -308,25 +309,25 @@ func (s *Server) setQuota(w http.ResponseWriter, r *http.Request, tenantID strin
 		return
 	}
 	if !s.isAdmin(actx) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required to set quota"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required to set quota"})
 		return
 	}
 	var cfg store.QuotaConfig
 	if err := decodeJSONBody(w, r, &cfg); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid quota config: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid quota config: " + err.Error()})
 		return
 	}
 	// 校验非负（0=不限，正数为上限）。
 	if cfg.MaxDevices < 0 || cfg.MaxTasks < 0 || cfg.MaxAlerts < 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "quota values must be non-negative (0=unlimited)"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "quota values must be non-negative (0=unlimited)"})
 		return
 	}
 	if s.quotaMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "quota manager not enabled"})
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "quota manager not enabled"})
 		return
 	}
 	if err := s.quotaMgr.SetQuota(tenantID, &cfg); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	// 记审计日志（携带 trace_id）。
@@ -334,7 +335,7 @@ func (s *Server) setQuota(w http.ResponseWriter, r *http.Request, tenantID strin
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "set_quota", Target: tenantID,
 		Detail: fmt.Sprintf("maxDevices=%d maxTasks=%d maxAlerts=%d", cfg.MaxDevices, cfg.MaxTasks, cfg.MaxAlerts),
 	})
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"tenantID":  tenantID,
 		"quota":     &cfg,
 		"updatedAt": "now",
@@ -352,22 +353,22 @@ func (s *Server) deleteQuota(w http.ResponseWriter, r *http.Request, tenantID st
 		return
 	}
 	if !s.isAdmin(actx) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required to delete quota"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required to delete quota"})
 		return
 	}
 	if s.quotaMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "quota manager not enabled"})
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "quota manager not enabled"})
 		return
 	}
 	if err := s.quotaMgr.SetQuota(tenantID, nil); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "delete_quota", Target: tenantID,
 		Detail: "quota cleared, fallback to default",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{
 		"tenantID": tenantID,
 		"status":   "cleared",
 	})

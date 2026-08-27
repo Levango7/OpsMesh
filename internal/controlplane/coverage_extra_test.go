@@ -15,19 +15,21 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"opsmesh/internal/alertengine"
 	"opsmesh/internal/config"
+	"opsmesh/internal/controlplane/factory"
 	"opsmesh/internal/grpcx"
 	"opsmesh/internal/k8s"
 	"opsmesh/internal/logstore"
 	"opsmesh/internal/metrics"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
+
+	grpcserver "opsmesh/internal/controlplane/grpc"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -817,103 +819,6 @@ func TestGrpcRecoveryInterceptor_Normal(t *testing.T) {
 }
 
 // =============================================================================
-// backup.go — NewStoreForCLI / ExportBackupFile / ImportBackupFile
-// =============================================================================
-
-// TestNewStoreForCLI_Memory 验证 cfg.Store 为空时返回 MemoryStore。
-func TestNewStoreForCLI_Memory(t *testing.T) {
-	cfg := &config.Config{Mode: "controlplane"}
-	st, err := NewStoreForCLI(cfg)
-	if err != nil {
-		t.Fatalf("NewStoreForCLI: %v", err)
-	}
-	if st == nil {
-		t.Fatal("store nil")
-	}
-}
-
-// TestExportBackupFile_Happy 验证导出到文件成功。
-func TestExportBackupFile_Happy(t *testing.T) {
-	st := seedBackupStore()
-	cfg := &config.Config{Mode: "controlplane"}
-	tmpDir := t.TempDir()
-	outPath := filepath.Join(tmpDir, "backup.json")
-	opts := ExportOptions{Format: "json", IncludeAudits: true}
-	data, err := ExportBackupFile(context.Background(), st, cfg, opts, outPath)
-	if err != nil {
-		t.Fatalf("ExportBackupFile: %v", err)
-	}
-	if data.Meta.Counts.Agents != 2 {
-		t.Fatalf("agents=%d, want 2", data.Meta.Counts.Agents)
-	}
-	if _, err := os.Stat(outPath); err != nil {
-		t.Fatalf("backup file not created: %v", err)
-	}
-}
-
-// TestExportBackupFile_BadPath 验证非法路径返回错误。
-func TestExportBackupFile_BadPath(t *testing.T) {
-	st := seedBackupStore()
-	cfg := &config.Config{Mode: "controlplane"}
-	opts := ExportOptions{Format: "json"}
-	if _, err := ExportBackupFile(context.Background(), st, cfg, opts, "/nonexistent/dir/backup.json"); err == nil {
-		t.Fatal("bad path: want error, got nil")
-	}
-}
-
-// TestImportBackupFile_Happy 验证从文件导入成功。
-func TestImportBackupFile_Happy(t *testing.T) {
-	// 先导出到文件。
-	srcSt := seedBackupStore()
-	cfg := &config.Config{Mode: "controlplane"}
-	tmpDir := t.TempDir()
-	outPath := filepath.Join(tmpDir, "backup.json")
-	opts := ExportOptions{Format: "json", IncludeAudits: true}
-	if _, err := ExportBackupFile(context.Background(), srcSt, cfg, opts, outPath); err != nil {
-		t.Fatalf("export: %v", err)
-	}
-	// 从文件导入到新 store。
-	dstSt := store.NewMemoryStore()
-	data, res, err := ImportBackupFile(context.Background(), dstSt, ImportOptions{}, outPath)
-	if err != nil {
-		t.Fatalf("ImportBackupFile: %v", err)
-	}
-	if data.Meta.Counts.Agents != 2 {
-		t.Fatalf("agents=%d, want 2", data.Meta.Counts.Agents)
-	}
-	if res.Agents != 2 {
-		t.Fatalf("imported agents=%d, want 2", res.Agents)
-	}
-}
-
-// TestImportBackupFile_DryRun 验证 dry-run 只校验不写入。
-func TestImportBackupFile_DryRun(t *testing.T) {
-	srcSt := seedBackupStore()
-	cfg := &config.Config{Mode: "controlplane"}
-	tmpDir := t.TempDir()
-	outPath := filepath.Join(tmpDir, "backup.json")
-	if _, err := ExportBackupFile(context.Background(), srcSt, cfg, ExportOptions{Format: "json"}, outPath); err != nil {
-		t.Fatalf("export: %v", err)
-	}
-	dstSt := store.NewMemoryStore()
-	_, res, err := ImportBackupFile(context.Background(), dstSt, ImportOptions{DryRun: true}, outPath)
-	if err != nil {
-		t.Fatalf("dry-run: %v", err)
-	}
-	if res.Devices == 0 {
-		t.Fatal("dry-run: devices=0, want >0")
-	}
-}
-
-// TestImportBackupFile_BadPath 验证非法路径返回错误。
-func TestImportBackupFile_BadPath(t *testing.T) {
-	st := store.NewMemoryStore()
-	if _, _, err := ImportBackupFile(context.Background(), st, ImportOptions{}, "/nonexistent/backup.json"); err == nil {
-		t.Fatal("bad path: want error, got nil")
-	}
-}
-
-// =============================================================================
 // server_batch.go — cleanupDoneBatches / handleCanaryStatus happy
 // =============================================================================
 
@@ -1011,7 +916,7 @@ func TestHandleCanaryStatus_TenantMismatch(t *testing.T) {
 func TestReportLogs_Happy(t *testing.T) {
 	st := store.NewMemoryStore().WithDemo(true)
 	st.Register(&proto.AgentInfo{AgentID: "agent-1", Segment: "seg-a", TenantID: "t1"})
-	srvImpl := &grpcServerImpl{store: st, requireAuth: false}
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: false}
 
 	req := &grpcx.ReportLogsReq{
 		Report: proto.LogReport{
@@ -1034,7 +939,7 @@ func TestReportLogs_Happy(t *testing.T) {
 // TestReportLogs_NilReq 验证 nil 请求返回 InvalidArgument。
 func TestReportLogs_NilReq(t *testing.T) {
 	st := store.NewMemoryStore().WithDemo(true)
-	srvImpl := &grpcServerImpl{store: st, requireAuth: false}
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: false}
 	_, err := srvImpl.ReportLogs(context.Background(), nil)
 	if err == nil {
 		t.Fatal("nil req: want error, got nil")
@@ -1048,7 +953,7 @@ func TestReportLogs_NilReq(t *testing.T) {
 // TestReportLogs_EmptyAgentID 验证空 agentID 返回 InvalidArgument。
 func TestReportLogs_EmptyAgentID(t *testing.T) {
 	st := store.NewMemoryStore().WithDemo(true)
-	srvImpl := &grpcServerImpl{store: st, requireAuth: false}
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: false}
 	req := &grpcx.ReportLogsReq{
 		Report: proto.LogReport{AgentID: "", LogName: "test"},
 	}
@@ -1063,7 +968,7 @@ func TestReportLogs_WithLogHandler(t *testing.T) {
 	st := store.NewMemoryStore().WithDemo(true)
 	st.Register(&proto.AgentInfo{AgentID: "agent-2", Segment: "seg-a", TenantID: "t1"})
 	ls := logstore.NewHandler(logstore.NewMemory(100))
-	srvImpl := &grpcServerImpl{store: st, requireAuth: false, logs: ls}
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: false, Logs: ls}
 
 	req := &grpcx.ReportLogsReq{
 		Report: proto.LogReport{
@@ -1096,13 +1001,13 @@ func TestHandleDeviceMetrics_MethodNotAllowed(t *testing.T) {
 }
 
 // =============================================================================
-// server_factory.go — selectStore / newDeployHandler / newOrchestrationHandler / newLogHandler
+// server_factory.go — SelectStore / newDeployHandler / newOrchestrationHandler / newLogHandler
 // =============================================================================
 
 // TestSelectStore_MySQLInvalidDSN 验证 mysql 无效 DSN 返回错误。
 func TestSelectStore_MySQLInvalidDSN(t *testing.T) {
 	cfg := &config.Config{Store: "mysql", MySQLDSN: "invalid-dsn"}
-	_, err := selectStore(cfg, nil)
+	_, err := factory.SelectStore(cfg, nil)
 	if err == nil {
 		t.Fatal("invalid DSN: want error, got nil")
 	}
@@ -1111,7 +1016,7 @@ func TestSelectStore_MySQLInvalidDSN(t *testing.T) {
 // TestNewLogHandler_Loki 验证 loki 后端构造。
 func TestNewLogHandler_Loki(t *testing.T) {
 	cfg := &config.Config{LogStore: "loki", LokiEndpoint: "http://loki:3100"}
-	h := newLogHandler(store.NewMemoryStore(), cfg)
+	h := factory.NewLogHandler(store.NewMemoryStore(), cfg)
 	if h == nil {
 		t.Fatal("handler nil")
 	}
@@ -1120,7 +1025,7 @@ func TestNewLogHandler_Loki(t *testing.T) {
 // TestNewLogHandler_ES 验证 es 后端构造。
 func TestNewLogHandler_ES(t *testing.T) {
 	cfg := &config.Config{LogStore: "es", ESEndpoint: "http://es:9200", ESIndex: "opsmesh-logs"}
-	h := newLogHandler(store.NewMemoryStore(), cfg)
+	h := factory.NewLogHandler(store.NewMemoryStore(), cfg)
 	if h == nil {
 		t.Fatal("handler nil")
 	}
@@ -1296,8 +1201,8 @@ func TestHandleSecretsTest_EmptyAddr(t *testing.T) {
 // TestCheckAgentTenant_RequireAuthNoTenant 验证 requireAuth=true 且无租户头返回错误。
 func TestCheckAgentTenant_RequireAuthNoTenant(t *testing.T) {
 	st := store.NewMemoryStore().WithDemo(true)
-	srvImpl := &grpcServerImpl{store: st, requireAuth: true}
-	err := srvImpl.checkAgentTenant(context.Background(), "a1")
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: true}
+	err := srvImpl.CheckAgentTenant(context.Background(), "a1")
 	if err == nil {
 		t.Fatal("require auth no tenant: want error, got nil")
 	}
@@ -1307,11 +1212,11 @@ func TestCheckAgentTenant_RequireAuthNoTenant(t *testing.T) {
 func TestCheckAgentTenant_RequireAuthCrossTenant(t *testing.T) {
 	st := store.NewMemoryStore().WithDemo(true)
 	st.Register(&proto.AgentInfo{AgentID: "a1", Segment: "seg-a", TenantID: "t1"})
-	srvImpl := &grpcServerImpl{store: st, requireAuth: true}
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: true}
 	// 构造带 t2 租户的 incoming context。
 	md := metadata.Pairs("x-tenant-id", "t2")
 	ctx := metadata.NewIncomingContext(context.Background(), md)
-	err := srvImpl.checkAgentTenant(ctx, "a1")
+	err := srvImpl.CheckAgentTenant(ctx, "a1")
 	if err == nil {
 		t.Fatal("cross tenant: want error, got nil")
 	}
@@ -1321,10 +1226,10 @@ func TestCheckAgentTenant_RequireAuthCrossTenant(t *testing.T) {
 func TestCheckAgentTenant_RequireAuthSameTenant(t *testing.T) {
 	st := store.NewMemoryStore().WithDemo(true)
 	st.Register(&proto.AgentInfo{AgentID: "a1", Segment: "seg-a", TenantID: "t1"})
-	srvImpl := &grpcServerImpl{store: st, requireAuth: true}
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: true}
 	md := metadata.Pairs("x-tenant-id", "t1")
 	ctx := metadata.NewIncomingContext(context.Background(), md)
-	if err := srvImpl.checkAgentTenant(ctx, "a1"); err != nil {
+	if err := srvImpl.CheckAgentTenant(ctx, "a1"); err != nil {
 		t.Fatalf("same tenant: %v", err)
 	}
 }
@@ -1332,10 +1237,10 @@ func TestCheckAgentTenant_RequireAuthSameTenant(t *testing.T) {
 // TestCheckAgentTenant_RequireAuthAgentNotExist 验证 requireAuth=true 且 agent 不存在时放行。
 func TestCheckAgentTenant_RequireAuthAgentNotExist(t *testing.T) {
 	st := store.NewMemoryStore().WithDemo(true)
-	srvImpl := &grpcServerImpl{store: st, requireAuth: true}
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: true}
 	md := metadata.Pairs("x-tenant-id", "t1")
 	ctx := metadata.NewIncomingContext(context.Background(), md)
-	if err := srvImpl.checkAgentTenant(ctx, "nope"); err != nil {
+	if err := srvImpl.CheckAgentTenant(ctx, "nope"); err != nil {
 		t.Fatalf("agent not exist: %v", err)
 	}
 }
@@ -1768,7 +1673,7 @@ func TestEvaluateAnomalyForDevice_WithMetrics(t *testing.T) {
 
 func TestNewDeployHandler_MemoryStore(t *testing.T) {
 	st := store.NewMemoryStore()
-	h := newDeployHandler(st)
+	h := factory.NewDeployHandler(st)
 	if h == nil {
 		t.Fatal("nil handler")
 	}
@@ -1776,7 +1681,7 @@ func TestNewDeployHandler_MemoryStore(t *testing.T) {
 
 func TestNewOrchestrationHandler_MemoryStore(t *testing.T) {
 	st := store.NewMemoryStore()
-	h := newOrchestrationHandler(st)
+	h := factory.NewOrchestrationHandler(st)
 	if h == nil {
 		t.Fatal("nil handler")
 	}
@@ -1912,7 +1817,7 @@ func TestRateLimitMiddleware_HealthEndpointBypass(t *testing.T) {
 
 func TestStoreDispatcher_CreateTaskCov(t *testing.T) {
 	st := store.NewMemoryStore()
-	d := &storeDispatcher{store: st}
+	d := &factory.StoreDispatcher{Store: st}
 	task := d.CreateTask(&proto.Task{AgentID: "a1", Type: proto.TaskTypeShell, Command: "echo hi"})
 	if task == nil || task.TaskID == "" {
 		t.Fatal("CreateTask returned nil or empty")
@@ -1922,7 +1827,7 @@ func TestStoreDispatcher_CreateTaskCov(t *testing.T) {
 func TestStoreDispatcher_DeviceCov(t *testing.T) {
 	st := store.NewMemoryStore()
 	a := st.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	d := &storeDispatcher{store: st}
+	d := &factory.StoreDispatcher{Store: st}
 	dev := d.Device("dev-" + a.AgentID)
 	if dev == nil {
 		t.Fatal("Device returned nil")
@@ -1933,7 +1838,7 @@ func TestStoreDispatcher_TaskStates(t *testing.T) {
 	st := store.NewMemoryStore()
 	a := st.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
 	task := st.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: proto.TaskTypeShell, Command: "echo hi"})
-	d := &storeDispatcher{store: st}
+	d := &factory.StoreDispatcher{Store: st}
 	states := d.TaskStates([]string{task.TaskID}, "t1")
 	if states[task.TaskID] == "" {
 		t.Fatal("TaskStates returned empty state")
@@ -1942,7 +1847,7 @@ func TestStoreDispatcher_TaskStates(t *testing.T) {
 
 func TestStoreDispatcher_TaskStatesEmpty(t *testing.T) {
 	st := store.NewMemoryStore()
-	d := &storeDispatcher{store: st}
+	d := &factory.StoreDispatcher{Store: st}
 	states := d.TaskStates(nil, "t1")
 	if len(states) != 0 {
 		t.Fatalf("expected 0 states, got %d", len(states))

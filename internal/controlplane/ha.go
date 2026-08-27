@@ -17,6 +17,7 @@ package controlplane
 //     手动切换需运维摘掉当前 leader Pod 触发重新选举）。
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"net/http"
 	"os"
 	"time"
@@ -70,7 +71,7 @@ func (s *Server) handleHAStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	current := s.haCurrentInstance()
@@ -95,7 +96,7 @@ func (s *Server) handleHAStatus(w http.ResponseWriter, r *http.Request) {
 	if s.cfg != nil {
 		resp.Replicas = s.cfg.Replicas
 	}
-	writeJSON(w, http.StatusOK, resp)
+	paginate.WriteJSON(w, http.StatusOK, resp)
 }
 
 // handleHAInstances 处理 GET /api/v1/ha/instances：列出所有控制面实例。
@@ -106,11 +107,11 @@ func (s *Server) handleHAInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	current := s.haCurrentInstance()
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"instances": []haInstanceInfo{current},
 		"count":     1,
 	})
@@ -124,11 +125,11 @@ func (s *Server) handleHAFailover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	current := s.haCurrentInstance()
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"status":    "accepted",
 		"message":   "failover triggered; new leader will be elected via leader_lease renewal",
 		"current":   current,
@@ -141,11 +142,11 @@ func (s *Server) handleHAFailover(w http.ResponseWriter, r *http.Request) {
 // 返回当前实例健康状态 + leader 状态，供负载均衡/监控探针使用。
 func (s *Server) handleHAHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	current := s.haCurrentInstance()
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"status":    "healthy",
 		"instance":  current,
 		"timestamp": time.Now(),

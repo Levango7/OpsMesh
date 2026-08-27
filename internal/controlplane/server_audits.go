@@ -5,6 +5,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"net/http"
 	"strconv"
 	"time"
@@ -14,7 +15,7 @@ import (
 // 查询参数：tenant（requireAuth 时强制取自身租户）、action、from/to（RFC3339）、limit（默认 100，上限 1000）。
 func (s *Server) handleAudits(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -51,5 +52,5 @@ func (s *Server) handleAudits(w http.ResponseWriter, r *http.Request) {
 		limit = 1000
 	}
 	evs := s.store.QueryAudits(tenant, action, since, until, limit)
-	writeJSON(w, http.StatusOK, evs)
+	paginate.WriteJSON(w, http.StatusOK, evs)
 }

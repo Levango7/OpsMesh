@@ -17,6 +17,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"context"
 	"encoding/json"
 	"errors"
@@ -377,7 +378,7 @@ func (s *Server) handleCMDBChanges(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.cmdbChangeSubmit(w, r)
 	default:
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -401,10 +402,10 @@ func (s *Server) cmdbChangeList(w http.ResponseWriter, r *http.Request) {
 		reqs, err = s.cmdbApprovalMgr.ListAll(actx.TenantID, status)
 	}
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"changes": reqs,
 		"total":   len(reqs),
 	})
@@ -421,7 +422,7 @@ func (s *Server) cmdbChangeSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	var req CMDBChangeRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid JSON: %v", err)})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid JSON: %v", err)})
 		return
 	}
 	if req.TenantID == "" {
@@ -432,10 +433,10 @@ func (s *Server) cmdbChangeSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.cmdbApprovalMgr.SubmitChange(&req)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusCreated, &req)
+	paginate.WriteJSON(w, http.StatusCreated, &req)
 	_ = id
 }
 
@@ -443,7 +444,7 @@ func (s *Server) cmdbChangeSubmit(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCMDBChangeRouting(w http.ResponseWriter, r *http.Request) {
 	idAndRest := strings.TrimPrefix(r.URL.Path, "/api/v1/cmdb/changes/")
 	if idAndRest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "change id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "change id required"})
 		return
 	}
 	parts := strings.SplitN(idAndRest, "/", 2)
@@ -451,7 +452,7 @@ func (s *Server) handleCMDBChangeRouting(w http.ResponseWriter, r *http.Request)
 	if len(parts) == 1 {
 		// GET /api/v1/cmdb/changes/{id}
 		if r.Method != http.MethodGet {
-			jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		s.cmdbChangeGet(w, r, id)
@@ -460,18 +461,18 @@ func (s *Server) handleCMDBChangeRouting(w http.ResponseWriter, r *http.Request)
 	switch parts[1] {
 	case "approve":
 		if r.Method != http.MethodPost {
-			jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		s.cmdbChangeApprove(w, r, id)
 	case "reject":
 		if r.Method != http.MethodPost {
-			jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		s.cmdbChangeReject(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
 	}
 }
 
@@ -486,14 +487,14 @@ func (s *Server) cmdbChangeGet(w http.ResponseWriter, r *http.Request, id string
 	}
 	req, err := s.cmdbApprovalMgr.GetChange(id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
 	if actx.TenantID != "" && req.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 		return
 	}
-	writeJSON(w, http.StatusOK, req)
+	paginate.WriteJSON(w, http.StatusOK, req)
 }
 
 // cmdbChangeApprove POST /api/v1/cmdb/changes/{id}/approve：审批通过。
@@ -508,11 +509,11 @@ func (s *Server) cmdbChangeApprove(w http.ResponseWriter, r *http.Request, id st
 	// 租户归属校验：审批前确认变更属于当前租户。
 	req, err := s.cmdbApprovalMgr.GetChange(id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
 	if actx.TenantID != "" && req.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 		return
 	}
 	var body struct {
@@ -520,14 +521,14 @@ func (s *Server) cmdbChangeApprove(w http.ResponseWriter, r *http.Request, id st
 	}
 	// comment 为可选字段：空 body 视为空注释；非法 JSON 返回 400。
 	if derr := decodeJSONBody(w, r, &body); derr != nil && !errors.Is(derr, io.EOF) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 	if err := s.cmdbApprovalMgr.ApproveChange(id, actx.UserID, body.Comment); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "approved", "id": id})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "approved", "id": id})
 }
 
 // cmdbChangeReject POST /api/v1/cmdb/changes/{id}/reject：驳回变更。
@@ -542,11 +543,11 @@ func (s *Server) cmdbChangeReject(w http.ResponseWriter, r *http.Request, id str
 	// 租户归属校验：驳回前确认变更属于当前租户。
 	req, err := s.cmdbApprovalMgr.GetChange(id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
 	if actx.TenantID != "" && req.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 		return
 	}
 	var body struct {
@@ -554,12 +555,12 @@ func (s *Server) cmdbChangeReject(w http.ResponseWriter, r *http.Request, id str
 	}
 	// comment 为可选字段：空 body 视为空注释；非法 JSON 返回 400。
 	if derr := decodeJSONBody(w, r, &body); derr != nil && !errors.Is(derr, io.EOF) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 	if err := s.cmdbApprovalMgr.RejectChange(id, actx.UserID, body.Comment); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "rejected", "id": id})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "rejected", "id": id})
 }

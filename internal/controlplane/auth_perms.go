@@ -4,7 +4,11 @@
 // userFromToken 鉴权 helper 与 server.go 中的 writeJSON 响应 helper。
 package controlplane
 
-import "net/http"
+import (
+	"net/http"
+
+	"opsmesh/internal/controlplane/paginate"
+)
 
 // ============================================================================
 // 权限查询 handler：/api/v1/permissions
@@ -14,12 +18,12 @@ import "net/http"
 // 鉴权：仅需有效 token（登录用户均可查看权限列表，便于前端权限选择）。
 func (s *Server) handlePermissions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if _, err := s.userFromToken(r); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"permissions": s.store.ListPermissions()})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"permissions": s.store.ListPermissions()})
 }

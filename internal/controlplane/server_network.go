@@ -21,6 +21,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -121,7 +122,7 @@ func (c *NetworkTopologyCache) peek() *NetworkTopology {
 //   - 缓存 5 分钟，避免频繁探测。
 func (s *Server) handleNetworkTopology(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -139,7 +140,7 @@ func (s *Server) handleNetworkTopology(w http.ResponseWriter, r *http.Request) {
 	// 非刷新模式：优先返回缓存。
 	if !refresh {
 		if data, valid := s.networkTopologyCache.get(); valid && data != nil && data.TenantID == tenant {
-			writeJSON(w, http.StatusOK, data)
+			paginate.WriteJSON(w, http.StatusOK, data)
 			return
 		}
 	}
@@ -147,18 +148,18 @@ func (s *Server) handleNetworkTopology(w http.ResponseWriter, r *http.Request) {
 	// 探测拓扑。
 	topo, err := s.probeNetworkTopology(tenant)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	// 写入缓存。
 	s.networkTopologyCache.set(topo)
-	writeJSON(w, http.StatusOK, topo)
+	paginate.WriteJSON(w, http.StatusOK, topo)
 }
 
 // handleNetworkTopologyCache 处理 GET /api/v1/network/topology/cache：返回最近一次缓存的拓扑（不触发探测）。
 func (s *Server) handleNetworkTopologyCache(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if _, ok := s.requireTenantContext(w, r); !ok {
@@ -169,7 +170,7 @@ func (s *Server) handleNetworkTopologyCache(w http.ResponseWriter, r *http.Reque
 	}
 	data := s.networkTopologyCache.peek()
 	if data == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"nodes":       []interface{}{},
 			"edges":       []interface{}{},
 			"generatedAt": time.Time{},
@@ -185,7 +186,7 @@ func (s *Server) handleNetworkTopologyCache(w http.ResponseWriter, r *http.Reque
 		"tenantID":    data.TenantID,
 		"cached":      true,
 	}
-	writeJSON(w, http.StatusOK, resp)
+	paginate.WriteJSON(w, http.StatusOK, resp)
 }
 
 // probeNetworkTopology 探测网络拓扑：构造节点 + 对每对设备发起互 ping 探测构造边。
@@ -456,7 +457,7 @@ type diagnoseResponse struct {
 //   - curl:        curl -sS -o /dev/null -w "%{http_code} %{time_total}" --max-time {timeout} {target}
 func (s *Server) handleNetworkDiagnose(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -470,20 +471,20 @@ func (s *Server) handleNetworkDiagnose(w http.ResponseWriter, r *http.Request) {
 
 	var req diagnoseRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	// 参数校验。
 	if req.AgentID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agentId is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "agentId is required"})
 		return
 	}
 	if req.Target == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "target is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "target is required"})
 		return
 	}
 	if err := validateDiagnoseTool(req.Tool); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	// 默认参数 + 范围校验。
@@ -491,38 +492,38 @@ func (s *Server) handleNetworkDiagnose(w http.ResponseWriter, r *http.Request) {
 		req.Options.Count = 4
 	}
 	if req.Options.Count < 1 || req.Options.Count > 100 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "count must be between 1 and 100"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "count must be between 1 and 100"})
 		return
 	}
 	if req.Options.Timeout == 0 {
 		req.Options.Timeout = 5
 	}
 	if req.Options.Timeout < 1 || req.Options.Timeout > 30 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "timeout must be between 1 and 30"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "timeout must be between 1 and 30"})
 		return
 	}
 	// tcping 必须指定 port。
 	if req.Tool == "tcping" && req.Options.Port <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "port is required for tcping"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "port is required for tcping"})
 		return
 	}
 
 	// 校验 agent 存在且属于当前租户。
 	agent := s.lookupAgent(req.AgentID)
 	if agent == nil || (tenant != "" && agent.TenantID != tenant) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found or tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found or tenant mismatch"})
 		return
 	}
 
 	// 构造诊断命令（按 agent.OS 区分 Linux/Windows）。
 	cmd, err := buildDiagnoseCommand(req.Tool, req.Target, req.Options, agent.OS)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	// 控制面侧命令校验（纵深防御）。
 	if err := validateCommand(cmd); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "command validation failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "command validation failed: " + err.Error()})
 		return
 	}
 
@@ -549,7 +550,7 @@ func (s *Server) handleNetworkDiagnose(w http.ResponseWriter, r *http.Request) {
 	s.publishEvent(r.Context(), "task_status", tenant, map[string]string{
 		"taskID": task.TaskID, "status": task.Status, "agentID": req.AgentID,
 	})
-	writeJSON(w, http.StatusAccepted, diagnoseResponse{TaskID: task.TaskID})
+	paginate.WriteJSON(w, http.StatusAccepted, diagnoseResponse{TaskID: task.TaskID})
 }
 
 // handleNetworkDiagnoseResult 处理 GET /api/v1/network/diagnose/{taskId}：查询诊断任务结果。
@@ -558,7 +559,7 @@ func (s *Server) handleNetworkDiagnose(w http.ResponseWriter, r *http.Request) {
 // 路径: /api/v1/network/diagnose/{taskId}
 func (s *Server) handleNetworkDiagnoseResult(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -572,14 +573,14 @@ func (s *Server) handleNetworkDiagnoseResult(w http.ResponseWriter, r *http.Requ
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/network/diagnose/")
 	rest = strings.TrimPrefix(rest, "/")
 	if rest == "" {
-		jsonError(w, http.StatusBadRequest, "taskId required")
+		paginate.JSONError(w, http.StatusBadRequest, "taskId required")
 		return
 	}
 	// 取第一段作为 taskId（忽略后续段）。
 	parts := strings.SplitN(rest, "/", 2)
 	taskID := parts[0]
 	if taskID == "" {
-		jsonError(w, http.StatusBadRequest, "taskId required")
+		paginate.JSONError(w, http.StatusBadRequest, "taskId required")
 		return
 	}
 	// 查询任务结果。
@@ -588,14 +589,14 @@ func (s *Server) handleNetworkDiagnoseResult(w http.ResponseWriter, r *http.Requ
 		// 任务可能仍在执行中，返回 pending 状态。
 		t := s.store.TaskByID(taskID)
 		if t == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not found"})
+			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "task not found"})
 			return
 		}
 		if actx.TenantID != "" && t.TenantID != actx.TenantID {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"taskId":  taskID,
 			"status":  t.Status,
 			"pending": true,
@@ -606,11 +607,11 @@ func (s *Server) handleNetworkDiagnoseResult(w http.ResponseWriter, r *http.Requ
 	if actx.TenantID != "" {
 		t := s.store.TaskByID(taskID)
 		if t == nil || t.TenantID != actx.TenantID {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"taskId":     taskID,
 		"exitCode":   res.ExitCode,
 		"stdout":     res.Stdout,
@@ -700,7 +701,7 @@ type connectivityResponse struct {
 //   - 返回所有 target 的连通性结果。
 func (s *Server) handleNetworkConnectivity(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -714,21 +715,21 @@ func (s *Server) handleNetworkConnectivity(w http.ResponseWriter, r *http.Reques
 
 	var req connectivityRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	if req.SourceAgentID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sourceAgentId is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "sourceAgentId is required"})
 		return
 	}
 	if len(req.Targets) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "targets is required (non-empty)"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "targets is required (non-empty)"})
 		return
 	}
 	// 校验 source agent 存在且属于当前租户。
 	agent := s.lookupAgent(req.SourceAgentID)
 	if agent == nil || (tenant != "" && agent.TenantID != tenant) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "source agent not found or tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "source agent not found or tenant mismatch"})
 		return
 	}
 
@@ -805,7 +806,7 @@ func (s *Server) handleNetworkConnectivity(w http.ResponseWriter, r *http.Reques
 		TenantID: tenant, UserID: actx.UserID, Action: "network_connectivity", Target: req.SourceAgentID,
 		Detail: sanitizeAuditDetail(fmt.Sprintf("targets:%d", len(req.Targets))),
 	})
-	writeJSON(w, http.StatusOK, connectivityResponse{Results: results})
+	paginate.WriteJSON(w, http.StatusOK, connectivityResponse{Results: results})
 }
 
 // ============================================================================

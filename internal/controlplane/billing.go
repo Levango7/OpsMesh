@@ -17,6 +17,7 @@ package controlplane
 //   - GET    /api/v1/billing/invoices/{id}   账单详情
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"net/http"
 	"strings"
 
@@ -36,7 +37,7 @@ func (s *Server) handleBillingPlans(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleCreateBillingPlan(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -46,7 +47,7 @@ func (s *Server) handleListBillingPlans(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	plans := s.store.ListBillingPlans()
-	writeJSON(w, http.StatusOK, map[string]interface{}{"plans": plans})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"plans": plans})
 }
 
 // handleCreateBillingPlan 处理 POST /api/v1/billing/plans。
@@ -57,11 +58,11 @@ func (s *Server) handleCreateBillingPlan(w http.ResponseWriter, r *http.Request)
 	}
 	var body store.SubscriptionPlan
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
 	if body.Interval == "" {
@@ -69,25 +70,25 @@ func (s *Server) handleCreateBillingPlan(w http.ResponseWriter, r *http.Request)
 	}
 	created := s.store.CreateBillingPlan(&body)
 	if created == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create plan failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create plan failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "billing_plan_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handleBillingPlanRouting 分派 /api/v1/billing/plans/{id} 子路径。
 func (s *Server) handleBillingPlanRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/billing/plans/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "plan id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "plan id required"})
 		return
 	}
 	id := rest
 	if strings.Contains(id, "/") {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path"})
 		return
 	}
 	switch r.Method {
@@ -98,7 +99,7 @@ func (s *Server) handleBillingPlanRouting(w http.ResponseWriter, r *http.Request
 	case http.MethodDelete:
 		s.handleDeleteBillingPlan(w, r, id)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -109,10 +110,10 @@ func (s *Server) handleGetBillingPlan(w http.ResponseWriter, r *http.Request, id
 	}
 	p, ok := s.store.GetBillingPlan(id)
 	if !ok || p == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "plan not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "plan not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, p)
+	paginate.WriteJSON(w, http.StatusOK, p)
 }
 
 // handleUpdateBillingPlan 处理 PUT /api/v1/billing/plans/{id}。
@@ -123,19 +124,19 @@ func (s *Server) handleUpdateBillingPlan(w http.ResponseWriter, r *http.Request,
 	}
 	var body store.SubscriptionPlan
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	body.ID = id
 	updated, ok := s.store.UpdateBillingPlan(&body)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "plan not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "plan not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "billing_plan_update", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // handleDeleteBillingPlan 处理 DELETE /api/v1/billing/plans/{id}。
@@ -145,13 +146,13 @@ func (s *Server) handleDeleteBillingPlan(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if !s.store.DeleteBillingPlan(id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "plan not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "plan not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "billing_plan_delete", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // ============================================================================
@@ -166,7 +167,7 @@ func (s *Server) handleBillingSubscriptions(w http.ResponseWriter, r *http.Reque
 	case http.MethodPost:
 		s.handleCreateSubscription(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -180,11 +181,11 @@ func (s *Server) handleListSubscriptions(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	subs := s.store.ListSubscriptions(actx.TenantID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"subscriptions": subs})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"subscriptions": subs})
 }
 
 // handleCreateSubscription 处理 POST /api/v1/billing/subscriptions。
@@ -198,16 +199,16 @@ func (s *Server) handleCreateSubscription(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.Subscription
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.PlanID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "planId is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "planId is required"})
 		return
 	}
 	body.TenantID = actx.TenantID
@@ -216,25 +217,25 @@ func (s *Server) handleCreateSubscription(w http.ResponseWriter, r *http.Request
 	}
 	created := s.store.CreateSubscription(&body)
 	if created == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create subscription failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create subscription failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "subscription_create", Target: created.ID, Detail: sanitizeAuditDetail("plan=" + created.PlanID),
 	})
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handleBillingSubscriptionRouting 分派 /api/v1/billing/subscriptions/{id} 子路径。
 func (s *Server) handleBillingSubscriptionRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/billing/subscriptions/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "subscription id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "subscription id required"})
 		return
 	}
 	id := rest
 	if strings.Contains(id, "/") {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path"})
 		return
 	}
 	switch r.Method {
@@ -245,7 +246,7 @@ func (s *Server) handleBillingSubscriptionRouting(w http.ResponseWriter, r *http
 	case http.MethodDelete:
 		s.handleDeleteSubscription(w, r, id)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -256,10 +257,10 @@ func (s *Server) handleGetSubscription(w http.ResponseWriter, r *http.Request, i
 	}
 	sub, ok := s.store.GetSubscription(id)
 	if !ok || sub == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "subscription not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "subscription not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, sub)
+	paginate.WriteJSON(w, http.StatusOK, sub)
 }
 
 // handleUpdateSubscription 处理 PUT /api/v1/billing/subscriptions/{id}。
@@ -270,19 +271,19 @@ func (s *Server) handleUpdateSubscription(w http.ResponseWriter, r *http.Request
 	}
 	var body store.Subscription
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	body.ID = id
 	updated, ok := s.store.UpdateSubscription(&body)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "subscription not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "subscription not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: updated.TenantID, UserID: caller.ID, Action: "subscription_update", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // handleDeleteSubscription 处理 DELETE /api/v1/billing/subscriptions/{id}。
@@ -292,13 +293,13 @@ func (s *Server) handleDeleteSubscription(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !s.store.DeleteSubscription(id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "subscription not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "subscription not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "subscription_delete", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // ============================================================================
@@ -315,17 +316,17 @@ func (s *Server) handleBillingInvoices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	invoices := s.store.ListInvoices(actx.TenantID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"invoices": invoices})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"invoices": invoices})
 }
 
 // handleBillingInvoiceRouting 处理 /api/v1/billing/invoices/{id}：账单详情。
 func (s *Server) handleBillingInvoiceRouting(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if _, ok := s.requirePermission(w, r, "billing:read"); !ok {
@@ -333,18 +334,18 @@ func (s *Server) handleBillingInvoiceRouting(w http.ResponseWriter, r *http.Requ
 	}
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/billing/invoices/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invoice id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invoice id required"})
 		return
 	}
 	id := rest
 	if strings.Contains(id, "/") {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path"})
 		return
 	}
 	inv, ok := s.store.GetInvoice(id)
 	if !ok || inv == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "invoice not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "invoice not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, inv)
+	paginate.WriteJSON(w, http.StatusOK, inv)
 }

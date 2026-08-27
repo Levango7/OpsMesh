@@ -1,4 +1,4 @@
-﻿// ticket.go 实现 Phase 1 工单管理 HTTP handler。
+// ticket.go 实现 Phase 1 工单管理 HTTP handler。
 //
 // API 端点：
 //   - GET    /api/v1/tickets           列出工单（支持 ?status=&priority=&category=&assigneeID= 查询参数）
@@ -15,6 +15,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"net/http"
 	"strings"
 
@@ -33,7 +34,7 @@ func (s *Server) handleTickets(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleCreateTicket(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -54,7 +55,7 @@ func (s *Server) handleListTickets(w http.ResponseWriter, r *http.Request) {
 		AssigneeID: r.URL.Query().Get("assigneeID"),
 	}
 	tickets := s.store.ListTickets(actx.TenantID, filter)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"tickets": tickets})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"tickets": tickets})
 }
 
 // handleCreateTicket 处理 POST /api/v1/tickets：创建工单。
@@ -81,11 +82,11 @@ func (s *Server) handleCreateTicket(w http.ResponseWriter, r *http.Request) {
 		Tags          []string `json:"tags"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.Title == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "title is required"})
 		return
 	}
 	// CreatorID 默认填充为当前调用者（防伪造创建人）。
@@ -106,13 +107,13 @@ func (s *Server) handleCreateTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	created := s.store.CreateTicket(actx.TenantID, t)
 	if created == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create ticket failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create ticket failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "ticket_create", Target: created.ID, Detail: sanitizeAuditDetail("title=" + created.Title),
 	})
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handleTicketRouting 分派 /api/v1/tickets/{id} 子路径：
@@ -122,14 +123,14 @@ func (s *Server) handleCreateTicket(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTicketRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/tickets/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ticket id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "ticket id required"})
 		return
 	}
 	// 按 / 切分：[id] / [id, action]。
 	parts := strings.SplitN(rest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ticket id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "ticket id required"})
 		return
 	}
 	// 仅 /{id}：工单本身管理（GET/PUT）。
@@ -140,7 +141,7 @@ func (s *Server) handleTicketRouting(w http.ResponseWriter, r *http.Request) {
 		case http.MethodPut:
 			s.handleUpdateTicket(w, r, id)
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 		return
 	}
@@ -150,7 +151,7 @@ func (s *Server) handleTicketRouting(w http.ResponseWriter, r *http.Request) {
 	case "close":
 		s.handleCloseTicket(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
 	}
 }
 
@@ -165,10 +166,10 @@ func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request, id stri
 	}
 	t, ok := s.store.GetTicket(actx.TenantID, id)
 	if !ok || t == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "ticket not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "ticket not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+	paginate.WriteJSON(w, http.StatusOK, t)
 }
 
 // handleUpdateTicket 处理 PUT /api/v1/tickets/{id}：更新工单。
@@ -195,7 +196,7 @@ func (s *Server) handleUpdateTicket(w http.ResponseWriter, r *http.Request, id s
 		Tags          []string `json:"tags"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	t := &store.Ticket{
@@ -212,19 +213,19 @@ func (s *Server) handleUpdateTicket(w http.ResponseWriter, r *http.Request, id s
 	}
 	updated, ok := s.store.UpdateTicket(actx.TenantID, t)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "ticket not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "ticket not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "ticket_update", Target: id, Detail: sanitizeAuditDetail("title=" + updated.Title),
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // handleCloseTicket 处理 POST /api/v1/tickets/{id}/close：关闭工单。
 func (s *Server) handleCloseTicket(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	caller, ok := s.requirePermission(w, r, "ticket:write")
@@ -237,13 +238,13 @@ func (s *Server) handleCloseTicket(w http.ResponseWriter, r *http.Request, id st
 	}
 	closed, ok := s.store.CloseTicket(actx.TenantID, id)
 	if !ok || closed == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "ticket not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "ticket not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "ticket_close", Target: id, Detail: sanitizeAuditDetail("title=" + closed.Title),
 	})
-	writeJSON(w, http.StatusOK, closed)
+	paginate.WriteJSON(w, http.StatusOK, closed)
 }
 
 

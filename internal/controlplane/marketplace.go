@@ -13,6 +13,7 @@ package controlplane
 //   - POST   /api/v1/marketplace/plugins/{id}/disable    禁用插件
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -44,7 +45,7 @@ func (s *Server) handleMarketplacePlugins(w http.ResponseWriter, r *http.Request
 	case http.MethodPost:
 		s.handleCreatePlugin(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -54,7 +55,7 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	plugins := s.store.ListPlugins()
-	writeJSON(w, http.StatusOK, map[string]interface{}{"plugins": plugins})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"plugins": plugins})
 }
 
 // handleCreatePlugin 处理 POST /api/v1/marketplace/plugins：注册插件。
@@ -65,24 +66,24 @@ func (s *Server) handleCreatePlugin(w http.ResponseWriter, r *http.Request) {
 	}
 	var body store.Plugin
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
 	if body.Version == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "version is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "version is required"})
 		return
 	}
 	// L1 输入校验：pluginType 白名单 {data,logic,integration}。
 	if body.Type == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "type is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "type is required"})
 		return
 	}
 	if !allowedPluginTypes[body.Type] {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid type: " + body.Type + " (want data|logic|integration)"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid type: " + body.Type + " (want data|logic|integration)"})
 		return
 	}
 	// L1 输入校验：downloadURL 仅允许 http/https scheme（防 file:// / ftp:// 等不安全协议）。
@@ -90,36 +91,36 @@ func (s *Server) handleCreatePlugin(w http.ResponseWriter, r *http.Request) {
 	if body.DownloadURL != "" {
 		u, err := url.Parse(body.DownloadURL)
 		if err != nil || u.Scheme == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid downloadURL: parse failed"})
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid downloadURL: parse failed"})
 			return
 		}
 		if u.Scheme != "http" && u.Scheme != "https" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid downloadURL scheme: " + u.Scheme + " (want http|https)"})
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid downloadURL scheme: " + u.Scheme + " (want http|https)"})
 			return
 		}
 	}
 	created := s.store.CreatePlugin(&body)
 	if created == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create plugin failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create plugin failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "plugin_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handleMarketplacePluginRouting 分派 /api/v1/marketplace/plugins/{id} 子路径。
 func (s *Server) handleMarketplacePluginRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/marketplace/plugins/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "plugin id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "plugin id required"})
 		return
 	}
 	parts := strings.SplitN(rest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "plugin id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "plugin id required"})
 		return
 	}
 	if len(parts) == 1 {
@@ -129,7 +130,7 @@ func (s *Server) handleMarketplacePluginRouting(w http.ResponseWriter, r *http.R
 		case http.MethodDelete:
 			s.handleDeletePlugin(w, r, id)
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 		return
 	}
@@ -144,7 +145,7 @@ func (s *Server) handleMarketplacePluginRouting(w http.ResponseWriter, r *http.R
 	case "disable":
 		s.handleDisablePlugin(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
 	}
 }
 
@@ -155,10 +156,10 @@ func (s *Server) handleGetPlugin(w http.ResponseWriter, r *http.Request, id stri
 	}
 	p, ok := s.store.GetPlugin(id)
 	if !ok || p == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "plugin not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "plugin not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, p)
+	paginate.WriteJSON(w, http.StatusOK, p)
 }
 
 // handleDeletePlugin 处理 DELETE /api/v1/marketplace/plugins/{id}。
@@ -168,13 +169,13 @@ func (s *Server) handleDeletePlugin(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	if !s.store.DeletePlugin(id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "plugin not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "plugin not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "plugin_delete", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // handleInstallPlugin 处理 POST /api/v1/marketplace/plugins/{id}/install。
@@ -188,23 +189,23 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	p, ok := s.store.GetPlugin(id)
 	if !ok || p == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "plugin not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "plugin not found"})
 		return
 	}
 	if p.Installed {
-		writeJSON(w, http.StatusOK, p)
+		paginate.WriteJSON(w, http.StatusOK, p)
 		return
 	}
 
 	// 真实安装：下载插件→校验 SHA256→保存到插件目录。
 	if p.DownloadURL != "" {
 		if err := downloadAndVerifyPlugin(p); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("plugin download/verify failed: %v", err)})
+			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("plugin download/verify failed: %v", err)})
 			return
 		}
 	}
@@ -213,13 +214,13 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request, id 
 	p.Enabled = true
 	updated, ok := s.store.UpdatePlugin(p)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "install plugin failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "install plugin failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "plugin_install", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // handleUninstallPlugin 处理 POST /api/v1/marketplace/plugins/{id}/uninstall。
@@ -233,23 +234,23 @@ func (s *Server) handleUninstallPlugin(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	p, ok := s.store.GetPlugin(id)
 	if !ok || p == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "plugin not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "plugin not found"})
 		return
 	}
 	if !p.Installed {
-		writeJSON(w, http.StatusOK, p)
+		paginate.WriteJSON(w, http.StatusOK, p)
 		return
 	}
 
 	// 真实卸载：删除插件文件。
 	if p.DownloadURL != "" {
 		if err := removePluginFiles(p); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("plugin removal failed: %v", err)})
+			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("plugin removal failed: %v", err)})
 			return
 		}
 	}
@@ -258,13 +259,13 @@ func (s *Server) handleUninstallPlugin(w http.ResponseWriter, r *http.Request, i
 	p.Enabled = false
 	updated, ok := s.store.UpdatePlugin(p)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "uninstall plugin failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "uninstall plugin failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "plugin_uninstall", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // downloadAndVerifyPlugin 下载插件并校验 SHA256。
@@ -327,19 +328,19 @@ func (s *Server) handleEnablePlugin(w http.ResponseWriter, r *http.Request, id s
 	}
 	p, ok := s.store.GetPlugin(id)
 	if !ok || p == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "plugin not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "plugin not found"})
 		return
 	}
 	p.Enabled = true
 	updated, ok := s.store.UpdatePlugin(p)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "enable plugin failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "enable plugin failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "plugin_enable", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // handleDisablePlugin 处理 POST /api/v1/marketplace/plugins/{id}/disable。
@@ -350,17 +351,17 @@ func (s *Server) handleDisablePlugin(w http.ResponseWriter, r *http.Request, id 
 	}
 	p, ok := s.store.GetPlugin(id)
 	if !ok || p == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "plugin not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "plugin not found"})
 		return
 	}
 	p.Enabled = false
 	updated, ok := s.store.UpdatePlugin(p)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "disable plugin failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "disable plugin failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "plugin_disable", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }

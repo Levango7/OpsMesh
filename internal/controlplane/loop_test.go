@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"opsmesh/internal/config"
+	"opsmesh/internal/controlplane/factory"
 	"opsmesh/internal/deploy"
 	"opsmesh/internal/orchestration"
 	"opsmesh/internal/store"
@@ -37,7 +38,7 @@ func newLoopTestServer() *Server {
 	return &Server{
 		store:         st,
 		cfg:           &config.Config{},
-		deployHandler: deploy.NewHandler(deploy.NewMemory(), &storeDispatcher{store: st}),
+		deployHandler: deploy.NewHandler(deploy.NewMemory(), &factory.StoreDispatcher{Store: st}),
 		orchHandler:   orchestration.NewHandler(orchestration.NewMemory(), st),
 	}
 }

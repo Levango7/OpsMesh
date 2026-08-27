@@ -5,6 +5,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"context"
 	"fmt"
 	"net/http"
@@ -19,12 +20,12 @@ import (
 
 func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	// 联邦入站验签：带转发标记的请求必须验签，防跨不可信网段伪造租户身份。
 	if err := s.verifyFederationRequest(r); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -36,9 +37,9 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	snap := s.store.Snapshot(actx.TenantID)
 	// 修复 3：分页（向后兼容：不传 page 返回全量 map）。
-	page, pageSize := parsePagination(r.URL.Query())
+	page, pageSize := paginate.ParsePagination(r.URL.Query())
 	if page == 0 {
-		writeJSON(w, http.StatusOK, snap)
+		paginate.WriteJSON(w, http.StatusOK, snap)
 		return
 	}
 	// 展平所有 segment 的设备后分页。
@@ -55,7 +56,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	if end > total {
 		end = total
 	}
-	writeJSON(w, http.StatusOK, paginateResult{
+	paginate.WriteJSON(w, http.StatusOK, paginate.PaginateResult{
 		Data: allDevs[start:end], Total: total, Page: page, PageSize: pageSize, HasMore: end < total,
 	})
 }
@@ -63,7 +64,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 // handleAgents 处理 GET /api/v1/agents，按网关注入租户返回已注册 agent 列表（供前端下拉框）。
 func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -80,9 +81,9 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	// 修复 3：分页（向后兼容：不传 page 返回全量）。
-	page, pageSize := parsePagination(r.URL.Query())
+	page, pageSize := paginate.ParsePagination(r.URL.Query())
 	if page == 0 {
-		writeJSON(w, http.StatusOK, out)
+		paginate.WriteJSON(w, http.StatusOK, out)
 		return
 	}
 	total := len(out)
@@ -94,7 +95,7 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	if end > total {
 		end = total
 	}
-	writeJSON(w, http.StatusOK, paginateResult{
+	paginate.WriteJSON(w, http.StatusOK, paginate.PaginateResult{
 		Data: out[start:end], Total: total, Page: page, PageSize: pageSize, HasMore: end < total,
 	})
 }
@@ -102,14 +103,14 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 // handleMe 返回网关注入的当前身份上下文（供 B/S 仪表盘渲染身份、租户、角色）。
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"tenantID": actx.TenantID,
 		"userID":   actx.UserID,
 		"roles":    actx.Roles,
@@ -120,12 +121,12 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 // handleDeviceDetail 处理 GET /api/v1/devices/{id}：返回设备详情 + 其任务与最近执行结果（租户隔离）。
 func (s *Server) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/devices/")
 	if id == "" {
-		jsonError(w, http.StatusBadRequest, "device id required")
+		paginate.JSONError(w, http.StatusBadRequest, "device id required")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -137,11 +138,11 @@ func (s *Server) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	dev := s.store.Device(id)
 	if dev == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
 		return
 	}
 	if actx.TenantID != "" && dev.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 		return
 	}
 	type deviceDetail struct {
@@ -158,7 +159,7 @@ func (s *Server) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 	for _, res := range s.store.Results(dev.AgentID) {
 		dd.Results = append(dd.Results, domain.TaskResultFromProto(res))
 	}
-	writeJSON(w, http.StatusOK, dd)
+	paginate.WriteJSON(w, http.StatusOK, dd)
 }
 
 // lookupAgent 按 agentID 直接查（O(1) 直查，修复线性扫描）。
@@ -176,7 +177,7 @@ func (s *Server) handleDeviceRouting(w http.ResponseWriter, r *http.Request) {
 	parts := strings.SplitN(idAndRest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		jsonError(w, http.StatusBadRequest, "device id required")
+		paginate.JSONError(w, http.StatusBadRequest, "device id required")
 		return
 	}
 	switch {
@@ -189,7 +190,7 @@ func (s *Server) handleDeviceRouting(w http.ResponseWriter, r *http.Request) {
 	case len(parts) == 2 && parts[1] == "metrics" && r.Method == http.MethodGet:
 		s.handleDeviceMetrics(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
 	}
 }
 
@@ -205,7 +206,7 @@ func (s *Server) handleRetireDevice(w http.ResponseWriter, r *http.Request, id s
 	}
 	tenant := actx.TenantID
 	if !s.store.RetireDevice(id, tenant) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found or tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "device not found or tenant mismatch"})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
@@ -219,7 +220,7 @@ func (s *Server) handleRetireDevice(w http.ResponseWriter, r *http.Request, id s
 	s.publishEvent(r.Context(), "device_offline", tenant, map[string]string{
 		"deviceID": id,
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "retired", "deviceID": id})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "retired", "deviceID": id})
 }
 
 // handleProvision 处理 POST /api/v1/devices/{id}/provision：触发自动纳管。
@@ -236,11 +237,11 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id stri
 	tenant := actx.TenantID
 	dev := s.store.Device(id)
 	if dev == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
 		return
 	}
 	if tenant != "" && dev.TenantID != tenant {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 		return
 	}
 	token, _, err := s.store.Provision(id, dev.IP, tenant)
@@ -249,9 +250,9 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id stri
 		// 与 Provision 之间被删除）。安全：映射为 404 而非 500。
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "not found") {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": errMsg})
+			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": errMsg})
 		} else {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": errMsg})
+			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": errMsg})
 		}
 		return
 	}
@@ -283,7 +284,7 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id stri
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: tenant, UserID: actx.UserID, Action: "provision_agent", Target: id, Detail: "token issued via HTTP",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{
 		"status":       "provisioning",
 		"deviceID":     id,
 		"installToken": token,

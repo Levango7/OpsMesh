@@ -1,4 +1,4 @@
-﻿package controlplane
+package controlplane
 
 // webhook.go 实现 Phase 5 Webhook 管理 HTTP handler（CRUD + 测试投递 + 投递记录）。
 //
@@ -25,6 +25,7 @@
 //     不实际发起 HTTP 请求（避免 SSRF 风险，仅验证 Webhook 配置可达性占位）。
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"fmt"
 	"io"
 	"net/http"
@@ -45,7 +46,7 @@ func (s *Server) handleWebhooks(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleCreateWebhook(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -59,11 +60,11 @@ func (s *Server) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	webhooks := s.store.ListWebhooks(actx.TenantID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"webhooks": webhooks})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"webhooks": webhooks})
 }
 
 // handleCreateWebhook 处理 POST /api/v1/webhooks：创建 Webhook。
@@ -77,20 +78,20 @@ func (s *Server) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.Webhook
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
 	if body.URL == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "url is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "url is required"})
 		return
 	}
 	// SSRF 防护（M1 修复）：与 notify-channels 同源复用 ValidateWebhookURL——
@@ -98,18 +99,18 @@ func (s *Server) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 	// allowPrivate 取 s.cfg.WebhookAllowPrivate（与 createNotifyChannel 同一开关，
 	// 内网部署场景显式放行私网）。校验失败返回 400 + 明确错误信息。
 	if err := ValidateWebhookURL(body.URL, s.cfg.WebhookAllowPrivate); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid webhook url: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid webhook url: " + err.Error()})
 		return
 	}
 	created := s.store.CreateWebhook(actx.TenantID, &body)
 	if created == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create webhook failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create webhook failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "webhook_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
-	writeJSON(w, http.StatusCreated, created)
+	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
 // handleWebhookRouting 分派 /api/v1/webhooks/{id} 子路径：
@@ -121,13 +122,13 @@ func (s *Server) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleWebhookRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/webhooks/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "webhook id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "webhook id required"})
 		return
 	}
 	parts := strings.SplitN(rest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "webhook id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "webhook id required"})
 		return
 	}
 	if len(parts) == 1 {
@@ -139,7 +140,7 @@ func (s *Server) handleWebhookRouting(w http.ResponseWriter, r *http.Request) {
 		case http.MethodDelete:
 			s.handleDeleteWebhook(w, r, id)
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 		return
 	}
@@ -150,7 +151,7 @@ func (s *Server) handleWebhookRouting(w http.ResponseWriter, r *http.Request) {
 	case "deliveries":
 		s.handleWebhookDeliveries(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
 	}
 }
 
@@ -164,15 +165,15 @@ func (s *Server) handleGetWebhook(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	wh, ok := s.store.GetWebhook(actx.TenantID, id)
 	if !ok || wh == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, wh)
+	paginate.WriteJSON(w, http.StatusOK, wh)
 }
 
 // handleUpdateWebhook 处理 PUT /api/v1/webhooks/{id}：更新 Webhook。
@@ -186,12 +187,12 @@ func (s *Server) handleUpdateWebhook(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.Webhook
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	// SSRF 防护（M1 修复）：更新路径与创建路径同一校验语义，防止经 PUT 绕过
@@ -200,20 +201,20 @@ func (s *Server) handleUpdateWebhook(w http.ResponseWriter, r *http.Request, id 
 	// allowPrivate 同样取 s.cfg.WebhookAllowPrivate，两端联动。
 	if body.URL != "" {
 		if err := ValidateWebhookURL(body.URL, s.cfg.WebhookAllowPrivate); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid webhook url: " + err.Error()})
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid webhook url: " + err.Error()})
 			return
 		}
 	}
 	body.ID = id
 	updated, ok := s.store.UpdateWebhook(actx.TenantID, &body)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "webhook_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // handleDeleteWebhook 处理 DELETE /api/v1/webhooks/{id}：删除 Webhook。
@@ -227,17 +228,17 @@ func (s *Server) handleDeleteWebhook(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if !s.store.DeleteWebhook(actx.TenantID, id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "webhook_delete", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // handleWebhookTest 处理 POST /api/v1/webhooks/{id}/test：测试投递。
@@ -252,12 +253,12 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	wh, ok := s.store.GetWebhook(actx.TenantID, id)
 	if !ok || wh == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
 		return
 	}
 	event := "test.event"
@@ -265,7 +266,7 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request, id st
 
 	// SSRF 校验：拒绝私网/元数据地址。
 	if err := ValidateWebhookURL(wh.URL, false); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("webhook URL rejected: %v", err)})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("webhook URL rejected: %v", err)})
 		return
 	}
 
@@ -276,7 +277,7 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request, id st
 		delivery := s.store.RecordWebhookDelivery(actx.TenantID, id, event, payload, 0, err.Error(), err.Error())
 		_ = caller
 		_ = delivery
-		writeJSON(w, http.StatusBadGateway, map[string]interface{}{
+		paginate.WriteJSON(w, http.StatusBadGateway, map[string]interface{}{
 			"webhookID": id,
 			"event":     event,
 			"error":     fmt.Sprintf("delivery failed: %v", err),
@@ -288,7 +289,7 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request, id st
 	delivery := s.store.RecordWebhookDelivery(actx.TenantID, id, event, payload, statusCode, respBody, "")
 	_ = caller
 	if delivery == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"webhookID":  id,
 			"event":      event,
 			"statusCode": statusCode,
@@ -296,7 +297,7 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request, id st
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, delivery)
+	paginate.WriteJSON(w, http.StatusOK, delivery)
 }
 
 // deliverWebhook 执行真实的 HTTP POST 投递。
@@ -333,10 +334,10 @@ func (s *Server) handleWebhookDeliveries(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	deliveries := s.store.ListWebhookDeliveries(actx.TenantID, id)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"deliveries": deliveries})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"deliveries": deliveries})
 }
 

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"opsmesh/internal/controlplane/paginate"
 	"opsmesh/internal/logx"
 	"opsmesh/internal/otelx"
 )
@@ -42,16 +43,16 @@ func (s *Server) Start() error {
 	// M6 日志检索：GET/POST /api/v1/logs（租户隔离由 authctx 注入）。
 	s.logHandler.RegisterRoutes(mux)
 	// M3 部署中心：POST/GET /api/v1/deploys（租户隔离由 authctx 注入）。
-	// 修复 3：用 paginateJSONHandler 包装 GET 列表做分页（向后兼容）。
+	// 修复 3：用 paginate.PaginateJSONHandler 包装 GET 列表做分页（向后兼容）。
 	deployMux := http.NewServeMux()
 	s.deployHandler.RegisterRoutes(deployMux)
-	mux.Handle("/api/v1/deploys", paginateJSONHandler(deployMux))
+	mux.Handle("/api/v1/deploys", paginate.PaginateJSONHandler(deployMux))
 	mux.Handle("/api/v1/deploys/", deployMux)
 	// M5 作业编排中心：POST/GET /api/v1/workflows（租户隔离由 authctx 注入）。
 	// 修复 3：同上分页包装。
 	orchMux := http.NewServeMux()
 	s.orchHandler.RegisterRoutes(orchMux)
-	mux.Handle("/api/v1/workflows", paginateJSONHandler(orchMux))
+	mux.Handle("/api/v1/workflows", paginate.PaginateJSONHandler(orchMux))
 	mux.Handle("/api/v1/workflows/", orchMux)
 	// 控制面联邦：仅当配置了 --federation-peers 时注册联邦 API。
 	// 未启用时这些端点返回 404（mux 未注册），保证向后兼容。
@@ -236,7 +237,7 @@ func (s *Server) Start() error {
 					s.rateLimitMiddleware( // API 限流（429 Too Many Requests）
 						s.securityHeadersMiddleware( // 安全头 + B1 CSP nonce
 							s.csrfOriginCheck( // CSRF Origin 校验（状态变更方法）
-								&jsonErrorMux{inner: mux})))))), // B1 404 JSON
+								&paginate.JSONErrorMux{Inner: mux})))))), // B1 404 JSON
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

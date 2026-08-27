@@ -18,8 +18,8 @@ import (
 //   2. 扫描 docs/sse-protocol.md 事件类型枚举表中的登记项；
 //   3. 双向比对：代码事件必须在文档登记；文档事件（除握手帧 hello）必须在代码中存在。
 
-// rePublishEvent 匹配 publishEvent 调用中的字面量事件名（第二参数）。
-var rePublishEvent = regexp.MustCompile(`publishEvent\([^\n]*?"(?P<name>[a-z0-9_]+)"`)
+	// rePublishEvent 匹配 publishEvent 调用中的字面量事件名（第二参数）。
+	var rePublishEvent = regexp.MustCompile(`[pP]ublishEvent\([^\n]*?"(?P<name>[a-z0-9_]+)"`)
 
 // reDocEventRow 匹配文档枚举表行：`| `task_status` | ...` 取首列反引号内容。
 var reDocEventRow = regexp.MustCompile("\\|\\s*`(?P<name>[a-z0-9_]+)`")
@@ -36,14 +36,35 @@ func TestSSEContract_CodeVsDocAlignment(t *testing.T) {
 	}
 	codeEvents := map[string]bool{}
 	scanned := 0
+	var filesToScan []string
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+		if strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		data, err := os.ReadFile(name)
+		if e.IsDir() {
+			if name == "grpc" {
+				grpcDir := filepath.Join(pkgDir, name)
+				grpcEntries, err := os.ReadDir(grpcDir)
+				if err != nil {
+					t.Fatalf("读取 grpc 子目录失败: %v", err)
+				}
+				for _, ge := range grpcEntries {
+					if !ge.IsDir() && strings.HasSuffix(ge.Name(), ".go") {
+						filesToScan = append(filesToScan, filepath.Join(grpcDir, ge.Name()))
+					}
+				}
+			}
+			continue
+		}
+		if strings.HasSuffix(name, ".go") {
+			filesToScan = append(filesToScan, filepath.Join(pkgDir, name))
+		}
+	}
+	for _, filePath := range filesToScan {
+		data, err := os.ReadFile(filePath)
 		if err != nil {
-			t.Fatalf("读取 %s 失败: %v", name, err)
+			t.Fatalf("读取 %s 失败: %v", filePath, err)
 		}
 		scanned++
 		for _, m := range rePublishEvent.FindAllStringSubmatch(string(data), -1) {
@@ -111,18 +132,39 @@ func TestSSEContract_PayloadKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取包目录失败: %v", err)
 	}
-	reCall := regexp.MustCompile(`publishEvent\(.*?"([a-z0-9_]+)"`)
+	reCall := regexp.MustCompile(`[pP]ublishEvent\(.*?"([a-z0-9_]+)"`)
 	reKey := regexp.MustCompile(`"([A-Za-z0-9_]+)"\s*:`)
 	seen := map[string]map[string]bool{} // event -> 出现过的 key 集合
 	scanned := 0
+	var filesToScan []string
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+		if strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		data, err := os.ReadFile(name)
+		if e.IsDir() {
+			if name == "grpc" {
+				grpcDir := filepath.Join(pkgDir, name)
+				grpcEntries, err := os.ReadDir(grpcDir)
+				if err != nil {
+					t.Fatalf("读取 grpc 子目录失败: %v", err)
+				}
+				for _, ge := range grpcEntries {
+					if !ge.IsDir() && strings.HasSuffix(ge.Name(), ".go") {
+						filesToScan = append(filesToScan, filepath.Join(grpcDir, ge.Name()))
+					}
+				}
+			}
+			continue
+		}
+		if strings.HasSuffix(name, ".go") {
+			filesToScan = append(filesToScan, filepath.Join(pkgDir, name))
+		}
+	}
+	for _, filePath := range filesToScan {
+		data, err := os.ReadFile(filePath)
 		if err != nil {
-			t.Fatalf("读取 %s 失败: %v", name, err)
+			t.Fatalf("读取 %s 失败: %v", filePath, err)
 		}
 		scanned++
 		lines := strings.Split(string(data), "\n")

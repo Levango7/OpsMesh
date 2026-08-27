@@ -6,6 +6,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"io"
 	"log"
 	"net/http"
@@ -29,7 +30,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleCreateUser(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -38,7 +39,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "user:read"); !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"users": s.store.ListUsers()})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"users": s.store.ListUsers()})
 }
 
 // handleCreateUser 处理 POST /api/v1/users：创建用户（需 user:write 权限）。
@@ -56,32 +57,32 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		log.Printf("controlplane: handleCreateUser 解析请求体失败: %v", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 	if body.Username == "" || body.Password == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
 		return
 	}
 	if msg := validateStrongPassword(body.Password); msg != "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
 	// P3 角色引用校验：role_ids 若存在须全部指向真实角色，避免写入无效角色引用。
 	for _, rid := range body.RoleIDs {
 		if rid != "" && s.store.GetRole(rid) == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown role id: " + rid})
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown role id: " + rid})
 			return
 		}
 	}
 	if s.store.GetUserByUsername(body.Username) != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
+		paginate.WriteJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
 		return
 	}
 	hash, err := hashPassword(body.Password)
 	if err != nil {
 		log.Printf("controlplane: handleCreateUser 哈希密码失败: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	u := &store.User{
@@ -93,14 +94,14 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		RoleIDs:      body.RoleIDs,
 	}
 	if s.store.CreateUser(u) == nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
+		paginate.WriteJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "user_create", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 	})
-	writeJSON(w, http.StatusCreated, u)
+	paginate.WriteJSON(w, http.StatusCreated, u)
 }
 
 // handleUserRouting 分派 /api/v1/users/{id} 子路径：
@@ -111,7 +112,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUserRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/users/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user id required"})
 		return
 	}
 	// 解析 {id} 或 {id}/approve 或 {id}/reject。
@@ -122,7 +123,7 @@ func (s *Server) handleUserRouting(w http.ResponseWriter, r *http.Request) {
 		subAction = rest[idx+1:]
 	}
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user id required"})
 		return
 	}
 	// 子路径分发（approve/reject）。
@@ -135,7 +136,7 @@ func (s *Server) handleUserRouting(w http.ResponseWriter, r *http.Request) {
 			s.handleRejectUser(w, r, id)
 			return
 		default:
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + subAction})
+			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + subAction})
 			return
 		}
 	}
@@ -146,7 +147,7 @@ func (s *Server) handleUserRouting(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		s.handleDeleteUser(w, r, id)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -155,7 +156,7 @@ func (s *Server) handleUserRouting(w http.ResponseWriter, r *http.Request) {
 // 鉴权：需 user:approve 权限（admin 角色自动拥有）。
 func (s *Server) handleApproveUser(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	caller, ok := s.requirePermission(w, r, "user:approve")
@@ -164,23 +165,23 @@ func (s *Server) handleApproveUser(w http.ResponseWriter, r *http.Request, id st
 	}
 	existing := s.store.GetUser(id)
 	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
 	if existing.Status != "pending" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "user is not pending (current status: " + existing.Status + ")"})
+		paginate.WriteJSON(w, http.StatusConflict, map[string]string{"error": "user is not pending (current status: " + existing.Status + ")"})
 		return
 	}
 	existing.Status = "active"
 	if !s.store.UpdateUser(existing) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "user_approve", Target: id, Detail: sanitizeAuditDetail("approved user " + existing.Username),
 	})
-	writeJSON(w, http.StatusOK, s.store.GetUser(id))
+	paginate.WriteJSON(w, http.StatusOK, s.store.GetUser(id))
 }
 
 // handleRejectUser 处理 POST /api/v1/users/{id}/reject：管理员拒绝用户注册（注册安全）。
@@ -189,7 +190,7 @@ func (s *Server) handleApproveUser(w http.ResponseWriter, r *http.Request, id st
 // 请求体可选：{reason?: "拒绝原因"}，记录到审计日志。
 func (s *Server) handleRejectUser(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	caller, ok := s.requirePermission(w, r, "user:approve")
@@ -205,16 +206,16 @@ func (s *Server) handleRejectUser(w http.ResponseWriter, r *http.Request, id str
 	}
 	existing := s.store.GetUser(id)
 	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
 	if existing.Status != "pending" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "user is not pending (current status: " + existing.Status + ")"})
+		paginate.WriteJSON(w, http.StatusConflict, map[string]string{"error": "user is not pending (current status: " + existing.Status + ")"})
 		return
 	}
 	existing.Status = "rejected"
 	if !s.store.UpdateUser(existing) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
 	detail := "rejected user " + existing.Username
@@ -225,7 +226,7 @@ func (s *Server) handleRejectUser(w http.ResponseWriter, r *http.Request, id str
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "user_reject", Target: id, Detail: sanitizeAuditDetail(detail),
 	})
-	writeJSON(w, http.StatusOK, s.store.GetUser(id))
+	paginate.WriteJSON(w, http.StatusOK, s.store.GetUser(id))
 }
 
 // handleUpdateUser 处理 PUT /api/v1/users/{id}：更新用户 email/roles/status（需 user:write 权限）。
@@ -242,7 +243,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request, id str
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		log.Printf("controlplane: handleUpdateUser 解析请求体失败: %v", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 	// 状态变更需更高权限：仅 user:write 不能激活/禁用账号，须 user:approve（与 审批模型一致），
@@ -254,7 +255,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request, id str
 	}
 	existing := s.store.GetUser(id)
 	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
 	if body.Email != "" {
@@ -267,14 +268,14 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request, id str
 		existing.Status = body.Status
 	}
 	if !s.store.UpdateUser(existing) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "user_update", Target: id, Detail: "updated via HTTP",
 	})
-	writeJSON(w, http.StatusOK, s.store.GetUser(id))
+	paginate.WriteJSON(w, http.StatusOK, s.store.GetUser(id))
 }
 
 // handleDeleteUser 处理 DELETE /api/v1/users/{id}：删除用户（需 user:delete 权限）。
@@ -284,11 +285,11 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 	if s.store.GetUser(id) == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
 	if !s.store.DeleteUser(id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。

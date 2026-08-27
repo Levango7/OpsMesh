@@ -27,6 +27,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -700,13 +701,13 @@ func extractBearer(r *http.Request) (string, error) {
 func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, required string) (*store.User, bool) {
 	u, err := s.userFromToken(r)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return nil, false
 	}
 	// 强制改密：标记 MustChangePassword 的用户只能访问 /api/v1/auth/change-password
 	// （该端点走 userFromToken，不经此处），其余受保护 API 一律拒绝，避免弱口令长期在线。
 	if u.MustChangePassword {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "password change required (MUST_CHANGE_PASSWORD)"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "password change required (MUST_CHANGE_PASSWORD)"})
 		return nil, false
 	}
 	perms := s.userPermissions(u)
@@ -715,7 +716,7 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, requi
 			return u, true
 		}
 	}
-	writeJSON(w, http.StatusForbidden, map[string]string{"error": "permission denied: " + required})
+	paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "permission denied: " + required})
 	return nil, false
 }
 
@@ -758,7 +759,7 @@ func (s *Server) requireProd(w http.ResponseWriter, r *http.Request, required st
 	if r.Header.Get("X-Federation-Forwarded") == "1" {
 		if err := s.verifyFederationRequest(r); err != nil {
 			log.Printf("controlplane: requireProd 联邦验签失败: %v", err)
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "federation signature verification failed"})
+			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "federation signature verification failed"})
 			return nil, false
 		}
 		return nil, true
@@ -790,7 +791,7 @@ func (s *Server) requireProd(w http.ResponseWriter, r *http.Request, required st
 		return nil, true
 	}
 	// 5. 无可用身份 → 拒绝。
-	writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity (no bearer token or gateway role header)"})
+	paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity (no bearer token or gateway role header)"})
 	return nil, false
 }
 
@@ -798,7 +799,7 @@ func (s *Server) requireProd(w http.ResponseWriter, r *http.Request, required st
 func (s *Server) authorizeByRoles(w http.ResponseWriter, r *http.Request, required string) (*store.User, bool) {
 	roleNames := authctx.FromHTTPHeader(r.Header).Roles
 	if len(roleNames) == 0 {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "no roles in identity context"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "no roles in identity context"})
 		return nil, false
 	}
 	// 动态查询角色权限映射，保证管理员修改角色权限后立即生效（无陈旧缓存）。
@@ -810,7 +811,7 @@ func (s *Server) authorizeByRoles(w http.ResponseWriter, r *http.Request, requir
 			}
 		}
 	}
-	writeJSON(w, http.StatusForbidden, map[string]string{"error": "permission denied: " + required})
+	paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "permission denied: " + required})
 	return nil, false
 }
 
@@ -873,22 +874,22 @@ func extractAPIKey(r *http.Request) (string, bool) {
 // 绝不允许因空指针 panic 或跳过校验形成认证旁路。
 func (s *Server) authorizeByAPIKey(w http.ResponseWriter, r *http.Request, required, key string) (*store.User, bool) {
 	if s.apiKeyMgr == nil || key == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid api key"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid api key"})
 		return nil, false
 	}
 	ak, err := s.apiKeyMgr.ValidateKey(key)
 	if err != nil || ak == nil {
 		// 统一错误文案，不区分"不存在/格式错/已禁用/已过期"，防枚举探测有效 key。
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid api key"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid api key"})
 		return nil, false
 	}
 	// 双保险：Enabled 与 ExpiresAt（ValidateKey 已校验，见函数注释）。
 	if !ak.Enabled {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid api key"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid api key"})
 		return nil, false
 	}
 	if !ak.ExpiresAt.IsZero() && time.Now().After(ak.ExpiresAt) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid api key"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid api key"})
 		return nil, false
 	}
 	// 租户交叉校验：X-Tenant-ID 与 key 归属不一致即拒绝（越权防线，FIXPLAN §2.3.2）。
@@ -897,11 +898,11 @@ func (s *Server) authorizeByAPIKey(w http.ResponseWriter, r *http.Request, requi
 		reqTenant = ak.TenantID // 头缺省时取 key 自身租户
 	}
 	if reqTenant != ak.TenantID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch between X-Tenant-ID header and api key tenant"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch between X-Tenant-ID header and api key tenant"})
 		return nil, false
 	}
 	if !s.apiKeyMgr.HasScope(ak, required) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient scope"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient scope"})
 		return nil, false
 	}
 	s.recordAPIKeyUsage(ak.ID)

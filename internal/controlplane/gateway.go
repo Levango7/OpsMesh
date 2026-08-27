@@ -1,4 +1,4 @@
-﻿package controlplane
+package controlplane
 
 // gateway.go 实现 Phase 5 API 网关 HTTP handler（路由规则 CRUD + 启停 + 统计）。
 //
@@ -23,6 +23,7 @@
 // 统计为内存计数器，进程级聚合（多副本各自统计，未做跨副本聚合）。
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"net"
 	"net/http"
 	"net/url"
@@ -115,7 +116,7 @@ func (s *Server) handleGatewayRoutes(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleCreateGatewayRoute(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -136,7 +137,7 @@ func (s *Server) handleListGatewayRoutes(w http.ResponseWriter, r *http.Request)
 	for _, e := range tenantRoutes {
 		rules = append(rules, e.rule)
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"routes": rules})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"routes": rules})
 }
 
 // handleCreateGatewayRoute 处理 POST /api/v1/gateway/routes：创建路由规则。
@@ -151,24 +152,24 @@ func (s *Server) handleCreateGatewayRoute(w http.ResponseWriter, r *http.Request
 	}
 	var body extension.RouteRule
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
 	if body.PathPrefix == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "pathPrefix is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "pathPrefix is required"})
 		return
 	}
 	if body.TargetBackend == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "targetBackend is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "targetBackend is required"})
 		return
 	}
 	// L1 输入校验：targetBackend 格式 scheme://host:port，scheme ∈ {http,https,grpc}。
 	if ok, msg := validateGatewayTargetBackend(body.TargetBackend); !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
 	now := time.Now()
@@ -193,7 +194,7 @@ func (s *Server) handleCreateGatewayRoute(w http.ResponseWriter, r *http.Request
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "gateway_route_create", Target: body.ID, Detail: sanitizeAuditDetail("name=" + body.Name),
 	})
-	writeJSON(w, http.StatusCreated, entry.rule)
+	paginate.WriteJSON(w, http.StatusCreated, entry.rule)
 }
 
 // handleGatewayRouteRouting 分派 /api/v1/gateway/routes/{id} 子路径：
@@ -205,13 +206,13 @@ func (s *Server) handleCreateGatewayRoute(w http.ResponseWriter, r *http.Request
 func (s *Server) handleGatewayRouteRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/gateway/routes/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "route id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "route id required"})
 		return
 	}
 	parts := strings.SplitN(rest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "route id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "route id required"})
 		return
 	}
 	if len(parts) == 1 {
@@ -223,7 +224,7 @@ func (s *Server) handleGatewayRouteRouting(w http.ResponseWriter, r *http.Reques
 		case http.MethodDelete:
 			s.handleDeleteGatewayRoute(w, r, id)
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 		return
 	}
@@ -234,7 +235,7 @@ func (s *Server) handleGatewayRouteRouting(w http.ResponseWriter, r *http.Reques
 	case "disable":
 		s.handleGatewayRouteToggle(w, r, id, false)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
 	}
 }
 
@@ -253,10 +254,10 @@ func (s *Server) handleGetGatewayRoute(w http.ResponseWriter, r *http.Request, i
 	tenantRoutes := gw.routes[actx.TenantID]
 	entry, ok := tenantRoutes[id]
 	if !ok || entry == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, entry.rule)
+	paginate.WriteJSON(w, http.StatusOK, entry.rule)
 }
 
 // handleUpdateGatewayRoute 处理 PUT /api/v1/gateway/routes/{id}：更新路由。
@@ -271,7 +272,7 @@ func (s *Server) handleUpdateGatewayRoute(w http.ResponseWriter, r *http.Request
 	}
 	var body extension.RouteRule
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	gw := s.ensureGateway()
@@ -280,7 +281,7 @@ func (s *Server) handleUpdateGatewayRoute(w http.ResponseWriter, r *http.Request
 	tenantRoutes := gw.routes[actx.TenantID]
 	entry, exists := tenantRoutes[id]
 	if !exists || entry == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})
 		return
 	}
 	// 保留不可改字段。
@@ -297,7 +298,7 @@ func (s *Server) handleUpdateGatewayRoute(w http.ResponseWriter, r *http.Request
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "gateway_route_update", Target: id, Detail: sanitizeAuditDetail("name=" + body.Name),
 	})
-	writeJSON(w, http.StatusOK, newEntry.rule)
+	paginate.WriteJSON(w, http.StatusOK, newEntry.rule)
 }
 
 // handleDeleteGatewayRoute 处理 DELETE /api/v1/gateway/routes/{id}：删除路由。
@@ -315,7 +316,7 @@ func (s *Server) handleDeleteGatewayRoute(w http.ResponseWriter, r *http.Request
 	defer gw.mu.Unlock()
 	tenantRoutes := gw.routes[actx.TenantID]
 	if _, exists := tenantRoutes[id]; !exists {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})
 		return
 	}
 	delete(tenantRoutes, id)
@@ -323,7 +324,7 @@ func (s *Server) handleDeleteGatewayRoute(w http.ResponseWriter, r *http.Request
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "gateway_route_delete", Target: id,
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // handleGatewayRouteToggle 处理 POST /api/v1/gateway/routes/{id}/enable|disable：启停路由。
@@ -342,7 +343,7 @@ func (s *Server) handleGatewayRouteToggle(w http.ResponseWriter, r *http.Request
 	tenantRoutes := gw.routes[actx.TenantID]
 	entry, exists := tenantRoutes[id]
 	if !exists || entry == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})
 		return
 	}
 	entry.rule.Enabled = enable
@@ -355,7 +356,7 @@ func (s *Server) handleGatewayRouteToggle(w http.ResponseWriter, r *http.Request
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: auditAction, Target: id,
 	})
-	writeJSON(w, http.StatusOK, entry.rule)
+	paginate.WriteJSON(w, http.StatusOK, entry.rule)
 }
 
 // handleGatewayStats 处理 GET /api/v1/gateway/stats：网关统计。
@@ -384,7 +385,7 @@ func (s *Server) handleGatewayStats(w http.ResponseWriter, r *http.Request) {
 		AvgLatencyMs:  gw.stats.AvgLatencyMs,
 		ActiveRoutes:  activeRoutes,
 	}
-	writeJSON(w, http.StatusOK, stats)
+	paginate.WriteJSON(w, http.StatusOK, stats)
 }
 
 // randGatewayRouteID 生成随机网关路由 ID（"gw-route-" + 16 字节 hex）。

@@ -6,6 +6,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"log"
 	"net/http"
 	"strings"
@@ -28,7 +29,7 @@ func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleCreateRole(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -36,10 +37,10 @@ func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
 // 鉴权：仅需有效 token（登录用户均可查看角色列表，便于前端角色选择下拉框）。
 func (s *Server) handleListRoles(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.userFromToken(r); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"roles": s.store.ListRoles()})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"roles": s.store.ListRoles()})
 }
 
 // handleCreateRole 处理 POST /api/v1/roles：创建角色（需 role:write 权限）。
@@ -56,11 +57,11 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		log.Printf("controlplane: handleCreateRole 解析请求体失败: %v", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 	if body.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "role name is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "role name is required"})
 		return
 	}
 	role := &store.Role{
@@ -70,14 +71,14 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		Permissions: body.Permissions,
 	}
 	if s.store.CreateRole(role) == nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "role name already exists"})
+		paginate.WriteJSON(w, http.StatusConflict, map[string]string{"error": "role name already exists"})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "role_create", Target: role.ID, Detail: sanitizeAuditDetail("name=" + role.Name),
 	})
-	writeJSON(w, http.StatusCreated, role)
+	paginate.WriteJSON(w, http.StatusCreated, role)
 }
 
 // handleRoleRouting 分派 /api/v1/roles/{id} 子路径：
@@ -86,7 +87,7 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRoleRouting(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/roles/")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "role id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "role id required"})
 		return
 	}
 	switch r.Method {
@@ -95,7 +96,7 @@ func (s *Server) handleRoleRouting(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		s.handleDeleteRole(w, r, id)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -111,12 +112,12 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request, id str
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		log.Printf("controlplane: handleUpdateRole 解析请求体失败: %v", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 	existing := s.store.GetRole(id)
 	if existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "role not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "role not found"})
 		return
 	}
 	if body.Description != "" {
@@ -126,14 +127,14 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request, id str
 		existing.Permissions = body.Permissions
 	}
 	if !s.store.UpdateRole(existing) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "role not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "role not found"})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "role_update", Target: id, Detail: "updated via HTTP",
 	})
-	writeJSON(w, http.StatusOK, s.store.GetRole(id))
+	paginate.WriteJSON(w, http.StatusOK, s.store.GetRole(id))
 }
 
 // handleDeleteRole 处理 DELETE /api/v1/roles/{id}：删除角色（需 role:delete 权限）。
@@ -143,11 +144,11 @@ func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 	if s.store.GetRole(id) == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "role not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "role not found"})
 		return
 	}
 	if !s.store.DeleteRole(id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "role not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "role not found"})
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。

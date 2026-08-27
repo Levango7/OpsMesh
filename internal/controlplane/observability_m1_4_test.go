@@ -20,6 +20,8 @@ import (
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 
+	grpcserver "opsmesh/internal/controlplane/grpc"
+
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	"google.golang.org/grpc/metadata"
@@ -160,9 +162,9 @@ func TestGRPCHandlerAuditCarriesTraceID(t *testing.T) {
 	}
 
 	// 用提取后的 ctx 产出审计日志（模拟 gRPC handler 调用 g.audit）。
-	g := &grpcServerImpl{store: s.store}
+	g := &grpcserver.GrpcServerImpl{Store: s.store}
 	e := &proto.AuditEvent{TenantID: "t1", Action: "register", Target: "agent-1"}
-	g.audit(extractedCtx, e)
+	g.Audit(extractedCtx, e)
 
 	if e.TraceID != expectedTraceID {
 		t.Fatalf("gRPC 审计日志 TraceID = %q, want %q", e.TraceID, expectedTraceID)

@@ -9,6 +9,7 @@ package controlplane
 //   - GET /api/v1/platform/metrics  平台指标汇总
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"net/http"
 	"runtime"
 	"time"
@@ -55,7 +56,7 @@ func (s *Server) handlePlatformConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		s.handleUpdatePlatformConfig(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -74,7 +75,7 @@ func (s *Server) handleGetPlatformConfig(w http.ResponseWriter, r *http.Request)
 		EnableBilling:     true,
 		UpdatedAt:         time.Now().Format(time.RFC3339),
 	}
-	writeJSON(w, http.StatusOK, cfg)
+	paginate.WriteJSON(w, http.StatusOK, cfg)
 }
 
 // handleUpdatePlatformConfig 处理 PUT /api/v1/platform/config。
@@ -88,7 +89,7 @@ func (s *Server) handleUpdatePlatformConfig(w http.ResponseWriter, r *http.Reque
 	}
 	var body PlatformConfig
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	body.UpdatedAt = time.Now().Format(time.RFC3339)
@@ -97,7 +98,7 @@ func (s *Server) handleUpdatePlatformConfig(w http.ResponseWriter, r *http.Reque
 		TenantID: "default", UserID: caller.ID, Action: "platform_config_update_simulated", Target: "config", Detail: "echo placeholder, not persisted",
 	})
 	// 响应体加 simulated:true，如实告知客户端此更新未持久化。
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"config":    body,
 		"simulated": true,
 	})
@@ -120,7 +121,7 @@ func (s *Server) handlePlatformHealth(w http.ResponseWriter, r *http.Request) {
 		Components: components,
 		Timestamp:  time.Now().Format(time.RFC3339),
 	}
-	writeJSON(w, http.StatusOK, health)
+	paginate.WriteJSON(w, http.StatusOK, health)
 }
 
 // handlePlatformMetrics 处理 GET /api/v1/platform/metrics：平台指标汇总。
@@ -138,5 +139,5 @@ func (s *Server) handlePlatformMetrics(w http.ResponseWriter, r *http.Request) {
 		Subscriptions: len(s.store.ListSubscriptions("")),
 		Invoices:      len(s.store.ListInvoices("")),
 	}
-	writeJSON(w, http.StatusOK, metrics)
+	paginate.WriteJSON(w, http.StatusOK, metrics)
 }

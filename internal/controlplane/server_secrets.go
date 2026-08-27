@@ -16,6 +16,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -39,7 +40,7 @@ type secretsStatusResponse struct {
 // 不返回 token，避免前端泄露。
 func (s *Server) handleSecretsStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if _, ok := s.requireProd(w, r, "secrets:read"); !ok {
@@ -53,7 +54,7 @@ func (s *Server) handleSecretsStatus(w http.ResponseWriter, r *http.Request) {
 		Mount:    cfg.VaultMount,
 		File:     cfg.SecretFile,
 	}
-	writeJSON(w, http.StatusOK, resp)
+	paginate.WriteJSON(w, http.StatusOK, resp)
 }
 
 // secretsTestRequest /api/v1/secrets/test 请求体。
@@ -75,7 +76,7 @@ type secretsTestResponse struct {
 // 返回 ok/fail + 延迟。SSRF 校验拒绝私网/环回地址。
 func (s *Server) handleSecretsTest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if _, ok := s.requireProd(w, r, "secrets:write"); !ok {
@@ -83,16 +84,16 @@ func (s *Server) handleSecretsTest(w http.ResponseWriter, r *http.Request) {
 	}
 	var req secretsTestRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
-		jsonError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		paginate.JSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
 	if req.Addr == "" {
-		jsonError(w, http.StatusBadRequest, "addr is required")
+		paginate.JSONError(w, http.StatusBadRequest, "addr is required")
 		return
 	}
 	// SSRF 校验：拒绝私网/环回/元数据地址，避免控制面被用作 SSRF 跳板。
 	if err := validateURLSSRF(req.Addr); err != nil {
-		writeJSON(w, http.StatusOK, secretsTestResponse{
+		paginate.WriteJSON(w, http.StatusOK, secretsTestResponse{
 			OK:    false,
 			Error: "SSRF blocked: " + err.Error(),
 		})
@@ -106,7 +107,7 @@ func (s *Server) handleSecretsTest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if token == "" {
-		writeJSON(w, http.StatusOK, secretsTestResponse{
+		paginate.WriteJSON(w, http.StatusOK, secretsTestResponse{
 			OK:    false,
 			Error: "vault token is empty (set token or env OPSMESH_VAULT_TOKEN)",
 		})
@@ -125,7 +126,7 @@ func (s *Server) handleSecretsTest(w http.ResponseWriter, r *http.Request) {
 	// 真正的连通性探测由后续 Get 调用触发；此处用一次 Get 触发网络 IO。
 	provider, err := secrets.NewVaultProvider(req.Addr, token, mount)
 	if err != nil {
-		writeJSON(w, http.StatusOK, secretsTestResponse{
+		paginate.WriteJSON(w, http.StatusOK, secretsTestResponse{
 			OK:        false,
 			LatencyMs: time.Since(start).Milliseconds(),
 			Error:     "construct vault provider: " + err.Error(),
@@ -138,7 +139,7 @@ func (s *Server) handleSecretsTest(w http.ResponseWriter, r *http.Request) {
 	_, getErr := provider.Get("opsmesh/secrets-test#probe")
 	latency := time.Since(start).Milliseconds()
 	if getErr == nil {
-		writeJSON(w, http.StatusOK, secretsTestResponse{
+		paginate.WriteJSON(w, http.StatusOK, secretsTestResponse{
 			OK:        true,
 			LatencyMs: latency,
 		})
@@ -147,13 +148,13 @@ func (s *Server) handleSecretsTest(w http.ResponseWriter, r *http.Request) {
 	// 区分 NotFound（可达）与其他错误（不可达/认证失败）。
 	errStr := getErr.Error()
 	if strings.Contains(errStr, "secret not found") || isVaultNotFound(errStr) {
-		writeJSON(w, http.StatusOK, secretsTestResponse{
+		paginate.WriteJSON(w, http.StatusOK, secretsTestResponse{
 			OK:        true,
 			LatencyMs: latency,
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, secretsTestResponse{
+	paginate.WriteJSON(w, http.StatusOK, secretsTestResponse{
 		OK:        false,
 		LatencyMs: latency,
 		Error:     errStr,
@@ -187,7 +188,7 @@ type secretsKeyEntry struct {
 // vault/未配置时返回空列表（前端展示"暂无密钥"）。
 func (s *Server) handleSecretsKeys(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if _, ok := s.requireProd(w, r, "secrets:read"); !ok {
@@ -195,10 +196,10 @@ func (s *Server) handleSecretsKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.cfg
 	if cfg.SecretProvider == "" {
-		writeJSON(w, http.StatusOK, []secretsKeyEntry{})
+		paginate.WriteJSON(w, http.StatusOK, []secretsKeyEntry{})
 		return
 	}
-	writeJSON(w, http.StatusOK, s.enumerateSecretKeys())
+	paginate.WriteJSON(w, http.StatusOK, s.enumerateSecretKeys())
 }
 
 // enumerateSecretKeys 根据 s.cfg 枚举密钥 key 列表（仅名称 + provider，不含值）。

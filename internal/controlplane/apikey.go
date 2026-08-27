@@ -12,6 +12,7 @@ package controlplane
 //   - POST   /api/v1/apikeys/{id}/disable  禁用 API Key
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"net/http"
 	"strings"
 
@@ -28,7 +29,7 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleCreateAPIKey(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -42,11 +43,11 @@ func (s *Server) handleListAPIKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	keys := s.store.ListAPIKeys(actx.TenantID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"apiKeys": keys})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"apiKeys": keys})
 }
 
 // handleCreateAPIKey 处理 POST /api/v1/apikeys：创建 API Key（返回明文 key，仅此一次）。
@@ -60,36 +61,36 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.APIKey
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
 	// 生成明文 key 与 hash。
 	plainKey, hash, err := platform.GenerateAPIKey()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "generate api key failed: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "generate api key failed: " + err.Error()})
 		return
 	}
 	body.Key = hash
 	body.Enabled = true
 	created := s.store.CreateAPIKey(actx.TenantID, &body)
 	if created == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create api key failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create api key failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "apikey_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
 	// 返回创建结果 + 明文 key（仅此一次）。
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusCreated, map[string]interface{}{
 		"apiKey":   created,
 		"plainKey": plainKey,
 	})
@@ -99,13 +100,13 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAPIKeyRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/apikeys/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "api key id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "api key id required"})
 		return
 	}
 	parts := strings.SplitN(rest, "/", 2)
 	id := parts[0]
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "api key id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "api key id required"})
 		return
 	}
 	if len(parts) == 1 {
@@ -117,7 +118,7 @@ func (s *Server) handleAPIKeyRouting(w http.ResponseWriter, r *http.Request) {
 		case http.MethodDelete:
 			s.handleDeleteAPIKey(w, r, id)
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 		return
 	}
@@ -128,7 +129,7 @@ func (s *Server) handleAPIKeyRouting(w http.ResponseWriter, r *http.Request) {
 	case "disable":
 		s.handleDisableAPIKey(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + action})
 	}
 }
 
@@ -142,15 +143,15 @@ func (s *Server) handleGetAPIKey(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	k, ok := s.store.GetAPIKey(actx.TenantID, id)
 	if !ok || k == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, k)
+	paginate.WriteJSON(w, http.StatusOK, k)
 }
 
 // handleUpdateAPIKey 处理 PUT /api/v1/apikeys/{id}。
@@ -169,23 +170,23 @@ func (s *Server) handleUpdateAPIKey(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	// 先取 existing，不存在返 404。
 	existing, ok := s.store.GetAPIKey(actx.TenantID, id)
 	if !ok || existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 		return
 	}
 	var body store.APIKey
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	// 白名单：scopes 不允许清空（防提权）。
 	if len(body.Scopes) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "scopes must not be empty"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "scopes must not be empty"})
 		return
 	}
 	// 按白名单覆盖可编辑字段。
@@ -197,13 +198,13 @@ func (s *Server) handleUpdateAPIKey(w http.ResponseWriter, r *http.Request, id s
 	// （body.Key 因 json:"-" 标签始终为空，此处显式不动 existing.Key 即可。）
 	updated, ok := s.store.UpdateAPIKey(actx.TenantID, existing)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "apikey_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // handleDeleteAPIKey 处理 DELETE /api/v1/apikeys/{id}。
@@ -217,17 +218,17 @@ func (s *Server) handleDeleteAPIKey(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if !s.store.DeleteAPIKey(actx.TenantID, id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "apikey_delete", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // handleEnableAPIKey 处理 POST /api/v1/apikeys/{id}/enable。
@@ -241,24 +242,24 @@ func (s *Server) handleEnableAPIKey(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	k, ok := s.store.GetAPIKey(actx.TenantID, id)
 	if !ok || k == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 		return
 	}
 	k.Enabled = true
 	updated, ok := s.store.UpdateAPIKey(actx.TenantID, k)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "enable api key failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "enable api key failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "apikey_enable", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }
 
 // handleDisableAPIKey 处理 POST /api/v1/apikeys/{id}/disable。
@@ -272,22 +273,22 @@ func (s *Server) handleDisableAPIKey(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	k, ok := s.store.GetAPIKey(actx.TenantID, id)
 	if !ok || k == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 		return
 	}
 	k.Enabled = false
 	updated, ok := s.store.UpdateAPIKey(actx.TenantID, k)
 	if !ok || updated == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "disable api key failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "disable api key failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "apikey_disable", Target: id, Detail: "",
 	})
-	writeJSON(w, http.StatusOK, updated)
+	paginate.WriteJSON(w, http.StatusOK, updated)
 }

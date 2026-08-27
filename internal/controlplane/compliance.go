@@ -1,4 +1,4 @@
-﻿package controlplane
+package controlplane
 
 // compliance.go 实现 Phase 3 安全合规 HTTP handler。
 //
@@ -17,6 +17,7 @@
 //   - 合规引擎在 handler 内即时构造（NewEngine 很轻，规则只读）。
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"net/http"
 	"strings"
 	"time"
@@ -37,7 +38,7 @@ func (s *Server) handleComplianceRules(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		s.handleListComplianceRules(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -48,7 +49,7 @@ func (s *Server) handleListComplianceRules(w http.ResponseWriter, r *http.Reques
 	}
 	eng := s.complianceEngine()
 	rules := eng.ListRules()
-	writeJSON(w, http.StatusOK, map[string]interface{}{"rules": rules})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"rules": rules})
 }
 
 // handleComplianceRuleRouting 分派 /api/v1/compliance/rules/{id} 子路径：
@@ -56,19 +57,19 @@ func (s *Server) handleListComplianceRules(w http.ResponseWriter, r *http.Reques
 func (s *Server) handleComplianceRuleRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/compliance/rules/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "rule id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "rule id required"})
 		return
 	}
 	id := rest
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "rule id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "rule id required"})
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
 		s.handleGetComplianceRule(w, r, id)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -80,10 +81,10 @@ func (s *Server) handleGetComplianceRule(w http.ResponseWriter, r *http.Request,
 	eng := s.complianceEngine()
 	rule, ok := eng.GetRule(id)
 	if !ok || rule == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "rule not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "rule not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, rule)
+	paginate.WriteJSON(w, http.StatusOK, rule)
 }
 
 // handleComplianceScan 处理 POST /api/v1/compliance/scan：扫描指定设备合规状态。
@@ -100,7 +101,7 @@ func (s *Server) handleComplianceScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body struct {
@@ -108,11 +109,11 @@ func (s *Server) handleComplianceScan(w http.ResponseWriter, r *http.Request) {
 		Results  []compliance.ComplianceResult `json:"results"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 	if body.DeviceID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
 	// 结果为空时用引擎规则生成占位结果（全 failed，供测试/演示）。
@@ -149,10 +150,10 @@ func (s *Server) handleComplianceScan(w http.ResponseWriter, r *http.Request) {
 	}
 	saved := s.store.SaveReport(actx.TenantID, storeReport)
 	if saved == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save report failed"})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save report failed"})
 		return
 	}
-	writeJSON(w, http.StatusCreated, saved)
+	paginate.WriteJSON(w, http.StatusCreated, saved)
 }
 
 // handleComplianceReports 统一处理 /api/v1/compliance/reports：
@@ -162,7 +163,7 @@ func (s *Server) handleComplianceReports(w http.ResponseWriter, r *http.Request)
 	case http.MethodGet:
 		s.handleListComplianceReports(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -176,11 +177,11 @@ func (s *Server) handleListComplianceReports(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	reports := s.store.ListReports(actx.TenantID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"reports": reports})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"reports": reports})
 }
 
 // handleComplianceReportRouting 分派 /api/v1/compliance/reports/{id} 子路径：
@@ -188,19 +189,19 @@ func (s *Server) handleListComplianceReports(w http.ResponseWriter, r *http.Requ
 func (s *Server) handleComplianceReportRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/compliance/reports/")
 	if rest == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "report id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "report id required"})
 		return
 	}
 	id := rest
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "report id required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "report id required"})
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
 		s.handleGetComplianceReport(w, r, id)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -214,14 +215,14 @@ func (s *Server) handleGetComplianceReport(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if actx.TenantID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	report, ok := s.store.GetReport(actx.TenantID, id)
 	if !ok || report == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "report not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "report not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, report)
+	paginate.WriteJSON(w, http.StatusOK, report)
 }
 

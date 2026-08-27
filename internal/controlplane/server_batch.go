@@ -14,6 +14,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
@@ -106,7 +107,7 @@ func genBatchID(prefix string) string {
 // 返回: { batchID, tasks: [{deviceID, taskID, status}] }
 func (s *Server) handleBatchExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -125,15 +126,15 @@ func (s *Server) handleBatchExec(w http.ResponseWriter, r *http.Request) {
 		Timeout   int      `json:"timeout"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	if len(body.DeviceIDs) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceIDs is required (non-empty)"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceIDs is required (non-empty)"})
 		return
 	}
 	if body.Command == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "command is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "command is required"})
 		return
 	}
 	if body.TaskType == "" {
@@ -141,7 +142,7 @@ func (s *Server) handleBatchExec(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.TaskType == "shell" {
 		if err := validateCommand(body.Command); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "command validation failed: " + err.Error()})
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "command validation failed: " + err.Error()})
 			return
 		}
 	}
@@ -203,7 +204,7 @@ func (s *Server) handleBatchExec(w http.ResponseWriter, r *http.Request) {
 	if s.metrics != nil {
 		s.metrics.SetQueueDepth(s.store.PendingDepth())
 	}
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusCreated, map[string]interface{}{
 		"batchID": batchID,
 		"tasks":   items,
 	})
@@ -212,7 +213,7 @@ func (s *Server) handleBatchExec(w http.ResponseWriter, r *http.Request) {
 // handleBatchStatus 处理 GET /api/v1/tasks/batch/{id}：批量任务状态。
 func (s *Server) handleBatchStatus(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -226,11 +227,11 @@ func (s *Server) handleBatchStatus(w http.ResponseWriter, r *http.Request, id st
 	bt, exists := s.batches.batches[id]
 	s.batches.mu.RUnlock()
 	if !exists {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "batch not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "batch not found"})
 		return
 	}
 	if actx.TenantID != "" && bt.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 		return
 	}
 	// 实时刷新每个任务的状态。
@@ -245,7 +246,7 @@ func (s *Server) handleBatchStatus(w http.ResponseWriter, r *http.Request, id st
 			items[i].Status = t.Status
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"batchID":   bt.BatchID,
 		"taskType":  bt.TaskType,
 		"command":   bt.Command,
@@ -264,7 +265,7 @@ func (s *Server) handleBatchStatus(w http.ResponseWriter, r *http.Request, id st
 // 返回: { canaryID, phases: [{phase, deviceIDs, status}] }
 func (s *Server) handleCanaryCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -286,15 +287,15 @@ func (s *Server) handleCanaryCreate(w http.ResponseWriter, r *http.Request) {
 		Labels     map[string]string `json:"labels"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	if len(body.DeviceIDs) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceIDs is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceIDs is required"})
 		return
 	}
 	if body.Command == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "command is required"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "command is required"})
 		return
 	}
 	if body.TaskType == "" {
@@ -302,14 +303,14 @@ func (s *Server) handleCanaryCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.TaskType == "shell" {
 		if err := validateCommand(body.Command); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "command validation failed: " + err.Error()})
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "command validation failed: " + err.Error()})
 			return
 		}
 	}
 	switch body.Strategy {
 	case "percentage", "group", "label":
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "strategy must be percentage/group/label"})
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "strategy must be percentage/group/label"})
 		return
 	}
 	tenant := actx.TenantID
@@ -351,7 +352,7 @@ func (s *Server) handleCanaryCreate(w http.ResponseWriter, r *http.Request) {
 			"status":    p.Status,
 		}
 	}
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusCreated, map[string]interface{}{
 		"canaryID": canaryID,
 		"phases":   phaseSummary,
 	})
@@ -482,7 +483,7 @@ func itoaPhase(n int) string {
 // handleCanaryStatus 处理 GET /api/v1/tasks/canary/{id}：灰度发布状态。
 func (s *Server) handleCanaryStatus(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -497,12 +498,12 @@ func (s *Server) handleCanaryStatus(w http.ResponseWriter, r *http.Request, id s
 	c, exists := s.batches.canaries[id]
 	if !exists {
 		s.batches.mu.RUnlock()
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "canary not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "canary not found"})
 		return
 	}
 	if actx.TenantID != "" && c.TenantID != actx.TenantID {
 		s.batches.mu.RUnlock()
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 		return
 	}
 	// 拷贝只读字段
@@ -557,7 +558,7 @@ func (s *Server) handleCanaryStatus(w http.ResponseWriter, r *http.Request, id s
 			"finishedAt": ps.FinishedAt,
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"canaryID":  canaryID,
 		"strategy":  strategy,
 		"taskType":  taskType,
@@ -571,7 +572,7 @@ func (s *Server) handleCanaryStatus(w http.ResponseWriter, r *http.Request, id s
 // handleCanaryAdvance 处理 POST /api/v1/tasks/canary/{id}/advance：推进到下一阶段。
 func (s *Server) handleCanaryAdvance(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -585,18 +586,18 @@ func (s *Server) handleCanaryAdvance(w http.ResponseWriter, r *http.Request, id 
 	defer s.batches.mu.Unlock()
 	c, exists := s.batches.canaries[id]
 	if !exists {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "canary not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "canary not found"})
 		return
 	}
 	if actx.TenantID != "" && c.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 		return
 	}
 	// 找到下一个 pending 阶段并执行。
 	for i := range c.Phases {
 		if c.Phases[i].Status == "pending" {
 			s.execCanaryPhase(c, &c.Phases[i], c.TaskType, c.Command, "", "", c.TenantID, actx.UserID, r)
-			writeJSON(w, http.StatusOK, map[string]interface{}{
+			paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 				"canaryID": c.CanaryID,
 				"phase":    c.Phases[i].Phase,
 				"status":   c.Phases[i].Status,
@@ -604,7 +605,7 @@ func (s *Server) handleCanaryAdvance(w http.ResponseWriter, r *http.Request, id 
 			return
 		}
 	}
-	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no pending phase to advance"})
+	paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "no pending phase to advance"})
 }
 
 // ============================================================================
@@ -618,7 +619,7 @@ func (s *Server) handleBatchRouting(w http.ResponseWriter, r *http.Request) {
 	// 路径形如 /api/v1/tasks/batch/{id}
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/tasks/batch/")
 	if id == "" || id == r.URL.Path {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "batch id required"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "batch id required"})
 		return
 	}
 	s.handleBatchStatus(w, r, id)
@@ -628,7 +629,7 @@ func (s *Server) handleBatchRouting(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCanaryRouting(w http.ResponseWriter, r *http.Request) {
 	idAndRest := strings.TrimPrefix(r.URL.Path, "/api/v1/tasks/canary/")
 	if idAndRest == "" {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "canary id required"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "canary id required"})
 		return
 	}
 	parts := strings.SplitN(idAndRest, "/", 2)
@@ -641,7 +642,7 @@ func (s *Server) handleCanaryRouting(w http.ResponseWriter, r *http.Request) {
 	case "advance":
 		s.handleCanaryAdvance(w, r, id)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
 	}
 }
 

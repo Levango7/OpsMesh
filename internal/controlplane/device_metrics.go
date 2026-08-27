@@ -11,6 +11,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"net/http"
 	"strings"
 	"time"
@@ -40,11 +41,11 @@ func (s *Server) handleDeviceMetrics(w http.ResponseWriter, r *http.Request, id 
 	// 先校验设备存在 + 租户归属，避免泄露他租户设备指标。
 	dev := s.store.Device(id)
 	if dev == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
 		return
 	}
 	if actx.TenantID != "" && dev.TenantID != actx.TenantID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 		return
 	}
 
@@ -53,29 +54,29 @@ func (s *Server) handleDeviceMetrics(w http.ResponseWriter, r *http.Request, id 
 		// 不带 range：保持现有行为，返回最新值。
 		metrics := s.store.DeviceMetrics(id)
 		if metrics == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "no metrics yet (agent may not have reported)"})
+			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "no metrics yet (agent may not have reported)"})
 			return
 		}
-		writeJSON(w, http.StatusOK, metrics)
+		paginate.WriteJSON(w, http.StatusOK, metrics)
 		return
 	}
 
 	// 带 range：返回历史时序数据。
 	since, ok := parseMetricsRange(rangeStr)
 	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "invalid range, supported: 15m, 1h, 2h, 6h, 24h",
 		})
 		return
 	}
 	samples := s.store.DeviceMetricsHistory(id, since)
 	if len(samples) == 0 {
-		writeJSON(w, http.StatusNotFound, map[string]string{
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{
 			"error": "no metrics history in range " + rangeStr + " (agent may not have reported or history expired)",
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, proto.MetricsSeries{
+	paginate.WriteJSON(w, http.StatusOK, proto.MetricsSeries{
 		DeviceID: id,
 		Range:    rangeStr,
 		Samples:  samples,

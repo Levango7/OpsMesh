@@ -2,6 +2,7 @@
 package controlplane
 
 import (
+	"opsmesh/internal/controlplane/paginate"
 	"fmt"
 	"net"
 	"net/http"
@@ -175,7 +176,7 @@ func (s *Server) rateLimitMiddleware(h http.Handler) http.Handler {
 		ip := clientIP(r, s.cfg.TrustProxy)
 		if !s.rateLimiter.allow(ip) {
 			w.Header().Set("Retry-After", "1")
-			jsonError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			paginate.JSONError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}
 		h.ServeHTTP(w, r)
