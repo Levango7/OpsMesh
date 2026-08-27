@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package opsmesh.log.v1;
+
+option go_package = "opsmesh.io/log-svc/api/proto/v1;logv1";
+
+import "google/protobuf/timestamp.proto";
+
+// LogService provides log operations for the OpsMesh platform.
+service LogService {
+  // SearchLogs searches log entries with filters.
+  rpc SearchLogs(SearchLogsRequest) returns (SearchLogsResponse);
+  // AppendLog appends a single log entry.
+  rpc AppendLog(AppendLogRequest) returns (LogEntry);
+  // GetLogStats returns log statistics for a tenant.
+  rpc GetLogStats(GetLogStatsRequest) returns (GetLogStatsResponse);
+  // ListLogSources returns distinct log sources for a tenant.
+  rpc ListLogSources(ListLogSourcesRequest) returns (ListLogSourcesResponse);
+}
+
+// LogEntry represents a single log record.
+message LogEntry {
+  int64 id = 1;
+  string tenant_id = 2;
+  string device_id = 3;
+  string agent_id = 4;
+  string task_id = 5;
+  google.protobuf.Timestamp timestamp = 6;
+  string level = 7;
+  string source = 8;
+  string message = 9;
+}
+
+// SearchLogsRequest is the request to search logs.
+message SearchLogsRequest {
+  string tenant_id = 1;
+  string device_id = 2;
+  string agent_id = 3;
+  string level = 4;
+  string source = 5;
+  string keyword = 6;
+  string q = 7;
+  google.protobuf.Timestamp from = 8;
+  google.protobuf.Timestamp to = 9;
+  int32 limit = 10;
+  int32 offset = 11;
+}
+
+// SearchLogsResponse contains search results.
+message SearchLogsResponse {
+  repeated LogEntry entries = 1;
+  int32 total = 2;
+}
+
+// AppendLogRequest is the request to append a log entry.
+message AppendLogRequest {
+  string tenant_id = 1;
+  string device_id = 2;
+  string agent_id = 3;
+  string task_id = 4;
+  string level = 5;
+  string source = 6;
+  string message = 7;
+}
+
+// GetLogStatsRequest is the request for log statistics.
+message GetLogStatsRequest {
+  string tenant_id = 1;
+  google.protobuf.Timestamp from = 2;
+  google.protobuf.Timestamp to = 3;
+}
+
+// GetLogStatsResponse contains log statistics.
+message GetLogStatsResponse {
+  int64 total_entries = 1;
+  int64 error_count = 2;
+  int64 warn_count = 3;
+  int64 info_count = 4;
+  map<string, int64> source_counts = 5;
+}
+
+// ListLogSourcesRequest is the request to list log sources.
+message ListLogSourcesRequest {
+  string tenant_id = 1;
+}
+
+// ListLogSourcesResponse contains distinct log sources.
+message ListLogSourcesResponse {
+  repeated string sources = 1;
+}

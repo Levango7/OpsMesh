@@ -1,0 +1,129 @@
+syntax = "proto3";
+
+package opsmesh.alert.v1;
+
+option go_package = "github.com/Levango7/OpsMesh/services/alert-svc/api/proto/v1;alertv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// AlertService 提供告警规则管理、评估、告警 CRUD 能力。
+service AlertService {
+  // CreateRule 创建告警规则。
+  rpc CreateRule(CreateRuleRequest) returns (AlertRule);
+  // GetRule 按 ID 获取规则详情。
+  rpc GetRule(GetRuleRequest) returns (AlertRule);
+  // ListRules 列出所有规则。
+  rpc ListRules(google.protobuf.Empty) returns (ListRulesResponse);
+  // UpdateRule 更新规则。
+  rpc UpdateRule(UpdateRuleRequest) returns (AlertRule);
+  // DeleteRule 删除规则。
+  rpc DeleteRule(DeleteRuleRequest) returns (google.protobuf.Empty);
+
+  // Evaluate 执行规则评估（通常定时触发）。
+  rpc Evaluate(EvaluateRequest) returns (EvaluateResponse);
+  // GetAlert 获取告警详情。
+  rpc GetAlert(GetAlertRequest) returns (Alert);
+  // ListAlerts 列出告警。
+  rpc ListAlerts(ListAlertsRequest) returns (ListAlertsResponse);
+  // AckAlert 确认告警。
+  rpc AckAlert(AckAlertRequest) returns (google.protobuf.Empty);
+  // SilenceAlert 静默告警。
+  rpc SilenceAlert(SilenceAlertRequest) returns (google.protobuf.Empty);
+}
+
+// AlertRule 告警规则。
+message AlertRule {
+  string id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  string metric = 4;
+  string op = 5;
+  double threshold = 6;
+  int32 duration = 7;
+  string severity = 8;
+  repeated string channels = 9;
+  bool enabled = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp updated_at = 12;
+}
+
+// Alert 告警事件。
+message Alert {
+  string id = 1;
+  string tenant_id = 2;
+  string rule_id = 3;
+  string rule_name = 4;
+  string severity = 5;
+  string message = 6;
+  map<string, double> values = 7;
+  string status = 8;  // firing|acknowledged|silenced|resolved
+  google.protobuf.Timestamp fired_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+// CreateRuleRequest 创建规则请求。
+message CreateRuleRequest {
+  AlertRule rule = 1;
+}
+
+// GetRuleRequest 获取规则请求。
+message GetRuleRequest {
+  string id = 1;
+}
+
+// UpdateRuleRequest 更新规则请求。
+message UpdateRuleRequest {
+  AlertRule rule = 1;
+}
+
+// DeleteRuleRequest 删除规则请求。
+message DeleteRuleRequest {
+  string id = 1;
+}
+
+// ListRulesResponse 规则列表响应。
+message ListRulesResponse {
+  repeated AlertRule rules = 1;
+}
+
+// EvaluateRequest 评估请求。
+message EvaluateRequest {
+  string tenant_id = 1;
+  string device_id = 2;
+  map<string, double> metrics = 3;
+}
+
+// EvaluateResponse 评估响应。
+message EvaluateResponse {
+  repeated Alert alerts = 1;
+}
+
+// GetAlertRequest 获取告警请求。
+message GetAlertRequest {
+  string id = 1;
+}
+
+// ListAlertsRequest 列出告警请求。
+message ListAlertsRequest {
+  string tenant_id = 1;
+  string status = 2;
+  int32 limit = 3;
+}
+
+// ListAlertsResponse 告警列表响应。
+message ListAlertsResponse {
+  repeated Alert alerts = 1;
+}
+
+// AckAlertRequest 确认告警请求。
+message AckAlertRequest {
+  string id = 1;
+}
+
+// SilenceAlertRequest 静默告警请求。
+message SilenceAlertRequest {
+  string id = 1;
+  int32 duration_minutes = 2;
+  string comment = 3;
+}
