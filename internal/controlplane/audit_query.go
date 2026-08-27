@@ -21,6 +21,14 @@ import (
 	"opsmesh/internal/proto"
 )
 
+// 审计查询限制常量（L7 魔法数提取）。
+const (
+	auditDefaultLimit = 100   // 默认返回条数
+	auditMaxLimit     = 1000  // 最大返回条数（防滥用）
+	exportDefaultLimit = 1000 // 导出默认条数
+	exportMaxLimit     = 10000 // 导出最大条数
+)
+
 // handleAuditEvents 处理 GET /api/v1/audit/events：查询审计事件。
 //
 // 查询参数：
@@ -50,14 +58,14 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 	user := q.Get("user")
 	from := q.Get("from")
 	to := q.Get("to")
-	limit := 100
+	limit := auditDefaultLimit
 	if v := q.Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			limit = n
 		}
 	}
-	if limit > 1000 {
-		limit = 1000
+	if limit > auditMaxLimit {
+		limit = auditMaxLimit
 	}
 	var since, until time.Time
 	if from != "" {
@@ -117,14 +125,14 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	action := q.Get("action")
 	from := q.Get("from")
 	to := q.Get("to")
-	limit := 1000
+	limit := exportDefaultLimit
 	if v := q.Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			limit = n
 		}
 	}
-	if limit > 10000 {
-		limit = 10000
+	if limit > exportMaxLimit {
+		limit = exportMaxLimit
 	}
 	var since, until time.Time
 	if from != "" {
