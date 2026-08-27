@@ -30,7 +30,8 @@ import (
 
 // scanAutomationRule 从一行扫描出 *AutomationRule。
 // 列顺序：id, tenant_id, name, description, trigger_type, trigger_params, actions,
-//         enabled, created_at, updated_at。
+//
+//	enabled, created_at, updated_at。
 func scanAutomationRule(row rowScanner) *AutomationRule {
 	var r AutomationRule
 	var triggerParamsJSON, actionsJSON []byte

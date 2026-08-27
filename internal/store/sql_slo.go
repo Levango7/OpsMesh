@@ -214,4 +214,3 @@ func (s *SQLStore) SLIStatus(tenantID, id string) []*SLIStatus {
 	}
 	return out
 }
-

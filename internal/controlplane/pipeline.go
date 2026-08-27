@@ -1,4 +1,4 @@
-package controlplane
+﻿package controlplane
 
 // pipeline.go 实现 Phase 2 CI/CD 流水线 HTTP handler。
 //
@@ -13,7 +13,7 @@ package controlplane
 //   - GET    /api/v1/pipeline/runs/{id}           获取运行详情
 //
 // 设计要点（与 traffic.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
+//   - 用 s.requireTenantContext(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 pipeline:read/pipeline:write 权限。
@@ -46,15 +46,15 @@ func (s *Server) handleListPipelineTemplates(w http.ResponseWriter, r *http.Requ
 	if _, ok := s.requirePermission(w, r, "pipeline:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	templates := s.store.ListTemplates(tenant)
+	templates := s.store.ListTemplates(actx.TenantID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"templates": templates})
 }
 
@@ -64,12 +64,12 @@ func (s *Server) handleCreatePipelineTemplate(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.PipelineTemplate
@@ -81,13 +81,13 @@ func (s *Server) handleCreatePipelineTemplate(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
-	created := s.store.CreateTemplate(tenant, &body)
+	created := s.store.CreateTemplate(actx.TenantID, &body)
 	if created == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create template failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "pipeline_template_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "pipeline_template_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -136,15 +136,15 @@ func (s *Server) handleGetPipelineTemplate(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requirePermission(w, r, "pipeline:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	t, ok := s.store.GetTemplate(tenant, id)
+	t, ok := s.store.GetTemplate(actx.TenantID, id)
 	if !ok || t == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
@@ -159,15 +159,15 @@ func (s *Server) handleUpdatePipelineTemplate(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	existing, ok := s.store.GetTemplate(tenant, id)
+	existing, ok := s.store.GetTemplate(actx.TenantID, id)
 	if !ok || existing == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
@@ -178,19 +178,19 @@ func (s *Server) handleUpdatePipelineTemplate(w http.ResponseWriter, r *http.Req
 		return
 	}
 	body.ID = id
-	body.TenantID = tenant
+	body.TenantID = actx.TenantID
 	body.CreatedAt = existing.CreatedAt
-	if !s.store.DeleteTemplate(tenant, id) {
+	if !s.store.DeleteTemplate(actx.TenantID, id) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update template failed (delete step)"})
 		return
 	}
-	updated := s.store.CreateTemplate(tenant, &body)
+	updated := s.store.CreateTemplate(actx.TenantID, &body)
 	if updated == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update template failed (create step)"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "pipeline_template_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "pipeline_template_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
 	})
 	writeJSON(w, http.StatusOK, updated)
 }
@@ -201,20 +201,20 @@ func (s *Server) handleDeletePipelineTemplate(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	if !s.store.DeleteTemplate(tenant, id) {
+	if !s.store.DeleteTemplate(actx.TenantID, id) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "pipeline_template_delete", Target: id, Detail: "",
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "pipeline_template_delete", Target: id, Detail: "",
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -229,15 +229,15 @@ func (s *Server) handleRunPipelineTemplate(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	tpl, ok := s.store.GetTemplate(tenant, id)
+	tpl, ok := s.store.GetTemplate(actx.TenantID, id)
 	if !ok || tpl == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
@@ -255,13 +255,13 @@ func (s *Server) handleRunPipelineTemplate(w http.ResponseWriter, r *http.Reques
 		Parameters:   body.Parameters,
 		StartedAt:    &now,
 	}
-	created := s.store.CreateRun(tenant, run)
+	created := s.store.CreateRun(actx.TenantID, run)
 	if created == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create run failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "pipeline_run", Target: created.ID, Detail: sanitizeAuditDetail("template=" + tpl.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "pipeline_run", Target: created.ID, Detail: sanitizeAuditDetail("template=" + tpl.Name),
 	})
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -282,16 +282,16 @@ func (s *Server) handleListPipelineRuns(w http.ResponseWriter, r *http.Request) 
 	if _, ok := s.requirePermission(w, r, "pipeline:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	templateID := r.URL.Query().Get("templateID")
-	runs := s.store.ListRuns(tenant, templateID)
+	runs := s.store.ListRuns(actx.TenantID, templateID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"runs": runs})
 }
 
@@ -319,18 +319,19 @@ func (s *Server) handlePipelineRun(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "pipeline:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	run, ok := s.store.GetRun(tenant, id)
+	run, ok := s.store.GetRun(actx.TenantID, id)
 	if !ok || run == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "run not found"})
 		return
 	}
 	writeJSON(w, http.StatusOK, run)
 }
+

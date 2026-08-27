@@ -68,16 +68,16 @@ func (s *Server) handleK8sResourceRouting(w http.ResponseWriter, r *http.Request
 		return
 	}
 	// 租户兜底：requireAuth 下缺租户头 → 401（防绕过网关伪造租户）。
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	// 租户隔离：校验集群归属当前租户，防跨租户操作集群资源（不泄露存在性）。
-	if c := s.store.GetK8sCluster(clusterID); c == nil || c.TenantID != tenant {
+	if c := s.store.GetK8sCluster(clusterID); c == nil || c.TenantID != actx.TenantID {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
 		return
 	}
@@ -315,12 +315,12 @@ func (s *Server) handleDeletePod(w http.ResponseWriter, r *http.Request, client 
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "k8s_pod_delete", Target: ns + "/" + name,
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "k8s_pod_delete", Target: ns + "/" + name,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -387,12 +387,12 @@ func (s *Server) handleScaleDeployment(w http.ResponseWriter, r *http.Request, c
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "k8s_deployment_scale", Target: ns + "/" + name,
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "k8s_deployment_scale", Target: ns + "/" + name,
 		Detail: fmt.Sprintf("replicas=%d", body.Replicas),
 	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -421,12 +421,12 @@ func (s *Server) handleRestartDeployment(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "k8s_deployment_restart", Target: ns + "/" + name,
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "k8s_deployment_restart", Target: ns + "/" + name,
 		Detail: "restartedAt=" + now,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "restarted", "restartedAt": now})
@@ -510,12 +510,12 @@ func (s *Server) handleRollbackDeployment(w http.ResponseWriter, r *http.Request
 	}
 
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "k8s_deployment_rollback", Target: ns + "/" + name,
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "k8s_deployment_rollback", Target: ns + "/" + name,
 		Detail: fmt.Sprintf("from revision %d to %d", currentRev, targetRev),
 	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{

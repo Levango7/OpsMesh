@@ -1,4 +1,4 @@
-// ticket.go 实现 Phase 1 工单管理 HTTP handler。
+﻿// ticket.go 实现 Phase 1 工单管理 HTTP handler。
 //
 // API 端点：
 //   - GET    /api/v1/tickets           列出工单（支持 ?status=&priority=&category=&assigneeID= 查询参数）
@@ -8,7 +8,7 @@
 //   - POST   /api/v1/tickets/{id}/close 关闭工单
 //
 // 设计要点（与 k8s_cluster.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(w, r) 提取租户（复用现有方法，统一租户隔离行为）；
+//   - 用 s.requireTenantContext(w, r) 提取租户（复用现有方法，统一租户隔离行为）；
 //   - 错误响应统一 {"error": "message"} 格式，HTTP 状态码 400/404/500；
 //   - 用 decodeJSONBody 解析请求体（防 DoS 限制大小）；
 //   - 鉴权：需 ticket:read/ticket:write 权限（与现有 RBAC 一致）。
@@ -18,17 +18,10 @@ import (
 	"net/http"
 	"strings"
 
-	"opsmesh/internal/authctx"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 )
 
-// ticketTenantFromRequest 提取请求归属租户（工单租户隔离）。
-// 复用 k8sTenantFromRequest 的逻辑：优先取网关注入的 X-Tenant-ID；
-// 缺头时按 requireAuth 决定返回空串（401）或归一为 default（demo 兼容）。
-func (s *Server) ticketTenantFromRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
-	return s.k8sTenantFromRequest(w, r)
-}
 
 // handleTickets 统一处理 /api/v1/tickets：
 //   - GET：列出工单（支持 ?status=&priority=&category=&assigneeID= 查询参数）
@@ -49,7 +42,7 @@ func (s *Server) handleListTickets(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "ticket:read"); !ok {
 		return
 	}
-	tenant, ok := s.ticketTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
@@ -60,7 +53,7 @@ func (s *Server) handleListTickets(w http.ResponseWriter, r *http.Request) {
 		Category:   r.URL.Query().Get("category"),
 		AssigneeID: r.URL.Query().Get("assigneeID"),
 	}
-	tickets := s.store.ListTickets(tenant, filter)
+	tickets := s.store.ListTickets(actx.TenantID, filter)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"tickets": tickets})
 }
 
@@ -72,7 +65,7 @@ func (s *Server) handleCreateTicket(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant, ok := s.ticketTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
@@ -111,13 +104,13 @@ func (s *Server) handleCreateTicket(w http.ResponseWriter, r *http.Request) {
 		RelatedTask:   body.RelatedTask,
 		Tags:          body.Tags,
 	}
-	created := s.store.CreateTicket(tenant, t)
+	created := s.store.CreateTicket(actx.TenantID, t)
 	if created == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create ticket failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "ticket_create", Target: created.ID, Detail: sanitizeAuditDetail("title=" + created.Title),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "ticket_create", Target: created.ID, Detail: sanitizeAuditDetail("title=" + created.Title),
 	})
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -166,11 +159,11 @@ func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request, id stri
 	if _, ok := s.requirePermission(w, r, "ticket:read"); !ok {
 		return
 	}
-	tenant, ok := s.ticketTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	t, ok := s.store.GetTicket(tenant, id)
+	t, ok := s.store.GetTicket(actx.TenantID, id)
 	if !ok || t == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "ticket not found"})
 		return
@@ -186,7 +179,7 @@ func (s *Server) handleUpdateTicket(w http.ResponseWriter, r *http.Request, id s
 	if !ok {
 		return
 	}
-	tenant, ok := s.ticketTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
@@ -217,13 +210,13 @@ func (s *Server) handleUpdateTicket(w http.ResponseWriter, r *http.Request, id s
 		RelatedTask:   body.RelatedTask,
 		Tags:          body.Tags,
 	}
-	updated, ok := s.store.UpdateTicket(tenant, t)
+	updated, ok := s.store.UpdateTicket(actx.TenantID, t)
 	if !ok || updated == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "ticket not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "ticket_update", Target: id, Detail: sanitizeAuditDetail("title=" + updated.Title),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "ticket_update", Target: id, Detail: sanitizeAuditDetail("title=" + updated.Title),
 	})
 	writeJSON(w, http.StatusOK, updated)
 }
@@ -238,21 +231,20 @@ func (s *Server) handleCloseTicket(w http.ResponseWriter, r *http.Request, id st
 	if !ok {
 		return
 	}
-	tenant, ok := s.ticketTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	closed, ok := s.store.CloseTicket(tenant, id)
+	closed, ok := s.store.CloseTicket(actx.TenantID, id)
 	if !ok || closed == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "ticket not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "ticket_close", Target: id, Detail: sanitizeAuditDetail("title=" + closed.Title),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "ticket_close", Target: id, Detail: sanitizeAuditDetail("title=" + closed.Title),
 	})
 	writeJSON(w, http.StatusOK, closed)
 }
 
-// 兼容性引用：确保 authctx 包被使用（ticketTenantFromRequest 通过 k8sTenantFromRequest
-// 间接使用 authctx.FromHTTPHeader，此处显式引用避免 import 被误删）。
-var _ = authctx.Context{}
+
+

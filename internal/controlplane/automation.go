@@ -1,4 +1,4 @@
-package controlplane
+﻿package controlplane
 
 // automation.go 实现 Phase 4 自动化闭环 HTTP handler（规则 CRUD + 启停 + 测试 + 执行历史）。
 //
@@ -15,7 +15,7 @@ package controlplane
 //   - GET    /api/v1/automation/executions/{id}    执行详情
 //
 // 设计要点（与 traffic.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
+//   - 用 s.requireTenantContext(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 automation:read/automation:write 权限。
@@ -51,15 +51,15 @@ func (s *Server) handleListAutomationRules(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requirePermission(w, r, "automation:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	rules := s.store.ListAutomationRules(tenant)
+	rules := s.store.ListAutomationRules(actx.TenantID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"rules": rules})
 }
 
@@ -69,12 +69,12 @@ func (s *Server) handleCreateAutomationRule(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.AutomationRule
@@ -88,14 +88,14 @@ func (s *Server) handleCreateAutomationRule(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	created := s.store.CreateAutomationRule(tenant, &body)
+	created := s.store.CreateAutomationRule(actx.TenantID, &body)
 	if created == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create automation rule failed"})
 		return
 	}
 	// 审计：记录创建人（H9 写路径审计补齐，与 webhook/slo 风格一致）。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "automation_rule_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "automation_rule_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -150,15 +150,15 @@ func (s *Server) handleGetAutomationRule(w http.ResponseWriter, r *http.Request,
 	if _, ok := s.requirePermission(w, r, "automation:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	rule, ok := s.store.GetAutomationRule(tenant, id)
+	rule, ok := s.store.GetAutomationRule(actx.TenantID, id)
 	if !ok || rule == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
 		return
@@ -172,12 +172,12 @@ func (s *Server) handleUpdateAutomationRule(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.AutomationRule
@@ -191,14 +191,14 @@ func (s *Server) handleUpdateAutomationRule(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	updated, ok := s.store.UpdateAutomationRule(tenant, &body)
+	updated, ok := s.store.UpdateAutomationRule(actx.TenantID, &body)
 	if !ok || updated == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
 		return
 	}
 	// 审计：记录更新人（H9 写路径审计补齐）。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "automation_rule_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "automation_rule_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
 	})
 	writeJSON(w, http.StatusOK, updated)
 }
@@ -209,21 +209,21 @@ func (s *Server) handleDeleteAutomationRule(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	if !s.store.DeleteAutomationRule(tenant, id) {
+	if !s.store.DeleteAutomationRule(actx.TenantID, id) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
 		return
 	}
 	// 审计：记录删除人（H9 写路径审计补齐）。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "automation_rule_delete", Target: id,
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "automation_rule_delete", Target: id,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -238,22 +238,22 @@ func (s *Server) handleEnableAutomationRule(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	rule, ok := s.store.EnableAutomationRule(tenant, id)
+	rule, ok := s.store.EnableAutomationRule(actx.TenantID, id)
 	if !ok || rule == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
 		return
 	}
 	// 审计：记录启用人（H9 写路径审计补齐）。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "automation_rule_enable", Target: id,
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "automation_rule_enable", Target: id,
 	})
 	writeJSON(w, http.StatusOK, rule)
 }
@@ -268,22 +268,22 @@ func (s *Server) handleDisableAutomationRule(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	rule, ok := s.store.DisableAutomationRule(tenant, id)
+	rule, ok := s.store.DisableAutomationRule(actx.TenantID, id)
 	if !ok || rule == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
 		return
 	}
 	// 审计：记录禁用人（H9 写路径审计补齐）。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "automation_rule_disable", Target: id,
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "automation_rule_disable", Target: id,
 	})
 	writeJSON(w, http.StatusOK, rule)
 }
@@ -297,15 +297,15 @@ func (s *Server) handleTestAutomationRule(w http.ResponseWriter, r *http.Request
 	if _, ok := s.requirePermission(w, r, "automation:write"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	rule, ok := s.store.GetAutomationRule(tenant, id)
+	rule, ok := s.store.GetAutomationRule(actx.TenantID, id)
 	if !ok || rule == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
 		return
@@ -314,8 +314,8 @@ func (s *Server) handleTestAutomationRule(w http.ResponseWriter, r *http.Request
 	domainRule := automationRuleToDomain(rule)
 	exec := automationEngine.TestRule(domainRule)
 	// 落库执行记录
-	storeExec := automationExecToStore(exec, tenant)
-	s.store.CreateAutomationExecution(tenant, storeExec)
+	storeExec := automationExecToStore(exec, actx.TenantID)
+	s.store.CreateAutomationExecution(actx.TenantID, storeExec)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"execution": storeExec, "triggered": true})
 }
 
@@ -328,15 +328,15 @@ func (s *Server) handleAutomationExecutions(w http.ResponseWriter, r *http.Reque
 	if _, ok := s.requirePermission(w, r, "automation:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	executions := s.store.ListAutomationExecutions(tenant, 100)
+	executions := s.store.ListAutomationExecutions(actx.TenantID, 100)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"executions": executions})
 }
 
@@ -349,12 +349,12 @@ func (s *Server) handleAutomationExecutionRouting(w http.ResponseWriter, r *http
 	if _, ok := s.requirePermission(w, r, "automation:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/automation/executions/")
@@ -362,7 +362,7 @@ func (s *Server) handleAutomationExecutionRouting(w http.ResponseWriter, r *http
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "execution id required"})
 		return
 	}
-	exec, ok := s.store.GetAutomationExecution(tenant, id)
+	exec, ok := s.store.GetAutomationExecution(actx.TenantID, id)
 	if !ok || exec == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "execution not found"})
 		return
@@ -416,3 +416,4 @@ func automationExecToStore(e *automation.Execution, tenantID string) *store.Auto
 		EndedAt:   e.EndedAt,
 	}
 }
+

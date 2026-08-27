@@ -31,19 +31,6 @@ import (
 	"opsmesh/internal/store"
 )
 
-// k8sTenantFromRequest 提取请求归属租户（K8s 租户隔离）。
-// 优先取网关注入的 X-Tenant-ID；缺头时：
-//   - requireAuth=true：返回空串（由调用方 handler 拒绝 401，防绕过网关伪造租户）；
-//   - requireAuth=false：归一为 default（与 store 层 SaveK8sCluster 空租户归一一致，保持 demo 兼容）。
-//
-// 修复：原实现缺头静默归一 default，绕过租户闸门（requireAuth 下缺头应 401 而非 default）。
-func (s *Server) k8sTenantFromRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
-	actx, ok := s.requireTenantContext(w, r)
-	if !ok {
-		return "", false
-	}
-	return actx.TenantID, true
-}
 
 // encryptKubeconfig 用 AES-256-GCM 加密 kubeconfig 明文，返回 base64(nonce+ciphertext)。
 // 安全语义：DB 泄露时加密后的 kubeconfig 不可直接还原，需同时拿到加密密钥才能解密。
@@ -160,16 +147,16 @@ func (s *Server) handleListK8sClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 租户兜底：requireAuth 下缺租户头 → 401（防绕过网关伪造租户）。
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	// 租户隔离：仅返回当前租户的集群。
-	clusters := s.store.ListK8sClusters(tenant)
+	clusters := s.store.ListK8sClusters(actx.TenantID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"clusters": maskK8sClusters(clusters)})
 }
 
@@ -186,12 +173,12 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// 租户兜底：requireAuth 下缺租户头 → 401。
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body struct {
@@ -215,7 +202,7 @@ func (s *Server) handleCreateK8sCluster(w http.ResponseWriter, r *http.Request) 
 	}
 	c := &store.K8sCluster{
 		Name:       body.Name,
-		TenantID:   tenant, // 租户归属
+		TenantID:   actx.TenantID, // 租户归属
 		Server:     body.Server,
 		Kubeconfig: encrypted, // 加密后存 store
 		Status:     "unknown",
@@ -302,17 +289,17 @@ func (s *Server) handleDeleteK8sCluster(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	// 租户兜底：requireAuth 下缺租户头 → 401。
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	existing := s.store.GetK8sCluster(id)
 	// 租户隔离：集群不存在或归属其他租户时按 not found 拒绝（不泄露存在性）。
-	if existing == nil || existing.TenantID != tenant {
+	if existing == nil || existing.TenantID != actx.TenantID {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
 		return
 	}
@@ -347,17 +334,17 @@ func (s *Server) handleTestK8sCluster(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	// 租户兜底：requireAuth 下缺租户头 → 401。
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	existing := s.store.GetK8sCluster(id)
 	// 租户隔离：集群不存在或归属其他租户时按 not found 拒绝。
-	if existing == nil || existing.TenantID != tenant {
+	if existing == nil || existing.TenantID != actx.TenantID {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not found"})
 		return
 	}

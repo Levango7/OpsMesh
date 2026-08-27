@@ -165,4 +165,3 @@ func (s *SQLStore) DeletePlugin(id string) bool {
 	}
 	return n > 0
 }
-

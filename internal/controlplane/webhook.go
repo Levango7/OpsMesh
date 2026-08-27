@@ -1,4 +1,4 @@
-package controlplane
+﻿package controlplane
 
 // webhook.go 实现 Phase 5 Webhook 管理 HTTP handler（CRUD + 测试投递 + 投递记录）。
 //
@@ -12,7 +12,7 @@ package controlplane
 //   - GET    /api/v1/webhooks/{id}/deliveries  投递记录
 //
 // 设计要点（与 automation.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
+//   - 用 s.requireTenantContext(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 webhook:read/webhook:write 权限。
@@ -51,15 +51,15 @@ func (s *Server) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "webhook:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	webhooks := s.store.ListWebhooks(tenant)
+	webhooks := s.store.ListWebhooks(actx.TenantID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"webhooks": webhooks})
 }
 
@@ -69,12 +69,12 @@ func (s *Server) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.Webhook
@@ -98,13 +98,13 @@ func (s *Server) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid webhook url: " + err.Error()})
 		return
 	}
-	created := s.store.CreateWebhook(tenant, &body)
+	created := s.store.CreateWebhook(actx.TenantID, &body)
 	if created == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create webhook failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "webhook_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "webhook_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -156,15 +156,15 @@ func (s *Server) handleGetWebhook(w http.ResponseWriter, r *http.Request, id str
 	if _, ok := s.requirePermission(w, r, "webhook:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	wh, ok := s.store.GetWebhook(tenant, id)
+	wh, ok := s.store.GetWebhook(actx.TenantID, id)
 	if !ok || wh == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
 		return
@@ -178,12 +178,12 @@ func (s *Server) handleUpdateWebhook(w http.ResponseWriter, r *http.Request, id 
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.Webhook
@@ -202,13 +202,13 @@ func (s *Server) handleUpdateWebhook(w http.ResponseWriter, r *http.Request, id 
 		}
 	}
 	body.ID = id
-	updated, ok := s.store.UpdateWebhook(tenant, &body)
+	updated, ok := s.store.UpdateWebhook(actx.TenantID, &body)
 	if !ok || updated == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "webhook_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "webhook_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
 	})
 	writeJSON(w, http.StatusOK, updated)
 }
@@ -219,20 +219,20 @@ func (s *Server) handleDeleteWebhook(w http.ResponseWriter, r *http.Request, id 
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	if !s.store.DeleteWebhook(tenant, id) {
+	if !s.store.DeleteWebhook(actx.TenantID, id) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "webhook_delete", Target: id, Detail: "",
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "webhook_delete", Target: id, Detail: "",
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -245,15 +245,15 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request, id st
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	wh, ok := s.store.GetWebhook(tenant, id)
+	wh, ok := s.store.GetWebhook(actx.TenantID, id)
 	if !ok || wh == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
 		return
@@ -262,8 +262,8 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request, id st
 	event := "test.event"
 	payload := `{"event":"test.event","message":"webhook test delivery"}`
 	// M3：直接经 Store 接口调用，消除对 *MemoryStore 的类型断言；
-	// SQLStore（桩）返回 nil 时降级为模拟响应（不落库），MultiSchemaStore 委托路由到 per-tenant store。
-	delivery := s.store.RecordWebhookDelivery(tenant, id, event, payload, 200, "test ok", "")
+	// SQLStore（桩）返回 nil 时降级为模拟响应（不落库），MultiSchemaStore 委托路由到 per-actx.TenantID store。
+	delivery := s.store.RecordWebhookDelivery(actx.TenantID, id, event, payload, 200, "test ok", "")
 	_ = caller
 	if delivery == nil {
 		// store 返回 nil（如 SQLStore 桩未持久化）：返回模拟结果不落库。
@@ -283,14 +283,15 @@ func (s *Server) handleWebhookDeliveries(w http.ResponseWriter, r *http.Request,
 	if _, ok := s.requirePermission(w, r, "webhook:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	deliveries := s.store.ListWebhookDeliveries(tenant, id)
+	deliveries := s.store.ListWebhookDeliveries(actx.TenantID, id)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"deliveries": deliveries})
 }
+

@@ -1,4 +1,4 @@
-
+﻿
 // slo.go 实现 Phase 1 SLO 管理 HTTP handler。
 //
 // API 端点：
@@ -10,7 +10,7 @@
 //   - GET    /api/v1/slos/{id}/status 获取 SLI 状态
 //
 // 设计要点（与 ticket.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(w, r) 提取租户（复用现有方法，统一租户隔离行为）；
+//   - 用 s.requireTenantContext(w, r) 提取租户（复用现有方法，统一租户隔离行为）；
 //   - 错误响应统一 {"error": "message"} 格式，HTTP 状态码 400/404/500；
 //   - 用 decodeJSONBody 解析请求体（防 DoS 限制大小）；
 //   - 鉴权：需 slo:read/slo:write/slo:delete 权限（与现有 RBAC 一致）。
@@ -43,15 +43,15 @@ func (s *Server) handleListSLOs(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "slo:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	slos := s.store.ListSLOs(tenant)
+	slos := s.store.ListSLOs(actx.TenantID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"slos": slos})
 }
 
@@ -62,12 +62,12 @@ func (s *Server) handleCreateSLO(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body struct {
@@ -94,13 +94,13 @@ func (s *Server) handleCreateSLO(w http.ResponseWriter, r *http.Request) {
 		Window:      body.Window,
 		SLIs:        body.SLIs,
 	}
-	created := s.store.CreateSLO(tenant, slo)
+	created := s.store.CreateSLO(actx.TenantID, slo)
 	if created == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create SLO failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "slo_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "slo_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -152,15 +152,15 @@ func (s *Server) handleGetSLO(w http.ResponseWriter, r *http.Request, id string)
 	if _, ok := s.requirePermission(w, r, "slo:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	slo, ok := s.store.GetSLO(tenant, id)
+	slo, ok := s.store.GetSLO(actx.TenantID, id)
 	if !ok || slo == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "slo not found"})
 		return
@@ -175,12 +175,12 @@ func (s *Server) handleUpdateSLO(w http.ResponseWriter, r *http.Request, id stri
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body struct {
@@ -204,13 +204,13 @@ func (s *Server) handleUpdateSLO(w http.ResponseWriter, r *http.Request, id stri
 		Window:      body.Window,
 		SLIs:        body.SLIs,
 	}
-	updated, ok := s.store.UpdateSLO(tenant, slo)
+	updated, ok := s.store.UpdateSLO(actx.TenantID, slo)
 	if !ok || updated == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "slo not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "slo_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "slo_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
 	})
 	writeJSON(w, http.StatusOK, updated)
 }
@@ -221,20 +221,20 @@ func (s *Server) handleDeleteSLO(w http.ResponseWriter, r *http.Request, id stri
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	if !s.store.DeleteSLO(tenant, id) {
+	if !s.store.DeleteSLO(actx.TenantID, id) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "slo not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "slo_delete", Target: id,
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "slo_delete", Target: id,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -248,20 +248,21 @@ func (s *Server) handleSLOStatus(w http.ResponseWriter, r *http.Request, id stri
 	if _, ok := s.requirePermission(w, r, "slo:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	// 先校验 SLO 存在（不存在返回 404，与 ticket close 风格一致）。
-	slo, ok := s.store.GetSLO(tenant, id)
+	slo, ok := s.store.GetSLO(actx.TenantID, id)
 	if !ok || slo == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "slo not found"})
 		return
 	}
-	statuses := s.store.SLIStatus(tenant, id)
+	statuses := s.store.SLIStatus(actx.TenantID, id)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"statuses": statuses})
 }
+

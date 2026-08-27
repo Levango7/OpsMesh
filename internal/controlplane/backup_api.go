@@ -1,4 +1,4 @@
-package controlplane
+﻿package controlplane
 
 // backup_api.go 实现 Phase 3 灾备恢复 HTTP handler。
 //
@@ -13,7 +13,7 @@ package controlplane
 //   - DELETE /api/v1/backup/         删除备份（子路径：{id}）
 //
 // 设计要点（与 traffic.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
+//   - 用 s.requireTenantContext(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 backup:read/backup:write 权限。
@@ -34,12 +34,12 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "backup:write"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -63,7 +63,7 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 		Status: "creating",
 		Path:   "/var/lib/opsmesh/backups/" + body.Type,
 	}
-	created := s.store.CreateBackup(tenant, rec)
+	created := s.store.CreateBackup(actx.TenantID, rec)
 	if created == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create backup failed"})
 		return
@@ -79,19 +79,19 @@ func (s *Server) handleBackupList(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "backup:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	backups := s.store.ListBackups(tenant)
+	backups := s.store.ListBackups(actx.TenantID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"backups": backups})
 }
 
@@ -103,12 +103,12 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "backup:write"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -126,7 +126,7 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id is required"})
 		return
 	}
-	rec, ok := s.store.GetBackup(tenant, body.ID)
+	rec, ok := s.store.GetBackup(actx.TenantID, body.ID)
 	if !ok || rec == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "backup not found"})
 		return
@@ -160,17 +160,18 @@ func (s *Server) handleBackupDeleteRouting(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requirePermission(w, r, "backup:write"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	if !s.store.DeleteBackup(tenant, id) {
+	if !s.store.DeleteBackup(actx.TenantID, id) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "backup not found"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
+

@@ -175,15 +175,15 @@ func (s *Server) handleListSubscriptions(w http.ResponseWriter, r *http.Request)
 	if _, ok := s.requirePermission(w, r, "billing:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	subs := s.store.ListSubscriptions(tenant)
+	subs := s.store.ListSubscriptions(actx.TenantID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"subscriptions": subs})
 }
 
@@ -193,12 +193,12 @@ func (s *Server) handleCreateSubscription(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.Subscription
@@ -210,7 +210,7 @@ func (s *Server) handleCreateSubscription(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "planId is required"})
 		return
 	}
-	body.TenantID = tenant
+	body.TenantID = actx.TenantID
 	if body.Status == "" {
 		body.Status = "active"
 	}
@@ -220,7 +220,7 @@ func (s *Server) handleCreateSubscription(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "subscription_create", Target: created.ID, Detail: sanitizeAuditDetail("plan=" + created.PlanID),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "subscription_create", Target: created.ID, Detail: sanitizeAuditDetail("plan=" + created.PlanID),
 	})
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -310,15 +310,15 @@ func (s *Server) handleBillingInvoices(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "billing:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	invoices := s.store.ListInvoices(tenant)
+	invoices := s.store.ListInvoices(actx.TenantID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"invoices": invoices})
 }
 

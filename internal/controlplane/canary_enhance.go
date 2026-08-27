@@ -62,12 +62,12 @@ func (s *Server) handleCanaryTrafficSplit(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	// 校验灰度发布存在
@@ -78,7 +78,7 @@ func (s *Server) handleCanaryTrafficSplit(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "canary release not found"})
 		return
 	}
-	if canary.TenantID != "" && canary.TenantID != tenant {
+	if canary.TenantID != "" && canary.TenantID != actx.TenantID {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "canary release not found"})
 		return
 	}
@@ -100,7 +100,7 @@ func (s *Server) handleCanaryTrafficSplit(w http.ResponseWriter, r *http.Request
 	s.batches.mu.Unlock()
 
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "canary_traffic_split", Target: id, Detail: sanitizeAuditDetail("percentage=" + strconv.Itoa(body.Percentage)),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "canary_traffic_split", Target: id, Detail: sanitizeAuditDetail("percentage=" + strconv.Itoa(body.Percentage)),
 	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"canaryID":   id,
@@ -119,12 +119,12 @@ func (s *Server) handleCanaryMetrics(w http.ResponseWriter, r *http.Request, id 
 	if _, ok := s.requirePermission(w, r, "task:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	// 校验灰度发布存在
@@ -135,7 +135,7 @@ func (s *Server) handleCanaryMetrics(w http.ResponseWriter, r *http.Request, id 
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "canary release not found"})
 		return
 	}
-	if canary.TenantID != "" && canary.TenantID != tenant {
+	if canary.TenantID != "" && canary.TenantID != actx.TenantID {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "canary release not found"})
 		return
 	}

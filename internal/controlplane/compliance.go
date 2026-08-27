@@ -1,4 +1,4 @@
-package controlplane
+﻿package controlplane
 
 // compliance.go 实现 Phase 3 安全合规 HTTP handler。
 //
@@ -10,7 +10,7 @@ package controlplane
 //   - GET  /api/v1/compliance/reports/{id}    报告详情
 //
 // 设计要点（与 traffic.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
+//   - 用 s.requireTenantContext(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 compliance:read/compliance:write 权限。
@@ -95,12 +95,12 @@ func (s *Server) handleComplianceScan(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "compliance:write"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body struct {
@@ -131,7 +131,7 @@ func (s *Server) handleComplianceScan(w http.ResponseWriter, r *http.Request) {
 	}
 	// 用引擎计算分数并生成报告。
 	eng := s.complianceEngine()
-	report := eng.Scan(tenant, body.DeviceID, results)
+	report := eng.Scan(actx.TenantID, body.DeviceID, results)
 	// 转换为 store 模型落库。
 	storeReport := &store.ComplianceReport{
 		TenantID:  report.TenantID,
@@ -147,7 +147,7 @@ func (s *Server) handleComplianceScan(w http.ResponseWriter, r *http.Request) {
 			CheckedAt: r.CheckedAt,
 		})
 	}
-	saved := s.store.SaveReport(tenant, storeReport)
+	saved := s.store.SaveReport(actx.TenantID, storeReport)
 	if saved == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save report failed"})
 		return
@@ -171,15 +171,15 @@ func (s *Server) handleListComplianceReports(w http.ResponseWriter, r *http.Requ
 	if _, ok := s.requirePermission(w, r, "compliance:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	reports := s.store.ListReports(tenant)
+	reports := s.store.ListReports(actx.TenantID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"reports": reports})
 }
 
@@ -209,18 +209,19 @@ func (s *Server) handleGetComplianceReport(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requirePermission(w, r, "compliance:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	report, ok := s.store.GetReport(tenant, id)
+	report, ok := s.store.GetReport(actx.TenantID, id)
 	if !ok || report == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "report not found"})
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
 }
+

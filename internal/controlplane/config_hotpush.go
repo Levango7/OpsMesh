@@ -32,12 +32,12 @@ func (s *Server) handleConfigHotpush(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body struct {
@@ -70,7 +70,7 @@ func (s *Server) handleConfigHotpush(w http.ResponseWriter, r *http.Request) {
 		Value:       body.Value,
 		Format:      body.Format,
 		Description: body.Description,
-		TenantID:    tenant,
+		TenantID:    actx.TenantID,
 		UpdatedBy:   caller.ID,
 	}
 	if item.Format == "" {
@@ -81,7 +81,7 @@ func (s *Server) handleConfigHotpush(w http.ResponseWriter, r *http.Request) {
 	// 2. 下发 file 类型任务（写配置文件到目标路径）
 	task := &proto.Task{
 		AgentID:  body.AgentID,
-		TenantID: tenant,
+		TenantID: actx.TenantID,
 		Type:     proto.TaskTypeFile,
 		Content:  body.Value,
 		Path:     body.Path,
@@ -89,7 +89,7 @@ func (s *Server) handleConfigHotpush(w http.ResponseWriter, r *http.Request) {
 	created := s.store.CreateTask(task)
 
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "config_hotpush", Target: body.Key, Detail: sanitizeAuditDetail("agent=" + body.AgentID + " path=" + body.Path),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "config_hotpush", Target: body.Key, Detail: sanitizeAuditDetail("agent=" + body.AgentID + " path=" + body.Path),
 	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"configKey":     body.Key,
@@ -112,12 +112,12 @@ func (s *Server) handleConfigCanary(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body struct {
@@ -153,7 +153,7 @@ func (s *Server) handleConfigCanary(w http.ResponseWriter, r *http.Request) {
 		Key:       body.Key,
 		Value:     body.Value,
 		Format:    body.Format,
-		TenantID:  tenant,
+		TenantID:  actx.TenantID,
 		UpdatedBy: caller.ID,
 	}
 	if item.Format == "" {
@@ -166,7 +166,7 @@ func (s *Server) handleConfigCanary(w http.ResponseWriter, r *http.Request) {
 	for _, agentID := range body.AgentIDs {
 		task := &proto.Task{
 			AgentID:  agentID,
-			TenantID: tenant,
+			TenantID: actx.TenantID,
 			Type:     proto.TaskTypeFile,
 			Content:  body.Value,
 			Path:     body.Path,
@@ -179,7 +179,7 @@ func (s *Server) handleConfigCanary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "config_canary", Target: body.Key, Detail: sanitizeAuditDetail("agents=" + strconv.Itoa(len(body.AgentIDs)) + " pct=" + strconv.Itoa(body.Percentage)),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "config_canary", Target: body.Key, Detail: sanitizeAuditDetail("agents=" + strconv.Itoa(len(body.AgentIDs)) + " pct=" + strconv.Itoa(body.Percentage)),
 	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"configKey":     body.Key,
@@ -200,12 +200,12 @@ func (s *Server) handleConfigVersions(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "cmdb:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	key := r.URL.Query().Get("key")
@@ -213,7 +213,7 @@ func (s *Server) handleConfigVersions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key query parameter is required"})
 		return
 	}
-	history := s.store.ConfigHistory(tenant, key)
+	history := s.store.ConfigHistory(actx.TenantID, key)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"key":      key,
 		"versions": history,

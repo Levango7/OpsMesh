@@ -195,5 +195,3 @@ func (s *SQLStore) SyncApp(tenantID, id string) (*ArgoCDApp, bool) {
 	existing.UpdatedAt = now
 	return existing, true
 }
-
-

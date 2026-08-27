@@ -37,15 +37,15 @@ func (s *Server) handleListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "apikey:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	keys := s.store.ListAPIKeys(tenant)
+	keys := s.store.ListAPIKeys(actx.TenantID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"apiKeys": keys})
 }
 
@@ -55,12 +55,12 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.APIKey
@@ -80,13 +80,13 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Key = hash
 	body.Enabled = true
-	created := s.store.CreateAPIKey(tenant, &body)
+	created := s.store.CreateAPIKey(actx.TenantID, &body)
 	if created == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create api key failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "apikey_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "apikey_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
 	// 返回创建结果 + 明文 key（仅此一次）。
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
@@ -137,15 +137,15 @@ func (s *Server) handleGetAPIKey(w http.ResponseWriter, r *http.Request, id stri
 	if _, ok := s.requirePermission(w, r, "apikey:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	k, ok := s.store.GetAPIKey(tenant, id)
+	k, ok := s.store.GetAPIKey(actx.TenantID, id)
 	if !ok || k == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 		return
@@ -164,16 +164,16 @@ func (s *Server) handleUpdateAPIKey(w http.ResponseWriter, r *http.Request, id s
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	// 先取 existing，不存在返 404。
-	existing, ok := s.store.GetAPIKey(tenant, id)
+	existing, ok := s.store.GetAPIKey(actx.TenantID, id)
 	if !ok || existing == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 		return
@@ -195,13 +195,13 @@ func (s *Server) handleUpdateAPIKey(w http.ResponseWriter, r *http.Request, id s
 	existing.Scopes = body.Scopes
 	// 强制保留：Enabled / Key / ID / TenantID / CreatedAt 等忽略 PUT 值。
 	// （body.Key 因 json:"-" 标签始终为空，此处显式不动 existing.Key 即可。）
-	updated, ok := s.store.UpdateAPIKey(tenant, existing)
+	updated, ok := s.store.UpdateAPIKey(actx.TenantID, existing)
 	if !ok || updated == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "apikey_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "apikey_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
 	})
 	writeJSON(w, http.StatusOK, updated)
 }
@@ -212,20 +212,20 @@ func (s *Server) handleDeleteAPIKey(w http.ResponseWriter, r *http.Request, id s
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	if !s.store.DeleteAPIKey(tenant, id) {
+	if !s.store.DeleteAPIKey(actx.TenantID, id) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "apikey_delete", Target: id, Detail: "",
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "apikey_delete", Target: id, Detail: "",
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -236,27 +236,27 @@ func (s *Server) handleEnableAPIKey(w http.ResponseWriter, r *http.Request, id s
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	k, ok := s.store.GetAPIKey(tenant, id)
+	k, ok := s.store.GetAPIKey(actx.TenantID, id)
 	if !ok || k == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 		return
 	}
 	k.Enabled = true
-	updated, ok := s.store.UpdateAPIKey(tenant, k)
+	updated, ok := s.store.UpdateAPIKey(actx.TenantID, k)
 	if !ok || updated == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "enable api key failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "apikey_enable", Target: id, Detail: "",
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "apikey_enable", Target: id, Detail: "",
 	})
 	writeJSON(w, http.StatusOK, updated)
 }
@@ -267,27 +267,27 @@ func (s *Server) handleDisableAPIKey(w http.ResponseWriter, r *http.Request, id 
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	k, ok := s.store.GetAPIKey(tenant, id)
+	k, ok := s.store.GetAPIKey(actx.TenantID, id)
 	if !ok || k == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 		return
 	}
 	k.Enabled = false
-	updated, ok := s.store.UpdateAPIKey(tenant, k)
+	updated, ok := s.store.UpdateAPIKey(actx.TenantID, k)
 	if !ok || updated == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "disable api key failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "apikey_disable", Target: id, Detail: "",
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "apikey_disable", Target: id, Detail: "",
 	})
 	writeJSON(w, http.StatusOK, updated)
 }

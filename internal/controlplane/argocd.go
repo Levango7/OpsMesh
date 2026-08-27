@@ -1,4 +1,4 @@
-package controlplane
+﻿package controlplane
 
 // argocd.go 实现 Phase 2 ArgoCD 应用管理 HTTP handler。
 //
@@ -11,7 +11,7 @@ package controlplane
 //   - POST   /api/v1/argocd/apps/{id}/sync 同步应用
 //
 // 设计要点（与 traffic.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
+//   - 用 s.requireTenantContext(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 argocd:read/argocd:write 权限。
@@ -43,15 +43,15 @@ func (s *Server) handleListArgoCDApps(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "argocd:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	apps := s.store.ListApps(tenant)
+	apps := s.store.ListApps(actx.TenantID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"apps": apps})
 }
 
@@ -61,12 +61,12 @@ func (s *Server) handleCreateArgoCDApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.ArgoCDApp
@@ -78,13 +78,13 @@ func (s *Server) handleCreateArgoCDApp(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
-	created := s.store.CreateApp(tenant, &body)
+	created := s.store.CreateApp(actx.TenantID, &body)
 	if created == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create app failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "argocd_app_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "argocd_app_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -133,15 +133,15 @@ func (s *Server) handleGetArgoCDApp(w http.ResponseWriter, r *http.Request, id s
 	if _, ok := s.requirePermission(w, r, "argocd:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	a, ok := s.store.GetApp(tenant, id)
+	a, ok := s.store.GetApp(actx.TenantID, id)
 	if !ok || a == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
 		return
@@ -155,12 +155,12 @@ func (s *Server) handleUpdateArgoCDApp(w http.ResponseWriter, r *http.Request, i
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.ArgoCDApp
@@ -169,13 +169,13 @@ func (s *Server) handleUpdateArgoCDApp(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	body.ID = id
-	updated, ok := s.store.UpdateApp(tenant, &body)
+	updated, ok := s.store.UpdateApp(actx.TenantID, &body)
 	if !ok || updated == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "argocd_app_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "argocd_app_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
 	})
 	writeJSON(w, http.StatusOK, updated)
 }
@@ -186,20 +186,20 @@ func (s *Server) handleDeleteArgoCDApp(w http.ResponseWriter, r *http.Request, i
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	if !s.store.DeleteApp(tenant, id) {
+	if !s.store.DeleteApp(actx.TenantID, id) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "argocd_app_delete", Target: id, Detail: "",
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "argocd_app_delete", Target: id, Detail: "",
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -214,21 +214,22 @@ func (s *Server) handleSyncArgoCDApp(w http.ResponseWriter, r *http.Request, id 
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	a, ok := s.store.SyncApp(tenant, id)
+	a, ok := s.store.SyncApp(actx.TenantID, id)
 	if !ok || a == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "argocd_app_sync", Target: id, Detail: sanitizeAuditDetail("name=" + a.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "argocd_app_sync", Target: id, Detail: sanitizeAuditDetail("name=" + a.Name),
 	})
 	writeJSON(w, http.StatusOK, a)
 }
+

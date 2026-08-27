@@ -1,4 +1,4 @@
-package controlplane
+﻿package controlplane
 
 // traffic.go 实现 Phase 2 流量治理 HTTP handler。
 //
@@ -12,7 +12,7 @@ package controlplane
 //   - POST   /api/v1/traffic/policies/{id}/disable 禁用策略
 //
 // 设计要点（与 ticket.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
+//   - 用 s.requireTenantContext(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 traffic:read/traffic:write 权限。
@@ -43,15 +43,15 @@ func (s *Server) handleListTrafficPolicies(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requirePermission(w, r, "traffic:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	policies := s.store.ListPolicies(tenant)
+	policies := s.store.ListPolicies(actx.TenantID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"policies": policies})
 }
 
@@ -61,12 +61,12 @@ func (s *Server) handleCreateTrafficPolicy(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.TrafficPolicy
@@ -78,7 +78,7 @@ func (s *Server) handleCreateTrafficPolicy(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
-	created := s.store.CreatePolicy(tenant, &body)
+	created := s.store.CreatePolicy(actx.TenantID, &body)
 	if created == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create policy failed"})
 		return
@@ -135,15 +135,15 @@ func (s *Server) handleGetTrafficPolicy(w http.ResponseWriter, r *http.Request, 
 	if _, ok := s.requirePermission(w, r, "traffic:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	p, ok := s.store.GetPolicy(tenant, id)
+	p, ok := s.store.GetPolicy(actx.TenantID, id)
 	if !ok || p == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
 		return
@@ -156,12 +156,12 @@ func (s *Server) handleUpdateTrafficPolicy(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requirePermission(w, r, "traffic:write"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.TrafficPolicy
@@ -170,7 +170,7 @@ func (s *Server) handleUpdateTrafficPolicy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	body.ID = id
-	updated, ok := s.store.UpdatePolicy(tenant, &body)
+	updated, ok := s.store.UpdatePolicy(actx.TenantID, &body)
 	if !ok || updated == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
 		return
@@ -183,15 +183,15 @@ func (s *Server) handleDeleteTrafficPolicy(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requirePermission(w, r, "traffic:write"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	if !s.store.DeletePolicy(tenant, id) {
+	if !s.store.DeletePolicy(actx.TenantID, id) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
 		return
 	}
@@ -207,15 +207,15 @@ func (s *Server) handleEnableTrafficPolicy(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requirePermission(w, r, "traffic:write"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	p, ok := s.store.EnablePolicy(tenant, id)
+	p, ok := s.store.EnablePolicy(actx.TenantID, id)
 	if !ok || p == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
 		return
@@ -232,18 +232,19 @@ func (s *Server) handleDisableTrafficPolicy(w http.ResponseWriter, r *http.Reque
 	if _, ok := s.requirePermission(w, r, "traffic:write"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	p, ok := s.store.DisablePolicy(tenant, id)
+	p, ok := s.store.DisablePolicy(actx.TenantID, id)
 	if !ok || p == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
 		return
 	}
 	writeJSON(w, http.StatusOK, p)
 }
+

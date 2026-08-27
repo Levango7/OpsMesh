@@ -12,7 +12,7 @@
 //
 // 设计要点（与 sql_webhook.go / sql_secret.go 风格一致）：
 //   - JSON 列：billing_plans.features（[]string）+ billing_plans.resource_limits（TenantQuota）
-//     + invoices.items（[]InvoiceItem），用 encoding/json 序列化为 TEXT；空值存空串，
+//   - invoices.items（[]InvoiceItem），用 encoding/json 序列化为 TEXT；空值存空串，
 //     读取时空串跳过 Unmarshal 得零值；
 //   - 金额用 INT（单位：分），避免浮点精度；
 //   - billing_plans 全局共享：Get/Update/Delete/List 不带 tenant_id；

@@ -1,4 +1,4 @@
-package controlplane
+﻿package controlplane
 
 // gateway.go 实现 Phase 5 API 网关 HTTP handler（路由规则 CRUD + 启停 + 统计）。
 //
@@ -13,7 +13,7 @@ package controlplane
 //   - GET    /api/v1/gateway/stats            网关统计
 //
 // 设计要点（与 automation.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
+//   - 用 s.requireTenantContext(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 gateway:read/gateway:write 权限。
@@ -103,11 +103,7 @@ func (s *Server) ensureGateway() *gatewayState {
 	return s.gateway
 }
 
-// gatewayTenantFromRequest 提取请求归属租户（网关租户隔离）。
-// 复用 k8sTenantFromRequest 的逻辑。
-func (s *Server) gatewayTenantFromRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
-	return s.k8sTenantFromRequest(w, r)
-}
+
 
 // handleGatewayRoutes 统一处理 /api/v1/gateway/routes：
 //   - GET：列出路由规则
@@ -128,14 +124,14 @@ func (s *Server) handleListGatewayRoutes(w http.ResponseWriter, r *http.Request)
 	if _, ok := s.requirePermission(w, r, "gateway:read"); !ok {
 		return
 	}
-	tenant, ok := s.gatewayTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
 	gw := s.ensureGateway()
 	gw.mu.RLock()
 	defer gw.mu.RUnlock()
-	tenantRoutes := gw.routes[tenant]
+	tenantRoutes := gw.routes[actx.TenantID]
 	rules := make([]*extension.RouteRule, 0, len(tenantRoutes))
 	for _, e := range tenantRoutes {
 		rules = append(rules, e.rule)
@@ -149,7 +145,7 @@ func (s *Server) handleCreateGatewayRoute(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	tenant, ok := s.gatewayTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
@@ -177,7 +173,7 @@ func (s *Server) handleCreateGatewayRoute(w http.ResponseWriter, r *http.Request
 	}
 	now := time.Now()
 	body.ID = randGatewayRouteID()
-	body.TenantID = tenant
+	body.TenantID = actx.TenantID
 	if body.CreatedAt.IsZero() {
 		body.CreatedAt = now
 	}
@@ -189,13 +185,13 @@ func (s *Server) handleCreateGatewayRoute(w http.ResponseWriter, r *http.Request
 	gw := s.ensureGateway()
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
-	if gw.routes[tenant] == nil {
-		gw.routes[tenant] = make(map[string]*gatewayRouteEntry)
+	if gw.routes[actx.TenantID] == nil {
+		gw.routes[actx.TenantID] = make(map[string]*gatewayRouteEntry)
 	}
-	gw.routes[tenant][body.ID] = entry
+	gw.routes[actx.TenantID][body.ID] = entry
 	// 审计：记录创建人（H9 写路径审计补齐，与 automation/webhook/slo 风格一致）。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "gateway_route_create", Target: body.ID, Detail: sanitizeAuditDetail("name=" + body.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "gateway_route_create", Target: body.ID, Detail: sanitizeAuditDetail("name=" + body.Name),
 	})
 	writeJSON(w, http.StatusCreated, entry.rule)
 }
@@ -247,14 +243,14 @@ func (s *Server) handleGetGatewayRoute(w http.ResponseWriter, r *http.Request, i
 	if _, ok := s.requirePermission(w, r, "gateway:read"); !ok {
 		return
 	}
-	tenant, ok := s.gatewayTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
 	gw := s.ensureGateway()
 	gw.mu.RLock()
 	defer gw.mu.RUnlock()
-	tenantRoutes := gw.routes[tenant]
+	tenantRoutes := gw.routes[actx.TenantID]
 	entry, ok := tenantRoutes[id]
 	if !ok || entry == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})
@@ -269,7 +265,7 @@ func (s *Server) handleUpdateGatewayRoute(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	tenant, ok := s.gatewayTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
@@ -281,7 +277,7 @@ func (s *Server) handleUpdateGatewayRoute(w http.ResponseWriter, r *http.Request
 	gw := s.ensureGateway()
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
-	tenantRoutes := gw.routes[tenant]
+	tenantRoutes := gw.routes[actx.TenantID]
 	entry, exists := tenantRoutes[id]
 	if !exists || entry == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})
@@ -299,7 +295,7 @@ func (s *Server) handleUpdateGatewayRoute(w http.ResponseWriter, r *http.Request
 	tenantRoutes[id] = newEntry
 	// 审计：记录更新人（H9 写路径审计补齐，与 automation/webhook/slo 风格一致）。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "gateway_route_update", Target: id, Detail: sanitizeAuditDetail("name=" + body.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "gateway_route_update", Target: id, Detail: sanitizeAuditDetail("name=" + body.Name),
 	})
 	writeJSON(w, http.StatusOK, newEntry.rule)
 }
@@ -310,14 +306,14 @@ func (s *Server) handleDeleteGatewayRoute(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	tenant, ok := s.gatewayTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
 	gw := s.ensureGateway()
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
-	tenantRoutes := gw.routes[tenant]
+	tenantRoutes := gw.routes[actx.TenantID]
 	if _, exists := tenantRoutes[id]; !exists {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})
 		return
@@ -325,7 +321,7 @@ func (s *Server) handleDeleteGatewayRoute(w http.ResponseWriter, r *http.Request
 	delete(tenantRoutes, id)
 	// 审计：记录删除人（H9 写路径审计补齐，与 automation/webhook/slo 风格一致）。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "gateway_route_delete", Target: id,
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "gateway_route_delete", Target: id,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -336,14 +332,14 @@ func (s *Server) handleGatewayRouteToggle(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	tenant, ok := s.gatewayTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
 	gw := s.ensureGateway()
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
-	tenantRoutes := gw.routes[tenant]
+	tenantRoutes := gw.routes[actx.TenantID]
 	entry, exists := tenantRoutes[id]
 	if !exists || entry == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})
@@ -357,7 +353,7 @@ func (s *Server) handleGatewayRouteToggle(w http.ResponseWriter, r *http.Request
 		auditAction = "gateway_route_disable"
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: auditAction, Target: id,
+		TenantID: actx.TenantID, UserID: caller.ID, Action: auditAction, Target: id,
 	})
 	writeJSON(w, http.StatusOK, entry.rule)
 }
@@ -367,7 +363,7 @@ func (s *Server) handleGatewayStats(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "gateway:read"); !ok {
 		return
 	}
-	tenant, ok := s.gatewayTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
@@ -375,7 +371,7 @@ func (s *Server) handleGatewayStats(w http.ResponseWriter, r *http.Request) {
 	gw.mu.RLock()
 	defer gw.mu.RUnlock()
 	// 统计当前租户的活跃路由数。
-	tenantRoutes := gw.routes[tenant]
+	tenantRoutes := gw.routes[actx.TenantID]
 	activeRoutes := 0
 	for _, e := range tenantRoutes {
 		if e.rule.Enabled {
@@ -395,3 +391,5 @@ func (s *Server) handleGatewayStats(w http.ResponseWriter, r *http.Request) {
 func randGatewayRouteID() string {
 	return randHexID("gw-route")
 }
+
+

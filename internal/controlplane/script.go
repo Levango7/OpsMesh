@@ -1,4 +1,4 @@
-package controlplane
+﻿package controlplane
 
 // script.go 实现 Phase 5 自定义脚本 HTTP handler（CRUD + 执行 + 执行记录）。
 //
@@ -12,7 +12,7 @@ package controlplane
 //   - GET    /api/v1/scripts/{id}/executions  执行记录
 //
 // 设计要点（与 webhook.go 风格一致）：
-//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
+//   - 用 s.requireTenantContext(w, r) 提取租户；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 用 decodeJSONBody 解析请求体；
 //   - 鉴权：需 script:read/script:write 权限。
@@ -64,15 +64,15 @@ func (s *Server) handleListScripts(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "script:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	scripts := s.store.ListScripts(tenant)
+	scripts := s.store.ListScripts(actx.TenantID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"scripts": scripts})
 }
 
@@ -82,12 +82,12 @@ func (s *Server) handleCreateScript(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.Script
@@ -113,13 +113,13 @@ func (s *Server) handleCreateScript(w http.ResponseWriter, r *http.Request) {
 	// 新建脚本默认启用（Enabled=true）：用户创建脚本即为可执行，
 	// 禁用需显式 PUT 更新 Enabled=false。避免零值 false 导致 execute 全 409。
 	body.Enabled = true
-	created := s.store.CreateScript(tenant, &body)
+	created := s.store.CreateScript(actx.TenantID, &body)
 	if created == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create script failed"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "script_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "script_create", Target: created.ID, Detail: sanitizeAuditDetail("name=" + created.Name),
 	})
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -171,15 +171,15 @@ func (s *Server) handleGetScript(w http.ResponseWriter, r *http.Request, id stri
 	if _, ok := s.requirePermission(w, r, "script:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	sc, ok := s.store.GetScript(tenant, id)
+	sc, ok := s.store.GetScript(actx.TenantID, id)
 	if !ok || sc == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
 		return
@@ -193,12 +193,12 @@ func (s *Server) handleUpdateScript(w http.ResponseWriter, r *http.Request, id s
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	var body store.Script
@@ -209,13 +209,13 @@ func (s *Server) handleUpdateScript(w http.ResponseWriter, r *http.Request, id s
 	body.ID = id
 	// L1 输入校验：timeoutSec clamp 至 [1,600] 秒（与 create 路径一致）。
 	body.TimeoutSec = clampScriptTimeout(body.TimeoutSec)
-	updated, ok := s.store.UpdateScript(tenant, &body)
+	updated, ok := s.store.UpdateScript(actx.TenantID, &body)
 	if !ok || updated == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "script_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "script_update", Target: id, Detail: sanitizeAuditDetail("name=" + updated.Name),
 	})
 	writeJSON(w, http.StatusOK, updated)
 }
@@ -226,20 +226,20 @@ func (s *Server) handleDeleteScript(w http.ResponseWriter, r *http.Request, id s
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	if !s.store.DeleteScript(tenant, id) {
+	if !s.store.DeleteScript(actx.TenantID, id) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: tenant, UserID: caller.ID, Action: "script_delete", Target: id, Detail: "",
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "script_delete", Target: id, Detail: "",
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -254,15 +254,15 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 	if !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	sc, ok := s.store.GetScript(tenant, id)
+	sc, ok := s.store.GetScript(actx.TenantID, id)
 	if !ok || sc == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
 		return
@@ -287,8 +287,8 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 	now := time.Now()
 	finishedAt := now
 	// M3：直接经 Store 接口调用，消除对 *MemoryStore 的类型断言；
-	// SQLStore（桩）返回 nil 时降级为模拟响应（不落库），MultiSchemaStore 委托路由到 per-tenant store。
-	exec := s.store.RecordScriptExecution(tenant, id, body.DeviceID, "succeeded",
+	// SQLStore（桩）返回 nil 时降级为模拟响应（不落库），MultiSchemaStore 委托路由到 per-actx.TenantID store。
+	exec := s.store.RecordScriptExecution(actx.TenantID, id, body.DeviceID, "succeeded",
 		"script executed (simulated): "+sc.Name, "", now, &finishedAt)
 	_ = caller
 	if exec == nil {
@@ -311,14 +311,15 @@ func (s *Server) handleScriptExecutions(w http.ResponseWriter, r *http.Request, 
 	if _, ok := s.requirePermission(w, r, "script:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	executions := s.store.ListScriptExecutions(tenant, id)
+	executions := s.store.ListScriptExecutions(actx.TenantID, id)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"executions": executions})
 }
+

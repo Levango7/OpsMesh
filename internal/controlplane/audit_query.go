@@ -1,4 +1,4 @@
-package controlplane
+﻿package controlplane
 
 // audit_query.go 实现 Phase 3 审计日志查询 HTTP handler。
 //
@@ -7,7 +7,7 @@ package controlplane
 //   - GET /api/v1/audit/export  导出审计日志（JSON 格式）
 //
 // 设计要点：
-//   - 用 s.k8sTenantFromRequest(w, r) 提取租户；
+//   - 用 s.requireTenantContext(w, r) 提取租户；
 //   - 用现有 AuditStore（s.store.QueryAudits）查询审计事件；
 //   - 错误响应统一 {"error": "message"} 格式；
 //   - 鉴权：需 audit:read 权限。
@@ -33,12 +33,12 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "audit:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -76,7 +76,7 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		until = t
 	}
-	events := s.store.QueryAudits(tenant, action, since, until, limit)
+	events := s.store.QueryAudits(actx.TenantID, action, since, until, limit)
 	// 按 user 过滤（QueryAudits 不支持 user 维度，内存过滤）。
 	if user != "" {
 		filtered := make([]*proto.AuditEvent, 0, len(events))
@@ -101,12 +101,12 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "audit:read"); !ok {
 		return
 	}
-	tenant, ok := s.k8sTenantFromRequest(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if tenant == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing tenant context (X-Tenant-ID required)"})
+	if actx.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -143,6 +143,7 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 		}
 		until = t
 	}
-	events := s.store.QueryAudits(tenant, action, since, until, limit)
+	events := s.store.QueryAudits(actx.TenantID, action, since, until, limit)
 	writeJSON(w, http.StatusOK, events)
 }
+

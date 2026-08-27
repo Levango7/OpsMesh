@@ -31,7 +31,8 @@ import (
 
 // scanNetworkDevice 从一行扫描出 *NetworkDevice。
 // 列顺序：id, tenant_id, name, type, vendor, model, ip, mask, mac, location,
-//         snmp_community, status, config, created_at, updated_at。
+//
+//	snmp_community, status, config, created_at, updated_at。
 func scanNetworkDevice(row rowScanner) *NetworkDevice {
 	var d NetworkDevice
 	var createdAt, updatedAt time.Time
