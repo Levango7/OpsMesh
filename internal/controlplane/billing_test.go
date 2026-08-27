@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"opsmesh/internal/config"
+	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 )
 
@@ -403,5 +404,58 @@ func TestHandleListInvoices_TenantIsolation(t *testing.T) {
 	s.handleBillingInvoices(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status=%d, want 403; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleBillingUsage 验证获取资源用量统计返回 200。
+func TestHandleBillingUsage(t *testing.T) {
+	s := newBillingTestServer()
+	auth := loginAsAdmin(t, s)
+
+	// 创建一些数据（需要 AgentID 才能正确存储）
+	s.store.CreateTask(&proto.Task{TaskID: "task-1", AgentID: "agent-1", TenantID: "default", Status: "pending"})
+	s.store.CreateTask(&proto.Task{TaskID: "task-2", AgentID: "agent-1", TenantID: "default", Status: "running"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/billing/usage", nil)
+	req.Header.Set("Authorization", auth)
+	req.Header.Set("X-Tenant-ID", "default")
+	w := httptest.NewRecorder()
+	s.handleBillingUsage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	var resp store.Usage
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.TaskCount < 2 {
+		t.Fatalf("TaskCount = %d, want >= 2", resp.TaskCount)
+	}
+}
+
+// TestHandleBillingUsage_NoAuth 验证未认证返回 401。
+func TestHandleBillingUsage_NoAuth(t *testing.T) {
+	s := newBillingTestServer()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/billing/usage", nil)
+	w := httptest.NewRecorder()
+	s.handleBillingUsage(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want 401", w.Code)
+	}
+}
+
+// TestHandleBillingUsage_MethodNotAllowed 验证 POST 返回 405。
+func TestHandleBillingUsage_MethodNotAllowed(t *testing.T) {
+	s := newBillingTestServer()
+	auth := loginAsAdmin(t, s)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/billing/usage", nil)
+	req.Header.Set("Authorization", auth)
+	req.Header.Set("X-Tenant-ID", "default")
+	w := httptest.NewRecorder()
+	s.handleBillingUsage(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status=%d, want 405", w.Code)
 	}
 }

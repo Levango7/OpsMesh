@@ -846,6 +846,15 @@ func (m *MultiSchemaStore) QueryNetworkMetrics(tenantID string, since time.Time)
 	return s.QueryNetworkMetrics(tenantID, since)
 }
 
+// CalculateUsage 计算指定租户的资源用量统计。
+func (m *MultiSchemaStore) CalculateUsage(tenantID string) (*Usage, bool) {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return nil, false
+	}
+	return s.CalculateUsage(tenantID)
+}
+
 // 编译期断言：MultiSchemaStore 实现 Store 接口。
 var (
 	_ DeviceStore         = (*MultiSchemaStore)(nil)

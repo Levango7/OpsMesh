@@ -256,3 +256,38 @@ func (m *MemoryStore) ListInvoices(tenantID string) []*Invoice {
 	}
 	return out
 }
+
+// CalculateUsage 计算指定租户的资源用量统计。
+func (m *MemoryStore) CalculateUsage(tenantID string) (*Usage, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	usage := &Usage{
+		TenantID:     tenantID,
+		CalculatedAt: time.Now(),
+	}
+
+	for _, devices := range m.segments {
+		for _, d := range devices {
+			if tenantID == "" || d.TenantID == tenantID {
+				usage.DeviceCount++
+			}
+		}
+	}
+
+	for _, taskList := range m.tasks {
+		for _, t := range taskList {
+			if tenantID == "" || t.TenantID == tenantID {
+				usage.TaskCount++
+			}
+		}
+	}
+
+	for _, a := range m.alerts {
+		if tenantID == "" || a.TenantID == tenantID {
+			usage.AlertCount++
+		}
+	}
+
+	return usage, true
+}

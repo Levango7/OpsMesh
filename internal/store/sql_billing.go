@@ -490,3 +490,42 @@ func (s *SQLStore) ListInvoices(tenantID string) []*Invoice {
 	}
 	return out
 }
+
+// CalculateUsage 计算指定租户的资源用量统计。
+func (s *SQLStore) CalculateUsage(tenantID string) (*Usage, bool) {
+	if s.db == nil {
+		return nil, false
+	}
+	usage := &Usage{
+		TenantID:     tenantID,
+		CalculatedAt: time.Now().UTC(),
+	}
+
+	deviceQuery := "SELECT COUNT(*) FROM devices"
+	taskQuery := "SELECT COUNT(*) FROM tasks"
+	alertQuery := "SELECT COUNT(*) FROM alerts"
+	deviceArgs := []interface{}{}
+	taskArgs := []interface{}{}
+	alertArgs := []interface{}{}
+
+	if tenantID != "" {
+		deviceQuery += " WHERE tenant_id=?"
+		taskQuery += " WHERE tenant_id=?"
+		alertQuery += " WHERE tenant_id=?"
+		deviceArgs = append(deviceArgs, tenantID)
+		taskArgs = append(taskArgs, tenantID)
+		alertArgs = append(alertArgs, tenantID)
+	}
+
+	if err := s.db.QueryRowContext(context.Background(), deviceQuery, deviceArgs...).Scan(&usage.DeviceCount); err != nil {
+		log.Printf("[store] CalculateUsage 查询设备数失败: %v", err)
+	}
+	if err := s.db.QueryRowContext(context.Background(), taskQuery, taskArgs...).Scan(&usage.TaskCount); err != nil {
+		log.Printf("[store] CalculateUsage 查询任务数失败: %v", err)
+	}
+	if err := s.db.QueryRowContext(context.Background(), alertQuery, alertArgs...).Scan(&usage.AlertCount); err != nil {
+		log.Printf("[store] CalculateUsage 查询告警数失败: %v", err)
+	}
+
+	return usage, true
+}

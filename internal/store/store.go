@@ -734,6 +734,18 @@ type BillingStore interface {
 	GetInvoice(id string) (*Invoice, bool)
 	// ListInvoices 返回指定租户的全部账单（按创建时间降序）。
 	ListInvoices(tenantID string) []*Invoice
+	// CalculateUsage 计算指定租户的资源用量统计。
+	CalculateUsage(tenantID string) (*Usage, bool)
+}
+
+// Usage 租户资源用量统计。
+type Usage struct {
+	TenantID     string    `json:"tenantID"`
+	DeviceCount  int       `json:"deviceCount"`
+	TaskCount    int       `json:"taskCount"`
+	AlertCount   int       `json:"alertCount"`
+	MetricsCount int       `json:"metricsCount"`
+	CalculatedAt time.Time `json:"calculatedAt"`
 }
 
 // Store 控制面注册表的可插拔持久化组合接口。

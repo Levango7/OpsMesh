@@ -349,3 +349,30 @@ func (s *Server) handleBillingInvoiceRouting(w http.ResponseWriter, r *http.Requ
 	}
 	paginate.WriteJSON(w, http.StatusOK, inv)
 }
+
+// handleBillingUsage 处理 GET /api/v1/billing/usage：获取当前租户资源用量统计。
+func (s *Server) handleBillingUsage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.requirePermission(w, r, "billing:read"); !ok {
+		return
+	}
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if actx.TenantID == "" {
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		return
+	}
+
+	usage, ok := s.store.CalculateUsage(actx.TenantID)
+	if !ok || usage == nil {
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to calculate usage"})
+		return
+	}
+
+	paginate.WriteJSON(w, http.StatusOK, usage)
+}

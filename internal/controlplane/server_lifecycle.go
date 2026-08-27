@@ -165,8 +165,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/billing/plans/", s.handleBillingPlanRouting)                 // 子路径：{id} GET/PUT/DELETE
 	mux.HandleFunc("/api/v1/billing/subscriptions", s.handleBillingSubscriptions)        // GET 列表 / POST 创建
 	mux.HandleFunc("/api/v1/billing/subscriptions/", s.handleBillingSubscriptionRouting) // 子路径：{id} GET/PUT/DELETE
-	mux.HandleFunc("/api/v1/billing/invoices", s.handleBillingInvoices)                  // GET 列表
-	mux.HandleFunc("/api/v1/billing/invoices/", s.handleBillingInvoiceRouting)           // 子路径：{id} GET
+ 	mux.HandleFunc("/api/v1/billing/invoices", s.handleBillingInvoices)                  // GET 列表
+ 	mux.HandleFunc("/api/v1/billing/invoices/", s.handleBillingInvoiceRouting)           // 子路径：{id} GET
+ 	mux.HandleFunc("/api/v1/billing/usage", s.handleBillingUsage)                        // GET 资源用量统计
 	mux.HandleFunc("/api/v1/platform/config", s.handlePlatformConfig)                    // GET/PUT 平台配置
 	mux.HandleFunc("/api/v1/platform/health", s.handlePlatformHealth)                    // GET 平台健康检查
 	mux.HandleFunc("/api/v1/platform/metrics", s.handlePlatformMetrics)                  // GET 平台指标汇总
