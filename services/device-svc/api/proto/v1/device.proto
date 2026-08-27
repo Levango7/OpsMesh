@@ -1,0 +1,287 @@
+syntax = "proto3";
+
+package opsmesh.device.v1;
+
+option go_package = "github.com/Levango7/OpsMesh/services/device-svc/api/proto/v1;devicev1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// DeviceService provides device registration, lifecycle, and status management.
+service DeviceService {
+  // RegisterDevice registers a new device.
+  rpc RegisterDevice(RegisterDeviceRequest) returns (Device);
+  // Heartbeat updates device heartbeat timestamp.
+  rpc Heartbeat(HeartbeatRequest) returns (google.protobuf.Empty);
+  // GetDevice retrieves a device by ID.
+  rpc GetDevice(GetDeviceRequest) returns (Device);
+  // ListDevices lists devices with optional filtering.
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
+  // UpdateDevice updates device information.
+  rpc UpdateDevice(UpdateDeviceRequest) returns (Device);
+  // DeleteDevice removes a device.
+  rpc DeleteDevice(DeleteDeviceRequest) returns (google.protobuf.Empty);
+  // GetDeviceStatus returns the current status of a device.
+  rpc GetDeviceStatus(GetDeviceStatusRequest) returns (DeviceStatus);
+}
+
+// AgentService provides agent registration, heartbeat, and status tracking.
+service AgentService {
+  // RegisterAgent registers a new agent.
+  rpc RegisterAgent(RegisterAgentRequest) returns (Agent);
+  // GetAgent retrieves an agent by ID.
+  rpc GetAgent(GetAgentRequest) returns (Agent);
+  // ListAgents lists agents with optional filtering.
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  // UpdateAgentStatus updates agent status.
+  rpc UpdateAgentStatus(UpdateAgentStatusRequest) returns (Agent);
+  // Heartbeat updates agent heartbeat.
+  rpc AgentHeartbeat(AgentHeartbeatRequest) returns (google.protobuf.Empty);
+}
+
+// CMDBService provides Configuration Item management and relationships.
+service CMDBService {
+  // CreateCI creates a new configuration item.
+  rpc CreateCI(CreateCIRequest) returns (CI);
+  // GetCI retrieves a CI by ID.
+  rpc GetCI(GetCIRequest) returns (CI);
+  // UpdateCI updates a CI.
+  rpc UpdateCI(UpdateCIRequest) returns (CI);
+  // DeleteCI removes a CI.
+  rpc DeleteCI(DeleteCIRequest) returns (google.protobuf.Empty);
+  // ListCIs lists CIs with optional filtering.
+  rpc ListCIs(ListCIsRequest) returns (ListCIsResponse);
+  // CreateCIRelation creates a relationship between two CIs.
+  rpc CreateCIRelation(CreateCIRelationRequest) returns (CIRelation);
+  // GetCIRelations retrieves relations for a CI.
+  rpc GetCIRelations(GetCIRelationsRequest) returns (GetCIRelationsResponse);
+}
+
+// DiscoveryService provides network discovery capabilities.
+service DiscoveryService {
+  // StartDiscovery initiates a network discovery scan.
+  rpc StartDiscovery(StartDiscoveryRequest) returns (DiscoveryJob);
+  // GetDiscoveryStatus returns the status of a discovery job.
+  rpc GetDiscoveryStatus(GetDiscoveryStatusRequest) returns (DiscoveryJob);
+  // ListDiscoveredDevices lists devices found during discovery.
+  rpc ListDiscoveredDevices(ListDiscoveredDevicesRequest) returns (ListDiscoveredDevicesResponse);
+}
+
+// Device represents a managed device.
+message Device {
+  string id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  string ip = 4;
+  string mac = 5;
+  string os = 6;
+  string arch = 7;
+  string status = 8; // online, offline, discovered, provisioning, retired
+  string agent_id = 9;
+  repeated string tags = 10;
+  map<string, string> labels = 11;
+  string group = 12;
+  google.protobuf.Timestamp last_heartbeat = 13;
+  google.protobuf.Timestamp created_at = 14;
+  google.protobuf.Timestamp updated_at = 15;
+}
+
+// Agent represents a registered agent.
+message Agent {
+  string id = 1;
+  string tenant_id = 2;
+  string device_id = 3;
+  string hostname = 4;
+  string version = 5;
+  string status = 6; // online, offline, stale
+  int32 load = 7;
+  string os = 8;
+  string arch = 9;
+  string addr = 10;
+  int32 grpc_port = 11;
+  int32 metrics_port = 12;
+  google.protobuf.Timestamp last_heartbeat = 13;
+  google.protobuf.Timestamp created_at = 14;
+  google.protobuf.Timestamp updated_at = 15;
+}
+
+// CI represents a Configuration Item in the CMDB.
+message CI {
+  string id = 1;
+  string tenant_id = 2;
+  string ci_type = 3;
+  string name = 4;
+  string status = 5;
+  map<string, string> attributes = 6;
+  string source = 7;
+  string agent_id = 8;
+  string device_id = 9;
+  int32 version = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp updated_at = 12;
+}
+
+// CIRelation represents a relationship between two CIs.
+message CIRelation {
+  int64 id = 1;
+  string source_ci_id = 2;
+  string target_ci_id = 3;
+  string relation_type = 4;
+  string tenant_id = 5;
+  map<string, string> attributes = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+
+// DiscoveryJob represents a network discovery job.
+message DiscoveryJob {
+  string id = 1;
+  string tenant_id = 2;
+  string cidr = 3;
+  string status = 4; // pending, running, completed, failed
+  int32 total_hosts = 5;
+  int32 scanned_hosts = 6;
+  int32 found_devices = 7;
+  string error = 8;
+  google.protobuf.Timestamp started_at = 9;
+  google.protobuf.Timestamp completed_at = 10;
+}
+
+// DeviceStatus represents the current status of a device.
+message DeviceStatus {
+  string device_id = 1;
+  string status = 2;
+  bool reachable = 3;
+  int64 uptime_seconds = 4;
+  google.protobuf.Timestamp last_heartbeat = 5;
+}
+
+// Request/Response messages for DeviceService
+
+message RegisterDeviceRequest {
+  Device device = 1;
+}
+
+message HeartbeatRequest {
+  string device_id = 1;
+  string status = 2;
+}
+
+message GetDeviceRequest {
+  string id = 1;
+}
+
+message ListDevicesRequest {
+  string tenant_id = 1;
+  string status = 2;
+  string group = 3;
+  int32 limit = 4;
+}
+
+message ListDevicesResponse {
+  repeated Device devices = 1;
+}
+
+message UpdateDeviceRequest {
+  Device device = 1;
+}
+
+message DeleteDeviceRequest {
+  string id = 1;
+}
+
+message GetDeviceStatusRequest {
+  string device_id = 1;
+}
+
+// Request/Response messages for AgentService
+
+message RegisterAgentRequest {
+  Agent agent = 1;
+}
+
+message GetAgentRequest {
+  string id = 1;
+}
+
+message ListAgentsRequest {
+  string tenant_id = 1;
+  string status = 2;
+  int32 limit = 3;
+}
+
+message ListAgentsResponse {
+  repeated Agent agents = 1;
+}
+
+message UpdateAgentStatusRequest {
+  string agent_id = 1;
+  string status = 2;
+  int32 load = 3;
+}
+
+message AgentHeartbeatRequest {
+  string agent_id = 1;
+  string status = 2;
+  int32 load = 3;
+}
+
+// Request/Response messages for CMDBService
+
+message CreateCIRequest {
+  CI ci = 1;
+}
+
+message GetCIRequest {
+  string id = 1;
+}
+
+message UpdateCIRequest {
+  CI ci = 1;
+}
+
+message DeleteCIRequest {
+  string id = 1;
+}
+
+message ListCIsRequest {
+  string tenant_id = 1;
+  string ci_type = 2;
+  string status = 3;
+  int32 limit = 4;
+}
+
+message ListCIsResponse {
+  repeated CI cis = 1;
+}
+
+message CreateCIRelationRequest {
+  CIRelation relation = 1;
+}
+
+message GetCIRelationsRequest {
+  string ci_id = 1;
+}
+
+message GetCIRelationsResponse {
+  repeated CIRelation relations = 1;
+}
+
+// Request/Response messages for DiscoveryService
+
+message StartDiscoveryRequest {
+  string cidr = 1;
+  string tenant_id = 2;
+}
+
+message GetDiscoveryStatusRequest {
+  string job_id = 1;
+}
+
+message ListDiscoveredDevicesRequest {
+  string job_id = 1;
+  string tenant_id = 2;
+}
+
+message ListDiscoveredDevicesResponse {
+  repeated Device devices = 1;
+}

@@ -1,0 +1,306 @@
+syntax = "proto3";
+
+package opsmesh.config.v1;
+
+option go_package = "github.com/Levango7/OpsMesh/services/config-svc/api/proto/v1;configv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// ConfigService provides configuration management with versioning and history.
+service ConfigService {
+  // GetConfig retrieves a configuration by key.
+  rpc GetConfig(GetConfigRequest) returns (ConfigItem);
+  // SetConfig creates or updates a configuration.
+  rpc SetConfig(SetConfigRequest) returns (ConfigItem);
+  // DeleteConfig removes a configuration.
+  rpc DeleteConfig(DeleteConfigRequest) returns (google.protobuf.Empty);
+  // ListConfigs lists all configurations for a tenant.
+  rpc ListConfigs(ListConfigsRequest) returns (ListConfigsResponse);
+  // GetConfigHistory retrieves version history for a configuration.
+  rpc GetConfigHistory(GetConfigHistoryRequest) returns (GetConfigHistoryResponse);
+  // RollbackConfig rolls back to a previous version.
+  rpc RollbackConfig(RollbackConfigRequest) returns (ConfigItem);
+}
+
+// SecretService provides secrets management with encryption at rest.
+service SecretService {
+  // CreateSecret creates a new secret.
+  rpc CreateSecret(CreateSecretRequest) returns (SecretMeta);
+  // GetSecret retrieves a secret by key.
+  rpc GetSecret(GetSecretRequest) returns (SecretItem);
+  // UpdateSecret updates an existing secret.
+  rpc UpdateSecret(UpdateSecretRequest) returns (SecretMeta);
+  // DeleteSecret removes a secret.
+  rpc DeleteSecret(DeleteSecretRequest) returns (google.protobuf.Empty);
+  // ListSecrets lists all secrets for a tenant.
+  rpc ListSecrets(ListSecretsRequest) returns (ListSecretsResponse);
+  // RotateSecret rotates a secret to a new value.
+  rpc RotateSecret(RotateSecretRequest) returns (SecretMeta);
+}
+
+// NotifyChannelService provides notification channel management.
+service NotifyChannelService {
+  // CreateChannel creates a notification channel.
+  rpc CreateChannel(CreateChannelRequest) returns (NotifyChannel);
+  // GetChannel retrieves a channel by ID.
+  rpc GetChannel(GetChannelRequest) returns (NotifyChannel);
+  // UpdateChannel updates a notification channel.
+  rpc UpdateChannel(UpdateChannelRequest) returns (NotifyChannel);
+  // DeleteChannel removes a notification channel.
+  rpc DeleteChannel(DeleteChannelRequest) returns (google.protobuf.Empty);
+  // ListChannels lists all notification channels for a tenant.
+  rpc ListChannels(ListChannelsRequest) returns (ListChannelsResponse);
+  // TestChannel sends a test notification.
+  rpc TestChannel(TestChannelRequest) returns (TestChannelResponse);
+}
+
+// TemplateService provides configuration template management.
+service TemplateService {
+  // CreateTemplate creates a configuration template.
+  rpc CreateTemplate(CreateTemplateRequest) returns (ConfigTemplate);
+  // GetTemplate retrieves a template by ID.
+  rpc GetTemplate(GetTemplateRequest) returns (ConfigTemplate);
+  // UpdateTemplate updates a configuration template.
+  rpc UpdateTemplate(UpdateTemplateRequest) returns (ConfigTemplate);
+  // DeleteTemplate removes a configuration template.
+  rpc DeleteTemplate(DeleteTemplateRequest) returns (google.protobuf.Empty);
+  // ListTemplates lists all templates for a tenant.
+  rpc ListTemplates(ListTemplatesRequest) returns (ListTemplatesResponse);
+  // ApplyTemplate applies a template with variable substitution.
+  rpc ApplyTemplate(ApplyTemplateRequest) returns (ApplyTemplateResponse);
+}
+
+// ConfigItem represents a configuration entry.
+message ConfigItem {
+  string id = 1;
+  string tenant_id = 2;
+  string key = 3;
+  string value = 4;
+  string format = 5;
+  int32 version = 6;
+  string description = 7;
+  string updated_by = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+// SecretItem represents a secret (internal, contains plaintext value).
+message SecretItem {
+  string id = 1;
+  string tenant_id = 2;
+  string key = 3;
+  string value = 4;
+  string key_type = 5;
+  int32 version = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// SecretMeta represents secret metadata (external, no value).
+message SecretMeta {
+  string id = 1;
+  string tenant_id = 2;
+  string key = 3;
+  string key_type = 4;
+  int32 version = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+// NotifyChannel represents a notification channel.
+message NotifyChannel {
+  string id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  string type = 4;
+  string config = 5;
+  bool enabled = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// ConfigTemplate represents a configuration template.
+message ConfigTemplate {
+  string id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  string description = 4;
+  string content = 5;
+  map<string, string> variables = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// ConfigService request/response messages
+
+message GetConfigRequest {
+  string tenant_id = 1;
+  string key = 2;
+}
+
+message SetConfigRequest {
+  string tenant_id = 1;
+  string key = 2;
+  string value = 3;
+  string format = 4;
+  string description = 5;
+  string updated_by = 6;
+}
+
+message DeleteConfigRequest {
+  string tenant_id = 1;
+  string key = 2;
+}
+
+message ListConfigsRequest {
+  string tenant_id = 1;
+}
+
+message ListConfigsResponse {
+  repeated ConfigItem configs = 1;
+}
+
+message GetConfigHistoryRequest {
+  string tenant_id = 1;
+  string key = 2;
+}
+
+message GetConfigHistoryResponse {
+  repeated ConfigItem history = 1;
+}
+
+message RollbackConfigRequest {
+  string tenant_id = 1;
+  string key = 2;
+  int32 version = 3;
+  string updated_by = 4;
+}
+
+// SecretService request/response messages
+
+message CreateSecretRequest {
+  string tenant_id = 1;
+  string key = 2;
+  string value = 3;
+  string key_type = 4;
+}
+
+message GetSecretRequest {
+  string tenant_id = 1;
+  string key = 2;
+}
+
+message UpdateSecretRequest {
+  string tenant_id = 1;
+  string key = 2;
+  string value = 3;
+  string key_type = 4;
+}
+
+message DeleteSecretRequest {
+  string tenant_id = 1;
+  string key = 2;
+}
+
+message ListSecretsRequest {
+  string tenant_id = 1;
+}
+
+message ListSecretsResponse {
+  repeated SecretMeta secrets = 1;
+}
+
+message RotateSecretRequest {
+  string tenant_id = 1;
+  string key = 2;
+  string new_value = 3;
+}
+
+// NotifyChannelService request/response messages
+
+message CreateChannelRequest {
+  string tenant_id = 1;
+  string name = 2;
+  string type = 3;
+  string config = 4;
+  bool enabled = 5;
+}
+
+message GetChannelRequest {
+  string id = 1;
+}
+
+message UpdateChannelRequest {
+  string id = 1;
+  string name = 2;
+  string type = 3;
+  string config = 4;
+  bool enabled = 5;
+}
+
+message DeleteChannelRequest {
+  string id = 1;
+  string tenant_id = 2;
+}
+
+message ListChannelsRequest {
+  string tenant_id = 1;
+}
+
+message ListChannelsResponse {
+  repeated NotifyChannel channels = 1;
+}
+
+message TestChannelRequest {
+  string id = 1;
+}
+
+message TestChannelResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// TemplateService request/response messages
+
+message CreateTemplateRequest {
+  string tenant_id = 1;
+  string name = 2;
+  string description = 3;
+  string content = 4;
+  map<string, string> variables = 5;
+}
+
+message GetTemplateRequest {
+  string id = 1;
+}
+
+message UpdateTemplateRequest {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string content = 4;
+  map<string, string> variables = 5;
+}
+
+message DeleteTemplateRequest {
+  string id = 1;
+  string tenant_id = 2;
+}
+
+message ListTemplatesRequest {
+  string tenant_id = 1;
+}
+
+message ListTemplatesResponse {
+  repeated ConfigTemplate templates = 1;
+}
+
+message ApplyTemplateRequest {
+  string id = 1;
+  map<string, string> variables = 2;
+}
+
+message ApplyTemplateResponse {
+  string rendered_content = 1;
+}

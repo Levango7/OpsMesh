@@ -1,0 +1,300 @@
+syntax = "proto3";
+
+package opsmesh.task.v1;
+
+option go_package = "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1;taskv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// TaskService 提供任务生命周期管理能力。
+service TaskService {
+  // CreateTask 创建任务。
+  rpc CreateTask(CreateTaskRequest) returns (Task);
+  // GetTask 按 ID 获取任务详情。
+  rpc GetTask(GetTaskRequest) returns (Task);
+  // ListTasks 列出任务。
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+  // ClaimTask 原子领取任务。
+  rpc ClaimTask(ClaimTaskRequest) returns (Task);
+  // ReportResult 上报执行结果。
+  rpc ReportResult(ReportResultRequest) returns (TaskResult);
+  // CancelTask 取消任务。
+  rpc CancelTask(CancelTaskRequest) returns (google.protobuf.Empty);
+  // ApproveTask 审批通过任务。
+  rpc ApproveTask(ApproveTaskRequest) returns (Task);
+  // RejectTask 驳回任务。
+  rpc RejectTask(RejectTaskRequest) returns (Task);
+  // GetTaskStatus 获取任务状态。
+  rpc GetTaskStatus(GetTaskStatusRequest) returns (TaskStatusResponse);
+}
+
+// ScheduleService 提供定时任务调度能力。
+service ScheduleService {
+  // CreateSchedule 创建定时任务。
+  rpc CreateSchedule(CreateScheduleRequest) returns (Schedule);
+  // GetSchedule 按 ID 获取定时任务。
+  rpc GetSchedule(GetScheduleRequest) returns (Schedule);
+  // UpdateSchedule 更新定时任务。
+  rpc UpdateSchedule(UpdateScheduleRequest) returns (Schedule);
+  // DeleteSchedule 删除定时任务。
+  rpc DeleteSchedule(DeleteScheduleRequest) returns (google.protobuf.Empty);
+  // ListSchedules 列出定时任务。
+  rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesResponse);
+}
+
+// ResultService 提供任务结果查询能力。
+service ResultService {
+  // GetTaskResult 获取任务执行结果。
+  rpc GetTaskResult(GetTaskResultRequest) returns (TaskResult);
+  // ListTaskResults 列出任务结果。
+  rpc ListTaskResults(ListTaskResultsRequest) returns (ListTaskResultsResponse);
+  // GetTaskLogs 获取任务日志。
+  rpc GetTaskLogs(GetTaskLogsRequest) returns (TaskLogsResponse);
+}
+
+// BatchService 提供批量任务能力。
+service BatchService {
+  // CreateBatchTask 创建批量任务。
+  rpc CreateBatchTask(CreateBatchTaskRequest) returns (BatchTask);
+  // GetBatchStatus 获取批量任务状态。
+  rpc GetBatchStatus(GetBatchStatusRequest) returns (BatchStatusResponse);
+  // ListBatchTasks 列出批量任务。
+  rpc ListBatchTasks(ListBatchTasksRequest) returns (ListBatchTasksResponse);
+}
+
+// Task 任务。
+message Task {
+  string task_id = 1;
+  string agent_id = 2;
+  string tenant_id = 3;
+  string type = 4;
+  string command = 5;
+  string content = 6;
+  string path = 7;
+  string status = 8;
+  string claimed_by = 9;
+  google.protobuf.Timestamp claimed_at = 10;
+  int64 claim_epoch = 11;
+  google.protobuf.Timestamp created_at = 12;
+  int32 retry_count = 13;
+  int32 max_retries = 14;
+  bool dead_letter = 15;
+  int32 timeout = 16;
+  int32 retry_delay = 17;
+  string schedule = 18;
+  string parent_id = 19;
+  repeated string depends_on = 20;
+  bool approval_required = 21;
+  string approved_by = 22;
+  google.protobuf.Timestamp approved_at = 23;
+  string batch_id = 24;
+}
+
+// TaskResult 任务执行结果。
+message TaskResult {
+  string task_id = 1;
+  string agent_id = 2;
+  int32 exit_code = 3;
+  string stdout = 4;
+  string stderr = 5;
+  int64 duration_ms = 6;
+  google.protobuf.Timestamp finished_at = 7;
+  int64 claim_epoch = 8;
+}
+
+// Schedule 定时任务。
+message Schedule {
+  string id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  string cron_expr = 4;
+  string task_type = 5;
+  string command = 6;
+  string content = 7;
+  string path = 8;
+  string agent_id = 9;
+  bool enabled = 10;
+  google.protobuf.Timestamp last_fired_at = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+// BatchTask 批量任务。
+message BatchTask {
+  string batch_id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  int32 total_count = 4;
+  int32 success_count = 5;
+  int32 failed_count = 6;
+  int32 pending_count = 7;
+  string status = 8;
+  google.protobuf.Timestamp created_at = 9;
+}
+
+// LogLine 日志行。
+message LogLine {
+  google.protobuf.Timestamp timestamp = 1;
+  string level = 2;
+  string message = 3;
+}
+
+// CreateTaskRequest 创建任务请求。
+message CreateTaskRequest {
+  Task task = 1;
+}
+
+// GetTaskRequest 获取任务请求。
+message GetTaskRequest {
+  string task_id = 1;
+}
+
+// ListTasksRequest 列出任务请求。
+message ListTasksRequest {
+  string tenant_id = 1;
+  string status = 2;
+  string agent_id = 3;
+  int32 limit = 4;
+}
+
+// ListTasksResponse 任务列表响应。
+message ListTasksResponse {
+  repeated Task tasks = 1;
+}
+
+// ClaimTaskRequest 领取任务请求。
+message ClaimTaskRequest {
+  string agent_id = 1;
+}
+
+// ReportResultRequest 上报结果请求。
+message ReportResultRequest {
+  TaskResult result = 1;
+}
+
+// CancelTaskRequest 取消任务请求。
+message CancelTaskRequest {
+  string task_id = 1;
+  string tenant_id = 2;
+}
+
+// ApproveTaskRequest 审批通过请求。
+message ApproveTaskRequest {
+  string task_id = 1;
+  string tenant_id = 2;
+  string approved_by = 3;
+}
+
+// RejectTaskRequest 驳回请求。
+message RejectTaskRequest {
+  string task_id = 1;
+  string tenant_id = 2;
+  string rejected_by = 3;
+}
+
+// GetTaskStatusRequest 获取任务状态请求。
+message GetTaskStatusRequest {
+  string task_id = 1;
+}
+
+// TaskStatusResponse 任务状态响应。
+message TaskStatusResponse {
+  string task_id = 1;
+  string status = 2;
+  string claimed_by = 3;
+  int64 claim_epoch = 4;
+  int32 retry_count = 5;
+  bool dead_letter = 6;
+}
+
+// CreateScheduleRequest 创建定时任务请求。
+message CreateScheduleRequest {
+  Schedule schedule = 1;
+}
+
+// GetScheduleRequest 获取定时任务请求。
+message GetScheduleRequest {
+  string id = 1;
+}
+
+// UpdateScheduleRequest 更新定时任务请求。
+message UpdateScheduleRequest {
+  Schedule schedule = 1;
+}
+
+// DeleteScheduleRequest 删除定时任务请求。
+message DeleteScheduleRequest {
+  string id = 1;
+}
+
+// ListSchedulesRequest 列出定时任务请求。
+message ListSchedulesRequest {
+  string tenant_id = 1;
+}
+
+// ListSchedulesResponse 定时任务列表响应。
+message ListSchedulesResponse {
+  repeated Schedule schedules = 1;
+}
+
+// GetTaskResultRequest 获取任务结果请求。
+message GetTaskResultRequest {
+  string task_id = 1;
+}
+
+// ListTaskResultsRequest 列出任务结果请求。
+message ListTaskResultsRequest {
+  string tenant_id = 1;
+  string agent_id = 2;
+  int32 limit = 3;
+}
+
+// ListTaskResultsResponse 任务结果列表响应。
+message ListTaskResultsResponse {
+  repeated TaskResult results = 1;
+}
+
+// GetTaskLogsRequest 获取任务日志请求。
+message GetTaskLogsRequest {
+  string task_id = 1;
+}
+
+// TaskLogsResponse 任务日志响应。
+message TaskLogsResponse {
+  string task_id = 1;
+  repeated LogLine logs = 2;
+}
+
+// CreateBatchTaskRequest 创建批量任务请求。
+message CreateBatchTaskRequest {
+  string tenant_id = 1;
+  string name = 2;
+  string agent_id = 3;
+  string type = 4;
+  string command = 5;
+  string content = 6;
+  string path = 7;
+  repeated string agent_ids = 8;
+}
+
+// GetBatchStatusRequest 获取批量任务状态请求。
+message GetBatchStatusRequest {
+  string batch_id = 1;
+}
+
+// BatchStatusResponse 批量任务状态响应。
+message BatchStatusResponse {
+  BatchTask batch = 1;
+  repeated Task tasks = 2;
+}
+
+// ListBatchTasksRequest 列出批量任务请求。
+message ListBatchTasksRequest {
+  string tenant_id = 1;
+}
+
+// ListBatchTasksResponse 批量任务列表响应。
+message ListBatchTasksResponse {
+  repeated BatchTask batches = 1;
+}

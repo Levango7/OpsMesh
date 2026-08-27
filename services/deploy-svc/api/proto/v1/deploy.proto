@@ -1,0 +1,313 @@
+syntax = "proto3";
+
+package opsmesh.deploy.v1;
+
+option go_package = "github.com/Levango7/OpsMesh/services/deploy-svc/api/proto/v1;deployv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// DeploymentService provides deployment lifecycle management.
+service DeploymentService {
+  // CreateDeployment creates a new deployment.
+  rpc CreateDeployment(CreateDeploymentRequest) returns (Deployment);
+  // GetDeployment retrieves a deployment by ID.
+  rpc GetDeployment(GetDeploymentRequest) returns (Deployment);
+  // ListDeployments lists deployments with optional filtering.
+  rpc ListDeployments(ListDeploymentsRequest) returns (ListDeploymentsResponse);
+  // RollbackDeployment rolls back a deployment.
+  rpc RollbackDeployment(RollbackDeploymentRequest) returns (Deployment);
+  // CancelDeployment cancels a running deployment.
+  rpc CancelDeployment(CancelDeploymentRequest) returns (Deployment);
+  // GetDeploymentStatus retrieves deployment status.
+  rpc GetDeploymentStatus(GetDeploymentStatusRequest) returns (DeploymentStatus);
+}
+
+// TemplateService provides deployment template management.
+service TemplateService {
+  // CreateTemplate creates a new deployment template.
+  rpc CreateTemplate(CreateTemplateRequest) returns (Template);
+  // GetTemplate retrieves a template by ID.
+  rpc GetTemplate(GetTemplateRequest) returns (Template);
+  // UpdateTemplate updates an existing template.
+  rpc UpdateTemplate(UpdateTemplateRequest) returns (Template);
+  // DeleteTemplate deletes a template.
+  rpc DeleteTemplate(DeleteTemplateRequest) returns (google.protobuf.Empty);
+  // ListTemplates lists all templates.
+  rpc ListTemplates(ListTemplatesRequest) returns (ListTemplatesResponse);
+}
+
+// StrategyService provides deployment strategy management.
+service StrategyService {
+  // CreateStrategy creates a new deployment strategy.
+  rpc CreateStrategy(CreateStrategyRequest) returns (Strategy);
+  // GetStrategy retrieves a strategy by ID.
+  rpc GetStrategy(GetStrategyRequest) returns (Strategy);
+  // UpdateStrategy updates an existing strategy.
+  rpc UpdateStrategy(UpdateStrategyRequest) returns (Strategy);
+  // DeleteStrategy deletes a strategy.
+  rpc DeleteStrategy(DeleteStrategyRequest) returns (google.protobuf.Empty);
+  // ListStrategies lists all strategies.
+  rpc ListStrategies(ListStrategiesRequest) returns (ListStrategiesResponse);
+}
+
+// CanaryService provides canary deployment management.
+service CanaryService {
+  // StartCanary starts a canary deployment.
+  rpc StartCanary(StartCanaryRequest) returns (Canary);
+  // GetCanaryStatus retrieves canary status.
+  rpc GetCanaryStatus(GetCanaryStatusRequest) returns (CanaryStatus);
+  // PromoteCanary promotes a canary to full deployment.
+  rpc PromoteCanary(PromoteCanaryRequest) returns (Canary);
+  // RollbackCanary rolls back a canary deployment.
+  rpc RollbackCanary(RollbackCanaryRequest) returns (Canary);
+  // ListCanaries lists canary deployments.
+  rpc ListCanaries(ListCanariesRequest) returns (ListCanariesResponse);
+}
+
+// Deployment represents a deployment task.
+message Deployment {
+  string id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  string type = 4;       // script / file / k8s
+  string repo_url = 5;
+  string content = 6;
+  string path = 7;
+  repeated string target_ids = 8;
+  string status = 9;     // pending / running / success / failed / rollback
+  string strategy = 10;  // rolling / canary / bluegreen
+  int32 canary_weight = 11;
+  bool auto_rollback = 12;
+  string created_by = 13;
+  google.protobuf.Timestamp created_at = 14;
+  google.protobuf.Timestamp updated_at = 15;
+  string error_message = 16;
+}
+
+// Template represents a deployment template.
+message Template {
+  string id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  string description = 4;
+  string type = 5;
+  string repo_url = 6;
+  string content = 7;
+  string path = 8;
+  map<string, string> parameters = 9;
+  string created_by = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp updated_at = 12;
+}
+
+// Strategy represents a deployment strategy.
+message Strategy {
+  string id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  string description = 4;
+  string type = 5;       // rolling / canary / bluegreen
+  int32 canary_weight = 6;
+  int32 max_unavailable = 7;
+  int32 max_surge = 8;
+  bool auto_rollback = 9;
+  int32 timeout_seconds = 10;
+  string created_by = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+// Canary represents a canary deployment.
+message Canary {
+  string id = 1;
+  string tenant_id = 2;
+  string deployment_id = 3;
+  string name = 4;
+  int32 weight = 5;
+  string status = 6;     // pending / running / analyzing / promoted / rollback
+  int32 success_count = 7;
+  int32 failure_count = 8;
+  string created_by = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+// DeploymentStatus represents the status of a deployment.
+message DeploymentStatus {
+  string deployment_id = 1;
+  string status = 2;
+  int32 total_targets = 3;
+  int32 completed_targets = 4;
+  int32 failed_targets = 5;
+  string error_message = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+// CanaryStatus represents the status of a canary deployment.
+message CanaryStatus {
+  string canary_id = 1;
+  string status = 2;
+  int32 weight = 3;
+  int32 success_count = 4;
+  int32 failure_count = 5;
+  double success_rate = 6;
+  string analysis_result = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// Request/Response messages for DeploymentService
+
+message CreateDeploymentRequest {
+  string tenant_id = 1;
+  string name = 2;
+  string type = 3;
+  string repo_url = 4;
+  string content = 5;
+  string path = 6;
+  repeated string target_ids = 7;
+  string strategy = 8;
+  int32 canary_weight = 9;
+  bool auto_rollback = 10;
+  string created_by = 11;
+}
+
+message GetDeploymentRequest {
+  string id = 1;
+  string tenant_id = 2;
+}
+
+message ListDeploymentsRequest {
+  string tenant_id = 1;
+  string status = 2;
+  int32 limit = 3;
+}
+
+message ListDeploymentsResponse {
+  repeated Deployment deployments = 1;
+}
+
+message RollbackDeploymentRequest {
+  string id = 1;
+  string tenant_id = 2;
+}
+
+message CancelDeploymentRequest {
+  string id = 1;
+  string tenant_id = 2;
+}
+
+message GetDeploymentStatusRequest {
+  string id = 1;
+  string tenant_id = 2;
+}
+
+// Request/Response messages for TemplateService
+
+message CreateTemplateRequest {
+  string tenant_id = 1;
+  string name = 2;
+  string description = 3;
+  string type = 4;
+  string repo_url = 5;
+  string content = 6;
+  string path = 7;
+  map<string, string> parameters = 8;
+  string created_by = 9;
+}
+
+message GetTemplateRequest {
+  string id = 1;
+  string tenant_id = 2;
+}
+
+message UpdateTemplateRequest {
+  Template template = 1;
+}
+
+message DeleteTemplateRequest {
+  string id = 1;
+  string tenant_id = 2;
+}
+
+message ListTemplatesRequest {
+  string tenant_id = 1;
+  int32 limit = 2;
+}
+
+message ListTemplatesResponse {
+  repeated Template templates = 1;
+}
+
+// Request/Response messages for StrategyService
+
+message CreateStrategyRequest {
+  string tenant_id = 1;
+  string name = 2;
+  string description = 3;
+  string type = 4;
+  int32 canary_weight = 5;
+  int32 max_unavailable = 6;
+  int32 max_surge = 7;
+  bool auto_rollback = 8;
+  int32 timeout_seconds = 9;
+  string created_by = 10;
+}
+
+message GetStrategyRequest {
+  string id = 1;
+  string tenant_id = 2;
+}
+
+message UpdateStrategyRequest {
+  Strategy strategy = 1;
+}
+
+message DeleteStrategyRequest {
+  string id = 1;
+  string tenant_id = 2;
+}
+
+message ListStrategiesRequest {
+  string tenant_id = 1;
+  int32 limit = 2;
+}
+
+message ListStrategiesResponse {
+  repeated Strategy strategies = 1;
+}
+
+// Request/Response messages for CanaryService
+
+message StartCanaryRequest {
+  string tenant_id = 1;
+  string deployment_id = 2;
+  string name = 3;
+  int32 weight = 4;
+  string created_by = 5;
+}
+
+message GetCanaryStatusRequest {
+  string canary_id = 1;
+  string tenant_id = 2;
+}
+
+message PromoteCanaryRequest {
+  string canary_id = 1;
+  string tenant_id = 2;
+}
+
+message RollbackCanaryRequest {
+  string canary_id = 1;
+  string tenant_id = 2;
+}
+
+message ListCanariesRequest {
+  string tenant_id = 1;
+  string status = 2;
+  int32 limit = 3;
+}
+
+message ListCanariesResponse {
+  repeated Canary canaries = 1;
+}

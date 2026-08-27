@@ -1,0 +1,220 @@
+syntax = "proto3";
+
+package opsmesh.auth.v1;
+
+option go_package = "github.com/Levango7/OpsMesh/services/auth-svc/api/proto/v1;authv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// AuthService provides authentication and authorization.
+service AuthService {
+  // Login authenticates a user and returns access/refresh tokens.
+  rpc Login(LoginRequest) returns (TokenResponse);
+  // Logout revokes the current session/token.
+  rpc Logout(LogoutRequest) returns (google.protobuf.Empty);
+  // RefreshToken issues a new access token using a refresh token.
+  rpc RefreshToken(RefreshTokenRequest) returns (TokenResponse);
+  // ValidateToken validates an access token and returns the claims.
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+  // CheckPermission checks if the authenticated user has a permission.
+  rpc CheckPermission(CheckPermissionRequest) returns (CheckPermissionResponse);
+}
+
+// UserService provides user management.
+service UserService {
+  // CreateUser creates a new user.
+  rpc CreateUser(CreateUserRequest) returns (User);
+  // GetUser retrieves a user by ID.
+  rpc GetUser(GetUserRequest) returns (User);
+  // UpdateUser updates a user.
+  rpc UpdateUser(UpdateUserRequest) returns (User);
+  // DeleteUser deletes a user.
+  rpc DeleteUser(DeleteUserRequest) returns (google.protobuf.Empty);
+  // ListUsers lists all users.
+  rpc ListUsers(google.protobuf.Empty) returns (ListUsersResponse);
+  // ChangePassword changes a user's password.
+  rpc ChangePassword(ChangePasswordRequest) returns (google.protobuf.Empty);
+}
+
+// RoleService provides role management.
+service RoleService {
+  // CreateRole creates a new role.
+  rpc CreateRole(CreateRoleRequest) returns (Role);
+  // GetRole retrieves a role by ID.
+  rpc GetRole(GetRoleRequest) returns (Role);
+  // UpdateRole updates a role.
+  rpc UpdateRole(UpdateRoleRequest) returns (Role);
+  // DeleteRole deletes a role.
+  rpc DeleteRole(DeleteRoleRequest) returns (google.protobuf.Empty);
+  // ListRoles lists all roles.
+  rpc ListRoles(google.protobuf.Empty) returns (ListRolesResponse);
+  // AssignRole assigns a role to a user.
+  rpc AssignRole(AssignRoleRequest) returns (google.protobuf.Empty);
+}
+
+// PermissionService provides permission queries.
+service PermissionService {
+  // ListPermissions lists all available permissions.
+  rpc ListPermissions(google.protobuf.Empty) returns (ListPermissionsResponse);
+  // CheckPermission checks if a user has a specific permission.
+  rpc CheckPermission(CheckPermissionRequest) returns (CheckPermissionResponse);
+}
+
+// User represents a user entity.
+message User {
+  string id = 1;
+  string username = 2;
+  string email = 3;
+  string status = 4;
+  repeated string role_ids = 5;
+  google.protobuf.Timestamp created_at = 6;
+  bool must_change_password = 7;
+}
+
+// Role represents a role entity.
+message Role {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  repeated string permissions = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+// Permission represents a permission entity.
+message Permission {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string group = 4;
+}
+
+// LoginRequest is the request to login.
+message LoginRequest {
+  string username = 1;
+  string password = 2;
+}
+
+// TokenResponse contains access and refresh tokens.
+message TokenResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  int64 expires_in = 3;
+  User user = 4;
+}
+
+// LogoutRequest is the request to logout.
+message LogoutRequest {
+  string access_token = 1;
+  string refresh_token = 2;
+}
+
+// RefreshTokenRequest is the request to refresh tokens.
+message RefreshTokenRequest {
+  string refresh_token = 1;
+}
+
+// ValidateTokenRequest is the request to validate a token.
+message ValidateTokenRequest {
+  string token = 1;
+}
+
+// ValidateTokenResponse is the response for token validation.
+message ValidateTokenResponse {
+  bool valid = 1;
+  string user_id = 2;
+  string username = 3;
+  repeated string roles = 4;
+  repeated string permissions = 5;
+  string tenant_id = 6;
+  int64 expires_at = 7;
+}
+
+// CheckPermissionRequest is the request to check a permission.
+message CheckPermissionRequest {
+  string token = 1;
+  string permission = 2;
+}
+
+// CheckPermissionResponse is the response for permission check.
+message CheckPermissionResponse {
+  bool allowed = 1;
+}
+
+// CreateUserRequest is the request to create a user.
+message CreateUserRequest {
+  string username = 1;
+  string email = 2;
+  string password = 3;
+  repeated string role_ids = 4;
+}
+
+// GetUserRequest is the request to get a user.
+message GetUserRequest {
+  string id = 1;
+}
+
+// UpdateUserRequest is the request to update a user.
+message UpdateUserRequest {
+  string id = 1;
+  string email = 2;
+  string status = 3;
+  repeated string role_ids = 4;
+}
+
+// DeleteUserRequest is the request to delete a user.
+message DeleteUserRequest {
+  string id = 1;
+}
+
+// ListUsersResponse is the response for listing users.
+message ListUsersResponse {
+  repeated User users = 1;
+}
+
+// ChangePasswordRequest is the request to change password.
+message ChangePasswordRequest {
+  string user_id = 1;
+  string old_password = 2;
+  string new_password = 3;
+}
+
+// CreateRoleRequest is the request to create a role.
+message CreateRoleRequest {
+  string name = 1;
+  string description = 2;
+  repeated string permissions = 3;
+}
+
+// GetRoleRequest is the request to get a role.
+message GetRoleRequest {
+  string id = 1;
+}
+
+// UpdateRoleRequest is the request to update a role.
+message UpdateRoleRequest {
+  string id = 1;
+  string description = 2;
+  repeated string permissions = 3;
+}
+
+// DeleteRoleRequest is the request to delete a role.
+message DeleteRoleRequest {
+  string id = 1;
+}
+
+// ListRolesResponse is the response for listing roles.
+message ListRolesResponse {
+  repeated Role roles = 1;
+}
+
+// AssignRoleRequest is the request to assign a role to a user.
+message AssignRoleRequest {
+  string user_id = 1;
+  string role_id = 2;
+}
+
+// ListPermissionsResponse is the response for listing permissions.
+message ListPermissionsResponse {
+  repeated Permission permissions = 1;
+}
