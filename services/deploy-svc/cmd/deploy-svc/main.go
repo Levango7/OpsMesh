@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"google.golang.org/grpc"
@@ -15,6 +17,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	deployv1 "github.com/Levango7/OpsMesh/services/deploy-svc/api/proto/v1"
+	"github.com/Levango7/OpsMesh/services/deploy-svc/internal/cloud"
 	"github.com/Levango7/OpsMesh/services/deploy-svc/internal/server"
 	"github.com/Levango7/OpsMesh/services/deploy-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/deploy-svc/internal/store"
@@ -54,6 +57,78 @@ func main() {
 	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready"))
+	})
+
+	mux.HandleFunc("/api/v1/cloud/providers", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"providers": cloud.ListProviders(),
+		})
+	})
+
+	mux.HandleFunc("/api/v1/cloud/validate", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var cfg cloud.DeploymentConfig
+		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"invalid JSON: %s"}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		p, err := cloud.NewProvider(cfg.Provider)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		if err := p.Validate(cfg); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"valid":    true,
+			"provider": cfg.Provider,
+		})
+	})
+
+	mux.HandleFunc("/api/v1/deployments/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/deployments/")
+		parts := strings.SplitN(path, "/deploy-to/", 2)
+		if len(parts) != 2 {
+			http.Error(w, `{"error":"use /api/v1/deployments/{id}/deploy-to/{provider}"}`, http.StatusBadRequest)
+			return
+		}
+		deploymentID := parts[0]
+		providerType := parts[1]
+
+		var cfg cloud.DeploymentConfig
+		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"invalid JSON: %s"}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		cfg.DeploymentID = deploymentID
+
+		p, err := cloud.NewProvider(providerType)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		result, err := p.Deploy(cfg)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
 	})
 
 	httpServer := &http.Server{
