@@ -1,0 +1,64 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "opsmesh-controlplane"
+    static_configs:
+      - targets: ["controlplane:9091"]
+    metrics_path: /metrics
+
+  - job_name: "auth-svc"
+    static_configs:
+      - targets: ["auth-svc:8100"]
+    metrics_path: /metrics
+
+  - job_name: "device-svc"
+    static_configs:
+      - targets: ["device-svc:8101"]
+    metrics_path: /metrics
+
+  - job_name: "task-svc"
+    static_configs:
+      - targets: ["task-svc:8102"]
+    metrics_path: /metrics
+
+  - job_name: "alert-svc"
+    static_configs:
+      - targets: ["alert-svc:8103"]
+    metrics_path: /metrics
+
+  - job_name: "deploy-svc"
+    static_configs:
+      - targets: ["deploy-svc:8104"]
+    metrics_path: /metrics
+
+  - job_name: "config-svc"
+    static_configs:
+      - targets: ["config-svc:8106"]
+    metrics_path: /metrics
+
+  - job_name: "log-svc"
+    static_configs:
+      - targets: ["log-svc:8105"]
+    metrics_path: /metrics
+
+  - job_name: "aio-svc"
+    static_configs:
+      - targets: ["aio-svc:8100"]
+    metrics_path: /metrics
+
+  - job_name: "plugin-svc"
+    static_configs:
+      - targets: ["plugin-svc:8100"]
+    metrics_path: /metrics
+
+  - job_name: "portal-svc"
+    static_configs:
+      - targets: ["portal-svc:8100"]
+    metrics_path: /metrics
+
+  - job_name: "grafana-bridge"
+    static_configs:
+      - targets: ["grafana-bridge:8100"]
+    metrics_path: /metrics

@@ -1,0 +1,308 @@
+version: "3.8"
+
+# OpsMesh Professional — 10 微服务完整编排
+# 包含：控制面 + 10 微服务 + 数据库 + 可观测性
+
+services:
+  # ===== 基础设施 =====
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: opsmesh_root
+      MYSQL_DATABASE: opsmesh
+      MYSQL_USER: opsmesh
+      MYSQL_PASSWORD: opsmesh_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - opsmesh_net
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - opsmesh_net
+
+  # ===== 控制面（API 网关） =====
+  controlplane:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.controlplane
+    ports:
+      - "8080:8080"
+      - "9090:9090"  # gRPC
+      - "9091:9091"  # Metrics
+    environment:
+      STORE: mysql
+      MYSQL_DSN: "opsmesh:opsmesh_pass@tcp(mysql:3306)/opsmesh?parseTime=true"
+      REDIS_ADDR: "redis:6379"
+      JWT_SECRET: "opsmesh_jwt_secret_change_in_production"
+      DEMO: "true"
+      SHUTDOWN_TIMEOUT: 30s
+      OTEL_ENDPOINT: "otel-collector:4317"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ===== 微服务 =====
+  auth-svc:
+    build:
+      context: ../../services/auth-svc
+      dockerfile: ../docker/Dockerfile.go
+    ports:
+      - "8100:8100"
+    environment:
+      AUTH_SVC_GRPC_PORT: 50050
+      AUTH_SVC_HTTP_PORT: 8100
+      AUTH_SVC_JWT_SECRET: "opsmesh_jwt_secret_change_in_production"
+      AUTH_SVC_JWT_TTL: 3600
+      AUTH_SVC_REFRESH_TTL: 604800
+      AUTH_SVC_DEMO: "true"
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  device-svc:
+    build:
+      context: ../../services/device-svc
+      dockerfile: ../docker/Dockerfile.go
+    ports:
+      - "8101:8101"
+    environment:
+      DEVICE_SVC_GRPC_PORT: 50051
+      DEVICE_SVC_HTTP_PORT: 8101
+      DEVICE_SVC_DEMO: "true"
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8101/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  task-svc:
+    build:
+      context: ../../services/task-svc
+      dockerfile: ../docker/Dockerfile.go
+    ports:
+      - "8102:8102"
+    environment:
+      TASK_SVC_GRPC_PORT: 50052
+      TASK_SVC_HTTP_PORT: 8102
+      TASK_SVC_DEMO: "true"
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8102/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  alert-svc:
+    build:
+      context: ../../services/alert-svc
+      dockerfile: ../docker/Dockerfile.go
+    ports:
+      - "8103:8103"
+    environment:
+      ALERT_SVC_GRPC_PORT: 50053
+      ALERT_SVC_HTTP_PORT: 8103
+      ALERT_SVC_DEMO: "true"
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8103/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  deploy-svc:
+    build:
+      context: ../../services/deploy-svc
+      dockerfile: ../docker/Dockerfile.go
+    ports:
+      - "8104:8104"
+    environment:
+      DEPLOY_SVC_GRPC_PORT: 50054
+      DEPLOY_SVC_HTTP_PORT: 8104
+      DEPLOY_SVC_DEMO: "true"
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8104/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  config-svc:
+    build:
+      context: ../../services/config-svc
+      dockerfile: ../docker/Dockerfile.go
+    ports:
+      - "8106:8106"
+    environment:
+      CONFIG_SVC_GRPC_PORT: 50055
+      CONFIG_SVC_HTTP_PORT: 8106
+      CONFIG_SVC_DEMO: "true"
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8106/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  log-svc:
+    build:
+      context: ../../services/log-svc
+      dockerfile: ../docker/Dockerfile.go
+    ports:
+      - "8105:8105"
+    environment:
+      LOG_SVC_GRPC_PORT: 50056
+      LOG_SVC_HTTP_PORT: 8105
+      LOG_SVC_STORE_TYPE: memory
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8105/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  aio-svc:
+    build:
+      context: ../../services/aio-svc
+      dockerfile: ../docker/Dockerfile.go
+    ports:
+      - "8107:8100"
+    environment:
+      AIO_SVC_PORT: 8100
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  plugin-svc:
+    build:
+      context: ../../services/plugin-svc
+      dockerfile: ../docker/Dockerfile.go
+    ports:
+      - "8108:8100"
+    environment:
+      PLUGIN_SVC_PORT: 8100
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  portal-svc:
+    build:
+      context: ../../services/portal-svc
+      dockerfile: ../docker/Dockerfile.go
+    ports:
+      - "8109:8100"
+    environment:
+      PORTAL_SVC_PORT: 8100
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  grafana-bridge:
+    build:
+      context: ../../services/grafana-bridge
+      dockerfile: ../docker/Dockerfile.go
+    ports:
+      - "8110:8100"
+    environment:
+      GRAFANA_BRIDGE_PORT: 8100
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ===== 可观测性 =====
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9092:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - opsmesh_net
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - opsmesh_net
+
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    volumes:
+      - ./monitoring/otel-config.yaml:/etc/otel-config.yaml
+    command: ["--config=/etc/otel-config.yaml"]
+    networks:
+      - opsmesh_net
+
+volumes:
+  mysql_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  opsmesh_net:
+    driver: bridge
