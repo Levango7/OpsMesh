@@ -120,3 +120,14 @@ func (s *Server) SilenceAlert(ctx context.Context, req *alertv1.SilenceAlertRequ
 	}
 	return &emptypb.Empty{}, nil
 }
+
+// ResolveAlert resolves an alert.
+func (s *Server) ResolveAlert(ctx context.Context, req *alertv1.ResolveAlertRequest) (*emptypb.Empty, error) {
+	if err := s.svc.ResolveAlert(ctx, req); err != nil {
+		if err == service.ErrAlertNotFound {
+			return nil, status.Error(codes.NotFound, err.Error())
+		}
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &emptypb.Empty{}, nil
+}

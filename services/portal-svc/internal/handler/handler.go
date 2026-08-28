@@ -2,20 +2,23 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/Levango7/OpsMesh/services/portal-svc/internal/cost"
 	"github.com/Levango7/OpsMesh/services/portal-svc/internal/service"
 )
 
 // Handler handles HTTP requests for the portal.
 type Handler struct {
-	svc *service.Service
+	svc      *service.Service
+	alloc    *cost.Allocator
 }
 
 // NewHandler creates a new Handler.
 func NewHandler(svc *service.Service) *Handler {
-	return &Handler{svc: svc}
+	return &Handler{svc: svc, alloc: cost.NewAllocator()}
 }
 
 // RegisterRoutes registers all API routes.
@@ -29,6 +32,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/cost/recommendations", h.handleRecommendations)
 	mux.HandleFunc("/api/v1/cost/savings", h.handleSavings)
 	mux.HandleFunc("/api/v1/cost/budget", h.handleBudget)
+
+	// Cost allocation / chargeback
+	mux.HandleFunc("/api/v1/cost/allocate", h.handleCostAllocate)
+	mux.HandleFunc("/api/v1/cost/allocation-report", h.handleAllocationReport)
+	mux.HandleFunc("/api/v1/cost/allocation-rules", h.handleAllocationRules)
 
 	// Quota management
 	mux.HandleFunc("/api/v1/quotas", h.handleQuotas)
@@ -373,6 +381,68 @@ func (h *Handler) handleDashboardActivity(w http.ResponseWriter, r *http.Request
 	limit := 20
 	activity := h.svc.GetRecentActivity(tenantID, limit)
 	writeJSON(w, http.StatusOK, activity)
+}
+
+// ============================================================================
+// Cost Allocation / Chargeback
+// ============================================================================
+
+func (h *Handler) handleCostAllocate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var in struct {
+		Dimension string          `json:"dimension"`
+		TotalCost float64         `json:"total_cost"`
+		Entries   []cost.CostEntry `json:"entries"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	report, err := h.alloc.AllocateCosts(cost.Dimension(in.Dimension), in.TotalCost, in.Entries)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (h *Handler) handleAllocationReport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	dimension := r.URL.Query().Get("dimension")
+	totalCost := 0.0
+	if v := r.URL.Query().Get("total_cost"); v != "" {
+		fmt.Sscanf(v, "%f", &totalCost)
+	}
+	report, err := h.alloc.GetAllocationReport(cost.Dimension(dimension), totalCost, nil)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (h *Handler) handleAllocationRules(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		rules := h.alloc.GetAllocationRules()
+		writeJSON(w, http.StatusOK, rules)
+	case http.MethodPost:
+		var rules []cost.AllocationRule
+		if err := json.NewDecoder(r.Body).Decode(&rules); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		h.alloc.SetAllocationRules(rules)
+		writeJSON(w, http.StatusCreated, map[string]string{"status": "rules updated"})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 // ============================================================================

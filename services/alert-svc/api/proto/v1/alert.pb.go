@@ -106,6 +106,11 @@ type SilenceAlertRequest struct {
 	Comment         string
 }
 
+// ResolveAlertRequest is the request to resolve an alert.
+type ResolveAlertRequest struct {
+	Id string
+}
+
 // AlertServiceServer is the server API for AlertService.
 type AlertServiceServer interface {
 	CreateRule(context.Context, *CreateRuleRequest) (*AlertRule, error)
@@ -118,6 +123,7 @@ type AlertServiceServer interface {
 	ListAlerts(context.Context, *ListAlertsRequest) (*ListAlertsResponse, error)
 	AckAlert(context.Context, *AckAlertRequest) (*emptypb.Empty, error)
 	SilenceAlert(context.Context, *SilenceAlertRequest) (*emptypb.Empty, error)
+	ResolveAlert(context.Context, *ResolveAlertRequest) (*emptypb.Empty, error)
 	mustEmbedUnimplementedAlertServiceServer()
 }
 
@@ -154,6 +160,9 @@ func (UnimplementedAlertServiceServer) AckAlert(context.Context, *AckAlertReques
 func (UnimplementedAlertServiceServer) SilenceAlert(context.Context, *SilenceAlertRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SilenceAlert not implemented")
 }
+func (UnimplementedAlertServiceServer) ResolveAlert(context.Context, *ResolveAlertRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResolveAlert not implemented")
+}
 func (UnimplementedAlertServiceServer) mustEmbedUnimplementedAlertServiceServer() {}
 
 // UnsafeAlertServiceServer may be embedded to opt out of forward compatibility.
@@ -173,6 +182,7 @@ type AlertServiceClient interface {
 	ListAlerts(ctx context.Context, in *ListAlertsRequest, opts ...grpc.CallOption) (*ListAlertsResponse, error)
 	AckAlert(ctx context.Context, in *AckAlertRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	SilenceAlert(ctx context.Context, in *SilenceAlertRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	ResolveAlert(ctx context.Context, in *ResolveAlertRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type alertServiceClient struct {
@@ -267,6 +277,15 @@ func (c *alertServiceClient) AckAlert(ctx context.Context, in *AckAlertRequest, 
 func (c *alertServiceClient) SilenceAlert(ctx context.Context, in *SilenceAlertRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	out := new(emptypb.Empty)
 	err := c.cc.Invoke(ctx, "/opsmesh.alert.v1.AlertService/SilenceAlert", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *alertServiceClient) ResolveAlert(ctx context.Context, in *ResolveAlertRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, "/opsmesh.alert.v1.AlertService/ResolveAlert", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -458,6 +477,24 @@ func _AlertService_SilenceAlert_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AlertService_ResolveAlert_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResolveAlertRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AlertServiceServer).ResolveAlert(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/opsmesh.alert.v1.AlertService/ResolveAlert",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AlertServiceServer).ResolveAlert(ctx, req.(*ResolveAlertRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _AlertService_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "opsmesh.alert.v1.AlertService",
 	HandlerType: (*AlertServiceServer)(nil),
@@ -501,6 +538,10 @@ var _AlertService_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SilenceAlert",
 			Handler:    _AlertService_SilenceAlert_Handler,
+		},
+		{
+			MethodName: "ResolveAlert",
+			Handler:    _AlertService_ResolveAlert_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

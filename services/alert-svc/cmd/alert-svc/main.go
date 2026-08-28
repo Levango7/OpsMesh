@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -16,6 +17,7 @@ import (
 
 	alertv1 "github.com/Levango7/OpsMesh/services/alert-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/engine"
+	"github.com/Levango7/OpsMesh/services/alert-svc/internal/notify"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/server"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/store"
@@ -29,6 +31,13 @@ func main() {
 	eng := engine.NewEngine(nil)
 
 	svc := service.NewService(eng, st)
+
+	if cfg.PagerDutyEnabled {
+		pdClient := notify.NewPagerDutyClient(cfg.PagerDutyRoutingKey, cfg.PagerDutyAPIURL, 10*time.Second, false)
+		svc.SetNotifier(pdClient)
+		log.Printf("PagerDuty notifications enabled (routing key: %s)", maskRoutingKey(cfg.PagerDutyRoutingKey))
+	}
+
 	srv := server.NewServer(svc)
 
 	grpcServer := grpc.NewServer()
@@ -89,4 +98,12 @@ func main() {
 	}
 
 	log.Println("Server stopped")
+}
+
+// maskRoutingKey returns a masked version of the routing key for logging.
+func maskRoutingKey(key string) string {
+	if len(key) <= 8 {
+		return "****"
+	}
+	return key[:4] + "..." + key[len(key)-4:]
 }

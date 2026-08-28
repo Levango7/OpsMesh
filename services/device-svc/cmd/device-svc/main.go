@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	devicev1 "github.com/Levango7/OpsMesh/services/device-svc/api/proto/v1"
+	"github.com/Levango7/OpsMesh/services/device-svc/internal/catalog"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/server"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
@@ -47,6 +49,9 @@ func main() {
 		log.Fatalf("Failed to listen on gRPC port %d: %v", cfg.GRPCPort, err)
 	}
 
+	cat := catalog.NewCatalog()
+	seedCatalog(cat)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -55,6 +60,38 @@ func main() {
 	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready"))
+	})
+	mux.HandleFunc("/api/v1/catalog/topology", func(w http.ResponseWriter, r *http.Request) {
+		tenantID := r.URL.Query().Get("tenantID")
+		graph := cat.BuildTopology(tenantID)
+		writeJSON(w, http.StatusOK, graph)
+	})
+	mux.HandleFunc("/api/v1/catalog/nodes/", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Path[len("/api/v1/catalog/nodes/"):]
+		node, err := cat.GetNode(id)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, node)
+	})
+	mux.HandleFunc("/api/v1/catalog/relations/", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Path[len("/api/v1/catalog/relations/"):]
+		rels, err := cat.GetRelations(id)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, rels)
+	})
+	mux.HandleFunc("/api/v1/catalog/impact/", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Path[len("/api/v1/catalog/impact/"):]
+		impact, err := cat.GetImpactAnalysis(id)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, impact)
 	})
 
 	httpServer := &http.Server{
@@ -96,4 +133,18 @@ func main() {
 	}
 
 	log.Println("Server stopped")
+}
+
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func seedCatalog(c *catalog.Catalog) {
+	c.AddNode(&catalog.CatalogNode{ID: "host-001", Name: "web-server-01", Type: "host", Status: "online", Metadata: map[string]string{"tenantID": "default"}})
+	c.AddNode(&catalog.CatalogNode{ID: "svc-001", Name: "auth-service", Type: "service", Status: "running", Metadata: map[string]string{"tenantID": "default"}})
+	c.AddNode(&catalog.CatalogNode{ID: "db-001", Name: "postgres-main", Type: "database", Status: "online", Metadata: map[string]string{"tenantID": "default"}})
+	c.AddEdge(&catalog.CatalogEdge{From: "svc-001", To: "host-001", RelationType: "runs_on"})
+	c.AddEdge(&catalog.CatalogEdge{From: "svc-001", To: "db-001", RelationType: "depends_on"})
 }

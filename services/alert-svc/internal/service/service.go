@@ -11,6 +11,7 @@ import (
 
 	alertv1 "github.com/Levango7/OpsMesh/services/alert-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/engine"
+	"github.com/Levango7/OpsMesh/services/alert-svc/internal/notify"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/store"
 )
 
@@ -23,8 +24,9 @@ var (
 
 // Service implements the alert service business logic.
 type Service struct {
-	engine *engine.Engine
-	store  store.AlertStore
+	engine  *engine.Engine
+	store   store.AlertStore
+	notifier notify.Notifier
 }
 
 // NewService creates a new Service.
@@ -33,6 +35,11 @@ func NewService(eng *engine.Engine, s store.AlertStore) *Service {
 		engine: eng,
 		store:  s,
 	}
+}
+
+// SetNotifier sets the notifier for the service (optional).
+func (s *Service) SetNotifier(n notify.Notifier) {
+	s.notifier = n
 }
 
 // CreateRule creates a new alert rule.
@@ -144,6 +151,31 @@ func (s *Service) Evaluate(ctx context.Context, req *alertv1.EvaluateRequest) (*
 			FiredAt:  timestamppb.New(ev.FiredAt),
 		}
 		out = append(out, alert)
+
+		s.store.AddAlert(&store.Alert{
+			AlertID:  alert.Id,
+			TenantID: ev.TenantID,
+			DeviceID: ev.DeviceID,
+			Severity: ev.Severity,
+			Message:  ev.Message,
+			Status:   "firing",
+			Metric:   ev.RuleID,
+			CreatedAt: ev.FiredAt,
+		})
+
+		if s.notifier != nil && s.notifier.IsEnabled() {
+			details := make(map[string]interface{}, len(ev.Values))
+			for k, v := range ev.Values {
+				details[k] = v
+			}
+			_ = s.notifier.TriggerEvent(
+				ev.DeviceID,
+				ev.Message,
+				ev.Severity,
+				alert.Id,
+				details,
+			)
+		}
 	}
 	return &alertv1.EvaluateResponse{Alerts: out}, nil
 }
@@ -178,6 +210,33 @@ func (s *Service) AckAlert(ctx context.Context, req *alertv1.AckAlertRequest) er
 	ok := s.store.AckAlert(req.Id, "", "system")
 	if !ok {
 		return ErrAlertNotFound
+	}
+
+	if s.notifier != nil && s.notifier.IsEnabled() {
+		a := s.store.Alert(req.Id)
+		source := ""
+		if a != nil {
+			source = a.DeviceID
+		}
+		_ = s.notifier.AcknowledgeEvent(source, "alert acknowledged", req.Id, nil)
+	}
+	return nil
+}
+
+// ResolveAlert resolves an alert.
+func (s *Service) ResolveAlert(ctx context.Context, req *alertv1.ResolveAlertRequest) error {
+	ok := s.store.ResolveAlert(req.Id, "", "system")
+	if !ok {
+		return ErrAlertNotFound
+	}
+
+	if s.notifier != nil && s.notifier.IsEnabled() {
+		a := s.store.Alert(req.Id)
+		source := ""
+		if a != nil {
+			source = a.DeviceID
+		}
+		_ = s.notifier.ResolveEvent(source, "alert resolved", req.Id, nil)
 	}
 	return nil
 }

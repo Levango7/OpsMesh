@@ -44,6 +44,7 @@ type AlertStore interface {
 	Alert(id string) *Alert
 	AckAlert(id, tenantID, by string) bool
 	SilenceAlert(id, tenantID, by string, until time.Time, comment string) bool
+	ResolveAlert(id, tenantID, by string) bool
 	CreateAlertRule(*AlertRule) *AlertRule
 	ListAlertRules(tenantID string) []*AlertRule
 	DeleteAlertRule(id string) bool
@@ -138,6 +139,21 @@ func (m *MemoryStore) SilenceAlert(id, tenantID, by string, until time.Time, com
 			a.AcknowledgedBy = by
 			a.SilencedUntil = until
 			a.Comment = comment
+			a.UpdatedAt = time.Now()
+			return true
+		}
+	}
+	return false
+}
+
+// ResolveAlert resolves an alert.
+func (m *MemoryStore) ResolveAlert(id, tenantID, by string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, a := range m.alerts {
+		if a.AlertID == id && (tenantID == "" || a.TenantID == tenantID) {
+			a.Status = "resolved"
+			a.AcknowledgedBy = by
 			a.UpdatedAt = time.Now()
 			return true
 		}

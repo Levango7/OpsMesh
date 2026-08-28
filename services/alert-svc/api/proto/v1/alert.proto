@@ -30,6 +30,8 @@ service AlertService {
   rpc AckAlert(AckAlertRequest) returns (google.protobuf.Empty);
   // SilenceAlert 静默告警。
   rpc SilenceAlert(SilenceAlertRequest) returns (google.protobuf.Empty);
+  // ResolveAlert 解决告警。
+  rpc ResolveAlert(ResolveAlertRequest) returns (google.protobuf.Empty);
 }
 
 // AlertRule 告警规则。
@@ -126,4 +128,9 @@ message SilenceAlertRequest {
   string id = 1;
   int32 duration_minutes = 2;
   string comment = 3;
+}
+
+// ResolveAlertRequest 解决告警请求。
+message ResolveAlertRequest {
+  string id = 1;
 }
