@@ -19,6 +19,7 @@ import (
 	deployv1 "github.com/Levango7/OpsMesh/services/deploy-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/deploy-svc/internal/aiworkload"
 	"github.com/Levango7/OpsMesh/services/deploy-svc/internal/cloud"
+	"github.com/Levango7/OpsMesh/services/deploy-svc/internal/k8s"
 	"github.com/Levango7/OpsMesh/services/deploy-svc/internal/server"
 	"github.com/Levango7/OpsMesh/services/deploy-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/deploy-svc/internal/store"
@@ -28,10 +29,21 @@ import (
 func main() {
 	cfg := config.Load()
 
+	// Initialize Kubernetes client with graceful fallback.
+	k8sClient := k8s.NewClient(k8s.ClientConfig{})
+	if k8sClient.IsConnected() {
+		log.Println("[main] Kubernetes client connected — using real K8s API")
+	} else {
+		log.Println("[main] Kubernetes client in simulated mode — no cluster available")
+	}
+
 	st := store.NewMemoryStore()
 	svc := service.NewService(st)
 	srv := server.NewServer(svc)
 	aiMgr := aiworkload.NewManager()
+
+	// Pass K8s client to cloud providers for real API integration.
+	cloud.SetK8sClient(k8sClient)
 
 	grpcServer := grpc.NewServer()
 	deployv1.RegisterDeploymentServiceServer(grpcServer, srv)

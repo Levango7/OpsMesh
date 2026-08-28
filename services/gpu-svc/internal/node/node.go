@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/gpu"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/models"
 )
 
@@ -43,6 +44,52 @@ func NewManager(now func() time.Time) *Manager {
 	return &Manager{
 		nodes: make(map[string]*models.GPUNode),
 		now:   now,
+	}
+}
+
+// RealGPUs detects real GPUs on the machine using nvidia-smi.
+// Falls back to simulated data if nvidia-smi is not available.
+func RealGPUs() []models.GPUInfo {
+	gpus, detector, err := gpu.AutoDetect()
+	if err != nil {
+		return simulatedGPUs()
+	}
+
+	result := make([]models.GPUInfo, 0, len(gpus))
+	for i, g := range gpus {
+		result = append(result, models.GPUInfo{
+			Index:             i,
+			Model:             g.Name,
+			VRAMMB:            g.MemoryTotalMB,
+			ComputeCapability: g.ComputeCapability,
+			DriverVersion:     g.DriverVersion,
+			Vendor:            models.GPUVendorNVIDIA,
+		})
+	}
+
+	_ = detector // used for detection, result already obtained
+	return result
+}
+
+// simulatedGPUs returns simulated GPU data for non-GPU machines.
+func simulatedGPUs() []models.GPUInfo {
+	return []models.GPUInfo{
+		{
+			Index:             0,
+			Model:             "NVIDIA A100-SXM4-80GB (simulated)",
+			VRAMMB:            81920,
+			ComputeCapability: "8.0",
+			DriverVersion:     "535.104.05",
+			Vendor:            models.GPUVendorNVIDIA,
+		},
+		{
+			Index:             1,
+			Model:             "NVIDIA A100-SXM4-80GB (simulated)",
+			VRAMMB:            81920,
+			ComputeCapability: "8.0",
+			DriverVersion:     "535.104.05",
+			Vendor:            models.GPUVendorNVIDIA,
+		},
 	}
 }
 

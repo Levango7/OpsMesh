@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/gpu"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/handler"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/metrics"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/node"
@@ -24,10 +25,31 @@ import (
 func main() {
 	cfg := config.Load()
 
+	nvidiaDetector := gpu.NewNvidiaDetector()
+	if nvidiaDetector.IsAvailable() {
+		log.Println("NVIDIA GPU detector available - using real nvidia-smi data")
+		gpus, err := nvidiaDetector.DetectGPUs()
+		if err != nil {
+			log.Printf("nvidia-smi detection failed (%v), falling back to simulated data", err)
+		} else {
+			log.Printf("Detected %d NVIDIA GPU(s)", len(gpus))
+			for _, g := range gpus {
+				log.Printf("  GPU %s: %s (%d MB, driver %s)", g.ID, g.Name, g.MemoryTotalMB, g.DriverVersion)
+			}
+		}
+	} else {
+		log.Println("nvidia-smi not found - using simulated GPU data")
+	}
+
 	nodeMgr := node.NewManager(nil)
 	sched := scheduler.NewScheduler(nil)
 	wlMgr := workload.NewManager(nil)
 	oc := ollama.NewClient(cfg.OllamaURL, 30*time.Second)
+	if oc.IsAvailable() {
+		log.Printf("Ollama server reachable at %s - using real HTTP API mode", cfg.OllamaURL)
+	} else {
+		log.Printf("Ollama server not reachable at %s - falling back to simulated mode", cfg.OllamaURL)
+	}
 	qMgr := quota.NewManager(nil)
 	collector := metrics.NewCollector(nil)
 

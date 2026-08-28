@@ -1,10 +1,13 @@
 package cloud
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/Levango7/OpsMesh/services/deploy-svc/internal/k8s"
 )
 
 // Provider type constants.
@@ -82,6 +85,7 @@ type AWSProvider struct {
 	mu            sync.RWMutex
 	deployments   map[string]DeploymentResult
 	region        string
+	K8sClient     *k8s.Client
 }
 
 // NewAWSProvider creates a new AWS provider.
@@ -89,10 +93,12 @@ func NewAWSProvider(region string) *AWSProvider {
 	if region == "" {
 		region = "us-east-1"
 	}
-	return &AWSProvider{
+	p := &AWSProvider{
 		deployments: make(map[string]DeploymentResult),
 		region:      region,
 	}
+	registerProvider(p)
+	return p
 }
 
 // ProviderName returns the provider name.
@@ -128,6 +134,61 @@ func (a *AWSProvider) Deploy(config DeploymentConfig) (DeploymentResult, error) 
 	}
 
 	now := time.Now()
+
+	// If this is a K8s deployment and we have a K8s client, use the real API.
+	if config.Type == "k8s" && a.K8sClient != nil && a.K8sClient.IsConnected() {
+		spec := &k8s.DeploymentSpec{
+			Name:      config.Name,
+			Namespace: config.Cluster,
+			Replicas:  1,
+			Image:     "nginx:latest",
+			Labels:    map[string]string{"app": config.Name, "tenant": config.TenantID},
+		}
+		if config.Parameters != nil {
+			if img, ok := config.Parameters["image"]; ok {
+				spec.Image = img
+			}
+			if ns, ok := config.Parameters["namespace"]; ok {
+				spec.Namespace = ns
+			}
+			if rep, ok := config.Parameters["replicas"]; ok {
+				var r int32
+				fmt.Sscanf(rep, "%d", &r)
+				if r > 0 {
+					spec.Replicas = r
+				}
+			}
+		}
+		if spec.Namespace == "" {
+			spec.Namespace = "default"
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		deploy, err := a.K8sClient.CreateDeployment(ctx, spec.Namespace, spec)
+		if err != nil {
+			return DeploymentResult{}, fmt.Errorf("k8s deploy failed: %w", err)
+		}
+
+		result := DeploymentResult{
+			DeploymentID: config.DeploymentID,
+			Provider:     ProviderAWS,
+			Status:       StatusRunning,
+			Region:       config.Region,
+			Message:      fmt.Sprintf("Deployed %s to EKS cluster in %s (K8s deployment: %s)", config.Name, config.Region, deploy.Name),
+			ExternalRef:  fmt.Sprintf("arn:aws:eks:%s:123456789:deployment/%s", config.Region, deploy.Name),
+			DeployedAt:   now,
+			UpdatedAt:    now,
+		}
+
+		a.mu.Lock()
+		a.deployments[config.DeploymentID] = result
+		a.mu.Unlock()
+
+		return result, nil
+	}
+
 	result := DeploymentResult{
 		DeploymentID: config.DeploymentID,
 		Provider:     ProviderAWS,
@@ -181,6 +242,7 @@ type HuaweiProvider struct {
 	mu            sync.RWMutex
 	deployments   map[string]DeploymentResult
 	region        string
+	K8sClient     *k8s.Client
 }
 
 // NewHuaweiProvider creates a new Huawei Cloud provider.
@@ -188,10 +250,12 @@ func NewHuaweiProvider(region string) *HuaweiProvider {
 	if region == "" {
 		region = "cn-north-4"
 	}
-	return &HuaweiProvider{
+	p := &HuaweiProvider{
 		deployments: make(map[string]DeploymentResult),
 		region:      region,
 	}
+	registerProvider(p)
+	return p
 }
 
 // ProviderName returns the provider name.
@@ -227,6 +291,60 @@ func (h *HuaweiProvider) Deploy(config DeploymentConfig) (DeploymentResult, erro
 	}
 
 	now := time.Now()
+
+	if config.Type == "k8s" && h.K8sClient != nil && h.K8sClient.IsConnected() {
+		spec := &k8s.DeploymentSpec{
+			Name:      config.Name,
+			Namespace: config.Cluster,
+			Replicas:  1,
+			Image:     "nginx:latest",
+			Labels:    map[string]string{"app": config.Name, "tenant": config.TenantID},
+		}
+		if config.Parameters != nil {
+			if img, ok := config.Parameters["image"]; ok {
+				spec.Image = img
+			}
+			if ns, ok := config.Parameters["namespace"]; ok {
+				spec.Namespace = ns
+			}
+			if rep, ok := config.Parameters["replicas"]; ok {
+				var r int32
+				fmt.Sscanf(rep, "%d", &r)
+				if r > 0 {
+					spec.Replicas = r
+				}
+			}
+		}
+		if spec.Namespace == "" {
+			spec.Namespace = "default"
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		deploy, err := h.K8sClient.CreateDeployment(ctx, spec.Namespace, spec)
+		if err != nil {
+			return DeploymentResult{}, fmt.Errorf("k8s deploy failed: %w", err)
+		}
+
+		result := DeploymentResult{
+			DeploymentID: config.DeploymentID,
+			Provider:     ProviderHuawei,
+			Status:       StatusRunning,
+			Region:       config.Region,
+			Message:      fmt.Sprintf("Deployed %s to Huawei CCE in %s (K8s deployment: %s)", config.Name, config.Region, deploy.Name),
+			ExternalRef:  fmt.Sprintf("huawei:cce:%s:deployment/%s", config.Region, deploy.Name),
+			DeployedAt:   now,
+			UpdatedAt:    now,
+		}
+
+		h.mu.Lock()
+		h.deployments[config.DeploymentID] = result
+		h.mu.Unlock()
+
+		return result, nil
+	}
+
 	result := DeploymentResult{
 		DeploymentID: config.DeploymentID,
 		Provider:     ProviderHuawei,
@@ -280,6 +398,7 @@ type AliProvider struct {
 	mu            sync.RWMutex
 	deployments   map[string]DeploymentResult
 	region        string
+	K8sClient     *k8s.Client
 }
 
 // NewAliProvider creates a new Alibaba Cloud provider.
@@ -287,10 +406,12 @@ func NewAliProvider(region string) *AliProvider {
 	if region == "" {
 		region = "cn-hangzhou"
 	}
-	return &AliProvider{
+	p := &AliProvider{
 		deployments: make(map[string]DeploymentResult),
 		region:      region,
 	}
+	registerProvider(p)
+	return p
 }
 
 // ProviderName returns the provider name.
@@ -326,6 +447,60 @@ func (a *AliProvider) Deploy(config DeploymentConfig) (DeploymentResult, error) 
 	}
 
 	now := time.Now()
+
+	if config.Type == "k8s" && a.K8sClient != nil && a.K8sClient.IsConnected() {
+		spec := &k8s.DeploymentSpec{
+			Name:      config.Name,
+			Namespace: config.Cluster,
+			Replicas:  1,
+			Image:     "nginx:latest",
+			Labels:    map[string]string{"app": config.Name, "tenant": config.TenantID},
+		}
+		if config.Parameters != nil {
+			if img, ok := config.Parameters["image"]; ok {
+				spec.Image = img
+			}
+			if ns, ok := config.Parameters["namespace"]; ok {
+				spec.Namespace = ns
+			}
+			if rep, ok := config.Parameters["replicas"]; ok {
+				var r int32
+				fmt.Sscanf(rep, "%d", &r)
+				if r > 0 {
+					spec.Replicas = r
+				}
+			}
+		}
+		if spec.Namespace == "" {
+			spec.Namespace = "default"
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		deploy, err := a.K8sClient.CreateDeployment(ctx, spec.Namespace, spec)
+		if err != nil {
+			return DeploymentResult{}, fmt.Errorf("k8s deploy failed: %w", err)
+		}
+
+		result := DeploymentResult{
+			DeploymentID: config.DeploymentID,
+			Provider:     ProviderAli,
+			Status:       StatusRunning,
+			Region:       config.Region,
+			Message:      fmt.Sprintf("Deployed %s to Alibaba ACK in %s (K8s deployment: %s)", config.Name, config.Region, deploy.Name),
+			ExternalRef:  fmt.Sprintf("ali:ack:%s:deployment/%s", config.Region, deploy.Name),
+			DeployedAt:   now,
+			UpdatedAt:    now,
+		}
+
+		a.mu.Lock()
+		a.deployments[config.DeploymentID] = result
+		a.mu.Unlock()
+
+		return result, nil
+	}
+
 	result := DeploymentResult{
 		DeploymentID: config.DeploymentID,
 		Provider:     ProviderAli,
@@ -378,13 +553,16 @@ func (a *AliProvider) Rollback(deploymentID string) (DeploymentResult, error) {
 type OnPremProvider struct {
 	mu            sync.RWMutex
 	deployments   map[string]DeploymentResult
+	K8sClient     *k8s.Client
 }
 
 // NewOnPremProvider creates a new on-premise provider.
 func NewOnPremProvider() *OnPremProvider {
-	return &OnPremProvider{
+	p := &OnPremProvider{
 		deployments: make(map[string]DeploymentResult),
 	}
+	registerProvider(p)
+	return p
 }
 
 // ProviderName returns the provider name.
@@ -477,6 +655,40 @@ func NewProvider(providerType string) (CloudProvider, error) {
 		return NewOnPremProvider(), nil
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrProviderUnsupported, providerType)
+	}
+}
+
+// providerRegistry holds the most recently created providers so they can be
+// updated with a K8s client after construction.
+var (
+	providerRegistry []CloudProvider
+	registryMu       sync.Mutex
+)
+
+// registerProvider adds a provider to the global registry.
+func registerProvider(p CloudProvider) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	providerRegistry = append(providerRegistry, p)
+}
+
+// SetK8sClient assigns a Kubernetes client to all registered providers that
+// support K8s operations. Providers created before this call will not receive
+// the client; call this before creating providers or recreate them afterward.
+func SetK8sClient(client *k8s.Client) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	for _, p := range providerRegistry {
+		switch prov := p.(type) {
+		case *AWSProvider:
+			prov.K8sClient = client
+		case *HuaweiProvider:
+			prov.K8sClient = client
+		case *AliProvider:
+			prov.K8sClient = client
+		case *OnPremProvider:
+			prov.K8sClient = client
+		}
 	}
 }
 

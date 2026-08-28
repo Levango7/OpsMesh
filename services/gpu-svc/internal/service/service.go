@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/metrics"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/models"
@@ -208,12 +209,39 @@ func (s *Service) GetScheduleQueue() []*models.Workload {
 
 // PullModel pulls/syncs an Ollama model.
 func (s *Service) PullModel(name string) (*models.GPUModel, error) {
-	return s.ollama.PullModel(name)
+	if err := s.ollama.PullModel(name); err != nil {
+		return nil, err
+	}
+	return &models.GPUModel{
+		Name:         name,
+		SizeBytes:    ollama.EstimateModelSize(name),
+		ParameterCount: ollama.EstimateParams(name),
+		Quantized:    true,
+		LastPulled:   time.Now(),
+	}, nil
 }
 
 // ListModels returns available models.
 func (s *Service) ListModels() []*models.GPUModel {
-	return s.ollama.ListModels()
+	ollamaModels, err := s.ollama.ListModels()
+	if err != nil {
+		return nil
+	}
+	result := make([]*models.GPUModel, 0, len(ollamaModels))
+	for _, m := range ollamaModels {
+		result = append(result, &models.GPUModel{
+			Name:           m.Name,
+			SizeBytes:      m.SizeBytes,
+			ParameterCount: m.ParameterCount,
+			Quantized:      m.Quantized,
+			Serving:        m.Serving,
+			Port:           m.Port,
+			NodeID:         m.NodeID,
+			Replicas:       m.Replicas,
+			LastPulled:     m.LastPulled,
+		})
+	}
+	return result
 }
 
 // RemoveModel removes a model.
@@ -223,12 +251,29 @@ func (s *Service) RemoveModel(name string) error {
 
 // ServeModel starts serving a model.
 func (s *Service) ServeModel(name, nodeID string, port, replicas int) (*models.GPUModel, error) {
-	return s.ollama.ServeModel(name, nodeID, port, replicas)
+	if err := s.ollama.ServeModel(name, port); err != nil {
+		return nil, err
+	}
+	return &models.GPUModel{
+		Name:         name,
+		Serving:      true,
+		Port:         port,
+		NodeID:       nodeID,
+		Replicas:     replicas,
+		LastPulled:   time.Now(),
+	}, nil
 }
 
 // GetModelStatus returns model serving status.
 func (s *Service) GetModelStatus(name string) (*models.GPUModel, error) {
-	return s.ollama.GetModelStatus(name)
+	status, err := s.ollama.GetModelStatus(name)
+	if err != nil {
+		return nil, err
+	}
+	return &models.GPUModel{
+		Name:    status.Name,
+		Serving: status.Serving,
+	}, nil
 }
 
 // ListQuotas returns all quotas.

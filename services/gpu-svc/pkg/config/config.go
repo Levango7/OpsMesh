@@ -19,7 +19,7 @@ func Load() *Config {
 	return &Config{
 		HTTPPort:        getEnvInt("GPU_SVC_HTTP_PORT", 8090),
 		ShutdownTimeout: getEnvDuration("GPU_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
-		OllamaURL:       getEnv("GPU_SVC_OLLAMA_URL", "http://localhost:11434"),
+		OllamaURL:       getEnv("OLLAMA_URL", getEnv("GPU_SVC_OLLAMA_URL", "http://localhost:11434")),
 		MetricsInterval: getEnvDuration("GPU_SVC_METRICS_INTERVAL", 30*time.Second),
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/inspection"
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/noise"
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/prediction"
+	"github.com/Levango7/OpsMesh/services/aio-svc/internal/prometheus"
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/rootcause"
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/slo"
 )
@@ -43,6 +44,16 @@ func main() {
 	sloManager.AddRule(slo.SLORule{Name: "api-latency", Target: 99.5, Window: "14d", SLIType: slo.SLILatency, Threshold: 200})
 
 	gpuDetector := gpuanomaly.NewDetector()
+
+	// Initialize Prometheus client with configurable URL.
+	promClient := prometheus.NewClient(os.Getenv("PROMETHEUS_URL"), 10*time.Second)
+	if promClient.Available() {
+		log.Printf("[aio-svc] Prometheus connected: %s", os.Getenv("PROMETHEUS_URL"))
+	} else if os.Getenv("PROMETHEUS_URL") != "" {
+		log.Printf("[aio-svc] Prometheus unreachable, using simulated mode")
+	} else {
+		log.Printf("[aio-svc] Prometheus disabled (set PROMETHEUS_URL to enable)")
+	}
 
 	mux := http.NewServeMux()
 
@@ -368,6 +379,82 @@ func main() {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"ingested": len(metrics), "status": "ok",
 		})
+	})
+
+	// Prometheus 状态。
+	mux.HandleFunc("/api/v1/prometheus/status", func(w http.ResponseWriter, r *http.Request) {
+		status := map[string]interface{}{
+			"available": promClient.Available(),
+			"simulated": !promClient.Available(),
+		}
+		if url := os.Getenv("PROMETHEUS_URL"); url != "" {
+			status["url"] = url
+		}
+		writeJSON(w, http.StatusOK, status)
+	})
+
+	// Prometheus 节点 CPU 查询。
+	mux.HandleFunc("/api/v1/prometheus/cpu", func(w http.ResponseWriter, r *http.Request) {
+		nodeID := r.URL.Query().Get("node_id")
+		samples, err := promClient.GetCPUUsage(nodeID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"samples": samples})
+	})
+
+	// Prometheus 节点内存查询。
+	mux.HandleFunc("/api/v1/prometheus/memory", func(w http.ResponseWriter, r *http.Request) {
+		nodeID := r.URL.Query().Get("node_id")
+		samples, err := promClient.GetMemoryUsage(nodeID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"samples": samples})
+	})
+
+	// Prometheus 节点磁盘查询。
+	mux.HandleFunc("/api/v1/prometheus/disk", func(w http.ResponseWriter, r *http.Request) {
+		nodeID := r.URL.Query().Get("node_id")
+		samples, err := promClient.GetDiskUsage(nodeID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"samples": samples})
+	})
+
+	// Prometheus GPU 利用率查询。
+	mux.HandleFunc("/api/v1/prometheus/gpu", func(w http.ResponseWriter, r *http.Request) {
+		samples, err := promClient.GetGPUUtilization()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"samples": samples})
+	})
+
+	// Prometheus 自定义 PromQL 查询。
+	mux.HandleFunc("/api/v1/prometheus/query", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		result, err := promClient.Query(req.Query, time.Now())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 	})
 
 	srv := &http.Server{
