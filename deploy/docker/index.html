@@ -3,61 +3,127 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpsMesh 控制台</title>
+    <title>OpsMesh 运维控制台</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; }
-        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-        h1 { color: #38bdf8; margin-bottom: 20px; }
-        .card { background: #1e293b; border-radius: 8px; padding: 20px; margin-bottom: 16px; border: 1px solid #334155; }
-        .card h2 { color: #38bdf8; margin-bottom: 12px; font-size: 16px; }
-        .status { display: flex; gap: 8px; flex-wrap: wrap; }
-        .badge { padding: 4px 12px; border-radius: 4px; font-size: 12px; }
-        .badge.ok { background: #064e3b; color: #34d399; }
-        .badge.err { background: #450a0a; color: #f87171; }
-        input, button { padding: 8px 12px; border-radius: 4px; border: 1px solid #475569; background: #0f172a; color: #e2e8f0; }
-        button { background: #0284c7; color: white; cursor: pointer; border: none; }
-        button:hover { background: #0369a1; }
-        .row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
-        .row label { width: 80px; color: #94a3b8; font-size: 14px; }
-        pre { background: #0f172a; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; max-height: 200px; overflow-y: auto; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
-        .stat { text-align: center; padding: 16px; }
-        .stat .value { font-size: 32px; font-weight: bold; color: #38bdf8; }
-        .stat .label { color: #94a3b8; font-size: 12px; margin-top: 4px; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: linear-gradient(135deg, #0c1220 0%, #1a1a2e 100%); color: #e8e8e8; min-height: 100vh; }
+        .header { background: rgba(15,23,42,0.95); border-bottom: 1px solid #1e3a5f; padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; backdrop-filter: blur(10px); }
+        .header h1 { font-size: 20px; font-weight: 600; color: #38bdf8; display: flex; align-items: center; gap: 10px; }
+        .header .time { color: #64748b; font-size: 13px; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+        
+        /* 统计卡片 */
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .stat-card { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border: 1px solid #1e3a5f; border-radius: 12px; padding: 24px; text-align: center; transition: transform 0.2s, box-shadow 0.2s; }
+        .stat-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(56,189,248,0.1); }
+        .stat-card .icon { font-size: 32px; margin-bottom: 8px; }
+        .stat-card .value { font-size: 36px; font-weight: 700; color: #38bdf8; margin-bottom: 4px; }
+        .stat-card .label { color: #94a3b8; font-size: 13px; }
+        
+        /* 服务状态 */
+        .card { background: rgba(30,41,59,0.6); border: 1px solid #1e3a5f; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+        .card h2 { color: #38bdf8; margin-bottom: 16px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+        .service-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+        .service-item { background: rgba(15,23,42,0.8); border-radius: 8px; padding: 14px; display: flex; align-items: center; gap: 10px; border: 1px solid #1e3a5f; }
+        .service-item .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .service-item .dot.ok { background: #34d399; box-shadow: 0 0 8px #34d399; }
+        .service-item .dot.err { background: #f87171; box-shadow: 0 0 8px #f87171; }
+        .service-item .info { flex: 1; }
+        .service-item .name { font-weight: 500; font-size: 14px; }
+        .service-item .port { color: #64748b; font-size: 12px; }
+        
+        /* 认证区域 */
+        .auth-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; color: #94a3b8; font-size: 13px; margin-bottom: 6px; }
+        .form-group input { width: 100%; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 14px; transition: border-color 0.2s; }
+        .form-group input:focus { outline: none; border-color: #38bdf8; }
+        .btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+        .btn { padding: 10px 20px; border-radius: 8px; border: none; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+        .btn-primary { background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); color: white; }
+        .btn-primary:hover { background: linear-gradient(135deg, #0369a1 0%, #075985 100%); }
+        .btn-secondary { background: #1e293b; color: #38bdf8; border: 1px solid #334155; }
+        .btn-secondary:hover { background: #334155; }
+        .result { background: #0f172a; border-radius: 8px; padding: 14px; font-size: 12px; max-height: 150px; overflow-y: auto; margin-top: 12px; border: 1px solid #1e3a5f; white-space: pre-wrap; word-break: break-all; }
+        .result.ok { border-color: #34d399; color: #34d399; }
+        .result.err { border-color: #f87171; color: #f87171; }
+        
+        /* 设备列表 */
+        .device-list { max-height: 300px; overflow-y: auto; }
+        .device-item { background: rgba(15,23,42,0.8); border-radius: 8px; padding: 12px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; border: 1px solid #1e3a5f; }
+        .device-item .status { width: 8px; height: 8px; border-radius: 50%; }
+        .device-item .status.online { background: #34d399; }
+        .device-item .status.offline { background: #64748b; }
+        .device-item .info { flex: 1; }
+        .device-item .name { font-weight: 500; font-size: 14px; }
+        .device-item .meta { color: #64748b; font-size: 12px; }
+        
+        @media (max-width: 768px) {
+            .auth-grid { grid-template-columns: 1fr; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+        }
     </style>
 </head>
 <body>
+    <div class="header">
+        <h1>🖥️ OpsMesh 运维控制台</h1>
+        <div class="time" id="time"></div>
+    </div>
+    
     <div class="container">
-        <h1>🖥️ OpsMesh 控制台</h1>
-        
-        <div class="card">
-            <h2>服务状态</h2>
-            <div class="status" id="services"></div>
-        </div>
-
-        <div class="card">
-            <h2>系统概览</h2>
-            <div class="grid" id="stats">
-                <div class="stat"><div class="value" id="deviceCount">-</div><div class="label">设备数</div></div>
-                <div class="stat"><div class="value" id="taskCount">-</div><div class="label">任务数</div></div>
-                <div class="stat"><div class="value" id="alertCount">-</div><div class="label">告警数</div></div>
-                <div class="stat"><div class="value" id="userCount">-</div><div class="label">用户数</div></div>
+        <!-- 统计卡片 -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="icon">📱</div>
+                <div class="value" id="deviceCount">-</div>
+                <div class="label">设备总数</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon">📋</div>
+                <div class="value" id="taskCount">-</div>
+                <div class="label">任务总数</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon">🔔</div>
+                <div class="value" id="alertCount">-</div>
+                <div class="label">活跃告警</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon">👥</div>
+                <div class="value" id="userCount">-</div>
+                <div class="label">注册用户</div>
             </div>
         </div>
-
+        
+        <!-- 服务状态 -->
         <div class="card">
-            <h2>用户认证</h2>
-            <div class="row"><label>用户名</label><input id="username" value="admin" style="width:200px"></div>
-            <div class="row"><label>密码</label><input id="password" type="password" value="admin123" style="width:200px"></div>
-            <div class="row"><button onclick="login()">登录</button><button onclick="register()">注册</button><button onclick="changePassword()">改密</button></div>
-            <pre id="authResult">未登录</pre>
+            <h2>⚙️ 服务状态</h2>
+            <div class="service-grid" id="services"></div>
         </div>
-
-        <div class="card">
-            <h2>设备管理</h2>
-            <div class="row"><button onclick="loadDevices()">刷新设备列表</button><button onclick="simulateDevice()">模拟设备注册</button></div>
-            <pre id="deviceList">无数据</pre>
+        
+        <!-- 认证 + 设备 -->
+        <div class="auth-grid">
+            <div class="card">
+                <h2>🔐 用户认证</h2>
+                <div class="form-group"><label>用户名</label><input id="username" value="admin" placeholder="输入用户名"></div>
+                <div class="form-group"><label>密码</label><input id="password" type="password" placeholder="输入密码"></div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="login()">登录</button>
+                    <button class="btn btn-secondary" onclick="register()">注册</button>
+                    <button class="btn btn-secondary" onclick="changePassword()">改密</button>
+                </div>
+                <div class="result" id="authResult">未登录 - 默认账号: admin / admin123</div>
+            </div>
+            
+            <div class="card">
+                <h2>📱 设备管理</h2>
+                <div class="btn-group" style="margin-bottom:12px">
+                    <button class="btn btn-primary" onclick="loadDevices()">刷新设备</button>
+                    <button class="btn btn-secondary" onclick="simulateDevice()">模拟注册</button>
+                    <button class="btn btn-secondary" onclick="startSimulator()">启动10台设备</button>
+                </div>
+                <div class="device-list" id="deviceList">点击"刷新设备"查看</div>
+            </div>
         </div>
     </div>
 
@@ -65,29 +131,52 @@
         const API = 'http://localhost:8080';
         let token = localStorage.getItem('opsmesh_token') || '';
         let changePasswordToken = '';
-
+        let deviceSimInterval = null;
+        
+        // 更新时间
+        setInterval(() => {
+            document.getElementById('time').textContent = new Date().toLocaleString('zh-CN');
+        }, 1000);
+        
+        // 检查服务状态
         async function checkServices() {
             const services = [
-                { name: 'Controlplane', port: 8080 },
-                { name: 'Auth-svc', port: 8100 },
-                { name: 'Device-svc', port: 8101 },
-                { name: 'Task-svc', port: 8102 },
-                { name: 'Alert-svc', port: 8103 },
+                { name: 'Controlplane', port: 8080, path: '/healthz' },
+                { name: 'Auth-svc', port: 8100, path: '/health' },
+                { name: 'Device-svc', port: 8101, path: '/health' },
+                { name: 'Task-svc', port: 8102, path: '/health' },
+                { name: 'Alert-svc', port: 8103, path: '/health' },
             ];
             const html = [];
             for (const s of services) {
                 try {
-                    await fetch(`http://localhost:${s.port}/health`);
-                    html.push(`<span class="badge ok">✅ ${s.name} (:${s.port})</span>`);
+                    await fetch(`http://localhost:${s.port}${s.path}`, { mode: 'no-cors' });
+                    html.push(`<div class="service-item"><div class="dot ok"></div><div class="info"><div class="name">${s.name}</div><div class="port">:${s.port}</div></div></div>`);
                 } catch {
-                    html.push(`<span class="badge err">❌ ${s.name} (:${s.port})</span>`);
+                    html.push(`<div class="service-item"><div class="dot err"></div><div class="info"><div class="name">${s.name}</div><div class="port">:${s.port} ✗</div></div></div>`);
                 }
             }
             document.getElementById('services').innerHTML = html.join('');
         }
-
+        
+        // 更新统计
+        async function updateStats() {
+            if (!token) return;
+            const h = { 'X-Tenant-ID': 'default', 'Authorization': 'Bearer ' + token };
+            try {
+                const d = await (await fetch(`${API}/api/v1/devices?limit=1`, { headers: h })).json();
+                document.getElementById('deviceCount').textContent = d.total || d.devices?.length || 0;
+            } catch {}
+            try {
+                const u = await (await fetch(`${API}/api/v1/auth/users?limit=1`, { headers: h })).json();
+                document.getElementById('userCount').textContent = u.total || u.users?.length || 0;
+            } catch {}
+        }
+        
+        // 登录
         async function login() {
             const body = { username: document.getElementById('username').value, password: document.getElementById('password').value };
+            const el = document.getElementById('authResult');
             try {
                 const resp = await fetch(`${API}/api/v1/auth/login`, {
                     method: 'POST',
@@ -100,20 +189,27 @@
                     localStorage.setItem('opsmesh_token', token);
                     if (data.mustChangePassword) {
                         changePasswordToken = data.changePasswordToken;
-                        document.getElementById('authResult').textContent = '需要改密! Token: ' + changePasswordToken;
+                        el.className = 'result warn';
+                        el.textContent = '⚠️ 首次登录需改密! 点击"改密"按钮';
                     } else {
-                        document.getElementById('authResult').textContent = '登录成功! Token: ' + token.substring(0, 20) + '...';
+                        el.className = 'result ok';
+                        el.textContent = '✅ 登录成功! Token: ' + token.substring(0, 30) + '...';
+                        updateStats();
                     }
                 } else {
-                    document.getElementById('authResult').textContent = JSON.stringify(data, null, 2);
+                    el.className = 'result err';
+                    el.textContent = '❌ ' + (data.error || JSON.stringify(data));
                 }
             } catch (e) {
-                document.getElementById('authResult').textContent = '错误: ' + e.message;
+                el.className = 'result err';
+                el.textContent = '错误: ' + e.message;
             }
         }
-
+        
+        // 注册
         async function register() {
-            const body = { username: document.getElementById('username').value, password: document.getElementById('password').value, email: 'test@opsmesh.io' };
+            const body = { username: document.getElementById('username').value, password: document.getElementById('password').value, email: 'user@opsmesh.io' };
+            const el = document.getElementById('authResult');
             try {
                 const resp = await fetch(`${API}/api/v1/auth/register`, {
                     method: 'POST',
@@ -121,14 +217,18 @@
                     body: JSON.stringify(body)
                 });
                 const data = await resp.json();
-                document.getElementById('authResult').textContent = JSON.stringify(data, null, 2);
+                el.className = data.userId ? 'result ok' : 'result err';
+                el.textContent = JSON.stringify(data, null, 2);
             } catch (e) {
-                document.getElementById('authResult').textContent = '错误: ' + e.message;
+                el.className = 'result err';
+                el.textContent = '错误: ' + e.message;
             }
         }
-
+        
+        // 改密
         async function changePassword() {
-            const body = { oldPassword: 'admin123', newPassword: 'NewPass123' };
+            const body = { oldPassword: document.getElementById('password').value, newPassword: 'NewPass123456' };
+            const el = document.getElementById('authResult');
             try {
                 const resp = await fetch(`${API}/api/v1/auth/change-password`, {
                     method: 'POST',
@@ -136,41 +236,78 @@
                     body: JSON.stringify(body)
                 });
                 const data = await resp.json();
-                document.getElementById('authResult').textContent = JSON.stringify(data, null, 2);
+                el.className = data.message ? 'result ok' : 'result err';
+                el.textContent = JSON.stringify(data, null, 2);
+                if (data.token) {
+                    token = data.token;
+                    localStorage.setItem('opsmesh_token', token);
+                }
             } catch (e) {
-                document.getElementById('authResult').textContent = '错误: ' + e.message;
+                el.className = 'result err';
+                el.textContent = '错误: ' + e.message;
             }
         }
-
+        
+        // 加载设备
         async function loadDevices() {
+            const el = document.getElementById('deviceList');
+            if (!token) { el.innerHTML = '<div style="color:#f87171">请先登录</div>'; return; }
             try {
-                const resp = await fetch(`${API}/api/v1/devices?limit=10`, {
+                const resp = await fetch(`${API}/api/v1/devices?limit=50`, {
                     headers: { 'X-Tenant-ID': 'default', 'Authorization': 'Bearer ' + token }
                 });
                 const data = await resp.json();
-                document.getElementById('deviceList').textContent = JSON.stringify(data, null, 2);
+                const devices = data.devices || data.items || [];
+                if (devices.length === 0) {
+                    el.innerHTML = '<div style="color:#64748b">暂无设备 - 点击"模拟注册"添加</div>';
+                    return;
+                }
+                el.innerHTML = devices.map(d => `
+                    <div class="device-item">
+                        <div class="status ${d.status === 'online' ? 'online' : 'offline'}"></div>
+                        <div class="info">
+                            <div class="name">${d.name || d.id}</div>
+                            <div class="meta">IP: ${d.ip || 'N/A'} | 状态: ${d.status || 'unknown'}</div>
+                        </div>
+                    </div>
+                `).join('');
+                document.getElementById('deviceCount').textContent = data.total || devices.length;
             } catch (e) {
-                document.getElementById('deviceList').textContent = '错误: ' + e.message;
+                el.innerHTML = '<div style="color:#f87171">错误: ' + e.message + '</div>';
             }
         }
-
+        
+        // 模拟设备注册
         async function simulateDevice() {
-            const body = { name: 'Device-' + Date.now(), ip: '192.168.1.' + Math.floor(Math.random()*254) };
+            if (!token) { alert('请先登录'); return; }
+            const body = { name: 'srv-' + Math.random().toString(36).substr(2,6), ip: '10.0.' + Math.floor(Math.random()*255) + '.' + Math.floor(Math.random()*255) };
             try {
-                const resp = await fetch(`${API}/api/v1/devices`, {
+                await fetch(`${API}/api/v1/devices`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': 'default', 'Authorization': 'Bearer ' + token },
                     body: JSON.stringify(body)
                 });
-                const data = await resp.json();
-                document.getElementById('deviceList').textContent = JSON.stringify(data, null, 2);
+                loadDevices();
             } catch (e) {
-                document.getElementById('deviceList').textContent = '错误: ' + e.message;
+                alert('注册失败: ' + e.message);
             }
         }
-
+        
+        // 启动10台设备模拟
+        async function startSimulator() {
+            if (!token) { alert('请先登录'); return; }
+            if (deviceSimInterval) { clearInterval(deviceSimInterval); deviceSimInterval = null; }
+            for (let i = 0; i < 10; i++) {
+                await simulateDevice();
+                await new Promise(r => setTimeout(r, 200));
+            }
+            deviceSimInterval = setInterval(loadDevices, 5000);
+        }
+        
+        // 初始化
         checkServices();
         setInterval(checkServices, 5000);
+        if (token) updateStats();
     </script>
 </body>
 </html>
