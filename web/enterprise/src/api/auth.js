@@ -8,6 +8,8 @@ export const authApi = {
     postJSON('/auth/register', { username, password, email: email || undefined }),
   me: () => getJSON('/auth/me'),
   logout: () => postJSON('/auth/logout'),
+  changePassword: (oldPassword, newPassword) =>
+    postJSON('/auth/change-password', { old_password: oldPassword, new_password: newPassword }),
 
   // —— 用户管理 ——
   listUsers: () => getJSON('/users'),

@@ -13,6 +13,8 @@ export const useAuthStore = defineStore('auth', () => {
   // 加载/错误状态
   const loading = ref(false)
   const error = ref('')
+  // 首次登录强制改密令牌（must_change_password 时由登录响应带回）
+  const changePasswordToken = ref('')
 
   // 是否已登录：以 user 是否存在为准（会话由 Cookie 维持，前端不存令牌）。
   const isLoggedIn = computed(() => !!user.value)
@@ -42,12 +44,32 @@ export const useAuthStore = defineStore('auth', () => {
   async function login(username, password) {
     loading.value = true
     error.value = ''
+    changePasswordToken.value = ''
     try {
       const { j } = await authApi.login(username, password)
       user.value = j.user || null
+      if (j.must_change_password) {
+        changePasswordToken.value = j.change_password_token || ''
+      }
       return j
     } catch (e) {
       error.value = e.j?.error || t('error.loginFailed')
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // 强制改密（首次登录）
+  async function changePassword(oldPassword, newPassword) {
+    loading.value = true
+    error.value = ''
+    try {
+      const { j } = await authApi.changePassword(oldPassword, newPassword)
+      changePasswordToken.value = ''
+      return j
+    } catch (e) {
+      error.value = e.j?.error || t('error.changePasswordFailed')
       throw e
     } finally {
       loading.value = false
@@ -110,5 +132,5 @@ export const useAuthStore = defineStore('auth', () => {
   }
   setUnauthorizedHandler(onUnauthorized)
 
-  return { user, loading, error, isLoggedIn, permissions, hasPerm, login, register, fetchMe, logout, clearSession, ready, initialized }
+  return { user, loading, error, isLoggedIn, changePasswordToken, permissions, hasPerm, login, register, changePassword, fetchMe, logout, clearSession, ready, initialized }
 })

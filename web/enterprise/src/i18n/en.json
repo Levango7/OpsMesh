@@ -71,6 +71,33 @@
     "need_password": "Please enter password",
     "username_taken": "Username already taken"
   },
+  "change_password": {
+    "title": "Change Password",
+    "subtitle": "For your account security, please change your initial password",
+    "old_password": "Current Password",
+    "new_password": "New Password",
+    "confirm_password": "Confirm New Password",
+    "submit": "Confirm Change",
+    "submitting": "Changing…",
+    "success": "Password changed, redirecting to login…",
+    "need_old_password": "Please enter current password",
+    "need_new_password": "Please enter new password",
+    "min_length": "Password must be at least 8 characters",
+    "need_lowercase": "Password must contain a lowercase letter",
+    "need_uppercase": "Password must contain an uppercase letter",
+    "need_number": "Password must contain a number",
+    "mismatch": "Passwords do not match",
+    "failed": "Failed to change password"
+  },
+  "password_strength": {
+    "min_length": "At least 8 characters",
+    "uppercase": "Uppercase letter",
+    "lowercase": "Lowercase letter",
+    "number": "Number",
+    "weak": "Weak",
+    "medium": "Medium",
+    "strong": "Strong"
+  },
   "overview": {
     "title": "Dashboard",
     "subtitle": "Global ops view — resource summary and recent events",
@@ -161,6 +188,7 @@
     "mwDetailFailed": "Failed to fetch middleware template detail",
     "loginFailed": "Login failed",
     "registerFailed": "Register failed",
+    "changePasswordFailed": "Failed to change password",
     "noPermission": "No permission to access this page",
     "workflowListFailed": "Failed to fetch workflow list",
     "workflowDetailFailed": "Failed to fetch workflow",

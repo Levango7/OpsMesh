@@ -20,9 +20,10 @@ const RouteSkeleton = defineComponent({
 })
 
 const routes = [
-  // 公共路由：登录 / 注册
+  // 公共路由：登录 / 注册 / 修改密码
   { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue'), meta: { public: true, title: 'login.title' } },
   { path: '/register', name: 'register', component: () => import('@/views/RegisterView.vue'), meta: { public: true, title: 'register.title' } },
+  { path: '/change-password', name: 'change-password', component: () => import('@/views/ChangePasswordView.vue'), meta: { public: true, title: 'change_password.title' } },
 
   // 概览
   { path: '/', redirect: '/overview' },

@@ -1,60 +1,74 @@
 <template>
   <div class="auth-page">
-    <!-- 装饰背景 -->
     <div class="auth-bg">
       <div class="bg-blob blob-1"></div>
       <div class="bg-blob blob-2"></div>
     </div>
 
-    <!-- 登录卡片 -->
     <div class="auth-card">
-      <!-- 品牌 -->
       <div class="brand">
         <div class="logo">
-          <Icon name="brand" :size="22" />
+          <Icon name="key" :size="22" />
         </div>
-        <h1>{{ $t('app.title') }}</h1>
-        <p class="sub">{{ $t('login.subtitle') }}</p>
+        <h1>{{ $t('change_password.title') }}</h1>
+        <p class="sub">{{ $t('change_password.subtitle') }}</p>
       </div>
 
-      <!-- 表单 -->
-      <form class="auth-form" data-testid="login-form" @submit.prevent="onSubmit">
+      <form class="auth-form" data-testid="change-password-form" @submit.prevent="onSubmit">
         <div class="field">
-          <label>{{ $t('login.username') }}</label>
+          <label>{{ $t('change_password.old_password') }}</label>
           <input
-            v-model.trim="username"
-            type="text"
-            autocomplete="username"
-            :placeholder="$t('login.username')"
-            :disabled="loading"
-            data-testid="login-username"
-          />
-        </div>
-        <div class="field">
-          <label>{{ $t('login.password') }}</label>
-          <input
-            v-model.trim="password"
+            v-model.trim="oldPassword"
             type="password"
             autocomplete="current-password"
-            :placeholder="$t('login.password')"
-            :disabled="loading"
-            data-testid="login-password"
+            :placeholder="$t('change_password.old_password')"
+            :disabled="loading || success"
+            data-testid="cp-old-password"
           />
         </div>
 
-        <div v-if="error" class="err-msg" data-testid="login-error">
+        <div class="field">
+          <label>{{ $t('change_password.new_password') }}</label>
+          <input
+            v-model.trim="newPassword"
+            type="password"
+            autocomplete="new-password"
+            :placeholder="$t('change_password.new_password')"
+            :disabled="loading || success"
+            data-testid="cp-new-password"
+          />
+          <PasswordStrength :password="newPassword" />
+        </div>
+
+        <div class="field">
+          <label>{{ $t('change_password.confirm_password') }}</label>
+          <input
+            v-model.trim="confirmPassword"
+            type="password"
+            autocomplete="new-password"
+            :placeholder="$t('change_password.confirm_password')"
+            :disabled="loading || success"
+            data-testid="cp-confirm-password"
+          />
+        </div>
+
+        <div v-if="error" class="err-msg" data-testid="cp-error">
           <Icon name="warning" :size="14" />
           <span>{{ error }}</span>
         </div>
 
-        <button type="submit" class="primary submit-btn" :disabled="loading" data-testid="login-submit">
+        <div v-if="success" class="success-msg" data-testid="cp-success">
+          <Icon name="check" :size="14" />
+          <span>{{ $t('change_password.success') }}</span>
+        </div>
+
+        <button type="submit" class="primary submit-btn" :disabled="loading || success" data-testid="cp-submit">
           <Icon v-if="loading" name="refresh" :size="16" class="spin" />
-          <Icon v-else name="login" :size="16" />
-          <span>{{ loading ? $t('login.loading') : $t('login.submit') }}</span>
+          <Icon v-else name="key" :size="16" />
+          <span>{{ loading ? $t('change_password.submitting') : $t('change_password.submit') }}</span>
         </button>
       </form>
 
-      <!-- 顶栏小工具：主题 + 语言 -->
       <div class="auth-tools">
         <button class="tool-btn" @click="themeStore.toggle()" :title="themeStore.isDark ? $t('topbar.theme_light') : $t('topbar.theme_dark')">
           <Icon :name="themeStore.isDark ? 'theme-light' : 'theme-dark'" :size="16" />
@@ -69,37 +83,50 @@
 </template>
 
 <script setup>
-// 登录页 — 全屏居中卡片，调用后端 /auth/login
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { currentLang, setLang, t } from '@/i18n'
 import Icon from '@/components/Icon.vue'
+import PasswordStrength from '@/components/PasswordStrength.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const themeStore = useThemeStore()
 
-const username = ref('')
-const password = ref('')
+const oldPassword = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
 const error = ref('')
 const loading = ref(false)
+const success = ref(false)
+
+const validationError = computed(() => {
+  if (!oldPassword.value) return t('change_password.need_old_password')
+  if (!newPassword.value) return t('change_password.need_new_password')
+  if (newPassword.value.length < 8) return t('change_password.min_length')
+  if (!/[a-z]/.test(newPassword.value)) return t('change_password.need_lowercase')
+  if (!/[A-Z]/.test(newPassword.value)) return t('change_password.need_uppercase')
+  if (!/[0-9]/.test(newPassword.value)) return t('change_password.need_number')
+  if (newPassword.value !== confirmPassword.value) return t('change_password.mismatch')
+  return ''
+})
 
 async function onSubmit() {
   error.value = ''
-  if (!username.value) { error.value = t('login.need_username'); return }
-  if (!password.value) { error.value = t('login.need_password'); return }
+  const err = validationError.value
+  if (err) { error.value = err; return }
+
   loading.value = true
   try {
-    const result = await authStore.login(username.value, password.value)
-    if (result.must_change_password) {
-      router.push('/change-password')
-    } else {
-      router.push('/overview')
-    }
+    await authStore.changePassword(oldPassword.value, newPassword.value)
+    success.value = true
+    setTimeout(() => {
+      router.push('/login')
+    }, 1500)
   } catch (e) {
-    error.value = e.j?.error || t('login.invalid_credentials')
+    error.value = e.j?.error || t('change_password.failed')
   } finally {
     loading.value = false
   }
@@ -118,7 +145,6 @@ function toggleLang() {
   overflow: hidden;
 }
 
-/* 装饰背景：两个柔光圆斑 */
 .auth-bg { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
 .bg-blob {
   position: absolute; border-radius: 50%;
@@ -169,6 +195,14 @@ function toggleLang() {
   padding: 7px 10px; border-radius: var(--radius-sm);
 }
 
+.success-msg {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: var(--success, #10b981);
+  background: var(--success-soft, rgba(16,185,129,.1));
+  border: 1px solid var(--success-bg, rgba(16,185,129,.25));
+  padding: 7px 10px; border-radius: var(--radius-sm);
+}
+
 .submit-btn {
   display: flex; align-items: center; justify-content: center; gap: 8px;
   width: 100%; height: 40px; font-size: 14px; font-weight: 600;
@@ -176,12 +210,6 @@ function toggleLang() {
 }
 .submit-btn .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-
-.auth-switch {
-  text-align: center; margin-top: 18px;
-  font-size: 12.5px; color: var(--text-3);
-}
-.auth-switch a { color: var(--accent); }
 
 .auth-tools {
   display: flex; justify-content: center; gap: 8px;

@@ -71,6 +71,33 @@
     "need_password": "请输入密码",
     "username_taken": "用户名已被占用"
   },
+  "change_password": {
+    "title": "修改密码",
+    "subtitle": "为了您的账户安全，请修改初始密码",
+    "old_password": "当前密码",
+    "new_password": "新密码",
+    "confirm_password": "确认新密码",
+    "submit": "确认修改",
+    "submitting": "修改中…",
+    "success": "密码修改成功，正在跳转登录…",
+    "need_old_password": "请输入当前密码",
+    "need_new_password": "请输入新密码",
+    "min_length": "密码长度至少 8 位",
+    "need_lowercase": "密码需包含小写字母",
+    "need_uppercase": "密码需包含大写字母",
+    "need_number": "密码需包含数字",
+    "mismatch": "两次输入的密码不一致",
+    "failed": "密码修改失败"
+  },
+  "password_strength": {
+    "min_length": "至少 8 个字符",
+    "uppercase": "大写字母",
+    "lowercase": "小写字母",
+    "number": "数字",
+    "weak": "弱",
+    "medium": "中",
+    "strong": "强"
+  },
   "overview": {
     "title": "总览",
     "subtitle": "运维全局视图，快速了解资源概况与近期事件",
@@ -161,6 +188,7 @@
     "mwDetailFailed": "中间件模板详情拉取失败",
     "loginFailed": "登录失败",
     "registerFailed": "注册失败",
+    "changePasswordFailed": "密码修改失败",
     "noPermission": "无权限访问该页面",
     "workflowListFailed": "作业流列表拉取失败",
     "workflowDetailFailed": "作业流拉取失败",
