@@ -1,13 +1,40 @@
+# Prometheus Configuration for OpsMesh Production
+# Scrapes all OpsMesh services and infrastructure
+
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
+  scrape_timeout: 10s
+  external_labels:
+    cluster: opsmesh-prod
+    environment: production
+
+# Alert rules
+rule_files:
+  - "alerts.yml"
+
+# Alertmanager (uncomment when alertmanager is deployed)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
 
 scrape_configs:
+  # Self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+    metrics_path: /metrics
+
+  # OpsMesh Controlplane
   - job_name: "opsmesh-controlplane"
     static_configs:
       - targets: ["controlplane:9091"]
     metrics_path: /metrics
+    scrape_interval: 10s
 
+  # OpsMesh Microservices
   - job_name: "auth-svc"
     static_configs:
       - targets: ["auth-svc:8100"]
@@ -28,11 +55,6 @@ scrape_configs:
       - targets: ["alert-svc:8103"]
     metrics_path: /metrics
 
-  - job_name: "deploy-svc"
-    static_configs:
-      - targets: ["deploy-svc:8104"]
-    metrics_path: /metrics
-
   - job_name: "config-svc"
     static_configs:
       - targets: ["config-svc:8106"]
@@ -43,22 +65,44 @@ scrape_configs:
       - targets: ["log-svc:8105"]
     metrics_path: /metrics
 
-  - job_name: "aio-svc"
+  - job_name: "gpu-svc"
     static_configs:
-      - targets: ["aio-svc:8100"]
+      - targets: ["gpu-svc:8107"]
     metrics_path: /metrics
 
-  - job_name: "plugin-svc"
+  - job_name: "aio-svc"
     static_configs:
-      - targets: ["plugin-svc:8100"]
+      - targets: ["aio-svc:8108"]
     metrics_path: /metrics
 
   - job_name: "portal-svc"
     static_configs:
-      - targets: ["portal-svc:8100"]
+      - targets: ["portal-svc:8109"]
     metrics_path: /metrics
 
-  - job_name: "grafana-bridge"
+  # Infrastructure
+  - job_name: "opsmesh-mysql"
     static_configs:
-      - targets: ["grafana-bridge:8100"]
+      - targets: ["mysql:3306"]
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
+
+  - job_name: "opsmesh-redis"
+    static_configs:
+      - targets: ["redis:6379"]
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
+
+  # OTel Collector metrics
+  - job_name: "otel-collector"
+    static_configs:
+      - targets: ["otel-collector:8888"]
+    metrics_path: /metrics
+
+  # Docker daemon metrics (if available)
+  - job_name: "docker"
+    static_configs:
+      - targets: ["host.docker.internal:9323"]
     metrics_path: /metrics

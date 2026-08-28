@@ -1,0 +1,737 @@
+version: "3.8"
+
+# OpsMesh Production Deployment
+# Real deployment configuration for production use
+# Usage: docker compose -f docker-compose.prod.yml up -d
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "5"
+    tag: "{{.Name}}"
+
+x-restart: &restart-policy
+  restart: unless-stopped
+
+x-otel: &otel-config
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+  OTEL_SERVICE_NAME: "{{.Service.Name}}"
+
+services:
+  # ============================================================
+  # Infrastructure Layer
+  # ============================================================
+
+  mysql:
+    image: mysql:8.0
+    container_name: opsmesh-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-opsmesh_root_secure_2024}
+      MYSQL_DATABASE: opsmesh
+      MYSQL_USER: ${MYSQL_USER:-opsmesh}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./monitoring/mysql.cnf:/etc/mysql/conf.d/custom.cnf:ro
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --max-connections=500
+      --innodb-buffer-pool-size=1G
+      --innodb-log-file-size=256M
+      --innodb-flush-log-at-trx-commit=1
+      --innodb-flush-method=O_DIRECT
+      --query-cache-type=1
+      --query-cache-size=64M
+      --slow-query-log=1
+      --slow-query-log-file=/var/lib/mysql/slow.log
+      --long-query-time=2
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p${MYSQL_ROOT_PASSWORD:-opsmesh_root_secure_2024} --silent"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 10
+    networks:
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    logging: *default-logging
+    <<: *restart-policy
+
+  redis:
+    image: redis:7-alpine
+    container_name: opsmesh-redis
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
+      --tcp-keepalive 300
+      --timeout 0
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-opsmesh_redis_secure_2024}", "ping"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+    networks:
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    logging: *default-logging
+    <<: *restart-policy
+
+  # ============================================================
+  # Observability Stack
+  # ============================================================
+
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: opsmesh-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --storage.tsdb.retention.size=10GB
+      - --web.enable-lifecycle
+      - --web.enable-admin-api
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+    ports:
+      - "${PROMETHEUS_PORT:-9092}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus-alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    environment:
+      - TZ=${TZ:-UTC}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - monitoring_net
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    logging: *default-logging
+    <<: *restart-policy
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: opsmesh-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-opsmesh_grafana_2024}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_LOG_MODE: "console file"
+      GF_LOG_LEVEL: "info"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: "/var/lib/grafana/dashboards/opsmesh-overview.json"
+      TZ: ${TZ:-UTC}
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_started
+    networks:
+      - monitoring_net
+      - frontend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    logging: *default-logging
+    <<: *restart-policy
+
+  loki:
+    image: grafana/loki:3.2.0
+    container_name: opsmesh-loki
+    command: -config.file=/etc/loki/loki-config.yml
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./monitoring/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    environment:
+      - TZ=${TZ:-UTC}
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3100/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - monitoring_net
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    logging: *default-logging
+    <<: *restart-policy
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.110.0
+    container_name: opsmesh-otel
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      - "${OTEL_GRPC_PORT:-4317}:4317"
+      - "${OTEL_HTTP_PORT:-4318}:4318"
+      - "${OTEL_METRICS_PORT:-8888}:8888"
+    volumes:
+      - ./monitoring/otel-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    environment:
+      - TZ=${TZ:-UTC}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13134/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - monitoring_net
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging: *default-logging
+    <<: *restart-policy
+
+  # ============================================================
+  # OpsMesh Core Services
+  # ============================================================
+
+  controlplane:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.controlplane
+    image: opsmesh/controlplane:${OPSMESH_VERSION:-latest}
+    container_name: opsmesh-controlplane
+    command:
+      - --mode=controlplane
+      - --store=mysql
+      - --mysql-dsn=${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh?parseTime=true
+      - --redis-addr=redis:6379
+      - --advertise-addr=http://controlplane:8080
+    ports:
+      - "${CONTROLPLANE_HTTP_PORT:-8080}:8080"
+      - "${CONTROLPLANE_GRPC_PORT:-9090}:9090"
+      - "${CONTROLPLANE_METRICS_PORT:-9091}:9091"
+    environment:
+      OPSMESH_JWT_SECRET: ${JWT_SECRET:-opsmesh_jwt_secret_production_change_me}
+      OPSMESH_COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      OPSMESH_PUBLIC_REGISTER: ${PUBLIC_REGISTER:-false}
+      OPSMESH_ALLOW_PUBLIC_REGISTER: ${ALLOW_PUBLIC_REGISTER:-false}
+      OPSMESH_PRODUCTION: ${PRODUCTION_MODE:-true}
+      OPSMESH_REQUIRE_AUTH: ${REQUIRE_AUTH:-true}
+      OPSMESH_TRUST_PROXY: ${TRUST_PROXY:-false}
+      OPSMESH_FEDERATION_SECRET: ${FEDERATION_SECRET:-}
+      OPSMESH_PROVISION_SECRET: ${PROVISION_SECRET:-}
+      OPSMESH_GRPC_REQUIRE_SIGNATURE: ${GRPC_REQUIRE_SIGNATURE:-true}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      SHUTDOWN_TIMEOUT: 30s
+      TZ: ${TZ:-UTC}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["/usr/local/bin/opsmesh", "--health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    networks:
+      - frontend_net
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    logging: *default-logging
+    <<: *restart-policy
+
+  auth-svc:
+    build:
+      context: ../../services/auth-svc
+      dockerfile: Dockerfile
+    image: opsmesh/auth-svc:${OPSMESH_VERSION:-latest}
+    container_name: opsmesh-auth-svc
+    ports:
+      - "${AUTH_SVC_HTTP_PORT:-8100}:8100"
+    environment:
+      AUTH_SVC_GRPC_PORT: 50050
+      AUTH_SVC_HTTP_PORT: 8100
+      AUTH_SVC_JWT_SECRET: ${JWT_SECRET:-opsmesh_jwt_secret_production_change_me}
+      AUTH_SVC_ACCESS_TOKEN_TTL: ${AUTH_ACCESS_TTL:-900s}
+      AUTH_SVC_REFRESH_TOKEN_TTL: ${AUTH_REFRESH_TTL:-168h}
+      AUTH_SVC_REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8100/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging: *default-logging
+    <<: *restart-policy
+
+  device-svc:
+    build:
+      context: ../../services/device-svc
+      dockerfile: Dockerfile
+    image: opsmesh/device-svc:${OPSMESH_VERSION:-latest}
+    container_name: opsmesh-device-svc
+    ports:
+      - "${DEVICE_SVC_HTTP_PORT:-8101}:8101"
+    environment:
+      DEVICE_SVC_GRPC_PORT: 50051
+      DEVICE_SVC_HTTP_PORT: 8101
+      DEVICE_SVC_STORE_TYPE: ${DEVICE_STORE_TYPE:-sql}
+      DEVICE_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh?parseTime=true"
+      DEVICE_SVC_REDIS_ADDR: "redis:6379"
+      DEVICE_SVC_JWT_SECRET: ${JWT_SECRET:-opsmesh_jwt_secret_production_change_me}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8101/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging: *default-logging
+    <<: *restart-policy
+
+  task-svc:
+    build:
+      context: ../../services/task-svc
+      dockerfile: Dockerfile
+    image: opsmesh/task-svc:${OPSMESH_VERSION:-latest}
+    container_name: opsmesh-task-svc
+    ports:
+      - "${TASK_SVC_HTTP_PORT:-8102}:8102"
+    environment:
+      TASK_SVC_GRPC_PORT: 50052
+      TASK_SVC_HTTP_PORT: 8102
+      TASK_SVC_STORE_TYPE: ${TASK_STORE_TYPE:-sql}
+      TASK_SVC_MAX_TASKS: 50000
+      TASK_SVC_MAX_RETRIES: 3
+      TASK_SVC_TASK_TIMEOUT: 600
+      MYSQL_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh?parseTime=true"
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8102/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    logging: *default-logging
+    <<: *restart-policy
+
+  alert-svc:
+    build:
+      context: ../../services/alert-svc
+      dockerfile: Dockerfile
+    image: opsmesh/alert-svc:${OPSMESH_VERSION:-latest}
+    container_name: opsmesh-alert-svc
+    ports:
+      - "${ALERT_SVC_HTTP_PORT:-8103}:8103"
+    environment:
+      ALERT_SVC_GRPC_PORT: 50053
+      ALERT_SVC_HTTP_PORT: 8103
+      ALERT_SVC_STORE_TYPE: ${ALERT_STORE_TYPE:-sql}
+      ALERT_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh?parseTime=true"
+      ALERT_SVC_REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
+      PAGERDUTY_ENABLED: ${PAGERDUTY_ENABLED:-false}
+      PAGERDUTY_ROUTING_KEY: ${PAGERDUTY_ROUTING_KEY:-}
+      PAGERDUTY_API_URL: ${PAGERDUTY_API_URL:-https://events.pagerduty.com/v2/enqueue}
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8103/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging: *default-logging
+    <<: *restart-policy
+
+  config-svc:
+    build:
+      context: ../../services/config-svc
+      dockerfile: Dockerfile
+    image: opsmesh/config-svc:${OPSMESH_VERSION:-latest}
+    container_name: opsmesh-config-svc
+    ports:
+      - "${CONFIG_SVC_HTTP_PORT:-8106}:8106"
+    environment:
+      CONFIG_SVC_GRPC_PORT: 50055
+      CONFIG_SVC_HTTP_PORT: 8106
+      CONFIG_SVC_STORE_TYPE: ${CONFIG_STORE_TYPE:-sql}
+      CONFIG_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh?parseTime=true"
+      CONFIG_SVC_REDIS_ADDR: "redis:6379"
+      CONFIG_SVC_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:-opsmesh_config_encryption_key_32bytes}
+      CONFIG_SVC_MAX_HISTORY_SIZE: 100
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8106/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging: *default-logging
+    <<: *restart-policy
+
+  log-svc:
+    build:
+      context: ../../services/log-svc
+      dockerfile: Dockerfile
+    image: opsmesh/log-svc:${OPSMESH_VERSION:-latest}
+    container_name: opsmesh-log-svc
+    ports:
+      - "${LOG_SVC_HTTP_PORT:-8105}:8105"
+      - "${LOG_SVC_GRPC_PORT:-9095}:9095"
+    environment:
+      LOG_SVC_GRPC_ADDR: ":9095"
+      LOG_SVC_HEALTH_ADDR: ":8105"
+      LOG_SVC_BACKEND: ${LOG_BACKEND:-loki}
+      LOG_SVC_LOKI_URL: "http://loki:3100"
+      LOG_SVC_SQL_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh?parseTime=true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      loki:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8105/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - backend_net
+      - monitoring_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging: *default-logging
+    <<: *restart-policy
+
+  gpu-svc:
+    build:
+      context: ../../services/gpu-svc
+      dockerfile: Dockerfile
+    image: opsmesh/gpu-svc:${OPSMESH_VERSION:-latest}
+    container_name: opsmesh-gpu-svc
+    ports:
+      - "${GPU_SVC_HTTP_PORT:-8107}:8107"
+    environment:
+      GPU_SVC_HTTP_PORT: 8107
+      GPU_SVC_OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      GPU_SVC_METRICS_INTERVAL: 30s
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8107/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging: *default-logging
+    <<: *restart-policy
+
+  portal-svc:
+    build:
+      context: ../../services/portal-svc
+      dockerfile: Dockerfile
+    image: opsmesh/portal-svc:${OPSMESH_VERSION:-latest}
+    container_name: opsmesh-portal-svc
+    ports:
+      - "${PORTAL_SVC_HTTP_PORT:-8109}:8109"
+    environment:
+      PORTAL_SVC_HTTP_PORT: 8109
+      PORTAL_SVC_GRPC_PORT: 50060
+      CONTROLPLANE_URL: "http://controlplane:8080"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    depends_on:
+      controlplane:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8109/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - frontend_net
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging: *default-logging
+    <<: *restart-policy
+
+  aio-svc:
+    build:
+      context: ../../services/aio-svc
+      dockerfile: Dockerfile
+    image: opsmesh/aio-svc:${OPSMESH_VERSION:-latest}
+    container_name: opsmesh-aio-svc
+    ports:
+      - "${AIO_SVC_HTTP_PORT:-8108}:8108"
+    environment:
+      AIO_SVC_PORT: 8108
+      AIO_SVC_READ_TIMEOUT: 30s
+      AIO_SVC_WRITE_TIMEOUT: 60s
+      AIO_SVC_SHUTDOWN_TIMEOUT: 10s
+      PROMETHEUS_URL: "http://prometheus:9090"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8108/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - backend_net
+      - monitoring_net
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    logging: *default-logging
+    <<: *restart-policy
+
+# ============================================================
+# Networks
+# ============================================================
+
+networks:
+  frontend_net:
+    driver: bridge
+    name: opsmesh-frontend
+    ipam:
+      config:
+        - subnet: 172.28.1.0/24
+    labels:
+      opsmesh.network.role: "frontend"
+
+  backend_net:
+    driver: bridge
+    internal: true
+    name: opsmesh-backend
+    ipam:
+      config:
+        - subnet: 172.28.2.0/24
+    labels:
+      opsmesh.network.role: "backend"
+
+  monitoring_net:
+    driver: bridge
+    internal: true
+    name: opsmesh-monitoring
+    ipam:
+      config:
+        - subnet: 172.28.3.0/24
+    labels:
+      opsmesh.network.role: "monitoring"
+
+# ============================================================
+# Volumes
+# ============================================================
+
+volumes:
+  mysql_data:
+    driver: local
+    name: opsmesh-mysql-data
+  redis_data:
+    driver: local
+    name: opsmesh-redis-data
+  prometheus_data:
+    driver: local
+    name: opsmesh-prometheus-data
+  grafana_data:
+    driver: local
+    name: opsmesh-grafana-data
+  loki_data:
+    driver: local
+    name: opsmesh-loki-data

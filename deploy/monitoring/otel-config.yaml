@@ -1,27 +1,96 @@
+# OpenTelemetry Collector Configuration for OpsMesh Production
+# Receives OTLP, exports to Prometheus, Loki, and console
+
 receivers:
   otlp:
     protocols:
       grpc:
         endpoint: 0.0.0.0:4317
+        max_recv_msg_size_mib: 64
       http:
         endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins:
+            - "http://localhost:3000"
+            - "http://localhost:8080"
 
 processors:
   batch:
     timeout: 1s
     send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+
+  resource:
+    attributes:
+      - key: environment
+        value: production
+        action: upsert
+      - key: service.namespace
+        value: opsmesh
+        action: upsert
+
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 100000
+    expected_new_traces_per_sec: 1000
+    policies:
+      - name: errors
+        type: status_code
+        status_code: {status_codes: [ERROR]}
+      - name: slow
+        type: latency
+        latency: {threshold_ms: 1000}
+      - name: default
+        type: probabilistic
+        probabilistic: {sampling_percentage: 10}
 
 exporters:
+  prometheus:
+    endpoint: "0.0.0.0:8888"
+    namespace: opsmesh
+    const_labels:
+      source: otel
+
   logging:
     loglevel: info
+    sampling_initial: 5
+    sampling_thereafter: 2
+
+  # Uncomment for Jaeger export
+  # jaeger:
+  #   endpoint: "jaeger:14250"
+  #   tls:
+  #     insecure: true
+
+  # Uncomment for OTLP export to external system
+  # otlp/external:
+  #   endpoint: "tempo:4317"
+  #   tls:
+  #     insecure: true
 
 service:
+  extensions: [health_check]
   pipelines:
-    traces:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [logging]
     metrics:
       receivers: [otlp]
-      processors: [batch]
+      processors: [memory_limiter, batch, resource]
+      exporters: [prometheus, logging]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, tail_sampling, batch, resource]
       exporters: [logging]
+
+extensions:
+  health_check:
+    endpoint: "0.0.0.0:13134"
+    path: "/"
+    check_collector_pipeline:
+      enabled: true
+      interval: "5s"
+      exporter_names:
+        - prometheus

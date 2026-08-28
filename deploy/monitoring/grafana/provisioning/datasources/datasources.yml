@@ -1,0 +1,44 @@
+# Grafana Datasource Provisioning
+# Auto-configures Prometheus, Loki, and OTel datasources on startup
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: "15s"
+      httpMethod: POST
+      manageAlerts: true
+      prometheusType: Prometheus
+      prometheusVersion: "2.55.0"
+      cacheLevel: 'High'
+      incrementalQuerying: true
+
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    editable: true
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        - datasourceUid: tempo
+          matcherRegex: '"trace_id":"(\w+)"'
+          name: TraceID
+          url: '$${__value.raw}'
+
+  - name: OpenTelemetry
+    type: prometheus
+    uid: otel
+    access: proxy
+    url: http://otel-collector:8888
+    editable: true
+    jsonData:
+      timeInterval: "15s"

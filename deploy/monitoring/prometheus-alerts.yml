@@ -1,0 +1,101 @@
+# Prometheus Alert Rules for OpsMesh Production
+
+groups:
+  - name: opsmesh_service_alerts
+    interval: 30s
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} has been down for more than 1 minute."
+
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate on {{ $labels.job }}"
+          description: "Error rate is {{ $value | humanizePercentage }} for {{ $labels.job }}."
+
+      - alert: HighLatency
+        expr: histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High P99 latency on {{ $labels.job }}"
+          description: "P99 latency is {{ $value }}s for {{ $labels.job }}."
+
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total[5m]) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.job }}"
+          description: "CPU usage is {{ $value }}% for {{ $labels.job }}."
+
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes / 1024 / 1024 > 500
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.job }}"
+          description: "Memory usage is {{ $value }}MB for {{ $labels.job }}."
+
+  - name: opsmesh_infrastructure_alerts
+    interval: 30s
+    rules:
+      - alert: MySQLDown
+        expr: up{job="opsmesh-mysql"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "MySQL is down"
+          description: "MySQL database has been unreachable for 30 seconds."
+
+      - alert: RedisDown
+        expr: up{job="opsmesh-redis"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is down"
+          description: "Redis cache has been unreachable for 30 seconds."
+
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk space low on {{ $labels.instance }}"
+          description: "Less than 10% disk space remaining."
+
+  - name: opsmesh_business_alerts
+    interval: 1m
+    rules:
+      - alert: DeviceOffline
+        expr: opsmesh_device_status{status="offline"} > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} devices are offline"
+          description: "More than 10 devices have been offline for 5+ minutes."
+
+      - alert: TaskExecutionFailed
+        expr: rate(opsmesh_tasks_failed_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High task failure rate"
+          description: "Task failure rate is {{ $value }} per second."
