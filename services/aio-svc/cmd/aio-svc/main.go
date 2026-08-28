@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/anomaly"
+	"github.com/Levango7/OpsMesh/services/aio-svc/internal/gpuanomaly"
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/inspection"
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/noise"
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/prediction"
@@ -40,6 +41,8 @@ func main() {
 	sloManager.AddRule(slo.SLORule{Name: "api-availability", Target: 99.9, Window: "30d", SLIType: slo.SLIAvailability})
 	sloManager.AddRule(slo.SLORule{Name: "api-error-rate", Target: 99.0, Window: "7d", SLIType: slo.SLIErrorRate})
 	sloManager.AddRule(slo.SLORule{Name: "api-latency", Target: 99.5, Window: "14d", SLIType: slo.SLILatency, Threshold: 200})
+
+	gpuDetector := gpuanomaly.NewDetector()
 
 	mux := http.NewServeMux()
 
@@ -312,6 +315,59 @@ func main() {
 	mux.HandleFunc("/api/v1/slo/burn-rate", func(w http.ResponseWriter, r *http.Request) {
 		trends := sloManager.GetBurnRateTrends()
 		writeJSON(w, http.StatusOK, map[string]interface{}{"burn_rate_trends": trends})
+	})
+
+	// GPU 异常检测。
+	mux.HandleFunc("/api/v1/gpu/anomaly/detect", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var metrics []gpuanomaly.GPUMetric
+		if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		anomalies := gpuDetector.FullGPUScan(metrics)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"anomalies": anomalies, "count": len(anomalies),
+		})
+	})
+
+	// GPU 异常历史。
+	mux.HandleFunc("/api/v1/gpu/anomaly/history", func(w http.ResponseWriter, r *http.Request) {
+		history := gpuDetector.GetHistory()
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"history": history, "count": len(history),
+		})
+	})
+
+	// GPU 健康报告。
+	mux.HandleFunc("/api/v1/gpu/health/", func(w http.ResponseWriter, r *http.Request) {
+		nodeID := r.URL.Path[len("/api/v1/gpu/health/"):]
+		if nodeID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "node_id is required"})
+			return
+		}
+		report := gpuDetector.GetHealthReport(nodeID)
+		writeJSON(w, http.StatusOK, report)
+	})
+
+	// GPU 指标摄入。
+	mux.HandleFunc("/api/v1/gpu/metrics/ingest", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var metrics []gpuanomaly.GPUMetric
+		if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		gpuDetector.IngestMetrics(metrics)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"ingested": len(metrics), "status": "ok",
+		})
 	})
 
 	srv := &http.Server{

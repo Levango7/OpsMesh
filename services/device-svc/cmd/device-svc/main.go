@@ -17,6 +17,7 @@ import (
 
 	devicev1 "github.com/Levango7/OpsMesh/services/device-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/catalog"
+	"github.com/Levango7/OpsMesh/services/device-svc/internal/gpu"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/server"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
@@ -51,6 +52,9 @@ func main() {
 
 	cat := catalog.NewCatalog()
 	seedCatalog(cat)
+
+	gpuDetector := gpu.NewDetector()
+	seedGPUs(gpuDetector)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -92,6 +96,35 @@ func main() {
 			return
 		}
 		writeJSON(w, http.StatusOK, impact)
+	})
+
+	mux.HandleFunc("/api/v1/devices/gpus/stats", func(w http.ResponseWriter, r *http.Request) {
+		stats := gpuDetector.GetGPUStats()
+		writeJSON(w, http.StatusOK, stats)
+	})
+	mux.HandleFunc("/api/v1/devices/gpus/", func(w http.ResponseWriter, r *http.Request) {
+		gpuID := r.URL.Path[len("/api/v1/devices/gpus/"):]
+		g, err := gpuDetector.GetGPUInfo(gpuID)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, g)
+	})
+	mux.HandleFunc("/api/v1/devices/gpus", func(w http.ResponseWriter, r *http.Request) {
+		nodeID := r.URL.Query().Get("nodeID")
+		gpus := gpuDetector.ListGPUs(nodeID)
+		writeJSON(w, http.StatusOK, gpus)
+	})
+	mux.HandleFunc("/api/v1/devices/", func(w http.ResponseWriter, r *http.Request) {
+		remainder := r.URL.Path[len("/api/v1/devices/"):]
+		if len(remainder) > 4 && remainder[len(remainder)-4:] == "/gpu" {
+			nodeID := remainder[:len(remainder)-4]
+			gpus := gpuDetector.ListGPUs(nodeID)
+			writeJSON(w, http.StatusOK, gpus)
+			return
+		}
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	})
 
 	httpServer := &http.Server{
@@ -147,4 +180,9 @@ func seedCatalog(c *catalog.Catalog) {
 	c.AddNode(&catalog.CatalogNode{ID: "db-001", Name: "postgres-main", Type: "database", Status: "online", Metadata: map[string]string{"tenantID": "default"}})
 	c.AddEdge(&catalog.CatalogEdge{From: "svc-001", To: "host-001", RelationType: "runs_on"})
 	c.AddEdge(&catalog.CatalogEdge{From: "svc-001", To: "db-001", RelationType: "depends_on"})
+}
+
+func seedGPUs(d *gpu.Detector) {
+	d.DetectGPUs("host-001")
+	d.DetectGPUs("host-002")
 }
