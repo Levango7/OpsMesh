@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpsMesh 控制台</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        h1 { color: #38bdf8; margin-bottom: 20px; }
+        .card { background: #1e293b; border-radius: 8px; padding: 20px; margin-bottom: 16px; border: 1px solid #334155; }
+        .card h2 { color: #38bdf8; margin-bottom: 12px; font-size: 16px; }
+        .status { display: flex; gap: 8px; flex-wrap: wrap; }
+        .badge { padding: 4px 12px; border-radius: 4px; font-size: 12px; }
+        .badge.ok { background: #064e3b; color: #34d399; }
+        .badge.err { background: #450a0a; color: #f87171; }
+        input, button { padding: 8px 12px; border-radius: 4px; border: 1px solid #475569; background: #0f172a; color: #e2e8f0; }
+        button { background: #0284c7; color: white; cursor: pointer; border: none; }
+        button:hover { background: #0369a1; }
+        .row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+        .row label { width: 80px; color: #94a3b8; font-size: 14px; }
+        pre { background: #0f172a; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; max-height: 200px; overflow-y: auto; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+        .stat { text-align: center; padding: 16px; }
+        .stat .value { font-size: 32px; font-weight: bold; color: #38bdf8; }
+        .stat .label { color: #94a3b8; font-size: 12px; margin-top: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🖥️ OpsMesh 控制台</h1>
+        
+        <div class="card">
+            <h2>服务状态</h2>
+            <div class="status" id="services"></div>
+        </div>
+
+        <div class="card">
+            <h2>系统概览</h2>
+            <div class="grid" id="stats">
+                <div class="stat"><div class="value" id="deviceCount">-</div><div class="label">设备数</div></div>
+                <div class="stat"><div class="value" id="taskCount">-</div><div class="label">任务数</div></div>
+                <div class="stat"><div class="value" id="alertCount">-</div><div class="label">告警数</div></div>
+                <div class="stat"><div class="value" id="userCount">-</div><div class="label">用户数</div></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>用户认证</h2>
+            <div class="row"><label>用户名</label><input id="username" value="admin" style="width:200px"></div>
+            <div class="row"><label>密码</label><input id="password" type="password" value="admin123" style="width:200px"></div>
+            <div class="row"><button onclick="login()">登录</button><button onclick="register()">注册</button><button onclick="changePassword()">改密</button></div>
+            <pre id="authResult">未登录</pre>
+        </div>
+
+        <div class="card">
+            <h2>设备管理</h2>
+            <div class="row"><button onclick="loadDevices()">刷新设备列表</button><button onclick="simulateDevice()">模拟设备注册</button></div>
+            <pre id="deviceList">无数据</pre>
+        </div>
+    </div>
+
+    <script>
+        const API = 'http://localhost:8080';
+        let token = localStorage.getItem('opsmesh_token') || '';
+        let changePasswordToken = '';
+
+        async function checkServices() {
+            const services = [
+                { name: 'Controlplane', port: 8080 },
+                { name: 'Auth-svc', port: 8100 },
+                { name: 'Device-svc', port: 8101 },
+                { name: 'Task-svc', port: 8102 },
+                { name: 'Alert-svc', port: 8103 },
+            ];
+            const html = [];
+            for (const s of services) {
+                try {
+                    await fetch(`http://localhost:${s.port}/health`);
+                    html.push(`<span class="badge ok">✅ ${s.name} (:${s.port})</span>`);
+                } catch {
+                    html.push(`<span class="badge err">❌ ${s.name} (:${s.port})</span>`);
+                }
+            }
+            document.getElementById('services').innerHTML = html.join('');
+        }
+
+        async function login() {
+            const body = { username: document.getElementById('username').value, password: document.getElementById('password').value };
+            try {
+                const resp = await fetch(`${API}/api/v1/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await resp.json();
+                if (data.token) {
+                    token = data.token;
+                    localStorage.setItem('opsmesh_token', token);
+                    if (data.mustChangePassword) {
+                        changePasswordToken = data.changePasswordToken;
+                        document.getElementById('authResult').textContent = '需要改密! Token: ' + changePasswordToken;
+                    } else {
+                        document.getElementById('authResult').textContent = '登录成功! Token: ' + token.substring(0, 20) + '...';
+                    }
+                } else {
+                    document.getElementById('authResult').textContent = JSON.stringify(data, null, 2);
+                }
+            } catch (e) {
+                document.getElementById('authResult').textContent = '错误: ' + e.message;
+            }
+        }
+
+        async function register() {
+            const body = { username: document.getElementById('username').value, password: document.getElementById('password').value, email: 'test@opsmesh.io' };
+            try {
+                const resp = await fetch(`${API}/api/v1/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await resp.json();
+                document.getElementById('authResult').textContent = JSON.stringify(data, null, 2);
+            } catch (e) {
+                document.getElementById('authResult').textContent = '错误: ' + e.message;
+            }
+        }
+
+        async function changePassword() {
+            const body = { oldPassword: 'admin123', newPassword: 'NewPass123' };
+            try {
+                const resp = await fetch(`${API}/api/v1/auth/change-password`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (changePasswordToken || token) },
+                    body: JSON.stringify(body)
+                });
+                const data = await resp.json();
+                document.getElementById('authResult').textContent = JSON.stringify(data, null, 2);
+            } catch (e) {
+                document.getElementById('authResult').textContent = '错误: ' + e.message;
+            }
+        }
+
+        async function loadDevices() {
+            try {
+                const resp = await fetch(`${API}/api/v1/devices?limit=10`, {
+                    headers: { 'X-Tenant-ID': 'default', 'Authorization': 'Bearer ' + token }
+                });
+                const data = await resp.json();
+                document.getElementById('deviceList').textContent = JSON.stringify(data, null, 2);
+            } catch (e) {
+                document.getElementById('deviceList').textContent = '错误: ' + e.message;
+            }
+        }
+
+        async function simulateDevice() {
+            const body = { name: 'Device-' + Date.now(), ip: '192.168.1.' + Math.floor(Math.random()*254) };
+            try {
+                const resp = await fetch(`${API}/api/v1/devices`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': 'default', 'Authorization': 'Bearer ' + token },
+                    body: JSON.stringify(body)
+                });
+                const data = await resp.json();
+                document.getElementById('deviceList').textContent = JSON.stringify(data, null, 2);
+            } catch (e) {
+                document.getElementById('deviceList').textContent = '错误: ' + e.message;
+            }
+        }
+
+        checkServices();
+        setInterval(checkServices, 5000);
+    </script>
+</body>
+</html>
