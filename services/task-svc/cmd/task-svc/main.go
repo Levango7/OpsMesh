@@ -21,7 +21,9 @@ import (
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/task-svc/pkg/config"
 	"opsmesh/pkg/circuit"
+	"opsmesh/pkg/compress"
 	"opsmesh/pkg/metrics"
+	"opsmesh/pkg/ratelimit"
 	"opsmesh/pkg/trace"
 )
 
@@ -44,7 +46,11 @@ func main() {
 
 	srv := server.NewServer(svc)
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(
+			ratelimit.GRPCInterceptor(),
+		),
+	)
 	taskv1.RegisterTaskServiceServer(grpcServer, srv)
 	taskv1.RegisterScheduleServiceServer(grpcServer, srv)
 	taskv1.RegisterResultServiceServer(grpcServer, srv)
@@ -75,6 +81,8 @@ func main() {
 
 	var handler http.Handler = mux
 	handler = metrics.HTTPMiddleware(handler)
+	handler = ratelimit.Middleware()(handler)
+	handler = compress.Middleware()(handler)
 	handler = trace.HTTPMiddleware("opsmesh/task-svc")(handler)
 
 	httpServer := &http.Server{

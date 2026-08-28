@@ -22,7 +22,10 @@ import (
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/device-svc/pkg/config"
+	"opsmesh/pkg/compress"
 	"opsmesh/pkg/metrics"
+	"opsmesh/pkg/ratelimit"
+	"opsmesh/pkg/tenant"
 	"opsmesh/pkg/trace"
 )
 
@@ -39,10 +42,24 @@ func main() {
 
 	st := store.NewMemoryStore()
 
-	svc := service.NewService(st, st, st, st)
+	tenantMgr := tenant.NewManager(nil, nil, map[tenant.ResourceType]int{
+		tenant.ResourceDevices:  100,
+		tenant.ResourceAgents:   50,
+		tenant.ResourceTasks:    500,
+		tenant.ResourceAlerts:   100,
+		tenant.ResourceWebhooks: 10,
+		tenant.ResourceAPIKeys:  5,
+	})
+
+	svc := service.NewService(st, st, st, st, tenantMgr)
 	srv := server.NewServer(svc)
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(
+			tenant.GRPCInterceptor(),
+			ratelimit.GRPCInterceptor(),
+		),
+	)
 	devicev1.RegisterDeviceServiceServer(grpcServer, srv)
 	devicev1.RegisterAgentServiceServer(grpcServer, srv)
 	devicev1.RegisterCMDBServiceServer(grpcServer, srv)
@@ -140,6 +157,9 @@ func main() {
 
 	var handler http.Handler = mux
 	handler = metrics.HTTPMiddleware(handler)
+	handler = ratelimit.Middleware()(handler)
+	handler = compress.Middleware()(handler)
+	handler = tenant.Middleware(cfg.JWTSecret)(handler)
 	handler = trace.HTTPMiddleware("opsmesh/device-svc")(handler)
 
 	httpServer := &http.Server{

@@ -10,6 +10,7 @@ import (
 type Config struct {
 	GRPCPort        int           `json:"grpcPort"`
 	HTTPPort        int           `json:"httpPort"`
+	JWTSecret       string        `json:"jwtSecret"`
 	StoreType       string        `json:"storeType"` // "memory" or "sql"
 	DSN             string        `json:"dsn"`       // SQLStore DSN (if StoreType=sql)
 	RedisAddr       string        `json:"redisAddr"` // Redis address (if StoreType=sql)
@@ -25,6 +26,7 @@ func Load() *Config {
 	return &Config{
 		GRPCPort:        getEnvInt("DEVICE_SVC_GRPC_PORT", 50052),
 		HTTPPort:        getEnvInt("DEVICE_SVC_HTTP_PORT", 8081),
+		JWTSecret:       getEnv("DEVICE_SVC_JWT_SECRET", "default-jwt-secret-change-in-production"),
 		StoreType:       getEnv("DEVICE_SVC_STORE_TYPE", "memory"),
 		DSN:             getEnv("DEVICE_SVC_DSN", ""),
 		RedisAddr:       getEnv("DEVICE_SVC_REDIS_ADDR", ""),

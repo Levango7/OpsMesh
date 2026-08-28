@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opsmesh-config
+  namespace: opsmesh
+  labels:
+    app.kubernetes.io/name: opsmesh
+    app.kubernetes.io/component: config
+data:
+  OPSMESH_LOG_LEVEL: "info"
+  OPSMESH_LOG_FORMAT: "json"
+  OPSMESH_HTTP_PORT: "8080"
+  OPSMESH_GRPC_PORT: "9090"
+  OPSMESH_METRICS_PORT: "9091"
+  OPSMESH_STORE: "mysql"
+  OPSMESH_PRODUCTION: "true"
+  OPSMESH_REQUIRE_AUTH: "true"
+  OPSMESH_TASK_LEASE_SEC: "300"
+  OPSMESH_TASK_MAX_RETRIES: "3"
+  OPSMESH_LEADER_TTL_SEC: "15"
+  OPSMESH_LEADER_TICK_SEC: "5"
+  OPSMESH_ARCHIVE_AGE_MIN: "1440"
+  OPSMESH_ALERT_NOTIFIER_TYPE: "generic"

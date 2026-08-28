@@ -17,13 +17,16 @@ import (
 
 	alertv1 "github.com/Levango7/OpsMesh/services/alert-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/engine"
+	"github.com/Levango7/OpsMesh/services/alert-svc/internal/escalation"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/notify"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/server"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/alert-svc/pkg/config"
 	"opsmesh/pkg/circuit"
+	"opsmesh/pkg/compress"
 	"opsmesh/pkg/metrics"
+	"opsmesh/pkg/ratelimit"
 	"opsmesh/pkg/security"
 	"opsmesh/pkg/trace"
 )
@@ -55,8 +58,17 @@ func main() {
 
 	srv := server.NewServer(svc)
 
+	esc := escalation.NewEscalator()
+	escHandler := server.NewEscalationHandler(esc)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	esc.Start(ctx)
+
 	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(trace.GRPCServerInterceptor()),
+		grpc.ChainUnaryInterceptor(
+			trace.GRPCServerInterceptor(),
+			ratelimit.GRPCInterceptor(),
+		),
 	)
 	alertv1.RegisterAlertServiceServer(grpcServer, srv)
 
@@ -80,6 +92,8 @@ func main() {
 	})
 	mux.Handle("/metrics", metrics.GetHandler())
 
+	escHandler.RegisterRoutes(mux)
+
 	corsConfig := security.CORSConfig{
 		AllowedOrigins: []string{"https://opsmesh.io", "https://app.opsmesh.io"},
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE"},
@@ -93,6 +107,8 @@ func main() {
 	handler = security.RequestSizeLimit(1 << 20)(handler)
 	handler = security.IPRateLimit(60, time.Minute)(handler)
 	handler = security.UserRateLimit(120, time.Minute)(handler)
+	handler = ratelimit.Middleware()(handler)
+	handler = compress.Middleware()(handler)
 	handler = corsConfig.Middleware()(handler)
 	handler = trace.HTTPMiddleware("opsmesh/alert-svc")(handler)
 
@@ -122,10 +138,13 @@ func main() {
 	<-quit
 	log.Println("Shutting down...")
 
+	cancel()
+	esc.Stop()
+
 	healthServer.SetServingStatus("opsmesh.alert.v1.AlertService", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-	defer cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer shutdownCancel()
 
 	grpcServer.GracefulStop()
 

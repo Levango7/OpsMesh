@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,7 @@ import (
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
 	"opsmesh/pkg/metrics"
 	"opsmesh/pkg/retry"
+	"opsmesh/pkg/tenant"
 )
 
 // Errors returned by the service.
@@ -33,15 +35,17 @@ type Service struct {
 	agentStore    store.AgentStore
 	ciStore       store.CiStore
 	discoveryStore store.DiscoveryStore
+	tenantMgr     *tenant.Manager
 }
 
 // NewService creates a new Service.
-func NewService(ds store.DeviceStore, as store.AgentStore, cs store.CiStore, disc store.DiscoveryStore) *Service {
+func NewService(ds store.DeviceStore, as store.AgentStore, cs store.CiStore, disc store.DiscoveryStore, tm *tenant.Manager) *Service {
 	return &Service{
 		deviceStore:   ds,
 		agentStore:    as,
 		ciStore:       cs,
 		discoveryStore: disc,
+		tenantMgr:     tm,
 	}
 }
 
@@ -51,6 +55,17 @@ func NewService(ds store.DeviceStore, as store.AgentStore, cs store.CiStore, dis
 func (s *Service) RegisterDevice(ctx context.Context, req *devicev1.RegisterDeviceRequest) (*devicev1.Device, error) {
 	if req.Device == nil {
 		return nil, ErrDeviceInvalid
+	}
+
+	// Enforce device count quota for the tenant.
+	if s.tenantMgr != nil {
+		tenantID, err := tenant.TenantIDFromContext(ctx)
+		if err != nil {
+			tenantID = req.Device.TenantId
+		}
+		if err := s.tenantMgr.EnforceQuota(ctx, tenantID, tenant.ResourceDevices, 1); err != nil {
+			return nil, fmt.Errorf("device quota exceeded: %w", err)
+		}
 	}
 
 	now := timestamppb.Now()
@@ -64,6 +79,15 @@ func (s *Service) RegisterDevice(ctx context.Context, req *devicev1.RegisterDevi
 
 	storeDev := protoToDevice(d)
 	s.deviceStore.RegisterDevice(storeDev)
+
+	// Track device usage for the tenant.
+	if s.tenantMgr != nil {
+		tenantID, _ := tenant.TenantIDFromContext(ctx)
+		if tenantID == "" {
+			tenantID = d.TenantId
+		}
+		_ = s.tenantMgr.TrackUsage(ctx, tenantID, tenant.ResourceDevices, 1)
+	}
 
 	return d, nil
 }

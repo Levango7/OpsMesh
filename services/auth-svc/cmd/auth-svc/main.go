@@ -22,6 +22,7 @@ import (
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/auth-svc/pkg/config"
 	"opsmesh/pkg/security"
+	"opsmesh/pkg/tenant"
 	"opsmesh/pkg/trace"
 )
 
@@ -41,7 +42,10 @@ func main() {
 	srv := server.NewServer(svc)
 
 	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(trace.GRPCServerInterceptor()),
+		grpc.ChainUnaryInterceptor(
+			tenant.GRPCInterceptor(),
+			trace.GRPCServerInterceptor(),
+		),
 	)
 	authv1.RegisterAuthServiceServer(grpcServer, srv)
 	authv1.RegisterUserServiceServer(grpcServer, srv)
@@ -83,6 +87,7 @@ func main() {
 	handler = security.IPRateLimit(60, time.Minute)(handler)
 	handler = security.UserRateLimit(120, time.Minute)(handler)
 	handler = corsConfig.Middleware()(handler)
+	handler = tenant.Middleware(cfg.JWTSecret)(handler)
 	handler = trace.HTTPMiddleware("opsmesh/auth-svc")(handler)
 
 	httpServer := &http.Server{

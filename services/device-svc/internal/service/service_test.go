@@ -10,7 +10,7 @@ import (
 
 func newTestService() *Service {
 	st := store.NewMemoryStore()
-	return NewService(st, st, st, st)
+	return NewService(st, st, st, st, nil)
 }
 
 // === DeviceService Tests ===
