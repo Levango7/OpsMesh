@@ -131,6 +131,7 @@
         const API = 'http://localhost:8080';
         let token = localStorage.getItem('opsmesh_token') || '';
         let changePasswordToken = '';
+        const defaultHeaders = { 'X-Tenant-ID': 'default' };
         let deviceSimInterval = null;
         
         // 更新时间
@@ -162,10 +163,10 @@
         // 更新统计
         async function updateStats() {
             if (!token) return;
-            const h = { 'X-Tenant-ID': 'default', 'Authorization': 'Bearer ' + token };
+            const h = { ...defaultHeaders, 'Authorization': 'Bearer ' + token };
             try {
                 const d = await (await fetch(`${API}/api/v1/devices?limit=1`, { headers: h })).json();
-                document.getElementById('deviceCount').textContent = d.total || d.devices?.length || 0;
+                document.getElementById('deviceCount').textContent = d.total || d.devices?.length || d.items?.length || 0;
             } catch {}
             try {
                 const u = await (await fetch(`${API}/api/v1/auth/users?limit=1`, { headers: h })).json();
@@ -257,7 +258,7 @@
             if (!token) { el.innerHTML = '<div style="color:#f87171">请先登录</div>'; return; }
             try {
                 const resp = await fetch(`${API}/api/v1/devices?limit=50`, {
-                    headers: { 'X-Tenant-ID': 'default', 'Authorization': 'Bearer ' + token }
+                    headers: { ...defaultHeaders, 'Authorization': 'Bearer ' + token }
                 });
                 const data = await resp.json();
                 const devices = data.devices || data.items || [];
@@ -287,13 +288,14 @@
             try {
                 await fetch(`${API}/api/v1/devices`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': 'default', 'Authorization': 'Bearer ' + token },
+                    headers: { ...defaultHeaders, 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
                     body: JSON.stringify(body)
                 });
                 loadDevices();
             } catch (e) {
                 alert('注册失败: ' + e.message);
             }
+        }
         }
         
         // 启动10台设备模拟
