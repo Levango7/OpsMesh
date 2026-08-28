@@ -1,8 +1,23 @@
 // 路由表 — 概览 + 运维 + 资产 + 交付 + 观测 + 系统管理 + 登录/注册
 import { createRouter, createWebHistory } from 'vue-router'
-import { watch } from 'vue'
+import { watch, defineComponent, h } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { t, currentLang } from '@/i18n'
+
+const RouteSkeleton = defineComponent({
+  name: 'RouteSkeleton',
+  setup() {
+    return () =>
+      h('div', { class: 'route-skeleton', style: { padding: '22px' } }, [
+        h('div', { class: 'skeleton-line', style: { width: '30%', height: '28px', marginBottom: '18px' } }),
+        h('div', { class: 'skeleton-line', style: { width: '60%', height: '16px', marginBottom: '12px' } }),
+        h('div', { class: 'skeleton-line', style: { width: '45%', height: '16px', marginBottom: '12px' } }),
+        h('div', { class: 'skeleton-line', style: { width: '80%', height: '16px', marginBottom: '24px' } }),
+        h('div', { class: 'skeleton-card', style: { height: '120px', marginBottom: '16px' } }),
+        h('div', { class: 'skeleton-card', style: { height: '120px' } })
+      ])
+  }
+})
 
 const routes = [
   // 公共路由：登录 / 注册
@@ -11,10 +26,10 @@ const routes = [
 
   // 概览
   { path: '/', redirect: '/overview' },
-  { path: '/overview', name: 'overview', component: () => import('@/views/OverviewView.vue'), meta: { title: 'nav.home', group: '概览', icon: 'home', requirePerm: '' } },
+  { path: '/overview', name: 'overview', component: () => import('@/views/OverviewView.vue'), meta: { title: 'nav.home', group: '概览', icon: 'home', requirePerm: '', prefetch: true } },
 
   // 运维管理
-  { path: '/devices', name: 'devices', component: () => import('@/views/DevicesView.vue'), meta: { title: 'nav.devices', group: '运维管理', icon: 'device', requirePerm: 'device:read' } },
+  { path: '/devices', name: 'devices', component: () => import('@/views/DevicesView.vue'), meta: { title: 'nav.devices', group: '运维管理', icon: 'device', requirePerm: 'device:read', prefetch: true } },
   { path: '/devices/:id', name: 'device-detail', component: () => import('@/views/DeviceDetailView.vue'), meta: { title: 'device_detail.title', group: '运维管理', icon: 'device', requirePerm: 'device:read' } },
   { path: '/tasks', name: 'tasks', component: () => import('@/views/TasksView.vue'), meta: { title: 'nav.tasks', group: '运维管理', icon: 'task', requirePerm: 'task:read' } },
   { path: '/alerts', name: 'alerts', component: () => import('@/views/AlertsView.vue'), meta: { title: 'nav.alerts', group: '运维管理', icon: 'alerts', requirePerm: 'alert:read' } },
@@ -36,7 +51,6 @@ const routes = [
   { path: '/users', name: 'users', component: () => import('@/views/UsersView.vue'), meta: { title: 'nav.users', group: '系统管理', icon: 'users', requirePerm: 'user:read' } },
   { path: '/roles', name: 'roles', component: () => import('@/views/RolesView.vue'), meta: { title: 'nav.roles', group: '系统管理', icon: 'roles', requirePerm: 'role:read' } },
   { path: '/permissions', name: 'permissions', component: () => import('@/views/PermissionsView.vue'), meta: { title: 'nav.permissions', group: '系统管理', icon: 'permissions', requirePerm: 'role:read' } },
-  // 密钥管理：查看 provider 状态 + 测试连接 + 配置 Vault 地址
   { path: '/secrets', name: 'secrets', component: () => import('@/views/secrets/SecretsView.vue'), meta: { title: 'nav.secrets', group: '系统管理', icon: 'key', requirePerm: 'role:read' } },
 
   // GPU 资源管理
@@ -63,45 +77,48 @@ const routes = [
 
 const router = createRouter({
   history: createWebHistory('/enterprise/'),
-  routes
+  routes,
+  scrollBehavior(to, from, savedPosition) {
+    if (savedPosition) return savedPosition
+    return { top: 0 }
+  }
 })
 
-// 全局前置守卫：未登录时重定向到 /login（public 路由除外）
-// async 化：等待 auth store 完成首次会话恢复（fetchMe）后再判断 isLoggedIn，
-// 避免冷启动时序竞争——刷新已登录页面时 user 初始为 null，若同步判断会误重定向到 /login。
-// 权限检查：meta.requirePerm 指定该路由所需权限（与 App.vue 侧栏 navGroups required 同源）；
-//           空字符串表示无权限门槛（登录即可见）；未授权时重定向到 /overview。
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
-  // 等待会话恢复完成（首次导航）；后续导航 ready 已 resolve，无额外开销
   await auth.ready
   if (!to.meta.public && !auth.isLoggedIn) {
     return { name: 'login' }
   }
-  // 已登录访问登录/注册页时重定向到总览
   if (to.meta.public && auth.isLoggedIn && (to.name === 'login' || to.name === 'register')) {
     return { name: 'overview' }
   }
-  // 权限检查：meta.requirePerm 存在且非空时，校验当前用户是否拥有该权限
-  // hasPerm 对空权限集合放宽（demo 模式），与侧栏过滤逻辑一致
   if (to.meta.requirePerm && !auth.hasPerm(to.meta.requirePerm)) {
     return { name: 'overview' }
   }
   return true
 })
 
-// document.title 跟随当前语言：afterEach 设置初始 title，
-// watch currentLang 确保语言切换时 title 同步更新（afterEach 仅在路由变更时触发）。
 function updateTitle(to) {
   const pageTitle = to.meta.title ? t(to.meta.title) : ''
   const appTitle = t('app.title')
   document.title = pageTitle ? `${pageTitle} · ${appTitle}` : appTitle
 }
 router.afterEach(updateTitle)
-// 语言切换时重新设置当前路由的 title（afterEach 不会因语言变化而重新触发）
 watch(currentLang, () => {
   const route = router.currentRoute.value
   if (route) updateTitle(route)
 })
 
+router.afterEach((to) => {
+  if (to.meta.prefetch) return
+  const currentIndex = routes.findIndex((r) => r.name === to.name)
+  if (currentIndex === -1) return
+  const nextRoute = routes[currentIndex + 1]
+  if (nextRoute?.meta.prefetch && typeof nextRoute.component === 'function') {
+    nextRoute.component()
+  }
+})
+
+export { RouteSkeleton }
 export default router

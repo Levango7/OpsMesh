@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -20,6 +21,7 @@ import (
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/auth-svc/pkg/config"
+	"opsmesh/pkg/security"
 )
 
 func main() {
@@ -59,9 +61,25 @@ func main() {
 		_, _ = w.Write([]byte("ready"))
 	})
 
+	corsConfig := security.CORSConfig{
+		AllowedOrigins: []string{"https://opsmesh.io", "https://app.opsmesh.io"},
+		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE"},
+		AllowedHeaders: []string{"Content-Type", "Authorization", "X-User-ID"},
+	}
+
+	var handler http.Handler = mux
+	handler = security.SecurityHeadersMiddleware()(handler)
+	handler = security.ConnectionLimit(100)(handler)
+	handler = security.RequestSizeLimit(1 << 20)(handler)
+	handler = security.IPRateLimit(60, time.Minute)(handler)
+	handler = security.UserRateLimit(120, time.Minute)(handler)
+	handler = corsConfig.Middleware()(handler)
+
 	httpServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: mux,
+		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),
+		Handler:      handler,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
 	}
 
 	go func() {

@@ -6,6 +6,7 @@ import router from './router'
 import { t, initLang } from './i18n'
 import { useThemeStore } from './stores/theme'
 import { useAuthStore } from './stores/auth'
+import { registerSW } from './registerSW'
 import './assets/tokens.css'
 
 const app = createApp(App)
@@ -25,3 +26,8 @@ useThemeStore().init()
 useAuthStore().fetchMe()
 
 app.mount('#app')
+
+// 注册 Service Worker（生产环境启用）
+if (import.meta.env.PROD) {
+  registerSW()
+}

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>离线 — OpsMesh</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        background: #0f172a;
+        color: #e2e8f0;
+        text-align: center;
+      }
+      .container { padding: 2rem; max-width: 400px; }
+      .icon { font-size: 4rem; margin-bottom: 1rem; }
+      h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+      p { color: #94a3b8; line-height: 1.6; margin-bottom: 1.5rem; }
+      button {
+        background: #6366f1;
+        color: #fff;
+        border: none;
+        padding: 0.75rem 1.5rem;
+        border-radius: 0.5rem;
+        font-size: 1rem;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      button:hover { background: #4f46e5; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="icon">📡</div>
+      <h1>网络连接已断开</h1>
+      <p>请检查您的网络连接后重试。部分缓存内容可能仍可用。</p>
+      <button onclick="window.location.reload()">重新连接</button>
+    </div>
+  </body>
+</html>

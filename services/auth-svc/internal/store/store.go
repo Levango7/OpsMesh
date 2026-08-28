@@ -421,3 +421,8 @@ func (s *MemoryStore) PurgeBlacklist() {
 		}
 	}
 }
+
+// Close is a no-op for MemoryStore (implements Store interface).
+func (s *MemoryStore) Close() error {
+	return nil
+}
