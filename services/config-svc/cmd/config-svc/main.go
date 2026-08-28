@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"google.golang.org/grpc"
@@ -15,6 +17,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	configv1 "github.com/Levango7/OpsMesh/services/config-svc/api/proto/v1"
+	"github.com/Levango7/OpsMesh/services/config-svc/internal/drift"
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/server"
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/store"
@@ -27,6 +30,7 @@ func main() {
 	st := store.NewMemoryStore(cfg.EncryptionKey, cfg.MaxHistorySize)
 	svc := service.NewService(st)
 	srv := server.NewServer(svc)
+	det := drift.NewDetector(st)
 
 	grpcServer := grpc.NewServer()
 	configv1.RegisterConfigServiceServer(grpcServer, srv)
@@ -55,6 +59,8 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready"))
 	})
+
+	registerDriftHandlers(mux, det)
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
@@ -95,4 +101,94 @@ func main() {
 	}
 
 	log.Println("Server stopped")
+}
+
+func registerDriftHandlers(mux *http.ServeMux, det *drift.Detector) {
+	mux.HandleFunc("/api/v1/drift/rules", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			var req struct {
+				ConfigKey     string `json:"configKey"`
+				ExpectedValue string `json:"expectedValue"`
+				Comparison    string `json:"comparison"`
+				TenantID      string `json:"tenantId"`
+				Description   string `json:"description"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+				return
+			}
+			if req.ConfigKey == "" || req.TenantID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "configKey and tenantId are required"})
+				return
+			}
+			compType := drift.ComparisonType(req.Comparison)
+			if compType == "" {
+				compType = drift.ComparisonExact
+			}
+			rule := det.RegisterRule(req.ConfigKey, req.ExpectedValue, compType, req.TenantID, req.Description)
+			writeJSON(w, http.StatusCreated, rule)
+
+		case http.MethodGet:
+			rules := det.ListRules()
+			writeJSON(w, http.StatusOK, rules)
+
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
+	})
+
+	mux.HandleFunc("/api/v1/drift/rules/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/api/v1/drift/rules/")
+		if id == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "rule ID is required"})
+			return
+		}
+		if !det.UnregisterRule(id) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "rule not found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	})
+
+	mux.HandleFunc("/api/v1/drift/check", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		results, err := det.ScanAll()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, results)
+	})
+
+	mux.HandleFunc("/api/v1/drift/history", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		history := det.GetDriftHistory()
+		writeJSON(w, http.StatusOK, history)
+	})
+
+	mux.HandleFunc("/api/v1/drift/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		status := det.GetStatus()
+		writeJSON(w, http.StatusOK, status)
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(data)
 }

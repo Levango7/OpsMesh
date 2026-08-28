@@ -19,6 +19,7 @@ import (
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/noise"
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/prediction"
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/rootcause"
+	"github.com/Levango7/OpsMesh/services/aio-svc/internal/slo"
 )
 
 func main() {
@@ -33,6 +34,12 @@ func main() {
 	reducer := noise.NewReducer()
 	predictor := prediction.NewPredictor()
 	inspector := inspection.NewInspector()
+
+	// 初始化 SLO 管理器并注册默认规则。
+	sloManager := slo.NewManager()
+	sloManager.AddRule(slo.SLORule{Name: "api-availability", Target: 99.9, Window: "30d", SLIType: slo.SLIAvailability})
+	sloManager.AddRule(slo.SLORule{Name: "api-error-rate", Target: 99.0, Window: "7d", SLIType: slo.SLIErrorRate})
+	sloManager.AddRule(slo.SLORule{Name: "api-latency", Target: 99.5, Window: "14d", SLIType: slo.SLILatency, Threshold: 200})
 
 	mux := http.NewServeMux()
 
@@ -248,6 +255,63 @@ func main() {
 		tenantID := r.URL.Query().Get("tenant_id")
 		score := inspector.GetRiskScore(tenantID, deviceID)
 		writeJSON(w, http.StatusOK, score)
+	})
+
+	// SLO 评估。
+	mux.HandleFunc("/api/v1/slo/evaluate", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req struct {
+			GoodCount  int `json:"good_count"`
+			TotalCount int `json:"total_count"`
+			ErrorCount int `json:"error_count"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if req.TotalCount == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "total_count must be > 0"})
+			return
+		}
+		results := sloManager.EvaluateAll(req.GoodCount, req.TotalCount, req.ErrorCount)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"results": results})
+	})
+
+	// SLO 状态总览。
+	mux.HandleFunc("/api/v1/slo/status", func(w http.ResponseWriter, r *http.Request) {
+		overview := sloManager.GetStatusOverview()
+		writeJSON(w, http.StatusOK, overview)
+	})
+
+	// SLO 错误预算计算。
+	mux.HandleFunc("/api/v1/slo/error-budget", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req struct {
+			CurrentValue float64 `json:"current_value"`
+			Target       float64 `json:"target"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		budget := sloManager.CalculateErrorBudget(req.CurrentValue, req.Target)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"current_value": req.CurrentValue,
+			"target":        req.Target,
+			"error_budget":  budget,
+		})
+	})
+
+	// SLO 消耗速率趋势。
+	mux.HandleFunc("/api/v1/slo/burn-rate", func(w http.ResponseWriter, r *http.Request) {
+		trends := sloManager.GetBurnRateTrends()
+		writeJSON(w, http.StatusOK, map[string]interface{}{"burn_rate_trends": trends})
 	})
 
 	srv := &http.Server{
