@@ -15,6 +15,10 @@ type Config struct {
 	MaxTasks        int           `json:"maxTasks"`
 	MaxRetries      int           `json:"maxRetries"`
 	TaskTimeout     int           `json:"taskTimeout"`
+
+	// OTel tracing settings.
+	OTelEndpoint string `json:"otelEndpoint"` // OTLP gRPC collector address (empty = disabled)
+	LogLevel     string `json:"logLevel"`     // debug, info, warn, error (default: info)
 }
 
 // Load returns a Config populated from environment variables with defaults.
@@ -27,6 +31,8 @@ func Load() *Config {
 		MaxTasks:        getEnvInt("TASK_SVC_MAX_TASKS", 10000),
 		MaxRetries:      getEnvInt("TASK_SVC_MAX_RETRIES", 3),
 		TaskTimeout:     getEnvInt("TASK_SVC_TASK_TIMEOUT", 300),
+		OTelEndpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		LogLevel:        getEnv("LOG_LEVEL", "info"),
 	}
 }
 

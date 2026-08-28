@@ -22,26 +22,42 @@ import (
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/alert-svc/pkg/config"
+	"opsmesh/pkg/circuit"
+	"opsmesh/pkg/metrics"
 	"opsmesh/pkg/security"
+	"opsmesh/pkg/trace"
 )
 
 func main() {
 	cfg := config.Load()
+
+	metrics.Init("alert-svc")
+
+	shutdown, err := trace.InitTracer("alert-svc", cfg.OTelEndpoint)
+	if err != nil {
+		log.Fatalf("Failed to initialize tracer: %v", err)
+	}
+	defer shutdown(context.Background())
 
 	st := store.NewMemoryStore()
 	eng := engine.NewEngine(nil)
 
 	svc := service.NewService(eng, st)
 
+	var cb *circuit.Breaker
 	if cfg.PagerDutyEnabled {
 		pdClient := notify.NewPagerDutyClient(cfg.PagerDutyRoutingKey, cfg.PagerDutyAPIURL, 10*time.Second, false)
+		cb = circuit.New("pagerduty", 5, 30*time.Second)
 		svc.SetNotifier(pdClient)
+		svc.SetCircuitBreaker(cb)
 		log.Printf("PagerDuty notifications enabled (routing key: %s)", maskRoutingKey(cfg.PagerDutyRoutingKey))
 	}
 
 	srv := server.NewServer(svc)
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(trace.GRPCServerInterceptor()),
+	)
 	alertv1.RegisterAlertServiceServer(grpcServer, srv)
 
 	healthServer := health.NewServer()
@@ -62,6 +78,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready"))
 	})
+	mux.Handle("/metrics", metrics.GetHandler())
 
 	corsConfig := security.CORSConfig{
 		AllowedOrigins: []string{"https://opsmesh.io", "https://app.opsmesh.io"},
@@ -70,12 +87,14 @@ func main() {
 	}
 
 	var handler http.Handler = mux
+	handler = metrics.HTTPMiddleware(handler)
 	handler = security.SecurityHeadersMiddleware()(handler)
 	handler = security.ConnectionLimit(100)(handler)
 	handler = security.RequestSizeLimit(1 << 20)(handler)
 	handler = security.IPRateLimit(60, time.Minute)(handler)
 	handler = security.UserRateLimit(120, time.Minute)(handler)
 	handler = corsConfig.Middleware()(handler)
+	handler = trace.HTTPMiddleware("opsmesh/alert-svc")(handler)
 
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),

@@ -15,6 +15,10 @@ type Config struct {
 	RefreshTokenTTL time.Duration `json:"refreshTokenTTL"`
 	RedisAddr       string        `json:"redisAddr"`
 	ShutdownTimeout time.Duration `json:"shutdownTimeout"`
+
+	// OTel tracing settings.
+	OTelEndpoint string `json:"otelEndpoint"` // OTLP gRPC collector address (empty = disabled)
+	LogLevel     string `json:"logLevel"`     // debug, info, warn, error (default: info)
 }
 
 // Load returns a Config populated from environment variables with defaults.
@@ -27,6 +31,8 @@ func Load() *Config {
 		RefreshTokenTTL: getEnvDuration("AUTH_SVC_REFRESH_TOKEN_TTL", 7*24*time.Hour),
 		RedisAddr:       getEnv("AUTH_SVC_REDIS_ADDR", ""),
 		ShutdownTimeout: getEnvDuration("AUTH_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
+		OTelEndpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		LogLevel:        getEnv("LOG_LEVEL", "info"),
 	}
 }
 

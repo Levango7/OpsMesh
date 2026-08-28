@@ -16,6 +16,10 @@ type Config struct {
 	ShutdownTimeout time.Duration `json:"shutdownTimeout"`
 	EncryptionKey   string        `json:"encryptionKey"` // Key for secrets encryption at rest
 	MaxHistorySize  int           `json:"maxHistorySize"` // Max versions to retain per config/secret
+
+	// OTel tracing settings.
+	OTelEndpoint string `json:"otelEndpoint"` // OTLP gRPC collector address (empty = disabled)
+	LogLevel     string `json:"logLevel"`     // debug, info, warn, error (default: info)
 }
 
 // Load returns a Config populated from environment variables with defaults.
@@ -29,6 +33,8 @@ func Load() *Config {
 		ShutdownTimeout: getEnvDuration("CONFIG_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
 		EncryptionKey:   getEnv("CONFIG_SVC_ENCRYPTION_KEY", "default-encryption-key-change-in-production"),
 		MaxHistorySize:  getEnvInt("CONFIG_SVC_MAX_HISTORY_SIZE", 50),
+		OTelEndpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		LogLevel:        getEnv("LOG_LEVEL", "info"),
 	}
 }
 

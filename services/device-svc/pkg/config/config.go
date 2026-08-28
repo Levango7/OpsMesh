@@ -14,6 +14,10 @@ type Config struct {
 	DSN             string        `json:"dsn"`       // SQLStore DSN (if StoreType=sql)
 	RedisAddr       string        `json:"redisAddr"` // Redis address (if StoreType=sql)
 	ShutdownTimeout time.Duration `json:"shutdownTimeout"`
+
+	// OTel tracing settings.
+	OTelEndpoint string `json:"otelEndpoint"` // OTLP gRPC collector address (empty = disabled)
+	LogLevel     string `json:"logLevel"`     // debug, info, warn, error (default: info)
 }
 
 // Load returns a Config populated from environment variables with defaults.
@@ -25,6 +29,8 @@ func Load() *Config {
 		DSN:             getEnv("DEVICE_SVC_DSN", ""),
 		RedisAddr:       getEnv("DEVICE_SVC_REDIS_ADDR", ""),
 		ShutdownTimeout: getEnvDuration("DEVICE_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
+		OTelEndpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		LogLevel:        getEnv("LOG_LEVEL", "info"),
 	}
 }
 

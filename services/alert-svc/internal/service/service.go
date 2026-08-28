@@ -13,6 +13,8 @@ import (
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/engine"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/notify"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/store"
+	"opsmesh/pkg/circuit"
+	"opsmesh/pkg/metrics"
 )
 
 // Errors returned by the service.
@@ -27,6 +29,7 @@ type Service struct {
 	engine  *engine.Engine
 	store   store.AlertStore
 	notifier notify.Notifier
+	breaker  *circuit.Breaker
 }
 
 // NewService creates a new Service.
@@ -40,6 +43,11 @@ func NewService(eng *engine.Engine, s store.AlertStore) *Service {
 // SetNotifier sets the notifier for the service (optional).
 func (s *Service) SetNotifier(n notify.Notifier) {
 	s.notifier = n
+}
+
+// SetCircuitBreaker sets the circuit breaker for notifications (optional).
+func (s *Service) SetCircuitBreaker(cb *circuit.Breaker) {
+	s.breaker = cb
 }
 
 // CreateRule creates a new alert rule.
@@ -168,13 +176,30 @@ func (s *Service) Evaluate(ctx context.Context, req *alertv1.EvaluateRequest) (*
 			for k, v := range ev.Values {
 				details[k] = v
 			}
-			_ = s.notifier.TriggerEvent(
-				ev.DeviceID,
-				ev.Message,
-				ev.Severity,
-				alert.Id,
-				details,
-			)
+			if s.breaker != nil {
+				err := s.breaker.Execute(func() error {
+					return s.notifier.TriggerEvent(
+						ev.DeviceID,
+						ev.Message,
+						ev.Severity,
+						alert.Id,
+						details,
+					)
+				})
+				if err != nil {
+					metrics.RecordBusinessMetric("alert_notification_failures", 1, map[string]string{"tenant_id": ev.TenantID})
+				} else {
+					metrics.RecordBusinessMetric("alert_notifications_total", 1, map[string]string{"tenant_id": ev.TenantID})
+				}
+			} else {
+				_ = s.notifier.TriggerEvent(
+					ev.DeviceID,
+					ev.Message,
+					ev.Severity,
+					alert.Id,
+					details,
+				)
+			}
 		}
 	}
 	return &alertv1.EvaluateResponse{Alerts: out}, nil
@@ -218,7 +243,13 @@ func (s *Service) AckAlert(ctx context.Context, req *alertv1.AckAlertRequest) er
 		if a != nil {
 			source = a.DeviceID
 		}
-		_ = s.notifier.AcknowledgeEvent(source, "alert acknowledged", req.Id, nil)
+		if s.breaker != nil {
+			_ = s.breaker.Execute(func() error {
+				return s.notifier.AcknowledgeEvent(source, "alert acknowledged", req.Id, nil)
+			})
+		} else {
+			_ = s.notifier.AcknowledgeEvent(source, "alert acknowledged", req.Id, nil)
+		}
 	}
 	return nil
 }
@@ -236,7 +267,13 @@ func (s *Service) ResolveAlert(ctx context.Context, req *alertv1.ResolveAlertReq
 		if a != nil {
 			source = a.DeviceID
 		}
-		_ = s.notifier.ResolveEvent(source, "alert resolved", req.Id, nil)
+		if s.breaker != nil {
+			_ = s.breaker.Execute(func() error {
+				return s.notifier.ResolveEvent(source, "alert resolved", req.Id, nil)
+			})
+		} else {
+			_ = s.notifier.ResolveEvent(source, "alert resolved", req.Id, nil)
+		}
 	}
 	return nil
 }

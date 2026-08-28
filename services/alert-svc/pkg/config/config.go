@@ -15,6 +15,10 @@ type Config struct {
 	RedisAddr       string        `json:"redisAddr"` // Redis address (if StoreType=sql)
 	ShutdownTimeout time.Duration `json:"shutdownTimeout"`
 
+	// OTel tracing settings.
+	OTelEndpoint string `json:"otelEndpoint"` // OTLP gRPC collector address (empty = disabled)
+	LogLevel     string `json:"logLevel"`     // debug, info, warn, error (default: info)
+
 	// PagerDuty notification settings.
 	PagerDutyEnabled    bool   `json:"pagerDutyEnabled"`
 	PagerDutyRoutingKey string `json:"pagerDutyRoutingKey"`
@@ -30,6 +34,8 @@ func Load() *Config {
 		DSN:                 getEnv("ALERT_SVC_DSN", ""),
 		RedisAddr:           getEnv("ALERT_SVC_REDIS_ADDR", ""),
 		ShutdownTimeout:     getEnvDuration("ALERT_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
+		OTelEndpoint:        getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		LogLevel:            getEnv("LOG_LEVEL", "info"),
 		PagerDutyEnabled:    getEnvBool("PAGERDUTY_ENABLED", false),
 		PagerDutyRoutingKey: getEnv("PAGERDUTY_ROUTING_KEY", ""),
 		PagerDutyAPIURL:     getEnv("PAGERDUTY_API_URL", "https://events.pagerduty.com/v2/enqueue"),

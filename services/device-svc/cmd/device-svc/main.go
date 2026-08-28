@@ -22,10 +22,20 @@ import (
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/device-svc/pkg/config"
+	"opsmesh/pkg/metrics"
+	"opsmesh/pkg/trace"
 )
 
 func main() {
 	cfg := config.Load()
+
+	metrics.Init("device-svc")
+
+	shutdown, err := trace.InitTracer("device-svc", cfg.OTelEndpoint)
+	if err != nil {
+		log.Fatalf("Failed to initialize tracer: %v", err)
+	}
+	defer shutdown(context.Background())
 
 	st := store.NewMemoryStore()
 
@@ -65,6 +75,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready"))
 	})
+	mux.Handle("/metrics", metrics.GetHandler())
 	mux.HandleFunc("/api/v1/catalog/topology", func(w http.ResponseWriter, r *http.Request) {
 		tenantID := r.URL.Query().Get("tenantID")
 		graph := cat.BuildTopology(tenantID)
@@ -127,9 +138,13 @@ func main() {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	})
 
+	var handler http.Handler = mux
+	handler = metrics.HTTPMiddleware(handler)
+	handler = trace.HTTPMiddleware("opsmesh/device-svc")(handler)
+
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: mux,
+		Handler: handler,
 	}
 
 	go func() {

@@ -11,6 +11,8 @@ import (
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/store"
+	"opsmesh/pkg/circuit"
+	"opsmesh/pkg/metrics"
 )
 
 // Errors returned by the service.
@@ -25,10 +27,11 @@ var (
 
 // Service implements the task service business logic.
 type Service struct {
-	taskStore    store.TaskStore
+	taskStore     store.TaskStore
 	scheduleStore store.ScheduleStore
-	resultStore  store.ResultStore
-	batchStore   store.BatchStore
+	resultStore   store.ResultStore
+	batchStore    store.BatchStore
+	breaker       *circuit.Breaker
 }
 
 // NewService creates a new Service.
@@ -39,6 +42,11 @@ func NewService(ts store.TaskStore, ss store.ScheduleStore, rs store.ResultStore
 		resultStore:   rs,
 		batchStore:    bs,
 	}
+}
+
+// SetCircuitBreaker sets the circuit breaker for task execution.
+func (s *Service) SetCircuitBreaker(cb *circuit.Breaker) {
+	s.breaker = cb
 }
 
 // CreateTask creates a new task.
@@ -92,10 +100,31 @@ func (s *Service) ClaimTask(ctx context.Context, req *taskv1.ClaimTaskRequest) (
 	if req.AgentId == "" {
 		return nil, ErrTaskInvalid
 	}
-	mt := s.taskStore.ClaimTask(req.AgentId)
-	if mt == nil {
-		return nil, ErrTaskNotFound
+	var mt *models.Task
+	var execErr error
+	if s.breaker != nil {
+		err := s.breaker.Execute(func() error {
+			mt = s.taskStore.ClaimTask(req.AgentId)
+			if mt == nil {
+				execErr = ErrTaskNotFound
+				return ErrTaskNotFound
+			}
+			return nil
+		})
+		if err != nil {
+			metrics.RecordBusinessMetric("task_claim_failures", 1, map[string]string{"agent_id": req.AgentId})
+			if execErr != nil {
+				return nil, execErr
+			}
+			return nil, err
+		}
+	} else {
+		mt = s.taskStore.ClaimTask(req.AgentId)
+		if mt == nil {
+			return nil, ErrTaskNotFound
+		}
 	}
+	metrics.RecordBusinessMetric("task_claims_total", 1, map[string]string{"agent_id": req.AgentId})
 	return taskToProto(mt), nil
 }
 
@@ -109,19 +138,48 @@ func (s *Service) ReportResult(ctx context.Context, req *taskv1.ReportResultRequ
 		r.FinishedAt = timestamppb.Now()
 	}
 
-	modelResult := protoToResult(r)
-	if err := s.taskStore.ReportResult(modelResult); err != nil {
-		if errors.Is(err, store.ErrClaimEpochMismatch) {
-			return nil, ErrClaimEpochMismatch
+	var reportErr error
+	if s.breaker != nil {
+		err := s.breaker.Execute(func() error {
+			modelResult := protoToResult(r)
+			if err := s.taskStore.ReportResult(modelResult); err != nil {
+				reportErr = err
+				if errors.Is(err, store.ErrClaimEpochMismatch) {
+					return nil // Don't retry epoch mismatch
+				}
+				return err
+			}
+			s.resultStore.SaveResult(modelResult)
+			if r.TaskId != "" {
+				s.resultStore.SaveLogs(r.TaskId, []models.LogLine{})
+			}
+			return nil
+		})
+		if err != nil {
+			metrics.RecordBusinessMetric("task_report_failures", 1, map[string]string{"task_id": r.TaskId})
+			if reportErr != nil {
+				if errors.Is(reportErr, store.ErrClaimEpochMismatch) {
+					return nil, ErrClaimEpochMismatch
+				}
+				return nil, reportErr
+			}
+			return nil, err
 		}
-		return nil, err
+	} else {
+		modelResult := protoToResult(r)
+		if err := s.taskStore.ReportResult(modelResult); err != nil {
+			if errors.Is(err, store.ErrClaimEpochMismatch) {
+				return nil, ErrClaimEpochMismatch
+			}
+			return nil, err
+		}
+		s.resultStore.SaveResult(modelResult)
+		if r.TaskId != "" {
+			s.resultStore.SaveLogs(r.TaskId, []models.LogLine{})
+		}
 	}
-	s.resultStore.SaveResult(modelResult)
 
-	if r.TaskId != "" {
-		s.resultStore.SaveLogs(r.TaskId, []models.LogLine{})
-	}
-
+	metrics.RecordBusinessMetric("task_reports_total", 1, map[string]string{"task_id": r.TaskId})
 	return r, nil
 }
 

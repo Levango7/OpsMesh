@@ -25,10 +25,17 @@ import (
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/config-svc/pkg/config"
+	"opsmesh/pkg/trace"
 )
 
 func main() {
 	cfg := config.Load()
+
+	shutdown, err := trace.InitTracer("config-svc", cfg.OTelEndpoint)
+	if err != nil {
+		log.Fatalf("Failed to initialize tracer: %v", err)
+	}
+	defer shutdown(context.Background())
 
 	st := store.NewMemoryStore(cfg.EncryptionKey, cfg.MaxHistorySize)
 	svc := service.NewService(st)
@@ -67,9 +74,12 @@ func main() {
 	registerDriftHandlers(mux, det)
 	registerRotationHandlers(mux, rot)
 
+	var handler http.Handler = mux
+	handler = trace.HTTPMiddleware("opsmesh/config-svc")(handler)
+
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: mux,
+		Handler: handler,
 	}
 
 	go func() {

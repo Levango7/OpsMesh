@@ -20,10 +20,17 @@ import (
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/workload"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/pkg/config"
+	"opsmesh/pkg/trace"
 )
 
 func main() {
 	cfg := config.Load()
+
+	shutdown, err := trace.InitTracer("gpu-svc", cfg.OTelEndpoint)
+	if err != nil {
+		log.Fatalf("Failed to initialize tracer: %v", err)
+	}
+	defer shutdown(context.Background())
 
 	nvidiaDetector := gpu.NewNvidiaDetector()
 	if nvidiaDetector.IsAvailable() {
@@ -68,9 +75,12 @@ func main() {
 		_, _ = w.Write([]byte(`{"status":"ready"}`))
 	})
 
+	var handler http.Handler = mux
+	handler = trace.HTTPMiddleware("opsmesh/gpu-svc")(handler)
+
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: mux,
+		Handler: handler,
 	}
 
 	go func() {

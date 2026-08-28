@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -19,13 +20,28 @@ import (
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/task-svc/pkg/config"
+	"opsmesh/pkg/circuit"
+	"opsmesh/pkg/metrics"
+	"opsmesh/pkg/trace"
 )
 
 func main() {
 	cfg := config.Load()
 
+	metrics.Init("task-svc")
+
+	shutdown, err := trace.InitTracer("task-svc", cfg.OTelEndpoint)
+	if err != nil {
+		log.Fatalf("Failed to initialize tracer: %v", err)
+	}
+	defer shutdown(context.Background())
+
 	st := store.NewMemoryStore()
 	svc := service.NewService(st, st, st, st)
+
+	cb := circuit.New("task-execution", 5, 30*time.Second)
+	svc.SetCircuitBreaker(cb)
+
 	srv := server.NewServer(svc)
 
 	grpcServer := grpc.NewServer()
@@ -55,10 +71,15 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready"))
 	})
+	mux.Handle("/metrics", metrics.GetHandler())
+
+	var handler http.Handler = mux
+	handler = metrics.HTTPMiddleware(handler)
+	handler = trace.HTTPMiddleware("opsmesh/task-svc")(handler)
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: mux,
+		Handler: handler,
 	}
 
 	go func() {

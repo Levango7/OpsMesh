@@ -22,10 +22,17 @@ import (
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/auth-svc/pkg/config"
 	"opsmesh/pkg/security"
+	"opsmesh/pkg/trace"
 )
 
 func main() {
 	cfg := config.Load()
+
+	shutdown, err := trace.InitTracer("auth-svc", cfg.OTelEndpoint)
+	if err != nil {
+		log.Fatalf("Failed to initialize tracer: %v", err)
+	}
+	defer shutdown(context.Background())
 
 	st := store.NewMemoryStore()
 	eng := auth.NewEngine(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
@@ -33,7 +40,9 @@ func main() {
 	svc := service.NewService(eng, st)
 	srv := server.NewServer(svc)
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(trace.GRPCServerInterceptor()),
+	)
 	authv1.RegisterAuthServiceServer(grpcServer, srv)
 	authv1.RegisterUserServiceServer(grpcServer, srv)
 	authv1.RegisterRoleServiceServer(grpcServer, srv)
@@ -74,6 +83,7 @@ func main() {
 	handler = security.IPRateLimit(60, time.Minute)(handler)
 	handler = security.UserRateLimit(120, time.Minute)(handler)
 	handler = corsConfig.Middleware()(handler)
+	handler = trace.HTTPMiddleware("opsmesh/auth-svc")(handler)
 
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),

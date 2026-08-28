@@ -11,6 +11,8 @@ import (
 	devicev1 "github.com/Levango7/OpsMesh/services/device-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
+	"opsmesh/pkg/metrics"
+	"opsmesh/pkg/retry"
 )
 
 // Errors returned by the service.
@@ -68,10 +70,20 @@ func (s *Service) RegisterDevice(ctx context.Context, req *devicev1.RegisterDevi
 
 // Heartbeat updates device heartbeat.
 func (s *Service) HeartbeatDevice(ctx context.Context, req *devicev1.HeartbeatRequest) error {
-	ok := s.deviceStore.Heartbeat(req.DeviceId, req.Status)
-	if !ok {
-		return ErrDeviceNotFound
+	var lastErr error
+	err := retry.Do(func() error {
+		ok := s.deviceStore.Heartbeat(req.DeviceId, req.Status)
+		if !ok {
+			lastErr = ErrDeviceNotFound
+			return retry.Retryable(ErrDeviceNotFound)
+		}
+		return nil
+	}, 3, 50*time.Millisecond)
+	if err != nil {
+		metrics.RecordBusinessMetric("device_heartbeat_failures", 1, map[string]string{"device_id": req.DeviceId})
+		return lastErr
 	}
+	metrics.RecordBusinessMetric("device_heartbeats_total", 1, map[string]string{"device_id": req.DeviceId})
 	return nil
 }
 
@@ -185,10 +197,20 @@ func (s *Service) UpdateAgentStatus(ctx context.Context, req *devicev1.UpdateAge
 
 // HeartbeatAgent updates agent heartbeat.
 func (s *Service) HeartbeatAgent(ctx context.Context, req *devicev1.AgentHeartbeatRequest) error {
-	ok := s.agentStore.AgentHeartbeat(req.AgentId, req.Status, int(req.Load))
-	if !ok {
-		return ErrAgentNotFound
+	var lastErr error
+	err := retry.Do(func() error {
+		ok := s.agentStore.AgentHeartbeat(req.AgentId, req.Status, int(req.Load))
+		if !ok {
+			lastErr = ErrAgentNotFound
+			return retry.Retryable(ErrAgentNotFound)
+		}
+		return nil
+	}, 3, 50*time.Millisecond)
+	if err != nil {
+		metrics.RecordBusinessMetric("agent_heartbeat_failures", 1, map[string]string{"agent_id": req.AgentId})
+		return lastErr
 	}
+	metrics.RecordBusinessMetric("agent_heartbeats_total", 1, map[string]string{"agent_id": req.AgentId})
 	return nil
 }
 
