@@ -37,7 +37,28 @@ const routes = [
   { path: '/roles', name: 'roles', component: () => import('@/views/RolesView.vue'), meta: { title: 'nav.roles', group: '系统管理', icon: 'roles', requirePerm: 'role:read' } },
   { path: '/permissions', name: 'permissions', component: () => import('@/views/PermissionsView.vue'), meta: { title: 'nav.permissions', group: '系统管理', icon: 'permissions', requirePerm: 'role:read' } },
   // 密钥管理：查看 provider 状态 + 测试连接 + 配置 Vault 地址
-  { path: '/secrets', name: 'secrets', component: () => import('@/views/secrets/SecretsView.vue'), meta: { title: 'nav.secrets', group: '系统管理', icon: 'key', requirePerm: 'role:read' } }
+  { path: '/secrets', name: 'secrets', component: () => import('@/views/secrets/SecretsView.vue'), meta: { title: 'nav.secrets', group: '系统管理', icon: 'key', requirePerm: 'role:read' } },
+
+  // GPU 资源管理
+  { path: '/gpu', name: 'gpu', component: () => import('@/views/GPUView.vue'), meta: { title: 'nav.gpu', group: 'AI 算力', icon: 'device', requirePerm: 'gpu:read' } },
+
+  // ChatOps
+  { path: '/bot', name: 'bot', component: () => import('@/views/BotView.vue'), meta: { title: 'nav.bot', group: 'AI 算力', icon: 'flow', requirePerm: 'bot:read' } },
+
+  // Runbook 自动化
+  { path: '/runbooks', name: 'runbooks', component: () => import('@/views/RunbookView.vue'), meta: { title: 'nav.runbooks', group: '自动化', icon: 'task', requirePerm: 'runbook:read' } },
+
+  // Incident 管理
+  { path: '/incidents', name: 'incidents', component: () => import('@/views/IncidentView.vue'), meta: { title: 'nav.incidents', group: '自动化', icon: 'alerts', requirePerm: 'incident:read' } },
+
+  // 自动扩缩容
+  { path: '/autoscaler', name: 'autoscaler', component: () => import('@/views/AutoscalerView.vue'), meta: { title: 'nav.autoscaler', group: '自动化', icon: 'settings', requirePerm: 'autoscaler:read' } },
+
+  // 插件市场
+  { path: '/plugins', name: 'plugins', component: () => import('@/views/PluginView.vue'), meta: { title: 'nav.plugins', group: '平台', icon: 'cmdb', requirePerm: 'plugin:read' } },
+
+  // 自助服务门户
+  { path: '/portal', name: 'portal', component: () => import('@/views/PortalView.vue'), meta: { title: 'nav.portal', group: '平台', icon: 'users', requirePerm: 'portal:read' } }
 ]
 
 const router = createRouter({
