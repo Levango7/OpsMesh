@@ -62,6 +62,36 @@ jobs:
           # 已配置 CODECOV_TOKEN 时，上报失败阻断 CI；未配置 token（fork/无 secret PR）则不失败。
           fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
 
+  # services：根模块 ./... 会被 Go 模块系统剪枝嵌套 go.mod（services/ 18 个
+  # 独立子模块永不编译/测试）。本 job 显式循环 services/*/ 逐个 go build + go test，
+  # 把游离的 18 个微服务纳入 CI（根 go.work 已统一 workspace，见仓库根 go.work）。
+  services:
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.6"
+      - name: Build all services modules
+        # 每个 services/*/ 都是独立 go.mod + func main；workspace 模式下子模块
+        # 由根 go.work 统一管理。循环遍历，任一失败 exit 1 阻断 CI。
+        run: |
+          for d in services/*/; do
+            echo "== build $d =="
+            (cd "$d" && go build ./...) || exit 1
+          done
+          echo "✅ all services build OK"
+      - name: Test all services modules
+        # 依赖真实环境（DSN/broker 等）的用例自带 Skip 机制会自行跳过；
+        # 能跑的照跑，任一失败 exit 1 阻断 CI（超时 300s 与根模块一致）。
+        run: |
+          for d in services/*/; do
+            echo "== test $d =="
+            (cd "$d" && go test -timeout 300s ./...) || exit 1
+          done
+          echo "✅ all services test OK"
+
   # ：SQL 后端集成测试 —— 默认 build-test 中 SQL Store 测试因无 DSN 被 Skip，
   # 此处起 mysql:8 + redis:7 真实后端，激活 OPSMESH_TEST_* 集成测试（报告 缺口）。
   integration:

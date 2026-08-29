@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -20,8 +21,8 @@ import (
 	"opsmesh/internal/approval"
 	"opsmesh/internal/cmdb"
 	"opsmesh/internal/config"
-	"opsmesh/internal/cron"
 	"opsmesh/internal/controlplane/factory"
+	"opsmesh/internal/cron"
 	"opsmesh/internal/deploy"
 	"opsmesh/internal/events"
 	"opsmesh/internal/helm"
@@ -206,6 +207,16 @@ type Server struct {
 	// gatewayOnce 保证 ensureGateway 在并发调用下只构造一次 gateway 状态。
 	// 即使多个 handler goroutine 同时进入 ensureGateway，也只会赋值一次。
 	gatewayOnce sync.Once
+
+	// automationEvalInterval 自动化引擎评估周期（来自 cfg.AutomationEvalInterval）。
+	// server_lifecycle.go Start 中 startAutomationEvalLoop(ctx, automationEvalInterval)
+	// 周期调用 processAutomationRules 评估 enabled 规则并执行命中动作。
+	automationEvalInterval time.Duration
+
+	// backupDir 灾备备份归档目录（NewServer 用 cfg.DataDir + "/backups" 初始化）。
+	// handleBackupCreate 后台 goroutine 将 JSON 快照打包为 backup-<ts>-<id>.tar.gz 写入此目录；
+	// handleBackupRestore 从该目录读取归档写回 store。空值时回退 os.TempDir()/opsmesh-backups。
+	backupDir string
 }
 
 // startRefreshSweep 周期清理过期刷新令牌（store 持久化后改为 no-op，
@@ -317,7 +328,18 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		apiKeyUsage: make(map[string]int64),
 		// Phase 5 API 网关运行期状态（路由规则 + 限流器 + 统计）。
 		gateway: newGatewayState(),
+		// 自动化引擎评估周期（startAutomationEvalLoop 消费；<=0 时 loop 内部按 30s 兜底）。
+		automationEvalInterval: cfg.AutomationEvalInterval,
+		// 灾备备份归档目录：data-dir/backups（与 CLI backup 子命令同源，便于运维统一备份数据目录）。
+		backupDir: filepath.Join(cfg.DataDir, "backups"),
 	}
+	// G1 鉴权修复：给 CMDB/部署/日志/编排子包 handler 注入统一鉴权回调
+	// （requireTenantContext + requireProd RBAC 权限闸），堵住全域匿名可达漏洞。
+	// 回调内按请求方法映射权限点（各包 RegisterRoutes 已按 read/write 语义包装）。
+	s.cmdbHandler.Authorize = s.subsystemAuthorize
+	s.logHandler.Authorize = s.subsystemAuthorize
+	s.deployHandler.Authorize = s.subsystemAuthorize
+	s.orchHandler.Authorize = s.subsystemAuthorize
 	// 告警通道密钥外置：根据 cfg.SecretProvider 构造 SecretProvider 并注入到 alertNotifier。
 	// cfg.SecretProvider 为空时 FromConfig 返回 (nil, nil)，不启用密钥外置（向后兼容）。
 	// 构造失败时：生产模式 fail-fast（避免运行期渠道鉴权失败），非生产模式打 Warning 继续。
@@ -367,6 +389,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	if cfg.JWTSecret != "" {
 		s.jwtSecret = []byte(cfg.JWTSecret)
 	} else {
+		logx.Warn(context.Background(), "警告：未配置 --jwt-secret，使用随机密钥：重启后所有会话失效；多副本部署会互踢；生产环境请配置 OPSMESH_JWT_SECRET", nil)
 		s.jwtSecret = make([]byte, 32)
 		if _, err := cryptoRand.Read(s.jwtSecret); err != nil {
 			return nil, fmt.Errorf("JWT 密钥随机生成失败: %w", err)

@@ -49,6 +49,24 @@ test:
 vet:
 	$(GOVET) ./...
 
+# 构建 services/ 下全部独立子模块（18 个，每个都是独立 go.mod + func main）
+.PHONY: services-build
+services-build:
+	@set -e; for d in services/*/; do \
+		echo "== build $$d =="; \
+		(cd "$$d" && go build ./...) || exit 1; \
+	done
+	@echo "✓ services build complete (18 modules)"
+
+# 测试 services/ 下全部独立子模块（依赖环境的用例有 Skip 机制的自行跳过）
+.PHONY: services-test
+services-test:
+	@set -e; for d in services/*/; do \
+		echo "== test $$d =="; \
+		(cd "$$d" && go test -timeout 300s ./...) || exit 1; \
+	done
+	@echo "✓ services test complete (18 modules)"
+
 # 构建 + 测试 + vet
 .PHONY: ci
 ci: vet test build
@@ -96,6 +114,8 @@ help:
 	@echo "  make frontend   - 仅构建前端（npm run build）"
 	@echo "  make test       - 运行测试"
 	@echo "  make vet        - 运行 vet"
+	@echo "  make services-build - 构建 services/ 全部 18 个子模块"
+	@echo "  make services-test  - 测试 services/ 全部 18 个子模块"
 	@echo "  make ci         - vet + test + build"
 	@echo "  make run        - 构建并启动控制面"
 	@echo "  make run-agent  - 构建并启动 agent"

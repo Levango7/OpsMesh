@@ -320,16 +320,28 @@ func (s *Server) processPendingPipelineRuns() {
 			s.store.UpdateRun(tenantID, run)
 			continue
 		}
+		// 模板须指定执行 agent（AgentID 非空），否则任务无法认领下发。
+		if tpl.AgentID == "" {
+			run.Status = "failed"
+			finished := time.Now()
+			run.FinishedAt = &finished
+			run.Logs = "template agentID not set"
+			s.store.UpdateRun(tenantID, run)
+			continue
+		}
 
 		// 创建 shell 任务执行 pipeline（从模板 YAML 提取命令）。
+		// 任务 AgentID 认领到模板指定 agent；ParentID 关联到 run.ID 供状态对账（reconcileRunStatus）。
 		task := &proto.Task{
 			Type:     "shell",
 			Command:  extractPipelineCommand(tpl),
+			AgentID:  tpl.AgentID,
 			TenantID: tenantID,
 			Status:   "pending",
+			ParentID: run.ID,
 		}
 		created := s.store.CreateTask(task)
-		if created == nil {
+		if created == nil || created.TaskID == "" {
 			run.Status = "failed"
 			finished := time.Now()
 			run.FinishedAt = &finished
@@ -338,13 +350,42 @@ func (s *Server) processPendingPipelineRuns() {
 			continue
 		}
 
-		// 标记为 succeeded（任务已下发，等待 agent 执行）。
-		run.Status = "succeeded"
-		finished := time.Now()
-		run.FinishedAt = &finished
+		// 任务已下发，run 保持 running（终态由 reconcileRunStatus 按子任务状态推导，不再立即 succeeded）。
 		run.Logs = fmt.Sprintf("execution task created: %s", created.TaskID)
 		s.store.UpdateRun(tenantID, run)
 	}
+}
+
+// reconcileRunStatus 按 run 的子任务（TasksByParent）推导运行终态。
+//
+// 规则：任一子任务 failed/cancelled → failed；全部 done → succeeded；否则 running
+// （含无子任务的异常态——任务尚未创建或已全部清理，视为进行中）。
+// 供 run 详情/列表 handler 查询时映射，不持久化（run 存储状态由 executor 维护为 running）。
+func (s *Server) reconcileRunStatus(runID string) string {
+	if s.store == nil || runID == "" {
+		return "running"
+	}
+	tasks := s.store.TasksByParent(runID)
+	if len(tasks) == 0 {
+		return "running"
+	}
+	for _, t := range tasks {
+		if t == nil {
+			continue
+		}
+		if t.Status == "failed" || t.Status == "cancelled" {
+			return "failed"
+		}
+	}
+	for _, t := range tasks {
+		if t == nil {
+			continue
+		}
+		if t.Status != "done" {
+			return "running"
+		}
+	}
+	return "succeeded"
 }
 
 // extractPipelineCommand 从 PipelineTemplate 中提取执行命令。
@@ -388,6 +429,13 @@ func (s *Server) handleListPipelineRuns(w http.ResponseWriter, r *http.Request) 
 	}
 	templateID := r.URL.Query().Get("templateID")
 	runs := s.store.ListRuns(actx.TenantID, templateID)
+	// 查询时按子任务状态对账：派生 run.Status（failed/succeeded/running）。
+	for _, run := range runs {
+		if run == nil {
+			continue
+		}
+		run.Status = s.reconcileRunStatus(run.ID)
+	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"runs": runs})
 }
 
@@ -428,6 +476,8 @@ func (s *Server) handlePipelineRun(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "run not found"})
 		return
 	}
+	// 查询时按子任务状态对账：派生 run.Status（failed/succeeded/running）。
+	run.Status = s.reconcileRunStatus(run.ID)
 	paginate.WriteJSON(w, http.StatusOK, run)
 }
 

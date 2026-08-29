@@ -10,6 +10,7 @@ package network
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -248,7 +249,7 @@ func scanPortsForHost(host string, ports []int, timeout time.Duration) []int {
 		wg.Add(1)
 		go func(p int) {
 			defer wg.Done()
-			addr := fmt.Sprintf("%s:%d", host, p)
+			addr := net.JoinHostPort(host, strconv.Itoa(p))
 			conn, err := net.DialTimeout("tcp", addr, timeout)
 			if err != nil {
 				return

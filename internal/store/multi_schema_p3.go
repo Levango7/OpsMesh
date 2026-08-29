@@ -101,3 +101,15 @@ func (m *MultiSchemaStore) DeleteBackup(tenantID, id string) bool {
 	}
 	return s.DeleteBackup(tenantID, id)
 }
+
+// UpdateBackup 更新备份记录状态机字段：用 tenantID 路由。
+func (m *MultiSchemaStore) UpdateBackup(tenantID string, rec *BackupRecord) bool {
+	if rec == nil || rec.ID == "" {
+		return false
+	}
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return false
+	}
+	return s.UpdateBackup(tenantID, rec)
+}

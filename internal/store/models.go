@@ -397,15 +397,18 @@ type TrafficPolicy struct {
 
 // PipelineTemplate CI/CD 流水线模板（Phase 2 CI/CD 流水线）。
 type PipelineTemplate struct {
-	ID          string          `json:"id"`
-	TenantID    string          `json:"tenantID"`
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Type        string          `json:"type"` // "tekton","jenkins"
-	YAML        string          `json:"yaml"` // pipeline 定义
-	Parameters  []PipelineParam `json:"parameters"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	UpdatedAt   time.Time       `json:"updatedAt"`
+	ID          string `json:"id"`
+	TenantID    string `json:"tenantID"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Type        string `json:"type"` // "tekton","jenkins"
+	YAML        string `json:"yaml"` // pipeline 定义
+	// AgentID 执行该流水线的默认 agent（触发 run 时派生执行任务写入 Task.AgentID）。
+	// 空=未指定（run 推进时任务无法下发，run 置 failed 并记录日志）。
+	AgentID    string          `json:"agentID"`
+	Parameters []PipelineParam `json:"parameters"`
+	CreatedAt  time.Time       `json:"createdAt"`
+	UpdatedAt  time.Time       `json:"updatedAt"`
 }
 
 // PipelineParam 流水线参数。

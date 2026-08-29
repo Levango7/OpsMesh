@@ -4,6 +4,7 @@
 // at 过期（401）时静默调用 /auth/refresh 换新 at+rt 并重试一次；刷新失败则清会话跳登录。
 // X-Tenant-ID / X-User / X-User-Roles 由前置网关注入，前端不主动设置。
 import axios from 'axios'
+import { toast } from '@/utils/toast'
 
 export const http = axios.create({
   baseURL: '/api/v1',
@@ -61,29 +62,35 @@ http.interceptors.response.use(
       if (unauthorizedHandler) unauthorizedHandler()
       else redirectToLogin()
     }
+    // 全局错误 toast：非 401（401 走登录流程不提示）、非 silent、非 refresh 静默请求
+    if (s !== 401 && !original?.silent && !/\/auth\/refresh$/.test(original?.url || '')) {
+      toast.error(j?.error || err.message || '请求失败')
+    }
     return Promise.reject({ s, j })
   }
 )
 
-// 便捷方法：返回原始 data（j），失败抛错
-export async function getJSON(url, params) {
-  const { j } = await http.get(url, { params })
+// 便捷方法：返回原始 data（j），失败抛错。
+// 各方法第 3 个参数 silent 为全局 toast 逃生口：传 true 时该请求的错误
+// 不弹出全局 toast（调用方自行处理提示）。
+export async function getJSON(url, params, silent) {
+  const { j } = await http.get(url, { params, silent })
   return j
 }
-export async function postJSON(url, body) {
-  const { s, j } = await http.post(url, body)
+export async function postJSON(url, body, silent) {
+  const { s, j } = await http.post(url, body, { silent })
   return { s, j }
 }
-export async function putJSON(url, body) {
-  const { s, j } = await http.put(url, body)
+export async function putJSON(url, body, silent) {
+  const { s, j } = await http.put(url, body, { silent })
   return { s, j }
 }
-export async function postEmpty(url) {
-  const { s, j } = await http.post(url)
+export async function postEmpty(url, silent) {
+  const { s, j } = await http.post(url, null, { silent })
   return { s, j }
 }
 // DELETE 便捷方法
-export async function deleteJSON(url) {
-  const { s, j } = await http.delete(url)
+export async function deleteJSON(url, silent) {
+  const { s, j } = await http.delete(url, { silent })
   return { s, j }
 }

@@ -610,6 +610,14 @@ func TestExecFile_SymlinkReject(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("创建符号链接失败（平台不支持）: %v", err)
 	}
+	// Windows 平台差异：os.Symlink 创建成功但 os.Lstat 不返回 symlink 位
+	// （Windows 符号链接语义与 POSIX 不同，Lstat 报告普通文件 mode），
+	// execFile 的 symlink 检查无法触发 → 该用例仅在 POSIX 平台语义下可验证，Windows 跳过。
+	if runtime.GOOS == "windows" {
+		if fi, err := os.Lstat(link); err == nil && fi.Mode()&os.ModeSymlink == 0 {
+			t.Skipf("Windows 平台 Lstat 不报告 symlink 位（mode=%v），跳过 symlink 拒绝验证", fi.Mode())
+		}
+	}
 	a := &Agent{cfg: &config.Config{}}
 	var out, errb strings.Builder
 	err := a.execFile(context.Background(), &out, &errb, proto.Task{

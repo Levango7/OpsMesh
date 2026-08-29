@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"opsmesh/internal/config"
+	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 )
 
@@ -450,8 +451,150 @@ func TestHandleGetPipelineRun_NotFound(t *testing.T) {
 }
 
 // =============================================================================
-// 路由分派
+// G2 修复：任务认领（AgentID/ParentID）+ run 状态流转（reconcileRunStatus）
 // =============================================================================
+
+// TestHandleRunPipelineTemplate_WithAgentID 验证模板带 AgentID 时：
+// run 推进后派生任务写入 AgentID（认领）+ ParentID（血缘），run 保持 running（不再立即 succeeded）。
+func TestHandleRunPipelineTemplate_WithAgentID(t *testing.T) {
+	s := newPipelineTestServer()
+	auth := loginAsAdmin(t, s)
+
+	created := s.store.CreateTemplate("default", &store.PipelineTemplate{
+		Name:    "claim-test",
+		Type:    "tekton",
+		YAML:    "echo hello",
+		AgentID: "agent-claim-01",
+	})
+	if created == nil {
+		t.Fatal("CreateTemplate returned nil")
+	}
+
+	body := `{}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipeline/templates/"+created.ID+"/run", strings.NewReader(body))
+	req.Header.Set("Authorization", auth)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.handlePipelineTemplate(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status=%d, want 201; body=%s", w.Code, w.Body.String())
+	}
+	var run store.PipelineRun
+	if err := json.Unmarshal(w.Body.Bytes(), &run); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// 推进 executor：pending → running，创建派生任务。
+	s.processPendingPipelineRuns()
+
+	// 派生任务应写入 AgentID=模板 AgentID + ParentID=run.ID。
+	tasks := s.store.TasksByParent(run.ID)
+	if len(tasks) != 1 {
+		t.Fatalf("TasksByParent(run=%s) = %d, want 1", run.ID, len(tasks))
+	}
+	task := tasks[0]
+	if task.AgentID != "agent-claim-01" {
+		t.Fatalf("task.AgentID=%q, want agent-claim-01", task.AgentID)
+	}
+	if task.ParentID != run.ID {
+		t.Fatalf("task.ParentID=%q, want %q", task.ParentID, run.ID)
+	}
+
+	// run 应保持 running（不再立即 succeeded）。
+	stored, ok := s.store.GetRun("default", run.ID)
+	if !ok {
+		t.Fatal("run not found in store")
+	}
+	if stored.Status != "running" {
+		t.Fatalf("stored run.Status=%q, want running", stored.Status)
+	}
+	// 查询详情时 reconcile 派生出 running（子任务未 done）。
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline/runs/"+run.ID, nil)
+	req2.Header.Set("Authorization", auth)
+	w2 := httptest.NewRecorder()
+	s.handlePipelineRun(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("detail status=%d", w2.Code)
+	}
+	var gotRun store.PipelineRun
+	_ = json.Unmarshal(w2.Body.Bytes(), &gotRun)
+	if gotRun.Status != "running" {
+		t.Fatalf("detail run.Status=%q, want running（子任务未 done）", gotRun.Status)
+	}
+}
+
+// TestRunPipeline_AgentIDMissing 验证模板未指定 AgentID 时 run 置 failed。
+func TestRunPipeline_AgentIDMissing(t *testing.T) {
+	s := newPipelineTestServer()
+	auth := loginAsAdmin(t, s)
+
+	created := s.store.CreateTemplate("default", &store.PipelineTemplate{
+		Name: "no-agent-test",
+		Type: "tekton",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipeline/templates/"+created.ID+"/run", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", auth)
+	w := httptest.NewRecorder()
+	s.handlePipelineTemplate(w, req)
+	var run store.PipelineRun
+	_ = json.Unmarshal(w.Body.Bytes(), &run)
+
+	s.processPendingPipelineRuns()
+
+	stored, ok := s.store.GetRun("default", run.ID)
+	if !ok {
+		t.Fatal("run not found in store")
+	}
+	if stored.Status != "failed" {
+		t.Fatalf("stored run.Status=%q, want failed（模板无 AgentID 任务不可下发）", stored.Status)
+	}
+	if !strings.Contains(stored.Logs, "agentID not set") {
+		t.Fatalf("run.Logs=%q, want contain 'agentID not set'", stored.Logs)
+	}
+}
+
+// TestReconcileRunStatus 验证 run 终态推导规则。
+func TestReconcileRunStatus(t *testing.T) {
+	s := newPipelineTestServer()
+
+	newRun := func(status string) *store.PipelineRun {
+		r := s.store.CreateRun("default", &store.PipelineRun{Status: "running"})
+		return r
+	}
+
+	// 1) 子任务全部 done → succeeded。
+	runOK := newRun("running")
+	s.store.CreateTask(&proto.Task{TaskID: "t-ok-1", AgentID: "a", ParentID: runOK.ID, Status: "done"})
+	if got := s.reconcileRunStatus(runOK.ID); got != "succeeded" {
+		t.Fatalf("全部 done 应 succeeded，got=%q", got)
+	}
+
+	// 2) 任一子任务 failed → failed。
+	runFail := newRun("running")
+	s.store.CreateTask(&proto.Task{TaskID: "t-fail-1", AgentID: "a", ParentID: runFail.ID, Status: "done"})
+	s.store.CreateTask(&proto.Task{TaskID: "t-fail-2", AgentID: "a", ParentID: runFail.ID, Status: "failed"})
+	if got := s.reconcileRunStatus(runFail.ID); got != "failed" {
+		t.Fatalf("含 failed 子任务应 failed，got=%q", got)
+	}
+
+	// 3) 子任务未全部 done → running。
+	runRun := newRun("running")
+	s.store.CreateTask(&proto.Task{TaskID: "t-run-1", AgentID: "a", ParentID: runRun.ID, Status: "pending"})
+	if got := s.reconcileRunStatus(runRun.ID); got != "running" {
+		t.Fatalf("子任务 pending 应 running，got=%q", got)
+	}
+
+	// 4) 无子任务 → running。
+	runEmpty := newRun("running")
+	if got := s.reconcileRunStatus(runEmpty.ID); got != "running" {
+		t.Fatalf("无子任务应 running，got=%q", got)
+	}
+
+	// 5) 空 ID → running（兜底）。
+	if got := s.reconcileRunStatus(""); got != "running" {
+		t.Fatalf("空 runID 应 running，got=%q", got)
+	}
+}
 
 // TestHandlePipelineTemplates_MethodNotAllowed 验证不支持的方法返回 405。
 func TestHandlePipelineTemplates_MethodNotAllowed(t *testing.T) {

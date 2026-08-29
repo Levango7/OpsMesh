@@ -106,3 +106,26 @@ func (m *MemoryStore) DeleteBackup(tenantID, id string) bool {
 	delete(m.backups, id)
 	return true
 }
+
+// UpdateBackup 更新备份记录的 status/size/path（按 rec.ID 定位，校验 tenantID 归属）。
+// 由控制面后台归档 goroutine 将 creating 推进为 completed（回填真实 Size/Path）或 failed。
+// 不存在或租户不匹配返回 false；更新成功返回 true（调用方按需重新 GetBackup 读取最新值）。
+func (m *MemoryStore) UpdateBackup(tenantID string, rec *BackupRecord) bool {
+	if rec == nil || rec.ID == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing, ok := m.backups[rec.ID]
+	if !ok {
+		return false
+	}
+	if tenantID != "" && existing.TenantID != tenantID {
+		return false
+	}
+	// 仅更新状态机字段（status/size/path），保留其余字段（id/type/created_at/tenant_id）。
+	existing.Status = rec.Status
+	existing.Size = rec.Size
+	existing.Path = rec.Path
+	return true
+}

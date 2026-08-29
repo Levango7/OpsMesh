@@ -151,7 +151,7 @@
     </div>
 
     <div class="card">
-      <DataTable :columns="columns" :rows="store.list" :empty-text="$t('logs.empty')">
+      <DataTable :columns="columns" :rows="store.list" :loading="store.loading" :empty-text="$t('logs.empty')">
         <template #cell-timestamp="{ value }">
           <small class="muted">{{ fmtTs(value) }}</small>
         </template>

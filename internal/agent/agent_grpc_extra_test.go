@@ -330,15 +330,24 @@ func TestWorker_ExecuteTask(t *testing.T) {
 	go a.worker(ctx)
 	// 发送一个简单任务
 	a.taskCh <- proto.Task{TaskID: "task-exec-1", Type: proto.TaskTypeShell, Command: "echo hello"}
-	// 等待上报
-	time.Sleep(500 * time.Millisecond)
+	// 轮询等待上报（Windows 上 sh -c 启动可达数百 ms，固定 sleep 易误报失败）
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		fake.mu.Lock()
+		got := fake.lastResult
+		fake.mu.Unlock()
+		if got != nil {
+			if got.TaskID != "task-exec-1" {
+				t.Fatalf("TaskID 应为 task-exec-1，得到 %q", got.TaskID)
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	if fake.lastResult == nil {
-		t.Fatal("worker 应上报结果")
-	}
-	if fake.lastResult.TaskID != "task-exec-1" {
-		t.Fatalf("TaskID 应为 task-exec-1，得到 %q", fake.lastResult.TaskID)
+		t.Fatal("worker 应上报结果（5s 内未上报）")
 	}
 }
 

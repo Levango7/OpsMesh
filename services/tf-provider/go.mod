@@ -1,6 +1,8 @@
 module github.com/Levango7/OpsMesh/services/tf-provider
 
-go 1.25.0
+go 1.26.0
+
+toolchain go1.26.6
 
 require github.com/hashicorp/terraform-plugin-sdk/v2 v2.34.0
 

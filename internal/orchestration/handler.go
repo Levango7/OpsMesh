@@ -28,6 +28,10 @@ type TaskEngine interface {
 type Handler struct {
 	store WorkflowStore
 	eng   TaskEngine
+	// Authorize 鉴权回调（由 controlplane 注入）：校验租户上下文 + 所需权限。
+	// perm 为当前请求所需权限（如 "workflow:read"）；未认证/无权限时须已写入响应并返回 ok=false。
+	// nil 时不启用鉴权（向后兼容独立使用/测试场景）。
+	Authorize func(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool)
 }
 
 // NewHandler 构造编排处理器。
@@ -35,10 +39,35 @@ func NewHandler(st WorkflowStore, eng TaskEngine) *Handler {
 	return &Handler{store: st, eng: eng}
 }
 
+// authorize 把 Authorize 鉴权回调包装到单个路由 handler 上（G1 鉴权修复）。
+// 按请求方法映射所需权限：GET/HEAD/OPTIONS 只读 → readPerm，其余（POST/PUT/PATCH/DELETE）→ writePerm。
+// 鉴权通过后若回调解析出的租户在请求头缺失，回填 X-Tenant-ID，使 handler 行级隔离与鉴权一致。
+func (h *Handler) authorize(fn http.HandlerFunc, readPerm, writePerm string) http.HandlerFunc {
+	if h.Authorize == nil {
+		return fn
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		perm := readPerm
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			perm = writePerm
+		}
+		actx, ok := h.Authorize(w, r, perm)
+		if !ok {
+			return
+		}
+		if actx.TenantID != "" && strings.TrimSpace(r.Header.Get("X-Tenant-ID")) == "" {
+			r.Header.Set("X-Tenant-ID", actx.TenantID)
+		}
+		fn(w, r)
+	}
+}
+
 // RegisterRoutes 注入 M5 编排路由到 mux。
+// G1 鉴权修复：读操作（GET 列表/详情/状态/历史）要求 workflow:read，
+// 写操作（POST 创建/运行/调度、PUT/PATCH 更新）要求 workflow:write；未配置 Authorize 时透传。
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/v1/workflows", h.handleWorkflows)
-	mux.HandleFunc("/api/v1/workflows/", h.handleWorkflowByID)
+	mux.HandleFunc("/api/v1/workflows", h.authorize(h.handleWorkflows, "workflow:read", "workflow:write"))
+	mux.HandleFunc("/api/v1/workflows/", h.authorize(h.handleWorkflowByID, "workflow:read", "workflow:write"))
 }
 
 func (h *Handler) handleWorkflows(w http.ResponseWriter, r *http.Request) {

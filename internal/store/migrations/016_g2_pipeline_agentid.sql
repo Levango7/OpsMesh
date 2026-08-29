@@ -1,0 +1,11 @@
+-- 016_g2_pipeline_agentid.sql — G2 流水线任务认领：pipeline_templates 新增 agent_id 列
+--
+-- 背景：PipelineTemplate 新增 AgentID 字段（默认执行 agent），触发 run 时派生执行任务
+-- 写入 Task.AgentID（认领到指定 agent），run 不再立即标 succeeded 而是按子任务状态流转。
+--
+-- 说明：
+--   - 迁移框架按版本号逐个应用并记录到 schema_migrations（每个文件只执行一次），
+--     故直接 ALTER TABLE ADD COLUMN 即可（无需 IF NOT EXISTS，旧版 MySQL 不支持）；
+--   - 全新库安装时，001_initial.sql 已建 pipeline_templates，本迁移同样适用；
+--   - 老库升级时，本迁移为已存在的 pipeline_templates 补齐 agent_id 列。
+ALTER TABLE pipeline_templates ADD COLUMN agent_id VARCHAR(128) DEFAULT '';

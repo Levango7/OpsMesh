@@ -403,6 +403,12 @@ func (g *GrpcServerImpl) ReportResult(ctx context.Context, res *proto.TaskResult
 
 // CancelTask 取消任务（F3）：转发到 store.CancelTask（pending/running -> cancelled）。
 // 服务端用网关注入租户强制覆盖 req.TenantID，防止越权取消他租户任务。
+//
+// G1 鉴权修复：CancelTask 原无 agent 验签（对比 PollCancels 已验签）。CancelTaskReq
+// 无 AgentID 字段，agent 侧（grpcclient.CancelTask）以 tenantID 为签名身份附加 HMAC
+// （signContext(ctx, tenantID)），故此处以 req.TenantID 调 verifyAgentSignature 对齐：
+// requireSignature 开启时，只有持有该租户签名密钥的调用方能取消任务（防冒充取消）。
+// 同时补租户交叉校验：metadata 与请求体均声明租户且不一致时拒绝（防伪装他租户）。
 func (g *GrpcServerImpl) CancelTask(ctx context.Context, req *grpcx.CancelTaskReq) (*grpcx.Empty, error) {
 	var actx authctx.Context
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
@@ -411,9 +417,18 @@ func (g *GrpcServerImpl) CancelTask(ctx context.Context, req *grpcx.CancelTaskRe
 	if g.RequireAuth && actx.TenantID == "" {
 		return nil, status.Error(codes.Unauthenticated, "missing tenant context: gateway auth required (--require-auth)")
 	}
+	// 补 agent 验签：以 req.TenantID 为签名身份（与 agent 侧 signContext(ctx, tenantID) 对齐）。
+	// RequireSignature 关闭时 verifyAgentSignature 直接放行（向后兼容）。
+	if err := g.verifyAgentSignature(ctx, req.TenantID); err != nil {
+		return nil, err
+	}
 	tenant := req.TenantID
 	if g.RequireAuth {
 		tenant = actx.TenantID // 强制租户隔离
+	}
+	// 租户交叉校验：metadata 与请求体均声明租户且不一致 → 拒绝。
+	if actx.TenantID != "" && req.TenantID != "" && actx.TenantID != req.TenantID {
+		return nil, status.Error(codes.PermissionDenied, "tenant mismatch between metadata and request body")
 	}
 	if req.TaskID == "" {
 		return nil, status.Error(codes.InvalidArgument, "taskID required")

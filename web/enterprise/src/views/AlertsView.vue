@@ -27,6 +27,7 @@
     </div>
 
     <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
+    <div v-else-if="store.loading && !store.list.length" class="muted" data-testid="alerts-loading">{{ $t('common.loading') }}</div>
     <div v-else-if="!store.list.length" class="muted" data-testid="alerts-empty"><Icon name="success" :size="14" /> {{ $t('alerts.empty') }}</div>
 
     <div

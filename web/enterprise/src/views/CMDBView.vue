@@ -24,6 +24,7 @@
             :rows="store.instances"
             row-key="id"
             :clickable="true"
+            :loading="store.loading"
             :empty-text="$t('cmdb.please_select_type')"
             @row-click="onOpenCI"
           >

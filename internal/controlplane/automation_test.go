@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"opsmesh/internal/config"
+	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 )
 
@@ -418,5 +419,92 @@ func TestHandleAutomationRules_NoAuth(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d, want 401", w.Code)
+	}
+}
+
+// =============================================================================
+// G2 修复：自动化引擎评估循环（processAutomationRules）
+// =============================================================================
+
+// newEvalTestServer 构造自动化评估循环测试用 Server（重置包级 engine 执行器为 nil，
+// 避免测试间单例污染导致动作真实执行）。
+func newEvalTestServer(t *testing.T) *Server {
+	t.Helper()
+	automationEngine.SetExecutor(nil)
+	s := newAutomationTestServer()
+	s.store.UpsertDevice(&proto.DeviceInfo{DeviceID: "dev-cpu-1", Segment: "default", TenantID: "default", State: "online"})
+	s.store.StoreDeviceMetrics("dev-cpu-1", &proto.DeviceMetrics{
+		DeviceID: "dev-cpu-1",
+		CPU:      proto.CPUMetrics{Usage: 95},
+		Memory:   proto.MemMetrics{Usage: 80},
+	})
+	return s
+}
+
+// TestProcessAutomationRules_ScheduleHit 验证 schedule 触发器恒命中：评估后产生执行记录。
+func TestProcessAutomationRules_ScheduleHit(t *testing.T) {
+	s := newEvalTestServer(t)
+	s.store.CreateAutomationRule("default", &store.AutomationRule{
+		Name:          "daily-report",
+		TriggerType:   "schedule",
+		TriggerParams: map[string]string{"cron": "0 9 * * *"},
+		Actions:       []store.AutomationAction{{Type: "send_notify", Params: map[string]string{"channel": "email", "message": "daily report"}}},
+		Enabled:       true,
+	})
+	s.processAutomationRules()
+	execs := s.store.ListAutomationExecutions("default", 10)
+	if len(execs) != 1 {
+		t.Fatalf("executions=%d, want 1（schedule 恒命中应产生执行记录）", len(execs))
+	}
+	if execs[0].RuleID == "" || execs[0].RuleName != "daily-report" {
+		t.Fatalf("execution 归属错误: %+v", execs[0])
+	}
+}
+
+// TestProcessAutomationRules_DisabledSkipped 验证 disabled 规则不评估不执行。
+func TestProcessAutomationRules_DisabledSkipped(t *testing.T) {
+	s := newEvalTestServer(t)
+	s.store.CreateAutomationRule("default", &store.AutomationRule{
+		Name:        "disabled-rule",
+		TriggerType: "schedule",
+		Actions:     []store.AutomationAction{{Type: "send_notify", Params: map[string]string{"channel": "email"}}},
+		Enabled:     false,
+	})
+	s.processAutomationRules()
+	if execs := s.store.ListAutomationExecutions("default", 10); len(execs) != 0 {
+		t.Fatalf("executions=%d, want 0（disabled 规则跳过）", len(execs))
+	}
+}
+
+// TestProcessAutomationRules_MetricThresholdHit 验证 metric_threshold 触发器：
+// 设备指标越线（cpu_usage=95 >= threshold=90）触发执行。
+func TestProcessAutomationRules_MetricThresholdHit(t *testing.T) {
+	s := newEvalTestServer(t)
+	s.store.CreateAutomationRule("default", &store.AutomationRule{
+		Name:          "cpu-high-scale",
+		TriggerType:   "metric_threshold",
+		TriggerParams: map[string]string{"metric": "cpu_usage", "threshold": "90"},
+		Actions:       []store.AutomationAction{{Type: "scale", Params: map[string]string{"service": "web", "replicas": "2"}}},
+		Enabled:       true,
+	})
+	s.processAutomationRules()
+	if execs := s.store.ListAutomationExecutions("default", 10); len(execs) != 1 {
+		t.Fatalf("executions=%d, want 1（cpu_usage=95 >= 90 应触发）", len(execs))
+	}
+}
+
+// TestProcessAutomationRules_MetricThresholdBelow 验证指标未越线不触发。
+func TestProcessAutomationRules_MetricThresholdBelow(t *testing.T) {
+	s := newEvalTestServer(t)
+	s.store.CreateAutomationRule("default", &store.AutomationRule{
+		Name:          "cpu-low-notrigger",
+		TriggerType:   "metric_threshold",
+		TriggerParams: map[string]string{"metric": "cpu_usage", "threshold": "99"},
+		Actions:       []store.AutomationAction{{Type: "send_notify", Params: map[string]string{"channel": "email"}}},
+		Enabled:       true,
+	})
+	s.processAutomationRules()
+	if execs := s.store.ListAutomationExecutions("default", 10); len(execs) != 0 {
+		t.Fatalf("executions=%d, want 0（cpu_usage=95 < 99 不应触发）", len(execs))
 	}
 }

@@ -69,7 +69,7 @@
 
           <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
-          <DataTable :columns="columns" :rows="store.list" row-key="id" :empty-text="$t('deploys.empty')">
+          <DataTable :columns="columns" :rows="store.list" row-key="id" :loading="store.loading" :empty-text="$t('deploys.empty')">
             <template #cell-id="{ value }"><code>{{ value }}</code></template>
             <template #cell-target_ids="{ value }"><code>{{ (value || '').replace(/,/g, ', ') }}</code></template>
             <template #cell-status="{ value }">

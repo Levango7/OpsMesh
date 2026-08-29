@@ -23,7 +23,14 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-if="!sortedRows || sortedRows.length === 0">
+        <tr v-if="loading && (!sortedRows || sortedRows.length === 0)">
+          <td :colspan="columns.length" class="skel" data-testid="dt-loading">
+            <div v-for="i in skeletonRows" :key="i" class="skel-row">
+              <div v-for="col in columns" :key="col.key" class="skel-cell" :class="{ wide: col.key === columns[0].key }" />
+            </div>
+          </td>
+        </tr>
+        <tr v-else-if="!sortedRows || sortedRows.length === 0">
           <td :colspan="columns.length" class="empty" data-testid="dt-empty">{{ emptyText || $t('common.no_data') }}</td>
         </tr>
         <tr
@@ -53,11 +60,16 @@ const props = defineProps({
   clickable: { type: Boolean, default: false },
   rowClass: { type: Function, default: null },
   emptyText: { type: String, default: '' },
+  // loading 且无数据时渲染 shimmer 骨架占位（有数据时仍正常渲染数据行）
+  loading: { type: Boolean, default: false },
   // 外部受控排序：传入则使用外部值，否则使用内部状态
   sortKey: { type: String, default: '' },
   sortOrder: { type: String, default: 'asc' }   // 'asc' | 'desc'
 })
 const emit = defineEmits(['row-click', 'sort-change'])
+
+// 骨架占位行数（纯装饰，无业务含义）
+const skeletonRows = 5
 
 // 内部排序状态（非受控模式）
 const internalSortKey = ref('')
@@ -157,6 +169,25 @@ function formatCell(row, col) {
 .data-table tr.clickable { cursor: pointer; }
 .data-table tr.clickable:hover { background: var(--accent-soft); }
 .data-table td.empty { text-align: center; color: var(--text-3); padding: 18px; }
+
+/* 加载骨架：复用 tokens 的 shimmer 动画，仅用 CSS token，无图片 */
+.data-table td.skel { padding: 0; }
+.skel-row {
+  display: flex; gap: 18px; align-items: center;
+  padding: 11px 12px; border-bottom: 1px solid var(--border);
+}
+.skel-row:last-child { border-bottom: none; }
+.skel-cell {
+  flex: 1; height: 12px; border-radius: 5px;
+  background: linear-gradient(90deg, var(--surface-3) 25%, var(--surface-2) 50%, var(--surface-3) 75%);
+  background-size: 200% 100%;
+  animation: dt-skel-shimmer 1.4s infinite;
+}
+.skel-cell.wide { flex: 1.6; }
+@keyframes dt-skel-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
 
 /* 排序相关样式 */
 .data-table th.sortable { cursor: pointer; user-select: none; transition: .12s; }

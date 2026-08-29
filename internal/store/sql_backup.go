@@ -123,3 +123,26 @@ func (s *SQLStore) DeleteBackup(tenantID, id string) bool {
 	}
 	return n > 0
 }
+
+// UpdateBackup 更新备份记录的 status/size/path（按 rec.ID 定位，校验 tenantID 归属）。
+// 由控制面后台归档 goroutine 将 creating 推进为 completed（回填真实 Size/Path）或 failed。
+// backup_records 表在 migrations/012_p3_backup_compliance.sql 已含 status/size/path 列，
+// 无需新增迁移。不存在或租户不匹配返回 false。
+func (s *SQLStore) UpdateBackup(tenantID string, rec *BackupRecord) bool {
+	if rec == nil || rec.ID == "" {
+		return false
+	}
+	res, err := s.db.ExecContext(context.Background(),
+		`UPDATE backup_records SET status=?, size=?, path=? WHERE id=? AND tenant_id=?`,
+		rec.Status, rec.Size, rec.Path, rec.ID, tenantID)
+	if err != nil {
+		log.Printf("[store] UpdateBackup 失败 (tenant=%s id=%s): %v", tenantID, rec.ID, err)
+		return false
+	}
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		log.Printf("[store] UpdateBackup RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, rec.ID, rowsErr)
+		return false
+	}
+	return n > 0
+}

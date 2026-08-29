@@ -4,10 +4,11 @@ package store
 //
 // 表结构：
 //   - pipeline_templates（id PK + tenant_id + name + description + type + yaml +
-//     parameters JSON + created_at + updated_at）；
+//     agent_id + parameters JSON + created_at + updated_at）；
 //   - pipeline_runs（id PK + tenant_id + template_id + template_name + status +
 //     parameters JSON + logs + started_at 可空 + finished_at 可空 + created_at）。
-// 迁移文件 migrations/011_p2_argocd_pipeline_traffic.sql 幂等建表。
+// 迁移文件 migrations/011_p2_argocd_pipeline_traffic.sql 幂等建表；
+// migrations/016_g2_pipeline_agentid.sql 为 pipeline_templates 补齐 agent_id 列。
 //
 // 设计要点（与 sql_k8s.go / sql_secret.go 风格一致）：
 //   - 两张表分别承载模板与运行记录；
@@ -30,13 +31,13 @@ import (
 )
 
 // scanPipelineTemplate 从一行扫描出 *PipelineTemplate。
-// 列顺序：id, tenant_id, name, description, type, yaml, parameters, created_at, updated_at。
+// 列顺序：id, tenant_id, name, description, type, yaml, agent_id, parameters, created_at, updated_at。
 func scanPipelineTemplate(row rowScanner) *PipelineTemplate {
 	var t PipelineTemplate
 	var paramsJSON []byte
 	var createdAt, updatedAt time.Time
 	if err := row.Scan(
-		&t.ID, &t.TenantID, &t.Name, &t.Description, &t.Type, &t.YAML,
+		&t.ID, &t.TenantID, &t.Name, &t.Description, &t.Type, &t.YAML, &t.AgentID,
 		&paramsJSON, &createdAt, &updatedAt,
 	); err != nil {
 		return nil
@@ -51,7 +52,8 @@ func scanPipelineTemplate(row rowScanner) *PipelineTemplate {
 }
 
 // pipelineTemplateColumns 是 pipeline_templates 表的查询列清单（与 scanPipelineTemplate 顺序一致）。
-const pipelineTemplateColumns = `id, tenant_id, name, description, type, yaml, parameters, created_at, updated_at`
+// agent_id 列由 migrations/016_g2_pipeline_agentid.sql 补齐（旧库升级后存在）。
+const pipelineTemplateColumns = `id, tenant_id, name, description, type, yaml, agent_id, parameters, created_at, updated_at`
 
 // scanPipelineRun 从一行扫描出 *PipelineRun。
 // 列顺序：id, tenant_id, template_id, template_name, status, parameters, logs,
@@ -137,11 +139,11 @@ func (s *SQLStore) CreateTemplate(tenantID string, t *PipelineTemplate) *Pipelin
 	t.UpdatedAt = now
 	paramsJSON := marshalPipelineParams(t.Parameters)
 	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO pipeline_templates (id, tenant_id, name, description, type, yaml, parameters, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO pipeline_templates (id, tenant_id, name, description, type, yaml, agent_id, parameters, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description), type=VALUES(type),
-		 yaml=VALUES(yaml), parameters=VALUES(parameters), updated_at=VALUES(updated_at)`,
-		t.ID, t.TenantID, t.Name, t.Description, t.Type, t.YAML, paramsJSON, t.CreatedAt, t.UpdatedAt); err != nil {
+		 yaml=VALUES(yaml), agent_id=VALUES(agent_id), parameters=VALUES(parameters), updated_at=VALUES(updated_at)`,
+		t.ID, t.TenantID, t.Name, t.Description, t.Type, t.YAML, t.AgentID, paramsJSON, t.CreatedAt, t.UpdatedAt); err != nil {
 		log.Printf("[store] CreateTemplate 插入失败 (tenant=%s id=%s): %v", tenantID, t.ID, err)
 		return nil
 	}

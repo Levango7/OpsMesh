@@ -18,6 +18,7 @@
         row-key="deviceID"
         :clickable="true"
         :row-class="rowClass"
+        :loading="store.loading"
         :empty-text="$t('devices.segment_empty')"
         @row-click="openDevice"
       >

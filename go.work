@@ -1,0 +1,24 @@
+go 1.26.0
+
+use (
+	.
+	./operator
+	./services/aio-svc
+	./services/alert-svc
+	./services/auth-svc
+	./services/autoscaler-svc
+	./services/bot-svc
+	./services/config-svc
+	./services/deploy-svc
+	./services/device-svc
+	./services/gpu-svc
+	./services/grafana-bridge
+	./services/incident-svc
+	./services/log-svc
+	./services/plugin-svc
+	./services/portal-svc
+	./services/runbook-svc
+	./services/task-svc
+	./services/tf-provider
+	./services/workflow-svc
+)

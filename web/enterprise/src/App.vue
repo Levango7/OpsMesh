@@ -89,6 +89,9 @@
       <span class="muted">{{ $t('app.copyright') }}</span>
     </footer>
   </div>
+
+  <!-- 全局错误 Toast（独立根节点，始终挂载；仅登录后的非 401 API 错误会触发） -->
+  <ToastHost />
 </template>
 
 <script setup>
@@ -103,6 +106,7 @@ import { useThemeStore } from '@/stores/theme'
 import { currentLang, setLang } from '@/i18n'
 import { createSSEClient } from '@/api/sse'
 import Icon from '@/components/Icon.vue'
+import ToastHost from '@/components/ToastHost.vue'
 
 const router = useRouter()
 const deviceStore = useDeviceStore()

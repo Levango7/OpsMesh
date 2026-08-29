@@ -85,7 +85,7 @@ const sseDefaultTenant = "default"
 //   - 头缺失时回退到 Authorization Bearer / HttpOnly Cookie JWT（与 requireTenantContext 一致）；
 //   - requireAuth=true：两种来源均无租户 → 401；
 //   - requireAuth=false 且 demo=true：均无身份 → 填充 "default" 租户（本地体验）；
-//   - requireAuth=false 且 demo=false：均无身份 → 视为全局订阅（兼容旧单租户部署）。
+//   - requireAuth=false 且 demo=false：均无身份 → 400 拒绝订阅（G1：不允许空租户全量订阅所有租户事件）。
 //
 // 租户过滤：收到的事件若 TenantID 非空且与当前订阅者租户不匹配则丢弃，
 // 不跨租户广播（防止 A 租户订阅者收到 B 租户的任务/告警事件）。
@@ -111,6 +111,13 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 	// 仅在非 requireAuth 时启用（requireAuth 已在上面拦截）。
 	if tenant == "" && s.cfg != nil && s.cfg.Demo {
 		tenant = sseDefaultTenant
+	}
+	// G1 鉴权修复：非 demo 且仍无租户 → 400 拒绝订阅。
+	// 不允许空租户全量订阅所有租户事件（原实现空租户订阅者可收到全部租户的
+	// 任务/告警/设备事件，构成跨租户信息泄露）。demo 模式已在上方填充 sseDefaultTenant。
+	if tenant == "" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "missing tenant context (X-Tenant-ID header or bearer token required)"})
+		return
 	}
 
 	flusher, ok := w.(http.Flusher)
@@ -146,8 +153,9 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 			}
 			// 租户隔离：事件归属租户非空且与当前订阅者不匹配则丢弃，
 			// 不跨租户下发（防跨租户信息泄露）。
-			// 订阅者租户为空（旧单租户/无网关降级）时放行全部，保持向后兼容。
-			if ev.TenantID != "" && tenant != "" && ev.TenantID != tenant {
+			// 注：订阅者租户必非空（G1 已在入口拒绝空租户订阅），空租户事件（全局，如 hello）
+			// 仍会推给所有订阅者。
+			if ev.TenantID != "" && ev.TenantID != tenant {
 				continue
 			}
 			data, err := json.Marshal(ev)

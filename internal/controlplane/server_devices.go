@@ -71,6 +71,10 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// G1 鉴权修复：agent 列表需 device:read 权限（原无 RBAC，任意匿名可枚举全部 agent）。
+	if _, ok := s.requireProd(w, r, "device:read"); !ok {
+		return
+	}
 	out := make([]map[string]string, 0)
 	for _, a := range s.store.Agents(actx.TenantID) {
 		out = append(out, map[string]string{
@@ -105,6 +109,15 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
+	}
+	// G1 鉴权修复：携带了用户身份 token（Bearer JWT / HttpOnly Cookie）但无效/过期 → 401，
+	// 不允许无效 token 静默回落到网关注入身份造成身份混淆。
+	// 未携带 token（纯网关注入头）或 API Key（Bearer om_*）不在此列，继续走身份头解析。
+	if s.hasUserIdentityToken(r) {
+		if _, err := s.userFromToken(r); err != nil {
+			paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+			return
+		}
 	}
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {

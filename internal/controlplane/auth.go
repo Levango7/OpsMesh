@@ -695,6 +695,37 @@ func extractBearer(r *http.Request) (string, error) {
 	return token, nil
 }
 
+// subsystemAuthorize 供 CMDB/部署/日志/编排等子包 handler 注入的统一鉴权回调（G1 鉴权修复）。
+// 组合 requireTenantContext（租户上下文：头/Token 交叉校验，requireAuth 缺失租户 401）
+// + requireProd（产品级 RBAC 权限闸：JWT/API Key/网关注入角色/联邦/demo）。
+// perm 由各 handler 按方法语义传入（如 "cmdb:read" / "cmdb:write"）；
+// 未认证/无权限时已写入响应并返回 ok=false，调用方应直接 return。
+func (s *Server) subsystemAuthorize(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool) {
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return actx, false
+	}
+	if _, ok := s.requireProd(w, r, perm); !ok {
+		return actx, false
+	}
+	return actx, true
+}
+
+// hasUserIdentityToken 判断请求是否携带用户身份 token（Bearer JWT 或 HttpOnly Cookie）。
+// API Key（Bearer om_* 或 X-API-Key）不属用户 token，返回 false（交由 requireTenantContext 走 API Key 路径）。
+func (s *Server) hasUserIdentityToken(r *http.Request) bool {
+	if _, isKey := extractAPIKey(r); isKey {
+		return false
+	}
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		return true
+	}
+	if ck, err := r.Cookie(accessTokenCookieName); err == nil && strings.TrimSpace(ck.Value) != "" {
+		return true
+	}
+	return false
+}
+
 // requirePermission 鉴权中间件：从 token 提取用户，校验是否拥有指定权限。
 // 返回 (user, ok)；ok=false 时已写入 401/403 响应，调用方应直接 return。
 // 权限校验逻辑：展开用户经角色获得的权限，检查是否含 required 权限。

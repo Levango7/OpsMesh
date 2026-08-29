@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"opsmesh/internal/authctx"
@@ -13,6 +14,10 @@ import (
 // Handler 是 M6 日志检索的 HTTP 处理器。
 type Handler struct {
 	ls LogStore
+	// Authorize 鉴权回调（由 controlplane 注入）：校验租户上下文 + 所需权限。
+	// perm 为当前请求所需权限（如 "log:read"）；未认证/无权限时须已写入响应并返回 ok=false。
+	// nil 时不启用鉴权（向后兼容独立使用/测试场景）。
+	Authorize func(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool)
 }
 
 // NewHandler 构造日志检索处理器。
@@ -20,9 +25,34 @@ func NewHandler(ls LogStore) *Handler {
 	return &Handler{ls: ls}
 }
 
+// authorize 把 Authorize 鉴权回调包装到单个路由 handler 上（G1 鉴权修复）。
+// 按请求方法映射所需权限：GET/HEAD/OPTIONS 只读 → readPerm，其余（POST）→ writePerm。
+// 鉴权通过后若回调解析出的租户在请求头缺失，回填 X-Tenant-ID，使 handler 行级隔离与鉴权一致。
+// 注：agent 日志上报走 gRPC ReportLogs → h.Store() 内部通道，不经此 HTTP 鉴权（G1 保留）。
+func (h *Handler) authorize(fn http.HandlerFunc, readPerm, writePerm string) http.HandlerFunc {
+	if h.Authorize == nil {
+		return fn
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		perm := readPerm
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			perm = writePerm
+		}
+		actx, ok := h.Authorize(w, r, perm)
+		if !ok {
+			return
+		}
+		if actx.TenantID != "" && strings.TrimSpace(r.Header.Get("X-Tenant-ID")) == "" {
+			r.Header.Set("X-Tenant-ID", actx.TenantID)
+		}
+		fn(w, r)
+	}
+}
+
 // RegisterRoutes 注入日志检索路由到 mux。
+// G1 鉴权修复：GET/POST 均要求 log:read（RBAC 权限目录仅有 log:read，见 rbacPermSpecs）。
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/v1/logs", h.handleLogs)
+	mux.HandleFunc("/api/v1/logs", h.authorize(h.handleLogs, "log:read", "log:read"))
 }
 
 // Store 暴露底层后端（供 gRPC 侧直接落地任务日志，绕过 HTTP）。

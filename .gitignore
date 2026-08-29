@@ -31,6 +31,11 @@ data/
 node_modules/
 dist/
 .vite/
+# vite/vitest 运行残留（config 内联处理产生的 timestamp 临时文件）
+web/enterprise/*.timestamp-*.mjs
+
+# WorkBuddy 会话记忆目录（非源码）
+/.workbuddy/
 
 
 .gocache/

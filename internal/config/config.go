@@ -367,6 +367,11 @@ type Config struct {
 	QuotaMaxTasks   int  // --quota-max-tasks 默认最大任务数（0=不限）
 	QuotaMaxAlerts  int  // --quota-max-alerts 默认最大告警数（0=不限）
 
+	// 自动化引擎评估周期：控制面周期评估 enabled 自动化规则并执行命中动作。
+	// 由 server_lifecycle.go Start 中 startAutomationEvalLoop(ctx, interval) 消费。
+	// 默认 30s；<=0 时按 30s 兜底（startAutomationEvalLoop 内处理）。
+	AutomationEvalInterval time.Duration // --automation-eval-interval 自动化规则评估周期（默认 30s）
+
 	// H2/H3 配套开关：是否允许 SQL 后端继续使用 P1-P6 桩存储。
 	// 背景：SQLStore 对 15 个领域（见 stubStoreDomains 清单）曾为桩实现，写入不持久化；
 	// 生产模式（--production=true）+ --store=mysql 时默认拒绝启动（fail-fast），
@@ -538,6 +543,8 @@ func Load() *Config {
 	quotaMaxAlerts := flag.Int("quota-max-alerts", 0, "默认最大告警数（未显式设置配额的租户回退到此值；0=不限，默认）；或 env OPSMESH_QUOTA_MAX_ALERTS")
 	// H2/H3 配套开关：SQL 后端桩存储放行开关（生产模式 + --store=mysql 时默认拒绝启动）。
 	allowStubStores := flag.Bool("allow-stub-stores", false, "H2/H3 止血：允许 SQL 后端继续使用 P1-P6 桩存储（15 个领域写入不持久化，见启动日志清单）；生产模式（--production=true）+ --store=mysql 时默认 false=拒绝启动，须显式 true 确认接受桩限制；memory 后端不受影响；或 env OPSMESH_ALLOW_STUB_STORES")
+	// 自动化引擎评估周期。
+	automationEvalInterval := flag.Duration("automation-eval-interval", 30*time.Second, "自动化引擎评估周期：周期评估 enabled 自动化规则并执行命中动作（默认 30s；或 env OPSMESH_AUTOMATION_EVAL_INTERVAL）")
 	flag.Parse()
 
 	// 记录被显式设置的 flag，用于"flag 优先、env 兜底"的正确语义（修复：原实现 env 会覆盖显式 flag）。
@@ -702,6 +709,7 @@ func Load() *Config {
 		QuotaMaxTasks:              valInt("quota-max-tasks", *quotaMaxTasks, "OPSMESH_QUOTA_MAX_TASKS"),
 		QuotaMaxAlerts:             valInt("quota-max-alerts", *quotaMaxAlerts, "OPSMESH_QUOTA_MAX_ALERTS"),
 		AllowStubStores:            valBool("allow-stub-stores", *allowStubStores, "OPSMESH_ALLOW_STUB_STORES"),
+		AutomationEvalInterval:     valDur("automation-eval-interval", *automationEvalInterval, "OPSMESH_AUTOMATION_EVAL_INTERVAL"),
 	}
 	// --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
 	// 使现有 LogBackend 校验/路由逻辑无缝复用；最终 LogStore 与 LogBackend 保持同值。

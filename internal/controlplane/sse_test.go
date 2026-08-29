@@ -29,10 +29,13 @@ import (
 // http.Get 获取流式 resp.Body，bufio.Reader 逐帧读取（帧以空行 \n 结束）。
 
 // newSSETestServer 构造最小测试控制面（仅 SSE 相关字段初始化）。
+// Demo=true：空租户连接自动填充 sseDefaultTenant（"default"），
+// 使底层 SSE 机制测试（响应头/握手/广播等）聚焦功能而非鉴权；
+// 空租户拒绝路径由 TestSSE_EmptyTenantRejected 单独覆盖。
 func newSSETestServer() *Server {
 	return &Server{
 		store:     store.NewMemoryStore(),
-		cfg:       &config.Config{},
+		cfg:       &config.Config{Demo: true},
 		eventSubs: make(map[chan SSEEvent]struct{}),
 	}
 }
@@ -363,6 +366,19 @@ func TestSSE_DemoFillsDefaultTenant(t *testing.T) {
 	}
 	if !strings.Contains(frame, "event: hello") {
 		t.Fatalf("demo mode should allow connection (got frame: %q)", frame)
+	}
+}
+
+// TestSSE_EmptyTenantRejected G1 鉴权修复：非 demo 且无租户时拒绝订阅（400），
+// 不允许空租户全量订阅所有租户事件（防跨租户信息泄露）。
+func TestSSE_EmptyTenantRejected(t *testing.T) {
+	s := newSSETestServer()
+	s.cfg = &config.Config{Demo: false} // 非 demo
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events/stream", nil)
+	rec := httptest.NewRecorder()
+	s.handleEventsStream(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty tenant non-demo = %d, want 400", rec.Code)
 	}
 }
 

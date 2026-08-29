@@ -531,6 +531,7 @@ type ComplianceStore interface {
 //
 // 由灾备恢复 API 创建 BackupRecord，按 (TenantID, ID) 唯一标识。
 // CreateBackup 创建备份记录（ID 为空时由 store 分配）；ListBackups 按租户列出。
+// UpdateBackup 推进备份记录状态机（creating→completed/failed 并回填真实 Size/Path）。
 type BackupStore interface {
 	// CreateBackup 创建备份记录（ID 为空时由 store 分配随机 ID）。
 	// TenantID 为空时归一为 default。返回持久化后的记录（含分配的 ID）。
@@ -539,6 +540,10 @@ type BackupStore interface {
 	GetBackup(tenantID, id string) (*BackupRecord, bool)
 	// ListBackups 返回指定租户的全部备份记录（按创建时间降序）。
 	ListBackups(tenantID string) []*BackupRecord
+	// UpdateBackup 更新备份记录的 status/size/path（按 rec.ID 定位，校验 tenantID 归属）。
+	// 用于后台归档 goroutine 将 creating 推进为 completed（回填真实 Size/Path）或 failed。
+	// 不存在或租户不匹配返回 false。
+	UpdateBackup(tenantID string, rec *BackupRecord) bool
 	// DeleteBackup 删除备份记录，返回是否删除成功（不存在或租户不匹配返回 false）。
 	DeleteBackup(tenantID, id string) bool
 }

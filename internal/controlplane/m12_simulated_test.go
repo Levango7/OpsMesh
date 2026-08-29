@@ -1,14 +1,14 @@
-// m12_simulated_test.go 测试 M12 占位实现 simulated:true 标记。
+// m12_simulated_test.go 测试 M12 占位实现 simulated 标记。
 //
 // 覆盖：
-//   - backup_api.go handleBackupRestore 响应含 simulated:true；
 //   - canary_enhance.go handleCanaryMetrics 响应含 simulated:true；
-//   - ha.go handleHAFailover 响应含 simulated:true；
-//   - compliance/engine.go Scan 返回 Simulated=true。
+//   - ha.go handleHAFailover 响应含 simulated:false；
+//   - compliance/engine.go Scan 返回 Simulated=false。
+//
+// 说明：backup restore 的 simulated 标记已在 G2 移除（真实备份/恢复，见 backup_api_test.go）。
 package controlplane
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -18,30 +18,6 @@ import (
 	"opsmesh/internal/config"
 	"opsmesh/internal/store"
 )
-
-// TestHandleBackupRestore_SimulatedFlag 验证 backup restore 响应含 simulated:true（M12）。
-func TestHandleBackupRestore_SimulatedFlag(t *testing.T) {
-	s := newBackupAPITestServer()
-	auth := loginAsAdmin(t, s)
-	created := s.store.CreateBackup("default", &store.BackupRecord{Type: "full", Status: "completed"})
-	body, _ := json.Marshal(map[string]string{"id": created.ID})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/backup/restore", bytes.NewReader(body))
-	req.Header.Set("Authorization", auth)
-	w := httptest.NewRecorder()
-	s.handleBackupRestore(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d, body=%s", w.Code, w.Body.String())
-	}
-	var resp struct {
-		Simulated bool `json:"simulated"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if !resp.Simulated {
-		t.Fatal("simulated=false, want true (M12 placeholder marker)")
-	}
-}
 
 // newCanarySimTestServer 构造带 batches + 鉴权的测试 Server（供 canary metrics 测试）。
 func newCanarySimTestServer() *Server {

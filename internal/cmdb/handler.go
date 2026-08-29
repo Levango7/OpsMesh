@@ -17,11 +17,40 @@ import (
 // Handler 是 CMDB HTTP 路由处理器。
 type Handler struct {
 	store CiStore
+	// Authorize 鉴权回调（由 controlplane 注入）：组合 requireTenantContext + requireProd
+	// 校验租户上下文与所需权限。perm 为当前请求所需权限（如 "cmdb:read"）；
+	// 未认证/无权限时回调须已写入响应并返回 ok=false，调用方直接 return。
+	// nil 时不启用鉴权（向后兼容独立使用/测试场景）。
+	Authorize func(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool)
 }
 
 // NewHandler 构造 CMDB 处理器。
 func NewHandler(store CiStore) *Handler {
 	return &Handler{store: store}
+}
+
+// authorize 把 Authorize 鉴权回调包装到单个路由 handler 上（G1 鉴权修复）。
+// 按请求方法映射所需权限：GET/HEAD/OPTIONS 只读 → readPerm，其余（POST/PUT/DELETE）→ writePerm。
+// 鉴权通过后若回调解析出的租户在请求头缺失，回填 X-Tenant-ID，
+// 使 handler 内 authctx.FromHTTPHeader 的行级隔离与鉴权租户一致（支持无网关直连时 token 携带租户）。
+func (h *Handler) authorize(fn http.HandlerFunc, readPerm, writePerm string) http.HandlerFunc {
+	if h.Authorize == nil {
+		return fn
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		perm := readPerm
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			perm = writePerm
+		}
+		actx, ok := h.Authorize(w, r, perm)
+		if !ok {
+			return
+		}
+		if actx.TenantID != "" && strings.TrimSpace(r.Header.Get("X-Tenant-ID")) == "" {
+			r.Header.Set("X-Tenant-ID", actx.TenantID)
+		}
+		fn(w, r)
+	}
 }
 
 // Store 返回底层 CiStore，供 CMDBCollector 等内部组件复用 CMDB CRUD 能力。
@@ -30,19 +59,21 @@ func NewHandler(store CiStore) *Handler {
 func (h *Handler) Store() CiStore { return h.store }
 
 // RegisterRoutes 注入 CMDB 路由到 mux。
+// G1 鉴权修复：所有路由经 authorize 包装，读操作（GET/导出/待审）要求 cmdb:read，
+// 写操作（POST/DELETE/审批/导入）要求 cmdb:write；未配置 Authorize 时透传（向后兼容）。
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/v1/cmdb/ci", h.handleCIs)
-	mux.HandleFunc("/api/v1/cmdb/types", h.handleCITypes)
+	mux.HandleFunc("/api/v1/cmdb/ci", h.authorize(h.handleCIs, "cmdb:read", "cmdb:write"))
+	mux.HandleFunc("/api/v1/cmdb/types", h.authorize(h.handleCITypes, "cmdb:read", "cmdb:write"))
 	// Phase 3: 导入导出 + 待审列表（比 /ci/ 子树更具体，优先匹配）
-	mux.HandleFunc("/api/v1/cmdb/ci/export", h.handleCIExport)
-	mux.HandleFunc("/api/v1/cmdb/ci/import", h.handleCIImport)
-	mux.HandleFunc("/api/v1/cmdb/ci/pending", h.handleCIPending)
+	mux.HandleFunc("/api/v1/cmdb/ci/export", h.authorize(h.handleCIExport, "cmdb:read", "cmdb:write"))
+	mux.HandleFunc("/api/v1/cmdb/ci/import", h.authorize(h.handleCIImport, "cmdb:read", "cmdb:write"))
+	mux.HandleFunc("/api/v1/cmdb/ci/pending", h.authorize(h.handleCIPending, "cmdb:read", "cmdb:write"))
 	// Phase 2: 关系拓扑 + CI 子路由
-	mux.HandleFunc("/api/v1/cmdb/ci/", h.handleCIByIDPrefix)
-	mux.HandleFunc("/api/v1/cmdb/relations", h.handleRelations)
+	mux.HandleFunc("/api/v1/cmdb/ci/", h.authorize(h.handleCIByIDPrefix, "cmdb:read", "cmdb:write"))
+	mux.HandleFunc("/api/v1/cmdb/relations", h.authorize(h.handleRelations, "cmdb:read", "cmdb:write"))
 	// Phase 2: 属性模板
-	mux.HandleFunc("/api/v1/cmdb/attr-templates", h.handleAttrTemplates)
-	mux.HandleFunc("/api/v1/cmdb/attr-templates/", h.handleAttrTemplateByID)
+	mux.HandleFunc("/api/v1/cmdb/attr-templates", h.authorize(h.handleAttrTemplates, "cmdb:read", "cmdb:write"))
+	mux.HandleFunc("/api/v1/cmdb/attr-templates/", h.authorize(h.handleAttrTemplateByID, "cmdb:read", "cmdb:write"))
 }
 
 // writeJSON 写入 JSON 响应。

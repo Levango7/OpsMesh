@@ -29,6 +29,10 @@ type Handler struct {
 	disp        Dispatcher
 	autoAdvance *AutoAdvanceManager    // 灰度自动推进管理器（可选，nil=未启用）
 	fed         *FederationCoordinator // 多集群联邦发布协调器（默认内存后端开箱即用）
+	// Authorize 鉴权回调（由 controlplane 注入）：校验租户上下文 + 所需权限。
+	// perm 为当前请求所需权限（如 "deploy:read"）；未认证/无权限时须已写入响应并返回 ok=false。
+	// nil 时不启用鉴权（向后兼容独立使用/测试场景）。
+	Authorize func(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool)
 }
 
 // NewHandler 构造部署处理器。
@@ -66,11 +70,37 @@ func (h *Handler) Store() DeployStore { return h.store }
 // 同时注册多集群联邦发布路由（/api/v1/deploys/federation*），复用同一 mux。
 // 联邦路由以 /api/v1/deploys/federation 前缀注册，ServeMux 最长前缀匹配优先于
 // /api/v1/deploys/，故 controlplane 无需改动即可获得联邦 API。
+//
+// G1 鉴权修复：所有路由经 authorize 包装，读操作（GET）要求 deploy:read，
+// 写操作（POST 创建/执行/回滚/晋级）要求 deploy:write；未配置 Authorize 时透传（向后兼容）。
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/v1/deploys", h.handleDeploys)
-	mux.HandleFunc("/api/v1/deploys/", h.handleDeployByID)
-	mux.HandleFunc("/api/v1/deploys/federation", h.handleFederationDeploys)
-	mux.HandleFunc("/api/v1/deploys/federation/", h.handleFederationDeployByID)
+	mux.HandleFunc("/api/v1/deploys", h.authorize(h.handleDeploys, "deploy:read", "deploy:write"))
+	mux.HandleFunc("/api/v1/deploys/", h.authorize(h.handleDeployByID, "deploy:read", "deploy:write"))
+	mux.HandleFunc("/api/v1/deploys/federation", h.authorize(h.handleFederationDeploys, "deploy:read", "deploy:write"))
+	mux.HandleFunc("/api/v1/deploys/federation/", h.authorize(h.handleFederationDeployByID, "deploy:read", "deploy:write"))
+}
+
+// authorize 把 Authorize 鉴权回调包装到单个路由 handler 上（G1 鉴权修复）。
+// 按请求方法映射所需权限：GET/HEAD/OPTIONS 只读 → readPerm，其余（POST/PUT/DELETE）→ writePerm。
+// 鉴权通过后若回调解析出的租户在请求头缺失，回填 X-Tenant-ID，使 handler 行级隔离与鉴权一致。
+func (h *Handler) authorize(fn http.HandlerFunc, readPerm, writePerm string) http.HandlerFunc {
+	if h.Authorize == nil {
+		return fn
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		perm := readPerm
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			perm = writePerm
+		}
+		actx, ok := h.Authorize(w, r, perm)
+		if !ok {
+			return
+		}
+		if actx.TenantID != "" && strings.TrimSpace(r.Header.Get("X-Tenant-ID")) == "" {
+			r.Header.Set("X-Tenant-ID", actx.TenantID)
+		}
+		fn(w, r)
+	}
 }
 
 // handleDeploys POST 创建 / GET 列表。

@@ -9,12 +9,14 @@ package controlplane
 //   - GET /api/v1/platform/metrics  平台指标汇总
 
 import (
+	"encoding/json"
 	"opsmesh/internal/controlplane/paginate"
 	"net/http"
 	"runtime"
 	"time"
 
 	"opsmesh/internal/proto"
+	"opsmesh/internal/store"
 )
 
 // PlatformConfig 平台配置视图。
@@ -60,12 +62,12 @@ func (s *Server) handlePlatformConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleGetPlatformConfig 处理 GET /api/v1/platform/config。
-func (s *Server) handleGetPlatformConfig(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requirePermission(w, r, "platform:read"); !ok {
-		return
-	}
-	cfg := PlatformConfig{
+// platformConfigStoreKey 平台配置在 store ConfigStore 中的键（tenant="default"）。
+const platformConfigStoreKey = "platform/config"
+
+// defaultPlatformConfig 返回出厂默认平台配置（store 未设置时回退）。
+func defaultPlatformConfig() PlatformConfig {
+	return PlatformConfig{
 		Version:           "0.6.0",
 		BuildTime:         time.Now().Format("2006-01-02"),
 		GoVersion:         runtime.Version(),
@@ -75,13 +77,28 @@ func (s *Server) handleGetPlatformConfig(w http.ResponseWriter, r *http.Request)
 		EnableBilling:     true,
 		UpdatedAt:         time.Now().Format(time.RFC3339),
 	}
+}
+
+// handleGetPlatformConfig 处理 GET /api/v1/platform/config。
+// 优先读 store（tenant=default, key=platform/config）；未设置时回退出厂默认。
+func (s *Server) handleGetPlatformConfig(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requirePermission(w, r, "platform:read"); !ok {
+		return
+	}
+	cfg := defaultPlatformConfig()
+	if item, ok := s.store.GetConfig("default", platformConfigStoreKey); ok && item != nil && item.Value != "" {
+		if err := json.Unmarshal([]byte(item.Value), &cfg); err != nil {
+			// 存储数据损坏：回退默认，不阻断查询。
+			cfg = defaultPlatformConfig()
+		}
+	}
 	paginate.WriteJSON(w, http.StatusOK, cfg)
 }
 
 // handleUpdatePlatformConfig 处理 PUT /api/v1/platform/config。
 //
-// 假审计修正：本 handler 未实际落库配置（MVP 仅返回 echo），审计 Action 加 _simulated
-// 后缀以如实标记非真实持久化；响应体加 simulated:true 字段提示客户端此更新未落库。
+// 真实持久化：把请求体序列化为 JSON 写入 store.ConfigStore（tenant=default, key=platform/config）。
+// 成功返回实际值；失败返回 500；审计 Action 为 platform_config_update（不再带 _simulated 后缀）。
 func (s *Server) handleUpdatePlatformConfig(w http.ResponseWriter, r *http.Request) {
 	caller, ok := s.requirePermission(w, r, "platform:write")
 	if !ok {
@@ -93,15 +110,28 @@ func (s *Server) handleUpdatePlatformConfig(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	body.UpdatedAt = time.Now().Format(time.RFC3339)
-	// 假审计修正：Action 加 _simulated 后缀，标记此更新未实际落库（MVP echo 占位）。
+	raw, err := json.Marshal(body)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "serialize config failed"})
+		return
+	}
+	item := s.store.SetConfig(&store.ConfigItem{
+		Key:         platformConfigStoreKey,
+		TenantID:    "default",
+		Value:       string(raw),
+		Format:      "json",
+		Description: "platform config",
+		UpdatedBy:   caller.ID,
+	})
+	if item == nil {
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "persist platform config failed"})
+		return
+	}
+	// 审计：真实落库后的更新事件。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "platform_config_update_simulated", Target: "config", Detail: "echo placeholder, not persisted",
+		TenantID: "default", UserID: caller.ID, Action: "platform_config_update", Target: platformConfigStoreKey, Detail: "persisted to store",
 	})
-	// 响应体加 simulated:true，如实告知客户端此更新未持久化。
-	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"config":    body,
-		"simulated": true,
-	})
+	paginate.WriteJSON(w, http.StatusOK, body)
 }
 
 // handlePlatformHealth 处理 GET /api/v1/platform/health：平台健康检查。

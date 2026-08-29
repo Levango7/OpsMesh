@@ -188,7 +188,7 @@ func TestScan_ArgoCDApp_ScanError(t *testing.T) {
 }
 
 // scanPipelineTemplate 列顺序：id, tenant_id, name, description, type, yaml,
-// parameters(JSON []byte), created_at, updated_at。
+// agent_id, parameters(JSON []byte), created_at, updated_at。
 
 func TestScan_PipelineTemplate_Happy(t *testing.T) {
 	created := time.Date(2026, 3, 5, 8, 0, 0, 0, time.UTC)
@@ -196,7 +196,7 @@ func TestScan_PipelineTemplate_Happy(t *testing.T) {
 	paramsJSON, _ := json.Marshal([]PipelineParam{{Name: "branch", Default: "main", Required: true}})
 	row := &mockRowScanner{vals: []interface{}{
 		"pipeline-1", "t1", "build", "构建流水线", "tekton", "apiVersion: v1",
-		paramsJSON, created, updated,
+		"agent-1", paramsJSON, created, updated,
 	}}
 	tpl := scanPipelineTemplate(row)
 	if tpl == nil {
@@ -207,6 +207,9 @@ func TestScan_PipelineTemplate_Happy(t *testing.T) {
 	}
 	if tpl.Type != "tekton" || tpl.YAML != "apiVersion: v1" {
 		t.Fatalf("类型/YAML 错误: %+v", tpl)
+	}
+	if tpl.AgentID != "agent-1" {
+		t.Fatalf("AgentID=%q, want agent-1", tpl.AgentID)
 	}
 	if len(tpl.Parameters) != 1 || tpl.Parameters[0].Name != "branch" || !tpl.Parameters[0].Required {
 		t.Fatalf("Parameters 解析错误: %+v", tpl.Parameters)
@@ -219,7 +222,7 @@ func TestScan_PipelineTemplate_Happy(t *testing.T) {
 func TestScan_PipelineTemplate_EmptyParams(t *testing.T) {
 	row := &mockRowScanner{vals: []interface{}{
 		"pipeline-2", "t1", "empty", "", "jenkins", "",
-		[]byte{}, time.Time{}, time.Time{},
+		"", []byte{}, time.Time{}, time.Time{},
 	}}
 	tpl := scanPipelineTemplate(row)
 	if tpl == nil {

@@ -26,6 +26,7 @@ import (
 	"opsmesh/internal/controlplane/paginate"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"strings"
 	"sync"
@@ -391,6 +392,104 @@ func (s *Server) handleGatewayStats(w http.ResponseWriter, r *http.Request) {
 // randGatewayRouteID 生成随机网关路由 ID（"gw-route-" + 16 字节 hex）。
 func randGatewayRouteID() string {
 	return randHexID("gw-route")
+}
+
+// gwStatResponseWriter 捕获响应状态码，供 handleGatewayProxy 统计错误数。
+// 默认 status=200（http.ResponseWriter 未显式 WriteHeader 时隐式 200）。
+type gwStatResponseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+// WriteHeader 记录状态码后透传。
+func (w *gwStatResponseWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+// handleGatewayProxy 实现 API 网关最小数据面：按 PathPrefix+Methods 匹配 enabled 路由，
+// 用 httputil.ReverseProxy 反向代理转发到 targetBackend。
+//
+// 设计要点（MVP 降级方案，完整数据面——独立端口/多租户鉴权留待 v2）：
+//   - 挂载 /gw/ 前缀：剥前缀后用剩余路径按 extension.MatchRoute 匹配（跨租户，最小数据面不做租户鉴权）；
+//   - 命中 enabled 路由 → 构造 ReverseProxy 转发；路由限流（RateLimitPerSec>0）超出返回 429；
+//   - 统计：每次请求递增 TotalRequests；错误（404 无路由 / 429 限流 / >=500 代理失败）递增 TotalErrors；
+//     维护 AvgLatencyMs 增量平均（newAvg = oldAvg + (latency-oldAvg)/count）；
+//   - grpc:// 后端不支持（最小数据面仅 http/https），返回 502 并计入错误。
+func (s *Server) handleGatewayProxy(w http.ResponseWriter, r *http.Request) {
+	gw := s.ensureGateway()
+
+	// 剥 /gw 前缀得到路由匹配路径（如 /gw/api/v1/devices → /api/v1/devices）。
+	path := strings.TrimPrefix(r.URL.Path, "/gw")
+	if path == "" {
+		path = "/"
+	}
+
+	// 汇总全部 enabled 路由（跨租户），按 extension.MatchRoute 匹配。
+	gw.mu.RLock()
+	routes := make([]*extension.RouteRule, 0, 8)
+	for _, tenantRoutes := range gw.routes {
+		for _, e := range tenantRoutes {
+			if e != nil && e.rule != nil {
+				routes = append(routes, e.rule)
+			}
+		}
+	}
+	gw.mu.RUnlock()
+	rule := extension.MatchRoute(routes, path, r.Method)
+
+	// 每次请求递增 TotalRequests（先于后续错误分支，保证统计覆盖所有请求）。
+	started := time.Now()
+	gw.mu.Lock()
+	gw.stats.TotalRequests++
+	gw.mu.Unlock()
+
+	rw := &gwStatResponseWriter{ResponseWriter: w, status: http.StatusOK}
+	// 请求结束后统计：错误计数 + 平均延迟增量更新。
+	defer func() {
+		latencyMs := time.Since(started).Seconds() * 1000
+		gw.mu.Lock()
+		if rw.status == http.StatusNotFound || rw.status == http.StatusTooManyRequests || rw.status >= http.StatusInternalServerError {
+			gw.stats.TotalErrors++
+		}
+		if count := gw.stats.TotalRequests; count > 1 {
+			gw.stats.AvgLatencyMs += (latencyMs - gw.stats.AvgLatencyMs) / float64(count)
+		} else {
+			gw.stats.AvgLatencyMs = latencyMs
+		}
+		gw.mu.Unlock()
+	}()
+
+	// 无命中路由 → 404。
+	if rule == nil {
+		paginate.WriteJSON(rw, http.StatusNotFound, map[string]string{"error": "no gateway route matches " + path})
+		return
+	}
+
+	// 路由级限流（RateLimitPerSec>0 时令牌桶；超出返回 429）。
+	gw.mu.RLock()
+	entry := gw.routes[rule.TenantID][rule.ID]
+	gw.mu.RUnlock()
+	if entry != nil && !entry.limiter.Allow() {
+		paginate.WriteJSON(rw, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded for route " + rule.ID})
+		return
+	}
+
+	// 后端解析：最小数据面仅支持 http/https；grpc:// 与非法 scheme 返回 502。
+	target, err := url.Parse(rule.TargetBackend)
+	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" {
+		paginate.WriteJSON(rw, http.StatusBadGateway, map[string]string{"error": "unsupported targetBackend: " + rule.TargetBackend})
+		return
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	director := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		director(req)
+		// 转发时去掉 /gw 前缀，后端按 PathPrefix 语义接收原始路径。
+		req.URL.Path = path
+		req.URL.RawPath = ""
+	}
+	proxy.ServeHTTP(rw, r)
 }
 
 
