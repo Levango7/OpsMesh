@@ -149,6 +149,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/gateway/routes", s.handleGatewayRoutes)
 	mux.HandleFunc("/api/v1/gateway/routes/", s.handleGatewayRouteRouting) // 子路径：{id} GET/PUT/DELETE、{id}/enable|disable POST
 	mux.HandleFunc("/api/v1/gateway/stats", s.handleGatewayStats)
+	mux.HandleFunc("/gw/", s.handleGatewayProxy) // API 网关最小数据面：按 PathPrefix 匹配路由反向代理转发
 	mux.HandleFunc("/api/v1/webhooks", s.handleWebhooks)
 	mux.HandleFunc("/api/v1/webhooks/", s.handleWebhookRouting) // 子路径：{id} GET/PUT/DELETE、{id}/test|deliveries
 	mux.HandleFunc("/api/v1/scripts", s.handleScripts)
@@ -230,17 +231,18 @@ func (s *Server) Start() error {
 	// ：otelx.HTTPMiddleware 为每个请求创建 span 并从请求头提取 W3C Trace Context，
 	// 置于 recoveryMiddleware 之内使 panic 被捕获后 span 仍能正常 End()，置于 securityHeaders 之外
 	// 使 span 覆盖完整业务逻辑（安全头注入不影响 span 边界）。
-	httpSrv := &http.Server{
-		Addr: fmt.Sprintf(":%d", s.httpPort),
-		Handler: s.httpMetricsMiddleware( // HTTP 指标（计数 + 延迟直方图）
-			recoveryMiddleware( // 兜底盘
-				otelx.HTTPMiddleware("opsmesh-controlplane", // OTel HTTP 自动埋点
-					s.rateLimitMiddleware( // API 限流（429 Too Many Requests）
-						s.securityHeadersMiddleware( // 安全头 + B1 CSP nonce
-							s.csrfOriginCheck( // CSRF Origin 校验（状态变更方法）
-								&paginate.JSONErrorMux{Inner: mux})))))), // B1 404 JSON
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+ 	httpSrv := &http.Server{
+ 		Addr: fmt.Sprintf(":%d", s.httpPort),
+ 		Handler: s.corsMiddleware( // CORS 跨域（开发模式允许所有来源）
+ 			s.httpMetricsMiddleware( // HTTP 指标（计数 + 延迟直方图）
+ 				recoveryMiddleware( // 兜底盘
+ 					otelx.HTTPMiddleware("opsmesh-controlplane", // OTel HTTP 自动埋点
+ 						s.rateLimitMiddleware( // API 限流（429 Too Many Requests）
+ 							s.securityHeadersMiddleware( // 安全头 + B1 CSP nonce
+ 								s.csrfOriginCheck( // CSRF Origin 校验（状态变更方法）
+ 									&paginate.JSONErrorMux{Inner: mux}))))))), // B1 404 JSON
+ 		ReadHeaderTimeout: 10 * time.Second,
+ 	}
 
 	grpcSrv, grpcLis, err := s.buildGRPC()
 	if err != nil {
@@ -273,6 +275,7 @@ func (s *Server) Start() error {
 		go s.cmdbCollector.Run(ctx) // CMDB 定时采集：周期从设备指标更新 CMDB CI（仅 leader）
 	}
 	s.startPipelineExecutor(ctx, 10*time.Second) // pipeline 执行器：推进 pending→running→succeeded
+	go s.startAutomationEvalLoop(ctx, s.automationEvalInterval) // 自动化引擎评估循环：周期评估 enabled 规则并执行命中动作
 
 	errCh := make(chan error, 3)
 	go func() {
@@ -333,7 +336,31 @@ func (s *Server) Start() error {
 			}
 		}
 		return nil
-	case err := <-errCh:
-		return err
-	}
+ 	case err := <-errCh:
+ 		return err
+ 	}
+ }
+
+// corsMiddleware 添加 CORS 头（开发模式允许所有来源）。
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Tenant-ID, X-Requested-With")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Max-Age", "3600")
+
+		// 处理预检请求
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
