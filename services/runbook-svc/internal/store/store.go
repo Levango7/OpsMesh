@@ -20,9 +20,9 @@ type RunbookStore interface {
 
 // MemoryStore is an in-memory implementation of RunbookStore.
 type MemoryStore struct {
-	mu          sync.RWMutex
-	runbooks    map[string]*models.Runbook
-	executions  []*models.ExecutionRecord
+	mu         sync.RWMutex
+	runbooks   map[string]*models.Runbook
+	executions []*models.ExecutionRecord
 }
 
 // NewMemoryStore creates a new MemoryStore.

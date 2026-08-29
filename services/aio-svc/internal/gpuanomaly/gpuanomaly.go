@@ -10,12 +10,12 @@ import (
 type AnomalyType string
 
 const (
-	HighTemperature    AnomalyType = "high_temperature"
-	MemoryLeak         AnomalyType = "memory_leak"
-	UtilizationSpike   AnomalyType = "utilization_spike"
-	PowerAnomaly       AnomalyType = "power_anomaly"
-	ECCError           AnomalyType = "ecc_error"
-	ThermalThrottling  AnomalyType = "thermal_throttling"
+	HighTemperature   AnomalyType = "high_temperature"
+	MemoryLeak        AnomalyType = "memory_leak"
+	UtilizationSpike  AnomalyType = "utilization_spike"
+	PowerAnomaly      AnomalyType = "power_anomaly"
+	ECCError          AnomalyType = "ecc_error"
+	ThermalThrottling AnomalyType = "thermal_throttling"
 )
 
 // GPUMetric represents a single GPU measurement at a point in time.
@@ -42,11 +42,11 @@ type Anomaly struct {
 
 // GPUHealthReport summarizes the health of a node's GPUs.
 type GPUHealthReport struct {
-	NodeID         string     `json:"node_id"`
-	GPUCount       int        `json:"gpu_count"`
-	HealthyGPUs    []string   `json:"healthy_gpus"`
-	UnhealthyGPUs  []string   `json:"unhealthy_gpus"`
-	AnomalyCount   int        `json:"anomaly_count"`
+	NodeID          string    `json:"node_id"`
+	GPUCount        int       `json:"gpu_count"`
+	HealthyGPUs     []string  `json:"healthy_gpus"`
+	UnhealthyGPUs   []string  `json:"unhealthy_gpus"`
+	AnomalyCount    int       `json:"anomaly_count"`
 	LatestAnomalies []Anomaly `json:"latest_anomalies"`
 }
 
@@ -62,9 +62,9 @@ const (
 
 // Detector provides GPU anomaly detection capabilities.
 type Detector struct {
-	mu       sync.RWMutex
-	history  []Anomaly
-	metrics  map[string][]GPUMetric // key: node_id:gpu_id
+	mu      sync.RWMutex
+	history []Anomaly
+	metrics map[string][]GPUMetric // key: node_id:gpu_id
 }
 
 // NewDetector creates a new GPU anomaly Detector.

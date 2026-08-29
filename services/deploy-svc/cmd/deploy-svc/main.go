@@ -151,30 +151,30 @@ func main() {
 		switch r.Method {
 		case http.MethodPost:
 			var req struct {
-				TenantID        string                    `json:"tenant_id"`
-				Name            string                    `json:"name"`
-				Type            string                    `json:"type"`
-				ModelName       string                    `json:"model_name"`
+				TenantID        string                     `json:"tenant_id"`
+				Name            string                     `json:"name"`
+				Type            string                     `json:"type"`
+				ModelName       string                     `json:"model_name"`
 				GPURequirements aiworkload.GPURequirements `json:"gpu_requirements"`
-				Replicas        int                       `json:"replicas"`
-				MaxReplicas     int                       `json:"max_replicas"`
-				ContainerImage  string                    `json:"container_image"`
-				EnvVars         map[string]string         `json:"env_vars"`
+				Replicas        int                        `json:"replicas"`
+				MaxReplicas     int                        `json:"max_replicas"`
+				ContainerImage  string                     `json:"container_image"`
+				EnvVars         map[string]string          `json:"env_vars"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, fmt.Sprintf(`{"error":"invalid JSON: %s"}`, err.Error()), http.StatusBadRequest)
 				return
 			}
 			wl := &aiworkload.AIWorkload{
-				TenantID:         req.TenantID,
-				Name:             req.Name,
-				Type:             req.Type,
-				ModelName:        req.ModelName,
-				GPURequirements:  req.GPURequirements,
-				Replicas:         req.Replicas,
-				MaxReplicas:      req.MaxReplicas,
-				ContainerImage:   req.ContainerImage,
-				EnvVars:          req.EnvVars,
+				TenantID:        req.TenantID,
+				Name:            req.Name,
+				Type:            req.Type,
+				ModelName:       req.ModelName,
+				GPURequirements: req.GPURequirements,
+				Replicas:        req.Replicas,
+				MaxReplicas:     req.MaxReplicas,
+				ContainerImage:  req.ContainerImage,
+				EnvVars:         req.EnvVars,
 			}
 			if wl.Replicas == 0 {
 				wl.Replicas = 1

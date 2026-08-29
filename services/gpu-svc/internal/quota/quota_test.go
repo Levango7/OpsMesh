@@ -100,12 +100,12 @@ func TestDeleteQuotaNotFound(t *testing.T) {
 func TestCheckAllocation(t *testing.T) {
 	mgr := NewManager(nil)
 	mgr.SetQuota(&models.GPUQuota{
-		TenantID:     "t1",
-		MaxGPUs:      8,
-		MaxVRAMMB:    655360,
-		MaxWorkloads: 5,
-		UsedGPUs:     4,
-		UsedVRAMMB:   327680,
+		TenantID:      "t1",
+		MaxGPUs:       8,
+		MaxVRAMMB:     655360,
+		MaxWorkloads:  5,
+		UsedGPUs:      4,
+		UsedVRAMMB:    327680,
 		UsedWorkloads: 2,
 	})
 

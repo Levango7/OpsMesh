@@ -444,7 +444,7 @@ func TestEvaluateCooldown(t *testing.T) {
 		ScaleDownThreshold: 20.0,
 		MinReplicas:        1,
 		MaxReplicas:        10,
-		CooldownUp:        60 * time.Second,
+		CooldownUp:         60 * time.Second,
 		Enabled:            true,
 	}
 

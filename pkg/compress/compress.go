@@ -140,13 +140,13 @@ func getCompressLevel() int {
 // compressWriter wraps http.ResponseWriter to compress response body.
 type compressWriter struct {
 	http.ResponseWriter
-	encoding      string
-	level         int
-	writer        io.WriteCloser
-	wroteHeader   bool
-	statusCode    int
-	skipCompress  bool
-	bytesWritten  int
+	encoding     string
+	level        int
+	writer       io.WriteCloser
+	wroteHeader  bool
+	statusCode   int
+	skipCompress bool
+	bytesWritten int
 }
 
 // WriteHeader captures the status code and determines if compression should be applied.

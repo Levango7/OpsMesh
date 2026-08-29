@@ -25,24 +25,24 @@ const (
 
 // SLORule defines a Service Level Objective with its target and evaluation parameters.
 type SLORule struct {
-	Name       string  `json:"name"`
-	Target     float64 `json:"target"`     // e.g., 99.9 for 99.9%
-	Window     string  `json:"window"`     // e.g., "30d", "7d"
-	SLIType    SLIType `json:"sli_type"`   // availability, latency, error_rate
-	Threshold  float64 `json:"threshold"`  // latency threshold in ms, or error rate as fraction
+	Name      string  `json:"name"`
+	Target    float64 `json:"target"`    // e.g., 99.9 for 99.9%
+	Window    string  `json:"window"`    // e.g., "30d", "7d"
+	SLIType   SLIType `json:"sli_type"`  // availability, latency, error_rate
+	Threshold float64 `json:"threshold"` // latency threshold in ms, or error rate as fraction
 }
 
 // SLOResult contains the evaluation result of an SLO rule.
 type SLOResult struct {
-	RuleName         string    `json:"rule_name"`
-	CurrentValue     float64   `json:"current_value"`
-	Target           float64   `json:"target"`
-	ErrorBudget      float64   `json:"error_budget_remaining"` // percentage points remaining
-	BurnRate         float64   `json:"burn_rate"`              // multiple of budget consumed per window
-	Status           SLOStatus `json:"status"`
-	Window           string    `json:"window"`
-	SLIType          SLIType   `json:"sli_type"`
-	EvaluatedAt      time.Time `json:"evaluated_at"`
+	RuleName     string    `json:"rule_name"`
+	CurrentValue float64   `json:"current_value"`
+	Target       float64   `json:"target"`
+	ErrorBudget  float64   `json:"error_budget_remaining"` // percentage points remaining
+	BurnRate     float64   `json:"burn_rate"`              // multiple of budget consumed per window
+	Status       SLOStatus `json:"status"`
+	Window       string    `json:"window"`
+	SLIType      SLIType   `json:"sli_type"`
+	EvaluatedAt  time.Time `json:"evaluated_at"`
 }
 
 // Manager handles SLO rule evaluation and tracking.
@@ -145,11 +145,11 @@ func (m *Manager) GetStatusOverview() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"total_rules":    len(m.rules),
-		"healthy":        healthy,
-		"warning":        warning,
-		"breached":       breached,
-		"evaluated_at":   time.Now().UTC(),
+		"total_rules":  len(m.rules),
+		"healthy":      healthy,
+		"warning":      warning,
+		"breached":     breached,
+		"evaluated_at": time.Now().UTC(),
 	}
 }
 
@@ -159,11 +159,11 @@ func (m *Manager) GetBurnRateTrends() []map[string]interface{} {
 	for _, rule := range m.rules {
 		result := m.EvaluateSLO(rule, 999, 1000, 1)
 		trends = append(trends, map[string]interface{}{
-			"rule_name":  rule.Name,
-			"burn_rate":  result.BurnRate,
-			"status":     result.Status,
-			"window":     rule.Window,
-			"sli_type":   rule.SLIType,
+			"rule_name": rule.Name,
+			"burn_rate": result.BurnRate,
+			"status":    result.Status,
+			"window":    rule.Window,
+			"sli_type":  rule.SLIType,
 		})
 	}
 	return trends

@@ -15,14 +15,13 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 )
-
 
 // handleTickets 统一处理 /api/v1/tickets：
 //   - GET：列出工单（支持 ?status=&priority=&category=&assigneeID= 查询参数）
@@ -246,6 +245,3 @@ func (s *Server) handleCloseTicket(w http.ResponseWriter, r *http.Request, id st
 	})
 	paginate.WriteJSON(w, http.StatusOK, closed)
 }
-
-
-

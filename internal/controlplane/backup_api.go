@@ -423,7 +423,7 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	snap, err := readBackupArchive(rec.Path)
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "read backup archive failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "backup.readArchive", err)
 		return
 	}
 	counts := s.restoreSnapshot(snap)

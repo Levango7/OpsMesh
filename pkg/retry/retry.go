@@ -42,12 +42,12 @@ func DefaultShouldRetry(err error) bool {
 
 // Config holds retry configuration.
 type Config struct {
-	MaxRetries   int           // maximum number of retry attempts after the first attempt
-	InitialDelay time.Duration // delay before the first retry
-	MaxDelay     time.Duration // cap on the backoff delay
-	BackoffFactor float64      // multiplier for each retry (e.g., 2.0 for exponential)
-	Jitter       float64      // 0..1 fraction of delay to randomize
-	ShouldRetry  ShouldRetry  // nil = retry all errors
+	MaxRetries    int           // maximum number of retry attempts after the first attempt
+	InitialDelay  time.Duration // delay before the first retry
+	MaxDelay      time.Duration // cap on the backoff delay
+	BackoffFactor float64       // multiplier for each retry (e.g., 2.0 for exponential)
+	Jitter        float64       // 0..1 fraction of delay to randomize
+	ShouldRetry   ShouldRetry   // nil = retry all errors
 }
 
 // DefaultConfig returns sensible defaults.
@@ -122,6 +122,6 @@ func applyJitter(delay time.Duration, jitter float64) time.Duration {
 		jitter = 1
 	}
 	delta := rand.Float64() * 2 * jitter // 0..2jitter
-	factor := 1.0 - jitter + delta        // (1-jitter)..(1+jitter)
+	factor := 1.0 - jitter + delta       // (1-jitter)..(1+jitter)
 	return time.Duration(float64(delay) * factor)
 }

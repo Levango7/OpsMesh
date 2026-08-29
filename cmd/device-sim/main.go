@@ -21,57 +21,57 @@ import (
 
 // Configuration holds all simulator parameters.
 type Configuration struct {
-	NumDevices       int
+	NumDevices        int
 	HeartbeatInterval time.Duration
-	BatchSize        int
-	ControlPlaneURL  string
-	FailureRate      float64
-	HighLoadRate     float64
+	BatchSize         int
+	ControlPlaneURL   string
+	FailureRate       float64
+	HighLoadRate      float64
 }
 
 // Device represents a simulated device.
 type Device struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	OSType     string    `json:"os_type"`
-	OSVersion  string    `json:"os_version"`
-	Arch       string    `json:"arch"`
-	IPAddress  string    `json:"ip_address"`
-	Status     string    `json:"status"`
-	LastSeen   time.Time `json:"last_seen"`
-	CPU        float64   `json:"cpu_percent"`
-	Memory     float64   `json:"memory_percent"`
-	Disk       float64   `json:"disk_percent"`
-	NetIn      int64     `json:"net_in_bytes"`
-	NetOut     int64     `json:"net_out_bytes"`
-	GPUs       []GPUInfo `json:"gpus,omitempty"`
-	Failures   int64     `json:"failures"`
-	TasksRun   int64   `json:"tasks_run"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	OSType    string    `json:"os_type"`
+	OSVersion string    `json:"os_version"`
+	Arch      string    `json:"arch"`
+	IPAddress string    `json:"ip_address"`
+	Status    string    `json:"status"`
+	LastSeen  time.Time `json:"last_seen"`
+	CPU       float64   `json:"cpu_percent"`
+	Memory    float64   `json:"memory_percent"`
+	Disk      float64   `json:"disk_percent"`
+	NetIn     int64     `json:"net_in_bytes"`
+	NetOut    int64     `json:"net_out_bytes"`
+	GPUs      []GPUInfo `json:"gpus,omitempty"`
+	Failures  int64     `json:"failures"`
+	TasksRun  int64     `json:"tasks_run"`
 }
 
 // GPUInfo represents simulated GPU data.
 type GPUInfo struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	Utilization  float64 `json:"utilization"`
-	MemoryUsed   int64   `json:"memory_used_mb"`
-	MemoryTotal  int64   `json:"memory_total_mb"`
-	Temperature  float64 `json:"temperature_c"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Utilization float64 `json:"utilization"`
+	MemoryUsed  int64   `json:"memory_used_mb"`
+	MemoryTotal int64   `json:"memory_total_mb"`
+	Temperature float64 `json:"temperature_c"`
 }
 
 // HeartbeatPayload is the data sent in each heartbeat.
 type HeartbeatPayload struct {
-	DeviceID   string    `json:"device_id"`
-	Timestamp  time.Time `json:"timestamp"`
-	Status     string    `json:"status"`
-	CPU        float64   `json:"cpu_percent"`
-	Memory     float64   `json:"memory_percent"`
-	Disk       float64   `json:"disk_percent"`
-	NetIn      int64     `json:"net_in_bytes"`
-	NetOut     int64     `json:"net_out_bytes"`
-	GPUs       []GPUInfo `json:"gpus,omitempty"`
-	TasksRun   int64     `json:"tasks_run"`
-	Failures   int64     `json:"failures"`
+	DeviceID  string    `json:"device_id"`
+	Timestamp time.Time `json:"timestamp"`
+	Status    string    `json:"status"`
+	CPU       float64   `json:"cpu_percent"`
+	Memory    float64   `json:"memory_percent"`
+	Disk      float64   `json:"disk_percent"`
+	NetIn     int64     `json:"net_in_bytes"`
+	NetOut    int64     `json:"net_out_bytes"`
+	GPUs      []GPUInfo `json:"gpus,omitempty"`
+	TasksRun  int64     `json:"tasks_run"`
+	Failures  int64     `json:"failures"`
 }
 
 // TaskResult reports task execution back to controlplane.
@@ -91,7 +91,7 @@ var (
 		"windows": {"Windows 11", "Windows Server 2022", "Windows Server 2025"},
 		"macos":   {"macOS 14", "macOS 15"},
 	}
-	archs = []string{"amd64", "arm64", "arm"}
+	archs    = []string{"amd64", "arm64", "arm"}
 	gpuNames = []string{
 		"NVIDIA RTX 4090", "NVIDIA RTX 4080", "NVIDIA A100",
 		"NVIDIA H100", "AMD RX 7900 XTX", "NVIDIA RTX 3090",
@@ -238,12 +238,12 @@ func parseFlags() Configuration {
 	}
 
 	return Configuration{
-		NumDevices:       *numDevices,
+		NumDevices:        *numDevices,
 		HeartbeatInterval: heartbeatInterval,
-		BatchSize:        *batchSize,
-		ControlPlaneURL:  *url,
-		FailureRate:      *failureRate,
-		HighLoadRate:     *highLoadRate,
+		BatchSize:         *batchSize,
+		ControlPlaneURL:   *url,
+		FailureRate:       *failureRate,
+		HighLoadRate:      *highLoadRate,
 	}
 }
 

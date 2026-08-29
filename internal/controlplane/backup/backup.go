@@ -564,7 +564,7 @@ func writeSQLDump(data *BackupData, w io.Writer) error {
 	return bw.Flush()
 }
 
-// sqlStr 把字符串转义为 SQL 字面量（单引号包裹，内部单引号转义为 ''）。
+// sqlStr 把字符串转义为 SQL 字面量（单引号包裹，内部单引号转义为 ”）。
 func sqlStr(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }

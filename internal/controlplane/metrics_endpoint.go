@@ -1,4 +1,3 @@
-
 // metrics_endpoint.go 实现 Prometheus metrics 端点（GET /metrics）。
 //
 // 输出 Prometheus text exposition format，包含以下指标：
@@ -14,9 +13,9 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"fmt"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 
 	"opsmesh/internal/store"
 )

@@ -25,9 +25,9 @@ type WorkflowStore interface {
 
 // MemoryStore is an in-memory implementation of WorkflowStore.
 type MemoryStore struct {
-	mu          sync.RWMutex
-	workflows   map[string]*models.Workflow
-	executions  map[string]*models.Execution
+	mu         sync.RWMutex
+	workflows  map[string]*models.Workflow
+	executions map[string]*models.Execution
 }
 
 // NewMemoryStore creates a new MemoryStore.

@@ -17,10 +17,10 @@ package controlplane
 //   - 鉴权：需 argocd:read/argocd:write 权限。
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"context"
 	"fmt"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"os/exec"
 	"strings"
 	"time"
@@ -281,4 +281,3 @@ func syncArgoCDApp(a *store.ArgoCDApp) error {
 	}
 	return nil
 }
-

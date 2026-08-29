@@ -39,32 +39,32 @@ type GPURequirements struct {
 
 // AIWorkload represents an AI workload deployment.
 type AIWorkload struct {
-	ID               string          `json:"id"`
-	TenantID         string          `json:"tenant_id"`
-	Name             string          `json:"name"`
-	Type             string          `json:"type"`
-	ModelName        string          `json:"model_name"`
-	GPURequirements  GPURequirements `json:"gpu_requirements"`
-	Status           string          `json:"status"`
-	Replicas         int             `json:"replicas"`
-	MaxReplicas      int             `json:"max_replicas"`
-	ContainerImage   string          `json:"container_image"`
+	ID               string            `json:"id"`
+	TenantID         string            `json:"tenant_id"`
+	Name             string            `json:"name"`
+	Type             string            `json:"type"`
+	ModelName        string            `json:"model_name"`
+	GPURequirements  GPURequirements   `json:"gpu_requirements"`
+	Status           string            `json:"status"`
+	Replicas         int               `json:"replicas"`
+	MaxReplicas      int               `json:"max_replicas"`
+	ContainerImage   string            `json:"container_image"`
 	EnvVars          map[string]string `json:"env_vars"`
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
-	ErrorMessage     string          `json:"error_message"`
-	DeploymentTarget string          `json:"deployment_target"`
-	ReplicasBefore   int             `json:"replicas_before,omitempty"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
+	ErrorMessage     string            `json:"error_message"`
+	DeploymentTarget string            `json:"deployment_target"`
+	ReplicasBefore   int               `json:"replicas_before,omitempty"`
 }
 
 // Validation errors.
 var (
-	ErrInvalidWorkload    = errors.New("invalid workload")
-	ErrWorkloadNotFound   = errors.New("workload not found")
-	ErrTenantMismatch     = errors.New("tenant mismatch")
+	ErrInvalidWorkload        = errors.New("invalid workload")
+	ErrWorkloadNotFound       = errors.New("workload not found")
+	ErrTenantMismatch         = errors.New("tenant mismatch")
 	ErrInvalidGPURequirements = errors.New("invalid GPU requirements")
-	ErrInvalidScaleTarget = errors.New("invalid scale target")
-	ErrCannotRollback     = errors.New("cannot rollback workload")
+	ErrInvalidScaleTarget     = errors.New("invalid scale target")
+	ErrCannotRollback         = errors.New("cannot rollback workload")
 )
 
 // Manager manages AI workload deployments.

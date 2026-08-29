@@ -21,13 +21,13 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 	"time"
 
@@ -81,7 +81,7 @@ func (s *Server) listAlertRulesEngine(w http.ResponseWriter, r *http.Request) {
 	}
 	rules, err := s.alertEngine.ListRules(actx.TenantID)
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(r.Context(), w, "alerts.listRules", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, rules)
@@ -498,10 +498,12 @@ func (s *Server) testNotifyChannel(w http.ResponseWriter, r *http.Request, id st
 		Timestamp: time.Now(),
 	}
 	if err := ch.Send(msg); err != nil {
-		paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "fail", "error": err.Error()})
-	} else {
-		paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "test notification sent"})
+		// 发送失败属于服务端/上游渠道故障，不再用 200 携带错误体（HTTP 语义错误，
+		// 会让前端与网关把失败当成功）。原始 err 含 SMTP 地址/内部错误细节，仅记日志。
+		writeInternalError(r.Context(), w, "alerts.testNotifyChannel.send", err)
+		return
 	}
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "test notification sent"})
 }
 
 // ============================================================================

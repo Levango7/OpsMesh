@@ -21,8 +21,8 @@ package controlplane
 //     MVP 实现仅记录执行记录（不下发实际任务，避免无 agent 时报错）。
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 	"time"
 
@@ -339,4 +339,3 @@ func (s *Server) handleScriptExecutions(w http.ResponseWriter, r *http.Request, 
 	executions := s.store.ListScriptExecutions(actx.TenantID, id)
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"executions": executions})
 }
-

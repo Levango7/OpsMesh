@@ -18,20 +18,19 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"crypto/aes"
 	"crypto/cipher"
 	cryptoRand "crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 
 	"opsmesh/internal/logx"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
 )
-
 
 // encryptKubeconfig 用 AES-256-GCM 加密 kubeconfig 明文，返回 base64(nonce+ciphertext)。
 // 安全语义：DB 泄露时加密后的 kubeconfig 不可直接还原，需同时拿到加密密钥才能解密。

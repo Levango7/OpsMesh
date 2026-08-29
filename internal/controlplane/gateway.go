@@ -23,11 +23,11 @@ package controlplane
 // 统计为内存计数器，进程级聚合（多副本各自统计，未做跨副本聚合）。
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 	"sync"
 	"time"
@@ -104,8 +104,6 @@ func (s *Server) ensureGateway() *gatewayState {
 	})
 	return s.gateway
 }
-
-
 
 // handleGatewayRoutes 统一处理 /api/v1/gateway/routes：
 //   - GET：列出路由规则
@@ -491,5 +489,3 @@ func (s *Server) handleGatewayProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	proxy.ServeHTTP(rw, r)
 }
-
-

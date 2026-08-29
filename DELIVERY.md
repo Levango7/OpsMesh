@@ -8,22 +8,20 @@
 
 **管控通道（已冻结决策：自研 gRPC，2026-07-27）**：MVP 管控通道 = **自研 gRPC（direct + proxy）**。原"蓝鲸 GSE 社区版底座 / GSE 级联纳管"**移出 MVP、降格为可选增强**（未来超大规模级联再独立立项）。跨网段规模化改为「每段一套控制面 + agent 集群 + 控制面联邦 / 任务跨段转发」。
 
-## 2. 代码规模（实测 2026-08-24 更新，含多轮重构收敛 + 个人版前端移除 + 14 功能域对齐）
+## 2. 代码规模（实测 2026-08-30 更新，含 services/ 18 微服务 + GPU/AIOps/ChatOps 新域）
 
-> 统计口径：排除 `.gocache`、`node_modules`、`internal/controlplane/web/`（个人版前端已于收敛为引导页，不再计入 Go 源码）、生成的 `.pb.go`；按 Go 模块分别统计后合计。主模块 `opsmesh`（go.mod 根）+ operator 子模块 `opsmesh/operator`（独立 go.mod，K8s Operator）。前端按 `web/enterprise/src/` 下 `.js` + `.vue` 统计（不含 `.json` i18n 资源）。
+> 统计口径：`git ls-files` 实测。主模块 + operator 子模块 + `services/` 18 个微服务子模块（各自独立 go.mod，2026-08-29 起新增）。
+> 前端按 `web/enterprise/src/` 下 `.js` + `.vue` 统计（不含 `.json` i18n 资源）。
 
-| 指标 | 主模块 opsmesh | operator 子模块 | 合计 |
-|------|---------------|----------------|------|
-| Go 包 | 31（1 cmd + 30 internal） | 3 | 34 |
-| 源码文件 | 173 | 6 | 179 |
-| 源码行数 | ~50,700 | 1,003 | ~51,700 |
-| 测试文件 | 166 | 1 | 167 |
-| 测试行数 | ~57,400 | 143 | ~57,500（占比约 52.6%） |
-| Go 文件合计 | 339 | 7 | **346** |
-| 直接依赖 | 11 | 4（3 个与主模块共享） | 12（去重） |
-| 前端文件（`.js` + `.vue`） | 84（`web/enterprise/src/`） | — | 84 |
+| 指标 | 数值（实测 2026-08-30） |
+|------|----------------------|
+| 仓库文件合计 | 1,121 |
+| Go 文件合计 | **714**（含 265 测试文件） |
+| Go 行数合计 | ~221,900（其中测试 ~99,050，占比约 44.6%） |
+| 前端文件（`.js` + `.vue`） | 145（`web/enterprise/src/`） |
+| 微服务子模块 | 18 个（`services/`，独立 go.mod，与主模块双轨并存，见 README「services/ 微服务目录」） |
 
-> 数值较 2026-08-19 版本更新：internal 包数 31→30（discover/discovery 拆分明确）+ 14 功能域对齐 + 前端 84 文件实测。个人版前端 1.3 万行 JS 已从仓库移除（不计入 Go 口径）。
+> 较 2026-08-24 版本（346 Go 文件 / ~51,700 行）大幅增长：新增 `services/` 微服务化拆分（约 8 万行）、GPU 资源管理、AIOps 引擎、ChatOps、成本分摊、Terraform provider 等能力；规模统计随 25 提交增量演进刷新。
 
 直接依赖清单（主模块 `go.mod` 非 indirect）：
 - 数据/消息：`go-sql-driver/mysql`、`redis/go-redis/v9`、`segmentio/kafka-go`
@@ -32,7 +30,7 @@
 - 系统采集：`shirou/gopsutil/v3`
 - K8s 客户端：`k8s.io/api`、`k8s.io/apimachinery`、`k8s.io/client-go`
 
-operator 子模块额外引入 `sigs.k8s.io/controller-runtime`（K8s CRD 控制器框架）。
+operator 子模块额外引入 `sigs.k8s.io/controller-runtime`（K8s CRD 控制器框架）。`services/` 各微服务子模块依赖独立声明于各自 go.mod。
 
 ## 3. 全量验证结果（go1.26.0）
 

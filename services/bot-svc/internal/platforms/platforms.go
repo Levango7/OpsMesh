@@ -26,9 +26,9 @@ type WebhookPayload struct {
 
 // OutgoingMessage represents a formatted response message.
 type OutgoingMessage struct {
-	Platform Platform `json:"-"`
-	Content  string   `json:"content"`
-	Format   string   `json:"format,omitempty"`
+	Platform Platform       `json:"-"`
+	Content  string         `json:"content"`
+	Format   string         `json:"format,omitempty"`
 	Extra    map[string]any `json:"extra,omitempty"`
 }
 

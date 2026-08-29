@@ -40,13 +40,13 @@ type Store interface {
 
 // MemoryStore is an in-memory implementation of Store.
 type MemoryStore struct {
-	mu             sync.RWMutex
-	requests       map[string]*models.ResourceRequest
-	quotas         map[string]*models.Quota
-	budgets        map[string]*models.Budget
+	mu              sync.RWMutex
+	requests        map[string]*models.ResourceRequest
+	quotas          map[string]*models.Quota
+	budgets         map[string]*models.Budget
 	recommendations map[string]*models.CostRecommendation
-	utilizations   map[string]*models.Utilization
-	activities     []*models.ActivityEvent
+	utilizations    map[string]*models.Utilization
+	activities      []*models.ActivityEvent
 }
 
 // NewMemoryStore creates a new MemoryStore.

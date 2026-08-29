@@ -13,8 +13,8 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"context"
+	"opsmesh/internal/controlplane/paginate"
 
 	"fmt"
 	"net/http"
@@ -277,7 +277,7 @@ func (s *Server) handleCMDBCollect(w http.ResponseWriter, r *http.Request) {
 	}
 	collected, failed, err := s.cmdbCollector.CollectAll()
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(r.Context(), w, "cmdbCollector.collectAll", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]int{

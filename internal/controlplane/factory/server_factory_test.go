@@ -33,8 +33,8 @@ func TestFirstNonEmpty(t *testing.T) {
 
 func TestSelectStore_Memory(t *testing.T) {
 	cfg := &config.Config{
-		Store:    "memory",
-		Demo:     true,
+		Store:     "memory",
+		Demo:      true,
 		RedisAddr: "",
 	}
 	st, err := SelectStore(cfg, nil)
@@ -48,8 +48,8 @@ func TestSelectStore_Memory(t *testing.T) {
 
 func TestSelectStore_EmptyDSNFallsBack(t *testing.T) {
 	cfg := &config.Config{
-		Store:      "mysql",
-		MySQLDSN:   "",
+		Store:       "mysql",
+		MySQLDSN:    "",
 		MultiSchema: false,
 		Demo:        true,
 	}

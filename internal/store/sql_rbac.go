@@ -281,6 +281,11 @@ var rbacPermSpecs = []struct {
 	{"alert", "alert:silence", "静默告警"},
 	{"cmdb", "cmdb:read", "查看配置项"},
 	{"cmdb", "cmdb:write", "编辑配置项"},
+	// cmdb:approve CI 变更审批（G1/SEC-5）：cmdb_approval.go 的 approve/reject 端点经
+	// requireProd 校验该权限点，但此前未在权限目录定义——已建库的 SQLStore 走 INSERT
+	// IGNORE 幂等补种；operator 角色按 RolePermissions 派生规则（仅 read/write/execute）
+	// 不会获得审批权，审批仅 admin 可用（最小权限：CI 变更审批属敏感操作）。
+	{"cmdb", "cmdb:approve", "审批配置项变更"},
 	{"deploy", "deploy:read", "查看部署"},
 	{"deploy", "deploy:write", "执行部署"},
 	{"workflow", "workflow:read", "查看工作流"},

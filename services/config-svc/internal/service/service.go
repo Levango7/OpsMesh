@@ -19,16 +19,16 @@ import (
 
 // Errors returned by the service.
 var (
-	ErrConfigNotFound    = errors.New("config not found")
-	ErrConfigInvalid     = errors.New("config invalid")
-	ErrSecretNotFound    = errors.New("secret not found")
-	ErrSecretInvalid     = errors.New("secret invalid")
-	ErrChannelNotFound   = errors.New("channel not found")
-	ErrChannelInvalid    = errors.New("channel invalid")
-	ErrTemplateNotFound  = errors.New("template not found")
-	ErrTemplateInvalid   = errors.New("template invalid")
-	ErrVersionNotFound   = errors.New("version not found")
-	ErrEncryptionFailed  = errors.New("encryption failed")
+	ErrConfigNotFound   = errors.New("config not found")
+	ErrConfigInvalid    = errors.New("config invalid")
+	ErrSecretNotFound   = errors.New("secret not found")
+	ErrSecretInvalid    = errors.New("secret invalid")
+	ErrChannelNotFound  = errors.New("channel not found")
+	ErrChannelInvalid   = errors.New("channel invalid")
+	ErrTemplateNotFound = errors.New("template not found")
+	ErrTemplateInvalid  = errors.New("template invalid")
+	ErrVersionNotFound  = errors.New("version not found")
+	ErrEncryptionFailed = errors.New("encryption failed")
 )
 
 // Service implements the config service business logic.
@@ -404,7 +404,7 @@ func (s *Service) UpdateTemplate(ctx context.Context, req *configv1.UpdateTempla
 		Description: req.Description,
 		Content:     req.Content,
 		Variables:   req.Variables,
-		CreatedAt:    existing.CreatedAt,
+		CreatedAt:   existing.CreatedAt,
 	}
 	if entry.Variables == nil {
 		entry.Variables = make(map[string]string)

@@ -18,16 +18,16 @@ import (
 
 // Errors returned by the service.
 var (
-	ErrPluginNotFound      = errors.New("plugin not found")
-	ErrPluginInvalid       = errors.New("plugin invalid")
-	ErrPluginExists        = errors.New("plugin already exists")
-	ErrInvalidURL          = errors.New("invalid download URL")
-	ErrSSRFBlocked         = errors.New("download URL blocked: private/internal IP")
-	ErrChecksumMismatch    = errors.New("checksum mismatch")
-	ErrVersionNotFound     = errors.New("version not found")
-	ErrPluginNotInstalled  = errors.New("plugin not installed")
-	ErrPluginInstalled     = errors.New("plugin already installed")
-	ErrInvalidStatus       = errors.New("invalid plugin status")
+	ErrPluginNotFound     = errors.New("plugin not found")
+	ErrPluginInvalid      = errors.New("plugin invalid")
+	ErrPluginExists       = errors.New("plugin already exists")
+	ErrInvalidURL         = errors.New("invalid download URL")
+	ErrSSRFBlocked        = errors.New("download URL blocked: private/internal IP")
+	ErrChecksumMismatch   = errors.New("checksum mismatch")
+	ErrVersionNotFound    = errors.New("version not found")
+	ErrPluginNotInstalled = errors.New("plugin not installed")
+	ErrPluginInstalled    = errors.New("plugin already installed")
+	ErrInvalidStatus      = errors.New("invalid plugin status")
 )
 
 // Service implements the plugin marketplace business logic.

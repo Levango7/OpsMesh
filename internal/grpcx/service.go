@@ -74,8 +74,8 @@ type ReportLogsReq struct {
 // agent 收到后调用 LogCollector.UpdateConfig 热更新日志采集策略，无需重启进程。
 // AgentID 为目标 agent 身份（控制面据此路由到对应 agent 的配置下发通道）。
 type ConfigureAgentReq struct {
-	AgentID string             `json:"agentID"`
-	Config  proto.AgentConfig  `json:"config"`
+	AgentID string            `json:"agentID"`
+	Config  proto.AgentConfig `json:"config"`
 }
 
 // ConfigureAgentResp 配置下发响应。Applied=true 表示 agent 已应用新配置。

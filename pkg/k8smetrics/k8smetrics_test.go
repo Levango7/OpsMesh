@@ -105,9 +105,9 @@ func TestGetMetricsHandlerNotInitialized(t *testing.T) {
 func TestMetricLabelsSorted(t *testing.T) {
 	Init()
 	SetCustomMetric("opsmesh_task_pending_count", 10, map[string]string{
-		"zone":    "us-east-1a",
-		"tenant":  "t1",
-		"region":  "us-east",
+		"zone":   "us-east-1a",
+		"tenant": "t1",
+		"region": "us-east",
 	})
 
 	out := defaultRegistry.render()

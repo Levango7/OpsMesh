@@ -967,13 +967,46 @@ internal/                 ← 36 个包，按 8 个领域分组（详见上文"i
 ├── tlsutil/              ← gRPC TLS / mTLS 工具 + 证书热重载
 └── version/              ← 构建版本注入
 operator/                 ← K8s Operator 子模块（独立 go.mod，controller-runtime OpsMeshInstance CRD）
+services/                 ← 微服务化拆分（18 个独立服务，见下表；与主模块双轨并存，收敛计划见 docs/tech-debt.md TD-60）
 proto/                    ← protobuf API 定义（buf 管理，与 internal/grpcx 双轨）
 web/enterprise/           ← Vue3 企业版前端（独立构建部署）
 deploy/                   ← 部署资产：helm/ + systemd/ + docker-compose.yaml + Dockerfile*
 docs/                     ← 24 篇设计文档（产品/架构/数据库/接口/安全/UI/模块/功能/测试/运维/AI/多系统/部署场景）
 ```
 
-> 包职责详细说明见上文 [internal 包职责](#internal-包职责36-个) 章节，完整设计见 `docs/module-design.md`。
+### services/ 微服务目录（18 个）
+
+> 2026-08-29 起仓库新增 `services/` 微服务化拆分（详见 `docs/architecture/adr-001-microservice-strategy.md`）。
+> 当前状态：**与主模块（`internal/` + `cmd/opsmesh`）双轨并存**——控制面单体仍是默认运行形态，
+> 微服务为渐进式拆分产物（各服务已具备独立 main + MySQL schema，但多数默认接内存 store，
+> 生产接线与双轨收敛计划见 `docs/tech-debt.md` TD-60/TD-65）。各服务职责：
+
+| 服务 | 职责 |
+|---|---|
+| `auth-svc` | 认证/用户/会话 |
+| `device-svc` | 设备纳管/心跳/指标 |
+| `task-svc` | 任务执行/调度/批量 |
+| `alert-svc` | 告警规则/静默/抑制 |
+| `log-svc` | 日志检索（gRPC + 独立 health） |
+| `config-svc` | 配置中心/热推送 |
+| `deploy-svc` | 部署计划/灰度/回滚 |
+| `workflow-svc` | DAG 工作流 |
+| `aio-svc` | AIOps 智能引擎（异常检测/根因/预测/降噪/GPU 异常） |
+| `gpu-svc` | GPU 资源管理/AI 工作负载调度 |
+| `incident-svc` | 事件管理/升级策略 |
+| `plugin-svc` | 插件服务 |
+| `portal-svc` | 门户聚合 |
+| `runbook-svc` | 运维手册 |
+| `autoscaler-svc` | 自动扩缩容 |
+| `bot-svc` | ChatOps 机器人 |
+| `grafana-bridge` | Grafana 数据源桥接 |
+| `tf-provider` | Terraform provider |
+
+> **端口注意**：各服务端口经 `<NAME>_SVC_HTTP_PORT` / `<NAME>_SVC_GRPC_PORT` 环境变量配置，
+> 但默认值存在重叠（多个服务默认同为 HTTP 8080/8081、gRPC 50051/50052）——同机并行运行
+> 多个服务时**必须显式分配不同端口**，否则监听冲突启动失败。
+
+> internal 包职责详细说明见上文 [internal 包职责](#internal-包职责36-个) 章节，完整设计见 `docs/module-design.md`。
 
 ---
 

@@ -63,10 +63,10 @@ type Report struct {
 // RunInspection performs risk inspection on a set of devices.
 func (in *Inspector) RunInspection(tenantId string, deviceIds []string) InspectionReport {
 	report := InspectionReport{
-		TenantId:    tenantId,
-		Devices:     make([]DeviceInspection, 0, len(deviceIds)),
+		TenantId:     tenantId,
+		Devices:      make([]DeviceInspection, 0, len(deviceIds)),
 		TotalDevices: len(deviceIds),
-		InspectedAt: time.Now(),
+		InspectedAt:  time.Now(),
 	}
 
 	for _, deviceId := range deviceIds {
@@ -123,10 +123,10 @@ func (in *Inspector) GetRiskScore(tenantId, deviceId string) RiskScoreResult {
 func (in *Inspector) GenerateReport(tenantId string, deviceIds []string) Report {
 	now := time.Now()
 	report := Report{
-		TenantId:    tenantId,
-		GeneratedAt: now,
+		TenantId:     tenantId,
+		GeneratedAt:  now,
 		TotalDevices: len(deviceIds),
-		TopRisks:    make([]RiskScoreResult, 0),
+		TopRisks:     make([]RiskScoreResult, 0),
 	}
 
 	// Score all devices

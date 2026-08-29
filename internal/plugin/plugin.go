@@ -1,4 +1,3 @@
-
 // Package plugin 提供 OpsMesh 控制面的插件框架。
 //
 // 设计目标：在不修改控制面核心代码的前提下，允许通过插件扩展控制面行为
@@ -71,10 +70,10 @@ type Plugin interface {
 // 并发安全：plugins 和 hooks 映射由 mu 保护；FireHook 拷贝 handler 切片后释放锁再调用。
 type Manager struct {
 	mu      sync.RWMutex
-	plugins map[string]Plugin         // name -> plugin
-	configs map[string]any            // name -> 配置（注册时传入，Init 时消费）
-	hooks   map[Hook][]HookHandler    // hook -> handlers（注册顺序）
-	closed  bool                      // 是否已 Close（防止重复关闭）
+	plugins map[string]Plugin      // name -> plugin
+	configs map[string]any         // name -> 配置（注册时传入，Init 时消费）
+	hooks   map[Hook][]HookHandler // hook -> handlers（注册顺序）
+	closed  bool                   // 是否已 Close（防止重复关闭）
 }
 
 // NewManager 创建插件管理器。

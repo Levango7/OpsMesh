@@ -102,8 +102,8 @@ func TestGetResourceSummary(t *testing.T) {
 func TestSubmitWorkload(t *testing.T) {
 	svc := newTestService()
 	wl := &models.Workload{
-		Name:     "train",
-		TenantID: "t1",
+		Name:       "train",
+		TenantID:   "t1",
 		GPURequest: models.GPURequest{Count: 2, MinVRAMMB: 40960},
 	}
 
@@ -119,8 +119,8 @@ func TestSubmitWorkload(t *testing.T) {
 func TestCancelWorkload(t *testing.T) {
 	svc := newTestService()
 	wl := &models.Workload{
-		Name:     "train",
-		TenantID: "t1",
+		Name:       "train",
+		TenantID:   "t1",
 		GPURequest: models.GPURequest{Count: 2},
 	}
 	svc.SubmitWorkload(wl)
@@ -155,8 +155,8 @@ func TestTriggerScheduling(t *testing.T) {
 	svc.RegisterNode(n)
 
 	wl := &models.Workload{
-		Name:     "wl-1",
-		TenantID: "t1",
+		Name:       "wl-1",
+		TenantID:   "t1",
 		GPURequest: models.GPURequest{Count: 1},
 	}
 	svc.SubmitWorkload(wl)

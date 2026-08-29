@@ -13,8 +13,8 @@ package controlplane
 //   - 鉴权：需 task:write（灰度发布属任务领域）/task:read 权限。
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strconv"
 	"strings"
 	"time"
@@ -144,9 +144,9 @@ func (s *Server) handleCanaryMetrics(w http.ResponseWriter, r *http.Request, id 
 	since := time.Now().Add(-5 * time.Minute)
 	metrics := s.store.QueryNetworkMetrics(actx.TenantID, since)
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"canaryID": id,
-		"baseline": metrics,
-		"canary":   metrics,
+		"canaryID":   id,
+		"baseline":   metrics,
+		"canary":     metrics,
 		"percentage": canary.Percentage,
 		"comparedAt": time.Now(),
 		"simulated":  false,

@@ -24,7 +24,7 @@ func TestCreateRule(t *testing.T) {
 	req := &alertv1.CreateRuleRequest{
 		Rule: &alertv1.AlertRule{
 			Name:      "High CPU",
-			TenantId: "tenant-1",
+			TenantId:  "tenant-1",
 			Metric:    "cpu_usage",
 			Op:        ">",
 			Threshold: 80.0,
@@ -67,7 +67,7 @@ func TestGetRule(t *testing.T) {
 	created, err := svc.CreateRule(ctx, &alertv1.CreateRuleRequest{
 		Rule: &alertv1.AlertRule{
 			Name:      "High Memory",
-			TenantId: "tenant-1",
+			TenantId:  "tenant-1",
 			Metric:    "mem_usage",
 			Op:        ">",
 			Threshold: 90.0,
@@ -113,7 +113,7 @@ func TestListRules(t *testing.T) {
 		_, err := svc.CreateRule(ctx, &alertv1.CreateRuleRequest{
 			Rule: &alertv1.AlertRule{
 				Name:      "Rule " + uuid.New().String(),
-				TenantId: "tenant-1",
+				TenantId:  "tenant-1",
 				Metric:    "cpu_usage",
 				Op:        ">",
 				Threshold: float64(70 + i),
@@ -143,7 +143,7 @@ func TestUpdateRule(t *testing.T) {
 	created, err := svc.CreateRule(ctx, &alertv1.CreateRuleRequest{
 		Rule: &alertv1.AlertRule{
 			Name:      "Original",
-			TenantId: "tenant-1",
+			TenantId:  "tenant-1",
 			Metric:    "cpu_usage",
 			Op:        ">",
 			Threshold: 80.0,
@@ -179,7 +179,7 @@ func TestUpdateRuleNotFound(t *testing.T) {
 		Rule: &alertv1.AlertRule{
 			Id:        "nonexistent",
 			Name:      "Ghost",
-			TenantId: "tenant-1",
+			TenantId:  "tenant-1",
 			Metric:    "cpu_usage",
 			Op:        ">",
 			Threshold: 80.0,
@@ -197,7 +197,7 @@ func TestDeleteRule(t *testing.T) {
 	created, err := svc.CreateRule(ctx, &alertv1.CreateRuleRequest{
 		Rule: &alertv1.AlertRule{
 			Name:      "ToDelete",
-			TenantId: "tenant-1",
+			TenantId:  "tenant-1",
 			Metric:    "cpu_usage",
 			Op:        ">",
 			Threshold: 80.0,
@@ -237,7 +237,7 @@ func TestEvaluate(t *testing.T) {
 	_, err := svc.CreateRule(ctx, &alertv1.CreateRuleRequest{
 		Rule: &alertv1.AlertRule{
 			Name:      "High CPU",
-			TenantId: "tenant-1",
+			TenantId:  "tenant-1",
 			Metric:    "cpu_usage",
 			Op:        ">",
 			Threshold: 80.0,

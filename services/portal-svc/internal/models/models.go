@@ -27,47 +27,47 @@ func (s RequestStatus) IsTerminal() bool {
 
 // ResourceRequest represents a resource request in the self-service portal.
 type ResourceRequest struct {
-	ID          string        `json:"id"`
-	TenantID    string        `json:"tenant_id"`
-	Requester   string        `json:"requester"`
-	Title       string        `json:"title"`
-	Description string        `json:"description"`
-	ResourceType string       `json:"resource_type"`
-	CPU         int           `json:"cpu"`
-	MemoryGB    int           `json:"memory_gb"`
-	StorageGB   int           `json:"storage_gd"`
-	CostEstimate float64      `json:"cost_estimate"`
-	Status      RequestStatus `json:"status"`
-	Approver    string        `json:"approver,omitempty"`
-	ApprovalNote string      `json:"approval_note,omitempty"`
-	CreatedAt   time.Time     `json:"created_at"`
-	UpdatedAt   time.Time     `json:"updated_at"`
+	ID           string        `json:"id"`
+	TenantID     string        `json:"tenant_id"`
+	Requester    string        `json:"requester"`
+	Title        string        `json:"title"`
+	Description  string        `json:"description"`
+	ResourceType string        `json:"resource_type"`
+	CPU          int           `json:"cpu"`
+	MemoryGB     int           `json:"memory_gb"`
+	StorageGB    int           `json:"storage_gd"`
+	CostEstimate float64       `json:"cost_estimate"`
+	Status       RequestStatus `json:"status"`
+	Approver     string        `json:"approver,omitempty"`
+	ApprovalNote string        `json:"approval_note,omitempty"`
+	CreatedAt    time.Time     `json:"created_at"`
+	UpdatedAt    time.Time     `json:"updated_at"`
 }
 
 // Quota represents a tenant's resource quota.
 type Quota struct {
-	TenantID    string  `json:"tenant_id"`
-	MaxCPU      int     `json:"max_cpu"`
-	MaxMemoryGB int     `json:"max_memory_gb"`
+	TenantID     string `json:"tenant_id"`
+	MaxCPU       int    `json:"max_cpu"`
+	MaxMemoryGB  int    `json:"max_memory_gb"`
 	MaxStorageGB int    `json:"max_storage_gb"`
-	MaxRequests int     `json:"max_requests"`
+	MaxRequests  int    `json:"max_requests"`
 }
 
 // QuotaUsage represents current quota usage for a tenant.
 type QuotaUsage struct {
-	TenantID     string `json:"tenant_id"`
-	UsedCPU      int    `json:"used_cpu"`
-	UsedMemoryGB int    `json:"used_memory_gb"`
-	UsedStorageGB int   `json:"used_storage_gd"`
-	UsedRequests int    `json:"used_requests"`
-	Quota        *Quota `json:"quota"`
+	TenantID      string `json:"tenant_id"`
+	UsedCPU       int    `json:"used_cpu"`
+	UsedMemoryGB  int    `json:"used_memory_gb"`
+	UsedStorageGB int    `json:"used_storage_gd"`
+	UsedRequests  int    `json:"used_requests"`
+	Quota         *Quota `json:"quota"`
 }
 
 // Budget represents a tenant's budget configuration.
 type Budget struct {
-	TenantID   string  `json:"tenant_id"`
-	MonthlyLimit float64 `json:"monthly_limit"`
-	CurrentSpend float64 `json:"current_spend"`
+	TenantID       string  `json:"tenant_id"`
+	MonthlyLimit   float64 `json:"monthly_limit"`
+	CurrentSpend   float64 `json:"current_spend"`
 	AlertThreshold float64 `json:"alert_threshold"`
 }
 
@@ -113,11 +113,11 @@ type ActivityEvent struct {
 
 // DashboardStats represents dashboard statistics.
 type DashboardStats struct {
-	TotalRequests      int     `json:"total_requests"`
-	PendingRequests    int     `json:"pending_requests"`
-	ApprovedRequests   int     `json:"approved_requests"`
-	RejectedRequests   int     `json:"rejected_requests"`
-	TotalSavings       float64 `json:"total_savings"`
-	MonthlySpend       float64 `json:"monthly_spend"`
-	ActiveQuotas       int     `json:"active_quotas"`
+	TotalRequests    int     `json:"total_requests"`
+	PendingRequests  int     `json:"pending_requests"`
+	ApprovedRequests int     `json:"approved_requests"`
+	RejectedRequests int     `json:"rejected_requests"`
+	TotalSavings     float64 `json:"total_savings"`
+	MonthlySpend     float64 `json:"monthly_spend"`
+	ActiveQuotas     int     `json:"active_quotas"`
 }

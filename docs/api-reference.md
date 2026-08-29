@@ -45,6 +45,20 @@
 - [联邦 API](#联邦-api)
 - [SSE 事件流 API](#sse-事件流-api)
 - [纳管 Bootstrap 端点](#纳管-bootstrap-端点)
+- [平台化 API（租户 / API Key / 插件市场 / 平台管理）](#平台化-api租户--api-key--插件市场--平台管理)
+- [计费 API](#计费-api)
+- [网关 API](#网关-api)
+- [备份与灾备 API](#备份与灾备-api)
+- [合规 API](#合规-api)
+- [HA API](#ha-api)
+- [工单与 SLO API](#工单与-slo-api)
+- [流量治理 API](#流量治理-api)
+- [流水线与 ArgoCD API](#流水线与-argocd-api)
+- [配置热推送 API](#配置热推送-api)
+- [自动化 API](#自动化-api)
+- [Webhook 与脚本 API](#webhook-与脚本-api)
+- [网络设备 API](#网络设备-api)
+- [审计扩展 API](#审计扩展-api)
 - [gRPC API](#grpc-api)
 
 ---
@@ -2470,6 +2484,2066 @@ curl -fsSL http://controlplane:8080/install.sh | sh -s -- --token=<tok> --contro
 agent 二进制下载（纳管 bootstrap 拉取）。
 
 - **响应**：`200 OK`，`Content-Type: application/octet-stream`
+
+---
+
+## 平台化 API（租户 / API Key / 插件市场 / 平台管理）
+
+Phase 6 平台化：多租户管理 + 程序化访问（API Key）+ 插件市场 + 平台配置/健康/指标。
+除租户与插件市场为平台级资源外，API Key 按租户隔离（`X-Tenant-ID` 必填）。
+
+### GET /api/v1/tenants
+
+列出租户（平台级，跨租户可见）。
+
+- **认证**：需 `tenant:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "tenants": [
+    {
+      "id": "t1",
+      "name": "tenant-a",
+      "displayName": "租户 A",
+      "status": "active",
+      "quota": {"maxDevices": 100, "maxTasks": 0, "maxActiveTasks": 0, "maxAlerts": 50, "maxAgents": 0, "maxWebhooks": 0, "maxAPIKeys": 0},
+      "usage": {"devices": 12, "tasks": 34, "activeTasks": 2, "alerts": 3, "agents": 12, "webhooks": 1, "apiKeys": 2},
+      "createdAt": "2026-08-17T09:00:00Z",
+      "updatedAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+### POST /api/v1/tenants
+
+创建租户。
+
+- **认证**：需 `tenant:write` 权限
+- **请求体**：`Tenant` 对象（`name` 必填；`status` 缺省为 `active`）
+
+```json
+{
+  "name": "tenant-a",
+  "displayName": "租户 A",
+  "quota": {"maxDevices": 100}
+}
+```
+
+- `name`：必填
+- `status`：`active` | `suspended` | `disabled`，缺省 `active`
+- **响应**：`201 Created`，返回完整 `Tenant`
+
+### GET /api/v1/tenants/{id}
+
+租户详情。
+
+- **认证**：需 `tenant:read` 权限
+- **响应**：`200 OK`，返回 `Tenant`
+- 不存在：`404`，`{"error": "tenant not found"}`
+
+### PUT /api/v1/tenants/{id}
+
+更新租户（请求体为完整 `Tenant`，`id` 取路径参数）。
+
+- **认证**：需 `tenant:write` 权限
+- **请求体**：同创建接口
+- **响应**：`200 OK`，返回更新后的 `Tenant`
+- 不存在：`404`
+
+### DELETE /api/v1/tenants/{id}
+
+删除租户。平台根租户 `default` 拒绝删除（409）；删除成功后级联清理该租户的
+APIKey / Webhook / Script 三域子资源（其余域暂未级联）。
+
+- **认证**：需 `tenant:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted"}`
+- 删除 `default`：`409`，`{"error": "cannot delete platform tenant 'default'"}`
+- 不存在：`404`
+
+### POST /api/v1/tenants/{id}/suspend
+
+暂停租户（`status` → `suspended`）。
+
+- **认证**：需 `tenant:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回状态为 `suspended` 的 `Tenant`
+- 不存在：`404`
+
+### POST /api/v1/tenants/{id}/activate
+
+激活租户（`status` → `active`）。
+
+- **认证**：需 `tenant:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回状态为 `active` 的 `Tenant`
+- 不存在：`404`
+
+### GET /api/v1/apikeys
+
+列出当前租户的 API Key（按 `X-Tenant-ID` 隔离）。
+
+- **认证**：需 `apikey:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "apiKeys": [
+    {
+      "id": "ak-001",
+      "tenantID": "t1",
+      "name": "ci-bot",
+      "scopes": ["device:read", "task:write"],
+      "rateLimitPerSec": 0,
+      "expiresAt": "0001-01-01T00:00:00Z",
+      "lastUsedAt": "0001-01-01T00:00:00Z",
+      "enabled": true,
+      "createdAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+> Key 仅为 SHA-256 hash，JSON 序列化时不输出（`json:"-"`），明文只在创建时返回一次。
+
+### POST /api/v1/apikeys
+
+创建 API Key。服务端生成明文 key（仅此一次返回）+ SHA-256 hash 落库，`enabled` 强制为 true。
+
+- **认证**：需 `apikey:write` 权限
+- **请求体**：
+
+```json
+{
+  "name": "ci-bot",
+  "scopes": ["device:read", "task:write"],
+  "rateLimitPerSec": 10
+}
+```
+
+- `name`：必填
+- **响应**：`201 Created`
+
+```json
+{
+  "apiKey": {"id": "ak-001", "name": "ci-bot", "scopes": ["device:read", "task:write"], "enabled": true},
+  "plainKey": "omk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+}
+```
+
+> `plainKey` 仅本次响应返回，之后不可再获取。
+
+### GET /api/v1/apikeys/{id}
+
+API Key 详情。
+
+- **认证**：需 `apikey:read` 权限
+- **响应**：`200 OK`，返回 `APIKey`
+- 不存在：`404`，`{"error": "api key not found"}`
+
+### PUT /api/v1/apikeys/{id}
+
+更新 API Key。白名单字段合并（仅允许更新 `Name` 与 `Scopes`）：
+`Enabled` 必须走 `/enable|/disable` 端点；`Key`（hash）/ `ID` / `TenantID` / `CreatedAt` 强制保留原值。
+`scopes` 不允许清空（防提权）。
+
+- **认证**：需 `apikey:write` 权限
+- **请求体**：
+
+```json
+{
+  "name": "ci-bot-v2",
+  "scopes": ["device:read", "task:write", "alert:read"]
+}
+```
+
+- `scopes` 为空数组：`400`，`{"error": "scopes must not be empty"}`
+- **响应**：`200 OK`，返回更新后的 `APIKey`
+- 不存在：`404`
+
+### DELETE /api/v1/apikeys/{id}
+
+删除 API Key。
+
+- **认证**：需 `apikey:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted"}`
+- 不存在：`404`
+
+### POST /api/v1/apikeys/{id}/enable
+
+启用 API Key（`enabled` → true）。
+
+- **认证**：需 `apikey:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回更新后的 `APIKey`
+- 不存在：`404`
+
+### POST /api/v1/apikeys/{id}/disable
+
+禁用 API Key（`enabled` → false）。
+
+- **认证**：需 `apikey:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回更新后的 `APIKey`
+- 不存在：`404`
+
+### GET /api/v1/marketplace/plugins
+
+列出插件市场全部插件（平台级）。
+
+- **认证**：需 `plugin:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "plugins": [
+    {
+      "id": "plg-001",
+      "name": "mysql-exporter",
+      "version": "1.2.0",
+      "description": "MySQL 指标采集插件",
+      "author": "opsmesh",
+      "type": "data",
+      "downloadURL": "https://plugins.opsmesh.io/mysql-exporter-1.2.0.tar.gz",
+      "checksum": "sha256:...",
+      "installed": true,
+      "enabled": true,
+      "createdAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+### POST /api/v1/marketplace/plugins
+
+注册插件到市场。
+
+- **认证**：需 `plugin:write` 权限
+- **请求体**：
+
+```json
+{
+  "name": "mysql-exporter",
+  "version": "1.2.0",
+  "description": "MySQL 指标采集插件",
+  "author": "opsmesh",
+  "type": "data",
+  "downloadURL": "https://plugins.opsmesh.io/mysql-exporter-1.2.0.tar.gz",
+  "checksum": "sha256:..."
+}
+```
+
+- `name`、`version`、`type`：必填
+- `type`：白名单 `data` | `logic` | `integration`
+- `downloadURL`：可空（内嵌插件）；非空时仅允许 `http` / `https` scheme（拒绝 `file://` 等）
+- **响应**：`201 Created`，返回完整 `Plugin`
+
+### GET /api/v1/marketplace/plugins/{id}
+
+插件详情。
+
+- **认证**：需 `plugin:read` 权限
+- **响应**：`200 OK`，返回 `Plugin`
+- 不存在：`404`，`{"error": "plugin not found"}`
+
+### DELETE /api/v1/marketplace/plugins/{id}
+
+删除插件。
+
+- **认证**：需 `plugin:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted"}`
+- 不存在：`404`
+
+### POST /api/v1/marketplace/plugins/{id}/install
+
+安装插件。`downloadURL` 非空时真实下载（SSRF 校验拒绝私网地址）→ SHA-256 校验
+（`checksum` 非空时）→ 保存到 `data/plugins/<id>/plugin.bin`；已安装时幂等直接返回。
+
+- **认证**：需 `plugin:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回 `installed=true, enabled=true` 的 `Plugin`
+- 下载/校验失败：`500`，`{"error": "plugin download/verify failed: ..."}`
+- 不存在：`404`
+
+### POST /api/v1/marketplace/plugins/{id}/uninstall
+
+卸载插件（删除 `data/plugins/<id>/` 目录，`installed=false, enabled=false`）。
+
+- **认证**：需 `plugin:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回更新后的 `Plugin`
+- 不存在：`404`
+
+### POST /api/v1/marketplace/plugins/{id}/enable
+
+启用插件。
+
+- **认证**：需 `plugin:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回 `enabled=true` 的 `Plugin`
+- 不存在：`404`
+
+### POST /api/v1/marketplace/plugins/{id}/disable
+
+禁用插件。
+
+- **认证**：需 `plugin:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回 `enabled=false` 的 `Plugin`
+- 不存在：`404`
+
+### GET /api/v1/platform/config
+
+查询平台配置。优先读 store（tenant=`default`，key=`platform/config`），
+未设置时回退出厂默认值。
+
+- **认证**：需 `platform:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "version": "0.6.0",
+  "buildTime": "2026-08-17",
+  "goVersion": "go1.22",
+  "defaultTenant": "default",
+  "maxTenants": 100,
+  "enableMarketplace": true,
+  "enableBilling": true,
+  "updatedAt": "2026-08-17T09:00:00Z"
+}
+```
+
+### PUT /api/v1/platform/config
+
+更新平台配置（真实持久化：序列化为 JSON 写入 ConfigStore，`updatedAt` 由服务端覆盖）。
+
+- **认证**：需 `platform:write` 权限
+- **请求体**：同上 `PlatformConfig`
+- **响应**：`200 OK`，返回实际保存的配置
+- 落库失败：`500`
+
+### GET /api/v1/platform/health
+
+平台健康检查（组件级状态视图）。
+
+- **认证**：需 `platform:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "status": "ok",
+  "components": {"store": "ok", "agent": "ok", "task": "ok", "alert": "ok", "billing": "ok"},
+  "timestamp": "2026-08-17T09:00:00Z"
+}
+```
+
+### GET /api/v1/platform/metrics
+
+平台指标汇总（各域资源计数）。
+
+- **认证**：需 `platform:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "tenants": 5,
+  "devices": 120,
+  "tasks": 3,
+  "alerts": 2,
+  "apiKeys": 8,
+  "plugins": 10,
+  "subscriptions": 5,
+  "invoices": 12
+}
+```
+
+---
+
+## 计费 API
+
+Phase 6 计费：订阅计划（平台级）+ 订阅（按租户隔离）+ 账单 + 资源用量。
+金额单位均为分（int，避免浮点精度问题）。
+
+### GET /api/v1/billing/plans
+
+列出全部订阅计划。
+
+- **认证**：需 `billing:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "plans": [
+    {
+      "id": "plan-001",
+      "name": "专业版",
+      "price": 29900,
+      "interval": "monthly",
+      "features": ["无限设备", "工单系统"],
+      "resourceLimits": {"maxDevices": 500, "maxTasks": 0, "maxActiveTasks": 0, "maxAlerts": 200, "maxAgents": 0, "maxWebhooks": 20, "maxAPIKeys": 10},
+      "createdAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+### POST /api/v1/billing/plans
+
+创建订阅计划。
+
+- **认证**：需 `billing:write` 权限
+- **请求体**：
+
+```json
+{
+  "name": "专业版",
+  "price": 29900,
+  "interval": "monthly",
+  "features": ["无限设备", "工单系统"],
+  "resourceLimits": {"maxDevices": 500}
+}
+```
+
+- `name`：必填；`interval` 缺省 `monthly`（取值 `monthly` | `yearly`）
+- **响应**：`201 Created`，返回完整 `SubscriptionPlan`
+
+### GET /api/v1/billing/plans/{id}
+
+计划详情。
+
+- **认证**：需 `billing:read` 权限
+- **响应**：`200 OK`，返回 `SubscriptionPlan`
+- 不存在：`404`，`{"error": "plan not found"}`
+
+### PUT /api/v1/billing/plans/{id}
+
+更新计划（请求体为完整 `SubscriptionPlan`，`id` 取路径参数）。
+
+- **认证**：需 `billing:write` 权限
+- **响应**：`200 OK`，返回更新后的计划
+- 不存在：`404`
+
+### DELETE /api/v1/billing/plans/{id}
+
+删除计划。
+
+- **认证**：需 `billing:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted"}`
+- 不存在：`404`
+
+### GET /api/v1/billing/subscriptions
+
+列出当前租户的订阅（按 `X-Tenant-ID` 隔离）。
+
+- **认证**：需 `billing:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "subscriptions": [
+    {
+      "id": "sub-001",
+      "tenantID": "t1",
+      "planID": "plan-001",
+      "status": "active",
+      "startedAt": "2026-08-17T09:00:00Z",
+      "expiresAt": "2026-09-17T09:00:00Z",
+      "createdAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+### POST /api/v1/billing/subscriptions
+
+为当前租户创建订阅。
+
+- **认证**：需 `billing:write` 权限
+- **请求体**：
+
+```json
+{
+  "planID": "plan-001",
+  "expiresAt": "2026-09-17T09:00:00Z"
+}
+```
+
+- `planID`：必填；`tenantID` 由请求上下文注入；`status` 缺省 `active`
+- **响应**：`201 Created`，返回完整 `Subscription`
+
+### GET /api/v1/billing/subscriptions/{id}
+
+订阅详情。
+
+- **认证**：需 `billing:read` 权限
+- **响应**：`200 OK`，返回 `Subscription`
+- 不存在：`404`，`{"error": "subscription not found"}`
+
+### PUT /api/v1/billing/subscriptions/{id}
+
+更新订阅（`id` 取路径参数）。
+
+- **认证**：需 `billing:write` 权限
+- **请求体**：完整 `Subscription`
+- **响应**：`200 OK`，返回更新后的订阅
+- 不存在：`404`
+
+### DELETE /api/v1/billing/subscriptions/{id}
+
+删除订阅。
+
+- **认证**：需 `billing:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted"}`
+- 不存在：`404`
+
+### GET /api/v1/billing/invoices
+
+列出当前租户的账单（按创建时间降序）。
+
+- **认证**：需 `billing:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "invoices": [
+    {
+      "id": "inv-001",
+      "tenantID": "t1",
+      "subscriptionID": "sub-001",
+      "amount": 29900,
+      "periodStart": "2026-08-01T00:00:00Z",
+      "periodEnd": "2026-08-31T00:00:00Z",
+      "status": "paid",
+      "items": [{"name": "专业版月费", "quantity": 1, "unitPrice": 29900, "amount": 29900}],
+      "createdAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+### GET /api/v1/billing/invoices/{id}
+
+账单详情。
+
+- **认证**：需 `billing:read` 权限
+- **响应**：`200 OK`，返回 `Invoice`
+- 不存在：`404`，`{"error": "invoice not found"}`
+
+### GET /api/v1/billing/usage
+
+当前租户资源用量统计（实时计算）。
+
+- **认证**：需 `billing:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "tenantID": "t1",
+  "deviceCount": 12,
+  "taskCount": 34,
+  "alertCount": 3,
+  "metricsCount": 120,
+  "calculatedAt": "2026-08-17T09:00:00Z"
+}
+```
+
+- 计算失败：`500`，`{"error": "failed to calculate usage"}`
+
+---
+
+## 网关 API
+
+Phase 5 API 网关：路由规则 CRUD + 启停 + 统计 + `/gw/` 数据面反向代理。
+路由规则保存在内存（`Server.gateway`，按租户隔离），**不持久化**——控制面重启后重置；
+统计为进程级计数器，多副本各自统计未做跨副本聚合。
+
+### GET /api/v1/gateway/routes
+
+列出当前租户的路由规则。
+
+- **认证**：需 `gateway:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "routes": [
+    {
+      "id": "gw-route-3f2a1b8c9d0e1f2a",
+      "tenantID": "t1",
+      "name": "device-api",
+      "pathPrefix": "/api/v1/devices",
+      "targetBackend": "http://backend:8080",
+      "methods": ["GET", "POST"],
+      "rateLimitPerSec": 100,
+      "enabled": true,
+      "createdAt": "2026-08-17T09:00:00Z",
+      "updatedAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+### POST /api/v1/gateway/routes
+
+创建路由规则。
+
+- **认证**：需 `gateway:write` 权限
+- **请求体**：
+
+```json
+{
+  "name": "device-api",
+  "pathPrefix": "/api/v1/devices",
+  "targetBackend": "http://backend:8080",
+  "methods": ["GET", "POST"],
+  "rateLimitPerSec": 100,
+  "enabled": true
+}
+```
+
+- `name`、`pathPrefix`、`targetBackend`：必填
+- `targetBackend`：格式 `scheme://host:port`，scheme ∈ {`http`, `https`, `grpc`}
+- `methods`：空数组表示允许全部方法
+- `rateLimitPerSec`：0 表示不限流
+- **响应**：`201 Created`，返回完整 `RouteRule`（`id` 自动生成 `gw-route-<16hex>`）
+
+### GET /api/v1/gateway/routes/{id}
+
+路由规则详情。
+
+- **认证**：需 `gateway:read` 权限
+- **响应**：`200 OK`，返回 `RouteRule`
+- 不存在：`404`，`{"error": "route not found"}`
+
+### PUT /api/v1/gateway/routes/{id}
+
+更新路由规则（`id` / `tenantID` / `createdAt` 保留原值，`updatedAt` 服务端覆盖）。
+
+- **认证**：需 `gateway:write` 权限
+- **请求体**：完整 `RouteRule`（同创建接口）
+- **响应**：`200 OK`，返回更新后的 `RouteRule`
+- 不存在：`404`
+
+### DELETE /api/v1/gateway/routes/{id}
+
+删除路由规则。
+
+- **认证**：需 `gateway:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted"}`
+- 不存在：`404`
+
+### POST /api/v1/gateway/routes/{id}/enable
+
+启用路由。
+
+- **认证**：需 `gateway:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回 `enabled=true` 的 `RouteRule`
+- 不存在：`404`
+
+### POST /api/v1/gateway/routes/{id}/disable
+
+禁用路由。
+
+- **认证**：需 `gateway:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回 `enabled=false` 的 `RouteRule`
+- 不存在：`404`
+
+### GET /api/v1/gateway/stats
+
+网关统计（进程级聚合）。
+
+- **认证**：需 `gateway:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "totalRequests": 1024,
+  "totalErrors": 3,
+  "avgLatencyMs": 12.5,
+  "activeRoutes": 2
+}
+```
+
+- `activeRoutes` 为当前租户的 enabled 路由数；`totalRequests` / `totalErrors` / `avgLatencyMs` 为全进程统计
+
+### /gw/（数据面反向代理）
+
+网关最小数据面：挂载 `/gw/` 前缀（任意方法），剥前缀后按 PathPrefix + Methods 匹配
+全部租户的 enabled 路由（跨租户，最小数据面不做租户鉴权），用 `httputil.ReverseProxy`
+反向代理转发到 `targetBackend`。
+
+- **匹配**：`GET/POST/PUT/DELETE http://<controlplane>:8080/gw/api/v1/devices` →
+  剥 `/gw` 后以 `/api/v1/devices` 匹配路由规则，命中后转发到后端（后端按 PathPrefix 语义接收原始路径）
+- **转发**：仅支持 `http` / `https` 后端；`grpc://` 及非法 scheme 返回 `502`
+- **限流**：`rateLimitPerSec > 0` 时按路由令牌桶限流，超出返回 `429`
+- **错误码**：
+  - 无命中路由：`404`，`{"error": "no gateway route matches <path>"}`
+  - 路由限流超出：`429`，`{"error": "rate limit exceeded for route <id>"}`
+  - 后端不支持：`502`，`{"error": "unsupported targetBackend: ..."}`
+- **统计**：每次请求计入 `totalRequests`；404 / 429 / >=500 计入 `totalErrors`；平均延迟增量更新
+
+---
+
+## 备份与灾备 API
+
+Phase 3 灾备恢复（真实备份/恢复，非模拟）。归档内容与 CLI 同源：导出 store 领域数据
+JSON 快照 + metadata.json 打包为 `tar.gz` 写入 `data/backups/`（Server.backupDir）。
+创建为异步归档（落库 `creating` 后后台 goroutine 执行，完成后更新 `completed` + 真实
+`Size`/`Path`，失败置 `failed`）。
+
+### POST /api/v1/backup/create
+
+创建备份（异步归档）。
+
+- **认证**：需 `backup:write` 权限
+- **请求体**：
+
+```json
+{"type": "full"}
+```
+
+- `type`：必填，`full` | `config` | `devices` | `tasks`
+- **响应**：`201 Created`（status 为 `creating`，归档在后台完成后变为 `completed`）
+
+```json
+{
+  "id": "bk-001",
+  "tenantID": "t1",
+  "type": "full",
+  "status": "creating",
+  "size": 0,
+  "path": "",
+  "createdAt": "2026-08-17T09:00:00Z"
+}
+```
+
+### GET /api/v1/backup/list
+
+列出当前租户的备份记录。
+
+- **认证**：需 `backup:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "backups": [
+    {"id": "bk-001", "tenantID": "t1", "type": "full", "status": "completed", "size": 20480, "path": "data/backups/backup-20260817-090000-bk-001.tar.gz", "createdAt": "2026-08-17T09:00:00Z"}
+  ]
+}
+```
+
+### POST /api/v1/backup/restore
+
+恢复备份（真实恢复：读归档 `snapshot.json` 按字段写回 store 接口，返回各类恢复计数）。
+
+- **认证**：需 `backup:write` 权限
+- **请求体**：`{"id": "bk-001"}`
+- `id`：必填
+- **响应**：`200 OK`
+
+```json
+{
+  "status": "restored",
+  "backup": {"id": "bk-001", "status": "completed", "path": "data/backups/..."},
+  "restored": {"configs": 12, "devices": 8, "agents": 8, "tasks": 3, "alertRules": 2, "templates": 1, "automationRules": 1},
+  "completedAt": "2026-08-17T09:05:00Z"
+}
+```
+
+- 备份记录不存在：`404`，`{"error": "backup not found"}`
+- 归档路径为空 / 归档文件缺失：`404`（`"backup archive missing (path empty)"` / `"backup archive file not found: ..."`）
+- 归档解析失败：`500`
+
+### DELETE /api/v1/backup/{id}
+
+删除备份记录。
+
+- **认证**：需 `backup:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted"}`
+- 不存在：`404`，`{"error": "backup not found"}`
+
+---
+
+## 合规 API
+
+Phase 3 安全合规：预置 CIS Benchmark 基线规则（12 条，只读）+ 扫描聚合 + 报告查询。
+引擎本身不执行 `CheckScript`（避免控制面直接 shell），实际执行由 agent 侧任务下发完成，
+控制面聚合结果生成 `ComplianceReport` 落库。
+
+### GET /api/v1/compliance/rules
+
+列出全部预置合规规则。
+
+- **认证**：需 `compliance:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "rules": [
+    {
+      "id": "cis-ssh-01",
+      "name": "SSH 禁用 root 登录",
+      "category": "cis",
+      "severity": "high",
+      "description": "PermitRootLogin 应为 no，禁止 root 直接 SSH 登录",
+      "checkScript": "grep -qE \"^PermitRootLogin\\s+no\" /etc/ssh/sshd_config",
+      "remediation": "编辑 /etc/ssh/sshd_config 设置 PermitRootLogin no 并重启 sshd"
+    }
+  ]
+}
+```
+
+- `category`：`cis` | `pci_dss` | `hipaa` | `custom`；`severity`：`high` | `medium` | `low`
+
+### GET /api/v1/compliance/rules/{id}
+
+规则详情。
+
+- **认证**：需 `compliance:read` 权限
+- **响应**：`200 OK`，返回单条 `ComplianceRule`
+- 不存在：`404`，`{"error": "rule not found"}`
+
+### POST /api/v1/compliance/scan
+
+提交设备合规检查结果（agent 上报格式），聚合生成报告落库。
+
+- **认证**：需 `compliance:write` 权限
+- **请求体**：
+
+```json
+{
+  "deviceID": "d-001",
+  "results": [
+    {"ruleId": "cis-ssh-01", "passed": true, "output": "ok", "checkedAt": "2026-08-17T09:00:00Z"}
+  ]
+}
+```
+
+- `deviceID`：必填
+- `results`：可空——为空时用引擎规则生成全 failed 占位结果（`output: "not checked"`，供测试/演示）
+- 评分规则：`passed 数 / 总规则数 * 100` 向下取整
+- **响应**：`201 Created`
+
+```json
+{
+  "id": "rpt-001",
+  "tenantID": "t1",
+  "deviceID": "d-001",
+  "results": [{"ruleId": "cis-ssh-01", "passed": true, "output": "ok", "checkedAt": "2026-08-17T09:00:00Z"}],
+  "score": 100,
+  "createdAt": "2026-08-17T09:00:00Z"
+}
+```
+
+### GET /api/v1/compliance/reports
+
+列出当前租户的合规报告。
+
+- **认证**：需 `compliance:read` 权限
+- **响应**：`200 OK`，`{"reports": [...]}`（元素同上扫描响应）
+
+### GET /api/v1/compliance/reports/{id}
+
+报告详情。
+
+- **认证**：需 `compliance:read` 权限
+- **响应**：`200 OK`，返回 `ComplianceReport`
+- 不存在：`404`，`{"error": "report not found"}`
+
+---
+
+## HA API
+
+Phase 3 控制面高可用管理。基于现有 LeaderStore（leader_lease 表续租）查询 leader 状态。
+MVP 限制：非 leader 实例无法得知 leader 详情（返回占位 `unknown`）；实例列表仅含当前实例
+（多副本需经 leader_lease 表查询全部活跃实例）。
+
+### GET /api/v1/ha/status
+
+获取 HA 状态（leader / 当前实例 / 实例列表 / 副本数）。
+
+- **认证**：需 `ha:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "leader": {"instanceId": "host-1", "hostname": "host-1", "httpPort": 8080, "grpcPort": 9090, "role": "leader", "isLeader": true},
+  "current": {"instanceId": "host-1", "hostname": "host-1", "httpPort": 8080, "grpcPort": 9090, "role": "leader", "isLeader": true},
+  "instances": [{"instanceId": "host-1", "role": "leader", "isLeader": true}],
+  "replicas": 3,
+  "generatedAt": "2026-08-17T09:00:00Z"
+}
+```
+
+- `replicas` 来自 `--replicas` 配置（内存 store 不支持多副本）
+- 非 leader 实例查询时 `leader` 为占位：`{"instanceId": "unknown", "hostname": "unknown", "role": "leader", "isLeader": true}`
+
+### GET /api/v1/ha/instances
+
+列出控制面实例（MVP 仅返回当前实例）。
+
+- **认证**：需 `ha:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "instances": [{"instanceId": "host-1", "hostname": "host-1", "httpPort": 8080, "grpcPort": 9090, "role": "leader", "isLeader": true}],
+  "count": 1
+}
+```
+
+### GET /api/v1/ha/health
+
+实例健康检查（当前实例状态 + leader 状态，供负载均衡/监控探针使用）。
+
+- **响应**：`200 OK`
+
+```json
+{
+  "status": "healthy",
+  "instance": {"instanceId": "host-1", "role": "leader", "isLeader": true},
+  "timestamp": "2026-08-17T09:00:00Z"
+}
+```
+
+### POST /api/v1/ha/failover
+
+手动切换 leader。返回当前实例角色与说明：实际选主由 leader_lease 表续租驱动，
+手动切换需运维摘掉当前 leader Pod 触发重新选举（本端点不直接执行切换）。
+
+- **认证**：需 `ha:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`
+
+```json
+{
+  "status": "accepted",
+  "message": "failover triggered; new leader will be elected via leader_lease renewal",
+  "current": {"instanceId": "host-1", "role": "leader", "isLeader": true},
+  "simulated": false
+}
+```
+
+> `simulated: false` 表示响应返回的是真实当前状态（旧版本的占位 `simulated:true` 标记已移除）。
+
+---
+
+## 工单与 SLO API
+
+Phase 1 服务台：工单管理 + SLO 管理，均按租户隔离（`X-Tenant-ID` 必填）。
+
+### GET /api/v1/tickets
+
+列出工单（支持过滤参数）。
+
+- **认证**：需 `ticket:read` 权限
+- **查询参数**：`status`（open/in_progress/resolved/closed）、`priority`（low/medium/high/urgent）、
+  `category`（incident/change/request/problem）、`assigneeID`（空串表示不过滤）
+- **响应**：`200 OK`
+
+```json
+{
+  "tickets": [
+    {
+      "id": "tk-001",
+      "tenantID": "t1",
+      "title": "CPU 告警处理",
+      "description": "host-1 CPU 持续 90%+",
+      "status": "open",
+      "priority": "high",
+      "category": "incident",
+      "assigneeID": "u-002",
+      "creatorID": "u-001",
+      "relatedDevice": "d-001",
+      "relatedTask": "",
+      "tags": ["cpu"],
+      "createdAt": "2026-08-17T09:00:00Z",
+      "updatedAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+### POST /api/v1/tickets
+
+创建工单。
+
+- **认证**：需 `ticket:write` 权限
+- **请求体**：
+
+```json
+{
+  "title": "CPU 告警处理",
+  "description": "host-1 CPU 持续 90%+",
+  "priority": "high",
+  "category": "incident",
+  "assigneeID": "u-002",
+  "relatedDevice": "d-001",
+  "relatedTask": "",
+  "tags": ["cpu"]
+}
+```
+
+- `title`：必填；`creatorID` 缺省填充为当前调用者（防伪造创建人）
+- **响应**：`201 Created`，返回完整 `Ticket`
+
+### GET /api/v1/tickets/{id}
+
+工单详情。
+
+- **认证**：需 `ticket:read` 权限
+- **响应**：`200 OK`，返回 `Ticket`
+- 不存在：`404`，`{"error": "ticket not found"}`
+
+### PUT /api/v1/tickets/{id}
+
+更新工单（含 `status` 字段，可推进 open → in_progress → resolved）。
+
+- **认证**：需 `ticket:write` 权限
+- **请求体**：同创建接口附加 `status` 字段
+- **响应**：`200 OK`，返回更新后的 `Ticket`
+- 不存在：`404`
+
+### POST /api/v1/tickets/{id}/close
+
+关闭工单（置 `closed`）。
+
+- **认证**：需 `ticket:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回关闭后的 `Ticket`
+- 不存在：`404`
+
+### GET /api/v1/slos
+
+列出 SLO。
+
+- **认证**：需 `slo:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "slos": [
+    {
+      "id": "slo-001",
+      "tenantID": "t1",
+      "name": "api 可用性",
+      "description": "核心 API 月度可用性",
+      "serviceName": "api-gateway",
+      "target": 99.9,
+      "window": "30d",
+      "slis": [{"name": "availability", "metric": "up", "target": 0.999, "operator": ">="}],
+      "createdAt": "2026-08-17T09:00:00Z",
+      "updatedAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+### POST /api/v1/slos
+
+创建 SLO。
+
+- **认证**：需 `slo:write` 权限
+- **请求体**：
+
+```json
+{
+  "name": "api 可用性",
+  "description": "核心 API 月度可用性",
+  "serviceName": "api-gateway",
+  "target": 99.9,
+  "window": "30d",
+  "slis": [{"name": "availability", "metric": "up", "target": 0.999, "operator": ">="}]
+}
+```
+
+- `name`：必填；`target` 如 99.9 表示 99.9%；`window` 如 `30d` / `7d`
+- **响应**：`201 Created`，返回完整 `SLO`
+
+### GET /api/v1/slos/{id}
+
+SLO 详情。
+
+- **认证**：需 `slo:read` 权限
+- **响应**：`200 OK`，返回 `SLO`
+- 不存在：`404`，`{"error": "slo not found"}`
+
+### PUT /api/v1/slos/{id}
+
+更新 SLO。
+
+- **认证**：需 `slo:write` 权限
+- **请求体**：同创建接口
+- **响应**：`200 OK`，返回更新后的 `SLO`
+- 不存在：`404`
+
+### DELETE /api/v1/slos/{id}
+
+删除 SLO。
+
+- **认证**：需 `slo:delete` 权限（注意与其他端点不同，删除单独使用 `slo:delete`）
+- **响应**：`204 No Content`（无响应体）
+- 不存在：`404`
+
+### GET /api/v1/slos/{id}/status
+
+获取 SLO 各 SLI 当前状态。
+
+- **认证**：需 `slo:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "statuses": [
+    {"sliName": "availability", "currentValue": 0.9995, "targetValue": 0.999, "status": "met", "lastEvaluated": "2026-08-17T09:00:00Z"}
+  ]
+}
+```
+
+- `status`：`met` | `breached` | `nodata`
+- SLO 不存在：`404`，`{"error": "slo not found"}`
+
+---
+
+## 流量治理 API
+
+Phase 2 微服务治理：流量策略 CRUD + 启停（canary / timeout / retry / circuit_breaker / mirror），
+按租户隔离。
+
+### GET /api/v1/traffic/policies
+
+列出流量策略。
+
+- **认证**：需 `traffic:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "policies": [
+    {
+      "id": "tp-001",
+      "tenantID": "t1",
+      "name": "api-canary",
+      "serviceName": "api-gateway",
+      "type": "canary",
+      "canaryWeights": {"v1": 90, "v2": 10},
+      "mirrorPercent": 0,
+      "timeout": "",
+      "retries": 0,
+      "retryTimeout": "",
+      "maxConns": 0,
+      "maxRequests": 0,
+      "status": "active",
+      "createdAt": "2026-08-17T09:00:00Z",
+      "updatedAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+### POST /api/v1/traffic/policies
+
+创建流量策略。
+
+- **认证**：需 `traffic:write` 权限
+- **请求体**：`TrafficPolicy`（`name` 必填）
+
+```json
+{
+  "name": "api-canary",
+  "serviceName": "api-gateway",
+  "type": "canary",
+  "canaryWeights": {"v1": 90, "v2": 10}
+}
+```
+
+- `type`：`canary` | `timeout` | `retry` | `circuit_breaker` | `mirror`
+- **响应**：`201 Created`，返回完整 `TrafficPolicy`
+
+### GET /api/v1/traffic/policies/{id}
+
+策略详情。
+
+- **认证**：需 `traffic:read` 权限
+- **响应**：`200 OK`，返回 `TrafficPolicy`
+- 不存在：`404`，`{"error": "policy not found"}`
+
+### PUT /api/v1/traffic/policies/{id}
+
+更新策略（`id` 取路径参数）。
+
+- **认证**：需 `traffic:write` 权限
+- **请求体**：完整 `TrafficPolicy`
+- **响应**：`200 OK`，返回更新后的策略
+- 不存在：`404`
+
+### DELETE /api/v1/traffic/policies/{id}
+
+删除策略。
+
+- **认证**：需 `traffic:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted"}`
+- 不存在：`404`
+
+### POST /api/v1/traffic/policies/{id}/enable
+
+启用策略（`status` → `active`）。
+
+- **认证**：需 `traffic:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回更新后的策略
+- 不存在：`404`
+
+### POST /api/v1/traffic/policies/{id}/disable
+
+禁用策略（`status` → `inactive`）。
+
+- **认证**：需 `traffic:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回更新后的策略
+- 不存在：`404`
+
+---
+
+## 流水线与 ArgoCD API
+
+Phase 2 CI/CD：流水线模板 CRUD + 触发运行 + 运行记录查询；ArgoCD 应用 CRUD + 同步。
+
+### GET /api/v1/pipeline/templates
+
+列出流水线模板。
+
+- **认证**：需 `pipeline:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "templates": [
+    {
+      "id": "tpl-001",
+      "tenantID": "t1",
+      "name": "build-and-deploy",
+      "description": "构建并部署",
+      "type": "tekton",
+      "yaml": "steps:\n  - name: build\n    command: make build",
+      "agentID": "a-001",
+      "parameters": [{"name": "env", "description": "目标环境", "default": "dev", "required": true}],
+      "createdAt": "2026-08-17T09:00:00Z",
+      "updatedAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+### POST /api/v1/pipeline/templates
+
+创建流水线模板。
+
+- **认证**：需 `pipeline:write` 权限
+- **请求体**：`PipelineTemplate`（`name` 必填）
+- **响应**：`201 Created`，返回完整模板
+- 说明：`agentID` 为执行该流水线的默认 agent，为空时 run 会推进失败（记录 `template agentID not set`）
+
+### GET /api/v1/pipeline/templates/{id}
+
+模板详情。
+
+- **认证**：需 `pipeline:read` 权限
+- **响应**：`200 OK`，返回 `PipelineTemplate`
+- 不存在：`404`，`{"error": "template not found"}`
+
+### PUT /api/v1/pipeline/templates/{id}
+
+更新模板（`id` / `tenantID` / `createdAt` 保留原值；实现为 Delete + Create，保留原 ID）。
+
+- **认证**：需 `pipeline:write` 权限
+- **请求体**：完整 `PipelineTemplate`
+- **响应**：`200 OK`，返回更新后的模板
+- 不存在：`404`
+
+### DELETE /api/v1/pipeline/templates/{id}
+
+删除模板。
+
+- **认证**：需 `pipeline:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted"}`
+- 不存在：`404`
+
+### POST /api/v1/pipeline/templates/{id}/run
+
+触发运行：创建 `pending` 状态的 run 记录，由后台 pipeline 执行器（10s 周期）推进为
+`running` 并下发执行任务（从模板 YAML 提取首行非注释命令构造 shell task，`ParentID`
+关联到 run 供状态对账）。
+
+- **认证**：需 `pipeline:write` 权限
+- **请求体**（可选，可无参数触发）：
+
+```json
+{"parameters": {"env": "prod"}}
+```
+
+- **响应**：`201 Created`
+
+```json
+{
+  "id": "run-001",
+  "tenantID": "t1",
+  "templateID": "tpl-001",
+  "templateName": "build-and-deploy",
+  "status": "pending",
+  "parameters": {"env": "prod"},
+  "startedAt": "2026-08-17T09:00:00Z",
+  "createdAt": "2026-08-17T09:00:00Z"
+}
+```
+
+- 模板不存在：`404`
+
+### GET /api/v1/pipeline/runs
+
+列出运行记录（查询时按子任务状态对账，派生 run.Status）。
+
+- **认证**：需 `pipeline:read` 权限
+- **查询参数**：`templateID`（按模板过滤）
+- **响应**：`200 OK`
+
+```json
+{
+  "runs": [
+    {"id": "run-001", "templateID": "tpl-001", "templateName": "build-and-deploy", "status": "succeeded", "logs": "execution task created: t-001", "createdAt": "2026-08-17T09:00:00Z"}
+  ]
+}
+```
+
+- `status` 对账规则：任一子任务 failed/cancelled → `failed`；全部 done → `succeeded`；否则 `running`
+
+### GET /api/v1/pipeline/runs/{id}
+
+运行详情（同上按子任务状态对账派生 status）。
+
+- **认证**：需 `pipeline:read` 权限
+- **响应**：`200 OK`，返回 `PipelineRun`
+- 不存在：`404`，`{"error": "run not found"}`
+
+### GET /api/v1/argocd/apps
+
+列出 ArgoCD 应用。
+
+- **认证**：需 `argocd:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "apps": [
+    {
+      "id": "app-001",
+      "tenantID": "t1",
+      "name": "my-app",
+      "namespace": "default",
+      "repoURL": "https://github.com/org/manifests",
+      "path": "overlays/prod",
+      "targetRevision": "main",
+      "clusterURL": "https://k8s.example.com:6443",
+      "syncPolicy": "manual",
+      "status": "synced",
+      "healthStatus": "healthy",
+      "createdAt": "2026-08-17T09:00:00Z",
+      "updatedAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+### POST /api/v1/argocd/apps
+
+创建 ArgoCD 应用。
+
+- **认证**：需 `argocd:write` 权限
+- **请求体**：`ArgoCDApp`（`name` 必填）
+- **响应**：`201 Created`，返回完整 `ArgoCDApp`
+
+### GET /api/v1/argocd/apps/{id}
+
+应用详情。
+
+- **认证**：需 `argocd:read` 权限
+- **响应**：`200 OK`，返回 `ArgoCDApp`
+- 不存在：`404`，`{"error": "app not found"}`
+
+### PUT /api/v1/argocd/apps/{id}
+
+更新应用（`id` 取路径参数）。
+
+- **认证**：需 `argocd:write` 权限
+- **请求体**：完整 `ArgoCDApp`
+- **响应**：`200 OK`，返回更新后的应用
+- 不存在：`404`
+
+### DELETE /api/v1/argocd/apps/{id}
+
+删除应用。
+
+- **认证**：需 `argocd:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted"}`
+- 不存在：`404`
+
+### POST /api/v1/argocd/apps/{id}/sync
+
+同步应用（真实执行：调用 `argocd` CLI 执行 `app sync`，60 秒超时；
+带 `namespace` / `targetRevision` 参数）。
+
+- **认证**：需 `argocd:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回同步后的 `ArgoCDApp`（`status=synced`）
+- 同步失败：`500`，`{"error": "argocd sync failed: ..."}`（应用状态置 `outofsync`）
+- 应用不存在：`404`
+
+### POST /api/v1/canary/{id}/traffic-split
+
+设置灰度发布流量分割百分比（针对经 `POST /api/v1/tasks/canary` 创建的灰度发布）。
+
+- **认证**：需 `task:write` 权限
+- **请求体**：`{"percentage": 30}`（0-100 整数，表示灰度版本流量占比）
+- **响应**：`200 OK`
+
+```json
+{
+  "canaryID": "canary-1a2b3c4d5e6f",
+  "percentage": 30,
+  "updatedAt": "2026-08-17T09:00:00Z"
+}
+```
+
+- 灰度发布不存在或跨租户：`404`，`{"error": "canary release not found"}`
+
+### GET /api/v1/canary/{id}/metrics
+
+获取灰度指标对比（真实指标：从 network_metrics 表查询最近 5 分钟均值）。
+
+- **认证**：需 `task:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "canaryID": "canary-1a2b3c4d5e6f",
+  "baseline": [...],
+  "canary": [...],
+  "percentage": 30,
+  "comparedAt": "2026-08-17T09:00:00Z",
+  "simulated": false
+}
+```
+
+> `simulated: false` 表示返回的是真实查询指标（旧版本的模拟数据占位 `simulated:true` 已替换为真实实现）。
+- 灰度发布不存在或跨租户：`404`
+
+---
+
+## 配置热推送 API
+
+Phase 2 配置管理：热推送 / 灰度配置发布 / 版本历史（复用 `cmdb:read` / `cmdb:write` 权限）。
+
+### POST /api/v1/config/hotpush
+
+热推送配置到指定设备。先 `SetConfig` 保存配置版本，再下发 `file` 类型任务写配置文件到目标路径。
+
+- **认证**：需 `cmdb:write` 权限
+- **请求体**：
+
+```json
+{
+  "agentID": "a-001",
+  "key": "app/config",
+  "value": "log_level=info\n",
+  "path": "/etc/app/config.ini",
+  "format": "text",
+  "description": "应用配置"
+}
+```
+
+- `agentID`、`key`、`path`：必填；`format` 缺省 `text`
+- **响应**：`200 OK`
+
+```json
+{
+  "configKey": "app/config",
+  "configVersion": 3,
+  "taskID": "t-001",
+  "agentID": "a-001",
+  "status": "pushed"
+}
+```
+
+### POST /api/v1/config/canary
+
+灰度配置发布：保存配置版本后向指定设备列表批量下发 `file` 类型任务。
+
+- **认证**：需 `cmdb:write` 权限
+- **请求体**：
+
+```json
+{
+  "agentIDs": ["a-001", "a-002"],
+  "key": "app/config",
+  "value": "log_level=debug\n",
+  "path": "/etc/app/config.ini",
+  "format": "text",
+  "percentage": 50
+}
+```
+
+- `agentIDs`（非空）、`key`、`path`：必填；`percentage`：0-100
+- **响应**：`200 OK`
+
+```json
+{
+  "configKey": "app/config",
+  "configVersion": 4,
+  "percentage": 50,
+  "tasks": [
+    {"agentID": "a-001", "taskID": "t-001"},
+    {"agentID": "a-002", "taskID": "t-002"}
+  ],
+  "status": "canary_pushed"
+}
+```
+
+### GET /api/v1/config/versions
+
+查询配置版本历史。
+
+- **认证**：需 `cmdb:read` 权限
+- **查询参数**：`key`（必填）
+- **响应**：`200 OK`
+
+```json
+{
+  "key": "app/config",
+  "versions": [...]
+}
+```
+
+- 缺 `key`：`400`，`{"error": "key query parameter is required"}`
+
+---
+
+## 自动化 API
+
+Phase 4 自动化闭环：规则 CRUD + 启停 + 测试 + 执行历史。规则为「触发器 + 动作列表」
+（TriggerType: alert/metric_threshold/schedule/event；ActionType:
+execute_task/send_notify/scale/restart/isolate），由后台评估循环（`automationEvalInterval`）
+周期评估 enabled 规则并执行命中动作。
+
+### GET /api/v1/automation/rules
+
+列出自动化规则。
+
+- **认证**：需 `automation:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "rules": [
+    {
+      "id": "ar-001",
+      "tenantID": "t1",
+      "name": "CPU 高自动重启",
+      "description": "CPU > 90% 时重启服务",
+      "triggerType": "metric_threshold",
+      "triggerParams": {"metric": "cpu", "op": ">", "threshold": "90"},
+      "actions": [{"type": "restart", "params": {"target": "nginx"}}],
+      "enabled": true,
+      "createdAt": "2026-08-17T09:00:00Z",
+      "updatedAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+### POST /api/v1/automation/rules
+
+创建自动化规则（经 `automation.ValidateRule` 校验合法性）。
+
+- **认证**：需 `automation:write` 权限
+- **请求体**：`AutomationRule`（同上结构）
+- **响应**：`201 Created`，返回完整规则
+- 规则校验失败：`400`，`{"error": "<校验错误详情>"}`
+
+### GET /api/v1/automation/rules/{id}
+
+规则详情。
+
+- **认证**：需 `automation:read` 权限
+- **响应**：`200 OK`，返回 `AutomationRule`
+- 不存在：`404`，`{"error": "automation rule not found"}`
+
+### PUT /api/v1/automation/rules/{id}
+
+更新规则（`id` 取路径参数，更新前同样经 `ValidateRule` 校验）。
+
+- **认证**：需 `automation:write` 权限
+- **请求体**：完整 `AutomationRule`
+- **响应**：`200 OK`，返回更新后的规则
+- 校验失败：`400`；不存在：`404`
+
+### DELETE /api/v1/automation/rules/{id}
+
+删除规则。
+
+- **认证**：需 `automation:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted"}`
+- 不存在：`404`
+
+### POST /api/v1/automation/rules/{id}/enable
+
+启用规则。
+
+- **认证**：需 `automation:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回 `enabled=true` 的规则
+- 不存在：`404`
+
+### POST /api/v1/automation/rules/{id}/disable
+
+禁用规则。
+
+- **认证**：需 `automation:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回 `enabled=false` 的规则
+- 不存在：`404`
+
+### POST /api/v1/automation/rules/{id}/test
+
+测试规则（dry-run：经引擎 `TestRule` 执行，不实际下发动作），执行记录落库。
+
+- **认证**：需 `automation:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`
+
+```json
+{
+  "execution": {"id": "exec-001", "tenantID": "t1", "ruleID": "ar-001", "ruleName": "CPU 高自动重启", "status": "succeeded", "detail": "...", "startedAt": "2026-08-17T09:00:00Z"},
+  "triggered": true
+}
+```
+
+- 规则不存在：`404`
+
+### GET /api/v1/automation/executions
+
+执行历史（最近 100 条）。
+
+- **认证**：需 `automation:read` 权限
+- **响应**：`200 OK`，`{"executions": [...]}`（元素为 `AutomationExecution`）
+
+### GET /api/v1/automation/executions/{id}
+
+执行详情。
+
+- **认证**：需 `automation:read` 权限
+- **响应**：`200 OK`，返回 `AutomationExecution`
+- 不存在：`404`，`{"error": "execution not found"}`
+
+---
+
+## Webhook 与脚本 API
+
+Phase 5 扩展能力：Webhook 管理（CRUD + 测试投递 + 投递记录）与自定义脚本
+（CRUD + 执行 + 执行记录），均按租户隔离。
+
+### GET /api/v1/webhooks
+
+列出 Webhook。
+
+- **认证**：需 `webhook:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "webhooks": [
+    {
+      "id": "wh-001",
+      "tenantID": "t1",
+      "name": "告警推送",
+      "url": "https://hooks.example.com/alert",
+      "events": ["alert.created"],
+      "headers": {"X-Token": "xxx"},
+      "bodyTemplate": "{\"title\": \"{{.Title}}\"}",
+      "enabled": true,
+      "retryCount": 3,
+      "retryIntervalSec": 30,
+      "createdAt": "2026-08-17T09:00:00Z",
+      "updatedAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+### POST /api/v1/webhooks
+
+创建 Webhook。
+
+- **认证**：需 `webhook:write` 权限
+- **请求体**：`Webhook`（`name`、`url` 必填）
+- SSRF 校验：`url` 复用 `ValidateWebhookURL`（协议白名单 + 私网/loopback/链路本地/云元数据
+  拦截 + DNS rebinding 防护；`--webhook-allow-private` 显式放行私网）
+- **响应**：`201 Created`，返回完整 `Webhook`
+- SSRF 校验失败：`400`，`{"error": "invalid webhook url: ..."}`
+
+### GET /api/v1/webhooks/{id}
+
+Webhook 详情。
+
+- **认证**：需 `webhook:read` 权限
+- **响应**：`200 OK`，返回 `Webhook`
+- 不存在：`404`，`{"error": "webhook not found"}`
+
+### PUT /api/v1/webhooks/{id}
+
+更新 Webhook（`url` 非空时同样过 SSRF 校验，防止经 PUT 绕过创建期防护）。
+
+- **认证**：需 `webhook:write` 权限
+- **请求体**：完整 `Webhook`
+- **响应**：`200 OK`，返回更新后的 `Webhook`
+- 不存在：`404`
+
+### DELETE /api/v1/webhooks/{id}
+
+删除 Webhook。
+
+- **认证**：需 `webhook:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted"}`
+- 不存在：`404`
+
+### POST /api/v1/webhooks/{id}/test
+
+测试投递：真实 HTTP POST 到 webhook URL（10 秒超时，记录真实响应）。
+事件为 `test.event`，payload 为 `{"event":"test.event","message":"webhook test delivery"}`。
+
+- **认证**：需 `webhook:write` 权限
+- **请求体**：无
+- **响应**：`200 OK`，返回本次投递记录（含真实 `statusCode` / `response`）
+- 投递失败：`502 Bad Gateway`，`{"webhookID": "...", "event": "test.event", "error": "delivery failed: ..."}`
+- Webhook 不存在：`404`
+
+### GET /api/v1/webhooks/{id}/deliveries
+
+投递记录（每次推送含重试产生一条记录）。
+
+- **认证**：需 `webhook:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "deliveries": [
+    {"id": "dlv-001", "tenantID": "t1", "webhookID": "wh-001", "event": "test.event", "payload": "...", "statusCode": 200, "response": "ok", "error": "", "deliveredAt": "2026-08-17T09:00:00Z"}
+  ]
+}
+```
+
+### GET /api/v1/scripts
+
+列出脚本。
+
+- **认证**：需 `script:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "scripts": [
+    {
+      "id": "sc-001",
+      "tenantID": "t1",
+      "name": "清理日志",
+      "language": "shell",
+      "content": "find /var/log -name '*.gz' -mtime +30 -delete",
+      "params": "",
+      "timeoutSec": 60,
+      "enabled": true,
+      "createdAt": "2026-08-17T09:00:00Z",
+      "updatedAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+### POST /api/v1/scripts
+
+创建脚本。
+
+- **认证**：需 `script:write` 权限
+- **请求体**：
+
+```json
+{
+  "name": "清理日志",
+  "language": "shell",
+  "content": "find /var/log -name '*.gz' -mtime +30 -delete",
+  "params": "",
+  "timeoutSec": 60
+}
+```
+
+- `name`、`content`：必填；`language`：`shell` | `python`（空则不限）
+- `timeoutSec`：clamp 至 [1, 600] 秒（<1 视为 1，>600 截断为 600）
+- 新建脚本默认 `enabled=true`（禁用需显式 PUT `enabled=false`）
+- **响应**：`201 Created`，返回完整 `Script`
+
+### GET /api/v1/scripts/{id}
+
+脚本详情。
+
+- **认证**：需 `script:read` 权限
+- **响应**：`200 OK`，返回 `Script`
+- 不存在：`404`，`{"error": "script not found"}`
+
+### PUT /api/v1/scripts/{id}
+
+更新脚本（`id` 取路径参数，`timeoutSec` 同样 clamp 至 [1, 600]）。
+
+- **认证**：需 `script:write` 权限
+- **请求体**：完整 `Script`
+- **响应**：`200 OK`，返回更新后的 `Script`
+- 不存在：`404`
+
+### DELETE /api/v1/scripts/{id}
+
+删除脚本。
+
+- **认证**：需 `script:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted"}`
+- 不存在：`404`
+
+### POST /api/v1/scripts/{id}/execute
+
+执行脚本（真实执行：创建 `type=shell` 任务下发到指定 agent，同时记录 `pending` 状态
+的 ScriptExecution；agent 执行完毕后回写）。
+
+- **认证**：需 `script:write` 权限
+- **请求体**：
+
+```json
+{
+  "deviceID": "d-001",
+  "params": ""
+}
+```
+
+- `deviceID`：必填
+- **响应**：`202 Accepted`
+
+```json
+{
+  "executionID": "exec-001",
+  "taskID": "t-001",
+  "scriptID": "sc-001",
+  "deviceID": "d-001",
+  "status": "pending",
+  "message": "script execution task created, waiting for agent to execute",
+  "startedAt": "2026-08-17T09:00:00Z"
+}
+```
+
+- 脚本已禁用：`409`，`{"error": "script is disabled, enable it before execution"}`
+- 脚本不存在：`404`；缺 `deviceID`：`400`
+
+### GET /api/v1/scripts/{id}/executions
+
+脚本执行记录。
+
+- **认证**：需 `script:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "executions": [
+    {"id": "exec-001", "tenantID": "t1", "scriptID": "sc-001", "deviceID": "d-001", "status": "succeeded", "stdout": "...", "stderr": "", "startedAt": "2026-08-17T09:00:00Z", "finishedAt": "2026-08-17T09:00:05Z"}
+  ]
+}
+```
+
+---
+
+## 网络设备 API
+
+Phase 4 网络设备管理：网络设备（switch/router/firewall/load_balancer，经 SNMP/CLI
+管理而非 agent）CRUD + 监控指标 + 配置下发 + 子网发现。与「网络拓扑与诊断 API」
+（`/api/v1/network/topology` 等）互补。
+
+### GET /api/v1/network/devices
+
+列出网络设备。
+
+- **认证**：需 `network:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "devices": [
+    {
+      "id": "nd-001",
+      "tenantID": "t1",
+      "name": "core-switch-1",
+      "type": "switch",
+      "vendor": "cisco",
+      "model": "C9300",
+      "ip": "10.30.0.1",
+      "mask": "255.255.255.0",
+      "mac": "aa:bb:cc:dd:ee:ff",
+      "location": "机房 A",
+      "snmpCommunity": "public",
+      "status": "up",
+      "createdAt": "2026-08-17T09:00:00Z",
+      "updatedAt": "2026-08-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+### POST /api/v1/network/devices
+
+添加网络设备。
+
+- **认证**：需 `network:write` 权限
+- **请求体**：`NetworkDevice`（`name` 必填）
+
+```json
+{
+  "name": "core-switch-1",
+  "type": "switch",
+  "vendor": "cisco",
+  "model": "C9300",
+  "ip": "10.30.0.1",
+  "snmpCommunity": "public"
+}
+```
+
+- `type` 非空时须为 `switch` | `router` | `firewall` | `load_balancer`
+- **响应**：`201 Created`，返回完整 `NetworkDevice`
+
+### GET /api/v1/network/devices/{id}
+
+设备详情。
+
+- **认证**：需 `network:read` 权限
+- **响应**：`200 OK`，返回 `NetworkDevice`
+- 不存在：`404`，`{"error": "network device not found"}`
+
+### DELETE /api/v1/network/devices/{id}
+
+删除设备。
+
+- **认证**：需 `network:write` 权限
+- **响应**：`200 OK`，`{"status": "deleted"}`
+- 不存在：`404`
+
+### GET /api/v1/network/devices/{id}/metrics
+
+设备监控指标（SNMP 采集的 CPU / 内存 / 温度 / uptime）。
+
+- **认证**：需 `network:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "deviceID": "nd-001",
+  "metrics": [
+    {"deviceID": "nd-001", "tenantID": "t1", "timestamp": "2026-08-17T09:00:00Z", "cpuUsage": 12.5, "memoryUsage": 45.0, "temperature": 38.2, "uptime": 86400}
+  ]
+}
+```
+
+- 设备不存在：`404`
+
+### POST /api/v1/network/devices/{id}/config
+
+下发网络配置（配置文本经 `network.ValidateConfig` 校验后写入设备 `config` 字段）。
+
+- **认证**：需 `network:write` 权限
+- **请求体**：
+
+```json
+{"config": "interface GigabitEthernet0/1\n description uplink"}
+```
+
+- **响应**：`200 OK`，返回更新后的 `NetworkDevice`
+- 配置校验失败：`400`；设备不存在：`404`
+
+### POST /api/v1/network/discover
+
+网络发现：对指定子网做 TCP Connect 扫描（端口 22/80/443/3306/6379/8080/9090，
+500ms/地址超时，单次最多 254 地址）发现存活设备。
+
+- **认证**：需 `network:write` 权限
+- **请求体**：`{"subnet": "192.168.1.0/24"}`
+- **响应**：`200 OK`
+
+```json
+{
+  "subnet": "192.168.1.0/24",
+  "devices": [
+    {"id": "", "name": "192.168.1.1", "type": "router", "ip": "192.168.1.1", "status": "up"}
+  ],
+  "scanned": 254,
+  "found": 1
+}
+```
+
+- 缺 `subnet` / CIDR 非法：`400`，`{"error": "subnet is required"}` / `{"error": "invalid CIDR: ..."}`
+
+---
+
+## 审计扩展 API
+
+Phase 3 审计查询：事件检索与导出（与 `GET /api/v1/audits` 互补，按租户隔离 + 更细过滤）。
+
+### GET /api/v1/audit/events
+
+查询审计事件（支持 action/user/from/to/limit 过滤）。
+
+- **认证**：需 `audit:read` 权限
+- **查询参数**：
+  - `action` — 按动作过滤（空=不限）
+  - `user` — 按用户过滤（内存过滤，匹配 UserID）
+  - `from` / `to` — 起止时间（RFC3339，空=不限）
+  - `limit` — 返回上限（默认 100，上限 1000）
+- **响应**：`200 OK`
+
+```json
+{
+  "events": [
+    {
+      "id": "au-001",
+      "tenantID": "t1",
+      "userID": "u-001",
+      "action": "ticket_create",
+      "target": "tk-001",
+      "detail": "title=CPU 告警处理",
+      "timestamp": "2026-08-17T09:00:00Z"
+    }
+  ],
+  "count": 1
+}
+```
+
+- `from` / `to` 格式非法：`400`，`{"error": "invalid 'from' time (use RFC3339): ..."}`
+
+### GET /api/v1/audit/export
+
+导出审计日志（纯 JSON 数组，非 `{events:[]}` 包装，便于外部工具直接消费）。
+查询参数同 `/api/v1/audit/events`（不含 `user`），`limit` 默认 1000、上限 10000。
+
+- **认证**：需 `audit:read` 权限
+- **响应**：`200 OK`
+
+```json
+[
+  {"id": "au-001", "tenantID": "t1", "userID": "u-001", "action": "ticket_create", "target": "tk-001", "timestamp": "2026-08-17T09:00:00Z"}
+]
+```
 
 ---
 

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/auth"
 )

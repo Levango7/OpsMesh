@@ -26,8 +26,8 @@ var (
 
 // Service implements the alert service business logic.
 type Service struct {
-	engine  *engine.Engine
-	store   store.AlertStore
+	engine   *engine.Engine
+	store    store.AlertStore
 	notifier notify.Notifier
 	breaker  *circuit.Breaker
 }
@@ -161,13 +161,13 @@ func (s *Service) Evaluate(ctx context.Context, req *alertv1.EvaluateRequest) (*
 		out = append(out, alert)
 
 		s.store.AddAlert(&store.Alert{
-			AlertID:  alert.Id,
-			TenantID: ev.TenantID,
-			DeviceID: ev.DeviceID,
-			Severity: ev.Severity,
-			Message:  ev.Message,
-			Status:   "firing",
-			Metric:   ev.RuleID,
+			AlertID:   alert.Id,
+			TenantID:  ev.TenantID,
+			DeviceID:  ev.DeviceID,
+			Severity:  ev.Severity,
+			Message:   ev.Message,
+			Status:    "firing",
+			Metric:    ev.RuleID,
 			CreatedAt: ev.FiredAt,
 		})
 

@@ -105,10 +105,10 @@ type GetUserRequest struct {
 
 // UpdateUserRequest is the request to update a user.
 type UpdateUserRequest struct {
-	Id       string
-	Email    string
-	Status   string
-	RoleIds  []string
+	Id      string
+	Email   string
+	Status  string
+	RoleIds []string
 }
 
 // DeleteUserRequest is the request to delete a user.

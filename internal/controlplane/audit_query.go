@@ -14,8 +14,8 @@ package controlplane
 //   - from/to 用 RFC3339 解析；limit 默认 100，上限 1000 防滥用。
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strconv"
 	"time"
 
@@ -24,9 +24,9 @@ import (
 
 // 审计查询限制常量（L7 魔法数提取）。
 const (
-	auditDefaultLimit = 100   // 默认返回条数
-	auditMaxLimit     = 1000  // 最大返回条数（防滥用）
-	exportDefaultLimit = 1000 // 导出默认条数
+	auditDefaultLimit  = 100   // 默认返回条数
+	auditMaxLimit      = 1000  // 最大返回条数（防滥用）
+	exportDefaultLimit = 1000  // 导出默认条数
 	exportMaxLimit     = 10000 // 导出最大条数
 )
 
@@ -155,4 +155,3 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	events := s.store.QueryAudits(actx.TenantID, action, since, until, limit)
 	paginate.WriteJSON(w, http.StatusOK, events)
 }
-

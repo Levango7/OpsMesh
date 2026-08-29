@@ -29,10 +29,10 @@ func New() *schema.Provider {
 			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
-			"opsmesh_device":       resourceDevice(),
-			"opsmesh_task":         resourceTask(),
-			"opsmesh_alert_rule":   resourceAlertRule(),
-			"opsmesh_deployment":   resourceDeployment(),
+			"opsmesh_device":     resourceDevice(),
+			"opsmesh_task":       resourceTask(),
+			"opsmesh_alert_rule": resourceAlertRule(),
+			"opsmesh_deployment": resourceDeployment(),
 		},
 		DataSourcesMap: map[string]*schema.Resource{
 			"opsmesh_device": dataSourceDevice(),

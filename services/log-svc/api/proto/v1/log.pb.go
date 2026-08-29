@@ -13,15 +13,15 @@ import (
 
 // LogEntry represents a single log record.
 type LogEntry struct {
-	Id        int64     `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	TenantId  string    `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	DeviceId  string    `protobuf:"bytes,3,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
-	AgentId   string    `protobuf:"bytes,4,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	TaskId    string    `protobuf:"bytes,5,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Id        int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	TenantId  string                 `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	DeviceId  string                 `protobuf:"bytes,3,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	AgentId   string                 `protobuf:"bytes,4,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	TaskId    string                 `protobuf:"bytes,5,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	Timestamp *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	Level     string    `protobuf:"bytes,7,opt,name=level,proto3" json:"level,omitempty"`
-	Source    string    `protobuf:"bytes,8,opt,name=source,proto3" json:"source,omitempty"`
-	Message   string    `protobuf:"bytes,9,opt,name=message,proto3" json:"message,omitempty"`
+	Level     string                 `protobuf:"bytes,7,opt,name=level,proto3" json:"level,omitempty"`
+	Source    string                 `protobuf:"bytes,8,opt,name=source,proto3" json:"source,omitempty"`
+	Message   string                 `protobuf:"bytes,9,opt,name=message,proto3" json:"message,omitempty"`
 }
 
 func (x *LogEntry) Reset() {

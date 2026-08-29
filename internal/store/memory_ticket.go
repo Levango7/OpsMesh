@@ -1,4 +1,3 @@
-
 // memory_ticket.go 实现 MemoryStore 的 TicketStore 子接口（Phase 1 工单管理）。
 //
 // 工单内存实现：

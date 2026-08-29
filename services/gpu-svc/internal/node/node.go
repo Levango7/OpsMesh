@@ -201,10 +201,10 @@ func (m *Manager) GetHealth(id string) (*models.NodeHealth, error) {
 	}
 
 	health := &models.NodeHealth{
-		NodeID:  id,
-		Status:  node.Status,
+		NodeID:    id,
+		Status:    node.Status,
 		ECCErrors: node.GPUErrors,
-		Issues:  make([]string, 0),
+		Issues:    make([]string, 0),
 	}
 
 	if node.Status == models.NodeStatusOffline {

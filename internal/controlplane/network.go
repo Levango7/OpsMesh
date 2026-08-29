@@ -22,8 +22,8 @@ package controlplane
 //   - 鉴权：需 network:read/network:write 权限。
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 
 	"opsmesh/internal/network"
@@ -284,4 +284,3 @@ func (s *Server) handleNetworkDiscover(w http.ResponseWriter, r *http.Request) {
 	}
 	paginate.WriteJSON(w, http.StatusOK, result)
 }
-

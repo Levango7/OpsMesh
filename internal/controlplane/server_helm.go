@@ -25,9 +25,10 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
+	"context"
 	"io"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 
 	"opsmesh/internal/helm"
@@ -87,11 +88,7 @@ func (s *Server) addHelmRepo(w http.ResponseWriter, r *http.Request) {
 	repo := &helm.ChartRepo{Name: req.Name, URL: req.URL, Type: helm.RepoType(req.Type)}
 	if err := s.helmRepo.AddRepo(repo); err != nil {
 		// helm CLI 不存在或命令失败时返回 503，便于前端区分。
-		status := http.StatusInternalServerError
-		if isHelmCLINotFound(err) {
-			status = http.StatusServiceUnavailable
-		}
-		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
+		writeHelmError(r.Context(), w, "helm.addRepo", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusCreated, repo)
@@ -142,15 +139,7 @@ func (s *Server) deleteHelmRepo(w http.ResponseWriter, r *http.Request, name str
 		return
 	}
 	if err := s.helmRepo.RemoveRepo(name); err != nil {
-		status := http.StatusInternalServerError
-		if isHelmCLINotFound(err) {
-			status = http.StatusServiceUnavailable
-		}
-		// 仓库不存在返回 404。
-		if strings.Contains(err.Error(), "不存在") {
-			status = http.StatusNotFound
-		}
-		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
+		writeHelmError(r.Context(), w, "helm.removeRepo", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted", "name": name})
@@ -167,14 +156,7 @@ func (s *Server) listHelmRepoCharts(w http.ResponseWriter, r *http.Request, name
 	}
 	charts, err := s.helmRepo.ListCharts(name)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if isHelmCLINotFound(err) {
-			status = http.StatusServiceUnavailable
-		}
-		if strings.Contains(err.Error(), "不存在") {
-			status = http.StatusNotFound
-		}
-		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
+		writeHelmError(r.Context(), w, "helm.listCharts", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"charts": charts})
@@ -200,11 +182,7 @@ func (s *Server) handleHelmChartSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	charts, err := s.helmRepo.SearchCharts(q)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if isHelmCLINotFound(err) {
-			status = http.StatusServiceUnavailable
-		}
-		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
+		writeHelmError(r.Context(), w, "helm.searchCharts", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"charts": charts, "query": q})
@@ -246,11 +224,7 @@ func (s *Server) listHelmReleases(w http.ResponseWriter, r *http.Request) {
 		releases, err = s.helmRelease.List(ns)
 	}
 	if err != nil {
-		status := http.StatusInternalServerError
-		if isHelmCLINotFound(err) {
-			status = http.StatusServiceUnavailable
-		}
-		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
+		writeHelmError(r.Context(), w, "helm.listReleases", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"releases": releases})
@@ -281,11 +255,7 @@ func (s *Server) installHelmRelease(w http.ResponseWriter, r *http.Request) {
 	}
 	rel, err := s.helmRelease.Install(req.Namespace, req.Name, req.Chart, req.Values)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if isHelmCLINotFound(err) {
-			status = http.StatusServiceUnavailable
-		}
-		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
+		writeHelmError(r.Context(), w, "helm.install", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusCreated, rel)
@@ -360,11 +330,7 @@ func (s *Server) upgradeHelmRelease(w http.ResponseWriter, r *http.Request, name
 	}
 	rel, err := s.helmRelease.Upgrade(req.Namespace, name, req.Chart, req.Values)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if isHelmCLINotFound(err) {
-			status = http.StatusServiceUnavailable
-		}
-		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
+		writeHelmError(r.Context(), w, "helm.upgrade", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, rel)
@@ -385,11 +351,7 @@ func (s *Server) uninstallHelmRelease(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 	if err := s.helmRelease.Uninstall(ns, name); err != nil {
-		status := http.StatusInternalServerError
-		if isHelmCLINotFound(err) {
-			status = http.StatusServiceUnavailable
-		}
-		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
+		writeHelmError(r.Context(), w, "helm.uninstall", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "uninstalled", "name": name})
@@ -418,11 +380,7 @@ func (s *Server) rollbackHelmRelease(w http.ResponseWriter, r *http.Request, nam
 	}
 	rel, err := s.helmRelease.Rollback(req.Namespace, name, req.Revision)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if isHelmCLINotFound(err) {
-			status = http.StatusServiceUnavailable
-		}
-		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
+		writeHelmError(r.Context(), w, "helm.rollback", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, rel)
@@ -444,11 +402,7 @@ func (s *Server) helmReleaseHistory(w http.ResponseWriter, r *http.Request, name
 	}
 	history, err := s.helmRelease.History(ns, name)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if isHelmCLINotFound(err) {
-			status = http.StatusServiceUnavailable
-		}
-		paginate.WriteJSON(w, status, map[string]string{"error": err.Error()})
+		writeHelmError(r.Context(), w, "helm.history", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"history": history, "name": name})
@@ -506,4 +460,26 @@ func isHelmCLINotFound(err error) bool {
 	return strings.Contains(msg, "executable file not found") ||
 		strings.Contains(msg, "no such file or directory") ||
 		strings.Contains(msg, "helm: command not found")
+}
+
+// writeHelmError helm 操作错误统一出口（脱敏）。
+//
+// helm 命令的 stderr 常包含 chart 本地缓存路径、kubeconfig 路径、仓库凭据等内部信息，
+// 直接回吐客户端等于泄露宿主文件系统布局，因此响应体统一替换为固定文案。
+//
+// 状态码沿用原有判定逻辑（CLI 缺失 503 / 资源不存在 404 / 其余 500），
+// 保证前端与既有测试的行为不变；原始 err 仅写入服务端日志。
+func writeHelmError(ctx context.Context, w http.ResponseWriter, op string, err error) {
+	status := http.StatusInternalServerError
+	msg := internalErrorBody
+	switch {
+	case isHelmCLINotFound(err):
+		status = http.StatusServiceUnavailable
+		msg = "helm CLI not available"
+	case strings.Contains(err.Error(), "不存在"):
+		// 仓库/release 不存在：对客户端而言是"找不到"，无需暴露底层命令输出。
+		status = http.StatusNotFound
+		msg = "resource not found"
+	}
+	writeSanitizedError(ctx, w, status, op, msg, err)
 }

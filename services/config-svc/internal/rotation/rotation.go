@@ -257,10 +257,10 @@ func (m *Manager) GetStatus() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"totalPolicies":  total,
+		"totalPolicies":   total,
 		"enabledPolicies": enabled,
-		"dueRotations":   due,
-		"totalHistory":   len(m.results),
+		"dueRotations":    due,
+		"totalHistory":    len(m.results),
 	}
 }
 

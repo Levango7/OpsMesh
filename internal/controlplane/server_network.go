@@ -21,9 +21,9 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"fmt"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"regexp"
 	"strconv"
 	"strings"
@@ -148,7 +148,7 @@ func (s *Server) handleNetworkTopology(w http.ResponseWriter, r *http.Request) {
 	// 探测拓扑。
 	topo, err := s.probeNetworkTopology(tenant)
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(r.Context(), w, "network.probeTopology", err)
 		return
 	}
 	// 写入缓存。

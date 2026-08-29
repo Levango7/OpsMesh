@@ -27,7 +27,6 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -36,6 +35,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 	"sync"
 	"time"

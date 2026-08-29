@@ -15,7 +15,7 @@ type Config struct {
 	PrometheusURL string `json:"prometheusUrl"`
 
 	// K8s settings.
-	KubeConfig  string `json:"kubeConfig"`
+	KubeConfig    string `json:"kubeConfig"`
 	KubeNamespace string `json:"kubeNamespace"`
 
 	// Cooldown settings.
@@ -26,13 +26,13 @@ type Config struct {
 // Load returns a Config populated from environment variables with defaults.
 func Load() *Config {
 	return &Config{
-		HTTPPort:       getEnvInt("AUTOSCALER_SVC_HTTP_PORT", 8080),
+		HTTPPort:        getEnvInt("AUTOSCALER_SVC_HTTP_PORT", 8080),
 		ShutdownTimeout: getEnvDuration("AUTOSCALER_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
-		PrometheusURL:  getEnv("PROMETHEUS_URL", "http://localhost:9090"),
-		KubeConfig:     getEnv("KUBECONFIG", ""),
-		KubeNamespace:  getEnv("KUBE_NAMESPACE", "default"),
-		CooldownUp:     getEnvDuration("COOLDOWN_UP", 60*time.Second),
-		CooldownDown:   getEnvDuration("COOLDOWN_DOWN", 300*time.Second),
+		PrometheusURL:   getEnv("PROMETHEUS_URL", "http://localhost:9090"),
+		KubeConfig:      getEnv("KUBECONFIG", ""),
+		KubeNamespace:   getEnv("KUBE_NAMESPACE", "default"),
+		CooldownUp:      getEnvDuration("COOLDOWN_UP", 60*time.Second),
+		CooldownDown:    getEnvDuration("COOLDOWN_DOWN", 300*time.Second),
 	}
 }
 

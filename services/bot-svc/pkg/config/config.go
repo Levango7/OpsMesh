@@ -8,14 +8,14 @@ import (
 
 // Config holds all configuration for the bot-svc.
 type Config struct {
-	HTTPPort         int           `json:"httpPort"`
-	ShutdownTimeout  time.Duration `json:"shutdownTimeout"`
-	OpsMeshAPIURL    string        `json:"opsMeshApiUrl"`
-	WecomToken       string        `json:"wecomToken"`
-	FeishuToken      string        `json:"feishuToken"`
-	SlackToken       string        `json:"slackToken"`
-	DingtalkToken    string        `json:"dingtalkToken"`
-	RateLimitPerMin  int           `json:"rateLimitPerMin"`
+	HTTPPort        int           `json:"httpPort"`
+	ShutdownTimeout time.Duration `json:"shutdownTimeout"`
+	OpsMeshAPIURL   string        `json:"opsMeshApiUrl"`
+	WecomToken      string        `json:"wecomToken"`
+	FeishuToken     string        `json:"feishuToken"`
+	SlackToken      string        `json:"slackToken"`
+	DingtalkToken   string        `json:"dingtalkToken"`
+	RateLimitPerMin int           `json:"rateLimitPerMin"`
 }
 
 // Load returns a Config populated from environment variables with defaults.

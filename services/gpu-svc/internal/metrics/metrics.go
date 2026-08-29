@@ -45,8 +45,8 @@ func (c *Collector) CollectMetrics(nodeID string, gpuCount int) *models.GPUMetri
 		utilization := c.rng.Float64() * 100
 		memUsed := int(c.rng.Float64() * 81920)
 		memTotal := 81920
-		temp := 40.0 + c.rng.Float64() * 50
-		power := 50.0 + c.rng.Float64() * 300
+		temp := 40.0 + c.rng.Float64()*50
+		power := 50.0 + c.rng.Float64()*300
 		eccErrors := 0
 		thermalThrottle := false
 		if temp > 85 {
@@ -60,7 +60,7 @@ func (c *Collector) CollectMetrics(nodeID string, gpuCount int) *models.GPUMetri
 			MemoryTotalMB:   memTotal,
 			TemperatureC:    temp,
 			PowerDrawW:      power,
-			FanSpeedPct:     30.0 + c.rng.Float64() * 70,
+			FanSpeedPct:     30.0 + c.rng.Float64()*70,
 			ClockSpeedMHz:   1000 + int(c.rng.Float64()*1500),
 			ECCErrorCount:   eccErrors,
 			ThermalThrottle: thermalThrottle,

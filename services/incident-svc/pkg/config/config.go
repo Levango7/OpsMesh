@@ -8,9 +8,9 @@ import (
 
 // Config holds all configuration for the incident-svc.
 type Config struct {
-	HTTPPort        int           `json:"httpPort"`
-	GRPCPort        int           `json:"grpcPort"`
-	ShutdownTimeout time.Duration `json:"shutdownTimeout"`
+	HTTPPort          int           `json:"httpPort"`
+	GRPCPort          int           `json:"grpcPort"`
+	ShutdownTimeout   time.Duration `json:"shutdownTimeout"`
 	AggregationWindow time.Duration `json:"aggregationWindow"`
 }
 

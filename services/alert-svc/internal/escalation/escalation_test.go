@@ -197,9 +197,9 @@ func TestEscalationAckStopsEscalation(t *testing.T) {
 func TestEscalationResolve(t *testing.T) {
 	e := NewEscalator()
 	policy := &EscalationPolicy{
-		ID:       "policy-1",
-		Levels:   []EscalationLevel{{Level: 0, Timeout: 0, Channels: []string{"email"}}},
-		Enabled:  true,
+		ID:      "policy-1",
+		Levels:  []EscalationLevel{{Level: 0, Timeout: 0, Channels: []string{"email"}}},
+		Enabled: true,
 	}
 	_ = e.AddPolicy(policy)
 

@@ -227,10 +227,10 @@ func (s *SQLStore) UpdateNetworkConfig(tenantID, id, config string) (*NetworkDev
 		log.Printf("[store] UpdateNetworkConfig 更新失败 (tenant=%s id=%s): %v", tenantID, id, err)
 		return nil, false
 	}
- 	existing.Config = config
- 	existing.UpdatedAt = now
- 	return existing, true
- }
+	existing.Config = config
+	existing.UpdatedAt = now
+	return existing, true
+}
 
 // QueryNetworkMetrics 查询指定租户最近时间窗口内的聚合指标均值。
 func (s *SQLStore) QueryNetworkMetrics(tenantID string, since time.Time) map[string]float64 {

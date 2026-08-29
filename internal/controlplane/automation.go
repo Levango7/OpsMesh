@@ -22,9 +22,9 @@ package controlplane
 //   - 真实执行：通过 automationExecutor 接口执行动作（execute_task/send_notify/scale/restart/isolate）。
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"fmt"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 	"time"
 
@@ -45,11 +45,11 @@ type automationExecutor struct {
 // ExecuteTask 在指定设备上创建并下发 shell 任务。
 func (a *automationExecutor) ExecuteTask(tenantID, deviceID, command string, params map[string]string) (string, error) {
 	task := &proto.Task{
-		Type:    "shell",
-		Command: command,
-		AgentID: deviceID,
+		Type:     "shell",
+		Command:  command,
+		AgentID:  deviceID,
 		TenantID: tenantID,
-		Status:  "pending",
+		Status:   "pending",
 	}
 	created := a.store.CreateTask(task)
 	if created == nil {
@@ -514,4 +514,3 @@ func automationExecToStore(e *automation.Execution, tenantID string) *store.Auto
 		EndedAt:   e.EndedAt,
 	}
 }
-

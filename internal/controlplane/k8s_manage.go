@@ -28,12 +28,12 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"sort"
 	"strconv"
 	"strings"
@@ -84,7 +84,7 @@ func (s *Server) handleK8sResourceRouting(w http.ResponseWriter, r *http.Request
 	}
 	client, err := s.clusterMgr.GetClient(clusterID)
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "cluster not connected: " + err.Error()})
+		writeSanitizedError(r.Context(), w, http.StatusNotFound, "k8s.clusterNotConnected", "cluster not connected", err)
 		return
 	}
 	switch resource {
@@ -209,7 +209,7 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request, cl
 	defer cancel()
 	list, err := client.Clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list namespaces failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.listNamespaces", err)
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(list.Items))
@@ -239,7 +239,7 @@ func (s *Server) handleListPods(w http.ResponseWriter, r *http.Request, client *
 	defer cancel()
 	list, err := client.Clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list pods failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.listPods", err)
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(list.Items))
@@ -288,14 +288,14 @@ func (s *Server) handlePodLogs(w http.ResponseWriter, r *http.Request, client *k
 	defer cancel()
 	stream, err := client.Clientset.CoreV1().Pods(ns).GetLogs(name, opts).Stream(ctx)
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "get pod logs failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.getPodLogs", err)
 		return
 	}
 	defer stream.Close()
 	const maxPodLogBytes = 2 << 20 // ：2MB 上限，防超大日志打爆控制面内存
 	data, err := io.ReadAll(io.LimitReader(stream, maxPodLogBytes))
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "read pod logs failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.readPodLogs", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]string{"logs": string(data)})
@@ -312,7 +312,7 @@ func (s *Server) handleDeletePod(w http.ResponseWriter, r *http.Request, client 
 	ctx, cancel := context.WithTimeout(r.Context(), k8sAPITimeout)
 	defer cancel()
 	if err := client.Clientset.CoreV1().Pods(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "delete pod failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.deletePod", err)
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
@@ -338,7 +338,7 @@ func (s *Server) handleListDeployments(w http.ResponseWriter, r *http.Request, c
 	defer cancel()
 	list, err := client.Clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list deployments failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.listDeployments", err)
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(list.Items))
@@ -378,13 +378,13 @@ func (s *Server) handleScaleDeployment(w http.ResponseWriter, r *http.Request, c
 	defer cancel()
 	scale, err := client.Clientset.AppsV1().Deployments(ns).GetScale(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "get scale failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.getScale", err)
 		return
 	}
 	scale.Spec.Replicas = body.Replicas
 	updated, err := client.Clientset.AppsV1().Deployments(ns).UpdateScale(ctx, name, scale, metav1.UpdateOptions{})
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "update scale failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.updateScale", err)
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
@@ -418,7 +418,7 @@ func (s *Server) handleRestartDeployment(w http.ResponseWriter, r *http.Request,
 	defer cancel()
 	if _, err := client.Clientset.AppsV1().Deployments(ns).Patch(
 		ctx, name, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "restart deployment failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.restartDeployment", err)
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
@@ -455,7 +455,7 @@ func (s *Server) handleRollbackDeployment(w http.ResponseWriter, r *http.Request
 	// 1. 获取当前 deployment，读取 revision annotation。
 	dep, err := client.Clientset.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "get deployment failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.getDeployment", err)
 		return
 	}
 	currentRevStr := dep.Annotations["deployment.kubernetes.io/revision"]
@@ -465,7 +465,7 @@ func (s *Server) handleRollbackDeployment(w http.ResponseWriter, r *http.Request
 	}
 	currentRev, err := strconv.ParseInt(currentRevStr, 10, 64)
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "parse current revision failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.parseCurrentRevision", err)
 		return
 	}
 	if currentRev <= 1 {
@@ -478,7 +478,7 @@ func (s *Server) handleRollbackDeployment(w http.ResponseWriter, r *http.Request
 	// 2. 列出 ReplicaSet，找到属于此 deployment 且 revision 为 targetRev 的 ReplicaSet。
 	rsList, err := client.Clientset.AppsV1().ReplicaSets(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list replicasets failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.listReplicaSets", err)
 		return
 	}
 	var targetRS *appsv1.ReplicaSet
@@ -500,13 +500,13 @@ func (s *Server) handleRollbackDeployment(w http.ResponseWriter, r *http.Request
 	// 3. 将目标 ReplicaSet 的 template patch 回 deployment（StrategicMergePatch）。
 	templateBytes, err := json.Marshal(targetRS.Spec.Template)
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "marshal template failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.marshalTemplate", err)
 		return
 	}
 	patch := fmt.Sprintf(`{"spec":{"template":%s}}`, string(templateBytes))
 	if _, err := client.Clientset.AppsV1().Deployments(ns).Patch(
 		ctx, name, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "rollback deployment failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.rollbackDeployment", err)
 		return
 	}
 
@@ -538,7 +538,7 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request, clie
 	defer cancel()
 	list, err := client.Clientset.CoreV1().Services(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list services failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.listServices", err)
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(list.Items))
@@ -584,7 +584,7 @@ func (s *Server) handleListConfigMaps(w http.ResponseWriter, r *http.Request, cl
 	defer cancel()
 	list, err := client.Clientset.CoreV1().ConfigMaps(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list configmaps failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.listConfigMaps", err)
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(list.Items))
@@ -615,7 +615,7 @@ func (s *Server) handleListSecrets(w http.ResponseWriter, r *http.Request, clien
 	defer cancel()
 	list, err := client.Clientset.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list secrets failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.listSecrets", err)
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(list.Items))
@@ -649,7 +649,7 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request, client 
 	defer cancel()
 	list, err := client.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "list nodes failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.listNodes", err)
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(list.Items))
@@ -947,7 +947,7 @@ func (s *Server) handleNodeMetrics(w http.ResponseWriter, r *http.Request, clien
 
 	node, err := client.Clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "get node failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "k8s.getNode", err)
 		return
 	}
 

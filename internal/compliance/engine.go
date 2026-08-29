@@ -78,6 +78,7 @@ type Engine struct {
 //  7. 服务最小化（关闭 telnet/rsh/ftp）
 //  8. SELinux/AppArmor 启用
 //  9. 时间同步（chrony/ntp active）
+//
 // 10. 网络配置（禁用不安全协议）
 // 11. sudo 审计（sudoers 配置）
 // 12. 内核模块（禁用 dccp/sctp）

@@ -15,11 +15,11 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strconv"
 	"strings"
 
@@ -760,7 +760,7 @@ func (s *Server) handleCreateOSTemplate(w http.ResponseWriter, r *http.Request) 
 	tpl.Risk = normalizeRisk(tpl.Risk)
 	st := osTemplateToStore(&tpl, actx.TenantID)
 	if err := s.store.SaveOSTemplate(st); err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save template failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "osOptimize.saveTemplate", err)
 		return
 	}
 	// 回读以获取 store 分配的 ID/时间戳。
@@ -825,7 +825,7 @@ func (s *Server) handleUpdateOSTemplate(w http.ResponseWriter, r *http.Request, 
 	tpl.Risk = normalizeRisk(tpl.Risk)
 	st := osTemplateToStore(&tpl, actx.TenantID)
 	if err := s.store.SaveOSTemplate(st); err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save template failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "osOptimize.saveTemplate", err)
 		return
 	}
 	saved := osTemplateFromStore(s.store.GetOSTemplate(id))

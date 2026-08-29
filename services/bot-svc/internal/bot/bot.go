@@ -39,8 +39,8 @@ type Result struct {
 
 // Bot handles command parsing, routing, and rate limiting.
 type Bot struct {
-	mu             sync.RWMutex
-	rateLimiter    map[string][]time.Time
+	mu              sync.RWMutex
+	rateLimiter     map[string][]time.Time
 	rateLimitPerMin int
 }
 

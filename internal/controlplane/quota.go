@@ -20,10 +20,10 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"errors"
 	"fmt"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 
 	"opsmesh/internal/authctx"
@@ -262,7 +262,7 @@ func (s *Server) listQuotas(w http.ResponseWriter, r *http.Request) {
 	}
 	usage, err := s.quotaMgr.Usage(actx.TenantID)
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(r.Context(), w, "quota.listUsage", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
@@ -292,7 +292,7 @@ func (s *Server) getQuota(w http.ResponseWriter, r *http.Request, tenantID strin
 	}
 	usage, err := s.quotaMgr.Usage(tenantID)
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(r.Context(), w, "quota.getUsage", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, usage)
@@ -327,7 +327,7 @@ func (s *Server) setQuota(w http.ResponseWriter, r *http.Request, tenantID strin
 		return
 	}
 	if err := s.quotaMgr.SetQuota(tenantID, &cfg); err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(r.Context(), w, "quota.setQuota", err)
 		return
 	}
 	// 记审计日志（携带 trace_id）。
@@ -361,7 +361,7 @@ func (s *Server) deleteQuota(w http.ResponseWriter, r *http.Request, tenantID st
 		return
 	}
 	if err := s.quotaMgr.SetQuota(tenantID, nil); err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(r.Context(), w, "quota.resetQuota", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{

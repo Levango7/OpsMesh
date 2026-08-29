@@ -299,8 +299,8 @@ func TestCreateCI(t *testing.T) {
 
 	req := &devicev1.CreateCIRequest{
 		Ci: &devicev1.CI{
-			CiType: "machine",
-			Name:   "server-01",
+			CiType:   "machine",
+			Name:     "server-01",
 			TenantId: "tenant-1",
 		},
 	}

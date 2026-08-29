@@ -12,30 +12,30 @@ import (
 
 // Task represents a task.
 type Task struct {
-	TaskId          string
-	AgentId         string
-	TenantId        string
-	Type            string
-	Command         string
-	Content         string
-	Path            string
-	Status          string
-	ClaimedBy       string
-	ClaimedAt       *timestamppb.Timestamp
-	ClaimEpoch      int64
-	CreatedAt       *timestamppb.Timestamp
-	RetryCount      int32
-	MaxRetries      int32
-	DeadLetter      bool
-	Timeout         int32
-	RetryDelay      int32
-	Schedule        string
-	ParentId        string
-	DependsOn       []string
+	TaskId           string
+	AgentId          string
+	TenantId         string
+	Type             string
+	Command          string
+	Content          string
+	Path             string
+	Status           string
+	ClaimedBy        string
+	ClaimedAt        *timestamppb.Timestamp
+	ClaimEpoch       int64
+	CreatedAt        *timestamppb.Timestamp
+	RetryCount       int32
+	MaxRetries       int32
+	DeadLetter       bool
+	Timeout          int32
+	RetryDelay       int32
+	Schedule         string
+	ParentId         string
+	DependsOn        []string
 	ApprovalRequired bool
-	ApprovedBy      string
-	ApprovedAt      *timestamppb.Timestamp
-	BatchId         string
+	ApprovedBy       string
+	ApprovedAt       *timestamppb.Timestamp
+	BatchId          string
 }
 
 // TaskResult represents a task execution result.
@@ -215,14 +215,14 @@ type TaskLogsResponse struct {
 
 // CreateBatchTaskRequest is the request to create a batch task.
 type CreateBatchTaskRequest struct {
-	TenantId  string
-	Name      string
-	AgentId   string
-	Type      string
-	Command   string
-	Content   string
-	Path      string
-	AgentIds  []string
+	TenantId string
+	Name     string
+	AgentId  string
+	Type     string
+	Command  string
+	Content  string
+	Path     string
+	AgentIds []string
 }
 
 // GetBatchStatusRequest is the request to get batch status.

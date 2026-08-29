@@ -4,6 +4,29 @@
 
 > 当前最新已发布版本：`v0.7.0`（2026-08-16）。`[Unreleased]` 段累积未发布变更，下一个发布版本号待定（按实际演进预计 `v0.8.0`；若按文档同步批次独立发版可记为 `v0.5.0`，由发布流程最终确定）。
 
+## [Unreleased] — 2026-08-30 第二轮安全加固与文档补全批次
+
+### 安全加固（SEC 系列）
+- **SEC-1 错误信息脱敏（收尾 + 守护测试）**：在 60+ 处 500 路径改用 `writeInternalError`/`writeSanitizedError`（k8s_manage 19 处、quota/apikey/middleware/os_optimize 等）的基础上，完成全量 4xx 泄露面核查——59 处输入回显 + 15 处固定鉴权文案 + 60 处 sentinel 校验文案均确认安全；新增 `http_infra_leak_test.go` 静态扫描守护测试：**禁止任何 5xx 响应携带原始 `err.Error()`**（金丝雀注入验证有效，CI 防回退）
+- **SEC-4 测试契约同步**：`testNotifyChannel` 发送失败语义从 200+`status:fail` 改为 500+脱敏文案（服务端改动在前批落地，本轮同步 `server_alerts_m2_extra_test.go` 断言），修正「HTTP 语义错误 + SMTP 地址泄露」
+- **SEC-5 权限目录补齐**：`rbacPermSpecs` 新增 `cmdb:approve`（CI 变更审批）——此前 `cmdb_approval.go` 的 approve/reject 端点经 `requireProd` 校验该权限点，但权限目录未定义（G1 遗留）；`RolePermissions` 单一来源自动派生，operator 角色不获得审批权（最小权限：审批仅 admin）
+
+### 可靠性（CB 系列）
+- **CB-9 agent goroutine panic 兜底**：新增 `internal/agent/safego.go`（`safeGo` 包装器：panic 捕获 + 带堆栈日志 + 5s 防风暴延迟后重启循环）；`agent.go` 全部 7 处常驻 goroutine（worker 池/heartbeatLoop/dispatchLoop/cancelLoop/logCollectLoop/LogPusher/LogCollector）经 safeGo 启动——单循环 panic 不再拖垮整个 agent 进程；新增 `safego_test.go` 验证 panic 后重启与正常退出不重启
+
+### 文档与代码一致性（DC 系列）
+- **DC-1 README 补 services/ 18 微服务**：新增「services/ 微服务目录」章节（18 服务职责表 + 双轨并存状态说明 + 端口默认重叠警告——多服务默认同为 HTTP 8080/8081，同机并行须显式配端口）
+- **DC-2 api-reference 补 61 组端点**：新增 16 个功能域章节、约 130 个端点小节（+2074 行），覆盖平台化/计费/网关/备份/合规/HA/工单 SLO/流量/流水线 ArgoCD/自动化/Webhook 脚本/网络设备/审计扩展——全部从 handler 源码提取方法/权限/请求体/响应，未文档化路由从 68 项清零；simulated 标记如实注明（backup restore/canary metrics/ha failover 已是真实实现，G2 批次移除占位）
+- **DC-5 DELIVERY 规模刷新（实测）**：仓库 1,121 文件 / Go 714（含测试 265）/ 约 221,900 行 / 前端 145 文件——对齐 25 提交增量演进后的真实规模（原 346 文件/~51,700 行已过时）
+- **tech-debt 如实登记 TD-60~67**：七域双份实现收敛（约 27,000 行重复）/ 父包拆分 / 网关数据面 / Task 三份 schema / pb stub 死代码 / 微服务 MySQL store 未接线 / gofmt 基线（TD-67 已当场修复）；纠正「全部解决」的失真表述
+
+### 代码质量
+- **gofmt 基线恢复**：`gofmt -w internal cmd pkg services tests` 全仓 139 文件清零（2026-08-29 晚间提交曾把 tab 改空格致 CI gofmt 门禁必挂）；`go build ./...` + `go vet ./...` 全绿
+- **TE-2 集成测试真断言**：`tests/integration/services_test.go` 重写为两类——A 类纯算法链路（异常检测/告警聚合/插件生命周期，默认执行真实断言）+ B 类微服务 HTTP 契约（环境变量控制，无环境自动 Skip）
+
+### 验证
+- `go build ./...` ✅ `go vet ./...` ✅ `go test ./internal/controlplane/ ./internal/agent/ ./internal/store/` ✅ 全绿（含新增 safego/leak-guard 测试）
+
 ## [Unreleased] — 2026-08-27 SQL 持久化全域落地（P0.3 + P1-P6 共 18 域）
 
 ### SQL 持久化实现

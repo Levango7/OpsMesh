@@ -32,9 +32,9 @@ type WorkflowStore interface {
 
 // Service implements the workflow service business logic.
 type Service struct {
-	mu      sync.RWMutex
-	store   WorkflowStore
-	engine  *engine.Engine
+	mu     sync.RWMutex
+	store  WorkflowStore
+	engine *engine.Engine
 }
 
 // NewService creates a new Service.

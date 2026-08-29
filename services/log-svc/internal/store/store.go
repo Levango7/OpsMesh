@@ -41,9 +41,9 @@ type LogStore interface {
 
 // MemoryStore is an in-memory implementation of LogStore.
 type MemoryStore struct {
-	mu         sync.RWMutex
-	agentLogs  []*LogEntry
-	auditLogs  []*AuditLog
+	mu        sync.RWMutex
+	agentLogs []*LogEntry
+	auditLogs []*AuditLog
 }
 
 // NewMemoryStore creates a new MemoryStore.

@@ -27,9 +27,9 @@ func NewOpsMeshClient(baseURL string) *OpsMeshClient {
 
 // SystemStatus represents the overall system status.
 type SystemStatus struct {
-	DevicesOnline int    `json:"devices_online"`
-	ActiveAlerts  int    `json:"active_alerts"`
-	Healthy       bool   `json:"healthy"`
+	DevicesOnline int  `json:"devices_online"`
+	ActiveAlerts  int  `json:"active_alerts"`
+	Healthy       bool `json:"healthy"`
 }
 
 // Device represents a managed device.
@@ -50,10 +50,10 @@ type AlertInfo struct {
 
 // DeviceMetrics represents metrics for a device.
 type DeviceMetrics struct {
-	DeviceID string            `json:"device_id"`
-	CPU      float64           `json:"cpu"`
-	Memory   float64           `json:"memory"`
-	Disk     float64           `json:"disk"`
+	DeviceID string             `json:"device_id"`
+	CPU      float64            `json:"cpu"`
+	Memory   float64            `json:"memory"`
+	Disk     float64            `json:"disk"`
 	Custom   map[string]float64 `json:"custom,omitempty"`
 }
 

@@ -1,4 +1,3 @@
-
 // slo.go 实现 Phase 1 SLO 管理 HTTP handler。
 //
 // API 端点：
@@ -17,8 +16,8 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 
 	"opsmesh/internal/proto"
@@ -72,11 +71,11 @@ func (s *Server) handleCreateSLO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		ServiceName string `json:"serviceName"`
-		Target      float64 `json:"target"`
-		Window      string `json:"window"`
+		Name        string      `json:"name"`
+		Description string      `json:"description"`
+		ServiceName string      `json:"serviceName"`
+		Target      float64     `json:"target"`
+		Window      string      `json:"window"`
 		SLIs        []store.SLI `json:"slis"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
@@ -185,11 +184,11 @@ func (s *Server) handleUpdateSLO(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 	var body struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		ServiceName string `json:"serviceName"`
-		Target      float64 `json:"target"`
-		Window      string `json:"window"`
+		Name        string      `json:"name"`
+		Description string      `json:"description"`
+		ServiceName string      `json:"serviceName"`
+		Target      float64     `json:"target"`
+		Window      string      `json:"window"`
 		SLIs        []store.SLI `json:"slis"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
@@ -266,4 +265,3 @@ func (s *Server) handleSLOStatus(w http.ResponseWriter, r *http.Request, id stri
 	statuses := s.store.SLIStatus(actx.TenantID, id)
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"statuses": statuses})
 }
-

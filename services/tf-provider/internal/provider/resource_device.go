@@ -77,13 +77,13 @@ func resourceDeviceCreate(ctx context.Context, d *schema.ResourceData, m interfa
 	c := m.(*client.Client)
 
 	device := &client.Device{
-		Name:   d.Get("name").(string),
-		IP:     d.Get("ip").(string),
-		MAC:    d.Get("mac").(string),
-		OS:     d.Get("os").(string),
-		Arch:   d.Get("arch").(string),
+		Name:    d.Get("name").(string),
+		IP:      d.Get("ip").(string),
+		MAC:     d.Get("mac").(string),
+		OS:      d.Get("os").(string),
+		Arch:    d.Get("arch").(string),
 		AgentID: d.Get("agent_id").(string),
-		Group:  d.Get("group").(string),
+		Group:   d.Get("group").(string),
 	}
 
 	if v, ok := d.GetOk("tags"); ok {
@@ -136,14 +136,14 @@ func resourceDeviceUpdate(ctx context.Context, d *schema.ResourceData, m interfa
 	c := m.(*client.Client)
 
 	device := &client.Device{
-		ID:     d.Id(),
-		Name:   d.Get("name").(string),
-		IP:     d.Get("ip").(string),
-		MAC:    d.Get("mac").(string),
-		OS:     d.Get("os").(string),
-		Arch:   d.Get("arch").(string),
+		ID:      d.Id(),
+		Name:    d.Get("name").(string),
+		IP:      d.Get("ip").(string),
+		MAC:     d.Get("mac").(string),
+		OS:      d.Get("os").(string),
+		Arch:    d.Get("arch").(string),
 		AgentID: d.Get("agent_id").(string),
-		Group:  d.Get("group").(string),
+		Group:   d.Get("group").(string),
 	}
 
 	if v, ok := d.GetOk("tags"); ok {

@@ -18,8 +18,8 @@ import (
 //   2. 扫描 docs/sse-protocol.md 事件类型枚举表中的登记项；
 //   3. 双向比对：代码事件必须在文档登记；文档事件（除握手帧 hello）必须在代码中存在。
 
-	// rePublishEvent 匹配 publishEvent 调用中的字面量事件名（第二参数）。
-	var rePublishEvent = regexp.MustCompile(`[pP]ublishEvent\([^\n]*?"(?P<name>[a-z0-9_]+)"`)
+// rePublishEvent 匹配 publishEvent 调用中的字面量事件名（第二参数）。
+var rePublishEvent = regexp.MustCompile(`[pP]ublishEvent\([^\n]*?"(?P<name>[a-z0-9_]+)"`)
 
 // reDocEventRow 匹配文档枚举表行：`| `task_status` | ...` 取首列反引号内容。
 var reDocEventRow = regexp.MustCompile("\\|\\s*`(?P<name>[a-z0-9_]+)`")

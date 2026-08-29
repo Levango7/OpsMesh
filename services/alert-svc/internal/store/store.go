@@ -7,15 +7,15 @@ import (
 
 // Alert represents an alert event in the store.
 type Alert struct {
-	AlertID   string
-	TenantID  string
-	DeviceID  string
-	AgentID   string
-	Severity  string
-	Message   string
-	Metric    string
-	CreatedAt time.Time
-	Status    string
+	AlertID        string
+	TenantID       string
+	DeviceID       string
+	AgentID        string
+	Severity       string
+	Message        string
+	Metric         string
+	CreatedAt      time.Time
+	Status         string
 	AcknowledgedBy string
 	SilencedUntil  time.Time
 	Comment        string
@@ -54,9 +54,9 @@ type AlertStore interface {
 
 // MemoryStore is an in-memory implementation of AlertStore.
 type MemoryStore struct {
-	mu          sync.RWMutex
-	alerts      []*Alert
-	alertRules  map[string]*AlertRule
+	mu         sync.RWMutex
+	alerts     []*Alert
+	alertRules map[string]*AlertRule
 }
 
 // NewMemoryStore creates a new MemoryStore.

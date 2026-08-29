@@ -38,21 +38,21 @@ const (
 // PagerDutyEvent is the payload for the PagerDuty Event API v2.
 // Reference: https://developer.pagerduty.com/api-reference/368ae3d83d083-send-an-event-to-pager-duty
 type PagerDutyEvent struct {
-	RoutingKey  string           `json:"routing_key"`
-	EventAction EventAction      `json:"event_action"`
-	DedupKey    string           `json:"dedup_key,omitempty"`
-	Payload     *EventPayload    `json:"payload"`
-	Links       []EventLink      `json:"links,omitempty"`
+	RoutingKey  string        `json:"routing_key"`
+	EventAction EventAction   `json:"event_action"`
+	DedupKey    string        `json:"dedup_key,omitempty"`
+	Payload     *EventPayload `json:"payload"`
+	Links       []EventLink   `json:"links,omitempty"`
 }
 
 // EventPayload is the payload field of a PagerDuty event.
 type EventPayload struct {
-	Summary   string            `json:"summary"`
-	Source    string            `json:"source"`
-	Severity  string            `json:"severity"`
-	Component string            `json:"component,omitempty"`
-	Group     string            `json:"group,omitempty"`
-	Class     string            `json:"class,omitempty"`
+	Summary   string                 `json:"summary"`
+	Source    string                 `json:"source"`
+	Severity  string                 `json:"severity"`
+	Component string                 `json:"component,omitempty"`
+	Group     string                 `json:"group,omitempty"`
+	Class     string                 `json:"class,omitempty"`
 	Details   map[string]interface{} `json:"custom_details,omitempty"`
 }
 

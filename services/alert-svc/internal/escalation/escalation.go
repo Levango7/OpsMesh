@@ -17,13 +17,13 @@ type EscalationLevel struct {
 
 // EscalationPolicy defines how an alert escalates through notification levels.
 type EscalationPolicy struct {
-	ID        string             `json:"id"`
-	Name      string             `json:"name"`
-	TenantID  string             `json:"tenant_id"`
-	Levels    []EscalationLevel  `json:"levels"`
-	Enabled   bool               `json:"enabled"`
-	CreatedAt time.Time          `json:"created_at"`
-	UpdatedAt time.Time          `json:"updated_at"`
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	TenantID  string            `json:"tenant_id"`
+	Levels    []EscalationLevel `json:"levels"`
+	Enabled   bool              `json:"enabled"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
 }
 
 // RotationType defines how on-call rotations repeat.
@@ -43,27 +43,27 @@ type OnCallEntry struct {
 
 // OnCallSchedule defines an on-call rotation for a team.
 type OnCallSchedule struct {
-	ID        string         `json:"id"`
-	Name      string         `json:"name"`
-	TenantID  string         `json:"tenant_id"`
-	Entries   []OnCallEntry  `json:"entries"`
-	Rotation  RotationType   `json:"rotation"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	ID        string        `json:"id"`
+	Name      string        `json:"name"`
+	TenantID  string        `json:"tenant_id"`
+	Entries   []OnCallEntry `json:"entries"`
+	Rotation  RotationType  `json:"rotation"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
 }
 
 // EscalationState tracks the current escalation status of an alert.
 type EscalationState struct {
-	ID             string             `json:"id"`
-	AlertID        string             `json:"alert_id"`
-	PolicyID       string             `json:"policy_id"`
-	CurrentLevel   int                `json:"current_level"`
-	Status         string             `json:"status"`
-	StartedAt      time.Time          `json:"started_at"`
-	AcknowledgedAt *time.Time         `json:"acknowledged_at,omitempty"`
-	ResolvedAt     *time.Time         `json:"resolved_at,omitempty"`
-	NotifiedAt     map[int]time.Time  `json:"notified_at"`
-	ChannelsUsed   map[int][]string   `json:"channels_used"`
+	ID             string            `json:"id"`
+	AlertID        string            `json:"alert_id"`
+	PolicyID       string            `json:"policy_id"`
+	CurrentLevel   int               `json:"current_level"`
+	Status         string            `json:"status"`
+	StartedAt      time.Time         `json:"started_at"`
+	AcknowledgedAt *time.Time        `json:"acknowledged_at,omitempty"`
+	ResolvedAt     *time.Time        `json:"resolved_at,omitempty"`
+	NotifiedAt     map[int]time.Time `json:"notified_at"`
+	ChannelsUsed   map[int][]string  `json:"channels_used"`
 }
 
 // NotificationFunc is called when escalation needs to notify a channel.

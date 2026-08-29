@@ -50,14 +50,14 @@ type EventPublisher interface {
 
 // GrpcServerImpl 实现 grpcx.RegistrationServer 接口，把四条 gRPC 通道转发到 store。
 type GrpcServerImpl struct {
-	Store           store.Store
-	RequireAuth     bool
-	Cfg             *config.Config    // 可为 nil（测试）；非 nil 时启用网段发现
-	Bus             events.Bus        // 可为 nil（测试）；非 nil 时发布审计/告警事件
-	Metrics         *metrics.M        // 可为 nil（测试）；非 nil 时更新观测指标
-	Cmdb            *cmdb.Handler     // CMDB 处理器（Phase 1）；nil 时不处理 CmdbReport
-	Logs            *logstore.Handler // M6 日志检索处理器；nil 时不落地任务日志
-	Publisher       EventPublisher    // SSE 事件发布器；nil 时不发布 SSE 事件（测试兼容）
+	Store       store.Store
+	RequireAuth bool
+	Cfg         *config.Config    // 可为 nil（测试）；非 nil 时启用网段发现
+	Bus         events.Bus        // 可为 nil（测试）；非 nil 时发布审计/告警事件
+	Metrics     *metrics.M        // 可为 nil（测试）；非 nil 时更新观测指标
+	Cmdb        *cmdb.Handler     // CMDB 处理器（Phase 1）；nil 时不处理 CmdbReport
+	Logs        *logstore.Handler // M6 日志检索处理器；nil 时不落地任务日志
+	Publisher   EventPublisher    // SSE 事件发布器；nil 时不发布 SSE 事件（测试兼容）
 	// RequireSignature gRPC agent 身份绑定：是否强制要求 agent 请求携带 HMAC 签名。
 	// false（默认，零值）=不校验签名（向后兼容 demo/测试/未启用 --grpc-require-signature 的部署）；
 	// true=PullTasks/ReportResult/PollCancels/Heartbeat 入口校验 agent-signature metadata，

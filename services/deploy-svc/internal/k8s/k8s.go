@@ -36,12 +36,12 @@ type PodInfo struct {
 
 // NodeResources represents a node's available resources.
 type NodeResources struct {
-	Name            string            `json:"name"`
-	CPUCapacityStr  string            `json:"cpu_capacity"`
-	MemCapacityStr  string            `json:"mem_capacity"`
-	CPUCapacity     int64             `json:"cpu_capacity_millicores"`
-	MemCapacity     int64             `json:"mem_capacity_bytes"`
-	Labels          map[string]string `json:"labels"`
+	Name           string            `json:"name"`
+	CPUCapacityStr string            `json:"cpu_capacity"`
+	MemCapacityStr string            `json:"mem_capacity"`
+	CPUCapacity    int64             `json:"cpu_capacity_millicores"`
+	MemCapacity    int64             `json:"mem_capacity_bytes"`
+	Labels         map[string]string `json:"labels"`
 }
 
 // Client wraps a Kubernetes clientset with graceful fallback to simulated mode.
@@ -470,4 +470,3 @@ func (c *Client) simScaleDeployment(namespace, name string, replicas int32) erro
 	c.simDeploy[key] = spec
 	return nil
 }
-

@@ -28,11 +28,11 @@ var defaultBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5,
 type Registry struct {
 	mu       sync.Mutex
 	service  string
-	reqTotal map[string]uint64            // "method|path|status" -> count
-	reqHist  map[string]*histogramStats   // "method|path" -> histogram
-	conn     int64                        // active connections
-	queue    int64                        // queue depth
-	business map[string]businessEntry    // "name|label1=val1|..." -> value + labels
+	reqTotal map[string]uint64          // "method|path|status" -> count
+	reqHist  map[string]*histogramStats // "method|path" -> histogram
+	conn     int64                      // active connections
+	queue    int64                      // queue depth
+	business map[string]businessEntry   // "name|label1=val1|..." -> value + labels
 }
 
 type histogramStats struct {

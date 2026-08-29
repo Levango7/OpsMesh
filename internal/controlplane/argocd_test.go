@@ -17,8 +17,8 @@ package controlplane
 import (
 	"encoding/json"
 	"net/http"
-	"os/exec"
 	"net/http/httptest"
+	"os/exec"
 	"strings"
 	"testing"
 

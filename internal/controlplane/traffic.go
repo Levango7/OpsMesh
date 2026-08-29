@@ -18,8 +18,8 @@ package controlplane
 //   - 鉴权：需 traffic:read/traffic:write 权限。
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 
 	"opsmesh/internal/store"
@@ -248,4 +248,3 @@ func (s *Server) handleDisableTrafficPolicy(w http.ResponseWriter, r *http.Reque
 	}
 	paginate.WriteJSON(w, http.StatusOK, p)
 }
-

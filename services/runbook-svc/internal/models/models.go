@@ -4,20 +4,20 @@ import "time"
 
 // Runbook represents an automated playbook with ordered steps.
 type Runbook struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
+	ID          string             `json:"id"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
 	Triggers    []TriggerCondition `json:"triggers"`
-	Steps       []Step            `json:"steps"`
-	Enabled     bool              `json:"enabled"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
+	Steps       []Step             `json:"steps"`
+	Enabled     bool               `json:"enabled"`
+	CreatedAt   time.Time          `json:"created_at"`
+	UpdatedAt   time.Time          `json:"updated_at"`
 }
 
 // TriggerCondition defines when a runbook should auto-trigger.
 type TriggerCondition struct {
 	EventType string            `json:"event_type"` // e.g. "alert", "webhook", "schedule"
-	Filters   map[string]string `json:"filters"`     // key-value match conditions
+	Filters   map[string]string `json:"filters"`    // key-value match conditions
 }
 
 // Step is a single action in a runbook.
@@ -32,14 +32,14 @@ type Step struct {
 
 // ExecutionRecord captures the result of a runbook execution.
 type ExecutionRecord struct {
-	ID           string            `json:"id"`
-	RunbookID    string            `json:"runbook_id"`
-	TriggeredBy  string            `json:"triggered_by"`
-	Status       string            `json:"status"` // running/success/failed
-	StepResults  []StepResult      `json:"step_results"`
-	StartedAt    time.Time         `json:"started_at"`
-	CompletedAt  time.Time         `json:"completed_at"`
-	ErrorMessage string            `json:"error_message,omitempty"`
+	ID           string       `json:"id"`
+	RunbookID    string       `json:"runbook_id"`
+	TriggeredBy  string       `json:"triggered_by"`
+	Status       string       `json:"status"` // running/success/failed
+	StepResults  []StepResult `json:"step_results"`
+	StartedAt    time.Time    `json:"started_at"`
+	CompletedAt  time.Time    `json:"completed_at"`
+	ErrorMessage string       `json:"error_message,omitempty"`
 }
 
 // StepResult captures the result of a single step execution.

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"opsmesh.io/log-svc/api/proto/v1"
 	"opsmesh.io/log-svc/pkg/logstore"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // newTestService creates a service with an in-memory store for testing.
@@ -201,8 +201,8 @@ func TestSearchLogs_Pagination(t *testing.T) {
 	// Test offset
 	resp, err = svc.SearchLogs(ctx, &logv1.SearchLogsRequest{
 		TenantId: "t1",
-		Limit:   5,
-		Offset:  5,
+		Limit:    5,
+		Offset:   5,
 	})
 	if err != nil {
 		t.Fatalf("SearchLogs with offset failed: %v", err)

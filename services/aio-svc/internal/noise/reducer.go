@@ -17,15 +17,15 @@ func NewReducer() *Reducer {
 
 // Alert represents an alert for noise reduction operations.
 type Alert struct {
-	Id        string
-	TenantId  string
-	RuleId    string
-	RuleName  string
-	DeviceId  string
-	Severity  string
-	Message   string
-	FiredAt   time.Time
-	Status    string
+	Id       string
+	TenantId string
+	RuleId   string
+	RuleName string
+	DeviceId string
+	Severity string
+	Message  string
+	FiredAt  time.Time
+	Status   string
 }
 
 // AlertCluster represents a group of similar alerts.

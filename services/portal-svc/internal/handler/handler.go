@@ -12,8 +12,8 @@ import (
 
 // Handler handles HTTP requests for the portal.
 type Handler struct {
-	svc      *service.Service
-	alloc    *cost.Allocator
+	svc   *service.Service
+	alloc *cost.Allocator
 }
 
 // NewHandler creates a new Handler.
@@ -103,14 +103,14 @@ func (h *Handler) handleRequestDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 type createRequestInput struct {
-	TenantID    string `json:"tenant_id"`
-	Requester   string `json:"requester"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
+	TenantID     string `json:"tenant_id"`
+	Requester    string `json:"requester"`
+	Title        string `json:"title"`
+	Description  string `json:"description"`
 	ResourceType string `json:"resource_type"`
-	CPU         int    `json:"cpu"`
-	MemoryGB    int    `json:"memory_gb"`
-	StorageGB   int    `json:"storage_gb"`
+	CPU          int    `json:"cpu"`
+	MemoryGB     int    `json:"memory_gb"`
+	StorageGB    int    `json:"storage_gb"`
 }
 
 func (h *Handler) createRequest(w http.ResponseWriter, r *http.Request) {
@@ -338,10 +338,10 @@ func (h *Handler) handleQuotaDetail(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, q)
 	case http.MethodPut:
 		var in struct {
-			MaxCPU      int `json:"max_cpu"`
-			MaxMemoryGB int `json:"max_memory_gb"`
+			MaxCPU       int `json:"max_cpu"`
+			MaxMemoryGB  int `json:"max_memory_gb"`
 			MaxStorageGB int `json:"max_storage_gb"`
-			MaxRequests int `json:"max_requests"`
+			MaxRequests  int `json:"max_requests"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
@@ -393,8 +393,8 @@ func (h *Handler) handleCostAllocate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Dimension string          `json:"dimension"`
-		TotalCost float64         `json:"total_cost"`
+		Dimension string           `json:"dimension"`
+		TotalCost float64          `json:"total_cost"`
 		Entries   []cost.CostEntry `json:"entries"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {

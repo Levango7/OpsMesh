@@ -15,9 +15,9 @@ const (
 type MetricType string
 
 const (
-	MetricCPUUsage      MetricType = "cpu_usage"
-	MetricMemoryUsage   MetricType = "memory_usage"
-	MetricDiskUsage     MetricType = "disk_usage"
+	MetricCPUUsage       MetricType = "cpu_usage"
+	MetricMemoryUsage    MetricType = "memory_usage"
+	MetricDiskUsage      MetricType = "disk_usage"
 	MetricNetworkTraffic MetricType = "network_traffic"
 )
 
@@ -46,10 +46,10 @@ type TableColumn struct {
 
 // Annotation represents a Grafana annotation event.
 type Annotation struct {
-	Time    time.Time
-	Title   string
-	Text    string
-	Tags    []string
+	Time  time.Time
+	Title string
+	Text  string
+	Tags  []string
 }
 
 // TagKey represents an available tag key.

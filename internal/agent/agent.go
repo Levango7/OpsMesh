@@ -445,14 +445,16 @@ func (a *Agent) Run() error {
 	ctx = logx.WithTrace(ctx, a.agentID)
 
 	// 启动 worker 池：并发执行被领取的任务。
+	// 全部循环经 safeGo 包装（CB-9）：单循环 panic 不再拖垮整个 agent 进程，
+	// 捕获后记日志并重启（详见 safego.go）。
 	for i := 0; i < a.workers; i++ {
-		go a.worker(ctx)
+		safeGo(ctx, "worker", a.worker)
 	}
 
-	go a.heartbeatLoop(ctx)
-	go a.dispatchLoop(ctx)
-	go a.cancelLoop(ctx)     // F3 取消信号：轮询控制面，中止已下发取消的正在执行任务
-	go a.logCollectLoop(ctx) // 日志采集：定时读取指定日志文件增量并上报控制面
+	safeGo(ctx, "heartbeatLoop", a.heartbeatLoop)
+	safeGo(ctx, "dispatchLoop", a.dispatchLoop)
+	safeGo(ctx, "cancelLoop", a.cancelLoop)         // F3 取消信号：轮询控制面，中止已下发取消的正在执行任务
+	safeGo(ctx, "logCollectLoop", a.logCollectLoop) // 日志采集：定时读取指定日志文件增量并上报控制面
 
 	// 日志采集推送：构造 LogPusher 并启动（cfg.LogPushEnabled=true 时）。
 	// 失败仅告警不阻塞启动（向后兼容，运维可后续修复配置后重启）。
@@ -463,11 +465,11 @@ func (a *Agent) Run() error {
 			logx.Warn(ctx, "LogPusher 构造失败，日志推送未启用", "error", err.Error())
 		} else {
 			a.logPusher = pusher
-			go func() {
+			safeGo(ctx, "logPusher", func(ctx context.Context) {
 				if err := pusher.Run(ctx); err != nil {
 					logx.Warn(ctx, "LogPusher 退出异常", "error", err.Error())
 				}
-			}()
+			})
 		}
 	}
 
@@ -486,11 +488,11 @@ func (a *Agent) Run() error {
 			logx.Warn(ctx, "LogCollector 构造失败，增强日志采集未启用", "error", err.Error())
 		} else {
 			a.logCollector = lc
-			go func() {
+			safeGo(ctx, "logCollector", func(ctx context.Context) {
 				if err := lc.Start(ctx); err != nil {
 					logx.Warn(ctx, "LogCollector 退出异常", "error", err.Error())
 				}
-			}()
+			})
 		}
 	}
 
@@ -1371,7 +1373,6 @@ func (a *Agent) makeLogCollectPushFn() LogCollectPushFunc {
 	}
 }
 
-//
 // logCollectLoop 定时读取指定日志文件的新增内容（基于文件 offset）并上报控制面。
 // 配置来自环境变量（见 initLogCollect）：
 //   - OPSMESH_LOG_COLLECT_PATHS：逗号分隔的日志文件路径。

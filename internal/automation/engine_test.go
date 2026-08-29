@@ -45,7 +45,7 @@ func TestAllActionTypes(t *testing.T) {
 
 func TestValidateRule(t *testing.T) {
 	validRule := &Rule{
-		Name: "test-rule",
+		Name:    "test-rule",
 		Trigger: Trigger{Type: TriggerTypeAlert},
 		Actions: []Action{{Type: ActionTypeExecuteTask}},
 	}
@@ -126,8 +126,8 @@ func TestEvaluate_ScheduleAlwaysFires(t *testing.T) {
 func TestExecute_NoExecutor(t *testing.T) {
 	e := NewEngine()
 	rule := &Rule{
-		ID:     "r1",
-		Name:   "test",
+		ID:      "r1",
+		Name:    "test",
 		Actions: []Action{{Type: ActionTypeExecuteTask, Params: map[string]string{"device_id": "d1", "command": "echo hi"}}},
 	}
 	exec := e.Execute(rule)
@@ -143,8 +143,8 @@ func TestExecute_WithExecutor(t *testing.T) {
 	exec := &mockExecutor{}
 	e := NewEngineWithExecutor(exec)
 	rule := &Rule{
-		ID:     "r1",
-		Name:   "test",
+		ID:      "r1",
+		Name:    "test",
 		Actions: []Action{{Type: ActionTypeExecuteTask, Params: map[string]string{"device_id": "d1", "command": "echo hi"}}},
 	}
 	result := e.Execute(rule)
@@ -160,8 +160,8 @@ func TestExecute_WithExecutorError(t *testing.T) {
 	exec := &mockExecutor{failTask: true}
 	e := NewEngineWithExecutor(exec)
 	rule := &Rule{
-		ID:     "r1",
-		Name:   "test",
+		ID:      "r1",
+		Name:    "test",
 		Actions: []Action{{Type: ActionTypeExecuteTask, Params: map[string]string{"device_id": "d1", "command": "echo hi"}}},
 	}
 	result := e.Execute(rule)
@@ -173,8 +173,8 @@ func TestExecute_WithExecutorError(t *testing.T) {
 var _ Executor = (*mockExecutor)(nil)
 
 type mockExecutor struct {
-	taskCalled  bool
-	failTask    bool
+	taskCalled bool
+	failTask   bool
 }
 
 func (m *mockExecutor) ExecuteTask(tenantID, deviceID, command string, params map[string]string) (string, error) {

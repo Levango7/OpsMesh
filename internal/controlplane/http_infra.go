@@ -2,16 +2,47 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
+	"context"
 	"encoding/json"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 
 	"opsmesh/internal/authctx"
+	"opsmesh/internal/logx"
 )
 
 // maxBodyBytes 限制请求体大小（防 DoS：拒绝超大 body 直接 413，避免 JSON 解析拖垮内存）。
 const maxBodyBytes = 1 << 20 // 1 MiB
+
+// ============================================================================
+// 错误信息脱敏（防内部信息泄露）
+// ============================================================================
+
+// internalErrorBody 内部错误对外暴露的固定文案。
+// store/db/k8s/内部组件返回的 err 可能包含表名、SQL 片段、文件路径、集群内部地址等，
+// 直接回吐客户端等于把部署拓扑交给攻击者，因此统一替换为该固定文案。
+const internalErrorBody = "internal server error"
+
+// writeInternalError 内部错误统一出口（500）。
+//
+// 语义：原始 err 只写入服务端日志（带 traceID，保留排障能力），客户端仅收到固定
+// 脱敏文案。HTTP 状态码与响应字段名 {"error": ...} 保持不变，不破坏前端与既有测试。
+//
+// op 为排障定位用的操作名（如 "k8s.listPods"），仅进日志、不进响应。
+func writeInternalError(ctx context.Context, w http.ResponseWriter, op string, err error) {
+	logx.Error(ctx, "internal error: "+op, err)
+	paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": internalErrorBody})
+}
+
+// writeSanitizedError 指定状态码 + 指定脱敏文案的错误出口。
+//
+// 用于「错误来自内部组件，但业务契约上以 4xx/502 表达」的端点：保持既有状态码不变
+// （不破坏测试），仅去掉响应体中的内部细节，原始 err 进服务端日志。
+func writeSanitizedError(ctx context.Context, w http.ResponseWriter, status int, op, clientMsg string, err error) {
+	logx.Error(ctx, "sanitized error: "+op, err)
+	paginate.WriteJSON(w, status, map[string]string{"error": clientMsg})
+}
 
 // decodeJSONBody 在 MaxBytesReader 约束下解析 JSON 请求体（请求体大小限制）。
 // 替换所有裸 json.NewDecoder(r.Body).Decode 调用，统一防超大请求体。

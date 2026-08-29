@@ -52,9 +52,9 @@ func TestSchedule(t *testing.T) {
 	}
 
 	workload := &models.Workload{
-		ID:       "wl-1",
+		ID:         "wl-1",
 		GPURequest: models.GPURequest{Count: 2, MinVRAMMB: 4096},
-		Priority: 5,
+		Priority:   5,
 	}
 
 	result, err := s.Schedule(workload, provider)
@@ -74,7 +74,7 @@ func TestScheduleNoNodes(t *testing.T) {
 	provider := &mockNodeProvider{nodes: []*models.GPUNode{}}
 
 	workload := &models.Workload{
-		ID:       "wl-1",
+		ID:         "wl-1",
 		GPURequest: models.GPURequest{Count: 1},
 	}
 
@@ -93,7 +93,7 @@ func TestScheduleInsufficientGPUs(t *testing.T) {
 	}
 
 	workload := &models.Workload{
-		ID:       "wl-1",
+		ID:         "wl-1",
 		GPURequest: models.GPURequest{Count: 4},
 	}
 
@@ -170,7 +170,7 @@ func TestBinPackingSort(t *testing.T) {
 	}
 
 	workload := &models.Workload{
-		ID:       "wl-1",
+		ID:         "wl-1",
 		GPURequest: models.GPURequest{Count: 1},
 	}
 
@@ -198,7 +198,7 @@ func TestSpreadingSort(t *testing.T) {
 	}
 
 	workload := &models.Workload{
-		ID:       "wl-1",
+		ID:         "wl-1",
 		GPURequest: models.GPURequest{Count: 1},
 	}
 

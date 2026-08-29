@@ -16,8 +16,8 @@ import (
 type ComparisonType string
 
 const (
-	ComparisonExact ComparisonType = "exact"
-	ComparisonRegex ComparisonType = "regex"
+	ComparisonExact  ComparisonType = "exact"
+	ComparisonRegex  ComparisonType = "regex"
 	ComparisonExists ComparisonType = "exists"
 )
 
@@ -54,11 +54,11 @@ type DriftStatus struct {
 
 // Detector manages drift detection rules and executes checks.
 type Detector struct {
-	mu       sync.RWMutex
-	rules    map[string]*DriftRule
-	history  []DriftResult
-	store    store.Store
-	maxHist  int
+	mu      sync.RWMutex
+	rules   map[string]*DriftRule
+	history []DriftResult
+	store   store.Store
+	maxHist int
 }
 
 // NewDetector creates a new DriftDetector.

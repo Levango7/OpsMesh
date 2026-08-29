@@ -1,4 +1,3 @@
-
 // multi_schema_p1.go MultiSchemaStore 对 Phase 1 两个新接口（TicketStore / SLOStore）的委托实现。
 //
 // MultiSchemaStore 按 tenantID 路由到 per-tenant Store（SQLStore 或测试 mock），

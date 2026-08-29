@@ -25,10 +25,10 @@ package controlplane
 //     不实际发起 HTTP 请求（避免 SSRF 风险，仅验证 Webhook 配置可达性占位）。
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"fmt"
 	"io"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 	"time"
 
@@ -340,4 +340,3 @@ func (s *Server) handleWebhookDeliveries(w http.ResponseWriter, r *http.Request,
 	deliveries := s.store.ListWebhookDeliveries(actx.TenantID, id)
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"deliveries": deliveries})
 }
-

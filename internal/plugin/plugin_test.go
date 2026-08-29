@@ -25,13 +25,13 @@ import (
 
 // fakePlugin 测试用插件桩。
 type fakePlugin struct {
-	name       string
-	version    string
-	initCnt    int32
-	closeCnt   int32
-	initErr    error // 注入 Init 错误
-	closeErr   error // 注入 Close 错误
-	closeMu    sync.Mutex
+	name     string
+	version  string
+	initCnt  int32
+	closeCnt int32
+	initErr  error // 注入 Init 错误
+	closeErr error // 注入 Close 错误
+	closeMu  sync.Mutex
 }
 
 func (p *fakePlugin) Name() string    { return p.name }

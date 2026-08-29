@@ -12,8 +12,8 @@ package controlplane
 //   - POST   /api/v1/apikeys/{id}/disable  禁用 API Key
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 
 	"opsmesh/internal/platform"
@@ -76,7 +76,7 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	// 生成明文 key 与 hash。
 	plainKey, hash, err := platform.GenerateAPIKey()
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "generate api key failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "apikey.generateKey", err)
 		return
 	}
 	body.Key = hash

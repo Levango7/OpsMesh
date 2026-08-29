@@ -128,8 +128,8 @@ func main() {
 			return
 		}
 		var req struct {
-			AlertID string               `json:"alert_id"`
-			Events  []rootcause.Event    `json:"events"`
+			AlertID string            `json:"alert_id"`
+			Events  []rootcause.Event `json:"events"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -163,9 +163,9 @@ func main() {
 			return
 		}
 		var req struct {
-			AlertID string              `json:"alert_id"`
-			Window  int                 `json:"window_seconds"`
-			States  []noise.AlertState  `json:"states"`
+			AlertID string             `json:"alert_id"`
+			Window  int                `json:"window_seconds"`
+			States  []noise.AlertState `json:"states"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -221,7 +221,7 @@ func main() {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"device_id": req.DeviceID, "metric": req.Metric,
 			"predicted_values": result.PredictedValues,
-			"slope": result.Slope, "intercept": result.Intercept,
+			"slope":            result.Slope, "intercept": result.Intercept,
 			"r_squared": result.Rsquared, "horizon": req.Horizon,
 		})
 	})

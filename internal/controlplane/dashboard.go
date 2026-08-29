@@ -39,7 +39,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	data, err := embed.WebFS.ReadFile("web/index.html")
 	if err != nil {
-		http.Error(w, "dashboard asset missing: "+err.Error(), http.StatusInternalServerError)
+		writeInternalError(r.Context(), w, "dashboard.readIndexAsset", err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

@@ -310,8 +310,8 @@ func tenantIDFromGRPCContext(ctx context.Context) string {
 // Middleware extracts tenant from JWT and injects it into the request context.
 //
 // The middleware looks for the tenant ID in the following order:
-//   1. "X-Tenant-ID" HTTP header
-//   2. "tenant_id" claim from the JWT in the Authorization header (if authSecret is non-empty)
+//  1. "X-Tenant-ID" HTTP header
+//  2. "tenant_id" claim from the JWT in the Authorization header (if authSecret is non-empty)
 //
 // If neither is present, the tenant defaults to "default".
 func Middleware(authSecret string) func(http.Handler) http.Handler {

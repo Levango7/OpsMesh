@@ -537,8 +537,13 @@ func TestHandleNotifyChannelRouting_TestSend(t *testing.T) {
 	req.Header.Set("X-Tenant-ID", "t1")
 	rec = httptest.NewRecorder()
 	s.handleNotifyChannelRouting(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("test send = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	// SEC-4 契约：SMTP 发送失败不再以 200+status:fail 表达（HTTP 语义错误），
+	// 改为 500 且错误体固定脱敏文案（原始 SMTP 错误仅进服务端日志，见 http_infra.go）。
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("test send = %d, want 500 (send failure per SEC-4 contract); body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "internal server error") {
+		t.Fatalf("error body should be sanitized fixed text; body=%s", rec.Body.String())
 	}
 }
 

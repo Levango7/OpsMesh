@@ -19,33 +19,33 @@ import (
 
 // Errors returned by the service.
 var (
-	ErrDeviceNotFound  = errors.New("device not found")
-	ErrDeviceInvalid   = errors.New("device invalid")
-	ErrAgentNotFound   = errors.New("agent not found")
-	ErrAgentInvalid    = errors.New("agent invalid")
-	ErrCINotFound      = errors.New("CI not found")
-	ErrCIInvalid       = errors.New("CI invalid")
-	ErrJobNotFound     = errors.New("discovery job not found")
-	ErrJobInvalid      = errors.New("discovery job invalid")
+	ErrDeviceNotFound = errors.New("device not found")
+	ErrDeviceInvalid  = errors.New("device invalid")
+	ErrAgentNotFound  = errors.New("agent not found")
+	ErrAgentInvalid   = errors.New("agent invalid")
+	ErrCINotFound     = errors.New("CI not found")
+	ErrCIInvalid      = errors.New("CI invalid")
+	ErrJobNotFound    = errors.New("discovery job not found")
+	ErrJobInvalid     = errors.New("discovery job invalid")
 )
 
 // Service implements the device service business logic.
 type Service struct {
-	deviceStore   store.DeviceStore
-	agentStore    store.AgentStore
-	ciStore       store.CiStore
+	deviceStore    store.DeviceStore
+	agentStore     store.AgentStore
+	ciStore        store.CiStore
 	discoveryStore store.DiscoveryStore
-	tenantMgr     *tenant.Manager
+	tenantMgr      *tenant.Manager
 }
 
 // NewService creates a new Service.
 func NewService(ds store.DeviceStore, as store.AgentStore, cs store.CiStore, disc store.DiscoveryStore, tm *tenant.Manager) *Service {
 	return &Service{
-		deviceStore:   ds,
-		agentStore:    as,
-		ciStore:       cs,
+		deviceStore:    ds,
+		agentStore:     as,
+		ciStore:        cs,
 		discoveryStore: disc,
-		tenantMgr:     tm,
+		tenantMgr:      tm,
 	}
 }
 
@@ -336,10 +336,10 @@ func (s *Service) StartDiscovery(ctx context.Context, req *devicev1.StartDiscove
 
 	now := timestamppb.Now()
 	job := &devicev1.DiscoveryJob{
-		Id:       "job-" + uuid.New().String()[:8],
-		TenantId: req.TenantId,
-		Cidr:     req.Cidr,
-		Status:   "running",
+		Id:        "job-" + uuid.New().String()[:8],
+		TenantId:  req.TenantId,
+		Cidr:      req.Cidr,
+		Status:    "running",
 		StartedAt: now,
 	}
 
@@ -415,60 +415,60 @@ func protoToDevice(d *devicev1.Device) *models.Device {
 
 func deviceToProto(d *models.Device) *devicev1.Device {
 	return &devicev1.Device{
-		Id:        d.ID,
-		TenantId:  d.TenantID,
-		Name:      d.Name,
-		Ip:        d.IP,
-		Mac:       d.MAC,
-		Os:        d.OS,
-		Arch:      d.Arch,
-		Status:    d.Status,
-		AgentId:   d.AgentID,
-		Tags:      d.Tags,
-		Labels:    d.Labels,
-		Group:     d.Group,
+		Id:            d.ID,
+		TenantId:      d.TenantID,
+		Name:          d.Name,
+		Ip:            d.IP,
+		Mac:           d.MAC,
+		Os:            d.OS,
+		Arch:          d.Arch,
+		Status:        d.Status,
+		AgentId:       d.AgentID,
+		Tags:          d.Tags,
+		Labels:        d.Labels,
+		Group:         d.Group,
 		LastHeartbeat: timestamppb.New(d.LastHeartbeat),
-		CreatedAt: timestamppb.New(d.CreatedAt),
-		UpdatedAt: timestamppb.New(d.UpdatedAt),
+		CreatedAt:     timestamppb.New(d.CreatedAt),
+		UpdatedAt:     timestamppb.New(d.UpdatedAt),
 	}
 }
 
 func protoToAgent(a *devicev1.Agent) *models.Agent {
 	return &models.Agent{
-		ID:        a.Id,
-		TenantID:  a.TenantId,
-		DeviceID:  a.DeviceId,
-		Hostname:  a.Hostname,
-		Version:   a.Version,
-		Status:    a.Status,
-		Load:      int(a.Load),
-		OS:        a.Os,
-		Arch:      a.Arch,
-		Addr:      a.Addr,
-		GRPCPort:  int(a.GrpcPort),
+		ID:          a.Id,
+		TenantID:    a.TenantId,
+		DeviceID:    a.DeviceId,
+		Hostname:    a.Hostname,
+		Version:     a.Version,
+		Status:      a.Status,
+		Load:        int(a.Load),
+		OS:          a.Os,
+		Arch:        a.Arch,
+		Addr:        a.Addr,
+		GRPCPort:    int(a.GrpcPort),
 		MetricsPort: int(a.MetricsPort),
-		CreatedAt: a.CreatedAt.AsTime(),
-		UpdatedAt: a.UpdatedAt.AsTime(),
+		CreatedAt:   a.CreatedAt.AsTime(),
+		UpdatedAt:   a.UpdatedAt.AsTime(),
 	}
 }
 
 func agentToProto(a *models.Agent) *devicev1.Agent {
 	return &devicev1.Agent{
-		Id:        a.ID,
-		TenantId:  a.TenantID,
-		DeviceId:  a.DeviceID,
-		Hostname:  a.Hostname,
-		Version:   a.Version,
-		Status:    a.Status,
-		Load:      int32(a.Load),
-		Os:        a.OS,
-		Arch:      a.Arch,
-		Addr:      a.Addr,
-		GrpcPort:  int32(a.GRPCPort),
-		MetricsPort: int32(a.MetricsPort),
+		Id:            a.ID,
+		TenantId:      a.TenantID,
+		DeviceId:      a.DeviceID,
+		Hostname:      a.Hostname,
+		Version:       a.Version,
+		Status:        a.Status,
+		Load:          int32(a.Load),
+		Os:            a.OS,
+		Arch:          a.Arch,
+		Addr:          a.Addr,
+		GrpcPort:      int32(a.GRPCPort),
+		MetricsPort:   int32(a.MetricsPort),
 		LastHeartbeat: timestamppb.New(a.LastHeartbeat),
-		CreatedAt: timestamppb.New(a.CreatedAt),
-		UpdatedAt: timestamppb.New(a.UpdatedAt),
+		CreatedAt:     timestamppb.New(a.CreatedAt),
+		UpdatedAt:     timestamppb.New(a.UpdatedAt),
 	}
 }
 

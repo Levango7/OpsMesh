@@ -13,8 +13,8 @@ package controlplane
 //   - 鉴权：需 config:read/config:write 权限（复用 cmdb 领域权限）。
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strconv"
 
 	"opsmesh/internal/proto"

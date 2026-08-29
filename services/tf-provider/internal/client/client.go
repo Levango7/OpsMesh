@@ -124,13 +124,13 @@ type AlertRule struct {
 
 // Alert represents an OpsMesh alert in the API.
 type Alert struct {
-	ID        string  `json:"id"`
-	RuleID    string  `json:"ruleID,omitempty"`
-	Severity  string  `json:"severity"`
-	Message   string  `json:"message"`
-	Status    string  `json:"status"`
-	FiredAt   string  `json:"firedAt,omitempty"`
-	UpdatedAt string  `json:"updatedAt,omitempty"`
+	ID        string `json:"id"`
+	RuleID    string `json:"ruleID,omitempty"`
+	Severity  string `json:"severity"`
+	Message   string `json:"message"`
+	Status    string `json:"status"`
+	FiredAt   string `json:"firedAt,omitempty"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 
 // Deployment represents an OpsMesh deployment in the API.

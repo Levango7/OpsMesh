@@ -21,9 +21,9 @@ var (
 
 // Service implements the incident management business logic.
 type Service struct {
-	store     models.IncidentStore
-	engine    *aggregate.Engine
-	timeline  *timeline.Builder
+	store    models.IncidentStore
+	engine   *aggregate.Engine
+	timeline *timeline.Builder
 }
 
 // NewService creates a new Service.
@@ -43,16 +43,16 @@ func (s *Service) CreateIncident(title, description string, severity models.Seve
 
 	now := time.Now()
 	inc := &models.Incident{
-		ID:         uuid.New().String(),
-		Title:      title,
+		ID:          uuid.New().String(),
+		Title:       title,
 		Description: description,
-		Severity:   severity,
-		Status:     models.StatusDetected,
-		DeviceIDs:  deviceIDs,
-		DetectedAt: now,
-		CreatedAt:  now,
-		UpdatedAt:  now,
-		Tags:       make(map[string]string),
+		Severity:    severity,
+		Status:      models.StatusDetected,
+		DeviceIDs:   deviceIDs,
+		DetectedAt:  now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Tags:        make(map[string]string),
 	}
 
 	s.store.CreateIncident(inc)

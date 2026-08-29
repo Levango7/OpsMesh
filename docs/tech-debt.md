@@ -50,7 +50,19 @@
 
 ## 待启动（仍真实存在，按优先级）
 
-所有已识别技术债均已解决或明确不做（见下方）。
+> 2026-08-30 全仓审查后如实登记（此前本节声称"全部解决"，与实际不符，已纠正）。
+> 以下为 25 提交增量演进（18 微服务拆分 + GPU/AIOps/ChatOps 等新域）引入的结构性债务，
+> 均需独立立项，不阻塞当前交付。
+
+| ID | 问题 | 现状 / 影响 / 下一步 |
+|---|---|---|
+| TD-60 | **七域双份实现收敛**（约 27,000 行重复） | `services/` 18 个微服务的 store/server/service 层与 `internal/` 主模块同域实现并存（task-svc vs controlplane task handler、auth-svc vs auth.go 等），双份维护成本高且行为易漂移。**下一步**：确定微服务架构为正式方向后，逐域收敛到单一实现，另一侧删除或改为薄客户端 |
+| TD-61 | **controlplane/store 父包拆分** | `internal/controlplane/` 顶层仍有 60+ 文件（与已拆出的 audit/auth/billing 等子目录风格不一致）；`internal/store/` 单目录 100+ 文件。**下一步**：按主题继续下沉到子包，目标顶层 ≤20 文件 |
+| TD-62 | **API 网关完整数据面** | 当前 `/gw/` 仅最小反向代理（PathPrefix 匹配），限流/鉴权/熔断未在数据面生效。**下一步**：extension 引擎与数据面接线，或明确声明网关为控制面预览形态 |
+| TD-63 | **Task 三份 schema 统一** | proto/（.proto 生成）、internal/proto（JSON 契约）、services/task-svc/api/proto 各有一份 Task 定义，字段演进时三处需同步。**下一步**：buf generate 单一来源，另两处改为引用或生成 |
+| TD-64 | **pb stub 死代码** | `internal/grpcx/pb/` 生成的 stub 未被运行时消费（JSON codec 为主契约）。**下一步**：若 protobuf 双轨不迁移则删除，若迁移则补 buf breaking CI 消费方 |
+| TD-65 | **微服务 MySQL store 未接线** | `services/task-svc` 等 10 个服务的 main 构造的是 `store.NewMemoryStore()`，服务端 mysql.go + schema.sql 已写好未启用，服务重启数据丢失。**下一步**：加 DSN 环境变量分支接线，加集成测试验证持久化 |
+| TD-67 | ~~gofmt 基线破坏~~ | ✅ 2026-08-30 已修：`gofmt -w internal cmd pkg services tests` 全仓恢复（73+66 文件），`gofmt -l` 清零，`go build ./...` 通过。留此行供 CI 首跑确认后删除 |
 
 ---
 

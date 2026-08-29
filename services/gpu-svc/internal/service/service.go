@@ -213,11 +213,11 @@ func (s *Service) PullModel(name string) (*models.GPUModel, error) {
 		return nil, err
 	}
 	return &models.GPUModel{
-		Name:         name,
-		SizeBytes:    ollama.EstimateModelSize(name),
+		Name:           name,
+		SizeBytes:      ollama.EstimateModelSize(name),
 		ParameterCount: ollama.EstimateParams(name),
-		Quantized:    true,
-		LastPulled:   time.Now(),
+		Quantized:      true,
+		LastPulled:     time.Now(),
 	}, nil
 }
 
@@ -255,12 +255,12 @@ func (s *Service) ServeModel(name, nodeID string, port, replicas int) (*models.G
 		return nil, err
 	}
 	return &models.GPUModel{
-		Name:         name,
-		Serving:      true,
-		Port:         port,
-		NodeID:       nodeID,
-		Replicas:     replicas,
-		LastPulled:   time.Now(),
+		Name:       name,
+		Serving:    true,
+		Port:       port,
+		NodeID:     nodeID,
+		Replicas:   replicas,
+		LastPulled: time.Now(),
 	}, nil
 }
 

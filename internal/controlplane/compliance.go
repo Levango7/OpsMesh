@@ -17,8 +17,8 @@ package controlplane
 //   - 合规引擎在 handler 内即时构造（NewEngine 很轻，规则只读）。
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 	"time"
 
@@ -225,4 +225,3 @@ func (s *Server) handleGetComplianceReport(w http.ResponseWriter, r *http.Reques
 	}
 	paginate.WriteJSON(w, http.StatusOK, report)
 }
-

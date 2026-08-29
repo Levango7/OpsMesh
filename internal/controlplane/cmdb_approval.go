@@ -17,13 +17,13 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strings"
 	"sync"
 	"time"
@@ -77,6 +77,16 @@ type CMDBChangeRequest struct {
 // ============================================================================
 // 审批管理器
 // ============================================================================
+
+// changeApplyError 包装"变更执行阶段"的底层错误（ciStore 的 CreateCI/UpdateCI/DeleteCI）。
+//
+// 底层 ciStore 可能返回 SQL 错误（含表名、列名、SQL 片段、DSN），直接回吐客户端即信息泄露。
+// 用该类型标记后，HTTP 层可据此脱敏：响应体只给固定文案，原始 err 进服务端日志与审计。
+// Cause 仍保留在错误链中（Unwrap），服务端日志/审计可拿到完整信息。
+type changeApplyError struct{ cause error }
+
+func (e *changeApplyError) Error() string { return "apply change failed: " + e.cause.Error() }
+func (e *changeApplyError) Unwrap() error { return e.cause }
 
 // CMDBApprovalManager CMDB 变更审批管理器。
 //
@@ -180,7 +190,8 @@ func (m *CMDBApprovalManager) ApproveChange(changeID, approver, comment string) 
 			Action: "cmdb_change_approve_failed", Target: changeID,
 			Detail: sanitizeAuditDetail(fmt.Sprintf("approve failed: %v", err)),
 		})
-		return fmt.Errorf("apply change failed: %w", err)
+		// 用 changeApplyError 标记：调用方据此脱敏，避免 SQL 细节回吐客户端。
+		return &changeApplyError{cause: err}
 	}
 
 	// 变更执行成功，更新状态。
@@ -402,7 +413,7 @@ func (s *Server) cmdbChangeList(w http.ResponseWriter, r *http.Request) {
 		reqs, err = s.cmdbApprovalMgr.ListAll(actx.TenantID, status)
 	}
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(r.Context(), w, "cmdbApproval.listChanges", err)
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
@@ -525,6 +536,13 @@ func (s *Server) cmdbChangeApprove(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 	if err := s.cmdbApprovalMgr.ApproveChange(id, actx.UserID, body.Comment); err != nil {
+		// 变更执行阶段的错误来自 ciStore（可能含 SQL 细节）→ 脱敏后返回，原始 err 仅记日志。
+		var apErr *changeApplyError
+		if errors.As(err, &apErr) {
+			writeSanitizedError(r.Context(), w, http.StatusBadRequest, "cmdbApproval.approveChange", "apply change failed", err)
+			return
+		}
+		// 其余为状态机/校验错误（not found / not pending），语义安全，按原契约回吐。
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}

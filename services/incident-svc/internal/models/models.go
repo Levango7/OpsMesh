@@ -9,11 +9,11 @@ import (
 type IncidentStatus string
 
 const (
-	StatusDetected     IncidentStatus = "detected"
+	StatusDetected      IncidentStatus = "detected"
 	StatusInvestigating IncidentStatus = "investigating"
-	StatusMitigating   IncidentStatus = "mitigating"
-	StatusResolved     IncidentStatus = "resolved"
-	StatusClosed       IncidentStatus = "closed"
+	StatusMitigating    IncidentStatus = "mitigating"
+	StatusResolved      IncidentStatus = "resolved"
+	StatusClosed        IncidentStatus = "closed"
 )
 
 // Severity represents the severity level of an incident.
@@ -29,20 +29,20 @@ const (
 
 // Incident represents a managed incident aggregating related alerts.
 type Incident struct {
-	ID           string            `json:"id"`
-	Title        string            `json:"title"`
-	Description  string            `json:"description"`
-	Severity     Severity          `json:"severity"`
-	Status       IncidentStatus    `json:"status"`
-	AlertIDs     []string          `json:"alert_ids"`
-	DeviceIDs    []string          `json:"device_ids"`
-	Assignee     string            `json:"assignee"`
-	Tags         map[string]string `json:"tags"`
-	DetectedAt   time.Time         `json:"detected_at"`
-	ResolvedAt   *time.Time        `json:"resolved_at,omitempty"`
-	ClosedAt     *time.Time        `json:"closed_at,omitempty"`
-	CreatedAt    time.Time         `json:"created_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
+	ID          string            `json:"id"`
+	Title       string            `json:"title"`
+	Description string            `json:"description"`
+	Severity    Severity          `json:"severity"`
+	Status      IncidentStatus    `json:"status"`
+	AlertIDs    []string          `json:"alert_ids"`
+	DeviceIDs   []string          `json:"device_ids"`
+	Assignee    string            `json:"assignee"`
+	Tags        map[string]string `json:"tags"`
+	DetectedAt  time.Time         `json:"detected_at"`
+	ResolvedAt  *time.Time        `json:"resolved_at,omitempty"`
+	ClosedAt    *time.Time        `json:"closed_at,omitempty"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
 }
 
 // TimelineEvent represents a single event in an incident timeline.
@@ -57,39 +57,39 @@ type TimelineEvent struct {
 
 // Alert represents an ingested alert that can be aggregated into incidents.
 type Alert struct {
-	ID        string    `json:"id"`
-	Source    string    `json:"source"`
-	DeviceID  string    `json:"device_id"`
-	Severity  Severity  `json:"severity"`
-	Message   string    `json:"message"`
-	Metric    string    `json:"metric"`
-	Timestamp time.Time `json:"timestamp"`
+	ID        string            `json:"id"`
+	Source    string            `json:"source"`
+	DeviceID  string            `json:"device_id"`
+	Severity  Severity          `json:"severity"`
+	Message   string            `json:"message"`
+	Metric    string            `json:"metric"`
+	Timestamp time.Time         `json:"timestamp"`
 	Labels    map[string]string `json:"labels"`
 }
 
 // Postmortem represents a generated postmortem document.
 type Postmortem struct {
-	IncidentID       string            `json:"incident_id"`
-	Title            string            `json:"title"`
-	Summary          string            `json:"summary"`
-	Impact           string            `json:"impact"`
-	RootCause        string            `json:"root_cause"`
-	Timeline         []TimelineEvent   `json:"timeline"`
-	LessonsLearned   []string          `json:"lessons_learned"`
-	ActionItems      []string          `json:"action_items"`
-	MTTD             time.Duration     `json:"mttd"`
-	MTTR             time.Duration     `json:"mttr"`
-	GeneratedAt      time.Time         `json:"generated_at"`
+	IncidentID     string          `json:"incident_id"`
+	Title          string          `json:"title"`
+	Summary        string          `json:"summary"`
+	Impact         string          `json:"impact"`
+	RootCause      string          `json:"root_cause"`
+	Timeline       []TimelineEvent `json:"timeline"`
+	LessonsLearned []string        `json:"lessons_learned"`
+	ActionItems    []string        `json:"action_items"`
+	MTTD           time.Duration   `json:"mttd"`
+	MTTR           time.Duration   `json:"mttr"`
+	GeneratedAt    time.Time       `json:"generated_at"`
 }
 
 // ResponseMetrics holds incident response metrics.
 type ResponseMetrics struct {
-	TotalIncidents   int           `json:"total_incidents"`
-	ActiveIncidents  int           `json:"active_incidents"`
-	ResolvedIncidents int         `json:"resolved_incidents"`
-	AvgMTTD          time.Duration `json:"avg_mttd"`
-	AvgMTTR          time.Duration `json:"avg_mttr"`
-	AvgMTTF          time.Duration `json:"avg_mttf"`
+	TotalIncidents    int           `json:"total_incidents"`
+	ActiveIncidents   int           `json:"active_incidents"`
+	ResolvedIncidents int           `json:"resolved_incidents"`
+	AvgMTTD           time.Duration `json:"avg_mttd"`
+	AvgMTTR           time.Duration `json:"avg_mttr"`
+	AvgMTTF           time.Duration `json:"avg_mttf"`
 }
 
 // IncidentStore is the interface for incident persistence.
@@ -106,9 +106,9 @@ type IncidentStore interface {
 
 // MemoryStore is an in-memory implementation of IncidentStore.
 type MemoryStore struct {
-	mu          sync.RWMutex
-	incidents   map[string]*Incident
-	timeline    map[string][]TimelineEvent
+	mu        sync.RWMutex
+	incidents map[string]*Incident
+	timeline  map[string][]TimelineEvent
 }
 
 // NewMemoryStore creates a new MemoryStore.

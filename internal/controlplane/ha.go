@@ -17,8 +17,8 @@ package controlplane
 //     手动切换需运维摘掉当前 leader Pod 触发重新选举）。
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"os"
 	"time"
 )

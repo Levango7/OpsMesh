@@ -12,20 +12,20 @@ import (
 
 // Provider type constants.
 const (
-	ProviderAWS     = "aws"
-	ProviderHuawei  = "huawei"
-	ProviderAli     = "ali"
-	ProviderOnPrem  = "onprem"
+	ProviderAWS    = "aws"
+	ProviderHuawei = "huawei"
+	ProviderAli    = "ali"
+	ProviderOnPrem = "onprem"
 )
 
 // DeploymentStatus represents the status of a cloud deployment.
 type DeploymentStatus string
 
 const (
-	StatusPending   DeploymentStatus = "pending"
-	StatusRunning   DeploymentStatus = "running"
-	StatusSuccess   DeploymentStatus = "success"
-	StatusFailed    DeploymentStatus = "failed"
+	StatusPending    DeploymentStatus = "pending"
+	StatusRunning    DeploymentStatus = "running"
+	StatusSuccess    DeploymentStatus = "success"
+	StatusFailed     DeploymentStatus = "failed"
 	StatusRolledBack DeploymentStatus = "rolled_back"
 )
 
@@ -47,14 +47,14 @@ type DeploymentConfig struct {
 
 // DeploymentResult holds the result of a cloud deployment operation.
 type DeploymentResult struct {
-	DeploymentID  string           `json:"deployment_id"`
-	Provider      string           `json:"provider"`
-	Status        DeploymentStatus `json:"status"`
-	Region        string           `json:"region"`
-	Message       string           `json:"message"`
-	ExternalRef   string           `json:"external_ref,omitempty"`
-	DeployedAt    time.Time        `json:"deployed_at"`
-	UpdatedAt     time.Time        `json:"updated_at"`
+	DeploymentID string           `json:"deployment_id"`
+	Provider     string           `json:"provider"`
+	Status       DeploymentStatus `json:"status"`
+	Region       string           `json:"region"`
+	Message      string           `json:"message"`
+	ExternalRef  string           `json:"external_ref,omitempty"`
+	DeployedAt   time.Time        `json:"deployed_at"`
+	UpdatedAt    time.Time        `json:"updated_at"`
 }
 
 // CloudProvider defines the interface for multi-cloud deployment operations.
@@ -82,10 +82,10 @@ var ErrInvalidConfig = errors.New("invalid deployment config")
 
 // AWSProvider implements CloudProvider for Amazon Web Services (ECS/EC2).
 type AWSProvider struct {
-	mu            sync.RWMutex
-	deployments   map[string]DeploymentResult
-	region        string
-	K8sClient     *k8s.Client
+	mu          sync.RWMutex
+	deployments map[string]DeploymentResult
+	region      string
+	K8sClient   *k8s.Client
 }
 
 // NewAWSProvider creates a new AWS provider.
@@ -239,10 +239,10 @@ func (a *AWSProvider) Rollback(deploymentID string) (DeploymentResult, error) {
 
 // HuaweiProvider implements CloudProvider for Huawei Cloud.
 type HuaweiProvider struct {
-	mu            sync.RWMutex
-	deployments   map[string]DeploymentResult
-	region        string
-	K8sClient     *k8s.Client
+	mu          sync.RWMutex
+	deployments map[string]DeploymentResult
+	region      string
+	K8sClient   *k8s.Client
 }
 
 // NewHuaweiProvider creates a new Huawei Cloud provider.
@@ -395,10 +395,10 @@ func (h *HuaweiProvider) Rollback(deploymentID string) (DeploymentResult, error)
 
 // AliProvider implements CloudProvider for Alibaba Cloud.
 type AliProvider struct {
-	mu            sync.RWMutex
-	deployments   map[string]DeploymentResult
-	region        string
-	K8sClient     *k8s.Client
+	mu          sync.RWMutex
+	deployments map[string]DeploymentResult
+	region      string
+	K8sClient   *k8s.Client
 }
 
 // NewAliProvider creates a new Alibaba Cloud provider.
@@ -551,9 +551,9 @@ func (a *AliProvider) Rollback(deploymentID string) (DeploymentResult, error) {
 
 // OnPremProvider implements CloudProvider for on-premise servers.
 type OnPremProvider struct {
-	mu            sync.RWMutex
-	deployments   map[string]DeploymentResult
-	K8sClient     *k8s.Client
+	mu          sync.RWMutex
+	deployments map[string]DeploymentResult
+	K8sClient   *k8s.Client
 }
 
 // NewOnPremProvider creates a new on-premise provider.

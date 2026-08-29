@@ -13,13 +13,13 @@ package controlplane
 //   - POST   /api/v1/marketplace/plugins/{id}/disable    禁用插件
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"opsmesh/internal/controlplane/paginate"
 	"os"
 	"path/filepath"
 	"strings"

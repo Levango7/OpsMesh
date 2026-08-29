@@ -14,7 +14,7 @@ type Config struct {
 	DSN             string        `json:"dsn"`       // SQLStore DSN (if StoreType=sql)
 	RedisAddr       string        `json:"redisAddr"` // Redis address (if StoreType=sql)
 	ShutdownTimeout time.Duration `json:"shutdownTimeout"`
-	EncryptionKey   string        `json:"encryptionKey"` // Key for secrets encryption at rest
+	EncryptionKey   string        `json:"encryptionKey"`  // Key for secrets encryption at rest
 	MaxHistorySize  int           `json:"maxHistorySize"` // Max versions to retain per config/secret
 
 	// OTel tracing settings.

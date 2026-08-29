@@ -162,9 +162,9 @@ type ListSecretsResponse struct {
 
 // RotateSecretRequest is the request to rotate a secret.
 type RotateSecretRequest struct {
-	TenantId  string
-	Key       string
-	NewValue  string
+	TenantId string
+	Key      string
+	NewValue string
 }
 
 // CreateChannelRequest is the request to create a channel.

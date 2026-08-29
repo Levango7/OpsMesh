@@ -18,9 +18,9 @@ const (
 
 // AllocationRule defines how costs should be allocated across a dimension.
 type AllocationRule struct {
-	Dimension Dimension    `json:"dimension"`
-	Weight    float64      `json:"weight"`
-	Tags      []string     `json:"targets"`
+	Dimension Dimension `json:"dimension"`
+	Weight    float64   `json:"weight"`
+	Tags      []string  `json:"targets"`
 }
 
 // AllocationResult represents the result of a cost allocation for a single target.
@@ -34,9 +34,9 @@ type AllocationResult struct {
 
 // AllocationReport contains the full results of a cost allocation run.
 type AllocationReport struct {
-	TotalCost   float64             `json:"total_cost"`
-	Rule        AllocationRule      `json:"rule"`
-	Results     []AllocationResult  `json:"results"`
+	TotalCost float64            `json:"total_cost"`
+	Rule      AllocationRule     `json:"rule"`
+	Results   []AllocationResult `json:"results"`
 }
 
 // CostEntry represents a single cost item to be allocated.

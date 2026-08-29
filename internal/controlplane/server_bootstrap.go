@@ -2,13 +2,13 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"context"
 	"crypto/hmac"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"os"
 	"strconv"
 	"strings"
@@ -170,7 +170,7 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 		Provision:    s.store.Provision,
 	}, s.cfg, cidrs, tenant)
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(r.Context(), w, "bootstrap.autoProvision", err)
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。

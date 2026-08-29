@@ -20,12 +20,12 @@ type GPUDevice struct {
 
 // GPUStats holds aggregate statistics across all GPUs.
 type GPUStats struct {
-	TotalGPUs      int            `json:"totalGpus"`
-	TotalVRAMGB    int            `json:"totalVramGb"`
-	OnlineGPUs     int            `json:"onlineGPUs"`
-	OfflineGPUs    int            `json:"offlineGPUs"`
-	ModelCounts    map[string]int `json:"modelCounts"`
-	AvgVRAMGB      float64        `json:"avgVramGb"`
+	TotalGPUs   int            `json:"totalGpus"`
+	TotalVRAMGB int            `json:"totalVramGb"`
+	OnlineGPUs  int            `json:"onlineGPUs"`
+	OfflineGPUs int            `json:"offlineGPUs"`
+	ModelCounts map[string]int `json:"modelCounts"`
+	AvgVRAMGB   float64        `json:"avgVramGb"`
 }
 
 // Detector manages GPU detection and caching.

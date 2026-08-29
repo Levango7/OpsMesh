@@ -14,7 +14,6 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"bytes"
 	"context"
 	"crypto/hmac"
@@ -26,6 +25,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strconv"
 	"strings"
 	"time"
@@ -319,7 +319,7 @@ func (s *Server) handleFederationForwardTask(w http.ResponseWriter, r *http.Requ
 	created, err := s.fed.ForwardTask(r.Context(), body.PeerURL, body.Task, r.Header)
 	if err != nil {
 		logx.Error(r.Context(), "联邦任务转发失败", err, "peer", body.PeerURL, "agentID", body.Task.AgentID)
-		paginate.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		paginate.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": "upstream peer request failed"})
 		return
 	}
 	// 本地审计留痕（等保三级：跨网段操作必须可追溯）。

@@ -32,7 +32,7 @@ type Detector interface {
 
 // NvidiaDetector runs nvidia-smi to detect NVIDIA GPUs.
 type NvidiaDetector struct {
-	mu       sync.Mutex
+	mu        sync.Mutex
 	nvidiaSMI string
 	available *bool
 }
@@ -125,7 +125,6 @@ func ParseCSVOutput(output string) []GPUInfo {
 		gpu.UtilizationMemory, _ = strconv.ParseFloat(fields[5], 64)
 		gpu.Temperature, _ = strconv.ParseFloat(fields[6], 64)
 		gpu.PowerDraw, _ = strconv.ParseFloat(fields[7], 64)
-
 
 		gpus = append(gpus, gpu)
 	}

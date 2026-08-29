@@ -47,10 +47,10 @@ func Config(serviceName, level string) *Logger {
 // includes trace_id and span_id from the OTel span context.
 func (l *Logger) WithContext(ctx context.Context) *ContextLogger {
 	return &ContextLogger{
-		ctx:        ctx,
+		ctx:         ctx,
 		serviceName: l.serviceName,
-		traceID:    logx.Trace(ctx),
-		spanID:     spanIDFromContext(ctx),
+		traceID:     logx.Trace(ctx),
+		spanID:      spanIDFromContext(ctx),
 	}
 }
 

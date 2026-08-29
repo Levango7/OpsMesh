@@ -32,7 +32,7 @@ type migration struct {
 	Path    string
 }
 
-//Migrator handles database schema migrations.
+// Migrator handles database schema migrations.
 type Migrator struct {
 	db        *sql.DB
 	schemaDir string

@@ -16,7 +16,7 @@ type Device struct {
 	TenantId      string
 	Name          string
 	Ip            string
-	Mac            string
+	Mac           string
 	Os            string
 	Arch          string
 	Status        string
@@ -77,16 +77,16 @@ type CIRelation struct {
 
 // DiscoveryJob represents a network discovery job.
 type DiscoveryJob struct {
-	Id            string
-	TenantId      string
-	Cidr          string
-	Status        string
-	TotalHosts    int32
-	ScannedHosts  int32
-	FoundDevices  int32
-	Error         string
-	StartedAt     *timestamppb.Timestamp
-	CompletedAt   *timestamppb.Timestamp
+	Id           string
+	TenantId     string
+	Cidr         string
+	Status       string
+	TotalHosts   int32
+	ScannedHosts int32
+	FoundDevices int32
+	Error        string
+	StartedAt    *timestamppb.Timestamp
+	CompletedAt  *timestamppb.Timestamp
 }
 
 // DeviceStatus represents the current status of a device.

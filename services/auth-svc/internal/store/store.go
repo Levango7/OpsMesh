@@ -51,14 +51,14 @@ type RefreshToken struct {
 
 // MemoryStore is an in-memory implementation of the auth store.
 type MemoryStore struct {
-	mu           sync.RWMutex
-	users        map[string]*User
-	usersByName  map[string]string
-	roles        map[string]*Role
-	rolesByName  map[string]string
-	permissions  map[string]*Permission
+	mu            sync.RWMutex
+	users         map[string]*User
+	usersByName   map[string]string
+	roles         map[string]*Role
+	rolesByName   map[string]string
+	permissions   map[string]*Permission
 	refreshTokens map[string]*RefreshToken
-	blacklist    map[string]time.Time
+	blacklist     map[string]time.Time
 }
 
 // NewMemoryStore creates a new MemoryStore with default permissions and admin user.

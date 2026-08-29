@@ -166,9 +166,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/billing/plans/", s.handleBillingPlanRouting)                 // 子路径：{id} GET/PUT/DELETE
 	mux.HandleFunc("/api/v1/billing/subscriptions", s.handleBillingSubscriptions)        // GET 列表 / POST 创建
 	mux.HandleFunc("/api/v1/billing/subscriptions/", s.handleBillingSubscriptionRouting) // 子路径：{id} GET/PUT/DELETE
- 	mux.HandleFunc("/api/v1/billing/invoices", s.handleBillingInvoices)                  // GET 列表
- 	mux.HandleFunc("/api/v1/billing/invoices/", s.handleBillingInvoiceRouting)           // 子路径：{id} GET
- 	mux.HandleFunc("/api/v1/billing/usage", s.handleBillingUsage)                        // GET 资源用量统计
+	mux.HandleFunc("/api/v1/billing/invoices", s.handleBillingInvoices)                  // GET 列表
+	mux.HandleFunc("/api/v1/billing/invoices/", s.handleBillingInvoiceRouting)           // 子路径：{id} GET
+	mux.HandleFunc("/api/v1/billing/usage", s.handleBillingUsage)                        // GET 资源用量统计
 	mux.HandleFunc("/api/v1/platform/config", s.handlePlatformConfig)                    // GET/PUT 平台配置
 	mux.HandleFunc("/api/v1/platform/health", s.handlePlatformHealth)                    // GET 平台健康检查
 	mux.HandleFunc("/api/v1/platform/metrics", s.handlePlatformMetrics)                  // GET 平台指标汇总
@@ -231,18 +231,18 @@ func (s *Server) Start() error {
 	// ：otelx.HTTPMiddleware 为每个请求创建 span 并从请求头提取 W3C Trace Context，
 	// 置于 recoveryMiddleware 之内使 panic 被捕获后 span 仍能正常 End()，置于 securityHeaders 之外
 	// 使 span 覆盖完整业务逻辑（安全头注入不影响 span 边界）。
- 	httpSrv := &http.Server{
- 		Addr: fmt.Sprintf(":%d", s.httpPort),
- 		Handler: s.corsMiddleware( // CORS 跨域（开发模式允许所有来源）
- 			s.httpMetricsMiddleware( // HTTP 指标（计数 + 延迟直方图）
- 				recoveryMiddleware( // 兜底盘
- 					otelx.HTTPMiddleware("opsmesh-controlplane", // OTel HTTP 自动埋点
- 						s.rateLimitMiddleware( // API 限流（429 Too Many Requests）
- 							s.securityHeadersMiddleware( // 安全头 + B1 CSP nonce
- 								s.csrfOriginCheck( // CSRF Origin 校验（状态变更方法）
- 									&paginate.JSONErrorMux{Inner: mux}))))))), // B1 404 JSON
- 		ReadHeaderTimeout: 10 * time.Second,
- 	}
+	httpSrv := &http.Server{
+		Addr: fmt.Sprintf(":%d", s.httpPort),
+		Handler: s.corsMiddleware( // CORS 跨域（开发模式允许所有来源）
+			s.httpMetricsMiddleware( // HTTP 指标（计数 + 延迟直方图）
+				recoveryMiddleware( // 兜底盘
+					otelx.HTTPMiddleware("opsmesh-controlplane", // OTel HTTP 自动埋点
+						s.rateLimitMiddleware( // API 限流（429 Too Many Requests）
+							s.securityHeadersMiddleware( // 安全头 + B1 CSP nonce
+								s.csrfOriginCheck( // CSRF Origin 校验（状态变更方法）
+									&paginate.JSONErrorMux{Inner: mux}))))))), // B1 404 JSON
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	grpcSrv, grpcLis, err := s.buildGRPC()
 	if err != nil {
@@ -270,11 +270,11 @@ func (s *Server) Start() error {
 	go s.autoProvisionLoop(ctx)         // 自动纳管：--discover + --auto-provision 时周期扫描网段并推送 agent
 	go s.deployReconcileLoop(ctx)       // M3 部署对账：周期把 running 部署按底层任务结果翻终态（仅 leader）
 	go s.workflowScheduleLoop(ctx)      // M5 作业编排：周期按 cron 触发 active 工作流并 reconcile 运行态（仅 leader）
- 	s.startRefreshSweep(ctx, time.Hour) // 周期清理过期刷新令牌 + blacklist，ctx 取消时优雅退出
+	s.startRefreshSweep(ctx, time.Hour) // 周期清理过期刷新令牌 + blacklist，ctx 取消时优雅退出
 	if s.cmdbCollector != nil {
 		go s.cmdbCollector.Run(ctx) // CMDB 定时采集：周期从设备指标更新 CMDB CI（仅 leader）
 	}
-	s.startPipelineExecutor(ctx, 10*time.Second) // pipeline 执行器：推进 pending→running→succeeded
+	s.startPipelineExecutor(ctx, 10*time.Second)                // pipeline 执行器：推进 pending→running→succeeded
 	go s.startAutomationEvalLoop(ctx, s.automationEvalInterval) // 自动化引擎评估循环：周期评估 enabled 规则并执行命中动作
 
 	errCh := make(chan error, 3)
@@ -336,10 +336,10 @@ func (s *Server) Start() error {
 			}
 		}
 		return nil
- 	case err := <-errCh:
- 		return err
- 	}
- }
+	case err := <-errCh:
+		return err
+	}
+}
 
 // corsMiddleware 添加 CORS 头（开发模式允许所有来源）。
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {

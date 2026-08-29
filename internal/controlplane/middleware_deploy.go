@@ -21,11 +21,11 @@
 package controlplane
 
 import (
-	"opsmesh/internal/controlplane/paginate"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"opsmesh/internal/controlplane/paginate"
 	"strconv"
 	"strings"
 
@@ -578,7 +578,7 @@ func (s *Server) handleCreateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	tpl.Risk = normalizeRisk(tpl.Risk)
 	st := middlewareTemplateToStore(&tpl, actx.TenantID)
 	if err := s.store.SaveMiddlewareTemplate(st); err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save template failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "middleware.saveTemplate", err)
 		return
 	}
 	saved := middlewareTemplateFromStore(s.store.GetMiddlewareTemplate(st.ID))
@@ -640,7 +640,7 @@ func (s *Server) handleUpdateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	tpl.Risk = normalizeRisk(tpl.Risk)
 	st := middlewareTemplateToStore(&tpl, actx.TenantID)
 	if err := s.store.SaveMiddlewareTemplate(st); err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save template failed: " + err.Error()})
+		writeInternalError(r.Context(), w, "middleware.saveTemplate", err)
 		return
 	}
 	saved := middlewareTemplateFromStore(s.store.GetMiddlewareTemplate(id))
