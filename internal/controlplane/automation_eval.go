@@ -145,11 +145,3 @@ func (s *Server) deviceMetricValue(tenantID, metric string) (float64, bool) {
 	}
 	return 0, false
 }
-
-// ensureAutomationEvalInterval 返回 Server 的评估周期（零值兜底 30s，供测试/诊断复用）。
-func (s *Server) ensureAutomationEvalInterval() time.Duration {
-	if s.automationEvalInterval <= 0 {
-		return defaultAutomationEvalInterval
-	}
-	return s.automationEvalInterval
-}

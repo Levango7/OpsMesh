@@ -41,8 +41,10 @@ func scanTrafficPolicy(row rowScanner) *TrafficPolicy {
 	p.CreatedAt = createdAt
 	p.UpdatedAt = updatedAt
 	if len(canaryJSON) > 0 {
-		// 反序列化失败不致命：保留空 CanaryWeights，避免单条坏数据让整个 List 崩。
-		_ = json.Unmarshal(canaryJSON, &p.CanaryWeights)
+		// 反序列化失败不致命：保留空 CanaryWeights，避免单条坏数据让整个 List 崩，但必须留痕。
+		if err := json.Unmarshal(canaryJSON, &p.CanaryWeights); err != nil {
+			log.Printf("[store] scanTrafficPolicy 反序列化 canary_weights 失败（保留空 CanaryWeights 继续）: %v", err)
+		}
 	}
 	return &p
 }

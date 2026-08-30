@@ -263,7 +263,7 @@ func TestGenerateSelfCert_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("解析 PEM 证书失败: %v", err)
 	}
-	if cert.Certificate == nil || len(cert.Certificate) == 0 {
+	if len(cert.Certificate) == 0 {
 		t.Fatal("证书链为空")
 	}
 }

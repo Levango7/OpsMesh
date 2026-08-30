@@ -45,7 +45,11 @@ type haStatusResponse struct {
 
 // haInstanceID 返回当前实例 ID（hostname:httpPort，MVP 简单方案）。
 func (s *Server) haInstanceID() string {
-	host, _ := os.Hostname()
+	host, err := os.Hostname()
+	if err != nil {
+		// 取不到主机名（极端环境）时用稳定占位符，保证实例 ID 非空可展示。
+		host = "unknown"
+	}
 	return host
 }
 

@@ -16,6 +16,7 @@ package controlplane
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -95,7 +96,11 @@ func newBatchStore() *batchStore {
 // genBatchID 生成批次 ID（batch-<8 字节 hex>）。
 func genBatchID(prefix string) string {
 	var b [8]byte
-	_, _ = rand.Read(b[:])
+	// crypto/rand 失败仅见于系统熵源故障的极端环境：占位 ID 保持非空可用，
+	// 冲突由 store 侧主键/覆盖语义兜底，此处留痕即可。
+	if _, err := rand.Read(b[:]); err != nil {
+		log.Printf("[controlplane] genBatchID: crypto/rand 读取失败（使用零值占位 ID）: %v", err)
+	}
 	return prefix + "-" + hex.EncodeToString(b[:])
 }
 

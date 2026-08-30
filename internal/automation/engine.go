@@ -10,6 +10,7 @@ package automation
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -275,7 +276,10 @@ func (e *Engine) executeAction(tenantID string, action Action) (string, error) {
 		service := action.Params["service"]
 		replicas := 0
 		if r := action.Params["replicas"]; r != "" {
-			_, _ = fmt.Sscanf(r, "%d", &replicas)
+			// 解析失败时 replicas 保持 0，落入下方「replicas > 0」校验返回明确错误。
+			if _, err := fmt.Sscanf(r, "%d", &replicas); err != nil {
+				log.Printf("[automation] scale: 解析 replicas 参数 %q 失败: %v", r, err)
+			}
 		}
 		if service == "" || replicas <= 0 {
 			return "", fmt.Errorf("scale requires service and replicas > 0 params")

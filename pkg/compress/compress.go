@@ -35,7 +35,12 @@ const (
 // gzipPool pools gzip writers for reuse.
 var gzipPool = sync.Pool{
 	New: func() interface{} {
-		w, _ := gzip.NewWriterLevel(nil, DefaultGzipLevel)
+		w, err := gzip.NewWriterLevel(nil, DefaultGzipLevel)
+		if err != nil {
+			// DefaultGzipLevel 是常量 gzip.BestSpeed（值域合法），此分支纯防御：
+			// level 非法属编程错误，回退默认 level 的 writer 保证池永不返回 nil。
+			w = gzip.NewWriter(nil)
+		}
 		return w
 	},
 }
@@ -179,11 +184,27 @@ func (cw *compressWriter) WriteHeader(code int) {
 	// Initialize the compressor
 	switch cw.encoding {
 	case "br":
-		bw := brotliPool.Get().(*brotli.Writer)
+		bw, ok := brotliPool.Get().(*brotli.Writer)
+		if !ok {
+			// 池 New 只产出 *brotli.Writer，断言失败属异常：撤销压缩头改走透传。
+			cw.Header().Del("Content-Encoding")
+			cw.Header().Del("Vary")
+			cw.skipCompress = true
+			cw.ResponseWriter.WriteHeader(code)
+			return
+		}
 		bw.Reset(cw.ResponseWriter)
 		cw.writer = &brotliWriterAdapter{w: bw}
 	case "gzip":
-		gw := gzipPool.Get().(*gzip.Writer)
+		gw, ok := gzipPool.Get().(*gzip.Writer)
+		if !ok {
+			// 池 New 只产出 *gzip.Writer，断言失败属异常：撤销压缩头改走透传。
+			cw.Header().Del("Content-Encoding")
+			cw.Header().Del("Vary")
+			cw.skipCompress = true
+			cw.ResponseWriter.WriteHeader(code)
+			return
+		}
 		gw.Reset(cw.ResponseWriter)
 		cw.writer = &gzipWriterAdapter{w: gw}
 	default:
@@ -230,14 +251,25 @@ func (cw *compressWriter) Close() {
 func (cw *compressWriter) Flush() {
 	if cw.writer != nil {
 		cw.writer.Close()
+		cw.writer = nil
 		// Re-initialize after flush for streaming
 		switch cw.encoding {
 		case "br":
-			bw := brotliPool.Get().(*brotli.Writer)
+			bw, ok := brotliPool.Get().(*brotli.Writer)
+			if !ok {
+				// 池 New 只产出 *brotli.Writer，断言失败属异常：终止压缩改走透传。
+				cw.skipCompress = true
+				break
+			}
 			bw.Reset(cw.ResponseWriter)
 			cw.writer = &brotliWriterAdapter{w: bw}
 		case "gzip":
-			gw := gzipPool.Get().(*gzip.Writer)
+			gw, ok := gzipPool.Get().(*gzip.Writer)
+			if !ok {
+				// 池 New 只产出 *gzip.Writer，断言失败属异常：终止压缩改走透传。
+				cw.skipCompress = true
+				break
+			}
 			gw.Reset(cw.ResponseWriter)
 			cw.writer = &gzipWriterAdapter{w: gw}
 		}

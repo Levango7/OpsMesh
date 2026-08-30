@@ -43,7 +43,9 @@ func StubNotImplemented(domain, method string) {
 	if v, ok := stubLastLog.Load(key); ok {
 		// 已有记录：窗口内静默；窗口外尝试 CAS 推进时间戳，
 		// CAS 失败说明并发下另一 goroutine 刚刷新过，本调用静默即可。
-		if last, _ := v.(int64); now-last < int64(stubLogInterval) {
+		// map 值只会是 LoadOrStore 存入的 int64 时间戳，断言失败按窗口未过处理（保守静默）。
+		last, ok := v.(int64)
+		if !ok || now-last < int64(stubLogInterval) {
 			return
 		}
 		if !stubLastLog.CompareAndSwap(key, v, now) {

@@ -360,9 +360,9 @@ func (m *Manager) QuotaMiddleware(resourceType ResourceType, amount int) func(ht
 				return
 			}
 
-			if err := m.TrackUsage(r.Context(), tenantID, resourceType, amount); err != nil {
-				// Non-fatal: log but proceed. Quota enforcement already passed.
-			}
+			// Non-fatal: usage tracking failure must not block the request —
+			// quota enforcement above already passed, so the request proceeds.
+			_ = m.TrackUsage(r.Context(), tenantID, resourceType, amount)
 
 			next.ServeHTTP(w, r)
 		})

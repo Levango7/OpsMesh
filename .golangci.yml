@@ -83,13 +83,20 @@ linters:
       - legacy
       - std-error-handling
     rules:
-      # 测试文件放宽：常故意忽略 err / 含弱口令 fixture / 用空参数占位。
+      # 测试文件放宽：常故意忽略 err / 含弱口令 fixture / 用空参数占位 /
+      # 构造 Server struct 时给未读字段赋 nil（govet unusedwrite 子检查：
+      # 测试构造惯例，结构体字段在真实链路才被读取，测试只断言个别字段/接口契约）。
+      # 注：unusedwrite 归属 govet，须以 govet 名义豁免（配 path 限定测试文件）。
       - linters:
           - errcheck
           - gosec
           - unparam
           - wastedassign
         path: _test\.go
+      - linters:
+          - govet
+        path: _test\.go
+        text: "unusedwrite:"
       # main.go 中 os.Exit 后的 fmt.Fprintf 返回值无需检查。
       - linters:
           - errcheck
@@ -100,10 +107,12 @@ linters:
           - govet
         text: "fieldalignment:"
       # SA1019: grpc.DialContext 已 deprecated 但官方注明"整个 1.x 都支持"，
-      # 迁移到 grpc.NewClient 涉及连接语义变化，有意保留，另行跟踪。
+      # 迁移到 grpc.NewClient 涉及连接语义变化（NewClient 无阻塞拨号语义、
+      # 返回前不建连），agent 连接缓存与 gRPC 测试的惰性建连依赖现状，有意保留。
+      # 注：告警文本为 "grpc.DialContext"（不带 google.golang.org/ 前缀）。
       - linters:
           - staticcheck
-        text: "SA1019: google.golang.org/grpc.DialContext is deprecated"
+        text: "SA1019: grpc\\.DialContext is deprecated"
       # SA1012: logx.Trace 专项测试故意传 nil 验证不 panic（该用例即契约）。
       - linters:
           - staticcheck
@@ -151,6 +160,11 @@ linters:
       - linters:
           - errcheck
         text: "session\\.Signal"
+      # tenant 配额中间件的用量记账：EnforceQuota 通过后记账失败不影响放行
+      # （下个周期会计入，语义为尽力而为），`_ =` 显式忽略即为设计意图。
+      - linters:
+          - errcheck
+        text: "m\\.TrackUsage"
       # 静态服务发现启动注册：纯内存 map 写入不会失败（接口保留给未来 etcd 后端）。
       - linters:
           - errcheck
@@ -208,6 +222,28 @@ linters:
       - linters:
           - gosec
         text: "G118"
+      # G404（弱随机数）—— device-sim：模拟数据生成工具，随机性本身就是职责
+      # （伪造设备指标/状态/IP/序列号），输出用于测试与演示环境，非加密场景，
+      # crypto/rand 反而拖慢模拟吞吐，整目录豁免。
+      - linters:
+          - gosec
+        text: "G404"
+        path: cmd/device-sim/
+      # G404（弱随机数）—— pkg/retry：重试退避抖动（jitter）只需打散重试风暴，
+      # 不需要不可预测性（攻击者无法利用抖动值），math/rand 是退避抖动的业界
+      # 常态实现（grpc-go/awsgosdk 同样如此），非加密场景。
+      - linters:
+          - gosec
+        text: "G404"
+        path: pkg/retry/
+      # G201（SQL 格式化）—— sql_slo.go 的 SLI 指标查询：拼入 SQL 的 column
+      # 来自 metricColumn() 白名单 switch（仅返回固定列名 cpu_usage/latency 等，
+      # 任意输入返回 "" 直接短路），用户可控的 metricName 永远进不了 SQL 字符串；
+      # tenant_id/时间条件仍走 ? 参数占位符，无注入面。
+      - linters:
+          - gosec
+        text: "G201"
+        path: internal/store/sql_slo\.go
       # G705: XSS 污点分析误报——dashboard.go 写入的 data 来自 webFS.ReadFile
       # （go:embed 编译期打包的受信静态资源），非用户输入，无 XSS 面。
       - linters:

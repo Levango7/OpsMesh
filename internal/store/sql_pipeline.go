@@ -45,8 +45,10 @@ func scanPipelineTemplate(row rowScanner) *PipelineTemplate {
 	t.CreatedAt = createdAt
 	t.UpdatedAt = updatedAt
 	if len(paramsJSON) > 0 {
-		// 反序列化失败不致命：保留空 Parameters，避免单条坏数据让整个 List 崩。
-		_ = json.Unmarshal(paramsJSON, &t.Parameters)
+		// 反序列化失败不致命：保留空 Parameters，避免单条坏数据让整个 List 崩，但必须留痕。
+		if err := json.Unmarshal(paramsJSON, &t.Parameters); err != nil {
+			log.Printf("[store] scanPipelineTemplate 反序列化 parameters 失败（保留空 Parameters 继续）: %v", err)
+		}
 	}
 	return &t
 }
@@ -79,7 +81,10 @@ func scanPipelineRun(row rowScanner) *PipelineRun {
 		r.FinishedAt = &ft
 	}
 	if len(paramsJSON) > 0 {
-		_ = json.Unmarshal(paramsJSON, &r.Parameters)
+		// 反序列化失败不致命：保留空 Parameters，避免单条坏数据让整个 List 崩，但必须留痕。
+		if err := json.Unmarshal(paramsJSON, &r.Parameters); err != nil {
+			log.Printf("[store] scanPipelineRun 反序列化 parameters 失败（保留空 Parameters 继续）: %v", err)
+		}
 	}
 	return &r
 }

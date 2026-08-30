@@ -190,7 +190,10 @@ func main() {
 					// Simulate task execution
 					if rand.Float64() < 0.3 {
 						result := simulateTask(d)
-						_ = reportTaskResult(ctx, cfg, result)
+						// 结果上报失败只影响模拟统计，不中断心跳循环；此处留痕即可。
+						if err := reportTaskResult(ctx, cfg, result); err != nil {
+							log.Printf("device-sim: reportTaskResult failed: %v", err)
+						}
 					}
 				}
 			}

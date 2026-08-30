@@ -60,19 +60,24 @@ func ValidateInput(input string, maxLength int) error {
 
 // ==================== Rate Limit (Sliding Window) ====================
 
-// windowEntry 表示滑动窗口内的一次请求时间戳。
-type windowEntry struct {
-	timestamp time.Time
-	index     int
-}
-
 // windowHeap 是最小堆，用于滑动窗口过期清理。
+// heap.Init/heap.Pop/heap.Push 只操作本包推入的 time.Time 元素，
+// 断言失败按零值入堆（仅发生在本包外的错误使用，届时时间戳零值会被过期清理剔除）。
 type windowHeap []time.Time
 
-func (h windowHeap) Len() int            { return len(h) }
-func (h windowHeap) Less(i, j int) bool  { return h[i].Before(h[j]) }
-func (h windowHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *windowHeap) Push(x interface{}) { *h = append(*h, x.(time.Time)) }
+func (h windowHeap) Len() int           { return len(h) }
+func (h windowHeap) Less(i, j int) bool { return h[i].Before(h[j]) }
+func (h windowHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *windowHeap) Push(x interface{}) {
+	ts, ok := x.(time.Time)
+	if !ok {
+		// heap.Interface 契约：Push 仅由 container/heap 调用，元素来自本包
+		// heap.Push(&sw.requests, now)，类型恒为 time.Time；类型不匹配只可能是
+		// 包外误用，与原裸断言语义一致地显式 panic，保留契约。
+		panic(fmt.Sprintf("security: windowHeap.Push expects time.Time, got %T", x))
+	}
+	*h = append(*h, ts)
+}
 func (h *windowHeap) Pop() interface{} {
 	old := *h
 	n := len(old)

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sync"
 	"time"
 )
 
@@ -27,7 +26,6 @@ type metricCollector struct {
 
 // pipelineState holds the running state of the metrics collection pipeline.
 type pipelineState struct {
-	mu         sync.Mutex
 	interval   time.Duration
 	endpoints  []ServiceEndpoint
 	collectors []metricCollector

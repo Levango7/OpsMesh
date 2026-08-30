@@ -21,6 +21,9 @@ package controlplane
 //     MVP 实现仅记录执行记录（不下发实际任务，避免无 agent 时报错）。
 
 import (
+	"errors"
+	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -277,8 +280,11 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 		DeviceID string `json:"deviceID"`
 		Params   string `json:"params"`
 	}
-	// 请求体可选（GET 也允许，但 POST 推荐 JSON 体）。
-	_ = decodeJSONBody(w, r, &body)
+	// 请求体可选（GET 也允许，但 POST 推荐 JSON 体）：解析失败不 4xx 拒绝，
+	// body 保持零值继续（后续 DeviceID 校验兜底），但畸形请求体必须留痕。
+	if err := decodeJSONBody(w, r, &body); err != nil && !errors.Is(err, io.EOF) {
+		log.Printf("[controlplane] execute script: 可选请求体解析失败（按空体继续）: %v", err)
+	}
 	if body.DeviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return

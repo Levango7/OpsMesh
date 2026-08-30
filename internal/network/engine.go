@@ -182,14 +182,14 @@ func (e *Engine) Discover(req DiscoverRequest) DiscoverResult {
 		return DiscoverResult{Subnet: req.Subnet, Error: "invalid CIDR: " + err.Error()}
 	}
 	_ = ip
-	// 统计子网内 IP 数（最多 254，避免 /8 之类超大子网爆算）。
+	// 校验掩码合法（bits==0 为非法 CIDR），并限制子网规模（/24 以内），
+	// 避免超大子网爆算；扫描数量上限由 subnetMaxHosts 在循环内统一控制。
 	ones, bits := ipnet.Mask.Size()
 	if bits == 0 {
 		return DiscoverResult{Subnet: req.Subnet, Error: "invalid mask"}
 	}
-	hostBits := bits - ones
-	if hostBits > 8 {
-		hostBits = 8
+	if bits-ones > 8 {
+		return DiscoverResult{Subnet: req.Subnet, Error: "subnet too large (max /24 for IPv4)"}
 	}
 
 	// 常用端口扫描列表。

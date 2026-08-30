@@ -20,7 +20,10 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -250,8 +253,11 @@ func (s *Server) handleRunPipelineTemplate(w http.ResponseWriter, r *http.Reques
 	var body struct {
 		Parameters map[string]string `json:"parameters"`
 	}
-	// 请求体可选（可无参数触发）
-	_ = decodeJSONBody(w, r, &body)
+	// 请求体可选（可无参数触发）：解析失败不 4xx 拒绝，body 保持零值继续，
+	// 但畸形请求体必须留痕（非静默吞错）。
+	if err := decodeJSONBody(w, r, &body); err != nil && !errors.Is(err, io.EOF) {
+		log.Printf("[controlplane] trigger run: 可选请求体解析失败（按无参数继续）: %v", err)
+	}
 	now := time.Now()
 	run := &store.PipelineRun{
 		TemplateID:   tpl.ID,

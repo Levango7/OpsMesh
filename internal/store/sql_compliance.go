@@ -37,7 +37,10 @@ func scanComplianceReport(row rowScanner) *ComplianceReport {
 	}
 	r.CreatedAt = createdAt
 	if len(resultsJSON) > 0 {
-		_ = json.Unmarshal(resultsJSON, &r.Results)
+		// 反序列化失败不致命：保留空 Results，避免单条坏数据让整个 List 崩，但必须留痕。
+		if err := json.Unmarshal(resultsJSON, &r.Results); err != nil {
+			log.Printf("[store] scanComplianceReport 反序列化 results 失败（保留空 Results 继续）: %v", err)
+		}
 	}
 	return &r
 }

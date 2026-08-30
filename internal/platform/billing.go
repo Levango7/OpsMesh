@@ -10,9 +10,6 @@
 package platform
 
 import (
-	"fmt"
-	"time"
-
 	"opsmesh/internal/store"
 )
 
@@ -23,8 +20,3 @@ type (
 	Invoice          = store.Invoice
 	InvoiceItem      = store.InvoiceItem
 )
-
-// formatPeriod 格式化账单周期为人类可读字符串（用于账单 PDF/邮件）。
-func formatPeriod(start, end time.Time) string {
-	return fmt.Sprintf("%s ~ %s", start.Format("2006-01-02"), end.Format("2006-01-02"))
-}

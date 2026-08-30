@@ -32,14 +32,11 @@ func TestSafeGo_RecoversAndRestarts(t *testing.T) {
 	}
 	// 等待 panic→重启链路走完（两次 panic + 第三次正常进入）。
 	deadline := time.Now().Add(3*safeGoRestartDelay + 2*time.Second)
-	for {
-		if n >= 3 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("panic 后未重启：期望 n>=3，实际 n=%d", n)
-		}
+	for n < 3 && time.Now().Before(deadline) {
 		time.Sleep(50 * time.Millisecond)
+	}
+	if n < 3 {
+		t.Fatalf("panic 后未重启：期望 n>=3，实际 n=%d", n)
 	}
 }
 

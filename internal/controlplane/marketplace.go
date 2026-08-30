@@ -306,7 +306,8 @@ func downloadAndVerifyPlugin(p *store.Plugin) error {
 		return fmt.Errorf("create plugin dir: %w", err)
 	}
 	pluginFile := filepath.Join(pluginDir, "plugin.bin")
-	if err := os.WriteFile(pluginFile, data, 0644); err != nil {
+	// 0600：插件二进制仅服务进程自身读取（最小权限），非共享资源。
+	if err := os.WriteFile(pluginFile, data, 0600); err != nil {
 		return fmt.Errorf("write plugin file: %w", err)
 	}
 	return nil

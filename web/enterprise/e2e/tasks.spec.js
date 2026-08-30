@@ -144,6 +144,9 @@ test.describe('任务下发', () => {
       await page.goto(routes.tasks)
       const t002Row = page.locator('tr', { hasText: 't-002' })
       await t002Row.getByTestId('task-cancel-btn').click()
+      // 第六轮迁移：取消已改 ConfirmModal（Teleport 到 body，用内部 confirm-modal 定位），确认后才发请求
+      await expect(page.getByTestId('confirm-modal')).toBeVisible({ timeout: 5_000 })
+      await page.getByTestId('confirm-modal-confirm').click()
       await expect.poll(() => cancelCalled, { timeout: 5_000 }).toBe(true)
     })
   })
@@ -156,7 +159,8 @@ test.describe('任务下发', () => {
       const options = await page.getByTestId('task-status-filter').evaluate((sel) =>
         Array.from(sel.options).map((o) => o.value)
       )
-      expect(options).toEqual(expect.arrayContaining(['', 'pending', 'running', 'done', 'failed', 'canceled']))
+      // 实际选项值为 'cancelled'（与后端任务状态机一致，TasksView.vue:62）
+      expect(options).toEqual(expect.arrayContaining(['', 'pending', 'running', 'done', 'failed', 'cancelled']))
     })
 
     test('切换状态过滤触发 API 请求（带 status 参数）', async ({ page, context }) => {

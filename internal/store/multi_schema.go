@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -750,14 +751,9 @@ func (m *MultiSchemaStore) QueryAudits(tenant, action string, since, until time.
 
 // sortAuditsDesc 按时间倒序排列审计事件（跨 schema 合并后重排）。
 func sortAuditsDesc(out []*proto.AuditEvent) {
-	// 简单插入排序（审计量通常不大，避免引入 sort 包的额外依赖；稳定且够用）。
-	for i := 1; i < len(out); i++ {
-		j := i
-		for j > 0 && out[j].CreatedAt.After(out[j-1].CreatedAt) {
-			out[j], out[j-1] = out[j-1], out[j]
-			j--
-		}
-	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
 }
 
 // ============================================================================

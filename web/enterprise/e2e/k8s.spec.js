@@ -113,14 +113,15 @@ test.describe('K8s 管理', () => {
         }
       })
       await page.goto(routes.k8s)
-      // 开始监听 dialog
-      page.once('dialog', async (dialog) => {
-        expect(dialog.message()).toContain('确认删除')
-        await dialog.accept()
-      })
-      // staging 集群的删除按钮
+      // 第六轮迁移：原生 confirm 已改 ConfirmModal；组件 Teleport 到 body，
+      // 组件标签上的 data-testid 不随内容渲染（attrs fallthrough 在 Teleport 场景不可靠），
+      // 用内部稳定的 confirm-modal overlay + 对话框标题定位。
       const stagingRow = page.locator('tr', { hasText: 'staging-cluster' })
       await stagingRow.getByTestId('k8s-delete-cluster-btn').click()
+      const modal = page.getByTestId('confirm-modal')
+      await expect(modal).toBeVisible({ timeout: 5_000 })
+      await expect(modal.locator('.modal-title')).toContainText('删除')
+      await page.getByTestId('confirm-modal-confirm').click()
       await expect.poll(() => deleteCalled, { timeout: 5_000 }).toBe(true)
     })
 
@@ -281,9 +282,12 @@ test.describe('K8s 管理', () => {
       await page.getByTestId('k8s-cluster-select').selectOption('c-prod')
       await page.getByTestId('k8s-tab-deployments').click()
       await expect(page.getByText('nginx-deploy', { exact: true })).toBeVisible({ timeout: 5_000 })
-      page.once('dialog', async (dialog) => { await dialog.accept() })
+      // 第六轮迁移：重启确认已改 ConfirmModal（Teleport 到 body，用内部 confirm-modal 定位）
       const nginxRow = page.locator('tr', { hasText: 'nginx-deploy' })
       await nginxRow.getByTestId('k8s-restart-btn').click()
+      const modal = page.getByTestId('confirm-modal')
+      await expect(modal).toBeVisible({ timeout: 5_000 })
+      await page.getByTestId('confirm-modal-confirm').click()
       await expect.poll(() => restartCalled, { timeout: 5_000 }).toBe(true)
     })
 
