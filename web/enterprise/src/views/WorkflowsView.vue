@@ -1,12 +1,12 @@
 <template>
-  <div>
-    <h2>{{ $t('workflows.title') }}</h2>
+  <div data-testid="workflows-view">
+    <h2 data-testid="workflows-title">{{ $t('workflows.title') }}</h2>
     <p class="muted">{{ $t('workflows.subtitle') }}</p>
 
     <div class="flowbar">
       <div class="field">
         <label>{{ $t('workflows.workflow_label') }}</label>
-        <select v-model="selectedId" @change="onOpen">
+        <select v-model="selectedId" data-testid="workflows-select" @change="onOpen">
           <option value="">{{ $t('workflows.new_blank') }}</option>
           <option v-for="w in store.list" :key="w.id" :value="w.id">
             #{{ w.id }} {{ w.name }} [{{ w.status }}]
@@ -15,7 +15,7 @@
       </div>
       <div class="field">
         <label>{{ $t('workflows.agent_label') }}</label>
-        <select v-model="store.current.agentID">
+        <select v-model="store.current.agentID" data-testid="workflows-agent-select">
           <option v-for="a in agents" :key="a.agentID" :value="a.agentID">
             {{ a.agentID }} ({{ a.hostname }})
           </option>
@@ -23,29 +23,29 @@
       </div>
       <div class="field">
         <label>{{ $t('workflows.name_label') }}</label>
-        <input v-model="store.current.name" :placeholder="$t('workflows.name_placeholder')" />
+        <input v-model="store.current.name" :placeholder="$t('workflows.name_placeholder')" data-testid="input-workflow-name" />
       </div>
       <div class="field">
         <label>{{ $t('workflows.cron_label') }}</label>
-        <input v-model="store.current.cron" placeholder="*/5 * * * *" />
+        <input v-model="store.current.cron" placeholder="*/5 * * * *" data-testid="input-workflow-cron" />
       </div>
     </div>
 
     <div class="btnbar">
-      <button class="primary" @click="onSave">{{ $t('workflows.save_btn') }}</button>
-      <button class="teal" @click="onRun" :disabled="!store.current.id">{{ $t('workflows.run_btn') }}</button>
-      <button @click="onSchedule" :disabled="!store.current.id">{{ $t('workflows.schedule_btn') }}</button>
-      <button @click="store.addNode()">{{ $t('workflows.add_step_btn') }}</button>
-      <button @click="store.autoLayout()">{{ $t('workflows.auto_layout_btn') }}</button>
-      <button @click="loadDemo">{{ $t('workflows.load_demo_btn') }}</button>
-      <button @click="store.reset()">{{ $t('workflows.clear_btn') }}</button>
+      <button class="primary" data-testid="workflows-save-btn" @click="onSave">{{ $t('workflows.save_btn') }}</button>
+      <button class="teal" data-testid="workflows-run-btn" @click="onRun" :disabled="!store.current.id">{{ $t('workflows.run_btn') }}</button>
+      <button data-testid="workflows-schedule-btn" @click="onSchedule" :disabled="!store.current.id">{{ $t('workflows.schedule_btn') }}</button>
+      <button data-testid="workflows-add-step-btn" @click="store.addNode()">{{ $t('workflows.add_step_btn') }}</button>
+      <button data-testid="workflows-auto-layout-btn" @click="store.autoLayout()">{{ $t('workflows.auto_layout_btn') }}</button>
+      <button data-testid="workflows-load-demo-btn" @click="loadDemo">{{ $t('workflows.load_demo_btn') }}</button>
+      <button data-testid="workflows-clear-btn" @click="store.reset()">{{ $t('workflows.clear_btn') }}</button>
     </div>
 
-    <p v-if="store.msg" :class="['msg', store.error ? 'err' : 'ok']">{{ store.msg }}</p>
-    <p v-if="store.error" class="msg err">{{ store.error }}</p>
+    <p v-if="store.msg" :class="['msg', store.error ? 'err' : 'ok']" data-testid="workflows-msg">{{ store.msg }}</p>
+    <p v-if="store.error" class="msg err" data-testid="workflows-error-msg">{{ store.error }}</p>
 
     <!-- DAG 画布 -->
-    <svg ref="canvasRef" class="canvas" @click="onCanvasClick">
+    <svg ref="canvasRef" class="canvas" data-testid="workflows-canvas" @click="onCanvasClick">
       <defs>
         <pattern id="grid" width="26" height="26" patternUnits="userSpaceOnUse">
           <circle cx="2" cy="2" r="1" fill="#dbe2f1" />
@@ -75,6 +75,7 @@
         class="node"
         :class="{ sel: store.selectedNode === n.id, run: store.status[n.id] === 'running', fail: store.status[n.id] === 'failed' }"
         :transform="`translate(${(store.nodePos[n.id] || {x:60,y:60}).x},${(store.nodePos[n.id] || {x:60,y:60}).y})`"
+        :data-testid="'workflows-node-' + n.id"
         @click.stop="store.selectedNode = n.id"
       >
         <rect class="card" width="170" height="66" rx="10" ry="10" />
@@ -87,16 +88,16 @@
     </svg>
 
     <!-- 节点编辑器 -->
-    <div v-if="currentNode" class="node-editor">
+    <div v-if="currentNode" class="node-editor" data-testid="workflows-node-editor">
       <h4>{{ $t('workflows.edit_node_title', { id: currentNode.id }) }}</h4>
       <div class="row">
         <div class="field">
           <label>{{ $t('workflows.name_label') }}</label>
-          <input v-model="currentNode.name" />
+          <input v-model="currentNode.name" data-testid="input-node-name" />
         </div>
         <div class="field">
           <label>{{ $t('workflows.type_label') }}</label>
-          <select v-model="currentNode.type">
+          <select v-model="currentNode.type" data-testid="input-node-type">
             <option value="shell">shell</option>
             <option value="file">file</option>
             <option value="service">service</option>
@@ -105,19 +106,20 @@
       </div>
       <div class="field">
         <label>{{ $t('workflows.command_label') }}</label>
-        <input v-model="currentNode.command" style="width: 70%" />
+        <input v-model="currentNode.command" style="width: 70%" data-testid="input-node-command" />
       </div>
       <div class="field">
         <label>{{ $t('workflows.depends_label') }}</label>
-        <input :value="(currentNode.dependsOn || []).join(', ')" @change="onDepsChange" />
+        <input :value="(currentNode.dependsOn || []).join(', ')" data-testid="input-node-depends" @change="onDepsChange" />
       </div>
-      <button class="danger xs" @click="store.deleteNode(currentNode.id)">{{ $t('workflows.delete_node_btn') }}</button>
+      <button class="danger xs" data-testid="workflows-delete-node-btn" @click="store.deleteNode(currentNode.id)">{{ $t('workflows.delete_node_btn') }}</button>
     </div>
   </div>
 
   <!-- Cron 定时输入（替代 prompt） -->
   <PromptModal
     v-model="cronModal.show"
+    data-testid="workflows-cron-modal"
     :title="$t('workflows.cron_title')"
     :message="$t('workflows.cron_prompt')"
     :default-value="store.current.cron || '*/5 * * * *'"

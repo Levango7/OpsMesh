@@ -253,3 +253,6 @@ func nullTime(t time.Time) interface{} {
 	}
 	return t
 }
+
+// 编译期断言：MySQLStore 实现 PluginStore 接口。
+var _ PluginStore = (*MySQLStore)(nil)

@@ -37,7 +37,16 @@ func main() {
 		log.Println("[main] Kubernetes client in simulated mode — no cluster available")
 	}
 
-	st := store.NewMemoryStore()
+	// Store 初始化：StoreType=sql 且 DSN 非空时接 MySQL（自动建表）；失败或未配置回退内存。
+	var st store.Store = store.NewMemoryStore()
+	if cfg.StoreType == "sql" && cfg.DSN != "" {
+		if ms, err := store.NewMySQLStore(cfg.DSN); err != nil {
+			log.Printf("MySQL store 初始化失败，回退 memory: %v", err)
+		} else {
+			st = ms
+			log.Printf("MySQL store 已启用")
+		}
+	}
 	svc := service.NewService(st)
 	srv := server.NewServer(svc)
 	aiMgr := aiworkload.NewManager()

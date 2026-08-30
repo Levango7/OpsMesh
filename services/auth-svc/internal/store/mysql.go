@@ -591,6 +591,9 @@ func (s *MySQLStore) PurgeBlacklist() {
 // Ensure MemoryStore implements Store.
 var _ Store = (*MemoryStore)(nil)
 
+// Ensure MySQLStore implements Store.
+var _ Store = (*MySQLStore)(nil)
+
 // NewStore creates a Store based on configuration.
 // If dbDSN is non-empty, it returns a MySQLStore; otherwise a MemoryStore.
 func NewStore(dbDSN string) (Store, error) {

@@ -1,61 +1,61 @@
 <template>
-  <div>
-    <h2>{{ $t('deploys.title') }}</h2>
+  <div data-testid="deploys-view">
+    <h2 data-testid="deploys-title">{{ $t('deploys.title') }}</h2>
     <p class="muted">{{ $t('deploys.subtitle') }}</p>
 
     <div class="row">
       <!-- 左：登记 -->
       <div class="col">
-        <div class="card">
+        <div class="card" data-testid="deploys-register-card">
           <h3>{{ $t('deploys.register_title') }}</h3>
-          <form @submit.prevent="onCreate">
+          <form @submit.prevent="onCreate" data-testid="deploys-register-form">
             <div class="field">
               <label>{{ $t('deploys.name_label') }}</label>
-              <input v-model="form.name" required />
+              <input v-model="form.name" required data-testid="input-name" />
             </div>
             <div class="row">
               <div class="field">
                 <label>{{ $t('deploys.type_label') }}</label>
-                <select v-model="form.type">
+                <select v-model="form.type" data-testid="input-type">
                   <option value="script">script</option>
                   <option value="git">git</option>
                 </select>
               </div>
               <div class="field">
                 <label>{{ $t('deploys.target_ids_label') }}</label>
-                <input v-model="form.target_ids" placeholder="dev-10.0.0.1, dev-10.0.0.2" />
+                <input v-model="form.target_ids" placeholder="dev-10.0.0.1, dev-10.0.0.2" data-testid="input-target-ids" />
               </div>
             </div>
             <div class="field">
               <label>{{ $t('deploys.repo_url_label') }}</label>
-              <input v-model="form.repo_url" placeholder="https://git.example.com/ops/nginx-deploy.git" />
+              <input v-model="form.repo_url" placeholder="https://git.example.com/ops/nginx-deploy.git" data-testid="input-repo-url" />
             </div>
             <div class="row">
               <div class="field">
                 <label>{{ $t('deploys.path_label') }}</label>
-                <input v-model="form.path" />
+                <input v-model="form.path" data-testid="input-path" />
               </div>
               <div class="field">
                 <label>{{ $t('deploys.content_label') }}</label>
-                <input v-model="form.content" />
+                <input v-model="form.content" data-testid="input-content" />
               </div>
             </div>
             <div class="btnbar">
-              <button type="submit" class="primary">{{ $t('deploys.register_btn') }}</button>
-              <button type="button" @click="loadDemo">{{ $t('deploys.demo_btn') }}</button>
+              <button type="submit" class="primary" data-testid="deploys-register-btn">{{ $t('deploys.register_btn') }}</button>
+              <button type="button" data-testid="deploys-demo-btn" @click="loadDemo">{{ $t('deploys.demo_btn') }}</button>
             </div>
-            <p v-if="store.msg" :class="['msg', store.error ? 'err' : 'ok']">{{ store.msg }}</p>
+            <p v-if="store.msg" :class="['msg', store.error ? 'err' : 'ok']" data-testid="deploys-msg">{{ store.msg }}</p>
           </form>
         </div>
       </div>
 
       <!-- 右：列表 -->
       <div class="col">
-        <div class="card">
+        <div class="card" data-testid="deploys-list-card">
           <div class="flowbar">
             <div class="field">
               <label>{{ $t('deploys.status_label') }}</label>
-              <select v-model="store.statusFilter" @change="store.fetchList()">
+              <select v-model="store.statusFilter" data-testid="deploys-status-filter" @change="store.fetchList()">
                 <option value="">{{ $t('common.all') }}</option>
                 <option value="created">created</option>
                 <option value="running">running</option>
@@ -64,29 +64,31 @@
                 <option value="rolledback">rolledback</option>
               </select>
             </div>
-            <button @click="store.fetchList()">↻ {{ $t('common.refresh') }}</button>
+            <button data-testid="deploys-refresh-btn" @click="store.fetchList()">↻ {{ $t('common.refresh') }}</button>
           </div>
 
-          <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
+          <div v-if="store.error" class="poll-err" data-testid="deploys-error-msg"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
-          <DataTable :columns="columns" :rows="store.list" row-key="id" :loading="store.loading" :empty-text="$t('deploys.empty')">
+          <DataTable :columns="columns" :rows="store.list" row-key="id" :loading="store.loading" :empty-text="$t('deploys.empty')" data-testid="deploys-table">
             <template #cell-id="{ value }"><code>{{ value }}</code></template>
             <template #cell-target_ids="{ value }"><code>{{ (value || '').replace(/,/g, ', ') }}</code></template>
             <template #cell-status="{ value }">
               <StatusBadge :status="value" :text="value" />
             </template>
             <template #cell-actions="{ row }">
-              <button class="xs" @click.stop="onExec(row.id)">▶ {{ $t('deploys.execute') }}</button>
-              <button class="xs outline" @click.stop="onRollback(row.id)">↩ {{ $t('deploys.rollback') }}</button>
-              <button class="xs outline" @click.stop="onOpen(row.id)">{{ $t('deploys.detail_btn') }}</button>
+              <div class="row-actions" :data-testid="'deploys-row-' + row.id">
+                <button class="xs" data-testid="btn-row-execute" @click.stop="onExec(row.id)">▶ {{ $t('deploys.execute') }}</button>
+                <button class="xs outline" data-testid="btn-row-rollback" @click.stop="onRollback(row.id)">↩ {{ $t('deploys.rollback') }}</button>
+                <button class="xs outline" data-testid="btn-row-detail" @click.stop="onOpen(row.id)">{{ $t('deploys.detail_btn') }}</button>
+              </div>
             </template>
           </DataTable>
         </div>
       </div>
     </div>
 
-    <DetailDrawer :open="!!store.current" :title="drawerTitle" @close="store.current = null">
-      <div v-if="store.current">
+    <DetailDrawer :open="!!store.current" :title="drawerTitle" data-testid="deploys-detail-drawer" @close="store.current = null">
+      <div v-if="store.current" data-testid="deploys-detail-body">
         <p>{{ $t('deploys.type_label') }}: {{ store.current.type }} ｜ {{ $t('deploys.status_label') }}: <StatusBadge :status="store.current.status" :text="store.current.status" /></p>
         <p>{{ $t('deploys.target_ids_label') }}: <code>{{ (store.current.target_ids || '').replace(/,/g, ', ') }}</code></p>
         <p v-if="store.current.repo_url">{{ $t('deploys.repo_url_label') }}: <code>{{ store.current.repo_url }}</code></p>

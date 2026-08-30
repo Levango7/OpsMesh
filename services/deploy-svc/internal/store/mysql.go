@@ -613,3 +613,6 @@ func joinWhere(conds []string) string {
 	}
 	return out
 }
+
+// 编译期断言：MySQLStore 实现 Store 接口。
+var _ Store = (*MySQLStore)(nil)

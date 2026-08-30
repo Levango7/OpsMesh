@@ -13,15 +13,25 @@ import (
 	"github.com/Levango7/OpsMesh/services/incident-svc/internal/handler"
 	"github.com/Levango7/OpsMesh/services/incident-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/incident-svc/internal/service"
+	"github.com/Levango7/OpsMesh/services/incident-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/incident-svc/pkg/config"
 )
 
 func main() {
 	cfg := config.Load()
 
-	store := models.NewMemoryStore()
+	// Store 初始化：StoreType=sql 且 DSN 非空时接 MySQL（自动建表）；失败或未配置回退内存。
+	var storeImpl models.IncidentStore = models.NewMemoryStore()
+	if cfg.StoreType == "sql" && cfg.DSN != "" {
+		if ms, err := store.NewMySQLStore(cfg.DSN); err != nil {
+			log.Printf("MySQL store 初始化失败，回退 memory: %v", err)
+		} else {
+			storeImpl = ms
+			log.Printf("MySQL store 已启用")
+		}
+	}
 	eng := aggregate.NewEngine(cfg.AggregationWindow)
-	svc := service.NewService(store, eng)
+	svc := service.NewService(storeImpl, eng)
 	h := handler.NewHandler(svc)
 
 	mux := http.NewServeMux()

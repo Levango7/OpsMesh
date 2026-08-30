@@ -10,7 +10,8 @@ import (
 type Config struct {
 	GRPCPort        int           `json:"grpcPort"`
 	HTTPPort        int           `json:"httpPort"`
-	StoreType       string        `json:"storeType"`
+	StoreType       string        `json:"storeType"` // "memory" or "sql"
+	DSN             string        `json:"dsn"`       // MySQL DSN (if StoreType=sql)
 	ShutdownTimeout time.Duration `json:"shutdownTimeout"`
 	MaxTasks        int           `json:"maxTasks"`
 	MaxRetries      int           `json:"maxRetries"`
@@ -27,6 +28,7 @@ func Load() *Config {
 		GRPCPort:        getEnvInt("TASK_SVC_GRPC_PORT", 50052),
 		HTTPPort:        getEnvInt("TASK_SVC_HTTP_PORT", 8081),
 		StoreType:       getEnv("TASK_SVC_STORE_TYPE", "memory"),
+		DSN:             getEnv("TASK_SVC_DSN", ""),
 		ShutdownTimeout: getEnvDuration("TASK_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
 		MaxTasks:        getEnvInt("TASK_SVC_MAX_TASKS", 10000),
 		MaxRetries:      getEnvInt("TASK_SVC_MAX_RETRIES", 3),

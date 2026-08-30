@@ -9,6 +9,8 @@ import (
 // Config holds all configuration for the plugin-svc.
 type Config struct {
 	HTTPPort        int           `json:"httpPort"`
+	StoreType       string        `json:"storeType"` // "memory" or "sql"
+	DSN             string        `json:"dsn"`       // MySQL DSN (if StoreType=sql)
 	ShutdownTimeout time.Duration `json:"shutdownTimeout"`
 }
 
@@ -16,6 +18,8 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		HTTPPort:        getEnvInt("PLUGIN_SVC_HTTP_PORT", 8082),
+		StoreType:       getEnv("PLUGIN_SVC_STORE_TYPE", "memory"),
+		DSN:             getEnv("PLUGIN_SVC_DSN", ""),
 		ShutdownTimeout: getEnvDuration("PLUGIN_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
 	}
 }

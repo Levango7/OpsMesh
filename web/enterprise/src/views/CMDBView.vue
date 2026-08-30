@@ -1,6 +1,6 @@
 <template>
-  <div>
-    <h2>{{ $t('cmdb.title') }}</h2>
+  <div data-testid="cmdb-view">
+    <h2 data-testid="cmdb-title">{{ $t('cmdb.title') }}</h2>
     <p class="muted">{{ $t('cmdb.subtitle') }}</p>
 
     <div class="row">
@@ -10,14 +10,14 @@
           <div class="flowbar">
             <div class="field">
               <label>{{ $t('cmdb.type_label') }}</label>
-              <select v-model="store.currentType" @change="store.fetchInstances()">
+              <select v-model="store.currentType" @change="store.fetchInstances()" data-testid="cmdb-type-select">
                 <option value="">{{ $t('cmdb.please_select_type') }}</option>
                 <option v-for="tp in store.types" :key="tp.name" :value="tp.name">
                   {{ tp.displayName }} ({{ tp.name }})
                 </option>
               </select>
             </div>
-            <button @click="store.fetchInstances()">↻ {{ $t('common.refresh') }}</button>
+            <button @click="store.fetchInstances()" data-testid="cmdb-refresh-btn">↻ {{ $t('common.refresh') }}</button>
           </div>
           <DataTable
             :columns="ciCols"
@@ -26,6 +26,7 @@
             :clickable="true"
             :loading="store.loading"
             :empty-text="$t('cmdb.please_select_type')"
+            data-testid="cmdb-instances-table"
             @row-click="onOpenCI"
           >
             <template #cell-id="{ value }"><code>{{ value }}</code></template>
@@ -37,23 +38,23 @@
       <div class="col">
         <div class="card">
           <h3>{{ $t('cmdb.create_title') }}</h3>
-          <form @submit.prevent="onCreate">
+          <form @submit.prevent="onCreate" data-testid="cmdb-create-form">
             <div class="field">
               <label>{{ $t('cmdb.type_label') }}</label>
-              <select v-model="form.ciType" required>
+              <select v-model="form.ciType" required data-testid="cmdb-create-type">
                 <option value="">{{ $t('cmdb.please_select_type') }}</option>
                 <option v-for="tp in store.types" :key="tp.name" :value="tp.name">{{ tp.name }}</option>
               </select>
             </div>
             <div class="field">
               <label>{{ $t('cmdb.name_label') }}</label>
-              <input v-model="form.name" required />
+              <input v-model="form.name" required data-testid="cmdb-create-name" />
             </div>
             <div class="field">
               <label>{{ $t('cmdb.attrs_label') }}</label>
-              <textarea v-model="form.attrsRaw" rows="3" placeholder='{"env":"prod"}' style="width:100%" />
+              <textarea v-model="form.attrsRaw" rows="3" placeholder='{"env":"prod"}' style="width:100%" data-testid="cmdb-create-attrs" />
             </div>
-            <button type="submit" class="primary">{{ $t('cmdb.create_btn') }}</button>
+            <button type="submit" class="primary" data-testid="cmdb-create-btn">{{ $t('cmdb.create_btn') }}</button>
             <p v-if="store.msg" :class="['msg', store.error ? 'err' : 'ok']">{{ store.msg }}</p>
           </form>
         </div>
@@ -71,13 +72,14 @@
               </template>
             </p>
             <!-- 视图切换：力导向图 / 网络拓扑 / 关系列表 -->
-            <div class="graph-tabs">
+            <div class="graph-tabs" data-testid="cmdb-graph-tabs">
               <button
                 v-for="m in graphModes"
                 :key="m.key"
                 :class="['graph-tab', graphMode === m.key ? 'active' : '']"
+                :data-testid="'cmdb-graph-mode-' + m.key"
                 @click="graphMode = m.key"
-              >{{ m.label }}</button>
+                >{{ m.label }}</button>
             </div>
             <!-- 力导向 / 拓扑视图：RelationGraph 组件 -->
             <RelationGraph
@@ -89,10 +91,10 @@
               @node-click="onGraphNodeClick"
             />
             <!-- 列表视图（保留原有文本列表） -->
-            <div v-else class="graph-list">
+            <div v-else class="graph-list" data-testid="cmdb-relations-list">
               <h4>{{ $t('cmdb.relations_title', { n: (store.graph.relations || []).length }) }}</h4>
-              <div v-if="!(store.graph.relations || []).length" class="muted">{{ $t('cmdb.no_relations') }}</div>
-              <div v-for="(r, i) in (store.graph.relations || [])" :key="i" class="rel">
+              <div v-if="!(store.graph.relations || []).length" class="muted" data-testid="cmdb-relations-empty">{{ $t('cmdb.no_relations') }}</div>
+              <div v-for="(r, i) in (store.graph.relations || [])" :key="i" class="rel" :data-testid="'cmdb-relation-' + i">
                 <b>{{ r.relationType }}</b> → {{ r.targetName }}
                 <small class="muted">({{ r.targetType }})</small>
               </div>

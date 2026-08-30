@@ -626,3 +626,11 @@ func (s *MySQLStore) GetBatchTasks(batchID string) []string {
 	}
 	return ids
 }
+
+// 编译期断言：MySQLStore 实现全部四个 store 接口。
+var (
+	_ TaskStore     = (*MySQLStore)(nil)
+	_ ScheduleStore = (*MySQLStore)(nil)
+	_ ResultStore   = (*MySQLStore)(nil)
+	_ BatchStore    = (*MySQLStore)(nil)
+)

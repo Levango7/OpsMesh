@@ -10,6 +10,8 @@ import (
 type Config struct {
 	HTTPPort          int           `json:"httpPort"`
 	GRPCPort          int           `json:"grpcPort"`
+	StoreType         string        `json:"storeType"` // "memory" or "sql"
+	DSN               string        `json:"dsn"`       // MySQL DSN (if StoreType=sql)
 	ShutdownTimeout   time.Duration `json:"shutdownTimeout"`
 	AggregationWindow time.Duration `json:"aggregationWindow"`
 }
@@ -19,6 +21,8 @@ func Load() *Config {
 	return &Config{
 		HTTPPort:          getEnvInt("INCIDENT_SVC_HTTP_PORT", 8082),
 		GRPCPort:          getEnvInt("INCIDENT_SVC_GRPC_PORT", 50052),
+		StoreType:         getEnv("INCIDENT_SVC_STORE_TYPE", "memory"),
+		DSN:               getEnv("INCIDENT_SVC_DSN", ""),
 		ShutdownTimeout:   getEnvDuration("INCIDENT_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
 		AggregationWindow: getEnvDuration("INCIDENT_SVC_AGGREGATION_WINDOW", 5*time.Minute),
 	}

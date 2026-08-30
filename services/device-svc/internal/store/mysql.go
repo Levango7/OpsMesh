@@ -657,3 +657,11 @@ func (s *MySQLStore) UpdateJob(job *models.DiscoveryJob) (*models.DiscoveryJob, 
 	}
 	return job, true
 }
+
+// 编译期断言：MySQLStore 实现全部四个 store 接口。
+var (
+	_ DeviceStore    = (*MySQLStore)(nil)
+	_ AgentStore     = (*MySQLStore)(nil)
+	_ CiStore        = (*MySQLStore)(nil)
+	_ DiscoveryStore = (*MySQLStore)(nil)
+)

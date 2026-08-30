@@ -1,19 +1,21 @@
 <template>
-  <div>
-    <h2>{{ $t('logs.title') }}</h2>
+  <div data-testid="logs-view">
+    <h2 data-testid="logs-title">{{ $t('logs.title') }}</h2>
     <p class="muted">{{ $t('logs.subtitle') }}</p>
 
-    <div class="card">
+    <div class="card" data-testid="logs-search-card">
       <!-- 模式切换 Tab -->
-      <div class="mode-tabs" role="tablist">
+      <div class="mode-tabs" role="tablist" data-testid="logs-mode-tabs">
         <button
           role="tab"
           :class="{ active: store.mode === 'simple' }"
+          data-testid="logs-mode-simple"
           @click="store.setMode('simple')"
         >{{ $t('logs.simpleSearch') }}</button>
         <button
           role="tab"
           :class="{ active: store.mode === 'advanced' }"
+          data-testid="logs-mode-advanced"
           @click="store.setMode('advanced')"
         >{{ $t('logs.advancedQuery') }}</button>
       </div>
@@ -23,15 +25,15 @@
         <div class="row">
           <div class="field">
             <label>{{ $t('logs.device_id_label') }}</label>
-            <input v-model="store.filters.deviceID" :placeholder="$t('logs.device_id_placeholder')" />
+            <input v-model="store.filters.deviceID" :placeholder="$t('logs.device_id_placeholder')" data-testid="input-device-id" />
           </div>
           <div class="field">
             <label>{{ $t('logs.agent_label') }}</label>
-            <input v-model="store.filters.agentID" />
+            <input v-model="store.filters.agentID" data-testid="input-agent-id" />
           </div>
           <div class="field">
             <label>{{ $t('logs.level_label') }}</label>
-            <select v-model="store.filters.level">
+            <select v-model="store.filters.level" data-testid="input-level">
               <option value="">{{ $t('common.all') }}</option>
               <option value="error">error</option>
               <option value="warn">warn</option>
@@ -40,7 +42,7 @@
           </div>
           <div class="field">
             <label>{{ $t('logs.source_label') }}</label>
-            <select v-model="store.filters.source">
+            <select v-model="store.filters.source" data-testid="input-source">
               <option value="">{{ $t('common.all') }}</option>
               <option value="agent">agent</option>
               <option value="task">task</option>
@@ -56,20 +58,21 @@
             <input
               v-model="store.filters.keyword"
               :placeholder="$t('logs.keyword_placeholder')"
+              data-testid="input-keyword"
               @keyup.enter="store.search(0)"
             />
           </div>
           <div class="field">
             <label>{{ $t('logs.from_label') }}</label>
-            <input v-model="store.filters.from" placeholder="2026-01-01T00:00:00Z" />
+            <input v-model="store.filters.from" placeholder="2026-01-01T00:00:00Z" data-testid="input-from" />
           </div>
           <div class="field">
             <label>{{ $t('logs.to_label') }}</label>
-            <input v-model="store.filters.to" />
+            <input v-model="store.filters.to" data-testid="input-to" />
           </div>
           <div class="field">
             <label>{{ $t('logs.limit_label') }}</label>
-            <input v-model.number="store.filters.limit" type="number" min="10" max="1000" />
+            <input v-model.number="store.filters.limit" type="number" min="10" max="1000" data-testid="input-limit" />
           </div>
         </div>
       </template>
@@ -82,27 +85,28 @@
             v-model="store.q"
             class="qinput"
             :placeholder="$t('logs.querySyntaxHint')"
+            data-testid="input-query"
             @keyup.enter="store.search(0)"
           />
         </div>
         <div class="row">
           <div class="field">
             <label>{{ $t('logs.from_label') }}</label>
-            <input v-model="store.filters.from" placeholder="2026-01-01T00:00:00Z" />
+            <input v-model="store.filters.from" placeholder="2026-01-01T00:00:00Z" data-testid="input-from" />
           </div>
           <div class="field">
             <label>{{ $t('logs.to_label') }}</label>
-            <input v-model="store.filters.to" />
+            <input v-model="store.filters.to" data-testid="input-to" />
           </div>
           <div class="field">
             <label>{{ $t('logs.limit_label') }}</label>
-            <input v-model.number="store.filters.limit" type="number" min="10" max="1000" />
+            <input v-model.number="store.filters.limit" type="number" min="10" max="1000" data-testid="input-limit" />
           </div>
         </div>
 
         <!-- 语法提示面板（可折叠） -->
         <div class="syntax-hint">
-          <button class="hint-toggle" @click="hintOpen = !hintOpen">
+          <button class="hint-toggle" data-testid="logs-syntax-hint-toggle" @click="hintOpen = !hintOpen">
             <span class="caret">{{ hintOpen ? '▾' : '▸' }}</span>
             <span>{{ $t('logs.querySyntaxHint') }}</span>
           </button>
@@ -133,25 +137,25 @@
             </div>
             <h4>{{ $t('logs.examples') }}</h4>
             <ul class="example-list">
-              <li v-for="ex in examples" :key="ex.q">
-                <code class="example-q">{{ ex.q }}</code>
-                <span class="muted"> — {{ $t(ex.descKey) }}</span>
-                <button class="xs outline try-btn" @click="tryExample(ex.q)">{{ $t('logs.tryIt') }}</button>
-              </li>
+            <li v-for="ex in examples" :key="ex.q" :data-testid="'logs-example-' + ex.q.replace(/[^a-z0-9]+/gi, '-')">
+              <code class="example-q">{{ ex.q }}</code>
+              <span class="muted"> — {{ $t(ex.descKey) }}</span>
+              <button class="xs outline try-btn" data-testid="btn-row-try-example" @click="tryExample(ex.q)">{{ $t('logs.tryIt') }}</button>
+            </li>
             </ul>
           </div>
         </div>
       </template>
 
       <div class="btnbar">
-        <button class="primary" @click="store.search(0)">{{ $t('logs.search_btn') }}</button>
-        <button @click="onReset">{{ $t('logs.reset_btn') }}</button>
+        <button class="primary" data-testid="logs-search-btn" @click="store.search(0)">{{ $t('logs.search_btn') }}</button>
+        <button data-testid="logs-reset-btn" @click="onReset">{{ $t('logs.reset_btn') }}</button>
       </div>
-      <p v-if="store.error" class="msg err">{{ store.error }}</p>
+      <p v-if="store.error" class="msg err" data-testid="logs-error-msg">{{ store.error }}</p>
     </div>
 
-    <div class="card">
-      <DataTable :columns="columns" :rows="store.list" :loading="store.loading" :empty-text="$t('logs.empty')">
+    <div class="card" data-testid="logs-results-card">
+      <DataTable :columns="columns" :rows="store.list" :loading="store.loading" :empty-text="$t('logs.empty')" data-testid="logs-table">
         <template #cell-timestamp="{ value }">
           <small class="muted">{{ fmtTs(value) }}</small>
         </template>

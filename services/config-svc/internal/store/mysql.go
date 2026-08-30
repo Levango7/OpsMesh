@@ -21,7 +21,10 @@ type MySQLStore struct {
 }
 
 // NewMySQLStore creates a MySQLStore with connection pool.
-func NewMySQLStore(dsn string) (*MySQLStore, error) {
+// encryptionKey 为 secret 加密口令（与 NewMemoryStore 同一来源 cfg.EncryptionKey），
+// maxHistory 为版本历史保留上限（<=0 时取 50）。空 key 时打告警并派生随机 key——
+// 该模式下重启后已加密数据将无法解密，仅适合演示；生产必须显式配置。
+func NewMySQLStore(dsn string, encryptionKey string, maxHistory int) (*MySQLStore, error) {
 	if dsn == "" {
 		return nil, fmt.Errorf("empty DSN")
 	}
@@ -38,7 +41,14 @@ func NewMySQLStore(dsn string) (*MySQLStore, error) {
 	if err := initSchema(db); err != nil {
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
-	return &MySQLStore{db: db, encryptionKey: deriveKey("default-key"), maxHistory: 50}, nil
+	if encryptionKey == "" {
+		log.Printf("[store] 警告: 未配置 encryption key，将生成随机 key（重启后已存 secret 无法解密，仅限演示环境）")
+		encryptionKey = fmt.Sprintf("ephemeral-%d-%s", time.Now().UnixNano(), dsn)
+	}
+	if maxHistory <= 0 {
+		maxHistory = 50
+	}
+	return &MySQLStore{db: db, encryptionKey: deriveKey(encryptionKey), maxHistory: maxHistory}, nil
 }
 
 func ensureParseTime(dsn string) string {
@@ -727,3 +737,6 @@ func boolToInt(b bool) int {
 	}
 	return 0
 }
+
+// 编译期断言：MySQLStore 实现 Store 接口。
+var _ Store = (*MySQLStore)(nil)

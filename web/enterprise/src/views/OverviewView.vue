@@ -1,35 +1,35 @@
 <template>
-  <div>
-    <h2>{{ $t('overview.title') }}</h2>
+  <div data-testid="overview-view">
+    <h2 data-testid="overview-title">{{ $t('overview.title') }}</h2>
     <p class="muted">{{ $t('overview.subtitle') }}</p>
 
     <!-- 统计卡片 -->
-    <div class="stats-grid">
-      <div class="stat-card">
+    <div class="stats-grid" data-testid="overview-stats">
+      <div class="stat-card" data-testid="stat-devices">
         <div class="stat-icon" style="color: var(--indigo);"><Icon name="device" :size="22" /></div>
         <div class="stat-body">
-          <div class="stat-val">{{ deviceStore.total }}</div>
+          <div class="stat-val" data-testid="stat-devices-value">{{ deviceStore.total }}</div>
           <div class="stat-label">{{ $t('overview.stats_devices') }}</div>
         </div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" data-testid="stat-managed">
         <div class="stat-icon" style="color: var(--teal);"><Icon name="success" :size="22" /></div>
         <div class="stat-body">
-          <div class="stat-val">{{ deviceStore.managed }}</div>
+          <div class="stat-val" data-testid="stat-managed-value">{{ deviceStore.managed }}</div>
           <div class="stat-label">{{ $t('overview.stats_managed') }}</div>
         </div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" data-testid="stat-alerts">
         <div class="stat-icon" style="color: var(--rose);"><Icon name="alerts" :size="22" /></div>
         <div class="stat-body">
-          <div class="stat-val">{{ alertStore.list.length }}</div>
+          <div class="stat-val" data-testid="stat-alerts-value">{{ alertStore.list.length }}</div>
           <div class="stat-label">{{ $t('overview.stats_alerts') }}</div>
         </div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" data-testid="stat-workflows">
         <div class="stat-icon" style="color: var(--sky);"><Icon name="flow" :size="22" /></div>
         <div class="stat-body">
-          <div class="stat-val">{{ workflowCount }}</div>
+          <div class="stat-val" data-testid="stat-workflows-value">{{ workflowCount }}</div>
           <div class="stat-label">{{ $t('overview.stats_workflows') }}</div>
         </div>
       </div>
@@ -39,12 +39,13 @@
     <div class="card">
       <h3>{{ $t('overview.ops_capabilities') }}</h3>
       <p class="muted cap-sub">{{ $t('overview.ops_capabilities_sub') }}</p>
-      <div class="cap-grid">
+      <div class="cap-grid" data-testid="overview-capabilities">
         <router-link
           v-for="cap in capabilities"
           :key="cap.key"
           :to="cap.to"
           class="cap-item"
+          :data-testid="'overview-cap-' + cap.key"
         >
           <span class="cap-icon" :style="{ color: cap.color, background: cap.bg }">
             <Icon :name="cap.icon" :size="22" />
@@ -63,8 +64,8 @@
     <!-- 快速入口 -->
     <div class="card">
       <h3>{{ $t('overview.quick_entry') }}</h3>
-      <div class="quick-grid">
-        <router-link v-for="q in quickEntries" :key="q.to" :to="q.to" class="quick-item">
+      <div class="quick-grid" data-testid="overview-quick-entries">
+        <router-link v-for="q in quickEntries" :key="q.to" :to="q.to" class="quick-item" :data-testid="'overview-quick-' + q.label.split('.').pop()">
           <span class="quick-icon" :style="{ color: q.color }"><Icon :name="q.icon" :size="20" /></span>
           <span class="quick-label">{{ $t(q.label) }}</span>
         </router-link>
@@ -74,9 +75,9 @@
     <!-- 近期告警 -->
     <div class="card">
       <h3>{{ $t('overview.recent_alerts') }}</h3>
-      <div v-if="!alertStore.list.length" class="muted">{{ $t('common.no_data') }}</div>
-      <div v-else class="alert-list">
-        <div v-for="a in recentAlerts" :key="a.id || a.fingerprint" class="alert-row">
+      <div v-if="!alertStore.list.length" class="muted" data-testid="overview-alerts-empty">{{ $t('common.no_data') }}</div>
+      <div v-else class="alert-list" data-testid="overview-alerts-list">
+        <div v-for="a in recentAlerts" :key="a.id || a.fingerprint" class="alert-row" :data-testid="'overview-alert-row-' + (a.id || a.fingerprint || 'unknown')">
           <StatusBadge :status="a.severity || a.status" :text="a.severity || a.status" />
           <span class="alert-name">{{ a.name || a.alertname || a.message || '—' }}</span>
           <span class="muted alert-time">{{ fmtTime(a.startsAt || a.createdAt || a.created_at) }}</span>

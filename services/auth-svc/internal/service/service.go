@@ -29,11 +29,11 @@ var (
 // Service implements the auth service business logic.
 type Service struct {
 	jwtEngine *auth.Engine
-	store     *store.MemoryStore
+	store     store.Store
 }
 
 // NewService creates a new Service.
-func NewService(engine *auth.Engine, st *store.MemoryStore) *Service {
+func NewService(engine *auth.Engine, st store.Store) *Service {
 	return &Service{
 		jwtEngine: engine,
 		store:     st,

@@ -37,7 +37,18 @@ func main() {
 	}
 	defer shutdown(context.Background())
 
-	st := store.NewMemoryStore(cfg.EncryptionKey, cfg.MaxHistorySize)
+	// Store 初始化：StoreType=sql 且 DSN 非空时接 MySQL（自动建表）；失败或未配置回退内存。
+	// 两种后端使用同一 cfg.EncryptionKey/MaxHistorySize——secret 加密行为跨后端一致，
+	// 杜绝 MySQL 模式退化为固定默认 key（安全修复，原实现硬编码 deriveKey("default-key")）。
+	var st store.Store = store.NewMemoryStore(cfg.EncryptionKey, cfg.MaxHistorySize)
+	if cfg.StoreType == "sql" && cfg.DSN != "" {
+		if ms, err := store.NewMySQLStore(cfg.DSN, cfg.EncryptionKey, cfg.MaxHistorySize); err != nil {
+			log.Printf("MySQL store 初始化失败，回退 memory: %v", err)
+		} else {
+			st = ms
+			log.Printf("MySQL store 已启用")
+		}
+	}
 	svc := service.NewService(st)
 	srv := server.NewServer(svc)
 	det := drift.NewDetector(st)

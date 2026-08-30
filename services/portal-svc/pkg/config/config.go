@@ -10,6 +10,8 @@ import (
 type Config struct {
 	HTTPPort        int           `json:"httpPort"`
 	GRPCPort        int           `json:"grpcPort"`
+	StoreType       string        `json:"storeType"` // "memory" or "sql"
+	DSN             string        `json:"dsn"`       // MySQL DSN (if StoreType=sql)
 	ShutdownTimeout time.Duration `json:"shutdownTimeout"`
 }
 
@@ -18,6 +20,8 @@ func Load() *Config {
 	return &Config{
 		HTTPPort:        getEnvInt("PORTAL_SVC_HTTP_PORT", 8080),
 		GRPCPort:        getEnvInt("PORTAL_SVC_GRPC_PORT", 50051),
+		StoreType:       getEnv("PORTAL_SVC_STORE_TYPE", "memory"),
+		DSN:             getEnv("PORTAL_SVC_DSN", ""),
 		ShutdownTimeout: getEnvDuration("PORTAL_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
 	}
 }

@@ -4,6 +4,29 @@
 
 > 当前最新已发布版本：`v0.7.0`（2026-08-16）。`[Unreleased]` 段累积未发布变更，下一个发布版本号待定（按实际演进预计 `v0.8.0`；若按文档同步批次独立发版可记为 `v0.5.0`，由发布流程最终确定）。
 
+## [Unreleased] — 2026-08-30 第三轮：微服务 MySQL 接线（TD-65）+ 前端可测性补齐
+
+### 微服务持久化接线（TD-65）
+- **9 个微服务 main 接线 MySQL store**：alert / auth / config / deploy / device / incident / plugin / portal / task——此前 `NewMySQLStore` 已实现（12 处定义）但 **0 处调用**，main 全部硬编码内存 store，重启数据全丢。现按统一模式接线：`<NAME>_SVC_STORE_TYPE=sql` + `<NAME>_SVC_DSN` 非空时启用 MySQL（构造时自动建表），初始化失败回退 memory 并打日志；auth/device/task 的 MySQLStore 有 `Close()` 的在分支内 defer 调用
+- **缺配置字段的服务补齐**（风格对齐既有 env helper）：auth / deploy / incident / plugin / portal / task 各补 `StoreType`/`DSN` 字段与 `<NAME>_SVC_STORE_TYPE`/`<NAME>_SVC_DSN` 环境变量
+- **编译期接口断言补齐**：9 个服务 mysql.go 补 `var _ <Store接口> = (*MySQLStore)(nil)`（device/task 各 4 条），杜绝"接线后才发现接口不全"的运行期风险
+- **auth-svc 服务层解耦**：`NewService` 参数 `*store.MemoryStore` → `store.Store` 接口（字段同步），否则 MySQLStore 无法注入；测试通过
+- **安全修复（接线审核中发现）**：config-svc `NewMySQLStore` 原硬编码 `deriveKey("default-key")`——MySQL 模式下所有租户 secret 用公开常量加密，形同明文。改为与 MemoryStore 同源的 `cfg.EncryptionKey`/`MaxHistorySize` 参数（跨后端加密行为一致）；空 key 时派生临时随机 key 并打告警（重启后旧 secret 不可解，仅限演示，生产必须显式配置）
+- **合理跳过（原因留档）**：runbook（无 mysql 实现，本轮不新写）/ tf-provider（无标准 main）/ aio·bot·autoscaler·grafana-bridge（main 无 store 概念）/ gpu（manager 构造不消费 store，需重构）/ workflow（service 层与 store 层接口签名不兼容，需适配层）/ log（main 已有完整 memory/sql/loki/es 四后端分支，mysql.go 为死代码不应换接）
+
+### 前端可测性与体验（DC 补全）
+- **6 个核心老页面补 data-testid**（OverviewView 18 / CMDBView 15 / LogsView 26 / UsersView 22 / WorkflowsView 24 / DeploysView 24）——此前这批页面 testid=0，E2E 无法定位元素，与新页面（GPU/K8s/Runbook 等 15-20 个）存在质量断层。命名对齐新页面基准（`<page>-view`/`btn-row-<action>`/`input-<field>`/`<page>-table`），v-for 元素用动态拼接保证唯一。纯属性添加，零逻辑/样式改动，631/631 前端测试全绿
+
+### 明确不做（审核决策，留档）
+- 服务默认端口重叠不改代码（改默认值破坏已部署环境，README 警告已覆盖）
+- tf-provider/bot-svc 外部系统深度集成（需联调环境，独立立项）
+
+### 验证
+- 9 个改动服务逐一 `go build ./... && go vet ./...` ✅；config-svc/auth-svc 服务层测试 ✅
+- 主模块 `go test ./internal/controlplane/ ./internal/agent/ ./internal/store/` ✅（三包全绿）；operator build ✅
+- 前端 `npx vitest run`（631/631）+ `npm run build` ✅（8.2s）
+- `gofmt -l` 全仓清零 ✅（修复 device-svc main 一处残留）
+
 ## [Unreleased] — 2026-08-30 第二轮安全加固与文档补全批次
 
 ### 安全加固（SEC 系列）

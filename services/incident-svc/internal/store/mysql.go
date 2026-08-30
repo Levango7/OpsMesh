@@ -361,3 +361,6 @@ func joinWhere(conds []string) string {
 	}
 	return out
 }
+
+// 编译期断言：MySQLStore 实现 models.IncidentStore 接口。
+var _ models.IncidentStore = (*MySQLStore)(nil)

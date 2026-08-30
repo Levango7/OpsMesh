@@ -40,7 +40,24 @@ func main() {
 	}
 	defer shutdown(context.Background())
 
-	st := store.NewMemoryStore()
+	// Store 初始化：StoreType=sql 且 DSN 非空时接 MySQL（自动建表）；失败或未配置回退内存。
+	// MemoryStore / MySQLStore 均实现 DeviceStore、AgentStore、CiStore、DiscoveryStore 四个接口。
+	memStore := store.NewMemoryStore()
+	var (
+		ds   store.DeviceStore    = memStore
+		as   store.AgentStore     = memStore
+		cs   store.CiStore        = memStore
+		disc store.DiscoveryStore = memStore
+	)
+	if cfg.StoreType == "sql" && cfg.DSN != "" {
+		if ms, err := store.NewMySQLStore(cfg.DSN); err != nil {
+			log.Printf("MySQL store 初始化失败，回退 memory: %v", err)
+		} else {
+			ds, as, cs, disc = ms, ms, ms, ms
+			log.Printf("MySQL store 已启用")
+			defer func() { _ = ms.Close() }()
+		}
+	}
 
 	tenantMgr := tenant.NewManager(nil, nil, map[tenant.ResourceType]int{
 		tenant.ResourceDevices:  100,
@@ -51,7 +68,7 @@ func main() {
 		tenant.ResourceAPIKeys:  5,
 	})
 
-	svc := service.NewService(st, st, st, st, tenantMgr)
+	svc := service.NewService(ds, as, cs, disc, tenantMgr)
 	srv := server.NewServer(svc)
 
 	grpcServer := grpc.NewServer(

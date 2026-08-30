@@ -387,3 +387,6 @@ func boolToInt(b bool) int {
 	}
 	return 0
 }
+
+// 编译期断言：MySQLStore 实现 AlertStore 接口。
+var _ AlertStore = (*MySQLStore)(nil)

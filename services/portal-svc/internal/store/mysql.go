@@ -434,3 +434,6 @@ func joinWhere(conds []string) string {
 }
 
 var _ = json.Marshal
+
+// 编译期断言：MySQLStore 实现 Store 接口。
+var _ Store = (*MySQLStore)(nil)

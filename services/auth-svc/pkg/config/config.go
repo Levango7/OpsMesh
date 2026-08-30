@@ -14,6 +14,8 @@ type Config struct {
 	AccessTokenTTL  time.Duration `json:"accessTokenTTL"`
 	RefreshTokenTTL time.Duration `json:"refreshTokenTTL"`
 	RedisAddr       string        `json:"redisAddr"`
+	StoreType       string        `json:"storeType"` // "memory" or "sql"
+	DSN             string        `json:"dsn"`       // MySQL DSN (if StoreType=sql)
 	ShutdownTimeout time.Duration `json:"shutdownTimeout"`
 
 	// OTel tracing settings.
@@ -30,6 +32,8 @@ func Load() *Config {
 		AccessTokenTTL:  getEnvDuration("AUTH_SVC_ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL: getEnvDuration("AUTH_SVC_REFRESH_TOKEN_TTL", 7*24*time.Hour),
 		RedisAddr:       getEnv("AUTH_SVC_REDIS_ADDR", ""),
+		StoreType:       getEnv("AUTH_SVC_STORE_TYPE", "memory"),
+		DSN:             getEnv("AUTH_SVC_DSN", ""),
 		ShutdownTimeout: getEnvDuration("AUTH_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
 		OTelEndpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),

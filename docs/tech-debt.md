@@ -61,7 +61,7 @@
 | TD-62 | **API 网关完整数据面** | 当前 `/gw/` 仅最小反向代理（PathPrefix 匹配），限流/鉴权/熔断未在数据面生效。**下一步**：extension 引擎与数据面接线，或明确声明网关为控制面预览形态 |
 | TD-63 | **Task 三份 schema 统一** | proto/（.proto 生成）、internal/proto（JSON 契约）、services/task-svc/api/proto 各有一份 Task 定义，字段演进时三处需同步。**下一步**：buf generate 单一来源，另两处改为引用或生成 |
 | TD-64 | **pb stub 死代码** | `internal/grpcx/pb/` 生成的 stub 未被运行时消费（JSON codec 为主契约）。**下一步**：若 protobuf 双轨不迁移则删除，若迁移则补 buf breaking CI 消费方 |
-| TD-65 | **微服务 MySQL store 未接线** | `services/task-svc` 等 10 个服务的 main 构造的是 `store.NewMemoryStore()`，服务端 mysql.go + schema.sql 已写好未启用，服务重启数据丢失。**下一步**：加 DSN 环境变量分支接线，加集成测试验证持久化 |
+| TD-65 | ~~**微服务 MySQL store 未接线**~~ | ✅ 2026-08-30 已修（9/12 接线）：alert/auth/config/deploy/device/incident/plugin/portal/task 经 `<NAME>_SVC_STORE_TYPE=sql` + DSN 启用 MySQL（失败回退 memory）；缺字段服务补 config，mysql.go 补编译期断言；**附带安全修复**：config-svc 硬编码 `deriveKey("default-key")` 改为 cfg.EncryptionKey（跨后端加密一致）。跳过项与原因：runbook（无实现）/ gpu（manager 不消费 store，需重构）/ workflow（接口签名不兼容，需适配层）/ log（main 已有 memory/sql/loki/es 四后端分支，不应换接）。留此行供集成测试补齐后删除 |
 | TD-67 | ~~gofmt 基线破坏~~ | ✅ 2026-08-30 已修：`gofmt -w internal cmd pkg services tests` 全仓恢复（73+66 文件），`gofmt -l` 清零，`go build ./...` 通过。留此行供 CI 首跑确认后删除 |
 
 ---

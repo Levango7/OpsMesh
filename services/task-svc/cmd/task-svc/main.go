@@ -38,8 +38,25 @@ func main() {
 	}
 	defer shutdown(context.Background())
 
-	st := store.NewMemoryStore()
-	svc := service.NewService(st, st, st, st)
+	// Store 初始化：StoreType=sql 且 DSN 非空时接 MySQL（自动建表）；失败或未配置回退内存。
+	// MemoryStore / MySQLStore 均实现 TaskStore、ScheduleStore、ResultStore、BatchStore 四个接口。
+	memStore := store.NewMemoryStore()
+	var (
+		ts store.TaskStore     = memStore
+		ss store.ScheduleStore = memStore
+		rs store.ResultStore   = memStore
+		bs store.BatchStore    = memStore
+	)
+	if cfg.StoreType == "sql" && cfg.DSN != "" {
+		if ms, err := store.NewMySQLStore(cfg.DSN); err != nil {
+			log.Printf("MySQL store 初始化失败，回退 memory: %v", err)
+		} else {
+			ts, ss, rs, bs = ms, ms, ms, ms
+			log.Printf("MySQL store 已启用")
+			defer func() { _ = ms.Close() }()
+		}
+	}
+	svc := service.NewService(ts, ss, rs, bs)
 
 	cb := circuit.New("task-execution", 5, 30*time.Second)
 	svc.SetCircuitBreaker(cb)
