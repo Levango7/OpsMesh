@@ -181,6 +181,485 @@ redis:
   affinity: {}
   tolerations: []
 
+## @section Microservices（微服务，默认全部禁用）
+# services/ 下 18 个微服务默认不经 Helm 部署——所有子项 enabled=false，
+# templates/microservices.yaml 渲染为空，存量 chart 行为 100% 不变（兼容红线）。
+# 键名统一用下划线（auth_svc 而非 auth-svc）：规避 helm --set 与模板 range 的连字符键坑。
+# 开启单个服务：helm upgrade <release> ./deploy/helm/opsmesh --set services.task_svc.enabled=true
+# 端口/健康路径均对照各服务 pkg/config/config.go 与 cmd/*/main.go 源码默认值。
+# 镜像名对照 .github/workflows/release.yml matrix 实际推送名：ghcr.io/<owner>/<service>，
+# 三连 tag：v<version>（发布）/ <github.sha>（可追溯）/ latest（浮动）。
+services:
+  auth_svc:
+    # 默认 false：不部署。改为 true 渲染 Deployment + Service（HTTP/gRPC 双端口）
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/auth-svc
+      tag: "latest"
+      # digest（"sha256:<hex>"）非空时优先于 tag，引用不可变镜像（供应链钉死）
+      digest: ""
+      pullPolicy: IfNotPresent
+    # HTTP 端口（=AUTH_SVC_HTTP_PORT 代码默认 8081，健康检查亦在此端口）
+    httpPort: 8081
+    # gRPC 端口（=AUTH_SVC_GRPC_PORT 代码默认 50052）；纯 HTTP 服务填 0（不渲染 gRPC 端口）
+    grpcPort: 50052
+    replicas: 1
+    # 环境变量前缀（auth-svc/pkg/config/config.go）：模板渲染 <前缀>_STORE_TYPE / <前缀>_DSN
+    storeEnvPrefix: "AUTH_SVC"
+    # 存储后端：memory（零依赖） | sql（接 MySQL，DSN 自动从 chart Secret mysql-dsn 注入，
+    # 需 controlplane.store=mysql 且 mysql.enabled=true，否则渲染空 DSN 回退 memory）
+    storeType: "memory"
+    probe:
+      # auth-svc 健康路径：cmd/auth-svc/main.go mux.HandleFunc("/health", ...)
+      path: /health
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    # 额外环境变量（键=env 变量名，值须为字符串；STORE_TYPE/DSN 由 storeEnvPrefix/storeType 自动派生，勿重复填）
+    env: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    # 容器级 securityContext：默认空。镜像 USER 为非数字用户名 svc，
+    # 设置 runAsNonRoot=true 会导致 kubelet 无法校验（non-numeric user）而拒绝启动，慎用。
+    securityContext: {}
+
+  device_svc:
+    # 设备/CMDB/纳管发现服务（device-svc/pkg/config：DEVICE_SVC_HTTP_PORT 8081 / GRPC 50052）
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/device-svc
+      tag: "latest"
+      digest: ""
+      pullPolicy: IfNotPresent
+    httpPort: 8081
+    grpcPort: 50052
+    replicas: 1
+    storeEnvPrefix: "DEVICE_SVC"
+    storeType: "memory"
+    probe:
+      # device-svc/cmd/device-svc/main.go 健康路径 /health
+      path: /health
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    env: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+
+  task_svc:
+    # 任务编排/调度服务（task-svc/pkg/config：TASK_SVC_HTTP_PORT 8081 / GRPC 50052）
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/task-svc
+      tag: "latest"
+      digest: ""
+      pullPolicy: IfNotPresent
+    httpPort: 8081
+    grpcPort: 50052
+    replicas: 1
+    storeEnvPrefix: "TASK_SVC"
+    storeType: "memory"
+    probe:
+      # task-svc/cmd/task-svc/main.go 健康路径 /health
+      path: /health
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    env: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+
+  alert_svc:
+    # 告警服务（alert-svc/pkg/config：ALERT_SVC_HTTP_PORT 8080 / GRPC 50051）
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/alert-svc
+      tag: "latest"
+      digest: ""
+      pullPolicy: IfNotPresent
+    httpPort: 8080
+    grpcPort: 50051
+    replicas: 1
+    storeEnvPrefix: "ALERT_SVC"
+    storeType: "memory"
+    probe:
+      # alert-svc/cmd/alert-svc/main.go 健康路径 /health
+      path: /health
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    env: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+
+  config_svc:
+    # 配置/密钥/通知通道服务（config-svc/pkg/config：CONFIG_SVC_HTTP_PORT 8083 / GRPC 50054）
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/config-svc
+      tag: "latest"
+      digest: ""
+      pullPolicy: IfNotPresent
+    httpPort: 8083
+    grpcPort: 50054
+    replicas: 1
+    storeEnvPrefix: "CONFIG_SVC"
+    storeType: "memory"
+    probe:
+      # config-svc/cmd/config-svc/main.go 健康路径 /health
+      path: /health
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    env: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+
+  log_svc:
+    # 日志检索服务（gRPC 9090，HTTP 健康检查 8080）。
+    # 注意：log-svc 无 <前缀>_STORE_TYPE/DSN env——后端选择走 LOG_SVC_BACKEND（见 env），
+    # 故 storeEnvPrefix 留空、storeType 不生效；DSN 需挂配置文件，当前镜像未挂载。
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/log-svc
+      tag: "latest"
+      digest: ""
+      pullPolicy: IfNotPresent
+    httpPort: 8080
+    grpcPort: 9090
+    replicas: 1
+    storeEnvPrefix: ""
+    storeType: "memory"
+    probe:
+      # log-svc/cmd/log-svc/main.go newHealthServer 注册的是 /healthz（唯一非 /health 的服务）
+      path: /healthz
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    # 日志后端：memory | sql | loki | es（LOG_SVC_BACKEND，cmd/log-svc/main.go）
+    env:
+      LOG_SVC_BACKEND: "memory"
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+
+  deploy_svc:
+    # 部署/模板/策略/金丝雀服务（deploy-svc/pkg/config：DEPLOY_SVC_HTTP_PORT 8081 / GRPC 50052）
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/deploy-svc
+      tag: "latest"
+      digest: ""
+      pullPolicy: IfNotPresent
+    httpPort: 8081
+    grpcPort: 50052
+    replicas: 1
+    storeEnvPrefix: "DEPLOY_SVC"
+    storeType: "memory"
+    probe:
+      # deploy-svc/cmd/deploy-svc/main.go 健康路径 /health
+      path: /health
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    env: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+
+  plugin_svc:
+    # 插件市场服务（纯 HTTP，无 gRPC；plugin-svc/pkg/config：PLUGIN_SVC_HTTP_PORT 8082）
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/plugin-svc
+      tag: "latest"
+      digest: ""
+      pullPolicy: IfNotPresent
+    httpPort: 8082
+    # 无 gRPC 服务端 → 0（模板不渲染 gRPC 端口）
+    grpcPort: 0
+    replicas: 1
+    storeEnvPrefix: "PLUGIN_SVC"
+    storeType: "memory"
+    probe:
+      # plugin-svc/internal/handler/handler.go 注册 /health
+      path: /health
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    env: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+
+  portal_svc:
+    # 统一门户 BFF（portal-svc/pkg/config：PORTAL_SVC_HTTP_PORT 8080 / GRPC 50051）
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/portal-svc
+      tag: "latest"
+      digest: ""
+      pullPolicy: IfNotPresent
+    httpPort: 8080
+    grpcPort: 50051
+    replicas: 1
+    storeEnvPrefix: "PORTAL_SVC"
+    storeType: "memory"
+    probe:
+      # portal-svc/cmd/portal-svc/main.go 健康路径 /health
+      path: /health
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    env: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+
+  aio_svc:
+    # AIOps 引擎（纯 HTTP；cmd/aio-svc/main.go：AIO_SVC_PORT 默认 8100）
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/aio-svc
+      tag: "latest"
+      digest: ""
+      pullPolicy: IfNotPresent
+    httpPort: 8100
+    # 无 gRPC 服务端 → 0（模板不渲染 gRPC 端口）
+    grpcPort: 0
+    replicas: 1
+    # aio-svc 无 STORE_TYPE/DSN env（SLO/异常检测引擎内存态）
+    storeEnvPrefix: ""
+    storeType: "memory"
+    probe:
+      # aio-svc/cmd/aio-svc/main.go 健康路径 /health
+      path: /health
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      # AIOps 五引擎（异常检测/容量/根因/巡检/GPU）计算型，默认略高
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 1000m
+        memory: 512Mi
+    env: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+
+  grafana_bridge:
+    # Grafana 数据源桥（纯 HTTP；grafana-bridge/pkg/config：GRAFANA_BRIDGE_HTTP_PORT 默认 8080）
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/grafana-bridge
+      tag: "latest"
+      digest: ""
+      pullPolicy: IfNotPresent
+    httpPort: 8080
+    # 无 gRPC 服务端 → 0（模板不渲染 gRPC 端口）
+    grpcPort: 0
+    replicas: 1
+    # grafana-bridge 无 STORE_TYPE/DSN env
+    storeEnvPrefix: ""
+    storeType: "memory"
+    probe:
+      # grafana-bridge/cmd/grafana-bridge/main.go 健康路径 /health
+      path: /health
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    env: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+
 ## @section ServiceAccount
 serviceAccount:
   create: true

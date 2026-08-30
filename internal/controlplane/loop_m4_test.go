@@ -20,8 +20,11 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -102,7 +105,7 @@ func TestLoopM4_NotifyLoop_PushesFiringAlert(t *testing.T) {
 		WebhookURL:   srv.URL,
 	}
 
-	// 注入一条 firing 告警（CreatedAt 为当前时间，晚于 lastAlertSent 零值）。
+	// 注入一条 firing 告警（首次出现，未在 alertSent 指纹集合中）。
 	alert := &proto.Alert{
 		AlertID:   "alert-m4-1",
 		TenantID:  "t1",
@@ -141,6 +144,139 @@ func TestLoopM4_NotifyLoop_PushesFiringAlert(t *testing.T) {
 	s2 := newLoopM4Server()
 	s2.cfg.AlertWebhookURL = "" // 无 webhook
 	// alertChannels 为 nil（newLoopM4Server 未设置），emailConfigured=false，notifyLoop 立即返回。
+	runLoopExpectImmediateReturn(t, "notifyLoop(no-channels)", s2.notifyLoop)
+}
+
+// TestLoopM4_NotifyLoop_OutOfOrderAlertsBothPushed 回归测试：notifyLoop 防重复按告警指纹
+// （AlertID）去重而非全局时间高水位。构造两条 CreatedAt 乱序的告警（后创建的先推送）：
+// 旧时间水位实现推送第一条后水位前移到 t+2m，第二条（CreatedAt=t，插入序在后）因早于水位
+// 被永久漏推；新指纹实现两条都推。同时验证指纹去重仍然生效（同一条告警不重复推）。
+func TestLoopM4_NotifyLoop_OutOfOrderAlertsBothPushed(t *testing.T) {
+	var mu sync.Mutex
+	received := make(map[string]int)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var a proto.Alert
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &a)
+		mu.Lock()
+		received[a.AlertID]++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	s := newLoopM4Server()
+	// 构造 alertChannels 指向 httptest.Server（绕过 SSRF 校验直接构造 Channels 结构）。
+	s.alertChannels = &notify.Channels{
+		NotifierType: "generic",
+		WebhookURL:   srv.URL,
+	}
+	// 指纹集合初始化（NewServer 路径默认有；直构测试 Server 需显式给）。
+	s.alertSent = make(map[string]time.Time)
+
+	// 两条告警 CreatedAt 乱序：early 先创建（t-1m）、late 后创建（t+1m），
+	// 但 store 插入顺序为 late 在前——模拟同轮扫描插入序 ≠ 时间序（多副本时钟偏差 /
+	// 跨租户告警 CreatedAt 分布场景）。
+	now := time.Now()
+	late := &proto.Alert{
+		AlertID:   "alert-ooo-late",
+		TenantID:  "t1",
+		DeviceID:  "dev-late",
+		Severity:  "critical",
+		Message:   "cpu usage > 90%",
+		Metric:    "cpu.usage",
+		CreatedAt: now.Add(time.Minute),
+		Status:    proto.AlertStatusFiring,
+	}
+	early := &proto.Alert{
+		AlertID:   "alert-ooo-early",
+		TenantID:  "t2", // 不同租户，CreatedAt 更早
+		DeviceID:  "dev-early",
+		Severity:  "critical",
+		Message:   "mem usage > 90%",
+		Metric:    "mem.usage",
+		CreatedAt: now.Add(-time.Minute),
+		Status:    proto.AlertStatusFiring,
+	}
+	// 插入顺序：late 先入 store（扫描序与时间序相反）。
+	s.store.AddAlert(late)
+	s.store.AddAlert(early)
+
+	// 复现 notifyLoop ticker 触发时对每条告警执行的完整判定链（跳过非 firing/指纹去重/
+	// 聚合抑制/推送），与 server_alerts.go notifyLoop 循环体逐行对齐。
+	pushDue := func(now time.Time) {
+		for _, a := range s.store.Alerts("") {
+			if a.Status != "" && a.Status != proto.AlertStatusFiring {
+				continue
+			}
+			if !s.markAlertSent(a.AlertID) {
+				continue
+			}
+			if !s.alertAggr.Allow(a, now) {
+				continue
+			}
+			if err := s.alertChannels.Push(a); err != nil {
+				t.Fatalf("alertChannels.Push 失败: %v", err)
+			}
+		}
+	}
+
+	// 第一轮：按插入序推送（late 先），旧时间水位实现此处把水位推到 now+1m。
+	pushDue(now)
+
+	// 核心断言：乱序下两条告警都必须被推送（旧水位实现会漏推 early）。
+	mu.Lock()
+	lateGot := received["alert-ooo-late"]
+	earlyGot := received["alert-ooo-early"]
+	mu.Unlock()
+	if lateGot != 1 {
+		t.Fatalf("后创建先推送的告警 alert-ooo-late 收到 %d 次，期望 1", lateGot)
+	}
+	if earlyGot != 1 {
+		t.Fatalf("乱序回归失败：CreatedAt 更早的告警 alert-ooo-early 收到 %d 次，期望 1（旧时间水位实现会漏推该告警）", earlyGot)
+	}
+
+	// 第二轮：指纹去重生效——同一批告警不再重复推送。
+	pushDue(now)
+	mu.Lock()
+	lateGot = received["alert-ooo-late"]
+	earlyGot = received["alert-ooo-early"]
+	mu.Unlock()
+	if lateGot != 1 || earlyGot != 1 {
+		t.Fatalf("指纹去重失败：late=%d early=%d，期望各 1 次", lateGot, earlyGot)
+	}
+
+	// 直接断言指纹集合内容：两条 AlertID 均已登记。
+	s.alertSentMu.Lock()
+	if len(s.alertSent) != 2 {
+		t.Fatalf("alertSent 指纹集合 %d 条，期望 2", len(s.alertSent))
+	}
+	if _, ok := s.alertSent["alert-ooo-early"]; !ok {
+		t.Fatal("alertSent 缺少 alert-ooo-early（乱序告警未被登记指纹）")
+	}
+	if _, ok := s.alertSent["alert-ooo-late"]; !ok {
+		t.Fatal("alertSent 缺少 alert-ooo-late")
+	}
+	s.alertSentMu.Unlock()
+
+	// 清理语义验证：cleanupAlertSent 只清早于 cutoff 的条目；模拟 25h 后 late（写入时间被
+	// 人为回拨到 cutoff 之前）被清理，early 保留——证明条目有界、不无限累积。
+	s.alertSentMu.Lock()
+	s.alertSent["alert-ooo-late"] = time.Now().Add(-25 * time.Hour)
+	s.alertSentMu.Unlock()
+	s.cleanupAlertSent(time.Now().Add(-alertSentRetention))
+	s.alertSentMu.Lock()
+	if _, ok := s.alertSent["alert-ooo-late"]; ok {
+		t.Fatal("cleanupAlertSent 未清理过期指纹条目（>24h）")
+	}
+	if _, ok := s.alertSent["alert-ooo-early"]; !ok {
+		t.Fatal("cleanupAlertSent 误清理了未过期指纹条目（<24h）")
+	}
+	s.alertSentMu.Unlock()
+
+	// 启停断言：无任何通道配置时 notifyLoop 立即返回（早退条件）。
+	s2 := newLoopM4Server()
+	s2.cfg.AlertWebhookURL = "" // 无 webhook
 	runLoopExpectImmediateReturn(t, "notifyLoop(no-channels)", s2.notifyLoop)
 }
 

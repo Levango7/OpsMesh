@@ -107,17 +107,28 @@
         </template>
       </DataTable>
     </div>
+
+    <!-- 审批确认（替代 confirm） -->
+    <ConfirmModal
+      v-model="approveConfirm.show"
+      data-testid="portal-approve-confirm-modal"
+      :title="approveConfirm.action === 'reject' ? $t('portal.reject') : $t('portal.approve')"
+      :message="approveConfirm.action === 'reject' ? $t('portal.rejectConfirm') : $t('portal.approveConfirm')"
+      @confirm="onApproveConfirm"
+    />
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { usePortalStore } from '@/stores/portal'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import MetricsCard from '@/components/MetricsCard.vue'
 import Icon from '@/components/Icon.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
+import { toast } from '@/utils/toast'
 
 const store = usePortalStore()
 
@@ -185,29 +196,48 @@ async function submitRequest() {
   }
 }
 
-// ---- 审批 ----
-async function onApprove(id) {
-  if (!confirm(t('portal.approveConfirm'))) return
+// ---- 审批确认弹窗（替代 confirm）：action 存待执行动作 ----
+const approveConfirm = reactive({ show: false, id: null, action: null })
+
+function onApprove(id) {
+  approveConfirm.id = id
+  approveConfirm.action = 'approve'
+  approveConfirm.show = true
+}
+
+async function doApprove(id) {
   try {
     const r = await store.approve(id)
     if (r.s >= 200 && r.s < 300) {
       await store.fetchApprovalQueue()
     }
   } catch (e) {
-    alert(e.j?.error || t('portal.approveFail'))
+    toast.error(e.j?.error || t('portal.approveFail'))
   }
 }
 
-async function onReject(id) {
-  if (!confirm(t('portal.rejectConfirm'))) return
+function onReject(id) {
+  approveConfirm.id = id
+  approveConfirm.action = 'reject'
+  approveConfirm.show = true
+}
+
+async function doReject(id) {
   try {
     const r = await store.reject(id, 'Rejected by manager')
     if (r.s >= 200 && r.s < 300) {
       await store.fetchApprovalQueue()
     }
   } catch (e) {
-    alert(e.j?.error || t('portal.rejectFail'))
+    toast.error(e.j?.error || t('portal.rejectFail'))
   }
+}
+
+async function onApproveConfirm() {
+  const { id, action } = approveConfirm
+  if (!id || !action) return
+  if (action === 'approve') await doApprove(id)
+  else if (action === 'reject') await doReject(id)
 }
 
 onMounted(() => {

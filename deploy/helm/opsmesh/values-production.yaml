@@ -166,6 +166,31 @@ redis:
   affinity: {}
   tolerations: []
 
+## @section Microservices（微服务，生产默认同样全部禁用）
+# 与 values.yaml 相同：services.* 默认 enabled=false，templates/microservices.yaml 渲染为空，
+# 存量生产部署零行为变化。生产启用微服务时的推荐覆盖项（示例以 task_svc 为准，未启用不生效）：
+# services:
+#   task_svc:
+#     enabled: true
+#     image:
+#       repository: ghcr.io/levango7/task-svc
+#       # 生产禁止 latest：钉 semver 或由 CI GitOps 写回 digest（非空优先于 tag）
+#       tag: "0.7.0"
+#       digest: ""
+#     replicas: 2
+#     # 生产接 MySQL（需 controlplane.store=mysql + mysql.enabled=true，
+#     # 自动渲染 TASK_SVC_DSN，复用 Secret 键 mysql-dsn——与控制面同库同凭据）
+#     storeType: "sql"
+#     resources:
+#       requests:
+#         cpu: 200m
+#         memory: 256Mi
+#       limits:
+#         cpu: 1000m
+#         memory: 512Mi
+#     env: {}
+services: {}
+
 ## @section ServiceAccount
 serviceAccount:
   create: true

@@ -27,7 +27,10 @@ import (
 // notifyLoop M7/告警通知推送：每 10s 检查是否有新的 firing 告警（critical + warning 均推送），
 // 经聚合/抑制后通过多通道（Webhook/Email/Slack/企业微信）推送。
 // 启动条件：WebhookURL 非空 或 邮件通道已配置；两者皆空时不启动。
-// 防重复：通过 lastAlertSent 时间戳追踪；只推送 CreatedAt 晚于该时间戳的告警。
+// 防重复：按告警指纹（AlertID）去重——s.alertSent 记录已成功推送的 AlertID，
+// 推送成功才标记（失败不标记，下轮重试）。替代旧版全局时间高水位：时间水位在乱序插入/
+// 跨租户告警/多副本时钟偏差下会漏推（任一租户推送后水位前移，其它租户 CreatedAt 更早的
+// 告警被永久跳过）；指纹去重对上述场景免疫。
 // 聚合/抑制：相同 metric+device 在 5 分钟窗口内只推送一次；critical 已触发时抑制同源 warning。
 // 修复 7：启动时对 webhook URL 做 SSRF 校验，拒绝私网/元数据地址。
 func (s *Server) notifyLoop(ctx context.Context) {
@@ -54,6 +57,9 @@ func (s *Server) notifyLoop(ctx context.Context) {
 			now := time.Now()
 			// 周期清理聚合器过期条目（防止内存泄漏；保留 2 倍窗口内的条目）。
 			s.alertAggr.Cleanup(now.Add(-2 * notify.AggregateWindow))
+			// 同步清理已推送指纹集合中早于 now-24h 的条目（有界防泄漏；
+			// 24h 远大于聚合窗口 5min，覆盖任何重试需求）。
+			s.cleanupAlertSent(now.Add(-24 * time.Hour))
 			alerts := s.store.Alerts("")
 			for _, a := range alerts {
 				// 推送所有 firing 状态告警（critical + warning）。
@@ -61,8 +67,9 @@ func (s *Server) notifyLoop(ctx context.Context) {
 				if a.Status != "" && a.Status != proto.AlertStatusFiring {
 					continue
 				}
-				if !a.CreatedAt.After(s.lastAlertSent) {
-					continue // 已推送过（防重复）
+				// 已成功推送过（按 AlertID 指纹去重，防重复；乱序/跨租户/时钟偏差免疫）。
+				if !s.markAlertSent(a.AlertID) {
+					continue
 				}
 				// 聚合/抑制——同源 5 分钟窗口内只推一次，critical 抑制同源 warning。
 				if !s.alertAggr.Allow(a, now) {
@@ -71,13 +78,54 @@ func (s *Server) notifyLoop(ctx context.Context) {
 				// 多通道推送（Webhook + Email；Slack/企业微信由 URL 域名自动识别）。
 				if err := s.alertChannels.Push(a); err != nil {
 					logx.Error(ctx, "告警推送失败", err, "alertID", a.AlertID)
+					// 推送失败不保留指纹标记，下轮扫描重试。
+					s.unmarkAlertSent(a.AlertID)
 				} else {
 					logx.Info(ctx, "告警推送成功", "alertID", a.AlertID, "severity", a.Severity)
 				}
-				if a.CreatedAt.After(s.lastAlertSent) {
-					s.lastAlertSent = a.CreatedAt
-				}
 			}
+		}
+	}
+}
+
+// alertSentRetention 已推送指纹条目的保留时长：超过后被 notifyLoop 周期清理。
+const alertSentRetention = 24 * time.Hour
+
+// markAlertSent 按告警指纹（AlertID）判断是否首次出现并登记：
+// 首次（未记录过）返回 true 并写入记录；重复返回 false。
+// notifyLoop 在推送前调用做防重复闸；推送失败时用 unmarkAlertSent 撤销登记。
+// map 为 nil（部分测试直构 Server 未初始化）时视为首次（恒 true），
+// 保证旧测试 Server 的推送行为不被破坏。
+func (s *Server) markAlertSent(alertID string) bool {
+	s.alertSentMu.Lock()
+	defer s.alertSentMu.Unlock()
+	if s.alertSent == nil {
+		return true
+	}
+	if _, ok := s.alertSent[alertID]; ok {
+		return false
+	}
+	s.alertSent[alertID] = time.Now()
+	return true
+}
+
+// unmarkAlertSent 撤销指纹登记（推送失败时调用，使下轮扫描重试该告警）。
+func (s *Server) unmarkAlertSent(alertID string) {
+	s.alertSentMu.Lock()
+	defer s.alertSentMu.Unlock()
+	if s.alertSent == nil {
+		return
+	}
+	delete(s.alertSent, alertID)
+}
+
+// cleanupAlertSent 清理早于 cutoff 的已推送指纹条目（notifyLoop 每轮循环末尾调用，有界防泄漏）。
+func (s *Server) cleanupAlertSent(cutoff time.Time) {
+	s.alertSentMu.Lock()
+	defer s.alertSentMu.Unlock()
+	for id, ts := range s.alertSent {
+		if ts.Before(cutoff) {
+			delete(s.alertSent, id)
 		}
 	}
 }

@@ -4,6 +4,31 @@
 
 > 当前最新已发布版本：`v0.7.0`（2026-08-16）。`[Unreleased]` 段累积未发布变更，下一个发布版本号待定（按实际演进预计 `v0.8.0`；若按文档同步批次独立发版可记为 `v0.5.0`，由发布流程最终确定）。
 
+## [Unreleased] — 2026-08-30 第六轮：留档项四项补齐（告警正确性 + Helm 微服务 + UX 收尾 + 文档保真）
+
+### 告警推送正确性修复（notifyLoop 水位线 → 指纹去重）
+- **根因**：`lastAlertSent` 全局单一时间高水位跨租户合并——任何租户告警推送后水位前移，其它租户/乱序插入/CreatedAt 更早的告警被**永久漏推**（多副本时钟偏差同样触发）。运维平台漏告警属核心正确性缺陷
+- **修复**：改为按 AlertID 指纹去重（map+mutex，对乱序/跨租户/时钟偏差免疫）；**推送成功才标记、失败撤销下轮重试**（原实现成败都推进水位，语义更优）；条目 24h 过期清理（有界防泄漏，远大于聚合窗口 5min）
+- **回归测试** `TestLoopM4_NotifyLoop_OutOfOrderAlertsBothPushed`：锁定乱序核心场景（后创建先推送 → 旧水位实现下早创建的告警被漏推、新实现两条都推）+ 去重仍生效 + 有界清理语义四组断言
+
+### Helm 微服务部署能力（18 服务上 K8s 的通道）
+- `values.yaml` 新增 `services:` 段（11 个有 Dockerfile 的服务全列，键名下划线规避 `--set` 连字符坑）；**默认全部 enabled=false——存量部署 chart 行为零变化**
+- 新增 `templates/microservices.yaml`（第 18 个模板）：range 生成 Deployment+Service（HTTP/gRPC 双端口），资源名下划线统一转连字符；探针路径/端口/存储 env 前缀逐一对照各服务源码实测（log-svc 的 /healthz、plugin/aio 无 gRPC 等差异如实处理）；DSN 复用控制面 Secret 的 mysql-dsn 键派生 + checksum 注解滚动重启
+- 渲染验证：默认值 0 对象渲染（零行为变化 PASS）；单服务启用/全量启用/MySQL 关闭三 case 模拟渲染全过（本机无 helm，CI helm lint job 兜底真渲染）
+- README Helm 章节补"微服务部署（可选）"；NOTES.txt 提示默认未启用
+
+### UX 收尾
+- K8sManageView（15 处）/PortalView（4 处）原生 confirm/alert 全部迁移 ConfirmModal/Toast——**全站对话框体系统一完成**（第五轮已迁 4 页，本轮补齐最后 2 个活跃页面），grep 残留清零
+
+### 文档保真（api-reference 剩余字段漂移清零）
+- 15 处 `agent_id` 疑似漂移**逐源核实**（handler JSON tag + 前端实际调用双证据）：14 处确认漂移修正（含 gRPC 全表——实际传输是 JSON codec，字段名=Go camelCase tag；HMAC 签名原文消息与密钥顺序均写反，按 grpc.go:210 实现修正）；1 处核实为 proto IDL 事实陈述保留
+- 顺带修正核实中发现的**关联虚构**：GET /devices 实为 segment 分组结构（非扁平数组）、GET /agents 仅 4 字段（原文档 5 字段不存在）、POST /tasks/batch 实为 `targets`（无 agent_ids）、POST /workflows 的 dag 是 JSON 字符串非 {nodes,edges}、os/middleware 响应实为 201+完整对象等 15 项——每项均有 handler 源码行号依据，零瞎改
+
+### 验证
+- `go build ./...` + vet + gofmt 清零 ✅；主模块 controlplane（158s，含新乱序回归测试）/store 全绿 ✅
+- 前端 vitest 631/631 + build 5.1s ✅；K8s/Portal 残留 grep 清零 ✅
+- Helm 模板：语法配对 77/77、helper 引用全有效、values-模板键路径 30 处逐一对照零多余、4 case 渲染模拟通过（CI helm lint 兜底）
+
 ## [Unreleased] — 2026-08-30 第五轮：四路审计问题全量修复（认证链 4C + 后端安全 4 项 + 交付链 4C + UX 包）
 
 > 基线：四路并行深度审计（架构/前端/测试CICD/文档）发现的 Critical/High 问题，四组 subagent 并行修复，文件边界零重叠，全部经独立抽验 + 全仓回归。

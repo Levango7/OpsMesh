@@ -47,4 +47,21 @@ OpsMesh "{{ .Chart.Name }}" 已安装到命名空间 {{ .Release.Namespace }}。
 Agent DaemonSet 已部署，每节点一个 agent，自动注册到控制面。
 {{- end }}
 
+{{- $enabledSvcs := list -}}
+{{- range $name, $svc := .Values.services -}}
+{{-   if $svc.enabled -}}
+{{-     $enabledSvcs = append $enabledSvcs ($name | replace "_" "-") -}}
+{{-   end -}}
+{{- end -}}
+{{- if $enabledSvcs }}
+微服务（可选组件）已启用：{{ $enabledSvcs | join ", " }}。
+各服务以 Deployment + Service（HTTP/gRPC 双端口）渲染，健康探针路径见 values services.<svc>.probe.path。
+存储接线：storeType=sql 且 chart MySQL 可用时自动注入 <前缀>_DSN（复用 Secret mysql-dsn）。
+{{- else }}
+微服务（services/ 下 18 个）默认未启用——本 chart 仅部署控制面 + agent + MySQL/Redis。
+按需开启单个服务（键名用下划线，K8s 资源名自动转连字符）：
+  helm upgrade {{ .Release.Name }} ./deploy/helm/opsmesh -n {{ .Release.Namespace }} --set services.task_svc.enabled=true
+开启后镜像需可拉取（release.yml 推送至 ghcr.io/<owner>/<service>，或改 services.<svc>.image.repository）。
+{{- end }}
+
 文档：https://github.com/opsmesh/opsmesh

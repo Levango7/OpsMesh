@@ -1,0 +1,142 @@
+{{- /*
+微服务 Deployment + Service（可选组件，默认全部禁用）。
+- 渲染条件：range .Values.services + 每服务独立 if $svc.enabled（默认 false，存量部署零行为变化）。
+- 键名用下划线（auth_svc）规避 --set 连字符坑；K8s 资源名不允许下划线，
+  统一 replace "_" "-"（Deployment/Service/容器名/组件标签均用连字符形式）。
+- 端口（httpPort/grpcPort）、探针路径（probe.path）、存储 env 前缀（storeEnvPrefix）
+  均由 values 提供，已对照各服务 pkg/config/config.go 与 cmd/*/main.go 源码默认值。
+- 存储接线：storeEnvPrefix 非空时渲染 <前缀>_STORE_TYPE（=storeType）；
+  且 chart 全局 MySQL 可用（mysql.enabled && controlplane.store=mysql）时
+  渲染 <前缀>_DSN，取值复用控制面 Secret 的 mysql-dsn 键（与全局连接串同源派生）。
+- 微服务镜像以非数字用户 svc 运行（见 services/*/Dockerfile USER svc），
+  故默认不设置容器 securityContext.runAsUser（non-numeric user 无法过 runAsNonRoot 校验）。
+*/ -}}
+{{- range $name, $svc := .Values.services }}
+{{- if $svc.enabled }}
+{{- $svcName := $name | replace "_" "-" }}
+{{- $fullName := printf "%s-%s" (include "opsmesh.fullname" $) $svcName }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "opsmesh.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $svcName }}
+spec:
+  replicas: {{ $svc.replicas }}
+  selector:
+    matchLabels:
+      {{- include "opsmesh.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $svcName }}
+  template:
+    metadata:
+      labels:
+        {{- include "opsmesh.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ $svcName }}
+        {{- with $svc.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- with $svc.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        # Secret（含 mysql-dsn）变更即滚动重启，DSN 轮换及时生效（与控制面同款机制）
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") $ | sha256sum }}
+    spec:
+      {{- include "opsmesh.imagePullSecrets" $ | nindent 6 }}
+      serviceAccountName: {{ include "opsmesh.serviceAccountName" $ }}
+      {{- with $svc.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $svc.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $svc.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ $svcName }}
+          image: {{ include "opsmesh.image" (list $ $svc.image) }}
+          imagePullPolicy: {{ $svc.image.pullPolicy }}
+          {{- if or $svc.storeEnvPrefix $svc.env }}
+          env:
+            {{- if $svc.storeEnvPrefix }}
+            - name: {{ printf "%s_STORE_TYPE" $svc.storeEnvPrefix | quote }}
+              value: {{ $svc.storeType | quote }}
+            {{- if and $.Values.mysql.enabled (eq $.Values.controlplane.store "mysql") }}
+            # DSN 派生自 chart 全局 MySQL 连接串（复用 Secret 键 mysql-dsn，与控制面同库同凭据）
+            - name: {{ printf "%s_DSN" $svc.storeEnvPrefix | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "opsmesh.fullname" $ }}-secret
+                  key: mysql-dsn
+            {{- end }}
+            {{- end }}
+            {{- range $k, $v := $svc.env }}
+            # 用户自定义 env（渲染在派生项之后，同名键可覆盖上方默认）
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ $svc.httpPort }}
+              protocol: TCP
+            {{- if $svc.grpcPort }}
+            - name: grpc
+              containerPort: {{ $svc.grpcPort }}
+              protocol: TCP
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              # 健康路径逐服务对照源码（多数 /health；log-svc 为 /healthz），经 values 注入
+              path: {{ $svc.probe.path }}
+              port: http
+            initialDelaySeconds: {{ $svc.probe.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $svc.probe.liveness.periodSeconds }}
+            timeoutSeconds: {{ $svc.probe.liveness.timeoutSeconds }}
+            failureThreshold: {{ $svc.probe.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ $svc.probe.path }}
+              port: http
+            initialDelaySeconds: {{ $svc.probe.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $svc.probe.readiness.periodSeconds }}
+            timeoutSeconds: {{ $svc.probe.readiness.timeoutSeconds }}
+            failureThreshold: {{ $svc.probe.readiness.failureThreshold }}
+          resources:
+            {{- toYaml $svc.resources | nindent 12 }}
+          {{- with $svc.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "opsmesh.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $svcName }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ $svc.httpPort }}
+      targetPort: http
+      protocol: TCP
+    {{- if $svc.grpcPort }}
+    - name: grpc
+      port: {{ $svc.grpcPort }}
+      targetPort: grpc
+      protocol: TCP
+    {{- end }}
+  selector:
+    {{- include "opsmesh.selectorLabels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $svcName }}
+{{- end }}
+{{- end }}

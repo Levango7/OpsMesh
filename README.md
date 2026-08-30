@@ -384,6 +384,35 @@ Chart 要点：
 - MySQL / Redis `StatefulSet`（持久化 PV）+ `Secret`（`provision-secret` / `mysql-dsn`）；TLS 证书走 `controlplane.tls.secretName` 预置 Secret（键 `tls.crt` / `tls.key` / `ca.crt`）。
 - 进阶开关（`--metrics-allow-cidr`、`--federation-*`）可通过 `controlplane.extraEnv` 注入对应 `OPSMESH_*` 环境变量（配置层已实现 env 兜底）。
 
+### 微服务部署（可选，默认不启用）
+
+`services/` 下的微服务默认不经 Helm 部署——values 中 `services.*` 全部 `enabled: false`，`templates/microservices.yaml` 渲染为空，**存量部署行为 100% 不变**。已建 Dockerfile 的 11 个服务（auth/device/task/alert/config/log/deploy/plugin/portal/aio-svc、grafana-bridge）可按需单独开启：
+
+```bash
+# 开启单个微服务（键名用下划线，K8s 资源名自动转连字符：opsmesh-task-svc）
+helm upgrade opsmesh ./deploy/helm/opsmesh -n opsmesh \
+  --set services.task_svc.enabled=true
+
+# 开启并接 MySQL（需 controlplane.store=mysql + mysql.enabled=true；
+# 自动注入 TASK_SVC_STORE_TYPE=sql 与 TASK_SVC_DSN，复用 Secret 键 mysql-dsn）
+helm upgrade opsmesh ./deploy/helm/opsmesh -n opsmesh \
+  --set services.task_svc.enabled=true \
+  --set services.task_svc.storeType=sql
+
+# 钉死不可变镜像（digest 非空优先于 tag）
+helm upgrade opsmesh ./deploy/helm/opsmesh -n opsmesh \
+  --set services.task_svc.enabled=true \
+  --set services.task_svc.image.digest=sha256:<hex>
+```
+
+每个启用的服务渲染 `Deployment` + `Service`（HTTP/gRPC 双端口，gRPC 缺省的服务如 plugin/aio/grafana-bridge 自动省略 gRPC 端口）：
+
+- **端口对照源码**：HTTP/gRPC 端口取各服务 `pkg/config/config.go` 默认值（auth/device/task 8081/50052、alert 8080/50051、config 8083/50054、log 8080/9090、deploy 8081/50052、plugin 8082（纯 HTTP）、portal 8080/50051、aio 8100（纯 HTTP）、grafana-bridge 8080（纯 HTTP））。
+- **健康探针**：liveness/readiness 探各服务 HTTP 端口的健康路径（多数为 `/health`，log-svc 为 `/healthz`，见 `services/*/cmd/*/main.go`）。
+- **镜像来源**：release.yml 推送至 `ghcr.io/<owner>/<service>`，三连 tag：`v<version>` / `<github.sha>` / `latest`；默认 `latest`，生产用 `values-production.yaml` 的 `services` 注释示例钉 semver/digest。
+- **存储接线**：`storeEnvPrefix` 非空时渲染 `<前缀>_STORE_TYPE`；chart 全局 MySQL 可用时同步注入 `<前缀>_DSN`（与控制面同库同凭据）。log-svc 后端选择走 `LOG_SVC_BACKEND`（env），aio-svc / grafana-bridge 无存储 env。
+
+
 > 旧版文档曾标注"Helm 规划中"，与当前仓库实际不符——现已纠正：Chart 已落地可用。Argo CD ApplicationSet 网段批量渲染仍属规划中能力。
 
 容器编排（非 Helm 路径）：`docker-compose.yaml`（controlplane + agent + mysql + redis 一键起）、`Dockerfile`（控制面多阶段）、`Dockerfile.agent`（agent 多阶段）。

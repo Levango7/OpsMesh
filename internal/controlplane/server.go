@@ -58,7 +58,15 @@ type Server struct {
 	logHandler    *logstore.Handler      // M6 日志检索处理器
 	deployHandler *deploy.Handler        // M3 部署中心处理器
 	orchHandler   *orchestration.Handler // M5 作业编排中心处理器
-	lastAlertSent time.Time              // M7 告警 Webhook：上次已推送的告警时间戳（notifyLoop 防重复）
+	// 告警推送去重（notifyLoop 防重复）：按告警指纹（AlertID）记录已推送集合，
+	// 替代旧版全局单一时间高水位 lastAlertSent——时间水位对乱序插入/跨租户告警/
+	// 多副本时钟偏差不免疫（任一租户推送后水位前移，其它租户 CreatedAt 更早的
+	// 告警被永久跳过）；指纹去重对上述场景全部免疫。
+	// key=AlertID，value=推送成功时间；推送成功才写入（失败不标记，下轮重试）。
+	// 条目保留 24h 后由 notifyLoop 周期清理（有界防泄漏；远大于聚合窗口 5min，
+	// 足够覆盖任何重试需求）。
+	alertSentMu sync.Mutex
+	alertSent   map[string]time.Time
 	// 告警聚合器：同源告警 5 分钟聚合 + 级别抑制（critical 抑制同源 warning）。
 	alertAggr *notify.AlertAggregator
 	// 告警多通道（Webhook + Email）。NewServer 从 cfg 构造；notifyLoop 每次推送复用。
@@ -326,6 +334,8 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		apiKeyMgr: platform.NewAPIKeyManager(st),
 		// LastUsedAt 内存聚合计数（MVP：仅累计不落库，见 Server.apiKeyUsage 注释）。
 		apiKeyUsage: make(map[string]int64),
+		// 告警推送去重集合（按 AlertID 指纹；见 Server.alertSent 注释）。
+		alertSent: make(map[string]time.Time),
 		// Phase 5 API 网关运行期状态（路由规则 + 限流器 + 统计）。
 		gateway: newGatewayState(),
 		// 自动化引擎评估周期（startAutomationEvalLoop 消费；<=0 时 loop 内部按 30s 兜底）。

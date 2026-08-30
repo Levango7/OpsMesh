@@ -197,17 +197,26 @@
         </div>
       </div>
     </div>
+    <ConfirmModal
+      v-model="deleteConfirm.show"
+      data-testid="k8s-delete-confirm-modal"
+      :title="deleteConfirm.kind === 'restart' ? $t('k8s.restart') : $t('k8s.delete')"
+      :message="deleteConfirm.kind === 'restart' ? $t('k8s.restartConfirm') : (deleteConfirm.kind === 'pod' ? $t('k8s.deletePodConfirm') : $t('k8s.deleteClusterConfirm'))"
+      @confirm="onDeleteConfirm"
+    />
   </div>
 </template>
 
 <script setup>
 // K8s 管理 — 集群 CRUD + 测试连接 + 资源管理（Pod/Deployment/Service/ConfigMap/Secret/Node）
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useK8sStore } from '@/stores/k8s'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
+import { toast } from '@/utils/toast'
 
 const store = useK8sStore()
 
@@ -355,9 +364,26 @@ async function confirmAdd() {
   }
 }
 
+// ---- 删除确认弹窗（替代 confirm）：kind 存待执行动作类型，id/row 存目标 ----
+const deleteConfirm = reactive({ show: false, kind: '', id: null, row: null })
+
 // ---- 删除集群 ----
-async function onDelete(id) {
-  if (!confirm(t('k8s.deleteClusterConfirm'))) return
+function onDelete(id) {
+  deleteConfirm.kind = 'cluster'
+  deleteConfirm.id = id
+  deleteConfirm.row = null
+  deleteConfirm.show = true
+}
+
+async function onDeleteConfirm() {
+  const { kind, id, row } = deleteConfirm
+  if (!kind) return
+  if (kind === 'cluster') await doDeleteCluster(id)
+  else if (kind === 'pod') await doDeletePod(row)
+  else if (kind === 'restart') await doRestart()
+}
+
+async function doDeleteCluster(id) {
   try {
     const r = await store.removeCluster(id)
     if (r.s === 204 || (r.s >= 200 && r.s < 300)) {
@@ -367,10 +393,10 @@ async function onDelete(id) {
         store.resources = []
       }
     } else {
-      alert(t('k8s.deleteFailHttp', { code: r.s }))
+      toast.error(t('k8s.deleteFailHttp', { code: r.s }))
     }
   } catch (e) {
-    alert(t('k8s.deleteFailError', { msg: (e.j?.error || e.message || e) }))
+    toast.error(t('k8s.deleteFailError', { msg: (e.j?.error || e.message || e) }))
   }
 }
 
@@ -380,12 +406,14 @@ async function onTest(id) {
     const r = await store.testCluster(id)
     if (r.s >= 200 && r.s < 300 && r.j) {
       const ok = r.j.status === 'ok' || r.j.status === 'online' || r.j.status === 'success'
-      alert((ok ? t('k8s.testSuccess') : t('k8s.testFail')) + (r.j.message ? '\n' + r.j.message : ''))
+      const title = (ok ? t('k8s.testSuccess') : t('k8s.testFail')) + (r.j.message ? '：' + r.j.message : '')
+      if (ok) toast.success(title)
+      else toast.error(title)
     } else {
-      alert(t('k8s.testFailHttp', { code: r.s }))
+      toast.error(t('k8s.testFailHttp', { code: r.s }))
     }
   } catch (e) {
-    alert(t('k8s.testFailError', { msg: (e.j?.error || e.message || e) }))
+    toast.error(t('k8s.testFailError', { msg: (e.j?.error || e.message || e) }))
   }
 }
 
@@ -420,17 +448,23 @@ async function fetchLogs() {
 }
 
 // ---- 删除 Pod ----
-async function onDeletePod(row) {
-  if (!confirm(t('k8s.deletePodConfirm'))) return
+function onDeletePod(row) {
+  deleteConfirm.kind = 'pod'
+  deleteConfirm.id = null
+  deleteConfirm.row = row
+  deleteConfirm.show = true
+}
+
+async function doDeletePod(row) {
   try {
     const r = await store.removePod(store.currentClusterID, row.namespace, row.name)
     if (r.s === 204 || (r.s >= 200 && r.s < 300)) {
       store.fetchResources()
     } else {
-      alert(t('k8s.deleteFailHttp', { code: r.s }))
+      toast.error(t('k8s.deleteFailHttp', { code: r.s }))
     }
   } catch (e) {
-    alert(t('k8s.deleteFailError', { msg: (e.j?.error || e.message || e) }))
+    toast.error(t('k8s.deleteFailError', { msg: (e.j?.error || e.message || e) }))
   }
 }
 
@@ -479,18 +513,26 @@ async function confirmScale() {
 }
 
 // ---- 重启 Deployment ----
-async function onRestart(row) {
-  if (!confirm(t('k8s.restartConfirm'))) return
+function onRestart(row) {
+  deleteConfirm.kind = 'restart'
+  deleteConfirm.id = null
+  deleteConfirm.row = row
+  deleteConfirm.show = true
+}
+
+async function doRestart() {
+  const row = deleteConfirm.row
+  if (!row) return
   try {
     const r = await store.restartDeployment(store.currentClusterID, row.namespace, row.name)
     if (r.s >= 200 && r.s < 300 && r.j) {
-      alert(t('k8s.restartTriggered', { msg: (r.j.restartedAt || '') }))
+      toast.success(t('k8s.restartTriggered', { msg: (r.j.restartedAt || '') }))
       store.fetchResources()
     } else {
-      alert(t('k8s.restartFailHttp', { code: r.s }))
+      toast.error(t('k8s.restartFailHttp', { code: r.s }))
     }
   } catch (e) {
-    alert(t('k8s.restartFailError', { msg: (e.j?.error || e.message || e) }))
+    toast.error(t('k8s.restartFailError', { msg: (e.j?.error || e.message || e) }))
   }
 }
 

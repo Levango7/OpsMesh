@@ -384,72 +384,92 @@ Prometheus 文本格式指标。**监听在独立端口 9091**（非主 8080 端
 
 设备清单（按网段分组）。
 
-- **查询参数**：`segment`、`status`（online/offline/retired）、`managed`
+- **查询参数**：`page`、`pageSize`（不传 `page` 返回全量；无 segment/status/managed 过滤参数）
 - **响应**：
 
 ```json
-[
-  {
-    "id": "d-001",
-    "hostname": "host-1",
-    "segment": "seg-a",
-    "agent_id": "a-001",
-    "state": "online",
-    "managed": true,
-    "last_heartbeat": "2026-08-07T10:00:00Z",
-    "os": "linux",
-    "arch": "amd64"
-  }
-]
+{
+  "seg-a": [
+    {
+      "deviceID": "d-001",
+      "hostname": "host-1",
+      "segment": "seg-a",
+      "agentID": "a-001",
+      "state": "online",
+      "managed": true,
+      "lastResult": "success",
+      "lastResultAt": "2026-08-07T10:00:00Z",
+      "os": "linux",
+      "arch": "amd64"
+    }
+  ]
+}
 ```
+
+说明：实际响应为 `segment → 设备列表` 的分组对象（`store.Snapshot` 返回 `map[string][]proto.DeviceInfo`），而非扁平数组；字段名以 `proto.DeviceInfo` 的 JSON tag 为准。
 
 ### GET /api/v1/devices/{id}
 
-设备详情（含最近任务结果）。
+设备详情（含该设备 agent 的任务与最近结果）。
 
-- **响应**：同上单个对象，附加 `recent_tasks` 字段
+- **响应**：`200 OK`
+
+```json
+{
+  "device": {"deviceID": "d-001", "agentID": "a-001", "state": "online", "...": "..."},
+  "tasks": [{"taskID": "t-001", "agentID": "a-001", "status": "done", "...": "..."}],
+  "results": [{"taskID": "t-001", "agentID": "a-001", "exitCode": 0, "...": "..."}]
+}
+```
+
+- `device`：`domain.Device`（字段同设备列表项）
+- `tasks`：该设备 agent 名下的任务列表（`domain.Task`）
+- `results`：该设备 agent 的任务结果列表（`domain.TaskResult`）
 
 ### DELETE /api/v1/devices/{id}
 
 退役/下线设备（`state` → `retired`）。
 
-- **响应**：`200 OK`，`{"message": "设备已退役"}`
+- **响应**：`200 OK`，`{"status": "retired", "deviceID": "d-001"}`
 
 ### POST /api/v1/devices/{id}/provision
 
-**纳管**：签发一次性 install token（15 分钟有效），返回 bootstrap 安装命令。
+**纳管**：签发一次性 install token，返回 bootstrap 安装命令。
 
 - **响应**：
 
 ```json
 {
-  "install_token": "tok-xxxx",
-  "expires_at": "2026-08-07T10:15:00Z",
-  "bootstrap": "curl -fsSL http://controlplane:8080/install.sh | sh -s -- --token=tok-xxxx --control-addr=http://controlplane:8080"
+  "status": "provisioning",
+  "deviceID": "d-001",
+  "installToken": "tok-xxxx",
+  "bootstrap": "curl -sSL http://controlplane:8080/install.sh | sh -s -- --token=tok-xxxx"
 }
 ```
 
 ### POST /api/v1/provision/auto
 
-自动纳管：按网段批量签发 install token。
+自动纳管：按网段批量扫描、登记候选设备并签发 install token（配置 SSH 私钥时自动推送 bootstrap）。
 
 - **请求体**：
 
 ```json
 {
-  "segment_cidr": "10.30.0.0/24",
-  "ssh_user": "root"
+  "cidrs": ["10.30.0.0/24"],
+  "tenantID": "t1"
 }
 ```
 
-- **响应**：
+- `cidrs`：目标网段列表（缺省回退 `--segment-cidr`；受 `--provision-cidr-whitelist` 白名单校验，命中白名单外返回 `403`）
+- **响应**：`200 OK`
 
 ```json
 {
-  "candidates": [
-    {"host": "10.30.0.5", "install_token": "tok-aaa", "bootstrap": "curl ... | sh -s -- --token=tok-aaa"}
-  ],
-  "total": 1
+  "scanned": 254,
+  "registered": 3,
+  "provisioned": 3,
+  "sshPushed": 1,
+  "failures": ["10.30.0.7: ssh: connect timeout"]
 }
 ```
 
@@ -551,13 +571,10 @@ agent 清单。
 ```json
 [
   {
-    "id": "a-001",
+    "agentID": "a-001",
     "hostname": "host-1",
     "segment": "seg-a",
-    "state": "online",
-    "last_heartbeat": "2026-08-07T10:00:00Z",
-    "version": "0.1.0",
-    "load": {"cpu": 0.3, "mem_mb": 256}
+    "status": "online"
   }
 ]
 ```
@@ -570,22 +587,21 @@ agent 清单。
 
 任务列表。
 
-- **查询参数**：`status`（pending/running/done/failed/cancelled）、`agent_id`、`page`、`pageSize`
+- **查询参数**：`status`（pending/running/done/failed/cancelled）、`page`、`pageSize`（不传 `page` 返回全量）
 - **响应**：
 
 ```json
 [
   {
-    "id": "t-001",
-    "agent_id": "a-001",
+    "taskID": "t-001",
+    "agentID": "a-001",
+    "tenantID": "t1",
     "type": "shell",
     "command": "uname -a",
     "status": "done",
-    "created_at": "2026-08-07T09:00:00Z",
-    "started_at": "2026-08-07T09:00:01Z",
-    "finished_at": "2026-08-07T09:00:02Z",
-    "retry_count": 0,
-    "max_retries": 3,
+    "createdAt": "2026-08-07T09:00:00Z",
+    "retryCount": 0,
+    "maxRetries": 3,
     "schedule": ""
   }
 ]
@@ -599,12 +615,12 @@ agent 清单。
 
 ```json
 {
-  "agent_id": "a-001",
+  "agentID": "a-001",
   "type": "shell",
   "command": "uname -a",
-  "timeout_sec": 120,
-  "max_retries": 3,
-  "schedule": "*/5 * * * *"
+  "schedule": "*/5 * * * *",
+  "maxRetries": 3,
+  "approvalRequired": false
 }
 ```
 
@@ -620,7 +636,7 @@ agent 清单。
 
 ```json
 {
-  "agent_ids": ["a-001", "a-002"],
+  "targets": ["a-001", "a-002"],
   "type": "shell",
   "command": "uptime"
 }
@@ -630,8 +646,9 @@ agent 清单。
 
 ```json
 {
-  "created": [{"id": "t-001", "agent_id": "a-001"}, {"id": "t-002", "agent_id": "a-002"}],
-  "total": 2
+  "count": 2,
+  "created": ["t-001", "t-002"],
+  "errors": [{"target": "a-003", "error": "agent not found or tenant mismatch"}]
 }
 ```
 
@@ -639,7 +656,7 @@ agent 清单。
 
 取消任务（pending 拦截 / running 强杀）。
 
-- **响应**：`200 OK`，`{"message": "任务已取消"}`
+- **响应**：`200 OK`，`{"status": "cancelled", "taskID": "t-001"}`
 
 ### GET /api/v1/tasks/{id}/result
 
@@ -649,13 +666,14 @@ agent 清单。
 
 ```json
 {
-  "task_id": "t-001",
-  "status": "done",
-  "exit_code": 0,
+  "taskID": "t-001",
+  "agentID": "a-001",
+  "exitCode": 0,
   "stdout": "Linux host-1 5.15.0 ...",
   "stderr": "",
-  "started_at": "2026-08-07T09:00:01Z",
-  "finished_at": "2026-08-07T09:00:02Z"
+  "durationMs": 1234,
+  "finishedAt": "2026-08-07T09:00:02Z",
+  "claimEpoch": 1
 }
 ```
 
@@ -1505,12 +1523,12 @@ M5 作业编排：DAG 创建 / 触发 / 状态查询。
 ```json
 [
   {
-    "id": "wf-001",
+    "id": 1,
     "name": "发布流水线",
     "status": "active",
     "cron": "0 2 * * *",
-    "agent_id": "a-001",
-    "created_at": "2026-08-07T09:00:00Z"
+    "agentID": "a-001",
+    "createdAt": "2026-08-07T09:00:00Z"
   }
 ]
 ```
@@ -1524,21 +1542,14 @@ M5 作业编排：DAG 创建 / 触发 / 状态查询。
 ```json
 {
   "name": "发布流水线",
-  "agent_id": "a-001",
+  "agentID": "a-001",
   "cron": "0 2 * * *",
-  "dag": {
-    "nodes": [
-      {"id": "n1", "name": "构建", "task": {"type": "shell", "command": "make build"}},
-      {"id": "n2", "name": "部署", "task": {"type": "shell", "command": "make deploy"}}
-    ],
-    "edges": [
-      {"from": "n1", "to": "n2"}
-    ]
-  }
+  "dag": "[{\"id\":\"n1\",\"name\":\"构建\",\"type\":\"shell\",\"command\":\"make build\"},{\"id\":\"n2\",\"name\":\"部署\",\"type\":\"shell\",\"command\":\"make deploy\",\"dependsOn\":[\"n1\"]}]"
 }
 ```
 
-- **响应**：`201 Created`
+- `dag`：节点数组的 JSON **字符串**（`WorkflowDef.DAG` 为 `json:"dag"` 字符串字段，节点间依赖由各节点 `dependsOn` 表达，非 `{nodes, edges}` 嵌套对象）
+- **响应**：`201 Created`，返回完整 `WorkflowDef`（含服务端生成的 `id`、`status` 默认 `draft`）
 
 ### GET /api/v1/workflows/{id}
 
@@ -1936,12 +1947,17 @@ M2/M3 增强：CI 自动采集 + 变更审批流。CI 创建/修改/删除走审
 
 ```json
 {
-  "agent_id": "a-001",
-  "params": {"swappiness": "10"}
+  "agentID": "a-001",
+  "paramsMap": {"swappiness": "10"},
+  "params": ["--swappiness=10"]
 }
 ```
 
-- **响应**：`200 OK`，`{"task_id": "t-001", "status": "pending"}`
+- `agentID`：必填，目标 agent
+- `paramsMap`：模板定义了参数 schema 时使用（占位符替换模式）
+- `params`：模板无参数定义时使用（位置参数注入模式）
+
+- **响应**：`201 Created`，`{"task": {...}, "templateID": "tpl-001", "templateName": "内核参数调优"}`
 
 ---
 
@@ -1980,12 +1996,13 @@ M2/M3 增强：CI 自动采集 + 变更审批流。CI 创建/修改/删除走审
 
 ```json
 {
-  "agent_id": "a-001",
-  "params": {"port": 80, "workers": 4}
+  "agentID": "a-001",
+  "deployType": "docker",
+  "params": {"port": "80", "workers": "4"}
 }
 ```
 
-- **响应**：`200 OK`，`{"instance_id": "mi-001", "task_id": "t-001"}`
+- **响应**：`201 Created`，`{"task": {...}, "taskID": "t-001", "templateID": "mw-001", "templateName": "Nginx 1.25", "deployType": "docker"}`
 
 ### GET /api/v1/middleware-instances
 
@@ -1997,7 +2014,8 @@ M2/M3 增强：CI 自动采集 + 变更审批流。CI 创建/修改/删除走审
 
 卸载中间件实例。
 
-- **响应**：`200 OK`，`{"message": "卸载已触发", "task_id": "t-002"}`
+- **请求体**：`{"agentID": "a-001", "templateID": "mw-001", "deployType": "docker"}`
+- **响应**：`201 Created`，`{"task": {...}, "taskID": "t-002", "instanceID": "mi-001", "templateID": "mw-001", "templateName": "Nginx 1.25", "deployType": "docker"}`
 
 ---
 
@@ -4606,16 +4624,18 @@ gRPC 服务监听 9090 端口（JSON codec），agent 通过此通道注册/心�
 
 | 方法 | 请求 | 响应 | 说明 |
 |------|------|------|------|
-| `Register` | `{install_token, hostname, segment, os, arch, version}` | `{agent_id, tenant_id, accepted}` | 注册 agent；携带 install_token 时可自动纳管候选设备 |
-| `Heartbeat` | `{agent_id, state, load}` | `{accepted}` | 上报在线状态与负载（每 10s） |
-| `PullTasks` | `{agent_id}` | `{task}` | 原子领取下一条 pending 任务（多副本安全） |
-| `ReportResult` | `{agent_id, task_id, status, exit_code, stdout, stderr}` | `{accepted}` | 上报任务执行结果（成功/失败/重试/死信） |
-| `CancelTask` | `{agent_id, task_id}` | `{cancelled}` | 取消指定任务（服务端按租户隔离） |
-| `PollCancels` | `{agent_id}` | `{task_ids: []}` | agent 轮询本机被取消的任务 ID（每 2s） |
-| `ReportLogs` | `{agent_id, log_name, lines[]}` | `{accepted}` | agent 上报任务执行日志（日志采集，含 timestamp/level/message） |
+| `Register` | `{hostname, segment, tenantID, installToken, os, arch}`（`proto.AgentInfo`） | `{agentID, controlConfig, secret}`（`RegisterResp`） | 注册 agent；携带 installToken 时可自动纳管候选设备 |
+| `Heartbeat` | `{agentID, status, load, cmdbReport?, metrics?}`（`HeartbeatReq`） | `{}`（`Empty`） | 上报在线状态与负载（每 10s） |
+| `PullTasks` | `{agentID}`（`PullTasksReq`） | `{tasks: []Task}`（`PullTasksResp`） | 原子领取下一条 pending 任务（多副本安全） |
+| `ReportResult` | `{taskID, agentID, exitCode, stdout, stderr, durationMs, finishedAt, claimEpoch}`（`proto.TaskResult`） | `{}`（`Empty`） | 上报任务执行结果（成功/失败/重试/死信） |
+| `CancelTask` | `{taskID, tenantID}`（`CancelTaskReq`，无 agent 字段） | `{}`（`Empty`） | 取消指定任务（服务端按租户隔离） |
+| `PollCancels` | `{agentID}`（`PollCancelsReq`） | `{cancelledTaskIDs: []}`（`PollCancelsResp`） | agent 轮询本机被取消的任务 ID（每 2s） |
+| `ReportLogs` | `{report: {agentID, logName, lines[], collectedAt}}`（`ReportLogsReq`，`proto.LogReport`） | `{}`（`Empty`） | agent 上报任务执行日志（日志采集，含 timestamp/level/message） |
+
+说明：字段名以 JSON codec（默认传输路径，`internal/grpcx`）实际序列化的 Go JSON tag 为准（camelCase）。proto IDL（`proto/opsmesh/v1/registration.proto`，protobuf codec 灰度路径）中为 snake_case（`agent_id` 等），由 `grpcx.*ToProto/Legacy` 防腐层互转，两条路径并行兼容。
 
 ### gRPC 安全
 
 - **TLS/mTLS**：`--tls-cert` / `--tls-key` / `--client-ca` 启用服务端证书与客户端证书校验
-- **HMAC 签名**：`--grpc-require-signature=true` 时 agent 请求须携带 `agent-signature` metadata（HMAC-SHA256(agent_id + timestamp + secret)），时间戳偏差 ±5min 防重放
+- **HMAC 签名**：`--grpc-require-signature=true` 时 agent 请求须携带 `agent-signature` / `agent-timestamp` metadata（HMAC-SHA256(secret, timestamp + agentID)，密钥为注册时下发的 secret 或 `--grpc-signature-key` 预共享密钥），时间戳偏差 ±5min 防重放
 - **Recovery 拦截器**：`grpcRecoveryInterceptor` 捕获 handler panic，返回 `codes.Internal`，单处 panic 不拖垮整个控制面
