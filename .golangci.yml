@@ -109,10 +109,18 @@ linters:
       # SA1019: grpc.DialContext 已 deprecated 但官方注明"整个 1.x 都支持"，
       # 迁移到 grpc.NewClient 涉及连接语义变化（NewClient 无阻塞拨号语义、
       # 返回前不建连），agent 连接缓存与 gRPC 测试的惰性建连依赖现状，有意保留。
-      # 注：告警文本为 "grpc.DialContext"（不带 google.golang.org/ 前缀）。
+      # 注：v2.13 起告警文本带完整包前缀 "google.golang.org/grpc.DialContext"，
+      # 正则需同时兼容新旧两种消息格式。
       - linters:
           - staticcheck
-        text: "SA1019: grpc\\.DialContext is deprecated"
+        text: "SA1019: (google\\.golang\\.org/)?grpc\\.DialContext is deprecated"
+      # SA1019: httputil.ReverseProxy.Director 自 Go 1.26 deprecated（Rewrite 替代）。
+      # 迁移 Rewrite 需重写网关代理的请求改写逻辑（Director 改 outreq、Rewrite 改
+      # ProxyRequest——含 hop-by-hop header 处理归属变化），属行为变更；网关数据面
+      # 当前为最小代理（TD-62 待重构），与其一并进行而非现在盲迁。
+      - linters:
+          - staticcheck
+        text: "SA1019: \\(net/http/httputil\\.ReverseProxy\\)\\.Director has been deprecated"
       # SA1012: logx.Trace 专项测试故意传 nil 验证不 panic（该用例即契约）。
       - linters:
           - staticcheck

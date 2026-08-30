@@ -78,6 +78,10 @@ func (s *Server) handleCreatePlugin(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "version is required"})
 		return
 	}
+	// G703 路径穿越真修：插件 ID 由服务端生成（store.randPluginID：plugin-<hex32>）。
+	// 此前 body.ID 透传进 filepath.Join("data","plugins",p.ID)——客户端可传 "../.."
+	// 实现路径穿越写文件。强制忽略客户端 ID，杜绝穿越面。
+	body.ID = ""
 	// L1 输入校验：pluginType 白名单 {data,logic,integration}。
 	if body.Type == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "type is required"})
@@ -301,13 +305,16 @@ func downloadAndVerifyPlugin(p *store.Plugin) error {
 	}
 
 	// 保存到插件目录。
-	pluginDir := filepath.Join("data", "plugins", p.ID)
-	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+	// G703 豁免（#nosec）：p.ID 已在 handler 侧强制清空（marketplace 创建处 body.ID=""），
+	// 仅由 store.randPluginID 服务端生成（"plugin-"+32hex 或时间戳兜底），无客户端可控
+	// 路径段；gosec 跨函数污点分析无法推断该保证，行内豁免并留理由。
+	pluginDir := filepath.Join("data", "plugins", p.ID)  // #nosec G703 -- p.ID 服务端生成见 randPluginID
+	if err := os.MkdirAll(pluginDir, 0755); err != nil { // #nosec G703 -- 同上
 		return fmt.Errorf("create plugin dir: %w", err)
 	}
 	pluginFile := filepath.Join(pluginDir, "plugin.bin")
 	// 0600：插件二进制仅服务进程自身读取（最小权限），非共享资源。
-	if err := os.WriteFile(pluginFile, data, 0600); err != nil {
+	if err := os.WriteFile(pluginFile, data, 0600); err != nil { // #nosec G703 -- 同上
 		return fmt.Errorf("write plugin file: %w", err)
 	}
 	return nil
@@ -315,8 +322,9 @@ func downloadAndVerifyPlugin(p *store.Plugin) error {
 
 // removePluginFiles 删除插件文件。
 func removePluginFiles(p *store.Plugin) error {
-	pluginDir := filepath.Join("data", "plugins", p.ID)
-	if err := os.RemoveAll(pluginDir); err != nil {
+	// G703 豁免同上：p.ID 服务端生成，非客户端可控。
+	pluginDir := filepath.Join("data", "plugins", p.ID) // #nosec G703 -- 同上
+	if err := os.RemoveAll(pluginDir); err != nil {     // #nosec G703 -- 同上
 		return fmt.Errorf("remove plugin dir: %w", err)
 	}
 	return nil

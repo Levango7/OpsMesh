@@ -28,6 +28,10 @@ jobs:
         with:
           # 默认读取仓库根 .golangci.yml；args 限定扫描范围为全仓。
           args: ./...
+          # 钉版本：action 默认 latest（曾用 v2.13.2），新版 lint 规则集会漂移
+          # （v2.6→v2.13 曾新增 G702/G703 报点、SA1019 消息格式变化），导致
+          # 本机验证通过 CI 仍红。钉死后本机/CI 用同一版本，豁免规则稳定生效。
+          version: v2.13.2
       - name: Gofmt
         run: test -z "$(gofmt -l .)"
       - name: Test (unit, memory store, -race + coverage)

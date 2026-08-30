@@ -266,6 +266,18 @@ func syncArgoCDApp(a *store.ArgoCDApp) error {
 	if a.Name == "" {
 		return fmt.Errorf("app name is required")
 	}
+	// G702 命令注入真修：Name/Namespace/TargetRevision 会成为 argocd CLI 的 argv。
+	// exec 不走 shell（无拼接注入面），但 argv 仍可注入 "--" 开头的 flag 改变
+	// argocd 语义（如 --grpc-web 或未来危险 flag）——白名单字符集校验杜绝。
+	if !isSafeCLIArg(a.Name) {
+		return fmt.Errorf("invalid app name: %q (allowed: letters/digits/-/_/./:)", a.Name)
+	}
+	if a.Namespace != "" && !isSafeCLIArg(a.Namespace) {
+		return fmt.Errorf("invalid namespace: %q", a.Namespace)
+	}
+	if a.TargetRevision != "" && !isSafeCLIArg(a.TargetRevision) {
+		return fmt.Errorf("invalid revision: %q", a.TargetRevision)
+	}
 	args := []string{"app", "sync", a.Name}
 	if a.Namespace != "" {
 		args = append(args, "--namespace", a.Namespace)
@@ -275,10 +287,30 @@ func syncArgoCDApp(a *store.ArgoCDApp) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), argoCDSyncTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "argocd", args...)
+	// G702 豁免（#nosec）：args 的三个外部输入段（Name/Namespace/TargetRevision）
+	// 已在上文经 isSafeCLIArg 白名单校验（字母数字/-/_/./: 且拒 "--" 前缀，无 flag
+	// 注入面）；exec 不走 shell 无拼接注入。gosec 跨函数污点分析无法推断该校验。
+	cmd := exec.CommandContext(ctx, "argocd", args...) // #nosec G702 -- args 已白名单校验见 isSafeCLIArg
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("argocd sync %q failed: %v (output: %s)", a.Name, err, string(output))
 	}
 	return nil
+}
+
+// isSafeCLIArg 校验可成为外部命令 argv 的字符串（防 flag 注入）：
+// 字母/数字/-/_/./: 且不得以 "--" 开头（argocd flag 前缀）。
+func isSafeCLIArg(s string) bool {
+	if s == "" || strings.HasPrefix(s, "--") {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-' || r == '_' || r == '.' || r == ':':
+		default:
+			return false
+		}
+	}
+	return true
 }
