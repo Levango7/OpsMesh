@@ -67,6 +67,7 @@
     "to_login": "Already have an account? Sign in",
     "loading": "Registering…",
     "success": "Registered, auto signed in",
+    "pending": "Registration submitted, pending admin approval. You can sign in once approved. (Default security policy; ask the administrator to enable --allow-public-register to skip approval.)",
     "need_username": "Please enter username",
     "need_password": "Please enter password",
     "username_taken": "Username already taken"

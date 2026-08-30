@@ -67,6 +67,7 @@
     "to_login": "已有账号？去登录",
     "loading": "注册中…",
     "success": "注册成功，已自动登录",
+    "pending": "注册已提交，等待管理员审批。审批通过后即可使用该账号登录（默认安全策略，如需免审批注册请联系管理员开启 --allow-public-register）。",
     "need_username": "请输入用户名",
     "need_password": "请输入密码",
     "username_taken": "用户名已被占用"

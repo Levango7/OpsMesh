@@ -115,10 +115,20 @@ async function onSubmit() {
   if (!password.value) { error.value = t('register.need_password'); return }
   loading.value = true
   try {
-    await authStore.register(username.value, password.value, email.value)
-    success.value = t('register.success')
-    // 短暂展示后跳转
-    setTimeout(() => router.push('/devices'), 600)
+    const j = await authStore.register(username.value, password.value, email.value)
+    // 后端两种注册结果（auth_login.go）：
+    //  a) status=pending（默认安全基线：--allow-public-register=false）——
+    //     不签发 token，须管理员审批后才能登录。此时绝不能跳 /devices
+    //     （未登录会被路由守卫弹回 /login，用户误以为"注册坏了"）。
+    //  b) status=active 且返回 token（--allow-public-register=true 演示模式）——
+    //     注册即登录，跳转总览页。
+    if (j && (j.status === 'pending' || (!j.token && j.message))) {
+      success.value = t('register.pending')
+      // 停留本页提示待审批；不自动跳转（修复：此前一律 600ms 跳 /devices 被弹回）
+    } else {
+      success.value = t('register.success')
+      setTimeout(() => router.push('/overview'), 600)
+    }
   } catch (e) {
     error.value = e.j?.error || t('register.username_taken')
   } finally {
@@ -183,12 +193,13 @@ function toggleLang() {
 .field input { width: 100%; }
 
 .err-msg, .ok-msg {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12.5px;
+  display: flex; align-items: flex-start; gap: 6px;
+  font-size: 12.5px; line-height: 1.5;
   padding: 7px 10px; border-radius: var(--radius-sm);
 }
 .err-msg { color: var(--fail); background: var(--fail-soft); border: 1px solid var(--fail-bg); }
 .ok-msg { color: var(--ok); background: var(--ok-soft); border: 1px solid var(--ok-bg); }
+.ok-msg .icon { flex-shrink: 0; margin-top: 2px; } /* 长文案（如待审批提示）多行时图标钉在首行 */
 
 .submit-btn {
   display: flex; align-items: center; justify-content: center; gap: 8px;
