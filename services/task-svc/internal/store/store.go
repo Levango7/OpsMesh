@@ -124,11 +124,16 @@ func (m *MemoryStore) ListTasks(tenantID, status, agentID string, limit int) []*
 }
 
 // ClaimTask atomically claims a pending task for an agent.
+//
+// 安全语义（Critical 修复）：严格按 AgentID 绑定领取——仅 status=pending 且
+// t.AgentID 精确等于请求 agent 的任务可被领取。原实现的 `|| t.AgentID == ""`
+// 兜底使任意 agent 可领取全部租户的"广播任务"（无租户条件的跨租户越权，
+// 任务内容可为任意 shell 命令 = RCE 级越权），与 MySQLStore.ClaimTask 同步移除。
 func (m *MemoryStore) ClaimTask(agentID string) *models.Task {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, t := range m.tasks {
-		if t.Status == models.TaskStatusPending && (t.AgentID == agentID || t.AgentID == "") {
+		if t.Status == models.TaskStatusPending && t.AgentID == agentID {
 			t.Status = models.TaskStatusClaimed
 			t.ClaimedBy = agentID
 			t.ClaimedAt = time.Now()

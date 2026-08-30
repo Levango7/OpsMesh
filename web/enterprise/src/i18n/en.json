@@ -146,7 +146,12 @@
     "cancel": "Cancel",
     "empty": "No users",
     "save_failed": "Save failed",
-    "delete_failed": "Delete failed"
+    "delete_failed": "Delete failed",
+    "approve": "Approve",
+    "reject": "Reject",
+    "pending": "Pending",
+    "approve_failed": "Approve failed",
+    "reject_failed": "Reject failed"
   },
   "roles": {
     "title": "Roles",
@@ -165,6 +170,8 @@
     "new_permissions": "Permissions",
     "save": "Save",
     "cancel": "Cancel",
+    "save_failed": "Save failed",
+    "delete_failed": "Delete failed",
     "empty": "No roles"
   },
   "permissions": {
@@ -190,6 +197,7 @@
     "loginFailed": "Login failed",
     "registerFailed": "Register failed",
     "changePasswordFailed": "Failed to change password",
+    "tooManyRequests": "Too many requests, please try again later",
     "noPermission": "No permission to access this page",
     "workflowListFailed": "Failed to fetch workflow list",
     "workflowDetailFailed": "Failed to fetch workflow",
@@ -396,7 +404,11 @@
     "graph_mode_list": "List",
     "graph_legend_type": "Types",
     "graph_legend_rel": "Relations",
-    "graph_empty": "No relation data"
+    "graph_empty": "No relation data",
+    "typesFetchFailed": "Failed to fetch CMDB types",
+    "instancesFetchFailed": "Failed to fetch configuration items",
+    "templatesFetchFailed": "Failed to fetch attribute templates",
+    "graphFetchFailed": "Failed to fetch relationship graph"
   },
   "workflows": {
     "title": "Workflows",
@@ -858,7 +870,7 @@
     "models": "Models",
     "nodes": "GPU Nodes",
     "workloads": "AI Workloads",
-    "models": "Model Management",
+    "model": "Model",
     "quotas": "Quota Overview",
     "utilizationChart": "GPU Utilization",
     "selectNodeHint": "Select a node to view metrics",
@@ -927,6 +939,8 @@
     "runbooks": "Runbooks",
     "executions": "Execution History",
     "editor": "Editor",
+    "editorPlaceholder": "Select a runbook to edit its content here (YAML/JSON)",
+    "name": "Name",
     "add": "Add Runbook",
     "execute": "Execute",
     "viewLogs": "View Logs",
@@ -1006,6 +1020,8 @@
     "addRule": "Add Rule",
     "enable": "Enable",
     "disable": "Disable",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
     "trigger": "Trigger",
     "noRules": "No rules",
     "noDecisions": "No decision records",
@@ -1077,7 +1093,6 @@
     "requestResource": "Resource Request",
     "submitRequest": "Submit Request",
     "submit": "Submit",
-    "myRequests": "My Requests",
     "approvalQueue": "Approval Queue",
     "approve": "Approve",
     "reject": "Reject",

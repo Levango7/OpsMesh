@@ -3,8 +3,11 @@
     <h2 data-testid="overview-title">{{ $t('overview.title') }}</h2>
     <p class="muted">{{ $t('overview.subtitle') }}</p>
 
-    <!-- 统计卡片 -->
-    <div class="stats-grid" data-testid="overview-stats">
+    <!-- 统计卡片：加载中显示骨架屏（fetch 失败由全局 request.js toast 提示） -->
+    <div v-if="statsLoading" class="route-skeleton stats-skeleton" data-testid="overview-stats-skeleton">
+      <div class="skeleton-card stats-skeleton-card" v-for="i in 4" :key="i" />
+    </div>
+    <div v-else class="stats-grid" data-testid="overview-stats">
       <div class="stat-card" data-testid="stat-devices">
         <div class="stat-icon" style="color: var(--indigo);"><Icon name="device" :size="22" /></div>
         <div class="stat-body">
@@ -101,6 +104,9 @@ const deviceStore = useDeviceStore()
 const alertStore = useAlertStore()
 const workflowStore = useWorkflowStore()
 
+// 统计加载态：任一数据源在拉取中即显示骨架屏
+const statsLoading = computed(() => deviceStore.loading || alertStore.loading)
+
 // 作业编排数量（容错：store 可能未加载）
 const workflowCount = computed(() => {
   const list = workflowStore.list
@@ -178,6 +184,13 @@ onMounted(() => {
   gap: 14px;
   margin: 16px 0;
 }
+.stats-skeleton {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  margin: 16px 0;
+}
+.stats-skeleton-card { height: 76px; }
 .stat-card {
   display: flex; align-items: center; gap: 14px;
   background: var(--surface); border: 1px solid var(--border);

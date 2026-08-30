@@ -8,12 +8,12 @@ import { setUnauthorizedHandler } from '@/api/request'
 import { t } from '@/i18n'
 
 export const useAuthStore = defineStore('auth', () => {
-  // 当前用户对象 {id, username, email, status, role_ids, permissions, ...}
+  // 当前用户对象 {id, username, email, status, roleIDs, permissions, ...}（后端驼峰 JSON）
   const user = ref(null)
   // 加载/错误状态
   const loading = ref(false)
   const error = ref('')
-  // 首次登录强制改密令牌（must_change_password 时由登录响应带回）
+  // 首登强制改密令牌（mustChangePassword=true 时由登录响应带回，5min 一次性）
   const changePasswordToken = ref('')
 
   // 是否已登录：以 user 是否存在为准（会话由 Cookie 维持，前端不存令牌）。
@@ -48,8 +48,10 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const { j } = await authApi.login(username, password)
       user.value = j.user || null
-      if (j.must_change_password) {
-        changePasswordToken.value = j.change_password_token || ''
+      // 后端 authResponse 为驼峰 JSON tag（mustChangePassword/changePasswordToken）。
+      // 此处只做一次映射，token 存入 ref 供 ChangePasswordView 提交时使用。
+      if (j.mustChangePassword) {
+        changePasswordToken.value = j.changePasswordToken || ''
       }
       return j
     } catch (e) {
@@ -65,7 +67,11 @@ export const useAuthStore = defineStore('auth', () => {
     loading.value = true
     error.value = ''
     try {
-      const { j } = await authApi.changePassword(oldPassword, newPassword)
+      const { j } = await authApi.changePassword(
+      oldPassword,
+      newPassword,
+      changePasswordToken.value || undefined
+    )
       changePasswordToken.value = ''
       return j
     } catch (e) {

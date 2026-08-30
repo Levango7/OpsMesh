@@ -167,6 +167,13 @@ func (s *MySQLStore) scanTasks(rows *sql.Rows) []*models.Task {
 }
 
 // ClaimTask atomically claims a pending task for an agent.
+//
+// 安全语义（Critical 修复）：严格按 agent_id 绑定领取——仅 status='pending' 且
+// agent_id 精确等于请求 agent 的任务可被领取。原实现的 `OR agent_id = ”` 兜底
+// 使任意 agent 可领取全部租户的"广播任务"（无租户条件的跨租户越权，任务内容可为
+// 任意 shell 命令 = RCE 级越权）。task-svc 无 agent→tenant 映射表（schema 中仅有
+// tenant_id 列，无 agents 表），调用方无法提供可验证的租户归属，故最严格的
+// 可执行修复是移除广播兜底、强制 agent 绑定（消除越权路径）。
 func (s *MySQLStore) ClaimTask(agentID string) *models.Task {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -175,7 +182,7 @@ func (s *MySQLStore) ClaimTask(agentID string) *models.Task {
 	defer tx.Rollback()
 
 	row := tx.QueryRow(
-		"SELECT task_id, agent_id, tenant_id, type, command, content, path, status, claimed_by, claimed_at, claim_epoch, created_at, retry_count, max_retries, dead_letter, timeout, retry_delay, schedule, parent_id, depends_on, approval_required, approved_by, approved_at, batch_id FROM tasks WHERE status = 'pending' AND (agent_id = ? OR agent_id = '') ORDER BY created_at ASC LIMIT 1 FOR UPDATE",
+		"SELECT task_id, agent_id, tenant_id, type, command, content, path, status, claimed_by, claimed_at, claim_epoch, created_at, retry_count, max_retries, dead_letter, timeout, retry_delay, schedule, parent_id, depends_on, approval_required, approved_by, approved_at, batch_id FROM tasks WHERE status = 'pending' AND agent_id = ? ORDER BY created_at ASC LIMIT 1 FOR UPDATE",
 		agentID,
 	)
 	t := s.scanTask(row)

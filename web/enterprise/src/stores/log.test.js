@@ -166,7 +166,8 @@ describe('useLogStore', () => {
       const store = useLogStore()
       await store.search()
 
-      expect(store.error).toBe('日志检索失败')
+      // store 改用 i18n：error.logsFailed → zh 回退文案
+      expect(store.error).toBe('日志拉取失败')
     })
 
     it('失败时保留上次的结果列表', async () => {

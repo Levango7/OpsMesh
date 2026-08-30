@@ -2695,7 +2695,7 @@ kubectl scale deploy opsmesh-controlplane -n opsmesh --replicas=3
 | 技术选型 | `docs/tech-selection.md` | 技术栈选型说明 |
 | UI 设计 | `docs/ui-design.md` | 前端 UI 设计 |
 | 测试规范 | `docs/test-specification.md` | 测试用例与规范 |
-| Flag 矩阵 | `docs/flag-matrix.md` | 116 个 flag 对照 |
+| Flag 矩阵 | `docs/flag-matrix.md` | 119 个 flag 对照 |
 | SSE 协议 | `docs/sse-protocol.md` | SSE 事件协议 |
 | 镜像固定 | `docs/image-pinning.md` | 镜像版本固定策略 |
 | 技术债务 | `docs/tech-debt.md` | 技术债务跟踪 |

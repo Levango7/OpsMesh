@@ -130,7 +130,9 @@ async function onSubmit() {
       setTimeout(() => router.push('/overview'), 600)
     }
   } catch (e) {
-    error.value = e.j?.error || t('register.username_taken')
+    // 429（注册限流）时优先给出准确提示，其余场景透传后端 error 文案
+    //（429/403 注册关闭等均有明确 error），最后才回退通用文案。
+    error.value = e.j?.error || (e.s === 429 ? t('error.tooManyRequests') : t('register.username_taken'))
   } finally {
     loading.value = false
   }

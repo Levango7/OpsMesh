@@ -447,11 +447,14 @@ jobs:
 
   # Release：推送 v* tag 时触发 goreleaser 跨平台发布（linux/amd64+arm64）。
   # 产物：tar.gz 归档 + sha256 checksums + SBOM（配置见 .goreleaser.yml）。
-  # 仅在 build-test/integration/security 全绿后执行，避免发布未验证产物。
+  # 仅在 build-test/integration/security/services/proto/frontend/race 全绿后执行，避免发布未验证产物。
   # fetch-depth: 0 取全量历史，goreleaser 据此生成 changelog。
   # 安装 syft（SBOM 生成依赖）+ 钉死 goreleaser 版本 + cosign 签名产物。
   release:
-    needs: [build-test, integration, security]
+    # needs 补齐：services/proto/frontend/race 均无 if 限制（tag push 正常触发），
+    # 与 build-test/integration/security 一样是发布前质量门禁——
+    # 尤其 services job 验证的就是 release.yml 矩阵发布的 6 个微服务镜像的源码可构建性。
+    needs: [build-test, integration, security, services, proto, frontend, race]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # 同 image job：cosign secret 提升到 job 级 env，保证产物签名 step 的 if 可读。

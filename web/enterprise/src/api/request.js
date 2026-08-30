@@ -44,7 +44,15 @@ http.interceptors.response.use(
     const j = err.response ? err.response.data : { error: err.message }
     const original = err.config
     // at 过期（401）时静默刷新后重试一次；刷新失败则清会话并跳登录。
-    if (s === 401 && original && !original._retry) {
+    // 循环边界（自等待死锁防护）：
+    //  1) refresh 请求自身的 401 绝不能进入本分支 —— 否则 `await refreshing` 等待的正是
+    //     自己这个 Promise（永不 settle），会话过期后整站挂起。isRefreshCall 先排除。
+    //  2) `original._retry = true` 保证任何原请求至多重试一次，刷新成功后的重试若再 401
+    //     走下方 s === 401 分支直接清会话，不会二次刷新。
+    //  3) refreshing 单飞（single-flight）：并发 401 共享同一个 refresh Promise，
+    //     finally 中置 null，下一次 401 才会发起新一轮刷新。
+    const isRefreshCall = /\/auth\/refresh$/.test(original?.url || '')
+    if (s === 401 && original && !original._retry && !isRefreshCall) {
       original._retry = true
       try {
         if (!refreshing) refreshing = postEmpty('/auth/refresh')

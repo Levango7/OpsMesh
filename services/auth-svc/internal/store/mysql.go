@@ -126,7 +126,13 @@ func (s *MySQLStore) seedDefaults() error {
 		return fmt.Errorf("check admin user: %w", err)
 	}
 	if count == 0 {
-		hash, _ := auth.HashPassword("admin123")
+		// 播种 admin：bcrypt 失败必须显式失败（原 `hash, _ :=` 吞错误会把空哈希落库，
+		// admin 永远无法登录且无任何日志可见）。seedDefaults 返回 error 由 NewMySQLStore
+		// 以 "failed to seed defaults" 拒绝启动，播种失败可见。
+		hash, err := auth.HashPassword("admin123")
+		if err != nil {
+			return fmt.Errorf("hash seed admin password: %w", err)
+		}
 		_, err = s.db.Exec(
 			"INSERT INTO users (id, username, email, password_hash, status, created_at, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?)",
 			"user-admin", "admin", "admin@opsmesh.io", hash, "active", time.Now(), true,

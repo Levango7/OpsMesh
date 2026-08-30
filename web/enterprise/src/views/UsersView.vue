@@ -18,15 +18,21 @@
     <div v-else data-testid="users-table-wrap">
       <DataTable :columns="columns" :rows="users" row-key="id" :empty-text="$t('users.empty')" data-testid="users-table">
         <template #cell-username="{ value }"><code>{{ value }}</code></template>
-        <template #cell-status="{ value }">
-          <StatusBadge :status="value === 'active' ? 'ok' : 'info'" :text="value === 'active' ? $t('users.active') : $t('users.disabled')" />
+        <template #cell-status="{ row }">
+          <StatusBadge
+            :data-testid="'users-status-' + (row.status || '')"
+            :status="statusBadgeKind(row.status)"
+            :text="statusText(row.status)"
+          />
         </template>
-        <template #cell-role_ids="{ row }">
-          <span>{{ roleNames(row.role_ids) }}</span>
+        <template #cell-roleIDs="{ row }">
+          <span>{{ roleNames(row.roleIDs) }}</span>
         </template>
-        <template #cell-created_at="{ value }">{{ fmtTime(value) }}</template>
+        <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions" :data-testid="'users-row-' + (row.id || row.username)">
+            <button v-if="row.status === 'pending'" class="xs primary" data-testid="btn-row-approve" @click="onApprove(row)"><Icon name="success" :size="13" /> {{ $t('users.approve') }}</button>
+            <button v-if="row.status === 'pending'" class="xs danger" data-testid="btn-row-reject" @click="onReject(row)"><Icon name="delete" :size="13" /> {{ $t('users.reject') }}</button>
             <button class="xs outline" data-testid="btn-row-edit" @click="openEdit(row)"><Icon name="edit" :size="13" /></button>
             <button class="xs danger" data-testid="btn-row-delete" @click="onDelete(row)"><Icon name="delete" :size="13" /></button>
           </div>
@@ -63,6 +69,7 @@
           <label>{{ $t('users.status') }}</label>
           <select v-model="form.status" data-testid="input-status">
             <option value="active">{{ $t('users.active') }}</option>
+            <option value="pending">{{ $t('users.pending') }}</option>
             <option value="disabled">{{ $t('users.disabled') }}</option>
           </select>
         </div>
@@ -120,9 +127,9 @@ const columns = [
   { key: 'username', title: t('users.username'), slot: 'cell-username', sortable: true },
   { key: 'email', title: t('users.email') },
   { key: 'status', title: t('users.status'), slot: 'cell-status', sortable: true },
-  { key: 'role_ids', title: t('users.roles'), slot: 'cell-role_ids', sortable: true },
-  { key: 'created_at', title: t('users.created_at'), slot: 'cell-created_at', sortable: true },
-  { key: 'actions', title: t('users.actions'), slot: 'cell-actions', width: '90px' }
+  { key: 'roleIDs', title: t('users.roles'), slot: 'cell-roleIDs', sortable: true },
+  { key: 'createdAt', title: t('users.created_at'), slot: 'cell-createdAt', sortable: true },
+  { key: 'actions', title: t('users.actions'), slot: 'cell-actions', width: '200px' }
 ]
 
 async function fetchUsers() {
@@ -154,6 +161,20 @@ function roleNames(ids) {
   }).join(', ')
 }
 
+// 状态三态展示：active（正常）/ pending（待审批，琥珀色）/ disabled|rejected（禁用）。
+// 不再用 active?ok:disabled 二值逻辑，避免 pending 用户被误标为"禁用"。
+function statusBadgeKind(value) {
+  if (value === 'active') return 'ok'
+  if (value === 'pending') return 'warn'
+  return 'info'
+}
+
+function statusText(value) {
+  if (value === 'active') return t('users.active')
+  if (value === 'pending') return t('users.pending')
+  return t('users.disabled')
+}
+
 function openCreate() {
   formError.value = ''
   form.value = { id: null, username: '', password: '', email: '', role_ids: [], status: 'active' }
@@ -161,13 +182,16 @@ function openCreate() {
 
 function openEdit(row) {
   formError.value = ''
-  form.value = { id: row.id, username: row.username, email: row.email || '', role_ids: [...(row.role_ids || [])], status: row.status || 'active' }
+  // 后端 User JSON 输出为驼峰（roleIDs），复制时须读驼峰字段。
+  form.value = { id: row.id, username: row.username, email: row.email || '', role_ids: [...(row.roleIDs || [])], status: row.status || 'active' }
 }
 
 async function onSave() {
   formError.value = ''
   try {
     if (form.value.id) {
+      // PUT /users/{id} 后端接收 json tag 为 role_ids（auth_users.go handleUpdateUser），
+      // 请求体字段名与后端真实 tag 保持一致，避免静默清空角色。
       await authApi.updateUser(form.value.id, {
         email: form.value.email || undefined,
         role_ids: form.value.role_ids,
@@ -185,6 +209,27 @@ async function onSave() {
     await fetchUsers()
   } catch (e) {
     formError.value = e.j?.error || t('users.save_failed')
+  }
+}
+
+// —— 注册审批（仅 status=pending 行显示操作按钮）——
+async function onApprove(row) {
+  try {
+    await authApi.approveUser(row.id)
+    await fetchUsers()
+  } catch (e) {
+    errorConfirm.message = e.j?.error || t('users.approve_failed')
+    errorConfirm.show = true
+  }
+}
+
+async function onReject(row) {
+  try {
+    await authApi.rejectUser(row.id)
+    await fetchUsers()
+  } catch (e) {
+    errorConfirm.message = e.j?.error || t('users.reject_failed')
+    errorConfirm.show = true
   }
 }
 

@@ -2,6 +2,10 @@ version: "3.8"
 
 # OpsMesh Professional — 10 微服务完整编排
 # 包含：控制面 + 10 微服务 + 数据库 + 可观测性
+#
+# 微服务镜像说明：每个微服务的 build.context 指向 services/<svc>/，
+# dockerfile 相对 context 解析，即各服务目录下的 services/<svc>/Dockerfile
+# （auth/device/task/alert/config/log/deploy/aio/plugin/portal/grafana-bridge 均已补齐）。
 
 services:
   # ===== 基础设施 =====
@@ -72,7 +76,7 @@ services:
   auth-svc:
     build:
       context: ../../services/auth-svc
-      dockerfile: ../docker/Dockerfile.go
+      dockerfile: Dockerfile
     ports:
       - "8100:8100"
     environment:
@@ -93,7 +97,7 @@ services:
   device-svc:
     build:
       context: ../../services/device-svc
-      dockerfile: ../docker/Dockerfile.go
+      dockerfile: Dockerfile
     ports:
       - "8101:8101"
     environment:
@@ -111,7 +115,7 @@ services:
   task-svc:
     build:
       context: ../../services/task-svc
-      dockerfile: ../docker/Dockerfile.go
+      dockerfile: Dockerfile
     ports:
       - "8102:8102"
     environment:
@@ -129,7 +133,7 @@ services:
   alert-svc:
     build:
       context: ../../services/alert-svc
-      dockerfile: ../docker/Dockerfile.go
+      dockerfile: Dockerfile
     ports:
       - "8103:8103"
     environment:
@@ -147,7 +151,7 @@ services:
   deploy-svc:
     build:
       context: ../../services/deploy-svc
-      dockerfile: ../docker/Dockerfile.go
+      dockerfile: Dockerfile
     ports:
       - "8104:8104"
     environment:
@@ -165,7 +169,7 @@ services:
   config-svc:
     build:
       context: ../../services/config-svc
-      dockerfile: ../docker/Dockerfile.go
+      dockerfile: Dockerfile
     ports:
       - "8106:8106"
     environment:
@@ -183,7 +187,7 @@ services:
   log-svc:
     build:
       context: ../../services/log-svc
-      dockerfile: ../docker/Dockerfile.go
+      dockerfile: Dockerfile
     ports:
       - "8105:8105"
     environment:
@@ -201,7 +205,7 @@ services:
   aio-svc:
     build:
       context: ../../services/aio-svc
-      dockerfile: ../docker/Dockerfile.go
+      dockerfile: Dockerfile
     ports:
       - "8107:8100"
     environment:
@@ -217,7 +221,7 @@ services:
   plugin-svc:
     build:
       context: ../../services/plugin-svc
-      dockerfile: ../docker/Dockerfile.go
+      dockerfile: Dockerfile
     ports:
       - "8108:8100"
     environment:
@@ -233,7 +237,7 @@ services:
   portal-svc:
     build:
       context: ../../services/portal-svc
-      dockerfile: ../docker/Dockerfile.go
+      dockerfile: Dockerfile
     ports:
       - "8109:8100"
     environment:
@@ -249,7 +253,7 @@ services:
   grafana-bridge:
     build:
       context: ../../services/grafana-bridge
-      dockerfile: ../docker/Dockerfile.go
+      dockerfile: Dockerfile
     ports:
       - "8110:8100"
     environment:

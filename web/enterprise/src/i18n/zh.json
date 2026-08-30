@@ -146,7 +146,12 @@
     "cancel": "取消",
     "empty": "暂无用户",
     "save_failed": "保存失败",
-    "delete_failed": "删除失败"
+    "delete_failed": "删除失败",
+    "approve": "审批通过",
+    "reject": "拒绝",
+    "pending": "待审批",
+    "approve_failed": "审批失败",
+    "reject_failed": "拒绝失败"
   },
   "roles": {
     "title": "角色管理",
@@ -165,6 +170,8 @@
     "new_permissions": "权限",
     "save": "保存",
     "cancel": "取消",
+    "save_failed": "保存失败",
+    "delete_failed": "删除失败",
     "empty": "暂无角色"
   },
   "permissions": {
@@ -190,6 +197,7 @@
     "loginFailed": "登录失败",
     "registerFailed": "注册失败",
     "changePasswordFailed": "密码修改失败",
+    "tooManyRequests": "请求过于频繁，请稍后再试",
     "noPermission": "无权限访问该页面",
     "workflowListFailed": "作业流列表拉取失败",
     "workflowDetailFailed": "作业流拉取失败",
@@ -396,7 +404,11 @@
     "graph_mode_list": "列表",
     "graph_legend_type": "类型",
     "graph_legend_rel": "关系",
-    "graph_empty": "暂无关系数据"
+    "graph_empty": "暂无关系数据",
+    "typesFetchFailed": "CMDB 类型拉取失败",
+    "instancesFetchFailed": "配置项拉取失败",
+    "templatesFetchFailed": "属性模板拉取失败",
+    "graphFetchFailed": "关系图拉取失败"
   },
   "workflows": {
     "title": "作业编排",
@@ -850,13 +862,15 @@
     "help_chain": "链式查找：按顺序依次尝试多个 provider，第一个命中者胜出"
   },
   "gpu": {
+    "title": "GPU 资源管理",
+    "desc": "GPU 节点、AI 工作负载、模型管理与配额",
     "totalNodes": "GPU 节点总数",
     "healthyNodes": "健康节点",
     "activeWorkloads": "运行中工作负载",
-    "models": "模型数量",
+    "models": "模型",
     "nodes": "GPU 节点",
     "workloads": "AI 工作负载",
-    "models": "模型管理",
+    "model": "模型",
     "quotas": "配额概览",
     "utilizationChart": "GPU 利用率",
     "selectNodeHint": "选择节点查看指标",
@@ -925,6 +939,8 @@
     "runbooks": "Runbook 列表",
     "executions": "执行历史",
     "editor": "编辑器",
+    "editorPlaceholder": "选择 Runbook 后在此编辑内容（YAML/JSON）",
+    "name": "名称",
     "add": "添加 Runbook",
     "execute": "执行",
     "viewLogs": "查看日志",
@@ -1004,6 +1020,8 @@
     "addRule": "添加规则",
     "enable": "启用",
     "disable": "禁用",
+    "enabled": "已启用",
+    "disabled": "已禁用",
     "trigger": "触发",
     "noRules": "暂无规则",
     "noDecisions": "暂无决策记录",
@@ -1075,7 +1093,6 @@
     "requestResource": "资源请求",
     "submitRequest": "提交请求",
     "submit": "提交",
-    "myRequests": "我的请求",
     "approvalQueue": "审批队列",
     "approve": "批准",
     "reject": "拒绝",

@@ -882,26 +882,24 @@ var (
 // ============================================================================
 //
 // 多租户 schema 隔离下用户中心的路由策略：
-//   - 用户/角色/权限为全局资源（跨租户共享），不按租户隔离；
-//   - 采用"任意 schema 即可读写"策略：选第一个已创建的 schema 转发，
-//     若尚无 schema 则回退到内置全局 store（惰性创建一个 "global" schema）。
+//   - 用户/角色/权限为平台级资源（跨租户共享，不按租户隔离），统一固定路由到
+//     "global" schema（确定性路由）；
 //   - 这与 device/task/alert 等租户隔离资源不同：用户中心是平台级管理，
 //     admin/operator/viewer 等预定义用户需跨租户可见。
+//   - storeFor 对 "global" 幂等：首次调用惰性创建并缓存到 m.stores["global"]，
+//     后续调用直接命中缓存，始终返回同一 store 实例。
 //
-// 注意：当前实现为简化版——多 schema 部署下用户中心路由到任一 schema，
-// 不保证跨 schema 的用户/角色数据一致性（生产多 schema 部署需另行设计全局 schema）。
-// 单 schema（memory 或单 mysql）部署下行为完全正确。
+// 安全修复（Critical）：原实现遍历 m.stores（Go map 迭代顺序随机）取"任一 schema"
+// 作为全局 store——多租户部署（≥2 租户）下，用户中心的读写每次调用可能路由到
+// 【不同】schema：登录在 schema A 写入的会话数据，下一次校验可能落到 schema B，
+// 表现为 admin 登录随机失败、用户中心数据漂移。改为固定路由 "global" schema，
+// 保证每次调用落在同一 schema（确定性），彻底消除随机路由。
 
-// globalStore 返回用于用户中心的全局 store（任一已创建 schema 或惰性创建 "global" schema）。
-// 用户/角色/权限为平台级资源，不按租户隔离，故路由到任一 schema 即可。
+// globalStore 返回用于用户中心的全局 store（固定路由 "global" schema，确定性）。
+// 用户/角色/权限为平台级资源，不按租户隔离，统一固定落 "global" schema：
+// storeFor 惰性创建（首次访问创建 schema）且对已创建的 schema 幂等返回
+// （快路径 map 命中，见 storeFor 实现），因此本方法每次调用返回同一 store 实例。
 func (m *MultiSchemaStore) globalStore() (Store, error) {
-	m.mu.RLock()
-	for _, s := range m.stores {
-		m.mu.RUnlock()
-		return s, nil
-	}
-	m.mu.RUnlock()
-	// 尚无 schema：惰性创建一个 "global" schema 专用于用户中心。
 	return m.storeFor("global")
 }
 

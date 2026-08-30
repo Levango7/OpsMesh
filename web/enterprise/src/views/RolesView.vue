@@ -21,7 +21,7 @@
         <template #cell-permissions="{ row }">
           <span class="perm-count">{{ (row.permissions || []).length }}</span>
         </template>
-        <template #cell-created_at="{ value }">{{ fmtTime(value) }}</template>
+        <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
             <button class="xs outline" @click="openEdit(row)"><Icon name="edit" :size="13" /></button>
@@ -62,17 +62,35 @@
         </div>
       </form>
     </DetailDrawer>
+
+    <!-- 删除确认（替代 confirm） -->
+    <ConfirmModal
+      v-model="deleteConfirm.show"
+      data-testid="roles-delete-confirm-modal"
+      :title="$t('roles.delete')"
+      :message="$t('roles.confirm_delete')"
+      @confirm="onDeleteConfirm"
+    />
+    <!-- 错误提示（替代 alert） -->
+    <ConfirmModal
+      v-model="errorConfirm.show"
+      data-testid="roles-error-modal"
+      :title="$t('common.error')"
+      :message="errorConfirm.message"
+      info
+    />
   </div>
 </template>
 
 <script setup>
 // 角色管理页 — 列表 + 新增/编辑/删除 + 权限分配
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, reactive, onMounted } from 'vue'
 import { authApi } from '@/api/auth'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
 
 const roles = ref([])
@@ -81,11 +99,16 @@ const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
 
+// 删除确认弹窗（替代 confirm）
+const deleteConfirm = reactive({ show: false, row: null })
+// 错误提示弹窗（替代 alert）
+const errorConfirm = reactive({ show: false, message: '' })
+
 const columns = [
   { key: 'name', title: t('roles.name'), slot: 'cell-name' },
   { key: 'description', title: t('roles.description') },
   { key: 'permissions', title: t('roles.permissions'), slot: 'cell-permissions', width: '90px' },
-  { key: 'created_at', title: t('roles.created_at'), slot: 'cell-created_at' },
+  { key: 'createdAt', title: t('roles.created_at'), slot: 'cell-createdAt' },
   { key: 'actions', title: t('roles.actions'), slot: 'cell-actions', width: '90px' }
 ]
 
@@ -149,17 +172,24 @@ async function onSave() {
     form.value = null
     await fetchRoles()
   } catch (e) {
-    formError.value = e.j?.error || '保存失败'
+    formError.value = e.j?.error || t('roles.save_failed')
   }
 }
 
-async function onDelete(row) {
-  if (!window.confirm(t('roles.confirm_delete'))) return
+function onDelete(row) {
+  deleteConfirm.row = row
+  deleteConfirm.show = true
+}
+
+async function onDeleteConfirm() {
+  const row = deleteConfirm.row
+  if (!row) return
   try {
     await authApi.deleteRole(row.id)
     await fetchRoles()
   } catch (e) {
-    window.alert(e.j?.error || '删除失败')
+    errorConfirm.message = e.j?.error || t('roles.delete_failed')
+    errorConfirm.show = true
   }
 }
 

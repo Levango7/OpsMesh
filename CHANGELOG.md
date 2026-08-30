@@ -4,6 +4,43 @@
 
 > 当前最新已发布版本：`v0.7.0`（2026-08-16）。`[Unreleased]` 段累积未发布变更，下一个发布版本号待定（按实际演进预计 `v0.8.0`；若按文档同步批次独立发版可记为 `v0.5.0`，由发布流程最终确定）。
 
+## [Unreleased] — 2026-08-30 第五轮：四路审计问题全量修复（认证链 4C + 后端安全 4 项 + 交付链 4C + UX 包）
+
+> 基线：四路并行深度审计（架构/前端/测试CICD/文档）发现的 Critical/High 问题，四组 subagent 并行修复，文件边界零重叠，全部经独立抽验 + 全仓回归。
+
+### 认证链修复（前端 4 个 Critical，全部亲验根因）
+- **刷新 401 自等待死锁**（request.js:47-59）：refresh 请求自身 401 时 `await refreshing` 等待自己的 Promise 永不 settle → 会话过期后整站挂起白屏。修复：401 分支入口排除 `/auth/refresh` 自身（isRefreshCall），refresh 401 直接清会话跳登录；注释完整推演三条循环边界（refresh 自排除 / _retry 单次 / single-flight）
+- **改密 API 字段名断裂**（api/auth.js:12）：前端发 `old_password` vs 后端 `json:"oldPassword"` 严格映射 → 改密功能 100% 返回 400。修复：对齐驼峰 + 新增可选 changePasswordToken 第三参（首登改密链路）
+- **首登强制改密断裂**（stores/auth.js:51 + LoginView.vue:96）：前端读蛇形 `must_change_password` 恒 undefined → 安全特性完全失效。修复：改读驼峰 `mustChangePassword`/`changePasswordToken`，ChangePasswordView 提交带改密令牌，全链路打通
+- **用户编辑静默清空角色**（UsersView.vue）：前端读 `role_ids`（后端输出实为 `roleIDs`）恒为 [] → 编辑任何用户保存即清空其全部角色（数据破坏级）。修复：读取侧全改驼峰；提交侧经核实后端 PUT 接收 tag 实为 `role_ids` 故保留（两侧契约不对称是后端历史设计，如实对齐而非盲目统一）；RolesView created_at 同修
+- **注册审批入口闭环**（新功能）：后端 `/users/{id}/approve|reject` 早已存在但前端零入口 → pending 用户永久卡死只能 curl。新增 approve/reject API 方法 + UsersView 审批按钮（仅 pending 行）+ 状态三态展示（pending 琥珀"待审批"）+ i18n 双语
+- **错误文案误导**（Register/Login）：429 限流被显示为"用户名已被占用"——优先 `e.j?.error` 后端明确文案，429 专用提示
+
+### 后端安全修复（4 项）
+- **CORS 反射任意 Origin**（server_lifecycle.go:344）：反射 + Allow-Credentials 等同向任意站点开放带 Cookie 跨域调用。重写为白名单模式（此前修复曾因目录事故丢失，本次落库）：新增 `--allowed-origins` flag（Validate 拒绝 `*`），空=同源策略不输出任何 CORS 头，不匹配 OPTIONS 透传（防浏览器误判放行）+ `Vary: Origin`
+- **MultiSchemaStore 随机路由**（multi_schema.go:897）：`for range map` 迭代使用户中心数据路由到随机 schema，≥2 租户时 admin 登录随机失败。修复：固定 `storeFor("global")` 确定性路由
+- **task-svc 领取越权**（RCE 级，mysql.go:178）：`OR agent_id=''` 兜底使任意 agent 可领任意租户任务。移除兜底改严格 `agent_id=?`（Memory/MySQL 双实现）+ 回归测试锁定
+- **auth-svc 弱口令直发 token**（双轨安全漂移）：Login 忽略 MustChangePassword，admin/admin123 首登直发全量 token（internal 轨早已修复、服务轨原样）。对齐 internal 轨语义：改走 5min 短时效改密令牌 + 不签 refresh；**防御性加固**：mustChangePassword 用户的 RefreshToken 通道同样拒绝签发全量 token（防绕过首登改密）；播种 bcrypt 吞错改 fail-fast；测试对齐新安全语义（含 2 个新回归测试）
+- **资源泄漏**：alert-svc MySQLStore 补 Close + main defer；escalation Stop 加 sync.Once 幂等 + ticker.Stop()（防双调 panic 与 ticker 泄漏）+ 幂等回归测试
+
+### 交付链修复（CI/CD 4 个 Critical）
+- **微服务镜像管道断裂**：release.yml 在 services/<svc> 构建但 Dockerfile 一个都不存在 → tag 发布必挂。新建 11 个服务 Dockerfile（多阶段，端口对照各服务 config 实测，runtime 用 alpine+curl 保 healthcheck 兼容，非 root 用户）；compose 的 11+9 处不存在引用全部修正
+- **共库表名冲突**：prod compose 全部服务 DSN 指向同一 opsmesh 库，而 devices/users/agents/alerts/ci_items 表结构两侧不一致 → INSERT 必炸。微服务改独立库 `opsmesh_<svc>` + init-mysql.sql 补 5 库 CREATE+GRANT
+- **release 门禁**：needs 补 services/proto/frontend/race（此前 tag 发布可在服务构建失败时照常出产物）
+- **README flag 表**：宣称 116 全列，实测 119 个且表格仅 79 行——补齐 40 个（含 --allow-stub-stores 生产启动闸/--vault-*/--cb-* 等安全项），全仓 5 处旧计数同步
+
+### UX 提升包（7 项）
+- 原生 confirm/alert 迁移 ConfirmModal/Toast（Tasks/Deploys/Plugin/Roles 四个活跃页面）；WorkflowsView 8 处硬编码色值 token 化（双主题可读）；硬编码中文错误 i18n 化（log/cmdb store + RolesView）；i18n 缺键补齐 + 2 处重复键去重（gpu.models/portal.myRequests）；路由权限不足 toast 提示（不再静默跳转）；OverviewView 加载骨架；TasksView SSE 事件刷新 2s 节流（trailing 保证末次必刷）
+
+### 文档保真修复
+- api-reference 3 处字段名漂移（K8s 集群 api_server/kube_config→server/kubeconfig 必填、设备指标扁平→嵌套结构、logs 蛇形→驼峰）；SSE 文档 2 处 data 字段（action→status）；operations.md 指标类型误标（counter→gauge，rate() 示例改阈值比较——原示例会在 Prometheus 直接报错）；DELIVERY 陈旧数字；product-design 成熟度表 6 个微服务域如实降 🟡
+
+### 验证
+- 主模块 build/vet + 四包测试（controlplane 157s/agent 51s/store 36s/config 0.4s）全绿 ✅
+- task-svc/auth-svc/alert-svc build+vet+test 全绿（含 3 个新回归测试）✅
+- 前端 vitest 631/631 + 生产构建 ✅ gofmt 全仓清零 ✅
+- 四组文件边界零重叠，交叉核对无互相回退（CORS 反射行确认已删、MustChangePassword 分支在位）
+
 ## [Unreleased] — 2026-08-30 第四轮：注册流程 UX 修复 + 浅色主题提亮
 
 ### 登录注册功能修复（用户反馈"登录注册好像有问题"）

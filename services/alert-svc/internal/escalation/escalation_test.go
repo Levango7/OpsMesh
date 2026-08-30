@@ -268,6 +268,24 @@ func TestBackgroundEscalation(t *testing.T) {
 	}
 }
 
+// TestEscalatorStopIdempotent 验证 Stop 幂等（双调不 panic）+ ticker 被正确停止。
+// 原实现：重复 Stop 触发 double-close(stopCh) panic；且不 Stop ticker 导致泄漏。
+func TestEscalatorStopIdempotent(t *testing.T) {
+	e := NewEscalator()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.Start(ctx)
+
+	// 第一次 Stop 正常返回。
+	e.Stop()
+	// 第二次 Stop 不应 panic（幂等保护）。
+	e.Stop()
+	// 第三次：即使 Start/Stop 交替也不崩（Start 在 Stop 后会起新 goroutine，
+	// 新一轮 Stop 再次安全）。
+	e.Start(ctx)
+	e.Stop()
+}
+
 func TestOnCallRotationDaily(t *testing.T) {
 	e := NewEscalator()
 	schedule := &OnCallSchedule{

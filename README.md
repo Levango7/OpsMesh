@@ -138,7 +138,7 @@
 | 包 | 职责 |
 |---|---|
 | `internal/controlplane` | 控制面核心：HTTP 路由 + gRPC server + Registry + dashboard + 14 个功能域 handler（按 `server_*.go` 拆分） |
-| `internal/config` | 统一配置：116 个 flag，命令行优先 + `OPSMESH_*` 环境变量兜底 |
+| `internal/config` | 统一配置：119 个 flag，命令行优先 + `OPSMESH_*` 环境变量兜底 |
 | `internal/authctx` | 网关注入身份提取：从 HTTP 头 / gRPC metadata 提取 X-Tenant-ID / X-User-Id / X-User-Roles |
 | `internal/grpcx` | 自研 gRPC 传输层：JSON codec + 手写 ServiceDesc + pb stub 双轨（`proto/` buf 代码生成） |
 | `internal/tlsutil` | gRPC TLS / mTLS 工具 + 证书热重载（fsnotify watch，无需重启更新 TLS 配置） |
@@ -325,7 +325,7 @@ helm install opsmesh ./deploy/helm/opsmesh -n opsmesh --create-namespace \
 ### 配置速查
 
 ```bash
-# 所有配置项（116 个 flag）
+# 所有配置项（119 个 flag）
 ./opsmesh --help
 # 查看版本
 ./opsmesh --version
@@ -644,7 +644,7 @@ Agent 端多控制面 failover：`--control-addrs="cp1:9090,cp2:9090"`，客户�
 
 ## 配置参考
 
-OpsMesh 启动参数共 **116 个 flag**，全部支持"命令行 flag 优先、环境变量兜底"语义（同名环境变量前缀 `OPSMESH_`）。下表按功能分组列出全部 flag。完整定义见 `internal/config/config.go`。
+OpsMesh 启动参数共 **119 个 flag**，全部支持"命令行 flag 优先、环境变量兜底"语义（同名环境变量前缀 `OPSMESH_`）。下表按功能分组列出全部 flag。完整定义见 `internal/config/config.go`。
 
 ### 基础配置
 
@@ -656,6 +656,8 @@ OpsMesh 启动参数共 **116 个 flag**，全部支持"命令行 flag 优先、
 | `--addr` | string | 127.0.0.1 | OPSMESH_ADDR | agent 自身地址（占位，供控制面感知） |
 | `--control-addr` | string | http://127.0.0.1:8080 | OPSMESH_CONTROL_ADDR | 控制面 HTTP 地址（agent 注册/心跳/拉任务用） |
 | `--control-addrs` | string | "" | OPSMESH_CONTROL_ADDRS | 多控制面地址（逗号分隔，如 cp1:9090,cp2:9090）；agent 依次重试实现 HA failover；空则回退 --control-addr |
+| `--controlplane-endpoints` | string | "" | OPSMESH_CONTROLPLANE_ENDPOINTS | 服务发现：多控制面地址（逗号分隔，如 cp1:9090,cp2:9090）；与 --control-addrs 同义，作为服务发现入口；优先级高于 --control-addrs；空则回退 --control-addrs/--control-addr |
+| `--lb-strategy` | string | failover | OPSMESH_LB_STRATEGY | 负载均衡策略：round-robin（轮询）\| failover（主备切换，默认）；单控制面地址时退化为始终用该地址 |
 | `--segment` | string | default | OPSMESH_SEGMENT | agent 所属网段（分桶键） |
 | `--http-port` | int | 8080 | OPSMESH_HTTP_PORT | 控制面 HTTP(B/S) 端口 |
 | `--grpc-port` | int | 9090 | OPSMESH_GRPC_PORT | gRPC 端口（注册/心跳/拉任务/上报/取消） |
@@ -687,6 +689,7 @@ OpsMesh 启动参数共 **116 个 flag**，全部支持"命令行 flag 优先、
 | `--tls-cert` | string | "" | OPSMESH_TLS_CERT | gRPC TLS 服务端证书路径（空=关闭） |
 | `--tls-key` | string | "" | OPSMESH_TLS_KEY | gRPC TLS 私钥路径 |
 | `--client-ca` | string | "" | OPSMESH_CLIENT_CA | 服务端要求客户端 CA（mTLS）/ 客户端校验服务端 CA |
+| `--tls-watch` | bool | false | OPSMESH_TLS_WATCH | 启用 TLS 证书文件热重载（fsnotify 监听，无需重启）；仅当 --tls-cert/--tls-key 非空时生效 |
 | `--jwt-public-key` | string | "" | OPSMESH_JWT_PUBLIC_KEY | JWT 验签公钥 PEM 文件路径（RS256）；空=关闭 JWT 验签回退头注入模式 |
 | `--jwt-issuer` | string | "" | OPSMESH_JWT_ISSUER | 预期 JWT issuer（iss claim）；非空时校验 iss 必须匹配 |
 | `--jwt-secret` | string | "" | OPSMESH_JWT_SECRET | 用户中心 JWT 签发密钥（HS256）；空=随机生成（重启后旧 token 失效）；多副本须一致 |
@@ -702,6 +705,19 @@ OpsMesh 启动参数共 **116 个 flag**，全部支持"命令行 flag 优先、
 | `--grpc-signature-key` | string | "" | OPSMESH_GRPC_SIGNATURE_KEY | gRPC agent 身份绑定预共享 HMAC 签名密钥；非空时 agent 在 PullTasks/ReportResult/PollCancels/Heartbeat 携带 HMAC-SHA256 签名，服务端验签防伪造；与 --grpc-require-signature 配合使用 |
 | `--session-store` | string | memory | OPSMESH_SESSION_STORE | 会话状态后端：memory（默认，单进程内存，重启丢会话） \| redis（经 --redis-addr 持久化，多副本共享会话）；生产多副本建议 redis |
 | `--device-fp-deadline` | duration | 0 | OPSMESH_DEVICE_FP_DEADLINE | DeviceFP 强制非空截止时间；>0 时设备指纹为空的纳管请求在该时长后强制拒绝（防 agent 裸注册绕过指纹采集）；0=不强制 |
+| `--trust-gateway-headers` | bool | false | OPSMESH_TRUST_GATEWAY_HEADERS | 信任网关注入的 X-User-Roles 头：开启后 requireProd 走 authorizeByRoles 路径信任头中角色；默认 false=忽略该头（防客户端自称 admin 越权）；生产模式强制 false |
+| `--agent-shell-whitelist-default` | bool | true | OPSMESH_AGENT_SHELL_WHITELIST_DEFAULT | 安全加固：agent shell 白名单默认开启；true（默认）=未显式设置 --agent-shell-whitelist 时自动填充只读诊断命令白名单（ls/cat/echo/date/whoami/hostname/pwd/free/df/uptime/top/ps/netstat/ss/ipconfig/systeminfo）；false=保持原行为（不限制）；显式 --agent-shell-whitelist 时本 flag 被忽略 |
+| `--secret-provider` | string | "" | OPSMESH_SECRET_PROVIDER | 密钥来源：env\|file\|vault\|chain:env,file（空=不启用密钥外置，向后兼容）；启用后告警通道等敏感字段可使用 ${key} 引用语法从 provider 解析 |
+| `--secret-file` | string | "" | OPSMESH_SECRET_FILE | JSON 密钥文件路径（--secret-provider=file 时生效） |
+| `--vault-addr` | string | "" | OPSMESH_VAULT_ADDR | Vault API 地址（如 https://vault:8200） |
+| `--vault-token` | string | "" | OPSMESH_VAULT_TOKEN | Vault 访问令牌（推荐 env 注入，避免命令行暴露） |
+| `--vault-mount` | string | secret | OPSMESH_VAULT_MOUNT | Vault KV v2 挂载路径（默认 secret） |
+| `--cb-failure-threshold` | int | 5 | OPSMESH_CB_FAILURE_THRESHOLD | 熔断器：连续失败 N 次后熔断该设备/通道；0=禁用熔断器（透传，向后兼容）；agent 端按 deviceID 隔离，控制面按 IP/tenant 限流 |
+| `--cb-recovery-timeout` | duration | 30s | OPSMESH_CB_RECOVERY_TIMEOUT | 熔断器：熔断后等待多久才进入 HalfOpen 半开探测 |
+| `--cb-half-open-max-calls` | int | 1 | OPSMESH_CB_HALF_OPEN_MAX_CALLS | 熔断器：HalfOpen 状态下允许的最大并发探测调用数 |
+| `--cb-rate-limit-per-sec` | int | 0 | OPSMESH_CB_RATE_LIMIT_PER_SEC | 控制面 API 限流阈值：每秒每 IP/tenant 最大请求数；0=禁用 API 限流（向后兼容） |
+| `--webhook-allow-private` | bool | false | OPSMESH_WEBHOOK_ALLOW_PRIVATE | SSRF 防护：允许内网 webhook URL（私网/loopback/链路本地）；默认 false=拒绝内网 webhook（安全基线，防 SSRF 访问云元数据/内网服务）；true=放行内网 webhook（内网部署场景，如钉钉/飞书内网网关） |
+| `--allowed-origins` | string | "" | OPSMESH_ALLOWED_ORIGINS | CORS 白名单：逗号分隔的允许跨域来源（如 https://console.example.com）；空=同源策略（不输出 CORS 头）；非空=仅精确匹配的 Origin 放行（带凭证）；禁止配置 *（与凭证互斥） |
 
 ### 网络配置
 
@@ -730,6 +746,15 @@ Webhook 通道（generic/feishu/dingtalk/slack/企业微信）与邮件通道（
 | `--alert-email-pass` | string | "" | OPSMESH_ALERT_EMAIL_PASS | 告警邮件 SMTP 密码（推荐 env 注入） |
 | `--alert-email-from` | string | "" | OPSMESH_ALERT_EMAIL_FROM | 告警邮件发件人地址（如 opsmesh@example.com） |
 | `--alert-email-to` | string | "" | OPSMESH_ALERT_EMAIL_TO | 告警邮件收件人列表（逗号分隔） |
+| `--notify-channels-config` | string | "" | OPSMESH_NOTIFY_CHANNELS_CONFIG | 通知渠道 JSON 配置文件路径（多渠道：钉钉/企业微信/飞书/Slack/邮件）；空=不加载 |
+| `--notify-dedup-ttl-min` | int | 5 | OPSMESH_NOTIFY_DEDUP_TTL_MIN | 通知去重 TTL（分钟）；相同消息在 TTL 内只发送一次；0=关闭去重 |
+| `--notify-retry-max-attempts` | int | 3 | OPSMESH_NOTIFY_RETRY_MAX_ATTEMPTS | 通知重试最大尝试次数（含首次）；0=不重试 |
+| `--notify-retry-interval` | duration | 5s | OPSMESH_NOTIFY_RETRY_INTERVAL | 通知重试基础间隔 |
+| `--notify-retry-backoff` | float64 | 2.0 | OPSMESH_NOTIFY_RETRY_BACKOFF | 通知重试退避系数（1.0=固定间隔，2.0=指数退避） |
+| `--inhibit-rules-file` | string | "" | OPSMESH_INHIBIT_RULES_FILE | 告警抑制规则 JSON 文件路径（空=不启用告警抑制，向后兼容）；非空时加载规则构造 AlertInhibitor，告警评估前先过抑制规则（父告警活跃时抑制子告警）；文件格式见 alertengine.LoadInhibitRules 文档 |
+| `--anomaly-detection` | bool | false | OPSMESH_ANOMALY_DETECTION | 启用异常检测（基线偏离告警）：启用后构造 AnomalyEngine，对设备指标评估异常并产生告警；默认 false（向后兼容） |
+| `--anomaly-window-size` | int | 100 | OPSMESH_ANOMALY_WINDOW_SIZE | 异常检测基线窗口大小（滑动窗口数据点数，默认 100） |
+| `--anomaly-threshold` | float64 | 3.0 | OPSMESH_ANOMALY_THRESHOLD | 异常检测 Z-Score 阈值（默认 3.0 即 3σ，约 99.7% 置信区间） |
 
 ### 联邦配置
 
@@ -746,6 +771,11 @@ Webhook 通道（generic/feishu/dingtalk/slack/企业微信）与邮件通道（
 | `--loki-endpoint` | string | "" | OPSMESH_LOKI_ENDPOINT | Loki API endpoint（如 http://loki:3100）；--log-backend=loki 时生效 |
 | `--es-endpoint` | string | "" | OPSMESH_ES_ENDPOINT | Elasticsearch endpoint（如 http://es:9200）；--log-backend=es 时生效 |
 | `--es-index` | string | opsmesh-logs | OPSMESH_ES_INDEX | Elasticsearch 索引名（--log-backend=es 时生效，默认 opsmesh-logs） |
+| `--log-push-enabled` | bool | false | OPSMESH_LOG_PUSH_ENABLED | 启用日志采集推送：agent 尾随日志文件（tail -f）批量推送到 Loki/ES；默认 false（向后兼容） |
+| `--log-push-files` | string | "" | OPSMESH_LOG_PUSH_FILES | 日志采集文件列表（逗号分隔，如 /var/log/syslog,/var/log/app.log） |
+| `--log-push-pattern` | string | "" | OPSMESH_LOG_PUSH_PATTERN | 日志采集正则过滤（空=不过滤，全部推送；如 ^ERROR 仅推送 ERROR 行） |
+| `--log-push-endpoint` | string | "" | OPSMESH_LOG_PUSH_ENDPOINT | 日志推送目标 endpoint（Loki /api/v1/push 或 ES /_bulk，如 http://loki:3100/loki/api/v1/push） |
+| `--log-push-backend` | string | loki | OPSMESH_LOG_PUSH_BACKEND | 日志推送后端类型：loki \| es（默认 loki） |
 
 ### K8s / 调度配置
 
@@ -784,8 +814,25 @@ Webhook 通道（generic/feishu/dingtalk/slack/企业微信）与邮件通道（
 | `--provision-ssh-key` | string | "" | OPSMESH_PROVISION_SSH_KEY | B1 SSH 自动推送：SSH 私钥路径（空=关闭 SSH 推送，仅返回 bootstrap 文本） |
 | `--provision-ssh-key-pass` | string | "" | OPSMESH_PROVISION_SSH_KEY_PASS | B1 SSH 自动推送：SSH 密钥密码（推荐 env 注入） |
 | `--provision-ssh-known-hosts` | string | "" | OPSMESH_PROVISION_SSH_KNOWN_HOSTS | B1 SSH KnownHosts 文件路径（等保加固）；空=InsecureIgnoreHostKey（生产务必配置） |
+| `--provision-cidr-whitelist` | string | "" | OPSMESH_PROVISION_CIDR_WHITELIST | SSRF 防护：autoProvision 扫描网段白名单（逗号分隔的 CIDR 列表，如 10.30.0.0/24,10.31.0.0/24）；空=不校验（向后兼容）；非空=扫描前校验目标 CIDR 必须完全落在白名单内，防扫描任意网段 |
 
-> 共 **116 个 flag**，覆盖基础/存储/安全/网络/告警/日志/调度/纳管八大领域。所有 flag 均支持同名 `OPSMESH_*` 环境变量兜底，命令行显式设置优先级最高。
+### 高级配置
+
+租户配额、桩存储放行、自动化引擎与 OTel 可观测性。
+
+| Flag | 类型 | 默认值 | 环境变量 | 说明 |
+|------|------|--------|----------|------|
+| `--quota-enabled` | bool | false | OPSMESH_QUOTA_ENABLED | 启用租户资源配额检查（设备/任务/告警创建前校验是否超额）；默认 false（向后兼容，不启用配额检查） |
+| `--quota-max-devices` | int | 0 | OPSMESH_QUOTA_MAX_DEVICES | 默认最大设备数（未显式设置配额的租户回退到此值；0=不限，默认） |
+| `--quota-max-tasks` | int | 0 | OPSMESH_QUOTA_MAX_TASKS | 默认最大任务数（未显式设置配额的租户回退到此值；0=不限，默认） |
+| `--quota-max-alerts` | int | 0 | OPSMESH_QUOTA_MAX_ALERTS | 默认最大告警数（未显式设置配额的租户回退到此值；0=不限，默认） |
+| `--allow-stub-stores` | bool | false | OPSMESH_ALLOW_STUB_STORES | H2/H3 止血：允许 SQL 后端继续使用 P1-P6 桩存储（15 个领域写入不持久化，见启动日志清单）；生产模式（--production=true）+ --store=mysql 时默认 false=拒绝启动，须显式 true 确认接受桩限制；memory 后端不受影响 |
+| `--automation-eval-interval` | duration | 30s | OPSMESH_AUTOMATION_EVAL_INTERVAL | 自动化引擎评估周期：周期评估 enabled 自动化规则并执行命中动作（默认 30s） |
+| `--otel-endpoint` | string | "" | OPSMESH_OTEL_ENDPOINT | OTel OTLP gRPC 导出地址（如 jaeger:4317 或 otel-collector:4317）；空=不启用追踪（no-op，零开销） |
+| `--otel-service-name` | string | "" | OPSMESH_OTEL_SERVICE_NAME | OTel 服务名标识（如 opsmesh-controlplane / opsmesh-agent）；空=回退 opsmesh |
+| `--otel-stdout` | bool | false | OPSMESH_OTEL_STDOUT | OTel 导出到 stderr（调试用，与 --otel-endpoint 互斥，stdout 优先） |
+
+> 共 **119 个 flag**，覆盖基础/存储/安全/网络/告警/日志/调度/纳管/高级九大领域。所有 flag 均支持同名 `OPSMESH_*` 环境变量兜底，命令行显式设置优先级最高。
 
 ---
 
@@ -938,7 +985,7 @@ internal/                 ← 36 个包，按 8 个领域分组（详见上文"i
 ├── circuitbreaker/       ← 通用熔断器（Closed→Open→HalfOpen 状态机）
 ├── cmdb/                 ← 配置库 CMDB（M2）：模型 + 实例 CRUD + SQL + 采集 + 关系图谱
 ├── compliance/           ← 安全合规检查引擎（CIS Benchmark 基线 + 扫描编排）
-├── config/               ← 统一配置（116 个 flag + env 兜底）
+├── config/               ← 统一配置（119 个 flag + env 兜底）
 ├── controlplane/         ← 控制面（HTTP 路由/gRPC server/Registry/dashboard + 14 个功能域 handler）
 ├── cron/                 ← 5 字段 cron 表达式匹配
 ├── dag/                  ← DAG 引擎（M5 作业编排）：拓扑排序 + 环检测 + 依赖就绪判定

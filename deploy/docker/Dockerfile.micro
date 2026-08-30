@@ -1,5 +1,6 @@
 # Generic Dockerfile for OpsMesh Go microservices
-# Build: docker build -f deploy/docker/Dockerfile.go -t opsmesh-svc ../services/<svc-name>
+# Legacy template — superseded by per-service Dockerfiles (services/<svc>/Dockerfile).
+# Build (per service, e.g. auth-svc): docker build -f services/auth-svc/Dockerfile -t opsmesh/auth-svc services/auth-svc
 FROM golang:1.26-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./

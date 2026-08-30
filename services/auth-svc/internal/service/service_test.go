@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	authv1 "github.com/Levango7/OpsMesh/services/auth-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/auth"
@@ -16,8 +17,24 @@ func newTestService() *Service {
 	return NewService(eng, st)
 }
 
+// mustClearChangePassword 模拟"admin 已完成首登改密"的常规用户状态：
+// 传入的 Service 内置 store 的 seed admin 带 MustChangePassword=true（安全基线），
+// 常规登录/刷新流程测试须先把该标记清掉（经 ChangePassword 正规路径改密），
+// 与生产语义一致（强制改密用户不走常规 at+rt 流程）。
+func mustClearChangePassword(t *testing.T, svc *Service) {
+	t.Helper()
+	hash, err := auth.HashPassword("admin123")
+	if err != nil {
+		t.Fatalf("hash password failed: %v", err)
+	}
+	if err := svc.store.ChangePassword("user-admin", hash); err != nil {
+		t.Fatalf("clear must-change-password failed: %v", err)
+	}
+}
+
 func TestLogin(t *testing.T) {
 	svc := newTestService()
+	mustClearChangePassword(t, svc)
 	ctx := context.Background()
 
 	resp, err := svc.Login(ctx, &authv1.LoginRequest{
@@ -35,6 +52,57 @@ func TestLogin(t *testing.T) {
 	}
 	if resp.User == nil {
 		t.Error("expected user to be set")
+	}
+}
+
+// TestLogin_MustChangePassword 验证首登强制改密语义（安全基线回归）：
+// mustChangePassword=true 用户密码校验通过后【不】签发常规全量 at+rt，
+// 仅返回 5min 改密专用 token（MustChangePassword=true 标记），
+// 改密成功后重新 Login 才签发正式 token（对齐 internal 轨 auth_login.go）。
+func TestLogin_MustChangePassword(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+
+	resp, err := svc.Login(ctx, &authv1.LoginRequest{
+		Username: "admin",
+		Password: "admin123",
+	})
+	if err != nil {
+		t.Fatalf("Login failed: %v", err)
+	}
+	if !resp.MustChangePassword {
+		t.Error("expected MustChangePassword to be true for seeded admin")
+	}
+	if resp.ChangePasswordToken == "" {
+		t.Error("expected change password token to be set")
+	}
+	if resp.RefreshToken != "" {
+		t.Error("mustChangePassword login must not issue refresh token (got one)")
+	}
+	// 改密专用 token 应为短时效（5min = 300s），非常规 access TTL（900s）。
+	if resp.ExpiresIn > 300 {
+		t.Errorf("change-password token TTL should be <= 300s (5min), got %d", resp.ExpiresIn)
+	}
+	// 改密成功后重新 Login 应签发常规全量 token。
+	if _, err := svc.ChangePassword(ctx, &authv1.ChangePasswordRequest{
+		UserId:      "user-admin",
+		OldPassword: "admin123",
+		NewPassword: "new-strong-pass-123",
+	}); err != nil {
+		t.Fatalf("ChangePassword failed: %v", err)
+	}
+	resp2, err := svc.Login(ctx, &authv1.LoginRequest{
+		Username: "admin",
+		Password: "new-strong-pass-123",
+	})
+	if err != nil {
+		t.Fatalf("Login after change password failed: %v", err)
+	}
+	if resp2.MustChangePassword {
+		t.Error("MustChangePassword should be cleared after password change")
+	}
+	if resp2.AccessToken == "" || resp2.RefreshToken == "" {
+		t.Error("expected full token set after password change")
 	}
 }
 
@@ -358,6 +426,7 @@ func TestAssignRole(t *testing.T) {
 
 func TestRefreshToken(t *testing.T) {
 	svc := newTestService()
+	mustClearChangePassword(t, svc)
 	ctx := context.Background()
 
 	resp, err := svc.Login(ctx, &authv1.LoginRequest{
@@ -382,8 +451,37 @@ func TestRefreshToken(t *testing.T) {
 	}
 }
 
+// TestRefreshToken_MustChangePasswordBlocked 验证强制改密用户不能经刷新通道
+// 换取常规全量 token（防绕过首登强制改密；mustChangePassword 用户本就不持有
+// refresh token，此处防御性验证：即使构造出有效 rt 也拒绝刷新）。
+func TestRefreshToken_MustChangePasswordBlocked(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+
+	// mustChangePassword=true 用户登录不签 rt，故手工保存一个 rt 到 store 模拟攻击者
+	// 持有该用户 refresh token 的场景（防御性验证 RefreshToken 不放行）。
+	refreshToken, err := svc.jwtEngine.IssueRefreshToken()
+	if err != nil {
+		t.Fatalf("issue refresh token failed: %v", err)
+	}
+	svc.store.SaveRefreshToken(&store.RefreshToken{
+		TokenHash: auth.HashRefreshToken(refreshToken),
+		UserID:    "user-admin",
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+		CreatedAt: time.Now(),
+	})
+
+	_, err = svc.RefreshToken(ctx, &authv1.RefreshTokenRequest{
+		RefreshToken: refreshToken,
+	})
+	if err != ErrTokenInvalid {
+		t.Fatalf("mustChangePassword user refresh should be rejected with ErrTokenInvalid, got: %v", err)
+	}
+}
+
 func TestLogout(t *testing.T) {
 	svc := newTestService()
+	mustClearChangePassword(t, svc)
 	ctx := context.Background()
 
 	resp, err := svc.Login(ctx, &authv1.LoginRequest{

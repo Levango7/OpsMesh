@@ -104,6 +104,14 @@ func initSchema(db *sql.DB) error {
 	return nil
 }
 
+// Close closes the database connection pool.
+// 资源泄漏修复：原 MySQLStore 无 Close 方法，main 退出时连接池不释放
+// （进程退出兜底但优雅退出窗口内连接悬挂；长驻测试/嵌入场景持续泄漏句柄）。
+// main 的 MySQL 分支成功后 defer ms.Close() 对齐 task-svc 写法。
+func (m *MySQLStore) Close() error {
+	return m.db.Close()
+}
+
 // Alerts returns alerts, optionally filtered by tenant.
 func (m *MySQLStore) Alerts(tenantID string) []*Alert {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -6,6 +6,7 @@
 // 查询失败（含语法错误 400）时保留上次的 list，仅设置 error，避免结果突兀清空。
 import { defineStore } from 'pinia'
 import { getLogs, queryLogs } from '@/api/log'
+import { t } from '@/i18n'
 
 const DEFAULT_FILTERS = {
   deviceID: '', agentID: '', level: '', source: '',
@@ -58,8 +59,8 @@ export const useLogStore = defineStore('log', {
         this.list = previousList
         this.pageSize = previousList.length
         // 优先取后端返回的 error 字段；语法错误时附加状态码便于前端识别
-        const msg = e?.j?.error || '日志检索失败'
-        this.error = e?.s === 400 ? `查询语法错误：${msg}` : msg
+        const msg = e?.j?.error || t('error.logsFailed')
+        this.error = e?.s === 400 ? t('logs.querySyntaxError') + msg : msg
       } finally {
         this.loading = false
       }

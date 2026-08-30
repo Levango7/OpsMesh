@@ -91,20 +91,34 @@
         </table>
       </div>
     </DetailDrawer>
+
+    <!-- 安装/卸载确认（替代 confirm） -->
+    <ConfirmModal
+      v-model="actionConfirm.show"
+      data-testid="plugin-action-confirm-modal"
+      :title="actionConfirm.title"
+      :message="actionConfirm.message"
+      @confirm="onActionConfirm"
+    />
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { usePluginStore } from '@/stores/plugin'
 import { t } from '@/i18n'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
+import { toast } from '@/utils/toast'
 
 const store = usePluginStore()
 const searchInput = ref('')
 const detailOpen = ref(false)
+
+// 安装/卸载确认弹窗（替代 confirm）：action 存待执行动作
+const actionConfirm = reactive({ show: false, id: null, action: null, title: '', message: '' })
 
 let searchTimer = null
 function onSearch() {
@@ -121,32 +135,53 @@ async function openDetail(id) {
   detailOpen.value = true
 }
 
-async function onInstall(id) {
-  if (!confirm(t('plugin.installConfirm'))) return
+function onInstall(id) {
+  actionConfirm.id = id
+  actionConfirm.action = 'install'
+  actionConfirm.title = t('plugin.install')
+  actionConfirm.message = t('plugin.installConfirm')
+  actionConfirm.show = true
+}
+
+async function doInstall(id) {
   try {
     const r = await store.install(id)
     if (r.s >= 200 && r.s < 300) {
       await store.fetchPlugins()
     } else {
-      alert(r.j?.error || t('plugin.installFail'))
+      toast.error(r.j?.error || t('plugin.installFail'))
     }
   } catch (e) {
-    alert(e.j?.error || t('plugin.installFail'))
+    toast.error(e.j?.error || t('plugin.installFail'))
   }
 }
 
-async function onUninstall(id) {
-  if (!confirm(t('plugin.uninstallConfirm'))) return
+function onUninstall(id) {
+  actionConfirm.id = id
+  actionConfirm.action = 'uninstall'
+  actionConfirm.title = t('plugin.uninstall')
+  actionConfirm.message = t('plugin.uninstallConfirm')
+  actionConfirm.show = true
+}
+
+async function doUninstall(id) {
   try {
     const r = await store.uninstall(id)
     if (r.s >= 200 && r.s < 300) {
       await store.fetchPlugins()
     } else {
-      alert(r.j?.error || t('plugin.uninstallFail'))
+      toast.error(r.j?.error || t('plugin.uninstallFail'))
     }
   } catch (e) {
-    alert(e.j?.error || t('plugin.uninstallFail'))
+    toast.error(e.j?.error || t('plugin.uninstallFail'))
   }
+}
+
+async function onActionConfirm() {
+  const { id, action } = actionConfirm
+  if (!id || !action) return
+  if (action === 'install') await doInstall(id)
+  else if (action === 'uninstall') await doUninstall(id)
 }
 
 onMounted(() => {

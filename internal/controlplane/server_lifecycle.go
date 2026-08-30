@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -233,7 +234,7 @@ func (s *Server) Start() error {
 	// 使 span 覆盖完整业务逻辑（安全头注入不影响 span 边界）。
 	httpSrv := &http.Server{
 		Addr: fmt.Sprintf(":%d", s.httpPort),
-		Handler: s.corsMiddleware( // CORS 跨域（开发模式允许所有来源）
+		Handler: s.corsMiddleware( // CORS 白名单（--allowed-origins；空=同源策略不输出 CORS 头）
 			s.httpMetricsMiddleware( // HTTP 指标（计数 + 延迟直方图）
 				recoveryMiddleware( // 兜底盘
 					otelx.HTTPMiddleware("opsmesh-controlplane", // OTel HTTP 自动埋点
@@ -341,21 +342,57 @@ func (s *Server) Start() error {
 	}
 }
 
-// corsMiddleware 添加 CORS 头（开发模式允许所有来源）。
+// corsMiddleware 按白名单放行跨域请求（安全加固：替代反射任意 Origin）。
+//
+// 为什么不能反射 Origin：原实现把请求 Origin 原样回显到 Access-Control-Allow-Origin
+// 并固定输出 Allow-Credentials: true，意味着【任何】恶意网站都能携带用户的 HttpOnly
+// Cookie（at/rt）跨域调用控制面 API（CSRF 之上叠加数据读取能力，Critical 级）。
+// 浏览器只校验"响应里的 Allow-Origin 是否与页面同源"，对反射值照单全收。
+//
+// 白名单语义（cfg.AllowedOrigins，--allowed-origins / OPSMESH_ALLOWED_ORIGINS）：
+//   - 空（默认）=同源策略：不输出任何 CORS 头。跨域浏览器请求被同源策略拦截，
+//     同源部署（前端与控制面同域名/经反代同源）完全不受影响。服务端无法区分
+//     "跨域被浏览器拦"与"未配置白名单"，非浏览器客户端（curl/agent）不受 CORS 影响。
+//   - 非空=仅当请求 Origin 与白名单中某项【精确匹配】时才输出
+//     Allow-Origin（回显该 Origin）+ Allow-Credentials: true 等头；
+//     白名单已禁止 "*"（Validate fail-fast），凭证模式下通配符无意义且危险。
+//   - Origin 不在白名单：不输出任何 CORS 头，透传 next（浏览器侧等同跨域被拒）。
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
+	// 启动期一次性解析白名单为 map（O(1) 匹配），空 map 表示未配置（同源策略）。
+	// corsMiddleware 仅在 Start 时构造一次，白名单运行期不可变，无并发问题。
+	allowed := make(map[string]struct{})
+	for _, item := range strings.Split(s.cfg.AllowedOrigins, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			allowed[item] = struct{}{}
+		}
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-		} else {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+		// 未配置白名单（同源策略）或 Origin 不在白名单：不输出任何 CORS 头，直接透传。
+		// 注意不能对不匹配的预检 OPTIONS 返回 204（那会让浏览器认为放行），
+		// 透传后由 mux 处理（OPTIONS 无路由注册则 404/405，浏览器侧判为跨域被拒）。
+		if len(allowed) == 0 {
+			next.ServeHTTP(w, r)
+			return
 		}
+		if origin == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if _, ok := allowed[origin]; !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// Origin 精确匹配白名单：输出凭证模式 CORS 头。
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		// 回显而非 *：凭证模式下浏览器要求 Allow-Origin 为具体来源。
+		w.Header().Add("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Tenant-ID, X-Requested-With")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Max-Age", "3600")
 
-		// 处理预检请求
+		// 处理预检请求：白名单放行的 OPTIONS 直接 204。
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

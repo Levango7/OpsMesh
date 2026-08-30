@@ -462,35 +462,76 @@ Prometheus 文本格式指标。**监听在独立端口 9091**（非主 8080 端
 - **查询参数**：
   - 无 `range`：返回最新值（`proto.DeviceMetrics`，向后兼容）
   - `range=2h`：返回历史时序数据（`proto.MetricsSeries`），支持 `15m` / `1h` / `2h` / `6h` / `24h`
-- **响应（最新值）**：`200 OK`
+- **响应（最新值）**：`200 OK`（`proto.DeviceMetrics` 结构，指标为嵌套对象）
 
 ```json
 {
-  "cpu_percent": 12.5,
-  "mem_percent": 45.2,
-  "mem_used_mb": 1843,
-  "mem_total_mb": 4096,
-  "disk_percent": 60.1,
-  "load_1": 0.34,
-  "load_5": 0.42,
-  "load_15": 0.38,
-  "net_in_kb": 1234,
-  "net_out_kb": 567,
-  "collected_at": "2026-08-24T10:00:00Z"
+  "deviceID": "d-001",
+  "hostname": "host-1",
+  "os": "linux",
+  "osVersion": "Ubuntu 22.04 LTS",
+  "kernel": "5.15.0",
+  "arch": "amd64",
+  "uptime": 3600,
+  "cpu": {
+    "cores": 8,
+    "usage": 12.5,
+    "model": "Intel(R) Xeon(R)"
+  },
+  "memory": {
+    "total": 4096,
+    "used": 1843,
+    "available": 2253,
+    "usage": 45.2
+  },
+  "disks": [
+    {
+      "mount": "/",
+      "total": 100,
+      "used": 60,
+      "free": 40,
+      "usage": 60.1,
+      "type": "ext4"
+    }
+  ],
+  "network": [
+    {
+      "name": "eth0",
+      "ip": "192.168.1.10",
+      "mac": "aa:bb:cc:dd:ee:ff",
+      "rxBytes": 1234567,
+      "txBytes": 765432,
+      "status": "up",
+      "speed": 1000
+    }
+  ],
+  "processCount": 120,
+  "collectedAt": "2026-08-24T10:00:00Z"
 }
 ```
 
-- **响应（历史时序）**：`200 OK`
+- **响应（历史时序）**：`200 OK`（`proto.MetricsSeries` 结构，`samples` 为 `DeviceMetrics` 快照数组，按 `collectedAt` 升序）
 
 ```json
 {
-  "device_id": "d-001",
+  "deviceID": "d-001",
   "range": "2h",
-  "points": [
-    {"timestamp": "2026-08-24T08:00:00Z", "cpu_percent": 10.2, "mem_percent": 44.1},
-    {"timestamp": "2026-08-24T08:30:00Z", "cpu_percent": 15.8, "mem_percent": 45.0}
-  ],
-  "total": 240
+  "samples": [
+    {
+      "deviceID": "d-001",
+      "hostname": "host-1",
+      "cpu": {"cores": 8, "usage": 10.2, "model": "Intel(R) Xeon(R)"},
+      "memory": {"total": 4096, "used": 1800, "available": 2296, "usage": 44.1},
+      "collectedAt": "2026-08-24T08:00:00Z"
+    },
+    {
+      "deviceID": "d-001",
+      "hostname": "host-1",
+      "cpu": {"cores": 8, "usage": 15.8, "model": "Intel(R) Xeon(R)"},
+      "memory": {"total": 4096, "used": 1843, "available": 2253, "usage": 45.0},
+      "collectedAt": "2026-08-24T08:30:00Z"
+    }
+  ]
 }
 ```
 
@@ -1968,36 +2009,43 @@ Phase 3 K8s 多集群管理（client-go 集成）。
 
 集群列表。
 
-- **响应**：
+- **响应**（`store.K8sCluster` 数组，`kubeconfig` 脱敏为 `***`）：
 
 ```json
-[
-  {
-    "id": "k8s-001",
-    "name": "prod-cluster",
-    "api_server": "https://1.2.3.4:6443",
-    "version": "1.28.0",
-    "status": "connected"
-  }
-]
+{
+  "clusters": [
+    {
+      "id": "k8s-001",
+      "tenantId": "default",
+      "name": "prod-cluster",
+      "server": "https://1.2.3.4:6443",
+      "kubeconfig": "***",
+      "status": "online",
+      "createdAt": "2026-08-01T00:00:00Z",
+      "updatedAt": "2026-08-01T00:00:00Z"
+    }
+  ]
+}
 ```
+
+`status` 取值：`online`（连接成功）/ `offline`（连接失败）/ `unknown`（未测试，创建初始态）。
 
 ### POST /api/v1/k8s/clusters
 
 注册集群。
 
-- **请求体**：
+- **权限**：需 `k8s:write` 权限，且请求头须带 `X-Tenant-ID`（否则 401）
+- **请求体**（`name` 与 `kubeconfig` 必填，`server` 可选）：
 
 ```json
 {
   "name": "prod-cluster",
-  "api_server": "https://1.2.3.4:6443",
-  "kube_config": "可选 kubeconfig 内容",
-  "insecure_skip_tls": false
+  "server": "https://1.2.3.4:6443",
+  "kubeconfig": "apiVersion: v1\nkind: Config\n..."
 }
 ```
 
-- **响应**：`201 Created`
+- **响应**：`201 Created`，返回创建的集群（`tenantId` 取自请求头 `X-Tenant-ID`，`kubeconfig` 已加密存储、响应中脱敏为 `***`；`status` 初始 `unknown`，服务端尝试建立连接后置 `online`/`offline`）
 
 ### GET /api/v1/k8s/clusters/{id}
 
@@ -2379,8 +2427,10 @@ M6 日志检索：双后端（Memory/SQL/Loki/ES）+ offset 分页。
 [
   {
     "id": "log-001",
-    "device_id": "d-001",
-    "agent_id": "a-001",
+    "tenantID": "default",
+    "deviceID": "d-001",
+    "agentID": "a-001",
+    "taskID": "t-001",
     "level": "info",
     "source": "task",
     "message": "任务执行完成",
@@ -2397,7 +2447,8 @@ M6 日志检索：双后端（Memory/SQL/Loki/ES）+ offset 分页。
 
 ```json
 {
-  "device_id": "d-001",
+  "deviceID": "d-001",
+  "agentID": "a-001",
   "level": "info",
   "source": "task",
   "message": "自定义日志条目"

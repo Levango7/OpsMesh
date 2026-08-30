@@ -40,7 +40,20 @@ func NewService(engine *auth.Engine, st store.Store) *Service {
 	}
 }
 
+// changePasswordTokenTTL is the TTL for the short-lived change-password token.
+// mustChangePassword=true 用户登录时不签发常规全量 token，仅签发此短时效 token（5min），
+// 语义对齐 internal/controlplane/auth_login.go 的 internal 轨实现（changePasswordTokenExpiry）。
+const changePasswordTokenTTL = 5 * time.Minute
+
 // Login authenticates a user and returns tokens.
+//
+// 安全语义（Critical 修复，双轨安全漂移消除）：mustChangePassword=true 的用户
+// （如 admin/admin123 首登）密码校验通过后【不】签发常规全量 token——否则弱口令
+// 用户持有效 access token 可直接访问全部受保护 API，与 internal 轨
+// （internal/controlplane/auth_login.go）的强制改密语义漂移。
+// 改为签发 5min 短时效改密专用 token（IssueTokenWithTTL），响应标记
+// MustChangePassword=true 并附 ChangePasswordToken；改密成功（须重新 Login）
+// 后才签发正式 at+rt。
 func (s *Service) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.TokenResponse, error) {
 	u := s.store.GetUserByUsername(req.Username)
 	if u == nil {
@@ -52,7 +65,30 @@ func (s *Service) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.
 	if !auth.VerifyPassword(u.PasswordHash, req.Password) {
 		return nil, ErrInvalidCredentials
 	}
+	// 首登强制改密：仅签 5min 改密专用 token，不签常规 at+rt（防弱口令直取全量权限）。
+	if u.MustChangePassword {
+		return s.issueChangePasswordTokens(u)
+	}
 	return s.issueTokens(u)
+}
+
+// issueChangePasswordTokens issues a short-lived change-password-only token set
+// for users with MustChangePassword=true. AccessToken 为 5min 短时效 token
+// （ExpiresIn 为其剩余秒数），不附 RefreshToken（改密专用会话不可刷新）；
+// 客户端应据 MustChangePassword=true 走 ChangePassword 流程后重新 Login。
+func (s *Service) issueChangePasswordTokens(u *store.User) (*authv1.TokenResponse, error) {
+	permissions := s.expandPermissions(u)
+	accessToken, expiresIn, err := s.jwtEngine.IssueTokenWithTTL(u.ID, u.Username, u.RoleIDs, permissions, changePasswordTokenTTL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to issue change-password token: %w", err)
+	}
+	return &authv1.TokenResponse{
+		AccessToken:         accessToken,
+		ExpiresIn:           expiresIn,
+		User:                toProtoUser(u),
+		MustChangePassword:  true,
+		ChangePasswordToken: accessToken,
+	}, nil
 }
 
 // Logout revokes tokens.
@@ -73,6 +109,8 @@ func (s *Service) Logout(ctx context.Context, req *authv1.LogoutRequest) (*empty
 }
 
 // RefreshToken issues a new access token using a refresh token.
+// mustChangePassword=true 的用户即使持有效 refresh token 也不签发常规全量 token
+// （与 Login 同语义，防止经刷新通道绕过首登强制改密）。
 func (s *Service) RefreshToken(ctx context.Context, req *authv1.RefreshTokenRequest) (*authv1.TokenResponse, error) {
 	tokenHash := auth.HashRefreshToken(req.RefreshToken)
 	rt, ok := s.store.ConsumeRefreshToken(tokenHash)
@@ -84,6 +122,9 @@ func (s *Service) RefreshToken(ctx context.Context, req *authv1.RefreshTokenRequ
 	}
 	u := s.store.GetUser(rt.UserID)
 	if u == nil || u.Status != "active" {
+		return nil, ErrTokenInvalid
+	}
+	if u.MustChangePassword {
 		return nil, ErrTokenInvalid
 	}
 	return s.issueTokens(u)

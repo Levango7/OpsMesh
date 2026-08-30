@@ -43,6 +43,7 @@ func main() {
 	defer shutdown(context.Background())
 
 	// Store 初始化：StoreType=sql 且 DSN 非空时接 MySQL（自动建表）；失败或未配置回退内存。
+	// 资源泄漏修复：MySQL 分支成功后 defer ms.Close() 释放连接池（对齐 task-svc main）。
 	var st store.AlertStore = store.NewMemoryStore()
 	if cfg.StoreType == "sql" && cfg.DSN != "" {
 		if ms, err := store.NewMySQLStore(cfg.DSN); err != nil {
@@ -50,6 +51,7 @@ func main() {
 		} else {
 			st = ms
 			log.Printf("MySQL store 已启用")
+			defer func() { _ = ms.Close() }()
 		}
 	}
 	eng := engine.NewEngine(nil)

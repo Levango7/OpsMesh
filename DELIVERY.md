@@ -128,7 +128,7 @@ go build ./... && go vet ./... && go test ./...
 
 - 远端：`github.com/Levango7/OpsMesh`，分支 `main`
 - 根提交链：以 `git rev-list --count HEAD` 实测为准（初始 README → 内核实现 → 六大运维模块 → CI/容器加固 → 文档同步，持续演进中）
-- 提交内容：34 包源码（主模块 31 + operator 3）+ 346 Go 文件（179 源码 + 167 测试）+ 84 前端文件 + Dockerfile/Dockerfile.agent + docker-compose + Helm Chart + systemd unit + README + DELIVERY + CHANGELOG + 23 个设计文档 + `.github/ci.yml` + `.gitignore`
+- 提交内容：34 包源码（主模块 31 + operator 3）+ ~714 Go 文件（含 ~265 测试，实测口径见 §2）+ ~145 前端文件（`web/enterprise/src/`）+ Dockerfile/Dockerfile.agent + 11 个微服务 Dockerfile（`services/<svc>/Dockerfile`）+ docker-compose + Helm Chart + systemd unit + README + DELIVERY + CHANGELOG + 23 个设计文档 + `.github/ci.yml` + `.gitignore`
 
 ---
 ## 9. 生产安全加固

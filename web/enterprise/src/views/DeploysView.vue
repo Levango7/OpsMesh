@@ -100,6 +100,15 @@
         <p v-if="store.current.task_ids">{{ $t('deploys.task_ids_label') }}: <code>{{ (store.current.task_ids || '').replace(/,/g, ', ') }}</code></p>
       </div>
     </DetailDrawer>
+
+    <!-- 执行/回滚确认（替代 confirm） -->
+    <ConfirmModal
+      v-model="actionConfirm.show"
+      data-testid="deploys-action-confirm-modal"
+      :title="actionConfirm.title"
+      :message="actionConfirm.message"
+      @confirm="onActionConfirm"
+    />
   </div>
 </template>
 
@@ -111,12 +120,16 @@ import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
 
 const store = useDeployStore()
 const form = reactive({
   name: '', type: 'script', repo_url: '', content: '', path: '', target_ids: ''
 })
+
+// 执行/回滚确认弹窗（替代 confirm）：pending 回调存待执行动作
+const actionConfirm = reactive({ show: false, id: null, action: null, title: '', message: '' })
 
 const columns = [
   { key: 'id', title: 'ID', slot: 'cell-id' },
@@ -147,15 +160,33 @@ async function onCreate() {
     if (r.s < 400) { form.name = ''; form.target_ids = ''; form.repo_url = ''; form.content = ''; form.path = '' }
   } catch (e) { store.msg = 'error: ' + (e.j?.error || e.message); store.error = 'create' }
 }
-async function onExec(id) {
-  if (!confirm(t('deploys.confirm_execute'))) return
+function onExec(id) {
+  actionConfirm.id = id
+  actionConfirm.action = 'exec'
+  actionConfirm.title = t('deploys.execute')
+  actionConfirm.message = t('deploys.confirm_execute')
+  actionConfirm.show = true
+}
+async function doExec(id) {
   try { const r = await store.execute(id); store.msg = `[${r.s}] ${r.j.error || t('deploys.executed_msg', { id })}`; store.error = r.s >= 400 ? 'exec' : '' }
   catch (e) { store.msg = 'error: ' + (e.j?.error || e.message); store.error = 'exec' }
 }
-async function onRollback(id) {
-  if (!confirm(t('deploys.confirm_rollback'))) return
+function onRollback(id) {
+  actionConfirm.id = id
+  actionConfirm.action = 'rollback'
+  actionConfirm.title = t('deploys.rollback')
+  actionConfirm.message = t('deploys.confirm_rollback')
+  actionConfirm.show = true
+}
+async function doRollback(id) {
   try { const r = await store.rollback(id); store.msg = `[${r.s}] ${r.j.error || t('deploys.rolled_back_msg', { id })}`; store.error = r.s >= 400 ? 'rb' : '' }
   catch (e) { store.msg = 'error: ' + (e.j?.error || e.message); store.error = 'rb' }
+}
+async function onActionConfirm() {
+  const { id, action } = actionConfirm
+  if (!id || !action) return
+  if (action === 'exec') await doExec(id)
+  else if (action === 'rollback') await doRollback(id)
 }
 async function onOpen(id) { await store.open(id) }
 

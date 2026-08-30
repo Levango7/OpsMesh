@@ -1,6 +1,6 @@
 # OpsMesh 产品设计文档
 
-> 版本：v0.7.0  ·  编制日期：2026-08-17  ·  适用基线：MVP（自研 gRPC 管控通道）+ 安全加固
+> 版本：v0.8.0-draft  ·  编制日期：2026-08-30（第五轮修复后基线）  ·  适用基线：MVP（自研 gRPC 管控通道）+ 安全加固
 >
 > 本文档基于 `README.md`、`DELIVERY.md`、`docs/product-roadmap.md` 与 `docs/api-reference.md` 编制，描述 OpsMesh 的产品定位、目标用户、功能矩阵、竞品对比、商业模式、适用场景、非功能需求与路线图。已实现能力以 `README.md` 功能矩阵为准，规划项以 `product-roadmap.md` 为准。
 
@@ -131,11 +131,13 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 
 | 成熟度 | 数量 | 模块 |
 |---|---|---|
-| ✅ 功能完整（CI 验证中） | 18 | 全部上述模块 |
-| 🟡 已交付待完善 | 0 | — |
+| ✅ 功能完整（CI 验证中） | 12 | §3.1-3.3 中的核心运维/资产/平台基线模块 |
+| 🟡 已交付待完善 | 6 | GPU / Bot（ChatOps）/ Runbook / Incident / Autoscaler / Portal（微服务域，见脚注¹） |
 | 🔵 规划中 | 0 | — |
 
-> **结论**：v0.7.0 基线下，用户要求的 18 个核心运维功能模块功能完整（CI 验证中），无规划中或待完善项；"生产可用"结论以 CI 真跑通过为准（见 `DELIVERY.md` §7）。AI 增强能力（AI-03~AI-14 共 12 项，见 `docs/ai-design.md`）为独立规划线，不在此 18 模块范围内。其他深化能力（如等保三级审计 6 月留存、Vault/KMS 远期轮转）见 §8 路线图。
+> ¹ **微服务域如实说明**：GPU / Bot / Runbook / Incident / Autoscaler / Portal 共 6 域以 `services/` 独立微服务形态交付（gpu-svc / bot-svc / runbook-svc / incident-svc / autoscaler-svc / portal-svc，各自独立 go.mod），**前端入口停用中**——`web/enterprise/src/router/index.js` 中对应路由已注释停用（后端 controlplane 尚无这些模块的路由，前端注册即 404，视图与 API 文件保留待恢复）。故此 6 域标注 🟡「已交付待完善」：后端服务可独立部署调用，但经主控制面 + 企业前端的一体化使用路径未打通，不构成 ✅「功能完整」。
+
+> **结论**：v0.8.0-draft 基线下，用户要求的核心运维功能模块中 12 个功能完整（CI 验证中）；GPU/Bot/Runbook/Incident/Autoscaler/Portal 6 个微服务域已交付但前端入口停用（🟡）；"生产可用"结论以 CI 真跑通过为准（见 `DELIVERY.md` §7）。AI 增强能力（AI-03~AI-14 共 12 项，见 `docs/ai-design.md`）为独立规划线，不在上述模块范围内。其他深化能力（如等保三级审计 6 月留存、Vault/KMS 远期轮转）见 §8 路线图。
 
 ---
 
@@ -437,7 +439,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | `DELIVERY.md` | 交付说明 + 代码规模 + 验证结果 + 功能矩阵 |
 | `docs/product-roadmap.md` | 产品方向与演进路线图（详细） |
 | `docs/api-reference.md` | HTTP REST + gRPC API 完整参考 |
-| `docs/flag-matrix.md` | 116 个 flag 全量配置矩阵 |
+| `docs/flag-matrix.md` | 119 个 flag 全量配置矩阵 |
 | `docs/deployment-guide.md` | 部署指南（控制面/agent/前端各场景） |
 | `docs/sse-protocol.md` | SSE 事件流契约 |
 | `docs/tech-selection.md` | 技术选型决策记录 |

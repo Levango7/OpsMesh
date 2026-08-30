@@ -1,8 +1,30 @@
 -- OpsMesh Unified MySQL Schema
 -- Auto-generated: combined from all service schema.sql files
 -- Services: auth, device, task, alert, config, gpu, portal, log, workflow, incident, autoscaler, plugin
+--
+-- 微服务独立库（表名冲突规避，与 docker-compose.prod.yml 对齐）：
+--   controlplane 主模块用 opsmesh 主库；device/task/alert/config/log 微服务各用独立库。
+--   原因：主模块与微服务的 devices/users/agents/alerts/ci_items 等表名相同但结构不一致，
+--   共库时 CREATE TABLE IF NOT EXISTS 静默让位，后启动服务的 INSERT 因列不匹配而失败。
+--   各微服务 schema.sql 均为 CREATE TABLE IF NOT EXISTS，服务启动 initSchema 自建表，此处只建库+授权。
 
 CREATE DATABASE IF NOT EXISTS opsmesh CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- 微服务独立库（utf8mb4 与主库一致）。
+CREATE DATABASE IF NOT EXISTS opsmesh_device  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS opsmesh_task    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS opsmesh_alert   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS opsmesh_config  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS opsmesh_log     CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- 微服务库授权（opsmesh 业务账号；容器初始化时以 root 执行本脚本）。
+GRANT ALL PRIVILEGES ON opsmesh_device.*  TO 'opsmesh'@'%';
+GRANT ALL PRIVILEGES ON opsmesh_task.*    TO 'opsmesh'@'%';
+GRANT ALL PRIVILEGES ON opsmesh_alert.*   TO 'opsmesh'@'%';
+GRANT ALL PRIVILEGES ON opsmesh_config.*  TO 'opsmesh'@'%';
+GRANT ALL PRIVILEGES ON opsmesh_log.*     TO 'opsmesh'@'%';
+FLUSH PRIVILEGES;
+
 USE opsmesh;
 
 -- =============================================================================

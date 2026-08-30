@@ -167,6 +167,39 @@ func TestClaimTask(t *testing.T) {
 	}
 }
 
+// TestClaimTask_StrictAgentBinding 验证领取的严格 agent 绑定（安全语义回归）：
+// 其他 agent 不能领取绑定到别的 agent 的任务（原 `OR agent_id=”` 广播兜底
+// 是跨租户越权路径，已移除）。
+func TestClaimTask_StrictAgentBinding(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+
+	_, err := svc.CreateTask(ctx, &taskv1.CreateTaskRequest{
+		Task: &taskv1.Task{
+			AgentId:  "agent-1",
+			TenantId: "tenant-1",
+			Command:  "echo test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	// agent-2 不能领取 agent-1 的任务
+	_, err = svc.ClaimTask(ctx, &taskv1.ClaimTaskRequest{AgentId: "agent-2"})
+	if err == nil {
+		t.Fatal("agent-2 领取 agent-1 的任务应失败（严格 agent 绑定），但成功了")
+	}
+	// 原任务仍可被 agent-1 领取
+	claimed, err := svc.ClaimTask(ctx, &taskv1.ClaimTaskRequest{AgentId: "agent-1"})
+	if err != nil {
+		t.Fatalf("agent-1 领取自己的任务应成功: %v", err)
+	}
+	if claimed == nil || claimed.ClaimedBy != "agent-1" {
+		t.Fatalf("任务应被 agent-1 领取，got %+v", claimed)
+	}
+}
+
 func TestReportResult(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()

@@ -3,6 +3,14 @@ version: "3.8"
 # OpsMesh Production Deployment
 # Real deployment configuration for production use
 # Usage: docker compose -f docker-compose.prod.yml up -d
+#
+# MySQL 库规划（表名冲突规避）：
+#   - `opsmesh` 主库：仅 controlplane（主模块 internal/store 建表）使用，MYSQL_DATABASE 保持 opsmesh。
+#   - `opsmesh_<svc>` 独立库：device/task/alert/config/log 各微服务使用。
+#     原因：controlplane 主模块与微服务的 devices/users/agents/alerts/ci_items 等表名相同但结构不一致，
+#     共库时 CREATE TABLE IF NOT EXISTS 会静默让位给先建表的一方，后启动服务的 INSERT 因列不匹配而失败。
+#     微服务各自 schema.sql 均为 CREATE TABLE IF NOT EXISTS，服务启动 initSchema 自建表，
+#     只需在 deploy/docker/scripts/init-mysql.sql 预建库并授权（opsmesh_device/opsmesh_task/opsmesh_alert/opsmesh_config/opsmesh_log）。
 
 x-logging: &default-logging
   driver: "json-file"
@@ -361,7 +369,7 @@ services:
       DEVICE_SVC_GRPC_PORT: 50051
       DEVICE_SVC_HTTP_PORT: 8101
       DEVICE_SVC_STORE_TYPE: ${DEVICE_STORE_TYPE:-sql}
-      DEVICE_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh?parseTime=true"
+      DEVICE_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh_device?parseTime=true"
       DEVICE_SVC_REDIS_ADDR: "redis:6379"
       DEVICE_SVC_JWT_SECRET: ${JWT_SECRET:-opsmesh_jwt_secret_production_change_me}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
@@ -407,7 +415,7 @@ services:
       TASK_SVC_MAX_TASKS: 50000
       TASK_SVC_MAX_RETRIES: 3
       TASK_SVC_TASK_TIMEOUT: 600
-      MYSQL_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh?parseTime=true"
+      MYSQL_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh_task?parseTime=true"
       REDIS_ADDR: "redis:6379"
       REDIS_PASSWORD: ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
@@ -449,7 +457,7 @@ services:
       ALERT_SVC_GRPC_PORT: 50053
       ALERT_SVC_HTTP_PORT: 8103
       ALERT_SVC_STORE_TYPE: ${ALERT_STORE_TYPE:-sql}
-      ALERT_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh?parseTime=true"
+      ALERT_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh_alert?parseTime=true"
       ALERT_SVC_REDIS_ADDR: "redis:6379"
       REDIS_PASSWORD: ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
       PAGERDUTY_ENABLED: ${PAGERDUTY_ENABLED:-false}
@@ -494,7 +502,7 @@ services:
       CONFIG_SVC_GRPC_PORT: 50055
       CONFIG_SVC_HTTP_PORT: 8106
       CONFIG_SVC_STORE_TYPE: ${CONFIG_STORE_TYPE:-sql}
-      CONFIG_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh?parseTime=true"
+      CONFIG_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh_config?parseTime=true"
       CONFIG_SVC_REDIS_ADDR: "redis:6379"
       CONFIG_SVC_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:-opsmesh_config_encryption_key_32bytes}
       CONFIG_SVC_MAX_HISTORY_SIZE: 100
@@ -540,7 +548,7 @@ services:
       LOG_SVC_HEALTH_ADDR: ":8105"
       LOG_SVC_BACKEND: ${LOG_BACKEND:-loki}
       LOG_SVC_LOKI_URL: "http://loki:3100"
-      LOG_SVC_SQL_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh?parseTime=true"
+      LOG_SVC_SQL_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh_log?parseTime=true"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-UTC}

@@ -50,6 +50,13 @@ type TokenResponse struct {
 	RefreshToken string
 	ExpiresIn    int64
 	User         *User
+	// MustChangePassword 为 true 表示用户首登须强制改密（安全基线）：
+	// 此时 AccessToken 为短时效改密专用 token（5min），仅可用于 ChangePassword，
+	// 不携带常规访问能力；改密成功后（须重新 Login）才签发正式全量 token。
+	MustChangePassword bool
+	// ChangePasswordToken 为 MustChangePassword=true 时下发的一次性改密凭据，
+	// 配合 ChangePassword 流程完成强制改密；常规登录（非强制改密）为空。
+	ChangePasswordToken string
 }
 
 // LogoutRequest is the request to logout.

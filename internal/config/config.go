@@ -281,6 +281,19 @@ type Config struct {
 	// 生产模式（--production=true）下默认 true（HTTPS 反代终止 TLS 时控制面虽收 HTTP，但对外是 HTTPS，须显式开启）。
 	CookieSecure bool
 
+	// CORS 白名单（安全加固，替代反射任意 Origin）：逗号分隔的允许跨域来源列表
+	// （如 https://console.example.com,https://ops.example.com）。
+	// 安全语义：
+	//   - 空（默认）=同源策略：corsMiddleware 不输出任何 CORS 头（浏览器跨域请求被同源策略
+	//     拦截），同源部署（前端与控制面同域名/同端口/经反代同源）不受影响。
+	//   - 非空=仅当请求 Origin 与列表中某项【精确匹配】时才输出
+	//     Access-Control-Allow-Origin（回显该 Origin）+ Allow-Credentials: true，
+	//     支持带 Cookie 的可信跨域；不匹配的 Origin 不输出任何 CORS 头（等同同源拒绝）。
+	//   - 禁止配置 "*"：凭证模式下 Allow-Origin: * 与 Cookie 不兼容，且等于放开任意来源，
+	//     Validate 中直接拒绝启动。
+	// 反射任意 Origin + Allow-Credentials 是 Critical 漏洞：恶意网站可带用户 Cookie 跨域调 API。
+	AllowedOrigins string
+
 	// 多副本会话状态共享：SessionStore 后端选择。
 	// 空（默认）=进程内 map（InProcessSessionStore，单副本/demo 零依赖）；
 	// "redis://host:port"=Redis 后端（RedisSessionStore，多副本 HA 共享 JWT 黑名单/限流计数/改密令牌）。
@@ -504,6 +517,10 @@ func Load() *Config {
 	// 默认 false（明文内网/本地开发需要）；生产模式（--production=true）下默认 true（除非显式 false）。
 	// 或 env OPSMESH_COOKIE_SECURE。
 	cookieSecure := flag.Bool("cookie-secure", false, "Cookie Secure 标志：true=at/rt Cookie 仅经 HTTPS 传输（防中间人窃取）；默认 false（明文内网/开发需要）；生产模式默认 true（HTTPS 反代终止 TLS 时须显式开启）；或 env OPSMESH_COOKIE_SECURE")
+	// CORS 白名单：逗号分隔的允许跨域来源列表（安全加固，替代反射任意 Origin）。
+	// 空（默认）=同源策略（不输出任何 CORS 头）；非空=仅精确匹配的 Origin 才放行并输出
+	// Allow-Credentials 头；禁止 "*"（与凭证互斥，Validate 直接拒绝）。
+	allowedOrigins := flag.String("allowed-origins", "", "CORS 白名单：逗号分隔的允许跨域来源（如 https://console.example.com）；空=同源策略（不输出 CORS 头，同源部署不受影响）；非空=仅精确匹配的 Origin 放行（带凭证）；禁止配置 *（与凭证互斥）；或 env OPSMESH_ALLOWED_ORIGINS")
 	// 多副本会话状态共享：SessionStore 后端选择。
 	// 空=进程内（默认，单副本/demo）；"redis://host:port"=Redis（多副本 HA 共享登出/限流/改密令牌）。
 	sessionStore := flag.String("session-store", "", "会话状态后端：空=进程内 map（单副本/demo 默认） | redis://host:port（多副本 HA 共享 JWT 黑名单/限流/改密令牌）；或 env OPSMESH_SESSION_STORE")
@@ -684,6 +701,7 @@ func Load() *Config {
 		TrustProxy:                 valBool("trust-proxy", *trustProxy, "OPSMESH_TRUST_PROXY"),
 		TrustGatewayHeaders:        valBool("trust-gateway-headers", *trustGatewayHeaders, "OPSMESH_TRUST_GATEWAY_HEADERS"),
 		CookieSecure:               valBool("cookie-secure", *cookieSecure, "OPSMESH_COOKIE_SECURE"),
+		AllowedOrigins:             val("allowed-origins", *allowedOrigins, "OPSMESH_ALLOWED_ORIGINS"),
 		SessionStore:               val("session-store", *sessionStore, "OPSMESH_SESSION_STORE"),
 		DeviceFPDeadline:           parseDeviceFPDeadline(val("device-fp-deadline", *deviceFPDeadline, "OPSMESH_DEVICE_FP_DEADLINE")),
 		OTELEndpoint:               val("otel-endpoint", *otelEndpoint, "OPSMESH_OTEL_ENDPOINT"),
@@ -1068,6 +1086,26 @@ func (c *Config) Validate() error {
 	if c.Replicas > 1 && c.SessionStore == "" && c.Store == "memory" {
 		// memory store 多副本本身已在上方校验拒绝，此处补充 mysql store 多副本未配置 session-store 的告警。
 		fmt.Fprintln(os.Stderr, "[config] 警告：多副本（replicas>1）但未配置 --session-store，登出/限流/改密令牌将不跨副本共享（建议 --session-store=redis://host:port）")
+	}
+	// CORS 白名单校验：禁止配置 "*"（与 Allow-Credentials 互斥；等于放开任意来源，
+	// 恶意网站可带用户 Cookie 跨域调 API，恢复到反射漏洞）。启动期 fail-fast。
+	if c.AllowedOrigins != "" {
+		for _, item := range strings.Split(c.AllowedOrigins, ",") {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			if item == "*" {
+				return fmt.Errorf("非法 --allowed-origins 项 \"*\"：CORS 凭证模式下通配符与 Cookie 互斥（等同放开任意来源），须改为显式域名列表")
+			}
+			u, err := url.Parse(item)
+			if err != nil {
+				return fmt.Errorf("非法 --allowed-origins 项 %q: %w", item, err)
+			}
+			if u.Scheme == "" || u.Host == "" || u.Path != "" {
+				return fmt.Errorf("非法 --allowed-origins 项 %q（须为 scheme://host[:port] 形式的完整 Origin，如 https://console.example.com，不含路径）", item)
+			}
+		}
 	}
 	// 通知渠道配置校验：每个渠道 type 必须合法，必填字段非空。
 	for i, ch := range c.NotifyChannels {

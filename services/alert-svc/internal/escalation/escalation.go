@@ -81,6 +81,7 @@ type Escalator struct {
 	wg          sync.WaitGroup
 	interval    time.Duration
 	now         func() time.Time
+	stopOnce    sync.Once
 }
 
 // NewEscalator creates a new Escalator with default settings.
@@ -406,8 +407,22 @@ func (e *Escalator) Start(ctx context.Context) {
 }
 
 // Stop gracefully shuts down the background goroutine.
+//
+// 健壮性修复：
+//   - 幂等保护（sync.Once）：原实现对已关闭的 stopCh 再次 close 会 panic
+//     （double-close panic）；main 异常退出路径 + 测试清理双重调用即崩。
+//   - ticker.Stop()：原实现仅 close(stopCh) 不停 ticker，goroutine 退出后
+//     time.Ticker 泄漏（其运行期 timer 须到下一次触发才回收）。
+//   - Stop 先于 Start 调用时不 panic（once 语义下仅标记已停止，wg.Wait 立即返回）。
 func (e *Escalator) Stop() {
-	close(e.stopCh)
+	e.stopOnce.Do(func() {
+		close(e.stopCh)
+	})
+	e.mu.Lock()
+	if e.ticker != nil {
+		e.ticker.Stop()
+	}
+	e.mu.Unlock()
 	e.wg.Wait()
 }
 

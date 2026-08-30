@@ -791,7 +791,7 @@ curl "$CP/api/v1/tasks/<task-id>/result" -H "$AUTH" -H "X-Tenant-ID: $TENANT"
 | 指标 | 类型 | 说明 |
 |---|---|---|
 | `opsmesh_agents_total` | gauge | 在线 agent 总数 |
-| `opsmesh_tasks_total{status}` | counter | 任务总数（按状态分：pending/running/succeeded/failed） |
+| `opsmesh_tasks_total` | gauge | 任务总数（不带 label 的瞬时值，取值为当前 store 全量任务数；任务状态 pending/running/done/failed 经 REST `/api/v1/tasks?status=` 查询，不经此指标维度拆分） |
 | `opsmesh_task_queue_depth` | gauge | 任务队列深度 |
 | `opsmesh_devices_total{status}` | gauge | 设备总数（按状态分：online/offline/retired） |
 | `opsmesh_alerts_total{severity}` | counter | 告警总数 |
@@ -834,7 +834,7 @@ observability:
 | 告警名 | 表达式 | 触发条件 | 严重级别 |
 |---|---|---|---|
 | `OpsMeshAgentsOffline` | `opsmesh_agents_total < 1` | 在线 agent 数 <1 持续 5m | critical |
-| `OpsMeshTaskFailureRateHigh` | `rate(opsmesh_tasks_total{status="failed"}[5m]) / rate(opsmesh_tasks_total[5m]) > 0.3` | 任务失败率 >30% 持续 5m | warning |
+| `OpsMeshTaskFailureRateHigh` | `opsmesh_tasks_total > 1000` | 任务总数 >1000 持续 5m（`opsmesh_tasks_total` 为不带 label 的 gauge，无法按状态拆分做失败率；按状态过滤请用 REST `/api/v1/tasks?status=failed` 拉取后在告警器侧计算比例） | warning |
 | `OpsMeshTaskQueueBacklog` | `opsmesh_task_queue_depth > 100` | 队列深度 >100 持续 5m | warning |
 
 ### 4.4 自定义告警规则

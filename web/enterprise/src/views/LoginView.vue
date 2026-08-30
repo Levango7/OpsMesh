@@ -93,13 +93,14 @@ async function onSubmit() {
   loading.value = true
   try {
     const result = await authStore.login(username.value, password.value)
-    if (result.must_change_password) {
+    if (result.mustChangePassword) {
       router.push('/change-password')
     } else {
       router.push('/overview')
     }
   } catch (e) {
-    error.value = e.j?.error || t('login.invalid_credentials')
+    // 429（登录限流）时优先给出准确提示，其余场景透传后端 error 文案，最后才回退通用文案。
+    error.value = e.j?.error || (e.s === 429 ? t('error.tooManyRequests') : t('login.invalid_credentials'))
   } finally {
     loading.value = false
   }

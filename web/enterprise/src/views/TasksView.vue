@@ -85,10 +85,19 @@
       </DataTable>
     </div>
   </div>
+
+  <!-- 取消确认（替代 confirm） -->
+  <ConfirmModal
+    v-model="cancelConfirm.show"
+    data-testid="task-cancel-confirm-modal"
+    :title="$t('tasks.cancel')"
+    :message="$t('tasks.confirm_cancel')"
+    @confirm="onCancelConfirm"
+  />
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useTaskStore } from '@/stores/task'
 import { useAuthStore } from '@/stores/auth'
 import { getAgents } from '@/api/device'
@@ -96,6 +105,7 @@ import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 
 const store = useTaskStore()
 const authStore = useAuthStore()
@@ -104,6 +114,33 @@ const form = ref({ agentID: '', type: 'shell', command: '', path: '', content: '
 const msg = ref('')
 const msgOk = ref(false)
 const submitting = ref(false)
+
+// 取消确认弹窗（替代 confirm）
+const cancelConfirm = reactive({ show: false, id: null })
+
+// SSE 事件刷新节流：2s 内多个 task-status 事件只 refetch 一次，
+// 最后一次事件必须执行（trailing），避免批量回执时全量 refetch 轰炸。
+const SSE_THROTTLE_MS = 2000
+let sseLastFetchAt = 0
+let sseTimer = null
+function scheduleSSEFetch() {
+  const now = Date.now()
+  const elapsed = now - sseLastFetchAt
+  if (elapsed >= SSE_THROTTLE_MS) {
+    // 距上次刷新已超过节流窗口：立即执行
+    sseLastFetchAt = now
+    clearTimeout(sseTimer)
+    sseTimer = null
+    store.fetchTasks()
+  } else if (!sseTimer) {
+    // 窗口内首个事件：安排 trailing 执行，保证最后一次事件必然触发刷新
+    sseTimer = setTimeout(() => {
+      sseTimer = null
+      sseLastFetchAt = Date.now()
+      store.fetchTasks()
+    }, SSE_THROTTLE_MS - elapsed)
+  }
+}
 
 const columns = [
   { key: 'taskID', title: t('tasks.col_task_id'), slot: 'cell-taskID' },
@@ -129,8 +166,13 @@ async function onSubmit() {
     submitting.value = false
   }
 }
-async function onCancel(id) {
-  if (!confirm(t('tasks.confirm_cancel'))) return
+function onCancel(id) {
+  cancelConfirm.id = id
+  cancelConfirm.show = true
+}
+async function onCancelConfirm() {
+  const id = cancelConfirm.id
+  if (!id) return
   try { await store.cancel(id) } catch (e) { console.error('cancel task failed:', e) }
 }
 
@@ -142,10 +184,12 @@ onMounted(async () => {
 })
 onUnmounted(() => {
   window.removeEventListener('opsmesh:task-status', onTaskStatus)
+  clearTimeout(sseTimer)
+  sseTimer = null
 })
 
 function onTaskStatus() {
-  store.fetchTasks()
+  scheduleSSEFetch()
 }
 </script>
 

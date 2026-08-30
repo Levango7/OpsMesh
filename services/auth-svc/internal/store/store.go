@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -113,8 +114,14 @@ func (s *MemoryStore) seedAdminRole() {
 }
 
 // seedAdminUser seeds the default admin user.
+// bcrypt 失败必须可见：原 `hash, _ :=` 吞错误会把空 PasswordHash 落入用户表，
+// admin 永远无法登录且无任何日志。此处 log.Fatal 快速失败（熵源不可用属不可恢复
+// 的系统级故障，与 auth.randHex 的 panic 语义一致），拒绝带坏数据启动。
 func (s *MemoryStore) seedAdminUser() {
-	hash, _ := auth.HashPassword("admin123")
+	hash, err := auth.HashPassword("admin123")
+	if err != nil {
+		log.Fatalf("auth-store: seed admin password hash failed: %v", err)
+	}
 	user := &User{
 		ID:                 "user-admin",
 		Username:           "admin",

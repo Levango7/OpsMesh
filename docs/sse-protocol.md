@@ -46,8 +46,8 @@ GET /api/v1/events/stream
 | `alert_new` | 新告警产生 / ack / silence（列表变更即触发） | `alertID`、`severity`、`ruleID` |
 | `device_online` | agent Register 上线 | `deviceID`、`segment`、`addr` |
 | `device_offline` | 设备退役 / 离线归档 | `deviceID`、`lastSeen` |
-| `approval_status` | 作业审批通过/拒绝 | `requestID`、`action` |
-| `schedule_status` | 定时任务触发/暂停/恢复 | `scheduleID`、`action` |
+| `approval_status` | 作业审批通过/拒绝 | `requestID`、`status` |
+| `schedule_status` | 定时任务触发/暂停/恢复 | `scheduleID`、`status` |
 | `os_template_changed` | OS 优化模板增删改 | `templateID`、`action` |
 | `mw_template_changed` | 中间件模板增删改 | `templateID`、`action` |
 | `agent_logs` | agent 日志上报到达 | `agentID`、`logName`、`lines` |

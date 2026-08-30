@@ -48,10 +48,10 @@
     <svg ref="canvasRef" class="canvas" data-testid="workflows-canvas" @click="onCanvasClick">
       <defs>
         <pattern id="grid" width="26" height="26" patternUnits="userSpaceOnUse">
-          <circle cx="2" cy="2" r="1" fill="#dbe2f1" />
+          <circle class="grid-dot" cx="2" cy="2" r="1" />
         </pattern>
         <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
-          <path d="M0,0 L8,3 L0,6 Z" fill="#94a3b8" />
+          <path class="arrow-head" d="M0,0 L8,3 L0,6 Z" />
         </marker>
       </defs>
       <rect x="-3000" y="-3000" width="8000" height="8000" fill="url(#grid)" />
@@ -142,10 +142,12 @@ const canvasRef = ref(null)
 const cronModal = reactive({ show: false })
 
 const NODE_W = 170, NODE_H = 66
-const TYPE_COLOR = { shell: '#6366f1', file: '#0d9488', service: '#d97706' }
-const TYPE_SOFT = { shell: '#eceaff', file: '#d8f3ef', service: '#fef3e2' }
-function typeColor(t) { return TYPE_COLOR[t] || '#6366f1' }
-function typeSoft(t) { return TYPE_SOFT[t] || '#eceaff' }
+// 节点类型配色改用主题 token（--indigo/--teal/--amber 及对应 soft），
+// 浅/深主题下自动取对应色值，避免暗色主题下硬编码浅色冲突。
+const TYPE_COLOR = { shell: 'var(--indigo)', file: 'var(--teal)', service: 'var(--amber)' }
+const TYPE_SOFT = { shell: 'var(--indigo-soft)', file: 'var(--teal-soft)', service: 'var(--amber-soft)' }
+function typeColor(t) { return TYPE_COLOR[t] || TYPE_COLOR.shell }
+function typeSoft(t) { return TYPE_SOFT[t] || TYPE_SOFT.shell }
 
 const noCommandText = t('workflows.no_command')
 
@@ -221,6 +223,8 @@ onMounted(async () => {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); box-shadow: var(--shadow);
 }
+.canvas .grid-dot { fill: var(--border-2); }
+.canvas .arrow-head { fill: var(--text-3); }
 .canvas .card { fill: var(--surface); stroke: var(--border-2); stroke-width: 1.5px; }
 .canvas .node { cursor: pointer; }
 .canvas .node.sel .card { stroke: var(--accent); stroke-width: 2.5px; filter: drop-shadow(0 4px 10px rgba(99,102,241,.2)); }

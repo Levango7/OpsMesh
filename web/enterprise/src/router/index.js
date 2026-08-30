@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { watch, defineComponent, h } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { t, currentLang } from '@/i18n'
+import { toast } from '@/utils/toast'
 
 const RouteSkeleton = defineComponent({
   name: 'RouteSkeleton',
@@ -103,6 +104,8 @@ router.beforeEach(async (to) => {
     return { name: 'overview' }
   }
   if (to.meta.requirePerm && !auth.hasPerm(to.meta.requirePerm)) {
+    // 权限不足静默重定向曾让用户困惑；跳转前 toast 提示（toast 自带同文案节流）
+    toast.warn(t('error.noPermission'))
     return { name: 'overview' }
   }
   return true

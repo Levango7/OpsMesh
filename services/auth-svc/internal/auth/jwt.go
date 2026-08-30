@@ -49,11 +49,22 @@ func NewEngine(secret string, accessTTL, refreshTTL time.Duration) *Engine {
 
 // IssueToken issues a JWT access token for the given user.
 func (e *Engine) IssueToken(userID, username string, roles, permissions []string) (string, int64, error) {
+	return e.IssueTokenWithTTL(userID, username, roles, permissions, e.accessTTL)
+}
+
+// IssueTokenWithTTL issues a JWT access token with a custom TTL.
+// 用于改密专用短时效 token（如 mustChangePassword=true 首登场景的 5min token）：
+// 与常规 token 同结构同签名（ValidateToken 可校验），仅有效期更短且由调用方
+// 通过响应字段（MustChangePassword/ChangePasswordToken）区分用途，客户端不应用它访问受保护 API。
+func (e *Engine) IssueTokenWithTTL(userID, username string, roles, permissions []string, ttl time.Duration) (string, int64, error) {
 	if len(e.secret) == 0 {
 		return "", 0, errors.New("auth: JWT secret is empty")
 	}
+	if ttl <= 0 {
+		return "", 0, errors.New("auth: token TTL must be positive")
+	}
 	jti := randHex(16)
-	expiresAt := time.Now().Add(e.accessTTL)
+	expiresAt := time.Now().Add(ttl)
 	claims := &jwtClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        jti,
@@ -72,7 +83,7 @@ func (e *Engine) IssueToken(userID, username string, roles, permissions []string
 	if err != nil {
 		return "", 0, fmt.Errorf("auth: failed to sign token: %w", err)
 	}
-	return signed, int64(e.accessTTL.Seconds()), nil
+	return signed, int64(ttl.Seconds()), nil
 }
 
 // ValidateToken validates a JWT token and returns the claims.
