@@ -39,13 +39,21 @@ jobs:
         # OPSMESH_TEST_BCRYPT_COST=4：400+ 测试每个都 NewMemoryStore→seedRBAC
         # 3 次 bcrypt cost=10，-race 下纯哈希 120s+ 曾致超时；测试进程降 cost 提速
         # （生产不设置此变量，仍用默认 cost 10，见 internal/store/memory.go）。
-        # -p 2：GitHub runner 7GB 内存下，-race+coverage 全仓默认并行（-p=CPU 数）
-        # 会把内存打爆被 OOM killer 以 SIGTERM(143) 杀掉（实测 81s 即挂，非超时）；
-        # 限制同时编译/测试的包数为 2 后峰值可控。timeout 同步放宽到 600s
-        # （本机 controlplane 单包 -race 约 160s，36 包串行化后需要更长窗口）。
+        #
+        # 内存两段式（实测两轮 143/SIGTERM 后定位）：
+        # GitHub runner 7GB 下 OOM 发生在 **race 插桩编译期**——cmd 包跑完后，
+        # go test 开始编译 internal 两个万行大包（controlplane/store），race
+        # 版本编译产物不在 build 缓存（不同 build config），峰值打爆被杀
+        # （-p 2 仍允许两个大包同时 race-编译，实测 91s 仍挂）。
+        # ① 先显式预编译全部包的 race 版本（go build -race，逐包进缓存，
+        #    峰值=单包编译内存）；② 测试阶段 -p 1 完全串行（峰值=单包测试内存）。
+        # timeout 放宽 900s：本机 controlplane 单包 -race 实测约 160s，全仓
+        # 串行执行 + 预编译一次的合理窗口。
         env:
           OPSMESH_TEST_BCRYPT_COST: "4"
-        run: go test -race -p 2 -timeout 600s -coverprofile=coverage.out ./...
+        run: |
+          go build -race ./...
+          go test -race -p 1 -timeout 900s -coverprofile=coverage.out ./...
       - name: Test (kafka tag, 审计 WAL 兜底)
         # 审计事件是合规关键数据，kafka 路径被 //go:build kafka 门控，默认构建零覆盖。
         # 此 step 显式传 -tags kafka 激活 internal/events/kafka*.go，跑 WAL 兜底/失败计数/重试测试。
@@ -147,8 +155,10 @@ jobs:
       - name: Run SQL/Redis store integration tests (含覆盖率，)
         # 加 -coverprofile 产出 store 包覆盖率，供后续 ≥60% 门禁消费。
         # 真实 mysql+redis 后端下 SQL store 用例全跑，store 包覆盖率比 build-test（仅 memory，32.9%）显著更高。
-        # -p 2：防 7GB runner OOM（同 build-test Test 步注释）。
-        run: go test -race -p 2 -timeout 600s -v -coverprofile=store.cover.out ./internal/store/...
+        # 预编译 + -p 1：防 7GB runner race 编译期 OOM（同 build-test Test 步注释）。
+        run: |
+          go build -race ./internal/store/...
+          go test -race -p 1 -timeout 900s -v -coverprofile=store.cover.out ./internal/store/...
       - name: 覆盖率门禁（store 包 ≥32%，原为 65%）
         # 实测（真实 mysql+redis 集成环境）：store 包覆盖率 34.6%（devices INSERT
         # 修复前后一致，INSERT 行不影响统计）。65% 门禁在 CI 从未真正跑到 integration
@@ -717,8 +727,11 @@ jobs:
       - name: Race detector (go test -race -count=3)
         # -count=3 重跑三次增加竞态检测概率（race detector 概率性，单跑可能漏报）。
         # 不带 -coverprofile：与 build-test 的覆盖率 step 解耦，专注 race 检测。
-        # -p 2：防 7GB runner OOM（同 build-test Test 步；-count=3 下本步最重）。
+        # 预编译 + -p 1：防 7GB runner race 编译期 OOM（同 build-test Test 步；
+        # -count=3 下本步最重，串行后 timeout 给到 1800s）。
         # OPSMESH_TEST_BCRYPT_COST=4 提速（与 build-test 一致，-race 下 bcrypt cost=10 曾致超时）。
         env:
           OPSMESH_TEST_BCRYPT_COST: "4"
-        run: go test -race -p 2 -count=3 -timeout 900s ./...
+        run: |
+          go build -race ./...
+          go test -race -p 1 -count=3 -timeout 1800s ./...
