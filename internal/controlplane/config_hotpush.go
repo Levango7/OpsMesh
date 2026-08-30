@@ -14,8 +14,9 @@ package controlplane
 
 import (
 	"net/http"
-	"opsmesh/internal/controlplane/paginate"
 	"strconv"
+
+	"opsmesh/internal/controlplane/paginate"
 
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"

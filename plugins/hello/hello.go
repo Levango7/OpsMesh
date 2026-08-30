@@ -1,4 +1,3 @@
-
 // plugins/hello 是 OpsMesh 插件框架的示例插件（main 包，独立可构建）。
 //
 // 演示插件框架的最小用法：

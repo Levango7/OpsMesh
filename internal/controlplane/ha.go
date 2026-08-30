@@ -18,9 +18,10 @@ package controlplane
 
 import (
 	"net/http"
-	"opsmesh/internal/controlplane/paginate"
 	"os"
 	"time"
+
+	"opsmesh/internal/controlplane/paginate"
 )
 
 // haInstanceInfo 控制面实例信息（HA 状态查询返回）。

@@ -23,12 +23,13 @@ package controlplane
 import (
 	"fmt"
 	"net/http"
-	"opsmesh/internal/controlplane/paginate"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"opsmesh/internal/controlplane/paginate"
 
 	"opsmesh/internal/events"
 	"opsmesh/internal/proto"

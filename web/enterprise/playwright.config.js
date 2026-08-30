@@ -20,7 +20,13 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:4173',
     headless: true,
     trace: 'on-first-retry',
-    screenshot: 'only-on-failure'
+    screenshot: 'only-on-failure',
+    // 阻止 Service Worker 注册（CI E2E 全挂的根因修复）：
+    // 生产 PWA 的 sw.js 会拦截 /api/* 请求并由 SW 自行 fetch——SW 的网络请求
+    // 不经过 Playwright 的 page.route（mock 层），直连 vite proxy → 无后端
+    // → ECONNREFUSED → 78 用例全挂。block 后测试上下文无 SW，mock 全程生效；
+    // 生产环境 sw.js 行为不受影响（仅测试配置）。
+    serviceWorkers: 'block'
   },
   projects: [
     {

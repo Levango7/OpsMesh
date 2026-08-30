@@ -17,11 +17,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
-	"opsmesh/internal/controlplane/paginate"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"opsmesh/internal/controlplane/paginate"
 
 	"opsmesh/internal/events"
 	"opsmesh/internal/proto"

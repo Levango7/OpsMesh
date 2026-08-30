@@ -23,8 +23,9 @@ package controlplane
 
 import (
 	"net/http"
-	"opsmesh/internal/controlplane/paginate"
 	"strings"
+
+	"opsmesh/internal/controlplane/paginate"
 
 	"opsmesh/internal/network"
 	"opsmesh/internal/proto"
