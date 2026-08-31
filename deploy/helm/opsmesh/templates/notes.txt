@@ -1,6 +1,6 @@
 {{- /*
 安装后提示：展示访问方式与下一步操作。
-*/ -}}
+*/}}
 OpsMesh "{{ .Chart.Name }}" 已安装到命名空间 {{ .Release.Namespace }}。
 
 控制面副本数：{{ .Values.controlplane.replicaCount }}  持久化后端：{{ .Values.controlplane.store }}
