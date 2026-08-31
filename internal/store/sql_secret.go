@@ -63,14 +63,17 @@ func (s *SQLStore) SetSecret(item *SecretItem, tenantID string) *SecretMeta {
 		item.KeyType = "passphrase"
 	}
 	// 查当前最大版本号（无历史则 0，新版本 = max+1）。
-	var maxVersion int
+	// MAX(version) 在无任何行时返回一行 NULL（而非 ErrNoRows），须用 NullInt64 承接；
+	// 此前直接 Scan 到 int 在首次写入（空表）时报 converting NULL to int 导致
+	// SetSecret 返回 nil（CI integration 实测捕获）。
+	var maxVersion sql.NullInt64
 	if err := s.db.QueryRowContext(context.Background(),
 		`SELECT MAX(version) FROM secrets WHERE tenant_id=? AND key_name=?`,
-		tenantID, item.Key).Scan(&maxVersion); err != nil && err != sql.ErrNoRows {
+		tenantID, item.Key).Scan(&maxVersion); err != nil {
 		log.Printf("[store] SetSecret 查询最大版本失败 (tenant=%s key=%s): %v", tenantID, item.Key, err)
 		return nil
 	}
-	newVersion := maxVersion + 1
+	newVersion := int(maxVersion.Int64) + 1
 	now := time.Now().UTC()
 	if _, err := s.db.ExecContext(context.Background(),
 		`INSERT INTO secrets (tenant_id, key_name, version, value, key_type, created_at, updated_at)

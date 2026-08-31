@@ -170,16 +170,33 @@ func (s *SQLStore) initWithRetry() error {
 	return lastErr
 }
 
-// ensureParseTime 在 DSN 中保证 parseTime=true，便于 time.Time 直接 Scan。
-
+// ensureParseTime 在 DSN 中保证 parseTime=true（time.Time 直接 Scan）与
+// clientFoundRows=true（UPDATE 语义按"匹配行数"而非"实际改变行数"计 RowsAffected）。
+//
+// clientFoundRows 的必要性（CI integration 实测捕获）：MySQL 默认 UPDATE 的
+// RowsAffected 只数"值发生实际变化的行"——当更新值与现值完全相同（如秒级精度
+// DATETIME 下同秒两次心跳 + 同状态）时返回 0。HeartbeatService/EnableXxx 等
+// "确认存在性"语义的接口据此误判为"实例不存在"（false）。开启后 RowsAffected
+// 数匹配行（与 PostgreSQL 等其它数据库语义一致），存在性判断恢复正确。
 func ensureParseTime(dsn string) string {
-	if strings.Contains(dsn, "parseTime=true") {
+	dsn = ensureDSNParam(dsn, "parseTime=true")
+	return ensureDSNParam(dsn, "clientFoundRows=true")
+}
+
+// ensureDSNParam 在 DSN 中保证某 k=v 参数存在（已含则不重复加）。
+func ensureDSNParam(dsn, param string) string {
+	kv := strings.SplitN(param, "=", 2)
+	if len(kv) != 2 {
+		return dsn
+	}
+	// 已含该参数名（k=...）则视为已配置。
+	if strings.Contains(dsn, kv[0]+"=") {
 		return dsn
 	}
 	if strings.Contains(dsn, "?") {
-		return dsn + "&parseTime=true"
+		return dsn + "&" + param
 	}
-	return dsn + "?parseTime=true"
+	return dsn + "?" + param
 }
 
 // migrationFile 描述一个待应用的迁移文件。

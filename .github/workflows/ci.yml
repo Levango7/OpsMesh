@@ -218,10 +218,14 @@ jobs:
         #   不支持按路径/函数豁免，故 G104 错误检查以 golangci-lint 的 errcheck + gosec
         #   为权威（.golangci.yml 中按 path/text 精细豁免设计上可忽略的调用），
         #   gosec 独立扫描仍保留 G104 整类排除以避免与 errcheck 重复告警。
+        #   G404 弱随机数：device-sim 是模拟数据生成器（随机性即职责，非加密场景，
+        #   crypto/rand 拖慢模拟吞吐）+ pkg/retry 退避抖动（只需打散重试风暴，业界
+        #   常态实现）——与 .golangci.yml 的 G404 path 豁免同理由（gosec 无路径豁免
+        #   能力，故整类排除）。
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@v2.25.0
           "$(go env GOPATH)/bin/gosec" -quiet \
-            -exclude=G103,G101,G104,G106,G115,G118,G124,G202,G204,G304,G704,G705 \
+            -exclude=G103,G101,G104,G106,G115,G118,G124,G202,G204,G304,G404,G704,G705 \
             ./...
       - name: govulncheck（官方 Go 漏洞数据库扫描）
         run: |
@@ -700,7 +704,17 @@ jobs:
           MYSQL_USER: opsmesh
           MYSQL_PASSWORD: opsmesh
           OPSMESH_JWT_SECRET: ci-e2e-sec-jwt-secret-key-min-32-bytes-0123456789abcdef
-        run: docker compose -f docker-compose.e2e-sec.yaml up -d --build --wait
+        # --wait 失败时 compose 不输出容器日志，控制面 exit(1) 的原因无从取证——
+        # 失败分支先转储 controlplane 完整日志再退出（本地全套 flag/env 复现均不退出，
+        # 差异只能在容器环境，需真实日志定位）。
+        run: |
+          if ! docker compose -f docker-compose.e2e-sec.yaml up -d --build --wait; then
+            echo "=== compose --wait 失败，转储 controlplane 日志 ==="
+            docker compose -f docker-compose.e2e-sec.yaml logs controlplane 2>&1 | tail -60
+            echo "=== agent 日志 ==="
+            docker compose -f docker-compose.e2e-sec.yaml logs agent 2>&1 | tail -20
+            exit 1
+          fi
       - name: 健康检查
         run: |
           for i in $(seq 1 30); do

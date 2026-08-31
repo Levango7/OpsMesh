@@ -54,14 +54,25 @@ func (m *mockRowScanner) Scan(dest ...interface{}) error {
 }
 
 // ============================================================================
-// ensureParseTime：DSN 改写（保证 parseTime=true）
+// ensureParseTime：DSN 改写（保证 parseTime=true + clientFoundRows=true）
 // ============================================================================
 
 func TestEnsureParseTime_AlreadyHasParseTime(t *testing.T) {
+	// 已含 parseTime=true 时不重复追加；clientFoundRows（存在性 RowsAffected 语义，
+	// 见 ensureParseTime 注释）缺失时仍会补上——这是 P03Discovery 修复后的预期行为。
 	dsn := "user:pass@tcp(127.0.0.1:3306)/db?parseTime=true&charset=utf8"
 	got := ensureParseTime(dsn)
-	if got != dsn {
-		t.Fatalf("已含 parseTime=true 时应原样返回；got=%q", got)
+	if !strings.Contains(got, "parseTime=true") {
+		t.Fatalf("应保留 parseTime=true；got=%q", got)
+	}
+	if strings.Count(got, "parseTime=true") != 1 {
+		t.Fatalf("parseTime=true 不应重复追加；got=%q", got)
+	}
+	if !strings.Contains(got, "clientFoundRows=true") {
+		t.Fatalf("应补齐 clientFoundRows=true（MySQL RowsAffected 匹配行语义）；got=%q", got)
+	}
+	if !strings.Contains(got, "charset=utf8") {
+		t.Fatalf("应保留原有参数；got=%q", got)
 	}
 }
 
@@ -70,6 +81,9 @@ func TestEnsureParseTime_AppendToExistingQuery(t *testing.T) {
 	got := ensureParseTime(dsn)
 	if !strings.Contains(got, "parseTime=true") {
 		t.Fatalf("应追加 parseTime=true；got=%q", got)
+	}
+	if !strings.Contains(got, "clientFoundRows=true") {
+		t.Fatalf("应追加 clientFoundRows=true；got=%q", got)
 	}
 	if !strings.Contains(got, "charset=utf8") {
 		t.Fatalf("应保留原有参数；got=%q", got)
@@ -81,6 +95,9 @@ func TestEnsureParseTime_AddNewQuery(t *testing.T) {
 	got := ensureParseTime(dsn)
 	if !strings.Contains(got, "?parseTime=true") {
 		t.Fatalf("无 query 时应以 ? 起始追加；got=%q", got)
+	}
+	if !strings.Contains(got, "clientFoundRows=true") {
+		t.Fatalf("应追加 clientFoundRows=true；got=%q", got)
 	}
 }
 
