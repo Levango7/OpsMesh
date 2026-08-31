@@ -19,6 +19,8 @@
 package store
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -157,13 +159,44 @@ func newMultiSchemaWithFactory(namer SchemaNamer, factory func(schema string) (S
 
 // defaultStoreFactory 生产路径工厂：为指定 schema 名创建 *SQLStore（DSN 中 database 替换为 schema），
 // 并传播 bus/secret/demo 配置。
+//
+// 建 schema（CI smoke 实测捕获的生产 bug 修复）：此前直接对目标 schema 建连——
+// 全仓无一处 CREATE DATABASE，schema 不存在时 NewSQLStore 首次建表即报
+// "Unknown database"，CreateTicket 等写入静默返回 nil（首租户数据丢失）。
+// 现在先用无库名 DSN 执行 CREATE DATABASE IF NOT EXISTS（schema 名已经过
+// validateIdent 白名单，无注入面），再建 per-schema 连接。
 func (m *MultiSchemaStore) defaultStoreFactory(schema string) (Store, error) {
+	if err := ensureSchemaExists(m.baseDSN, schema); err != nil {
+		return nil, fmt.Errorf("multi-schema: 确保 schema %q 存在失败: %w", schema, err)
+	}
 	dsn := dsnForSchema(m.baseDSN, schema)
 	ss, err := NewSQLStore(dsn, m.redisAddr)
 	if err != nil {
 		return nil, fmt.Errorf("multi-schema: 创建 schema %q 的 SQLStore 失败: %w", schema, err)
 	}
 	return ss.WithBus(m.bus).WithSecret(m.secret).WithDemo(m.demo), nil
+}
+
+// ensureSchemaExists 用无库名 DSN 连接（不选中任何 database）并建目标 schema。
+// CREATE DATABASE IF NOT EXISTS 幂等；多副本并发建同名库由 MySQL 原子保证。
+func ensureSchemaExists(baseDSN, schema string) error {
+	// 剥掉 DSN 中的 database 名（保留参数）：user:pass@tcp(host:port)?params。
+	// dsnForSchema 的解析逻辑复用——把库名替换为空后，LastIndex('/') 的后段即参数段。
+	dsn := dsnForSchema(baseDSN, "")
+	if dsn == baseDSN {
+		return fmt.Errorf("DSN 缺少 database 段（无 '/'），无法推导无库名连接: %s", "dsn-redacted")
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return fmt.Errorf("open(no-db dsn): %w", err)
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := db.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS `"+schema+"` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"); err != nil {
+		return fmt.Errorf("create database %s: %w", schema, err)
+	}
+	return nil
 }
 
 // WithBus 注入事件总线（store 构造后由控制面注入）。

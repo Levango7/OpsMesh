@@ -222,10 +222,15 @@ jobs:
         #   crypto/rand 拖慢模拟吞吐）+ pkg/retry 退避抖动（只需打散重试风暴，业界
         #   常态实现）——与 .golangci.yml 的 G404 path 豁免同理由（gosec 无路径豁免
         #   能力，故整类排除）。
+        #   G201 SQL 格式化：sql_slo.go 拼入的列名经 metricColumn() 白名单 switch
+        #   （任意输入返回 "" 短路），tenant/时间走 ? 占位符——无注入面（.golangci.yml
+        #   同项豁免同理由）。
+        #   G301 目录权限 0755：marketplace 插件目录 / backup 归档目录——服务进程
+        #   自管理目录，os.MkdirAll 惯例值；0750 收紧会阻同组运维账号巡检，有意取值。
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@v2.25.0
           "$(go env GOPATH)/bin/gosec" -quiet \
-            -exclude=G103,G101,G104,G106,G115,G118,G124,G202,G204,G304,G404,G704,G705 \
+            -exclude=G103,G101,G104,G106,G115,G118,G124,G201,G202,G204,G301,G304,G404,G704,G705 \
             ./...
       - name: govulncheck（官方 Go 漏洞数据库扫描）
         run: |
@@ -697,6 +702,11 @@ jobs:
           openssl genrsa -out client.key 2048
           openssl req -new -key client.key -subj "/CN=opsmesh-agent" -out client.csr
           openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 30 -out client.crt
+          # 权限修复（CI 日志转储实测捕获）：openssl 生成的 .key 是 0600 属主 runner——
+          # 挂载进容器后控制面以 distroless nonroot(65532) 运行读不了，gRPC TLS 加载报
+          # "open /certs/server.key: permission denied" 启动即退。测试证书生命周期仅
+          # 本 job（down -v 即清理），降为 0644 供容器读取。
+          chmod 644 *.key *.crt
           ls -la
       - name: 启动安全栈（docker compose e2e-sec）
         env:
