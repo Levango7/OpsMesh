@@ -8,10 +8,37 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 )
+
+// syncBuffer 是并发安全的 bytes.Buffer 封装。
+//
+// PushAndExec 中 session.Run 在独立 goroutine 内向 Stdout/Stderr 写入远程输出，
+// 而 select 的 ctx.Done/超时分支会在 Run 未返回时并发读取缓冲区内容——
+// 裸 bytes.Buffer 无锁共享会构成数据竞争（CI -race 实证：
+// TestPushAndExec_ContextCancel 取消时 Run goroutine 写 / 主 goroutine 读）。
+// 所有读写经 mu 串行化，取消/超时路径读取到的可能是部分输出，但绝不竞争。
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+// Write 实现 io.Writer（session.Stdout/Stderr 赋值目标），加锁写入。
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+// String 加锁读取缓冲区全部内容。
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 // knownHostsCallback 从 known_hosts 文件读取主机公钥，返回一个 HostKeyCallback。
 // 只支持非哈希的 known_hosts 格式（"hostname key-type base64-key"），不支持 |1|hash 格式。
@@ -144,7 +171,9 @@ func PushAndExec(ctx context.Context, addr, user, keyPath, keyPass, knownHostsPa
 	defer session.Close()
 
 	// 在远程执行 bootstrap 命令（curl install.sh | sh 或直接启动 agent binary）
-	var stdout, stderr bytes.Buffer
+	// 使用并发安全缓冲：session.Run 在独立 goroutine 写入，select 的取消/超时
+	// 分支会并发读取，裸 bytes.Buffer 会触发数据竞争（-race 实证）。
+	var stdout, stderr syncBuffer
 	session.Stdout = &stdout
 	session.Stderr = &stderr
 
@@ -162,6 +191,9 @@ func PushAndExec(ctx context.Context, addr, user, keyPath, keyPass, knownHostsPa
 	case <-ctx.Done():
 		_ = session.Signal(ssh.SIGTERM)
 		_ = client.Close()
+		// Run goroutine 仍可能持有 session 在写 stdout/stderr（远程输出经 SSH
+		// 连接传输），syncBuffer 保证此处并发读不竞争；Run 随后因连接关闭而
+		// 返回并向 resCh（缓冲 1）投递，goroutine 不泄漏。
 		return stdout.String() + stderr.String(), ctx.Err()
 	case r := <-resCh:
 		out := stdout.String() + stderr.String()

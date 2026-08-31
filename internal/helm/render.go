@@ -23,7 +23,7 @@ type RenderOptions struct {
 	SetPairs    []string               // --set KEY=VALUE 列表
 	Kubeconfig  string                 // --kubeconfig（仅用于 OCI 拉取鉴权，本地 template 通常不需要）
 	IncludeCRDs bool                   // --include-crds
-	APIVersions []string               // --api-version（如 ["monitoring.coreos.com/v1"]）
+	APIVersions []string               // --api-versions（如 ["monitoring.coreos.com/v1"]，可重复传）
 }
 
 // RenderedTemplate 是渲染后的单个 Kubernetes 资源。
@@ -81,8 +81,10 @@ func RenderChart(chartPath string, opts *RenderOptions) ([]*RenderedTemplate, er
 	if opts.IncludeCRDs {
 		args = append(args, "--include-crds")
 	}
+	// helm 3 真实 flag 是 --api-versions（StringSlice，可重复传，支持 -a 缩写）；
+	// 旧实现误写为 --api-version，会被真 helm 拒绝（unknown flag: --api-version）。
 	for _, av := range opts.APIVersions {
-		args = append(args, "--api-version", av)
+		args = append(args, "--api-versions", av)
 	}
 
 	raw, err := cli.Run(args...)
@@ -128,8 +130,10 @@ func RenderChartWithCLI(cli HelmCLI, chartPath string, opts *RenderOptions) ([]*
 	if opts.IncludeCRDs {
 		args = append(args, "--include-crds")
 	}
+	// helm 3 真实 flag 是 --api-versions（StringSlice，可重复传，支持 -a 缩写）；
+	// 旧实现误写为 --api-version，会被真 helm 拒绝（unknown flag: --api-version）。
 	for _, av := range opts.APIVersions {
-		args = append(args, "--api-version", av)
+		args = append(args, "--api-versions", av)
 	}
 
 	raw, err := cli.Run(args...)

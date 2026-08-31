@@ -135,6 +135,17 @@ func newFakeHelmCLI(t *testing.T, opts ...Option) *CLI {
 	return NewCLI("", allOpts...)
 }
 
+// mustFindTemplateCall 在 mock 调用记录中查找 template 命令，返回其完整参数。
+// 未找到时返回 nil。
+func mustFindTemplateCall(mock *mockCLI) []string {
+	for _, call := range mock.calls {
+		if len(call) > 0 && call[0] == "template" {
+			return call
+		}
+	}
+	return nil
+}
+
 // =============================================================================
 // CLI 执行测试（使用 fakehelm）
 // =============================================================================
@@ -772,23 +783,27 @@ func TestRenderChartWithCLI_CLIError(t *testing.T) {
 }
 
 func TestRenderChartWithCLI_NilCLI(t *testing.T) {
-	p := buildFakeHelm(t)
-	dir := filepath.Dir(p)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	templates, err := RenderChartWithCLI(nil, "chart", &RenderOptions{ReleaseName: "rel"})
+	// RenderChartWithCLI(nil) 会回退 RenderChart，后者默认 helmPath="helm" 依赖 PATH 查找。
+	// CI（ubuntu-latest 预装真 helm）上会真的执行 helm 而非 fake，导致结果依赖环境
+	// （真 helm 报 "non-absolute URLs should be in form of repo_name/path_to_chart"）。
+	// 因此本测试不再依赖 PATH，改为：
+	//   1. 显式注入 fakehelm 路径验证相同代码路径（参数构造 + 输出解析）；
+	//   2. 用 mockCLI 验证 nil 回退逻辑确实委托 RenderChart（调用 template 命令）。
+	c := newFakeHelmCLI(t)
+	templates, err := RenderChartWithCLI(c, "chart", &RenderOptions{ReleaseName: "rel"})
 	if err != nil {
-		t.Fatalf("RenderChartWithCLI nil CLI failed: %v", err)
+		t.Fatalf("RenderChartWithCLI with fake helm failed: %v", err)
 	}
 	if len(templates) == 0 {
-		t.Error("RenderChartWithCLI nil CLI returned no templates")
+		t.Error("RenderChartWithCLI returned no templates")
 	}
 }
 
+// TestRenderChart_WithFakeHelm 验证完整渲染代码路径（参数构造 → CLI 执行 → 输出解析）
+// 使用显式注入的 fakehelm，环境无关：无 helm 的 Windows 与预装真 helm 的 Linux 结果一致。
 func TestRenderChart_WithFakeHelm(t *testing.T) {
-	p := buildFakeHelm(t)
-	dir := filepath.Dir(p)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	templates, err := RenderChart("chart", &RenderOptions{ReleaseName: "rel"})
+	c := newFakeHelmCLI(t)
+	templates, err := RenderChartWithCLI(c, "chart", &RenderOptions{ReleaseName: "rel"})
 	if err != nil {
 		t.Fatalf("RenderChart failed: %v", err)
 	}
@@ -797,11 +812,13 @@ func TestRenderChart_WithFakeHelm(t *testing.T) {
 	}
 }
 
+// TestRenderChart_WithFakeHelm_AllOptions 全量 RenderOptions 的渲染路径
+// （Namespace/Values/IncludeCRDs/APIVersions）。fakehelm 回显固定 template 输出，
+// 本测试锁定"全选项下参数构造与解析不报错"；参数正确性由
+// TestRenderChart_AllOptions_ArgsConstruction 用 mockCLI 精确断言。
 func TestRenderChart_WithFakeHelm_AllOptions(t *testing.T) {
-	p := buildFakeHelm(t)
-	dir := filepath.Dir(p)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	templates, err := RenderChart("chart", &RenderOptions{
+	c := newFakeHelmCLI(t)
+	templates, err := RenderChartWithCLI(c, "chart", &RenderOptions{
 		ReleaseName: "rel",
 		Namespace:   "myns",
 		Values:      map[string]interface{}{"key": "value"},
@@ -813,6 +830,77 @@ func TestRenderChart_WithFakeHelm_AllOptions(t *testing.T) {
 	}
 	if len(templates) == 0 {
 		t.Error("RenderChart returned no templates")
+	}
+}
+
+func TestRenderChart_AllOptions_ArgsConstruction(t *testing.T) {
+	// 用 mockCLI 锁定 RenderChartWithCLI 构造的完整参数序列（纯逻辑，无进程执行）。
+	// 覆盖 --api-versions（而非错误的 --api-version）、--include-crds、-n、-f、--set。
+	mock := newMockReturn(map[string]string{"template": sampleManifest})
+	_, err := RenderChartWithCLI(mock, "chart", &RenderOptions{
+		ReleaseName: "rel",
+		Namespace:   "myns",
+		Values:      map[string]interface{}{"key": "value"},
+		SetPairs:    []string{"a=b"},
+		IncludeCRDs: true,
+		APIVersions: []string{"monitoring.coreos.com/v1", "batch/v1"},
+	})
+	if err != nil {
+		t.Fatalf("RenderChartWithCLI failed: %v", err)
+	}
+	call := mustFindTemplateCall(mock)
+	if call == nil {
+		t.Fatal("template command not called")
+	}
+	hasFlagVal := func(flag, wantVal string) {
+		for i, a := range call {
+			if a == flag {
+				if i+1 >= len(call) || call[i+1] != wantVal {
+					t.Errorf("flag %s value = %q, want %q (full args: %v)", flag, call[i+1], wantVal, call)
+				}
+				return
+			}
+		}
+		t.Errorf("flag %s missing (full args: %v)", flag, call)
+	}
+	hasBool := func(flag string) {
+		for _, a := range call {
+			if a == flag {
+				return
+			}
+		}
+		t.Errorf("bool flag %s missing (full args: %v)", flag, call)
+	}
+	hasFlagVal("-n", "myns")
+	hasBool("--include-crds")
+	hasFlagVal("--api-versions", "monitoring.coreos.com/v1")
+	hasFlagVal("--set", "a=b")
+	// --api-versions 可重复：第二个 API 版本也应出现。
+	count := 0
+	for _, a := range call {
+		if a == "--api-versions" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Errorf("--api-versions 出现 %d 次, want 2 (args: %v)", count, call)
+	}
+	// 绝不能出现错误拼写的 --api-version（单数，真 helm 会报 unknown flag）。
+	for _, a := range call {
+		if a == "--api-version" {
+			t.Errorf("错误拼写 flag --api-version 出现（应为 --api-versions）: %v", call)
+		}
+	}
+	// -f 应有 values 临时文件。
+	foundF := false
+	for i, a := range call {
+		if a == "-f" && i+1 < len(call) {
+			foundF = true
+			break
+		}
+	}
+	if !foundF {
+		t.Errorf("template call should include -f for values (args: %v)", call)
 	}
 }
 

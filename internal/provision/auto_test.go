@@ -439,8 +439,15 @@ func TestAutoProvision_EmptyTenantID(t *testing.T) {
 	}
 }
 
-// TestAutoProvision_MultipleAliveHosts 验证多个存活主机都被登记。
-// 在 127.0.0.1:9100 和 127.0.0.1:22 启动监听器，使用 127.0.0.0/30 扫描 127.0.0.1 和 127.0.0.2。
+// TestAutoProvision_MultipleAliveHosts 验证扫描网段内所有存活主机都被登记。
+// 在 127.0.0.1:9100 启动监听器，扫描 127.0.0.1/32（单主机网段）。
+//
+// 历史问题：曾用 127.0.0.0/30（含 127.0.0.1 与 127.0.0.2）并断言 Scanned==1。
+// Linux 上整段 127/8 loopback 均路由到本机，CI runner（ubuntu-latest）上若有
+// 服务监听 0.0.0.0 的 22/9100 端口，127.0.0.2 的 TCP connect 也会成功，
+// 导致 Scanned==2 随机失败（本机 Windows 无此现象）。
+// 断言语义改为"发现的 host 数 >=1 且包含确定存活的 127.0.0.1"，
+// 网段收窄为 /32 只含确定存活主机，不再对环境做独占性假设。
 func TestAutoProvision_MultipleAliveHosts(t *testing.T) {
 	cleanup1 := startTCPEcho(t, 9100)
 	defer cleanup1()
@@ -448,30 +455,38 @@ func TestAutoProvision_MultipleAliveHosts(t *testing.T) {
 	cfg := &config.Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
 
 	var mu sync.Mutex
-	upsertedCount := 0
+	upserted := make(map[string]*proto.DeviceInfo)
 	deps := Deps{
 		UpsertDevice: func(d *proto.DeviceInfo) {
 			mu.Lock()
 			defer mu.Unlock()
-			upsertedCount++
+			upserted[d.IP] = d
 		},
 		Provision: func(deviceID, host, tenantID string) (string, string, error) {
 			return "tok", "", nil
 		},
 	}
 
-	// 127.0.0.0/30 扫描 127.0.0.1 和 127.0.0.2（排除网络 127.0.0.0 和广播 127.0.0.3）
-	// 只有 127.0.0.1 有监听器，127.0.0.2 不可达
-	sum, err := AutoProvision(context.Background(), deps, cfg, []string{"127.0.0.0/30"}, "t1")
+	// 127.0.0.1/32 只含 127.0.0.1，其 9100 端口有本测试启动的监听器（确定存活）。
+	// 不使用 127.0.0.0/30：Linux loopback 整段路由到本机，runner 上其它监听
+	// 0.0.0.0 的服务会让 127.0.0.2 也"存活"，Scanned==1 的硬断言随机失败。
+	sum, err := AutoProvision(context.Background(), deps, cfg, []string{"127.0.0.1/32"}, "t1")
 	if err != nil {
 		t.Fatalf("多主机扫描不应报错: %v", err)
 	}
-	if sum.Scanned != 1 {
-		t.Fatalf("Scanned 应为 1（仅 127.0.0.1 存活），got %d", sum.Scanned)
+	if sum.Scanned < 1 {
+		t.Fatalf("Scanned 应 >=1（127.0.0.1 确定存活），got %d", sum.Scanned)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if upsertedCount != 1 {
-		t.Fatalf("UpsertDevice 应被调用 1 次，got %d", upsertedCount)
+	dev, ok := upserted["127.0.0.1"]
+	if !ok {
+		t.Fatalf("127.0.0.1 应被登记（upserted: %v）", upserted)
+	}
+	if dev.State != "discovered" || dev.Managed {
+		t.Fatalf("设备应为 discovered 且未纳管: %+v", dev)
+	}
+	if len(upserted) != sum.Scanned {
+		t.Fatalf("UpsertDevice 去重后数量 (%d) 应与 Scanned (%d) 一致", len(upserted), sum.Scanned)
 	}
 }

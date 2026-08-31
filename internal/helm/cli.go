@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os/exec"
 	"strings"
 	"sync"
@@ -332,12 +333,23 @@ func (c *CLI) Template(namespace, name, chart string, valuesFiles, setPairs []st
 var ErrHelmNotFound = errors.New("helm: 命令未找到，请确认 helm 已安装并在 PATH 中")
 
 // CheckAvailable 检查 helm 命令是否可用（执行 `helm version` 验证）。
+//
+// "未找到" 的判定跨平台稳定化：
+//   - Windows：os/exec 启动失败统一包装为 *exec.Error（exec: "path": ...）；
+//   - Linux：带路径分隔符的路径启动失败由 os/exec 内部直接 fork/exec，
+//     返回 *fs.PathError（fork/exec ...: no such file or directory），不含 *exec.Error。
+//
+// 因此除 errors.As(*exec.Error) 外，还需用 errors.Is(err, fs.ErrNotExist) 兜底
+// （PathError 实现了 Is/Unwrap 链），两种平台的不存在路径都归一为 ErrHelmNotFound。
 func (c *CLI) CheckAvailable() error {
 	_, err := c.Run("version", "--short")
 	if err != nil {
 		// 区分 "未找到" 与 "执行失败"。
 		var ee *exec.Error
 		if errors.As(err, &ee) {
+			return ErrHelmNotFound
+		}
+		if errors.Is(err, fs.ErrNotExist) {
 			return ErrHelmNotFound
 		}
 		return err
