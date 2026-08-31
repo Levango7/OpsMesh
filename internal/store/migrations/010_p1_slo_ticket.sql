@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS slos (
     description  TEXT,
     service_name VARCHAR(255),
     target       DOUBLE       NOT NULL DEFAULT 0,
-    window       VARCHAR(32),
+    window_spec  VARCHAR(32),  -- 不用 "window"：MySQL 8.0 保留字（WINDOW 子句），裸用必报 1064
     slis         TEXT,
     created_at   DATETIME     NOT NULL,
     updated_at   DATETIME     NOT NULL,

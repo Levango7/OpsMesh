@@ -40,10 +40,16 @@ func (m *MemoryStore) CreateRunbook(r *models.Runbook) *models.Runbook {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// 时间戳尊重调用方已设值（service.CreateRunbook 以同一 now 赋 CreatedAt==UpdatedAt，
+	// "创建时两时间戳相等"是服务契约）；此前无条件用新 time.Now() 覆盖 UpdatedAt，
+	// 高精度单调钟平台（Linux）产生纳秒级偏差打破契约（CI 实测失败；Windows
+	// 定时器粒度粗偶然相等所以本地从不触发）。未设值时才兜底。
 	if r.CreatedAt.IsZero() {
 		r.CreatedAt = time.Now()
 	}
-	r.UpdatedAt = time.Now()
+	if r.UpdatedAt.IsZero() {
+		r.UpdatedAt = r.CreatedAt
+	}
 	cp := *r
 	m.runbooks[r.ID] = &cp
 	return r

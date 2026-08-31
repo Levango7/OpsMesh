@@ -11,6 +11,11 @@
 FROM golang:1.26-bookworm AS build
 # 国内网络环境 proxy.golang.org 不可达，走 goproxy.cn 公共代理（CI 同样可用）。
 ENV GOPROXY=https://goproxy.cn,direct
+# GOWORK=off：仓库根 go.work 声明 operator/ 与 services/* 模块，但 .dockerignore
+# 刻意排除它们（构建上下文瘦身）——容器内 go.work 引用不存在的模块会直接报错
+# （CI 实测：cannot load module operator listed in go.work）。主模块 go.mod
+# 自洽（operator/services 均不被内核 import），关掉 workspace 按单模块构建。
+ENV GOWORK=off
 WORKDIR /src
 COPY go.mod go.sum ./
 # 构建期校验模块完整性（防供应链投毒 / go.sum 漂移，task 安全 P2-5）

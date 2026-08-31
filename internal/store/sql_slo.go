@@ -1,7 +1,8 @@
 // sql_slo.go 实现 SQLStore 的 SLOStore 子接口（Phase 1 SLO 管理，生产就绪）。
 //
 // 表结构：slos（id PK + tenant_id + name + description + service_name + target +
-// window + slis JSON + created_at + updated_at）。迁移文件
+// window_spec + slis JSON + created_at + updated_at；列名 window_spec 规避
+// MySQL 8.0 保留字 WINDOW）。迁移文件
 // migrations/010_p1_slo_ticket.sql 幂等建表。
 //
 // 设计要点（与 sql_k8s.go / sql_secret.go 风格一致）：
@@ -24,7 +25,7 @@ import (
 )
 
 // scanSLO 从一行扫描出 *SLO（slis 为 JSON 文本列）。
-// 列顺序：id, tenant_id, name, description, service_name, target, window, slis,
+// 列顺序：id, tenant_id, name, description, service_name, target, window_spec, slis,
 // created_at, updated_at。无行或扫描失败返回 nil。
 func scanSLO(row rowScanner) *SLO {
 	var s SLO
@@ -83,10 +84,10 @@ func (s *SQLStore) CreateSLO(tenantID string, slo *SLO) *SLO {
 		slisJSON = string(b)
 	}
 	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO slos (id, tenant_id, name, description, service_name, target, window, slis, created_at, updated_at)
+		`INSERT INTO slos (id, tenant_id, name, description, service_name, target, window_spec, slis, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description),
-		 service_name=VALUES(service_name), target=VALUES(target), window=VALUES(window),
+		 service_name=VALUES(service_name), target=VALUES(target), window_spec=VALUES(window_spec),
 		 slis=VALUES(slis), updated_at=VALUES(updated_at)`,
 		slo.ID, slo.TenantID, slo.Name, slo.Description, slo.ServiceName,
 		slo.Target, slo.Window, slisJSON, slo.CreatedAt, slo.UpdatedAt); err != nil {
@@ -99,7 +100,7 @@ func (s *SQLStore) CreateSLO(tenantID string, slo *SLO) *SLO {
 // GetSLO 按 (tenantID, id) 返回单个 SLO（深拷贝；不存在或租户不匹配返回 (nil, false)）。
 func (s *SQLStore) GetSLO(tenantID, id string) (*SLO, bool) {
 	row := s.db.QueryRowContext(context.Background(),
-		`SELECT id, tenant_id, name, description, service_name, target, window, slis, created_at, updated_at
+		`SELECT id, tenant_id, name, description, service_name, target, window_spec, slis, created_at, updated_at
 		  FROM slos WHERE id=? AND tenant_id=?`, id, tenantID)
 	slo := scanSLO(row)
 	if slo == nil {
@@ -141,7 +142,7 @@ func (s *SQLStore) UpdateSLO(tenantID string, slo *SLO) (*SLO, bool) {
 		slisJSON = string(b)
 	}
 	if _, err := s.db.ExecContext(context.Background(),
-		`UPDATE slos SET name=?, description=?, service_name=?, target=?, window=?, slis=?, updated_at=?
+		`UPDATE slos SET name=?, description=?, service_name=?, target=?, window_spec=?, slis=?, updated_at=?
 		 WHERE id=? AND tenant_id=?`,
 		slo.Name, slo.Description, slo.ServiceName, slo.Target, slo.Window, slisJSON,
 		slo.UpdatedAt, slo.ID, slo.TenantID); err != nil {
@@ -155,7 +156,7 @@ func (s *SQLStore) UpdateSLO(tenantID string, slo *SLO) (*SLO, bool) {
 // tenantID 为空时返回空切片（与 memory 实现一致：tenantID 非空时仅返回同租户 SLO）。
 func (s *SQLStore) ListSLOs(tenantID string) []*SLO {
 	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT id, tenant_id, name, description, service_name, target, window, slis, created_at, updated_at
+		`SELECT id, tenant_id, name, description, service_name, target, window_spec, slis, created_at, updated_at
 		  FROM slos WHERE tenant_id=? ORDER BY created_at ASC`, tenantID)
 	if err != nil {
 		log.Printf("[store] ListSLOs 查询失败 (tenant=%s): %v", tenantID, err)

@@ -1,4 +1,4 @@
-# OpsMesh Agent 镜像（U-05 agent 角色）。
+﻿# OpsMesh Agent 镜像（U-05 agent 角色）。
 # agent 需 sh -c 执行 shell/service 任务（如调用系统命令、跑脚本），
 # 故 runtime 必须含 /bin/sh。注意：gcr.io/distroless/base-debian12 官方
 # 明确"不含 shell"（/bin/sh 不存在），此前用它导致 exec.Command("sh",...)
@@ -10,6 +10,9 @@
 FROM golang:1.26-bookworm AS build
 # 国内网络环境 proxy.golang.org 不可达，走 goproxy.cn 公共代理（CI 同样可用）。
 ENV GOPROXY=https://goproxy.cn,direct
+# GOWORK=off：同 Dockerfile——go.work 引用被 dockerignore 排除的 operator/services
+# 模块，容器内按单模块构建（主模块 go.mod 自洽）。
+ENV GOWORK=off
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
