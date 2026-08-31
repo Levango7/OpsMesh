@@ -51,13 +51,16 @@ jobs:
         # （set -e）。覆盖率文件分批 append 后合并。
         env:
           OPSMESH_TEST_BCRYPT_COST: "4"
+          # TSan（race detector）内存上限：Linux TSan 默认影子内存映射极大，
+          # 7GB runner 上跑 200+ 用例后其内部分配器 OOM（实测 FATAL:
+          # ThreadSanitizer internal allocator is out of memory）。
+          # hardlimit_mb 限制 TSan 自身内存（含 2x 全局红区），超出报告后退出；
+          # exitcode=66 让 TSan OOM 以可识别码失败而非挂死。
+          TSAN_OPTIONS: "hardlimit_mb=2560 exitcode=66"
         run: |
           set -e
           rm -f coverage.out
-          # 分批顺序按"runner 资源压力"重排（CI 实测迭代）：
-          # agent 批曾在大批跑完后 17s 即被 143——race 编译峰值叠加累计资源压力超限。
-          # 先跑 agent（runner 最干净时），再 store，再最大的 controlplane；每批
-          # 之间无显式清缓存（race 编译缓存可复用，越跑越快）。
+          # 分批顺序（agent 批前置：runner 最干净时先跑重的）+ -v 诊断输出。
           go test -race -p 1 -timeout 300s -coverprofile=cov3.out -v ./internal/agent/...
           go test -race -p 1 -timeout 300s -coverprofile=cov2.out ./internal/store/...
           go test -race -p 1 -timeout 600s -coverprofile=cov1.out ./internal/controlplane/...
@@ -747,6 +750,8 @@ jobs:
         # OPSMESH_TEST_BCRYPT_COST=4 提速（与 build-test 一致，-race 下 bcrypt cost=10 曾致超时）。
         env:
           OPSMESH_TEST_BCRYPT_COST: "4"
+          # TSan 内存上限同 build-test Test 步（agent 包实测 TSan 分配器 OOM）。
+          TSAN_OPTIONS: "hardlimit_mb=2560 exitcode=66"
         run: |
           set -e
           go test -race -p 1 -count=3 -timeout 1800s ./internal/controlplane/...
