@@ -939,7 +939,14 @@ func (a *Agent) execute(ctx context.Context, t proto.Task) proto.TaskResult {
 	} else {
 		res.ExitCode = 0
 	}
-	res.DurationMs = time.Since(start).Milliseconds()
+	// 耗时保底 1ms：真实执行过任务（走到本行）耗时 <1ms 时截断为 0 会对消费方
+	// 产生"没有执行"的误导（Linux 上 echo 级命令常见；Windows 计时粒度大不触发）。
+	// 快速失败路径（上方 5 处 early-return）未执行任务，保持 0ms 语义。
+	d := time.Since(start).Milliseconds()
+	if d < 1 {
+		d = 1
+	}
+	res.DurationMs = d
 	// OTel：记录退出码与执行耗时到 span。
 	span.SetAttributes(
 		attribute.Int("task.exit_code", res.ExitCode),
