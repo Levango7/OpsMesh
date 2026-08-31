@@ -191,6 +191,13 @@ func TestMultiSchemaSmoke_ListSubscriptionsCrossTenant(t *testing.T) {
 //
 // 环境变量 OPSMESH_TEST_MYSQL_DSN 提供时跑真实 SQL 集成冒烟（构造 MultiSchemaStore +
 // per-tenant 写读隔离）；未提供时 t.Skip 并 Logf 原因（避免静默跳过，对齐 H11）。
+//
+// 租户名用合法标识符（CI integration 实测捕获）：DefaultSchemaNamer 的
+// validateIdent 只允许 [a-zA-Z0-9_]——此前用 "sql-smoke-a"（含连字符），
+// storeFor 的 namer 直接返回 error，CreateTicket 经 MultiSchema 委托层
+// 静默返回 nil（无日志无 error），GetTicket 永远 miss。该测试自编写以来
+// 首次在真实 MySQL 上执行（本轮 integration 解锁）即暴露。租户名改用
+// 白名单合法字符 sqlsmokea/sqlsmokeb（validateIdent 是 SQL 注入防线，不放宽）。
 func TestMultiSchemaSmoke_MySQLDSNBranch(t *testing.T) {
 	dsn := os.Getenv("OPSMESH_TEST_MYSQL_DSN")
 	if dsn == "" {
@@ -203,18 +210,21 @@ func TestMultiSchemaSmoke_MySQLDSNBranch(t *testing.T) {
 		t.Fatalf("NewMultiSchemaStore 失败: %v", err)
 	}
 
-	// per-tenant 写读隔离冒烟（Ticket 域）。
-	m.CreateTicket("sql-smoke-a", &Ticket{
+	// per-tenant 写读隔离冒烟（Ticket 域）；CreateTicket 返回值也断言（防静默 nil）。
+	created := m.CreateTicket("sqlsmokea", &Ticket{
 		ID:       "ticket-sql-smoke-1",
-		TenantID: "sql-smoke-a",
+		TenantID: "sqlsmokea",
 		Title:    "sql-smoke",
 		Status:   "open",
 	})
-	if got, ok := m.GetTicket("sql-smoke-a", "ticket-sql-smoke-1"); !ok || got == nil {
-		t.Errorf("SQL GetTicket(sql-smoke-a, ticket-sql-smoke-1) 未命中，应命中: ok=%v", ok)
+	if created == nil {
+		t.Fatalf("CreateTicket 返回 nil（storeFor/namer 失败被静默吞掉；租户名须过 validateIdent 白名单 [a-zA-Z0-9_]）")
 	}
-	if got, ok := m.GetTicket("sql-smoke-b", "ticket-sql-smoke-1"); ok || got != nil {
-		t.Errorf("SQL GetTicket(sql-smoke-b, ticket-sql-smoke-1) 命中，应不命中（跨租户隔离）: ok=%v", ok)
+	if got, ok := m.GetTicket("sqlsmokea", "ticket-sql-smoke-1"); !ok || got == nil {
+		t.Errorf("SQL GetTicket(sqlsmokea, ticket-sql-smoke-1) 未命中，应命中: ok=%v", ok)
+	}
+	if got, ok := m.GetTicket("sqlsmokeb", "ticket-sql-smoke-1"); ok || got != nil {
+		t.Errorf("SQL GetTicket(sqlsmokeb, ticket-sql-smoke-1) 命中，应不命中（跨租户隔离）: ok=%v", ok)
 	}
 }
 

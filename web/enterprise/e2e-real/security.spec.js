@@ -86,12 +86,17 @@ test.describe('安全契约（require-auth 开启）', () => {
 
   test('租户越权：跨租户查设备 → 403/404（不可见）', async () => {
     const token = await login()
-    // tenant-a 视角查设备：应可见（至少 200）
-    const a = await req('GET', '/api/v1/devices', { headers: { Authorization: `Bearer ${token}`, 'X-Tenant-ID': 'tenant-a' } })
-    expect(a.status).toBe(200)
-    // 无 token 仅伪造头：require-auth 下头伪造无身份支撑 → 401（防网关伪造）
+    // token 所属租户（default）视角查设备：应可见。
+    // 注意不能给 token 配别的租户头——token.tenant 与 X-Tenant-ID 交叉校验（第五轮
+    // 安全修复）对不一致组合返回 403，那是防伪造设计，不是本用例要测的越权。
+    const own = await req('GET', '/api/v1/devices', { headers: { Authorization: `Bearer ${token}` } })
+    expect(own.status).toBe(200)
+    // 越权场景：请求头声明其它租户（无 token 支撑）→ require-auth 拒 401；
+    // 头与 token 不一致（伪造租户）→ 交叉校验 403。两者均"不可见"。
     const forged = await req('GET', '/api/v1/devices', { headers: { 'X-Tenant-ID': 'tenant-b' } })
     expect([401, 403]).toContain(forged.status)
+    const mismatched = await req('GET', '/api/v1/devices', { headers: { Authorization: `Bearer ${token}`, 'X-Tenant-ID': 'tenant-b' } })
+    expect([403, 404]).toContain(mismatched.status)
   })
 
   test('任务取消全链路：pending 拦截 + running 强杀 + 无回写', async () => {
@@ -154,23 +159,22 @@ test.describe('安全契约（require-auth 开启）', () => {
     const clientCert = fs.readFileSync(path.join(CERTS_DIR, 'client.crt'))
     const clientKey = fs.readFileSync(path.join(CERTS_DIR, 'client.key'))
 
-    // 1. 无客户端证书 → 握手失败（mTLS 拒绝）
+    // 1. 无客户端证书 → 被 mTLS 拒绝。
+    //    TLS 1.3 语义修正（CI 实测）：Go 服务端对缺客户端证书的拒绝（certificate required）
+    //    发生在握手末段——Node 客户端可能先触发 secureConnect、随后才收到 alert 收包。
+    //    因此"握手即断"不能作为判定，改为握手后写入数据并等待：无证书的连接
+    //    在服务端证书校验失败后必然被断（error/close），有证书的连接可正常读写。
     await new Promise((resolve, reject) => {
+      let settled = false
+      const done = (fn, arg) => { if (!settled) { settled = true; clearTimeout(timer); sock.destroy(); fn(arg) } }
       const sock = tls.connect({ host: u.hostname, port: 9090, ca, rejectUnauthorized: true }, () => {
-        // 本不该到这（无客户端证书应被拒）；若到了说明 mTLS 未强制
-        sock.destroy()
-        reject(new Error('无客户端证书竟完成 TLS 握手——mTLS 未生效'))
+        // secureConnect 在 TLS1.3 下可能先于服务端 alert——写入数据逼出服务端响应
+        sock.write('GET / HTTP/1.1\r\nHost: opsmesh\r\n\r\n')
       })
-      sock.on('error', (err) => {
-        // 预期：客户端证书缺失 → 服务端终止握手
-        sock.destroy()
-        resolve()
-      })
-      sock.on('secureConnect', () => {
-        sock.destroy()
-        reject(new Error('无客户端证书竟完成 TLS 握手——mTLS 未生效'))
-      })
-      setTimeout(() => { sock.destroy(); resolve() }, 5000)
+      sock.on('error', (err) => { done(resolve) })        // 服务端拒绝（certificate required 等）
+      sock.on('close', () => { done(resolve) })           // 写入后被服务端断开
+      sock.on('data', () => { done(reject, new Error('无客户端证书竟收到服务端响应——mTLS 未生效')) })
+      const timer = setTimeout(() => { done(resolve) }, 5000)
     })
 
     // 2. 带客户端证书 → TLS 握手成功（mTLS 通过）

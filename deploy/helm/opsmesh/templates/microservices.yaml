@@ -4,13 +4,15 @@
 - 键名用下划线（auth_svc）规避 --set 连字符坑；K8s 资源名不允许下划线，
   统一 replace "_" "-"（Deployment/Service/容器名/组件标签均用连字符形式）。
 - 端口（httpPort/grpcPort）、探针路径（probe.path）、存储 env 前缀（storeEnvPrefix）
-  均由 values 提供，已对照各服务 pkg/config/config.go 与 cmd/*/main.go 源码默认值。
+  均由 values 提供，已对照各服务 pkg/config/config.go 与 cmd 目录源码默认值。
 - 存储接线：storeEnvPrefix 非空时渲染 <前缀>_STORE_TYPE（=storeType）；
   且 chart 全局 MySQL 可用（mysql.enabled && controlplane.store=mysql）时
   渲染 <前缀>_DSN，取值复用控制面 Secret 的 mysql-dsn 键（与全局连接串同源派生）。
-- 微服务镜像以非数字用户 svc 运行（见 services/*/Dockerfile USER svc），
+- 微服务镜像以非数字用户 svc 运行（见各服务 Dockerfile USER svc），
   故默认不设置容器 securityContext.runAsUser（non-numeric user 无法过 runAsNonRoot 校验）。
-*/ -}}
+注：注释体内不得出现 "*/" 序列（Helm 模板注释以首个 */ 闭合——CI helm lint 实测
+"comment ends before closing delimiter" 即此前正文 cmd/*/main.go 的 */ 提前闭合）。
+*/}}
 {{- range $name, $svc := .Values.services }}
 {{- if $svc.enabled }}
 {{- $svcName := $name | replace "_" "-" }}
