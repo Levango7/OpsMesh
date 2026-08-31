@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     display_name VARCHAR(255),
     status       VARCHAR(32)  NOT NULL DEFAULT 'active',
     quota        TEXT,                    -- JSON: TenantQuota
-    usage        TEXT,                    -- JSON: ResourceUsage
+    usage_data   TEXT,                    -- JSON: ResourceUsage（列名不用 usage：MySQL 8.0 保留字）
     created_at   DATETIME     NOT NULL,
     updated_at   DATETIME     NOT NULL,
     PRIMARY KEY (id),
@@ -89,12 +89,12 @@ CREATE TABLE IF NOT EXISTS billing_plans (
     id              VARCHAR(64)  NOT NULL,
     name            VARCHAR(255) NOT NULL,
     price           INT          NOT NULL DEFAULT 0,
-    interval        VARCHAR(32)  NOT NULL DEFAULT 'monthly',
+    interval_spec   VARCHAR(32)  NOT NULL DEFAULT 'monthly',  -- 列名不用 interval：MySQL 8.0 保留字
     features        TEXT,                    -- JSON: []string
     resource_limits TEXT,                    -- JSON: TenantQuota
     created_at      DATETIME     NOT NULL,
     PRIMARY KEY (id),
-    KEY idx_billing_plans_interval (interval)
+    KEY idx_billing_plans_interval (interval_spec)
 );
 
 CREATE TABLE IF NOT EXISTS subscriptions (

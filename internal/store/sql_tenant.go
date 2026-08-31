@@ -1,12 +1,12 @@
 // sql_tenant.go 实现 SQLStore 的 TenantStore 子接口（Phase 6 租户管理，生产就绪）。
 //
 // 表结构：tenants（id PK + name UNIQUE + display_name + status + quota JSON +
-// usage JSON + created_at + updated_at）。迁移文件
+// usage_data JSON + created_at + updated_at）。迁移文件
 // migrations/015_p6_tenant_apikey_plugin_billing.sql 幂等建表。
 //
 // 设计要点（与 sql_webhook.go / sql_secret.go 风格一致）：
 //   - 全局共享：tenants 表无 tenant_id 列，本身就是租户，所有方法不带 tenant_id 条件；
-//   - JSON 列：quota（TenantQuota）+ usage（ResourceUsage），用 encoding/json 序列化为 TEXT；
+//   - JSON 列：quota（TenantQuota）+ usage_data（ResourceUsage），用 encoding/json 序列化为 TEXT；
 //     空值存空串，读取时空串跳过 Unmarshal 得零值；
 //   - name 唯一约束（UNIQUE KEY uq_tenants_name，URL-safe 租户标识唯一）；
 //   - CreateTenant 按 ID 幂等（INSERT ... ON DUPLICATE KEY UPDATE），不更新 created_at；
@@ -23,8 +23,8 @@ import (
 	"time"
 )
 
-// scanTenant 从一行扫描出 *Tenant（quota / usage 为 JSON 文本列）。
-// 列顺序：id, name, display_name, status, quota, usage, created_at, updated_at。
+// scanTenant 从一行扫描出 *Tenant（quota / usage_data 为 JSON 文本列）。
+// 列顺序：id, name, display_name, status, quota, usage_data, created_at, updated_at。
 // 无行或扫描失败返回 nil。
 func scanTenant(row rowScanner) *Tenant {
 	var t Tenant
@@ -104,10 +104,10 @@ func (s *SQLStore) CreateTenant(tenant *Tenant) *Tenant {
 	quotaJSON := marshalTenantQuota(tenant.Quota)
 	usageJSON := marshalResourceUsage(tenant.Usage)
 	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO tenants (id, name, display_name, status, quota, usage, created_at, updated_at)
+		`INSERT INTO tenants (id, name, display_name, status, quota, usage_data, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE name=VALUES(name), display_name=VALUES(display_name),
-		 status=VALUES(status), quota=VALUES(quota), usage=VALUES(usage), updated_at=VALUES(updated_at)`,
+		 status=VALUES(status), quota=VALUES(quota), usage_data=VALUES(usage_data), updated_at=VALUES(updated_at)`,
 		tenant.ID, tenant.Name, tenant.DisplayName, string(tenant.Status),
 		quotaJSON, usageJSON, tenant.CreatedAt, tenant.UpdatedAt); err != nil {
 		log.Printf("[store] CreateTenant 插入失败 (tenant=%s): %v", tenant.ID, err)
@@ -119,7 +119,7 @@ func (s *SQLStore) CreateTenant(tenant *Tenant) *Tenant {
 // GetTenant 按 ID 返回单个租户（深拷贝；不存在返回 (nil, false)）。
 func (s *SQLStore) GetTenant(id string) (*Tenant, bool) {
 	row := s.db.QueryRowContext(context.Background(),
-		`SELECT id, name, display_name, status, quota, usage, created_at, updated_at
+		`SELECT id, name, display_name, status, quota, usage_data, created_at, updated_at
 		  FROM tenants WHERE id=?`, id)
 	t := scanTenant(row)
 	if t == nil {
@@ -165,7 +165,7 @@ func (s *SQLStore) UpdateTenant(tenant *Tenant) (*Tenant, bool) {
 // ListTenants 返回全部租户（按创建时间升序；深拷贝）。
 func (s *SQLStore) ListTenants() []*Tenant {
 	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT id, name, display_name, status, quota, usage, created_at, updated_at
+		`SELECT id, name, display_name, status, quota, usage_data, created_at, updated_at
 		  FROM tenants ORDER BY created_at ASC`)
 	if err != nil {
 		log.Printf("[store] ListTenants 查询失败: %v", err)

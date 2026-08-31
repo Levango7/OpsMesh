@@ -1,7 +1,7 @@
 // sql_billing.go 实现 SQLStore 的 BillingStore 子接口（Phase 6 计费：计划/订阅/账单，生产就绪）。
 //
 // 表结构：
-//   - billing_plans（id PK + name + price + interval + features JSON + resource_limits JSON +
+//   - billing_plans（id PK + name + price + interval_spec + features JSON + resource_limits JSON +
 //     created_at）— 计划全局共享，无 tenant_id；
 //   - subscriptions（id PK + tenant_id + plan_id + status + started_at + expires_at +
 //     created_at）— 按 ID 全局唯一，List 按 tenant_id 过滤；
@@ -40,7 +40,7 @@ import (
 // ============================================================================
 
 // scanBillingPlan 从一行扫描出 *SubscriptionPlan（features / resource_limits 为 JSON 文本列）。
-// 列顺序：id, name, price, interval, features, resource_limits, created_at。
+// 列顺序：id, name, price, interval_spec, features, resource_limits, created_at。
 // 无行或扫描失败返回 nil。
 func scanBillingPlan(row rowScanner) *SubscriptionPlan {
 	var p SubscriptionPlan
@@ -111,9 +111,9 @@ func (s *SQLStore) CreateBillingPlan(plan *SubscriptionPlan) *SubscriptionPlan {
 	featuresJSON := marshalPlanFeatures(plan.Features)
 	resourceLimitsJSON := marshalPlanResourceLimits(plan.ResourceLimits)
 	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO billing_plans (id, name, price, interval, features, resource_limits, created_at)
+		`INSERT INTO billing_plans (id, name, price, interval_spec, features, resource_limits, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), price=VALUES(price), interval=VALUES(interval),
+		 ON DUPLICATE KEY UPDATE name=VALUES(name), price=VALUES(price), interval_spec=VALUES(interval_spec),
 		 features=VALUES(features), resource_limits=VALUES(resource_limits)`,
 		plan.ID, plan.Name, plan.Price, plan.Interval, featuresJSON, resourceLimitsJSON,
 		plan.CreatedAt); err != nil {
@@ -126,7 +126,7 @@ func (s *SQLStore) CreateBillingPlan(plan *SubscriptionPlan) *SubscriptionPlan {
 // GetBillingPlan 按 ID 返回单个订阅计划（深拷贝；不存在返回 (nil, false)）。
 func (s *SQLStore) GetBillingPlan(id string) (*SubscriptionPlan, bool) {
 	row := s.db.QueryRowContext(context.Background(),
-		`SELECT id, name, price, interval, features, resource_limits, created_at
+		`SELECT id, name, price, interval_spec, features, resource_limits, created_at
 		  FROM billing_plans WHERE id=?`, id)
 	p := scanBillingPlan(row)
 	if p == nil {
@@ -138,7 +138,7 @@ func (s *SQLStore) GetBillingPlan(id string) (*SubscriptionPlan, bool) {
 // ListBillingPlans 返回全部订阅计划（按创建时间升序；深拷贝）。
 func (s *SQLStore) ListBillingPlans() []*SubscriptionPlan {
 	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT id, name, price, interval, features, resource_limits, created_at
+		`SELECT id, name, price, interval_spec, features, resource_limits, created_at
 		  FROM billing_plans ORDER BY created_at ASC`)
 	if err != nil {
 		log.Printf("[store] ListBillingPlans 查询失败: %v", err)
@@ -179,7 +179,7 @@ func (s *SQLStore) UpdateBillingPlan(plan *SubscriptionPlan) (*SubscriptionPlan,
 	featuresJSON := marshalPlanFeatures(plan.Features)
 	resourceLimitsJSON := marshalPlanResourceLimits(plan.ResourceLimits)
 	if _, err := s.db.ExecContext(context.Background(),
-		`UPDATE billing_plans SET name=?, price=?, interval=?, features=?, resource_limits=?
+		`UPDATE billing_plans SET name=?, price=?, interval_spec=?, features=?, resource_limits=?
 		 WHERE id=?`,
 		plan.Name, plan.Price, plan.Interval, featuresJSON, resourceLimitsJSON, plan.ID); err != nil {
 		log.Printf("[store] UpdateBillingPlan 更新失败 (plan=%s): %v", plan.ID, err)
