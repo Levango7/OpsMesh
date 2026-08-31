@@ -54,16 +54,19 @@ jobs:
         run: |
           set -e
           rm -f coverage.out
-          # 批 1：最大的三个包逐个跑（每批只有一个测试二进制在内存）
-          go test -race -p 1 -timeout 600s -coverprofile=cov1.out ./internal/controlplane/...
+          # 分批顺序按"runner 资源压力"重排（CI 实测迭代）：
+          # agent 批曾在大批跑完后 17s 即被 143——race 编译峰值叠加累计资源压力超限。
+          # 先跑 agent（runner 最干净时），再 store，再最大的 controlplane；每批
+          # 之间无显式清缓存（race 编译缓存可复用，越跑越快）。
+          go test -race -p 1 -timeout 300s -coverprofile=cov3.out -v ./internal/agent/...
           go test -race -p 1 -timeout 300s -coverprofile=cov2.out ./internal/store/...
-          go test -race -p 1 -timeout 300s -coverprofile=cov3.out ./internal/agent/...
-          # 批 2：其余全部包（小包为主，-p 2 内存可控）
+          go test -race -p 1 -timeout 600s -coverprofile=cov1.out ./internal/controlplane/...
+          # 其余全部包（小包为主，-p 2 内存可控）
           go test -race -p 2 -timeout 600s -coverprofile=cov4.out $(go list ./... | grep -v -E 'internal/(controlplane|store|agent)' | grep -v 'cmd/')
-          # 批 3：cmd 包
+          # cmd 包
           go test -race -p 2 -timeout 120s -coverprofile=cov5.out ./cmd/...
-          # 合并覆盖率（简单拼接：mode 行取首个）
-          head -1 cov1.out > coverage.out
+          # 合并覆盖率（mode 行取首个）
+          head -1 cov3.out > coverage.out
           cat cov1.out cov2.out cov3.out cov4.out cov5.out | grep -v '^mode:' >> coverage.out
           echo "=== 分批测试完成，覆盖 profile 合并至 coverage.out ==="
       - name: Test (kafka tag, 审计 WAL 兜底)
