@@ -64,6 +64,14 @@ type GRPCClient struct {
 	// evictConn 每次淘汰坏连接时 +1；经 expvar 暴露（http://agent:port/debug/vars）
 	// 供运维观测控制面连接稳定性（断线率）。
 	connFailures *atomic.Int64
+	// connCooldown 连接熔断冷却表（goroutine 泄漏修复）：target → 冷却截止时间。
+	// 背景：evictConn 淘汰后 getConn 会立即重新 Dial——gRPC Backoff 只在单个 conn
+	// 内部生效，evict 打破了它；目标持续不可达（如 127.0.0.1:1 立即 refuse）时
+	// "invoke 失败→evict→新 Dial→旧 conn 内部重连 goroutine 尚未退出"高频循环，
+	// goroutine/内存持续堆积（CI 7GB runner 实测 OOM；本地 32GB 掩盖）。
+	// 冷却窗口内对该 target 的请求直接快速失败，不再建新连接——生产正确的
+	// 连接熔断语义；窗口过后恢复重建。
+	connCooldown map[string]time.Time
 }
 
 // SetSecret ：设置 agent 的 HMAC 签名密钥（由 Register 响应下发）。
@@ -138,6 +146,7 @@ func NewGRPCClient(addrs []string, tlsCert, tlsKey, tlsCA string, grpcPort int) 
 		grpcPort:     grpcPort,
 		conns:        make(map[string]*grpc.ClientConn),
 		connFailures: connFailures,
+		connCooldown: make(map[string]time.Time),
 	}, nil
 }
 
@@ -280,6 +289,12 @@ func (c *GRPCClient) getConn(target string) (*grpc.ClientConn, error) {
 	if conn, ok := c.conns[target]; ok {
 		return conn, nil
 	}
+	// 连接熔断：目标处于冷却期（上次 evictConn 后 connCooldownWindow 内）时
+	// 不重建——防止"evict→Dial 循环打破 gRPC Backoff"导致目标持续不可达时
+	// 无限重建（goroutine/内存堆积，见 connCooldown 字段注释）。冷却期满恢复。
+	if until, ok := c.connCooldown[target]; ok && time.Now().Before(until) {
+		return nil, fmt.Errorf("connection to %s in cooldown (circuit open until %s)", target, until.Format(time.RFC3339))
+	}
 	conn, err := grpc.DialContext(context.Background(), target,
 		grpc.WithTransportCredentials(c.creds),
 		grpc.WithDefaultCallOptions(grpc.ForceCodec(grpcx.JSONCodec)),
@@ -301,8 +316,14 @@ func (c *GRPCClient) getConn(target string) (*grpc.ClientConn, error) {
 	return conn, nil
 }
 
-// evictConn 连接淘汰：关闭并从缓存移除指定地址的连接。
-// 在 Invoke 返回连接级错误时调用，下次 invoke 会经 getConn 重新 Dial。
+// connCooldownWindow 连接熔断冷却时长：略大于 gRPC Backoff 的 MaxDelay(5s)，
+// 使"冷却结束→重建→若仍失败→再次冷却"的稳态循环频率被限制在约每 6s 一轮，
+// 单轮仅一个 Dial（不再高频堆积）。
+const connCooldownWindow = 6 * time.Second
+
+// evictConn 连接淘汰：关闭并从缓存移除指定地址的连接，并记录熔断冷却。
+// 在 Invoke 返回连接级错误时调用，下次 invoke 会经 getConn 重新 Dial
+// （冷却窗口内 getConn 直接快速失败，见 connCooldown 注释）。
 func (c *GRPCClient) evictConn(target string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -310,9 +331,14 @@ func (c *GRPCClient) evictConn(target string) {
 		conn.Close()
 		delete(c.conns, target)
 	}
+	// 熔断冷却：该 target 在窗口内不再重建（防 goroutine 泄漏，见 getConn 注释）。
+	if c.connCooldown != nil {
+		c.connCooldown[target] = time.Now().Add(connCooldownWindow)
+	}
 	c.connFailures.Add(1)
-	logx.Warn(context.Background(), "gRPC 连接故障（已淘汰重建）",
-		"target", target, "failures", c.connFailures.Load())
+	logx.Warn(context.Background(), "gRPC 连接故障（已淘汰，冷却重建）",
+		"target", target, "failures", c.connFailures.Load(),
+		"cooldown", connCooldownWindow.String())
 }
 
 // isConnError 判断错误是否为连接级错误（需淘汰重连）。
