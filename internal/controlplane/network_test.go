@@ -18,6 +18,7 @@ package controlplane
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -330,11 +331,25 @@ func TestHandleNetworkDeviceConfig_EmptyConfig(t *testing.T) {
 // =============================================================================
 
 // TestHandleNetworkDiscover_Success 验证正常发现返回 200。
+// 环境无关改造（CI 实测 found=0 修复）：此前扫 192.168.1.0/24——本机网段有真实
+// 设备所以能过，但 GitHub runner 网络里该网段空无主机（扫满 254 个无响应 IP
+// 累积 127s 后 found=0，且引擎扫描表固定无法注入端口）。
+// 改为：测试内自起 127.0.0.1:8080 监听（8080 在引擎扫描表内），扫 127.0.0.0/29
+// （仅 8 地址，任何环境必有 loopback）；8080 被占则 Skip（并行测试环境兜底）。
 func TestHandleNetworkDiscover_Success(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:8080")
+	if err != nil {
+		t.Skipf("127.0.0.1:8080 不可绑定（被占用），跳过环境相关发现测试: %v", err)
+	}
+	defer lis.Close()
+	srv := &http.Server{Handler: http.NotFoundHandler()}
+	go func() { _ = srv.Serve(lis) }()
+	defer srv.Close()
+
 	s := newNetworkDeviceTestServer()
 	auth := loginAsAdmin(t, s)
 
-	body := `{"subnet":"192.168.1.0/24"}`
+	body := `{"subnet":"127.0.0.0/29"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/network/discover", strings.NewReader(body))
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("X-Tenant-ID", "default")
@@ -353,7 +368,7 @@ func TestHandleNetworkDiscover_Success(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if resp.Found == 0 {
-		t.Fatal("found=0, want >0")
+		t.Fatal("found=0, want >0（127.0.0.1:8080 已监听，应被发现）")
 	}
 }
 

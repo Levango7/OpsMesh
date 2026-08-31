@@ -102,7 +102,12 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 后台 goroutine 归档：导出 JSON 快照打包 tar.gz 写入 backupDir，完成后更新 status=completed。
-	go s.runBackupAsync(actx.TenantID, created)
+	// DATA RACE 修复（CI -race 实测捕获）：此前把同一 created 指针既交给 goroutine 写
+	// （runBackupAsync 更新 Status/Path）又在下方同步 JSON 序列化——响应写一半后台
+	// 已并发改同一结构体。goroutine 持独立副本（值拷贝结构体仅含值字段，浅拷贝即安全），
+	// created 保持只读直至序列化完成。
+	asyncRec := *created
+	go s.runBackupAsync(actx.TenantID, &asyncRec)
 	paginate.WriteJSON(w, http.StatusCreated, created)
 }
 
