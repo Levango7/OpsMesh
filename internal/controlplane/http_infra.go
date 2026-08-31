@@ -90,7 +90,8 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 		// 处置：requireAuth 下默认拒绝；仅当部署方显式 --trust-gateway-headers=true
 		// （声明有可信网关认证后剥离凭证只留头转发，即 README IAM 路径 B）才放行。
 		// requireAuth=false 保留内网头直通（部署方自行保证前置）。
-		if tokenTenant == "" && s.requireAuth && !(s.cfg != nil && s.cfg.TrustGatewayHeaders) {
+		trustGateway := s.cfg != nil && s.cfg.TrustGatewayHeaders
+		if tokenTenant == "" && s.requireAuth && !trustGateway {
 			paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "identity header without verifiable credential (require-auth; enable --trust-gateway-headers if behind a trusted gateway)"})
 			return actx, false
 		}
