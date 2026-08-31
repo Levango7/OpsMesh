@@ -53,21 +53,25 @@ jobs:
           OPSMESH_TEST_BCRYPT_COST: "4"
           # TSan（race detector）内存上限：Linux TSan 默认影子内存映射极大，
           # 7GB runner 上跑 200+ 用例后其内部分配器 OOM（实测 FATAL:
-          # ThreadSanitizer internal allocator is out of memory）。
+          # ThreadSanitizer: internal allocator is out of memory）。
           # hardlimit_mb 限制 TSan 自身内存（含 2x 全局红区），超出报告后退出；
           # exitcode=66 让 TSan OOM 以可识别码失败而非挂死。
           TSAN_OPTIONS: "hardlimit_mb=2560 exitcode=66"
+          # GOMEMLIMIT：Go 软内存上限（GC 目标），超限触发激进回收而非逼近 7GB
+          # 硬墙时才 fatal。agent 包（无 race 下亦实测 OOM：fatal runtime:
+          # out of memory 且死时仅 ~12 存活 goroutine——非泄漏非驻留，是
+          # 测试期瞬时大分配+GC 回收不及时在 7GB 物理限制下的死亡）。
+          GOMEMLIMIT: 3GiB
         run: |
           set -e
           rm -f coverage.out
-          # agent 批不带 -race（取舍说明）：实测该包 goroutine 密集（fake gRPC server
-          # + safeGo 循环，229 用例累计 ~1700 goroutine），Linux TSan 影子内存
-          # 随存活 goroutine 线性膨胀，7GB runner 上恒定在 TestSafeGo 处
-          # "ThreadSanitizer: internal allocator is out of memory" FATAL——
-          # TSAN_OPTIONS hardlimit_mb 实测无法约束该内部分配器。race 检测对
-          # agent 包的覆盖改由 race job 承担（该 job 同样会 TSan OOM，见其注释）。
-          # 覆盖率不受影响（-coverprofile 与 -race 正交）。
-          go test -p 1 -timeout 300s -coverprofile=cov3.out ./internal/agent/...
+          # agent 批不带 -race + GOMEMLIMIT=3GiB + 拆两半（取舍与诊断）：
+          # - TSan 在该包 goroutine 密集场景分配器恒 OOM（hardlimit 约束不了）
+          # - 无 race 下仍 7GB OOM（瞬时分配峰值），GOMEMLIMIT 让 GC 提前介入
+          # - 拆两半（字母序）降低单进程累计分配；-v 保留死点可诊断
+          go test -p 1 -timeout 180s -coverprofile=cov3a.out -v -run 'Test[A-I]' ./internal/agent/
+          go test -p 1 -timeout 180s -coverprofile=cov3b.out -v -run 'Test[J-Z]' ./internal/agent/
+          cat cov3a.out cov3b.out | grep -v '^mode:' > cov3.out
           go test -race -p 1 -timeout 300s -coverprofile=cov2.out ./internal/store/...
           go test -race -p 1 -timeout 600s -coverprofile=cov1.out ./internal/controlplane/...
           # 其余全部包（小包为主，-p 2 内存可控）
@@ -75,7 +79,7 @@ jobs:
           # cmd 包
           go test -race -p 2 -timeout 120s -coverprofile=cov5.out ./cmd/...
           # 合并覆盖率（mode 行取首个）
-          head -1 cov3.out > coverage.out
+          head -1 cov3a.out > coverage.out
           cat cov1.out cov2.out cov3.out cov4.out cov5.out | grep -v '^mode:' >> coverage.out
           echo "=== 分批测试完成，覆盖 profile 合并至 coverage.out ==="
       - name: Test (kafka tag, 审计 WAL 兜底)
