@@ -796,9 +796,12 @@ func TestHandleAudits_RequireAuth(t *testing.T) {
 
 // TestHandleAudits_TenantIsolation 验证 requireAuth 时强制按网关注入租户过滤，
 // 客户端伪造的 ?tenant= 参数被忽略，不会越权看到他租户审计。
+// TrustGatewayHeaders=true：本用例构造的是"可信网关注入头"场景（IAM 路径 B）——
+// requireAuth 下无凭证裸头默认 401（越权修复），显式信任网关才直通（语义未变）。
 func TestHandleAudits_TenantIsolation(t *testing.T) {
 	s := newExtraTestServer()
 	s.requireAuth = true
+	s.cfg.TrustGatewayHeaders = true
 	s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
 	s.store.Register(&proto.AgentInfo{Segment: "seg-b", TenantID: "t2"})
 	// 手动写一条 t2 的审计

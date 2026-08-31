@@ -10,8 +10,8 @@
   渲染 <前缀>_DSN，取值复用控制面 Secret 的 mysql-dsn 键（与全局连接串同源派生）。
 - 微服务镜像以非数字用户 svc 运行（见各服务 Dockerfile USER svc），
   故默认不设置容器 securityContext.runAsUser（non-numeric user 无法过 runAsNonRoot 校验）。
-注：注释体内不得出现 "*/" 序列（Helm 模板注释以首个 */ 闭合——CI helm lint 实测
-"comment ends before closing delimiter" 即此前正文 cmd/*/main.go 的 */ 提前闭合）。
+注：注释体内不得出现「星斜杠」序列（Helm 模板注释以首个该序列闭合——CI helm lint
+实测 "comment ends before closing delimiter" 即此前正文 cmd 路径 glob 里的该序列提前闭合）。
 */}}
 {{- range $name, $svc := .Values.services }}
 {{- if $svc.enabled }}

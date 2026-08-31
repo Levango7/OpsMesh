@@ -281,13 +281,15 @@ func TestHandleDeviceMetrics_GET(t *testing.T) {
 }
 
 // TestHandleDeviceMetrics_TenantIsolation 租户隔离：他租户设备指标不可访问。
+// TrustGatewayHeaders=true：本用例只带 X-Tenant-ID 头无凭证（网关注入场景，IAM 路径 B）——
+// requireAuth 下裸头默认 401（越权修复），显式信任网关才直通（隔离语义不变）。
 func TestHandleDeviceMetrics_TenantIsolation(t *testing.T) {
 	st := store.NewMemoryStore()
 	a := st.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
 	deviceID := "dev-" + a.AgentID
 	st.StoreDeviceMetrics(deviceID, &proto.DeviceMetrics{DeviceID: deviceID, Hostname: "h1"})
 
-	s := &Server{store: st, requireAuth: true, cfg: &config.Config{Demo: true}} // Demo 放行 RBAC，聚焦租户隔离验证
+	s := &Server{store: st, requireAuth: true, cfg: &config.Config{Demo: true, TrustGatewayHeaders: true}} // Demo 放行 RBAC；信任网关注入头，聚焦租户隔离验证
 
 	// t2 用户访问 t1 设备 -> 403
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/devices/"+deviceID+"/metrics", nil)

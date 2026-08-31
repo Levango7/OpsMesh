@@ -506,6 +506,10 @@ func TestIntegrationM4_AlertFullChain(t *testing.T) {
 func TestIntegrationM4_TenantIsolation(t *testing.T) {
 	s := newIntegrationServer(true) // Demo 放行 RBAC 闸，聚焦租户隔离
 	s.requireAuth = true            // 强制要求租户头，聚焦隔离
+	// 网关注入场景（IAM 路径 B）：本用例全部请求只带 X-Tenant-ID 头无凭证——
+	// requireAuth 下裸头默认 401（越权修复），显式信任网关才直通（newIntegrationServer
+	// 的 TrustGatewayHeaders=!demo 在 demo=true 时为 false，此处按用例语义覆盖）。
+	s.cfg.TrustGatewayHeaders = true
 	const tenantA = "tenant-A"
 	const tenantB = "tenant-B"
 

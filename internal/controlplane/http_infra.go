@@ -55,18 +55,25 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) error
 
 // requireTenantContext 提取并校验网关注入的租户身份上下文（认证防御）。
 //
-// 行为矩阵（修复 1+2：增加 Bearer token 回退与交叉校验）：
+// 行为矩阵（修复 1+2 + CI E2E-sec 越权漏洞真修）：
 //   - 头非空（X-Tenant-ID 已注入）：
 //   - token 也携带 tenant_id 且一致 → 返回 actx, true
 //   - token 也携带 tenant_id 但不一致 → 403 Forbidden（防绕过网关伪造租户头）
-//   - token 无 tenant_id → 返回 actx, true（仅头注入，向后兼容）
+//   - 无 token 且 requireAuth=true 且未开 --trust-gateway-headers → 401（防只伪造头冒充租户）
+//   - 无 token 且（requireAuth=false 或显式 --trust-gateway-headers=true）→ 返回 actx, true
 //   - 头为空且 token 携带 tenant_id → 回退到 token 中的 tenant_id，返回 actx, true
 //   - 头为空且 token 无 tenant_id 且 requireAuth=true → 401 Unauthorized
 //   - 头为空且 token 无 tenant_id 且 requireAuth=false 且 demo=true → 自动填充 default/demo
 //   - 头为空且 token 无 tenant_id 且 requireAuth=false 且 demo=false → 400 Bad Request
 //
-// 安全语义：Bearer token 中的 tenant_id 与 X-Tenant-ID 头交叉校验，防绕过网关伪造租户头；
-// 头空时回退到 token，支持无网关直连场景（用户中心登录后直接访问 API）。
+// 安全语义：
+//   - Bearer token 中的 tenant_id 与 X-Tenant-ID 头交叉校验，防绕过网关伪造租户头；
+//   - **头非空但无任何凭证**：requireAuth 开启时拒绝（CI E2E-sec 实测捕获的越权——
+//     此前该分支直接放行，攻击者只发 X-Tenant-ID: victim 头即可冒充任意租户。
+//     信任边界：requireAuth=true 意味着"所有请求必须携带可验证身份"（网关注入头
+//     须由可信网关剥离重发+配合网关层认证，或直接走 Bearer token）；requireAuth=false
+//     保留头直通（内网信任环境原有语义，由部署方自行保证网关前置）。
+//
 // 调用方应在 ok=false 时直接 return（响应已写入）。
 func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (authctx.Context, bool) {
 	actx := authctx.FromHTTPHeader(r.Header)
@@ -76,6 +83,15 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 		// 头非空：若 token 也携带 tenant_id，校验两者一致，防绕过网关伪造租户头。
 		if tokenTenant != "" && tokenTenant != actx.TenantID {
 			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch between X-Tenant-ID header and JWT claims"})
+			return actx, false
+		}
+		// 头非空但无凭证（无 token/cookie）——CI E2E-sec 实测捕获的越权漏网分支：
+		// 此前直接放行，攻击者只发 X-Tenant-ID: victim 头即可冒充任意租户。
+		// 处置：requireAuth 下默认拒绝；仅当部署方显式 --trust-gateway-headers=true
+		// （声明有可信网关认证后剥离凭证只留头转发，即 README IAM 路径 B）才放行。
+		// requireAuth=false 保留内网头直通（部署方自行保证前置）。
+		if tokenTenant == "" && s.requireAuth && !(s.cfg != nil && s.cfg.TrustGatewayHeaders) {
+			paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "identity header without verifiable credential (require-auth; enable --trust-gateway-headers if behind a trusted gateway)"})
 			return actx, false
 		}
 		return actx, true
