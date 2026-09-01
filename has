@@ -1,0 +1,2 @@
+genproto/googleapis/rpc v0.0.0-20260818201246 = h1: True, is /go.mod line: False
+x/net v0.58.0 = h1: True, is /go.mod line: False
