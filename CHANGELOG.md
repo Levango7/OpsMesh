@@ -4,6 +4,42 @@
 
 > 当前最新已发布版本：`v0.8.0`（2026-09-01）。五/六/七轮 + release 全链攻坚（0f77e0d→6a35690）均归入 v0.8.0 发布。
 
+## [Unreleased] — 2026-09-02 第十轮：部署配置补齐 + pkg 测试清零 + 3 个真 bug 修复
+
+> 三线并行收官（A=部署配置/B=数据库文档/C=pkg 测试 6 包 130+ 用例，2 subagent 协作）：六域接线的部署侧（compose/helm/Dockerfile）补齐、database-design.md 补档 11 个迁移、pkg/ 全部 12 包有测试且全绿——测试驱动开发实抓 3 个真 bug。
+
+### A 组：M13 六域部署配置（adf57d6）
+
+- **5 服务 Dockerfile 新建**（gpu/bot/runbook/incident/autoscaler）：克隆既有 11 服务模式（golang:1.26-bookworm 构建 + alpine:3.23 + apk upgrade 运行基线、非 root svc 用户、EXPOSE 按各自 pkg/config 默认端口）
+- **docker-compose.yml 补 5 条目**：宿主端口 8111-8115（无冲突）、健康路径逐服务对照源码（gpu/bot=/health；runbook/incident/autoscaler=/api/v1/health）
+- **helm values.yaml 补 5 条目**（gpu_svc/bot_svc/runbook_svc/incident_svc/autoscaler_svc）：默认全部 enabled=false（存量部署零行为变化），microservices.yaml 模板 range 自动渲染；incident 含 gRPC 50052
+
+### B 组：database-design.md 补档（adf57d6）
+
+- 表清单 29→55 张（007-017 共 26 张新表逐条入档）；7.1 迁移清单补 007-017 十一个文件（逐条对照 SQL 的 CREATE TABLE/ALTER 提取）；附录 A 文件↔Go 代码映射补齐（引用文件全部实存验证）；ER 图实体补 26 个（表清单/标题/实体数三处 55 自洽）
+
+### C 组：pkg/ 6 零测试包测试补齐（086d601，2 subagent 并行）
+
+- compress 21 + log 14 + migrate 24 + ratelimit 18 + tenant 24 + trace 14 = **115+ 用例**（httptest 端到端、go-sqlmock 事务链路[复用既有依赖零新增]、50/20 goroutine 并发拍、os.Pipe 捕获真实输出）
+- pkg/ 至此 **12/12 包全部有测试且全绿**
+
+### 测试驱动抓到的 3 个真 bug（C 组报告 → 主会话独立验证实锤 → 修复）
+
+| Bug | 根因 | 修复 |
+|---|---|---|
+| migrate `Rollback` 回滚必炸 | 传正版本走 applyMigration 的 **INSERT 分支**——真实 MySQL 中该版本行已存在（主键），回滚第一步记账即主键冲突 | 改传负版本走 DELETE 分支（本就是为回滚设计的） |
+| tenant `RequireTenant` 403 不可达 | `extractTenantFromRequest` 末尾恒返 "default"，"严格模式"与普通 Middleware 完全等价（文档宣称虚假） | 兜底移入 Middleware（宽松语义零变化，依赖方 auth/device-svc 全兼容）；RequireTenant 无身份真正 403 |
+| tenant `EnforceQuota` data race | 错误信息构造在 `CanAllocate` 返回后**锁外裸读 `usage.Quota` map**，与 quotaStore 并发 SetQuota 写同 map 竞争（CI -race 实测捕获） | 锁内快照判定（snapshotUsageAndQuota），无限额语义与 CanAllocate 完全对齐 |
+
+- 次要项：compress `MinCompressSize` 为死代码（WriteHeader 即初始化压缩器，阈值分支不可达）——改为如实文档注释（行为无害已上线，真实阈值需响应缓冲改变流式语义，不值得）
+- 记录项（不修）：ratelimit cleanup goroutine 无停止通道（构造期一次性成本）；tenant SetDefaultQuota 拷贝语义；log Debug 级别落 INFO
+
+### CI 修复链（2 轮）
+
+- 086d601 红：golangci-lint staticcheck 3 项（log_test De Morgan + trace_test QF1011×2）→ 修复后钉版复验 0 issues
+- adf57d6 红：Race detector（即上面 tenant data race）→ 锁内快照修复
+- 终态 **093bc89 CI 全绿**（含 Race detector -count=3）
+
 ## [Unreleased] — 2026-09-01 第九轮：UI 覆盖面清零 + 六域微服务接线（M13 最后一公里）
 
 > 两大留档项一次收官：①"6 个微服务域路由停用"——查明并非缺 UI（前端组件/API 封装/独立微服务全在），只缺 controlplane 聚合层路由，属纯接线问题；②"20+ 后端域无前端 UI"——后端 endpoint 早已全部注册，纯缺页面。3 个并行 subagent 交付 19 张页面，全部独立抽验。
