@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /svc ./cmd/p
 
 # 手动钉死：crane digest alpine:3.23 → FROM alpine:3.23@sha256:<digest> AS runtime
 FROM alpine:3.23 AS runtime
-RUN apk --no-cache add ca-certificates curl
+RUN apk --no-cache upgrade && apk --no-cache add ca-certificates curl
 # 以非 root 运行（H16，与仓库根 Dockerfile 的 nonroot 基线一致）。
 RUN addgroup -S svc && adduser -S svc -G svc
 USER svc
