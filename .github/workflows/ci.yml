@@ -531,9 +531,11 @@ jobs:
           go-version: "1.26.6"
       - name: 安装 syft（SBOM 生成依赖）
         # .goreleaser.yml 声明 sboms.artifacts: archive，goreleaser 调用 syft 生成 SBOM。
-        # 钉死 syft v1.11.0，防 latest 供应链漂移。
+        # 钉死 syft v1.51.1（2026 最新稳定版），防 latest 供应链漂移。
+        # v1.11.0（2024 版）实测不认 goreleaser v2.18.0 默认传的 --enrich all
+        # 旗标（"unknown flag: --enrich"）——两个工具版本必须同代。
         run: |
-          curl -sSL https://github.com/anchore/syft/releases/download/v1.11.0/syft_1.11.0_linux_amd64.tar.gz \
+          curl -sSL https://github.com/anchore/syft/releases/download/v1.51.1/syft_1.51.1_linux_amd64.tar.gz \
             -o /tmp/syft.tar.gz
           tar -xzf /tmp/syft.tar.gz -C /tmp syft
           sudo mv /tmp/syft /usr/local/bin/syft
