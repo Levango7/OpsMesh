@@ -11,7 +11,9 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
+  # 镜像 tag 强制小写：Docker repository 名不允许大写（实测 GitHub owner 名
+  # 'Levango7' 直接拼进 tag 报 invalid tag: repository name must be lowercase）。
+  IMAGE_PREFIX: ghcr.io/levango7
 
 jobs:
   build-and-push:
