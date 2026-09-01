@@ -26,7 +26,7 @@ COPY services/ services/
 # go.work 位于 /src，从服务目录向上回溯即可命中，workspace 模式下依赖
 # 解析全部走 go.work，不依赖 GOPATH 内的模块缓存。
 WORKDIR /src/services/${SERVICE}
-RUN ls -la . && go env GOWORK GOPATH && CGO_ENABLED=0 GOOS=linux go build -trimpath \
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
     -ldflags="-s -w -X opsmesh/internal/version.Version=${VERSION}" \
     -o /svc ./cmd/${SERVICE}
 
