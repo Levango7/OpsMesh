@@ -305,13 +305,12 @@ jobs:
       - name: buf breaking（FILE 策略，对比 main）
         # 仅在 PR 或非 main 分支 push 时检测破坏性变更（main 自身是基线，无对比意义）。
         if: github.ref != 'refs/heads/main'
-        # tag push 触发时 checkout 为 detached HEAD，refs/heads/main 不在本地——
-        # 必须显式 fetch main，否则 buf 对比基线缺失（tag 首跑实测）。
-        # 另外 working-directory=proto 会把相对路径 .git 解析到 proto/.git（不存在），
-        # 必须用 $GITHUB_WORKSPACE 绝对路径。
-        run: |
-          git fetch origin main --depth=1
-          buf breaking --against ".git#branch=origin/main,subdir=proto"
+        # against 用 https 远程克隆而非本地 .git，两个坑的根治（tag 首跑实测）：
+        # ① working-directory=proto 会把相对路径 .git 解析到 proto/.git（不存在）；
+        # ② tag/PR checkout 是 detached HEAD，refs/heads 无任何本地分支，
+        #   git fetch origin main 只建 remote-tracking ref，buf 克隆后 branch=origin/main 仍不可见。
+        # 仓库为 PUBLIC，https 克隆无需凭证。
+        run: buf breaking --against "https://github.com/${GITHUB_REPOSITORY}.git#branch=main,subdir=proto"
 
   # 镜像构建/推送 —— 推送路径须与 Helm values 的镜像引用逐字一致，
   # 否则 Argo CD 拉不到（registry.internal/opsmesh/opsmesh-binary:tag）。
