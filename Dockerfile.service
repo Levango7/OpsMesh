@@ -18,8 +18,12 @@ COPY operator/ operator/
 COPY pkg/ pkg/
 COPY internal/ internal/
 COPY services/ services/
+# golang 官方镜像 GOPATH=/go 且其中可能残留 go.mod（release 第 4 轮实测
+# "warning: ignoring go.mod in $GOPATH /go" 导致后续 go build 行为异常）。
+# 显式重置 GOPATH 避开该目录，workspace 模式下依赖解析全部走 /src 的 go.work。
+ENV GOPATH=/root/go
 WORKDIR /src/services/${SERVICE}
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+RUN ls -la . && go env GOWORK GOPATH && CGO_ENABLED=0 GOOS=linux go build -trimpath \
     -ldflags="-s -w -X opsmesh/internal/version.Version=${VERSION}" \
     -o /svc ./cmd/${SERVICE}
 
