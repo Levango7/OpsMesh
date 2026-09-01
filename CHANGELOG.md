@@ -2,7 +2,37 @@
 
 本文件记录 OpsMesh 所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [Semantic Versioning](https://semver.org/)。
 
-> 当前最新已发布版本：`v0.8.0`（2026-09-01）。[Unreleased] 段之上五/六/七轮（0f77e0d→202351a）均归入 v0.8.0 发布。
+> 当前最新已发布版本：`v0.8.0`（2026-09-01）。五/六/七轮 + release 全链攻坚（0f77e0d→6a35690）均归入 v0.8.0 发布。
+
+## [Unreleased] — 2026-09-01 第八轮：release tag 全链真跑攻坚（10 轮迭代 × 2 workflow）
+
+> CI 11/11 全绿后遗留的最后一道：`v*` tag 触发的 **release.yml（服务镜像发布）+ ci.yml release job（goreleaser 二进制发布）** 两条链从未真跑。本轮从 tag 打下到全链绿共 10 轮迭代，每一层失败均由真实 CI 日志取证。
+
+### 修复链（每轮失败 → 根因 → 修复）
+
+| 轮次 | 失败点 | 根因 | 修复 |
+|---|---|---|---|
+| 1 | `invalid tag "ghcr.io/Levango7/..."` | Docker repository 名必须小写，GitHub owner 'Levango7' 含大写 L | release.yml IMAGE_PREFIX 硬编码 `ghcr.io/levango7` |
+| 2 | `replaced by ../../: reading /go.mod: no such file` | 服务 go.mod 全部 `replace opsmesh => ../../`，单服务目录作构建上下文时容器内无主模块 | 新建根级 Dockerfile.service（上下文=仓库根，COPY go.work + 全部模块目录） |
+| 3 | `"/operator": not found` | .dockerignore 排除 operator/，但 go.work 引用它 | .dockerignore 移除 operator 排除 |
+| 4 | `warning: ignoring go.mod in $GOPATH /go` + `go.mod not found` | **golang 官方镜像默认 WORKDIR=/go（即 GOPATH）**——COPY 全落 GOPATH 且 WORKDIR /src/services/<svc> 是空目录，两条报错同根 | Dockerfile.service COPY 前先 `WORKDIR /src` |
+| 5 | Trivy HIGH×2（musl CVE-2026-40200） | alpine:3.19 已 EOL（2025-11），musl 补丁 r6 不再进镜像 | 全 14 个 Dockerfile runtime 基础镜像 alpine:3.19→**3.23**（支持到 2027-11） |
+| 6 | Trivy HIGH×1（openssl CVE-2026-14456） | alpine:3.23.5 基镜像预置 openssl 3.5.7-r0，而源里已有修复版 3.5.8-r0——`apk add` 只装不升 | runtime 阶段 `apk upgrade && apk add`（14 文件） |
+| 7 | ✅ release.yml 全链绿（8/8 job：6 服务 build+push+Trivy + changelog + github-release） | — | — |
+| 8 | ci.yml proto job：`buf breaking` 找不到 `proto/.git` | tag/PR checkout 是 detached HEAD，且 working-directory=proto 把相对 `.git` 解析到 `proto/.git`——**此步骤在 tag/PR 触发下从未跑通过**（main push 会跳过所以一直没暴露）；首次修复（git fetch origin main + branch=origin/main）实测仍失败：fetch 只建 remote-tracking ref | 改用 `https://github.com/${GITHUB_REPOSITORY}.git#branch=main,subdir=proto` 远程克隆对比（PUBLIC 仓库免凭证） |
+| 9 | goreleaser `field formats not found in type config.Archive`（行 39） | **goreleaser v2.4.8（2025 初）不认 v2 的 archives.formats 复数语法**——.goreleaser.yml 声明的是 v2 新格式，CI 钉的版本太老 | goreleaser v2.4.8→**v2.18.0**（2026 最新稳定） |
+| 10 | （验证中） | — | — |
+
+### 发布产物（独立抽验实存）
+
+- **GHCR 镜像**：`ghcr.io/levango7/{auth,device,alert,task,config,log}-svc` 各带 `0.8.0` + `latest` + 每 SHA tag，Trivy 扫描零 HIGH/CRITICAL
+- **GitHub Release v0.8.0**：非草稿非预发布，正文从 CHANGELOG 充实（821 字符）
+- 二进制产物（tar.gz linux/amd64+arm64、checksums、SBOM）：随第 10 轮 goreleaser 首跑落地
+
+### 架构确认
+
+- 两个 workflow 对同一 tag 无冲突：release.yml（~2 分钟）先建 Release 页面，goreleaser（等 11 门禁全绿，~17 分钟）后到只补产物——goreleaser 对已存在 Release 默认 keep-existing 不覆盖正文（官方文档确认），产物照常上传
+- 发现并解锁：proto job 的 buf breaking 自仓库诞生起在 tag/PR 触发下就是坏的（needs 连坐导致 goreleaser release job 从未真跑过）
 
 ## [0.8.0] — 2026-09-01（五/六/七轮合并发布）
 

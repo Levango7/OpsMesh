@@ -30,10 +30,16 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -trimpath
+      # 注意 -trimpath 是 go build 旗标不是链接器旗标——写进 -ldflags 会被
+      # linker 拒收（首跑实测 "flag provided but not defined: -trimpath"）。
+      # 路径剥离由下方 flags 的 -trimpath 承担（作用于构建阶段）。
+      - -s -w
       - -X opsmesh/internal/version.Version={{.Version}}
       - -X opsmesh/internal/version.Commit={{.ShortCommit}}
       - -X opsmesh/internal/version.Date={{.Date}}
+    # 路径剥离：等价于命令行 go build -trimpath。
+    flags:
+      - -trimpath
 
 archives:
   - formats: [tar.gz]
