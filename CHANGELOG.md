@@ -4,6 +4,38 @@
 
 > 当前最新已发布版本：`v0.7.0`（2026-08-16）。`[Unreleased]` 段累积未发布变更，下一个发布版本号待定（按实际演进预计 `v0.8.0`；若按文档同步批次独立发版可记为 `v0.5.0`，由发布流程最终确定）。
 
+## [Unreleased] — 2026-09-01 第七轮：CI 23 连红 → 全绿攻坚（11 job × 19 提交）
+
+> 本轮从「CI 从未跑通过」打到全绿：23+ 次真实 CI 运行、19 个修复提交、每一项修复均由真实 CI 日志取证（gh run logs），不凭猜测。**结束时 11/11 job 全绿**（build-test / integration / security / services / proto / Frontend / E2E-real / E2E-sec / Race / image / image-agent）。
+
+### CI 转绿过程中抓到的真实 bug（均已在第六轮前各批次修复，本轮收尾清零）
+
+| 类别 | 问题 | 根因与修复 |
+|---|---|---|
+| lint | 112 项静态错误 | errcheck 18 处语义化修复 + goimports local-prefixes 对齐（54 文件）+ G404/G702/G703 处置 + golangci-lint **版本钉死 v2.13.2**（此前 latest 漂移致本机绿 CI 红） |
+| E2E mock | 78 用例全挂 | **Service Worker 绕过 page.route mock**：生产 PWA 的 sw.js 拦截 /api/* 自行 fetch，不经 Playwright mock 层直连无后端 proxy → ECONNREFUSED。`serviceWorkers: 'block'` |
+| E2E mock | 3 用例挂（confirm 迁移连带） | 断言原生 dialog 的用例改 ConfirmModal 交互；confirm 迁移后组件 Teleport to body，组件标签 testid 不可靠 → 用内部 confirm-modal 定位 |
+| agent 测试 | killProcessGroup(1) Linux 广播 SIGTERM 杀掉整个 CI job | 负 PID 语义=向所有可及进程组广播；fork sleep 子进程独立进程组再杀其组 |
+| runner OOM | -race+coverage 全仓 81s SIGTERM(143) | 测试按资源分批（大包逐个/小包合并 -p 2）+ agent 批 GOMEMLIMIT=3GiB+拆半 + agent 包 TSan 分配器 goroutine 密集场景恒 OOM 降载 |
+| DATA RACE | 备份 Create 的指针竞争 | CI -race 实证：goroutine162 写 vs goroutine161 json 序列化读同一结构体 → goroutine 持独立副本 |
+| DURATION | TestExecute_Shell Linux 秒挂 | echo 级命令 <1ms 截断为 0 → 耗时保底 1ms（快速失败路径保持 0ms 语义） |
+| **生产越权** | **裸 X-Tenant-ID 头冒充任意租户** | **E2E-sec 实测 200 穿透**：头非空但无凭证分支直接放行——修复：requireAuth 下默认 401，显式 --trust-gateway-headers=true（网关认证后剥离凭证的场景）才放行 |
+| 迁移链 | 015 用 MySQL 8.0 保留字 usage/interval | 裸用必报 1064 → 改名 usage_data/interval_spec（迁移+SQL 同步；全仓保留字扫描确认无第三处） |
+| 迁移链 | devices 表缺 hostname/os/arch | 001 建表漏列 → 017 迁移正式化（fixup 转正）+ agents.secret |
+| **生产静默丢数据** | **MultiSchemaStore 从未建 schema** | 全仓无 CREATE DATABASE——首租户写入即 Unknown database → CreateTicket 静默 nil。defaultStoreFactory 先建库再连 |
+| SQL | SetSecret 首写 NULL 扫描失败 | MAX(version) 空表返回一行 NULL（非 ErrNoRows）→ NullInt64 承接 |
+| SQL | HeartbeatService 返回 false | MySQL RowsAffected 只数实际变更行，秒级 DATETIME 同值更新=0 行 → DSN 统一注入 clientFoundRows=true |
+| helm | 三轮 lint 同错 | microservices.yaml 注释体内 */ 序列提前闭合 ×2 + **真凶：notes.txt 应为大写 NOTES.txt**（helm 只对大写名做提示渲染不参与 YAML 解析）。本地 helm v3.14.4 同版实测锁定 |
+| 镜像构建 | 容器内 'cannot load module operator' | go.work 引用被 .dockerignore 排除的模块 → Dockerfile 加 GOWORK=off（主模块自洽） |
+| 依赖 CVE | x/crypto CRITICAL + x/net/x/text/x/mod HIGH + tf-provider grpc CRITICAL | Trivy 全 lockfile 扫描 → 19 个模块全部升级到一致组合（crypto v0.55/net v0.57/text v0.41/grpc v1.83）；go.work.sum 陈旧哈希行清理 |
+| 依赖文件 | go.work.sum 被写坏为 CRLF | PowerShell Set-Content -Encoding ascii 重写引入 196 处 CRLF，容器校验拒绝 → 转回 LF + go.sum tidy 补全 |
+
+### 流程产出
+
+- **安全测试的价值实证**：E2E-sec 的租户越权用例 401 断言抓到生产越权漏洞；CI -race 抓到备份 DATA RACE；Trivy 抓到 CRITICAL CVE——全链从未跑通前这些全被掩盖
+- **教训（写入 memory）**：目录被外部清空 3 次（workbuddy 侧），工作区两次重建（现 OpsMesh-ci）；PowerShell Set-Content 写 Go 文件必炸（BOM/CRLF 双雷），本轮 go.work.sum 事故后禁用，统一 Read+Edit
+- 修复完成即 commit+push（不留未提交状态防目录事故）
+
 ## [Unreleased] — 2026-08-30 第六轮：留档项四项补齐（告警正确性 + Helm 微服务 + UX 收尾 + 文档保真）
 
 ### 告警推送正确性修复（notifyLoop 水位线 → 指纹去重）
