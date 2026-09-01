@@ -32,12 +32,15 @@ docs
 ui-screenshots
 
 # ── CI / 部署清单（构建镜像本身不需要）──
+# operator/ 不再排除：根级 Dockerfile.service 构建微服务时 COPY go.work 引用全部
+# 模块目录（缺目录即 docker 'not found'，release 第 3 轮实测）；operator 源码
+# 仅数十个 Go 文件，体积影响可忽略。deploy/ 清单仍排除。
 .github
 deploy
-operator
 docker-compose*.yaml
 Dockerfile
 Dockerfile.agent
+Dockerfile.service
 .dockerignore
 
 # ── protobuf 源（生成的 Go 代码已提交在 internal/grpcx/pb）──
