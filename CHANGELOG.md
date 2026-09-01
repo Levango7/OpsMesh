@@ -4,6 +4,35 @@
 
 > 当前最新已发布版本：`v0.8.0`（2026-09-01）。五/六/七轮 + release 全链攻坚（0f77e0d→6a35690）均归入 v0.8.0 发布。
 
+## [Unreleased] — 2026-09-01 第九轮：UI 覆盖面清零 + 六域微服务接线（M13 最后一公里）
+
+> 两大留档项一次收官：①"6 个微服务域路由停用"——查明并非缺 UI（前端组件/API 封装/独立微服务全在），只缺 controlplane 聚合层路由，属纯接线问题；②"20+ 后端域无前端 UI"——后端 endpoint 早已全部注册，纯缺页面。3 个并行 subagent 交付 19 张页面，全部独立抽验。
+
+### 六域微服务聚合接线（bfb8644）
+
+- **`internal/controlplane/service_proxy.go`**：gpu/runbook/incident/autoscaler/portal 五域反向代理转发到 services/* 独立进程——静态映射表（env `*_SVC_URL` 可覆盖，默认与各 svc pkg/config 端口一致）；**路径改写**（autoscaler-svc 真实路径 `/api/v1/rules`、portal-svc `/api/v1/requests`，均无域前缀——代理层剥域前缀转发）；**鉴权双守卫**（requirePermission + requireTenantContext，微服务自身无租户鉴权，聚合层统一做——与第七轮越权修复同一信任边界）；连接预检不可达返回 503 带服务名（前端可提示"服务未启动"而非空洞 502）；剥离 Cookie 防会话凭证落地内部服务日志
+- **`internal/controlplane/bot_bridge.go`**：ChatOps Web 命令台——bot-svc 是 IM 平台 webhook 入口（/webhook/{wecom,feishu,slack,dingtalk}），与前端 BotView 契约（/bot/command 等）不同构，属真实契约缺口。聚合层实现 Web 契约：命令语法与 bot-svc 完全一致（`/opsmesh status|devices|alerts|ack|metrics|help`，帮助见页面），数据源站内 store（租户隔离天然继承）；历史进程级内存（每租户 200 条有界）；web 平台恒开，IM 平台开关 env `BOT_PLATFORMS_ENABLED` 控制
+- **RBAC 六域权限补种**（sql_rbac.go rbacPermSpecs）：gpu/bot/runbook/incident/autoscaler/portal 各 read+write 共 12 权限点——此前缺目录（admin 全量不受影响，但角色无法被显式授予、权限页不可见）；viewer 派生规则自动获得全部 read
+- **前端六路由启用**（router/index.js）：GPU/ChatOps/Runbook/事件/扩缩容/门户 恢复注册
+- **防回归测试 9 项**（service_proxy_test.go）：路径改写×9 用例、代理转发端到端（httptest 后端+env 覆盖+方法透传）、不可达 503、无凭证 401、bot 执行+历史、语法错误记录、平台/快捷命令、权限种子、env 覆盖解析——全部真跑通过
+
+### 20 域管理页面（18c8730，3 subagent 并行交付后独立抽验）
+
+- **19 view + 19 api 封装 + 46 路由 + i18n 中英双语逐键对齐**：定时任务/自动化规则/Webhook/脚本/工单/SLO/流量策略/流水线/ArgoCD/合规/HA/备份/配额/租户/计费(4 tab)/API Key(明文一次性展示)/网关路由(统计卡片)/审计事件(只读+筛选+导出)/通知渠道(渠道+模板双 tab)
+- 全部克隆 RolesView 黄金模板：DataTable + DetailDrawer + ConfirmModal + toast，**零原生 confirm/alert**；高危操作（HA failover/备份恢复/流水线触发）ConfirmModal 二次确认
+- 表单字段对齐真实后端 struct（subagent 逐一 Read handler 核实，非凭空设计）
+- 独立抽验：文件清单 19+19 ✓、路由 20/20 ✓、i18n zh/en 键逐一相等 ✓、自跑 vite build ✓、vitest 631/631 ✓、eslint 0 error ✓
+
+### 金丝雀活体验证（D 组）
+
+- 25 个新端点活探测全部注册且守卫生效：未鉴权 401/400（schedules/quotas/notify-channels 因 handler 先解析租户头返回 400）vs 未注册路径 404——语义区分清晰，无"打开即 404"的死路由
+- admin 一次性密码随机化/首登强制改密语义实测符合设计
+
+### CI 状态
+
+- 首推两轮 build-test 红：golangci-lint v2.13.2 报 gofmt 2 文件（本地未格式化直写）→ gofmt 修复 + 本地钉版复验 0 issues（510fc1c）
+- 终态 **11 success + 1 skipped（release job 仅 tag 触发）全绿**（run 33547881837）
+
 ## [Unreleased] — 2026-09-01 第八轮：release tag 全链真跑攻坚（10 轮迭代 × 2 workflow）
 
 > CI 11/11 全绿后遗留的最后一道：`v*` tag 触发的 **release.yml（服务镜像发布）+ ci.yml release job（goreleaser 二进制发布）** 两条链从未真跑。本轮从 tag 打下到全链绿共 10 轮迭代，每一层失败均由真实 CI 日志取证。
