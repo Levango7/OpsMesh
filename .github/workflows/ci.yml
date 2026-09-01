@@ -540,8 +540,10 @@ jobs:
           syft version
       - uses: goreleaser/goreleaser-action@v7
         with:
-          # 钉死 goreleaser v2.4.8，防 latest 供应链漂移
-          version: v2.4.8
+          # 钉死 goreleaser v2.18.0（2026 最新稳定版），防 latest 供应链漂移。
+          # v2.4.8 首跑实测不认 v2 的 archives.formats 复数语法（"field formats
+          # not found in type config.Archive"）——配置声明的是 v2 新格式，版本必须跟上。
+          version: v2.18.0
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
