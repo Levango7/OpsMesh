@@ -518,6 +518,11 @@ jobs:
     needs: [build-test, integration, security, services, proto, frontend, race]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # GITHUB_TOKEN 权限（job 级最小化）：goreleaser 上传产物到 GitHub Release
+    # 需要 contents:write。本 workflow 无顶级 permissions 块，默认 token 是只读
+    # （首跑实测 PATCH /releases/:id 403 Resource not accessible by integration）。
+    permissions:
+      contents: write
     # 同 image job：cosign secret 提升到 job 级 env，保证产物签名 step 的 if 可读。
     env:
       COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
