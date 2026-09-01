@@ -79,7 +79,7 @@
                 :class="['graph-tab', graphMode === m.key ? 'active' : '']"
                 :data-testid="'cmdb-graph-mode-' + m.key"
                 @click="graphMode = m.key"
-                >{{ m.label }}</button>
+              >{{ m.label }}</button>
             </div>
             <!-- 力导向 / 拓扑视图：RelationGraph 组件 -->
             <RelationGraph

@@ -137,11 +137,11 @@
             </div>
             <h4>{{ $t('logs.examples') }}</h4>
             <ul class="example-list">
-            <li v-for="ex in examples" :key="ex.q" :data-testid="'logs-example-' + ex.q.replace(/[^a-z0-9]+/gi, '-')">
-              <code class="example-q">{{ ex.q }}</code>
-              <span class="muted"> — {{ $t(ex.descKey) }}</span>
-              <button class="xs outline try-btn" data-testid="btn-row-try-example" @click="tryExample(ex.q)">{{ $t('logs.tryIt') }}</button>
-            </li>
+              <li v-for="ex in examples" :key="ex.q" :data-testid="'logs-example-' + ex.q.replace(/[^a-z0-9]+/gi, '-')">
+                <code class="example-q">{{ ex.q }}</code>
+                <span class="muted"> — {{ $t(ex.descKey) }}</span>
+                <button class="xs outline try-btn" data-testid="btn-row-try-example" @click="tryExample(ex.q)">{{ $t('logs.tryIt') }}</button>
+              </li>
             </ul>
           </div>
         </div>

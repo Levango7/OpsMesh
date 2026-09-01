@@ -21,8 +21,12 @@ import (
 )
 
 const (
-	// MinCompressSize is the minimum response body size (in bytes) to compress.
-	// Smaller responses are not compressed to avoid overhead.
+	// MinCompressSize 预留的最小压缩阈值（历史宣称 1KB 以下不压缩）。
+	// 实际行为（测试补齐时实测确认）：WriteHeader(200) 即初始化压缩器，
+	// Write 的阈值分支不可达——任意大小的 200 响应都会被压缩。小响应
+	// 压缩的开销可接受且已在生产运行，此处保留常量仅作文档锚点，
+	// 不再宣称"小响应跳过"（如需真实阈值须引入响应缓冲，会改变
+	// 流式语义，见 compress_test.go TestMiddlewareSmallBodyCompressedDespiteDocs）。
 	MinCompressSize = 1024 // 1KB
 
 	// DefaultGzipLevel is the default gzip compression level (balanced).

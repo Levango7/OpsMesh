@@ -117,8 +117,11 @@ func (m *Migrator) Rollback(targetVersion int) error {
 		if !ok {
 			return fmt.Errorf("migrate: no rollback file for version %d", v)
 		}
+		// 记账方向：负版本走 applyMigration 的 DELETE 分支（删除该版本的
+		// 已应用记录）。传正版本会误走 INSERT 分支——真实 MySQL 中该版本行
+		// 已存在（PRIMARY KEY），主键冲突导致回滚第一步就失败（测试补齐时实测）。
 		if err := m.applyMigration(migration{
-			Version: v,
+			Version: -v,
 			Name:    downFile.name,
 			Path:    downFile.path,
 		}); err != nil {

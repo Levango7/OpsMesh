@@ -318,6 +318,13 @@ func Middleware(authSecret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			tenantID := extractTenantFromRequest(r, authSecret)
+			// Middleware 语义：无法确定租户时兜底 default（宽松模式）。
+			// RequireTenant 才是严格模式（无租户 403）——两模式差异由这里兜底
+			// 实现：extractTenantFromRequest 不再自带兜底，否则 RequireTenant
+			// 的 403 分支永不可达（"stricter"宣称形同虚设，测试补齐时实测确认）。
+			if tenantID == "" {
+				tenantID = "default"
+			}
 			ctx := WithTenantID(r.Context(), tenantID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -370,6 +377,8 @@ func (m *Manager) QuotaMiddleware(resourceType ResourceType, amount int) func(ht
 }
 
 // extractTenantFromRequest extracts the tenant ID from headers and JWT.
+// 无租户身份时返回空串（兜底策略由调用方决定：Middleware 兜 default，
+// RequireTenant 拒绝 403）。
 func extractTenantFromRequest(r *http.Request, authSecret string) string {
 	// 1. Check X-Tenant-ID header.
 	if tid := strings.TrimSpace(r.Header.Get("X-Tenant-ID")); tid != "" {
@@ -387,7 +396,7 @@ func extractTenantFromRequest(r *http.Request, authSecret string) string {
 		}
 	}
 
-	return "default"
+	return ""
 }
 
 // extractTenantFromToken parses a JWT token and extracts the tenant_id claim.
