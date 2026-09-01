@@ -347,6 +347,23 @@ var rbacPermSpecs = []struct {
 	{"billing", "billing:write", "管理计费"},
 	{"platform", "platform:read", "查看平台配置"},
 	{"platform", "platform:write", "管理平台配置"},
+	// M13 六域接线新增（聚合代理/ChatOps 命令台的权限点）：
+	// 前端 router requirePerm 已引用（nav.gpu/bot/runbooks/incidents/autoscaler/portal），
+	// 此前缺目录——requirePermission 对 admin 不受影响（admin=全量），但角色无法被
+	// 显式授予、权限管理页不可见。补种后 SQLStore INSERT IGNORE 幂等/MemoryStore
+	// 构造期全量重建；viewer/operator 派生规则自动生效（viewer=全部 *:read）。
+	{"gpu", "gpu:read", "查看GPU资源"},
+	{"gpu", "gpu:write", "管理GPU工作负载/模型"},
+	{"bot", "bot:read", "查看ChatOps命令台"},
+	{"bot", "bot:write", "执行ChatOps命令"},
+	{"runbook", "runbook:read", "查看Runbook"},
+	{"runbook", "runbook:write", "编辑/执行Runbook"},
+	{"incident", "incident:read", "查看事件"},
+	{"incident", "incident:write", "编辑事件"},
+	{"autoscaler", "autoscaler:read", "查看扩缩容规则"},
+	{"autoscaler", "autoscaler:write", "编辑扩缩容规则"},
+	{"portal", "portal:read", "查看服务门户"},
+	{"portal", "portal:write", "审批门户请求"},
 }
 
 // seedRBAC 在 initSchema 末尾调用，幂等写入默认权限/角色/用户。

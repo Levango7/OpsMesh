@@ -55,6 +55,22 @@ func (s *Server) Start() error {
 	s.orchHandler.RegisterRoutes(orchMux)
 	mux.Handle("/api/v1/workflows", paginate.PaginateJSONHandler(orchMux))
 	mux.Handle("/api/v1/workflows/", orchMux)
+	// M13 微服务聚合代理：gpu/runbook/incident/autoscaler/portal 五域转发到
+	// services/* 独立进程（规则表见 service_proxy.go；bot 域由 bot_bridge.go 提供
+	// 聚合 handler，契约与前端 src/api/bot.js 对齐）。鉴权在代理层统一完成。
+	for i := range serviceProxyRules {
+		if serviceProxyRules[i].publicPrefix == "" {
+			continue
+		}
+		mux.HandleFunc(serviceProxyRules[i].publicPrefix, s.handleServiceProxy)
+		mux.HandleFunc(serviceProxyRules[i].publicPrefix+"/", s.handleServiceProxy)
+	}
+	// ChatOps Web 命令台（bot_bridge.go）：命令语法与 bot-svc IM webhook 一致
+	//（/opsmesh status|devices|alerts|ack|metrics|help），历史进程级内存。
+	mux.HandleFunc("/api/v1/bot/command", s.handleBotCommand)
+	mux.HandleFunc("/api/v1/bot/history", s.handleBotHistory)
+	mux.HandleFunc("/api/v1/bot/platforms", s.handleBotPlatforms)
+	mux.HandleFunc("/api/v1/bot/quick-commands", s.handleBotQuickCommands)
 	// 控制面联邦：仅当配置了 --federation-peers 时注册联邦 API。
 	// 未启用时这些端点返回 404（mux 未注册），保证向后兼容。
 	if s.fed != nil {
