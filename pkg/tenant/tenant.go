@@ -163,13 +163,27 @@ func (m *Manager) EnforceQuota(ctx context.Context, tenantID string, resourceTyp
 		}
 	}
 
-	if !usage.CanAllocate(resourceType, amount) {
+	// 快照读取（锁内）：CanAllocate 返回后 RLock 已释放，若直接在错误
+	// 信息里裸读 usage.Quota/GetUsage，会与上方 quotaStore 并发 SetQuota
+	// 写同一 map 构成 data race（CI -race -count=3 实测捕获）。
+	// 判定语义与 CanAllocate 完全一致：无限额（limit<=0）一律放行。
+	current, limit, hasLimit := usage.snapshotUsageAndQuota(resourceType)
+	if hasLimit && limit > 0 && current+amount > limit {
 		return fmt.Errorf("%w: tenant=%s resource=%s amount=%d current=%d limit=%d",
 			ErrQuotaExceeded, tenantID, resourceType, amount,
-			usage.GetUsage(resourceType), usage.Quota[resourceType])
+			current, limit)
 	}
 
 	return nil
+}
+
+// snapshotUsageAndQuota 锁内一次性读取用量与配额（供超限判定与错误信息构造）。
+// hasLimit=false 或 limit<=0 表示无限额（与 CanAllocate 的判定口径一致）。
+func (u *TenantUsage) snapshotUsageAndQuota(resourceType ResourceType) (current, limit int, hasLimit bool) {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	limit, hasLimit = u.Quota[resourceType]
+	return u.Usage[resourceType], limit, hasLimit
 }
 
 // TrackUsage records the consumption of a resource by a tenant.

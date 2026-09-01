@@ -430,7 +430,11 @@ func TestAPIReturnTypeSmoke(t *testing.T) {
 	})
 	HTTPMiddleware("smoke")(compressLike(base)).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 
-	// grpc 拦截器可赋给对应类型变量。
-	var _ grpc.UnaryServerInterceptor = GRPCServerInterceptor()
-	var _ grpc.UnaryClientInterceptor = GRPCClientInterceptor()
+	// grpc 拦截器是可调用的非 nil 函数（行为断言，替代 var _ 类型哨兵——
+	// staticcheck QF1011 不接受 var _ 显式类型声明形式）。
+	serverIC := GRPCServerInterceptor()
+	clientIC := GRPCClientInterceptor()
+	if serverIC == nil || clientIC == nil {
+		t.Fatal("gRPC 拦截器不应为 nil")
+	}
 }

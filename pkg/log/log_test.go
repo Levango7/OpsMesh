@@ -182,7 +182,7 @@ func TestLoggerMethodsNoPanic(t *testing.T) {
 func TestLoggerDebugLevelFiltering(t *testing.T) {
 	// debug 级别：条件满足，调用 logx。
 	lDebug := Config("svc", "debug")
-	if !(lDebug.level <= slog.LevelDebug) {
+	if lDebug.level > slog.LevelDebug {
 		t.Fatal("Config(debug) 的 level 应满足 Debug 输出条件")
 	}
 
