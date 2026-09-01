@@ -660,6 +660,216 @@ services:
     podLabels: {}
     securityContext: {}
 
+  # ---- 以下 5 域为 M13 六域接线（controlplane service_proxy.go 转发）对应服务 ----
+  # 聚合层默认转发地址 http://127.0.0.1:<默认端口>；K8s 部署时由
+  # controlplane 的 env *_SVC_URL 指向 Service DNS（如 http://opsmesh-gpu-svc:8090）。
+  gpu_svc:
+    # GPU 资源管理（纯 HTTP；gpu-svc/pkg/config：GPU_SVC_HTTP_PORT 默认 8090）
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/gpu-svc
+      tag: "latest"
+      digest: ""
+      pullPolicy: IfNotPresent
+    httpPort: 8090
+    grpcPort: 0
+    replicas: 1
+    # gpu-svc 无 STORE_TYPE/DSN env（Ollama 集成为外部依赖 OLLAMA_URL）
+    storeEnvPrefix: ""
+    storeType: "memory"
+    probe:
+      # gpu-svc/cmd/gpu-svc/main.go 健康路径 /health
+      path: /health
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    env: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+
+  bot_svc:
+    # ChatOps IM webhook 入口（纯 HTTP；bot-svc/pkg/config：BOT_SVC_HTTP_PORT 默认 8080）
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/bot-svc
+      tag: "latest"
+      digest: ""
+      pullPolicy: IfNotPresent
+    httpPort: 8080
+    grpcPort: 0
+    replicas: 1
+    # bot-svc 无 STORE_TYPE/DSN env（IM 平台 token 各自 env）
+    storeEnvPrefix: ""
+    storeType: "memory"
+    probe:
+      # bot-svc/internal/handler/handler.go:38 健康路径 /health
+      path: /health
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    env: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+
+  runbook_svc:
+    # Runbook 自动化（纯 HTTP；runbook-svc/pkg/config：RUNBOOK_SVC_HTTP_PORT 默认 8082）
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/runbook-svc
+      tag: "latest"
+      digest: ""
+      pullPolicy: IfNotPresent
+    httpPort: 8082
+    grpcPort: 0
+    replicas: 1
+    storeEnvPrefix: "RUNBOOK_SVC"
+    storeType: "memory"
+    probe:
+      # runbook-svc/internal/handler/handler.go:28 健康路径 /api/v1/health
+      path: /api/v1/health
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    env: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+
+  incident_svc:
+    # 事件管理（HTTP+gRPC；incident-svc/pkg/config：HTTP 8082 / gRPC 50052）
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/incident-svc
+      tag: "latest"
+      digest: ""
+      pullPolicy: IfNotPresent
+    httpPort: 8082
+    grpcPort: 50052
+    replicas: 1
+    storeEnvPrefix: "INCIDENT_SVC"
+    storeType: "memory"
+    probe:
+      # incident-svc/internal/handler/handler.go:28 健康路径 /api/v1/health
+      path: /api/v1/health
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    env: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+
+  autoscaler_svc:
+    # 自动扩缩容（纯 HTTP；autoscaler-svc/pkg/config：AUTOSCALER_SVC_HTTP_PORT 默认 8080）
+    enabled: false
+    image:
+      repository: ghcr.io/levango7/autoscaler-svc
+      tag: "latest"
+      digest: ""
+      pullPolicy: IfNotPresent
+    httpPort: 8080
+    grpcPort: 0
+    replicas: 1
+    storeEnvPrefix: "AUTOSCALER_SVC"
+    storeType: "memory"
+    probe:
+      # autoscaler-svc/internal/handler/handler.go:28 健康路径 /api/v1/health
+      path: /api/v1/health
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    env: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+
 ## @section ServiceAccount
 serviceAccount:
   create: true

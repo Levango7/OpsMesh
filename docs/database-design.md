@@ -20,12 +20,12 @@
 
 连接池策略（`NewSQLStore`）：单 schema 上限 `MaxOpenConns=50` / `MaxIdleConns=10` / `ConnMaxLifetime=30m`；多租户 schema 隔离下总连接数 = 租户数 × 50，须配合 MySQL `max_connections` 容量规划。DSN 强制 `parseTime=true`，便于 `DATETIME` 列直接 Scan 进 `time.Time`。
 
-### 1.2 表清单（共 29 张表）
+### 1.2 表清单（共 55 张表）
 
 | # | 表名 | 领域 | 主键 | 来源迁移 |
 | --- | --- | --- | --- | --- |
-| 1 | `agents` | 设备管理 | `agent_id` | 001 |
-| 2 | `devices` | 设备管理 | `device_id` | 001 |
+| 1 | `agents` | 设备管理 | `agent_id` | 001 / 017 |
+| 2 | `devices` | 设备管理 | `device_id` | 001 / 017 |
 | 3 | `tasks` | 任务管理 | `task_id` | 001 / 002 |
 | 4 | `task_results` | 任务管理 | `task_id` | 001 |
 | 5 | `alerts` | 告警管理 | `id` (自增) | 001 |
@@ -53,6 +53,32 @@
 | 27 | `log_entries` | 日志检索 | `id` (自增) | `logstore/sql.go` |
 | 28 | `schema_migrations` | 迁移元 | `version` | `sql.go` 运行期 |
 | 29 | `leader_lease` | 领导权 | `id` (=1 单行) | 001 |
+| 30 | `secrets` | 密钥外置 | `id` | 007 |
+| 31 | `configs` | 配置热推 | `id` | 008 |
+| 32 | `config_history` | 配置热推 | `id` (自增) | 008 |
+| 33 | `services` | 服务目录 | `id` | 009 |
+| 34 | `slos` | SLO | `id` | 010 |
+| 35 | `tickets` | 工单 | `id` | 010 |
+| 36 | `argocd_apps` | ArgoCD | `id` | 011 |
+| 37 | `pipeline_templates` | 流水线 | `id` | 011 / 016 |
+| 38 | `pipeline_runs` | 流水线 | `id` | 011 |
+| 39 | `traffic_policies` | 流量策略 | `id` | 011 |
+| 40 | `backup_records` | 灾备 | `id` | 012 |
+| 41 | `compliance_reports` | 合规 | `id` | 012 |
+| 42 | `automation_rules` | 自动化 | `id` | 013 |
+| 43 | `automation_executions` | 自动化 | `id` | 013 |
+| 44 | `network_devices` | 网络 | `id` | 013 |
+| 45 | `network_metrics` | 网络 | `id` | 013 |
+| 46 | `scripts` | 脚本 | `id` | 014 |
+| 47 | `script_executions` | 脚本 | `id` | 014 |
+| 48 | `webhooks` | Webhook | `id` | 014 |
+| 49 | `webhook_deliveries` | Webhook | `id` | 014 |
+| 50 | `tenants` | 多租户 | `id` | 015 |
+| 51 | `api_keys` | API Key | `id` | 015 |
+| 52 | `plugins` | 插件 | `id` | 015 |
+| 53 | `billing_plans` | 计费 | `id` | 015 |
+| 54 | `subscriptions` | 计费 | `id` | 015 |
+| 55 | `invoices` | 计费 | `id` | 015 |
 
 > 说明：任务书提及的 `agent_logs / sessions / audit_events / ci_instances / deployments / release_records / workflows / middleware_instances / silence_rules` 在当前代码中**不存在**或**已更名**：
 > - `agent_logs` → `SQLStore` 采用内存 slice 暂存（`sql_agent_logs.go`），检索侧由 `logstore.log_entries` 表承担；
@@ -67,7 +93,7 @@
 
 ## 第 2 章 ER 图
 
-下图用 Mermaid `erDiagram` 语法描述全部 29 张表及其逻辑关系（虚线关系为应用层维护，无外键约束）。
+下图用 Mermaid `erDiagram` 语法描述全部 55 张表及其逻辑关系（虚线关系为应用层维护，无外键约束；007-017 增量 26 表以字段主键+逻辑外键表示，字段明细见各迁移文件）。
 
 ```mermaid
 erDiagram
@@ -291,6 +317,146 @@ erDiagram
         INT     version PK
         DATETIME applied_at
         VARCHAR checksum "sha256 防篡改"
+    }
+
+    %% ===== 007-017 增量域（M13 后全量表） =====
+    secrets {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        VARCHAR provider
+        VARCHAR key_name
+    }
+    configs {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        TEXT    value
+    }
+    config_history {
+        BIGINT  id PK
+        VARCHAR config_id FK
+        TEXT    old_value
+    }
+    services {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        VARCHAR endpoint
+    }
+    slos {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        VARCHAR service_id FK
+        VARCHAR status
+    }
+    tickets {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        VARCHAR status
+        VARCHAR priority
+    }
+    argocd_apps {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        VARCHAR app_name
+    }
+    pipeline_templates {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        VARCHAR agent_id "016 增列"
+        MEDIUMTEXT stages
+    }
+    pipeline_runs {
+        VARCHAR id PK
+        VARCHAR template_id FK
+        VARCHAR status
+    }
+    traffic_policies {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        VARCHAR policy_type
+    }
+    backup_records {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        VARCHAR status
+    }
+    compliance_reports {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        VARCHAR rule_id FK
+        VARCHAR result
+    }
+    automation_rules {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        VARCHAR trigger_type
+    }
+    automation_executions {
+        VARCHAR id PK
+        VARCHAR rule_id FK
+        VARCHAR status
+    }
+    network_devices {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        VARCHAR device_ip
+    }
+    network_metrics {
+        BIGINT  id PK
+        VARCHAR network_device_id FK
+        FLOAT   latency_ms
+    }
+    scripts {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        MEDIUMTEXT content
+    }
+    script_executions {
+        VARCHAR id PK
+        VARCHAR script_id FK
+        VARCHAR status
+    }
+    webhooks {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        VARCHAR url
+    }
+    webhook_deliveries {
+        VARCHAR id PK
+        VARCHAR webhook_id FK
+        INT     status_code
+    }
+    tenants {
+        VARCHAR id PK
+        VARCHAR name UK
+        VARCHAR status
+    }
+    api_keys {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        VARCHAR key_hash "SHA-256"
+        JSON    scopes
+    }
+    plugins {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        VARCHAR version
+    }
+    billing_plans {
+        VARCHAR id PK
+        DECIMAL price
+        VARCHAR billing_cycle
+    }
+    subscriptions {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        VARCHAR plan_id FK
+        VARCHAR status
+    }
+    invoices {
+        VARCHAR id PK
+        VARCHAR tenant_id
+        DECIMAL amount
+        DATETIME period_start
     }
 ```
 
@@ -990,6 +1156,17 @@ WHERE status='running' AND claimed_at < NOW() - INTERVAL maxAge SECOND
 | 004 | `004_add_audit_trace_id.sql` | `ALTER TABLE audit_log ADD COLUMN trace_id` + `CREATE INDEX idx_audit_trace` |
 | 005 | `005_m2_alert_governance.sql` | M2 告警治理：alert_silences / notify_channels / notify_templates 三张表 + alert_rules 补 created_by 列 |
 | 006 | `006_quota_configs.sql` | 配额：quota_configs 表 |
+| 007 | `007_p03_secrets.sql` | Phase3 密钥外置：secrets 表（provider/key/value 元数据） |
+| 008 | `008_p03_configs.sql` | Phase3 配置热推：configs + config_history 两表（热推历史可回溯） |
+| 009 | `009_p03_services.sql` | Phase3 服务目录：services 表 |
+| 010 | `010_p1_slo_ticket.sql` | P1 观测与工单：slos + tickets 两表（upsert 幂等，tenant_id+created_at 索引） |
+| 011 | `011_p2_argocd_pipeline_traffic.sql` | P2 交付域：argocd_apps / pipeline_templates / pipeline_runs / traffic_policies 四表 |
+| 012 | `012_p3_backup_compliance.sql` | P3 灾备与合规：backup_records + compliance_reports 两表（仅 created_at，一次性记录） |
+| 013 | `013_p4_automation_network.sql` | P4 自动化与网络：automation_rules / automation_executions / network_devices / network_metrics 四表 |
+| 014 | `014_p5_script_webhook.sql` | P5 脚本与 Webhook：scripts / script_executions / webhooks / webhook_deliveries 四表 |
+| 015 | `015_p6_tenant_apikey_plugin_billing.sql` | P6 多租户与商业化：tenants / api_keys / plugins / billing_plans / subscriptions / invoices 六表 |
+| 016 | `016_g2_pipeline_agentid.sql` | G2：pipeline_templates 补 `agent_id` 列（ALTER，幂等由 schema_migrations 版本记录保证） |
+| 017 | `017_g3_devices_hostname_os_arch.sql` | G3：devices 补 `hostname/os/arch` 三列 + agents 补 `secret` 列（设备基础元信息正式化，替代运行期 fixup） |
 
 ### 7.2 幂等建表
 
@@ -1130,6 +1307,17 @@ MySQL 容器可能尚未就绪（compose 起栈时 mysql 与 controlplane 并发
 | `004_add_audit_trace_id.sql` | `sql_audits.go` `Audit` / `QueryAudits` | OTel 链路关联 |
 | `005_m2_alert_governance.sql` | `sql_m2.go` | M2 告警治理持久化 |
 | `006_quota_configs.sql` | `sql_quota.go` | 多租户配额 |
+| `007_p03_secrets.sql` | `sql_secret.go` | 密钥外置元数据 |
+| `008_p03_configs.sql` | `sql_config.go` | 配置热推 + 历史回溯 |
+| `009_p03_services.sql` | `sql_discovery.go` | 服务目录 |
+| `010_p1_slo_ticket.sql` | `sql_slo.go` + `sql_ticket.go` | SLO 目标 + 工单 |
+| `011_p2_argocd_pipeline_traffic.sql` | `sql_argocd.go` / `sql_pipeline.go` / `sql_traffic.go` | ArgoCD 应用 + 流水线 + 流量策略 |
+| `012_p3_backup_compliance.sql` | `sql_backup.go` / `sql_compliance.go` | 灾备备份记录 + 合规报告 |
+| `013_p4_automation_network.sql` | `sql_automation.go` / `sql_network.go` | 自动化规则/执行 + 网络设备/指标 |
+| `014_p5_script_webhook.sql` | `sql_script.go` / `sql_webhook.go` | 自定义脚本 + Webhook 投递 |
+| `015_p6_tenant_apikey_plugin_billing.sql` | `sql_tenant.go` / `sql_apikey.go` / `sql_plugin.go` / `sql_billing.go` | 多租户 + API Key + 插件 + 计费六表 |
+| `016_g2_pipeline_agentid.sql` | `sql_pipeline.go` | pipeline_templates 补 agent_id 列 |
+| `017_g3_devices_hostname_os_arch.sql` | `sql_devices.go` | devices/agents 基础元信息列正式化 |
 | —（运行期） | `sql.go` `runMigrations` | `schema_migrations` 表 + checksum 校验 |
 | —（兼容补丁） | `sql.go` `applyLegacyColumnFixups` + `sql_legacy.go` `initSchemaExtra` | 老库增量补列/补索引 |
 | —（独立模块） | `orchestration/sql.go` | `workflow_defs` / `workflow_runs` |

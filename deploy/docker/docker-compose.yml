@@ -266,6 +266,89 @@ services:
       timeout: 5s
       retries: 3
 
+  # ===== M13 六域接线微服务（controlplane service_proxy.go 转发目标） =====
+  # controlplane 聚合层默认转发 http://127.0.0.1:<默认端口>；compose 网络内
+  # 需给 controlplane 配 *_SVC_URL=http://<服务名>:<容器端口>（如 GPU_SVC_URL=http://gpu-svc:8090）。
+  gpu-svc:
+    build:
+      context: ../../services/gpu-svc
+      dockerfile: Dockerfile
+    ports:
+      - "8111:8090"
+    environment:
+      GPU_SVC_HTTP_PORT: 8090
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  bot-svc:
+    build:
+      context: ../../services/bot-svc
+      dockerfile: Dockerfile
+    ports:
+      - "8112:8080"
+    environment:
+      BOT_SVC_HTTP_PORT: 8080
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  runbook-svc:
+    build:
+      context: ../../services/runbook-svc
+      dockerfile: Dockerfile
+    ports:
+      - "8113:8082"
+    environment:
+      RUNBOOK_SVC_HTTP_PORT: 8082
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  incident-svc:
+    build:
+      context: ../../services/incident-svc
+      dockerfile: Dockerfile
+    ports:
+      - "8114:8082"
+    environment:
+      INCIDENT_SVC_HTTP_PORT: 8082
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  autoscaler-svc:
+    build:
+      context: ../../services/autoscaler-svc
+      dockerfile: Dockerfile
+    ports:
+      - "8115:8080"
+    environment:
+      AUTOSCALER_SVC_HTTP_PORT: 8080
+    networks:
+      - opsmesh_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
   # ===== 可观测性 =====
   prometheus:
     image: prom/prometheus:latest

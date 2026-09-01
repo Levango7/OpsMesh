@@ -1,0 +1,28 @@
+# bot-svc 微服务镜像（M13 六域接线：补齐 compose/helm 部署引用的 Dockerfile）。
+# ChatOps IM webhook 入口（企业微信/飞书/Slack/钉钉回调），Web 命令台在
+# controlplane 聚合层（bot_bridge.go），本服务仅承载 IM 平台对接。
+# 多阶段构建：build 阶段参照仓库根 Dockerfile（golang:1.26-bookworm 编译静态二进制），
+# runtime 阶段 alpine:3.23 + curl（与 deploy/docker/Dockerfile.controlplane 一致，
+# 保证 docker-compose.yml 的 healthcheck 可执行）。
+# 注意：bot-svc 是独立 go.mod 模块，构建必须在本服务目录内进行。
+# base image digest 由 Renovate 自动钉死（见 .github/renovate.json）。
+# 手动钉死：crane digest golang:1.26-bookworm → FROM golang:1.26-bookworm@sha256:<digest> AS build
+FROM golang:1.26-bookworm AS build
+# 国内网络环境 proxy.golang.org 不可达，走 goproxy.cn 公共代理（CI 同样可用）。
+ENV GOPROXY=https://goproxy.cn,direct
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod verify && go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /svc ./cmd/bot-svc
+
+# 手动钉死：crane digest alpine:3.23 → FROM alpine:3.23@sha256:<digest> AS runtime
+FROM alpine:3.23 AS runtime
+RUN apk --no-cache upgrade && apk --no-cache add ca-certificates curl
+# 以非 root 运行（H16，与仓库根 Dockerfile 的 nonroot 基线一致）。
+RUN addgroup -S svc && adduser -S svc -G svc
+USER svc
+COPY --from=build /svc /usr/local/bin/svc
+# 监听端口（BOT_SVC_HTTP_PORT）：8080。
+EXPOSE 8080
+CMD ["svc"]
