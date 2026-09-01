@@ -11,6 +11,11 @@ FROM golang:1.26-bookworm AS build
 ARG SERVICE=auth-svc
 ARG VERSION=dev
 ENV GOPROXY=https://goproxy.cn,direct
+# 关键：golang 官方镜像默认 WORKDIR=/go（即 GOPATH）。若不先切换 WORKDIR，
+# 下方 COPY ./ 会把 go.mod 写进 GOPATH（第 4 轮实测报 "warning: ignoring
+# go.mod in $GOPATH /go"），且 WORKDIR /src/services/<svc> 随后是空目录
+# （"go.mod file not found"）。必须先落地 /src 再 COPY。
+WORKDIR /src
 # 主模块 + 全部服务 go.mod 先行复制，使各模块 replace 解析可用。
 COPY go.work go.work.sum ./
 COPY go.mod go.sum ./
@@ -18,10 +23,8 @@ COPY operator/ operator/
 COPY pkg/ pkg/
 COPY internal/ internal/
 COPY services/ services/
-# golang 官方镜像 GOPATH=/go 且其中可能残留 go.mod（release 第 4 轮实测
-# "warning: ignoring go.mod in $GOPATH /go" 导致后续 go build 行为异常）。
-# 显式重置 GOPATH 避开该目录，workspace 模式下依赖解析全部走 /src 的 go.work。
-ENV GOPATH=/root/go
+# go.work 位于 /src，从服务目录向上回溯即可命中，workspace 模式下依赖
+# 解析全部走 go.work，不依赖 GOPATH 内的模块缓存。
 WORKDIR /src/services/${SERVICE}
 RUN ls -la . && go env GOWORK GOPATH && CGO_ENABLED=0 GOOS=linux go build -trimpath \
     -ldflags="-s -w -X opsmesh/internal/version.Version=${VERSION}" \
