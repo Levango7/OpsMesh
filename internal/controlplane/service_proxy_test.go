@@ -32,7 +32,7 @@ func newServiceProxyTestServer() *Server {
 	return &Server{
 		store:        st,
 		cfg:          &config.Config{TaskMaxRetries: 3},
-		jwtSecret:     []byte("test-jwt-secret-for-svc-proxy-32bytes!!"),
+		jwtSecret:    []byte("test-jwt-secret-for-svc-proxy-32bytes!!"),
 		sessionStore: ss,
 		loginGuard:   newLoginGuard(ss),
 	}
@@ -42,9 +42,9 @@ func newServiceProxyTestServer() *Server {
 // gpu/runbook/incident 前缀保持不变；autoscaler/portal 剥域前缀（服务真实路径无域前缀）。
 func TestRewriteProxyPath(t *testing.T) {
 	cases := []struct {
-		publicPath   string
-		requestPath  string
-		wantPath     string
+		publicPath  string
+		requestPath string
+		wantPath    string
 	}{
 		{"/api/v1/gpu", "/api/v1/gpu/nodes", "/api/v1/gpu/nodes"},
 		{"/api/v1/gpu", "/api/v1/gpu/metrics/node-1", "/api/v1/gpu/metrics/node-1"},
@@ -153,7 +153,7 @@ func TestServiceProxyPermDenied(t *testing.T) {
 }
 
 // TestBotCommandExecuteAndHistory bot 命令台：执行 status 命令 + 历史回读
-//（契约：响应即历史记录项；history.list 租户隔离）。
+// （契约：响应即历史记录项；history.list 租户隔离）。
 func TestBotCommandExecuteAndHistory(t *testing.T) {
 	s := newServiceProxyTestServer()
 	auth := loginAsAdmin(t, s)
@@ -269,7 +269,7 @@ func TestBotPlatformsAndQuickCommands(t *testing.T) {
 }
 
 // TestServiceProxyPermSeeded 六域权限点已入 rbacPermSpecs 目录
-//（前端 router requirePerm 引用；缺失会导致 viewer 无权访问、权限页不可见）。
+// （前端 router requirePerm 引用；缺失会导致 viewer 无权访问、权限页不可见）。
 func TestServiceProxyPermSeeded(t *testing.T) {
 	rp := store.RolePermissions()
 	readPerms := []string{

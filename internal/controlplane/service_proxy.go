@@ -50,53 +50,55 @@ type serviceProxyRule struct {
 }
 
 // serviceProxyRules 六域转发映射表。端口依据各服务 pkg/config 默认值：
-//   gpu:8090 / runbook:8082 / incident:8082 / autoscaler:8080 / portal:8080 / bot:8080
+//
+//	gpu:8090 / runbook:8082 / incident:8082 / autoscaler:8080 / portal:8080 / bot:8080
+//
 // 注意 runbook 与 incident、autoscaler 与 portal 默认端口两两相同——单机同跑
 // 多服务时必须用 env 覆盖（*_SVC_URL 或各服务 *_SVC_HTTP_PORT）区分。
 var serviceProxyRules = []serviceProxyRule{
 	{
-		publicPrefix:  "/api/v1/gpu",
+		publicPrefix:   "/api/v1/gpu",
 		upstreamPrefix: "/api/v1/gpu",
-		domainPrefix:  "/api/v1/gpu",
-		envKey:        "GPU_SVC_URL",
-		defaultURL:    "http://127.0.0.1:8090",
-		perm:          "gpu:read",
+		domainPrefix:   "/api/v1/gpu",
+		envKey:         "GPU_SVC_URL",
+		defaultURL:     "http://127.0.0.1:8090",
+		perm:           "gpu:read",
 	},
 	{
-		publicPrefix:  "/api/v1/runbooks",
+		publicPrefix:   "/api/v1/runbooks",
 		upstreamPrefix: "/api/v1/runbooks",
-		domainPrefix:  "/api/v1/runbooks",
-		envKey:        "RUNBOOK_SVC_URL",
-		defaultURL:    "http://127.0.0.1:8082",
-		perm:          "runbook:read",
+		domainPrefix:   "/api/v1/runbooks",
+		envKey:         "RUNBOOK_SVC_URL",
+		defaultURL:     "http://127.0.0.1:8082",
+		perm:           "runbook:read",
 	},
 	{
-		publicPrefix:  "/api/v1/incidents",
+		publicPrefix:   "/api/v1/incidents",
 		upstreamPrefix: "/api/v1/incidents",
-		domainPrefix:  "/api/v1/incidents",
-		envKey:        "INCIDENT_SVC_URL",
-		defaultURL:    "http://127.0.0.1:8082",
-		perm:          "incident:read",
+		domainPrefix:   "/api/v1/incidents",
+		envKey:         "INCIDENT_SVC_URL",
+		defaultURL:     "http://127.0.0.1:8082",
+		perm:           "incident:read",
 	},
 	{
 		// autoscaler-svc 路径不含域前缀（/api/v1/rules 而非 /api/v1/autoscaler/rules，
-	// 见 services/autoscaler-svc/internal/handler/handler.go:24-28），需路径改写。
-		publicPrefix:  "/api/v1/autoscaler",
+		// 见 services/autoscaler-svc/internal/handler/handler.go:24-28），需路径改写。
+		publicPrefix:   "/api/v1/autoscaler",
 		upstreamPrefix: "/api/v1",
-		domainPrefix:  "/api/v1/autoscaler",
-		envKey:        "AUTOSCALER_SVC_URL",
-		defaultURL:    "http://127.0.0.1:8080",
-		perm:          "autoscaler:read",
+		domainPrefix:   "/api/v1/autoscaler",
+		envKey:         "AUTOSCALER_SVC_URL",
+		defaultURL:     "http://127.0.0.1:8080",
+		perm:           "autoscaler:read",
 	},
 	{
 		// portal-svc 同理：/api/v1/requests 而非 /api/v1/portal/requests
 		// （见 services/portal-svc/internal/handler/handler.go:27-34）。
-		publicPrefix:  "/api/v1/portal",
+		publicPrefix:   "/api/v1/portal",
 		upstreamPrefix: "/api/v1",
-		domainPrefix:  "/api/v1/portal",
-		envKey:        "PORTAL_SVC_URL",
-		defaultURL:    "http://127.0.0.1:8080",
-		perm:          "portal:read",
+		domainPrefix:   "/api/v1/portal",
+		envKey:         "PORTAL_SVC_URL",
+		defaultURL:     "http://127.0.0.1:8080",
+		perm:           "portal:read",
 	},
 	{
 		// bot-svc 暴露的是 ChatOps 平台回调（/webhook/{wecom,feishu,slack,dingtalk}）
