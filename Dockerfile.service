@@ -30,7 +30,7 @@ RUN ls -la . && go env GOWORK GOPATH && CGO_ENABLED=0 GOOS=linux go build -trimp
     -ldflags="-s -w -X opsmesh/internal/version.Version=${VERSION}" \
     -o /svc ./cmd/${SERVICE}
 
-FROM alpine:3.19 AS runtime
+FROM alpine:3.23 AS runtime
 RUN apk --no-cache add ca-certificates curl
 # 非 root 运行（H16 基线）：与仓库根 Dockerfile 的 nonroot 语义一致。
 RUN addgroup -S svc && adduser -S svc -G svc

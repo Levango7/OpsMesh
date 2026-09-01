@@ -1,6 +1,6 @@
 # portal-svc 微服务镜像（补齐 docker-compose.yml 引用缺失的 Dockerfile）。
 # 多阶段构建：build 阶段参照仓库根 Dockerfile（golang:1.26-bookworm 编译静态二进制），
-# runtime 阶段 alpine:3.19 + curl（与 deploy/docker/Dockerfile.controlplane 一致，
+# runtime 阶段 alpine:3.23 + curl（与 deploy/docker/Dockerfile.controlplane 一致，
 # 保证 docker-compose.yml / docker-compose.prod.yml 的 healthcheck 可执行）。
 # 注意：portal-svc 是独立 go.mod 模块，构建必须在本服务目录内进行。
 # base image digest 由 Renovate 自动钉死（见 .github/renovate.json）。
@@ -14,8 +14,8 @@ RUN go mod verify && go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /svc ./cmd/portal-svc
 
-# 手动钉死：crane digest alpine:3.19 → FROM alpine:3.19@sha256:<digest> AS runtime
-FROM alpine:3.19 AS runtime
+# 手动钉死：crane digest alpine:3.23 → FROM alpine:3.23@sha256:<digest> AS runtime
+FROM alpine:3.23 AS runtime
 RUN apk --no-cache add ca-certificates curl
 # 以非 root 运行（H16，与仓库根 Dockerfile 的 nonroot 基线一致）。
 RUN addgroup -S svc && adduser -S svc -G svc
