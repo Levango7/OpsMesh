@@ -21,13 +21,16 @@
 | 7 | ✅ release.yml 全链绿（8/8 job：6 服务 build+push+Trivy + changelog + github-release） | — | — |
 | 8 | ci.yml proto job：`buf breaking` 找不到 `proto/.git` | tag/PR checkout 是 detached HEAD，且 working-directory=proto 把相对 `.git` 解析到 `proto/.git`——**此步骤在 tag/PR 触发下从未跑通过**（main push 会跳过所以一直没暴露）；首次修复（git fetch origin main + branch=origin/main）实测仍失败：fetch 只建 remote-tracking ref | 改用 `https://github.com/${GITHUB_REPOSITORY}.git#branch=main,subdir=proto` 远程克隆对比（PUBLIC 仓库免凭证） |
 | 9 | goreleaser `field formats not found in type config.Archive`（行 39） | **goreleaser v2.4.8（2025 初）不认 v2 的 archives.formats 复数语法**——.goreleaser.yml 声明的是 v2 新格式，CI 钉的版本太老 | goreleaser v2.4.8→**v2.18.0**（2026 最新稳定） |
-| 10 | （验证中） | — | — |
+| 10 | goreleaser `flag provided but not defined: -trimpath`（链接阶段） | **-trimpath 是 go build 旗标不是链接器旗标**——写进 -ldflags 被 linker 拒收 | 移到 builds.flags，ldflags 只留 -s -w -X |
+| 11 | syft `unknown flag: --enrich`（SBOM 环节，归档已成功） | goreleaser v2.18.0 默认给 syft 传 `--enrich all`，CI 钉的 syft v1.11.0（2024-08）不认识——两个工具版本不同代 | syft v1.11.0→**v1.51.1**（2026 最新） |
+| 12 | `PATCH /releases/380249686: 403 Resource not accessible by integration`（产物上传） | ci.yml 无顶级 permissions 块，GITHUB_TOKEN 默认只读——goreleaser 更新 Release 需要写权限 | release job 加 job 级 `permissions: contents: write`（最小授权） |
+| 13 | ✅ **ci.yml 全链绿（12/12 job 含 goreleaser release）** | — | — |
 
 ### 发布产物（独立抽验实存）
 
 - **GHCR 镜像**：`ghcr.io/levango7/{auth,device,alert,task,config,log}-svc` 各带 `0.8.0` + `latest` + 每 SHA tag，Trivy 扫描零 HIGH/CRITICAL
-- **GitHub Release v0.8.0**：非草稿非预发布，正文从 CHANGELOG 充实（821 字符）
-- 二进制产物（tar.gz linux/amd64+arm64、checksums、SBOM）：随第 10 轮 goreleaser 首跑落地
+- **GitHub Release v0.8.0**：非草稿非预发布，正文从 CHANGELOG 充实；二进制产物 5 个资产——tar.gz linux/amd64（18MB）+ arm64（16.6MB）+ SBOM×2 + checksums.txt；amd64 tar.gz 已下载实测 SHA256 与 checksums.txt 逐字节一致（e3612982…）
+- cosign 签名：COSIGN_PRIVATE_KEY secret 未配置，签名步骤按设计跳过（不影响发布链）
 
 ### 架构确认
 
