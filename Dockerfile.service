@@ -1,0 +1,33 @@
+# Dockerfile.service — 微服务统一构建模板（release job 用）。
+#
+# 背景（release 首跑实测）：services/<svc> 是独立 go.mod 模块且全部
+# replace opsmesh => ../../ 引用主模块——单服务目录作构建上下文时容器内
+# 无主模块，go mod verify 直接报 "replaced by ../../: open /go.mod: no
+# such file"。因此本模板必须以【仓库根】为构建上下文（release.yml 已设
+# context: .），服务名经 --build-arg SERVICE 注入，编译 ./services/<svc>。
+#
+# base image digest 由 Renovate 自动钉死（.github/renovate.json）。
+FROM golang:1.26-bookworm AS build
+ARG SERVICE=auth-svc
+ARG VERSION=dev
+ENV GOPROXY=https://goproxy.cn,direct
+# 主模块 + 全部服务 go.mod 先行复制，使各模块 replace 解析可用。
+COPY go.work go.work.sum ./
+COPY go.mod go.sum ./
+COPY operator/ operator/
+COPY pkg/ pkg/
+COPY internal/ internal/
+COPY services/ services/
+WORKDIR /src/services/${SERVICE}
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+    -ldflags="-s -w -X opsmesh/internal/version.Version=${VERSION}" \
+    -o /svc ./cmd/${SERVICE}
+
+FROM alpine:3.19 AS runtime
+RUN apk --no-cache add ca-certificates curl
+# 非 root 运行（H16 基线）：与仓库根 Dockerfile 的 nonroot 语义一致。
+RUN addgroup -S svc && adduser -S svc -G svc
+USER svc
+COPY --from=build /svc /usr/local/bin/svc
+EXPOSE 8080
+CMD ["svc"]

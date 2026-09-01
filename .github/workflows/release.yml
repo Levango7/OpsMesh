@@ -52,9 +52,13 @@ jobs:
           echo "image=${{ env.IMAGE_PREFIX }}/${{ matrix.service }}" >> $GITHUB_OUTPUT
 
       - name: Build Docker image
-        working-directory: services/${{ matrix.service }}
+        # 构建上下文=仓库根（services/<svc> 的 go.mod 均 replace opsmesh => ../..，
+        # 上下文限单服务目录时容器内无主模块，go mod verify 必报
+        # "replaced by ../../: open /go.mod"——首跑实测）。统一走根级
+        # Dockerfile.service 模板，服务名经 --build-arg SERVICE 注入。
         run: |
           docker buildx build \
+            --file Dockerfile.service \
             --build-arg VERSION=${{ steps.meta.outputs.version }} \
             --build-arg SERVICE=${{ matrix.service }} \
             --tag ${{ steps.meta.outputs.image }}:${{ github.sha }} \
