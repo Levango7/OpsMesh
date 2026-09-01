@@ -57,32 +57,105 @@ const routes = [
 
   // ================= 插件市场 =================
   // 保留：后端有真实端点 /api/v1/marketplace/plugins（见 src/api/plugin.js），修复端点后可用。
-  { path: '/plugins', name: 'plugins', component: () => import('@/views/PluginView.vue'), meta: { title: 'nav.plugins', group: '平台', icon: 'cmdb', requirePerm: 'plugin:read' } }
+  { path: '/plugins', name: 'plugins', component: () => import('@/views/PluginView.vue'), meta: { title: 'nav.plugins', group: '平台', icon: 'cmdb', requirePerm: 'plugin:read' } },
 
   // ======================================================================
-  // 以下路由【已停用】：
-  //   /gpu /bot /runbooks /incidents /autoscaler /portal
-  // 后端 controlplane 目前没有这些模块的路由（均已核实 server_lifecycle.go
-  // 全量路由），前端注册会导致打开即 404。保留视图与 API 文件，待后端
-  // 路由就绪后取消注释即可恢复。恢复时取消注释：
+  // 七域管理页（schedules/automation/webhooks/scripts/tickets/slos/traffic，
+  // 后端 handler 在 internal/controlplane/{server_schedules,automation,webhook,
+  // script,ticket,slo,traffic}.go 注册，API 契约见 src/api/*.js 注释头）。
   // ======================================================================
-  // // GPU 资源管理
-  // { path: '/gpu', name: 'gpu', component: () => import('@/views/GPUView.vue'), meta: { title: 'nav.gpu', group: 'AI 算力', icon: 'device', requirePerm: 'gpu:read' } },
-  //
-  // // ChatOps
-  // { path: '/bot', name: 'bot', component: () => import('@/views/BotView.vue'), meta: { title: 'nav.bot', group: 'AI 算力', icon: 'flow', requirePerm: 'bot:read' } },
-  //
-  // // Runbook 自动化
-  // { path: '/runbooks', name: 'runbooks', component: () => import('@/views/RunbookView.vue'), meta: { title: 'nav.runbooks', group: '自动化', icon: 'task', requirePerm: 'runbook:read' } },
-  //
-  // // Incident 管理
-  // { path: '/incidents', name: 'incidents', component: () => import('@/views/IncidentView.vue'), meta: { title: 'nav.incidents', group: '自动化', icon: 'alerts', requirePerm: 'incident:read' } },
-  //
-  // // 自动扩缩容
-  // { path: '/autoscaler', name: 'autoscaler', component: () => import('@/views/AutoscalerView.vue'), meta: { title: 'nav.autoscaler', group: '自动化', icon: 'settings', requirePerm: 'autoscaler:read' } },
-  //
-  // // 自助服务门户
-  // { path: '/portal', name: 'portal', component: () => import('@/views/PortalView.vue'), meta: { title: 'nav.portal', group: '平台', icon: 'users', requirePerm: 'portal:read' } }
+  // 定时任务（自动化）
+  { path: '/schedules', name: 'schedules', component: () => import('@/views/SchedulesView.vue'), meta: { title: 'nav.schedules', group: '自动化', icon: 'task', requirePerm: 'automation:read' } },
+
+  // 自动化规则（自动化）
+  { path: '/automation', name: 'automation', component: () => import('@/views/AutomationView.vue'), meta: { title: 'nav.automation', group: '自动化', icon: 'flow', requirePerm: 'automation:read' } },
+
+  // Webhook 管理（自动化）
+  { path: '/webhooks', name: 'webhooks', component: () => import('@/views/WebhooksView.vue'), meta: { title: 'nav.webhooks', group: '自动化', icon: 'alerts', requirePerm: 'webhook:read' } },
+
+  // 自定义脚本（自动化）
+  { path: '/scripts', name: 'scripts', component: () => import('@/views/ScriptsView.vue'), meta: { title: 'nav.scripts', group: '自动化', icon: 'settings', requirePerm: 'script:read' } },
+
+  // 工单（系统管理）
+  { path: '/tickets', name: 'tickets', component: () => import('@/views/TicketsView.vue'), meta: { title: 'nav.tickets', group: '系统管理', icon: 'users', requirePerm: 'ticket:read' } },
+
+  // SLO 目标（可观测性）
+  { path: '/slos', name: 'slos', component: () => import('@/views/SLOsView.vue'), meta: { title: 'nav.slos', group: '可观测性', icon: 'alerts', requirePerm: 'slo:read' } },
+
+  // 流量策略（交付中心）
+  { path: '/traffic', name: 'traffic', component: () => import('@/views/TrafficPoliciesView.vue'), meta: { title: 'nav.traffic', group: '交付中心', icon: 'flow', requirePerm: 'traffic:read' } },
+
+  // ======================================================================
+  // 六域已接线（M13 聚合层补齐，2026-09）：
+  //   gpu/runbooks/incidents/autoscaler/portal → controlplane service_proxy.go
+  //     转发到 services/* 独立进程（后端地址 env 覆盖：*_SVC_URL）；
+  //   bot → controlplane bot_bridge.go（Web 命令台，命令语法与 bot-svc IM
+  //     webhook 一致：/opsmesh status|devices|alerts|ack|metrics|help）。
+  // 后端服务未启动时代理返回 503 service unreachable（页面报错但不 404）。
+  // ======================================================================
+  // GPU 资源管理
+  { path: '/gpu', name: 'gpu', component: () => import('@/views/GPUView.vue'), meta: { title: 'nav.gpu', group: 'AI 算力', icon: 'device', requirePerm: 'gpu:read' } },
+
+  // ChatOps
+  { path: '/bot', name: 'bot', component: () => import('@/views/BotView.vue'), meta: { title: 'nav.bot', group: 'AI 算力', icon: 'flow', requirePerm: 'bot:read' } },
+
+  // Runbook 自动化
+  { path: '/runbooks', name: 'runbooks', component: () => import('@/views/RunbookView.vue'), meta: { title: 'nav.runbooks', group: '自动化', icon: 'task', requirePerm: 'runbook:read' } },
+
+  // Incident 管理
+  { path: '/incidents', name: 'incidents', component: () => import('@/views/IncidentView.vue'), meta: { title: 'nav.incidents', group: '自动化', icon: 'alerts', requirePerm: 'incident:read' } },
+
+  // 自动扩缩容
+  { path: '/autoscaler', name: 'autoscaler', component: () => import('@/views/AutoscalerView.vue'), meta: { title: 'nav.autoscaler', group: '自动化', icon: 'settings', requirePerm: 'autoscaler:read' } },
+
+  // 自助服务门户
+  { path: '/portal', name: 'portal', component: () => import('@/views/PortalView.vue'), meta: { title: 'nav.portal', group: '平台', icon: 'users', requirePerm: 'portal:read' } },
+
+  // ======================================================================
+  // 七域管理页（pipeline/argocd/compliance/ha/backups/quotas/tenants，
+  // 后端 handler 在 internal/controlplane/server_lifecycle.go 注册，
+  // API 契约见 src/api/{pipeline,argocd,compliance,ha,backup,quota,tenant}.js 注释头）。
+  // ======================================================================
+  // CI/CD 流水线（交付中心）
+  { path: '/pipeline', name: 'pipeline', component: () => import('@/views/PipelineView.vue'), meta: { title: 'nav.pipeline', group: '交付中心', icon: 'flow', requirePerm: 'pipeline:read' } },
+
+  // ArgoCD 应用（交付中心）
+  { path: '/argocd', name: 'argocd', component: () => import('@/views/ArgoCDView.vue'), meta: { title: 'nav.argocd', group: '交付中心', icon: 'deploy', requirePerm: 'argocd:read' } },
+
+  // 合规管理（系统管理）
+  { path: '/compliance', name: 'compliance', component: () => import('@/views/ComplianceView.vue'), meta: { title: 'nav.compliance', group: '系统管理', icon: 'permissions', requirePerm: 'compliance:read' } },
+
+  // 高可用状态（系统管理）
+  { path: '/ha', name: 'ha', component: () => import('@/views/HAView.vue'), meta: { title: 'nav.ha', group: '系统管理', icon: 'device', requirePerm: 'ha:read' } },
+
+  // 灾备备份（系统管理）
+  { path: '/backups', name: 'backups', component: () => import('@/views/BackupsView.vue'), meta: { title: 'nav.backups', group: '系统管理', icon: 'alerts', requirePerm: 'backup:read' } },
+
+  // 租户配额（系统管理，quotas 无独立权限点，复用 tenant:read）
+  { path: '/quotas', name: 'quotas', component: () => import('@/views/QuotasView.vue'), meta: { title: 'nav.quotas', group: '系统管理', icon: 'settings', requirePerm: 'tenant:read' } },
+
+  // 租户管理（系统管理）
+  { path: '/tenants', name: 'tenants', component: () => import('@/views/TenantsView.vue'), meta: { title: 'nav.tenants', group: '系统管理', icon: 'users', requirePerm: 'tenant:read' } },
+
+  // ======================================================================
+  // 平台运营五域管理页（billing/apikeys/gateway-routes/audit-events/
+  // notify-channels，后端 handler 在 internal/controlplane/
+  // {billing,apikey,gateway,audit_query,server_alerts_m2}.go 注册）。
+  // ======================================================================
+  // 计费管理（平台：订阅计划 / 订阅 / 账单 / 用量）
+  { path: '/billing', name: 'billing', component: () => import('@/views/BillingView.vue'), meta: { title: 'nav.billing', group: '平台', icon: 'cmdb', requirePerm: 'billing:read' } },
+
+  // API Key 管理（平台）
+  { path: '/apikeys', name: 'apikeys', component: () => import('@/views/APIKeysView.vue'), meta: { title: 'nav.apikeys', group: '平台', icon: 'key', requirePerm: 'apikey:read' } },
+
+  // API 网关路由（平台）
+  { path: '/gateway-routes', name: 'gateway-routes', component: () => import('@/views/GatewayRoutesView.vue'), meta: { title: 'nav.gatewayRoutes', group: '平台', icon: 'flow', requirePerm: 'gateway:read' } },
+
+  // 审计事件（系统管理：只读查询 + 导出）
+  { path: '/audit-events', name: 'audit-events', component: () => import('@/views/AuditEventsView.vue'), meta: { title: 'nav.auditEvents', group: '系统管理', icon: 'alerts', requirePerm: 'audit:read' } },
+
+  // 通知渠道（平台：渠道 + 模板；无独立权限点，复用告警权限）
+  { path: '/notify-channels', name: 'notify-channels', component: () => import('@/views/NotifyChannelsView.vue'), meta: { title: 'nav.notifyChannels', group: '平台', icon: 'alerts', requirePerm: 'alert:read' } }
 ]
 
 const router = createRouter({
