@@ -162,3 +162,18 @@ export {
 export {
   renderSchedulesTable, renderScheduleForm,
 } from './render-schedules.js';
+
+// ============================================================================
+// P3 补齐功能域：审批流 / 密钥管理 / Helm 应用商店
+// ============================================================================
+export {
+  renderApprovalFlowsTable, renderApprovalFlowForm, renderApprovalRequestsTable,
+} from './render-approval.js';
+export {
+  renderSecretsStatus, renderSecretsTestResult, renderSecretKeysTable,
+} from './render-secrets.js';
+export {
+  renderHelmReposTable, renderHelmRepoForm, renderHelmCatalog,
+  renderHelmChartsTable, renderHelmChartsSearchForm,
+  renderHelmReleasesTable, renderHelmReleaseForm,
+} from './render-helm.js';

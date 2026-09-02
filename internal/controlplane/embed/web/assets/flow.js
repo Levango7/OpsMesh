@@ -70,13 +70,19 @@ import * as flowProvision     from './flow-provision.js';
 import * as flowBot           from './flow-bot.js';
 import * as flowFederation    from './flow-federation.js';
 import * as flowSchedules     from './flow-schedules.js';
+// P3 补齐功能域子模块
+import * as flowApproval      from './flow-approval.js';
+import * as flowSecrets       from './flow-secrets.js';
+import * as flowHelm          from './flow-helm.js';
 
 // ============================================================================
 // Tab 切换
 // ============================================================================
 
 export function switchTab(tab) {
-  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push', 'compliance', 'ha', 'network-mgmt', 'automation', 'gateway', 'webhook', 'script', 'tenant', 'apikey', 'plugin', 'billing', 'platform', 'devices', 'tasks', 'alerts', 'alert-rules', 'batch', 'notify', 'logs', 'deploys', 'workflows', 'cmdb', 'os-optimize', 'middleware', 'k8s', 'provision', 'bot', 'federation', 'schedules'];
+  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push', 'compliance', 'ha', 'network-mgmt', 'automation', 'gateway', 'webhook', 'script', 'tenant', 'apikey', 'plugin', 'billing', 'platform', 'devices', 'tasks', 'alerts', 'alert-rules', 'batch', 'notify', 'logs', 'deploys', 'workflows', 'cmdb', 'os-optimize', 'middleware', 'k8s',   'provision', 'bot', 'federation', 'schedules',
+  // P3 补齐功能域
+  'approval', 'secrets', 'helm'];
   if (validTabs.indexOf(tab) === -1) return;
   state.currentTab = tab;
   // 更新 tab 按钮激活态
@@ -133,8 +139,14 @@ export function switchTab(tab) {
   if (tab === 'bot' && !state._botLoaded) { flowBot.showBotCommandForm(); state._botLoaded = true; }
   if (tab === 'federation' && state.federation.peers.length === 0) flowFederation.loadFederationPeers();
   if (tab === 'schedules' && state.schedules.list.length === 0) flowSchedules.loadSchedules();
+  // P3 补齐功能域懒加载
+  if (tab === 'approval' && state.approval.flows.length === 0) flowApproval.loadApprovalAll();
+  if (tab === 'secrets' && !state.secrets.status) flowSecrets.loadSecretsAll();
+  if (tab === 'helm' && state.helm.repos.length === 0) flowHelm.loadHelmAll();
 }
 
+// ============================================================================
+// 初始化与刷新
 // ============================================================================
 // 初始化与刷新
 // ============================================================================
@@ -200,6 +212,10 @@ export function init() {
   flowBot.buildBotToolbar();
   flowFederation.buildFederationToolbar();
   flowSchedules.buildSchedulesToolbar();
+  // P3 补齐功能域工具栏
+  flowApproval.buildApprovalToolbar();
+  flowSecrets.buildSecretsToolbar();
+  flowHelm.buildHelmToolbar();
 
   // 绑定 tab 切换
   document.querySelectorAll('.tab-btn').forEach((btn) => {
@@ -254,6 +270,10 @@ function refreshCurrentPage() {
   flowBot.buildBotToolbar();
   flowFederation.buildFederationToolbar();
   flowSchedules.buildSchedulesToolbar();
+  // P3 补齐功能域工具栏
+  flowApproval.buildApprovalToolbar();
+  flowSecrets.buildSecretsToolbar();
+  flowHelm.buildHelmToolbar();
   // 重新加载当前页数据
   if (state.currentTab === 'tickets') flowTicket.loadTickets();
   else if (state.currentTab === 'dashboard') flowDashboard.loadDashboardAll();
@@ -294,6 +314,10 @@ function refreshCurrentPage() {
   else if (state.currentTab === 'bot') flowBot.refreshBotSubTab();
   else if (state.currentTab === 'federation') flowFederation.refreshFederationSubTab();
   else if (state.currentTab === 'schedules') flowSchedules.loadSchedules();
+  // P3 补齐功能域刷新
+  else if (state.currentTab === 'approval') flowApproval.refreshApprovalSubTab();
+  else if (state.currentTab === 'secrets') flowSecrets.refreshSecretsSubTab();
+  else if (state.currentTab === 'helm') flowHelm.refreshHelmSubTab();
 }
 
 // ============================================================================
@@ -376,6 +400,10 @@ export * from './flow-provision.js';
 export * from './flow-bot.js';
 export * from './flow-federation.js';
 export * from './flow-schedules.js';
+// P3 补齐功能域 re-export
+export * from './flow-approval.js';
+export * from './flow-secrets.js';
+export * from './flow-helm.js';
 
 // init/switchTab 也需要导出
 export { init, switchTab, initSSE };

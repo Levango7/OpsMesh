@@ -265,6 +265,32 @@ export const deleteSchedule = flow.deleteSchedule;
 export const toggleSchedule = flow.toggleSchedule;
 export const refreshSchedulesSubTab = flow.refreshSchedulesSubTab;
 export const buildSchedulesToolbar = flow.buildSchedulesToolbar;
+// P3 补齐功能域编排层
+export const loadApprovalFlows = flow.loadApprovalFlows;
+export const loadApprovalRequests = flow.loadApprovalRequests;
+export const loadApprovalAll = flow.loadApprovalAll;
+export const showApprovalFlowForm = flow.showApprovalFlowForm;
+export const deleteApprovalFlow = flow.deleteApprovalFlow;
+export const approveRequest = flow.approveRequest;
+export const rejectRequest = flow.rejectRequest;
+export const refreshApprovalSubTab = flow.refreshApprovalSubTab;
+export const buildApprovalToolbar = flow.buildApprovalToolbar;
+export const loadSecretsStatus = flow.loadSecretsStatus;
+export const loadSecretKeys = flow.loadSecretKeys;
+export const testSecrets = flow.testSecrets;
+export const loadSecretsAll = flow.loadSecretsAll;
+export const refreshSecretsSubTab = flow.refreshSecretsSubTab;
+export const buildSecretsToolbar = flow.buildSecretsToolbar;
+export const loadHelmRepos = flow.loadHelmRepos;
+export const showHelmRepoForm = flow.showHelmRepoForm;
+export const deleteHelmRepo = flow.deleteHelmRepo;
+export const searchHelmCharts = flow.searchHelmCharts;
+export const loadHelmReleases = flow.loadHelmReleases;
+export const showHelmReleaseForm = flow.showHelmReleaseForm;
+export const uninstallHelmRelease = flow.uninstallHelmRelease;
+export const loadHelmAll = flow.loadHelmAll;
+export const refreshHelmSubTab = flow.refreshHelmSubTab;
+export const buildHelmToolbar = flow.buildHelmToolbar;
 
 // API 层
 export const ApiError = api.ApiError;
@@ -463,6 +489,25 @@ export const getSchedules = api.getSchedules;
 export const createScheduleApi = api.createSchedule;
 export const updateScheduleApi = api.updateSchedule;
 export const deleteScheduleApi = api.deleteSchedule;
+// P3 补齐功能域 API 层
+export const getApprovalFlows = api.getApprovalFlows;
+export const createApprovalFlowApi = api.createApprovalFlow;
+export const deleteApprovalFlowApi = api.deleteApprovalFlow;
+export const getApprovalRequests = api.getApprovalRequests;
+export const approveRequestApi = api.approveRequest;
+export const rejectRequestApi = api.rejectRequest;
+export const getPendingApprovals = api.getPendingApprovals;
+export const getSecretsStatus = api.getSecretsStatus;
+export const testSecretsApi = api.testSecrets;
+export const getSecretKeys = api.getSecretKeys;
+export const getHelmRepos = api.getHelmRepos;
+export const createHelmRepoApi = api.createHelmRepo;
+export const deleteHelmRepoApi = api.deleteHelmRepo;
+export const searchHelmChartsApi = api.searchHelmCharts;
+export const getHelmReleases = api.getHelmReleases;
+export const installHelmReleaseApi = api.installHelmRelease;
+export const uninstallHelmReleaseApi = api.uninstallHelmRelease;
+export const getHelmCatalog = api.getHelmCatalog;
 
 // 渲染层
 export const el = render.el;
@@ -601,6 +646,20 @@ export const renderFederationForwardForm = render.renderFederationForwardForm;
 export const renderFederationForwardResult = render.renderFederationForwardResult;
 export const renderSchedulesTable = render.renderSchedulesTable;
 export const renderScheduleForm = render.renderScheduleForm;
+// P3 补齐功能域 渲染层
+export const renderApprovalFlowsTable = render.renderApprovalFlowsTable;
+export const renderApprovalFlowForm = render.renderApprovalFlowForm;
+export const renderApprovalRequestsTable = render.renderApprovalRequestsTable;
+export const renderSecretsStatus = render.renderSecretsStatus;
+export const renderSecretsTestResult = render.renderSecretsTestResult;
+export const renderSecretKeysTable = render.renderSecretKeysTable;
+export const renderHelmReposTable = render.renderHelmReposTable;
+export const renderHelmRepoForm = render.renderHelmRepoForm;
+export const renderHelmCatalog = render.renderHelmCatalog;
+export const renderHelmChartsTable = render.renderHelmChartsTable;
+export const renderHelmChartsSearchForm = render.renderHelmChartsSearchForm;
+export const renderHelmReleasesTable = render.renderHelmReleasesTable;
+export const renderHelmReleaseForm = render.renderHelmReleaseForm;
 
 // i18n
 export const t = i18n.t;

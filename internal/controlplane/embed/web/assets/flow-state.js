@@ -119,6 +119,13 @@ const state = {
   federationSubTab: 'peers', // peers | devices | forward
   // 定时任务
   schedules: { list: [], loading: false, error: null },
+  // P3 补齐功能域状态
+  // 审批流
+  approval: { flows: [], requests: [], pending: [], loading: false, error: null },
+  // 密钥管理
+  secrets: { status: null, keys: [], loading: false, error: null },
+  // Helm 应用商店
+  helm: { repos: [], charts: [], releases: [], catalog: [], loading: false, error: null },
   // SSE 连接实例（不直接渲染，仅用于生命周期管理）
   _sse: null,
 };

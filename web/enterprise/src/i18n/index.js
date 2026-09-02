@@ -120,7 +120,14 @@ export const ROUTE_DOMAIN_MAP = {
   'network-diagnose': 'ops',
   'network-devices': 'ops',
   audits: 'system',
-  'auto-provision': 'ops'
+  'auto-provision': 'ops',
+
+  // ====================================================================
+  // P3 Helm 应用商店三子域路由 → 功能域映射（全部 → delivery）
+  // ====================================================================
+  'helm-repos': 'delivery',
+  'helm-catalog': 'delivery',
+  'helm-releases': 'delivery'
 }
 
 // 预先收集所有功能域 json 模块（Vite 会为每个 json 生成单独 chunk，按需加载）

@@ -69,7 +69,10 @@
     "networkDiagnose": "Network Diagnose",
     "networkDevices": "Network Devices",
     "audits": "Audits",
-    "autoProvision": "Auto Provision"
+    "autoProvision": "Auto Provision",
+    "helmRepos": "Helm Repos",
+    "helmCatalog": "App Catalog",
+    "helmReleases": "Helm Releases"
   },
   "topbar": {
     "devices": "Devices",
@@ -262,7 +265,16 @@
     "networkConfigPushFailed": "Config push failed",
     "networkDiscoverFailed": "Network discovery failed",
     "auditsFailed": "Failed to fetch audits",
-    "autoProvisionFailed": "Auto provision failed"
+    "autoProvisionFailed": "Auto provision failed",
+    "helmReposFailed": "Failed to fetch Helm repos",
+    "helmRepoChartsFailed": "Failed to fetch repo charts",
+    "helmSearchFailed": "Chart search failed",
+    "helmReleasesFailed": "Failed to fetch Helm releases",
+    "helmUpgradeFailed": "Failed to upgrade release",
+    "helmUninstallFailed": "Failed to uninstall release",
+    "helmRollbackFailed": "Failed to rollback release",
+    "helmHistoryFailed": "Failed to fetch release history",
+    "helmCatalogFailed": "Failed to fetch catalog"
   },
   "common": {
     "loading": "Loading…",

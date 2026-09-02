@@ -334,6 +334,16 @@ a:hover{color:var(--accent-hover);}
       <button type="button" class="tab-btn" data-tab="schedules" data-i18n="nav.schedules">
         <span class="icon" data-icon="clock"></span><span>定时任务</span>
       </button>
+      <!--P3 补齐功能域 tab -->
+      <button type="button" class="tab-btn" data-tab="approval" data-i18n="nav.approval">
+        <span class="icon" data-icon="check"></span><span>审批流</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="secrets" data-i18n="nav.secrets">
+        <span class="icon" data-icon="apikey"></span><span>密钥管理</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="helm" data-i18n="nav.helm">
+        <span class="icon" data-icon="plugin"></span><span>Helm 商店</span>
+      </button>
     </div>
   </nav>
 
@@ -702,6 +712,36 @@ a:hover{color:var(--accent-hover);}
       </div>
       <div id="schedules-toolbar" class="toolbar"></div>
       <div id="schedules-content" class="content"></div>
+    </section>
+
+    <!-- 审批流 page (P3) -->
+    <section id="page-approval" class="page">
+      <div class="page-head">
+        <h2>审批流</h2>
+        <p>审批流定义 / 审批请求 / approve / reject</p>
+      </div>
+      <div id="approval-toolbar" class="toolbar"></div>
+      <div id="approval-content" class="content"></div>
+    </section>
+
+    <!-- 密钥管理 page (P3) -->
+    <section id="page-secrets" class="page">
+      <div class="page-head">
+        <h2>密钥管理</h2>
+        <p>密钥后端状态 / 测试 / 密钥列表</p>
+      </div>
+      <div id="secrets-toolbar" class="toolbar"></div>
+      <div id="secrets-content" class="content"></div>
+    </section>
+
+    <!-- Helm 应用商店 page (P3) -->
+    <section id="page-helm" class="page">
+      <div class="page-head">
+        <h2>Helm 应用商店</h2>
+        <p>仓库管理 / 应用目录 / Release 管理</p>
+      </div>
+      <div id="helm-toolbar" class="toolbar"></div>
+      <div id="helm-content" class="content"></div>
     </section>
   </main>
 

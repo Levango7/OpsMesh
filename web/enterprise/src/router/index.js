@@ -214,7 +214,21 @@ const routes = [
   { path: '/audits', name: 'audits', component: () => import('@/views/AuditsView.vue'), meta: { title: 'nav.audits', group: '系统管理', icon: 'logs', requirePerm: '' } },
 
   // 自动纳管（运维管理）：触发表单 + 结果展示
-  { path: '/auto-provision', name: 'auto-provision', component: () => import('@/views/AutoProvisionView.vue'), meta: { title: 'nav.autoProvision', group: '运维管理', icon: 'device', requirePerm: '' } }
+  { path: '/auto-provision', name: 'auto-provision', component: () => import('@/views/AutoProvisionView.vue'), meta: { title: 'nav.autoProvision', group: '运维管理', icon: 'device', requirePerm: '' } },
+
+  // ======================================================================
+  // P3 Helm 应用商店三子域管理页（helm-repos/helm-catalog/helm-releases，
+  // 后端 handler 在 internal/controlplane/helm.go 注册，
+  // API 契约见 src/api/helm.js 注释头）。
+  // ======================================================================
+  // Helm 仓库管理（交付中心）：仓库列表 + 添加 + 删除 + 查看仓库 Chart
+  { path: '/helm-repos', name: 'helm-repos', component: () => import('@/views/HelmReposView.vue'), meta: { title: 'nav.helmRepos', group: '交付中心', icon: 'cmdb', requirePerm: '' } },
+
+  // Helm 应用目录（交付中心）：预置分类 + Chart 搜索 + Chart 详情
+  { path: '/helm-catalog', name: 'helm-catalog', component: () => import('@/views/HelmCatalogView.vue'), meta: { title: 'nav.helmCatalog', group: '交付中心', icon: 'cmdb', requirePerm: '' } },
+
+  // Helm Release 管理（交付中心）：列表 + 安装 + 升级 + 卸载 + 回滚 + 历史
+  { path: '/helm-releases', name: 'helm-releases', component: () => import('@/views/HelmReleasesView.vue'), meta: { title: 'nav.helmReleases', group: '交付中心', icon: 'deploy', requirePerm: '' } }
 ]
 
 const router = createRouter({

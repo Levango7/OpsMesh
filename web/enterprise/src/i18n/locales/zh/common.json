@@ -69,7 +69,10 @@
     "networkDiagnose": "网络诊断",
     "networkDevices": "网络设备",
     "audits": "审计检索",
-    "autoProvision": "自动纳管"
+    "autoProvision": "自动纳管",
+    "helmRepos": "Helm 仓库",
+    "helmCatalog": "应用目录",
+    "helmReleases": "Helm Release"
   },
   "topbar": {
     "devices": "设备",
@@ -262,7 +265,16 @@
     "networkConfigPushFailed": "配置下发失败",
     "networkDiscoverFailed": "网络发现失败",
     "auditsFailed": "审计检索失败",
-    "autoProvisionFailed": "自动纳管失败"
+    "autoProvisionFailed": "自动纳管失败",
+    "helmReposFailed": "Helm 仓库列表拉取失败",
+    "helmRepoChartsFailed": "仓库 Chart 列表拉取失败",
+    "helmSearchFailed": "Chart 搜索失败",
+    "helmReleasesFailed": "Helm Release 列表拉取失败",
+    "helmUpgradeFailed": "Release 升级失败",
+    "helmUninstallFailed": "Release 卸载失败",
+    "helmRollbackFailed": "Release 回滚失败",
+    "helmHistoryFailed": "Release 历史拉取失败",
+    "helmCatalogFailed": "应用目录拉取失败"
   },
   "common": {
     "loading": "加载中…",

@@ -1372,3 +1372,138 @@ export function updateSchedule(id, data) {
 export function deleteSchedule(id) {
   return requestJSON('DELETE', '/api/v1/schedules/' + encodeURIComponent(id));
 }
+
+// ============================================================================
+// P3 补齐功能域：审批流 API（流定义 / 审批请求 / approve / reject）
+// ============================================================================
+
+// getApprovalFlows 列出审批流定义。GET /api/v1/approval/flows
+// 返回 {flows: [ApprovalFlow]}，ApprovalFlow {id, name, description, steps, createdAt}
+export function getApprovalFlows() {
+  return requestJSON('GET', '/api/v1/approval/flows').then((d) => {
+    return Array.isArray(d) ? d : (d && d.flows ? d.flows : []);
+  });
+}
+
+// createApprovalFlow 创建审批流。POST /api/v1/approval/flows（201）
+// body: {name, description, steps}
+export function createApprovalFlow(data) {
+  return requestJSON('POST', '/api/v1/approval/flows', data);
+}
+
+// deleteApprovalFlow 删除审批流。DELETE /api/v1/approval/flows/{id}
+// 返回 {status: "deleted"}
+export function deleteApprovalFlow(id) {
+  return requestJSON('DELETE', '/api/v1/approval/flows/' + encodeURIComponent(id));
+}
+
+// getApprovalRequests 列出审批请求。GET /api/v1/approval/requests?status=pending
+// 返回 {requests: [ApprovalRequest]}
+export function getApprovalRequests(filter = {}) {
+  return requestJSON('GET', '/api/v1/approval/requests' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.requests ? d.requests : []);
+  });
+}
+
+// approveRequest 批准审批请求。POST /api/v1/approval/requests/{id}/approve
+export function approveRequest(id) {
+  return requestJSON('POST', '/api/v1/approval/requests/' + encodeURIComponent(id) + '/approve');
+}
+
+// rejectRequest 驳回审批请求。POST /api/v1/approval/requests/{id}/reject
+export function rejectRequest(id) {
+  return requestJSON('POST', '/api/v1/approval/requests/' + encodeURIComponent(id) + '/reject');
+}
+
+// getPendingApprovals 获取待审批列表。GET /api/v1/approval/pending
+// 返回 {requests: [ApprovalRequest]}
+export function getPendingApprovals() {
+  return requestJSON('GET', '/api/v1/approval/pending').then((d) => {
+    return Array.isArray(d) ? d : (d && d.requests ? d.requests : []);
+  });
+}
+
+// ============================================================================
+// P3 补齐功能域：密钥管理 API（状态 / 测试 / 密钥列表）
+// ============================================================================
+
+// getSecretsStatus 获取密钥后端状态。GET /api/v1/secrets/status
+// 返回 {backend, sealed, keys}
+export function getSecretsStatus() {
+  return requestJSON('GET', '/api/v1/secrets/status');
+}
+
+// testSecrets 测试密钥后端连通性。POST /api/v1/secrets/test
+// 返回 {status: "ok|failed", error}
+export function testSecrets() {
+  return requestJSON('POST', '/api/v1/secrets/test');
+}
+
+// getSecretKeys 列出密钥。GET /api/v1/secrets/keys
+// 返回 {keys: [{name, createdAt, rotatedAt}]}
+export function getSecretKeys() {
+  return requestJSON('GET', '/api/v1/secrets/keys').then((d) => {
+    return Array.isArray(d) ? d : (d && d.keys ? d.keys : []);
+  });
+}
+
+// ============================================================================
+// P3 补齐功能域：Helm 应用商店 API（仓库 / Chart 搜索 / Release / 目录）
+// ============================================================================
+
+// getHelmRepos 列出 Helm 仓库。GET /api/v1/helm/repos
+// 返回 {repos: [HelmRepo]}，HelmRepo {name, url, username, createdAt}
+export function getHelmRepos() {
+  return requestJSON('GET', '/api/v1/helm/repos').then((d) => {
+    return Array.isArray(d) ? d : (d && d.repos ? d.repos : []);
+  });
+}
+
+// createHelmRepo 添加 Helm 仓库。POST /api/v1/helm/repos（201）
+// body: {name, url, username, password}
+export function createHelmRepo(data) {
+  return requestJSON('POST', '/api/v1/helm/repos', data);
+}
+
+// deleteHelmRepo 删除 Helm 仓库。DELETE /api/v1/helm/repos/{name}
+// 返回 {status: "deleted"}
+export function deleteHelmRepo(name) {
+  return requestJSON('DELETE', '/api/v1/helm/repos/' + encodeURIComponent(name));
+}
+
+// searchHelmCharts 搜索 Helm Chart。GET /api/v1/helm/charts/search?q=xxx
+// 返回 {charts: [Chart]}，Chart {name, repo, version, description, home, sources}
+export function searchHelmCharts(q) {
+  const query = q ? '?q=' + encodeURIComponent(q) : '';
+  return requestJSON('GET', '/api/v1/helm/charts/search' + query).then((d) => {
+    return Array.isArray(d) ? d : (d && d.charts ? d.charts : []);
+  });
+}
+
+// getHelmReleases 列出 Helm Release。GET /api/v1/helm/releases
+// 返回 {releases: [HelmRelease]}，HelmRelease {name, namespace, chart, version, status, updated}
+export function getHelmReleases() {
+  return requestJSON('GET', '/api/v1/helm/releases').then((d) => {
+    return Array.isArray(d) ? d : (d && d.releases ? d.releases : []);
+  });
+}
+
+// installHelmRelease 安装 Helm Release。POST /api/v1/helm/releases（201）
+// body: {name, chart, namespace, values, repo}
+export function installHelmRelease(data) {
+  return requestJSON('POST', '/api/v1/helm/releases', data);
+}
+
+// uninstallHelmRelease 卸载 Helm Release。DELETE /api/v1/helm/releases/{name}
+// 返回 {status: "deleted"}
+export function uninstallHelmRelease(name) {
+  return requestJSON('DELETE', '/api/v1/helm/releases/' + encodeURIComponent(name));
+}
+
+// getHelmCatalog 获取 Helm 应用目录。GET /api/v1/helm/catalog
+// 返回 {categories: [CatalogCategory]}，CatalogCategory {name, description, count}
+export function getHelmCatalog() {
+  return requestJSON('GET', '/api/v1/helm/catalog').then((d) => {
+    return Array.isArray(d) ? d : (d && d.categories ? d.categories : []);
+  });
+}
