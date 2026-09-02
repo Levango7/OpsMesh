@@ -34,7 +34,7 @@ export function renderApiEndpoints(container) {
     { method: 'POST',   path: '/api/v1/argocd/apps',                     desc: 'create argocd app' },
     { method: 'DELETE', path: '/api/v1/argocd/apps/{id}',                desc: 'delete argocd app' },
     { method: 'POST',   path: '/api/v1/argocd/apps/{id}/sync',           desc: 'sync argocd app' },
-    { method: 'GET',    path: '/api/v1/canary/releases',                 desc: 'list canary releases' },
+    { method: 'GET',    path: '/api/v1/tasks/canary',                    desc: 'list canary deployments' },
     { method: 'POST',   path: '/api/v1/canary/{id}/traffic-split',       desc: 'set canary traffic split' },
     { method: 'GET',    path: '/api/v1/canary/{id}/metrics',             desc: 'get canary metrics' },
     { method: 'POST', path: '/api/v1/config/hotpush',                  desc: 'hotpush config' },

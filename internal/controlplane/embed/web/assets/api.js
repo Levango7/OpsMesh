@@ -264,9 +264,10 @@ export function syncArgoCDApp(id) {
 // Phase 2：灰度发布增强 API
 // ============================================================================
 
-// getCanaryReleases 列出灰度发布。GET /api/v1/canary/releases
+// getCanaryReleases 列出灰度发布。GET /api/v1/tasks/canary
+// 注：后端无 /api/v1/canary/releases，改用 /api/v1/tasks/canary（灰度任务列表）。
 export function getCanaryReleases() {
-  return requestJSON('GET', '/api/v1/canary/releases').then((d) => {
+  return requestJSON('GET', '/api/v1/tasks/canary').then((d) => {
     return (d && d.releases) ? d.releases : (Array.isArray(d) ? d : []);
   });
 }
@@ -845,4 +846,194 @@ export function getPlatformHealth() {
 // getPlatformMetrics 获取平台运行指标。GET /api/v1/platform/metrics
 export function getPlatformMetrics() {
   return requestJSON('GET', '/api/v1/platform/metrics');
+}
+
+// ============================================================================
+// P0 补齐功能域：设备管理 API
+// ============================================================================
+
+// getDevices 列出设备。GET /api/v1/devices
+// filter: {status, type, agentID, ...}
+export function getDevices(filter = {}) {
+  return requestJSON('GET', '/api/v1/devices' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.devices ? d.devices : []);
+  });
+}
+
+// retireDevice 退役设备。DELETE /api/v1/devices/{id}
+export function retireDevice(id) {
+  return requestJSON('DELETE', '/api/v1/devices/' + encodeURIComponent(id));
+}
+
+// getDeviceMetrics 获取设备监控指标。GET /api/v1/devices/{id}/metrics
+export function getDeviceMetrics(id) {
+  return requestJSON('GET', '/api/v1/devices/' + encodeURIComponent(id) + '/metrics');
+}
+
+// getAgents 列出代理。GET /api/v1/agents
+export function getAgents(filter = {}) {
+  return requestJSON('GET', '/api/v1/agents' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.agents ? d.agents : []);
+  });
+}
+
+// ============================================================================
+// P0 补齐功能域：任务执行 API
+// ============================================================================
+
+// getTasks 列出任务。GET /api/v1/tasks
+// filter: {status, type, deviceID, ...}
+export function getTasks(filter = {}) {
+  return requestJSON('GET', '/api/v1/tasks' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.tasks ? d.tasks : []);
+  });
+}
+
+// createTask 创建任务。POST /api/v1/tasks
+// body: {name, type, deviceID, payload, priority, ...}
+export function createTask(data) {
+  return requestJSON('POST', '/api/v1/tasks', data);
+}
+
+// cancelTask 取消任务。POST /api/v1/tasks/{id}/cancel
+export function cancelTask(id) {
+  return requestJSON('POST', '/api/v1/tasks/' + encodeURIComponent(id) + '/cancel');
+}
+
+// getTaskResult 获取任务结果。GET /api/v1/tasks/{id}/result
+export function getTaskResult(id) {
+  return requestJSON('GET', '/api/v1/tasks/' + encodeURIComponent(id) + '/result');
+}
+
+// ============================================================================
+// P0 补齐功能域：告警管理 API
+// ============================================================================
+
+// getAlerts 列出告警。GET /api/v1/alerts
+// filter: {severity, state, source, ...}
+export function getAlerts(filter = {}) {
+  return requestJSON('GET', '/api/v1/alerts' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.alerts ? d.alerts : []);
+  });
+}
+
+// ackAlert 确认告警。POST /api/v1/alerts/{id}/ack
+export function ackAlert(id) {
+  return requestJSON('POST', '/api/v1/alerts/' + encodeURIComponent(id) + '/ack');
+}
+
+// silenceAlert 静默告警。POST /api/v1/alerts/{id}/silence
+// body: {duration, reason}
+export function silenceAlert(id, data) {
+  return requestJSON('POST', '/api/v1/alerts/' + encodeURIComponent(id) + '/silence', data || {});
+}
+
+// ============================================================================
+// P0 补齐功能域：告警规则管理 API（规则 CRUD / 多条件引擎 / 静默规则）
+// ============================================================================
+
+// --- 告警规则 ---
+
+// getAlertRules 列出告警规则。GET /api/v1/alert-rules
+export function getAlertRules(filter = {}) {
+  return requestJSON('GET', '/api/v1/alert-rules' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.rules ? d.rules : []);
+  });
+}
+
+// createAlertRule 创建告警规则。POST /api/v1/alert-rules
+export function createAlertRule(data) {
+  return requestJSON('POST', '/api/v1/alert-rules', data);
+}
+
+// getAlertRule 获取告警规则详情。GET /api/v1/alert-rules/{id}
+export function getAlertRule(id) {
+  return requestJSON('GET', '/api/v1/alert-rules/' + encodeURIComponent(id));
+}
+
+// updateAlertRule 更新告警规则。PUT /api/v1/alert-rules/{id}
+export function updateAlertRule(id, data) {
+  return requestJSON('PUT', '/api/v1/alert-rules/' + encodeURIComponent(id), data);
+}
+
+// deleteAlertRule 删除告警规则。DELETE /api/v1/alert-rules/{id}
+export function deleteAlertRule(id) {
+  return requestJSON('DELETE', '/api/v1/alert-rules/' + encodeURIComponent(id));
+}
+
+// --- 多条件引擎 ---
+
+// getAlertRulesEngine 列出多条件引擎规则。GET /api/v1/alert-rules-engine
+export function getAlertRulesEngine(filter = {}) {
+  return requestJSON('GET', '/api/v1/alert-rules-engine' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.rules ? d.rules : (d && d.engine ? d.engine : []));
+  });
+}
+
+// createAlertRuleEngine 创建多条件引擎规则。POST /api/v1/alert-rules-engine
+export function createAlertRuleEngine(data) {
+  return requestJSON('POST', '/api/v1/alert-rules-engine', data);
+}
+
+// getAlertRuleEngine 获取多条件引擎规则详情。GET /api/v1/alert-rules-engine/{id}
+export function getAlertRuleEngine(id) {
+  return requestJSON('GET', '/api/v1/alert-rules-engine/' + encodeURIComponent(id));
+}
+
+// updateAlertRuleEngine 更新多条件引擎规则。PUT /api/v1/alert-rules-engine/{id}
+export function updateAlertRuleEngine(id, data) {
+  return requestJSON('PUT', '/api/v1/alert-rules-engine/' + encodeURIComponent(id), data);
+}
+
+// deleteAlertRuleEngine 删除多条件引擎规则。DELETE /api/v1/alert-rules-engine/{id}
+export function deleteAlertRuleEngine(id) {
+  return requestJSON('DELETE', '/api/v1/alert-rules-engine/' + encodeURIComponent(id));
+}
+
+// --- 静默规则 ---
+
+// getAlertSilences 列出静默规则。GET /api/v1/alert-silences
+export function getAlertSilences(filter = {}) {
+  return requestJSON('GET', '/api/v1/alert-silences' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.silences ? d.silences : []);
+  });
+}
+
+// createAlertSilence 创建静默规则。POST /api/v1/alert-silences
+export function createAlertSilence(data) {
+  return requestJSON('POST', '/api/v1/alert-silences', data);
+}
+
+// deleteAlertSilence 删除静默规则。DELETE /api/v1/alert-silences/{id}
+export function deleteAlertSilence(id) {
+  return requestJSON('DELETE', '/api/v1/alert-silences/' + encodeURIComponent(id));
+}
+
+// ============================================================================
+// P0 补齐功能域：批量执行 API
+// ============================================================================
+
+// batchExec 批量执行任务（立即下发）。POST /api/v1/tasks/batch-exec
+// body: {type, devices[], payload, concurrency, failThreshold, ...}
+export function batchExec(data) {
+  return requestJSON('POST', '/api/v1/tasks/batch-exec', data);
+}
+
+// getBatchStatus 查询批量任务状态。GET /api/v1/tasks/batch/{id}
+export function getBatchStatus(id) {
+  return requestJSON('GET', '/api/v1/tasks/batch/' + encodeURIComponent(id));
+}
+
+// batchCreate 创建批量任务（不立即执行）。POST /api/v1/tasks/batch
+// body: {name, type, devices[], payload, concurrency, ...}
+export function batchCreate(data) {
+  return requestJSON('POST', '/api/v1/tasks/batch', data);
+}
+
+// getBatchList 列出最近批量任务。GET /api/v1/tasks/batch
+// 注：用于批量列表 tab 展示最近批次；后端无明确文档时按 RESTful 约定推断。
+export function getBatchList(filter = {}) {
+  return requestJSON('GET', '/api/v1/tasks/batch' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.batches ? d.batches : (d && d.tasks ? d.tasks : []));
+  });
 }

@@ -50,6 +50,7 @@ export const ROUTE_DOMAIN_MAP = {
   'os-optimize': 'ops',
   middleware: 'ops',
   k8s: 'ops',
+  batch: 'ops',
   // 资产配置 → assets
   cmdb: 'assets',
   // 交付中心 → delivery
@@ -58,9 +59,11 @@ export const ROUTE_DOMAIN_MAP = {
   traffic: 'delivery',
   pipeline: 'delivery',
   argocd: 'delivery',
+  canary: 'delivery',
   // 可观测性 → observability
   logs: 'observability',
   slos: 'observability',
+  'alert-rules': 'observability',
   // 系统管理 → system
   users: 'system',
   roles: 'system',

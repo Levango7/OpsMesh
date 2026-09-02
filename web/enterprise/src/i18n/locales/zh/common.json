@@ -52,7 +52,10 @@
     "apikeys": "API Key",
     "gatewayRoutes": "网关路由",
     "auditEvents": "审计事件",
-    "notifyChannels": "通知渠道"
+    "notifyChannels": "通知渠道",
+    "alertRules": "告警规则",
+    "batch": "批量运维",
+    "canary": "灰度发布"
   },
   "topbar": {
     "devices": "设备",
@@ -185,7 +188,17 @@
     "pluginsFailed": "插件列表拉取失败",
     "pluginDetailFailed": "插件详情拉取失败",
     "requestsFailed": "请求列表拉取失败",
-    "approvalsFailed": "审批队列拉取失败"
+    "approvalsFailed": "审批队列拉取失败",
+    "alertRuleListFailed": "告警规则列表拉取失败",
+    "alertEngineListFailed": "引擎规则列表拉取失败",
+    "alertSilenceListFailed": "静默规则列表拉取失败",
+    "batchExecFailed": "批量执行失败",
+    "batchStatusFailed": "批量状态查询失败",
+    "canaryCreateFailed": "灰度发布创建失败",
+    "canaryStatusFailed": "灰度状态查询失败",
+    "canaryAdvanceFailed": "灰度推进失败",
+    "canaryTrafficFailed": "流量分割操作失败",
+    "canaryMetricsFailed": "灰度指标拉取失败"
   },
   "common": {
     "loading": "加载中…",

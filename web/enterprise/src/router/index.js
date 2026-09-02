@@ -38,6 +38,8 @@ const routes = [
   { path: '/os-optimize', name: 'os-optimize', component: () => import('@/views/OSOptimizeView.vue'), meta: { title: 'nav.osopt', group: '运维管理', icon: 'task', requirePerm: 'task:read' } },
   { path: '/middleware', name: 'middleware', component: () => import('@/views/MiddlewareDeployView.vue'), meta: { title: 'nav.mwdep', group: '运维管理', icon: 'deploy', requirePerm: 'deploy:read' } },
   { path: '/k8s', name: 'k8s', component: () => import('@/views/K8sManageView.vue'), meta: { title: 'nav.k8s', group: '运维管理', icon: 'device', requirePerm: 'device:read' } },
+  // 批量运维（运维管理）：多设备批量下发 + 状态查看
+  { path: '/batch', name: 'batch', component: () => import('@/views/BatchView.vue'), meta: { title: 'nav.batch', group: '运维管理', icon: 'task', requirePerm: 'task:read' } },
 
   // 资产配置
   { path: '/cmdb', name: 'cmdb', component: () => import('@/views/CMDBView.vue'), meta: { title: 'nav.cmdb', group: '资产配置', icon: 'cmdb', requirePerm: 'cmdb:read' } },
@@ -45,9 +47,13 @@ const routes = [
   // 交付中心
   { path: '/workflows', name: 'workflows', component: () => import('@/views/WorkflowsView.vue'), meta: { title: 'nav.workflows', group: '交付中心', icon: 'flow', requirePerm: 'workflow:read' } },
   { path: '/deploys', name: 'deploys', component: () => import('@/views/DeploysView.vue'), meta: { title: 'nav.deploys', group: '交付中心', icon: 'deploy', requirePerm: 'deploy:read' } },
+  // 灰度发布（交付中心）：创建灰度 + 状态 + 推进 + 流量分割 + 指标
+  { path: '/canary', name: 'canary', component: () => import('@/views/CanaryView.vue'), meta: { title: 'nav.canary', group: '交付中心', icon: 'flow', requirePerm: 'traffic:read' } },
 
   // 可观测性
   { path: '/logs', name: 'logs', component: () => import('@/views/LogsView.vue'), meta: { title: 'nav.logs', group: '可观测性', icon: 'logs', requirePerm: 'log:read' } },
+  // 告警规则管理（可观测性）：规则 / 引擎 / 静默 三 Tab
+  { path: '/alert-rules', name: 'alert-rules', component: () => import('@/views/AlertRulesView.vue'), meta: { title: 'nav.alertRules', group: '可观测性', icon: 'alerts', requirePerm: 'alert:read' } },
 
   // 系统管理
   { path: '/users', name: 'users', component: () => import('@/views/UsersView.vue'), meta: { title: 'nav.users', group: '系统管理', icon: 'users', requirePerm: 'user:read' } },

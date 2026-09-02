@@ -6,9 +6,7 @@ vi.mock('@/api/plugin', () => ({
   getPlugins: vi.fn(),
   getPlugin: vi.fn(),
   installPlugin: vi.fn(),
-  uninstallPlugin: vi.fn(),
-  getPluginVersions: vi.fn(),
-  getPluginCategories: vi.fn()
+  uninstallPlugin: vi.fn()
 }))
 
 import { usePluginStore } from '@/stores/plugin'
@@ -16,9 +14,7 @@ import {
   getPlugins,
   getPlugin,
   installPlugin,
-  uninstallPlugin,
-  getPluginVersions,
-  getPluginCategories
+  uninstallPlugin
 } from '@/api/plugin'
 
 describe('usePluginStore', () => {
@@ -33,19 +29,9 @@ describe('usePluginStore', () => {
       expect(store.plugins).toEqual([])
     })
 
-    it('categories 初始为空数组', () => {
-      const store = usePluginStore()
-      expect(store.categories).toEqual([])
-    })
-
     it('searchQuery 初始为空字符串', () => {
       const store = usePluginStore()
       expect(store.searchQuery).toBe('')
-    })
-
-    it('selectedCategory 初始为空字符串', () => {
-      const store = usePluginStore()
-      expect(store.selectedCategory).toBe('')
     })
   })
 
@@ -108,31 +94,6 @@ describe('usePluginStore', () => {
     })
   })
 
-  describe('fetchVersions 动作', () => {
-    it('成功时设置 versions', async () => {
-      const mockVersions = [{ version: '1.0.0', changelog: 'Initial release', releasedAt: '2026-01-01' }]
-      getPluginVersions.mockResolvedValueOnce({ versions: mockVersions })
-
-      const store = usePluginStore()
-      await store.fetchVersions('p1')
-
-      expect(getPluginVersions).toHaveBeenCalledWith('p1')
-      expect(store.versions).toEqual(mockVersions)
-    })
-  })
-
-  describe('fetchCategories 动作', () => {
-    it('成功时设置 categories', async () => {
-      const mockCategories = [{ id: 'monitoring', name: '监控', count: 5 }]
-      getPluginCategories.mockResolvedValueOnce({ categories: mockCategories })
-
-      const store = usePluginStore()
-      await store.fetchCategories()
-
-      expect(store.categories).toEqual(mockCategories)
-    })
-  })
-
   describe('setSearch 动作', () => {
     it('设置 searchQuery', () => {
       const store = usePluginStore()
@@ -142,36 +103,14 @@ describe('usePluginStore', () => {
     })
   })
 
-  describe('setCategory 动作', () => {
-    it('设置 selectedCategory', () => {
-      const store = usePluginStore()
-      store.setCategory('monitoring')
-
-      expect(store.selectedCategory).toBe('monitoring')
-    })
-  })
-
   describe('getters', () => {
-    it('filteredPlugins 按分类过滤', () => {
-      const store = usePluginStore()
-      store.plugins = [
-        { id: 'p1', name: 'monitor-a', category: 'monitoring' },
-        { id: 'p2', name: 'log-b', category: 'logging' }
-      ]
-      store.selectedCategory = 'monitoring'
-      store.searchQuery = ''
-
-      expect(store.filteredPlugins.length).toBe(1)
-      expect(store.filteredPlugins[0].id).toBe('p1')
-    })
-
     it('filteredPlugins 按搜索词过滤', () => {
       const store = usePluginStore()
       store.plugins = [
         { id: 'p1', name: 'monitor-a', description: 'system monitoring' },
         { id: 'p2', name: 'log-b', description: 'log collector' }
       ]
-      store.selectedCategory = ''
+
       store.searchQuery = 'monitor'
 
       expect(store.filteredPlugins.length).toBe(1)

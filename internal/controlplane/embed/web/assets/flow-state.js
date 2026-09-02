@@ -66,6 +66,27 @@ const state = {
   platformConfig: null,
   platformHealth: null,
   platformMetrics: null,
+  // P0 补齐功能域状态
+  // 设备管理
+  devices: [],
+  agents: [],
+  devicesSubTab: 'devices', // devices | agents
+  // 任务执行
+  tasks: [],
+  taskFilter: { status: '' },
+  // 告警管理
+  alerts: [],
+  alertFilter: { severity: '', state: '' },
+  // 告警规则管理
+  alertRules: [],
+  alertRulesEngine: [],
+  alertSilences: [],
+  alertRulesSubTab: 'rules', // rules | engine | silences
+  // 批量执行
+  batches: [],
+  batchDetail: null,
+  batchSelectedId: null,
+  batchSubTab: 'list', // list | exec | create | status
 };
 
 

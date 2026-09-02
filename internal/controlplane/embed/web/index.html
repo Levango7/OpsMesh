@@ -280,6 +280,22 @@ a:hover{color:var(--accent-hover);}
       <button type="button" class="tab-btn" data-tab="platform" data-i18n="nav.platform">
         <span class="icon" data-icon="platform"></span><span>平台配置</span>
       </button>
+      <!--D0 补齐功能域 tab -->
+      <button type="button" class="tab-btn" data-tab="devices" data-i18n="nav.devices">
+        <span class="icon" data-icon="device"></span><span>设备管理</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="tasks" data-i18n="nav.tasks">
+        <span class="icon" data-icon="task"></span><span>任务执行</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="alerts" data-i18n="nav.alerts">
+        <span class="icon" data-icon="alert"></span><span>告警管理</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="alert-rules" data-i18n="nav.alertRules">
+        <span class="icon" data-icon="rule"></span><span>告警规则</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="batch" data-i18n="nav.batch">
+        <span class="icon" data-icon="rocket"></span><span>批量执行</span>
+      </button>
     </div>
   </nav>
 
@@ -478,6 +494,56 @@ a:hover{color:var(--accent-hover);}
       </div>
       <div id="platform-toolbar" class="toolbar"></div>
       <div id="platform-content" class="content"></div>
+    </section>
+
+    <!-- 设备管理 page -->
+    <section id="page-devices" class="page">
+      <div class="page-head">
+        <h2>设备管理</h2>
+        <p>设备列表 / 退役 / 监控指标 / 代理列表</p>
+      </div>
+      <div id="devices-toolbar" class="toolbar"></div>
+      <div id="devices-content" class="content"></div>
+    </section>
+
+    <!-- 任务执行 page -->
+    <section id="page-tasks" class="page">
+      <div class="page-head">
+        <h2>任务执行</h2>
+        <p>任务下发 / 取消 / 结果查看</p>
+      </div>
+      <div id="tasks-toolbar" class="toolbar"></div>
+      <div id="tasks-content" class="content"></div>
+    </section>
+
+    <!-- 告警管理 page -->
+    <section id="page-alerts" class="page">
+      <div class="page-head">
+        <h2>告警管理</h2>
+        <p>活跃告警列表 / 确认 / 静默</p>
+      </div>
+      <div id="alerts-toolbar" class="toolbar"></div>
+      <div id="alerts-content" class="content"></div>
+    </section>
+
+    <!-- 告警规则管理 page -->
+    <section id="page-alert-rules" class="page">
+      <div class="page-head">
+        <h2>告警规则</h2>
+        <p>告警规则 CRUD / 多条件引擎 / 静默规则</p>
+      </div>
+      <div id="alert-rules-toolbar" class="toolbar"></div>
+      <div id="alert-rules-content" class="content"></div>
+    </section>
+
+    <!-- 批量执行 page -->
+    <section id="page-batch" class="page">
+      <div class="page-head">
+        <h2>批量执行</h2>
+        <p>批量任务下发 / 状态查询</p>
+      </div>
+      <div id="batch-toolbar" class="toolbar"></div>
+      <div id="batch-content" class="content"></div>
     </section>
   </main>
 

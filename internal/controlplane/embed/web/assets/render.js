@@ -95,3 +95,23 @@ export {
   renderScriptsTable, renderScriptForm, renderScriptExecuteForm,
   renderScriptExecutionsTable, renderScriptExecutionDetail,
 } from './render-script.js';
+
+// ============================================================================
+// P0 补齐功能域：设备管理 / 任务执行 / 告警管理 / 告警规则管理 / 批量执行
+// ============================================================================
+export { renderDevicesTable, renderDeviceMetrics, renderAgentsTable } from './render-devices.js';
+export {
+  renderTasksTable, renderTaskForm, renderTaskResult,
+} from './render-tasks.js';
+export {
+  renderAlertsTable, renderAlertSilenceForm, renderAlertDetail,
+  alertSeverityBadge, alertStateBadge,
+} from './render-alerts.js';
+export {
+  renderAlertRulesTable, renderAlertRuleForm,
+  renderAlertEngineTable, renderAlertEngineForm,
+  renderAlertSilencesTable, renderAlertSilenceCreateForm,
+} from './render-alert-rules.js';
+export {
+  renderBatchExecForm, renderBatchCreateForm, renderBatchStatus, renderBatchList,
+} from './render-batch.js';

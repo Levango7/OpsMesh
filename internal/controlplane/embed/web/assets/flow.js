@@ -49,13 +49,19 @@ import * as flowAPIKey      from './flow-apikey.js';
 import * as flowPlugin      from './flow-plugin.js';
 import * as flowBilling     from './flow-billing.js';
 import * as flowPlatform    from './flow-platform.js';
+// P0 补齐功能域子模块
+import * as flowDevices     from './flow-devices.js';
+import * as flowTasks       from './flow-tasks.js';
+import * as flowAlerts      from './flow-alerts.js';
+import * as flowAlertRules  from './flow-alert-rules.js';
+import * as flowBatch       from './flow-batch.js';
 
 // ============================================================================
 // Tab 切换
 // ============================================================================
 
 export function switchTab(tab) {
-  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push', 'compliance', 'ha', 'network-mgmt', 'automation', 'gateway', 'webhook', 'script', 'tenant', 'apikey', 'plugin', 'billing', 'platform'];
+  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push', 'compliance', 'ha', 'network-mgmt', 'automation', 'gateway', 'webhook', 'script', 'tenant', 'apikey', 'plugin', 'billing', 'platform', 'devices', 'tasks', 'alerts', 'alert-rules', 'batch'];
   if (validTabs.indexOf(tab) === -1) return;
   state.currentTab = tab;
   // 更新 tab 按钮激活态
@@ -92,6 +98,12 @@ export function switchTab(tab) {
   if (tab === 'plugin' && state.plugins.length === 0) flowPlugin.loadPlugins();
   if (tab === 'billing' && !state._billingLoaded) flowBilling.loadBilling();
   if (tab === 'platform' && !state._platformLoaded) flowPlatform.loadPlatform();
+  // P0 补齐功能域懒加载
+  if (tab === 'devices' && state.devices.length === 0) flowDevices.loadDevices();
+  if (tab === 'tasks' && state.tasks.length === 0) flowTasks.loadTasks();
+  if (tab === 'alerts' && state.alerts.length === 0) flowAlerts.loadAlerts();
+  if (tab === 'alert-rules' && state.alertRules.length === 0) flowAlertRules.loadAlertRules();
+  if (tab === 'batch' && state.batches.length === 0) flowBatch.loadBatch();
 }
 
 // ============================================================================
@@ -139,6 +151,12 @@ export function init() {
   flowPlugin.buildPluginToolbar();
   flowBilling.buildBillingToolbar();
   flowPlatform.buildPlatformToolbar();
+  // P0 补齐功能域工具栏
+  flowDevices.buildDevicesToolbar();
+  flowTasks.buildTasksToolbar();
+  flowAlerts.buildAlertsToolbar();
+  flowAlertRules.buildAlertRulesToolbar();
+  flowBatch.buildBatchToolbar();
 
   // 绑定 tab 切换
   document.querySelectorAll('.tab-btn').forEach((btn) => {
@@ -170,6 +188,12 @@ function refreshCurrentPage() {
   flowPlugin.buildPluginToolbar();
   flowBilling.buildBillingToolbar();
   flowPlatform.buildPlatformToolbar();
+  // P0 补齐功能域工具栏
+  flowDevices.buildDevicesToolbar();
+  flowTasks.buildTasksToolbar();
+  flowAlerts.buildAlertsToolbar();
+  flowAlertRules.buildAlertRulesToolbar();
+  flowBatch.buildBatchToolbar();
   // 重新加载当前页数据
   if (state.currentTab === 'tickets') flowTicket.loadTickets();
   else if (state.currentTab === 'dashboard') flowDashboard.loadDashboardAll();
@@ -190,6 +214,12 @@ function refreshCurrentPage() {
   else if (state.currentTab === 'plugin') flowPlugin.loadPlugins();
   else if (state.currentTab === 'billing') flowBilling.loadBilling();
   else if (state.currentTab === 'platform') flowPlatform.loadPlatform();
+  // P0 补齐功能域刷新
+  else if (state.currentTab === 'devices') flowDevices.refreshDevicesSubTab();
+  else if (state.currentTab === 'tasks') flowTasks.loadTasks();
+  else if (state.currentTab === 'alerts') flowAlerts.loadAlerts();
+  else if (state.currentTab === 'alert-rules') flowAlertRules.refreshAlertRulesSubTab();
+  else if (state.currentTab === 'batch') flowBatch.refreshBatchSubTab();
 }
 
 // ============================================================================
@@ -215,6 +245,12 @@ export * from './flow-apikey.js';
 export * from './flow-plugin.js';
 export * from './flow-billing.js';
 export * from './flow-platform.js';
+// P0 补齐功能域 re-export
+export * from './flow-devices.js';
+export * from './flow-tasks.js';
+export * from './flow-alerts.js';
+export * from './flow-alert-rules.js';
+export * from './flow-batch.js';
 
 // init/switchTab 也需要导出
 export { init, switchTab };

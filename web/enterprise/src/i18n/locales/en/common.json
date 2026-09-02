@@ -52,7 +52,10 @@
     "apikeys": "API Keys",
     "gatewayRoutes": "Gateway Routes",
     "auditEvents": "Audit Events",
-    "notifyChannels": "Notify Channels"
+    "notifyChannels": "Notify Channels",
+    "alertRules": "Alert Rules",
+    "batch": "Batch Ops",
+    "canary": "Canary"
   },
   "topbar": {
     "devices": "Devices",
@@ -185,7 +188,17 @@
     "pluginsFailed": "Failed to fetch plugins",
     "pluginDetailFailed": "Failed to fetch plugin details",
     "requestsFailed": "Failed to fetch requests",
-    "approvalsFailed": "Failed to fetch approvals"
+    "approvalsFailed": "Failed to fetch approvals",
+    "alertRuleListFailed": "Failed to fetch alert rules",
+    "alertEngineListFailed": "Failed to fetch engine rules",
+    "alertSilenceListFailed": "Failed to fetch silence rules",
+    "batchExecFailed": "Batch execution failed",
+    "batchStatusFailed": "Failed to fetch batch status",
+    "canaryCreateFailed": "Failed to create canary release",
+    "canaryStatusFailed": "Failed to fetch canary status",
+    "canaryAdvanceFailed": "Failed to advance canary",
+    "canaryTrafficFailed": "Failed to operate traffic split",
+    "canaryMetricsFailed": "Failed to fetch canary metrics"
   },
   "common": {
     "loading": "Loading…",

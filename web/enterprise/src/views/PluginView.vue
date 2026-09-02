@@ -5,7 +5,7 @@
 
     <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
-    <!-- 搜索和过滤 -->
+    <!-- 搜索 -->
     <div class="flowbar search-bar">
       <div class="field search-field">
         <input
@@ -14,13 +14,6 @@
           data-testid="plugin-search-input"
           @input="onSearch"
         />
-      </div>
-      <div class="field">
-        <label>{{ $t('plugin.category') }}</label>
-        <select v-model="store.selectedCategory" @change="store.fetchPlugins()" data-testid="plugin-category-select">
-          <option value="">{{ $t('plugin.allCategories') }}</option>
-          <option v-for="c in store.categories" :key="c.id" :value="c.id">{{ c.name }} ({{ c.count }})</option>
-        </select>
       </div>
       <button class="xs outline" @click="store.fetchPlugins()">↻ {{ $t('common.refresh') }}</button>
     </div>
@@ -75,20 +68,7 @@
           <tr><th>{{ $t('plugin.downloads') }}</th><td>{{ store.selectedPlugin.downloads || 0 }}</td></tr>
           <tr><th>{{ $t('plugin.status') }}</th><td>{{ store.selectedPlugin.status }}</td></tr>
         </table>
-        <h4>{{ $t('plugin.versionHistory') }}</h4>
-        <div v-if="!store.versions.length" class="muted">{{ $t('plugin.noVersions') }}</div>
-        <table v-else>
-          <thead>
-            <tr><th>{{ $t('plugin.version') }}</th><th>{{ $t('plugin.changelog') }}</th><th>{{ $t('plugin.releasedAt') }}</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="v in store.versions" :key="v.version">
-              <td>v{{ v.version }}</td>
-              <td>{{ v.changelog || '-' }}</td>
-              <td>{{ v.releasedAt || '-' }}</td>
-            </tr>
-          </tbody>
-        </table>
+
       </div>
     </DetailDrawer>
 
@@ -131,7 +111,7 @@ function onSearch() {
 
 async function openDetail(id) {
   await store.fetchPlugin(id)
-  await store.fetchVersions(id)
+
   detailOpen.value = true
 }
 
@@ -186,7 +166,7 @@ async function onActionConfirm() {
 
 onMounted(() => {
   store.fetchPlugins()
-  store.fetchCategories()
+
 })
 </script>
 
