@@ -108,6 +108,19 @@ const state = {
   middlewareSubTab: 'templates', // templates | instances
   // K8s 集群管理
   k8s: { clusters: [], loading: false, error: null },
+  // P2 补齐功能域状态
+  // 自动纳管
+  provision: { result: null, loading: false, error: null },
+  // ChatOps
+  bot: { history: [], platforms: [], response: null, loading: false, error: null },
+  botSubTab: 'command', // command | history | platforms
+  // 控制面联邦
+  federation: { peers: [], devices: [], loading: false, error: null },
+  federationSubTab: 'peers', // peers | devices | forward
+  // 定时任务
+  schedules: { list: [], loading: false, error: null },
+  // SSE 连接实例（不直接渲染，仅用于生命周期管理）
+  _sse: null,
 };
 
 

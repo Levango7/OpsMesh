@@ -107,7 +107,20 @@ export const ROUTE_DOMAIN_MAP = {
   config: 'ops',
   'cmdb-changes': 'ops',
   'cmdb-attr-templates': 'ops',
-  'cmdb-collect': 'ops'
+  'cmdb-collect': 'ops',
+
+  // ====================================================================
+  // P2 四子域路由 → 功能域映射
+  //   approval-flows/approval-requests/audits → system
+  //   network-topology/network-diagnose/network-devices/auto-provision → ops
+  // ====================================================================
+  'approval-flows': 'system',
+  'approval-requests': 'system',
+  'network-topology': 'ops',
+  'network-diagnose': 'ops',
+  'network-devices': 'ops',
+  audits: 'system',
+  'auto-provision': 'ops'
 }
 
 // 预先收集所有功能域 json 模块（Vite 会为每个 json 生成单独 chunk，按需加载）

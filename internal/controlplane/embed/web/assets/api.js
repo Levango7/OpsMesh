@@ -1250,3 +1250,125 @@ export function createK8sCluster(data) {
 export function testK8sCluster(id) {
   return requestJSON('POST', '/api/v1/k8s/clusters/' + encodeURIComponent(id) + '/test');
 }
+
+// ============================================================================
+// P2 补齐功能域：SSE 实时推送 API
+// ============================================================================
+
+// connectSSE 连接 SSE 事件流。GET /api/v1/events/stream
+// onEvent: (event) => void，事件对象 {type, data}
+// 连接失败时静默降级（不抛错），返回 EventSource 实例或 null。
+export function connectSSE(onEvent) {
+  try {
+    if (typeof EventSource === 'undefined') return null;
+    const url = '/api/v1/events/stream';
+    const es = new EventSource(url);
+    // 通用 message 事件
+    es.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        if (onEvent) onEvent({ type: 'message', data });
+      } catch (_) { /* 静默忽略解析失败 */ }
+    };
+    // 已知事件类型：task_status / alert_new / device_status
+    ['task_status', 'alert_new', 'device_status'].forEach((type) => {
+      es.addEventListener(type, (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          if (onEvent) onEvent({ type, data });
+        } catch (_) { /* 静默 */ }
+      });
+    });
+    // 连接失败时静默降级（不报错）
+    es.onerror = () => { /* 静默降级到轮询 */ };
+    return es;
+  } catch (_) {
+    return null;
+  }
+}
+
+// ============================================================================
+// P2 补齐功能域：自动纳管 API
+// ============================================================================
+
+// autoProvision 自动纳管。POST /api/v1/provision/auto
+// body: {segment, agentVersion}
+// 返回 {discovered, provisioned, failed, devices: [{ip, hostname, status}]}
+export function autoProvision(data) {
+  return requestJSON('POST', '/api/v1/provision/auto', data);
+}
+
+// ============================================================================
+// P2 补齐功能域：ChatOps API（命令 / 历史 / 平台）
+// ============================================================================
+
+// sendBotCommand 发送 ChatOps 命令。POST /api/v1/bot/command
+// body: {command, platform}
+// 返回 {response, taskID}
+export function sendBotCommand(data) {
+  return requestJSON('POST', '/api/v1/bot/command', data);
+}
+
+// getBotHistory 获取 ChatOps 历史记录。GET /api/v1/bot/history
+// 返回 {history: [{id, command, response, userID, createdAt}]}
+export function getBotHistory() {
+  return requestJSON('GET', '/api/v1/bot/history');
+}
+
+// getBotPlatforms 获取 ChatOps 平台列表。GET /api/v1/bot/platforms
+// 返回 {platforms: [{name, enabled, webhookURL}]}
+export function getBotPlatforms() {
+  return requestJSON('GET', '/api/v1/bot/platforms').then((d) => {
+    return Array.isArray(d) ? d : (d && d.platforms ? d.platforms : []);
+  });
+}
+
+// ============================================================================
+// P2 补齐功能域：控制面联邦 API（Peer / 设备聚合 / 任务转发）
+// ============================================================================
+
+// getFederationPeers 列出联邦 Peer。GET /api/v1/federation/peers
+// 返回 {peers: [PeerStatus]}，PeerStatus {url, online, lastCheckAt, latencyMs}
+export function getFederationPeers() {
+  return requestJSON('GET', '/api/v1/federation/peers');
+}
+
+// forwardTask 转发任务到 peer。POST /api/v1/federation/forward/task
+// body: {peerURL, taskType, command, deviceID, timeoutSec}
+// 返回 {taskID, peerURL, status}
+export function forwardTask(data) {
+  return requestJSON('POST', '/api/v1/federation/forward/task', data);
+}
+
+// getFederationDevices 获取跨 peer 设备聚合视图。GET /api/v1/federation/devices
+// 返回 {devices: [Device], peers: [{url, online, deviceCount}]}
+export function getFederationDevices() {
+  return requestJSON('GET', '/api/v1/federation/devices');
+}
+
+// ============================================================================
+// P2 补齐功能域：定时任务 API（CRUD）
+// ============================================================================
+
+// getSchedules 列出定时任务。GET /api/v1/schedules
+// 返回 {schedules: [Schedule]}，Schedule {id, name, cron, taskType, params, enabled, lastRunAt, nextRunAt, createdAt}
+export function getSchedules() {
+  return requestJSON('GET', '/api/v1/schedules');
+}
+
+// createSchedule 创建定时任务。POST /api/v1/schedules（201）
+// body: {name, cron, taskType, params, enabled}
+export function createSchedule(data) {
+  return requestJSON('POST', '/api/v1/schedules', data);
+}
+
+// updateSchedule 更新定时任务。PUT /api/v1/schedules/{id}
+export function updateSchedule(id, data) {
+  return requestJSON('PUT', '/api/v1/schedules/' + encodeURIComponent(id), data);
+}
+
+// deleteSchedule 删除定时任务。DELETE /api/v1/schedules/{id}
+// 返回 {status: "deleted"}
+export function deleteSchedule(id) {
+  return requestJSON('DELETE', '/api/v1/schedules/' + encodeURIComponent(id));
+}

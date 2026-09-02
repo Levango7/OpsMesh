@@ -188,7 +188,33 @@ const routes = [
   { path: '/cmdb-attr-templates', name: 'cmdb-attr-templates', component: () => import('@/views/CMDBAttrTemplatesView.vue'), meta: { title: 'nav.cmdbAttrTemplates', group: '运维管理', icon: 'cmdb', requirePerm: 'cmdb:read' } },
 
   // CMDB 采集管理（运维管理）：触发采集 + CI 导入导出 + 待审批 CI
-  { path: '/cmdb-collect', name: 'cmdb-collect', component: () => import('@/views/CMDBCollectView.vue'), meta: { title: 'nav.cmdbCollect', group: '运维管理', icon: 'cmdb', requirePerm: 'cmdb:read' } }
+  { path: '/cmdb-collect', name: 'cmdb-collect', component: () => import('@/views/CMDBCollectView.vue'), meta: { title: 'nav.cmdbCollect', group: '运维管理', icon: 'cmdb', requirePerm: 'cmdb:read' } },
+
+  // ======================================================================
+  // P2 四子域管理页（approval/network/audits/provision，后端 handler 在
+  // internal/controlplane/{approval,network,audit_query,provision}.go 注册，
+  // API 契约见 src/api/{approval,network,audit,provision}.js 注释头）。
+  // ======================================================================
+  // 审批流定义（系统管理）：审批流 CRUD + 多级审批节点配置
+  { path: '/approval-flows', name: 'approval-flows', component: () => import('@/views/ApprovalFlowsView.vue'), meta: { title: 'nav.approvalFlows', group: '系统管理', icon: 'flow', requirePerm: '' } },
+
+  // 审批请求（系统管理）：审批请求列表 + 待我审批（approve/reject/cancel + history）
+  { path: '/approval-requests', name: 'approval-requests', component: () => import('@/views/ApprovalRequestsView.vue'), meta: { title: 'nav.approvalRequests', group: '系统管理', icon: 'task', requirePerm: '' } },
+
+  // 网络拓扑（运维管理）：拓扑图展示 + 刷新 + 缓存
+  { path: '/network-topology', name: 'network-topology', component: () => import('@/views/NetworkTopologyView.vue'), meta: { title: 'nav.networkTopology', group: '运维管理', icon: 'device', requirePerm: '' } },
+
+  // 网络诊断（运维管理）：诊断工具表单 + 结果展示 + 批量连通性检测
+  { path: '/network-diagnose', name: 'network-diagnose', component: () => import('@/views/NetworkDiagnoseView.vue'), meta: { title: 'nav.networkDiagnose', group: '运维管理', icon: 'task', requirePerm: '' } },
+
+  // 网络设备（运维管理）：设备 CRUD + 指标查看 + 配置下发 + 网络发现
+  { path: '/network-devices', name: 'network-devices', component: () => import('@/views/NetworkDevicesView.vue'), meta: { title: 'nav.networkDevices', group: '运维管理', icon: 'cmdb', requirePerm: '' } },
+
+  // 审计检索（系统管理）：筛选 action/user/时间范围 + 分页列表
+  { path: '/audits', name: 'audits', component: () => import('@/views/AuditsView.vue'), meta: { title: 'nav.audits', group: '系统管理', icon: 'logs', requirePerm: '' } },
+
+  // 自动纳管（运维管理）：触发表单 + 结果展示
+  { path: '/auto-provision', name: 'auto-provision', component: () => import('@/views/AutoProvisionView.vue'), meta: { title: 'nav.autoProvision', group: '运维管理', icon: 'device', requirePerm: '' } }
 ]
 
 const router = createRouter({

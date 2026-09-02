@@ -28,6 +28,7 @@
 import { state, $ } from './flow-state.js';
 import { iconEl } from './icons.js';
 import { setLang as i18nSetLang } from './i18n.js';
+import * as api from './api.js';
 
 // 各功能域子模块（命名空间导入）
 import * as flowTicket      from './flow-ticket.js';
@@ -64,13 +65,18 @@ import * as flowCMDB          from './flow-cmdb.js';
 import * as flowOSOptimize    from './flow-os-optimize.js';
 import * as flowMiddleware    from './flow-middleware.js';
 import * as flowK8s           from './flow-k8s.js';
+// P2 补齐功能域子模块
+import * as flowProvision     from './flow-provision.js';
+import * as flowBot           from './flow-bot.js';
+import * as flowFederation    from './flow-federation.js';
+import * as flowSchedules     from './flow-schedules.js';
 
 // ============================================================================
 // Tab 切换
 // ============================================================================
 
 export function switchTab(tab) {
-  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push', 'compliance', 'ha', 'network-mgmt', 'automation', 'gateway', 'webhook', 'script', 'tenant', 'apikey', 'plugin', 'billing', 'platform', 'devices', 'tasks', 'alerts', 'alert-rules', 'batch', 'notify', 'logs', 'deploys', 'workflows', 'cmdb', 'os-optimize', 'middleware', 'k8s'];
+  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push', 'compliance', 'ha', 'network-mgmt', 'automation', 'gateway', 'webhook', 'script', 'tenant', 'apikey', 'plugin', 'billing', 'platform', 'devices', 'tasks', 'alerts', 'alert-rules', 'batch', 'notify', 'logs', 'deploys', 'workflows', 'cmdb', 'os-optimize', 'middleware', 'k8s', 'provision', 'bot', 'federation', 'schedules'];
   if (validTabs.indexOf(tab) === -1) return;
   state.currentTab = tab;
   // 更新 tab 按钮激活态
@@ -122,6 +128,11 @@ export function switchTab(tab) {
   if (tab === 'os-optimize' && state.osOptimize.templates.length === 0) flowOSOptimize.loadOSTemplates();
   if (tab === 'middleware' && state.middleware.templates.length === 0) flowMiddleware.loadMiddlewareTemplates();
   if (tab === 'k8s' && state.k8s.clusters.length === 0) flowK8s.loadK8sClusters();
+  // P2 补齐功能域懒加载
+  if (tab === 'provision' && !state._provisionLoaded) { flowProvision.showProvisionForm(); state._provisionLoaded = true; }
+  if (tab === 'bot' && !state._botLoaded) { flowBot.showBotCommandForm(); state._botLoaded = true; }
+  if (tab === 'federation' && state.federation.peers.length === 0) flowFederation.loadFederationPeers();
+  if (tab === 'schedules' && state.schedules.list.length === 0) flowSchedules.loadSchedules();
 }
 
 // ============================================================================
@@ -184,6 +195,11 @@ export function init() {
   flowOSOptimize.buildOSOptimizeToolbar();
   flowMiddleware.buildMiddlewareToolbar();
   flowK8s.buildK8sToolbar();
+  // P2 补齐功能域工具栏
+  flowProvision.buildProvisionToolbar();
+  flowBot.buildBotToolbar();
+  flowFederation.buildFederationToolbar();
+  flowSchedules.buildSchedulesToolbar();
 
   // 绑定 tab 切换
   document.querySelectorAll('.tab-btn').forEach((btn) => {
@@ -192,6 +208,9 @@ export function init() {
 
   // 默认加载工单列表
   flowTicket.loadTickets();
+
+  // 初始化 SSE 实时推送（静默降级，不影响主流程）
+  initSSE();
 }
 
 function refreshCurrentPage() {
@@ -230,6 +249,11 @@ function refreshCurrentPage() {
   flowOSOptimize.buildOSOptimizeToolbar();
   flowMiddleware.buildMiddlewareToolbar();
   flowK8s.buildK8sToolbar();
+  // P2 补齐功能域工具栏
+  flowProvision.buildProvisionToolbar();
+  flowBot.buildBotToolbar();
+  flowFederation.buildFederationToolbar();
+  flowSchedules.buildSchedulesToolbar();
   // 重新加载当前页数据
   if (state.currentTab === 'tickets') flowTicket.loadTickets();
   else if (state.currentTab === 'dashboard') flowDashboard.loadDashboardAll();
@@ -265,6 +289,48 @@ function refreshCurrentPage() {
   else if (state.currentTab === 'os-optimize') flowOSOptimize.loadOSTemplates();
   else if (state.currentTab === 'middleware') flowMiddleware.refreshMiddlewareSubTab();
   else if (state.currentTab === 'k8s') flowK8s.loadK8sClusters();
+  // P2 补齐功能域刷新
+  else if (state.currentTab === 'provision') flowProvision.refreshProvisionSubTab();
+  else if (state.currentTab === 'bot') flowBot.refreshBotSubTab();
+  else if (state.currentTab === 'federation') flowFederation.refreshFederationSubTab();
+  else if (state.currentTab === 'schedules') flowSchedules.loadSchedules();
+}
+
+// ============================================================================
+// SSE 实时推送
+// ============================================================================
+
+// initSSE 初始化 SSE 实时推送连接。
+// 监听事件并更新对应页面状态；连接失败时静默降级到现有轮询机制（不报错）。
+export function initSSE() {
+  try {
+    // 避免重复连接
+    if (state._sse) {
+      try { state._sse.close(); } catch (_) { /* 静默 */ }
+      state._sse = null;
+    }
+    const es = api.connectSSE((ev) => {
+      handleSSEEvent(ev);
+    });
+    state._sse = es;
+  } catch (_) { /* 静默降级 */ }
+}
+
+// handleSSEEvent 处理 SSE 事件，按事件类型更新对应页面状态。
+// 事件类型：task_status（任务状态）、alert_new（新增告警）、device_status（设备上下线）。
+function handleSSEEvent(ev) {
+  try {
+    if (ev.type === 'task_status') {
+      // 任务状态变更：刷新任务列表（若当前在任务页）
+      if (state.currentTab === 'tasks') flowTasks.loadTasks();
+    } else if (ev.type === 'alert_new') {
+      // 新增告警：刷新告警列表（若当前在告警页）
+      if (state.currentTab === 'alerts') flowAlerts.loadAlerts();
+    } else if (ev.type === 'device_status') {
+      // 设备上下线：刷新设备列表（若当前在设备页）
+      if (state.currentTab === 'devices') flowDevices.loadDevices();
+    }
+  } catch (_) { /* 静默，SSE 不应中断主流程 */ }
 }
 
 // ============================================================================
@@ -305,6 +371,11 @@ export * from './flow-cmdb.js';
 export * from './flow-os-optimize.js';
 export * from './flow-middleware.js';
 export * from './flow-k8s.js';
+// P2 补齐功能域 re-export
+export * from './flow-provision.js';
+export * from './flow-bot.js';
+export * from './flow-federation.js';
+export * from './flow-schedules.js';
 
 // init/switchTab 也需要导出
-export { init, switchTab };
+export { init, switchTab, initSSE };

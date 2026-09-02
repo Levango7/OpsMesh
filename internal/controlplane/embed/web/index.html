@@ -321,6 +321,19 @@ a:hover{color:var(--accent-hover);}
       <button type="button" class="tab-btn" data-tab="k8s" data-i18n="nav.k8s">
         <span class="icon" data-icon="dashboard"></span><span>K8s 集群</span>
       </button>
+      <!--P2 补齐功能域 tab -->
+      <button type="button" class="tab-btn" data-tab="provision" data-i18n="nav.provision">
+        <span class="icon" data-icon="discover"></span><span>自动纳管</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="bot" data-i18n="nav.bot">
+        <span class="icon" data-icon="send"></span><span>ChatOps</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="federation" data-i18n="nav.federation">
+        <span class="icon" data-icon="network"></span><span>控制面联邦</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="schedules" data-i18n="nav.schedules">
+        <span class="icon" data-icon="clock"></span><span>定时任务</span>
+      </button>
     </div>
   </nav>
 
@@ -649,6 +662,46 @@ a:hover{color:var(--accent-hover);}
       </div>
       <div id="k8s-toolbar" class="toolbar"></div>
       <div id="k8s-content" class="content"></div>
+    </section>
+
+    <!-- 自动纳管 page (P2) -->
+    <section id="page-provision" class="page">
+      <div class="page-head">
+        <h2>自动纳管</h2>
+        <p>网段扫描 + 自动纳管设备</p>
+      </div>
+      <div id="provision-toolbar" class="toolbar"></div>
+      <div id="provision-content" class="content"></div>
+    </section>
+
+    <!-- ChatOps page (P2) -->
+    <section id="page-bot" class="page">
+      <div class="page-head">
+        <h2>ChatOps</h2>
+        <p>命令台 / 历史记录 / 平台</p>
+      </div>
+      <div id="bot-toolbar" class="toolbar"></div>
+      <div id="bot-content" class="content"></div>
+    </section>
+
+    <!-- 控制面联邦 page (P2) -->
+    <section id="page-federation" class="page">
+      <div class="page-head">
+        <h2>控制面联邦</h2>
+        <p>Peer 管理 / 设备聚合 / 任务转发</p>
+      </div>
+      <div id="federation-toolbar" class="toolbar"></div>
+      <div id="federation-content" class="content"></div>
+    </section>
+
+    <!-- 定时任务 page (P2) -->
+    <section id="page-schedules" class="page">
+      <div class="page-head">
+        <h2>定时任务</h2>
+        <p>Cron 定时任务管理</p>
+      </div>
+      <div id="schedules-toolbar" class="toolbar"></div>
+      <div id="schedules-content" class="content"></div>
     </section>
   </main>
 

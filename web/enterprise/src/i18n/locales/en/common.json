@@ -62,7 +62,14 @@
     "config": "Config Hotpush",
     "cmdbChanges": "CMDB Changes",
     "cmdbAttrTemplates": "Attr Templates",
-    "cmdbCollect": "CMDB Collect"
+    "cmdbCollect": "CMDB Collect",
+    "approvalFlows": "Approval Flows",
+    "approvalRequests": "Approval Requests",
+    "networkTopology": "Network Topology",
+    "networkDiagnose": "Network Diagnose",
+    "networkDevices": "Network Devices",
+    "audits": "Audits",
+    "autoProvision": "Auto Provision"
   },
   "topbar": {
     "devices": "Devices",
@@ -239,7 +246,23 @@
     "cmdbAttrTemplateCreateFailed": "Failed to create attr template",
     "cmdbAttrTemplateDetailFailed": "Failed to fetch attr template detail",
     "cmdbAttrTemplateUpdateFailed": "Failed to update attr template",
-    "cmdbAttrTemplateDeleteFailed": "Failed to delete attr template"
+    "cmdbAttrTemplateDeleteFailed": "Failed to delete attr template",
+    "approvalFlowsFailed": "Failed to fetch approval flows",
+    "approvalRequestsFailed": "Failed to fetch approval requests",
+    "approvalApproveFailed": "Failed to approve request",
+    "approvalRejectFailed": "Failed to reject request",
+    "approvalCancelFailed": "Failed to cancel request",
+    "approvalHistoryFailed": "Failed to fetch approval history",
+    "approvalPendingFailed": "Failed to fetch pending approvals",
+    "networkTopologyFailed": "Failed to fetch network topology",
+    "networkDiagnoseFailed": "Network diagnose failed",
+    "networkConnectivityFailed": "Connectivity check failed",
+    "networkDevicesFailed": "Failed to fetch network devices",
+    "networkDeviceMetricsFailed": "Failed to fetch device metrics",
+    "networkConfigPushFailed": "Config push failed",
+    "networkDiscoverFailed": "Network discovery failed",
+    "auditsFailed": "Failed to fetch audits",
+    "autoProvisionFailed": "Auto provision failed"
   },
   "common": {
     "loading": "Loading…",

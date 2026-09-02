@@ -62,7 +62,14 @@
     "config": "配置热推送",
     "cmdbChanges": "CMDB 变更",
     "cmdbAttrTemplates": "属性模板",
-    "cmdbCollect": "CMDB 采集"
+    "cmdbCollect": "CMDB 采集",
+    "approvalFlows": "审批流",
+    "approvalRequests": "审批请求",
+    "networkTopology": "网络拓扑",
+    "networkDiagnose": "网络诊断",
+    "networkDevices": "网络设备",
+    "audits": "审计检索",
+    "autoProvision": "自动纳管"
   },
   "topbar": {
     "devices": "设备",
@@ -239,7 +246,23 @@
     "cmdbAttrTemplateCreateFailed": "属性模板创建失败",
     "cmdbAttrTemplateDetailFailed": "属性模板详情拉取失败",
     "cmdbAttrTemplateUpdateFailed": "属性模板更新失败",
-    "cmdbAttrTemplateDeleteFailed": "属性模板删除失败"
+    "cmdbAttrTemplateDeleteFailed": "属性模板删除失败",
+    "approvalFlowsFailed": "审批流列表拉取失败",
+    "approvalRequestsFailed": "审批请求列表拉取失败",
+    "approvalApproveFailed": "审批通过失败",
+    "approvalRejectFailed": "审批拒绝失败",
+    "approvalCancelFailed": "审批取消失败",
+    "approvalHistoryFailed": "审批历史拉取失败",
+    "approvalPendingFailed": "待审批列表拉取失败",
+    "networkTopologyFailed": "网络拓扑拉取失败",
+    "networkDiagnoseFailed": "网络诊断失败",
+    "networkConnectivityFailed": "连通性检测失败",
+    "networkDevicesFailed": "网络设备列表拉取失败",
+    "networkDeviceMetricsFailed": "网络设备指标拉取失败",
+    "networkConfigPushFailed": "配置下发失败",
+    "networkDiscoverFailed": "网络发现失败",
+    "auditsFailed": "审计检索失败",
+    "autoProvisionFailed": "自动纳管失败"
   },
   "common": {
     "loading": "加载中…",

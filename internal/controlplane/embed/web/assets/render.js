@@ -144,3 +144,21 @@ export {
 export {
   renderK8sClustersTable, renderK8sClusterForm, renderK8sTestResult,
 } from './render-k8s.js';
+
+// ============================================================================
+// P2 补齐功能域：自动纳管 / ChatOps / 控制面联邦 / 定时任务
+// ============================================================================
+export {
+  renderProvisionForm, renderProvisionResult,
+} from './render-provision.js';
+export {
+  renderBotCommandForm, renderBotResponse,
+  renderBotHistoryTable, renderBotPlatformsTable,
+} from './render-bot.js';
+export {
+  renderFederationPeersTable, renderFederationDevicesTable,
+  renderFederationForwardForm, renderFederationForwardResult,
+} from './render-federation.js';
+export {
+  renderSchedulesTable, renderScheduleForm,
+} from './render-schedules.js';

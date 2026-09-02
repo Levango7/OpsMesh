@@ -240,6 +240,31 @@ export const loadK8sClusters = flow.loadK8sClusters;
 export const showK8sClusterForm = flow.showK8sClusterForm;
 export const testK8sCluster = flow.testK8sCluster;
 export const buildK8sToolbar = flow.buildK8sToolbar;
+// P2 补齐功能域编排层
+export const initSSE = flow.initSSE;
+export const showProvisionForm = flow.showProvisionForm;
+export const showProvisionResult = flow.showProvisionResult;
+export const refreshProvisionSubTab = flow.refreshProvisionSubTab;
+export const buildProvisionToolbar = flow.buildProvisionToolbar;
+export const loadBotPlatforms = flow.loadBotPlatforms;
+export const loadBotHistory = flow.loadBotHistory;
+export const showBotCommandForm = flow.showBotCommandForm;
+export const showBotResponse = flow.showBotResponse;
+export const showBotPlatforms = flow.showBotPlatforms;
+export const refreshBotSubTab = flow.refreshBotSubTab;
+export const buildBotToolbar = flow.buildBotToolbar;
+export const loadFederationPeers = flow.loadFederationPeers;
+export const loadFederationDevices = flow.loadFederationDevices;
+export const showFederationForwardForm = flow.showFederationForwardForm;
+export const refreshFederationSubTab = flow.refreshFederationSubTab;
+export const buildFederationToolbar = flow.buildFederationToolbar;
+export const loadSchedules = flow.loadSchedules;
+export const showScheduleForm = flow.showScheduleForm;
+export const editSchedule = flow.editSchedule;
+export const deleteSchedule = flow.deleteSchedule;
+export const toggleSchedule = flow.toggleSchedule;
+export const refreshSchedulesSubTab = flow.refreshSchedulesSubTab;
+export const buildSchedulesToolbar = flow.buildSchedulesToolbar;
 
 // API 层
 export const ApiError = api.ApiError;
@@ -425,6 +450,19 @@ export const getMiddlewareInstances = api.getMiddlewareInstances;
 export const getK8sClusters = api.getK8sClusters;
 export const createK8sClusterApi = api.createK8sCluster;
 export const testK8sClusterApi = api.testK8sCluster;
+// P2 补齐功能域 API 层
+export const connectSSE = api.connectSSE;
+export const autoProvisionApi = api.autoProvision;
+export const sendBotCommandApi = api.sendBotCommand;
+export const getBotHistory = api.getBotHistory;
+export const getBotPlatforms = api.getBotPlatforms;
+export const getFederationPeers = api.getFederationPeers;
+export const forwardTaskApi = api.forwardTask;
+export const getFederationDevices = api.getFederationDevices;
+export const getSchedules = api.getSchedules;
+export const createScheduleApi = api.createSchedule;
+export const updateScheduleApi = api.updateSchedule;
+export const deleteScheduleApi = api.deleteSchedule;
 
 // 渲染层
 export const el = render.el;
@@ -550,6 +588,19 @@ export const renderMiddlewareInstancesTable = render.renderMiddlewareInstancesTa
 export const renderK8sClustersTable = render.renderK8sClustersTable;
 export const renderK8sClusterForm = render.renderK8sClusterForm;
 export const renderK8sTestResult = render.renderK8sTestResult;
+// P2 补齐功能域 渲染层
+export const renderProvisionForm = render.renderProvisionForm;
+export const renderProvisionResult = render.renderProvisionResult;
+export const renderBotCommandForm = render.renderBotCommandForm;
+export const renderBotResponse = render.renderBotResponse;
+export const renderBotHistoryTable = render.renderBotHistoryTable;
+export const renderBotPlatformsTable = render.renderBotPlatformsTable;
+export const renderFederationPeersTable = render.renderFederationPeersTable;
+export const renderFederationDevicesTable = render.renderFederationDevicesTable;
+export const renderFederationForwardForm = render.renderFederationForwardForm;
+export const renderFederationForwardResult = render.renderFederationForwardResult;
+export const renderSchedulesTable = render.renderSchedulesTable;
+export const renderScheduleForm = render.renderScheduleForm;
 
 // i18n
 export const t = i18n.t;
