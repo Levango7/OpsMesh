@@ -1,4 +1,4 @@
-// K8s 管理 store — 集群 CRUD + 资源 list/scale/restart/logs/delete
+﻿// K8s 管理 store — 集群 CRUD + 资源 list/scale/restart/logs/delete
 import { defineStore } from 'pinia'
 import {
   getK8sClusters,
@@ -67,7 +67,7 @@ export const useK8sStore = defineStore('k8s', {
       try {
         const data = await getK8sNamespaces(clusterID)
         this.namespaces = (data && data.namespaces) || data || []
-      } catch (e) {
+      } catch {
         this.namespaces = []
       }
     },

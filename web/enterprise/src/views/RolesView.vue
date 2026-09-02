@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('roles.title') }}</h2>
     <p class="muted">{{ $t('roles.subtitle') }}</p>
@@ -128,7 +128,7 @@ async function fetchRoles() {
   try {
     const r = await authApi.listRoles()
     roles.value = (r && r.roles) || r || []
-  } catch (e) {
+  } catch {
     roles.value = []
   } finally {
     loading.value = false
@@ -139,7 +139,7 @@ async function fetchPermissions() {
   try {
     const r = await authApi.listPermissions()
     permissions.value = (r && r.permissions) || r || []
-  } catch (e) {
+  } catch {
     permissions.value = []
   }
 }

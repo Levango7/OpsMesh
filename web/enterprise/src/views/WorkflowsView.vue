@@ -129,11 +129,12 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, defineAsyncComponent } from 'vue'
 import { useWorkflowStore } from '@/stores/workflow'
 import { getAgents } from '@/api/device'
 import { t } from '@/i18n'
-import PromptModal from '@/components/PromptModal.vue'
+// PromptModal 仅少数页面使用，改为异步加载减小首屏 components chunk
+const PromptModal = defineAsyncComponent(() => import('@/components/PromptModal.vue'))
 
 const store = useWorkflowStore()
 const agents = ref([])

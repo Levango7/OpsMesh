@@ -1,4 +1,4 @@
-// Bot / ChatOps store — 命令历史、平台、快捷命令
+﻿// Bot / ChatOps store — 命令历史、平台、快捷命令
 import { defineStore } from 'pinia'
 import {
   executeCommand,
@@ -27,7 +27,7 @@ export const useBotStore = defineStore('bot', {
       try {
         const data = await getBotPlatforms()
         this.platforms = (data && data.platforms) || data || []
-      } catch (e) {
+      } catch {
         this.platforms = []
       }
     },
@@ -35,7 +35,7 @@ export const useBotStore = defineStore('bot', {
       try {
         const data = await getQuickCommands()
         this.quickCommands = (data && data.commands) || data || []
-      } catch (e) {
+      } catch {
         this.quickCommands = []
       }
     },

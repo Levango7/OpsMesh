@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('traffic.title') }}</h2>
     <p class="muted">{{ $t('traffic.subtitle') }}</p>
@@ -150,7 +150,7 @@ async function fetchPolicies() {
   try {
     const r = await getTrafficPolicies()
     policies.value = (r && r.policies) || []
-  } catch (e) {
+  } catch {
     policies.value = []
   } finally {
     loading.value = false

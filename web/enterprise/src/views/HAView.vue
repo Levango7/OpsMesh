@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('ha.title') }}</h2>
     <p class="muted">{{ $t('ha.subtitle') }}</p>
@@ -114,7 +114,7 @@ async function fetchAll() {
     // instances 接口返回 {instances, count}；status 里也带 instances，优先用专口数据
     instances.value = (ins && ins.instances) || (st && st.instances) || []
     health.value = hl || null
-  } catch (e) {
+  } catch {
     status.value = null
     instances.value = []
     health.value = null
@@ -158,9 +158,9 @@ onMounted(fetchAll)
   display: inline-block; padding: 2px 8px; border-radius: 999px;
   font-size: 12px; background: var(--accent-soft); color: var(--accent);
 }
-.tag.ok { background: rgba(46, 184, 114, .14); color: #2eb872; }
-.tag.bad { background: rgba(231, 76, 60, .14); color: #e74c3c; }
+.tag.ok { background: var(--ok-bg); color: var(--ok); }
+.tag.bad { background: var(--fail-bg); color: var(--fail); }
 .tag.dim { background: var(--surface-3); color: var(--text-3); }
-.tag.leader { background: rgba(46, 184, 114, .14); color: #2eb872; }
+.tag.leader { background: var(--ok-bg); color: var(--ok); }
 .tag.follower { background: var(--surface-3); color: var(--text-2); }
 </style>

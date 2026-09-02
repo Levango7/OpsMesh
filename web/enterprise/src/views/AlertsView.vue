@@ -84,14 +84,15 @@
 </template>
 
 <script setup>
-import { computed, reactive, onMounted } from 'vue'
+import { computed, reactive, onMounted, defineAsyncComponent } from 'vue'
 import { useAlertStore } from '@/stores/alert'
 import { t } from '@/i18n'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
-import PromptModal from '@/components/PromptModal.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+// PromptModal 仅少数页面使用，改为异步加载减小首屏 components chunk
+const PromptModal = defineAsyncComponent(() => import('@/components/PromptModal.vue'))
 
 const store = useAlertStore()
 

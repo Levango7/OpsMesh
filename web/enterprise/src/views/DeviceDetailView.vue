@@ -204,16 +204,17 @@
 // 设备详情页 — 监控指标仪表盘
 // 路由：/devices/:id
 // 自动每 30 秒刷新一次指标
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { t } from '@/i18n'
 import MetricsCard from '@/components/MetricsCard.vue'
-import ProgressRing from '@/components/ProgressRing.vue'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+// ProgressRing 仅设备详情页使用，改为异步加载减小首屏 components chunk
+const ProgressRing = defineAsyncComponent(() => import('@/components/ProgressRing.vue'))
 
 const route = useRoute()
 const router = useRouter()

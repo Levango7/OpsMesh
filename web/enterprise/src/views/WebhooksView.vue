@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('webhooks.title') }}</h2>
     <p class="muted">{{ $t('webhooks.subtitle') }}</p>
@@ -153,7 +153,7 @@ async function fetchWebhooks() {
   try {
     const r = await getWebhooks()
     webhooks.value = (r && r.webhooks) || []
-  } catch (e) {
+  } catch {
     webhooks.value = []
   } finally {
     loading.value = false
@@ -223,7 +223,7 @@ async function openDeliveries(row) {
   try {
     const r = await getWebhookDeliveries(row.id)
     deliveries.value = (r && r.deliveries) || []
-  } catch (e) {
+  } catch {
     deliveries.value = []
   } finally {
     deliveriesLoading.value = false
@@ -260,7 +260,7 @@ onMounted(fetchWebhooks)
 }
 .status-pill.ok { background: var(--accent-soft); color: var(--accent); }
 .status-pill.off { background: var(--surface-3); color: var(--text-3); }
-.status-pill.bad { background: rgba(214,69,56,.12); color: #d64538; }
+.status-pill.bad { background: var(--fail-bg); color: var(--fail); }
 .webhook-form { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }

@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('billing.title') }}</h2>
     <p class="muted">{{ $t('billing.subtitle') }}</p>
@@ -326,7 +326,7 @@ async function fetchPlans() {
   try {
     const r = await listPlans()
     plans.value = (r && r.plans) || []
-  } catch (e) {
+  } catch {
     plans.value = []
   } finally {
     loading.value = false
@@ -338,7 +338,7 @@ async function fetchSubs() {
   try {
     const r = await listSubscriptions()
     subs.value = (r && r.subscriptions) || []
-  } catch (e) {
+  } catch {
     subs.value = []
   } finally {
     loading.value = false
@@ -350,7 +350,7 @@ async function fetchInvoices() {
   try {
     const r = await listInvoices()
     invoices.value = (r && r.invoices) || []
-  } catch (e) {
+  } catch {
     invoices.value = []
   } finally {
     loading.value = false
@@ -361,7 +361,7 @@ async function fetchUsage() {
   loading.value = true
   try {
     usage.value = await getUsage()
-  } catch (e) {
+  } catch {
     usage.value = null
   } finally {
     loading.value = false

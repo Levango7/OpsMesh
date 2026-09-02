@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('mwdep.title') }}</h2>
     <p class="muted">{{ $t('mwdep.desc') }}</p>
@@ -301,7 +301,7 @@ async function onDeploy(id) {
       params[p.name] = p.default != null ? String(p.default) : ''
     })
     deployForm.value.params = params
-  } catch (e) {
+  } catch {
     deployTpl.value = null
   }
   if (!store.devices.length) store.fetchDevices()
@@ -386,7 +386,7 @@ function startDeployPoll(taskId) {
           deployLog.value += '\n' + t('mwdep.pollTimeout')
         }
       }
-    } catch (e) {
+    } catch {
       if (count >= max) {
         clearInterval(deployTimer); deployTimer = null
         deployLog.value += '\n' + t('mwdep.pollTimeout')
@@ -463,7 +463,7 @@ function startUninstallPoll(taskId) {
           uninstallLog.value += '\n' + t('mwdep.pollTimeout')
         }
       }
-    } catch (e) {
+    } catch {
       if (count >= max) {
         clearInterval(uninstallTimer); uninstallTimer = null
         uninstallLog.value += '\n' + t('mwdep.pollTimeout')
@@ -520,7 +520,7 @@ onUnmounted(() => {
 /* 模态对话框 */
 .modal-mask {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(31,37,64,.42); display: flex; align-items: center; justify-content: center;
+  background: var(--modal-mask); display: flex; align-items: center; justify-content: center;
 }
 .modal {
   width: 580px; max-width: 94vw; max-height: 88vh; overflow: auto;

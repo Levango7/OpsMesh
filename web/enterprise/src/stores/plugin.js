@@ -1,4 +1,4 @@
-// Plugin 插件市场 store — 插件列表、安装/卸载、版本
+﻿// Plugin 插件市场 store — 插件列表、安装/卸载、版本
 import { defineStore } from 'pinia'
 import {
   getPlugins,
@@ -68,7 +68,7 @@ export const usePluginStore = defineStore('plugin', {
       try {
         const data = await getPluginVersions(id)
         this.versions = (data && data.versions) || data || []
-      } catch (e) {
+      } catch {
         this.versions = []
       }
     },
@@ -76,7 +76,7 @@ export const usePluginStore = defineStore('plugin', {
       try {
         const data = await getPluginCategories()
         this.categories = (data && data.categories) || data || []
-      } catch (e) {
+      } catch {
         this.categories = []
       }
     },

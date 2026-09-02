@@ -77,7 +77,7 @@ function onEsc(e) {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(31, 37, 64, 0.42);
+  background: var(--modal-mask);
   display: flex;
   align-items: center;
   justify-content: center;

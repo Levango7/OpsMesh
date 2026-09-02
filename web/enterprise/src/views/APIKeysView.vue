@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('apikeys.title') }}</h2>
     <p class="muted">{{ $t('apikeys.subtitle') }}</p>
@@ -165,7 +165,7 @@ async function fetchKeys() {
   try {
     const r = await listAPIKeys()
     keys.value = (r && r.apiKeys) || r || []
-  } catch (e) {
+  } catch {
     keys.value = []
   } finally {
     loading.value = false

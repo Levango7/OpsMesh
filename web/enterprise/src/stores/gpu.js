@@ -1,4 +1,4 @@
-// GPU 资源管理 store — 节点、工作负载、模型、配额、指标
+﻿// GPU 资源管理 store — 节点、工作负载、模型、配额、指标
 import { defineStore } from 'pinia'
 import {
   getGpuNodes,
@@ -83,7 +83,7 @@ export const useGpuStore = defineStore('gpu', {
       try {
         const data = await getGpuQuotas()
         this.quotas = (data && data.quotas) || data || []
-      } catch (e) {
+      } catch {
         this.quotas = []
       }
     },

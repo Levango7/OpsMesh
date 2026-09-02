@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('notify.title') }}</h2>
     <p class="muted">{{ $t('notify.subtitle') }}</p>
@@ -232,7 +232,7 @@ async function fetchChannels() {
     // 后端返回数组（Config 已脱敏）
     const r = await listChannels()
     channels.value = Array.isArray(r) ? r : (r && r.channels) || []
-  } catch (e) {
+  } catch {
     channels.value = []
   } finally {
     loading.value = false
@@ -244,7 +244,7 @@ async function fetchTemplates() {
   try {
     const r = await listTemplates()
     templates.value = Array.isArray(r) ? r : (r && r.templates) || []
-  } catch (e) {
+  } catch {
     templates.value = []
   } finally {
     loading.value = false

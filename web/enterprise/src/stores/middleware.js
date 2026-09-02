@@ -1,4 +1,4 @@
-// 中间件部署 store — 模板列表 + 详情 + 部署 + 实例列表 + 卸载
+﻿// 中间件部署 store — 模板列表 + 详情 + 部署 + 实例列表 + 卸载
 import { defineStore } from 'pinia'
 import {
   getMiddlewareTemplates,
@@ -36,7 +36,7 @@ export const useMiddlewareStore = defineStore('middleware', {
       this.instancesLoading = true
       try {
         this.instances = await getMiddlewareInstances() || []
-      } catch (e) {
+      } catch {
         // 实例列表失败不覆盖主错误
       } finally {
         this.instancesLoading = false
@@ -59,7 +59,7 @@ export const useMiddlewareStore = defineStore('middleware', {
         } else {
           this.devices = []
         }
-      } catch (e) {
+      } catch {
         this.devices = []
       }
     },

@@ -1,4 +1,4 @@
-// Portal 自助服务门户 store — 请求、审批、成本
+﻿// Portal 自助服务门户 store — 请求、审批、成本
 import { defineStore } from 'pinia'
 import {
   createResourceRequest,
@@ -58,7 +58,7 @@ export const usePortalStore = defineStore('portal', {
       try {
         const data = await getCostOverview()
         this.costOverview = data
-      } catch (e) {
+      } catch {
         this.costOverview = null
       }
     }

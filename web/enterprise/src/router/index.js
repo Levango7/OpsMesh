@@ -2,7 +2,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { watch, defineComponent, h } from 'vue'
 import { useAuthStore } from '@/stores/auth'
-import { t, currentLang } from '@/i18n'
+import { t, currentLang, loadRouteDomain } from '@/i18n'
 import { toast } from '@/utils/toast'
 
 const RouteSkeleton = defineComponent({
@@ -181,6 +181,8 @@ router.beforeEach(async (to) => {
     toast.warn(t('error.noPermission'))
     return { name: 'overview' }
   }
+  // 按需加载当前路由对应的功能域翻译（i18n 模块拆分后路由切换时异步加载）
+  await loadRouteDomain(to.name)
   return true
 })
 

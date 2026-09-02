@@ -1,0 +1,29 @@
+{
+  "cmdb": {
+    "title": "CMDB",
+    "subtitle": "Organize configuration items by type; supports instance CRUD and relationship graph viewing.",
+    "type_label": "Type",
+    "please_select_type": "(Select a type first)",
+    "create_title": "New CI",
+    "name_label": "Name",
+    "attrs_label": "Attributes (JSON)",
+    "create_btn": "Create",
+    "graph_title": "Relationship Graph",
+    "status_label": "Status",
+    "source_label": "Source",
+    "version_label": "Version",
+    "relations_title": "Topology ({n})",
+    "no_relations": "No relations",
+    "attrs_parse_failed": "Attributes JSON parse failed: ",
+    "graph_mode_force": "Force",
+    "graph_mode_topology": "Topology",
+    "graph_mode_list": "List",
+    "graph_legend_type": "Types",
+    "graph_legend_rel": "Relations",
+    "graph_empty": "No relation data",
+    "typesFetchFailed": "Failed to fetch CMDB types",
+    "instancesFetchFailed": "Failed to fetch configuration items",
+    "templatesFetchFailed": "Failed to fetch attribute templates",
+    "graphFetchFailed": "Failed to fetch relationship graph"
+  }
+}

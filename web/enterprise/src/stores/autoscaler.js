@@ -1,4 +1,4 @@
-// Autoscaler 自动扩缩容 store — 规则、决策、冷却
+﻿// Autoscaler 自动扩缩容 store — 规则、决策、冷却
 import { defineStore } from 'pinia'
 import {
   getScalingRules,
@@ -63,7 +63,7 @@ export const useAutoscalerStore = defineStore('autoscaler', {
       try {
         const data = await getCooldowns()
         this.cooldowns = (data && data.cooldowns) || data || []
-      } catch (e) {
+      } catch {
         this.cooldowns = []
       }
     }

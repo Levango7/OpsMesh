@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('quotas.title') }}</h2>
     <p class="muted">{{ $t('quotas.subtitle') }}</p>
@@ -123,7 +123,7 @@ async function fetchQuota() {
     const r = await quotaApi.listQuotas()
     enabled.value = !!(r && r.enabled)
     usage.value = (r && r.current) || null
-  } catch (e) {
+  } catch {
     usage.value = null
   } finally {
     loading.value = false
@@ -191,7 +191,7 @@ onMounted(fetchQuota)
 .quota-limit { color: var(--text-2); font-size: 14px; font-weight: 500; }
 .quota-bar { margin-top: 10px; height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
 .quota-bar-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width .3s; }
-.quota-bar-fill.over { background: #e74c3c; }
+.quota-bar-fill.over { background: var(--fail); }
 .quota-form { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }

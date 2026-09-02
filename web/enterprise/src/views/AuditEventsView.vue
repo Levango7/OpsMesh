@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('audit_events.title') }}</h2>
     <p class="muted">{{ $t('audit_events.subtitle') }}</p>
@@ -140,7 +140,7 @@ async function fetchEvents() {
     const r = await getEvents(buildParams())
     events.value = (r && r.events) || []
     page.value = 1
-  } catch (e) {
+  } catch {
     events.value = []
   } finally {
     loading.value = false

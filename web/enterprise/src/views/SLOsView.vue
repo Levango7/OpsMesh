@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('slos.title') }}</h2>
     <p class="muted">{{ $t('slos.subtitle') }}</p>
@@ -142,7 +142,7 @@ async function fetchSLOs() {
   try {
     const r = await getSLOs()
     slos.value = (r && r.slos) || []
-  } catch (e) {
+  } catch {
     slos.value = []
   } finally {
     loading.value = false
@@ -194,7 +194,7 @@ async function openStatus(row) {
     const r = await getSLOStatus(row.id)
     // 契约：{sliStatus: [...]} 或裸数组，两态兼容
     sliStatus.value = (r && (r.sliStatus || r.sliStatuses || r.slis)) || (Array.isArray(r) ? r : []) || []
-  } catch (e) {
+  } catch {
     sliStatus.value = []
   } finally {
     statusLoading.value = false
@@ -235,7 +235,7 @@ onMounted(fetchSLOs)
 }
 .status-pill.ok { background: var(--accent-soft); color: var(--accent); }
 .status-pill.off { background: var(--surface-3); color: var(--text-3); }
-.status-pill.bad { background: rgba(214,69,56,.12); color: #d64538; }
+.status-pill.bad { background: var(--fail-bg); color: var(--fail); }
 .slo-form { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }

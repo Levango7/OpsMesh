@@ -41,6 +41,8 @@
   --drawer-shadow: -8px 0 30px rgba(28,35,64,.12);
   /* code 文字色 */
   --code-color: #4338ca;
+  /* 模态遮罩：浅色背景下深灰半透明 */
+  --modal-mask: rgba(31,37,64,.42);
 }
 
 /* ===========================================================================
@@ -79,6 +81,8 @@
   --drawer-shadow: -8px 0 30px rgba(0,0,0,.5);
   /* code 文字色 */
   --code-color: #a5b4fc;
+  /* 模态遮罩：暗色背景下加深，保证对比度 */
+  --modal-mask: rgba(0,0,0,.6);
 }
 
 * { box-sizing: border-box; }
@@ -181,6 +185,19 @@ label { display: inline-flex; align-items: center; gap: 6px; margin: 4px 12px 8p
 /* 响应式 */
 @media (max-width: 768px) {
   .col { min-width: 100%; }
+  /* 两栏 .row 在小屏堆叠为单列 */
+  .row { flex-direction: column; gap: 14px; }
+  /* 卡片内边距收窄，节省小屏空间 */
+  .card { padding: 14px 14px; margin-bottom: 14px; }
+  /* 底栏单列居中 */
+  .footbar { flex-direction: column; gap: 4px; text-align: center; }
+  /* h2 标题略缩 */
+  h2 { font-size: 15px; }
+}
+@media (max-width: 480px) {
+  /* 极窄屏：按钮栏允许换行且占满宽度 */
+  .btnbar { width: 100%; }
+  .btnbar button { flex: 1 1 auto; }
 }
 
 /* 路由懒加载骨架屏 */

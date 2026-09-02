@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('pipeline.title') }}</h2>
     <p class="muted">{{ $t('pipeline.subtitle') }}</p>
@@ -153,7 +153,7 @@ async function fetchAll() {
     const [tr, rr] = await Promise.all([pipelineApi.listTemplates(), pipelineApi.listRuns()])
     templates.value = (tr && tr.templates) || []
     runs.value = (rr && rr.runs) || []
-  } catch (e) {
+  } catch {
     templates.value = []
     runs.value = []
   } finally {
@@ -250,9 +250,9 @@ onMounted(fetchAll)
   display: inline-block; padding: 2px 8px; border-radius: 999px;
   font-size: 12px; background: var(--accent-soft); color: var(--accent);
 }
-.tag.st-succeeded { background: rgba(46, 184, 114, .14); color: #2eb872; }
-.tag.st-failed { background: rgba(231, 76, 60, .14); color: #e74c3c; }
-.tag.st-running { background: rgba(52, 152, 219, .14); color: #3498db; }
+.tag.st-succeeded { background: var(--ok-bg); color: var(--ok); }
+.tag.st-failed { background: var(--fail-bg); color: var(--fail); }
+.tag.st-running { background: var(--info-bg); color: var(--info); }
 .tag.st-pending { background: var(--surface-3); color: var(--text-3); }
 .tpl-form { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }

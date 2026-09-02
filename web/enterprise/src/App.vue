@@ -6,11 +6,22 @@
   <div v-else class="app">
     <!-- 顶栏 -->
     <header class="appbar">
-      <div class="brand">
-        <div class="logo"><Icon name="brand" :size="20" /></div>
-        <div>
-          <h1>{{ $t('app.title') }}</h1>
-          <div class="sub">{{ $t('app.subtitle') }}</div>
+      <div class="appbar-left">
+        <!-- 移动端侧栏切换按钮（仅 ≤768px 可见） -->
+        <button
+          class="icon-btn menu-toggle"
+          :aria-label="$t('common.menu')"
+          data-testid="topbar-menu-toggle"
+          @click="sidebarOpen = !sidebarOpen"
+        >
+          <Icon name="task" :size="18" />
+        </button>
+        <div class="brand">
+          <div class="logo"><Icon name="brand" :size="20" /></div>
+          <div>
+            <h1>{{ $t('app.title') }}</h1>
+            <div class="sub">{{ $t('app.subtitle') }}</div>
+          </div>
         </div>
       </div>
 
@@ -51,8 +62,15 @@
     </header>
 
     <div class="layout">
+      <!-- 移动端侧栏遮罩（点击关闭抽屉） -->
+      <div
+        v-if="sidebarOpen"
+        class="sidebar-mask"
+        data-testid="sidebar-mask"
+        @click="sidebarOpen = false"
+      />
       <!-- 侧栏导航：分组 + 编号功能入口 -->
-      <aside class="sidebar">
+      <aside class="sidebar" :class="{ open: sidebarOpen }">
         <div v-for="grp in navView" :key="grp.group" class="nav-group">
           <div class="nav-group-title">{{ $t(grp.labelKey) }}</div>
           <div
@@ -60,7 +78,7 @@
             :key="item.name"
             class="tab"
             :class="{ active: $route.name === item.name }"
-            @click="$router.push('/' + item.name)"
+            @click="goNav(item.name)"
           >
             <span class="tab-index">{{ item.index }}</span>
             <span class="tab-icon"><Icon :name="item.icon" :size="16" /></span>
@@ -97,7 +115,7 @@
 <script setup>
 // 应用根组件 — 顶栏 + 分组侧栏 + 内容 + 底栏
 // 已登录显示主布局；未登录仅渲染路由（登录/注册页全屏）
-import { onMounted, onUnmounted, computed, watch } from 'vue'
+import { onMounted, onUnmounted, computed, watch, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { useAlertStore } from '@/stores/alert'
@@ -177,6 +195,16 @@ const navView = computed(() => {
 function toggleLang() {
   setLang(currentLang.value === 'zh' ? 'en' : 'zh')
 }
+
+// 移动端侧栏抽屉开关（仅 ≤768px 生效，桌面端侧栏始终可见）
+const sidebarOpen = ref(false)
+// 点击导航项：跳转并关闭移动端抽屉
+function goNav(name) {
+  router.push('/' + name)
+  sidebarOpen.value = false
+}
+// 路由切换时自动关闭移动端抽屉（避免点击后退/前进时抽屉残留）
+watch(() => router.currentRoute.value.path, () => { sidebarOpen.value = false })
 
 // 退出登录
 function onLogout() {
@@ -296,6 +324,9 @@ onUnmounted(() => {
 .brand .sub { font-size: 12px; color: var(--text-3); }
 
 .appbar-right { display: flex; align-items: center; gap: 8px; }
+.appbar-left { display: flex; align-items: center; gap: 10px; }
+/* 移动端菜单切换按钮：默认隐藏，≤768px 显示 */
+.menu-toggle { display: none; }
 .appbar-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-right: 4px; }
 .chip {
   font-size: 12px; color: var(--text-2);
@@ -383,9 +414,23 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
-  .sidebar { flex: 0 0 100%; position: fixed; transform: translateX(-100%); z-index: 100; }
+  .menu-toggle { display: inline-flex; }
+  .sidebar {
+    flex: 0 0 260px; width: 260px;
+    position: fixed; top: 0; bottom: 0; left: 0;
+    transform: translateX(-100%); z-index: 100;
+    transition: transform .22s ease;
+    box-shadow: var(--drawer-shadow);
+  }
+  .sidebar.open { transform: translateX(0); }
+  .sidebar-mask {
+    position: fixed; inset: 0; z-index: 99;
+    background: rgba(0,0,0,.42);
+  }
   .content { padding: 14px; }
   .appbar { padding: 8px 12px; }
   .appbar-meta { display: none; }
+  /* 移动端顶栏用户名隐藏，仅保留头像，节省横向空间 */
+  .user-name { display: none; }
 }
 </style>

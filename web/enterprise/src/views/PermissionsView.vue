@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('permissions.title') }}</h2>
     <p class="muted">{{ $t('permissions.subtitle') }}</p>
@@ -59,7 +59,7 @@ async function fetchPermissions() {
   try {
     const r = await authApi.listPermissions()
     permissions.value = (r && r.permissions) || r || []
-  } catch (e) {
+  } catch {
     permissions.value = []
   } finally {
     loading.value = false

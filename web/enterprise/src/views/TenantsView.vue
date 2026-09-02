@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('tenants.title') }}</h2>
     <p class="muted">{{ $t('tenants.subtitle') }}</p>
@@ -142,7 +142,7 @@ async function fetchTenants() {
   try {
     const r = await tenantApi.listTenants()
     tenants.value = (r && r.tenants) || []
-  } catch (e) {
+  } catch {
     tenants.value = []
   } finally {
     loading.value = false
@@ -241,9 +241,9 @@ onMounted(fetchTenants)
   display: inline-block; padding: 2px 8px; border-radius: 999px;
   font-size: 12px; background: var(--accent-soft); color: var(--accent);
 }
-.tag.st-active { background: rgba(46, 184, 114, .14); color: #2eb872; }
-.tag.st-suspended { background: rgba(243, 156, 18, .16); color: #e67e22; }
-.tag.st-disabled { background: rgba(231, 76, 60, .14); color: #e74c3c; }
+.tag.st-active { background: var(--ok-bg); color: var(--ok); }
+.tag.st-suspended { background: var(--warn-bg); color: var(--warn); }
+.tag.st-disabled { background: var(--fail-bg); color: var(--fail); }
 .tenant-form { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }

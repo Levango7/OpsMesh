@@ -269,7 +269,8 @@
     "next": "Next ›",
     "api_base": "API: /api/v1",
     "web_base": "Base: /enterprise/",
-    "back": "Back"
+    "back": "Back",
+    "menu": "Menu"
   },
   "devices": {
     "title": "Devices",

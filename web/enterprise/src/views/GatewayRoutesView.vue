@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('gateway_routes.title') }}</h2>
     <p class="muted">{{ $t('gateway_routes.subtitle') }}</p>
@@ -167,7 +167,7 @@ async function fetchRoutes() {
   try {
     const r = await listRoutes()
     routes.value = (r && r.routes) || []
-  } catch (e) {
+  } catch {
     routes.value = []
   } finally {
     loading.value = false
@@ -177,7 +177,7 @@ async function fetchRoutes() {
 async function fetchStats() {
   try {
     stats.value = (await getStats()) || {}
-  } catch (e) {
+  } catch {
     stats.value = {}
   }
 }

@@ -1,0 +1,29 @@
+{
+  "cmdb": {
+    "title": "配置项 CMDB",
+    "subtitle": "按类型组织配置项，支持实例 CRUD 与关系图查看。",
+    "type_label": "类型",
+    "please_select_type": "（先选一个类型）",
+    "create_title": "新建配置项",
+    "name_label": "名称",
+    "attrs_label": "属性（JSON）",
+    "create_btn": "创建",
+    "graph_title": "关系图",
+    "status_label": "状态",
+    "source_label": "来源",
+    "version_label": "版本",
+    "relations_title": "关系拓扑（{n}）",
+    "no_relations": "无关系",
+    "attrs_parse_failed": "属性 JSON 解析失败: ",
+    "graph_mode_force": "力导向图",
+    "graph_mode_topology": "网络拓扑",
+    "graph_mode_list": "列表",
+    "graph_legend_type": "类型",
+    "graph_legend_rel": "关系",
+    "graph_empty": "暂无关系数据",
+    "typesFetchFailed": "CMDB 类型拉取失败",
+    "instancesFetchFailed": "配置项拉取失败",
+    "templatesFetchFailed": "属性模板拉取失败",
+    "graphFetchFailed": "关系图拉取失败"
+  }
+}

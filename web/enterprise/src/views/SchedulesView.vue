@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('schedules.title') }}</h2>
     <p class="muted">{{ $t('schedules.subtitle') }}</p>
@@ -132,7 +132,7 @@ async function fetchSchedules() {
   try {
     const r = await getSchedules()
     schedules.value = (r && r.schedules) || []
-  } catch (e) {
+  } catch {
     schedules.value = []
   } finally {
     loading.value = false
@@ -209,7 +209,7 @@ onMounted(fetchSchedules)
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
 }
 .status-pill.ok { background: var(--accent-soft); color: var(--accent); }
-.status-pill.warn { background: rgba(214,158,46,.14); color: #d69e2e; }
+.status-pill.warn { background: var(--warn-bg); color: var(--warn); }
 .schedule-form { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }

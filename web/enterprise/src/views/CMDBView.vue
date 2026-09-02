@@ -107,11 +107,12 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, defineAsyncComponent } from 'vue'
 import { useCmdbStore } from '@/stores/cmdb'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
-import RelationGraph from '@/components/RelationGraph.vue'
+// RelationGraph 仅 CMDB 页使用且体积较大（23KB），改为异步加载减小首屏 components chunk
+const RelationGraph = defineAsyncComponent(() => import('@/components/RelationGraph.vue'))
 
 const store = useCmdbStore()
 const form = reactive({ ciType: '', name: '', attrsRaw: '' })

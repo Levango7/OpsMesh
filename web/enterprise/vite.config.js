@@ -62,10 +62,23 @@ export default defineConfig({
               return 'vendor-http'
             }
           }
-          if (id.includes('/src/i18n/')) {
+          // i18n chunk：只包含 i18n 核心模块（index.js）和 common.json（静态 import）
+          // 动态 import 的域 json（通过 import.meta.glob）由 Vite 自动拆分为单独 chunk，按需加载
+          if (id.includes('/src/i18n/index.js')) {
+            return 'i18n'
+          }
+          if (id.includes('/src/i18n/locales/') && id.includes('common.json')) {
             return 'i18n'
           }
           if (id.includes('/src/components/') && !id.includes('/src/views/')) {
+            // 异步加载的组件（defineAsyncComponent 动态 import）单独 chunk，不打入 components
+            if (
+              id.includes('RelationGraph.vue') ||
+              id.includes('ProgressRing.vue') ||
+              id.includes('PromptModal.vue')
+            ) {
+              return // undefined：让 Vite 自动拆分为单独 chunk，按需加载
+            }
             return 'components'
           }
         },

@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('scripts.title') }}</h2>
     <p class="muted">{{ $t('scripts.subtitle') }}</p>
@@ -163,7 +163,7 @@ async function fetchScripts() {
   try {
     const r = await getScripts()
     scripts.value = (r && r.scripts) || []
-  } catch (e) {
+  } catch {
     scripts.value = []
   } finally {
     loading.value = false
@@ -236,7 +236,7 @@ async function openExecutions(row) {
   try {
     const r = await getScriptExecutions(row.id)
     executions.value = (r && r.executions) || []
-  } catch (e) {
+  } catch {
     executions.value = []
   } finally {
     execLoading.value = false
@@ -272,8 +272,8 @@ onMounted(fetchScripts)
 }
 .status-pill.ok { background: var(--accent-soft); color: var(--accent); }
 .status-pill.off { background: var(--surface-3); color: var(--text-3); }
-.status-pill.bad { background: rgba(214,69,56,.12); color: #d64538; }
-.status-pill.warn { background: rgba(214,158,46,.14); color: #d69e2e; }
+.status-pill.bad { background: var(--fail-bg); color: var(--fail); }
+.status-pill.warn { background: var(--warn-bg); color: var(--warn); }
 .script-form { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }

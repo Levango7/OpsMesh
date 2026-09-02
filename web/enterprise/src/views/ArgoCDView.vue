@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('argocd.title') }}</h2>
     <p class="muted">{{ $t('argocd.subtitle') }}</p>
@@ -146,7 +146,7 @@ async function fetchApps() {
   try {
     const r = await argocdApi.listApps()
     apps.value = (r && r.apps) || []
-  } catch (e) {
+  } catch {
     apps.value = []
   } finally {
     loading.value = false
@@ -248,11 +248,11 @@ onMounted(fetchApps)
   display: inline-block; padding: 2px 8px; border-radius: 999px;
   font-size: 12px; background: var(--accent-soft); color: var(--accent);
 }
-.tag.st-synced { background: rgba(46, 184, 114, .14); color: #2eb872; }
-.tag.st-outofsync { background: rgba(243, 156, 18, .16); color: #e67e22; }
-.tag.hst-healthy { background: rgba(46, 184, 114, .14); color: #2eb872; }
-.tag.hst-degraded { background: rgba(231, 76, 60, .14); color: #e74c3c; }
-.tag.hst-missing { background: rgba(243, 156, 18, .16); color: #e67e22; }
+.tag.st-synced { background: var(--ok-bg); color: var(--ok); }
+.tag.st-outofsync { background: var(--warn-bg); color: var(--warn); }
+.tag.hst-healthy { background: var(--ok-bg); color: var(--ok); }
+.tag.hst-degraded { background: var(--fail-bg); color: var(--fail); }
+.tag.hst-missing { background: var(--warn-bg); color: var(--warn); }
 .repo { font-size: 12px; }
 .app-form { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }

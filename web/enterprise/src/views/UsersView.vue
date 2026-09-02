@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div data-testid="users-view">
     <h2 data-testid="users-title">{{ $t('users.title') }}</h2>
     <p class="muted">{{ $t('users.subtitle') }}</p>
@@ -137,7 +137,7 @@ async function fetchUsers() {
   try {
     const r = await authApi.listUsers()
     users.value = (r && r.users) || r || []
-  } catch (e) {
+  } catch {
     users.value = []
   } finally {
     loading.value = false
@@ -148,7 +148,7 @@ async function fetchRoles() {
   try {
     const r = await authApi.listRoles()
     roles.value = (r && r.roles) || r || []
-  } catch (e) {
+  } catch {
     roles.value = []
   }
 }

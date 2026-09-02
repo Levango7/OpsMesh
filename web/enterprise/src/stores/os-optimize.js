@@ -1,4 +1,4 @@
-// OS 优化 store — 模板列表 + 详情 + 执行
+﻿// OS 优化 store — 模板列表 + 详情 + 执行
 import { defineStore } from 'pinia'
 import { getOSTemplates, getOSTemplate, executeOSTemplate } from '@/api/os-optimize'
 import { getDevices } from '@/api/device'
@@ -41,7 +41,7 @@ export const useOSOptimizeStore = defineStore('os-optimize', {
         } else {
           this.devices = []
         }
-      } catch (e) {
+      } catch {
         this.devices = []
       }
     },

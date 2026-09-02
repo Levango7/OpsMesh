@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('compliance.title') }}</h2>
     <p class="muted">{{ $t('compliance.subtitle') }}</p>
@@ -132,7 +132,7 @@ async function fetchAll() {
     const [rr, pr] = await Promise.all([complianceApi.listRules(), complianceApi.listReports()])
     rules.value = (rr && rr.rules) || []
     reports.value = (pr && pr.reports) || []
-  } catch (e) {
+  } catch {
     rules.value = []
     reports.value = []
   } finally {
@@ -165,7 +165,7 @@ async function openDetail(row) {
   try {
     const r = await complianceApi.getReport(row.id)
     detail.value = r || row
-  } catch (e) {
+  } catch {
     // 详情拉取失败时降级用列表行数据（结果可能缺失）
     detail.value = row
   }
@@ -181,13 +181,13 @@ onMounted(fetchAll)
   display: inline-block; padding: 2px 8px; border-radius: 999px;
   font-size: 12px; background: var(--accent-soft); color: var(--accent);
 }
-.tag.sev-high { background: rgba(231, 76, 60, .14); color: #e74c3c; }
-.tag.sev-medium { background: rgba(243, 156, 18, .16); color: #e67e22; }
-.tag.score-high { background: rgba(46, 184, 114, .14); color: #2eb872; }
-.tag.score-mid { background: rgba(243, 156, 18, .16); color: #e67e22; }
-.tag.score-low { background: rgba(231, 76, 60, .14); color: #e74c3c; }
-.tag.pass { background: rgba(46, 184, 114, .14); color: #2eb872; }
-.tag.nopass { background: rgba(231, 76, 60, .14); color: #e74c3c; }
+.tag.sev-high { background: var(--fail-bg); color: var(--fail); }
+.tag.sev-medium { background: var(--warn-bg); color: var(--warn); }
+.tag.score-high { background: var(--ok-bg); color: var(--ok); }
+.tag.score-mid { background: var(--warn-bg); color: var(--warn); }
+.tag.score-low { background: var(--fail-bg); color: var(--fail); }
+.tag.pass { background: var(--ok-bg); color: var(--ok); }
+.tag.nopass { background: var(--fail-bg); color: var(--fail); }
 .scan-form { display: flex; flex-direction: column; gap: 8px; max-width: 380px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }

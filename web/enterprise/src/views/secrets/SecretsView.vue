@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('secrets.title') }}</h2>
     <p class="muted">{{ $t('secrets.subtitle') }}</p>
@@ -170,7 +170,7 @@ async function fetchKeys() {
   try {
     const data = await listSecretKeys()
     keys.value = Array.isArray(data) ? data : []
-  } catch (e) {
+  } catch {
     keys.value = []
   }
 }

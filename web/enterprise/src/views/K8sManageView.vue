@@ -567,7 +567,7 @@ onMounted(() => {
 /* 模态对话框 */
 .modal-mask {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(31,37,64,.42); display: flex; align-items: center; justify-content: center;
+  background: var(--modal-mask); display: flex; align-items: center; justify-content: center;
 }
 .modal {
   width: 540px; max-width: 94vw; max-height: 88vh; overflow: auto;

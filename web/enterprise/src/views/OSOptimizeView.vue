@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('osopt.title') }}</h2>
     <p class="muted">{{ $t('osopt.desc') }}</p>
@@ -194,7 +194,7 @@ async function onExecute(id) {
       params[p.name] = p.default != null ? String(p.default) : ''
     })
     execForm.value.params = params
-  } catch (e) {
+  } catch {
     execTpl.value = null
   }
   // 加载设备列表
@@ -283,7 +283,7 @@ function startPoll(taskId) {
           execLog.value += '\n' + t('osopt.pollTimeout')
         }
       }
-    } catch (e) {
+    } catch {
       if (count >= max) {
         clearInterval(execTimer); execTimer = null
         execLog.value += '\n' + t('osopt.pollTimeoutShort')
@@ -333,7 +333,7 @@ onUnmounted(() => {
 /* 模态对话框 */
 .modal-mask {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(31,37,64,.42); display: flex; align-items: center; justify-content: center;
+  background: var(--modal-mask); display: flex; align-items: center; justify-content: center;
 }
 .modal {
   width: 540px; max-width: 94vw; max-height: 88vh; overflow: auto;

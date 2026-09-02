@@ -269,7 +269,8 @@
     "next": "下一页 ›",
     "api_base": "API: /api/v1",
     "web_base": "Base: /enterprise/",
-    "back": "返回"
+    "back": "返回",
+    "menu": "菜单"
   },
   "devices": {
     "title": "设备纳管",

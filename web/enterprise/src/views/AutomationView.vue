@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('automation.title') }}</h2>
     <p class="muted">{{ $t('automation.subtitle') }}</p>
@@ -161,7 +161,7 @@ function parseParamsText(text, errKey) {
   if (!text || !text.trim()) return {}
   try {
     return JSON.parse(text)
-  } catch (e) {
+  } catch {
     throw new Error(t(errKey))
   }
 }
@@ -171,7 +171,7 @@ async function fetchRules() {
   try {
     const r = await getAutomationRules()
     rules.value = (r && r.rules) || []
-  } catch (e) {
+  } catch {
     rules.value = []
   } finally {
     loading.value = false
@@ -182,7 +182,7 @@ async function fetchExecutions() {
   try {
     const r = await getAutomationExecutions()
     executions.value = (r && r.executions) || []
-  } catch (e) {
+  } catch {
     executions.value = []
   }
 }
@@ -289,8 +289,8 @@ onMounted(refreshAll)
 }
 .status-pill.ok { background: var(--accent-soft); color: var(--accent); }
 .status-pill.off { background: var(--surface-3); color: var(--text-3); }
-.status-pill.bad { background: rgba(214,69,56,.12); color: #d64538; }
-.status-pill.warn { background: rgba(214,158,46,.14); color: #d69e2e; }
+.status-pill.bad { background: var(--fail-bg); color: var(--fail); }
+.status-pill.warn { background: var(--warn-bg); color: var(--warn); }
 .rule-form { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }

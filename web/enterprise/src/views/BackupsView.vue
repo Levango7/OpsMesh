@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <h2>{{ $t('backups.title') }}</h2>
     <p class="muted">{{ $t('backups.subtitle') }}</p>
@@ -133,7 +133,7 @@ async function fetchBackups() {
   try {
     const r = await backupApi.listBackups()
     backups.value = (r && r.backups) || []
-  } catch (e) {
+  } catch {
     backups.value = []
   } finally {
     loading.value = false
@@ -206,9 +206,9 @@ onMounted(fetchBackups)
   display: inline-block; padding: 2px 8px; border-radius: 999px;
   font-size: 12px; background: var(--accent-soft); color: var(--accent);
 }
-.tag.st-completed { background: rgba(46, 184, 114, .14); color: #2eb872; }
-.tag.st-creating { background: rgba(52, 152, 219, .14); color: #3498db; }
-.tag.st-failed { background: rgba(231, 76, 60, .14); color: #e74c3c; }
+.tag.st-completed { background: var(--ok-bg); color: var(--ok); }
+.tag.st-creating { background: var(--info-bg); color: var(--info); }
+.tag.st-failed { background: var(--fail-bg); color: var(--fail); }
 .backup-form { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
