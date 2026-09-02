@@ -93,7 +93,21 @@ export const ROUTE_DOMAIN_MAP = {
   billing: 'platform',
   apikeys: 'platform',
   'gateway-routes': 'platform',
-  'notify-channels': 'platform'
+  'notify-channels': 'platform',
+
+  // ====================================================================
+  // P1 五子域路由 → 功能域映射
+  //   platform/federation → system
+  //   deploys-federation   → delivery
+  //   config/cmdb-*        → ops
+  // ====================================================================
+  platform: 'system',
+  federation: 'system',
+  'deploys-federation': 'delivery',
+  config: 'ops',
+  'cmdb-changes': 'ops',
+  'cmdb-attr-templates': 'ops',
+  'cmdb-collect': 'ops'
 }
 
 // 预先收集所有功能域 json 模块（Vite 会为每个 json 生成单独 chunk，按需加载）

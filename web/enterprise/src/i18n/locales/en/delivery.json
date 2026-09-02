@@ -224,5 +224,29 @@
     "view": "View",
     "col_canary_id": "Canary ID",
     "col_actions": "Actions"
+  },
+  "federationDeploys": {
+    "title": "Federation Deploys",
+    "subtitle": "Multi-cluster federation deploys: create cross-cluster deploys, view per-cluster status and details",
+    "add": "New Federation Deploy",
+    "detail": "Detail",
+    "detail_title": "Federation Deploy #{id}",
+    "created": "Federation deploy created",
+    "create_failed": "Create failed",
+    "empty": "No federation deploys",
+    "col_id": "ID",
+    "col_clusters": "Clusters",
+    "col_actions": "Actions",
+    "field_name": "Name",
+    "field_status": "Status",
+    "field_template": "Template",
+    "field_params": "Params",
+    "field_clusters": "Target Clusters",
+    "field_createdAt": "Created At",
+    "field_createdBy": "Created By",
+    "clusters_placeholder": "comma-separated cluster IDs",
+    "template_placeholder": "deploy template name",
+    "params_placeholder": "deploy params (JSON)",
+    "clusters_title": "Cluster Execution Status"
   }
 }

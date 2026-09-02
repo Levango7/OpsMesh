@@ -115,3 +115,32 @@ export {
 export {
   renderBatchExecForm, renderBatchCreateForm, renderBatchStatus, renderBatchList,
 } from './render-batch.js';
+
+// ============================================================================
+// P1 补齐功能域：通知管理 / 日志检索 / 部署中心 / 作业编排 / CMDB / OS 优化 / 中间件部署 / K8s 集群
+// ============================================================================
+export {
+  renderNotifyChannelsTable, renderNotifyChannelForm,
+  renderNotifyTemplatesTable, renderNotifyTemplateForm,
+} from './render-notify.js';
+export {
+  renderLogsSearchForm, renderLogsTable, logLevelBadge,
+} from './render-logs.js';
+export {
+  renderDeploysTable, renderDeployForm, renderFederationDeploysTable,
+} from './render-deploys.js';
+export {
+  renderWorkflowsTable, renderWorkflowForm, renderWorkflowStatus,
+} from './render-workflows.js';
+export {
+  renderCMDBTypesTable, renderCMDBItemsTable, renderCMDBCollectResult, renderCMDBChangesTable,
+} from './render-cmdb.js';
+export {
+  renderOSTemplatesTable, renderOSTemplateExecForm, renderOSExecResult,
+} from './render-os-optimize.js';
+export {
+  renderMiddlewareTemplatesTable, renderMiddlewareDeployForm, renderMiddlewareInstancesTable,
+} from './render-middleware.js';
+export {
+  renderK8sClustersTable, renderK8sClusterForm, renderK8sTestResult,
+} from './render-k8s.js';

@@ -224,5 +224,29 @@
     "view": "查看",
     "col_canary_id": "灰度ID",
     "col_actions": "操作"
+  },
+  "federationDeploys": {
+    "title": "联邦部署",
+    "subtitle": "多集群联邦部署：创建跨集群部署、查看各集群状态与详情",
+    "add": "新建联邦部署",
+    "detail": "详情",
+    "detail_title": "联邦部署 #{id}",
+    "created": "联邦部署已创建",
+    "create_failed": "创建失败",
+    "empty": "暂无联邦部署",
+    "col_id": "ID",
+    "col_clusters": "集群状态",
+    "col_actions": "操作",
+    "field_name": "名称",
+    "field_status": "状态",
+    "field_template": "模板",
+    "field_params": "参数",
+    "field_clusters": "目标集群",
+    "field_createdAt": "创建时间",
+    "field_createdBy": "创建人",
+    "clusters_placeholder": "逗号分隔的集群 ID 列表",
+    "template_placeholder": "部署模板名称",
+    "params_placeholder": "部署参数（JSON）",
+    "clusters_title": "集群执行状态"
   }
 }

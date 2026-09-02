@@ -55,13 +55,22 @@ import * as flowTasks       from './flow-tasks.js';
 import * as flowAlerts      from './flow-alerts.js';
 import * as flowAlertRules  from './flow-alert-rules.js';
 import * as flowBatch       from './flow-batch.js';
+// P1 补齐功能域子模块
+import * as flowNotify        from './flow-notify.js';
+import * as flowLogs          from './flow-logs.js';
+import * as flowDeploys       from './flow-deploys.js';
+import * as flowWorkflows     from './flow-workflows.js';
+import * as flowCMDB          from './flow-cmdb.js';
+import * as flowOSOptimize    from './flow-os-optimize.js';
+import * as flowMiddleware    from './flow-middleware.js';
+import * as flowK8s           from './flow-k8s.js';
 
 // ============================================================================
 // Tab 切换
 // ============================================================================
 
 export function switchTab(tab) {
-  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push', 'compliance', 'ha', 'network-mgmt', 'automation', 'gateway', 'webhook', 'script', 'tenant', 'apikey', 'plugin', 'billing', 'platform', 'devices', 'tasks', 'alerts', 'alert-rules', 'batch'];
+  const validTabs = ['tickets', 'dashboard', 'slo', 'traffic', 'pipeline', 'canary', 'config-push', 'compliance', 'ha', 'network-mgmt', 'automation', 'gateway', 'webhook', 'script', 'tenant', 'apikey', 'plugin', 'billing', 'platform', 'devices', 'tasks', 'alerts', 'alert-rules', 'batch', 'notify', 'logs', 'deploys', 'workflows', 'cmdb', 'os-optimize', 'middleware', 'k8s'];
   if (validTabs.indexOf(tab) === -1) return;
   state.currentTab = tab;
   // 更新 tab 按钮激活态
@@ -104,6 +113,15 @@ export function switchTab(tab) {
   if (tab === 'alerts' && state.alerts.length === 0) flowAlerts.loadAlerts();
   if (tab === 'alert-rules' && state.alertRules.length === 0) flowAlertRules.loadAlertRules();
   if (tab === 'batch' && state.batches.length === 0) flowBatch.loadBatch();
+  // P1 补齐功能域懒加载
+  if (tab === 'notify' && state.notify.channels.length === 0) flowNotify.loadNotifyChannels();
+  if (tab === 'logs' && !state._logsLoaded) { flowLogs.loadLogs(); state._logsLoaded = true; }
+  if (tab === 'deploys' && state.deploys.list.length === 0) flowDeploys.loadDeploys();
+  if (tab === 'workflows' && state.workflows.list.length === 0) flowWorkflows.loadWorkflows();
+  if (tab === 'cmdb' && state.cmdb.types.length === 0) flowCMDB.loadCMDBTypes();
+  if (tab === 'os-optimize' && state.osOptimize.templates.length === 0) flowOSOptimize.loadOSTemplates();
+  if (tab === 'middleware' && state.middleware.templates.length === 0) flowMiddleware.loadMiddlewareTemplates();
+  if (tab === 'k8s' && state.k8s.clusters.length === 0) flowK8s.loadK8sClusters();
 }
 
 // ============================================================================
@@ -157,6 +175,15 @@ export function init() {
   flowAlerts.buildAlertsToolbar();
   flowAlertRules.buildAlertRulesToolbar();
   flowBatch.buildBatchToolbar();
+  // P1 补齐功能域工具栏
+  flowNotify.buildNotifyToolbar();
+  flowLogs.buildLogsToolbar();
+  flowDeploys.buildDeploysToolbar();
+  flowWorkflows.buildWorkflowsToolbar();
+  flowCMDB.buildCMDBToolbar();
+  flowOSOptimize.buildOSOptimizeToolbar();
+  flowMiddleware.buildMiddlewareToolbar();
+  flowK8s.buildK8sToolbar();
 
   // 绑定 tab 切换
   document.querySelectorAll('.tab-btn').forEach((btn) => {
@@ -194,6 +221,15 @@ function refreshCurrentPage() {
   flowAlerts.buildAlertsToolbar();
   flowAlertRules.buildAlertRulesToolbar();
   flowBatch.buildBatchToolbar();
+  // P1 补齐功能域工具栏
+  flowNotify.buildNotifyToolbar();
+  flowLogs.buildLogsToolbar();
+  flowDeploys.buildDeploysToolbar();
+  flowWorkflows.buildWorkflowsToolbar();
+  flowCMDB.buildCMDBToolbar();
+  flowOSOptimize.buildOSOptimizeToolbar();
+  flowMiddleware.buildMiddlewareToolbar();
+  flowK8s.buildK8sToolbar();
   // 重新加载当前页数据
   if (state.currentTab === 'tickets') flowTicket.loadTickets();
   else if (state.currentTab === 'dashboard') flowDashboard.loadDashboardAll();
@@ -220,6 +256,15 @@ function refreshCurrentPage() {
   else if (state.currentTab === 'alerts') flowAlerts.loadAlerts();
   else if (state.currentTab === 'alert-rules') flowAlertRules.refreshAlertRulesSubTab();
   else if (state.currentTab === 'batch') flowBatch.refreshBatchSubTab();
+  // P1 补齐功能域刷新
+  else if (state.currentTab === 'notify') flowNotify.refreshNotifySubTab();
+  else if (state.currentTab === 'logs') flowLogs.loadLogs();
+  else if (state.currentTab === 'deploys') flowDeploys.refreshDeploysSubTab();
+  else if (state.currentTab === 'workflows') flowWorkflows.loadWorkflows();
+  else if (state.currentTab === 'cmdb') flowCMDB.refreshCMDBSubTab();
+  else if (state.currentTab === 'os-optimize') flowOSOptimize.loadOSTemplates();
+  else if (state.currentTab === 'middleware') flowMiddleware.refreshMiddlewareSubTab();
+  else if (state.currentTab === 'k8s') flowK8s.loadK8sClusters();
 }
 
 // ============================================================================
@@ -251,6 +296,15 @@ export * from './flow-tasks.js';
 export * from './flow-alerts.js';
 export * from './flow-alert-rules.js';
 export * from './flow-batch.js';
+// P1 补齐功能域 re-export
+export * from './flow-notify.js';
+export * from './flow-logs.js';
+export * from './flow-deploys.js';
+export * from './flow-workflows.js';
+export * from './flow-cmdb.js';
+export * from './flow-os-optimize.js';
+export * from './flow-middleware.js';
+export * from './flow-k8s.js';
 
 // init/switchTab 也需要导出
 export { init, switchTab };

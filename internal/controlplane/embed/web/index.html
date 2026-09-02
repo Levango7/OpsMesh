@@ -296,6 +296,31 @@ a:hover{color:var(--accent-hover);}
       <button type="button" class="tab-btn" data-tab="batch" data-i18n="nav.batch">
         <span class="icon" data-icon="rocket"></span><span>批量执行</span>
       </button>
+      <!--P1 补齐功能域 tab -->
+      <button type="button" class="tab-btn" data-tab="notify" data-i18n="nav.notify">
+        <span class="icon" data-icon="webhook"></span><span>通知管理</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="logs" data-i18n="nav.logs">
+        <span class="icon" data-icon="search"></span><span>日志检索</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="deploys" data-i18n="nav.deploys">
+        <span class="icon" data-icon="rocket"></span><span>部署中心</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="workflows" data-i18n="nav.workflows">
+        <span class="icon" data-icon="automation"></span><span>作业编排</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="cmdb" data-i18n="nav.cmdb">
+        <span class="icon" data-icon="network"></span><span>CMDB</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="os-optimize" data-i18n="nav.osOptimize">
+        <span class="icon" data-icon="sliders"></span><span>OS 优化</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="middleware" data-i18n="nav.middleware">
+        <span class="icon" data-icon="pipeline"></span><span>中间件部署</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="k8s" data-i18n="nav.k8s">
+        <span class="icon" data-icon="dashboard"></span><span>K8s 集群</span>
+      </button>
     </div>
   </nav>
 
@@ -544,6 +569,86 @@ a:hover{color:var(--accent-hover);}
       </div>
       <div id="batch-toolbar" class="toolbar"></div>
       <div id="batch-content" class="content"></div>
+    </section>
+
+    <!-- 通知管理 page -->
+    <section id="page-notify" class="page">
+      <div class="page-head">
+        <h2>通知管理</h2>
+        <p>通知渠道 / 通知模板</p>
+      </div>
+      <div id="notify-toolbar" class="toolbar"></div>
+      <div id="notify-content" class="content"></div>
+    </section>
+
+    <!-- 日志检索 page -->
+    <section id="page-logs" class="page">
+      <div class="page-head">
+        <h2>日志检索</h2>
+        <p>关键词 / 级别 / 时间范围检索</p>
+      </div>
+      <div id="logs-toolbar" class="toolbar"></div>
+      <div id="logs-content" class="content"></div>
+    </section>
+
+    <!-- 部署中心 page -->
+    <section id="page-deploys" class="page">
+      <div class="page-head">
+        <h2>部署中心</h2>
+        <p>部署 / 回滚 / 联邦部署</p>
+      </div>
+      <div id="deploys-toolbar" class="toolbar"></div>
+      <div id="deploys-content" class="content"></div>
+    </section>
+
+    <!-- 作业编排 page -->
+    <section id="page-workflows" class="page">
+      <div class="page-head">
+        <h2>作业编排</h2>
+        <p>工作流 / 运行 / 执行状态</p>
+      </div>
+      <div id="workflows-toolbar" class="toolbar"></div>
+      <div id="workflows-content" class="content"></div>
+    </section>
+
+    <!-- CMDB page -->
+    <section id="page-cmdb" class="page">
+      <div class="page-head">
+        <h2>CMDB</h2>
+        <p>CI 类型 / CI 项 / 采集 / 变更</p>
+      </div>
+      <div id="cmdb-toolbar" class="toolbar"></div>
+      <div id="cmdb-content" class="content"></div>
+    </section>
+
+    <!-- OS 优化 page -->
+    <section id="page-os-optimize" class="page">
+      <div class="page-head">
+        <h2>OS 优化</h2>
+        <p>OS 优化模板 / 执行</p>
+      </div>
+      <div id="os-optimize-toolbar" class="toolbar"></div>
+      <div id="os-optimize-content" class="content"></div>
+    </section>
+
+    <!-- 中间件部署 page -->
+    <section id="page-middleware" class="page">
+      <div class="page-head">
+        <h2>中间件部署</h2>
+        <p>模板 / 部署 / 实例</p>
+      </div>
+      <div id="middleware-toolbar" class="toolbar"></div>
+      <div id="middleware-content" class="content"></div>
+    </section>
+
+    <!-- K8s 集群管理 page -->
+    <section id="page-k8s" class="page">
+      <div class="page-head">
+        <h2>K8s 集群管理</h2>
+        <p>集群列表 / 添加 / 测试连接</p>
+      </div>
+      <div id="k8s-toolbar" class="toolbar"></div>
+      <div id="k8s-content" class="content"></div>
     </section>
   </main>
 

@@ -1037,3 +1037,216 @@ export function getBatchList(filter = {}) {
     return Array.isArray(d) ? d : (d && d.batches ? d.batches : (d && d.tasks ? d.tasks : []));
   });
 }
+
+// ============================================================================
+// P1 补齐功能域：通知管理 API（通知渠道 / 通知模板）
+// ============================================================================
+
+// getNotifyChannels 列出通知渠道。GET /api/v1/notify-channels
+export function getNotifyChannels(filter = {}) {
+  return requestJSON('GET', '/api/v1/notify-channels' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.channels ? d.channels : []);
+  });
+}
+
+// createNotifyChannel 创建通知渠道。POST /api/v1/notify-channels
+// body: {name, type, config}
+export function createNotifyChannel(data) {
+  return requestJSON('POST', '/api/v1/notify-channels', data);
+}
+
+// updateNotifyChannel 更新通知渠道。PUT /api/v1/notify-channels/{id}
+export function updateNotifyChannel(id, data) {
+  return requestJSON('PUT', '/api/v1/notify-channels/' + encodeURIComponent(id), data);
+}
+
+// deleteNotifyChannel 删除通知渠道。DELETE /api/v1/notify-channels/{id}
+export function deleteNotifyChannel(id) {
+  return requestJSON('DELETE', '/api/v1/notify-channels/' + encodeURIComponent(id));
+}
+
+// getNotifyTemplates 列出通知模板。GET /api/v1/notify-templates
+export function getNotifyTemplates(filter = {}) {
+  return requestJSON('GET', '/api/v1/notify-templates' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.templates ? d.templates : []);
+  });
+}
+
+// createNotifyTemplate 创建通知模板。POST /api/v1/notify-templates
+// body: {name, type, subject, body}
+export function createNotifyTemplate(data) {
+  return requestJSON('POST', '/api/v1/notify-templates', data);
+}
+
+// deleteNotifyTemplate 删除通知模板。DELETE /api/v1/notify-templates/{id}
+export function deleteNotifyTemplate(id) {
+  return requestJSON('DELETE', '/api/v1/notify-templates/' + encodeURIComponent(id));
+}
+
+// ============================================================================
+// P1 补齐功能域：日志检索 API
+// ============================================================================
+
+// searchLogs 检索日志。GET /api/v1/logs?query=&level=&from=&to=&limit=&offset=
+// 返回 {logs: [LogEntry], total}
+export function searchLogs(filter = {}) {
+  return requestJSON('GET', '/api/v1/logs' + buildQuery(filter)).then((d) => {
+    if (d && d.logs) return d;
+    return { logs: Array.isArray(d) ? d : [], total: Array.isArray(d) ? d.length : 0 };
+  });
+}
+
+// ============================================================================
+// P1 补齐功能域：部署中心 API（部署 / 回滚 / 联邦部署）
+// ============================================================================
+
+// getDeploys 列出部署。GET /api/v1/deploys
+export function getDeploys(filter = {}) {
+  return requestJSON('GET', '/api/v1/deploys' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.deploys ? d.deploys : []);
+  });
+}
+
+// createDeploy 创建部署。POST /api/v1/deploys
+// body: {name, template, params, target}
+export function createDeploy(data) {
+  return requestJSON('POST', '/api/v1/deploys', data);
+}
+
+// rollbackDeploy 回滚部署。POST /api/v1/deploys/{id}/rollback
+export function rollbackDeploy(id) {
+  return requestJSON('POST', '/api/v1/deploys/' + encodeURIComponent(id) + '/rollback');
+}
+
+// getFederationDeploys 列出联邦部署。GET /api/v1/deploys/federation
+export function getFederationDeploys(filter = {}) {
+  return requestJSON('GET', '/api/v1/deploys/federation' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.deploys ? d.deploys : []);
+  });
+}
+
+// ============================================================================
+// P1 补齐功能域：作业编排 API（工作流 / 运行 / 状态）
+// ============================================================================
+
+// getWorkflows 列出工作流。GET /api/v1/workflows
+export function getWorkflows(filter = {}) {
+  return requestJSON('GET', '/api/v1/workflows' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.workflows ? d.workflows : []);
+  });
+}
+
+// createWorkflow 创建工作流。POST /api/v1/workflows
+// body: {name, steps}
+export function createWorkflow(data) {
+  return requestJSON('POST', '/api/v1/workflows', data);
+}
+
+// runWorkflow 运行工作流。POST /api/v1/workflows/{id}/run
+// 返回 {taskID, status}
+export function runWorkflow(id) {
+  return requestJSON('POST', '/api/v1/workflows/' + encodeURIComponent(id) + '/run');
+}
+
+// getWorkflowStatus 查询工作流执行状态。GET /api/v1/workflows/{id}/status
+// 返回 {status, steps: [{name, status, startedAt, finishedAt}]}
+export function getWorkflowStatus(id) {
+  return requestJSON('GET', '/api/v1/workflows/' + encodeURIComponent(id) + '/status');
+}
+
+// ============================================================================
+// P1 补齐功能域：CMDB API（CI 类型 / CI 项 / 采集 / 变更）
+// ============================================================================
+
+// getCMDBCIs 列出 CI 项。GET /api/v1/cmdb/ci?type=
+export function getCMDBCIs(filter = {}) {
+  return requestJSON('GET', '/api/v1/cmdb/ci' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.items ? d.items : []);
+  });
+}
+
+// getCMDBTypes 列出 CI 类型。GET /api/v1/cmdb/types
+export function getCMDBTypes() {
+  return requestJSON('GET', '/api/v1/cmdb/types').then((d) => {
+    return Array.isArray(d) ? d : (d && d.types ? d.types : []);
+  });
+}
+
+// collectCMDB 触发 CMDB 采集。POST /api/v1/cmdb/collect
+// 返回 {collected, failed}
+export function collectCMDB() {
+  return requestJSON('POST', '/api/v1/cmdb/collect');
+}
+
+// getCMDBChanges 列出变更申请。GET /api/v1/cmdb/changes
+export function getCMDBChanges(filter = {}) {
+  return requestJSON('GET', '/api/v1/cmdb/changes' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.changes ? d.changes : []);
+  });
+}
+
+// ============================================================================
+// P1 补齐功能域：OS 优化 API（模板 / 执行）
+// ============================================================================
+
+// getOSTemplates 列出 OS 优化模板。GET /api/v1/os-templates
+export function getOSTemplates(filter = {}) {
+  return requestJSON('GET', '/api/v1/os-templates' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.templates ? d.templates : []);
+  });
+}
+
+// executeOSTemplate 执行 OS 优化模板。POST /api/v1/os-templates/{id}/execute
+// body: {agentID, params}
+// 返回 {taskID, status}
+export function executeOSTemplate(id, body) {
+  return requestJSON('POST', '/api/v1/os-templates/' + encodeURIComponent(id) + '/execute', body || {});
+}
+
+// ============================================================================
+// P1 补齐功能域：中间件部署 API（模板 / 部署 / 实例）
+// ============================================================================
+
+// getMiddlewareTemplates 列出中间件模板。GET /api/v1/middleware-templates
+export function getMiddlewareTemplates(filter = {}) {
+  return requestJSON('GET', '/api/v1/middleware-templates' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.templates ? d.templates : []);
+  });
+}
+
+// deployMiddleware 部署中间件。POST /api/v1/middleware-templates/{id}/deploy
+// body: {agentID, params, mode}
+// 返回 {taskID, status}
+export function deployMiddleware(id, body) {
+  return requestJSON('POST', '/api/v1/middleware-templates/' + encodeURIComponent(id) + '/deploy', body || {});
+}
+
+// getMiddlewareInstances 列出中间件实例。GET /api/v1/middleware-instances
+export function getMiddlewareInstances(filter = {}) {
+  return requestJSON('GET', '/api/v1/middleware-instances' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.instances ? d.instances : []);
+  });
+}
+
+// ============================================================================
+// P1 补齐功能域：K8s 集群管理 API（集群 / 添加 / 测试连接）
+// ============================================================================
+
+// getK8sClusters 列出 K8s 集群。GET /api/v1/k8s/clusters
+export function getK8sClusters(filter = {}) {
+  return requestJSON('GET', '/api/v1/k8s/clusters' + buildQuery(filter)).then((d) => {
+    return Array.isArray(d) ? d : (d && d.clusters ? d.clusters : []);
+  });
+}
+
+// createK8sCluster 添加 K8s 集群。POST /api/v1/k8s/clusters
+// body: {name, kubeconfig, server}
+export function createK8sCluster(data) {
+  return requestJSON('POST', '/api/v1/k8s/clusters', data);
+}
+
+// testK8sCluster 测试 K8s 集群连接。POST /api/v1/k8s/clusters/{id}/test
+// 返回 {status: "ok|failed", error}
+export function testK8sCluster(id) {
+  return requestJSON('POST', '/api/v1/k8s/clusters/' + encodeURIComponent(id) + '/test');
+}

@@ -87,6 +87,27 @@ const state = {
   batchDetail: null,
   batchSelectedId: null,
   batchSubTab: 'list', // list | exec | create | status
+  // P1 补齐功能域状态
+  // 通知管理
+  notify: { channels: [], templates: [], loading: false, error: null },
+  notifySubTab: 'channels', // channels | templates
+  // 日志检索
+  logs: { entries: [], total: 0, loading: false, error: null, filter: { query: '', level: '', from: '', to: '', limit: '100' } },
+  // 部署中心
+  deploys: { list: [], federationList: [], loading: false, error: null },
+  deploysSubTab: 'list', // list | federation | create
+  // 作业编排
+  workflows: { list: [], currentStatus: null, loading: false, error: null, selectedId: null },
+  // CMDB
+  cmdb: { types: [], items: [], changes: [], loading: false, error: null, selectedType: null },
+  cmdbSubTab: 'types', // types | items | changes
+  // OS 优化
+  osOptimize: { templates: [], loading: false, error: null, selectedId: null },
+  // 中间件部署
+  middleware: { templates: [], instances: [], loading: false, error: null, selectedId: null },
+  middlewareSubTab: 'templates', // templates | instances
+  // K8s 集群管理
+  k8s: { clusters: [], loading: false, error: null },
 };
 
 

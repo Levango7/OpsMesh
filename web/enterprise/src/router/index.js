@@ -161,7 +161,34 @@ const routes = [
   { path: '/audit-events', name: 'audit-events', component: () => import('@/views/AuditEventsView.vue'), meta: { title: 'nav.auditEvents', group: '系统管理', icon: 'alerts', requirePerm: 'audit:read' } },
 
   // 通知渠道（平台：渠道 + 模板；无独立权限点，复用告警权限）
-  { path: '/notify-channels', name: 'notify-channels', component: () => import('@/views/NotifyChannelsView.vue'), meta: { title: 'nav.notifyChannels', group: '平台', icon: 'alerts', requirePerm: 'alert:read' } }
+  { path: '/notify-channels', name: 'notify-channels', component: () => import('@/views/NotifyChannelsView.vue'), meta: { title: 'nav.notifyChannels', group: '平台', icon: 'alerts', requirePerm: 'alert:read' } },
+
+  // ======================================================================
+  // P1 五子域管理页（platform/federation/deploys-federation/config/
+  // cmdb-advanced，后端 handler 在 internal/controlplane/{platform,federation,
+  // deploys_federation,config_hotpush,cmdb_advanced,cmdb_attr_templates}.go
+  // 注册，API 契约见 src/api/*.js 注释头）。
+  // ======================================================================
+  // 平台配置（系统管理）：配置 / 健康检查 / 指标汇总
+  { path: '/platform', name: 'platform', component: () => import('@/views/PlatformConfigView.vue'), meta: { title: 'nav.platform', group: '系统管理', icon: 'settings', requirePerm: '' } },
+
+  // 控制面联邦（系统管理）：Peer 管理 / 设备聚合 / 任务转发
+  { path: '/federation', name: 'federation', component: () => import('@/views/FederationView.vue'), meta: { title: 'nav.federation', group: '系统管理', icon: 'flow', requirePerm: '' } },
+
+  // 多集群联邦部署（交付中心）：联邦部署列表 + 创建 + 详情
+  { path: '/deploys-federation', name: 'deploys-federation', component: () => import('@/views/FederationDeploysView.vue'), meta: { title: 'nav.federationDeploys', group: '交付中心', icon: 'deploy', requirePerm: 'deploy:read' } },
+
+  // 配置热推送（运维管理）：热推送 / 灰度发布 / 版本历史
+  { path: '/config', name: 'config', component: () => import('@/views/ConfigHotpushView.vue'), meta: { title: 'nav.config', group: '运维管理', icon: 'task', requirePerm: 'task:read' } },
+
+  // CMDB 变更审批（运维管理）：变更列表 + 详情 + approve/reject
+  { path: '/cmdb-changes', name: 'cmdb-changes', component: () => import('@/views/CMDBChangesView.vue'), meta: { title: 'nav.cmdbChanges', group: '运维管理', icon: 'cmdb', requirePerm: 'cmdb:read' } },
+
+  // CMDB 属性模板（运维管理）：模板 CRUD
+  { path: '/cmdb-attr-templates', name: 'cmdb-attr-templates', component: () => import('@/views/CMDBAttrTemplatesView.vue'), meta: { title: 'nav.cmdbAttrTemplates', group: '运维管理', icon: 'cmdb', requirePerm: 'cmdb:read' } },
+
+  // CMDB 采集管理（运维管理）：触发采集 + CI 导入导出 + 待审批 CI
+  { path: '/cmdb-collect', name: 'cmdb-collect', component: () => import('@/views/CMDBCollectView.vue'), meta: { title: 'nav.cmdbCollect', group: '运维管理', icon: 'cmdb', requirePerm: 'cmdb:read' } }
 ]
 
 const router = createRouter({
