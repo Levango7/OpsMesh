@@ -1,6 +1,6 @@
 # OpsMesh 网段运维中枢 — 交付说明
 
-> 版本：MVP（自研 gRPC 管控通道）·  数据刷新 2026-08-24（行数/包数/依赖数/功能矩阵实测更新，对齐 14 个功能域）·  仓库：https://github.com/Levango7/OpsMesh
+> 版本：MVP（自研 gRPC 管控通道）·  数据刷新 2026-09-03（前端 P0–P3 功能差距补齐 + 测试覆盖 + API 契约校验 + 代码质量优化）·  仓库：https://github.com/Levango7/OpsMesh
 
 ## 1. 产品定位
 
@@ -84,6 +84,53 @@ operator 子模块额外引入 `sigs.k8s.io/controller-runtime`（K8s CRD 控制
 ### 4.4 其余已落地能力（横切）
 
 定时/周期调度、失败重试+死信队列、设备自动退役(F5)、自动纳管令牌闭环、多副本保护+agent 多控制面 failover+真 HA leader 选举、生产基线、前端壳层重构、Prometheus 指标 + /healthz + /readyz、OTel 链路追踪、多阶段 Dockerfile + CI(gosec/Trivy/golangci-lint/-race)。**Helm Chart（`deploy/helm/opsmesh/`）已落地可用**，systemd 部署资产齐全（`deploy/systemd/`），docker-compose 一键起栈，Argo CD ApplicationSet 网段批量渲染仍属规划中。
+
+### 4.5 前端功能差距补齐（P0–P3，2026-09-03 完成）
+
+> 通过 5 个 commit（cc3f826 / dee012e / 2f41aac / 2fc3bba / ec30913 / fcd4853，156 files，+18,262/−163）完成企业版与个人版前端对后端 API 的全量对齐，并补齐测试覆盖、API 契约校验与代码质量优化。详细差距分析见 `docs/enterprise-gap-analysis.md`、`docs/personal-gap-analysis.md`。
+
+#### 4.5.1 企业版新增 13 个子域（`web/enterprise/`）
+
+| # | 子域 | 关键能力 | 引入 commit |
+|---|---|---|---|
+| 1 | 告警规则 | 规则 CRUD + 多条件 + 静默/抑制/聚合 | cc3f826 |
+| 2 | 批量运维 | 批量任务下发 + 进度聚合 + 取消 | cc3f826 |
+| 3 | 灰度发布 | 灰度策略 + 自适应推进 + Promote 拥级 | cc3f826 |
+| 4 | 平台配置 | 平台参数 CRUD + 热推送 | dee012e |
+| 5 | 控制面联邦 | peer 管理 + 跨段任务转发视图 | dee012e |
+| 6 | 联邦部署 | 多集群联邦发布协调 | dee012e |
+| 7 | 配置热推送 | 配置项热推 + 版本回滚 | dee012e |
+| 8 | CMDB 高级 | 变更审批 / 属性模板 / 采集配置 | dee012e |
+| 9 | 审批流 | 审批流定义 + 节点 + 请求 approve/reject | 2f41aac |
+| 10 | 网络拓扑诊断 | 设备拓扑 + 子网发现 + 监控指标 | 2f41aac |
+| 11 | 审计检索 | 租户/动作/时间窗过滤 + ≥6 月导出 | 2f41aac |
+| 12 | 自动纳管 | 候选设备状态机 + SSH 推送 bootstrap | 2f41aac |
+| 13 | Helm 应用商店 | 仓库/Chart/Release + 24 个预置应用 | 2fc3bba |
+
+#### 4.5.2 个人版新增 21 个功能域（`internal/controlplane/web/`）
+
+| # | 功能域 | 引入 commit | # | 功能域 | 引入 commit |
+|---|---|---|---|---|---|
+| 1 | 设备管理 | cc3f826 | 12 | 中间件部署 | dee012e |
+| 2 | 任务执行 | cc3f826 | 13 | K8s 集群 | dee012e |
+| 3 | 告警监控 | cc3f826 | 14 | SSE 实时推送 | 2f41aac |
+| 4 | 告警规则 | cc3f826 | 15 | 自动纳管 | 2f41aac |
+| 5 | 批量运维 | cc3f826 | 16 | ChatOps | 2f41aac |
+| 6 | 通知管理 | dee012e | 17 | 控制面联邦 | 2f41aac |
+| 7 | 日志检索 | dee012e | 18 | 定时任务 | 2f41aac |
+| 8 | 部署中心 | dee012e | 19 | 审批流 | 2fc3bba |
+| 9 | 作业编排 | dee012e | 20 | 密钥管理 | 2fc3bba |
+| 10 | CMDB | dee012e | 21 | Helm 应用商店 | 2fc3bba |
+| 11 | OS 优化 | dee012e | | | |
+
+#### 4.5.3 验证结果
+
+| 维度 | 指标 | 结果 |
+|---|---|---|
+| 单元测试 | vitest passed | 783 → **1121**（新增 338 用例，12 个 store 测试文件，commit ec30913） |
+| Lint | eslint errors / warnings（企业版 + 个人版） | **0 / 0**（企业版修复 12 warnings；个人版新增 eslint 配置，修复 24 个 `$` 语法错误 + flow.js duplicate export + 5 个 badge 函数移至 `render-common.js` + 清理 413 个未使用导入，commit fcd4853） |
+| 语法检查 | `node --check`（个人版 88 文件） | **88 / 88 通过** |
+| API 契约 | 后端 165 路由 vs 企业版 243 API vs 个人版 120 API | **匹配率 100%**，幽灵 API = 0（详见 `docs/api-contract-audit.md`，commit fcd4853） |
 
 ## 5. 网络分区（CIDR）
 
