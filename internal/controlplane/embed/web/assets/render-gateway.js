@@ -4,13 +4,8 @@
 // 公共依赖：i18n（t）、icons（iconEl/iconHtml）、render-common（DOM/Badge/表单辅助）。
 
 import { t } from './i18n.js';
-import { iconEl, iconHtml } from './icons.js';
-import {
-  el, formatTime, formatNumber, badge,
-  renderLoading, renderError, renderEmpty, renderToast,
-  statusBadge, priorityBadge, categoryBadge, sloStatusBadge,
-  detailItem, fieldRow,
-} from './render-common.js';
+import { iconEl } from './icons.js';
+import { el, badge, renderEmpty, fieldRow } from './render-common.js';
 
 // ============================================================================
 // Phase 5：扩展能力渲染（API 网关 / Webhook / 自定义脚本）
@@ -137,13 +132,6 @@ export function renderGatewayRouteForm(container, route, handlers) {
 
 // --- Webhook ---
 
-// webhookStatusBadge Webhook 状态 badge。
-function webhookStatusBadge(status) {
-  const s = String(status || '').toLowerCase();
-  if (s === 'enabled' || s === 'active') return badge(t('webhook.enabled'), 'badge-status-resolved');
-  if (s === 'disabled' || s === 'inactive') return badge(t('webhook.disabled'), 'badge-status-closed');
-  return badge(status || '-', 'badge-status-in_progress');
-}
 
 // renderWebhooksTable 渲染 Webhook 列表表格。
 // handlers: { onEdit(wh), onTest(wh), onDeliveries(wh), onDelete(wh) }

@@ -117,6 +117,7 @@ export function useFetch() {
 }
 
 function revalidateInBackground(url, cacheKey, options) {
+  // eslint-disable-next-line no-unused-vars -- 有意从 options 剥离 ttl，避免其透传至 fetch
   const { ttl, useETag, headers = {}, ...fetchOptions } = options
   const requestHeaders = { ...headers }
 

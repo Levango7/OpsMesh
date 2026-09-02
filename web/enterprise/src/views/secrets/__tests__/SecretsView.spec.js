@@ -177,8 +177,7 @@ describe('SecretsView 组件', () => {
       })
       await nextTick()
       await nextTick()
-      // 表单中应已预填 addr 与 mount
-      const inputs = wrapper.findAll('input')
+
       // 找到提交按钮（type=submit）
       const submitBtn = wrapper.find('button[type="submit"]')
       expect(submitBtn.exists()).toBe(true)

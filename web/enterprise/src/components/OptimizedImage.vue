@@ -101,7 +101,7 @@ function decodeBlurhash() {
 
 function decodeBlurhashData(hash, width, height) {
   if (!hash || hash.length < 6) return null
-  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~'
+
   const sizeFlag = decode83(hash[0])
   const numY = Math.floor(sizeFlag / 9) + 1
   const numX = (sizeFlag % 9) + 1

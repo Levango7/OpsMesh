@@ -24,11 +24,11 @@
       <div class="chart-area">
         <div class="mock-chart cost-chart">
           <div
-            v-for="(t, idx) in store.costOverview.trend"
+            v-for="(point, idx) in store.costOverview.trend"
             :key="idx"
             class="chart-bar bar-cost"
-            :style="{ height: costBarHeight(t.amount) + '%' }"
-            :title="t.date + ': ' + formatCost(t.amount)"
+            :style="{ height: costBarHeight(point.amount) + '%' }"
+            :title="point.date + ': ' + formatCost(point.amount)"
           />
         </div>
       </div>

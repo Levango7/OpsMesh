@@ -4,13 +4,8 @@
 // 公共依赖：i18n（t）、icons（iconEl/iconHtml）、render-common（DOM/Badge/表单辅助）。
 
 import { t } from './i18n.js';
-import { iconEl, iconHtml } from './icons.js';
-import {
-  el, formatTime, formatNumber, badge,
-  renderLoading, renderError, renderEmpty, renderToast,
-  statusBadge, priorityBadge, categoryBadge, sloStatusBadge,
-  detailItem, fieldRow,
-} from './render-common.js';
+import { iconEl } from './icons.js';
+import { el, formatTime, badge, renderEmpty, fieldRow, webhookStatusBadge } from './render-common.js';
 
 export function renderWebhooksTable(container, webhooks, handlers) {
   container.innerHTML = '';
@@ -118,13 +113,6 @@ export function renderWebhookDeliveriesTable(container, deliveries) {
 
 // --- 自定义脚本 ---
 
-// scriptStatusBadge 脚本状态 badge。
-function scriptStatusBadge(status) {
-  const s = String(status || '').toLowerCase();
-  if (s === 'enabled' || s === 'active') return badge(t('script.enabled'), 'badge-status-resolved');
-  if (s === 'disabled' || s === 'inactive') return badge(t('script.disabled'), 'badge-status-closed');
-  return badge(status || '-', 'badge-status-in_progress');
-}
 
 // renderScriptsTable 渲染自定义脚本列表表格。
 // handlers: { onEdit(s), onExecute(s), onExecutions(s), onDelete(s) }

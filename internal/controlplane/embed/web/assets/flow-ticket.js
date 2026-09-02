@@ -7,11 +7,13 @@ import * as api from './api.js';
 import * as render from './render.js';
 import { t } from './i18n.js';
 import { iconEl } from './icons.js';
-import { state, \$, pageRoot } from './flow-state.js';
+import { state, $ } from './flow-state.js';
 
 // ============================================================================
 // 工单管理
 // ============================================================================
+
+function ticketsContent() { return $('tickets-content'); }
 
 // loadTickets 加载工单列表（带当前过滤器）。
 export async function loadTickets(filter) {

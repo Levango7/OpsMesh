@@ -405,5 +405,4 @@ export * from './flow-approval.js';
 export * from './flow-secrets.js';
 export * from './flow-helm.js';
 
-// init/switchTab 也需要导出
-export { init, switchTab, initSSE };
+// init/switchTab/initSSE 已在上方通过 export function 直接导出，无需重复 re-export。

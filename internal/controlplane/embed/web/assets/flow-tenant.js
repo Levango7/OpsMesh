@@ -7,7 +7,7 @@ import * as api from './api.js';
 import * as render from './render.js';
 import { t } from './i18n.js';
 import { iconEl } from './icons.js';
-import { state, \$, pageRoot } from './flow-state.js';
+import { state, $ } from './flow-state.js';
 
 // ============================================================================
 // Phase 6：平台化管理（租户 / API Key / 插件市场 / 计费订阅 / 平台配置）

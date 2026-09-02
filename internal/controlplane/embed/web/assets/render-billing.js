@@ -4,13 +4,8 @@
 // 公共依赖：i18n（t）、icons（iconEl/iconHtml）、render-common（DOM/Badge/表单辅助）。
 
 import { t } from './i18n.js';
-import { iconEl, iconHtml } from './icons.js';
-import {
-  el, formatTime, formatNumber, badge,
-  renderLoading, renderError, renderEmpty, renderToast,
-  statusBadge, priorityBadge, categoryBadge, sloStatusBadge,
-  detailItem, fieldRow,
-} from './render-common.js';
+import { iconEl } from './icons.js';
+import { el, formatTime, badge, fieldRow } from './render-common.js';
 
 export function renderBillingPage(container, plans, subscriptions, invoices, handlers) {
   container.innerHTML = '';
@@ -195,14 +190,6 @@ export function renderSubscriptionForm(container, sub, handlers) {
 
 // --- 平台配置 ---
 
-// healthStatusBadge 健康状态 badge。
-function healthStatusBadge(status) {
-  const s = String(status || '').toLowerCase();
-  if (s === 'healthy' || s === 'ok' || s === 'up') return badge(t('platform.healthy'), 'status-resolved');
-  if (s === 'unhealthy' || s === 'down' || s === 'error') return badge(t('platform.unhealthy'), 'status-closed');
-  if (s === 'degraded' || s === 'warn') return badge(t('platform.degraded'), 'status-in_progress');
-  return badge(status || '-', 'status-in_progress');
-}
 
 // renderPlatformPage 渲染平台配置页（配置表单 + 健康状态 + 指标仪表盘）。
 // handlers: { onSaveConfig(data) }

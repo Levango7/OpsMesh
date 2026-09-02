@@ -7,11 +7,13 @@ import * as api from './api.js';
 import * as render from './render.js';
 import { t } from './i18n.js';
 import { iconEl } from './icons.js';
-import { state, \$, pageRoot } from './flow-state.js';
+import { state, $ } from './flow-state.js';
 
 // ============================================================================
 // SLO 管理
 // ============================================================================
+
+function sloContent() { return $('slo-content'); }
 
 // loadSLOs 加载 SLO 列表。
 export async function loadSLOs() {

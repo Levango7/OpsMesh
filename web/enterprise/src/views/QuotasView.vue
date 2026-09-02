@@ -161,9 +161,6 @@ async function onSave() {
   }
 }
 
-function onReset() {
-  deleteConfirm.show = true
-}
 
 async function onResetConfirm() {
   try {

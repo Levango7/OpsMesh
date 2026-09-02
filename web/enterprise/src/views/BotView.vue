@@ -96,7 +96,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { useBotStore } from '@/stores/bot'
-import { t } from '@/i18n'
+
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
 

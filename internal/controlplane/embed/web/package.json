@@ -1,0 +1,13 @@
+{
+  "name": "opsmesh-personal-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpsMesh 个人版前端 — 原生 ES Module JS",
+  "scripts": {
+    "lint": "eslint assets/*.js",
+    "lint:fix": "eslint assets/*.js --fix"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.1"
+  }
+}

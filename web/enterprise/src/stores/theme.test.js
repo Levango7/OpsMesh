@@ -1,6 +1,6 @@
 // theme store 单元测试
 // 覆盖：初始状态、init/toggle/set 动作、isDark getter、localStorage 持久化、DOM 属性应用。
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
 import { useThemeStore } from '@/stores/theme'

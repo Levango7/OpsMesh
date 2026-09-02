@@ -1,7 +1,7 @@
 // i18n 模块单元测试
 // 覆盖：t() 翻译、插值、回退机制（en 缺失键回退 zh）、setLang 切换、initLang。
 // 注意：i18n 模块为单例（模块级 currentLang ref），测试间需重置状态。
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { t, currentLang, setLang, initLang } from '@/i18n'
 
 describe('i18n 模块', () => {

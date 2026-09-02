@@ -4,13 +4,8 @@
 // 公共依赖：i18n（t）、icons（iconEl/iconHtml）、render-common（DOM/Badge/表单辅助）。
 
 import { t } from './i18n.js';
-import { iconEl, iconHtml } from './icons.js';
-import {
-  el, formatTime, formatNumber, badge,
-  renderLoading, renderError, renderEmpty, renderToast,
-  statusBadge, priorityBadge, categoryBadge, sloStatusBadge,
-  detailItem, fieldRow,
-} from './render-common.js';
+import { iconEl } from './icons.js';
+import { el, formatTime, renderEmpty, renderToast, fieldRow, apiKeyStatusBadge } from './render-common.js';
 
 export function renderAPIKeyPage(container, apikeys, handlers) {
   container.innerHTML = '';
@@ -119,13 +114,6 @@ export function renderAPIKeyGenerated(container, key, handlers) {
 
 // --- 插件市场 ---
 
-// pluginInstallBadge 插件安装状态 badge。
-function pluginInstallBadge(status) {
-  const s = String(status || '').toLowerCase();
-  if (s === 'installed') return badge(t('plugin.installed'), 'status-resolved');
-  if (s === 'notinstalled' || s === 'not_installed' || s === '' ) return badge(t('plugin.notInstalled'), 'status-closed');
-  return badge(status || '-', 'status-in_progress');
-}
 
 // renderPluginPage 渲染插件表格。
 // handlers: { onInstall(id), onUninstall(id), onToggle(p), onDelete(id) }

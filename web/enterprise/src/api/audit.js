@@ -30,7 +30,7 @@ export async function exportEvents(params) {
     try {
       const j = await resp.json()
       if (j && j.error) msg = j.error
-    } catch (_) { /* 非 JSON 错误体时保留状态码文案 */ }
+    } catch { /* 非 JSON 错误体时保留状态码文案 */ }
     throw new Error(msg)
   }
   return resp.json()

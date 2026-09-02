@@ -4,13 +4,8 @@
 // 公共依赖：i18n（t）、icons（iconEl/iconHtml）、render-common（DOM/Badge/表单辅助）。
 
 import { t } from './i18n.js';
-import { iconEl, iconHtml } from './icons.js';
-import {
-  el, formatTime, formatNumber, badge,
-  renderLoading, renderError, renderEmpty, renderToast,
-  statusBadge, priorityBadge, categoryBadge, sloStatusBadge,
-  detailItem, fieldRow,
-} from './render-common.js';
+import { iconEl } from './icons.js';
+import { el, formatTime, badge, renderEmpty } from './render-common.js';
 
 // ============================================================================
 // 设备管理渲染
@@ -99,7 +94,7 @@ export function renderDeviceMetrics(container, deviceID, metrics, handlers) {
 
 // renderAgentsTable 渲染代理列表表格。
 // handlers: { onDetail(id) }
-export function renderAgentsTable(container, agents, handlers) {
+export function renderAgentsTable(container, agents, _handlers) {
   container.innerHTML = '';
   if (!agents || agents.length === 0) {
     renderEmpty(container, t('common.empty'));

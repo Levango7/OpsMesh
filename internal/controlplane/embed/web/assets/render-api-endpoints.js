@@ -3,14 +3,8 @@
 // 渲染子模块 — 由 render.js 拆分而来。
 // 公共依赖：i18n（t）、icons（iconEl/iconHtml）、render-common（DOM/Badge/表单辅助）。
 
-import { t } from './i18n.js';
-import { iconEl, iconHtml } from './icons.js';
-import {
-  el, formatTime, formatNumber, badge,
-  renderLoading, renderError, renderEmpty, renderToast,
-  statusBadge, priorityBadge, categoryBadge, sloStatusBadge,
-  detailItem, fieldRow,
-} from './render-common.js';
+
+import { el } from './render-common.js';
 
 // ============================================================================
 // Phase 2：API 端点汇总（render 层提供，便于调试/文档展示）

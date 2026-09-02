@@ -2,7 +2,7 @@
 // 职责：DOM 构建、格式化、通用渲染、Badge 辅助、表单字段行、详情项。
 
 import { t } from './i18n.js';
-import { iconEl, iconHtml } from './icons.js';
+import { iconEl } from './icons.js';
 
 // ============================================================================
 // DOM 构建辅助
@@ -135,4 +135,49 @@ export function fieldRow(label, required, control) {
 export function formatNumber(n) {
   if (n == null || isNaN(n)) return '-';
   return String(n);
+}
+
+// ============================================================================
+// 业务域 Badge 辅助（跨域共用，集中维护以避免重复定义与未定义引用）
+// ============================================================================
+
+// apiKeyStatusBadge API Key 状态 badge。
+export function apiKeyStatusBadge(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'enabled' || s === 'active') return badge(t('common.enabled'), 'status-resolved');
+  if (s === 'disabled' || s === 'inactive') return badge(t('common.disabled'), 'status-closed');
+  return badge(status || '-', 'status-in_progress');
+}
+
+// healthStatusBadge 健康状态 badge。
+export function healthStatusBadge(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'healthy' || s === 'ok' || s === 'up') return badge(t('platform.healthy'), 'status-resolved');
+  if (s === 'unhealthy' || s === 'down' || s === 'error') return badge(t('platform.unhealthy'), 'status-closed');
+  if (s === 'degraded' || s === 'warn') return badge(t('platform.degraded'), 'status-in_progress');
+  return badge(status || '-', 'status-in_progress');
+}
+
+// webhookStatusBadge Webhook 状态 badge。
+export function webhookStatusBadge(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'enabled' || s === 'active') return badge(t('webhook.enabled'), 'badge-status-resolved');
+  if (s === 'disabled' || s === 'inactive') return badge(t('webhook.disabled'), 'badge-status-closed');
+  return badge(status || '-', 'badge-status-in_progress');
+}
+
+// scriptStatusBadge 脚本状态 badge。
+export function scriptStatusBadge(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'enabled' || s === 'active') return badge(t('script.enabled'), 'badge-status-resolved');
+  if (s === 'disabled' || s === 'inactive') return badge(t('script.disabled'), 'badge-status-closed');
+  return badge(status || '-', 'badge-status-in_progress');
+}
+
+// pluginInstallBadge 插件安装状态 badge。
+export function pluginInstallBadge(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'installed') return badge(t('plugin.installed'), 'status-resolved');
+  if (s === 'notinstalled' || s === 'not_installed' || s === '' ) return badge(t('plugin.notInstalled'), 'status-closed');
+  return badge(status || '-', 'status-in_progress');
 }

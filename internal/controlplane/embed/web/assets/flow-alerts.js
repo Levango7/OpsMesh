@@ -7,7 +7,7 @@ import * as api from './api.js';
 import * as render from './render.js';
 import { t } from './i18n.js';
 import { iconEl } from './icons.js';
-import { state, \$, pageRoot } from './flow-state.js';
+import { state, $ } from './flow-state.js';
 
 // ============================================================================
 // 告警管理

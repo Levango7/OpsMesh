@@ -124,7 +124,7 @@ export const useAuthStore = defineStore('auth', () => {
   async function logout() {
     try {
       await authApi.logout()
-    } catch (_) { /* 忽略网络错误，前端仍清状态 */ }
+    } catch { /* 忽略网络错误，前端仍清状态 */ }
     user.value = null
   }
 

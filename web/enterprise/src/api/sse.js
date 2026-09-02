@@ -147,7 +147,7 @@ export class SSEClient {
               await refreshToken()
               this._connect()
               return
-            } catch (_) {
+            } catch {
               // 刷新失败：request.js 拦截器已触发 unauthorizedHandler 跳登录
               if (this.onDisconnect) this.onDisconnect()
               return
@@ -170,7 +170,7 @@ export class SSEClient {
           if (done) break
           buf += decoder.decode(value, { stream: true })
           // 按帧边界切分（空行分隔；保留尾部未完成数据到下一块）
-          let idx
+
           let match
           while ((match = buf.match(/\r?\n\r?\n/)) !== null) {
             const idx = match.index

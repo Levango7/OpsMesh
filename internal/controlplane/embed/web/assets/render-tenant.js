@@ -4,13 +4,8 @@
 // 公共依赖：i18n（t）、icons（iconEl/iconHtml）、render-common（DOM/Badge/表单辅助）。
 
 import { t } from './i18n.js';
-import { iconEl, iconHtml } from './icons.js';
-import {
-  el, formatTime, formatNumber, badge,
-  renderLoading, renderError, renderEmpty, renderToast,
-  statusBadge, priorityBadge, categoryBadge, sloStatusBadge,
-  detailItem, fieldRow,
-} from './render-common.js';
+import { iconEl } from './icons.js';
+import { el, formatTime, badge, renderEmpty, fieldRow } from './render-common.js';
 
 // ============================================================================
 // Phase 6：平台化管理渲染（租户 / API Key / 插件市场 / 计费订阅 / 平台配置）
@@ -116,13 +111,6 @@ export function renderTenantForm(container, tenant, handlers) {
 
 // --- API Key 管理 ---
 
-// apiKeyStatusBadge API Key 状态 badge。
-function apiKeyStatusBadge(status) {
-  const s = String(status || '').toLowerCase();
-  if (s === 'enabled' || s === 'active') return badge(t('common.enabled'), 'status-resolved');
-  if (s === 'disabled' || s === 'inactive') return badge(t('common.disabled'), 'status-closed');
-  return badge(status || '-', 'status-in_progress');
-}
 
 // renderAPIKeyPage 渲染 API Key 表格。
 // handlers: { onEdit(k), onToggle(k), onDelete(id) }
