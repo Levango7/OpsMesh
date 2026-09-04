@@ -282,10 +282,11 @@ jobs:
           scan-ref: .
           severity: HIGH,CRITICAL
           exit-code: "1"
-          # 显式指向仓库根豁免清单（Trivy 默认也会读工作目录 .trivyignore，
-          # 双保险防 action 工作目录漂移）。豁免条目与依据见 .trivyignore 注释
-          #（现行条目：GO-2026-5932 openpgp unmaintained——无修复版本+符号级不可达）。
-          ignorefile: .trivyignore
+          # 显式传豁免清单：trivy-action v0.36.0 的合法输入名是 trivyignores
+          #（首轮修复实测传 ignorefile 报 Unexpected input(s)，豁免未生效）。
+          # 豁免条目与依据见 .trivyignore 注释（现行条目：GO-2026-5932
+          # openpgp unmaintained——无修复版本+符号级不可达）。
+          trivyignores: .trivyignore
 
   # protobuf 契约守护：lint（STANDARD 规则）+ breaking（FILE 策略，禁止删字段/改类型/改字段号）。
   # buf 用 Docker 镜像，无需本机安装。breaking 对比 main 分支（PR 时检测破坏性变更）。
