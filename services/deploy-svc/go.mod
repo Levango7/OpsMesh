@@ -7,7 +7,7 @@ toolchain go1.26.6
 require (
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/google/uuid v1.6.0
-	google.golang.org/grpc v1.83.0
+	google.golang.org/grpc v1.83.1
 	google.golang.org/protobuf v1.36.11
 	k8s.io/api v0.32.0
 	k8s.io/apimachinery v0.32.0
