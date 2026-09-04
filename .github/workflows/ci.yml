@@ -287,6 +287,18 @@ jobs:
           # 豁免条目与依据见 .trivyignore 注释（现行条目：GO-2026-5932
           # openpgp unmaintained——无修复版本+符号级不可达）。
           trivyignores: .trivyignore
+          # 诊断输出：HIGH/CRITICAL 命中时把明细打成 GitHub step summary——
+          # 否则 job 日志需要 repo admin 权限，annotation 只给 exit code，
+          # 漏洞明细无从取证（连续 3 轮红但看不到具体发现时的排障通道）。
+          output: trivy-fs-report.txt
+          format: table
+      - name: Trivy 报告上传（红时取证）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-fs-report
+          path: trivy-fs-report.txt
+          retention-days: 7
 
   # protobuf 契约守护：lint（STANDARD 规则）+ breaking（FILE 策略，禁止删字段/改类型/改字段号）。
   # buf 用 Docker 镜像，无需本机安装。breaking 对比 main 分支（PR 时检测破坏性变更）。
