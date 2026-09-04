@@ -1,4 +1,4 @@
-﻿// K8s 管理 store — 集群 CRUD + 资源 list/scale/restart/logs/delete
+// K8s 管理 store — 集群 CRUD + 资源 list/scale/restart/logs/delete
 import { defineStore } from 'pinia'
 import {
   getK8sClusters,

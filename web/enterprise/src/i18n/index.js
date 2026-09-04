@@ -1,4 +1,4 @@
-﻿// 简易 i18n 模块 — 不依赖 vue-i18n，自己实现响应式语言切换
+// 简易 i18n 模块 — 不依赖 vue-i18n，自己实现响应式语言切换
 // 用法：
 //   import { t, currentLang, setLang, loadDomain, loadRouteDomain } from '@/i18n'
 //   t('nav.devices')          // 翻译

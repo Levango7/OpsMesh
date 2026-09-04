@@ -1,4 +1,4 @@
-﻿// 中间件部署 store — 模板列表 + 详情 + 部署 + 实例列表 + 卸载
+// 中间件部署 store — 模板列表 + 详情 + 部署 + 实例列表 + 卸载
 import { defineStore } from 'pinia'
 import {
   getMiddlewareTemplates,

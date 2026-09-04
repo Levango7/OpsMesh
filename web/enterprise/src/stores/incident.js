@@ -1,4 +1,4 @@
-﻿// Incident 管理 store — Incident CRUD + 时间线 + 复盘
+// Incident 管理 store — Incident CRUD + 时间线 + 复盘
 import { defineStore } from 'pinia'
 import {
   getIncidents,

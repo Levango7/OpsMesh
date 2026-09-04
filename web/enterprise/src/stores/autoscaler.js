@@ -1,4 +1,4 @@
-﻿// Autoscaler 自动扩缩容 store — 规则、决策、冷却
+// Autoscaler 自动扩缩容 store — 规则、决策、冷却
 import { defineStore } from 'pinia'
 import {
   getScalingRules,

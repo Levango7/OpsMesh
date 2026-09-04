@@ -1,4 +1,4 @@
-﻿// Plugin 插件市场 store — 插件列表、安装/卸载
+// Plugin 插件市场 store — 插件列表、安装/卸载
 import { defineStore } from 'pinia'
 import {
   getPlugins,

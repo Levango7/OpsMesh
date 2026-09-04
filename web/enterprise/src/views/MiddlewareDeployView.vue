@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div>
     <h2>{{ $t('mwdep.title') }}</h2>
     <p class="muted">{{ $t('mwdep.desc') }}</p>

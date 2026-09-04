@@ -1,4 +1,4 @@
-﻿// 通用 HTTP 请求封装 — 基于 axios
+// 通用 HTTP 请求封装 — 基于 axios
 // 职责：基础 URL、JSON 解析、{status, data} 归一、错误透传
 // 鉴权：采用双 HttpOnly Cookie（at+rt）同源自动携带，前端不持有令牌（防 XSS 窃取）；
 // at 过期（401）时静默调用 /auth/refresh 换新 at+rt 并重试一次；刷新失败则清会话跳登录。

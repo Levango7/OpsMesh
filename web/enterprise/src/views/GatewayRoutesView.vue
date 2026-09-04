@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div>
     <h2>{{ $t('gateway_routes.title') }}</h2>
     <p class="muted">{{ $t('gateway_routes.subtitle') }}</p>

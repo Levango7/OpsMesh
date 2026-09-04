@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div>
     <h2>{{ $t('apikeys.title') }}</h2>
     <p class="muted">{{ $t('apikeys.subtitle') }}</p>

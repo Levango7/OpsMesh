@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div>
     <h2>{{ $t('webhooks.title') }}</h2>
     <p class="muted">{{ $t('webhooks.subtitle') }}</p>

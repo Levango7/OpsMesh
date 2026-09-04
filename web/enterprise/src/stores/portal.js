@@ -1,4 +1,4 @@
-﻿// Portal 自助服务门户 store — 请求、审批、成本
+// Portal 自助服务门户 store — 请求、审批、成本
 import { defineStore } from 'pinia'
 import {
   createResourceRequest,

@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div>
     <h2>{{ $t('notify.title') }}</h2>
     <p class="muted">{{ $t('notify.subtitle') }}</p>

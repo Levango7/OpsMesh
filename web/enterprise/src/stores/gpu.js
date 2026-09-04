@@ -1,4 +1,4 @@
-﻿// GPU 资源管理 store — 节点、工作负载、模型、配额、指标
+// GPU 资源管理 store — 节点、工作负载、模型、配额、指标
 import { defineStore } from 'pinia'
 import {
   getGpuNodes,

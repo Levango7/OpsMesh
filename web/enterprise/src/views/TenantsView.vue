@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div>
     <h2>{{ $t('tenants.title') }}</h2>
     <p class="muted">{{ $t('tenants.subtitle') }}</p>
