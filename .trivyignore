@@ -1,0 +1,20 @@
+# .trivyignore — Trivy fs 扫描漏洞豁免清单（仓库根，Trivy 默认自动加载）。
+#
+# 豁免原则（每条必须带依据，防"一豁了之"）：
+#   1. 无修复版本（Fixed in: N/A）——升级无法解决；
+#   2. 且经 govulncheck 符号级可达性分析确认代码不可达（未 import/未调用）；
+#   3. 且豁免来源（advisory 链接）与复核方式留档，任何人可验证。
+#
+# ─────────────────────────────────────────────────────────────
+# GO-2026-5932 — golang.org/x/crypto/openpgp 包被官方标记 unmaintained /
+# unsafe by design（advisory: https://pkg.go.dev/vuln/GO-2026-5932）
+#   依据：
+#   - Fixed in: N/A（上游不修复，openpgp 的继任路径是迁到
+#     github.com/ProtonMail/go-crypto，但本项目未使用 openpgp 功能）；
+#   - 全仓 grep 无任何 import（internal/pkg/services/operator/cmd 均 0 命中）；
+#   - govulncheck v1.1.4（CI 钉版）符号级结论：0 vulnerabilities reachable，
+#     仅 module 级"require 了 x/crypto"连带报；
+#   - Trivy fs 扫描只看 lockfile 不做可达性分析，故对此误报 HIGH。
+#   复核方式：go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+#   豁免日期：2026-09-02（CI security job Trivy fs 扫描失败根因）
+GO-2026-5932
