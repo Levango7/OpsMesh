@@ -1,6 +1,6 @@
 # OpsMesh 产品设计文档
 
-> 版本：v0.8.0-draft  ·  编制日期：2026-08-30（第五轮修复后基线）  ·  适用基线：MVP（自研 gRPC 管控通道）+ 安全加固
+> 版本：v0.9.0-draft  ·  编制日期：2026-09-05（v0.9.0 发版基线）  ·  适用基线：MVP（自研 gRPC 管控通道）+ 安全加固
 >
 > 本文档基于 `README.md`、`DELIVERY.md`、`docs/product-roadmap.md` 与 `docs/api-reference.md` 编制，描述 OpsMesh 的产品定位、目标用户、功能矩阵、竞品对比、商业模式、适用场景、非功能需求与路线图。已实现能力以 `README.md` 功能矩阵为准，规划项以 `product-roadmap.md` 为准。
 

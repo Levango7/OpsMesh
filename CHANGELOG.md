@@ -2,9 +2,41 @@
 
 本文件记录 OpsMesh 所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [Semantic Versioning](https://semver.org/)。
 
-> 当前最新已发布版本：`v0.8.0`（2026-09-01）。五/六/七轮 + release 全链攻坚（0f77e0d→6a35690）均归入 v0.8.0 发布。
+> 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
-## [Unreleased] — 2026-09-02 第十轮：部署配置补齐 + pkg 测试清零 + 3 个真 bug 修复
+## [0.9.0] — 2026-09-05（九/十轮 + 前端功能补齐合并发布）
+
+### 版本亮点（相对 v0.8.0）
+
+- **UI 覆盖面清零**：20 个后端域补齐管理页面（19 view + 19 api 封装 + 46 路由 + i18n 中英对齐）——此前 curl-only 的域全部可视化
+- **六域微服务接线闭环**：controlplane 聚合层（service_proxy 反向代理 + ChatOps Web 命令台）+ RBAC 12 权限点 + 部署配置（Dockerfile×5 + compose + helm）全链就绪
+- **测试规模翻倍**：前端 631→1121 用例（+338 store 测试）；pkg/ 12/12 包全覆盖（+130 用例）；测试驱动实抓 3 个真 bug（migrate Rollback 记账反向、tenant RequireTenant 403 不可达、EnforceQuota 数据竞争）
+- **安全清零**：CVE-2026-84304（grpc HIGH，10 模块升 v1.83.1）、CVE-2026-14456（openssl）、CVE-2026-40200（musl）、GO-2026-5932（openpgp，不可达豁免留档）、36 文件 BOM 污染剥离
+- **前端 P0-P3 功能补齐**（11 提交收编）：企业版多子域（Helm 应用商店等）+ 个人版功能域 + 幽灵 API 修复 + eslint 0/0
+
+### 九轮：UI 覆盖面清零 + 六域微服务接线（2026-09-01）
+
+- `internal/controlplane/service_proxy.go`：gpu/runbook/incident/autoscaler/portal 五域反向代理——静态映射+env 覆盖+路径改写（autoscaler/portal 服务真实路径无域前缀）+ 鉴权双守卫+不可达 503
+- `internal/controlplane/bot_bridge.go`：ChatOps Web 命令台（bot-svc 是 IM webhook 入口与前端契约不同构的真缺口），命令语法与 bot-svc 一致（/opsmesh status|devices|alerts|ack|metrics|help）
+- RBAC 补种 12 权限点（六域 read/write，viewer 派生 read）；前端六路由启用；9 项防回归测试
+- 20 域管理页面（克隆 RolesView 黄金模板：DataTable/DetailDrawer/ConfirmModal/toast 零原生对话框，高危操作二次确认，表单字段对齐真实 handler）；金丝雀 25 新端点守卫生效验证
+- 数据库文档补档：表清单 29→55 张、7.1 迁移清单 007-017、附录 A 文件↔代码映射
+
+### 十轮：部署配置补齐 + pkg 测试清零 + 3 个真 bug（2026-09-02）
+
+- 部署：5 服务 Dockerfile（alpine:3.23+apk upgrade 基线）+ compose 5 条目（8111-8115）+ helm values 5 条目（默认 disabled 零行为变化）
+- pkg/ 6 零测试包补齐 115+ 用例（httptest 端到端、go-sqlmock 复用既有依赖、goroutine 并发拍）→ 12/12 包全绿
+- **3 个真 bug 修复**（subagent 报告→主会话独立实锤→修复）：①migrate Rollback 传正版本走 INSERT 分支（真实 MySQL 主键冲突回滚必炸）→负版本 DELETE；②tenant RequireTenant 403 不可达（extract 恒返 default）→兜底移入 Middleware；③tenant EnforceQuota 锁外裸读 Quota map data race（CI -race 实测）→锁内快照
+- compress MinCompressSize 死代码改如实文档；次要项（ratelimit goroutine 泄漏/SetDefaultQuota 拷贝语义/log Debug 落 INFO）留档
+
+### 追加固化（2026-09-04/05）
+
+- 3 轮 CI Trivy 红根因链：GO-2026-5932（openpgp unmaintained，Fixed N/A，0 import 符号级不可达）→ .trivyignore 豁免（trivyignores 输入名）→ 真凶 CVE-2026-84304（grpc v1.83.0 HIGH）→ 10 模块升 v1.83.1 → 本地 trivy 0.74+daocloud 镜像 DB 复扫清零 → CI 全绿
+- Trivy 扫描报告 artifact 落盘（7 天保留）作为漏洞明细取证通道
+- 并行工具 11 提交收编验证（前端测试 631→1121 全绿）+ 36 文件 BOM 污染字节级剥离
+- gofmt/staticcheck 修复（golangci-lint v2.13.2 钉版复验）
+
+## [Unreleased] — 2026-09-02 第十轮：部署配置补齐 + pkg 测试清零 + 3 个真 bug 修复（已归入 0.9.0）
 
 > 三线并行收官（A=部署配置/B=数据库文档/C=pkg 测试 6 包 130+ 用例，2 subagent 协作）：六域接线的部署侧（compose/helm/Dockerfile）补齐、database-design.md 补档 11 个迁移、pkg/ 全部 12 包有测试且全绿——测试驱动开发实抓 3 个真 bug。
 
