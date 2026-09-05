@@ -38,12 +38,14 @@
           class="icon-btn"
           @click="themeStore.toggle()"
           :title="themeStore.isDark ? $t('topbar.theme_light') : $t('topbar.theme_dark')"
+          :aria-label="themeStore.isDark ? $t('topbar.theme_light') : $t('topbar.theme_dark')"
+          :aria-pressed="themeStore.isDark"
         >
           <Icon :name="themeStore.isDark ? 'theme-light' : 'theme-dark'" :size="18" />
         </button>
 
         <!-- 语言切换 -->
-        <button class="icon-btn" @click="toggleLang" :title="$t('topbar.lang')">
+        <button class="icon-btn" @click="toggleLang" :title="$t('topbar.lang')" :aria-label="$t('topbar.lang')" aria-live="polite">
           <Icon name="lang" :size="18" />
           <span class="lang-label">{{ currentLang === 'zh' ? '中' : 'EN' }}</span>
         </button>
@@ -55,7 +57,13 @@
         </div>
 
         <!-- 退出 -->
-        <button class="icon-btn danger" @click="onLogout" :title="$t('topbar.logout')" data-testid="topbar-logout">
+        <button
+          class="icon-btn danger"
+          @click="onLogout"
+          :title="$t('topbar.logout')"
+          :aria-label="$t('topbar.logout')"
+          data-testid="topbar-logout"
+        >
           <Icon name="logout" :size="18" />
         </button>
       </div>
@@ -433,4 +441,15 @@ onUnmounted(() => {
   /* 移动端顶栏用户名隐藏，仅保留头像，节省横向空间 */
   .user-name { display: none; }
 }
+
+/* 可访问性：键盘 Tab 焦点可见轮廓（WCAG 2.4.7）。
+  所有 :visible 的键盘聚焦元素在 hover 之外额外提供 2px 轮廓；
+  不影响鼠标点击样式变化（只在 :focus-visible 时叠加，不改变任何既有 hover/active 样式）。
+*/
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+
 </style>

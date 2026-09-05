@@ -37,7 +37,10 @@
           v-for="(row, idx) in sortedRows"
           :key="rowKey ? row[rowKey] : idx"
           :class="[rowClass ? rowClass(row) : '', clickable ? 'clickable' : '']"
+          :tabindex="clickable ? 0 : undefined"
+          :aria-label="clickable ? (ariaLabel && ariaLabel(row)) : undefined"
           @click="clickable ? $emit('row-click', row) : null"
+          @keydown="clickable ? onRowKeydown(row, $event) : null"
         >
           <td v-for="col in columns" :key="col.key">
             <slot v-if="col.slot" :name="col.slot" :row="row" :value="row[col.key]" />
@@ -67,6 +70,19 @@ const props = defineProps({
   sortOrder: { type: String, default: 'asc' }   // 'asc' | 'desc'
 })
 const emit = defineEmits(['row-click', 'sort-change'])
+
+// 行点击键盘可达性（accessibility）：
+// clickable 行的 row 有 tabindex=0，按 Enter/Space 触发与 click 相同的 row-click
+// 事件（AT —— 屏幕阅读器/键盘用户可操作；视觉用户无影响——仅新增两个属性，
+// 不改任何已有 CSS）。
+const ariaLabel = ref(null) // 默认 null：调用方可传行标签函数；不传时行 aria-label 由调用方决定
+
+function onRowKeydown(row, e) {
+  if (e.key !== 'Enter' && e.key !== ' ') return
+  if (e.target !== e.currentTarget) return // 仅捕获行本身的按键，不拦子元素的按键
+  if (typeof e.target.tagName === 'string' && e.target.tagName !== 'TR') return
+  emit('row-click', row)
+}
 
 // 骨架占位行数（纯装饰，无业务含义）
 const skeletonRows = 5
