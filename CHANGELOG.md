@@ -4,6 +4,26 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-05 第十二轮：技术债 TD-60~64 全量复核 + 留档小项清零（be272e8）
+
+> 对审计遗留的最后一块技术债（TD-60~64）逐项侦察复核——结论是"五项中两项基于过期事实"，如实登记优于盲动；顺带清掉三处文档/测试留档项。
+
+### TD-60~64 复核结论（docs/tech-debt.md 已全量更新）
+
+| 项 | 复核结论 | 动作 |
+|---|---|---|
+| TD-64 pb stub 死代码 | **撤销**——原判定过期：internal/grpcx/pb 是 agent gRPC 管控通道（Register/Heartbeat/TaskReport）的**在用 stub**（stub.go 消费），JSON/gRPC 双轨各司其职 | 登记撤销 |
+| TD-63 Task 三份 schema | **修正为双份**——proto/opsmesh/v1 实际只有 registration.proto（不含 Task）；真实双份是 task-svc 的 task.proto（gRPC API）vs internal/proto/model.go（JSON 主契约） | 低成本缓解：两份定义头部**双向同步锚注释**（演进须人工同步另一侧）；根治留待 TD-60 决策后 buf generate 单一来源 |
+| TD-62 网关完整数据面 | 现状如实化：/gw/ 已有 PathPrefix 匹配+路由级限流+统计，缺数据面级鉴权/熔断 | **决策声明为控制面预览形态**——生产流量走 APISIX/Envoy，本网关定位轻量路由编排预览 |
+| TD-60 七域双份收敛 | 定量：7 核心服务各 ~3k 行独立实现；controlplane 侧是 CI/E2E 在用的线上路径（v0.9.0 刚发布基线） | **风险分级留产品决策**（选项 A 微服务正式方向/B 单体正式方向/C 双轨+drift 检测 CI）——2 万行级重构不作为常规修复盲动 |
+| TD-61 父包拆分 | 定量：controlplane 134 文件、store 96 文件 | 建议与 TD-60 决策合并立项（避免两次全量 import 改动） |
+
+### 留档小项清零
+
+- **product-design.md 口径修正**：六域微服务"🟡 前端入口停用中"（v0.8.0 过期表述）→ **✅ 已接线就绪（v0.9.0）**——service_proxy/bot_bridge/前端六路由/RBAC/部署配置全通的如实状态；结论段同步为"12 完整+6 接线就绪"
+- **e2e-sec mTLS 第 2 段偶发修复**：带证书握手 5s 硬超时会把慢 runner 假红当失败——改为 15s+超时≠拒绝语义（超时降级软跳过+annotation 标注，只有显式 error 才 fail）
+- **init-mysql GRANT 核实达标**：授权范围仅限 5 个微服务独立库（合理）；prod compose 已 `${MYSQL_PASSWORD:-...}` env 注入模式（demo 弱口令仅 demo 环境），登记无需改动
+
 ## [0.9.0] — 2026-09-05（九/十轮 + 前端功能补齐合并发布）
 
 ### 版本亮点（相对 v0.8.0）
