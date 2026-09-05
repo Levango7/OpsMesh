@@ -56,11 +56,11 @@
 
 | ID | 问题 | 现状 / 影响 / 下一步 |
 |---|---|---|
-| TD-60 | **七域双份实现收敛**（约 27,000 行重复） | `services/` 18 个微服务的 store/server/service 层与 `internal/` 主模块同域实现并存（task-svc vs controlplane task handler、auth-svc vs auth.go 等），双份维护成本高且行为易漂移。**下一步**：确定微服务架构为正式方向后，逐域收敛到单一实现，另一侧删除或改为薄客户端 |
-| TD-61 | **controlplane/store 父包拆分** | `internal/controlplane/` 顶层仍有 60+ 文件（与已拆出的 audit/auth/billing 等子目录风格不一致）；`internal/store/` 单目录 100+ 文件。**下一步**：按主题继续下沉到子包，目标顶层 ≤20 文件 |
-| TD-62 | **API 网关完整数据面** | 当前 `/gw/` 仅最小反向代理（PathPrefix 匹配），限流/鉴权/熔断未在数据面生效。**下一步**：extension 引擎与数据面接线，或明确声明网关为控制面预览形态 |
-| TD-63 | **Task 三份 schema 统一** | proto/（.proto 生成）、internal/proto（JSON 契约）、services/task-svc/api/proto 各有一份 Task 定义，字段演进时三处需同步。**下一步**：buf generate 单一来源，另两处改为引用或生成 |
-| TD-64 | **pb stub 死代码** | `internal/grpcx/pb/` 生成的 stub 未被运行时消费（JSON codec 为主契约）。**下一步**：若 protobuf 双轨不迁移则删除，若迁移则补 buf breaking CI 消费方 |
+| TD-60 | **七域双份实现收敛**（约 27,000 行重复） | `services/` 18 个微服务的 store/server/service 层与 `internal/` 主模块同域实现并存（task-svc vs controlplane task handler、auth-svc vs auth.go 等），双份维护成本高且行为易漂移。**2026-09-05 复核定量**：task/auth/device 等 7 个核心服务各 ~3k 行独立实现；controlplane 侧是 CI/E2E 全部在用的线上路径（v0.9.0 已发布基线）。**风险分级**：大收敛会动 ~2 万行核心路径+属产品架构方向决策（哪侧是正式方向），不作为常规修复项盲动。**下一步**：需要产品决策后立项——选项 A=微服务化正式方向（controlplane 域 handler 改薄客户端走 service_proxy）；选项 B=单体为正式方向（services 降级为实验性，冻结演进）；选项 C=维持双轨+字段演进时补 drift 检测 CI |
+| TD-61 | **controlplane/store 父包拆分** | `internal/controlplane/` 顶层 **134** 文件、`internal/store/` **96** 文件（2026-09-05 实测）。**下一步**：按主题继续下沉到子包，目标顶层 ≤20 文件。纯机械重构但 diff 巨大（import 全改），建议与 TD-60 收敛决策合并立项（收敛时一并搬家，避免两次全量 import 改动） |
+| TD-62 | **API 网关完整数据面** | 当前 `/gw/` 为最小反向代理：PathPrefix 匹配 ✓、路由级限流 ✓（gatewayRouteEntry.RateLimiter，超出 429）、统计 ✓；缺数据面级鉴权/熔断/租户隔离。**2026-09-05 决策：明确声明为控制面预览形态**（路由规则 CRUD/统计是产品能力，数据面转发是 demo 级），完整数据面不在当前路线图——生产流量应走 APISIX/Envoy 等正式网关（README 部署架构已按此口径），本网关定位为轻量路由编排预览。升级为正式数据面需重新立项 |
+| TD-63 | **Task 多份 schema 统一** | **2026-09-05 复核修正**：原表述"三份 Task 定义"不准确——proto/opsmesh/v1 实际只有 registration.proto（163 行，agent gRPC 管控通道），**不含 Task**；真实的双份是：services/task-svc/api/proto/v1/task.proto（300 行，task-svc 自身 gRPC API）与 internal/proto/model.go Task struct（JSON codec 主契约）。两份服务于不同通道（独立服务 gRPC vs controlplane JSON），字段演进需人工同步。**下一步**：低成本缓解=在两份定义头部互相加"演进须同步"锚注释+CI 加字段数一致性断言（浅校验）；根治=buf generate 单一来源（需先把 Task 契约搬进 proto/opsmesh/v1，属 TD-60 决策的前置） |
+| TD-64 | ~~**pb stub 死代码**~~ | **2026-09-05 复核撤销**：原判定过期——internal/grpcx/pb（registration.pb.go + registration_grpc.pb.go）是 agent gRPC 管控通道的**在用 stub**（internal/grpcx/stub.go 消费，gRPC Register/Heartbeat/TaskReport 通道），非死代码。JSON codec 是 B/S 通道主契约、gRPC 是 agent 管控通道，双轨各司其职。原"删除或补消费方"的下一步作废 |
 | TD-65 | ~~**微服务 MySQL store 未接线**~~ | ✅ 2026-08-30 已修（9/12 接线）：alert/auth/config/deploy/device/incident/plugin/portal/task 经 `<NAME>_SVC_STORE_TYPE=sql` + DSN 启用 MySQL（失败回退 memory）；缺字段服务补 config，mysql.go 补编译期断言；**附带安全修复**：config-svc 硬编码 `deriveKey("default-key")` 改为 cfg.EncryptionKey（跨后端加密一致）。跳过项与原因：runbook（无实现）/ gpu（manager 不消费 store，需重构）/ workflow（接口签名不兼容，需适配层）/ log（main 已有 memory/sql/loki/es 四后端分支，不应换接）。留此行供集成测试补齐后删除 |
 | TD-67 | ~~gofmt 基线破坏~~ | ✅ 2026-08-30 已修：`gofmt -w internal cmd pkg services tests` 全仓恢复（73+66 文件），`gofmt -l` 清零，`go build ./...` 通过。留此行供 CI 首跑确认后删除 |
 

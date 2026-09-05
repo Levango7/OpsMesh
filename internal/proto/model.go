@@ -135,6 +135,11 @@ const (
 )
 
 // Task 控制面下发给 agent 的自动化任务。
+//
+// 【TD-63 schema 同步锚】本 struct 是 Task 的 JSON codec 主契约（B/S 通道+store 持久化），
+// 与 services/task-svc/api/proto/v1/task.proto 的 Task message 构成双轨定义
+// （后者服务 task-svc 独立 gRPC API）。**任一侧字段演进时必须人工同步另一侧**，
+// 详见 docs/tech-debt.md TD-63（根治=buf generate 单一来源，前置 TD-60 架构决策）。
 type Task struct {
 	TaskID    string    `json:"taskID"`
 	AgentID   string    `json:"agentID"`

@@ -132,12 +132,12 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | 成熟度 | 数量 | 模块 |
 |---|---|---|
 | ✅ 功能完整（CI 验证中） | 12 | §3.1-3.3 中的核心运维/资产/平台基线模块 |
-| 🟡 已交付待完善 | 6 | GPU / Bot（ChatOps）/ Runbook / Incident / Autoscaler / Portal（微服务域，见脚注¹） |
+| ✅ 已接线就绪（v0.9.0） | 6 | GPU / Bot（ChatOps）/ Runbook / Incident / Autoscaler / Portal（微服务域，见脚注¹） |
 | 🔵 规划中 | 0 | — |
 
-> ¹ **微服务域如实说明**：GPU / Bot / Runbook / Incident / Autoscaler / Portal 共 6 域以 `services/` 独立微服务形态交付（gpu-svc / bot-svc / runbook-svc / incident-svc / autoscaler-svc / portal-svc，各自独立 go.mod），**前端入口停用中**——`web/enterprise/src/router/index.js` 中对应路由已注释停用（后端 controlplane 尚无这些模块的路由，前端注册即 404，视图与 API 文件保留待恢复）。故此 6 域标注 🟡「已交付待完善」：后端服务可独立部署调用，但经主控制面 + 企业前端的一体化使用路径未打通，不构成 ✅「功能完整」。
+> ¹ **微服务域如实说明（2026-09-05 v0.9.0 基线更新）**：GPU / Bot / Runbook / Incident / Autoscaler / Portal 共 6 域以 `services/` 独立微服务形态交付（gpu-svc / bot-svc / runbook-svc / incident-svc / autoscaler-svc / portal-svc，各自独立 go.mod）。**一体化使用路径已打通（v0.9.0）**：controlplane 聚合层 `service_proxy.go`（五域反向代理：静态映射+env 覆盖+路径改写+鉴权双守卫）与 `bot_bridge.go`（ChatOps Web 命令台）已上线，前端六路由启用，RBAC 12 权限点补种，部署配置（Dockerfile×5+compose+helm，默认 disabled）齐备。由 v0.8.0 基线的 🟡 升级为 ✅「已接线就绪」——后端服务进程需部署侧拉起（compose/helm 条目在位），未拉起时聚合层返回 503 明确提示。
 
-> **结论**：v0.8.0-draft 基线下，用户要求的核心运维功能模块中 12 个功能完整（CI 验证中）；GPU/Bot/Runbook/Incident/Autoscaler/Portal 6 个微服务域已交付但前端入口停用（🟡）；"生产可用"结论以 CI 真跑通过为准（见 `DELIVERY.md` §7）。AI 增强能力（AI-03~AI-14 共 12 项，见 `docs/ai-design.md`）为独立规划线，不在上述模块范围内。其他深化能力（如等保三级审计 6 月留存、Vault/KMS 远期轮转）见 §8 路线图。
+> **结论**：v0.9.0 基线下，用户要求的核心运维功能模块中 12 个功能完整（CI 验证中）+ 6 个微服务域已接线就绪（聚合层+前端入口+RBAC+部署配置全通）；"生产可用"结论以 CI 真跑通过为准（见 `DELIVERY.md` §7）。AI 增强能力（AI-03~AI-14 共 12 项，见 `docs/ai-design.md`）为独立规划线，不在上述模块范围内。其他深化能力（如等保三级审计 6 月留存、Vault/KMS 远期轮转）见 §8 路线图。
 
 ---
 
