@@ -111,6 +111,71 @@ func (s *Service) UpdateIncident(id, title, description, assignee string, severi
 	return inc, nil
 }
 
+// UpdateStatus transitions an incident's status via PUT {id}.
+// 状态机约束：只允许沿 detected→investigating→mitigating→resolved→closed
+// 向前迁移；任何回退（含 resolved→detected）与同状态重入（resolved/closed
+// 再次 resolve）都拒绝为 ErrInvalidStatus。
+func (s *Service) UpdateStatus(id string, status models.IncidentStatus) (*models.Incident, error) {
+	inc, err := s.GetIncident(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if !validForwardTransition(inc.Status, status) {
+		return nil, ErrInvalidStatus
+	}
+
+	now := time.Now()
+	inc.Status = status
+	switch status {
+	case models.StatusResolved:
+		if inc.ResolvedAt == nil {
+			t := now
+			inc.ResolvedAt = &t
+		}
+	case models.StatusClosed:
+		if inc.ClosedAt == nil {
+			t := now
+			inc.ClosedAt = &t
+		}
+	}
+	s.store.UpdateIncident(inc)
+
+	_ = s.store.AddTimelineEvent(&models.TimelineEvent{
+		ID:          uuid.New().String(),
+		IncidentID:  inc.ID,
+		Timestamp:   now,
+		Type:        "status_changed",
+		Description: "Status changed to " + string(status),
+		Author:      "system",
+	})
+
+	return inc, nil
+}
+
+// validForwardTransition reports whether from→to is a legal forward-only move.
+func validForwardTransition(from, to models.IncidentStatus) bool {
+	if to != models.StatusDetected && to != models.StatusInvestigating &&
+		to != models.StatusMitigating && to != models.StatusResolved && to != models.StatusClosed {
+		return false
+	}
+	switch from {
+	case models.StatusDetected:
+		return to == models.StatusInvestigating || to == models.StatusMitigating ||
+			to == models.StatusResolved || to == models.StatusClosed
+	case models.StatusInvestigating:
+		return to == models.StatusMitigating || to == models.StatusResolved || to == models.StatusClosed
+	case models.StatusMitigating:
+		return to == models.StatusResolved || to == models.StatusClosed
+	case models.StatusResolved:
+		return to == models.StatusClosed
+	case models.StatusClosed:
+		return false
+	default:
+		return false
+	}
+}
+
 // DeleteIncident deletes an incident.
 func (s *Service) DeleteIncident(id string) error {
 	if !s.store.DeleteIncident(id) {

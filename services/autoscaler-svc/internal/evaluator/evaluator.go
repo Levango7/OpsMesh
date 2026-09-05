@@ -341,3 +341,90 @@ func (e *Evaluator) Decisions() []*models.ScaleDecision {
 	copy(out, e.decisions)
 	return out
 }
+
+// RecordDecision appends a decision to the history (for manual scaling etc. to record via service.Scale,
+// front-end decisions/cooldowns queries can then see it; it does not participate in cooldown checks —
+// isInCooldown only looks at scale_up/scale_down actions).
+func (e *Evaluator) RecordDecision(d *models.ScaleDecision) {
+	if d == nil {
+		return
+	}
+	if d.Timestamp.IsZero() {
+		d.Timestamp = e.now()
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.decisions = append(e.decisions, d)
+}
+
+// CooldownStatus 是单条规则的冷却状态快照（只读查询用，前端契约字段
+// ruleId/ruleName/remaining/expiresAt，单位秒）。
+type CooldownStatus struct {
+	RuleID    string `json:"ruleId"`
+	RuleName  string `json:"ruleName"`
+	Remaining int64  `json:"remaining"`
+	ExpiresAt int64  `json:"expiresAt"`
+}
+
+// Cooldowns 计算每条规则当前的冷却剩余时间：取该规则最近一次
+// scale_up / scale_down 决策，按其对应冷却窗口（缺省 up=60s、down=300s）
+// 推导剩余秒数与到期时刻（Unix 秒）；无历史扩缩决策的规则返回 0 剩余。
+func (e *Evaluator) Cooldowns() []CooldownStatus {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	now := e.now()
+	ruleByID := make(map[string]*models.ScaleRule, len(e.rules))
+	for id, r := range e.rules {
+		ruleByID[id] = r
+	}
+
+	// 每条规则只取最近一次 scale_up / scale_down 决策。
+	last := make(map[string]map[string]*models.ScaleDecision, len(e.rules))
+	for _, d := range e.decisions {
+		if d.Action != "scale_up" && d.Action != "scale_down" {
+			continue
+		}
+		if _, ok := last[d.RuleID]; !ok {
+			last[d.RuleID] = map[string]*models.ScaleDecision{}
+		}
+		if prev, ok := last[d.RuleID][d.Action]; !ok || d.Timestamp.After(prev.Timestamp) {
+			last[d.RuleID][d.Action] = d
+		}
+	}
+
+	out := make([]CooldownStatus, 0, len(e.rules))
+	for id, r := range ruleByID {
+		remaining := int64(0)
+		expiresAt := int64(0)
+		for action, d := range last[id] {
+			var window time.Duration
+			if action == "scale_down" {
+				window = r.CooldownDown
+				if window == 0 {
+					window = 300 * time.Second
+				}
+			} else {
+				window = r.CooldownUp
+				if window == 0 {
+					window = 60 * time.Second
+				}
+			}
+			expire := d.Timestamp.Add(window)
+			if remain := expire.Sub(now).Seconds(); remain > 0 {
+				secs := int64(remain)
+				if secs > remaining {
+					remaining = secs
+					expiresAt = expire.Unix()
+				}
+			}
+		}
+		out = append(out, CooldownStatus{
+			RuleID:    id,
+			RuleName:  r.Name,
+			Remaining: remaining,
+			ExpiresAt: expiresAt,
+		})
+	}
+	return out
+}

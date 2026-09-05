@@ -25,6 +25,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/incidents/", h.handleIncidentDetail)
 	mux.HandleFunc("/api/v1/alerts/ingest", h.handleAlertIngest)
 	mux.HandleFunc("/api/v1/metrics/response", h.handleMetrics)
+	// 契约约束：前端只走 /api/v1/incidents/* 子树（聚合层代理边界），
+	// GET /incidents/metrics 必须在此子树内提供；/api/v1/metrics/response
+	// 在子树外，前端不可达。
+	mux.HandleFunc("/api/v1/incidents/metrics", h.handleIncidentsMetrics)
 	mux.HandleFunc("/api/v1/health", h.handleHealth)
 }
 
@@ -84,6 +88,10 @@ func (h *Handler) handleIncidentDetail(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			h.getTimeline(w, r, id)
+		case http.MethodPost:
+			// 契约约束：前端 POST timeline 发 {type,content}，写路径与
+			// POST {id}/events 复用同一逻辑。
+			h.addTimelineEvent(w, r, id)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
@@ -105,6 +113,10 @@ func (h *Handler) handleIncidentDetail(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			h.getPostmortem(w, r, id)
+		case http.MethodPost:
+			// 契约约束：前端 generatePostmortem 调 POST {id}/postmortem，
+			// 与 GET 复用同一生成逻辑。
+			h.getPostmortem(w, r, id)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
@@ -118,6 +130,7 @@ func (h *Handler) createIncident(w http.ResponseWriter, r *http.Request) {
 		Title       string   `json:"title"`
 		Description string   `json:"description"`
 		Severity    string   `json:"severity"`
+		Assignee    string   `json:"assignee"`
 		DeviceIDs   []string `json:"device_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -134,6 +147,14 @@ func (h *Handler) createIncident(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	// 契约约束：前端创建表单带 assignee，创建成功后落库（CreateIncident 签名
+	// 不变，经 UpdateIncident 持久化到同一模型）。
+	if req.Assignee != "" {
+		inc.Assignee = req.Assignee
+		if updated, err := h.svc.UpdateIncident(inc.ID, "", "", req.Assignee, ""); err == nil {
+			inc = updated
+		}
 	}
 
 	writeJSON(w, http.StatusCreated, inc)
@@ -162,16 +183,44 @@ func (h *Handler) updateIncident(w http.ResponseWriter, r *http.Request, id stri
 		Description string `json:"description"`
 		Assignee    string `json:"assignee"`
 		Severity    string `json:"severity"`
+		Status      string `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
+	if req.Status != "" {
+		if _, err := h.svc.UpdateStatus(id, models.IncidentStatus(req.Status)); err != nil {
+			if err == service.ErrIncidentNotFound {
+				writeError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			// 非法状态迁移（如 resolved 回退 detected）按 409 Conflict。
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+	}
+
 	inc, err := h.svc.UpdateIncident(id, req.Title, req.Description, req.Assignee, models.Severity(req.Severity))
 	if err != nil {
 		if err == service.ErrIncidentNotFound {
 			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		// 本次请求刚完成向 resolved/closed 的合法迁移后，服务层对已结案
+		// 事件的字段冻结守卫会拒绝空字段更新——此时返回迁移后的最新事件，
+		// 而非 409；不带 status 的纯字段更新撞冻结守卫仍按 409。
+		if err == service.ErrIncidentResolved && req.Status != "" {
+			if cur, gerr := h.svc.GetIncident(id); gerr == nil {
+				writeJSON(w, http.StatusOK, cur)
+				return
+			}
+			writeError(w, http.StatusNotFound, service.ErrIncidentNotFound.Error())
+			return
+		}
+		if err == service.ErrIncidentResolved {
+			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -193,14 +242,22 @@ func (h *Handler) addTimelineEvent(w http.ResponseWriter, r *http.Request, id st
 	var req struct {
 		Type        string `json:"type"`
 		Description string `json:"description"`
-		Author      string `json:"author"`
+		// 契约约束：前端 POST timeline 发 {type,content}，events 路径
+		// 发 {type,description}——两个字段名都提取。
+		Content string `json:"content"`
+		Author  string `json:"author"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
-	ev, err := h.svc.AddTimelineEvent(id, req.Type, req.Description, req.Author)
+	description := req.Description
+	if description == "" {
+		description = req.Content
+	}
+
+	ev, err := h.svc.AddTimelineEvent(id, req.Type, description, req.Author)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -294,6 +351,26 @@ func (h *Handler) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 	metrics := h.svc.GetResponseMetrics()
 	writeJSON(w, http.StatusOK, metrics)
+}
+
+// handleIncidentsMetrics 前端 GET /incidents/metrics 的契约形状：
+// {mttd,mttr,total,open,resolved}（stores/incident.test.js 的 mock 即此形状，
+// views 读 data.mttd/data.mttr；内部命名与 /metrics/response 保持不变）。
+func (h *Handler) handleIncidentsMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	m := h.svc.GetResponseMetrics()
+	open := m.ActiveIncidents
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"mttd":     m.AvgMTTD.String(),
+		"mttr":     m.AvgMTTR.String(),
+		"total":    m.TotalIncidents,
+		"open":     open,
+		"resolved": m.ResolvedIncidents,
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
