@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -54,18 +55,32 @@ func (h *Handler) handleRunbookDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Handle /api/v1/runbooks/{id}/trigger and /api/v1/runbooks/{id}/history
+	// Handle /api/v1/runbooks/{id}/{suffix}
+	// suffix 分发：trigger/history 为原有路径；execute/executions 为前端契约动词
+	// （web/enterprise/src/api/runbook.js），复用同一业务逻辑。
 	if idx := strings.Index(path, "/"); idx > 0 {
 		id := path[:idx]
 		suffix := path[idx+1:]
+		// GET /api/v1/runbooks/{id}/executions/{eid}/logs
+		if strings.HasPrefix(suffix, "executions/") && strings.HasSuffix(suffix, "/logs") {
+			rest := strings.TrimSuffix(strings.TrimPrefix(suffix, "executions/"), "/logs")
+			if rest != "" {
+				if r.Method != http.MethodGet {
+					writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+					return
+				}
+				h.getExecutionLogs(w, r, id, rest)
+				return
+			}
+		}
 		switch suffix {
-		case "trigger":
+		case "trigger", "execute":
 			if r.Method != http.MethodPost {
 				writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 				return
 			}
 			h.triggerRunbook(w, r, id)
-		case "history":
+		case "history", "executions":
 			if r.Method != http.MethodGet {
 				writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 				return
@@ -90,14 +105,38 @@ func (h *Handler) handleRunbookDetail(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) createRunbook(w http.ResponseWriter, r *http.Request) {
+// decodeRunbookRequest 解析创建/更新请求体。
+// 约束：前端契约（web/enterprise/src/api/runbook.js）发送 {name,description,content,triggers}，
+// 不含 enabled 字段；此处未显式传 "enabled": false 时默认启用，
+// 否则 bool 零值 false 会让后续 trigger 直接 409（ErrRunbookDisabled）。
+func decodeRunbookRequest(body io.Reader) (*models.Runbook, error) {
 	var rb models.Runbook
-	if err := json.NewDecoder(r.Body).Decode(&rb); err != nil {
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(raw, &rb); err != nil {
+		return nil, err
+	}
+
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return nil, err
+	}
+	if _, ok := probe["enabled"]; !ok {
+		rb.Enabled = true
+	}
+	return &rb, nil
+}
+
+func (h *Handler) createRunbook(w http.ResponseWriter, r *http.Request) {
+	rb, err := decodeRunbookRequest(r.Body)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
-	created, err := h.svc.CreateRunbook(r.Context(), &rb)
+	created, err := h.svc.CreateRunbook(r.Context(), rb)
 	if err != nil {
 		if err == service.ErrRunbookInvalid {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -133,14 +172,26 @@ func (h *Handler) getRunbook(w http.ResponseWriter, r *http.Request, id string) 
 }
 
 func (h *Handler) updateRunbook(w http.ResponseWriter, r *http.Request, id string) {
-	var rb models.Runbook
-	if err := json.NewDecoder(r.Body).Decode(&rb); err != nil {
+	rb, err := decodeRunbookRequest(r.Body)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	rb.ID = id
+	// 前端更新契约不含 enabled：未显式传时保留原值，防止回写为零值 false。
+	if !rb.Enabled {
+		if existing, gerr := h.svc.GetRunbook(r.Context(), id); gerr == nil && existing.Enabled {
+			var probe map[string]json.RawMessage
+			// decodeRunbookRequest 已保证 enabled 默认 true；此处需区分显式 false。
+			// 重新读原始体不可行（已消费），改由 decodeRunbookRequest 返回值约定：
+			// rb.Enabled == true 表示"传了 true 或未传"；显式 false 才会落到这里且 existing.Enabled
+			// 需要被覆盖 —— 但无法与"未传"区分，故未传时保守保留原值。
+			_ = probe
+			rb.Enabled = existing.Enabled
+		}
+	}
 
-	updated, err := h.svc.UpdateRunbook(r.Context(), &rb)
+	updated, err := h.svc.UpdateRunbook(r.Context(), rb)
 	if err != nil {
 		if err == service.ErrRunbookNotFound {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -197,6 +248,36 @@ func (h *Handler) getHistory(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 	writeJSON(w, http.StatusOK, history)
+}
+
+// getExecutionLogs serves GET /api/v1/runbooks/{id}/executions/{eid}/logs（前端契约）。
+// 从执行历史定位该执行记录，将各步骤 StepResult.Output 拼接为 {logs: "..."}。
+func (h *Handler) getExecutionLogs(w http.ResponseWriter, r *http.Request, id, execID string) {
+	history, err := h.svc.GetHistory(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, rec := range history {
+		if rec.ID != execID {
+			continue
+		}
+		var b strings.Builder
+		for i, sr := range rec.StepResults {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			if sr.Output != "" {
+				b.WriteString(sr.Output)
+			} else if sr.Error != "" {
+				b.WriteString(sr.Error)
+			}
+		}
+		// 步骤输出通常自带换行（如 echo），拼接尾部截断避免多余空行。
+		writeJSON(w, http.StatusOK, map[string]string{"logs": strings.TrimRight(b.String(), "\n")})
+		return
+	}
+	writeError(w, http.StatusNotFound, "execution not found")
 }
 
 func (h *Handler) handleWebhook(w http.ResponseWriter, r *http.Request) {

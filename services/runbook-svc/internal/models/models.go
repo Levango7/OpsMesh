@@ -4,14 +4,17 @@ import "time"
 
 // Runbook represents an automated playbook with ordered steps.
 type Runbook struct {
-	ID          string             `json:"id"`
-	Name        string             `json:"name"`
-	Description string             `json:"description"`
-	Triggers    []TriggerCondition `json:"triggers"`
-	Steps       []Step             `json:"steps"`
-	Enabled     bool               `json:"enabled"`
-	CreatedAt   time.Time          `json:"created_at"`
-	UpdatedAt   time.Time          `json:"updated_at"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// Content 是前端编辑器的文本形式契约（web/enterprise/src/api/runbook.js），
+	// 与 Steps 并存：Steps 为结构化形式，两者可同时存在。
+	Content   string             `json:"content,omitempty"`
+	Triggers  []TriggerCondition `json:"triggers"`
+	Steps     []Step             `json:"steps"`
+	Enabled   bool               `json:"enabled"`
+	CreatedAt time.Time          `json:"created_at"`
+	UpdatedAt time.Time          `json:"updated_at"`
 }
 
 // TriggerCondition defines when a runbook should auto-trigger.

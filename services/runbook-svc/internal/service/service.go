@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,7 +47,7 @@ func (s *Service) CreateRunbook(ctx context.Context, rb *models.Runbook) (*model
 	now := time.Now()
 	rb.CreatedAt = now
 	rb.UpdatedAt = now
-	if rb.Enabled && len(rb.Steps) == 0 {
+	if rb.Enabled && len(rb.Steps) == 0 && contentToSteps(rb.Content) == nil {
 		return nil, ErrRunbookInvalid
 	}
 
@@ -95,10 +97,44 @@ func (s *Service) TriggerRunbook(ctx context.Context, id string, triggeredBy str
 	if !rb.Enabled {
 		return nil, ErrRunbookDisabled
 	}
+	// 约束：前端契约只发 content 文本（无结构化 steps）；Steps 为空且 Content 非空时，
+	// 降级为逐行 shell 步骤执行，禁止零步骤直接返回 success。
+	if len(rb.Steps) == 0 {
+		if steps := contentToSteps(rb.Content); steps != nil {
+			rb.Steps = steps
+		}
+	}
 
 	record := s.runner.Runbook(ctx, rb, triggeredBy)
+	// 约束：执行记录必须有 ID，供前端 GET /runbooks/{id}/executions/{eid}/logs 定位。
+	if record.ID == "" {
+		record.ID = uuid.New().String()
+	}
 	s.store.AddExecution(record)
 	return record, nil
+}
+
+// contentToSteps parses editor text content into shell steps (one per non-empty line).
+// Returns nil when content yields no executable steps.
+func contentToSteps(content string) []models.Step {
+	lines := strings.Split(content, "\n")
+	steps := make([]models.Step, 0, len(lines))
+	for i, line := range lines {
+		cmd := strings.TrimSpace(line)
+		if cmd == "" || strings.HasPrefix(cmd, "#") {
+			continue
+		}
+		steps = append(steps, models.Step{
+			Name:    fmt.Sprintf("step-%d", i+1),
+			Action:  "shell",
+			Command: cmd,
+			OnError: "stop",
+		})
+	}
+	if len(steps) == 0 {
+		return nil
+	}
+	return steps
 }
 
 // GetHistory returns execution history for a runbook.
@@ -121,6 +157,9 @@ func (s *Service) HandleWebhook(ctx context.Context, payload *models.WebhookPayl
 		}
 		if matchesTriggers(rb, payload) {
 			record := s.runner.Runbook(ctx, rb, "webhook:"+payload.Source)
+			if record.ID == "" {
+				record.ID = uuid.New().String()
+			}
 			s.store.AddExecution(record)
 			records = append(records, record)
 		}

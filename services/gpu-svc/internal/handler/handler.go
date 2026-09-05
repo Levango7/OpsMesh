@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -31,6 +32,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/gpu/resources/per-node", h.handlePerNodeResources)
 
 	// GPU Metrics
+	// "/api/v1/gpu/metrics"：前端契约（web/enterprise/src/api/gpu.js）GET query 形态；
+	// 尾斜杠子树（/api/v1/gpu/metrics/{nodeID}）为旧路径形态，保留兼容。
+	mux.HandleFunc("/api/v1/gpu/metrics", h.handleMetrics)
 	mux.HandleFunc("/api/v1/gpu/metrics/", h.handleMetrics)
 
 	// Workload Management
@@ -153,30 +157,51 @@ func (h *Handler) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	nodeID := strings.TrimPrefix(r.URL.Path, "/api/v1/gpu/metrics/")
+	// 前端契约：nodeId 取 query 参数（web/enterprise/src/api/gpu.js getJSON('/gpu/metrics', {nodeId, range})）。
+	query := r.URL.Query()
+	nodeID := query.Get("nodeId")
+	if nodeID == "" {
+		nodeID = query.Get("node_id")
+	}
+	if nodeID == "" {
+		// 旧路径形态 /api/v1/gpu/metrics/{nodeID}
+		nodeID = strings.TrimPrefix(r.URL.Path, "/api/v1/gpu/metrics/")
+	}
+	// range 参数当前后端指标仅为即时采集快照，无时间序列，忽略透传不报错。
 	gpuCount := 4
-	if gc := r.URL.Query().Get("gpu_count"); gc != "" {
+	if gc := query.Get("gpu_count"); gc != "" {
 		if n, err := strconv.Atoi(gc); err == nil {
 			gpuCount = n
 		}
 	}
-	metrics, err := h.svc.GetGPUMetrics(nodeID, gpuCount)
+	m, err := h.svc.GetGPUMetrics(nodeID, gpuCount)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, metrics)
+	// 前端消费 {metrics: [...]}（stores/gpu.js fetchMetrics），首元素为节点级聚合。
+	writeJSON(w, http.StatusOK, map[string][]*models.GPUMetrics{"metrics": {m}})
 }
 
 func (h *Handler) handleWorkloads(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
-		var wl models.Workload
-		if err := json.NewDecoder(r.Body).Decode(&wl); err != nil {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
-		submitted, err := h.svc.SubmitWorkload(&wl)
+		wl, err := decodeWorkload(body)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		// 前端契约不发 tenant 字段：X-Tenant-ID 由前置网关注入（见 web/enterprise/src/api/request.js），
+		// 缺失时兜底 "default"，与 pkg/tenant 零租户安全语义一致。
+		if wl.TenantID == "" {
+			wl.TenantID = tenantFromRequest(r)
+		}
+		submitted, err := h.svc.SubmitWorkload(wl)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -298,8 +323,11 @@ func (h *Handler) handleScheduleQueue(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
+		// 前端契约：{name,nodeId}（web/enterprise/src/api/gpu.js pullGpuModel），
+		// nodeId 需带入返回的模型对象，禁止丢弃。
 		var req struct {
-			Name string `json:"name"`
+			Name   string `json:"name"`
+			NodeID string `json:"nodeId"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
@@ -309,6 +337,9 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
+		}
+		if req.NodeID != "" {
+			model.NodeID = req.NodeID
 		}
 		writeJSON(w, http.StatusCreated, model)
 
@@ -420,6 +451,56 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(data)
+}
+
+// workloadCreateRequest 是前端创建负载的 camelCase 契约形态
+// （web/enterprise/src/api/gpu.js createGpuWorkload 发 {name,type,model,gpuCount,nodeId}）。
+type workloadCreateRequest struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Model    string `json:"model"`
+	GPUCount int    `json:"gpuCount"`
+	NodeID   string `json:"nodeId"`
+	TenantID string `json:"tenantId"`
+}
+
+// tenantFromRequest extracts the tenant ID injected by the upstream gateway.
+func tenantFromRequest(r *http.Request) string {
+	if tid := strings.TrimSpace(r.Header.Get("X-Tenant-ID")); tid != "" {
+		return tid
+	}
+	return "default"
+}
+
+// decodeWorkload 兼容解析两种负载创建请求体：
+// 前端 camelCase（gpuCount/nodeId/model/tenantId）与旧 snake_case（models.Workload JSON 形态）。
+// 约束：前端形态的 gpu_request 不在请求体中，必须由顶层 camelCase 字段映射，避免零值负载入库。
+func decodeWorkload(body []byte) (*models.Workload, error) {
+	wl := &models.Workload{}
+	if err := json.Unmarshal(body, wl); err != nil {
+		return nil, err
+	}
+
+	var cr workloadCreateRequest
+	if err := json.Unmarshal(body, &cr); err != nil {
+		return nil, err
+	}
+
+	if cr.GPUCount > 0 {
+		wl.GPURequest.Count = cr.GPUCount
+	}
+	if cr.TenantID != "" {
+		wl.TenantID = cr.TenantID
+	}
+	if cr.Model != "" {
+		wl.ModelName = cr.Model
+	}
+	if cr.NodeID != "" {
+		if len(wl.NodeIDs) == 0 {
+			wl.NodeIDs = []string{cr.NodeID}
+		}
+	}
+	return wl, nil
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
