@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -341,6 +342,49 @@ func (s *MySQLStore) AllTasks() []*models.Task {
 	}
 	defer rows.Close()
 	return s.scanTasks(rows)
+}
+
+// UpdateTask 全字段回写（用于 scheduler fire/reclaim 等内部循环）。
+//
+// A-1 阶段限制：MySQLStore 任务的 schema 当前不含 last_fired_at 字段（仅内存态
+// 走 scheduler fire），本实现只更新 tasks 表已存在的列。若 A-2 切流到 MySQL 模式并
+// 启用 SQL 调度器，需先 schema 迁移加 last_fired_at 列，本接口实现保持兼容。
+func (s *MySQLStore) UpdateTask(t *models.Task) bool {
+	if t == nil || t.TaskID == "" {
+		return false
+	}
+	dependsOn := ""
+	if len(t.DependsOn) > 0 {
+		b, _ := json.Marshal(t.DependsOn)
+		dependsOn = string(b)
+	}
+	deadLetter, approvalRequired := 0, 0
+	if t.DeadLetter {
+		deadLetter = 1
+	}
+	if t.ApprovalRequired {
+		approvalRequired = 1
+	}
+	res, err := s.db.Exec(
+		`UPDATE tasks SET agent_id=?, type=?, command=?, content=?, path=?, status=?, claimed_by=?, claimed_at=?, claim_epoch=?, retry_count=?, max_retries=?, dead_letter=?, timeout=?, retry_delay=?, schedule=?, parent_id=?, depends_on=?, approval_required=?, approved_by=?, approved_at=?, batch_id=? WHERE task_id=?`,
+		t.AgentID, t.Type, t.Command, t.Content, t.Path, t.Status, t.ClaimedBy, nullTime(t.ClaimedAt), t.ClaimEpoch, t.RetryCount, t.MaxRetries,
+		deadLetter, t.Timeout, t.RetryDelay, t.Schedule, t.ParentID, dependsOn, approvalRequired, t.ApprovedBy, nullTime(t.ApprovedAt), t.BatchID, t.TaskID,
+	)
+	if err != nil {
+		log.Printf("[store] UpdateTask 失败: %v", err)
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
+}
+
+// nullTime 把零值 time 序列化为 NULL（MySQL UPDATE 不接受 zero time；Status/Status 字段回写
+// 时若 ClaimedAt 是零值需传 NULL）。
+func nullTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
 }
 
 // === ScheduleStore implementation ===

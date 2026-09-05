@@ -19,6 +19,9 @@ type TaskStore interface {
 	RejectTask(taskID, tenantID, rejectedBy string) bool
 	GetTaskStatus(taskID string) *models.Task
 	AllTasks() []*models.Task
+	// UpdateTask 更新任务全字段（用于 scheduler fire/reclaim 等内部循环回写 LastFiredAt/状态）。
+	// 按 TaskID 匹配；不存在返回 false。A-1 阶段仅 task-svc scheduler 闭包使用。
+	UpdateTask(t *models.Task) bool
 }
 
 // ScheduleStore is the interface for schedule persistence.
@@ -246,6 +249,23 @@ func (m *MemoryStore) AllTasks() []*models.Task {
 		out = append(out, &cp)
 	}
 	return out
+}
+
+// UpdateTask 全字段回写（用于 scheduler fire/reclaim 等内部循环回写 LastFiredAt/状态）。
+// 按 TaskID 匹配；不存在返回 false。A-1 阶段仅 task-svc scheduler 闭包使用。
+func (m *MemoryStore) UpdateTask(t *models.Task) bool {
+	if t == nil || t.TaskID == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing, ok := m.tasks[t.TaskID]
+	if !ok {
+		return false
+	}
+	_ = existing
+	m.tasks[t.TaskID] = t
+	return true
 }
 
 // CreateSchedule creates a schedule.

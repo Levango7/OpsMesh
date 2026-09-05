@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -55,6 +56,13 @@ func (s *Service) CreateTask(ctx context.Context, req *taskv1.CreateTaskRequest)
 		return nil, ErrTaskInvalid
 	}
 	t := req.Task
+	// 纵深防御：shell 类型任务在入队前校验命令内容（与 controlplane/server_tasks.go:149
+	// 的 validateCommand 调用等价）。非 shell 类型（service/file）命令字段为空，
+	// 走 maxCommandLen 上限与空检查即可，天然通过（service.go:type="" 时默认填
+	// models.TaskTypeShell 见下方——所以这里校验始终是 shell 语义）。
+	if err := ValidateCommand(t.Command); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrTaskInvalid, err)
+	}
 	if t.TaskId == "" {
 		t.TaskId = uuid.New().String()
 	}

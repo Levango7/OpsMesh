@@ -49,6 +49,7 @@ type Task struct {
 	Timeout          int
 	RetryDelay       int
 	Schedule         string
+	LastFiredAt      time.Time // A-1 阶段 fire 闭包用于本分钟去重（与 controlplane 行为一致）；scheduler 周期 < 1min 时尤其重要
 	ParentID         string
 	DependsOn        []string
 	ApprovalRequired bool
