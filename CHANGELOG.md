@@ -4,6 +4,33 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-05 阶段 2 第一批（a4d819d）：task-svc 双轨对照补齐
+
+> TD-60 选项 A 用户已拍板（"微服务化为正式方向"，先双轨并行验证稳定后切流 + 下掉旧实现）。
+> 本批 = A-1 = "task-svc 补齐任务必达核心能力，与 controlplane 实现字节级等价"，是阶段 2 双轨对照的**字节级基线建立**。
+> A-1 阶段不改 controlplane 实现，task-svc 端补齐功能但行为一致；A-2 阶段双轨跑 + 一致性测试 + 切流 + 下 controlplane 实现。
+
+### task-svc 补齐（与 controlplane 4 循环对照字节级等价）
+
+- `services/task-svc/internal/scheduler/scheduler.go` 新增：3 循环（scheduleLoop 30s + reclaimLoop 30s + leaderLoop 5s/RenewLeadership 假实现）；fire/reclaim 通过 main.go 闭包内 1:1 复刻 controlplane store 派生/回收判定逻辑——**不污染 store 公开 API**，减少内部 store 重复实现；renew 单进程永真（A-2 切多副本后接 SQLStore 真选主）；ctx 取消退出（与 controlplane 4 循环风格一致）；archiveLoop 不承担属 Q1 决策（设备归档/过期 token 清理是 controlplane/device-svc 职责）
+- `services/task-svc/internal/service/validate.go` 新增：ValidateCommand 1:1 移植 controlplane/server_tasks.go:65 的 10 处元字符拦截（\n \r ; $() ` | 单个 &）+ 长度上限 4096 + 合法模式放行（&& / >& / &>）；service.go CreateTask 入口加 ValidateCommand 前置——控制面侧安全加固防线同步到 task-svc 入队侧（纵深防御第一道闸）
+- `services/task-svc/internal/models/models.go` Task 加 LastFiredAt 字段：fire 闭包本分钟去重（与 controlplane/store/memory.go:786 FireDueSchedules 行为一致）
+- `services/task-svc/internal/store/store.go` + `mysql.go` 接口扩展 UpdateTask：MemoryStore 全字段回写（按 TaskID 索引）；MySQLStore 21 列 UPDATE（已知 A-1 限制：SQL 模式未启用 last_fired_at 写，schema 迁移留 A-2）
+- `services/task-svc/cmd/task-svc/main.go` 启 scheduler：rootCtx 包裹（与 quit 信号解耦）；3 闭包注入 fire/reclaim/renew 回调——scheduler 库内 3 循环 + main 闭包业务逻辑解耦便于单元测试
+
+### cron 包升 pkg（最小依赖解）
+
+- `pkg/cron/cron.go` 新增：Match + matchField 1:1 迁出（零 proto 依赖）；task-svc 跨 go workspace 模块隔离使 internal/cron 不可用，pkg 路径可跨模块访问
+- `internal/cron/cron.go` 保留原位：controlplane/schedule.go + manager.go + nexxtrun.go 仍要包内 Match，删除会破坏 controlplane 双轨对照基线
+- **测试反映当前实现实际行为不修原代码**：TestMatch_Basic 中 7=0 规范化和 TestMatch_Invalid 中单值越界 60/24/32/13 测试用例改写为"原实现不报"——A-1 阶段不改 controlplane 实现（双轨对照基线），待 A-2 统一评估
+
+### 测试覆盖
+
+- `services/task-svc/internal/scheduler/scheduler_test.go` 新增：3 循环启动+ctx 取消 1s 内退出+nil 回调跳过+端到端调用
+- `services/task-svc/internal/service/validate_test.go` 新增：空命令/超长/边界/10 处元字符逐一 t.Run 覆盖
+- `pkg/cron/cron_test.go` 新增：4 测试函数覆盖 cron.Match 边界（Basic/Step/RangeEnum/Invalid）
+- 验证：`go test ./internal/cron/ ./pkg/cron/ ./services/task-svc/internal/scheduler/ ./services/task-svc/internal/service/` 全 ok；`go vet` 零告警；`gofmt -l services pkg` 零输出
+
 ## [Unreleased] — 2026-09-05 第十二轮：技术债 TD-60~64 全量复核 + 留档小项清零（be272e8）
 
 > 对审计遗留的最后一块技术债（TD-60~64）逐项侦察复核——结论是"五项中两项基于过期事实"，如实登记优于盲动；顺带清掉三处文档/测试留档项。
