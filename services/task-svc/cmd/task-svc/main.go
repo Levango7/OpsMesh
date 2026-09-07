@@ -176,6 +176,14 @@ func main() {
 	)
 	sched.Start()
 
+	// A-2 影子模式（TASK_SVC_SHADOW_MODE=true 开启）：在常规 scheduler 之外额外启动
+	// 只读影子循环，评估 task 派生/回收期望并与现状对比；不写任何 store 状态。
+	// 生命周期与 schedulerRootCtx 绑定，cancel 时自动退出。
+	if cfg.ShadowMode {
+		shadow := scheduler.NewShadowLoop(ts)
+		shadow.Start(schedulerRootCtx)
+	}
+
 	go func() {
 		log.Printf("Starting gRPC server on :%d", cfg.GRPCPort)
 		if err := grpcServer.Serve(grpcLis); err != nil {

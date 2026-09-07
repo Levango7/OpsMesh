@@ -20,6 +20,11 @@ type Config struct {
 	// OTel tracing settings.
 	OTelEndpoint string `json:"otelEndpoint"` // OTLP gRPC collector address (empty = disabled)
 	LogLevel     string `json:"logLevel"`     // debug, info, warn, error (default: info)
+
+	// ShadowMode 影子模式开关（A-2 阶段任务迁移双轨对照用）。
+	// true=在常规 scheduler 之外额外启动只读影子循环，评估 task 派生/回收期望并与
+	// 现状对比；不写任何 store 状态。默认 false（关闭=常规服务模式）。
+	ShadowMode bool `json:"shadowMode"`
 }
 
 // Load returns a Config populated from environment variables with defaults.
@@ -35,6 +40,7 @@ func Load() *Config {
 		TaskTimeout:     getEnvInt("TASK_SVC_TASK_TIMEOUT", 300),
 		OTelEndpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
+		ShadowMode:      getEnv("TASK_SVC_SHADOW_MODE") == "true",
 	}
 }
 
