@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
 )
@@ -288,7 +290,10 @@ func (g *Gateway) handleDiscoveryJobs(w http.ResponseWriter, r *http.Request) {
 		}
 		// A-1 阶段说明：StartDiscovery 的 service 层是硬编码 stub（写死 3/254）。
 		// HTTP 网关照实透传 store 行为——真实 Sweep 移植属 P1（见 tech-debt TD-60）。
+		// ID 生成与 service.go StartDiscovery 同款（job- + uuid 前 8 位）——
+		// store.CreateJob 不代填 ID，缺省会以空 ID 入库导致无法回查。
 		job := &models.DiscoveryJob{
+			ID:       "job-" + uuid.New().String()[:8],
 			TenantID: body.TenantID,
 			CIDR:     body.CIDR,
 			Status:   "running",

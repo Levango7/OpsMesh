@@ -1,0 +1,225 @@
+// gateway_test.go — P0 HTTP 网关单测（httptest 全端点覆盖）。
+//
+// 覆盖目标：注册路由后每个 REST 端点的方法分发、状态码、响应形状。
+// 用 MemoryStore 种子数据验证 CRUD 往返；鉴权中间件传直通 stub（本测只验网关层）。
+package http
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/Levango7/OpsMesh/services/device-svc/internal/models"
+	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
+)
+
+// newTestGateway 构造带种子数据的 gateway + mux。
+func newTestGateway(t *testing.T) *http.ServeMux {
+	t.Helper()
+	ms := store.NewMemoryStore()
+	// 种子：1 设备 + 1 agent + 1 CI。
+	ms.RegisterDevice(&models.Device{ID: "dev-1", TenantID: "default", Name: "web-1", IP: "10.0.0.1", Status: "online"})
+	ms.RegisterAgent(&models.Agent{ID: "ag-1", TenantID: "default", Hostname: "host-1", Status: "online"})
+	ms.CreateCI(&models.CI{ID: "ci-1", TenantID: "default", CiType: "host", Name: "web-1", Status: "active"})
+
+	g := NewGateway(ms, ms, ms, ms)
+	mux := http.NewServeMux()
+	g.RegisterRoutes(mux, func(h http.Handler) http.Handler { return h })
+	return mux
+}
+
+// doReq 发请求并返回 recorder。
+func doReq(t *testing.T, mux *http.ServeMux, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	var req *http.Request
+	if body != "" {
+		req = httptest.NewRequest(method, path, strings.NewReader(body))
+	} else {
+		req = httptest.NewRequest(method, path, nil)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// ============ 设备 ============
+
+func TestDevices_ListAndCreate(t *testing.T) {
+	mux := newTestGateway(t)
+
+	// 列表：种子设备可见。
+	rec := doReq(t, mux, http.MethodGet, "/api/v1/devices", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list devices: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var list struct {
+		Devices []*models.Device `json:"devices"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("list devices 响应解析失败: %v", err)
+	}
+	if len(list.Devices) != 1 || list.Devices[0].ID != "dev-1" {
+		t.Fatalf("期望 1 台种子设备 dev-1，实际 %+v", list.Devices)
+	}
+
+	// 创建：201 + 回显。
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/devices", `{"tenantID":"default","name":"new-dev","ip":"10.0.0.9"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create device: got %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var created models.Device
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("create device 响应解析失败: %v", err)
+	}
+	if created.Name != "new-dev" {
+		t.Fatalf("创建回显 name=%q, want new-dev", created.Name)
+	}
+}
+
+func TestDevices_DetailHeartbeatStatus(t *testing.T) {
+	mux := newTestGateway(t)
+
+	// 详情。
+	rec := doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get device: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	// 404。
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/devices/no-such", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("get missing device: got %d, want 404", rec.Code)
+	}
+	// 心跳。
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/devices/dev-1/heartbeat", `{"status":"online"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("heartbeat: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	// 状态。
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1/status", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	// 更新。
+	rec = doReq(t, mux, http.MethodPut, "/api/v1/devices/dev-1", `{"name":"renamed"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	// 删除。
+	rec = doReq(t, mux, http.MethodDelete, "/api/v1/devices/dev-1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	// 删除后 404。
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("get after delete: got %d, want 404", rec.Code)
+	}
+}
+
+// ============ Agent ============
+
+func TestAgents_ListAndDetail(t *testing.T) {
+	mux := newTestGateway(t)
+
+	rec := doReq(t, mux, http.MethodGet, "/api/v1/agents", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list agents: got %d", rec.Code)
+	}
+	var list struct {
+		Agents []*models.Agent `json:"agents"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("list agents 解析失败: %v", err)
+	}
+	if len(list.Agents) != 1 || list.Agents[0].ID != "ag-1" {
+		t.Fatalf("期望种子 agent ag-1，实际 %+v", list.Agents)
+	}
+
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/agents/ag-1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get agent: got %d", rec.Code)
+	}
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/agents/ag-1/heartbeat", `{"status":"online","load":3}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("agent heartbeat: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/agents/no-such", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("get missing agent: got %d, want 404", rec.Code)
+	}
+}
+
+// ============ CMDB ============
+
+func TestCMDB_CICRUDAndRelations(t *testing.T) {
+	mux := newTestGateway(t)
+
+	// 列表。
+	rec := doReq(t, mux, http.MethodGet, "/api/v1/cmdb/cis", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list cis: got %d", rec.Code)
+	}
+	// 详情。
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/cmdb/cis/ci-1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get ci: got %d", rec.Code)
+	}
+	// 更新。
+	rec = doReq(t, mux, http.MethodPut, "/api/v1/cmdb/cis/ci-1", `{"name":"renamed-ci"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update ci: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	// 创建关系后查关系。
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/cmdb/relations/ci-1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("relations: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	// 删除。
+	rec = doReq(t, mux, http.MethodDelete, "/api/v1/cmdb/cis/ci-1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete ci: got %d", rec.Code)
+	}
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/cmdb/cis/ci-1", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("get after delete: got %d, want 404", rec.Code)
+	}
+}
+
+// ============ 发现 ============
+
+func TestDiscovery_CreateAndStatus(t *testing.T) {
+	mux := newTestGateway(t)
+
+	// 创建任务：201。
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/discovery/jobs", `{"tenantID":"default","cidr":"192.168.1.0/24"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create job: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var job models.DiscoveryJob
+	if err := json.Unmarshal(rec.Body.Bytes(), &job); err != nil {
+		t.Fatalf("create job 解析失败: %v", err)
+	}
+	if job.ID == "" || job.CIDR != "192.168.1.0/24" {
+		t.Fatalf("job 回显异常: %+v", job)
+	}
+
+	// 查状态。
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/discovery/jobs/"+job.ID, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("job status: got %d", rec.Code)
+	}
+
+	// 缺 cidr：400。
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/discovery/jobs", `{"tenantID":"default"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("create job without cidr: got %d, want 400", rec.Code)
+	}
+
+	// 已发现设备列表。
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/discovery/devices", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("discovered devices: got %d", rec.Code)
+	}
+}

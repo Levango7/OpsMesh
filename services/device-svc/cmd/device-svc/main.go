@@ -18,6 +18,7 @@ import (
 	devicev1 "github.com/Levango7/OpsMesh/services/device-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/catalog"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/gpu"
+	httpgw "github.com/Levango7/OpsMesh/services/device-svc/internal/http"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/server"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
@@ -101,6 +102,12 @@ func main() {
 	seedGPUs(gpuDetector)
 
 	mux := http.NewServeMux()
+
+	// P0 HTTP 网关：devices/agents/cmdb/discovery 的 REST 端点（直连 store 层）。
+	// 鉴权走 tenant.Middleware（与 gRPC 拦截器同语义），在下文 handler 链统一包裹。
+	httpGateway := httpgw.NewGateway(ds, as, cs, disc)
+	httpGateway.RegisterRoutes(mux, func(h http.Handler) http.Handler { return h })
+
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
