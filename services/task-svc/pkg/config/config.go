@@ -40,7 +40,7 @@ func Load() *Config {
 		TaskTimeout:     getEnvInt("TASK_SVC_TASK_TIMEOUT", 300),
 		OTelEndpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
-		ShadowMode:      getEnv("TASK_SVC_SHADOW_MODE") == "true",
+		ShadowMode:      getEnv("TASK_SVC_SHADOW_MODE", "false") == "true",
 	}
 }
 

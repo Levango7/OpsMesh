@@ -1,13 +1,13 @@
 // shadow.go — task-svc 影子分析模式（A-2 阶段 2 的观察舱）。
 //
 // 设计目标（TD-60 A-2 阶段影子策略，选项 A 的双轨切流前置验证）：
-//   1. **只观察不动作**：shadow loop 周期性读取 store（走 store.TaskStore 接口），
-//      用 task-svc 自身引擎（与 controlplane 4 循环相同判定逻辑）评估：该派生多少个
-//      定时任务实例？该回收多少失联任务？但**不写入任何东西**。
-//   2. **产出观察指标**：将影子评估结果写入 Prometheus gauge，日志输出评估明细；
-//      运维对比同期 controlplane 的 FireDueSchedules/ReclaimStaleTasks 产出，
-//      判断 task-svc 引擎与 controlplane 行为是否一致。
-//   3. **零风险**：不引入任务写操作；业务行为不变；关闭开关即回归 A-1 行为。
+//  1. **只观察不动作**：shadow loop 周期性读取 store（走 store.TaskStore 接口），
+//     用 task-svc 自身引擎（与 controlplane 4 循环相同判定逻辑）评估：该派生多少个
+//     定时任务实例？该回收多少失联任务？但**不写入任何东西**。
+//  2. **产出观察指标**：将影子评估结果写入 Prometheus gauge，日志输出评估明细；
+//     运维对比同期 controlplane 的 FireDueSchedules/ReclaimStaleTasks 产出，
+//     判断 task-svc 引擎与 controlplane 行为是否一致。
+//  3. **零风险**：不引入任务写操作；业务行为不变；关闭开关即回归 A-1 行为。
 //
 // 用法：main 启动时如果 cfg.ShadowMode=true，调 NewShadowLoop(ts).Start(ctx)；
 // 生产环境长期开着（无写入开销），通过 metrics/日志判断 cutover 就绪度。
@@ -25,9 +25,9 @@ import (
 
 // shadow 常量：与 controlplane 4 循环对照表参数一致。
 const (
-	shadowInterval      = 5 * time.Minute // 影子评估周期
-	reclaimMaxAge       = 5 * time.Minute // 失联判定阈值（放宽到 5min 防误报）
-	shadowMetricPrefix  = "opsmesh_task_shadow"
+	shadowInterval     = 5 * time.Minute // 影子评估周期
+	reclaimMaxAge      = 5 * time.Minute // 失联判定阈值（放宽到 5min 防误报）
+	shadowMetricPrefix = "opsmesh_task_shadow"
 )
 
 // ShadowLoop 持有影子状态 + 评价引擎。
