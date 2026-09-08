@@ -4,6 +4,16 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-09 D2：Discovery 真实化（1e1d0aa）
+
+> device-svc 的 StartDiscovery 从硬编码 stub（写死 FoundDevices=3/ScannedHosts=254）替换为真实 Sweep 存活扫描——侦察确认 18 项 device-svc 缺口中网络发现先落地（其余自动纳管链属 D3 独立立项）。
+
+- **`internal/discover` → `pkg/discover`**（git rename 零改码，95 行纯函数零依赖；与 pkg/cron 同迁出模式，解 go workspace 模块隔离）——controlplane 7 处 import + 2 注释同步；误伤 internal/discovery（服务发现 LB 包）的 5 处正则前缀陷阱当场回修
+- **`StartDiscovery` 重写**：白名单校验（`DEVICE_SVC_CIDR_WHITELIST`，目标网段须完全落在白名单内——防云元数据 169.254.169.254 SSRF/内网探测，与 controlplane autoProvision 同语义）→ 创建 running job **立即返回**（异步语义，与 proto pending/running/completed 状态机吻合）→ 后台 Sweep（ports [22,9100]/并发 64/单连 800ms，**与 controlplane provision/auto.go 双轨对照同参数**）→ 存活 IP 以 `dev-{ip}` 幂等入库 Status=discovered（候选设备，与 controlplane UpsertDevice State=discovered 语义对齐）→ job 回写终态（completed/failed+Error 留痕）
+- **config 2 项**：`DEVICE_SVC_CIDR_WHITELIST`（空=不校验向后兼容，生产文档标注必配）+ `DEVICE_SVC_DISCOVER_TIMEOUT`（默认 60s job ctx 兜底防大网段拖死）
+- **单测 5 用例**：真实网段扫描（本地 9100 listener+异步轮询终态+设备入库 discovered）/坏 CIDR failed+Error 留痕/白名单 6 子用例（含 SSRF 防护核心 169.254.169.254/32）/幂等入库（重复扫描同网段不产生重复设备）/旧 stub 断言更新为异步 running
+- 全量验证：build+vet+gofmt 净+**8 包测试绿**（pkg/discover/device-svc×5/agent 55s/provision/grpc）；CI 全绿
+
 ## [Unreleased] — 2026-09-09 阶段 2 D1：device-svc HTTP 网关接入 + Shadow 模式落地（7aeb388）
 
 > TD-60 阶段 2 继续：方案审核后按风险分级执行——D1（gateway 接入，收益明显/风险极小）+ S1（Shadow 观测代码就位）立即做；D2（真实 Sweep）/D3（自动纳管）/A1+A2（auth 域）因触及网络 IO/写路径/鉴权基座而缓做、各自独立立项。
