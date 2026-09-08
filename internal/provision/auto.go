@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"opsmesh/internal/config"
-	"opsmesh/internal/discover"
 	"opsmesh/internal/proto"
+	"opsmesh/pkg/discover"
 )
 
 // Deps 是 AutoProvision 所需的控制面依赖（以函数注入，避免 provision 反向依赖 controlplane）。

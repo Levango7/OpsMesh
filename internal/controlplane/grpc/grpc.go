@@ -17,7 +17,6 @@ import (
 	"opsmesh/internal/authctx"
 	"opsmesh/internal/cmdb"
 	"opsmesh/internal/config"
-	"opsmesh/internal/discover"
 	"opsmesh/internal/domain"
 	"opsmesh/internal/events"
 	"opsmesh/internal/grpcx"
@@ -27,6 +26,7 @@ import (
 	"opsmesh/internal/otelx"
 	"opsmesh/internal/proto"
 	"opsmesh/internal/store"
+	"opsmesh/pkg/discover"
 )
 
 // agentSignatureMaxSkew ：签名 timestamp 允许的最大时钟偏移（5 分钟）。

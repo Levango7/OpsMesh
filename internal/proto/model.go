@@ -30,7 +30,7 @@ type AgentInfo struct {
 
 // DeviceInfo 被纳管的网段内设备（服务部署后整段网络打通，设备自动纳管）。
 // MVP 降级：默认采用“agent 即设备”——agent 注册时落一个代表其自身主机的 DeviceInfo（真实 IP/Hostname）。
-// 开启 --discover 时，控制面按真实网段扫描（internal/discover）为每个存活主机创建 DeviceInfo，
+// 开启 --discover 时，控制面按真实网段扫描（pkg/discover）为每个存活主机创建 DeviceInfo，
 // 这才是产品“整段网络自动纳管”的完整兑现路径（见）。
 //
 // 自动纳管闭环：网段发现的开放端口主机记为 Managed=false / State="discovered" 的候选设备

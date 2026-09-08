@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +14,7 @@ import (
 	devicev1 "github.com/Levango7/OpsMesh/services/device-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
+	"opsmesh/pkg/discover"
 	"opsmesh/pkg/metrics"
 	"opsmesh/pkg/retry"
 	"opsmesh/pkg/tenant"
@@ -36,6 +39,17 @@ type Service struct {
 	ciStore        store.CiStore
 	discoveryStore store.DiscoveryStore
 	tenantMgr      *tenant.Manager
+	// discoverCfg D2 Discovery 真实化配置（白名单/超时）。nil=默认值（白名单空=不校验，
+	// 超时 60s）——测试直构 Service 时可零值，生产由 main 注入 config.Load() 结果。
+	discoverCfg *DiscoverConfig
+}
+
+// DiscoverConfig D2 真实发现的运行参数（由 main 从 config.Load() 映射注入）。
+type DiscoverConfig struct {
+	// CIDRWhitelist 逗号分隔白名单；空=不校验（与 controlplane 同语义）。
+	CIDRWhitelist string
+	// Timeout 单个发现 job 的整体超时。
+	Timeout time.Duration
 }
 
 // NewService creates a new Service.
@@ -47,6 +61,68 @@ func NewService(ds store.DeviceStore, as store.AgentStore, cs store.CiStore, dis
 		discoveryStore: disc,
 		tenantMgr:      tm,
 	}
+}
+
+// SetDiscoverConfig 注入 D2 真实发现配置（main 启动时调用；测试可省略走默认值）。
+func (s *Service) SetDiscoverConfig(cfg *DiscoverConfig) {
+	s.discoverCfg = cfg
+}
+
+// discoverWhitelist 返回生效的白名单（未注入配置时为空=不校验）。
+func (s *Service) discoverWhitelist() string {
+	if s.discoverCfg == nil {
+		return ""
+	}
+	return s.discoverCfg.CIDRWhitelist
+}
+
+// discoverTimeout 返回生效的 job 超时（未配置时 60s）。
+func (s *Service) discoverTimeout() time.Duration {
+	if s.discoverCfg == nil || s.discoverCfg.Timeout <= 0 {
+		return 60 * time.Second
+	}
+	return s.discoverCfg.Timeout
+}
+
+// validateDiscoveryCIDR 目标 CIDR 必须完全落在白名单内（防扫描云元数据网段/内网探测）。
+// 白名单为空时不校验（向后兼容）。语义与 controlplane server_netsec.go ValidateCIDR 一致：
+// 目标网段起止 IP 都必须落在同一条允许的 CIDR 内。
+func (s *Service) validateDiscoveryCIDR(cidr string) error {
+	whitelist := s.discoverWhitelist()
+	if whitelist == "" {
+		return nil
+	}
+	_, targetNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return fmt.Errorf("invalid target CIDR %q: %w", cidr, err)
+	}
+	targetStart, targetEnd := cidrBounds(targetNet)
+	for _, allowed := range strings.Split(whitelist, ",") {
+		allowed = strings.TrimSpace(allowed)
+		if allowed == "" {
+			continue
+		}
+		_, n, err := net.ParseCIDR(allowed)
+		if err != nil {
+			return fmt.Errorf("invalid allowed CIDR %q: %w", allowed, err)
+		}
+		if n.Contains(targetStart) && n.Contains(targetEnd) {
+			return nil
+		}
+	}
+	return fmt.Errorf("target CIDR %q not within any allowed CIDR in whitelist", cidr)
+}
+
+// cidrBounds 返回 CIDR 网段的起始 IP 与结束 IP（网络地址与广播地址）。
+func cidrBounds(n *net.IPNet) (net.IP, net.IP) {
+	start := make(net.IP, len(n.IP))
+	copy(start, n.IP)
+	end := make(net.IP, len(n.IP))
+	copy(end, n.IP)
+	for i := range end {
+		end[i] = n.IP[i] | ^n.Mask[i]
+	}
+	return start, end
 }
 
 // === DeviceService methods ===
@@ -329,9 +405,25 @@ func (s *Service) GetCIRelations(ctx context.Context, req *devicev1.GetCIRelatio
 // === DiscoveryService methods ===
 
 // StartDiscovery initiates network discovery.
+//
+// D2 真实化（2026-09）：原实现为硬编码 stub（同步写死 FoundDevices=3/ScannedHosts=254），
+// 现改为真实 Sweep 扫描 + 候选设备入库：
+//  1. CIDR 白名单校验（不通过直接报错，job 不创建）；
+//  2. 创建 status=running 的 job，HTTP/gRPC 立即返回（异步语义，与 proto 的
+//     pending/running/completed 状态机吻合——大网段扫描不再阻塞调用方）；
+//  3. 后台 goroutine 用 pkg/discover.Sweep（TCP-connect 存活扫描，与
+//     controlplane provision/auto.go:70 同参数：ports [22,9100]/并发 64/单连 800ms）
+//     扫描目标网段；
+//  4. 每个存活 IP 以 ID=dev-{ip} 幂等入库（Status=discovered，与 controlplane
+//     UpsertDevice 的 State=discovered/Managed=false 候选设备语义对齐）；
+//  5. job 以超时 ctx 兜底（默认 60s），完成/失败/超时均回写终态。
 func (s *Service) StartDiscovery(ctx context.Context, req *devicev1.StartDiscoveryRequest) (*devicev1.DiscoveryJob, error) {
 	if req.Cidr == "" {
 		return nil, ErrJobInvalid
+	}
+	// 白名单校验失败：job 不落库直接报错（与 controlplane autoProvision 的 403 语义一致）。
+	if err := s.validateDiscoveryCIDR(req.Cidr); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrJobInvalid, err)
 	}
 
 	now := timestamppb.Now()
@@ -350,23 +442,57 @@ func (s *Service) StartDiscovery(ctx context.Context, req *devicev1.StartDiscove
 		Status:    "running",
 		StartedAt: now.AsTime(),
 	}
-	s.discoveryStore.CreateJob(storeJob)
+	created := s.discoveryStore.CreateJob(storeJob)
+	if created == nil {
+		return nil, errors.New("create job failed")
+	}
 
-	// Simulate discovery completion
-	storeJob.Status = "completed"
-	storeJob.FoundDevices = 3
-	storeJob.ScannedHosts = 254
-	storeJob.TotalHosts = 254
-	storeJob.CompletedAt = time.Now()
-	s.discoveryStore.UpdateJob(storeJob)
+	// 后台扫描：job ctx 超时兜底；完成/失败/超时均回写终态（幂等 UpdateJob）。
+	go s.runDiscoveryJob(created)
+
+	job.Status = "running"
+	return job, nil
+}
+
+// runDiscoveryJob 执行单次真实扫描并回写 job 终态。
+// 扫描参数与 controlplane provision/auto.go:70 完全一致（ports [22,9100]/并发 64/
+// 单连 800ms）——双轨对照前提：发现行为必须与 controlplane 的网段发现可对照。
+func (s *Service) runDiscoveryJob(job *models.DiscoveryJob) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.discoverTimeout())
+	defer cancel()
+
+	alive, err := discover.Sweep(ctx, job.CIDR, []int{22, 9100}, 64, 800*time.Millisecond)
+	if err != nil {
+		job.Status = "failed"
+		job.Error = err.Error()
+		if !job.CompletedAt.IsZero() {
+			job.CompletedAt = time.Now()
+		} else {
+			job.CompletedAt = time.Now()
+		}
+		s.discoveryStore.UpdateJob(job)
+		return
+	}
+
+	// 候选设备入库：ID=dev-{ip} 幂等（重复扫描同网段不产生重复设备），
+	// Status=discovered 与 controlplane UpsertDevice 的 State=discovered 语义对齐。
+	for _, ip := range alive {
+		d := &models.Device{
+			ID:       "dev-" + ip,
+			TenantID: job.TenantID,
+			IP:       ip,
+			Status:   "discovered",
+		}
+		s.deviceStore.RegisterDevice(d)
+	}
 
 	job.Status = "completed"
-	job.FoundDevices = 3
-	job.ScannedHosts = 254
-	job.TotalHosts = 254
-	job.CompletedAt = timestamppb.Now()
-
-	return job, nil
+	job.ScannedHosts = len(alive) // 语义说明：此处记存活主机数（Sweep 只返回存活 IP，
+	// 不返回探测过的全量主机数——原 stub 的 254 是网段理论容量）。真实网段容量
+	// 展示留给前端按 CIDR 计算（与 controlplane 的行为差异已在 TD-60 登记）。
+	job.FoundDevices = len(alive)
+	job.CompletedAt = time.Now()
+	s.discoveryStore.UpdateJob(job)
 }
 
 // GetDiscoveryStatus returns discovery job status.

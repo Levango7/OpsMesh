@@ -5,6 +5,11 @@
 //
 // 这是产品核心差异点“服务部署后整段网络打通、设备自动纳管”的真实兑现路径；
 // MVP 默认关闭（--discover=false），此时采用“agent 即设备”的降级纳管（见 store.Register）。
+//
+// 位置历史：原 internal/discover/discover.go（2026-09 D2 阶段迁出）。
+// 迁出原因：device-svc 的 StartDiscovery 需要真实 Sweep 替代硬编码 stub，但 go workspace
+// 模块隔离使 services/* 引不到 internal 路径。零依赖纯函数，pkg 路径可跨模块访问
+// （与 pkg/cron 同模式）。controlplane 的消费方 import 已同步改为本包。
 package discover
 
 import (

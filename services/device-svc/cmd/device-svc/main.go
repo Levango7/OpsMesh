@@ -70,6 +70,11 @@ func main() {
 	})
 
 	svc := service.NewService(ds, as, cs, disc, tenantMgr)
+	// D2 真实发现配置注入：白名单（空=不校验，生产必配）+ job 超时（默认 60s）。
+	svc.SetDiscoverConfig(&service.DiscoverConfig{
+		CIDRWhitelist: cfg.CIDRWhitelist,
+		Timeout:       cfg.DiscoverTimeout,
+	})
 	srv := server.NewServer(svc)
 
 	grpcServer := grpc.NewServer(

@@ -416,11 +416,11 @@ func TestStartDiscovery(t *testing.T) {
 	if job.Id == "" {
 		t.Error("expected job ID to be set")
 	}
-	if job.Status != "completed" {
-		t.Errorf("expected status completed, got %s", job.Status)
-	}
-	if job.FoundDevices != 3 {
-		t.Errorf("expected 3 found devices, got %d", job.FoundDevices)
+	// D2 真实化后为异步语义：立即返回 running（真实扫描在后台完成，
+	// 终态经 GetDiscoveryStatus 轮询获取——原同步写死 completed/3 台的 stub
+	// 断言随 stub 一并废弃）。
+	if job.Status != "running" {
+		t.Errorf("expected initial status running (async), got %s", job.Status)
 	}
 }
 

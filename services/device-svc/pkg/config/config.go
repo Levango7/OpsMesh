@@ -19,6 +19,15 @@ type Config struct {
 	// OTel tracing settings.
 	OTelEndpoint string `json:"otelEndpoint"` // OTLP gRPC collector address (empty = disabled)
 	LogLevel     string `json:"logLevel"`     // debug, info, warn, error (default: info)
+
+	// D2 Discovery 真实化配置。
+	// CIDRWhitelist 逗号分隔白名单（如 "10.0.0.0/16,192.168.1.0/24"）；
+	// 空=不校验（与 controlplane ProvisionCIDRWhitelist 的向后兼容语义一致），
+	// 生产部署文档须标注必配——防扫描云元数据网段（SSRF）与内网探测。
+	CIDRWhitelist string `json:"cidrWhitelist"`
+	// DiscoverTimeout 单个发现 job 的整体 ctx 超时（默认 60s，
+	// MaxHosts=1024 × 800ms 单连超时 / 并发 64 的最坏情况约 13s，60s 余量充足）。
+	DiscoverTimeout time.Duration `json:"discoverTimeout"`
 }
 
 // Load returns a Config populated from environment variables with defaults.
@@ -33,6 +42,8 @@ func Load() *Config {
 		ShutdownTimeout: getEnvDuration("DEVICE_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
 		OTelEndpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
+		CIDRWhitelist:   getEnv("DEVICE_SVC_CIDR_WHITELIST", ""),
+		DiscoverTimeout: getEnvDuration("DEVICE_SVC_DISCOVER_TIMEOUT", 60*time.Second),
 	}
 }
 
