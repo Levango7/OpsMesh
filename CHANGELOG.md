@@ -4,6 +4,30 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-09 阶段 2 D1：device-svc HTTP 网关接入 + Shadow 模式落地（7aeb388）
+
+> TD-60 阶段 2 继续：方案审核后按风险分级执行——D1（gateway 接入，收益明显/风险极小）+ S1（Shadow 观测代码就位）立即做；D2（真实 Sweep）/D3（自动纳管）/A1+A2（auth 域）因触及网络 IO/写路径/鉴权基座而缓做、各自独立立项。
+
+### D1：device-svc HTTP 网关上线（017dd39 + c027504）
+
+- `internal/http/gateway.go`（341 行）：REST API 直连 store 层（同进程不经 gRPC），devices/agents/cmdb/discovery 全端点——列表/详情/心跳/状态/更新/删除/创建任务/关系查询，鉴权挂 tenant.Middleware（与 gRPC 拦截器同语义）
+- `main.go` 接入：httpgw 注册到 mux（此前 gateway 是死代码，现已真实可达）
+- 修复：`CreateJob` 缺 ID 生成——store 不代填，网关补 `job-`+uuid（与 service 层同款）
+- `gateway_test.go`（5 测试函数）：MemoryStore 种子数据 + httptest 覆盖全端点 CRUD 往返 + 404 + 400 校验
+- P0 意义：前端 service_proxy 现在可加 device 转发规则（网关端点与前端 api/device.js 路径已对齐）
+
+### S1：task-svc Shadow 观测模式（9a1ce21）
+
+- `internal/scheduler/shadow.go`：只读观测循环（5 分钟周期），用与 controlplane 4 循环相同判定逻辑评估任务派生/回收期望，**零写入**；产出 Prometheus gauge `opsmesh_task_shadow_*`
+- `TASK_SVC_SHADOW_MODE=true` 环境变量开关（config.ShadowMode 字段），默认关闭=常规服务模式
+- A-2 切流前置验证工具：预发起 task-svc 影子实例连续观察 72h，与 controlplane 产出对比趋零即触发切流评估
+
+### 修复链
+
+- CI Gofmt 红：shadow.go 注释缩进（上轮遗留）→ gofmt 化（7aeb388）
+- CI 编译红：config.go `ShadowMode` 字段 getEnv 少传默认参（签名 `getEnv(key, def)`）→ 补默认参（7aeb388）
+- CI E2E compose 启动红：flaky（Docker Hub 拉取超时，与改动无关——E2E 整栈只 build controlplane+agent 不含 device/task-svc）→ 重跑即绿
+
 ## [Unreleased] — 2026-09-05 阶段 2 第一批（a4d819d）：task-svc 双轨对照补齐
 
 > TD-60 选项 A 用户已拍板（"微服务化为正式方向"，先双轨并行验证稳定后切流 + 下掉旧实现）。
