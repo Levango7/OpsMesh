@@ -4,6 +4,32 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-09 A1+A2：auth-svc 方案 B 用户中心后端（3aae39b + 1761793）
+
+> TD-60 阶段 2 auth 域收官（方案 B：controlplane 121 处热路径本地验签零触碰；auth-svc 作为平行用户中心补齐能力+HTTP 网关）。方案 V2 经 8 项风险点（R1-R8）代码级实证完善后执行。
+
+### A1：HTTP 网关（3aae39b，9 测试全绿 CI 绿）
+
+- `internal/http/gateway.go`（470 行）：login/logout/refresh/register/change-password/me + users/roles/perms CRUD；**AUTH_SVC_HTTP_ENABLED 默认 false**（R1：杜绝与 controlplane 并存期双轨 Cookie 互写——关闭时 auth-svc 仅 gRPC，controlplane 仍是唯一登录入口）
+- Cookie 与 controlplane setCookie 逐字段对齐（R1）：opsmesh_at/opsmesh_rt、Path=/、HttpOnly、SameSite=Lax、Secure 条件（AUTH_SVC_HTTP_COOKIE_SECURE）；refresh 只写 Cookie 不回 token body（R2：前端 request.js refreshing 单飞契约）
+- service 层 DeviceFP（R3）：LoginWithFP/RefreshTokenWithFP——rt 签发绑定 X-Device-FP，刷新 FP 不匹配拒绝（空 FP 兼容旧客户端）；跨设备重放 401 实测
+- change-password 只走 token 模式（R4）：changePasswordToken 优先/回退 at（Cookie→Bearer），**绝不接受 body.user_id 直调**（gRPC 内部语义 HTTP 化即越权——已堵）；改密后会话终局清 Cookie
+- 注册审批（R6）：Register 仅 HTTP（gRPC proto 零改动），默认 Status=pending 须 admin approve/reject（与 controlplane 安全基线一致）；CreateUser 补 Password 字段消费（注册密码真实落库）
+- 9 测试：Cookie 逐字段比对/refresh 单飞/DeviceFP 跨设备+空 FP 兼容/首登改密流全程/注册 pending→拒登→approve→可登→重复审批 409/用户枚举防护（统一 401）/me+logout 吊销
+
+### A2：安全能力补齐（1761793，7 测试全绿 CI 绿）
+
+- `internal/http/guard.go`：loginGuard 两道闸（与 controlplane auth.go:392-414 参数逐字一致）——IP 令牌桶 burst=5/refill≈1/6s（10/min）+ 账号锁定 5 次/15min 窗口锁 15min（进程内 MVP，多副本 Redis 共享留独立立项——R7 声明）；挂 login/register 入口，失败计数/成功复位
+- `internal/http/password.go`：validateStrongPassword（≥8+大小写+数字，controlplane 同规则集）；挂 register+change-password 新密码
+- `main.go` rotateDefaultAdminPassword：admin/admin123 bcrypt 命中才轮换（幂等）→ 16 字节 hex 随机口令仅打印一次 → **SetMustChangePassword 置回 true**（ChangePassword 语义清标记——轮换非用户改密，首登强制保持，controlplane 同语义）
+- store 加 SetMustChangePassword（接口+Memory+MySQL）：UpdateUser 只更新 Email/Status/RoleIDs 不支持标记字段——轮换需要独立方法
+- 7 测试：guard IP 桶/账号锁/窗口重置/网关锁定集成（5 次错密触发+正确密码 429 locked）/弱口令注册 400/强口令 201/admin 轮换序列（清标记→置回→口令哈希不变）
+
+### CI 修复链
+
+- E2E exit 124（超时）→ 重跑 success（flaky：auth-svc 不进 E2E 整栈——compose 只 build controlplane+agent）
+- 测试设计修正：账号锁集成用例 4 次<阈值 5 改为 5 次错密+第 6 次正确密码被拒；IP 闸与账号闸分散 IP 隔离验证
+
 ## [Unreleased] — 2026-09-09 D2：Discovery 真实化（1e1d0aa）
 
 > device-svc 的 StartDiscovery 从硬编码 stub（写死 FoundDevices=3/ScannedHosts=254）替换为真实 Sweep 存活扫描——侦察确认 18 项 device-svc 缺口中网络发现先落地（其余自动纳管链属 D3 独立立项）。
