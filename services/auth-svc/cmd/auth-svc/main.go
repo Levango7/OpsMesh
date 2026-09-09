@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net"
@@ -50,6 +52,12 @@ func main() {
 	eng := auth.NewEngine(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 
 	svc := service.NewService(eng, st)
+
+	// A2 admin 弱口令轮换（与 controlplane rotateDefaultAdminPassword 同语义）：
+	// seed 的 admin/admin123 若仍是弱口令，启动时换为随机口令（仅打印一次日志），
+	// MustChangePassword=true 保持——即使管理员不改密，已知弱口令也无法登录。
+	rotateDefaultAdminPassword(st)
+
 	srv := server.NewServer(svc)
 
 	grpcServer := grpc.NewServer(
@@ -152,4 +160,47 @@ func main() {
 	}
 
 	log.Println("Server stopped")
+}
+
+// rotateDefaultAdminPassword admin 弱口令启动轮换（A2，与 controlplane
+// auth.go:336 rotateDefaultAdminPassword 同语义）：
+//   - 仅当 admin 当前密码仍是 seed 弱口令 "admin123"（bcrypt 比对命中）时才重置，
+//     幂等——管理员已改密则不覆盖；MemoryStore 每次启动新实例会重置（预期），
+//     MySQLStore 持久化后重启不重复重置；
+//   - 随机口令 16 字节 hex（crypto/rand），仅打印一次日志（须妥善保管）；
+//   - MustChangePassword=true 保持：首登强制改密语义与 controlplane 安全债一致。
+func rotateDefaultAdminPassword(st store.Store) {
+	u := st.GetUserByUsername("admin")
+	if u == nil {
+		return
+	}
+	if !auth.VerifyPassword(u.PasswordHash, "admin123") {
+		return // 管理员已改密：不覆盖。
+	}
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		log.Printf("[auth-svc] admin 弱口令轮换失败（crypto/rand 不可用，保持原口令+强制改密兜底）: %v", err)
+		return
+	}
+	newPass := hex.EncodeToString(b)
+	hash, err := auth.HashPassword(newPass)
+	if err != nil {
+		log.Printf("[auth-svc] admin 弱口令轮换哈希失败: %v", err)
+		return
+	}
+	if err := st.ChangePassword(u.ID, hash); err != nil {
+		log.Printf("[auth-svc] admin 弱口令轮换落库失败: %v", err)
+		return
+	}
+	// ChangePassword 语义会清 MustChangePassword=false（正常用户改密完成）——
+	// 轮换不是用户主动改密，标记须置回 true（首登强制改密保持，与 controlplane
+	// rotateDefaultAdminPassword 的"改密后恢复标记"同语义）。
+	if err := st.SetMustChangePassword(u.ID, true); err != nil {
+		log.Printf("[auth-svc] admin 轮换置回 MustChangePassword 失败: %v", err)
+	}
+	log.Printf("============================================================")
+	log.Printf("[auth-svc] 安全提示：默认 admin 弱口令(admin123)已替换为随机口令。")
+	log.Printf("[auth-svc]   一次性随机密码（请立即复制并登录后修改）: %s", newPass)
+	log.Printf("[auth-svc]   MustChangePassword=true 保持：首登仍强制改密。")
+	log.Printf("============================================================")
 }

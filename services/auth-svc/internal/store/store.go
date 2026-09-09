@@ -245,6 +245,18 @@ func (s *MemoryStore) ChangePassword(userID, newHash string) error {
 	return nil
 }
 
+// SetMustChangePassword 置首登强制改密标记（A2 admin 轮换：ChangePassword 清标记后置回）。
+func (s *MemoryStore) SetMustChangePassword(userID string, mustChange bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, ok := s.users[userID]
+	if !ok {
+		return fmt.Errorf("user not found")
+	}
+	u.MustChangePassword = mustChange
+	return nil
+}
+
 // --- Role operations ---
 
 // GetRole returns a role by ID.

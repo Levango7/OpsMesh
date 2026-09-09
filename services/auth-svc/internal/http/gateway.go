@@ -39,12 +39,23 @@ const (
 type Gateway struct {
 	svc          *service.Service
 	cookieSecure bool
+	guard        *loginGuard // A2 防爆破（login/register 入口）
 }
 
 // NewGateway 构造 Gateway。cookieSecure 由 main 注入（AUTH_SVC_HTTP_COOKIE_SECURE
 // 显式配置，或 TLS 推断——与 controlplane cookieSecure 同语义）。
 func NewGateway(svc *service.Service, cookieSecure bool) *Gateway {
-	return &Gateway{svc: svc, cookieSecure: cookieSecure}
+	return &Gateway{svc: svc, cookieSecure: cookieSecure, guard: newLoginGuard()}
+}
+
+// clientIP 提取客户端 IP（httptest 场景 RemoteAddr 可靠；代理场景留待部署层
+// X-Forwarded-For 处理——与 controlplane 同限制，MVP 直连语义）。
+func clientIP(r *http.Request) string {
+	host := r.RemoteAddr
+	if i := strings.LastIndex(host, ":"); i > 0 {
+		host = host[:i]
+	}
+	return host
 }
 
 // setCookie 与 controlplane setCookie 逐字段对齐（R1：同名 Cookie 语义必须一致）。
@@ -108,15 +119,29 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "username and password are required")
 		return
 	}
+	// A2 防爆破两道闸（与 controlplane loginGuard 同参数）：
+	// IP 令牌桶（429）+ 账号锁定（423 Locked 语义，此处用 429 统一——与
+	// controlplane 一致：账号锁定同样以"拒绝"呈现，不区分码，防探测锁定状态）。
+	if !g.guard.allowIP(clientIP(r)) {
+		writeError(w, http.StatusTooManyRequests, "too many attempts from this IP")
+		return
+	}
+	if g.guard.accountLocked(body.Username) {
+		writeError(w, http.StatusTooManyRequests, "account temporarily locked")
+		return
+	}
 	resp, err := g.svc.LoginWithFP(r.Context(), &authv1.LoginRequest{
 		Username: body.Username,
 		Password: body.Password,
 	}, deviceFP(r))
 	if err != nil {
+		// 失败计入账号锁定计数（成功才复位——与 controlplane 同语义）。
+		g.guard.recordFail(body.Username)
 		// 统一 401（不区分"用户不存在/密码错/非 active"——防用户名枚举，controlplane 同语义）。
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
+	g.guard.recordSuccess(body.Username)
 	// at 写 Cookie；rt 仅常规登录写（首登改密流不写 rt——与 controlplane 一致）。
 	g.setCookie(w, accessTokenCookieName, resp.AccessToken, int(resp.ExpiresIn))
 	if resp.RefreshToken != "" {
@@ -191,7 +216,16 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "username and password are required")
 		return
 	}
-	// A2 批会加强口令校验；本批先走 pending 流（弱口令用户无法登录，pending 天然拦截）。
+	// A2 防爆破：注册入口同样过 IP 令牌桶（与 controlplane loginGuard 挂注册端点同语义）。
+	if !g.guard.allowIP(clientIP(r)) {
+		writeError(w, http.StatusTooManyRequests, "too many attempts from this IP")
+		return
+	}
+	// A2 强口令校验（与 controlplane validateStrongPassword 同规则集）。
+	if msg := validateStrongPassword(body.Password); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
 	if _, err := g.svc.CreateUser(r.Context(), &authv1.CreateUserRequest{
 		Username: body.Username,
 		Password: body.Password,
@@ -234,6 +268,11 @@ func (g *Gateway) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.NewPassword == "" {
 		writeError(w, http.StatusBadRequest, "oldPassword and newPassword are required")
+		return
+	}
+	// A2 强口令校验（新密码必须满足强度规则——与 controlplane 改密路径同语义）。
+	if msg := validateStrongPassword(body.NewPassword); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 	// userID 解析：首登 token 优先，回退常规 at（Cookie → Authorization Bearer）。

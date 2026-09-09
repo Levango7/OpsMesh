@@ -21,6 +21,9 @@ type Store interface {
 	UpdateUser(u *User) error
 	DeleteUser(id string) error
 	ChangePassword(userID, newHash string) error
+	// SetMustChangePassword 置首登强制改密标记（A2 admin 轮换专用——ChangePassword
+	// 语义会清标记（正常用户改密完成），轮换后须显式置回 true）。
+	SetMustChangePassword(userID string, mustChange bool) error
 	GetRole(id string) *Role
 	GetRoleByName(name string) *Role
 	ListRoles() []*Role
@@ -340,6 +343,26 @@ func (s *MySQLStore) ChangePassword(userID, newHash string) error {
 	)
 	if err != nil {
 		return fmt.Errorf("update password: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
+// SetMustChangePassword 置首登强制改密标记（A2 admin 轮换：ChangePassword 清标记后置回）。
+func (s *MySQLStore) SetMustChangePassword(userID string, mustChange bool) error {
+	val := 0
+	if mustChange {
+		val = 1
+	}
+	res, err := s.db.Exec(
+		"UPDATE users SET must_change_password = ? WHERE id = ?",
+		val, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("set must-change-password: %w", err)
 	}
 	rows, _ := res.RowsAffected()
 	if rows == 0 {
