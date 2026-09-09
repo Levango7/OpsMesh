@@ -17,6 +17,7 @@ import (
 
 	authv1 "github.com/Levango7/OpsMesh/services/auth-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/auth"
+	httpgw "github.com/Levango7/OpsMesh/services/auth-svc/internal/http"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/server"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/store"
@@ -83,6 +84,16 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready"))
 	})
+
+	// A1 HTTP 网关（方案 B 用户中心后端）：AUTH_SVC_HTTP_ENABLED 默认 false——
+	// 关闭时 auth-svc 仅 gRPC+health，与 controlplane 并存期不产生双轨 Cookie 冲突（R1）。
+	if cfg.HTTPEnabled {
+		gw := httpgw.NewGateway(svc, cfg.CookieSecure)
+		gw.RegisterRoutes(mux)
+		log.Printf("HTTP gateway enabled (AUTH_SVC_HTTP_ENABLED=true) — cookie_secure=%v", cfg.CookieSecure)
+	} else {
+		log.Printf("HTTP gateway disabled (default) — auth-svc serves gRPC only; controlplane remains the sole login entry")
+	}
 
 	corsConfig := security.CORSConfig{
 		AllowedOrigins: []string{"https://opsmesh.io", "https://app.opsmesh.io"},

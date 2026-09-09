@@ -40,6 +40,13 @@ func NewService(engine *auth.Engine, st store.Store) *Service {
 	}
 }
 
+// Store 暴露内部 store 供 HTTP 网关使用（注册审批的 pending 覆盖/用户详情直读）。
+// 网关只做读+状态字段写，业务逻辑仍走 service 方法——暴露 store 是受控妥协
+// （审批流需要 UpdateUser 细粒度字段控制，proto 未覆盖该语义）。
+func (s *Service) Store() store.Store {
+	return s.store
+}
+
 // changePasswordTokenTTL is the TTL for the short-lived change-password token.
 // mustChangePassword=true 用户登录时不签发常规全量 token，仅签发此短时效 token（5min），
 // 语义对齐 internal/controlplane/auth_login.go 的 internal 轨实现（changePasswordTokenExpiry）。
@@ -69,7 +76,26 @@ func (s *Service) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.
 	if u.MustChangePassword {
 		return s.issueChangePasswordTokens(u)
 	}
-	return s.issueTokens(u)
+	return s.issueTokens(u, "")
+}
+
+// LoginWithFP 带设备指纹的登录（A1 HTTP 网关专用——gRPC proto 不含 FP 字段，
+// HTTP 层从 X-Device-FP 头读取后走本方法；语义与 Login 一致 + FP 绑定 rt）。
+func (s *Service) LoginWithFP(ctx context.Context, req *authv1.LoginRequest, deviceFP string) (*authv1.TokenResponse, error) {
+	u := s.store.GetUserByUsername(req.Username)
+	if u == nil {
+		return nil, ErrInvalidCredentials
+	}
+	if u.Status != "active" {
+		return nil, ErrInvalidCredentials
+	}
+	if !auth.VerifyPassword(u.PasswordHash, req.Password) {
+		return nil, ErrInvalidCredentials
+	}
+	if u.MustChangePassword {
+		return s.issueChangePasswordTokens(u)
+	}
+	return s.issueTokens(u, deviceFP)
 }
 
 // issueChangePasswordTokens issues a short-lived change-password-only token set
@@ -112,12 +138,27 @@ func (s *Service) Logout(ctx context.Context, req *authv1.LogoutRequest) (*empty
 // mustChangePassword=true 的用户即使持有效 refresh token 也不签发常规全量 token
 // （与 Login 同语义，防止经刷新通道绕过首登强制改密）。
 func (s *Service) RefreshToken(ctx context.Context, req *authv1.RefreshTokenRequest) (*authv1.TokenResponse, error) {
-	tokenHash := auth.HashRefreshToken(req.RefreshToken)
+	return s.refreshTokenFP(ctx, req.RefreshToken, "")
+}
+
+// RefreshTokenWithFP 带设备指纹的刷新（A1 HTTP 网关专用）：FP 非空且与签发时不匹配
+// → 拒绝（防 rt 被盗后跨设备重放；空 FP 兼容旧客户端，controlplane 同语义）。
+func (s *Service) RefreshTokenWithFP(ctx context.Context, refreshToken, deviceFP string) (*authv1.TokenResponse, error) {
+	return s.refreshTokenFP(ctx, refreshToken, deviceFP)
+}
+
+func (s *Service) refreshTokenFP(_ context.Context, refreshToken, deviceFP string) (*authv1.TokenResponse, error) {
+	tokenHash := auth.HashRefreshToken(refreshToken)
 	rt, ok := s.store.ConsumeRefreshToken(tokenHash)
 	if !ok {
 		return nil, ErrTokenInvalid
 	}
 	if time.Now().After(rt.ExpiresAt) {
+		return nil, ErrTokenInvalid
+	}
+	// 设备指纹校验（A1）：签发时绑定了非空 FP 且本次携带的 FP 不匹配 → 视为跨设备重放拒绝。
+	// 签发时 FP 为空（旧客户端）不校验——与 controlplane 的向后兼容语义一致。
+	if rt.DeviceFP != "" && deviceFP != rt.DeviceFP {
 		return nil, ErrTokenInvalid
 	}
 	u := s.store.GetUser(rt.UserID)
@@ -127,7 +168,7 @@ func (s *Service) RefreshToken(ctx context.Context, req *authv1.RefreshTokenRequ
 	if u.MustChangePassword {
 		return nil, ErrTokenInvalid
 	}
-	return s.issueTokens(u)
+	return s.issueTokens(u, deviceFP)
 }
 
 // ValidateToken validates an access token.
@@ -172,7 +213,11 @@ func (s *Service) CreateUser(ctx context.Context, req *authv1.CreateUserRequest)
 	if req.Username == "" || req.Password == "" {
 		return nil, errors.New("username and password are required")
 	}
-	_, err := s.store.CreateUser(&store.User{
+	hash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+	_, err = s.store.CreateUser(&store.User{
 		Username: req.Username,
 		Email:    req.Email,
 		RoleIDs:  req.RoleIds,
@@ -184,10 +229,8 @@ func (s *Service) CreateUser(ctx context.Context, req *authv1.CreateUserRequest)
 		return nil, err
 	}
 	u := s.store.GetUserByUsername(req.Username)
-	hash, err := auth.HashPassword(req.Password)
-	if err != nil {
-		return nil, fmt.Errorf("failed to hash password: %w", err)
-	}
+	// store.CreateUser 不落 PasswordHash（建用户与密码解耦），密码经
+	// ChangePassword 二次写入——hash 已在上方算好，此处直接复用。
 	s.store.ChangePassword(u.ID, hash)
 	return toProtoUser(u), nil
 }
@@ -384,7 +427,9 @@ func (s *Service) ListPermissions(ctx context.Context, _ *emptypb.Empty) (*authv
 }
 
 // issueTokens issues access and refresh tokens for a user.
-func (s *Service) issueTokens(u *store.User) (*authv1.TokenResponse, error) {
+// deviceFP 为设备指纹（A1 安全对齐 controlplane）：签发 rt 时绑定——非空时刷新必须
+// 匹配（防 token 被盗后跨设备重放）；空=旧客户端兼容不校验（controlplane 同语义）。
+func (s *Service) issueTokens(u *store.User, deviceFP string) (*authv1.TokenResponse, error) {
 	permissions := s.expandPermissions(u)
 	accessToken, expiresIn, err := s.jwtEngine.IssueToken(u.ID, u.Username, u.RoleIDs, permissions)
 	if err != nil {
@@ -398,6 +443,7 @@ func (s *Service) issueTokens(u *store.User) (*authv1.TokenResponse, error) {
 		TokenHash: auth.HashRefreshToken(refreshToken),
 		UserID:    u.ID,
 		TenantID:  "default",
+		DeviceFP:  deviceFP,
 		ExpiresAt: time.Now().Add(s.jwtEngine.RefreshTokenTTL()),
 		CreatedAt: time.Now(),
 	})
