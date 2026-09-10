@@ -4,7 +4,27 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
-## [Unreleased] — 2026-09-10 D3：device-svc 自动纳管闭环（36cc7e1 + 83ff207）
+## [Unreleased] — 2026-09-10 双轨观察 GH Actions 落地 + 双 NULL 扫描 bug 清剿（07447da → 9506f8c）
+
+> TD-60 A-2 阶段 2 启动：task-svc 影子双轨对照观察在 GitHub Actions 免费跑（用户设备需休息，用户拍板云端方案）。观察栈本身首战即抓出两个生产路径真 bug。
+
+### 双轨观察免费跑（07447da + 67bc7a7 + a3aaf7e）
+
+- `shadow-observe.yml`：手动 workflow_dispatch（时长 10-360min 参数）——起观察栈 → ALTER 补齐 task-svc SELECT 缺列（controlplane tasks 表缺 approval_required/approved_by/approved_at/batch_id 4 列，schema 断层登记为切流课题）→ 灌种子定时模板（每分钟 cron）→ 观察期 → 双栈日志对照（controlplane logx JSON `"fired":N` vs task-svc `[shadow] fire_would_fire=N`）→ summary 报告 + 14 天工件留存
+- `docker-compose.shadow-observe.yaml`：controlplane + task-svc（`TASK_SVC_SHADOW_MODE=true` + 同库 SQL store）+ mysql 三容器，不带 agent/redis（观察栈无真实执行）
+- task-svc 镜像构建走根级 `Dockerfile.service` 模板（`replace opsmesh => ../../` 单服务目录上下文必炸——release.yml 同结论）；task-svc MySQL 连接预检 + 失败重启重试（connection refused 回退 memory 后不再重试的坑）
+
+### 双 NULL 扫描 bug（观察栈首战战果，生产路径真缺陷）
+
+- **controlplane FireDueSchedules**（f55192d）：`Scan error on column "content": converting NULL to string` —— tasks 表 content TEXT 允许 NULL，裸 string 承接遇 NULL 每轮静默失败，定时派生全停；修复=content/command/path 三列 NullString（同文件其他 3 处扫描的既有模式唯独此处遗漏）
+- **task-svc scanTasks/scanAllTasks**（9506f8c）：孪生 bug——同一 schema 同一陷阱，裸 `&t.Content/&t.ClaimedAt` 承接 NULL 静默丢行，AllTasks 返回空表（影子评估恒 0 任务的根因）；修复=6 列 NullString + 2 列 NullTime
+- **task-svc AllTasks 加 last_fired_at**（a3aaf7e）：原 A-1 已知限制（SELECT 不含该列）——影子读不到 controlplane 回写的派生去重标记，每 tick 恒报 fire_would_fire=2 与实际脱节；加列 + 独立 scanAllTasks（其余 4 SELECT 不动）
+
+### device-svc ProvisionStore 修复（07447da）
+
+- main.go sql 模式下 NewService/NewGateway 的 ProvisionStore 参数硬编码 memStore（设备四 store 切 MySQL 后 token 仍走内存 fallback 实例）；修复=独立 provisionStore 实例 + `DEVICE_SVC_PROVISION_SECRET` 注入 SetSecret（token 15min 一次性短时效，进程内生命周期足够——controlplane 同现状）
+
+
 
 > TD-60 阶段 2 设备域收官：device-svc 补齐自动纳管能力链（install token 签发消费 + bootstrap 资产分发 + SSH 推送编排）。安全设计文档经用户审核通过后分四批实施（D3-a/b → D3-c/d 按风险递增）。双轨原则：与 controlplane AutoProvision 行为等价、零触碰现有路径。
 
