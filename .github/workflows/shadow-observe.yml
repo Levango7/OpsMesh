@@ -60,10 +60,14 @@ jobs:
           echo "seed=$SEED" >> "$GITHUB_OUTPUT"
 
       - name: 构建镜像（controlplane + agent + task-svc）
+        # task-svc 镜像走根级 Dockerfile.service 模板（上下文=仓库根）：
+        # services/task-svc/go.mod 有 replace opsmesh => ../../，单服务目录
+        # 上下文构建时容器内无主模块，go mod verify 必炸（release.yml 同结论，
+        # 见其 Build Docker image 步注释）。
         run: |
           docker build -f Dockerfile -t opsmesh/controlplane:dev .
           docker build -f Dockerfile.agent -t opsmesh/agent:dev .
-          docker build -f services/task-svc/Dockerfile -t opsmesh/task-svc:dev services/task-svc
+          docker build -f Dockerfile.service --build-arg SERVICE=task-svc -t opsmesh/task-svc:dev .
 
       - name: 起观察栈（docker compose -f docker-compose.shadow-observe.yaml）
         run: |

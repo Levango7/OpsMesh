@@ -29,9 +29,9 @@ services:
     restart: unless-stopped
 
   task-svc:
-    build:
-      context: services/task-svc
-      dockerfile: Dockerfile
+    # 镜像由 workflow 预构建（根级 Dockerfile.service 模板，上下文=仓库根——
+    # 单服务目录上下文会因 go.mod replace opsmesh=>../../ 而失败，见
+    # shadow-observe.yml 构建步注释）。compose 只消费 image 名，不再触发 build。
     image: opsmesh/task-svc:dev
     environment:
       # 同库只读观察：SQL store 读 controlplane 建的 tasks 表 + shadow 模式只评估不写入。
