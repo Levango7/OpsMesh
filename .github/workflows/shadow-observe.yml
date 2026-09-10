@@ -1,0 +1,171 @@
+# shadow-observe.yml — task-svc 影子模式双轨观察（TD-60 A-2 阶段 2）。
+#
+# 背景：task-svc 已补齐与 controlplane 4 循环同判定逻辑的 scheduler（A-1）+
+# 只读影子评估循环（S1，TASK_SVC_SHADOW_MODE=true）。切流（50/50）前需要
+# 双轨对照观察：同一数据源（MySQL）上，task-svc 影子引擎评估的 fire/reclaim
+# 期望与 controlplane 实际产出持续趋零 → 双轨行为一致 → 具备切流条件。
+#
+# 用户设备需休息 → 本 workflow 在 GitHub Actions 免费跑（用户拍板）。
+#
+# 触发：手动 workflow_dispatch（带观察时长参数，默认 30 分钟，上限 360）。
+# 不挂 push/schedule——免费额度友好，按需跑。
+#
+# 拓扑（docker-compose.shadow-observe.yaml）：
+#   mysql:8（task 数据源，两栈共享）
+#   controlplane（--store=mysql，正常跑 4 循环产出 fired 日志）
+#   task-svc（TASK_SVC_STORE_TYPE=sql 同库 + TASK_SVC_SHADOW_MODE=true 只读评估）
+#
+# 对照物：
+#   controlplane 日志 "定时任务派生 fired=N"（server_tasks.go scheduleLoop 实际产出）
+#   task-svc 日志 "[shadow] fire_would_fire=N ..."（shadow.go evaluate 影子期望）
+#   两者按观察窗聚合对比；差异行进 job summary。
+#
+# 数据注入：观察栈无真实流量，用 mysql client 灌 2 条种子定时模板
+#（每分钟触发的 cron），让两引擎在观察期内有真实评估对象。
+name: shadow-observe
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: '观察时长（分钟，10-360）'
+        required: false
+        default: '30'
+      seed_schedules:
+        description: '灌入的定时模板数（每分钟触发）'
+        required: false
+        default: '2'
+
+jobs:
+  shadow-observe:
+    name: Shadow Observe (双轨对照)
+    runs-on: ubuntu-latest
+    timeout-minutes: 400 # GH 单 job 上限 360min + 余量
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 解析参数
+        id: params
+        run: |
+          DUR="${{ github.event.inputs.duration_minutes }}"
+          SEED="${{ github.event.inputs.seed_schedules }}"
+          # 边界钳制：10-360 分钟；种子 1-10 条
+          DUR=$(echo "$DUR" | grep -E '^[0-9]+$' || echo 30)
+          [ "$DUR" -lt 10 ] && DUR=10
+          [ "$DUR" -gt 360 ] && DUR=360
+          SEED=$(echo "$SEED" | grep -E '^[0-9]+$' || echo 2)
+          [ "$SEED" -lt 1 ] && SEED=1
+          [ "$SEED" -gt 10 ] && SEED=10
+          echo "duration=$DUR" >> "$GITHUB_OUTPUT"
+          echo "seed=$SEED" >> "$GITHUB_OUTPUT"
+
+      - name: 构建镜像（controlplane + agent + task-svc）
+        run: |
+          docker build -f Dockerfile -t opsmesh/controlplane:dev .
+          docker build -f Dockerfile.agent -t opsmesh/agent:dev .
+          docker build -f services/task-svc/Dockerfile -t opsmesh/task-svc:dev services/task-svc
+
+      - name: 起观察栈（docker compose -f docker-compose.shadow-observe.yaml）
+        run: |
+          docker compose -f docker-compose.shadow-observe.yaml up -d --wait
+          # 健康检查：controlplane 90s 内就绪
+          for i in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
+              echo "controlplane 就绪（${i}x2s）"; break
+            fi
+            sleep 2
+            if [ "$i" = "45" ]; then
+              echo "controlplane 未就绪；容器状态："; docker compose -f docker-compose.shadow-observe.yaml ps
+              docker compose -f docker-compose.shadow-observe.yaml logs --tail=50; exit 1
+            fi
+          done
+          # task-svc shadow 启动确认（日志含影子模式启动行）
+          sleep 5
+          docker compose -f docker-compose.shadow-observe.yaml logs task-svc 2>&1 | grep -E "影子模式|shadow" | head -3 || true
+
+      - name: 补齐 task-svc SELECT 所需列（观察栈 schema 对齐）
+        # controlplane tasks 表（migrations/001）不含 task-svc SELECT 的
+        # approval_required/approved_by/approved_at/batch_id 4 列——不补齐则
+        # task-svc AllTasks 报错返回空，shadow 评估退化为空数据（对照失效）。
+        # 观察栈内打补丁（ALTER IF NOT EXISTS 语义用 information_schema 判断）；
+        # 列缺失本体是切流阶段 schema 统一课题，此处仅测试环境对齐。
+        run: |
+          for col in approval_required approved_by approved_at batch_id; do
+            docker compose -f docker-compose.shadow-observe.yaml exec -T mysql \
+              mysql -uopsmesh -popsmesh opsmesh -e \
+              "SELECT COUNT(*) INTO @exists FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='opsmesh' AND TABLE_NAME='tasks' AND COLUMN_NAME='$col'; \
+               SET @ddl = IF(@exists=0, 'ALTER TABLE tasks ADD COLUMN $col VARCHAR(64) DEFAULT ''''', 'SELECT 1'); \
+               PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;"
+          done
+          docker compose -f docker-compose.shadow-observe.yaml exec -T mysql \
+            mysql -uopsmesh -popsmesh opsmesh -e "SHOW COLUMNS FROM tasks LIKE 'batch_id'"
+
+      - name: 灌种子定时模板（每分钟触发的 cron 模板任务）
+        run: |
+          SEED=${{ steps.params.outputs.seed }}
+          # controlplane 需先有任务表结构：等待 store 自动建表完成（compose 内
+          # controlplane 启动即建），再经 mysql client 直插模板任务。
+          # 字段与 internal/store schema 对齐：ParentID 空 + Schedule 非空 = 模板。
+          for i in $(seq 1 30); do
+            if docker compose -f docker-compose.shadow-observe.yaml exec -T mysql \
+              mysql -uopsmesh -popsmesh opsmesh -e "SELECT 1 FROM tasks LIMIT 1" >/dev/null 2>&1; then
+              break; fi
+            sleep 2
+          done
+          # 灌 SEED 条每分钟模板（tenant default，shell 类型，task_id 主键防重）。
+          # 列名对齐 internal/store/migrations/001_initial.sql 的 tasks 表
+          #（task_id/schedule/parent_id/last_fired_at）；失败不阻断观察——
+          # 降级为空栈基线噪音对照，两引擎对零数据的评估一致性同样有效。
+          for j in $(seq 1 "$SEED"); do
+            docker compose -f docker-compose.shadow-observe.yaml exec -T mysql \
+              mysql -uopsmesh -popsmesh opsmesh -e \
+              "INSERT INTO tasks (task_id, tenant_id, agent_id, type, command, status, schedule, parent_id, created_at) VALUES ('shadow-seed-$j', 'default', 'agent-1', 'shell', 'echo shadow-seed-$j', 'pending', '* * * * *', '', NOW()) ON DUPLICATE KEY UPDATE schedule='* * * * *'" \
+              && echo "seed-$j 灌入成功" || echo "seed-$j 灌入失败（观察降级为空栈基线）"
+          done
+
+      - name: 观察期（双栈并行运行）
+        run: |
+          DUR=${{ steps.params.outputs.duration }}
+          echo "开始 ${DUR} 分钟观察：controlplane 实际产出 vs task-svc 影子期望..."
+          sleep $((DUR * 60))
+
+      - name: 采集双栈日志并生成对照报告
+        if: always()
+        run: |
+          mkdir -p shadow-report
+          docker compose -f docker-compose.shadow-observe.yaml logs controlplane > shadow-report/controlplane.log 2>&1 || true
+          docker compose -f docker-compose.shadow-observe.yaml logs task-svc > shadow-report/task-svc.log 2>&1 || true
+          # 提取对照行
+          grep -oE "定时任务派生.*fired=[0-9]+" shadow-report/controlplane.log | tail -100 > shadow-report/controlplane-fired.txt || true
+          grep -oE "fire_would_fire=[0-9]+" shadow-report/task-svc.log | tail -100 > shadow-report/task-svc-shadow.txt || true
+          # 汇总
+          CP_TOTAL=$(grep -oE 'fired=[0-9]+' shadow-report/controlplane-fired.txt 2>/dev/null | cut -d= -f2 | paste -sd+ | bc)
+          SH_TOTAL=$(grep -oE 'fire_would_fire=[0-9]+' shadow-report/task-svc-shadow.txt 2>/dev/null | cut -d= -f2 | paste -sd+ | bc)
+          CP_TOTAL=${CP_TOTAL:-0}; SH_TOTAL=${SH_TOTAL:-0}
+          {
+            echo "# 双轨观察报告"
+            echo ""
+            echo "- 观察时长: ${{ steps.params.outputs.duration }} 分钟"
+            echo "- 种子模板: ${{ steps.params.outputs.seed }} 条（每分钟 cron）"
+            echo "- controlplane 实际 fired 合计: $CP_TOTAL"
+            echo "- task-svc 影子 fire_would_fire 合计: $SH_TOTAL"
+            echo ""
+            echo "## 判读"
+            echo "- 两值同量级 → 双轨行为一致（切流就绪信号之一）"
+            echo "- 差异显著 → 抓取 shadow-report/ 工件内日志比对评估细节"
+            echo "- 注意：影子循环 5min 一轮、controlplane 30s 一轮，采样密度不同，"
+            echo "  期望值为同量级而非严格相等；每分钟模板在观察窗 N 分钟内期望约 N×种子数（影子侧按 5min tick 折算）"
+          } > shadow-report/summary.md
+          cat shadow-report/summary.md
+
+      - name: 上传观察工件
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shadow-observe-report
+          path: shadow-report/
+          retention-days: 14
+
+      - name: 清理
+        if: always()
+        run: docker compose -f docker-compose.shadow-observe.yaml down -v

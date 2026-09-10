@@ -59,6 +59,16 @@ func main() {
 			defer func() { _ = ms.Close() }()
 		}
 	}
+	// D3 ProvisionStore：独立 MemoryStore + 配置密钥。设备四 store 可切 MySQL，
+	// 但 install token 是 15min 一次性短时效凭证——进程内生命周期足够
+	//（controlplane 同现状：重启后未消费 token 全部作废是安全特性而非缺陷），
+	// 不随设备数据落库（MySQLStore 无 token 表，加表超出 D3 范围）。
+	// 独立实例而非复用 memStore：避免 sql 模式下 memStore 只作 fallback 却被
+	// token 写入的混淆。ProvisionSecret 空=issueTokenLocked 随机兜底（重启轮换）。
+	provisionStore := store.NewMemoryStore()
+	if cfg.ProvisionSecret != "" {
+		provisionStore.SetSecret(cfg.ProvisionSecret)
+	}
 
 	tenantMgr := tenant.NewManager(nil, nil, map[tenant.ResourceType]int{
 		tenant.ResourceDevices:  100,
@@ -69,7 +79,7 @@ func main() {
 		tenant.ResourceAPIKeys:  5,
 	})
 
-	svc := service.NewService(ds, as, cs, disc, memStore, tenantMgr)
+	svc := service.NewService(ds, as, cs, disc, provisionStore, tenantMgr)
 	// D3 自动纳管配置注入（默认关闭；需显式启用 + 配置 SSH 私钥才推送）。
 	svc.SetAutoProvisionConfig(&service.AutoProvisionConfig{
 		Enabled:           cfg.AutoProvision,
@@ -124,7 +134,7 @@ func main() {
 	if advertiseAddr == "" {
 		advertiseAddr = fmt.Sprintf("http://127.0.0.1:%d", cfg.HTTPPort)
 	}
-	httpGateway := httpgw.NewGateway(ds, as, cs, disc, memStore, advertiseAddr)
+	httpGateway := httpgw.NewGateway(ds, as, cs, disc, provisionStore, advertiseAddr)
 	httpGateway.RegisterRoutes(mux, func(h http.Handler) http.Handler { return h })
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

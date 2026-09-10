@@ -1,0 +1,61 @@
+# docker-compose.shadow-observe.yaml — 双轨观察栈（shadow-observe.yml 专用）。
+#
+# 拓扑：controlplane（实际产出）+ task-svc（影子只读评估）共享同一 MySQL 任务库。
+# 双轨对照：controlplane scheduleLoop 每 30s FireDueSchedules 派生实例（日志
+# "定时任务派生 fired=N"）vs task-svc ShadowLoop 每 5min 只读评估
+#（日志 "[shadow] fire_would_fire=N ..."）。数值同量级 → 双轨一致 → 切流就绪。
+#
+# 不复用 docker-compose.yaml：观察栈不要 agent（无真实执行）不要 Redis
+#（controlplane 本地降级）且 task-svc 需要独立 compose 注入 shadow 开关。
+services:
+  controlplane:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: opsmesh/controlplane:dev
+    command:
+      - --mode=controlplane
+      - --store=mysql
+      - --mysql-dsn=opsmesh:opsmesh@tcp(mysql:3306)/opsmesh?parseTime=true
+      - --advertise-addr=http://controlplane:8080
+      - --demo
+    ports:
+      - "8080:8080"
+    environment:
+      OPSMESH_JWT_SECRET: shadow-observe-jwt-secret-not-for-prod-32b
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  task-svc:
+    build:
+      context: services/task-svc
+      dockerfile: Dockerfile
+    image: opsmesh/task-svc:dev
+    environment:
+      # 同库只读观察：SQL store 读 controlplane 建的 tasks 表 + shadow 模式只评估不写入。
+      TASK_SVC_STORE_TYPE: sql
+      TASK_SVC_DSN: opsmesh:opsmesh@tcp(mysql:3306)/opsmesh?parseTime=true
+      TASK_SVC_SHADOW_MODE: "true"
+      TASK_SVC_GRPC_PORT: "50052"
+      TASK_SVC_HTTP_PORT: "8081"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: shadow-root
+      MYSQL_DATABASE: opsmesh
+      MYSQL_USER: opsmesh
+      MYSQL_PASSWORD: opsmesh
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
+    restart: unless-stopped
