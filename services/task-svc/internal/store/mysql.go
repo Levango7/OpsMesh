@@ -153,11 +153,42 @@ func (s *MySQLStore) scanTasks(rows *sql.Rows) []*models.Task {
 		var t models.Task
 		var dependsOn sql.RawBytes
 		var deadLetter, approvalRequired int
-		if err := rows.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &t.Command, &t.Content, &t.Path, &t.Status,
-			&t.ClaimedBy, &t.ClaimedAt, &t.ClaimEpoch, &t.CreatedAt, &t.RetryCount, &t.MaxRetries,
+		// NULL 兼容：tasks 表 content/claimed_by/approved_by/batch_id/claimed_at/approved_at
+		// 均允许 NULL（controlplane migrations/001 无 NOT NULL；直插种子行实测全 NULL），
+		// 裸 string/time 承接遇 NULL 即 Scan 报错——continue 静默丢行导致整表不可见
+		//（双轨观察第四次冒烟实测：AllTasks 返回空、影子评估恒 0）。
+		// 与 controlplane sql_tasks.go 既有模式一致（content/command/path 用 NullString）。
+		var content, command, path, claimedBy, approvedBy, batchID sql.NullString
+		var claimedAt, approvedAt sql.NullTime
+		if err := rows.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &command, &content, &path, &t.Status,
+			&claimedBy, &claimedAt, &t.ClaimEpoch, &t.CreatedAt, &t.RetryCount, &t.MaxRetries,
 			&deadLetter, &t.Timeout, &t.RetryDelay, &t.Schedule, &t.ParentID, &dependsOn,
-			&approvalRequired, &t.ApprovedBy, &t.ApprovedAt, &t.BatchID); err != nil {
+			&approvalRequired, &approvedBy, &approvedAt, &batchID); err != nil {
 			continue
+		}
+		if content.Valid {
+			t.Content = content.String
+		}
+		if command.Valid {
+			t.Command = command.String
+		}
+		if path.Valid {
+			t.Path = path.String
+		}
+		if claimedBy.Valid {
+			t.ClaimedBy = claimedBy.String
+		}
+		if claimedAt.Valid {
+			t.ClaimedAt = claimedAt.Time
+		}
+		if approvedBy.Valid {
+			t.ApprovedBy = approvedBy.String
+		}
+		if approvedAt.Valid {
+			t.ApprovedAt = approvedAt.Time
+		}
+		if batchID.Valid {
+			t.BatchID = batchID.String
 		}
 		t.DeadLetter = deadLetter != 0
 		t.ApprovalRequired = approvalRequired != 0
@@ -361,11 +392,39 @@ func (s *MySQLStore) scanAllTasks(rows *sql.Rows) []*models.Task {
 		var dependsOn sql.RawBytes
 		var deadLetter, approvalRequired int
 		var lastFired sql.NullTime
-		if err := rows.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &t.Command, &t.Content, &t.Path, &t.Status,
-			&t.ClaimedBy, &t.ClaimedAt, &t.ClaimEpoch, &t.CreatedAt, &t.RetryCount, &t.MaxRetries,
+		// NULL 兼容（与 scanTasks 同理由）：content/claimed_by/approved_by/batch_id/
+		// claimed_at/approved_at 允许 NULL，裸承接遇 NULL 静默丢行。
+		var content, command, path, claimedBy, approvedBy, batchID sql.NullString
+		var claimedAt, approvedAt sql.NullTime
+		if err := rows.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &command, &content, &path, &t.Status,
+			&claimedBy, &claimedAt, &t.ClaimEpoch, &t.CreatedAt, &t.RetryCount, &t.MaxRetries,
 			&deadLetter, &t.Timeout, &t.RetryDelay, &t.Schedule, &t.ParentID, &dependsOn,
-			&approvalRequired, &t.ApprovedBy, &t.ApprovedAt, &t.BatchID, &lastFired); err != nil {
+			&approvalRequired, &approvedBy, &approvedAt, &batchID, &lastFired); err != nil {
 			continue
+		}
+		if content.Valid {
+			t.Content = content.String
+		}
+		if command.Valid {
+			t.Command = command.String
+		}
+		if path.Valid {
+			t.Path = path.String
+		}
+		if claimedBy.Valid {
+			t.ClaimedBy = claimedBy.String
+		}
+		if claimedAt.Valid {
+			t.ClaimedAt = claimedAt.Time
+		}
+		if approvedBy.Valid {
+			t.ApprovedBy = approvedBy.String
+		}
+		if approvedAt.Valid {
+			t.ApprovedAt = approvedAt.Time
+		}
+		if batchID.Valid {
+			t.BatchID = batchID.String
 		}
 		if lastFired.Valid {
 			t.LastFiredAt = lastFired.Time
