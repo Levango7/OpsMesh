@@ -69,7 +69,17 @@ func main() {
 		tenant.ResourceAPIKeys:  5,
 	})
 
-	svc := service.NewService(ds, as, cs, disc, tenantMgr)
+	svc := service.NewService(ds, as, cs, disc, memStore, tenantMgr)
+	// D3 自动纳管配置注入（默认关闭；需显式启用 + 配置 SSH 私钥才推送）。
+	svc.SetAutoProvisionConfig(&service.AutoProvisionConfig{
+		Enabled:           cfg.AutoProvision,
+		FallbackAdvertise: fmt.Sprintf("http://127.0.0.1:%d", cfg.HTTPPort),
+		SSHKey:            cfg.ProvisionSSHKey,
+		SSHUser:           cfg.ProvisionSSHUser,
+		SSHKP:             cfg.ProvisionSSHKP,
+		SSHKnownHosts:     cfg.ProvisionSSHKnownHosts,
+		AdvertiseAddr:     cfg.AdvertiseAddr,
+	})
 	// D2 真实发现配置注入：白名单（空=不校验，生产必配）+ job 超时（默认 60s）。
 	svc.SetDiscoverConfig(&service.DiscoverConfig{
 		CIDRWhitelist: cfg.CIDRWhitelist,
@@ -110,7 +120,11 @@ func main() {
 
 	// P0 HTTP 网关：devices/agents/cmdb/discovery 的 REST 端点（直连 store 层）。
 	// 鉴权走 tenant.Middleware（与 gRPC 拦截器同语义），在下文 handler 链统一包裹。
-	httpGateway := httpgw.NewGateway(ds, as, cs, disc)
+	advertiseAddr := cfg.AdvertiseAddr
+	if advertiseAddr == "" {
+		advertiseAddr = fmt.Sprintf("http://127.0.0.1:%d", cfg.HTTPPort)
+	}
+	httpGateway := httpgw.NewGateway(ds, as, cs, disc, memStore, advertiseAddr)
 	httpGateway.RegisterRoutes(mux, func(h http.Handler) http.Handler { return h })
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

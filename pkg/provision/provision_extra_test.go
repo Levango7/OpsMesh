@@ -22,8 +22,6 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/ssh"
-
-	"opsmesh/internal/config"
 )
 
 // ============================================================
@@ -284,7 +282,7 @@ func TestAutoProvision_SSHPushSuccessLoop(t *testing.T) {
 	}
 	defer cleanupSrv()
 
-	cfg := &config.Config{
+	cfg := Config{
 		AdvertiseAddr:    wantAdvertise,
 		ProvisionSSHKey:  keyPath,
 		ProvisionSSHUser: "root",

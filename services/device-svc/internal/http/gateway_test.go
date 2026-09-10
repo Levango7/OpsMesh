@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
@@ -24,7 +25,7 @@ func newTestGateway(t *testing.T) *http.ServeMux {
 	ms.RegisterAgent(&models.Agent{ID: "ag-1", TenantID: "default", Hostname: "host-1", Status: "online"})
 	ms.CreateCI(&models.CI{ID: "ci-1", TenantID: "default", CiType: "host", Name: "web-1", Status: "active"})
 
-	g := NewGateway(ms, ms, ms, ms)
+	g := NewGateway(ms, ms, ms, ms, ms, "https://opsmesh.example.com:8443")
 	mux := http.NewServeMux()
 	g.RegisterRoutes(mux, func(h http.Handler) http.Handler { return h })
 	return mux
@@ -221,5 +222,156 @@ func TestDiscovery_CreateAndStatus(t *testing.T) {
 	rec = doReq(t, mux, http.MethodGet, "/api/v1/discovery/devices", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("discovered devices: got %d", rec.Code)
+	}
+}
+
+// ============ 自动纳管（D3） ============
+
+// TestProvisionAuto_BadRequests 验证 /api/v1/provision/auto 的方法与参数校验。
+func TestProvisionAuto_BadRequests(t *testing.T) {
+	mux := newTestGateway(t)
+
+	// GET 不允许：405。
+	rec := doReq(t, mux, http.MethodGet, "/api/v1/provision/auto", "")
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET provision/auto: got %d, want 405", rec.Code)
+	}
+	// 无效 JSON：400。
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/provision/auto", `{invalid`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid JSON: got %d, want 400", rec.Code)
+	}
+	// 空 cidrs：400。
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/provision/auto", `{"tenantID":"t1"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("no cidrs: got %d, want 400", rec.Code)
+	}
+}
+
+// TestProvisionAuto_RunFullLoop 验证编排触发返回 200 + Summary 形状。
+// 用 RFC 5737 TEST-NET 网段避免触碰真实网络；无存活主机时 Scanned=0。
+func TestProvisionAuto_RunFullLoop(t *testing.T) {
+	mux := newTestGateway(t)
+
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/provision/auto", `{"cidrs":["192.0.2.0/30"],"tenantID":"t1"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("provision auto: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var sum struct {
+		Scanned     int      `json:"scanned"`
+		Registered  int      `json:"registered"`
+		Provisioned int      `json:"provisioned"`
+		SSHPushed   int      `json:"sshPushed"`
+		Failures    []string `json:"failures"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &sum); err != nil {
+		t.Fatalf("summary 解析失败: %v (body=%s)", err, rec.Body.String())
+	}
+	// TEST-NET 网段无存活主机：全零计数（SSH 未配置，无副作用）。
+	if sum.Scanned != 0 || sum.SSHPushed != 0 {
+		t.Fatalf("TEST-NET 应无存活主机，Scanned=%d SSHPushed=%d", sum.Scanned, sum.SSHPushed)
+	}
+}
+
+// ============ bootstrap 端点（D3-d） ============
+
+// TestInstallSh_ServesScript 验证 GET /install.sh 下发自举脚本（含 advertise 地址）。
+func TestInstallSh_ServesScript(t *testing.T) {
+	mux := newTestGateway(t)
+
+	// 方法校验：405。
+	rec := doReq(t, mux, http.MethodPost, "/install.sh", "")
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /install.sh: got %d, want 405", rec.Code)
+	}
+	// GET：200 + 脚本内容。
+	rec = doReq(t, mux, http.MethodGet, "/install.sh", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /install.sh: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "opsmesh-agent") {
+		t.Fatalf("脚本应包含 opsmesh-agent，got: %.200s", body)
+	}
+	if !strings.Contains(body, "https://opsmesh.example.com:8443") {
+		t.Fatalf("脚本应内嵌 advertise 地址（newTestGateway 注入），got: %.200s", body)
+	}
+}
+
+// TestProvisionRegister_TokenLifecycle 验证 token 消费注册端点全生命周期：
+// 无 token 400 → 无效 token 401 → 有效 token 200 翻转设备 → 二次消费 401 → 设备不存在 404。
+func TestProvisionRegister_TokenLifecycle(t *testing.T) {
+	ms := store.NewMemoryStore()
+	// 种子：候选设备 dev-1（discovered 状态，模拟 AutoProvision 登记产物）。
+	ms.RegisterDevice(&models.Device{ID: "dev-1", TenantID: "default", IP: "10.0.0.1", Status: "discovered"})
+	g := NewGateway(ms, ms, ms, ms, ms, "https://opsmesh.example.com:8443")
+	mux := http.NewServeMux()
+	g.RegisterRoutes(mux, func(h http.Handler) http.Handler { return h })
+
+	// 方法校验：405。
+	rec := doReq(t, mux, http.MethodGet, "/api/v1/provision/register", "")
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET register: got %d, want 405", rec.Code)
+	}
+	// 缺 token：400。
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/provision/register", `{"agentID":"ag-1"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing token: got %d, want 400", rec.Code)
+	}
+	// 无效 token：401。
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/provision/register", `{"token":"garbage.token"}`)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid token: got %d, want 401", rec.Code)
+	}
+
+	// 签发有效 token 并消费注册。
+	tok, err := ms.IssueToken("dev-1", "default", 15*time.Minute)
+	if err != nil {
+		t.Fatalf("IssueToken: %v", err)
+	}
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/provision/register", `{"token":"`+tok+`","agentID":"ag-1","hostname":"web-1"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid token register: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Status   string `json:"status"`
+		DeviceID string `json:"deviceID"`
+		TenantID string `json:"tenantID"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("register 响应解析失败: %v", err)
+	}
+	if resp.Status != "registered" || resp.DeviceID != "dev-1" {
+		t.Fatalf("register 回显异常: %+v", resp)
+	}
+	// 设备翻转验证：discovered → online + AgentID 回填。
+	dev := ms.Device("dev-1")
+	if dev == nil {
+		t.Fatal("dev-1 应存在")
+	}
+	if dev.Status != "online" {
+		t.Fatalf("设备应翻转为 online，got %s", dev.Status)
+	}
+	if dev.AgentID != "ag-1" {
+		t.Fatalf("AgentID 应回填 ag-1，got %s", dev.AgentID)
+	}
+	if dev.Name != "web-1" {
+		t.Fatalf("hostname 应回填为 Name=web-1，got %s", dev.Name)
+	}
+
+	// 一次性语义：同一 token 二次消费 401。
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/provision/register", `{"token":"`+tok+`"}`)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("re-consume token: got %d, want 401（一次性）", rec.Code)
+	}
+
+	// 设备不存在：为不存在的设备签发 token，注册 404。
+	tok2, err := ms.IssueToken("dev-404", "default", 15*time.Minute)
+	if err != nil {
+		t.Fatalf("IssueToken dev-404: %v", err)
+	}
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/provision/register", `{"token":"`+tok2+`"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("device not found: got %d, want 404", rec.Code)
 	}
 }

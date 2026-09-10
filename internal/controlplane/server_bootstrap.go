@@ -17,8 +17,8 @@ import (
 
 	"opsmesh/internal/logx"
 	"opsmesh/internal/proto"
-	"opsmesh/internal/provision"
 	"opsmesh/internal/version"
+	"opsmesh/pkg/provision"
 )
 
 func (s *Server) verifyBootstrapToken(w http.ResponseWriter, r *http.Request) bool {
@@ -166,10 +166,27 @@ func (s *Server) handleAutoProvision(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	sum, err := provision.AutoProvision(r.Context(), provision.Deps{
-		UpsertDevice: s.store.UpsertDevice,
-		Provision:    s.store.Provision,
-	}, s.cfg, cidrs, tenant)
+	sum, err := provision.AutoProvision(r.Context(), provision.DeviceDeps{
+		UpsertDevice: func(deviceID, ip, cidr, tenantID string) {
+			s.store.UpsertDevice(&proto.DeviceInfo{
+				DeviceID: deviceID,
+				IP:       ip,
+				Segment:  cidr,
+				TenantID: tenantID,
+				State:    "discovered",
+				Managed:  false,
+			})
+		},
+		Provision: s.store.Provision,
+	}, provision.Config{
+		AdvertiseAddr:          s.cfg.AdvertiseAddr,
+		FallbackAdvertise:      fmt.Sprintf("http://127.0.0.1:%d", s.cfg.HTTPPort),
+		Production:             s.cfg.Production,
+		ProvisionSSHUser:       s.cfg.ProvisionSSHUser,
+		ProvisionSSHKey:        s.cfg.ProvisionSSHKey,
+		ProvisionSSHKP:         s.cfg.ProvisionSSHKP,
+		ProvisionSSHKnownHosts: s.cfg.ProvisionSSHKnownHosts,
+	}, cidrs, tenant)
 	if err != nil {
 		writeInternalError(r.Context(), w, "bootstrap.autoProvision", err)
 		return
@@ -202,18 +219,52 @@ func (s *Server) autoProvisionLoop(ctx context.Context) {
 				if err := ValidateCIDR(s.cfg.SegmentCIDR, allowedCIDRs); err != nil {
 					log.Printf("controlplane: autoProvisionLoop CIDR 白名单校验失败，跳过本轮: %v", err)
 				} else {
-					if _, err := provision.AutoProvision(ctx, provision.Deps{
-						UpsertDevice: s.store.UpsertDevice,
-						Provision:    s.store.Provision,
-					}, s.cfg, []string{s.cfg.SegmentCIDR}, ""); err != nil {
+					if _, err := provision.AutoProvision(ctx, provision.DeviceDeps{
+						UpsertDevice: func(deviceID, ip, cidr, tenantID string) {
+							s.store.UpsertDevice(&proto.DeviceInfo{
+								DeviceID: deviceID,
+								IP:       ip,
+								Segment:  cidr,
+								TenantID: tenantID,
+								State:    "discovered",
+								Managed:  false,
+							})
+						},
+						Provision: s.store.Provision,
+					}, provision.Config{
+						AdvertiseAddr:          s.cfg.AdvertiseAddr,
+						FallbackAdvertise:      fmt.Sprintf("http://127.0.0.1:%d", s.cfg.HTTPPort),
+						Production:             s.cfg.Production,
+						ProvisionSSHUser:       s.cfg.ProvisionSSHUser,
+						ProvisionSSHKey:        s.cfg.ProvisionSSHKey,
+						ProvisionSSHKP:         s.cfg.ProvisionSSHKP,
+						ProvisionSSHKnownHosts: s.cfg.ProvisionSSHKnownHosts,
+					}, []string{s.cfg.SegmentCIDR}, ""); err != nil {
 						log.Printf("controlplane: autoProvisionLoop 自动纳管失败: %v", err)
 					}
 				}
 			} else {
-				if _, err := provision.AutoProvision(ctx, provision.Deps{
-					UpsertDevice: s.store.UpsertDevice,
-					Provision:    s.store.Provision,
-				}, s.cfg, []string{s.cfg.SegmentCIDR}, ""); err != nil {
+				if _, err := provision.AutoProvision(ctx, provision.DeviceDeps{
+					UpsertDevice: func(deviceID, ip, cidr, tenantID string) {
+						s.store.UpsertDevice(&proto.DeviceInfo{
+							DeviceID: deviceID,
+							IP:       ip,
+							Segment:  cidr,
+							TenantID: tenantID,
+							State:    "discovered",
+							Managed:  false,
+						})
+					},
+					Provision: s.store.Provision,
+				}, provision.Config{
+					AdvertiseAddr:          s.cfg.AdvertiseAddr,
+					FallbackAdvertise:      fmt.Sprintf("http://127.0.0.1:%d", s.cfg.HTTPPort),
+					Production:             s.cfg.Production,
+					ProvisionSSHUser:       s.cfg.ProvisionSSHUser,
+					ProvisionSSHKey:        s.cfg.ProvisionSSHKey,
+					ProvisionSSHKP:         s.cfg.ProvisionSSHKP,
+					ProvisionSSHKnownHosts: s.cfg.ProvisionSSHKnownHosts,
+				}, []string{s.cfg.SegmentCIDR}, ""); err != nil {
 					log.Printf("controlplane: autoProvisionLoop 自动纳管失败: %v", err)
 				}
 			}

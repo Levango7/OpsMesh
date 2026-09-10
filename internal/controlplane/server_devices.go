@@ -16,7 +16,7 @@ import (
 	"opsmesh/internal/domain"
 	"opsmesh/internal/logx"
 	"opsmesh/internal/proto"
-	"opsmesh/internal/provision"
+	"opsmesh/pkg/provision"
 )
 
 func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {

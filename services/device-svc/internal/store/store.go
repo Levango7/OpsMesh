@@ -55,7 +55,11 @@ type MemoryStore struct {
 	relations map[int64]*models.CIRelation
 	jobs      map[string]*models.DiscoveryJob
 	relSeq    int64
-	mu        sync.RWMutex
+	// tokens 是自动纳管 install token 的存储（HMAC 一次性、限时）。
+	// 键为 token 的 SHA-256 摘要（明文 token 不落库），值为 tokenMeta。
+	tokens map[string]*tokenMeta
+	secret []byte // HMAC 密钥（构造时注入；空则随机生成）
+	mu     sync.RWMutex
 }
 
 // NewMemoryStore creates a new MemoryStore.
@@ -66,6 +70,7 @@ func NewMemoryStore() *MemoryStore {
 		cis:       make(map[string]*models.CI),
 		relations: make(map[int64]*models.CIRelation),
 		jobs:      make(map[string]*models.DiscoveryJob),
+		tokens:    make(map[string]*tokenMeta),
 	}
 }
 

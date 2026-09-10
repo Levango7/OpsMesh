@@ -156,7 +156,7 @@ func TestValidateDiscoveryCIDR(t *testing.T) {
 // （dev-{ip} 幂等键——与 controlplane UpsertDevice 语义对齐）。
 func TestStartDiscovery_IdempotentDeviceIngress(t *testing.T) {
 	st := store.NewMemoryStore()
-	svc := NewService(st, st, st, st, nil)
+	svc := NewService(st, st, st, st, st, nil)
 	svc.SetDiscoverConfig(&DiscoverConfig{Timeout: 5 * time.Second})
 
 	for i := 0; i < 2; i++ {

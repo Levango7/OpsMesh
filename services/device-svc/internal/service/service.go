@@ -16,6 +16,7 @@ import (
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
 	"opsmesh/pkg/discover"
 	"opsmesh/pkg/metrics"
+	"opsmesh/pkg/provision"
 	"opsmesh/pkg/retry"
 	"opsmesh/pkg/tenant"
 )
@@ -38,10 +39,14 @@ type Service struct {
 	agentStore     store.AgentStore
 	ciStore        store.CiStore
 	discoveryStore store.DiscoveryStore
+	provisionStore store.ProvisionStore
 	tenantMgr      *tenant.Manager
 	// discoverCfg D2 Discovery 真实化配置（白名单/超时）。nil=默认值（白名单空=不校验，
 	// 超时 60s）——测试直构 Service 时可零值，生产由 main 注入 config.Load() 结果。
 	discoverCfg *DiscoverConfig
+	// autoProvisionCfg D3 自动纳管配置（默认 nil=自动纳管关闭）。
+	// 由 main 从 config.Load() 映射注入。
+	autoProvisionCfg *AutoProvisionConfig
 }
 
 // DiscoverConfig D2 真实发现的运行参数（由 main 从 config.Load() 映射注入）。
@@ -52,15 +57,87 @@ type DiscoverConfig struct {
 	Timeout time.Duration
 }
 
+// AutoProvisionConfig D3 自动纳管的运行参数（由 main 从 config.Load() 映射注入）。
+type AutoProvisionConfig struct {
+	// Enabled 启用自动纳管编排（默认 false，双闸第一闸）。
+	Enabled bool
+	// FallbackAdvertise advertise 为空时回退的地址（通常 http://127.0.0.1:8081）。
+	FallbackAdvertise string
+	// SSHKey SSH 私钥路径（空=仅签发 token 不推送，第二闸）。
+	SSHKey string
+	// SSHUser SSH 登录用户。
+	SSHUser string
+	// SSHKP SSH 私钥密码（可选）。
+	SSHKP string
+	// SSHKnownHosts KnownHosts 文件路径（生产必配，防 MITM）。
+	SSHKnownHosts string
+	// AdvertiseAddr 控制面对外地址（用于拼接 bootstrap URL）。
+	AdvertiseAddr string
+}
+
+// SetAutoProvisionConfig 注入 D3 自动纳管配置（main 启动时调用；测试可省略走默认值）。
+func (s *Service) SetAutoProvisionConfig(cfg *AutoProvisionConfig) {
+	s.autoProvisionCfg = cfg
+}
+
+// RunAutoProvision 执行自动纳管编排（与 controlplane AutoProvision 行为等价）：
+//
+//	对每段 CIDR：discover.Sweep 存活扫描 → dev-{ip} 幂等入库 discovered → 签发一次性 install token →
+//	（配置 SSHKey 时）通过 SSH 推送 bootstrap 完成 agent 安装。
+//
+// 双闸默认关闭（Enabled=false 时立即返回错误）；SSH 推送受 SSHKey 配置控制。
+// 返回 provision.Summary（含 Scanned/Registered/Provisioned/SSHPushed/Failures）。
+func (s *Service) RunAutoProvision(ctx context.Context, cidrs []string, tenantID string) (*provision.Summary, error) {
+	if s.autoProvisionCfg == nil || !s.autoProvisionCfg.Enabled {
+		return nil, fmt.Errorf("provision: 自动纳管未启用（需配置 DEVICE_SVC_AUTO_PROVISION=true）")
+	}
+	// SSRF 防护：CIDR 白名单校验（与 controlplane ValidateCIDR 同语义）。
+	// validateDiscoveryCIDR 内部读取 s.discoverWhitelist(); 白名单为空时不校验（向后兼容）。
+	for _, cidr := range cidrs {
+		if err := s.validateDiscoveryCIDR(cidr); err != nil {
+			return nil, fmt.Errorf("provision: CIDR %q 不在白名单: %w", cidr, err)
+		}
+	}
+	cfg := provision.Config{
+		AdvertiseAddr:          s.autoProvisionCfg.AdvertiseAddr,
+		FallbackAdvertise:      s.autoProvisionCfg.FallbackAdvertise,
+		ProvisionSSHUser:       s.autoProvisionCfg.SSHUser,
+		ProvisionSSHKey:        s.autoProvisionCfg.SSHKey,
+		ProvisionSSHKP:         s.autoProvisionCfg.SSHKP,
+		ProvisionSSHKnownHosts: s.autoProvisionCfg.SSHKnownHosts,
+	}
+	deps := provision.DeviceDeps{
+		UpsertDevice: func(deviceID, ip, cidr, tntID string) {
+			s.deviceStore.RegisterDevice(&models.Device{
+				ID:       deviceID,
+				IP:       ip,
+				TenantID: tntID,
+				Status:   "discovered",
+			})
+		},
+		Provision: func(deviceID, host, tntID string) (token string, bootstrap string, err error) {
+			token, err = s.provisionStore.IssueToken(deviceID, tntID, 15*time.Minute)
+			return
+		},
+	}
+	return provision.AutoProvision(ctx, deps, cfg, cidrs, tenantID)
+}
+
 // NewService creates a new Service.
-func NewService(ds store.DeviceStore, as store.AgentStore, cs store.CiStore, disc store.DiscoveryStore, tm *tenant.Manager) *Service {
+func NewService(ds store.DeviceStore, as store.AgentStore, cs store.CiStore, disc store.DiscoveryStore, ps store.ProvisionStore, tm *tenant.Manager) *Service {
 	return &Service{
 		deviceStore:    ds,
 		agentStore:     as,
 		ciStore:        cs,
 		discoveryStore: disc,
+		provisionStore: ps,
 		tenantMgr:      tm,
 	}
+}
+
+// SetProvisionStore 注入 ProvisionStore（main 启动时调用；测试可省略走默认值）。
+func (s *Service) SetProvisionStore(ps store.ProvisionStore) {
+	s.provisionStore = ps
 }
 
 // SetDiscoverConfig 注入 D2 真实发现配置（main 启动时调用；测试可省略走默认值）。

@@ -8,15 +8,12 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"opsmesh/internal/config"
-	"opsmesh/internal/proto"
 )
 
 // noopDeps 返回注入哑依赖（UpsertDevice/Provision 均空实现）。
-func noopDeps() Deps {
-	return Deps{
-		UpsertDevice: func(d *proto.DeviceInfo) {},
+func noopDeps() DeviceDeps {
+	return DeviceDeps{
+		UpsertDevice: func(deviceID, ip, cidr, tenantID string) {},
 		Provision:    func(deviceID, host, tenantID string) (string, string, error) { return "tok", "", nil },
 	}
 }
@@ -24,7 +21,7 @@ func noopDeps() Deps {
 // TestAutoProvision_ProductionRequiresHTTPS 验证 ：
 // 生产模式下 advertise 非 HTTPS 时整轮纳管被拒绝（防 agent 二进制明文下载被篡改）。
 func TestAutoProvision_ProductionRequiresHTTPS(t *testing.T) {
-	cfg := &config.Config{Production: true, AdvertiseAddr: "http://10.30.0.1:8080", HTTPPort: 8080}
+	cfg := Config{Production: true, AdvertiseAddr: "http://10.30.0.1:8080", FallbackAdvertise: "http://127.0.0.1:8080"}
 	_, err := AutoProvision(context.Background(), noopDeps(), cfg, []string{"192.0.2.0/30"}, "t1")
 	if err == nil {
 		t.Fatal("生产模式 + http advertise 应被拒绝")
@@ -36,7 +33,7 @@ func TestAutoProvision_ProductionRequiresHTTPS(t *testing.T) {
 
 // TestAutoProvision_ProductionEmptyAdvertiseRejected 验证 advertise 缺省回退本机回环（http）时同样被生产模式拒绝。
 func TestAutoProvision_ProductionEmptyAdvertiseRejected(t *testing.T) {
-	cfg := &config.Config{Production: true, HTTPPort: 8080}
+	cfg := Config{Production: true, FallbackAdvertise: "http://127.0.0.1:8080"}
 	_, err := AutoProvision(context.Background(), noopDeps(), cfg, []string{"192.0.2.0/30"}, "t1")
 	if err == nil {
 		t.Fatal("生产模式 + 缺省 advertise（回退 http 回环）应被拒绝")
@@ -46,7 +43,7 @@ func TestAutoProvision_ProductionEmptyAdvertiseRejected(t *testing.T) {
 // TestAutoProvision_ProductionHTTPSAllowed 验证生产模式 + HTTPS advertise 不被守卫拒绝
 // （扫描本身用 RFC 5737 TEST-NET 网段，不会命中真实主机；扫描失败仅记 Failures 不报错）。
 func TestAutoProvision_ProductionHTTPSAllowed(t *testing.T) {
-	cfg := &config.Config{Production: true, AdvertiseAddr: "https://opsmesh.example.com:8443"}
+	cfg := Config{Production: true, AdvertiseAddr: "https://opsmesh.example.com:8443"}
 	sum, err := AutoProvision(context.Background(), noopDeps(), cfg, []string{"192.0.2.0/30"}, "t1")
 	if err != nil {
 		t.Fatalf("HTTPS advertise 不应被守卫拒绝: %v", err)
@@ -62,7 +59,7 @@ func TestAutoProvision_ProductionHTTPSAllowed(t *testing.T) {
 
 // TestAutoProvision_NoCIDR 验证无待扫描网段时返回错误。
 func TestAutoProvision_NoCIDR(t *testing.T) {
-	cfg := &config.Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
+	cfg := Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
 	_, err := AutoProvision(context.Background(), noopDeps(), cfg, nil, "t1")
 	if err == nil {
 		t.Fatal("无 CIDR 应返回错误")
@@ -74,7 +71,7 @@ func TestAutoProvision_NoCIDR(t *testing.T) {
 
 // TestAutoProvision_EmptyCIDRList 验证空 CIDR 列表返回错误。
 func TestAutoProvision_EmptyCIDRList(t *testing.T) {
-	cfg := &config.Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
+	cfg := Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
 	_, err := AutoProvision(context.Background(), noopDeps(), cfg, []string{}, "t1")
 	if err == nil {
 		t.Fatal("空 CIDR 列表应返回错误")
@@ -83,8 +80,8 @@ func TestAutoProvision_EmptyCIDRList(t *testing.T) {
 
 // TestAutoProvision_NilUpsertDevice 验证 UpsertDevice 未注入时返回错误。
 func TestAutoProvision_NilUpsertDevice(t *testing.T) {
-	cfg := &config.Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
-	deps := Deps{
+	cfg := Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
+	deps := DeviceDeps{
 		UpsertDevice: nil,
 		Provision:    func(deviceID, host, tenantID string) (string, string, error) { return "tok", "", nil },
 	}
@@ -99,9 +96,9 @@ func TestAutoProvision_NilUpsertDevice(t *testing.T) {
 
 // TestAutoProvision_NilProvision 验证 Provision 未注入时返回错误。
 func TestAutoProvision_NilProvision(t *testing.T) {
-	cfg := &config.Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
-	deps := Deps{
-		UpsertDevice: func(d *proto.DeviceInfo) {},
+	cfg := Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
+	deps := DeviceDeps{
+		UpsertDevice: func(deviceID, ip, cidr, tenantID string) {},
 		Provision:    nil,
 	}
 	_, err := AutoProvision(context.Background(), deps, cfg, []string{"192.0.2.0/30"}, "t1")
@@ -119,7 +116,7 @@ func TestAutoProvision_NilProvision(t *testing.T) {
 
 // TestAutoProvision_NonHTTPSWarning 验证非生产模式下非 HTTPS advertise 打印警告但不报错。
 func TestAutoProvision_NonHTTPSWarning(t *testing.T) {
-	cfg := &config.Config{AdvertiseAddr: "http://10.30.0.1:8080"}
+	cfg := Config{AdvertiseAddr: "http://10.30.0.1:8080"}
 	sum, err := AutoProvision(context.Background(), noopDeps(), cfg, []string{"192.0.2.0/30"}, "t1")
 	if err != nil {
 		t.Fatalf("非生产模式 + http advertise 不应报错: %v", err)
@@ -131,7 +128,7 @@ func TestAutoProvision_NonHTTPSWarning(t *testing.T) {
 
 // TestAutoProvision_EmptyAdvertiseNonProduction 验证非生产模式下 advertise 缺省回退本机回环不报错。
 func TestAutoProvision_EmptyAdvertiseNonProduction(t *testing.T) {
-	cfg := &config.Config{HTTPPort: 8080}
+	cfg := Config{FallbackAdvertise: "http://127.0.0.1:8080"}
 	sum, err := AutoProvision(context.Background(), noopDeps(), cfg, []string{"192.0.2.0/30"}, "t1")
 	if err != nil {
 		t.Fatalf("非生产模式 + 缺省 advertise 不应报错: %v", err)
@@ -147,7 +144,7 @@ func TestAutoProvision_EmptyAdvertiseNonProduction(t *testing.T) {
 
 // TestAutoProvision_InvalidCIDR 验证无效 CIDR 扫描失败记录到 Failures 但不返回错误。
 func TestAutoProvision_InvalidCIDR(t *testing.T) {
-	cfg := &config.Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
+	cfg := Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
 	sum, err := AutoProvision(context.Background(), noopDeps(), cfg, []string{"invalid-cidr"}, "t1")
 	if err != nil {
 		t.Fatalf("扫描失败不应返回错误（仅记 Failures）: %v", err)
@@ -165,7 +162,7 @@ func TestAutoProvision_InvalidCIDR(t *testing.T) {
 
 // TestAutoProvision_MixedCIDRs 验证混合有效/无效 CIDR：无效的记 Failures，有效的继续处理。
 func TestAutoProvision_MixedCIDRs(t *testing.T) {
-	cfg := &config.Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
+	cfg := Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
 	sum, err := AutoProvision(context.Background(), noopDeps(), cfg, []string{"invalid-cidr", "192.0.2.0/30"}, "t1")
 	if err != nil {
 		t.Fatalf("混合 CIDR 不应返回错误: %v", err)
@@ -217,15 +214,15 @@ func TestAutoProvision_DeviceRegistration(t *testing.T) {
 	cleanup := startTCPEcho(t, 9100)
 	defer cleanup()
 
-	cfg := &config.Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
+	cfg := Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
 
 	var mu sync.Mutex
-	var upserted []*proto.DeviceInfo
-	deps := Deps{
-		UpsertDevice: func(d *proto.DeviceInfo) {
+	var upserted []struct{ DeviceID, IP, CIDR, TenantID string }
+	deps := DeviceDeps{
+		UpsertDevice: func(deviceID, ip, cidr, tenantID string) {
 			mu.Lock()
 			defer mu.Unlock()
-			upserted = append(upserted, d)
+			upserted = append(upserted, struct{ DeviceID, IP, CIDR, TenantID string }{deviceID, ip, cidr, tenantID})
 		},
 		Provision: func(deviceID, host, tenantID string) (string, string, error) {
 			return "tok-" + deviceID, "", nil
@@ -256,17 +253,15 @@ func TestAutoProvision_DeviceRegistration(t *testing.T) {
 	if dev.DeviceID != "dev-127.0.0.1" {
 		t.Fatalf("DeviceID 应为 dev-127.0.0.1，got %s", dev.DeviceID)
 	}
-	if dev.State != "discovered" {
-		t.Fatalf("State 应为 discovered，got %s", dev.State)
-	}
-	if dev.Managed {
-		t.Fatal("Managed 应为 false")
+	// State/Managed 不再通过回调传递（调用方自行构造实体时设置）
+	if dev.IP != "127.0.0.1" {
+		t.Fatalf("IP 应为 127.0.0.1，got %s", dev.IP)
 	}
 	if dev.TenantID != "tenant-a" {
 		t.Fatalf("TenantID 应为 tenant-a，got %s", dev.TenantID)
 	}
-	if dev.IP != "127.0.0.1" {
-		t.Fatalf("IP 应为 127.0.0.1，got %s", dev.IP)
+	if dev.CIDR != "127.0.0.1/32" {
+		t.Fatalf("CIDR 应为 127.0.0.1/32，got %s", dev.CIDR)
 	}
 }
 
@@ -275,10 +270,10 @@ func TestAutoProvision_ProvisionFailure(t *testing.T) {
 	cleanup := startTCPEcho(t, 9100)
 	defer cleanup()
 
-	cfg := &config.Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
+	cfg := Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
 
-	deps := Deps{
-		UpsertDevice: func(d *proto.DeviceInfo) {},
+	deps := DeviceDeps{
+		UpsertDevice: func(deviceID, ip, cidr, tenantID string) {},
 		Provision: func(deviceID, host, tenantID string) (string, string, error) {
 			return "", "", fmt.Errorf("token signing failed")
 		},
@@ -308,7 +303,7 @@ func TestAutoProvision_NoSSHKey_OnlyToken(t *testing.T) {
 	defer cleanup()
 
 	// 不配置 ProvisionSSHKey
-	cfg := &config.Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
+	cfg := Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
 
 	sum, err := AutoProvision(context.Background(), noopDeps(), cfg, []string{"127.0.0.1/32"}, "t1")
 	if err != nil {
@@ -329,7 +324,7 @@ func TestAutoProvision_ProductionNoKnownHostsRejected(t *testing.T) {
 	defer cleanup()
 
 	// 生产模式 + HTTPS advertise + SSH 私钥但无 known_hosts
-	cfg := &config.Config{
+	cfg := Config{
 		Production:       true,
 		AdvertiseAddr:    "https://opsmesh.example.com:8443",
 		ProvisionSSHKey:  "/tmp/fake-key", // 不需要真实文件，因为会在 known_hosts 检查时跳过
@@ -365,7 +360,7 @@ func TestAutoProvision_SSHPushFailureRecorded(t *testing.T) {
 	cleanup := startTCPEcho(t, 9100)
 	defer cleanup()
 
-	cfg := &config.Config{
+	cfg := Config{
 		AdvertiseAddr:    "https://opsmesh.example.com:8443",
 		ProvisionSSHKey:  "/nonexistent/id_rsa", // 私钥文件不存在，PushAndExec 会失败
 		ProvisionSSHUser: "root",
@@ -407,15 +402,15 @@ func TestAutoProvision_EmptyTenantID(t *testing.T) {
 	cleanup := startTCPEcho(t, 9100)
 	defer cleanup()
 
-	cfg := &config.Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
+	cfg := Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
 
 	var mu sync.Mutex
-	var upserted []*proto.DeviceInfo
-	deps := Deps{
-		UpsertDevice: func(d *proto.DeviceInfo) {
+	var upserted []struct{ DeviceID, IP, CIDR, TenantID string }
+	deps := DeviceDeps{
+		UpsertDevice: func(deviceID, ip, cidr, tenantID string) {
 			mu.Lock()
 			defer mu.Unlock()
-			upserted = append(upserted, d)
+			upserted = append(upserted, struct{ DeviceID, IP, CIDR, TenantID string }{deviceID, ip, cidr, tenantID})
 		},
 		Provision: func(deviceID, host, tenantID string) (string, string, error) {
 			return "tok", "", nil
@@ -452,15 +447,15 @@ func TestAutoProvision_MultipleAliveHosts(t *testing.T) {
 	cleanup1 := startTCPEcho(t, 9100)
 	defer cleanup1()
 
-	cfg := &config.Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
+	cfg := Config{AdvertiseAddr: "https://opsmesh.example.com:8443"}
 
 	var mu sync.Mutex
-	upserted := make(map[string]*proto.DeviceInfo)
-	deps := Deps{
-		UpsertDevice: func(d *proto.DeviceInfo) {
+	upserted := make(map[string]struct{ DeviceID, IP, CIDR, TenantID string })
+	deps := DeviceDeps{
+		UpsertDevice: func(deviceID, ip, cidr, tenantID string) {
 			mu.Lock()
 			defer mu.Unlock()
-			upserted[d.IP] = d
+			upserted[ip] = struct{ DeviceID, IP, CIDR, TenantID string }{deviceID, ip, cidr, tenantID}
 		},
 		Provision: func(deviceID, host, tenantID string) (string, string, error) {
 			return "tok", "", nil
@@ -479,14 +474,51 @@ func TestAutoProvision_MultipleAliveHosts(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	dev, ok := upserted["127.0.0.1"]
+	_, ok := upserted["127.0.0.1"]
 	if !ok {
 		t.Fatalf("127.0.0.1 应被登记（upserted: %v）", upserted)
 	}
-	if dev.State != "discovered" || dev.Managed {
-		t.Fatalf("设备应为 discovered 且未纳管: %+v", dev)
-	}
+	// State/Managed 不再通过回调传递
 	if len(upserted) != sum.Scanned {
 		t.Fatalf("UpsertDevice 去重后数量 (%d) 应与 Scanned (%d) 一致", len(upserted), sum.Scanned)
+	}
+}
+
+// TestAutoProvision_AdvertiseFormatValidation 验证 advertise 格式校验（加固项：白名单）
+func TestAutoProvision_AdvertiseFormatValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		advertise  string
+		wantPass   bool
+		wantErrMsg string
+	}{
+		{"HTTPS valid", "https://opsmesh.example.com:8443", true, ""},
+		{"HTTPS no port", "https://opsmesh.example.com", true, ""},
+		{"HTTP valid", "http://10.30.0.1:8080", true, ""},
+		{"empty", "", false, "advertise 格式非法"},
+		{"no scheme", "opsmesh.example.com:8443", false, "advertise 格式非法"},
+		{"space in host", "http://host with space:8080", false, "advertise 格式非法"},
+		{"semicolon injection", "https://example.com;rm -rf /", false, "advertise 格式非法"},
+		{"backtick injection", "https://example.com`id`", false, "advertise 格式非法"},
+		{"newline injection", "https://example.com\n", false, "advertise 格式非法"},
+		{"dollar injection", "https://example.com$PATH", false, "advertise 格式非法"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Config{AdvertiseAddr: tc.advertise}
+			_, err := AutoProvision(context.Background(), noopDeps(), cfg, []string{"192.0.2.0/30"}, "t1")
+			if tc.wantPass {
+				if err != nil {
+					t.Fatalf("期望通过，got err: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("期望失败，got nil")
+				}
+				if tc.wantErrMsg != "" && !strings.Contains(err.Error(), tc.wantErrMsg) {
+					t.Fatalf("错误信息应包含 %q，got: %v", tc.wantErrMsg, err)
+				}
+			}
+		})
 	}
 }
