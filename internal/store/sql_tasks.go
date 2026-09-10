@@ -606,9 +606,24 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 	for rows.Next() {
 		var tp tpl
 		var lf sql.NullTime
-		if err := rows.Scan(&tp.id, &tp.agentID, &tp.tenantID, &tp.typ, &tp.command, &tp.content, &tp.path, &tp.maxRetries, &tp.schedule, &lf, &tp.timeout, &tp.retryDelay); err != nil {
+		// content/command/path 用 NullString 承接：tasks 表 content TEXT 允许 NULL
+		//（migrations/001 无 NOT NULL），裸 string 扫描遇 NULL 即炸
+		// "converting NULL to string is unsupported"（双轨观察栈实测：
+		// shadow-seed 模板 content=NULL 时 FireDueSchedules 每轮静默失败）。
+		// 与本文件 PendingTasks/:138、ListTasks/:376、GetTask/:401 的处理一致。
+		var content, command, path sql.NullString
+		if err := rows.Scan(&tp.id, &tp.agentID, &tp.tenantID, &tp.typ, &command, &content, &path, &tp.maxRetries, &tp.schedule, &lf, &tp.timeout, &tp.retryDelay); err != nil {
 			log.Printf("[store] FireDueSchedules 扫描失败: %v", err)
 			continue
+		}
+		if content.Valid {
+			tp.content = content.String
+		}
+		if command.Valid {
+			tp.command = command.String
+		}
+		if path.Valid {
+			tp.path = path.String
 		}
 		if lf.Valid {
 			tp.lastFiredAt = lf.Time
