@@ -42,6 +42,11 @@
 - device-svc 多副本 leader 选主（单实例部署 MVP，多副本需前置选主——同 loginGuard R7 声明模式）
 - discovery job 与纳管合并触发（发现与远程执行风险等级不同，保持分离）
 
+### CI 修复链（D3 推送后 2 项上游/历史问题）
+
+- **CVE-2026-84445**（d3f04e6）：grpc v1.83.1 xDS servers DoS（crash via missing validation）新 advisory，Trivy 10 模块同报——10 个 go.mod 全升 v1.83.2（主模块+8 服务+tf-provider），tidy+build+回归全绿。与 D3 改动无关（上游新入库，同 CVE-2026-84304 处置模式）
+- **TestBuildMetrics_PortInUse flaky 清零**（71edcd9）：原版先 buildMetrics(:0 随机端口) 再同端口重绑——buildMetrics 绑 0.0.0.0:port，Linux SO_REUSEADDR 放宽 TIME_WAIT 端口重绑，-count=3 或上轮 listener 刚关闭窗口期偶发绑定成功（changelog-only run 也复现实证与代码无关）。修复：手动持有活跃通配 listener（同 0.0.0.0:port 地址对）再触发重绑——活跃占用不受 SO_REUSEADDR 放宽，确定性失败。本地 6 轮 × count=3 = 18 次全绿
+
 ## [Unreleased] — 2026-09-09 A1+A2：auth-svc 方案 B 用户中心后端（3aae39b + 1761793）
 
 > TD-60 阶段 2 auth 域收官（方案 B：controlplane 121 处热路径本地验签零触碰；auth-svc 作为平行用户中心补齐能力+HTTP 网关）。方案 V2 经 8 项风险点（R1-R8）代码级实证完善后执行。
