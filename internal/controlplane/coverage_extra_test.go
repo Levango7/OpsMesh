@@ -761,28 +761,30 @@ func TestBuildMetrics_Happy_Extra(t *testing.T) {
 }
 
 // TestBuildMetrics_PortInUse 验证端口占用时返回错误。
+//
+// flaky 修复：原版先 buildMetrics（绑 :0 随机端口）再同端口重绑——buildMetrics 绑
+// 0.0.0.0:port，而重绑尝试同 0.0.0.0:port；Linux SO_REUSEADDR 放宽 TIME_WAIT 端口
+// 的重绑，-count=3 或上轮 listener 刚关闭的窗口期偶发绑定成功（CI 实证：changelog-only
+// run 也复现，与代码变更无关）。
+// 现改为 net.Listen("tcp", ":port") 手动持有活跃 listener（0.0.0.0 通配，与 buildMetrics
+// 完全同地址对）再触发重绑——活跃占用不受 SO_REUSEADDR 放宽，确定性失败，且无关闭时序依赖。
 func TestBuildMetrics_PortInUse(t *testing.T) {
-	// 先用 buildMetrics 成功监听一个端口，再尝试用同一端口再次 buildMetrics。
-	s := &Server{
-		store:       store.NewMemoryStore(),
-		cfg:         &config.Config{},
-		metrics:     metrics.New(),
-		metricsPort: 0, // 随机端口
-	}
-	srv1, lis1, err := s.buildMetrics()
+	// 手动占用一个通配地址端口（活跃 listener，进程持有不释放；:0 = 0.0.0.0 随机端口）。
+	hold, err := net.Listen("tcp", ":0")
 	if err != nil {
-		t.Fatalf("first buildMetrics: %v", err)
+		t.Fatalf("hold listener: %v", err)
 	}
-	defer srv1.Close()
-	port := lis1.Addr().(*net.TCPAddr).Port
-	// 用同一端口再次 buildMetrics，应失败（端口已占用）。
-	s2 := &Server{
+	defer hold.Close()
+	port := hold.Addr().(*net.TCPAddr).Port
+	// 用被占用端口 buildMetrics（同样绑 0.0.0.0:port），应失败——同地址对活跃占用，
+	// SO_REUSEADDR 不放宽（Windows/Linux 一致）。
+	s := &Server{
 		store:       store.NewMemoryStore(),
 		cfg:         &config.Config{},
 		metrics:     metrics.New(),
 		metricsPort: port,
 	}
-	if _, _, err := s2.buildMetrics(); err == nil {
+	if _, _, err := s.buildMetrics(); err == nil {
 		t.Fatal("port in use: want error, got nil")
 	}
 }
