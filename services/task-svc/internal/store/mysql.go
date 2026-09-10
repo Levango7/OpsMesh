@@ -333,15 +333,49 @@ func (s *MySQLStore) GetTaskStatus(taskID string) *models.Task {
 }
 
 // AllTasks returns all tasks.
+//
+// 列清单含 last_fired_at（其余 SELECT 不含，故本方法走独立 scanAllTasks 而非
+// 共用的 scanTasks）：供 scheduler fire 闭包与 ShadowLoop 只读评估——
+// shadow.go 的本分钟去重依赖 LastFiredAt（原 A-1 限制恒零值，双轨观察实测
+// 导致影子每 tick 恒报 fire_would_fire=2——controlplane 回写的 last_fired_at
+// 影子侧读不到）。controlplane tasks 表含该列（migrations/001_initial.sql:61），
+// task-svc schema.sql 也已声明，SELECT 对齐。NULL 兼容：DATETIME NULL 用
+// NullTime 承接。
 func (s *MySQLStore) AllTasks() []*models.Task {
 	rows, err := s.db.Query(
-		"SELECT task_id, agent_id, tenant_id, type, command, content, path, status, claimed_by, claimed_at, claim_epoch, created_at, retry_count, max_retries, dead_letter, timeout, retry_delay, schedule, parent_id, depends_on, approval_required, approved_by, approved_at, batch_id FROM tasks",
+		"SELECT task_id, agent_id, tenant_id, type, command, content, path, status, claimed_by, claimed_at, claim_epoch, created_at, retry_count, max_retries, dead_letter, timeout, retry_delay, schedule, parent_id, depends_on, approval_required, approved_by, approved_at, batch_id, last_fired_at FROM tasks",
 	)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
-	return s.scanTasks(rows)
+	return s.scanAllTasks(rows)
+}
+
+// scanAllTasks 扫描含 last_fired_at 尾列的行集（仅 AllTasks 使用；
+// 列序与 AllTasks 的 SELECT 严格对齐，与 scanTasks 的 24 列清单不同）。
+func (s *MySQLStore) scanAllTasks(rows *sql.Rows) []*models.Task {
+	var tasks []*models.Task
+	for rows.Next() {
+		var t models.Task
+		var dependsOn sql.RawBytes
+		var deadLetter, approvalRequired int
+		var lastFired sql.NullTime
+		if err := rows.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &t.Command, &t.Content, &t.Path, &t.Status,
+			&t.ClaimedBy, &t.ClaimedAt, &t.ClaimEpoch, &t.CreatedAt, &t.RetryCount, &t.MaxRetries,
+			&deadLetter, &t.Timeout, &t.RetryDelay, &t.Schedule, &t.ParentID, &dependsOn,
+			&approvalRequired, &t.ApprovedBy, &t.ApprovedAt, &t.BatchID, &lastFired); err != nil {
+			continue
+		}
+		if lastFired.Valid {
+			t.LastFiredAt = lastFired.Time
+		}
+		t.DeadLetter = deadLetter != 0
+		t.ApprovalRequired = approvalRequired != 0
+		t.DependsOn = scanStringSlice(dependsOn)
+		tasks = append(tasks, &t)
+	}
+	return tasks
 }
 
 // UpdateTask 全字段回写（用于 scheduler fire/reclaim 等内部循环）。

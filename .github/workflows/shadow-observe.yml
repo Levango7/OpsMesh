@@ -83,8 +83,21 @@ jobs:
               docker compose -f docker-compose.shadow-observe.yaml logs --tail=50; exit 1
             fi
           done
-          # task-svc shadow 启动确认（日志含影子模式启动行）
-          sleep 5
+          # task-svc MySQL 连接预检（第二次冒烟实测坑）：compose service_healthy 只保证
+          # 启动顺序，task-svc 首次拨号仍可能 connection refused，回退 memory 后不再
+          # 重试——影子评估全程空库，对照失效。检测到回退即重启容器直到 SQL 生效。
+          for i in $(seq 1 6); do
+            sleep 5
+            if docker compose -f docker-compose.shadow-observe.yaml logs task-svc 2>&1 | grep -q "MySQL store 已启用"; then
+              echo "task-svc SQL store 生效（第 $i 次检测）"; break
+            fi
+            echo "task-svc 未连上 MySQL（第 $i 次），重启容器重试..."
+            docker compose -f docker-compose.shadow-observe.yaml restart task-svc
+            if [ "$i" = "6" ]; then
+              echo "task-svc 六次重试仍未连上 MySQL，对照失效；日志："
+              docker compose -f docker-compose.shadow-observe.yaml logs --tail=30 task-svc; exit 1
+            fi
+          done
           docker compose -f docker-compose.shadow-observe.yaml logs task-svc 2>&1 | grep -E "影子模式|shadow" | head -3 || true
 
       - name: 补齐 task-svc SELECT 所需列（观察栈 schema 对齐）
@@ -139,11 +152,12 @@ jobs:
           mkdir -p shadow-report
           docker compose -f docker-compose.shadow-observe.yaml logs controlplane > shadow-report/controlplane.log 2>&1 || true
           docker compose -f docker-compose.shadow-observe.yaml logs task-svc > shadow-report/task-svc.log 2>&1 || true
-          # 提取对照行
-          grep -oE "定时任务派生.*fired=[0-9]+" shadow-report/controlplane.log | tail -100 > shadow-report/controlplane-fired.txt || true
+          # 提取对照行。controlplane 日志是 JSON 结构（logx）："msg":"定时任务派生","fired":N
+          #——正则用 "fired":N 提取；task-svc 是 log 标准库纯文本：fire_would_fire=N。
+          grep -oE '"fired":[0-9]+' shadow-report/controlplane.log | tail -100 > shadow-report/controlplane-fired.txt || true
           grep -oE "fire_would_fire=[0-9]+" shadow-report/task-svc.log | tail -100 > shadow-report/task-svc-shadow.txt || true
           # 汇总
-          CP_TOTAL=$(grep -oE 'fired=[0-9]+' shadow-report/controlplane-fired.txt 2>/dev/null | cut -d= -f2 | paste -sd+ | bc)
+          CP_TOTAL=$(grep -oE '"fired":[0-9]+' shadow-report/controlplane-fired.txt 2>/dev/null | cut -d: -f2 | paste -sd+ | bc)
           SH_TOTAL=$(grep -oE 'fire_would_fire=[0-9]+' shadow-report/task-svc-shadow.txt 2>/dev/null | cut -d= -f2 | paste -sd+ | bc)
           CP_TOTAL=${CP_TOTAL:-0}; SH_TOTAL=${SH_TOTAL:-0}
           {
