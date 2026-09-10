@@ -6,9 +6,14 @@
 # 期望与 controlplane 实际产出持续趋零 → 双轨行为一致 → 具备切流条件。
 #
 # 用户设备需休息 → 本 workflow 在 GitHub Actions 免费跑（用户拍板）。
+# **用户设备全程可关机**：观察跑在 GitHub 的 runner 上，本地只在线几秒触发；
+# 无人值守模式（auto_reps>0）下连触发都不需要。
 #
-# 触发：手动 workflow_dispatch（带观察时长参数，默认 30 分钟，上限 360）。
-# 不挂 push/schedule——免费额度友好，按需跑。
+# 触发（二选一）：
+#   1. 手动 workflow_dispatch（duration_minutes 10-360，默认 30）——本地在线几秒。
+#   2. 无人值守长窗观察：auto_reps 参数>0 时，本 run 结束自动触发下一个
+#      （gh workflow run 透传参数，reps 递减到 0 停）——用于凑 24h/72h 观察窗，
+#      GH 单 job 上限 360min，长窗=N 段拼接，报告分段留存。本地零在线。
 #
 # 拓扑（docker-compose.shadow-observe.yaml）：
 #   mysql:8（task 数据源，两栈共享）
@@ -20,7 +25,7 @@
 #   task-svc 日志 "[shadow] fire_would_fire=N ..."（shadow.go evaluate 影子期望）
 #   两者按观察窗聚合对比；差异行进 job summary。
 #
-# 数据注入：观察栈无真实流量，用 mysql client 灌 2 条种子定时模板
+# 数据注入：观察栈无真实流量，用 mysql client 灌种子定时模板
 #（每分钟触发的 cron），让两引擎在观察期内有真实评估对象。
 name: shadow-observe
 
@@ -35,6 +40,10 @@ on:
         description: '灌入的定时模板数（每分钟触发）'
         required: false
         default: '2'
+      auto_reps:
+        description: '无人值守长窗：自动连续触发的后续段数（0=单段；如 6 段×360min≈36h）'
+        required: false
+        default: '0'
 
 jobs:
   shadow-observe:
@@ -49,15 +58,20 @@ jobs:
         run: |
           DUR="${{ github.event.inputs.duration_minutes }}"
           SEED="${{ github.event.inputs.seed_schedules }}"
-          # 边界钳制：10-360 分钟；种子 1-10 条
+          REPS="${{ github.event.inputs.auto_reps }}"
+          # 边界钳制：10-360 分钟；种子 1-10 条；无人值守段数 0-12（12×360min≈3 天封顶）
           DUR=$(echo "$DUR" | grep -E '^[0-9]+$' || echo 30)
           [ "$DUR" -lt 10 ] && DUR=10
           [ "$DUR" -gt 360 ] && DUR=360
           SEED=$(echo "$SEED" | grep -E '^[0-9]+$' || echo 2)
           [ "$SEED" -lt 1 ] && SEED=1
           [ "$SEED" -gt 10 ] && SEED=10
+          REPS=$(echo "$REPS" | grep -E '^[0-9]+$' || echo 0)
+          [ "$REPS" -lt 0 ] && REPS=0
+          [ "$REPS" -gt 12 ] && REPS=12
           echo "duration=$DUR" >> "$GITHUB_OUTPUT"
           echo "seed=$SEED" >> "$GITHUB_OUTPUT"
+          echo "reps=$REPS" >> "$GITHUB_OUTPUT"
 
       - name: 构建镜像（controlplane + agent + task-svc）
         # task-svc 镜像走根级 Dockerfile.service 模板（上下文=仓库根）：
@@ -187,3 +201,25 @@ jobs:
       - name: 清理
         if: always()
         run: docker compose -f docker-compose.shadow-observe.yaml down -v
+
+      - name: 无人值守接力（触发下一段长窗观察）
+        # 本 run 成功且 reps>0 时自动触发下一段（reps-1 透传），用户设备零在线。
+        # gh CLI 用 run 内置 GITHUB_TOKEN（需 actions: write 权限，下方 permissions 声明）。
+        # 失败不重试不接力——报告已留工件，人工判读后再续跑（避免坏栈连跑烧额度）。
+        if: success() && steps.params.outputs.reps != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          REPS=${{ steps.params.outputs.reps }}
+          NEXT=$((REPS - 1))
+          echo "无人值守模式：剩余 $REPS 段，触发下一段（reps=$NEXT）..."
+          gh workflow run shadow-observe.yml \
+            --ref "${{ github.ref_name }}" \
+            -f duration_minutes=${{ steps.params.outputs.duration }} \
+            -f seed_schedules=${{ steps.params.outputs.seed }} \
+            -f auto_reps=$NEXT
+          echo "接力已触发。所有段完成后，在 Actions 页按时间序汇总各段 summary 即长窗对照结论。"
+
+# 无人值守接力需要 workflow_dispatch 写权限（gh workflow run 走 GitHub API）。
+permissions:
+  actions: write
