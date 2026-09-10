@@ -4,6 +4,44 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-10 D3：device-svc 自动纳管闭环（36cc7e1 + 83ff207）
+
+> TD-60 阶段 2 设备域收官：device-svc 补齐自动纳管能力链（install token 签发消费 + bootstrap 资产分发 + SSH 推送编排）。安全设计文档经用户审核通过后分四批实施（D3-a/b → D3-c/d 按风险递增）。双轨原则：与 controlplane AutoProvision 行为等价、零触碰现有路径。
+
+### D3-a：provision 迁 pkg/provision（36cc7e1）
+
+- `internal/provision` → `pkg/provision`（git rename，与 pkg/cron、pkg/discover 同迁出模式，解 go workspace 模块隔离——device-svc 独立模块无法 import internal）
+- **解耦改造**：`*config.Config` 整包依赖 → 参数结构 `provision.Config{Advertise/FallbackAdvertise/Production/SSH*}`（调用方各自填充）；`Deps.UpsertDevice func(*proto.DeviceInfo)` 泛化为 `DeviceDeps.UpsertDevice func(deviceID, ip, cidr, tenantID string)`——调用方闭包内自行构造实体（controlplane 构造 proto.DeviceInfo，device-svc 构造 models.Device）
+- **加固项（设计文档 §五 4）**：`validateAdvertise` 格式白名单——只允许 `scheme://host:port`，显式拒绝 `` ` ``/`$`/`;`/`&`/`|`/`<`/`>`/`\`/引号/空白等 shell 元字符，封死唯一外部值进 bootstrap 命令拼接的通道；10 组注入用例单测（分号/反引号/换行/$PATH 注入全拒）
+- controlplane 改引用（server_bootstrap.go 3 处调用 + server_devices.go import），行为字节级等价（pkg/provision 42 测试 + controlplane 全量回归全绿）
+
+### D3-b：device-svc TokenStore（36cc7e1）
+
+- `internal/store/token.go`：`ProvisionStore` 接口（IssueToken/ConsumeToken）+ MemoryStore 实现——token 语义与 controlplane 1:1：`HMAC-SHA256(secret, tenantID|deviceID|expiryUnix|nonce)`、15min TTL、nonce 随机、**一次性 consumed**、库存键为 SHA-256 摘要（明文不落库）、`|` 字符拒绝（F15 解析歧义）
+- `SetSecret` 注入（config `DEVICE_SVC_PROVISION_SECRET`；空则首签时随机兜底——重启 token 全失效，生产建议固定配置）
+- 12 单测：签发/消费/过期/一次性/伪造 MAC/篡改 payload/`|` 拒绝/空密钥兜底/多 token 独立
+
+### D3-c：编排 + 双闸（83ff207）
+
+- `Service.RunAutoProvision(cidrs, tenantID)`：复用 pkg/provision.AutoProvision——Sweep → dev-{ip} 幂等入库 discovered → IssueToken → （配 SSHKey 时）SSH 推送 bootstrap
+- **双闸设计**：`DEVICE_SVC_AUTO_PROVISION` 默认 false（闸 1，关闭时整条链拒绝执行）+ `DEVICE_SVC_PROVISION_SSH_KEY` 不配则仅签发 token 不推送（闸 2）；CIDR 白名单复用 D2 `validateDiscoveryCIDR`（SSRF 防护）
+- config 增 7 字段（AutoProvision/SSHKey/SSHUser/SSHKP/SSHKnownHosts/AdvertiseAddr）；`NewService` 增 ProvisionStore 参数 + SetProvisionStore/SetAutoProvisionConfig 注入
+- 网关 `POST /api/v1/provision/auto`（advertise 从网关构造时注入）
+- 7 编排单测（闸禁 2/白名单/闭环计数+入库/无效 CIDR/advertise 元字符拒绝）+ 2 网关单测（405/400/无效 JSON/TEST-NET 全零 Summary）
+
+### D3-d：bootstrap 端点（83ff207）
+
+- `GET /install.sh`：`provision.InstallScript` 同源模板分发（token 0600 落盘+systemd 单元+ps 不泄露 token——M12 安全语义继承）；advertise 指向控制面（agent 二进制分发仍由 controlplane 承担，device-svc 不重复携带二进制资产——设计决策 2）
+- `POST /api/v1/provision/register`：token 消费注册闭环——ConsumeToken（MAC→存在→未消费→未过期→置 consumed）→ 翻转 dev-{ip} 为 online + AgentID/hostname 回填（与 controlplane gRPC Register OnboardDeviceID 翻转语义等价）；401 无效/过期/已用、404 设备不存在
+- 2 单测：install.sh 内容（advertise 内嵌+方法校验）+ token 全生命周期（405/400/401/200 翻转+回填/二次消费 401/不存在 404）
+
+### 明确不做项（切流阶段独立课题）
+
+- 不动 controlplane 任何现有代码路径（除 D3-a 机械改引用）
+- device-svc ↔ controlplane token 互认/存量迁移（数据边界声明，同 auth-svc R8）
+- device-svc 多副本 leader 选主（单实例部署 MVP，多副本需前置选主——同 loginGuard R7 声明模式）
+- discovery job 与纳管合并触发（发现与远程执行风险等级不同，保持分离）
+
 ## [Unreleased] — 2026-09-09 A1+A2：auth-svc 方案 B 用户中心后端（3aae39b + 1761793）
 
 > TD-60 阶段 2 auth 域收官（方案 B：controlplane 121 处热路径本地验签零触碰；auth-svc 作为平行用户中心补齐能力+HTTP 网关）。方案 V2 经 8 项风险点（R1-R8）代码级实证完善后执行。
