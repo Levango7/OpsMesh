@@ -332,3 +332,124 @@ func TestServiceProxyRulesEnvOverrides(t *testing.T) {
 // bytes 导入守卫（避免未来重构删 import 编译仍过的假阴性——bytes 仅在
 // 扩展用例时使用，这里显式引用一次）。
 var _ = bytes.MinRead
+
+// ============ device 域代理（TD-60 D1/D3 接线） ============
+
+// TestDeviceProxyRuleRewrite 验证 device 域路径改写：
+// /api/v1/device-svc/{devices,agents,cmdb,discovery} → /api/v1/{...}（剥 device-svc 域前缀）。
+func TestDeviceProxyRuleRewrite(t *testing.T) {
+	cases := []struct {
+		publicPath  string
+		requestPath string
+		wantPath    string
+	}{
+		{"/api/v1/device-svc/devices", "/api/v1/device-svc/devices", "/api/v1/devices"},
+		{"/api/v1/device-svc/devices", "/api/v1/device-svc/devices/dev-1", "/api/v1/devices/dev-1"},
+		{"/api/v1/device-svc/devices", "/api/v1/device-svc/devices/dev-1/heartbeat", "/api/v1/devices/dev-1/heartbeat"},
+		{"/api/v1/device-svc/agents", "/api/v1/device-svc/agents", "/api/v1/agents"},
+		{"/api/v1/device-svc/agents", "/api/v1/device-svc/agents/ag-1", "/api/v1/agents/ag-1"},
+		{"/api/v1/device-svc/cmdb", "/api/v1/device-svc/cmdb/cis", "/api/v1/cmdb/cis"},
+		{"/api/v1/device-svc/discovery", "/api/v1/device-svc/discovery/jobs", "/api/v1/discovery/jobs"},
+		{"/api/v1/device-svc/discovery", "/api/v1/device-svc/discovery/devices", "/api/v1/discovery/devices"},
+	}
+	for i := range deviceProxyExtras {
+		r := &deviceProxyExtras[i]
+		found := false
+		for _, c := range cases {
+			if c.publicPath == r.publicPrefix {
+				found = true
+				if got := r.rewriteProxyPath(c.requestPath); got != c.wantPath {
+					t.Errorf("rule %s: rewrite(%s) = %s, want %s", r.publicPrefix, c.requestPath, got, c.wantPath)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("device 规则 %s 未被用例覆盖", r.publicPrefix)
+		}
+	}
+}
+
+// TestDeviceProxyLookup 验证 device 域路径命中规则表 + 六域规则不受影响。
+func TestDeviceProxyLookup(t *testing.T) {
+	// device 域四前缀命中。
+	for _, p := range []string{
+		"/api/v1/device-svc/devices",
+		"/api/v1/device-svc/devices/dev-1",
+		"/api/v1/device-svc/agents",
+		"/api/v1/device-svc/cmdb/cis",
+		"/api/v1/device-svc/discovery/jobs",
+	} {
+		r := lookupServiceProxyRule(p)
+		if r == nil {
+			t.Fatalf("device 路径 %s 应命中规则", p)
+		}
+		if r.envKey != "DEVICE_SVC_URL" {
+			t.Errorf("device 路径 %s 命中的 envKey=%s, want DEVICE_SVC_URL", p, r.envKey)
+		}
+	}
+	// 六域不受影响（回归）。
+	if r := lookupServiceProxyRule("/api/v1/gpu/nodes"); r == nil || r.publicPrefix != "/api/v1/gpu" {
+		t.Fatalf("gpu 规则回归失败: %v", r)
+	}
+	// 未知路径不命中。
+	if lookupServiceProxyRule("/api/v1/no-such-domain") != nil {
+		t.Fatal("未知路径不应命中")
+	}
+	// 旧 device 路径（controlplane 本地 handler 域）不命中代理——双轨并存边界。
+	if lookupServiceProxyRule("/api/v1/devices") != nil {
+		t.Fatal("/api/v1/devices 是 controlplane 本地 handler 域，不应命中代理（会 panic 重复注册）")
+	}
+}
+
+// TestDeviceProxyForwardWithTenantHeader 端到端：device 代理转发时
+// 聚合层验证的租户身份以 X-Tenant-ID 头注入后端（六域规则不注入）。
+func TestDeviceProxyForwardWithTenantHeader(t *testing.T) {
+	var gotPath, gotTenant, gotCookie string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotTenant = r.Header.Get("X-Tenant-ID")
+		gotCookie = r.Header.Get("Cookie")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"devices": []}`))
+	}))
+	defer backend.Close()
+
+	t.Setenv("DEVICE_SVC_URL", backend.URL)
+
+	s := newServiceProxyTestServer()
+	auth := loginAsAdmin(t, s)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/device-svc/devices", nil)
+	req.Header.Set("Authorization", auth)
+	// 不带 X-Tenant-ID 头：租户身份从 JWT 提取（requireTenantContext 验证后
+	// 由代理注入 X-Tenant-ID 头转发——本测正验证该注入）。
+	req.Header.Set("Cookie", "opsmesh_at=leak-me")
+	w := httptest.NewRecorder()
+	s.handleServiceProxy(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if gotPath != "/api/v1/devices" {
+		t.Errorf("后端收到路径 %s, want /api/v1/devices（device-svc 域前缀应剥除）", gotPath)
+	}
+	if gotTenant != "default" {
+		t.Errorf("后端 X-Tenant-ID = %q, want default（loginAsAdmin JWT 租户应被注入转发）", gotTenant)
+	}
+	if gotCookie != "" {
+		t.Errorf("后端不应收到 Cookie（会话凭证不下落内部服务）: %q", gotCookie)
+	}
+}
+
+// TestDeviceProxyPermDenied device 域规则权限守卫生效（无权 viewer 之外的角色拒绝）。
+func TestDeviceProxyPermDenied(t *testing.T) {
+	s := newServiceProxyTestServer()
+	// 未登录裸请求：401（绝不透传到无鉴权的后端）。
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/device-svc/devices", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	w := httptest.NewRecorder()
+	s.handleServiceProxy(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("未登录请求 status = %d, want 401", w.Code)
+	}
+}

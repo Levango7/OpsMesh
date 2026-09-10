@@ -65,6 +65,15 @@ func (s *Server) Start() error {
 		mux.HandleFunc(serviceProxyRules[i].publicPrefix, s.handleServiceProxy)
 		mux.HandleFunc(serviceProxyRules[i].publicPrefix+"/", s.handleServiceProxy)
 	}
+	// device 域（TD-60 D1/D3 后 device-svc REST 网关接线）：/api/v1/device-svc/{devices,
+	// agents,cmdb,discovery} 转发（规则见 service_proxy.go deviceProxyExtras；代理层
+	// 鉴权后注入 X-Tenant-ID 头——device-svc 网关消费租户上下文，与六域不同）。
+	// 前缀带 device-svc 域名：controlplane 本地已有 /api/v1/devices 等同名 handler
+	//（server_lifecycle.go:25-34），同 mux 重复注册会 panic；双轨期新旧并存。
+	for i := range deviceProxyExtras {
+		mux.HandleFunc(deviceProxyExtras[i].publicPrefix, s.handleServiceProxy)
+		mux.HandleFunc(deviceProxyExtras[i].publicPrefix+"/", s.handleServiceProxy)
+	}
 	// ChatOps Web 命令台（bot_bridge.go）：命令语法与 bot-svc IM webhook 一致
 	//（/opsmesh status|devices|alerts|ack|metrics|help），历史进程级内存。
 	mux.HandleFunc("/api/v1/bot/command", s.handleBotCommand)

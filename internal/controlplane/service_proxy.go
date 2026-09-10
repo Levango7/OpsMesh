@@ -109,14 +109,68 @@ var serviceProxyRules = []serviceProxyRule{
 	},
 }
 
+// deviceProxyExtras device 域（D1/D3 后 device-svc 已有完整 REST 网关）额外转发规则。
+// 与 serviceProxyRules 分表的原因：device 域的网关直连 store 层、鉴权走
+// tenant.Middleware（X-Tenant-ID 头或 JWT）——代理层完成鉴权后需显式注入
+// X-Tenant-ID 头再转发（六域微服务不消费租户上下文，device 消费）。
+//
+// 路径设计：publicPrefix 用 /api/v1/device-svc 域前缀（剥去后拼回 /api/v1/*），
+// 如 /api/v1/device-svc/devices → 后端 /api/v1/devices。不能用 /api/v1/devices
+// 直转——controlplane 本地已有同名 handler（server_lifecycle.go:25-34），
+// 同一 mux 重复注册会 panic；双轨期新旧路径并存（旧=controlplane 本地实现，
+// 新=device-svc 网关），切流阶段再评估替换。
+// bootstrap 端点（/install.sh、/api/v1/provision/register）不经代理
+// （agent 自举直连 device-svc）。
+var deviceProxyExtras = []serviceProxyRule{
+	{
+		publicPrefix:   "/api/v1/device-svc/devices",
+		upstreamPrefix: "/api/v1/devices",
+		domainPrefix:   "/api/v1/device-svc/devices",
+		envKey:         "DEVICE_SVC_URL",
+		defaultURL:     "http://127.0.0.1:8081",
+		perm:           "device:read",
+	},
+	{
+		publicPrefix:   "/api/v1/device-svc/agents",
+		upstreamPrefix: "/api/v1/agents",
+		domainPrefix:   "/api/v1/device-svc/agents",
+		envKey:         "DEVICE_SVC_URL",
+		defaultURL:     "http://127.0.0.1:8081",
+		perm:           "device:read",
+	},
+	{
+		publicPrefix:   "/api/v1/device-svc/cmdb",
+		upstreamPrefix: "/api/v1/cmdb",
+		domainPrefix:   "/api/v1/device-svc/cmdb",
+		envKey:         "DEVICE_SVC_URL",
+		defaultURL:     "http://127.0.0.1:8081",
+		perm:           "cmdb:read",
+	},
+	{
+		publicPrefix:   "/api/v1/device-svc/discovery",
+		upstreamPrefix: "/api/v1/discovery",
+		domainPrefix:   "/api/v1/device-svc/discovery",
+		envKey:         "DEVICE_SVC_URL",
+		defaultURL:     "http://127.0.0.1:8081",
+		perm:           "device:read",
+	},
+}
+
 // lookupServiceProxyRule 按请求路径匹配转发规则（最长前缀语义由注册顺序保证：
 // server_lifecycle.go 按本表顺序注册，ServeMux 自身按最长模式匹配）。
+// device 域规则（deviceProxyExtras）与六域共用同一匹配语义。
 func lookupServiceProxyRule(path string) *serviceProxyRule {
 	for i := range serviceProxyRules {
 		r := &serviceProxyRules[i]
 		if r.publicPrefix == "" {
 			continue
 		}
+		if path == r.publicPrefix || strings.HasPrefix(path, r.publicPrefix+"/") {
+			return r
+		}
+	}
+	for i := range deviceProxyExtras {
+		r := &deviceProxyExtras[i]
 		if path == r.publicPrefix || strings.HasPrefix(path, r.publicPrefix+"/") {
 			return r
 		}
@@ -167,10 +221,11 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	// 聚合层鉴权：与站内其他 API 同一守卫（第七轮越权修复后 requireAuth 语义：
 	// 无凭证的裸租户头在此被拒，绝不透传到无鉴权的微服务）。
-	if _, ok := s.requirePermission(w, r, rule.perm); !ok {
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
 		return
 	}
-	if _, ok := s.requireTenantContext(w, r); !ok {
+	if _, ok := s.requirePermission(w, r, rule.perm); !ok {
 		return
 	}
 	target := rule.upstreamBase()
@@ -195,11 +250,27 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 		// 下游微服务不消费会话 Cookie；鉴权已在聚合层完成，剥除防止
 		// 会话凭证意外落地到内部服务的访问日志。
 		req.Header.Del("Cookie")
+		// device 域网关消费租户上下文（tenant.Middleware 读 X-Tenant-ID 头）：
+		// 聚合层已验证的租户身份注入头后再转发，防下游兜底 default 造成
+		// 跨租户数据可见（六域微服务不消费租户上下文，此头对它们无影响）。
+		if isDeviceProxyRule(rule) {
+			req.Header.Set("X-Tenant-ID", actx.TenantID)
+		}
 	}
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
 		writeProxyErrorJSON(rw, http.StatusBadGateway, "service backend error: "+err.Error())
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+// isDeviceProxyRule 判断规则是否属于 device 域附加表（deviceProxyExtras）。
+func isDeviceProxyRule(r *serviceProxyRule) bool {
+	for i := range deviceProxyExtras {
+		if &deviceProxyExtras[i] == r {
+			return true
+		}
+	}
+	return false
 }
 
 // writeProxyErrorJSON 代理层错误响应（与站内 {"error": msg} 约定一致）。
