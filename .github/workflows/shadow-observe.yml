@@ -33,7 +33,7 @@ on:
   workflow_dispatch:
     inputs:
       duration_minutes:
-        description: '观察时长（分钟，10-360）'
+        description: '观察时长（分钟，10-350）'
         required: false
         default: '30'
       seed_schedules:
@@ -41,7 +41,7 @@ on:
         required: false
         default: '2'
       auto_reps:
-        description: '无人值守长窗：自动连续触发的后续段数（0=单段；如 6 段×360min≈36h）'
+        description: '无人值守长窗：自动连续触发的后续段数（0=单段；如 12 段×350min≈70h）'
         required: false
         default: '0'
 
@@ -59,10 +59,14 @@ jobs:
           DUR="${{ github.event.inputs.duration_minutes }}"
           SEED="${{ github.event.inputs.seed_schedules }}"
           REPS="${{ github.event.inputs.auto_reps }}"
-          # 边界钳制：10-360 分钟；种子 1-10 条；无人值守段数 0-12（12×360min≈3 天封顶）
+          # 边界钳制：10-350 分钟；种子 1-10 条；无人值守段数 0-12（12 段×350min≈70h）。
+          # 350 上限的实证：duration=360 时观察期 sleep 360min + 构建/报告约 1.5min
+          # 开销 > GH 托管 runner 单 job 360min 平台上限，第一段 6h1m 被强制取消
+          #（34499875800 实锤 annotation "exceeded maximum execution time of 6h"），
+          # 接力链断裂。350min + 开销 ≈ 352min 留足余量。
           DUR=$(echo "$DUR" | grep -E '^[0-9]+$' || echo 30)
           [ "$DUR" -lt 10 ] && DUR=10
-          [ "$DUR" -gt 360 ] && DUR=360
+          [ "$DUR" -gt 350 ] && DUR=350
           SEED=$(echo "$SEED" | grep -E '^[0-9]+$' || echo 2)
           [ "$SEED" -lt 1 ] && SEED=1
           [ "$SEED" -gt 10 ] && SEED=10
