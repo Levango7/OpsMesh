@@ -217,12 +217,27 @@ jobs:
           REPS=${{ steps.params.outputs.reps }}
           NEXT=$((REPS - 1))
           echo "无人值守模式：剩余 $REPS 段，触发下一段（reps=$NEXT）..."
-          gh workflow run shadow-observe.yml \
-            --ref "${{ github.ref_name }}" \
-            -f duration_minutes=${{ steps.params.outputs.duration }} \
-            -f seed_schedules=${{ steps.params.outputs.seed }} \
-            -f auto_reps=$NEXT
-          echo "接力已触发。所有段完成后，在 Actions 页按时间序汇总各段 summary 即长窗对照结论。"
+          # 重试防偶发 GH API 5xx：段 6（34735531691）接力触发时 GitHub 服务端
+          # HTTP 500（"Failed to run workflow dispatch"）一次即断链，观察白白
+          # 空转 11h。5 次 × 30s 退避，全失败才退出（报告已留工件不丢数据）。
+          OK=0
+          for i in 1 2 3 4 5; do
+            if gh workflow run shadow-observe.yml \
+              --ref "${{ github.ref_name }}" \
+              -f duration_minutes=${{ steps.params.outputs.duration }} \
+              -f seed_schedules=${{ steps.params.outputs.seed }} \
+              -f auto_reps=$NEXT; then
+              echo "接力已触发（第 $i 次尝试成功）。所有段完成后，在 Actions 页按时间序汇总各段 summary 即长窗对照结论。"
+              OK=1
+              break
+            fi
+            echo "接力第 $i 次失败（API 5xx 偶发），30s 后重试..."
+            sleep 30
+          done
+          if [ "$OK" != "1" ]; then
+            echo "接力 5 次全失败——本段报告已留工件，人工续跑：gh workflow run shadow-observe.yml -f duration_minutes=350 -f auto_reps=$NEXT"
+            exit 1
+          fi
 
 # 无人值守接力需要 workflow_dispatch 写权限（gh workflow run 走 GitHub API）。
 permissions:
