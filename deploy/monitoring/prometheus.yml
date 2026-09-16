@@ -35,49 +35,50 @@ scrape_configs:
     scrape_interval: 10s
 
   # OpsMesh Microservices
+  # metrics 端口统一 9091（与 helm values.yaml metricsPort 对齐，ServiceMonitor 亦采此端口）
   - job_name: "auth-svc"
     static_configs:
-      - targets: ["auth-svc:8100"]
+      - targets: ["auth-svc:9091"]
     metrics_path: /metrics
 
   - job_name: "device-svc"
     static_configs:
-      - targets: ["device-svc:8101"]
+      - targets: ["device-svc:9091"]
     metrics_path: /metrics
 
   - job_name: "task-svc"
     static_configs:
-      - targets: ["task-svc:8102"]
+      - targets: ["task-svc:9091"]
     metrics_path: /metrics
 
   - job_name: "alert-svc"
     static_configs:
-      - targets: ["alert-svc:8103"]
+      - targets: ["alert-svc:9091"]
     metrics_path: /metrics
 
   - job_name: "config-svc"
     static_configs:
-      - targets: ["config-svc:8106"]
+      - targets: ["config-svc:9091"]
     metrics_path: /metrics
 
   - job_name: "log-svc"
     static_configs:
-      - targets: ["log-svc:8105"]
+      - targets: ["log-svc:9091"]
     metrics_path: /metrics
 
   - job_name: "gpu-svc"
     static_configs:
-      - targets: ["gpu-svc:8107"]
+      - targets: ["gpu-svc:9091"]
     metrics_path: /metrics
 
   - job_name: "aio-svc"
     static_configs:
-      - targets: ["aio-svc:8108"]
+      - targets: ["aio-svc:9091"]
     metrics_path: /metrics
 
   - job_name: "portal-svc"
     static_configs:
-      - targets: ["portal-svc:8109"]
+      - targets: ["portal-svc:9091"]
     metrics_path: /metrics
 
   # Infrastructure
