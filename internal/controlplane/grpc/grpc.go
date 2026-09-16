@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -49,8 +50,15 @@ type EventPublisher interface {
 }
 
 // GrpcServerImpl 实现 grpcx.RegistrationServer 接口，把四条 gRPC 通道转发到 store。
+//
+// 依赖注入：优先使用 Svc（AgentService 适配层）；若构造时未注入 Svc，svc() 会
+// 用 sync.Once 懒初始化为 NewStoreAgentService(Store)，向后兼容仅注入 Store 的
+// 旧构造方（测试 / server_netsec）。TD-60 微服务切流时直接注入远程调用实现的
+// AgentService 即可，无需改本结构体或任何 handler 方法。
 type GrpcServerImpl struct {
-	Store       store.Store
+	Store       store.Store  // deprecated：保留向后兼容仅注入 Store 的构造方；Svc 优先
+	Svc         AgentService // Agent 适配层；nil 时由 svc() 懒初始化自 Store
+	svcOnce     sync.Once    // 懒初始化 Svc 的并发安全守卫
 	RequireAuth bool
 	Cfg         *config.Config    // 可为 nil（测试）；非 nil 时启用网段发现
 	Bus         events.Bus        // 可为 nil（测试）；非 nil 时发布审计/告警事件
@@ -70,6 +78,22 @@ type GrpcServerImpl struct {
 	SignatureKey string
 }
 
+// svc 返回当前 AgentService 实现：优先返回构造时注入的 Svc；
+// 若 Svc 为 nil（仅注入 Store 的旧构造方），用 sync.Once 懒初始化为
+// NewStoreAgentService(Store) 并缓存。并发安全。
+//
+// 本方法是 GrpcServerImpl 从 store.Store 依赖迁移到 AgentService 适配层的
+// 核心枢纽：所有 handler 方法通过 g.svc().* 访问 store 能力，而非 g.svc().*。
+// TD-60 微服务切流时只需在构造方注入远程 AgentService 实现，handler 无需改动。
+func (g *GrpcServerImpl) svc() AgentService {
+	g.svcOnce.Do(func() {
+		if g.Svc == nil {
+			g.Svc = NewStoreAgentService(g.Store)
+		}
+	})
+	return g.Svc
+}
+
 // Register 注册：调用 store.Register，返回分配到的 agentID 与控制面下发配置。
 // 服务端按网关注入租户给 AgentInfo.TenantID 盖章（agent 不可伪造所属租户）。
 // 入站 proto 经防腐层（ACL）转 domain，业务处理在 domain 上进行（贯穿边界）。
@@ -84,7 +108,7 @@ func (g *GrpcServerImpl) Register(ctx context.Context, info *proto.AgentInfo) (*
 	// agent 经 bootstrap 安装后携带一次性 install token 注册，该 token 由 Provision 签发，
 	// 经 ConsumeToken 校验通过后，回填对应候选设备的 deviceID 并强制以 token 内租户为准。
 	if info.InstallToken != "" {
-		devID, tokTenant, tokOK := g.Store.ConsumeToken(info.InstallToken)
+		devID, tokTenant, tokOK := g.svc().ConsumeToken(info.InstallToken)
 		if !tokOK {
 			// 认证失败也要留痕（B1 token 校验失败属认证事件）。
 			// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
@@ -108,7 +132,7 @@ func (g *GrpcServerImpl) Register(ctx context.Context, info *proto.AgentInfo) (*
 		// 用标准 gRPC 状态码，便于 agent 侧精确判断未鉴权。
 		return nil, status.Error(codes.Unauthenticated, "missing tenant context: gateway auth required (--require-auth)")
 	}
-	registered := g.Store.Register(domain.AgentToProto(dom))
+	registered := g.svc().Register(domain.AgentToProto(dom))
 
 	// 真实网段发现：开启时按 SegmentCIDR 扫描存活主机并纳管为真实 DeviceInfo。
 	if g.Cfg != nil && g.Cfg.Discover && g.Cfg.SegmentCIDR != "" {
@@ -121,7 +145,7 @@ func (g *GrpcServerImpl) Register(ctx context.Context, info *proto.AgentInfo) (*
 				// 短期：网段发现的开放端口主机只是"候选"，不是已纳管设备。
 				// 发现 ≠ 纳管（该主机上尚无 agent，无法注册/执行任务）。
 				// 故标 State="discovered"、Managed=false、AgentID=""（待 provision 推送 agent 才真正纳管）。
-				g.Store.UpsertDevice(&proto.DeviceInfo{
+				g.svc().UpsertDevice(&proto.DeviceInfo{
 					DeviceID: "dev-" + ip, Segment: dom.Segment, TenantID: dom.TenantID,
 					IP: ip, AgentID: "", State: "discovered", Managed: false, TaskState: "idle",
 				})
@@ -133,7 +157,7 @@ func (g *GrpcServerImpl) Register(ctx context.Context, info *proto.AgentInfo) (*
 	// 注册审计与事件总线发布已统一在 store.Register 产出（等保三级 +），此处不再重复。
 	// 观测：更新 agent 数与队列深度。
 	if g.Metrics != nil {
-		g.Metrics.SetAgents(len(g.Store.Agents("")))
+		g.Metrics.SetAgents(len(g.svc().Agents("")))
 	}
 
 	// SSE：通知前端新 agent/设备已上线（设备表实时追加）
@@ -193,7 +217,7 @@ func (g *GrpcServerImpl) CheckAgentTenant(ctx context.Context, agentID string) e
 	if agentID == "" {
 		return nil // 空 AgentID 由后续业务逻辑校验 InvalidArgument
 	}
-	a := g.Store.Agent(agentID)
+	a := g.svc().Agent(agentID)
 	if a == nil {
 		return nil // agent 不存在，交由后续业务逻辑处理（未注册/已退役）
 	}
@@ -249,7 +273,7 @@ func (g *GrpcServerImpl) verifyAgentSignature(ctx context.Context, agentID strin
 	// 预共享密钥模式下所有 agent 共用同一密钥，密钥不随 Register 响应下发，防注册不硬时密钥外泄。
 	secret := g.SignatureKey
 	if secret == "" {
-		secret = g.Store.AgentSecret(agentID)
+		secret = g.svc().AgentSecret(agentID)
 	}
 	if secret == "" {
 		// agent 未注册或未生成 secret 且未配置预共享密钥：requireSignature 开启时拒绝
@@ -284,7 +308,7 @@ func (g *GrpcServerImpl) Audit(ctx context.Context, e *proto.AuditEvent) {
 	if e.TraceID == "" {
 		e.TraceID = otelx.TraceIDFromContext(ctx)
 	}
-	g.Store.Audit(e)
+	g.svc().Audit(e)
 }
 
 // Heartbeat 心跳：转发到 store.Heartbeat；若携带监控指标则缓存到 store。
@@ -295,7 +319,7 @@ func (g *GrpcServerImpl) Heartbeat(ctx context.Context, req *grpcx.HeartbeatReq)
 	if err := g.verifyAgentSignature(ctx, req.AgentID); err != nil {
 		return nil, err
 	}
-	g.Store.Heartbeat(req.AgentID, req.Status, req.Load)
+	g.svc().Heartbeat(req.AgentID, req.Status, req.Load)
 	// 监控指标上报：agent 每 30s 采集一次系统指标随心跳上报，控制面缓存最新值供 API 查询。
 	if req.Metrics != nil {
 		// 若 metrics.DeviceID 为空，用 dev-<agentID> 兜底（与 Register 创建占位设备的 ID 对齐）。
@@ -304,7 +328,7 @@ func (g *GrpcServerImpl) Heartbeat(ctx context.Context, req *grpcx.HeartbeatReq)
 			deviceID = "dev-" + req.AgentID
 			req.Metrics.DeviceID = deviceID
 		}
-		g.Store.StoreDeviceMetrics(deviceID, req.Metrics)
+		g.svc().StoreDeviceMetrics(deviceID, req.Metrics)
 	}
 	return &grpcx.Empty{}, nil
 }
@@ -318,9 +342,9 @@ func (g *GrpcServerImpl) PullTasks(ctx context.Context, req *grpcx.PullTasksReq)
 	if err := g.verifyAgentSignature(ctx, req.AgentID); err != nil {
 		return nil, err
 	}
-	t := g.Store.ClaimTask(req.AgentID)
+	t := g.svc().ClaimTask(req.AgentID)
 	if g.Metrics != nil {
-		g.Metrics.SetQueueDepth(g.Store.PendingDepth())
+		g.Metrics.SetQueueDepth(g.svc().PendingDepth())
 	}
 	if t == nil {
 		return &grpcx.PullTasksResp{}, nil
@@ -337,12 +361,12 @@ func (g *GrpcServerImpl) ReportResult(ctx context.Context, res *proto.TaskResult
 	if err := g.verifyAgentSignature(ctx, res.AgentID); err != nil {
 		return nil, err
 	}
-	g.Store.SubmitResult(res)
+	g.svc().SubmitResult(res)
 
 	// M6 日志检索：任务执行结果（stdout/stderr）自动落地为可检索日志。
-	// 租户取自 agent 归属（g.Store.Agent 返回 *proto.AgentInfo.TenantID），强制隔离不可伪造。
+	// 租户取自 agent 归属（g.svc().Agent 返回 *proto.AgentInfo.TenantID），强制隔离不可伪造。
 	if g.Logs != nil && res.AgentID != "" {
-		if a := g.Store.Agent(res.AgentID); a != nil {
+		if a := g.svc().Agent(res.AgentID); a != nil {
 			g.Logs.RecordTaskResult(ctx, a.TenantID, res.AgentID, res.TaskID, res.ExitCode, res.Stdout, res.Stderr)
 		}
 	}
@@ -356,7 +380,7 @@ func (g *GrpcServerImpl) ReportResult(ctx context.Context, res *proto.TaskResult
 		}
 		g.Metrics.IncTask(status)
 		g.Metrics.ObserveDuration(float64(dr.DurationMs) / 1000.0)
-		g.Metrics.SetQueueDepth(g.Store.PendingDepth())
+		g.Metrics.SetQueueDepth(g.svc().PendingDepth())
 	}
 	if g.Bus != nil {
 		lvl := events.LevelInfo
@@ -378,7 +402,7 @@ func (g *GrpcServerImpl) ReportResult(ctx context.Context, res *proto.TaskResult
 	// 携带 ctx 的 trace_id，使 SSE 事件与链路追踪关联。
 	if g.Publisher != nil {
 		agentTenant := ""
-		if a := g.Store.Agent(res.AgentID); a != nil {
+		if a := g.svc().Agent(res.AgentID); a != nil {
 			agentTenant = a.TenantID
 		}
 		status := "done"
@@ -433,7 +457,7 @@ func (g *GrpcServerImpl) CancelTask(ctx context.Context, req *grpcx.CancelTaskRe
 	if req.TaskID == "" {
 		return nil, status.Error(codes.InvalidArgument, "taskID required")
 	}
-	ok := g.Store.CancelTask(req.TaskID, tenant)
+	ok := g.svc().CancelTask(req.TaskID, tenant)
 	if !ok {
 		return nil, status.Error(codes.NotFound, "task not cancellable (not found / not pending|running / tenant mismatch)")
 	}
@@ -464,7 +488,7 @@ func (g *GrpcServerImpl) PollCancels(ctx context.Context, req *grpcx.PollCancels
 	if err := g.CheckAgentTenant(ctx, req.AgentID); err != nil {
 		return nil, err
 	}
-	ids := g.Store.CancelledTaskIDs(req.AgentID)
+	ids := g.svc().CancelledTaskIDs(req.AgentID)
 	return &grpcx.PollCancelsResp{CancelledTaskIDs: ids}, nil
 }
 
@@ -492,13 +516,13 @@ func (g *GrpcServerImpl) ReportLogs(ctx context.Context, req *grpcx.ReportLogsRe
 	// 按 agent 归属回填 TenantID（agent 自报不信任，行级隔离由控制面盖章）。
 	// agent 不存在时 tenant 留空（兼容无网关降级 / 旧数据）。
 	tenantID := req.Report.TenantID
-	if a := g.Store.Agent(agentID); a != nil {
+	if a := g.svc().Agent(agentID); a != nil {
 		tenantID = a.TenantID
 	}
 	// 落库到 store（MemoryStore/SQLStore 内存暂存，供 GET /api/v1/agent-logs 检索）。
 	report := req.Report
 	report.TenantID = tenantID
-	if err := g.Store.SaveLogs(tenantID, &report); err != nil {
+	if err := g.svc().SaveLogs(tenantID, &report); err != nil {
 		logx.Error(ctx, "agent 日志落库失败", err, "agentID", agentID, "logName", req.Report.LogName)
 		return nil, status.Error(codes.Internal, fmt.Sprintf("save logs failed: %v", err))
 	}
