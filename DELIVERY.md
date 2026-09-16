@@ -8,17 +8,17 @@
 
 **管控通道（已冻结决策：自研 gRPC，2026-07-27）**：MVP 管控通道 = **自研 gRPC（direct + proxy）**。原"蓝鲸 GSE 社区版底座 / GSE 级联纳管"**移出 MVP、降格为可选增强**（未来超大规模级联再独立立项）。跨网段规模化改为「每段一套控制面 + agent 集群 + 控制面联邦 / 任务跨段转发」。
 
-## 2. 代码规模（实测 2026-08-30 更新，含 services/ 18 微服务 + GPU/AIOps/ChatOps 新域）
+## 2. 代码规模（实测 2026-09-16 更新，含 services/ 18 微服务 + GPU/AIOps/ChatOps 新域）
 
 > 统计口径：`git ls-files` 实测。主模块 + operator 子模块 + `services/` 18 个微服务子模块（各自独立 go.mod，2026-08-29 起新增）。
 > 前端按 `web/enterprise/src/` 下 `.js` + `.vue` 统计（不含 `.json` i18n 资源）。
 
-| 指标 | 数值（实测 2026-08-30） |
+| 指标 | 数值（实测 2026-09-16） |
 |------|----------------------|
-| 仓库文件合计 | 1,121 |
-| Go 文件合计 | **714**（含 265 测试文件） |
-| Go 行数合计 | ~221,900（其中测试 ~99,050，占比约 44.6%） |
-| 前端文件（`.js` + `.vue`） | 145（`web/enterprise/src/`） |
+| 仓库文件合计 | 1,411 |
+| Go 文件合计 | **771**（含 288 测试文件） |
+| Go 行数合计 | ~234,200（其中测试 ~106,100，占比约 45.3%） |
+| 前端文件（`.js` + `.vue`） | 223（`web/enterprise/src/`） |
 | 微服务子模块 | 18 个（`services/`，独立 go.mod，与主模块双轨并存，见 README「services/ 微服务目录」） |
 
 > 较 2026-08-24 版本（346 Go 文件 / ~51,700 行）大幅增长：新增 `services/` 微服务化拆分（约 8 万行）、GPU 资源管理、AIOps 引擎、ChatOps、成本分摊、Terraform provider 等能力；规模统计随 25 提交增量演进刷新。
@@ -34,7 +34,7 @@ operator 子模块额外引入 `sigs.k8s.io/controller-runtime`（K8s CRD 控制
 
 ## 3. 全量验证结果（go1.26.0）
 
-> Go 版本要求：主模块 `go.mod` 声明 `go 1.26.0`（toolchain `go1.26.6`）；operator 子模块声明 `go 1.22.0`（toolchain `go1.23.4`，待对齐，见 `docs/tech-debt.md` TD-29/TD-30）。构建需本机安装 Go ≥ 1.26.0。
+> Go 版本要求：主模块 `go.mod` 声明 `go 1.26.0`（toolchain `go1.26.6`）；operator 子模块声明 `go 1.26.0`（已对齐主模块，见 `docs/tech-debt.md` TD-29/TD-30 已解决）。构建需本机安装 Go ≥ 1.26.0。
 
 | 命令 | 结果 |
 |------|------|
@@ -83,7 +83,7 @@ operator 子模块额外引入 `sigs.k8s.io/controller-runtime`（K8s CRD 控制
 
 ### 4.4 其余已落地能力（横切）
 
-定时/周期调度、失败重试+死信队列、设备自动退役(F5)、自动纳管令牌闭环、多副本保护+agent 多控制面 failover+真 HA leader 选举、生产基线、前端壳层重构、Prometheus 指标 + /healthz + /readyz、OTel 链路追踪、多阶段 Dockerfile + CI(gosec/Trivy/golangci-lint/-race)。**Helm Chart（`deploy/helm/opsmesh/`）已落地可用**，systemd 部署资产齐全（`deploy/systemd/`），docker-compose 一键起栈，Argo CD ApplicationSet 网段批量渲染仍属规划中。
+定时/周期调度、失败重试+死信队列、设备自动退役(F5)、自动纳管令牌闭环、多副本保护+agent 多控制面 failover+真 HA leader 选举、生产基线、前端壳层重构、Prometheus 指标 + /healthz + /readyz、OTel 链路追踪、多阶段 Dockerfile + CI(gosec/Trivy/golangci-lint/-race)。**Helm Chart（`deploy/helm/opsmesh/`）已落地可用**，systemd 部署资产齐全（`deploy/systemd/`），docker-compose 一键起栈，**Argo CD ApplicationSet 网段批量渲染已落地（`deploy/gitops/`）**。
 
 ### 4.5 前端功能差距补齐（P0–P3，2026-09-03 完成）
 
@@ -158,7 +158,7 @@ go build ./... && go vet ./... && go test ./...
 ```
 
 - 容器：`Dockerfile`（controlplane，多阶段）+ `Dockerfile.agent`（agent，多阶段），已含 gosec/Trivy 扫描门禁
-- 编排：**Helm Chart 已提供**（`deploy/helm/opsmesh/`，含 values / values-production overlay），可直接 `helm install`；Argo CD GitOps 仓库规划中。非 Helm 路径仍可用 Dockerfile + docker-compose（controlplane 用 `Dockerfile`，agent 用 `Dockerfile.agent`）
+- 编排：**Helm Chart 已提供**（`deploy/helm/opsmesh/`，含 values / values-production overlay），可直接 `helm install`；**Argo CD GitOps 仓库已落地**（`deploy/gitops/`，含 ApplicationSet + projects + segments）。非 Helm 路径仍可用 Dockerfile + docker-compose（controlplane 用 `Dockerfile`，agent 用 `Dockerfile.agent`）
 
 ## 7. CI 状态
 
@@ -175,7 +175,7 @@ go build ./... && go vet ./... && go test ./...
 
 - 远端：`github.com/Levango7/OpsMesh`，分支 `main`
 - 根提交链：以 `git rev-list --count HEAD` 实测为准（初始 README → 内核实现 → 六大运维模块 → CI/容器加固 → 文档同步，持续演进中）
-- 提交内容：34 包源码（主模块 31 + operator 3）+ ~714 Go 文件（含 ~265 测试，实测口径见 §2）+ ~145 前端文件（`web/enterprise/src/`）+ Dockerfile/Dockerfile.agent + 11 个微服务 Dockerfile（`services/<svc>/Dockerfile`）+ docker-compose + Helm Chart + systemd unit + README + DELIVERY + CHANGELOG + 23 个设计文档 + `.github/ci.yml` + `.gitignore`
+- 提交内容：34 包源码（主模块 31 + operator 3）+ ~771 Go 文件（含 ~288 测试，实测口径见 §2）+ ~223 前端文件（`web/enterprise/src/`）+ Dockerfile/Dockerfile.agent + 11 个微服务 Dockerfile（`services/<svc>/Dockerfile`）+ docker-compose + Helm Chart + systemd unit + README + DELIVERY + CHANGELOG + 23 个设计文档 + `.github/ci.yml` + `.gitignore`
 
 ---
 ## 9. 生产安全加固

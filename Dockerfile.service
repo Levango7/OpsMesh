@@ -26,10 +26,15 @@ COPY services/ services/
 # go.work 位于 /src，从服务目录向上回溯即可命中，workspace 模式下依赖
 # 解析全部走 go.work，不依赖 GOPATH 内的模块缓存。
 WORKDIR /src/services/${SERVICE}
+# M11 供应链安全：go mod verify 校验模块完整性（防 go.sum 漂移 / 投毒）。
+# workspace 模式下 download 拉取所有 workspace 模块依赖，verify 校验哈希。
+RUN go mod download && go mod verify
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
     -ldflags="-s -w -X opsmesh/internal/version.Version=${VERSION}" \
     -o /svc ./cmd/${SERVICE}
 
+# P2-2 供应链安全：base image digest 由 Renovate 自动钉死（见 .github/renovate.json）。
+# 手动钉死：crane digest alpine:3.23 → FROM alpine:3.23@sha256:<digest> AS runtime
 FROM alpine:3.23 AS runtime
 RUN apk --no-cache upgrade && apk --no-cache add ca-certificates curl
 # 非 root 运行（H16 基线）：与仓库根 Dockerfile 的 nonroot 语义一致。

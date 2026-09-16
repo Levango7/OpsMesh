@@ -4,7 +4,7 @@
 // 适用于 CI/CD 系统、自动化脚本、第三方集成等场景。
 //
 // 设计要点：
-//   - Key 格式：om_ + 32 位随机 hex（共 35 字符），前缀 om_ 便于识别；
+//   - Key 格式：om_ + 64 位随机 hex（共 67 字符，256 位熵），前缀 om_ 便于识别；
 //   - 存储：仅存 SHA-256 hash，明文 key 仅在创建时返回一次（不可再次获取）；
 //   - 校验：ValidateKey 用 SHA-256(明文) 比对已存 hash；
 //   - Scopes：细粒度权限控制（如 ["device:read","task:write"]）；
@@ -41,12 +41,12 @@ func NewAPIKeyManager(s store.APIKeyStore) *APIKeyManager {
 
 // GenerateAPIKey 生成新的 API Key 明文与 hash。
 // 返回 (prefix, hash)：
-//   - prefix：明文 key（"om_" + 32 位随机 hex，共 35 字符），仅在生成时返回，调用方须妥善保存；
+//   - prefix：明文 key（"om_" + 64 位随机 hex，共 67 字符，256 位熵），仅在生成时返回，调用方须妥善保存；
 //   - hash：SHA-256(prefix) 的 hex 编码，用于持久化存储与校验。
 //
 // 熵源失败时返回错误（crypto/rand 不可用）。
 func GenerateAPIKey() (prefix string, hash string, err error) {
-	b := make([]byte, 16) // 16 字节 = 32 位 hex
+	b := make([]byte, 32) // 32 字节 = 64 位 hex = 256 位熵（NIST SP 800-132 建议 ≥256 位）
 	if _, err := rand.Read(b); err != nil {
 		return "", "", fmt.Errorf("generate api key: crypto/rand failed: %w", err)
 	}
@@ -64,7 +64,7 @@ func hashAPIKey(key string) string {
 
 // ValidateKey 校验明文 API Key 是否有效。
 // 校验流程：
-//   - 解析 key 格式（om_ 前缀 + 32 位 hex）；
+//   - 解析 key 格式（om_ 前缀 + 32 或 64 位 hex，兼容旧 128 位与新 256 位 key）；
 //   - 计算 SHA-256(key)，与 store 中已存 hash 比对；
 //   - 校验 Enabled=true 且未过期。
 //
@@ -76,8 +76,10 @@ func (m *APIKeyManager) ValidateKey(key string) (*APIKey, error) {
 	if !strings.HasPrefix(key, "om_") {
 		return nil, errors.New("invalid api key format: missing om_ prefix")
 	}
-	if len(key) != 35 { // om_ (3) + 32 hex
-		return nil, fmt.Errorf("invalid api key length: %d (want 35)", len(key))
+	// 兼容旧 128 位 key（35 字符 = om_ + 32 hex）与新 256 位 key（67 字符 = om_ + 64 hex）。
+	// 旧 key 渐进淘汰；新 key 由 GenerateAPIKey 生成（256 位熵，符合 NIST 建议）。
+	if len(key) != 35 && len(key) != 67 {
+		return nil, fmt.Errorf("invalid api key length: %d (want 35 or 67)", len(key))
 	}
 	hash := hashAPIKey(key)
 	// 遍历所有租户的 API Key 比对 hash（MVP 线性扫描；生产可建 hash→APIKey 索引）。

@@ -262,7 +262,7 @@ deploy/helm/opsmesh/
 ├── Chart.yaml
 ├── values.yaml              # 开发/体验默认值
 ├── values-production.yaml   # 生产 overlay
-└── templates/               # 14 个模板
+└── templates/               # 19 个模板
 ```
 
 ### 开发/体验部署

@@ -4,6 +4,9 @@
 # 明确"不含 shell"（/bin/sh 不存在），此前用它导致 exec.Command("sh",...)
 # 启动失败（exitCode=-1，任务全部立即失败）——改用 debian:bookworm-slim
 # （含完整 sh），仍以非 root（UID 65532）运行保持最小权限。
+# S10 安全决策：agent 需 /bin/sh 执行 shell 任务，distroless（static/base）均
+# 不含 shell，故保留 debian:bookworm-slim；通过 S5 apt-get upgrade 修复 CVE、
+# 非 root 运行 + drop ALL capabilities 缩小攻击面（见 builders.go agentDaemonSet）。
 # 多阶段构建：build 阶段拉取依赖并编译静态二进制，runtime 阶段用精简镜像。
 # syntax=docker/dockerfile:1.6
 # P2-2 供应链安全：base image digest 由 Renovate 自动钉死（见 .github/renovate.json）。
@@ -15,11 +18,18 @@ ENV GOPROXY=https://goproxy.cn,direct
 ENV GOWORK=off
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+# M11 供应链安全：go mod verify 校验下载模块完整性（防 go.sum 漂移 / 投毒）。
+RUN go mod download && go mod verify
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /opsmesh ./cmd/opsmesh
 
+# P2-2 供应链安全：base image digest 由 Renovate 自动钉死（见 .github/renovate.json）。
+# 手动钉死：crane digest debian:bookworm-slim → FROM debian:bookworm-slim@sha256:<digest> AS runtime
 FROM debian:bookworm-slim AS runtime
+# S5 供应链安全：apt-get upgrade 升级基础包修复已知 CVE（debian-slim 基础镜像
+# 可能携带过期包）。在 USER 切换前以 root 执行；agent 二进制静态编译
+# （CGO_ENABLED=0）无需额外 apt install，仅 upgrade 已有包。
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 # 非 root 运行（与 distroless 的 nonroot 用户同 UID 65532，保持最小权限）。
 # 注意：USER 后不能再有需要 root 的 COPY（chown 在此完成）。
 COPY --chown=65532:65532 --from=build /opsmesh /usr/local/bin/opsmesh

@@ -35,9 +35,15 @@ controlplane:
   # 控制面对外 HTTP 地址（拼接 bootstrap 安装命令）；空则回退 127.0.0.1:<http-port>
   advertiseAddr: ""
   # gRPC TLS / mTLS
+  # 生产环境强烈建议启用 mTLS（设置 tls.enabled=true 并预置含 tls.crt/tls.key/ca.crt 的 Secret），
+  # 以双向认证防止未授权客户端直连控制面绕过网关身份注入。
+  # 内网/开发环境可保持 enabled=false（合理降级，不强制）。
+  # 安全加固 S2：此默认值经评审确认——内网部署 mTLS 非必需，但生产（尤其多租户/公网可达）
+  # 务必开启，否则攻击者可绕过网关注入伪造 X-Tenant-ID 越权。
   tls:
     enabled: false
     # 证书需以 Secret 形式预置，键名 tls.crt / tls.key / ca.crt
+    # 启用 mTLS 时 ca.crt 用于校验客户端证书（双向认证）；仅 server TLS 时可省略 ca.crt。
     secretName: opsmesh-tls
   # 任务租约租期秒；超期未上报结果则复位重调度
   taskLeaseSec: 300

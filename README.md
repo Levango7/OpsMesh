@@ -350,7 +350,7 @@ docker compose down
 
 ### 方式三：Helm Chart（K8s 生产部署）
 
-仓库自带完整 Helm Chart（`deploy/helm/opsmesh/`，含 17 个模板），一键部署控制面 + agent DaemonSet + MySQL + Redis：
+仓库自带完整 Helm Chart（`deploy/helm/opsmesh/`，含 19 个模板），一键部署控制面 + agent DaemonSet + MySQL + Redis：
 
 ```bash
 # 开发/体验：单副本 + memory store
@@ -411,7 +411,7 @@ mysql -e "CREATE DATABASE IF NOT EXISTS ops_device"
 
 ### Kubernetes 部署（Helm Chart，已提供）
 
-仓库已自带完整 Helm Chart（`deploy/helm/opsmesh/`，含 `Chart.yaml` / `values.yaml` / `values-production.yaml` / `templates/` 全套 17 个模板），可一键部署控制面 + agent DaemonSet + MySQL + Redis：
+仓库已自带完整 Helm Chart（`deploy/helm/opsmesh/`，含 `Chart.yaml` / `values.yaml` / `values-production.yaml` / `templates/` 全套 19 个模板），可一键部署控制面 + agent DaemonSet + MySQL + Redis：
 
 ```bash
 # 开发/体验：单副本 + memory store

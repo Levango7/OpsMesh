@@ -64,6 +64,12 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构：
 | 28 | orchestration | 基础 | M5 作业编排：DAG 展开 + 子工作流 + 条件分支 | `Handler`/`WorkflowDef`/`WorkflowRun`/`TaskEngine` | authctx/cron/dag/proto | ✓ |
 | 29 | proto | 其他 | 控制面/agent 共享数据类型（JSON 友好） | `AgentInfo`/`DeviceInfo`/`Task`/`TaskResult`/`Alert`/`AuditEvent`/`DeviceMetrics` | — | — |
 | 30 | version | 其他 | 内核版本号（CI 注入 Commit/Date） | `Version`/`Commit`/`Date` | — | — |
+| 31 | automation | 运维 | 自动化闭环引擎：规则（条件→动作）+ 触发器 + 动作执行 | `Rule`/`Trigger`/`Action`/`Engine` | — | ✓ |
+| 32 | network | 运维 | 网络管理引擎：网络设备模型 + 拓扑结构 + 网络发现 | `Device`/`Interface`/`Topology`/`DeviceType` | — | ✓ |
+| 33 | compliance | 安全 | 安全合规检查引擎：CIS Benchmark 基线 + 自定义规则 + 扫描编排 | `ComplianceRule`/`ComplianceResult`/`ComplianceReport`/`Engine` | — | ✓ |
+| 34 | plugin | 基础 | 插件框架：注册/反注册/钩子触发/生命周期管理 | `Plugin`/`Hook`/`Manager`/`Event` | — | ✓ |
+| 35 | extension | 其他 | API 网关引擎：路由规则匹配 + 令牌桶限流 + 统计聚合 | `RouteRule`/`RateLimiter`/`GatewayStats` | — | ✓ |
+| 36 | platform | 其他 | 平台化业务引擎：租户管理 + API Key + 插件市场 + 计费 | `Tenant`/`APIKey`/`SubscriptionPlan`/`Plugin` | — | ✓ |
 
 ## 第3章 详细设计
 
@@ -526,6 +532,80 @@ K8s 集群客户端连接与多集群管理（Phase 3）。封装 client-go 连�
 - `ServiceDiscovery` 接口：未来扩展 etcd/Consul 实现只需实现接口即可无缝接入
 - `Balancer` 接口：可新增负载均衡策略（如加权轮询 / 最少连接）
 
+#### 3.2.7 automation
+
+**职责描述**
+
+自动化闭环引擎：定义"条件→动作"规则，当触发器条件满足时执行对应动作，实现运维场景的自动响应（如告警触发自动重启、指标超阈值自动扩容）。纯领域模型，无外部依赖，可被 controlplane/store 复用。触发器类型覆盖 alert/metric_threshold/schedule/event 四类，动作类型覆盖 execute_task/send_notify/scale/restart/isolate 五类。
+
+**关键接口**
+
+- `Engine`：规则引擎主体，持有规则集并提供 Evaluate 方法判定触发条件
+- `Rule`：自动化规则（含 Trigger + Action + 启用状态）
+- `Trigger`：触发器定义（Type + Params）
+- `Action`：动作定义（Type + Params）
+- `TriggerType`/`ActionType`：类型枚举（含校验函数 `ValidTriggerType`/`ValidActionType`）
+
+**核心数据结构**
+
+- `Rule`：含 `ID`/`Name`/`TenantID`/`Trigger`/`Action`/`Enabled`/`CreatedAt`
+- `Trigger`：含 `Type TriggerType`/`Params map[string]string`（如 `metric=cpu, threshold=90`）
+- `Action`：含 `Type ActionType`/`Params map[string]string`（如 `task_id, target, notify_channel`）
+- `ExecutionRecord`：规则执行记录（含规则 ID / 触发时间 / 执行结果）
+
+**关键算法**
+
+- `Evaluate`：判定触发条件是否满足（MVP 桩实现，后续接入指标查询与告警事件）
+- 触发器匹配：按 `TriggerType` 分发到对应判定逻辑（alert → 告警事件匹配，metric_threshold → 指标查询比较，schedule → cron 到时，event → 事件总线匹配）
+- 动作执行：按 `ActionType` 分发到对应执行逻辑（execute_task → 创建任务，send_notify → 发通知，scale → 扩缩容，restart → 重启，isolate → 隔离）
+
+**并发安全**
+
+- 纯领域模型，无内部状态，调用方负责并发保护
+
+**扩展点**
+
+- `TriggerType`/`ActionType`：可扩展新触发器 / 动作类型
+- `Params map[string]string`：触发 / 动作参数灵活键值对，按类型自定义语义
+
+#### 3.2.8 network
+
+**职责描述**
+
+网络管理引擎：提供网络设备模型、监控指标、拓扑结构与网络发现能力。预置 switch/router/firewall/load_balancer 四类设备类型，支持设备 CRUD、接口管理、拓扑可视化与子网扫描发现。纯领域模型，无外部依赖，可被 controlplane/store 复用。
+
+**关键接口**
+
+- `Device`：网络设备模型（含类型 / 厂商 / 管理 IP / 接口列表 / 状态 / 配置）
+- `Interface`：网络接口（名称 / IP / 掩码 / 状态 / 速率）
+- `Topology`：网络拓扑（邻接表表示节点 + 链路）
+- `DeviceType`/`DeviceStatus`：类型 / 状态枚举（含校验函数 `ValidDeviceType`）
+- `DiscoveryEngine`：网络发现引擎（基于子网扫描，MVP 桩实现返回示例设备）
+
+**核心数据结构**
+
+- `Device`：含 `ID`/`TenantID`/`Name`/`Type`/`Vendor`/`Model`/`IP`/`Mask`/`Mac`/`Location`/`SnmpCommunity`/`Status`/`Interfaces`/`Config`
+- `Interface`：含 `Name`/`IP`/`Mask`/`Status`/`Speed`
+- `Topology`：含 `Nodes []Device`/`Links []Link`（邻接表表示）
+- `Link`：含 `SourceID`/`TargetID`/`SourceInterface`/`TargetInterface`
+- `subnetMaxHosts = 254`：IPv4 /24 子网最大可用地址数
+
+**关键算法**
+
+- 子网扫描：枚举 CIDR 内主机 IP（排除网络 / 广播地址），TCP-connect 探测存活
+- 拓扑构建：从设备接口信息推导链路关系，构建邻接表
+- 设备配置备份 / 下发：`Config` 字段存储当前配置快照
+
+**并发安全**
+
+- 纯领域模型，无内部状态（`DiscoveryEngine` 的桩实现用 `sync.Mutex` 保护内部缓存）
+
+**扩展点**
+
+- `DeviceType`：可扩展新设备类型（如 wireless / ips）
+- `DiscoveryEngine`：可替换为真实 SNMP / LLDP 发现实现
+- `Config` 字段：可承载厂商特定配置格式
+
 ### 3.3 告警包
 
 告警包构成 OpsMesh 的监控告警闭环：规则引擎评估 + 多渠道通知 + 事件总线。
@@ -946,6 +1026,43 @@ gRPC 传输层 TLS / mTLS 凭证的构造助手+ TLS 证书热重载。内核默
 - `CipherSuites`：保留 Go 默认强套件（Go 1.17+ 默认已排除不安全套件），可显式设置
 - `CertificateReloader`：可扩展监听多个证书文件
 
+#### 3.5.4 compliance
+
+**职责描述**
+
+安全合规检查引擎（Phase 3 安全合规）：预置 CIS Benchmark 基线规则（SSH 加固 / 防火墙 / 文件权限 / 密码策略 / 日志审计 / 内核参数 / 服务最小化 / SELinux / 时间同步 / 网络配置），支持自定义规则（`Category="custom"`）。引擎本身不执行 `CheckScript`（避免控制面直接 shell 执行带来的注入风险），仅提供规则目录与扫描编排；实际执行由 agent 侧任务下发完成，控制面聚合结果生成 `ComplianceReport` 落库。
+
+**关键接口**
+
+- `Engine`：合规检查引擎，持有规则目录，提供查询与扫描编排
+- `NewEngine() *Engine`：构造引擎，预置 10+ 条 CIS Benchmark 基线规则
+- `(e *Engine) ListRules() []ComplianceRule`：列出全部规则
+- `(e *Engine) GetRule(id) (ComplianceRule, bool)`：按 ID 查询规则
+- `(e *Engine) Scan(deviceID, results []ComplianceResult) ComplianceReport`：聚合检查结果生成报告
+
+**核心数据结构**
+
+- `ComplianceRule`：含 `ID`/`Name`/`Category`/`Severity`/`Description`/`CheckScript`/`Remediation`
+- `ComplianceResult`：含 `RuleID`/`Passed`/`Output`/`CheckedAt`
+- `ComplianceReport`：含 `ID`/`TenantID`/`DeviceID`/`Results`/`Score`/`CreatedAt`/`Simulated`
+- Category 枚举：`cis`/`pci_dss`/`hipaa`/`custom`
+- Severity 枚举：`high`/`medium`/`low`
+
+**关键算法**
+
+- 预置规则填充：`NewEngine` 时一次性构造 10+ 条 CIS 基线规则（SSH / 防火墙 / 文件权限 / 密码策略 / 日志审计 / 内核参数 / 服务最小化 / SELinux / 时间同步 / 网络配置）
+- `Scan` 聚合：接收 agent 侧执行的 `CheckScript` 结果，计算合规分数（通过率 × 100），标记 `Simulated`（占位扫描非 agent 实际执行）
+
+**并发安全**
+
+- `rules` 在 `NewEngine` 时一次性填充，此后只读，无需加锁
+
+**扩展点**
+
+- `Category`：可扩展新合规框架（如 ISO27001 / GDPR）
+- `CheckScript`：可自定义检查命令（由 agent 侧执行）
+- `Remediation`：可扩展修复建议格式（如自动修复脚本）
+
 ### 3.6 基础包
 
 基础包提供 OpsMesh 的通用基础设施：gRPC 服务描述、DAG 引擎、熔断器、审批引擎、CMDB、定时任务、作业编排。
@@ -1246,6 +1363,42 @@ M5 作业编排中心：DAG 展开 + 子工作流递归 + 条件分支求值 + c
 - 节点类型：可扩展（如 HTTP 调用 / 等待节点）
 - 条件表达式：可扩展语法（如括号嵌套 / 数学运算）
 
+#### 3.6.8 plugin
+
+**职责描述**
+
+插件框架：在不修改控制面核心代码的前提下，允许通过插件扩展控制面行为（如审计增强、自定义通知渠道、配置变更钩子、准入校验等）。核心抽象为 `Plugin` 接口（生命周期）+ `Hook` 扩展点 + `HookHandler` 钩子处理函数。`Manager` 管理插件注册 / 反注册 / 钩子触发 / 生命周期，并发安全。
+
+**关键接口**
+
+- `Plugin`：插件实例接口（`Name`/`Version`/`Init(cfg)`/`Close`）
+- `Hook`：扩展点标识（字符串，命名约定 `领域.动作.时机`，如 `config.preSet`）
+- `HookHandler`：钩子处理函数签名（接收 `Event`，返回 error 阻断流程）
+- `Manager`：插件管理器（`Register`/`Unregister`/`RegisterHook`/`FireHook`/`Close`）
+- `NewManager() *Manager`：构造管理器
+
+**核心数据结构**
+
+- `Event`：钩子事件（含 `Hook`/`Name`/`Payload`/`Result`/`Ctx`）
+- `Manager`：含 `plugins map[string]Plugin`/`configs map[string]any`/`hooks map[Hook][]HookHandler`/`closed bool`
+
+**关键算法**
+
+- `FireHook`：持 RLock 拷贝 handler 切片后释放锁，再逐个调用 handler（避免长锁 + 死锁）
+- handler 阻断：任一 handler 返回 error 即停止后续 handler 执行，控制面据此决定回滚 / 拒绝
+- `Close`：逐个调用 `Plugin.Close`（幂等），标记 `closed` 防重复关闭
+
+**并发安全**
+
+- `mu sync.RWMutex` 保护 `plugins` 和 `hooks` 映射
+- `FireHook` 拷贝 handler 切片后释放锁再调用，避免长时持锁
+
+**扩展点**
+
+- `Hook`：控制面在各扩展点定义并触发（可新增扩展点）
+- `Plugin` 接口：实现接口即可注册插件
+- `Payload any`：事件负载可变，handler 可修改以影响后续流程
+
 ### 3.7 其他包
 
 其他包提供 OpsMesh 的共享数据类型与版本信息。
@@ -1319,6 +1472,80 @@ M5 作业编排中心：DAG 展开 + 子工作流递归 + 条件分支求值 + c
 
 - `Version` 破坏性变更（如 gRPC ServiceName 改名）须升主版本
 - CI 可注入额外构建信息（如分支名 / 构建号）
+
+#### 3.7.3 extension
+
+**职责描述**
+
+API 网关引擎（Phase 5 扩展能力）：提供路由规则匹配 + 令牌桶限流 + 网关统计聚合能力，供控制面 gateway handler 复用。`RouteRule` 描述一条路由规则（路径前缀 + 后端 + 方法 + 限流），`MatchRoute` 按前缀匹配返回首条命中规则。`RateLimiter` 为令牌桶实现，按 `ratePerSec` 补充令牌。
+
+**关键接口**
+
+- `RouteRule`：路由规则（含 `PathPrefix`/`TargetBackend`/`Methods`/`RateLimitPerSec`/`Enabled`）
+- `RateLimiter`：令牌桶限流器（`NewRateLimiter(ratePerSec)`/`Allow() bool`）
+- `GatewayStats`：网关统计聚合（请求数 / 错误数 / 平均延迟 / 活跃路由数）
+- `MatchRoute(routes, path, method) (*RouteRule, error)`：路由匹配
+
+**核心数据结构**
+
+- `RouteRule`：含 `ID`/`TenantID`/`Name`/`PathPrefix`/`TargetBackend`/`Methods`/`RateLimitPerSec`/`Enabled`/`CreatedAt`/`UpdatedAt`
+- `RateLimiter`：含 `ratePerSec`/`tokens`/`lastRefill`/`mu`
+- `GatewayStats`：含 `TotalRequests`/`TotalErrors`/`AvgLatencyMs`/`ActiveRoutes`
+
+**关键算法**
+
+- `MatchRoute`：按 `PathPrefix` 前缀匹配 + `Methods` 包含校验，返回首条命中规则
+- `Allow`：令牌桶算法——按时间差补充令牌（最多到桶容量），抢占一个令牌；`ratePerSec<=0` 时恒返回 true（不限流）
+
+**并发安全**
+
+- `RateLimiter`：`mu sync.Mutex` 保护 `tokens` + `lastRefill`
+- `MatchRoute`：纯函数，无内部状态
+
+**扩展点**
+
+- `RouteRule`：可扩展匹配条件（如 Header 匹配、正则路径）
+- `RateLimiter`：可替换为分布式限流（如 Redis 令牌桶）
+- `GatewayStats`：可扩展统计维度（如按路由 / 按租户分桶）
+
+#### 3.7.4 platform
+
+**职责描述**
+
+平台化业务引擎：租户管理 / API Key / 插件市场 / 计费。与 controlplane（HTTP handler）和 store（持久化）解耦——platform 包封装业务规则（校验 / 配额 / 计费 / 插件安装），controlplane 负责协议层，store 负责 CRUD。引擎对 store 仅依赖最小子接口，降低耦合。原 `TenantManager`/`BillingManager`/`PluginManager` 引擎已作为 H7 平台死代码清理删除（handler 直接调用 store 接口），类型别名保留以兼容 import 路径。
+
+**关键接口**
+
+- `Tenant`：租户实体（含状态 / 配额 / 用量）
+- `APIKey`：API Key（复用 `store.APIKey`，程序化访问凭证）
+- `SubscriptionPlan`/`Subscription`/`Invoice`：计费模型（复用 store 类型别名）
+- `Plugin`：插件市场模型（复用 `store.Plugin`）
+- `TenantStatus`：租户状态枚举（active / suspended / disabled）
+
+**核心数据结构**
+
+- `Tenant`：含 `ID`/`Name`/`DisplayName`/`Status`/`Quota`/`Usage`/`CreatedAt`/`UpdatedAt`
+- `TenantQuota`：资源配额（`MaxDevices`/`MaxTasks`/`MaxActiveTasks`/`MaxAlerts`/`MaxAgents`/`MaxWebhooks`/`MaxAPIKeys`，0=不限）
+- `ResourceUsage`：实时用量（`Devices`/`Tasks`/`ActiveTasks`/`Alerts`/`Agents`/`Webhooks`/`APIKeys`）
+- `APIKey`：含 Key 明文（仅创建时返回）/ SHA-256 hash / Scopes / `RateLimitPerSec` / `ExpiresAt` / `Enabled`
+- 计费单位为分（int），避免浮点精度；货币默认 CNY
+
+**关键算法**
+
+- API Key 生成：`om_` + 64 位随机 hex（256 位熵），仅存 SHA-256 hash
+- API Key 校验：`subtle.ConstantTimeCompare` 比对 hash（防时序攻击）
+- 配额校验：handler 侧调用 `store.TenantStore` 时比对 `Usage` vs `Quota`
+- 计费：handler 直接调用 `store.BillingStore`，不经 platform 封装
+
+**并发安全**
+
+- 纯数据模型 + 类型别名，无内部状态，并发安全由 store 层保证
+
+**扩展点**
+
+- `TenantQuota`：可扩展新资源维度
+- `APIKey.Scopes`：可扩展细粒度权限（如 `device:read`/`task:write`）
+- `SubscriptionPlan`：可扩展计费模型（按量 / 包年 / 阶梯）
 
 ## 第4章 跨包依赖关系
 

@@ -18,8 +18,9 @@ ENV GOPROXY=https://goproxy.cn,direct
 ENV GOWORK=off
 WORKDIR /src
 COPY go.mod go.sum ./
-# 构建期校验模块完整性（防供应链投毒 / go.sum 漂移，task 安全 P2-5）
-RUN go mod verify && go mod download
+# 构建期校验模块完整性（防供应链投毒 / go.sum 漂移，task 安全 P2-5）。
+# M11：先 download 再 verify，校验已下载模块内容与 go.sum 哈希一致。
+RUN go mod download && go mod verify
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /opsmesh ./cmd/opsmesh
 

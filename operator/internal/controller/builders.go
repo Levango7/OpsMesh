@@ -205,8 +205,11 @@ func mysqlStatefulSet(cr *opsmeshv1alpha1.OpsMeshInstance) *appsv1.StatefulSet {
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  "mysql",
-							Image: "mysql:8.0",
+							Name: "mysql",
+							// S12 供应链安全：钉具体 patch 版本而非泛 tag mysql:8.0
+							// （泛 tag 可被覆盖、不可变追踪）。生产建议进一步钉 digest：
+							// mysql:8.0.40@sha256:<digest>（由 CI Renovate 自动写回）。
+							Image: "mysql:8.0.40",
 							Env: []corev1.EnvVar{
 								{
 									Name: "MYSQL_ROOT_PASSWORD",

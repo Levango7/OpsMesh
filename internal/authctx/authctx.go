@@ -20,7 +20,11 @@
 package authctx
 
 import (
+	"crypto/hmac"
 	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -43,6 +47,14 @@ const (
 	hdrTenant = "x-tenant-id"
 	hdrUser   = "x-user-id"
 	hdrRoles  = "x-user-roles"
+)
+
+// 网关身份头 HMAC 签名相关头（安全加固 S6）。
+// 当配置了 GatewaySecret 时，网关在注入身份头的同时计算 HMAC 签名，
+// 内核侧校验签名以防客户端伪造 X-Tenant-ID/X-User-Id 越权。
+const (
+	hdrGatewaySig = "x-gateway-sig" // HMAC-SHA256(secret, tenant|user|roles|timestamp) 的 hex 编码
+	hdrGatewayTS  = "x-gateway-ts"  // 签名时的时间戳（Unix 秒，字符串形式）
 )
 
 // FromHTTPHeader 从 HTTP 头提取身份上下文（前置网关已校验 JWT 并注入）。
@@ -124,6 +136,19 @@ type JWTConfig struct {
 	PublicKey *rsa.PublicKey // RS256 验签公钥；nil 表示未配置
 	Issuer    string         // 预期 iss claim；非空时校验 iss 必须匹配
 	Enabled   bool           // 是否启用 JWT 验签（与 PublicKey!=nil 等价，显式字段便于配置装配）
+
+	// GatewaySecret 是网关身份头 HMAC 签名密钥（可选，安全加固 S6）。
+	//
+	// 启用语义：非空时，FromRequest 在头注入模式（未启用 JWT 验签）下，
+	// 要求请求携带 X-Gateway-Sig 与 X-Gateway-Ts 头，并校验：
+	//   X-Gateway-Sig == hex(HMAC-SHA256(secret, X-Tenant-ID|X-User-Id|X-User-Roles|X-Gateway-Ts))
+	// 签名缺失或不匹配则返回 error，调用方应拒绝请求（403）。
+	//
+	// 向后兼容：空字符串（零值）时不校验签名，保持原有头注入行为（需在可信网关后部署）。
+	//
+	// 注意：启用 JWT 验签（Enabled && PublicKey!=nil）时本字段不生效——
+	// JWT 已提供完整的密码学身份证明，无需额外 HMAC 签名。
+	GatewaySecret string
 }
 
 // JWT claim 键约定（与网关 / IAM 签发的 token 对齐）。
@@ -231,9 +256,12 @@ func FromJWT(h http.Header, publicKey *rsa.PublicKey, issuer string) (Context, e
 //   - Enabled && PublicKey!=nil && 未携带 token     → 返回零值, ErrNoJWTToken（调用方应 401，不回退头注入）
 //   - Enabled && PublicKey!=nil && Authorization 非 Bearer 格式 → 返回零值, error（调用方应 401）
 //   - !Enabled || PublicKey==nil                   → 直接 FromHTTPHeader, nil（MVP 头注入模式）
+//   - !Enabled || PublicKey==nil && GatewaySecret!="" → 校验网关 HMAC 签名后 FromHTTPHeader, nil
 //
 // 安全语义：当 JWT 验签启用时，必须携带有效 Bearer token，攻击者无法通过省略
 // Authorization 头并伪造 X-Tenant-ID 头来绕过身份校验。
+// 当 JWT 未启用但配置了 GatewaySecret 时，头注入模式要求携带有效 HMAC 签名，
+// 攻击者无法在不知密钥的情况下伪造身份头越权。
 func FromRequest(h http.Header, cfg JWTConfig) (Context, error) {
 	if cfg.Enabled && cfg.PublicKey != nil {
 		// JWT 验签启用：强制走 JWT 路径，不回退头注入模式。
@@ -241,8 +269,52 @@ func FromRequest(h http.Header, cfg JWTConfig) (Context, error) {
 		// - token 验签失败 / 非 Bearer 格式 / 未携带 token → 返回 error，调用方应 401
 		return FromJWT(h, cfg.PublicKey, cfg.Issuer)
 	}
+	// 头注入模式：当配置了网关签名密钥时，校验 HMAC 签名防伪造（安全加固 S6）。
+	// 签名缺失或不匹配 → 返回 error，调用方应 403 拒绝请求。
+	if cfg.GatewaySecret != "" {
+		if err := verifyGatewaySignature(h, cfg.GatewaySecret); err != nil {
+			return Context{}, err
+		}
+	}
 	// 未启用 JWT 验签：回退头注入模式（MVP 兼容，需在可信网关后部署）。
 	return FromHTTPHeader(h), nil
+}
+
+// verifyGatewaySignature 校验网关身份头 HMAC-SHA256 签名（安全加固 S6）。
+//
+// 签名方案：
+//   - 网关在注入 X-Tenant-ID/X-User-Id/X-User-Roles 后，计算：
+//     payload = tenant + "|" + user + "|" + roles + "|" + timestamp
+//     sig = hex(HMAC-SHA256(secret, payload))
+//   - 网关将 sig 写入 X-Gateway-Sig，timestamp 写入 X-Gateway-Ts
+//   - 内核侧用相同 secret 重算并常时比较（防时序攻击）
+//
+// 安全保证：
+//   - 攻击者不知 secret 无法伪造有效签名 → 无法注入任意 X-Tenant-ID 越权；
+//   - 签名覆盖 tenant+user+roles+timestamp → 篡改任一字段均导致签名不匹配；
+//   - 使用 crypto/subtle.ConstantTimeCompare → 防时序侧信道。
+//
+// 注意：本函数不做时间戳新鲜度校验（防重放），调用方如需防重放可在外层
+// 校验 X-Gateway-Ts 与服务器时钟的偏移。当前实现聚焦防伪造，重放防护
+// 留待后续加固（需时钟同步机制）。
+func verifyGatewaySignature(h http.Header, secret string) error {
+	sig := h.Get(hdrGatewaySig)
+	ts := h.Get(hdrGatewayTS)
+	if sig == "" || ts == "" {
+		return errors.New("authctx: 网关签名缺失（X-Gateway-Sig/X-Gateway-Ts），" +
+			"生产部署须在网关层配置身份头 HMAC 签名")
+	}
+	tenant := h.Get(hdrTenant)
+	user := h.Get(hdrUser)
+	roles := h.Get(hdrRoles)
+	payload := tenant + "|" + user + "|" + roles + "|" + ts
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(payload))
+	expected := hex.EncodeToString(mac.Sum(nil))
+	if subtle.ConstantTimeCompare([]byte(sig), []byte(expected)) != 1 {
+		return errors.New("authctx: 网关签名校验失败（身份头可能被篡改）")
+	}
+	return nil
 }
 
 // extractBearerToken 从 Authorization: Bearer <token> 头提取 token 部分。

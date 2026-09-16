@@ -81,11 +81,14 @@ type OpsMeshInstanceSpec struct {
 	Replicas int32 `json:"replicas"`
 
 	// Image is the control-plane container image.
-	// +kubebuilder:default="opsmesh/opsmesh:latest"
+	// S11 供应链安全：默认 tag 钉与 Chart.yaml version 对齐的 0.9.0，禁止 latest
+	// （latest 不可变追踪，多节点可能运行不同版本）。生产由 CI GitOps 写回 digest。
+	// +kubebuilder:default="opsmesh/opsmesh:0.9.0"
 	Image string `json:"image"`
 
 	// AgentImage is the node-agent DaemonSet container image.
-	// +kubebuilder:default="opsmesh/opsmesh-agent:latest"
+	// S11：同 Image，钉 0.9.0 而非 latest，与 Chart.yaml appVersion 对齐。
+	// +kubebuilder:default="opsmesh/opsmesh-agent:0.9.0"
 	AgentImage string `json:"agentImage"`
 
 	// Store selects the backing store: "memory" or "mysql".

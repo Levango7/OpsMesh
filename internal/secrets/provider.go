@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -137,25 +138,47 @@ func (p *FileProvider) Name() string {
 // ChainProvider 链式密钥提供者：按顺序依次尝试多个 provider，
 // 第一个返回非 ErrSecretNotFound 的结果胜出。
 // 全部 provider 都返回 ErrSecretNotFound 时才返回 ErrSecretNotFound。
-// 任一 provider 返回其他错误（如 Vault 不可达）则立即返回该错误（不继续尝试后续 provider）。
+// 任一 provider 返回其他错误（如 Vault 不可达）时：
+//   - AllowDegradation=false（默认）：立即返回该错误（fail-fast，不继续尝试后续 provider）；
+//   - AllowDegradation=true：跳过该 provider 并记录警告，继续尝试后续 provider（降级模式）。
 type ChainProvider struct {
 	providers []SecretProvider
+	// AllowDegradation 控制非 NotFound 错误时的行为（安全加固 S8）。
+	// false（零值，默认）：fail-fast，任一 provider 返回非 NotFound 错误即立即返回（向后兼容）。
+	// true：跳过返回非 NotFound 错误的 provider 并记录警告日志，继续尝试后续 provider。
+	// 适用场景：生产环境某 provider 暂时不可用（如 Vault 网络抖动）时，
+	// 允许降级到其他 provider（如 env/file）而非整体不可用。
+	AllowDegradation bool
 }
 
 // NewChainProvider 构造 ChainProvider。providers 顺序即优先级顺序。
+// 默认 AllowDegradation=false（fail-fast），可通过 WithAllowDegradation 开启降级模式。
 func NewChainProvider(providers ...SecretProvider) *ChainProvider {
 	return &ChainProvider{providers: providers}
 }
 
+// WithAllowDegradation 设置降级模式并返回 ChainProvider（链式调用）。
+// allow=true 时，Get 跳过返回非 NotFound 错误的 provider 并记录警告，而非 fail-fast。
+// allow=false（默认）时保持 fail-fast 行为（向后兼容）。
+func (c *ChainProvider) WithAllowDegradation(allow bool) *ChainProvider {
+	c.AllowDegradation = allow
+	return c
+}
+
 // Get 实现 SecretProvider。依次尝试 providers，第一个非 NotFound 的结果胜出。
+// 非 NotFound 错误的处理由 AllowDegradation 控制（见 ChainProvider 文档）。
 func (c *ChainProvider) Get(key string) (string, error) {
 	for _, p := range c.providers {
 		v, err := p.Get(key)
 		if err == nil {
 			return v, nil
 		}
-		// 非 NotFound 错误立即返回（如 Vault 连接失败）。
+		// 非 NotFound 错误：降级模式下跳过并记录警告，否则立即返回（fail-fast）。
 		if !errors.Is(err, ErrSecretNotFound) {
+			if c.AllowDegradation {
+				log.Printf("secrets: ChainProvider 降级跳过 provider %q（key=%q, 错误: %v）", p.Name(), key, err)
+				continue
+			}
 			return "", err
 		}
 		// NotFound 继续尝试下一个 provider。

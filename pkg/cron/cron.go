@@ -8,6 +8,12 @@
 // 不可跨模块访问；task-svc 调度循环需要 Match 派生模板任务。
 // 迁出最小范围：仅本文件（无 internal 私有依赖）；internal/cron 下的其他文件
 // （schedule/manager/dag/sla）保留原位，其 proto 依赖与 controlplane 内部实现强相关。
+//
+// TODO(M15): pkg/cron 与 internal/cron 存在双份实现，需手动同步。
+// 当前两份有故意差异（7=周日处理、语法组合丰富度、错误检测严格度），
+// 系 A-1 阶段双轨对照设计（保持与 controlplane 行为字节级一致）。
+// 合并方案待 A-2 阶段评估——需统一语义且不破坏双轨对照前提。
+// 安全加固 M15 已识别此风险，列入后续合并跟踪。
 package cron
 
 import (

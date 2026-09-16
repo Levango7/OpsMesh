@@ -9,12 +9,12 @@
 # - noctx/prealloc/wastedassign/durationcheck/contextcheck 等"建议型"linter
 #   存量告警量大（noctx 412 项）且 v1 时代 CI 从未真正执行到 lint 阶段，
 #   本轮收敛为"当前代码真实可达"的核心集，避免 CI 从首次执行就长期飘红。
-#   存量债登记：docs/tech-debt.md TD-50（lint 存量收敛）。
+#   存量债未在 docs/tech-debt.md 单独登记（lint 存量收敛，本轮收敛为"当前代码真实可达"核心集）。
 # - 保留正确性/安全/风格核心：errcheck/govet/staticcheck/ineffassign/unused/
 #   gosec/revive/misspell/bodyclose/sqlclosecheck/copyloopvar。
 # - 测试文件放宽 errcheck/gosec/unparam（_test.go 中常故意忽略错误/含弱口令 fixture）。
 # - errorlint：v1 时代从未真正执行（CI 从未跑到 lint），存量 19 项为历史债
-#   （==/!= 比较 sentinel error），登记 TD-51 后续统一 errors.Is 改造；本轮先移除 enable。
+#   （==/!= 比较 sentinel error），后续统一 errors.Is 改造（存量债未在 tech-debt.md 单独登记）；本轮先移除 enable。
 #
 # 注：gofmt/goimports 在 formatters 节。本地 Windows（core.autocrlf=true）
 # 会因 CRLF 报 gofmt 噪音，属环境差异非代码问题（.gitattributes 已强制 Go 文件 LF）。

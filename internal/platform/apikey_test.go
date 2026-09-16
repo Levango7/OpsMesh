@@ -13,14 +13,14 @@ func newTestAPIKeyManager() *APIKeyManager {
 	return NewAPIKeyManager(store.NewMemoryStore())
 }
 
-// TestGenerateAPIKey_Format 验证生成的 key 格式正确（om_ + 32 hex = 35 字符）。
+// TestGenerateAPIKey_Format 验证生成的 key 格式正确（om_ + 64 hex = 67 字符，256 位熵）。
 func TestGenerateAPIKey_Format(t *testing.T) {
 	prefix, hash, err := GenerateAPIKey()
 	if err != nil {
 		t.Fatalf("GenerateAPIKey failed: %v", err)
 	}
-	if len(prefix) != 35 {
-		t.Fatalf("prefix length=%d, want 35", len(prefix))
+	if len(prefix) != 67 {
+		t.Fatalf("prefix length=%d, want 67", len(prefix))
 	}
 	if prefix[:3] != "om_" {
 		t.Fatalf("prefix=%q, want om_ prefix", prefix[:3])
