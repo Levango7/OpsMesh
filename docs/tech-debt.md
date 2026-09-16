@@ -12,7 +12,7 @@
 | ID | 问题 | 解决方式 |
 |---|---|---|
 | TD-01 | Store 巨型接口（40+ 方法违反 ISP） | `internal/store/store.go` 已拆成 15 个领域小接口 + 编译期双实现断言 |
-| TD-02 | 个人版前端死重（`internal/controlplane/web/`，~1.3 万行） | 删除全部业务 JS（flow_*/render/i18n/icons/api），仅保留引导页 + stub；业务全部由 Vue3 企业版接管 |
+| TD-02 | 个人版前端死重（`internal/controlplane/embed/web/`，88 个 .js） | **状态修正**：TD-02 原声称"删除全部业务 JS"但实际未执行。个人版前端已升级为 Phase 1 原生 JS 仪表盘（40 flow + 41 render + 7 核心），是 Docker 镜像中唯一可用 UI。企业版前端（web/enterprise/ Vue3）未嵌入/路由，需独立部署。后续应明确迁移计划或承认双前端并存 |
 | TD-03 | `docker-compose.yaml` 硬编码 MySQL 弱口令 | 改为 `${MYSQL_ROOT_PASSWORD:-rootpass}` 等环境变量插值，CLI 强制注入 |
 | TD-04 | Dockerfile 缺 `go mod verify` | 已加入构建阶段（防供应链投毒） |
 | TD-05 | CI GitOps 写回步骤必失败 | `.github/workflows/ci.yml` 新增 clone/path 守卫，仓库未就绪时安全跳过（`::warning::`） |

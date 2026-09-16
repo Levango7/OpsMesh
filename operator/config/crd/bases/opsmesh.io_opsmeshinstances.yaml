@@ -98,9 +98,21 @@ spec:
                       type: string
                       default: 10Gi
                       description: 'Storage is the requested persistent volume size, e.g. "10Gi".'
-                    password:
-                      type: string
-                      description: Password is the MySQL root password.
+                    passwordSecretRef:
+                      description: PasswordSecretRef references a Kubernetes Secret key holding the MySQL root password.
+                      properties:
+                        key:
+                          description: The key of the secret to select from. Must be a valid secret key.
+                          type: string
+                        name:
+                          description: 'Name of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names TODO: Add other useful fields. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names'
+                          type: string
+                        optional:
+                          description: Specify whether the Secret or its key must be defined
+                          type: boolean
+                      required:
+                        - key
+                      type: object
                 redis:
                   type: object
                   required:

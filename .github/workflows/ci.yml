@@ -23,6 +23,17 @@ jobs:
         run: go build ./...
       - name: Vet
         run: go vet ./...
+      - name: Verify internal package count (H4 防回归)
+        run: |
+          ACTUAL=$(find internal -maxdepth 1 -type d | tail -n +2 | wc -l)
+          README_COUNT=$(grep -oP 'internal 包职责（\K\d+' README.md)
+          DOC_COUNT=$(grep -oP '覆盖包数：\K\d+' docs/module-design.md)
+          echo "实际包数: $ACTUAL / README: $README_COUNT / module-design: $DOC_COUNT"
+          if [ "$ACTUAL" != "$README_COUNT" ] || [ "$ACTUAL" != "$DOC_COUNT" ]; then
+            echo "❌ internal 包数三说不一致！请同步更新 README.md 和 docs/module-design.md"
+            exit 1
+          fi
+          echo "✅ internal 包数一致 ($ACTUAL)"
       - name: golangci-lint (聚合静态分析)
         uses: golangci/golangci-lint-action@v9
         with:

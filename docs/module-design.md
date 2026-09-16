@@ -2,11 +2,11 @@
 
 ## 第1章 概述
 
-本文档对 OpsMesh 内核 `internal/` 下 30 个 Go 包进行系统化模块设计说明，覆盖每个包的职责、关键接口、核心数据结构、关键算法、并发安全策略与扩展点。文档面向架构 review、新成员 onboarding 与跨团队协作，作为代码导航的"地图"。
+本文档对 OpsMesh 内核 `internal/` 下 35 个 Go 包进行系统化模块设计说明，覆盖每个包的职责、关键接口、核心数据结构、关键算法、并发安全策略与扩展点。文档面向架构 review、新成员 onboarding 与跨团队协作，作为代码导航的"地图"。
 
 ### 1.1 文档范围
 
-- 涵盖范围：`F:\Nexus\OpsMesh\internal\` 下全部 30 个包
+- 涵盖范围：`F:\Nexus\OpsMesh\internal\` 下全部 35 个包
 - 分组维度：按领域职责划分为核心 / 运维 / 告警 / 数据 / 安全 / 基础 / 其他 共 7 组
 - 信息来源：每个包的 `*.go` 源文件（不含 `_test.go`）的包注释与关键类型/接口定义
 - 不涵盖：第三方依赖、`cmd/` 入口、`pkg/` 公共库、前端资源
@@ -24,11 +24,11 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构：
 - 控制面（`--mode=controlplane`）：HTTP 8080（B/S 仪表盘 + REST API）+ gRPC 9090（agent 通道）+ metrics 9091
 - 数据面（`--mode=agent`）：经 gRPC 9090 注册 / 心跳 / 拉任务 / 上报结果，本地 `os/exec` 执行任务
 
-30 个 internal 包按领域分层组合，控制面通过 `controlplane.Server` 装配各域 handler，agent 通过 `agent.Agent` 装配 gRPC 客户端 + worker 池。
+35 个 internal 包按领域分层组合，控制面通过 `controlplane.Server` 装配各域 handler，agent 通过 `agent.Agent` 装配 gRPC 客户端 + worker 池。
 
 ## 第2章 包总览表
 
-下表汇总 30 个 internal 包的核心属性，详细设计见第3章。
+下表汇总 35 个 internal 包的核心属性，详细设计见第3章。
 
 表：internal 包总览对照表
 
@@ -1505,4 +1505,4 @@ OpsMesh 包依赖遵循"核心 → 领域 → 基础"自顶向下分层，避免
 
 ---
 
-文档版本：v1.0  |  生成日期：2026-08-17  |  覆盖包数：30  |  维护者：OpsMesh 技术文档工程师
+文档版本：v1.1  |  生成日期：2026-08-17  |  更新日期：2026-09-16  |  覆盖包数：35  |  维护者：OpsMesh 技术文档工程师

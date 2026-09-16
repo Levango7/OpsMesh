@@ -22,7 +22,9 @@ spec:
   mysql:
     enabled: true
     storage: 20Gi
-    password: change-me-in-prod
+    passwordSecretRef:
+      name: opsmesh-mysql-secret
+      key: root-password
   redis:
     enabled: true
     storage: 2Gi

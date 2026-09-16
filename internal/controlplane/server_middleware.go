@@ -34,9 +34,9 @@ func (s *Server) securityHeadersMiddleware(h http.Handler) http.Handler {
 		// 每请求生成 16 字节随机 nonce（hex 编码 32 字符），注入 CSP 头。
 
 		// 安全加固（CSP 收紧 — 已完成）：
-		// 个人版前端已在 v0.6.1 收敛为引导页（internal/controlplane/web/index.html），
-		// 业务 JS 已删除，仅剩外部 <script type="module" src="/assets/main.js">，无 inline script。
-		// 企业版前端是 Vue3+Vite 编译产物（web/enterprise/dist/），<script> 均为外部 src 引用，
+		// 个人版前端是 Phase 1 原生 JS 仪表盘（internal/controlplane/embed/web/），
+		// 含 88 个 ES Module .js（40 flow + 41 render + 7 核心），均通过 <script type="module"> 外部引用，无 inline script。
+		// 企业版前端是 Vue3+Vite 编译产物（web/enterprise/dist/），独立部署，<script> 均为外部 src 引用，
 		// Vue 的 @click 编译为 addEventListener（非 inline onclick），无 inline script。
 		// → script-src 已移除 'unsafe-inline'，仅保留 'self' + 'nonce-{nonce}'（nonce 作防御纵深）。
 

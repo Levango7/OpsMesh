@@ -1,4 +1,5 @@
 {{- if .Values.observability.serviceMonitor.enabled -}}
+# Controlplane ServiceMonitor（/metrics:9091 采集）
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -15,4 +16,29 @@ spec:
       path: /metrics
       interval: {{ .Values.observability.serviceMonitor.interval | default "30s" }}
       scrapeTimeout: {{ .Values.observability.serviceMonitor.scrapeTimeout | default "10s" }}
+# Microservice ServiceMonitors（遍历 values.services，为每个启用且有 metricsPort 的服务生成独立 ServiceMonitor）
+{{- range $name, $svc := .Values.services }}
+{{- if and $svc.enabled $svc.metricsPort }}
+{{- $svcName := $name | replace "_" "-" }}
+{{- $fullName := printf "%s-%s" (include "opsmesh.fullname" $) $svcName }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "opsmesh.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $svcName }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "opsmesh.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $svcName }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ $.Values.observability.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ $.Values.observability.serviceMonitor.scrapeTimeout | default "10s" }}
+{{- end }}
+{{- end }}
 {{- end -}}

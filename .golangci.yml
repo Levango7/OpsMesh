@@ -207,9 +207,10 @@ linters:
         text: "G101"
       # G124: cookie Secure 由 cfg.CookieSecure 显式控制（HTTPS 部署才置位），
       # 内网明文场景需 false，属有意识设计（README 生产加固章节有说明）。
+      # H1 拆分后 setCookie 从 auth.go 移至 auth_cookies.go，豁免路径同步更新。
       - linters:
           - gosec
-        path: internal/controlplane/auth\.go
+        path: internal/controlplane/auth_cookies\.go
         text: "G124"
       # G106: SSH InsecureIgnoreHostKey 受 --provision-ssh-known-hosts 配置约束
       # （README 明确"生产务必配置"），空值回退为忽略是设计取舍，非静默漏洞。

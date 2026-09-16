@@ -3,6 +3,7 @@ package v1alpha1
 import (
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -57,10 +58,10 @@ type MySQLSpec struct {
 	// +kubebuilder:default="10Gi"
 	Storage string `json:"storage"`
 
-	// Password is the MySQL root password. In production this should be
-	// sourced from a Secret, but for the v1alpha1 scaffold we accept a
-	// plain string to keep the CRD self-contained.
-	Password string `json:"password,omitempty"`
+	// PasswordSecretRef references a Kubernetes Secret key holding the MySQL
+	// root password. The Secret must live in the same namespace as the
+	// OpsMeshInstance. Required when Enabled==true.
+	PasswordSecretRef *corev1.SecretKeySelector `json:"passwordSecretRef,omitempty"`
 }
 
 // RedisSpec defines the desired state of the embedded Redis StatefulSet.

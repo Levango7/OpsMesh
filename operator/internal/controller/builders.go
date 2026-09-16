@@ -77,6 +77,12 @@ func controlPlaneDeployment(cr *opsmeshv1alpha1.OpsMeshInstance) *appsv1.Deploym
 					Labels: labelsForOpsMesh(cr.Name),
 				},
 				Spec: corev1.PodSpec{
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot: boolPtr(true),
+						RunAsUser:    int64Ptr(65532),
+						RunAsGroup:   int64Ptr(65532),
+						FSGroup:      int64Ptr(65532),
+					},
 					Containers: []corev1.Container{
 						{
 							Name:  "opsmesh",
@@ -84,10 +90,36 @@ func controlPlaneDeployment(cr *opsmeshv1alpha1.OpsMeshInstance) *appsv1.Deploym
 							Ports: []corev1.ContainerPort{
 								{ContainerPort: 8080, Name: "http"},
 								{ContainerPort: 9090, Name: "grpc"},
+								{ContainerPort: 9091, Name: "metrics"},
+							},
+							Args: []string{
+								"--metrics-port=9091",
 							},
 							Env:             env,
 							EnvFrom:         nil,
 							ImagePullPolicy: corev1.PullIfNotPresent,
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("512Mi"),
+								},
+							},
+							LivenessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/healthz",
+										Port: intstr.FromInt(8080),
+									},
+								},
+								InitialDelaySeconds: 10,
+								PeriodSeconds:       30,
+								TimeoutSeconds:      3,
+								FailureThreshold:    3,
+							},
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
@@ -117,12 +149,26 @@ func agentDaemonSet(cr *opsmeshv1alpha1.OpsMeshInstance) *appsv1.DaemonSet {
 					Labels: labelsForOpsMesh(cr.Name),
 				},
 				Spec: corev1.PodSpec{
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot: boolPtr(true),
+						RunAsUser:    int64Ptr(65532),
+						RunAsGroup:   int64Ptr(65532),
+						FSGroup:      int64Ptr(65532),
+					},
 					Containers: []corev1.Container{
 						{
 							Name:  "agent",
 							Image: cr.Spec.AgentImage,
 							SecurityContext: &corev1.SecurityContext{
-								Privileged: boolPtr(true),
+								RunAsNonRoot:             boolPtr(true),
+								RunAsUser:                int64Ptr(65532),
+								RunAsGroup:               int64Ptr(65532),
+								AllowPrivilegeEscalation: boolPtr(false),
+								ReadOnlyRootFilesystem:   boolPtr(false),
+								Capabilities: &corev1.Capabilities{
+									Add:  []corev1.Capability{"NET_ADMIN", "SYS_ADMIN"},
+									Drop: []corev1.Capability{"ALL"},
+								},
 							},
 							Env: []corev1.EnvVar{
 								{Name: "OPSMESH_CONTROL_PLANE", Value: fmt.Sprintf("%s-control-plane.%s.svc:9090", cr.Name, cr.Namespace)},
@@ -162,7 +208,12 @@ func mysqlStatefulSet(cr *opsmeshv1alpha1.OpsMeshInstance) *appsv1.StatefulSet {
 							Name:  "mysql",
 							Image: "mysql:8.0",
 							Env: []corev1.EnvVar{
-								{Name: "MYSQL_ROOT_PASSWORD", Value: cr.Spec.MySQL.Password},
+								{
+									Name: "MYSQL_ROOT_PASSWORD",
+									ValueFrom: &corev1.EnvVarSource{
+										SecretKeyRef: cr.Spec.MySQL.PasswordSecretRef,
+									},
+								},
 							},
 							Ports: []corev1.ContainerPort{{ContainerPort: 3306, Name: "mysql"}},
 							VolumeMounts: []corev1.VolumeMount{
@@ -242,6 +293,7 @@ func headlessService(cr *opsmeshv1alpha1.OpsMeshInstance) *corev1.Service {
 			Ports: []corev1.ServicePort{
 				{Name: "http", Port: 8080, TargetPort: intstr.FromInt(8080)},
 				{Name: "grpc", Port: 9090, TargetPort: intstr.FromInt(9090)},
+				{Name: "metrics", Port: 9091, TargetPort: intstr.FromInt(9091)},
 			},
 		},
 	}
@@ -258,3 +310,6 @@ func boolStr(b bool) string {
 
 // boolPtr returns a pointer to b.
 func boolPtr(b bool) *bool { return &b }
+
+// int64Ptr returns a pointer to i.
+func int64Ptr(i int64) *int64 { return &i }

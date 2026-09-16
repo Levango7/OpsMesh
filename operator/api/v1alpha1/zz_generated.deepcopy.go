@@ -7,6 +7,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
@@ -14,6 +15,11 @@ import (
 // DeepCopyInto copies all properties of MySQLSpec into dst.
 func (in *MySQLSpec) DeepCopyInto(dst *MySQLSpec) {
 	*dst = *in
+	if in.PasswordSecretRef != nil {
+		in, out := &in.PasswordSecretRef, &dst.PasswordSecretRef
+		*out = new(corev1.SecretKeySelector)
+		(*in).DeepCopyInto(*out)
+	}
 }
 
 // DeepCopy returns a deep copy of MySQLSpec.

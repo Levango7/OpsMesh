@@ -1,6 +1,8 @@
 # OpsMesh Helm Chart 默认值（开发/体验环境）
 # 生产环境请使用 -f values-production.yaml 覆盖关键项。
-# 文档：https://github.com/opsmesh/opsmesh  端口约定 HTTP 8080 / gRPC 9090 / metrics 9091
+# 文档：https://github.com/opsmesh/opsmesh
+# 端口约定：各微服务 httpPort/grpcPort 独立配置（见各服务段，对照源码默认值），
+# 统一 metricsPort: 9091（Prometheus /metrics 采集端口，全服务一致）。
 
 ## @section Global
 global:
@@ -203,6 +205,8 @@ services:
     httpPort: 8081
     # gRPC 端口（=AUTH_SVC_GRPC_PORT 代码默认 50052）；纯 HTTP 服务填 0（不渲染 gRPC 端口）
     grpcPort: 50052
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     # 环境变量前缀（auth-svc/pkg/config/config.go）：模板渲染 <前缀>_STORE_TYPE / <前缀>_DSN
     storeEnvPrefix: "AUTH_SVC"
@@ -250,6 +254,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8081
     grpcPort: 50052
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "DEVICE_SVC"
     storeType: "memory"
@@ -291,6 +297,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8081
     grpcPort: 50052
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "TASK_SVC"
     storeType: "memory"
@@ -332,6 +340,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8080
     grpcPort: 50051
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "ALERT_SVC"
     storeType: "memory"
@@ -373,6 +383,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8083
     grpcPort: 50054
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "CONFIG_SVC"
     storeType: "memory"
@@ -416,6 +428,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8080
     grpcPort: 9090
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: ""
     storeType: "memory"
@@ -459,6 +473,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8081
     grpcPort: 50052
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "DEPLOY_SVC"
     storeType: "memory"
@@ -501,6 +517,8 @@ services:
     httpPort: 8082
     # 无 gRPC 服务端 → 0（模板不渲染 gRPC 端口）
     grpcPort: 0
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "PLUGIN_SVC"
     storeType: "memory"
@@ -542,6 +560,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8080
     grpcPort: 50051
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "PORTAL_SVC"
     storeType: "memory"
@@ -584,6 +604,8 @@ services:
     httpPort: 8100
     # 无 gRPC 服务端 → 0（模板不渲染 gRPC 端口）
     grpcPort: 0
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     # aio-svc 无 STORE_TYPE/DSN env（SLO/异常检测引擎内存态）
     storeEnvPrefix: ""
@@ -628,6 +650,8 @@ services:
     httpPort: 8080
     # 无 gRPC 服务端 → 0（模板不渲染 gRPC 端口）
     grpcPort: 0
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     # grafana-bridge 无 STORE_TYPE/DSN env
     storeEnvPrefix: ""
@@ -673,6 +697,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8090
     grpcPort: 0
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     # gpu-svc 无 STORE_TYPE/DSN env（Ollama 集成为外部依赖 OLLAMA_URL）
     storeEnvPrefix: ""
@@ -715,6 +741,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8080
     grpcPort: 0
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     # bot-svc 无 STORE_TYPE/DSN env（IM 平台 token 各自 env）
     storeEnvPrefix: ""
@@ -757,6 +785,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8082
     grpcPort: 0
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "RUNBOOK_SVC"
     storeType: "memory"
@@ -798,6 +828,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8082
     grpcPort: 50052
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "INCIDENT_SVC"
     storeType: "memory"
@@ -839,6 +871,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8080
     grpcPort: 0
+    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
+    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "AUTOSCALER_SVC"
     storeType: "memory"

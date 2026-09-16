@@ -93,6 +93,11 @@ spec:
               containerPort: {{ $svc.grpcPort }}
               protocol: TCP
             {{- end }}
+            {{- if $svc.metricsPort }}
+            - name: metrics
+              containerPort: {{ $svc.metricsPort }}
+              protocol: TCP
+            {{- end }}
           livenessProbe:
             httpGet:
               # 健康路径逐服务对照源码（多数 /health；log-svc 为 /healthz），经 values 注入
@@ -135,6 +140,12 @@ spec:
     - name: grpc
       port: {{ $svc.grpcPort }}
       targetPort: grpc
+      protocol: TCP
+    {{- end }}
+    {{- if $svc.metricsPort }}
+    - name: metrics
+      port: {{ $svc.metricsPort }}
+      targetPort: metrics
       protocol: TCP
     {{- end }}
   selector:

@@ -119,9 +119,9 @@
 | 联邦 | gRPC (mTLS) | 9090 | 跨控制面任务转发/设备视图同步 |
 | Metrics | HTTP | 9091 | Prometheus 指标采集（HTTP 延迟/Go runtime） |
 
-### internal 包职责（36 个）
+### internal 包职责（35 个）
 
-> 完整设计见 `docs/module-design.md`。下表按 8 个领域分组列出 36 个 internal 包的职责简述。
+> 完整设计见 `docs/module-design.md`。下表按 8 个领域分组列出 35 个 internal 包的职责简述。
 
 #### 设备与纳管域
 
@@ -1054,7 +1054,7 @@ server {
 
 ```
 cmd/opsmesh/              ← 入口 main：解析 --mode 分派 controlplane / agent
-internal/                 ← 36 个包，按 8 个领域分组（详见上文"internal 包职责"）
+internal/                 ← 35 个包，按 8 个领域分组（详见上文"internal 包职责"）
 ├── agent/                ← agent 运行时（注册/心跳/worker 池/执行器 + log_collect 日志采集 v2.0）
 ├── alertengine/          ← 告警规则引擎（多条件 + Z-Score/EWMA 异常检测 + 静默 + 抑制 + 聚合）
 ├── approval/             ← 审批引擎（审批流 + 请求 + approve/reject）
@@ -1131,7 +1131,7 @@ docs/                     ← 24 篇设计文档（产品/架构/数据库/接�
 > 但默认值存在重叠（多个服务默认同为 HTTP 8080/8081、gRPC 50051/50052）——同机并行运行
 > 多个服务时**必须显式分配不同端口**，否则监听冲突启动失败。
 
-> internal 包职责详细说明见上文 [internal 包职责](#internal-包职责36-个) 章节，完整设计见 `docs/module-design.md`。
+> internal 包职责详细说明见上文 [internal 包职责](#internal-包职责35-个) 章节，完整设计见 `docs/module-design.md`。
 
 ---
 

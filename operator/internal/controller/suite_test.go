@@ -47,7 +47,7 @@ func TestOpsMeshInstanceReconcile(t *testing.T) {
 			Production:  true,
 			TLSEnabled:  true,
 			SegmentCIDR: "10.244.0.0/16",
-			MySQL:       opsmeshv1alpha1.MySQLSpec{Enabled: true, Storage: "5Gi", Password: "s3cret"},
+			MySQL:       opsmeshv1alpha1.MySQLSpec{Enabled: true, Storage: "5Gi", PasswordSecretRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "opsmesh-mysql-secret"}, Key: "root-password"}},
 			Redis:       opsmeshv1alpha1.RedisSpec{Enabled: true, Storage: "1Gi"},
 		},
 	}
