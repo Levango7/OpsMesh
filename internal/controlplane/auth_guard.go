@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 func newLoginGuard(ss store.SessionStore) *loginGuard {

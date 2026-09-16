@@ -20,4 +20,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260818201246-1b0934165a6f // indirect
 )
 
-replace opsmesh => ../..
+
+replace github.com/Levango7/OpsMesh => ../../

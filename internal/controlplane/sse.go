@@ -40,10 +40,10 @@ import (
 	"net/http"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/authctx"
-	"opsmesh/internal/otelx"
+	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/otelx"
 )
 
 // SSEEvent 是推送给前端的事件信封。

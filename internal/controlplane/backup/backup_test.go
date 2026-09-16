@@ -19,9 +19,9 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // SeedBackupStore 构造一个有数据的 MemoryStore，供导出测试使用。

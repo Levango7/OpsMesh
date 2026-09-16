@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/authctx"
-	"opsmesh/internal/config"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // 本文件补全 quota.go 的单元测试（配额管理 API）。

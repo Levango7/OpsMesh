@@ -4,6 +4,7 @@
 //   - "env" → EnvProvider（前缀 OPSMESH_）
 //   - "file" → FileProvider（从 cfg.SecretFile 加载）
 //   - "vault" → VaultProvider（连接 cfg.VaultAddr）
+//   - "kms" → KMSProvider（连接 cfg.KmsEndpoint，通过 HTTP API 解密密文）
 //   - "chain:env,file" → ChainProvider（依次尝试 env 和 file）
 //   - "chain:env,vault" → ChainProvider（env 优先，vault 兜底）
 
@@ -15,7 +16,7 @@ import (
 	"os"
 	"strings"
 
-	"opsmesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/config"
 )
 
 // FromConfig 根据 config 构造 SecretProvider。
@@ -25,6 +26,7 @@ import (
 //   - "env" → EnvProvider（前缀 OPSMESH_）
 //   - "file" → FileProvider（从 cfg.SecretFile 加载）
 //   - "vault" → VaultProvider（连接 cfg.VaultAddr）
+//   - "kms" → KMSProvider（连接 cfg.KmsEndpoint，通过 HTTP API 解密密文）
 //   - "chain:env,file" → ChainProvider（依次尝试 env 和 file）
 //
 // 任一组合下子 provider 构造失败时返回错误（fail-fast，避免运行期诡异失败）。
@@ -51,8 +53,10 @@ func FromConfig(cfg *config.Config) (SecretProvider, error) {
 		return NewFileProvider(cfg.SecretFile)
 	case "vault":
 		return buildVault(cfg)
+	case "kms":
+		return buildKMS(cfg)
 	default:
-		return nil, fmt.Errorf("非法 --secret-provider=%q（应为 env | file | vault | chain:...）", spec)
+		return nil, fmt.Errorf("非法 --secret-provider=%q（应为 env | file | vault | kms | chain:...）", spec)
 	}
 }
 
@@ -93,8 +97,10 @@ func buildSingle(name string, cfg *config.Config) (SecretProvider, error) {
 		return NewFileProvider(cfg.SecretFile)
 	case "vault":
 		return buildVault(cfg)
+	case "kms":
+		return buildKMS(cfg)
 	default:
-		return nil, fmt.Errorf("未知 provider 名称 %q（应为 env | file | vault）", name)
+		return nil, fmt.Errorf("未知 provider 名称 %q（应为 env | file | vault | kms）", name)
 	}
 }
 
@@ -115,4 +121,24 @@ func buildVault(cfg *config.Config) (SecretProvider, error) {
 		return nil, errors.New("vault token 为空（请配置 --vault-token 或环境变量 OPSMESH_VAULT_TOKEN）")
 	}
 	return NewVaultProvider(cfg.VaultAddr, token, cfg.VaultMount)
+}
+
+// buildKMS 从 config 构造 KMSProvider。
+// token 优先取 cfg.KmsToken，为空时回退环境变量 OPSMESH_KMS_TOKEN（更安全）。
+func buildKMS(cfg *config.Config) (SecretProvider, error) {
+	if cfg.KmsEndpoint == "" {
+		return nil, errors.New("--kms-endpoint 为空（kms provider 需要 KMS API 地址）")
+	}
+	if cfg.KmsKeyID == "" {
+		return nil, errors.New("--kms-key-id 为空（kms provider 需要主密钥 ID）")
+	}
+	token := cfg.KmsToken
+	if token == "" {
+		// 回退到环境变量（避免在命令行/配置文件中暴露 token）。
+		if v, ok := os.LookupEnv("OPSMESH_KMS_TOKEN"); ok && v != "" {
+			token = v
+		}
+	}
+	// token 允许为空（部分内网 KMS 不鉴权），不强制报错。
+	return NewKMSProvider(cfg.KmsEndpoint, cfg.KmsKeyID, token)
 }

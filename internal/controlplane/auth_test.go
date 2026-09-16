@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newAuthTestServer 构造测试用 Server：memory store + 固定 jwtSecret。

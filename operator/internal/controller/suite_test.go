@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	opsmeshv1alpha1 "opsmesh/operator/api/v1alpha1"
-	"opsmesh/operator/internal/controller"
+	opsmeshv1alpha1 "github.com/Levango7/OpsMesh/operator/api/v1alpha1"
+	"github.com/Levango7/OpsMesh/operator/internal/controller"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -41,8 +41,8 @@ func TestOpsMeshInstanceReconcile(t *testing.T) {
 		},
 		Spec: opsmeshv1alpha1.OpsMeshInstanceSpec{
 			Replicas:    3,
-			Image:       "opsmesh/opsmesh:v0.1.0",
-			AgentImage:  "opsmesh/opsmesh-agent:v0.1.0",
+			Image:       "github.com/Levango7/OpsMesh/opsmesh:v0.1.0",
+			AgentImage:  "github.com/Levango7/OpsMesh/opsmesh-agent:v0.1.0",
 			Store:       "mysql",
 			Production:  true,
 			TLSEnabled:  true,
@@ -102,8 +102,8 @@ func TestOpsMeshInstanceReconcile_MemoryStore(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "lite", Namespace: "default", Generation: 1},
 		Spec: opsmeshv1alpha1.OpsMeshInstanceSpec{
 			Replicas:    1,
-			Image:       "opsmesh/opsmesh:latest",
-			AgentImage:  "opsmesh/opsmesh-agent:latest",
+			Image:       "github.com/Levango7/OpsMesh/opsmesh:latest",
+			AgentImage:  "github.com/Levango7/OpsMesh/opsmesh-agent:latest",
 			Store:       "memory",
 			SegmentCIDR: "10.244.0.0/16",
 			MySQL:       opsmeshv1alpha1.MySQLSpec{Enabled: false},

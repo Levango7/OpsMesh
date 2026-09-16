@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // mockStoreFactory 返回一个 factory：每次调用创建一个新的 MemoryStore（独立实例，数据物理隔离）。

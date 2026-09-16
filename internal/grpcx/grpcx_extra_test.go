@@ -20,8 +20,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pb "opsmesh/internal/grpcx/pb"
-	"opsmesh/internal/proto"
+	pb "github.com/Levango7/OpsMesh/internal/grpcx/pb"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // ===== helper：可注入 error 的 fakeLegacyServer 变体 =====

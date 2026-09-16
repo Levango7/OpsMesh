@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/proto"
-	"opsmesh/internal/secrets"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/secrets"
 )
 
 // mockSecretProvider 基于 map 的测试用 SecretProvider。

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // loginAsViewer 用预定义 viewer 账号登录，返回 Authorization 头值。

@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"opsmesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // stubLogInterval 同一 (domain, method) 告警的限频窗口。

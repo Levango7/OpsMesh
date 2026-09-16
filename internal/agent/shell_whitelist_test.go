@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/config"
 )
 
 // TestCheckShellWhitelist_DefaultWhitelistAllowsReadOnly 验证 defaultAgentShellWhitelist

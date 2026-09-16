@@ -5,9 +5,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // 本文件补全 server_network.go 中 0% 覆盖的 probeEdges 和 handleNetworkDiagnoseResult。

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // TestCollectMetrics_Basic 验证 CollectMetrics 能在当前主机上采集到基本指标。

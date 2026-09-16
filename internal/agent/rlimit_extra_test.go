@@ -8,7 +8,7 @@ package agent
 import (
 	"testing"
 
-	"opsmesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/config"
 )
 
 // --- setRlimits ---

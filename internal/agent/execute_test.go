@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 func newTestAgent(timeout time.Duration) *Agent {

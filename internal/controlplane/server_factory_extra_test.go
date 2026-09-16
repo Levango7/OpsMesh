@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/controlplane/factory"
-	"opsmesh/internal/events"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/controlplane/factory"
+	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // 本文件补全 server.go / server_factory.go / server_lifecycle.go 中 0% 覆盖的函数：

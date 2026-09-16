@@ -23,8 +23,8 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newK8sTestServer 构造 K8s 集群 API 测试用 Server：

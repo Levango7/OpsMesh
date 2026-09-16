@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newPlatformConfigTestServer 构造平台配置 API 测试用 Server。

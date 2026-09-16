@@ -20,10 +20,10 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/discovery"
-	"opsmesh/internal/grpcx"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/discovery"
+	"github.com/Levango7/OpsMesh/internal/grpcx"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // --- firstNonEmptyAgent ---

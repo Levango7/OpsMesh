@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"opsmesh/internal/authctx"
-	"opsmesh/internal/controlplane/embed"
+	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/controlplane/embed"
 )
 
 // handleDashboard 结构化 HTML 仪表盘（GET /）。

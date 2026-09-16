@@ -13,8 +13,8 @@ import (
 
 	"os"
 
-	opsmeshv1alpha1 "opsmesh/operator/api/v1alpha1"
-	"opsmesh/operator/internal/controller"
+	opsmeshv1alpha1 "github.com/Levango7/OpsMesh/operator/api/v1alpha1"
+	"github.com/Levango7/OpsMesh/operator/internal/controller"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"

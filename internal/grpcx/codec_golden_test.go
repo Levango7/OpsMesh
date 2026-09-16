@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // TestJSONCodecGoldenRegister 校验 Register 请求（proto.AgentInfo）的 golden JSON 报文。

@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/logx"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 func (s *Server) securityHeadersMiddleware(h http.Handler) http.Handler {

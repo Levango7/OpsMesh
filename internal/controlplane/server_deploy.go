@@ -10,8 +10,8 @@ import (
 	"log"
 	"time"
 
-	"opsmesh/internal/cron"
-	"opsmesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/cron"
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // deployReconcileLoop 后台周期对账 M3 部署：把 running 部署按底层任务结果翻成功/失败。

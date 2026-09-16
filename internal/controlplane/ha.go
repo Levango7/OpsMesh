@@ -21,7 +21,7 @@ import (
 	"os"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
 // haInstanceInfo 控制面实例信息（HA 状态查询返回）。

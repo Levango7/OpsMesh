@@ -22,9 +22,9 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/secrets"
+	"github.com/Levango7/OpsMesh/internal/secrets"
 )
 
 // secretsStatusResponse /api/v1/secrets/status 响应。
@@ -137,7 +137,7 @@ func (s *Server) handleSecretsTest(w http.ResponseWriter, r *http.Request) {
 	// 探测：用一次 Get 触发网络 IO。key 用 "<mount>#_" 形式；
 	// 即使返回 NotFound 也说明 Vault 可达且 token 通过认证（404 而非 401/403）。
 	// 任何错误都视为连接失败，错误信息透传给前端（不含敏感信息）。
-	_, getErr := provider.Get("opsmesh/secrets-test#probe")
+	_, getErr := provider.Get("github.com/Levango7/OpsMesh/secrets-test#probe")
 	latency := time.Since(start).Milliseconds()
 	if getErr == nil {
 		paginate.WriteJSON(w, http.StatusOK, secretsTestResponse{

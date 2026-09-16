@@ -5,9 +5,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/k8s"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/k8s"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // 本文件补全 k8s_cluster.go 中 0% 覆盖的 handleTestK8sCluster 和 decryptKubeconfig。

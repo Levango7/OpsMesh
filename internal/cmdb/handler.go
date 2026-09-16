@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/authctx"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // Handler 是 CMDB HTTP 路由处理器。

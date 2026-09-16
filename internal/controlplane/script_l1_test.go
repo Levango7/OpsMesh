@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // TestHandleCreateScript_TimeoutClampLow 验证 timeoutSec<1 被 clamp 到 1。

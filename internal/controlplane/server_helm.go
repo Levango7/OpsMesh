@@ -30,9 +30,9 @@ import (
 	"net/http"
 	"strings"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/helm"
+	"github.com/Levango7/OpsMesh/internal/helm"
 )
 
 // ============================================================================

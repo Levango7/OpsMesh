@@ -13,8 +13,8 @@ import (
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/engine"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/notify"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/store"
-	"opsmesh/pkg/circuit"
-	"opsmesh/pkg/metrics"
+	"github.com/Levango7/OpsMesh/pkg/circuit"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 )
 
 // Errors returned by the service.

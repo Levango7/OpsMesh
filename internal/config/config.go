@@ -75,11 +75,14 @@ type Config struct {
 	// 密钥管理外置：支持从环境变量/JSON文件/HashiCorp Vault 读取密钥。
 	// 空字符串=不启用密钥外置（向后兼容，密钥直接从 config 字段读取）。
 	// 启用后告警通道等敏感字段可使用 ${key} 引用语法从 provider 解析。
-	SecretProvider string // --secret-provider 密钥来源：env|file|vault|chain:env,file（空=不启用）
+	SecretProvider string // --secret-provider 密钥来源：env|file|vault|kms|chain:env,file（空=不启用）
 	SecretFile     string // --secret-file JSON 密钥文件路径（--secret-provider=file 时生效）
 	VaultAddr      string // --vault-addr Vault API 地址（如 https://vault:8200）
 	VaultToken     string // --vault-token Vault 访问令牌（推荐 env OPSMESH_VAULT_TOKEN 更安全）
 	VaultMount     string // --vault-mount Vault KV v2 挂载路径（默认 "secret"）
+	KmsEndpoint    string // --kms-endpoint KMS API 地址（如 https://kms.example.com/api/v1）
+	KmsKeyID       string // --kms-key-id KMS 主密钥 ID
+	KmsToken       string // --kms-token KMS 访问令牌（env OPSMESH_KMS_TOKEN 更安全）
 
 	// 真实网段发现。默认关闭：采用“agent 即设备”的 MVP 降级纳管；
 	// 开启后控制面按 SegmentCIDR 做存活扫描，为每台存活主机创建真实 DeviceInfo。
@@ -423,11 +426,14 @@ func Load() *Config {
 	clientCA := flag.String("client-ca", "", "服务端要求客户端 CA（mTLS）/ 客户端校验服务端 CA")
 	tlsWatch := flag.Bool("tls-watch", false, "启用 TLS 证书文件热重载（fsnotify 监听，无需重启）")
 	// 密钥管理外置：从环境变量/JSON文件/HashiCorp Vault 读取密钥。
-	secretProvider := flag.String("secret-provider", "", "密钥来源：env|file|vault|chain:env,file（空=不启用密钥外置，向后兼容）；或 env OPSMESH_SECRET_PROVIDER")
+	secretProvider := flag.String("secret-provider", "", "密钥来源：env|file|vault|kms|chain:env,file（空=不启用密钥外置，向后兼容）；或 env OPSMESH_SECRET_PROVIDER")
 	secretFile := flag.String("secret-file", "", "JSON 密钥文件路径（--secret-provider=file 时生效）；或 env OPSMESH_SECRET_FILE")
 	vaultAddr := flag.String("vault-addr", "", "Vault API 地址（如 https://vault:8200）；或 env OPSMESH_VAULT_ADDR")
 	vaultToken := flag.String("vault-token", "", "Vault 访问令牌（env OPSMESH_VAULT_TOKEN 更安全，避免命令行暴露）；或 env OPSMESH_VAULT_TOKEN")
 	vaultMount := flag.String("vault-mount", "secret", "Vault KV v2 挂载路径（默认 secret）；或 env OPSMESH_VAULT_MOUNT")
+	kmsEndpoint := flag.String("kms-endpoint", "", "KMS API 地址（如 https://kms.example.com/api/v1，--secret-provider=kms 时生效）；或 env OPSMESH_KMS_ENDPOINT")
+	kmsKeyID := flag.String("kms-key-id", "", "KMS 主密钥 ID（CMK，用于解密）；或 env OPSMESH_KMS_KEY_ID")
+	kmsToken := flag.String("kms-token", "", "KMS 访问令牌（env OPSMESH_KMS_TOKEN 更安全，避免命令行暴露）；或 env OPSMESH_KMS_TOKEN")
 	discover := flag.Bool("discover", false, "开启真实网段发现；关闭时采用 agent 即设备的 MVP 降级纳管")
 	segmentCIDR := flag.String("segment-cidr", "", "待扫描网段（如 10.30.0.0/24）；开启 --discover 时生效")
 	autoProvision := flag.Bool("auto-provision", false, "自动纳管：discover 扫描到存活主机后自动登记候选设备并（配置 --provision-ssh-key 时）推送 agent")
@@ -633,6 +639,9 @@ func Load() *Config {
 		VaultAddr:                val("vault-addr", *vaultAddr, "OPSMESH_VAULT_ADDR"),
 		VaultToken:               val("vault-token", *vaultToken, "OPSMESH_VAULT_TOKEN"),
 		VaultMount:               val("vault-mount", *vaultMount, "OPSMESH_VAULT_MOUNT"),
+		KmsEndpoint:              val("kms-endpoint", *kmsEndpoint, "OPSMESH_KMS_ENDPOINT"),
+		KmsKeyID:                 val("kms-key-id", *kmsKeyID, "OPSMESH_KMS_KEY_ID"),
+		KmsToken:                 val("kms-token", *kmsToken, "OPSMESH_KMS_TOKEN"),
 		Discover:                 valBool("discover", *discover, "OPSMESH_DISCOVER"),
 		SegmentCIDR:              val("segment-cidr", *segmentCIDR, "OPSMESH_SEGMENT_CIDR"),
 		AutoProvision:            valBool("auto-provision", *autoProvision, "OPSMESH_AUTO_PROVISION"),

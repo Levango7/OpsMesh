@@ -21,9 +21,9 @@ import (
 	"net/http"
 	"strings"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // handleTrafficPolicies 统一处理 /api/v1/traffic/policies：

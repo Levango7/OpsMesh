@@ -13,7 +13,7 @@ import (
 	"log"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // scanAlertRule 从一行扫描出 *AlertRule。

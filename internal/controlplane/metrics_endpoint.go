@@ -16,9 +16,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // handlePrometheusMetrics 处理 GET /metrics：输出 Prometheus text exposition format。

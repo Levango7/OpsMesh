@@ -15,18 +15,18 @@ package controlplane
 import (
 	"context"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
-	"opsmesh/internal/cmdb"
-	"opsmesh/internal/logx"
-	"opsmesh/internal/otelx"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/cmdb"
+	"github.com/Levango7/OpsMesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/otelx"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // cmdbCollectDefaultInterval 默认采集间隔（5 分钟）。

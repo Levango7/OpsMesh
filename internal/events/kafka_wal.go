@@ -28,7 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"opsmesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 
 	"github.com/google/uuid"
 )

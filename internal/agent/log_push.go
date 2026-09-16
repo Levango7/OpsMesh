@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"opsmesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // LogPusher 日志采集推送器：尾随日志文件，正则过滤，批量推送到指定 endpoint。

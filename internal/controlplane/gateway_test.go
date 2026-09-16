@@ -16,9 +16,9 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/extension"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/extension"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newGatewayRouteTestServer 构造网关 API 测试用 Server。

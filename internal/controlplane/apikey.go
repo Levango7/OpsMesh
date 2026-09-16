@@ -15,11 +15,11 @@ import (
 	"net/http"
 	"strings"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/platform"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/platform"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // handleAPIKeys 统一处理 /api/v1/apikeys。

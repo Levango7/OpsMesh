@@ -20,8 +20,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
 
-	"opsmesh/internal/events"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 //go:embed migrations/*.sql

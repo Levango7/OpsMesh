@@ -7,10 +7,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/domain"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/domain"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newTestServer 构造一个无总线/无指标的测试控制面（白盒，直接装配 Registry）。

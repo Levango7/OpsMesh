@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"strings"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/events"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // handleMiddlewareTemplates 处理 /api/v1/middleware-templates：

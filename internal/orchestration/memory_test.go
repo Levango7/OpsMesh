@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // TestOrchestration_CycleRejected 验证含自环/环路的 DAG 在 Trigger 时被 dag.Validate 拒绝。

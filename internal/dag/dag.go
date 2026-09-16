@@ -10,7 +10,7 @@ package dag
 import (
 	"fmt"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // indexByID 将任务列表按 TaskID 建索引。

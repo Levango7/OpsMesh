@@ -21,7 +21,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
-	"opsmesh/internal/otelx"
+	"github.com/Levango7/OpsMesh/internal/otelx"
 )
 
 // InitTracer initializes the OTel tracer provider for the given service.
@@ -60,7 +60,7 @@ func RecordError(span trace.Span, err error) {
 }
 
 // HTTPMiddleware returns an HTTP middleware that creates spans for each request.
-// The serviceName is used as the tracer name (e.g. "opsmesh/alert-svc").
+// The serviceName is used as the tracer name (e.g. "github.com/Levango7/OpsMesh/alert-svc").
 // It extracts W3C Trace Context from incoming headers and records method/path/status.
 func HTTPMiddleware(serviceName string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

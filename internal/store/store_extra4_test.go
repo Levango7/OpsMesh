@@ -11,7 +11,7 @@ import (
 	"errors"
 	"testing"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // failStoreFactory 始终返回错误的 store 工厂。

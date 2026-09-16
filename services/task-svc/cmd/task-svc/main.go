@@ -21,12 +21,12 @@ import (
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/task-svc/pkg/config"
-	"opsmesh/pkg/circuit"
-	"opsmesh/pkg/compress"
-	"opsmesh/pkg/cron"
-	"opsmesh/pkg/metrics"
-	"opsmesh/pkg/ratelimit"
-	"opsmesh/pkg/trace"
+	"github.com/Levango7/OpsMesh/pkg/circuit"
+	"github.com/Levango7/OpsMesh/pkg/compress"
+	"github.com/Levango7/OpsMesh/pkg/cron"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
+	"github.com/Levango7/OpsMesh/pkg/ratelimit"
+	"github.com/Levango7/OpsMesh/pkg/trace"
 )
 
 // cronMatch 包装 pkg/cron.Match——main.go 不希望每次 fire 闭包都写完整包名。
@@ -105,7 +105,7 @@ func main() {
 	handler = metrics.HTTPMiddleware(handler)
 	handler = ratelimit.Middleware()(handler)
 	handler = compress.Middleware()(handler)
-	handler = trace.HTTPMiddleware("opsmesh/task-svc")(handler)
+	handler = trace.HTTPMiddleware("github.com/Levango7/OpsMesh/task-svc")(handler)
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),

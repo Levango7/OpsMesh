@@ -27,7 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"opsmesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // LogCollectConfig 增强日志采集配置。

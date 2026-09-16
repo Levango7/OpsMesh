@@ -22,8 +22,8 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/authctx"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // hashRefreshToken 计算 refresh token 明文的 SHA-256 摘要（hex 编码）。

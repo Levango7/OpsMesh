@@ -25,14 +25,14 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
-	"opsmesh/internal/grpcx"
-	"opsmesh/internal/logx"
-	"opsmesh/internal/otelx"
+	"github.com/Levango7/OpsMesh/internal/grpcx"
+	"github.com/Levango7/OpsMesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/otelx"
 
-	grpcserver "opsmesh/internal/controlplane/grpc"
-	"opsmesh/internal/controlplane/paginate"
-	"opsmesh/internal/store"
-	"opsmesh/internal/tlsutil"
+	grpcserver "github.com/Levango7/OpsMesh/internal/controlplane/grpc"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/tlsutil"
 )
 
 func (s *Server) buildGRPC() (*grpc.Server, net.Listener, error) {

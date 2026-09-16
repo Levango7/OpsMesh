@@ -4,7 +4,7 @@ package agent
 import (
 	"testing"
 
-	"opsmesh/internal/discovery"
+	"github.com/Levango7/OpsMesh/internal/discovery"
 )
 
 // TestGRPCClient_SetBalancer 验证 SetBalancer 能正确注入 balancer。

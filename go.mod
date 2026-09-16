@@ -1,4 +1,4 @@
-module opsmesh
+module github.com/Levango7/OpsMesh
 
 go 1.26.0
 

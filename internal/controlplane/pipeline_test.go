@@ -22,9 +22,9 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newPipelineTestServer 构造流水线 API 测试用 Server。

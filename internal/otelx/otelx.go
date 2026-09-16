@@ -114,7 +114,7 @@ func Init(cfg Config) (ShutdownFunc, error) {
 }
 
 // Tracer 返回名为 name 的 Tracer（全局 TracerProvider 的句柄）。
-// name 通常为调用方包名或模块名（如 "opsmesh/controlplane"）。
+// name 通常为调用方包名或模块名（如 "github.com/Levango7/OpsMesh/controlplane"）。
 func Tracer(name string) trace.Tracer {
 	return otel.Tracer(name)
 }

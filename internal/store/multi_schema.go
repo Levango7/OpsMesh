@@ -29,8 +29,8 @@ import (
 	"sync"
 	"time"
 
-	"opsmesh/internal/events"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // SchemaNamer 把租户名映射为 MySQL schema（database）名。

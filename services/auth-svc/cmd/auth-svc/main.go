@@ -24,9 +24,9 @@ import (
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/auth-svc/pkg/config"
-	"opsmesh/pkg/security"
-	"opsmesh/pkg/tenant"
-	"opsmesh/pkg/trace"
+	"github.com/Levango7/OpsMesh/pkg/security"
+	"github.com/Levango7/OpsMesh/pkg/tenant"
+	"github.com/Levango7/OpsMesh/pkg/trace"
 )
 
 func main() {
@@ -117,7 +117,7 @@ func main() {
 	handler = security.UserRateLimit(120, time.Minute)(handler)
 	handler = corsConfig.Middleware()(handler)
 	handler = tenant.Middleware(cfg.JWTSecret)(handler)
-	handler = trace.HTTPMiddleware("opsmesh/auth-svc")(handler)
+	handler = trace.HTTPMiddleware("github.com/Levango7/OpsMesh/auth-svc")(handler)
 
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),

@@ -20,9 +20,9 @@ import (
 
 	"google.golang.org/grpc"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/grpcx"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/grpcx"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // fakeAgentServer 是 grpcx.RegistrationServer 的测试假实现。

@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/agent"
-	"opsmesh/internal/config"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/agent"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // TestE2E_TaskLifecycle 是「已编码未证实」缺口的真机闭环：

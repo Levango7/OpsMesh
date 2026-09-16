@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/alertengine"
-	"opsmesh/internal/config"
-	"opsmesh/internal/notify"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/alertengine"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/notify"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // 本文件补全 server_alerts_m2.go 的单元测试（M2 告警规则/静默/渠道/模板 API + 评估循环）。

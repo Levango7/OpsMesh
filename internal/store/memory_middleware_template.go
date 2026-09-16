@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 func randMiddlewareTemplateID() string {

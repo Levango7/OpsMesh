@@ -1,6 +1,6 @@
 package domain
 
-import "opsmesh/internal/proto"
+import "github.com/Levango7/OpsMesh/internal/proto"
 
 // 本文件是防腐层（ACL）：传输层 proto 与领域 domain 的双向映射。
 // 业务/应用层只认 domain；gRPC/HTTP 边界才接触 proto，降级了传输结构变更对内核的冲击。

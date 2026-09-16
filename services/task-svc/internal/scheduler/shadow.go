@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/store"
-	"opsmesh/pkg/cron"
-	"opsmesh/pkg/metrics"
+	"github.com/Levango7/OpsMesh/pkg/cron"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 )
 
 // shadow 常量：与 controlplane 4 循环对照表参数一致。

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // TestExecute_ShellWhitelist_Empty 验证白名单为空时放行所有命令（向后兼容）。

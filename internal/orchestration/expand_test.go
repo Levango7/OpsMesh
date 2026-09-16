@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // mockTaskEngine 是测试用的 TaskEngine mock，记录所有创建的任务（不处理依赖 blocked 状态）。

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // newSQLStoreWithBadDB 构造一个 DB 指向不可达端口的 SQLStore。

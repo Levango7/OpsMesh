@@ -23,12 +23,12 @@ import (
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/alert-svc/pkg/config"
-	"opsmesh/pkg/circuit"
-	"opsmesh/pkg/compress"
-	"opsmesh/pkg/metrics"
-	"opsmesh/pkg/ratelimit"
-	"opsmesh/pkg/security"
-	"opsmesh/pkg/trace"
+	"github.com/Levango7/OpsMesh/pkg/circuit"
+	"github.com/Levango7/OpsMesh/pkg/compress"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
+	"github.com/Levango7/OpsMesh/pkg/ratelimit"
+	"github.com/Levango7/OpsMesh/pkg/security"
+	"github.com/Levango7/OpsMesh/pkg/trace"
 )
 
 func main() {
@@ -121,7 +121,7 @@ func main() {
 	handler = ratelimit.Middleware()(handler)
 	handler = compress.Middleware()(handler)
 	handler = corsConfig.Middleware()(handler)
-	handler = trace.HTTPMiddleware("opsmesh/alert-svc")(handler)
+	handler = trace.HTTPMiddleware("github.com/Levango7/OpsMesh/alert-svc")(handler)
 
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),

@@ -44,7 +44,7 @@ linters:
       #   bufio.Writer.WriteString / (io.Writer).Write：缓冲写入失败由后续
       #     Flush/错误处理兜底，单独检查每行写入是噪音。
       exclude-functions:
-        - (opsmesh/internal/events.Bus).Publish
+        - (github.com/Levango7/OpsMesh/internal/events.Bus).Publish
         - (*bufio.Writer).WriteString
         - (*bytes.Buffer).Write
         - (io.Writer).Write
@@ -309,7 +309,7 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - opsmesh
+        - github.com/Levango7/OpsMesh
   exclusions:
     generated: lax
     paths:

@@ -16,8 +16,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newHATestServer 构造 HA API 测试用 Server。

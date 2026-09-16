@@ -21,9 +21,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"opsmesh/internal/compliance"
-	"opsmesh/internal/config"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/compliance"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newComplianceTestServer 构造合规 API 测试用 Server。

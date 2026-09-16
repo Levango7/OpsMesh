@@ -7,7 +7,7 @@ import (
 	"context"
 	"testing"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // =============================================================================

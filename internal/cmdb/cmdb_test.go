@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/authctx"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // ===== MemoryCiStore 单元测试 =====

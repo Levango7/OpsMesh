@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"time"
 
-	"opsmesh/internal/automation"
+	"github.com/Levango7/OpsMesh/internal/automation"
 )
 
 // defaultAutomationEvalInterval 评估周期兜底值（interval<=0 时使用）。

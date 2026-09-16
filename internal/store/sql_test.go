@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // 本文件测试 sql.go / sql_rbac.go / sql_k8s.go 中的关键查询逻辑。

@@ -7,7 +7,7 @@ package controlplane
 import (
 	"net/http"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
 // ============================================================================

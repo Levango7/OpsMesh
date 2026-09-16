@@ -8,7 +8,7 @@ require (
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.22.0
-	opsmesh v0.0.0-00010101000000-000000000000
+	github.com/Levango7/OpsMesh v0.0.0-00010101000000-000000000000
 )
 
 require (
@@ -38,4 +38,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
-replace opsmesh => ../../
+
+replace github.com/Levango7/OpsMesh => ../../

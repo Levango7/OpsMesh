@@ -14,10 +14,10 @@ import (
 	"strconv"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/k8s"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/k8s"
+	"github.com/Levango7/OpsMesh/internal/proto"
 
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

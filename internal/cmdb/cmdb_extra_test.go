@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // ===== Handler.Store() =====

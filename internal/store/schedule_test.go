@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // TestMemory_FireDueSchedules 验证 F4 定时/周期调度：模板任务（ParentID 空 + Schedule 非空）

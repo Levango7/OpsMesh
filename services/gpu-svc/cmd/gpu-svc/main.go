@@ -20,7 +20,7 @@ import (
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/workload"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/pkg/config"
-	"opsmesh/pkg/trace"
+	"github.com/Levango7/OpsMesh/pkg/trace"
 )
 
 func main() {
@@ -76,7 +76,7 @@ func main() {
 	})
 
 	var handler http.Handler = mux
-	handler = trace.HTTPMiddleware("opsmesh/gpu-svc")(handler)
+	handler = trace.HTTPMiddleware("github.com/Levango7/OpsMesh/gpu-svc")(handler)
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),

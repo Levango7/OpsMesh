@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // TestNotifier_NoChannels 验证无渠道时静默返回 nil。

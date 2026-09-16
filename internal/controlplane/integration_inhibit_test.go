@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/alertengine"
-	"opsmesh/internal/config"
-	"opsmesh/internal/notify"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/alertengine"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/notify"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // ============================================================================

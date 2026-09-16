@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 func middlewareTemplateByID(id string) *MiddlewareTemplate {

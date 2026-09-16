@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/cmdb"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/cmdb"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newTestCMDBApprovalManager 构造测试用 CMDBApprovalManager + MemoryStore + MemoryCiStore。

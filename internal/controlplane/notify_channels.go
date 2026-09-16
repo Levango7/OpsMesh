@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/notify"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/secrets"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/notify"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/secrets"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // handleNotifyChannels 处理 /api/v1/notify-channels：GET 列表 / POST 创建。

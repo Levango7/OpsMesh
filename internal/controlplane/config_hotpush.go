@@ -16,10 +16,10 @@ import (
 	"net/http"
 	"strconv"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // handleConfigHotpush 处理 POST /api/v1/config/hotpush：热推送配置到指定设备。

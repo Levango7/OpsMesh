@@ -9,7 +9,7 @@ require (
 	github.com/google/uuid v1.6.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.11
-	opsmesh v0.0.0-00010101000000-000000000000
+	github.com/Levango7/OpsMesh v0.0.0-00010101000000-000000000000
 )
 
 require (
@@ -38,4 +38,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260818201246-1b0934165a6f // indirect
 )
 
-replace opsmesh => ../../
+
+replace github.com/Levango7/OpsMesh => ../../

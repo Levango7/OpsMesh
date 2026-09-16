@@ -340,5 +340,5 @@ var Registration_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "opsmesh/v1/registration.proto",
+	Metadata: "github.com/Levango7/OpsMesh/v1/registration.proto",
 }

@@ -16,7 +16,7 @@ import (
 	"runtime/debug"
 	"time"
 
-	"opsmesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // safeGoRestartDelay panic 后重启循环前的最小等待间隔（防风暴）。

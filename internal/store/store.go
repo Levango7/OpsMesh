@@ -21,7 +21,7 @@ package store
 import (
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // DeviceStore 设备/Agent 纳管领域：注册、心跳、设备视图、退役归档、监控指标。

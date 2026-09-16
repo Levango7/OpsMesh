@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"opsmesh/pkg/auth"
+	"github.com/Levango7/OpsMesh/pkg/auth"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"

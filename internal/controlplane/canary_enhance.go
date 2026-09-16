@@ -18,9 +18,9 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // handleCanaryEnhance 分派 /api/v1/canary/{id} 子路径：

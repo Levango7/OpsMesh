@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/approval"
-	"opsmesh/internal/config"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/approval"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // 本文件补全 server_approval.go 中 0% 覆盖的审批 handler：

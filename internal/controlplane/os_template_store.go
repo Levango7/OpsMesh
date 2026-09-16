@@ -7,7 +7,7 @@ package controlplane
 import (
 	"encoding/json"
 
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // osTemplateByID 按 ID 查找预置模板，未找到返回 nil。

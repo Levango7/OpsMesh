@@ -29,11 +29,11 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/deploy"
-	"opsmesh/internal/notify"
-	"opsmesh/internal/orchestration"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/deploy"
+	"github.com/Levango7/OpsMesh/internal/notify"
+	"github.com/Levango7/OpsMesh/internal/orchestration"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newLoopM4Server 构造带 alertAggr/alertChannels 的测试控制面（newLoopTestServer 未初始化这两个字段）。

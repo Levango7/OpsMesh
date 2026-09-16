@@ -31,10 +31,10 @@ import (
 	"sync"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/extension"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/extension"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // allowedGatewayBackendSchemes 网关后端 scheme 白名单（L1 输入校验）。

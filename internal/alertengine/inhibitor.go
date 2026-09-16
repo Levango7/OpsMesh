@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // defaultInhibitTTL 默认活跃告警存活时间。

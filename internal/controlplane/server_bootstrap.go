@@ -13,12 +13,12 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/logx"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/version"
-	"opsmesh/pkg/provision"
+	"github.com/Levango7/OpsMesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/version"
+	"github.com/Levango7/OpsMesh/pkg/provision"
 )
 
 func (s *Server) verifyBootstrapToken(w http.ResponseWriter, r *http.Request) bool {

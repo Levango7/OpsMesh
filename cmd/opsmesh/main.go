@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/agent"
-	"opsmesh/internal/config"
-	"opsmesh/internal/controlplane"
-	"opsmesh/internal/controlplane/backup"
-	"opsmesh/internal/version"
+	"github.com/Levango7/OpsMesh/internal/agent"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/controlplane"
+	"github.com/Levango7/OpsMesh/internal/controlplane/backup"
+	"github.com/Levango7/OpsMesh/internal/version"
 )
 
 func main() {

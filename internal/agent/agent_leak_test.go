@@ -55,7 +55,7 @@ func topGoroutineSites(top int) string {
 		site := ""
 		for _, l := range lines[1:] {
 			t := strings.TrimSpace(l)
-			if strings.HasPrefix(t, "opsmesh/") {
+			if strings.HasPrefix(t, "github.com/Levango7/OpsMesh/") {
 				site = t
 				break
 			}

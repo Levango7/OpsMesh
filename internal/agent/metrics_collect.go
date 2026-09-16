@@ -26,7 +26,7 @@ import (
 	gnet "github.com/shirou/gopsutil/v3/net"
 	"github.com/shirou/gopsutil/v3/process"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // MetricsHistoryDefaultCap 环形缓冲默认容量：2h * 120 samples/h（30s 采样间隔）= 240 条。

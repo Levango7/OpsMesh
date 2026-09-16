@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // handleDeviceMetrics 处理 GET /api/v1/devices/{id}/metrics：返回设备监控指标。

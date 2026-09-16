@@ -19,10 +19,10 @@ import (
 	"net/http"
 	"strings"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/alertengine"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/alertengine"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // handleAlertRulesEngine 处理 /api/v1/alert-rules-engine：GET 列表 / POST 创建。

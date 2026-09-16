@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/events"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 func (s *SQLStore) Register(a *proto.AgentInfo) *proto.AgentInfo {

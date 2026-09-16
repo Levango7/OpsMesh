@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"log"
 
-	"opsmesh/internal/plugin"
+	"github.com/Levango7/OpsMesh/internal/plugin"
 )
 
 // helloPlugin 示例插件实例。

@@ -1,9 +1,10 @@
 // Package secrets 提供统一的密钥管理抽象层。
 //
-// 支持 3 种密钥来源：
+// 支持 4 种密钥来源：
 //   - EnvProvider：从环境变量读取（适合 K8s Secret 注入）
 //   - FileProvider：从 JSON 文件读取（适合本地开发/CI 流水线）
 //   - VaultProvider：从 HashiCorp Vault KV v2 引擎读取（适合生产环境）
+//   - KMSProvider：通过 HTTP API 调用 KMS 服务解密密文（信封加密，密文可安全入库）
 //
 // 通过 ChainProvider 可按优先级依次尝试多个 provider。
 // ResolveSecret 辅助函数支持 ${provider:key} 引用语法，向后兼容明文配置。

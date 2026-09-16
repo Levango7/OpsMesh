@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // TestMapper_AgentRoundTrip 校验 Agent 的 proto<->domain 双向映射不丢字段（ACL 防腐层）。

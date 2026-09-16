@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/authctx"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // Dispatcher 是 M3 派发底层任务到执行引擎（M4）的防腐接口。

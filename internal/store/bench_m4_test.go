@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // makeDeviceInfo 构造一个填充完整的 DeviceInfo（避免空字段导致某些路径早退）。

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newTestAPIKeyManager 构造测试用 APIKeyManager。

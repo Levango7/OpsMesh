@@ -7,15 +7,15 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/cmdb"
-	"opsmesh/internal/config"
-	"opsmesh/internal/deploy"
-	"opsmesh/internal/events"
-	"opsmesh/internal/logstore"
-	"opsmesh/internal/logx"
-	"opsmesh/internal/orchestration"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/cmdb"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/deploy"
+	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/logstore"
+	"github.com/Levango7/OpsMesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/orchestration"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 func FirstNonEmpty(ss ...string) string {

@@ -14,8 +14,8 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/otelx"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/otelx"
 )
 
 // TestOTelHTTPMiddlewareSpanCreation 验证控制面 HTTP 中间件为请求创建有效 span。

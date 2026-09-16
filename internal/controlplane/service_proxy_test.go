@@ -21,8 +21,8 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newServiceProxyTestServer 构造聚合层测试用 Server（与 gateway_test.go 同模式）。

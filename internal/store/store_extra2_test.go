@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/events"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // errRowScanner 始终返回错误的 rowScanner（用于测试 scan* 函数的错误路径）。

@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
-	"opsmesh/internal/logx"
-	"opsmesh/internal/otelx"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/otelx"
 )
 
 // Start 启动 HTTP(B/S)、gRPC(9090)、metrics(9091) 三个监听，并在收到 SIGTERM/SIGINT 时优雅退出。

@@ -15,12 +15,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/otelx"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/otelx"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 
-	grpcserver "opsmesh/internal/controlplane/grpc"
+	grpcserver "github.com/Levango7/OpsMesh/internal/controlplane/grpc"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/authctx"
 )
 
 // Handler 是 M6 日志检索的 HTTP 处理器。

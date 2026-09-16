@@ -14,9 +14,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"opsmesh/internal/compliance"
-	"opsmesh/internal/config"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/compliance"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newCanarySimTestServer 构造带 batches + 鉴权的测试 Server（供 canary metrics 测试）。

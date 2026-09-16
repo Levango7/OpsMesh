@@ -38,10 +38,10 @@ import (
 	"sync"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/authctx"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // 双 HttpOnly Cookie 令牌方案（同源最简单且安全）：

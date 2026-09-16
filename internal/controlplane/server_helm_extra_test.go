@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/helm"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/helm"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // 本文件补全 server_helm.go 的单元测试（Helm 应用商店 API）。

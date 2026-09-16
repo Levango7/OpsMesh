@@ -6,7 +6,7 @@ package events
 import (
 	"context"
 
-	"opsmesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // Level 事件级别。

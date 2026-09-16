@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/otelx"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/otelx"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // 本文件为 SSE 实时推送的单元测试。

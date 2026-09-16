@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/authctx"
-	"opsmesh/internal/cron"
-	"opsmesh/internal/dag"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/cron"
+	"github.com/Levango7/OpsMesh/internal/dag"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // TaskEngine 防腐接口：M5 展开 DAG 时经此把节点下发给底层任务引擎

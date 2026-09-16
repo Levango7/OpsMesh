@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/events"
 )
 
 // newSQLStoreForTest 直接构造 SQLStore（不连数据库），用于测试构造器方法。

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"opsmesh/pkg/discover"
+	"github.com/Levango7/OpsMesh/pkg/discover"
 )
 
 // Config 自动纳管所需的配置项（解耦：原 internal/provision 直接吃 *config.Config，迁出后改为

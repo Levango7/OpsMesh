@@ -15,11 +15,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
-	"opsmesh/internal/grpcx"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/grpcx"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 
-	grpcserver "opsmesh/internal/controlplane/grpc"
+	grpcserver "github.com/Levango7/OpsMesh/internal/controlplane/grpc"
 )
 
 // TestGRPCRegistrationLoop 是内核的端到端护栏：进程内起真实 gRPC server（9090，JSON codec，

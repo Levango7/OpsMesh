@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"log"
 
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/store"
 
 	"golang.org/x/crypto/bcrypt"
 )

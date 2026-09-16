@@ -14,7 +14,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"opsmesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 
 	"github.com/segmentio/kafka-go"
 )

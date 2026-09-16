@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"testing"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
 // 本文件补全 server_paginate.go 中 0% 覆盖的分页中间件：

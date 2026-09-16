@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // TestTaskTimeoutFor_TaskLevel 测试任务自带 Timeout>0 时覆盖全局超时。

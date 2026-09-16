@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	pb "opsmesh/internal/grpcx/pb" // 包名为 pbv1，用 pb 别名引用（兼容性修复）
-	"opsmesh/internal/proto"
+	pb "github.com/Levango7/OpsMesh/internal/grpcx/pb" // 包名为 pbv1，用 pb 别名引用（兼容性修复）
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // fakeLegacyServer 是 grpcx.RegistrationServer 的测试假实现，

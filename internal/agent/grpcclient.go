@@ -23,12 +23,12 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"opsmesh/internal/discovery"
-	"opsmesh/internal/grpcx"
-	"opsmesh/internal/logx"
-	"opsmesh/internal/otelx"
-	"opsmesh/internal/proto"
-	"opsmesh/internal/tlsutil"
+	"github.com/Levango7/OpsMesh/internal/discovery"
+	"github.com/Levango7/OpsMesh/internal/grpcx"
+	"github.com/Levango7/OpsMesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/otelx"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/tlsutil"
 )
 
 // GRPCClient 封装到控制面 9090 的真实 gRPC 注册通道（JSON codec）。

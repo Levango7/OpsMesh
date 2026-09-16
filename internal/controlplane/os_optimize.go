@@ -23,7 +23,7 @@ import (
 	"net/http"
 	"strings"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
 // OSTemplate 预置 OS 优化任务模板。

@@ -3,7 +3,7 @@ package notify
 import (
 	"fmt"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // feishuCard 构造飞书 interactive 卡片消息体（JSON serializable）。

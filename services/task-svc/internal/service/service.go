@@ -12,8 +12,8 @@ import (
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/store"
-	"opsmesh/pkg/circuit"
-	"opsmesh/pkg/metrics"
+	"github.com/Levango7/OpsMesh/pkg/circuit"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 )
 
 // Errors returned by the service.

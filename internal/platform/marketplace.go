@@ -13,7 +13,7 @@
 package platform
 
 import (
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // 复用 store 包 Plugin 数据模型。

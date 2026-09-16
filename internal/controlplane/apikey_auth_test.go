@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/platform"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/platform"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newAPIKeyAuthTestServer 构造非 demo 模式的 API Key 认证测试 Server。

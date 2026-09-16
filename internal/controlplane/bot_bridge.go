@@ -30,9 +30,9 @@ import (
 	"sync"
 	"time"
 
-	"opsmesh/internal/authctx"
-	"opsmesh/internal/controlplane/paginate"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // botCommandRecord 一条命令执行历史（前端 BotView history 项契约）。

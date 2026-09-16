@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
 func validateURLSSRF(rawURL string) error {

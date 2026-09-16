@@ -1,8 +1,8 @@
 package grpc
 
 import (
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // AgentService 封装 gRPC handler 需要的 store 操作，解耦 gRPC 层与 store 层。

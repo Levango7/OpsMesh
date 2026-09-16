@@ -5,7 +5,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // 以下是 gRPC 四方法的消息类型。
@@ -110,7 +110,7 @@ var Registration_ServiceDesc = grpc.ServiceDesc{
 		{MethodName: "ReportLogs", Handler: _Registration_ReportLogs_Handler},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "opsmesh/registration",
+	Metadata: "github.com/Levango7/OpsMesh/registration",
 }
 
 // ---- 四个方法的服务端分发 Handler（标准 gRPC 一元 Handler 写法）----

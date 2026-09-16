@@ -31,10 +31,10 @@ import (
 	"fmt"
 	"time"
 
-	"opsmesh/internal/alertengine"
-	"opsmesh/internal/events"
-	"opsmesh/internal/logx"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/alertengine"
+	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // ============================================================================

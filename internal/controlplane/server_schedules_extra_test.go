@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/cron"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/cron"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // 本文件补全 server_schedules.go 中 0% 覆盖的定时任务 handler：

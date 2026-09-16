@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/domain"
-	"opsmesh/internal/events"
-	"opsmesh/internal/logx"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/domain"
+	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // sanitizeAuditDetail 对写入审计/事件 Detail 的用户输入做脱敏与规范化：

@@ -4,7 +4,7 @@ import (
 	"log"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // Scheduler 定时任务调度器，定期检查带 Schedule 的模板任务并派生实例。

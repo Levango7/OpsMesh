@@ -14,10 +14,10 @@ import (
 	"sync"
 	"time"
 
-	"opsmesh/internal/cron"
-	"opsmesh/internal/dag"
-	"opsmesh/internal/events"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/cron"
+	"github.com/Levango7/OpsMesh/internal/dag"
+	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/proto"
 
 	"golang.org/x/crypto/bcrypt"
 )

@@ -38,9 +38,9 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/k8s"
+	"github.com/Levango7/OpsMesh/internal/k8s"
 )
 
 // k8sAPITimeout 单次 K8s API 调用的超时时间。

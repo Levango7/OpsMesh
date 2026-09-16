@@ -23,11 +23,11 @@ import (
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/device-svc/pkg/config"
-	"opsmesh/pkg/compress"
-	"opsmesh/pkg/metrics"
-	"opsmesh/pkg/ratelimit"
-	"opsmesh/pkg/tenant"
-	"opsmesh/pkg/trace"
+	"github.com/Levango7/OpsMesh/pkg/compress"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
+	"github.com/Levango7/OpsMesh/pkg/ratelimit"
+	"github.com/Levango7/OpsMesh/pkg/tenant"
+	"github.com/Levango7/OpsMesh/pkg/trace"
 )
 
 func main() {
@@ -213,7 +213,7 @@ func main() {
 	handler = ratelimit.Middleware()(handler)
 	handler = compress.Middleware()(handler)
 	handler = tenant.Middleware(cfg.JWTSecret)(handler)
-	handler = trace.HTTPMiddleware("opsmesh/device-svc")(handler)
+	handler = trace.HTTPMiddleware("github.com/Levango7/OpsMesh/device-svc")(handler)
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),

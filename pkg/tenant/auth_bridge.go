@@ -2,7 +2,7 @@
 package tenant
 
 import (
-	"opsmesh/pkg/auth"
+	"github.com/Levango7/OpsMesh/pkg/auth"
 )
 
 // authExtractTenant validates a JWT token and returns the tenant_id claim.

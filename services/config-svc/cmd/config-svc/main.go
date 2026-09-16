@@ -25,7 +25,7 @@ import (
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/config-svc/pkg/config"
-	"opsmesh/pkg/trace"
+	"github.com/Levango7/OpsMesh/pkg/trace"
 )
 
 func main() {
@@ -86,7 +86,7 @@ func main() {
 	registerRotationHandlers(mux, rot)
 
 	var handler http.Handler = mux
-	handler = trace.HTTPMiddleware("opsmesh/config-svc")(handler)
+	handler = trace.HTTPMiddleware("github.com/Levango7/OpsMesh/config-svc")(handler)
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),

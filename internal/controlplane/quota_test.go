@@ -13,8 +13,8 @@ import (
 	"errors"
 	"testing"
 
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newTestQuotaManager 构造测试用 QuotaManager（启用配额检查 + 指定默认配额）。

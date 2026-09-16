@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // TestMemoryStore_TaskTimeoutRetryPassthrough 验证 CreateTask 设置的 Timeout/RetryDelay/MaxRetries

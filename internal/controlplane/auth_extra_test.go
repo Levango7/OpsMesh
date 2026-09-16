@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // 本文件补全 auth.go 中 0% 覆盖函数的单元测试：

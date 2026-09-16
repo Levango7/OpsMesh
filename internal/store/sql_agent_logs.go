@@ -1,6 +1,6 @@
 package store
 
-import "opsmesh/internal/proto"
+import "github.com/Levango7/OpsMesh/internal/proto"
 
 // ============================================================================
 // agent 日志上报：SaveLogs / AgentLogs（SQLStore 内存暂存实现）

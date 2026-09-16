@@ -3,7 +3,7 @@ package dag
 import (
 	"testing"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 func mk(id string, deps ...string) *proto.Task {

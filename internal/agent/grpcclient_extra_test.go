@@ -28,9 +28,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"opsmesh/internal/discovery"
-	"opsmesh/internal/grpcx"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/discovery"
+	"github.com/Levango7/OpsMesh/internal/grpcx"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // --- SetSecret ---

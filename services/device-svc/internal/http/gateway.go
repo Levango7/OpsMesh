@@ -21,7 +21,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
-	"opsmesh/pkg/provision"
+	"github.com/Levango7/OpsMesh/pkg/provision"
 )
 
 // Gateway 持有 HTTP handler 依赖的各 store 接口。

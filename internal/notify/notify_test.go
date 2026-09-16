@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // TestPostAlert_Generic 验证 generic 模式下 POST Alert JSON 到 webhook server。

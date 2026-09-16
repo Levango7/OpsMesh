@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
 // handleAudits 处理 GET /api/v1/audits：按租户/动作/时间窗检索审计事件（审计可查；等保三级留痕必须可检索）。

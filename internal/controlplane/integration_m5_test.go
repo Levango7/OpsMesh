@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"opsmesh/internal/approval"
-	"opsmesh/internal/config"
-	"opsmesh/internal/cron"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/approval"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/cron"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newM5TestServer 构造一个注入了 M5 字段的测试控制面。

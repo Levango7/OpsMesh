@@ -13,7 +13,7 @@ import (
 
 	gnet "github.com/shirou/gopsutil/v3/net"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // --- isLoopback ---

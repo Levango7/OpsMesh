@@ -15,8 +15,8 @@ import (
 	"log/slog"
 	"os"
 
-	"opsmesh/internal/logx"
-	"opsmesh/internal/otelx"
+	"github.com/Levango7/OpsMesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/otelx"
 )
 
 // Logger provides structured logging with trace context.

@@ -40,8 +40,8 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/alertengine"
-	"opsmesh/internal/plugin"
+	"github.com/Levango7/OpsMesh/internal/alertengine"
+	"github.com/Levango7/OpsMesh/internal/plugin"
 )
 
 // 集成环境开关环境变量。

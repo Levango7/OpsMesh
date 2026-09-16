@@ -24,11 +24,11 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/controlplane/factory"
-	"opsmesh/internal/deploy"
-	"opsmesh/internal/orchestration"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/controlplane/factory"
+	"github.com/Levango7/OpsMesh/internal/deploy"
+	"github.com/Levango7/OpsMesh/internal/orchestration"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newLoopTestServer 构造一个完整的测试控制面（白盒装配），包含 deploy/orchestration handler，

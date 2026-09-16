@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // fakeStore 是 TaskStore 的内存实现，供调度器单测。

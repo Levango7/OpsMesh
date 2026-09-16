@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/secrets"
+	"github.com/Levango7/OpsMesh/internal/secrets"
 )
 
 // ============================================================================

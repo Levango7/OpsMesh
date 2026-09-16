@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"strings"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/authctx"
-	"opsmesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // maxBodyBytes 限制请求体大小（防 DoS：拒绝超大 body 直接 413，避免 JSON 解析拖垮内存）。

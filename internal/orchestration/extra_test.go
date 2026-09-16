@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/proto"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newWFRequest 构造带租户头的 HTTP 请求（辅助函数）。

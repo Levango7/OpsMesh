@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // fakeDisp 是 Dispatcher 的测试桩：记录派发的任务并提供可控的设备/状态。

@@ -14,11 +14,11 @@ import (
 	devicev1 "github.com/Levango7/OpsMesh/services/device-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
-	"opsmesh/pkg/discover"
-	"opsmesh/pkg/metrics"
-	"opsmesh/pkg/provision"
-	"opsmesh/pkg/retry"
-	"opsmesh/pkg/tenant"
+	"github.com/Levango7/OpsMesh/pkg/discover"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
+	"github.com/Levango7/OpsMesh/pkg/provision"
+	"github.com/Levango7/OpsMesh/pkg/retry"
+	"github.com/Levango7/OpsMesh/pkg/tenant"
 )
 
 // Errors returned by the service.

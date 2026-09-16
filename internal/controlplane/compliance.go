@@ -21,10 +21,10 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/compliance"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/compliance"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // complianceEngine 返回合规引擎（MVP：即时构造，规则只读无并发风险）。

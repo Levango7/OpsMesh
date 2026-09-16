@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"opsmesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"opsmesh/internal/domain"
-	"opsmesh/internal/logx"
-	"opsmesh/internal/proto"
-	"opsmesh/pkg/provision"
+	"github.com/Levango7/OpsMesh/internal/domain"
+	"github.com/Levango7/OpsMesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/pkg/provision"
 )
 
 func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {

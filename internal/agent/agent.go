@@ -29,13 +29,13 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"opsmesh/internal/circuitbreaker"
-	"opsmesh/internal/config"
-	"opsmesh/internal/discovery"
-	"opsmesh/internal/grpcx"
-	"opsmesh/internal/logx"
-	"opsmesh/internal/otelx"
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/circuitbreaker"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/discovery"
+	"github.com/Levango7/OpsMesh/internal/grpcx"
+	"github.com/Levango7/OpsMesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/otelx"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // runState 记录一个正在执行中的任务的控制句柄（F3 取消信号用）。

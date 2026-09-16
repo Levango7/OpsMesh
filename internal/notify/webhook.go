@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"opsmesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // postJSON 将任意可 JSON 序列化的值 POST 到 webhook URL（Content-Type: application/json）。

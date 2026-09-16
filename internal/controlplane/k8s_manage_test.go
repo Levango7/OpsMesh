@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"opsmesh/internal/config"
-	"opsmesh/internal/k8s"
-	"opsmesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/k8s"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // newK8sManageTestServer 构造 K8s 资源管理测试用 Server。
