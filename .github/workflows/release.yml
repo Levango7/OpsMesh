@@ -27,6 +27,18 @@ jobs:
           - task-svc
           - config-svc
           - log-svc
+          - aio-svc
+          - autoscaler-svc
+          - bot-svc
+          - deploy-svc
+          - gpu-svc
+          - grafana-bridge
+          - incident-svc
+          - plugin-svc
+          - portal-svc
+          - runbook-svc
+          - tf-provider
+          - workflow-svc
     steps:
       - uses: actions/checkout@v5
 

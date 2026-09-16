@@ -31,7 +31,9 @@ func ServerCreds(certFile, keyFile, clientCA string) (credentials.TransportCrede
 		if err != nil {
 			return nil, err
 		}
-		pool.AppendCertsFromPEM(b)
+		if !pool.AppendCertsFromPEM(b) {
+			return nil, fmt.Errorf("tlsutil: failed to append client CA certificates from %s", clientCA)
+		}
 		cfg.ClientCAs = pool
 		cfg.ClientAuth = tls.RequireAndVerifyClientCert
 	}
@@ -56,7 +58,9 @@ func ClientCreds(certFile, keyFile, caFile string) (credentials.TransportCredent
 		if err != nil {
 			return nil, err
 		}
-		pool.AppendCertsFromPEM(b)
+		if !pool.AppendCertsFromPEM(b) {
+			return nil, fmt.Errorf("tlsutil: failed to append CA certificates from %s", caFile)
+		}
 		cfg.RootCAs = pool
 	}
 	return credentials.NewTLS(cfg), nil

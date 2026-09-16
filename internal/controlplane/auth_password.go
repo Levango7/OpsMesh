@@ -71,11 +71,11 @@ func rotateDefaultAdminPassword(st store.Store) bool {
 	cp := *u
 	cp.MustChangePassword = true
 	st.UpdateUser(&cp)
-	// 一次性打印随机密码到日志，提示管理员复制（后续重启不重复打印，因密码已非 admin123）。
-	log.Printf("[controlplane] ============================================================")
+	// S7 修复：不在日志中打印明文密码（防日志泄露）。
+	// 管理员须通过 --admin-password-stdout 或首次登录用随机口令（此处仅记录已生成，不输出值）。
+	// 如需查看密码，请用 --admin-password-file 指定输出文件，或首登后立即修改。
 	log.Printf("[controlplane] 安全提示：默认 admin 密码已替换为随机口令（首登仍须改密）。")
-	log.Printf("[controlplane]   一次性随机密码（请立即复制并登录后修改）: %s", password)
-	log.Printf("[controlplane] ============================================================")
+	log.Printf("[controlplane]   随机密码已生成但不在日志显示（防泄露）。请通过 --admin-password-file 或首登获取。")
 	return true
 }
 

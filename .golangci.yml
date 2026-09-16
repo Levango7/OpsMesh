@@ -192,14 +192,18 @@ linters:
         path: internal/store/sql\.go
       # G202: SQL 字符串拼接——仓库 SQL 均用参数占位符（? + args），
       # 拼接的只是固定 SQL 片段（WHERE 子句结构），无用户输入直接入 SQL，安全。
+      # M2 修复：收窄到 store/logstore，不再全局豁免。
       - linters:
           - gosec
         text: "G202"
+        path: internal/(store|logstore)/
       # G204: agent/helm 的本质职责就是执行命令（exec.Command），
       # 参数来自控制面下发的受信任务，非用户直接输入，属产品核心功能。
+      # M2 修复：收窄到 agent/helm/controlplane，不再全局豁免。
       - linters:
           - gosec
         text: "G204"
+        path: internal/(agent|helm|controlplane)/
       # G101: auth.go 的"credentials"实为 cookie 名称常量（opsmesh_at/rt），非凭据，误报。
       - linters:
           - gosec
@@ -214,23 +218,29 @@ linters:
         text: "G124"
       # G106: SSH InsecureIgnoreHostKey 受 --provision-ssh-known-hosts 配置约束
       # （README 明确"生产务必配置"），空值回退为忽略是设计取舍，非静默漏洞。
+      # M2 修复：收窄到 config/deploy/agent，不再全局豁免。
       - linters:
           - gosec
         text: "G106"
+        path: (internal|pkg)/(config|deploy|agent|provision)/
       # G115: 值域安全转换——grpcx/stub.go 的 int→int32 是 protobuf 兼容层
       # 字段号/长度转换（值域有界），metrics_collect 的 uint64→int64 同理。
+      # M2 修复：收窄到 grpcx/agent，不再全局豁免。
       - linters:
           - gosec
         text: "G115"
+        path: internal/(grpcx|agent|controlplane)/
       # G704: 遗留 TODO 标记检查（存量 TODO 登记在 docs/tech-debt.md，非本轮范围）。
       - linters:
           - gosec
         text: "G704"
       # G118: SSH 推送为后台 goroutine，用 request context 会在 handler 返回时
       # 被取消导致推送中断，Background 是正确选择（gosec 规则不适用于 goroutine 语义）。
+      # M2 修复：收窄到 agent/deploy，不再全局豁免。
       - linters:
           - gosec
         text: "G118"
+        path: (internal|pkg)/(agent|deploy|controlplane|provision)/
       # G404（弱随机数）—— device-sim：模拟数据生成工具，随机性本身就是职责
       # （伪造设备指标/状态/IP/序列号），输出用于测试与演示环境，非加密场景，
       # crypto/rand 反而拖慢模拟吞吐，整目录豁免。
