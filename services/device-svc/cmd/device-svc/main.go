@@ -187,8 +187,8 @@ func main() {
 		stats := gpuDetector.GetGPUStats()
 		writeJSON(w, http.StatusOK, stats)
 	})
-	mux.HandleFunc("/api/v1/devices/gpus/", func(w http.ResponseWriter, r *http.Request) {
-		gpuID := r.URL.Path[len("/api/v1/devices/gpus/"):]
+	mux.HandleFunc("/api/v1/devices/gpu/", func(w http.ResponseWriter, r *http.Request) {
+		gpuID := r.URL.Path[len("/api/v1/devices/gpu/"):]
 		g, err := gpuDetector.GetGPUInfo(gpuID)
 		if err != nil {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
@@ -201,16 +201,9 @@ func main() {
 		gpus := gpuDetector.ListGPUs(nodeID)
 		writeJSON(w, http.StatusOK, gpus)
 	})
-	mux.HandleFunc("/api/v1/devices/", func(w http.ResponseWriter, r *http.Request) {
-		remainder := r.URL.Path[len("/api/v1/devices/"):]
-		if len(remainder) > 4 && remainder[len(remainder)-4:] == "/gpu" {
-			nodeID := remainder[:len(remainder)-4]
-			gpus := gpuDetector.ListGPUs(nodeID)
-			writeJSON(w, http.StatusOK, gpus)
-			return
-		}
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-	})
+	// NOTE: /api/v1/devices/ catch-all 已由 gateway.RegisterRoutes 注册
+	// （handleDeviceDetail 处理 {id}/heartbeat|status|provision|metrics + CRUD）。
+	// /{id}/gpu 子路径由上方 /api/v1/devices/gpu/ 独立路由处理。
 
 	var handler http.Handler = mux
 	handler = metrics.HTTPMiddleware(handler)
