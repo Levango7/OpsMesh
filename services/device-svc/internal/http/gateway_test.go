@@ -50,19 +50,22 @@ func doReq(t *testing.T, mux *http.ServeMux, method, path, body string) *httptes
 func TestDevices_ListAndCreate(t *testing.T) {
 	mux := newTestGateway(t)
 
-	// 列表：种子设备可见。
+	// 列表：种子设备可见（响应格式对齐 controlplane：按 segment(Group) 分组的 map）。
 	rec := doReq(t, mux, http.MethodGet, "/api/v1/devices", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list devices: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	var list struct {
-		Devices []*models.Device `json:"devices"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+	var snap map[string][]*models.Device
+	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
 		t.Fatalf("list devices 响应解析失败: %v", err)
 	}
-	if len(list.Devices) != 1 || list.Devices[0].ID != "dev-1" {
-		t.Fatalf("期望 1 台种子设备 dev-1，实际 %+v", list.Devices)
+	// 种子设备 Group="" → 归入 "" 桶。
+	var gotDevs []*models.Device
+	for _, ds := range snap {
+		gotDevs = append(gotDevs, ds...)
+	}
+	if len(gotDevs) != 1 || gotDevs[0].ID != "dev-1" {
+		t.Fatalf("期望 1 台种子设备 dev-1，实际 %+v", gotDevs)
 	}
 
 	// 创建：201 + 回显。
@@ -128,14 +131,17 @@ func TestAgents_ListAndDetail(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list agents: got %d", rec.Code)
 	}
-	var list struct {
-		Agents []*models.Agent `json:"agents"`
-	}
+	// 响应格式对齐 controlplane：裸数组 [{agentID, hostname, segment, status}]。
+	var list []map[string]string
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
 		t.Fatalf("list agents 解析失败: %v", err)
 	}
-	if len(list.Agents) != 1 || list.Agents[0].ID != "ag-1" {
-		t.Fatalf("期望种子 agent ag-1，实际 %+v", list.Agents)
+	if len(list) != 1 || list[0]["agentID"] != "ag-1" {
+		t.Fatalf("期望种子 agent ag-1，实际 %+v", list)
+	}
+	// 验证只含 4 个契约字段，且 segment 为空字符串（device-svc Agent 无 segment 信息）。
+	if list[0]["hostname"] != "host-1" || list[0]["status"] != "online" || list[0]["segment"] != "" {
+		t.Fatalf("agent 字段不匹配契约，实际 %+v", list[0])
 	}
 
 	rec = doReq(t, mux, http.MethodGet, "/api/v1/agents/ag-1", "")
