@@ -150,13 +150,14 @@ func main() {
 	// 生产环境可注入 K8sLeaseElector 实现多副本选主）。
 	elector := leader.NewStub() // A-2 默认：stub 永真（单进程/CI）；生产注入 K8sLeaseElector
 	defer elector.Close()
-	sched := scheduler.New(
-		schedulerRootCtx,
-		// reclaim：直接读 store.AllTasks 复用 controlplane/store/memory.go:756 ReclaimStaleTasks
-		// 的判定逻辑——A-1 任务必达机制逐字对齐。
-		func(_ context.Context, maxAge time.Duration) int {
+	// ShadowMode=true 时，task-svc 不执行 fire/reclaim（真正只读），只有 controlplane 调度。
+	// 这防止共库双调度器并发写 tasks 表。
+	var reclaimFn scheduler.ReclaimFunc
+	var fireFn scheduler.FireFunc
+	if !cfg.ShadowMode {
+		reclaimFn = func(_ context.Context, maxAge time.Duration) int {
 			if maxAge <= 0 {
-				maxAge = 30 * time.Second // task-svc 默认租约（与 controlplane server_tasks.go:319 cfg.TaskLeaseSec 默认 30s 对齐）
+				maxAge = 30 * time.Second
 			}
 			cutoff := time.Now().Add(-maxAge)
 			reclaimed := 0
@@ -164,19 +165,15 @@ func main() {
 				if t.Status != "running" || t.ClaimedAt.IsZero() || !t.ClaimedAt.Before(cutoff) {
 					continue
 				}
-				// 防双跑：持有者心跳活跃则不回收（task-svc 无 agent 心跳索引，简化为：租约超时即回收；
-				// 收敛后由 controlplane 端 agent 侧防误回收——A-2 阶段补跨服务心跳查询）。
 				t.Status = "pending"
 				t.ClaimedAt = time.Time{}
 				t.ClaimedBy = ""
-				ts.UpdateTask(t) // task-svc store 接口已有 UpdateTask
+				ts.UpdateTask(t)
 				reclaimed++
 			}
 			return reclaimed
-		},
-		// fire：直接读 store.AllTasks 复用 controlplane/store/memory.go:786 FireDueSchedules
-		// 的派生逻辑——cron 匹配 + 本分钟去重。
-		func(_ context.Context, now time.Time) int {
+		}
+		fireFn = func(_ context.Context, now time.Time) int {
 			fired := 0
 			minuteStart := now.Truncate(time.Minute)
 			for _, t := range ts.AllTasks() {
@@ -190,18 +187,17 @@ func main() {
 				if !t.LastFiredAt.IsZero() && !t.LastFiredAt.Before(minuteStart) {
 					continue
 				}
-				// 派生 pending 实例——与 controlplane 同构（保留 Schedule 字段、ParentID 指向模板）。
-				// A-1 阶段：仅更新模板的 LastFiredAt 防止重入，**不实际派生**——派生实例会改动
-				// 任务必达行为，A-2 阶段切流时再做（避免本轮引入新写路径影响双轨对照）。
 				t.LastFiredAt = now
 				ts.UpdateTask(t)
 				fired++
 			}
 			return fired
-		},
-		// renew：A-2 阶段通过 LeaderElector 接口注入。
-		// 默认 StubLeaderElector 永真（单进程/CI，与 A-1 行为一致）；
-		// 生产环境由 main 注入 K8sLeaseElector（基于 coordination.k8s.io Lease 多副本选主）。
+		}
+	}
+	sched := scheduler.New(
+		schedulerRootCtx,
+		reclaimFn,
+		fireFn,
 		func(ctx context.Context, ttl time.Duration) bool {
 			return elector.Renew(ctx, ttl)
 		},

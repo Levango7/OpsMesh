@@ -173,7 +173,8 @@ func (g *Gateway) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	for _, t := range resp.Tasks {
 		out = append(out, taskToResponse(t))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tasks": out})
+	// 无分页时返回裸数组（对齐 controlplane server_tasks.go:239）。
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleCreateTask 处理 POST /api/v1/tasks。

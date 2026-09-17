@@ -115,7 +115,7 @@ services:
       TASK_SVC_HTTP_PORT: "8102"
       TASK_SVC_STORE_TYPE: "sql"
       TASK_SVC_DSN: "opsmesh:opsmesh_pass@tcp(mysql:3306)/opsmesh?parseTime=true"
-      TASK_SVC_SHADOW_MODE: "false"
+      TASK_SVC_SHADOW_MODE: "true"
       TASK_SVC_HTTP_GATEWAY_ENABLED: "true"
       JWT_SECRET: "dualtrack-jwt-secret-for-local-validation-32b"
     depends_on:

@@ -18,6 +18,7 @@ package scheduler
 import (
 	"context"
 	"log"
+	"sync/atomic"
 	"time"
 )
 
@@ -48,6 +49,9 @@ type Scheduler struct {
 	reclaim ReclaimFunc
 	fire    FireFunc
 	renew   RenewFunc
+	// isLeader 由 leaderLoop 更新，scheduleLoop/reclaimLoop 在 tick 时检查——
+	// 只有当选 leader 才执行 fire/reclaim，防共库双调度器并发写。
+	isLeader atomic.Bool
 	// 跨循环共享 ctx（main 进程 signal.NotifyContext 注入，cancel 时 3 循环全退出）。
 	ctx context.Context
 }
@@ -87,6 +91,9 @@ func (s *Scheduler) scheduleLoop() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
+			if !s.isLeader.Load() {
+				continue
+			}
 			n := s.fire(s.ctx, time.Now())
 			if n > 0 {
 				log.Printf("定时任务派生 fired=%d", n)
@@ -108,6 +115,9 @@ func (s *Scheduler) reclaimLoop() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
+			if !s.isLeader.Load() {
+				continue
+			}
 			n := s.reclaim(s.ctx, 0) // maxAge 由 store 内部 cfg.TaskLeaseSec 决定（0=使用默认）
 			if n > 0 {
 				log.Printf("任务租约回收 reclaimed=%d", n)
@@ -128,6 +138,7 @@ func (s *Scheduler) leaderLoop() {
 			return
 		case <-ticker.C:
 			isLeader := s.renew(s.ctx, leaderTTL)
+			s.isLeader.Store(isLeader)
 			if isLeader != wasLeader {
 				if isLeader {
 					log.Printf("晋升为 leader，开始执行周期协调任务 ttl=%s", leaderTTL.String())
