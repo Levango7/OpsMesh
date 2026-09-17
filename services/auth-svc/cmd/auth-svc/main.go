@@ -101,12 +101,13 @@ func main() {
 		var redisCache *cache.Cache
 		var sessionStore *cache.SessionStore
 		if cfg.RedisAddr != "" {
-			redisCache = cache.New("auth:")
+			redisCache = cache.NewWithAddr("auth:", cfg.RedisAddr)
+			defer redisCache.Close()
 			if redisCache.Enabled() {
 				log.Printf("Redis cache enabled at %s — guard/deviceFP backed by Redis", cfg.RedisAddr)
 			}
 		}
-		if cfg.SessionStoreEnabled && redisCache != nil && redisCache.Enabled() {
+		if cfg.SessionStoreEnabled && cfg.RedisAddr != "" {
 			sessionStore = cache.NewSessionStore(cfg.RedisAddr, cfg.SessionTTL)
 			if sessionStore.Enabled() {
 				log.Printf("Redis SessionStore enabled (TTL=%v) — stateful session management active", cfg.SessionTTL)

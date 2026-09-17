@@ -28,10 +28,16 @@ func NewMySQLStore(dsn string) (*MySQLStore, error) {
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	if err := db.Ping(); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("failed to ping mysql: %w", err)
 	}
 
-	return &MySQLStore{db: db}, nil
+	s := &MySQLStore{db: db}
+	if err := s.migrateTasks(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to migrate mysql tasks: %w", err)
+	}
+	return s, nil
 }
 
 // Close closes the database connection.
@@ -70,7 +76,7 @@ func scanStringSlice(data []byte) []string {
 // === TaskStore implementation ===
 
 // CreateTask creates a task.
-func (s *MySQLStore) CreateTask(t *models.Task) *models.Task {
+func (s *MySQLStore) CreateTask(t *models.Task) (*models.Task, error) {
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = time.Now()
 	}
@@ -81,14 +87,14 @@ func (s *MySQLStore) CreateTask(t *models.Task) *models.Task {
 	_, err := s.db.Exec(
 		"INSERT INTO tasks (task_id, agent_id, tenant_id, type, command, content, path, status, claimed_by, claimed_at, claim_epoch, created_at, retry_count, max_retries, dead_letter, timeout, retry_delay, schedule, parent_id, depends_on, approval_required, approved_by, approved_at, batch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		t.TaskID, t.AgentID, t.TenantID, t.Type, t.Command, t.Content, t.Path, t.Status,
-		t.ClaimedBy, t.ClaimedAt, t.ClaimEpoch, t.CreatedAt, t.RetryCount, t.MaxRetries,
+		t.ClaimedBy, nullTime(t.ClaimedAt), t.ClaimEpoch, t.CreatedAt, t.RetryCount, t.MaxRetries,
 		t.DeadLetter, t.Timeout, t.RetryDelay, t.Schedule, t.ParentID,
-		jsonStringSlice(t.DependsOn), t.ApprovalRequired, t.ApprovedBy, t.ApprovedAt, t.BatchID,
+		jsonStringSlice(t.DependsOn), t.ApprovalRequired, t.ApprovedBy, nullTime(t.ApprovedAt), t.BatchID,
 	)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("insert task: %w", err)
 	}
-	return t
+	return t, nil
 }
 
 // GetTask returns a task by ID.
@@ -118,7 +124,7 @@ func (s *MySQLStore) scanTask(row *sql.Row) *models.Task {
 }
 
 // ListTasks returns tasks with optional filtering.
-func (s *MySQLStore) ListTasks(tenantID, status, agentID string, limit int) []*models.Task {
+func (s *MySQLStore) ListTasks(tenantID, status, agentID string, limit int) ([]*models.Task, error) {
 	query := "SELECT task_id, agent_id, tenant_id, type, command, content, path, status, claimed_by, claimed_at, claim_epoch, created_at, retry_count, max_retries, dead_letter, timeout, retry_delay, schedule, parent_id, depends_on, approval_required, approved_by, approved_at, batch_id FROM tasks WHERE 1=1"
 	args := []interface{}{}
 	if tenantID != "" {
@@ -141,14 +147,14 @@ func (s *MySQLStore) ListTasks(tenantID, status, agentID string, limit int) []*m
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("query tasks: %w", err)
 	}
 	defer rows.Close()
 	return s.scanTasks(rows)
 }
 
-func (s *MySQLStore) scanTasks(rows *sql.Rows) []*models.Task {
-	var tasks []*models.Task
+func (s *MySQLStore) scanTasks(rows *sql.Rows) ([]*models.Task, error) {
+	tasks := make([]*models.Task, 0)
 	for rows.Next() {
 		var t models.Task
 		var dependsOn sql.RawBytes
@@ -164,7 +170,7 @@ func (s *MySQLStore) scanTasks(rows *sql.Rows) []*models.Task {
 			&claimedBy, &claimedAt, &t.ClaimEpoch, &t.CreatedAt, &t.RetryCount, &t.MaxRetries,
 			&deadLetter, &t.Timeout, &t.RetryDelay, &t.Schedule, &t.ParentID, &dependsOn,
 			&approvalRequired, &approvedBy, &approvedAt, &batchID); err != nil {
-			continue
+			return nil, fmt.Errorf("scan task: %w", err)
 		}
 		if content.Valid {
 			t.Content = content.String
@@ -195,7 +201,10 @@ func (s *MySQLStore) scanTasks(rows *sql.Rows) []*models.Task {
 		t.DependsOn = scanStringSlice(dependsOn)
 		tasks = append(tasks, &t)
 	}
-	return tasks
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tasks: %w", err)
+	}
+	return tasks, nil
 }
 
 // ClaimTask atomically claims a pending task for an agent.
@@ -474,7 +483,10 @@ func (s *MySQLStore) UpdateTask(t *models.Task) bool {
 // nullTime 把零值 time 序列化为 NULL（MySQL UPDATE 不接受 zero time；Status/Status 字段回写
 // 时若 ClaimedAt 是零值需传 NULL）。
 func nullTime(t time.Time) any {
-	if t.IsZero() {
+	// MySQL TIMESTAMP 最小值为 '1970-01-01 00:00:01' UTC。
+	// Go time.Time{} 零值（0001-01-01）和 protobuf Timestamp 零值转换后的
+	// time.Unix(0,0)（1970-01-01 00:00:00）都早于此，必须转 NULL。
+	if t.IsZero() || t.Unix() <= 0 {
 		return nil
 	}
 	return t

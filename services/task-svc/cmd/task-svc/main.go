@@ -47,7 +47,7 @@ func main() {
 	}
 	defer shutdown(context.Background())
 
-	// Store 初始化：StoreType=sql 且 DSN 非空时接 MySQL（自动建表）；失败或未配置回退内存。
+	// Store 初始化：SQL 模式自动迁移 tasks 表；初始化失败必须阻断启动，不能静默回退内存。
 	// MemoryStore / MySQLStore 均实现 TaskStore、ScheduleStore、ResultStore、BatchStore 四个接口。
 	memStore := store.NewMemoryStore()
 	var (
@@ -58,7 +58,7 @@ func main() {
 	)
 	if cfg.StoreType == "sql" && cfg.DSN != "" {
 		if ms, err := store.NewMySQLStore(cfg.DSN); err != nil {
-			log.Printf("MySQL store 初始化失败，回退 memory: %v", err)
+			log.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
 		} else {
 			ts, ss, rs, bs = ms, ms, ms, ms
 			log.Printf("MySQL store 已启用")

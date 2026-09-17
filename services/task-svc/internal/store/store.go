@@ -9,9 +9,9 @@ import (
 
 // TaskStore is the interface for task persistence.
 type TaskStore interface {
-	CreateTask(t *models.Task) *models.Task
+	CreateTask(t *models.Task) (*models.Task, error)
 	GetTask(taskID string) *models.Task
-	ListTasks(tenantID, status, agentID string, limit int) []*models.Task
+	ListTasks(tenantID, status, agentID string, limit int) ([]*models.Task, error)
 	ClaimTask(agentID string) *models.Task
 	ReportResult(result *models.TaskResult) error
 	CancelTask(taskID, tenantID string) bool
@@ -76,7 +76,7 @@ func NewMemoryStore() *MemoryStore {
 }
 
 // CreateTask creates a task.
-func (m *MemoryStore) CreateTask(t *models.Task) *models.Task {
+func (m *MemoryStore) CreateTask(t *models.Task) (*models.Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if t.CreatedAt.IsZero() {
@@ -87,7 +87,7 @@ func (m *MemoryStore) CreateTask(t *models.Task) *models.Task {
 	}
 	cp := *t
 	m.tasks[t.TaskID] = &cp
-	return t
+	return t, nil
 }
 
 // GetTask returns a task by ID.
@@ -103,7 +103,7 @@ func (m *MemoryStore) GetTask(taskID string) *models.Task {
 }
 
 // ListTasks returns tasks with optional filtering.
-func (m *MemoryStore) ListTasks(tenantID, status, agentID string, limit int) []*models.Task {
+func (m *MemoryStore) ListTasks(tenantID, status, agentID string, limit int) ([]*models.Task, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]*models.Task, 0, len(m.tasks))
@@ -123,7 +123,7 @@ func (m *MemoryStore) ListTasks(tenantID, status, agentID string, limit int) []*
 			break
 		}
 	}
-	return out
+	return out, nil
 }
 
 // ClaimTask atomically claims a pending task for an agent.

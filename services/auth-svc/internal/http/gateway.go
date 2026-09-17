@@ -133,11 +133,33 @@ func (g *Gateway) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/auth/me", g.handleMe)
 
 	// 用户/角色/权限管理（与 controlplane /users /roles /permissions 路径一致）。
-	mux.HandleFunc("/api/v1/users", g.handleUsers)
-	mux.HandleFunc("/api/v1/users/", g.handleUserDetail)
-	mux.HandleFunc("/api/v1/roles", g.handleRoles)
-	mux.HandleFunc("/api/v1/roles/", g.handleRoleDetail)
-	mux.HandleFunc("/api/v1/permissions", g.handlePermissions)
+	mux.HandleFunc("/api/v1/users", g.managementHandler("user", g.handleUsers))
+	mux.HandleFunc("/api/v1/users/", g.managementHandler("user", g.handleUserDetail))
+	mux.HandleFunc("/api/v1/roles", g.managementHandler("role", g.handleRoles))
+	mux.HandleFunc("/api/v1/roles/", g.managementHandler("role", g.handleRoleDetail))
+	mux.HandleFunc("/api/v1/permissions", g.managementHandler("permission", g.handlePermissions))
+}
+
+// managementHandler 统一保护管理路由；认证端点不经过此中间件。
+// 角色/权限查询与 controlplane 一致，允许有效登录用户访问。
+// auth-svc 已定义 user:approve 权限，审批由 user:approve 门控（对齐 controlplane）。
+func (g *Gateway) managementHandler(resource string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		permission := resource + ":write"
+		switch r.Method {
+		case http.MethodGet:
+			permission = resource + ":read"
+			if resource == "role" || resource == "permission" {
+				permission = ""
+			}
+		case http.MethodDelete:
+			permission = resource + ":delete"
+		}
+		if _, ok := g.requirePermission(w, r, permission); !ok {
+			return
+		}
+		next(w, r)
+	}
 }
 
 // ============ 认证流 ============
@@ -335,7 +357,7 @@ func (g *Gateway) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		NewPassword         string `json:"newPassword"`
 		ChangePasswordToken string `json:"changePasswordToken"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.NewPassword == "" {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.OldPassword == "" || body.NewPassword == "" {
 		writeError(w, http.StatusBadRequest, "oldPassword and newPassword are required")
 		return
 	}
@@ -458,6 +480,10 @@ func (g *Gateway) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
+		// 鉴权：需 user:approve 权限（对齐 controlplane auth_users.go:163,197）。
+		if _, ok := g.requirePermission(w, r, "user:approve"); !ok {
+			return
+		}
 		id := strings.TrimSuffix(strings.TrimSuffix(rest, "/approve"), "/reject")
 		action := "approve"
 		if strings.HasSuffix(rest, "/reject") {
@@ -506,13 +532,10 @@ func (g *Gateway) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateUser 处理 PUT /api/v1/users/{id}：更新用户 email/roleIDs/status。
-// 鉴权：需 user:write 权限（admin 角色拥有，与 controlplane requirePermission 同语义）。
+// 鉴权：需 user:write 权限；status 变更（active/rejected）额外要求 user:approve
+// （对齐 controlplane auth_users.go:253，防低权限绕过审批流）。
 // 请求体：{email?, roleIds?, status?}；仅更新提供的非空字段（与 controlplane
 // handleUpdateUser 同语义）。
-//
-// 注：controlplane 对 status 变更额外要求 user:approve 权限（防低权限绕过审批流）；
-// auth-svc 权限模型未定义 user:approve，此处 status 变更仍由 user:write 门控
-// （admin 拥有 user:write 即可）。后续迭代可对齐 user:approve 细粒度。
 func (g *Gateway) handleUpdateUser(w http.ResponseWriter, r *http.Request, id string) {
 	if _, ok := g.requirePermission(w, r, "user:write"); !ok {
 		return
@@ -525,6 +548,13 @@ func (g *Gateway) handleUpdateUser(w http.ResponseWriter, r *http.Request, id st
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+	// 状态变更需更高权限：仅 user:write 不能激活/禁用账号，须 user:approve
+	// （与 controlplane 审批模型一致，防低权限绕过审批流）。
+	if body.Status != "" {
+		if _, ok := g.requirePermission(w, r, "user:approve"); !ok {
+			return
+		}
 	}
 	if _, err := g.svc.UpdateUserFields(r.Context(), id, body.Email, body.Status, body.RoleIDs); err != nil {
 		writeError(w, http.StatusNotFound, "user not found")
@@ -662,6 +692,10 @@ func bearerOrCookie(r *http.Request) string {
 // 返回 ValidateTokenResponse 与 true 表示通过，否则已写入错误响应并返回 false。
 // 与 controlplane requirePermission 同语义（权限经 token claims 展开）。
 // admin 角色拥有全部权限（seedAdminRole），故 admin 自然通过所有 user:*/role:* 检查。
+//
+// permission 为空串语义（仅管理路由 GET role/permission 列表使用，对齐 controlplane
+// auth_roles.go:40 / auth_perms.go:24 的 userFromToken 语义）：只要求有效登录，
+// 不做权限点检查。当前仅 Gateway 内部传入该特殊值；对外仍要求非空权限名。
 func (g *Gateway) requirePermission(w http.ResponseWriter, r *http.Request, permission string) (*authv1.ValidateTokenResponse, bool) {
 	token := bearerOrCookie(r)
 	if token == "" {
@@ -676,6 +710,19 @@ func (g *Gateway) requirePermission(w http.ResponseWriter, r *http.Request, perm
 	if resp == nil || !resp.Valid {
 		writeError(w, http.StatusUnauthorized, "invalid or expired token")
 		return nil, false
+	}
+	u := g.svc.Store().GetUser(resp.UserId)
+	if u == nil || u.Status != "active" {
+		writeError(w, http.StatusUnauthorized, "user is not active")
+		return nil, false
+	}
+	// 首登 token 仅供改密，不能据其全量权限访问管理端点。
+	if u.MustChangePassword {
+		writeError(w, http.StatusForbidden, "password change required")
+		return nil, false
+	}
+	if permission == "" {
+		return resp, true
 	}
 	for _, p := range resp.Permissions {
 		if p == permission {

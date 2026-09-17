@@ -72,6 +72,7 @@ func (s *MySQLStore) seedDefaults() error {
 	perms := []Permission{
 		{ID: "perm-1", Name: "user:read", Description: "Read users", Group: "user"},
 		{ID: "perm-2", Name: "user:write", Description: "Create/update users", Group: "user"},
+		{ID: "perm-2b", Name: "user:approve", Description: "Approve/reject user registration", Group: "user"},
 		{ID: "perm-3", Name: "user:delete", Description: "Delete users", Group: "user"},
 		{ID: "perm-4", Name: "role:read", Description: "Read roles", Group: "role"},
 		{ID: "perm-5", Name: "role:write", Description: "Create/update roles", Group: "role"},

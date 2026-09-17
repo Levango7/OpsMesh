@@ -90,6 +90,28 @@ func loginAsAdmin(t *testing.T, mux *http.ServeMux, svc *service.Service) map[st
 	return map[string]string{"Cookie": "opsmesh_at=" + at.Value + "; opsmesh_rt=" + rt.Value}
 }
 
+func TestManagement_RequiresAuthentication(t *testing.T) {
+	_, mux, _ := newTestGateway()
+	for _, route := range []struct{ method, path string }{
+		{"GET", "/api/v1/users"}, {"POST", "/api/v1/users"},
+		{"GET", "/api/v1/users/user-admin"}, {"PUT", "/api/v1/users/user-admin"},
+		{"DELETE", "/api/v1/users/user-admin"},
+		{"POST", "/api/v1/users/user-admin/approve"}, {"POST", "/api/v1/users/user-admin/reject"},
+		{"GET", "/api/v1/roles"}, {"POST", "/api/v1/roles"},
+		{"GET", "/api/v1/roles/role-admin"}, {"PUT", "/api/v1/roles/role-admin"},
+		{"DELETE", "/api/v1/roles/role-admin"}, {"GET", "/api/v1/permissions"},
+	} {
+		t.Run(route.method+route.path, func(t *testing.T) {
+			for _, headers := range []map[string]string{nil, {"Authorization": "Bearer invalid"}, {"Cookie": "opsmesh_at=invalid"}} {
+				rec := doReq(t, mux, route.method, route.path, `{}`, headers)
+				if rec.Code != http.StatusUnauthorized {
+					t.Errorf("应拒绝未认证请求，got %d, body=%s", rec.Code, rec.Body.String())
+				}
+			}
+		})
+	}
+}
+
 // ============ R1/R2：Cookie 语义 + refresh 单飞契约 ============
 
 func TestLogin_CookieFieldsMatchControlplane(t *testing.T) {

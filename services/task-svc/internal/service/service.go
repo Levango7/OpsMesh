@@ -135,7 +135,9 @@ func (s *Service) CreateTask(ctx context.Context, req *taskv1.CreateTaskRequest)
 	t.CreatedAt = timestamppb.Now()
 
 	modelTask := protoToTask(t)
-	s.taskStore.CreateTask(modelTask)
+	if _, err := s.taskStore.CreateTask(modelTask); err != nil {
+		return nil, fmt.Errorf("create task: %w", err)
+	}
 	// A-2 阶段：任务生命周期事件审计（创建）
 	s.emitAudit(ctx, t.TenantId, "", "create_task", t.TaskId, t.Command, events.LevelInfo, map[string]string{
 		"taskID":  t.TaskId,
@@ -156,7 +158,10 @@ func (s *Service) GetTask(ctx context.Context, req *taskv1.GetTaskRequest) (*tas
 
 // ListTasks lists tasks with optional filtering.
 func (s *Service) ListTasks(ctx context.Context, req *taskv1.ListTasksRequest) (*taskv1.ListTasksResponse, error) {
-	tasks := s.taskStore.ListTasks(req.TenantId, req.Status, req.AgentId, int(req.Limit))
+	tasks, err := s.taskStore.ListTasks(req.TenantId, req.Status, req.AgentId, int(req.Limit))
+	if err != nil {
+		return nil, fmt.Errorf("list tasks: %w", err)
+	}
 	out := make([]*taskv1.Task, 0, len(tasks))
 	for _, t := range tasks {
 		out = append(out, taskToProto(t))
@@ -469,7 +474,9 @@ func (s *Service) CreateBatchTask(ctx context.Context, req *taskv1.CreateBatchTa
 			task.Type = models.TaskTypeShell
 		}
 		modelTask := protoToTask(task)
-		s.taskStore.CreateTask(modelTask)
+		if _, err := s.taskStore.CreateTask(modelTask); err != nil {
+			return nil, fmt.Errorf("create batch task: %w", err)
+		}
 		s.batchStore.AddTaskToBatch(batchID, task.TaskId)
 	}
 

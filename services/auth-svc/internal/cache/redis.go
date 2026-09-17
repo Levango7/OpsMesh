@@ -35,12 +35,16 @@ type Cache struct {
 // New creates a Cache instance configured via environment variables.
 //
 // The REDIS_ADDR env var controls the Redis server address (default "localhost:6379").
-// If REDIS_ADDR is empty or Redis is unreachable, the Cache operates in disabled mode,
+// If Redis is unreachable, the Cache operates in disabled mode,
 // where all reads return misses and all writes are no-ops (with logged warnings).
 //
 // The prefix parameter isolates this service's keys (e.g. "auth:", "device:").
 func New(prefix string) *Cache {
-	addr := os.Getenv("REDIS_ADDR")
+	return NewWithAddr(prefix, os.Getenv("REDIS_ADDR"))
+}
+
+// NewWithAddr 使用显式 Redis 地址；空地址使用默认值，不读取环境变量。
+func NewWithAddr(prefix, addr string) *Cache {
 	if addr == "" {
 		addr = defaultRedisAddr
 	}

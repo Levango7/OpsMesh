@@ -1,0 +1,134 @@
+# docker-compose.dual-track.yaml - TD-60 dual-track local validation stack
+services:
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: dualtrack_root
+      MYSQL_DATABASE: opsmesh
+      MYSQL_USER: opsmesh
+      MYSQL_PASSWORD: opsmesh_pass
+    ports:
+      - "13306:3306"
+    volumes:
+      - dualtrack-mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    ports:
+      - "16379:6379"
+    volumes:
+      - dualtrack-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
+    restart: unless-stopped
+
+  controlplane:
+    image: opsmesh/controlplane:dev
+    command:
+      - /usr/local/bin/opsmesh
+      - --mode=controlplane
+      - --store=mysql
+      - --mysql-dsn=opsmesh:opsmesh_pass@tcp(mysql:3306)/opsmesh?parseTime=true
+      - --redis-addr=redis:6379
+      - --advertise-addr=http://controlplane:8080
+      - --demo
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+      - "9091:9091"
+    environment:
+      OPSMESH_JWT_SECRET: dualtrack-jwt-secret-for-local-validation-32b
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+    restart: unless-stopped
+
+  auth-svc:
+    image: opsmesh/auth-svc:dev
+    ports:
+      - "8100:8100"
+    environment:
+      AUTH_SVC_GRPC_PORT: "50050"
+      AUTH_SVC_HTTP_PORT: "8100"
+      AUTH_SVC_JWT_SECRET: "dualtrack-jwt-secret-for-local-validation-32b"
+      AUTH_SVC_ACCESS_TOKEN_TTL: "1h"
+      AUTH_SVC_REFRESH_TOKEN_TTL: "168h"
+      AUTH_SVC_HTTP_ENABLED: "true"
+      AUTH_SVC_REDIS_ADDR: "redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    restart: unless-stopped
+
+  device-svc:
+    image: opsmesh/device-svc:dev
+    ports:
+      - "8101:8101"
+    environment:
+      DEVICE_SVC_GRPC_PORT: "50051"
+      DEVICE_SVC_HTTP_PORT: "8101"
+      DEVICE_SVC_JWT_SECRET: "dualtrack-jwt-secret-for-local-validation-32b"
+      DEVICE_SVC_STORE_TYPE: "sql"
+      DEVICE_SVC_DSN: "opsmesh:opsmesh_pass@tcp(mysql:3306)/opsmesh?parseTime=true"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8101/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    restart: unless-stopped
+
+  task-svc:
+    image: opsmesh/task-svc:dev
+    ports:
+      - "8102:8102"
+    environment:
+      TASK_SVC_GRPC_PORT: "50052"
+      TASK_SVC_HTTP_PORT: "8102"
+      TASK_SVC_STORE_TYPE: "sql"
+      TASK_SVC_DSN: "opsmesh:opsmesh_pass@tcp(mysql:3306)/opsmesh?parseTime=true"
+      TASK_SVC_SHADOW_MODE: "false"
+      TASK_SVC_HTTP_GATEWAY_ENABLED: "true"
+      JWT_SECRET: "dualtrack-jwt-secret-for-local-validation-32b"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8102/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  dualtrack-mysql:
+  dualtrack-redis:
