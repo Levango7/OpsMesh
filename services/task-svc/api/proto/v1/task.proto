@@ -64,9 +64,9 @@ service BatchService {
 }
 
 // Task 任务。
-// 【TD-63 schema 同步锚】本 message 与 internal/proto/model.go 的 Task struct 构成双轨定义
-//（后者是 controlplane JSON codec 主契约）。任一侧字段演进时必须人工同步另一侧，
-// 详见 docs/tech-debt.md TD-63。
+// ⚠️ 演进须同步：本 message 字段变更须同步 internal/proto/model.go Task struct。
+// CI 守护：internal/proto/task_schema_test.go 做字段数一致性断言。
+// 详见 docs/tech-debt.md TD-63（根治=buf generate 单一来源，前置 TD-60 架构决策）。
 message Task {
   string task_id = 1;
   string agent_id = 2;
