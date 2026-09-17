@@ -5,11 +5,11 @@ go 1.26.0
 toolchain go1.26.6
 
 require (
+	github.com/Levango7/OpsMesh v0.0.0-00010101000000-000000000000
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/google/uuid v1.6.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.11
-	github.com/Levango7/OpsMesh v0.0.0-00010101000000-000000000000
 )
 
 require (
@@ -19,6 +19,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -37,6 +38,5 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260818201246-1b0934165a6f // indirect
 )
-
 
 replace github.com/Levango7/OpsMesh => ../../

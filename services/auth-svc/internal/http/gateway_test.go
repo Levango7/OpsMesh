@@ -350,3 +350,125 @@ func TestMe_And_Logout(t *testing.T) {
 		t.Fatalf("登出后 me 应 401（at 已吊销），实际 %d", rec3.Code)
 	}
 }
+
+// ============ PUT /api/v1/users/{id} + PUT /api/v1/roles/{id} ============
+
+// TestUpdateUser_AdminCanUpdateFields 验证 admin 可经 PUT 更新用户 email/status。
+func TestUpdateUser_AdminCanUpdateFields(t *testing.T) {
+	g, mux, svc := newTestGateway()
+	cookies := loginAsAdmin(t, mux, svc)
+
+	// 注册一个测试用户（密码满足强策略）。
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/auth/register",
+		`{"username":"editme","password":"SomePass123!x","email":"old@x.io"}`, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	u := g.svc.Store().GetUserByUsername("editme")
+	if u == nil {
+		t.Fatal("测试用户未入库")
+	}
+
+	// PUT 更新 email + status（pending → active）。
+	rec2 := doReq(t, mux, http.MethodPut, "/api/v1/users/"+u.ID,
+		`{"email":"new@x.io","status":"active"}`, cookies)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("update user: got %d, body=%s", rec2.Code, rec2.Body.String())
+	}
+	updated := g.svc.Store().GetUser(u.ID)
+	if updated.Email != "new@x.io" {
+		t.Errorf("email 未更新，got %s", updated.Email)
+	}
+	if updated.Status != "active" {
+		t.Errorf("status 未更新，got %s", updated.Status)
+	}
+}
+
+// TestUpdateUser_RequiresAuth 验证无 token 更新用户被拒（401）。
+func TestUpdateUser_RequiresAuth(t *testing.T) {
+	_, mux, _ := newTestGateway()
+	rec := doReq(t, mux, http.MethodPut, "/api/v1/users/user-admin",
+		`{"email":"x@x.io"}`, nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("无 token 更新用户应 401，实际 %d", rec.Code)
+	}
+}
+
+// TestUpdateUser_PartialUpdate 验证仅更新提供的字段，未提供字段保持不变。
+func TestUpdateUser_PartialUpdate(t *testing.T) {
+	g, mux, svc := newTestGateway()
+	cookies := loginAsAdmin(t, mux, svc)
+
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/auth/register",
+		`{"username":"partial","password":"SomePass123!x","email":"keep@x.io"}`, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register: got %d", rec.Code)
+	}
+	u := g.svc.Store().GetUserByUsername("partial")
+
+	// 仅更新 status，email 应保持不变。
+	rec2 := doReq(t, mux, http.MethodPut, "/api/v1/users/"+u.ID,
+		`{"status":"active"}`, cookies)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("partial update: got %d, body=%s", rec2.Code, rec2.Body.String())
+	}
+	updated := g.svc.Store().GetUser(u.ID)
+	if updated.Email != "keep@x.io" {
+		t.Errorf("未提供的 email 应保持不变，got %s", updated.Email)
+	}
+	if updated.Status != "active" {
+		t.Errorf("status 应更新为 active，got %s", updated.Status)
+	}
+}
+
+// TestUpdateRole_AdminCanUpdateFields 验证 admin 可经 PUT 更新角色 description/permissions。
+func TestUpdateRole_AdminCanUpdateFields(t *testing.T) {
+	g, mux, svc := newTestGateway()
+	cookies := loginAsAdmin(t, mux, svc)
+
+	// 创建测试角色（不动 admin 角色避免污染）。
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/roles",
+		`{"name":"editor","description":"old desc","permissions":["user:read"]}`, cookies)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create role: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	role := g.svc.Store().GetRoleByName("editor")
+	if role == nil {
+		t.Fatal("测试角色未入库")
+	}
+
+	// PUT 更新 description + permissions。
+	rec2 := doReq(t, mux, http.MethodPut, "/api/v1/roles/"+role.ID,
+		`{"description":"updated desc","permissions":["user:read","role:read"]}`, cookies)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("update role: got %d, body=%s", rec2.Code, rec2.Body.String())
+	}
+	updated := g.svc.Store().GetRole(role.ID)
+	if updated.Description != "updated desc" {
+		t.Errorf("description 未更新，got %s", updated.Description)
+	}
+	if len(updated.Permissions) != 2 {
+		t.Errorf("permissions 数量应 2，got %d (%v)", len(updated.Permissions), updated.Permissions)
+	}
+}
+
+// TestUpdateRole_RequiresAuth 验证无 token 更新角色被拒（401）。
+func TestUpdateRole_RequiresAuth(t *testing.T) {
+	_, mux, _ := newTestGateway()
+	rec := doReq(t, mux, http.MethodPut, "/api/v1/roles/role-admin",
+		`{"description":"x"}`, nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("无 token 更新角色应 401，实际 %d", rec.Code)
+	}
+}
+
+// TestUpdateRole_NotFound 验证更新不存在的角色返回 404。
+func TestUpdateRole_NotFound(t *testing.T) {
+	_, mux, svc := newTestGateway()
+	cookies := loginAsAdmin(t, mux, svc)
+	rec := doReq(t, mux, http.MethodPut, "/api/v1/roles/role-nonexistent",
+		`{"description":"x"}`, cookies)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("更新不存在角色应 404，实际 %d", rec.Code)
+	}
+}

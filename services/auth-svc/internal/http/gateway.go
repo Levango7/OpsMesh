@@ -485,6 +485,8 @@ func (g *Gateway) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.Method {
+	case http.MethodPut:
+		g.handleUpdateUser(w, r, rest)
 	case http.MethodGet:
 		u := g.svc.Store().GetUser(rest)
 		if u == nil {
@@ -501,6 +503,35 @@ func (g *Gateway) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// handleUpdateUser 处理 PUT /api/v1/users/{id}：更新用户 email/roleIDs/status。
+// 鉴权：需 user:write 权限（admin 角色拥有，与 controlplane requirePermission 同语义）。
+// 请求体：{email?, roleIds?, status?}；仅更新提供的非空字段（与 controlplane
+// handleUpdateUser 同语义）。
+//
+// 注：controlplane 对 status 变更额外要求 user:approve 权限（防低权限绕过审批流）；
+// auth-svc 权限模型未定义 user:approve，此处 status 变更仍由 user:write 门控
+// （admin 拥有 user:write 即可）。后续迭代可对齐 user:approve 细粒度。
+func (g *Gateway) handleUpdateUser(w http.ResponseWriter, r *http.Request, id string) {
+	if _, ok := g.requirePermission(w, r, "user:write"); !ok {
+		return
+	}
+	var body struct {
+		Email   string   `json:"email"`
+		RoleIDs []string `json:"roleIds"`
+		Status  string   `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if _, err := g.svc.UpdateUserFields(r.Context(), id, body.Email, body.Status, body.RoleIDs); err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	// 响应与 GET 分支一致：返回 store.User。
+	writeJSON(w, http.StatusOK, g.svc.Store().GetUser(id))
 }
 
 // handleRoles GET 列表 / POST 创建。
@@ -549,6 +580,8 @@ func (g *Gateway) handleRoleDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.Method {
+	case http.MethodPut:
+		g.handleUpdateRole(w, r, rest)
 	case http.MethodGet:
 		resp, err := g.svc.GetRole(r.Context(), &authv1.GetRoleRequest{Id: rest})
 		if err != nil {
@@ -565,6 +598,30 @@ func (g *Gateway) handleRoleDetail(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// handleUpdateRole 处理 PUT /api/v1/roles/{id}：更新角色 description/permissions。
+// 鉴权：需 role:write 权限（admin 角色拥有，与 controlplane requirePermission 同语义）。
+// 请求体：{description?, permissions?}；仅更新提供的非空字段（与 controlplane
+// handleUpdateRole 同语义）。
+func (g *Gateway) handleUpdateRole(w http.ResponseWriter, r *http.Request, id string) {
+	if _, ok := g.requirePermission(w, r, "role:write"); !ok {
+		return
+	}
+	var body struct {
+		Description string   `json:"description"`
+		Permissions []string `json:"permissions"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	resp, err := g.svc.UpdateRoleFields(r.Context(), id, body.Description, body.Permissions)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "role not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handlePermissions GET /api/v1/permissions。
@@ -599,6 +656,34 @@ func bearerOrCookie(r *http.Request) string {
 		return strings.TrimPrefix(h, "Bearer ")
 	}
 	return readCookie(r, accessTokenCookieName)
+}
+
+// requirePermission 校验请求携带有效 token 且调用方拥有指定权限。
+// 返回 ValidateTokenResponse 与 true 表示通过，否则已写入错误响应并返回 false。
+// 与 controlplane requirePermission 同语义（权限经 token claims 展开）。
+// admin 角色拥有全部权限（seedAdminRole），故 admin 自然通过所有 user:*/role:* 检查。
+func (g *Gateway) requirePermission(w http.ResponseWriter, r *http.Request, permission string) (*authv1.ValidateTokenResponse, bool) {
+	token := bearerOrCookie(r)
+	if token == "" {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return nil, false
+	}
+	resp, err := g.svc.ValidateToken(r.Context(), &authv1.ValidateTokenRequest{Token: token})
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		return nil, false
+	}
+	if resp == nil || !resp.Valid {
+		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		return nil, false
+	}
+	for _, p := range resp.Permissions {
+		if p == permission {
+			return resp, true
+		}
+	}
+	writeError(w, http.StatusForbidden, "insufficient permissions")
+	return nil, false
 }
 
 // toPublicUser proto User → 网关公开字段（不含敏感）。

@@ -40,6 +40,12 @@ type Gateway struct {
 	// 空字符串=回退当前进程二进制（与 controlplane handleServeAgent 同语义，仅开发/单机部署）。
 	// 由 main 通过 SetAgentBinDir 注入；测试可省略走默认回退。
 	agentBinDir string
+	// metricsStore 是可选注入的设备监控指标存储（P0 端点补齐）。
+	// 未注入时 GET /api/v1/devices/{id}/metrics 返回空数组不报错（降级安全）。
+	metricsStore store.MetricsStore
+	// taskResultFetcher 是可选注入的任务/结果获取接口（P0 端点补齐）。
+	// 未注入时 GET /api/v1/devices/{id} 聚合响应的 tasks/results 为空数组（降级安全）。
+	taskResultFetcher store.TaskResultFetcher
 }
 
 // NewGateway 构造 Gateway 实例。
@@ -51,6 +57,18 @@ func NewGateway(ds store.DeviceStore, as store.AgentStore, cs store.CiStore, dis
 // 目录内文件命名约定：opsmesh-agent-{os}-{arch}（如 opsmesh-agent-linux-amd64）。
 func (g *Gateway) SetAgentBinDir(dir string) {
 	g.agentBinDir = dir
+}
+
+// SetMetricsStore 注入设备监控指标存储（可选；main 启动时调用，测试可省略）。
+// 未注入时 GET /api/v1/devices/{id}/metrics 返回空数组不报错（降级安全）。
+func (g *Gateway) SetMetricsStore(ms store.MetricsStore) {
+	g.metricsStore = ms
+}
+
+// SetTaskResultFetcher 注入任务/结果获取接口（可选；main 启动时调用，测试可省略）。
+// 未注入时 GET /api/v1/devices/{id} 聚合响应的 tasks/results 为空数组（降级安全）。
+func (g *Gateway) SetTaskResultFetcher(trf store.TaskResultFetcher) {
+	g.taskResultFetcher = trf
 }
 
 // RegisterRoutes 注册全部 HTTP 路由到给定 mux。
@@ -107,7 +125,7 @@ func (g *Gateway) handleDevices(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/devices/")
-	// 子路径：{id}/heartbeat（POST）、{id}/status（GET）
+	// 子路径：{id}/heartbeat（POST）、{id}/status（GET）、{id}/provision（POST）、{id}/metrics（GET）
 	switch {
 	case strings.HasSuffix(rest, "/heartbeat") && r.Method == http.MethodPost:
 		id := strings.TrimSuffix(rest, "/heartbeat")
@@ -130,6 +148,14 @@ func (g *Gateway) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, st)
 		return
+	case strings.HasSuffix(rest, "/provision") && r.Method == http.MethodPost:
+		id := strings.TrimSuffix(rest, "/provision")
+		g.handleDeviceProvision(w, r, id)
+		return
+	case strings.HasSuffix(rest, "/metrics") && r.Method == http.MethodGet:
+		id := strings.TrimSuffix(rest, "/metrics")
+		g.handleDeviceMetrics(w, r, id)
+		return
 	}
 	if rest == "" || strings.Contains(rest, "/") {
 		writeError(w, http.StatusNotFound, "not found")
@@ -137,12 +163,19 @@ func (g *Gateway) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
+		// 聚合响应：{device, tasks, results}（与 controlplane handleDeviceDetail 对齐）。
+		// tasks/results 通过可选注入的 TaskResultFetcher 获取；未注入时降级为空数组。
 		d := g.devices.Device(rest)
 		if d == nil {
 			writeError(w, http.StatusNotFound, "device not found")
 			return
 		}
-		writeJSON(w, http.StatusOK, d)
+		tasks, results := g.fetchTasksAndResults(d.AgentID, d.TenantID)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"device":  d,
+			"tasks":   tasks,
+			"results": results,
+		})
 	case http.MethodPut:
 		var d models.Device
 		if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
@@ -165,6 +198,166 @@ func (g *Gateway) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// handleDeviceProvision 处理 POST /api/v1/devices/{id}/provision：手动触发单设备纳管。
+//
+// 语义（与 controlplane handleProvision 等价）：
+//   - 校验设备存在 + 租户归属；
+//   - 签发一次性 install token（15min 有效）；
+//   - 构造可直接复制粘贴的 bootstrap curl|sh 命令；
+//   - 返回 {status, deviceID, installToken, bootstrap}。
+//
+// 安全：bootstrap 地址用 advertiseAddr（运维显式配置），绝不用请求方可控的 r.Host
+// （Host 头注入可让 bootstrap 指向攻击者服务器→供应链 RCE）。
+// 不执行 SSH 推送（device-svc 薄客户端化定位下 SSH 推送由 autoProvision 编排负责）。
+func (g *Gateway) handleDeviceProvision(w http.ResponseWriter, r *http.Request, id string) {
+	dev := g.devices.Device(id)
+	if dev == nil {
+		writeError(w, http.StatusNotFound, "device not found")
+		return
+	}
+	// 租户隔离：从 query 或 body 取 tenantID 校验设备归属。
+	// 与现有 handler 一致采用 query 参数（前端 service_proxy 透传）。
+	tenantID := r.URL.Query().Get("tenantID")
+	if tenantID != "" && dev.TenantID != tenantID {
+		writeError(w, http.StatusForbidden, "tenant mismatch")
+		return
+	}
+	token, err := g.provisionStore.IssueToken(id, dev.TenantID, 15*time.Minute)
+	if err != nil {
+		// TOCTOU 窗口补偿：设备在前置校验与 IssueToken 间被删除时映射为 404。
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "not found") {
+			writeError(w, http.StatusNotFound, errMsg)
+		} else {
+			writeError(w, http.StatusInternalServerError, errMsg)
+		}
+		return
+	}
+	// 构造 bootstrap 命令。advertise 用运维显式配置，空则回退本机（仅开发）。
+	advertise := strings.TrimRight(g.advertiseAddr, "/")
+	if advertise == "" {
+		advertise = "http://127.0.0.1:8081"
+	}
+	bootstrap := fmt.Sprintf("curl -sSL %s/install.sh | sh -s -- --token=%s", advertise, token)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":       "provisioning",
+		"deviceID":     id,
+		"installToken": token,
+		"bootstrap":    bootstrap,
+	})
+}
+
+// handleDeviceMetrics 处理 GET /api/v1/devices/{id}/metrics：返回设备监控指标。
+//
+// 查询模式（与 controlplane handleDeviceMetrics 对齐）：
+//   - 不带 range 参数：返回最新值；
+//   - ?range=2h：返回历史时序数据（支持 15m/1h/2h/6h/24h）。
+//
+// 降级安全（与 controlplane 404 语义不同）：
+//   - MetricsStore 未注入 → 返回空数组（device-svc 薄客户端，无数据是正常状态）；
+//   - MetricsStore 注入但无数据 → 返回空数组（agent 未上报过指标）。
+//
+// 租户隔离：先校验设备存在 + 租户归属，避免泄露他租户设备指标。
+func (g *Gateway) handleDeviceMetrics(w http.ResponseWriter, r *http.Request, id string) {
+	dev := g.devices.Device(id)
+	if dev == nil {
+		writeError(w, http.StatusNotFound, "device not found")
+		return
+	}
+	tenantID := r.URL.Query().Get("tenantID")
+	if tenantID != "" && dev.TenantID != tenantID {
+		writeError(w, http.StatusForbidden, "tenant mismatch")
+		return
+	}
+	rangeStr := strings.TrimSpace(r.URL.Query().Get("range"))
+
+	// 未注入 MetricsStore：降级返回空数组（不报错）。
+	if g.metricsStore == nil {
+		if rangeStr == "" {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"deviceID": id,
+				"metrics":  nil,
+			})
+		} else {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"deviceID": id,
+				"range":    rangeStr,
+				"samples":  []any{},
+			})
+		}
+		return
+	}
+
+	if rangeStr == "" {
+		// 最新值模式。
+		latest := g.metricsStore.DeviceMetrics(id)
+		if latest == nil {
+			// 无数据：返回空 metrics 字段（降级，不报 404）。
+			writeJSON(w, http.StatusOK, map[string]any{
+				"deviceID": id,
+				"metrics":  nil,
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, latest)
+		return
+	}
+
+	// 历史时序模式。
+	since, ok := parseMetricsRange(rangeStr)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid range, supported: 15m, 1h, 2h, 6h, 24h")
+		return
+	}
+	samples := g.metricsStore.DeviceMetricsHistory(id, since)
+	if samples == nil {
+		samples = []any{} // 空数组而非 null，便于前端统一处理
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deviceID": id,
+		"range":    rangeStr,
+		"samples":  samples,
+	})
+}
+
+// fetchTasksAndResults 获取设备的任务与执行结果（聚合响应用）。
+// 降级安全：TaskResultFetcher 未注入或返回 nil 时返回空切片（非 nil），
+// 确保 JSON 序列化为 [] 而非 null，便于前端统一处理。
+func (g *Gateway) fetchTasksAndResults(agentID, tenantID string) (tasks []any, results []any) {
+	tasks = []any{}
+	results = []any{}
+	if g.taskResultFetcher == nil || agentID == "" {
+		return
+	}
+	if t := g.taskResultFetcher.TasksByAgent(agentID, tenantID); t != nil {
+		tasks = t
+	}
+	if r := g.taskResultFetcher.ResultsByAgent(agentID); r != nil {
+		results = r
+	}
+	return
+}
+
+// parseMetricsRange 解析 range 参数为查询起始时间（since = now - duration）。
+// 支持 15m/1h/2h/6h/24h（不区分大小写）；非法值返回 (zero, false)。
+// 与 controlplane device_metrics.go parseMetricsRange 同语义。
+func parseMetricsRange(s string) (time.Time, bool) {
+	now := time.Now()
+	switch strings.ToLower(s) {
+	case "15m":
+		return now.Add(-15 * time.Minute), true
+	case "1h":
+		return now.Add(-1 * time.Hour), true
+	case "2h":
+		return now.Add(-2 * time.Hour), true
+	case "6h":
+		return now.Add(-6 * time.Hour), true
+	case "24h":
+		return now.Add(-24 * time.Hour), true
+	}
+	return time.Time{}, false
 }
 
 // ============ Agent ============

@@ -41,6 +41,9 @@ type Service struct {
 	discoveryStore store.DiscoveryStore
 	provisionStore store.ProvisionStore
 	tenantMgr      *tenant.Manager
+	// metricsStore 是可选注入的设备监控指标存储（P0 端点补齐）。
+	// 未注入时 GetDeviceMetrics 返回空数据不报错（降级安全）。
+	metricsStore store.MetricsStore
 	// discoverCfg D2 Discovery 真实化配置（白名单/超时）。nil=默认值（白名单空=不校验，
 	// 超时 60s）——测试直构 Service 时可零值，生产由 main 注入 config.Load() 结果。
 	discoverCfg *DiscoverConfig
@@ -313,6 +316,104 @@ func cidrBounds(n *net.IPNet) (net.IP, net.IP) {
 		end[i] = n.IP[i] | ^n.Mask[i]
 	}
 	return start, end
+}
+
+// ProvisionDevice 手动触发单设备纳管：签发一次性 install token + 构造 bootstrap 命令。
+//
+// 语义（与 controlplane handleProvision 等价）：
+//   - 校验设备存在 + 租户归属；
+//   - provisionStore.IssueToken 签发 15min 一次性 token；
+//   - 构造可直接复制粘贴的 `curl -sSL {advertise}/install.sh | sh -s -- --token={token}` 命令；
+//   - advertise 取 autoProvisionCfg.AdvertiseAddr，空则回退 http://127.0.0.1:8081（仅开发）。
+//
+// 返回 (token, bootstrap, err)。设备不存在返回 ErrDeviceNotFound；租户不匹配返回错误。
+// 注意：本方法不执行 SSH 推送（与 controlplane handleProvision 的 B1 SSH 异步推送不同）——
+// device-svc 薄客户端化定位下 SSH 推送由 autoProvision 编排负责，手动纳管仅签发 token。
+func (s *Service) ProvisionDevice(ctx context.Context, deviceID, tenantID string) (token, bootstrap string, err error) {
+	dev := s.deviceStore.Device(deviceID)
+	if dev == nil {
+		return "", "", ErrDeviceNotFound
+	}
+	if tenantID != "" && dev.TenantID != tenantID {
+		return "", "", fmt.Errorf("provision: tenant mismatch (device tenant=%q, request tenant=%q)", dev.TenantID, tenantID)
+	}
+	token, err = s.provisionStore.IssueToken(deviceID, tenantID, 15*time.Minute)
+	if err != nil {
+		return "", "", fmt.Errorf("provision: issue token: %w", err)
+	}
+	// 构造 bootstrap 命令。advertise 取配置值，空则回退本机（仅开发，与 controlplane 同语义）。
+	advertise := ""
+	if s.autoProvisionCfg != nil {
+		advertise = s.autoProvisionCfg.AdvertiseAddr
+	}
+	if advertise == "" {
+		advertise = "http://127.0.0.1:8081"
+	}
+	bootstrap = fmt.Sprintf("curl -sSL %s/install.sh | sh -s -- --token=%s", strings.TrimRight(advertise, "/"), token)
+	return token, bootstrap, nil
+}
+
+// GetDeviceMetrics 返回设备监控指标（最新值 + 可选历史时序）。
+//
+// 查询模式（与 controlplane handleDeviceMetrics 对齐）：
+//   - rangeParam 为空：返回最新值（latest 非 nil，history 为 nil）；
+//   - rangeParam 非空（如 "2h"）：返回历史时序（latest 为 nil，history 非 nil）。
+//
+// 降级安全：device-svc 默认不持有 metrics 数据（MetricsStore 未注入或返回 nil），
+// 返回 (nil, nil, nil) 不报错——handler 层据此返回空数组而非 404。
+//
+// 设备不存在返回 ErrDeviceNotFound；租户不匹配返回错误。
+// rangeParam 非法（非 15m/1h/2h/6h/24h）返回错误。
+func (s *Service) GetDeviceMetrics(ctx context.Context, deviceID, tenantID, rangeParam string) (latest any, history []any, err error) {
+	dev := s.deviceStore.Device(deviceID)
+	if dev == nil {
+		return nil, nil, ErrDeviceNotFound
+	}
+	if tenantID != "" && dev.TenantID != tenantID {
+		return nil, nil, fmt.Errorf("metrics: tenant mismatch (device tenant=%q, request tenant=%q)", dev.TenantID, tenantID)
+	}
+	// 未注入 MetricsStore：降级返回空（不报错）。
+	if s.metricsStore == nil {
+		return nil, nil, nil
+	}
+	if rangeParam == "" {
+		// 最新值模式。
+		latest = s.metricsStore.DeviceMetrics(deviceID)
+		return latest, nil, nil
+	}
+	// 历史时序模式。
+	since, ok := parseMetricsRange(rangeParam)
+	if !ok {
+		return nil, nil, fmt.Errorf("metrics: invalid range %q, supported: 15m, 1h, 2h, 6h, 24h", rangeParam)
+	}
+	history = s.metricsStore.DeviceMetricsHistory(deviceID, since)
+	return nil, history, nil
+}
+
+// parseMetricsRange 解析 range 参数为查询起始时间（since = now - duration）。
+// 支持 15m/1h/2h/6h/24h（不区分大小写）；非法值返回 (zero, false)。
+// 与 controlplane device_metrics.go parseMetricsRange 同语义。
+func parseMetricsRange(s string) (time.Time, bool) {
+	now := time.Now()
+	switch strings.ToLower(s) {
+	case "15m":
+		return now.Add(-15 * time.Minute), true
+	case "1h":
+		return now.Add(-1 * time.Hour), true
+	case "2h":
+		return now.Add(-2 * time.Hour), true
+	case "6h":
+		return now.Add(-6 * time.Hour), true
+	case "24h":
+		return now.Add(-24 * time.Hour), true
+	}
+	return time.Time{}, false
+}
+
+// SetMetricsStore 注入 MetricsStore（可选；main 启动时调用，测试可省略）。
+// 未注入时 GetDeviceMetrics 返回空数据不报错（降级安全）。
+func (s *Service) SetMetricsStore(ms store.MetricsStore) {
+	s.metricsStore = ms
 }
 
 // === DeviceService methods ===

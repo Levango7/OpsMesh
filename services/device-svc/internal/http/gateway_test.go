@@ -375,3 +375,289 @@ func TestProvisionRegister_TokenLifecycle(t *testing.T) {
 		t.Fatalf("device not found: got %d, want 404", rec.Code)
 	}
 }
+
+// ============ P0 端点补齐：provision / metrics / 聚合响应 ============
+
+// TestDeviceProvision_ManualTrigger 验证 POST /api/v1/devices/{id}/provision 手动纳管：
+// 设备不存在 404 → 成功 200 返回 token + bootstrap → 租户不匹配 403。
+func TestDeviceProvision_ManualTrigger(t *testing.T) {
+	mux := newTestGateway(t)
+
+	// 设备不存在：404。
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/devices/no-such/provision", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("provision missing device: got %d, want 404", rec.Code)
+	}
+
+	// 成功纳管：200 + token + bootstrap。
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/devices/dev-1/provision", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("provision dev-1: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Status       string `json:"status"`
+		DeviceID     string `json:"deviceID"`
+		InstallToken string `json:"installToken"`
+		Bootstrap    string `json:"bootstrap"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("provision 响应解析失败: %v", err)
+	}
+	if resp.Status != "provisioning" {
+		t.Fatalf("status=%q, want provisioning", resp.Status)
+	}
+	if resp.DeviceID != "dev-1" {
+		t.Fatalf("deviceID=%q, want dev-1", resp.DeviceID)
+	}
+	if resp.InstallToken == "" {
+		t.Fatal("installToken 不应为空")
+	}
+	if !strings.Contains(resp.Bootstrap, "install.sh") || !strings.Contains(resp.Bootstrap, resp.InstallToken) {
+		t.Fatalf("bootstrap 应包含 install.sh 和 token，got: %s", resp.Bootstrap)
+	}
+	if !strings.Contains(resp.Bootstrap, "https://opsmesh.example.com:8443") {
+		t.Fatalf("bootstrap 应使用 advertise 地址，got: %s", resp.Bootstrap)
+	}
+
+	// 租户不匹配：403。
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/devices/dev-1/provision?tenantID=other-tenant", "")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("provision tenant mismatch: got %d, want 403", rec.Code)
+	}
+
+	// GET 不允许：走 handleDeviceDetail 的子路径匹配，provision 只接受 POST。
+	// GET /api/v1/devices/dev-1/provision 不匹配任何子路径分支，落到 rest 含 / 的 404。
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1/provision", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET provision: got %d, want 404", rec.Code)
+	}
+}
+
+// TestDeviceMetrics_NoStoreDegraded 验证未注入 MetricsStore 时降级返回空数组不报错。
+func TestDeviceMetrics_NoStoreDegraded(t *testing.T) {
+	mux := newTestGateway(t)
+
+	// 设备不存在：404。
+	rec := doReq(t, mux, http.MethodGet, "/api/v1/devices/no-such/metrics", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("metrics missing device: got %d, want 404", rec.Code)
+	}
+
+	// 无 range：降级返回空 metrics。
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1/metrics", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics no store: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var latest struct {
+		DeviceID string `json:"deviceID"`
+		Metrics  any    `json:"metrics"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &latest); err != nil {
+		t.Fatalf("metrics 响应解析失败: %v", err)
+	}
+	if latest.DeviceID != "dev-1" || latest.Metrics != nil {
+		t.Fatalf("降级应返回 deviceID + nil metrics，got %+v", latest)
+	}
+
+	// 带 range：降级返回空 samples 数组。
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1/metrics?range=2h", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics range no store: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var series struct {
+		DeviceID string `json:"deviceID"`
+		Range    string `json:"range"`
+		Samples  []any  `json:"samples"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &series); err != nil {
+		t.Fatalf("metrics series 响应解析失败: %v", err)
+	}
+	if series.DeviceID != "dev-1" || series.Range != "2h" || len(series.Samples) != 0 {
+		t.Fatalf("降级应返回空 samples，got %+v", series)
+	}
+}
+
+// fakeMetricsStore 是测试用的 MetricsStore 桩。
+type fakeMetricsStore struct {
+	latest    any
+	history   []any
+	callDev   string
+	callSince time.Time
+}
+
+func (f *fakeMetricsStore) DeviceMetrics(deviceID string) any {
+	f.callDev = deviceID
+	return f.latest
+}
+
+func (f *fakeMetricsStore) DeviceMetricsHistory(deviceID string, since time.Time) []any {
+	f.callDev = deviceID
+	f.callSince = since
+	return f.history
+}
+
+// TestDeviceMetrics_WithStore 验证注入 MetricsStore 后返回真实数据。
+func TestDeviceMetrics_WithStore(t *testing.T) {
+	ms := store.NewMemoryStore()
+	ms.RegisterDevice(&models.Device{ID: "dev-1", TenantID: "default", IP: "10.0.0.1", Status: "online"})
+	g := NewGateway(ms, ms, ms, ms, ms, "https://opsmesh.example.com:8443")
+
+	// 注入 fakeMetricsStore：最新值模式。
+	fakeLatest := map[string]any{"deviceID": "dev-1", "cpu": 42.5, "memory": 60.0}
+	g.SetMetricsStore(&fakeMetricsStore{latest: fakeLatest})
+
+	mux := http.NewServeMux()
+	g.RegisterRoutes(mux, func(h http.Handler) http.Handler { return h })
+
+	// 无 range：返回最新值。
+	rec := doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1/metrics", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics with store: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("metrics 响应解析失败: %v", err)
+	}
+	if got["deviceID"] != "dev-1" || got["cpu"] != 42.5 {
+		t.Fatalf("应返回 fake 最新指标，got %+v", got)
+	}
+
+	// 带 range：返回历史时序。
+	fakeHistory := []any{
+		map[string]any{"deviceID": "dev-1", "cpu": 10.0},
+		map[string]any{"deviceID": "dev-1", "cpu": 20.0},
+	}
+	g.SetMetricsStore(&fakeMetricsStore{history: fakeHistory})
+	// 重新注册 mux（SetMetricsStore 后需要重新注册以反映新状态——实际上 Gateway 持有引用，
+	// 无需重新注册；但此处为清晰起见重新构建）。
+	mux2 := http.NewServeMux()
+	g.RegisterRoutes(mux2, func(h http.Handler) http.Handler { return h })
+
+	rec = doReq(t, mux2, http.MethodGet, "/api/v1/devices/dev-1/metrics?range=2h", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics range with store: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var series struct {
+		DeviceID string `json:"deviceID"`
+		Range    string `json:"range"`
+		Samples  []any  `json:"samples"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &series); err != nil {
+		t.Fatalf("series 响应解析失败: %v", err)
+	}
+	if series.Range != "2h" || len(series.Samples) != 2 {
+		t.Fatalf("应返回 2 条历史样本，got %+v", series)
+	}
+
+	// 非法 range：400。
+	rec = doReq(t, mux2, http.MethodGet, "/api/v1/devices/dev-1/metrics?range=99d", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid range: got %d, want 400", rec.Code)
+	}
+}
+
+// fakeTaskResultFetcher 是测试用的 TaskResultFetcher 桩。
+type fakeTaskResultFetcher struct {
+	tasks   []any
+	results []any
+}
+
+func (f *fakeTaskResultFetcher) TasksByAgent(agentID, tenantID string) []any {
+	return f.tasks
+}
+
+func (f *fakeTaskResultFetcher) ResultsByAgent(agentID string) []any {
+	return f.results
+}
+
+// TestDeviceDetail_AggregatedResponse 验证 GET /api/v1/devices/{id} 聚合响应：
+// 返回 {device, tasks, results} 而非仅 device；未注入 fetcher 时降级为空数组。
+func TestDeviceDetail_AggregatedResponse(t *testing.T) {
+	ms := store.NewMemoryStore()
+	// 种子设备带 AgentID（聚合响应按 AgentID 关联 tasks/results）。
+	ms.RegisterDevice(&models.Device{
+		ID: "dev-1", TenantID: "default", Name: "web-1", IP: "10.0.0.1",
+		Status: "online", AgentID: "ag-1",
+	})
+	g := NewGateway(ms, ms, ms, ms, ms, "https://opsmesh.example.com:8443")
+
+	// 未注入 TaskResultFetcher：降级返回空 tasks/results。
+	mux := http.NewServeMux()
+	g.RegisterRoutes(mux, func(h http.Handler) http.Handler { return h })
+
+	rec := doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get device: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var dd struct {
+		Device  *models.Device `json:"device"`
+		Tasks   []any          `json:"tasks"`
+		Results []any          `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &dd); err != nil {
+		t.Fatalf("聚合响应解析失败: %v", err)
+	}
+	if dd.Device == nil || dd.Device.ID != "dev-1" {
+		t.Fatalf("device 字段应非空且 ID=dev-1，got %+v", dd.Device)
+	}
+	if dd.Tasks == nil || len(dd.Tasks) != 0 {
+		t.Fatalf("降级 tasks 应为空数组，got %+v", dd.Tasks)
+	}
+	if dd.Results == nil || len(dd.Results) != 0 {
+		t.Fatalf("降级 results 应为空数组，got %+v", dd.Results)
+	}
+
+	// 注入 TaskResultFetcher：返回真实 tasks/results。
+	g.SetTaskResultFetcher(&fakeTaskResultFetcher{
+		tasks:   []any{map[string]any{"taskID": "task-1", "agentID": "ag-1"}},
+		results: []any{map[string]any{"taskID": "task-1", "exitCode": 0}},
+	})
+	mux2 := http.NewServeMux()
+	g.RegisterRoutes(mux2, func(h http.Handler) http.Handler { return h })
+
+	rec = doReq(t, mux2, http.MethodGet, "/api/v1/devices/dev-1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get device with fetcher: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &dd); err != nil {
+		t.Fatalf("聚合响应解析失败: %v", err)
+	}
+	if len(dd.Tasks) != 1 {
+		t.Fatalf("应返回 1 个 task，got %d", len(dd.Tasks))
+	}
+	if len(dd.Results) != 1 {
+		t.Fatalf("应返回 1 个 result，got %d", len(dd.Results))
+	}
+
+	// 设备不存在：404。
+	rec = doReq(t, mux2, http.MethodGet, "/api/v1/devices/no-such", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("get missing device: got %d, want 404", rec.Code)
+	}
+}
+
+// TestDeviceDetail_Aggregated_NoAgentID 验证设备无 AgentID 时聚合响应 tasks/results 为空。
+func TestDeviceDetail_Aggregated_NoAgentID(t *testing.T) {
+	mux := newTestGateway(t)
+	// 种子设备 dev-1 无 AgentID（newTestGateway 默认种子）。
+
+	rec := doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get device: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var dd struct {
+		Device  *models.Device `json:"device"`
+		Tasks   []any          `json:"tasks"`
+		Results []any          `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &dd); err != nil {
+		t.Fatalf("聚合响应解析失败: %v", err)
+	}
+	if dd.Device == nil || dd.Device.ID != "dev-1" {
+		t.Fatalf("device 字段应非空且 ID=dev-1，got %+v", dd.Device)
+	}
+	// 无 AgentID：tasks/results 应为空数组（fetchTasksAndResults 在 agentID 为空时返回空）。
+	if len(dd.Tasks) != 0 || len(dd.Results) != 0 {
+		t.Fatalf("无 AgentID 时 tasks/results 应为空，got tasks=%d results=%d", len(dd.Tasks), len(dd.Results))
+	}
+}

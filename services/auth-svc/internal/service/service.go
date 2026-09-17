@@ -259,6 +259,30 @@ func (s *Service) UpdateUser(ctx context.Context, req *authv1.UpdateUserRequest)
 	return toProtoUser(u), nil
 }
 
+// UpdateUserFields 更新用户的可选字段（仅更新提供的非空字段）。
+// email/status 非空才更新，roleIDs 非 nil 才更新。返回更新后的用户。
+// 供 HTTP 网关 PUT /api/v1/users/{id} 使用（proto UpdateUserRequest 全量写入
+// 语义未覆盖"仅更新提供字段"的细粒度场景，故 service 层提供本方法）。
+func (s *Service) UpdateUserFields(_ context.Context, userID, email, status string, roleIDs []string) (*authv1.User, error) {
+	u := s.store.GetUser(userID)
+	if u == nil {
+		return nil, ErrUserNotFound
+	}
+	if email != "" {
+		u.Email = email
+	}
+	if status != "" {
+		u.Status = status
+	}
+	if roleIDs != nil {
+		u.RoleIDs = roleIDs
+	}
+	if err := s.store.UpdateUser(u); err != nil {
+		return nil, ErrUserNotFound
+	}
+	return toProtoUser(s.store.GetUser(userID)), nil
+}
+
 // DeleteUser deletes a user.
 func (s *Service) DeleteUser(ctx context.Context, req *authv1.DeleteUserRequest) (*emptypb.Empty, error) {
 	err := s.store.DeleteUser(req.Id)
@@ -356,6 +380,33 @@ func (s *Service) UpdateRole(ctx context.Context, req *authv1.UpdateRoleRequest)
 		Description: r.Description,
 		Permissions: r.Permissions,
 		CreatedAt:   timestamppb.New(r.CreatedAt),
+	}, nil
+}
+
+// UpdateRoleFields 更新角色的可选字段（仅更新提供的非空字段）。
+// description 非空才更新，permissions 非 nil 才更新。返回更新后的角色。
+// 供 HTTP 网关 PUT /api/v1/roles/{id} 使用。
+func (s *Service) UpdateRoleFields(_ context.Context, roleID, description string, permissions []string) (*authv1.Role, error) {
+	r := s.store.GetRole(roleID)
+	if r == nil {
+		return nil, ErrRoleNotFound
+	}
+	if description != "" {
+		r.Description = description
+	}
+	if permissions != nil {
+		r.Permissions = permissions
+	}
+	if err := s.store.UpdateRole(r); err != nil {
+		return nil, ErrRoleNotFound
+	}
+	updated := s.store.GetRole(roleID)
+	return &authv1.Role{
+		Id:          updated.ID,
+		Name:        updated.Name,
+		Description: updated.Description,
+		Permissions: updated.Permissions,
+		CreatedAt:   timestamppb.New(updated.CreatedAt),
 	}, nil
 }
 

@@ -20,9 +20,11 @@ import (
 	"github.com/Levango7/OpsMesh/pkg/cron"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/pkg/ratelimit"
+	"github.com/Levango7/OpsMesh/pkg/tenant"
 	"github.com/Levango7/OpsMesh/pkg/trace"
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/events"
+	httpgw "github.com/Levango7/OpsMesh/services/task-svc/internal/http"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/leader"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/scheduler"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/server"
@@ -109,10 +111,25 @@ func main() {
 	})
 	mux.Handle("/metrics", metrics.GetHandler())
 
+	// P0 HTTP 业务网关：将 gRPC service 方法包装为 REST 端点，路径对齐 controlplane。
+	// /api/v1/tasks, /api/v1/tasks/{id}/cancel|result|approve|reject, /api/v1/schedules[/{id}]。
+	// 鉴权/租户走 tenant.Middleware（在下文 handler 链统一包裹，与 gRPC 拦截器同语义）。
+	// 默认启用（cfg.HTTPGatewayEnabled）；测试/CI 可经 TASK_SVC_HTTP_GATEWAY_ENABLED=false 关闭。
+	if cfg.HTTPGatewayEnabled {
+		httpGateway := httpgw.NewGateway(svc, cfg.JWTSecret)
+		httpGateway.RegisterRoutes(mux)
+		log.Printf("HTTP 业务网关已启用（/api/v1/tasks, /api/v1/schedules）")
+	} else {
+		log.Printf("HTTP 业务网关已关闭（TASK_SVC_HTTP_GATEWAY_ENABLED=false）")
+	}
+
 	var handler http.Handler = mux
 	handler = metrics.HTTPMiddleware(handler)
 	handler = ratelimit.Middleware()(handler)
 	handler = compress.Middleware()(handler)
+	// 租户中间件：从 X-Tenant-ID 头或 JWT 提取 tenantID 注入 context（与 gRPC 拦截器同语义）。
+	// HTTP 网关 handler 经此中间件后可从 context 提取租户（extractAuth 优先读 context）。
+	handler = tenant.Middleware(cfg.JWTSecret)(handler)
 	handler = trace.HTTPMiddleware("github.com/Levango7/OpsMesh/task-svc")(handler)
 
 	httpServer := &http.Server{
@@ -207,7 +224,7 @@ func main() {
 	}()
 
 	go func() {
-		log.Printf("Starting HTTP health server on :%d", cfg.HTTPPort)
+		log.Printf("Starting HTTP server on :%d (health/ready/metrics + business gateway)", cfg.HTTPPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("HTTP server failed: %v", err)
 		}

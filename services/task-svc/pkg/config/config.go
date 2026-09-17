@@ -25,22 +25,35 @@ type Config struct {
 	// true=在常规 scheduler 之外额外启动只读影子循环，评估 task 派生/回收期望并与
 	// 现状对比；不写任何 store 状态。默认 false（关闭=常规服务模式）。
 	ShadowMode bool `json:"shadowMode"`
+
+	// HTTPGatewayEnabled 控制 HTTP 业务网关是否启用（P0 切流阻塞项）。
+	// true=在 /health /ready /metrics 之外注册 /api/v1/tasks /api/v1/schedules 等 REST 端点。
+	// 默认 true（启用）；测试/CI 可关闭以隔离 gRPC 行为。
+	HTTPGatewayEnabled bool `json:"httpGatewayEnabled"`
+
+	// JWTSecret 是 HTTP 网关验签 access token 的 HS256 对称密钥。
+	// 非空时启用 token 校验（解析 userID/tenantID 注入上下文）；
+	// 空串=仅租户隔离（从头/context 提取租户，不校验 token）。
+	// 与 controlplane/auth-svc 的 JWT_SECRET 同源。
+	JWTSecret string `json:"jwtSecret"`
 }
 
 // Load returns a Config populated from environment variables with defaults.
 func Load() *Config {
 	return &Config{
-		GRPCPort:        getEnvInt("TASK_SVC_GRPC_PORT", 50052),
-		HTTPPort:        getEnvInt("TASK_SVC_HTTP_PORT", 8081),
-		StoreType:       getEnv("TASK_SVC_STORE_TYPE", "memory"),
-		DSN:             getEnv("TASK_SVC_DSN", ""),
-		ShutdownTimeout: getEnvDuration("TASK_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
-		MaxTasks:        getEnvInt("TASK_SVC_MAX_TASKS", 10000),
-		MaxRetries:      getEnvInt("TASK_SVC_MAX_RETRIES", 3),
-		TaskTimeout:     getEnvInt("TASK_SVC_TASK_TIMEOUT", 300),
-		OTelEndpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
-		LogLevel:        getEnv("LOG_LEVEL", "info"),
-		ShadowMode:      getEnv("TASK_SVC_SHADOW_MODE", "false") == "true",
+		GRPCPort:           getEnvInt("TASK_SVC_GRPC_PORT", 50052),
+		HTTPPort:           getEnvInt("TASK_SVC_HTTP_PORT", 8081),
+		StoreType:          getEnv("TASK_SVC_STORE_TYPE", "memory"),
+		DSN:                getEnv("TASK_SVC_DSN", ""),
+		ShutdownTimeout:    getEnvDuration("TASK_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
+		MaxTasks:           getEnvInt("TASK_SVC_MAX_TASKS", 10000),
+		MaxRetries:         getEnvInt("TASK_SVC_MAX_RETRIES", 3),
+		TaskTimeout:        getEnvInt("TASK_SVC_TASK_TIMEOUT", 300),
+		OTelEndpoint:       getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		LogLevel:           getEnv("LOG_LEVEL", "info"),
+		ShadowMode:         getEnv("TASK_SVC_SHADOW_MODE", "false") == "true",
+		HTTPGatewayEnabled: getEnv("TASK_SVC_HTTP_GATEWAY_ENABLED", "true") != "false",
+		JWTSecret:          getEnv("JWT_SECRET", ""),
 	}
 }
 

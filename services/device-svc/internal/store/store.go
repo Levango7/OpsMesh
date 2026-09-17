@@ -47,6 +47,39 @@ type DiscoveryStore interface {
 	UpdateJob(*models.DiscoveryJob) (*models.DiscoveryJob, bool)
 }
 
+// MetricsStore 是设备监控指标的只读存储接口（可选注入）。
+//
+// 设计说明（M13 device-svc 薄客户端化 P0）：
+//   - device-svc 默认不持有 metrics 数据（agent 心跳上报到 controlplane 或 Prometheus）；
+//   - 注入此接口后 GET /api/v1/devices/{id}/metrics 可返回指标数据；
+//   - 未注入时 handler 返回空数组（不报错），与 controlplane 404 语义不同——
+//     device-svc 定位为薄客户端，无数据是正常状态而非错误。
+//
+// 返回 any（而非具体 struct）以避免引入对 controlplane proto 包的跨服务依赖；
+// 实现方可返回任意 JSON 友好类型（map[string]any 或具名 struct），handler 直接 JSON 序列化。
+type MetricsStore interface {
+	// DeviceMetrics 返回设备最新指标；无数据返回 nil。
+	DeviceMetrics(deviceID string) any
+	// DeviceMetricsHistory 返回设备历史时序（since 起始时间，升序）；无数据返回 nil。
+	DeviceMetricsHistory(deviceID string, since time.Time) []any
+}
+
+// TaskResultFetcher 是任务与执行结果的只读获取接口（可选注入）。
+//
+// 设计说明（与 MetricsStore 同理）：
+//   - device-svc 默认不持有 tasks/results（由 task-svc 管理）；
+//   - 注入此接口后 GET /api/v1/devices/{id} 聚合响应可包含 tasks/results；
+//   - 未注入时聚合响应返回空数组（降级安全：依赖服务不可用不报错）。
+//
+// 与 controlplane handleDeviceDetail 行为对齐：按 dev.AgentID 关联任务与结果。
+// 实现方可通过 gRPC 调 task-svc 或直连共享 DB 获取数据。
+type TaskResultFetcher interface {
+	// TasksByAgent 返回指定 agent 的任务列表（按 tenantID 隔离）；无数据返回 nil。
+	TasksByAgent(agentID, tenantID string) []any
+	// ResultsByAgent 返回指定 agent 的任务执行结果列表；无数据返回 nil。
+	ResultsByAgent(agentID string) []any
+}
+
 // MemoryStore is an in-memory implementation of all stores.
 type MemoryStore struct {
 	devices   map[string]*models.Device
