@@ -15,6 +15,11 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/Levango7/OpsMesh/pkg/compress"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
+	"github.com/Levango7/OpsMesh/pkg/ratelimit"
+	"github.com/Levango7/OpsMesh/pkg/tenant"
+	"github.com/Levango7/OpsMesh/pkg/trace"
 	devicev1 "github.com/Levango7/OpsMesh/services/device-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/catalog"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/gpu"
@@ -23,11 +28,6 @@ import (
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/device-svc/pkg/config"
-	"github.com/Levango7/OpsMesh/pkg/compress"
-	"github.com/Levango7/OpsMesh/pkg/metrics"
-	"github.com/Levango7/OpsMesh/pkg/ratelimit"
-	"github.com/Levango7/OpsMesh/pkg/tenant"
-	"github.com/Levango7/OpsMesh/pkg/trace"
 )
 
 func main() {
@@ -89,6 +89,9 @@ func main() {
 		SSHKP:             cfg.ProvisionSSHKP,
 		SSHKnownHosts:     cfg.ProvisionSSHKnownHosts,
 		AdvertiseAddr:     cfg.AdvertiseAddr,
+		LoopInterval:      cfg.AutoProvisionInterval,
+		LoopMaxBackoff:    cfg.AutoProvisionMaxBackoff,
+		SegmentCIDR:       cfg.SegmentCIDR,
 	})
 	// D2 真实发现配置注入：白名单（空=不校验，生产必配）+ job 超时（默认 60s）。
 	svc.SetDiscoverConfig(&service.DiscoverConfig{
@@ -135,6 +138,7 @@ func main() {
 		advertiseAddr = fmt.Sprintf("http://127.0.0.1:%d", cfg.HTTPPort)
 	}
 	httpGateway := httpgw.NewGateway(ds, as, cs, disc, provisionStore, advertiseAddr)
+	httpGateway.SetAgentBinDir(cfg.AgentBinDir)
 	httpGateway.RegisterRoutes(mux, func(h http.Handler) http.Handler { return h })
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -227,6 +231,12 @@ func main() {
 		}
 	}()
 
+	// D3+ 自动纳管后台循环（与 controlplane autoProvisionLoop 同语义）。
+	// 双闸默认关闭（Enabled=false 或 LoopInterval<=0 或 SegmentCIDR="" 时不启动）。
+	// ctx 随进程退出取消，循环优雅退出。
+	autoprovCtx, autoprovCancel := context.WithCancel(context.Background())
+	go svc.AutoProvisionLoop(autoprovCtx)
+
 	go func() {
 		log.Printf("Starting HTTP health server on :%d", cfg.HTTPPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -238,6 +248,8 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("Shutting down...")
+
+	autoprovCancel()
 
 	healthServer.SetServingStatus("opsmesh.device.v1.DeviceService", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 	healthServer.SetServingStatus("opsmesh.device.v1.AgentService", grpc_health_v1.HealthCheckResponse_NOT_SERVING)

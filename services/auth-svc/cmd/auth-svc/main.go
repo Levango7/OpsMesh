@@ -17,16 +17,17 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/Levango7/OpsMesh/pkg/security"
+	"github.com/Levango7/OpsMesh/pkg/tenant"
+	"github.com/Levango7/OpsMesh/pkg/trace"
 	authv1 "github.com/Levango7/OpsMesh/services/auth-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/auth"
+	"github.com/Levango7/OpsMesh/services/auth-svc/internal/cache"
 	httpgw "github.com/Levango7/OpsMesh/services/auth-svc/internal/http"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/server"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/auth-svc/pkg/config"
-	"github.com/Levango7/OpsMesh/pkg/security"
-	"github.com/Levango7/OpsMesh/pkg/tenant"
-	"github.com/Levango7/OpsMesh/pkg/trace"
 )
 
 func main() {
@@ -96,9 +97,32 @@ func main() {
 	// A1 HTTP 网关（方案 B 用户中心后端）：AUTH_SVC_HTTP_ENABLED 默认 false——
 	// 关闭时 auth-svc 仅 gRPC+health，与 controlplane 并存期不产生双轨 Cookie 冲突（R1）。
 	if cfg.HTTPEnabled {
-		gw := httpgw.NewGateway(svc, cfg.CookieSecure)
+		// TD-60 安全能力初始化：Redis 缓存 + SessionStore。
+		var redisCache *cache.Cache
+		var sessionStore *cache.SessionStore
+		if cfg.RedisAddr != "" {
+			redisCache = cache.New("auth:")
+			if redisCache.Enabled() {
+				log.Printf("Redis cache enabled at %s — guard/deviceFP backed by Redis", cfg.RedisAddr)
+			}
+		}
+		if cfg.SessionStoreEnabled && redisCache != nil && redisCache.Enabled() {
+			sessionStore = cache.NewSessionStore(cfg.RedisAddr, cfg.SessionTTL)
+			if sessionStore.Enabled() {
+				log.Printf("Redis SessionStore enabled (TTL=%v) — stateful session management active", cfg.SessionTTL)
+			} else {
+				log.Printf("Redis SessionStore disabled (Redis unreachable) — degraded to stateless JWT mode")
+			}
+		}
+
+		gw := httpgw.NewGatewayWithConfig(svc, cfg.CookieSecure, &httpgw.GatewayConfig{
+			Cache:           redisCache,
+			DeviceFPEnabled: cfg.DeviceFPEnabled,
+			Sessions:        sessionStore,
+		})
 		gw.RegisterRoutes(mux)
-		log.Printf("HTTP gateway enabled (AUTH_SVC_HTTP_ENABLED=true) — cookie_secure=%v", cfg.CookieSecure)
+		log.Printf("HTTP gateway enabled (AUTH_SVC_HTTP_ENABLED=true) — cookie_secure=%v deviceFP=%v",
+			cfg.CookieSecure, cfg.DeviceFPEnabled)
 	} else {
 		log.Printf("HTTP gateway disabled (default) — auth-svc serves gRPC only; controlplane remains the sole login entry")
 	}

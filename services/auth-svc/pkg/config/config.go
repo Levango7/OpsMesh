@@ -29,6 +29,21 @@ type Config struct {
 	// CookieSecure 与 controlplane cookieSecure 同语义：显式 true 或 TLS 部署时
 	// Cookie 加 Secure 属性（HTTP 反代终止 TLS 场景须显式配置）。
 	CookieSecure bool `json:"cookieSecure"`
+
+	// TD-60 安全能力配置（默认启用，测试环境可关闭）。
+
+	// DeviceFPEnabled 设备指纹校验开关（默认 true）。
+	// false 时所有设备放行（不触发未知设备二次验证），测试环境用。
+	DeviceFPEnabled bool `json:"deviceFPEnabled"`
+	// SessionStoreEnabled Redis Session 存储开关（默认 true）。
+	// false 或 Redis 不可用时降级为 JWT 无状态模式。
+	SessionStoreEnabled bool `json:"sessionStoreEnabled"`
+	// SessionTTL Session 过期时间（默认 24h，滑动过期）。
+	SessionTTL time.Duration `json:"sessionTTL"`
+	// PasswordMinLen 强口令最小长度（默认 12；设 8 可降级到旧策略用于测试）。
+	PasswordMinLen int `json:"passwordMinLen"`
+	// PasswordRequireSpecial 强口令是否要求特殊字符（默认 true；false 降级到旧策略）。
+	PasswordRequireSpecial bool `json:"passwordRequireSpecial"`
 }
 
 // Load returns a Config populated from environment variables with defaults.
@@ -47,6 +62,13 @@ func Load() *Config {
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 		HTTPEnabled:     getEnv("AUTH_SVC_HTTP_ENABLED", "false") == "true",
 		CookieSecure:    getEnv("AUTH_SVC_HTTP_COOKIE_SECURE", "false") == "true",
+
+		// TD-60 安全能力：默认启用，测试环境可通过环境变量关闭。
+		DeviceFPEnabled:        getEnv("AUTH_SVC_DEVICE_FP_ENABLED", "true") != "false",
+		SessionStoreEnabled:    getEnv("AUTH_SVC_SESSION_STORE_ENABLED", "true") != "false",
+		SessionTTL:             getEnvDuration("AUTH_SVC_SESSION_TTL", 24*time.Hour),
+		PasswordMinLen:         getEnvInt("AUTH_SVC_PASSWORD_MIN_LEN", 12),
+		PasswordRequireSpecial: getEnv("AUTH_SVC_PASSWORD_REQUIRE_SPECIAL", "true") != "false",
 	}
 }
 

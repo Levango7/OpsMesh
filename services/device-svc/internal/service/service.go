@@ -11,14 +11,14 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	devicev1 "github.com/Levango7/OpsMesh/services/device-svc/api/proto/v1"
-	"github.com/Levango7/OpsMesh/services/device-svc/internal/models"
-	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
 	"github.com/Levango7/OpsMesh/pkg/discover"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/pkg/provision"
 	"github.com/Levango7/OpsMesh/pkg/retry"
 	"github.com/Levango7/OpsMesh/pkg/tenant"
+	devicev1 "github.com/Levango7/OpsMesh/services/device-svc/api/proto/v1"
+	"github.com/Levango7/OpsMesh/services/device-svc/internal/models"
+	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
 )
 
 // Errors returned by the service.
@@ -73,6 +73,15 @@ type AutoProvisionConfig struct {
 	SSHKnownHosts string
 	// AdvertiseAddr 控制面对外地址（用于拼接 bootstrap URL）。
 	AdvertiseAddr string
+	// LoopInterval 自动纳管循环间隔（默认 5min；<=0 时 AutoProvisionLoop 不启动）。
+	// 由 main 从 config.Load() 映射注入；AutoProvisionLoop 据此 ticker 周期执行。
+	LoopInterval time.Duration
+	// SegmentCIDR 后台循环扫描的目标网段（空=循环不执行扫描，仅当显式触发时生效）。
+	// 与 controlplane --segment-cidr 同语义；AutoProvisionLoop 每轮对此网段做 Sweep→纳管。
+	SegmentCIDR string
+	// LoopMaxBackoff 退避上限（默认 30min）。AutoProvisionLoop 失败后间隔翻倍，
+	// 达到上限后保持上限；成功后恢复 LoopInterval。<=0 时取默认 30min。
+	LoopMaxBackoff time.Duration
 }
 
 // SetAutoProvisionConfig 注入 D3 自动纳管配置（main 启动时调用；测试可省略走默认值）。
@@ -120,7 +129,72 @@ func (s *Service) RunAutoProvision(ctx context.Context, cidrs []string, tenantID
 			return
 		},
 	}
-	return provision.AutoProvision(ctx, deps, cfg, cidrs, tenantID)
+	sum, err := provision.AutoProvision(ctx, deps, cfg, cidrs, tenantID)
+	if err == nil {
+		s.RecordDeviceMetrics()
+	}
+	return sum, err
+}
+
+// AutoProvisionLoop 后台周期执行自动纳管编排（与 controlplane autoProvisionLoop 行为等价）。
+//
+// 启动条件（双闸 + 配置完整性）：
+//   - autoProvisionCfg.Enabled = true（第一闸）
+//   - LoopInterval > 0（未配置间隔则不启动，避免空转）
+//   - SegmentCIDR != ""（无目标网段则无意义）
+//
+// 循环语义：
+//  1. 每隔 currentInterval 对 SegmentCIDR 执行 RunAutoProvision
+//  2. 成功后 currentInterval 恢复 LoopInterval（退出退避）
+//  3. 失败后 currentInterval 翻倍（指数退避），上限 LoopMaxBackoff（默认 30min）
+//  4. ctx 取消时优雅退出
+//
+// 退避机制防配置错误（如网段不可达）导致 CPU 空转；成功后恢复基础间隔。
+// 仅 leader 执行语义由调用方保证（device-svc 单实例，此处不重复实现 IsLeader）。
+func (s *Service) AutoProvisionLoop(ctx context.Context) {
+	if s.autoProvisionCfg == nil || !s.autoProvisionCfg.Enabled {
+		return
+	}
+	if s.autoProvisionCfg.LoopInterval <= 0 || s.autoProvisionCfg.SegmentCIDR == "" {
+		return
+	}
+	maxBackoff := s.autoProvisionCfg.LoopMaxBackoff
+	if maxBackoff <= 0 {
+		maxBackoff = 30 * time.Minute
+	}
+	currentInterval := s.autoProvisionCfg.LoopInterval
+	ticker := time.NewTicker(currentInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		// 执行一轮自动纳管（SegmentCIDR 单网段扫描）。
+		_, err := s.RunAutoProvision(ctx, []string{s.autoProvisionCfg.SegmentCIDR}, "")
+		if err != nil {
+			// 失败：指数退避（间隔翻倍，上限 maxBackoff）。
+			currentInterval *= 2
+			if currentInterval > maxBackoff {
+				currentInterval = maxBackoff
+			}
+			ticker.Reset(currentInterval)
+			metrics.RecordBusinessMetric("auto_provision_loop_failures", 1, map[string]string{
+				"cidr":    s.autoProvisionCfg.SegmentCIDR,
+				"backoff": currentInterval.String(),
+			})
+		} else {
+			// 成功：恢复基础间隔（退出退避）。
+			if currentInterval != s.autoProvisionCfg.LoopInterval {
+				currentInterval = s.autoProvisionCfg.LoopInterval
+				ticker.Reset(currentInterval)
+			}
+			metrics.RecordBusinessMetric("auto_provision_loop_success", 1, map[string]string{
+				"cidr": s.autoProvisionCfg.SegmentCIDR,
+			})
+		}
+	}
 }
 
 // NewService creates a new Service.
@@ -143,6 +217,45 @@ func (s *Service) SetProvisionStore(ps store.ProvisionStore) {
 // SetDiscoverConfig 注入 D2 真实发现配置（main 启动时调用；测试可省略走默认值）。
 func (s *Service) SetDiscoverConfig(cfg *DiscoverConfig) {
 	s.discoverCfg = cfg
+}
+
+// RecordDeviceMetrics 遍历设备 store 计算 4 项 Prometheus metrics 并写入全局 registry：
+//   - device_total：设备总数（含 discovered/online/offline 等所有状态）
+//   - device_online：在线设备数（Status=online）
+//   - device_offline：离线设备数（Status=offline 或 discovered 候选未纳管）
+//   - provision_success_rate：纳管成功率（已纳管/总设备数，已纳管=Status=online 且 AgentID!=""）
+//
+// 在设备状态变更点（Register/Heartbeat/Delete/Update/autoProvision）调用以保持 metrics 新鲜。
+// 性能：ListDevices 遍历全量设备，O(n)；仅在状态变更时调用，非高频路径，可接受。
+// tenant 隔离：metrics 不按 tenant 分标签（全局视图）；如需按 tenant 拆分可扩展 labels。
+func (s *Service) RecordDeviceMetrics() {
+	if s.deviceStore == nil {
+		return
+	}
+	all := s.deviceStore.ListDevices("", "", "", 0)
+	total := len(all)
+	online := 0
+	offline := 0
+	managed := 0
+	for _, d := range all {
+		switch d.Status {
+		case "online":
+			online++
+			if d.AgentID != "" {
+				managed++
+			}
+		case "offline", "discovered":
+			offline++
+		}
+	}
+	metrics.RecordBusinessMetric("device_total", float64(total), nil)
+	metrics.RecordBusinessMetric("device_online", float64(online), nil)
+	metrics.RecordBusinessMetric("device_offline", float64(offline), nil)
+	successRate := 0.0
+	if total > 0 {
+		successRate = float64(managed) / float64(total) * 100.0
+	}
+	metrics.RecordBusinessMetric("provision_success_rate", successRate, nil)
 }
 
 // discoverWhitelist 返回生效的白名单（未注入配置时为空=不校验）。
@@ -242,6 +355,7 @@ func (s *Service) RegisterDevice(ctx context.Context, req *devicev1.RegisterDevi
 		_ = s.tenantMgr.TrackUsage(ctx, tenantID, tenant.ResourceDevices, 1)
 	}
 
+	s.RecordDeviceMetrics()
 	return d, nil
 }
 
@@ -261,6 +375,7 @@ func (s *Service) HeartbeatDevice(ctx context.Context, req *devicev1.HeartbeatRe
 		return lastErr
 	}
 	metrics.RecordBusinessMetric("device_heartbeats_total", 1, map[string]string{"device_id": req.DeviceId})
+	s.RecordDeviceMetrics()
 	return nil
 }
 
@@ -294,6 +409,7 @@ func (s *Service) UpdateDevice(ctx context.Context, req *devicev1.UpdateDeviceRe
 	if !ok {
 		return nil, ErrDeviceNotFound
 	}
+	s.RecordDeviceMetrics()
 	return deviceToProto(updated), nil
 }
 
@@ -303,6 +419,7 @@ func (s *Service) DeleteDevice(ctx context.Context, req *devicev1.DeleteDeviceRe
 	if !ok {
 		return ErrDeviceNotFound
 	}
+	s.RecordDeviceMetrics()
 	return nil
 }
 
@@ -570,6 +687,7 @@ func (s *Service) runDiscoveryJob(job *models.DiscoveryJob) {
 	job.FoundDevices = len(alive)
 	job.CompletedAt = time.Now()
 	s.discoveryStore.UpdateJob(job)
+	s.RecordDeviceMetrics()
 }
 
 // GetDiscoveryStatus returns discovery job status.

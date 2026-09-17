@@ -427,11 +427,12 @@ func (s *Service) ListPermissions(ctx context.Context, _ *emptypb.Empty) (*authv
 }
 
 // issueTokens issues access and refresh tokens for a user.
-// deviceFP 为设备指纹（A1 安全对齐 controlplane）：签发 rt 时绑定——非空时刷新必须
-// 匹配（防 token 被盗后跨设备重放）；空=旧客户端兼容不校验（controlplane 同语义）。
+// deviceFP 为设备指纹（A1 安全对齐 controlplane）：签发 at/rt 时均绑定——非空时
+// 刷新与请求校验必须匹配（防 token 被盗后跨设备重放）；空=旧客户端兼容不校验（controlplane 同语义）。
 func (s *Service) issueTokens(u *store.User, deviceFP string) (*authv1.TokenResponse, error) {
 	permissions := s.expandPermissions(u)
-	accessToken, expiresIn, err := s.jwtEngine.IssueToken(u.ID, u.Username, u.RoleIDs, permissions)
+	// at 绑定 deviceFP：ValidateToken 返回 DeviceFP 供调用方校验请求设备一致。
+	accessToken, expiresIn, err := s.jwtEngine.IssueTokenWithDeviceFP(u.ID, u.Username, u.RoleIDs, permissions, deviceFP, s.jwtEngine.AccessTokenTTL())
 	if err != nil {
 		return nil, fmt.Errorf("failed to issue token: %w", err)
 	}

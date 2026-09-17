@@ -220,3 +220,46 @@ func (c *Cache) Close() error {
 func (c *Cache) Enabled() bool {
 	return c.enabled
 }
+
+// IncrWithExpire 原子递增计数器并设置过期时间。
+//
+// 用于 loginGuard 的失败计数：每次失败 INCR + EXPIRE（滑动窗口）。
+// Redis 不可用时返回 (0, false)——调用方应降级为内存计数。
+//
+// 返回 (n, true) 成功（n=递增后的值）；(0, false) Redis 不可用或错误。
+func (c *Cache) IncrWithExpire(key string, expire time.Duration) (int64, bool) {
+	if !c.enabled {
+		return 0, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
+	defer cancel()
+	fullKey := c.key(key)
+	n, err := c.client.Incr(ctx, fullKey).Result()
+	if err != nil {
+		log.Printf("[cache] Incr %s failed: %v", key, err)
+		return 0, false
+	}
+	// 仅在首次递增（n==1）时设置 TTL，避免每次递增都重置窗口。
+	// 窗口语义：从首次失败起 guardFailWindow 内累计计数，过期后 Redis 自动清理。
+	if n == 1 {
+		if err := c.client.Expire(ctx, fullKey, expire).Err(); err != nil {
+			log.Printf("[cache] Expire %s failed: %v", key, err)
+		}
+	}
+	return n, true
+}
+
+// SetExpire 为已有 key 设置过期时间（用于锁定标记 TTL）。
+// Redis 不可用时返回 false。
+func (c *Cache) SetExpire(key string, expire time.Duration) bool {
+	if !c.enabled {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
+	defer cancel()
+	if err := c.client.Expire(ctx, c.key(key), expire).Err(); err != nil {
+		log.Printf("[cache] SetExpire %s failed: %v", key, err)
+		return false
+	}
+	return true
+}

@@ -19,12 +19,15 @@
 package http
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strings"
 
 	authv1 "github.com/Levango7/OpsMesh/services/auth-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/auth"
+	"github.com/Levango7/OpsMesh/services/auth-svc/internal/cache"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/store"
 )
@@ -39,13 +42,50 @@ const (
 type Gateway struct {
 	svc          *service.Service
 	cookieSecure bool
-	guard        *loginGuard // A2 防爆破（login/register 入口）
+	guard        *loginGuard         // A2 防爆破（login/register 入口）
+	deviceFP     *deviceFPManager    // 设备指纹管理（TD-60）
+	sessions     *cache.SessionStore // Redis Session 存储（可为 nil=JWT 无状态模式）
 }
 
 // NewGateway 构造 Gateway。cookieSecure 由 main 注入（AUTH_SVC_HTTP_COOKIE_SECURE
 // 显式配置，或 TLS 推断——与 controlplane cookieSecure 同语义）。
+//
+// 向后兼容：不带 Redis/DeviceFP 参数的构造走纯内存模式（测试用）。
 func NewGateway(svc *service.Service, cookieSecure bool) *Gateway {
-	return &Gateway{svc: svc, cookieSecure: cookieSecure, guard: newLoginGuard()}
+	return &Gateway{
+		svc:          svc,
+		cookieSecure: cookieSecure,
+		guard:        newLoginGuard(),
+		deviceFP:     newDeviceFPManager(nil, false), // 默认关闭设备指纹校验（测试兼容）
+	}
+}
+
+// GatewayConfig 封装 Gateway 构造的可选安全配置（TD-60）。
+type GatewayConfig struct {
+	Cache           *cache.Cache        // Redis 缓存（nil=纯内存）
+	DeviceFPEnabled bool                // 设备指纹校验开关
+	Sessions        *cache.SessionStore // Redis Session 存储（nil=JWT 无状态）
+}
+
+// NewGatewayWithConfig 构造带安全配置的 Gateway（TD-60 增强）。
+//
+// cache 非 nil 时：loginGuard 走 Redis 后端（多副本共享失败计数），
+// deviceFPManager 走 Redis 存储已知设备集合。
+// sessions 非 nil 时：启用 Redis Session 存储；否则降级为 JWT 无状态模式。
+func NewGatewayWithConfig(svc *service.Service, cookieSecure bool, gc *GatewayConfig) *Gateway {
+	g := &Gateway{
+		svc:          svc,
+		cookieSecure: cookieSecure,
+		sessions:     gc.Sessions,
+	}
+	if gc.Cache != nil {
+		g.guard = newLoginGuardWithCache(gc.Cache)
+		g.deviceFP = newDeviceFPManager(gc.Cache, gc.DeviceFPEnabled)
+	} else {
+		g.guard = newLoginGuard()
+		g.deviceFP = newDeviceFPManager(nil, gc.DeviceFPEnabled)
+	}
+	return g
 }
 
 // clientIP 提取客户端 IP（httptest 场景 RemoteAddr 可靠；代理场景留待部署层
@@ -106,6 +146,10 @@ func (g *Gateway) RegisterRoutes(mux *http.ServeMux) {
 //
 // 首登 mustChangePassword：与 controlplane 同语义——不签常规 at+rt，签 5min 改密
 // 专用 token 进 opsmesh_at Cookie，响应体带 MustChangePassword=true + ChangePasswordToken。
+//
+// TD-60 增强：
+//   - 设备指纹采集（X-Device-FP 头优先，否则 UA+IP+TLS 合成）
+//   - 未知设备触发二次验证（响应 needMFA=true，前端引导 MFA/邮箱确认）
 func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -130,10 +174,12 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "account temporarily locked")
 		return
 	}
+	// TD-60 设备指纹采集：X-Device-FP 头优先，否则 UA+IP+TLS 合成。
+	fp := collectDeviceFP(r)
 	resp, err := g.svc.LoginWithFP(r.Context(), &authv1.LoginRequest{
 		Username: body.Username,
 		Password: body.Password,
-	}, deviceFP(r))
+	}, fp)
 	if err != nil {
 		// 失败计入账号锁定计数（成功才复位——与 controlplane 同语义）。
 		g.guard.recordFail(body.Username)
@@ -142,19 +188,37 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.guard.recordSuccess(body.Username)
+
+	// TD-60 设备指纹校验：未知设备触发二次验证。
+	// 登录成功后检查设备是否已知；未知设备注册并标记 needMFA。
+	// needMFA=true 时仍下发 token（用户已通过密码验证），前端据 needMFA 引导 MFA 确认。
+	_, needMFA := g.deviceFP.checkAndRegister(resp.User.Id, fp)
+
 	// at 写 Cookie；rt 仅常规登录写（首登改密流不写 rt——与 controlplane 一致）。
 	g.setCookie(w, accessTokenCookieName, resp.AccessToken, int(resp.ExpiresIn))
 	if resp.RefreshToken != "" {
 		g.setCookie(w, refreshTokenCookieName, resp.RefreshToken, 7*24*3600)
 	}
+	// TD-60 创建 Redis Session（可用时；降级 no-op）。
+	if g.sessions != nil && g.sessions.Enabled() && resp.AccessToken != "" {
+		sid := sessionIDFromToken(resp.AccessToken)
+		_ = g.sessions.Create(&cache.Session{
+			SessionID: sid,
+			UserID:    resp.User.Id,
+			TenantID:  "default",
+			DeviceFP:  fp,
+		})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user":                toPublicUser(resp.User),
 		"mustChangePassword":  resp.MustChangePassword,
 		"changePasswordToken": resp.ChangePasswordToken,
+		"needMFA":             needMFA,
+		"deviceFP":            fp != "", // 标记是否绑定了设备指纹
 	})
 }
 
-// handleLogout POST /api/v1/auth/logout → 清双 Cookie + 吊销（jti 黑名单 + rt 删除）。
+// handleLogout POST /api/v1/auth/logout → 清双 Cookie + 吊销（jti 黑名单 + rt 删除 + Session 撤销）。
 func (g *Gateway) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -162,6 +226,11 @@ func (g *Gateway) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	at := readCookie(r, accessTokenCookieName)
 	rt := readCookie(r, refreshTokenCookieName)
+	// TD-60 Session 撤销（Redis 可用时即时失效；不可用时 JWT 黑名单兜底）。
+	// sessionID = SHA-256(access token)，与 handleLogin 创建时一致。
+	if g.sessions != nil && g.sessions.Enabled() && at != "" {
+		_ = g.sessions.Revoke(sessionIDFromToken(at))
+	}
 	// 复用 service.Logout（jti 黑名单 + rt 删除）。
 	_, _ = g.svc.Logout(r.Context(), &authv1.LogoutRequest{
 		AccessToken:  at,
@@ -185,7 +254,7 @@ func (g *Gateway) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "no refresh token")
 		return
 	}
-	resp, err := g.svc.RefreshTokenWithFP(r.Context(), rt, deviceFP(r))
+	resp, err := g.svc.RefreshTokenWithFP(r.Context(), rt, collectDeviceFP(r))
 	if err != nil {
 		// 刷新失败清 Cookie（与 controlplane 同语义：会话终局，防残 Cookie 误导）。
 		g.clearCookies(w)
@@ -559,3 +628,11 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 // 编译期依赖断言（store 包被 Gateway 经 service.Store() 间接消费）。
 var _ = store.NewMemoryStore
 var _ = auth.HashRefreshToken
+
+// sessionIDFromToken 由 access token 计算 Session ID（SHA-256 摘要）。
+// 用于 Redis SessionStore 的 session 标识：Login 时 Create，Logout 时 Revoke。
+// 用 hash 而非明文 token 作 key，避免 token 明文暴露在 Redis key 中。
+func sessionIDFromToken(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
+}

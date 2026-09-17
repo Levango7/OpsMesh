@@ -15,18 +15,20 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
-	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
-	"github.com/Levango7/OpsMesh/services/task-svc/internal/scheduler"
-	"github.com/Levango7/OpsMesh/services/task-svc/internal/server"
-	"github.com/Levango7/OpsMesh/services/task-svc/internal/service"
-	"github.com/Levango7/OpsMesh/services/task-svc/internal/store"
-	"github.com/Levango7/OpsMesh/services/task-svc/pkg/config"
 	"github.com/Levango7/OpsMesh/pkg/circuit"
 	"github.com/Levango7/OpsMesh/pkg/compress"
 	"github.com/Levango7/OpsMesh/pkg/cron"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/pkg/ratelimit"
 	"github.com/Levango7/OpsMesh/pkg/trace"
+	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
+	"github.com/Levango7/OpsMesh/services/task-svc/internal/events"
+	"github.com/Levango7/OpsMesh/services/task-svc/internal/leader"
+	"github.com/Levango7/OpsMesh/services/task-svc/internal/scheduler"
+	"github.com/Levango7/OpsMesh/services/task-svc/internal/server"
+	"github.com/Levango7/OpsMesh/services/task-svc/internal/service"
+	"github.com/Levango7/OpsMesh/services/task-svc/internal/store"
+	"github.com/Levango7/OpsMesh/services/task-svc/pkg/config"
 )
 
 // cronMatch 包装 pkg/cron.Match——main.go 不希望每次 fire 闭包都写完整包名。
@@ -62,6 +64,12 @@ func main() {
 		}
 	}
 	svc := service.NewService(ts, ss, rs, bs)
+
+	// A-2 阶段：事件总线/审计/SSE 桥接注入（接口注入模式，生产环境由 main 注入真实实现）。
+	// 默认 LogBus/LogAuditSink/StubSSEBridge（开发/单机可见）；生产环境可通过环境变量切换。
+	svc.SetEventBus(events.LogBus{})
+	svc.SetAuditSink(events.LogAuditSink{})
+	svc.SetSSEBridge(events.StubSSEBridge{})
 
 	cb := circuit.New("task-execution", 5, 30*time.Second)
 	svc.SetCircuitBreaker(cb)
@@ -121,7 +129,10 @@ func main() {
 	// 派生 pending 实例或回收超期 running——不污染 TaskStore 公开方法集。
 	// 派生规则：ParentID=="" + Schedule!="" + cron.Match 命中 + 本分钟未触发过。
 	// 回收规则：status=running + ClaimAt 早于 maxAge + 持有者无活跃心跳。
-	// renew 单进程假实现（永真），A-2 切流后接 SQL leader_lease 升级。
+	// A-2 阶段：renew 通过 LeaderElector 接口注入（stub 永真为默认，
+	// 生产环境可注入 K8sLeaseElector 实现多副本选主）。
+	elector := leader.NewStub() // A-2 默认：stub 永真（单进程/CI）；生产注入 K8sLeaseElector
+	defer elector.Close()
 	sched := scheduler.New(
 		schedulerRootCtx,
 		// reclaim：直接读 store.AllTasks 复用 controlplane/store/memory.go:756 ReclaimStaleTasks
@@ -171,8 +182,12 @@ func main() {
 			}
 			return fired
 		},
-		// renew：A-1 单进程假实现（永真），A-2 阶段接 SQLStore 真选主。
-		func(_ context.Context, _ time.Duration) bool { return true },
+		// renew：A-2 阶段通过 LeaderElector 接口注入。
+		// 默认 StubLeaderElector 永真（单进程/CI，与 A-1 行为一致）；
+		// 生产环境由 main 注入 K8sLeaseElector（基于 coordination.k8s.io Lease 多副本选主）。
+		func(ctx context.Context, ttl time.Duration) bool {
+			return elector.Renew(ctx, ttl)
+		},
 	)
 	sched.Start()
 

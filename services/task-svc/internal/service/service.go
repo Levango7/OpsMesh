@@ -9,11 +9,12 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
-	"github.com/Levango7/OpsMesh/services/task-svc/internal/models"
-	"github.com/Levango7/OpsMesh/services/task-svc/internal/store"
 	"github.com/Levango7/OpsMesh/pkg/circuit"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
+	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
+	"github.com/Levango7/OpsMesh/services/task-svc/internal/events"
+	"github.com/Levango7/OpsMesh/services/task-svc/internal/models"
+	"github.com/Levango7/OpsMesh/services/task-svc/internal/store"
 )
 
 // Errors returned by the service.
@@ -33,6 +34,10 @@ type Service struct {
 	resultStore   store.ResultStore
 	batchStore    store.BatchStore
 	breaker       *circuit.Breaker
+	// 事件总线/审计/SSE 桥接（A-2 阶段：可选注入，nil 时跳过发射，向后兼容）。
+	bus       events.EventBus
+	auditSink events.AuditSink
+	sseBridge events.SSEBridge
 }
 
 // NewService creates a new Service.
@@ -48,6 +53,56 @@ func NewService(ts store.TaskStore, ss store.ScheduleStore, rs store.ResultStore
 // SetCircuitBreaker sets the circuit breaker for task execution.
 func (s *Service) SetCircuitBreaker(cb *circuit.Breaker) {
 	s.breaker = cb
+}
+
+// SetEventBus 注入事件总线（可选：nil 时跳过事件发射，向后兼容）。
+// 生产环境由 main 注入真实实现（Kafka/日志），测试/单机可不注入。
+func (s *Service) SetEventBus(bus events.EventBus) {
+	s.bus = bus
+}
+
+// SetAuditSink 注入审计日志写入器（可选：nil 时跳过审计写入，向后兼容）。
+// 生产环境由 main 注入 SQL 审计存储适配器，测试/单机可不注入。
+func (s *Service) SetAuditSink(sink events.AuditSink) {
+	s.auditSink = sink
+}
+
+// SetSSEBridge 注入 SSE 桥接器（可选：nil 时跳过 SSE 转发，向后兼容）。
+// 生产环境由 main 注入真实 SSE client（转发到 controlplane SSE 通道），
+// 测试/单机可不注入或注入 StubSSEBridge（日志记录）。
+func (s *Service) SetSSEBridge(bridge events.SSEBridge) {
+	s.sseBridge = bridge
+}
+
+// emitAudit 发射审计事件 + 事件总线事件 + SSE 桥接（A-2 阶段统一 helper）。
+//
+// 三者均为可选注入：nil 时对应通道跳过，不破坏现有 API/测试。
+// 对齐 controlplane server_tasks.go 的三连发模式：
+//   - s.audit(ctx, &proto.AuditEvent{...})  → 审计日志（等保留痕）
+//   - s.bus.Publish(ctx, events.Event{...})  → 事件总线（Kafka/告警管道）
+//   - s.publishEvent(ctx, "task_status", ..) → SSE（前端实时推送）
+//
+// sseData 为 nil 时不转发 SSE（部分事件不需要 SSE 推送）。
+func (s *Service) emitAudit(ctx context.Context, tenantID, userID, action, target, detail string, level events.Level, sseData interface{}) {
+	// 审计日志（等保三级：操作 100% 留痕）
+	if s.auditSink != nil {
+		s.auditSink.Audit(events.NewAuditEvent(ctx, tenantID, userID, action, target, detail))
+	}
+	// 事件总线（Kafka/告警管道）
+	if s.bus != nil {
+		_ = s.bus.Publish(ctx, events.Event{
+			TenantID: tenantID,
+			UserID:   userID,
+			Action:   action,
+			Target:   target,
+			Detail:   detail,
+			Level:    level,
+		})
+	}
+	// SSE 桥接（前端实时推送）
+	if s.sseBridge != nil && sseData != nil {
+		s.sseBridge.Forward(ctx, "task_status", tenantID, sseData)
+	}
 }
 
 // CreateTask creates a new task.
@@ -81,6 +136,12 @@ func (s *Service) CreateTask(ctx context.Context, req *taskv1.CreateTaskRequest)
 
 	modelTask := protoToTask(t)
 	s.taskStore.CreateTask(modelTask)
+	// A-2 阶段：任务生命周期事件审计（创建）
+	s.emitAudit(ctx, t.TenantId, "", "create_task", t.TaskId, t.Command, events.LevelInfo, map[string]string{
+		"taskID":  t.TaskId,
+		"status":  t.Status,
+		"agentID": t.AgentId,
+	})
 	return t, nil
 }
 
@@ -133,6 +194,12 @@ func (s *Service) ClaimTask(ctx context.Context, req *taskv1.ClaimTaskRequest) (
 		}
 	}
 	metrics.RecordBusinessMetric("task_claims_total", 1, map[string]string{"agent_id": req.AgentId})
+	// A-2 阶段：任务生命周期事件审计（分配/领取）
+	s.emitAudit(ctx, mt.TenantID, req.AgentId, "claim_task", mt.TaskID, "claimed by agent", events.LevelInfo, map[string]string{
+		"taskID":  mt.TaskID,
+		"status":  mt.Status,
+		"agentID": req.AgentId,
+	})
 	return taskToProto(mt), nil
 }
 
@@ -188,6 +255,26 @@ func (s *Service) ReportResult(ctx context.Context, req *taskv1.ReportResultRequ
 	}
 
 	metrics.RecordBusinessMetric("task_reports_total", 1, map[string]string{"task_id": r.TaskId})
+	// A-2 阶段：任务生命周期事件审计（完成/失败）
+	// ExitCode==0 → 完成（info）；ExitCode!=0 → 失败（warn）
+	action := "report_result"
+	level := events.LevelInfo
+	detail := fmt.Sprintf("exit=%d", r.ExitCode)
+	if r.ExitCode != 0 {
+		action = "fail_task"
+		level = events.LevelWarn
+	}
+	// 从 store 拿当前任务状态用于 SSE 载荷（不额外引入 req 字段）
+	var sseStatus string
+	if mt := s.taskStore.GetTask(r.TaskId); mt != nil {
+		sseStatus = mt.Status
+	}
+	s.emitAudit(ctx, "", r.AgentId, action, r.TaskId, detail, level, map[string]string{
+		"taskID":   r.TaskId,
+		"status":   sseStatus,
+		"agentID":  r.AgentId,
+		"exitCode": fmt.Sprintf("%d", r.ExitCode),
+	})
 	return r, nil
 }
 
@@ -199,6 +286,11 @@ func (s *Service) CancelTask(ctx context.Context, req *taskv1.CancelTaskRequest)
 	if !s.taskStore.CancelTask(req.TaskId, req.TenantId) {
 		return ErrTaskNotFound
 	}
+	// A-2 阶段：任务生命周期事件审计（取消）
+	s.emitAudit(ctx, req.TenantId, "", "cancel_task", req.TaskId, "task cancelled", events.LevelInfo, map[string]string{
+		"taskID": req.TaskId,
+		"status": models.TaskStatusCancelled,
+	})
 	return nil
 }
 

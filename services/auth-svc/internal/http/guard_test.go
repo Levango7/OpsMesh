@@ -17,18 +17,21 @@ import (
 
 func TestValidateStrongPassword(t *testing.T) {
 	bad := map[string]string{
-		"short":   "Ab1",      // 太短
-		"noUpper": "abcdefg1", // 缺大写
-		"noLower": "ABCDEFG1", // 缺小写
-		"noDigit": "Abcdefgh", // 缺数字
-		"empty":   "",         // 空
+		"short":     "Ab1!xyz",      // 太短（<12）
+		"noUpper":   "abcdefg1!xyz", // 缺大写（12字符）
+		"noLower":   "ABCDEFG1!XYZ", // 缺小写（12字符）
+		"noDigit":   "Abcdefgh!xyz", // 缺数字（12字符）
+		"noSpecial": "Abcdefgh123x", // 缺特殊字符（12字符，TD-60 增强）
+		"empty":     "",             // 空
+		"common":    "Welcome1!23",  // 黑名单（满足复杂度但在 top-100 常见列表）
 	}
 	for name, pw := range bad {
 		if msg := validateStrongPassword(pw); msg == "" {
 			t.Errorf("%s: %q 应被拒绝", name, pw)
 		}
 	}
-	good := []string{"Abcdefg1", "NewPass123x", "Xy9Zabcd"}
+	// TD-60 强策略：12+字符 + 大小写 + 数字 + 特殊字符 + 不在黑名单。
+	good := []string{"Abcdefg1!xyz", "NewPass123x!y", "Xy9Zabcd!efg", "Str0ngP@ss!w0rd"}
 	for _, pw := range good {
 		if msg := validateStrongPassword(pw); msg != "" {
 			t.Errorf("合法口令 %q 被拒: %s", pw, msg)
@@ -150,9 +153,9 @@ func TestGateway_RegisterRejectsWeakPassword(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("弱口令注册应 400，实际 %d body=%s", rec.Code, rec.Body.String())
 	}
-	// 强口令注册 → 201。
+	// 强口令注册 → 201（TD-60：12+字符+特殊字符+非黑名单）。
 	rec2 := doReq(t, mux, http.MethodPost, "/api/v1/auth/register",
-		`{"username":"strongpw","password":"GoodPass123","email":"s@x.io"}`, nil)
+		`{"username":"strongpw","password":"GoodPass123!x","email":"s@x.io"}`, nil)
 	if rec2.Code != http.StatusCreated {
 		t.Fatalf("强口令注册应 201，实际 %d body=%s", rec2.Code, rec2.Body.String())
 	}

@@ -43,29 +43,46 @@ type Config struct {
 	ProvisionSSHKnownHosts string `json:"provisionSSHKnownHosts"`
 	// AdvertiseAddr 控制面对外地址（用于拼接 bootstrap URL）。
 	AdvertiseAddr string `json:"advertiseAddr"`
+
+	// D3+ 自动纳管循环配置（TD-60 阶段 2 补齐）。
+	// AutoProvisionInterval 后台循环间隔（默认 5min；<=0 时不启动循环）。
+	AutoProvisionInterval time.Duration `json:"autoProvisionInterval"`
+	// AutoProvisionMaxBackoff 退避上限（默认 30min）。
+	AutoProvisionMaxBackoff time.Duration `json:"autoProvisionMaxBackoff"`
+	// SegmentCIDR 后台循环扫描的目标网段（空=循环不执行扫描）。
+	SegmentCIDR string `json:"segmentCIDR"`
+
+	// D3+ bootstrap agent 二进制分发配置（TD-60 阶段 2 补齐）。
+	// AgentBinDir agent 二进制分发目录（按平台/架构组织：opsmesh-agent-{os}-{arch}）。
+	// 空=回退当前进程二进制（仅开发/单机部署）。
+	AgentBinDir string `json:"agentBinDir"`
 }
 
 // Load returns a Config populated from environment variables with defaults.
 func Load() *Config {
 	return &Config{
-		GRPCPort:               getEnvInt("DEVICE_SVC_GRPC_PORT", 50052),
-		HTTPPort:               getEnvInt("DEVICE_SVC_HTTP_PORT", 8081),
-		JWTSecret:              getEnv("DEVICE_SVC_JWT_SECRET", "default-jwt-secret-change-in-production"),
-		ProvisionSecret:        getEnv("DEVICE_SVC_PROVISION_SECRET", ""), // 空=启动时随机生成（每次重启 token 失效，生产建议固定配置）
-		StoreType:              getEnv("DEVICE_SVC_STORE_TYPE", "memory"),
-		DSN:                    getEnv("DEVICE_SVC_DSN", ""),
-		RedisAddr:              getEnv("DEVICE_SVC_REDIS_ADDR", ""),
-		ShutdownTimeout:        getEnvDuration("DEVICE_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
-		OTelEndpoint:           getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
-		LogLevel:               getEnv("LOG_LEVEL", "info"),
-		CIDRWhitelist:          getEnv("DEVICE_SVC_CIDR_WHITELIST", ""),
-		DiscoverTimeout:        getEnvDuration("DEVICE_SVC_DISCOVER_TIMEOUT", 60*time.Second),
-		AutoProvision:          valBool("DEVICE_SVC_AUTO_PROVISION", false, "auto-provision"),
-		ProvisionSSHKey:        getEnv("DEVICE_SVC_PROVISION_SSH_KEY", ""),
-		ProvisionSSHUser:       getEnv("DEVICE_SVC_PROVISION_SSH_USER", "root"),
-		ProvisionSSHKP:         getEnv("DEVICE_SVC_PROVISION_SSH_KEY_PASS", ""),
-		ProvisionSSHKnownHosts: getEnv("DEVICE_SVC_PROVISION_SSH_KNOWN_HOSTS", ""),
-		AdvertiseAddr:          getEnv("DEVICE_SVC_ADVERTISE_ADDR", ""),
+		GRPCPort:                getEnvInt("DEVICE_SVC_GRPC_PORT", 50052),
+		HTTPPort:                getEnvInt("DEVICE_SVC_HTTP_PORT", 8081),
+		JWTSecret:               getEnv("DEVICE_SVC_JWT_SECRET", "default-jwt-secret-change-in-production"),
+		ProvisionSecret:         getEnv("DEVICE_SVC_PROVISION_SECRET", ""), // 空=启动时随机生成（每次重启 token 失效，生产建议固定配置）
+		StoreType:               getEnv("DEVICE_SVC_STORE_TYPE", "memory"),
+		DSN:                     getEnv("DEVICE_SVC_DSN", ""),
+		RedisAddr:               getEnv("DEVICE_SVC_REDIS_ADDR", ""),
+		ShutdownTimeout:         getEnvDuration("DEVICE_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
+		OTelEndpoint:            getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		LogLevel:                getEnv("LOG_LEVEL", "info"),
+		CIDRWhitelist:           getEnv("DEVICE_SVC_CIDR_WHITELIST", ""),
+		DiscoverTimeout:         getEnvDuration("DEVICE_SVC_DISCOVER_TIMEOUT", 60*time.Second),
+		AutoProvision:           valBool("DEVICE_SVC_AUTO_PROVISION", false, "auto-provision"),
+		ProvisionSSHKey:         getEnv("DEVICE_SVC_PROVISION_SSH_KEY", ""),
+		ProvisionSSHUser:        getEnv("DEVICE_SVC_PROVISION_SSH_USER", "root"),
+		ProvisionSSHKP:          getEnv("DEVICE_SVC_PROVISION_SSH_KEY_PASS", ""),
+		ProvisionSSHKnownHosts:  getEnv("DEVICE_SVC_PROVISION_SSH_KNOWN_HOSTS", ""),
+		AdvertiseAddr:           getEnv("DEVICE_SVC_ADVERTISE_ADDR", ""),
+		AutoProvisionInterval:   getEnvDuration("DEVICE_SVC_AUTO_PROVISION_INTERVAL", 5*time.Minute),
+		AutoProvisionMaxBackoff: getEnvDuration("DEVICE_SVC_AUTO_PROVISION_MAX_BACKOFF", 30*time.Minute),
+		SegmentCIDR:             getEnv("DEVICE_SVC_SEGMENT_CIDR", ""),
+		AgentBinDir:             getEnv("DEVICE_SVC_AGENT_BIN_DIR", ""),
 	}
 }
 

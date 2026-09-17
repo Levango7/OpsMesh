@@ -205,8 +205,9 @@ func TestChangePassword_RequiresTokenNotUserId(t *testing.T) {
 	_, mux, _ := newTestGateway()
 
 	// 无任何凭证 → 401（不接受 body.user_id 直调）。
+	// newPassword 须满足强策略，否则先被 400 拦截（此测试验证 token 缺失 → 401）。
 	rec := doReq(t, mux, http.MethodPost, "/api/v1/auth/change-password",
-		`{"oldPassword":"admin123","newPassword":"NewPass123","userId":"user-admin"}`, nil)
+		`{"oldPassword":"admin123","newPassword":"NewPass123!xy","userId":"user-admin"}`, nil)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("无凭证改密应 401（R4：token 模式强制），实际 %d", rec.Code)
 	}
@@ -234,15 +235,15 @@ func TestChangePassword_FirstLoginFlow(t *testing.T) {
 		t.Error("首登改密流不应写 rt Cookie（与 controlplane 同语义）")
 	}
 
-	// 用改密 token 改密 → 200。
+	// 用改密 token 改密 → 200（TD-60：新密码须满足 12+字符+特殊字符）。
 	rec2 := doReq(t, mux, http.MethodPost, "/api/v1/auth/change-password",
-		`{"oldPassword":"admin123","newPassword":"NewPass123x","changePasswordToken":"`+resp.ChangePasswordToken+`"}`, nil)
+		`{"oldPassword":"admin123","newPassword":"NewPass123x!y","changePasswordToken":"`+resp.ChangePasswordToken+`"}`, nil)
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("首登改密: got %d, body=%s", rec2.Code, rec2.Body.String())
 	}
 
 	// 新密码可登录（改密生效）。
-	rec3 := doReq(t, mux, http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"NewPass123x"}`, nil)
+	rec3 := doReq(t, mux, http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"NewPass123x!y"}`, nil)
 	if rec3.Code != http.StatusOK {
 		t.Fatalf("新密码登录: got %d, body=%s", rec3.Code, rec3.Body.String())
 	}
@@ -261,15 +262,15 @@ func TestChangePassword_FirstLoginFlow(t *testing.T) {
 func TestRegister_PendingApprovalFlow(t *testing.T) {
 	g, mux, svc := newTestGateway()
 
-	// 注册 → 201 pending。
+	// 注册 → 201 pending（TD-60：密码须满足 12+字符+特殊字符）。
 	rec := doReq(t, mux, http.MethodPost, "/api/v1/auth/register",
-		`{"username":"newuser","password":"SomePass123","email":"n@x.io"}`, nil)
+		`{"username":"newuser","password":"SomePass123!x","email":"n@x.io"}`, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("register: got %d, body=%s", rec.Code, rec.Body.String())
 	}
 	// pending 用户登录 → 401（Status!=active 拒绝）。
 	rec2 := doReq(t, mux, http.MethodPost, "/api/v1/auth/login",
-		`{"username":"newuser","password":"SomePass123"}`, nil)
+		`{"username":"newuser","password":"SomePass123!x"}`, nil)
 	if rec2.Code != http.StatusUnauthorized {
 		t.Fatalf("pending 用户登录应 401，实际 %d", rec2.Code)
 	}
@@ -286,7 +287,7 @@ func TestRegister_PendingApprovalFlow(t *testing.T) {
 	}
 	// approve 后可登录。
 	rec4 := doReq(t, mux, http.MethodPost, "/api/v1/auth/login",
-		`{"username":"newuser","password":"SomePass123"}`, nil)
+		`{"username":"newuser","password":"SomePass123!x"}`, nil)
 	if rec4.Code != http.StatusOK {
 		t.Fatalf("approve 后登录: got %d", rec4.Code)
 	}

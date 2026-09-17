@@ -12,16 +12,19 @@ package http
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/Levango7/OpsMesh/pkg/provision"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
-	"github.com/Levango7/OpsMesh/pkg/provision"
 )
 
 // Gateway 持有 HTTP handler 依赖的各 store 接口。
@@ -32,11 +35,22 @@ type Gateway struct {
 	discovery      store.DiscoveryStore
 	provisionStore store.ProvisionStore
 	advertiseAddr  string
+	// agentBinDir 是 agent 二进制分发目录（按平台/架构组织）。
+	// 目录结构：{agentBinDir}/opsmesh-agent-{os}-{arch}（如 opsmesh-agent-linux-amd64）。
+	// 空字符串=回退当前进程二进制（与 controlplane handleServeAgent 同语义，仅开发/单机部署）。
+	// 由 main 通过 SetAgentBinDir 注入；测试可省略走默认回退。
+	agentBinDir string
 }
 
 // NewGateway 构造 Gateway 实例。
 func NewGateway(ds store.DeviceStore, as store.AgentStore, cs store.CiStore, disc store.DiscoveryStore, ps store.ProvisionStore, advertiseAddr string) *Gateway {
 	return &Gateway{devices: ds, agents: as, cis: cs, discovery: disc, provisionStore: ps, advertiseAddr: advertiseAddr}
+}
+
+// SetAgentBinDir 注入 agent 二进制分发目录（main 启动时调用；测试可省略走默认回退）。
+// 目录内文件命名约定：opsmesh-agent-{os}-{arch}（如 opsmesh-agent-linux-amd64）。
+func (g *Gateway) SetAgentBinDir(dir string) {
+	g.agentBinDir = dir
 }
 
 // RegisterRoutes 注册全部 HTTP 路由到给定 mux。
@@ -58,9 +72,10 @@ func (g *Gateway) RegisterRoutes(mux *http.ServeMux, auth func(http.Handler) htt
 	mux.Handle("/api/v1/discovery/devices", auth(http.HandlerFunc(g.handleDiscoveredDevices)))
 	// 自动纳管（D3）
 	mux.Handle("/api/v1/provision/auto", auth(http.HandlerFunc(g.handleProvisionAuto)))
-	// bootstrap 端点（D3-d）：install.sh 分发 + token 消费注册。
+	// bootstrap 端点（D3-d）：install.sh 分发 + agent 二进制分发 + token 消费注册。
 	// 不挂 auth（agent 自举阶段无 JWT；token 本身即凭证，与 controlplane /install.sh 同语义）。
 	mux.HandleFunc("/install.sh", g.handleInstallSh)
+	mux.HandleFunc("/bin/opsmesh-agent", g.handleServeAgent)
 	mux.HandleFunc("/api/v1/provision/register", g.handleProvisionRegister)
 }
 
@@ -390,6 +405,101 @@ func (g *Gateway) handleProvisionAuto(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============ 工具 ============
+
+// handleServeAgent 处理 GET /bin/opsmesh-agent：分发 agent 二进制本体（按平台/架构）。
+//
+// 平台/架构探测优先级：
+//  1. 查询参数 ?os=linux&arch=amd64（显式指定，install.sh 脚本可传入）
+//  2. User-Agent 头启发式探测（curl/wget 不携带，故通常回退默认）
+//  3. 默认 linux/amd64
+//
+// 二进制查找顺序：
+//  1. {agentBinDir}/opsmesh-agent-{os}-{arch}（配置了 agentBinDir 时）
+//  2. {agentBinDir}/opsmesh-agent（通用名，不区分平台/架构）
+//  3. 当前进程二进制（os.Executable()，与 controlplane handleServeAgent 同语义，
+//     仅开发/单机部署回退——生产应配置 agentBinDir 按平台/架构分发）
+//
+// 安全：路径拼接走 filepath.Join + Clean，防穿越（../）；文件不存在返回 404。
+// 与 controlplane server_bootstrap.go handleServeAgent 行为对齐（双模式同体）。
+func (g *Gateway) handleServeAgent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	osName, arch := detectPlatform(r)
+	binPath := g.resolveAgentBinary(osName, arch)
+	if binPath == "" {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("agent binary not found for %s/%s", osName, arch))
+		return
+	}
+	f, err := os.Open(binPath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "cannot open agent binary: "+err.Error())
+		return
+	}
+	defer f.Close()
+	info, statErr := f.Stat()
+	if statErr != nil {
+		writeError(w, http.StatusInternalServerError, "cannot stat agent binary")
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=opsmesh-agent")
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	w.Header().Set("X-OpsMesh-Agent-OS", osName)
+	w.Header().Set("X-OpsMesh-Agent-Arch", arch)
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, f); err != nil {
+		log.Printf("device-svc: handleServeAgent 写 agent 二进制失败: %v", err)
+	}
+}
+
+// detectPlatform 从请求中探测目标平台/架构。
+// 优先查询参数 ?os=&arch=，回退默认 linux/amd64。
+// User-Agent 启发式仅作辅助（curl/wget 通常不携带有用 UA，故不依赖）。
+func detectPlatform(r *http.Request) (string, string) {
+	osName := r.URL.Query().Get("os")
+	arch := r.URL.Query().Get("arch")
+	if osName == "" {
+		osName = "linux"
+	}
+	if arch == "" {
+		arch = "amd64"
+	}
+	return osName, arch
+}
+
+// resolveAgentBinary 按平台/架构解析 agent 二进制路径。
+// 查找顺序：{dir}/opsmesh-agent-{os}-{arch} → {dir}/opsmesh-agent → 当前进程二进制。
+// 返回空字符串表示未找到。
+func (g *Gateway) resolveAgentBinary(osName, arch string) string {
+	if g.agentBinDir != "" {
+		// 优先：按平台/架构命名（opsmesh-agent-linux-amd64）
+		named := fmt.Sprintf("%s/opsmesh-agent-%s-%s", g.agentBinDir, osName, arch)
+		if fileExists(named) {
+			return named
+		}
+		// 回退：通用名（不区分平台/架构，单二进制部署）
+		generic := g.agentBinDir + "/opsmesh-agent"
+		if fileExists(generic) {
+			return generic
+		}
+	}
+	// 最终回退：当前进程二进制（与 controlplane 同语义，仅开发/单机）
+	if exe, err := os.Executable(); err == nil && fileExists(exe) {
+		return exe
+	}
+	return ""
+}
+
+// fileExists 检查文件存在且非目录。
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
+}
 
 // handleInstallSh 处理 GET /install.sh：下发 agent 自举安装脚本（D3-d）。
 // 脚本由 provision.InstallScript 生成（模板与 controlplane 同源）；
