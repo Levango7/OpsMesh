@@ -1,6 +1,6 @@
 # TD-60 双轨 API 一致性对比报告
 
-> 生成时间：2026-09-17（初版）｜最近更新：2026-09-18（本轮修复后重新评分）
+> 生成时间：2026-09-17（初版）｜最近更新：2026-09-19（M5 增强能力补齐后重新评分）
 > 对比范围：controlplane（单体）vs task-svc / device-svc / auth-svc（三域微服务）
 > 阶段：TD-60 阶段 2 A-2 完成后，切流前的 API 一致性体检
 > 分析依据：
@@ -13,14 +13,14 @@
 
 | 域 | controlplane 端点数 | 微服务端点数 | 匹配 | 仅 controlplane | 仅微服务 | 一致性 |
 |---|---|---|---|---|---|---|
-| task  | 15 (HTTP) | 22 (gRPC 方法) + 3 (HTTP 运维) + 7 (HTTP 业务网关，本轮新增) | 12 (语义对齐) | 3 | 13 | 80.0% |
-| device | 10 (HTTP) | 21 (HTTP) | 9 (路径对齐) | 1 | 15 | 90.0% |
+| task  | 15 (HTTP) | 22 (gRPC 方法) + 3 (HTTP 运维) + 17 (HTTP 业务网关，含 M5 增强) | 15 (全对齐) | 0 | 17 | 100.0% |
+| device | 10 (HTTP) | 21 (HTTP) | 10 (路径对齐) | 0 | 15 | 100.0% |
 | auth  | 15 (HTTP) | 15 (HTTP，含本轮补齐的 2 个 PUT) | 15 (路径对齐) | 0 | 0 | 100.0% |
 
 > 说明：
-> - **task 域**：本轮已补齐 HTTP 业务网关（`/api/v1/tasks`、`/api/v1/tasks/{id}/cancel` 等 7 个 REST 端点），前端可直接调用 task-svc HTTP。task-svc 的 gRPC 对齐的是 controlplane 的 gRPC 通道（agent 侧 ClaimTask/ReportResult），HTTP 网关对齐的是 controlplane 的 HTTP B/S 通道。仍缺 batch-exec/canary/approval/schedules pause-resume 等 3 类增强能力。
-> - **device 域**：device-svc 已实现 HTTP 网关，路径前缀与 controlplane 完全一致（`/api/v1/devices` 等）。本轮已补齐 `POST /api/v1/devices/{id}/provision`、`GET /api/v1/devices/{id}/metrics`、`GET /api/v1/devices/{id}` 聚合响应三个 P0 端点。仅剩 DELETE 语义差异（controlplane 软删除 vs device-svc 硬删除）。
-> - **auth 域**：auth-svc HTTP 网关路径与 controlplane 逐字对齐，匹配率最高。本轮已补齐 `PUT /api/v1/users/{id}` 和 `PUT /api/v1/roles/{id}` 两个 PUT 端点，并对齐 user:approve 权限、Redis 连接、管理路由鉴权，达成 15/15 全匹配。
+> - **task 域**：已补齐全部 HTTP 业务网关（核心 CRUD + cancel/result/approve/reject + schedules CRUD + pause/resume + M5 增强 batch-exec/canary/approval），前端可直接调用 task-svc HTTP。task-svc 的 gRPC 对齐的是 controlplane 的 gRPC 通道（agent 侧 ClaimTask/ReportResult），HTTP 网关对齐的是 controlplane 的 HTTP B/S 通道。M5 三类增强能力（batch-exec/canary/approval）和 schedules pause/resume 已全部补齐，达成 15/15 全匹配。
+> - **device 域**：device-svc 已实现 HTTP 网关，路径前缀与 controlplane 完全一致（`/api/v1/devices` 等）。已补齐 `POST /api/v1/devices/{id}/provision`、`GET /api/v1/devices/{id}/metrics`、`GET /api/v1/devices/{id}` 聚合响应三个 P0 端点。DELETE 语义已对齐（controlplane 软删除 vs device-svc 软删除 Retired=true，commit 8c5b4ca），达成 10/10 全匹配。
+> - **auth 域**：auth-svc HTTP 网关路径与 controlplane 逐字对齐，匹配率最高。已补齐 `PUT /api/v1/users/{id}` 和 `PUT /api/v1/roles/{id}` 两个 PUT 端点，并对齐 user:approve 权限、Redis 连接、管理路由鉴权，达成 15/15 全匹配。
 > - 一致性 = 匹配数 / controlplane 端点数（以 controlplane 为基准，衡量切流后前端可无感迁移的比例）。
 
 ---
