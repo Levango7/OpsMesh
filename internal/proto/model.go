@@ -180,6 +180,8 @@ type Task struct {
 	ApprovalRequired bool      `json:"approvalRequired"`
 	ApprovedBy       string    `json:"approvedBy"`
 	ApprovedAt       time.Time `json:"approvedAt"`
+	// BatchID 批量任务分组标识（批量下发时同一批次的任务共享同一 batch_id）。
+	BatchID string `json:"batchID,omitempty"`
 }
 
 // AuditEvent 内核产出的审计事件（等保三级：操作 100% 留痕）。

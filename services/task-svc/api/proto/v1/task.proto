@@ -92,6 +92,7 @@ message Task {
   string approved_by = 22;
   google.protobuf.Timestamp approved_at = 23;
   string batch_id = 24;
+  google.protobuf.Timestamp last_fired_at = 25;
 }
 
 // TaskResult 任务执行结果。

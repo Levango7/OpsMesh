@@ -23,7 +23,7 @@ const taskProtoRelPath = "../../services/task-svc/api/proto/v1/task.proto"
 
 // expectedTaskFields 是 Task 定义的期望字段数（手工维护）。
 // 当任一侧 Task 增删字段时，须同步更新此值 + 两份定义。
-const expectedTaskFields = 24
+const expectedTaskFields = 25
 
 // TestTaskSchemaFieldCountConsistency 校验 model.go Task struct 与 task.proto Task message
 // 的字段数一致，且与硬编码期望值一致。双重守门：
