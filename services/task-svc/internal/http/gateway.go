@@ -173,7 +173,10 @@ func (g *Gateway) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	for _, t := range resp.Tasks {
 		out = append(out, taskToResponse(t))
 	}
-	// 无分页时返回裸数组（对齐 controlplane server_tasks.go:239）。
+	// task-svc 列表只支持 limit 截断（裸数组响应），不支持 page/pageSize 分页。
+	// controlplane 在 page>0 时返回 PaginateResult{Data,Total,Page,PageSize,HasMore} 分页结构。
+	// 双轨期前端不传 page 参数请求 task-svc（前端 tasks.js 仅传 limit），此差异不影响切流。
+	// 若后续需对齐分页，引入 internal/controlplane/paginate 包并解析 page/pageSize 参数。
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -472,6 +475,10 @@ func (g *Gateway) handleScheduleRouting(w http.ResponseWriter, r *http.Request) 
 
 // ============ 响应 DTO（camelCase JSON 对齐 controlplane） ============
 
+// taskResponse 是 Task 的 HTTP DTO。相比 model.go Task（25 字段），故意不暴露 LastFiredAt：
+// LastFiredAt 是调度内部状态（上次触发时间），不应暴露给 API 客户端。
+// controlplane 用 model.go Task 直接序列化暴露了 lastFiredAt 属于过度暴露，task-svc 的做法更合理。
+//
 // taskResponse 对齐 controlplane proto.Task 的 json tag（camelCase）。
 type taskResponse struct {
 	TaskID           string    `json:"taskID"`
@@ -497,7 +504,7 @@ type taskResponse struct {
 	ApprovalRequired bool      `json:"approvalRequired"`
 	ApprovedBy       string    `json:"approvedBy"`
 	ApprovedAt       time.Time `json:"approvedAt"`
-	BatchID          string    `json:"batchID"`
+	BatchID          string    `json:"batchID,omitempty"`
 }
 
 func taskToResponse(t *taskv1.Task) taskResponse {

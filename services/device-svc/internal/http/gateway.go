@@ -106,11 +106,16 @@ func (g *Gateway) handleDevices(w http.ResponseWriter, r *http.Request) {
 		limit, _ := strconv.Atoi(q.Get("limit"))
 		devs := g.devices.ListDevices(q.Get("tenantID"), q.Get("status"), q.Get("group"), limit)
 		// 响应格式对齐 controlplane GET /api/v1/devices：按 segment 分组返回
-		// map[segment][]DeviceInfo（无分页时）。device-svc 的 models.Device 无 Segment
-		// 字段，采用语义最接近的 Group 字段作为分桶键（Group 即设备分组/网段归属）。
+		// map[segment][]DeviceInfo（无分页时）。
+		// device-svc 的 Device.Group 在语义上等价于 controlplane 的 segment
+		// （两者都表示设备分组/网段归属，device-svc 用 Group 命名，controlplane 用 segment 命名）。
+		// 此处用 Group 作分桶键对齐 controlplane 的 map[segment][]Device 响应格式。
 		// Group 为空的设备归入 "" 桶，与 controlplane snap 的空 segment 行为一致。
 		snap := make(map[string][]*models.Device, len(devs))
 		for _, d := range devs {
+			if d == nil { // ListDevices 返回 []*Device（指针切片），防御 nil 元素
+				continue
+			}
 			snap[d.Group] = append(snap[d.Group], d)
 		}
 		writeJSON(w, http.StatusOK, snap)
@@ -375,16 +380,33 @@ func (g *Gateway) handleAgents(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		q := r.URL.Query()
 		limit, _ := strconv.Atoi(q.Get("limit"))
-		agents := g.agents.ListAgents(q.Get("tenantID"), q.Get("status"), limit)
+		tenantID := q.Get("tenantID")
+		agents := g.agents.ListAgents(tenantID, q.Get("status"), limit)
 		// 响应格式对齐 controlplane GET /api/v1/agents：返回裸数组
 		// [{agentID, hostname, segment, status}]，每个元素只含 4 个 string 字段。
-		// device-svc 的 models.Agent 无 Segment 字段，置空字符串保持契约形状一致。
+		// device-svc 的 models.Agent 无 Segment 字段，从关联 Device 的 Group 推导
+		// （Agent.DeviceID → Device.Group，Group 语义等价于 controlplane segment）。
+		// 获取设备列表用于推导 segment（Agent.DeviceID → Device.Group）
+		devs := g.devices.ListDevices(tenantID, "", "", 0)
+		deviceSegment := make(map[string]string, len(devs))
+		for _, d := range devs {
+			if d == nil { // ListDevices 返回 []*Device（指针切片），防御 nil 元素
+				continue
+			}
+			deviceSegment[d.ID] = d.Group
+		}
+
 		out := make([]map[string]string, 0, len(agents))
 		for _, a := range agents {
+			if a == nil { // ListAgents 返回 []*Agent（指针切片），防御 nil 元素
+				continue
+			}
+			// segment 从关联 Device 的 Group 推导（device-svc Agent 无 Segment 字段）
+			seg := deviceSegment[a.DeviceID]
 			out = append(out, map[string]string{
 				"agentID":  a.ID,
 				"hostname": a.Hostname,
-				"segment":  "",
+				"segment":  seg,
 				"status":   a.Status,
 			})
 		}

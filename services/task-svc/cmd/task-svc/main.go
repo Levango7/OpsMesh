@@ -168,8 +168,11 @@ func main() {
 				t.Status = "pending"
 				t.ClaimedAt = time.Time{}
 				t.ClaimedBy = ""
-				ts.UpdateTask(t)
-				reclaimed++
+				if ts.UpdateTask(t) {
+					reclaimed++
+				} else {
+					log.Printf("[reclaim] UpdateTask failed for task %s", t.TaskID)
+				}
 			}
 			return reclaimed
 		}
@@ -188,8 +191,11 @@ func main() {
 					continue
 				}
 				t.LastFiredAt = now
-				ts.UpdateTask(t)
-				fired++
+				if ts.UpdateTask(t) {
+					fired++
+				} else {
+					log.Printf("[fire] UpdateTask failed for task %s", t.TaskID)
+				}
 			}
 			return fired
 		}

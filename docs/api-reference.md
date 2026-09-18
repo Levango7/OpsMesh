@@ -1264,6 +1264,22 @@ M3 部署中心：计划 + fan-out 执行 + Reconcile + Rollback。
 
 - **响应**：`200 OK`，`{"message": "回滚已触发", "rollback_id": "dp-001-rb"}`
 
+### POST /api/v1/deploys/{id}/execute
+
+执行指定部署。
+
+### POST /api/v1/deploys/{id}/promote
+
+灰度晋级，将部署从当前阶段推进到下一阶段。
+
+### POST /api/v1/deploys/{id}/auto-advance
+
+启用灰度自动推进。
+
+### GET /api/v1/deploys/{id}/auto-advance/status
+
+查询灰度自动推进状态。
+
 ### GET /api/v1/deploys/federation
 
 列出联邦发布计划（多集群联邦发布，复用 deployMux）。
@@ -1555,9 +1571,9 @@ M5 作业编排：DAG 创建 / 触发 / 状态查询。
 
 工作流详情。
 
-### POST /api/v1/workflows/{id}/trigger
+### POST /api/v1/workflows/{id}/run
 
-手动触发工作流执行。
+运行工作流。
 
 - **响应**：`200 OK`，`{"run_id": "run-001", "status": "running"}`
 
@@ -4613,6 +4629,62 @@ Phase 3 审计查询：事件检索与导出（与 `GET /api/v1/audits` 互补�
   {"id": "au-001", "tenantID": "t1", "userID": "u-001", "action": "ticket_create", "target": "tk-001", "timestamp": "2026-08-17T09:00:00Z"}
 ]
 ```
+
+---
+
+## 微服务代理域
+
+以下 API 端点通过 controlplane 的 service_proxy 反向代理转发到独立微服务进程。
+前端通过 baseURL=/api/v1 调用，controlplane 按前缀匹配并代理转发。
+
+### GPU 管理（代理到 gpu-svc）
+
+- `GET /api/v1/gpu/metrics` — GPU 监控指标
+- `GET /api/v1/gpu/models` — GPU 型号列表
+- `GET /api/v1/gpu/models/{id}` — GPU 型号详情
+- `GET /api/v1/gpu/nodes` — GPU 节点列表
+- `GET /api/v1/gpu/quotas` — GPU 配额
+- `GET /api/v1/gpu/workloads` — GPU 工作负载列表
+- `GET /api/v1/gpu/workloads/{id}` — GPU 工作负载详情
+
+### 事件管理（代理到 incident-svc）
+
+- `GET /api/v1/incidents` — 事件列表
+- `GET /api/v1/incidents/metrics` — 事件统计指标
+- `GET /api/v1/incidents/{id}` — 事件详情
+- `GET /api/v1/incidents/{id}/timeline` — 事件时间线
+- `GET /api/v1/incidents/{id}/postmortem` — 事件复盘
+
+### Runbook（代理到 runbook-svc）
+
+- `GET /api/v1/runbooks` — Runbook 列表
+- `GET /api/v1/runbooks/{id}` — Runbook 详情
+- `POST /api/v1/runbooks/{id}/execute` — 执行 Runbook
+- `GET /api/v1/runbooks/{id}/executions` — Runbook 执行历史
+- `GET /api/v1/runbooks/{id}/executions/{execId}/logs` — 执行日志
+
+### 自动扩缩容（代理到 autoscaler-svc）
+
+- `GET /api/v1/autoscaler/rules` — 扩缩容规则列表
+- `GET /api/v1/autoscaler/rules/{id}` — 扩缩容规则详情
+- `POST /api/v1/autoscaler/scale` — 手动扩缩容
+- `GET /api/v1/autoscaler/decisions` — 扩缩容决策历史
+- `GET /api/v1/autoscaler/cooldowns` — 冷却期列表
+
+### 门户（代理到 portal-svc）
+
+- `GET /api/v1/portal/approvals` — 门户审批列表
+- `POST /api/v1/portal/approvals/{id}/approve` — 批准门户审批
+- `POST /api/v1/portal/approvals/{id}/reject` — 驳回门户审批
+- `GET /api/v1/portal/cost` — 门户成本分析
+- `GET /api/v1/portal/requests` — 门户请求列表
+
+### Bot（直接注册）
+
+- `POST /api/v1/bot/command` — 执行 Bot 命令
+- `GET /api/v1/bot/history` — Bot 命令历史
+- `GET /api/v1/bot/platforms` — Bot 平台列表
+- `GET /api/v1/bot/quick-commands` — Bot 快捷命令列表
 
 ---
 
