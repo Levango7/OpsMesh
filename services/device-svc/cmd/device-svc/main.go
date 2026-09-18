@@ -22,7 +22,6 @@ import (
 	"github.com/Levango7/OpsMesh/pkg/trace"
 	devicev1 "github.com/Levango7/OpsMesh/services/device-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/catalog"
-	"github.com/Levango7/OpsMesh/services/device-svc/internal/gpu"
 	httpgw "github.com/Levango7/OpsMesh/services/device-svc/internal/http"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/server"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/service"
@@ -126,9 +125,6 @@ func main() {
 	cat := catalog.NewCatalog()
 	seedCatalog(cat)
 
-	gpuDetector := gpu.NewDetector()
-	seedGPUs(gpuDetector)
-
 	mux := http.NewServeMux()
 
 	// P0 HTTP 网关：devices/agents/cmdb/discovery 的 REST 端点（直连 store 层）。
@@ -183,27 +179,8 @@ func main() {
 		writeJSON(w, http.StatusOK, impact)
 	})
 
-	mux.HandleFunc("/api/v1/devices/gpus/stats", func(w http.ResponseWriter, r *http.Request) {
-		stats := gpuDetector.GetGPUStats()
-		writeJSON(w, http.StatusOK, stats)
-	})
-	mux.HandleFunc("/api/v1/devices/gpu/", func(w http.ResponseWriter, r *http.Request) {
-		gpuID := r.URL.Path[len("/api/v1/devices/gpu/"):]
-		g, err := gpuDetector.GetGPUInfo(gpuID)
-		if err != nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, g)
-	})
-	mux.HandleFunc("/api/v1/devices/gpus", func(w http.ResponseWriter, r *http.Request) {
-		nodeID := r.URL.Query().Get("nodeID")
-		gpus := gpuDetector.ListGPUs(nodeID)
-		writeJSON(w, http.StatusOK, gpus)
-	})
 	// NOTE: /api/v1/devices/ catch-all 已由 gateway.RegisterRoutes 注册
 	// （handleDeviceDetail 处理 {id}/heartbeat|status|provision|metrics + CRUD）。
-	// /{id}/gpu 子路径由上方 /api/v1/devices/gpu/ 独立路由处理。
 
 	var handler http.Handler = mux
 	handler = metrics.HTTPMiddleware(handler)
@@ -273,9 +250,4 @@ func seedCatalog(c *catalog.Catalog) {
 	c.AddNode(&catalog.CatalogNode{ID: "db-001", Name: "postgres-main", Type: "database", Status: "online", Metadata: map[string]string{"tenantID": "default"}})
 	c.AddEdge(&catalog.CatalogEdge{From: "svc-001", To: "host-001", RelationType: "runs_on"})
 	c.AddEdge(&catalog.CatalogEdge{From: "svc-001", To: "db-001", RelationType: "depends_on"})
-}
-
-func seedGPUs(d *gpu.Detector) {
-	d.DetectGPUs("host-001")
-	d.DetectGPUs("host-002")
 }
