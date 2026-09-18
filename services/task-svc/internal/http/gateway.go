@@ -433,51 +433,107 @@ func (g *Gateway) handleCreateSchedule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, scheduleToResponse(created))
 }
 
-// handleScheduleRouting 处理 /api/v1/schedules/{id}：GET / PUT / DELETE。
+// handleScheduleRouting 处理 /api/v1/schedules/{id}[/pause|/resume]：GET / PUT / DELETE / POST pause / POST resume。
+// 对齐 controlplane server_schedules.go handleScheduleRouting。
 func (g *Gateway) handleScheduleRouting(w http.ResponseWriter, r *http.Request) {
 	idAndRest := strings.TrimPrefix(r.URL.Path, "/api/v1/schedules/")
 	parts := strings.SplitN(idAndRest, "/", 2)
 	id := parts[0]
-	if id == "" || len(parts) > 1 {
-		writeError(w, http.StatusNotFound, "not found")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "schedule id required")
 		return
 	}
 	if _, err := g.extractAuth(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
-	switch r.Method {
-	case http.MethodGet:
-		sched, err := g.svc.GetSchedule(r.Context(), &taskv1.GetScheduleRequest{Id: id})
-		if err != nil {
-			writeServiceError(w, err)
-			return
+	// 无子路径：/api/v1/schedules/{id}
+	if len(parts) == 1 {
+		switch r.Method {
+		case http.MethodGet:
+			sched, err := g.svc.GetSchedule(r.Context(), &taskv1.GetScheduleRequest{Id: id})
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, scheduleToResponse(sched))
+		case http.MethodPut:
+			var body scheduleResponse
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+				return
+			}
+			body.ID = id // 路径 id 优先，防 body 覆盖
+			updated, err := g.svc.UpdateSchedule(r.Context(), &taskv1.UpdateScheduleRequest{
+				Schedule: responseToScheduleProto(&body),
+			})
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, scheduleToResponse(updated))
+		case http.MethodDelete:
+			if err := g.svc.DeleteSchedule(r.Context(), &taskv1.DeleteScheduleRequest{Id: id}); err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
-		writeJSON(w, http.StatusOK, scheduleToResponse(sched))
-	case http.MethodPut:
-		var body scheduleResponse
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-			return
-		}
-		body.ID = id // 路径 id 优先，防 body 覆盖
-		updated, err := g.svc.UpdateSchedule(r.Context(), &taskv1.UpdateScheduleRequest{
-			Schedule: responseToScheduleProto(&body),
-		})
-		if err != nil {
-			writeServiceError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, scheduleToResponse(updated))
-	case http.MethodDelete:
-		if err := g.svc.DeleteSchedule(r.Context(), &taskv1.DeleteScheduleRequest{Id: id}); err != nil {
-			writeServiceError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
 	}
+	// 有子路径：/api/v1/schedules/{id}/pause 或 /api/v1/schedules/{id}/resume
+	switch parts[1] {
+	case "pause":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		g.handleSchedulePause(w, r, id)
+	case "resume":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		g.handleScheduleResume(w, r, id)
+	default:
+		writeError(w, http.StatusNotFound, "not found")
+	}
+}
+
+// handleSchedulePause 处理 POST /api/v1/schedules/{id}/pause — 暂停定时任务。
+// 对齐 controlplane schedulePause：设置 Enabled=false 并返回更新后的 schedule。
+func (g *Gateway) handleSchedulePause(w http.ResponseWriter, r *http.Request, id string) {
+	sched, err := g.svc.GetSchedule(r.Context(), &taskv1.GetScheduleRequest{Id: id})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	sched.Enabled = false
+	updated, err := g.svc.UpdateSchedule(r.Context(), &taskv1.UpdateScheduleRequest{Schedule: sched})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, scheduleToResponse(updated))
+}
+
+// handleScheduleResume 处理 POST /api/v1/schedules/{id}/resume — 恢复定时任务。
+// 对齐 controlplane scheduleResume：设置 Enabled=true 并返回更新后的 schedule。
+func (g *Gateway) handleScheduleResume(w http.ResponseWriter, r *http.Request, id string) {
+	sched, err := g.svc.GetSchedule(r.Context(), &taskv1.GetScheduleRequest{Id: id})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	sched.Enabled = true
+	updated, err := g.svc.UpdateSchedule(r.Context(), &taskv1.UpdateScheduleRequest{Schedule: sched})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, scheduleToResponse(updated))
 }
 
 // ============ 响应 DTO（camelCase JSON 对齐 controlplane） ============
