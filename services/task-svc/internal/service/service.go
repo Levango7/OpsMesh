@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +36,7 @@ type Service struct {
 	scheduleStore store.ScheduleStore
 	resultStore   store.ResultStore
 	batchStore    store.BatchStore
+	canaryStore   store.CanaryStore // 灰度发布内存索引（可选注入，nil 时 canary API 返回 503）
 	breaker       *circuit.Breaker
 	// 事件总线/审计/SSE 桥接（A-2 阶段：可选注入，nil 时跳过发射，向后兼容）。
 	bus       events.EventBus
@@ -72,6 +76,12 @@ func (s *Service) SetAuditSink(sink events.AuditSink) {
 // 测试/单机可不注入或注入 StubSSEBridge（日志记录）。
 func (s *Service) SetSSEBridge(bridge events.SSEBridge) {
 	s.sseBridge = bridge
+}
+
+// SetCanaryStore 注入灰度发布存储（可选：nil 时 canary API 返回 503，向后兼容）。
+// 生产环境由 main 注入 MemoryStore（同进程内存索引），与 controlplane batchStore.canaries 对齐。
+func (s *Service) SetCanaryStore(cs store.CanaryStore) {
+	s.canaryStore = cs
 }
 
 // emitAudit 发射审计事件 + 事件总线事件 + SSE 桥接（A-2 阶段统一 helper）。
@@ -647,4 +657,250 @@ func batchToProto(b *models.BatchTask) *taskv1.BatchTask {
 		Status:       b.Status,
 		CreatedAt:    timestamppb.New(b.CreatedAt),
 	}
+}
+
+// ============================================================================
+// 灰度发布（canary）— 对齐 controlplane server_batch.go L265-615
+//
+// task-svc 不管理 agent/device，直接为每个 deviceID 创建任务（无需 lookupAgent 检查）。
+// 灰度状态仅内存索引（重启后丢失），任务实例本身持久化在 taskStore 中。
+// ============================================================================
+
+// Canary 相关错误。
+var (
+	ErrCanaryNotFound          = errors.New("canary not found")
+	ErrCanaryStoreNotAvailable = errors.New("canary store not available")
+	ErrCanaryNoPendingPhase    = errors.New("no pending phase to advance")
+)
+
+// CanaryCreateRequest 灰度发布创建请求（service 层 DTO，不经 proto）。
+type CanaryCreateRequest struct {
+	DeviceIDs  []string
+	TaskType   string
+	Command    string
+	Content    string
+	Path       string
+	Strategy   string // percentage/group/label
+	Percentage int    // strategy=percentage 时有效
+	Groups     []string
+	Labels     map[string]string
+	TenantID   string
+	UserID     string
+}
+
+// genCanaryID 生成灰度 ID（canary-<8 字节 hex>）。
+func genCanaryID() string {
+	var b [8]byte
+	// crypto/rand 失败仅见于系统熵源故障的极端环境：占位 ID 保持非空可用。
+	if _, err := rand.Read(b[:]); err != nil {
+		log.Printf("[task-svc] genCanaryID: crypto/rand 读取失败（使用零值占位 ID）: %v", err)
+	}
+	return "canary-" + hex.EncodeToString(b[:])
+}
+
+// planCanaryPhases 按策略划分灰度阶段（对齐 controlplane planCanaryPhases）。
+func planCanaryPhases(devices []string, strategy string, percentage int, groups []string, labels map[string]string) []models.CanaryPhase {
+	switch strategy {
+	case "percentage":
+		// 按比例分两阶段：第一阶段 percentage%，第二阶段剩余。
+		if percentage <= 0 {
+			percentage = 10
+		}
+		if percentage > 100 {
+			percentage = 100
+		}
+		n := len(devices) * percentage / 100
+		if n < 1 && len(devices) > 0 {
+			n = 1
+		}
+		phases := []models.CanaryPhase{
+			{Phase: 1, DeviceIDs: append([]string(nil), devices[:n]...), Status: "pending"},
+		}
+		if n < len(devices) {
+			phases = append(phases, models.CanaryPhase{
+				Phase: 2, DeviceIDs: append([]string(nil), devices[n:]...), Status: "pending",
+			})
+		}
+		return phases
+	case "group":
+		// 按分组多阶段：每个分组一阶段。
+		// 简化实现：分组仅作为标签，实际设备划分由调用方在 deviceIDs 中已指定；
+		// 这里按 groups 数量等分 deviceIDs。
+		nGroups := len(groups)
+		if nGroups == 0 {
+			nGroups = 1
+		}
+		phases := make([]models.CanaryPhase, nGroups)
+		chunkSize := (len(devices) + nGroups - 1) / nGroups
+		for i := 0; i < nGroups; i++ {
+			start := i * chunkSize
+			end := start + chunkSize
+			if start > len(devices) {
+				start = len(devices)
+			}
+			if end > len(devices) {
+				end = len(devices)
+			}
+			phases[i] = models.CanaryPhase{
+				Phase:     i + 1,
+				DeviceIDs: append([]string(nil), devices[start:end]...),
+				Status:    "pending",
+			}
+		}
+		return phases
+	case "label":
+		// 按标签单阶段（标签筛选由调用方在 deviceIDs 中已完成）。
+		return []models.CanaryPhase{{Phase: 1, DeviceIDs: append([]string(nil), devices...), Status: "pending"}}
+	}
+	return []models.CanaryPhase{{Phase: 1, DeviceIDs: append([]string(nil), devices...), Status: "pending"}}
+}
+
+// execCanaryPhase 执行灰度的某一阶段：为每个设备下发任务。
+// task-svc 不管理 agent/device，直接为每个 deviceID 创建任务（无需 lookupAgent 检查）。
+func (s *Service) execCanaryPhase(ctx context.Context, canary *models.CanaryRelease, phase *models.CanaryPhase,
+	taskType, command, content, path, tenantID, userID string) {
+	phase.StartedAt = time.Now()
+	phase.Status = "running"
+	phase.Tasks = make([]models.BatchTaskItem, 0, len(phase.DeviceIDs))
+	for _, devID := range phase.DeviceIDs {
+		task := &models.Task{
+			TaskID:   uuid.New().String(),
+			AgentID:  devID,
+			TenantID: tenantID,
+			Type:     taskType,
+			Command:  command,
+			Content:  content,
+			Path:     path,
+			Status:   models.TaskStatusPending,
+		}
+		if task.Type == "" {
+			task.Type = models.TaskTypeShell
+		}
+		if task.MaxRetries == 0 {
+			task.MaxRetries = 3
+		}
+		created, err := s.taskStore.CreateTask(task)
+		if err != nil {
+			phase.Tasks = append(phase.Tasks, models.BatchTaskItem{
+				DeviceID: devID, Status: "failed", Error: err.Error(),
+			})
+			continue
+		}
+		phase.Tasks = append(phase.Tasks, models.BatchTaskItem{
+			DeviceID: devID, TaskID: created.TaskID, Status: created.Status,
+		})
+		// 审计 + 事件总线 + SSE（对齐 controlplane 三连发模式）
+		s.emitAudit(ctx, tenantID, userID, "canary_exec", created.TaskID,
+			fmt.Sprintf("canary:%s:phase%d", canary.CanaryID, phase.Phase),
+			events.LevelInfo, map[string]string{
+				"taskID":  created.TaskID,
+				"status":  created.Status,
+				"agentID": devID,
+			})
+	}
+}
+
+// CreateCanary 创建灰度发布，按策略划分阶段，执行第一阶段。
+func (s *Service) CreateCanary(ctx context.Context, req *CanaryCreateRequest) (*models.CanaryRelease, error) {
+	if s.canaryStore == nil {
+		return nil, ErrCanaryStoreNotAvailable
+	}
+	if len(req.DeviceIDs) == 0 {
+		return nil, fmt.Errorf("%w: deviceIDs is required", ErrTaskInvalid)
+	}
+	if req.Command == "" {
+		return nil, fmt.Errorf("%w: command is required", ErrTaskInvalid)
+	}
+	taskType := req.TaskType
+	if taskType == "" {
+		taskType = models.TaskTypeShell
+	}
+	// shell 类型命令校验（对齐 controlplane validateCommand）
+	if taskType == models.TaskTypeShell {
+		if err := ValidateCommand(req.Command); err != nil {
+			return nil, fmt.Errorf("%w: command validation failed: %v", ErrTaskInvalid, err)
+		}
+	}
+	switch req.Strategy {
+	case "percentage", "group", "label":
+	default:
+		return nil, fmt.Errorf("%w: strategy must be percentage/group/label", ErrTaskInvalid)
+	}
+
+	canaryID := genCanaryID()
+	phases := planCanaryPhases(req.DeviceIDs, req.Strategy, req.Percentage, req.Groups, req.Labels)
+
+	now := time.Now()
+	canary := &models.CanaryRelease{
+		CanaryID:   canaryID,
+		TenantID:   req.TenantID,
+		TaskType:   taskType,
+		Command:    req.Command,
+		Strategy:   req.Strategy,
+		Percentage: req.Percentage,
+		Groups:     req.Groups,
+		Labels:     req.Labels,
+		CreatedAt:  now,
+		CreatedBy:  req.UserID,
+		Phases:     phases,
+	}
+
+	// 立即执行第一阶段，其余阶段标记 pending（需手动推进）。
+	if len(phases) > 0 {
+		s.execCanaryPhase(ctx, canary, &canary.Phases[0], taskType, req.Command, req.Content, req.Path, req.TenantID, req.UserID)
+	}
+
+	s.canaryStore.CreateCanary(canary)
+	return canary, nil
+}
+
+// GetCanaryStatus 查询灰度发布状态（实时刷新每阶段任务状态）。
+func (s *Service) GetCanaryStatus(ctx context.Context, canaryID, tenantID string) (*models.CanaryRelease, error) {
+	if s.canaryStore == nil {
+		return nil, ErrCanaryStoreNotAvailable
+	}
+	canary := s.canaryStore.GetCanary(canaryID)
+	if canary == nil {
+		return nil, ErrCanaryNotFound
+	}
+	if tenantID != "" && canary.TenantID != tenantID {
+		return nil, ErrCanaryNotFound
+	}
+	// 实时刷新每阶段每个任务的状态（对齐 controlplane handleCanaryStatus 刷新逻辑）。
+	for i := range canary.Phases {
+		for j := range canary.Phases[i].Tasks {
+			taskID := canary.Phases[i].Tasks[j].TaskID
+			if taskID == "" {
+				continue
+			}
+			t := s.taskStore.GetTask(taskID)
+			if t != nil {
+				canary.Phases[i].Tasks[j].Status = t.Status
+			}
+		}
+	}
+	return canary, nil
+}
+
+// AdvanceCanary 推进灰度发布到下一阶段。
+func (s *Service) AdvanceCanary(ctx context.Context, canaryID, tenantID, userID string) (*models.CanaryRelease, error) {
+	if s.canaryStore == nil {
+		return nil, ErrCanaryStoreNotAvailable
+	}
+	canary := s.canaryStore.GetCanary(canaryID)
+	if canary == nil {
+		return nil, ErrCanaryNotFound
+	}
+	if tenantID != "" && canary.TenantID != tenantID {
+		return nil, ErrCanaryNotFound
+	}
+	// 找到下一个 pending 阶段并执行。
+	for i := range canary.Phases {
+		if canary.Phases[i].Status == "pending" {
+			s.execCanaryPhase(ctx, canary, &canary.Phases[i], canary.TaskType, canary.Command, "", "", canary.TenantID, userID)
+			s.canaryStore.UpdateCanary(canary)
+			return canary, nil
+		}
+	}
+	return nil, ErrCanaryNoPendingPhase
 }

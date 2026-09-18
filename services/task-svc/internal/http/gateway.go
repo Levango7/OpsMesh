@@ -22,6 +22,7 @@ import (
 	"github.com/Levango7/OpsMesh/pkg/auth"
 	"github.com/Levango7/OpsMesh/pkg/tenant"
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
+	"github.com/Levango7/OpsMesh/services/task-svc/internal/approval"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/service"
 )
 
@@ -38,8 +39,9 @@ var (
 
 // Gateway 持有 HTTP handler 依赖的 service 引用。
 type Gateway struct {
-	svc       *service.Service
-	jwtSecret string // JWT 验签密钥（空=不校验 token，仅从头/context 提取租户）
+	svc            *service.Service
+	jwtSecret      string           // JWT 验签密钥（空=不校验 token，仅从头/context 提取租户）
+	approvalEngine *approval.Engine // 审批引擎实例（由 SetApprovalEngine 注入）
 }
 
 // NewGateway 构造 Gateway 实例。
@@ -57,6 +59,11 @@ func (g *Gateway) RegisterRoutes(mux *http.ServeMux) {
 	// 定时任务
 	mux.HandleFunc("/api/v1/schedules", g.handleSchedules)        // GET 列表 / POST 创建
 	mux.HandleFunc("/api/v1/schedules/", g.handleScheduleRouting) // {id} GET/PUT/DELETE
+
+	// M5 增强：批量运维/灰度发布 + 审批 API（对齐 controlplane server_lifecycle.go L137-152）
+	g.RegisterBatchRoutes(mux)    // /api/v1/tasks/batch-exec, /api/v1/tasks/batch/{id}
+	g.RegisterCanaryRoutes(mux)   // /api/v1/tasks/canary[/{id}|/{id}/advance]
+	g.RegisterApprovalRoutes(mux) // /api/v1/approval/{flows,requests,pending}
 }
 
 // ============ 认证 / 租户提取 ============

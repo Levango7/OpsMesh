@@ -112,3 +112,40 @@ type TaskLog struct {
 	TaskID string
 	Logs   []LogLine
 }
+
+// ============================================================================
+// 灰度发布（canary）模型 — 对齐 controlplane server_batch.go L36-79
+// ============================================================================
+
+// BatchTaskItem 批量中单设备任务状态。
+type BatchTaskItem struct {
+	DeviceID string `json:"deviceID"`
+	TaskID   string `json:"taskID"`
+	Status   string `json:"status"`
+	Error    string `json:"error,omitempty"`
+}
+
+// CanaryRelease 灰度发布记录。
+type CanaryRelease struct {
+	CanaryID   string            // 灰度 ID
+	TenantID   string            // 租户
+	TaskType   string            // 任务类型
+	Command    string            // 命令
+	Strategy   string            // 策略：percentage/group/label
+	Percentage int               // 比例（strategy=percentage 时有效）
+	Groups     []string          // 分组（strategy=group 时有效）
+	Labels     map[string]string // 标签（strategy=label 时有效）
+	CreatedAt  time.Time
+	CreatedBy  string
+	Phases     []CanaryPhase // 各阶段执行情况
+}
+
+// CanaryPhase 灰度发布单阶段。
+type CanaryPhase struct {
+	Phase      int             // 阶段序号（1-based）
+	DeviceIDs  []string        // 本阶段设备
+	Status     string          // 阶段状态：pending/running/done/failed/aborted
+	Tasks      []BatchTaskItem // 本阶段每设备任务
+	StartedAt  time.Time
+	FinishedAt time.Time
+}

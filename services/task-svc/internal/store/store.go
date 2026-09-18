@@ -52,6 +52,14 @@ type BatchStore interface {
 	GetBatchTasks(batchID string) []string
 }
 
+// CanaryStore is the interface for canary release persistence (in-memory index).
+type CanaryStore interface {
+	CreateCanary(c *models.CanaryRelease) *models.CanaryRelease
+	GetCanary(canaryID string) *models.CanaryRelease
+	UpdateCanary(c *models.CanaryRelease)
+	ListCanaries(tenantID string) []*models.CanaryRelease
+}
+
 // MemoryStore is an in-memory implementation of all stores.
 type MemoryStore struct {
 	mu        sync.RWMutex
@@ -61,6 +69,7 @@ type MemoryStore struct {
 	schedules map[string]*models.Schedule
 	batches   map[string]*models.BatchTask
 	batchTask map[string][]string
+	canaries  map[string]*models.CanaryRelease
 }
 
 // NewMemoryStore creates a new MemoryStore.
@@ -72,6 +81,7 @@ func NewMemoryStore() *MemoryStore {
 		schedules: make(map[string]*models.Schedule),
 		batches:   make(map[string]*models.BatchTask),
 		batchTask: make(map[string][]string),
+		canaries:  make(map[string]*models.CanaryRelease),
 	}
 }
 
@@ -454,5 +464,55 @@ func (m *MemoryStore) GetBatchTasks(batchID string) []string {
 	}
 	out := make([]string, len(ids))
 	copy(out, ids)
+	return out
+}
+
+// ============================================================================
+// CanaryStore 实现（内存索引，对齐 controlplane batchStore.canaries）
+// ============================================================================
+
+// CreateCanary creates a canary release record.
+func (m *MemoryStore) CreateCanary(c *models.CanaryRelease) *models.CanaryRelease {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if c.CreatedAt.IsZero() {
+		c.CreatedAt = time.Now()
+	}
+	cp := *c
+	m.canaries[c.CanaryID] = &cp
+	return c
+}
+
+// GetCanary returns a canary release by ID.
+func (m *MemoryStore) GetCanary(canaryID string) *models.CanaryRelease {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	c, ok := m.canaries[canaryID]
+	if !ok {
+		return nil
+	}
+	cp := *c
+	return &cp
+}
+
+// UpdateCanary updates a canary release record.
+func (m *MemoryStore) UpdateCanary(c *models.CanaryRelease) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.canaries[c.CanaryID] = c
+}
+
+// ListCanaries returns canary releases, optionally filtered by tenant.
+func (m *MemoryStore) ListCanaries(tenantID string) []*models.CanaryRelease {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*models.CanaryRelease, 0, len(m.canaries))
+	for _, c := range m.canaries {
+		if tenantID != "" && c.TenantID != tenantID {
+			continue
+		}
+		cp := *c
+		out = append(out, &cp)
+	}
 	return out
 }
