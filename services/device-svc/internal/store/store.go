@@ -147,6 +147,9 @@ func (m *MemoryStore) ListDevices(tenantID, status, group string, limit int) []*
 	defer m.mu.RUnlock()
 	out := make([]*models.Device, 0, len(m.devices))
 	for _, d := range m.devices {
+		if d.Retired {
+			continue
+		}
 		if tenantID != "" && d.TenantID != tenantID {
 			continue
 		}
@@ -181,14 +184,16 @@ func (m *MemoryStore) UpdateDevice(d *models.Device) (*models.Device, bool) {
 	return d, true
 }
 
-// DeleteDevice removes a device.
+// DeleteDevice soft-deletes a device by setting Retired=true (aligns with controlplane handleRetireDevice).
+// The device remains in the store but is excluded from ListDevices; Device(id) still returns it.
 func (m *MemoryStore) DeleteDevice(id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.devices[id]; !ok {
+	d, ok := m.devices[id]
+	if !ok {
 		return false
 	}
-	delete(m.devices, id)
+	d.Retired = true
 	return true
 }
 

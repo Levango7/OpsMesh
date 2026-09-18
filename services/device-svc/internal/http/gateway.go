@@ -207,7 +207,7 @@ func (g *Gateway) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "device not found")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "retired"})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}

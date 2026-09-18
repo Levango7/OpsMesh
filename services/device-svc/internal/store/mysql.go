@@ -115,7 +115,7 @@ func (s *MySQLStore) RegisterDevice(d *models.Device) *models.Device {
 // Device returns a device by ID.
 func (s *MySQLStore) Device(id string) *models.Device {
 	row := s.db.QueryRow(
-		"SELECT id, tenant_id, name, ip, mac, os, arch, status, agent_id, tags, labels, `group`, lastHeartbeat, created_at, updated_at FROM devices WHERE id = ?",
+		"SELECT id, tenant_id, name, ip, mac, os, arch, status, agent_id, tags, labels, `group`, lastHeartbeat, created_at, updated_at, retired FROM devices WHERE id = ?",
 		id,
 	)
 	return s.scanDevice(row)
@@ -125,7 +125,7 @@ func (s *MySQLStore) scanDevice(row *sql.Row) *models.Device {
 	var d models.Device
 	var tags, labels sql.RawBytes
 	err := row.Scan(&d.ID, &d.TenantID, &d.Name, &d.IP, &d.MAC, &d.OS, &d.Arch, &d.Status, &d.AgentID,
-		&tags, &labels, &d.Group, &d.LastHeartbeat, &d.CreatedAt, &d.UpdatedAt)
+		&tags, &labels, &d.Group, &d.LastHeartbeat, &d.CreatedAt, &d.UpdatedAt, &d.Retired)
 	if err != nil {
 		return nil
 	}
@@ -136,7 +136,7 @@ func (s *MySQLStore) scanDevice(row *sql.Row) *models.Device {
 
 // ListDevices returns devices with optional filtering.
 func (s *MySQLStore) ListDevices(tenantID, status, group string, limit int) []*models.Device {
-	query := "SELECT id, tenant_id, name, ip, mac, os, arch, status, agent_id, tags, labels, `group`, lastHeartbeat, created_at, updated_at FROM devices WHERE 1=1"
+	query := "SELECT id, tenant_id, name, ip, mac, os, arch, status, agent_id, tags, labels, `group`, lastHeartbeat, created_at, updated_at, retired FROM devices WHERE 1=1 AND retired = false"
 	args := []interface{}{}
 	if tenantID != "" {
 		query += " AND tenant_id = ?"
@@ -170,7 +170,7 @@ func (s *MySQLStore) scanDevices(rows *sql.Rows) []*models.Device {
 		var d models.Device
 		var tags, labels sql.RawBytes
 		if err := rows.Scan(&d.ID, &d.TenantID, &d.Name, &d.IP, &d.MAC, &d.OS, &d.Arch, &d.Status, &d.AgentID,
-			&tags, &labels, &d.Group, &d.LastHeartbeat, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			&tags, &labels, &d.Group, &d.LastHeartbeat, &d.CreatedAt, &d.UpdatedAt, &d.Retired); err != nil {
 			continue
 		}
 		d.Tags = scanStringSlice(tags)
@@ -187,9 +187,9 @@ func (s *MySQLStore) UpdateDevice(d *models.Device) (*models.Device, bool) {
 	}
 	d.UpdatedAt = time.Now()
 	res, err := s.db.Exec(
-		"UPDATE devices SET tenant_id = ?, name = ?, ip = ?, mac = ?, os = ?, arch = ?, status = ?, agent_id = ?, tags = ?, labels = ?, `group` = ?, lastHeartbeat = ?, updated_at = ? WHERE id = ?",
+		"UPDATE devices SET tenant_id = ?, name = ?, ip = ?, mac = ?, os = ?, arch = ?, status = ?, agent_id = ?, tags = ?, labels = ?, `group` = ?, lastHeartbeat = ?, updated_at = ?, retired = ? WHERE id = ?",
 		d.TenantID, d.Name, d.IP, d.MAC, d.OS, d.Arch, d.Status, d.AgentID,
-		jsonString(d.Tags), jsonMap(d.Labels), d.Group, d.LastHeartbeat, d.UpdatedAt, d.ID,
+		jsonString(d.Tags), jsonMap(d.Labels), d.Group, d.LastHeartbeat, d.UpdatedAt, d.Retired, d.ID,
 	)
 	if err != nil {
 		return nil, false
@@ -201,9 +201,9 @@ func (s *MySQLStore) UpdateDevice(d *models.Device) (*models.Device, bool) {
 	return d, true
 }
 
-// DeleteDevice removes a device.
+// DeleteDevice soft-deletes a device by setting retired=true (aligns with controlplane handleRetireDevice).
 func (s *MySQLStore) DeleteDevice(id string) bool {
-	res, err := s.db.Exec("DELETE FROM devices WHERE id = ?", id)
+	res, err := s.db.Exec("UPDATE devices SET retired = true WHERE id = ?", id)
 	if err != nil {
 		return false
 	}
@@ -253,7 +253,7 @@ func (s *MySQLStore) GetDeviceStatus(deviceID string) *models.DeviceStatus {
 // DevicesByAgent returns devices managed by a specific agent.
 func (s *MySQLStore) DevicesByAgent(agentID string) []*models.Device {
 	rows, err := s.db.Query(
-		"SELECT id, tenant_id, name, ip, mac, os, arch, status, agent_id, tags, labels, `group`, lastHeartbeat, created_at, updated_at FROM devices WHERE agent_id = ?",
+		"SELECT id, tenant_id, name, ip, mac, os, arch, status, agent_id, tags, labels, `group`, lastHeartbeat, created_at, updated_at, retired FROM devices WHERE agent_id = ?",
 		agentID,
 	)
 	if err != nil {

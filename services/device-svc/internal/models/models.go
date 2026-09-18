@@ -19,6 +19,7 @@ type Device struct {
 	LastHeartbeat time.Time         `json:"lastHeartbeat"`
 	CreatedAt     time.Time         `json:"createdAt"`
 	UpdatedAt     time.Time         `json:"updatedAt"`
+	Retired       bool              `json:"retired"`
 }
 
 // Agent represents a registered agent in the domain model.

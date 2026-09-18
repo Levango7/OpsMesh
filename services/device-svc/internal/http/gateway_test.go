@@ -110,15 +110,52 @@ func TestDevices_DetailHeartbeatStatus(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update: got %d, body=%s", rec.Code, rec.Body.String())
 	}
-	// 删除。
+	// 删除（软删除，对齐 controlplane handleRetireDevice）。
 	rec = doReq(t, mux, http.MethodDelete, "/api/v1/devices/dev-1", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delete: got %d, body=%s", rec.Code, rec.Body.String())
 	}
-	// 删除后 404。
+	// 软删除后响应 status=retired。
+	var delResp struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &delResp); err != nil {
+		t.Fatalf("delete 响应解析失败: %v", err)
+	}
+	if delResp.Status != "retired" {
+		t.Fatalf("delete status=%q, want retired", delResp.Status)
+	}
+	// 软删除后 GET 仍返回 200（设备仍在，retired=true，对齐 controlplane）。
 	rec = doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1", "")
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("get after delete: got %d, want 404", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get after soft-delete: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var dd struct {
+		Device  *models.Device `json:"device"`
+		Tasks   []any          `json:"tasks"`
+		Results []any          `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &dd); err != nil {
+		t.Fatalf("get after delete 响应解析失败: %v", err)
+	}
+	if dd.Device == nil || !dd.Device.Retired {
+		t.Fatalf("软删除后设备应存在且 retired=true，got %+v", dd.Device)
+	}
+	// 软删除后列表不包含该设备（ListDevices 过滤 retired）。
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/devices", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list after delete: got %d", rec.Code)
+	}
+	var snap map[string][]*models.Device
+	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
+		t.Fatalf("list after delete 解析失败: %v", err)
+	}
+	for _, ds := range snap {
+		for _, d := range ds {
+			if d != nil && d.ID == "dev-1" {
+				t.Fatalf("软删除后 dev-1 不应出现在列表中")
+			}
+		}
 	}
 }
 

@@ -168,9 +168,14 @@ func TestDeleteDevice(t *testing.T) {
 		t.Fatalf("DeleteDevice failed: %v", err)
 	}
 
-	_, err = svc.GetDevice(ctx, &devicev1.GetDeviceRequest{Id: created.Id})
-	if err != ErrDeviceNotFound {
-		t.Fatalf("expected ErrDeviceNotFound after delete, got: %v", err)
+	// 软删除后设备仍存在（对齐 controlplane handleRetireDevice 语义）。
+	// proto 层不暴露 retired 字段，故只验证 GetDevice 不返回 ErrDeviceNotFound。
+	dev, err := svc.GetDevice(ctx, &devicev1.GetDeviceRequest{Id: created.Id})
+	if err != nil {
+		t.Fatalf("expected device to still exist after soft-delete, got error: %v", err)
+	}
+	if dev == nil || dev.Id != created.Id {
+		t.Fatalf("expected device %s after soft-delete, got %+v", created.Id, dev)
 	}
 }
 
