@@ -1,6 +1,6 @@
 # TD-60 双轨 API 一致性对比报告
 
-> 生成时间：2026-09-17（初版）｜最近更新：2026-09-19（M5 增强能力补齐后重新评分）
+> 生成时间：2026-09-17（初版）｜最近更新：2026-09-19（MySQL store 运行时缺陷修复后重新评分）
 > 对比范围：controlplane（单体）vs task-svc / device-svc / auth-svc（三域微服务）
 > 阶段：TD-60 阶段 2 A-2 完成后，切流前的 API 一致性体检
 > 分析依据：
@@ -414,13 +414,13 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
 
 | 域 | 一致性 | 评级 | 切流就绪度 |
 |---|---|---|---|
-| task | 80.0% | ✅ 中高 | **基本就绪**——本轮已补齐 HTTP 业务网关，核心 task CRUD + cancel + result + approve + reject + schedules 基本操作可前端直调。仍缺 batch-exec/canary/approval/schedules pause-resume 等 3 类增强能力 |
+| task | 100.0% | ✅ 高 | **就绪**——M5 增强能力（batch-exec/canary/approval/schedules pause-resume）已全部补齐，MySQL store 运行时四项缺陷已修复，端到端验证全绿 |
 | device | 90.0% | ✅ 高 | **就绪**——本轮已补齐 provision/metrics/聚合响应 3 个 P0 端点，路径全对齐。仅剩 DELETE 软删除 vs 硬删除设计决策项 |
 | auth | 100.0% | ✅ 高 | **就绪**——本轮已补齐 2 个 PUT 端点并对齐权限/鉴权/Redis，15/15 全匹配，Cookie 语义已逐字对齐 |
 
 ### 关键风险
 
-1. **task-svc 增强能力缺失（P1，本轮降级）**：本轮已补齐 HTTP 业务网关，核心 task CRUD + cancel + result + approve + reject + schedules 基本操作可前端直调，P0 阻塞已解除。剩余 batch-exec / canary / approval / schedules pause-resume 属增强功能（P1），不影响核心切流，可在切流后迭代补齐。
+1. **task-svc 增强能力已补齐（P1，本轮修复）**：batch-exec / canary / approval / schedules pause-resume 已全部补齐（commit 9fba295/00c5310），MySQL store 运行时四项缺陷已修复（commit 9bec4fa），端到端验证全绿（task GET 200 / schedules pause+resume 200 / canary 201 / approval 200）。task 域一致性达 100%，切流就绪。
 
 2. **device 域 DELETE 语义差异（P1 设计决策项）**：
    - `DELETE /api/v1/devices/{id}`：controlplane 软删除（retired 可查归档），device-svc 硬删除。归档能力丢失。本轮已补齐 provision/metrics/聚合响应 3 个 P0 端点，响应结构差异正在对齐中。
@@ -443,17 +443,19 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
    - 响应格式对齐 `GET /api/v1/devices` 和 `GET /api/v1/agents`（进行中）。
    - 决策 DELETE 语义：device-svc 改为软删除（retired），或接受归档能力丢失（P1 设计决策项）。
 
-3. **task 域最后**（一致性 80.0%，基本就绪）：
-   - ✅ 本轮已补齐 HTTP 业务网关（7 个 REST 端点），前端 B/S 通道可用，P0 阻塞已解除。
-   - ✅ 本轮已修复 SQL 错误贯穿、batch_id 迁移、nullTime、调度并发风险、列表格式对齐。
-   - 补 batch-exec / canary / approval / schedules pause-resume 等增强能力（P1，可在切流后迭代）。
-   - 灰度发布（canary）和审批流（approval）在 task-svc gRPC 完全没有，须从 controlplane 移植（P1）。
+3. **task 域最后**（一致性 100.0%，已就绪）：
+   - ✅ 已补齐 HTTP 业务网关（7 个 REST 端点），前端 B/S 通道可用。
+   - ✅ 已修复 SQL 错误贯穿、batch_id 迁移、nullTime、调度并发风险、列表格式对齐。
+   - ✅ 已补齐 batch-exec / canary / approval / schedules pause-resume 增强能力（commit 9fba295/00c5310）。
+   - ✅ 已修复 MySQL store 运行时四项缺陷：Row.Scan RawBytes 限制、schedules 自动建表、canary store/approval engine 初始化、last_fired_at 零值时间（commit 9bec4fa）。
+   - ✅ 端到端验证全绿：task GET 200 / schedules pause+resume 200 / canary 201 / approval 200。
 
 ### 后续行动项
 
-- [x] **task-svc**：补 HTTP 业务网关（P0，本轮已修复，2026-09-18）
-- [x] **task-svc**：修复 SQL 错误贯穿 / batch_id 迁移 / nullTime / 调度并发风险 / 列表格式对齐（本轮已修复）
-- [ ] **task-svc**：补 batch-exec / canary / approval / schedules pause-resume 能力（P1）
+- [x] **task-svc**：补 HTTP 业务网关（P0，已修复，2026-09-18）
+- [x] **task-svc**：修复 SQL 错误贯穿 / batch_id 迁移 / nullTime / 调度并发风险 / 列表格式对齐（已修复）
+- [x] **task-svc**：补 batch-exec / canary / approval / schedules pause-resume 能力（P1，已修复，2026-09-19 commit 9fba295/00c5310）
+- [x] **task-svc**：修复 MySQL store 运行时四项缺陷：Row.Scan RawBytes / schedules 自动建表 / canary store+approval engine 初始化 / last_fired_at 零值时间（已修复，2026-09-19 commit 9bec4fa）
 - [x] **device-svc**：补 `POST /devices/{id}/provision` + `GET /devices/{id}/metrics`（P0，本轮已修复）
 - [x] **device-svc**：补 `GET /devices/{id}` 聚合响应（P1，本轮已修复）
 - [ ] **device-svc**：对齐 `GET /devices` 和 `GET /agents` 响应格式（P1，进行中）
@@ -472,6 +474,7 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
 |---|---|---|---|---|---|
 | 2026-09-17 | v1.0（初版） | 60.0%（9/15） | 60.0%（6/10） | 86.7%（13/15） | 首次生成 TD-60 双轨 API 一致性对比报告。task-svc 无 HTTP 业务网关（P0 阻塞）；device-svc 缺 provision/metrics/聚合 3 个端点；auth-svc 缺 2 个 PUT 端点 |
 | 2026-09-18 | v1.1（本轮修复后重新评分） | 80.0%（12/15） | 90.0%（9/10） | 100.0%（15/15） | task 域：补齐 HTTP 业务网关（7 个 REST 端点）+ 修复 SQL 错误贯穿/batch_id 迁移/nullTime/调度并发风险/列表格式对齐（commit d449718, e05c2fb）。device 域：补齐 provision/metrics/聚合响应 3 个端点，响应格式对齐进行中。auth 域：补齐 2 个 PUT 端点 + 对齐 user:approve 权限/Redis 连接/管理路由鉴权/改密参数校验（commit d449718） |
+| 2026-09-19 | v1.2（M5 增强 + MySQL store 缺陷修复） | 100.0%（15/15） | 90.0%（9/10） | 100.0%（15/15） | task 域：补齐 batch-exec/canary/approval/schedules pause-resume M5 增强能力（commit 9fba295/00c5310）+ 修复 MySQL store 运行时四项缺陷：Row.Scan RawBytes 限制/schedules 自动建表/canary store+approval engine 初始化/last_fired_at 零值时间（commit 9bec4fa）。端到端验证全绿：task GET 200 / schedules pause+resume 200 / canary 201 / approval 200。三域平均一致性 96.7% |
 
 ### 评分变更依据汇总
 
@@ -483,6 +486,15 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
 - 调度并发风险修复：scheduler.go 加 `isLeader atomic.Bool` gate；ShadowMode=true 时不启动 fire/reclaim。
 - 列表格式对齐：无分页时返回裸数组 `[...]`（对齐 controlplane）。
 - 仍缺 3 类增强能力（batch-exec / canary / approval / schedules pause-resume），不计入核心 task CRUD 对齐。
+
+**task 域 80.0% → 100.0%（+20.0%，匹配数 12 → 15）**（2026-09-19，commit 9fba295/00c5310/9bec4fa）：
+- M5 增强能力补齐：batch-exec（POST /api/v1/tasks/batch-exec）、canary（POST /api/v1/tasks/canary + GET/POST /canary/{id}）、approval（GET/POST /approval/flows + /approval/requests + /approval/pending）、schedules pause/resume（POST /schedules/{id}/pause + /resume）。
+- MySQL store 运行时四项缺陷修复：
+  - `sql.RawBytes` 不允许在 `Row.Scan` 中使用（只允许 `Rows.Scan`），scanTask 静默吞错致 task GET by id 404 → 改为 `[]byte` + 添加错误日志。
+  - schedules 表无 `migrateSchedules()` 自动建表 + `CreateSchedule` 接口签名不返回 error → 添加建表迁移 + 接口签名改为 `(*models.Schedule, error)`。
+  - `main.go` 未初始化 canary store + approval engine → 添加 `SetCanaryStore()` + `SetApprovalEngine()` 初始化。
+  - `last_fired_at` 零值时间 MySQL 拒绝（1970-01-01）+ `GetSchedule` 用 `time.Time` 接收 NULL → `nullTime()` 包装 + `sql.NullTime` 接收。
+- 端到端验证全绿：task GET 200 / schedules pause+resume 200 / canary 201 / approval 200。
 
 **device 域 60.0% → 90.0%（+30.0%，匹配数 6 → 9）**：
 - `POST /api/v1/devices/{id}/provision` 补齐（单设备手动纳管）。
