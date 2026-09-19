@@ -23,6 +23,7 @@ import (
 	"github.com/Levango7/OpsMesh/pkg/tenant"
 	"github.com/Levango7/OpsMesh/pkg/trace"
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
+	"github.com/Levango7/OpsMesh/services/task-svc/internal/approval"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/events"
 	httpgw "github.com/Levango7/OpsMesh/services/task-svc/internal/http"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/leader"
@@ -66,6 +67,9 @@ func main() {
 		}
 	}
 	svc := service.NewService(ts, ss, rs, bs)
+
+	// M5 增强：初始化 canary store（内存索引，不持久化）
+	svc.SetCanaryStore(store.NewMemoryStore())
 
 	// A-2 阶段：事件总线/审计/SSE 桥接注入（接口注入模式，生产环境由 main 注入真实实现）。
 	// 默认 LogBus/LogAuditSink/StubSSEBridge（开发/单机可见）；生产环境可通过环境变量切换。
@@ -117,6 +121,9 @@ func main() {
 	// 默认启用（cfg.HTTPGatewayEnabled）；测试/CI 可经 TASK_SVC_HTTP_GATEWAY_ENABLED=false 关闭。
 	if cfg.HTTPGatewayEnabled {
 		httpGateway := httpgw.NewGateway(svc, cfg.JWTSecret)
+		// M5 增强：初始化审批引擎
+		approvalEngine := approval.New()
+		httpGateway.SetApprovalEngine(approvalEngine)
 		httpGateway.RegisterRoutes(mux)
 		log.Printf("HTTP 业务网关已启用（/api/v1/tasks, /api/v1/schedules）")
 	} else {

@@ -256,6 +256,7 @@ func (g *Gateway) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 //   - POST /api/v1/tasks/{id}/approve  → ApproveTask
 //   - POST /api/v1/tasks/{id}/reject   → RejectTask
 func (g *Gateway) handleTaskRouting(w http.ResponseWriter, r *http.Request) {
+
 	idAndRest := strings.TrimPrefix(r.URL.Path, "/api/v1/tasks/")
 	parts := strings.SplitN(idAndRest, "/", 2)
 	id := parts[0]

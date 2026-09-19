@@ -363,7 +363,13 @@ func (s *Service) CreateSchedule(ctx context.Context, req *taskv1.CreateSchedule
 	sched.UpdatedAt = now
 
 	modelSched := protoToSchedule(sched)
-	s.scheduleStore.CreateSchedule(modelSched)
+	result, err := s.scheduleStore.CreateSchedule(modelSched)
+	if err != nil {
+		return nil, fmt.Errorf("create schedule: %w", err)
+	}
+	if result == nil {
+		return nil, ErrScheduleNotFound
+	}
 	return sched, nil
 }
 

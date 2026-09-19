@@ -37,6 +37,10 @@ func NewMySQLStore(dsn string) (*MySQLStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("failed to migrate mysql tasks: %w", err)
 	}
+	if err := s.migrateSchedules(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to migrate mysql schedules: %w", err)
+	}
 	return s, nil
 }
 
@@ -108,14 +112,43 @@ func (s *MySQLStore) GetTask(taskID string) *models.Task {
 
 func (s *MySQLStore) scanTask(row *sql.Row) *models.Task {
 	var t models.Task
-	var dependsOn sql.RawBytes
+	var dependsOn []byte
 	var deadLetter, approvalRequired int
-	err := row.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &t.Command, &t.Content, &t.Path, &t.Status,
-		&t.ClaimedBy, &t.ClaimedAt, &t.ClaimEpoch, &t.CreatedAt, &t.RetryCount, &t.MaxRetries,
+	// NULL 兼容（与 scanTasks 同理由）：content/command/path/claimed_by/approved_by/batch_id/
+	// claimed_at/approved_at 允许 NULL，裸承接遇 NULL 返回 nil 导致 GetTask/ClaimTask 404。
+	var content, command, path, claimedBy, approvedBy, batchID sql.NullString
+	var claimedAt, approvedAt sql.NullTime
+	err := row.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &command, &content, &path, &t.Status,
+		&claimedBy, &claimedAt, &t.ClaimEpoch, &t.CreatedAt, &t.RetryCount, &t.MaxRetries,
 		&deadLetter, &t.Timeout, &t.RetryDelay, &t.Schedule, &t.ParentID, &dependsOn,
-		&approvalRequired, &t.ApprovedBy, &t.ApprovedAt, &t.BatchID)
+		&approvalRequired, &approvedBy, &approvedAt, &batchID)
 	if err != nil {
+		log.Printf("[store] scanTask 失败: %v", err)
 		return nil
+	}
+	if content.Valid {
+		t.Content = content.String
+	}
+	if command.Valid {
+		t.Command = command.String
+	}
+	if path.Valid {
+		t.Path = path.String
+	}
+	if claimedBy.Valid {
+		t.ClaimedBy = claimedBy.String
+	}
+	if claimedAt.Valid {
+		t.ClaimedAt = claimedAt.Time
+	}
+	if approvedBy.Valid {
+		t.ApprovedBy = approvedBy.String
+	}
+	if approvedAt.Valid {
+		t.ApprovedAt = approvedAt.Time
+	}
+	if batchID.Valid {
+		t.BatchID = batchID.String
 	}
 	t.DeadLetter = deadLetter != 0
 	t.ApprovalRequired = approvalRequired != 0
@@ -157,7 +190,7 @@ func (s *MySQLStore) scanTasks(rows *sql.Rows) ([]*models.Task, error) {
 	tasks := make([]*models.Task, 0)
 	for rows.Next() {
 		var t models.Task
-		var dependsOn sql.RawBytes
+		var dependsOn []byte
 		var deadLetter, approvalRequired int
 		// NULL 兼容：tasks 表 content/claimed_by/approved_by/batch_id/claimed_at/approved_at
 		// 均允许 NULL（controlplane migrations/001 无 NOT NULL；直插种子行实测全 NULL），
@@ -260,17 +293,45 @@ func (s *MySQLStore) ReportResult(result *models.TaskResult) error {
 	defer tx.Rollback()
 
 	var t models.Task
-	var dependsOn sql.RawBytes
+	var dependsOn []byte
 	var deadLetter, approvalRequired int
+	// NULL 兼容（与 scanTasks/scanTask 同理由）：content/command/path/claimed_by/approved_by/
+	// batch_id/claimed_at/approved_at 允许 NULL，裸承接遇 NULL 返回 ErrTaskNotFound。
+	var content, command, path, claimedBy, approvedBy, batchID sql.NullString
+	var claimedAt, approvedAt sql.NullTime
 	err = tx.QueryRow(
 		"SELECT task_id, agent_id, tenant_id, type, command, content, path, status, claimed_by, claimed_at, claim_epoch, created_at, retry_count, max_retries, dead_letter, timeout, retry_delay, schedule, parent_id, depends_on, approval_required, approved_by, approved_at, batch_id FROM tasks WHERE task_id = ? FOR UPDATE",
 		result.TaskID,
-	).Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &t.Command, &t.Content, &t.Path, &t.Status,
-		&t.ClaimedBy, &t.ClaimedAt, &t.ClaimEpoch, &t.CreatedAt, &t.RetryCount, &t.MaxRetries,
+	).Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &command, &content, &path, &t.Status,
+		&claimedBy, &claimedAt, &t.ClaimEpoch, &t.CreatedAt, &t.RetryCount, &t.MaxRetries,
 		&deadLetter, &t.Timeout, &t.RetryDelay, &t.Schedule, &t.ParentID, &dependsOn,
-		&approvalRequired, &t.ApprovedBy, &t.ApprovedAt, &t.BatchID)
+		&approvalRequired, &approvedBy, &approvedAt, &batchID)
 	if err != nil {
 		return ErrTaskNotFound
+	}
+	if content.Valid {
+		t.Content = content.String
+	}
+	if command.Valid {
+		t.Command = command.String
+	}
+	if path.Valid {
+		t.Path = path.String
+	}
+	if claimedBy.Valid {
+		t.ClaimedBy = claimedBy.String
+	}
+	if claimedAt.Valid {
+		t.ClaimedAt = claimedAt.Time
+	}
+	if approvedBy.Valid {
+		t.ApprovedBy = approvedBy.String
+	}
+	if approvedAt.Valid {
+		t.ApprovedAt = approvedAt.Time
+	}
+	if batchID.Valid {
+		t.BatchID = batchID.String
 	}
 	t.DeadLetter = deadLetter != 0
 	t.ApprovalRequired = approvalRequired != 0
@@ -398,7 +459,7 @@ func (s *MySQLStore) scanAllTasks(rows *sql.Rows) []*models.Task {
 	var tasks []*models.Task
 	for rows.Next() {
 		var t models.Task
-		var dependsOn sql.RawBytes
+		var dependsOn []byte
 		var deadLetter, approvalRequired int
 		var lastFired sql.NullTime
 		// NULL 兼容（与 scanTasks 同理由）：content/claimed_by/approved_by/batch_id/
@@ -495,7 +556,7 @@ func nullTime(t time.Time) any {
 // === ScheduleStore implementation ===
 
 // CreateSchedule creates a schedule.
-func (s *MySQLStore) CreateSchedule(sch *models.Schedule) *models.Schedule {
+func (s *MySQLStore) CreateSchedule(sch *models.Schedule) (*models.Schedule, error) {
 	if sch.CreatedAt.IsZero() {
 		sch.CreatedAt = time.Now()
 	}
@@ -506,27 +567,31 @@ func (s *MySQLStore) CreateSchedule(sch *models.Schedule) *models.Schedule {
 	_, err := s.db.Exec(
 		"INSERT INTO schedules (id, tenant_id, name, cron_expr, task_type, command, content, path, agent_id, enabled, last_fired_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		sch.ID, sch.TenantID, sch.Name, sch.CronExpr, sch.TaskType, sch.Command, sch.Content,
-		sch.Path, sch.AgentID, sch.Enabled, sch.LastFiredAt, sch.CreatedAt, sch.UpdatedAt,
+		sch.Path, sch.AgentID, sch.Enabled, nullTime(sch.LastFiredAt), sch.CreatedAt, sch.UpdatedAt,
 	)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("create schedule: %w", err)
 	}
-	return sch
+	return sch, nil
 }
 
 // GetSchedule returns a schedule by ID.
 func (s *MySQLStore) GetSchedule(id string) *models.Schedule {
 	var sch models.Schedule
 	var enabled int
+	var lastFired sql.NullTime
 	err := s.db.QueryRow(
 		"SELECT id, tenant_id, name, cron_expr, task_type, command, content, path, agent_id, enabled, last_fired_at, created_at, updated_at FROM schedules WHERE id = ?",
 		id,
 	).Scan(&sch.ID, &sch.TenantID, &sch.Name, &sch.CronExpr, &sch.TaskType, &sch.Command, &sch.Content,
-		&sch.Path, &sch.AgentID, &enabled, &sch.LastFiredAt, &sch.CreatedAt, &sch.UpdatedAt)
+		&sch.Path, &sch.AgentID, &enabled, &lastFired, &sch.CreatedAt, &sch.UpdatedAt)
 	if err != nil {
 		return nil
 	}
 	sch.Enabled = enabled != 0
+	if lastFired.Valid {
+		sch.LastFiredAt = lastFired.Time
+	}
 	return &sch
 }
 
@@ -545,7 +610,7 @@ func (s *MySQLStore) UpdateSchedule(sch *models.Schedule) (*models.Schedule, err
 	_, err = s.db.Exec(
 		"UPDATE schedules SET tenant_id = ?, name = ?, cron_expr = ?, task_type = ?, command = ?, content = ?, path = ?, agent_id = ?, enabled = ?, last_fired_at = ?, updated_at = ? WHERE id = ?",
 		sch.TenantID, sch.Name, sch.CronExpr, sch.TaskType, sch.Command, sch.Content,
-		sch.Path, sch.AgentID, sch.Enabled, sch.LastFiredAt, sch.UpdatedAt, sch.ID,
+		sch.Path, sch.AgentID, sch.Enabled, nullTime(sch.LastFiredAt), sch.UpdatedAt, sch.ID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update schedule: %w", err)

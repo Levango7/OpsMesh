@@ -26,7 +26,7 @@ type TaskStore interface {
 
 // ScheduleStore is the interface for schedule persistence.
 type ScheduleStore interface {
-	CreateSchedule(s *models.Schedule) *models.Schedule
+	CreateSchedule(s *models.Schedule) (*models.Schedule, error)
 	GetSchedule(id string) *models.Schedule
 	UpdateSchedule(s *models.Schedule) (*models.Schedule, error)
 	DeleteSchedule(id string) bool
@@ -279,7 +279,7 @@ func (m *MemoryStore) UpdateTask(t *models.Task) bool {
 }
 
 // CreateSchedule creates a schedule.
-func (m *MemoryStore) CreateSchedule(s *models.Schedule) *models.Schedule {
+func (m *MemoryStore) CreateSchedule(s *models.Schedule) (*models.Schedule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if s.CreatedAt.IsZero() {
@@ -290,7 +290,7 @@ func (m *MemoryStore) CreateSchedule(s *models.Schedule) *models.Schedule {
 	}
 	cp := *s
 	m.schedules[s.ID] = &cp
-	return s
+	return s, nil
 }
 
 // GetSchedule returns a schedule by ID.

@@ -59,3 +59,25 @@ func (s *MySQLStore) migrateTasks() error {
 	}
 	return nil
 }
+
+// migrateSchedules 初始化 schedules 表。
+// CREATE 使用嵌入的 schema.sql，避免维护第二份易产生差异的建表定义。
+// 与 migrateTasks 同风格：从 schema.sql 中提取 schedules 的 CREATE TABLE 语句执行。
+func (s *MySQLStore) migrateSchedules() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const prefix = "CREATE TABLE IF NOT EXISTS schedules ("
+	start := strings.Index(taskSchema, prefix)
+	if start < 0 {
+		return fmt.Errorf("schedules schema statement not found")
+	}
+	statement, _, ok := strings.Cut(taskSchema[start:], ";")
+	if !ok {
+		return fmt.Errorf("schedules schema statement is incomplete")
+	}
+	if _, err := s.db.ExecContext(ctx, statement); err != nil {
+		return fmt.Errorf("create schedules table: %w", err)
+	}
+	return nil
+}
