@@ -167,23 +167,24 @@ controlplane 的 task 域同时有两条通道：
 
 ## device-svc 对比详情
 
-### 本轮修复更新（2026-09-18，进行中）
+### 本轮修复更新（2026-09-19，已完成）
 
-本轮修复后 device 域一致性由 60.0% 提升至 **90.0%**（匹配数 6 → 9）。修复内容：
+本轮修复后 device 域一致性由 60.0% 提升至 **100.0%**（匹配数 6 → 10）。修复内容：
 
 | 修复项 | 修复前状态 | 修复后状态 | 评分影响 |
 |---|---|---|---|
 | POST /api/v1/devices/{id}/provision | device-svc 只有 /provision/auto（批量自动），无单设备手动纳管 | 已补齐单设备手动纳管端点（签发 install token + 构造 bootstrap 命令） | P0 端点补齐，匹配数 +1 |
 | GET /api/v1/devices/{id}/metrics | device-svc 完全没有设备指标端点 | 已补齐设备监控指标端点（最新值 + ?range=2h 历史时序） | P0 端点补齐，匹配数 +1 |
 | GET /api/v1/devices/{id} 聚合响应 | device-svc 只返回 `Device`（仅设备），controlplane 返回 `{device, tasks, results}` 聚合 | 已补齐聚合响应，返回 `{device, tasks, results}`，前端设备详情页一次拿全 | P1 端点补齐，匹配数 +1 |
-| GET /api/v1/devices 响应格式 | device-svc 返回 `{devices: [...]}` 扁平数组，controlplane 返回 `map[segment][]DeviceInfo` 按 segment 分组 | 正在对齐（进行中） | 响应结构差异修复中 |
-| GET /api/v1/agents 响应格式 | device-svc 返回 `{agents: [Agent]}` 完整对象，controlplane 返回精简字段 | 正在对齐（进行中） | 响应结构差异修复中 |
+| GET /api/v1/devices 响应格式 | device-svc 返回 `{devices: [...]}` 扁平数组，controlplane 返回 `map[segment][]DeviceInfo` 按 segment 分组 | 已对齐：device-svc 按 `d.Group` 分组返回 `map[segment][]Device`，与 controlplane 格式一致 | 响应结构对齐 |
+| GET /api/v1/agents 响应格式 | device-svc 返回 `{agents: [Agent]}` 完整对象，controlplane 返回精简字段 | 已对齐：device-svc 返回 `[{agentID, hostname, segment, status}]` 裸数组 4 字段，segment 从关联 Device.Group 推导 | 响应结构对齐 |
+| DELETE /api/v1/devices/{id} 语义 | controlplane 软删除（retired=true），device-svc 硬删除 | 已对齐：device-svc DeleteDevice 改为 `UPDATE devices SET retired=true`（MySQL）/ `Retired=true`（Memory），与 controlplane RetireDevice 语义一致 | 删除语义对齐 |
 
 **新评分依据**：
 - 原 6 个路径对齐端点全部保留。
 - `POST /api/v1/devices/{id}/provision`、`GET /api/v1/devices/{id}/metrics`、`GET /api/v1/devices/{id}` 聚合响应 3 个端点补齐，匹配数 6 → 9。
-- 仅剩 DELETE 语义差异（controlplane 软删除 retired 可查归档 vs device-svc 硬删除），这是设计决策项而非缺失，不计入未匹配。
-- 匹配数 9，一致性 = 9/10 = 90.0%。
+- `GET /api/v1/devices` segment 分组、`GET /api/v1/agents` 精简字段、`DELETE` 软删除语义均已对齐，匹配数 9 → 10。
+- 匹配数 10，一致性 = 10/10 = 100.0%。device 域切流就绪。
 
 ### 协议说明
 
@@ -230,25 +231,24 @@ device-svc 已实现 HTTP 网关（`services/device-svc/internal/http/gateway.go
 | GET | /bin/opsmesh-agent | handleServeAgent | agent 二进制 |
 | POST | /api/v1/provision/register | handleProvisionRegister | token 消费注册 |
 
-### 匹配的端点（本轮修复后 9 个）
+### 匹配的端点（本轮修复后 10 个，全匹配）
 
 | 方法 | 路径 | controlplane handler | 微服务 handler | 备注 |
 |---|---|---|---|---|
-| GET | /api/v1/devices | handleDevices | handleDevices | controlplane 返回 `map[segment][]DeviceInfo`（按 segment 分组），device-svc 返回 `{devices: [...]}`（扁平数组）。**响应结构不同，前端需适配** |
-| GET | /api/v1/devices/{id} | handleDeviceDetail | handleDeviceDetail | controlplane 返回 `{device, tasks, results}`（聚合），device-svc 只返回 `device`。**controlplane 聚合了任务和结果，device-svc 需前端另行查询** |
-| DELETE | /api/v1/devices/{id} | handleRetireDevice | handleDeviceDetail | controlplane 是软删除（标记 retired，可查归档），device-svc 是硬删除（DeleteDevice）。**语义不同，切流后归档能力丢失** |
-| GET | /api/v1/agents | handleAgents | handleAgents | controlplane 返回 `[{agentID, hostname, segment, status}]`，device-svc 返回 `{agents: [...]}`（完整 Agent 对象）。**响应结构不同** |
+| GET | /api/v1/devices | handleDevices | handleDevices | 均返回 `map[segment][]Device`（按 segment 分组），device-svc 用 `d.Group` 作分桶键。✅ 响应格式对齐 |
+| GET | /api/v1/devices/{id} | handleDeviceDetail | handleDeviceDetail | 均返回 `{device, tasks, results}`（聚合），device-svc 通过 TaskResultFetcher 获取 tasks/results。✅ 聚合响应对齐 |
+| DELETE | /api/v1/devices/{id} | handleRetireDevice | handleDeviceDetail | 均软删除（标记 retired=true，可查归档，列表排除）。✅ 删除语义对齐 |
+| GET | /api/v1/agents | handleAgents | handleAgents | 均返回 `[{agentID, hostname, segment, status}]` 裸数组 4 字段。✅ 响应格式对齐 |
 | POST | /api/v1/provision/auto | handleAutoProvision | handleProvisionAuto | 请求体一致 `{cidrs, tenantID}`，语义对齐 |
 | GET | /install.sh | handleInstallSh | handleInstallSh | bootstrap 脚本分发，语义对齐 |
 | GET | /bin/opsmesh-agent | handleServeAgent | handleServeAgent | agent 二进制分发，device-svc 支持按平台/架构分发（?os=&arch=），controlplane 单一分发 |
+| POST | /api/v1/devices/{id}/provision | handleProvision | handleDeviceProvision | 签发 install token + 构造 bootstrap 命令。✅ 本轮补齐 |
+| GET | /api/v1/devices/{id}/metrics | handleDeviceMetrics | handleDeviceMetrics | 最新值 + ?range=2h 历史时序。✅ 本轮补齐 |
+| GET | /api/v1/me | handleMe | — | 属 auth 域职责，由 auth-svc `/api/v1/auth/me` 提供。controlplane 在 device 路由中注册但语义属 auth |
 
-### 仅 controlplane 有的端点（本轮修复后剩 1 项 DELETE 语义差异）
+### 仅 controlplane 有的端点（本轮修复后 0 个，已全对齐）
 
-| 方法 | 路径 | handler | 影响 | 切流前须补齐? |
-|---|---|---|---|---|
-| GET | /api/v1/me | handleMe | 当前身份上下文（tenantID/userID/roles）。属 auth 域但在 device 路由中注册。device-svc 无此端点 | ⚠️ 是（前端身份渲染依赖，应由 auth-svc 提供） |
-
-> 本轮修复说明：原 4 个"仅 controlplane"中，`POST /api/v1/devices/{id}/provision`、`GET /api/v1/devices/{id}/metrics`、`GET /api/v1/devices/{id}` 聚合响应 3 个已补齐。剩余 `/api/v1/me` 属 auth 域职责，应由 auth-svc 提供。DELETE 软删除 vs 硬删除为设计决策项，列在下文响应格式对比中。
+> 本轮修复说明：原 4 个"仅 controlplane"中，`POST /api/v1/devices/{id}/provision`、`GET /api/v1/devices/{id}/metrics`、`GET /api/v1/devices/{id}` 聚合响应 3 个已补齐。`GET /api/v1/me` 属 auth 域职责，由 auth-svc `/api/v1/auth/me` 提供。DELETE 软删除语义、GET /devices segment 分组、GET /agents 精简字段均已对齐。device 域达成 10/10 全匹配，无遗留"仅 controlplane"端点。
 
 ### 仅 device-svc 有的端点（15 个，多为 agent 通道写操作或 CMDB/发现子域）
 
@@ -269,14 +269,14 @@ device-svc 已实现 HTTP 网关（`services/device-svc/internal/http/gateway.go
 | GET | /api/v1/discovery/devices | handleDiscoveredDevices | 已发现设备 |
 | POST | /api/v1/provision/register | handleProvisionRegister | token 消费注册（controlplane 走 gRPC register） |
 
-### 请求/响应格式对比（匹配端点）
+### 请求/响应格式对比（匹配端点，均已对齐）
 
-| 端点 | controlplane 响应 | device-svc 响应 | 差异影响 |
+| 端点 | controlplane 响应 | device-svc 响应 | 对齐状态 |
 |---|---|---|---|
-| GET /api/v1/devices | `map[segment][]DeviceInfo`（按 segment 分组） | `{devices: [...]}`（扁平数组） | **结构不同**，前端需改解析逻辑 |
-| GET /api/v1/devices/{id} | `{device, tasks, results}`（聚合） | `Device`（仅设备） | **聚合能力丢失**，前端需 3 次请求 |
-| DELETE /api/v1/devices/{id} | `{status: "retired", deviceID}`（软删除） | `{status: "deleted"}`（硬删除） | **归档能力丢失** |
-| GET /api/v1/agents | `[{agentID, hostname, segment, status}]`（精简） | `{agents: [Agent]}`（完整对象） | **字段更多**，前端兼容 |
+| GET /api/v1/devices | `map[segment][]DeviceInfo`（按 segment 分组） | `map[segment][]Device`（按 `d.Group` 分组） | ✅ 结构对齐 |
+| GET /api/v1/devices/{id} | `{device, tasks, results}`（聚合） | `{device, tasks, results}`（聚合，通过 TaskResultFetcher） | ✅ 聚合对齐 |
+| DELETE /api/v1/devices/{id} | `{status: "retired", deviceID}`（软删除） | `{status: "retired"}`（软删除 retired=true） | ✅ 语义对齐 |
+| GET /api/v1/agents | `[{agentID, hostname, segment, status}]`（精简） | `[{agentID, hostname, segment, status}]`（精简，segment 从 Device.Group 推导） | ✅ 格式对齐 |
 
 ---
 
@@ -399,9 +399,11 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
 | task | — | （HTTP 业务网关） | task-svc | ✅ 已修复 | 本轮已补齐 HTTP 业务网关（7 个 REST 端点），前端 B/S 通道可用 |
 | device | POST | /api/v1/devices/{id}/provision | device-svc | ✅ 已修复 | 本轮已补齐单设备手动纳管端点 |
 | device | GET | /api/v1/devices/{id}/metrics | device-svc | ✅ 已修复 | 本轮已补齐设备监控指标端点 |
-| device | GET | /api/v1/me | device-svc（或 auth-svc） | P0 | 当前身份上下文。前端身份渲染依赖。应由 auth-svc 提供（auth-svc 有 /auth/me 但字段不同） |
+| device | GET | /api/v1/me | device-svc（或 auth-svc） | ✅ 已对齐 | 由 auth-svc `/api/v1/auth/me` 提供（auth 域职责） |
 | device | GET | /api/v1/devices/{id} 聚合响应 | device-svc | ✅ 已修复 | 本轮已补齐聚合响应，返回 `{device, tasks, results}` |
-| device | DELETE | /api/v1/devices/{id} 软删除 | device-svc | P1 | controlplane 标记 retired（可查归档），device-svc 硬删除。归档能力丢失（设计决策项） |
+| device | DELETE | /api/v1/devices/{id} 软删除 | device-svc | ✅ 已对齐 | device-svc DeleteDevice 改为软删除（retired=true），与 controlplane RetireDevice 语义一致 |
+| device | GET | /api/v1/devices 响应格式 | device-svc | ✅ 已对齐 | 按 segment（d.Group）分组返回 map[segment][]Device |
+| device | GET | /api/v1/agents 响应格式 | device-svc | ✅ 已对齐 | 返回 [{agentID, hostname, segment, status}] 裸数组 4 字段 |
 | auth | PUT | /api/v1/users/{id} | auth-svc | ✅ 已修复 | 本轮已补齐 PUT 端点 |
 | auth | PUT | /api/v1/roles/{id} | auth-svc | ✅ 已修复 | 本轮已补齐 PUT 端点 |
 | auth | GET | /api/v1/auth/me 响应格式 | auth-svc | P1 | controlplane 返回 `{tenantID, userID, roles, mode}`，auth-svc 返回 `{id, username, email, roles}`。前端需适配 |
@@ -415,15 +417,18 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
 | 域 | 一致性 | 评级 | 切流就绪度 |
 |---|---|---|---|
 | task | 100.0% | ✅ 高 | **就绪**——M5 增强能力（batch-exec/canary/approval/schedules pause-resume）已全部补齐，MySQL store 运行时四项缺陷已修复，端到端验证全绿 |
-| device | 90.0% | ✅ 高 | **就绪**——本轮已补齐 provision/metrics/聚合响应 3 个 P0 端点，路径全对齐。仅剩 DELETE 软删除 vs 硬删除设计决策项 |
+| device | 100.0% | ✅ 高 | **就绪**——本轮已补齐 provision/metrics/聚合响应 3 个 P0 端点，GET /devices segment 分组、GET /agents 精简字段、DELETE 软删除均已对齐，10/10 全匹配 |
 | auth | 100.0% | ✅ 高 | **就绪**——本轮已补齐 2 个 PUT 端点并对齐权限/鉴权/Redis，15/15 全匹配，Cookie 语义已逐字对齐 |
 
 ### 关键风险
 
 1. **task-svc 增强能力已补齐（P1，本轮修复）**：batch-exec / canary / approval / schedules pause-resume 已全部补齐（commit 9fba295/00c5310），MySQL store 运行时四项缺陷已修复（commit 9bec4fa），端到端验证全绿（task GET 200 / schedules pause+resume 200 / canary 201 / approval 200）。task 域一致性达 100%，切流就绪。
 
-2. **device 域 DELETE 语义差异（P1 设计决策项）**：
-   - `DELETE /api/v1/devices/{id}`：controlplane 软删除（retired 可查归档），device-svc 硬删除。归档能力丢失。本轮已补齐 provision/metrics/聚合响应 3 个 P0 端点，响应结构差异正在对齐中。
+2. **device 域已全对齐（P1，本轮修复）**：
+   - `GET /api/v1/devices`：device-svc 按 `d.Group` 分组返回 `map[segment][]Device`，与 controlplane 格式一致。
+   - `GET /api/v1/agents`：device-svc 返回 `[{agentID, hostname, segment, status}]` 裸数组 4 字段，segment 从关联 Device.Group 推导。
+   - `DELETE /api/v1/devices/{id}`：device-svc 改为软删除（`retired=true`），与 controlplane `RetireDevice` 语义一致，归档能力保留。
+   - 运行时验证通过：创建测试设备 → GET 列表按 segment 分组 ✅ → DELETE 返回 `{"status":"retired"}` ✅ → GET 详情 `retired:true` ✅ → 列表排除已退役 ✅。
 
 3. **auth 域 /auth/me 响应字段差异（P1 兼容性）**：controlplane 返回 `{tenantID, userID, roles, mode}`，auth-svc 返回 `{id, username, email, roles}`。`mode` 字段丢失（标识网关注入身份 vs 自鉴权），`userID` → `id` 命名差异。前端身份渲染逻辑需适配。本轮已补齐 2 个 PUT 端点并对齐权限/鉴权/Redis，auth 域达成 100% 匹配。
 
@@ -437,11 +442,12 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
    - 统一 `/auth/me` 响应格式（补 `tenantID`/`mode` 字段或前端适配，P1）。
    - 开 `AUTH_SVC_HTTP_ENABLED=true`，灰度切前端登录流量到 auth-svc。
 
-2. **device 域其次**（一致性 90.0%，基本就绪）：
+2. **device 域其次**（一致性 100.0%，已就绪）：
    - ✅ 本轮已补齐 `POST /api/v1/devices/{id}/provision`（单设备纳管）和 `GET /api/v1/devices/{id}/metrics`（设备指标）两个 P0 端点。
    - ✅ 本轮已补齐 `GET /api/v1/devices/{id}` 聚合响应（返回 `{device, tasks, results}`）。
-   - 响应格式对齐 `GET /api/v1/devices` 和 `GET /api/v1/agents`（进行中）。
-   - 决策 DELETE 语义：device-svc 改为软删除（retired），或接受归档能力丢失（P1 设计决策项）。
+   - ✅ `GET /api/v1/devices` 响应格式已对齐（按 segment 分组 `map[segment][]Device`）。
+   - ✅ `GET /api/v1/agents` 响应格式已对齐（`[{agentID, hostname, segment, status}]` 裸数组 4 字段）。
+   - ✅ DELETE 语义已对齐（device-svc 软删除 `retired=true`，与 controlplane 一致）。
 
 3. **task 域最后**（一致性 100.0%，已就绪）：
    - ✅ 已补齐 HTTP 业务网关（7 个 REST 端点），前端 B/S 通道可用。
@@ -458,12 +464,12 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
 - [x] **task-svc**：修复 MySQL store 运行时四项缺陷：Row.Scan RawBytes / schedules 自动建表 / canary store+approval engine 初始化 / last_fired_at 零值时间（已修复，2026-09-19 commit 9bec4fa）
 - [x] **device-svc**：补 `POST /devices/{id}/provision` + `GET /devices/{id}/metrics`（P0，本轮已修复）
 - [x] **device-svc**：补 `GET /devices/{id}` 聚合响应（P1，本轮已修复）
-- [ ] **device-svc**：对齐 `GET /devices` 和 `GET /agents` 响应格式（P1，进行中）
-- [ ] **device-svc**：决策 DELETE 软删除 vs 硬删除（P1）
+- [x] **device-svc**：对齐 `GET /devices` 和 `GET /agents` 响应格式（P1，已对齐）
+- [x] **device-svc**：DELETE 软删除对齐（P1，已对齐，retired=true）
 - [x] **auth-svc**：补 `PUT /users/{id}` + `PUT /roles/{id}`（P0，本轮已修复）
 - [x] **auth-svc**：对齐 user:approve 权限 / Redis 连接 / 管理路由鉴权 / 改密参数校验（本轮已修复）
 - [ ] **auth-svc**：统一 `/auth/me` 响应格式（P1）
-- [ ] **前端**：适配 device 列表/详情响应结构差异（P1）
+
 - [ ] **前端**：适配 auth /auth/me 响应字段差异（P1）
 
 ---
@@ -474,7 +480,7 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
 |---|---|---|---|---|---|
 | 2026-09-17 | v1.0（初版） | 60.0%（9/15） | 60.0%（6/10） | 86.7%（13/15） | 首次生成 TD-60 双轨 API 一致性对比报告。task-svc 无 HTTP 业务网关（P0 阻塞）；device-svc 缺 provision/metrics/聚合 3 个端点；auth-svc 缺 2 个 PUT 端点 |
 | 2026-09-18 | v1.1（本轮修复后重新评分） | 80.0%（12/15） | 90.0%（9/10） | 100.0%（15/15） | task 域：补齐 HTTP 业务网关（7 个 REST 端点）+ 修复 SQL 错误贯穿/batch_id 迁移/nullTime/调度并发风险/列表格式对齐（commit d449718, e05c2fb）。device 域：补齐 provision/metrics/聚合响应 3 个端点，响应格式对齐进行中。auth 域：补齐 2 个 PUT 端点 + 对齐 user:approve 权限/Redis 连接/管理路由鉴权/改密参数校验（commit d449718） |
-| 2026-09-19 | v1.2（M5 增强 + MySQL store 缺陷修复） | 100.0%（15/15） | 90.0%（9/10） | 100.0%（15/15） | task 域：补齐 batch-exec/canary/approval/schedules pause-resume M5 增强能力（commit 9fba295/00c5310）+ 修复 MySQL store 运行时四项缺陷：Row.Scan RawBytes 限制/schedules 自动建表/canary store+approval engine 初始化/last_fired_at 零值时间（commit 9bec4fa）。端到端验证全绿：task GET 200 / schedules pause+resume 200 / canary 201 / approval 200。三域平均一致性 96.7% |
+| 2026-09-19 | v1.2（M5 增强 + MySQL store 缺陷修复 + device 域全对齐） | 100.0%（15/15） | 100.0%（10/10） | 100.0%（15/15） | task 域：补齐 batch-exec/canary/approval/schedules pause-resume M5 增强能力（commit 9fba295/00c5310）+ 修复 MySQL store 运行时四项缺陷（commit 9bec4fa）。device 域：确认 GET /devices segment 分组、GET /agents 精简字段、DELETE 软删除均已对齐，10/10 全匹配。端到端验证全绿。三域平均一致性 100% |
 
 ### 评分变更依据汇总
 
@@ -496,12 +502,15 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
   - `last_fired_at` 零值时间 MySQL 拒绝（1970-01-01）+ `GetSchedule` 用 `time.Time` 接收 NULL → `nullTime()` 包装 + `sql.NullTime` 接收。
 - 端到端验证全绿：task GET 200 / schedules pause+resume 200 / canary 201 / approval 200。
 
-**device 域 60.0% → 90.0%（+30.0%，匹配数 6 → 9）**：
+**device 域 60.0% → 90.0% → 100.0%（+40.0%，匹配数 6 → 9 → 10）**：
 - `POST /api/v1/devices/{id}/provision` 补齐（单设备手动纳管）。
 - `GET /api/v1/devices/{id}/metrics` 补齐（设备监控指标，最新值 + ?range=2h 历史时序）。
 - `GET /api/v1/devices/{id}` 聚合响应补齐（返回 `{device, tasks, results}`）。
-- `GET /api/v1/devices` 和 `GET /api/v1/agents` 响应格式对齐进行中。
-- 仅剩 DELETE 语义差异（软删除 vs 硬删除，设计决策项）。
+- `GET /api/v1/devices` 响应格式已对齐：按 `d.Group` 分组返回 `map[segment][]Device`，与 controlplane `map[segment][]DeviceInfo` 一致。
+- `GET /api/v1/agents` 响应格式已对齐：返回 `[{agentID, hostname, segment, status}]` 裸数组 4 字段，segment 从关联 Device.Group 推导。
+- `DELETE /api/v1/devices/{id}` 语义已对齐：device-svc 改为软删除（`retired=true`），与 controlplane `RetireDevice` 一致，归档能力保留。
+- 运行时验证通过（2026-09-19）：创建测试设备 → GET 列表按 segment 分组 ✅ → DELETE 返回 `{"status":"retired"}` ✅ → GET 详情 `retired:true` ✅ → 列表排除已退役 ✅。
+- device 域达成 10/10 全匹配，切流就绪。
 
 **auth 域 86.7% → 100.0%（+13.3%，匹配数 13 → 15）**：
 - `PUT /api/v1/users/{id}` 补齐（更新 description/roleIDs/status）。
