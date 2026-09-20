@@ -377,7 +377,7 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
 | 端点 | controlplane | auth-svc | 差异影响 |
 |---|---|---|---|
 | POST /auth/login | `{username, password}` → `{user, mustChangePassword, changePasswordToken}` + Set-Cookie×2 | 同 + `{needMFA, deviceFP}` | auth-svc 响应多 2 字段，前端兼容（忽略额外字段） |
-| GET /auth/me | `{tenantID, userID, roles, mode: "gateway-injected"}` | `{id, username, email, roles}` | **结构不同**，前端需适配（mode 字段丢失，id vs userID 命名差异） |
+| GET /auth/me | `{tenantID, userID, roles, mode: "gateway-injected"}` | `{tenantID, userID, roles, mode: "self-validated", id, username, email}` | ✅ 已对齐：核心字段一致，mode 值为架构语义差异，额外字段前端可忽略 |
 | POST /users | `{username, password, email, roleIDs}` | `{username, email}`（无 password/roleIDs） | **请求字段不同**，管理端创建用户时 auth-svc 不支持设密码和角色 |
 | Cookie | opsmesh_at / opsmesh_rt，Path=/、HttpOnly、SameSite=Lax、Secure 条件 | 逐字一致 | ✅ Cookie 语义完全对齐（跨入口互换前提） |
 
@@ -387,15 +387,15 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
 
 | 域 | 方法 | 路径 | 缺失方 | 优先级 | 说明 |
 |---|---|---|---|---|---|
-| task | POST | /api/v1/tasks/batch | task-svc（HTTP 网关） | P0 | 多 agent 批量下发。task-svc 有 gRPC CreateBatchTask 但 HTTP 网关未包装该能力 |
-| task | POST | /api/v1/tasks/batch-exec | task-svc | P1 | M5 增强批量执行（带进度跟踪） |
-| task | POST | /api/v1/tasks/canary | task-svc | P1 | 灰度发布创建。task-svc gRPC 完全没有 canary 能力 |
-| task | GET/POST | /api/v1/tasks/canary/{id} | task-svc | P1 | 灰度状态/advance |
-| task | POST | /api/v1/schedules/{id}/pause | task-svc | P1 | 暂停定时任务。gRPC ScheduleService 无 pause/resume 方法 |
-| task | POST | /api/v1/schedules/{id}/resume | task-svc | P1 | 恢复定时任务 |
-| task | GET/POST | /api/v1/approval/flows | task-svc | P1 | 审批流定义 CRUD。task-svc gRPC 完全没有 approval 能力 |
-| task | GET/POST | /api/v1/approval/requests | task-svc | P1 | 审批请求提交/查询 |
-| task | GET | /api/v1/approval/pending | task-svc | P1 | 待我审批列表 |
+| task | POST | /api/v1/tasks/batch | task-svc（HTTP 网关） | ✅ 已修复 | HTTP 网关已补齐批量下发端点 |
+| task | POST | /api/v1/tasks/batch-exec | task-svc | ✅ 已修复 | M5 增强批量执行已补齐（commit 9fba295） |
+| task | POST | /api/v1/tasks/canary | task-svc | ✅ 已修复 | 灰度发布创建已补齐（commit 9fba295） |
+| task | GET/POST | /api/v1/tasks/canary/{id} | task-svc | ✅ 已修复 | 灰度状态/advance 已补齐（commit 9fba295） |
+| task | POST | /api/v1/schedules/{id}/pause | task-svc | ✅ 已修复 | 暂停定时任务已补齐（commit 00c5310） |
+| task | POST | /api/v1/schedules/{id}/resume | task-svc | ✅ 已修复 | 恢复定时任务已补齐（commit 00c5310） |
+| task | GET/POST | /api/v1/approval/flows | task-svc | ✅ 已修复 | 审批流定义 CRUD 已补齐（commit 9fba295） |
+| task | GET/POST | /api/v1/approval/requests | task-svc | ✅ 已修复 | 审批请求提交/查询已补齐（commit 9fba295） |
+| task | GET | /api/v1/approval/pending | task-svc | ✅ 已修复 | 待我审批列表已补齐（commit 9fba295） |
 | task | — | （HTTP 业务网关） | task-svc | ✅ 已修复 | 本轮已补齐 HTTP 业务网关（7 个 REST 端点），前端 B/S 通道可用 |
 | device | POST | /api/v1/devices/{id}/provision | device-svc | ✅ 已修复 | 本轮已补齐单设备手动纳管端点 |
 | device | GET | /api/v1/devices/{id}/metrics | device-svc | ✅ 已修复 | 本轮已补齐设备监控指标端点 |
@@ -406,7 +406,7 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
 | device | GET | /api/v1/agents 响应格式 | device-svc | ✅ 已对齐 | 返回 [{agentID, hostname, segment, status}] 裸数组 4 字段 |
 | auth | PUT | /api/v1/users/{id} | auth-svc | ✅ 已修复 | 本轮已补齐 PUT 端点 |
 | auth | PUT | /api/v1/roles/{id} | auth-svc | ✅ 已修复 | 本轮已补齐 PUT 端点 |
-| auth | GET | /api/v1/auth/me 响应格式 | auth-svc | P1 | controlplane 返回 `{tenantID, userID, roles, mode}`，auth-svc 返回 `{id, username, email, roles}`。前端需适配 |
+| auth | GET | /api/v1/auth/me 响应格式 | auth-svc | ✅ 已对齐 | auth-svc /auth/me 补齐 tenantID/userID/mode 字段，与 controlplane 格式一致。mode 值差异（self-validated vs gateway-injected）为架构语义差异，前端兼容 |
 
 ---
 
@@ -430,7 +430,7 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
    - `DELETE /api/v1/devices/{id}`：device-svc 改为软删除（`retired=true`），与 controlplane `RetireDevice` 语义一致，归档能力保留。
    - 运行时验证通过：创建测试设备 → GET 列表按 segment 分组 ✅ → DELETE 返回 `{"status":"retired"}` ✅ → GET 详情 `retired:true` ✅ → 列表排除已退役 ✅。
 
-3. **auth 域 /auth/me 响应字段差异（P1 兼容性）**：controlplane 返回 `{tenantID, userID, roles, mode}`，auth-svc 返回 `{id, username, email, roles}`。`mode` 字段丢失（标识网关注入身份 vs 自鉴权），`userID` → `id` 命名差异。前端身份渲染逻辑需适配。本轮已补齐 2 个 PUT 端点并对齐权限/鉴权/Redis，auth 域达成 100% 匹配。
+3. **auth 域 /auth/me 响应字段已对齐（P2，本轮修复）**：auth-svc /auth/me 已补齐 `tenantID`/`userID`/`mode` 字段，与 controlplane 格式一致。`mode` 值差异（`self-validated` vs `gateway-injected`）为架构语义差异（auth-svc 自验 JWT vs controlplane 网关注入身份），前端兼容。auth-svc 额外返回 `id`/`username`/`email` 供富信息使用，前端可忽略。
 
 4. **双轨 Cookie 互写冲突（已规避）**：auth-svc HTTP 网关默认关闭（`AUTH_SVC_HTTP_ENABLED=false`），双轨期 controlplane 仍是唯一登录入口。切流时需先开 auth-svc 网关、再切前端流量，避免两端同时写 Cookie。
 
@@ -439,7 +439,7 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
 1. **auth 域优先切流**（一致性 100.0%，已就绪）：
    - ✅ 本轮已补齐 `PUT /api/v1/users/{id}` 和 `PUT /api/v1/roles/{id}` 两个 P0 端点。
    - ✅ 本轮已对齐 user:approve 权限、Redis 连接、管理路由鉴权、改密参数校验。
-   - 统一 `/auth/me` 响应格式（补 `tenantID`/`mode` 字段或前端适配，P1）。
+   - ✅ /auth/me 响应格式已对齐（补齐 tenantID/userID/mode 字段）。
    - 开 `AUTH_SVC_HTTP_ENABLED=true`，灰度切前端登录流量到 auth-svc。
 
 2. **device 域其次**（一致性 100.0%，已就绪）：
@@ -468,9 +468,9 @@ auth-svc HTTP 网关（`services/auth-svc/internal/http/gateway.go`）路径与 
 - [x] **device-svc**：DELETE 软删除对齐（P1，已对齐，retired=true）
 - [x] **auth-svc**：补 `PUT /users/{id}` + `PUT /roles/{id}`（P0，本轮已修复）
 - [x] **auth-svc**：对齐 user:approve 权限 / Redis 连接 / 管理路由鉴权 / 改密参数校验（本轮已修复）
-- [ ] **auth-svc**：统一 `/auth/me` 响应格式（P1）
+- [x] **auth-svc**：统一 `/auth/me` 响应格式（P1，已对齐——补齐 tenantID/userID/mode 字段）
 
-- [ ] **前端**：适配 auth /auth/me 响应字段差异（P1）
+- [ ] **前端**：适配 auth /auth/me mode 字段语义差异（self-validated vs gateway-injected，P2 兼容性）
 
 ---
 

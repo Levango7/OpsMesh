@@ -421,10 +421,16 @@ func (g *Gateway) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
+		// 对齐 controlplane GET /api/v1/me 响应格式：
+		// {tenantID, userID, roles, mode}
+		"tenantID": resp.TenantId,
+		"userID":   u.ID,
+		"roles":    u.RoleIDs,
+		"mode":     "self-validated", // auth-svc 自验 JWT（vs controlplane "gateway-injected"）
+		// 保留额外字段供前端富信息使用（controlplane 不返回这些，前端可忽略）
 		"id":       u.ID,
 		"username": u.Username,
 		"email":    u.Email,
-		"roles":    u.RoleIDs,
 	})
 }
 
