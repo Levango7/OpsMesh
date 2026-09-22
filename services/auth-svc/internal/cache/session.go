@@ -28,7 +28,7 @@ type Session struct {
 	SessionID string    `json:"session_id"` // 会话 ID（= JWT jti）
 	UserID    string    `json:"user_id"`
 	TenantID  string    `json:"tenant_id"`
-	DeviceFP  string    `json:"device_fp"`  // 绑定的设备指纹
+	DeviceFP  string    `json:"device_fp"` // 绑定的设备指纹
 	CreatedAt time.Time `json:"created_at"`
 	LastSeen  time.Time `json:"last_seen"` // 最后访问时间（滑动过期用）
 }

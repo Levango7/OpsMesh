@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/Levango7/OpsMesh/pkg/trace"
 	configv1 "github.com/Levango7/OpsMesh/services/config-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/drift"
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/rotation"
@@ -25,7 +26,6 @@ import (
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/config-svc/pkg/config"
-	"github.com/Levango7/OpsMesh/pkg/trace"
 )
 
 func main() {

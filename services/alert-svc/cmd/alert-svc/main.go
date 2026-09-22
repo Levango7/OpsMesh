@@ -15,6 +15,12 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/Levango7/OpsMesh/pkg/circuit"
+	"github.com/Levango7/OpsMesh/pkg/compress"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
+	"github.com/Levango7/OpsMesh/pkg/ratelimit"
+	"github.com/Levango7/OpsMesh/pkg/security"
+	"github.com/Levango7/OpsMesh/pkg/trace"
 	alertv1 "github.com/Levango7/OpsMesh/services/alert-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/engine"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/escalation"
@@ -23,12 +29,6 @@ import (
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/alert-svc/pkg/config"
-	"github.com/Levango7/OpsMesh/pkg/circuit"
-	"github.com/Levango7/OpsMesh/pkg/compress"
-	"github.com/Levango7/OpsMesh/pkg/metrics"
-	"github.com/Levango7/OpsMesh/pkg/ratelimit"
-	"github.com/Levango7/OpsMesh/pkg/security"
-	"github.com/Levango7/OpsMesh/pkg/trace"
 )
 
 func main() {

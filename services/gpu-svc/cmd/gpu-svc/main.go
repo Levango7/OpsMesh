@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Levango7/OpsMesh/pkg/trace"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/gpu"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/handler"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/metrics"
@@ -20,7 +21,6 @@ import (
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/workload"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/pkg/config"
-	"github.com/Levango7/OpsMesh/pkg/trace"
 )
 
 func main() {

@@ -9,12 +9,12 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/Levango7/OpsMesh/pkg/circuit"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 	alertv1 "github.com/Levango7/OpsMesh/services/alert-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/engine"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/notify"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/store"
-	"github.com/Levango7/OpsMesh/pkg/circuit"
-	"github.com/Levango7/OpsMesh/pkg/metrics"
 )
 
 // Errors returned by the service.
