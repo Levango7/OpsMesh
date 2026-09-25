@@ -1501,14 +1501,29 @@ P1-2 批次推送后，CI **第一次真正跑完整流水线**（run `361226480
 
 **接线后的验证**：17 个服务模块逐个 `go build ./...` + `go test ./...` 全部通过；bot-svc 二进制实跑输出为合法 JSON（`level`/`msg`/`service`/`via`/`fatal` 字段齐备）；根模块 `gofmt`/`go vet`/`golangci-lint v2.13.2` 全 0 问题。
 
-### 17.5.1 唯一未跑项（明确标注，不写进 PASS 数）
+### 17.5.1 曾经的唯一未跑项（现已真机跑过，边界如下）
 
-`verify-runtime.sh` 第 15 节的**第 9 条**断言（匿名 `POST /api/v1/admin/loglevel` → 401）
-**尚未在真机跑过**：它要求被测镜像内含该端点，而本机 Docker Desktop 在验证前已停
-（`docker-desktop` WSL 发行版 Stopped、宿主仅剩 2.1GB 空闲），重建镜像会连带把 kind
-集群与 17 个容器拉回来拖死机器，故按用户决定不动本地环境。
-该断言的逻辑由 3 个单测覆盖（匿名 401 / viewer 403 / operator+admin 200），
-**只有运行时那条是待跑**。
+`verify-runtime.sh` 第 15 节的**第 9 条**断言（匿名 `POST /api/v1/admin/loglevel` → 401）此前
+因 Docker Desktop 停机而未跑，只由 3 个单测覆盖（匿名 401 / viewer 403 / operator+admin 200）。
+
+**2026-09-26 已用本机独立实例真机验证**（不必重建镜像：验的是运行期鉴权，同一份 HTTP 服务代码路径）：
+以 `--store=memory --require-auth=true` 起在临时端口 18099/19090/19091，实测：
+
+| 断言 | 结果 |
+|---|---|
+| 匿名 `POST /api/v1/admin/loglevel`（`{"level":"debug"}`） | **401**，响应体 `{"error":"missing identity (no bearer token or gateway role header)"}` |
+| 匿名 `GET /api/v1/admin/config` / `GET /api/v1/admin/diagnostics` | **401 / 401** |
+| `GET /version` / `GET /healthz` | 200 / 200 |
+| `GET /debug/pprof/`（出厂未开 `--debug-pprof`） | **404** |
+| 级别是否被匿名请求改动 | 未改（`/version` 的 `runtime.logLevel` 仍 info；进程随后销毁） |
+
+**边界（不要读成"容器栈里也验过了"）**：这一条验的是**本机独立二进制实例**，
+`verify-runtime.sh` 里针对**重建后的容器镜像**的同一条断言仍未跑（需 `deploy.sh up` 重建控制面镜像，
+而本机 Docker 与 kind 集群、他人项目容器并存，重建栈的内存代价不该由这条断言来转嫁）。
+取证坑一条，值得记住：`opsmesh serve --flag=…` 这类写法会让 **Go flag 包在第一个非旗标参数处停止解析**，
+所有 `--flag` 被静默忽略、进程改用默认值（实测它去监听 8080 而不是我给的 18099）——
+控制面是**单命令扁平旗标**，没有 `serve` 子命令。起实例后必须回读启动日志里的
+`http/grpc/metrics` 三个端口字段确认旗标真的生效，别假设。
 
 **另需记录的环境事实（与本仓库代码无关，但会污染本地计时类用例）**：Docker Desktop
 在负载下整体停退，导致 `internal/agent` 的 Windows 计时阈值用例（`TestExecute_Timeout`

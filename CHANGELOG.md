@@ -91,7 +91,7 @@
 - **微服务日志统一（管道完成，逐点严重级别为增量项）**：规模是 17 个 main.go、约 **301 处** stdlib 调用点。**刻意不做一次性逐点改写**——那要求给每处判严重级别，误判比无级别更糟，且改动面无法一次验证。落地为 `pkg/log.Init(serviceName)` **接管标准库默认 logger**：每服务 main 加一行，该进程全部输出即为带 `service` + `via:"stdlib-log"` 的 JSON 并受 `OPSMESH_LOG_LEVEL` 控制。经此通道的行**一律如实记 INFO**（stdlib `Printf` 不带级别信息，按前缀猜级别等于制造不实陈述）。有判别价值的那一类已显式化：**47 处 `log.Fatal*` → `lgr.Fatalf/lgr.Fatal`**（ERROR + `fatal=true`，退出码 1 语义不变）。
 - **依赖接线**：11 个服务模块的 `go.mod` 补 `require github.com/Levango7/OpsMesh` + `replace … => ../../`（本地替换，不联网解析版本）。
 - **实测**：17 个模块 `go build ./...` + `go test ./...` 全绿；bot-svc 二进制实跑 → 启动行 `level=INFO`、崩溃行 `level=ERROR fatal=true`，均为合法 JSON；`Dockerfile.service` 容器内构建成功（跨模块依赖在镜像构建中可解析）；新增 6 个缓存单测 + 级别端点 2 个单测；根模块 `gofmt`/`go vet`/`golangci-lint v2.13.2` 0 问题。
-- **待跑项（不混进 PASS 数）**：`verify-runtime.sh` 第 15 节新增的第 9 条断言（匿名 `POST /api/v1/admin/loglevel` → 401）**尚未在真机执行**——它需要含该端点的镜像，而本机 Docker Desktop 在验证前已停（宿主仅剩 2.1GB），重建会连带拉回 kind 集群与 17 容器。断言逻辑本身由上述单测覆盖（匿名 401 / viewer 403 / operator+admin 200）。详见报告 §17.5.1。
+- **原「待跑项」已真机跑掉（2026-09-26）**：匿名 `POST /api/v1/admin/loglevel` → **401**（响应体 `missing identity (no bearer token or gateway role header)`），同实例复验 `GET /api/v1/admin/config`、`/admin/diagnostics` 均 401、`/version` 200、`/debug/pprof/` 出厂 404。做法：`--store=memory --require-auth=true` 起本机独立实例于临时端口 18099/19090/19091，验毕销毁。**边界**：这条验的是本机二进制实例；`verify-runtime.sh` 中针对**重建后的容器镜像**的同一条仍未跑（不该为它去承担重建整栈的内存代价）。取证坑：`opsmesh serve --flag=…` 会让 Go flag 包在第一个非旗标参数处**静默停止解析**（实测它去监听默认 8080 而非 18099），控制面无 `serve` 子命令——起实例后必须回读启动日志的 `http/grpc/metrics` 字段确认旗标生效。详见报告 §17.5.1。
 - **诚实边界**：剩余约 250 处 `Printf/Println` 的逐点级别升级（`Infof/Warnf/Errorf/Debugf` 已在 `pkg/log` 备好）为后续增量，不谎称已完。
 
 ## [Unreleased] — 2026-09-26 `build-test` 内存型 flaky：复核 + 可观测 + 仅 OOM 重试一次
