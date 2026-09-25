@@ -29,16 +29,24 @@ const safeGoRestartDelay = 5 * time.Second
 // 等待 safeGoRestartDelay 后重启 fn，循环继续提供能力（心跳/派发/取消等不中断）。
 // 重启期间该能力短暂缺失（如心跳停 5s+），控制面按租约/归档阈值判定在线状态，
 // 短暂缺失不会误判离线（archive-age 默认 1440 分钟）。
+//
+// 重启原因必须如实区分（实机发现）：若 fn 因「未配置/无事可做」提前 return 而未 cancel
+// ctx，旧实现一律打印「panic 后重启」——实机每 5s 一条假 panic 告警（`logCollectLoop`
+// 在未配置采集路径时立即 return），运维会去追一个根本不存在的崩溃。故此处按 recover
+// 是否真的捕获到 panic 区分措辞；调用方更应避免启动「注定立即返回」的循环。
 func safeGo(ctx context.Context, name string, fn func(ctx context.Context)) {
 	go func() {
 		for {
+			panicked := true
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
 						logx.Error(ctx, "agent 循环 panic 已捕获并将重启",
 							nil, "loop", name, "panic", r,
 							"stack", string(debug.Stack()))
+						return
 					}
+					panicked = false // fn 正常 return（ctx 取消，或未配置导致提前退出）
 				}()
 				fn(ctx)
 			}()
@@ -46,7 +54,11 @@ func safeGo(ctx context.Context, name string, fn func(ctx context.Context)) {
 			case <-ctx.Done():
 				return // 正常退出（ctx 取消），不重启
 			case <-time.After(safeGoRestartDelay):
-				logx.Warn(ctx, "agent 循环 panic 后重启", "loop", name)
+				if panicked {
+					logx.Warn(ctx, "agent 循环 panic 后重启", "loop", name)
+				} else {
+					logx.Warn(ctx, "agent 循环提前退出，将重启", "loop", name)
+				}
 			}
 		}
 	}()

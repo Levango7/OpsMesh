@@ -125,3 +125,41 @@ groups:
         annotations:
           summary: "审计链自检 15 分钟内未执行"
           description: "leader 周期任务（归档 + 自检）疑似停摆：检查控制面 leader 状态与 auditMaintenanceLoop 日志。"
+
+  - name: opsmesh_agent_signature_alerts
+    interval: 30s
+    rules:
+      # P1-2 agent 身份绑定：验签被拒必须可见。
+      # 语义：require-signature 开启时，agent 忘配密钥/密钥与库内不一致/时间戳漂移/伪造尝试
+      # 都会落在 {result="rejected"}。零流量（无 agent）时 rate 为 0，表达式为假，不误报。
+      # 排查：控制面日志中的 "agent-signature mismatch" / "no signing secret" / "out of skew"，
+      # 以及 GET /api/v1/agents 确认该 agent 是否有 per-agent 密钥（secret 非空）。
+      - alert: OpsMeshAgentSignatureRejected
+        expr: rate(opsmesh_agent_signature_verifications_total{result="rejected"}[5m]) > 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "agent gRPC 请求持续被验签拒绝"
+          description: "近 10 分钟持续存在被拒验签（{{ $value }} 次/秒）：agent 密钥缺失/不匹配或有人伪造上报。请核对控制面日志与 agents 表的 secret 列。"
+
+      # 遗留算法仍在生产使用（滚动升级未收尾）：v1 不覆盖载荷，同秒内可被改写重放。
+      # 仅在确实有 v1 流量时告警；升级完成（全部 v2）后自动清零。
+      - alert: OpsMeshAgentSignatureLegacyAlg
+        expr: rate(opsmesh_agent_signature_verifications_total{alg="v1",result="ok"}[10m]) > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "仍有 agent 使用 v1 签名算法（不覆盖载荷）"
+          description: "v1 签名不含载荷摘要，同秒内任务结果可被篡改重放已持续 30 分钟：请按构建顺序升级 agent 到 v2（控制面已兼容 v1/v2，可先升级控制面）。"
+
+      # 全舰队预共享密钥兜底仍在被使用 = 密钥未按 agent 隔离（单机泄漏即全舰队可冒充）。
+      - alert: OpsMeshAgentFleetKeyInUse
+        expr: rate(opsmesh_agent_signing_key_source_total{source="fleet"}[10m]) > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "仍有 agent 依赖全舰队预共享签名密钥"
+          description: "近 30 分钟存在以 --grpc-signature-key 兜底验签通过（{{ $value }} 次/秒）：建议改用 install token + TLS 纳管，使每台 agent 持有独立密钥，实现单机吊销与轮换。"

@@ -2,9 +2,6 @@ package agent
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"expvar"
 	"fmt"
 	"net"
@@ -49,9 +46,13 @@ type GRPCClient struct {
 	addrs    []string // 候选控制面地址（host:grpcPort），按序 failover
 	creds    credentials.TransportCredentials
 	grpcPort int
-	// gRPC agent 身份绑定：agent 的 HMAC 签名密钥（由 Register 响应下发）。
-	// 非空时，invoke 在每次请求的 gRPC metadata 中携带 agent-signature 与 agent-timestamp，
-	// 控制面据此验证 agent 身份。空=未启用签名（demo 模式或控制面未下发 secret）。
+	// gRPC agent 身份绑定：agent 的 HMAC 签名密钥。
+	// 来源（优先级，见 Agent.resolveAgentKey）：--grpc-signature-key 预共享密钥
+	// > Register 响应下发的 per-agent 密钥（控制面仅在 install token 认证 + TLS 时下发）
+	// > 本机 <dataDir>/agent.key 已落盘密钥。
+	// 非空时，invoke 在每次请求的 gRPC metadata 中携带 agent-signature（v2，覆盖载荷）/
+	// agent-timestamp / agent-signature-alg，控制面据此验证 agent 身份。
+	// 空=不签名（demo 模式或控制面未启用 --grpc-require-signature）。
 	secret string
 	// 连接复用：按 target 地址缓存的长连接池。
 	// mu 保护 conns 并发读写（invoke/heartbeat/pull/report/cancel 多 goroutine 并发调用）。
@@ -361,21 +362,29 @@ func isConnError(err error) bool {
 }
 
 // signContext gRPC agent 身份绑定：为请求 ctx 附加 HMAC 签名 metadata。
-// 当 client 持有 secret 且 agentID 非空时，计算 agent-signature = HMAC-SHA256(secret, timestamp+agentID)
-// 并附加 agent-signature / agent-timestamp 到 outgoing metadata。
-// secret 为空（未启用签名）或 agentID 为空（无身份）时原样返回 ctx（向后兼容）。
+//
+// 签名算法 v2（P1-2）：HMAC-SHA256(secret, "v2\n"+timestamp+"\n"+identity+"\n"+载荷摘要)，
+// 载荷摘要 = sha256(经同一 JSON codec 序列化的 payload)。相比旧 v1（仅 ts+identity），
+// v2 把业务字段绑进签名——任务结果/日志/心跳指标被中间人改写即验签失败。
+//
+// secret 为空（未启用签名）或 identity 为空（无身份）时原样返回 ctx（向后兼容 demo/未配置）。
 // 控制面 verifyAgentSignature 据此验证 agent 身份，不再纯信任 agent 自报的 AgentID。
-func (c *GRPCClient) signContext(ctx context.Context, agentID string) context.Context {
-	if c.secret == "" || agentID == "" {
+func (c *GRPCClient) signContext(ctx context.Context, identity string, payload any) context.Context {
+	if c.secret == "" || identity == "" {
 		return ctx // 未启用签名或无身份，原样返回（向后兼容 demo/未配置）
 	}
+	digest := grpcx.PayloadDigest(payload)
+	if digest == "" {
+		// 摘要不可计算（报文含不可序列化字段）：不签名，控制面以「缺签名」明确拒绝，
+		// 好过发出一个「算法错误但看起来有效」的签名把编程错误掩盖成身份问题。
+		logx.Warn(ctx, "载荷摘要计算失败，跳过签名（控制面将以缺签名拒绝本次请求）", "identity", identity)
+		return ctx
+	}
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	mac := hmac.New(sha256.New, []byte(c.secret))
-	mac.Write([]byte(ts + agentID))
-	sig := hex.EncodeToString(mac.Sum(nil))
 	return metadata.AppendToOutgoingContext(ctx,
-		"agent-signature", sig,
-		"agent-timestamp", ts,
+		grpcx.AgentSignatureMetadataKey, grpcx.ComputeAgentSignatureV2(c.secret, ts, identity, digest),
+		grpcx.AgentTimestampMetadataKey, ts,
+		grpcx.AgentSignatureAlgMetadataKey, grpcx.AgentSignatureAlgV2,
 	)
 }
 
@@ -389,7 +398,7 @@ func (c *GRPCClient) Register(ctx context.Context, info *proto.AgentInfo) (*grpc
 // Heartbeat 通过 gRPC Heartbeat 方法上报心跳。
 func (c *GRPCClient) Heartbeat(ctx context.Context, req *grpcx.HeartbeatReq) error {
 	resp := &grpcx.Empty{}
-	ctx = c.signContext(ctx, req.AgentID) // 附加 HMAC 签名
+	ctx = c.signContext(ctx, req.AgentID, req) // 附加 HMAC 签名（覆盖载荷）
 	return c.invoke(ctx, "/opsmesh.v1.Registration/Heartbeat", req, resp)
 }
 
@@ -397,7 +406,7 @@ func (c *GRPCClient) Heartbeat(ctx context.Context, req *grpcx.HeartbeatReq) err
 func (c *GRPCClient) PullTasks(ctx context.Context, agentID string) ([]proto.Task, error) {
 	resp := &grpcx.PullTasksResp{}
 	req := &grpcx.PullTasksReq{AgentID: agentID}
-	ctx = c.signContext(ctx, agentID) // 附加 HMAC 签名
+	ctx = c.signContext(ctx, agentID, req) // 附加 HMAC 签名（覆盖载荷）
 	if err := c.invoke(ctx, "/opsmesh.v1.Registration/PullTasks", req, resp); err != nil {
 		return nil, err
 	}
@@ -407,7 +416,7 @@ func (c *GRPCClient) PullTasks(ctx context.Context, agentID string) ([]proto.Tas
 // ReportResult 通过 gRPC ReportResult 方法上报任务执行结果。
 func (c *GRPCClient) ReportResult(ctx context.Context, res *proto.TaskResult) error {
 	resp := &grpcx.Empty{}
-	ctx = c.signContext(ctx, res.AgentID) // 附加 HMAC 签名
+	ctx = c.signContext(ctx, res.AgentID, res) // 附加 HMAC 签名（覆盖载荷）
 	return c.invoke(ctx, "/opsmesh.v1.Registration/ReportResult", res, resp)
 }
 
@@ -417,7 +426,7 @@ func (c *GRPCClient) ReportResult(ctx context.Context, res *proto.TaskResult) er
 func (c *GRPCClient) CancelTask(ctx context.Context, taskID, tenantID string) error {
 	resp := &grpcx.Empty{}
 	req := &grpcx.CancelTaskReq{TaskID: taskID, TenantID: tenantID}
-	ctx = c.signContext(ctx, tenantID) // 附加 HMAC 签名（用 tenantID 作为签名身份）
+	ctx = c.signContext(ctx, tenantID, req) // 附加 HMAC 签名（用 tenantID 作为签名身份，覆盖载荷）
 	return c.invoke(ctx, "/opsmesh.v1.Registration/CancelTask", req, resp)
 }
 
@@ -425,7 +434,7 @@ func (c *GRPCClient) CancelTask(ctx context.Context, taskID, tenantID string) er
 func (c *GRPCClient) PollCancels(ctx context.Context, agentID string) ([]string, error) {
 	resp := &grpcx.PollCancelsResp{}
 	req := &grpcx.PollCancelsReq{AgentID: agentID}
-	ctx = c.signContext(ctx, agentID) // 附加 HMAC 签名
+	ctx = c.signContext(ctx, agentID, req) // 附加 HMAC 签名（覆盖载荷）
 	if err := c.invoke(ctx, "/opsmesh.v1.Registration/PollCancels", req, resp); err != nil {
 		return nil, err
 	}
@@ -437,7 +446,7 @@ func (c *GRPCClient) PollCancels(ctx context.Context, agentID string) ([]string,
 func (c *GRPCClient) ReportLogs(ctx context.Context, report *proto.LogReport) error {
 	resp := &grpcx.Empty{}
 	req := &grpcx.ReportLogsReq{Report: *report}
-	ctx = c.signContext(ctx, report.AgentID) // 附加 HMAC 签名
+	ctx = c.signContext(ctx, report.AgentID, req) // 附加 HMAC 签名（覆盖载荷）
 	return c.invoke(ctx, "/opsmesh.v1.Registration/ReportLogs", req, resp)
 }
 
@@ -452,7 +461,7 @@ func (c *GRPCClient) ReportLogs(ctx context.Context, report *proto.LogReport) er
 func (c *GRPCClient) ConfigureAgent(ctx context.Context, agentID string, cfg *proto.AgentConfig) (*grpcx.ConfigureAgentResp, error) {
 	resp := &grpcx.ConfigureAgentResp{}
 	req := &grpcx.ConfigureAgentReq{AgentID: agentID, Config: *cfg}
-	ctx = c.signContext(ctx, agentID) // 附加 HMAC 签名
+	ctx = c.signContext(ctx, agentID, req) // 附加 HMAC 签名（覆盖载荷）
 	if err := c.invoke(ctx, "/opsmesh.v1.Registration/ConfigureAgent", req, resp); err != nil {
 		return nil, err
 	}

@@ -313,12 +313,17 @@ func (s *Server) restoreSnapshot(snap *backupSnapshot) map[string]int {
 		counts["devices"]++
 	}
 	// agents：Register 幂等（按 agentID）。
+	// Register 返回 nil 表示被跨租户重绑定防护拒绝（该 agentID 已归属其他租户）：
+	// 单独计数而非静默吞掉，让运维能从响应看出「备份里的租户与现网不一致」。
 	for _, a := range snap.Agents {
 		if a == nil || a.AgentID == "" {
 			continue
 		}
 		ac := *a
-		s.store.Register(&ac)
+		if s.store.Register(&ac) == nil {
+			counts["agents_tenant_conflict"]++
+			continue
+		}
 		counts["agents"]++
 	}
 	// tasks：CreateTask（AgentID 空的任务不可入队，跳过）。

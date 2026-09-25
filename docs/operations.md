@@ -1744,6 +1744,40 @@ export OPSMESH_ENCRYPTION_KEY=${NEW_KEY}
 systemctl restart opsmesh-controlplane
 ```
 
+#### 9.2.4 agent 签名密钥（per-agent）轮换与迁移
+
+P1-2 起每台 agent 应持有**独立**的 HMAC 签名密钥（`agents.secret`），控制面验签时
+**per-agent 优先、`--grpc-signature-key` 兜底**。预共享密钥是全舰队共用凭据（单机泄漏即全舰队可冒充），
+仅作为过渡兜底保留。
+
+**从预共享迁移到 per-agent（推荐，无需停机）**：
+
+```bash
+# 1) agent 侧去掉 --grpc-signature-key（它是最高优先级，留着就永远不会启用 per-agent 密钥）
+#    同时确保控制面保留 --grpc-signature-key ——迁移期作为兜底，避免老 agent 掉线
+# 2) 控制面为设备签发一次性 install token（15 分钟有效）
+TOKEN=$(curl -s -X POST https://<cp>:8080/api/v1/devices/<deviceID>/provision \
+  -H "Authorization: Bearer <admin-jwt>" | jq -r .installToken)
+# 3) 写入 agent 数据目录并重启（install.token 文件优先于 --install-token 参数）
+printf '%s' "$TOKEN" > <data-dir>/install.token && chmod 600 <data-dir>/install.token
+systemctl restart opsmesh-agent
+# 4) 校验：注册日志应出现 keySource=register-response，且 agent.key 被写入（0600）
+journalctl -u opsmesh-agent -n 20 | grep '注册成功'
+ls -l <data-dir>/agent.key
+```
+
+**轮换现有 per-agent 密钥**：同上述第 2~3 步（重新 provision 签发新 token → 重启 agent）。
+agent 收到新密钥后会**覆盖** `<data-dir>/agent.key`，旧密钥即刻失效（无需在库内手工改 secret）。
+
+**收敛判定与告警**：迁移完成后
+`opsmesh_agent_signing_key_source_total{source="fleet"}` 应停止增长；若 30 分钟内仍有 fleet 计数，
+触发 `OpsMeshAgentFleetKeyInUse`（见 §11.4）。全部收敛后即可移除控制面的 `--grpc-signature-key`。
+
+> 注意：**不要删除** agent 侧的 `<data-dir>/install.token`。install token 是一次性的，重启后 agent 会重放
+> 已消费的 token；控制面据此识别「已知 agent 重注册」并沿用库内租户（不下发新密钥），
+> agent 继续使用本地 `agent.key`。删除该文件会让「重启后重注册」退化为无令牌路径
+> （旧版本控制面会因此拒绝）。
+
 ### 9.3 安全审计
 
 #### 9.3.1 审计日志
@@ -2042,6 +2076,45 @@ helm upgrade opsmesh ./deploy/helm/opsmesh -n opsmesh \
   --set agent.image.tag=<new-version> \
   -f deploy/helm/opsmesh/values-production.yaml
 ```
+
+### 11.4 agent 签名 v1→v2 的升级顺序（P1-2，**顺序不可颠倒**）
+
+自 P1-2 起，agent→控制面的 gRPC HMAC 签名从「只签时间戳+身份」升级为「**覆盖请求载荷**」：
+
+```
+v1（旧）：HMAC-SHA256(secret, timestamp + identity)
+v2（新）：HMAC-SHA256(secret, "v2\n" + timestamp + "\n" + identity + "\n" + payloadDigest)
+payloadDigest = hex(sha256(protojson(payload)))
+```
+
+新控制面**同时接受** v1 与 v2（收到 v1 会打有界 WARN 并计入 `opsmesh_agent_signature_verifications_total{alg="v1"}`），
+旧控制面**只认** v1。因此升级/回滚方向被唯一确定：
+
+| 动作 | 顺序 | 原因 |
+|---|---|---|
+| **升级** | **先控制面，后 agent** | 新控制面兼容 v1，旧 agent 不受影响；若反过来先升 agent，新 agent 只发 v2，旧控制面全部拒绝 → 全舰队失联 |
+| **回滚** | **先 agent，后控制面** | 新 agent 兼容不了旧控制面的 v1-only 校验；先把 agent 退回 v1，再退控制面 |
+
+判定混合窗口是否结束（是否还有 agent 未升级）：
+
+```bash
+# v1/ok 归零 → 全部 agent 已发出过 v2 签名（v1 有 15 分钟内的签名流量，短窗口 rate 即可）
+docker compose exec -T prometheus wget -qO- 'http://127.0.0.1:9090/api/v1/query?query=opsmesh_agent_signature_verifications_total' \
+  | grep -o '"alg":"v1","result":"ok","value":\[[^]]*\]' || echo "v1 已归零"
+```
+
+配套告警（`deploy/monitoring/prometheus-alerts.yml`，随 `deploy.sh up` 热加载）：
+
+| 告警名 | 表达式 | 含义 |
+|---|---|---|
+| `OpsMeshAgentSignatureRejected` | `rate(opsmesh_agent_signature_verifications_total{result="rejected"}[5m]) > 0` / `for: 10m` | 有 agent 签名被拒（密钥不一致/伪造/时钟漂移） |
+| `OpsMeshAgentSignatureLegacyAlg` | `rate(...{alg="v1",result="ok"}[10m]) > 0` / `for: 30m` | 混合窗口未收敛：仍有 agent 在用 v1 签名 |
+| `OpsMeshAgentFleetKeyInUse` | `rate(opsmesh_agent_signing_key_source_total{source="fleet"}[10m]) > 0` / `for: 30m` | 仍在用舰队级预共享密钥验签（per-agent 密钥未生效） |
+
+**密钥来源与轮换**：见 §9.2.4。**环境变量隔离**：本版本起任务子进程只继承白名单环境变量
+（`PATH`/`HOME`/`USER`/`SHELL`/`TZ`/`TMPDIR` + Windows 系统变量 + `LC_*`），
+agent 自身的 `OPSMESH_GRPC_SIGNATURE_KEY` 等不再泄露给任务脚本；**若既有作业脚本依赖某个自定义环境变量，
+须在脚本内显式 `export`**，否则升级后该变量为空。
 
 ---
 

@@ -14,6 +14,21 @@ import (
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
+// agentTenant 查询 agent 既有租户，返回 (租户, 是否存在)。
+// 查询失败（表/列缺失、DB 不可达）时返回 ("", false)：保守放行注册，
+// 不因基础设施问题阻断纳管（跨租户防护是纵深防御，失败时的降级方向必须是可用性优先）。
+func (s *SQLStore) agentTenant(ctx context.Context, agentID string) (string, bool) {
+	var tenant string
+	// COALESCE：tenant_id 列可为 NULL（老库手工插入的行），NULL 扫描到 string 会报错。
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(tenant_id,'') FROM agents WHERE agent_id=?`, agentID).Scan(&tenant); err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("[store] 查询 agent 既有租户失败（跳过跨租户校验）%s: %v", agentID, err)
+		}
+		return "", false
+	}
+	return tenant, true
+}
+
 func (s *SQLStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -26,6 +41,19 @@ func (s *SQLStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 		a.Status = "online"
 	}
 	now := time.Now().UTC()
+
+	// 跨租户重绑定防护（P1-2）：agentID 一旦绑定非空租户即锁定，换租户重注册直接拒绝。
+	//
+	// 威胁：gRPC Register 不硬（无 install token 时任何人可注册任意 agentID），而 upsert 原本
+	// 无条件 `tenant_id=VALUES(tenant_id)`，于是「以他人 agentID + 自己的租户」重注册即可把该
+	// agent 连同其设备/任务划归自己租户（越权接管：可对其下发任务、读其日志）。
+	// 规则：既有租户非空且与新租户不同 → 拒绝（含「非空 → 空」，防用空租户绕过隔离：
+	// 空租户 agent 在 CheckAgentTenant 下对任何租户都放行）。
+	// 既有租户为空 → 允许绑定（历史无租户数据首次归属租户）；租户迁移需先删除该 agent 行。
+	if existingTenant, known := s.agentTenant(ctx, a.AgentID); known && existingTenant != "" && existingTenant != a.TenantID {
+		log.Printf("[store] Register 拒绝跨租户重绑定 %s（既有租户=%q，请求租户=%q）", a.AgentID, existingTenant, a.TenantID)
+		return nil
+	}
 
 	// gRPC agent 身份绑定：为该 agent 生成 HMAC 签名密钥。
 	// 仅在该 agent 首次注册（agents 表无此 agent_id）时生成；复用已有 agent 不重置密钥，

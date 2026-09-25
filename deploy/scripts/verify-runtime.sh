@@ -561,6 +561,63 @@ else
                         || bad "ok=${cok:-0}（链完整性校验未通过，P1-3 告警：疑似篡改或尾部删除）"
 fi
 
+sec "14. agent 身份绑定与 per-agent 密钥（P1-2 回归）"
+# 14a 交付资产接线：prod compose 默认开启签名验证（.env 可覆盖为 false 仅用于开发形态）。
+sig_env="$(docker inspect opsmesh-controlplane --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep '^OPSMESH_GRPC_REQUIRE_SIGNATURE=' | head -1)"
+case "$sig_env" in
+  OPSMESH_GRPC_REQUIRE_SIGNATURE=true) ok "控制面已接线 gRPC 签名验证（${sig_env}）" ;;
+  "")                                  bad "控制面容器未见 OPSMESH_GRPC_REQUIRE_SIGNATURE（P1-2 交付资产未接线！）" ;;
+  *)                                   warn "签名验证被显式关闭（${sig_env}）——仅开发形态可接受，生产应收敛为 true" ;;
+esac
+
+# 14b 验签可观测性：指标族必须存在（固定标签全量输出，含 0 值）。
+mbody3="$(docker exec opsmesh-prometheus wget -qO- --timeout=8 http://controlplane:9091/metrics 2>/dev/null)"
+[ -z "$mbody3" ] && mbody3="$(curl -sS --max-time 8 "http://127.0.0.1:${MP}/metrics" 2>/dev/null)"
+if [ -z "$mbody3" ]; then
+  warn "无法抓取 9091 指标，跳过 P1-2 可观测性断言"
+else
+  sigmiss=""
+  for a in v1 v2 none unknown; do
+    for r in ok rejected; do
+      printf '%s\n' "$mbody3" | grep -q "^opsmesh_agent_signature_verifications_total{alg=\"${a}\",result=\"${r}\"} [0-9]" \
+        || sigmiss="${sigmiss} ${a}/${r}"
+    done
+  done
+  [ -z "$sigmiss" ] && ok "验签指标全标签集已暴露（alg∈{v1,v2,none,unknown} × result∈{ok,rejected}）" \
+                    || bad "验签指标缺时序：${sigmiss}（P1-2 可观测性未接线）"
+  for s in per_agent fleet; do
+    printf '%s\n' "$mbody3" | grep -q "^opsmesh_agent_signing_key_source_total{source=\"${s}\"} [0-9]" \
+      && ok "密钥来源指标已暴露（source=${s}）" || bad "缺少 opsmesh_agent_signing_key_source_total{source=\"${s}\"}（P1-2）"
+  done
+  # 运行期活性（条件式）：本次部署后若尚无 agent 流量，如实 WARN 而不是伪造 PASS。
+  v2ok="$(printf '%s\n' "$mbody3" | grep -E '^opsmesh_agent_signature_verifications_total\{alg="v2",result="ok"\} [0-9]+$' | head -1 | awk '{print $2}')"
+  if [ "${v2ok:-0}" -ge 1 ]; then
+    ok "已有 agent 用 v2（覆盖载荷）签名通过验签（v2/ok=${v2ok}）"
+  else
+    warn "本次部署后尚无 agent 验签流量（v2/ok=0）——纳管 agent 后应转为 ≥1，届时可复跑本脚本复查"
+  fi
+  v1ok="$(printf '%s\n' "$mbody3" | grep -E '^opsmesh_agent_signature_verifications_total\{alg="v1",result="ok"\} [0-9]+$' | head -1 | awk '{print $2}')"
+  [ "${v1ok:-0}" = "0" ] && ok "无 v1（不覆盖载荷）遗留算法流量" \
+                         || warn "存在 v1 签名流量（v1/ok=${v1ok}，滚动升级未收尾；v1 不覆盖载荷，见告警 OpsMeshAgentSignatureLegacyAlg）"
+  flt="$(printf '%s\n' "$mbody3" | grep -E '^opsmesh_agent_signing_key_source_total\{source="fleet"\} [0-9]+$' | head -1 | awk '{print $2}')"
+  [ "${flt:-0}" = "0" ] && ok "无全舰队预共享密钥兜底使用（per-agent 密钥隔离生效）" \
+                        || warn "存在全舰队预共享密钥兜底验签（fleet=${flt}，单机泄漏即全舰队可冒充）"
+fi
+
+# 14c 落库：per-agent 密钥列已生成（有 agent 时）。
+if [ -n "${MYSQL_C:-}" ] && [ -n "${U:-}" ]; then
+  atot="$(q "SELECT COUNT(*) FROM agents;")"
+  asec="$(q "SELECT COUNT(*) FROM agents WHERE secret IS NOT NULL AND secret<>'';")"
+  if [ "${atot:-0}" = "0" ]; then
+    warn "agents 表为空（本次部署后未纳管 agent），跳过 per-agent 密钥落库断言"
+  elif [ "${asec:-0}" -ge 1 ]; then
+    ok "已注册 agent 持 per-agent 密钥（${asec}/${atot}，P1-2 密钥隔离基线）"
+    [ "${asec:-0}" = "${atot:-0}" ] || warn "有部分 agent 无 per-agent 密钥（${asec}/${atot}；常见于老库注册或未跑迁移）"
+  else
+    bad "agents 表有 ${atot} 台 agent 但无一持有 per-agent 密钥（P1-2 密钥生成未生效！）"
+  fi
+fi
+
 echo ""
 echo "==================================================="
 echo "  断言汇总：PASS=${PASS}  FAIL=${FAIL}"

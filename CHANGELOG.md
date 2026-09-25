@@ -8,6 +8,100 @@
 
 > 承接 P0 两批。本批解决「命令白名单可绕过 / 审计日志可被静默篡改且无保留策略 / 无界内存缓冲 / 指标内存耗尽 DoS + 无准入 + 无限流」四项 P1 高风险。证据：`docs/commercial-readiness-review-2026-09-25.md` §3、§10。
 
+## [Unreleased] — 2026-09-25 商用就绪 P1 批次（二）：P1-2 agent 身份与密钥
+
+> 承接上一批（P1-1 / P1-3 / P1-4 / P1-5）。本批解决 §3 P1-2：**全机群共用一个 HMAC 密钥 + 签名不覆盖载荷 + 任务子进程继承 agent 全量环境**。证据：`docs/commercial-readiness-review-2026-09-25.md` §3 P1-2、§13。
+
+### 安全：P1-2 per-agent 签名密钥下发 + 签名覆盖载荷 + 任务环境隔离
+
+- **修复 1／协议升级为覆盖载荷的 v2**（新文件 `internal/grpcx/agentsig.go`，算法与 metadata 键名两侧共用，防 agent/控制面漂移）：
+  - **v2（新）**：`HMAC-SHA256(secret, "v2\n" + timestamp + "\n" + identity + "\n" + payloadDigest)`，
+    `payloadDigest = hex(sha256(JSON 编解码后的请求体))`——两端对同一 struct 类型独立计算，与线上字节一致。
+    **载荷被篡改/同秒内换内容重放即验签失败**（旧缺陷的正面修复）。
+  - **v1（遗留）**：`HMAC(secret, timestamp+agentID)` 仍被接受，仅为滚动升级期兼容；命中即按 agent 限次 WARN，
+    并新增告警 `OpsMeshAgentSignatureLegacyAlg`。测试**如实固化**「v1 签名 + 篡改载荷会被接受」这一旧机制的缺陷，
+    避免后人误以为 v1 是安全的。
+- **修复 2／per-agent 密钥下发（双门槛）**：`Register` 仅在「一次性 install token 认证（`ConsumeToken` 原子抢占）
+  **且** gRPC 连接为 TLS」时返回 per-agent 密钥（`transportIsTLS`：`--tls-cert` 非空 + peer 带 TLS AuthInfo）；
+  明文连接拒发并 WARN。此前或「完全不下发」（只能全舰队预共享）或「无条件下发」（注册不硬即可骗取密钥），
+  两者都不成立，现收口为双门槛。
+- **修复 3／agent 密钥持久化与优先级**：`--grpc-signature-key`（预共享，最弱）> Register 下发（收到即落盘
+  `<dataDir>/agent.key`，0600，内容不变则不重写）> 本机 `agent.key`（重启沿用，身份连续）；注册日志新增
+  `signed=`/`keySource=` 两个字段，现场可直接判断该 agent 是否已签名及密钥来源。
+- **修复 4／控制面密钥选取**：per-agent 密钥**优先**，预共享密钥兜底（命中即限次 WARN）；限次告警的键总数
+  封顶 4096，防恶意 agentID 撑爆内存（P1-5 同类基数风险）。新增指标
+  `opsmesh_agent_signature_verifications_total{alg,result}`（标签固定小集合，agentID 不入标签）与
+  `opsmesh_agent_signing_key_source_total{source}`（per_agent/fleet），让「有多少 agent 还在用弱路径」可被查询与告警。
+- **修复 5／任务子进程环境隔离**：`executeShell` / `execService` 不再继承 agent 全量环境，改为白名单
+  （`PATH`/`HOME`/`USER`/`LOGNAME`/`SHELL`/`LANG`/`TZ`/`TMPDIR` + Windows 集合 + `LC_*`）。
+  此前任一 shell 任务读 `/proc/self/environ` 即拿到 `OPSMESH_GRPC_SIGNATURE_KEY`/`OPSMESH_JWT_SECRET`——
+  等于 agent 身份密钥随任务泄漏，per-agent 密钥再细也白给。
+- **修复 6／跨租户重注册锁定（同批侦察发现）**：`Register` 的 upsert 此前无条件写 `tenant_id=VALUES(tenant_id)`，
+  同租户攻击者改个 `tenant_id` 重注册即可把他人 agent 连设备、任务一起划走。现 store 层（memory/SQL/multi-schema）
+  对「既有非空租户 ≠ 请求租户」一律拒绝返回 `nil`，gRPC 层映射为 `PermissionDenied` + 审计
+  `register_tenant_conflict`；备份恢复路径同样跳过并计入 `agents_tenant_conflict`（不静默）。
+  空 → 非空仍放行（老库行首次绑定租户），非空 → 空的降级同样拒绝。
+- **附带修复（本批实测发现的可用性缺陷）／已消费 install token 导致 agent 永远无法重启**：
+  bootstrap 把一次性 token 写入 `<dataDir>/install.token`，agent 只读不删；首轮注册消费后，
+  systemd/机器重启会携**同一已消费 token** 再次注册，此前一律按「已消费」拒绝 → agent fail-fast 退出，
+  纳管 agent 重启即永久失联（多租户下即整机失联）。现控制面对「token 失效但 agentID 已在库」按
+  **已知 agent 重注册**放行：租户沿用库内值、不下发密钥（密钥已在 agent 本机 `agent.key`）；
+  agentID 不在库仍拒绝（拿死 token 做首次纳管不成立）。无 token 路径下「已知 agent 未声明租户」
+  同样沿用库内租户，避免被跨租户保护误伤。
+- **过期文案修正**：`--grpc-signature-key` 帮助文本、`config.Config.GRPCSignatureKey` 注释、
+  `docs/security-mechanism.md` §10.8 此前写「Register 响应不再下发密钥」（该结论已被本轮取代），已全部重写为
+  现行双门槛 + 三级优先级的真实语义。
+- **滚动升级顺序（必须遵守）**：**先升控制面，再升 agent**（新控制面同时接受 v1/v2，旧 agent 不受影响）；
+  **回滚顺序相反——先回滚 agent，再回控制面**（新 agent 只会 v2 签名，旧控制面只认 v1，先回滚控制面会
+  让全部 agent 立即验签失败）。已写入 `docs/operations.md`。
+- 测试：`internal/grpcx/agentsig_test.go`（9 类报文跨端摘要一致性、字段敏感性、map 键序确定性、v1≠v2、
+  分隔符歧义、v1 旧公式锁）、`internal/controlplane/grpc_sig_test.go`（真实 gRPC server + 真实 agent 客户端 +
+  TLS：密钥下发门槛、v2 篡改拒绝/v1 篡改接受、错密钥/过期时间戳/未知算法拒绝、**重启容错**、跨租户拒绝、
+  验签指标计数）、`internal/agent/agent_key_test.go`（agent.key 0600 落盘与三级优先级、env 白名单防凭据名、
+  真实子进程 env 输出不含密钥标记、`LC_*` 透传）、`internal/store/register_tenant_guard_test.go`（memory + SQL）。
+- **真机验收（2026-09-25）**：全量重建部署后 `verify-runtime.sh` **PASS=94 / FAIL=0**（新增第 14 节 8 条 P1-2 专项断言），
+  静态门禁 `validate-deploy-assets.sh` **PASS=20 / FAIL=0**；`internal/store` 全量套件在真实 MySQL 8.0.46 下
+  **684 PASS / 0 SKIP / 0 FAIL**（375.6s）。关键实测：
+  ① **密钥下发**：全新纳管 agent 注册返回 `signed=true`、`keySource=register-response`，本机落盘 `agent.key` 64 字节，
+     agent 侧 `ERROR` 计数 0；
+  ② **签名覆盖载荷（端到端）**：签名 agent 执行真实任务 → `exit=0`、`stdout='p12-signed-result-ok'`，
+     指标 `opsmesh_agent_signature_verifications_total{alg="v2",result="ok"}` 随流量增长（收口复跑时 **185**），
+     `source="fleet"` 恒为 **0**、`alg="v1"` 恒为 **0**（即全部流量走 per-agent 密钥 + v2），5/5 agent 均持 per-agent 密钥；
+  ③ **错密钥拒绝（负向验证，在本批最终代码上重跑取数）**：换用伪造 `agent.key` 的已知 agent 启动后 18 秒内，
+     `v2/rejected` 由 **0 → 11**，agent 侧 `Unauthenticated desc = agent-signature mismatch: HMAC verification failed`、
+     `心跳 ok` 计数为 **0**（业务 RPC 全被拒）；此前已单测固化「v1 签名 + 篡改载荷被接受」的旧机制缺陷，
+     同一篡改在 v2 下被拒；
+  ④ **任务环境隔离（端到端）**：任务子进程内 `OPSKEY=[%OPSMESH_GRPC_SIGNATURE_KEY%]`、
+     `CANARY=[%P12_ENV_CANARY%]` **未被展开**（即该变量对子进程不存在），而 `USER=[winge]`、`HOME=[C:\Users\winge]`
+     正常展开（白名单未误伤必需变量）；
+  ⑤ **重启身份连续性**：杀掉 agent 进程后原样重启（`<dataDir>/install.token` 仍在，为**已消费** token）→
+     注册成功、`keySource=agent.key`、agent 侧 `ERROR` 计数 0，控制面打印限次 WARN
+     「install token 已消费或失效，按已知 agent 重注册处理（沿用库内租户、不下发密钥）」；
+  ⑥ **可观测性**：`opsmesh_agent_signature_verifications_total{alg,result}` 8 条时序与
+     `opsmesh_agent_signing_key_source_total{source}` 2 条时序在零值时也全量暴露（断言无需 `absent()`）。
+- **本批实测发现并修复的可用性缺陷（P0 级，超出 P1-2 原范围）**：出厂生产形态
+  （`OPSMESH_REQUIRE_AUTH=true` + `OPSMESH_GRPC_REQUIRE_SIGNATURE=true`）下，agent **注册成功但所有业务 RPC 被拒**
+  （`Unauthenticated: missing tenant context: gateway auth required (--require-auth)`）→ 心跳/领任务/上报结果/上报日志
+  全链路不可用，即生产形态下任务下发与结果上报完全不可用。根因：`--require-auth` 语义是「要求**网关**注入租户」
+  （见 flag 帮助与 `docs/api-reference.md`），但 agent 是**拉模型**（直连 9090，不经网关），既无租户配置项，
+  `RegisterResp` 也不含租户字段 → 该检查对 agent 通道本就不可能满足。修复：`CheckAgentTenant` 在 ctx 无租户时
+  取「注册时盖章的库内归属租户」（由 install token / 库内记录确定，非 agent 自报）；**不放松任何既有拒绝路径**
+  ——声明租户且与归属不一致仍 `PermissionDenied`，未知 agent 且无租户仍 `Unauthenticated`。同时把 E2E 夹具
+  `grpc_sig_test.go` 的 `RequireAuth` 由 `false` 改为 `true`（此前正因为夹具与出厂配置不一致而掩盖了该缺陷），
+  并做了「临时回退修复 → 2 个用例按实测同一错误串失败 → 还原」的反向验证。诚实边界：agent 侧本就**不存在**
+  可用的「自带租户」机制，被取代的 `x-tenant-id` 元数据不带签名、从来不是安全边界（能伪造身份者可直接填对租户）；
+  真正的身份边界是 v2 签名与 mTLS。gRPC `CancelTask` 仍要求 ctx 自带租户（无库内绑定可推导、且当前无调用方），
+  作为残留限制记录于报告 §13。
+
+- **附带修复（本批实测发现）／agent 日志把「循环提前退出」误报为「panic」**：`safeGo`（`internal/agent/safego.go`）
+  的重启分支不区分「fn panic」与「fn 提前 return」，一律打印 `WARN agent 循环 panic 后重启`。
+  而 `logCollectLoop` 在未配置日志采集路径时**立即 return**（默认配置必然如此），故 agent 每 5s 打一条
+  假 panic 告警（实机 `p12-final-2.log`：约 5 分钟 7 条 `loop=logCollectLoop`；日志里 `panic 已捕获` 计数为 **0**，
+  证明从未 panic）。后果是排障时去追一个不存在的崩溃。修复：① 调用点仅在配置了采集路径时才启动该循环；
+  ② `safeGo` 按 recover 是否真的捕获 panic 区分措辞（`panic 后重启` / `循环提前退出，将重启`），
+  并补 `TestSafeGo_EarlyReturnRestarts`（提前 return 仍须重启，不得静默失去能力）。真机复测：重启 agent 后
+  25 秒内 `循环` 告警 **0 条**（对照修复前 5 分钟 7 条）、`心跳 ok` 正常、`ERROR` 计数 0。
+
 ### 安全：P1-1 agent shell 白名单可被 `&&` / `||` / `|` 绕过
 
 - **根因**：`--agent-shell-whitelist` 只校验命令的**首个 token**，而 agent 侧 `checkShellMetachars` 刻意放行 `&&`、`>&`、`&>`（注释称其「不引入任意命令执行」——该推理对白名单场景不成立）。故 `ls && rm -rf /` 首 token `ls` 命中白名单，右侧照常执行。

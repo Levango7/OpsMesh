@@ -327,8 +327,14 @@ func (m *MultiSchemaStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 		log.Printf("[multi-schema] Register 路由失败 tenant=%q: %v", a.TenantID, err)
 		return a
 	}
+	// 先注册成功再写反查索引：子 store 拒绝（跨租户重绑定防护，P1-2）时不得把索引
+	// 指向新租户，否则该 agent 的后续操作会被路由到错误的 schema（查无此人）。
+	reg := s.Register(a)
+	if reg == nil {
+		return nil
+	}
 	m.setAgentTenant(a.AgentID, a.TenantID)
-	return s.Register(a)
+	return reg
 }
 
 // Heartbeat 更新 agent 状态：经 agentTenant 反查租户路由。

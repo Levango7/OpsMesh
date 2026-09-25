@@ -556,6 +556,12 @@ func (m *MemoryStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 	if a.Status == "" {
 		a.Status = "online"
 	}
+	// 跨租户重绑定防护（P1-2）：与 SQLStore.Register 同规则（威胁模型见该处注释）。
+	// 既有租户非空且与新租户不同 → 拒绝注册（返回 nil，由 gRPC 层映射为 PermissionDenied）。
+	if prev, ok := m.agents[a.AgentID]; ok && prev != nil && prev.TenantID != "" && prev.TenantID != a.TenantID {
+		log.Printf("[store] Register 拒绝跨租户重绑定 %s（既有租户=%q，请求租户=%q）", a.AgentID, prev.TenantID, a.TenantID)
+		return nil
+	}
 	a.LastSeen = time.Now()
 	m.agents[a.AgentID] = a
 	// gRPC agent 身份绑定：为每个 agent 生成 HMAC 签名密钥（仅首次注册时生成，复用已有 agent 不重置）。

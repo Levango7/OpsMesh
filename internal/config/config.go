@@ -293,14 +293,13 @@ type Config struct {
 	//   - 生产模式（--production=true）下默认开启（除非显式 --grpc-require-signature=false）。
 	//   - 已启用 mTLS（--tls-cert + --client-ca 均非空）时可不开启（mTLS 本身提供身份绑定）。
 	GRPCRequireSignature bool
-	// 安全加固：gRPC agent 身份绑定的预共享 HMAC 签名密钥。
-	// 此前签名密钥由控制面在 Register 响应中下发给 agent，但注册不硬（任何人可注册）时
-	// 攻击者可注册获取密钥后伪造签名，使签名形同虚设。改为预共享方式：
-	//   - 控制面与 agent 两侧通过 --grpc-signature-key 手动配置同一密钥。
-	//   - Register 响应不再返回签名密钥（Secret 字段始终为空）。
-	//   - verifyAgentSignature 优先使用此预共享密钥验签；为空时回退到 store.AgentSecret（向后兼容已注册 agent）。
-	//   - agent 端优先使用此预共享密钥签名；为空时不签名（向后兼容，但日志警告）。
-	// 空=未配置预共享密钥（回退到旧的 store.AgentSecret 机制，向后兼容）。
+	// 安全加固：gRPC agent 身份绑定的预共享 HMAC 签名密钥（全舰队同密钥，最省事但最弱）。
+	// 密钥下发/持久化（P1-2）：
+	//   - 控制面：Register 仅在「一次性 install token 认证 + TLS 连接」双门槛下下发 per-agent 密钥
+	//     （Secret 字段），验签时 per-agent 密钥优先、本预共享密钥兜底。
+	//   - agent：本预共享密钥优先级最高；未配置时依次采用 Register 下发的密钥（落盘 0600）
+	//     与本机 <dataDir>/agent.key，重启沿用、身份连续。
+	// 空=未配置预共享密钥（推荐：改用 token 纳管 + TLS 下发 + agent.key 持久化，避免全舰队同密钥）。
 	GRPCSignatureKey string
 	// 反向代理信任（安全运行于 LB/网关后时）：开启后 clientIP 信任 X-Forwarded-For 首段取真实客户端 IP；
 	// 默认 false=仅用 RemoteAddr（防止客户端伪造 XFF 绕过登录限流/审计）；仅当确有可信反代前置时才开启。
@@ -553,7 +552,8 @@ func Load() *Config {
 	// gRPC agent 身份绑定：强制要求 agent 请求携带 HMAC 签名。
 	grpcRequireSignature := flag.Bool("grpc-require-signature", false, "gRPC agent 身份绑定：强制要求 agent 在 PullTasks/ReportResult/PollCancels/Heartbeat 携带 HMAC 签名（防冒领任务/伪造上报）；demo 模式强制关闭；生产模式默认开启（除非显式 false）；或 env OPSMESH_GRPC_REQUIRE_SIGNATURE")
 	// 安全加固：gRPC 签名预共享密钥（控制面与 agent 两侧手动配置同一密钥）。
-	grpcSignatureKey := flag.String("grpc-signature-key", "", "安全加固：gRPC agent 身份绑定的预共享 HMAC 签名密钥（控制面与 agent 两侧须配置同一密钥）；Register 响应不再下发密钥，改用预共享方式防注册不硬时密钥外泄；空=回退到 store.AgentSecret（向后兼容）；或 env OPSMESH_GRPC_SIGNATURE_KEY")
+	// agent 侧密钥选取优先级：本参数 > Register 下发的 per-agent 密钥（install token + TLS 双门槛）> 本机 <dataDir>/agent.key。
+	grpcSignatureKey := flag.String("grpc-signature-key", "", "安全加固：gRPC agent 身份绑定的预共享 HMAC 签名密钥（控制面与 agent 两侧配置同一密钥，全舰队同密钥）；agent 侧优先级最高，配置后不再采用 Register 下发的 per-agent 密钥（推荐留空，改用 token 纳管 + TLS 下发 + 本机 agent.key 持久化）；或 env OPSMESH_GRPC_SIGNATURE_KEY")
 	// 安全运行于反向代理/LB 后：开启后 clientIP 信任 X-Forwarded-For 首段；默认 false 仅用 RemoteAddr，
 	// 防止客户端伪造 XFF 绕过登录限流与审计。仅当确有可信反代（如 APISIX/Nginx 注入真实 IP）前置时启用。
 	trustProxy := flag.Bool("trust-proxy", false, "信任反向代理：开启后 clientIP 取 X-Forwarded-For 首段（仅当有可信 LB/网关前置时启用）；默认 false=仅用 RemoteAddr 防 XFF 伪造绕过限流；或 env OPSMESH_TRUST_PROXY")

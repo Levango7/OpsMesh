@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/Levango7/OpsMesh/internal/discovery"
@@ -57,7 +58,7 @@ func TestSignContext_NoSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	out := cli.signContext(ctx, "agent-1")
+	out := cli.signContext(ctx, "agent-1", &grpcx.PullTasksReq{AgentID: "agent-1"})
 	if out != ctx {
 		t.Fatal("无 secret 时应原样返回 ctx")
 	}
@@ -70,12 +71,13 @@ func TestSignContext_EmptyAgentID(t *testing.T) {
 	}
 	cli.SetSecret("secret")
 	ctx := context.Background()
-	out := cli.signContext(ctx, "")
+	out := cli.signContext(ctx, "", &grpcx.PullTasksReq{AgentID: "agent-1"})
 	if out != ctx {
 		t.Fatal("空 agentID 时应原样返回 ctx")
 	}
 }
 
+// TestSignContext_WithSecret ：有密钥时附加 v2 签名 metadata，且签名覆盖载荷。
 func TestSignContext_WithSecret(t *testing.T) {
 	cli, err := newTestGRPCClient()
 	if err != nil {
@@ -83,16 +85,38 @@ func TestSignContext_WithSecret(t *testing.T) {
 	}
 	cli.SetSecret("test-secret")
 	ctx := context.Background()
-	out := cli.signContext(ctx, "agent-xyz")
+	req := &grpcx.PullTasksReq{AgentID: "agent-xyz"}
+	out := cli.signContext(ctx, "agent-xyz", req)
 	if out == ctx {
 		t.Fatal("有 secret + agentID 时应返回新的 ctx（带 metadata）")
 	}
-	// 多次调用应产生不同的 timestamp（时间推进）
-	time.Sleep(10 * time.Millisecond)
-	out2 := cli.signContext(ctx, "agent-xyz")
-	// 两次签名都应成功（不 panic 即可）
-	_ = out
-	_ = out2
+	md, ok := metadata.FromOutgoingContext(out)
+	if !ok {
+		t.Fatal("签名 ctx 应携带 outgoing metadata")
+	}
+	if got := md.Get(grpcx.AgentSignatureAlgMetadataKey); len(got) == 0 || got[0] != grpcx.AgentSignatureAlgV2 {
+		t.Fatalf("签名算法应为 v2，得到 %v", got)
+	}
+	ts := md.Get(grpcx.AgentTimestampMetadataKey)
+	sig := md.Get(grpcx.AgentSignatureMetadataKey)
+	if len(ts) == 0 || len(sig) == 0 {
+		t.Fatal("应同时携带 timestamp 与 signature")
+	}
+	// 签名须可由控制面用同一套算法验证（v2 覆盖载荷摘要）。
+	want := grpcx.ComputeAgentSignatureV2("test-secret", ts[0], "agent-xyz", grpcx.PayloadDigest(req))
+	if sig[0] != want {
+		t.Fatalf("签名不可验证：got=%s want=%s", sig[0], want)
+	}
+	// 篡改载荷（同一密钥/时间戳）→ 签名不匹配：v2 覆盖载荷的直接证据。
+	honest := &proto.TaskResult{TaskID: "t1", AgentID: "agent-xyz", Stdout: "ok"}
+	forged := &proto.TaskResult{TaskID: "t1", AgentID: "agent-xyz", Stdout: "forged"}
+	honestCtx := cli.signContext(ctx, "agent-xyz", honest)
+	honestMD, _ := metadata.FromOutgoingContext(honestCtx)
+	hTS := honestMD.Get(grpcx.AgentTimestampMetadataKey)[0]
+	got := honestMD.Get(grpcx.AgentSignatureMetadataKey)[0]
+	if got == grpcx.ComputeAgentSignatureV2("test-secret", hTS, "agent-xyz", grpcx.PayloadDigest(forged)) {
+		t.Fatal("篡改载荷后签名仍然匹配：v2 未真正覆盖载荷")
+	}
 }
 
 // --- grpcTarget 边界 ---

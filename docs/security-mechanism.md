@@ -1005,18 +1005,58 @@ dom.TenantID = tokTenant // token 权威：纳管设备归属以 token 内租户
 
 `maxOutputBytes = 10 * 1024 * 1024`（10MB，`agent.go:900`），`limitedBuffer`（`agent.go:904`）限制单个任务 stdout/stderr 内存占用，超过即截断并追加提示 `...[output truncated at 10MB]...`，避免 cat 大文件耗尽 agent 内存。
 
-### 10.8 gRPC HMAC 签名
+### 10.8 gRPC HMAC 签名（P1-2：per-agent 密钥 + 覆盖载荷）
 
-`verifyAgentSignature`（`grpc.go:205`）gRPC agent 身份绑定：
+`verifyAgentSignature`（`internal/controlplane/grpc/grpc.go`）gRPC agent 身份绑定。
+算法与 metadata 键名集中在 `internal/grpcx/agentsig.go`（`agentsig.go` 两侧共用，防 agent/控制面漂移）：
 
 - `--grpc-require-signature=true` 时，agent 必须在 gRPC metadata 中携带：
   - `agent-timestamp`：签名生成时刻（Unix 秒）。
-  - `agent-signature`：`HMAC-SHA256(secret, timestamp + agentID)` 的 hex 编码。
+  - `agent-signature`：签名 hex。
+  - `agent-signature-alg`：`v2`（缺省按 `v1` 处理，兼容存量 agent，控制面按限次 WARN 告警）。
+- **v2（当前算法，覆盖载荷）**：`HMAC-SHA256(secret, "v2\n" + timestamp + "\n" + identity + "\n" + payloadDigest)`，
+  其中 `payloadDigest = hex(sha256(JSON 编解码后的请求体))`——两端对**同一 struct 类型**独立计算，
+  线路字节与 codec 注入的 `__v` 字段一致，故摘要可比对。载荷被改动/重放（同秒内换内容）即验签失败。
+- **v1（遗留算法，仅兼容）**：`HMAC-SHA256(secret, timestamp + agentID)`，**不覆盖载荷**——
+  同秒内替换任务结果/日志内容无法被察觉。仅为滚动升级期兼容保留，控制面命中 v1 时限次 WARN。
 - **时间戳校验**：`agentSignatureMaxSkew = 5 * time.Minute`，超过 5 分钟偏移视为重放/过期，拒绝。
-- **预共享密钥优先**：`signatureKey`（`--grpc-signature-key`）非空时优先使用，为空时回退 `store.AgentSecret(agentID)`（向后兼容）。
+- **密钥选取（控制面）**：per-agent 密钥（`store.AgentSecret(agentID)`）**优先**，`--grpc-signature-key`
+  预共享密钥兜底；命中兜底或 v1 时按 agent 限次 WARN（键总数上限 4096，防恶意 agentID 撑爆内存）。
+- **密钥下发（Register）**：仅当「一次性 install token 认证（`ConsumeToken` 原子抢占）**且** gRPC 连接为
+  TLS（`--tls-cert` 非空且 peer 携带 TLS AuthInfo）」时，`Secret` 字段才返回 per-agent 密钥；
+  明文连接拒发（防同网段窃取）。未拿到密钥的 agent 回退本机 `agent.key` 或预共享密钥。
+- **agent 侧密钥优先级**：`--grpc-signature-key`（预共享，最弱）> Register 下发（收到即落盘
+  `<dataDir>/agent.key`，0600）> 本机 `agent.key`（重启沿用，身份连续）。
+- **register 日志**：`注册成功 … signed=<bool> keySource=<pre-shared|register-response|agent.key>`，
+  现场可直接判断该 agent 是否已签名及密钥来源。
+- **一次性 token 与重启**：bootstrap 写入的 `<dataDir>/install.token` 不会自动消失，重启后 agent 会再次
+  携带**已消费**的 token 注册。控制面对「token 失效但 agentID 已在库」按**已知 agent 重注册**放行
+  （租户沿用库内值、不下发密钥）；agentID 不在库则仍拒绝（拿死 token 做首次纳管不成立）。
 - **常量时间比对**：`hmac.Equal` 防时序侧信道。
-- **Register 不下发密钥**：`Register` 响应 `Secret` 字段始终为空，防注册不硬时密钥外泄。控制面与 agent 两侧通过 `--grpc-signature-key` 手动配置同一密钥。
-- **生产模式默认开启**：`config.go:695` Production 模式且未显式设置时默认开启（纵深防御）。
+- **生产模式默认开启**：`config.go` Production 模式且未显式设置时默认开启（纵深防御）。
+
+**诚实边界**：① 无密钥（SHA-256）链式的签名只保证「密钥持有者」身份，密钥一旦落到任务进程即失效——
+故 `executeShell` / `execService` 一律以白名单环境变量启动（见 §10.11），任务进程看不到
+`OPSMESH_GRPC_SIGNATURE_KEY`；② 重注册路径不验证调用方身份（等同于既有「无 token 裸注册」信任边界），
+但既拿不到密钥、也不能改既有租户（`store.Register` 跨租户锁定）。
+
+### 10.11 任务环境变量隔离（P1-2）
+
+`executeShell` / `execService`（`internal/agent/agent.go`）不再把 agent 进程的完整环境传给任务子进程：
+
+- 仅放行 `sandboxEnvAllowlist` 白名单变量（权威清单见代码 `agent.go` 该 map，
+  逐项为：`PATH`、`HOME`、`USER`、`LOGNAME`、`SHELL`、`LANG`、`TZ`、`TMPDIR`；Windows 追加
+  `SystemRoot`、`SystemDrive`、`windir`、`COMSPEC`、`ComSpec`、`PATHEXT`、`USERPROFILE`、`USERNAME`、`APPDATA`、
+  `LOCALAPPDATA`、`PROGRAMDATA`、`TEMP`、`TMP`、`OS`、`NUMBER_OF_PROCESSORS`、`PROCESSOR_ARCHITECTURE`）
+  以及 `LC_*` 前缀（locale）。
+  Windows 侧 `USERNAME` 是 Unix `USER` 的对位项（`USER` 在 Windows 不存在，缺失会使既有脚本里
+  常见的 `%USERNAME%` 原样保留不展开）；真机实测在补入前 `echo %USERNAME%` 输出字面量。
+- **动机**：此前任务子进程继承 agent 全量环境，`OPSMESH_GRPC_SIGNATURE_KEY` / `OPSMESH_JWT_SECRET` /
+  DSN 等全部可见——任一任务被注入（如 shell 任务读 `/proc/self/environ`）即等于交出 agent 身份密钥。
+- `sandboxedEnv()` 始终返回**非 nil** 切片（`cmd.Env == nil` 在 Go 中语义是「继承父进程环境」，
+  故非 nil 是承载语义的关键，`agent_key_test.go` 有回归断言）。
+- **诚实边界**：白名单隔离的是**环境变量**，不隔离文件系统与进程可见性（`/proc/1/environ` 仍可读
+  agent 进程环境，需配合容器/最小权限运行）；也不改变「任务以 agent 用户权限执行」这一前提。
 
 ### 10.9 进程组隔离
 

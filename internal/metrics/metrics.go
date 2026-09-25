@@ -79,7 +79,21 @@ type M struct {
 	auditChainUnsupported int64
 	auditChainCheckedRows int64
 	auditChainChecks      int64
+
+	// agent 验签指标（P1-2）：sigVerifs 键为 "alg|result"，sigKeySrc 键为密钥来源。
+	// 与 httpSeries 不同，这里的标签取值是**固定小集合**（见 sanitizeSigAlg/Result/KeySource），
+	// 且 agentID 绝不出现在标签里——算法声明由 agent 自选，入标签等于把基数控制权交给对方。
+	sigVerifs map[string]uint64
+	sigKeySrc map[string]uint64
 }
+
+// 验签指标的固定标签取值。渲染时按这些取值全量输出（计数为 0 也输出），
+// 使仪表盘与告警无需处理「时序缺失」与「计数为 0」两种语义（absent() 陷阱）。
+var (
+	sigAlgValues    = []string{"v1", "v2", "none", "unknown"}
+	sigResultValues = []string{"ok", "rejected"}
+	sigKeySources   = []string{"per_agent", "fleet"}
+)
 
 // New 构造空指标注册表。
 func New() *M {
@@ -88,6 +102,8 @@ func New() *M {
 		httpReqs:   make(map[string]uint64),
 		httpHist:   make(map[string]*httpHistStats),
 		httpSeries: make(map[string]struct{}),
+		sigVerifs:  make(map[string]uint64),
+		sigKeySrc:  make(map[string]uint64),
 	}
 }
 
@@ -141,6 +157,62 @@ func (m *M) SetAuditChainStatus(ok bool, checked int, supported bool) {
 	} else {
 		m.auditChainOK = 0
 	}
+}
+
+// IncAgentSignature 记录一次 agent gRPC 验签结果（P1-2）。
+// alg：v1 / v2（v2 覆盖载荷）/ none（未携带签名或时间戳）/ unknown（算法声明不在支持集）；
+// result：ok / rejected。标签取值经收敛，未知输入归入 unknown，agentID 不入标签。
+// 告警建议：{result="rejected"} 持续增长 = agent 配置错误或伪造尝试；
+// {alg="v1",result="ok"} 长期增长 = 仍有 agent 未升级到覆盖载荷的 v2（滚动升级未收尾）。
+func (m *M) IncAgentSignature(alg, result string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sigVerifs == nil {
+		m.sigVerifs = make(map[string]uint64)
+	}
+	m.sigVerifs[sanitizeSigAlg(alg)+"|"+sanitizeSigResult(result)]++
+}
+
+// IncAgentSignatureKeySource 记录一次验签**通过**所用密钥的来源（P1-2）。
+// source：per_agent（该 agent 独立密钥）/ fleet（全舰队预共享兜底）；未知值归入 fleet
+// （兜底是弱路径，宁可把异常计入弱路径也不要凭空造标签值）。
+func (m *M) IncAgentSignatureKeySource(source string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sigKeySrc == nil {
+		m.sigKeySrc = make(map[string]uint64)
+	}
+	m.sigKeySrc[sanitizeSigKeySource(source)]++
+}
+
+// sanitizeSigAlg 把算法标签收敛到固定集合（v1/v2/none/unknown）。
+func sanitizeSigAlg(alg string) string {
+	for _, v := range sigAlgValues {
+		if alg == v {
+			return v
+		}
+	}
+	return "unknown"
+}
+
+// sanitizeSigResult 把结果标签收敛到固定集合（ok/rejected）。
+func sanitizeSigResult(result string) string {
+	for _, v := range sigResultValues {
+		if result == v {
+			return v
+		}
+	}
+	return "rejected"
+}
+
+// sanitizeSigKeySource 把密钥来源标签收敛到固定集合（per_agent/fleet）。
+func sanitizeSigKeySource(source string) string {
+	for _, v := range sigKeySources {
+		if source == v {
+			return v
+		}
+	}
+	return "fleet"
 }
 
 // httpKey 构造 HTTP 指标维度键（method|path|status）。
@@ -267,6 +339,7 @@ func (m *M) Render() string {
 
 	b = m.appendHTTPMetrics(b)
 	b = m.appendAuditChainMetrics(b)
+	b = m.appendAgentSignatureMetrics(b)
 	b = m.appendRuntimeMetrics(b)
 	return string(b)
 }
@@ -289,6 +362,28 @@ func (m *M) appendAuditChainMetrics(b []byte) []byte {
 	b = append(b, "# HELP opsmesh_audit_chain_checks_total 审计链自检执行次数\n"...)
 	b = append(b, "# TYPE opsmesh_audit_chain_checks_total counter\n"...)
 	b = append(b, fmt.Sprintf("opsmesh_audit_chain_checks_total %d\n", m.auditChainChecks)...)
+	return b
+}
+
+// appendAgentSignatureMetrics 输出 agent gRPC 验签指标（P1-2）。调用方已持锁。
+//
+// 固定全量输出（含 0 值）：标签取值是小集合，全量输出让
+// 「时序缺失（从未有 agent 流量）」与「计数为 0」在 PromQL 下语义一致，
+// 避免 absent() 与 == 0 两套写法并存导致的误告警。
+func (m *M) appendAgentSignatureMetrics(b []byte) []byte {
+	b = append(b, "# HELP opsmesh_agent_signature_verifications_total agent gRPC 请求验签次数（按算法/结果）\n"...)
+	b = append(b, "# TYPE opsmesh_agent_signature_verifications_total counter\n"...)
+	for _, alg := range sigAlgValues {
+		for _, res := range sigResultValues {
+			b = append(b, fmt.Sprintf("opsmesh_agent_signature_verifications_total{alg=%q,result=%q} %d\n",
+				alg, res, m.sigVerifs[alg+"|"+res])...)
+		}
+	}
+	b = append(b, "# HELP opsmesh_agent_signing_key_source_total 验签通过的密钥来源次数（per_agent=该 agent 独立密钥；fleet=全舰队预共享兜底，属待迁移的弱路径）\n"...)
+	b = append(b, "# TYPE opsmesh_agent_signing_key_source_total counter\n"...)
+	for _, src := range sigKeySources {
+		b = append(b, fmt.Sprintf("opsmesh_agent_signing_key_source_total{source=%q} %d\n", src, m.sigKeySrc[src])...)
+	}
 	return b
 }
 

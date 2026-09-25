@@ -99,7 +99,8 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener, error) {
 		// demo 模式下 config 已强制关闭（cfg.GRPCRequireSignature=false），此处直接透传。
 		RequireSignature: s.cfg != nil && s.cfg.GRPCRequireSignature,
 		// 安全加固：传入预共享签名密钥（--grpc-signature-key）。
-		// 非空时 verifyAgentSignature 优先使用此密钥验签，Register 不再下发密钥。
+		// 非空时作为验签兜底（per-agent 密钥优先，P1-2）；per-agent 密钥只经
+		// Register 的「token 认证 + TLS」双门槛下发。
 		SignatureKey: func() string {
 			if s.cfg != nil {
 				return s.cfg.GRPCSignatureKey

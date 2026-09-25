@@ -1247,6 +1247,34 @@ func TestCheckAgentTenant_RequireAuthAgentNotExist(t *testing.T) {
 	}
 }
 
+// TestCheckAgentTenant_AgentBindingFallback 验证「拉模型 agent 无网关注入租户」时按库内归属放行。
+// 出厂生产形态（REQUIRE_AUTH=true）下 agent 直连 9090、无任何途径提供 X-Tenant-ID，
+// 若不放行则心跳/领任务/上报全 401（真机实测缺陷）。归属租户取自注册时盖章的库内记录。
+func TestCheckAgentTenant_AgentBindingFallback(t *testing.T) {
+	st := store.NewMemoryStore().WithDemo(true)
+	st.Register(&proto.AgentInfo{AgentID: "a1", Segment: "seg-a", TenantID: "t1"})
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: true}
+	// 无 incoming metadata（agent 直连的常态）。
+	if err := srvImpl.CheckAgentTenant(context.Background(), "a1"); err != nil {
+		t.Fatalf("已注册 agent 无租户元数据时应按库内归属放行，得到 %v", err)
+	}
+}
+
+// TestCheckAgentTenant_AgentBindingEmptyTenantStillRefused 验证兜底不放宽未知/无归属调用方：
+// 未注册 agentID 且无租户元数据 → 仍拒绝（否则任意客户端可借空租户绕过 require-auth）。
+func TestCheckAgentTenant_AgentBindingEmptyTenantStillRefused(t *testing.T) {
+	st := store.NewMemoryStore().WithDemo(true)
+	// 已注册但归属租户为空（旧数据/无网关降级入库）。
+	st.Register(&proto.AgentInfo{AgentID: "a-empty", Segment: "seg-a"})
+	srvImpl := &grpcserver.GrpcServerImpl{Store: st, RequireAuth: true}
+	if err := srvImpl.CheckAgentTenant(context.Background(), "a-empty"); err == nil {
+		t.Fatal("库内归属为空且无租户元数据：应维持拒绝，得到 nil")
+	}
+	if err := srvImpl.CheckAgentTenant(context.Background(), "never-registered"); err == nil {
+		t.Fatal("未注册 agentID 且无租户元数据：应维持拒绝，得到 nil")
+	}
+}
+
 // =============================================================================
 // handleNetworkDiagnose 补充测试
 // =============================================================================

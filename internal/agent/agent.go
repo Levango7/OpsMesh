@@ -214,6 +214,45 @@ func loadOrCreateAgentID(dir, host string) string {
 	return id
 }
 
+// agentKeyPath 返回 per-agent 签名密钥的持久化路径（P1-2）；dataDir 为空时返回空串。
+func agentKeyPath(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "agent.key")
+}
+
+// loadAgentKey 读取本机已落盘的 per-agent 签名密钥（P1-2）。
+// 文件不存在/为空/读取失败均返回空串（调用方回退到预共享密钥或不签名）。
+func loadAgentKey(dir string) string {
+	p := agentKeyPath(dir)
+	if p == "" {
+		return ""
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// saveAgentKey 持久化 per-agent 签名密钥（0600，仅属主可读）。
+// 控制面只在 install token 认证 + TLS 上下发密钥，落盘后 agent 重启可继续用同一密钥签名
+// （不必再次依赖一次性 install token）。内容不变时不写盘，避免无谓的磁盘写与 mtime 变动。
+func saveAgentKey(dir, key string) error {
+	p := agentKeyPath(dir)
+	if p == "" || key == "" {
+		return fmt.Errorf("agent: 密钥落盘参数不足（dataDir=%q）", dir)
+	}
+	if loadAgentKey(dir) == key {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(key), 0o600)
+}
+
 // installToken 读取 install token（自动纳管闭环）。
 // 安全（F16）：优先读 <dataDir>/install.token 文件（bootstrap 脚本写入），
 // 避 --install-token 命令行参数被 ps 可见。文件不存在或读取失败时回退 cfg.InstallToken。
@@ -453,8 +492,13 @@ func (a *Agent) Run() error {
 
 	safeGo(ctx, "heartbeatLoop", a.heartbeatLoop)
 	safeGo(ctx, "dispatchLoop", a.dispatchLoop)
-	safeGo(ctx, "cancelLoop", a.cancelLoop)         // F3 取消信号：轮询控制面，中止已下发取消的正在执行任务
-	safeGo(ctx, "logCollectLoop", a.logCollectLoop) // 日志采集：定时读取指定日志文件增量并上报控制面
+	safeGo(ctx, "cancelLoop", a.cancelLoop) // F3 取消信号：轮询控制面，中止已下发取消的正在执行任务
+	// 日志采集：定时读取指定日志文件增量并上报控制面。
+	// 未配置采集路径时不启动——此时 logCollectLoop 会立即 return，而无条件启动会让
+	// safeGo 每 5s 重启一个空循环并打印「循环提前退出」（实机观测：默认配置下每分钟 12 条）。
+	if len(a.logCollectPaths) > 0 {
+		safeGo(ctx, "logCollectLoop", a.logCollectLoop)
+	}
 
 	// 日志采集推送：构造 LogPusher 并启动（cfg.LogPushEnabled=true 时）。
 	// 失败仅告警不阻塞启动（向后兼容，运维可后续修复配置后重启）。
@@ -557,6 +601,34 @@ func capabilityNote(goos string) string {
 	return fmt.Sprintf("target=%s: 仅 shell 可用；service(systemctl)/rlimit 不可用（冻结 Linux-only，详见产品文档）", goos)
 }
 
+// resolveAgentKey 决定本次运行的 HMAC 签名密钥（P1-2），返回密钥与其来源（供日志/排查）。
+//
+// 优先级（越靠前越权威）：
+//  1. --grpc-signature-key 预共享密钥：运维显式配置，覆盖一切（全舰队同密钥，最省事但最弱）。
+//  2. respSecret：控制面 Register 响应下发的 per-agent 密钥（仅在 install token 认证 + TLS 时下发），
+//     收到后立即落盘 <dataDir>/agent.key（0600），供后续重启复用。
+//  3. <dataDir>/agent.key：本机已落盘的 per-agent 密钥——控制面重启/未下发（如 token 已消费、
+//     或临时非 TLS）时的身份连续性保障。
+//
+// 三者皆空 → 返回空串，不签名（controlplane 未启用 --grpc-require-signature 的 demo 部署）。
+func (a *Agent) resolveAgentKey(ctx context.Context, respSecret string) (key, source string) {
+	if a.cfg.GRPCSignatureKey != "" {
+		return a.cfg.GRPCSignatureKey, "pre-shared"
+	}
+	if respSecret != "" {
+		if err := saveAgentKey(a.dataDir, respSecret); err != nil {
+			// 落盘失败不阻塞本次运行（本次仍能用该密钥签名），但重启后会失去身份连续性。
+			logx.Warn(ctx, "per-agent 签名密钥落盘失败，重启后将无法沿用该密钥",
+				"agentID", a.agentID, "error", err.Error())
+		}
+		return respSecret, "register-response"
+	}
+	if k := loadAgentKey(a.dataDir); k != "" {
+		return k, "agent.key"
+	}
+	return "", ""
+}
+
 // register 经 gRPC Register 注册自身，拿到 agentID。带有限重试，避免控制面未就绪即退出。
 func (a *Agent) register() error {
 	info := proto.AgentInfo{
@@ -582,25 +654,18 @@ func (a *Agent) register() error {
 			// 后续 PullTasks/ReportResult/PollCancels/Heartbeat 请求在 metadata 中携带签名，
 			// 控制面据此验证 agent 身份，不再纯信任 agent 自报的 AgentID。
 
-			// 安全加固：优先使用预共享密钥（--grpc-signature-key），Register 响应不再下发密钥。
-			//   - 配置了 cfg.GRPCSignatureKey → 使用预共享密钥签名（推荐，防注册不硬时密钥外泄）。
-			//   - 未配置但 resp.Secret 非空 → 回退到响应下发密钥（向后兼容旧控制面）。
-			//   - 两者都为空 → 不签名（控制面未启用签名验证，demo 模式或未配置 --grpc-require-signature）。
-			signed := false
-			if a.cfg.GRPCSignatureKey != "" {
-				a.grpc.SetSecret(a.cfg.GRPCSignatureKey)
-				signed = true
-			} else if resp.Secret != "" {
-				a.grpc.SetSecret(resp.Secret)
-				signed = true
+			key, keySource := a.resolveAgentKey(ctx, resp.Secret)
+			if key != "" {
+				a.grpc.SetSecret(key)
 			}
+			signed := key != ""
 			if !signed && a.cfg.GRPCRequireSignature {
-				// 控制面要求签名但 agent 既无预共享密钥也未从响应获取密钥：
-				// 后续请求将被控制面拒绝。日志警告提示运维配置 --grpc-signature-key。
-				logx.Warn(ctx, "控制面启用签名验证但 agent 未配置预共享密钥（--grpc-signature-key），"+
-					"后续请求将被拒绝，请配置预共享密钥", "agentID", a.agentID)
+				// 控制面要求签名但 agent 三处都拿不到密钥：后续请求将被拒绝，提前告警。
+				logx.Warn(ctx, "控制面启用签名验证但 agent 无可用密钥（预共享 / 下发 / 本机 agent.key 均无），"+
+					"后续请求将被拒绝：请用 install token 重新纳管，或配置 --grpc-signature-key", "agentID", a.agentID)
 			}
-			logx.Info(ctx, "注册成功", "agentID", a.agentID, "segment", a.cfg.Segment, "grpc", a.cfg.ControlAddr, "signed", signed)
+			logx.Info(ctx, "注册成功", "agentID", a.agentID, "segment", a.cfg.Segment, "grpc", a.cfg.ControlAddr,
+				"signed", signed, "keySource", keySource)
 			return nil
 		}
 		// 安全：Unauthenticated（install token 无效/过期/已被消费）属不可重试错误，
@@ -1284,6 +1349,7 @@ func (a *Agent) executeShell(ctx context.Context, command string, stdout, stderr
 	setProcessGroup(cmd) // 平台特定：Linux/Darwin 设 Setpgid；Windows noop
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	cmd.Env = sandboxedEnv() // P1-2：不把 agent 自身环境（含签名密钥）透传给任务子进程
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -1333,7 +1399,41 @@ func (a *Agent) execService(ctx context.Context, out, errb io.Writer, t proto.Ta
 	c := exec.CommandContext(ctx, "systemctl", verb, svc)
 	c.Stdout = out
 	c.Stderr = errb
+	c.Env = sandboxedEnv() // P1-2：同 executeShell，任务派生进程不透传 agent 环境
 	return c.Run()
+}
+
+// sandboxEnvAllowlist 是任务子进程允许继承的环境变量白名单（最小必需集合）。
+//
+// P1-2：此前 executeShell/execService 未设置 cmd.Env，子进程整体继承 agent 进程环境——
+// 任意任务命令执行 `env` 即可读到 OPSMESH_GRPC_SIGNATURE_KEY 等变量，进而冒充任意 agent
+// 身份（签名密钥泄漏 = 身份体系失效）。现只透传运行 shell/systemctl 必需的最小集合。
+//
+// 注意：白名单是「按需最小」而非「已知安全」——新增变量须评估其是否可能承载凭据。
+var sandboxEnvAllowlist = map[string]bool{
+	"PATH": true, "HOME": true, "USER": true, "LOGNAME": true, "SHELL": true,
+	"LANG": true, "TZ": true, "TMPDIR": true,
+	// Windows（agent 在 Windows 上仅 shell 任务可用）
+	"SystemRoot": true, "SystemDrive": true, "windir": true, "COMSPEC": true, "ComSpec": true,
+	"PATHEXT": true, "USERPROFILE": true, "USERNAME": true, "APPDATA": true, "LOCALAPPDATA": true, "PROGRAMDATA": true,
+	"TEMP": true, "TMP": true, "OS": true, "NUMBER_OF_PROCESSORS": true, "PROCESSOR_ARCHITECTURE": true,
+}
+
+// sandboxedEnv 返回透传给任务子进程的环境变量（K=V 形式），白名单外一律剥离，LC_* 例外放行（本地化）。
+func sandboxedEnv() []string {
+	env := os.Environ()
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		i := strings.IndexByte(kv, '=')
+		if i <= 0 {
+			continue // 非法条目（无键或形如 "=C:=..."）丢弃
+		}
+		name := kv[:i]
+		if sandboxEnvAllowlist[name] || strings.HasPrefix(name, "LC_") {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // serviceVerbWhitelist 是 systemctl 允许的动词白名单。

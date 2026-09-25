@@ -55,3 +55,29 @@ func TestSafeGo_NoRestartOnCleanExit(t *testing.T) {
 		t.Fatal("循环未随 ctx 退出")
 	}
 }
+
+// TestSafeGo_EarlyReturnRestarts 验证 fn 未 panic 但提前 return（ctx 未取消）时循环仍被重启。
+// 真实场景：logCollectLoop 在未配置采集路径时立即 return。此时**不得**记为 panic
+// （措辞区分见 safego.go），但重启本身必须发生——否则该能力永久静默缺失。
+// 用带缓冲 channel 传递计数，避免测试侧与循环侧的 data race（CI 带 -race）。
+func TestSafeGo_EarlyReturnRestarts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := make(chan struct{}, 4)
+	safeGo(ctx, "test-early-return", func(context.Context) {
+		select {
+		case calls <- struct{}{}:
+		default:
+		}
+	})
+	got := 0
+	deadline := time.After(safeGoRestartDelay + 3*time.Second)
+	for got < 2 {
+		select {
+		case <-calls:
+			got++
+		case <-deadline:
+			t.Fatalf("提前 return 的循环未被重启：期望至少 2 次调用，实际 %d", got)
+		}
+	}
+}

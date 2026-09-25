@@ -25,7 +25,7 @@
 | 部署可用性 | ★★★★☆ | compose 路径真机跑通；企业版前端由镜像构建期装配进二进制、开箱可用 |
 | 升级与灾备 | ★★★★☆ | 迁移加咨询锁 + checksum/版本门禁 + 可重放；18 个 `.down.sql` + 手工回滚手册 |
 | 许可与商务机制 | ★★☆☆☆ | Apache-2.0 + 无第三方声明 + 无授权/版本机制（**未修，非技术阻断**） |
-| **商用就绪度** | **★★★★☆** | 7 项 P0 + P1-1/P1-3/P1-4/P1-5 四项技术类高风险均已修复并经真机验证；剩余 P1-2（agent 密钥与签名）、P1-6（可支撑性）、P1-7（许可合规） |
+| **商用就绪度** | **★★★★☆** | 7 项 P0 + 五项技术类 P1（P1-1/P1-2/P1-3/P1-4/P1-5）均已修复并经真机验证；剩余 P1-6（可支撑性）、P1-7（许可合规） |
 
 **修复到「可商用」的总工作量估算：约 45–65 人天**（不含可选的企业级功能补齐）。其中 6 项 P0 阻断项约 25–40 人天，是唯一必须先做掉的部分。
 
@@ -43,9 +43,13 @@
 >   指标基数熔断 + `/metrics` CIDR 准入 + 全局限流均经真机复验（含 403 fail-closed 与 429 突发的负向断言，见 §11）。
 > - 第四批（P1-3）：`verify-runtime.sh` 扩容至 **86 项全过**（新增第 13 节 19 条审计链专项断言）；
 >   在线库完成「改写一行 → 60s 内自检翻转并定位 `first_bad_id` → critical 告警 firing → 还原后自动清零」
->   全周期实证（见 §12.4）。**至此 §3 P1 表中技术类高风险项（P1-1/P1-3/P1-4/P1-5）全部收口。**
+>   全周期实证（见 §12.4）。
+> - 第五批（P1-2）：`verify-runtime.sh` 扩容至 **94 项全过**（新增第 14 节 8 条 agent 签名/密钥专项断言）；
+>   完成「全新纳管 → per-agent 密钥下发落盘 → v2 签名任务真实执行 → 错密钥被拒 → 杀进程重启沿用本机密钥」
+>   端到端实证，并实测证明任务子进程读不到签名密钥（见 §13）。
+>   **至此 §3 P1 表中技术类高风险项（P1-1/P1-2/P1-3/P1-4/P1-5）全部收口。**
 >
-> **尚未完成**：P1-2（agent 侧共享密钥与签名不覆盖载荷，见 §3）；许可与商务机制（非技术阻断）；
+> **尚未完成**：P1-6（可支撑性，见 §3）；P1-7 许可与商务机制（非技术阻断）；
 > `services/` 双轨收敛（TD-60，路线图阶段四）。
 
 ---
@@ -592,7 +596,7 @@ staleness 窗口内的历史样本，避免重启后误判）。
 | # | 问题 | 证据 | 商用影响 | 工作量 |
 |---|---|---|---|---|
 | **P1-1** | **agent 命令白名单可被 `&&` 绕过**。`--agent-shell-whitelist` 只校验首个 token，而 `&&` 两端均放行（agent 侧 `agent.go:1043-1048`，控制面 `server_tasks.go:94-99`）。`ls && rm -rf /` 首 token `ls` 命中白名单，右侧照常执行。代码注释称 `&&`「不引入任意命令执行」——该推理对白名单场景不成立。 | `internal/agent/agent.go:1077-1115`（白名单）、`agent.go:1020-1022`（明确不拦管道 `\|`）、`internal/controlplane/server_tasks.go:90`（控制面【有】拦管道） | 默认开启的白名单被宣传为生产加固项，实际不提供隔离；且两端策略不一致（控制面拦 `\|`、agent 不拦） **→ 修复（2026-09-25）**：白名单改为按「执行段」校验——先按 `&&`/`||`/`|` 切段（`>&`/`&>` 重定向不误切），再逐段取命令词匹配，任一段未命中即整条拒绝；带路径的命令词仅系统标准可执行目录按 basename 匹配（非标准目录须显式白名单整条路径），`VAR=value cmd` 前缀 fail-closed。验证见 §11 | 1–2 pd |
-| **P1-2** | **全机群共用一个 agent HMAC 密钥，且签名不覆盖载荷**。签名为 `HMAC(secret, timestamp+agentID)`，不覆盖任务内容/结果；`Register` 不返回 per-agent 密钥；agent 执行 shell 任务时不隔离环境变量，故任一 agent 被 RCE 即泄漏全机群密钥。 | `internal/controlplane/grpc/grpc.go:294-297`、`:274-277`；`internal/agent/agent.go:1149-1154`（未设 cmd.Env） | 单点失守 → 全机群可被冒领任务、可伪造上报结果（审计可信度归零）；无按 agent 吊销能力 | 5–8 pd |
+| **P1-2** | **全机群共用一个 agent HMAC 密钥，且签名不覆盖载荷**。签名为 `HMAC(secret, timestamp+agentID)`，不覆盖任务内容/结果；`Register` 不返回 per-agent 密钥；agent 执行 shell 任务时不隔离环境变量，故任一 agent 被 RCE 即泄漏全机群密钥。 | `internal/controlplane/grpc/grpc.go:294-297`、`:274-277`；`internal/agent/agent.go:1149-1154`（未设 cmd.Env） | 单点失守 → 全机群可被冒领任务、可伪造上报结果（审计可信度归零）；无按 agent 吊销能力 **→ 修复（2026-09-25）**：① **签名升级为 v2 并覆盖载荷**——`HMAC-SHA256(secret, "v2\n"+timestamp+"\n"+identity+"\n"+payloadDigest)`，两端共用 `internal/grpcx/agentsig.go` 独立计算同一摘要（同秒换内容/篡改载荷即验签失败），v1 仅作滚动升级期兼容并按 agent 限次 WARN；② **per-agent 密钥下发双门槛**——一次性 install token 原子消费 **且** 连接为 TLS 才返回密钥（明文拒发），落盘 `<dataDir>/agent.key`（0600），控制面按「per-agent 优先、预共享兜底」选取；③ **任务子进程环境白名单**——`executeShell`/`execService` 只透传运行所需最小集合 + `LC_*`，堵住「任一任务读 `/proc/self/environ` 即拿到签名密钥」；④ 新增验签/密钥来源指标与 3 条告警规则，滚动升级顺序（先控制面、回滚先 agent）写入 `docs/operations.md`。验证见 §13 | 5–8 pd |
 | **P1-3** | **审计日志不可防篡改，且无保留策略、无查询索引**。`audit_log` 为普通追加表，无 hash 链/签名（`migrations/001_initial.sql:78-86`）；全仓库无 DELETE/归档/分区逻辑；`QueryAudits` 以 `tenant_id + created_at` 过滤但仅 `idx_audit_trace` 一个索引，长期运行后审计检索将全表扫描。 | `internal/store/sql_audits.go`、`migrations/001_initial.sql`、`internal/controlplane/server_audits.go:15-16` | README「100% 留痕 / 等保三级 ≥6 月」仅靠「永不删除」满足，但**无防篡改**（持 DB 凭证即可改写历史，等保三级明确要求审计记录防篡改）；且查询会随时间劣化 **→ 修复（2026-09-25）**：迁移 019 引入哈希链（`prev_hash`/`entry_hash`，`entry_hash=sha256(prev_hash‖长度前缀字段…)`，`created_at` 秒截断）+ `audit_chain_head` 单行链头（写入事务内 `FOR UPDATE` 串行化，多副本不分叉）+ 链式写入失败降级普通 INSERT（数据不丢、自检如实计 `legacyRows`）；`VerifyAuditChain` 平台级/租户级双强度校验 + `GET /api/v1/audit/verify`（200/409/501/500）；`--audit-retention-days`（默认 180 天）由 leader 周期归档至 `audit_log_archive` + `audit_archive_meta` 边界哈希（跨归档边界仍可校验）；补 `idx_audit_tenant_created` / `idx_audit_entry_hash`；新增 4 个指标与 2 条告警规则。**诚实边界**：无密钥链无法对抗全链重写，需外部 WORM 锚定（未内置）。验证见 §12 | 3–5 pd |
 | **P1-4** | **无界的 agent 日志缓冲会导致进程 OOM**。`agentLogs` 切片按 agent 每 30s 追加且永不裁剪；`deviceMetrics` map 无淘汰。 | `internal/store/sql_agent_logs.go:24-27` 及 memory 同名实现 | 机群规模上去后数周内控制面 OOM；商用 SLA 不可承诺 **→ 修复（2026-09-25）**：新增 `internal/store/memory_bounds.go` 统一施加硬上限——`deviceMetrics` 设备条目 ≤2000（超限按「最久未写入」淘汰整条设备，排序刻意用写入时刻而非 agent 可控的 `CollectedAt`）、`agentLogs` 批次 ≤2000 且总行数 ≤100000（超限丢最旧批次并回收底层数组容量）。验证见 §11 | 2–3 pd |
 | **P1-5** | **未鉴权即可造成指标内存耗尽 DoS**。中间件对**每个请求**（含 404 与未鉴权请求）记录指标，`normalizePath` 仅归一全数字段，`/api/v1/<随机串>` 原样入 map 且无上限；`/metrics` 默认放行（空 CIDR 白名单=不限制），无全局限流器。 | `internal/controlplane/server_middleware.go:169-177,207-228`、`internal/metrics/metrics.go:61-66,100-110`、`internal/controlplane/server_netsec.go:129-131` | 远程未鉴权即可打爆内存导致控制面重启 **→ 修复（2026-09-25）**：四层收敛——(1) 时序硬上限 2000（超限折叠 `:other` + 自观测指标）；(2) `normalizePath` 收紧（段 >48B／含非安全字符／全数字 → `:id`；整路径 >200B → `/:overlong`）；(3) 8080/9091 两处 `/metrics` 均接入准入，生产模式空 CIDR 改 fail-closed；(4) 生产未显式配置时默认启用 200 req/s/IP 限流，限流器 IP 桶上限 5 万（超限先清空闲桶，仍满则放行但不建桶）。真机实测见 §11 | 2–3 pd |
@@ -662,10 +666,11 @@ staleness 窗口内的历史样本，避免重启后误判）。
 - ~~P1-1 白名单绕过修复（1–2 pd）~~ ✅ 2026-09-25
 - ~~P1-4 日志/指标缓冲加上限与淘汰（2–3 pd）~~ ✅ 2026-09-25
 - ~~P1-5 指标基数控制 + `/metrics` 生产默认受限（2–3 pd）~~ ✅ 2026-09-25
+- ~~P1-2 per-agent 密钥下发 + 签名覆盖载荷 + 任务环境隔离（5–8 pd）~~ ✅ 2026-09-25（原列于阶段四，因属技术类高风险提前收口；密钥轮换与滚动升级顺序见 `docs/operations.md` §9.2.4 / §11.4）
 - P1-6 版本/诊断端点 + 日志级别可配 + 结构化日志统一（6–10 pd）
 - `docs/dr-runbook.md` 恢复流程可执行化（当前手册读 `/backup`，而 `mysql-statefulset.yaml` 并未挂载该路径 → 首次演练必失败）（1–2 pd）
 
-> 本阶段 P1-1 / P1-3 / P1-4 / P1-5 已收口并真机复验（`verify-runtime.sh` 断言 0 失败、静态门禁 20 项 0 失败），
+> 本阶段 P1-1 / P1-2 / P1-3 / P1-4 / P1-5 已收口并真机复验（`verify-runtime.sh` 断言 94 项 0 失败、静态门禁 20 项 0 失败），
 > 并对「Docker Desktop 端口转发不保留真实来源 IP」这一部署形态边界做了对照实验与文档化（见 §11.3）。
 
 ### 阶段三：可销售（约 10–20 人天 + 法务）
@@ -676,7 +681,7 @@ staleness 窗口内的历史样本，避免重启后误判）。
 - 企业级能力补齐（按目标客户取舍）：SSO/LDAP/OIDC、真实 HA failover（当前 `handleHAFailover` 为 no-op 返回 `"simulated": false`）、白标、离线安装包 —— 约 20–30 pd，**建议与首个客户的真实需求挂钩后再投入**，不要预先建设。
 
 ### 阶段四：规模化（按需）
-- P1-2 per-agent 凭证 + 签名覆盖载荷（5–8 pd）
+- ~~P1-2 per-agent 凭证 + 签名覆盖载荷（5–8 pd）~~ ✅ 2026-09-25（已提前至阶段二收口，见 §13）
 - 双轨架构收敛决策落地
 - 首次真实负载测试（当前仓库内**无任何压测结果**，而每 agent 2s 一次的取消轮询意味着 1000 agent ≈ 500 req/s 的固定开销，应实测确认）
 
@@ -1039,5 +1044,124 @@ leader 后台自检（60s 周期）能否发现、定位、导出指标、触发
 - **无密钥链的固有边界**：持 DB 写权限者可重写整条链并重算全部 `entry_hash`（无 WORM/外部锚定）。
   本批如实写入 `docs/security-mechanism.md` §7.7，未内置外部锚定。
 - `-race` 仍因 Windows 无 cgo 无法本地启用；CI integration job 已在 MySQL 8 + Redis 上带 `-race` 跑 store 包。
+
+---
+
+## 13. 真机全栈验证记录（2026-09-25 第五批：P1-2 收口验收）
+
+执行方式：以本批**最终源码**重建控制面镜像 → `bash deploy/docker/scripts/deploy.sh up -y`（17 容器全 Up，
+冒烟测试通过）→ `bash deploy/scripts/verify-runtime.sh`（断言已扩容至 **94 项：PASS=94 / FAIL=0**）
+→ `bash deploy/scripts/validate-deploy-assets.sh`（**PASS=20 / FAIL=0**）
+→ 真实 MySQL 8.0.46 上 `internal/store` 全量套件 → 另加 agent 侧五组端到端实测（13.1–13.5）。
+
+> 顺序说明：先完成全部源码改动（含 13.6 / 13.7 两项实测发现的缺陷修复）并重建部署，再跑断言脚本——
+> 上文的 94 项与 20 项均取自**冻结后的最终代码**，不存在「验完又改」的时间差。
+
+### 13.1 per-agent 密钥下发与落盘
+
+| 断言 | 实测结果 |
+|---|---|
+| 全新纳管（一次性 install token + TLS） | 注册响应 `signed=true`、`keySource=register-response` |
+| 密钥落盘 | `<dataDir>/agent.key` **64 字节**（该文件在重启后仍被沿用，见 13.4） |
+| agent 侧错误 | `level=ERROR` 计数 **0** |
+| 库内 per-agent 密钥 | `agents` 表 5/5 行 `secret` 非空（断言脚本 14c 实测） |
+
+### 13.2 签名覆盖载荷（端到端 + 负向）
+
+- **正向**：签名 agent 领取并执行真实 shell 任务 `task-1790322380049322603` → 经
+  `GET /api/v1/tasks/{id}/result` 黑盒读取结果 `exit: 0`、`stdout: 'p12-signed-result-ok'`。
+- **指标结构**：`opsmesh_agent_signature_verifications_total{alg="v2",result="ok"}` 随流量增长
+  （收口复跑 **185**）；`alg="v1"` 恒 **0**、`source="fleet"` 恒 **0**、`source="per_agent"` 与 `v2/ok` 同值
+  ——即全部业务流量走 **per-agent 密钥 + 覆盖载荷的 v2**。
+- **负向（错密钥）**：`p12-badkey`（已知 agentID + 伪造 `agent.key=deadbeef…`）启动后 18 秒内，
+  控制面 `v2/rejected` 由 **0 → 11**，agent 侧 `心跳 ok` 计数 **0**、错误串
+  `Unauthenticated desc = agent-signature mismatch: HMAC verification failed`（心跳/领任务/取消轮询全被拒）。
+  - **诚实说明**：更早一轮曾在旧镜像上测到 `v2/rejected` 0→20，但该计数随容器重建归零；为不把
+    「上一轮读数」当成本轮证据，此处在本批最终代码上**重跑了同一条负向用例**取数。
+
+### 13.3 任务子进程环境隔离（端到端）
+
+任务 `task-1790322380202017385` 的 cmd 为 `echo OPSKEY=[%OPSMESH_GRPC_SIGNATURE_KEY%] CANARY=[%P12_ENV_CANARY%] USER=[%USERNAME%] HOME=[%USERPROFILE%]`，
+实测 `exit: 0`、`stdout`：
+
+```
+OPSKEY=[%OPSMESH_GRPC_SIGNATURE_KEY%] CANARY=[%P12_ENV_CANARY%] USER=[winge] HOME=[C:\Users\winge]
+```
+
+- 前两项**未被展开** = 这两个变量在任务子进程环境里根本不存在（修复前 `set` 可直接读到 agent 全量环境）。
+- 后两项正常展开 = 白名单未误伤运行必需变量；`USERNAME` 的补入由此实测确认（补入前 `%USERNAME%` 输出字面量）。
+
+### 13.4 重启身份连续性（已消费 install token）
+
+杀掉 agent 进程后原样重启（`<dataDir>/install.token` 129 字节仍在，且已被首轮注册消费）→
+注册成功、`signed=true`、`keySource=agent.key`、`ERROR` 计数 0；控制面打印限次 WARN
+「install token 已消费或失效，按已知 agent 重注册处理（沿用库内租户、不下发密钥）」。
+即：修复前该场景 agent 会 fail-fast 退出，纳管机器重启即永久失联。
+
+### 13.5 断言脚本第 14 节（8 条，逐条实测）
+
+| # | 断言 | 实测 |
+|---|---|---|
+| 14a | 交付资产已接线签名验证 | `OPSMESH_GRPC_REQUIRE_SIGNATURE=true` |
+| 14b-1 | 验签指标全标签集（8 条时序，含 0 值） | PASS |
+| 14b-2/3 | 密钥来源指标 `source=per_agent` / `source=fleet` | PASS |
+| 14b-4 | 已有 agent 用 v2 通过验签 | `v2/ok=185` |
+| 14b-5 | 无 v1 遗留算法流量 | `v1/ok=0` |
+| 14b-6 | 无全舰队预共享密钥兜底 | `source="fleet"=0` |
+| 14c | 已注册 agent 持 per-agent 密钥 | 5/5 |
+
+### 13.6 本轮实测发现并修复的 **P0 级可用性缺陷**：agent 通道被租户门禁全量拒绝
+
+| 项 | 内容 |
+|---|---|
+| 现象 | 出厂生产形态（`OPSMESH_REQUIRE_AUTH=true` + `OPSMESH_GRPC_REQUIRE_SIGNATURE=true`）下，agent **注册成功但所有业务 RPC 被拒**：`Unauthenticated: missing tenant context: gateway auth required (--require-auth)` → 心跳、领任务、上报结果、上报日志、取消轮询**全部不可用**，即任务下发与结果上报完全不可用（真机复现：注册 1 次成功后，心跳/领任务/取消轮询连续失败） |
+| 根因 | `--require-auth` 的语义是「要求**网关**注入租户」（见 flag 帮助与 `docs/api-reference.md`），但 agent 是**拉模型**——直连 gRPC 9090、不经 HTTP 网关，既无租户配置项，`RegisterResp` 也不含租户字段。该检查对 agent 通道本就不可能满足 |
+| 为何此前未暴露 | E2E 夹具 `grpc_sig_test.go` 用 `RequireAuth: false`，而出厂 compose 用 `true` —— **测试配置与交付配置不一致**，把缺陷挡在了测试之外（该夹具已改为 `true` 以对齐出厂形态） |
+| 修复 | `CheckAgentTenant` 在 ctx 无租户时取「注册时盖章的库内归属租户」（由 install token / 库内记录确定，**非 agent 自报**）；**不放松任何既有拒绝路径**：声明租户且与归属不一致 → 仍 `PermissionDenied`；未知 agent 且无租户 → 仍 `Unauthenticated`；库内归属为空且无租户 → 仍拒绝。补 2 个单测（放行 / 维持拒绝） |
+| 安全论证 | 被取代的「必须自带 `x-tenant-id` 元数据」**从来不是安全边界**：该元数据不带签名，能伪造身份的调用方本可直接填上正确租户通过旧检查。真正的身份边界是 `verifyAgentSignature`（v2 覆盖载荷）与 mTLS |
+| 反向验证 | 临时把修复回退为「无租户一律拒绝」→ `TestCheckAgentTenant_AgentBindingFallback` 与 `TestGRPCAgentIdentityBinding_TLS_EndToEnd` 两个用例按**实测同一错误串**失败；还原后全绿（证明该断言不是橡皮图章） |
+| 残留限制 | gRPC `CancelTask` 仍要求 ctx 自带租户（该 RPC 无库内绑定可推导，且当前无任何调用方）；后续若为其接入 agent 侧调用，须按同一思路改造 |
+
+### 13.7 本轮实测发现并修复的次要缺陷：日志把「循环提前退出」误报为「panic」
+
+- **现象**：`agent 循环 panic 后重启 loop=logCollectLoop` 每 5s 一条（实测约 5 分钟 7 条），而同一日志里
+  `panic 已捕获` 计数 **0** —— 即根本不是 panic。运维按此排查会去追一个不存在的崩溃。
+- **根因**：`safeGo` 的重启分支不区分「fn panic」与「fn 提前 return」，而 `logCollectLoop` 在未配置采集路径时
+  **立即 return**（默认配置必然如此）。
+- **修复**：① 调用点仅在配置了采集路径时才启动该循环；② `safeGo` 按 recover 是否真的捕获到 panic 区分措辞
+  （`panic 后重启` / `循环提前退出，将重启`），并补 `TestSafeGo_EarlyReturnRestarts`（提前 return 仍须重启，
+  不得静默失去能力）。
+- **真机复测**：重启 agent 后 25 秒内 `循环` 告警 **0 条**（对照修复前 5 分钟 7 条），`心跳 ok` 正常、`ERROR` 0。
+- 该修复仅影响 agent 进程（控制面容器不运行 agent 循环），故 13.5 的断言结果不受影响；agent 侧以真实进程复测。
+
+### 13.8 静态门禁与单元测试
+
+| 项 | 结果 |
+|---|---|
+| `gofmt -l internal/` | 空 |
+| `go vet ./internal/...` | 无输出 |
+| `go test ./internal/agent/ ./internal/grpcx/ ./internal/controlplane/` | `ok agent 56.911s`、`ok grpcx 0.185s`、`ok controlplane 42.954s`（exit 0） |
+| `internal/store`（真实 MySQL 8.0.46，`OPSMESH_TEST_MYSQL_DSN` 指向带库名的 DSN） | **684 PASS / 0 SKIP / 0 FAIL**，375.599s，exit 0 |
+| 部署冒烟（`deploy.sh up` 自带） | 通过 |
+
+> **本轮的测试环境自伤（如实记录）**：首次跑 store 套件时 DSN 未带库名（`…@tcp(127.0.0.1:13317)/?parseTime=true`），
+> `TestMultiSchemaSmoke_MySQLDSNBranch` 因 `No database selected` 失败并触发迁移重试循环；
+> 补上库名（`/opsmesh?parseTime=true`）后 684 项全绿。**不是代码缺陷，是执行方式错误**——记录以免后人误读为回归。
+
+### 13.9 本轮未覆盖 / 诚实边界
+
+- **密钥文件权限语义**：`os.WriteFile(..., 0600)` 在 Linux（出厂形态：容器/systemd）是真实权限；在 Windows 上
+  不映射 ACL（实测 `-rw-r--r--`），该形态的保护依赖目录 ACL 与运行账户。Windows 本非加固目标平台
+  （能力矩阵已声明仅 shell 任务可用）。
+- **v1 兼容期未关闭**：滚动升级期内旧 agent 仍可 v1 签名（不覆盖载荷），代码**不会强制拒绝 v1**；
+  收敛依赖 `OpsMeshAgentSignatureLegacyAlg` 告警 + 运维升级（顺序见 `docs/operations.md` §11.4）。
+- **预共享密钥兜底路径仍可用**（迁移期需要）：其使用可观测（`source="fleet"` 指标 + `OpsMeshAgentFleetKeyInUse` 告警）
+  但不阻断；彻底停用需控制面不再配置 `--grpc-signature-key`。
+- **多租户 agent 的跨租户实机负向未做**：`x-tenant-id` 声明他租户 → `PermissionDenied` 由
+  `TestGRPCAgentRegisterCrossTenantRefused` / `TestCheckAgentTenant_*` 单测覆盖（实机复现需第二个租户的有效 install token，
+  本轮未构造）；断言脚本第 12 节覆盖的是 HTTP 侧租户伪造拒绝。
+- **未做多机规模压测**：本批验证均为单 agent 进程，未验证「数百 agent 并发验签」下的吞吐与指纹缓存开销
+  （`sigWarnOnce` 键上限 4096 已在 P1-5 同类风险中封顶）。
+- `-race` 仍因 Windows 无 cgo 无法本地启用（CI integration job 覆盖）。
 
 
