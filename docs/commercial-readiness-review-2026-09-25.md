@@ -1710,6 +1710,15 @@ feature 分支**刻意不打** `latest`：否则 `latest` 会被「最后合入�
 | 三凭证齐备 + `main` | `mode=private`，前缀 = `<REGISTRY>/<leaf>`，标签同上 |
 | 抽掉 `IMAGE_LEAF` | **rc=1**，`${IMAGE_LEAF:?…}` 直接报错 ⇒ 不会静默产出半套标签 |
 
+**CI 真跑已证实同一件事（run `36198676177`，commit `21bae16`，push 到 main）**——本机 bash 场景测试之外，真实发布链路兑现了承诺。推送后用匿名 token 探 GHCR：
+
+```text
+ghcr.io/levango7/opsmesh-binary:latest -> 200
+ghcr.io/levango7/opsmesh-agent:latest  -> 200
+```
+
+而这两条在 §19.4 取证时**都是 404**（当时只有 sha 标签）。同一 run 里 `build-test`（含新的 actionlint step）、`security`（含 §7/§8 两道新门禁与 helm 三条新断言）、`services`、`integration`、`proto`、`release-dryrun`、`image`、`image-agent`、E2E×2、Frontend 全部 success。
+
 生成过程中踩到两处**生成期**缺陷（都属「看起来对、实际少东西」，值得单独记）：
 
 1. 多行值写 `$GITHUB_OUTPUT` **必须**用 heredoc 定界符（`tags<<TAGSEOF` … `TAGSEOF`）。
