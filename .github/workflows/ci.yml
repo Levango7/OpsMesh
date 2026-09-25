@@ -448,6 +448,12 @@ jobs:
           image-ref: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
           severity: HIGH,CRITICAL
           exit-code: "1"
+          # ignore-unfixed：只对「上游已发布修复但镜像未升级」判红；上游尚无修复版本的条目
+          # 仍逐条打印在日志里但不阻断（基础镜像扫描的通行做法）。
+          # 依据（2026-09-25 首跑实测）：agent 镜像 56 条 HIGH/CRITICAL（52+4）的 Fixed Version
+          # 全为空、状态为 affected/fix_deferred/will_not_fix，且镜像内已执行 apt-get upgrade -y
+          # ——属"升级也无解"，若一律判红则流水线永久红（长期红的门禁会被忽略，见教训 11）。
+          ignore-unfixed: true
       # SBOM：syft 对推送后的镜像出 SPDX JSON 并作为 workflow artifact 留存（供应链证据）。
       # 不改变镜像产物形态（不用 buildx attestation），避免私有路径的消费方行为变化。
       - name: 生成镜像 SBOM（syft v1.51.1，钉版）
@@ -649,6 +655,9 @@ jobs:
           image-ref: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
           severity: HIGH,CRITICAL
           exit-code: "1"
+          # 同 controlplane image job：只对可修复未修复的漏洞判红（首跑实测 agent 侧 56 条
+          # HIGH/CRITICAL 全无上游修复版本）。
+          ignore-unfixed: true
       - name: 生成 agent 镜像 SBOM（syft v1.51.1，钉版）
         env:
           IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}

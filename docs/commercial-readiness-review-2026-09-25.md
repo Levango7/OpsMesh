@@ -1366,4 +1366,21 @@ P1-2 批次推送后，CI **第一次真正跑完整流水线**（run `361226480
 - **命名对齐待核对（真实交付风险，非本轮引入）**：CI 推送的 leaf 名是 `opsmesh-binary` / `opsmesh-agent`，而仓库内 `deploy/helm/opsmesh` 用的是 `controlplane.image.repository=opsmesh/opsmesh`、`agent.image.repository=opsmesh/opsmesh-agent`；`opsmesh-binary` 全仓只出现在 `ci.yml`。原注释称它对齐的是**外部 GitOps chart**（`charts/opsmesh-controlplane/values.yaml`，不在本仓库），本轮无法核实。**若消费方实际用仓库内 chart，则 CI 推的镜像永远不会被引用**——建议连同 GitOps chart 一并核对（需用户在外部仓库确认）。
 - **actionlint 未接入 CI**：本机用它验过 workflow，但未把它加成流水线门禁（属新增门禁，超出本轮范围；鉴于本项目已出现四类 CI 自身缺陷，建议后续纳入）。
 
+### 15.4 镜像链路首度真跑的第二个发现：agent 镜像 56 条 HIGH/CRITICAL（全无上游修复）
+
+`0a1c81d` 首跑：`image`（controlplane）**全链路真跑成功**——构建、推送 GHCR、Trivy、SBOM、keyless cosign、覆盖自述全部执行；`image-agent` 唯一红点在 **Trivy 扫描**，因为门槛 `exit-code: "1"` 对 HIGH/CRITICAL 判红，而 agent 镜像确有 56 条：
+
+| 项 | 值 |
+|---|---|
+| 镜像 | `ghcr.io/levango7/opsmesh-agent:<sha>` |
+| 基础 | `debian:bookworm-slim` + 构建期 `apt-get update && apt-get upgrade -y`（Dockerfile.agent:28-32） |
+| 结果 | `Total: 56 (HIGH: 52, CRITICAL: 4)`，全部来自 debian 基础包（util-linux 系 / perl-base / zlib1g / libsystemd0 / gzip / libtinfo6 …） |
+| **Fixed Version** | **全部为空**（CI 日志 55 行明细逐行解析：0 条有修复版本）；状态 `affected` 48 / `fix_deferred` 6 / `will_not_fix` 1 → **Debian 尚无修复版本，升级也无解**（镜像内已是 `+deb12u3`） |
+| 去重后 | 55 行明细 → **17 个包上的 27 个 (包, CVE) 组合**（主要是同一个 util-linux CVE 扩散到其各子包），即实际 CVE 条数远少于 56 |
+| 对照 | controlplane 镜像（`gcr.io/distroless/static-debian12`，无 OS 包）扫描 **0 条** |
+
+**处置（用户决策）**：Trivy 加 `ignore-unfixed: true`——只对「上游已发布修复但镜像未升级」判红；无修复版本的条目仍逐条打印在日志里但不阻断。理由：这类 CVE 在「一律判红」下会让流水线**永久红**，而长期红的门禁必然被忽略（本项目教训 11）；`ignore-unfixed` 是基础镜像扫描的通行做法，对「可修复未修复」的强约束保持不变。
+
+**诚实边界**：这 56 条**不是**被修掉了，只是不再阻断流水线——它们是 agent 运行时镜像的既有风险，客户侧若做镜像合规审查会看到同样结果。彻底下降需换运行时基础（如 Alpine/busybox），但那会改变 agent 执行 shell 命令的语义（`ls`/`free`/`df` 等实现不同），需重跑全部 agent 任务相关测试与 E2E，属产品级改动，本轮未做。
+
 

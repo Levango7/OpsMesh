@@ -4,6 +4,14 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+### CI：镜像链路首度真跑的两个发现（GHCR 前缀大小写 / agent 镜像 56 条无修复 CVE）
+
+- **发现 1：GHCR 前缀必须全小写**（run `36148760407`）。首个修复版推送后 `image` / `image-agent` **不再空转、真的开跑**，但 buildx 立即失败：`invalid tag "ghcr.io/Levango7/opsmesh-binary:<sha>": repository name must be lowercase`——`GITHUB_REPOSITORY_OWNER` 保留原始大小写。修复：owner `tr` 转小写后再拼前缀（两 job），warning 文案同步。**这正说明"真跑"的价值：空转绿永远碰不到这类问题。**
+- **发现 2：Trivy 扫出 agent 镜像 56 条 HIGH/CRITICAL，且全部无上游修复**（run `36151941407`）。`image`（controlplane）本轮**全链路真跑成功**（构建/GHCR 推送/Trivy/SBOM/keyless cosign/覆盖自述），`image-agent` 唯一红点是 Trivy 门槛：`Total: 56 (HIGH: 52, CRITICAL: 4)`，全部落在 `debian:bookworm-slim` 基础包（util-linux 系 / perl-base / zlib1g / libsystemd0 / gzip / libtinfo6…），**Fixed Version 全为空**、状态 `affected`/`fix_deferred`/`will_not_fix`——镜像内已执行 `apt-get upgrade -y` 且已是 `+deb12u3`，属"升级也无解"。对照：controlplane 用的 `gcr.io/distroless/static-debian12` 无 OS 包，扫描 **0 条**。
+  - **处置**：Trivy 加 `ignore-unfixed: true`——只对「上游已发布修复但镜像未升级」判红，无修复版本的条目仍逐条打印但不阻断。若一律判红则流水线**永久红**，而长期红的门禁必被忽略（教训 11）。
+  - **诚实边界**：这 56 条不是被修掉了，只是不再阻断——属 agent 运行时镜像的既有风险，客户做镜像合规审查会看到同样结果。彻底下降需换运行时基础（Alpine/busybox），会改变 agent 执行 shell 命令的语义，需重跑 agent 任务相关测试与 E2E，属产品级改动，本轮未做。
+- **同时加固**：`build-push-action` 加 `load: true`（镜像同时载入本地 daemon，使 Trivy 扫描不再依赖"能否凭 docker config 从默认 private 的 GHCR 拉取"），Trivy 步骤补 `TRIVY_USERNAME`/`TRIVY_PASSWORD` 兜底。
+
 ## [Unreleased] — 2026-09-25 CI 首跑全绿 + 消除镜像 job 的「空转绿」
 
 > 承接下一节的 4 处修复（`68ff539`）。推送后 CI 首跑（run `36143704673`）**`completed / success`，12 个 job 全绿**——2026-09-20 以来下游 7 个 job **第一次真正执行**。但同一次首跑暴露出第三类假绿：`image` / `image-agent` 结论 `success`，实际只跑了「探测 secret」一步。本节记录该结论与本轮修复。证据：`docs/commercial-readiness-review-2026-09-25.md` §15。
