@@ -264,6 +264,16 @@ jobs:
           echo "$out" | grep -q "image: opsmesh/opsmesh@sha256:aaaa1111" || { echo "::error::controlplane digest 引用渲染失效"; exit 1; }
           echo "$out" | grep -q "image: opsmesh/opsmesh-agent@sha256:bbbb2222" || { echo "::error::agent digest 引用渲染失效"; exit 1; }
           echo "✅ helm chart 门禁通过"
+      # 部署资产一致性门禁：把「清单 ↔ 源码 ↔ 版本 ↔ 镜像契约」漂移挡在 CI。
+      # 覆盖：版本源一致性（Chart/values-production/gitops/compose tag）、服务矩阵对齐、
+      # Helm 渲染（ServiceMonitor 只给真实暴露 /metrics 的服务）、Compose 渲染（项目名隔离、
+      # internal 网络 + 宿主端口冲突）、K8s 样例清单（无过权 RBAC）。
+      # helm 用上面同一个钉版 docker 镜像，导出为函数供脚本内 `command -v helm` 探测。
+      - name: 部署资产一致性门禁
+        run: |
+          helm() { docker run --rm -v "$PWD:/apps" -w /apps alpine/helm:3.14.4 "$@"; }
+          export -f helm
+          bash deploy/scripts/validate-deploy-assets.sh
       - name: Dockerfile base image digest 校验（供应链安全）
         # 检查 Dockerfile 中的 FROM 行是否钉死 digest（@sha256:）。
         # Renovate 会自动创建 PR 钉死 digest（见 .github/renovate.json）。
@@ -642,6 +652,56 @@ jobs:
       - name: Test
         run: npx vitest run
         working-directory: web/enterprise
+      # ── P0-3：企业版前端的交付路径（此前缺失，个人版入口点开是 404）──
+      # 仅 `npm run build` 产出 dist/ 是不够的：go:embed 不能跨目录，必须把 dist/ 组装进
+      # internal/controlplane/embed/enterprise/ 才会被打进二进制、由 /enterprise/ 分发。
+      - name: 组装企业版产物到 go:embed 目录
+        run: bash deploy/docker/scripts/build-enterprise-web.sh --no-build
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.6"
+      # 真实产物态下跑控制面企业版交付路径用例（占位态由 build-test job 的常规 go test 覆盖）。
+      - name: 控制面企业版交付路径测试（真实产物态）
+        run: go test ./internal/controlplane/ -run 'TestEnterprise' -count=1 -v
+      # 黑盒验收：构建真实二进制、启动、断言 /enterprise/ 可用且确实内置了产物（非占位页）。
+      # 这一层是防「测试通过但交付物里没有前端」的关键——P0-3 的成因正是「代码看起来支持、产物里没有」。
+      - name: 黑盒验证二进制内置企业版前端
+        run: |
+          set -euo pipefail
+          go build -o /tmp/opsmesh ./cmd/opsmesh
+          /tmp/opsmesh --mode=controlplane --store=memory --demo --http-port=18099 --grpc-port=19099 --metrics-port=19098 > /tmp/cp.log 2>&1 &
+          CP_PID=$!
+          trap 'kill $CP_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:18099/healthz > /dev/null 2>&1 && break
+            sleep 1
+          done
+          code=$(curl -s -o /tmp/ent.html -w '%{http_code}' http://127.0.0.1:18099/enterprise/)
+          test "$code" = "200" || { echo "::error::GET /enterprise/ 应 200，实际 $code"; cat /tmp/cp.log; exit 1; }
+          if grep -q 'OPSMESH_ENTERPRISE_BUNDLE_PLACEHOLDER\|未内置' /tmp/ent.html; then
+            echo "::error::二进制里仍是占位页（企业版前端未随产物交付）"; exit 1
+          fi
+          grep -q '/enterprise/assets/' /tmp/ent.html || { echo "::error::外壳未引用企业版构建产物"; exit 1; }
+          asset=$(grep -o '/enterprise/assets/js/[^"]*\.js' /tmp/ent.html | head -1)
+          acode=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:18099$asset")
+          test "$acode" = "200" || { echo "::error::$asset 应 200，实际 $acode"; exit 1; }
+          # 预压缩协商：必须逐编码断言「声明了对应 Content-Encoding 且体积确实变小」。
+          # 只看状态码会漏掉「200 但发未压缩原文」——曾因把头值 gzip 当文件后缀（.gzip ≠ .gz）而静默失效。
+          ilen=$(curl -s -H 'Accept-Encoding: identity' -o /dev/null -w '%{size_download}' "http://127.0.0.1:18099$asset")
+          for enc in br gzip; do
+            eh=$(curl -s -D - -H "Accept-Encoding: $enc" -o /dev/null "http://127.0.0.1:18099$asset" | grep -i '^content-encoding:' | tr -d '\r')
+            elen=$(curl -s -H "Accept-Encoding: $enc" -o /dev/null -w '%{size_download}' "http://127.0.0.1:18099$asset")
+            if [ -n "$eh" ]; then
+              echo "$eh" | grep -q "$enc" || { echo "::error::Accept-Encoding: $enc 返回 $eh"; exit 1; }
+              test "$elen" -lt "$ilen" || { echo "::error::$enc 旁路体积未变小（$elen >= $ilen）"; exit 1; }
+              echo "  ✓ $enc 旁路生效：${elen}B < ${ilen}B"
+            fi
+          done
+          # SPA 回退（vue-router history 模式）与个人版入口联动
+          fcode=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18099/enterprise/devices)
+          test "$fcode" = "200" || { echo "::error::/enterprise/devices 应回退外壳 200，实际 $fcode"; exit 1; }
+          curl -s http://127.0.0.1:18099/ | grep -q '/enterprise/' || { echo "::error::个人版首页未展示企业版入口"; exit 1; }
+          echo "✅ 企业版前端已随二进制交付：外壳/资源/SPA 回退/个人版入口 全部可用"
       # Playwright mock 用例（现有 5 个 spec，覆盖页面渲染与交互）
       # 必须先 playwright install 下载浏览器，否则 CI 上浏览器二进制不存在（78 用例全挂）。
       # PLAYWRIGHT_DOWNLOAD_HOST 用 npmmirror 镜像：cdn.playwright.dev 偶发卡死

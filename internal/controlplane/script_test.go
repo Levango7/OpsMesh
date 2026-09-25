@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
 
@@ -397,6 +398,10 @@ func TestHandleScriptExecute(t *testing.T) {
 	s := newScriptTestServer()
 	auth := loginAsAdmin(t, s)
 
+	// 租户隔离（P0-6）：执行前校验目标 agent 存在且归属本租户，故须真实注册（default 租户）。
+	if s.store.Register(&proto.AgentInfo{AgentID: "dev-01", Segment: "seg-a", TenantID: "default"}) == nil {
+		t.Fatal("Register dev-01 failed")
+	}
 	created := s.store.CreateScript("default", &store.Script{Name: "exec-test", Content: "echo hello"})
 	if created == nil {
 		t.Fatal("CreateScript returned nil")

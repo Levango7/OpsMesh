@@ -25,7 +25,25 @@ OpsMesh 控制面与 agent 共用同一份二进制 `opsmesh`，通过 `--mode=c
 
 ### 1.1 Docker Compose 部署
 
-仓库根目录 `docker-compose.yaml` 提供 controlplane + agent + mysql + redis 一键起环境，适合开发/演示。
+**生产形态（推荐，客户交付走这条）**：`deploy/docker/docker-compose.prod.yml` 由 `deploy/docker/scripts/deploy.sh`
+驱动——自动生成 `.env`（随机强口令 / 加密密钥）、自签 TLS 证书、微服务独立库，控制面默认 HTTPS，
+并内置部署前预检与部署后冒烟测试。
+
+```bash
+cd deploy/docker
+bash scripts/deploy.sh init            # 首次：生成 .env + 自签证书（幂等，不覆盖已有 .env）
+bash scripts/deploy.sh up              # 预检 → 构建 → 起栈 → 冒烟测试（默认子命令）
+bash scripts/deploy.sh up -y           # 非交互（端口占用等确认自动同意；无人值守才用）
+bash scripts/deploy.sh up --proxy -y   # 叠加 Nginx 终止 TLS（控制面转明文，仅内网监听）
+bash scripts/deploy.sh smoke           # 只跑冒烟（需栈已在运行）
+bash scripts/deploy.sh down            # 停止并移除容器（保留数据卷）
+bash scripts/deploy.sh --help          # 全部子命令与参数
+```
+
+初始 admin 口令在 `deploy/docker/.env` 的 `ADMIN_PASSWORD`（首次登录强制改密，见 §3.4.0）；
+部署完成后按 §1.5 用 `deploy/scripts/verify-runtime.sh` 复验。
+
+**开发/演示形态**：仓库根目录 `docker-compose.yaml` 提供 controlplane + agent + mysql + redis 一键环境（明文 HTTP、零配置），适合开发/演示，**不要用于生产**。
 
 #### 1.1.1 前置条件
 
@@ -33,7 +51,7 @@ OpsMesh 控制面与 agent 共用同一份二进制 `opsmesh`，通过 `--mode=c
 - 端口 8080 / 9090 / 9091 未被占用
 - 仓库根目录可写（构建镜像与挂载卷）
 
-#### 1.1.2 启动与停止
+#### 1.1.2 启动与停止（开发/演示形态）
 
 命令示例：Docker Compose 启停
 
@@ -118,7 +136,7 @@ helm upgrade opsmesh ./deploy/helm/opsmesh -n opsmesh \
 | `controlplane.store` | memory | **mysql** | 多副本必须 mysql |
 | `controlplane.production` | false | **true** | 生产模式 |
 | `controlplane.requireAuth` | false | **true** | 强制鉴权 |
-| `controlplane.tls.enabled` | false | **true** | gRPC TLS/mTLS |
+| `controlplane.tls.enabled` | false | **true** | gRPC TLS/mTLS（证书同时可供 Web/REST） |
 | `controlplane.cookieSecure` | false | **true** | Cookie Secure |
 | `controlplane.resources.limits.cpu` | 500m | **2000m** | 资源放大 |
 | `controlplane.resources.limits.memory` | 512Mi | **2Gi** | 资源放大 |
@@ -229,16 +247,29 @@ export OPSMESH_TLS_KEY=/etc/opsmesh/tls/server.key
 
 ### 1.5 部署后自检
 
-部署完成后逐项验证：
+**自动化（推荐）**：部署完成后直接跑随仓库交付的黑盒断言脚本（只读、不改动被测系统，退出码即结论）：
+
+```bash
+bash deploy/scripts/verify-runtime.sh        # 期望：断言汇总 PASS=N FAIL=0，退出码 0
+bash deploy/scripts/validate-deploy-assets.sh # 静态门禁（版本源/服务矩阵/Helm/Compose/k8s 清单）
+```
+
+`verify-runtime.sh` 覆盖：宿主端口发布真实性（`internal` 网络静默丢弃回归）、控制面 TLS 与明文拒绝、
+P0-1 鉴权链路（错误口令与预置弱口令拒绝 / 强制改密 / 改密前不签发可用 token）、微服务健康与 `/metrics`
+暴露面、Prometheus 采集目标全 UP 与 0 firing 告警、多库隔离与建表落库。
+
+**手工抽查**（生产形态默认 HTTPS；`<cp>` 为控制面地址）：
 
 | 验证项 | 命令 | 期望 |
 |---|---|---|
-| 控制面健康 | `curl http://<cp>:8080/healthz` | `ok` |
+| 控制面健康 | `curl -k https://<cp>:8080/healthz` | `ok`（反代形态走 `http://<gateway>/healthz`） |
+| 明文必须被拒 | `curl -s -o /dev/null -w '%{http_code}' http://<cp>:8080/healthz` | `000` 或 `400`（**不得为 2xx**） |
 | gRPC 端口 | `nc -zv <cp> 9090` | succeeded |
-| metrics 端口 | `curl http://<cp>:9091/metrics \| head -5` | Prometheus 文本 |
-| 仪表盘 | 浏览器 `http://<cp>:8080` | 登录页 |
+| metrics 端口 | `curl http://<cp>:9091/metrics \| head -5` | Prometheus 文本；**该端口无鉴权，仅限内网/白名单** |
+| 仪表盘 | 浏览器 `https://<cp>:8080` | 登录页 |
 | Agent 在线 | 仪表盘设备页 / `opsmesh_agents_total` | ≥1 |
 | MySQL 连接 | 控制面日志无 `dial tcp ...:3306` 错误 | 无错误 |
+| MySQL 落库 | 各微服务库（`opsmesh_device` / `opsmesh_task` / `opsmesh_alert` / `opsmesh_config`）有表 | 建表存在（`*_STORE_TYPE=sql` 时服务启动即建表） |
 | 备份 CronJob | `kubectl get cronjob -n opsmesh` | opsmesh-mysql-backup |
 
 ---
@@ -281,11 +312,13 @@ OpsMesh 采用「flag 优先、环境变量兜底」的统一配置模型（`int
 | `grpc-require-signature` | **强制关闭** | **默认开启**（除非显式 false） |
 | `public-register` | **强制 true**（接口开放） | 默认 false（关闭公开注册） |
 | `allow-public-register` | false（仍走审批） | false |
-| TLS 校验 | 不强制 | **强制**（`--tls-cert` 必填，否则启动失败） |
+| TLS 校验 | 不强制 | **强制**（`--tls-cert` 与 `--tls-key` 均必填，否则启动失败） |
+| Web/REST 协议 | 明文（无证书时） | `--http-tls=auto`（默认）：有证书即 **HTTPS**；显式 `off` 才明文（须由上游反代终止 TLS，启动时告警） |
 | `jwt-secret` 校验 | 不强制 | **强制 ≥32 字节**，否则启动失败 |
 | `encryption-key` 校验 | 不强制 | **强制非空**，否则启动失败 |
 | `store=memory` | 允许 | 告警（多副本分裂） |
-| admin 密码 | 固定 `admin/admin123` | 随机化（首次启动日志输出） |
+| admin 密码 | 固定 `admin/admin123` | 由 `OPSMESH_ADMIN_PASSWORD`（推荐）或 `--admin-password-file` 交付；两者都未配置时**拒绝启动** |
+| 预置 operator/viewer | `operator123` / `viewer123` 可登录 | 启动时替换为随机不可知口令（账号保留，须删除重建） |
 
 ### 2.3 网络与端口
 
@@ -325,8 +358,9 @@ OpsMesh 采用「flag 优先、环境变量兜底」的统一配置模型（`int
 | Flag | 环境变量 | 默认 | 说明 |
 |---|---|---|---|
 | `--require-auth` | `OPSMESH_REQUIRE_AUTH` | false | 强制鉴权（缺失 X-Tenant-ID 拒绝） |
-| `--tls-cert` | `OPSMESH_TLS_CERT` | 空 | gRPC TLS 服务端证书路径 |
-| `--tls-key` | `OPSMESH_TLS_KEY` | 空 | gRPC TLS 私钥路径 |
+| `--tls-cert` | `OPSMESH_TLS_CERT` | 空 | TLS 服务端证书路径（gRPC 与 Web/REST 共用） |
+| `--tls-key` | `OPSMESH_TLS_KEY` | 空 | TLS 私钥路径 |
+| `--http-tls` | `OPSMESH_HTTP_TLS` | auto | Web/REST 监听协议：auto=有证书即 HTTPS / on=强制 HTTPS / off=始终明文（上游反代终止 TLS） |
 | `--client-ca` | `OPSMESH_CLIENT_CA` | 空 | mTLS 客户端 CA |
 | `--tls-watch` | `OPSMESH_TLS_WATCH` | false | TLS 证书热重载（fsnotify） |
 | `--jwt-secret` | `OPSMESH_JWT_SECRET` | 空 | 用户中心 JWT 签发密钥（HS256，≥32 字节） |
@@ -469,6 +503,9 @@ OpsMesh 采用「flag 优先、环境变量兜底」的统一配置模型（`int
 - `--store=memory` 且 `--replicas>1`（多副本分裂）
 - `--discover=true` 但 `--segment-cidr` 缺失或非法
 - **生产模式** `--production=true` 但 `--tls-cert` 为空（明文通信不满足等保三级）
+- **生产模式** 配了 `--tls-cert` 但 `--tls-key` 为空（TLS 无法启用，gRPC/Web 会静默退回明文）
+- `--http-tls=on` 但 `--tls-cert`/`--tls-key` 未配齐
+- `--http-tls` 取值非 auto/on/off
 - **生产模式** `--jwt-secret` 为空或长度 <32 字节
 - **生产模式** `--encryption-key` 为空（kubeconfig 明文存储）
 - `--log-backend=loki` 但 `--loki-endpoint` 为空
@@ -610,6 +647,40 @@ curl -s http://es:9200/opsmesh-logs/_search?q=level:ERROR | jq .
 ```
 
 ### 3.4 用户与租户管理
+
+#### 3.4.0 初始 admin 口令与找回
+
+非 demo 模式下，内置 admin 的公开弱口令 `admin123` 会在**首次启动时被替换**，替换后的口令必须由部署通道交付给运维——控制面不会把它写进日志（防日志采集留存）。交付通道二选一：
+
+| 通道 | 配置 | 适用 |
+|---|---|---|
+| 显式注入（推荐） | `OPSMESH_ADMIN_PASSWORD`（须≥8 位含大小写与数字）；Helm 用 `controlplane.adminPassword` | 生产：由 Secret 注入，不落明文 |
+| 落盘读取 | `--admin-password-file=/path`（权限 0600，仅轮换时写入） | 不便用 Secret 的裸金属/VM 部署 |
+
+**首次安装后取口令：**
+
+```bash
+# Helm：随机生成并写入 Secret（upgrade 复用，不轮换）
+kubectl get secret <release>-secret -o jsonpath='{.data.admin-password}' | base64 -d; echo
+
+# docker-compose（deploy/docker/scripts/deploy.sh 生成的 .env）
+grep '^ADMIN_PASSWORD=' deploy/docker/.env
+
+# systemd / 裸金属：见 /etc/opsmesh/opsmesh-controlplane.env 的 OPSMESH_ADMIN_PASSWORD
+```
+
+首次登录会强制改密（响应 `mustChangePassword=true`，改密前不签发正式 token）。
+
+**口令遗失后的找回：** 用 `--admin-password-force-reset=true` + 重新指定的 `--admin-password` 启动一次，即可覆盖库内口令；恢复后请把开关改回 false（否则每次重启都会把口令重置为该值，覆盖界面上的改密）。
+
+```bash
+# Helm 示例（恢复后记得 --set controlplane.adminPasswordForceReset=false）
+helm upgrade <release> ./deploy/helm/opsmesh \
+  --set controlplane.adminPasswordForceReset=true \
+  --set controlplane.adminPassword="$(openssl rand -base64 24)"
+```
+
+**预置账号 operator/viewer：** 二者随源码公开弱口令（`operator123`/`viewer123`），非 demo 模式下启动时会被替换为随机不可知口令（账号保留但不可登录）。需要 operator/viewer 角色时，用 admin 登录后在「用户管理」中删除预置账号并重建（或另建新账号）。
 
 #### 3.4.1 用户管理
 
@@ -1127,11 +1198,81 @@ kubectl scale deploy opsmesh-controlplane -n opsmesh --replicas=3
 
 ### 6.3 迁移
 
-#### 6.3.1 Schema 迁移
+#### 6.3.1 Schema 迁移（自动，启动期）
 
-OpsMesh 启动时自动建表（幂等），无需手动迁移。版本升级时若 schema 变更，由控制面启动期 `Migrate()` 自动执行。
+OpsMesh 的 schema 由控制面/微服务启动期自动迁移，**无需手工执行建表**。执行入口是
+`internal/store/sql.go` 的 `runMigrations()`（每个 `*SQLStore` 构造时运行；多租户模式下
+每个租户 schema 各跑一次）。
 
-#### 6.3.2 MySQL 实例迁移
+机制（P0-5 加固后）：
+
+| 环节 | 行为 | 失败后果 |
+|---|---|---|
+| 并发串行化 | 迁移前取 MySQL 咨询锁 `GET_LOCK('opsmesh_mig_<库名>', 60)`，锁按库隔离（多租户各库互不阻塞） | 等锁 60s 超时报错；不并发执行 DDL |
+| 版本记录 | `schema_migrations(version, applied_at, checksum)`，checksum = 迁移文件 sha256 | — |
+| 防篡改 | 已应用迁移的 checksum 与当前二进制内嵌文件不一致 | **拒绝启动**（fatal，不重试） |
+| 版本门禁 | 库中已应用版本 **高于** 本二进制已知最高版本（二进制回滚到旧版） | **拒绝启动**（fatal，不重试） |
+| 断点续跑 | 迁移逐条执行且可重放：进程在迁移中途退出后，下次启动重放同一文件，「对象已存在」类错误经 `information_schema` 二次核实后放行 | 自愈；无法核实的错误照常报错 |
+| 启动失败 | `seedRBAC` 失败、迁移失败 | **拒绝启动**（不以不完整 schema 提供服务；MySQL 未就绪时按 3s × 20 次重试窗口等待） |
+
+> **注意**：MySQL 的 DDL 会隐式提交，「一个迁移文件一个事务、失败整体回滚」对 DDL 不成立。
+> 因此安全边界是**可重放**而非可回滚——这也是不能手工改已发布迁移文件的原因（改了就 checksum 不匹配）。
+
+变更 schema 的正确流程：新增 `internal/store/migrations/NNN_描述.sql`（版本号递增，
+文件用 `--go:embed` 自动收录，不要在既有文件里追加语句）→ 重新构建二进制 → 滚动发布。
+多副本滚动升级无需人工干预，锁 + 幂等保证只有一份迁移真正执行。
+
+**升级顺序**：先升二进制再让新二进制迁移 schema（新二进制兼容旧 schema）；
+**禁止**先手工把库改新、再跑旧二进制（会被版本门禁拒绝启动，这是有意的保护）。
+
+#### 6.3.2 回滚脚本（手工执行）
+
+`internal/store/migrations/` 中每个正向迁移 `NNN_x.sql` 都配有对应 `NNN_x.down.sql`。
+回滚脚本**不会自动执行**（`runMigrations` 显式跳过 `.down.sql`），必须人工按需执行。
+
+| 迁移 | 内容 | 回滚脚本 |
+|---|---|---|
+| 001_initial | 20 张核心表（agents/devices/tasks/users/roles/...） | `001_initial.down.sql`（**破坏性**，逐表 DROP） |
+| 002 | tasks.claim_epoch | `002_add_claim_epoch.down.sql` |
+| 003 | 4 张历史遗留表（与 001 重叠） | `003_legacy_tables.down.sql`（**占位说明**，表归属 001，不重复 DROP） |
+| 004 | audit_log.trace_id + idx_audit_trace | `004_add_audit_trace_id.down.sql` |
+| 005 | 告警治理表 + alert_rules.created_by | `005_m2_alert_governance.down.sql` |
+| 006 | quota_configs | `006_quota_configs.down.sql` |
+| 007 | secrets | `007_p03_secrets.down.sql`（**含密钥数据，删前务必备份**） |
+| 008 | configs / config_history | `008_p03_configs.down.sql` |
+| 009 | services | `009_p03_services.down.sql` |
+| 010 | tickets / slos | `010_p1_slo_ticket.down.sql` |
+| 011 | traffic_policies / pipeline_* / argocd_apps | `011_p2_argocd_pipeline_traffic.down.sql` |
+| 012 | compliance_reports / backup_records | `012_p3_backup_compliance.down.sql` |
+| 013 | network_* / automation_* | `013_p4_automation_network.down.sql` |
+| 014 | scripts / script_executions / webhooks / webhook_deliveries | `014_p5_script_webhook.down.sql` |
+| 015 | tenants / api_keys / plugins / billing_* | `015_p6_tenant_apikey_plugin_billing.down.sql` |
+| 016 | pipeline_templates.agent_id | `016_g2_pipeline_agentid.down.sql` |
+| 017 | devices.arch/os/hostname、agents.secret | `017_g3_devices_hostname_os_arch.down.sql` |
+| 018 | users.tenant_id | `018_users_tenant_id.down.sql` |
+
+回滚一个版本的完整步骤（以回滚到 017 为例）：
+
+```bash
+# 1) 停控制面（以及所有连同一库的微服务），避免旧二进制读写新 schema
+kubectl scale deploy opsmesh-controlplane -n opsmesh --replicas=0
+
+# 2) 手工执行对应 down 脚本（先看它头部注释里的破坏性警告）
+mysql -h $MYSQL_HOST -u$MYSQL_USER -p$MYSQL_PASSWORD $MYSQL_DATABASE \
+  < internal/store/migrations/018_users_tenant_id.down.sql
+
+# 3) 删除版本记录（迁移记录必须与 schema 一致，否则下次启动会因 checksum/版本门禁拒绝启动）
+mysql -h $MYSQL_HOST -u$MYSQL_USER -p$MYSQL_PASSWORD $MYSQL_DATABASE \
+  -e "DELETE FROM schema_migrations WHERE version=18;"
+
+# 4) 部署回退后的二进制（必须 ≤ 已回滚到的 schema 版本），扩回副本数
+kubectl scale deploy opsmesh-controlplane -n opsmesh --replicas=3
+```
+
+多版本回滚按**版本倒序**逐个执行（先 018、再 017…）；`001_initial.down.sql` 会把库清空，
+仅在「整套环境下线」时使用，且**不会**删除 `schema_migrations` 表本身。
+
+#### 6.3.3 MySQL 实例迁移
 
 命令示例：MySQL 实例迁移
 
@@ -1359,7 +1500,9 @@ helm upgrade opsmesh ./deploy/helm/opsmesh -n opsmesh \
 | 任务持续 `pending` | 无 agent 在线或 worker 池满 | 查 `opsmesh_agents_total` / `opsmesh_task_queue_depth` | 扩容 agent 或调大 `--worker-concurrency` |
 | 任务 `failed` 重试达上限 | agent 执行失败 | 查任务结果日志 | 修复命令/环境后重投 |
 | 用户登录 401 | JWT 密钥不一致（多副本） | 查各副本 `OPSMESH_JWT_SECRET` | 统一密钥后重启 |
-| 用户登录后立即掉线 | `--cookie-secure=true` 但走 HTTP | 查请求协议 | 改走 HTTPS 或关闭 `--cookie-secure` |
+| 用户登录后立即掉线 | `--cookie-secure=true` 但走 HTTP | 查请求协议 | 改走 HTTPS（控制面配 `--tls-cert/--tls-key`，`--http-tls=auto/on`）或确认上游反代已终止 TLS |
+| 浏览器访问 `http://<cp>:8080` 报 `Client sent an HTTP request to an HTTPS server` | 控制面已按 `--http-tls=auto` 以 HTTPS 提供 Web/REST | 查启动日志 `scheme=https` | 改用 `https://` 访问；或确需明文则设 `--http-tls=off`（须有上游终止 TLS） |
+| 启用 HTTPS 后健康检查/探针失败 | 探针为旧版固定 `http://`（`--health` 已自适应两种协议） | 查探针命令 | 用 `opsmesh --health`（自动适配），或把探针 scheme 改为 HTTPS |
 | MySQL 连接耗尽 | 连接池太小或慢查询堆积 | `SHOW PROCESSLIST` | 调大连接池/优化慢查询 |
 | 备份 Job 失败 | MySQL 不可达或 PVC 满 | `kubectl logs job/<name>` | 修 MySQL/扩 PVC |
 

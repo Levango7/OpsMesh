@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Levango7/OpsMesh/internal/config"
 	"github.com/Levango7/OpsMesh/internal/extension"
@@ -139,6 +140,9 @@ func TestHandleGatewayProxy_ForwardsAndStats(t *testing.T) {
 	var gotPath string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		// 睡 2ms：本机回环转发可在时钟粒度内完成，导致实测延迟恰为 0，
+		// 使下方 AvgLatencyMs>0 断言随机失败（Windows 单调时钟粒度粗）。真实后端必有耗时。
+		time.Sleep(2 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	}))

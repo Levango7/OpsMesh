@@ -234,7 +234,7 @@ func TestScanUser_Happy(t *testing.T) {
 	roleIDsJSON, _ := json.Marshal([]string{"role-admin", "role-ops"})
 	row := &mockRowScanner{vals: []interface{}{
 		"u-1", "alice", "alice@example.com", "$2a$10$hash", "active",
-		roleIDsJSON, created, true,
+		roleIDsJSON, created, true, sql.NullString{String: "acme", Valid: true},
 	}}
 	u := scanUser(row)
 	if u == nil {
@@ -252,12 +252,16 @@ func TestScanUser_Happy(t *testing.T) {
 	if !u.CreatedAt.Equal(created) {
 		t.Fatalf("CreatedAt 错误: got=%v want=%v", u.CreatedAt, created)
 	}
+	// 租户隔离（P0-6）：tenant_id 列须映射到 TenantID。
+	if u.TenantID != "acme" {
+		t.Fatalf("TenantID 错误: got=%q want=acme", u.TenantID)
+	}
 }
 
 func TestScanUser_EmptyRoles(t *testing.T) {
 	row := &mockRowScanner{vals: []interface{}{
 		"u-2", "bob", "", "$2a$10$hash", "pending",
-		[]byte{}, time.Time{}, false,
+		[]byte{}, time.Time{}, false, sql.NullString{},
 	}}
 	u := scanUser(row)
 	if u == nil {
@@ -265,6 +269,10 @@ func TestScanUser_EmptyRoles(t *testing.T) {
 	}
 	if len(u.RoleIDs) != 0 {
 		t.Fatalf("空 roleIDs JSON 应解析为空切片；got=%+v", u.RoleIDs)
+	}
+	// 租户归一：NULL/空租户落 default（存量用户升级后与迁移前行为一致）。
+	if u.TenantID != DefaultTenantID {
+		t.Fatalf("空 tenant_id 应归一为 %q；got=%q", DefaultTenantID, u.TenantID)
 	}
 }
 
@@ -387,8 +395,12 @@ func TestUserColumns_ContainsMustChangePassword(t *testing.T) {
 	if !strings.Contains(userColumns, "must_change_password") {
 		t.Fatal("userColumns 缺少 must_change_password 列")
 	}
-	// 列顺序须与 scanUser 的 Scan 顺序一致：id, username, email, password_hash, status, role_ids, created_at, must_change_password
-	expected := "id, username, email, password_hash, status, role_ids, created_at, must_change_password"
+	// 租户隔离（P0-6）：userColumns 必须含 tenant_id（迁移 018 补列），否则 scanUser 列错位。
+	if !strings.Contains(userColumns, "tenant_id") {
+		t.Fatal("userColumns 缺少 tenant_id 列")
+	}
+	// 列顺序须与 scanUser 的 Scan 顺序一致：id, username, email, password_hash, status, role_ids, created_at, must_change_password, tenant_id
+	expected := "id, username, email, password_hash, status, role_ids, created_at, must_change_password, tenant_id"
 	if userColumns != expected {
 		t.Fatalf("userColumns 顺序漂移；got=%q want=%q", userColumns, expected)
 	}
@@ -445,7 +457,7 @@ func TestSQLStore_TenantIsolation(t *testing.T) {
 		t.Skip("OPSMESH_TEST_MYSQL_DSN not set; skipping SQL store test")
 	}
 	redisAddr := os.Getenv("OPSMESH_TEST_REDIS_ADDR")
-	s, err := NewSQLStore(dsn, redisAddr)
+	s, err := NewSQLStore(dsn, redisAddr, "")
 	if err != nil {
 		t.Fatalf("NewSQLStore: %v", err)
 	}

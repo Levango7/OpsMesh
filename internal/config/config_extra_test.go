@@ -246,6 +246,7 @@ func TestValidate_ProductionWithTLS(t *testing.T) {
 	c := base()
 	c.Production = true
 	c.TLSCert = "tls.crt"
+	c.TLSKey = "tls.key"
 	c.JWTSecret = "0123456789abcdef0123456789abcdef"
 	c.EncryptionKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=" // 32 字节 base64
 	if err := c.Validate(); err != nil {
@@ -409,11 +410,14 @@ func TestValidate_ProductionFullConfig(t *testing.T) {
 	c := base()
 	c.Production = true
 	c.TLSCert = "tls.crt"
+	c.TLSKey = "tls.key"
 	c.JWTSecret = "0123456789abcdef0123456789abcdef"
 	c.EncryptionKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=" // 32 字节 base64
 	c.Store = "mysql"
 	c.MySQLDSN = "u:p@tcp(db:3306)/ops_device"
 	c.Replicas = 3
+	// 多副本生产必须配置共享会话后端（否则登出/限流/改密令牌仅进程内可见，见 Validate）。
+	c.SessionStore = "redis://:redispass@redis:6379"
 	// H2/H3 配套：P1-P6 全部 15 个领域已实现 MySQL 持久化，stubStoreDomains 为空，
 	// 生产 + mysql 后端不再拒绝启动（无桩领域则无须放行门槛）。AllowStubStores=true 仍兼容放行。
 	// 本用例验证"完整 production 配置"通过。
@@ -1086,6 +1090,7 @@ func TestLoad_ProductionMemoryStoreWarning(t *testing.T) {
 func prodReadyDefaults(c *Config) {
 	c.Production = true
 	c.TLSCert = "tls.crt"
+	c.TLSKey = "tls.key"
 	c.JWTSecret = "0123456789abcdef0123456789abcdef"                 // 32 字节
 	c.EncryptionKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=" // 32 字节 base64
 }

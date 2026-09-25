@@ -75,6 +75,15 @@ exporters:
 
 service:
   extensions: [health_check]
+  telemetry:
+    metrics:
+      level: basic
+      # 关键：otelcol-contrib 0.110.0 的内部遥测监听地址默认仍是 :8888（旧版 address 字段），
+      # 与下方 exporters.prometheus 的 0.0.0.0:8888 撞端口，collector 启动即失败并无限重启：
+      #   listen tcp 0.0.0.0:8888: bind: address already in use（实测 crash-loop）
+      # 显式把内部遥测挪到 8889：8888 留给应用侧指标（prometheus.yml 抓 otel-collector:8888），
+      # 采集器自身指标（队列/丢弃/导出失败）由 prometheus.yml 的 otel-collector-internal job 抓 8889。
+      address: "0.0.0.0:8889"
   pipelines:
     metrics:
       receivers: [otlp]
@@ -92,5 +101,7 @@ extensions:
     check_collector_pipeline:
       enabled: true
       interval: "5s"
-      exporter_names:
-        - prometheus
+      # otelcol-contrib 0.110.0：check_collector_pipeline 不再接受 exporter_names
+      # （镜像钉 0.110.0，保留该键会让 collector 启动即失败：'check_collector_pipeline'
+      # has invalid keys: exporter_names ——实测）。改为新版的失败阈值语义。
+      exporter_failure_threshold: 5

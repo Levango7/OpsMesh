@@ -57,10 +57,14 @@ type Config struct {
 	GRPCPort    int    // gRPC 端口（约定 9090，真实 gRPC 注册通道）
 	MetricsPort int    // metrics 端口（约定 9091）
 	// 数据本地化：持久化后端选择。
-	Store       string // 持久化后端: memory（默认） | mysql
-	MySQLDSN    string // MySQL DSN（--store=mysql 时生效），如 user:pass@tcp(host:3306)/ops_device
-	RedisAddr   string // Redis 地址（--store=mysql 时作 agent/device 状态缓存），如 redis:6379
-	RequireAuth bool   // 生产模式：要求网关注入租户头，缺失则拒绝（MVP 默认 false=开发降级）
+	Store     string // 持久化后端: memory（默认） | mysql
+	MySQLDSN  string // MySQL DSN（--store=mysql 时生效），如 user:pass@tcp(host:3306)/ops_device
+	RedisAddr string // Redis 地址（--store=mysql 时作 agent/device 状态缓存），如 redis:6379
+	// Redis 认证口令（--requirepass 场景）。空=不发送 AUTH，仅适用于未设密码的 Redis。
+	// 生产 Redis 必须设密码：未认证的 Redis 可被内网任意进程读取会话黑名单/限流计数，
+	// 也可被直接 FLUSHALL 使登出与锁定失效。同时作用于状态缓存与会话后端（--session-store）。
+	RedisPassword string
+	RequireAuth   bool // 生产模式：要求网关注入租户头，缺失则拒绝（MVP 默认 false=开发降级）
 	// 运行健壮性
 	TaskTimeout     time.Duration // agent 单任务执行超时（默认 120s）
 	ShutdownTimeout time.Duration // 收到 SIGTERM 后的优雅退出窗口（默认 15s）
@@ -71,6 +75,15 @@ type Config struct {
 	// TLS 证书热重载：启用 fsnotify 监听证书文件变更，自动重载无需重启。
 	// 仅当 TLSCert/TLSKey 非空时生效；关闭时证书更新需重启服务。
 	TLSWatch bool // --tls-watch 启用证书文件热重载（默认 false）
+	// HTTPTLS 控制 Web/REST（B/S 端口，--http-port）的监听协议：
+	//   auto（默认）— TLSCert/TLSKey 齐备即启用 HTTPS，否则明文（开发/内网）；
+	//   on          — 强制 HTTPS，缺证书 fail-fast；
+	//   off         — 始终明文，仅适用于上游 Ingress/Nginx 终止 TLS 的部署，
+	//                 此时该端口必须只对反代/内网开放（生产下 Cookie 强制 Secure，
+	//                 浏览器直连明文端口会丢弃会话）。
+	// 注意与 gRPC TLS 的区别：TLSCert/TLSKey 同时服务 gRPC（agent 链路）与
+	// Web/REST（本字段决定是否复用），--client-ca 的 mTLS 要求只作用于 gRPC。
+	HTTPTLS string // --http-tls auto|on|off
 
 	// 密钥管理外置：支持从环境变量/JSON文件/HashiCorp Vault 读取密钥。
 	// 空字符串=不启用密钥外置（向后兼容，密钥直接从 config 字段读取）。
@@ -129,6 +142,17 @@ type Config struct {
 	// true=注册即激活并立即签发 token（仅演示/内网受信环境使用，生产务必关闭）。
 	// 与 PublicRegister 解耦：PublicRegister 控制接口是否开放，AllowPublicRegister 控制是否免审批。
 	AllowPublicRegister bool
+	// 初始管理员口令交付（首启引导）：非 demo 模式下若内置 admin 仍为公开弱口令 admin123，
+	// 控制面必须替换它——替换后的口令必须能被运维拿到，否则管理员将永久无法登录。
+	// AdminPassword：运维显式指定的初始口令（须满足强口令规则），推荐用 env OPSMESH_ADMIN_PASSWORD 避免入 shell history。
+	// AdminPasswordFile：未指定 AdminPassword 时，把随机生成的口令写入该文件（权限 0600）作为交付通道。
+	// 生产模式两者都未配置时，控制面在选择替换口令的那一刻 fail-fast（宁可不启动，也不能让管理员被静默锁死）。
+	AdminPassword     string
+	AdminPasswordFile string
+	// AdminPasswordForceReset：口令恢复通道。默认 false 时 AdminPassword 只在「admin 仍是初始弱口令」
+	// 的首启场景生效，避免运维残留的配置在重启时静默回滚管理员在界面上做过的改密；
+	// 置 true 则每次启动都以 AdminPassword 覆盖 admin 口令（用于口令遗失后的可控恢复，须显式开启）。
+	AdminPasswordForceReset bool
 	// F2 任务失败重试上限：SubmitResult 失败时按策略重入队，达上限置 failed（死信）。
 	TaskMaxRetries int
 	// 选主租约秒：本实例持有 leader 身份的时长；到期前需续租，否则被其他副本抢占。
@@ -418,13 +442,15 @@ func Load() *Config {
 	store := flag.String("store", "memory", "持久化后端: memory（默认） | mysql（数据本地化）")
 	mysqlDSN := flag.String("mysql-dsn", "", "MySQL DSN（--store=mysql 时生效），如 user:pass@tcp(mysql:3306)/ops_device")
 	redisAddr := flag.String("redis-addr", "", "Redis 地址（--store=mysql 时作状态缓存），如 redis:6379")
+	redisPassword := flag.String("redis-password", "", "Redis 认证口令（服务端 --requirepass）；空=不认证（仅限未设密码的 Redis，生产必须配置）；或 env OPSMESH_REDIS_PASSWORD")
 	requireAuth := flag.Bool("require-auth", false, "要求网关注入 X-Tenant-ID，缺失则拒绝（生产 hardening）")
 	taskTimeout := flag.Duration("task-timeout", 120*time.Second, "agent 单任务执行超时")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 15*time.Second, "SIGTERM 优雅退出窗口")
-	tlsCert := flag.String("tls-cert", "", "gRPC TLS 证书路径（空=关闭）")
-	tlsKey := flag.String("tls-key", "", "gRPC TLS 私钥路径")
+	tlsCert := flag.String("tls-cert", "", "gRPC TLS 证书路径（空=关闭）；--http-tls=auto 时同时用于 Web/REST HTTPS")
+	tlsKey := flag.String("tls-key", "", "gRPC TLS 私钥路径；--http-tls=auto 时同时用于 Web/REST HTTPS")
 	clientCA := flag.String("client-ca", "", "服务端要求客户端 CA（mTLS）/ 客户端校验服务端 CA")
 	tlsWatch := flag.Bool("tls-watch", false, "启用 TLS 证书文件热重载（fsnotify 监听，无需重启）")
+	httpTLS := flag.String("http-tls", "auto", "Web/REST 监听协议：auto=有 --tls-cert/--tls-key 即 HTTPS（默认）；on=强制 HTTPS（缺证书拒绝启动）；off=始终明文（仅限上游反代终止 TLS，端口不得对公网暴露）；或 env OPSMESH_HTTP_TLS")
 	// 密钥管理外置：从环境变量/JSON文件/HashiCorp Vault 读取密钥。
 	secretProvider := flag.String("secret-provider", "", "密钥来源：env|file|vault|kms|chain:env,file（空=不启用密钥外置，向后兼容）；或 env OPSMESH_SECRET_PROVIDER")
 	secretFile := flag.String("secret-file", "", "JSON 密钥文件路径（--secret-provider=file 时生效）；或 env OPSMESH_SECRET_FILE")
@@ -480,6 +506,11 @@ func Load() *Config {
 	jwtIssuer := flag.String("jwt-issuer", "", "预期 JWT issuer（iss claim）；非空时校验 iss 必须匹配（或 env OPSMESH_JWT_ISSUER）")
 	jwtSecret := flag.String("jwt-secret", "", "用户中心 JWT 签发密钥（HS256）；空=随机生成（重启后旧 token 失效）（或 env OPSMESH_JWT_SECRET）")
 	encryptionKey := flag.String("encryption-key", "", "kubeconfig AES-256-GCM 加密密钥（base64 编码 32 字节）；空=不加密（仅开发/demo，生产必须配置）；或 env OPSMESH_ENCRYPTION_KEY")
+	// 初始管理员口令交付：非 demo 模式下内置 admin 的 admin123 会被替换，替换后的口令
+	// 必须通过这些通道之一交给运维，否则管理员被锁死（见 controlplane.enforceInitialCredentials）。
+	adminPassword := flag.String("admin-password", "", "初始 admin 口令（须≥8 位且含大小写字母与数字）；非 demo 模式下替换内置弱口令 admin123；推荐改用 env OPSMESH_ADMIN_PASSWORD（避免进 shell history）")
+	adminPasswordFile := flag.String("admin-password-file", "", "未指定 --admin-password 时，随机初始口令的落盘路径（权限 0600，仅轮换时写入）；生产未指定 --admin-password 时须给此路径；或 env OPSMESH_ADMIN_PASSWORD_FILE")
+	adminPasswordForceReset := flag.Bool("admin-password-force-reset", false, "让 --admin-password 覆盖已有 admin 口令（口令遗失后的恢复手段；默认 false=仅首启生效，不回滚界面改密）；或 env OPSMESH_ADMIN_PASSWORD_FORCE_RESET")
 	// 日志检索后端：memory（默认） | sql | loki | es。
 	logBackend := flag.String("log-backend", "memory", "日志检索后端: memory | sql | loki | es（loki/es 模式下日志由 agent 直接推送，控制面仅查询）")
 	// --log-store 作为 --log-backend 的别名：显式设置 --log-store 时覆盖 log-backend，
@@ -627,6 +658,7 @@ func Load() *Config {
 		Store:                    val("store", *store, "OPSMESH_STORE"),
 		MySQLDSN:                 val("mysql-dsn", *mysqlDSN, "OPSMESH_MYSQL_DSN"),
 		RedisAddr:                val("redis-addr", *redisAddr, "OPSMESH_REDIS_ADDR"),
+		RedisPassword:            val("redis-password", *redisPassword, "OPSMESH_REDIS_PASSWORD"),
 		RequireAuth:              valBool("require-auth", *requireAuth, "OPSMESH_REQUIRE_AUTH"),
 		TaskTimeout:              valDur("task-timeout", *taskTimeout, "OPSMESH_TASK_TIMEOUT"),
 		ShutdownTimeout:          valDur("shutdown-timeout", *shutdownTimeout, "OPSMESH_SHUTDOWN_TIMEOUT"),
@@ -634,6 +666,7 @@ func Load() *Config {
 		TLSKey:                   val("tls-key", *tlsKey, "OPSMESH_TLS_KEY"),
 		ClientCA:                 val("client-ca", *clientCA, "OPSMESH_CLIENT_CA"),
 		TLSWatch:                 valBool("tls-watch", *tlsWatch, "OPSMESH_TLS_WATCH"),
+		HTTPTLS:                  strings.ToLower(strings.TrimSpace(val("http-tls", *httpTLS, "OPSMESH_HTTP_TLS"))),
 		SecretProvider:           val("secret-provider", *secretProvider, "OPSMESH_SECRET_PROVIDER"),
 		SecretFile:               val("secret-file", *secretFile, "OPSMESH_SECRET_FILE"),
 		VaultAddr:                val("vault-addr", *vaultAddr, "OPSMESH_VAULT_ADDR"),
@@ -687,6 +720,9 @@ func Load() *Config {
 		JWTIssuer:                val("jwt-issuer", *jwtIssuer, "OPSMESH_JWT_ISSUER"),
 		JWTSecret:                val("jwt-secret", *jwtSecret, "OPSMESH_JWT_SECRET"),
 		EncryptionKey:            val("encryption-key", *encryptionKey, "OPSMESH_ENCRYPTION_KEY"),
+		AdminPassword:            val("admin-password", *adminPassword, "OPSMESH_ADMIN_PASSWORD"),
+		AdminPasswordFile:        val("admin-password-file", *adminPasswordFile, "OPSMESH_ADMIN_PASSWORD_FILE"),
+		AdminPasswordForceReset:  valBool("admin-password-force-reset", *adminPasswordForceReset, "OPSMESH_ADMIN_PASSWORD_FORCE_RESET"),
 		LogStore:                 val("log-store", *logStore, "OPSMESH_LOG_STORE"),
 		LogBackend:               val("log-backend", *logBackend, "OPSMESH_LOG_BACKEND"),
 		LokiEndpoint:             val("loki-endpoint", *lokiEndpoint, "OPSMESH_LOKI_ENDPOINT"),
@@ -986,6 +1022,11 @@ func (c *Config) Validate() error {
 	if c.Store == "memory" && c.Replicas > 1 {
 		return fmt.Errorf("store=memory 不支持多副本（replicas=%d）；请改用 --store=mysql（数据本地化）", c.Replicas)
 	}
+	// 口令恢复开关必须与显式口令配合：单独打开无从「恢复」到什么，属误配置，启动即拒绝。
+	// 口令强度校验在控制面（controlplane.validateStrongPassword 是唯一实现），此处不重复规则。
+	if c.AdminPasswordForceReset && c.AdminPassword == "" {
+		return fmt.Errorf("--admin-password-force-reset=true 必须同时提供 --admin-password（或 env OPSMESH_ADMIN_PASSWORD）")
+	}
 	if c.Discover {
 		if c.SegmentCIDR == "" {
 			return fmt.Errorf("--discover 开启但 --segment-cidr 为空（真实网段发现需要 CIDR）")
@@ -1000,6 +1041,22 @@ func (c *Config) Validate() error {
 	// 非 Production 模式不校验（开发/内网友好网络降级）。
 	if c.Production && c.TLSCert == "" {
 		return fmt.Errorf("生产模式（--production=true）必须配置 TLS（--tls-cert 为空），明文通信不满足等保三级要求；请提供证书或关闭 --production")
+	}
+	// 有证书无私钥 = TLS 无法加载，gRPC/Web 会静默退回明文（比不配证书更危险：运维以为已加密）。
+	if c.Production && c.TLSKey == "" {
+		return fmt.Errorf("生产模式配置了 --tls-cert 但缺少 --tls-key：TLS 无法启用，gRPC/Web 将静默退回明文；请补齐 --tls-key（或 env OPSMESH_TLS_KEY）")
+	}
+	// Web/REST 监听协议校验（--http-tls）：
+	//   auto（默认，含程序化构造 Config 时的空值）— 有证书即 HTTPS；
+	//   on   — 强制 HTTPS，缺证书 fail-fast；
+	//   off  — 始终明文，生产下允许（上游反代终止 TLS 是合法架构），启动时输出告警。
+	switch c.HTTPTLS {
+	case "", "auto", "on", "off":
+	default:
+		return fmt.Errorf("非法 --http-tls=%q（应为 auto | on | off）", c.HTTPTLS)
+	}
+	if c.HTTPTLS == "on" && (c.TLSCert == "" || c.TLSKey == "") {
+		return fmt.Errorf("--http-tls=on 要求同时配置 --tls-cert 与 --tls-key（Web/REST HTTPS 服务端证书与私钥）")
 	}
 	// 生产控制面必须配置稳定 JWT 密钥。
 	// 语义：控机用户中心 JWT 签发密钥为空则重启丢会话、多副本各自独立随机密钥互不相认、用户间歇 401。
@@ -1081,20 +1138,29 @@ func (c *Config) Validate() error {
 	if len(c.FederationPeers) > 0 && c.FederationSecret == "" {
 		return fmt.Errorf("federation-secret is required when federation-peers is set")
 	}
-	// 多副本会话状态共享校验：session-store 格式须为 "redis://host:port"。
-	// 多副本 HA（replicas>1）但未配置 session-store 时告警（不 fail-fast，保持单副本 memory store 兼容）。
+	// 多副本会话状态共享校验：session-store 格式须为
+	// "redis://host:port" 或 "redis://:password@host:port"（口令可内嵌，百分号编码特殊字符）。
+	// 内嵌口令优先于 --redis-password（后者同时服务状态缓存，前者只作用于会话后端）。
 	if c.SessionStore != "" {
-		if !strings.HasPrefix(c.SessionStore, "redis://") {
-			return fmt.Errorf("非法 --session-store=%q（须为 redis://host:port 格式）", c.SessionStore)
+		u, err := url.Parse(c.SessionStore)
+		if err != nil {
+			return fmt.Errorf("非法 --session-store=%q（须为 redis://[user:password@]host:port 格式）: %v", c.SessionStore, err)
 		}
-		// 去除 "redis://" 前缀后须非空（如 "redis://" 不合法）。
-		if strings.TrimPrefix(c.SessionStore, "redis://") == "" {
-			return fmt.Errorf("非法 --session-store=%q（host:port 不可为空）", c.SessionStore)
+		if u.Scheme != "redis" || u.Host == "" {
+			return fmt.Errorf("非法 --session-store=%q（须为 redis://[user:password@]host:port 格式，host:port 不可为空）", c.SessionStore)
 		}
 	}
-	if c.Replicas > 1 && c.SessionStore == "" && c.Store == "memory" {
-		// memory store 多副本本身已在上方校验拒绝，此处补充 mysql store 多副本未配置 session-store 的告警。
-		fmt.Fprintln(os.Stderr, "[config] 警告：多副本（replicas>1）但未配置 --session-store，登出/限流/改密令牌将不跨副本共享（建议 --session-store=redis://host:port）")
+	// 多副本未配置共享会话后端：登出/限流/改密令牌仅进程内可见——
+	// 在一个副本登出后其他副本仍认该 token，登录失败计数与账号锁定被放大 replicas 倍。
+	// 生产模式 fail-fast（与 TLS/JWT 同风格）；非生产告警，保持本地单副本体验兼容。
+	// 注意：上方已拒绝 store=memory + replicas>1，故此处只可能是 mysql 等多副本后端——
+	// 此前该告警的条件误写为 store=="memory"（永假），导致 Helm 生产 overlay 的
+	// replicas=3 + 无 session-store 长期静默。
+	if c.Replicas > 1 && c.SessionStore == "" {
+		if c.Production {
+			return fmt.Errorf("生产模式多副本（--replicas=%d）必须配置 --session-store=redis://[:password@]host:port（或 env OPSMESH_SESSION_STORE）：否则登出/限流/改密令牌不跨副本共享，登出在其他副本失效、爆破防护被放大 %d 倍", c.Replicas, c.Replicas)
+		}
+		fmt.Fprintf(os.Stderr, "[config] 警告：多副本（replicas=%d）但未配置 --session-store，登出/限流/改密令牌将不跨副本共享（建议 --session-store=redis://host:port）\n", c.Replicas)
 	}
 	// CORS 白名单校验：禁止配置 "*"（与 Allow-Credentials 互斥；等于放开任意来源，
 	// 恶意网站可带用户 Cookie 跨域调 API，恢复到反射漏洞）。启动期 fail-fast。

@@ -1675,7 +1675,10 @@ func TestEvaluateAnomalyForDevice_WithMetrics(t *testing.T) {
 
 func TestNewDeployHandler_MemoryStore(t *testing.T) {
 	st := store.NewMemoryStore()
-	h := factory.NewDeployHandler(st)
+	h, err := factory.NewDeployHandler(st, false)
+	if err != nil {
+		t.Fatalf("非生产模式不应报错: %v", err)
+	}
 	if h == nil {
 		t.Fatal("nil handler")
 	}
@@ -1683,7 +1686,10 @@ func TestNewDeployHandler_MemoryStore(t *testing.T) {
 
 func TestNewOrchestrationHandler_MemoryStore(t *testing.T) {
 	st := store.NewMemoryStore()
-	h := factory.NewOrchestrationHandler(st)
+	h, err := factory.NewOrchestrationHandler(st, false)
+	if err != nil {
+		t.Fatalf("非生产模式不应报错: %v", err)
+	}
 	if h == nil {
 		t.Fatal("nil handler")
 	}

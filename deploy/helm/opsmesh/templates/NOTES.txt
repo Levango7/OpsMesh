@@ -16,6 +16,12 @@ OpsMesh "{{ .Chart.Name }}" 已安装到命名空间 {{ .Release.Namespace }}。
 
   然后浏览器打开： http://127.0.0.1:8080
 
+  首次登录：用户名 admin，口令从 Secret 读取（首次安装随机生成，upgrade 复用不轮换）
+
+    kubectl get secret {{ include "opsmesh.fullname" . }}-secret -n {{ .Release.Namespace }} -o jsonpath='{.data.admin-password}' | base64 -d; echo
+
+  （若已设置 controlplane.adminPassword，则口令即为该值；首登会强制修改口令。）
+
 3. 端口转发 gRPC（agent 注册通道，9090）：
 
   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "opsmesh.controlplane.serviceName" . }} 9090:9090

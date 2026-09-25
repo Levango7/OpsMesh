@@ -291,6 +291,16 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		logx.Warn(context.Background(), "持久化后端初始化失败，非生产模式回退 memory（生产模式将 fail-fast）", "err", storeErr)
 		st = store.NewMemoryStore().WithSecret(cfg.ProvisionSecret).WithBus(bus).WithDemo(cfg.Demo)
 	}
+	// M3/M5 子存储：与主存储同一策略——生产模式初始化失败即终止启动（P1-8），
+	// 非生产模式回退内存并由 subStoreOrFallback 打 Warning。
+	deployHandler, err := factory.NewDeployHandler(st, cfg.Production)
+	if err != nil {
+		return nil, err
+	}
+	orchHandler, err := factory.NewOrchestrationHandler(st, cfg.Production)
+	if err != nil {
+		return nil, err
+	}
 	s := &Server{
 		cfg:           cfg,
 		store:         st,
@@ -306,8 +316,8 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		metrics:       metrics.New(),
 		cmdbHandler:   factory.NewCMDBHandler(st),
 		logHandler:    factory.NewLogHandler(st, cfg),
-		deployHandler: factory.NewDeployHandler(st),
-		orchHandler:   factory.NewOrchestrationHandler(st),
+		deployHandler: deployHandler,
+		orchHandler:   orchHandler,
 		eventSubs:     make(map[chan SSEEvent]struct{}), // SSE 订阅者集合
 		alertAggr:     notify.NewAlertAggregator(),      // 告警聚合器
 		alertChannels: &notify.Channels{ // 多通道（Webhook + Email）
@@ -465,10 +475,14 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// 使模板支持在线 CRUD；store 为空时 API 回退到内存常量（向后兼容）。
 	s.seedPresetOSTemplates()
 	s.seedPresetMiddlewareTemplates()
-	// 默认 admin 随机密码：非 demo 模式下，若 admin 仍用弱口令 admin123，
-	// 替换为随机口令并打印日志。demo 模式保持 admin123（本地体验兼容）。
+	// 首启凭据加固：非 demo 模式下清除随源码公开的预置弱口令（admin 替换并按
+	// --admin-password/--admin-password-file 交付，operator/viewer 替换为随机不可知口令）。
+	// demo 模式保留 admin123 以维持本地一键体验（上方已打印强告警）。
+	// 生产模式缺少口令交付通道时在此 fail-fast：管理员被静默锁死比启动失败更糟。
 	if !cfg.Demo {
-		rotateDefaultAdminPassword(st)
+		if err := enforceInitialCredentials(cfg, st); err != nil {
+			return nil, err
+		}
 	}
 	// OTel 链路追踪初始化：endpoint 为空且 stdout=false 时 no-op（零开销）。
 	// 服务名默认 "opsmesh-controlplane"（未配置时由 otelx 回退 "opsmesh"）。

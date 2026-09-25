@@ -108,7 +108,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: u.ID, Action: "user_register", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username + " status=" + initialStatus),
+		TenantID: tenantOrDefault(u.TenantID), UserID: u.ID, Action: "user_register", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username + " status=" + initialStatus),
 	})
 	// 只有 --allow-public-register=true 时才立即签发 token；否则返回 pending 提示。
 	if s.cfg.AllowPublicRegister {
@@ -118,7 +118,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
-		rt, err := s.createRefreshToken(u.ID, deviceFingerprint(r))
+		rt, err := s.createRefreshToken(u.ID, u.TenantID, deviceFingerprint(r))
 		if err != nil {
 			log.Printf("controlplane: handleAuthRegister 生成刷新令牌失败: %v", err)
 			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
@@ -198,7 +198,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	s.loginGuard.resetFail(body.Username)
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: u.ID, Action: "user_login", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
+		TenantID: tenantOrDefault(u.TenantID), UserID: u.ID, Action: "user_login", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 	})
 	// ：mustChangePassword=true 时不签发 access token（at），仅签发一次性短时效
 	// changePasswordToken（5min），仅可用于 /api/v1/auth/change-password。改密成功后才签发
@@ -224,7 +224,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 双 Cookie：at（短寿命，JS 不可读）+ rt（长寿命，服务端可吊销/旋转）。
-	rt, err := s.createRefreshToken(u.ID, deviceFingerprint(r))
+	rt, err := s.createRefreshToken(u.ID, u.TenantID, deviceFingerprint(r))
 	if err != nil {
 		log.Printf("controlplane: handleAuthLogin 生成刷新令牌失败: %v", err)
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
@@ -245,7 +245,7 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	if u, err := s.userFromToken(r); err == nil {
 		// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 		s.audit(r.Context(), &proto.AuditEvent{
-			TenantID: "default", UserID: u.ID, Action: "user_logout", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
+			TenantID: tenantOrDefault(u.TenantID), UserID: u.ID, Action: "user_logout", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 		})
 	}
 	// 吊销 access token：jti 加入黑名单，使登出后 token 立即失效。
@@ -294,7 +294,7 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 签发新 rt 时绑定当前设备指纹（与 consume 时的 DeviceFP 一致，实现设备绑定旋转）。
-	rt, err := s.createRefreshToken(u.ID, deviceFingerprint(r))
+	rt, err := s.createRefreshToken(u.ID, u.TenantID, deviceFingerprint(r))
 	if err != nil {
 		log.Printf("controlplane: handleAuthRefresh 生成刷新令牌失败: %v", err)
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
@@ -433,7 +433,7 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: u.ID, Action: "user_change_password", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
+		TenantID: tenantOrDefault(u.TenantID), UserID: u.ID, Action: "user_change_password", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
 	})
 	// 首登强制改密场景：改密成功后签发正式 at+rt，前端据此进入正常会话。
 	if firstLoginChange {
@@ -443,7 +443,7 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
-		rt, err := s.createRefreshToken(u.ID, deviceFingerprint(r))
+		rt, err := s.createRefreshToken(u.ID, u.TenantID, deviceFingerprint(r))
 		if err != nil {
 			log.Printf("controlplane: handleAuthChangePassword 生成刷新令牌失败: %v", err)
 			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})

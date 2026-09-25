@@ -434,6 +434,7 @@ func (m *MemoryStore) seedRBAC() {
 			ID:                 us.id,
 			Username:           us.name,
 			Email:              us.email,
+			TenantID:           DefaultTenantID, // 预置账号归平台租户（与 SQLStore seed 一致）
 			PasswordHash:       hash,
 			Status:             "active",
 			RoleIDs:            us.roleIDs,
@@ -690,13 +691,23 @@ func (m *MemoryStore) TasksByParent(parentID string) []*proto.Task {
 // 并发调用时由同一把锁保证同一任务只被领取一次（HA 协调）。返回值为锁内拷贝。
 // 防双跑：领取时 ClaimEpoch++，返回的 Task 带 ClaimEpoch；
 // agent 上报结果时携带 ClaimEpoch，SubmitResult 校验持有者是否仍为当前 epoch。
+//
+// 租户隔离（P0-6，第二道闸）：与 SQLStore.ClaimTask 同语义——任务租户与 agent 自身租户
+// 不一致时跳过该任务；任一侧租户为空视为「无租户标记」放行（兼容未标租户的历史数据）。
 func (m *MemoryStore) ClaimTask(agentID string) *proto.Task {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	agentTenant := ""
+	if a := m.agents[agentID]; a != nil {
+		agentTenant = a.TenantID
+	}
 	for _, t := range m.tasks[agentID] {
 		// 仅模板任务（ParentID 空且 Schedule 非空）不可被直接领取；
 		// 派生实例（ParentID 指向模板）是正常 pending 任务，可被领取。
 		if t.ParentID == "" && t.Schedule != "" {
+			continue
+		}
+		if t.TenantID != "" && agentTenant != "" && t.TenantID != agentTenant {
 			continue
 		}
 		if t.Status == "" || t.Status == "pending" {

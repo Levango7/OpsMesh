@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -30,7 +31,12 @@ func NewMySQLStore(dsn string) (*MySQLStore, error) {
 		return nil, fmt.Errorf("failed to ping mysql: %w", err)
 	}
 
-	return &MySQLStore{db: db}, nil
+	s := &MySQLStore{db: db}
+	if err := s.migrate(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to migrate mysql schema: %w", err)
+	}
+	return s, nil
 }
 
 // Close closes the database connection.
@@ -45,6 +51,28 @@ func NewStore(dbDSN string) (*MySQLStore, error) {
 		return NewMySQLStore(dbDSN)
 	}
 	return nil, nil
+}
+
+// nullTime 零值 time.Time 转 NULL。
+//
+// Go 的零值 time.Time 是 0001-01-01，超出 MySQL TIMESTAMP/DATETIME 范围
+// （1970–2038），直接写入报 "Incorrect datetime value" 且整条 INSERT 失败。
+// 可空时间列（lastHeartbeat / started_at / completed_at）的语义正是「尚未发生」，
+// 映射为 NULL 才正确。与 controlplane internal/store 及其余 7 个微服务同款。
+func nullTime(t time.Time) interface{} {
+	if t.IsZero() {
+		return nil
+	}
+	return t
+}
+
+// scanNullTime 读取可空时间列：NULL 还原为零值 time.Time（与 nullTime 互逆）。
+// 直接把 NULL 扫进 time.Time 会报 "converting NULL to time.Time is unsupported"。
+func scanNullTime(nt sql.NullTime) time.Time {
+	if !nt.Valid {
+		return time.Time{}
+	}
+	return nt.Time
 }
 
 // jsonString marshals a string slice to JSON.
@@ -104,9 +132,10 @@ func (s *MySQLStore) RegisterDevice(d *models.Device) *models.Device {
 	_, err := s.db.Exec(
 		"INSERT INTO devices (id, tenant_id, name, ip, mac, os, arch, status, agent_id, tags, labels, `group`, lastHeartbeat, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		d.ID, d.TenantID, d.Name, d.IP, d.MAC, d.OS, d.Arch, d.Status, d.AgentID,
-		jsonString(d.Tags), jsonMap(d.Labels), d.Group, d.LastHeartbeat, d.CreatedAt, d.UpdatedAt,
+		jsonString(d.Tags), jsonMap(d.Labels), d.Group, nullTime(d.LastHeartbeat), d.CreatedAt, d.UpdatedAt,
 	)
 	if err != nil {
+		log.Printf("[store] RegisterDevice %s 写入失败: %v", d.ID, err)
 		return nil
 	}
 	return d
@@ -123,12 +152,18 @@ func (s *MySQLStore) Device(id string) *models.Device {
 
 func (s *MySQLStore) scanDevice(row *sql.Row) *models.Device {
 	var d models.Device
-	var tags, labels sql.RawBytes
+	// 注意：单行扫描必须用 []byte——sql.RawBytes 仅对 Rows.Scan 合法，
+	// 用在 Row.Scan 上直接报 "RawBytes isn't allowed on Row.Scan"，
+	// 导致按 id 查询设备恒失败（列表路径用 Rows 故掩盖了该问题）。
+	var tags, labels []byte
+	var lastHeartbeat sql.NullTime
 	err := row.Scan(&d.ID, &d.TenantID, &d.Name, &d.IP, &d.MAC, &d.OS, &d.Arch, &d.Status, &d.AgentID,
-		&tags, &labels, &d.Group, &d.LastHeartbeat, &d.CreatedAt, &d.UpdatedAt, &d.Retired)
+		&tags, &labels, &d.Group, &lastHeartbeat, &d.CreatedAt, &d.UpdatedAt, &d.Retired)
 	if err != nil {
+		log.Printf("[store] scanDevice 失败: %v", err)
 		return nil
 	}
+	d.LastHeartbeat = scanNullTime(lastHeartbeat)
 	d.Tags = scanStringSlice(tags)
 	d.Labels = scanStringMap(labels)
 	return &d
@@ -169,10 +204,12 @@ func (s *MySQLStore) scanDevices(rows *sql.Rows) []*models.Device {
 	for rows.Next() {
 		var d models.Device
 		var tags, labels sql.RawBytes
+		var lastHeartbeat sql.NullTime
 		if err := rows.Scan(&d.ID, &d.TenantID, &d.Name, &d.IP, &d.MAC, &d.OS, &d.Arch, &d.Status, &d.AgentID,
-			&tags, &labels, &d.Group, &d.LastHeartbeat, &d.CreatedAt, &d.UpdatedAt, &d.Retired); err != nil {
+			&tags, &labels, &d.Group, &lastHeartbeat, &d.CreatedAt, &d.UpdatedAt, &d.Retired); err != nil {
 			continue
 		}
+		d.LastHeartbeat = scanNullTime(lastHeartbeat)
 		d.Tags = scanStringSlice(tags)
 		d.Labels = scanStringMap(labels)
 		devices = append(devices, &d)
@@ -189,9 +226,10 @@ func (s *MySQLStore) UpdateDevice(d *models.Device) (*models.Device, bool) {
 	res, err := s.db.Exec(
 		"UPDATE devices SET tenant_id = ?, name = ?, ip = ?, mac = ?, os = ?, arch = ?, status = ?, agent_id = ?, tags = ?, labels = ?, `group` = ?, lastHeartbeat = ?, updated_at = ?, retired = ? WHERE id = ?",
 		d.TenantID, d.Name, d.IP, d.MAC, d.OS, d.Arch, d.Status, d.AgentID,
-		jsonString(d.Tags), jsonMap(d.Labels), d.Group, d.LastHeartbeat, d.UpdatedAt, d.Retired, d.ID,
+		jsonString(d.Tags), jsonMap(d.Labels), d.Group, nullTime(d.LastHeartbeat), d.UpdatedAt, d.Retired, d.ID,
 	)
 	if err != nil {
+		log.Printf("[store] UpdateDevice %s 更新失败: %v", d.ID, err)
 		return nil, false
 	}
 	n, _ := res.RowsAffected()
@@ -235,7 +273,7 @@ func (s *MySQLStore) Heartbeat(deviceID, status string) bool {
 func (s *MySQLStore) GetDeviceStatus(deviceID string) *models.DeviceStatus {
 	var d models.Device
 	var status string
-	var lastHeartbeat time.Time
+	var lastHeartbeat sql.NullTime
 	err := s.db.QueryRow(
 		"SELECT id, status, lastHeartbeat FROM devices WHERE id = ?", deviceID,
 	).Scan(&d.ID, &status, &lastHeartbeat)
@@ -246,7 +284,7 @@ func (s *MySQLStore) GetDeviceStatus(deviceID string) *models.DeviceStatus {
 		DeviceID:      d.ID,
 		Status:        status,
 		Reachable:     status == "online",
-		LastHeartbeat: lastHeartbeat,
+		LastHeartbeat: scanNullTime(lastHeartbeat),
 	}
 }
 
@@ -282,9 +320,10 @@ func (s *MySQLStore) RegisterAgent(a *models.Agent) *models.Agent {
 	_, err := s.db.Exec(
 		"INSERT INTO agents (id, tenant_id, device_id, hostname, version, status, load_count, os, arch, addr, grpc_port, metrics_port, lastHeartbeat, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		a.ID, a.TenantID, a.DeviceID, a.Hostname, a.Version, a.Status, a.Load,
-		a.OS, a.Arch, a.Addr, a.GRPCPort, a.MetricsPort, a.LastHeartbeat, a.CreatedAt, a.UpdatedAt,
+		a.OS, a.Arch, a.Addr, a.GRPCPort, a.MetricsPort, nullTime(a.LastHeartbeat), a.CreatedAt, a.UpdatedAt,
 	)
 	if err != nil {
+		log.Printf("[store] RegisterAgent %s 写入失败: %v", a.ID, err)
 		return nil
 	}
 	return a
@@ -301,11 +340,13 @@ func (s *MySQLStore) Agent(id string) *models.Agent {
 
 func (s *MySQLStore) scanAgent(row *sql.Row) *models.Agent {
 	var a models.Agent
+	var lastHeartbeat sql.NullTime
 	err := row.Scan(&a.ID, &a.TenantID, &a.DeviceID, &a.Hostname, &a.Version, &a.Status,
-		&a.Load, &a.OS, &a.Arch, &a.Addr, &a.GRPCPort, &a.MetricsPort, &a.LastHeartbeat, &a.CreatedAt, &a.UpdatedAt)
+		&a.Load, &a.OS, &a.Arch, &a.Addr, &a.GRPCPort, &a.MetricsPort, &lastHeartbeat, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		return nil
 	}
+	a.LastHeartbeat = scanNullTime(lastHeartbeat)
 	return &a
 }
 
@@ -336,10 +377,12 @@ func (s *MySQLStore) ListAgents(tenantID, status string, limit int) []*models.Ag
 	var agents []*models.Agent
 	for rows.Next() {
 		var a models.Agent
+		var lastHeartbeat sql.NullTime
 		if err := rows.Scan(&a.ID, &a.TenantID, &a.DeviceID, &a.Hostname, &a.Version, &a.Status,
-			&a.Load, &a.OS, &a.Arch, &a.Addr, &a.GRPCPort, &a.MetricsPort, &a.LastHeartbeat, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			&a.Load, &a.OS, &a.Arch, &a.Addr, &a.GRPCPort, &a.MetricsPort, &lastHeartbeat, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			continue
 		}
+		a.LastHeartbeat = scanNullTime(lastHeartbeat)
 		agents = append(agents, &a)
 	}
 	return agents
@@ -429,7 +472,8 @@ func (s *MySQLStore) GetCI(id, tenantID string) *models.CI {
 
 func (s *MySQLStore) scanCI(row *sql.Row) *models.CI {
 	var ci models.CI
-	var attrs sql.RawBytes
+	// []byte 而非 sql.RawBytes：Row.Scan 不接受 RawBytes（见 scanDevice 注释）。
+	var attrs []byte
 	err := row.Scan(&ci.ID, &ci.TenantID, &ci.CiType, &ci.Name, &ci.Status, &attrs,
 		&ci.Source, &ci.AgentID, &ci.DeviceID, &ci.Version, &ci.CreatedAt, &ci.UpdatedAt)
 	if err != nil {
@@ -446,7 +490,8 @@ func (s *MySQLStore) UpdateCI(ci *models.CI) (*models.CI, bool) {
 	}
 
 	var old models.CI
-	var attrs sql.RawBytes
+	// []byte 而非 sql.RawBytes：Row.Scan 不接受 RawBytes（见 scanDevice 注释）。
+	var attrs []byte
 	err := s.db.QueryRow(
 		"SELECT id, tenant_id, ci_type, name, status, attributes, source, agent_id, device_id, version, created_at, updated_at FROM ci_items WHERE id = ?",
 		ci.ID,
@@ -591,9 +636,10 @@ func (s *MySQLStore) CreateJob(job *models.DiscoveryJob) *models.DiscoveryJob {
 
 	_, err := s.db.Exec(
 		"INSERT INTO discovery_jobs (id, tenant_id, cidr, status, total_hosts, scanned_hosts, found_devices, error_msg, started_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		job.ID, job.TenantID, job.CIDR, job.Status, job.TotalHosts, job.ScannedHosts, job.FoundDevices, job.Error, job.StartedAt, job.CompletedAt,
+		job.ID, job.TenantID, job.CIDR, job.Status, job.TotalHosts, job.ScannedHosts, job.FoundDevices, job.Error, nullTime(job.StartedAt), nullTime(job.CompletedAt),
 	)
 	if err != nil {
+		log.Printf("[store] CreateDiscoveryJob %s 写入失败: %v", job.ID, err)
 		return nil
 	}
 	return job
@@ -602,13 +648,15 @@ func (s *MySQLStore) CreateJob(job *models.DiscoveryJob) *models.DiscoveryJob {
 // GetJob returns a discovery job by ID.
 func (s *MySQLStore) GetJob(id string) *models.DiscoveryJob {
 	var job models.DiscoveryJob
+	var startedAt, completedAt sql.NullTime
 	err := s.db.QueryRow(
 		"SELECT id, tenant_id, cidr, status, total_hosts, scanned_hosts, found_devices, error_msg, started_at, completed_at FROM discovery_jobs WHERE id = ?",
 		id,
-	).Scan(&job.ID, &job.TenantID, &job.CIDR, &job.Status, &job.TotalHosts, &job.ScannedHosts, &job.FoundDevices, &job.Error, &job.StartedAt, &job.CompletedAt)
+	).Scan(&job.ID, &job.TenantID, &job.CIDR, &job.Status, &job.TotalHosts, &job.ScannedHosts, &job.FoundDevices, &job.Error, &startedAt, &completedAt)
 	if err != nil {
 		return nil
 	}
+	job.StartedAt, job.CompletedAt = scanNullTime(startedAt), scanNullTime(completedAt)
 	return &job
 }
 
@@ -631,9 +679,11 @@ func (s *MySQLStore) ListJobs(tenantID string) []*models.DiscoveryJob {
 	var jobs []*models.DiscoveryJob
 	for rows.Next() {
 		var job models.DiscoveryJob
-		if err := rows.Scan(&job.ID, &job.TenantID, &job.CIDR, &job.Status, &job.TotalHosts, &job.ScannedHosts, &job.FoundDevices, &job.Error, &job.StartedAt, &job.CompletedAt); err != nil {
+		var startedAt, completedAt sql.NullTime
+		if err := rows.Scan(&job.ID, &job.TenantID, &job.CIDR, &job.Status, &job.TotalHosts, &job.ScannedHosts, &job.FoundDevices, &job.Error, &startedAt, &completedAt); err != nil {
 			continue
 		}
+		job.StartedAt, job.CompletedAt = scanNullTime(startedAt), scanNullTime(completedAt)
 		jobs = append(jobs, &job)
 	}
 	return jobs
@@ -646,7 +696,7 @@ func (s *MySQLStore) UpdateJob(job *models.DiscoveryJob) (*models.DiscoveryJob, 
 	}
 	res, err := s.db.Exec(
 		"UPDATE discovery_jobs SET tenant_id = ?, cidr = ?, status = ?, total_hosts = ?, scanned_hosts = ?, found_devices = ?, error_msg = ?, started_at = ?, completed_at = ? WHERE id = ?",
-		job.TenantID, job.CIDR, job.Status, job.TotalHosts, job.ScannedHosts, job.FoundDevices, job.Error, job.StartedAt, job.CompletedAt, job.ID,
+		job.TenantID, job.CIDR, job.Status, job.TotalHosts, job.ScannedHosts, job.FoundDevices, job.Error, nullTime(job.StartedAt), nullTime(job.CompletedAt), job.ID,
 	)
 	if err != nil {
 		return nil, false

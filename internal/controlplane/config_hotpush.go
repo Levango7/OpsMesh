@@ -66,6 +66,11 @@ func (s *Server) handleConfigHotpush(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
 		return
 	}
+	// 租户隔离（P0-6）：目标设备必须属于调用方租户，否则租户 A 可经配置热推
+	// 向租户 B 的 agent 写任意文件（任务队列按 agent_id 寻址，无租户维度）。
+	if _, ok := s.requireTenantAgent(w, body.AgentID, actx.TenantID); !ok {
+		return
+	}
 	// 1. 保存配置版本到 ConfigStore
 	item := &store.ConfigItem{
 		Key:         body.Key,
@@ -149,6 +154,14 @@ func (s *Server) handleConfigCanary(w http.ResponseWriter, r *http.Request) {
 	if body.Percentage < 0 || body.Percentage > 100 {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "percentage must be between 0 and 100"})
 		return
+	}
+	// 租户隔离（P0-6）：整批设备逐一校验，任一不属于调用方租户即整体拒绝（403）。
+	// 先全量校验再落库：避免「已给本租户设备下发了配置、同时给外租户设备建了任务」的
+	// 半成功状态——灰度发布按批语义处理，批内出现越权目标即视为恶意/错误调用。
+	for _, agentID := range body.AgentIDs {
+		if _, ok := s.requireTenantAgent(w, agentID, actx.TenantID); !ok {
+			return
+		}
 	}
 	// 1. 保存配置版本
 	item := &store.ConfigItem{

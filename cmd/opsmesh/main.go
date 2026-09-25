@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"net/http"
@@ -108,6 +109,8 @@ func versionString() string {
 //   - 3s 超时与 docker-compose healthcheck.timeout 对齐，避免阻塞容器编排；
 //   - 仅依赖 Go 标准库，distroless 镜像无需 curl/wget/sh 即可探活；
 //   - 错误诊断输出到 stderr，stdout 保持空，便于编排系统解析退出码。
+//   - 协议自适应：控制面 Web/REST 可能是明文（--http-tls=off 或未配证书）或 HTTPS
+//     （--http-tls=auto/on 且证书齐备），探针两种都探，先 HTTPS 后 HTTP。
 func runHealth() int {
 	fs := flag.NewFlagSet("health", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -125,20 +128,31 @@ func runHealth() int {
 		return 2
 	}
 
-	url := fmt.Sprintf("http://localhost:%d/healthz", *httpPort)
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[health] 连接 %s 失败: %v\n", url, err)
-		return 1
+	// 探针只判断本机监听端口能否返回 200，不认证对端身份（等价 curl -k），
+	// 故跳过证书链校验：自签证书/证书 SAN 不含 localhost 都属正常情况。
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "[health] %s 返回非 200: HTTP %d\n", url, resp.StatusCode)
-		return 1
+	var lastErr error
+	for _, scheme := range []string{"https", "http"} {
+		url := fmt.Sprintf("%s://localhost:%d/healthz", scheme, *httpPort)
+		resp, err := client.Get(url)
+		if err != nil {
+			lastErr = fmt.Errorf("连接 %s 失败: %w", url, err)
+			continue
+		}
+		status := resp.StatusCode
+		resp.Body.Close()
+		if status == http.StatusOK {
+			return 0
+		}
+		lastErr = fmt.Errorf("%s 返回非 200: HTTP %d", url, status)
 	}
-	return 0
+	fmt.Fprintf(os.Stderr, "[health] %v\n", lastErr)
+	return 1
 }
 
 // backupFlagSpecs 定义 backup 子命令特有 flag 及其是否带值（bool flag 不带值）。

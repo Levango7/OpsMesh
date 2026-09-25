@@ -43,12 +43,13 @@ type RedisSessionStore struct {
 //
 // 参数：
 //   - addr：Redis 地址（如 "redis:6379"）；
+//   - password：Redis 认证口令（服务端 --requirepass）；空=不发送 AUTH；
 //   - prefix：key 前缀（如 "opsmesh:"，多实例共享同一 Redis 时隔离）；
 //   - dialTimeout：连接超时（建议 5s）。
 //
 // 返回的实例已就绪，可直接使用。Redis 不可达不在此处 fail-fast（容错策略见文件注释），
 // 调用方在首次操作时会感知到错误（IsBlacklisted 返回 false 等）。
-func NewRedisSessionStore(addr, prefix string, dialTimeout time.Duration) (*RedisSessionStore, error) {
+func NewRedisSessionStore(addr, password, prefix string, dialTimeout time.Duration) (*RedisSessionStore, error) {
 	if addr == "" {
 		return nil, errRedisAddrRequired
 	}
@@ -60,6 +61,7 @@ func NewRedisSessionStore(addr, prefix string, dialTimeout time.Duration) (*Redi
 	}
 	client := redis.NewClient(&redis.Options{
 		Addr:        addr,
+		Password:    password,
 		DialTimeout: dialTimeout,
 	})
 	// Ping 验证连通性（不 fail-fast，仅记录日志；首次操作失败时容错策略生效）。

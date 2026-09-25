@@ -43,8 +43,26 @@ type automationExecutor struct {
 	bus      events.Bus
 }
 
+// requireTargetAgent 校验动作目标设备属于规则租户（P0-6）。
+// 规则的动作参数（device_id）来自用户规则定义，而引擎按规则租户执行；
+// 若目标 agent 属他租户，任务队列会按 agent_id 把它交给对方 agent 执行。
+// deviceID 为空表示该动作未指定目标设备（既有行为：任务 AgentID 为空、无人领取），
+// 此时跳过校验，保持既有语义不回归。
+func (a *automationExecutor) requireTargetAgent(tenantID, deviceID string) error {
+	if deviceID == "" {
+		return nil
+	}
+	if _, err := tenantAgentIn(a.store, deviceID, tenantID); err != nil {
+		return err
+	}
+	return nil
+}
+
 // ExecuteTask 在指定设备上创建并下发 shell 任务。
 func (a *automationExecutor) ExecuteTask(tenantID, deviceID, command string, params map[string]string) (string, error) {
+	if err := a.requireTargetAgent(tenantID, deviceID); err != nil {
+		return "", err
+	}
 	task := &proto.Task{
 		Type:     "shell",
 		Command:  command,
@@ -81,6 +99,9 @@ func (a *automationExecutor) SendNotify(tenantID, channel, message string, param
 
 // Scale 扩缩容：创建 scale 任务。
 func (a *automationExecutor) Scale(tenantID, service string, replicas int, params map[string]string) (string, error) {
+	if err := a.requireTargetAgent(tenantID, params["device_id"]); err != nil {
+		return "", err
+	}
 	task := &proto.Task{
 		Type:     "scale",
 		Command:  fmt.Sprintf("scale %s to %d replicas", service, replicas),
@@ -97,6 +118,9 @@ func (a *automationExecutor) Scale(tenantID, service string, replicas int, param
 
 // Restart 重启：创建 restart 任务。
 func (a *automationExecutor) Restart(tenantID, target string, params map[string]string) (string, error) {
+	if err := a.requireTargetAgent(tenantID, params["device_id"]); err != nil {
+		return "", err
+	}
 	task := &proto.Task{
 		Type:     "restart",
 		Command:  fmt.Sprintf("restart %s", target),
@@ -113,6 +137,9 @@ func (a *automationExecutor) Restart(tenantID, target string, params map[string]
 
 // Isolate 隔离：创建 isolate 任务。
 func (a *automationExecutor) Isolate(tenantID, deviceID string, params map[string]string) (string, error) {
+	if err := a.requireTargetAgent(tenantID, deviceID); err != nil {
+		return "", err
+	}
 	task := &proto.Task{
 		Type:     "isolate",
 		Command:  fmt.Sprintf("isolate device %s", deviceID),

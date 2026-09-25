@@ -1209,7 +1209,7 @@ func TestInProcessSessionStore_Close(t *testing.T) {
 
 // TestRedisSessionStore_New_EmptyAddr 验证空 addr 返回错误。
 func TestRedisSessionStore_New_EmptyAddr(t *testing.T) {
-	if _, err := NewRedisSessionStore("", "opsmesh:", time.Second); err == nil {
+	if _, err := NewRedisSessionStore("", "", "opsmesh:", time.Second); err == nil {
 		t.Fatal("空 addr 应返回错误")
 	}
 }
@@ -1217,7 +1217,7 @@ func TestRedisSessionStore_New_EmptyAddr(t *testing.T) {
 // TestRedisSessionStore_New_InvalidAddr 验证无效 addr 不 fail-fast（仅日志）。
 func TestRedisSessionStore_New_InvalidAddr(t *testing.T) {
 	// 无效地址：连接失败但不应 fail-fast
-	s, err := NewRedisSessionStore("127.0.0.1:1", "opsmesh:", 100*time.Millisecond)
+	s, err := NewRedisSessionStore("127.0.0.1:1", "", "opsmesh:", 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewRedisSessionStore 不应 fail-fast: %v", err)
 	}
@@ -1229,7 +1229,7 @@ func TestRedisSessionStore_New_InvalidAddr(t *testing.T) {
 
 // TestRedisSessionStore_New_DefaultPrefix 验证空 prefix 使用默认值。
 func TestRedisSessionStore_New_DefaultPrefix(t *testing.T) {
-	s, err := NewRedisSessionStore("127.0.0.1:1", "", 100*time.Millisecond)
+	s, err := NewRedisSessionStore("127.0.0.1:1", "", "", 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewRedisSessionStore 失败: %v", err)
 	}
@@ -1242,16 +1242,39 @@ func TestRedisSessionStore_New_DefaultPrefix(t *testing.T) {
 
 // TestRedisSessionStore_New_DefaultDialTimeout 验证 dialTimeout<=0 使用默认值。
 func TestRedisSessionStore_New_DefaultDialTimeout(t *testing.T) {
-	s, err := NewRedisSessionStore("127.0.0.1:1", "opsmesh:", 0)
+	s, err := NewRedisSessionStore("127.0.0.1:1", "", "opsmesh:", 0)
 	if err != nil {
 		t.Fatalf("NewRedisSessionStore 失败: %v", err)
 	}
 	defer s.Close()
 }
 
+// TestRedisSessionStore_New_PasswordWiredToClient 验证口令透传到 redis.Options
+// （此前 Redis 无认证支持，密码无从传递）。
+func TestRedisSessionStore_New_PasswordWiredToClient(t *testing.T) {
+	s, err := NewRedisSessionStore("127.0.0.1:1", "s3cret", "opsmesh:", 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewRedisSessionStore 失败: %v", err)
+	}
+	defer s.Close()
+	if got := s.client.Options().Password; got != "s3cret" {
+		t.Fatalf("redis client Password = %q, want s3cret", got)
+	}
+
+	// 空口令（默认）不发送 AUTH。
+	s2, err := NewRedisSessionStore("127.0.0.1:1", "", "opsmesh:", 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewRedisSessionStore 失败: %v", err)
+	}
+	defer s2.Close()
+	if got := s2.client.Options().Password; got != "" {
+		t.Fatalf("空口令时 redis client Password = %q, want 空", got)
+	}
+}
+
 // TestRedisSessionStore_KeyBuilders 验证各 key 拼接方法。
 func TestRedisSessionStore_KeyBuilders(t *testing.T) {
-	s, err := NewRedisSessionStore("127.0.0.1:1", "opsmesh:", 100*time.Millisecond)
+	s, err := NewRedisSessionStore("127.0.0.1:1", "", "opsmesh:", 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewRedisSessionStore 失败: %v", err)
 	}
@@ -1272,7 +1295,7 @@ func TestRedisSessionStore_KeyBuilders(t *testing.T) {
 
 // TestRedisSessionStore_IsBlacklisted_Empty 验证空 jti 返回 false（不查 Redis）。
 func TestRedisSessionStore_IsBlacklisted_Empty(t *testing.T) {
-	s, err := NewRedisSessionStore("127.0.0.1:1", "opsmesh:", 100*time.Millisecond)
+	s, err := NewRedisSessionStore("127.0.0.1:1", "", "opsmesh:", 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewRedisSessionStore 失败: %v", err)
 	}
@@ -1284,7 +1307,7 @@ func TestRedisSessionStore_IsBlacklisted_Empty(t *testing.T) {
 
 // TestRedisSessionStore_Blacklist_Empty 验证空 jti 不写入。
 func TestRedisSessionStore_Blacklist_Empty(t *testing.T) {
-	s, err := NewRedisSessionStore("127.0.0.1:1", "opsmesh:", 100*time.Millisecond)
+	s, err := NewRedisSessionStore("127.0.0.1:1", "", "opsmesh:", 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewRedisSessionStore 失败: %v", err)
 	}
@@ -1294,7 +1317,7 @@ func TestRedisSessionStore_Blacklist_Empty(t *testing.T) {
 
 // TestRedisSessionStore_PurgeBlacklist_NoOp 验证 PurgeBlacklist 是 no-op。
 func TestRedisSessionStore_PurgeBlacklist_NoOp(t *testing.T) {
-	s, err := NewRedisSessionStore("127.0.0.1:1", "opsmesh:", 100*time.Millisecond)
+	s, err := NewRedisSessionStore("127.0.0.1:1", "", "opsmesh:", 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewRedisSessionStore 失败: %v", err)
 	}
@@ -1304,7 +1327,7 @@ func TestRedisSessionStore_PurgeBlacklist_NoOp(t *testing.T) {
 
 // TestRedisSessionStore_IncrRateLimit_Empty 验证空 key 返回 0。
 func TestRedisSessionStore_IncrRateLimit_Empty(t *testing.T) {
-	s, err := NewRedisSessionStore("127.0.0.1:1", "opsmesh:", 100*time.Millisecond)
+	s, err := NewRedisSessionStore("127.0.0.1:1", "", "opsmesh:", 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewRedisSessionStore 失败: %v", err)
 	}
@@ -1316,7 +1339,7 @@ func TestRedisSessionStore_IncrRateLimit_Empty(t *testing.T) {
 
 // TestRedisSessionStore_ResetRateLimit_Empty 验证空 key 不 panic。
 func TestRedisSessionStore_ResetRateLimit_Empty(t *testing.T) {
-	s, err := NewRedisSessionStore("127.0.0.1:1", "opsmesh:", 100*time.Millisecond)
+	s, err := NewRedisSessionStore("127.0.0.1:1", "", "opsmesh:", 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewRedisSessionStore 失败: %v", err)
 	}
@@ -1326,7 +1349,7 @@ func TestRedisSessionStore_ResetRateLimit_Empty(t *testing.T) {
 
 // TestRedisSessionStore_CreateChangePasswordToken_Empty 验证空 token 返回错误。
 func TestRedisSessionStore_CreateChangePasswordToken_Empty(t *testing.T) {
-	s, err := NewRedisSessionStore("127.0.0.1:1", "opsmesh:", 100*time.Millisecond)
+	s, err := NewRedisSessionStore("127.0.0.1:1", "", "opsmesh:", 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewRedisSessionStore 失败: %v", err)
 	}
@@ -1338,7 +1361,7 @@ func TestRedisSessionStore_CreateChangePasswordToken_Empty(t *testing.T) {
 
 // TestRedisSessionStore_ConsumeChangePasswordToken_Empty 验证空 token 返回 false。
 func TestRedisSessionStore_ConsumeChangePasswordToken_Empty(t *testing.T) {
-	s, err := NewRedisSessionStore("127.0.0.1:1", "opsmesh:", 100*time.Millisecond)
+	s, err := NewRedisSessionStore("127.0.0.1:1", "", "opsmesh:", 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewRedisSessionStore 失败: %v", err)
 	}
@@ -1350,7 +1373,7 @@ func TestRedisSessionStore_ConsumeChangePasswordToken_Empty(t *testing.T) {
 
 // TestRedisSessionStore_PurgeChangePasswordTokens_NoOp 验证 PurgeChangePasswordTokens 是 no-op。
 func TestRedisSessionStore_PurgeChangePasswordTokens_NoOp(t *testing.T) {
-	s, err := NewRedisSessionStore("127.0.0.1:1", "opsmesh:", 100*time.Millisecond)
+	s, err := NewRedisSessionStore("127.0.0.1:1", "", "opsmesh:", 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewRedisSessionStore 失败: %v", err)
 	}
@@ -1394,7 +1417,7 @@ func TestErrRefreshTokenHashRequired(t *testing.T) {
 // TestMultiSchemaStore_DefaultStoreFactory 验证 defaultStoreFactory 在无效 DSN 下返回错误。
 func TestMultiSchemaStore_DefaultStoreFactory(t *testing.T) {
 	namer := DefaultSchemaNamer("opsmesh_")
-	m, err := NewMultiSchemaStore("invalid-dsn", "", namer)
+	m, err := NewMultiSchemaStore("invalid-dsn", "", "", namer)
 	if err != nil {
 		t.Fatalf("NewMultiSchemaStore 失败: %v", err)
 	}
@@ -1492,7 +1515,7 @@ func TestMultiSchemaStore_AllStores_Empty(t *testing.T) {
 
 // TestMultiSchemaStore_NewMultiSchemaStore_NilNamer 验证 nil namer 返回错误。
 func TestMultiSchemaStore_NewMultiSchemaStore_NilNamer(t *testing.T) {
-	if _, err := NewMultiSchemaStore("dsn", "", nil); err == nil {
+	if _, err := NewMultiSchemaStore("dsn", "", "", nil); err == nil {
 		t.Fatal("nil namer 应返回错误")
 	}
 }

@@ -34,6 +34,20 @@ func main() {
 	if backend := os.Getenv("LOG_SVC_BACKEND"); backend != "" {
 		cfg.LogStore.Backend = backend
 	}
+	// 后端端点：此前仅有 backend 可选而端点无任何环境变量入口，
+	// 导致容器化部署下 loki/es 永远拿到空 endpoint、sql 拿到空 DSN。
+	if v := os.Getenv("LOG_SVC_LOKI_ENDPOINT"); v != "" {
+		cfg.LogStore.Loki.Endpoint = v
+	}
+	if v := os.Getenv("LOG_SVC_ES_ENDPOINT"); v != "" {
+		cfg.LogStore.ES.Endpoint = v
+	}
+	if v := os.Getenv("LOG_SVC_ES_INDEX"); v != "" {
+		cfg.LogStore.ES.Index = v
+	}
+	if v := os.Getenv("LOG_SVC_SQL_DSN"); v != "" {
+		cfg.LogStore.SQL.DSN = v
+	}
 
 	// Initialize logstore backend
 	store, err := initLogStore(cfg)

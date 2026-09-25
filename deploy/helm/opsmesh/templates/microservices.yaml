@@ -8,6 +8,9 @@
 - 存储接线：storeEnvPrefix 非空时渲染 <前缀>_STORE_TYPE（=storeType）；
   且 chart 全局 MySQL 可用（mysql.enabled && controlplane.store=mysql）时
   渲染 <前缀>_DSN，取值复用控制面 Secret 的 mysql-dsn 键（与全局连接串同源派生）。
+- JWT 接线：jwtEnvName 非空（auth_svc/device_svc/task_svc）时渲染该名环境变量，
+  取值复用 Secret 的 jwt-secret 键。不注入则 auth/device-svc 退回代码内置弱默认值
+  "default-jwt-secret-change-in-production"（公开密钥，生产启用微服务即为令牌伪造风险）。
 - 微服务镜像以非数字用户 svc 运行（见各服务 Dockerfile USER svc），
   故默认不设置容器 securityContext.runAsUser（non-numeric user 无法过 runAsNonRoot 校验）。
 注：注释体内不得出现「星斜杠」序列（Helm 模板注释以首个该序列闭合——CI helm lint
@@ -64,8 +67,17 @@ spec:
         - name: {{ $svcName }}
           image: {{ include "opsmesh.image" (list $ $svc.image) }}
           imagePullPolicy: {{ $svc.image.pullPolicy }}
-          {{- if or $svc.storeEnvPrefix $svc.env }}
+          {{- if or $svc.storeEnvPrefix $svc.env $svc.jwtEnvName }}
           env:
+            {{- if $svc.jwtEnvName }}
+            # JWT 校验密钥：与控制面同源（Secret 键 jwt-secret）。缺省时 auth-svc/device-svc
+            # 会退回代码内置 "default-jwt-secret-change-in-production"（公开弱密钥 → 令牌可伪造）。
+            - name: {{ $svc.jwtEnvName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "opsmesh.fullname" $ }}-secret
+                  key: jwt-secret
+            {{- end }}
             {{- if $svc.storeEnvPrefix }}
             - name: {{ printf "%s_STORE_TYPE" $svc.storeEnvPrefix | quote }}
               value: {{ $svc.storeType | quote }}
@@ -91,11 +103,6 @@ spec:
             {{- if $svc.grpcPort }}
             - name: grpc
               containerPort: {{ $svc.grpcPort }}
-              protocol: TCP
-            {{- end }}
-            {{- if $svc.metricsPort }}
-            - name: metrics
-              containerPort: {{ $svc.metricsPort }}
               protocol: TCP
             {{- end }}
           livenessProbe:
@@ -140,12 +147,6 @@ spec:
     - name: grpc
       port: {{ $svc.grpcPort }}
       targetPort: grpc
-      protocol: TCP
-    {{- end }}
-    {{- if $svc.metricsPort }}
-    - name: metrics
-      port: {{ $svc.metricsPort }}
-      targetPort: metrics
       protocol: TCP
     {{- end }}
   selector:

@@ -28,6 +28,8 @@ scrape_configs:
     metrics_path: /metrics
 
   # OpsMesh Controlplane
+  # 控制面有【独立】metrics 监听（internal/controlplane/server_netsec.go 对 metricsPort
+  # 单独 net.Listen），与 Web(8080)/gRPC(9090) 分离，故此处 9091 正确。
   - job_name: "opsmesh-controlplane"
     static_configs:
       - targets: ["controlplane:9091"]
@@ -35,75 +37,88 @@ scrape_configs:
     scrape_interval: 10s
 
   # OpsMesh Microservices
-  # metrics 端口统一 9091（与 helm values.yaml metricsPort 对齐，ServiceMonitor 亦采此端口）
-  - job_name: "auth-svc"
-    static_configs:
-      - targets: ["auth-svc:9091"]
-    metrics_path: /metrics
-
+  #
+  # 事实（2026-09-25 逐服务对照源码核验）：微服务【没有】独立 metrics 端口——
+  # services/** 无任何 9091 监听；/metrics 由服务在自身 HTTP 端口注册
+  # （cmd/<svc>/main.go: mux.Handle("/metrics", metrics.GetHandler())）。
+  # 当前仅 device-svc / task-svc / alert-svc 注册了该路径；auth / config / log /
+  # gpu / portal / aio 尚未暴露 Prometheus 指标。此前为 9 个服务配置的 :9091
+  # 抓取任务全部指向无监听端口（target 恒 DOWN，属虚假配置），已按实际情况删减；
+  # 其余服务补齐 /metrics 后再在此追加 job。
   - job_name: "device-svc"
     static_configs:
-      - targets: ["device-svc:9091"]
+      - targets: ["device-svc:8101"]
     metrics_path: /metrics
 
   - job_name: "task-svc"
     static_configs:
-      - targets: ["task-svc:9091"]
+      - targets: ["task-svc:8102"]
     metrics_path: /metrics
 
   - job_name: "alert-svc"
     static_configs:
-      - targets: ["alert-svc:9091"]
+      - targets: ["alert-svc:8103"]
     metrics_path: /metrics
 
-  - job_name: "config-svc"
-    static_configs:
-      - targets: ["config-svc:9091"]
-    metrics_path: /metrics
-
-  - job_name: "log-svc"
-    static_configs:
-      - targets: ["log-svc:9091"]
-    metrics_path: /metrics
-
-  - job_name: "gpu-svc"
-    static_configs:
-      - targets: ["gpu-svc:9091"]
-    metrics_path: /metrics
-
-  - job_name: "aio-svc"
-    static_configs:
-      - targets: ["aio-svc:9091"]
-    metrics_path: /metrics
-
-  - job_name: "portal-svc"
-    static_configs:
-      - targets: ["portal-svc:9091"]
-    metrics_path: /metrics
-
-  # Infrastructure
+  # Infrastructure（经 blackbox_exporter 做 TCP 可达性拨测）
+  #
+  # 为什么必须带 relabel_configs（2026-09-25 实测）：metrics_path=/probe + module 是
+  # blackbox_exporter 的协议——Prometheus 应当去抓【exporter】的 /probe?target=<被拨测地址>，
+  # 而不是把 /probe 发给 MySQL/Redis 本身。缺了下面三条 relabel，target 恒 DOWN，
+  # 并让 up==0 / MySQLDown / RedisDown 在健康栈上常驻 firing（实测 5 条 critical 假告警）。
+  #   __param_target = 拨测目标（原 target 地址）
+  #   instance       = 用被拨测地址做标签，便于 Grafana 展示
+  #   __address__    = 改指向 blackbox-exporter（compose 服务名，见 docker-compose.prod.yml）
   - job_name: "opsmesh-mysql"
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
     static_configs:
       - targets: ["mysql:3306"]
-    metrics_path: /probe
-    params:
-      module: [tcp_connect]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
 
   - job_name: "opsmesh-redis"
-    static_configs:
-      - targets: ["redis:6379"]
     metrics_path: /probe
     params:
       module: [tcp_connect]
+    static_configs:
+      - targets: ["redis:6379"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
 
-  # OTel Collector metrics
+  # OTel Collector 应用侧指标（OTLP → prometheus exporter，端口 8888）
   - job_name: "otel-collector"
     static_configs:
       - targets: ["otel-collector:8888"]
     metrics_path: /metrics
 
-  # Docker daemon metrics (if available)
-  - job_name: "docker"
+  # OTel Collector 自身遥测（otelcol_* 进程指标、队列/丢弃计数）。
+  # 注意：0.110.0 的内部遥测默认 :8888，与应用侧 exporter 撞端口会让 collector 起不来，
+  # 故 otel-config.yaml 已把内部遥测显式挪到 8889（见该文件 service.telemetry 注释）。
+  - job_name: "otel-collector-internal"
     static_configs:
-      - targets: ["host.docker.internal:9323"]
+      - targets: ["otel-collector:8889"]
     metrics_path: /metrics
+
+  # Docker daemon 指标：默认【不启用】。
+  # 原因（2026-09-25 实测）：dockerd 默认不暴露 /metrics，需要显式开启（Docker Desktop：
+  # Settings → Docker Engine 加 "metrics-addr": "0.0.0.0:9323"；Linux：/etc/docker/daemon.json
+  # 同上并重启 docker）。此前默认启用让该 target 恒 DOWN，叠加 alerts.yml 的 up==0 会产生
+  # 常驻 critical 假告警。另需注意 Linux 宿主默认没有 host.docker.internal 主机名
+  # （需给 Prometheus 加 extra_hosts: ["host.docker.internal:host-gateway"]）。
+  # 开启方式：取消下面注释，并确认已按上述配置 dockerd。
+  # - job_name: "docker"
+  #   static_configs:
+  #     - targets: ["host.docker.internal:9323"]
+  #   metrics_path: /metrics

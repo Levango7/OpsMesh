@@ -8,6 +8,23 @@
 # Renovate 会检测 FROM 行并自动创建 PR 添加 @sha256:<digest>，合入后即钉死。
 # CI 中有 digest 校验步骤（ci.yml security job）检查钉死状态。
 # 手动钉死：crane digest golang:1.26-bookworm → FROM golang:1.26-bookworm@sha256:<digest> AS build
+
+# ── 企业版前端构建阶段（P0-3）──
+# 企业版前端（Vue3 + Vite，web/enterprise/）是控制面的交付物之一：产物经 go:embed
+# 打进二进制，由 /enterprise/ 提供。没有这个阶段，客户拿到的镜像里只有占位页
+# （P0-3：「企业版前端无任何可交付路径」）。发布镜像必须走本 Dockerfile，故在此构建。
+# 受限网络可换源：docker build --build-arg NPM_REGISTRY=https://registry.npmmirror.com .
+ARG NPM_REGISTRY=https://registry.npmjs.org
+FROM node:22-alpine AS web
+ARG NPM_REGISTRY
+WORKDIR /src/web/enterprise
+# 先只拷清单：依赖层可复用，改源码不触发重新 npm ci。
+COPY web/enterprise/package.json web/enterprise/package-lock.json ./
+RUN npm config set registry "$NPM_REGISTRY" && npm ci --no-audit --no-fund
+COPY web/enterprise/ ./
+# 构建失败即整个镜像构建失败（不静默降级为占位页）：交付物必须确定包含企业版前端。
+RUN npm run build && test -f dist/index.html
+
 FROM golang:1.26-bookworm AS build
 # 国内网络环境 proxy.golang.org 不可达，走 goproxy.cn 公共代理（CI 同样可用）。
 ENV GOPROXY=https://goproxy.cn,direct
@@ -22,6 +39,9 @@ COPY go.mod go.sum ./
 # M11：先 download 再 verify，校验已下载模块内容与 go.sum 哈希一致。
 RUN go mod download && go mod verify
 COPY . .
+# 企业版前端产物（见上方 web 阶段）覆盖 embed 目录内的占位页 → go:embed 打进二进制。
+# 缺此行则客户打开 /enterprise/ 只能看到「未内置」说明页（P0-3 缺陷）。
+COPY --from=web /src/web/enterprise/dist/ ./internal/controlplane/embed/enterprise/
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /opsmesh ./cmd/opsmesh
 
 # P2-2 供应链安全：distroless 镜像 digest 同样由 Renovate 自动钉死。

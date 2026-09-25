@@ -1,8 +1,11 @@
 # OpsMesh Helm Chart 默认值（开发/体验环境）
 # 生产环境请使用 -f values-production.yaml 覆盖关键项。
 # 文档：https://github.com/opsmesh/opsmesh
-# 端口约定：各微服务 httpPort/grpcPort 独立配置（见各服务段，对照源码默认值），
-# 统一 metricsPort: 9091（Prometheus /metrics 采集端口，全服务一致）。
+# 端口约定：各微服务 httpPort/grpcPort 独立配置（见各服务段，对照源码默认值）。
+# 指标暴露：微服务【没有】独立 metrics 端口（services/** 无 9091 监听），/metrics
+# 由服务在自身 HTTP 端口注册（cmd/<svc>/main.go: mux.Handle("/metrics", metrics.GetHandler())）。
+# 当前仅 device-svc / task-svc / alert-svc 注册了该路径，因此只有这三段 metrics: true，
+# ServiceMonitor 按 http 端口抓取；其余服务补齐 /metrics 后再开启。
 
 ## @section Global
 global:
@@ -45,6 +48,10 @@ controlplane:
     # 证书需以 Secret 形式预置，键名 tls.crt / tls.key / ca.crt
     # 启用 mTLS 时 ca.crt 用于校验客户端证书（双向认证）；仅 server TLS 时可省略 ca.crt。
     secretName: opsmesh-tls
+  # Web/REST（8080）监听协议：auto=有证书即 HTTPS（适合控制面直供 HTTPS 的部署）；
+  # off=始终明文——本 chart 默认形态（TLS 由 Ingress/LB 终止，8080 仅 ClusterIP 内可达，
+  # kubelet 探针走明文 httpGet）；on=强制 HTTPS（证书 SAN 须含访问域名，探针自动转 HTTPS）。
+  httpTLS: "off"
   # 任务租约租期秒；超期未上报结果则复位重调度
   taskLeaseSec: 300
   # 任务失败重试上限；超出置 failed（死信）
@@ -59,6 +66,37 @@ controlplane:
   # 用户中心 JWT 签发密钥（HS256，多副本必须一致）。空=helm 首次安装随机生成并固化。
   # 生产务必 --set 注入，长度≥32 字节。
   jwtSecret: ""
+  # 内置 admin 账号的初始口令（须≥8 位且含大小写字母与数字）。空=helm 首次安装随机生成并写入
+  # Secret（upgrade 复用同一值，不轮换）。读取方式：
+  #   kubectl get secret <release>-secret -o jsonpath='{.data.admin-password}' | base64 -d; echo
+  # 生产建议显式注入（Secret 注入即可，无需进 values 明文）：
+  #   helm upgrade <release> ./deploy/helm/opsmesh --set controlplane.adminPassword="$(openssl rand -base64 24)"
+  # 注意：production=true 时该值为空且库内 admin 仍是默认弱口令会导致控制面 fail-fast（防管理员被锁死）。
+  adminPassword: ""
+  # admin 口令恢复开关：管理员口令遗失时置 true，用上面的 adminPassword 覆盖库内口令。
+  # 默认 false=仅在「admin 仍是公开弱口令」的首启场景应用，避免重启时回滚界面上的改密。
+  adminPasswordForceReset: false
+  # kubeconfig AES-256-GCM 静态加密密钥（base64 编码的 32 字节；等保三级要求静态加密）。
+  # 空=helm 首次安装随机生成 32 字节写入 Secret，upgrade 自动复用；生产建议显式注入并离线备份：
+  #   helm install ... --set controlplane.encryptionKey="$(openssl rand 32 | base64 -w0)"
+  # 严禁轮换：已加密的 kubeconfig 只能用同一密钥解密，换掉=被托管主机全部失控需重新纳管。
+  # production=true 且为空时控制面 Validate 拒绝启动（fail-fast，不静默降级为明文存储）。
+  encryptionKey: ""
+  # 多副本会话状态后端：JWT 黑名单 / 限流计数 / 改密令牌的共享存储。
+  # 空=进程内 map（单副本/demo）；redis://host:port=Redis 后端（多副本 HA 必需）。
+  # 留空且 redis.enabled=true、且副本>1（或开 HPA）时，模板自动指向 chart 内置 Redis；
+  # production=true + 多副本 + 最终为空 → 控制面 Validate 拒绝启动。
+  # 带密码的外部 Redis：用 extraEnv 注入 OPSMESH_SESSION_STORE（可接 secretKeyRef；
+  # extraEnv 位于 env 列表末尾，同名覆盖模板默认值）——避免明文口令进入 Pod 参数。
+  sessionStore: ""
+  # 日志检索后端：memory | sql | loki | es（控制面侧日志查询/检索）。
+  # 默认 memory=进程内（重启即丢，开发可用）；生产建议 loki（本 chart 不部署 Loki 实例，
+  # 需自备并把地址填到 lokiEndpoint）。
+  # 注意：只有非默认值才会显式生成 --log-backend 参数——显式参数会压过 env，
+  # 因此想完全用 extraEnv（OPSMESH_LOG_BACKEND / OPSMESH_LOKI_ENDPOINT）配置时保持此处默认即可。
+  logBackend: "memory"
+  # Loki API 地址（如 http://loki.monitoring.svc:3100）；仅 logBackend=loki 时生效。
+  lokiEndpoint: ""
   # Cookie Secure 标志：控制 at/rt HttpOnly Cookie 的 Secure 属性。
   # true=Cookie 仅经 HTTPS 传输（防中间人窃取会话）；false=Cookie 亦经 HTTP 传输（明文内网/本地开发需要）。
   # 开发默认 false；生产模式（production=true）下代码侧会自动回退 true，但建议显式设置以便审计。
@@ -194,6 +232,8 @@ redis:
 # templates/microservices.yaml 渲染为空，存量 chart 行为 100% 不变（兼容红线）。
 # 键名统一用下划线（auth_svc 而非 auth-svc）：规避 helm --set 与模板 range 的连字符键坑。
 # 开启单个服务：helm upgrade <release> ./deploy/helm/opsmesh --set services.task_svc.enabled=true
+# JWT 接线：jwtEnvName 非空的服务自动注入该名变量（取值复用 Secret 的 jwt-secret，与控制面同源）——
+# 缺省时 auth-svc/device-svc 会退回代码内置弱默认值，生产启用微服务务必保留该接线。
 # 端口/健康路径均对照各服务 pkg/config/config.go 与 cmd/*/main.go 源码默认值。
 # 镜像名对照 .github/workflows/release.yml matrix 实际推送名：ghcr.io/<owner>/<service>，
 # 三连 tag：v<version>（发布）/ <github.sha>（可追溯）/ latest（浮动）。
@@ -211,14 +251,15 @@ services:
     httpPort: 8081
     # gRPC 端口（=AUTH_SVC_GRPC_PORT 代码默认 50052）；纯 HTTP 服务填 0（不渲染 gRPC 端口）
     grpcPort: 50052
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
     replicas: 1
     # 环境变量前缀（auth-svc/pkg/config/config.go）：模板渲染 <前缀>_STORE_TYPE / <前缀>_DSN
     storeEnvPrefix: "AUTH_SVC"
     # 存储后端：memory（零依赖） | sql（接 MySQL，DSN 自动从 chart Secret mysql-dsn 注入，
     # 需 controlplane.store=mysql 且 mysql.enabled=true，否则渲染空 DSN 回退 memory）
     storeType: "memory"
+    # JWT 校验密钥 env 名（auth-svc/pkg/config getEnv("AUTH_SVC_JWT_SECRET", ...)）：
+    # 非空时渲染该名变量，取值复用 Secret 的 jwt-secret（与控制面同源，避免代码内置弱默认值）。
+    jwtEnvName: "AUTH_SVC_JWT_SECRET"
     probe:
       # auth-svc 健康路径：cmd/auth-svc/main.go mux.HandleFunc("/health", ...)
       path: /health
@@ -260,11 +301,13 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8081
     grpcPort: 50052
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
+    # /metrics 已注册在 HTTP 端口（device-svc/cmd/device-svc/main.go），ServiceMonitor 据此生成
+    metrics: true
     replicas: 1
     storeEnvPrefix: "DEVICE_SVC"
     storeType: "memory"
+    # JWT 校验密钥 env 名（device-svc/pkg/config getEnv("DEVICE_SVC_JWT_SECRET", ...)）
+    jwtEnvName: "DEVICE_SVC_JWT_SECRET"
     probe:
       # device-svc/cmd/device-svc/main.go 健康路径 /health
       path: /health
@@ -303,11 +346,14 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8081
     grpcPort: 50052
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
+    # /metrics 已注册在 HTTP 端口（task-svc/cmd/task-svc/main.go），ServiceMonitor 据此生成
+    metrics: true
     replicas: 1
     storeEnvPrefix: "TASK_SVC"
     storeType: "memory"
+    # JWT 校验密钥 env 名。注意：task-svc 代码读的是裸名 JWT_SECRET（非 TASK_SVC_JWT_SECRET），
+    # 与控制面同名但作用域仅限该 Pod，无冲突。
+    jwtEnvName: "JWT_SECRET"
     probe:
       # task-svc/cmd/task-svc/main.go 健康路径 /health
       path: /health
@@ -346,8 +392,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8080
     grpcPort: 50051
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
+    # /metrics 已注册在 HTTP 端口（alert-svc/cmd/alert-svc/main.go），ServiceMonitor 据此生成
+    metrics: true
     replicas: 1
     storeEnvPrefix: "ALERT_SVC"
     storeType: "memory"
@@ -389,8 +435,6 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8083
     grpcPort: 50054
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "CONFIG_SVC"
     storeType: "memory"
@@ -434,8 +478,6 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8080
     grpcPort: 9090
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: ""
     storeType: "memory"
@@ -479,8 +521,6 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8081
     grpcPort: 50052
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "DEPLOY_SVC"
     storeType: "memory"
@@ -523,8 +563,6 @@ services:
     httpPort: 8082
     # 无 gRPC 服务端 → 0（模板不渲染 gRPC 端口）
     grpcPort: 0
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "PLUGIN_SVC"
     storeType: "memory"
@@ -566,8 +604,6 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8080
     grpcPort: 50051
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "PORTAL_SVC"
     storeType: "memory"
@@ -610,8 +646,6 @@ services:
     httpPort: 8100
     # 无 gRPC 服务端 → 0（模板不渲染 gRPC 端口）
     grpcPort: 0
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
     replicas: 1
     # aio-svc 无 STORE_TYPE/DSN env（SLO/异常检测引擎内存态）
     storeEnvPrefix: ""
@@ -656,8 +690,6 @@ services:
     httpPort: 8080
     # 无 gRPC 服务端 → 0（模板不渲染 gRPC 端口）
     grpcPort: 0
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
     replicas: 1
     # grafana-bridge 无 STORE_TYPE/DSN env
     storeEnvPrefix: ""
@@ -703,8 +735,6 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8090
     grpcPort: 0
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
     replicas: 1
     # gpu-svc 无 STORE_TYPE/DSN env（Ollama 集成为外部依赖 OLLAMA_URL）
     storeEnvPrefix: ""
@@ -747,8 +777,6 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8080
     grpcPort: 0
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
     replicas: 1
     # bot-svc 无 STORE_TYPE/DSN env（IM 平台 token 各自 env）
     storeEnvPrefix: ""
@@ -791,8 +819,6 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8082
     grpcPort: 0
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "RUNBOOK_SVC"
     storeType: "memory"
@@ -834,8 +860,6 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8082
     grpcPort: 50052
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "INCIDENT_SVC"
     storeType: "memory"
@@ -877,8 +901,6 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8080
     grpcPort: 0
-    # Prometheus metrics 端口（/metrics 采集，全微服务统一 9091）
-    metricsPort: 9091
     replicas: 1
     storeEnvPrefix: "AUTOSCALER_SVC"
     storeType: "memory"

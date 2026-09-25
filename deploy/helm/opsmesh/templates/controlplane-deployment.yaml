@@ -1,3 +1,6 @@
+{{- if and (eq .Values.controlplane.logBackend "loki") (not .Values.controlplane.lokiEndpoint) -}}
+{{ fail "controlplane.logBackend=loki 需要 controlplane.lokiEndpoint（如 http://loki.monitoring.svc:3100）：控制面 Validate 会拒绝 --log-backend=loki 且 --loki-endpoint 为空的配置，这里提前到 helm 渲染期报错（而非 Pod CrashLoop）。若想完全用 extraEnv 配置，请保持 controlplane.logBackend=memory 并注入 OPSMESH_LOG_BACKEND / OPSMESH_LOKI_ENDPOINT。" }}
+{{- end -}}
 {{- if .Values.controlplane -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -65,6 +68,14 @@ spec:
             - --leader-ttl-sec={{ .Values.controlplane.leaderTTLSec }}
             - --leader-tick-sec={{ .Values.controlplane.leaderTickSec }}
             - --archive-age-min={{ .Values.controlplane.archiveAgeMin }}
+            # 日志检索后端：仅非默认值（memory）时显式传参——显式 --log-backend 会压过 env
+            # （配置优先级 flag > env），写死默认值反而堵住 extraEnv 注入 OPSMESH_LOG_BACKEND 的路。
+            {{- if ne .Values.controlplane.logBackend "memory" }}
+            - --log-backend={{ .Values.controlplane.logBackend }}
+            {{- end }}
+            {{- if .Values.controlplane.lokiEndpoint }}
+            - --loki-endpoint={{ .Values.controlplane.lokiEndpoint }}
+            {{- end }}
             # Cookie Secure：透传到控制面，控制 at/rt HttpOnly Cookie 的 Secure 属性。
             # 显式传值（true/false）以确保语义明确，避免依赖代码侧 production 回退逻辑。
             - --cookie-secure={{ .Values.controlplane.cookieSecure }}
@@ -82,6 +93,12 @@ spec:
             - --tls-key=/etc/opsmesh/tls/tls.key
             - --client-ca=/etc/opsmesh/tls/ca.crt
             {{- end }}
+            # Web/REST 监听协议。本 chart 的形态是「TLS 由 Ingress/LB 终止」：
+            # 8080 仅 ClusterIP 内可达、kubelet 探针走明文 httpGet，故默认显式关闭
+            # 控制面自身 HTTPS，避免与探针/Ingress 后端协议不一致。
+            # 若要控制面直供 HTTPS：controlplane.httpTLS=on（证书 SAN 须含访问域名），
+            # 组件下面 livenessProbe/readinessProbe 的 scheme 同步改为 HTTPS。
+            - --http-tls={{ .Values.controlplane.httpTLS }}
             {{- if eq .Values.controlplane.store "mysql" }}
             - --mysql-dsn=$(OPSMESH_MYSQL_DSN)
             - --redis-addr={{ include "opsmesh.redis.serviceName" . }}:6379
@@ -101,6 +118,40 @@ spec:
                 secretKeyRef:
                   name: {{ include "opsmesh.fullname" . }}-secret
                   key: jwt-secret
+            # 初始 admin 口令交付：生产模式（production=true）下若无此变量且库内 admin
+            # 仍是公开弱口令，控制面会 fail-fast 拒绝启动（宁可不启动也不锁死管理员）。
+            - name: OPSMESH_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "opsmesh.fullname" . }}-secret
+                  key: admin-password
+            {{- if .Values.controlplane.adminPasswordForceReset }}
+            # 口令恢复开关：管理员口令遗失时置 true，用 Secret 中的 admin-password 覆盖。
+            # 默认 false=只在首启生效，避免运维残留配置在重启时回滚界面改密。
+            - name: OPSMESH_ADMIN_PASSWORD_FORCE_RESET
+              value: "true"
+            {{- end }}
+            # kubeconfig 静态加密密钥（等保三级）。production=true 且为空时控制面 fail-fast 拒绝启动；
+            # Secret 侧保证首次安装即随机生成并 upgrade 复用，默认安装路径无需手工注入。
+            - name: OPSMESH_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "opsmesh.fullname" . }}-secret
+                  key: encryption-key
+            # 多副本会话共享后端（JWT 黑名单 / 限流计数 / 改密令牌）。
+            # 用 env 而非 arg：① 代码侧优先级 flag > env，写成 arg 会压过 env；
+            # ② env 可被列表末尾的 extraEnv 同名覆盖（便于接 secretKeyRef 注入带密码的 URL）。
+            {{- if .Values.controlplane.sessionStore }}
+            - name: OPSMESH_SESSION_STORE
+              value: {{ .Values.controlplane.sessionStore | quote }}
+            {{- else if and .Values.redis.enabled (eq .Values.controlplane.store "mysql") (or (gt (int .Values.controlplane.replicaCount) 1) .Values.controlplane.autoscaling.enabled) }}
+            # 多副本（含 HPA 可扩到 >1）但未显式配置：默认指向 chart 内置 Redis（无密码；
+            # network-policy 仅放行控制面与微服务）。否则 production+replicas>1 时控制面拒绝启动。
+            # 条件与 redis-statefulset.yaml 的渲染条件一致（redis.enabled 且 store=mysql），
+            # 避免 memory 存储 + 多副本时指向一个并不存在的 Redis Service。
+            - name: OPSMESH_SESSION_STORE
+              value: {{ printf "redis://%s:6379" (include "opsmesh.redis.serviceName" .) | quote }}
+            {{- end }}
             {{- if eq .Values.controlplane.store "mysql" }}
             - name: OPSMESH_MYSQL_DSN
               valueFrom:
@@ -125,6 +176,9 @@ spec:
             httpGet:
               path: /healthz
               port: http
+              {{- if eq .Values.controlplane.httpTLS "on" }}
+              scheme: HTTPS
+              {{- end }}
             initialDelaySeconds: 10
             periodSeconds: 30
             timeoutSeconds: 3
@@ -133,6 +187,9 @@ spec:
             httpGet:
               path: /healthz
               port: http
+              {{- if eq .Values.controlplane.httpTLS "on" }}
+              scheme: HTTPS
+              {{- end }}
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3

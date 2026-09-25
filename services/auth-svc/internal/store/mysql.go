@@ -61,6 +61,10 @@ func NewMySQLStore(dsn string) (*MySQLStore, error) {
 	}
 
 	s := &MySQLStore{db: db}
+	if err := s.migrate(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to migrate mysql schema: %w", err)
+	}
 	if err := s.seedDefaults(); err != nil {
 		return nil, fmt.Errorf("failed to seed defaults: %w", err)
 	}

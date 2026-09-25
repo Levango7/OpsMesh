@@ -24,8 +24,20 @@
 node_modules
 **/node_modules
 
-# ── 顶层前端（Vue 源码 / 构建产物 / 测试报告，均不参与 go build）──
-web
+# ── 顶层前端 ──
+# P0-3 后企业版前端源码必须进入构建上下文：控制面镜像内的 node 阶段会
+# `npm ci && npm run build`（web/enterprise/），产物拷进
+# internal/controlplane/embed/enterprise/ 由 go:embed 打进二进制并以 /enterprise/ 分发。
+# 若这里整体排除 web/，镜像构建会因找不到 package.json 而失败——那正是 P0-3
+# 「企业版前端无交付路径」的成因之一，勿再回收此行。
+# 依旧排除：依赖树、构建产物、E2E 报告（体积大 / 需在镜像内重建 / 与源码版本无关）。
+web/enterprise/node_modules
+web/enterprise/dist
+web/enterprise/.vite
+web/enterprise/test-results
+web/enterprise/playwright-report
+web/enterprise/e2e
+web/enterprise/e2e-real
 
 # ── 文档与截图 ──
 docs

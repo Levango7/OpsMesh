@@ -571,7 +571,7 @@ func TestSQLStore_Publish_WithBus_Extra(t *testing.T) {
 
 // TestSQLStore_NewSQLStore_InvalidDSN 验证 NewSQLStore 无效 DSN 立即返回错误。
 func TestSQLStore_NewSQLStore_InvalidDSN(t *testing.T) {
-	s, err := NewSQLStore("invalid-dsn", "")
+	s, err := NewSQLStore("invalid-dsn", "", "")
 	if err == nil {
 		defer s.DB().Close()
 		t.Fatal("NewSQLStore 无效 DSN 应返回错误")

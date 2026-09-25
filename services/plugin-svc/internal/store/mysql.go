@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/Levango7/OpsMesh/services/plugin-svc/internal/models"
@@ -38,7 +39,21 @@ func NewMySQLStore(dsn string) (*MySQLStore, error) {
 	return &MySQLStore{db: db}, nil
 }
 
+// ensureParseTime 保证 DSN 带 parseTime=true（否则 DATETIME 列无法 Scan 进 time.Time），
+// 且对「已带查询参数」的 DSN 幂等。
+//
+// 修复的线上缺陷（2026-09-25 实测）：原实现无条件在末尾追加 "?parseTime=true"。
+// 而 compose 等生产清单给出的 DSN 本身已含 "?parseTime=true"，拼出
+// "...?parseTime=true?parseTime=true"，驱动报 invalid bool value: true?parseTime=true，
+// sql.Open 直接失败 → 服务【静默退回 memory store】（生产重启即丢数据：
+// 实测 alert-svc / config-svc 运行在内存存储上，库内无任何表）。
 func ensureParseTime(dsn string) string {
+	if strings.Contains(dsn, "parseTime=") {
+		return dsn
+	}
+	if strings.Contains(dsn, "?") {
+		return dsn + "&parseTime=true"
+	}
 	return dsn + "?parseTime=true"
 }
 

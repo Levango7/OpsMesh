@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"os"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -48,6 +49,7 @@ const sessionKeyPrefix = "session:"
 
 // NewSessionStore 创建 Session 存储。
 // addr 为 Redis 地址（空=默认 localhost:6379）；ttl 为 Session 过期时间。
+// 口令取自 REDIS_PASSWORD（--requirepass 场景；空=不发送 AUTH）。
 // Redis 不可用时 enabled=false，降级为无状态模式。
 func NewSessionStore(addr string, ttl time.Duration) *SessionStore {
 	if addr == "" {
@@ -58,6 +60,7 @@ func NewSessionStore(addr string, ttl time.Duration) *SessionStore {
 	}
 	client := redis.NewClient(&redis.Options{
 		Addr:        addr,
+		Password:    os.Getenv("REDIS_PASSWORD"),
 		DialTimeout: opTimeout,
 		ReadTimeout: opTimeout,
 	})

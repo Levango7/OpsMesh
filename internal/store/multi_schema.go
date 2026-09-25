@@ -103,12 +103,13 @@ func dsnForSchema(baseDSN, schema string) string {
 //
 // 线程安全：所有字段访问经 m.mu 保护。store 方法本身不回调 MultiSchemaStore，无死锁风险。
 type MultiSchemaStore struct {
-	mu           sync.RWMutex
-	baseDSN      string // 基础 DSN（database 名会被替换为 schema 名）
-	redisAddr    string // Redis 地址（所有 schema 共享，仅作缓存）
-	namer        SchemaNamer
-	storeFactory func(schema string) (Store, error) // 创建新 schema 的 store（生产用 *SQLStore，测试可注入 mock）
-	stores       map[string]Store                   // tenantID -> per-tenant store
+	mu            sync.RWMutex
+	baseDSN       string // 基础 DSN（database 名会被替换为 schema 名）
+	redisAddr     string // Redis 地址（所有 schema 共享，仅作缓存）
+	redisPassword string // Redis 认证口令（空=不发送 AUTH）
+	namer         SchemaNamer
+	storeFactory  func(schema string) (Store, error) // 创建新 schema 的 store（生产用 *SQLStore，测试可注入 mock）
+	stores        map[string]Store                   // tenantID -> per-tenant store
 
 	// 配置项（创建新 schema 时传播给 *SQLStore）
 	demo   bool
@@ -123,21 +124,22 @@ type MultiSchemaStore struct {
 
 // NewMultiSchemaStore 构造多租户 schema 隔离存储。
 // baseDSN 为基础 MySQL DSN（database 名会被替换为各租户的 schema 名）。
-// redisAddr 为空则跳过 Redis 缓存。
+// redisAddr 为空则跳过 Redis 缓存；redisPassword 为空表示未设 --requirepass。
 // namer 为租户→schema 名的映射函数（含 SQL 注入防护）。
-func NewMultiSchemaStore(baseDSN, redisAddr string, namer SchemaNamer) (*MultiSchemaStore, error) {
+func NewMultiSchemaStore(baseDSN, redisAddr, redisPassword string, namer SchemaNamer) (*MultiSchemaStore, error) {
 	if namer == nil {
 		return nil, errors.New("multi-schema: namer 为 nil")
 	}
 	m := &MultiSchemaStore{
-		baseDSN:      baseDSN,
-		redisAddr:    redisAddr,
-		namer:        namer,
-		stores:       make(map[string]Store),
-		agentTenant:  make(map[string]string),
-		deviceTenant: make(map[string]string),
-		taskTenant:   make(map[string]string),
-		secret:       mustRandHex(32),
+		baseDSN:       baseDSN,
+		redisAddr:     redisAddr,
+		redisPassword: redisPassword,
+		namer:         namer,
+		stores:        make(map[string]Store),
+		agentTenant:   make(map[string]string),
+		deviceTenant:  make(map[string]string),
+		taskTenant:    make(map[string]string),
+		secret:        mustRandHex(32),
 	}
 	m.storeFactory = m.defaultStoreFactory
 	return m, nil
@@ -170,7 +172,7 @@ func (m *MultiSchemaStore) defaultStoreFactory(schema string) (Store, error) {
 		return nil, fmt.Errorf("multi-schema: 确保 schema %q 存在失败: %w", schema, err)
 	}
 	dsn := dsnForSchema(m.baseDSN, schema)
-	ss, err := NewSQLStore(dsn, m.redisAddr)
+	ss, err := NewSQLStore(dsn, m.redisAddr, m.redisPassword)
 	if err != nil {
 		return nil, fmt.Errorf("multi-schema: 创建 schema %q 的 SQLStore 失败: %w", schema, err)
 	}

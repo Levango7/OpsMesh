@@ -480,10 +480,19 @@ func (s *SQLStore) CreateTask(t *proto.Task) *proto.Task {
 // ClaimTask 原子领取该 agent 的下一条 pending 任务（FOR UPDATE 行锁保证多副本不双领）。
 // 防双跑：领取时 claim_epoch=claim_epoch+1，返回的 Task 带 ClaimEpoch；
 // agent 上报结果时携带 ClaimEpoch，SubmitResult 校验持有者是否仍为当前 epoch。
-
+//
+// 租户隔离（P0-6，第二道闸）：领取条件额外要求任务的 tenant_id 与「agent 自身租户」一致。
+// 下发侧已在各 HTTP/执行器路径校验目标 agent 归属（tenant_guard.go），此处是数据层兜底——
+// 即便未来新增的下发路径漏校验，跨租户任务也永远领不出去（不会落到对方 agent 上执行）。
+// 容忍任务侧 tenant_id 为空/NULL（迁移 011 之前的存量任务），避免历史任务被静默饿死。
 func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	// agent 自身租户（agent 未注册/无租户时为空 → 跳过租户过滤，保持既有行为）。
+	agentTenant := ""
+	if a := s.Agent(agentID); a != nil {
+		agentTenant = a.TenantID
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		log.Printf("[store] ClaimTask begin 失败 %s: %v", agentID, err)
@@ -496,10 +505,14 @@ func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 	var createdAt time.Time
 	var claimEpoch int64
 	var timeout, retryDelay int
+	// (tenant_id IS NULL OR tenant_id='' OR tenant_id=?)：空租户任务视为「无租户标记」放行，
+	// 与下发侧对存量数据的兼容策略一致。
 	if err := tx.QueryRowContext(ctx,
 		`SELECT task_id, tenant_id, type, command, content, path, created_at, claim_epoch, timeout, retry_delay FROM tasks
-		 WHERE agent_id=? AND (status IS NULL OR status='pending') AND (schedule IS NULL OR schedule='') ORDER BY created_at LIMIT 1 FOR UPDATE`,
-		agentID).Scan(&taskID, &tenantID, &typ, &command, &content, &path, &createdAt, &claimEpoch, &timeout, &retryDelay); err != nil {
+		 WHERE agent_id=? AND (status IS NULL OR status='pending') AND (schedule IS NULL OR schedule='')
+		   AND (tenant_id IS NULL OR tenant_id='' OR tenant_id=?)
+		 ORDER BY created_at LIMIT 1 FOR UPDATE`,
+		agentID, agentTenant).Scan(&taskID, &tenantID, &typ, &command, &content, &path, &createdAt, &claimEpoch, &timeout, &retryDelay); err != nil {
 		if err == sql.ErrNoRows {
 			return nil
 		}

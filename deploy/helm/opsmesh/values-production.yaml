@@ -35,6 +35,12 @@ controlplane:
   tls:
     enabled: true
     secretName: opsmesh-tls
+  # Web/REST（8080）监听协议：off = 本 chart 的生产形态——TLS 由 Ingress/LB 终止，
+  # 8080 仅 ClusterIP 内可达（kubelet 探针走明文 httpGet）。控制面自身不启 HTTPS，
+  # 避免与 Ingress 后端协议冲突。若不用 Ingress 而让控制面直供 HTTPS，改 on
+  # （证书 SAN 须含访问域名；探针自动转 HTTPS）。
+  # 注意：off 时若把 8080 以 NodePort/LoadBalancer 直接暴露，即为明文传输口令与会话。
+  httpTLS: "off"
   taskLeaseSec: 300
   taskMaxRetries: 3
   leaderTTLSec: 15
@@ -45,6 +51,27 @@ controlplane:
   # jwtSecret 务必显式注入（多副本需一致），与 provisionSecret 同法：
   # helm install ... --set controlplane.jwtSecret=$(openssl rand -hex 32)
   jwtSecret: ""
+  # adminPassword：内置 admin 初始口令。留空=helm 首次安装随机生成并写入 Secret（upgrade 复用）；
+  # 生产推荐显式注入：--set controlplane.adminPassword="$(openssl rand -base64 24)"
+  # 读取随机值：kubectl get secret <release>-secret -o jsonpath='{.data.admin-password}' | base64 -d; echo
+  adminPassword: ""
+  # adminPasswordForceReset：口令遗失时置 true + adminPassword 覆盖（一次性用，用完请改回 false）。
+  adminPasswordForceReset: false
+  # encryptionKey：kubeconfig 静态加密密钥（等保三级）。留空=首次安装随机生成 32 字节并固化进
+  # Secret（upgrade 复用）；生产建议显式注入并离线备份：
+  #   --set controlplane.encryptionKey="$(openssl rand 32 | base64 -w0)"
+  # 该值丢失或轮换 → 已加密 kubeconfig 无法解密，被托管主机需重新纳管。
+  encryptionKey: ""
+  # sessionStore：多副本会话共享（本 overlay 3 副本 + HPA 2~10，必须有共享后端，
+  # 否则控制面 Validate 直接拒绝启动）。留空=模板自动指向 chart 内置 Redis（推荐，无密码、
+  # NetworkPolicy 隔离）；外部/带密码 Redis 改用 controlplane.extraEnv 注入
+  # OPSMESH_SESSION_STORE（secretKeyRef），extraEnv 同名可覆盖此默认。
+  sessionStore: ""
+  # logBackend/lokiEndpoint：控制面日志检索。生产建议 loki——本 chart 不含 Loki 实例，
+  # 需自备（如 kube-prometheus-stack 之外的 loki-stack）并把内部地址填入 lokiEndpoint；
+  # 留 memory 时控制面重启即丢日志。logBackend=loki 而未填 lokiEndpoint 会在 helm 渲染期报错。
+  logBackend: "memory"
+  lokiEndpoint: ""
   # Cookie Secure 标志：生产强制 true——HTTPS 反代终止 TLS 时控制面虽收 HTTP，
   # 但对外是 HTTPS，Cookie 须 Secure 防中间人窃取会话。
   cookieSecure: true
@@ -174,8 +201,9 @@ redis:
 #     enabled: true
 #     image:
 #       repository: ghcr.io/levango7/task-svc
-#       # 生产禁止 latest：钉 semver 或由 CI GitOps 写回 digest（非空优先于 tag）
-#       tag: "0.7.0"
+#       # 生产禁止 latest：钉 semver 或由 CI GitOps 写回 digest（非空优先于 tag）。
+#       # 标签格式为 release.yml 的 ${GITHUB_REF_NAME#v}（v0.9.0 → 0.9.0），无 v 前缀。
+#       tag: "0.9.0"
 #       digest: ""
 #     replicas: 2
 #     # 生产接 MySQL（需 controlplane.store=mysql + mysql.enabled=true，

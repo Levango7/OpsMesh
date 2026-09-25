@@ -54,7 +54,8 @@ agent → controlplane:8080
 | `--store` | mysql | 持久化后端 |
 | `--mysql-dsn` | opsmesh:opsmesh@tcp(mysql:3306)/opsmesh | MySQL 连接 |
 | `--redis-addr` | redis:6379 | Redis 地址 |
-| `--advertise-addr` | http://controlplane:8080 | 控制面对外地址 |
+| `--advertise-addr` | http://controlplane:8080 | 控制面对外地址（开发明文；生产须 `https://`，见自动纳管前置条件） |
+| `--http-tls` | auto | Web/REST 协议：有 `--tls-cert`/`--tls-key` 即 HTTPS；开发 compose 未配证书故为明文 |
 | `OPSMESH_JWT_SECRET` | `${OPSMESH_JWT_SECRET:-}` | JWT 密钥（空=dev 随机兜底） |
 | `OPSMESH_COOKIE_SECURE` | false | Cookie Secure（开发明文 HTTP 需要 false） |
 | `OPSMESH_PUBLIC_REGISTER` | true | 公开注册（开发开放） |
@@ -121,9 +122,14 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["/usr/local/bin/opsmesh", "--health"]
 ```
 
-`--health` 在 config.Load 之前短路，GET `http://localhost:8080/healthz`，200 → exit 0，否则 exit 1。
+`--health` 在 config.Load 之前短路，探测 `localhost:<http-port>/healthz`，200 → exit 0，否则 exit 1。
+控制面 Web/REST 可能明文也可能 HTTPS（见下节 `--http-tls`），探针**自动适配两种协议**
+（先 HTTPS 后 HTTP），无需按部署形态改健康检查配置。
 
 ### TLS 证书挂载
+
+`--tls-cert` / `--tls-key` 同时作用于两条链路：gRPC（agent↔控制面 mTLS）与 Web/REST（B/S 端口）。
+配置后 Web/REST 默认即走 HTTPS（`--http-tls=auto`），浏览器需访问 `https://`。
 
 ```bash
 docker run -d --name opsmesh-cp \
@@ -137,6 +143,18 @@ docker run -d --name opsmesh-cp \
   --tls-key=/etc/opsmesh/tls/server.key \
   --production
 ```
+
+Web/REST 监听协议由 `--http-tls` 决定：
+
+| 取值 | 行为 | 适用场景 |
+|------|------|---------|
+| `auto`（默认） | 配了 `--tls-cert`+`--tls-key` 即 HTTPS，否则明文 | 控制面直供 HTTPS（如上例） |
+| `on` | 强制 HTTPS，缺证书**拒绝启动** | 不想依赖默认值、要求明确加密的部署 |
+| `off` | 始终明文 | 由 Nginx/Ingress/LB 终止 TLS，控制面端口仅对内网/反代开放 |
+
+`off` 是合法的生产架构（上游终止 TLS），但控制面会打印告警：生产模式 Cookie 强制 `Secure`，
+浏览器直连明文端口会丢弃会话（表现为登录后立即掉线），且端口一旦对公网暴露即为明文传输口令。
+指定 `--http-tls` 时务必确认 `--advertise-addr` 的协议与实际一致（浏览器/agent 安装命令据此拼接）。
 
 ---
 
@@ -217,6 +235,10 @@ OPSMESH_TLS_KEY=/etc/opsmesh/tls/server.key
 
 # JWT 密钥（生产必须注入，openssl rand -hex 32）
 OPSMESH_JWT_SECRET=
+
+# 初始 admin 口令（首登强制改密）；生产未配置且库内 admin 仍是默认弱口令时会拒绝启动。
+# 生成：echo "Aa1$(openssl rand -hex 16)"（须含大小写字母与数字）
+OPSMESH_ADMIN_PASSWORD=
 
 # 对外通告地址
 OPSMESH_ADVERTISE_ADDR=http://0.0.0.0:8080
@@ -302,8 +324,9 @@ helm upgrade opsmesh ./deploy/helm/opsmesh -n opsmesh \
 | `controlplane.store` | memory | 持久化后端 |
 | `controlplane.production` | false | 生产模式 |
 | `controlplane.requireAuth` | false | 强制鉴权 |
-| `controlplane.tls.enabled` | false | TLS/mTLS |
+| `controlplane.tls.enabled` | false | TLS/mTLS（gRPC 与 Web/REST 共用同一份证书） |
 | `controlplane.tls.secretName` | opsmesh-tls | 证书 Secret（键 tls.crt/tls.key/ca.crt） |
+| `controlplane.httpTLS` | off | Web/REST 监听协议：auto/on/off。chart 默认 off=TLS 由 Ingress/LB 终止、8080 仅 ClusterIP 内可达；改 on 时探针自动转 HTTPS，证书 SAN 须含访问域名 |
 | `controlplane.taskLeaseSec` | 300 | 任务租约秒 |
 | `controlplane.taskMaxRetries` | 3 | 任务重试上限 |
 | `controlplane.leaderTTLSec` | 15 | 选主租约 |
@@ -466,7 +489,9 @@ Operator 会自动 Reconcile 出控制面 Deployment、agent DaemonSet、MySQL/R
 - [ ] `--store=mysql`（memory 多副本数据分裂）
 - [ ] `--jwt-secret` 已注入 ≥32 字节强随机密钥（`openssl rand -hex 32`），多副本一致
 - [ ] `--provision-secret` 已注入强随机密钥，多副本一致
-- [ ] `--tls-cert` / `--tls-key` 已配置 gRPC TLS 证书
+- [ ] `--tls-cert` / `--tls-key` 已配置 TLS 证书（同时用于 gRPC 与 Web/REST；生产缺任一项拒绝启动）
+- [ ] Web/REST 协议已确认：直供 HTTPS 用 `--http-tls=auto/on`；由反代终止 TLS 用 `--http-tls=off` 且端口仅对内网开放
+- [ ] `--advertise-addr` 协议与实际一致（HTTPS 部署填 `https://...`，否则 agent 安装命令/下载地址错误）
 - [ ] `--client-ca` 已配置 mTLS 客户端 CA（强制客户端持证）
 - [ ] `--cookie-secure=true`（HTTPS 环境防中间人窃取会话）
 - [ ] `--public-register=false`（关闭公开注册，仅管理员创建用户）
@@ -617,9 +642,60 @@ Operator 会自动 Reconcile 出控制面 Deployment、agent DaemonSet、MySQL/R
 
 ## 企业版前端部署
 
-OpsMesh 控制面内置 Go 模板仪表盘（`/`），适合轻量内网运维。面向企业级前端体验，仓库另提供独立 SPA 前端（`web/enterprise/`，技术栈 Vue 3 + Vite + Pinia + Vue Router），**与控制面解耦、独立构建、独立部署**：Nginx/CDN 托管静态资源，反向代理 API 到控制面 `:8080`。
+企业版前端（`web/enterprise/`，技术栈 Vue 3 + Vite + Pinia + Vue Router）是唯一维护的业务前端。个人版原生 JS 仪表盘已收敛为极简引导页（`GET /`），页面上的「进入企业版前端」入口指向 `/enterprise/`。
 
-### 1. 构建步骤
+控制面内置 Go 模板仪表盘（`/`），适合轻量内网运维。
+
+### 1. 交付形态选择
+
+| 形态 | 适用场景 | 构建方式 | 前端路由前缀 |
+|---|---|---|---|
+| **A. 控制面内置托管**（默认，推荐） | 私有化单机/小集群，无独立网关与 CDN | 构建期 `go:embed` 打进控制面二进制（镜像构建自动完成） | `/enterprise/` |
+| B. 独立构建 + 子路径托管 | 已有统一网关（APISIX/Envoy/Nginx）承担静态与鉴权 | `npm run build` 后由 Nginx `alias` | `/enterprise/`（保留 Vite 默认 `base`） |
+| C. 独立站点（根路径） | 前端独占域名/端口，走 CDN | 改 `vite.config.js` 的 `base: '/'` 后构建 | `/` |
+
+> **形态 A 的边界**：控制面只在**构建期**打包前端产物，运行期不依赖 Node，也不读取宿主文件系统。浏览器直接访问 `/enterprise/`（该路径**不做租户/鉴权门禁**——浏览器不会携带 `X-Tenant-ID`，登录页必须先渲染出来），租户隔离仍由 `/api/v1/*` 的鉴权中间件承担。
+
+### 2. 方式 A：控制面内置托管（推荐）
+
+#### 2.1 源码构建
+
+```bash
+# 一键：装配前端产物到 internal/controlplane/embed/enterprise/
+bash deploy/docker/scripts/build-enterprise-web.sh          # 依赖 Node 18+（推荐 20 LTS）
+bash deploy/docker/scripts/build-enterprise-web.sh --clean  # 先删 node_modules 再 npm ci
+bash deploy/docker/scripts/build-enterprise-web.sh --no-build  # 复用已有 dist/，仅装配
+
+make frontend        # 等价封装
+make build           # 前端装配 + 后端编译（go build -a 强制重编，确保 embed 生效）
+```
+
+`go:embed` 无法跨目录，因此产物必须物理落在 `internal/controlplane/embed/enterprise/`；该目录已用嵌套 `.gitignore` 白名单化（仅提交 `placeholder.html` 与 `.gitignore`），构建产物不会被提交。
+
+#### 2.2 容器镜像构建（推荐路径）
+
+两个 Dockerfile（根目录 `Dockerfile`、`deploy/docker/Dockerfile.controlplane`）均已内置 `node` 构建阶段并自动装配产物，**npm 构建失败会直接让镜像构建失败**（不会静默产出无前端的镜像）：
+
+```bash
+docker build -t opsmesh:latest .
+
+# 内网/镜像站：覆盖 npm registry
+docker build --build-arg NPM_REGISTRY=https://registry.npmmirror.com -t opsmesh:latest .
+```
+
+#### 2.3 未构建时的行为（诚实降级）
+
+源码编译（`go build`，未经 `make frontend`）时嵌入的是占位页，控制面的表现是**可诊断的**而非静默错误：
+
+- `/enterprise/` 返回 **200** 的说明页，标题为「OpsMesh 企业版前端 · 未内置」，正文给出上述构建命令；
+- 响应头带 `X-OpsMesh-Enterprise-Bundle: placeholder`，便于脚本/巡检断言；
+- 个人版引导页 `GET /` 中的「进入企业版前端」入口被**服务端剥离**（构建期标记 `<!--OPSMESH_ENTERPRISE_CTA_START/END-->`），避免用户点进死路。
+
+判定逻辑：`enterprise/index.html` 存在且不含标记 `OPSMESH_ENTERPRISE_BUNDLE_PLACEHOLDER` 才算已装配。占位状态永不返回 404，因为 404 常被前端框架误判为「路由未命中」并回退 HTML，排障成本高。
+
+### 3. 方式 B/C：独立构建 + Nginx/CDN 托管
+
+#### 3.1 构建步骤
 
 ```bash
 # 依赖：Node.js 18+（推荐 20 LTS）
@@ -637,9 +713,7 @@ npm run dev         # Vite dev server，端口 5174，自动代理 /api → loca
 
 构建产物为纯静态文件（`dist/index.html` + `dist/assets/*`），可托管于任意静态服务器或 CDN。
 
-### 2. Nginx 配置示例
-
-#### 2.1 独立站点（根路径部署）
+#### 3.2 独立站点（根路径部署）
 
 若企业版前端独占一个域名/端口，将 `vite.config.js` 中 `base` 改为 `'/'` 后重新构建，Nginx 配置如下：
 
@@ -667,9 +741,9 @@ server {
 }
 ```
 
-#### 2.2 子路径部署（保留默认 `/enterprise/` 前缀）
+#### 3.3 子路径部署（保留默认 `/enterprise/` 前缀）
 
-`vite.config.js` 默认 `base: '/enterprise/'`，构建产物以 `/enterprise/` 前缀分发，可由控制面或统一网关托管于子路径：
+`vite.config.js` 默认 `base: '/enterprise/'`，构建产物以 `/enterprise/` 前缀分发，可由统一网关托管于子路径（控制面内置托管见方式 A）：
 
 ```nginx
 server {
@@ -693,7 +767,7 @@ server {
 }
 ```
 
-### 3. 与后端 API 的反代配置
+#### 3.4 与后端 API 的反代配置
 
 企业版前端通过 `/api/v1/` 前缀调用控制面 REST API，反代要点：
 
@@ -725,7 +799,7 @@ server {
 生产环境**强烈建议**全链路 HTTPS：
 
 - **前端 → 用户**：Nginx 配置 TLS 证书（Let's Encrypt / 企业 PKI），`listen 443 ssl http2;`。
-- **Nginx → 控制面**：若同机/内网可信可走 HTTP；跨网段建议走 HTTPS（控制面 `--tls-cert` / `--tls-key` 启用 HTTP TLS，Nginx `proxy_pass https://controlplane:8080;` + `proxy_ssl_verify on;`）。
+- **Nginx → 控制面**：若同机/内网可信可走 HTTP——此时控制面用 `--http-tls=off`（Nginx `proxy_pass http://controlplane:8080;`）；跨网段建议走 HTTPS——控制面 `--tls-cert` / `--tls-key` 配置证书且 `--http-tls=auto/on`（默认 auto 即启用，Nginx `proxy_pass https://controlplane:8080;` + `proxy_ssl_verify on;`）。两种形态控制面均只应被反代/内网访问。
 - **控制面 → agent**：gRPC TLS / mTLS（`--tls-cert` / `--tls-key` / `--client-ca`），与前端部署无关但须一并配置。
 - **Cookie Secure**：HTTPS 环境下控制面 `--cookie-secure=true`，确保 at/rt Cookie 仅经 HTTPS 传输，防中间人窃取。
 - **HSTS**：Nginx 加 `add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;` 强制后续访问走 HTTPS。
@@ -734,17 +808,24 @@ server {
 
 企业版前端独立部署时，`X-Tenant-ID` / `X-User-Id` / `X-User-Roles` 身份头由前置网关（APISIX/Envoy）或 Nginx 注入。控制面 `--require-auth` 开启后，缺失 `X-Tenant-ID` 的请求被直接拒绝（401）。详见 [README.md - IAM 与租户隔离](../README.md#iam-与租户隔离)。
 
+> 例外：`/enterprise/` 静态资源与 SPA 入口**不注入、不校验**上述身份头——浏览器首屏（登录页）本身尚无会话，若此处强校验会导致登录页无法加载。隔离边界在 `/api/v1/*`。
+
 #### 4.4 缓存与版本发布
 
 - **静态资源**：Vite 构建产物 `assets/*` 文件名含内容哈希（如 `index-<hash>.js`），可设置 `Cache-Control: public, max-age=31536000, immutable` 长缓存。
 - **index.html**：**不缓存**（`Cache-Control: no-cache` 或 `max-age=0`），确保用户及时拉到新版本入口。
-- **版本发布**：构建新产物 → 替换 `dist/` →（可选）`nginx -s reload`；无需重启控制面。
+- **版本发布**：
+  - 方式 A（内置托管）：重新构建镜像/二进制并滚动重启控制面；`assets/*` 已由控制面自带 `immutable` 长缓存，`index.html` 与 `sw.js` 自带 `no-cache, no-store, must-revalidate`，无需额外网关配置。
+  - 方式 B/C（独立托管）：构建新产物 → 替换 `dist/` →（可选）`nginx -s reload`；无需重启控制面。
+- **预压缩旁路（方式 A）**：若 `dist/` 内存在同名 `.br` / `.gz`（如 `index-<hash>.js.br`），控制面会在客户端 `Accept-Encoding` 支持时直接返回旁路文件，并带 `Content-Encoding` 与 `Vary: Accept-Encoding`；无旁路则回退原始文件。gzip 静态预压缩可在构建后执行 `find dist -type f \( -name '*.js' -o -name '*.css' -o -name '*.svg' \) -exec gzip -9k {} +`。
 
 #### 4.5 CDN 部署
 
 将 `dist/` 上传至 CDN（OSS/COS/S3 + CDN 加速），`index.html` 不缓存、`assets/*` 长缓存。API 请求须配置 CDN 回源或前端 axios `baseURL` 指向控制面公网域名（注意跨域 Cookie 配置见 4.1）。
 
-#### 4.6 容器化部署（可选）
+#### 4.6 容器化部署（可选，仅在需要前端独立镜像时使用）
+
+> 若控制面与前端同容器交付，**不要**用本节方案——直接用方式 A（两个 Dockerfile 已内置 node 构建阶段）。本节适用于前端需要独立扩缩容/独立发版的场景。
 
 将企业版前端构建为 Nginx 镜像：
 

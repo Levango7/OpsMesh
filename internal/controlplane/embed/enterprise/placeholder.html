@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpsMesh 企业版前端 · 未内置</title>
+<!--
+  OPSMESH_ENTERPRISE_BUNDLE_PLACEHOLDER
+
+  这是「企业版前端未嵌入本二进制」的占位页（P0-3）。判定与展示逻辑见
+  internal/controlplane/enterprise_ui.go：控制面读取本文件，若发现上面这行标记，
+  则认为企业版前端不可用（此时个人版引导页也会自动隐藏「进入企业版前端」入口）。
+
+  ⚠️ 不要手工编辑本文件来「修好」企业版；请用构建脚本把真实产物拷进来：
+
+      bash deploy/docker/scripts/build-enterprise-web.sh
+
+  该脚本执行 `npm ci && npm run build`（web/enterprise/）后将 dist/ 覆盖到
+  internal/controlplane/embed/enterprise/，再 `go build` 即得到内置企业版前端的二进制。
+  官方镜像（deploy/docker/Dockerfile.controlplane）与 CI 都会自动完成这一步，
+  因此客户拿到的镜像/发布包里企业版前端是可用的。
+-->
+<style>
+  :root{--bg:#0b1220;--card:#141c2e;--text:#e6edf7;--text2:#9aa8bf;--accent:#4c8dff;--border:#233049;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","PingFang SC","Microsoft YaHei",sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:2rem;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;max-width:640px;padding:2rem 2.25rem;}
+  h1{margin:0 0 .5rem;font-size:1.25rem;}
+  p{color:var(--text2);margin:.6rem 0;}
+  code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85rem;}
+  pre{background:#0e1626;border:1px solid var(--border);border-radius:8px;padding:.9rem 1rem;overflow-x:auto;color:#cfe0ff;}
+  a{color:var(--accent);}
+  .hint{border-left:3px solid var(--accent);padding-left:.9rem;margin-top:1.25rem;}
+</style>
+</head>
+<body>
+  <main class="card">
+    <h1>企业版前端未内置于本二进制</h1>
+    <p>控制面已在 <code>/enterprise/</code> 就绪，但构建这个二进制时没有把企业版前端产物（Vue3 + Vite）打包进去。</p>
+    <p>这是<strong>源码构建的正常结果</strong>：企业版前端需要 Node.js 构建，官方镜像与发布包已内置，源码构建请先执行组装脚本。</p>
+    <pre>bash deploy/docker/scripts/build-enterprise-web.sh
+go build ./cmd/opsmesh</pre>
+    <p>如果使用 Docker 部署（<code>deploy.sh up</code> / docker-compose / Helm），请重新构建控制面镜像——镜像内已包含 Node 构建阶段，无需本地 Node 环境。</p>
+    <div class="hint">
+      <p>个人版控制台：<a href="/">返回控制台首页</a></p>
+      <p>企业版前端源码与构建说明：<code>web/enterprise/README.md</code></p>
+    </div>
+  </main>
+</body>
+</html>

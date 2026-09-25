@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,6 +23,10 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleDashboard)
 	mux.HandleFunc("/assets/", s.handleAsset) // 前端静态资源（独立化：web/assets/*）
+	// 企业版前端（P0-3）：/enterprise/ 静态外壳 + SPA 回退；/enterprise/assets/ 带哈希资源。
+	// 未内置构建产物的二进制会返回「未内置」说明页（不是 404），且个人版入口自动隐藏。
+	mux.HandleFunc("/enterprise/", s.handleEnterpriseUI)
+	mux.HandleFunc("/enterprise/assets/", s.handleEnterpriseAsset)
 	mux.HandleFunc("/api/v1/devices", s.handleDevices)
 	mux.HandleFunc("/api/v1/agents", s.handleAgents)
 	mux.HandleFunc("/api/v1/me", s.handleMe)
@@ -284,9 +289,35 @@ func (s *Server) Start() error {
 		return fmt.Errorf("联邦 mTLS 监听构建失败: %w", fedErr)
 	}
 
+	// Web/REST 监听协议（--http-tls）：auto 时证书齐备即 HTTPS。
+	// 显式 net.Listen 而非 ListenAndServe：端口占用等监听错误在启动期 fail-fast，
+	// 而非推迟到后台 goroutine 里（原实现只在 goroutine 中返回错误）。
+	httpTLS, err := s.buildHTTPTLS()
+	if err != nil {
+		return fmt.Errorf("Web/REST TLS 配置失败: %w", err)
+	}
+	if httpTLS != nil {
+		httpSrv.TLSConfig = httpTLS
+	}
+	httpLis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.httpPort))
+	if err != nil {
+		return fmt.Errorf("HTTP(B/S) 监听失败 %d: %w", s.httpPort, err)
+	}
+	httpScheme := "http"
+	if httpTLS != nil {
+		httpScheme = "https"
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx = logx.WithTrace(ctx, "controlplane")
+	// 生产 + 明文 Web/REST：显式告警。--http-tls=off 是合法架构选择（TLS 由上游
+	// Ingress/反代终止，本端口仅对内网开放），但端口一旦可达即为明文传输口令与会话。
+	if s.cfg.Production && httpScheme == "http" {
+		logx.Warn(ctx, "生产模式 Web/REST 为明文 HTTP（--http-tls=off）",
+			"port", s.httpPort,
+			"hint", "确保该端口仅对内网/反向代理开放、TLS 由上游终止；Cookie 已强制 Secure，浏览器直连明文端口会丢弃会话")
+	}
 	go s.leaderLoop(ctx)                // 选主：周期续租，仅 leader 执行周期协调任务
 	go s.reclaimLoop(ctx)               // 任务租约回收：周期复位失联 agent 的 running 任务（仅 leader）
 	go s.scheduleLoop(ctx)              // F4 定时/周期调度：周期派生到点模板任务的 pending 实例（仅 leader）
@@ -315,9 +346,17 @@ func (s *Server) Start() error {
 		}
 	}()
 	go func() {
-		logx.Info(ctx, "HTTP(B/S) 监听", "port", s.httpPort)
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- fmt.Errorf("http: %w", err)
+		logx.Info(ctx, "HTTP(B/S) 监听", "port", s.httpPort, "scheme", httpScheme)
+		var serveErr error
+		if httpTLS != nil {
+			// TLSConfig 已就位（含 --tls-watch 热重载时的 GetCertificate），
+			// 故此处的 cert/key 文件参数留空。
+			serveErr = httpSrv.ServeTLS(httpLis, "", "")
+		} else {
+			serveErr = httpSrv.Serve(httpLis)
+		}
+		if serveErr != nil && serveErr != http.ErrServerClosed {
+			errCh <- fmt.Errorf("http: %w", serveErr)
 		}
 	}()
 	if fedSrv != nil {
@@ -331,9 +370,9 @@ func (s *Server) Start() error {
 	}
 
 	if s.cfg.FederationPort > 0 && s.fed != nil {
-		logx.Info(ctx, "控制面已启动", "http", s.httpPort, "grpc", s.grpcPort, "metrics", s.metricsPort, "federation_mtls", s.cfg.FederationPort)
+		logx.Info(ctx, "控制面已启动", "http", s.httpPort, "http_scheme", httpScheme, "grpc", s.grpcPort, "metrics", s.metricsPort, "federation_mtls", s.cfg.FederationPort)
 	} else {
-		logx.Info(ctx, "控制面已启动", "http", s.httpPort, "grpc", s.grpcPort, "metrics", s.metricsPort)
+		logx.Info(ctx, "控制面已启动", "http", s.httpPort, "http_scheme", httpScheme, "grpc", s.grpcPort, "metrics", s.metricsPort)
 	}
 	// 优雅退出清理：无论正常收信号还是 server 异常返回，都停止 loginGuard 的 sweep goroutine，
 	// 避免 goroutine 泄漏。startRefreshSweep 的 goroutine 由 ctx 取消自动退出（defer stop() 取消 ctx）。

@@ -14,9 +14,9 @@
 |                                                                                                    |
 |                 | 企业版前端 web/enterprise/ |   | 内嵌个人版引导页           |                    |
 |                 | Vue3 + Vite + Pinia        |   | internal/controlplane/web/ |                    |
-|                 | + VueRouter + i18n ;       |   | GET / 重定向 /enterprise/  |                    |
-|                 | SPA 独立构建部署           |   | bootstrap:                 |                    |
-|                 | (Nginx/CDN 托管 dist/)     |   | /install.sh                |                    |
+|                 | + VueRouter + i18n ;       |   | GET / → 企业版入口 CTA     |                    |
+|                 | 构建期 go:embed 进控制面   |   | bootstrap:                 |                    |
+|                 | 二进制，默认 /enterprise/  |   | /install.sh                |                    |
 +----------------------------------------------------------------------------------------------------+
            |  HTTP :8080   REST API (/api/v1/**)  +  SSE 实时推送 (/api/v1/events/stream)
            |  认证: JWT (at/rt HttpOnly Cookie) / Bearer om_xxxxxxxx API Key (RBAC scope)
@@ -78,7 +78,7 @@
 
 **图中组件速览**：
 
-- **客户端层**：企业版前端（`web/enterprise/`，Vue3 + Vite + Pinia + VueRouter + i18n，SPA 独立构建部署）；内嵌个人版引导页（`internal/controlplane/web/`，GET / 重定向 `/enterprise/`，保留 bootstrap 端点）
+- **客户端层**：企业版前端（`web/enterprise/`，Vue3 + Vite + Pinia + VueRouter + i18n）——默认在**构建期**由 `go:embed` 装配进控制面二进制，经 `/enterprise/` 提供（镜像构建自动装配；亦可 `npm run build` 后独立托管）；内嵌个人版引导页（`internal/controlplane/web/`，GET / 提供企业版入口，保留 bootstrap 端点）
 - **四监听器**：HTTP :8080（REST API + B/S + SSE `/api/v1/events/stream` 实时推送）、gRPC :9090（agent 通道，mTLS 生产强制）、Metrics :9091（Prometheus `/metrics` 文本端点）、Federation :9092（可选独立 mTLS 联邦监听，强制对端持证）
 - **传输与安全**：`internal/grpcx` 自研 gRPC（JSON codec 与 protobuf 双轨，`proto/` buf 代码生成）；`internal/tlsutil` TLS/mTLS + 证书热重载（fsnotify，`--production` 强制 TLS）；认证走 JWT Cookie / Bearer `om_*` API Key / 网关头注入三条路径，RBAC 权限校验
 - **核心引擎**：`alertengine`（多条件规则 + Z-Score/EWMA 异常检测 + 静默/抑制/聚合）、`orchestration`+`dag`（作业流编排）、`deploy`+`cmdb`（三策略部署/配置库图谱）、`logstore`+`k8s`+`helm`（Loki+ES 日志检索/多集群管理）、`automation`+`network`(自动化闭环/网络拓扑)、API Key 认证引擎
@@ -99,7 +99,7 @@
 | K8s 客户端 | `k8s.io/client-go` | 多集群管理，无 kubectl 依赖 |
 | 可观测 | OTel + 自研 Prometheus 文本指标 | `otelx` HTTP/gRPC 自动埋点 + OTLP 导出；零依赖 metrics |
 | 系统采集 | `shirou/gopsutil/v3` | agent 负载上报 |
-| 前端 | Vue 3 + Vite + Pinia + Vue Router | 企业版 SPA（`web/enterprise/`），独立构建部署 |
+| 前端 | Vue 3 + Vite + Pinia + Vue Router | 企业版 SPA（`web/enterprise/`），构建期 go:embed 进控制面，默认 `/enterprise/` |
 | 前端测试 | Vitest + @vue/test-utils + jsdom + Playwright | 单测 + E2E（含 e2e-real 真实后端联调） |
 | 部署 | Helm Chart + docker-compose + systemd | 三套部署形态，详见 [快速启动](#快速启动零依赖-30-秒) 与 [生产部署](#生产部署mysql--redis--tls--多副本) |
 | CI | GitHub Actions | build-test / integration / security / proto / frontend / E2E / image / release |
@@ -401,6 +401,8 @@ mysql -e "CREATE DATABASE IF NOT EXISTS ops_device"
   --client-ca=/etc/opsmesh/ca.crt \
   --production \
   --provision-secret="change-me-to-a-random-64-hex"
+# 注：--tls-cert/--tls-key 使 Web/REST 默认也走 HTTPS（--http-tls=auto），
+# 浏览器访问 https://<cp>:8080；若由 Nginx/Ingress 终止 TLS，加 --http-tls=off。
 
 # 3. 启动 agent（--control-addrs 逗号分隔多地址，HA failover）
 ./opsmesh --mode=agent --segment=seg-a \
@@ -764,9 +766,10 @@ OpsMesh 启动参数共 **119 个 flag**，全部支持"命令行 flag 优先、
 | Flag | 类型 | 默认值 | 环境变量 | 说明 |
 |------|------|--------|----------|------|
 | `--require-auth` | bool | false | OPSMESH_REQUIRE_AUTH | 要求网关注入 X-Tenant-ID，缺失则拒绝（生产 hardening）；--production 下默认 true |
-| `--tls-cert` | string | "" | OPSMESH_TLS_CERT | gRPC TLS 服务端证书路径（空=关闭） |
-| `--tls-key` | string | "" | OPSMESH_TLS_KEY | gRPC TLS 私钥路径 |
-| `--client-ca` | string | "" | OPSMESH_CLIENT_CA | 服务端要求客户端 CA（mTLS）/ 客户端校验服务端 CA |
+| `--tls-cert` | string | "" | OPSMESH_TLS_CERT | TLS 服务端证书路径（空=关闭）；同时用于 gRPC 与 Web/REST |
+| `--tls-key` | string | "" | OPSMESH_TLS_KEY | TLS 私钥路径 |
+| `--http-tls` | string | "auto" | OPSMESH_HTTP_TLS | Web/REST 监听协议：auto=有证书即 HTTPS（默认）/ on=强制 HTTPS（缺证书拒绝启动）/ off=始终明文（仅限上游反代终止 TLS） |
+| `--client-ca` | string | "" | OPSMESH_CLIENT_CA | 服务端要求客户端 CA（mTLS）/ 客户端校验服务端 CA（仅 gRPC，不影响 Web/REST） |
 | `--tls-watch` | bool | false | OPSMESH_TLS_WATCH | 启用 TLS 证书文件热重载（fsnotify 监听，无需重启）；仅当 --tls-cert/--tls-key 非空时生效 |
 | `--jwt-public-key` | string | "" | OPSMESH_JWT_PUBLIC_KEY | JWT 验签公钥 PEM 文件路径（RS256）；空=关闭 JWT 验签回退头注入模式 |
 | `--jwt-issuer` | string | "" | OPSMESH_JWT_ISSUER | 预期 JWT issuer（iss claim）；非空时校验 iss 必须匹配 |
@@ -961,21 +964,34 @@ OpsMesh 控制面内置的 B/S 仪表盘为 Go 模板渲染（`/`），适合轻
 |---|---|
 | 源码路径 | `web/enterprise/` |
 | 技术栈 | Vue 3 + Vite + Pinia + Vue Router |
-| 构建命令 | `cd web/enterprise && npm ci && npm run build` |
-| 产物目录 | `web/enterprise/dist/`（静态资源，含 index.html / assets/） |
-| 部署方式 | 独立部署（Nginx 静态托管 / CDN 分发），API 反代到控制面 `:8080` |
+| 构建命令 | `bash deploy/docker/scripts/build-enterprise-web.sh`（或 `make frontend`） |
+| 产物目录 | `internal/controlplane/embed/enterprise/`（`go:embed` 装配目录，经嵌套 `.gitignore` 白名单化，不入库） |
+| 交付形态 | **默认：内置进控制面二进制**（`/enterprise/`，镜像构建自动装配）；可选独立部署（Nginx 静态托管 / CDN） |
 | 开发模式 | `cd web/enterprise && npm install && npm run dev`（Vite dev server，端口 5174，自动代理 `/api` 到 `localhost:8080`） |
 
 ### 构建
 
 ```bash
-# 依赖：Node.js 18+（推荐 20 LTS）
-cd web/enterprise
-npm ci              # 严格按 package-lock.json 安装依赖
-npm run build       # 产出 dist/（index.html + assets/）
+# 方式 A（推荐）：装配进控制面二进制（go:embed 不跨目录，故产物须落在 embed/enterprise/）
+bash deploy/docker/scripts/build-enterprise-web.sh   # npm ci + npm run build + 装配
+make build                                           # 前端装配 + 后端编译
+
+# 方式 B：独立构建（Nginx/CDN 托管）
+cd web/enterprise && npm ci && npm run build         # 产出 web/enterprise/dist/
 ```
 
-### 部署（Nginx 反代 API 到控制面 8080）
+> **未构建时的行为**：源码 `go build` 未经 `make frontend` 时，`/enterprise/` 返回 200 的「未内置」说明页（响应头 `X-OpsMesh-Enterprise-Bundle: placeholder`），个人版引导页的企业版入口被服务端自动剥离——不静默、不 404，便于排障。
+
+### 部署（方式 A：控制面内置托管）
+
+```bash
+docker build -t opsmesh:latest .                       # 镜像内置前端（npm 失败即构建失败）
+docker build --build-arg NPM_REGISTRY=https://registry.npmmirror.com -t opsmesh:latest .   # 内网镜像站
+```
+
+访问 `http://<host>:8080/enterprise/`；`GET /` 引导页的「进入企业版前端」入口即指向此处。
+
+### 部署（方式 B：Nginx 反代 API 到控制面 8080）
 
 ```nginx
 server {
@@ -986,7 +1002,7 @@ server {
 }
 ```
 
-> **base 前缀**：`vite.config.js` 默认 `base: '/enterprise/'`，构建产物以 `/enterprise/` 前缀分发。若改为根路径独立站点（如上 Nginx 示例 `location /`），需将 `base` 改为 `'/'` 后重新构建；若由控制面统一托管于 `/enterprise/` 子路径，则保留默认 `base` 并将 `root` 指向 `dist`、`location /enterprise/` 套 `try_files`。
+> **base 前缀**：`vite.config.js` 默认 `base: '/enterprise/'`，构建产物以 `/enterprise/` 前缀分发。若改为根路径独立站点（如上 Nginx 示例 `location /`），需将 `base` 改为 `'/'` 后重新构建；若由统一网关托管于 `/enterprise/` 子路径，则保留默认 `base` 并将 `root` 指向 `dist`、`location /enterprise/` 套 `try_files`。
 
 > **鉴权头**：企业版前端独立部署时，`X-Tenant-ID` / `X-User-Id` / `X-User-Roles` 身份头由前置网关（APISIX/Envoy）或 Nginx 注入，控制面 `--require-auth` 开启后缺失则 401。详见 [IAM 与租户隔离](#iam-与租户隔离)。
 
@@ -1004,7 +1020,7 @@ server {
 | RBAC 隔离 | 网关注入 X-Tenant-ID，控制面/存储层行级过滤（BELONGS_TO tenant） |
 | 访问控制 | --require-auth 拒绝未鉴权请求；gRPC 网关注入租户头 |
 | 入侵检测 | 任务命令来源受限（仅控制面下发），shell 执行经 exec.CommandContext |
-| 通信加密 | gRPC TLS / mTLS（--tls-cert, --tls-key, --client-ca） |
+| 通信加密 | gRPC TLS / mTLS（--tls-cert, --tls-key, --client-ca）；Web/REST HTTPS（--http-tls，默认有证书即启用） |
 
 ---
 
@@ -1094,7 +1110,7 @@ internal/                 ← 35 个包，按 8 个领域分组（详见上文"i
 operator/                 ← K8s Operator 子模块（独立 go.mod，controller-runtime OpsMeshInstance CRD）
 services/                 ← 微服务化拆分（18 个独立服务，见下表；与主模块双轨并存，收敛计划见 docs/tech-debt.md TD-60）
 proto/                    ← protobuf API 定义（buf 管理，与 internal/grpcx 双轨）
-web/enterprise/           ← Vue3 企业版前端（独立构建部署）
+web/enterprise/           ← Vue3 企业版前端源码（构建产物经脚本装配进 internal/controlplane/embed/enterprise/）
 deploy/                   ← 部署资产：helm/ + systemd/ + docker-compose.yaml + Dockerfile*
 docs/                     ← 24 篇设计文档（产品/架构/数据库/接口/安全/UI/模块/功能/测试/运维/AI/多系统/部署场景）
 ```

@@ -1,3 +1,14 @@
+# gpu-svc —— 本地 Kind 开发样例清单（非生产；生产用 deploy/helm/opsmesh）。
+#
+# 端口 / 探针逐项对照源码核实（2026-09-25）：
+#   - HTTP 端口：GPU_SVC_HTTP_PORT，默认 8090（services/gpu-svc/pkg/config/config.go）
+#   - gpu-svc 无 gRPC 端口（config 无 GRPCPort），故不声明 grpc
+#   - 探针路径：/health、/ready（cmd/gpu-svc/main.go）
+#   - gpu-svc 不注册 /metrics
+#
+# 与生产形态的差异（本样例可在无 GPU 的本地集群直接起）：
+#   原清单锁定 accelerator=nvidia 节点 + 申请 nvidia.com/gpu，Kind 集群无此节点 →
+#   Pod 永远 Pending。样例移除该约束；接真实 GPU 节点时按下方注释恢复。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,50 +27,38 @@ spec:
       labels:
         app: gpu-svc
         component: gpu
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "9091"
-        prometheus.io/path: "/metrics"
     spec:
-      serviceAccountName: opsmesh-sa
-      nodeSelector:
-        accelerator: nvidia
-      tolerations:
-        - key: nvidia.com/gpu
-          operator: Exists
-          effect: NoSchedule
+      # 真实 GPU 节点上恢复以下约束（并给 resources 加 nvidia.com/gpu: 1）：
+      # nodeSelector:
+      #   accelerator: nvidia
+      # tolerations:
+      #   - key: nvidia.com/gpu
+      #     operator: Exists
+      #     effect: NoSchedule
       containers:
         - name: gpu-svc
-          image: opsmesh/gpu-svc:latest
+          image: opsmesh/gpu-svc:0.9.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
-              containerPort: 8080
+              containerPort: 8090
               protocol: TCP
-            - name: grpc
-              containerPort: 9090
-              protocol: TCP
-            - name: metrics
-              containerPort: 9091
-              protocol: TCP
-          envFrom:
-            - configMapRef:
-                name: opsmesh-config
           env:
-            - name: OPSMESH_SERVICE_NAME
-              value: "gpu-svc"
+            - name: GPU_SVC_HTTP_PORT
+              value: "8090"
+            # GPU 指标采集目标（默认 http://localhost:11434）；无 Ollama 时可留空。
+            - name: GPU_SVC_OLLAMA_URL
+              value: ""
           resources:
             requests:
-              cpu: 500m
-              memory: 1Gi
-              nvidia.com/gpu: 1
+              cpu: 100m
+              memory: 128Mi
             limits:
-              cpu: 2000m
-              memory: 4Gi
-              nvidia.com/gpu: 1
+              cpu: 1000m
+              memory: 1Gi
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /health
               port: http
             initialDelaySeconds: 15
             periodSeconds: 20
@@ -67,7 +66,7 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /readyz
+              path: /ready
               port: http
             initialDelaySeconds: 10
             periodSeconds: 15
@@ -75,7 +74,7 @@ spec:
             failureThreshold: 3
           startupProbe:
             httpGet:
-              path: /healthz
+              path: /health
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
@@ -92,16 +91,8 @@ spec:
   type: ClusterIP
   ports:
     - name: http
-      port: 8080
+      port: 8090
       targetPort: http
-      protocol: TCP
-    - name: grpc
-      port: 9090
-      targetPort: grpc
-      protocol: TCP
-    - name: metrics
-      port: 9091
-      targetPort: metrics
       protocol: TCP
   selector:
     app: gpu-svc

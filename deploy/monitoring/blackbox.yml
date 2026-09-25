@@ -1,0 +1,10 @@
+# blackbox_exporter 探测模块（OpsMesh 生产）
+#
+# 只声明 Prometheus 实际使用的模块，避免出现「配置里有、无人用」的僵尸项。
+# tcp_connect：仅做 TCP 建连（不做协议/认证握手），用于 MySQL/Redis 端口可达性拨测。
+#   - 端口可建连 → probe_success=1 → up{job="opsmesh-mysql"}=1
+#   - 实例宕机 / 网络不通 / 端口未监听 → up=0 → 触发 alerts.yml 的 MySQLDown / RedisDown
+modules:
+  tcp_connect:
+    prober: tcp
+    timeout: 5s

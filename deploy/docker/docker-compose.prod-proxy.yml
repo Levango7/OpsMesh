@@ -1,0 +1,105 @@
+# OpsMesh 生产部署 —— 反代 overlay（由 Nginx 网关终止 TLS）
+#
+# 用途：控制面自身不直接暴露 Web/REST，由 gateway 容器在 443 终止 TLS 后
+# 明文回源到 controlplane:8080。适用于已有统一入口/证书体系（企业 CA、LE、
+# 云 LB）或需要 80/443 复用（同机还跑着其它站点）的场景。
+#
+# 用法：
+#   bash scripts/deploy.sh init
+#   bash scripts/deploy.sh up --proxy
+#   # 等价于：
+#   # docker compose --env-file .env -f docker-compose.prod.yml -f docker-compose.prod-proxy.yml up -d
+#
+# overlay 依赖 Compose ≥ 2.24.4（!override 标签用于「替换」而非「合并」端口列表；
+# 不重置的话控制面会同时暴露 8080 明文端口，TLS 网关形同虚设）。
+#
+# 与默认形态（直连 HTTPS）的差异：
+#   1. 控制面 Web/REST 改为明文监听 --http-tls=off（端口不再对外发布）；
+#   2. gateway 发布 ${GATEWAY_HTTP_PORT:-80} / ${GATEWAY_HTTPS_PORT:-443}；
+#   3. OPSMESH_TRUST_PROXY=true —— 控制面从 X-Forwarded-For 取真实客户端 IP
+#      （登录限流与审计依据）；仅因前置网关可信才可开启。
+#   4. OPSMESH_ADVERTISE_ADDR 必须写成「浏览器实际访问的 https 地址」，
+#      且与 GATEWAY_HTTPS_PORT 一致。控制面 CSRF 校验以 AdvertiseAddr 的
+#      host:port 比对请求 Origin，端口不一致会导致所有写操作被 403 拒绝。
+#      例：GATEWAY_HTTPS_PORT=8443 → OPSMESH_ADVERTISE_ADDR=https://ops.example.com:8443
+#
+# 端口冲突提示：默认 80/443。若宿主机已被占用（如已有 Nginx/Dify），
+#   在 .env 里改 GATEWAY_HTTP_PORT / GATEWAY_HTTPS_PORT 即可（如 8080/8443）。
+#
+# gRPC（9090）不经网关：agent 仍直连控制面 9090，由控制面自身用同一份证书做 TLS。
+#   故 ${OPSMESH_TLS_DIR} 仍需挂载到控制面（生产校验强制要求 --tls-cert/--tls-key）。
+#
+# 证书：gateway 与控制面共用 ${OPSMESH_TLS_DIR} 下的 tls.crt / tls.key。
+#   无需额外生成——网关只做终止，控制面的证书同时用于 gRPC。
+
+services:
+  controlplane:
+    # command 是整体替换语义（compose 不合并 command 列表），因此需完整重述。
+    command:
+      - --mode=controlplane
+      - --store=mysql
+      - --mysql-dsn=${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:?请在 .env 设置 MYSQL_PASSWORD}@tcp(mysql:3306)/opsmesh?parseTime=true
+      - --redis-addr=redis:6379
+      - --session-store=redis://redis:6379
+      # Web/REST 明文（仅 frontend_net 内可达，不发布宿主机端口），TLS 由 gateway 终止。
+      - --http-tls=off
+      # 证书保留：生产校验强制要求，且 gRPC 仍由控制面自己启用 TLS。
+      - --tls-cert=/etc/opsmesh/tls/tls.crt
+      - --tls-key=/etc/opsmesh/tls/tls.key
+      - --advertise-addr=${OPSMESH_ADVERTISE_ADDR:?请在 .env 设置 OPSMESH_ADVERTISE_ADDR（须与 GATEWAY_HTTPS_PORT 一致）}
+      - --log-backend=loki
+      - --loki-endpoint=http://loki:3100
+    # !override：重置端口列表而非追加。去掉 8080——若保留，客户端可绕过网关直连明文端口。
+    ports: !override
+      - "${CONTROLPLANE_GRPC_PORT:-9090}:9090"
+      - "127.0.0.1:${CONTROLPLANE_METRICS_PORT:-9091}:9091"
+    environment:
+      # Cookie 仍带 Secure（浏览器看到的是 HTTPS，由网关终止）。
+      OPSMESH_COOKIE_SECURE: "true"
+      # 前置网关可信，才可信任 X-Forwarded-For；否则客户端可伪造 XFF 绕过登录限流。
+      OPSMESH_TRUST_PROXY: "true"
+
+  gateway:
+    image: nginx:1.27-alpine
+    container_name: opsmesh-gateway
+    ports:
+      - "${GATEWAY_HTTP_PORT:-80}:80"
+      - "${GATEWAY_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./proxy/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${OPSMESH_TLS_DIR:-./certs}:/etc/nginx/tls:ro
+    environment:
+      # server_name：默认 _（接受任意 Host）。填真实域名可拒绝未知 Host 的请求。
+      GATEWAY_SERVER_NAME: ${GATEWAY_SERVER_NAME:-_}
+      # HTTP→HTTPS 跳转目标。不写作 $host（不含端口）：GATEWAY_HTTPS_PORT 非 443 时
+      # 跳转会丢端口。与控制面 OPSMESH_ADVERTISE_ADDR 同源，杜绝两处配置漂移。
+      GATEWAY_PUBLIC_ORIGIN: ${OPSMESH_ADVERTISE_ADDR:?请在 .env 设置 OPSMESH_ADVERTISE_ADDR（须与 GATEWAY_HTTPS_PORT 一致）}
+      TZ: ${TZ:-UTC}
+    depends_on:
+      controlplane:
+        condition: service_healthy
+    healthcheck:
+      # 探网关自身（/nginx-health），不探上游：上游故障时不应反复重启网关。
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      # 仅 frontend_net：与 controlplane 同网即可回源，无需接触 backend_net。
+      - frontend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          cpus: "0.1"
+          memory: 32M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+        tag: "{{.Name}}"
+    restart: unless-stopped

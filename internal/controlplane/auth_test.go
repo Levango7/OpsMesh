@@ -1176,7 +1176,7 @@ func TestConsumeRefreshToken_DeviceFPDeadlineNotEnforced(t *testing.T) {
 	// deviceFPDeadline 零值（默认）：不强制 DeviceFP。
 
 	// 创建不带 DeviceFP 的 refresh token（模拟旧客户端）。
-	rt, err := s.createRefreshToken("user-1", "")
+	rt, err := s.createRefreshToken("user-1", "", "")
 	if err != nil {
 		t.Fatalf("创建 refresh token 失败: %v", err)
 	}
@@ -1194,7 +1194,7 @@ func TestConsumeRefreshToken_DeviceFPDeadlineEnforced(t *testing.T) {
 	s.deviceFPDeadline = time.Now().Add(-time.Hour)
 
 	// 创建不带 DeviceFP 的 refresh token（模拟旧客户端，但 deadline 已过）。
-	rt, err := s.createRefreshToken("user-1", "")
+	rt, err := s.createRefreshToken("user-1", "", "")
 	if err != nil {
 		t.Fatalf("创建 refresh token 失败: %v", err)
 	}
@@ -1212,7 +1212,7 @@ func TestConsumeRefreshToken_DeviceFPDeadlineWithFP(t *testing.T) {
 	s.deviceFPDeadline = time.Now().Add(-time.Hour)
 
 	// 创建带 DeviceFP 的 refresh token（新客户端）。
-	rt, err := s.createRefreshToken("user-1", "device-fp-123")
+	rt, err := s.createRefreshToken("user-1", "", "device-fp-123")
 	if err != nil {
 		t.Fatalf("创建 refresh token 失败: %v", err)
 	}
@@ -1228,7 +1228,7 @@ func TestConsumeRefreshToken_DeviceFPDeadlineBefore(t *testing.T) {
 	s := newAuthTestServer(t)
 
 	// 先创建不带 DeviceFP 的 refresh token（模拟 deadline 前签发的旧 token）。
-	rt, err := s.createRefreshToken("user-1", "")
+	rt, err := s.createRefreshToken("user-1", "", "")
 	if err != nil {
 		t.Fatalf("创建 refresh token 失败: %v", err)
 	}

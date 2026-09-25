@@ -115,6 +115,8 @@ func (m *MemoryStore) CreateUser(u *User) *User {
 	if u.Status == "" {
 		u.Status = "active"
 	}
+	// 租户归一：空值落 default（与 SQLStore 一致，避免两后端语义漂移）。
+	u.TenantID = normalizeTenantID(u.TenantID)
 	if u.CreatedAt.IsZero() {
 		u.CreatedAt = time.Now()
 	}
@@ -149,6 +151,10 @@ func (m *MemoryStore) UpdateUser(u *User) bool {
 	}
 	if u.RoleIDs != nil {
 		existing.RoleIDs = append([]string(nil), u.RoleIDs...)
+	}
+	// 租户变更：非空才覆盖（空值视为「本次不改租户」，避免调用方漏填被静默搬回 default）。
+	if u.TenantID != "" {
+		existing.TenantID = normalizeTenantID(u.TenantID)
 	}
 	existing.MustChangePassword = u.MustChangePassword
 	return true

@@ -40,6 +40,14 @@ type Config struct {
 	SessionStoreEnabled bool `json:"sessionStoreEnabled"`
 	// SessionTTL Session 过期时间（默认 24h，滑动过期）。
 	SessionTTL time.Duration `json:"sessionTTL"`
+	// AdminPassword 初始 admin 口令（与 controlplane --admin-password 同语义）：
+	// 非空时替换 seed 弱口令 admin123，须满足强口令策略；留空则生成随机口令并交付
+	// （优先 AdminPasswordFile，其次打印一次到日志）。
+	AdminPassword string `json:"adminPassword"`
+	// AdminPasswordFile 未显式提供 AdminPassword 时，随机口令的落盘路径（权限 0600）。
+	// 容器环境下日志会被集中采集留存，生产建议用 Secret 注入 AdminPassword 或改用本文件交付。
+	AdminPasswordFile string `json:"adminPasswordFile"`
+
 	// PasswordMinLen 强口令最小长度（默认 12；设 8 可降级到旧策略用于测试）。
 	PasswordMinLen int `json:"passwordMinLen"`
 	// PasswordRequireSpecial 强口令是否要求特殊字符（默认 true；false 降级到旧策略）。
@@ -62,6 +70,9 @@ func Load() *Config {
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 		HTTPEnabled:     getEnv("AUTH_SVC_HTTP_ENABLED", "false") == "true",
 		CookieSecure:    getEnv("AUTH_SVC_HTTP_COOKIE_SECURE", "false") == "true",
+
+		AdminPassword:     getEnv("AUTH_SVC_ADMIN_PASSWORD", ""),
+		AdminPasswordFile: getEnv("AUTH_SVC_ADMIN_PASSWORD_FILE", ""),
 
 		// TD-60 安全能力：默认启用，测试环境可通过环境变量关闭。
 		DeviceFPEnabled:        getEnv("AUTH_SVC_DEVICE_FP_ENABLED", "true") != "false",

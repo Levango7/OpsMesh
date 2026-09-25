@@ -187,6 +187,43 @@ func (s *Server) buildFederationServer() (*http.Server, net.Listener, error) {
 	return srv, lis, nil
 }
 
+// buildHTTPTLS 构造 Web/REST（B/S 端口）监听的 TLS 配置。
+//
+// 语义与 config.HTTPTLS 对应：auto=证书齐备即 HTTPS；on=强制 HTTPS；off=始终明文。
+// 返回 nil 表示明文监听（调用方走 http.Server.Serve）。
+//
+// 两点刻意的设计：
+//   - 复用 --tls-cert/--tls-key（与 gRPC 同一份服务端证书），不新增凭证配置项；
+//   - 不使用 --client-ca 的 mTLS 要求——浏览器不会出示客户端证书，若在 B/S 端口
+//     开启 RequireAndVerifyClientCert，所有人都会被挡在 TLS 握手层。
+//
+// 启用 --tls-watch 时复用 buildGRPC 已建的证书热重载器（Start 中 buildGRPC 先执行），
+// 使 gRPC 与 Web/REST 共享同一份证书与重载事件。
+func (s *Server) buildHTTPTLS() (*tls.Config, error) {
+	mode := strings.ToLower(strings.TrimSpace(s.cfg.HTTPTLS))
+	switch mode {
+	case "off":
+		return nil, nil
+	case "", "auto":
+		if s.tlsCert == "" || s.tlsKey == "" {
+			return nil, nil
+		}
+	case "on":
+		if s.tlsCert == "" || s.tlsKey == "" {
+			return nil, fmt.Errorf("--http-tls=on 要求同时配置 --tls-cert 与 --tls-key")
+		}
+	default:
+		return nil, fmt.Errorf("非法 --http-tls=%q（应为 auto | on | off）", s.cfg.HTTPTLS)
+	}
+	if s.tlsReloader != nil {
+		return &tls.Config{
+			GetCertificate: s.tlsReloader.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
+		}, nil
+	}
+	return tlsutil.HTTPServerTLSConfig(s.tlsCert, s.tlsKey, "")
+}
+
 // buildMetrics 构造 metrics HTTP server 与监听，渲染零依赖 Prometheus 文本指标。
 func (s *Server) buildMetrics() (*http.Server, net.Listener, error) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.metricsPort))

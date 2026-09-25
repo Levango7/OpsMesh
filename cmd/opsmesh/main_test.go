@@ -180,6 +180,31 @@ func portOf(t *testing.T, srv *httptest.Server) int {
 	return p
 }
 
+// TestRunHealth_HTTPS 验证控制面以 HTTPS 提供 Web/REST（--http-tls）时探针仍返回 0：
+// 探针先试 HTTPS（自签证书跳过校验，等价 curl -k），失败再退回 HTTP。
+func TestRunHealth_HTTPS(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	defer withArgs("--health", "--http-port="+strconv.Itoa(portOf(t, srv)))()
+	if code := runHealth(); code != 0 {
+		t.Fatalf("runHealth=%d, want 0 (HTTPS 200)", code)
+	}
+}
+
+// TestRunHealth_HTTPSNon200 验证 HTTPS 监听返回非 200 时探针判定不健康。
+func TestRunHealth_HTTPSNon200(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	defer withArgs("--health", "--http-port="+strconv.Itoa(portOf(t, srv)))()
+	if code := runHealth(); code != 1 {
+		t.Fatalf("runHealth=%d, want 1 (HTTPS 非 200)", code)
+	}
+}
+
 // withArgs 临时设置 os.Args 并在返回时恢复，供 runHealth 直接测试使用。
 func withArgs(args ...string) func() {
 	old := os.Args

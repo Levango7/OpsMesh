@@ -36,17 +36,19 @@ func hashRefreshToken(token string) string {
 // createRefreshToken 生成并持久化一个刷新令牌（crypto/rand，32 字节十六进制）。
 // 返回明文 token（仅下发给客户端 Cookie），库内只存其 SHA-256 摘要。
 // deviceFP 绑定签发设备（空串=不校验设备，向后兼容旧客户端）。
-func (s *Server) createRefreshToken(userID, deviceFP string) (string, error) {
+// tenantID 为该用户的所属租户（空值归一为 default），随 refresh token 持久化，
+// 供多副本下登录态审计与租户归属对账使用。
+func (s *Server) createRefreshToken(userID, tenantID, deviceFP string) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	id := hex.EncodeToString(b)
-	// 持久化：存摘要 + UserID + DeviceFP + 过期时间，不存明文。
+	// 持久化：存摘要 + UserID + TenantID + DeviceFP + 过期时间，不存明文。
 	if err := s.store.SaveRefreshToken(&store.RefreshToken{
 		TokenHash: hashRefreshToken(id),
 		UserID:    userID,
-		TenantID:  "default", // 用户中心为平台级，统一 default 租户
+		TenantID:  tenantOrDefault(tenantID),
 		DeviceFP:  deviceFP,
 		ExpiresAt: time.Now().Add(refreshTokenExpiry),
 	}); err != nil {
@@ -208,13 +210,17 @@ func randHexID(prefix string) string {
 // issueUserToken 为用户签发 JWT token。
 // claims 包含：用户 ID/用户名/角色 ID/权限/租户/过期时间。
 // ：SignJWT 自动生成 jti（JWT ID），用于登出吊销。
+//
+// 租户（P0-6）：取用户实体的 TenantID（空值归一 default），不再硬编码 "default"。
+// 该 claim 是下游按租户作用域的唯一身份来源（requireTenantContext 交叉校验
+// X-Tenant-ID 头，device/task/script/alert 各域按此过滤），故必须反映用户真实归属。
 func (s *Server) issueUserToken(u *store.User) (string, error) {
 	claims := authctx.JWTClaims{
 		UserID:      u.ID,
 		Username:    u.Username,
 		Roles:       u.RoleIDs,
 		Permissions: s.userPermissions(u),
-		TenantID:    "default", // 用户中心为平台级，统一 "default" 租户
+		TenantID:    tenantOrDefault(u.TenantID),
 		ExpiresAt:   time.Now().Add(accessTokenExpiry),
 	}
 	return authctx.SignJWT(claims, s.jwtSecret)

@@ -4,6 +4,78 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-25 商用就绪 P0 批次（二）：P0-3 / P0-5 / P0-6 / P1-8
+
+> 承接上一批（P0-1 / P0-2 / P0-4 / P0-7）。本批解决「前端交付路径 / 迁移安全 / 多租户隔离」三块上线硬伤 + 一项 P1 可靠性项。证据：`docs/commercial-readiness-review-2026-09-25.md`。
+
+### P0-3 企业版前端交付路径断裂（生产镜像里根本没有前端）
+
+- **根因**：企业版前端只有「源码 + 独立部署说明」，没有任何构建/发布通道接进交付物——控制面二进制里没有 `/enterprise/` 路由（404），两个 Dockerfile 都不构建前端，`.dockerignore` 更是整体排除了 `web/`（镜像构建连 `package.json` 都看不到）。用户拿到的镜像打开首页只有个人版引导页，企业版前端无处可去。
+- **修复（方案 1+2+4，弃用 sidecar nginx 方案）**：
+  1. **构建期装配**：新增 `deploy/docker/scripts/build-enterprise-web.sh`（npm ci + build + 装配到 `internal/controlplane/embed/enterprise/`）+ `make frontend`；`go:embed` 不跨目录，故产物必须物理落在 embed 目录，该目录用嵌套 `.gitignore` 白名单化（仅提交 `placeholder.html` + `.gitignore`），**构建产物永不入库**。
+  2. **控制面路由**：`enterprise_ui.go` 提供 `/enterprise/` 与 `/enterprise/assets/`——SPA 深链回退 index.html、缺失分包一律 404（不回退 HTML，避免浏览器 MIME 错误难排障）、路径穿越拒绝、带哈希 `assets/*` 长缓存 `immutable`、`index.html`/`sw.js` 强制不缓存、`.br`/`.gz` 预压缩协商（带 `Vary: Accept-Encoding`）。
+  3. **诚实降级**：未装配时 `/enterprise/` 返回 **200 说明页**（响应头 `X-OpsMesh-Enterprise-Bundle: placeholder`，正文含构建命令），个人版引导页的企业版入口由服务端按标记剥离（`<!--OPSMESH_ENTERPRISE_CTA_START/END-->`）——不返回 404、不静默。
+  4. **镜像交付**：根 `Dockerfile` 与 `deploy/docker/Dockerfile.controlplane` 均新增 `node:22-alpine` 构建阶段并 `COPY --from=web`；`ARG NPM_REGISTRY` 支持镜像站；**npm 构建失败即镜像构建失败**（不再静默产出无前端镜像）。`.dockerignore` 从「整体排除 `web`」收窄为「排除 node_modules/dist/.vite/e2e 等噪音」，并加注释警示禁止回收。
+  5. **CI 防回归**：`frontend` job 增加装配步骤 + 真实产物态下跑 `TestEnterprise*` + 黑盒启动二进制断言 `/enterprise/` 为真产物（非占位）且引用资源可 200。
+- **设计取舍**：`/enterprise/` **不做租户/鉴权门禁**——浏览器首屏（登录页）不会携带 `X-Tenant-ID`，此处强校验会导致登录页无法加载；隔离边界保持在 `/api/v1/*`。该决策已在 `docs/deployment-guide.md` §4.3 显式记录。
+
+### P0-5 数据库迁移安全（并发启动 / 无回滚 / 半应用不可续）
+
+- **并发串行化**：启动期迁移改为在单个 `*sql.Conn` 上取 `GET_LOCK('opsmesh_mig_<db>', 60)` 咨询锁，多副本同时启动不再互相踩踏（+ `TestMigrationLock_ExcludesOtherSession` / `TestRunMigrations_ConcurrentStores`）。
+- **防篡改 + 版本门禁**：`schema_migrations` 记录 SHA-256 checksum，改动既有迁移文件启动即 fatal；库内版本 > 二进制已知最大版本时拒绝启动（拒绝「旧代码连新库」静默破坏）。
+- **可重放替代可回滚**：MySQL DDL 隐式提交，无法真回滚，安全性改由**幂等可重放**保证——半途失败后重启可续跑（`TestRunMigrations_ReplayAfterHalfApplied`）；`1050/1060/1061/1091` 等「已存在」错误码仅在回查 `information_schema` 确认后容忍。
+- **启动失败可诊断**：`NewSQLStore` 迁移失败改为 fail-fast（不再带病启动）。
+- **可回滚交付物**：补齐 18 个迁移的 `.down.sql` 回滚脚本（`.down.sql` **永不自动执行**，仅人工回滚时手动跑），并在 `docs/operations.md` §6.3.2 给出 20 行回滚对照表 + 4 步手工回滚流程（缩容 → 执行 down → 删版本行 → 恢复副本）。
+- 集成验证：真实 MySQL 8.0.46 上 13 个迁移集成测试全绿（含 `TestMigrationDownScripts_UnwindChain` 整链回滚）。
+
+### P0-6 跨租户越权（可跨租户远程命令执行 + 租户上下文不落地）
+
+- **问题 A（数据模型缺租户）**：`users` 表无租户列、JWT 无租户声明 → 租户只能靠网关头，程序化调用（API Key / agent）拿不到租户上下文。修复：迁移 `018_users_tenant_id` 增列并把历史行回填 `default`；JWT 增 `tenant_id` 声明；用户创建/更新按调用方租户收敛并校验租户 ID 字符集（`^[A-Za-z0-9_.-]{1,64}$`，防流入 schema 名/SQL 参数）；`RequireAuth` 拒绝空租户。
+- **问题 B（跨租户下发任务）**：任务队列按 `agent_id` 单独寻址，多条「下发任务」HTTP 路径直接取请求体 `deviceID/agentID` 建任务、不校验归属 → 租户 A 可让租户 B 的 agent 以 root 执行任意脚本。修复：新增 `internal/controlplane/tenant_guard.go` 统一校验入口（`requireTenantAgent` / `tenantAgent` / `tenantAgentIn`），在 4 条下发路径接入（批量下发先整体校验再落库，避免部分成功）；领取侧在 SQL 层加租户门（`AND (tenant_id IS NULL OR tenant_id='' OR tenant_id=?)`，兼容存量空租户任务），**`Store` 接口刻意不变**以免影响 35 个子接口实现。
+
+### P1-8 M3/M5 子存储失败静默降级
+
+- 生产模式下子存储初始化失败由「打日志继续」改为 fail-fast，与既有 `--production` / `StoreType=sql` 的阻断先例一致，避免带病启动后表现为「功能时好时坏」。
+
+## [Unreleased] — 2026-09-25 商用就绪 P0 批次（P0-1 / P0-2 / P0-4 / P0-7）
+
+> 来源：`docs/commercial-readiness-review-2026-09-25.md`（静态六维 + 真机黑盒双证据）。本批验收统一以「真机把生产栈跑起来」为准，不以静态结论收口。
+
+### 安全：P0-1 预置弱口令可被公开接管（控制面 + auth-svc 双轨）
+
+- 控制面：内置 `admin123` 不再可用于非 demo 登录。初始口令改为显式交付——`--admin-password` / env `OPSMESH_ADMIN_PASSWORD`，或 `--admin-password-file`（未指定时随机生成、0600 落盘）；`--admin-password-force-reset` 作为口令遗失后的可控恢复通道（默认仅首启生效，不回滚界面改密）。
+- 首次登录强制改密：登录响应携带 `mustChangePassword=true` 与 5 分钟有效的一次性 `changePasswordToken`。
+- auth-svc 同缺陷同修（双轨架构）；Helm（Secret + values）、Compose（`.env`）、systemd 三条交付通道同步。
+
+### 安全：P0-2 生产模式 Web/REST 为明文 HTTP
+
+- 新增 `--http-tls auto|on|off`（env `OPSMESH_HTTP_TLS`）：`auto`=配了 `--tls-cert/--tls-key` 即 HTTPS（默认）；`on`=强制 HTTPS（缺证书拒绝启动）；`off`=显式明文（仅限上游反代终止 TLS，文档明确标注端口不得对公网暴露）。
+- 生产形态默认 HTTPS；对 TLS 端口发明文请求被 TLS 层拒绝（HTTP 400，不进业务处理）。黑盒断言 16/16 通过。
+
+### 部署：P0-4 主要部署资产开箱即坏
+
+- `docker-compose.prod.yml`：修复 Docker Desktop(WSL2) 下「容器全部网络为 `internal: true` → 已发布宿主端口被**静默丢弃**」缺陷（13 容器 / 15 端口受影响；`internal` 同时移除网关导致无出网 DNS）。入站边界改由「端口只发布到 `127.0.0.1`」保证。
+- 新增 `deploy/docker/gen-tls.sh`（证书生成）、`init-databases.sql`（多库隔离）；`deploy.sh` 补齐证书 / 加密密钥 / 初始口令生成与 preflight；反代 overlay（nginx 终止 TLS）修复。
+- 监控栈开箱即产生 5 条 critical 假告警：mysql/redis 采集改为经 `blackbox-exporter`（`tcp_connect` 探 3306/6379），移除指向不存在 exporter 的 docker job；`deploy.sh` 冒烟测试新增「Prometheus 采集目标全 UP」断言，把假告警挡在部署阶段。
+- Helm：新增 `encryptionKey`（Secret，upgrade 复用）、`sessionStore`（多副本/HPA + `store=mysql` 时默认 redis，否则必然 CrashLoop）、`logBackend`/`lokiEndpoint`，并接线 `jwtEnvName`（此前启用 auth/device/task-svc 会退回代码内置弱 JWT 默认值）。
+- `deploy/k8s/` 降级为开发样例：移除 ClusterRole/ClusterRoleBinding、修硬伤、显式标注适用边界。
+- 新增部署资产门禁 `deploy/scripts/validate-deploy-assets.sh`（版本源一致性 / release matrix ↔ services ↔ chart 三方对齐 / helm 渲染 + ServiceMonitor 白名单 / compose 可渲染 + 「internal 网络 + 宿主端口」不变式 / k8s 清单），并接入 CI `security` job。
+
+### 数据：P0-7 微服务持久化被静默降级（生产库里没有表）
+
+- 根因：10 个微服务的 `ensureParseTime` 在 DSN 已含 `parseTime=true` 时二次追加（`...?parseTime=true&parseTime=true`），MySQL 驱动报 `invalid bool value: true?parseTime=true` → `sql.Open` 必失败 → 静默回退 memory：生产库无表、重启即丢数据、`/health` 仍为 200。
+- 修复：DSN 归一化改为幂等 + 每服务补 `dsn_test.go`；`StoreType=sql` 且 DSN 已显式配置时，初始化失败由「打日志回退」改为 `log.Fatalf` 阻断启动（8 个 `main.go`，对齐 task-svc 与 controlplane `--production` 的既有 fail-fast 先例）。
+
+### 验证（真机，2026-09-25）
+
+- `deploy/docker/scripts/deploy.sh up -y` → 退出码 0，17 容器全 Up，含「Prometheus 采集目标全 UP」新断言。
+- 新增并交付 `deploy/scripts/verify-runtime.sh`（部署后独立黑盒断言，只读）→ **PASS=38 FAIL=0**：
+  端口发布真实性、P0-1 鉴权链路（含「强制改密期间不签发可用 token」）、P0-2 明文 HTTP 拒绝、
+  P0-7 建表落库、0 firing 告警、多库隔离。
+- `deploy/scripts/validate-deploy-assets.sh`（静态门禁）→ **PASS=20 FAIL=0**；负向测试（人为制造
+  `internal` 网络 + 宿主端口）门禁正确点名 8 个服务。
+- 完整记录：`docs/commercial-readiness-review-2026-09-25.md` §9。
+
 ## [Unreleased] — 2026-09-10 双轨观察 GH Actions 落地 + 双 NULL 扫描 bug 清剿（07447da → 9506f8c）
 
 > TD-60 A-2 阶段 2 启动：task-svc 影子双轨对照观察在 GitHub Actions 免费跑（用户设备需休息，用户拍板云端方案）。观察栈本身首战即抓出两个生产路径真 bug。

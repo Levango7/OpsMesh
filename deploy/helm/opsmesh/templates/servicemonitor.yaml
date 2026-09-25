@@ -16,9 +16,13 @@ spec:
       path: /metrics
       interval: {{ .Values.observability.serviceMonitor.interval | default "30s" }}
       scrapeTimeout: {{ .Values.observability.serviceMonitor.scrapeTimeout | default "10s" }}
-# Microservice ServiceMonitors（遍历 values.services，为每个启用且有 metricsPort 的服务生成独立 ServiceMonitor）
+# Microservice ServiceMonitors（遍历 values.services，为启用【且已暴露 /metrics】的服务生成）。
+# 注意：微服务没有独立 metrics 端口，/metrics 注册在服务自身 HTTP 端口
+# （cmd/<svc>/main.go: mux.Handle("/metrics", metrics.GetHandler())），故 endpoint 取
+# port: http。当前仅 device-svc / task-svc / alert-svc 暴露该路径，由 values 中
+# services.<name>.metrics: true 显式开启，避免为无指标的服务生成 target 恒 DOWN 的采集项。
 {{- range $name, $svc := .Values.services }}
-{{- if and $svc.enabled $svc.metricsPort }}
+{{- if and $svc.enabled $svc.metrics }}
 {{- $svcName := $name | replace "_" "-" }}
 {{- $fullName := printf "%s-%s" (include "opsmesh.fullname" $) $svcName }}
 ---
@@ -35,7 +39,7 @@ spec:
       {{- include "opsmesh.selectorLabels" $ | nindent 6 }}
       app.kubernetes.io/component: {{ $svcName }}
   endpoints:
-    - port: metrics
+    - port: http
       path: /metrics
       interval: {{ $.Values.observability.serviceMonitor.interval | default "30s" }}
       scrapeTimeout: {{ $.Values.observability.serviceMonitor.scrapeTimeout | default "10s" }}

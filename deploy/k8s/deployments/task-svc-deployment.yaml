@@ -1,3 +1,13 @@
+# task-svc —— 本地 Kind 开发样例清单（非生产；生产用 deploy/helm/opsmesh）。
+#
+# 端口 / 探针 / env 名逐项对照源码核实（2026-09-25）：
+#   - HTTP 端口：TASK_SVC_HTTP_PORT，默认 8081（services/task-svc/pkg/config/config.go）
+#   - gRPC 端口：TASK_SVC_GRPC_PORT，默认 50052
+#   - 探针路径：/health、/ready（cmd/task-svc/main.go）
+#   - 暴露 /metrics（在 HTTP 端口上，无独立 metrics 端口）
+#   - JWT 校验密钥 env 名为裸 JWT_SECRET（services/task-svc/pkg/config 读此名，非 TASK_SVC_ 前缀）
+#   - 多副本选主默认是进程内 stub（cmd/task-svc/main.go: leader.NewStub()），
+#     不访问 K8s API；改用 K8s Lease 选举时需另行授予 coordination.k8s.io/leases 权限。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -18,30 +28,30 @@ spec:
         component: task
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "9091"
+        prometheus.io/port: "8081"
         prometheus.io/path: "/metrics"
     spec:
-      serviceAccountName: opsmesh-sa
       containers:
         - name: task-svc
-          image: opsmesh/task-svc:latest
+          image: opsmesh/task-svc:0.9.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
-              containerPort: 8080
+              containerPort: 8081
               protocol: TCP
             - name: grpc
-              containerPort: 9090
+              containerPort: 50052
               protocol: TCP
-            - name: metrics
-              containerPort: 9091
-              protocol: TCP
-          envFrom:
-            - configMapRef:
-                name: opsmesh-config
           env:
-            - name: OPSMESH_SERVICE_NAME
-              value: "task-svc"
+            - name: TASK_SVC_HTTP_PORT
+              value: "8081"
+            - name: TASK_SVC_GRPC_PORT
+              value: "50052"
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: opsmesh-secrets
+                  key: jwt-secret
           resources:
             requests:
               cpu: 200m
@@ -51,7 +61,7 @@ spec:
               memory: 1Gi
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /health
               port: http
             initialDelaySeconds: 10
             periodSeconds: 15
@@ -59,7 +69,7 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /readyz
+              path: /ready
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
@@ -67,7 +77,7 @@ spec:
             failureThreshold: 3
           startupProbe:
             httpGet:
-              path: /healthz
+              path: /health
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5
@@ -84,16 +94,12 @@ spec:
   type: ClusterIP
   ports:
     - name: http
-      port: 8080
+      port: 8081
       targetPort: http
       protocol: TCP
     - name: grpc
-      port: 9090
+      port: 50052
       targetPort: grpc
-      protocol: TCP
-    - name: metrics
-      port: 9091
-      targetPort: metrics
       protocol: TCP
   selector:
     app: task-svc

@@ -1,0 +1,22 @@
+-- 018_users_tenant_id.sql — users 表补 tenant_id 列（多租户隔离 P0-6）
+--
+-- 背景（商用就绪评审 P0-6 问题 A）：内置用户中心无法表达租户——store.User 无 TenantID
+-- 字段、签发 JWT 时硬编码 TenantID: "default"（controlplane/auth_tokens.go）。结果是
+-- 生产模式下内置路径签发的所有用户恒在 default 租户，而网关注入租户的唯一路径
+-- （--trust-gateway-headers）在生产被强制为 false，README「IAM 与租户隔离」所描述的
+-- 按租户隔离在实际生产部署中**无法配置出来**（用户无法被指派到租户）。
+--
+-- 本迁移为用户实体补 tenant_id 列：
+--   - 存量用户由 DEFAULT 'default' 归入平台租户，与迁移前行为完全一致（无行为变更）；
+--   - 新建/更新用户可由平台租户（default）管理员显式指派租户
+--     （POST/PUT /api/v1/users 的可选 tenantId 字段，见 handleCreateUser）；
+--   - 登录后签发的 JWT 携带用户所属租户，从而使 device/task/script/alert 等
+--     按租户作用域的子系统对内置用户真实生效。
+--
+-- 幂等性：MySQL 8 不支持 ADD COLUMN IF NOT EXISTS，故由两层保证重复执行安全——
+--   1. schema_migrations 版本记录（018 已记录则本文件整体跳过）；
+--   2. applyMigration 对 MySQL 1060（ER_DUP_FIELDNAME，列已存在）按「结构已就位」容忍跳过
+--      （sql.go applyMigration），覆盖「列已由历史 fixup 加上但版本号未记录」的半迁移库。
+--
+-- 回滚：见 018_users_tenant_id.down.sql（DROP COLUMN 会丢失租户指派，须先确认无租户内用户）。
+ALTER TABLE users ADD COLUMN tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';

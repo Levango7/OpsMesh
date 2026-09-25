@@ -1,0 +1,12 @@
+-- 018_users_tenant_id.down.sql — 018_users_tenant_id.sql 的回滚脚本（P0-5 补齐）
+--
+-- 回滚动作：删除 users.tenant_id 列。
+--
+-- 真实回滚须知（与 003 的「占位」不同，本文件是可执行的回滚）：
+--   - DROP COLUMN 会永久丢失租户指派信息；若已存在归属非 default 租户的用户，
+--     回滚后这些用户将重新落回 default 租户（内置用户中心的租户能力失效），
+--     但用户本身、密码、角色不受影响。
+--   - 回滚须与二进制版本同步：删除列前先回退到不含本列读写的控制面版本
+--     （userColumns 常量含 tenant_id，缺列时用户查询会报 Unknown column）。
+--   - 执行方式：手工执行（runMigrations 只跑正向迁移，migrationFiles 显式跳过 .down.sql）。
+ALTER TABLE users DROP COLUMN tenant_id;

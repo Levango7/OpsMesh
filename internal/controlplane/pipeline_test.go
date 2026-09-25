@@ -460,6 +460,10 @@ func TestHandleRunPipelineTemplate_WithAgentID(t *testing.T) {
 	s := newPipelineTestServer()
 	auth := loginAsAdmin(t, s)
 
+	// 租户隔离（P0-6）：运行期会校验模板 AgentID 归属 run 所属租户，故执行 agent 须真实注册。
+	if s.store.Register(&proto.AgentInfo{AgentID: "agent-claim-01", Segment: "seg-a", TenantID: "default"}) == nil {
+		t.Fatal("Register agent-claim-01 failed")
+	}
 	created := s.store.CreateTemplate("default", &store.PipelineTemplate{
 		Name:    "claim-test",
 		Type:    "tekton",

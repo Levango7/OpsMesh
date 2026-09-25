@@ -42,12 +42,16 @@ func main() {
 	}
 	defer shutdown(context.Background())
 
-	// Store 初始化：StoreType=sql 且 DSN 非空时接 MySQL（自动建表）；失败或未配置回退内存。
+	// Store 初始化：StoreType=sql 且 DSN 非空时接 MySQL（自动建表）；未配置时用内存。
+	// 注意：显式配置了 sql+DSN 却初始化失败 = 直接阻断启动，不回退内存。
 	// 资源泄漏修复：MySQL 分支成功后 defer ms.Close() 释放连接池（对齐 task-svc main）。
 	var st store.AlertStore = store.NewMemoryStore()
 	if cfg.StoreType == "sql" && cfg.DSN != "" {
 		if ms, err := store.NewMySQLStore(cfg.DSN); err != nil {
-			log.Printf("MySQL store 初始化失败，回退 memory: %v", err)
+			// StoreType=sql 且 DSN 已显式配置 = 运维明确要求持久化存储。此时回退内存会让
+			// 服务看起来正常（/health 仍 200）却在重启后丢光数据，属静默数据丢失陷阱；
+			// 故直接阻断启动（对齐 controlplane --production 与 task-svc 的 fail-fast 策略）。
+			log.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
 		} else {
 			st = ms
 			log.Printf("MySQL store 已启用")

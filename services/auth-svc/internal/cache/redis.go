@@ -35,6 +35,8 @@ type Cache struct {
 // New creates a Cache instance configured via environment variables.
 //
 // The REDIS_ADDR env var controls the Redis server address (default "localhost:6379").
+// The REDIS_PASSWORD env var supplies the AUTH credential for servers started with
+// `--requirepass` (empty = send no AUTH, only valid for unauthenticated Redis).
 // If Redis is unreachable, the Cache operates in disabled mode,
 // where all reads return misses and all writes are no-ops (with logged warnings).
 //
@@ -44,6 +46,7 @@ func New(prefix string) *Cache {
 }
 
 // NewWithAddr 使用显式 Redis 地址；空地址使用默认值，不读取环境变量。
+// 口令始终取自 REDIS_PASSWORD（地址与口令来源分离：地址可被调用方覆盖，口令不能）。
 func NewWithAddr(prefix, addr string) *Cache {
 	if addr == "" {
 		addr = defaultRedisAddr
@@ -51,6 +54,7 @@ func NewWithAddr(prefix, addr string) *Cache {
 
 	client := redis.NewClient(&redis.Options{
 		Addr:        addr,
+		Password:    os.Getenv("REDIS_PASSWORD"),
 		DialTimeout: opTimeout,
 		ReadTimeout: opTimeout,
 	})

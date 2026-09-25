@@ -205,7 +205,7 @@ func TestMultiSchemaSmoke_MySQLDSNBranch(t *testing.T) {
 	}
 
 	namer := DefaultSchemaNamer("opsmesh_tenant_")
-	m, err := NewMultiSchemaStore(dsn, "", namer)
+	m, err := NewMultiSchemaStore(dsn, "", "", namer)
 	if err != nil {
 		t.Fatalf("NewMultiSchemaStore 失败: %v", err)
 	}

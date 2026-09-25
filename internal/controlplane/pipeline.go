@@ -88,6 +88,14 @@ func (s *Server) handleCreatePipelineTemplate(w http.ResponseWriter, r *http.Req
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
+	// 租户隔离（P0-6）：模板的 AgentID 决定后续 pipeline 运行在哪个 agent 上执行
+	// （processPendingPipelineRuns 按 tpl.AgentID 建任务，任务队列按 agent_id 寻址）。
+	// 在模板写入侧即校验归属，避免跨租户模板成为长期潜伏的下发通道。
+	if body.AgentID != "" {
+		if _, ok := s.requireTenantAgent(w, body.AgentID, actx.TenantID); !ok {
+			return
+		}
+	}
 	created := s.store.CreateTemplate(actx.TenantID, &body)
 	if created == nil {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create template failed"})
@@ -183,6 +191,13 @@ func (s *Server) handleUpdatePipelineTemplate(w http.ResponseWriter, r *http.Req
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
+	}
+	// 租户隔离（P0-6）：同创建路径，模板 AgentID 必须属于本租户。
+	// 空 AgentID 不在校验范围（保持 PUT 全量替换语义：清空执行目标由运行期分支处理）。
+	if body.AgentID != "" {
+		if _, ok := s.requireTenantAgent(w, body.AgentID, actx.TenantID); !ok {
+			return
+		}
 	}
 	body.ID = id
 	body.TenantID = actx.TenantID
@@ -333,6 +348,18 @@ func (s *Server) processPendingPipelineRuns() {
 			finished := time.Now()
 			run.FinishedAt = &finished
 			run.Logs = "template agentID not set"
+			s.store.UpdateRun(tenantID, run)
+			continue
+		}
+		// 租户隔离（P0-6）：模板 AgentID 必须属于运行所属租户。
+		// 写入侧（handleCreatePipelineTemplate/handleUpdatePipelineTemplate）已校验，
+		// 此处对「本修复上线前创建的存量模板」兜底：命中即判失败并留可诊断日志，
+		// 绝不下发跨租户任务（任务队列按 agent_id 寻址，下发即等于把命令交给对方 agent）。
+		if _, err := tenantAgentIn(s.store, tpl.AgentID, tenantID); err != nil {
+			run.Status = "failed"
+			finished := time.Now()
+			run.FinishedAt = &finished
+			run.Logs = "template agentID rejected: " + err.Error()
 			s.store.UpdateRun(tenantID, run)
 			continue
 		}

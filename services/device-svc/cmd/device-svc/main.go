@@ -51,7 +51,10 @@ func main() {
 	)
 	if cfg.StoreType == "sql" && cfg.DSN != "" {
 		if ms, err := store.NewMySQLStore(cfg.DSN); err != nil {
-			log.Printf("MySQL store 初始化失败，回退 memory: %v", err)
+			// StoreType=sql 且 DSN 已显式配置 = 运维明确要求持久化存储。此时回退内存会让
+			// 服务看起来正常（/health 仍 200）却在重启后丢光数据，属静默数据丢失陷阱；
+			// 故直接阻断启动（对齐 controlplane --production 与 task-svc 的 fail-fast 策略）。
+			log.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
 		} else {
 			ds, as, cs, disc = ms, ms, ms, ms
 			log.Printf("MySQL store 已启用")

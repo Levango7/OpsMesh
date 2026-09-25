@@ -17,8 +17,8 @@ MAIN = ./cmd/opsmesh
 ALLOW_PUBLIC_REGISTER ?= false
 
 # 前端
-NPM = npm
 WEB_ENTERPRISE = web/enterprise
+EMBED_ENTERPRISE = internal/controlplane/embed/enterprise
 
 # 默认目标
 .PHONY: all
@@ -34,10 +34,12 @@ build: frontend backend
 backend:
 	$(GOBUILD) -a -o $(BINARY_WIN) $(MAIN)
 
-# 仅构建前端（企业版 Vue3）
+# 仅构建前端（企业版 Vue3）：构建 + 组装进 go:embed 目录（P0-3）
+# 只跑 `npm run build` 是不够的——go:embed 不能跨目录，必须把 web/enterprise/dist/
+# 拷到 internal/controlplane/embed/enterprise/ 才能真正打进二进制（否则 /enterprise/ 只有占位页）。
 .PHONY: frontend
 frontend:
-	cd $(WEB_ENTERPRISE) && $(NPM) run build
+	@bash deploy/docker/scripts/build-enterprise-web.sh
 
 # 运行测试
 .PHONY: test
@@ -89,6 +91,10 @@ run-agent: build
 clean:
 	rm -f $(BINARY) $(BINARY_WIN) $(BINARY_WIN)~
 	rm -rf $(WEB_ENTERPRISE)/dist/
+	# 复位 go:embed 目录：清掉组装进来的企业版产物（保留入库的 placeholder.html 与 .gitignore），
+	# 使「clean 后的二进制」回到明确的「未内置企业版前端」状态，避免陈旧产物被误嵌入。
+	@find $(EMBED_ENTERPRISE) -mindepth 1 -maxdepth 1 \
+		! -name 'placeholder.html' ! -name '.gitignore' -exec rm -rf {} +
 
 # Docker 构建
 .PHONY: docker
@@ -111,7 +117,7 @@ help:
 	@echo "OpsMesh Makefile targets:"
 	@echo "  make build      - 完整构建（前端+后端）"
 	@echo "  make backend    - 仅构建后端（go build -a）"
-	@echo "  make frontend   - 仅构建前端（npm run build）"
+	@echo "  make frontend   - 构建企业版前端并组装进 go:embed 目录（需 Node）"
 	@echo "  make test       - 运行测试"
 	@echo "  make vet        - 运行 vet"
 	@echo "  make services-build - 构建 services/ 全部 18 个子模块"

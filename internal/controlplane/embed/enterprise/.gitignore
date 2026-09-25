@@ -1,0 +1,8 @@
+# 企业版前端构建产物目录（P0-3）
+#
+# placeholder.html 是「未内置」占位页（入库）；其余文件由
+# deploy/docker/scripts/build-enterprise-web.sh 从 web/enterprise/dist/ 拷入，
+# 属构建产物，不入库（避免几百个压缩产物污染 diff / 与源码版本漂移）。
+*
+!.gitignore
+!placeholder.html

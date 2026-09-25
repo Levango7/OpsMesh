@@ -50,6 +50,10 @@ limits_config:
   reject_old_samples: true
   reject_old_samples_max_age: 168h
   split_queries_by_interval: 15m
+  # Loki 3.x：chunk_store_config.max_look_back_period 已被移除（镜像钉的是 3.2.0），
+  # 对应能力迁到 limits_config.max_query_lookback；保留旧键会让 loki 启动即失败：
+  #   field max_look_back_period not found in type config.ChunkStoreConfig（实测）
+  max_query_lookback: 720h
 
 schema_config:
   configs:
@@ -69,12 +73,12 @@ storage_config:
   filesystem:
     directory: /loki/chunks
 
-chunk_store_config:
-  max_look_back_period: 720h
-
 compactor:
   working_directory: /loki/compactor
-  shared_store: filesystem
+  # Loki 3.x：compactor.shared_store 已被移除，delete_request_store 取代之
+  # （未设时报 field shared_store not found in type compactor.Config）。
+  # 开启 retention 时必须与 object_store 同为 filesystem。
+  delete_request_store: filesystem
   compaction_interval: 10m
   retention_enabled: true
   retention_delete_delay: 2h

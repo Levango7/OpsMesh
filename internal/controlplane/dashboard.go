@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"strings"
@@ -42,9 +43,46 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(r.Context(), w, "dashboard.readIndexAsset", err)
 		return
 	}
+	// 企业版入口按需显示（P0-3）：本二进制未内置企业版前端（只有占位页）时，
+	// 隐藏「进入企业版前端 →」按钮，避免把用户送到一个打不开的页面。
+	data = stripEnterpriseCTA(data)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	_, _ = w.Write(data)
+}
+
+// enterpriseCTAStart / enterpriseCTAEnd 是 web/index.html 中企业版入口的包裹标记。
+// 用标记而非「正则匹配 <a class="btn-enterprise">」是为了让 HTML 作者可自由改样式/文案。
+const (
+	enterpriseCTAStart = "<!--OPSMESH_ENTERPRISE_CTA_START-->"
+	enterpriseCTAEnd   = "<!--OPSMESH_ENTERPRISE_CTA_END-->"
+)
+
+// stripEnterpriseCTA 在内置企业版前端可用时原样返回（仅去掉包裹标记），
+// 否则删除标记之间的整段入口。标记缺失时原样返回（保持向后兼容，不退化为破坏性替换）。
+func stripEnterpriseCTA(html []byte) []byte {
+	start := bytes.Index(html, []byte(enterpriseCTAStart))
+	if start < 0 {
+		return html
+	}
+	rest := html[start:]
+	endRel := bytes.Index(rest, []byte(enterpriseCTAEnd))
+	if endRel < 0 {
+		return html
+	}
+	end := start + endRel + len(enterpriseCTAEnd)
+	if bundleAvailable() {
+		// 去标记、留内容：HTML 里不再残留内部注释。
+		out := make([]byte, 0, len(html))
+		out = append(out, html[:start]...)
+		out = append(out, html[start+len(enterpriseCTAStart):end-len(enterpriseCTAEnd)]...)
+		out = append(out, html[end:]...)
+		return out
+	}
+	out := make([]byte, 0, len(html))
+	out = append(out, html[:start]...)
+	out = append(out, html[end:]...)
+	return out
 }
 
 // handleAsset 服务前端静态资源（前端独立化：web/assets/* 经 embed.FS 打包）。

@@ -147,3 +147,52 @@ func TestDefaultAgentShellWhitelistContainsExpected(t *testing.T) {
 		}
 	}
 }
+
+// =============================================================================
+// 初始 admin 口令交付通道（P0-1：生产不得静默锁死管理员）
+// =============================================================================
+
+// TestLoad_AdminPasswordDefaults 验证三个口令相关字段默认均为空/false（不隐式注入口令）。
+func TestLoad_AdminPasswordDefaults(t *testing.T) {
+	restore := clearOpsmeshEnv()
+	defer restore()
+	cfg := loadForTest()
+	if cfg.AdminPassword != "" || cfg.AdminPasswordFile != "" {
+		t.Fatalf("默认不应有口令交付通道，得到 password=%q file=%q", cfg.AdminPassword, cfg.AdminPasswordFile)
+	}
+	if cfg.AdminPasswordForceReset {
+		t.Fatal("AdminPasswordForceReset 默认应为 false（避免重启静默回滚界面改密）")
+	}
+}
+
+// TestLoad_AdminPasswordFromFlagAndEnv 验证 flag 与 env 两种注入方式均生效。
+func TestLoad_AdminPasswordFromFlagAndEnv(t *testing.T) {
+	restore := clearOpsmeshEnv()
+	defer restore()
+	cfg := loadForTest("--admin-password=FlagPw123", "--admin-password-file=/tmp/pw")
+	if cfg.AdminPassword != "FlagPw123" || cfg.AdminPasswordFile != "/tmp/pw" {
+		t.Fatalf("flag 注入失败: password=%q file=%q", cfg.AdminPassword, cfg.AdminPasswordFile)
+	}
+	restore2 := clearOpsmeshEnv()
+	defer restore2()
+	t.Setenv("OPSMESH_ADMIN_PASSWORD", "EnvPw123")
+	t.Setenv("OPSMESH_ADMIN_PASSWORD_FILE", "/tmp/envpw")
+	cfg = loadForTest()
+	if cfg.AdminPassword != "EnvPw123" || cfg.AdminPasswordFile != "/tmp/envpw" {
+		t.Fatalf("env 注入失败: password=%q file=%q", cfg.AdminPassword, cfg.AdminPasswordFile)
+	}
+}
+
+// TestValidate_AdminPasswordForceResetRequiresPassword 验证恢复开关必须与显式口令配合。
+func TestValidate_AdminPasswordForceResetRequiresPassword(t *testing.T) {
+	restore := clearOpsmeshEnv()
+	defer restore()
+	cfg := loadForTest("--admin-password-force-reset=true")
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("--admin-password-force-reset=true 而未提供 --admin-password 时应拒绝启动")
+	}
+	cfg = loadForTest("--admin-password-force-reset=true", "--admin-password=Str0ngPw123")
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("提供 --admin-password 后应通过校验: %v", err)
+	}
+}

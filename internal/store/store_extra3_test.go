@@ -188,7 +188,7 @@ func TestSQLStore_CreateTask_EmptyAgentID(t *testing.T) {
 func TestScanUser_InvalidRolesJSON_Extra(t *testing.T) {
 	now := time.Now()
 	row := &mockRowScanner{vals: []interface{}{
-		"user-1", "admin", "", "", "active", []byte(`invalid-json`), now, false,
+		"user-1", "admin", "", "", "active", []byte(`invalid-json`), now, false, sql.NullString{String: "default", Valid: true},
 	}}
 	u := scanUser(row)
 	if u == nil {

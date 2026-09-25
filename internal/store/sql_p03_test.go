@@ -189,7 +189,7 @@ func TestSQLStore_P03Secret(t *testing.T) {
 	if dsn == "" {
 		t.Skip("OPSMESH_TEST_MYSQL_DSN not set; skipping P0.3 SQL integration test")
 	}
-	s, err := NewSQLStore(dsn, "")
+	s, err := NewSQLStore(dsn, "", "")
 	if err != nil {
 		t.Fatalf("NewSQLStore: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestSQLStore_P03Config(t *testing.T) {
 	if dsn == "" {
 		t.Skip("OPSMESH_TEST_MYSQL_DSN not set; skipping P0.3 SQL integration test")
 	}
-	s, err := NewSQLStore(dsn, "")
+	s, err := NewSQLStore(dsn, "", "")
 	if err != nil {
 		t.Fatalf("NewSQLStore: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestSQLStore_P03Discovery(t *testing.T) {
 	if dsn == "" {
 		t.Skip("OPSMESH_TEST_MYSQL_DSN not set; skipping P0.3 SQL integration test")
 	}
-	s, err := NewSQLStore(dsn, "")
+	s, err := NewSQLStore(dsn, "", "")
 	if err != nil {
 		t.Fatalf("NewSQLStore: %v", err)
 	}

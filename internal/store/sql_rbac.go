@@ -10,6 +10,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -24,14 +25,17 @@ type rowScanner interface {
 
 // scanUser 从一行扫描出 *User（role_ids 为 JSON 文本列）。无行或扫描失败返回 nil。
 // 安全债：扫描 must_change_password 列（旧库无此列时回退 false，向后兼容）。
+// 租户隔离：扫描 tenant_id 列（迁移 018 补列；空/NULL 归一为 default）。
 func scanUser(row rowScanner) *User {
 	var u User
 	var roleIDsJSON []byte
 	var createdAt time.Time
-	if err := row.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Status, &roleIDsJSON, &createdAt, &u.MustChangePassword); err != nil {
+	var tenantID sql.NullString
+	if err := row.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Status, &roleIDsJSON, &createdAt, &u.MustChangePassword, &tenantID); err != nil {
 		return nil
 	}
 	u.CreatedAt = createdAt
+	u.TenantID = normalizeTenantID(strings.TrimSpace(tenantID.String))
 	if len(roleIDsJSON) > 0 {
 		if err := json.Unmarshal(roleIDsJSON, &u.RoleIDs); err != nil {
 			log.Printf("store: scanUser 解析 role_ids JSON 失败 (user=%s): %v", u.ID, err)
@@ -61,8 +65,8 @@ func scanRole(row rowScanner) *Role {
 // UserStore：用户中心用户领域（6 方法）
 // ============================================================================
 
-// userColumns users 表查询的列列表（含 must_change_password，安全债）。
-const userColumns = `id, username, email, password_hash, status, role_ids, created_at, must_change_password`
+// userColumns users 表查询的列列表（含 must_change_password，安全债；tenant_id 由迁移 018 保证）。
+const userColumns = `id, username, email, password_hash, status, role_ids, created_at, must_change_password, tenant_id`
 
 // GetUser 按 ID 返回单用户（不存在返回 nil）。
 func (s *SQLStore) GetUser(id string) *User {
@@ -107,21 +111,23 @@ func (s *SQLStore) CreateUser(u *User) *User {
 	}
 	roleIDs, _ := json.Marshal(u.RoleIDs)
 	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO users (id, username, email, password_hash, status, role_ids, created_at, must_change_password)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Username, u.Email, u.PasswordHash, u.Status, roleIDs, time.Now().UTC(), u.MustChangePassword); err != nil {
+		`INSERT INTO users (id, username, email, password_hash, status, role_ids, created_at, must_change_password, tenant_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Username, u.Email, u.PasswordHash, u.Status, roleIDs, time.Now().UTC(), u.MustChangePassword, normalizeTenantID(u.TenantID)); err != nil {
 		return nil
 	}
+	u.TenantID = normalizeTenantID(u.TenantID)
 	return u
 }
 
-// UpdateUser 更新用户 email/roles/status/must_change_password（按 u.ID 定位）。不存在返回 false。
+// UpdateUser 更新用户 email/roles/status/must_change_password/tenant_id（按 u.ID 定位）。不存在返回 false。
 // PasswordHash 不可经此方法修改（避免误覆盖登录凭据，改密走 ChangePassword）。
+// 租户：非空时覆盖（空值视为「本次不改租户」）；实际租户迁移须调用方先经权限判定。
 func (s *SQLStore) UpdateUser(u *User) bool {
 	roleIDs, _ := json.Marshal(u.RoleIDs)
 	res, err := s.db.ExecContext(context.Background(),
-		`UPDATE users SET email=?, role_ids=?, status=?, must_change_password=? WHERE id=?`,
-		u.Email, roleIDs, u.Status, u.MustChangePassword, u.ID)
+		`UPDATE users SET email=?, role_ids=?, status=?, must_change_password=?, tenant_id=COALESCE(NULLIF(?, ''), tenant_id) WHERE id=?`,
+		u.Email, roleIDs, u.Status, u.MustChangePassword, u.TenantID, u.ID)
 	if err != nil {
 		return false
 	}
@@ -419,10 +425,10 @@ func (s *SQLStore) seedRBAC(ctx context.Context) error {
 		}
 		roleIDs, _ := json.Marshal(us.roleIDs)
 		if _, err := s.db.ExecContext(ctx,
-			`INSERT INTO users (id, username, email, password_hash, status, role_ids, created_at, must_change_password)
-			 VALUES (?, ?, ?, ?, 'active', ?, ?, 1)
+			`INSERT INTO users (id, username, email, password_hash, status, role_ids, created_at, must_change_password, tenant_id)
+			 VALUES (?, ?, ?, ?, 'active', ?, ?, 1, ?)
 			 ON DUPLICATE KEY UPDATE must_change_password=1`,
-			us.id, us.name, us.email, string(hash), roleIDs, now); err != nil {
+			us.id, us.name, us.email, string(hash), roleIDs, now, DefaultTenantID); err != nil {
 			return err
 		}
 	}

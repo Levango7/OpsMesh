@@ -4,7 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_DIR="${SCRIPT_DIR}/deployments"
 HPA_DIR="${SCRIPT_DIR}/hpa"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+# deploy/k8s → 上两级即仓库根。原写法 ../../.. 会指到仓库的【父目录】，
+# 使 --load-images 在检查 ${PROJECT_ROOT}/services 时直接报目录不存在。
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CLUSTER_NAME="opsmesh-local"
 NAMESPACE="opsmesh"
 
@@ -64,63 +66,15 @@ check_cluster() {
     log_info "Connected to cluster."
 }
 
-apply_rbac() {
-    log_step "Applying RBAC resources..."
-
-    kubectl apply -f - <<EOF
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: opsmesh-sa
-  namespace: ${NAMESPACE}
-  labels:
-    app.kubernetes.io/name: opsmesh
-    app.kubernetes.io/component: serviceaccount
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: opsmesh-role
-  labels:
-    app.kubernetes.io/name: opsmesh
-rules:
-  - apiGroups: [""]
-    resources: ["pods", "services", "endpoints", "configmaps", "secrets", "namespaces"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["apps"]
-    resources: ["deployments", "daemonsets", "replicasets", "statefulsets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["autoscaling"]
-    resources: ["horizontalpodautoscalers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses", "networkpolicies"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: opsmesh-rolebinding
-  labels:
-    app.kubernetes.io/name: opsmesh
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: opsmesh-role
-subjects:
-  - kind: ServiceAccount
-    name: opsmesh-sa
-    namespace: ${NAMESPACE}
-EOF
-
-    log_info "RBAC resources applied."
-}
-
 apply_secrets() {
     log_step "Applying secrets..."
 
-    local jwt_secret
+    local jwt_secret admin_password
     jwt_secret=$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)
+    # 口令须同时满足控制面与 auth-svc 的强口令规则（auth-svc 更严：≥12 位 + 大小写 + 数字 +
+    # 特殊字符）。纯 base64 随机偶有无数字/无大写，故用固定前缀 + 随机 hex 段，保证恒定合规；
+    # 特殊字符取 '!'（避开 '@'/'#'/'$'/引号等会破坏 DSN、env 与 YAML 的字符）。
+    admin_password="Pw1!$(openssl rand -hex 12 2>/dev/null || head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 
     kubectl apply -f - <<EOF
 apiVersion: v1
@@ -135,10 +89,12 @@ type: Opaque
 stringData:
   jwt-secret: "${jwt_secret}"
   provision-secret: "$(openssl rand -base64 24 2>/dev/null || head -c 24 /dev/urandom | base64)"
-  alert-webhook-url: ""
+  admin-password: "${admin_password}"
 EOF
 
     log_info "Secrets applied."
+    log_warn "初始 admin 口令（仅本地样例）：${admin_password}"
+    log_warn "首次登录强制改密；生产环境改用随机口令交付通道，勿用可预测口令。"
 }
 
 apply_namespace() {
@@ -147,11 +103,10 @@ apply_namespace() {
     log_info "Namespace '${NAMESPACE}' ready."
 }
 
-apply_configmap() {
-    log_step "Applying ConfigMap..."
-    kubectl apply -f "${DEPLOY_DIR}/configmap.yaml"
-    log_info "ConfigMap applied."
-}
+# 说明：本样例【不】创建任何 RBAC。样例只部署 5 个微服务，其运行期不访问 K8s API
+# （task-svc 多副本选主默认走进程内 stub，见 cmd/task-svc/main.go: leader.NewStub()）。
+# 原脚本给 Pod 绑定了一个含 secrets 写、namespace 删除的 ClusterRole（过权），已删除；
+# 控制面集群能力（internal/k8s/client.go）所需的 RBAC 由生产部署（Helm）侧另行提供。
 
 apply_deployments() {
     log_step "Applying deployments..."
@@ -188,6 +143,13 @@ apply_hpa() {
 apply_ingress() {
     log_step "Applying Ingress..."
 
+    # 路径对照各服务真实注册的路由（2026-09-25 逐服务核实），且【不】做 rewrite：
+    # 各服务自身就服务 /api/v1/... 前缀，剥掉前缀会 404。
+    #   auth-svc   /api/v1/auth|users|roles|permissions            :8081
+    #   task-svc   /api/v1/tasks|schedules|approval                :8081
+    #   alert-svc  /api/v1/escalation|oncall                       :8080
+    #   device-svc /api/v1/devices|agents|catalog|cmdb|discovery|provision :8081
+    #   gpu-svc    /api/v1/gpu                                     :8090
     kubectl apply -f - <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -197,7 +159,6 @@ metadata:
   labels:
     app.kubernetes.io/name: opsmesh
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
@@ -208,48 +169,90 @@ spec:
     - host: opsmesh.local
       http:
         paths:
-          - path: /api/auth
+          - path: /api/v1/auth
             pathType: Prefix
             backend:
               service:
                 name: auth-svc
                 port:
-                  number: 8080
-          - path: /api/tasks
+                  number: 8081
+          - path: /api/v1/users
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-svc
+                port:
+                  number: 8081
+          - path: /api/v1/roles
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-svc
+                port:
+                  number: 8081
+          - path: /api/v1/permissions
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-svc
+                port:
+                  number: 8081
+          - path: /api/v1/tasks
             pathType: Prefix
             backend:
               service:
                 name: task-svc
                 port:
-                  number: 8080
-          - path: /api/alerts
+                  number: 8081
+          - path: /api/v1/schedules
+            pathType: Prefix
+            backend:
+              service:
+                name: task-svc
+                port:
+                  number: 8081
+          - path: /api/v1/approval
+            pathType: Prefix
+            backend:
+              service:
+                name: task-svc
+                port:
+                  number: 8081
+          - path: /api/v1/escalation
             pathType: Prefix
             backend:
               service:
                 name: alert-svc
                 port:
                   number: 8080
-          - path: /api/devices
+          - path: /api/v1/oncall
+            pathType: Prefix
+            backend:
+              service:
+                name: alert-svc
+                port:
+                  number: 8080
+          - path: /api/v1/devices
             pathType: Prefix
             backend:
               service:
                 name: device-svc
                 port:
-                  number: 8080
-          - path: /api/gpu
+                  number: 8081
+          - path: /api/v1/catalog
+            pathType: Prefix
+            backend:
+              service:
+                name: device-svc
+                port:
+                  number: 8081
+          - path: /api/v1/gpu
             pathType: Prefix
             backend:
               service:
                 name: gpu-svc
                 port:
-                  number: 8080
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: auth-svc
-                port:
-                  number: 8080
+                  number: 8090
 EOF
 
     log_info "Ingress applied."
@@ -277,59 +280,38 @@ load_images() {
         exit 1
     fi
 
-    local registry="${REGISTRY:-localhost:5000}"
-    local tag="${IMAGE_TAG:-latest}"
+    # 标签默认 0.9.0：与 deployments/*.yaml 中的 image 标签、当前发布版本一致。
+    local tag="${IMAGE_TAG:-0.9.0}"
 
     for svc in "${SERVICES[@]}"; do
         local svc_dir="${PROJECT_ROOT}/services/${svc}"
-        if [[ -d "$svc_dir" ]]; then
-            local image_name="opsmesh/${svc}:${tag}"
-            log_info "Building ${image_name}..."
-
-            if [[ -f "${svc_dir}/Dockerfile" ]]; then
-                docker build -t "$image_name" "${svc_dir}/"
-            elif [[ -f "${PROJECT_ROOT}/deploy/docker/Dockerfile.micro" ]]; then
-                docker build -t "$image_name" \
-                    -f "${PROJECT_ROOT}/deploy/docker/Dockerfile.micro" \
-                    --build-arg SERVICE_NAME="$svc" \
-                    "${PROJECT_ROOT}/"
-            else
-                log_warn "No Dockerfile found for ${svc}. Creating minimal image..."
-                create_minimal_image "$svc" "$image_name"
-            fi
-
-            log_info "Loading ${image_name} into Kind..."
-            kind load docker-image "$image_name" --name "${CLUSTER_NAME}"
-        else
-            log_warn "Service directory not found: ${svc_dir}. Creating minimal image..."
-            create_minimal_image "$svc" "opsmesh/${svc}:${tag}"
-            kind load docker-image "opsmesh/${svc}:${tag}" --name "${CLUSTER_NAME}"
+        if [[ ! -d "$svc_dir" ]]; then
+            log_error "Service directory not found: ${svc_dir}"
+            exit 1
         fi
+
+        if [[ ! -f "${PROJECT_ROOT}/Dockerfile.service" ]]; then
+            log_error "缺少根级 Dockerfile.service（微服务统一构建模板），无法构建 ${svc}"
+            exit 1
+        fi
+
+        local image_name="opsmesh/${svc}:${tag}"
+        log_info "Building ${image_name}..."
+        # 构建上下文必须是仓库根：services/*/go.mod 均 `replace opsmesh => ../..`，
+        # 单服务目录作上下文时容器内无主模块，go mod verify 必失败
+        # （实测报 "replaced by ../../: open /go.mod: no such file"）。
+        # 与 .github/workflows/release.yml、docker-compose.prod.yml 同一契约。
+        docker build -t "$image_name" \
+            -f "${PROJECT_ROOT}/Dockerfile.service" \
+            --build-arg SERVICE="$svc" \
+            --build-arg VERSION="$tag" \
+            "${PROJECT_ROOT}/"
+
+        log_info "Loading ${image_name} into Kind..."
+        kind load docker-image "$image_name" --name "${CLUSTER_NAME}"
     done
 
     log_info "All images loaded into Kind cluster."
-}
-
-create_minimal_image() {
-    local svc_name="$1"
-    local image_name="$2"
-
-    local tmpdir
-    tmpdir=$(mktemp -d)
-
-    cat > "${tmpdir}/Dockerfile" <<DOCKERFILE
-FROM alpine:3.19
-RUN apk --no-cache add ca-certificates curl && \
-    adduser -D -u 65532 opsmesh
-USER opsmesh
-EXPOSE 8080 9090 9091
-HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/healthz || exit 1
-ENTRYPOINT ["/bin/sh", "-c", "echo 'OpsMesh ${svc_name} placeholder' && exec sleep infinity"]
-DOCKERFILE
-
-    docker build -t "$image_name" "$tmpdir"
-    rm -rf "$tmpdir"
 }
 
 print_status() {
@@ -352,7 +334,12 @@ print_status() {
     echo ""
     echo "Access:"
     echo "  - Add '127.0.0.1 opsmesh.local' to /etc/hosts for ingress"
-    echo "  - Port-forward: kubectl port-forward svc/auth-svc 8080:8080 -n ${NAMESPACE}"
+    echo "  - Port-forward: kubectl port-forward svc/auth-svc 8081:8081 -n ${NAMESPACE}"
+    echo ""
+    log_warn "开发样例边界：本目录仅供本地 Kind 联调，非生产部署基线。"
+    log_warn "  - 无 RBAC：Pod 运行期不访问 K8s API（控制面集群能力由 Helm/生产侧提供）"
+    log_warn "  - 密码/密钥为脚本随机生成，经 Secret 注入；生产走正式密钥管理"
+    log_warn "  - 无 TLS、无 NetworkPolicy、无资源配额策略；生产基线见 deploy/helm/opsmesh"
     echo ""
 }
 
@@ -369,9 +356,7 @@ main() {
     fi
 
     apply_namespace
-    apply_rbac
     apply_secrets
-    apply_configmap
     apply_deployments
     apply_hpa
     apply_ingress

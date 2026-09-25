@@ -1,8 +1,34 @@
-version: "3.8"
-
-# OpsMesh Production Deployment
-# Real deployment configuration for production use
-# Usage: docker compose -f docker-compose.prod.yml up -d
+# OpsMesh 生产部署 —— 控制面直连 HTTPS（默认形态）
+#
+# 用法：
+#   bash scripts/deploy.sh init      # 生成 .env（随机口令/密钥）+ 自签证书
+#   bash scripts/deploy.sh up        # = docker compose -f docker-compose.prod.yml --env-file .env up -d
+#
+# 必需变量（全部无内置默认值，缺失时 compose 直接报错，而不是拿预置弱口令跑起来）：
+#   OPSMESH_VERSION        镜像标签（禁止 latest 浮动标签）
+#   OPSMESH_ADVERTISE_ADDR 控制面对外可达地址，用于拼接 bootstrap 安装命令
+#   MYSQL_ROOT_PASSWORD / MYSQL_PASSWORD / REDIS_PASSWORD
+#   JWT_SECRET（≥32 字节）/ ENCRYPTION_KEY（base64 的 32 字节）
+#   ADMIN_PASSWORD（初始 admin 口令）/ GRAFANA_ADMIN_PASSWORD / CONFIG_ENCRYPTION_KEY
+#   生成：openssl rand -base64 48（JWT_SECRET）/ openssl rand -base64 32（其余）
+#
+# 项目名：见文件顶部 name: opsmesh。
+#   不写 name 时 Compose 用「目录名」当项目名（本目录名是 docker）——任何同样放在名为
+#   docker 的目录下的 compose 项目都会与此处共享项目名，`docker compose down
+#   --remove-orphans` 会把那个项目的容器一并删除（实测：本机 `compose ps -a` 曾列出
+#   17 个属于另一套 Dify 栈的容器）。显式 name 后各栈互不可见。
+#
+# 版本要求：Docker Compose ≥ 2.24.4（name 字段 + 反代 overlay 的 !override 标签）。
+#
+# TLS：本文件为「控制面直连 HTTPS」形态——浏览器与 agent 直连 8080/9090，
+#   证书挂载自 ${OPSMESH_TLS_DIR}（默认 ./certs，需含 tls.crt + tls.key）。
+#   agent 侧需以 --client-ca=<ca> 信任该证书（自签场景），否则 gRPC 校验失败。
+#   若由 Nginx/Ingress 终止 TLS，叠加反代 overlay：
+#     docker compose --env-file .env -f docker-compose.prod.yml -f docker-compose.prod-proxy.yml up -d
+#   （overlay 用 !override 重置端口映射）
+#
+# 端口暴露策略：仅控制面 HTTP(8080)/gRPC(9090) 对外；MySQL/Redis/监控组件/各微服务
+#   端口仅绑 127.0.0.1（运维经 SSH 隧道或 docker exec 访问），避免内网直连数据库。
 #
 # MySQL 库规划（表名冲突规避）：
 #   - `opsmesh` 主库：仅 controlplane（主模块 internal/store 建表）使用，MYSQL_DATABASE 保持 opsmesh。
@@ -10,7 +36,20 @@ version: "3.8"
 #     原因：controlplane 主模块与微服务的 devices/users/agents/alerts/ci_items 等表名相同但结构不一致，
 #     共库时 CREATE TABLE IF NOT EXISTS 会静默让位给先建表的一方，后启动服务的 INSERT 因列不匹配而失败。
 #     微服务各自 schema.sql 均为 CREATE TABLE IF NOT EXISTS，服务启动 initSchema 自建表，
-#     只需在 deploy/docker/scripts/init-mysql.sql 预建库并授权（opsmesh_device/opsmesh_task/opsmesh_alert/opsmesh_config/opsmesh_log）。
+#     只需预建库并授权——已由 mysql 服务挂载 scripts/init-databases.sql 到
+#     /docker-entrypoint-initdb.d/ 自动完成（仅首次初始化数据卷时执行）。
+#     注意：不要改挂 scripts/init-mysql.sql（那是含全量表 DDL 的单库合并脚本，
+#     会让结构不一致的同名表抢先落地，详见 init-databases.sql 内注释）。
+#
+# 镜像构建（踩坑记录）：
+#   微服务统一用「仓库根上下文 + 根级 Dockerfile.service + --build-arg SERVICE=<svc>」，
+#   与 .github/workflows/release.yml 同一契约。原因：services/*/go.mod 均含
+#   `replace opsmesh => ../..`，若把 context 限定在 services/<svc> 单服务目录，
+#   容器内没有主模块，`go mod verify` 必失败——实测报
+#   `go: github.com/Levango7/OpsMesh@v0.0.0-... (replaced by ../../): reading /go.mod: no such file`。
+#   VERSION 供 -ldflags 注入版本号，取自 OPSMESH_VERSION（与镜像 tag 同源）。
+
+name: opsmesh
 
 x-logging: &default-logging
   driver: "json-file"
@@ -22,10 +61,6 @@ x-logging: &default-logging
 x-restart: &restart-policy
   restart: unless-stopped
 
-x-otel: &otel-config
-  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
-  OTEL_SERVICE_NAME: "{{.Service.Name}}"
-
 services:
   # ============================================================
   # Infrastructure Layer
@@ -35,18 +70,28 @@ services:
     image: mysql:8.0
     container_name: opsmesh-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-opsmesh_root_secure_2024}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 设置 MYSQL_ROOT_PASSWORD（openssl rand -base64 32）}
       MYSQL_DATABASE: opsmesh
       MYSQL_USER: ${MYSQL_USER:-opsmesh}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}
-      MYSQL_ROOT_HOST: '%'
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 .env 设置 MYSQL_PASSWORD（openssl rand -base64 32）}
+      # root 仅限容器内 localhost（镜像默认会额外创建 root@'%'，等于把全库管理权开放给整个网络）。
+      MYSQL_ROOT_HOST: localhost
     ports:
-      - "${MYSQL_PORT:-3306}:3306"
+      # 仅本机可达：数据库不对外暴露，运维经 SSH 隧道/容器内客户端访问。
+      - "127.0.0.1:${MYSQL_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./monitoring/mysql.cnf:/etc/mysql/conf.d/custom.cnf:ro
+      - ../monitoring/mysql.cnf:/etc/mysql/conf.d/custom.cnf:ro
+      # 首次初始化（数据目录为空）时建微服务独立库并授权；已有数据卷不重跑。
+      # 只建库不建表：表由各服务启动时按自身 schema 创建（详见脚本内注释）。
+      - ./scripts/init-databases.sql:/docker-entrypoint-initdb.d/10-init-databases.sql:ro
+    # 参数说明（MySQL 8.0 实测）：
+    #   - 不含 --query-cache-type/--query-cache-size：8.0 已移除查询缓存，
+    #     带该参数会 [ERROR] [MY-000067] unknown variable + Aborting 直接启动失败。
+    #   - 不含 --default-authentication-plugin=mysql_native_password：8.0.46 起弃用、8.4 移除；
+    #     且无必要——go-sql-driver/mysql v1.10.0 原生支持 caching_sha2_password，
+    #     非 TLS 连接走 RSA 公钥交换，实测（8.0 容器 + 非 TLS DSN）Ping/DDL/SELECT 均通过。
     command: >
-      --default-authentication-plugin=mysql_native_password
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
       --max-connections=500
@@ -54,13 +99,12 @@ services:
       --innodb-log-file-size=256M
       --innodb-flush-log-at-trx-commit=1
       --innodb-flush-method=O_DIRECT
-      --query-cache-type=1
-      --query-cache-size=64M
       --slow-query-log=1
       --slow-query-log-file=/var/lib/mysql/slow.log
       --long-query-time=2
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p${MYSQL_ROOT_PASSWORD:-opsmesh_root_secure_2024} --silent"]
+      # -h localhost 走容器内 socket，命中 root@localhost（root 已被限制为 localhost）。
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
       interval: 15s
       timeout: 5s
       start_period: 60s
@@ -87,15 +131,19 @@ services:
       --appendfsync everysec
       --maxmemory 512mb
       --maxmemory-policy allkeys-lru
-      --requirepass ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
+      --requirepass ${REDIS_PASSWORD:?请在 .env 设置 REDIS_PASSWORD（Redis --requirepass 口令）}
       --tcp-keepalive 300
       --timeout 0
+    environment:
+      # 供健康检查在容器内取用（避免把口令写进 compose 渲染出的命令行）。
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 设置 REDIS_PASSWORD（Redis --requirepass 口令）}
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      # 仅本机可达：未认证 Redis 可被任意容器读取会话黑名单/限流计数或直接 FLUSHALL。
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-opsmesh_redis_secure_2024}", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 15s
       timeout: 5s
       start_period: 15s
@@ -130,10 +178,10 @@ services:
       - --web.console.libraries=/usr/share/prometheus/console_libraries
       - --web.console.templates=/usr/share/prometheus/consoles
     ports:
-      - "${PROMETHEUS_PORT:-9092}:9090"
+      - "127.0.0.1:${PROMETHEUS_PORT:-9092}:9090"
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./monitoring/prometheus-alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/prometheus-alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
     environment:
       - TZ=${TZ:-UTC}
@@ -156,13 +204,50 @@ services:
     logging: *default-logging
     <<: *restart-policy
 
+  # 黑盒拨测（blackbox_exporter）：prometheus.yml 的 opsmesh-mysql / opsmesh-redis
+  # 用 metrics_path=/probe + module=tcp_connect（即本 exporter 的协议）。
+  #
+  # 为什么必须真的部署它（2026-09-25 实测）：此前栈内没有 blackbox-exporter，且这两个
+  # job 缺 relabel_configs，等价于让 Prometheus 直接向 MySQL/Redis 发 HTTP /probe 请求
+  # → target 恒 DOWN；叠加 alerts.yml 的 up==0 / MySQLDown / RedisDown，一个完全健康的
+  # 栈在 /api/v1/alerts 上常驻 5 条 critical 假告警（MySQLDown、RedisDown、
+  # ServiceDown×3）。假告警会让值班人员整体忽略告警，比不配告警更危险。
+  #
+  # 不发布宿主端口：只由 Prometheus 经内网抓取（排障看 Prometheus targets 页即可）。
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: opsmesh-blackbox
+    command:
+      - --config.file=/etc/blackbox_exporter/config.yml
+    volumes:
+      - ../monitoring/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    environment:
+      - TZ=${TZ:-UTC}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9115/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      # backend_net 用于拨测 mysql:3306 / redis:6379；monitoring_net 供 Prometheus 抓取。
+      - monitoring_net
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+    logging: *default-logging
+    <<: *restart-policy
+
   grafana:
     image: grafana/grafana:11.2.0
     container_name: opsmesh-grafana
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-opsmesh_grafana_2024}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?请在 .env 设置 GRAFANA_ADMIN_PASSWORD}
       GF_USERS_ALLOW_SIGN_UP: "false"
+      # Grafana 仅绑本机，root URL 用 localhost（远程访问走 SSH 隧道）。
       GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
       GF_SERVER_SERVE_FROM_SUB_PATH: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
@@ -172,11 +257,11 @@ services:
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: "/var/lib/grafana/dashboards/opsmesh-overview.json"
       TZ: ${TZ:-UTC}
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       prometheus:
         condition: service_healthy
@@ -201,9 +286,9 @@ services:
     container_name: opsmesh-loki
     command: -config.file=/etc/loki/loki-config.yml
     ports:
-      - "${LOKI_PORT:-3100}:3100"
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
     volumes:
-      - ./monitoring/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - ../monitoring/loki-config.yml:/etc/loki/loki-config.yml:ro
       - loki_data:/loki
     environment:
       - TZ=${TZ:-UTC}
@@ -230,18 +315,20 @@ services:
     container_name: opsmesh-otel
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     ports:
-      - "${OTEL_GRPC_PORT:-4317}:4317"
-      - "${OTEL_HTTP_PORT:-4318}:4318"
-      - "${OTEL_METRICS_PORT:-8888}:8888"
+      - "127.0.0.1:${OTEL_GRPC_PORT:-4317}:4317"
+      - "127.0.0.1:${OTEL_HTTP_PORT:-4318}:4318"
+      - "127.0.0.1:${OTEL_METRICS_PORT:-8888}:8888"
+      # health_check 扩展端口：发布到宿主 127.0.0.1，供外部探活/排障。
+      # 为什么容器内不做 healthcheck：otel/opentelemetry-collector-contrib 是
+      # distroless 镜像（无 shell、无 wget），`test: ["CMD","wget",...]` 无法执行，
+      # 实测报 executable file not found in $PATH，容器会恒为 unhealthy 并让
+      # deploy.sh 判定失败。该镜像唯一可用二进制是 /otelcol-contrib 本身，故健康
+      # 判定改由外部（宿主/Docker 编排/K8s httpGet）访问本端口完成。
+      - "127.0.0.1:${OTEL_HEALTH_PORT:-13134}:13134"
     volumes:
-      - ./monitoring/otel-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ../monitoring/otel-config.yaml:/etc/otelcol-contrib/config.yaml:ro
     environment:
       - TZ=${TZ:-UTC}
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13134/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
     networks:
       - monitoring_net
       - backend_net
@@ -264,32 +351,58 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.controlplane
-    image: opsmesh/controlplane:${OPSMESH_VERSION:-latest}
+    # 生产禁用 latest 浮动标签：镜像内容不可追溯，回滚无法定位版本。
+    image: opsmesh/controlplane:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION（如 0.9.0，禁止 latest）}
     container_name: opsmesh-controlplane
     command:
       - --mode=controlplane
       - --store=mysql
-      - --mysql-dsn=${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh?parseTime=true
+      - --mysql-dsn=${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:?请在 .env 设置 MYSQL_PASSWORD}@tcp(mysql:3306)/opsmesh?parseTime=true
       - --redis-addr=redis:6379
-      - --advertise-addr=http://controlplane:8080
+      # 口令经 OPSMESH_REDIS_PASSWORD 注入（不写进命令行，避免出现在 ps/inspect 的 argv 中）。
+      - --session-store=redis://redis:6379
+      # Web/REST 协议：auto=证书齐备即 HTTPS（本文件已挂载证书）；gRPC 同样启用 TLS。
+      - --http-tls=auto
+      - --tls-cert=/etc/opsmesh/tls/tls.crt
+      - --tls-key=/etc/opsmesh/tls/tls.key
+      # 自动纳管 bootstrap 命令使用该地址，必须是对 agent 可达的真实地址。
+      - --advertise-addr=${OPSMESH_ADVERTISE_ADDR:?请在 .env 设置 OPSMESH_ADVERTISE_ADDR（如 https://ops.example.com:8080）}
+      # M6 日志检索：查 Loki（日志由 agent 直接推送）；endpoint 必填，否则启动期校验拒绝。
+      - --log-backend=loki
+      - --loki-endpoint=http://loki:3100
     ports:
       - "${CONTROLPLANE_HTTP_PORT:-8080}:8080"
       - "${CONTROLPLANE_GRPC_PORT:-9090}:9090"
-      - "${CONTROLPLANE_METRICS_PORT:-9091}:9091"
+      # metrics 只给监控网段与本机用；Prometheus 经 backend_net 抓取，无需对外。
+      - "127.0.0.1:${CONTROLPLANE_METRICS_PORT:-9091}:9091"
+    volumes:
+      - ${OPSMESH_TLS_DIR:-./certs}:/etc/opsmesh/tls:ro
     environment:
-      OPSMESH_JWT_SECRET: ${JWT_SECRET:-opsmesh_jwt_secret_production_change_me}
-      OPSMESH_COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      OPSMESH_PUBLIC_REGISTER: ${PUBLIC_REGISTER:-false}
-      OPSMESH_ALLOW_PUBLIC_REGISTER: ${ALLOW_PUBLIC_REGISTER:-false}
+      # ---- 密钥（全部必填：无内置默认口令，缺失即拒绝启动）----
+      OPSMESH_JWT_SECRET: ${JWT_SECRET:?请在 .env 设置 JWT_SECRET（≥32 字节，openssl rand -base64 48）}
+      OPSMESH_ENCRYPTION_KEY: ${ENCRYPTION_KEY:?请在 .env 设置 ENCRYPTION_KEY（kubeconfig AES-256-GCM 密钥，base64 的 32 字节）}
+      # 初始 admin 口令交付：生产模式且此处为空时，控制面 fail-fast 拒绝启动
+      # （替代此前"随机口令不输出导致管理员被静默锁死"）。生成：openssl rand -base64 24
+      OPSMESH_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请在 .env 设置 ADMIN_PASSWORD（初始 admin 口令，至少 8 位含大小写与数字）}
+      OPSMESH_REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 设置 REDIS_PASSWORD（Redis --requirepass 口令）}
+      # ---- 运行模式与安全开关 ----
       OPSMESH_PRODUCTION: ${PRODUCTION_MODE:-true}
       OPSMESH_REQUIRE_AUTH: ${REQUIRE_AUTH:-true}
+      # 直连 HTTPS：Cookie 必须带 Secure（明文形态由反代 overlay 覆盖）。
+      OPSMESH_COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      OPSMESH_PUBLIC_REGISTER: ${PUBLIC_REGISTER:-false}
+      OPSMESH_ALLOW_PUBLIC_REGISTER: ${ALLOW_PUBLIC_REGISTER:-false}
       OPSMESH_TRUST_PROXY: ${TRUST_PROXY:-false}
-      OPSMESH_FEDERATION_SECRET: ${FEDERATION_SECRET:-}
-      OPSMESH_PROVISION_SECRET: ${PROVISION_SECRET:-}
       OPSMESH_GRPC_REQUIRE_SIGNATURE: ${GRPC_REQUIRE_SIGNATURE:-true}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
-      SHUTDOWN_TIMEOUT: 30s
+      # 重启/多副本后 bootstrap 安装令牌仍需有效时须固定该密钥（空=进程内随机，重启即失效）。
+      OPSMESH_PROVISION_SECRET: ${PROVISION_SECRET:-}
+      OPSMESH_FEDERATION_SECRET: ${FEDERATION_SECRET:-}
+      # metrics 白名单：仅 compose 网段与本机（空=不限来源）。
+      OPSMESH_METRICS_ALLOW_CIDR: ${METRICS_ALLOW_CIDR:-127.0.0.0/8,172.28.0.0/16}
+      # ---- 可观测性 ----
+      OPSMESH_OTEL_ENDPOINT: "otel-collector:4317"
+      OPSMESH_OTEL_SERVICE_NAME: "opsmesh-controlplane"
+      OPSMESH_SHUTDOWN_TIMEOUT: 30s
       TZ: ${TZ:-UTC}
     depends_on:
       mysql:
@@ -297,10 +410,11 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["/usr/local/bin/opsmesh", "--health"]
+      # --health 探针自行尝试 https 与 http（等价 curl -k），直连 HTTPS 与反代明文两种形态均可。
+      test: ["CMD", "/usr/local/bin/opsmesh", "--health"]
       interval: 30s
       timeout: 5s
-      start_period: 15s
+      start_period: 30s
       retries: 3
     networks:
       - frontend_net
@@ -318,20 +432,27 @@ services:
 
   auth-svc:
     build:
-      context: ../../services/auth-svc
-      dockerfile: Dockerfile
-    image: opsmesh/auth-svc:${OPSMESH_VERSION:-latest}
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE: auth-svc
+        VERSION: ${OPSMESH_VERSION}
+    image: opsmesh/auth-svc:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION（如 0.9.0，禁止 latest）}
     container_name: opsmesh-auth-svc
     ports:
-      - "${AUTH_SVC_HTTP_PORT:-8100}:8100"
+      - "127.0.0.1:${AUTH_SVC_HTTP_PORT:-8100}:8100"
     environment:
       AUTH_SVC_GRPC_PORT: 50050
       AUTH_SVC_HTTP_PORT: 8100
-      AUTH_SVC_JWT_SECRET: ${JWT_SECRET:-opsmesh_jwt_secret_production_change_me}
+      AUTH_SVC_JWT_SECRET: ${JWT_SECRET:?请在 .env 设置 JWT_SECRET}
+      # 与 controlplane 的 OPSMESH_ADMIN_PASSWORD 同源：同一套初始口令，避免两处不一致。
+      AUTH_SVC_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请在 .env 设置 ADMIN_PASSWORD}
       AUTH_SVC_ACCESS_TOKEN_TTL: ${AUTH_ACCESS_TTL:-900s}
       AUTH_SVC_REFRESH_TOKEN_TTL: ${AUTH_REFRESH_TTL:-168h}
       AUTH_SVC_REDIS_ADDR: "redis:6379"
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
+      # 口令经 REDIS_PASSWORD 读取（cache.NewWithAddr / NewSessionStore 均取该变量）。
+      # 缺失时 Redis AUTH 失败会静默降级为进程内缓存（登录态不跨副本共享），故此处必填。
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 设置 REDIS_PASSWORD}
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-UTC}
@@ -359,27 +480,26 @@ services:
 
   device-svc:
     build:
-      context: ../../services/device-svc
-      dockerfile: Dockerfile
-    image: opsmesh/device-svc:${OPSMESH_VERSION:-latest}
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE: device-svc
+        VERSION: ${OPSMESH_VERSION}
+    image: opsmesh/device-svc:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION}
     container_name: opsmesh-device-svc
     ports:
-      - "${DEVICE_SVC_HTTP_PORT:-8101}:8101"
+      - "127.0.0.1:${DEVICE_SVC_HTTP_PORT:-8101}:8101"
     environment:
       DEVICE_SVC_GRPC_PORT: 50051
       DEVICE_SVC_HTTP_PORT: 8101
       DEVICE_SVC_STORE_TYPE: ${DEVICE_STORE_TYPE:-sql}
-      DEVICE_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh_device?parseTime=true"
-      DEVICE_SVC_REDIS_ADDR: "redis:6379"
-      DEVICE_SVC_JWT_SECRET: ${JWT_SECRET:-opsmesh_jwt_secret_production_change_me}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
+      DEVICE_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:?请在 .env 设置 MYSQL_PASSWORD}@tcp(mysql:3306)/opsmesh_device?parseTime=true"
+      DEVICE_SVC_JWT_SECRET: ${JWT_SECRET:?请在 .env 设置 JWT_SECRET}
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-UTC}
     depends_on:
       mysql:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8101/health"]
@@ -402,12 +522,15 @@ services:
 
   task-svc:
     build:
-      context: ../../services/task-svc
-      dockerfile: Dockerfile
-    image: opsmesh/task-svc:${OPSMESH_VERSION:-latest}
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE: task-svc
+        VERSION: ${OPSMESH_VERSION}
+    image: opsmesh/task-svc:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION}
     container_name: opsmesh-task-svc
     ports:
-      - "${TASK_SVC_HTTP_PORT:-8102}:8102"
+      - "127.0.0.1:${TASK_SVC_HTTP_PORT:-8102}:8102"
     environment:
       TASK_SVC_GRPC_PORT: 50052
       TASK_SVC_HTTP_PORT: 8102
@@ -415,16 +538,16 @@ services:
       TASK_SVC_MAX_TASKS: 50000
       TASK_SVC_MAX_RETRIES: 3
       TASK_SVC_TASK_TIMEOUT: 600
-      MYSQL_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh_task?parseTime=true"
-      REDIS_ADDR: "redis:6379"
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
+      # 变量名必须是 TASK_SVC_DSN：此前写作 MYSQL_DSN（无人读取），
+      # 叠加 STORE_TYPE=sql 时服务静默退回内存存储——生产重启即丢任务。
+      TASK_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:?请在 .env 设置 MYSQL_PASSWORD}@tcp(mysql:3306)/opsmesh_task?parseTime=true"
+      # 与 controlplane 同源：HTTP 网关校验调用方 token。
+      JWT_SECRET: ${JWT_SECRET:?请在 .env 设置 JWT_SECRET}
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-UTC}
     depends_on:
       mysql:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8102/health"]
@@ -447,19 +570,20 @@ services:
 
   alert-svc:
     build:
-      context: ../../services/alert-svc
-      dockerfile: Dockerfile
-    image: opsmesh/alert-svc:${OPSMESH_VERSION:-latest}
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE: alert-svc
+        VERSION: ${OPSMESH_VERSION}
+    image: opsmesh/alert-svc:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION}
     container_name: opsmesh-alert-svc
     ports:
-      - "${ALERT_SVC_HTTP_PORT:-8103}:8103"
+      - "127.0.0.1:${ALERT_SVC_HTTP_PORT:-8103}:8103"
     environment:
       ALERT_SVC_GRPC_PORT: 50053
       ALERT_SVC_HTTP_PORT: 8103
       ALERT_SVC_STORE_TYPE: ${ALERT_STORE_TYPE:-sql}
-      ALERT_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh_alert?parseTime=true"
-      ALERT_SVC_REDIS_ADDR: "redis:6379"
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
+      ALERT_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:?请在 .env 设置 MYSQL_PASSWORD}@tcp(mysql:3306)/opsmesh_alert?parseTime=true"
       PAGERDUTY_ENABLED: ${PAGERDUTY_ENABLED:-false}
       PAGERDUTY_ROUTING_KEY: ${PAGERDUTY_ROUTING_KEY:-}
       PAGERDUTY_API_URL: ${PAGERDUTY_API_URL:-https://events.pagerduty.com/v2/enqueue}
@@ -468,8 +592,6 @@ services:
       TZ: ${TZ:-UTC}
     depends_on:
       mysql:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8103/health"]
@@ -492,28 +614,28 @@ services:
 
   config-svc:
     build:
-      context: ../../services/config-svc
-      dockerfile: Dockerfile
-    image: opsmesh/config-svc:${OPSMESH_VERSION:-latest}
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE: config-svc
+        VERSION: ${OPSMESH_VERSION}
+    image: opsmesh/config-svc:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION}
     container_name: opsmesh-config-svc
     ports:
-      - "${CONFIG_SVC_HTTP_PORT:-8106}:8106"
+      - "127.0.0.1:${CONFIG_SVC_HTTP_PORT:-8106}:8106"
     environment:
       CONFIG_SVC_GRPC_PORT: 50055
       CONFIG_SVC_HTTP_PORT: 8106
       CONFIG_SVC_STORE_TYPE: ${CONFIG_STORE_TYPE:-sql}
-      CONFIG_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh_config?parseTime=true"
-      CONFIG_SVC_REDIS_ADDR: "redis:6379"
-      CONFIG_SVC_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:-opsmesh_config_encryption_key_32bytes}
+      CONFIG_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:?请在 .env 设置 MYSQL_PASSWORD}@tcp(mysql:3306)/opsmesh_config?parseTime=true"
+      # secret 静态加密口令（SHA-256 派生 AES 密钥）；必填，禁止使用预置默认值。
+      CONFIG_SVC_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:?请在 .env 设置 CONFIG_ENCRYPTION_KEY（openssl rand -base64 32）}
       CONFIG_SVC_MAX_HISTORY_SIZE: 100
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-opsmesh_redis_secure_2024}
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-UTC}
     depends_on:
       mysql:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8106/health"]
@@ -536,19 +658,24 @@ services:
 
   log-svc:
     build:
-      context: ../../services/log-svc
-      dockerfile: Dockerfile
-    image: opsmesh/log-svc:${OPSMESH_VERSION:-latest}
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE: log-svc
+        VERSION: ${OPSMESH_VERSION}
+    image: opsmesh/log-svc:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION}
     container_name: opsmesh-log-svc
     ports:
-      - "${LOG_SVC_HTTP_PORT:-8105}:8105"
-      - "${LOG_SVC_GRPC_PORT:-9095}:9095"
+      - "127.0.0.1:${LOG_SVC_HTTP_PORT:-8105}:8105"
+      - "127.0.0.1:${LOG_SVC_GRPC_PORT:-9095}:9095"
     environment:
       LOG_SVC_GRPC_ADDR: ":9095"
       LOG_SVC_HEALTH_ADDR: ":8105"
       LOG_SVC_BACKEND: ${LOG_BACKEND:-loki}
-      LOG_SVC_LOKI_URL: "http://loki:3100"
-      LOG_SVC_SQL_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:-opsmesh_pass_secure_2024}@tcp(mysql:3306)/opsmesh_log?parseTime=true"
+      # 端点此前无任何环境变量入口（服务只读 LOG_SVC_BACKEND），
+      # 容器化部署下 loki 永远拿到空 endpoint；现已支持 LOG_SVC_LOKI_ENDPOINT / LOG_SVC_SQL_DSN。
+      LOG_SVC_LOKI_ENDPOINT: "http://loki:3100"
+      LOG_SVC_SQL_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:?请在 .env 设置 MYSQL_PASSWORD}@tcp(mysql:3306)/opsmesh_log?parseTime=true"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-UTC}
@@ -558,7 +685,8 @@ services:
       loki:
         condition: service_started
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8105/health"]
+      # 探针路径为 /healthz（该服务从未提供 /health，此前探针恒 404 → 容器永远 unhealthy）。
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8105/healthz"]
       interval: 30s
       timeout: 5s
       start_period: 10s
@@ -579,12 +707,15 @@ services:
 
   gpu-svc:
     build:
-      context: ../../services/gpu-svc
-      dockerfile: Dockerfile
-    image: opsmesh/gpu-svc:${OPSMESH_VERSION:-latest}
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE: gpu-svc
+        VERSION: ${OPSMESH_VERSION}
+    image: opsmesh/gpu-svc:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION}
     container_name: opsmesh-gpu-svc
     ports:
-      - "${GPU_SVC_HTTP_PORT:-8107}:8107"
+      - "127.0.0.1:${GPU_SVC_HTTP_PORT:-8107}:8107"
     environment:
       GPU_SVC_HTTP_PORT: 8107
       GPU_SVC_OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
@@ -613,16 +744,18 @@ services:
 
   portal-svc:
     build:
-      context: ../../services/portal-svc
-      dockerfile: Dockerfile
-    image: opsmesh/portal-svc:${OPSMESH_VERSION:-latest}
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE: portal-svc
+        VERSION: ${OPSMESH_VERSION}
+    image: opsmesh/portal-svc:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION}
     container_name: opsmesh-portal-svc
     ports:
-      - "${PORTAL_SVC_HTTP_PORT:-8109}:8109"
+      - "127.0.0.1:${PORTAL_SVC_HTTP_PORT:-8109}:8109"
     environment:
       PORTAL_SVC_HTTP_PORT: 8109
       PORTAL_SVC_GRPC_PORT: 50060
-      CONTROLPLANE_URL: "http://controlplane:8080"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-UTC}
@@ -651,12 +784,15 @@ services:
 
   aio-svc:
     build:
-      context: ../../services/aio-svc
-      dockerfile: Dockerfile
-    image: opsmesh/aio-svc:${OPSMESH_VERSION:-latest}
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE: aio-svc
+        VERSION: ${OPSMESH_VERSION}
+    image: opsmesh/aio-svc:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION}
     container_name: opsmesh-aio-svc
     ports:
-      - "${AIO_SVC_HTTP_PORT:-8108}:8108"
+      - "127.0.0.1:${AIO_SVC_HTTP_PORT:-8108}:8108"
     environment:
       AIO_SVC_PORT: 8108
       AIO_SVC_READ_TIMEOUT: 30s
@@ -703,9 +839,25 @@ networks:
     labels:
       opsmesh.network.role: "frontend"
 
+  # 为什么不给这两个网络加 internal: true（2026-09-25 实测，勿回退）：
+  #   1) internal 与「发布宿主端口」互斥。Docker Desktop(WSL2) 下若某容器所连网络
+  #      【全部】是 internal，宿主端口转发器无法路由进该网络（internal 桥无网关/NAT），
+  #      publish 会被【静默丢弃】：容器照常 Up/healthy，但 NetworkSettings.Ports 为空、
+  #      `docker port` 无输出、宿主 curl 连不上，compose up 也不报任何错。
+  #      对照实验（同镜像 prom/prometheus:v2.55.0、同宿主端口写法、仅网络不同）：
+  #        --network opsmesh-backend  → NS={"9090/tcp":[]}   curl 000
+  #        --network opsmesh-frontend → NS=[127.0.0.1:28102] curl 200
+  #        两个网络都连              → NS=[127.0.0.1:28103] curl 200
+  #      受影响面：mysql/redis/prometheus/loki/otel 及全部微服务共 13 个容器 15 个端口
+  #      （compose 声明了 127.0.0.1 发布却全部无效，deploy.sh 冒烟测试因此失败）。
+  #   2) internal 无网关 = 无外网出口，出站 DNS 也不通。实测 opsmesh-alert-svc 内
+  #      `getent hosts events.pagerduty.com` 直接解析失败，而本文件为 alert-svc 配了
+  #      PAGERDUTY_API_URL=https://events.pagerduty.com/... —— 即 PagerDuty 集成
+  #      在 internal 网络上永远不可用。
+  #   入站边界由「端口只发布到 127.0.0.1（仅本机可达）」保证，不依赖 internal；
+  #   若需限制微服务出站，请用宿主防火墙或 K8s NetworkPolicy（compose 层不提供该能力）。
   backend_net:
     driver: bridge
-    internal: true
     name: opsmesh-backend
     ipam:
       config:
@@ -715,7 +867,6 @@ networks:
 
   monitoring_net:
     driver: bridge
-    internal: true
     name: opsmesh-monitoring
     ipam:
       config:

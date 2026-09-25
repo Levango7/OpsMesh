@@ -76,6 +76,12 @@ func validateStrongPassword(pw string) string {
 	return validatePasswordWithPolicy(pw, defaultPasswordPolicy())
 }
 
+// ValidateStrongPassword 导出默认强策略校验，供 cmd 启动引导（初始 admin 口令）复用，
+// 避免引导路径另写一份强度规则导致两份口径漂移。
+func ValidateStrongPassword(pw string) string {
+	return validateStrongPassword(pw)
+}
+
 // validatePasswordWithPolicy 按给定策略校验口令强度。
 // 返回不满足时的可读提示（满足返回空串）。
 //

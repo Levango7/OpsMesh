@@ -35,16 +35,58 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleListUsers 处理 GET /api/v1/users：列出全部用户（需 user:read 权限）。
+// handleListUsers 处理 GET /api/v1/users：列出用户（需 user:read 权限）。
+//
+// 租户隔离（P0-6）：非平台租户的调用者仅返回本租户用户；平台租户（default）保持全量视图
+// ——平台管理员负责跨租户的用户编排，租户管理员不应看到他租户的账号清单。
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requirePermission(w, r, "user:read"); !ok {
+	caller, ok := s.requirePermission(w, r, "user:read")
+	if !ok {
 		return
 	}
-	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"users": s.store.ListUsers()})
+	users := s.store.ListUsers()
+	if t := tenantOrDefault(caller.TenantID); t != store.DefaultTenantID {
+		scoped := make([]*store.User, 0, len(users))
+		for _, u := range users {
+			if u != nil && tenantOrDefault(u.TenantID) == t {
+				scoped = append(scoped, u)
+			}
+		}
+		users = scoped
+	}
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"users": users})
+}
+
+// resolveUserTenant 解析创建/更新用户的目标租户（P0-6）。
+//
+// 规则：
+//   - 未指定 tenantId：归属调用方自己的租户（平台管理员不填 → default，与迁移前一致）；
+//   - 显式指定他租户：仅平台租户（default）调用者可指派（防止租户 A 的管理员
+//     把用户创建进租户 B，或以他租户身份制造账号）；
+//   - 字面量恒经 validateTenantID 校验（租户 ID 会流入 schema 名与各域过滤参数）。
+//
+// 返回 (tenant, ok)：ok=false 时已写响应。
+func resolveUserTenant(w http.ResponseWriter, caller *store.User, requested string) (string, bool) {
+	callerTenant := tenantOrDefault(caller.TenantID)
+	target := callerTenant
+	if requested != "" && requested != callerTenant {
+		if callerTenant != store.DefaultTenantID {
+			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{
+				"error": "only platform tenant (default) users may assign other tenants",
+			})
+			return "", false
+		}
+		target = requested
+	}
+	if err := validateTenantID(target); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return "", false
+	}
+	return target, true
 }
 
 // handleCreateUser 处理 POST /api/v1/users：创建用户（需 user:write 权限）。
-// 请求体：{username, password, email?, role_ids?}；密码最短 6 字符，bcrypt 哈希后存库。
+// 请求体：{username, password, email?, role_ids?, tenantId?}；密码最短 6 字符，bcrypt 哈希后存库。
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	caller, ok := s.requirePermission(w, r, "user:write")
 	if !ok {
@@ -55,6 +97,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		Password string   `json:"password"`
 		Email    string   `json:"email"`
 		RoleIDs  []string `json:"role_ids"`
+		TenantID string   `json:"tenantId"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		log.Printf("controlplane: handleCreateUser 解析请求体失败: %v", err)
@@ -67,6 +110,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if msg := validateStrongPassword(body.Password); msg != "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+		return
+	}
+	targetTenant, ok := resolveUserTenant(w, caller, body.TenantID)
+	if !ok {
 		return
 	}
 	// P3 角色引用校验：role_ids 若存在须全部指向真实角色，避免写入无效角色引用。
@@ -90,6 +137,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		ID:           randHexID("user"),
 		Username:     body.Username,
 		Email:        body.Email,
+		TenantID:     targetTenant,
 		PasswordHash: hash,
 		Status:       "active",
 		RoleIDs:      body.RoleIDs,
@@ -99,8 +147,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// 审计租户取目标用户租户：用户编排发生在哪个租户域，审计就归属哪个租户。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "user_create", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
+		TenantID: targetTenant, UserID: caller.ID, Action: "user_create", Target: u.ID,
+		Detail: sanitizeAuditDetail("username=" + u.Username + " tenant=" + targetTenant),
 	})
 	paginate.WriteJSON(w, http.StatusCreated, u)
 }
@@ -180,7 +230,7 @@ func (s *Server) handleApproveUser(w http.ResponseWriter, r *http.Request, id st
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "user_approve", Target: id, Detail: sanitizeAuditDetail("approved user " + existing.Username),
+		TenantID: tenantOrDefault(existing.TenantID), UserID: caller.ID, Action: "user_approve", Target: id, Detail: sanitizeAuditDetail("approved user " + existing.Username),
 	})
 	paginate.WriteJSON(w, http.StatusOK, s.store.GetUser(id))
 }
@@ -225,22 +275,23 @@ func (s *Server) handleRejectUser(w http.ResponseWriter, r *http.Request, id str
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "user_reject", Target: id, Detail: sanitizeAuditDetail(detail),
+		TenantID: tenantOrDefault(existing.TenantID), UserID: caller.ID, Action: "user_reject", Target: id, Detail: sanitizeAuditDetail(detail),
 	})
 	paginate.WriteJSON(w, http.StatusOK, s.store.GetUser(id))
 }
 
-// handleUpdateUser 处理 PUT /api/v1/users/{id}：更新用户 email/roles/status（需 user:write 权限）。
-// 请求体：{email?, role_ids?, status?}；仅更新非空字段。
+// handleUpdateUser 处理 PUT /api/v1/users/{id}：更新用户 email/roles/status/tenantId（需 user:write 权限）。
+// 请求体：{email?, role_ids?, status?, tenantId?}；仅更新非空字段。
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request, id string) {
 	caller, ok := s.requirePermission(w, r, "user:write")
 	if !ok {
 		return
 	}
 	var body struct {
-		Email   string   `json:"email"`
-		RoleIDs []string `json:"role_ids"`
-		Status  string   `json:"status"`
+		Email    string   `json:"email"`
+		RoleIDs  []string `json:"role_ids"`
+		Status   string   `json:"status"`
+		TenantID string   `json:"tenantId"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		log.Printf("controlplane: handleUpdateUser 解析请求体失败: %v", err)
@@ -259,6 +310,15 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request, id str
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
+	// 租户迁移（P0-6）：与创建同规则——仅平台租户调用者可跨租户指派；非平台租户的调用者
+	// 只能把用户留在自己租户（显式指定他租户 → 403）。空值=不改租户。
+	if body.TenantID != "" {
+		targetTenant, ok := resolveUserTenant(w, caller, body.TenantID)
+		if !ok {
+			return
+		}
+		existing.TenantID = targetTenant
+	}
 	if body.Email != "" {
 		existing.Email = body.Email
 	}
@@ -274,7 +334,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request, id str
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "user_update", Target: id, Detail: "updated via HTTP",
+		TenantID: tenantOrDefault(existing.TenantID), UserID: caller.ID, Action: "user_update", Target: id, Detail: "updated via HTTP",
 	})
 	paginate.WriteJSON(w, http.StatusOK, s.store.GetUser(id))
 }
@@ -285,7 +345,8 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request, id str
 	if !ok {
 		return
 	}
-	if s.store.GetUser(id) == nil {
+	target := s.store.GetUser(id)
+	if target == nil {
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
@@ -295,7 +356,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request, id str
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "user_delete", Target: id, Detail: "deleted via HTTP",
+		TenantID: tenantOrDefault(target.TenantID), UserID: caller.ID, Action: "user_delete", Target: id, Detail: "deleted via HTTP",
 	})
 	w.WriteHeader(http.StatusNoContent)
 }

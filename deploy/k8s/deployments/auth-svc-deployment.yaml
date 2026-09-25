@@ -1,3 +1,11 @@
+# auth-svc —— 本地 Kind 开发样例清单（非生产；生产用 deploy/helm/opsmesh）。
+#
+# 本文件的端口 / 探针 / env 名逐项对照源码核实（2026-09-25），
+# 与生产形态的差异：单机 memory 存储、无 TLS、无资源隔离，仅用于本地联调。
+#   - HTTP 端口：AUTH_SVC_HTTP_PORT，默认 8081（services/auth-svc/pkg/config/config.go）
+#   - gRPC 端口：AUTH_SVC_GRPC_PORT，默认 50052
+#   - 探针路径：/health、/ready（services/auth-svc/cmd/auth-svc/main.go）
+#   - auth-svc 不注册 /metrics（仅 device-svc / task-svc / alert-svc 注册该路径）
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,37 +24,37 @@ spec:
       labels:
         app: auth-svc
         component: auth
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "9091"
-        prometheus.io/path: "/metrics"
     spec:
-      serviceAccountName: opsmesh-sa
       containers:
         - name: auth-svc
-          image: opsmesh/auth-svc:latest
+          image: opsmesh/auth-svc:0.9.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
-              containerPort: 8080
+              containerPort: 8081
               protocol: TCP
             - name: grpc
-              containerPort: 9090
+              containerPort: 50052
               protocol: TCP
-            - name: metrics
-              containerPort: 9091
-              protocol: TCP
-          envFrom:
-            - configMapRef:
-                name: opsmesh-config
           env:
-            - name: OPSMESH_SERVICE_NAME
-              value: "auth-svc"
-            - name: OPSMESH_JWT_SECRET
+            - name: AUTH_SVC_HTTP_PORT
+              value: "8081"
+            - name: AUTH_SVC_GRPC_PORT
+              value: "50052"
+            # JWT 校验密钥：与控制面同源（Secret 键 jwt-secret）。
+            # 缺失时 auth-svc 会退回代码内置弱密钥 "default-jwt-secret-change-in-production"（可伪造令牌）。
+            - name: AUTH_SVC_JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: opsmesh-secrets
                   key: jwt-secret
+            # 初始 admin 口令：与控制面 OPSMESH_ADMIN_PASSWORD 同一交付通道
+            # （生产模式缺失即拒绝启动，此处由 create-secret 随机生成并打印）。
+            - name: AUTH_SVC_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: opsmesh-secrets
+                  key: admin-password
           resources:
             requests:
               cpu: 100m
@@ -56,7 +64,7 @@ spec:
               memory: 512Mi
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /health
               port: http
             initialDelaySeconds: 10
             periodSeconds: 15
@@ -64,7 +72,7 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /readyz
+              path: /ready
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
@@ -72,7 +80,7 @@ spec:
             failureThreshold: 3
           startupProbe:
             httpGet:
-              path: /healthz
+              path: /health
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5
@@ -89,16 +97,12 @@ spec:
   type: ClusterIP
   ports:
     - name: http
-      port: 8080
+      port: 8081
       targetPort: http
       protocol: TCP
     - name: grpc
-      port: 9090
+      port: 50052
       targetPort: grpc
-      protocol: TCP
-    - name: metrics
-      port: 9091
-      targetPort: metrics
       protocol: TCP
   selector:
     app: auth-svc

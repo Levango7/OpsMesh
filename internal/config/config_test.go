@@ -165,6 +165,7 @@ func TestValidate_ProductionControlplaneRequiresJWTSecret(t *testing.T) {
 	c := base()
 	c.Production = true
 	c.TLSCert = "tls.crt" // 绕过 H6 TLS，聚焦 JWT 校验
+	c.TLSKey = "tls.key"
 	if err := c.Validate(); err == nil {
 		t.Fatal("production + 空 jwt-secret 应被拒绝，但 Validate 通过了")
 	}
@@ -172,6 +173,7 @@ func TestValidate_ProductionControlplaneRequiresJWTSecret(t *testing.T) {
 	c2 := base()
 	c2.Production = true
 	c2.TLSCert = "tls.crt"
+	c2.TLSKey = "tls.key"
 	c2.JWTSecret = "0123456789abcdef0123456789abcdef"                 // 32 字节
 	c2.EncryptionKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=" // 32 字节 base64
 	if err := c2.Validate(); err != nil {
@@ -191,6 +193,7 @@ func TestValidate_ProductionJWTSecretLength(t *testing.T) {
 	c := base()
 	c.Production = true
 	c.TLSCert = "tls.crt"
+	c.TLSKey = "tls.key"
 	c.JWTSecret = "tooshort" // 8 字节 < 32
 	if err := c.Validate(); err == nil {
 		t.Fatal("production + (<32) jwt-secret 应被拒绝，但通过了")
@@ -198,6 +201,7 @@ func TestValidate_ProductionJWTSecretLength(t *testing.T) {
 	c2 := base()
 	c2.Production = true
 	c2.TLSCert = "tls.crt"
+	c2.TLSKey = "tls.key"
 	c2.JWTSecret = "0123456789abcdef0123456789abcdef"                 // 32 字节
 	c2.EncryptionKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=" // 32 字节 base64
 	if err := c2.Validate(); err != nil {

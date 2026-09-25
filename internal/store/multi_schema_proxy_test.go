@@ -462,7 +462,7 @@ func TestMultiSchemaStore_TenantProxy_Alerts(t *testing.T) {
 // NewMultiSchemaStore 不创建 SQLStore（惰性创建），无需数据库连接。
 func TestMultiSchemaStore_NewWithBusSecret(t *testing.T) {
 	namer := DefaultSchemaNamer("opsmesh_tenant_")
-	m, err := NewMultiSchemaStore("root:@tcp(127.0.0.1:3306)/base", "", namer)
+	m, err := NewMultiSchemaStore("root:@tcp(127.0.0.1:3306)/base", "", "", namer)
 	if err != nil {
 		t.Fatalf("NewMultiSchemaStore err = %v", err)
 	}
@@ -470,7 +470,7 @@ func TestMultiSchemaStore_NewWithBusSecret(t *testing.T) {
 		t.Fatal("NewMultiSchemaStore 返回 nil")
 	}
 	// nil namer 报错
-	if _, err := NewMultiSchemaStore("", "", nil); err == nil {
+	if _, err := NewMultiSchemaStore("", "", "", nil); err == nil {
 		t.Fatal("NewMultiSchemaStore nil namer 应报错")
 	}
 	// WithBus

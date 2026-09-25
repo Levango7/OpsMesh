@@ -14,9 +14,13 @@ import "time"
 // User 用户实体。PasswordHash 为 bcrypt 哈希（绝不存明文）。
 // RoleIDs 为该用户绑定的角色 ID 列表（用户经角色间接获得权限）。
 type User struct {
-	ID                 string    `json:"id"`
-	Username           string    `json:"username"`
-	Email              string    `json:"email"`
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	// TenantID 为用户所属租户，决定登录后签发的 JWT 租户（进而决定可见设备/任务/脚本范围）。
+	// 空值按 default 归一（见 normalizeTenantID）：用户中心为平台级，未显式指派租户的用户
+	// 归入平台默认租户，与迁移前行为一致。
+	TenantID           string    `json:"tenantId"`
 	PasswordHash       string    `json:"-"`      // bcrypt 哈希；JSON 序列化时不输出（防泄露）
 	Status             string    `json:"status"` // "active" | "pending" | "rejected" | "disabled"（pending=待管理员审批）
 	RoleIDs            []string  `json:"roleIDs"`
@@ -25,6 +29,19 @@ type User struct {
 	// EffectivePermissions 为角色展开后的有效权限集合（由 /auth/me 计算填充，非持久化字段）。
 	// 供前端侧栏按权限过滤功能入口，与后端 RBAC 闸（requireProd）同源，杜绝定义漂移。
 	EffectivePermissions []string `json:"permissions"`
+}
+
+// DefaultTenantID 平台默认租户（内置用户中心未显式指派租户时的归属）。
+const DefaultTenantID = "default"
+
+// normalizeTenantID 将空租户归一为 DefaultTenantID，供用户实体读写与 JWT 签发统一取值。
+// 空值语义必须收敛到单一实现：否则「空租户用户」会在不同子系统落到不同桶
+// （任务队列按 tenant_id 过滤、审计按 tenant_id 归集），造成同一用户跨域不可见。
+func normalizeTenantID(tenantID string) string {
+	if tenantID == "" {
+		return DefaultTenantID
+	}
+	return tenantID
 }
 
 // Role 角色实体。Permissions 为权限字符串数组（如 ["device:read", "task:write"]）。
