@@ -405,13 +405,18 @@ jobs:
             echo "::notice::镜像目标=私有仓库 ${REGISTRY}/${IMAGE_LEAF}（凭证齐备）"
           else
             # 三者缺一即回落，避免半配置状态下 login 失败把流水线弄红。
+            # 注意：Docker 要求仓库名全小写，而 GITHUB_REPOSITORY_OWNER 保留原始大小写
+            # （本仓为 Levango7）→ 直接拼进 tag 会被 buildx 拒绝：
+            #   invalid tag "ghcr.io/Levango7/...": repository name must be lowercase
+            # 故此处统一转小写（首跑实测踩到）。
+            GHCR_OWNER="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
             {
               echo "mode=ghcr"
               echo "registry=ghcr.io"
               echo "username=${GITHUB_ACTOR}"
-              echo "prefix=ghcr.io/${GITHUB_REPOSITORY_OWNER}/${IMAGE_LEAF}"
+              echo "prefix=ghcr.io/${GHCR_OWNER}/${IMAGE_LEAF}"
             } >>"$GITHUB_OUTPUT"
-            echo "::warning::REGISTRY/REGISTRY_USER/REGISTRY_TOKEN 未齐备 → 本次改用 GHCR（凭证=GITHUB_TOKEN）；消费方需设 imageRegistry=ghcr.io/${GITHUB_REPOSITORY_OWNER}、repository=${IMAGE_LEAF}"
+            echo "::warning::REGISTRY/REGISTRY_USER/REGISTRY_TOKEN 未齐备 → 本次改用 GHCR（凭证=GITHUB_TOKEN）；消费方需设 imageRegistry=ghcr.io/${GHCR_OWNER}、repository=${IMAGE_LEAF}"
           fi
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -428,10 +433,17 @@ jobs:
         with:
           context: .
           push: true
+          # load: true —— 同时载入本地 docker daemon，供随后的 Trivy 扫描直接取用，
+          # 避免扫描步骤依赖"能否凭 docker config 从（默认 private 的）GHCR 拉取"这一不确定条件。
+          load: true
           # leaf 名 opsmesh-binary 由消费方 chart 的 image.repository 决定（见 job 顶部注释）。
           tags: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
       - name: Trivy 镜像扫描
         uses: aquasecurity/trivy-action@v0.36.0  # ：钉死版本，防 @master 供应链漂移
+        env:
+          # 兜底：镜像不在本地时应能凭凭证从 registry 拉取（私有路径同用）。
+          TRIVY_USERNAME: ${{ steps.check.outputs.username }}
+          TRIVY_PASSWORD: ${{ steps.check.outputs.mode == 'private' && secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
         with:
           image-ref: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
           severity: HIGH,CRITICAL
@@ -599,13 +611,15 @@ jobs:
             } >>"$GITHUB_OUTPUT"
             echo "::notice::agent 镜像目标=私有仓库 ${REGISTRY}/${IMAGE_LEAF}（凭证齐备）"
           else
+            # 同 image job：Docker 仓库名必须全小写，owner 需转小写（首跑实测踩到）。
+            GHCR_OWNER="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
             {
               echo "mode=ghcr"
               echo "registry=ghcr.io"
               echo "username=${GITHUB_ACTOR}"
-              echo "prefix=ghcr.io/${GITHUB_REPOSITORY_OWNER}/${IMAGE_LEAF}"
+              echo "prefix=ghcr.io/${GHCR_OWNER}/${IMAGE_LEAF}"
             } >>"$GITHUB_OUTPUT"
-            echo "::warning::REGISTRY/REGISTRY_USER/REGISTRY_TOKEN 未齐备 → agent 镜像改用 GHCR（凭证=GITHUB_TOKEN）；消费方需设 imageRegistry=ghcr.io/${GITHUB_REPOSITORY_OWNER}、repository=${IMAGE_LEAF}"
+            echo "::warning::REGISTRY/REGISTRY_USER/REGISTRY_TOKEN 未齐备 → agent 镜像改用 GHCR（凭证=GITHUB_TOKEN）；消费方需设 imageRegistry=ghcr.io/${GHCR_OWNER}、repository=${IMAGE_LEAF}"
           fi
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -622,10 +636,15 @@ jobs:
           context: .
           file: Dockerfile.agent
           push: true
+          # 同 controlplane image job：载入本地 daemon 供 Trivy 直接取用，不依赖 registry 拉取鉴权。
+          load: true
           # leaf 名 opsmesh-agent 由消费方 chart 的 agent.image.repository 决定。
           tags: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
       - name: Trivy 镜像扫描（agent）
         uses: aquasecurity/trivy-action@v0.36.0  # ：钉死版本，防 @master 供应链漂移
+        env:
+          TRIVY_USERNAME: ${{ steps.check.outputs.username }}
+          TRIVY_PASSWORD: ${{ steps.check.outputs.mode == 'private' && secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
         with:
           image-ref: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
           severity: HIGH,CRITICAL
