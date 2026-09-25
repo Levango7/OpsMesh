@@ -1383,4 +1383,26 @@ P1-2 批次推送后，CI **第一次真正跑完整流水线**（run `361226480
 
 **诚实边界**：这 56 条**不是**被修掉了，只是不再阻断流水线——它们是 agent 运行时镜像的既有风险，客户侧若做镜像合规审查会看到同样结果。彻底下降需换运行时基础（如 Alpine/busybox），但那会改变 agent 执行 shell 命令的语义（`ls`/`free`/`df` 等实现不同），需重跑全部 agent 任务相关测试与 E2E，属产品级改动，本轮未做。
 
+### 15.5 终局：12 个 job 全部**真跑**且全绿（run `36155335631`，commit `0dc4ece`）
+
+`ignore-unfixed` 推送后，流水线 `completed / success`。**这是本项目第一次「每个 job 都真的执行了、并且都通过」**——含此前从未执行过的镜像链路：
+
+| Job | 真跑证据 |
+|---|---|
+| build-test | 编译 / vet / golangci-lint / gofmt / 分批单测 + 覆盖率合并全过（**首跑曾因 OOM flaky 红过一次，见下**） |
+| Frontend / proto / services / integration / Race detector / security / E2E×2 | 同 §15.1，本轮复跑全绿 |
+| **image** | 推送 `ghcr.io/levango7/opsmesh-binary:0a1c81d…@sha256:5ede994378c5f4905a444f63f…`；Trivy 通过；SBOM `包条目数: 89`；**keyless 签名成功**（`tlog entry created with index: 2957978033` + `Pushing signature to: ghcr.io/levango7/opsmesh-binary`） |
+| **image-agent** | 推送 `ghcr.io/levango7/opsmesh-agent:0dc4ece…@sha256:962c212…`；Trivy 通过（`ignore-unfixed` 生效）；SBOM `包条目数: 172`；keyless 签名成功 |
+| release | 设计内 skip（`refs/tags/v` 才触发） |
+
+**新发现的第二个 CI 可靠性问题：`build-test` 的内存 OOM flaky**（run `36155335631` 首跑）
+
+- 现象：`Test (unit, memory store, -race + coverage)` 红，但日志里 `./internal/agent/` 批次最后一个用例是 `--- PASS`、随后才崩：
+  `fatal error: runtime: cannot allocate memory`（堆栈里是 GC worker）→ **测试全绿却被判红**。
+- 与代码无关：该步骤注释本身即写明「无 race 下仍 7GB OOM（瞬时分配峰值），GOMEMLIMIT 让 GC 提前介入」；同一 commit **重跑即绿**（`gh run rerun`）。
+- 影响被放大：`build-test` 是唯一门禁，它一挂，**7 个下游 job 全部 skip**（本轮首跑即如此，镜像链路没验到，只能重跑）。
+- 严重性：**间歇性红**与长期红同属「门禁不可信」——都会训练人忽略它。建议后续单独处理（把 agent 批次拆得更细 / 降 `GOMEMLIMIT` / 分批之间显式 GC），本轮未改（改测试基础设施需独立验证）。
+
+**至此的诚实边界**：`release` 按设计 tag 触发，未验；GitOps tag/digest 回写因无 `GITOPS_REPO`/`GITOPS_PAT` 仍未启用（job Summary 已显式标注「此段本次未验证」）；GHCR 包可见性由 GitHub 侧策略决定；CI 推的 leaf 名与仓库内 chart 的命名关系仍待与外部 GitOps chart 核对（§15.3）。
+
 

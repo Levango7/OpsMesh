@@ -11,6 +11,8 @@
   - **处置**：Trivy 加 `ignore-unfixed: true`——只对「上游已发布修复但镜像未升级」判红，无修复版本的条目仍逐条打印但不阻断。若一律判红则流水线**永久红**，而长期红的门禁必被忽略（教训 11）。
   - **诚实边界**：这 56 条不是被修掉了，只是不再阻断——属 agent 运行时镜像的既有风险，客户做镜像合规审查会看到同样结果。彻底下降需换运行时基础（Alpine/busybox），会改变 agent 执行 shell 命令的语义，需重跑 agent 任务相关测试与 E2E，属产品级改动，本轮未做。
 - **同时加固**：`build-push-action` 加 `load: true`（镜像同时载入本地 daemon，使 Trivy 扫描不再依赖"能否凭 docker config 从默认 private 的 GHCR 拉取"），Trivy 步骤补 `TRIVY_USERNAME`/`TRIVY_PASSWORD` 兜底。
+- **终局验证**（run `36155335631`，commit `0dc4ece`）：**12 个 job 全部真跑且全绿**——本项目第一次每个 job 都真的执行并通过。`image` 推送 `ghcr.io/levango7/opsmesh-binary@sha256:5ede99…`（keyless 签名落 Rekor `index: 2957978033`，SBOM 89 条）；`image-agent` 推送 `ghcr.io/levango7/opsmesh-agent@sha256:962c21…`（SBOM 172 条，Trivy 在 `ignore-unfixed` 下通过）。
+- **同轮发现的第二个 CI 可靠性问题：`build-test` OOM flaky**。首跑 `Test (unit, …)` 红，但 `./internal/agent/` 批次最后一条是 `--- PASS`、随后才 `fatal error: runtime: cannot allocate memory`（GC worker 堆栈）——**测试全绿却被判红**，同 commit **重跑即绿**。与代码无关（该步骤注释已写明"无 race 下仍 7GB OOM"），但 `build-test` 是唯一门禁、它一挂 7 个下游全 skip，故影响被放大。间歇性红与长期红同属"门禁不可信"，建议后续单独处理（拆细 agent 批次 / 降 GOMEMLIMIT），本轮未改。
 
 ## [Unreleased] — 2026-09-25 CI 首跑全绿 + 消除镜像 job 的「空转绿」
 
