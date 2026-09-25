@@ -1751,6 +1751,36 @@ feature 分支**刻意不打** `latest`：否则 `latest` 会被「最后合入�
   两条 workflow 启动 5 秒，而两条发布路径当时都判 `skipped` ⇒ 它是打 tag 时由外部（人工）创建的，
   不是流水线行为。流水线自身的门禁（`github-release` needs `build-and-push`）经核是正确的，无需改。
 
+
+### 20.5 `release-dryrun` 首跑就抓到一个真实脆弱点：代理抖动会让整批发版失败
+
+新门禁上线后第一次跑（run `36190011844`，commit `b343316`）就红了，红在第 4 步：
+
+```
+#20 ERROR: process "/bin/sh -c go mod download && go mod verify" did not complete successfully: exit 1
+go: cloud.google.com/go/auth@v0.18.2: read "https://goproxy.cn/cloud.google.com/go/auth/@v/v0.18.2.info": …
+```
+
+同一份代码在下一个 run（`36190483281`，commit `c78532e`）里 step 全绿 ⇒ 判为外部抖动而非断言失败。
+**但这条路径的性质使然**：`release.yml` 的镜像矩阵是 fail-fast（v0.9.1 实测「1 红 + 17 cancel」），
+所以任何一次代理截断都会让整批发版失败——这不是"偶发红一下"，是**发布成功率的结构性风险**。
+
+处置（四个 Dockerfile 同步：`Dockerfile`、`Dockerfile.agent`、`Dockerfile.service`、
+`deploy/docker/Dockerfile.controlplane`）：`go mod download` 改为 5 次退避重试（5/10/15/20s），
+**`go mod verify` 一次都不省**，重试用尽仍失败就明确 `exit 1` 并说明"不是抖动，是真取不到模块"。
+边界写清楚：抖动是外部服务的性质，重试不改变正确性判定；`go.sum` 哈希仍然生效，坏下载无论如何过不了 verify。
+
+验证（不给"永远 PASS"留口子，两个方向都测）：
+
+| 方式 | 结果 |
+|---|---|
+| 把 `RUN` 的续行还原成 shell，用**计数型假 `go`** 注入 | 抖动 2 次 → 第 3 次成功 → `verify` 照跑 → rc=0；持续失败 → 恰好 5 次尝试 → 打印判定语 → **rc=1**（不会静默绿） |
+| 真实 `docker buildx build --file Dockerfile.service`（本机 Docker，干净旗标） | **rc=0**，构建日志里能看到新的 `RUN set -eu; ok=0; for i in 1 2 3 4 5 …` 整段被执行；产物照常生成 |
+| 静态门禁 §8（COPY 源 vs `.gitignore`）在改完四个 Dockerfile 后复跑 | PASS=29 / FAIL=0 / SKIP=0 |
+
+顺带一条实现坑（写进了 Dockerfile 注释）：这些说明**必须放在 `RUN` 之上**。
+本项目已经因"续行行尾"炸过一次（`RUN …  \` 变成 CR+LF 时 Docker 识别不到续行），
+而把 `# 注释`写进续行中间同样会让解析器在该行截断指令——第一版就踩了，改回 shell 体内只用 `echo`。
 ## 21. 下一轮清单（按优先级）
 
 | # | 事项 | 为什么排在这 |

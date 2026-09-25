@@ -19,6 +19,15 @@
 - **验证**：六个标签场景用抽出的 step 脚本在 bash 里实跑并核对 `$GITHUB_OUTPUT`（含「抽掉 `IMAGE_LEAF` 必须 rc=1」的负向）；四组 `helm template` 渲染（默认 / 叶子名+前缀 / 全名+前缀 / digest 优先）逐条比对；`helm lint`（含 `values-production.yaml`）0 失败；静态门禁 **PASS=29 / FAIL=0 / SKIP=0**；`actionlint` 0 问题。
 - **明确未做**：**没有重切 `v0.9.2`**（打 tag 会对外发布 Release 与镜像，需授权；且应先看到新标签策略下 `image` / `release-dryrun` 真跑绿）。v0.9.1 那个 `assets=0` 的空壳 Release 经核是**打 tag 时由外部创建**的（其 `createdAt` 早于两条 workflow 启动 5 秒，两条发布路径当时都判 skip），流水线自身门禁正确，故未改创建逻辑。
 
+### `release-dryrun` 首跑即抓到的真实脆弱点：代理抖动会让整批发版失败（已修）
+
+- **现象**：run `36190011844` 的 `release-dryrun` 红在构建步——`go mod download && go mod verify` 失败于 `cloud.google.com/go/auth@v0.18.2: read "https://goproxy.cn/…"` 响应截断；同一代码在下一个 run 全绿 ⇒ 外部抖动。
+- **为什么必须修**：镜像矩阵是 **fail-fast**（v0.9.1 实测「1 红 + 17 cancel」），所以一次代理截断=整批发版失败。这不是"偶发红一下"，是发布成功率的结构性风险。
+- **处置**：四个 Dockerfile（`Dockerfile` / `Dockerfile.agent` / `Dockerfile.service` / `deploy/docker/Dockerfile.controlplane`）的 `go mod download` 改为 5 次退避重试（5/10/15/20s），**`go mod verify` 一次不省**，用尽仍失败就明确 `exit 1` 并说明"不是抖动，是真取不到模块"。
+- **双向验证**：用计数型假 `go` 注入——抖动 2 次 → 第 3 次成功且 verify 照跑（rc=0）；持续失败 → 恰好 5 次尝试后 rc=1（不静默绿）。另用本机 Docker 真跑一次 `Dockerfile.service` 构建确认 Docker 解析续行无误（rc=0，新 RUN 段确实执行）。
+- **实现坑**：说明注释**必须放在 `RUN` 之上**——写进续行中间会让 Docker 解析器在该行截断指令（与本项目踩过的"CRLF 断续行"同族）。
+
+
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §19。**结论：`v0.9.1` 既没有镜像也没有二进制产物**——P0/P1 全部修复目前只存在于源码，不存在于任何可安装的发布物。
 

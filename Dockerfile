@@ -37,7 +37,18 @@ WORKDIR /src
 COPY go.mod go.sum ./
 # 构建期校验模块完整性（防供应链投毒 / go.sum 漂移，task 安全 P2-5）。
 # M11：先 download 再 verify，校验已下载模块内容与 go.sum 哈希一致。
-RUN go mod download && go mod verify
+# 依赖拉取带退避重试：goproxy 偶发把模块流截断（CI 实测 `cloud.google.com/go/auth@v0.18.2: read …` 失败），
+# 而镜像矩阵 fail-fast ⇒ 一次网络抖动就能让整批发版失败。刻意不放宽正确性：重试用尽仍失败就 exit 1，
+# 且完整性校验 go mod verify 一次都不省（go.sum 哈希仍在，坏下载无论如何都过不了 verify）。
+RUN set -eu; \
+  ok=0; \
+  for i in 1 2 3 4 5; do \
+    if go mod download; then ok=1; break; fi; \
+    echo "go mod download 第 $i 次失败（多为代理抖动），退避后重试"; \
+    sleep $((i * 5)); \
+  done; \
+  [ "$ok" = 1 ] || { echo "go mod download 连续 5 次失败：不是抖动，是真取不到模块"; exit 1; }; \
+  go mod verify
 COPY . .
 # 企业版前端产物（见上方 web 阶段）覆盖 embed 目录内的占位页 → go:embed 打进二进制。
 # 缺此行则客户打开 /enterprise/ 只能看到「未内置」说明页（P0-3 缺陷）。
