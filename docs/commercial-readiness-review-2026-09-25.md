@@ -25,7 +25,7 @@
 | 部署可用性 | ★★★★☆ | compose 路径真机跑通；企业版前端由镜像构建期装配进二进制、开箱可用 |
 | 升级与灾备 | ★★★★☆ | 迁移加咨询锁 + checksum/版本门禁 + 可重放；18 个 `.down.sql` + 手工回滚手册 |
 | 许可与商务机制 | ★★☆☆☆ | Apache-2.0 + 无第三方声明 + 无授权/版本机制（**未修，非技术阻断**） |
-| **商用就绪度** | **★★★★☆** | 7 项 P0 + 五项技术类 P1（P1-1/P1-2/P1-3/P1-4/P1-5）均已修复并经真机验证；剩余 P1-6（可支撑性）、P1-7（许可合规） |
+| **商用就绪度** | **★★★★☆** | 7 项 P0 + 六项技术类 P1（P1-1~P1-6）已修复并真机验证；剩余 P1-7（许可与商务合规，非技术阻断） |
 
 **修复到「可商用」的总工作量估算：约 45–65 人天**（不含可选的企业级功能补齐）。其中 6 项 P0 阻断项约 25–40 人天，是唯一必须先做掉的部分。
 
@@ -49,7 +49,7 @@
 >   端到端实证，并实测证明任务子进程读不到签名密钥（见 §13）。
 >   **至此 §3 P1 表中技术类高风险项（P1-1/P1-2/P1-3/P1-4/P1-5）全部收口。**
 >
-> **尚未完成**：P1-6（可支撑性，见 §3）；P1-7 许可与商务机制（非技术阻断）；
+> **尚未完成**：P1-7 许可与商务机制（非技术阻断）；P1-6 残留两项（`/metrics` 全表读、微服务日志未统一，见 §17.5）；
 > `services/` 双轨收敛（TD-60，路线图阶段四）。
 
 ---
@@ -600,7 +600,7 @@ staleness 窗口内的历史样本，避免重启后误判）。
 | **P1-3** | **审计日志不可防篡改，且无保留策略、无查询索引**。`audit_log` 为普通追加表，无 hash 链/签名（`migrations/001_initial.sql:78-86`）；全仓库无 DELETE/归档/分区逻辑；`QueryAudits` 以 `tenant_id + created_at` 过滤但仅 `idx_audit_trace` 一个索引，长期运行后审计检索将全表扫描。 | `internal/store/sql_audits.go`、`migrations/001_initial.sql`、`internal/controlplane/server_audits.go:15-16` | README「100% 留痕 / 等保三级 ≥6 月」仅靠「永不删除」满足，但**无防篡改**（持 DB 凭证即可改写历史，等保三级明确要求审计记录防篡改）；且查询会随时间劣化 **→ 修复（2026-09-25）**：迁移 019 引入哈希链（`prev_hash`/`entry_hash`，`entry_hash=sha256(prev_hash‖长度前缀字段…)`，`created_at` 秒截断）+ `audit_chain_head` 单行链头（写入事务内 `FOR UPDATE` 串行化，多副本不分叉）+ 链式写入失败降级普通 INSERT（数据不丢、自检如实计 `legacyRows`）；`VerifyAuditChain` 平台级/租户级双强度校验 + `GET /api/v1/audit/verify`（200/409/501/500）；`--audit-retention-days`（默认 180 天）由 leader 周期归档至 `audit_log_archive` + `audit_archive_meta` 边界哈希（跨归档边界仍可校验）；补 `idx_audit_tenant_created` / `idx_audit_entry_hash`；新增 4 个指标与 2 条告警规则。**诚实边界**：无密钥链无法对抗全链重写，需外部 WORM 锚定（未内置）。验证见 §12 | 3–5 pd |
 | **P1-4** | **无界的 agent 日志缓冲会导致进程 OOM**。`agentLogs` 切片按 agent 每 30s 追加且永不裁剪；`deviceMetrics` map 无淘汰。 | `internal/store/sql_agent_logs.go:24-27` 及 memory 同名实现 | 机群规模上去后数周内控制面 OOM；商用 SLA 不可承诺 **→ 修复（2026-09-25）**：新增 `internal/store/memory_bounds.go` 统一施加硬上限——`deviceMetrics` 设备条目 ≤2000（超限按「最久未写入」淘汰整条设备，排序刻意用写入时刻而非 agent 可控的 `CollectedAt`）、`agentLogs` 批次 ≤2000 且总行数 ≤100000（超限丢最旧批次并回收底层数组容量）。验证见 §11 | 2–3 pd |
 | **P1-5** | **未鉴权即可造成指标内存耗尽 DoS**。中间件对**每个请求**（含 404 与未鉴权请求）记录指标，`normalizePath` 仅归一全数字段，`/api/v1/<随机串>` 原样入 map 且无上限；`/metrics` 默认放行（空 CIDR 白名单=不限制），无全局限流器。 | `internal/controlplane/server_middleware.go:169-177,207-228`、`internal/metrics/metrics.go:61-66,100-110`、`internal/controlplane/server_netsec.go:129-131` | 远程未鉴权即可打爆内存导致控制面重启 **→ 修复（2026-09-25）**：四层收敛——(1) 时序硬上限 2000（超限折叠 `:other` + 自观测指标）；(2) `normalizePath` 收紧（段 >48B／含非安全字符／全数字 → `:id`；整路径 >200B → `/:overlong`）；(3) 8080/9091 两处 `/metrics` 均接入准入，生产模式空 CIDR 改 fail-closed；(4) 生产未显式配置时默认启用 200 req/s/IP 限流，限流器 IP 桶上限 5 万（超限先清空闲桶，仍满则放行但不建桶）。真机实测见 §11 | 2–3 pd |
-| **P1-6** | **可支撑性缺口**（影响交付后的运维成本）。无版本端点、无 pprof、无配置转储、无诊断包；日志级别硬编码 Info；`/metrics` 抓取本身会做 4 次全表读。 | `internal/controlplane/server_lifecycle.go`（151 条路由中无上述项）、`internal/logx/logx.go` | 客户现场排障必须 SSH + 看源码，支持成本高、无法远程定位问题 | 6–10 pd |
+| **P1-6** | **可支撑性缺口**（影响交付后的运维成本）。无版本端点、无 pprof、无配置转储、无诊断包；日志级别硬编码 Info；`/metrics` 抓取本身会做 4 次全表读。 **→ 主体修复（2026-09-26）**：`GET /version` + `--log-level`/`OPSMESH_LOG_LEVEL`（非法值 fail-fast）+ `GET /api/v1/admin/config`（白名单脱敏）+ `GET /api/v1/admin/diagnostics`（zip 诊断包）+ `--debug-pprof`（默认关 + 复用 metrics CIDR 双层门槛）；`logx` 补 Debug/SetLevel/SetOutput，`pkg/log` 收口到 logx（修 3 处级别与每调用建 handler 缺陷）；顺带修掉 `-ldflags -X` 包路径全仓写错导致**发布产物版本注入从未生效**。详见 §17。**残留**：`/metrics` 全表读未改；18 个微服务仍是标准库 `log`（未统一）。 | `internal/controlplane/server_lifecycle.go`（151 条路由中无上述项）、`internal/logx/logx.go` | 客户现场排障必须 SSH + 看源码，支持成本高、无法远程定位问题 | 6–10 pd |
 | **P1-7** | **许可与第三方合规未就绪**。LICENSE = Apache-2.0（`Copyright 2026 OpsMesh Contributors`），**无 NOTICE / THIRD_PARTY 清单**；依赖含 MPL-2.0 组件（go-sql-driver/mysql、hashicorp/vault/api、terraform-plugin-sdk/v2）；Helm 应用商店 28 个条目引用 bitnami 仓库与 bitnami.com 图床，而 Bitnami 已于 2025 年调整镜像授权策略。 | `LICENSE`、`go.mod`、`internal/helm/catalog.go` | 采购/法务尽调会要求第三方声明；Apache-2.0 意味着**任何第三方可自由再分发你的商业产品**（是否可接受需商业决策）；应用商店在客户无外网时不可用，且可能撞上 Bitnami 授权限制 | 3–5 pd + 法务 |
 | **P1-8** | ~~控制面的 M3/M5 子存储仍可静默退回内存~~ **✅ 2026-09-25 已修**。`NewDeployHandler` / `NewOrchestrationHandler` 在 `deploy.NewSQL` / `orchestration.NewSQL` 构造失败时只 `logx.Error` 后改用 `Memory`，且工厂拿不到 `cfg.Production`，故生产模式下同样静默。 | `internal/controlplane/factory/server_factory.go`（原 `:32-47`、`:51-66`）；调用方 `internal/controlplane/server.go:309-310` 未传生产标志 | 部署模板/M5 编排数据在重启后丢失，而 `/health` 与界面均正常。触发窗口窄（主 store 已在同一 DSN 上跑完迁移，通常先失败），但属「配置要求持久化却跑在内存」的同一类缺陷 | **修复**：工厂接线生产标志，生产模式下子存储构造失败改为 fail-fast（对齐既有阻断先例），`server_factory_test.go` 覆盖两分支；验证见 §10.5 |
 | **P1-9** | **交付树中残留开发调试页面，内含硬编码凭据**。`deploy/docker/index.html` 是一份手工冒烟测试页：登录表单把 `viewer` / `viewer123` 直接写死在 `value=` 属性里，`var API = 'http://localhost:8080'` 硬编码明文地址，「改密」按钮把口令固定改成 `NewPass123`，并把 token 前 30 字符回显到页面。该文件**未被任何 compose/部署文件引用**（孤立文件），因此未被实际部署——但它是残留物，且恰好印证了 P0-1：团队自己的测试习惯仍依赖 `viewer123` 可用，这可能是该账号在生产存活未被察觉的原因之一。 | `deploy/docker/index.html`（全文） | 交付物卫生问题；若被误拷入静态目录即成凭据泄露；给客户做源码审计时会被质疑 | ✅ 2026-09-25 已删除（随 P0-4 遗留物清理批次）；复核 `deploy/docker/` 现仅剩 Dockerfile/脚本/证书与 compose |
@@ -667,7 +667,7 @@ staleness 窗口内的历史样本，避免重启后误判）。
 - ~~P1-4 日志/指标缓冲加上限与淘汰（2–3 pd）~~ ✅ 2026-09-25
 - ~~P1-5 指标基数控制 + `/metrics` 生产默认受限（2–3 pd）~~ ✅ 2026-09-25
 - ~~P1-2 per-agent 密钥下发 + 签名覆盖载荷 + 任务环境隔离（5–8 pd）~~ ✅ 2026-09-25（原列于阶段四，因属技术类高风险提前收口；密钥轮换与滚动升级顺序见 `docs/operations.md` §9.2.4 / §11.4）
-- P1-6 版本/诊断端点 + 日志级别可配 + 结构化日志统一（6–10 pd）
+- ~~P1-6 版本/诊断端点 + 日志级别可配 + 结构化日志统一（6–10 pd）~~ ✅ 2026-09-26（主体交付并真机验证，见 §17；「微服务日志统一」与 `/metrics` 全表读作为残留项另批处理）
 - `docs/dr-runbook.md` 恢复流程可执行化（当前手册读 `/backup`，而 `mysql-statefulset.yaml` 并未挂载该路径 → 首次演练必失败）（1–2 pd）
 
 > 本阶段 P1-1 / P1-2 / P1-3 / P1-4 / P1-5 已收口并真机复验（`verify-runtime.sh` 断言 94 项 0 失败、静态门禁 20 项 0 失败），
@@ -1447,3 +1447,85 @@ P1-2 批次推送后，CI **第一次真正跑完整流水线**（run `361226480
 另：`bash -n` 通过；`actionlint v1.7.7` 对全部 workflow 仍 **0 问题**。
 
 **诚实边界**：这是「让门禁可信 + 下次可诊断」，**不是**根因修复。若后续仍复现，按日志里的 `MemTotal`（区分 7GB/16GB runner）+ 每批峰值 RSS 继续定位；若确认是宿主级偶发，可再评估是否把 agent 批拆得更细。
+
+## 17. P1-6 可支撑性：交付记录（2026-09-26）
+
+§3 P1-6 的原文是「无版本端点、无 pprof、无配置转储、无诊断包；日志级别硬编码 Info；`/metrics` 抓取本身会做 4 次全表读」，商用影响为「客户现场排障必须 SSH + 看源码，支持成本高、无法远程定位问题」。
+
+### 17.1 交付项
+
+| 能力 | 端点/开关 | 鉴权 | 说明 |
+|---|---|---|---|
+| 版本与构建信息 | `GET /version` | 无（刻意，与 `/healthz` 同级） | 版本/提交/构建时间/Go 版本/GOOS·GOARCH/uptime + Go 内嵌 VCS 元信息（`vcs.revision`/`vcs.time`/`vcs.modified`） |
+| 日志级别可配 | `--log-level` / `OPSMESH_LOG_LEVEL` | — | `debug\|info\|warn\|error`，默认 info；**非法值启动期 fail-fast** |
+| 配置转储 | `GET /api/v1/admin/config` | `diagnostics:dump` | 脱敏后按 10 组呈现生效配置 |
+| 诊断包 | `GET /api/v1/admin/diagnostics` | `diagnostics:dump` | zip：README + version/config/health + metrics + goroutines |
+| 性能剖面 | `--debug-pprof` | 默认关 + `--metrics-allow-cidr` 准入 | `/debug/pprof/*`，生产空白名单即全拒（双层门槛） |
+
+代码位：`internal/controlplane/support_endpoints.go`（+ `support_endpoints_test.go`）、`internal/logx/logx.go`、`pkg/log/log.go`、`internal/agent/agent.go`（任务生命周期 DEBUG 站点）、`internal/config/config.go`（两个新 flag）、`cmd/opsmesh/main.go`（`applyLogLevel`，三个入口共用）。
+
+### 17.2 两个非显然的安全设计
+
+1. **权限点命名刻意避开 `:read`**。RBAC 派生规则（`store.RolePermissions()`）把**所有** `*:read` 权限自动授予 `viewer`。若把新权限命名为 `diagnostics:read`，只读用户即可拉走配置转储（含内部拓扑）。故命名 `diagnostics:dump`：`viewer` 不匹配、`operator` 组不在其内、`admin` 自动获得全量 → 实际仅 admin 可用。
+2. **脱敏采用白名单而非反射 + 字段名黑名单**。反射整个 `Config` 的失效方向是「新增一个 secret 字段就默认泄漏」；白名单的失效方向是「新字段看不到」（可被测试与人工发现）。敏感项一律只出 `*Configured: true|false`；URL 类字段（`--log-push-endpoint`/`--alert-webhook-url`/Loki/ES/OTel）经 `redactURL` 剥除 userinfo 与查询串——这类 URL 常被写成 `https://user:pass@host?token=…`，原样回显等于把凭证写进诊断包。
+
+### 17.3 顺带修掉的三处静默失效（都是"声明了但没生效"类）
+
+| # | 缺陷 | 为何此前不可见 | 实测证据 |
+|---|---|---|---|
+| 1 | **`-ldflags -X` 包路径全仓写错**：`.goreleaser.yml` 三行 + `Dockerfile.service` 一行写成 `opsmesh/internal/version.*`，模块实为 `github.com/Levango7/OpsMesh`；根 `Dockerfile`/`Dockerfile.agent`/`deploy/docker/Dockerfile.controlplane` 则完全没注入 | Go 链接器对不存在的 `-X` 符号**静默忽略**（构建成功、产物照跑、版本恒为默认 `0.9.0`/`dev`/`unknown`）；当前发布版本恰等于默认值，故 `--version` 看起来"对" | 用错误路径构建 → 版本仍报 `0.9.0`；用修正路径构建 → `opsmesh 9.9.9 (commit=abc1234 date=2026-09-26T00:00:00Z)`。已补 compose/CI 传 `VERSION/COMMIT/BUILD_DATE`，并在 `verify-runtime.sh` §15 加「`/version` 版本 == `.env` OPSMESH_VERSION」黑盒回归断言 |
+| 2 | `logx.Warn(ctx, msg, nil)` 传裸 `nil` | slog 对奇数参数生成 `"!BADKEY":null`，日志仍可解析，只是**字段被吞**——而这条恰好是 demo 模式的安全告警 | 修复前后对比：`...用于生产","traceID":"","!BADKEY":null}` → `...用于生产","traceID":""}`。全仓扫描确认仅此一处 |
+| 3 | `agent.go` 注释仍写「白名单只校验第一个 token」 | P1-1 已改为按段校验，注释未同步；读码者会据此误判安全边界（以为 `ls;rm -rf /` 只靠元字符检查兜底） | 已更正为按段校验语义，并说明元字符检查与白名单的互补关系 |
+
+### 17.4 验证（真机 + 单测）
+
+| 项 | 方式 | 结果 |
+|---|---|---|
+| 单元（端点） | `internal/controlplane/support_endpoints_test.go`：`/version` 字段与 405、配置快照脱敏与分组、admin/viewer/匿名三态、诊断包 zip 条目与鉴权、pprof 三态、`redactURL` 边界 | 全绿（7 用例） |
+| **脱敏的机器可判定形式** | 14 个敏感字段各填哨兵 `SUPERSECRET-*`，对响应做**全字符串搜索**（而非逐字段检查） | 端点/快照/zip 全包均 0 命中 |
+| 单元（日志） | `logx`：`ParseLevel` 10 输入（含大小写/空白/非法）、级别过滤三档、并发换级别 + 换输出（-race 在 CI 覆盖）；`agent`：DEBUG 生命周期站点 | 全绿；debug 站点输出 `"level":"DEBUG"` 且**不含命令内容** |
+| 黑盒（独立实例，不触碰 prod 栈） | 临时端口 18099/19090/19091 起控制面，注入哨兵密钥 | `/version` 200；转储 2949B 无哨兵、`lokiEndpoint` → `https://loki.internal:3100/loki/api/v1/push`；诊断包 6612B/6 条目、`goroutines.txt` 125 行、`health.json` 正常；pprof 默认 **404**；CIDR 排除 **403**、放行 **200**；匿名读 `admin/config`+`admin/diagnostics` 均 **401** |
+| 黑盒（级别透传） | `--log-level=warn` 实跑 | INFO=0 / WARN=3，且 `runtime.logLevel` 如实报 `warn`；`--log-level=bogus` → 退出码 1 + 明确错误 |
+| 门禁 | `golangci-lint v2.13.2 ./...`、`gofmt -l .`、`go vet`、`actionlint v1.7.7`、`validate-deploy-assets.sh`、compose 渲染 | 全 0 问题；门禁 PASS=20 FAIL=0 SKIP=0；`build.args` 渲染为 `VERSION=0.9.0, COMMIT=dev, BUILD_DATE=unknown` |
+| 回归 | `internal/controlplane` 40.9s、`internal/agent` 两半批、`pkg/log`、`internal/logx`、`internal/config`、`internal/store` | 全绿 |
+| **真机全栈复验** | `deploy.sh up`（重建镜像）+ `verify-runtime.sh` | **PASS=101 / FAIL=0**（新增第 15 节 8 条：`/version` 200、**版本与 `.env OPSMESH_VERSION` 一致**、三字段齐备、pprof 出厂未注册 404、匿名读 `admin/config` 与 `admin/diagnostics` 均 401）；静态门禁 `PASS=22 FAIL=0 SKIP=0` |
+
+### 17.5 P1-6 残留（明确未做）
+
+- **`/metrics` 抓取的 4~5 次全量扫描未改**：`handlePrometheusMetrics` 仍做 `Snapshot`/`AllTasks`/`Alerts`/`ListTickets` 四次全量，9091 端口那次另加 `Agents("")` 共五次。P1-5 已把它收进 CIDR 准入（生产空白名单即 403），故**不再是攻击面**，但被抓取频率放大 DB 负载的问题仍在。修法应为短 TTL 计数缓存或改走已有的 `internal/metrics` 计数器，需独立评估新鲜度语义（本批未做）。
+- **18 个微服务仍用标准库 `log`**：50 个文件为纯文本、无 traceID、无级别控制，与控制面的 `logx` 结构化 JSON **未统一**。全量迁移会改变服务日志格式（影响客户侧采集器解析规则），属独立批次；`pkg/log` 现已是可正确使用的门面（本批修好），迁移时可作为落点。
+- **pprof 未做「运行期开关」**：改级别须重启容器。诊断包/配置转储不需重启，pprof 需要——记录为已知限制。
+
+### 17.6 第四个静默失效（由门禁故障注入抓出，属 P0-4 同级：部署资产在 Windows 上开箱即坏）
+
+给门禁做故障注入时发现并修掉的一整类问题。**证据链**：
+
+1. 对照实验——同一 Dockerfile，只改行尾：
+   `LF → docker build 成功`；`CRLF → ERROR: failed to solve: dockerfile parse error on line 3: unknown instruction: &&`。
+   原因是 `RUN ... \` 续行的行尾变成 CR+LF，Docker 解析器识别不到续行，把下一行当指令。
+2. `.gitattributes` 原本只钉了 `*.go`/`*.sh`/`*.yml`/`*.yaml`/`Makefile`/`*.md`，**没有覆盖 Dockerfile 与 `.dockerignore`**；
+   而本机 `core.autocrlf=true` → Windows 检出即 CRLF。CI 永远在 Linux 上跑（检出必为 LF），
+   所以**这类缺陷在流水线上不可见**，只在客户/开发者 Windows 机器上炸。
+3. 门禁上线即抓出三个既有 CRLF 文件（仓库内均为 LF，仅本机检出态为 CRLF）：
+   `.dockerignore`(66 处 CR)、`operator/Dockerfile`(27)、`deploy/helm/opsmesh/templates/_helpers.tpl`(130)。
+   其中 `.dockerignore` 尤其危险——带 CR 的模式（如 `web/`）匹配不到路径，会**静默失效**，
+   而这正是 P0-3「企业版前端无交付路径」的根因文件（见 §13.8 与 `.dockerignore` 内的警示注释）。
+4. 修法：`.gitattributes` 增补 `[Dd]ockerfile*` / `*.dockerfile` / `.dockerignore` / `*.tpl` / `*.yaml` / `*.json` /
+   并给 `.gitattributes` 自身钉 `eol=lf`；已用 `git add --renormalize` + `tr -d ''` 把工作区归一到 LF
+   （三文件归一后 `git diff` 为空 → 仓库内容本就 LF，只是检出形态错）。
+
+**过程中踩到的两个坑（写给后续维护者）**：
+
+- **`grep`/`awk` 在 Git-Bash 下看不见 CR**：对确认含 CRLF 的文件，`grep -c $''` 与 `awk '//'` 都返回 0
+  （MSYS 文本模式在读时吞 CR），只有 `tr -d ''` 走字节路径可见（实测 32 → 31 字节）。
+  ⇒ 用 grep 写的 CRLF 门禁**在 Windows 上是空转的**，而这恰是它唯一要防的平台。第一版就是这样，
+  是故障注入（放一个含 CRLF 的探针文件）把它抓出来的——**没有注入，这道门禁会以"永远 PASS"的形态骗过所有人**。
+  现改用 `wc -c` 与 `tr -d '' | wc -c` 的字节数比对。
+- **`.gitattributes` 的注释里不能出现真 CR/LF**：写注释时误插入一个真实换行，使半截注释没有 `#` 前缀，
+  git 遂把它当规则解析，**每一次 git 调用都吐 `... is not a valid attribute name: .gitattributes:25`**。
+  修完顺手给该文件自己钉上 `eol=lf`。
+
+**新增永久门禁**：`deploy/scripts/validate-deploy-assets.sh` 第 6 节「行尾一致性」——
+扫描 Dockerfile/`.dockerignore`/compose/`*.sh`/Helm 模板/Chart·values，任一含 CR 即 FAIL 并点名；
+另用 `git check-attr eol -- Dockerfile` 断言属性真的生效（问 git 而非解析文件，避免规则写法差异导致误判通过）。
+故障注入双向验证：放探针文件 → `FAIL=1` 且点名；撤掉 → `PASS=22 FAIL=0`。

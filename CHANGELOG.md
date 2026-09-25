@@ -14,6 +14,53 @@
 - **终局验证**（run `36155335631`，commit `0dc4ece`）：**12 个 job 全部真跑且全绿**——本项目第一次每个 job 都真的执行并通过。`image` 推送 `ghcr.io/levango7/opsmesh-binary@sha256:5ede99…`（keyless 签名落 Rekor `index: 2957978033`，SBOM 89 条）；`image-agent` 推送 `ghcr.io/levango7/opsmesh-agent@sha256:962c21…`（SBOM 172 条，Trivy 在 `ignore-unfixed` 下通过）。
 - **同轮发现的第二个 CI 可靠性问题：`build-test` OOM flaky**。首跑 `Test (unit, …)` 红，但 `./internal/agent/` 批次最后一条是 `--- PASS`、随后才 `fatal error: runtime: cannot allocate memory`（GC worker 堆栈）——**测试全绿却被判红**，同 commit **重跑即绿**。与代码无关（该步骤注释已写明"无 race 下仍 7GB OOM"），但 `build-test` 是唯一门禁、它一挂 7 个下游全 skip，故影响被放大。间歇性红与长期红同属"门禁不可信"，建议后续单独处理（拆细 agent 批次 / 降 GOMEMLIMIT），本轮未改。
 
+## [Unreleased] — 2026-09-26 商用就绪 P1-6：可支撑性（版本端点 / 日志级别 / 配置转储 / 诊断包 / pprof）
+
+> 解决 §3 P1-6「客户现场排障必须 SSH + 看源码，无法远程定位问题」。证据：`docs/commercial-readiness-review-2026-09-25.md` §17。
+
+### 新增能力
+
+- **`GET /version`（无鉴权，与 `/healthz` 同级）**：版本 / 提交 / 构建时间 / Go 版本 / GOOS·GOARCH / uptime + Go 构建内嵌的 VCS 元信息（`vcs.revision`/`vcs.time`/`vcs.modified`，即使 ldflags 失效也能定位源码版本）。只含构建事实，不含配置、租户、主机名或路径。
+- **`--log-level` / `OPSMESH_LOG_LEVEL`（debug|info|warn|error，默认 info）**：日志级别此前**硬编码**在 `internal/logx`；`docs/operations.md` §5.1 还写着「未暴露该 flag，需改源码重建」。现在由配置控制，且**非法值启动期 fail-fast**（静默退回会让「我设了 debug 为什么没有 debug 日志」变成一次现场排障）。
+- **`GET /api/v1/admin/config`（需 `diagnostics:dump`）**：**脱敏后**的生效配置，按 runtime / store / auth / tls / secrets / discovery / agent / observability / limits 分组。
+- **`GET /api/v1/admin/diagnostics`（需 `diagnostics:dump`）**：zip 诊断包（`README.txt` + version/config/health + `metrics.txt` + `goroutines.txt`）。goroutine 用聚合形态（`debug=1`）并截断到 512KB，防大集群把包撑爆。
+- **`--debug-pprof`（默认 false）**：B/S 端口暴露 `/debug/pprof/*`，**两层门槛**——默认关闭，开启后仍复用 `--metrics-allow-cidr` 准入（生产模式空白名单即全拒）。
+- **`logx` 补 `Debug` 级别 + `SetLevel`/`ParseLevel`/`SetOutput`**：级别用 `slog.LevelVar`（自带并发安全，可运行期调整）；输出经原子换目标的转发 Writer（避免替换 logger 变量与并发写日志构成数据竞争）。agent 任务生命周期新增 2 个 DEBUG 站点（**只记 ID/类型/退出码/耗时/输出字节数，命令与输出内容刻意不入日志**）。
+- **`pkg/log` 收口到 `logx`**：修正三处缺陷——① `ContextLogger.*` 每条日志 `slog.New` 一个 handler（级别硬编码、忽略配置、每条一次分配）；② `Logger.Debug`/`FieldLogger.Debug` 走 `logx.Info`，**debug 日志被记成 INFO 级**；③ `Config` 的 level 只作用于 `Debug` 一处，设 `error` 仍照打 info。级别现为进程级单一来源。
+
+### 安全设计（两条非显然的决定）
+
+- **权限点刻意命名为 `diagnostics:dump` 而非 `:read`**：RBAC 派生规则会把**所有** `*:read` 自动授予 `viewer`——若叫 `diagnostics:read`，只读用户就能拉走配置转储。现仅 `admin` 持有（admin 自动获得全部权限点）。
+- **脱敏是白名单式**：实现只列明确允许的配置项，敏感字段一律只出 `*Configured: true|false`；URL 类字段剥除 userinfo 与查询串（`--log-push-endpoint`/`--alert-webhook-url` 常被写成 `https://u:p@host?token=…`）。反射整个 Config 的做法被否决：那样新增一个 secret 字段就默认泄漏，而白名单的失效方向是「新字段看不到」。
+
+### 顺带修掉的三处静默失效
+
+- **`-ldflags -X` 包路径全仓写错（4 处）**：`.goreleaser.yml` 三行 + `Dockerfile.service` 一行都写成 `opsmesh/internal/version.*`，而模块是 `github.com/Levango7/OpsMesh`——**链接器静默忽略不存在的符号**（实测：构建成功、产物照跑、版本恒为默认 `0.9.0`/`dev`/`unknown`）。即**发布产物的版本注入从未生效**，此前不可见只因版本号恰好等于默认值。已修正并给根 `Dockerfile`/`Dockerfile.agent`/`deploy/docker/Dockerfile.controlplane` 补上 `ARG VERSION/COMMIT/BUILD_DATE` + compose/CI 传参。
+- **`logx.Warn(ctx, msg, nil)`** 传裸 `nil` → slog 输出 `"!BADKEY":null`（demo 模式那条安全告警的字段被吞）。全仓仅此一处，已修。
+- **`agent.go` 的白名单注释仍写「只校验第一个 token」** → 与 P1-1 之后的按段校验矛盾，会误导维护者对安全边界的判断，已更正。
+
+### 验证（全部真机/单测，非静态结论）
+
+| 项 | 方式 | 结果 |
+|---|---|---|
+| 单元（新端点） | `support_endpoints_test.go` 7 个用例 | 全绿；含**哨兵脱敏**（14 个敏感字段填哨兵值 + 全字符串搜索）、admin 200 / viewer 403 / 匿名 401、zip 六条目、pprof 三态（关 404 / 白名单排除 403 / 放行 200） |
+| 单元（日志） | `logx` 5 个级别用例 + `agent` DEBUG 生命周期用例 | 全绿；debug 站点输出 `level=DEBUG` 且**不含命令内容** |
+| 黑盒（独立实例） | 临时端口起控制面（不触碰 prod 栈）+ 哨兵密钥 | `/version` 正确；转储 2949B **不含哨兵**；`lokiEndpoint` 剥成 `https://loki.internal:3100/loki/api/v1/push`；zip 6612B 六条目、`goroutines.txt` 125 行、全包无哨兵；pprof 默认 404；`--log-level=warn` 时 INFO=0/WARN=3 且转储 `logLevel=warn`；`--log-level=bogus` 退出码 1 |
+| 版本注入实测 | 按修正后的 ldflags 构建 + `--version` | `opsmesh 9.9.9 (commit=abc1234 date=2026-09-26T…)`（修正前该注入是空操作） |
+| 门禁 | `golangci-lint v2.13.2 ./...`、`gofmt -l .`、`go vet`、actionlint v1.7.7 | 全部 0 问题；`validate-deploy-assets.sh` PASS=20 FAIL=0 |
+| 回归 | `internal/controlplane` 40.9s、`internal/agent`（含新用例）、`pkg/log`、`internal/logx`、`internal/config`、`internal/store` | 全绿 |
+
+**诚实边界**：`/version` 无鉴权是刻意取舍（信息均为构建事实）；`GET /api/v1/admin/*` 仍会暴露内部拓扑（对端地址、端口、网段白名单），已在 README 与包注释中要求按客户敏感规定流转。18 个微服务仍用标准库 `log`（50 文件、纯文本、无级别控制），与控制面的结构化日志**尚未统一**——迁移面大且会改变服务日志格式，属独立批次。
+
+### 第四处静默失效：部署资产的 CRLF（由新门禁的故障注入抓出，Windows 上开箱即坏）
+
+- **对照实验证实危害**：同一 Dockerfile 仅行尾不同——`LF` → `docker build` 成功；`CRLF` → `ERROR: failed to solve: dockerfile parse error on line 3: unknown instruction: &&`（`RUN ... \` 续行行尾变成 CR+LF，Docker 解析器识别不到续行）。
+- **根因**：`.gitattributes` 原只覆盖 Go/sh/yml/Makefile/md，**未覆盖 Dockerfile 与 `.dockerignore`**；本机 `core.autocrlf=true` → Windows 检出即 CRLF。CI 恒在 Linux（必为 LF），**故该缺陷流水线不可见，只在客户/开发者 Windows 机器上炸**。
+- **门禁上线即抓出三个既有 CRLF 文件**（仓库内均 LF，仅本机检出态 CRLF）：`.dockerignore`(66 CR)、`operator/Dockerfile`(27)、`deploy/helm/opsmesh/templates/_helpers.tpl`(130)。`.dockerignore` 尤危——带 CR 的模式（`web/\r`）匹配不到路径即**静默失效**，而那正是 P0-3 的根因文件。
+- **修法**：`.gitattributes` 增补 `[Dd]ockerfile*` / `*.dockerfile` / `.dockerignore` / `*.tpl` / `*.yaml` / `*.json`，并给 `.gitattributes` 自身钉 `eol=lf`；工作区用 `git add --renormalize` + `tr -d '\r'` 归一（归一后 `git diff` 为空，证明仓库内容本就 LF）。
+- **新增永久门禁**：`validate-deploy-assets.sh` 第 6 节扫描部署资产行尾，任一含 CR 即 FAIL 并点名；并用 `git check-attr eol -- Dockerfile` 断言属性真的生效（问 git 而非解析文件）。双向注入验证：放探针 → `FAIL=1` 点名；撤掉 → `PASS=22 FAIL=0`。
+- **两个值得记住的坑**：① **Git-Bash 的 `grep`/`awk` 看不见 CR**（`grep -c $'\r'`、`awk '/\r/'` 对确含 CRLF 的文件均返回 0，MSYS 读时吞 CR；只有 `tr -d '\r'` 走字节路径，实测 32→31 字节）——**第一版门禁正是用 grep 写的，在 Windows 上以"永远 PASS"的形态空转**，是故障注入把它抓出来的；② `.gitattributes` 注释里混入一个真换行，会让半截注释没有 `#` 前缀，git 每次调用都报 `is not a valid attribute name`。
+
 ## [Unreleased] — 2026-09-26 `build-test` 内存型 flaky：复核 + 可观测 + 仅 OOM 重试一次
 
 > 承接下一节的镜像链路修复。`build-test` 在 run `36155335631` 首跑时红了——但**不是测试失败**：`./internal/agent/` 批次最后一个用例是 `--- PASS`，随后进程才 `fatal error: runtime: cannot allocate memory`（mmap 型 ENOMEM）死亡。该 job 是唯一门禁，一挂则 7 个下游全 skip，故列为门禁可信度问题处理。

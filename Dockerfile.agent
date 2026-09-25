@@ -21,7 +21,11 @@ COPY go.mod go.sum ./
 # M11 供应链安全：go mod verify 校验下载模块完整性（防 go.sum 漂移 / 投毒）。
 RUN go mod download && go mod verify
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /opsmesh ./cmd/opsmesh
+# 同根 Dockerfile：注入构建元信息（P1-6 /version）；-X 包路径必须是模块路径。
+ARG VERSION=dev
+ARG COMMIT=dev
+ARG BUILD_DATE=unknown
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath     -ldflags="-s -w -X github.com/Levango7/OpsMesh/internal/version.Version=${VERSION} -X github.com/Levango7/OpsMesh/internal/version.Commit=${COMMIT} -X github.com/Levango7/OpsMesh/internal/version.Date=${BUILD_DATE}"     -o /opsmesh ./cmd/opsmesh
 
 # P2-2 供应链安全：base image digest 由 Renovate 自动钉死（见 .github/renovate.json）。
 # 手动钉死：crane digest debian:bookworm-slim → FROM debian:bookworm-slim@sha256:<digest> AS runtime

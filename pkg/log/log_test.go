@@ -2,8 +2,8 @@
 //
 // 可测性说明（源码限制）：
 //   - Logger.Info/Warn/Error 与 FieldLogger.* 底层调用 internal/logx 的包级函数，
-//     logx 的 logger 是包内私有全局变量（slog.NewJSONHandler(os.Stderr,...)，
-//     无 SetOutput/带 writer 的构造函数），无法注入 bytes.Buffer，只能验证
+//     logx 现提供 SetOutput（2026-09-26 起），本文件所有用例统一用 withCapture
+//     捕获真实 JSON 输出；历史实现因无法注入 bytes.Buffer，只能验证
 //     不 panic + 字段展开逻辑；
 //   - ContextLogger.* 每次调用时读取 os.Stderr 变量构造 handler，因此可通过
 //     临时替换 os.Stderr 为 os.Pipe 管道捕获真实 JSON 输出断言字段结构。
@@ -14,49 +14,32 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"os"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
-// withStderrCapture 将 os.Stderr 重定向到管道，执行 fn 后读取全部捕获内容。
-// fn 内发起的 ContextLogger.* 调用会写入管道（源码在每次调用时读取 os.Stderr 变量
-// 构造 JSONHandler，替换变量即生效）。
-// 时序保证：fn 返回后先关写端（触发 io.Copy 的 EOF），再等读端 goroutine 结束，
-// 确保捕获到 fn 内全部输出。
-// 注意：logx 全局 logger 在包初始化时已绑定原 os.Stderr 文件句柄，
-// 不受本重定向影响——本捕获只对 ContextLogger 生效（logx 路径见各 NoPanic 用例）。
-func withStderrCapture(t *testing.T, fn func()) string {
+// withCapture 通过 logx.SetOutput 捕获日志输出（同步写入 bytes.Buffer，
+// 无需管道/goroutine；返回前恢复 stderr）。
+//
+// P1-6 起 pkg/log 全量转发到 logx，故本 helper 能捕获**所有**级别与方法
+// （历史实现只能捕获 ContextLogger，且依赖它每次调用重建 handler 的缺陷）。
+func withCapture(t *testing.T, fn func()) string {
 	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe 失败: %v", err)
-	}
-	orig := os.Stderr
-	os.Stderr = w
-
-	var captured bytes.Buffer
-	done := make(chan struct{})
-	go func() {
-		io.Copy(&captured, r) // 阻塞直到 w 关闭（EOF）
-		close(done)
-	}()
-
+	var buf bytes.Buffer
+	logx.SetOutput(&buf)
+	defer func() { logx.SetOutput(os.Stderr); logx.SetLevel(slog.LevelInfo) }()
 	fn()
-
-	// 先恢复 os.Stderr 并关闭写端：slog 写入已同步完成，EOF 让 io.Copy 返回。
-	os.Stderr = orig
-	w.Close()
-	<-done
-	r.Close()
-	return captured.String()
+	return buf.String()
 }
 
-// TestConfigLevels 验证 Config 对各级别字符串的解析（未知级别回退 info）。
+// TestConfigLevels 验证 Config 把级别应用到进程级（logx），且未知级别退回 info。
 func TestConfigLevels(t *testing.T) {
+	defer logx.SetLevel(slog.LevelInfo)
 	tests := []struct {
 		level string
 		want  slog.Level
@@ -66,16 +49,16 @@ func TestConfigLevels(t *testing.T) {
 		{"warn", slog.LevelWarn},
 		{"error", slog.LevelError},
 		{"", slog.LevelInfo},        // 空串回退默认 info
-		{"verbose", slog.LevelInfo}, // 未知级别回退 info
-		{"DEBUG", slog.LevelInfo},   // 大小写敏感，"DEBUG" 未命中 → info
+		{"verbose", slog.LevelInfo}, // 未知级别回退 info（并打 WARN）
+		{"DEBUG", slog.LevelDebug},  // 大小写不敏感（2026-09-26 起与 logx.ParseLevel 对齐）
 	}
 	for _, tt := range tests {
 		l := Config("test-svc", tt.level)
 		if l == nil {
 			t.Fatalf("Config(%q) 返回 nil", tt.level)
 		}
-		if l.level != tt.want {
-			t.Errorf("Config(level=%q).level = %v, want %v", tt.level, l.level, tt.want)
+		if got := logx.Level(); got != tt.want {
+			t.Errorf("Config(level=%q) 后进程级别 = %v, want %v", tt.level, got, tt.want)
 		}
 		if l.serviceName != "test-svc" {
 			t.Errorf("Config(%q).serviceName = %q, want %q", tt.level, l.serviceName, "test-svc")
@@ -94,9 +77,11 @@ func TestWithContext(t *testing.T) {
 	if c.serviceName != "svc-a" {
 		t.Errorf("serviceName = %q, want %q", c.serviceName, "svc-a")
 	}
-	// 无 OTel span 的 ctx：traceID/spanID 应为空串（logx.Trace 回退空、spanID 无效）。
-	if c.traceID != "" || c.spanID != "" {
-		t.Errorf("无 span 的 ctx 应产生空 traceID/spanID, got %q/%q", c.traceID, c.spanID)
+	// 无 OTel span 的 ctx：spanID 为空串。
+	// traceID 不再由 ContextLogger 固化（改为写入时刻由 logx 从 ctx 取），
+	// 故此处只断言 spanID；traceID 的真实输出见 TestContextLoggerJSONOutput。
+	if c.spanID != "" {
+		t.Errorf("无 span 的 ctx 应产生空 spanID, got %q", c.spanID)
 	}
 }
 
@@ -173,42 +158,37 @@ func TestLoggerMethodsNoPanic(t *testing.T) {
 	dbg.Debug(ctx, "debug level message")
 }
 
-// TestLoggerDebugLevelFiltering 验证 Debug 的级别过滤语义：
-// Logger.level > Debug 时不输出（logx.Debug 调用被跳过），
-// Logger.level == Debug 时输出。logx 无输出捕获入口，此处验证
-// 分支条件本身（l.level <= slog.LevelDebug）与 Config 联动：
-//   - Config(level="debug")  → Debug 输出；
-//   - Config(level="info")   → Debug 不输出（无日志副作用，仅验证条件可达）。
+// TestLoggerDebugLevelFiltering 验证 Debug 的真实过滤语义（捕获输出断言）：
+//   - Config(level="info")  → Debug 不输出；
+//   - Config(level="debug") → Debug 输出，且 level 字段为 DEBUG
+//     （历史缺陷：Debug 走 logx.Info，被记成 INFO）。
 func TestLoggerDebugLevelFiltering(t *testing.T) {
-	// debug 级别：条件满足，调用 logx。
-	lDebug := Config("svc", "debug")
-	if lDebug.level > slog.LevelDebug {
-		t.Fatal("Config(debug) 的 level 应满足 Debug 输出条件")
+	lInfo := Config("svc", "info")
+	out := withCapture(t, func() { lInfo.Debug(context.Background(), "应被过滤") })
+	if strings.Contains(out, "应被过滤") {
+		t.Fatalf("info 级别下 Debug 不应输出，实际: %s", out)
 	}
 
-	// info 级别：条件不满足，跳过调用。
-	lInfo := Config("svc", "info")
-	if lInfo.level <= slog.LevelDebug {
-		t.Fatal("Config(info) 的 level 不应满足 Debug 输出条件")
+	lDebug := Config("svc", "debug")
+	out = withCapture(t, func() { lDebug.Debug(context.Background(), "应被输出") })
+	if !strings.Contains(out, "应被输出") {
+		t.Fatalf("debug 级别下 Debug 应输出，实际: %s", out)
 	}
-	// 实际调用确保过滤分支可执行不 panic。
-	lInfo.Debug(context.Background(), "应被过滤")
-	lDebug.Debug(context.Background(), "应被输出")
+	if !strings.Contains(out, `"level":"DEBUG"`) {
+		t.Fatalf("Debug 的 level 字段应为 DEBUG，实际: %s", out)
+	}
 }
 
 // TestContextLoggerJSONOutput 验证 ContextLogger 的真实 JSON 输出结构。
-// 捕获方式：ContextLogger.* 在每次调用时读取 os.Stderr 变量构造 handler，
-// 故 withStderrCapture 替换该变量后可捕获真实输出，断言
+// 捕获方式：withCapture（logx.SetOutput），断言
 // level/msg/traceID/spanID/service 字段及透传 args 均按序进入 JSON。
+// traceID 由 logx 在写入时刻从 ctx 取（此处用 logx.WithTrace 注入）。
 func TestContextLoggerJSONOutput(t *testing.T) {
-	c := &ContextLogger{
-		ctx:         context.Background(),
-		serviceName: "test-svc",
-		traceID:     "0af7651916cd43dd8448eb211c80319c",
-		spanID:      "b7ad6b7169203331",
-	}
+	traceID := "0af7651916cd43dd8448eb211c80319c"
+	c := Config("test-svc", "debug").WithContext(logx.WithTrace(context.Background(), traceID))
+	c.spanID = "b7ad6b7169203331"
 
-	out := withStderrCapture(t, func() {
+	out := withCapture(t, func() {
 		c.Info("ctx info message", "user", "alice")
 		c.Warn("ctx warn message")
 		c.Error("ctx error message", errors.New("boom"))
@@ -241,9 +221,9 @@ func TestContextLoggerJSONOutput(t *testing.T) {
 		if m["msg"] != v.wantMsg {
 			t.Errorf("第 %d 行 msg = %v, want %q", i+1, m["msg"], v.wantMsg)
 		}
-		// traceID/spanID/service 为 ContextLogger 固定注入字段。
-		if m["traceID"] != c.traceID {
-			t.Errorf("第 %d 行 traceID = %v, want %q", i+1, m["traceID"], c.traceID)
+		// traceID（logx 从 ctx 取）/spanID/service 为固定注入字段。
+		if m["traceID"] != traceID {
+			t.Errorf("第 %d 行 traceID = %v, want %q", i+1, m["traceID"], traceID)
 		}
 		if m["spanID"] != c.spanID {
 			t.Errorf("第 %d 行 spanID = %v, want %q", i+1, m["spanID"], c.spanID)
@@ -276,9 +256,9 @@ func TestContextLoggerJSONOutput(t *testing.T) {
 // TestContextLoggerErrorNilBranch 验证 ContextLogger.Error 的 nil error 分支：
 // 不追加 error 字段（源码 if err != nil 分支跳过）。
 func TestContextLoggerErrorNilBranch(t *testing.T) {
-	c := &ContextLogger{serviceName: "svc", traceID: "t1", spanID: "s1"}
+	c := &ContextLogger{ctx: context.Background(), serviceName: "svc", spanID: "s1"}
 
-	out := withStderrCapture(t, func() {
+	out := withCapture(t, func() {
 		c.Error("ctx error message nil", nil)
 	})
 
@@ -295,7 +275,7 @@ func TestContextLoggerErrorNilBranch(t *testing.T) {
 }
 
 // TestContextLoggerMethodsNoPanic 验证 ContextLogger 边界输入不 panic
-// （真实输出经 withStderrCapture 在 JSON 用例覆盖，此处走原 stderr）。
+// （真实输出结构由 TestContextLoggerJSONOutput 覆盖）。
 func TestContextLoggerMethodsNoPanic(t *testing.T) {
 	l := Config("ctx-svc", "debug")
 	c := l.WithContext(context.Background())
@@ -313,11 +293,8 @@ func TestContextLoggerMethodsNoPanic(t *testing.T) {
 func TestFieldLoggerFieldExpansion(t *testing.T) {
 	f := &FieldLogger{fields: map[string]string{"k1": "v1", "k2": "v2"}}
 
-	// 复刻源码 FieldLogger.Info 的 args 构造逻辑。
-	args := make([]any, 0, len(f.fields)*2)
-	for k, v := range f.fields {
-		args = append(args, k, v)
-	}
+	// 直接测源码的 binds()（历史实现是"复刻一份逻辑"，会掩盖源码改动）。
+	args := f.binds(0)
 	if len(args) != 4 {
 		t.Fatalf("展开后 args 数量 = %d, want 4（2 字段 × k/v）", len(args))
 	}
@@ -342,8 +319,7 @@ func TestFieldLoggerFieldExpansion(t *testing.T) {
 	}
 }
 
-// TestFieldLoggerMethodsNoPanic 验证 FieldLogger 四个级别方法不 panic
-// （底层走 logx 全局 stderr，无法捕获断言，见文件头可测性说明）。
+// TestFieldLoggerMethodsNoPanic 验证 FieldLogger 四个级别方法不 panic。
 func TestFieldLoggerMethodsNoPanic(t *testing.T) {
 	l := Config("field-svc", "info")
 	ctx := context.Background()
@@ -359,7 +335,7 @@ func TestFieldLoggerMethodsNoPanic(t *testing.T) {
 	// 边界：空消息 + 字段为 nil。
 	l.WithFields(nil).Info(ctx, "")
 
-	// FieldLogger.Debug 走 logx.Info（源码如此），确保分支可达。
+	// FieldLogger.Debug 走 logx.Debug（P1-6 修正：此前误走 logx.Info）。
 	l.WithField("d", "1").Debug(ctx, "debug via field logger")
 }
 

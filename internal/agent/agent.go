@@ -938,6 +938,17 @@ func (a *Agent) execute(ctx context.Context, t proto.Task) proto.TaskResult {
 	start := time.Now()
 	res := proto.TaskResult{TaskID: t.TaskID, AgentID: a.agentID, ClaimEpoch: t.ClaimEpoch, FinishedAt: time.Now()}
 
+	// P1-6 可支撑性：任务生命周期 DEBUG 日志。默认 info 级别不输出，现场排障时用
+	// --log-level=debug / OPSMESH_LOG_LEVEL=debug 打开（"任务下发后没动静"是最高频工单）。
+	// 刻意**不记**命令与 stdout/stderr 内容——任务体常含口令、主机路径或业务数据，
+	// 一旦进日志就会被采集器送到日志平台，等于把凭据二次扩散；只记 ID/类型/字节数。
+	logx.Debug(ctx, "任务开始执行", "taskID", t.TaskID, "type", t.Type, "agentID", a.agentID)
+	defer func() {
+		logx.Debug(ctx, "任务执行结束", "taskID", res.TaskID, "exitCode", res.ExitCode,
+			"durationMs", time.Since(start).Milliseconds(),
+			"stdoutBytes", len(res.Stdout), "stderrBytes", len(res.Stderr))
+	}()
+
 	stdout := newLimitedBuffer(maxOutputBytes)
 	stderr := newLimitedBuffer(maxOutputBytes)
 	var runErr error
@@ -953,9 +964,9 @@ func (a *Agent) execute(ctx context.Context, t proto.Task) proto.TaskResult {
 			res.DurationMs = time.Since(start).Milliseconds()
 			return res
 		}
-		// 安全加固：shell 元字符检测——纵深防御，拒绝含高危元字符的命令。
-		// 白名单只校验第一个 token 的 basename，无法阻止 "ls;rm -rf /" 这类元字符拼接绕过
-		// （;后内容仍由同一 sh -c 解释执行）。此处前置拦截最高危元字符，与白名单互补。
+		// 安全加固：shell 元字符检测——纵深防御拦截高危元字符。
+		// P1-1 后白名单已改为**按命令段**校验（&& / || / | 切段后逐段取命令词），
+		// 不再只看首 token；本检查与之互补（另挡 ; / 反引号 / $() 等白名单语义外的形式）。
 		if err := checkShellMetachars(t.Command); err != nil {
 			res.ExitCode = -1
 			res.Stderr = err.Error()

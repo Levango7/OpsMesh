@@ -379,6 +379,8 @@ OpsMesh 采用「flag 优先、环境变量兜底」的统一配置模型（`int
 | `--provision-cidr-whitelist` | `OPSMESH_PROVISION_CIDR_WHITELIST` | 空 | autoProvision 扫描网段白名单 |
 | `--device-fp-deadline` | `OPSMESH_DEVICE_FP_DEADLINE` | 空 | DeviceFP 强制非空截止时间（RFC3339） |
 | `--audit-retention-days` | `OPSMESH_AUDIT_RETENTION_DAYS` | 180 | 审计日志保留天数（P1-3）。超龄行由 **leader** 周期搬入 `audit_log_archive` 后从在线表删除；`0`=永久保留。等保三级/ISO 27001 通常要求审计留存 ≥180 天，按合规要求调整。Docker 部署在 `.env` 的 `AUDIT_RETENTION_DAYS` 设置（compose 已接线）；K8s 部署在 `controlplane.env` 加 `OPSMESH_AUDIT_RETENTION_DAYS` |
+| `--log-level` | `OPSMESH_LOG_LEVEL` | info | 进程日志级别：`debug`\|`info`\|`warn`\|`error`（大小写不敏感，空=info）。**非法值启动期直接失败**（不静默退回默认，否则「设了 debug 却没有 debug 日志」会变成一次现场排障）。Docker 在 `.env` 加 `LOG_LEVEL`；K8s 在 `controlplane.env`/`agent` 容器加 `OPSMESH_LOG_LEVEL`。调试完请改回 `info` 并重启（debug 日志量大且可能含敏感上下文） |
+| `--debug-pprof` | `OPSMESH_DEBUG_PPROF` | false | 在 B/S 端口暴露 `/debug/pprof/*`（goroutine/heap/profile 等）。**两层门槛**：默认关闭；开启后仍受 `--metrics-allow-cidr` 准入（生产模式下该白名单为空即全拒，故必须先显式放开来源）。pprof 可读取进程内存与调用栈，仅应在排障期间开启，用完关闭并重启 |
 
 ### 2.6 联邦配置
 
@@ -1015,7 +1017,25 @@ export OPSMESH_OTEL_SERVICE_NAME="opsmesh-controlplane"
 
 OpsMesh 使用 Go `slog` 结构化日志，默认级别 `INFO`。生产建议保持 `INFO`，排查时可临时调到 `DEBUG`：
 
-> **注意**：当前版本未暴露 `--log-level` flag，日志级别由代码控制。如需调试级别，可通过环境变量 `OPSMESH_LOG_LEVEL=debug`（若代码支持）或修改源码重新构建。
+```bash
+# 命令行
+./opsmesh --mode=controlplane --log-level=debug ...
+./opsmesh --mode=agent      --log-level=debug ...
+# 或环境变量（等价）
+export OPSMESH_LOG_LEVEL=debug
+# Docker：.env 加 LOG_LEVEL=debug；K8s：controlplane.env / agent 容器加 OPSMESH_LOG_LEVEL=debug
+```
+
+> **变更（P1-6，2026-09-26）**：此前本文档写的是「当前版本未暴露 `--log-level` flag，
+> 需改源码重建」——该限制已消除。现在级别由 `--log-level` / `OPSMESH_LOG_LEVEL` 控制，
+> 且**非法值会在启动期直接失败**（不静默退回 `info`）。
+>
+> 当前已埋的 DEBUG 输出点：agent 任务生命周期（`任务开始执行` / `任务执行结束`，含
+> taskID、类型、退出码、耗时、输出字节数）。**命令内容与 stdout/stderr 刻意不入日志**——
+> 任务体常含口令与主机路径，进日志即被采集器二次扩散。控制面侧暂无 DEBUG 调用点。
+>
+> 生效后 `GET /api/v1/admin/config` 的 `runtime.logLevel` 会如实报告**当前生效级别**
+> （而非请求值），可用于确认现场是否真的开到了 debug。
 
 ### 5.2 日志后端选择
 
@@ -1940,6 +1960,42 @@ SELECT COUNT(*) FROM audit_log WHERE entry_hash IS NULL OR entry_hash='';
 | 证书全量续期 | TLS/联邦证书全续期 | 完成 |
 
 ---
+
+### 10.5 支持端点（版本 / 配置转储 / 诊断包）
+
+P1-6 补齐的远程排障面。目的：客户现场无需 SSH + 读源码即可回答「跑的是哪个构建、
+生效配置是什么、现在健康吗」。
+
+| 端点 | 鉴权 | 内容 | 说明 |
+|---|---|---|---|
+| `GET /version` | 无（与 `/healthz` 同级） | 版本、提交、构建时间、Go 版本、OS/ARCH、uptime、VCS 元信息 | 只含构建事实，不含配置/租户/主机信息 |
+| `GET /api/v1/admin/config` | `diagnostics:dump` | **脱敏后**的生效配置（按 runtime/store/auth/tls/secrets/discovery/agent/observability/limits 分组） | 敏感项只出 `*Configured: true\|false`；URL 类字段剥除 userinfo 与查询串 |
+| `GET /api/v1/admin/diagnostics` | `diagnostics:dump` | zip：`README.txt` `version.json` `config.json` `health.json` `metrics.txt` `goroutines.txt` | goroutine 用聚合形态（debug=1）并截断到 512KB，防大集群把包撑爆 |
+
+**权限说明（重要）**：`diagnostics:dump` 刻意**不以 `:read` 结尾**。角色权限派生规则会把
+所有 `*:read` 自动授予 `viewer`，若命名为 `diagnostics:read`，只读用户就能拉走配置转储。
+当前该权限仅 `admin` 持有。
+
+**脱敏是白名单式的**：实现只列明确允许的配置项，敏感字段一律不落值。因此给 `Config`
+新增字段时，它**默认不会出现在转储里**（失效方向是"看不到"而非"泄漏"）。
+回归断言：`internal/controlplane/support_endpoints_test.go` 用哨兵值 + 全字符串搜索，
+任一枚哨兵出现在响应中即测试失败。
+
+**版本注入的可验证性**：`/version` 的 `version` 字段来自构建期 `-ldflags -X`。
+注意 `-X` 的包路径**必须是模块路径** `github.com/Levango7/OpsMesh/internal/version`；
+写成 `opsmesh/internal/version` 时链接器**静默忽略**（构建成功、产物照跑、版本恒为默认值）。
+`deploy/scripts/verify-runtime.sh` 第 15 节对此有黑盒断言（比对 `.env` 的 `OPSMESH_VERSION`）。
+
+**日志级别实操**：
+
+```bash
+# 现场打开 agent 调试日志（任务生命周期两条 DEBUG：开始执行 / 执行结束）
+docker compose -f deploy/docker/docker-compose.prod.yml up -d --no-build   --scale opsmesh-agent=0        # agent 通常装在被管主机上，见下
+
+# 被管主机上的 agent
+OPSMESH_LOG_LEVEL=debug ./opsmesh --mode=agent --control-addr=https://cp:8080 ...
+# 排障结束后务必改回 info：DEBUG 日志量级显著上升
+```
 
 ## 第11章 升级指南
 

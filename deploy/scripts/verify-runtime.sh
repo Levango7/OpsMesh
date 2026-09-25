@@ -618,6 +618,43 @@ if [ -n "${MYSQL_C:-}" ] && [ -n "${U:-}" ]; then
   fi
 fi
 
+sec "15. 可支撑性端点（P1-6 回归：版本注入 / 诊断面默认关闭 / 匿名不可读）"
+# 15a /version 无鉴权可读（刻意），且必须报告**构建注入的版本**——
+#     -X 的包路径写成 opsmesh/... 时链接器静默忽略：构建成功、产物照跑、版本恒为默认值。
+#     这条断言就是防它复发的黑盒门禁。
+ver_body="$(curl "${K[@]}" --max-time 10 "$CP/version" 2>/dev/null)"
+ver_code="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' --max-time 10 "$CP/version" 2>/dev/null)"
+if [ "$ver_code" = "200" ]; then
+  ok "GET /version → 200（无鉴权，供现场核对构建）"
+else
+  bad "GET /version → ${ver_code}（期望 200）"
+fi
+want_ver="$(env_val OPSMESH_VERSION)"
+got_ver="$(printf '%s' "$ver_body" | tr ',' '\n' | sed -nE 's/^\s*"version"\s*:\s*"([^"]*)".*/\1/p' | head -1)"
+if [ -n "$want_ver" ] && [ "$got_ver" = "$want_ver" ]; then
+  ok "/version 版本与 .env OPSMESH_VERSION 一致（${got_ver}，构建期 -ldflags 注入生效）"
+else
+  bad "/version 版本='${got_ver:-空}' 与 .env OPSMESH_VERSION='${want_ver:-空}' 不一致（版本注入未生效？查 Dockerfile 的 -X 包路径是否为模块路径）"
+fi
+for f in commit goVersion uptimeSeconds; do
+  if printf '%s' "$ver_body" | grep -q "\"$f\""; then ok "/version 含字段 $f"; else bad "/version 缺字段 $f"; fi
+done
+
+# 15b 诊断面在出厂形态下默认关闭 / 需鉴权（安全断言：这些面不能对匿名来源开放）
+pprof_code="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' --max-time 10 "$CP/debug/pprof/goroutine" 2>/dev/null)"
+if [ "$pprof_code" = "404" ]; then
+  ok "pprof 未注册（--debug-pprof 默认 false）"
+else
+  bad "pprof 返回 ${pprof_code}（期望 404：出厂形态不应暴露进程内存/调用栈剖面）"
+fi
+for ep in api/v1/admin/config api/v1/admin/diagnostics; do
+  ac="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' --max-time 10 "$CP/$ep" 2>/dev/null)"
+  if [ "$ac" = "401" ]; then
+    ok "匿名 GET /$ep → 401（诊断材料不匿名开放）"
+  else
+    bad "匿名 GET /$ep → ${ac}（期望 401）"
+  fi
+done
 echo ""
 echo "==================================================="
 echo "  断言汇总：PASS=${PASS}  FAIL=${FAIL}"

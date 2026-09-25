@@ -404,6 +404,13 @@ type Config struct {
 	LogPushPattern  string   // --log-push-pattern 正则过滤（空=不过滤）
 	LogPushEndpoint string   // --log-push-endpoint 推送目标（如 http://loki:3100/loki/api/v1/push）
 	LogPushBackend  string   // --log-push-backend 后端类型：loki|es（默认 loki）
+	// LogLevel：进程日志级别（P1-6）。debug|info|warn|error，默认 info。
+	// 非法值在启动期由 logx.ParseLevel 拒绝并退出（不静默退回默认）。
+	LogLevel string // --log-level / env OPSMESH_LOG_LEVEL
+	// DebugPprof：是否在 B/S 端口暴露 /debug/pprof/（P1-6 可支撑性）。
+	// 默认 false。开启后仍受 --metrics-allow-cidr 白名单准入（它能读内存与调用栈，
+	// 属内部诊断面）；生产模式下该白名单 fail-closed，故须显式放开来源才可用。
+	DebugPprof bool // --debug-pprof / env OPSMESH_DEBUG_PPROF
 
 	// 多租户资源配额与计费：
 	//   - QuotaEnabled：是否启用配额检查（设备/任务/告警创建前校验是否超额）。
@@ -599,6 +606,10 @@ func Load() *Config {
 	logPushPattern := flag.String("log-push-pattern", "", "日志采集正则过滤（空=不过滤，全部推送；如 ^ERROR 仅推送 ERROR 行）；或 env OPSMESH_LOG_PUSH_PATTERN")
 	logPushEndpoint := flag.String("log-push-endpoint", "", "日志推送目标 endpoint（Loki /api/v1/push 或 ES /_bulk，如 http://loki:3100/loki/api/v1/push）；或 env OPSMESH_LOG_PUSH_ENDPOINT")
 	logPushBackend := flag.String("log-push-backend", "loki", "日志推送后端类型：loki | es（默认 loki）；或 env OPSMESH_LOG_PUSH_BACKEND")
+	// P1-6 可支撑性：日志级别可配（默认 info；非法值启动期 fail-fast，见 cmd/opsmesh）。
+	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error（默认 info）；debug 会显著增加日志量，仅在排障时开启；或 env OPSMESH_LOG_LEVEL")
+	// P1-6 可支撑性：pprof 默认关闭（能读内存与调用栈）；开启后仍受 metrics CIDR 白名单准入。
+	debugPprof := flag.Bool("debug-pprof", false, "在 B/S 端口暴露 /debug/pprof/（默认 false；开启后仍受 --metrics-allow-cidr 准入，生产须显式放开来源）；或 env OPSMESH_DEBUG_PPROF")
 	// 多租户资源配额与计费：租户级资源配额（设备数/任务数/告警数上限）。
 	// 启用后 QuotaManager 在设备/任务/告警创建路径校验是否超额，超额返回 ErrQuotaExceeded。
 	// 默认配额用于未显式设置配额的租户（0=不限，向后兼容）。
@@ -779,6 +790,8 @@ func Load() *Config {
 		LogPushPattern:             val("log-push-pattern", *logPushPattern, "OPSMESH_LOG_PUSH_PATTERN"),
 		LogPushEndpoint:            val("log-push-endpoint", *logPushEndpoint, "OPSMESH_LOG_PUSH_ENDPOINT"),
 		LogPushBackend:             val("log-push-backend", *logPushBackend, "OPSMESH_LOG_PUSH_BACKEND"),
+		LogLevel:                   val("log-level", *logLevel, "OPSMESH_LOG_LEVEL"),
+		DebugPprof:                 valBool("debug-pprof", *debugPprof, "OPSMESH_DEBUG_PPROF"),
 		QuotaEnabled:               valBool("quota-enabled", *quotaEnabled, "OPSMESH_QUOTA_ENABLED"),
 		QuotaMaxDevices:            valInt("quota-max-devices", *quotaMaxDevices, "OPSMESH_QUOTA_MAX_DEVICES"),
 		QuotaMaxTasks:              valInt("quota-max-tasks", *quotaMaxTasks, "OPSMESH_QUOTA_MAX_TASKS"),

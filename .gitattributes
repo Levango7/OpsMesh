@@ -7,6 +7,10 @@
 
 * text=auto
 
+# .gitattributes 自身也钉 LF：它的注释里一旦被写成 CRLF，续行式注释会被截断成
+# 半截规则（2026-09-26 实测：git 报 "… is not a valid attribute name"）。
+.gitattributes text eol=lf
+
 # Go 源码：强制 LF（gofmt/golangci-lint 契约）
 *.go text eol=lf
 
@@ -16,6 +20,24 @@
 *.yaml text eol=lf
 Makefile text eol=lf
 *.md text eol=lf
+
+# Dockerfile 与 .dockerignore：强制 LF（**实测必需**，不是风格问题）。
+# 2026-09-26 对照实验：同一 Dockerfile 仅行尾不同——
+#   LF   → docker build 成功
+#   CRLF → ERROR: failed to solve: dockerfile parse error on line 3: unknown instruction: &&
+# 因为 RUN 续行的行尾是 CR + LF，Docker 解析器识别不到续行，
+# 会把下一行当指令解析。
+# 本机 core.autocrlf=true 且 CI 跑在 Linux（永远检出 LF），故该缺陷 CI 不可见、
+# 只在 Windows 本地构建时爆——必须靠 .gitattributes 钉死，不能靠约定。
+[Dd]ockerfile* text eol=lf
+*.dockerfile text eol=lf
+.dockerignore text eol=lf
+
+# Helm 模板：LF。**实测必需**——_helpers.tpl 在 text=auto 下本机检出为 CRLF，
+# 而 Helm 模板内容会原样进入渲染结果（缩进/空白敏感的 YAML 与 NOTES 会被 CR 污染）。
+*.tpl text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
 
 # 二进制与构建产物：不转换
 *.png binary

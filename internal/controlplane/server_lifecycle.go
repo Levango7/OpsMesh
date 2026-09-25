@@ -31,9 +31,16 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/agents", s.handleAgents)
 	mux.HandleFunc("/api/v1/me", s.handleMe)
 	mux.HandleFunc("/api/v1/tasks", s.handleListTasks)
-	mux.HandleFunc("/api/v1/tasks/", s.handleTaskRouting)           // 子路径：{id}/cancel、{id}/result
-	mux.HandleFunc("/healthz", s.handleHealthz)                     // K8s liveness 探针（+ 深度检查）
-	mux.HandleFunc("/readyz", s.handleReadyz)                       // K8s readiness 探针（新增）
+	mux.HandleFunc("/api/v1/tasks/", s.handleTaskRouting) // 子路径：{id}/cancel、{id}/result
+	mux.HandleFunc("/healthz", s.handleHealthz)           // K8s liveness 探针（+ 深度检查）
+	mux.HandleFunc("/readyz", s.handleReadyz)             // K8s readiness 探针（新增）
+	// P1-6 可支撑性：构建信息（无鉴权，仅版本/构建/运行时，供现场排障核对版本）。
+	mux.HandleFunc("/version", s.handleVersion)
+	// P1-6 可支撑性：配置转储与诊断包（需 diagnostics:dump 权限，RBAC 派生规则下仅 admin）。
+	mux.HandleFunc("/api/v1/admin/config", s.handleAdminConfig)
+	mux.HandleFunc("/api/v1/admin/diagnostics", s.handleAdminDiagnostics)
+	// P1-6 可支撑性：pprof（默认关闭；开启后仍受 --metrics-allow-cidr 白名单约束）。
+	s.registerPprof(mux)
 	mux.HandleFunc("/api/v1/audits", s.handleAudits)                // GET 审计检索
 	mux.HandleFunc("/api/v1/tasks/batch", s.handleBatchCreateTasks) // POST 批量下发
 	mux.HandleFunc("/api/v1/devices/", s.handleDeviceRouting)       // 子路径：{id} DELETE 退役、{id}/provision

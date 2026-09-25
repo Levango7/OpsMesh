@@ -679,6 +679,14 @@ CB_RATE_LIMIT_PER_SEC=
 # 0=永久保留。等保三级/ISO 27001 通常要求审计留存 ≥ 180 天（默认即 180），按合规要求调整。
 AUDIT_RETENTION_DAYS=180
 
+# === 可支撑性（P1-6）===
+# 日志级别：debug|info|warn|error。排障期间临时改 debug，结束后改回 info
+# （debug 量级显著上升；非法值会让控制面启动期直接失败而非静默退回）。
+LOG_LEVEL=info
+# 是否在 B/S 端口暴露 /debug/pprof/*：默认 false。开启后仍受 METRICS_ALLOW_CIDR 准入
+# （生产形态该白名单为空即全拒）。pprof 能读进程内存与调用栈，仅排障期间开启、用完关闭。
+DEBUG_PPROF=false
+
 # === 存储后端（sql=MySQL 持久化；memory 仅用于演示，重启丢数据）===
 DEVICE_STORE_TYPE=sql
 TASK_STORE_TYPE=sql

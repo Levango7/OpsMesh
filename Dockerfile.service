@@ -29,8 +29,11 @@ WORKDIR /src/services/${SERVICE}
 # M11 供应链安全：go mod verify 校验模块完整性（防 go.sum 漂移 / 投毒）。
 # workspace 模式下 download 拉取所有 workspace 模块依赖，verify 校验哈希。
 RUN go mod download && go mod verify
+# 注意：-X 的包路径必须是模块路径（github.com/Levango7/OpsMesh/...）。写成 opsmesh/...
+# 时链接器会**静默忽略**（构建成功但版本注入不生效，2026-09-26 实测确认，产物仍报默认值）。
+# 注释不得写在 RUN 续行中间：Dockerfile 解析器会在注释处截断该指令。
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
-    -ldflags="-s -w -X opsmesh/internal/version.Version=${VERSION}" \
+    -ldflags="-s -w -X github.com/Levango7/OpsMesh/internal/version.Version=${VERSION}" \
     -o /svc ./cmd/${SERVICE}
 
 # P2-2 供应链安全：base image digest 由 Renovate 自动钉死（见 .github/renovate.json）。

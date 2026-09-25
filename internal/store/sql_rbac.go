@@ -370,6 +370,10 @@ var rbacPermSpecs = []struct {
 	{"autoscaler", "autoscaler:write", "编辑扩缩容规则"},
 	{"portal", "portal:read", "查看服务门户"},
 	{"portal", "portal:write", "审批门户请求"},
+	// P1-6 可支撑性：配置转储（/api/v1/admin/config）与诊断包（/api/v1/admin/diagnostics）。
+	// 刻意**不以 `:read` 结尾**——派生规则会把所有 `*:read` 自动授予 viewer，而配置转储
+	// 与诊断包含内部拓扑与配置细节，只应给 admin（admin 自动获得全部权限点）。
+	{"diagnostics", "diagnostics:dump", "导出脱敏配置转储与诊断包（仅 admin）"},
 }
 
 // seedRBAC 在 initSchema 末尾调用，幂等写入默认权限/角色/用户。

@@ -34,9 +34,11 @@ builds:
       # linker 拒收（首跑实测 "flag provided but not defined: -trimpath"）。
       # 路径剥离由下方 flags 的 -trimpath 承担（作用于构建阶段）。
       - -s -w
-      - -X opsmesh/internal/version.Version={{.Version}}
-      - -X opsmesh/internal/version.Commit={{.ShortCommit}}
-      - -X opsmesh/internal/version.Date={{.Date}}
+      # 包路径必须是模块路径（github.com/Levango7/OpsMesh/...）：写成 opsmesh/...
+      # 链接器会**静默忽略**（构建成功但注入不生效，2026-09-26 实测）。
+      - -X github.com/Levango7/OpsMesh/internal/version.Version={{.Version}}
+      - -X github.com/Levango7/OpsMesh/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/Levango7/OpsMesh/internal/version.Date={{.Date}}
     # 路径剥离：等价于命令行 go build -trimpath。
     flags:
       - -trimpath

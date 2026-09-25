@@ -351,6 +351,13 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.controlplane
+      # 构建元信息注入（P1-6 /version 据此报告版本）。缺省值 dev/unknown 表示未提供，
+      # 而非"构建失败"——Dockerfile 里的 ARG 默认值承担这一点。
+      # 注意：-X 的包路径必须是模块路径，写成 opsmesh/... 会被链接器静默忽略。
+      args:
+        VERSION: ${OPSMESH_VERSION}
+        COMMIT: ${OPSMESH_BUILD_COMMIT:-dev}
+        BUILD_DATE: ${OPSMESH_BUILD_DATE:-unknown}
     # 生产禁用 latest 浮动标签：镜像内容不可追溯，回滚无法定位版本。
     image: opsmesh/controlplane:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION（如 0.9.0，禁止 latest）}
     container_name: opsmesh-controlplane
@@ -395,6 +402,10 @@ services:
       OPSMESH_PUBLIC_REGISTER: ${PUBLIC_REGISTER:-false}
       OPSMESH_ALLOW_PUBLIC_REGISTER: ${ALLOW_PUBLIC_REGISTER:-false}
       OPSMESH_TRUST_PROXY: ${TRUST_PROXY:-false}
+      # 可支撑性（P1-6）：日志级别与 pprof 开关（pprof 开启后仍受 METRICS_ALLOW_CIDR 准入）。
+      # 默认 info/false；debug 仅排障期间使用（日志量级显著上升）。
+      OPSMESH_LOG_LEVEL: ${LOG_LEVEL:-info}
+      OPSMESH_DEBUG_PPROF: ${DEBUG_PPROF:-false}
       OPSMESH_GRPC_REQUIRE_SIGNATURE: ${GRPC_REQUIRE_SIGNATURE:-true}
       # 重启/多副本后 bootstrap 安装令牌仍需有效时须固定该密钥（空=进程内随机，重启即失效）。
       OPSMESH_PROVISION_SECRET: ${PROVISION_SECRET:-}

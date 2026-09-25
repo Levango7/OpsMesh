@@ -375,6 +375,44 @@ else
     ok "deploy/k8s 清单未引用 serviceAccountName"
 fi
 
+sec "6. 行尾一致性（CRLF 会让 Dockerfile / Helm / bash 开箱即坏）"
+# 为什么要单列一节：CI 全跑在 Linux，checkout 永远是 LF——CRLF 缺陷 CI 不可见，
+# 只在 Windows 本地构建/部署时爆。2026-09-26 实测对照（同一 Dockerfile 仅行尾不同）：
+#   LF   → docker build 成功
+#   CRLF → ERROR: failed to solve: dockerfile parse error on line 3: unknown instruction: &&
+# 原因：RUN 续行的行尾变成 CR+LF，Docker 解析器识别不到续行。
+# 检测手段必须走 tr 做字节比对，不能用 grep/awk：
+# 2026-09-26 实测 Git-Bash 的 `grep -c $'\r'` 与 `awk '/\r/'` 对确实含 CRLF 的文件都返回 0
+# （MSYS 文本模式在读时吞 CR，而 `tr -d '\r'` 能看到：32 → 31 字节）。
+# 也就是说"用 grep 写的 CRLF 门禁在 Windows 上空转"——而 Windows 正是它唯一要防的平台。
+has_crlf() { # $1=文件；含 CR 则返回 0
+    local raw stripped
+    raw="$(wc -c < "$1" | tr -d ' ')"
+    stripped="$(tr -d '\r' < "$1" | wc -c | tr -d ' ')"
+    [[ "$raw" != "$stripped" ]]
+}
+CRLF_BAD=""
+while IFS= read -r f; do
+    [[ -n "$f" && -f "$f" ]] || continue
+    if has_crlf "$f"; then
+        CRLF_BAD="${CRLF_BAD} ${f#./}"
+    fi
+done < <(find . -path ./.git -prune -o -type f \
+            \( -name 'Dockerfile*' -o -name '.dockerignore' -o -name 'docker-compose*.yml' \
+               -o -name '*.sh' -o -name '*.tpl' -o -name 'Chart.yaml' -o -name 'values*.yaml' \) -print 2>/dev/null)
+if [[ -n "$CRLF_BAD" ]]; then
+    bad "以下部署资产含 CRLF（Windows 检出后 docker/helm/bash 会坏）：$CRLF_BAD"
+    echo "         修法：git add --renormalize <file>，并确认 .gitattributes 覆盖该文件类型"
+else
+    ok "Dockerfile/compose/脚本/Helm 模板均为 LF（无 CRLF 破坏风险）"
+fi
+# 根因防护：问 git 本身而不是解析 .gitattributes——check-attr 覆盖显式规则与继承，
+# 不会因为规则写法不同而误判通过。
+if [[ "$(git check-attr eol -- Dockerfile 2>/dev/null)" == *"eol: lf"* ]]; then
+    ok "git 判定 Dockerfile 为 eol=lf（Windows 检出不会变 CRLF）"
+else
+    bad "git check-attr 未把 Dockerfile 判为 eol=lf（core.autocrlf=true 的机器检出即 CRLF → docker build 失败）"
+fi
 # ---------------------------------------------------------------
 echo ""
 echo "==================================================="

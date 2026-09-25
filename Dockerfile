@@ -42,7 +42,12 @@ COPY . .
 # 企业版前端产物（见上方 web 阶段）覆盖 embed 目录内的占位页 → go:embed 打进二进制。
 # 缺此行则客户打开 /enterprise/ 只能看到「未内置」说明页（P0-3 缺陷）。
 COPY --from=web /src/web/enterprise/dist/ ./internal/controlplane/embed/enterprise/
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /opsmesh ./cmd/opsmesh
+# 构建元信息注入（P1-6 /version 端点据此报告版本；缺省值 dev/unknown 表示本地构建）。
+# -X 的包路径必须是模块路径，写成 opsmesh/... 会被链接器静默忽略（2026-09-26 实测）。
+ARG VERSION=dev
+ARG COMMIT=dev
+ARG BUILD_DATE=unknown
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath     -ldflags="-s -w -X github.com/Levango7/OpsMesh/internal/version.Version=${VERSION} -X github.com/Levango7/OpsMesh/internal/version.Commit=${COMMIT} -X github.com/Levango7/OpsMesh/internal/version.Date=${BUILD_DATE}"     -o /opsmesh ./cmd/opsmesh
 
 # P2-2 供应链安全：distroless 镜像 digest 同样由 Renovate 自动钉死。
 # 手动钉死：crane digest gcr.io/distroless/static-debian12 → FROM gcr.io/distroless/static-debian12@sha256:<digest> AS runtime

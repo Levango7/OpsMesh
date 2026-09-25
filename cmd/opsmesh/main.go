@@ -17,8 +17,24 @@ import (
 	"github.com/Levango7/OpsMesh/internal/config"
 	"github.com/Levango7/OpsMesh/internal/controlplane"
 	"github.com/Levango7/OpsMesh/internal/controlplane/backup"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/version"
 )
+
+// applyLogLevel 应用 --log-level / OPSMESH_LOG_LEVEL（P1-6 可支撑性）。
+// 非法值 fail-fast 并返回非零退出码：配置类错误静默退回默认，会让现场排障
+// 退化成「我明明设了 debug，为什么没有 debug 日志」。三个入口（主流程/backup/
+// restore）共用，保证子命令日志级别语义一致。
+func applyLogLevel(cfg *config.Config) int {
+	lv, err := logx.ParseLevel(cfg.LogLevel)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[config] %v\n", err)
+		logx.Error(context.Background(), "日志级别配置非法，启动中止", err, "logLevel", cfg.LogLevel)
+		return 1
+	}
+	logx.SetLevel(lv)
+	return 0
+}
 
 func main() {
 	os.Exit(runMain())
@@ -59,6 +75,11 @@ func runMain() int {
 	}
 
 	cfg := config.Load()
+
+	// 日志级别先于其余校验生效，使后续启动日志（含校验失败详情）都按配置级别输出。
+	if code := applyLogLevel(cfg); code != 0 {
+		return code
+	}
 
 	// 启动期配置校验：明显非法配置立即失败，而非运行期诡异出错（健壮性）。
 	if err := cfg.Validate(); err != nil {
@@ -259,6 +280,10 @@ func runBackup() int {
 	cfg := config.Load()
 	os.Args = oldArgs
 
+	if code := applyLogLevel(cfg); code != 0 {
+		return code
+	}
+
 	if err := cfg.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "[backup] 配置校验失败: %v\n", err)
 		return 1
@@ -331,6 +356,10 @@ func runRestore() int {
 	os.Args = append([]string{"opsmesh"}, cfgArgs...)
 	cfg := config.Load()
 	os.Args = oldArgs
+
+	if code := applyLogLevel(cfg); code != 0 {
+		return code
+	}
 
 	if err := cfg.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "[restore] 配置校验失败: %v\n", err)

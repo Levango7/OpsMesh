@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
@@ -110,5 +113,35 @@ func TestTaskTimeoutFor(t *testing.T) {
 					c.taskTO, global, got, c.want)
 			}
 		})
+	}
+}
+
+// TestExecute_DebugLifecycleLogs 验证 P1-6 任务生命周期 DEBUG 日志（--log-level=debug）：
+//   - info 级别下不输出；debug 级别下「开始/结束」两条都出且 level=DEBUG；
+//   - **绝不出现命令内容**：任务体常含口令/主机路径，进日志即被采集器二次扩散。
+func TestExecute_DebugLifecycleLogs(t *testing.T) {
+	a := newTestAgent(5 * time.Second)
+	defer func() { logx.SetOutput(os.Stderr); logx.SetLevel(slog.LevelInfo) }()
+
+	var buf bytes.Buffer
+	logx.SetOutput(&buf)
+
+	logx.SetLevel(slog.LevelInfo)
+	a.execute(context.Background(), proto.Task{TaskID: "t-info", Type: proto.TaskTypeShell, Command: "echo token=SHOULD-NOT-APPEAR"})
+	if strings.Contains(buf.String(), "t-info") {
+		t.Fatalf("info 级别下不应输出任务生命周期日志：%s", buf.String())
+	}
+
+	buf.Reset()
+	logx.SetLevel(slog.LevelDebug)
+	a.execute(context.Background(), proto.Task{TaskID: "t-dbg", Type: proto.TaskTypeShell, Command: "echo token=SHOULD-NOT-APPEAR"})
+	out := buf.String()
+	for _, want := range []string{"任务开始执行", "任务执行结束", "t-dbg", `"level":"DEBUG"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("debug 输出缺少 %q：%s", want, out)
+		}
+	}
+	if strings.Contains(out, "SHOULD-NOT-APPEAR") || strings.Contains(out, "echo token") {
+		t.Fatalf("DEBUG 日志泄漏了命令内容：%s", out)
 	}
 }

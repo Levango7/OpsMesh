@@ -56,6 +56,10 @@ jobs:
         # （-p N 并行或预编译后测试）均在 internal 大包阶段被 runner 守护
         # 杀掉（SIGTERM 143 → "canceled"），根因是 race 编译缓存 + 多个测试
         # 二进制同驻内存超限。
+        # ⚠ 2026-09-26 实测更正：本步骤 runner 的 /proc/meminfo MemTotal=15989MB
+        #   （≈16GB），**不是**上文的 7GB；每批峰值 RSS 亦已量得（见 run 块内的
+        #   "内存可观测"注释）。分批策略保留（它同时解决磁盘与单批超时问题），
+        #   但不应再把"7GB 硬约束"当作既定前提排障。
         # 最终方案：**分批测试**——大包（controlplane/store/agent）逐包单独
         # go test（每批峰值=单包），其余小包合并一批 -p 2。每批结束 go clean
         # -cache 中的 race 增量由批间自然复用，磁盘峰值可控。批间失败即停
@@ -465,6 +469,7 @@ jobs:
               echo "username=${REGISTRY_USER}"
               echo "prefix=${REGISTRY}/${IMAGE_LEAF}"
             } >>"$GITHUB_OUTPUT"
+            echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >>"$GITHUB_OUTPUT"
             echo "::notice::镜像目标=私有仓库 ${REGISTRY}/${IMAGE_LEAF}（凭证齐备）"
           else
             # 三者缺一即回落，避免半配置状态下 login 失败把流水线弄红。
@@ -479,6 +484,7 @@ jobs:
               echo "username=${GITHUB_ACTOR}"
               echo "prefix=ghcr.io/${GHCR_OWNER}/${IMAGE_LEAF}"
             } >>"$GITHUB_OUTPUT"
+            echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >>"$GITHUB_OUTPUT"
             echo "::warning::REGISTRY/REGISTRY_USER/REGISTRY_TOKEN 未齐备 → 本次改用 GHCR（凭证=GITHUB_TOKEN）；消费方需设 imageRegistry=ghcr.io/${GHCR_OWNER}、repository=${IMAGE_LEAF}"
           fi
       - name: Set up Docker Buildx
@@ -496,6 +502,11 @@ jobs:
         with:
           context: .
           push: true
+          # 构建元信息注入（P1-6 /version）：tag 触发用 tag 名，分支触发用 commit sha。
+          build-args: |
+            VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.check.outputs.date }}
           # load: true —— 同时载入本地 docker daemon，供随后的 Trivy 扫描直接取用，
           # 避免扫描步骤依赖"能否凭 docker config 从（默认 private 的）GHCR 拉取"这一不确定条件。
           load: true
@@ -678,6 +689,7 @@ jobs:
               echo "username=${REGISTRY_USER}"
               echo "prefix=${REGISTRY}/${IMAGE_LEAF}"
             } >>"$GITHUB_OUTPUT"
+            echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >>"$GITHUB_OUTPUT"
             echo "::notice::agent 镜像目标=私有仓库 ${REGISTRY}/${IMAGE_LEAF}（凭证齐备）"
           else
             # 同 image job：Docker 仓库名必须全小写，owner 需转小写（首跑实测踩到）。
@@ -688,6 +700,7 @@ jobs:
               echo "username=${GITHUB_ACTOR}"
               echo "prefix=ghcr.io/${GHCR_OWNER}/${IMAGE_LEAF}"
             } >>"$GITHUB_OUTPUT"
+            echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >>"$GITHUB_OUTPUT"
             echo "::warning::REGISTRY/REGISTRY_USER/REGISTRY_TOKEN 未齐备 → agent 镜像改用 GHCR（凭证=GITHUB_TOKEN）；消费方需设 imageRegistry=ghcr.io/${GHCR_OWNER}、repository=${IMAGE_LEAF}"
           fi
       - name: Set up Docker Buildx
@@ -705,6 +718,11 @@ jobs:
           context: .
           file: Dockerfile.agent
           push: true
+          # 同 image job：注入版本/提交/构建时间（agent 与控制面共用同一内核二进制）。
+          build-args: |
+            VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.check.outputs.date }}
           # 同 controlplane image job：载入本地 daemon 供 Trivy 直接取用，不依赖 registry 拉取鉴权。
           load: true
           # leaf 名 opsmesh-agent 由消费方 chart 的 agent.image.repository 决定。

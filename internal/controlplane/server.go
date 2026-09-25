@@ -386,7 +386,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		// ② 弱口令保留：跳过默认 admin 口令随机轮换（下方 !cfg.Demo 分支），admin/admin123 持续可登。
 		logx.Warn(context.Background(),
 			"警告：demo 模式已启用——无身份请求自动放行且 admin 使用默认弱口令 admin123（口令轮换已跳过），"+
-				"任何可达该端口的人都有完整管理员权限；仅限本机演示，切勿暴露到网络或用于生产", nil)
+				"任何可达该端口的人都有完整管理员权限；仅限本机演示，切勿暴露到网络或用于生产")
 		// 演示模式：主动播种 demo 拓扑，让 6 大模块在无真实 agent 时也能完整演示。
 		if ms, ok := st.(*store.MemoryStore); ok {
 			ms.SeedDemoTopology()
