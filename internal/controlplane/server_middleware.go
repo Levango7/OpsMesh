@@ -165,16 +165,15 @@ func recoveryMiddleware(h http.Handler) http.Handler {
 //  3. statusRecorder 透传 Flush() 以支持 SSE（sse.go 用 http.Flusher 流式推送）。
 //  4. /metrics 端点在独立 server（buildMetrics），不经本中间件，无自递归观测问题。
 //  5. /healthz、/readyz 仍被记录（探针流量也需观测，便于发现探针异常与频率漂移）。
+//  6. 走 metrics.RecordHTTP 单次解析时序键：一次加锁 + 一次归一化，
+//     并让基数熔断的折叠计数按"请求"精确计一次（P1-5）。
 func (s *Server) httpMetricsMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		h.ServeHTTP(rec, r)
 		elapsed := time.Since(start).Seconds()
-		path := normalizePath(r.URL.Path)
-		status := strconv.Itoa(rec.status)
-		s.metrics.IncHTTPRequest(r.Method, path, status)
-		s.metrics.ObserveHTTPRequestDuration(r.Method, path, status, elapsed)
+		s.metrics.RecordHTTP(r.Method, normalizePath(r.URL.Path), strconv.Itoa(rec.status), elapsed)
 	})
 }
 
@@ -197,34 +196,65 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
+// maxMetricsPathLen / maxMetricsPathSegmentLen 路径归一化的长度闸门（P1-5）。
+// metrics 包内有硬基数上限（maxHTTPSeries）兜底，这里再做一层廉价的前置收敛：
+// 超长整路径、超长段、含异常字符的段直接折叠，避免"形状可疑"的路径各自占用一个时序。
+const (
+	maxMetricsPathLen        = 200
+	maxMetricsPathSegmentLen = 48
+)
+
 // normalizePath 归一化 URL 路径，避免 metrics 标签高基数。
-// 规则：纯数字路径段替换为 :id（设备/任务/用户等资源 ID），
-// 版本段（v1/v2 含字母）不受影响。
+// 规则：
+//   - 整路径超长（> maxMetricsPathLen）→ /:overlong；
+//   - 纯数字段、超长段（> maxMetricsPathSegmentLen）、含 [A-Za-z0-9._~-] 以外字符的段 → :id；
+//   - 版本段（v1/v2 含字母）与固定路由词（devices/tasks/batch）不受影响。
+//
 // 例：/api/v1/devices/123 -> /api/v1/devices/:id
 //
 //	/api/v1/tasks/batch    -> /api/v1/tasks/batch（不变）
-//	/api/v1/users/u-abc-1  -> /api/v1/users/u-abc-1（不变，含字母）
+//	/api/v1/users/u-abc-1  -> /api/v1/users/u-abc-1（不变，含字母与连字符）
+//	/api/v1/devices/10.0.0.1 -> /api/v1/devices/10.0.0.1（不变，含点号的稳定标识）
+//
+// 未匹配路由（404）的请求同样经过本函数，故对任意路径都必须是 O(len) 且输出空间受控。
 func normalizePath(p string) string {
 	if p == "" || p == "/" {
 		return p
 	}
-	// 快速路径：无数字段直接返回（多数 API 路径不含数字 ID）。
-	if !strings.ContainsAny(p, "0123456789") {
-		return p
+	if len(p) > maxMetricsPathLen {
+		return "/:overlong"
 	}
 	parts := strings.Split(p, "/")
 	changed := false
 	for i, part := range parts {
-		if part == "" || !isAllDigits(part) {
+		if part == "" || part == ":id" {
 			continue
 		}
-		parts[i] = ":id"
-		changed = true
+		if len(part) > maxMetricsPathSegmentLen || !isMetricsPathSegmentSafe(part) || isAllDigits(part) {
+			parts[i] = ":id"
+			changed = true
+		}
 	}
 	if !changed {
 		return p
 	}
 	return strings.Join(parts, "/")
+}
+
+// isMetricsPathSegmentSafe 判断路径段是否只含安全字符（字母/数字/._~-）。
+// URL 路径已被 net/http 解码（%XX 还原为原字符），故任何非白名单字符
+// （空格、引号、非 ASCII、控制字符）都说明该段不是稳定的路由标识，交由调用方折叠为 :id。
+func isMetricsPathSegmentSafe(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '.' || c == '_' || c == '~' || c == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // isAllDigits 判断字符串是否全为数字字符（且非空）。

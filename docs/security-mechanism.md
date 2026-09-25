@@ -181,6 +181,26 @@ if u.Status != "active" {
 
 `clientIP`（`auth.go:526`）：`trustProxy=false`（默认，安全）仅用 `RemoteAddr`，防客户端伪造 `X-Forwarded-For` 绕过限流；`trustProxy=true` 信任 XFF 首段（确有可信反代前置时）。
 
+**控制面 API 全局限流（P1-5，2026-09-25）**：`rateLimitMiddleware`（`server_security.go`）按 `clientIP`
+令牌桶限流，桶容量=速率（允许 1s 突发），超限 429 + `Retry-After: 1`；`/healthz`、`/readyz` 豁免
+（避免 K8s 探针被误杀）。生产模式未显式设置 `--cb-rate-limit-per-sec` 时默认 200 req/s/IP
+（`config.defaultProductionRateLimitPerSec`），显式 0 关闭并打印告警。
+限流器跟踪的 IP 桶有硬上限（`maxRateLimitBuckets=50000`）：达上限先清空闲桶，仍满则放行但不建桶
+（不让 IP 自选性把限流器本身变成内存耗尽面），并每 30s 至多告警一次。
+
+### 1.11 metrics 端点准入与指标基数熔断（P1-5）
+
+`/metrics` 无鉴权且（8080 侧）每次请求做 4 次全量 store 扫描，故：
+
+| 面 | 机制 | 位置 |
+|---|---|---|
+| 准入 | `metricsAllowed`：CIDR 白名单。**生产模式（`--production`）白名单为空即一律 403**（fail-closed）；非生产模式保持开放（向后兼容开发/演示）。8080 与 9091 两个 `/metrics` 均经此准入 | `server_netsec.go`、`metrics_endpoint.go` |
+| 基数熔断 | 每个 (method,path,status) 时序受硬上限 2000 约束；超限后新路径折叠为 `path=":other"`，非标准 HTTP 方法折叠为 `method=":other"`，并累加 `opsmesh_http_metrics_series_dropped_total` | `internal/metrics/metrics.go` |
+| 路径归一化 | `normalizePath`：纯数字段、超长段（>48 字节）、含 `[A-Za-z0-9._~-]` 以外字符的段 → `:id`；整路径超长（>200 字节）→ `/:overlong` | `server_middleware.go` |
+
+威胁模型：`/api/v1/<随机串>` 这类未匹配路由（404）也会入指标，任意来源可构造海量路径。
+三层（准入 → 归一化 → 硬上限）叠加后，内存增长被 `maxHTTPSeries` 封顶，且折叠计数可供告警识别扫描行为。
+
 ---
 
 ## 第2章 授权机制
@@ -705,6 +725,18 @@ ALTER TABLE audit_log ADD COLUMN trace_id VARCHAR(64);
 CREATE INDEX idx_audit_trace ON audit_log (trace_id);
 ```
 
+`migrations/019_audit_chain.sql`（P1-3）增加哈希链列与配套表/索引：
+
+```sql
+ALTER TABLE audit_log ADD COLUMN prev_hash  CHAR(64) NULL;   -- 前一行的 entry_hash（创世为空串）
+ALTER TABLE audit_log ADD COLUMN entry_hash CHAR(64) NULL;   -- 本行内容 + prev_hash 的 SHA-256
+CREATE INDEX idx_audit_entry_hash ON audit_log (entry_hash);          -- 校验窗口不全表扫
+CREATE INDEX idx_audit_tenant_created ON audit_log (tenant_id, created_at DESC);
+CREATE TABLE audit_chain_head (id, last_id, last_hash, updated_at);   -- 单行链头（多副本串行化）
+CREATE TABLE audit_log_archive (...prev_hash, entry_hash, archived_at); -- 超龄归档（保留策略）
+CREATE TABLE audit_archive_meta (id, archived_through_id, boundary_hash, archived_rows, updated_at);
+```
+
 ### 7.2 写入接口
 
 `SQLStore.Audit`（`internal/store/sql_audits.go:16`）：
@@ -749,9 +781,54 @@ CREATE INDEX idx_audit_trace ON audit_log (trace_id);
 - `limit <= 0` 表示不限制。
 - 返回按时间倒序。
 
+索引：`idx_audit_tenant_created (tenant_id, created_at DESC)` 与 `idx_audit_trace (trace_id)` 支撑「按租户 + 时间窗」和「按 trace 反查」两条主查询路径；`idx_audit_entry_hash` 支撑链校验窗口定位。审计表是持续增长的写密集表，缺索引会让检索退化为全表扫（P1-3 修复项之一）。
+
 ### 7.6 不可篡改
 
 审计日志采用只追加（INSERT）模式，不提供 UPDATE/DELETE 接口。`audit_log` 表无对应更新/删除方法，确保日志一旦写入不可篡改。生产环境建议配合 MySQL binlog 或 WORM 存储进一步加固。
+
+### 7.7 防篡改哈希链（P1-3）
+
+「只追加」是接口层约束，DBA 或拿到库写权限的人仍可直接 `UPDATE/DELETE` 审计表。P1-3 在此基础上加了一层**可校验的哈希链**（`internal/store/sql_audit_chain.go`）：历史行被改写或删除后，校验能从行号到原因精确定位。
+
+**链接算法**
+
+```
+entry_hash = sha256( prev_hash ‖ H(tenant) ‖ H(user) ‖ H(action) ‖ H(target)
+                     ‖ H(detail) ‖ H(created_at) ‖ H(trace_id) )
+其中每个参与字段写为   len(字节数):value\x1f   （即 H(field)）
+```
+
+- 字段采用 `len:value\x1f` 前缀拼接：避免 `("ab","c")` 与 `("a","bc")` 这类拼接歧义（长度前缀使边界不可伪造）。
+- `created_at` 以 **秒** 精度参与哈希（`e.CreatedAt.UTC().Truncate(time.Second)`）：MySQL `DATETIME` 无小数秒，若用纳秒参与则读回后重算永不相等——校验会 100% 误报。
+- 创世行 `prev_hash=""`；`audit_chain_head(id=1, last_id, last_hash)` 记录**在线**链尾。
+
+**并发写入串行化（多副本安全）**
+
+写入路径：`INSERT IGNORE` 确保链头单行存在 → 在写入事务内 `SELECT last_hash FROM audit_chain_head WHERE id=1 FOR UPDATE` 锁定并取尾哈希 → 插入审计行（带 prev/entry hash）→ 更新链头 → 提交。死锁/锁等待超时（1213/1205）自动退避重试最多 3 次。因此多副本同时写审计不会分叉，也不会跳链。
+
+**降级路径（审计数据永不丢）**
+
+链式写入失败（如链头表被锁死、DDL 半成品）时，`SQLStore.Audit` 打印告警并退回普通 INSERT（含 trace_id / 无 trace_id 两种兜底）。代价是该行不计入链，自检会将此类「链前遗留行」如实计数（`legacyRows`），不会假装完整。
+
+**校验范围与强度**
+
+| 范围 | 入口 | 判定强度 |
+|------|------|---------|
+| 平台级 `tenant=""` | leader 自检 / 服务端内部 | 严格：逐行重算 + 相邻行必须链接 + 窗口首行前驱必须匹配 + **链头必须等于在线最新链式行**（`tailCovered=false` 直接判失败——尾部被删） |
+| 租户级 `tenant=X` | `GET /api/v1/audit/verify` | 逐行重算 + 窗口首行前驱边界 + 仅当行号相邻时才做链接判定（链在多租户间交错，租户视角读不到其他租户行内容，无法逐行验证链接）；窗口未覆盖链尾时「链头一致性」标注为未判定 |
+
+结果字段：`firstBadID`/`reason`（首个坏行与原因）、`checked`/`fromID`/`toID`（校验窗口）、`tailCovered`/`headConsistent`、`chainHeadID`/`chainHeadHash`、`legacyRows`、`archivedThroughID`/`archivedBoundaryHash`。
+
+**归档与保留（保留策略不与防篡改冲突）**
+
+超过 `--audit-retention-days`（默认 180 天，`0`=永久保留；等保三级通常 ≥180 天）的行，由 leader 周期搬入 `audit_log_archive`（保留同样的 `prev_hash`/`entry_hash` 列），随后从在线表删除；`audit_archive_meta` 记录归档边界（`archived_through_id` + `boundary_hash` + `archived_rows`）。校验窗口的前驱按「在线前一行 → **归档表**前一行 → 创世」三级解析，因此跨归档边界仍能验证链接连续性；若归档批次包含链头行（历史事件被回填归档），链头自动回退到当前在线尾行。
+
+**诚实的边界（对客户必须如实说明）**
+
+- 链是**无密钥**的 SHA-256 链：拥有库写权限的攻击者可以重算整条链使其自洽。本机制能发现**局部/偷懒的篡改与删除**，**无法**对抗「全链重写」。要对抗全链重写，必须把链头定期锚定到外部不可变存储（WORM / S3 对象锁 / 外部日志服务）——当前版本未内置锚定，属已知边界。
+- 内存存储后端不维护链（校验结果 `supported=false`，HTTP 端点返回 `501`）；老库未应用迁移 019 同样返回 501，不会假装校验通过。
+- 校验窗口有上限（10000 行）——超出的历史行需分段校验，或依赖归档边界哈希串联。
 
 ---
 
@@ -1018,7 +1095,7 @@ dom.TenantID = tokTenant // token 权威：纳管设备归属以 token 内租户
 - [ ] `--grpc-require-signature=true` + `--grpc-signature-key` 已配置预共享密钥。
 - [ ] `--store=mysql` + `--mysql-dsn` 已配置（非 memory store）。
 - [ ] `--session-store=redis://host:port` 已配置（多副本 HA 共享会话状态）。
-- [ ] `--metrics-allow-cidr` 已配置（限制 metrics 端点访问来源）。
+- [ ] `--metrics-allow-cidr` 已配置（**生产模式必配**：为空则 `/metrics` 一律 403，Prometheus 抓取会断）。
 - [ ] `--provision-cidr-whitelist` 已配置（限制 autoProvision 扫描网段）。
 - [ ] `--advertise-addr` 已配置（CSRF Origin 校验需要）。
 
@@ -1086,13 +1163,14 @@ dom.TenantID = tokTenant // token 权威：纳管设备归属以 token 内租户
 - [ ] 控制面不直接暴露（必须经网关/APISIX/IAM 前置）。
 - [ ] 网关剥离客户端自带的 `X-Tenant-ID`，重注入经鉴权的真实租户。
 - [ ] 网络策略拒绝直连控制面（绕过网关）的请求。
-- [ ] metrics 端点（9091）仅内网访问（CIDR 白名单）。
+- [ ] metrics 端点（9091 / 8080）仅内网访问（CIDR 白名单；生产模式未配置即 403）。
 - [ ] 联邦端口独立监听，网络策略限制来源 IP。
 - [ ] Agent 出站仅允许控制面 gRPC 端口（白名单出站）。
 
 ### 12.5 监控检查
 
 - [ ] 审计日志写入监控（`audit_log` 表增长速率）。
+- [ ] 审计链自检告警（`opsmesh_audit_chain_supported==1 and opsmesh_audit_chain_ok==0` 持续 5m；见 operations.md §监控告警）。
 - [ ] 登录失败告警（`loginGuard.recordFail` 触发锁定）。
 - [ ] CSRF 拒绝告警（`csrf_origin_rejected` 审计事件）。
 - [ ] 联邦验签失败告警（`federation signature verification failed`）。
@@ -1148,6 +1226,10 @@ dom.TenantID = tokTenant // token 权威：纳管设备归属以 token 内租户
 | 审计日志写入 | `internal/store/sql_audits.go:16` |
 | 审计脱敏 | `internal/controlplane/server_tasks.go:29` |
 | 审计检索 | `internal/store/sql_audits.go:84` |
+| 审计哈希链（算法/写入/校验/归档） | `internal/store/sql_audit_chain.go:51`/`182`/`247`/`467` |
+| 审计链校验端点 | `internal/controlplane/audit_query.go:174` |
+| 审计归档+自检 leader 循环 | `internal/controlplane/server_tasks.go:310`/`332` |
+| 审计链自检指标 | `internal/metrics/metrics.go:129`/`275` |
 | MultiSchemaStore | `internal/store/multi_schema.go:92` |
 | Schema 名 SQL 注入防护 | `internal/store/multi_schema.go:45`/`62` |
 | QuotaManager | `internal/controlplane/quota.go` |

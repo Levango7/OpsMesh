@@ -3,8 +3,8 @@
 #
 # 用途：部署完成后的独立复验。与 deploy.sh 自带冒烟测试相互独立（不复用其函数/变量），
 #       覆盖 P0-1 鉴权链路、P0-2 明文 HTTP、P0-3 企业版前端内置、P0-4 端口发布真实性、
-#       P0-5 迁移版本门禁、P0-6 租户列落库、P0-7 持久化落库、监控假告警、多库隔离等
-#       回归断言。任一 FAIL 即退出码非 0。
+#       P0-5 迁移版本门禁、P0-6 租户列落库、P0-7 持久化落库、监控假告警、多库隔离，
+#       以及 P1-5 /metrics 准入·基数熔断·限流等回归断言。任一 FAIL 即退出码非 0。
 #
 # 前置：栈已由 `deploy/docker/scripts/deploy.sh up` 拉起。
 # 用法：bash deploy/scripts/verify-runtime.sh
@@ -59,16 +59,135 @@ case "$pcode" in
   *)      bad "明文 HTTP 竟返回 ${pcode}（P0-2 回归！）" ;;
 esac
 
-sec "3. 公开 /metrics（无鉴权）—— 已知发现项复核"
+sec "3. metrics 端点准入 + 指标基数熔断（P1-5 回归）"
+MP="$(env_val CONTROLPLANE_METRICS_PORT 9091)"
+METRICS_CIDR="$(env_val METRICS_ALLOW_CIDR)"
+# .env 未显式设置时 compose 仍注入默认白名单（本机 + 三个 compose 网段）。
+[ -z "$METRICS_CIDR" ] && METRICS_CIDR="127.0.0.0/8,172.28.0.0/16（compose 默认）"
+echo "  METRICS_ALLOW_CIDR=${METRICS_CIDR}"
+
+# 3a 8080 公开端点：来源在白名单内 → 200；不在 → 403（fail-closed，属预期而非缺陷）。
 mcode="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' "$CP/metrics" 2>/dev/null)"
-if [ "$mcode" = "200" ]; then
-  warn "GET $CP/metrics 无需认证即返回 200（聚合计数对外可见）"
-  echo "  ---- 前 12 行 ----"
-  curl "${K[@]}" "$CP/metrics" 2>/dev/null | head -12 | sed 's/^/    /'
-  echo "  ---- 是否含敏感聚合指标 ----"
-  curl "${K[@]}" "$CP/metrics" 2>/dev/null | grep -E "^opsmesh_(devices|tasks|alerts|tickets)" | head -8 | sed 's/^/    /'
+case "$mcode" in
+  200) ok "GET $CP/metrics → 200（本机来源在 CIDR 白名单内）" ;;
+  403) warn "GET $CP/metrics → 403（本机来源不在 METRICS_ALLOW_CIDR 内；端点已按 P1-5 收敛，非回归）" ;;
+  *)   bad "GET $CP/metrics → ${mcode:-无响应}（期望 200 或 403）" ;;
+esac
+
+# 3b 9091 独立 metrics 端口：Prometheus 抓取路径必须可达（monitoring 网段，走容器内抓取最稳）。
+mbody="$(docker exec opsmesh-prometheus wget -qO- --timeout=8 http://controlplane:9091/metrics 2>/dev/null)"
+[ -z "$mbody" ] && mbody="$(curl -sS --max-time 8 "http://127.0.0.1:${MP}/metrics" 2>/dev/null)"
+if [ -z "$mbody" ]; then
+  bad "9091 /metrics 抓取为空（Prometheus → controlplane:9091 与宿主 127.0.0.1:${MP} 均失败）"
 else
-  ok "GET $CP/metrics → ${mcode}（未公开）"
+  ok "9091 /metrics 可抓取（$(printf '%s' "$mbody" | wc -l | tr -d ' ') 行）"
+  sline="$(printf '%s\n' "$mbody" | grep -E '^opsmesh_http_metrics_series [0-9]+$' | head -1)"
+  if [ -z "$sline" ]; then
+    bad "缺少 opsmesh_http_metrics_series（P1-5 基数熔断自观测未生效）"
+  else
+    nseries="${sline##* }"
+    [ "$nseries" -le 2000 ] && ok "HTTP 指标时序数 ${nseries} ≤ 2000（基数硬上限生效）" \
+                             || bad "HTTP 指标时序数 ${nseries} > 2000（基数上限失效！）"
+  fi
+  printf '%s\n' "$mbody" | grep -q '^opsmesh_http_metrics_series_dropped_total [0-9]' \
+    && ok "折叠计数器 opsmesh_http_metrics_series_dropped_total 已暴露（超限请求可观测）" \
+    || bad "缺少 opsmesh_http_metrics_series_dropped_total（超限请求不可观测）"
+fi
+
+# 3c 路径归一化（基数护栏第一层）：超长/危险字符段与超长整体路径必须折叠，绝不原样入标签。
+probe="$(printf 'zzprobe-%058d' 0)"      # 66 字节 > 48 上限，且含独特前缀
+longpath="$(printf '/%0220d' 0)"         # 221 字节 > 200 上限
+curl "${K[@]}" -o /dev/null --max-time 8 "${CP}/api/v1/${probe}" 2>/dev/null
+curl "${K[@]}" -o /dev/null --max-time 8 "${CP}${longpath}" 2>/dev/null
+mbody2="$(docker exec opsmesh-prometheus wget -qO- --timeout=8 http://controlplane:9091/metrics 2>/dev/null)"
+[ -z "$mbody2" ] && mbody2="$(curl -sS --max-time 8 "http://127.0.0.1:${MP}/metrics" 2>/dev/null)"
+if [ -n "$mbody2" ]; then
+  printf '%s\n' "$mbody2" | grep -qF 'path="/api/v1/:id"' \
+    && ok "超长路径段归一化为 path=\"/api/v1/:id\"" \
+    || bad "未观察到 path=\"/api/v1/:id\"（超长段未被归一化）"
+  if printf '%s\n' "$mbody2" | grep -qF "$probe"; then
+    bad "原始超长路径串泄漏进指标标签（基数护栏失效！）"
+  else
+    ok "原始超长路径未进入指标标签（无标签膨胀）"
+  fi
+  printf '%s\n' "$mbody2" | grep -qF 'path="/:overlong"' \
+    && ok "超长整体路径归一化为 path=\"/:overlong\"" \
+    || warn "未观察到 path=\"/:overlong\"（上游可能先行拒绝该请求，非回归）"
+fi
+
+# 3d 生产默认限流（P1-5）：.env 未显式设置时须以 200 req/s/IP 启动（此前默认关闭）。
+rl="$(env_val CB_RATE_LIMIT_PER_SEC)"
+clog="$(docker logs opsmesh-controlplane 2>&1)"
+if [ -z "$rl" ]; then
+  printf '%s' "$clog" | grep -q '生产模式默认启用 API 限流 200' \
+    && ok "生产模式默认启用限流 200 req/s/IP（启动期提示可见）" \
+    || bad "未见默认限流启动提示（P1-5 默认启用失效）"
+  printf '%s' "$clog" | grep -q 'API 限流已启用' \
+    && ok "限流器已装载（日志含「API 限流已启用」）" \
+    || bad "限流器未装载（生产默认限流未生效）"
+elif [ "$rl" = "0" ]; then
+  warn "CB_RATE_LIMIT_PER_SEC=0：限流被显式关闭（下方 429 实测将跳过）"
+  printf '%s' "$clog" | grep -q '生产模式未启用 API 限流' \
+    && ok "显式关闭限流时打印告警（可审计）" \
+    || warn "显式关闭限流但未见启动告警"
+else
+  warn "CB_RATE_LIMIT_PER_SEC=${rl}：自定义限流阈值，按实际值实测"
+fi
+
+# 3e 限流实测：突发请求须出现 429（显式关闭时跳过，避免误报）。
+# 用单条 curl 复用同一 keep-alive 连接连打 N 次——若用 `xargs -P` 逐请求起进程，
+# Windows 上进程创建开销会把实际速率压到 ~200 req/s 附近（实测 1500 请求无一 429 的假阴性）。
+if [ "$rl" = "0" ]; then
+  warn "限流已显式关闭，跳过 429 突发实测"
+else
+  urls=()
+  for _ in $(seq 1 800); do urls+=("$CP/api/v1/devices"); done
+  codes="$(curl "${K[@]}" -o /dev/null -w '%{http_code}\n' "${urls[@]}" 2>/dev/null | grep -E '^[0-9]{3}$')"
+  n429="$(printf '%s\n' "$codes" | grep -c '^429$' | tr -d ' ')"
+  nok="$(printf '%s\n' "$codes" | grep -cE '^(401|403|200)$' | tr -d ' ')"
+  if [ "$n429" -gt 0 ]; then
+    ok "突发限流实测：800 请求中 429=${n429}，非 429=${nok}（令牌桶生效）"
+  else
+    bad "800 突发请求无一 429（限流未生效，P1-5 回归）"
+  fi
+  sleep 2  # 令牌回填（200/s、桶容量 200），避免影响后续断言
+fi
+
+# 3f 负向验证（fail-closed 实测）：另起一次性探针容器，白名单设成【不含实际来源】的网段，必须 403。
+# 为什么不直接对被测栈做负向验证：Docker Desktop(WSL2) 的端口转发不保留真实来源 IP——
+# 实测宿主 curl / 宿主经局域网 IP / 默认桥容器经 host.docker.internal，容器侧 remote 恒为
+# 172.28.1.1（frontend 网桥网关），落在被测栈白名单内；来源区分能力只在裸机/K8s 部署下成立。
+PROBE_PORT=29191
+CP_IMG="$(docker inspect opsmesh-controlplane --format '{{.Config.Image}}' 2>/dev/null)"
+if [ -z "$CP_IMG" ]; then
+  warn "未取得控制面镜像名，跳过 fail-closed 负向探针"
+elif curl -sS --max-time 2 -o /dev/null "http://127.0.0.1:${PROBE_PORT}/metrics" 2>/dev/null; then
+  warn "宿主端口 ${PROBE_PORT} 已被占用，跳过 fail-closed 负向探针"
+else
+  docker rm -f opsmesh-cidr-probe >/dev/null 2>&1
+  if docker run -d --rm --name opsmesh-cidr-probe --network opsmesh-frontend \
+       -p "127.0.0.1:${PROBE_PORT}:9091" "$CP_IMG" --mode=controlplane --store=memory \
+       --http-port=18080 --grpc-port=19090 --metrics-port=9091 \
+       --metrics-allow-cidr=127.0.0.1/32 >/dev/null 2>&1; then
+    pcode=""
+    for _ in $(seq 1 15); do
+      sleep 1
+      pcode="$(curl -sS --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PROBE_PORT}/metrics" 2>/dev/null)"
+      [ -n "$pcode" ] && [ "$pcode" != "000" ] && break
+    done
+    plog="$(docker logs opsmesh-cidr-probe 2>&1 | grep 'metrics 访问被拒' | tail -1)"
+    docker rm -f opsmesh-cidr-probe >/dev/null 2>&1
+    case "$pcode" in
+      403) ok "非白名单来源被拒（403 fail-closed 实测；探针白名单=127.0.0.1/32，实际来源 172.28.1.1）" ;;
+      000|"") warn "fail-closed 探针未就绪（启动超时），负向验证未执行" ;;
+      *)   bad "白名单不含实际来源时仍返回 ${pcode}（fail-closed 失效！）" ;;
+    esac
+    if [ -n "$plog" ]; then
+      echo "    探针拒绝日志: $(printf '%s' "$plog" | sed -E 's/.*"msg":"([^"]*)".*"remote":"([^"]*)".*/msg=\1 remote=\2/')"
+    fi
+  else
+    warn "fail-closed 探针容器启动失败（镜像/网络不可用），跳过负向验证"
+  fi
 fi
 
 sec "4. 鉴权链路（P0-1 回归）"
@@ -374,6 +493,73 @@ case "$fcode2" in
   401|403) ok "伪造租户头访问用户管理被拒（→ ${fcode2}）" ;;
   *)       bad "伪造租户头访问 /api/v1/users 返回 ${fcode2}（越权回归！）" ;;
 esac
+
+sec "13. 审计链防篡改与保留策略（P1-3 回归）"
+# 13a 迁移 019 落库：链式列 / 链头表 / 归档表 / 检索索引必须真实存在。
+if [ -n "${MYSQL_C:-}" ] && [ -n "${U:-}" ]; then
+  q() { docker exec "$MYSQL_C" sh -c "mysql -u'$U' -p'$PWDB' -D opsmesh -N -e \"$1\"" 2>/dev/null | tr -d ' \r'; }
+  ccol="$(q "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='opsmesh' AND table_name='audit_log' AND column_name IN ('prev_hash','entry_hash');")"
+  [ "$ccol" = "2" ] && ok "audit_log 已落 prev_hash/entry_hash 链式列" \
+                    || bad "audit_log 链式列缺失（期望 2 列，实为 ${ccol:-查询失败}；P1-3 迁移未生效！）"
+  for t in audit_chain_head audit_log_archive audit_archive_meta; do
+    tcnt="$(q "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='opsmesh' AND table_name='$t';")"
+    [ "$tcnt" = "1" ] && ok "表 ${t} 已建" || bad "表 ${t} 缺失（P1-3 迁移未生效！）"
+  done
+  icnt="$(q "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema='opsmesh' AND table_name='audit_log' AND index_name='idx_audit_entry_hash';")"
+  [ "${icnt:-0}" -ge 1 ] && ok "audit_log.idx_audit_entry_hash 已建（链式窗口查询不全表扫）" \
+                         || bad "链式索引 idx_audit_entry_hash 缺失（P1-3 迁移未生效！）"
+  hrow="$(q "SELECT COUNT(*) FROM audit_chain_head WHERE id=1;")"
+  [ "$hrow" = "1" ] && ok "audit_chain_head 单行链头就绪（多副本串行化基线）" \
+                    || bad "audit_chain_head 无 id=1 单行（并发写入将无法串行化）"
+  # 13b 链写入活性（真实运行期证据，非静态配置）：最新审计行必须已纳入链，且链头指向它。
+  chalive="$(q "SELECT IFNULL((SELECT entry_hash<>'' FROM audit_log ORDER BY id DESC LIMIT 1),0);")"
+  [ "$chalive" = "1" ] && ok "最新审计行已带 entry_hash（运行期链式写入生效）" \
+                       || warn "最新审计行无 entry_hash（可能尚无审计事件，或写入降级为非链式——查控制面日志）"
+  if [ "$chalive" = "1" ]; then
+    hcons="$(q "SELECT (last_hash = (SELECT entry_hash FROM audit_log WHERE entry_hash<>'' ORDER BY id DESC LIMIT 1)) FROM audit_chain_head WHERE id=1;")"
+    [ "$hcons" = "1" ] && ok "链头 last_hash == 最新链式行 entry_hash（链头跟随，尾部未被删改）" \
+                       || bad "链头与最新链式行不一致（尾部行被删除或链头被改动，P1-3 完整性告警！）"
+  fi
+  nlegacy="$(q "SELECT COUNT(*) FROM audit_log WHERE entry_hash IS NULL OR entry_hash='';")"
+  [ "${nlegacy:-0}" = "0" ] && ok "无链前遗留行（全部审计行已纳入哈希链）" \
+                            || warn "有 ${nlegacy} 条链前遗留行（迁移 019 之前写入，未纳入链，自检会如实计数）"
+  # 13c 保留策略配置已接线（--audit-retention-days 出现在控制面启动参数中）。
+  ret="$(docker inspect opsmesh-controlplane --format '{{json .Config.Cmd}}' 2>/dev/null | grep -o 'audit-retention-days=[0-9]*' | head -1)"
+  [ -n "$ret" ] && ok "控制面已接线保留策略（${ret}）" \
+                || bad "控制面启动参数未见 --audit-retention-days（P1-3 保留策略未接线！）"
+else
+  warn "未取得 MySQL 容器/凭据上下文，跳过 P1-3 落库断言"
+fi
+
+# 13d 校验端点准入：未带凭证必须 401（404 说明路由未注册，501 说明后端不支持——均应告警）。
+vcode="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' "$CP/api/v1/audit/verify" 2>/dev/null)"
+case "$vcode" in
+  401) ok "GET /api/v1/audit/verify 未认证 → 401（端点已注册且受鉴权保护）" ;;
+  404) bad "GET /api/v1/audit/verify → 404（路由未注册，P1-3 端点缺失！）" ;;
+  *)   warn "GET /api/v1/audit/verify 未认证 → ${vcode:-无响应}（期望 401，请复核鉴权链路）" ;;
+esac
+
+# 13e 链自检循环的运行时自观测：leader 每 60s 归档 + 自检，指标须为「已支持且自洽」。
+mbody2="$(docker exec opsmesh-prometheus wget -qO- --timeout=8 http://controlplane:9091/metrics 2>/dev/null)"
+[ -z "$mbody2" ] && mbody2="$(curl -sS --max-time 8 "http://127.0.0.1:${MP}/metrics" 2>/dev/null)"
+if [ -z "$mbody2" ]; then
+  warn "无法抓取 9091 指标，跳过审计链自观测断言"
+else
+  for m in opsmesh_audit_chain_supported opsmesh_audit_chain_ok opsmesh_audit_chain_checked_rows opsmesh_audit_chain_checks_total; do
+    printf '%s\n' "$mbody2" | grep -q "^${m} [0-9]" && ok "指标 ${m} 已暴露" || bad "缺少指标 ${m}（P1-3 自检不可观测）"
+  done
+  ctot="$(printf '%s\n' "$mbody2" | grep -E '^opsmesh_audit_chain_checks_total [0-9]+$' | head -1 | awk '{print $2}')"
+  csup="$(printf '%s\n' "$mbody2" | grep -E '^opsmesh_audit_chain_supported [0-9]+$' | head -1 | awk '{print $2}')"
+  cok="$(printf '%s\n' "$mbody2" | grep -E '^opsmesh_audit_chain_ok [0-9]+$' | head -1 | awk '{print $2}')"
+  crow="$(printf '%s\n' "$mbody2" | grep -E '^opsmesh_audit_chain_checked_rows [0-9]+$' | head -1 | awk '{print $2}')"
+  echo "  supported=${csup:-?} ok=${cok:-?} checked_rows=${crow:-?} checks_total=${ctot:-?}"
+  [ "${ctot:-0}" -ge 1 ] && ok "链自检已实际执行（checks_total=${ctot}，leader 循环在跑）" \
+                         || bad "链自检从未执行（checks_total=0，leader 维护循环未生效！）"
+  [ "${csup:-0}" = "1" ] && ok "存储后端支持链式校验（supported=1）" \
+                         || bad "supported=${csup:-0}（SQL 后端应支持链式校验）"
+  [ "${cok:-0}" = "1" ] && ok "链自检结论自洽（ok=1）" \
+                        || bad "ok=${cok:-0}（链完整性校验未通过，P1-3 告警：疑似篡改或尾部删除）"
+fi
 
 echo ""
 echo "==================================================="

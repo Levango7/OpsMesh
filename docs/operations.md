@@ -265,7 +265,7 @@ P0-1 鉴权链路（错误口令与预置弱口令拒绝 / 强制改密 / 改密
 | 控制面健康 | `curl -k https://<cp>:8080/healthz` | `ok`（反代形态走 `http://<gateway>/healthz`） |
 | 明文必须被拒 | `curl -s -o /dev/null -w '%{http_code}' http://<cp>:8080/healthz` | `000` 或 `400`（**不得为 2xx**） |
 | gRPC 端口 | `nc -zv <cp> 9090` | succeeded |
-| metrics 端口 | `curl http://<cp>:9091/metrics \| head -5` | Prometheus 文本；**该端口无鉴权，仅限内网/白名单** |
+| metrics 端口 | `curl http://<cp>:9091/metrics \| head -5` | Prometheus 文本；**该端口无鉴权，故经 `--metrics-allow-cidr` 准入**（生产模式未配置白名单时一律 403，仅内网/白名单可达） |
 | 仪表盘 | 浏览器 `https://<cp>:8080` | 登录页 |
 | Agent 在线 | 仪表盘设备页 / `opsmesh_agents_total` | ≥1 |
 | MySQL 连接 | 控制面日志无 `dial tcp ...:3306` 错误 | 无错误 |
@@ -372,12 +372,13 @@ OpsMesh 采用「flag 优先、环境变量兜底」的统一配置模型（`int
 | `--cookie-secure` | `OPSMESH_COOKIE_SECURE` | false | Cookie Secure 标志 |
 | `--public-register` | `OPSMESH_PUBLIC_REGISTER` | true | 公开注册接口开关（新用户须审批） |
 | `--allow-public-register` | `OPSMESH_ALLOW_PUBLIC_REGISTER` | false | 公开注册免审批 |
-| `--metrics-allow-cidr` | `OPSMESH_METRICS_ALLOW_CIDR` | 空 | metrics CIDR 白名单 |
+| `--metrics-allow-cidr` | `OPSMESH_METRICS_ALLOW_CIDR` | 空 | metrics CIDR 白名单。**生产模式（`--production`）下为空即 `/metrics` 一律 403**（fail-closed，8080 与 9091 同一准入）。**注意来源 IP 的真实性**（2026-09-25 实测）：Docker Desktop(WSL2) 端口转发把来源统一重写为网桥网关（`172.28.1.1`），故白名单必须含 `172.28.0.0/16` 才能让宿主/Prometheus 抓取；该形态下白名单**无法区分**局域网/公网来源，真实边界应靠「端口只发布到 `127.0.0.1`」+ 宿主防火墙。裸机/systemd（来源 IP 保留）与 K8s（Pod IP）下白名单才具备来源区分能力 |
 | `--agent-shell-whitelist` | `OPSMESH_AGENT_SHELL_WHITELIST` | 空 | agent shell 命令白名单 |
 | `--agent-file-root-whitelist` | `OPSMESH_AGENT_FILE_ROOT_WHITELIST` | 空 | agent 文件任务根目录白名单 |
 | `--webhook-allow-private` | `OPSMESH_WEBHOOK_ALLOW_PRIVATE` | false | 允许内网 webhook（SSRF 防护） |
 | `--provision-cidr-whitelist` | `OPSMESH_PROVISION_CIDR_WHITELIST` | 空 | autoProvision 扫描网段白名单 |
 | `--device-fp-deadline` | `OPSMESH_DEVICE_FP_DEADLINE` | 空 | DeviceFP 强制非空截止时间（RFC3339） |
+| `--audit-retention-days` | `OPSMESH_AUDIT_RETENTION_DAYS` | 180 | 审计日志保留天数（P1-3）。超龄行由 **leader** 周期搬入 `audit_log_archive` 后从在线表删除；`0`=永久保留。等保三级/ISO 27001 通常要求审计留存 ≥180 天，按合规要求调整。Docker 部署在 `.env` 的 `AUDIT_RETENTION_DAYS` 设置（compose 已接线）；K8s 部署在 `controlplane.env` 加 `OPSMESH_AUDIT_RETENTION_DAYS` |
 
 ### 2.6 联邦配置
 
@@ -457,7 +458,7 @@ OpsMesh 采用「flag 优先、环境变量兜底」的统一配置模型（`int
 | `--cb-failure-threshold` | `OPSMESH_CB_FAILURE_THRESHOLD` | 5 | 熔断失败阈值（0=禁用） |
 | `--cb-recovery-timeout` | `OPSMESH_CB_RECOVERY_TIMEOUT` | 30s | 熔断恢复等待 |
 | `--cb-half-open-max-calls` | `OPSMESH_CB_HALF_OPEN_MAX_CALLS` | 1 | 半开状态最大探测调用数 |
-| `--cb-rate-limit-per-sec` | `OPSMESH_CB_RATE_LIMIT_PER_SEC` | 0 | API 限流阈值（0=禁用） |
+| `--cb-rate-limit-per-sec` | `OPSMESH_CB_RATE_LIMIT_PER_SEC` | 0（生产 200） | API 限流阈值（req/s/IP）。**生产模式未显式设置时默认 200**；显式 0=关闭（启动打印告警）。跟踪的 IP 桶有上限（5 万，满了先清空闲桶、仍满则放行不建桶），内存有界 |
 
 ### 2.10 自动纳管与配额
 
@@ -867,8 +868,14 @@ curl "$CP/api/v1/tasks/<task-id>/result" -H "$AUTH" -H "X-Tenant-ID: $TENANT"
 | `opsmesh_devices_total{status}` | gauge | 设备总数（按状态分：online/offline/retired） |
 | `opsmesh_alerts_total{severity}` | counter | 告警总数 |
 | `opsmesh_http_request_duration_seconds` | histogram | HTTP 请求耗时 |
+| `opsmesh_http_metrics_series` | gauge | 当前 HTTP 指标时序数（基数上限 2000，达到后新路径折叠为 `path=":other"`） |
+| `opsmesh_http_metrics_series_dropped_total` | counter | 因基数超限被折叠的请求数（持续增长=端点正被扫描） |
 | `opsmesh_grpc_request_total` | counter | gRPC 请求总数 |
 | `opsmesh_leader_elections_total` | counter | leader 选举次数 |
+| `opsmesh_audit_chain_supported` | gauge | 审计链校验是否被后端支持（P1-3；SQL=1，内存/老库=0，非 leader 副本恒 0） |
+| `opsmesh_audit_chain_ok` | gauge | 最近一次链校验结论（1=自洽，0=发现不一致/尚未校验） |
+| `opsmesh_audit_chain_checked_rows` | gauge | 最近一次校验覆盖的行数 |
+| `opsmesh_audit_chain_checks_total` | counter | 链自检执行次数（leader 每 60s 一次；长期不增长=维护循环停摆） |
 
 ### 4.2 ServiceMonitor 配置
 
@@ -1765,14 +1772,47 @@ curl "$CP/api/v1/audit?user=alice&limit=100" -H "$AUTH" -H "X-Tenant-ID: $TENANT
 
 #### 9.3.3 合规审计
 
-定期导出审计日志归档：
+定期导出审计日志归档（导出为 **JSON 数组**，非 CSV——便于外部工具直接消费与二次校验）：
 
 ```bash
-# 导出最近 30 天审计日志
-curl "$CP/api/v1/audit/export?since=720h&format=csv" \
+# 导出最近 30 天审计日志（返回 JSON 数组）
+curl "$CP/api/v1/audit/export?since=720h" \
   -H "$AUTH" -H "X-Tenant-ID: $TENANT" \
-  -o audit-$(date +%Y%m%d).csv
+  -o audit-$(date +%Y%m%d).json
 ```
+
+#### 9.3.4 审计链完整性校验（P1-3 防篡改）
+
+审计行写入时串联成 SHA-256 哈希链（`entry_hash = sha256(prev_hash ‖ 各字段长度前缀拼接)`），任何对历史行的改写/删除都能被定位。校验方式：
+
+```bash
+# 校验最近 1000 行（默认 1000，上限 10000）；200=自洽，409=发现不一致，501=后端不支持
+curl -i "$CP/api/v1/audit/verify?limit=1000" \
+  -H "$AUTH" -H "X-Tenant-ID: $TENANT"
+```
+
+判读与处置：
+
+| 响应 | 含义 | 处置 |
+|---|---|---|
+| `200` + `ok=true` | 窗口内逐行自洽，链头与在线最新链式行一致 | 正常。注意租户视角看不到其他租户行内容，`tailCovered=false` 表示窗口未覆盖链尾（属正常，非失败） |
+| `409` + `ok=false` | 发现不一致，`firstBadID`/`reason` 指出首个坏行 | 立即保全证据（`mysqldump` 导出 `audit_log` + binlog）、核查 DBA 操作与数据库账号权限，按安全事件流程上报 |
+| `501` | 后端不支持（内存存储 / 老库未应用迁移 019） | 查 `SELECT MAX(version) FROM schema_migrations` 是否为 19；生产必须用 SQL 后端 |
+| `500` | 探测本身失败（DB 故障） | 查控制面日志 `audit.verifyChain` 的原始错误 |
+
+自动化：leader 每 60s 归档 + 自检一次，结果写入 `opsmesh_audit_chain_ok` / `_supported` / `_checked_rows` / `_checks_total`（见 §4.1）。**务必启用告警规则 `OpsMeshAuditChainBroken`**（`opsmesh_audit_chain_supported == 1 and opsmesh_audit_chain_ok == 0`）与 `OpsMeshAuditChainCheckStale`（15 分钟内自检次数不增长），否则「链断了没人知道」。
+
+保留与归档：超过 `AUDIT_RETENTION_DAYS`（默认 180 天）的行由 leader 搬入 `audit_log_archive`（保留同样的 `prev_hash`/`entry_hash` 列），并从在线表删除；`audit_archive_meta` 记录归档边界哈希，跨归档边界仍可校验链接连续性。人工核查：
+
+```sql
+-- 链头（在线链尾）与归档边界
+SELECT * FROM audit_chain_head;
+SELECT * FROM audit_archive_meta;
+-- 未纳入链的历史行（迁移 019 之前写入）
+SELECT COUNT(*) FROM audit_log WHERE entry_hash IS NULL OR entry_hash='';
+```
+
+> 诚实边界：链为无密钥 SHA-256 链，可发现局部篡改/删除，**无法**对抗「全链重写」。对抗全链重写需把链头定期锚定到外部不可变存储（WORM/S3 对象锁）。详见 [security-mechanism.md §7.7](./security-mechanism.md)。
 
 ### 9.4 渗透测试
 
@@ -1919,8 +1959,27 @@ systemctl status opsmesh-controlplane
 curl http://localhost:8080/healthz
 ```
 
-### 11.2 回滚
+#### 11.1.4 Docker Compose 升级
 
+```bash
+cd deploy/docker
+# 1) 拉取/构建新镜像（--no-build 表示复用本地已构建镜像）
+./scripts/deploy.sh up -y
+# 2) 冒烟 + 断言（含审计链、迁移版本、租户隔离等 86 项）
+bash ../scripts/verify-runtime.sh
+```
+
+两个易踩的坑（脚本已处理，手工升级时需注意）：
+
+- **告警规则必须热加载**：`alerts.yml` 以 bind mount 注入，容器未重建时 Prometheus **不会**自动重读文件，
+  升级后新告警规则静默不生效。`deploy.sh up` 会在 Prometheus 就绪后自动 `POST /-/reload`；
+  手工升级时需自行执行：
+  `docker compose exec -T prometheus wget -qO- --post-data='' http://127.0.0.1:9090/-/reload`
+  （依赖 `--web.enable-lifecycle`，已在本仓库 compose 中开启）。
+- **控制面 command 是整体替换语义**：`docker-compose.prod-proxy.yml` overlay 需与 `docker-compose.prod.yml`
+  保持参数一致，新增启动参数时两处都要改（`validate-deploy-assets.sh` 有对齐门禁）。
+
+### 11.2 回滚
 #### 11.2.1 K8s 回滚
 
 命令示例：K8s 回滚
@@ -2114,14 +2173,23 @@ appendfsync everysec
 #### 12.4.2 限流与熔断
 
 ```bash
-# 控制面 API 限流（每秒每 IP/tenant 100 请求）
---cb-rate-limit-per-sec=100
+# 控制面 API 限流（req/s/IP）。生产模式未显式设置时默认 200（代码侧兜底），此处为显式调优示例：
+--cb-rate-limit-per-sec=200
+# 显式关闭（仅当已有网关/WAF 层限流时使用；启动会打印告警）
+--cb-rate-limit-per-sec=0
 
 # 熔断阈值
 --cb-failure-threshold=5
 --cb-recovery-timeout=30s
 --cb-half-open-max-calls=1
 ```
+
+限流按 `clientIP`（见 §安全机制：`--trust-proxy`）计数，健康探针 `/healthz`、`/readyz` 不限流。
+控制面位于 LB/网关之后时源 IP 会汇聚为同一地址，需按真实客户端限流请同时开 `--trust-proxy=true`
+（要求网关重写 `X-Forwarded-For`），或把阈值调高/设为 0。
+
+> 为什么会有默认阈值：无任何限流时，单个来源（脚本、被攻陷 agent、扫描器）可无限放大控制面
+> CPU/DB 压力。限流器自身内存亦有界（IP 桶上限 5 万，达上限先清空闲桶、仍满则放行不建桶）。
 
 ### 12.5 Agent 调优
 

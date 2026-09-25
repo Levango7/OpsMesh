@@ -370,6 +370,8 @@ services:
       # M6 日志检索：查 Loki（日志由 agent 直接推送）；endpoint 必填，否则启动期校验拒绝。
       - --log-backend=loki
       - --loki-endpoint=http://loki:3100
+      # P1-3 审计日志保留：超龄行由 leader 搬入 audit_log_archive 后从在线表删除（0=永久保留）。
+      - --audit-retention-days=${AUDIT_RETENTION_DAYS:-180}
     ports:
       - "${CONTROLPLANE_HTTP_PORT:-8080}:8080"
       - "${CONTROLPLANE_GRPC_PORT:-9090}:9090"
@@ -397,8 +399,16 @@ services:
       # 重启/多副本后 bootstrap 安装令牌仍需有效时须固定该密钥（空=进程内随机，重启即失效）。
       OPSMESH_PROVISION_SECRET: ${PROVISION_SECRET:-}
       OPSMESH_FEDERATION_SECRET: ${FEDERATION_SECRET:-}
-      # metrics 白名单：仅 compose 网段与本机（空=不限来源）。
+      # metrics 白名单（P1-5 起生产模式必填）：为空则 /metrics 一律 403（fail-closed）。
+      # 必须含 172.28.0.0/16：Docker Desktop(WSL2) 的端口转发【不保留真实来源 IP】——
+      # 2026-09-25 实测（探针容器白名单=127.0.0.1/32）：宿主 curl、宿主经局域网 IP、
+      # 默认桥容器经 host.docker.internal 三种来源，容器侧看到的 remote 均为 172.28.1.1
+      # （frontend 网桥网关），故漏掉该网段连宿主都抓不到；反之它也【无法区分】局域网/公网来源。
+      # 因此 Docker 部署下真正的边界是「端口只发布到需要的地址」+ 宿主防火墙；CIDR 白名单
+      # 在裸机/systemd（真实来源 IP 保留）与 K8s（Pod IP）部署下才具备来源区分能力。
       OPSMESH_METRICS_ALLOW_CIDR: ${METRICS_ALLOW_CIDR:-127.0.0.0/8,172.28.0.0/16}
+      # API 限流（P1-5）：空=代码侧默认（生产 200 req/s/IP）；0=显式关闭（打印告警）。
+      OPSMESH_CB_RATE_LIMIT_PER_SEC: ${CB_RATE_LIMIT_PER_SEC:-}
       # ---- 可观测性 ----
       OPSMESH_OTEL_ENDPOINT: "otel-collector:4317"
       OPSMESH_OTEL_SERVICE_NAME: "opsmesh-controlplane"

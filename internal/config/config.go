@@ -22,6 +22,12 @@ import (
 // 当 --agent-shell-whitelist 未显式设置且 --agent-shell-whitelist-default=true（默认）时使用。
 const defaultAgentShellWhitelist = "ls,cat,echo,date,whoami,hostname,pwd,free,df,uptime,top,ps,netstat,ss,ipconfig,systeminfo"
 
+// defaultProductionRateLimitPerSec 是生产模式下的 API 限流默认阈值（req/s/IP，P1-5）。
+// 200 远高于单人/单客户端正常使用强度（含仪表盘并发的典型峰值 <20/s），
+// 又能把单个来源的放大能力限制在可控量级。经反向代理汇聚时请启用 --trust-proxy
+// 以按真实客户端 IP 计数，或调高此阈值。
+const defaultProductionRateLimitPerSec = 200
+
 // DefaultAgentShellWhitelist 返回 agent shell 白名单的预置安全默认值（导出，供测试/外部包引用）。
 func DefaultAgentShellWhitelist() string {
 	return defaultAgentShellWhitelist
@@ -162,6 +168,10 @@ type Config struct {
 	// F5 离线超龄自动归档阈值（分钟）：agent 最后心跳早于该时长的设备自动 retired。
 	// <=0 表示关闭自动归档（仅手动 DELETE 退役）。
 	ArchiveAgeMin int
+	// P1-3 审计日志保留天数：超龄审计行由 leader 周期搬入 audit_log_archive
+	// （边界哈希记入 audit_archive_meta，删除后「归档段↔在线段」仍可验证）。
+	// 0 表示永久保留（不归档）。等保三级通常要求 ≥180 天，默认 180。
+	AuditRetentionDays int
 	// 自动纳管：install token 的 HMAC 签名密钥（一次性、限时）。
 	// 多副本共享同一 MySQL 时需一致（否则互不相认）；空则本实例随机生成（单实例 MVP）。
 	ProvisionSecret string
@@ -482,6 +492,7 @@ func Load() *Config {
 	leaderTTLSec := flag.Int("leader-ttl-sec", 15, "选主租约秒；本实例持有 leader 身份的时长，到期前需续租")
 	leaderTickSec := flag.Int("leader-tick-sec", 5, "选主续租周期秒；leaderLoop 续租频率（应小于 leader-ttl-sec）")
 	archiveAgeMin := flag.Int("archive-age-min", 1440, "F5 离线超龄自动归档阈值（分钟）；agent 最后心跳早于该时长的设备自动 retired（<=0 关闭）")
+	auditRetentionDays := flag.Int("audit-retention-days", 180, "P1-3 审计日志保留天数；超龄审计行由 leader 搬入 audit_log_archive 后从在线表删除（0=永久保留）；或 env OPSMESH_AUDIT_RETENTION_DAYS")
 	provisionSecret := flag.String("provision-secret", "", "自动纳管 install token 的 HMAC 签名密钥；空则本实例随机生成（多副本需一致）")
 	advertiseAddr := flag.String("advertise-addr", "", "自动纳管控制面对外 HTTP 地址（拼接 bootstrap 安装命令）；空则回退 127.0.0.1:<http-port>（仅本机开发）")
 	alertWebhookURL := flag.String("alert-webhook-url", "", "M7 告警 Webhook 推送 URL（POST JSON 告警到此地址）；空=不推送。：URL 含 slack.com 走 Slack Block Kit，含 qyapi.weixin.qq.com 走企业微信 markdown")
@@ -697,6 +708,7 @@ func Load() *Config {
 		LeaderTTLSec:             valInt("leader-ttl-sec", *leaderTTLSec, "OPSMESH_LEADER_TTL_SEC"),
 		LeaderTickSec:            valInt("leader-tick-sec", *leaderTickSec, "OPSMESH_LEADER_TICK_SEC"),
 		ArchiveAgeMin:            valInt("archive-age-min", *archiveAgeMin, "OPSMESH_ARCHIVE_AGE_MIN"),
+		AuditRetentionDays:       valInt("audit-retention-days", *auditRetentionDays, "OPSMESH_AUDIT_RETENTION_DAYS"),
 		ProvisionSecret:          val("provision-secret", *provisionSecret, "OPSMESH_PROVISION_SECRET"),
 		AdvertiseAddr:            val("advertise-addr", *advertiseAddr, "OPSMESH_ADVERTISE_ADDR"),
 		AlertWebhookURL:          val("alert-webhook-url", *alertWebhookURL, "OPSMESH_ALERT_WEBHOOK_URL"),
@@ -827,6 +839,24 @@ func Load() *Config {
 	//（明文 HTTP 下 Secure Cookie 会被浏览器拒绝回传，导致会话丢失）。
 	if cfg.Production && !explicit["cookie-secure"] {
 		cfg.CookieSecure = true
+	}
+	// 安全加固（P1-5）：生产模式默认启用 API 限流（每 IP defaultProductionRateLimitPerSec req/s）。
+	// 无任何限流的 API 意味着单个来源（脚本、被攻陷 agent、扫描器）可无限放大控制面 CPU/DB 压力。
+	// 显式设置（flag 或 env，含显式 0）时尊重用户意图；显式关闭时打印告警以便运维感知暴露面。
+	if cfg.Production {
+		explicitRateLimit := explicit["cb-rate-limit-per-sec"] ||
+			strings.TrimSpace(os.Getenv("OPSMESH_CB_RATE_LIMIT_PER_SEC")) != ""
+		if !explicitRateLimit && cfg.CBRateLimitPerSec <= 0 {
+			cfg.CBRateLimitPerSec = defaultProductionRateLimitPerSec
+			fmt.Fprintf(os.Stderr, "[config] 提示：生产模式默认启用 API 限流 %d req/s/IP（--cb-rate-limit-per-sec 可调整，=0 关闭）\n", defaultProductionRateLimitPerSec)
+		} else if cfg.CBRateLimitPerSec <= 0 {
+			fmt.Fprintln(os.Stderr, "[config] 警告：生产模式未启用 API 限流（--cb-rate-limit-per-sec=0），单个来源可无限放大控制面压力；建议改由网关/WAF 层限流")
+		}
+	}
+	// metrics 准入（P1-5）：生产模式未配置白名单时 /metrics 一律 403（fail-closed，见 metricsAllowed）。
+	// 提前告警，避免运维在 Prometheus 抓取失败（403 / target DOWN）后才排查。
+	if cfg.Production && strings.TrimSpace(cfg.MetricsAllowCIDR) == "" {
+		fmt.Fprintln(os.Stderr, "[config] 警告：生产模式未配置 --metrics-allow-cidr，/metrics（8080 与 9091）将一律返回 403（fail-closed）；如需监控抓取请配置监控网段（如 --metrics-allow-cidr=10.0.0.0/8,172.28.0.0/16）")
 	}
 	// 安全加固：生产模式强制不信任网关注入的 X-User-Roles 头（即使显式 --trust-gateway-headers=true
 	// 也覆盖为 false）。生产环境要求身份经 Bearer token/联邦验签/mTLS 等密码学手段验证，杜绝信任客户端

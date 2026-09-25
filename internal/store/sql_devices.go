@@ -419,7 +419,7 @@ func (s *SQLStore) RetireStaleDevices(maxAge time.Duration) int {
 
 // StoreDeviceMetrics 缓存设备监控指标（agent 心跳上报，追加到环形缓冲保留最近 N 条历史）。
 // 高频时序数据落库应由 Prometheus 承担，控制面仅缓存最近 2h 历史供 GET /api/v1/devices/{id}/metrics?range=2h 查询。
-
+// 设备条目总数受 maxTrackedDeviceMetrics 约束（P1-4）：超限淘汰最久未更新设备，防 agent 伪造 DeviceID 撑爆 map。
 func (s *SQLStore) StoreDeviceMetrics(deviceID string, metrics *proto.DeviceMetrics) {
 	if deviceID == "" || metrics == nil {
 		return
@@ -432,6 +432,7 @@ func (s *SQLStore) StoreDeviceMetrics(deviceID string, metrics *proto.DeviceMetr
 		s.deviceMetrics[deviceID] = r
 	}
 	r.add(metrics)
+	evictDeviceMetricsIfNeeded(s.deviceMetrics)
 }
 
 // DeviceMetrics 返回设备最新监控指标缓存（无数据时返回 nil）。

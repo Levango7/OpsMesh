@@ -49,6 +49,8 @@ services:
       - --advertise-addr=${OPSMESH_ADVERTISE_ADDR:?请在 .env 设置 OPSMESH_ADVERTISE_ADDR（须与 GATEWAY_HTTPS_PORT 一致）}
       - --log-backend=loki
       - --loki-endpoint=http://loki:3100
+      # P1-3 审计保留：与 prod.yml 保持一致（command 为整体替换，漏写会退回代码默认值）。
+      - --audit-retention-days=${AUDIT_RETENTION_DAYS:-180}
     # !override：重置端口列表而非追加。去掉 8080——若保留，客户端可绕过网关直连明文端口。
     ports: !override
       - "${CONTROLPLANE_GRPC_PORT:-9090}:9090"

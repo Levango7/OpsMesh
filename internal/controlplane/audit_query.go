@@ -29,6 +29,8 @@ const (
 	auditMaxLimit      = 1000  // 最大返回条数（防滥用）
 	exportDefaultLimit = 1000  // 导出默认条数
 	exportMaxLimit     = 10000 // 导出最大条数
+	verifyDefaultLimit = 1000  // 链校验默认窗口行数
+	verifyMaxLimit     = 10000 // 链校验最大窗口行数（与 store.maxAuditVerifyLimit 对齐）
 )
 
 // handleAuditEvents 处理 GET /api/v1/audit/events：查询审计事件。
@@ -155,4 +157,57 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	}
 	events := s.store.QueryAudits(actx.TenantID, action, since, until, limit)
 	paginate.WriteJSON(w, http.StatusOK, events)
+}
+
+// handleAuditVerify 处理 GET /api/v1/audit/verify：校验审计哈希链完整性（P1-3 防篡改）。
+//
+// 查询参数：limit=校验窗口行数（默认 1000，上限 10000）。
+// 鉴权：audit:read + 租户上下文；校验窗口按租户过滤，响应不含其他租户的任何行内容，
+// 仅含行号区间/哈希/计数（前驱哈希取自全表上一条，用于保持链接判定正确）。
+//
+// 状态码：
+//   - 200：校验完成且无异常（ok=true）；
+//   - 409：校验完成但发现不一致（ok=false，firstBadID/reason 指出首个坏行）——
+//     用非 2xx 让 curl -f / 网关健康检查能直接告警；
+//   - 501：当前存储后端不提供链式校验（内存态 / 老库未应用迁移 019）；
+//   - 500：探测本身失败（DB 故障）。
+func (s *Server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requirePermission(w, r, "audit:read"); !ok {
+		return
+	}
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if actx.TenantID == "" {
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		return
+	}
+	if r.Method != http.MethodGet {
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	limit := verifyDefaultLimit
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > verifyMaxLimit {
+		limit = verifyMaxLimit
+	}
+	res, err := s.store.VerifyAuditChain(actx.TenantID, limit)
+	if err != nil {
+		writeInternalError(r.Context(), w, "audit.verifyChain", err)
+		return
+	}
+	if res == nil || !res.Supported {
+		paginate.WriteJSON(w, http.StatusNotImplemented, res)
+		return
+	}
+	if !res.OK {
+		paginate.WriteJSON(w, http.StatusConflict, res)
+		return
+	}
+	paginate.WriteJSON(w, http.StatusOK, res)
 }

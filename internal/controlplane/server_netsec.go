@@ -125,10 +125,13 @@ func grpcRecoveryInterceptor(ctx context.Context, req interface{}, info *grpc.Un
 }
 
 // metricsAllowed 判断客户端是否为 metrics 端点授权来源（CIDR 白名单）。
-// 白名单为空（默认）= 允许全部（向后兼容 MVP）；非空时仅允许命中白名单的 IP。
+//
+// 白名单为空时（P1-5 起）：生产模式一律拒绝（fail-closed，防未授权抓取与放大攻击——
+// metrics 端点无鉴权且做全量 store 扫描，暴露即是被打面）；开发/演示模式放行（向后兼容）。
+// 非空时仅允许命中白名单的 IP，解析失败的项直接跳过（配置在校验阶段已拦非法 CIDR）。
 func (s *Server) metricsAllowed(remoteAddr string) bool {
 	if strings.TrimSpace(s.cfg.MetricsAllowCIDR) == "" {
-		return true // 未配置白名单：向后兼容开放
+		return !s.cfg.Production
 	}
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {

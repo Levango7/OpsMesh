@@ -106,6 +106,10 @@ type metricsRing struct {
 	head     int                   // 下一个写入位置（0..capacity-1）
 	size     int                   // 当前已写入数量（<= capacity）
 	capacity int                   // 缓冲容量
+	// writeSeq 本条目最近一次写入的单调序号，用于 map 超上限时按「最久未更新」淘汰设备条目（P1-4）。
+	// 刻意用 store 侧写入序号而非样本里的 CollectedAt：后者由 agent 上报，可被伪造成未来时间从而永不被淘汰。
+	// 也不用墙钟：Windows 时间粒度约 15.6ms，同刻写入会有并列，淘汰对象随 map 迭代顺序随机。
+	writeSeq uint64
 }
 
 // newMetricsRing 创建环形缓冲。capacity<=0 时用 metricsRingDefaultCap（240）。

@@ -10,6 +10,7 @@ import "github.com/Levango7/OpsMesh/internal/proto"
 // tenantID 为 agent 归属租户（由控制面 gRPC handler 按 agent 注册时盖章回填，agent 不可伪造）；
 // 强制覆盖 report.TenantID 以保证行级隔离。report 为 nil 时直接返回。
 // 深拷贝 report 及其 Lines 避免外部并发修改破坏内部状态。
+// 驻留量受 maxAgentLogReports / maxAgentLogLines 约束（P1-4）：超限丢弃最旧批次，防长跑 OOM。
 func (m *MemoryStore) SaveLogs(tenantID string, report *proto.LogReport) error {
 	if report == nil {
 		return nil
@@ -23,7 +24,7 @@ func (m *MemoryStore) SaveLogs(tenantID string, report *proto.LogReport) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.agentLogs = append(m.agentLogs, cp)
+	m.agentLogs, m.agentLogLines = appendAgentLogBounded(m.agentLogs, m.agentLogLines, cp)
 	return nil
 }
 

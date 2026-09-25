@@ -1423,3 +1423,46 @@ func TestLoad_ExplicitFlagOverridesEnv(t *testing.T) {
 			cfg2.MaxMemoryMB, cfg2.TaskTimeout, cfg2.AnomalyThreshold)
 	}
 }
+
+// TestLoad_ProductionDefaultRateLimit 验证 P1-5：生产模式未显式设置限流阈值时默认启用 API 限流，
+// 显式设置（flag 或 env，含显式 0）时尊重用户意图。
+func TestLoad_ProductionDefaultRateLimit(t *testing.T) {
+	restore := clearOpsmeshEnv()
+	defer restore()
+	prodArgs := []string{"--production", "--tls-cert=tls.crt",
+		"--jwt-secret=0123456789abcdef0123456789abcdef",
+		"--encryption-key=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
+		"--store=mysql", "--mysql-dsn=u:p@tcp(db:3306)/db"}
+
+	// 1. 生产模式未显式设置 → 默认启用
+	cfg := loadForTest(prodArgs...)
+	if cfg.CBRateLimitPerSec != defaultProductionRateLimitPerSec {
+		t.Fatalf("生产默认 CBRateLimitPerSec = %d, want %d", cfg.CBRateLimitPerSec, defaultProductionRateLimitPerSec)
+	}
+
+	// 2. 显式 flag 优先，不被默认覆盖
+	cfg = loadForTest(append(append([]string{}, prodArgs...), "--cb-rate-limit-per-sec=42")...)
+	if cfg.CBRateLimitPerSec != 42 {
+		t.Fatalf("显式 flag CBRateLimitPerSec = %d, want 42", cfg.CBRateLimitPerSec)
+	}
+
+	// 3. 显式关闭（0）尊重用户意图（运维自行在网关层限流）
+	cfg = loadForTest(append(append([]string{}, prodArgs...), "--cb-rate-limit-per-sec=0")...)
+	if cfg.CBRateLimitPerSec != 0 {
+		t.Fatalf("显式 0 应关闭限流，实际 %d", cfg.CBRateLimitPerSec)
+	}
+
+	// 4. env 显式设置同样优先于默认值
+	os.Setenv("OPSMESH_CB_RATE_LIMIT_PER_SEC", "77")
+	cfg = loadForTest(prodArgs...)
+	if cfg.CBRateLimitPerSec != 77 {
+		t.Fatalf("env CBRateLimitPerSec = %d, want 77", cfg.CBRateLimitPerSec)
+	}
+	os.Unsetenv("OPSMESH_CB_RATE_LIMIT_PER_SEC")
+
+	// 5. 非生产（开发/演示）模式不自动启用，保持向后兼容
+	cfg = loadForTest()
+	if cfg.CBRateLimitPerSec != 0 {
+		t.Fatalf("非生产模式应保持禁用，实际 %d", cfg.CBRateLimitPerSec)
+	}
+}

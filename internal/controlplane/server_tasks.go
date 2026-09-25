@@ -304,6 +304,57 @@ func (s *Server) archiveLoop(ctx context.Context) {
 	}
 }
 
+// auditMaintenanceLoop P1-3 审计维护（仅 leader，每 60s）：归档超龄审计行 + 哈希链自检。
+// 与 archiveLoop 分开：审计保留策略（AuditRetentionDays）与设备归档（ArchiveAgeMin）
+// 是两条独立开关，任一方关闭不应连带停掉另一方。
+func (s *Server) auditMaintenanceLoop(ctx context.Context) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	// 启动后先等选主完成，再跑首轮：让自检指标（opsmesh_audit_chain_ok）尽早可见。
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(10 * time.Second):
+	}
+	for {
+		if s.store.IsLeader() {
+			s.runAuditMaintenance(ctx)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// runAuditMaintenance 执行一次审计维护：归档 + 链自检（仅 leader 调用）。
+func (s *Server) runAuditMaintenance(ctx context.Context) {
+	// 1) 归档：把超过 AuditRetentionDays 的在线行搬入 audit_log_archive（0=永久保留）。
+	if n, err := s.store.ArchiveAuditLog(s.cfg.AuditRetentionDays, 500); err != nil {
+		logx.Warn(ctx, "审计日志归档失败", "err", err)
+	} else if n > 0 {
+		logx.Info(ctx, "审计日志归档", "archived", n, "retain_days", s.cfg.AuditRetentionDays)
+	}
+	// 2) 链自检（平台级，tenant 为空）：结果写入指标；发现不一致时高声告警。
+	res, err := s.store.VerifyAuditChain("", 1000)
+	if err != nil {
+		logx.Warn(ctx, "审计链自检失败", "err", err)
+		return
+	}
+	if s.metrics != nil {
+		s.metrics.SetAuditChainStatus(res.OK, res.Checked, res.Supported)
+	}
+	if !res.Supported {
+		logx.Info(ctx, "审计链自检跳过（当前存储后端不提供链式校验）", "note", res.Note)
+		return
+	}
+	if !res.OK {
+		logx.Error(ctx, "审计链完整性校验发现不一致（疑似篡改或行被删除）", nil,
+			"first_bad_id", res.FirstBadID, "reason", res.Reason, "checked", res.Checked)
+	}
+}
+
 // reclaimLoop 周期性复位超期 running 任务（任务必达）：agent 领取后超过租约租期仍未
 // 上报结果，视为失联，复位 pending 重新进入调度队列。ctx 取消即退出。
 func (s *Server) reclaimLoop(ctx context.Context) {

@@ -673,6 +673,11 @@ TRUST_PROXY=false
 GRPC_REQUIRE_SIGNATURE=true
 # metrics 来源白名单（默认仅本机 + compose 网段；空值=不限来源）
 METRICS_ALLOW_CIDR=127.0.0.0/8,172.28.0.0/16
+# API 限流 req/s/IP（空=用代码默认：生产 200；0=显式关闭，控制面会打印告警）
+CB_RATE_LIMIT_PER_SEC=
+# P1-3 审计日志保留天数：超龄审计行由 leader 搬入 audit_log_archive 后从在线表删除。
+# 0=永久保留。等保三级/ISO 27001 通常要求审计留存 ≥ 180 天（默认即 180），按合规要求调整。
+AUDIT_RETENTION_DAYS=180
 
 # === 存储后端（sql=MySQL 持久化；memory 仅用于演示，重启丢数据）===
 DEVICE_STORE_TYPE=sql
@@ -842,6 +847,14 @@ start_observability() {
     log_info "启动 Prometheus / Loki / OTel Collector / Grafana..."
     compose up -d prometheus loki otel-collector grafana
     wait_for_healthy prometheus 90
+    # 告警规则热加载：alerts.yml 是宿主机 bind mount，升级后文件内容已变，但 Prometheus
+    # 不会自动重读（实测：新增 opsmesh_audit_chain_alerts 组在不 reload 时始终不生效）。
+    # 容器未重建 → 必须显式 reload，否则客户升级后静默沿用旧告警规则。
+    if compose exec -T prometheus wget -qO- --post-data='' http://127.0.0.1:9090/-/reload >/dev/null 2>&1; then
+        log_ok "Prometheus 告警规则已热加载"
+    else
+        log_warn "Prometheus 热加载失败（--web.enable-lifecycle 未开启？）——告警规则将在容器重建后生效"
+    fi
     wait_for_healthy loki 90
     wait_for_healthy otel-collector 90
     wait_for_healthy grafana 90

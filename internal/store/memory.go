@@ -94,6 +94,8 @@ type MemoryStore struct {
 	// 生产高频场景应由 logstore.SQLLogStore / Loki / ES 承担检索侧）。
 	// 由 m.mu 保护并发安全。
 	agentLogs []proto.LogReport
+	// agentLogLines 为 agentLogs 当前总行数，用于 O(1) 判定是否超过 maxAgentLogLines（P1-4）。
+	agentLogLines int
 	// P0.3 服务发现 / 配置中心 / 密钥管理 内存表（按 tenantID 隔离）。
 	// 由 m.mu 保护并发安全；key 形如 "tenantID|key" 或 serviceID。
 	services       map[string]*ServiceInstance // serviceID -> 实例
@@ -1255,6 +1257,43 @@ func (m *MemoryStore) QueryAudits(tenant, action string, since, until time.Time,
 	return out
 }
 
+// VerifyAuditChain 内存态审计没有哈希链可校验：如实回报 Supported=false，
+// 而不是伪称「校验通过」（内存后端的定位是开发/测试；生产强制 SQL 后端）。
+func (m *MemoryStore) VerifyAuditChain(tenant string, limit int) (*AuditChainVerifyResult, error) {
+	return &AuditChainVerifyResult{
+		Supported: false,
+		Note:      "内存存储不维护审计哈希链（防篡改校验仅 SQL 后端提供）",
+	}, nil
+}
+
+// ArchiveAuditLog 内存态保留策略：直接丢弃早于 retainDays 的审计事件。
+// 内存态没有归档表，超龄即删除（SQL 后端是「先入归档表再删」，可追溯）。
+// batch 对内存实现无意义（整表线性扫描），保留形参以对齐接口。
+func (m *MemoryStore) ArchiveAuditLog(retainDays, batch int) (int, error) {
+	if retainDays <= 0 {
+		return 0, nil // 永久保留
+	}
+	cutoff := time.Now().AddDate(0, 0, -retainDays)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	old := m.audits
+	kept := old[:0]
+	removed := 0
+	for _, e := range old {
+		if e.CreatedAt.Before(cutoff) {
+			removed++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	m.audits = kept
+	// 释放被丢弃事件在底层数组中的引用，避免数组持有已删对象。
+	for i := len(kept); i < len(old); i++ {
+		old[i] = nil
+	}
+	return removed, nil
+}
+
 // AllTasks 返回全部任务（tenantID 非空时按租户过滤；供任务列表端点）。
 func (m *MemoryStore) AllTasks(tenantID string) []*proto.Task {
 	m.mu.RLock()
@@ -1436,6 +1475,7 @@ func (m *MemoryStore) Snapshot(tenantID string) map[string][]proto.DeviceInfo {
 // StoreDeviceMetrics 存储设备监控指标（agent 心跳上报，追加到环形缓冲保留最近 N 条历史）。
 // deviceID 为空或 metrics 为 nil 时直接返回。深拷贝入参避免外部并发修改。
 // 环形缓冲默认容量 240 条（2h * 120 samples/h，30s 采样间隔），满后覆写最旧。
+// 设备条目总数受 maxTrackedDeviceMetrics 约束（P1-4）：超限淘汰最久未更新设备，防 map 无界膨胀。
 func (m *MemoryStore) StoreDeviceMetrics(deviceID string, metrics *proto.DeviceMetrics) {
 	if deviceID == "" || metrics == nil {
 		return
@@ -1448,6 +1488,7 @@ func (m *MemoryStore) StoreDeviceMetrics(deviceID string, metrics *proto.DeviceM
 		m.deviceMetrics[deviceID] = r
 	}
 	r.add(metrics) // 在 m.mu 锁内执行，metricsRing 自身无锁，由外层 m.mu 统一保护
+	evictDeviceMetricsIfNeeded(m.deviceMetrics)
 }
 
 // DeviceMetrics 返回设备最新监控指标（无数据时返回 nil）。返回深拷贝避免外部并发修改。
@@ -1660,6 +1701,7 @@ func (r *metricsRing) add(m *proto.DeviceMetrics) {
 	if r.size < r.capacity {
 		r.size++
 	}
+	r.writeSeq = nextDeviceMetricsSeq() // 供设备条目淘汰排序用（P1-4，单调序号保证全序）
 }
 
 // latest 返回最近一条指标快照（无数据时返回 nil）。返回深拷贝。

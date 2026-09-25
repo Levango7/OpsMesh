@@ -209,6 +209,17 @@ func TestMultiSchemaSmoke_MySQLDSNBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMultiSchemaStore 失败: %v", err)
 	}
+	// 本用例会在真实库上创建 per-tenant 库（namer 决定库名），用完即删，避免测试残留。
+	adminDSN := stripDBName(dsn)
+	t.Cleanup(func() {
+		for _, tenant := range []string{"sqlsmokea", "sqlsmokeb"} {
+			name, nerr := namer(tenant)
+			if nerr != nil {
+				continue
+			}
+			dropTestDB(adminDSN, name)
+		}
+	})
 
 	// per-tenant 写读隔离冒烟（Ticket 域）；CreateTicket 返回值也断言（防静默 nil）。
 	created := m.CreateTicket("sqlsmokea", &Ticket{

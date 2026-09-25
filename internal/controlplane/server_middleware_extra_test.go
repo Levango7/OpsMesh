@@ -279,3 +279,61 @@ func TestIsAllDigits(t *testing.T) {
 
 // 确保 strings 被使用
 var _ = strings.HasPrefix
+
+// TestNormalizePath_Tightened 验证路径归一化的收紧（P1-5）：
+// 超长路径、超长段、含异常字符的段都折叠，防止任意路径各自占用一个 metrics 时序。
+func TestNormalizePath_Tightened(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+	}{
+		{"超长整路径", "/" + strings.Repeat("a", maxMetricsPathLen+10), "/:overlong"},
+		{"超长段", "/api/v1/devices/" + strings.Repeat("9", maxMetricsPathSegmentLen+1), "/api/v1/devices/:id"},
+		{"路径恰好达长度上限不折叠", strings.Repeat("/aaaa", maxMetricsPathLen/5), strings.Repeat("/aaaa", maxMetricsPathLen/5)},
+		{"含空格段", "/api/v1/devices/evil path", "/api/v1/devices/:id"},
+		{"含尖括号段", "/api/v1/devices/<script>", "/api/v1/devices/:id"},
+		{"含编码控制字符段", "/api/v1/devices/\x00\x01", "/api/v1/devices/:id"},
+		{"非 ASCII 段", "/api/v1/devices/设备一", "/api/v1/devices/:id"},
+		{"点分 IP 段保留", "/api/v1/devices/10.0.0.1", "/api/v1/devices/10.0.0.1"},
+		{"连字符标识保留", "/api/v1/users/u-abc-1", "/api/v1/users/u-abc-1"},
+		{"点号扩展名保留", "/enterprise/assets/index-B3xk9Q2z.js", "/enterprise/assets/index-B3xk9Q2z.js"},
+		{"无数字普通路径不变", "/api/v1/tasks/batch", "/api/v1/tasks/batch"},
+		{"下划线与波浪号保留", "/api/v1/x/a_b~c", "/api/v1/x/a_b~c"},
+	}
+	for _, c := range cases {
+		if got := normalizePath(c.in); got != c.want {
+			t.Errorf("%s: normalizePath(%q) = %q, want %q", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+// TestIsMetricsPathSegmentSafe 验证路径段字符白名单。
+func TestIsMetricsPathSegmentSafe(t *testing.T) {
+	for _, ok := range []string{"devices", "v1", "u-abc-1", "10.0.0.1", "a_b~c", "index-B3xk9Q2z.js"} {
+		if !isMetricsPathSegmentSafe(ok) {
+			t.Errorf("isMetricsPathSegmentSafe(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"evil path", "<script>", "a|b", "a/b", "中文", "a\x00b", "a:b", "a%b"} {
+		if isMetricsPathSegmentSafe(bad) {
+			t.Errorf("isMetricsPathSegmentSafe(%q) = true, want false", bad)
+		}
+	}
+}
+
+// TestHTTPMetricsMiddleware_RecordsNormalizedPath 验证中间件记录的是归一化后的路径，
+// 且扫描器路径不会造成时序膨胀（P1-5 端到端：中间件 + metrics 基数熔断）。
+func TestHTTPMetricsMiddleware_RecordsNormalizedPath(t *testing.T) {
+	s := &Server{cfg: &config.Config{}, metrics: metrics.New()}
+	h := s.httpMetricsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/devices/"+strings.Repeat("7", 80), nil))
+	out := s.metrics.Render()
+	if !strings.Contains(out, `path="/api/v1/devices/:id"`) {
+		t.Fatalf("超长数字段应归一化为 :id\n---%s", out)
+	}
+	if strings.Contains(out, strings.Repeat("7", 80)) {
+		t.Fatalf("原始超长段泄漏进 metrics 标签\n---%s", out)
+	}
+}

@@ -11,6 +11,7 @@ import "github.com/Levango7/OpsMesh/internal/proto"
 // 不宜直接落 MySQL，检索侧由 logstore.SQLLogStore 走独立表/连接池承担。
 // tenantID 为 agent 归属租户（由控制面回填，agent 不可伪造）；强制覆盖 report.TenantID 保证行级隔离。
 // report 为 nil 时直接返回。深拷贝 report 及其 Lines 避免外部并发修改。
+// 驻留量受 maxAgentLogReports / maxAgentLogLines 约束（P1-4）：超限丢弃最旧批次，防长跑 OOM。
 func (s *SQLStore) SaveLogs(tenantID string, report *proto.LogReport) error {
 	if report == nil {
 		return nil
@@ -23,7 +24,7 @@ func (s *SQLStore) SaveLogs(tenantID string, report *proto.LogReport) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.agentLogs = append(s.agentLogs, cp)
+	s.agentLogs, s.agentLogLines = appendAgentLogBounded(s.agentLogs, s.agentLogLines, cp)
 	return nil
 }
 

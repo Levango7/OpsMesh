@@ -30,6 +30,17 @@ var defBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 
 // 包初始化时采集一次，等价于 prometheus process collector 的 start_time。
 var processStartTime = float64(time.Now().UnixNano()) / 1e9
 
+// maxHTTPSeries HTTP 指标时序基数硬上限（P1-5 基数熔断）。
+// 未鉴权/半开放入口上的任意 URL 都会成为一个 (method,path,status) 时序；无上限意味着
+// 扫描器遍历随机路径即可让 httpReqs/httpHist 无限增长直至 OOM（内存耗尽型 DoS）。
+// 达到上限后新路径折叠到 path=":other"，方法折叠到标准方法集合，见 httpSeriesKey。
+const maxHTTPSeries = 2000
+
+// otherPathLabel 基数超限后的折叠路径标签值。
+// 命名与 Prometheus 生态惯例一致（如 nginx-ingress 的 path=":other"），
+// 便于告警区分"真实路径"与"被折叠的长尾"。
+const otherPathLabel = ":other"
+
 // httpHistStats 单个 (method,path,status) 维度的直方图统计。
 // bucketCounts[i] 表示落在 (defBuckets[i-1], defBuckets[i]] 区间内的观测数；
 // bucketCounts[len(defBuckets)] 为 +Inf 桶（> 最大有限桶上界）。
@@ -55,14 +66,28 @@ type M struct {
 	// key 形如 "GET|/api/v1/devices|200"，避免高基数（路径已归一化）。
 	httpReqs map[string]uint64
 	httpHist map[string]*httpHistStats
+
+	// httpSeries 已分配的时序键集合（基数计量与上限判定），
+	// httpSeriesDropped 因基数超限被折叠到 :other 的请求数。
+	httpSeries        map[string]struct{}
+	httpSeriesDropped uint64
+
+	// 审计链自检状态（P1-3）：由 leader 周期校验后写入。
+	// auditChainOK 1=链完整 / 0=不一致或不可校验；auditChainUnsupported 1=后端不提供链式校验
+	// （内存态 / 老库未应用迁移 019），用于区分「校验失败」与「无法校验」。
+	auditChainOK          int64
+	auditChainUnsupported int64
+	auditChainCheckedRows int64
+	auditChainChecks      int64
 }
 
 // New 构造空指标注册表。
 func New() *M {
 	return &M{
-		tasks:    make(map[string]int64),
-		httpReqs: make(map[string]uint64),
-		httpHist: make(map[string]*httpHistStats),
+		tasks:      make(map[string]int64),
+		httpReqs:   make(map[string]uint64),
+		httpHist:   make(map[string]*httpHistStats),
+		httpSeries: make(map[string]struct{}),
 	}
 }
 
@@ -98,9 +123,65 @@ func (m *M) ObserveDuration(seconds float64) {
 	}
 }
 
+// SetAuditChainStatus 记录一次审计链自检结果（P1-3）。
+// ok=链完好；checked=本次校验行数；supported=false 表示该后端不提供链式校验。
+// 告警建议：opsmesh_audit_chain_ok == 0 且 opsmesh_audit_chain_supported == 1 → 有篡改迹象。
+func (m *M) SetAuditChainStatus(ok bool, checked int, supported bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.auditChainChecks++
+	m.auditChainCheckedRows = int64(checked)
+	if supported {
+		m.auditChainUnsupported = 0
+	} else {
+		m.auditChainUnsupported = 1
+	}
+	if ok && supported {
+		m.auditChainOK = 1
+	} else {
+		m.auditChainOK = 0
+	}
+}
+
 // httpKey 构造 HTTP 指标维度键（method|path|status）。
 func httpKey(method, path, status string) string {
 	return method + "|" + path + "|" + status
+}
+
+// httpSeriesKey 解析/分配 HTTP 指标时序键，带硬基数上限（P1-5）。
+// 调用方须持有 m.mu。
+//
+// 语义：
+//   - 已登记的键直接复用（既有真实路径不会因超限而丢失计数连续性）；
+//   - 未达上限：登记真实键；
+//   - 已达上限：折叠为 (标准方法|:other|status)，累加 httpSeriesDropped。
+//
+// 折叠键空间有界：方法经 collapseHTTPMethod 收敛到 7 个标准方法 + :other，
+// 状态码由控制面自身产生（有限集），故折叠本身不会重新引入无界增长。
+func (m *M) httpSeriesKey(method, path, status string) string {
+	k := httpKey(method, path, status)
+	if _, ok := m.httpSeries[k]; ok {
+		return k
+	}
+	if len(m.httpSeries) < maxHTTPSeries {
+		m.httpSeries[k] = struct{}{}
+		return k
+	}
+	m.httpSeriesDropped++
+	k = httpKey(collapseHTTPMethod(method), otherPathLabel, status)
+	m.httpSeries[k] = struct{}{}
+	return k
+}
+
+// collapseHTTPMethod 把非标准 HTTP 方法收敛为 :other，防止攻击者用任意方法文本
+// （method 由请求方自选）撑大折叠键空间。
+func collapseHTTPMethod(method string) string {
+	switch method {
+	case "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS":
+		return method
+	default:
+		return ":other"
+	}
 }
 
 // IncHTTPRequest 累加 HTTP 请求计数。
@@ -108,7 +189,7 @@ func httpKey(method, path, status string) string {
 func (m *M) IncHTTPRequest(method, path, status string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.httpReqs[httpKey(method, path, status)]++
+	m.httpReqs[m.httpSeriesKey(method, path, status)]++
 }
 
 // ObserveHTTPRequestDuration 记录一次 HTTP 请求耗时（秒），更新直方图桶。
@@ -116,7 +197,22 @@ func (m *M) IncHTTPRequest(method, path, status string) {
 func (m *M) ObserveHTTPRequestDuration(method, path, status string, seconds float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	k := httpKey(method, path, status)
+	m.observeHTTPLocked(m.httpSeriesKey(method, path, status), seconds)
+}
+
+// RecordHTTP 记录一次 HTTP 请求（计数器 + 延迟直方图），时序键只解析一次。
+// 中间件走本方法：省一次加锁与键解析，且基数熔断的折叠计数按"请求"精确计一次
+// （先 Inc 再 Observe 的写法会让同一请求在超限后重复累加折叠计数）。
+func (m *M) RecordHTTP(method, path, status string, seconds float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := m.httpSeriesKey(method, path, status)
+	m.httpReqs[k]++
+	m.observeHTTPLocked(k, seconds)
+}
+
+// observeHTTPLocked 更新直方图桶（调用方须持锁）。
+func (m *M) observeHTTPLocked(k string, seconds float64) {
 	h, ok := m.httpHist[k]
 	if !ok {
 		h = &httpHistStats{bucketCounts: make([]uint64, len(defBuckets)+1)}
@@ -170,13 +266,44 @@ func (m *M) Render() string {
 	b = append(b, fmt.Sprintf("opsmesh_task_duration_seconds_max %f\n", m.durMax)...)
 
 	b = m.appendHTTPMetrics(b)
+	b = m.appendAuditChainMetrics(b)
 	b = m.appendRuntimeMetrics(b)
 	return string(b)
+}
+
+// appendAuditChainMetrics 输出审计链自检状态（P1-3）。调用方已持锁。
+func (m *M) appendAuditChainMetrics(b []byte) []byte {
+	b = append(b, "# HELP opsmesh_audit_chain_ok 审计哈希链最近一次校验是否完好（1=完好；0=不一致或不可校验，需结合 opsmesh_audit_chain_supported 判断）\n"...)
+	b = append(b, "# TYPE opsmesh_audit_chain_ok gauge\n"...)
+	b = append(b, fmt.Sprintf("opsmesh_audit_chain_ok %d\n", m.auditChainOK)...)
+	b = append(b, "# HELP opsmesh_audit_chain_supported 当前存储后端是否提供审计链式校验（1=支持；0=内存态/未迁移/尚未校验）\n"...)
+	b = append(b, "# TYPE opsmesh_audit_chain_supported gauge\n"...)
+	supported := int64(0)
+	if m.auditChainChecks > 0 && m.auditChainUnsupported == 0 {
+		supported = 1
+	}
+	b = append(b, fmt.Sprintf("opsmesh_audit_chain_supported %d\n", supported)...)
+	b = append(b, "# HELP opsmesh_audit_chain_checked_rows 最近一次校验覆盖的审计行数\n"...)
+	b = append(b, "# TYPE opsmesh_audit_chain_checked_rows gauge\n"...)
+	b = append(b, fmt.Sprintf("opsmesh_audit_chain_checked_rows %d\n", m.auditChainCheckedRows)...)
+	b = append(b, "# HELP opsmesh_audit_chain_checks_total 审计链自检执行次数\n"...)
+	b = append(b, "# TYPE opsmesh_audit_chain_checks_total counter\n"...)
+	b = append(b, fmt.Sprintf("opsmesh_audit_chain_checks_total %d\n", m.auditChainChecks)...)
+	return b
 }
 
 // appendHTTPMetrics 输出 HTTP 请求计数器与延迟直方图。
 // 调用方已持锁，无需再锁。
 func (m *M) appendHTTPMetrics(b []byte) []byte {
+	// 0. 基数熔断自观测：当前时序数 + 因超限被折叠的请求数。
+	// 告警建议：series_dropped_total 持续增长说明本端点正在被扫描（或路径归一化规则需补全）。
+	b = append(b, "# HELP opsmesh_http_metrics_series 当前 HTTP 指标时序数（基数上限内）\n"...)
+	b = append(b, "# TYPE opsmesh_http_metrics_series gauge\n"...)
+	b = append(b, fmt.Sprintf("opsmesh_http_metrics_series %d\n", len(m.httpSeries))...)
+	b = append(b, "# HELP opsmesh_http_metrics_series_dropped_total 因基数超限被折叠到 :other 标签的请求数\n"...)
+	b = append(b, "# TYPE opsmesh_http_metrics_series_dropped_total counter\n"...)
+	b = append(b, fmt.Sprintf("opsmesh_http_metrics_series_dropped_total %d\n", m.httpSeriesDropped)...)
+
 	// 1. HTTP 请求计数器（按 key 排序保证输出稳定，便于测试断言）。
 	b = append(b, "# HELP opsmesh_http_requests_total HTTP 请求总数（按方法/路径/状态）\n"...)
 	b = append(b, "# TYPE opsmesh_http_requests_total counter\n"...)

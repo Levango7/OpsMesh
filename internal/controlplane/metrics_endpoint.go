@@ -8,7 +8,9 @@
 //
 // 设计要点：
 //   - 从 s.store 获取数据（Snapshot/AllTasks/Alerts/ListTickets）；
-//   - 不需要鉴权（Prometheus 抓取通常经网络策略限制访问）；
+//   - 访问控制（P1-5）：每次请求做 4 次全量 store 扫描，且本端点位于对外 Web 端口（8080）
+//     且无鉴权，故必须经 metricsAllowed（CIDR 白名单）准入；生产模式未配置白名单时 fail-closed
+//     返回 403。Prometheus 抓取应指向独立 metrics 端口 9091（buildMetrics，只做 O(1) 渲染）。
 //   - 输出 Prometheus text exposition format（Content-Type: text/plain; version=0.0.4）。
 package controlplane
 
@@ -18,6 +20,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
 
@@ -25,6 +28,14 @@ import (
 func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	// 准入控制：本端点无鉴权且做全量 store 扫描，未授权来源可直接放大为控制面 CPU/DB 压力。
+	if !s.metricsAllowed(r.RemoteAddr) {
+		logx.Warn(r.Context(), "metrics(8080) 访问被拒",
+			"remote", r.RemoteAddr, "hint", "配置 --metrics-allow-cidr 或改用独立 metrics 端口 9091")
+		paginate.WriteJSON(w, http.StatusForbidden,
+			map[string]string{"error": "metrics access denied", "hint": "配置 --metrics-allow-cidr 白名单（生产模式必填）；监控抓取建议使用 9091 端口"})
 		return
 	}
 	// 从 store 获取数据（空租户=全部租户）。

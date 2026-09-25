@@ -19,6 +19,24 @@ func (s *SQLStore) Audit(e *proto.AuditEvent) {
 	if e.CreatedAt.IsZero() {
 		e.CreatedAt = time.Now().UTC()
 	}
+	// P1-3：优先走哈希链写入（防篡改）。链式写入对所有副本串行化（audit_chain_head 单行锁），
+	// 突发并发下的死锁 1213 / 锁等待超时 1205 是预期内瞬时冲突，有限重试。
+	if _, hasChain := s.auditColumnFlags(ctx); hasChain {
+		hasTrace := s.columnExists(ctx, "audit_log", "trace_id")
+		var err error
+		for attempt := 0; attempt < 3; attempt++ {
+			if _, err = s.insertChainedAudit(ctx, e, hasTrace); !isRetryableTxErr(err) {
+				break
+			}
+			time.Sleep(time.Duration(attempt+1) * 20 * time.Millisecond)
+		}
+		if err == nil {
+			return
+		}
+		// 链式写入失败也绝不丢审计：降级为非链式写入并高声告警。该行 entry_hash 为空，
+		// 校验端如实计入 LegacyRows（链前遗留行），不会被误报成篡改。
+		log.Printf("[store] 链式审计写入失败，降级为非链式写入（该行不计入哈希链）: %v", err)
+	}
 	// 持久化 trace_id（列存在时写入，列不存在时回退到无 trace_id 写入）。
 	// trace_id 列由 migrations/004_add_audit_trace_id.sql 添加；
 	// 老库未迁移时 INSERT 会报错"Unknown column"，此时降级到无 trace_id 写入（向后兼容）。

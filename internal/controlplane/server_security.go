@@ -2,6 +2,7 @@
 package controlplane
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 func validateURLSSRF(rawURL string) error {
@@ -93,6 +95,10 @@ func isPrivateIP(ip net.IP) bool {
 // API 限流（控制面熔断）
 // ============================================================================
 
+// maxRateLimitBuckets 限流器跟踪的 IP 桶上限（P1-5 内存熔断）。
+// 每个桶几十字节量级，5 万桶约数 MB；达到上限时先清理空闲桶，仍满则放行但不建桶（见 allow）。
+const maxRateLimitBuckets = 50000
+
 // rateLimiter 按 IP 令牌桶限流器。
 // 每个 IP 维护一个独立的令牌桶，按 ratePerSec 速率补充令牌，桶容量=ratePerSec（允许 1s 突发）。
 // 超过桶容量时拒绝请求（返回 429）。sweepInterval 周期清理空闲 IP 条目防内存泄漏。
@@ -101,6 +107,11 @@ type rateLimiter struct {
 	buckets       map[string]*tokenBucket
 	ratePerSec    int
 	sweepInterval time.Duration
+	// maxBuckets 跟踪的 IP 桶数上限（<=0 时取 maxRateLimitBuckets）；untracked 为达上限后
+	// 未跟踪（直接放行且不建桶）的请求数，lastUntrackedLog 为上次告警时刻（限噪用）。
+	maxBuckets       int
+	untracked        uint64
+	lastUntrackedLog time.Time
 }
 
 // tokenBucket 令牌桶。lastRefill 为上次补充时刻，tokens 为当前令牌数（浮点支持分数补充）。
@@ -115,18 +126,39 @@ func newRateLimiter(ratePerSec int, sweepInterval time.Duration) *rateLimiter {
 		buckets:       make(map[string]*tokenBucket),
 		ratePerSec:    ratePerSec,
 		sweepInterval: sweepInterval,
+		maxBuckets:    maxRateLimitBuckets,
 	}
 	go rl.sweepLoop()
 	return rl
 }
 
 // allow 检查 IP 是否允许放行。true=放行并消耗一个令牌；false=拒绝（429）。
+//
+// 内存有界（P1-5）：IP 由请求方自选（IPv6 地址空间近乎无限），无上限的 buckets
+// 本身即内存耗尽面。达到上限后先清理空闲桶；若仍满，则放行但不建桶——正在刷流量的
+// 攻击方早已持有桶并处于限流之下，放行新 IP 不会削弱对在途攻击的抑制，同时内存不再增长。
 func (rl *rateLimiter) allow(ip string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	now := time.Now()
 	b, ok := rl.buckets[ip]
 	if !ok {
+		limit := rl.maxBuckets
+		if limit <= 0 {
+			limit = maxRateLimitBuckets
+		}
+		if len(rl.buckets) >= limit {
+			rl.evictIdleLocked(now)
+			if len(rl.buckets) >= limit {
+				rl.untracked++
+				if rl.lastUntrackedLog.IsZero() || now.Sub(rl.lastUntrackedLog) > 30*time.Second {
+					rl.lastUntrackedLog = now
+					logx.Warn(context.Background(), "限流器 IP 桶已达上限：本请求仅放行不跟踪（不再新建桶）",
+						"tracked", len(rl.buckets), "limit", limit, "untracked_total", rl.untracked)
+				}
+				return true
+			}
+		}
 		// 首次访问：满桶（容量=ratePerSec），允许 1s 突发。
 		b = &tokenBucket{tokens: float64(rl.ratePerSec), lastRefill: now}
 		rl.buckets[ip] = b
@@ -145,18 +177,22 @@ func (rl *rateLimiter) allow(ip string) bool {
 	return false
 }
 
+// evictIdleLocked 清理超过 sweepInterval 未访问的桶（调用方须持锁）。
+func (rl *rateLimiter) evictIdleLocked(now time.Time) {
+	for ip, b := range rl.buckets {
+		if now.Sub(b.lastRefill) > rl.sweepInterval {
+			delete(rl.buckets, ip)
+		}
+	}
+}
+
 // sweepLoop 周期清理超过 sweepInterval 未访问的 IP 条目，防内存泄漏。
 func (rl *rateLimiter) sweepLoop() {
 	ticker := time.NewTicker(rl.sweepInterval)
 	defer ticker.Stop()
 	for range ticker.C {
 		rl.mu.Lock()
-		now := time.Now()
-		for ip, b := range rl.buckets {
-			if now.Sub(b.lastRefill) > rl.sweepInterval {
-				delete(rl.buckets, ip)
-			}
-		}
+		rl.evictIdleLocked(time.Now())
 		rl.mu.Unlock()
 	}
 }

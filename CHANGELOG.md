@@ -4,6 +4,53 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-25 商用就绪 P1 批次（P1-1 / P1-3 / P1-4 / P1-5）
+
+> 承接 P0 两批。本批解决「命令白名单可绕过 / 审计日志可被静默篡改且无保留策略 / 无界内存缓冲 / 指标内存耗尽 DoS + 无准入 + 无限流」四项 P1 高风险。证据：`docs/commercial-readiness-review-2026-09-25.md` §3、§10。
+
+### 安全：P1-1 agent shell 白名单可被 `&&` / `||` / `|` 绕过
+
+- **根因**：`--agent-shell-whitelist` 只校验命令的**首个 token**，而 agent 侧 `checkShellMetachars` 刻意放行 `&&`、`>&`、`&>`（注释称其「不引入任意命令执行」——该推理对白名单场景不成立）。故 `ls && rm -rf /` 首 token `ls` 命中白名单，右侧照常执行。
+- **修复**：白名单改为**按命令段校验**（`splitShellSegments` 按 `&&`/`||`/`|` 切段，每段首词都必须命中白名单，任一段失败即整条拒绝）；`>&`/`&>` 识别为重定向而非分隔符（否则 `echo hi 1>&2` 会被误切）。
+- **同时收紧**：① 环境变量赋值前缀（`PATH=/tmp ls`、`FOO=bar cmd`）fail-closed 拒绝；② 路径形式命令词只在「标准 bin 目录内按 basename 匹配」或「整条路径被显式列入白名单」时放行（`/tmp/ls`、`./ls`、`../bin/ls` 一律拒绝，`/opt/app/bin/ctl` 需显式列出）。
+- **诚实边界**（写入代码注释）：命令词白名单不约束重定向目标与命令参数（`echo hi > /etc/x` 在 `echo` 命中时仍会写文件），也不拦 base64/编码类绕过的**参数**——白名单是纵深防御的一层，不是沙箱。
+- 测试：`shell_whitelist_test.go` 新增分段链式拒绝/放行、env 赋值、路径作用域、空白名单回归等 ~120 行断言。
+- **验证（2026-09-25）**：`go test ./internal/agent/` 全过（53.1s）；控制面侧 `validateCommand` 与 agent 侧策略不再分歧——`&&` 链式在 agent 侧逐段校验。
+
+### 可靠性：P1-4 无界 agent 日志缓冲 / 设备指标 map 导致 OOM
+
+- **根因**：`agentLogs` 按 agent 每 30s 追加且永不裁剪；`deviceMetrics`（每设备一个 240 样本环形缓冲）无淘汰。
+- **修复**（`internal/store/memory_bounds.go` 共享实现，memory/sql 双实现同改）：日志报告数上限 2000、总行数上限 10 万（超出按最旧优先淘汰，并把切片后备数组在 `cap > 2×max` 时压实）；设备指标 map 上限 2000 台，超出淘汰**最久未被写入**的设备。
+- **防绕过**：淘汰顺序用 store 侧写入序号（`metricsRing.writeSeq`，进程内单调原子递增），不用 agent 上报的 `CollectedAt`——后者可被伪造到未来从而永久钉住条目。
+- **淘汰排序必须单调（本批自查修复）**：初版用墙钟 `lastWrite` 排序，全量套件暴露间歇失败（`TestStoreDeviceMetrics_RecentlyWrittenSurvives`）——Windows 上 `time.Now()` 粒度约 15.6ms，同 tick 内多个条目并列，淘汰顺序退化为 map 随机遍历。改为原子序号后与系统时钟彻底解耦，`-count=5` 连跑确定性通过；同时修正了该用例自身的错误前提（旧写法在「先灌满再刷新」顺序下按 LRU 本就该淘汰被刷新项，旧实现只是靠时钟并列侥幸通过）。
+- 测试：`memory_bounds_test.go` 6 项（报告数/行数封顶、单条超大报告保留、最旧淘汰、最近写入存活、后备数组压实）。
+- **验证（2026-09-25）**：`go test ./internal/store/ -count=1` 真实 MySQL 8.0.46 下全绿（176.8s，含 memory/sql 双实现边界用例与 8 个审计链集成用例）。
+
+### 安全：P1-5 指标内存耗尽 DoS + `/metrics` 默认开放 + 无全局限流
+
+- **指标基数熔断**（`internal/metrics/metrics.go`）：每个 (method, path, status) 时序受硬上限 **2000** 约束，超限后新路径折叠为 `path=":other"`、非标准 HTTP 方法折叠为 `method=":other"`（折叠键空间有界）；新增 `opsmesh_http_metrics_series` / `opsmesh_http_metrics_series_dropped_total` 供告警识别扫描行为。中间件改走 `RecordHTTP`（一次加锁 + 一次键解析，折叠计数按请求精确计一次）。
+- **路径归一化收紧**（`normalizePath`）：纯数字段 → `:id`（原有），新增超长段（>48 字节）、含 `[A-Za-z0-9._~-]` 以外字符的段 → `:id`，整路径 >200 字节 → `/:overlong`。
+- **`/metrics` 准入（fail-closed）**：8080 侧 `handlePrometheusMetrics` 此前无任何准入且每次请求做 4 次全量 store 扫描（对外端口，可被任意来源放大），现与 9091 统一经 `metricsAllowed`；**生产模式（`--production`）白名单为空即一律 403**（响应含 `hint` 指明配置项），非生产模式保持开放。生产未配置白名单时启动打印告警。
+- **全局限流默认开启**：生产模式未显式设置 `--cb-rate-limit-per-sec` 时默认 **200 req/s/IP**（显式 0 关闭并告警）；限流器 IP 桶加上限（50000，达上限先清空闲桶、仍满则放行但不建桶——正在刷流量的攻击方早已有桶并被限流，内存不再增长），并每 30s 至多告警一次。
+- **交付资产同步**：compose（`.env` 默认 `127.0.0.0/8,172.28.0.0/16` + `CB_RATE_LIMIT_PER_SEC`）、Helm（`controlplane.metricsAllowCIDR` 默认 `0.0.0.0/0,::/0` 以保 ServiceMonitor 抓取不断，`controlplane.cbRateLimitPerSec` 空=用代码默认）、systemd（`OPSMESH_METRICS_ALLOW_CIDR=127.0.0.1/32,::1/128` + 限流说明）。
+- 测试：`internal/metrics`（基数封顶/折叠计数/方法收敛）、`server_middleware_extra_test.go`（归一化收紧 12 例）、`server_netsec_extra_test.go`（生产 fail-closed / 开发开放 / 准入拒 403 与放行回归）、`server_security_extra_test.go`（桶上限 + 空闲桶优先清理）、`config_extra_test.go`（生产默认/显式 flag/env/显式 0/非生产）。
+- **真机验收（2026-09-25）**：全量重建部署后 `verify-runtime.sh` **69 项断言 PASS=69 / FAIL=0**（新增 3a–3f 六组 P1-5 断言），静态门禁 `validate-deploy-assets.sh` **20 项 PASS=20**。关键实测：9091 抓取 200（Prometheus target `controlplane:9091` = up）、`opsmesh_http_metrics_series`=16（≤2000）、66 字节路径段归一为 `path="/api/v1/:id"` 且原始串未入标签、221 字节路径归一为 `path="/:overlong"`、单连接 800 次突发出现 **429×429**、探针容器（白名单=127.0.0.1/32）**403** 且日志 `remote=172.28.1.1`。
+- **部署边界（实测发现，已写入 compose 注释与 `docs/operations.md`）**：Docker Desktop(WSL2) 端口转发**不保留真实来源 IP**（宿主 curl / 宿主经局域网 IP / 默认桥容器经 `host.docker.internal` 三种来源在容器侧均为网桥网关 `172.28.1.1`）→ ① 白名单必须含 `172.28.0.0/16`，否则连宿主都抓不到；② 该形态下 CIDR 白名单**不具备来源区分能力**，真实边界是「端口只发布到 `127.0.0.1`」+ 宿主防火墙，来源区分只在裸机（真实 IP）与 K8s（Pod IP）下成立。
+
+### 安全/合规：P1-3 审计日志不可篡改（哈希链）+ 保留策略 + 检索索引
+
+- **根因（三条独立缺陷）**：① 「不可篡改」只是接口层约定（不提供 UPDATE/DELETE 接口），拿到库写权限的 DBA 可直接改/删审计行且无任何可检测迹象；② 无保留/归档策略，`audit_log` 无限增长；③ 审计表缺「租户 + 时间窗」检索索引，等保要求的历史检索随存量增长退化为全表扫。
+- **修复 1／哈希链（迁移 `019_audit_chain.sql` ）**：`audit_log` 增 `prev_hash`/`entry_hash`（CHAR(64)）；`entry_hash = sha256(prev_hash ‖ len:value\x1f 拼接的 tenant/user/action/target/detail/created_at/trace_id)`——长度前缀消除字段边界歧义，`created_at` **按秒截断**参与哈希（MySQL DATETIME 无小数秒，不截断则校验永远不可能通过）。多副本串行化：`INSERT IGNORE` 初始化 `audit_chain_head` 单行 → 写入事务内 `SELECT last_hash … FOR UPDATE` → 写行 + 更新链头，死锁/锁等待（1213/1205）退避重试 3 次。**降级不丢数据**：链式写入失败打印告警并退回普通 INSERT，自检把这类「链前遗留行」如实计数（`legacyRows`），不假装完整。
+- **修复 2／校验（`internal/store/sql_audit_chain.go`）**：`VerifyAuditChain(tenant, limit)` 双强度——平台级（`tenant=""`，leader 自检）逐行重算 + 相邻行链接 + 窗口首行前驱 + **链头必须等于在线最新链式行**（`tailCovered=false` 即判尾部被删）；租户级（HTTP 端点）逐行重算 + 首行前驱边界 + 仅行号相邻时校验链接（链在多租户间交错，租户视角读不到他人行内容），`scope=tenant` 显式标注判定强度差异。归档后前驱按「在线前一行 → 归档表前一行 → 创世」三级解析，跨归档边界仍可验证；归档批次含链头行时链头回退到在线尾行。
+- **修复 3／保留与归档**：`--audit-retention-days`（env `OPSMESH_AUDIT_RETENTION_DAYS`，默认 **180** 天，`0`=永久保留）——leader 周期把超龄行搬入 `audit_log_archive`（保留同样的 prev/entry hash）并从在线表删除，`audit_archive_meta` 记录 `archived_through_id`/`boundary_hash`/`archived_rows`。compose 两个文件（prod + prod-proxy overlay，后者 command 为整体替换语义）与 `.env` 均已接线；Helm 可经 `controlplane.env` 注入。
+- **修复 4／索引**：`idx_audit_tenant_created (tenant_id, created_at DESC)`（历史检索）与 `idx_audit_entry_hash`（链校验窗口定位）。
+- **可观测与告警**：新增 `opsmesh_audit_chain_{supported,ok,checked_rows,checks_total}` 四个指标；新增告警规则 `OpsMeshAuditChainBroken`（`supported==1 and ok==0` 持续 5m，critical）与 `OpsMeshAuditChainCheckStale`（15m 内自检次数不增长，warning——「没有结果」也是失效）。
+- **HTTP 端点**：`GET /api/v1/audit/verify?limit=`（需 `audit:read` + 租户上下文）→ `200` 自洽 / `409` 发现不一致（`firstBadID`/`reason`）/ `501` 后端不支持（内存 / 老库）/ `500` 探测失败（原始错误只进日志，响应走 `writeInternalError` 脱敏，符合项目 5xx 不泄露不变式）。
+- **诚实边界（已写入 security-mechanism/operations/api-reference 三处文档）**：链为**无密钥** SHA-256 链，可发现局部篡改/删除，**无法**对抗「全链重写」——对抗全链重写需把链头定期锚定到外部不可变存储（WORM/S3 对象锁），当前版本未内置。
+- 测试：`audit_chain_test.go`（字段边界歧义/秒精度/前驱链接纯函数、平台级与租户级逐条篡改场景、内存与多 schema 后端不支持语义）+ `audit_verify_test.go`（200/409/501/500/limit 收敛/401/405）+ `metrics_test.go`（初始未校验态不得触发告警）+ **8 个真实 MySQL 集成用例**（写入自洽、内容篡改定位、删中间行、删尾行、链前遗留行计数、租户窗口隔离、归档搬移与跨段链接、归档尾回退链头）。
+- **附带修复（本批实测发现）**：① `deploy.sh` 启动可观测栈后自动 `POST /-/reload` 热加载告警规则——`alerts.yml` 是 bind mount，容器未重建时 Prometheus 不会自动重读，实测新增的审计链告警组一直不生效，客户升级后会静默沿用旧规则；② 多租户冒烟用例补充 `t.Cleanup` 回收 per-tenant 库，此前每跑一次就在真实库留下 `opsmesh_tenant_sqlsmokea/b`。
+- **验证（真机，2026-09-25）**：`verify-runtime.sh` **PASS=86 / FAIL=0**（新增第 13 节 19 条 P1-3 专项断言）；在线库迁移 019 生效（checksum `05ad9446cc5751a9…`）且链头与最新链式行一致；**在线篡改—自检—告警—恢复全周期实证**：改写一行 `detail` → 60s 内 `opsmesh_audit_chain_ok` 1→0 并定位 `first_bad_id=26` → Prometheus `OpsMeshAuditChainBroken` 进入 firing(critical) → 还原后 `ok→1`、告警自动清零。详见报告 §12。
+
 ## [Unreleased] — 2026-09-25 商用就绪 P0 批次（二）：P0-3 / P0-5 / P0-6 / P1-8
 
 > 承接上一批（P0-1 / P0-2 / P0-4 / P0-7）。本批解决「前端交付路径 / 迁移安全 / 多租户隔离」三块上线硬伤 + 一项 P1 可靠性项。证据：`docs/commercial-readiness-review-2026-09-25.md`。

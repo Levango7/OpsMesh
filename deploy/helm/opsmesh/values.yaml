@@ -33,6 +33,21 @@ controlplane:
   store: memory
   # 生产模式：默认开启 require-auth，并对 store=memory 强告警
   production: false
+  # metrics(/metrics) 准入 CIDR 白名单（--metrics-allow-cidr）。P1-5 起：production=true 且该值为空
+  # 时 /metrics 一律 403（fail-closed）。集群内抓取源（ServiceMonitor/Prometheus Pod IP）不可预知，
+  # 故默认允许全部来源（等价旧行为）；建议收紧为 Pod/Service 网段，或用 NetworkPolicy 限制 9091 端口。
+  # 双栈须知：IPv4 与 IPv6 需分别列出（0.0.0.0/0 不匹配 IPv6 来源，反之同理）。置空串=用代码默认（生产为拒绝）。
+  metricsAllowCIDR: "0.0.0.0/0,::/0"
+  # API 限流（--cb-rate-limit-per-sec，req/s/IP）。空串=用代码默认（生产模式 200；开发/演示 0=不限）。
+  # 填 "0" 显式关闭（代码会打印告警）。注意本 chart 默认形态是「Ingress/LB 终止 TLS」，
+  # 控制面看到的是 Ingress Pod IP：按 IP 限流会把全集群客户端汇聚到一个桶，
+  # 需按真实客户端限流时注入 extraEnv: OPSMESH_TRUST_PROXY=true（要求 Ingress 重写 X-Forwarded-For）。
+  cbRateLimitPerSec: ""
+  # 审计日志保留天数（P1-3）：leader 每 60s 把超过该天数的审计行搬入 audit_log_archive 后从在线表删除；
+  # 0=永久保留。代码侧默认 180（等保三级通常要求 ≥180 天）。本 chart 不为它传 flag（避免压过 env），
+  # 需调整时注入 extraEnv: OPSMESH_AUDIT_RETENTION_DAYS=<天数>。
+  # 审计链完整性由 leader 自检并暴露 opsmesh_audit_chain_* 指标，配合 prometheus-alerts.yml 的
+  # OpsMeshAuditChainBroken（supported==1 and ok==0）告警。
   # 要求网关注入 X-Tenant-ID，缺失则拒绝（生产 hardening）
   requireAuth: false
   # 控制面对外 HTTP 地址（拼接 bootstrap 安装命令）；空则回退 127.0.0.1:<http-port>

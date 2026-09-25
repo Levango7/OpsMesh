@@ -66,6 +66,16 @@ type SQLStore struct {
 	// 检索侧由 logstore.SQLLogStore 走独立表/连接池承担；此处仅承接上报并暂存供 API 查询。
 	// 由 s.mu 保护并发安全。
 	agentLogs []proto.LogReport
+	// agentLogLines 为 agentLogs 当前总行数，用于 O(1) 判定是否超过 maxAgentLogLines（P1-4）。
+	agentLogLines int
+
+	// 审计表列能力探测缓存（P1-3）：trace_id / prev_hash / entry_hash 列是否存在。
+	// 审计写入是高频路径（每 30s/agent 一条 report_logs），每次写都查 information_schema
+	// 会给 MySQL 叠加固定开销；TTL 内复用探测结果（迁移在启动时应用，运行期不改表）。
+	auditColsMu   sync.Mutex
+	auditColsAt   time.Time
+	auditHasTrace bool
+	auditHasChain bool
 }
 
 func (s *SQLStore) DB() *sql.DB { return s.db }

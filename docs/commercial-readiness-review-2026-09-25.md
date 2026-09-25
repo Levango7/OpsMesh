@@ -25,7 +25,7 @@
 | 部署可用性 | ★★★★☆ | compose 路径真机跑通；企业版前端由镜像构建期装配进二进制、开箱可用 |
 | 升级与灾备 | ★★★★☆ | 迁移加咨询锁 + checksum/版本门禁 + 可重放；18 个 `.down.sql` + 手工回滚手册 |
 | 许可与商务机制 | ★★☆☆☆ | Apache-2.0 + 无第三方声明 + 无授权/版本机制（**未修，非技术阻断**） |
-| **商用就绪度** | **★★★★☆** | 7 项 P0 阻断项全部修复并经真机验证；剩余为许可合规与 P1 项 |
+| **商用就绪度** | **★★★★☆** | 7 项 P0 + P1-1/P1-3/P1-4/P1-5 四项技术类高风险均已修复并经真机验证；剩余 P1-2（agent 密钥与签名）、P1-6（可支撑性）、P1-7（许可合规） |
 
 **修复到「可商用」的总工作量估算：约 45–65 人天**（不含可选的企业级功能补齐）。其中 6 项 P0 阻断项约 25–40 人天，是唯一必须先做掉的部分。
 
@@ -39,8 +39,14 @@
 > - 过程中由「体积/头比对」断言抓出并修复 1 个自查漏网的缺陷：gzip 预压缩旁路把
 >   `Content-Encoding` 头值（`gzip`）当文件后缀用，导致 gzip 客户端静默拿到未压缩原文
 >   （服务端仍 200，只表现为体积翻 4 倍）。已修并补测试 + 运行时逐编码断言。
+> - 第三批（P1-1 / P1-4 / P1-5）：`verify-runtime.sh` **69 项全过**；命令白名单按段校验、无界内存缓冲封顶、
+>   指标基数熔断 + `/metrics` CIDR 准入 + 全局限流均经真机复验（含 403 fail-closed 与 429 突发的负向断言，见 §11）。
+> - 第四批（P1-3）：`verify-runtime.sh` 扩容至 **86 项全过**（新增第 13 节 19 条审计链专项断言）；
+>   在线库完成「改写一行 → 60s 内自检翻转并定位 `first_bad_id` → critical 告警 firing → 还原后自动清零」
+>   全周期实证（见 §12.4）。**至此 §3 P1 表中技术类高风险项（P1-1/P1-3/P1-4/P1-5）全部收口。**
 >
-> **尚未完成**：许可与商务机制（§3 P1 面，非技术阻断）；`services/` 双轨收敛（TD-60，路线图阶段四）。
+> **尚未完成**：P1-2（agent 侧共享密钥与签名不覆盖载荷，见 §3）；许可与商务机制（非技术阻断）；
+> `services/` 双轨收敛（TD-60，路线图阶段四）。
 
 ---
 
@@ -585,11 +591,11 @@ staleness 窗口内的历史样本，避免重启后误判）。
 
 | # | 问题 | 证据 | 商用影响 | 工作量 |
 |---|---|---|---|---|
-| **P1-1** | **agent 命令白名单可被 `&&` 绕过**。`--agent-shell-whitelist` 只校验首个 token，而 `&&` 两端均放行（agent 侧 `agent.go:1043-1048`，控制面 `server_tasks.go:94-99`）。`ls && rm -rf /` 首 token `ls` 命中白名单，右侧照常执行。代码注释称 `&&`「不引入任意命令执行」——该推理对白名单场景不成立。 | `internal/agent/agent.go:1077-1115`（白名单）、`agent.go:1020-1022`（明确不拦管道 `\|`）、`internal/controlplane/server_tasks.go:90`（控制面【有】拦管道） | 默认开启的白名单被宣传为生产加固项，实际不提供隔离；且两端策略不一致（控制面拦 `\|`、agent 不拦） | 1–2 pd |
+| **P1-1** | **agent 命令白名单可被 `&&` 绕过**。`--agent-shell-whitelist` 只校验首个 token，而 `&&` 两端均放行（agent 侧 `agent.go:1043-1048`，控制面 `server_tasks.go:94-99`）。`ls && rm -rf /` 首 token `ls` 命中白名单，右侧照常执行。代码注释称 `&&`「不引入任意命令执行」——该推理对白名单场景不成立。 | `internal/agent/agent.go:1077-1115`（白名单）、`agent.go:1020-1022`（明确不拦管道 `\|`）、`internal/controlplane/server_tasks.go:90`（控制面【有】拦管道） | 默认开启的白名单被宣传为生产加固项，实际不提供隔离；且两端策略不一致（控制面拦 `\|`、agent 不拦） **→ 修复（2026-09-25）**：白名单改为按「执行段」校验——先按 `&&`/`||`/`|` 切段（`>&`/`&>` 重定向不误切），再逐段取命令词匹配，任一段未命中即整条拒绝；带路径的命令词仅系统标准可执行目录按 basename 匹配（非标准目录须显式白名单整条路径），`VAR=value cmd` 前缀 fail-closed。验证见 §11 | 1–2 pd |
 | **P1-2** | **全机群共用一个 agent HMAC 密钥，且签名不覆盖载荷**。签名为 `HMAC(secret, timestamp+agentID)`，不覆盖任务内容/结果；`Register` 不返回 per-agent 密钥；agent 执行 shell 任务时不隔离环境变量，故任一 agent 被 RCE 即泄漏全机群密钥。 | `internal/controlplane/grpc/grpc.go:294-297`、`:274-277`；`internal/agent/agent.go:1149-1154`（未设 cmd.Env） | 单点失守 → 全机群可被冒领任务、可伪造上报结果（审计可信度归零）；无按 agent 吊销能力 | 5–8 pd |
-| **P1-3** | **审计日志不可防篡改，且无保留策略、无查询索引**。`audit_log` 为普通追加表，无 hash 链/签名（`migrations/001_initial.sql:78-86`）；全仓库无 DELETE/归档/分区逻辑；`QueryAudits` 以 `tenant_id + created_at` 过滤但仅 `idx_audit_trace` 一个索引，长期运行后审计检索将全表扫描。 | `internal/store/sql_audits.go`、`migrations/001_initial.sql`、`internal/controlplane/server_audits.go:15-16` | README「100% 留痕 / 等保三级 ≥6 月」仅靠「永不删除」满足，但**无防篡改**（持 DB 凭证即可改写历史，等保三级明确要求审计记录防篡改）；且查询会随时间劣化 | 3–5 pd |
-| **P1-4** | **无界的 agent 日志缓冲会导致进程 OOM**。`agentLogs` 切片按 agent 每 30s 追加且永不裁剪；`deviceMetrics` map 无淘汰。 | `internal/store/sql_agent_logs.go:24-27` 及 memory 同名实现 | 机群规模上去后数周内控制面 OOM；商用 SLA 不可承诺 | 2–3 pd |
-| **P1-5** | **未鉴权即可造成指标内存耗尽 DoS**。中间件对**每个请求**（含 404 与未鉴权请求）记录指标，`normalizePath` 仅归一全数字段，`/api/v1/<随机串>` 原样入 map 且无上限；`/metrics` 默认放行（空 CIDR 白名单=不限制），无全局限流器。 | `internal/controlplane/server_middleware.go:169-177,207-228`、`internal/metrics/metrics.go:61-66,100-110`、`internal/controlplane/server_netsec.go:129-131` | 远程未鉴权即可打爆内存导致控制面重启 | 2–3 pd |
+| **P1-3** | **审计日志不可防篡改，且无保留策略、无查询索引**。`audit_log` 为普通追加表，无 hash 链/签名（`migrations/001_initial.sql:78-86`）；全仓库无 DELETE/归档/分区逻辑；`QueryAudits` 以 `tenant_id + created_at` 过滤但仅 `idx_audit_trace` 一个索引，长期运行后审计检索将全表扫描。 | `internal/store/sql_audits.go`、`migrations/001_initial.sql`、`internal/controlplane/server_audits.go:15-16` | README「100% 留痕 / 等保三级 ≥6 月」仅靠「永不删除」满足，但**无防篡改**（持 DB 凭证即可改写历史，等保三级明确要求审计记录防篡改）；且查询会随时间劣化 **→ 修复（2026-09-25）**：迁移 019 引入哈希链（`prev_hash`/`entry_hash`，`entry_hash=sha256(prev_hash‖长度前缀字段…)`，`created_at` 秒截断）+ `audit_chain_head` 单行链头（写入事务内 `FOR UPDATE` 串行化，多副本不分叉）+ 链式写入失败降级普通 INSERT（数据不丢、自检如实计 `legacyRows`）；`VerifyAuditChain` 平台级/租户级双强度校验 + `GET /api/v1/audit/verify`（200/409/501/500）；`--audit-retention-days`（默认 180 天）由 leader 周期归档至 `audit_log_archive` + `audit_archive_meta` 边界哈希（跨归档边界仍可校验）；补 `idx_audit_tenant_created` / `idx_audit_entry_hash`；新增 4 个指标与 2 条告警规则。**诚实边界**：无密钥链无法对抗全链重写，需外部 WORM 锚定（未内置）。验证见 §12 | 3–5 pd |
+| **P1-4** | **无界的 agent 日志缓冲会导致进程 OOM**。`agentLogs` 切片按 agent 每 30s 追加且永不裁剪；`deviceMetrics` map 无淘汰。 | `internal/store/sql_agent_logs.go:24-27` 及 memory 同名实现 | 机群规模上去后数周内控制面 OOM；商用 SLA 不可承诺 **→ 修复（2026-09-25）**：新增 `internal/store/memory_bounds.go` 统一施加硬上限——`deviceMetrics` 设备条目 ≤2000（超限按「最久未写入」淘汰整条设备，排序刻意用写入时刻而非 agent 可控的 `CollectedAt`）、`agentLogs` 批次 ≤2000 且总行数 ≤100000（超限丢最旧批次并回收底层数组容量）。验证见 §11 | 2–3 pd |
+| **P1-5** | **未鉴权即可造成指标内存耗尽 DoS**。中间件对**每个请求**（含 404 与未鉴权请求）记录指标，`normalizePath` 仅归一全数字段，`/api/v1/<随机串>` 原样入 map 且无上限；`/metrics` 默认放行（空 CIDR 白名单=不限制），无全局限流器。 | `internal/controlplane/server_middleware.go:169-177,207-228`、`internal/metrics/metrics.go:61-66,100-110`、`internal/controlplane/server_netsec.go:129-131` | 远程未鉴权即可打爆内存导致控制面重启 **→ 修复（2026-09-25）**：四层收敛——(1) 时序硬上限 2000（超限折叠 `:other` + 自观测指标）；(2) `normalizePath` 收紧（段 >48B／含非安全字符／全数字 → `:id`；整路径 >200B → `/:overlong`）；(3) 8080/9091 两处 `/metrics` 均接入准入，生产模式空 CIDR 改 fail-closed；(4) 生产未显式配置时默认启用 200 req/s/IP 限流，限流器 IP 桶上限 5 万（超限先清空闲桶，仍满则放行但不建桶）。真机实测见 §11 | 2–3 pd |
 | **P1-6** | **可支撑性缺口**（影响交付后的运维成本）。无版本端点、无 pprof、无配置转储、无诊断包；日志级别硬编码 Info；`/metrics` 抓取本身会做 4 次全表读。 | `internal/controlplane/server_lifecycle.go`（151 条路由中无上述项）、`internal/logx/logx.go` | 客户现场排障必须 SSH + 看源码，支持成本高、无法远程定位问题 | 6–10 pd |
 | **P1-7** | **许可与第三方合规未就绪**。LICENSE = Apache-2.0（`Copyright 2026 OpsMesh Contributors`），**无 NOTICE / THIRD_PARTY 清单**；依赖含 MPL-2.0 组件（go-sql-driver/mysql、hashicorp/vault/api、terraform-plugin-sdk/v2）；Helm 应用商店 28 个条目引用 bitnami 仓库与 bitnami.com 图床，而 Bitnami 已于 2025 年调整镜像授权策略。 | `LICENSE`、`go.mod`、`internal/helm/catalog.go` | 采购/法务尽调会要求第三方声明；Apache-2.0 意味着**任何第三方可自由再分发你的商业产品**（是否可接受需商业决策）；应用商店在客户无外网时不可用，且可能撞上 Bitnami 授权限制 | 3–5 pd + 法务 |
 | **P1-8** | ~~控制面的 M3/M5 子存储仍可静默退回内存~~ **✅ 2026-09-25 已修**。`NewDeployHandler` / `NewOrchestrationHandler` 在 `deploy.NewSQL` / `orchestration.NewSQL` 构造失败时只 `logx.Error` 后改用 `Memory`，且工厂拿不到 `cfg.Production`，故生产模式下同样静默。 | `internal/controlplane/factory/server_factory.go`（原 `:32-47`、`:51-66`）；调用方 `internal/controlplane/server.go:309-310` 未传生产标志 | 部署模板/M5 编排数据在重启后丢失，而 `/health` 与界面均正常。触发窗口窄（主 store 已在同一 DSN 上跑完迁移，通常先失败），但属「配置要求持久化却跑在内存」的同一类缺陷 | **修复**：工厂接线生产标志，生产模式下子存储构造失败改为 fail-fast（对齐既有阻断先例），`server_factory_test.go` 覆盖两分支；验证见 §10.5 |
@@ -653,17 +659,20 @@ staleness 窗口内的历史样本，避免重启后误判）。
 ### 阶段二：可运维（约 12–20 人天）
 目标是「出问题能查、能升级、能恢复」。
 
-- P1-1 白名单绕过修复（1–2 pd）
-- P1-4 日志/指标缓冲加上限与淘汰（2–3 pd）
-- P1-5 指标基数控制 + `/metrics` 生产默认受限（2–3 pd）
+- ~~P1-1 白名单绕过修复（1–2 pd）~~ ✅ 2026-09-25
+- ~~P1-4 日志/指标缓冲加上限与淘汰（2–3 pd）~~ ✅ 2026-09-25
+- ~~P1-5 指标基数控制 + `/metrics` 生产默认受限（2–3 pd）~~ ✅ 2026-09-25
 - P1-6 版本/诊断端点 + 日志级别可配 + 结构化日志统一（6–10 pd）
 - `docs/dr-runbook.md` 恢复流程可执行化（当前手册读 `/backup`，而 `mysql-statefulset.yaml` 并未挂载该路径 → 首次演练必失败）（1–2 pd）
+
+> 本阶段 P1-1 / P1-3 / P1-4 / P1-5 已收口并真机复验（`verify-runtime.sh` 断言 0 失败、静态门禁 20 项 0 失败），
+> 并对「Docker Desktop 端口转发不保留真实来源 IP」这一部署形态边界做了对照实验与文档化（见 §11.3）。
 
 ### 阶段三：可销售（约 10–20 人天 + 法务）
 目标是「采购、法务、安全评审能过」。
 
 - P1-7 THIRD_PARTY/NOTICE 清单 + MPL 声明 + 明确 Apache-2.0 的再分发含义（是否引入商业许可/EULA 需你决策）（3–5 pd + 法务）
-- P1-3 审计防篡改（hash 链或外部 WORM 归档）+ 保留/归档任务 + `(tenant_id, created_at)` 复合索引（3–5 pd）
+- ~~P1-3 审计防篡改（hash 链或外部 WORM 归档）+ 保留/归档任务 + `(tenant_id, created_at)` 复合索引（3–5 pd）~~ ✅ 2026-09-25（WORM 外部锚定仍为已知边界，见 §3 P1-3 与 `docs/security-mechanism.md` §7.7）
 - 企业级能力补齐（按目标客户取舍）：SSO/LDAP/OIDC、真实 HA failover（当前 `handleHAFailover` 为 no-op 返回 `"simulated": false`）、白标、离线安装包 —— 约 20–30 pd，**建议与首个客户的真实需求挂钩后再投入**，不要预先建设。
 
 ### 阶段四：规模化（按需）
@@ -863,4 +872,172 @@ gzip 分支去找 `x.js.gzip`（实际文件是 `x.js.gz`）→ 未命中 → �
 - 企业版前端构建产物落在 `internal/controlplane/embed/enterprise/`，由嵌套 `.gitignore`
   白名单化（仅 `placeholder.html` + `.gitignore` 入库），`git status -uall` 该目录下**仅这两个文件**，
   构建产物不可能被误提交。
+
+---
+
+## 11. 真机全栈验证记录（2026-09-25 第三批：P1-1 / P1-4 / P1-5 收口验收）
+
+执行方式：`bash deploy/docker/scripts/deploy.sh up -y`（全量重建 17 容器，冒烟测试通过）
+→ `bash deploy/scripts/verify-runtime.sh`（断言脚本已扩容至 **69 项，PASS=69 / FAIL=0**）
+→ 另加一次性探针容器的定向负向实验（见 11.3）。
+
+### 11.1 P1-5 指标 DoS 收敛（四层修复的逐项实证）
+
+| 断言 | 实测结果 |
+|---|---|
+| 宿主 8080 `GET /metrics` | 200（来源落在 `METRICS_ALLOW_CIDR` 内） |
+| 9091 `GET /metrics`（Prometheus 抓取路径） | 200，303 行；Prometheus target `controlplane:9091` = `up` |
+| `opsmesh_http_metrics_series` | 16（硬上限 2000 内，且随请求数线性增长已不可能） |
+| `opsmesh_http_metrics_series_dropped_total` | 已暴露（超限请求可观测，用于「本端点正被扫描」告警） |
+| 请求 `/api/v1/<66 字节随机段>` | 归一为 `path="/api/v1/:id"`；原始 66 字节串**未出现**在指标文本中（无标签膨胀） |
+| 请求 `/<221 字节路径>` | 归一为 `path="/:overlong"` |
+| 生产默认限流启动日志 | `[config] 提示：生产模式默认启用 API 限流 200 req/s/IP` + `API 限流已启用 ratePerSec=200` |
+| 限流突发实测 | 单连接复用连打 800 次 `/api/v1/devices` → **429=429、非 429=371**（令牌桶生效） |
+| fail-closed 负向验证 | 探针容器白名单=127.0.0.1/32 → **403**，拒绝日志 `msg=metrics 访问被拒（不在 CIDR 白名单） remote=172.28.1.1:40360` |
+
+### 11.2 断言自身的假阴性（自查记录）
+
+首轮 3e 限流断言用 `xargs -P 80` 逐请求起 `curl` 进程打 1500 次突发，结果**无一 429**。
+排查后确认不是限流未生效，而是 Windows 上进程创建开销把实际速率压到 ~200 req/s 边界
+（对照实验：单条 curl 复用 keep-alive 连接连打 600 次耗时 0.80s，其中 273 次 429）。
+断言已改为单连接突发（800 次），并把这条「假阴性」写进脚本注释——避免后人重踩。
+
+### 11.3 部署形态边界（实测发现，需在交付文档中如实说明）
+
+Docker Desktop(WSL2) 的端口转发**不保留真实来源 IP**。用一次性探针容器（白名单仅 `127.0.0.1/32`）
+做对照实验，三种来源在容器侧观察到的 `remote` 均为 **172.28.1.1**（frontend 网桥网关）：
+
+| 来源 | 结果 |
+|---|---|
+| 宿主 `curl http://127.0.0.1:29191/metrics` | 403，`remote=172.28.1.1:51578` |
+| 宿主经局域网 IP `http://192.168.10.201:8080/metrics` | 对被测栈返回 200（来源同为网关，落在 172.28.0.0/16 内） |
+| 默认桥容器经 `host.docker.internal:9091/metrics` | 200（同上） |
+
+结论（已写入 `docker-compose.prod.yml` 注释与 `docs/operations.md`）：
+1. `METRICS_ALLOW_CIDR` 必须包含 `172.28.0.0/16`，否则**连宿主都抓不到**（探针实验已证）；
+2. 该部署形态下 CIDR 白名单**不具备来源区分能力**，真正的边界是「端口只发布到 `127.0.0.1`」+ 宿主防火墙；
+   来源区分只在裸机/systemd（真实 IP 保留）与 K8s（Pod IP）部署下成立；
+3. 因此本次修复把「生产模式空 CIDR = fail-closed」设为默认，避免客户以为配了白名单就等于有边界。
+
+### 11.4 静态门禁与单元测试
+
+- `deploy/scripts/validate-deploy-assets.sh`：**PASS=20 / FAIL=0**（含 Helm 渲染后新参数
+  `--metrics-allow-cidr` / `--cb-rate-limit-per-sec` 的出现性校验）。
+- `go test ./internal/agent/ ./internal/store/ ./internal/metrics/ ./internal/config/ ./internal/controlplane/`：全绿
+  （agent 53.1s、store 39.6s、controlplane 40.6s；`-race` 因 Windows 无 cgo 未启用，已在报告中注明）。
+
+---
+
+## 12. 真机全栈验证记录（2026-09-25 第四批：P1-3 收口验收）
+
+执行方式：重建控制面镜像（本地 11:28，晚于本批最后一次源码改动 11:21，避免验到旧二进制）
+→ `bash deploy/docker/scripts/deploy.sh up --no-build -y`（复用已建镜像，17 容器就绪）
+→ `bash deploy/scripts/verify-runtime.sh`（断言已扩容至 **86 项，PASS=86 / FAIL=0**）
+→ 另加**在线篡改—自检—告警—恢复**全周期实证（12.4）。
+
+### 12.1 落库与迁移（迁移 019 生效）
+
+| 断言 | 实测结果 |
+|---|---|
+| `schema_migrations` 最高版本 | `19`，checksum `05ad9446cc5751a9…`（与仓库内 `019_audit_chain.sql` 一致） |
+| `audit_log` 链式列 | `prev_hash` / `entry_hash` 均存在 |
+| 新增表 | `audit_chain_head`（单行 id=1）、`audit_log_archive`、`audit_archive_meta` 均建 |
+| 新增索引 | `idx_audit_tenant_created`（(tenant_id, created_at) 复合）、`idx_audit_entry_hash` |
+| 控制面启动参数 | `--audit-retention-days=180`（来自 `.env` 的 `AUDIT_RETENTION_DAYS`，证明 `.env → compose → flag` 全链路接线） |
+| 在线库现状 | `audit_total=26`、`chained=11`、`legacy=15`、`archived=0`（保留期 180 天，无超龄行可归档） |
+| 链头一致性 | `audit_chain_head.last_hash == 最新链式行 entry_hash` → `1` |
+
+`legacy=15` 为迁移 019 之前写入的历史行，**如实计数不伪造**：自检把它们计为未纳链遗留，
+断言脚本对其给 `[WARN]` 而非 `[PASS]`，避免「全绿」掩盖存量数据未纳链的事实。
+
+### 12.2 静态门禁与单元测试（真实 MySQL 8.0.46）
+
+- `gofmt -l internal/store/` 空、`go vet ./internal/store/` 无输出。
+- `OPSMESH_TEST_MYSQL_DSN=… go test ./internal/store/ -count=1`
+  → **`ok github.com/Levango7/OpsMesh/internal/store 176.791s`，exit 0**（全量含 8 个审计链集成用例）。
+- 审计链集成用例改为共享临时库（`TestMain` 统一回收）后，8 个用例合计由 93.7s 降至 **11.4s**，
+  避免 CI `-race -timeout 900s` 预算被单包吞掉；运行后 `SHOW DATABASES` 无 `test_auditchain_*` 残留。
+- 淘汰/缓冲上限用例 `-count=5` 连跑确定性通过（见 12.5 第 1 条）。
+- `promtool check rules /etc/prometheus/alerts.yml` → **SUCCESS: 12 rules found**（含新增审计链告警组）。
+
+### 12.3 `verify-runtime.sh` 第 13 节（P1-3 专项断言，逐条实测）
+
+```
+=== 13. 审计链防篡改与保留策略（P1-3 回归） ===
+  [PASS] audit_log 已落 prev_hash/entry_hash 链式列
+  [PASS] 表 audit_chain_head 已建
+  [PASS] 表 audit_log_archive 已建
+  [PASS] 表 audit_archive_meta 已建
+  [PASS] audit_log.idx_audit_entry_hash 已建（链式窗口查询不全表扫）
+  [PASS] audit_chain_head 单行链头就绪（多副本串行化基线）
+  [PASS] 最新审计行已带 entry_hash（运行期链式写入生效）
+  [PASS] 链头 last_hash == 最新链式行 entry_hash（链头跟随，尾部未被删改）
+  [WARN] 有 15 条链前遗留行（迁移 019 之前写入，未纳入链，自检会如实计数）
+  [PASS] 控制面已接线保留策略（audit-retention-days=180）
+  [PASS] GET /api/v1/audit/verify 未认证 → 401（端点已注册且受鉴权保护）
+  [PASS] 指标 opsmesh_audit_chain_supported 已暴露
+  [PASS] 指标 opsmesh_audit_chain_ok 已暴露
+  [PASS] 指标 opsmesh_audit_chain_checked_rows 已暴露
+  [PASS] 指标 opsmesh_audit_chain_checks_total 已暴露
+  supported=1 ok=1 checked_rows=10 checks_total=1
+  [PASS] 链自检已实际执行（checks_total=1，leader 循环在跑）
+  [PASS] 存储后端支持链式校验（supported=1）
+  [PASS] 链自检结论自洽（ok=1）
+```
+
+### 12.4 在线篡改—自检—告警—恢复全周期实证（本轮最强证据）
+
+不经任何测试夹具：直接改写**在线库**一行已纳链审计记录的内容，观察**已部署二进制**的
+leader 后台自检（60s 周期）能否发现、定位、导出指标、触发告警，再恢复并确认自动复原。
+
+目标行：`id=26`（`action=user_login`，原 `detail='username=admin'`，无引号等特殊字符，便于精确还原）。
+
+| 动作时刻（UTC） | 动作 | 观测时刻与结果 |
+|---|---|---|
+| （篡改前一次抓取） | 取基线 | `ok=1 supported=1 checked_rows=11 checks_total=2` |
+| 03:31:32 | `UPDATE audit_log SET detail='username=admin_TAMPERED' WHERE id=26` | — |
+| 03:32:47 | 等下一个自检周期（60s） | `ok=1 → 0`，`checks_total → 3`；控制面 ERROR 日志：`first_bad_id=26`、`reason="id=26 的 entry_hash 与内容重算结果不一致（行内容被改写）"` |
+| 03:32:55 | 还原 `detail='username=admin'`（长度 14，与原值一致） | 03:34:10 `checks_total → 5`、`ok → 1`，其后 90s 内无新告警日志 |
+| 03:34:20 | 二次篡改（验证告警通道，需跨越 `for: 5m`） | 03:35:17 Prometheus 记为 `activeAt`（规则进入 pending） |
+| 03:41:26 | 等满 5 分钟后观测 | 03:41:20 状态 **firing**，`severity=critical`（`/api/v1/alerts` 仅此 1 条） |
+| 03:41:26 | 还原并等待 90s | 03:42:56 `ok=1`、`checks_total=14`；`/api/v1/alerts` → **firing/pending 告警数 0**（自动恢复） |
+
+结论：**防篡改不是静态配置，而是可复现的运行时行为**——改写一行即被定位到具体 `id`，
+指标翻转、critical 告警触发，恢复后自动收敛。目标行已精确还原，收尾状态
+`audit_total=26 / chained=11 / legacy=15 / archived=0`、链头与最新链式行一致（=1）。
+
+### 12.5 本轮自查抓到并修复的缺陷（说明断言与测试不是橡皮图章）
+
+1. **P1-4 设备指标淘汰使用墙钟排序 → 淘汰不确定**（生产代码缺陷，非测试问题）。
+   全量 store 套件暴露 `TestStoreDeviceMetrics_RecentlyWrittenSurvives` 间歇失败：
+   `lastWrite` 取自墙钟，Windows 上 `time.Now()` 粒度约 15.6ms，同一 tick 内多个条目并列，
+   淘汰顺序退化为 Go map 随机遍历。修复：引入单调原子序号 `writeSeq`（`atomic.Uint64`）
+   作为淘汰依据，与墙钟彻底解耦；文件 `internal/store/memory_bounds.go`、
+   `memory_middleware_template.go`、`memory.go`。
+2. **同用例的断言前提本身是错的**（测试缺陷）。旧写法在「灌满 > 刷新 veteran」的顺序下，
+   按 LRU 语义 veteran 本就该被淘汰——旧实现只是靠时钟并列「侥幸通过」。已重写为语义正确的
+   场景（预载 `maxTrackedDeviceMetrics-10` → 刷新 veteran → 再写 20 个 → 断言 veteran 存活、
+   `d-0` 被淘汰、总数不超过上限）。
+3. **告警规则升级后静默不生效**（交付/运维缺陷）。`alerts.yml` 以 bind mount 注入，
+   容器未重建时 Prometheus **不会**自动重读：实测新增的 `opsmesh_audit_chain_alerts` 组
+   一直未加载，手动 `POST /-/reload` 后才出现（`--web.enable-lifecycle` 已开启）。
+   修复：`deploy.sh` 的 `start_observability()` 在 Prometheus 就绪后自动热加载，
+   失败则显式 WARN——否则客户升级后新旧规则混用而无任何提示。
+4. **多租户冒烟用例在真实库留下残留库**（测试卫生）。`TestMultiSchemaSmoke_MySQLDSNBranch`
+   创建的 `opsmesh_tenant_sqlsmokea/b` 从不回收，历次运行持续堆积。已加 `t.Cleanup`
+   按 namer 反推库名并 `DROP DATABASE`，实测跑完 `SHOW DATABASES` 已归零。
+
+### 12.6 本轮未覆盖 / 诚实边界
+
+- **未在在线栈上取得已认证的 200/409 响应**：三个种子用户（admin/operator/viewer）均处于
+  P0-1 的「首登强制改密」态，无可用会话 token；为不改动交付态口令（会让断言脚本第 4 节的
+  `mustChangePassword=true` 期望失效），未走改密流程换取 token。该端点的 200/409/501/500
+  分支由 handler 单测 + 真实 MySQL 集成用例覆盖，在线仅断言了 401 鉴权门；平台级
+  「定位首个坏行」的语义则由 12.4 的后台自检端到端证明（同一 `VerifyAuditChain` 代码路径）。
+- **告警仅在 Prometheus 内 firing，未接 Alertmanager**：仓库 compose 中 Alertmanager 仍为
+  可选未启用（注释保留），故「触发告警」止于 Prometheus 规则状态，未验证到邮件/webhook 投递。
+- **无密钥链的固有边界**：持 DB 写权限者可重写整条链并重算全部 `entry_hash`（无 WORM/外部锚定）。
+  本批如实写入 `docs/security-mechanism.md` §7.7，未内置外部锚定。
+- `-race` 仍因 Windows 无 cgo 无法本地启用；CI integration job 已在 MySQL 8 + Redis 上带 `-race` 跑 store 包。
+
 

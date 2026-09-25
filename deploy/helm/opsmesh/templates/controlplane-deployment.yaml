@@ -99,6 +99,19 @@ spec:
             # 若要控制面直供 HTTPS：controlplane.httpTLS=on（证书 SAN 须含访问域名），
             # 组件下面 livenessProbe/readinessProbe 的 scheme 同步改为 HTTPS。
             - --http-tls={{ .Values.controlplane.httpTLS }}
+            # metrics 准入白名单（P1-5）：非空即传参（须用 flag 传，代码侧无对应默认值；
+            # controlplane.metricsAllowCIDR 是唯一入口，extraEnv 同名项会被 flag 压过）。
+            # 默认 0.0.0.0/0,::/0 等价旧行为（允许全部来源）；置空串则生产模式 /metrics 一律 403（fail-closed）。
+            {{- if .Values.controlplane.metricsAllowCIDR }}
+            - --metrics-allow-cidr={{ .Values.controlplane.metricsAllowCIDR }}
+            {{- end }}
+            # API 限流（P1-5）：空=用代码侧默认（生产 200 req/s/IP，见 config.defaultProductionRateLimitPerSec）；
+            # "0"=显式关闭（运维自担，代码会打印告警）。
+            # 注意：控制面位于 Ingress/LB 之后时所有流量源 IP 相同（Ingress Pod IP），按 IP 限流会汇聚到同一桶；
+            # 需按真实客户端限流请注入 OPSMESH_TRUST_PROXY=true（要求 Ingress 重写 X-Forwarded-For），或设为 0。
+            {{- if ne (toString .Values.controlplane.cbRateLimitPerSec) "" }}
+            - --cb-rate-limit-per-sec={{ .Values.controlplane.cbRateLimitPerSec }}
+            {{- end }}
             {{- if eq .Values.controlplane.store "mysql" }}
             - --mysql-dsn=$(OPSMESH_MYSQL_DSN)
             - --redis-addr={{ include "opsmesh.redis.serviceName" . }}:6379

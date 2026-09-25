@@ -246,6 +246,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/compliance/reports", s.handleComplianceReports)
 	mux.HandleFunc("/api/v1/compliance/reports/", s.handleComplianceReportRouting) // 子路径：{id} GET
 	mux.HandleFunc("/api/v1/audit/events", s.handleAuditEvents)                    // GET 查询审计事件
+	mux.HandleFunc("/api/v1/audit/verify", s.handleAuditVerify)                    // GET 校验审计哈希链（P1-3 防篡改）
 	mux.HandleFunc("/api/v1/audit/export", s.handleAuditExport)                    // GET 导出审计日志
 	mux.HandleFunc("/api/v1/ha/status", s.handleHAStatus)                          // GET HA 状态
 	mux.HandleFunc("/api/v1/ha/instances", s.handleHAInstances)                    // GET 实例列表
@@ -321,7 +322,8 @@ func (s *Server) Start() error {
 	go s.leaderLoop(ctx)                // 选主：周期续租，仅 leader 执行周期协调任务
 	go s.reclaimLoop(ctx)               // 任务租约回收：周期复位失联 agent 的 running 任务（仅 leader）
 	go s.scheduleLoop(ctx)              // F4 定时/周期调度：周期派生到点模板任务的 pending 实例（仅 leader）
-	go s.archiveLoop(ctx)               // F5 ��线超龄自动归档（仅 leader）
+	go s.archiveLoop(ctx)               // F5 离线超龄自动归档（仅 leader）
+	go s.auditMaintenanceLoop(ctx)      // P1-3 审计归档保留 + 哈希链自检（仅 leader）
 	go s.notifyLoop(ctx)                // M7 告警 Webhook 推送：周期检查新 critical 告警并推送到 webhook URL
 	go s.alertEngineLoop(ctx)           // M2 告警评估循环：alertengine.Engine + Silencer + Aggregator + Notifier
 	go s.autoProvisionLoop(ctx)         // 自动纳管：--discover + --auto-provision 时周期扫描网段并推送 agent

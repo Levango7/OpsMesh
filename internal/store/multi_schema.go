@@ -791,6 +791,95 @@ func sortAuditsDesc(out []*proto.AuditEvent) {
 	})
 }
 
+// namedStore 带 schema 名的 store（仅用于需要可辨识遍历的内部场景）。
+type namedStore struct {
+	name  string
+	store Store
+}
+
+// namedStores 返回按 schema 名排序的 store 快照（map 遍历无序，排序保证输出稳定）。
+func (m *MultiSchemaStore) namedStores() []namedStore {
+	m.mu.RLock()
+	out := make([]namedStore, 0, len(m.stores))
+	for name, s := range m.stores {
+		out = append(out, namedStore{name: name, store: s})
+	}
+	m.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out
+}
+
+// VerifyAuditChain 审计链校验（P1-3）：
+//   - tenant 非空（租户自检 / 对外 API）：只路由该租户 schema，输出不含其他租户信息；
+//   - tenant 为空（平台级自检，仅服务端 leader 使用）：逐 schema 校验后汇总。
+//     各 schema 的链彼此独立，故不合并 id 区间，只在 Note 中逐 schema 列明。
+func (m *MultiSchemaStore) VerifyAuditChain(tenant string, limit int) (*AuditChainVerifyResult, error) {
+	if tenant != "" {
+		s, err := m.storeFor(tenant)
+		if err != nil {
+			return &AuditChainVerifyResult{
+				Supported: false,
+				Note:      fmt.Sprintf("租户 %q 的 schema 不可用: %v", tenant, err),
+			}, nil
+		}
+		return s.VerifyAuditChain(tenant, limit)
+	}
+	agg := &AuditChainVerifyResult{OK: true, HeadConsistent: true}
+	var notes []string
+	for _, ns := range m.namedStores() {
+		res, err := ns.store.VerifyAuditChain("", limit)
+		if err != nil {
+			return nil, fmt.Errorf("schema %s 审计链校验失败: %w", ns.name, err)
+		}
+		if res == nil || !res.Supported {
+			notes = append(notes, ns.name+" 不支持链式校验")
+			continue
+		}
+		agg.Supported = true
+		agg.Checked += res.Checked
+		agg.LegacyRows += res.LegacyRows
+		agg.HeadConsistent = agg.HeadConsistent && res.HeadConsistent
+		if res.ChainHeadHash != "" {
+			agg.ChainHeadID, agg.ChainHeadHash = res.ChainHeadID, res.ChainHeadHash
+		}
+		if !res.OK && agg.OK {
+			agg.OK = false
+			agg.FirstBadID = res.FirstBadID
+			agg.Reason = fmt.Sprintf("schema %s: %s", ns.name, res.Reason)
+		}
+		notes = append(notes, fmt.Sprintf("%s 校验 %d 行/链头 id=%d", ns.name, res.Checked, res.ChainHeadID))
+	}
+	if !agg.Supported {
+		agg.OK = false
+		agg.Note = "所有 schema 均不提供链式校验（内存后端或未应用迁移 019）"
+		return agg, nil
+	}
+	agg.Note = "平台级汇总（各 schema 链彼此独立，未合并 id 区间）：" + strings.Join(notes, "；")
+	return agg, nil
+}
+
+// ArchiveAuditLog 逐 schema 归档超龄审计行（各 schema 独立，单个失败不阻断其余）。
+// 返回归档总行数；首个错误通过返回值的 error 上报（便于 leader 日志告警）。
+func (m *MultiSchemaStore) ArchiveAuditLog(retainDays, batch int) (int, error) {
+	if retainDays <= 0 {
+		return 0, nil
+	}
+	total := 0
+	var firstErr error
+	for _, ns := range m.namedStores() {
+		n, err := ns.store.ArchiveAuditLog(retainDays, batch)
+		if err != nil {
+			log.Printf("[multi-schema] schema %s 审计归档失败: %v", ns.name, err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("schema %s: %w", ns.name, err)
+			}
+			continue
+		}
+		total += n
+	}
+	return total, firstErr
+}
+
 // ============================================================================
 // TokenStore 实现（4 方法）
 // ============================================================================

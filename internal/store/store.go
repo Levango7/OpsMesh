@@ -146,6 +146,14 @@ type AuditStore interface {
 	// QueryAudits 按租户/动作/时间窗过滤审计事件（审计可查；等保三级留痕必须可检索）。
 	// limit<=0 表示不限制（默认建议 100）。
 	QueryAudits(tenant, action string, since, until time.Time, limit int) []*proto.AuditEvent
+	// VerifyAuditChain 校验审计哈希链完整性（P1-3 防篡改），limit 为校验窗口行数。
+	// tenant 非空时只校验该租户的可见窗口（多租户隔离，结果不含其他租户信息）；
+	// 传空串表示平台级校验（仅服务端内部调用）。结果 Supported=false 表示该存储后端
+	// 不提供链式校验（内存态 / 老库未应用迁移 019）；返回 error 仅表示探测/查询本身失败。
+	VerifyAuditChain(tenant string, limit int) (*AuditChainVerifyResult, error)
+	// ArchiveAuditLog 归档超过 retainDays 的审计行（P1-3 保留策略）。
+	// retainDays<=0 表示永久保留（不做任何事，返回 0, nil）。返回本次归档行数。
+	ArchiveAuditLog(retainDays, batch int) (int, error)
 }
 
 // TokenStore 自动纳管 install token 领域：签发、登记、消费、清理。

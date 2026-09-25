@@ -99,3 +99,29 @@ groups:
         annotations:
           summary: "High task failure rate"
           description: "Task failure rate is {{ $value }} per second."
+
+  - name: opsmesh_audit_chain_alerts
+    interval: 30s
+    rules:
+      # P1-3 审计防篡改：链完整性校验失败必须立刻可见。
+      # 语义：supported=1 表示当前存储后端提供链式校验（SQL 后端），ok=0 表示校验发现
+      # 不一致（行被改写/删除，或尾部被截断）。内存后端/老库 supported=0，表达式为假，
+      # 不会误报；非 leader 副本也从不写指标（supported 渲染为 0），同样不误报。
+      - alert: OpsMeshAuditChainBroken
+        expr: opsmesh_audit_chain_supported == 1 and opsmesh_audit_chain_ok == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "审计哈希链完整性校验失败（疑似篡改或审计行被删除）"
+          description: "opsmesh_audit_chain_ok=0 且 supported=1 已持续 5m：请立即调用 GET /api/v1/audit/verify 查看 firstBadID/reason，并核对 audit_log 的 DBA 操作记录。"
+
+      # 自检循环停摆（leader 挂掉/被抢主后无人自检）——「没有结果」也是一种失效，需可见。
+      - alert: OpsMeshAuditChainCheckStale
+        expr: increase(opsmesh_audit_chain_checks_total[15m]) == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "审计链自检 15 分钟内未执行"
+          description: "leader 周期任务（归档 + 自检）疑似停摆：检查控制面 leader 状态与 auditMaintenanceLoop 日志。"

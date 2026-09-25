@@ -139,10 +139,16 @@
 
 ### GET /metrics
 
-Prometheus 文本格式指标。**监听在独立端口 9091**（非主 8080 端口），受 `--metrics-allow-cidr` 白名单控制（白名单非空时仅允许授权来源，否则 403）。
+Prometheus 文本格式指标。**监听在独立端口 9091**（非主 8080 端口），受 `--metrics-allow-cidr` 白名单控制。
 
 - **请求**：`GET http://<controlplane-host>:9091/metrics`
 - **响应**：`200 OK`，`Content-Type: text/plain; version=0.0.4`
+- **403 Forbidden**：来源不在白名单内；**生产模式（`--production`）未配置白名单时一律 403**（fail-closed，P1-5）。
+  响应体含 `hint`，指明应配置 `--metrics-allow-cidr`。抓取端应指向本端口（8080 侧同名端点供冒烟测试，
+  同样经白名单准入且每次请求做 4 次全量 store 扫描，不建议用于常规抓取）。
+- **基数熔断（P1-5）**：每个 (method, path, status) 时序受硬上限 2000 约束；超限后新路径折叠为
+  `path=":other"`，非标准 HTTP 方法折叠为 `method=":other"`，可用
+  `opsmesh_http_metrics_series`（当前时序数）与 `opsmesh_http_metrics_series_dropped_total`（被折叠请求数）观测。
 
 ### GET /api/v1/me
 
@@ -4629,6 +4635,53 @@ Phase 3 审计查询：事件检索与导出（与 `GET /api/v1/audits` 互补�
   {"id": "au-001", "tenantID": "t1", "userID": "u-001", "action": "ticket_create", "target": "tk-001", "timestamp": "2026-08-17T09:00:00Z"}
 ]
 ```
+
+### GET /api/v1/audit/verify
+
+校验审计日志哈希链完整性（P1-3 防篡改）。校验窗口按调用方租户过滤；响应只含行号区间、哈希与计数，**不含其他租户的任何行内容**。
+
+- **认证**：需 `audit:read` 权限 + 有效租户上下文（缺 `X-Tenant-ID` 或 token 租户为空 → `401`）
+- **查询参数**：
+  - `limit` — 校验窗口行数（默认 1000，上限 10000；非法值回落默认）
+- **响应状态码**：
+  - `200 OK` — 校验完成且无异常（`ok=true`）
+  - `409 Conflict` — 校验完成但发现不一致（`ok=false`，`firstBadID`/`reason` 指出首个坏行）——用非 2xx 让 `curl -f` 与网关健康检查直接告警
+  - `501 Not Implemented` — 当前存储后端不提供链式校验（内存态 / 老库未应用迁移 019；`supported=false`）
+  - `500 Internal Server Error` — 探测本身失败（DB 故障）；响应体为脱敏错误，原始错误仅进服务端日志
+
+```json
+{
+  "supported": true,
+  "scope": "tenant",
+  "ok": true,
+  "checked": 1000,
+  "fromID": 21,
+  "toID": 1020,
+  "chainHeadID": 1020,
+  "chainHeadHash": "9f2c…",
+  "headConsistent": true,
+  "tailCovered": true,
+  "legacyRows": 0,
+  "note": ""
+}
+```
+
+字段说明：
+
+| 字段 | 含义 |
+|------|------|
+| `supported` | 后端是否提供链式校验（内存 `false` → 501） |
+| `scope` | `platform`（内部/leader 自检，逐行严格链接校验）或 `tenant`（租户窗口，隔离视角） |
+| `checked` | 本次实际校验的行数 |
+| `fromID`/`toID` | 校验窗口的行号区间（倒序表内取最近 `limit` 行后正序） |
+| `firstBadID`/`reason` | 首个不一致行的 id 与原因（仅 `ok=false` 时出现） |
+| `chainHeadID`/`chainHeadHash` | 链头（在线链尾）指向的行与哈希 |
+| `tailCovered` | 窗口是否覆盖到链尾；`false` 时链头一致性无法判定（租户视角标注，平台视角直接判失败＝尾部被删） |
+| `headConsistent` | 链头是否与在线最新链式行一致（`false` 表示尾部行被删或链头被改） |
+| `legacyRows` | 迁移 019 上线前写入、未纳入链的行数（如实计数，不假装完整） |
+| `archivedThroughID`/`archivedBoundaryHash` | 归档边界（超出保留期的行已搬入 `audit_log_archive`）时给出，用于跨段链接判定 |
+
+> 边界说明：链为无密钥 SHA-256 链，能发现局部篡改/删除，无法对抗「全链重写」；对抗全链重写需外部不可变锚定（WORM）。详见 [security-mechanism.md §7.7](./security-mechanism.md)。
 
 ---
 

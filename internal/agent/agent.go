@@ -1057,62 +1057,195 @@ func checkShellMetachars(command string) error {
 
 // checkShellWhitelist 检查命令是否在白名单内（安全加固）。
 // 白名单为空时放行所有命令（向后兼容，demo/受信内网环境）。
-// 白名单非空时，取命令第一个 token 的 basename，检查是否匹配白名单中某个条目。
 //
-// 匹配规则（安全加固修正，防前缀过宽绕过）：
-//   - 条目以 "*" 结尾（如 "system*"）→ 前缀匹配：base 以 "system" 开头即放行（覆盖 systemctl/systemd-analyze 等）。
-//   - 条目不含 "*" → 精确匹配：base 必须完全等于条目（如 "ls" 仅匹配 "ls"，不匹配 "lsusb"）。
+// 白名单非空时按「执行段」逐段校验（P1-1 安全修复）：
+// 原实现只看整条命令的第一个 token，而 `&&`（以及 `||`、`|`）会把命令切成多段、
+// 每段由同一个 sh -c 独立执行——`ls && rm -rf /` 首 token `ls` 命中白名单即整条放行，
+// 右侧危险命令形同未校验（白名单被绕过）。现改为先按命令分隔操作符切段，
+// 再对每一段取命令词校验，任一段未命中即整条拒绝。
+//
+// 匹配规则（防前缀过宽绕过）：
+//   - 条目以 "*" 结尾（如 "system*"）→ 前缀匹配：命令词以 "system" 开头即放行（覆盖 systemctl/systemd-analyze 等）。
+//   - 条目不含 "*" → 精确匹配：命令词必须完全等于条目（如 "ls" 仅匹配 "ls"，不匹配 "lsusb"）。
 //   - 条目中间含 "*" 视为普通字符（仅尾部 "*" 是通配符标记）。
+//   - 命令词含路径（如 /bin/ls）：仅当目录是系统标准可执行目录（/bin、/usr/bin、/sbin、
+//     /usr/sbin、/usr/local/bin、/usr/local/sbin；Windows 为 System32 等）时按 basename 匹配；
+//     非标准目录必须整条路径被显式白名单（精确条目）才放行。
+//     否则 `cp evil /tmp/ls && /tmp/ls` 可借任意可写目录冒充白名单命令名绕过。
+//   - 命令词为环境变量赋值前缀（`FOO=bar cmd`）一律不放行（fail-closed）：
+//     `PATH=/tmp ls` 可让 shell 以攻击者控制的 PATH 解析后续命令，不可按 basename 放行。
 //
 // M6 集成：网络诊断命令（ping/traceroute/tracert/nslookup/curl/nc/powershell）
-// 被加入内置白名单，即使 --agent-shell-whitelist 未显式包含这些命令也放行。
+// 被加入内置白名单，即使 --agent-shell-whitelist 未显式包含这些命令也放行（逐段生效）。
 // 设计理由：网络诊断是运维平台核心能力，命令经控制面侧 validateCommand 校验 +
 // checkShellMetachars 元字符拦截后风险可控；若管理员需禁用，可在控制面侧禁用网络诊断 API。
 //
-// 此前用 HasPrefix 做前缀匹配，导致白名单 "ls" 会放行 "lsusb"/"lsof" 等非预期命令，存在过宽风险。
-//
-// 注意：这是最佳努力防御，无法完全阻止 "ls;rm -rf /" 这类 shell 元字符拼接绕过
-// （;后内容仍由同一 sh -c 解释执行）。纵深防御应配合 checkShellMetachars 元字符拦截 +
-// 控制面侧 SubmitTask 校验 + IAM 鉴权 + 限制为非交互式单命令下发（无 sh -c 元字符）。
+// 注意：这仍是最佳努力防御——白名单为空时不生效；命令词白名单也不约束重定向目标
+// （`echo hi > /etc/x` 在 echo 命中白名单时仍会写文件）与命令参数；
+// base64/编码类绕过（如 `sh -c "$(echo cGk= | base64 -d)"`）依赖 checkShellMetachars 兜底。
+// 纵深防御应配合控制面侧 validateCommand + IAM 鉴权 + agent 以最小权限运行 + 非交互式单命令下发。
 func (a *Agent) checkShellWhitelist(command string) error {
 	wl := a.cfg.AgentShellWhitelist
 	if wl == "" {
 		return nil // 白名单为空，不限制（向后兼容）
 	}
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
+	if len(strings.Fields(command)) == 0 {
 		return nil // 空命令已在调用前拦截，此处兜底放行
 	}
-	first := fields[0]
-	base := filepath.Base(first) // 取 basename（如 /bin/ls -> ls）
-	// M6 集成：网络诊断命令内置白名单（即使 --agent-shell-whitelist 未包含也放行）。
-	// 覆盖 ping/traceroute/tracert/nslookup/curl/nc/powershell 等网络诊断工具，
-	// 使网络拓扑探测/诊断/连通性检测在白名单启用时仍可正常工作。
-	if isNetworkDiagnoseCommand(base) {
-		return nil
+	for _, seg := range splitShellSegments(command) {
+		fields := strings.Fields(seg)
+		if len(fields) == 0 {
+			continue // 分隔符切分产生的空白段（如 `a && b` 的中间段）跳过
+		}
+		word := fields[0]
+		// M6 集成：网络诊断命令内置白名单（即使 --agent-shell-whitelist 未包含也放行）。
+		// 覆盖 ping/traceroute/tracert/nslookup/curl/nc/powershell 等网络诊断工具，
+		// 使网络拓扑探测/诊断/连通性检测在白名单启用时仍可正常工作。
+		if isNetworkDiagnoseCommand(filepath.Base(word)) {
+			continue
+		}
+		if shellWordAllowed(word, wl) {
+			continue
+		}
+		return fmt.Errorf("command %q not in shell whitelist (segment %q, allowed entries: %s)",
+			filepath.Base(word), strings.TrimSpace(seg), wl)
 	}
+	return nil
+}
+
+// splitShellSegments 把命令按「命令分隔操作符」切分为多个独立执行段（P1-1）。
+//
+// 只有经 checkShellMetachars 过滤后仍可能串联命令的操作符需要切：
+//   - `&&`（条件与）、`||`（条件或）、`|`（管道）→ 切段；
+//   - `>&` / `&>` 是重定向而非分隔符，必须保留在同一段内（否则 `echo hi 1>&2`
+//     会被切成 `echo hi 1>` 与 `2`，第二段命令词 "2" 误判为非法）；
+//   - `;`、单个 `&`、换行/回车、`$()`、反引号已由 checkShellMetachars 前置拦截，
+//     此处仍对其切段/忽略以保持语义一致（纵深防御，不依赖调用顺序）。
+func splitShellSegments(command string) []string {
+	segs := make([]string, 0, 2)
+	var cur strings.Builder
+	flush := func() {
+		segs = append(segs, cur.String())
+		cur.Reset()
+	}
+	for i := 0; i < len(command); i++ {
+		switch c := command[i]; c {
+		case '&':
+			// `&>`：重定向合并（`cmd &>file`）→ 不切段。
+			if i+1 < len(command) && command[i+1] == '>' {
+				cur.WriteByte(c)
+				continue
+			}
+			// `>&`：fd 重定向（`1>&2`）→ 不切段。
+			if i > 0 && command[i-1] == '>' {
+				cur.WriteByte(c)
+				continue
+			}
+			// `&&`：条件与 —— 跳过第二个 & 后切段。
+			if i+1 < len(command) && command[i+1] == '&' {
+				i++
+			}
+			flush()
+		case '|':
+			// `||`：条件或 —— 跳过第二个 | 后切段；单个 |（管道）同样切段。
+			if i+1 < len(command) && command[i+1] == '|' {
+				i++
+			}
+			flush()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	flush()
+	return segs
+}
+
+// standardShellBinDirs 返回系统标准可执行目录（含尾部分隔符，便于前缀比较）。
+// 命令词带路径时，只有落在这些目录内才允许按 basename 命中白名单，
+// 防 `cp /bin/ls /tmp/ls && /tmp/ls` 这类「把白名单命令名搬到可写目录再执行」的绕过。
+// POSIX 目录在任意平台都列入（非目标平台上的同名目录不可执行，不影响判定）；
+// Windows 系统目录按实际 SystemRoot 追加。
+func standardShellBinDirs() []string {
+	dirs := []string{"/bin/", "/usr/bin/", "/sbin/", "/usr/sbin/", "/usr/local/bin/", "/usr/local/sbin/"}
+	if runtime.GOOS == "windows" {
+		root := os.Getenv("SystemRoot")
+		if root == "" {
+			root = `C:\Windows`
+		}
+		dirs = append(dirs,
+			strings.ToLower(filepath.ToSlash(root+`\System32`))+"/",
+			strings.ToLower(filepath.ToSlash(root+`\SysWOW64`))+"/",
+			strings.ToLower(filepath.ToSlash(root))+"/",
+		)
+	}
+	return dirs
+}
+
+// shellWordAllowed 判断单段命令的命令词是否被白名单放行。
+func shellWordAllowed(word, wl string) bool {
+	// 环境变量赋值前缀（`FOO=bar cmd`，`PATH=/tmp ls`）不放行：shell 会用该值解析后续命令，
+	// 按 basename 放行等于放行攻击者可控路径。
+	if strings.Contains(word, "=") && !strings.ContainsAny(word, "/\\") {
+		return false
+	}
+	if !strings.ContainsAny(word, `/\`) {
+		return shellWhitelistMatches(filepath.Base(word), wl)
+	}
+	// 带路径：非标准目录必须整条路径被显式白名单（精确条目）才放行。
+	dir := filepath.ToSlash(filepath.Dir(word))
+	if !strings.HasSuffix(dir, "/") {
+		dir += "/"
+	}
+	// 相对路径（`./ls`、`../bin/ls`）依赖 cwd 解析，不放行（必须显式白名单整条路径）。
+	if dir == "./" || strings.HasPrefix(dir, "../") {
+		return false
+	}
+	base := filepath.Base(word)
+	// Windows：路径形式通常带 .exe/.cmd/.bat 后缀，白名单条目一般写裸名，比较时去掉后缀。
+	if runtime.GOOS == "windows" {
+		for _, ext := range []string{".exe", ".cmd", ".bat", ".com"} {
+			if strings.HasSuffix(strings.ToLower(base), ext) {
+				base = base[:len(base)-len(ext)]
+				break
+			}
+		}
+	}
+	for _, std := range standardShellBinDirs() {
+		// POSIX 路径大小写敏感；Windows 系统目录不区分大小写（列表已小写化）。
+		if dir == std || (runtime.GOOS == "windows" && strings.ToLower(dir) == std) {
+			return shellWhitelistMatches(base, wl)
+		}
+	}
+	// 非标准目录：要求白名单中存在与整条路径完全相等的条目（不做前缀/通配匹配）。
+	for _, entry := range strings.Split(wl, ",") {
+		if entry = strings.TrimSpace(entry); entry != "" && entry == word {
+			return true
+		}
+	}
+	return false
+}
+
+// shellWhitelistMatches 按白名单条目匹配命令 basename（精确为主，尾部 "*" 才前缀匹配）。
+func shellWhitelistMatches(base, wl string) bool {
 	for _, entry := range strings.Split(wl, ",") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
 		}
-		// 安全加固：精确匹配为主，前缀匹配仅当条目以 "*" 结尾时启用。
-		// "ls" 仅匹配 "ls"，"system*" 匹配 "systemctl" 等以 "system" 开头的命令。
-		if strings.HasSuffix(entry, "*") {
-			prefix := strings.TrimSuffix(entry, "*")
+		if prefix, ok := strings.CutSuffix(entry, "*"); ok {
 			if prefix == "" {
 				continue // "*" 单独无意义，跳过
 			}
 			if strings.HasPrefix(base, prefix) {
-				return nil
+				return true
 			}
-		} else {
-			if base == entry {
-				return nil
-			}
+			continue
+		}
+		if base == entry {
+			return true
 		}
 	}
-	return fmt.Errorf("command %q not in shell whitelist (allowed entries: %s)", base, wl)
+	return false
 }
 
 // isNetworkDiagnoseCommand 判断命令 basename 是否为网络诊断命令（M6 集成）。
