@@ -4,6 +4,25 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-25 CI 首跑全绿 + 消除镜像 job 的「空转绿」
+
+> 承接下一节的 4 处修复（`68ff539`）。推送后 CI 首跑（run `36143704673`）**`completed / success`，12 个 job 全绿**——2026-09-20 以来下游 7 个 job **第一次真正执行**。但同一次首跑暴露出第三类假绿：`image` / `image-agent` 结论 `success`，实际只跑了「探测 secret」一步。本节记录该结论与本轮修复。证据：`docs/commercial-readiness-review-2026-09-25.md` §15。
+
+### CI：`image` / `image-agent` 空转绿（缺私有仓库凭证即整段不执行，但退出码 0）
+
+- **现象**：两个 job 的结论是 `success`，`gh run list` 里与真跑绿无法区分；下钻 step 级日志才看到只执行了 `Check registry secret` 一步，日志为 `REGISTRY secret not set, skipping image build/push`，其余 step 全被 `if:` 挡掉——**镜像未构建、未推送、未签名、无 SBOM、gitops tag 未回写**。
+- **根因**：两个 job 依赖仓库 secrets `REGISTRY` / `REGISTRY_USER` / `REGISTRY_TOKEN`（私有仓库凭证，指向 `registry.internal`），未配置时按设计**自跳过**；但「跳过」的实现方式是让 job 以 0 退出，而非让结论反映「未验证」。
+- **修复：私有 / GHCR 双路径**（`.github/workflows/ci.yml`，两 job 对称）：
+  - 三者**齐备** → `mode=private`，推 `<REGISTRY>/opsmesh-binary|opsmesh-agent`（与原路径逐字相同，向后兼容），凭证 `REGISTRY_TOKEN`；
+  - **缺任一**（含半配置状态）→ `mode=ghcr`，推 `ghcr.io/<owner>/opsmesh-binary|opsmesh-agent`，凭证用内置 `GITHUB_TOKEN`（**零 secret 即可真跑**）；
+  - 回落**不是跳过**：GHCR 路径下构建、推送、Trivy 扫描、SBOM、cosign 签名全部照跑，消费方需相应设 `imageRegistry=ghcr.io/<owner>`。半配置时回落而非报错，避免半配置状态让 `login` 失败把流水线弄红。
+  - job 级 `permissions` 增加 `packages: write`（GHCR 推送）与 `id-token: write`（keyless cosign）。
+- **修复：签名不再只能依赖密钥**——私有路径保持 key-based + `--tlog-upload=false`；GHCR 路径改 **keyless（Fulcio OIDC + Rekor 透明日志）**，无需任何 secret。验证命令（`cosign verify` 的 identity-regexp / issuer）写在 workflow 注释内。
+- **新增：镜像 SBOM**——syft v1.51.1（钉版，与 release job 同版本）对推送后的镜像出 SPDX JSON 并作为 workflow artifact 留存，为供应链证据补齐一环。**刻意不用 buildx attestation**，以免改变私有路径的镜像产物形态。
+- **新增：防空转绿自述**——job 末尾把本次实际覆盖的环节（构建推送 / Trivy / SBOM / cosign 模式 / GitOps 写回）写入 `$GITHUB_STEP_SUMMARY`，未启用的可选段同时打 `::warning::`。今后只要 job 报 success，Summary 就能一眼看出「哪些环节真的跑了」。
+- **实测（本地可脱离 GitHub 运行的部分全部实跑）**：仓库解析三分支（齐备/全缺/半配置）注入 env 后执行 → 前缀与原值一致或正确回落；自述步骤 4 场景 × 2 job = 8 组全部正确输出（**首轮实测抓到真 bug**：`set -u` 下未定义的可选 env 直接 `unbound variable` 失败，已改 `${VAR:-}`）；11 个 `run` 块 `bash -n` 0 错误；**actionlint v1.7.7** 对 `ci.yml` 及全部 workflow **0 问题**。
+- **诚实边界**：GHCR 推送、keyless cosign 的 Fulcio/Rekor 交互、artifact 上传均需推送后由 CI 首跑确认（本机无法模拟 OIDC 与 GHCR 权限模型）；GHCR 包可见性由 GitHub 侧策略决定；**命名对齐待核对**——CI 推的 leaf 名是 `opsmesh-binary`/`opsmesh-agent`，而仓库内 `deploy/helm/opsmesh` 用 `opsmesh/opsmesh`、`opsmesh/opsmesh-agent`，`opsmesh-binary` 全仓只出现在 `ci.yml`，原注释称它对齐的是**外部 GitOps chart**（不在本仓库），本轮无法核实。
+
 ## [Unreleased] — 2026-09-25 CI 首次真跑暴露的 3 处失败 + 本地复现暴露的第 4 处夹具缺陷
 
 > 背景：P1-2 推送后 CI 第一次真正跑完整流水线（run `36122648074`），`security`、`E2E (real backend)`、`E2E (security)` 三个 job 失败——前两个此前**从未执行过**（一直被更早的 lint 失败静默跳过），后两个的失败则分别是 P1-1 与 P0-2 两次修复的**真实回归/兼容性影响**。四处均已修复并**本地按 CI 同款命令实测**。

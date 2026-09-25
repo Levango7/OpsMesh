@@ -1331,6 +1331,39 @@ P1-2 批次推送后，CI **第一次真正跑完整流水线**（run `361226480
 - **为何仍算可接受**：Dockerfile 路径本机已被真实覆盖——`deploy/docker/docker-compose.prod.yml` 的 `opsmesh/controlplane:0.9.0` 等镜像即由本仓库 Dockerfile 构建并跑起 17 容器全栈（见 §13）。
 - **未覆盖**：CI 独有的一段链路从未执行——buildx 构建、SBOM（syft）、cosign 签名、gitops 镜像 tag 回写。**这是发布前的真空白**，需配置 registry 凭证或改用 GHCR（`GITHUB_TOKEN`）才能验证。
 - **教训（写给后续维护者）**：这是本项目第三类「绿而不实」——① lint 失败导致下游 **skip**（§13.8）；② 门禁因环境问题 **false red**（§14.2）；③ secret 缺失导致 job **空转绿**（本节）。三者的共同点是 `gh run list` 的一行结论**都不足以判断是否真的验过**，必须落到 job 内 step 级日志。
-- **处置建议**（未实施，需决策）：无凭证时改为 build-only（`load: true`、跳过 push/cosign/gitops），或把该 job 在无凭证时显式输出 `::warning::` / 让 job 结论反映「未验证」。本轮未擅自改动发布链路。
+- ~~**处置建议**（未实施，需决策）~~ → **已实施（用户决策：改 GHCR 走 GITHUB_TOKEN），见 §15.3**。
+
+### 15.3 消除空转绿：镜像 job 私有/ GHCR 双路径（已实施）
+
+**问题**：`image` / `image-agent` 依赖私有仓库三 secret，未配置即整段空转但结论 `success`——发布链路永远得不到验证。
+
+**方案**（`.github/workflows/ci.yml`，两个 job 对称）：
+
+| 解析结果 | 触发条件 | registry / 凭证 | 镜像前缀 |
+|---|---|---|---|
+| `mode=private` | `REGISTRY` + `REGISTRY_USER` + `REGISTRY_TOKEN` **三者齐备** | 私有仓库 / `REGISTRY_TOKEN` | `<REGISTRY>/opsmesh-binary`（与原路径逐字相同，向后兼容） |
+| `mode=ghcr` | 三者**缺任一**（含半配置状态） | `ghcr.io` / 内置 `GITHUB_TOKEN` | `ghcr.io/<owner>/opsmesh-binary` |
+
+- **回落不是跳过**：GHCR 路径下 job 照常构建、推送、Trivy 扫描、出 SBOM、cosign 签名——只是消费方要相应设 `imageRegistry=ghcr.io/<owner>`、`repository=opsmesh-binary|opsmesh-agent`。三 secret 缺一时**回落而非失败**，避免半配置状态让 `login` 报错把流水线弄红（本地用三种 env 组合实测过：齐备/全缺/半配置）。
+- **签名**：私有路径保持 key-based + `--tlog-upload=false`；GHCR 路径改 **keyless（Fulcio OIDC + Rekor）**，零 secret 即可真签——`permissions` 增加 `packages: write` 与 `id-token: write`。验证命令写在 workflow 注释里（`cosign verify --certificate-identity-regexp … --certificate-oidc-issuer https://token.actions.githubusercontent.com`）。
+- **SBOM**：新增 syft v1.51.1（钉版，与 release job 同版本）对推送后的镜像出 SPDX JSON，作为 workflow artifact 留存。**刻意不用 buildx attestation**，以免改变私有路径的镜像产物形态影响既有消费方。
+- **防空转绿自述**：job 末尾把本次实际覆盖的环节（构建推送 / Trivy / SBOM / cosign 模式 / GitOps 写回）写进 `$GITHUB_STEP_SUMMARY`，未启用的可选段同时打 `::warning::`——以后只要 job 报了 success，Summary 里就能一眼看出「哪些环节真的跑了」。
+
+**本地验证**（CI 无法在本机执行，故对可脱离 GitHub 运行的部分逐个实测）：
+
+| 项 | 方法 | 结果 |
+|---|---|---|
+| 仓库解析三分支 | 抽出 `run` 脚本，注入 env 组合（齐备/全缺/半配置）后执行 | 齐备→`private`+`registry.internal/opsmesh-binary`（与原值一致）；另两种→`ghcr`+`ghcr.io/Levango7/opsmesh-binary`，且半配置时打出 warning 而非报错 |
+| 自述步骤四场景 × 两 job | 注入 `mode`×`COSIGN_PRIVATE_KEY`×`GITOPS_*` 组合 | 8 组全部正确输出；**首轮实测抓到真 bug**：`set -u` 下未定义的可选 env 直接 `unbound variable` 失败 → 已改为 `${VAR:-}` 取值 |
+| 全部 `run` 块语法 | `bash -n`（11 个块） | 0 错误 |
+| workflow 静态校验 | **actionlint v1.7.7**（本机新装） | `ci.yml` 及全部 workflow **0 问题**（含 `steps.check.outputs.*` 引用、表达式、action 输入） |
+| YAML 结构 | PyYAML 解析 + 逐 step 打印 `if:`/`permissions` | 两 job 均 `packages: write` + `id-token: write`；无残留 `steps.check.outputs.skip` 引用 |
+
+**诚实边界**：
+
+- 上述验证**不含**「GitHub 侧真跑」——`ghcr.io` 推送、keyless cosign 的 Fulcio/Rekor 交互、`upload-artifact` 均需推送后由 CI 首跑确认。本机无法模拟 OIDC 签发与 GHCR 权限模型。
+- **GHCR 包可见性**：首次发布后包的可见性由 GitHub 侧策略决定，若企业客户需要匿名拉取（如离线交付前的预拉），可能需手工把包设为 public；本轮未处理。
+- **命名对齐待核对（真实交付风险，非本轮引入）**：CI 推送的 leaf 名是 `opsmesh-binary` / `opsmesh-agent`，而仓库内 `deploy/helm/opsmesh` 用的是 `controlplane.image.repository=opsmesh/opsmesh`、`agent.image.repository=opsmesh/opsmesh-agent`；`opsmesh-binary` 全仓只出现在 `ci.yml`。原注释称它对齐的是**外部 GitOps chart**（`charts/opsmesh-controlplane/values.yaml`，不在本仓库），本轮无法核实。**若消费方实际用仓库内 chart，则 CI 推的镜像永远不会被引用**——建议连同 GitOps chart 一并核对（需用户在外部仓库确认）。
+- **actionlint 未接入 CI**：本机用它验过 workflow，但未把它加成流水线门禁（属新增门禁，超出本轮范围；鉴于本项目已出现四类 CI 自身缺陷，建议后续纳入）。
 
 

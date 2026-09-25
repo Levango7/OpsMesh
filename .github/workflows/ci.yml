@@ -358,15 +358,24 @@ jobs:
         # 仓库为 PUBLIC，https 克隆无需凭证。
         run: buf breaking --against "https://github.com/${GITHUB_REPOSITORY}.git#branch=main,subdir=proto"
 
-  # 镜像构建/推送 —— 推送路径须与 Helm values 的镜像引用逐字一致，
-  # 否则 Argo CD 拉不到（registry.internal/opsmesh/opsmesh-binary:tag）。
-  # 同时钉死 digest（不可变镜像），helm values.global.image.tag 在发布流程中替换为该 digest。
-  # 注意：本 job 依赖仓库 secret REGISTRY/REGISTRY_USER/REGISTRY_TOKEN（私有镜像仓库凭证）。
-  # 若未配置这些 secret，则整个 job 自动跳过（而非失败），保证 build-test/integration/security 仍可全绿。
+  # 镜像构建/推送 —— 推送路径须与消费方 chart 的镜像引用一致，否则拉不到。
+  # 仓库解析优先级（2026-09-25 起，消除"空转绿"，见报告 §15.2）：
+  #   ① 仓库 secret REGISTRY/REGISTRY_USER/REGISTRY_TOKEN 三者齐备 → 推私有仓库（原路径，leaf 名不变）；
+  #   ② 否则回落 GHCR（ghcr.io/<owner>，凭证用内置 GITHUB_TOKEN，无需任何 secret）。
+  #   回落不是"跳过"：job 照常构建/推送/扫描/签名/出 SBOM，只是消费方要设 imageRegistry=ghcr.io/<owner>。
+  # 旧实现无 secret 时只跑一步"探测 secret"就以退出码 0 结束，结论 success 却什么都没做——
+  # 属第三类假绿（`gh run list` 看不出，必须下钻 step 级日志）。
+  # 私有路径的 leaf 名 opsmesh-binary / opsmesh-agent 由外部 GitOps chart（charts/opsmesh-controlplane）消费；
+  # 仓库内 deploy/helm/opsmesh 用的是 controlplane.image.repository=opsmesh/opsmesh，两者命名关系待核对（报告 §15.3）。
   image:
     runs-on: ubuntu-latest
     needs: security
     if: github.event_name == 'push'
+    # GHCR 推送需 packages:write；keyless cosign 走 Fulcio OIDC 需 id-token:write。
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     # secrets 提升到 job 级 env：step 级 if 读不到本 step 的 env map（求值顺序在前），
     # 若放在 step env 里则 env.COSIGN_PRIVATE_KEY 恒为空、签名步骤永远被跳过。
     # 未配置 secret 时值为空串，step 的 != '' 守卫照常跳过，不阻塞流水线。
@@ -375,74 +384,147 @@ jobs:
       COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
       GITOPS_REPO: ${{ secrets.GITOPS_REPO }}
       GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+      REGISTRY: ${{ secrets.REGISTRY }}
+      REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v5
-      - name: Check registry secret
+      - name: 解析镜像仓库（私有凭证齐备 → 私有；否则 GHCR + GITHUB_TOKEN）
         id: check
         env:
-          REGISTRY: ${{ secrets.REGISTRY }}
+          IMAGE_LEAF: opsmesh-binary
         run: |
-          if [ -z "$REGISTRY" ]; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "REGISTRY secret not set, skipping image build/push"
+          set -euo pipefail
+          if [ -n "${REGISTRY:-}" ] && [ -n "${REGISTRY_USER:-}" ] && [ -n "${REGISTRY_TOKEN:-}" ]; then
+            {
+              echo "mode=private"
+              echo "registry=${REGISTRY}"
+              echo "username=${REGISTRY_USER}"
+              echo "prefix=${REGISTRY}/${IMAGE_LEAF}"
+            } >>"$GITHUB_OUTPUT"
+            echo "::notice::镜像目标=私有仓库 ${REGISTRY}/${IMAGE_LEAF}（凭证齐备）"
           else
-            echo "skip=false" >> $GITHUB_OUTPUT
+            # 三者缺一即回落，避免半配置状态下 login 失败把流水线弄红。
+            {
+              echo "mode=ghcr"
+              echo "registry=ghcr.io"
+              echo "username=${GITHUB_ACTOR}"
+              echo "prefix=ghcr.io/${GITHUB_REPOSITORY_OWNER}/${IMAGE_LEAF}"
+            } >>"$GITHUB_OUTPUT"
+            echo "::warning::REGISTRY/REGISTRY_USER/REGISTRY_TOKEN 未齐备 → 本次改用 GHCR（凭证=GITHUB_TOKEN）；消费方需设 imageRegistry=ghcr.io/${GITHUB_REPOSITORY_OWNER}、repository=${IMAGE_LEAF}"
           fi
       - name: Set up Docker Buildx
-        if: steps.check.outputs.skip != 'true'
         uses: docker/setup-buildx-action@v4
       - name: 登录镜像仓库
-        if: steps.check.outputs.skip != 'true'
         uses: docker/login-action@v4
         with:
-          registry: ${{ secrets.REGISTRY }}
-          username: ${{ secrets.REGISTRY_USER }}
-          password: ${{ secrets.REGISTRY_TOKEN }}
+          registry: ${{ steps.check.outputs.registry }}
+          username: ${{ steps.check.outputs.username }}
+          # 私有路径用 REGISTRY_TOKEN；GHCR 路径用内置 GITHUB_TOKEN（三者齐备才走私有）。
+          password: ${{ steps.check.outputs.mode == 'private' && secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
       - name: 构建并推送（钉死 digest）
-        if: steps.check.outputs.skip != 'true'
         id: build
         uses: docker/build-push-action@v7
         with:
           context: .
           push: true
-          # 注意：repository 名 opsmesh-binary 必须与 charts/opsmesh-controlplane/values.yaml
-          # 的 global.image.repository 逐字一致；REGISTRY 必须等于 global.imageRegistry。
-          tags: ${{ secrets.REGISTRY }}/opsmesh-binary:${{ github.sha }}
+          # leaf 名 opsmesh-binary 由消费方 chart 的 image.repository 决定（见 job 顶部注释）。
+          tags: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
       - name: Trivy 镜像扫描
-        if: steps.check.outputs.skip != 'true'
         uses: aquasecurity/trivy-action@v0.36.0  # ：钉死版本，防 @master 供应链漂移
         with:
-          image-ref: ${{ secrets.REGISTRY }}/opsmesh-binary:${{ github.sha }}
+          image-ref: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
           severity: HIGH,CRITICAL
           exit-code: "1"
-      # 供应链安全：对推送的镜像做 cosign 签名（key-based，非 keyless/OIDC）。
-      # 条件守卫：registry secret 已配置（steps.check.outputs.skip != 'true'）且
-      # COSIGN_PRIVATE_KEY secret 已配置（env.COSIGN_PRIVATE_KEY != ''）。
-      # 若 COSIGN_PRIVATE_KEY 未配置，本步骤自动跳过，不影响 CI 流水线（与 image job 整体跳过机制一致）。
-      # --tlog-upload=false：不上传透明日志（内网/无 OIDC 场景）；COSIGN_EXPERIMENTAL=1 启用非交互签名。
+      # SBOM：syft 对推送后的镜像出 SPDX JSON 并作为 workflow artifact 留存（供应链证据）。
+      # 不改变镜像产物形态（不用 buildx attestation），避免私有路径的消费方行为变化。
+      - name: 生成镜像 SBOM（syft v1.51.1，钉版）
+        env:
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          command -v syft >/dev/null 2>&1 || {
+            curl -sSL https://github.com/anchore/syft/releases/download/v1.51.1/syft_1.51.1_linux_amd64.tar.gz -o /tmp/syft.tar.gz
+            tar -xzf /tmp/syft.tar.gz -C /tmp syft
+            sudo mv /tmp/syft /usr/local/bin/syft
+          }
+          syft version
+          syft "${IMAGE}" -o spdx-json > "sbom-controlplane-${GITHUB_SHA}.spdx.json"
+          python3 -c 'import json,sys;print("SBOM 包条目数:", len(json.load(open(sys.argv[1]))["packages"]))' "sbom-controlplane-${GITHUB_SHA}.spdx.json"
+      - name: 上传 SBOM 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-controlplane-${{ github.sha }}
+          path: sbom-controlplane-*.spdx.json
+          retention-days: 30
+      # 供应链安全：对推送的镜像做 cosign 签名，两条互斥路径：
+      # ① 私有路径（COSIGN_PRIVATE_KEY 已配置）→ key-based，--tlog-upload=false（内网无 OIDC 场景）。
+      # ② GHCR 路径（无密钥）→ keyless，以本 workflow 的 OIDC 身份签名并上传 Rekor 透明日志，零 secret。
+      # 验证命令（keyless）：cosign verify <image> \
+      #   --certificate-identity-regexp '^https://github\.com/<owner>/<repo>/\.github/workflows/ci\.yml@' \
+      #   --certificate-oidc-issuer https://token.actions.githubusercontent.com
       # cosign 安装：官方 sigstore/cosign-installer action，钉死 commit（防 tag 重指向）。
       # installer 内部链式校验：bootstrap 二进制以嵌入 sha256 校验，目标版本（v2.2.4）
       # 经 verify-blob 密码学验签（keyless 或官方公钥）——消除"手填哈希"风险类别。
       - name: 安装 cosign（官方 installer，钉死 commit）
-        if: steps.check.outputs.skip != 'true' && env.COSIGN_PRIVATE_KEY != ''
+        if: env.COSIGN_PRIVATE_KEY != '' || steps.check.outputs.mode == 'ghcr'
         uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
         with:
           cosign-release: 'v2.2.4'
-      - name: cosign 签名镜像（供应链安全）
-        if: steps.check.outputs.skip != 'true' && env.COSIGN_PRIVATE_KEY != ''
+      - name: cosign 签名镜像（key-based，私有仓库路径）
+        if: env.COSIGN_PRIVATE_KEY != ''
         env:
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-          IMAGE: ${{ secrets.REGISTRY }}/opsmesh-binary:${{ github.sha }}
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
         run: |
-          echo "Signing image: ${IMAGE}"
-          # 签名镜像（keyless 模式需要 OIDC，这里用 key-based 签名）
-          cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false ${IMAGE}
-          echo "Image signed successfully"
+          set -euo pipefail
+          cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false "${IMAGE}"
+          echo "已签名（key-based）: ${IMAGE}"
+      - name: cosign 签名镜像（keyless OIDC，GHCR 路径）
+        if: env.COSIGN_PRIVATE_KEY == '' && steps.check.outputs.mode == 'ghcr'
+        env:
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # --yes 跳过多镜像确认；默认上传 Rekor 透明日志（keyless 的可验证性正来自此）。
+          cosign sign --yes "${IMAGE}"
+          echo "已签名（keyless/OIDC）: ${IMAGE}"
+      # 自述本次实际覆盖到的链路，缺 secret 的可选段显式列出——
+      # 直接针对"job 报了 success 但整段没跑"这类假绿（报告 §15.2）。
+      - name: 本次覆盖范围自述（防空转绿）
+        # 注意：可选 secret 一律用 ${VAR:-} 取值——set -u 下未定义变量会让本步直接失败，
+        # 而"secret 未配置"正是本步要如实报告的情况（本地实测踩到过）。
+        run: |
+          set -euo pipefail
+          MODE="${{ steps.check.outputs.mode }}"
+          PREFIX="${{ steps.check.outputs.prefix }}"
+          if [ -n "${COSIGN_PRIVATE_KEY:-}" ]; then
+            cosign_mode="key-based（COSIGN_PRIVATE_KEY）"
+          elif [ "$MODE" = "ghcr" ]; then
+            cosign_mode="keyless/OIDC（GHCR 路径，无需密钥）"
+          else
+            cosign_mode="未启用（私有路径且无 COSIGN_PRIVATE_KEY）"
+          fi
+          if [ -n "${GITOPS_REPO:-}" ] && [ -n "${GITOPS_PAT:-}" ]; then
+            gitops_mode="启用"
+          else
+            gitops_mode="未启用（缺 GITOPS_REPO/GITOPS_PAT）"
+            echo "::warning::GitOps tag/digest 写回未启用——发布链路此段本次未验证"
+          fi
+          {
+            echo "### image job 本次实际覆盖"
+            echo ""
+            echo "| 环节 | 状态 |"
+            echo "|---|---|"
+            echo "| 构建 + 推送 | \`${PREFIX}:${{ github.sha }}\`（模式=${MODE}） |"
+            echo "| Trivy 扫描 | HIGH/CRITICAL 门禁 |"
+            echo "| SBOM | syft SPDX JSON（artifact） |"
+            echo "| cosign 签名 | ${cosign_mode} |"
+            echo "| GitOps 写回 | ${gitops_mode} |"
+          } >>"$GITHUB_STEP_SUMMARY"
       # 闭环：构建后把镜像 tag 钉死写回 GitOps chart。若 GitOps 仓库未就绪则安全跳过（不再失败）。
       # 启用条件：secrets.GITOPS_REPO 与 secrets.GITOPS_PAT 均已配置，且仓库中 charts/opsmesh-controlplane/values.yaml 存在。
       - name: 钉死镜像 tag 写回 GitOps values（E4，可选）
-        if: steps.check.outputs.skip != 'true' && env.GITOPS_REPO != '' && env.GITOPS_PAT != ''
+        if: env.GITOPS_REPO != '' && env.GITOPS_PAT != ''
         env:
           TAG: ${{ github.sha }}
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -481,76 +563,138 @@ jobs:
           git commit -m "ci: pin opsmesh-binary to ${TAG}" || exit 0
           git push || { echo "::warning::git push 失败，跳过"; exit 0; }
 
-  # E4/：agent 镜像构建/推送 —— 与 image job 对称，构建 Dockerfile.agent 推送 opsmesh-agent。
-  # Helm Chart（deploy/helm/opsmesh/values*.yaml）引用 opsmesh/opsmesh-agent:tag，
-  # 若 CI 不构建则部署必 ErrImagePull。tag 与 controlplane 一致（github.sha），保证可追溯。
-  # 同样依赖 REGISTRY/REGISTRY_USER/REGISTRY_TOKEN secret，未配置则自动跳过（与 image job 一致）。
+  # E4/：agent 镜像构建/推送 —— 与 image job 对称（同一套仓库解析与回落策略，见 image job 顶部注释），
+  # 构建 Dockerfile.agent 推送 opsmesh-agent。若 CI 不构建则部署必 ErrImagePull。
+  # tag 与 controlplane 一致（github.sha），保证可追溯。
   image-agent:
     runs-on: ubuntu-latest
     needs: security
     if: github.event_name == 'push'
+    # 同 image job：GHCR 推送 packages:write；keyless cosign 需 id-token:write。
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     # 同 image job：cosign secret 提升到 job 级 env，保证 step 级 if 可读。
     env:
       COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
       COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+      REGISTRY: ${{ secrets.REGISTRY }}
+      REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v5
-      - name: Check registry secret
+      - name: 解析镜像仓库（私有凭证齐备 → 私有；否则 GHCR + GITHUB_TOKEN）
         id: check
         env:
-          REGISTRY: ${{ secrets.REGISTRY }}
+          IMAGE_LEAF: opsmesh-agent
         run: |
-          if [ -z "$REGISTRY" ]; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "REGISTRY secret not set, skipping agent image build/push"
+          set -euo pipefail
+          if [ -n "${REGISTRY:-}" ] && [ -n "${REGISTRY_USER:-}" ] && [ -n "${REGISTRY_TOKEN:-}" ]; then
+            {
+              echo "mode=private"
+              echo "registry=${REGISTRY}"
+              echo "username=${REGISTRY_USER}"
+              echo "prefix=${REGISTRY}/${IMAGE_LEAF}"
+            } >>"$GITHUB_OUTPUT"
+            echo "::notice::agent 镜像目标=私有仓库 ${REGISTRY}/${IMAGE_LEAF}（凭证齐备）"
           else
-            echo "skip=false" >> $GITHUB_OUTPUT
+            {
+              echo "mode=ghcr"
+              echo "registry=ghcr.io"
+              echo "username=${GITHUB_ACTOR}"
+              echo "prefix=ghcr.io/${GITHUB_REPOSITORY_OWNER}/${IMAGE_LEAF}"
+            } >>"$GITHUB_OUTPUT"
+            echo "::warning::REGISTRY/REGISTRY_USER/REGISTRY_TOKEN 未齐备 → agent 镜像改用 GHCR（凭证=GITHUB_TOKEN）；消费方需设 imageRegistry=ghcr.io/${GITHUB_REPOSITORY_OWNER}、repository=${IMAGE_LEAF}"
           fi
       - name: Set up Docker Buildx
-        if: steps.check.outputs.skip != 'true'
         uses: docker/setup-buildx-action@v4
       - name: 登录镜像仓库
-        if: steps.check.outputs.skip != 'true'
         uses: docker/login-action@v4
         with:
-          registry: ${{ secrets.REGISTRY }}
-          username: ${{ secrets.REGISTRY_USER }}
-          password: ${{ secrets.REGISTRY_TOKEN }}
+          registry: ${{ steps.check.outputs.registry }}
+          username: ${{ steps.check.outputs.username }}
+          password: ${{ steps.check.outputs.mode == 'private' && secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
       - name: 构建并推送 agent 镜像（钉死 digest）
-        if: steps.check.outputs.skip != 'true'
         id: build
         uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.agent
           push: true
-          # repository 名 opsmesh-agent 必须与 deploy/helm/opsmesh/values*.yaml
-          # 的 agent.image.repository 逐字一致（去掉 imageRegistry 前缀后）。
-          tags: ${{ secrets.REGISTRY }}/opsmesh-agent:${{ github.sha }}
+          # leaf 名 opsmesh-agent 由消费方 chart 的 agent.image.repository 决定。
+          tags: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
       - name: Trivy 镜像扫描（agent）
-        if: steps.check.outputs.skip != 'true'
         uses: aquasecurity/trivy-action@v0.36.0  # ：钉死版本，防 @master 供应链漂移
         with:
-          image-ref: ${{ secrets.REGISTRY }}/opsmesh-agent:${{ github.sha }}
+          image-ref: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
           severity: HIGH,CRITICAL
           exit-code: "1"
-      # 供应链安全：agent 镜像同样做 cosign 签名，与 controlplane image job 对称。
+      - name: 生成 agent 镜像 SBOM（syft v1.51.1，钉版）
+        env:
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          command -v syft >/dev/null 2>&1 || {
+            curl -sSL https://github.com/anchore/syft/releases/download/v1.51.1/syft_1.51.1_linux_amd64.tar.gz -o /tmp/syft.tar.gz
+            tar -xzf /tmp/syft.tar.gz -C /tmp syft
+            sudo mv /tmp/syft /usr/local/bin/syft
+          }
+          syft version
+          syft "${IMAGE}" -o spdx-json > "sbom-agent-${GITHUB_SHA}.spdx.json"
+          python3 -c 'import json,sys;print("SBOM 包条目数:", len(json.load(open(sys.argv[1]))["packages"]))' "sbom-agent-${GITHUB_SHA}.spdx.json"
+      - name: 上传 agent SBOM 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-agent-${{ github.sha }}
+          path: sbom-agent-*.spdx.json
+          retention-days: 30
+      # 供应链安全：agent 镜像同样做 cosign 签名，与 controlplane image job 对称（两条互斥路径见其注释）。
       # 同 controlplane image job：官方 installer action 钉死 commit，内部链式校验。
       - name: 安装 cosign（官方 installer，钉死 commit）
-        if: steps.check.outputs.skip != 'true' && env.COSIGN_PRIVATE_KEY != ''
+        if: env.COSIGN_PRIVATE_KEY != '' || steps.check.outputs.mode == 'ghcr'
         uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
         with:
           cosign-release: 'v2.2.4'
-      - name: cosign 签名镜像（agent，供应链安全）
-        if: steps.check.outputs.skip != 'true' && env.COSIGN_PRIVATE_KEY != ''
+      - name: cosign 签名 agent 镜像（key-based，私有仓库路径）
+        if: env.COSIGN_PRIVATE_KEY != ''
         env:
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-          IMAGE: ${{ secrets.REGISTRY }}/opsmesh-agent:${{ github.sha }}
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
         run: |
-          echo "Signing image: ${IMAGE}"
-          cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false ${IMAGE}
-          echo "Image signed successfully"
+          set -euo pipefail
+          cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false "${IMAGE}"
+          echo "已签名（key-based）: ${IMAGE}"
+      - name: cosign 签名 agent 镜像（keyless OIDC，GHCR 路径）
+        if: env.COSIGN_PRIVATE_KEY == '' && steps.check.outputs.mode == 'ghcr'
+        env:
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE}"
+          echo "已签名（keyless/OIDC）: ${IMAGE}"
+      - name: 本次覆盖范围自述（防空转绿）
+        # 同 image job：可选 secret 用 ${VAR:-} 取值，避免 set -u 下未定义即失败。
+        run: |
+          set -euo pipefail
+          MODE="${{ steps.check.outputs.mode }}"
+          PREFIX="${{ steps.check.outputs.prefix }}"
+          if [ -n "${COSIGN_PRIVATE_KEY:-}" ]; then
+            cosign_mode="key-based（COSIGN_PRIVATE_KEY）"
+          elif [ "$MODE" = "ghcr" ]; then
+            cosign_mode="keyless/OIDC（GHCR 路径，无需密钥）"
+          else
+            cosign_mode="未启用（私有路径且无 COSIGN_PRIVATE_KEY）"
+          fi
+          {
+            echo "### image-agent job 本次实际覆盖"
+            echo ""
+            echo "| 环节 | 状态 |"
+            echo "|---|---|"
+            echo "| 构建 + 推送 | \`${PREFIX}:${{ github.sha }}\`（模式=${MODE}） |"
+            echo "| Trivy 扫描 | HIGH/CRITICAL 门禁 |"
+            echo "| SBOM | syft SPDX JSON（artifact） |"
+            echo "| cosign 签名 | ${cosign_mode} |"
+          } >>"$GITHUB_STEP_SUMMARY"
 
   # Release：推送 v* tag 时触发 goreleaser 跨平台发布（linux/amd64+arm64）。
   # 产物：tar.gz 归档 + sha256 checksums + SBOM（配置见 .goreleaser.yml）。
