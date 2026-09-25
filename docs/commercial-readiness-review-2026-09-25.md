@@ -1218,4 +1218,85 @@ P0 批次二（`4fd64112`）、P1-2 批次（`01475e69`）**三次推送全部�
   （`sigWarnOnce` 键上限 4096 已在 P1-5 同类风险中封顶）。
 - `-race` 仍因 Windows 无 cgo 无法本地启用（CI integration job 覆盖）。
 
+## 14. 真机全栈验证记录（2026-09-25 第六批：CI 首次真跑暴露的 3 处失败 + 本地复现暴露的第 4 处夹具缺陷）
+
+### 14.1 背景
+
+P1-2 批次推送后，CI **第一次真正跑完整流水线**（run `36122648074`，`golangci-lint` 已绿）。此前 7 个下游 job 一直被更早的 lint 失败静默跳过（§13.8.1），因此这一跑同时是 `services` / `integration` / `proto` / `Race detector` 的**首次执行**（均绿），也是 `security` / `E2E (real backend)` / `E2E (security)` 的首次执行（均红）。三处失败经根因分析后修复，并在本地按 CI 同款命令复现验证；复现过程中又发现第 4 处被掩盖的夹具缺陷。
+
+**四处缺陷的定性很重要**：没有一处是「断言写错」，两处是**上批修复（P1-1、P0-2）的真实兼容性/联动影响**——即产品代码的行为变更是正确的，但交付资产（E2E 夹具）没有跟着更新；另两处是**门禁脚本自身的假红/假绿口子**。这正说明「本地绿≠CI 绿」：这三处在本机各自被「有 kind 集群」「白名单恰好命中」「Linux 明文习惯」掩盖。
+
+### 14.2 CI `security`：`kubectl apply --dry-run=client` 在无集群 runner 上假失败
+
+| 项 | 内容 |
+|---|---|
+| 现象 | `部署资产门禁：PASS=19 FAIL=1`，`[FAIL] kubectl client dry-run 失败：` + `failed to download openapi: … connection refused` |
+| 根因 | `kubectl` 的 `--dry-run=client` schema 校验**实际依赖服务端 OpenAPI**（kubectl 1.12+）；runner 无集群 → 非 0 退出。本机一直通过只因本机恰好有 kind 集群（`nexus-deploy-drill`），把该缺陷掩盖了 |
+| 修复 | ① CI 装 `kubeconform@v0.6.7`（`go install`，钉版，复用 setup-go）；② 脚本 `kubectl` 分支加 `kubectl cluster-info` 前置探测，无集群即 SKIP |
+
+**门禁判定分层（顺带堵掉两个假绿口子）**：初版「`Errors>0` 就 SKIP」的写法有洞——实测 kubeconform 把 **YAML 语法/类型错**也计入 `Errors`（坏缩进 → `Valid: 0, Invalid: 0, Errors: 1`，报错文本 `error unmarshalling resource`），而无 `Summary` 行时旧逻辑会落到 `ok`。故最终四分支：
+
+| 输入 | 判定 | 实测 |
+|---|---|---|
+| `Invalid>0` | FAIL（清单不合规） | 注入 `spec.replicas: Invalid type` → FAIL |
+| `Errors>0` 且全部为 `failed (downloading\|parsing) schema` | SKIP（离线/受限网络拉不到 JSON schema，环境问题） | schema 源指向不可达地址 → `Errors=11` → SKIP |
+| `Errors>0` 含 `error unmarshalling resource` | FAIL（YAML 语法/类型错是资产缺陷） | 注入坏缩进清单 → FAIL |
+| 无 `Summary` 行 | FAIL（不得假绿） | 合成 panic 输出 → FAIL |
+| 全绿 | PASS | 真实清单 → `PASS=20 FAIL=0` |
+
+`kubectl` 存在但无集群 → SKIP（实测：`KUBECONFIG=/nonexistent` + PATH 去掉 kubeconform → `PASS=19 FAIL=0 SKIP=1`）。
+
+### 14.3 E2E (real backend)：P1-1 按段白名单让夹具命令不再成立
+
+- **现象**：`agent_lifecycle.spec.js`「失败任务回执」红。
+- **根因**：该用例下发 `echo "e2e-fail-stderr" >&2 && exit 7` 以制造非零退出；P1-1 后白名单**按命令段**校验，第二段首词 `exit` 不在出厂默认白名单内 → 整条被拒。
+- **实测回执（新起栈复现）**：`exitCode=-1`，`stderr=command "exit" not in shell whitelist (segment "exit 7", allowed entries: ls,cat,echo,date,whoami,hostname,pwd,free,df,uptime,top,ps,netstat,ss,ipconfig,systeminfo)` —— 用例断言的是「回执链路可用」，却因命令被拒而误判为链路故障。
+- **修复（夹具）**：改用白名单内的 `cat /nonexistent-e2e-fail-stderr`（稳定非零退出 + stderr 必含可控 marker），并在注释中写明「P1-1 后必须遵守白名单」的理由与默认白名单内容。
+- **产品侧影响（已写入 `docs/operations.md` 的 `--agent-shell-whitelist` 行）**：这是**升级兼容性变更**——旧版 `ls && rm -rf /` 会被整体放行（P1-1 修的正是该绕过），升级后历史任务模板中「白名单命令 + 任意后续段」（`&& exit N`、`&& systemctl restart x`）会被拒，需逐个把后续命令词补进白名单。
+
+### 14.4 E2E (security)：P0-2 的 `--http-tls=auto` 把 B/S 端口一并变成 HTTPS
+
+- **现象**：job 在「健康检查」步就红（`curl http://127.0.0.1:8080/healthz` 失败），Playwright 根本没跑到——**该 job 的 Playwright 步骤在 CI 上从未执行过**。
+- **根因**：`docker-compose.e2e-sec.yaml` 为 gRPC mTLS 配了 `--tls-cert/--tls-key`（两者是 gRPC 与 Web/REST **共用**的），而 `--http-tls` 默认 `auto` = 「配了证书即 HTTPS」→ 8080 变 HTTPS。整栈夹具（CI 的 curl 探活、`E2E_BASE_URL=http://…:8080`、agent 的 `--control-addr=http://controlplane:8080`）都按明文访问 → Go 直接 `400 Client sent an HTTP request to an HTTPS server`。
+- **修复（夹具）**：该栈显式 `--http-tls=off`，注释说明「本栈 `--demo`、非生产；gRPC 侧 mTLS 不受影响；生产不要照抄」。
+- **实测**：`docker compose up -d --wait` 全绿；`curl http://127.0.0.1:8080/healthz` → `200 {"checks":{"store":"ok"},"status":"ok"}`（正是 CI 失败的那一步）；对 8080 做 TLS 握手失败（确为明文，`packet length too long`）；启动日志 `gRPC 已启用 TLS, mtls:true`（gRPC 契约未变）。
+- **产品侧影响（已写入 `docs/operations.md` 的 `--http-tls` 行）**：部署方若「为 gRPC 配了证书」，必须意识到 B/S 端口同时变 HTTPS；上游反代终止 TLS 的形态应显式 `off`。
+
+### 14.5 第 4 处（本地复现新发现）：`sleep` 不在默认白名单 → 取消用例会踩「终态任务 cancel=404」
+
+- **根因链**：`security.spec.js`「任务取消全链路」用 `sleep 30`/`sleep 60` 制造长任务 → `sleep` 不在出厂默认白名单内 → agent 拒绝（`exitCode=-1`）→ 任务在 cancel 之前就进入**终态** `failed` → 而 cancel 对非 pending/running 任务返回 **404**（`internal/controlplane/server_tasks.go:566`，`task not cancellable`）→ 用例的 `expect([200,201]).toContain(cancel.status)` 必红。该缺陷与 14.4 是**叠加关系**：HTTP-TLS 阻塞让 Playwright 从没执行，掩盖了它。
+- **修复（夹具）**：e2e-sec 的 agent 显式给出 `--agent-shell-whitelist=<出厂默认> + sleep`，注释写明本栈是安全夹具、非生产。
+- **正向实测**：e2e-sec 全套 **5 passed (16.4s)**；agent 日志出现 `任务入队 → 收到取消信号，中止任务 → 任务已取消，丢弃执行结果`，即「running 强杀」路径**真实走到**（不是空过）。
+- **反向对照（证明修复是承重的，而非装饰）**：临时把 `sleep` 从该栈白名单去掉后重跑同一用例——`sleep 60` 在 t≈12s 变 `failed`（`exitCode=-1`、stderr `command "sleep" not in shell whitelist (segment "sleep 60", …)`），随后 `cancel` 返回 **HTTP 404** `task not cancellable`。与根因链逐环吻合。
+- **顺带修正一个方法论错误**：首次反向对照「通过」了，原因是我用 `agents[0]` 取 agent，而此时列表里还有**被重建替换掉的旧实例**（仍显示 `status=online`），任务被下发给了死实例、停留 pending，于是用例「通过」得毫无意义。改用真实在跑的 agentID 后才复现出 404。教训：**负向对照必须核对被测对象身份**，否则会得到假结论。
+
+### 14.6 聚合验证（全部为本机真机执行）
+
+| 项 | 命令 / 方式 | 结果 |
+|---|---|---|
+| 部署资产门禁 | `bash deploy/scripts/validate-deploy-assets.sh` | **PASS=20 / FAIL=0** |
+| 门禁分支注入 | 坏清单 / 无 kubeconform 无集群 / schema 源不可达 / 无 Summary | FAIL / SKIP / SKIP / FAIL 四条分支均实测 |
+| E2E 真实后端 | `npx playwright test --config playwright.real.config.js --grep-invert "安全契约"`，`E2E_BASE_URL=http://127.0.0.1:8080` | **8 passed (32.4s)** |
+| E2E 安全契约 | `npx playwright test --config playwright.real.config.js --grep "安全契约"`，`E2E_CERTS_DIR=../../e2e-certs` | **5 passed (16.4s)** |
+| 旧命令被拒（根因证据） | curl 下发 `echo … >&2 && exit 7` | `exitCode=-1` + 白名单 stderr |
+| 终态 cancel=404（根因证据） | curl 下发 `sleep 60`（无 sleep 白名单）后 cancel | `failed` → `HTTP 404 task not cancellable` |
+| 生产栈未受影响 | 复原后 `https://127.0.0.1:8080/healthz` | 200（`auto` 语义不变，prod 栈 17 容器全 healthy） |
+
+> CI 侧结论以流水线首跑为准，本报告不预判；上述均为本机按 CI 同款命令与同款夹具的实测。
+
+### 14.7 环境陷阱记录（避免下次误判为代码缺陷）
+
+1. **宿主资源压力 → agent `fatal error: newosproc`**：本机 Docker VM（WSL2，25.43 GiB）曾被闲置的 kind 演练集群（4 节点，约 **6.9 GiB / 3006 PID**）压到 `runtime: failed to create new OS thread (have 14 already; errno=11)`，agent 注册成功后即崩、容器重启循环（`restart: unless-stopped`）。容器内 `ulimit -u` 为 unlimited、`pids.max` 为 max，故**不是**容器限制；停掉闲置 kind 集群后两个 E2E 栈均正常。**与本次改动无关**。
+2. **端口/项目名争用**：本机同时在跑 17 容器的 prod 栈（占 8080/9090/9091）。e2e-sec 的 mTLS 用例**硬编码 9090**（`security.spec.js`），故本地要跑完整安全套件必须让该端口指向 e2e-sec 栈；本次做法是临时停 prod 栈（保留卷与容器，`docker start` 原样恢复）与闲置 kind 集群，跑完即复原。
+3. **`kubeconform` 的 schema 默认源是 `raw.githubusercontent.com`**：本机 IPv6 到该域名不稳（曾 `fetch failed`），离线/受限网络下会得到 `Errors=N / Invalid=0`。这正是门禁判定要区分「环境」与「资产缺陷」的原因。
+4. **MSYS/Git-Bash 路径转换**：`openssl req -subj "/CN=…"` 在本机被 MSYS 改写为 Windows 路径导致生成失败（只剩 `ca.key`），需 `MSYS_NO_PATHCONV=1`。CI（Linux）无此问题。
+5. **e2e-sec 证书目录**：`e2e-certs` 已在 `.gitignore`（第 83 行）；本地验证后已删除，需要时按 CI 的 openssl 三步重新生成。
+
+### 14.8 本轮未覆盖 / 诚实边界
+
+- **CI 尚未复跑**：四处修复均只在本机验证，需推送后以 CI 全绿（`image` / `image-agent` / `release` 不再是 skip）为最终验收。
+- **`security.spec.js` 的 mTLS 用例依赖固定端口 9090**：本地复现需独占该端口；若在多栈共存机器上跑，会打到别的栈（本机 prod 栈未开 mTLS，直连会「握手成功」从而误报 mTLS 未生效）。建议后续把端口改成可配置（`E2E_GRPC_PORT`），本轮未改（避免动断言语义）。
+- **`sleep` 未进出厂默认白名单**：本轮的修复在夹具侧（显式白名单）。产品侧是否需要把 `sleep` 这类「无副作用但会占住执行槽」的命令纳入默认，属**产品决策**：纳入可让「取消长任务」在默认配置下可用，代价是默认放行的命令集变大。本轮未擅自改默认值。
+- **未做完整流水线时长/资源评估**：新增的 `go install kubeconform` 步骤每次 job 约多几秒（走 Go module 代理，已钉版）。
+
 

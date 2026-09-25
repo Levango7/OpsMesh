@@ -360,7 +360,7 @@ OpsMesh 采用「flag 优先、环境变量兜底」的统一配置模型（`int
 | `--require-auth` | `OPSMESH_REQUIRE_AUTH` | false | 强制鉴权（缺失 X-Tenant-ID 拒绝） |
 | `--tls-cert` | `OPSMESH_TLS_CERT` | 空 | TLS 服务端证书路径（gRPC 与 Web/REST 共用） |
 | `--tls-key` | `OPSMESH_TLS_KEY` | 空 | TLS 私钥路径 |
-| `--http-tls` | `OPSMESH_HTTP_TLS` | auto | Web/REST 监听协议：auto=有证书即 HTTPS / on=强制 HTTPS / off=始终明文（上游反代终止 TLS） |
+| `--http-tls` | `OPSMESH_HTTP_TLS` | auto | Web/REST 监听协议：auto=有证书即 HTTPS / on=强制 HTTPS / off=始终明文（上游反代终止 TLS）。**注意联动**：`--tls-cert/--tls-key` 是 gRPC 与 Web/REST **共用**的（见上），故「为 gRPC 配了证书」会顺带把 B/S 端口也变成 HTTPS——若此时仍有客户端/探针/反代按 `http://` 访问，会直接收到 Go 的 `400 Client sent an HTTP request to an HTTPS server`（实测：安全 E2E 栈即此现象）。上游反代终止 TLS 的部署应显式 `--http-tls=off` |
 | `--client-ca` | `OPSMESH_CLIENT_CA` | 空 | mTLS 客户端 CA |
 | `--tls-watch` | `OPSMESH_TLS_WATCH` | false | TLS 证书热重载（fsnotify） |
 | `--jwt-secret` | `OPSMESH_JWT_SECRET` | 空 | 用户中心 JWT 签发密钥（HS256，≥32 字节） |
@@ -373,7 +373,7 @@ OpsMesh 采用「flag 优先、环境变量兜底」的统一配置模型（`int
 | `--public-register` | `OPSMESH_PUBLIC_REGISTER` | true | 公开注册接口开关（新用户须审批） |
 | `--allow-public-register` | `OPSMESH_ALLOW_PUBLIC_REGISTER` | false | 公开注册免审批 |
 | `--metrics-allow-cidr` | `OPSMESH_METRICS_ALLOW_CIDR` | 空 | metrics CIDR 白名单。**生产模式（`--production`）下为空即 `/metrics` 一律 403**（fail-closed，8080 与 9091 同一准入）。**注意来源 IP 的真实性**（2026-09-25 实测）：Docker Desktop(WSL2) 端口转发把来源统一重写为网桥网关（`172.28.1.1`），故白名单必须含 `172.28.0.0/16` 才能让宿主/Prometheus 抓取；该形态下白名单**无法区分**局域网/公网来源，真实边界应靠「端口只发布到 `127.0.0.1`」+ 宿主防火墙。裸机/systemd（来源 IP 保留）与 K8s（Pod IP）下白名单才具备来源区分能力 |
-| `--agent-shell-whitelist` | `OPSMESH_AGENT_SHELL_WHITELIST` | 空 | agent shell 命令白名单 |
+| `--agent-shell-whitelist` | `OPSMESH_AGENT_SHELL_WHITELIST` | 空（未显式设置且 `--agent-shell-whitelist-default=true` 时自动填入出厂只读诊断命令集 `ls,cat,echo,date,whoami,hostname,pwd,free,df,uptime,top,ps,netstat,ss,ipconfig,systeminfo`） | agent shell 命令白名单。**P1-1 起按命令段校验**：`&&`/`||`/`|` 切段后**每段首词**都必须命中白名单，任一段不命中即整条拒绝；环境变量赋值前缀（`FOO=bar cmd`）fail-closed 拒绝；路径形式命令词仅当「标准 bin 目录内 basename 匹配」或「整条路径被显式列入」才放行。**升级注意**：旧版只校验首 token，`ls && rm -rf /` 这类「白名单命令 + 任意后续段」会整体放行（P1-1 修的正是该绕过）；升级后同样的命令会被拒，历史任务模板/脚本里带 `&& exit N`、`&& systemctl restart x` 等的命令需把**每个**后续命令词补进白名单，否则 agent 侧直接拒绝（回执 `exitCode=-1`，stderr 含 `not in shell whitelist (segment …)`）。白名单为空则完全不校验（向后兼容，不建议生产使用） |
 | `--agent-file-root-whitelist` | `OPSMESH_AGENT_FILE_ROOT_WHITELIST` | 空 | agent 文件任务根目录白名单 |
 | `--webhook-allow-private` | `OPSMESH_WEBHOOK_ALLOW_PRIVATE` | false | 允许内网 webhook（SSRF 防护） |
 | `--provision-cidr-whitelist` | `OPSMESH_PROVISION_CIDR_WHITELIST` | 空 | autoProvision 扫描网段白名单 |

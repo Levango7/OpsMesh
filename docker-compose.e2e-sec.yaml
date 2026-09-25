@@ -24,6 +24,15 @@ services:
       - --tls-cert=/certs/server.crt
       - --tls-key=/certs/server.key
       - --client-ca=/certs/ca.crt
+      # --http-tls=off：本栈测的是 require-auth / 租户越权 / mTLS 契约（gRPC 侧），
+      # 整栈夹具（CI 的 curl 健康检查、Playwright E2E_BASE_URL、agent 的
+      # --control-addr=http://controlplane:8080）都按明文 HTTP 访问 B/S 端口。
+      # 而 --http-tls 默认 auto = 「配了证书即 HTTPS」——上面的 --tls-cert/--tls-key
+      # 是为 gRPC mTLS 配的，会让 8080 一并变成 HTTPS：明文请求被 Go 直接以
+      # 400（Client sent an HTTP request to an HTTPS server）拒绝，实测即此现象。
+      # 本栈以 --demo 运行、非生产，故显式关闭 B/S 侧 TLS 保持夹具语义一致。
+      # 生产部署不要照抄：那里应让 auto 生效，或由上游反代终止 TLS 后再 off。
+      - --http-tls=off
     ports:
       - "8080:8080"   # HTTP API（require-auth 生效）
       - "9090:9090"   # gRPC（mTLS 生效）
@@ -82,6 +91,14 @@ services:
       - --tls-cert=/certs/client.crt
       - --tls-key=/certs/client.key
       - --client-ca=/certs/ca.crt
+      # 显式白名单 = 出厂默认（defaultAgentShellWhitelist） + sleep。
+      # security.spec.js「任务取消全链路」用 `sleep 30`/`sleep 60` 制造长任务，才能验
+      # pending 拦截与 running 强杀；而 sleep 不在默认白名单（仅只读诊断命令）内，
+      # 不放开则 agent 侧 checkShellWhitelist 立即拒绝（ExitCode=-1）、任务在 cancel
+      # 之前就进入 failed——cancel 对终态任务返回 404（server_tasks.go:566），
+      # 用例会以 "expect([200,201]).toContain(404)" 误判为取消链路故障。
+      # 本栈是安全场景夹具（--demo、非生产），显式放开 sleep 只为让取消语义可测。
+      - --agent-shell-whitelist=ls,cat,echo,date,whoami,hostname,pwd,free,df,uptime,top,ps,netstat,ss,ipconfig,systeminfo,sleep
     volumes:
       - ./e2e-certs:/certs:ro
     depends_on:

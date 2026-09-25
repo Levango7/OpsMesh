@@ -269,8 +269,16 @@ jobs:
       # Helm 渲染（ServiceMonitor 只给真实暴露 /metrics 的服务）、Compose 渲染（项目名隔离、
       # internal 网络 + 宿主端口冲突）、K8s 样例清单（无过权 RBAC）。
       # helm 用上面同一个钉版 docker 镜像，导出为函数供脚本内 `command -v helm` 探测。
+      # kubeconform：脚本第 5 节优先用它做 K8s 清单 schema 校验（离线、不依赖集群）。
+      # 不装它时脚本会退到 kubectl，而 client dry-run 要拉服务端 OpenAPI——
+      # runner 上没集群，只会得到 "failed to download openapi: connection refused"
+      # 的假失败（本 job 首次真正执行时即此现象，资产本身没问题）。
+      # 用 go install 复用 setup-go 工具链并钉死版本，避免下载 GitHub release 的网络抖动。
+      - name: 安装 kubeconform（K8s 清单离线 schema 校验，钉版）
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
       - name: 部署资产一致性门禁
         run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
           helm() { docker run --rm -v "$PWD:/apps" -w /apps alpine/helm:3.14.4 "$@"; }
           export -f helm
           bash deploy/scripts/validate-deploy-assets.sh

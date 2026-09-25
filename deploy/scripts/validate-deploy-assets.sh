@@ -308,14 +308,48 @@ if [[ -z "$K8S_FILES" ]]; then
     bad "deploy/k8s/deployments/ 下无清单文件"
 elif command -v kubeconform >/dev/null 2>&1; then
     # shellcheck disable=SC2086
-    if kubeconform -strict -summary -ignore-missing-schemas $K8S_FILES >/dev/null 2>&1; then
-        ok "kubeconform 校验通过（deploy/k8s/deployments）"
-    else
-        bad "kubeconform 校验失败："
-        # shellcheck disable=SC2086
-        kubeconform -strict -summary -ignore-missing-schemas $K8S_FILES 2>&1 | tail -10 | sed 's/^/         /'
+    kc_out="$(kubeconform -strict -summary -ignore-missing-schemas $K8S_FILES 2>&1)"
+    kc_summary="$(printf '%s\n' "$kc_out" | grep -E '^Summary:' | tail -1)"
+    kc_invalid="$(printf '%s' "$kc_summary" | grep -oE 'Invalid: [0-9]+' | grep -oE '[0-9]+')"
+    kc_errors="$(printf '%s' "$kc_summary" | grep -oE 'Errors: [0-9]+' | grep -oE '[0-9]+')"
+    # 分支判定（按「资产缺陷必须 FAIL、环境问题才 SKIP」分层，避免假绿/假红）：
+    #   Invalid>0                                    → 清单不合规，FAIL
+    #   Errors>0 且全部是 failed (downloading|parsing) schema → 拉不到 JSON schema
+    #     （默认 schema 源 raw.githubusercontent.com，离线/受限网络全额失败），
+    #     属环境问题而非资产缺陷，SKIP；这是 CI 上唯一可能出现的 Errors 成因。
+    #   Errors>0 含 error unmarshalling resource     → YAML 语法/类型错误，资产缺陷，FAIL。
+    #     kubeconform 把这类也计入 Errors（实测：坏缩进 → Valid: 0, Invalid: 0, Errors: 1），
+    #     若无条件按 Errors SKIP，等于给坏清单开后门。
+    #   无 Summary 行                                → kubeconform 异常退出，FAIL（不得假绿）。
+    kc_schema_msg=0
+    if printf '%s' "$kc_out" | grep -qE 'failed (downloading|parsing) schema'; then
+        kc_schema_msg=1
     fi
-elif command -v kubectl >/dev/null 2>&1; then
+    kc_parse_err=0
+    if printf '%s' "$kc_out" | grep -qE 'error unmarshalling resource'; then
+        kc_parse_err=1
+    fi
+    if [[ -z "$kc_summary" ]]; then
+        bad "kubeconform 未输出 Summary（异常退出）："
+        printf '%s\n' "$kc_out" | head -10 | sed 's/^/         /'
+    elif [[ "${kc_invalid:-0}" != "0" ]]; then
+        bad "kubeconform 校验失败：清单 schema 不合规（Invalid=${kc_invalid}）"
+        printf '%s\n' "$kc_out" | grep -vE '^Summary:' | head -10 | sed 's/^/         /'
+    elif [[ "${kc_errors:-0}" != "0" && "$kc_parse_err" = "0" && "$kc_schema_msg" = "1" ]]; then
+        skip "kubeconform 拉取 JSON schema 失败（Errors=${kc_errors}，离线/受限网络），本次跳过 K8s schema 校验"
+    elif [[ "${kc_errors:-0}" != "0" ]]; then
+        bad "kubeconform 校验失败：资源无法解析（Errors=${kc_errors}）"
+        printf '%s\n' "$kc_out" | grep -vE '^Summary:' | head -10 | sed 's/^/         /'
+    else
+        ok "kubeconform 校验通过（deploy/k8s/deployments，Invalid=0）"
+    fi
+elif command -v kubectl >/dev/null 2>&1 && kubectl cluster-info --request-timeout=5s >/dev/null 2>&1; then
+    # 仅在有可用集群时走 kubectl：client dry-run 的 schema 校验需要从服务端拉
+    # OpenAPI（kubectl 1.12+ 的客户端校验事实上依赖服务端 schema），无集群时
+    # 报 "failed to download openapi: ... connection refused" 并以非 0 退出——
+    # 那会让一份正确的清单被误判为失败（实测：CI 的 security job 从未装 kubeconform，
+    # 走本分支即假失败；而本机有 kind 集群故掩盖了该缺陷）。
+    # 无集群而装了 kubeconform 时走上一分支（离线 schema 校验，不依赖集群）。
     out="$(kubectl apply --dry-run=client -f deploy/k8s/deployments/ 2>&1)"
     if [[ $? -eq 0 ]]; then
         ok "kubectl client dry-run 通过"
@@ -323,8 +357,10 @@ elif command -v kubectl >/dev/null 2>&1; then
         bad "kubectl client dry-run 失败："
         echo "$out" | head -10 | sed 's/^/         /'
     fi
+elif command -v kubectl >/dev/null 2>&1; then
+    skip "kubectl 存在但无可用集群（client dry-run 需服务端 OpenAPI schema），跳过 K8s 清单校验；装 kubeconform 可做离线校验"
 else
-    skip "未安装 kubeconform/kubectl，跳过 K8s 清单校验"
+    skip "未安装 kubeconform/kubectl，跳过 K8s 清单校验（装 kubeconform 可离线校验 schema）"
 fi
 
 # 样例边界硬门禁：过权 RBAC 不得回归

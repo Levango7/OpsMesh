@@ -4,6 +4,47 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-25 CI 首次真跑暴露的 3 处失败 + 本地复现暴露的第 4 处夹具缺陷
+
+> 背景：P1-2 推送后 CI 第一次真正跑完整流水线（run `36122648074`），`security`、`E2E (real backend)`、`E2E (security)` 三个 job 失败——前两个此前**从未执行过**（一直被更早的 lint 失败静默跳过），后两个的失败则分别是 P1-1 与 P0-2 两次修复的**真实回归/兼容性影响**。四处均已修复并**本地按 CI 同款命令实测**。
+
+### CI `security`：`kubectl apply --dry-run=client` 无集群 → 假失败
+
+- **根因**：部署资产门禁脚本第 5 节在无 kubeconform 时回退到 `kubectl apply --dry-run=client`。client dry-run 的 schema 校验**实际依赖服务端 OpenAPI**（kubectl 1.12+），runner 上没有任何集群 → `failed to download openapi: … connection refused` → 非 0 退出 → 把一份**完全正确**的清单判为 FAIL（实测 `PASS=19 FAIL=1`）。本机此前一直通过，只因本机恰好有 kind 集群，掩盖了该缺陷。
+- **修复**：CI `security` job 用 `go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7`（钉版，复用 setup-go 工具链，避开 GitHub release 网络抖动）安装**离线 schema 校验器**并加入 PATH；`kubectl` 分支加 `kubectl cluster-info` 前置探测，无集群则 SKIP 并提示装 kubeconform。
+- **判定分层（本次加固）**：`Invalid>0` → FAIL（清单不合规）；`Errors>0` 且报错文本全部是 `failed (downloading|parsing) schema` → SKIP（离线/受限网络拉不到 JSON schema，属环境问题）；`Errors>0` 含 `error unmarshalling resource` → **FAIL**（YAML 语法/类型错，是资产缺陷——实测 kubeconform 把这类也计入 `Errors`，若无条件按 `Errors` 跳过等于给坏清单开后门）；无 `Summary` 行 → FAIL（不得假绿）。
+- **实测**：正常 20 项 PASS=20 / FAIL=0；注入语法坏清单 → `[FAIL] kubeconform 校验失败：资源无法解析（Errors=1）`；kubeconform 缺失 + 无集群 → SKIP 且提示；模拟 schema 拉取失败（schema 源指向不可达地址）→ SKIP（Errors=11）。
+
+### E2E (real backend)：P1-1 的按段白名单让夹具命令不再成立
+
+- **根因**：`agent_lifecycle.spec.js` 的「失败任务回执」用例下发 `echo "e2e-fail-stderr" >&2 && exit 7`。P1-1 后白名单**按命令段**逐段校验，第二段 `exit 7` 的首词 `exit` 不在出厂默认白名单内 → 整条命令被 agent 拒绝。实测回执：`exitCode=-1`，`stderr=command "exit" not in shell whitelist (segment "exit 7", allowed entries: ls,cat,echo,…)` —— 既不是 7 也不含 marker，用例断言的是「回执链路」，却因命令被拒而误判为链路故障。
+- **修复（夹具侧）**：改用白名单内的 `cat /nonexistent-e2e-fail-stderr`——稳定非零退出（cat 退出码 1）且 stderr 必然含可控 marker；注释写明「P1-1 后必须遵守白名单」的理由与默认白名单内容，避免后人再踩。
+- **实测**：e2e-real 全套 **8 passed (32.4s)**（含该用例）；反向验证旧命令确实被拒（`exitCode=-1` + 白名单 stderr，见上）。
+
+### E2E (security)：P0-2 的 `--http-tls=auto` 让 B/S 端口变 HTTPS，整栈明文夹具全断
+
+- **根因**：`docker-compose.e2e-sec.yaml` 为 gRPC mTLS 配了 `--tls-cert/--tls-key`，而 `--http-tls` 默认 `auto` = 「配了证书即 HTTPS」→ **8080 一并变成 HTTPS**。本栈的整套夹具（CI 的 `curl http://127.0.0.1:8080/healthz`、Playwright 的 `E2E_BASE_URL=http://…:8080`、agent 的 `--control-addr=http://controlplane:8080`）都按明文 HTTP 访问，于是 Go 直接以 `400 Client sent an HTTP request to an HTTPS server` 拒绝——job 在「健康检查」步骤就红，Playwright 根本没跑到。
+- **修复（夹具侧）**：该栈显式加 `--http-tls=off`，注释说明「本栈以 `--demo` 运行、非生产；gRPC 侧 mTLS 不受影响；生产不要照抄，那里应让 auto 生效或由上游反代终止 TLS 后再 off」。
+- **实测**：`docker compose up -d --wait` 全绿；`curl http://127.0.0.1:8080/healthz` → `200 {"checks":{"store":"ok"},"status":"ok"}`（正是 CI 失败的那一步）；对 8080 发 TLS 握手失败（确为明文）；控制面日志 `gRPC 已启用 TLS, mtls:true`（gRPC 侧契约未变）。
+
+### E2E (security) 第 4 处（本地复现新发现）：`sleep` 不在默认白名单 → 取消用例会踩「终态任务 cancel=404」
+
+- **根因**：`security.spec.js`「任务取消全链路」用 `sleep 30`/`sleep 60` 制造长任务；`sleep` 不在出厂默认白名单（仅只读诊断命令）内 → agent 拒绝 → 任务在 cancel 之前就进入终态 `failed` → 而 cancel 对非 pending/running 任务返回 **404**（`internal/controlplane/server_tasks.go:566` `task not cancellable`）→ 用例的 `expect([200,201]).toContain(cancel.status)` 必红。该缺陷此前被上面的 HTTP-TLS 阻塞**完全掩盖**（job 从没跑到 Playwright 这一步）。
+- **修复（夹具侧）**：e2e-sec 的 agent 显式给出 `--agent-shell-whitelist=<出厂默认> + sleep`，注释写明「本栈是安全夹具、非生产；放开 sleep 只为让取消语义可测」。
+- **实测（含反向对照）**：放开后 e2e-sec 全套 **5 passed (16.4s)**，且 agent 日志出现 `任务入队 → 收到取消信号，中止任务 → 任务已取消，丢弃执行结果`——「running 强杀」路径真实走到；反向对照（临时把 sleep 从该栈白名单去掉）→ `sleep 60` 在 t≈12s 变 `failed`（`exitCode=-1`、stderr `command "sleep" not in shell whitelist`）→ `cancel` 返回 **HTTP 404**，与上述根因完全吻合。
+
+### 验证（真机，2026-09-25）
+
+| 项 | 命令 | 结果 |
+| --- | --- | --- |
+| 部署资产门禁 | `bash deploy/scripts/validate-deploy-assets.sh` | PASS=20 / FAIL=0（kubeconform v0.6.7 离线校验） |
+| 门禁故障注入 | 注入语法坏清单 / 移除 kubeconform / schema 源不可达 | FAIL / SKIP / SKIP —— 三条分支均实测 |
+| E2E 真实后端 | `npx playwright test --config playwright.real.config.js --grep-invert "安全契约"`（`E2E_BASE_URL=http://127.0.0.1:8080`） | **8 passed (32.4s)** |
+| E2E 安全契约 | `npx playwright test --config playwright.real.config.js --grep "安全契约"`（`E2E_CERTS_DIR`） | **5 passed (16.4s)** |
+| 生产栈未受影响 | 复原后 `https://127.0.0.1:8080/healthz` | 200（`--http-tls=auto` 语义不变） |
+
+> 环境说明：本机 Docker VM 曾被闲置的 kind 演练集群（4 节点，约 6.9 GiB / 3000 PID）压到 `fatal error: newosproc`（`errno=11`，agent 注册成功后创建线程失败），导致首次 e2e-real 起栈时 agent 崩溃重启。停掉闲置集群后两个 E2E 栈均正常——**与本次改动无关，属宿主资源压力**，但记此以免误判为 agent 缺陷。
+
 ## [Unreleased] — 2026-09-25 商用就绪 P1 批次（P1-1 / P1-3 / P1-4 / P1-5）
 
 > 承接 P0 两批。本批解决「命令白名单可绕过 / 审计日志可被静默篡改且无保留策略 / 无界内存缓冲 / 指标内存耗尽 DoS + 无准入 + 无限流」四项 P1 高风险。证据：`docs/commercial-readiness-review-2026-09-25.md` §3、§10。

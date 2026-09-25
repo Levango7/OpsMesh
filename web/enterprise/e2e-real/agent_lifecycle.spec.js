@@ -157,13 +157,20 @@ test.describe('真实后端长链路（agent 执行回执闭环）', () => {
     const token = await login(request)
     const { id: agentID, headers } = await firstAgentID(request, token)
 
-    // 下发一条必然失败的任务（exit 7），maxRetries=0 使一次失败即终态。
+    // 下发一条必然失败的任务，maxRetries=0 使一次失败即终态。
+    //
+    // 注意（P1-1 后必须遵守白名单）：agent 侧 shell 白名单按「命令段」逐段校验
+    // （见 internal/agent/agent.go checkShellWhitelist），出厂默认白名单为
+    // ls,cat,echo,date,whoami,hostname,pwd,free,df,uptime,top,ps,netstat,ss,ipconfig,systeminfo。
+    // 故 `echo ... >&2 && exit 7` 不再是「任务执行失败」——第二段 `exit` 不在白名单内，
+    // 整条命令被拒，stderr 变成白名单错误、exitCode 也不是 7，断言会误判为回执链路故障。
+    // 改用白名单内的 cat 读一个不存在的路径：稳定非零退出，且 stderr 必然带可控标记。
     const create = await request.post(`${BASE}/api/v1/tasks`, {
       headers,
       data: {
         agentID,
         type: 'shell',
-        command: 'echo "e2e-fail-stderr" >&2 && exit 7',
+        command: 'cat /nonexistent-e2e-fail-stderr',
         maxRetries: 0
       }
     })
@@ -179,7 +186,7 @@ test.describe('真实后端长链路（agent 执行回执闭环）', () => {
     const result = await request.get(`${BASE}/api/v1/tasks/${taskID}/result`, { headers })
     expect(result.ok()).toBeTruthy()
     const rc = await result.json()
-    // agent 上报的 exitCode 非零（7）；stderr 含我们写入的标记。
+    // agent 上报的 exitCode 非零（cat 读不存在路径 → 1）；stderr 含命令中的标记路径。
     expect(rc.exitCode).not.toBe(0)
     expect(rc.stderr).toContain('e2e-fail-stderr')
   })
