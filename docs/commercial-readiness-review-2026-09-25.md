@@ -49,7 +49,7 @@
 >   端到端实证，并实测证明任务子进程读不到签名密钥（见 §13）。
 >   **至此 §3 P1 表中技术类高风险项（P1-1/P1-2/P1-3/P1-4/P1-5）全部收口。**
 >
-> **尚未完成**：P1-7 许可与商务机制（非技术阻断）；P1-6 残留两项（`/metrics` 全表读、微服务日志未统一，见 §17.5）；
+> **尚未完成**：P1-7 许可与商务机制（非技术阻断）；P1-6 仅剩「微服务 ~250 处 `Printf` 的逐点严重级别升级」这一增量项（见 §17.5）；
 > `services/` 双轨收敛（TD-60，路线图阶段四）。
 
 ---
@@ -600,7 +600,7 @@ staleness 窗口内的历史样本，避免重启后误判）。
 | **P1-3** | **审计日志不可防篡改，且无保留策略、无查询索引**。`audit_log` 为普通追加表，无 hash 链/签名（`migrations/001_initial.sql:78-86`）；全仓库无 DELETE/归档/分区逻辑；`QueryAudits` 以 `tenant_id + created_at` 过滤但仅 `idx_audit_trace` 一个索引，长期运行后审计检索将全表扫描。 | `internal/store/sql_audits.go`、`migrations/001_initial.sql`、`internal/controlplane/server_audits.go:15-16` | README「100% 留痕 / 等保三级 ≥6 月」仅靠「永不删除」满足，但**无防篡改**（持 DB 凭证即可改写历史，等保三级明确要求审计记录防篡改）；且查询会随时间劣化 **→ 修复（2026-09-25）**：迁移 019 引入哈希链（`prev_hash`/`entry_hash`，`entry_hash=sha256(prev_hash‖长度前缀字段…)`，`created_at` 秒截断）+ `audit_chain_head` 单行链头（写入事务内 `FOR UPDATE` 串行化，多副本不分叉）+ 链式写入失败降级普通 INSERT（数据不丢、自检如实计 `legacyRows`）；`VerifyAuditChain` 平台级/租户级双强度校验 + `GET /api/v1/audit/verify`（200/409/501/500）；`--audit-retention-days`（默认 180 天）由 leader 周期归档至 `audit_log_archive` + `audit_archive_meta` 边界哈希（跨归档边界仍可校验）；补 `idx_audit_tenant_created` / `idx_audit_entry_hash`；新增 4 个指标与 2 条告警规则。**诚实边界**：无密钥链无法对抗全链重写，需外部 WORM 锚定（未内置）。验证见 §12 | 3–5 pd |
 | **P1-4** | **无界的 agent 日志缓冲会导致进程 OOM**。`agentLogs` 切片按 agent 每 30s 追加且永不裁剪；`deviceMetrics` map 无淘汰。 | `internal/store/sql_agent_logs.go:24-27` 及 memory 同名实现 | 机群规模上去后数周内控制面 OOM；商用 SLA 不可承诺 **→ 修复（2026-09-25）**：新增 `internal/store/memory_bounds.go` 统一施加硬上限——`deviceMetrics` 设备条目 ≤2000（超限按「最久未写入」淘汰整条设备，排序刻意用写入时刻而非 agent 可控的 `CollectedAt`）、`agentLogs` 批次 ≤2000 且总行数 ≤100000（超限丢最旧批次并回收底层数组容量）。验证见 §11 | 2–3 pd |
 | **P1-5** | **未鉴权即可造成指标内存耗尽 DoS**。中间件对**每个请求**（含 404 与未鉴权请求）记录指标，`normalizePath` 仅归一全数字段，`/api/v1/<随机串>` 原样入 map 且无上限；`/metrics` 默认放行（空 CIDR 白名单=不限制），无全局限流器。 | `internal/controlplane/server_middleware.go:169-177,207-228`、`internal/metrics/metrics.go:61-66,100-110`、`internal/controlplane/server_netsec.go:129-131` | 远程未鉴权即可打爆内存导致控制面重启 **→ 修复（2026-09-25）**：四层收敛——(1) 时序硬上限 2000（超限折叠 `:other` + 自观测指标）；(2) `normalizePath` 收紧（段 >48B／含非安全字符／全数字 → `:id`；整路径 >200B → `/:overlong`）；(3) 8080/9091 两处 `/metrics` 均接入准入，生产模式空 CIDR 改 fail-closed；(4) 生产未显式配置时默认启用 200 req/s/IP 限流，限流器 IP 桶上限 5 万（超限先清空闲桶，仍满则放行但不建桶）。真机实测见 §11 | 2–3 pd |
-| **P1-6** | **可支撑性缺口**（影响交付后的运维成本）。无版本端点、无 pprof、无配置转储、无诊断包；日志级别硬编码 Info；`/metrics` 抓取本身会做 4 次全表读。 **→ 主体修复（2026-09-26）**：`GET /version` + `--log-level`/`OPSMESH_LOG_LEVEL`（非法值 fail-fast）+ `GET /api/v1/admin/config`（白名单脱敏）+ `GET /api/v1/admin/diagnostics`（zip 诊断包）+ `--debug-pprof`（默认关 + 复用 metrics CIDR 双层门槛）；`logx` 补 Debug/SetLevel/SetOutput，`pkg/log` 收口到 logx（修 3 处级别与每调用建 handler 缺陷）；顺带修掉 `-ldflags -X` 包路径全仓写错导致**发布产物版本注入从未生效**。详见 §17。**残留**：`/metrics` 全表读未改；18 个微服务仍是标准库 `log`（未统一）。 | `internal/controlplane/server_lifecycle.go`（151 条路由中无上述项）、`internal/logx/logx.go` | 客户现场排障必须 SSH + 看源码，支持成本高、无法远程定位问题 | 6–10 pd |
+| **P1-6** | **可支撑性缺口**（影响交付后的运维成本）。无版本端点、无 pprof、无配置转储、无诊断包；日志级别硬编码 Info；`/metrics` 抓取本身会做 4 次全表读。 **→ 主体修复（2026-09-26）**：`GET /version` + `--log-level`/`OPSMESH_LOG_LEVEL`（非法值 fail-fast）+ `GET /api/v1/admin/config`（白名单脱敏）+ `GET /api/v1/admin/diagnostics`（zip 诊断包）+ `--debug-pprof`（默认关 + 复用 metrics CIDR 双层门槛）；`logx` 补 Debug/SetLevel/SetOutput，`pkg/log` 收口到 logx（修 3 处级别与每调用建 handler 缺陷）；顺带修掉 `-ldflags -X` 包路径全仓写错导致**发布产物版本注入从未生效**。详见 §17。**后续同日追加**：`/metrics` 全表读已改 TTL 缓存、新增运行期级别开关、17 个微服务日志已接入统一 JSON 管道（逐点严重级别为增量项）——见 §17.5。 | `internal/controlplane/server_lifecycle.go`（151 条路由中无上述项）、`internal/logx/logx.go` | 客户现场排障必须 SSH + 看源码，支持成本高、无法远程定位问题 | 6–10 pd |
 | **P1-7** | **许可与第三方合规未就绪**。LICENSE = Apache-2.0（`Copyright 2026 OpsMesh Contributors`），**无 NOTICE / THIRD_PARTY 清单**；依赖含 MPL-2.0 组件（go-sql-driver/mysql、hashicorp/vault/api、terraform-plugin-sdk/v2）；Helm 应用商店 28 个条目引用 bitnami 仓库与 bitnami.com 图床，而 Bitnami 已于 2025 年调整镜像授权策略。 | `LICENSE`、`go.mod`、`internal/helm/catalog.go` | 采购/法务尽调会要求第三方声明；Apache-2.0 意味着**任何第三方可自由再分发你的商业产品**（是否可接受需商业决策）；应用商店在客户无外网时不可用，且可能撞上 Bitnami 授权限制 | 3–5 pd + 法务 |
 | **P1-8** | ~~控制面的 M3/M5 子存储仍可静默退回内存~~ **✅ 2026-09-25 已修**。`NewDeployHandler` / `NewOrchestrationHandler` 在 `deploy.NewSQL` / `orchestration.NewSQL` 构造失败时只 `logx.Error` 后改用 `Memory`，且工厂拿不到 `cfg.Production`，故生产模式下同样静默。 | `internal/controlplane/factory/server_factory.go`（原 `:32-47`、`:51-66`）；调用方 `internal/controlplane/server.go:309-310` 未传生产标志 | 部署模板/M5 编排数据在重启后丢失，而 `/health` 与界面均正常。触发窗口窄（主 store 已在同一 DSN 上跑完迁移，通常先失败），但属「配置要求持久化却跑在内存」的同一类缺陷 | **修复**：工厂接线生产标志，生产模式下子存储构造失败改为 fail-fast（对齐既有阻断先例），`server_factory_test.go` 覆盖两分支；验证见 §10.5 |
 | **P1-9** | **交付树中残留开发调试页面，内含硬编码凭据**。`deploy/docker/index.html` 是一份手工冒烟测试页：登录表单把 `viewer` / `viewer123` 直接写死在 `value=` 属性里，`var API = 'http://localhost:8080'` 硬编码明文地址，「改密」按钮把口令固定改成 `NewPass123`，并把 token 前 30 字符回显到页面。该文件**未被任何 compose/部署文件引用**（孤立文件），因此未被实际部署——但它是残留物，且恰好印证了 P0-1：团队自己的测试习惯仍依赖 `viewer123` 可用，这可能是该账号在生产存活未被察觉的原因之一。 | `deploy/docker/index.html`（全文） | 交付物卫生问题；若被误拷入静态目录即成凭据泄露；给客户做源码审计时会被质疑 | ✅ 2026-09-25 已删除（随 P0-4 遗留物清理批次）；复核 `deploy/docker/` 现仅剩 Dockerfile/脚本/证书与 compose |
@@ -1500,6 +1500,21 @@ P1-2 批次推送后，CI **第一次真正跑完整流水线**（run `361226480
 | 微服务模块此前不依赖根模块 | **已按需接线** | 11 个模块的 `go.mod` 补 `require github.com/Levango7/OpsMesh v0.0.0-…` + `replace … => ../../`（本地替换，不联网解析版本）。已实测 `Dockerfile.service` 在容器内可正常构建（其 `COPY pkg/ internal/` 早已存在，非新增上下文） |
 
 **接线后的验证**：17 个服务模块逐个 `go build ./...` + `go test ./...` 全部通过；bot-svc 二进制实跑输出为合法 JSON（`level`/`msg`/`service`/`via`/`fatal` 字段齐备）；根模块 `gofmt`/`go vet`/`golangci-lint v2.13.2` 全 0 问题。
+
+### 17.5.1 唯一未跑项（明确标注，不写进 PASS 数）
+
+`verify-runtime.sh` 第 15 节的**第 9 条**断言（匿名 `POST /api/v1/admin/loglevel` → 401）
+**尚未在真机跑过**：它要求被测镜像内含该端点，而本机 Docker Desktop 在验证前已停
+（`docker-desktop` WSL 发行版 Stopped、宿主仅剩 2.1GB 空闲），重建镜像会连带把 kind
+集群与 17 个容器拉回来拖死机器，故按用户决定不动本地环境。
+该断言的逻辑由 3 个单测覆盖（匿名 401 / viewer 403 / operator+admin 200），
+**只有运行时那条是待跑**。
+
+**另需记录的环境事实（与本仓库代码无关，但会污染本地计时类用例）**：Docker Desktop
+在负载下整体停退，导致 `internal/agent` 的 Windows 计时阈值用例（`TestExecute_Timeout`
+断言 <4.5s、`TestCollectDeviceMetrics_Throttle`）在本地跑出 27s / 43s——
+用 git worktree 取**改动前**的同一提交在同负载下复跑，**失败且更慢**，故已证明非回归；
+CI（Linux、独立 runner）这两个用例本轮为绿。
 
 ### 17.6 ~~P1-6 残留（明确未做）~~（内容已并入上表）
 注入抓出，属 P0-4 同级：部署资产在 Windows 上开箱即坏）
