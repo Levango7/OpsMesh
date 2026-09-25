@@ -1516,8 +1516,7 @@ P1-2 批次推送后，CI **第一次真正跑完整流水线**（run `361226480
 用 git worktree 取**改动前**的同一提交在同负载下复跑，**失败且更慢**，故已证明非回归；
 CI（Linux、独立 runner）这两个用例本轮为绿。
 
-### 17.6 ~~P1-6 残留（明确未做）~~（内容已并入上表）
-注入抓出，属 P0-4 同级：部署资产在 Windows 上开箱即坏）
+## 18. 附：部署资产行尾一致性（CRLF）——故障注入抓出的一整类缺陷（P0-4 同级：Windows 上开箱即坏）
 
 给门禁做故障注入时发现并修掉的一整类问题。**证据链**：
 
@@ -1529,19 +1528,19 @@ CI（Linux、独立 runner）这两个用例本轮为绿。
    所以**这类缺陷在流水线上不可见**，只在客户/开发者 Windows 机器上炸。
 3. 门禁上线即抓出三个既有 CRLF 文件（仓库内均为 LF，仅本机检出态为 CRLF）：
    `.dockerignore`(66 处 CR)、`operator/Dockerfile`(27)、`deploy/helm/opsmesh/templates/_helpers.tpl`(130)。
-   其中 `.dockerignore` 尤其危险——带 CR 的模式（如 `web/`）匹配不到路径，会**静默失效**，
+   其中 `.dockerignore` 尤其危险——带 CR 的模式（如 `web/\r`）匹配不到路径，会**静默失效**，
    而这正是 P0-3「企业版前端无交付路径」的根因文件（见 §13.8 与 `.dockerignore` 内的警示注释）。
 4. 修法：`.gitattributes` 增补 `[Dd]ockerfile*` / `*.dockerfile` / `.dockerignore` / `*.tpl` / `*.yaml` / `*.json` /
-   并给 `.gitattributes` 自身钉 `eol=lf`；已用 `git add --renormalize` + `tr -d ''` 把工作区归一到 LF
+   并给 `.gitattributes` 自身钉 `eol=lf`；已用 `git add --renormalize` + `tr -d '\r'` 把工作区归一到 LF
    （三文件归一后 `git diff` 为空 → 仓库内容本就 LF，只是检出形态错）。
 
 **过程中踩到的两个坑（写给后续维护者）**：
 
-- **`grep`/`awk` 在 Git-Bash 下看不见 CR**：对确认含 CRLF 的文件，`grep -c $''` 与 `awk '//'` 都返回 0
-  （MSYS 文本模式在读时吞 CR），只有 `tr -d ''` 走字节路径可见（实测 32 → 31 字节）。
+- **`grep`/`awk` 在 Git-Bash 下看不见 CR**：对确认含 CRLF 的文件，`grep -c $'\r'` 与 `awk '/\r/'` 都返回 0
+  （MSYS 文本模式在读时吞 CR），只有 `tr -d '\r'` 走字节路径可见（实测 32 → 31 字节）。
   ⇒ 用 grep 写的 CRLF 门禁**在 Windows 上是空转的**，而这恰是它唯一要防的平台。第一版就是这样，
   是故障注入（放一个含 CRLF 的探针文件）把它抓出来的——**没有注入，这道门禁会以"永远 PASS"的形态骗过所有人**。
-  现改用 `wc -c` 与 `tr -d '' | wc -c` 的字节数比对。
+  现改用 `wc -c` 与 `tr -d '\r' | wc -c` 的字节数比对。
 - **`.gitattributes` 的注释里不能出现真 CR/LF**：写注释时误插入一个真实换行，使半截注释没有 `#` 前缀，
   git 遂把它当规则解析，**每一次 git 调用都吐 `... is not a valid attribute name: .gitattributes:25`**。
   修完顺手给该文件自己钉上 `eol=lf`。
@@ -1550,3 +1549,66 @@ CI（Linux、独立 runner）这两个用例本轮为绿。
 扫描 Dockerfile/`.dockerignore`/compose/`*.sh`/Helm 模板/Chart·values，任一含 CR 即 FAIL 并点名；
 另用 `git check-attr eol -- Dockerfile` 断言属性真的生效（问 git 而非解析文件，避免规则写法差异导致误判通过）。
 故障注入双向验证：放探针文件 → `FAIL=1` 且点名；撤掉 → `PASS=22 FAIL=0`。
+
+**本节自身也曾带病（2026-09-26 复扫发现并修掉）**：报告文件里曾残留 **6 个裸 CR 字节**，位置恰是
+正文写 `tr -d '<CR>'`、`grep -c $'<CR>'`、`awk '/<CR>/'` 的地方——早先用 here-doc 批量改文档时，
+`\r` 转义被 shell 吃掉、落地成真 CR。后果不是行尾不一致（这些行其余部分是 LF，门禁的行尾检查未必抓得到），
+而是**文档里教的那条命令是错的、且看起来是对的**。修法同样要绕开文本模式：
+MSYS 下的 `sed`/`perl` 因读写两侧都做 CRLF 转换，替换看似执行、字节数却纹丝不动；
+只有 Node 以 latin1 读入、按字节 split/join 才真的把 1 字节换成 2 字节（149941 → 149947，CR 计数 6 → 0）。
+教训并入教训 11 那一类：**校验工具的输入通道本身会骗人**（grep 看不见 CR、sed/perl 会吞 CR）。
+
+## 19. 发布链路复核：当前对外版本的容器镜像从来没有构建成功过（2026-09-26）
+
+§15 把 CI 的 12 个 job 拉成真跑全绿之后，回头核对"客户到底能装到什么"，发现发布链路仍有一个
+**已发生但无人察觉**的硬伤。三条独立实测证据：
+
+| # | 事实 | 取证方式 |
+|---|---|---|
+| 1 | **`v0.9.1` 的微服务镜像一张都没有**：`ghcr.io/levango7/auth-svc` 的 tag 集里只有 `0.8.0`、`0.9.0`、`latest` 与若干 sha，**没有 `0.9.1`**（`/v2/.../manifests/0.9.1` → 404） | 匿名向 GHCR 换 pull token 后查 manifest（Accept 必须含 `application/vnd.oci.image.index.v1+json`，否则 OCI index 会被误报成 404——本轮先踩了这个坑） |
+| 2 | **GitHub Release `v0.9.1` 有 0 个产物**（`assets=0`），而 `release.yml` 的 `github-release` job 结论是 `skipped`、`ci.yml` 的 `release` job 也因 `build-test` 红而 `skipped` → 两条发布路径都没上传任何东西 | `gh release view v0.9.1 --json assets` + 两个 run 的 job 级结论 |
+| 3 | **release run `35129758414` 的失败原因是构建模板自身**：`ERROR: failed to build: failed to solve: failed to compute cache key: "/go.work.sum": not found`，18 条矩阵 1 红 17 cancel | `gh run view --job 104907540361 --log-failed` |
+
+### 19.1 根因（一行 COPY）
+
+- `.gitignore:91` 明确排除 `go.work.sum`（"自动生成，无需版本控制"）→ **干净检出里没有这个文件**。
+- `Dockerfile.service:20` 却写 `COPY go.work go.work.sum ./` → 构建上下文缺文件，buildx 直接失败。
+- 时间线自洽：`go.work` 系列改动在 2026-09-01 之后落地，因此 v0.8.0/v0.9.0 的镜像还在，
+  v0.9.1 起全灭；而 **`Dockerfile.service` 只在 `git tag v*` 时才第一次被执行**，所以缺陷潜伏了整整两个版本。
+
+**反证（决定修法方向）**：CI 的 `services` job 在同一干净检出（无 go.work.sum）下对 17 个服务模块逐个
+`go build ./...` 全绿 ⇒ workspace 缺 sum 文件不影响构建；各模块自己的 `go.sum` 仍会被 COPY，
+`go mod download` 在 workspace 模式下自行补齐 go.work.sum。因此**修 COPY，而不是把 go.work.sum 塞进版本库**
+（后者会引入"tracked 但没人负责保鲜"的新陈旧源，且没有任何门禁保证它与 go.work 同步）。
+
+### 19.2 处置
+
+| 改动 | 内容 |
+|---|---|
+| `Dockerfile.service` | `COPY go.work go.work.sum ./` → `COPY go.work ./`，并把上述根因/反证写成注释 |
+| `ci.yml` 新增 `release-dryrun` job | 每次 push 用**同一套发布模板**构建 `auth-svc`（`--load`，不推送、不登录、不扫描），再自检产物：入口 `/usr/local/bin/svc` 存在、是 ELF（`7f 45 4c 46`）、且容器内**非 root**。零 secret 依赖，因此任何分支都能跑 |
+| `ci.yml` 的 `release` job | `needs` 追加 `release-dryrun`：**镜像模板产不出产物就不发布版本化二进制**；同时删掉原注释里"services job 验证的就是矩阵镜像的可构建性"这句不实安心——它验证的是源码能编译，验证不了镜像能构建，这正是本缺陷能活到发版才爆的原因 |
+
+### 19.3 与既有教训的关系（第四类假绿的变体）
+
+§15.2 定义过"空转绿"（有 `if:` 守卫但条件永远不满足）。本轮是它的**镜像面**：
+步骤本身没有守卫、逻辑也没错，只是**它只在发版那一刻才第一次执行**。同一个仓库里等价的两类问题——
+"从未跑过的门禁"与"只在生产时刻跑的门禁"——都不会在常规 CI 里暴露，因此必须显式把发布路径
+（构建产物、渲染 chart、拉起栈）**复制成 push 期就执行的检查**，否则发布永远是人肉首跑。
+
+### 19.4 尚未处理（需决策，不在本轮改动内）
+
+1. **核心镜像命名与 chart 默认值不一致**：CI 推 `ghcr.io/levango7/opsmesh-binary` / `opsmesh-agent`，
+   而 `deploy/helm/opsmesh/values.yaml`（及 `values-production.yaml`）默认
+   `repository: opsmesh/opsmesh`、`tag: latest`——`helm template` 实测渲染即 `image: opsmesh/opsmesh:latest`，
+   **本仓库任何 workflow 都不发布这个名字**，Helm 客户开箱即 `ErrImagePull`。
+   同时 CI 对这两个镜像**只推 sha 标签**（实测 `latest`、`0.9.0` 均 404），所以即便改名也对不上默认 tag；
+   16 个微服务段默认 `ghcr.io/levango7/<svc>:latest` 反而真实存在（auth-svc 实测有 latest/0.8.0/0.9.0）。
+   `docs/deployment-guide.md` 与 `docs/deployment-scenarios.md` 沿用了同一错名，
+   且示例把 `global.imageRegistry` 写成带尾斜杠并与 `repository` 重复命名空间（helper 直接拼接会产出 `//`）。
+   → 需要决策的是**对外发布产物形态**（是否追加 `latest`/semver 标签会改变 GHCR 上的公共可见物），故未擅动。
+2. **重切版本**：v0.9.1 既无镜像也无二进制，而 P0-1/P0-3/P0-5/P0-6、P1-1~P1-6 全部修复都在其后。
+   对外可售的最低事实是"存在一个版本，其镜像与二进制都真的发布成功"——目前不满足。
+   待 §19.2 的门禁在 CI 真跑绿后，建议切 `v0.9.2` 并以 release run 的 job 级日志（非状态码）验收。
+3. **GHCR 可见性已核实**（关闭 §15.5 的一条诚实边界）：`levango7/opsmesh-binary` 匿名 pull token
+   即可取 `tags/list`（200）并解析 manifest → **包是公开的**，无需登录即可拉取。

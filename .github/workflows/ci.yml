@@ -425,6 +425,47 @@ jobs:
         # 仓库为 PUBLIC，https 克隆无需凭证。
         run: buf breaking --against "https://github.com/${GITHUB_REPOSITORY}.git#branch=main,subdir=proto"
 
+  # 发布路径干跑（release-dryrun）—— 每次 push 用【release.yml 同一套模板】构建一个微服务镜像。
+  #
+  # 为什么单列一个 job：`Dockerfile.service` 此前只在 `git tag v*` 时才第一次被真正执行，
+  # 于是"构建上下文里根本没有 go.work.sum（.gitignore 排除）却被 COPY"这个缺陷一路潜伏，
+  # 直到 tag v0.9.1 的 release run `35129758414` 才爆：18 条矩阵 1 红 17 cancel，
+  # **GHCR 至今没有 0.9.1 的任何微服务镜像**（实测 levango7/auth-svc 的 tag 集里没有 0.9.1）。
+  # 这与 §15 的"空转绿"同源：发布链路不进常规门禁，就必然等到下一次发版才暴露。
+  #
+  # 刻意只做构建、不推送不登录不扫描：验证的是"发布产物建得出来"，不是发布本身。
+  # 零 secret 依赖，因此任何分支的 push 都能跑。
+  release-dryrun:
+    runs-on: ubuntu-latest
+    needs: build-test
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - name: 用发布模板构建 auth-svc（--load，不推送）
+        # 上下文必须是仓库根（与 release.yml 一致）：服务模块 replace opsmesh => ../../，
+        # 限单服务目录则容器内无主模块，go mod verify 必失败（release 首跑实测过这个坑）。
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --file Dockerfile.service \
+            --build-arg SERVICE=auth-svc \
+            --build-arg VERSION=dryrun \
+            --load \
+            -t opsmesh-dryrun/auth-svc:local .
+      - name: 产物自检（入口存在且为 ELF、且非 root）
+        # 只构建不检查会漏掉"构建成功但产物形态错"（COPY 落错路径、USER 指令丢失等）。
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint sh opsmesh-dryrun/auth-svc:local -c '
+            test -x /usr/local/bin/svc || { echo "缺可执行入口 /usr/local/bin/svc"; exit 1; }
+            head -c 4 /usr/local/bin/svc | od -An -tx1 | grep -q "7f 45 4c 46" || { echo "入口不是 ELF 二进制"; exit 1; }
+            if [ "$(id -u)" = "0" ]; then echo "以 root 运行，H16 非 root 基线失效"; exit 1; fi
+            echo "dryrun 产物 OK：ELF 入口存在且以非 root 运行"
+          '
+
   # 镜像构建/推送 —— 推送路径须与消费方 chart 的镜像引用一致，否则拉不到。
   # 仓库解析优先级（2026-09-25 起，消除"空转绿"，见报告 §15.2）：
   #   ① 仓库 secret REGISTRY/REGISTRY_USER/REGISTRY_TOKEN 三者齐备 → 推私有仓库（原路径，leaf 名不变）；
@@ -813,8 +854,13 @@ jobs:
   release:
     # needs 补齐：services/proto/frontend/race 均无 if 限制（tag push 正常触发），
     # 与 build-test/integration/security 一样是发布前质量门禁——
-    # 尤其 services job 验证的就是 release.yml 矩阵发布的 6 个微服务镜像的源码可构建性。
-    needs: [build-test, integration, security, services, proto, frontend, race]
+    #
+    # 更正一处此前的不实安心（2026-09-26）：原注释称"services job 验证的就是 release.yml
+    # 矩阵镜像的源码可构建性"，它验证的其实是**源码能编译**，验证不了**镜像能构建**。
+    # v0.9.1 正是源码全绿而镜像矩阵 18 条全灭（Dockerfile.service COPY 了不存在的
+    # go.work.sum），见 release-dryrun job 注释。故 release 现在依赖 release-dryrun：
+    # 镜像模板产不出产物，就不发布版本化二进制。
+    needs: [build-test, integration, security, services, proto, frontend, race, release-dryrun]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # GITHUB_TOKEN 权限（job 级最小化）：goreleaser 上传产物到 GitHub Release

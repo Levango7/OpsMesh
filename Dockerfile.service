@@ -17,7 +17,20 @@ ENV GOPROXY=https://goproxy.cn,direct
 # （"go.mod file not found"）。必须先落地 /src 再 COPY。
 WORKDIR /src
 # 主模块 + 全部服务 go.mod 先行复制，使各模块 replace 解析可用。
-COPY go.work go.work.sum ./
+#
+# 只 COPY go.work，**不 COPY go.work.sum**（2026-09-26 实测修复）：go.work.sum 由
+# .gitignore 显式排除（自动生成、不入库），干净检出里根本不存在它，而 COPY 一个不
+# 存在的文件会让**每一次微服务镜像构建直接失败**：
+#   ERROR: failed to build: failed to solve: failed to compute cache key:
+#   "/go.work.sum": not found
+# 后果已发生：release run 35129758414（tag v0.9.1）18 条矩阵全红/被取消 →
+# GHCR 上至今没有 0.9.1 的微服务镜像（实测 levango7/auth-svc 的 tag 集只有
+# 0.8.0 / 0.9.0 / latest / <sha>，无 0.9.1）。
+# 不入库的依赖校验并未因此丢失：各模块自己的 go.sum 仍在（下方 COPY），
+# `go mod download` 在 workspace 模式下会自行生成 go.work.sum。
+# 反证：CI 的 services job 在同样的干净检出（无 go.work.sum）下对 17 个模块逐个
+# `go build ./...` 全绿——workspace 无 sum 文件可正常构建。
+COPY go.work ./
 COPY go.mod go.sum ./
 COPY operator/ operator/
 COPY pkg/ pkg/

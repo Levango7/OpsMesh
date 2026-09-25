@@ -4,6 +4,19 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-26 发布链路复核：`Dockerfile.service` 自 v0.9.1 起从未构建成功
+
+> 证据：`docs/commercial-readiness-review-2026-09-25.md` §19。**结论：`v0.9.1` 既没有镜像也没有二进制产物**——P0/P1 全部修复目前只存在于源码，不存在于任何可安装的发布物。
+
+- **实测的三条证据**：① `ghcr.io/levango7/auth-svc` 的 tag 集里有 `0.8.0`/`0.9.0`/`latest`/若干 sha，**没有 `0.9.1`**（manifest → 404）；② GitHub Release `v0.9.1` 的 `assets=0`；③ release run `35129758414` 的失败日志：`failed to compute cache key: "/go.work.sum": not found`，18 条矩阵 1 红 17 cancel。（取证坑：查 GHCR 的 OCI manifest 时 `Accept` 必须含 `application/vnd.oci.image.index.v1+json`，否则真存在的镜像会被误判成 404。）
+- **根因是一行 COPY**：`.gitignore` 排除 `go.work.sum` ⇒ 干净检出里没有它；`Dockerfile.service` 却 `COPY go.work go.work.sum ./`。该模板**只在 `git tag v*` 时才第一次被执行**，所以缺陷从 2026-09-01 的 workspace 改动一路潜伏到 v0.9.1 才爆。
+- **修法是改 COPY，不是把 go.work.sum 入库**：CI 的 `services` job 在同一干净检出下对 17 个模块 `go build ./...` 全绿 ⇒ workspace 缺 sum 文件不影响构建；各模块 `go.sum` 仍被 COPY，`go mod download` 会自行补 go.work.sum。入库反而制造"tracked 却无人保鲜"的新陈旧源。
+- **新增 push 期门禁 `release-dryrun`**：每次 push 用同一发布模板构建 `auth-svc`（`--load`，不推送/不登录/不扫描），并自检产物形态——入口 `/usr/local/bin/svc` 存在、是 ELF、容器内**非 root**。零 secret 依赖。
+- **`release` job 的 `needs` 追加 `release-dryrun`**：镜像模板产不出产物就不发布版本化二进制。同时删掉原注释里"services job 验证的就是矩阵镜像的可构建性"这句**不实安心**——它验证的是源码能编译，验证不了镜像能构建，这正是缺陷能活到发版才爆的原因。
+- **顺带修掉文档带病**：`docs/commercial-readiness-review-2026-09-25.md` 里残留 6 个裸 CR，位置恰是正文写 `tr -d '\r'`、`grep -c $'\r'` 的地方（here-doc 改文档时转义被吃掉）——**报告里教的命令是错的且看起来是对的**。MSYS 下 `sed`/`perl` 读写两侧都做 CRLF 转换，替换看似执行、字节数不变；最终用 Node 按字节 split/join 才真换掉（149941→149947 字节，CR 6→0）。
+- **待决策项（未擅动）**：① CI 推的核心镜像名/标签与 `deploy/helm/opsmesh` 默认值对不上（`helm template` 实测渲染 `image: opsmesh/opsmesh:latest`，本仓库任何 workflow 都不发布这个名字；且 `opsmesh-binary`/`opsmesh-agent` 实测只有 sha 标签、无 `latest`/semver）→ Helm 客户开箱 `ErrImagePull`；② 是否重切 `v0.9.2` 让修复真正可安装。
+- **GHCR 可见性已核实**（关闭 §15.5 一条诚实边界）：`levango7/opsmesh-binary` 匿名 pull token 即可列 tag 并解析 manifest → 包为**公开**。
+
 ### CI：镜像链路首度真跑的两个发现（GHCR 前缀大小写 / agent 镜像 56 条无修复 CVE）
 
 - **发现 1：GHCR 前缀必须全小写**（run `36148760407`）。首个修复版推送后 `image` / `image-agent` **不再空转、真的开跑**，但 buildx 立即失败：`invalid tag "ghcr.io/Levango7/opsmesh-binary:<sha>": repository name must be lowercase`——`GITHUB_REPOSITORY_OWNER` 保留原始大小写。修复：owner `tr` 转小写后再拼前缀（两 job），warning 文案同步。**这正说明"真跑"的价值：空转绿永远碰不到这类问题。**
