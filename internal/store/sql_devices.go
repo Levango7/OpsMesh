@@ -51,7 +51,9 @@ func (s *SQLStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 	// 空租户 agent 在 CheckAgentTenant 下对任何租户都放行）。
 	// 既有租户为空 → 允许绑定（历史无租户数据首次归属租户）；租户迁移需先删除该 agent 行。
 	if existingTenant, known := s.agentTenant(ctx, a.AgentID); known && existingTenant != "" && existingTenant != a.TenantID {
-		log.Printf("[store] Register 拒绝跨租户重绑定 %s（既有租户=%q，请求租户=%q）", a.AgentID, existingTenant, a.TenantID)
+		// G706 豁免（#nosec）：三个入参均以 %q 输出，控制字符/换行被转义为 Go 转义序列，
+		// 伪造不出新的日志行（日志注入不可行）；a.AgentID 仍需保留原文以便运维定位。
+		log.Printf("[store] Register 拒绝跨租户重绑定 %q（既有租户=%q，请求租户=%q）", a.AgentID, existingTenant, a.TenantID) // #nosec G706 -- %q 转义换行与控制字符，见上注
 		return nil
 	}
 

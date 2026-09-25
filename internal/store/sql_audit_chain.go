@@ -418,6 +418,7 @@ func (s *SQLStore) VerifyAuditChain(tenant string, limit int) (*AuditChainVerify
 //
 // 完整的逐行链接校验在平台级（tenant 为空）由 verifyChainRows 执行。
 func verifyChainRowsScoped(rows []auditChainRow, expectedPrev string) (int, string) {
+	var prev *auditChainRow // 前一行（指针而非 rows[i-1]：下标运算会被 gosec G602 误判越界）
 	for i, r := range rows {
 		if r.EntryHash == "" {
 			return i, fmt.Sprintf("id=%d 已纳入链的行缺少 entry_hash", r.ID)
@@ -429,11 +430,10 @@ func verifyChainRowsScoped(rows []auditChainRow, expectedPrev string) (int, stri
 			if r.PrevHash != expectedPrev {
 				return i, fmt.Sprintf("id=%d 的 prev_hash 与窗口前驱不一致（前驱行被删除/改写，或本行 prev_hash 被改）", r.ID)
 			}
-			continue
-		}
-		if r.ID == rows[i-1].ID+1 && r.PrevHash != rows[i-1].EntryHash {
+		} else if r.ID == prev.ID+1 && r.PrevHash != prev.EntryHash {
 			return i, fmt.Sprintf("id=%d 的 prev_hash 与相邻前一行 entry_hash 不一致（行被改写或换序）", r.ID)
 		}
+		prev = &r
 	}
 	return -1, ""
 }
@@ -547,8 +547,12 @@ func (s *SQLStore) auditArchiveCommit(ctx context.Context, ids []int64, boundary
 	if err != nil {
 		return fmt.Errorf("删除在线审计行: %w", err)
 	}
-	deleted, _ := res.RowsAffected()
-	if int(deleted) != len(ids) {
+	deleted, err := res.RowsAffected()
+	if err != nil {
+		// 行数读不到不改变「已删除」的事实：如实告警后继续推进边界，
+		// 否则本轮归档会被判失败，下轮再取同批超龄行时它们已不在在线表。
+		log.Printf("[store] 审计归档删除后无法读取影响行数：%v（本批已从在线表删除，跳过数量核对）", err)
+	} else if int(deleted) != len(ids) {
 		// 并发追加不会影响这些超龄行；数量不符说明有别的写者在动审计表 → 明确告警。
 		log.Printf("[store] 审计归档删除行数不符：期望 %d 实际 %d（可能有外部写者直接操作 audit_log）", len(ids), deleted)
 	}

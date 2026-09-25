@@ -82,7 +82,7 @@ func deliverAdminCredential(cfg *config.Config, st store.Store) error {
 	isSeed := verifyPassword(u.PasswordHash, seedPw)
 	// 非首启（口令已非公开弱口令）：默认尊重现状。仅显式开启恢复开关时用 cfg.AdminPassword 覆盖，
 	// 避免运维残留的配置在每次重启时静默回滚管理员在界面上做过的改密。
-	if !isSeed && !(cfg.AdminPasswordForceReset && cfg.AdminPassword != "") {
+	if !isSeed && (!cfg.AdminPasswordForceReset || cfg.AdminPassword == "") {
 		return nil
 	}
 	password := cfg.AdminPassword

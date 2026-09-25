@@ -263,11 +263,12 @@ linters:
           - gosec
         text: "G201"
         path: internal/store/sql_slo\.go
-      # G705: XSS 污点分析误报——dashboard.go 写入的 data 来自 webFS.ReadFile
-      # （go:embed 编译期打包的受信静态资源），非用户输入，无 XSS 面。
+      # G705: XSS 污点分析误报——dashboard.go / enterprise_ui.go 写入的 data 来自
+      # webFS.ReadFile（go:embed 编译期打包的受信静态资源），非用户输入，无 XSS 面。
+      # 两处同源同写法（控制面内置前端产物托管），故共用一条规则。
       - linters:
           - gosec
-        path: internal/controlplane/dashboard\.go
+        path: internal/controlplane/(dashboard|enterprise_ui)\.go
         text: "G705"
       # ST1003: grpcx 手写 ServiceDesc 故意沿用 protoc 生成的命名
       # （Registration_ServiceDesc / _Registration_*_Handler），与 protobuf

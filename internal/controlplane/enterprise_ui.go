@@ -39,7 +39,7 @@ const (
 )
 
 // enterpriseBundleOnce 缓存「是否内置了企业版前端」的判定结果。
-// go:embed 内容在编译期固定，进程存活期内不会变化，故只需判定一次。
+// 前端产物经 go:embed 在编译期固定，进程存活期内不会变化，故只需判定一次。
 var enterpriseBundleOnce sync.Once
 
 var enterpriseBundleEmbedded bool

@@ -445,12 +445,11 @@ func TestMigrationLock_ExcludesOtherSession(t *testing.T) {
 	b, cleanupB := newTestSQLStoreSameSchema(t, s)
 	defer cleanupB()
 
-	lockName := migrationLockName("test_migration_lock")
 	var dbName string
 	if err := s.db.QueryRow(`SELECT DATABASE()`).Scan(&dbName); err != nil {
 		t.Fatalf("查询当前库名失败: %v", err)
 	}
-	lockName = migrationLockName(dbName)
+	lockName := migrationLockName(dbName)
 
 	release, err := s.acquireMigrationLock(context.Background())
 	if err != nil {

@@ -133,7 +133,7 @@ func runHealth() int {
 	client := &http.Client{
 		Timeout: 2 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 -- 本机存活探针，不认证对端身份（等价 curl -k），详见上注
 		},
 	}
 	var lastErr error

@@ -1148,6 +1148,60 @@ OPSKEY=[%OPSMESH_GRPC_SIGNATURE_KEY%] CANARY=[%P12_ENV_CANARY%] USER=[winge] HOM
 > `TestMultiSchemaSmoke_MySQLDSNBranch` 因 `No database selected` 失败并触发迁移重试循环；
 > 补上库名（`/opsmesh?parseTime=true`）后 684 项全绿。**不是代码缺陷，是执行方式错误**——记录以免后人误读为回归。
 
+#### 13.8.1 提交后发现并修复：CI `golangci-lint` 自 2026-09-20 起连续飘红（本批最严重的工程问题）
+
+**事实**：`gh run list` 显示 `ci` workflow 最后一次全绿是 `2c87a0b`（2026-09-22），此后 P0 批次（`206247c`）、
+P0 批次二（`4fd64112`）、P1-2 批次（`01475e69`）**三次推送全部失败**，且失败点都是同一步
+`build-test / golangci-lint (聚合静态分析)`（例如 `36118693003`）。**该步骤失败使下游 7 个 job 全部被 skip**：
+`services`（18 个微服务构建）、`integration`（真实 MySQL 集成）、`proto`、`Race detector`、`security`、
+`image`/`image-agent`（镜像构建）、`E2E` × 2。也就是说，前几批「已推送」的修复**从未经过 CI 的集成/竞态/安全/镜像验证**，
+本报告里所有真机结论均来自本机验证而非流水线。
+
+**根因（流程性，非技术性）**：本机从未跑过 CI 同款命令。`.golangci.yml` 的豁免规则此前是「CI 报一条 → 本地复现一条 → 加一条豁免」，
+从未在提交前做全量复跑；而 CI 钉死 `v2.13.2`，本机装的却是随时间的默认版本，规则集漂移。
+本轮改为**用 CI 钉死版本全程复跑**（`/e/dev-data/go/bin/golangci-lint` v2.13.2 + 根配置 + `args: ./...`）。
+
+**8 项告警与处置（全部为真告警或正确的豁免，无一条靠关规则消掉）**：
+
+| # | 位置 | 规则 | 处置 |
+|---|---|---|---|
+| 1 | `cmd/opsmesh/main.go:136` | G402 `InsecureSkipVerify` | 行内 `// #nosec G402 --` + 理由（本机存活探针，等价 `curl -k`，不认证对端） |
+| 2 | `internal/controlplane/auth_password.go:85` | QF1001 De Morgan | 等价改写 `!isSeed && (!force \|\| pwd == "")`（语义不变） |
+| 3 | `internal/controlplane/enterprise_ui.go:42` | SA9009 | 注释以 `// go:embed` 开头被当作伪指令 → 改写措辞 |
+| 4 | `internal/controlplane/enterprise_ui.go:206` | G705 XSS 误报 | 把既有 `dashboard.go` 的 G705 豁免扩为 `(dashboard\|enterprise_ui)\.go`（同源同写法：`go:embed` 受信资源） |
+| 5 | `internal/store/migration_test.go:448` | ineffassign | 删死赋值，改单次 `:=`（值语义不变） |
+| 6 | `internal/store/sql_audit_chain.go:434` | G602 越界误报 | `rows[i-1]` → `prev *auditChainRow` 指针前驱（语义等价，且更不易写错） |
+| 7 | `internal/store/sql_audit_chain.go:550` | errcheck | `RowsAffected()` 错误显式处理：读不到影响行数时如实告警并继续推进归档边界 |
+| 8 | `internal/store/sql_devices.go:54` | G706 日志注入 | `%s` → `%q`（换行/控制字符被转义）+ `// #nosec G706 --` 说明 |
+
+**验证**：CI 同款 `golangci-lint run ./...`（v2.13.2）→ **0 issues**；`gofmt -l .`（CI 同款 `test -z "$(gofmt -l .)"`）= 空；
+`go vet ./...`、`go mod verify` 干净；受影响包回归：`internal/controlplane` **46.3s 全绿**，
+`internal/store` 真实 MySQL 8.0.46 全量套件（含 8 个审计链集成用例，见 §13.8.2）；
+提交后需以 CI 首跑结论为准（本报告不预判流水线结果）。
+
+**教训（写给后续维护者）**：① 「本地绿」不等于「CI 绿」——**提交前必须复跑 CI 同款命令与钉死版本**；
+② lint 步骤失败会**静默吞掉整条流水线的验证能力**（下游全是 skip 而非 fail，`gh run list` 只看一行 `failure` 很容易被忽略），
+商用交付前应把「CI 是否全绿」列为与单元测试同级的门禁。
+
+#### 13.8.2 CI 修复后的受影响包回归（真实 MySQL 8.0.46）
+
+| 项 | 结果 |
+|---|---|
+| `golangci-lint run ./...`（CI 钉死版本 v2.13.2 + 根配置） | **0 issues** |
+| `test -z "$(gofmt -l .)"`（CI 同款） | 通过（无输出） |
+| `go vet ./...` / `go mod verify` | 均干净 |
+| `go test ./internal/controlplane/ -count=1` | **ok 46.289s**（exit 0） |
+| `go test ./internal/store/ -count=1 -v -timeout 20m`（真实 MySQL 8.0.46） | **688 PASS / 0 FAIL / 0 SKIP**，239.462s，exit 0；运行后 `information_schema` 无 `test_%` 残留库 |
+| `go test ./internal/agent/ ./internal/grpcx/` | 见 §13.8（本批未再改动这两包，仅 `safego` 属 agent 包并已真机复测） |
+
+> 关于两次 store 数字（684 → 688）：684 是 §13.8 那轮（P1-2 批次功能代码）的计数，
+> 688 是 CI 修复后的计数，差异来自 `-v` 明细口径下 `PASS` 行的统计范围（子测试与表驱动子项计入），
+> 两轮均 **0 FAIL / 0 SKIP**，不改变结论。运行环境为一次性 MySQL 8.0.46 容器（`root@%`，端口 13317，
+> 仅测试期间存在，跑完即销毁）——注意**不能**指向出厂栈的 MySQL：其 `root` 仅允许容器内连接，
+> 宿主直连会得到 `Error 1045 (28000) Access denied for user 'root'@'172.28.2.1'`，
+> 表现为 27 个用例失败（首次误用即此现象，非代码回归）。
+
+
 ### 13.9 本轮未覆盖 / 诚实边界
 
 - **密钥文件权限语义**：`os.WriteFile(..., 0600)` 在 Linux（出厂形态：容器/systemd）是真实权限；在 Windows 上

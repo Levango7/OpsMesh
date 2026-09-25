@@ -101,6 +101,26 @@
   ② `safeGo` 按 recover 是否真的捕获 panic 区分措辞（`panic 后重启` / `循环提前退出，将重启`），
   并补 `TestSafeGo_EarlyReturnRestarts`（提前 return 仍须重启，不得静默失去能力）。真机复测：重启 agent 后
   25 秒内 `循环` 告警 **0 条**（对照修复前 5 分钟 7 条）、`心跳 ok` 正常、`ERROR` 计数 0。
+- **交付门禁恢复／CI `golangci-lint` 自 2026-09-20 起连续飘红（本批最严重的工程问题，非代码缺陷）**：
+  `ci` workflow 的 `golangci-lint (聚合静态分析)` 一步失败，**下游 7 个 job（services / integration / proto /
+  Race detector / security / image / E2E）全部被 skip**——即 P0/P1 全部批次虽已推送，却从未真正经过集成、
+  竞态、安全与镜像构建验证（最新失败运行 `36118693003`，`01475e6`）。根因是**本机从未跑过 CI 同款命令**
+  （`.golangci.yml` 的豁免规则此前只按「读到告警」逐条加，未做全量复跑）。8 项告警全部修复：
+  ① `cmd/opsmesh/main.go:136` **G402** `InsecureSkipVerify`——本机存活探针（等价 `curl -k`），
+     按仓库既有约定加行内 `// #nosec G402` 并写明理由；② `auth_password.go:85` **QF1001** De Morgan
+     等价改写；③ `enterprise_ui.go:42` **SA9009** 注释以 `// go:embed` 开头被 staticcheck 当伪指令——改写措辞；
+  ④ `enterprise_ui.go:206` **G705** XSS 误报——把既有 `dashboard.go` 的 G705 豁免规则扩为
+     `internal/controlplane/(dashboard|enterprise_ui)\.go`（同源同写法：`go:embed` 受信静态资源）；
+  ⑤ `migration_test.go:448` **ineffassign** 死赋值——改为单次 `:=` 声明（值语义不变）；
+  ⑥ `sql_audit_chain.go:434` **G602** 切片越界误报——`rows[i-1]` 改为 `prev *auditChainRow` 指针前驱
+     （语义等价，且比下标更不易写错）；⑦ `sql_audit_chain.go:550` **errcheck** `RowsAffected()`——改为显式
+     处理错误：读不到影响行数时如实告警并**继续推进归档边界**（否则该批已从在线表删除却判本轮失败，
+     下轮再也取不到这批行的数量核对）；⑧ `sql_devices.go:54` **G706** 日志注入——`%s` 改 `%q`（换行/控制
+     字符被转义，无法伪造日志行）并加 `// #nosec G706` 说明。
+  **验证**：本机以 CI 钉死版本 `v2.13.2` 复跑 `golangci-lint run ./...` → **0 issues**；
+  `gofmt -l .`（CI 同款命令）为空、`go vet ./...` 与 `go mod verify` 干净；
+  `internal/controlplane` 测试 **46.3s 全绿**、`internal/store` 在真实 MySQL 8.0.46 下全量回归（见下）。
+  教训写入报告 §13.8：**本地必须复跑 CI 同款命令，而不是只按告警逐条灭**。
 
 ### 安全：P1-1 agent shell 白名单可被 `&&` / `||` / `|` 绕过
 
