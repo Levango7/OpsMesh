@@ -1612,3 +1612,41 @@ MSYS 下的 `sed`/`perl` 因读写两侧都做 CRLF 转换，替换看似执行�
    待 §19.2 的门禁在 CI 真跑绿后，建议切 `v0.9.2` 并以 release run 的 job 级日志（非状态码）验收。
 3. **GHCR 可见性已核实**（关闭 §15.5 的一条诚实边界）：`levango7/opsmesh-binary` 匿名 pull token
    即可取 `tags/list`（200）并解析 manifest → **包是公开的**，无需登录即可拉取。
+
+### 19.5 `c6f0a2e` 的本地三重验证 + 首跑暴露的第三条真缺陷（2026-09-26）
+
+**本地验证（用户授权启动 Docker Desktop 后）**——用 `git archive HEAD` 造出与 CI 逐字等价的
+干净上下文（`go.work` 在、`go.work.sum` **不在**，实测该目录里只有 `go.work`）：
+
+| 场景 | 命令要点 | 结果 |
+|---|---|---|
+| ① 故障注入（复刻修复前的 COPY 行） | `COPY go.work go.work.sum ./` | **rc=1**，且报错与 release run 逐字相同：`failed to compute cache key: … "/go.work.sum": not found` ⇒ 复现成立，根因确认 |
+| ② 修复后的 COPY 行 | `COPY go.work ./` + 其余 5 条 COPY | **rc=0**（`PROBE_NEW_PASSED`）⇒ 修复对根因有效 |
+| ③ 端到端：HEAD 的真实发布模板 | `docker buildx build --file Dockerfile.service --build-arg SERVICE=auth-svc --load` | **rc=0**，走完 `go mod download && go mod verify` + Go 编译 + alpine 运行层，导出 digest `sha256:1aa3782…` |
+| ④ 新门禁自检逐字实跑 | ③ 的产物按 `release-dryrun` 里那段 shell 原样检查 | `dryrun 产物 OK：ELF 入口存在且以非 root 运行`（**这段是 ci.yml 里一字未改的原文**，所以首跑不会因语法/`od` 输出格式而红） |
+| ⑤ 自检的反向对照 | 同段检查换到一个没有 `/usr/local/bin/svc` 的镜像 | 打印「缺可执行入口」并非零退出 ⇒ 这道门禁**不是永远 PASS**（教训 11 的规矩） |
+| ⑥ 附带证据 | `grep -a -c dryrun /usr/local/bin/svc` | 命中 ⇒ §17.3 的 `-X` 版本注入在**微服务镜像**上真的生效（此前只在控制面上验过） |
+
+**首跑（run `36188672870`）判红，但红得有价值**：`build-test` 的 `Test (unit, -race + coverage)`
+失败 → 10 个下游（含 `release-dryrun`）全部 skip。下钻 step 级日志不是 OOM 而是断言失败：
+
+```
+--- FAIL: TestLogCollectorRateLimit (0.06s)
+    log_collect_test.go:420: TotalLines 期望 >=10, 得到 0
+```
+
+这条**不是「计时用例不稳」那种可以糊过去的红**，而是被测代码里一个真实的计数可见性缺陷：
+`collectFile` 把 `stats.lines` 记在**本地**、把 `Dropped` 直接**原子写全局**，两者的可见时机不同；
+测试（以及运维读的同一份 `Stats()`）在 `Dropped>0` 的那一刻跳出等待，就会读到
+`Dropped>0 且 TotalLines=0` 这个自相矛盾的中间态。
+
+- **复现**：用 `git worktree` 取改动前的同一提交，`-run TestLogCollectorRateLimit -count=400`
+  → **2 次失败**，报错逐字相同（`得到 0`）。⇒ 间歇性是调度决定的，缺陷本身是确定的。
+- **修法**：`dropped` 改为与 `lines` 同样的本地增量，由调用方在 **lines/bytes 之后**统一落账
+  （`internal/agent/log_collect.go`）⇒ 任何时刻「`Dropped>0`」都必然伴随已结算的 `TotalLines`。
+  语义总量不变，只改可见顺序；不放宽任何断言、不给测试加 sleep。
+- **验证**：修复后 `-count=800` **0 失败**；`internal/agent` 全包 `-count=1` 绿（86.6s）；
+  `golangci-lint`（CI 钉死版本）`0 issues`、`gofmt -l .` 干净。
+- **顺带确认门禁 integrity**：这次失败**没有**触发 OOM 重试路径（§16.3 的重试只认内存型死亡），
+  说明「只重试内存型死亡」的边界是真的在按性质分流，而不是把红洗成绿。
+

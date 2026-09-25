@@ -17,6 +17,16 @@
 - **待决策项（未擅动）**：① CI 推的核心镜像名/标签与 `deploy/helm/opsmesh` 默认值对不上（`helm template` 实测渲染 `image: opsmesh/opsmesh:latest`，本仓库任何 workflow 都不发布这个名字；且 `opsmesh-binary`/`opsmesh-agent` 实测只有 sha 标签、无 `latest`/semver）→ Helm 客户开箱 `ErrImagePull`；② 是否重切 `v0.9.2` 让修复真正可安装。
 - **GHCR 可见性已核实**（关闭 §15.5 一条诚实边界）：`levango7/opsmesh-binary` 匿名 pull token 即可列 tag 并解析 manifest → 包为**公开**。
 
+### 修复该链路首跑暴露的真缺陷：`Dropped>0 而 TotalLines=0` 的计数可见性窗口
+
+- **现象**：推送后 run `36188672870` 的 `build-test` 判红（10 个下游含 `release-dryrun` 全 skip），但**不是** OOM、也不是镜像链路，而是断言失败 `log_collect_test.go:420: TotalLines 期望 >=10, 得到 0`。
+- **定性（不是"计时用例不稳"）**：`internal/agent/log_collect.go` 里 `collectFile` 把 `stats.lines` 记在本地、`Dropped` 却**直接原子写全局**，两者可见时机不同；任何读 `Stats()` 的一方（测试与运维是同一份）都可能在 `Dropped>0` 的瞬间读到 `TotalLines=0` —— 一份自相矛盾的运行时观测。
+- **复现**：`git worktree` 取改动前提交，`-run TestLogCollectorRateLimit -count=400` → **2 次失败**、报错逐字相同。间歇性由调度决定，缺陷本身确定。
+- **修法**：`dropped` 改为与 `lines` 一致的本地增量，由调用方在 **lines/bytes 之后**统一落账 ⇒ `Dropped>0` 必然伴随已结算的 `TotalLines`。**不放宽断言、不加 sleep**，总量语义不变。
+- **验证**：修复后 `-count=800` **0 失败**；`internal/agent` 全包绿；`golangci-lint` 0 issues、`gofmt` 干净。同时确认这次失败**没有**走 §16.3 的 OOM 重试通道——「只重试内存型死亡」在真事件上分流正确。
+- **镜像链路修复的本地三重验证**（用户授权启动 Docker 后，用 `git archive` 造与 CI 等价的干净上下文）：① 修复前的 COPY 行 → rc=1 且报错与 release run 逐字相同；② 修复后 → rc=0；③ HEAD 的真实 `Dockerfile.service` 端到端构建 `auth-svc` → rc=0；④ `release-dryrun` 里那段自检**原文**实跑通过，反向对照（换无入口镜像）确实 FAIL；⑤ `grep -a dryrun` 命中产物 ⇒ `-X` 版本注入在微服务镜像上也真生效。详见报告 §19.5。
+
+
 ### CI：镜像链路首度真跑的两个发现（GHCR 前缀大小写 / agent 镜像 56 条无修复 CVE）
 
 - **发现 1：GHCR 前缀必须全小写**（run `36148760407`）。首个修复版推送后 `image` / `image-agent` **不再空转、真的开跑**，但 buildx 立即失败：`invalid tag "ghcr.io/Levango7/opsmesh-binary:<sha>": repository name must be lowercase`——`GITHUB_REPOSITORY_OWNER` 保留原始大小写。修复：owner `tr` 转小写后再拼前缀（两 job），warning 文案同步。**这正说明"真跑"的价值：空转绿永远碰不到这类问题。**

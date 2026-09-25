@@ -267,6 +267,9 @@ func (lc *LogCollector) tick(ctx context.Context) error {
 		allRecords = append(allRecords, records...)
 		atomic.AddInt64(&lc.stats.TotalLines, n.lines)
 		atomic.AddInt64(&lc.stats.TotalBytes, n.bytes)
+		// dropped 必须在 lines/bytes 之后落账：保证任何时刻「Dropped>0」都伴随已经
+		// 结算过的 TotalLines，运维与测试都不会读到「丢了行却一行都没采到」的中间态。
+		atomic.AddInt64(&lc.stats.Dropped, n.dropped)
 	}
 	atomic.StoreInt64(&lc.stats.ActiveFiles, activeFiles)
 
@@ -283,9 +286,15 @@ func (lc *LogCollector) tick(ctx context.Context) error {
 }
 
 // fileStats 单文件采集计数（避免返回多值）。
+//
+// dropped 与 lines 一样是**本次该文件的本地增量**，由调用方与 lines 一并落到共享计数：
+// 早期实现里 lines 走本地、dropped 直接原子写全局，于是存在一个真实可观测的窗口
+// ——「Dropped>0 而 TotalLines=0」。运维侧看到的正是这个瞬间（限速刚触发、本批还没
+// 结算），会把它读成「一行都没采到却被丢了行」这种自相矛盾的结论。
 type fileStats struct {
-	lines int64
-	bytes int64
+	lines   int64
+	bytes   int64
+	dropped int64
 }
 
 // collectFile 采集单文件增量：读新增字节 → 按行切分 → 过滤 → 多行合并 → 限速。
@@ -378,7 +387,7 @@ func (lc *LogCollector) collectFile(
 		}
 		// 限速：超限丢弃并计数。
 		if rateLimit > 0 && !lc.allowRate(rateLimit) {
-			atomic.AddInt64(&lc.stats.Dropped, 1)
+			stats.dropped++
 			continue
 		}
 		// 多行合并：multiline 匹配行首 → 新记录开始；不匹配 → 合并到上一条。
