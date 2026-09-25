@@ -1225,7 +1225,7 @@ global:
 controlplane:
   replicaCount: 3
   image:
-    repository: ghcr.io/levango7/opsmesh-binary
+    repository: opsmesh-binary   # 叶子名：配上面的 imageRegistry 渲染为 …/opsmesh/opsmesh-binary
     tag: "v1.0.0"
   store: mysql
   production: true
@@ -1706,13 +1706,14 @@ agent:
 ```yaml
 # 国产化环境 Helm values（鲲鹏 + openEuler + GaussDB）
 global:
-  imageRegistry: "registry.domestic.example.com/opsmesh/"
+  # 走前缀就必须给叶子名：helper 只在 repository 首段不含 "."/":" 时才拼 imageRegistry
+  imageRegistry: "registry.domestic.example.com/opsmesh"
   imagePullSecrets:
     - name: domestic-registry-secret
 
 controlplane:
   image:
-    repository: ghcr.io/levango7/opsmesh-binary
+    repository: opsmesh-binary          # → registry.domestic.example.com/opsmesh/opsmesh-binary:v1.0.0-linux-arm64
     tag: "v1.0.0-linux-arm64"  # 鲲鹏 ARM64
   replicaCount: 3
   store: mysql
@@ -1896,12 +1897,12 @@ spec:
 ```yaml
 # 完整生产 values.yaml
 global:
-  imageRegistry: "registry.example.com/"
+  imageRegistry: "registry.example.com/opsmesh"   # 不带尾斜杠，helper 负责拼接
   storageClass: "fast-ssd"
 
 controlplane:
   image:
-    repository: ghcr.io/levango7/opsmesh-binary
+    repository: opsmesh-binary    # 叶子名 ⇒ 渲染为 registry.example.com/opsmesh/opsmesh-binary:v1.0.0
     tag: "v1.0.0"
   replicaCount: 3
   store: mysql
@@ -1940,7 +1941,7 @@ controlplane:
 agent:
   enabled: true
   image:
-    repository: ghcr.io/levango7/opsmesh-agent
+    repository: opsmesh-agent   # 同上：走 imageRegistry 前缀时必须给叶子名
     tag: "v1.0.0"
   segment: default
   workerConcurrency: 8
