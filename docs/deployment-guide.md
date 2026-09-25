@@ -424,8 +424,8 @@ metadata:
   name: my-opsmesh
 spec:
   replicas: 3                    # 控制面副本数
-  image: opsmesh/opsmesh:latest  # 控制面镜像
-  agentImage: opsmesh/opsmesh-agent:latest  # agent 镜像
+  image: ghcr.io/levango7/opsmesh-binary:latest  # 控制面镜像（CI 实际推送名）
+  agentImage: ghcr.io/levango7/opsmesh-agent:latest  # agent 镜像（CI 实际推送名）
   store: mysql                   # memory | mysql
   production: true               # 生产模式
   tlsEnabled: true               # mTLS

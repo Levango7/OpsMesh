@@ -13,8 +13,8 @@ metadata:
     app.kubernetes.io/instance: prod
 spec:
   replicas: 3
-  image: opsmesh/opsmesh:v0.1.0
-  agentImage: opsmesh/opsmesh-agent:v0.1.0
+  image: ghcr.io/levango7/opsmesh-binary:latest
+  agentImage: ghcr.io/levango7/opsmesh-agent:latest
   store: mysql
   production: true
   tlsEnabled: true

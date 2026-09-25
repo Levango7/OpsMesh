@@ -810,7 +810,7 @@ helm upgrade opsmesh ./deploy/helm/opsmesh -n opsmesh \
 
 # 或直接 rollout
 kubectl set image daemonset/opsmesh-agent \
-  agent=opsmesh/opsmesh-agent:<new-tag> -n opsmesh
+  agent=ghcr.io/levango7/opsmesh-agent:<new-tag> -n opsmesh
 
 # 观察滚动状态
 kubectl rollout status daemonset/opsmesh-agent -n opsmesh

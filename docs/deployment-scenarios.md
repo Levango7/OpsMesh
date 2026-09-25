@@ -227,7 +227,7 @@
 version: "3.9"
 services:
   controlplane:
-    image: opsmesh/opsmesh:latest
+    image: ghcr.io/levango7/opsmesh-binary:latest
     command: --mode=controlplane --store=mysql --production
     environment:
       OPSMESH_MYSQL_DSN: opsmesh:opsmesh@tcp(mysql:3306)/opsmesh?parseTime=true
@@ -272,7 +272,7 @@ services:
       - redis-data:/data
 
   agent:
-    image: opsmesh/opsmesh-agent:latest
+    image: ghcr.io/levango7/opsmesh-agent:latest
     command: --mode=agent --control-addr=http://controlplane:8080 --segment=idc-a
     deploy:
       mode: global
@@ -1218,14 +1218,14 @@ spec:
 ```yaml
 # values.yaml（公有云生产）
 global:
-  imageRegistry: "registry.cn-north-4.huaweicloud.com/opsmesh/"
+  imageRegistry: "registry.cn-north-4.huaweicloud.com/opsmesh"   # 不带尾斜杠（helper 负责拼接 "/"）
   imagePullSecrets:
     - name: huawei-cloud-registry-secret
 
 controlplane:
   replicaCount: 3
   image:
-    repository: opsmesh/opsmesh
+    repository: ghcr.io/levango7/opsmesh-binary
     tag: "v1.0.0"
   store: mysql
   production: true
@@ -1712,7 +1712,7 @@ global:
 
 controlplane:
   image:
-    repository: opsmesh/opsmesh
+    repository: ghcr.io/levango7/opsmesh-binary
     tag: "v1.0.0-linux-arm64"  # 鲲鹏 ARM64
   replicaCount: 3
   store: mysql
@@ -1818,8 +1818,8 @@ mysql:
 
 ### 12.4 组件容器化
 
-- **控制面镜像**：`opsmesh/opsmesh:latest`，基于 distroless，nonroot 运行
-- **Agent 镜像**：`opsmesh/opsmesh-agent:latest`，基于 debian，含 sh
+- **控制面镜像**：`ghcr.io/levango7/opsmesh-binary`（CI 推 `:<sha>`，main 分支追加 `:latest`，tag 追加 `:<版本号>`），基于 distroless、nonroot 运行
+- **Agent 镜像**：`ghcr.io/levango7/opsmesh-agent`（标签策略同控制面），基于 debian、含 sh
 - **MySQL 镜像**：`mysql:8`，官方镜像
 - **Redis 镜像**：`redis:7`，官方镜像
 
@@ -1901,7 +1901,7 @@ global:
 
 controlplane:
   image:
-    repository: opsmesh/opsmesh
+    repository: ghcr.io/levango7/opsmesh-binary
     tag: "v1.0.0"
   replicaCount: 3
   store: mysql
@@ -1940,7 +1940,7 @@ controlplane:
 agent:
   enabled: true
   image:
-    repository: opsmesh/opsmesh-agent
+    repository: ghcr.io/levango7/opsmesh-agent
     tag: "v1.0.0"
   segment: default
   workerConcurrency: 8
@@ -2474,11 +2474,11 @@ jobs:
       - run: make build
       - run: make test
       - name: Build Docker image
-        run: docker build -t opsmesh/opsmesh:${{ github.sha }} .
+        run: docker build -t ghcr.io/levango7/opsmesh-binary:${{ github.sha }} .
       - name: Push to registry
         run: |
           docker login -u ${{ secrets.REGISTRY_USER }} -p ${{ secrets.REGISTRY_PASS }}
-          docker push opsmesh/opsmesh:${{ github.sha }}
+          docker push ghcr.io/levango7/opsmesh-binary:${{ github.sha }}
 
   deploy-staging:
     needs: build

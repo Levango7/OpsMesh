@@ -4,6 +4,14 @@
 > **评估对象**：`F:\Nexus\OpsMesh`（v0.9.0，commit `2c87a0b`）
 > **评估视角**：以「能否正式商用交付给企业客户」为准绳，而非「代码质量是否良好」
 > **评估方法**：静态阅读 + **实际编译并运行二进制做黑盒验证**（前者读代码，后者跑产品）
+
+> **⚠️ 2026-09-26 追加的关键事实（会改变"能不能卖"的判定，单独放在最前面）**：
+> **P0/P1 的全部修复目前只存在于源码，不存在于任何可安装的发布物。**
+> 对外最新的 `v0.9.1` 实测是空壳——GitHub Release `assets=0`，且 `ghcr.io/levango7/*` 里
+> **没有 0.9.1 标签的镜像**（根因与三重证据见 §19；发布链路缺陷已修，门禁见 §20）。
+> 因此"商用就绪"的必要条件尚未满足，且它**不是写代码能补的**：必须在门禁于 CI 真跑绿之后
+> 切一个版本（§21 第 2 项），验收口径是"Release 产物非空 + 版本标签镜像可解析 + 签名与 SBOM 齐备"。
+> 同期可安装的最新镜像仍是 `0.9.0`（2026-09-05），**不含**本轮全部安全修复。
 > **与既有报告的关系**：`docs/evaluation-report.md`（2026-09-16）已覆盖代码质量维度且标记 35/35 已修复。本报告**不重复**该维度，聚焦其未覆盖的**商用阻断项**，并对其中的错误结论做了实证纠正。
 
 ---
@@ -1611,7 +1619,7 @@ MSYS 下的 `sed`/`perl` 因读写两侧都做 CRLF 转换，替换看似执行�
 "从未跑过的门禁"与"只在生产时刻跑的门禁"——都不会在常规 CI 里暴露，因此必须显式把发布路径
 （构建产物、渲染 chart、拉起栈）**复制成 push 期就执行的检查**，否则发布永远是人肉首跑。
 
-### 19.4 尚未处理（需决策，不在本轮改动内）
+### 19.4 当时留下的待决项（其中 1 已在 §20 处理；2 的版本动作待授权；3 已核实）
 
 1. **核心镜像命名与 chart 默认值不一致**：CI 推 `ghcr.io/levango7/opsmesh-binary` / `opsmesh-agent`，
    而 `deploy/helm/opsmesh/values.yaml`（及 `values-production.yaml`）默认
@@ -1665,3 +1673,90 @@ MSYS 下的 `sed`/`perl` 因读写两侧都做 CRLF 转换，替换看似执行�
 - **顺带确认门禁 integrity**：这次失败**没有**触发 OOM 重试路径（§16.3 的重试只认内存型死亡），
   说明「只重试内存型死亡」的边界是真的在按性质分流，而不是把红洗成绿。
 
+## 20. 镜像发布名与消费方引用的对齐（把 §19.4 的两个待决项做掉，2026-09-26）
+
+§19.4 留下两条需要拍板的开口，本轮按「不改变对外契约的最小正确解」处理：
+
+| # | 缺陷 | 处置 | 为什么是这个方向 |
+|---|---|---|---|
+| 1 | CI 推 `ghcr.io/levango7/opsmesh-binary\|opsmesh-agent` 且**只有 sha 标签**，而 chart 与全部文档默认 `opsmesh/opsmesh:latest` | 两边同时收敛：chart/文档改用 **CI 的实际发布名**，CI 补齐**标签策略** | 只改 chart 会留下「名字对得上但 `:latest` 不存在」；只改 CI 标签则名字仍旧。任修一半都还是 `ErrImagePull` |
+| 2 | `global.imageRegistry` 与「已含主机的 repository」无条件拼接 | `templates/_helpers.tpl` 改为**首段含 `.`/`:`/`localhost` 即视为已限定**，不再叠加前缀 | 与 Docker 自身的判定规则一致；不改则 16 个微服务默认值 + 任何设了前缀的用户必然产出 `reg/ghcr.io/...` |
+
+同步改名的消费面：`values.yaml`、`values-production.yaml`、`docs/deployment-guide.md`（CRD 示例）、
+`docs/deployment-scenarios.md`（4 处 values + 2 处 image + 构建/推送命令 + 镜像说明 + 私有仓库示例去掉尾斜杠）、
+`docs/operations.md`（kustomize 编辑示例）、`operator/config/crd/bases/*.yaml`（CRD 默认值）与
+`operator/config/samples/*.yaml`（两份样例），以及 `values.yaml` 顶部指向不存在仓库的文档链接。
+
+### 20.1 标签策略（`image` / `image-agent` 两个 job 同步，脚本由同一份生成）
+
+| 触发 | 推送标签 |
+|---|---|
+| 任何 push | `:<sha>`（不可变，GitOps 写回的锚点） |
+| 默认分支 `main` | 追加 `:latest` |
+| tag `vX.Y.Z` | 追加 `:X.Y.Z`（剥掉前导 v）与 `:latest` |
+
+feature 分支**刻意不打** `latest`：否则 `latest` 会被「最后合入者之外」的推送改写，
+变成一个由分支推送顺序决定的隐式发布通道。口径与 `release.yml` 的微服务镜像一致（那边一直推 `:latest`）。
+
+**验证方式**：把生成后的两个 step 脚本从 yaml 里抽出来，用 bash 直接喂环境变量跑，逐场景核对
+`$GITHUB_OUTPUT` 的实际内容（不是读代码确认）：
+
+| 场景 | 结果 |
+|---|---|
+| `main` push（无三凭证） | `mode=ghcr`，标签 = `:<sha>` + `:latest` |
+| feature 分支 push | `mode=ghcr`，标签 = `:<sha>`（无 latest）✓ 刻意 |
+| `v9.9.9` tag | `mode=ghcr`，标签 = `:<sha>` + `:9.9.9` + `:latest` |
+| agent job（同逻辑另一 leaf） | `prefix` 落到 `…/opsmesh-agent` ✓ |
+| 三凭证齐备 + `main` | `mode=private`，前缀 = `<REGISTRY>/<leaf>`，标签同上 |
+| 抽掉 `IMAGE_LEAF` | **rc=1**，`${IMAGE_LEAF:?…}` 直接报错 ⇒ 不会静默产出半套标签 |
+
+生成过程中踩到两处**生成期**缺陷（都属「看起来对、实际少东西」，值得单独记）：
+
+1. 多行值写 `$GITHUB_OUTPUT` **必须**用 heredoc 定界符（`tags<<TAGSEOF` … `TAGSEOF`）。
+   直接 `echo "tags=多行"` 只会取到第一行，`tags` 静默退化成单个 `:<sha>`——正是本项目反复出现的形态。
+2. 前缀与标签集必须由**同一个** `IMAGE_LEAF` env 派生。生成器一度把 leaf 名内联进 `PREFIX`，
+   于是 env 成了摆设、注释宣称的「只有一个来源」与实际的两个来源矛盾。已改为 4 处 `PREFIX` 全用 `${IMAGE_LEAF}`。
+
+### 20.2 防再次分叉（三道机器判定，全部做过故障注入）
+
+| 门禁 | 断言 | 故障注入结果 |
+|---|---|---|
+| `validate-deploy-assets.sh` §7 | chart 每个 `image.repository` 的**叶子名**必须落在「CI 发布名集合」=（`release.yml` 矩阵 ∪ `ci.yml` 的 `IMAGE_LEAF`）内；默认值必须自带 registry 主机（判定口径与 helper 严格一致） | 把 `values.yaml` 改回 `opsmesh/opsmesh` → `[FAIL] chart 引用了 CI 从不推送的镜像名：opsmesh/opsmesh`；还原 → PASS |
+| `security` job 的 helm 段 | 默认渲染必须是 `ghcr.io/levango7/opsmesh-binary:latest` 与 `…/opsmesh-agent:latest`；digest 断言换成真实发布名；设了 `global.imageRegistry` 时**不得**出现 `registry/ghcr.io/…` 双前缀 | 本机四组渲染逐条比对：默认值 / 叶子名+前缀 / 全名+前缀 / digest 优先，均符合预期 |
+| `validate-deploy-assets.sh` §8（新增） | 任何 Dockerfile 的字面 `COPY` 源必须存在于仓库，且**不得同时被 `.gitignore` 排除** | 把 §19.1 那行改回 `COPY go.work go.work.sum ./` → `[FAIL] COPY 源同时被 .gitignore 排除：Dockerfile.service:go.work.sum`；还原 → PASS=29 FAIL=0 |
+
+§8 是第一性原理那条：**「本地能构建、干净检出必失败」必须能在静态阶段判定**，而不是等发版那一刻。
+它自己实现时也踩了两个坑，均已写进脚本注释：
+
+- `tr -d ' -'` 里的 ` -` 被 tr 解释成 **0x20~0x2D 字符区间**（含 `-` 与全部数字），
+  把 `auth-svc` 洗成 `authsvc`；两边集合同时变形后门禁会长期误判。改用 `sed` 定点剥前缀。
+- 跨阶段 `COPY --from=build /svc …` 的源来自上一构建阶段而非上下文，首版据此误报 6 条。
+  现按「含 `--from=` 的 COPY 整条跳过」处理。
+
+### 20.3 本轮附带关闭的两条长期开口
+
+- **actionlint 进 CI**：`build-test` 新增钉版 v1.7.7 的检查步（本机对全部 workflow 为 0 问题）。
+  理由与已抓到的四类「CI 自己骗自己」同源——workflow 是交付物，此前却只在作者本机跑过。
+- **`opsmesh-binary` 与外部 GitOps chart 的关系**：私有仓库路径的 leaf 名保持**逐字不变**
+  （向后兼容既有 GitOps 写回），同时仓库内 chart 现在用的就是这个 leaf 名，
+  两边命名关系从此可被 §7 静态核对。仍存的不确定只剩外部 chart 的 values 结构
+  （它写的是 `.global.image.tag/digest`，本仓是 `.controlplane.image.*`），需要该仓库权限，列入 §21。
+
+### 20.4 明确不做的事
+
+- **没有重切版本（`v0.9.2`）**：打 tag 会对外发布 Release 与镜像，属需授权动作；且应先看到
+  `release-dryrun` 与新标签策略下的 `image` job 真跑绿。**这是下一轮第一优先级**——
+  否则「P0/P1 修复只存在于源码、不存在于任何可安装产物」的状态没有被改变。
+- **没有改 Release 的创建逻辑**：v0.9.1 那个 `assets=0` 的空壳 Release，其 `createdAt` 早于
+  两条 workflow 启动 5 秒，而两条发布路径当时都判 `skipped` ⇒ 它是打 tag 时由外部（人工）创建的，
+  不是流水线行为。流水线自身的门禁（`github-release` needs `build-and-push`）经核是正确的，无需改。
+
+## 21. 下一轮清单（按优先级）
+
+| # | 事项 | 为什么排在这 |
+|---|---|---|
+| 1 | 看本轮 commit 的 CI：`release-dryrun`、`image`、`image-agent`、`security` 的 **step 级**证据 | 标签策略、命名收敛、actionlint 门禁都要靠真跑证实或证伪，本机 bash 只能证一半 |
+| 2 | 切 `v0.9.2` 并验收产物：GitHub Release assets 非空 + `ghcr.io/levango7/*:0.9.2` 可解析 + 签名与 SBOM 齐备 | 商用可交付的最低事实：存在一个版本，其镜像与二进制都真的发布成功 |
+| 3 | P1-7 许可与第三方合规（NOTICE/THIRD_PARTY、MPL-2.0 依赖的再分发含义、基础镜像来源目录） | 唯一剩下的 P1 大块，属商务 + 法务判定 |
+| 4 | 外部 GitOps chart 的 values 结构核对（需该仓库读权限） | §20.3 遗留的最后一处不确定 |
+| 5 | 微服务剩余约 250 处 `Printf` 的逐点严重级别升级 | 增量改进，统一管道已就位 |

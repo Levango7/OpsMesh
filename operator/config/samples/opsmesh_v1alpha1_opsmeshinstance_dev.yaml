@@ -10,8 +10,8 @@ metadata:
     app.kubernetes.io/instance: dev
 spec:
   replicas: 1
-  image: opsmesh/opsmesh:0.9.0
-  agentImage: opsmesh/opsmesh-agent:0.9.0
+  image: ghcr.io/levango7/opsmesh-binary:0.9.0
+  agentImage: ghcr.io/levango7/opsmesh-agent:0.9.0
   store: memory
   production: false
   tlsEnabled: false

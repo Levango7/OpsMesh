@@ -1,6 +1,6 @@
 # OpsMesh Helm Chart 默认值（开发/体验环境）
 # 生产环境请使用 -f values-production.yaml 覆盖关键项。
-# 文档：https://github.com/opsmesh/opsmesh
+# 文档：https://github.com/Levango7/OpsMesh（镜像发布产物见 CI 的 image / image-agent job 与 .github/workflows/release.yml）
 # 端口约定：各微服务 httpPort/grpcPort 独立配置（见各服务段，对照源码默认值）。
 # 指标暴露：微服务【没有】独立 metrics 端口（services/** 无 9091 监听），/metrics
 # 由服务在自身 HTTP 端口注册（cmd/<svc>/main.go: mux.Handle("/metrics", metrics.GetHandler())）。
@@ -9,7 +9,9 @@
 
 ## @section Global
 global:
-  # 镜像仓库前缀，空表示使用 Docker Hub 公共镜像；私有环境填 registry.example.com/
+  # 镜像仓库前缀：只对**未含 registry 主机**的 repository 生效（见 templates/_helpers.tpl 的
+  # opsmesh.image 判定）。本文件默认值已全部写成 `ghcr.io/levango7/...` 全名，因此这里留空
+  # 即直接按全名拉取；要换私有镜像仓库，请改各 image.repository（或把本值配上叶子名形式的 repository）。
   imageRegistry: ""
   # 镜像拉取凭证（私有仓库必填）
   imagePullSecrets: []
@@ -20,7 +22,10 @@ global:
 ## @section Controlplane
 controlplane:
   image:
-    repository: opsmesh/opsmesh
+    # 名字必须与 CI 实际推送的一致（门禁：validate-deploy-assets.sh 第 7 节会核对）。
+    # 此前写的是 Bitnami 风格的 opsmesh/opsmesh，而 ci.yml 的 image job 推的是
+    # ghcr.io/levango7/opsmesh-binary —— 任何 workflow 都不发布前者，默认装完即 ErrImagePull。
+    repository: ghcr.io/levango7/opsmesh-binary
     # 镜像 tag：开发环境用 latest；生产环境用 --set controlplane.image.tag=<sha> 或 GitOps 写回
     tag: "latest"
     # 镜像 digest（完整形式 "sha256:<hex>"）：非空时优先于 tag，引用不可变镜像。
@@ -146,7 +151,7 @@ controlplane:
 agent:
   enabled: true
   image:
-    repository: opsmesh/opsmesh-agent
+    repository: ghcr.io/levango7/opsmesh-agent
     # 镜像 tag：开发环境用 latest；生产环境用 --set agent.image.tag=<sha> 或 GitOps 写回
     tag: "latest"
     # 镜像 digest（完整形式 "sha256:<hex>"）：非空时优先于 tag，引用不可变镜像。

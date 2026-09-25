@@ -64,13 +64,22 @@ Service account name.
 Image reference: optional registry prefix + repository:tag（或 repository@digest）。
 digest 字段非空时优先使用 digest 引用（不可变镜像，供应链钉死），忽略 tag。
 digest 值须为完整形式 "sha256:<hex>"（由 CI 以 build-push-action digest 输出写回）。
+
+**已含 registry 主机的 repository 不再叠加 global.imageRegistry**（Docker 判定规则：
+路径首段含 "."、":" 或等于 "localhost" 即为 registry 主机）。此前的无条件拼接会产出
+`registry.example.com/ghcr.io/levango7/auth-svc` 这种必拉取失败的引用——而 values 里
+16 个微服务与 controlplane/agent 的默认值本来就写成 `ghcr.io/...` 全名，所以这个分支
+不是理论风险，是默认路径就会踩到的。要用私有镜像仓库，请改 repository 本身（或整体
+用 imageRegistry + 叶子名形式的 repository，两种写法都能得到正确结果）。
 Usage: {{ include "opsmesh.image" (list . .Values.controlplane.image) }}
 */}}
 {{- define "opsmesh.image" -}}
 {{- $root := index . 0 -}}
 {{- $img := index . 1 -}}
 {{- $repo := $img.repository -}}
-{{- if $root.Values.global.imageRegistry -}}
+{{- $first := splitList "/" $img.repository | first -}}
+{{- $qualified := or (contains "." $first) (contains ":" $first) (eq $first "localhost") -}}
+{{- if and $root.Values.global.imageRegistry (not $qualified) -}}
 {{- $repo = printf "%s/%s" $root.Values.global.imageRegistry $img.repository -}}
 {{- end -}}
 {{- if $img.digest -}}

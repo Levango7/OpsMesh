@@ -414,6 +414,140 @@ else
     bad "git check-attr 未把 Dockerfile 判为 eol=lf（core.autocrlf=true 的机器检出即 CRLF → docker build 失败）"
 fi
 # ---------------------------------------------------------------
+sec "7. 镜像发布名 ↔ chart 引用一致性（Helm 开箱即 ErrImagePull 的那次教训）"
+# ---------------------------------------------------------------
+# 为什么要这道门禁：CI 的 image job 推 ghcr.io/levango7/opsmesh-binary，而仓库内 chart 的
+# 默认值写的是 opsmesh/opsmesh:latest —— 两边各说各话，默认装完两个核心 workload 必
+# ErrImagePull。更糟的是它长期不可见：CI 全绿（镜像真的推上去了、chart 也真的渲染成功），
+# 只是两件"成功的事"从不互相引用。2026-09-26 实测记录见报告 §19.4。
+# 这道门禁把「chart 引用的名字必须有人推送」变成机器判定，而不是靠注释与记忆。
+PUBLISHED_FILE="$(mktemp)"
+trap 'rm -f "$PUBLISHED_FILE"' EXIT
+
+# 发布名集合 = release.yml 的 microservice 矩阵 + ci.yml 的两个 IMAGE_LEAF
+# （核心镜像刻意不在矩阵里：它们由 ci.yml 的 image / image-agent job 构建，用 Dockerfile 与
+#  Dockerfile.agent，而非服务模板 Dockerfile.service。）
+if [ -f .github/workflows/release.yml ]; then
+    sed -n '/^      matrix:/,/^    steps:/p' .github/workflows/release.yml \
+        | grep -oE '^[[:space:]]+- [a-z0-9-]+[[:space:]]*$' \
+        | sed 's/^[[:space:]]*-[[:space:]]*//; s/[[:space:]]*$//' >> "$PUBLISHED_FILE"
+    # 坑（实测踩过）：这里不能用 `tr -d ' -'` 去同时删空格和连字符 —— tr 把 ' -' 解释成
+    # **0x20~0x2D 的字符区间**（空格到连字符，含 '-' 与全部数字），于是 auth-svc 被洗成
+    # authsvc、任何版本号也被洗残；两边集合都变形后，门禁会以"对不上"的方式长期误判。
+fi
+grep -hoE 'IMAGE_LEAF: [a-z0-9-]+' .github/workflows/ci.yml 2>/dev/null \
+    | awk '{print $2}' >> "$PUBLISHED_FILE"
+sort -u -o "$PUBLISHED_FILE" "$PUBLISHED_FILE"
+
+PUB_N=$(wc -l < "$PUBLISHED_FILE" | tr -d ' ')
+if [ "${PUB_N:-0}" -lt 3 ]; then
+    # 解析不出集合就直接判红：workflow 的 YAML 写法一变，这道门禁就会"瞎"，
+    # 而"瞎了的门禁"必须以红的形态被发现，不能静默退化成永远 PASS（教训 11）。
+    bad "未能从 workflow 解析出 CI 发布名集合（只得到 ${PUB_N} 条）——请同步本脚本的解析规则"
+else
+    ok "解析到 CI 发布名 ${PUB_N} 个（release.yml 矩阵 + ci.yml IMAGE_LEAF）"
+fi
+
+# chart 侧：values.yaml / values-production.yaml 里每个 image.repository 的叶子名都必须有人推
+CHART_REPOS="$(grep -hoE '^[[:space:]]*repository:[[:space:]]*[^ ]+' \
+    deploy/helm/opsmesh/values.yaml deploy/helm/opsmesh/values-production.yaml 2>/dev/null \
+    | awk '{print $2}' | sort -u)"
+if [ -z "$CHART_REPOS" ]; then
+    bad "chart 里一个 image.repository 都没解析到（values 结构变了？本脚本需同步）"
+else
+    MISSING=""
+    N=0
+    while IFS= read -r repo; do
+        [ -n "$repo" ] || continue
+        N=$((N + 1))
+        leaf="${repo##*/}"
+        grep -qxF "$leaf" "$PUBLISHED_FILE" || MISSING="$MISSING $repo"
+    done <<< "$CHART_REPOS"
+    if [ -n "$MISSING" ]; then
+        bad "chart 引用了 CI 从不推送的镜像名：$MISSING"
+        echo "         修法：把 chart 的 repository 改成 CI 实际推送名，或在 workflow 中补上该发布项"
+    else
+        ok "chart 的 $N 个 image.repository 叶子名全部落在 CI 发布名集合内"
+    fi
+fi
+
+# 默认值必须"自带 registry 主机"：否则 helm install 不填任何 values 时会去 Docker Hub 找
+# opsmesh/*（本项目不在那儿发布）——这是"名字对得上但仍然拉不到"的另一半根因。
+#
+# 判定口径与 chart helper 严格一致（templates/_helpers.tpl）：**首段含 "." 或 ":"（或等于
+# localhost）才算 registry 主机**。所以 `opsmesh/opsmesh` 这种 Bitnami 风格名字**不是**合格的
+# 默认值 —— 它带斜杠但指向 Docker Hub。早期版本这里用 `grep -v '/'` 只挑"完全没斜杠"的，
+# 于是恰好把本次真缺陷（opsmesh/opsmesh）放过去了：门禁与自己要防的形态错位。
+UNQUALIFIED="$(grep -hoE '^[[:space:]]*repository:[[:space:]]*[^ ]+' deploy/helm/opsmesh/values.yaml 2>/dev/null \
+    | awk '{print $2}' | awk -F/ '{print $1}' | grep -vE '[.:]' | grep -v '^localhost$' | tr '\n' ' ')"
+
+GLOBAL_REG="$(grep -A4 '^global:' deploy/helm/opsmesh/values.yaml | grep -E '^[[:space:]]*imageRegistry:[[:space:]]*"[^"]+"' || true)"
+if [ -n "${UNQUALIFIED// /}" ] && [ -z "$GLOBAL_REG" ]; then
+    bad "values.yaml 里这些 repository 既无 registry 主机、global.imageRegistry 又留空：$UNQUALIFIED（默认装必拉不到）"
+else
+    ok "默认 image 引用可解析（自带 registry 主机，或 global.imageRegistry 已给前缀）"
+fi
+
+# 核心镜像名固定断言：上面两条的语义都建立在"CI 确实发布这两个叶子名"之上，
+# 一旦被改回去，集合会变小、chart 也会跟着改，两条断言可能同时"自洽地错"。
+for want in opsmesh-binary opsmesh-agent; do
+    if grep -qxF "$want" "$PUBLISHED_FILE"; then
+        ok "CI 发布名包含 $want"
+    else
+        bad "CI 不再发布 $want —— chart / GitOps / 文档的消费方需同步改名"
+    fi
+done
+
+sec "8. 构建上下文自洽（Dockerfile 的 COPY 源必须存在于干净检出）"
+# ---------------------------------------------------------------
+# 起因（报告 §19.1）：Dockerfile.service 写 `COPY go.work go.work.sum ./`，而 .gitignore
+# 明确排除 go.work.sum ⇒ 干净检出里没有该文件 ⇒ buildx 在 compute cache key 阶段就死：
+#   ERROR: failed to build: failed to solve: failed to compute cache key: "/go.work.sum": not found
+# 代价已经付过一次：tag v0.9.1 的 release 矩阵 18 条全灭，GHCR 至今没有 0.9.1 的微服务镜像，
+# 而同期源码侧 CI 全绿 —— 因为没有任何常规检查会去构建这些镜像（现由 release-dryrun 补上）。
+# 这道静态门禁是第二层：在"改 Dockerfile 的那一刻"就报警，不必等构建。
+MISSING_COPY=""
+IGNORED_COPY=""
+CHECKED=0
+for df in Dockerfile Dockerfile.agent Dockerfile.service deploy/docker/Dockerfile.controlplane deploy/docker/Dockerfile.micro; do
+    [ -f "$df" ] || continue
+    dfdir="$(dirname "$df")"
+    CHECKED=$((CHECKED + 1))
+    # 取每条 COPY 的源（第 2..NF-1 个字段；最后一个字段是目标路径；以 - 开头的是 --from/--chown 等旗标）
+    while IFS= read -r src; do
+        [ -n "$src" ] || continue
+        case "$src" in
+            -*|*'*'*|*'?'*) continue ;;          # 旗标与通配不适用"路径必须存在"
+        esac
+        if [ ! -e "$src" ] && [ ! -e "$dfdir/$src" ]; then
+            MISSING_COPY="$MISSING_COPY ${df}:${src}"
+        fi
+        # 干净检出里没有的东西 = 被 .gitignore 排除的东西（go.work.sum 正是这一类）
+        if git check-ignore -q "$src" 2>/dev/null; then
+            IGNORED_COPY="$IGNORED_COPY ${df}:${src}"
+        fi
+    # **含 --from= 的 COPY 整条跳过**：它的源来自上一个构建阶段（跨阶段拷贝），不是构建上下文；
+    # 拿上下文里的文件去要求它存在是错的（首版误报了 `COPY --from=build /svc /usr/local/bin/svc` 里的 /svc）。
+    done < <(awk '/^COPY[ \t]/{ if ($0 ~ /--from=/) next; for (i = 2; i < NF; i++) { if ($i ~ /^-/) continue; print $i } }' "$df")
+
+done
+if [ "$CHECKED" -eq 0 ]; then
+    bad "一个 Dockerfile 都没扫到（路径变了？本脚本需同步）"
+else
+    if [ -n "${MISSING_COPY// /}" ]; then
+        bad "Dockerfile 的 COPY 源在仓库里不存在：${MISSING_COPY}"
+        echo "         构建会在 compute cache key 阶段直接失败（不是运行期问题，现场改不回来）"
+    else
+        ok "${CHECKED} 个 Dockerfile 的字面 COPY 源都存在于仓库中"
+    fi
+    if [ -n "${IGNORED_COPY// /}" ]; then
+        bad "Dockerfile 的 COPY 源同时被 .gitignore 排除：${IGNORED_COPY}"
+        echo "         本机可构建（工作区里有该文件）、CI/干净检出必失败 —— 正是 v0.9.1 镜像全灭的形态"
+    else
+        ok "没有 COPY 源被 .gitignore 排除（干净检出与本工作区在这一点上等价）"
+    fi
+fi
+
 echo ""
 echo "==================================================="
 echo "  部署资产门禁：PASS=${PASS}  FAIL=${FAIL}  SKIP=${SKIP}"

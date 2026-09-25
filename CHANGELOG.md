@@ -4,7 +4,21 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
-## [Unreleased] — 2026-09-26 发布链路复核：`Dockerfile.service` 自 v0.9.1 起从未构建成功
+## [Unreleased] — 2026-09-26 镜像发布名与消费方引用收敛（Helm 开箱即 ErrImagePull 的根治）
+
+> 证据：`docs/commercial-readiness-review-2026-09-25.md` §20。**这是 §19.4 留下的两条待决项的落地。**
+
+- **两边同时收敛，而不是只改一半**：CI 此前推 `ghcr.io/levango7/opsmesh-binary|opsmesh-agent` 且**只有 sha 标签**，而 chart 与全部文档默认 `opsmesh/opsmesh:latest`（本仓库任何 workflow 都不发布这个名字）。只改 chart 会留下「名字对了但 `:latest` 不存在」，只改 CI 标签则名字仍旧——任修一半都还是 `ErrImagePull`。
+- **标签策略**（`image` / `image-agent` 同口径）：任何 push → `:<sha>`；默认分支 `main` → 追加 `:latest`；tag `vX.Y.Z` → 追加 `:X.Y.Z`（剥前导 v）+ `:latest`。feature 分支**刻意不打** `latest`，否则 `latest` 会被「最后合入者之外」的推送改写。私有仓库路径的 leaf 名逐字不变（向后兼容既有 GitOps 写回）。
+- **`global.imageRegistry` 语义修正**：`templates/_helpers.tpl` 现在按 Docker 自己的规则判定——repository 首段含 `.`/`:`（或等于 `localhost`）即视为已带 registry 主机，**不再叠加前缀**。此前是无条件拼接，会产出 `registry.example.com/ghcr.io/levango7/auth-svc` 这种必拉取失败的引用，而 values 里 16 个微服务与核心镜像默认值本来就写全名 ⇒ 不是理论风险。
+- **同步改名**：`values.yaml`、`values-production.yaml`、`deployment-guide.md`、`deployment-scenarios.md`（values 示例 / 构建推送命令 / 镜像说明 / 私有仓库示例去掉尾斜杠）、`operations.md`、operator 的 **CRD 默认值与两份样例**、`values.yaml` 顶部指向不存在仓库的文档链接。
+- **三道防分叉门禁，全部做故障注入**：① `validate-deploy-assets.sh` §7——chart 每个 `image.repository` 叶子名必须落在「CI 发布名集合」（`release.yml` 矩阵 ∪ `ci.yml` 的 `IMAGE_LEAF`）内，默认值必须自带 registry 主机；把名字改回 `opsmesh/opsmesh` 立刻 FAIL 并点名。② `security` job 的 helm 段——默认渲染必须是 `ghcr.io/levango7/opsmesh-binary:latest`，digest 断言换成真实发布名，并断言设前缀时**不出现**双前缀。③ 新增 §8——任何 Dockerfile 的字面 `COPY` 源必须存在于仓库且**不得同时被 `.gitignore` 排除**（把 `COPY go.work go.work.sum ./` 改回去立刻 FAIL），这把 §19.1 那类「本地能构建、干净检出必失败」变成静态可判定。
+- **本轮新踩并记进注释的两个坑**：`tr -d ' -'` 里的 ` -` 被 tr 当作 **0x20~0x2D 字符区间**（含 `-` 与全部数字），会把 `auth-svc` 洗成 `authsvc`、让门禁两边同时变形；跨阶段 `COPY --from=build /svc …` 的源不来自构建上下文，首版据此误报 6 条。
+- **生成期缺陷两处**：多行值写 `$GITHUB_OUTPUT` 必须用 heredoc 定界符，否则 `tags` 静默退化成单个 `:<sha>`；`PREFIX` 必须由 `IMAGE_LEAF` env 单一派生（一度把 leaf 名内联，使注释说的「只有一个来源」变成两个来源）。
+- **actionlint 进 CI**：`build-test` 新增钉版 v1.7.7 检查步（本机对全部 workflow 为 0 问题）。workflow 是交付物，此前却只在作者本机跑过。
+- **验证**：六个标签场景用抽出的 step 脚本在 bash 里实跑并核对 `$GITHUB_OUTPUT`（含「抽掉 `IMAGE_LEAF` 必须 rc=1」的负向）；四组 `helm template` 渲染（默认 / 叶子名+前缀 / 全名+前缀 / digest 优先）逐条比对；`helm lint`（含 `values-production.yaml`）0 失败；静态门禁 **PASS=29 / FAIL=0 / SKIP=0**；`actionlint` 0 问题。
+- **明确未做**：**没有重切 `v0.9.2`**（打 tag 会对外发布 Release 与镜像，需授权；且应先看到新标签策略下 `image` / `release-dryrun` 真跑绿）。v0.9.1 那个 `assets=0` 的空壳 Release 经核是**打 tag 时由外部创建**的（其 `createdAt` 早于两条 workflow 启动 5 秒，两条发布路径当时都判 skip），流水线自身门禁正确，故未改创建逻辑。
+
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §19。**结论：`v0.9.1` 既没有镜像也没有二进制产物**——P0/P1 全部修复目前只存在于源码，不存在于任何可安装的发布物。
 
@@ -14,7 +28,8 @@
 - **新增 push 期门禁 `release-dryrun`**：每次 push 用同一发布模板构建 `auth-svc`（`--load`，不推送/不登录/不扫描），并自检产物形态——入口 `/usr/local/bin/svc` 存在、是 ELF、容器内**非 root**。零 secret 依赖。
 - **`release` job 的 `needs` 追加 `release-dryrun`**：镜像模板产不出产物就不发布版本化二进制。同时删掉原注释里"services job 验证的就是矩阵镜像的可构建性"这句**不实安心**——它验证的是源码能编译，验证不了镜像能构建，这正是缺陷能活到发版才爆的原因。
 - **顺带修掉文档带病**：`docs/commercial-readiness-review-2026-09-25.md` 里残留 6 个裸 CR，位置恰是正文写 `tr -d '\r'`、`grep -c $'\r'` 的地方（here-doc 改文档时转义被吃掉）——**报告里教的命令是错的且看起来是对的**。MSYS 下 `sed`/`perl` 读写两侧都做 CRLF 转换，替换看似执行、字节数不变；最终用 Node 按字节 split/join 才真换掉（149941→149947 字节，CR 6→0）。
-- **待决策项（未擅动）**：① CI 推的核心镜像名/标签与 `deploy/helm/opsmesh` 默认值对不上（`helm template` 实测渲染 `image: opsmesh/opsmesh:latest`，本仓库任何 workflow 都不发布这个名字；且 `opsmesh-binary`/`opsmesh-agent` 实测只有 sha 标签、无 `latest`/semver）→ Helm 客户开箱 `ErrImagePull`；② 是否重切 `v0.9.2` 让修复真正可安装。
+- **~~待决策项（未擅动）~~ → ① 已在下一批落地**（见本文件顶部「镜像发布名与消费方引用收敛」：chart/文档改用 CI 实际发布名 + CI 补 `latest`/semver 标签 + 三道防分叉门禁）；② 重切 `v0.9.2` 仍未做，那是对外发布动作、需授权。
+
 - **GHCR 可见性已核实**（关闭 §15.5 一条诚实边界）：`levango7/opsmesh-binary` 匿名 pull token 即可列 tag 并解析 manifest → 包为**公开**。
 
 ### 修复该链路首跑暴露的真缺陷：`Dropped>0 而 TotalLines=0` 的计数可见性窗口
