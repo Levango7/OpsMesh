@@ -411,6 +411,10 @@ type Config struct {
 	// 默认 false。开启后仍受 --metrics-allow-cidr 白名单准入（它能读内存与调用栈，
 	// 属内部诊断面）；生产模式下该白名单 fail-closed，故须显式放开来源才可用。
 	DebugPprof bool // --debug-pprof / env OPSMESH_DEBUG_PPROF
+	// MetricsCacheTTL：/metrics 应用级计数的缓存窗口（P1-6）。
+	// 这些计数仅供仪表盘读数，逐秒精确无意义；缓存把「同一波抓取对 store 的 5 次全量扫描」
+	// 合并成一次。0 = 关闭缓存（每次实算，行为与引入缓存之前一致）。
+	MetricsCacheTTL time.Duration // --metrics-cache-ttl / env OPSMESH_METRICS_CACHE_TTL
 
 	// 多租户资源配额与计费：
 	//   - QuotaEnabled：是否启用配额检查（设备/任务/告警创建前校验是否超额）。
@@ -609,6 +613,7 @@ func Load() *Config {
 	// P1-6 可支撑性：日志级别可配（默认 info；非法值启动期 fail-fast，见 cmd/opsmesh）。
 	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error（默认 info）；debug 会显著增加日志量，仅在排障时开启；或 env OPSMESH_LOG_LEVEL")
 	// P1-6 可支撑性：pprof 默认关闭（能读内存与调用栈）；开启后仍受 metrics CIDR 白名单准入。
+	metricsCacheTTL := flag.Duration("metrics-cache-ttl", time.Second, "/metrics 应用级计数缓存窗口（默认 1s；0=关闭缓存、每次抓取实算）。仅影响计数新鲜度，不影响告警/任务等真实数据读取；或 env OPSMESH_METRICS_CACHE_TTL")
 	debugPprof := flag.Bool("debug-pprof", false, "在 B/S 端口暴露 /debug/pprof/（默认 false；开启后仍受 --metrics-allow-cidr 准入，生产须显式放开来源）；或 env OPSMESH_DEBUG_PPROF")
 	// 多租户资源配额与计费：租户级资源配额（设备数/任务数/告警数上限）。
 	// 启用后 QuotaManager 在设备/任务/告警创建路径校验是否超额，超额返回 ErrQuotaExceeded。
@@ -792,6 +797,7 @@ func Load() *Config {
 		LogPushBackend:             val("log-push-backend", *logPushBackend, "OPSMESH_LOG_PUSH_BACKEND"),
 		LogLevel:                   val("log-level", *logLevel, "OPSMESH_LOG_LEVEL"),
 		DebugPprof:                 valBool("debug-pprof", *debugPprof, "OPSMESH_DEBUG_PPROF"),
+		MetricsCacheTTL:            valDur("metrics-cache-ttl", *metricsCacheTTL, "OPSMESH_METRICS_CACHE_TTL"),
 		QuotaEnabled:               valBool("quota-enabled", *quotaEnabled, "OPSMESH_QUOTA_ENABLED"),
 		QuotaMaxDevices:            valInt("quota-max-devices", *quotaMaxDevices, "OPSMESH_QUOTA_MAX_DEVICES"),
 		QuotaMaxTasks:              valInt("quota-max-tasks", *quotaMaxTasks, "OPSMESH_QUOTA_MAX_TASKS"),

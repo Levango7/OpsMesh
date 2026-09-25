@@ -61,6 +61,15 @@
 - **新增永久门禁**：`validate-deploy-assets.sh` 第 6 节扫描部署资产行尾，任一含 CR 即 FAIL 并点名；并用 `git check-attr eol -- Dockerfile` 断言属性真的生效（问 git 而非解析文件）。双向注入验证：放探针 → `FAIL=1` 点名；撤掉 → `PASS=22 FAIL=0`。
 - **两个值得记住的坑**：① **Git-Bash 的 `grep`/`awk` 看不见 CR**（`grep -c $'\r'`、`awk '/\r/'` 对确含 CRLF 的文件均返回 0，MSYS 读时吞 CR；只有 `tr -d '\r'` 走字节路径，实测 32→31 字节）——**第一版门禁正是用 grep 写的，在 Windows 上以"永远 PASS"的形态空转**，是故障注入把它抓出来的；② `.gitattributes` 注释里混入一个真换行，会让半截注释没有 `#` 前缀，git 每次调用都报 `is not a valid attribute name`。
 
+### P1-6 残留三项的最终处置（同日追加）
+
+- **`/metrics` 全表读 → TTL 缓存**（新文件 `internal/controlplane/metrics_cache.go`）：应用级计数由 `appMetricsCounts()` 统一提供，8080 的 4 次扫描与 9091 的 `SetAgents` 全量扫描合并为一份快照；新增 `--metrics-cache-ttl`（默认 1s，0=关闭）。**失效方向保守**：`appCountsCache` 零值即不缓存，故不经 `New()` 构造的既有测试路径行为逐字不变。顺带更正一处不实注释——旧注释称 9091「只做 O(1) 渲染」，实际每次抓取都全量扫 `Agents("")`。
+- **运行期日志级别开关**：`POST /api/v1/admin/loglevel`（`{"level":"debug"}`）。理由：排障是「复现→开 debug→拿到就关」，而重启本身会改变被观察状态（连接、leader、计数器归零）。权限用 **`diagnostics:execute`** 而非 `diagnostics:dump`——现场运维该能提级别，但不该因此看到含内部拓扑的配置转储（RBAC 派生规则下 operator 可得 execute、不得得 dump）。非法值 400 **且不改动当前级别**。
+- **微服务日志统一（管道完成，逐点严重级别为增量项）**：规模是 17 个 main.go、约 **301 处** stdlib 调用点。**刻意不做一次性逐点改写**——那要求给每处判严重级别，误判比无级别更糟，且改动面无法一次验证。落地为 `pkg/log.Init(serviceName)` **接管标准库默认 logger**：每服务 main 加一行，该进程全部输出即为带 `service` + `via:"stdlib-log"` 的 JSON 并受 `OPSMESH_LOG_LEVEL` 控制。经此通道的行**一律如实记 INFO**（stdlib `Printf` 不带级别信息，按前缀猜级别等于制造不实陈述）。有判别价值的那一类已显式化：**47 处 `log.Fatal*` → `lgr.Fatalf/lgr.Fatal`**（ERROR + `fatal=true`，退出码 1 语义不变）。
+- **依赖接线**：11 个服务模块的 `go.mod` 补 `require github.com/Levango7/OpsMesh` + `replace … => ../../`（本地替换，不联网解析版本）。
+- **实测**：17 个模块 `go build ./...` + `go test ./...` 全绿；bot-svc 二进制实跑 → 启动行 `level=INFO`、崩溃行 `level=ERROR fatal=true`，均为合法 JSON；`Dockerfile.service` 容器内构建成功（跨模块依赖在镜像构建中可解析）；新增 6 个缓存单测 + 级别端点 2 个单测；根模块 `gofmt`/`go vet`/`golangci-lint v2.13.2` 0 问题。
+- **诚实边界**：剩余约 250 处 `Printf/Println` 的逐点级别升级（`Infof/Warnf/Errorf/Debugf` 已在 `pkg/log` 备好）为后续增量，不谎称已完。
+
 ## [Unreleased] — 2026-09-26 `build-test` 内存型 flaky：复核 + 可观测 + 仅 OOM 重试一次
 
 > 承接下一节的镜像链路修复。`build-test` 在 run `36155335631` 首跑时红了——但**不是测试失败**：`./internal/agent/` 批次最后一个用例是 `--- PASS`，随后进程才 `fatal error: runtime: cannot allocate memory`（mmap 型 ENOMEM）死亡。该 job 是唯一门禁，一挂则 7 个下游全 skip，故列为门禁可信度问题处理。

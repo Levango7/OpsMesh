@@ -42,6 +42,9 @@ var processStartedAt = time.Now()
 // 而配置转储/诊断包含内部拓扑与配置细节，只应给 admin（admin 自动获得全部权限点）。
 const diagPermission = "diagnostics:dump"
 
+// levelPermission 运行期日志级别开关的权限点（operator 亦可，见 sql_rbac.go 注释）。
+const levelPermission = "diagnostics:execute"
+
 // handleVersion 处理 GET /version：返回构建信息，供客户现场排障与版本核对。
 //
 // 无鉴权（与 /healthz 同级的最小暴露面）：只有版本号、提交、构建时间、Go 运行时
@@ -89,6 +92,47 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, s.configSnapshot())
+}
+
+// handleAdminLogLevel 处理 POST /api/v1/admin/loglevel：运行期调整日志级别（P1-6）。
+//
+// 为什么要有这个端点：排障常常是「先复现、再开 debug、拿到日志后立刻关回去」，
+// 而改 --log-level 需要重启进程——重启本身就会改变正在被观察的状态（连接、leader、
+// 计数器归零），观察窗口就废了。故提供免重启开关。
+//
+// 权限用 diagnostics:execute（不是 diagnostics:dump）：现场运维该能提级别，
+// 但不该因此看到含内部拓扑的配置转储。
+func (s *Server) handleAdminLogLevel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if _, ok := s.requireProd(w, r, levelPermission); !ok {
+		return
+	}
+	var body struct {
+		Level string `json:"level"`
+	}
+	// 400 携 err.Error() 是本仓既有约定（泄漏门禁只禁 5xx 携带原始错误）。
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	lv, err := logx.ParseLevel(body.Level)
+	if err != nil {
+		// 与启动期同一条判据：非法值明确拒绝，不静默沿用旧级别。
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	prev := logx.Level()
+	logx.SetLevel(lv)
+	// 级别变更本身必须落日志（否则事后无法证明"这段时间为什么日志突然变多"）。
+	logx.Warn(r.Context(), "日志级别已运行期调整", "from", prev.String(), "to", lv.String(),
+		"hint", "debug 日志量大且可能含敏感上下文，排障结束后请改回 info")
+	paginate.WriteJSON(w, http.StatusOK, map[string]any{
+		"previousLevel": strings.ToLower(prev.String()),
+		"level":         strings.ToLower(lv.String()),
+	})
 }
 
 // handleAdminDiagnostics 处理 GET /api/v1/admin/diagnostics：打包诊断材料（zip 流）。

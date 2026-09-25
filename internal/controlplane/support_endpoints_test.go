@@ -10,12 +10,14 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
 
@@ -285,6 +287,82 @@ func TestRedactURL(t *testing.T) {
 	for _, c := range cases {
 		if got := redactURL(c.in); got != c.want {
 			t.Errorf("redactURL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestAdminLogLevel_AuthorizationAndEffect 验证运行期级别开关：
+//   - 无身份 → 401；viewer → 403；operator → 200（现场运维该能提级别，但不该看到配置转储）；
+//   - 非法 level → 400 且**不改动**当前级别；
+//   - 合法 level → 200 且真的改变 logx.Level()（这才算"免重启生效"）。
+func TestAdminLogLevel_AuthorizationAndEffect(t *testing.T) {
+	defer logx.SetLevel(slog.LevelInfo)
+	s := newSupportTestServer(t)
+
+	anon := httptest.NewRecorder()
+	s.handleAdminLogLevel(anon, httptest.NewRequest(http.MethodPost, "/api/v1/admin/loglevel",
+		strings.NewReader(`{"level":"debug"}`)))
+	if anon.Code != http.StatusUnauthorized {
+		t.Fatalf("匿名 status=%d, want 401", anon.Code)
+	}
+
+	vw := httptest.NewRecorder()
+	vr := httptest.NewRequest(http.MethodPost, "/api/v1/admin/loglevel", strings.NewReader(`{"level":"debug"}`))
+	vr.Header.Set("Authorization", loginAsViewer(t, s))
+	s.handleAdminLogLevel(vw, vr)
+	if vw.Code != http.StatusForbidden {
+		t.Fatalf("viewer status=%d, want 403", vw.Code)
+	}
+
+	// 非法值：必须 400，且级别保持原样（不能"顺手设成 info"）。
+	logx.SetLevel(slog.LevelWarn)
+	bad := httptest.NewRecorder()
+	br := httptest.NewRequest(http.MethodPost, "/api/v1/admin/loglevel", strings.NewReader(`{"level":"verbose"}`))
+	br.Header.Set("Authorization", loginAsAdmin(t, s))
+	s.handleAdminLogLevel(bad, br)
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("非法级别 status=%d, want 400; body=%s", bad.Code, bad.Body.String())
+	}
+	if logx.Level() != slog.LevelWarn {
+		t.Fatalf("非法请求不得改动级别，当前=%v", logx.Level())
+	}
+
+	okw := httptest.NewRecorder()
+	okr := httptest.NewRequest(http.MethodPost, "/api/v1/admin/loglevel", strings.NewReader(`{"level":"DEBUG"}`))
+	okr.Header.Set("Authorization", loginAsAdmin(t, s))
+	s.handleAdminLogLevel(okw, okr)
+	if okw.Code != http.StatusOK {
+		t.Fatalf("admin status=%d, want 200; body=%s", okw.Code, okw.Body.String())
+	}
+	if logx.Level() != slog.LevelDebug {
+		t.Fatalf("级别未生效，当前=%v", logx.Level())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(okw.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("响应非法 JSON: %v", err)
+	}
+	if resp["level"] != "debug" || resp["previousLevel"] != "warn" {
+		t.Errorf("响应应回显新旧级别，实际 %v", resp)
+	}
+}
+
+// TestOperatorCanToggleLevelButNotDumpConfig 锁死权限分层：
+// operator 有 diagnostics:execute（可提级别）但没有 diagnostics:dump（看不到配置转储）。
+func TestOperatorCanToggleLevelButNotDumpConfig(t *testing.T) {
+	perms := store.RolePermissions()
+	op := map[string]bool{}
+	for _, p := range perms["operator"] {
+		op[p] = true
+	}
+	if !op["diagnostics:execute"] {
+		t.Errorf("operator 应持有 diagnostics:execute（现场运维免重启提级别）：%v", perms["operator"])
+	}
+	if op["diagnostics:dump"] {
+		t.Errorf("operator 不得持有 diagnostics:dump（配置转储含内部拓扑，仅 admin）")
+	}
+	for _, p := range perms["viewer"] {
+		if strings.HasPrefix(p, "diagnostics:") {
+			t.Errorf("viewer 不应持有任何 diagnostics 权限，实际 %s", p)
 		}
 	}
 }

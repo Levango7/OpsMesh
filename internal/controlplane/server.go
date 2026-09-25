@@ -42,10 +42,13 @@ import (
 
 // Server 控制面服务（HTTP + gRPC + metrics）。
 type Server struct {
-	cfg           *config.Config
-	httpPort      int
-	grpcPort      int
-	metricsPort   int
+	cfg         *config.Config
+	httpPort    int
+	grpcPort    int
+	metricsPort int
+	// metricsCounts 缓存 /metrics 的应用级计数（P1-6：每次抓取 5 次全量扫描 → TTL 内合并）。
+	// 零值 = 不缓存，故测试里直接 &Server{...} 构造的老路径行为不变。
+	metricsCounts appCountsCache
 	requireAuth   bool
 	tlsCert       string
 	tlsKey        string
@@ -307,6 +310,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		httpPort:      cfg.HTTPPort,
 		grpcPort:      cfg.GRPCPort,
 		metricsPort:   cfg.MetricsPort,
+		metricsCounts: appCountsCache{ttl: cfg.MetricsCacheTTL},
 		requireAuth:   cfg.RequireAuth,
 		tlsCert:       cfg.TLSCert,
 		tlsKey:        cfg.TLSKey,

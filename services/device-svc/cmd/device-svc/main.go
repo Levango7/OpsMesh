@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/Levango7/OpsMesh/pkg/compress"
+	applog "github.com/Levango7/OpsMesh/pkg/log"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/pkg/ratelimit"
 	"github.com/Levango7/OpsMesh/pkg/tenant"
@@ -30,13 +31,16 @@ import (
 )
 
 func main() {
+	// P1-6 结构化日志统一：把标准库 log 接入统一 JSON 管道（级别由 OPSMESH_LOG_LEVEL 控制）。
+	// 必须最先调用——早于任何日志输出。
+	lgr := applog.Init("device-svc")
 	cfg := config.Load()
 
 	metrics.Init("device-svc")
 
 	shutdown, err := trace.InitTracer("device-svc", cfg.OTelEndpoint)
 	if err != nil {
-		log.Fatalf("Failed to initialize tracer: %v", err)
+		lgr.Fatalf("Failed to initialize tracer: %v", err)
 	}
 	defer shutdown(context.Background())
 
@@ -54,7 +58,7 @@ func main() {
 			// StoreType=sql 且 DSN 已显式配置 = 运维明确要求持久化存储。此时回退内存会让
 			// 服务看起来正常（/health 仍 200）却在重启后丢光数据，属静默数据丢失陷阱；
 			// 故直接阻断启动（对齐 controlplane --production 与 task-svc 的 fail-fast 策略）。
-			log.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
+			lgr.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
 		} else {
 			ds, as, cs, disc = ms, ms, ms, ms
 			log.Printf("MySQL store 已启用")
@@ -122,7 +126,7 @@ func main() {
 
 	grpcLis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.GRPCPort))
 	if err != nil {
-		log.Fatalf("Failed to listen on gRPC port %d: %v", cfg.GRPCPort, err)
+		lgr.Fatalf("Failed to listen on gRPC port %d: %v", cfg.GRPCPort, err)
 	}
 
 	cat := catalog.NewCatalog()
@@ -200,7 +204,7 @@ func main() {
 	go func() {
 		log.Printf("Starting gRPC server on :%d", cfg.GRPCPort)
 		if err := grpcServer.Serve(grpcLis); err != nil {
-			log.Fatalf("gRPC server failed: %v", err)
+			lgr.Fatalf("gRPC server failed: %v", err)
 		}
 	}()
 
@@ -213,7 +217,7 @@ func main() {
 	go func() {
 		log.Printf("Starting HTTP health server on :%d", cfg.HTTPPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("HTTP server failed: %v", err)
+			lgr.Fatalf("HTTP server failed: %v", err)
 		}
 	}()
 

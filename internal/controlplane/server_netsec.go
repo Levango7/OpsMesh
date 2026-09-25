@@ -244,7 +244,8 @@ func (s *Server) buildMetrics() (*http.Server, net.Listener, error) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		s.metrics.SetAgents(len(s.store.Agents("")))
+		// 这一步同样是全量扫描（Agents），与 8080 的 4 次计数共用 TTL 缓存。
+		s.metrics.SetAgents(s.appMetricsCounts().agents)
 		fmt.Fprint(w, s.metrics.Render())
 	})
 	return &http.Server{Handler: recoveryMiddleware(mux), ReadHeaderTimeout: 5 * time.Second}, lis, nil

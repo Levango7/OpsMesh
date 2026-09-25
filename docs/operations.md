@@ -381,6 +381,7 @@ OpsMesh 采用「flag 优先、环境变量兜底」的统一配置模型（`int
 | `--audit-retention-days` | `OPSMESH_AUDIT_RETENTION_DAYS` | 180 | 审计日志保留天数（P1-3）。超龄行由 **leader** 周期搬入 `audit_log_archive` 后从在线表删除；`0`=永久保留。等保三级/ISO 27001 通常要求审计留存 ≥180 天，按合规要求调整。Docker 部署在 `.env` 的 `AUDIT_RETENTION_DAYS` 设置（compose 已接线）；K8s 部署在 `controlplane.env` 加 `OPSMESH_AUDIT_RETENTION_DAYS` |
 | `--log-level` | `OPSMESH_LOG_LEVEL` | info | 进程日志级别：`debug`\|`info`\|`warn`\|`error`（大小写不敏感，空=info）。**非法值启动期直接失败**（不静默退回默认，否则「设了 debug 却没有 debug 日志」会变成一次现场排障）。Docker 在 `.env` 加 `LOG_LEVEL`；K8s 在 `controlplane.env`/`agent` 容器加 `OPSMESH_LOG_LEVEL`。调试完请改回 `info` 并重启（debug 日志量大且可能含敏感上下文） |
 | `--debug-pprof` | `OPSMESH_DEBUG_PPROF` | false | 在 B/S 端口暴露 `/debug/pprof/*`（goroutine/heap/profile 等）。**两层门槛**：默认关闭；开启后仍受 `--metrics-allow-cidr` 准入（生产模式下该白名单为空即全拒，故必须先显式放开来源）。pprof 可读取进程内存与调用栈，仅应在排障期间开启，用完关闭并重启 |
+| `--metrics-cache-ttl` | `OPSMESH_METRICS_CACHE_TTL` | 1s | `/metrics` 应用级计数的缓存窗口（P1-6）。0=关闭缓存、每次抓取实算。此前每次抓取对 store 做 4 次（8080）+1 次（9091 `SetAgents`）全量扫描；缓存只影响**计数新鲜度**，不影响告警/任务等真实数据读取 |
 
 ### 2.6 联邦配置
 
@@ -1036,6 +1037,18 @@ export OPSMESH_LOG_LEVEL=debug
 >
 > 生效后 `GET /api/v1/admin/config` 的 `runtime.logLevel` 会如实报告**当前生效级别**
 > （而非请求值），可用于确认现场是否真的开到了 debug。
+>
+> **免重启改级别**：`POST /api/v1/admin/loglevel` `{"level":"debug"}`（权限
+> `diagnostics:execute`，operator 亦可）。排障常是「复现 → 开 debug → 拿到就关」，
+> 而重启本身会改变被观察的状态（连接、leader 租约、Prometheus 计数器归零）。
+>
+> **微服务侧**：17 个服务在 `main()` 首行调用 `pkg/log.Init(<服务名>)`，**接管标准库
+> `log` 的默认输出**——于是各服务既有的 ~250 处 `log.Printf` 无需改写即为 JSON
+> （带 `service` 与 `via:"stdlib-log"` 字段），级别同样读 `OPSMESH_LOG_LEVEL`。
+> 经此通道的行一律如实记 `INFO`：stdlib 的 `Printf` 不携带级别信息，按文本前缀猜级别
+> 等于制造不实陈述。真正需要判别的那一类已显式化——**47 处 `log.Fatal*` 已改为
+> `lgr.Fatalf/lgr.Fatal`，输出 `level=ERROR` + `fatal=true`**（退出码仍为 1）。
+> 剩余 `Printf` 的逐点升级（`Infof/Warnf/Errorf/Debugf` 已在 `pkg/log` 备好）为增量项。
 
 ### 5.2 日志后端选择
 
@@ -1970,6 +1983,7 @@ P1-6 补齐的远程排障面。目的：客户现场无需 SSH + 读源码即�
 |---|---|---|---|
 | `GET /version` | 无（与 `/healthz` 同级） | 版本、提交、构建时间、Go 版本、OS/ARCH、uptime、VCS 元信息 | 只含构建事实，不含配置/租户/主机信息 |
 | `GET /api/v1/admin/config` | `diagnostics:dump` | **脱敏后**的生效配置（按 runtime/store/auth/tls/secrets/discovery/agent/observability/limits 分组） | 敏感项只出 `*Configured: true\|false`；URL 类字段剥除 userinfo 与查询串 |
+| `POST /api/v1/admin/loglevel` | `diagnostics:execute` | 运行期改日志级别：`{"level":"debug"}` | 免重启——重启会改变被观察状态（连接/leader/计数器归零）。权限与 config 刻意分离：现场运维可提级别，但看不到配置转储。非法值 → 400 且**不改动当前级别** |
 | `GET /api/v1/admin/diagnostics` | `diagnostics:dump` | zip：`README.txt` `version.json` `config.json` `health.json` `metrics.txt` `goroutines.txt` | goroutine 用聚合形态（debug=1）并截断到 512KB，防大集群把包撑爆 |
 
 **权限说明（重要）**：`diagnostics:dump` 刻意**不以 `:read` 结尾**。角色权限派生规则会把

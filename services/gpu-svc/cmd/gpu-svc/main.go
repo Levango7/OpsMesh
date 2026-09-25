@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	applog "github.com/Levango7/OpsMesh/pkg/log"
 	"github.com/Levango7/OpsMesh/pkg/trace"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/gpu"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/handler"
@@ -24,11 +25,14 @@ import (
 )
 
 func main() {
+	// P1-6 结构化日志统一：把标准库 log 接入统一 JSON 管道（级别由 OPSMESH_LOG_LEVEL 控制）。
+	// 必须最先调用——早于任何日志输出。
+	lgr := applog.Init("gpu-svc")
 	cfg := config.Load()
 
 	shutdown, err := trace.InitTracer("gpu-svc", cfg.OTelEndpoint)
 	if err != nil {
-		log.Fatalf("Failed to initialize tracer: %v", err)
+		lgr.Fatalf("Failed to initialize tracer: %v", err)
 	}
 	defer shutdown(context.Background())
 
@@ -86,7 +90,7 @@ func main() {
 	go func() {
 		log.Printf("Starting gpu-svc HTTP server on :%d", cfg.HTTPPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("HTTP server failed: %v", err)
+			lgr.Fatalf("HTTP server failed: %v", err)
 		}
 	}()
 

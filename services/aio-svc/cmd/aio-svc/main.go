@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	applog "github.com/Levango7/OpsMesh/pkg/log"
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/anomaly"
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/gpuanomaly"
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/inspection"
@@ -25,6 +26,9 @@ import (
 )
 
 func main() {
+	// P1-6 结构化日志统一：把标准库 log 接入统一 JSON 管道（级别由 OPSMESH_LOG_LEVEL 控制）。
+	// 必须最先调用——早于任何日志输出。
+	lgr := applog.Init("aio-svc")
 	port := envInt("AIO_SVC_PORT", 8100)
 	readTimeout := envDuration("AIO_SVC_READ_TIMEOUT", 30*time.Second)
 	writeTimeout := envDuration("AIO_SVC_WRITE_TIMEOUT", 60*time.Second)
@@ -467,7 +471,7 @@ func main() {
 	go func() {
 		log.Printf("[aio-svc] AIOps 引擎启动 :%d (5 engines ready)", port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("[aio-svc] 启动失败: %v", err)
+			lgr.Fatalf("[aio-svc] 启动失败: %v", err)
 		}
 	}()
 

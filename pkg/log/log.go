@@ -19,11 +19,92 @@ package log
 
 import (
 	"context"
+	"fmt"
+	stdlog "log"
 	"log/slog"
+	"os"
+	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/otelx"
 )
+
+// stdEnvLevelKey 是服务侧读取日志级别的环境变量（与控制面 --log-level 同源）。
+const stdEnvLevelKey = "OPSMESH_LOG_LEVEL"
+
+// Init 把一个服务的**标准库日志输出**接入统一 JSON 管道（P1-6 结构化日志统一）。
+//
+// 为什么用"接管 stdlib log"而不是逐点改写：各服务共约 300 处 log.Printf/Println。
+// 逐点改写需要为每一处判定严重级别，误判（把正常行标成 error 或反之）比没有级别更糟，
+// 且改动面大到无法在一次交付里验证。接管默认 logger 之后，一行 Init 即让该进程的
+// 所有既有输出变成带 service 字段的 JSON、并受 OPSMESH_LOG_LEVEL 控制——
+// 这是运维/支持侧真正需要的两件事（可解析、可控量）。
+//
+// 语义边界（不要当成"迁移完成"）：经此通道进来的行一律记 info 并带
+// via:"stdlib-log" 标记。stdlib 的 Printf 不携带级别信息，任何按文本前缀
+// 猜级别的做法都会制造新的不实陈述。逐点严重级别由 Fatalf/Error 等显式 API
+// 在被改写时给出。
+func Init(serviceName string) *Logger {
+	lvl, err := logx.ParseLevel(os.Getenv(stdEnvLevelKey))
+	if err != nil {
+		lvl = logx.Level()
+		logx.Warn(context.Background(), "日志级别环境变量非法，沿用当前级别",
+			"service", serviceName, "key", stdEnvLevelKey, "value", os.Getenv(stdEnvLevelKey))
+	}
+	logx.SetLevel(lvl)
+	// 标准库自带的时间戳/文件名前缀交给 JSON 字段承载，否则一行里出现两套时间。
+	stdlog.SetFlags(0)
+	stdlog.SetPrefix("")
+	stdlog.SetOutput(stdlibWriter{service: serviceName})
+	return &Logger{serviceName: serviceName}
+}
+
+// stdlibWriter 把标准库日志的每一行转成结构化记录。
+// 它必须满足 io.Writer；返回值语义按 Writer 约定（返回 len(p) 让 stdlib 满意）。
+type stdlibWriter struct{ service string }
+
+func (w stdlibWriter) Write(p []byte) (int, error) {
+	// 标准库总以换行结尾；去掉后才是干净的 msg 字段值。
+	msg := strings.TrimRight(string(p), "\r\n")
+	if msg == "" {
+		return len(p), nil
+	}
+	logx.Info(context.Background(), msg, "service", w.service, "via", "stdlib-log")
+	return len(p), nil
+}
+
+// Fatalf 记录一条 ERROR 级日志后以退出码 1 结束进程（对齐 stdlib log.Fatalf 语义）。
+//
+// 存在意义：崩溃/启动失败信息恰恰是支持侧最需要按级别检索的，而 stdlib 的
+// Fatalf 走的是"无级别"通道。改写它只需把 log.Fatalf 换成 lgr.Fatalf，
+// 参数与退出行为一致。
+func (l *Logger) Fatalf(format string, args ...any) {
+	logx.Error(context.Background(), fmt.Sprintf(format, args...), nil, "service", l.serviceName, "fatal", true)
+	os.Exit(1)
+}
+
+// Fatal 对齐 stdlib log.Fatal（非格式化参数版）：ERROR 级 + os.Exit(1)。
+func (l *Logger) Fatal(args ...any) {
+	logx.Error(context.Background(), fmt.Sprint(args...), nil, "service", l.serviceName, "fatal", true)
+	os.Exit(1)
+}
+
+// Errorf/Warnf/Infof/Debugf：带格式串的显式级别入口（供调用点逐步改用）。
+func (l *Logger) Errorf(ctx context.Context, format string, args ...any) {
+	logx.Error(ctx, fmt.Sprintf(format, args...), nil, "service", l.serviceName)
+}
+
+func (l *Logger) Warnf(ctx context.Context, format string, args ...any) {
+	logx.Warn(ctx, fmt.Sprintf(format, args...), "service", l.serviceName)
+}
+
+func (l *Logger) Infof(ctx context.Context, format string, args ...any) {
+	logx.Info(ctx, fmt.Sprintf(format, args...), "service", l.serviceName)
+}
+
+func (l *Logger) Debugf(ctx context.Context, format string, args ...any) {
+	logx.Debug(ctx, fmt.Sprintf(format, args...), "service", l.serviceName)
+}
 
 // Logger provides structured logging with trace context.
 type Logger struct {

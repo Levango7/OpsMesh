@@ -18,6 +18,7 @@ import (
 	"github.com/Levango7/OpsMesh/pkg/circuit"
 	"github.com/Levango7/OpsMesh/pkg/compress"
 	"github.com/Levango7/OpsMesh/pkg/cron"
+	applog "github.com/Levango7/OpsMesh/pkg/log"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/pkg/ratelimit"
 	"github.com/Levango7/OpsMesh/pkg/tenant"
@@ -38,13 +39,16 @@ import (
 func cronMatch(expr string, now time.Time) (bool, error) { return cron.Match(expr, now) }
 
 func main() {
+	// P1-6 结构化日志统一：把标准库 log 接入统一 JSON 管道（级别由 OPSMESH_LOG_LEVEL 控制）。
+	// 必须最先调用——早于任何日志输出。
+	lgr := applog.Init("task-svc")
 	cfg := config.Load()
 
 	metrics.Init("task-svc")
 
 	shutdown, err := trace.InitTracer("task-svc", cfg.OTelEndpoint)
 	if err != nil {
-		log.Fatalf("Failed to initialize tracer: %v", err)
+		lgr.Fatalf("Failed to initialize tracer: %v", err)
 	}
 	defer shutdown(context.Background())
 
@@ -59,7 +63,7 @@ func main() {
 	)
 	if cfg.StoreType == "sql" && cfg.DSN != "" {
 		if ms, err := store.NewMySQLStore(cfg.DSN); err != nil {
-			log.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
+			lgr.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
 		} else {
 			ts, ss, rs, bs = ms, ms, ms, ms
 			log.Printf("MySQL store 已启用")
@@ -101,7 +105,7 @@ func main() {
 
 	grpcLis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.GRPCPort))
 	if err != nil {
-		log.Fatalf("Failed to listen on gRPC port %d: %v", cfg.GRPCPort, err)
+		lgr.Fatalf("Failed to listen on gRPC port %d: %v", cfg.GRPCPort, err)
 	}
 
 	mux := http.NewServeMux()
@@ -228,14 +232,14 @@ func main() {
 	go func() {
 		log.Printf("Starting gRPC server on :%d", cfg.GRPCPort)
 		if err := grpcServer.Serve(grpcLis); err != nil {
-			log.Fatalf("gRPC server failed: %v", err)
+			lgr.Fatalf("gRPC server failed: %v", err)
 		}
 	}()
 
 	go func() {
 		log.Printf("Starting HTTP server on :%d (health/ready/metrics + business gateway)", cfg.HTTPPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("HTTP server failed: %v", err)
+			lgr.Fatalf("HTTP server failed: %v", err)
 		}
 	}()
 

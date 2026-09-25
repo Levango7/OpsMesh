@@ -1490,13 +1490,19 @@ P1-2 批次推送后，CI **第一次真正跑完整流水线**（run `361226480
 | 回归 | `internal/controlplane` 40.9s、`internal/agent` 两半批、`pkg/log`、`internal/logx`、`internal/config`、`internal/store` | 全绿 |
 | **真机全栈复验** | `deploy.sh up`（重建镜像）+ `verify-runtime.sh` | **PASS=101 / FAIL=0**（新增第 15 节 8 条：`/version` 200、**版本与 `.env OPSMESH_VERSION` 一致**、三字段齐备、pprof 出厂未注册 404、匿名读 `admin/config` 与 `admin/diagnostics` 均 401）；静态门禁 `PASS=22 FAIL=0 SKIP=0` |
 
-### 17.5 P1-6 残留（明确未做）
+### 17.5 P1-6 残留项的最终处置（同日追加）
 
-- **`/metrics` 抓取的 4~5 次全量扫描未改**：`handlePrometheusMetrics` 仍做 `Snapshot`/`AllTasks`/`Alerts`/`ListTickets` 四次全量，9091 端口那次另加 `Agents("")` 共五次。P1-5 已把它收进 CIDR 准入（生产空白名单即 403），故**不再是攻击面**，但被抓取频率放大 DB 负载的问题仍在。修法应为短 TTL 计数缓存或改走已有的 `internal/metrics` 计数器，需独立评估新鲜度语义（本批未做）。
-- **18 个微服务仍用标准库 `log`**：50 个文件为纯文本、无 traceID、无级别控制，与控制面的 `logx` 结构化 JSON **未统一**。全量迁移会改变服务日志格式（影响客户侧采集器解析规则），属独立批次；`pkg/log` 现已是可正确使用的门面（本批修好），迁移时可作为落点。
-- **pprof 未做「运行期开关」**：改级别须重启容器。诊断包/配置转储不需重启，pprof 需要——记录为已知限制。
+| 残留项 | 结论 | 做法与边界 |
+|---|---|---|
+| `/metrics` 每次抓取做 4~5 次全量扫描 | **已修** | 新增 `internal/controlplane/metrics_cache.go`：应用级计数走 **TTL 缓存**（`--metrics-cache-ttl`，默认 1s，0=关闭）。8080 的 4 次与 9091 的 `SetAgents` 1 次合并进同一份快照（`appMetricsCounts`），同波抓取只算一次。失效方向刻意保守：**零值=不缓存**，故不经 `New()` 构造的既有测试路径行为逐字不变。顺带更正一处不实注释——旧注释称 9091「只做 O(1) 渲染」，实际它每次都全量扫 `Agents("")` |
+| 无运行期日志级别开关（须重启） | **已修** | 新增 `POST /api/v1/admin/loglevel`（`{"level":"debug"}`）。理由：排障常是「复现→开 debug→拿到就关」，而重启本身会改变被观察状态（连接、leader、计数器归零）。权限刻意用 **`diagnostics:execute`**（不是 `diagnostics:dump`）：现场运维该能提级别，但不该因此看到含内部拓扑的配置转储；非法值返回 400 **且不改动当前级别** |
+| 18 个微服务用标准库 `log`（无 JSON、无级别） | **管道已统一；逐点严重级别为增量项** | 规模：17 个 main.go、约 **301 处** stdlib 调用点。**没有做"一次性逐点改写"**——那需要给每一处判定严重级别，误判比没有级别更糟，且改动面无法在一次交付里验证。实际做法：`pkg/log.Init(serviceName)` **接管标准库默认 logger**，每服务 main 加一行即让该进程全部输出变成带 `service` 与 `via:"stdlib-log"` 的 JSON、并受 `OPSMESH_LOG_LEVEL` 控制（可解析 + 可控量，正是支持侧需要的两件事）。经此通道的行**一律如实记 INFO**——stdlib 的 `Printf` 不带级别信息，按文本前缀猜级别等于制造不实陈述。<br>真正有判别价值的那一类已经显式化：**47 处 `log.Fatal*` 全部改成 `lgr.Fatalf/lgr.Fatal`**（ERROR 级 + `fatal=true`，退出码 1 语义不变），实测崩溃行 `level=ERROR` 而正常启动行仍 `INFO`。剩余约 250 处 `Printf/Println` 的逐点升级（`Infof/Warnf/Errorf/Debugf` 已在 `pkg/log` 备好）为后续增量，不谎称已完 |
+| 微服务模块此前不依赖根模块 | **已按需接线** | 11 个模块的 `go.mod` 补 `require github.com/Levango7/OpsMesh v0.0.0-…` + `replace … => ../../`（本地替换，不联网解析版本）。已实测 `Dockerfile.service` 在容器内可正常构建（其 `COPY pkg/ internal/` 早已存在，非新增上下文） |
 
-### 17.6 第四个静默失效（由门禁故障注入抓出，属 P0-4 同级：部署资产在 Windows 上开箱即坏）
+**接线后的验证**：17 个服务模块逐个 `go build ./...` + `go test ./...` 全部通过；bot-svc 二进制实跑输出为合法 JSON（`level`/`msg`/`service`/`via`/`fatal` 字段齐备）；根模块 `gofmt`/`go vet`/`golangci-lint v2.13.2` 全 0 问题。
+
+### 17.6 ~~P1-6 残留（明确未做）~~（内容已并入上表）
+注入抓出，属 P0-4 同级：部署资产在 Windows 上开箱即坏）
 
 给门禁做故障注入时发现并修掉的一整类问题。**证据链**：
 

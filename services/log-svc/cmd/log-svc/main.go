@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	applog "github.com/Levango7/OpsMesh/pkg/log"
 	_ "github.com/go-sql-driver/mysql"
 	"opsmesh.io/log-svc/internal/server"
 	"opsmesh.io/log-svc/internal/service"
@@ -22,6 +23,9 @@ import (
 )
 
 func main() {
+	// P1-6 结构化日志统一：把标准库 log 接入统一 JSON 管道（级别由 OPSMESH_LOG_LEVEL 控制）。
+	// 必须最先调用——早于任何日志输出。
+	lgr := applog.Init("log-svc")
 	cfg := config.DefaultConfig()
 
 	// Override from environment if needed
@@ -52,7 +56,7 @@ func main() {
 	// Initialize logstore backend
 	store, err := initLogStore(cfg)
 	if err != nil {
-		log.Fatalf("Failed to initialize log store: %v", err)
+		lgr.Fatalf("Failed to initialize log store: %v", err)
 	}
 	defer store.Close()
 
@@ -65,7 +69,7 @@ func main() {
 	// Start gRPC listener
 	lis, err := net.Listen("tcp", cfg.Server.Address)
 	if err != nil {
-		log.Fatalf("Failed to listen on %s: %v", cfg.Server.Address, err)
+		lgr.Fatalf("Failed to listen on %s: %v", cfg.Server.Address, err)
 	}
 
 	// Start health check server

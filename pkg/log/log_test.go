@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	stdlog "log"
 	"log/slog"
 	"os"
 	"strings"
@@ -382,3 +383,59 @@ func TestConcurrentLogging(t *testing.T) {
 // TestStderrDefaultWriter 编译期确认源码引用 os.Stderr（防止误改输出目标）。
 // 若 pkg/log 不再使用 os.Stderr，本测试无法编译——即输出目标变更会被立即发现。
 var _ = os.Stderr
+
+// ── P1-6：stdlib 接管入口 Init ────────────────────────────────────
+
+// TestInit_RoutesStdlibLogToJSON 验证服务只需一行 Init，既有 log.Printf 输出即变 JSON：
+// 带 service 与 via=stdlib-log 标记，且不再有标准库自带的时间戳前缀。
+func TestInit_RoutesStdlibLogToJSON(t *testing.T) {
+	defer func() {
+		logx.SetOutput(os.Stderr)
+		logx.SetLevel(slog.LevelInfo)
+		stdlog.SetOutput(os.Stderr)
+	}()
+	// 只需把 logx 的输出指向 buffer：Init 会把标准库 logger 接到 logx，
+	// 于是 stdlib → stdlibWriter → logx → buf 一条链贯通，无需改动 stdlib 的输出目标。
+	var buf bytes.Buffer
+	logx.SetOutput(&buf)
+
+	lg := Init("init-svc")
+	if lg == nil {
+		t.Fatal("Init 返回 nil")
+	}
+	stdlog.Printf("启动完成 port=%d", 8123)
+
+	out := buf.String()
+	var m map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &m); err != nil {
+		t.Fatalf("Init 后 stdlib 输出应为单行 JSON，实际: %q (%v)", out, err)
+	}
+	if m["msg"] != "启动完成 port=8123" {
+		t.Errorf("msg = %v", m["msg"])
+	}
+	if m["service"] != "init-svc" || m["via"] != "stdlib-log" {
+		t.Errorf("缺少 service/via 标记: %v", m)
+	}
+	if m["level"] != "INFO" {
+		t.Errorf("stdlib 通道应如实记 INFO（不猜级别），实际 %v", m["level"])
+	}
+}
+
+// TestInit_AppliesEnvLevel 验证 OPSMESH_LOG_LEVEL 真的被应用（含非法值不改动级别）。
+func TestInit_AppliesEnvLevel(t *testing.T) {
+	defer func() {
+		logx.SetLevel(slog.LevelInfo)
+		os.Unsetenv(stdEnvLevelKey)
+		stdlog.SetOutput(os.Stderr)
+	}()
+	os.Setenv(stdEnvLevelKey, "warn")
+	Init("lvl-svc")
+	if logx.Level() != slog.LevelWarn {
+		t.Fatalf("Init 后级别=%v, want warn", logx.Level())
+	}
+	os.Setenv(stdEnvLevelKey, "bogus")
+	Init("lvl-svc")
+	if logx.Level() != slog.LevelWarn {
+		t.Fatalf("非法值不得改动级别，实际=%v", logx.Level())
+	}
+}

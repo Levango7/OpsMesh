@@ -647,6 +647,13 @@ if [ "$pprof_code" = "404" ]; then
 else
   bad "pprof 返回 ${pprof_code}（期望 404：出厂形态不应暴露进程内存/调用栈剖面）"
 fi
+# 级别开关用 POST 探（GET 会先被 405 拦下，测不到鉴权）
+lvl_code="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' -X POST --max-time 10   -H 'Content-Type: application/json' -d '{"level":"debug"}'   "$CP/api/v1/admin/loglevel" 2>/dev/null)"
+if [ "$lvl_code" = "401" ]; then
+  ok "匿名 POST /api/v1/admin/loglevel → 401（运行期改级别需身份）"
+else
+  bad "匿名 POST /api/v1/admin/loglevel → ${lvl_code}（期望 401）"
+fi
 for ep in api/v1/admin/config api/v1/admin/diagnostics; do
   ac="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' --max-time 10 "$CP/$ep" 2>/dev/null)"
   if [ "$ac" = "401" ]; then

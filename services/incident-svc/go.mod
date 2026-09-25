@@ -10,3 +10,8 @@ require (
 )
 
 require filippo.io/edwards25519 v1.2.0 // indirect
+
+require github.com/Levango7/OpsMesh v0.0.0-00010101000000-000000000000
+
+// 本地 workspace 替换：不联网解析版本，构建期即根模块源码。
+replace github.com/Levango7/OpsMesh => ../../

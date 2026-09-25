@@ -374,6 +374,10 @@ var rbacPermSpecs = []struct {
 	// 刻意**不以 `:read` 结尾**——派生规则会把所有 `*:read` 自动授予 viewer，而配置转储
 	// 与诊断包含内部拓扑与配置细节，只应给 admin（admin 自动获得全部权限点）。
 	{"diagnostics", "diagnostics:dump", "导出脱敏配置转储与诊断包（仅 admin）"},
+	// 运行期改日志级别：动作名刻意用 :execute 而非 :read/:dump，配合 operatorGroups 里的
+	// "diagnostics" 让 operator 也能提级别（现场排障的人不该为此找管理员要 token），
+	// 同时 diagnostics:dump（含内部拓扑）仍严格 admin-only。
+	{"diagnostics", "diagnostics:execute", "调整进程日志级别"},
 }
 
 // seedRBAC 在 initSchema 末尾调用，幂等写入默认权限/角色/用户。
@@ -455,6 +459,9 @@ func RolePermissions() map[string][]string {
 		"device": true, "task": true, "alert": true, "cmdb": true,
 		"deploy": true, "workflow": true, "log": true, "audit": true,
 		"os": true, "middleware": true, "provision": true,
+		// diagnostics 组在此 = operator 可执行"调级别"这类动作型权限点；
+		// 但 diagnostics:dump 的动作名是 dump（不属 read/write/execute），故 operator 拿不到。
+		"diagnostics": true,
 	}
 	for _, p := range allPerms {
 		idx := strings.Index(p, ":")

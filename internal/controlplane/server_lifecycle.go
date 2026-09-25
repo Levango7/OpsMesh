@@ -38,6 +38,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/version", s.handleVersion)
 	// P1-6 可支撑性：配置转储与诊断包（需 diagnostics:dump 权限，RBAC 派生规则下仅 admin）。
 	mux.HandleFunc("/api/v1/admin/config", s.handleAdminConfig)
+	// 运行期日志级别开关（diagnostics:execute，operator 亦可）：避免"为开 debug 而重启"
+	// 把要观察的状态本身打乱。
+	mux.HandleFunc("/api/v1/admin/loglevel", s.handleAdminLogLevel)
 	mux.HandleFunc("/api/v1/admin/diagnostics", s.handleAdminDiagnostics)
 	// P1-6 可支撑性：pprof（默认关闭；开启后仍受 --metrics-allow-cidr 白名单约束）。
 	s.registerPprof(mux)
