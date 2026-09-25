@@ -1294,9 +1294,43 @@ P1-2 批次推送后，CI **第一次真正跑完整流水线**（run `361226480
 
 ### 14.8 本轮未覆盖 / 诚实边界
 
-- **CI 尚未复跑**：四处修复均只在本机验证，需推送后以 CI 全绿（`image` / `image-agent` / `release` 不再是 skip）为最终验收。
+- ~~CI 尚未复跑~~ → **已复跑并全绿，见 §14.9**（但其中 `image` / `image-agent` 是**空转绿**，`release` 按设计 tag 触发）。
 - **`security.spec.js` 的 mTLS 用例依赖固定端口 9090**：本地复现需独占该端口；若在多栈共存机器上跑，会打到别的栈（本机 prod 栈未开 mTLS，直连会「握手成功」从而误报 mTLS 未生效）。建议后续把端口改成可配置（`E2E_GRPC_PORT`），本轮未改（避免动断言语义）。
 - **`sleep` 未进出厂默认白名单**：本轮的修复在夹具侧（显式白名单）。产品侧是否需要把 `sleep` 这类「无副作用但会占住执行槽」的命令纳入默认，属**产品决策**：纳入可让「取消长任务」在默认配置下可用，代价是默认放行的命令集变大。本轮未擅自改默认值。
 - **未做完整流水线时长/资源评估**：新增的 `go install kubeconform` 步骤每次 job 约多几秒（走 Go module 代理，已钉版）。
+
+## 15. CI 首跑结论（2026-09-25 第七批：`68ff539` → run 36143704673）
+
+推送 `68ff539` 后流水线首跑结论：**`completed / success`，12 个 job 全绿**。
+这是 **2026-09-20 以来下游 job 第一次真正执行**（此前三轮推送它们全是 `skipped`，见 §13.8）。
+
+### 15.1 job 级证据（非状态码，而是日志内的实际执行内容）
+
+| Job | 状态 | 关键证据（CI 日志原文） |
+|---|---|---|
+| build-test | ✅ success | 编译 + 单测通过（下游唯一门禁） |
+| Frontend (Vue3 Enterprise) | ✅ success | 前端构建通过 |
+| proto | ✅ success | proto 生成/校验通过 |
+| services | ✅ success | `Test all services modules` 各模块 `ok`（task-svc / workflow-svc / tf-provider …） |
+| integration | ✅ success | `ok internal/store 36.240s coverage: 68.3% of statements`（真实 MySQL + Redis，带 `-race`） |
+| Race detector | ✅ success | `go test -race -count=3` 全包通过（`cmd/opsmesh 50.114s`、`pkg/security` / `pkg/tenant` / `tests/integration` 等） |
+| security | ✅ success | 新版门禁真跑：`[PASS] kubeconform 校验通过（deploy/k8s/deployments，Invalid=0）` + `部署资产门禁：PASS=20  FAIL=0  SKIP=0`；Trivy fs 扫描通过 |
+| E2E (real backend) | ✅ success | **8 passed (29.3s)**，含 `失败任务回执：exit non-zero → status=failed → stderr 可读 (15.1s)`——即本轮修好的那条用例 |
+| E2E (security) | ✅ success | **5 passed (16.7s)**（含 `--http-tls=off` 夹具使明文 8080 契约可测） |
+| image | ⚠️ **空转绿** | 只跑了 `Check registry secret` → `REGISTRY secret not set, skipping image build/push`，其余 step 全部因 `if:` 未执行 |
+| image-agent | ⚠️ **空转绿** | 同上：`REGISTRY secret not set, skipping agent image build/push` |
+| release | ⏭ skipped（设计内） | `if: startsWith(github.ref, 'refs/tags/v')`，分支推送本就不触发；发布由打 tag 驱动 |
+
+与本机对照：E2E 数字完全一致（本机 real 8 passed / 32.4s、sec 5 passed / 16.4s vs CI 8 passed / 29.3s、5 passed / 16.7s）；
+`security` 门禁本机 `PASS=20 FAIL=0` 与 CI 逐字相同（含 kubeconform 分支）。
+
+### 15.2 新发现：`image` / `image-agent` 的「空转绿」（假绿第三类）
+
+- **现象**：job 结论 `success`，但除「探测 secret」外**没有任何 step 执行**——镜像未构建、未推送、未签名、未生成 SBOM。
+- **根因**：两个 job 均依赖仓库 secrets `REGISTRY` / `REGISTRY_USER` / `REGISTRY_TOKEN`（私有仓库凭证，指向 `registry.internal`），仓库未配置时按设计自跳过，但**退出码为 0**，在 `gh run list` 里与真跑绿无法区分。
+- **为何仍算可接受**：Dockerfile 路径本机已被真实覆盖——`deploy/docker/docker-compose.prod.yml` 的 `opsmesh/controlplane:0.9.0` 等镜像即由本仓库 Dockerfile 构建并跑起 17 容器全栈（见 §13）。
+- **未覆盖**：CI 独有的一段链路从未执行——buildx 构建、SBOM（syft）、cosign 签名、gitops 镜像 tag 回写。**这是发布前的真空白**，需配置 registry 凭证或改用 GHCR（`GITHUB_TOKEN`）才能验证。
+- **教训（写给后续维护者）**：这是本项目第三类「绿而不实」——① lint 失败导致下游 **skip**（§13.8）；② 门禁因环境问题 **false red**（§14.2）；③ secret 缺失导致 job **空转绿**（本节）。三者的共同点是 `gh run list` 的一行结论**都不足以判断是否真的验过**，必须落到 job 内 step 级日志。
+- **处置建议**（未实施，需决策）：无凭证时改为 build-only（`load: true`、跳过 push/cosign/gitops），或把该 job 在无凭证时显式输出 `::warning::` / 让 job 结论反映「未验证」。本轮未擅自改动发布链路。
 
 
