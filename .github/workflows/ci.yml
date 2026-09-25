@@ -72,23 +72,86 @@ jobs:
           # 硬墙时才 fatal。agent 包（无 race 下亦实测 OOM：fatal runtime:
           # out of memory 且死时仅 ~12 存活 goroutine——非泄漏非驻留，是
           # 测试期瞬时大分配+GC 回收不及时在 7GB 物理限制下的死亡）。
+          #
+          # ⚠ 2026-09-25 复核（保留原文以备追溯）：本机按同一命令（含 -coverprofile、
+          # OPSMESH_TEST_BCRYPT_COST=4、GOMEMLIMIT=3GiB）分两半实跑 agent 包，
+          # 峰值堆仅 223MB(J-Z,102 用例) / 224MB(A-I,137 用例)，退出时存活 goroutine
+          # ≤600（TestMain 泄漏检查未触发）→ **"瞬时大分配打满 7GB"未被复现**。
+          # 当日 CI 的 ENOMEM 发生在"全部用例 PASS 之后"（见 run 块注释），属机器级偶发。
+          # 故保留 GOMEMLIMIT（无害的保险）但不再把它当作已定位根因。
           GOMEMLIMIT: 3GiB
         run: |
           set -e
           rm -f coverage.out
+
+          # ── 内存可观测 + 内存型失败重试（2026-09-25 加入）────────────────────
+          # 背景：本步骤曾出现「全部用例 PASS 之后」以 fatal error: runtime: cannot
+          # allocate memory 死掉的间歇失败（1/4 轮次），而本机同口径实测 agent 批峰值堆
+          # 仅 223–227MB → 现有日志无法判断真实峰值（attempt-1 日志已被重跑覆盖）。
+          # 两手应对：
+          #   ① mem_line + GNU time 记录每批峰值 RSS 与 runner 内存 → 下次复现留硬数字；
+          #   ② 仅对「内存型死亡」重试一次并打 warning —— 该类失败与断言失败性质不同
+          #      （机器不给内存）。确定性回归重试后仍红，门禁不被削弱。
+          TIMEBIN=""
+          # 只在确认是能用的 GNU time 时才启用（BSD time 没有 -v/-o，误用会把步骤弄红）
+          if [ -x /usr/bin/time ] && /usr/bin/time -v -o /tmp/.time_probe true 2>/dev/null && grep -q "Maximum resident set size" /tmp/.time_probe 2>/dev/null; then
+            TIMEBIN=/usr/bin/time
+          fi
+          mem_line() {
+            if [ -r /proc/meminfo ]; then
+              # 缺 MemAvailable 时打印 n/a 而不是 0MB（0 会误导后续排障）
+              awk -v tag="$1" '/^MemTotal:/{t=int($2/1024)} /^MemAvailable:/{a=int($2/1024); has=1} END{if(has) printf "[mem] %s MemTotal=%dMB MemAvailable=%dMB\n", tag, t, a; else printf "[mem] %s MemTotal=%dMB MemAvailable=n/a\n", tag, t}' /proc/meminfo
+            else
+              echo "[mem] $1 /proc/meminfo 不可读"
+            fi
+          }
+          # 内存型死亡判据：Go 运行时 ENOMEM/OOM，或 TSan 内部分配器 OOM（配 exitcode=66）。
+          OOM_PAT='fatal error: runtime: (cannot allocate memory|out of memory)|ThreadSanitizer: internal allocator is out of memory'
+          run_batch() {
+            local label="$1"; shift
+            local log="/tmp/${label}.log" tf="/tmp/${label}.time" attempt=1 rc=0
+            while true; do
+              set +e
+              if [ -n "$TIMEBIN" ]; then
+                "$TIMEBIN" -v -o "$tf" "$@" 2>&1 | tee "$log"
+              else
+                "$@" 2>&1 | tee "$log"
+              fi
+              rc=${PIPESTATUS[0]}
+              set -e
+              if [ -n "$TIMEBIN" ] && [ -f "$tf" ]; then
+                grep -E "Maximum resident set size|Exit status" "$tf" | sed "s|^|[${label}] |"
+              fi
+              mem_line "$label"
+              if [ "$rc" -eq 0 ]; then
+                echo "[${label}] OK"
+                return 0
+              fi
+              if [ "$attempt" -eq 1 ] && grep -qE "$OOM_PAT" "$log"; then
+                echo "::warning::[${label}] 内存型死亡（非断言失败），重试一次；若重试仍失败则判红"
+                grep -m1 -E "$OOM_PAT" "$log" | sed "s|^|[${label}] 首次死因: |"
+                attempt=2
+                continue
+              fi
+              echo "::error::[${label}] 失败 rc=${rc}（重试后仍失败，或非内存型失败）"
+              return "$rc"
+            done
+          }
+
+          mem_line "测试开始前"
           # agent 批不带 -race + GOMEMLIMIT=3GiB + 拆两半（取舍与诊断）：
           # - TSan 在该包 goroutine 密集场景分配器恒 OOM（hardlimit 约束不了）
-          # - 无 race 下仍 7GB OOM（瞬时分配峰值），GOMEMLIMIT 让 GC 提前介入
           # - 拆两半（字母序）降低单进程累计分配；-v 保留死点可诊断
-          go test -p 1 -timeout 180s -coverprofile=cov3a.out -v -run 'Test[A-I]' ./internal/agent/
-          go test -p 1 -timeout 180s -coverprofile=cov3b.out -v -run 'Test[J-Z]' ./internal/agent/
+          # - 2026-09-25 复核见上方 env 注释：峰值堆实测 223–227MB，旧「打满 7GB」未被复现
+          run_batch agent_AI go test -p 1 -timeout 180s -coverprofile=cov3a.out -v -run 'Test[A-I]' ./internal/agent/
+          run_batch agent_JZ go test -p 1 -timeout 180s -coverprofile=cov3b.out -v -run 'Test[J-Z]' ./internal/agent/
           cat cov3a.out cov3b.out | grep -v '^mode:' > cov3.out
-          go test -race -p 1 -timeout 300s -coverprofile=cov2.out ./internal/store/...
-          go test -race -p 1 -timeout 600s -coverprofile=cov1.out ./internal/controlplane/...
+          run_batch store_race go test -race -p 1 -timeout 300s -coverprofile=cov2.out ./internal/store/...
+          run_batch cp_race go test -race -p 1 -timeout 600s -coverprofile=cov1.out ./internal/controlplane/...
           # 其余全部包（小包为主，-p 2 内存可控）
-          go test -race -p 2 -timeout 600s -coverprofile=cov4.out $(go list ./... | grep -v -E 'internal/(controlplane|store|agent)' | grep -v 'cmd/')
+          run_batch pkgs_race go test -race -p 2 -timeout 600s -coverprofile=cov4.out $(go list ./... | grep -v -E 'internal/(controlplane|store|agent)' | grep -v 'cmd/')
           # cmd 包
-          go test -race -p 2 -timeout 120s -coverprofile=cov5.out ./cmd/...
+          run_batch cmd_race go test -race -p 2 -timeout 120s -coverprofile=cov5.out ./cmd/...
           # 合并覆盖率（mode 行取首个）
           head -1 cov3a.out > coverage.out
           cat cov1.out cov2.out cov3.out cov4.out cov5.out | grep -v '^mode:' >> coverage.out

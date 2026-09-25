@@ -14,6 +14,31 @@
 - **终局验证**（run `36155335631`，commit `0dc4ece`）：**12 个 job 全部真跑且全绿**——本项目第一次每个 job 都真的执行并通过。`image` 推送 `ghcr.io/levango7/opsmesh-binary@sha256:5ede99…`（keyless 签名落 Rekor `index: 2957978033`，SBOM 89 条）；`image-agent` 推送 `ghcr.io/levango7/opsmesh-agent@sha256:962c21…`（SBOM 172 条，Trivy 在 `ignore-unfixed` 下通过）。
 - **同轮发现的第二个 CI 可靠性问题：`build-test` OOM flaky**。首跑 `Test (unit, …)` 红，但 `./internal/agent/` 批次最后一条是 `--- PASS`、随后才 `fatal error: runtime: cannot allocate memory`（GC worker 堆栈）——**测试全绿却被判红**，同 commit **重跑即绿**。与代码无关（该步骤注释已写明"无 race 下仍 7GB OOM"），但 `build-test` 是唯一门禁、它一挂 7 个下游全 skip，故影响被放大。间歇性红与长期红同属"门禁不可信"，建议后续单独处理（拆细 agent 批次 / 降 GOMEMLIMIT），本轮未改。
 
+## [Unreleased] — 2026-09-26 `build-test` 内存型 flaky：复核 + 可观测 + 仅 OOM 重试一次
+
+> 承接下一节的镜像链路修复。`build-test` 在 run `36155335631` 首跑时红了——但**不是测试失败**：`./internal/agent/` 批次最后一个用例是 `--- PASS`，随后进程才 `fatal error: runtime: cannot allocate memory`（mmap 型 ENOMEM）死亡。该 job 是唯一门禁，一挂则 7 个下游全 skip，故列为门禁可信度问题处理。
+
+### 复核：旧解释（2026-08-31「瞬时大分配打满 7GB」）未被复现
+
+- 本机按**同口径**（含 `-coverprofile`、`OPSMESH_TEST_BCRYPT_COST=4`、`GOMEMLIMIT=3GiB`）分两半实跑 `internal/agent`：
+
+  | 批次 | 用例数 | 峰值堆 | 退出码 | TestMain 泄漏检查 |
+  |---|---|---|---|---|
+  | `Test[A-I]` | 137 | **224 MB** | 0 | 未触发 |
+  | `Test[J-Z]` | 102 | **223 MB** | 0 | 未触发 |
+  | `Test[J-Z]`（无覆盖率） | 101 | **227 MB** | 0 | 未触发 |
+
+- 且三处大包的 `t.Parallel()` 计数均为 **0** → 包内并行也不是峰值来源。结论：**agent 批自身不占内存**，旧解释在当前代码上不成立。
+- **证据限制**：崩溃那次（attempt 1）的日志已被 `gh run rerun` 覆盖（GitHub 只保留最新 attempt，实测取回 0 字节），**崩溃瞬间的运行时内存自述无法取回** → 根因未定位，仅能确定「非 agent 测试自身的分配」。
+
+### 处置（用户决策：测量 + 仅 OOM 重试一次）
+
+- **可观测**：新增 `mem_line()`（`MemTotal`/`MemAvailable`，缺 `MemAvailable` 打 `n/a` 而非误导性的 `0MB`）与 `run_batch()` 内的 **GNU time 峰值 RSS** 记录（`Maximum resident set size`/`Exit status`）；GNU time 带**可用性探测**（`-v -o` 实测通过才启用），避免 BSD time 误用反而弄红。六个批次全走 `run_batch`，每次运行都留下每批峰值 RSS。
+- **仅内存型死亡重试一次**：判据 `fatal error: runtime: (cannot allocate memory|out of memory)` 或 `ThreadSanitizer: internal allocator is out of memory`；命中打 `::warning::`（附首次死因原文）后重试一次。**非内存型失败立即红、重试后仍失败也红** → 确定性回归不被掩盖，门禁强度不变。
+- **修正注释**：保留 2026-08-31 的原始解释以备追溯，就地标注复核结果，避免后来者按错误前提排障。
+- **本地实测 6 场景全部符合预期**：成功 / 非内存失败即红 / OOM 一次后成功 / OOM 两次仍红 / TSan OOM 重试 / GNU time 峰值打印；`bash -n` 通过，`actionlint v1.7.7` 仍 0 问题。
+- **诚实边界**：这是「让门禁可信 + 下次可诊断」，**不是**根因修复。
+
 ## [Unreleased] — 2026-09-25 CI 首跑全绿 + 消除镜像 job 的「空转绿」
 
 > 承接下一节的 4 处修复（`68ff539`）。推送后 CI 首跑（run `36143704673`）**`completed / success`，12 个 job 全绿**——2026-09-20 以来下游 7 个 job **第一次真正执行**。但同一次首跑暴露出第三类假绿：`image` / `image-agent` 结论 `success`，实际只跑了「探测 secret」一步。本节记录该结论与本轮修复。证据：`docs/commercial-readiness-review-2026-09-25.md` §15。

@@ -1406,3 +1406,44 @@ P1-2 批次推送后，CI **第一次真正跑完整流水线**（run `361226480
 **至此的诚实边界**：`release` 按设计 tag 触发，未验；GitOps tag/digest 回写因无 `GITOPS_REPO`/`GITOPS_PAT` 仍未启用（job Summary 已显式标注「此段本次未验证」）；GHCR 包可见性由 GitHub 侧策略决定；CI 推的 leaf 名与仓库内 chart 的命名关系仍待与外部 GitOps chart 核对（§15.3）。
 
 
+
+## 16. `build-test` 内存型 flaky：复核与处置（2026-09-26）
+
+### 16.1 复核：旧解释未被复现
+
+步骤注释（2026-08-31）把 agent 批的 OOM 归因为「测试期瞬时大分配 + GC 回收不及时在 7GB 物理限制下死亡」。2026-09-26 按**同一命令口径**（含 `-coverprofile`、`OPSMESH_TEST_BCRYPT_COST=4`、`GOMEMLIMIT=3GiB`）在本机分两半实跑：
+
+| 批次 | 用例数 | 峰值堆（gctrace） | 退出码 | TestMain 泄漏检查 |
+|---|---|---|---|---|
+| `Test[A-I]` | 137 | **224 MB** | 0 | 未触发（存活 goroutine ≤600） |
+| `Test[J-Z]` | 102 | **223 MB** | 0 | 未触发 |
+| `Test[J-Z]`（不带覆盖率） | 101 | **227 MB** | 0 | 未触发 |
+
+→ agent 批次**自身不占内存**（峰值 2 个数量级低于 7GB），「瞬时大分配打满 7GB」在当前代码上不成立。同时 `t.Parallel()` 在 `internal/agent`、`internal/store`、`internal/controlplane` 中出现次数均为 **0**，故包内并行也不是峰值来源。
+
+### 16.2 证据限制（诚实说明）
+
+那次崩溃（run `36155335631` attempt 1）的完整日志**已被 `gh run rerun` 覆盖**——GitHub 只保留最新 attempt 的日志（实测 attempt-1 的 job log 取回为 0 字节），因此**崩溃瞬间的运行时内存自述（`in use` 字节数、堆/栈占用）无法取回**。已知事实仅两条：① 崩溃发生在 `--- PASS` 之后（全部用例已通过，`FAIL … internal/agent 20.093s` 是进程非零退出所致，非断言失败）；② 判据是 Go 运行时的 `fatal error: runtime: cannot allocate memory`（mmap 型 ENOMEM），不是线程创建失败。**根因未定位**，只能确定「非 agent 测试自身的分配」。
+
+### 16.3 处置（用户决策：测量 + 仅 OOM 重试一次）
+
+`.github/workflows/ci.yml` 的 `Test (unit, memory store, -race + coverage)`：
+
+1. **可观测**：新增 `mem_line()`（打印 `/proc/meminfo` 的 `MemTotal`/`MemAvailable`，缺 `MemAvailable` 时打印 `n/a` 而非误导性的 `0MB`）与 `run_batch()` 内的 **GNU time 峰值 RSS** 记录——`Maximum resident set size` / `Exit status` 随日志输出。GNU time 带**可用性探测**（`-v -o` 实测通过才启用），避免 BSD time 误用反而把步骤弄红。六个批次全部改走 `run_batch`，故每次运行都留下每批峰值 RSS。
+2. **仅内存型死亡重试一次**：判据 `OOM_PAT = fatal error: runtime: (cannot allocate memory|out of memory) | ThreadSanitizer: internal allocator is out of memory`。命中即打 `::warning::`（含首次死因原文）后重试一次；**非内存型失败立即红**，**重试后仍失败也红** → 确定性回归不会被掩盖，门禁强度不变。
+3. **修正注释**：保留 2026-08-31 的原始解释以备追溯，并就地标注本次复核结果（原文未被复现），避免后来者继续按错误前提排障。
+
+### 16.4 本地实测（6 场景，全部符合预期）
+
+| 场景 | 注入 | 期望 | 实测 |
+|---|---|---|---|
+| 1 成功 | 正常退出 | `[label] OK`，脚本继续 | ✅ |
+| 2 非内存型失败 | `exit 1` + `--- FAIL` | `::error::`，脚本中止（rc=1） | ✅ |
+| 3 OOM 一次后成功 | 首次 `cannot allocate memory` | warning + 重试 + OK（rc=0） | ✅ |
+| 4 OOM 两次 | 两次 ENOMEM | warning → 重试 → `::error::`（rc=2） | ✅ |
+| 5 TSan 分配器 OOM | `internal allocator is out of memory` | warning + 重试 | ✅ |
+| 6 GNU time 路径 | 桩替 `-v -o` | 打印 `Maximum resident set size` | ✅ |
+
+另：`bash -n` 通过；`actionlint v1.7.7` 对全部 workflow 仍 **0 问题**。
+
+**诚实边界**：这是「让门禁可信 + 下次可诊断」，**不是**根因修复。若后续仍复现，按日志里的 `MemTotal`（区分 7GB/16GB runner）+ 每批峰值 RSS 继续定位；若确认是宿主级偶发，可再评估是否把 agent 批拆得更细。
