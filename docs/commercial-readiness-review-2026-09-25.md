@@ -1781,7 +1781,46 @@ go: cloud.google.com/go/auth@v0.18.2: read "https://goproxy.cn/cloud.google.com/
 顺带一条实现坑（写进了 Dockerfile 注释）：这些说明**必须放在 `RUN` 之上**。
 本项目已经因"续行行尾"炸过一次（`RUN …  \` 变成 CR+LF 时 Docker 识别不到续行），
 而把 `# 注释`写进续行中间同样会让解析器在该行截断指令——第一版就踩了，改回 shell 体内只用 `echo`。
-## 21. 下一轮清单（按优先级）
+
+### 20.6 新上的 actionlint 门禁首跑就把自己的本机检查证伪了
+
+`actionlint` 步进 `build-test` 之后，**第一次 CI 运行就红了**（run `36195037306`，step 8）：
+报出 **12 条** shellcheck 级问题，横跨三个 workflow：
+
+| 类型 | 条数 | 位置与性质 |
+|---|---|---|
+| SC2046 词分裂 | 2 | `go test … $(go list ./... \| grep -v …)`（build-test 的 pkgs 批、race job 的同款）——这里词分裂是**故意的**，但写法确实脆：加引号会把整份清单变成一个参数 |
+| SC2155 声明即赋值 | 1 | `export PATH="$(go env GOPATH)/bin:$PATH"`——`export` 的退出码盖掉 `go env` 的，go env 失败时 PATH 静默不变 |
+| SC2034 循环变量未用 | 4 | `for i in $(seq 1 N); do …`（轮询等待，`i` 从不用） |
+| SC2035 裸 glob | 2 | `chmod 644 *.key *.crt`（文件名以 `-` 开头会被当选项） |
+| SC2086 未加引号 | 2 | `release.yml` 的 `VERSION=${GITHUB_REF_NAME#v}` 与 `>> $GITHUB_OUTPUT` |
+| SC2129 重复重定向 | 1 | `shadow-observe.yml` 三次 `echo … >> $GITHUB_OUTPUT` |
+
+**更值得记的是这条元事实**：本机此前多次跑 `actionlint` 都是 **0 问题**，CI 却报 12 条。
+原因不在版本（都是 v1.7.7），而在 **actionlint 只在 `shellcheck` 在 PATH 上时才做 shell 分析**——
+本机没装 shellcheck，于是那半个门禁是瞎的。这与 §18「grep 看不见 CR 的门禁在 Windows 上永远 PASS」
+同族：**门禁的取证能力取决于它的后端工具是否真的在场**，而工具缺失通常不报错，只表现为"干净"。
+处置：本机装上 shellcheck v0.10.0 后，12 条在本机逐条复现，之后全部在推送前修完。
+
+修法（都是真修，没有一条靠 `# ignore` 压掉）：
+
+- 两处 `$(go list …)` 改成 `mapfile -t PKGS < <(go list …)` + `"${PKGS[@]}"`：既不词分裂，也不把清单并成一个参数。
+  顺带补上**空清单判红**——`go test "${PKGS[@]}"` 在零参数时 `build-test` 那批会退化成整模块单批
+  （正是分批要避开的内存峰值场景），race 那批会退化成"只测当前目录"（静默少跑），
+  而 process substitution 里 `go list` 的失败**不会触发 `set -e`**，不判就是无声漏跑。
+- `GO_BIN_ROOT="$(go env GOPATH)"` 与 `export PATH=…` 拆成两行。
+- 轮询循环 `for i in` → `for _ in`（4 处）；`chmod 644 *.key *.crt` → `./*.key ./*.crt`；
+  `VERSION="${GITHUB_REF_NAME#v}"`、`>> "$GITHUB_OUTPUT"` 加引号；三段输出合并成 `{ …; } >> "$GITHUB_OUTPUT"`。
+
+验证口径（如实分层，不写成「本机全绿」）：
+
+- **复现**：本机补上门禁后端（shellcheck）后，`actionlint` 报出的正是 CI 那 12 条（同一集合，不多不少）⇒ 复现成立。
+- **修复**：把改动前后的两种写法各做成一个最小脚本跑 `shellcheck`——`before.sh` 报出
+  SC2034 / SC2035 / SC2046 / SC2086 / SC2155 共 9 处，`after.sh` 在 `-S warning` 下 **0 报告、rc=0**；
+  数组语义另做行为验证：`run_batch` 收到 9 个独立参数（没被并成一个），空清单元素数为 0 会被守卫拦下。
+- **未做**：本机没有把整份 `actionlint` 跑到底——装上 shellcheck 后全量运行超过 10 分钟仍未结束
+  （CI 侧同一检查 0.7 秒完成，差在 Windows 逐脚本起进程的成本）。因此**最终结论以 CI 的 actionlint step 为准**，
+  本机证据只覆盖「复现 + 逐类修复模式正确」，不含「整仓 workflow 全清」。
 
 | # | 事项 | 为什么排在这 |
 |---|---|---|

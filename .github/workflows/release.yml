@@ -59,9 +59,9 @@ jobs:
       - name: Extract metadata
         id: meta
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "image=${{ env.IMAGE_PREFIX }}/${{ matrix.service }}" >> $GITHUB_OUTPUT
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "image=${{ env.IMAGE_PREFIX }}/${{ matrix.service }}" >> "$GITHUB_OUTPUT"
 
       - name: Build Docker image
         # 构建上下文=仓库根（services/<svc> 的 go.mod 均 replace opsmesh => ../..，

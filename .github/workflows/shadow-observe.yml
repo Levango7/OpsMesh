@@ -73,9 +73,11 @@ jobs:
           REPS=$(echo "$REPS" | grep -E '^[0-9]+$' || echo 0)
           [ "$REPS" -lt 0 ] && REPS=0
           [ "$REPS" -gt 12 ] && REPS=12
-          echo "duration=$DUR" >> "$GITHUB_OUTPUT"
-          echo "seed=$SEED" >> "$GITHUB_OUTPUT"
-          echo "reps=$REPS" >> "$GITHUB_OUTPUT"
+          {                                   # 一次重定向而不是三次打开文件（SC2129）
+            echo "duration=${DUR}"
+            echo "seed=${SEED}"
+            echo "reps=${REPS}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: 构建镜像（controlplane + agent + task-svc）
         # task-svc 镜像走根级 Dockerfile.service 模板（上下文=仓库根）：
@@ -141,7 +143,7 @@ jobs:
           # controlplane 需先有任务表结构：等待 store 自动建表完成（compose 内
           # controlplane 启动即建），再经 mysql client 直插模板任务。
           # 字段与 internal/store schema 对齐：ParentID 空 + Schedule 非空 = 模板。
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if docker compose -f docker-compose.shadow-observe.yaml exec -T mysql \
               mysql -uopsmesh -popsmesh opsmesh -e "SELECT 1 FROM tasks LIMIT 1" >/dev/null 2>&1; then
               break; fi

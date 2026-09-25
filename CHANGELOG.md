@@ -27,6 +27,13 @@
 - **双向验证**：用计数型假 `go` 注入——抖动 2 次 → 第 3 次成功且 verify 照跑（rc=0）；持续失败 → 恰好 5 次尝试后 rc=1（不静默绿）。另用本机 Docker 真跑一次 `Dockerfile.service` 构建确认 Docker 解析续行无误（rc=0，新 RUN 段确实执行）。
 - **实现坑**：说明注释**必须放在 `RUN` 之上**——写进续行中间会让 Docker 解析器在该行截断指令（与本项目踩过的"CRLF 断续行"同族）。
 
+### actionlint 门禁首跑即红：12 条 shellcheck 问题 + 一条关于"门禁后端不在场"的元事实
+
+- **本机 0 问题、CI 报 12 条**：原因不是版本（都是 v1.7.7），而是 **actionlint 只在 `shellcheck` 位于 PATH 上时才做 shell 分析**。本机没装 shellcheck，那半个门禁一直是瞎的——与「用 grep 写的 CRLF 门禁在 Windows 上永远 PASS」同族：**门禁的取证能力取决于它的后端工具是否真的在场**，而工具缺失不报错，只表现为"干净"。本机补装 shellcheck v0.10.0 后 12 条逐条复现。
+- **修掉的 12 条**（真修，无一条用 ignore 压掉）：2× SC2046（`go test … $(go list ./...)` 改 `mapfile` + `"${PKGS[@]}"`）、1× SC2155（`export PATH="$(go env GOPATH)/bin:$PATH"` 拆两行）、4× SC2034（轮询 `for i in` → `for _ in`）、2× SC2035（`chmod 644 *.key *.crt` → `./*.key ./*.crt`）、2× SC2086（`VERSION="${GITHUB_REF_NAME#v}"`、`>> "$GITHUB_OUTPUT"`）、1× SC2129（三段输出合并成 `{ …; } >> "$GITHUB_OUTPUT"`）。
+- **顺带堵掉一个静默漏跑**：改用数组后，`go test "${PKGS[@]}"` 在**空清单**时零参数——build-test 那批会退化成整模块单批（正是分批要避开的内存峰值），race 那批会退化成"只测当前目录"；而 `mapfile < <(go list …)` 里 `go list` 失败**不会触发 `set -e`**。两处都加了「空清单即 `::error::` + exit 1」守卫。
+- **验证口径如实分层**：装上门禁后端后本机 `actionlint` 复现出与 CI 完全同一组 12 条；修复用前后两个最小脚本证明（before 报 SC2034/2035/2046/2086/2155 共 9 处，after 在 `-S warning` 下 0 报告），数组语义另做行为验证（`run_batch` 收到 9 个独立参数、空清单被守卫拦下）。**没有**把整份 actionlint 在本机跑完（装上 shellcheck 后全量 >10 分钟不结束，CI 同检查 0.7 秒），故最终结论以 CI 该 step 为准。
+
 
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §19。**结论：`v0.9.1` 既没有镜像也没有二进制产物**——P0/P1 全部修复目前只存在于源码，不存在于任何可安装的发布物。
