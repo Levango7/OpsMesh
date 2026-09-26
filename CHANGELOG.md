@@ -20,6 +20,20 @@
 - **验证**：`rand_pw` 从 `deploy.sh` 抽出**真实定义**跑 300 次（长度 / 越界字符为空 / 必含特殊字符）⇒ 0 失败，且故意把校验集合写窄会立刻报错（断言是活的）；`/tmp` 沙箱真跑 `deploy.sh init` ⇒ `.env` 生成成功、四条口令均落在新字符集内、`docker compose config` rc=0（插值链路可用）；13 个脚本 `shellcheck -S warning` + `bash -n` 全绿。
 - **口径如实分层**：`-S info` 级仍有 39×SC2015、3×SC2012 未动（可读性而非正确性，提口径前需逐条判"是否真死变量"），已列入 §23 待办第 9 项。shellcheck 门禁本身以 CI 该 step 为准。
 
+## [Unreleased] — 2026-09-26 升级路径演练（0.9.0 → 0.9.2）抓到一条每次重启都会复发的客户可见缺陷
+
+> 证据：`docs/commercial-readiness-review-2026-09-25.md` §19.8。此前所有验证都是**全新装**；客户手上是**有存量数据的旧库**。
+
+- **演练怎么做的**：`git worktree` 取 `v0.9.0` 编出**真的 0.9.0 二进制**，另起一台隔离 MySQL（独立容器名/卷/宿主端口 13306，不碰用户在跑的那套），用 0.9.0 建库到 17/17，再走它自己的 API 完成"首登强制改密 → 登录 → 建资源"，得到 `users=3 / devices=2 / audit_log=9`、无 `users.tenant_id`、无 `audit_log.prev_hash` 的真老库，然后换 0.9.2 指向同一个库。（直接用本机现成的库不行——它已被新代码迁移过，只能验"同结构换二进制"。）
+- **升级本身是干净的**：17 → 19/19；`019_audit_chain` 在老库上走**幂等放行**分支（`Error 1061 Duplicate key name` 被正确识别）；三个老用户回填 `tenant_id=default`；`/api/v1/audit/verify` 报 `supported:true ok:true legacyRows:9`（链前遗留行被如实标注而不是误判为篡改）；存量行数一字不差；客户改过的口令哈希未被 seed 覆盖；0.9.0 的 `admin123` 升级后仍 401。
+- **缺陷**：预置用户 seed 用 `INSERT … ON DUPLICATE KEY UPDATE must_change_password=1`，而 `seedRBAC` 由 `runMigrations` 在**每次进程启动**执行 ⇒ 改过口令的 admin 在**任何一次重启 / 升级 / pod 重建**后都被打回"必须改密"，登录只拿到 `changePasswordToken`、**拿不到会话 token**。实测：改密成功 → 标记=0 → 重启一次 → 标记=1、token 长度 0。口令没丢，但"每次重启都逼管理员再改一次密码"不可交付。
+- **修法**：已存在的账号**仅当该行哈希仍等于预置口令**时才补标记（bcrypt 比对）；新账号仍 `INSERT IGNORE` 带标记，保留多副本首启不撞主键的并发语义。安全侧**没有放宽**：仍用预置弱口令的 `operator/viewer` 照样被标记。
+- **回归测试**（`internal/store/sql_rbac_seed_test.go`，真 MySQL 集成层）：断言两个方向 + 哈希不被覆盖 + 重复 seed 幂等。**变异检验证明它会红**：把条件改回恒真（等价旧代码）→ `[FAIL] 改过口令的 admin 在重启后又被标记成 must_change_password=1（缺陷复现）`；还原 → PASS。
+- **真机前后对照**：修好的二进制在同一老库上连续重启两次 ⇒ `admin=0 / operator=1 / viewer=1` 稳定，admin 登录拿到 1977 字符 token、`mustChangePassword=false`。
+- **顺带记录**：`opsmesh_audit_chain_supported|ok` 开机后最多 60s 才是 1（由 leader 维护循环写入）。出厂告警 `for: 5m` 覆盖得住，但看板上会短暂显示 0——别再当成"链校验失效"。
+- **待你决定的尾巴**：已发布的 `v0.9.2` 镜像/二进制是在这条修复**之前**构建的。要么再移动一次标签重发，要么留给 0.9.3 并在 Release 说明里写明。
+- **演练环境已清理**：两个控制面进程、演练 MySQL 容器与卷、`v0.9.0` worktree、临时二进制全部删除；用户在跑的 `opsmesh-*` 与 `opsmesh-mysql-data` 未被触碰。
+
 ## [Unreleased] — 2026-09-26 v0.9.2 第一次发版尝试失败：矩阵里混进了一个不是服务的模块
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §19.6。§19.1 那行 `COPY` 修好之后第一次真发版（tag `v0.9.2` → run `36217841524`）**仍然没有产物**，只是根因往下挪了一层。

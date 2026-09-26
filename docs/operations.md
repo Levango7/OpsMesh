@@ -675,6 +675,12 @@ grep '^ADMIN_PASSWORD=' deploy/docker/.env
 
 首次登录会强制改密（响应 `mustChangePassword=true`，改密前不签发正式 token）。
 
+> **这个标记只打一次，不随重启复活**：启动时的预置账号 seed 只在"该账号的口令哈希**仍是预置弱口令**"时才补标记。
+> 也就是说——全新装与"从旧版本升上来、admin 还在用 `admin123`"两种情况会被要求改密；
+> 已经改过口令的账号在任何一次重启 / 升级 / pod 重建后**都不会**再被要求改第二次
+> （0.9.2 之前的实现是无条件重设，导致每次重启都强制改密，见 `docs/commercial-readiness-review-2026-09-25.md` §19.8）。
+> 与它同类的启动期改写还有 `--admin-password-force-reset`：那个是**故意**每次重启覆盖口令，用完必须改回 false。
+
 **口令遗失后的找回：** 用 `--admin-password-force-reset=true` + 重新指定的 `--admin-password` 启动一次，即可覆盖库内口令；恢复后请把开关改回 false（否则每次重启都会把口令重置为该值，覆盖界面上的改密）。
 
 ```bash
@@ -879,7 +885,7 @@ curl "$CP/api/v1/tasks/<task-id>/result" -H "$AUTH" -H "X-Tenant-ID: $TENANT"
 | `opsmesh_http_request_duration_seconds_sum` / `opsmesh_http_request_duration_seconds_count` | counter | 耗时总和与观测次数（算平均耗时用这两个） |
 | `opsmesh_http_metrics_series` | gauge | 当前 HTTP 指标时序数（基数上限 2000，达到后新路径折叠为 `path=":other"`） |
 | `opsmesh_http_metrics_series_dropped_total` | counter | 因基数超限被折叠的请求数（持续增长=端点正被扫描） |
-| `opsmesh_audit_chain_supported` | gauge | 审计链校验是否被后端支持（P1-3；SQL=1，内存/老库=0，非 leader 副本恒 0） |
+| `opsmesh_audit_chain_supported` | gauge | 审计链校验是否被后端支持（P1-3；SQL 后端=1、内存后端=0，非 leader 副本恒 0）。**注意**：从旧版本升级上来、带"链建立之前写入的遗留行"的 SQL 库仍然是 1——遗留行数由 `/api/v1/audit/verify` 的 `legacyRows` 单独报告，不影响本指标（实测见报告 §19.8）。两个链指标在**启动后最多 60s** 才是真值（leader 维护循环每分钟一次），开机首分钟看到 0 属正常，出厂告警的 `for: 5m` 正是为此 |
 | `opsmesh_audit_chain_ok` | gauge | 最近一次链校验结论（1=自洽，0=发现不一致/尚未校验） |
 | `opsmesh_audit_chain_checked_rows` | gauge | 最近一次校验覆盖的行数 |
 | `opsmesh_audit_chain_checks_total` | counter | 链自检执行次数（leader 周期执行；长期不增长=维护循环停摆） |

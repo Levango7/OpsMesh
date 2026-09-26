@@ -1734,6 +1734,52 @@ github-release                 → skipped   ⇒ Release 资产仍是 0
   （其中含一段 4 空格 + `tag:`）误匹配成 3 次而报警。改成**整行相等**匹配后正是 2 处。
   ——计数断言这次的价值不是"通过"，而是**拦下了一次半改**。
 
+### 19.8 升级路径演练：用真的 v0.9.0 二进制建库，再升到 0.9.2（2026-09-26，抓到一条客户可见缺陷）
+
+前面所有验证都是**全新装**；商用交付里客户拿到的是**有存量数据的旧库**。本轮按 §23 第 2 项做真机升级演练。
+
+- **为什么不能直接拿本机在跑的栈演练**：它的 `opsmesh` 库已经被我早先跑新代码时迁移过（`schema_migrations=19/19`、
+  租户列与 `prev_hash` 都在），拿它升级只能验"同结构换二进制"，验不到迁移。所以演练自己造老库。
+- **演练设计**（全程隔离，不碰用户那套）：`git worktree` 取 `v0.9.0` 编出**真的 0.9.0 二进制**；
+  另起一台 MySQL（容器 `opsmesh-updrill-mysql`、独立卷、宿主端口 13306）；
+  用 0.9.0 跑迁移建库（停在 17/17）→ 走它自己的 API 完成"首登强制改密 + 登录 + 建资源"，
+  再 SQL 补两台存量设备 ⇒ 得到 `users=3 / devices=2 / audit_log=9`、`users.tenant_id` 不存在、
+  `audit_log.prev_hash` 不存在的**真 0.9.0 库**。然后换 0.9.2 二进制指向同一个库。
+
+**升级结果（断言 11 项通过，逐条实测）**：
+
+| 检查 | 结果 |
+|---|---|
+| 迁移推进 | 17 → **19/19**；`018_users_tenant_id` 正常应用 |
+| 第 19 条在老库上 | 走 **幂等放行** 分支：`Error 1061 Duplicate key name 'idx_audit_tenant_created'` 被正确识别后标记已应用（P0-5 那套幂等 ALTER 在真老库上按设计工作） |
+| 存量数据 | `users/devices/audit_log` 行数一字不差，存量 `device_id` 仍在 |
+| 018 回填 | 三个老用户全部落到 `tenant_id=default`，无 NULL/空 |
+| 019 链语义 | `/api/v1/audit/verify` → `supported:true ok:true checked:6 legacyRows:9 note:"存在 9 条链前遗留行"`；指标 `opsmesh_audit_chain_{supported,ok}` 在启动后 ≤60s 内由维护循环写为 1/1（**注意这两个指标开机头一分钟是 0**，出厂告警 `for: 5m` 恰好盖住这个窗口） |
+| 凭据 | 客户改过的口令哈希**没有被 seed 覆盖**；0.9.0 的预置弱口令 `admin123` 升级后仍 **401** |
+
+**抓到的缺陷（客户可见，且不只影响升级）**：`internal/store/sql_rbac.go` 的预置用户 seed 用
+`INSERT … ON DUPLICATE KEY UPDATE must_change_password=1`，而 `seedRBAC` 由 `runMigrations` 在
+**每次进程启动**调用 ⇒ 改过口令的 admin 在**任何一次重启/升级/pod 重建**后都会被打回
+`must_change_password=1`，登录接口于是只返回 `changePasswordToken`、**不返回会话 token**。
+实测链条：升级后改密成功 → DB 里标记=0 → 重启一次 → 标记=1、登录 token 长度 0。
+（口令哈希本身没丢，所以是可恢复的，但"每次重启都要管理员再改一次密码"对企业交付是不可接受的。）
+
+- **修法**：已存在的账号**只在"该行哈希仍等于预置口令"时**才补标记（bcrypt 比对）；新账号仍 `INSERT IGNORE`
+  带标记（多副本首启不撞主键报错，保留原并发语义）。
+- **回归测试**（`internal/store/sql_rbac_seed_test.go`，真 MySQL 集成层）：两个方向都断言——
+  改过口令的 `user-admin` 重启后必须保持 0；仍用预置口令的 `user-operator` 必须被重新标记为 1；
+  外加"口令哈希不得被覆盖"与"重复 seed 幂等"。**变异检验**：把条件改回恒真（等价旧代码）→
+  测试 `[FAIL] 改过口令的 admin 在重启后又被标记成 must_change_password=1（缺陷复现）`；还原 → PASS。
+  这条测试的意义在于**它会红**，不是它常绿。
+- **真机前后对照**：换用修好的二进制在同一老库上**连续重启两次** ⇒ `admin=0 / operator=1 / viewer=1`
+  不变，admin 用改过的口令登录拿到 1977 字符 token、`mustChangePassword=false`。
+
+**留下的决策**：`v0.9.2` 的镜像与二进制是在修复**之前**构建的，因此已发布的 0.9.2 仍带这条缺陷。
+要么再移动一次标签重发，要么留给 0.9.3 并在 Release 说明里写明——属对外发布动作，未擅动。
+
+**演练环境已清理**：停掉两个演练控制面进程、删除 `opsmesh-updrill-mysql` 容器与其卷、
+移除 `v0.9.0` worktree 与临时二进制；用户在跑的那套 `opsmesh-*` 容器与 `opsmesh-mysql-data` 全程未被触碰。
+
 ## 20. 镜像发布名与消费方引用的对齐（把 §19.4 的两个待决项做掉，2026-09-26）
 
 §19.4 留下两条需要拍板的开口，本轮按「不改变对外契约的最小正确解」处理：

@@ -12,10 +12,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // rowScanner 兼容 *sql.Row 与 *sql.Rows 的 Scan 接口。
@@ -415,8 +418,8 @@ func (s *SQLStore) seedRBAC(ctx context.Context) error {
 		}
 	}
 	// 3. 默认用户（bcrypt 哈希；与 memory.go 保持一致）。
-	// 安全债：预置弱口令首登强制改密（must_change_password=1）。
-	// 用 INSERT ... ON DUPLICATE KEY UPDATE 同步标记，保证老库升级后 admin 也会被标记。
+	// 安全债：预置弱口令首登强制改密（must_change_password=1）。老库升级后仍用预置口令的账号
+	// 也会被标记——但**只标一次**：判定依据是"该行的哈希是否仍等于预置口令"，见循环内注释。
 	type userSpec struct {
 		id, name, password, email string
 		roleIDs                   []string
@@ -432,12 +435,31 @@ func (s *SQLStore) seedRBAC(ctx context.Context) error {
 			return err
 		}
 		roleIDs, _ := json.Marshal(us.roleIDs)
-		if _, err := s.db.ExecContext(ctx,
-			`INSERT INTO users (id, username, email, password_hash, status, role_ids, created_at, must_change_password, tenant_id)
-			 VALUES (?, ?, ?, ?, 'active', ?, ?, 1, ?)
-			 ON DUPLICATE KEY UPDATE must_change_password=1`,
-			us.id, us.name, us.email, string(hash), roleIDs, now, DefaultTenantID); err != nil {
-			return err
+		// 已存在的账号**只在仍使用预置口令时**才补标记。
+		// 原先是无条件 `ON DUPLICATE KEY UPDATE must_change_password=1`，而 seedRBAC 由
+		// runMigrations 在**每次进程启动**调用 ⇒ 客户改过口令之后，任何一次重启或升级都会把
+		// must_change_password 复活成 1，登录只能拿到 changePasswordToken、拿不到会话 token
+		// （2026-09-26 用真的 v0.9.0 二进制建库 → 升 0.9.2 → 重启，实测复现）。
+		var stored string
+		qerr := s.db.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE id = ?`, us.id).Scan(&stored)
+		switch {
+		case qerr == nil:
+			if bcrypt.CompareHashAndPassword([]byte(stored), []byte(us.password)) == nil {
+				if _, err := s.db.ExecContext(ctx,
+					`UPDATE users SET must_change_password = 1 WHERE id = ?`, us.id); err != nil {
+					return err
+				}
+			}
+		case errors.Is(qerr, sql.ErrNoRows):
+			// INSERT IGNORE：多副本同时首启时，后到者撞主键也不报错（保持原 upsert 的并发语义）。
+			if _, err := s.db.ExecContext(ctx,
+				`INSERT IGNORE INTO users (id, username, email, password_hash, status, role_ids, created_at, must_change_password, tenant_id)
+				 VALUES (?, ?, ?, ?, 'active', ?, ?, 1, ?)`,
+				us.id, us.name, us.email, string(hash), roleIDs, now, DefaultTenantID); err != nil {
+				return err
+			}
+		default:
+			return qerr
 		}
 	}
 	return nil
