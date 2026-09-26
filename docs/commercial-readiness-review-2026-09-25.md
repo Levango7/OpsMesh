@@ -1719,6 +1719,18 @@ ghcr.io/levango7/opsmesh-agent:latest  -> 200
 
 而这两条在 §19.4 取证时**都是 404**（当时只有 sha 标签）。同一 run 里 `build-test`（含新的 actionlint step）、`security`（含 §7/§8 两道新门禁与 helm 三条新断言）、`services`、`integration`、`proto`、`release-dryrun`、`image`、`image-agent`、E2E×2、Frontend 全部 success。
 
+**再往强里证一层（run `36205827115`，commit `a3d0d3b`）**：`:latest` 光有 200 只能说明"这个名字存在"，不能说明它指向**这次**推送。于是比对 manifest 摘要——`latest` 与 `:<完整 sha>` 两条标签的 `docker-content-digest` **逐字相同**：
+
+```text
+opsmesh-binary  latest=sha256:d113e53c6196…  sha(a3d0d3b)=sha256:d113e53c6196…  一致=YES  标签数=25
+opsmesh-agent   latest=sha256:19794ff4ed26…  sha(a3d0d3b)=sha256:19794ff4ed26…  一致=YES  标签数=24
+```
+
+⇒ "`latest` 随默认分支推送前移"这条策略在注册表侧成立，而不只是在 step 里被拼进 `tags`。
+（探针坑复用 §19.4 那条：`Accept` 必须含 `application/vnd.oci.image.index.v1+json`；且标签用的是
+**完整 40 位 sha**——用 7 位短 sha 探会得到 404，那是探针写错，不是发布失败。本轮就差点把自家探针的 404 当成缺陷报出去。）
+
+
 生成过程中踩到两处**生成期**缺陷（都属「看起来对、实际少东西」，值得单独记）：
 
 1. 多行值写 `$GITHUB_OUTPUT` **必须**用 heredoc 定界符（`tags<<TAGSEOF` … `TAGSEOF`）。
