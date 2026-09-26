@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAMESPACE="${NAMESPACE:-opsmesh}"
 SERVICE="${SERVICE:-auth-svc}"
 PORT="${PORT:-8080}"
@@ -185,10 +184,14 @@ verify_autoscaling() {
     local pod_count_after
     pod_count_after=$(kubectl get deployment "$deployment" -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
 
-    log_info "Pods after load: ${pod_count_after} (max during test: ${max_pods})"
+    log_info "Pods after load: ${pod_count_after} (max during test: ${max_pods}, 目标副本数: ${target_replicas})"
 
-    if [[ $max_pods -gt $pod_count_before ]]; then
-        log_info "Autoscaling triggered! Scaled from ${pod_count_before} to ${max_pods} pods."
+    if [[ ${max_pods:-0} -ge $target_replicas ]]; then
+        log_info "Autoscaling 达标：${pod_count_before} → ${max_pods}（≥ 目标 ${target_replicas}）"
+        return 0
+    elif [[ ${max_pods:-0} -gt ${pod_count_before:-0} ]]; then
+        log_warn "已扩容但未达目标：${pod_count_before} → ${max_pods}（目标 ${target_replicas}）"
+        log_warn "通常是压测时长不足或 CPU 未持续越过 HPA 阈值（duration=${duration}s）。"
         return 0
     else
         log_warn "Autoscaling may not have triggered (CPU may not have reached threshold)."

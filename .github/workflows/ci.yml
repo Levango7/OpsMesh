@@ -379,6 +379,39 @@ jobs:
       # 用 go install 复用 setup-go 工具链并钉死版本，避免下载 GitHub release 的网络抖动。
       - name: 安装 kubeconform（K8s 清单离线 schema 校验，钉版）
         run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+      - name: shellcheck 交付脚本（客户在生产机上直接跑的 bash 入口，钉版 v0.10.0）
+        run: |
+          # 为什么要单列：actionlint 只检查 workflow 里的内联 run 块，**不会跟进被调用的脚本**，
+          # 而 deploy/**/scripts/*.sh 属于交付物。补上 shellcheck 后一次抓到 14 处，其中三处是真缺陷：
+          #   ① deploy-opsmesh.sh 的 --skip-images 写进 usage 却从不生效（哑按钮，且无人报错）；
+          #   ② deploy.sh 的 PASSWORD_SPECIAL_CHARS 声明了口令字符集，但生成器走 openssl rand -base64
+          #      （字母表含 '/'）——常量从未被引用；
+          #   ③ .env 的 chmod 失败时（无 POSIX 权限的文件系统）仍无条件自称"权限 0600"。
+          # 取二进制而不是 docker 镜像：本机 Docker 配了镜像白名单代理拉不到 shellcheck-alpine，
+          # runner 侧则要吃 Docker Hub 匿名限额——同一个门禁不该有两种环境失效方式。
+          # 下载带退避重试（§20.5 的教训：一次代理截断 = 整批门禁失败）。
+          set -euo pipefail
+          ver=0.10.0
+          url="https://github.com/koalaman/shellcheck/releases/download/v${ver}/shellcheck-v${ver}.linux.x86_64.tar.xz"
+          for i in 1 2 3 4 5; do
+              if curl -sSfL --max-time 120 -o /tmp/sc.tar.xz "$url"; then break; fi
+              if [ "$i" = 5 ]; then echo "::error::shellcheck 下载连续 5 次失败：不是抖动，是真取不到"; exit 1; fi
+              sleep $((i * 5))
+          done
+          tar -xJf /tmp/sc.tar.xz -C /tmp
+          SC="/tmp/shellcheck-v${ver}/shellcheck"
+          "$SC" --version | head -3
+          # 断言版本：下到别的版本 = 门禁强度变了却看不出来。
+          # 注意输出格式（本机 v0.10.0 实测）：首行是 "ShellCheck - shell script analysis tool"，
+          # 版本在第二行 "version: 0.10.0"——按 "ShellCheck 0.10.0" grep 永远不匹配。
+          "$SC" --version | grep -q "version: ${ver}" || { echo "::error::shellcheck 版本不是钉死的 ${ver}"; exit 1; }
+          mapfile -t SH < <(git ls-files '*.sh')
+          if [ "${#SH[@]}" -eq 0 ]; then
+              echo "::error::git ls-files 未返回任何 .sh —— 门禁空转，不等于「脚本都干净」"
+              exit 1
+          fi
+          "$SC" -S warning "${SH[@]}"
+          echo "✅ ${#SH[@]} 个交付脚本在 shellcheck -S warning 下 0 findings"
       - name: 部署资产一致性门禁
         run: |
           # 先赋值再 export：合在一行会让 export 的退出码盖掉 go env 的（shellcheck SC2155，

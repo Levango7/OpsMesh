@@ -437,10 +437,24 @@ else
 fi
 
 sec "11. 迁移版本门禁与租户列落库（P0-5 / P0-6 回归）"
+# 用 shell glob 而不是 `ls -1 | grep -v | wc -l`：后者是 shellcheck SC2010 的反模式
+# （文件名含空格/换行即错），且管道尾的 wc 会把 ls 的失败吞成 0。
+# 无匹配时 glob 会留下字面模式本身，故逐个 -e 判存在。
+count_sql() { # $1=目录 $2=是否只数回滚脚本（yes|no）
+    local n=0 f
+    for f in "$1"/*.sql; do
+        [[ -e "$f" ]] || continue
+        case "$f" in
+            *.down.sql) [[ "$2" == yes ]] && n=$((n + 1)) ;;
+            *) [[ "$2" == no ]] && n=$((n + 1)) ;;
+        esac
+    done
+    printf '%s' "$n"
+}
 if [ -n "${MYSQL_C:-}" ] && [ -n "${U:-}" ]; then
   mx="$(docker exec "$MYSQL_C" sh -c "mysql -u'$U' -p'$PWDB' -D opsmesh -N -e 'SELECT MAX(version) FROM schema_migrations;'" 2>/dev/null | tr -d ' \r')"
   # 磁盘上未执行的迁移数（排除 .down.sql 回滚脚本），与库内版本号比对即为「版本门禁」不变量。
-  disk="$(ls -1 "${ROOT}"/internal/store/migrations/*.sql 2>/dev/null | grep -v '\.down\.sql$' | wc -l | tr -d ' ')"
+  disk="$(count_sql "${ROOT}/internal/store/migrations" no)"
   if [ -n "$mx" ] && [ "$mx" != "NULL" ]; then
     ok "schema_migrations 最大版本=${mx}（磁盘迁移文件 ${disk} 个）"
     if [ "$mx" = "$disk" ]; then
@@ -471,8 +485,8 @@ if [ -n "${MYSQL_C:-}" ] && [ -n "${U:-}" ]; then
     bad "无法读取 opsmesh.schema_migrations（迁移体系未生效？）"
   fi
   # 回滚脚本齐备性：每个迁移都应随附 .down.sql（P0-5 可回滚交付物）。
-  upf="$(ls -1 "${ROOT}"/internal/store/migrations/*.sql 2>/dev/null | grep -v '\.down\.sql$' | wc -l | tr -d ' ')"
-  dnf="$(ls -1 "${ROOT}"/internal/store/migrations/*.down.sql 2>/dev/null | wc -l | tr -d ' ')"
+  upf="$(count_sql "${ROOT}/internal/store/migrations" no)"
+  dnf="$(count_sql "${ROOT}/internal/store/migrations" yes)"
   [ "$upf" = "$dnf" ] && ok "回滚脚本齐备（up=${upf} down=${dnf}）" \
                       || bad "回滚脚本缺失：up=${upf} down=${dnf}（P0-5 可回滚性不达标）"
 else

@@ -38,12 +38,14 @@ EOF
 }
 
 LOAD_IMAGES=false
-SKIP_IMAGES=false
 
+# --skip-images 与 --load-images 共用一个开关（默认即不加载）：此前 SKIP_IMAGES 解析后
+# 从不被读，于是这个写进 usage 的开关是个哑按钮——传与不传行为一致，且没人报错。
+# 两个都给时以**最后出现者**为准（与常见 CLI 语义一致）。
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --load-images) LOAD_IMAGES=true; shift ;;
-        --skip-images) SKIP_IMAGES=true; shift ;;
+        --skip-images) LOAD_IMAGES=false; shift ;;
         --namespace) NAMESPACE="$2"; shift 2 ;;
         --help) usage; exit 0 ;;
         *) log_error "Unknown option: $1"; usage; exit 1 ;;

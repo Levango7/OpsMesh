@@ -5,12 +5,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-COMPOSE_FILE="${PROJECT_DIR}/docker-compose.prod.yml"
+# 按**容器名** docker inspect，不经 compose —— 别在此声明 COMPOSE_FILE（曾声明而从未被引用）。
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 GRAY='\033[0;90m'
 NC='\033[0;0m'

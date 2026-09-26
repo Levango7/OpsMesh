@@ -97,6 +97,23 @@ env_val() {
 rand_b64() { openssl rand -base64 "$1" | tr -d '\n'; }
 rand_hex() { openssl rand -hex "$1" | tr -d '\n'; }
 
+# 口令字符集约束：口令会流经 .env、compose 插值、YAML stringData、shell 双引号与 DSN，
+# 故限定在安全集合内，避免 '@'（破坏 MySQL DSN）、'#'（env/注释歧义）、'$'/'"'/'\'/反引号（插值）
+# 与空白字符。auth-svc 只要求「非字母数字」，本集合是其子集。
+PASSWORD_SPECIAL_CHARS='!%^*-_+=.'
+
+# rand_pw：长度 $1 的口令，字符集严格 ⊆ [0-9a-f] ∪ PASSWORD_SPECIAL_CHARS，且末位恒为特殊字符
+# （满足「含特殊字符」类策略）。刻意不复用 rand_b64：base64 字母表含 '/'，不在上面的集合内——
+# 早先该常量从未被任何代码引用，等于「声明了字符集、生成器却在字符集外」。
+# 也不用 `tr -dc … /dev/urandom | head -c N` 的常见写法：head 提前关管道会让 tr 吃 SIGPIPE，
+# 在 pipefail 下变成随机失败。熵：长度 32 ⇒ 31 位 hex（124 bit）+ 1 位固定位置的特殊字符。
+rand_pw() {
+    local n="$1" body idx
+    body="$(openssl rand -hex "$n")"
+    idx="$(( 0x$(openssl rand -hex 1) % ${#PASSWORD_SPECIAL_CHARS} ))"
+    printf '%s%s' "${body:0:$((n - 1))}" "${PASSWORD_SPECIAL_CHARS:idx:1}"
+}
+
 confirm() {
     local prompt="$1"
     if [ "$ASSUME_YES" = true ]; then
@@ -104,8 +121,8 @@ confirm() {
         return 0
     fi
     if [ ! -t 0 ]; then
-        log_error "${prompt}"
-        log_error "当前不是交互终端（stdin 非 tty）。请处理后重试，或加 -y/--yes 显式承担风险。"
+        # 问题本身不该印成 [ERROR]（运维读日志时会以为已经出错）：这里出错的是"无法确认"。
+        log_error "需要确认「${prompt}」，但当前不是交互终端（stdin 非 tty）——已按拒绝处理。请加 -y/--yes 显式承担风险。"
         return 1
     fi
     local answer=""
@@ -266,10 +283,7 @@ password_is_strong() {
     return 0
 }
 
-# 特殊字符选择说明：口令会流经 .env、compose 插值、YAML stringData、shell 双引号与 DSN，
-# 故限定在安全集合内，避免 '@'（破坏 MySQL DSN）、'#'（env/注释歧义）、'$'/'"'/'\'/反引号（插值）
-# 与空白字符。auth-svc 只要求「非字母数字」，本集合是其子集。
-PASSWORD_SPECIAL_CHARS='!%^*-_+=.'
+# 这里只判定「含非字母数字」；生成侧更严，用文件头的 PASSWORD_SPECIAL_CHARS（rand_pw 强制执行，是本判定的子集）。
 
 # ============================================================
 # TLS 证书校验
@@ -556,10 +570,10 @@ generate_env_file() {
     jwt="$(rand_b64 48)"
     enc="$(rand_b64 32)"
     cfg_key="$(rand_b64 32)"
-    mysql_pw="$(rand_b64 32)"
-    mysql_root="$(rand_b64 32)"
-    redis_pw="$(rand_b64 32)"
-    grafana_pw="$(rand_b64 32)"
+    mysql_pw="$(rand_pw 32)"
+    mysql_root="$(rand_pw 32)"
+    redis_pw="$(rand_pw 32)"
+    grafana_pw="$(rand_pw 32)"
     provision="$(rand_b64 32)"
     federation="$(rand_b64 32)"
     # 初始 admin 口令：前缀 Aa1 保证含大写/小写/数字（控制面强口令校验要求），
@@ -589,7 +603,7 @@ generate_env_file() {
     cat > "$ENV_FILE" <<EOF
 # OpsMesh 生产环境配置
 # 生成时间: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
-# 权限 0600；内含全部明文口令，勿提交仓库/勿外传。
+# 内含全部明文口令，勿提交仓库/勿外传；应仅部署用户可读（POSIX 0600 或平台等价 ACL）。
 # 重新生成：./scripts/deploy.sh init --force（会覆盖本文件）
 
 # === 核心安全（全部随机生成，无需手工修改）===
@@ -711,8 +725,17 @@ LOG_LEVEL=info
 TZ=UTC
 EOF
 
+    # 权限必须**验证**而不是假定：NTFS/Git-Bash 上 chmod 会静默失败（`|| true`），
+    # 此时文件仍是 0644 而日志照说"权限 0600"——一句关于凭据文件保护的不实陈述。
     chmod 600 "$ENV_FILE" 2>/dev/null || true
-    log_ok "已生成 ${ENV_FILE}（随机口令/密钥，权限 0600）"
+    mode="$(stat -c '%a' "$ENV_FILE" 2>/dev/null || stat -f '%Lp' "$ENV_FILE" 2>/dev/null || echo unknown)"
+    if [ "$mode" = "600" ]; then
+        log_ok "已生成 ${ENV_FILE}（随机口令/密钥，权限 0600）"
+    else
+        log_warn "已生成 ${ENV_FILE}，但实际权限为 ${mode}（chmod 未生效——本文件系统不支持 POSIX 权限）"
+        log_warn "该文件含全部明文口令：请用平台 ACL 限制读取（Windows 例：icacls 文件 /inheritance:r /grant:r 当前用户:F），"
+        log_warn "不要把 chmod 成功当成凭据已被保护。"
+    fi
 
     if [ "$host" = "127.0.0.1" ]; then
         log_warn "未能自动探测本机 IP，OPSMESH_ADVERTISE_ADDR 暂设为 https://127.0.0.1:8080"
@@ -982,9 +1005,9 @@ run_smoke_tests() {
     # 查询带 `time() - timestamp(up) < 60`：只统计【仍在被采集但报 0】的目标，
     # 排除「已从配置中删除、样本进入 5 分钟 staleness 窗口」的历史 series
     # （否则改完 prometheus.yml 重启后，已删除的 job 会在窗口内造成误判）。
-    local attempt q_resp down_jobs
+    local q_resp down_jobs
     down_jobs=""
-    for attempt in 1 2 3 4 5 6 7 8 9; do
+    for _ in 1 2 3 4 5 6 7 8 9; do
         q_resp="$(curl -fsS --max-time 8 \
             --data-urlencode 'query=up == 0 and (time() - timestamp(up)) < 60' \
             "http://127.0.0.1:$(env_val PROMETHEUS_PORT 9092)/api/v1/query" 2>/dev/null || true)"
@@ -1080,7 +1103,7 @@ run_smoke_tests() {
 print_access_info() {
     log_section "部署完成"
 
-    local adv scheme rest port_adv
+    local adv scheme rest
     adv="$(env_val OPSMESH_ADVERTISE_ADDR)"
     scheme="${adv%%://*}"; rest="${adv#*://}"; rest="${rest%%/*}"
 
@@ -1103,7 +1126,7 @@ print_access_info() {
     echo -e "${BOLD}凭据${NC}"
     echo -e "  admin 初始口令:  grep '^ADMIN_PASSWORD=' ${ENV_FILE}   （首登强制改密）"
     echo -e "  Grafana:         grep '^GRAFANA_ADMIN_PASSWORD=' ${ENV_FILE}"
-    echo -e "  MySQL/Redis:     同上，见 ${ENV_FILE}（权限 0600）"
+    echo -e "  MySQL/Redis:     同上，见 ${ENV_FILE}（应仅部署用户可读）"
     echo ""
     echo -e "${BOLD}安全提醒${NC}"
     echo -e "  1. 控制面 8080/9090 默认对全网卡发布：请用安全组/防火墙限制来源（仅放行运维网段与 agent 网段）。"

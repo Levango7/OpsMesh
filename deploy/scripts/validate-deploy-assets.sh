@@ -11,6 +11,10 @@
 #   4. Compose 渲染：两份 compose（+反代 overlay）可渲染，项目名为 opsmesh*，
 #      且不存在「所连网络全为 internal + 声明宿主端口」的静默失效组合
 #   5. K8s 样例清单：kubeconform 校验（未安装则跳过并提示）
+#   6. 行尾一致性：部署资产（Dockerfile/脚本/Helm/compose）不得含 CR
+#   7. 镜像发布名 ↔ chart 引用一致性（发布名集合来自 CI，单一事实源）
+#   8. 构建上下文自洽：Dockerfile 字面 COPY 源必须存在且不被 .gitignore 排除
+#   9. 提交内容不得含**行内**孤立 CR（会随 blob 推送、被渲染器当换行）
 #
 # 用法：bash deploy/scripts/validate-deploy-assets.sh
 set -uo pipefail
@@ -226,15 +230,16 @@ POSTGRES_PASSWORD=CITestPgPw1
 GRAFANA_ADMIN_PASSWORD=CITestGrafanaPw1
 TLS_CN=opsmesh.ci.local
 ENVEOF
-    for f in deploy/docker/docker-compose.prod.yml; do
-        out="$(docker compose --env-file "$TMPENV" -f "$f" config 2>&1 >/dev/null)"
-        if [[ $? -eq 0 ]]; then
-            ok "compose 渲染通过：${f}"
-        else
-            bad "compose 渲染失败：${f}"
-            echo "$out" | head -12 | sed 's/^/         /'
-        fi
-    done
+    # 单文件不用 for：shellcheck SC2043（"loop will only ever run once"）正是提醒这里
+    # 曾经有两个文件、现在只剩一个——写成循环会让人以为还漏了一个 compose。
+    f=deploy/docker/docker-compose.prod.yml
+    out="$(docker compose --env-file "$TMPENV" -f "$f" config 2>&1 >/dev/null)"
+    if [[ $? -eq 0 ]]; then
+        ok "compose 渲染通过：${f}"
+    else
+        bad "compose 渲染失败：${f}"
+        echo "$out" | head -12 | sed 's/^/         /'
+    fi
     out="$(docker compose --env-file "$TMPENV" \
         -f deploy/docker/docker-compose.prod.yml \
         -f deploy/docker/docker-compose.prod-proxy.yml config 2>&1 >/dev/null)"
@@ -547,6 +552,38 @@ else
         ok "没有 COPY 源被 .gitignore 排除（干净检出与本工作区在这一点上等价）"
     fi
 fi
+
+# ---------------------------------------------------------------
+sec "9. 提交内容里的『行内孤立 CR』（§6 抓不到、grep 也看不见的那一类）"
+# ---------------------------------------------------------------
+# 为什么 §6 不够，要单列一节：
+#   ① 范围：§6 只扫部署资产（Dockerfile/*.sh/*.yml/…），文档与代码不在其内；
+#      而且它判的是"含任何 CR"——放到全仓会把 Windows 检出的正常 CRLF 行尾全判成缺陷，
+#      所以它只能窄覆盖，这是刻意的。
+#   ② 危害形态不同：危险的是**行内**孤立 CR（不是行尾）。git 的 CRLF 归一化（* text=auto）
+#      只处理行尾，行内 CR 会**原样进入 blob 并被推送**；markdown 渲染器把它当换行，
+#      于是一条 bullet 从句子中间断开——2026-09-26 在 CHANGELOG.md 实测抓到一处已推送的。
+#   ③ 检测口径：必须问 git 自己而不是读工作区文件。--cached 读**暂存 blob**（clean filter
+#      已应用），行尾 CRLF 归一化掉了，剩下的任何 CR 都必然是真杂质。实测对照：
+#      同一仓库工作区 335 个文件带正常 CRLF → 本门禁 0 误报；CHANGELOG.md 那 1 个行内 CR → 点名。
+#      反过来若在 Windows 工作区用 grep/awk 找 CR，MSYS 文本模式会吞 CR 而返回 0（见 §6 注释）。
+# 门禁后端缺席必须**判红而不是判绿**（本轮 actionlint/shellcheck 的教训）：
+# 因此下面显式区分 rc=1（无匹配，正常）与 rc≥2（PCRE 不可用/命令失败 = 门禁失明）。
+LONE_CR_OUT="$(git grep -IP --cached -e '\r(?!\n)' -- . 2>&1)"
+case $? in
+    0)
+        bad "以下文件的**已提交内容**含行内孤立 CR（会被 markdown/渲染器当换行，且 grep 在 Windows 上看不见）："
+        echo "$LONE_CR_OUT" | head -20 | sed 's/^/         /'
+        echo "         修法：按字节删掉该 CR（勿用 sed/perl 的文本模式，它会连行尾一起改写）"
+        ;;
+    1)
+        ok "全部暂存 blob 无行内孤立 CR（含 .md/.go/.yml 等所有文本文件）"
+        ;;
+    *)
+        bad "行内 CR 门禁**失明**：git grep -P 返回非 0/1 状态，输出：$(echo "$LONE_CR_OUT" | head -3 | tr '\n' ' ')"
+        echo "         这不是「内容干净」，而是「没检查成」：请确认该 git 构建带 PCRE（git grep -P 可用）"
+        ;;
+esac
 
 echo ""
 echo "==================================================="
