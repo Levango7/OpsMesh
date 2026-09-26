@@ -10,7 +10,7 @@
 > 对外最新的 `v0.9.1` 实测是空壳——GitHub Release `assets=0`，且 `ghcr.io/levango7/*` 里
 > **没有 0.9.1 标签的镜像**（根因与三重证据见 §19；发布链路缺陷已修，门禁见 §20）。
 > 因此"商用就绪"的必要条件尚未满足，且它**不是写代码能补的**：必须在门禁于 CI 真跑绿之后
-> 切一个版本（§21 第 2 项），验收口径是"Release 产物非空 + 版本标签镜像可解析 + 签名与 SBOM 齐备"。
+> 切一个版本（§23 第 2 项），验收口径是"Release 产物非空 + 版本标签镜像可解析 + 签名与 SBOM 齐备"。
 > 同期可安装的最新镜像仍是 `0.9.0`（2026-09-05），**不含**本轮全部安全修复。
 > **与既有报告的关系**：`docs/evaluation-report.md`（2026-09-16）已覆盖代码质量维度且标记 35/35 已修复。本报告**不重复**该维度，聚焦其未覆盖的**商用阻断项**，并对其中的错误结论做了实证纠正。
 
@@ -1749,7 +1749,7 @@ ghcr.io/levango7/opsmesh-agent:latest  -> 200
 - **`opsmesh-binary` 与外部 GitOps chart 的关系**：私有仓库路径的 leaf 名保持**逐字不变**
   （向后兼容既有 GitOps 写回），同时仓库内 chart 现在用的就是这个 leaf 名，
   两边命名关系从此可被 §7 静态核对。仍存的不确定只剩外部 chart 的 values 结构
-  （它写的是 `.global.image.tag/digest`，本仓是 `.controlplane.image.*`），需要该仓库权限，列入 §21。
+  （它写的是 `.global.image.tag/digest`，本仓是 `.controlplane.image.*`），需要该仓库权限，列入 §23。
 
 ### 20.4 明确不做的事
 
@@ -1831,10 +1831,140 @@ go: cloud.google.com/go/auth@v0.18.2: read "https://goproxy.cn/cloud.google.com/
   （CI 侧同一检查 0.7 秒完成，差在 Windows 逐脚本起进程的成本）。因此**最终结论以 CI 的 actionlint step 为准**，
   本机证据只覆盖「复现 + 逐类修复模式正确」，不含「整仓 workflow 全清」。
 
+## 21. 监控资产对账：出厂告警有一批"永远不可能触发"（2026-09-26）
+
+起因是清单里那条长期挂着的开口——"`/metrics` 在 8080 与 9091 返回不同序列集"。
+把它当真去查，结论比"两个端口不一样"严重得多：**Prometheus 只抓 9091，
+而出厂规则/面板引用的一批序列在 9091 上根本不存在**。
+
+### 21.1 实测证据（本机独立实例，抓真实 9091）
+
+| 被引用的序列 | 出处 | 9091 命中 | 后果 |
+|---|---|---|---|
+| `http_requests_total` | HighErrorRate + 总览面板 | 0（真名 `opsmesh_http_requests_total`） | 规则恒 no data |
+| `http_request_duration_seconds_bucket` | HighLatency + 面板 | 0 | 同上 |
+| `opsmesh_tasks_failed_total` | TaskExecutionFailed | 0（真名 `opsmesh_tasks_total{status="failed"}`） | 同上 |
+| `opsmesh_device_status` | DeviceOffline | 0（**全仓从未产出过这个指标**） | 同上 |
+| `process_cpu_seconds_total` | HighCPUUsage + CPU 面板 | 0（注册表只有 start_time/rss/vms/pid） | 同上 |
+| `node_filesystem_*` | DiskSpaceLow | 0（栈里没有 node_exporter） | 同上 |
+| `opsmesh_alerts_total{severity}`、`opsmesh_grpc_request_total`、`opsmesh_leader_elections_total` | operations.md 指标表 | 0（代码里从未实现） | 客户照文档接监控→空面板 |
+
+关键在于**这类缺陷不会报错**：PromQL 语法合法，而 Prometheus 对无数据的处置就是不评估。
+CI 也看不见，因为它只跑代码测试与静态清单，没有任何一处把"规则引用的名字"与"实际渲染的序列"放在一起对过账。
+客户侧的表现是：出事那天没有告警——这与 §20 的镜像命名、§19 的发布链路是同一族问题：**声明与事实从不互相校验**。
+
+### 21.2 处置
+
+| 层面 | 改动 |
+|---|---|
+| 两个端口一份渲染 | 8080 与 9091 共用 `Server.writeMetricsBody`（`internal/controlplane/metrics_endpoint.go`）；"某序列只在另一个端口有"从此结构上不可能 |
+| 补齐抓取面 | `internal/metrics` 新增应用级仪表值：`opsmesh_devices_total`、`opsmesh_device_status{status="online\|offline"}`、`opsmesh_alerts_active`、`opsmesh_tickets_open`（**0 值也恒定输出**，冷启动就能看到"0/0"而不是缺序列）；设备状态只按显式 `online`/`offline` 计数，`discovered`/`provisioning` 不塞进 offline——那会凭空造出掉线告警 |
+| 补 CPU | 新增 `process_cpu_seconds_total`（counter，读 `/proc/self/stat` 的 utime+stime）。非 Linux **不输出该序列**而不是输假的 0：假的 0 会让 `rate()` 显示"CPU 空闲"，比缺数据更误导 |
+| 规则口径 | `DeviceOffline` 从"离线 > 10 台"改成**占比 > 20%**（10 台的阈值对 20 台小集群永不触发、对 5000 台又太迟钝）；`HighErrorRate`/`HighLatency` 用 `{__name__=~"opsmesh_…\|…"}` **同时覆盖控制面与微服务两套命名**（见下）；直方图补 `sum by (le)`；`opsmesh_tasks_failed_total` 改用真实 counter |
+| 主机级规则 | `DiskSpaceLow` 从默认文件移出，落到 `deploy/monitoring/prometheus-alerts.host.example.yml`，头部写明"需要 node_exporter，本栈不含"；另配 `DiskSpaceCritical` |
+| 文档 | operations.md §4.1 指标表**重写为与实测一致**，并写明两套命名并存的事实 |
+
+### 21.3 一个必须记住的并存事实：两套 HTTP 指标命名
+
+控制面（`internal/metrics`）导出 `opsmesh_http_requests_total`；微服务（`pkg/metrics`，
+目前 device-svc / task-svc / alert-svc 注册了 `/metrics`）导出**无前缀**的 `http_requests_total`。
+两类 job 都被 Prometheus 抓取，所以任何按概念写的规则/面板**必须同时覆盖两个名字**——
+第一版我只把规则改成带前缀的那种，等于把覆盖面从"全部目标"悄悄缩成"只有控制面"，
+是修 bug 时新引入的窄化（已改为 `__name__` 并集，并在 operations.md 写明）。
+彻底统一命名会破坏客户已有面板与告警，属版本级破坏性变更，记入待办而不是本轮擅改。
+
+### 21.4 防复发：三条契约测试（都做了故障注入）
+
+`internal/controlplane/metrics_contract_test.go`：
+
+| 测试 | 断言 | 注入验证 |
+|---|---|---|
+| `TestShippedAlertRulesReferenceExportedMetrics` | 规则文件里表达式引用的每个 `opsmesh_*`/`process_*` 名字，必须在真实渲染的 exposition 里可见 | 把 `opsmesh_device_status` 改成带 typo 的名字 → **FAIL 并点名**；还原 → PASS |
+| `TestShippedDashboardsReferenceExportedMetrics` | 出厂 Grafana 面板同罪同判 | 同上（面板引用被清空时**判红而不是静默跳过**） |
+| `TestDocumentedMetricsAreExported` | operations.md 指标表第一列的每个名字必须真的能抓到 | 本轮**上线即抓到我刚写错的一行**（把 histogram 家族名写成 `opsmesh_http_request_duration_seconds`，实际导出的是 `_bucket`/`_sum`/`_count`）⇒ 门禁对我的手写字也生效 |
+| `TestMetricsPortsServeIdenticalExposition` | 8080 与 9091 的序列名集合必须逐字一致（只比名字不比数值，否则 go_goroutines 会造成偶发失败） | — |
+
+解析细节都写在注释里，避免以后被"顺手简化"掉：只从 `expr:` 行取名字（否则 YAML 的组名
+`opsmesh_service_alerts` 会被当指标误判，第一版就误报了 5 条）；同时支持 JSON 里的 `{ "expr": ...` 形态；
+外部导出器的序列（`node_*`）走**带理由的显式豁免表**，不塞进通用逻辑。
+
+### 21.5 验证与遗留
+
+- 真机：`opsmesh_device_status{status="online"} 3` / `{offline} 0`、`opsmesh_devices_total 3`、
+  `opsmesh_alerts_active 2` 在 9091 可见；8080 与 9091 的序列名集合 md5 相同。
+- 代码：`internal/controlplane`（39.2s）与 `internal/metrics` 全绿；`gofmt`/`go vet`/`golangci-lint` 干净；
+  `/proc/self/stat` 解析另有 4 个用例（含 comm 带空格与右括号的错位陷阱、畸形输入必须拒绝）。
+- 遗留（记入待办，未擅动）：① 统一控制面与微服务的 HTTP 指标命名（破坏性，随版本走）；
+  ② 其余 13 个微服务未注册 `/metrics`（现只有 device/task/alert 三个）；
+  ③ node_exporter 是否纳入出厂栈（决定主机级告警能否默认可用）。
+
+## 22. 交付脚本第一次被静态检查：三处"哑按钮 + 不实陈述"（2026-09-26）
+
+起因很小：给 `validate-deploy-assets.sh` 加第 9 节时，顺手对 `deploy/scripts/*.sh` 跑了一次 shellcheck。
+结果不是 lint 噪音，是**三处真实缺陷**——而它们一直躲着，因为
+**CI 的 actionlint 只检查 workflow 里的内联 `run` 块，不会跟进被调用的脚本**，
+于是 13 个「客户在生产机上直接执行」的 bash 入口从未被任何静态门禁看过一眼。
+
+### 22.1 三处真实缺陷
+
+| # | 缺陷 | 表现 | 处置 |
+|---|---|---|---|
+| 1 | `deploy/k8s/deploy-opsmesh.sh` 的 `--skip-images` 是**哑按钮** | usage 里承诺了它，参数解析把 `SKIP_IMAGES=true` 存进一个**从未被读取**的变量；`load_images()` 只看 `LOAD_IMAGES`。传与不传行为一致，且无人报错 | 与 `--load-images` 共用一个开关（`--skip-images` → `LOAD_IMAGES=false`），并写明"两个都给时最后出现者为准"；哑变量删除 |
+| 2 | `deploy.sh` 的 `PASSWORD_SPECIAL_CHARS` **从未被任何代码引用**，而口令生成走 `openssl rand -base64` | 常量上方三段注释认真解释了"为什么排除 `@` `#` `$` `"` `\` 反引号 与空白"，但 base64 字母表含 `/`（不在该集合内）⇒ 生成的口令可以违反自己声明的字符集。这是 §19/§20/§21 同一族的"声明与事实从不互相校验"，只不过发生在凭据上 | 新增 `rand_pw`：字符集严格 ⊆ `[0-9a-f] ∪ PASSWORD_SPECIAL_CHARS`，末位恒为特殊字符（满足"含特殊字符"类策略）；4 个口令改用之。`JWT_SECRET`/`ENCRYPTION_KEY` **刻意不变**（后者必须是合法 base64，解码后要正好 32 字节） |
+| 3 | `.env` 生成后**无条件自称"权限 0600"** | `chmod 600 … \|\| true` 在无 POSIX 权限的文件系统（NTFS/Git-Bash）上静默失败，实际仍是 0644，而日志与 `.env` 头注释都说 0600——一句关于凭据保护的不实陈述 | 先 `stat` 实测再陈述：0600 才说 0600，否则 WARN 报出真实 mode 并给平台 ACL 处置建议；`.env` 头注释与部署摘要里另外两处"权限 0600"一并改为不假定结果 |
+
+另有 11 处纯死代码（`logs.sh`/`simulate.sh`/`status.sh` 里从未使用的颜色变量、`status.sh` 的 `COMPOSE_FILE`、
+两个脚本的 `SCRIPT_DIR`、`print_access_info` 的 `port_adv`、轮询计数 `attempt` → `_`），以及
+`load-test.sh` 的 `target_replicas`：它作为第 3 个参数被解析却从不参与判定，现在真的进入结论
+（达标 / 已扩容但未达目标 / 未触发三态），并顺带修掉了 `${max_pods}` 为空时 `[[ -gt ]]` 的报错。
+
+### 22.2 行内孤立 CR：我自己的推送内容里也有杂质
+
+用户对口径的要求是「确保推送上去的不是包含杂质的」。复查方式是全仓扫**跟踪文件**的字节，
+结果抓到一处已随 `1bde2b3` 推上 main 的缺陷：`CHANGELOG.md` 某条 bullet 中间有一个**孤立 `\r`**（不在行尾）。
+
+这类字节有三重隐蔽性，值得单独记：
+
+1. `grep`/`awk` 在 Git-Bash 下看不见它（MSYS 文本模式读时吞 CR）——见部署资产门禁第 6 节的同源教训；
+2. git 的 CRLF 归一化（`* text=auto`）只处理**行尾**，行内 CR 原样进 blob 并被推送；
+3. markdown 渲染器把它当换行 ⇒ 一条 bullet 从句子中间断开，而 GitHub 上的 diff 视图不会highlight它。
+
+修法用 Node 以 latin1 逐字节 splice（读 utf8 写 latin1 会把整个中文文件洗成乱码——本轮之前撞过一次，
+靠 `file-history` 快照恢复），改完断言 UTF-8 仍合法且字节数只减 1。
+
+### 22.3 两条新门禁（都做了故障注入）
+
+| 门禁 | 判据 | 为什么这样判 | 注入验证 |
+|---|---|---|---|
+| `validate-deploy-assets.sh` §9 | `git grep -IP --cached '\r(?!\n)'`——扫**暂存 blob**里的行内 CR | 读工作区必然误报：本机 335 个文件带正常 CRLF 行尾（Windows 检出所致）。问 git 自己，clean filter 已把行尾归一化，剩下任何 CR 都必是真杂质。rc=0 判红、rc=1 判绿、**rc≥2 判红为"门禁失明"**（PCRE 不可用不等于内容干净，见 §20.6 的 shellcheck 教训） | 造一个含行内 CR 的文件 `git add` → 点名；修复前 index 仍是 HEAD 的带 CR 版本 → §9 立刻红，暂存修复后 → 绿（两向都是自然发生的，无需伪造） |
+| CI `security` job 的 shellcheck step | 13 个交付脚本 `-S warning` 零 findings | 钉版 v0.10.0 且**断言 `version:` 行**（下到别的版本=门禁强度变了却看不出来）；空清单直接 `::error::`（清单为空不等于脚本干净）；下载 5 次退避（§20.5 教训：一次代理截断=整批门禁失败）；取二进制而非 docker 镜像——本机 Docker 配了镜像白名单代理拉不到 `shellcheck-alpine`，runner 侧则要扛 Docker Hub 匿名限额，同一门禁不该有两种环境失效方式 | 往 `proto/scripts/gen.sh` 追加一行未使用变量 → 报 SC2034 并 rc=1；`git checkout --` 还原 → 0 findings |
+
+版本断言本身也是一次"先测再写"：`shellcheck --version` 首行是
+`ShellCheck - shell script analysis tool`，版本在第二行 `version: 0.10.0`——
+最初按 `ShellCheck 0.10.0` grep 永远不匹配，会在 CI 里把一个正常门禁写成永久失败。
+
+### 22.4 验证
+
+- `rand_pw`：从 `deploy.sh` 里抽出**真实定义**跑 300 次，断言长度、字符集越界字符为空、至少含一个特殊字符 ⇒ `bad=0`；
+  负向自证：故意把校验集合写窄（漏掉 `_`）立刻报 42 处 ⇒ 断言是活的。
+- 沙箱真跑：把 `deploy/docker` 复制到 `/tmp` 独立目录（删掉复制来的真实 `.env`/证书，避免把密钥材料扩散），
+  跑 `deploy.sh init` → 生成成功，四条口令 len=32、无越界字符、各含特殊字符；`JWT_SECRET`(64)/`ENCRYPTION_KEY`(44) 不变；
+  `docker compose --env-file .env -f docker-compose.prod.yml config` rc=0 ⇒ 新字符集在 compose 插值链路上真的可用；
+  权限分支本机实测走 WARN（`实际权限为 644`）——即缺陷 #3 的复现与修复同时被看见。
+  （顺带发现 `confirm()` 在非 tty 下把**问题本身**印成 `[ERROR]`，已改为一句说明"已按拒绝处理"的 error，不再误导。）
+- 全量：13 个脚本 `shellcheck -S warning` 0 findings + `bash -n` 全通过；`gofmt`/`go vet` 干净。
+- 遗留（记入 §23）：`-S info` 级仍有 39 处 SC2015（`a && b || c` 风格）与 3 处 SC2012，属可读性而非正确性，未在本轮动。
+
+## 23. 下一轮清单（按优先级）
+
 | # | 事项 | 为什么排在这 |
 |---|---|---|
 | 1 | 看本轮 commit 的 CI：`release-dryrun`、`image`、`image-agent`、`security` 的 **step 级**证据 | 标签策略、命名收敛、actionlint 门禁都要靠真跑证实或证伪，本机 bash 只能证一半 |
 | 2 | 切 `v0.9.2` 并验收产物：GitHub Release assets 非空 + `ghcr.io/levango7/*:0.9.2` 可解析 + 签名与 SBOM 齐备 | 商用可交付的最低事实：存在一个版本，其镜像与二进制都真的发布成功 |
 | 3 | P1-7 许可与第三方合规（NOTICE/THIRD_PARTY、MPL-2.0 依赖的再分发含义、基础镜像来源目录） | 唯一剩下的 P1 大块，属商务 + 法务判定 |
 | 4 | 外部 GitOps chart 的 values 结构核对（需该仓库读权限） | §20.3 遗留的最后一处不确定 |
-| 5 | 微服务剩余约 250 处 `Printf` 的逐点严重级别升级 | 增量改进，统一管道已就位 |
+| 5 | 统一控制面与微服务的 HTTP 指标命名（`opsmesh_http_*` vs 无前缀 `http_*`） | 破坏性变更，需随版本走；当前出厂规则/面板已用 `__name__` 并集兜住（§21.3） |
+| 6 | 其余 13 个微服务未注册 `/metrics`（现只有 device/task/alert） | 并集写法目前只能覆盖已开端点的三个；不注册就永远没有它们的数据 |
+| 7 | node_exporter 是否纳入出厂栈 | 决定主机级告警（磁盘等）能否默认可用；现在只能以 `.example` 形式提供（§21.2） |
+| 8 | 微服务剩余约 250 处 `Printf` 的逐点严重级别升级 | 增量改进，统一管道已就位 |
+| 9 | 把交付脚本的 shellcheck 口径从 `-S warning` 提到 `-S info`（余 39×SC2015、3×SC2012） | 可读性而非正确性；提口径前要逐条判"是否真死变量"，与本轮 SC2034 的处置同法，不宜顺手 |
