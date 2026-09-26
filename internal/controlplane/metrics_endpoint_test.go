@@ -46,24 +46,33 @@ func TestHandlePrometheusMetrics_Empty(t *testing.T) {
 	}
 	body := w.Body.String()
 	// 校验 Prometheus text exposition format 关键标记。
+	//
+	// 2026-09-26 起 8080 与 9091 共用一份注册表渲染（见 metrics_endpoint.go 的 writeMetricsBody），
+	// 因此这里不再是"手写 4 行"的那份体：应用级仪表值由注册表产出，且**刻意不再产出
+	// 未带标签的 opsmesh_tasks_total gauge**——它在 9091 上是带 status 标签的 counter，
+	// 同名两种类型正是"两个端口都被抓时序列冲突"的成因。
 	required := []string{
 		"# HELP opsmesh_devices_total",
 		"# TYPE opsmesh_devices_total gauge",
 		"opsmesh_devices_total 0",
-		"# HELP opsmesh_tasks_total",
-		"# TYPE opsmesh_tasks_total gauge",
-		"opsmesh_tasks_total 0",
+		"# TYPE opsmesh_device_status gauge",
+		`opsmesh_device_status{status="online"} 0`,
+		`opsmesh_device_status{status="offline"} 0`,
 		"# HELP opsmesh_alerts_active",
-		"# TYPE opsmesh_alerts_active gauge",
 		"opsmesh_alerts_active 0",
 		"# HELP opsmesh_tickets_open",
-		"# TYPE opsmesh_tickets_open gauge",
 		"opsmesh_tickets_open 0",
 	}
 	for _, want := range required {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metrics body missing %q; got:\n%s", want, body)
 		}
+	}
+	// 设备状态序列必须**恒定输出 0 值**：DeviceOffline 告警的口径是 offline/(online+offline)，
+	// 冷启动时若两个序列都不存在，比值无数据 ⇒ 告警既不误报也不漏报，但排查时看不到"0/0"这一事实。
+	// 同名不同型的回归防护：
+	if strings.Contains(body, "# TYPE opsmesh_tasks_total gauge") {
+		t.Fatalf("opsmesh_tasks_total 又变成 gauge 了：9091 上它是按 status 累加的 counter，同名两种类型会造成抓取冲突")
 	}
 }
 

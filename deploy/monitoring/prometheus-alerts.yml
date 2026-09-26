@@ -13,23 +13,30 @@ groups:
           summary: "Service {{ $labels.job }} is down"
           description: "{{ $labels.job }} has been down for more than 1 minute."
 
+      # HTTP 错误率/延迟：**必须同时覆盖两套命名**。
+      # 控制面（internal/metrics）导出 opsmesh_http_requests_total，而微服务（pkg/metrics）
+      # 导出无前缀的 http_requests_total；prometheus.yml 两类 job 都抓（controlplane:9091 +
+      # device/task/alert-svc）。只写其中一边 ⇒ 另一半目标恒无数据，规则看起来全局生效实则只覆盖一半。
+      # 彻底统一命名是破坏性变更（客户已有面板/告警按现名写死），此处先用 __name__ 正则并集，
+      # 统一方案记在报告 §23 的待办里。分母用 clamp_min(...,1) 而不是裸除：零流量时 0/0 会得到 NaN，
+      # 而 NaN 在 Prometheus 里等于"不评估"——正好是本轮要消灭的那种静默失效。
       - alert: HighErrorRate
-        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+        expr: sum(rate({__name__=~"opsmesh_http_requests_total|http_requests_total",status=~"5.."}[5m])) / clamp_min(sum(rate({__name__=~"opsmesh_http_requests_total|http_requests_total"}[5m])), 1) > 0.05
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: "High error rate on {{ $labels.job }}"
-          description: "Error rate is {{ $value | humanizePercentage }} for {{ $labels.job }}."
+          description: "5xx 占比 {{ $value | humanizePercentage }} 已持续 5m（覆盖控制面与已开 /metrics 的微服务）。"
 
       - alert: HighLatency
-        expr: histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) > 2
+        expr: histogram_quantile(0.99, sum by (le) (rate({__name__=~"opsmesh_http_request_duration_seconds_bucket|http_request_duration_seconds_bucket"}[5m]))) > 2
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: "High P99 latency on {{ $labels.job }}"
-          description: "P99 latency is {{ $value }}s for {{ $labels.job }}."
+          description: "P99 延迟 {{ $value }}s 已持续 5m。sum by (le) 是必须的：不聚合会把每个 method/path/status 各算一条曲线。"
 
       - alert: HighCPUUsage
         expr: rate(process_cpu_seconds_total[5m]) * 100 > 80
@@ -70,29 +77,26 @@ groups:
           summary: "Redis is down"
           description: "Redis cache has been unreachable for 30 seconds."
 
-      - alert: DiskSpaceLow
-        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.1
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Disk space low on {{ $labels.instance }}"
-          description: "Less than 10% disk space remaining."
+      # 磁盘类规则不在此文件：它们依赖 node_* 序列，而本栈没有 node_exporter
+      # ⇒ 放进默认加载的文件里就是一条永久静默的死规则。见 prometheus-alerts.host.example.yml。
 
   - name: opsmesh_business_alerts
     interval: 1m
     rules:
       - alert: DeviceOffline
-        expr: opsmesh_device_status{status="offline"} > 10
+        expr: sum(opsmesh_device_status{status="offline"}) / clamp_min(sum(opsmesh_device_status{status="online"}) + sum(opsmesh_device_status{status="offline"}), 1) > 0.2
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "{{ $value }} devices are offline"
-          description: "More than 10 devices have been offline for 5+ minutes."
+          summary: "离线设备占比 {{ $value | humanizePercentage }}"
+          # 口径说明：用**占比**而不是旧写的 "> 10 台"——10 台的阈值对 20 台的小集群等于永不触发，
+          # 对 5000 台的集群又太迟钝。分母只含 online+offline（不含 discovered/provisioning），
+          # clamp_min(...,1) 保证一台设备都没有时结果是 0 而不是 NaN。
+          description: "超过 20% 的已纳管设备处于 offline 已持续 5m：检查 agent 心跳、网络分区与控制面 --agent-offline-after 设置。"
 
       - alert: TaskExecutionFailed
-        expr: rate(opsmesh_tasks_failed_total[5m]) > 0.1
+        expr: sum(rate(opsmesh_tasks_total{status="failed"}[5m])) > 0.1
         for: 5m
         labels:
           severity: warning

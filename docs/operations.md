@@ -859,26 +859,49 @@ curl "$CP/api/v1/tasks/<task-id>/result" -H "$AUTH" -H "X-Tenant-ID: $TENANT"
 
 ### 4.1 Prometheus Metrics
 
-控制面在 `--metrics-port`（默认 9091）暴露 `/metrics` 端点，关键指标：
+控制面在 `--metrics-port`（默认 9091）暴露 `/metrics`。**Web 端口（8080）的 `/metrics` 与 9091 输出同一份内容**
+（2026-09-26 起共用同一渲染路径，见 `internal/controlplane/metrics_endpoint.go` 的 `writeMetricsBody`；
+8080 那份仍受 `--metrics-allow-cidr` 准入约束）。抓取一律指向 9091。
 
 表：关键 Prometheus 指标说明表
 
 | 指标 | 类型 | 说明 |
 |---|---|---|
-| `opsmesh_agents_total` | gauge | 在线 agent 总数 |
-| `opsmesh_tasks_total` | gauge | 任务总数（不带 label 的瞬时值，取值为当前 store 全量任务数；任务状态 pending/running/done/failed 经 REST `/api/v1/tasks?status=` 查询，不经此指标维度拆分） |
-| `opsmesh_task_queue_depth` | gauge | 任务队列深度 |
-| `opsmesh_devices_total{status}` | gauge | 设备总数（按状态分：online/offline/retired） |
-| `opsmesh_alerts_total{severity}` | counter | 告警总数 |
-| `opsmesh_http_request_duration_seconds` | histogram | HTTP 请求耗时 |
+| `opsmesh_agents_total` | gauge | 已注册 agent 数（快照） |
+| `opsmesh_tasks_total{status}` | counter | 按状态累加的任务事件数（done/failed/…）。**是累计值不是当前存量**；当前待执行量看 `opsmesh_task_queue_depth` |
+| `opsmesh_task_queue_depth` | gauge | 待执行队列深度 |
+| `opsmesh_devices_total` | gauge | 已纳管设备总数 |
+| `opsmesh_device_status{status}` | gauge | 设备数按连接状态细分（`online`/`offline`；`discovered`/`provisioning` 不计入任一侧，故两值之和可能小于 devices_total）。DeviceOffline 告警的口径 |
+| `opsmesh_alerts_active` | gauge | 活跃告警数 |
+| `opsmesh_tickets_open` | gauge | 未关闭工单数 |
+| `opsmesh_http_requests_total{method,path,status}` | counter | HTTP 请求数（路径已归一，基数上限见下） |
+| `opsmesh_http_request_duration_seconds_bucket` | histogram | HTTP 请求耗时的桶（`histogram_quantile` 要用这个名字） |
+| `opsmesh_http_request_duration_seconds_sum` / `opsmesh_http_request_duration_seconds_count` | counter | 耗时总和与观测次数（算平均耗时用这两个） |
 | `opsmesh_http_metrics_series` | gauge | 当前 HTTP 指标时序数（基数上限 2000，达到后新路径折叠为 `path=":other"`） |
 | `opsmesh_http_metrics_series_dropped_total` | counter | 因基数超限被折叠的请求数（持续增长=端点正被扫描） |
-| `opsmesh_grpc_request_total` | counter | gRPC 请求总数 |
-| `opsmesh_leader_elections_total` | counter | leader 选举次数 |
 | `opsmesh_audit_chain_supported` | gauge | 审计链校验是否被后端支持（P1-3；SQL=1，内存/老库=0，非 leader 副本恒 0） |
 | `opsmesh_audit_chain_ok` | gauge | 最近一次链校验结论（1=自洽，0=发现不一致/尚未校验） |
 | `opsmesh_audit_chain_checked_rows` | gauge | 最近一次校验覆盖的行数 |
-| `opsmesh_audit_chain_checks_total` | counter | 链自检执行次数（leader 每 60s 一次；长期不增长=维护循环停摆） |
+| `opsmesh_audit_chain_checks_total` | counter | 链自检执行次数（leader 周期执行；长期不增长=维护循环停摆） |
+| `opsmesh_agent_signature_verifications_total{alg,result}` | counter | agent 验签次数（P1-2；`result="rejected"` 持续增长=密钥错或被伪造） |
+| `opsmesh_agent_signing_key_source_total{source}` | counter | 验签所用密钥来源（`per_agent`/`fleet`；fleet 增长=仍在用全舰队共享密钥） |
+| `process_cpu_seconds_total` | counter | 本进程累计 CPU 秒（user+system）。**只在 Linux 输出**（读 `/proc/self/stat`）；其它平台该序列**不出现**——刻意不输假的 0 |
+| `process_resident_memory_bytes` | gauge | 进程驻留内存**近似值**（用 heap_inuse 近似，不是真 RSS） |
+| `process_virtual_memory_bytes` | gauge | 进程虚拟内存近似值（用 MemStats.Sys 近似） |
+| `process_start_time_seconds` / `process_pid` | gauge | 进程基础读数 |
+| `go_goroutines` / `go_memstats_*` / `go_gc_duration_seconds_*` | gauge/summary | Go 运行时指标 |
+
+> **两套命名并存（接监控前必读）**：控制面（`internal/metrics`）导出上表这些 `opsmesh_` 前缀名；
+> 微服务（`pkg/metrics`，目前 device-svc / task-svc / alert-svc 注册了 `/metrics`）导出**无前缀**的
+> `http_requests_total` 等。两类 job 都被抓取，所以按概念写的规则与面板必须同时覆盖两种名字——
+> 出厂规则与总览面板已用 `{__name__=~"opsmesh_http_requests_total|http_requests_total"}` 表达并集。
+> 彻底统一命名属破坏性变更（客户已有面板/告警按现名写死），已记入商用就绪报告 §23 待办。
+
+> **本表受测试约束**：`internal/controlplane/metrics_contract_test.go` 的
+> `TestDocumentedMetricsAreExported` 会解析本表第一列的指标名，逐个要求在真实渲染的 `/metrics`
+> 里可见。写这条门禁的当口它就抓到了事：此前表里列有 `opsmesh_alerts_total{severity}`、
+> `opsmesh_grpc_request_total`、`opsmesh_leader_elections_total` 三条**代码里从未实现**的指标，
+> 而照着文档接告警的人只会拿到永久空序列——文档一侧此前没有任何机制能发现这件事。
 
 ### 4.2 ServiceMonitor 配置
 

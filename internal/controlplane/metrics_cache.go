@@ -16,12 +16,19 @@ import (
 )
 
 // appCounts 是 /metrics 输出的应用级计数快照。
+//
+// devicesOnline/devicesOffline 是为 DeviceOffline 告警拆出来的：出厂规则引用带 status 标签的
+// 序列，而此前全仓只有一处未分状态的设备总数 ⇒ 该告警永远没有可比序列。
+// 注意 online+offline 不一定等于 devices：设备还有 unknown 等状态（实测 demo 种子即有差额），
+// 刻意不把未知状态塞进 offline —— 那会凭空造出一条"设备掉线"的假告警。
 type appCounts struct {
-	devices     int
-	tasks       int
-	alerts      int
-	ticketsOpen int
-	agents      int
+	devices        int
+	devicesOnline  int
+	devicesOffline int
+	tasks          int
+	alerts         int
+	ticketsOpen    int
+	agents         int
 }
 
 // appCountsCache 按 TTL 复用一次计算结果。零值可用（ttl=0 → 不缓存）。

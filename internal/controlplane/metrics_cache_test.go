@@ -9,12 +9,15 @@ package controlplane
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/metrics"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -118,8 +121,13 @@ func TestAppCountsCache_ConcurrentResolve(t *testing.T) {
 	}
 }
 
-// TestMetricsEndpoint_WithCacheEnabled 端到端验证接线：开缓存后连续两次抓取输出一致，
-// 且计数仍来自真实 store（不是被缓存写死的假值）。
+// TestMetricsEndpoint_WithCacheEnabled 端到端验证接线：开缓存后连续两次抓取的
+// **应用级计数**一致，且计数仍来自真实 store（不是被缓存写死的假值）。
+//
+// 2026-09-26 起 8080 与 9091 共用一份注册表渲染，响应体里多了 go_*/process_* 这类
+// **每次抓取本就会变**的运行期读数；再拿"整份 body 逐字相等"当缓存命中的判据，
+// 会从"验证缓存"退化成"验证 goroutine 数没变"（偶发失败 + 判据错位）。
+// 因此这里只比对受本缓存管辖的应用级行。
 func TestMetricsEndpoint_WithCacheEnabled(t *testing.T) {
 	st := store.NewMemoryStore()
 	st.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
@@ -127,6 +135,7 @@ func TestMetricsEndpoint_WithCacheEnabled(t *testing.T) {
 		store:         st,
 		cfg:           &config.Config{MetricsAllowCIDR: "127.0.0.0/8"},
 		metricsCounts: appCountsCache{ttl: time.Hour},
+		metrics:       metrics.New(),
 	}
 	scrape := func() string {
 		w := httptest.NewRecorder()
@@ -136,18 +145,48 @@ func TestMetricsEndpoint_WithCacheEnabled(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 		}
-		return w.Body.String()
+		return appGaugeLines(w.Body.String())
 	}
 	a := scrape()
 	// 抓取后再写一条数据：TTL 内应看到旧值（证明命中缓存），invalidate 后看到新值。
-	st.CreateTask(&proto.Task{AgentID: "agent-x", TenantID: "t1", Type: "shell", Command: "echo hi"})
+	//
+	// 用"工单"而不是"任务"作新增数据：任务计数在 exposition 里是 counter
+	// （opsmesh_tasks_total{status}，只在任务真的完成/失败后才产出），
+	// 单纯 CreateTask 不会改变任何受本缓存管辖的读数；工单数则是每次抓取都算的快照值。
+	st.CreateTicket("t1", &store.Ticket{Title: "cache-probe", Status: "open"})
 	b := scrape()
 	if a != b {
-		t.Fatalf("TTL 内两次抓取输出应一致（命中缓存）：\n%s\n---\n%s", a, b)
+		t.Fatalf("TTL 内两次抓取的应用级计数应一致（命中缓存）：\n%s\n---\n%s", a, b)
 	}
 	s.metricsCounts.invalidate()
 	c := scrape()
 	if c == a {
-		t.Fatalf("invalidate 后应反映新任务数，输出仍与首次相同：\n%s", c)
+		t.Fatalf("invalidate 后应反映新工单数，输出仍与首次相同：\n%s", c)
 	}
+	if !strings.Contains(c, "opsmesh_tickets_open 1") {
+		t.Fatalf("invalidate 后应看到 opsmesh_tickets_open 1，实际：\n%s", c)
+	}
+}
+
+// appGaugeLines 从 exposition 里挑出受 TTL 缓存管辖的应用级计数行。
+func appGaugeLines(body string) string {
+	wanted := []string{
+		"opsmesh_agents_total", "opsmesh_devices_total", "opsmesh_device_status",
+		"opsmesh_alerts_active", "opsmesh_tickets_open",
+	}
+	var out []string
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		for _, w := range wanted {
+			if strings.HasPrefix(trimmed, w) {
+				out = append(out, trimmed)
+				break
+			}
+		}
+	}
+	slices.Sort(out)
+	return strings.Join(out, "\n")
 }

@@ -243,10 +243,9 @@ func (s *Server) buildMetrics() (*http.Server, net.Listener, error) {
 			paginate.JSONError(w, http.StatusForbidden, "metrics access denied")
 			return
 		}
-		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		// 这一步同样是全量扫描（Agents），与 8080 的 4 次计数共用 TTL 缓存。
-		s.metrics.SetAgents(s.appMetricsCounts().agents)
-		fmt.Fprint(w, s.metrics.Render())
+		// 与 8080 共用同一渲染路径（含应用级仪表值）：两端口输出一致，
+		// 才不会出现"规则引用的序列只在另一个端口存在"这类永不触发的告警。
+		s.writeMetricsBody(w)
 	})
 	return &http.Server{Handler: recoveryMiddleware(mux), ReadHeaderTimeout: 5 * time.Second}, lis, nil
 }

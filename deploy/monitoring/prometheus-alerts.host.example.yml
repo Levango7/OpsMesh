@@ -1,0 +1,31 @@
+# 主机级告警规则（**默认不启用**）——需要自备 node_exporter
+#
+# 为什么单独放一个文件：本栈（deploy/docker、deploy/monitoring、deploy/helm）里**没有 node_exporter**，
+# 而下面这些表达式全部依赖 `node_*` 序列。放在默认加载的 prometheus-alerts.yml 里时，
+# Prometheus 对"无数据"的处置是**不评估**——不报错、不告警，于是这条 DiskSpaceLow
+# 是一条永久静默的死规则：运维以为"磁盘快满会响"，实际不会。
+# 2026-09-26 把它从默认文件移出来，并在 metrics_contract_test.go 里禁止默认文件再引用外部导出器序列。
+#
+# 启用方式：部署 node_exporter（或在 Kubernetes 里装 node-exporter DaemonSet），
+# 确认 prometheus.yml 有抓到它，再把本文件并入 rule_files 指向的目录。
+groups:
+  - name: opsmesh_host_alerts
+    interval: 1m
+    rules:
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}) < 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk space low on {{ $labels.instance }}"
+          description: "根分区剩余空间不足 10% 已持续 5m。OpsMesh 的审计归档、任务日志与 Loki 都写在同一块盘上，请清理或扩容。"
+
+      - alert: DiskSpaceCritical
+        expr: (node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}) < 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk space critical on {{ $labels.instance }}"
+          description: "根分区剩余空间不足 5%：MySQL 写入与对象存储此时最易失败，请立即处理。"

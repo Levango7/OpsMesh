@@ -61,6 +61,14 @@ type M struct {
 	durSum float64
 	durMax float64
 
+	// 应用级仪表值（快照 gauge，见 app_gauges.go）。8080 与 9091 共用同一渲染器，
+	// 因此这些值只需一份来源——把"两个端口指标集合不同"从根上消掉。
+	devices        int64
+	devicesOnline  int64
+	devicesOffline int64
+	alertsActive   int64
+	ticketsOpen    int64
+
 	// HTTP 指标。
 	// httpReqs: (method|path|status) -> count；httpHist: 同 key -> 直方图统计。
 	// key 形如 "GET|/api/v1/devices|200"，避免高基数（路径已归一化）。
@@ -340,6 +348,7 @@ func (m *M) Render() string {
 	b = m.appendHTTPMetrics(b)
 	b = m.appendAuditChainMetrics(b)
 	b = m.appendAgentSignatureMetrics(b)
+	b = m.appendAppGaugeMetrics(b)
 	b = m.appendRuntimeMetrics(b)
 	return string(b)
 }
@@ -528,6 +537,15 @@ func (m *M) appendRuntimeMetrics(b []byte) []byte {
 	b = append(b, "# HELP process_pid 进程 PID\n"...)
 	b = append(b, "# TYPE process_pid gauge\n"...)
 	b = append(b, fmt.Sprintf("process_pid %d\n", os.Getpid())...)
+
+	// 累计 CPU 秒（Linux 读 /proc/self/stat）。非 Linux **不输出该序列**：
+	// 输一个假的 0 会让 rate(process_cpu_seconds_total) 得到 0，读起来像"CPU 空闲"，
+	// 比缺序列更误导人（缺数据在 Grafana 里显式为 No data）。
+	if cpuSec, ok := readProcessCPUTimeSeconds(); ok {
+		b = append(b, "# HELP process_cpu_seconds_total 本进程累计 CPU 时间（秒，user+system）\n"...)
+		b = append(b, "# TYPE process_cpu_seconds_total counter\n"...)
+		b = append(b, fmt.Sprintf("process_cpu_seconds_total %f\n", cpuSec)...)
+	}
 
 	return b
 }
