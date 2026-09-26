@@ -1709,6 +1709,31 @@ github-release                 → skipped   ⇒ Release 资产仍是 0
   镜像用 `--build-arg VERSION` 从标签注入），但**按生产 values 装 Helm 的客户会部署到 0.9.0**
   ——又是"声明与事实不互相校验"，只是这次是版本维度。修法见 §23 待办：随发布 bump 版本源并让第 1 节核对。
 
+### 19.7 版本源对齐到 0.9.2，并把「标签 == 版本源」做成发版硬门禁（2026-09-26，用户决定：重切 v0.9.2 前一并 bump）
+
+§19.6 末尾那条待决项的处置：
+
+- **bump 面（12 个跟踪文件，逐处按整行/次数断言，不允许"改了一半"）**：`Chart.yaml`（version + appVersion）、
+  `values-production.yaml`（controlplane/agent 两处 tag + 注释 + GitOps 示例块）、`gitops/segments/production-segment.yaml`、
+  `internal/version/version.go`、`docker-compose.prod.yml` 两处提示语、`deploy.sh` 两处报错示例、
+  `deploy/k8s/deploy-opsmesh.sh` 的 `IMAGE_TAG` 默认值、5 份 `deploy/k8s/deployments/*.yaml`、`deploy/k8s/README.md`
+  的构建示例、以及门禁自身的 compose 渲染夹具。**刻意不改**：`values-production` 里"0.9.0/0.9.1 当时没有版本标签镜像"
+  这句历史事实、`docs/architecture/v1-roadmap.md` 的 `v0.9.0-rc` 里程碑、`internal/events` 测试夹具、
+  第三方依赖版本号（`terraform-plugin-log v0.9.0`），以及**未跟踪的本机 `deploy/docker/.env`**
+  （那是用户正在跑的部署状态，不是仓库交付物；`init` 也不会覆盖它）。
+- **证据链（本机真跑）**：门禁第 1 节六项全 `0.9.2`；`detect_version()` 从改动后的 `deploy.sh` 里抽出真实函数体
+  实跑返回 `0.9.2`；`helm template -f values-production.yaml` 渲染出
+  `image: ghcr.io/levango7/opsmesh-binary:0.9.2` 与 `…/opsmesh-agent:0.9.2`；
+  整仓 `go build ./...` 通过；13 个交付脚本 shellcheck 0 findings；门禁整体 `PASS=34 FAIL=0 SKIP=0`。
+- **新硬门禁（这是关键，不是"改完就算"）**：`release.yml` 的 `build-and-push` 在 checkout 之后、构建与登录之前
+  断言 `${GITHUB_REF_NAME#v} == Chart.yaml appVersion`，不等就 `::error::` + `exit 1`。
+  为什么放最前：矩阵是 fail-fast，放在构建之后等于"先把一半镜像推上注册表再失败"，留下半成品产物。
+  **两向验证**：抽出该 step 的真实 `run` 内容本地跑，`GITHUB_REF_NAME=v0.9.2` → rc=0 打印一致；
+  `v0.9.1` → rc=1 并点名"请先 bump 版本源"。
+- 生成期自我纠错一处：批量替换脚本原本按**子串**计数 `    tag: "0.9.0"`，被 7 空格缩进的注释示例行
+  （其中含一段 4 空格 + `tag:`）误匹配成 3 次而报警。改成**整行相等**匹配后正是 2 处。
+  ——计数断言这次的价值不是"通过"，而是**拦下了一次半改**。
+
 ## 20. 镜像发布名与消费方引用的对齐（把 §19.4 的两个待决项做掉，2026-09-26）
 
 §19.4 留下两条需要拍板的开口，本轮按「不改变对外契约的最小正确解」处理：
@@ -2013,7 +2038,7 @@ CI 也看不见，因为它只跑代码测试与静态清单，没有任何一�
 
 | # | 事项 | 为什么排在这 |
 |---|---|---|
-| 1 | 看本轮 commit 的 CI：`release-dryrun`、`image`、`image-agent`、`security` 的 **step 级**证据 | 标签策略、命名收敛、actionlint 门禁都要靠真跑证实或证伪，本机 bash 只能证一半 |
+| 1 | ~~看本轮 commit 的 CI step 级证据~~ **已完成**：run `36205827115`（13 job success，shellcheck step 与门禁第 9 节的输出行已取证）、run `36218894361`（矩阵修复 + 第 10 节） | 留下的唯一在办项是发布本身（第 2 项） |
 | 2 | 重切 `v0.9.2`（第一次尝试红在 §19.6 的矩阵缺陷，Release 仍是 0 资产）：修复合入后需**移动/重打标签**，再验收 GitHub Release assets 非空 + `ghcr.io/levango7/*:0.9.2` 可解析 + 签名与 SBOM 齐备 | 商用可交付的最低事实：存在一个版本，其镜像与二进制都真的发布成功。移动公开标签是对外可见动作，需授权 |
 | 3 | P1-7 许可与第三方合规（NOTICE/THIRD_PARTY、MPL-2.0 依赖的再分发含义、基础镜像来源目录） | 唯一剩下的 P1 大块，属商务 + 法务判定 |
 | 4 | 外部 GitOps chart 的 values 结构核对（需该仓库读权限） | §20.3 遗留的最后一处不确定 |
@@ -2022,4 +2047,4 @@ CI 也看不见，因为它只跑代码测试与静态清单，没有任何一�
 | 7 | node_exporter 是否纳入出厂栈 | 决定主机级告警（磁盘等）能否默认可用；现在只能以 `.example` 形式提供（§21.2） |
 | 8 | 微服务剩余约 250 处 `Printf` 的逐点严重级别升级 | 增量改进，统一管道已就位 |
 | 9 | 把交付脚本的 shellcheck 口径从 `-S warning` 提到 `-S info`（余 39×SC2015、3×SC2012） | 可读性而非正确性；提口径前要逐条判"是否真死变量"，与本轮 SC2034 的处置同法，不宜顺手 |
-| 10 | **版本源随发布一起 bump**：`Chart.yaml` 的 version/appVersion、`values-production.yaml` 三处 tag、gitops segment、`internal/version/version.go` 默认值仍写 `0.9.0`，而标签是 `v0.9.2` | 产物不受影响（版本由标签经 ldflags/`--build-arg` 注入），但**按生产 values 装 Helm 的客户会部署到 0.9.0**；第 1 节门禁只保证"版本源彼此一致"，不保证"版本源 == 正在发布的标签"，这一格是空的（见 §19.6 末） |
+| 10 | ~~版本源仍写 0.9.0~~ **已处理**：全量对齐到 0.9.2，并在 `release.yml` 加「标签 == Chart appVersion」硬门禁（见 §19.7）。**残留待办**：本机在跑的 `deploy/docker/.env` 仍是 `OPSMESH_VERSION=0.9.0`（未跟踪、属用户部署状态），升级到 0.9.2 需显式执行数据卷兼容的镜像替换而不是直接改 tag | 直接改 `.env` 的 tag 会让已在跑的容器换镜像；MySQL 数据卷的迁移是 §P0-5 那条链路，需要按升级流程走而不是改标签 |

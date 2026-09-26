@@ -29,7 +29,16 @@
 - **真正的问题不是路径，是成员资格**：`tf-provider` 是 Terraform 插件（`plugin.Serve`）。即使把构建目标修对，镜像 `CMD ["svc"]` 一启动就会打印 "This binary is a plugin" 并以码 1 退出 ⇒ **发布必定 CrashLoop 的产物比不发更糟**。且全仓无任何部署清单引用它（实测 `grep tf-provider deploy/ operator/` 为空），Helm chart 本来也不含它。
 - **处置**：从镜像矩阵**移除** `tf-provider`，并把"哪些模块不是服务"变成**带理由的显式豁免表**。它仍被 `services` job 逐个 `go build ./...` 覆盖，编译/测试覆盖度不减。
 - **两条防复发门禁**：① 第 2 节改为比对「矩阵 ∪ 豁免表」（新增非服务模块必须表态，不能靠放宽对齐规则消红）；② 新增第 10 节静态断言矩阵每个服务都有 `cmd/<svc>` 且内含 `package main`，反方向断言"有该布局却不在矩阵/豁免表 = 忘发镜像的真服务"，并断言豁免表每条都有理由、目录真实存在。**故障注入**：把 `- tf-provider` 放回矩阵 → 第 10 节立刻 `[FAIL]` 点名且整体 rc=1；还原 → `PASS=34 FAIL=0 SKIP=0`。
-- **顺带暴露的待决项**：标签是 `v0.9.2`，而**版本源仍写 `0.9.0`**（`Chart.yaml` version/appVersion、`values-production.yaml` 三处 tag、gitops segment、`internal/version/version.go`）。产物不受影响（版本由标签经 ldflags / `--build-arg VERSION` 注入），但**按生产 values 装 Helm 的客户会部署到 0.9.0**——第 1 节门禁只保证"版本源彼此一致"，不保证"版本源 == 正在发布的标签"。
+- **顺带暴露的待决项 → 已处理**：标签是 `v0.9.2`，而**版本源仍写 `0.9.0`**（`Chart.yaml` version/appVersion、`values-production.yaml` 三处 tag、gitops segment、`internal/version/version.go`）。产物不受影响（版本由标签经 ldflags / `--build-arg VERSION` 注入），但**按生产 values 装 Helm 的客户会部署到 0.9.0**——第 1 节门禁只保证"版本源彼此一致"，它不知道正在发哪个标签。
+
+### 版本源对齐到 0.9.2 + 新增「发布标签 == Chart appVersion」硬门禁
+
+- **bump 面**：`Chart.yaml`（version + appVersion）、`values-production.yaml`（controlplane/agent tag + 注释 + GitOps 示例块）、`gitops/segments/production-segment.yaml`、`internal/version/version.go`、`docker-compose.prod.yml` 与 `deploy.sh` 的四处提示语、`deploy/k8s/deploy-opsmesh.sh` 的 `IMAGE_TAG` 默认值、5 份 `deploy/k8s/deployments/*.yaml`、`deploy/k8s/README.md` 构建示例、门禁自身的 compose 渲染夹具。
+- **刻意不改**：`values-production` 里"0.9.0/0.9.1 当时没有版本标签镜像"这句历史事实、`v1-roadmap.md` 的 `v0.9.0-rc` 里程碑、`internal/events` 测试夹具、第三方依赖版本号（`terraform-plugin-log v0.9.0`），以及**未跟踪的本机 `deploy/docker/.env`**（那是用户正在跑的部署状态，不是交付物；升级到 0.9.2 要走显式的镜像替换，见报告 §19.7）。
+- **新硬门禁**：`release.yml` 的 `build-and-push` 在 checkout 之后、构建/登录**之前**断言 `${GITHUB_REF_NAME#v} == Chart.yaml appVersion`，不等即 `::error::` + `exit 1`。位置很关键：矩阵 fail-fast，放构建之后等于先把一半镜像推上注册表再失败。两向验证：抽出该 step 真实 `run` 内容本地跑，`v0.9.2` → rc=0；`v0.9.1` → rc=1 并点名"请先 bump 版本源"。
+- **本机证据**：门禁第 1 节六项全 `0.9.2`、`detect_version()`（从 `deploy.sh` 抽真实函数体）返回 `0.9.2`、`helm template -f values-production.yaml` 渲染出 `opsmesh-binary:0.9.2` / `opsmesh-agent:0.9.2`、`go build ./...` 通过、13 个交付脚本 shellcheck 0 findings、门禁 `PASS=34 FAIL=0 SKIP=0`。
+- **批量替换脚本自己被抓到一次**：按**子串**计数 `    tag: "0.9.0"` 时被 7 空格缩进的注释示例（内含一段 4 空格 + `tag:`）误算成 3 次而报警；改成**整行相等**匹配后正好 2 处。计数断言这次的价值不是"通过"，而是拦下一次半改。
+- **发布动作（用户已授权）**：把 `v0.9.2` 移到修复后的提交重发（该标签此前从未产出 Release 或核心镜像，仅 `bot-svc:0.9.2` 一次成功残留——按决定**保留不动**）。
 - **下一步需要授权**：移动/重打公开标签是对外可见动作。可选：把 `v0.9.2` 移到修复后的提交（该标签至今没产出任何 Release 或镜像，仅 `bot-svc:0.9.2` 一次成功残留）／改切 `v0.9.3`／先只合入修复。
 
 ## [Unreleased] — 2026-09-26 监控资产对账：出厂告警引用了根本不存在的指标

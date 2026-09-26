@@ -15,13 +15,13 @@ controlplane:
     repository: ghcr.io/levango7/opsmesh-binary
     # 生产环境必须用精确 sha 或 semver：--set controlplane.image.tag=<sha>
     # 或通过 GitOps 写回（ci.yml 闭环，需配置 GITOPS_REPO/GITOPS_PAT secret）。
-    # 此处钉死 0.9.0（与 Chart.yaml version 对齐）；禁止改回 latest——latest 不可变追踪，
+    # 此处钉死 0.9.2（与 Chart.yaml version 对齐）；禁止改回 latest——latest 不可变追踪，
     # 滚回 / 审计 / 供应链溯源均失效。
     # 版本标签的出处（2026-09-26 起）：打 tag `vX.Y.Z` 时 CI 会推
     # ghcr.io/levango7/opsmesh-binary:X.Y.Z（剥前导 v）+ :latest + :<sha>，与此处口径一致；
     # **注意 0.9.0/0.9.1 当时没有版本标签镜像**（那次 release 的镜像矩阵全灭，见报告 §19），
-    # 所以本 overlay 的默认值要在下一次发版（v0.9.2+）后同步更新。
-    tag: "0.9.0"
+    # 本 overlay 已同步到 0.9.2；以后再打 tag 时必须一起改这里——release.yml 的「标签==appVersion」硬门禁会兜住。
+    tag: "0.9.2"
     # 镜像 digest（完整形式 "sha256:<hex>"）：生产强烈建议由 CI 经 GitOps 写回。
     # 非空时优先于 tag 引用不可变镜像，实现部署内容位级可追溯。
     digest: ""
@@ -115,8 +115,8 @@ agent:
   enabled: true
   image:
     repository: ghcr.io/levango7/opsmesh-agent
-    # 与 controlplane 同版本发布（与 Chart.yaml 0.9.0 对齐）；禁止 latest。
-    tag: "0.9.0"
+    # 与 controlplane 同版本发布（与 Chart.yaml 0.9.2 对齐）；禁止 latest。
+    tag: "0.9.2"
     # 镜像 digest：同 controlplane，生产建议 CI 写回，非空优先于 tag。
     digest: ""
     pullPolicy: IfNotPresent
@@ -206,8 +206,8 @@ redis:
 #     image:
 #       repository: ghcr.io/levango7/task-svc
 #       # 生产禁止 latest：钉 semver 或由 CI GitOps 写回 digest（非空优先于 tag）。
-#       # 标签格式为 release.yml 的 ${GITHUB_REF_NAME#v}（v0.9.0 → 0.9.0），无 v 前缀。
-#       tag: "0.9.0"
+#       # 标签格式为 release.yml 的 ${GITHUB_REF_NAME#v}（v0.9.2 → 0.9.2），无 v 前缀。
+#       tag: "0.9.2"
 #       digest: ""
 #     replicas: 2
 #     # 生产接 MySQL（需 controlplane.store=mysql + mysql.enabled=true，

@@ -359,7 +359,7 @@ services:
         COMMIT: ${OPSMESH_BUILD_COMMIT:-dev}
         BUILD_DATE: ${OPSMESH_BUILD_DATE:-unknown}
     # 生产禁用 latest 浮动标签：镜像内容不可追溯，回滚无法定位版本。
-    image: opsmesh/controlplane:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION（如 0.9.0，禁止 latest）}
+    image: opsmesh/controlplane:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION（如 0.9.2，禁止 latest）}
     container_name: opsmesh-controlplane
     command:
       - --mode=controlplane
@@ -458,7 +458,7 @@ services:
       args:
         SERVICE: auth-svc
         VERSION: ${OPSMESH_VERSION}
-    image: opsmesh/auth-svc:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION（如 0.9.0，禁止 latest）}
+    image: opsmesh/auth-svc:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION（如 0.9.2，禁止 latest）}
     container_name: opsmesh-auth-svc
     ports:
       - "127.0.0.1:${AUTH_SVC_HTTP_PORT:-8100}:8100"

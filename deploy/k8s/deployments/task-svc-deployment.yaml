@@ -33,7 +33,7 @@ spec:
     spec:
       containers:
         - name: task-svc
-          image: opsmesh/task-svc:0.9.0
+          image: opsmesh/task-svc:0.9.2
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

@@ -238,7 +238,7 @@ check_env_vars() {
     ver="$(env_val OPSMESH_VERSION)"
     if [ "$ver" = "latest" ]; then
         log_error "OPSMESH_VERSION=latest 禁止用于生产：镜像内容不可追溯，回滚无法定位版本。"
-        log_error "改为具体版本号（如 0.9.0）。"
+        log_error "改为具体版本号（如 0.9.2）。"
         exit 1
     fi
 
@@ -585,7 +585,7 @@ generate_env_file() {
     version="$(detect_version)"
     if [ -z "$version" ]; then
         log_error "无法从源码推断版本号（internal/version/version.go 或 Helm Chart.yaml 未找到）。"
-        log_error "请在 .env 中手动设置 OPSMESH_VERSION（如 0.9.0，禁止 latest）。"
+        log_error "请在 .env 中手动设置 OPSMESH_VERSION（如 0.9.2，禁止 latest）。"
         exit 1
     fi
 

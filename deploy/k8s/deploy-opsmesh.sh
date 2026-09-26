@@ -282,8 +282,8 @@ load_images() {
         exit 1
     fi
 
-    # 标签默认 0.9.0：与 deployments/*.yaml 中的 image 标签、当前发布版本一致。
-    local tag="${IMAGE_TAG:-0.9.0}"
+    # 标签默认 0.9.2：与 deployments/*.yaml 中的 image 标签、当前发布版本一致。
+    local tag="${IMAGE_TAG:-0.9.2}"
 
     for svc in "${SERVICES[@]}"; do
         local svc_dir="${PROJECT_ROOT}/services/${svc}"

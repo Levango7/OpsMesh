@@ -224,7 +224,7 @@ sec "4. Compose 渲染"
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     TMPENV="$(mktemp)"
     cat > "$TMPENV" <<'ENVEOF'
-OPSMESH_VERSION=0.9.0
+OPSMESH_VERSION=0.9.2
 OPSMESH_ADVERTISE_ADDR=https://opsmesh.ci.local:8080
 MYSQL_ROOT_PASSWORD=CITestRootPw1
 MYSQL_PASSWORD=CITestUserPw1

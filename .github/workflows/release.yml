@@ -48,6 +48,22 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: 版本源一致性（发布标签必须等于 Chart.yaml appVersion）
+        # 为什么必须在构建**之前**：第一次切 v0.9.2 时，Chart.yaml 的 version/appVersion、
+        # values-production 的三处 tag、gitops segment、internal/version 全都还写着 0.9.0。
+        # 产物本身不受影响（版本号由标签经 goreleaser {{.Version}} / --build-arg VERSION 注入），
+        # 但客户按 values-production 装到的是 0.9.0 —— 「发出去的版本」与「清单声明的版本」不一致，
+        # 而此前没有任何一处核对：门禁第 1 节只保证版本源彼此一致，它不知道正在发哪个标签。
+        run: |
+          set -euo pipefail
+          WANT="${GITHUB_REF_NAME#v}"
+          HAVE="$(grep -E '^appVersion:' deploy/helm/opsmesh/Chart.yaml | sed -E 's/.*"([^"]*)".*/\1/')"
+          if [ "$WANT" != "$HAVE" ]; then
+              echo "::error::发布标签 v${WANT} 与 Chart.yaml appVersion=${HAVE} 不一致：请先 bump 版本源（Chart / values-production / gitops segment / internal-version）再打标签"
+              exit 1
+          fi
+          echo "版本源一致：appVersion=${HAVE} == 标签 v${WANT}"
+
       - uses: actions/setup-go@v6
         with:
           go-version: "1.26.6"

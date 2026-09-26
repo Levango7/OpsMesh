@@ -59,7 +59,7 @@ curl http://127.0.0.1:8081/health
 ```bash
 docker build -f Dockerfile.service \
   --build-arg SERVICE=auth-svc \
-  --build-arg VERSION=0.9.0 \
+  --build-arg VERSION=0.9.2 \
   .
 ```
 
