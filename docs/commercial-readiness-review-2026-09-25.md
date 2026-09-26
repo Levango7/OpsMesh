@@ -1673,6 +1673,42 @@ MSYS 下的 `sed`/`perl` 因读写两侧都做 CRLF 转换，替换看似执行�
 - **顺带确认门禁 integrity**：这次失败**没有**触发 OOM 重试路径（§16.3 的重试只认内存型死亡），
   说明「只重试内存型死亡」的边界是真的在按性质分流，而不是把红洗成绿。
 
+### 19.6 v0.9.2 第一次真发版就红：矩阵里混进了一个**不是服务**的模块（2026-09-26）
+
+修完 §19.1 之后第一次真跑发布链路（tag `v0.9.2` → run `36217841524`）仍然没出产物，但**根因换了一层**：
+
+```text
+build-and-push (tf-provider)  → failure  Build Docker image
+  #21 0.407 stat /src/services/tf-provider/cmd/tf-provider: directory not found
+  ERROR: failed to build: failed to solve
+build-and-push (其余 16 个)     → cancelled（矩阵 fail-fast）
+github-release                 → skipped   ⇒ Release 资产仍是 0
+```
+
+- **为什么 §19.1 修好了它 yet 看不见**：`Dockerfile.service` 硬编码 `-o /svc ./cmd/${SERVICE}`，
+  而 18 个模块里 17 个遵守这个布局、`tf-provider` 的 `main.go` 在模块根。常规 CI 两层都盖不住：
+  `services` job 跑 `go build ./...`（不假设 cmd 布局），`release-dryrun` 只构建 **auth-svc 一个样本**
+  ——dryrun 的价值被样本选择限制住了。**"样本能建"不等于"矩阵能建"**，这是 §19.3 那条的变体。
+- **但真正的问题不是路径，是矩阵的成员资格**：`tf-provider` 是 Terraform 插件
+  （`main.go` 里 `plugin.Serve`）。就算把构建目标修对，镜像里 `CMD ["svc"]` 一启动就会打印
+  "This binary is a plugin" 并以码 1 退出 ⇒ **发布一个必定 CrashLoop 的产物**比不发更糟。
+  且全仓没有任何部署清单引用它（实测 `grep tf-provider deploy/ operator/` 为空），
+  Helm chart 也本来就不含它（门禁第 2 节的 INFO 早就说了）。
+- **处置（不是"让构建通过"，而是"停止发布错误产物"）**：从镜像矩阵移除 `tf-provider`，
+  并把"哪些模块不是服务"变成**带理由的显式豁免表**。它仍被 `services` job 逐个 `go build ./...` 覆盖，
+  编译与测试覆盖度**一点没少**。
+- **两条防复发门禁**：① 第 2 节改为比对「矩阵 ∪ 豁免表」而不是只比矩阵——这样新增非服务模块仍会被逼着
+  表态（进矩阵或进豁免表），而不是靠放宽对齐规则消红；② 新增第 10 节，静态断言矩阵里每个服务
+  都有 `cmd/<svc>` 且内含 `package main`，反方向也断言（有该布局却不在矩阵/豁免表 = 忘发镜像的真服务），
+  并断言豁免表每条都有理由且目录真实存在。**故障注入**：把 `- tf-provider` 放回矩阵
+  → 第 10 节立即 `[FAIL] … 没有 Dockerfile.service 要求的 cmd/<svc> 目录： tf-provider` 且整体 rc=1；
+  还原 → `PASS=34 FAIL=0 SKIP=0`。
+- **顺带暴露的第二个问题（待决）**：标签切到 `v0.9.2`，而**版本源还写着 0.9.0**
+  （`Chart.yaml` 的 version/appVersion、`values-production.yaml` 三处 tag、gitops segment、
+  `internal/version/version.go` 默认值）。产物本身不受影响（goreleaser 用 `{{.Version}}`、
+  镜像用 `--build-arg VERSION` 从标签注入），但**按生产 values 装 Helm 的客户会部署到 0.9.0**
+  ——又是"声明与事实不互相校验"，只是这次是版本维度。修法见 §23 待办：随发布 bump 版本源并让第 1 节核对。
+
 ## 20. 镜像发布名与消费方引用的对齐（把 §19.4 的两个待决项做掉，2026-09-26）
 
 §19.4 留下两条需要拍板的开口，本轮按「不改变对外契约的最小正确解」处理：
@@ -1978,7 +2014,7 @@ CI 也看不见，因为它只跑代码测试与静态清单，没有任何一�
 | # | 事项 | 为什么排在这 |
 |---|---|---|
 | 1 | 看本轮 commit 的 CI：`release-dryrun`、`image`、`image-agent`、`security` 的 **step 级**证据 | 标签策略、命名收敛、actionlint 门禁都要靠真跑证实或证伪，本机 bash 只能证一半 |
-| 2 | 切 `v0.9.2` 并验收产物：GitHub Release assets 非空 + `ghcr.io/levango7/*:0.9.2` 可解析 + 签名与 SBOM 齐备 | 商用可交付的最低事实：存在一个版本，其镜像与二进制都真的发布成功 |
+| 2 | 重切 `v0.9.2`（第一次尝试红在 §19.6 的矩阵缺陷，Release 仍是 0 资产）：修复合入后需**移动/重打标签**，再验收 GitHub Release assets 非空 + `ghcr.io/levango7/*:0.9.2` 可解析 + 签名与 SBOM 齐备 | 商用可交付的最低事实：存在一个版本，其镜像与二进制都真的发布成功。移动公开标签是对外可见动作，需授权 |
 | 3 | P1-7 许可与第三方合规（NOTICE/THIRD_PARTY、MPL-2.0 依赖的再分发含义、基础镜像来源目录） | 唯一剩下的 P1 大块，属商务 + 法务判定 |
 | 4 | 外部 GitOps chart 的 values 结构核对（需该仓库读权限） | §20.3 遗留的最后一处不确定 |
 | 5 | 统一控制面与微服务的 HTTP 指标命名（`opsmesh_http_*` vs 无前缀 `http_*`） | 破坏性变更，需随版本走；当前出厂规则/面板已用 `__name__` 并集兜住（§21.3） |
@@ -1986,3 +2022,4 @@ CI 也看不见，因为它只跑代码测试与静态清单，没有任何一�
 | 7 | node_exporter 是否纳入出厂栈 | 决定主机级告警（磁盘等）能否默认可用；现在只能以 `.example` 形式提供（§21.2） |
 | 8 | 微服务剩余约 250 处 `Printf` 的逐点严重级别升级 | 增量改进，统一管道已就位 |
 | 9 | 把交付脚本的 shellcheck 口径从 `-S warning` 提到 `-S info`（余 39×SC2015、3×SC2012） | 可读性而非正确性；提口径前要逐条判"是否真死变量"，与本轮 SC2034 的处置同法，不宜顺手 |
+| 10 | **版本源随发布一起 bump**：`Chart.yaml` 的 version/appVersion、`values-production.yaml` 三处 tag、gitops segment、`internal/version/version.go` 默认值仍写 `0.9.0`，而标签是 `v0.9.2` | 产物不受影响（版本由标签经 ldflags/`--build-arg` 注入），但**按生产 values 装 Helm 的客户会部署到 0.9.0**；第 1 节门禁只保证"版本源彼此一致"，不保证"版本源 == 正在发布的标签"，这一格是空的（见 §19.6 末） |

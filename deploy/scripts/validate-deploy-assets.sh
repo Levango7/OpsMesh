@@ -15,6 +15,7 @@
 #   7. 镜像发布名 ↔ chart 引用一致性（发布名集合来自 CI，单一事实源）
 #   8. 构建上下文自洽：Dockerfile 字面 COPY 源必须存在且不被 .gitignore 排除
 #   9. 提交内容不得含**行内**孤立 CR（会随 blob 推送、被渲染器当换行）
+#  10. 镜像矩阵每个服务的构建目标必须存在（cmd/<svc> + package main），豁免表须带理由
 #
 # 用法：bash deploy/scripts/validate-deploy-assets.sh
 set -uo pipefail
@@ -89,21 +90,27 @@ RELEASE_SVCS="$(grep -A40 'matrix:' .github/workflows/release.yml \
     | grep -E '^\s+-\s+\S+$' \
     | sed -E 's/^\s+-\s+//' | sort)"
 DIR_SVCS="$(ls services/ 2>/dev/null | sort)"
+# 豁免表：`services/` 下有模块、但**不是常驻服务**因而不出镜像的东西。必须带理由，
+# 否则"豁免"就成了第二个静默漂移的入口。与 release.yml 矩阵注释同源。
+NON_SERVICE="tf-provider|Terraform 插件（main.go 里 plugin.Serve）：装进容器会在启动瞬间打印 \"This binary is a plugin\" 并以码 1 退出 ⇒ 出镜像=发布一个必定 CrashLoop 的产物"
+NS_NAMES="$(printf '%s\n' "$NON_SERVICE" | cut -d'|' -f1 | sed '/^$/d' | sort)"
 CHART_SVCS="$(grep -E '^  [a-z_]+_?[a-z_]*:' deploy/helm/opsmesh/values.yaml \
     | sed -E 's/^  ([a-z_]+):.*/\1/' | grep -E '_svc$|^grafana_bridge$' | sort)"
 
 n_rel="$(echo "$RELEASE_SVCS" | grep -c . || true)"
 n_dir="$(echo "$DIR_SVCS" | grep -c . || true)"
 n_cht="$(echo "$CHART_SVCS" | grep -c . || true)"
-echo "  release.yml=${n_rel}  services/=${n_dir}  chart=${n_cht}"
+echo "  release.yml=${n_rel}  services/=${n_dir}  chart=${n_cht}  非服务豁免=$(echo "$NS_NAMES" | grep -c . || true)"
 
 only_rel="$(comm -23 <(echo "$RELEASE_SVCS") <(echo "$DIR_SVCS") | tr '\n' ' ')"
-only_dir="$(comm -13 <(echo "$RELEASE_SVCS") <(echo "$DIR_SVCS") | tr '\n' ' ')"
+# 比对的是「矩阵 ∪ 豁免表」而不是矩阵本身：这样"新增一个非服务模块"仍会被本节逼着表态
+# （进矩阵或进豁免表），而不是靠放宽对齐规则来消红。
+only_dir="$(comm -13 <(sort -u <(printf '%s\n' "$RELEASE_SVCS") <(printf '%s\n' "$NS_NAMES")) <(echo "$DIR_SVCS") | tr '\n' ' ')"
 if [[ -z "${only_rel// }" && -z "${only_dir// }" ]]; then
-    ok "release.yml matrix 与 services/ 目录完全对齐（${n_rel} 个）"
+    ok "release.yml matrix（∪ 豁免表）与 services/ 目录完全对齐（${n_rel} 个镜像 + $(echo "$NS_NAMES" | grep -c . || true) 个豁免）"
 else
     [[ -n "${only_rel// }" ]] && bad "release.yml 有但 services/ 无目录：${only_rel}"
-    [[ -n "${only_dir// }" ]] && bad "services/ 有目录但 release.yml 未构建：${only_dir}"
+    [[ -n "${only_dir// }" ]] && bad "services/ 有目录，但既不在 release.yml 矩阵也不在豁免表：${only_dir}"
 fi
 
 # chart 未覆盖的服务是允许的（例如纯 CLI 工具），但必须显式声明为豁免，避免静默漂移
@@ -584,6 +591,61 @@ case $? in
         echo "         这不是「内容干净」，而是「没检查成」：请确认该 git 构建带 PCRE（git grep -P 可用）"
         ;;
 esac
+
+# ---------------------------------------------------------------
+sec "10. 镜像矩阵的构建目标必须存在（Dockerfile.service 假设 cmd/<svc> 布局）"
+# ---------------------------------------------------------------
+# 这是「只在发版那一刻才执行」那一类假绿的镜像（§19 第 5 类）：Dockerfile.service 硬编码
+# `-o /svc ./cmd/${SERVICE}`，而 2026-09-26 v0.9.2 第一次真发版就红在
+#   stat /src/services/tf-provider/cmd/tf-provider: directory not found
+#   → 矩阵 fail-fast：1 红 + 16 cancel + github-release skip ⇒ Release 依旧 0 资产
+# 常规 CI 看不见它的原因有两层：`services` job 跑的是 `go build ./...`（不假设 cmd 布局），
+# 而 `release-dryrun` 只构建 auth-svc 一个样本。⇒ 「布局约定」与「矩阵内容」之间从没有人核对。
+BAD_TARGET=""; NO_MAIN_PKG=""; FORGOTTEN=""
+while IFS= read -r svc; do
+    [[ -n "$svc" ]] || continue
+    if [ ! -d "services/${svc}/cmd/${svc}" ]; then
+        BAD_TARGET="${BAD_TARGET} ${svc}"
+        continue
+    fi
+    if ! grep -qs '^package main' "services/${svc}/cmd/${svc}/"*.go; then
+        NO_MAIN_PKG="${NO_MAIN_PKG} ${svc}"
+    fi
+done <<< "$RELEASE_SVCS"
+# 反方向同样要判：有 cmd/<name> 布局却不在矩阵里 ⇒ 一个忘发镜像的真服务
+while IFS= read -r d; do
+    [[ -n "$d" ]] || continue
+    printf '%s\n' "$RELEASE_SVCS" | grep -qx "$d" && continue
+    [ -d "services/${d}/cmd/${d}" ] && FORGOTTEN="${FORGOTTEN} ${d}"
+done <<< "$DIR_SVCS"
+if [[ -n "${BAD_TARGET// }" ]]; then
+    bad "矩阵里这些服务没有 Dockerfile.service 要求的 cmd/<svc> 目录：${BAD_TARGET}"
+    echo "         后果是在发版那一刻才失败并连带取消整批；要么补齐 cmd/<svc>/main.go，要么从矩阵移除"
+else
+    ok "矩阵 ${n_rel} 个服务全部具备 cmd/<svc> 构建目标"
+fi
+if [[ -n "${NO_MAIN_PKG// }" ]]; then
+    bad "这些 cmd/<svc> 目录里没有 package main：${NO_MAIN_PKG}"
+else
+    ok "每个构建目标都含 package main"
+fi
+if [[ -n "${FORGOTTEN// }" ]]; then
+    bad "有 cmd/<name> 布局（看起来是可发布服务）却不在矩阵也不在豁免表：${FORGOTTEN}"
+else
+    ok "没有「具备服务布局却被漏掉」的模块"
+fi
+# 豁免表本身也要自证：每条必须有理由，否则"豁免"就是新的静默漂移入口。
+NO_REASON=""
+while IFS='|' read -r nm rs; do
+    [[ -n "$nm" ]] || continue
+    [[ -n "${rs// }" ]] || NO_REASON="${NO_REASON} ${nm}"
+    grep -qx "$nm" <<< "$DIR_SVCS" || NO_REASON="${NO_REASON} ${nm}(目录不存在)"
+done <<< "$NON_SERVICE"
+if [[ -n "${NO_REASON// }" ]]; then
+    bad "豁免表条目缺理由或指向不存在的模块：${NO_REASON}"
+else
+    ok "豁免表 $(printf '%s\n' "$NON_SERVICE" | grep -c . || true) 条：均有理由且模块真实存在"
+fi
 
 echo ""
 echo "==================================================="

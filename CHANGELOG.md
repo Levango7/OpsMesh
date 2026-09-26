@@ -20,6 +20,18 @@
 - **验证**：`rand_pw` 从 `deploy.sh` 抽出**真实定义**跑 300 次（长度 / 越界字符为空 / 必含特殊字符）⇒ 0 失败，且故意把校验集合写窄会立刻报错（断言是活的）；`/tmp` 沙箱真跑 `deploy.sh init` ⇒ `.env` 生成成功、四条口令均落在新字符集内、`docker compose config` rc=0（插值链路可用）；13 个脚本 `shellcheck -S warning` + `bash -n` 全绿。
 - **口径如实分层**：`-S info` 级仍有 39×SC2015、3×SC2012 未动（可读性而非正确性，提口径前需逐条判"是否真死变量"），已列入 §23 待办第 9 项。shellcheck 门禁本身以 CI 该 step 为准。
 
+## [Unreleased] — 2026-09-26 v0.9.2 第一次发版尝试失败：矩阵里混进了一个不是服务的模块
+
+> 证据：`docs/commercial-readiness-review-2026-09-25.md` §19.6。§19.1 那行 `COPY` 修好之后第一次真发版（tag `v0.9.2` → run `36217841524`）**仍然没有产物**，只是根因往下挪了一层。
+
+- **现象**：`build-and-push (tf-provider)` 红在 `stat /src/services/tf-provider/cmd/tf-provider: directory not found` → 矩阵 fail-fast 取消其余 16 个 → `github-release` skip ⇒ **Release 资产仍为 0**（`gh release view v0.9.2` 直接 not found）。
+- **为什么常规 CI 两层都盖不住**：`Dockerfile.service` 硬编码 `-o /svc ./cmd/${SERVICE}`，18 个模块里 17 个守这个布局、`tf-provider` 的 `main.go` 在模块根。`services` job 跑 `go build ./...`（不假设 cmd 布局）；`release-dryrun` 只构建 **auth-svc 一个样本**——**"样本能建"不等于"矩阵能建"**。
+- **真正的问题不是路径，是成员资格**：`tf-provider` 是 Terraform 插件（`plugin.Serve`）。即使把构建目标修对，镜像 `CMD ["svc"]` 一启动就会打印 "This binary is a plugin" 并以码 1 退出 ⇒ **发布必定 CrashLoop 的产物比不发更糟**。且全仓无任何部署清单引用它（实测 `grep tf-provider deploy/ operator/` 为空），Helm chart 本来也不含它。
+- **处置**：从镜像矩阵**移除** `tf-provider`，并把"哪些模块不是服务"变成**带理由的显式豁免表**。它仍被 `services` job 逐个 `go build ./...` 覆盖，编译/测试覆盖度不减。
+- **两条防复发门禁**：① 第 2 节改为比对「矩阵 ∪ 豁免表」（新增非服务模块必须表态，不能靠放宽对齐规则消红）；② 新增第 10 节静态断言矩阵每个服务都有 `cmd/<svc>` 且内含 `package main`，反方向断言"有该布局却不在矩阵/豁免表 = 忘发镜像的真服务"，并断言豁免表每条都有理由、目录真实存在。**故障注入**：把 `- tf-provider` 放回矩阵 → 第 10 节立刻 `[FAIL]` 点名且整体 rc=1；还原 → `PASS=34 FAIL=0 SKIP=0`。
+- **顺带暴露的待决项**：标签是 `v0.9.2`，而**版本源仍写 `0.9.0`**（`Chart.yaml` version/appVersion、`values-production.yaml` 三处 tag、gitops segment、`internal/version/version.go`）。产物不受影响（版本由标签经 ldflags / `--build-arg VERSION` 注入），但**按生产 values 装 Helm 的客户会部署到 0.9.0**——第 1 节门禁只保证"版本源彼此一致"，不保证"版本源 == 正在发布的标签"。
+- **下一步需要授权**：移动/重打公开标签是对外可见动作。可选：把 `v0.9.2` 移到修复后的提交（该标签至今没产出任何 Release 或镜像，仅 `bot-svc:0.9.2` 一次成功残留）／改切 `v0.9.3`／先只合入修复。
+
 ## [Unreleased] — 2026-09-26 监控资产对账：出厂告警引用了根本不存在的指标
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §21。起因是清单里那条长期开口——「`/metrics` 在 8080 与 9091 返回不同序列集」。当真去查，结论严重得多：**Prometheus 只抓 9091，而出厂规则与面板引用的一批序列在 9091 上不存在**。

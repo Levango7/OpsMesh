@@ -20,6 +20,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        # 只列**常驻服务**：Dockerfile.service 假设 `services/<svc>/cmd/<svc>` 布局并以
+        # `CMD ["svc"]` 起 HTTP 服务。`services/` 目录里不是所有模块都是服务——
+        # tf-provider 是 Terraform 插件（main.go 里 plugin.Serve），装进容器会在启动瞬间
+        # 打印"This binary is a plugin"并以码 1 退出，做成镜像就是一个必定 CrashLoop 的产物。
+        # 它仍被 ci.yml 的 services job 逐个 `go build ./...` 覆盖（编译/测试不受影响）。
+        # 这类"模块 vs 服务"的差集必须写进 validate-deploy-assets.sh 的豁免表（含理由），
+        # 否则第 2/10 节会红——刻意不允许静默漂移。
         service:
           - auth-svc
           - device-svc
@@ -37,7 +44,6 @@ jobs:
           - plugin-svc
           - portal-svc
           - runbook-svc
-          - tf-provider
           - workflow-svc
     steps:
       - uses: actions/checkout@v5
