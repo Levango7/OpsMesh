@@ -1965,6 +1965,12 @@ CI 也看不见，因为它只跑代码测试与静态清单，没有任何一�
   权限分支本机实测走 WARN（`实际权限为 644`）——即缺陷 #3 的复现与修复同时被看见。
   （顺带发现 `confirm()` 在非 tty 下把**问题本身**印成 `[ERROR]`，已改为一句说明"已按拒绝处理"的 error，不再误导。）
 - 全量：13 个脚本 `shellcheck -S warning` 0 findings + `bash -n` 全通过；`gofmt`/`go vet` 干净。
+- **CI 已把这两条门禁真跑过（run `36205827115`，commit `a3d0d3b`，13 个 job 全 success）**：
+  `security` 的 shellcheck step 打印 `version: 0.10.0` 与
+  `✅ 13 个交付脚本在 shellcheck -S warning 下 0 findings`；`部署资产一致性门禁` 在 CI 里
+  `PASS=30 FAIL=0 SKIP=0`，且第 9 节输出「全部暂存 blob 无行内孤立 CR」；
+  `build-test` 的 actionlint step、E2E×2、`Race detector` 同 run 全绿。
+  上面"以 CI 该 step 为准"的口径到此兑现——本机只证到复现与逐类修复。
 - 遗留（记入 §23）：`-S info` 级仍有 39 处 SC2015（`a && b || c` 风格）与 3 处 SC2012，属可读性而非正确性，未在本轮动。
 
 ## 23. 下一轮清单（按优先级）
