@@ -34,6 +34,8 @@
 - **真跑以重切标签后的 `release` run 为准**（这三步首次执行就在发版那一刻，属 §19 第 5 类"只在发版时执行"的路径）。
 - **首跑（run `36326611245`）结果：自验证当场拦下一批**——`build-and-push (deploy-svc)` 在"自验证签名"失败、矩阵 fail-fast 取消其余。**但这正是它该做的事**：同一步骤在 `aio-svc` 等 4 个 job 上是 success（检查有效），失败 job 的日志显示 `Pushing signature to: ghcr.io/levango7/deploy-svc` + `tlog entry created with index: 2976354703`（签名确实推上去了），两秒后的 verify 报 `no signatures found`；**几分钟后复查同一 digest 的 `.sig` → 200** ⇒ 根因是 **GHCR 写后读窗口**，不是漏签。
 - **处置**：verify 改为**有界退避重试**（5 次 / 10·20·30·40s），**判据不放宽**——5 次都验不过仍判红。经验一条：`cosign sign` 的 tlog 索引只证明透明日志写成功，不证明注册表已可读。
+- **重切后四条验收全部达成**（tag `9347554`，run `36327166836`，19/19 job success）：① Release assets 5 个；② 核心镜像 `:0.9.2` 可解析且 `.sig` 200；③ 微服务镜像 17/17；④ **17/17 微服务镜像带 `.sig`**（加核心共 19/19）+ **17 份 `sbom-<svc>` 产物**。⇒ **0.9.2 是第一个镜像与二进制都真实发布成功、且带签名与 SBOM 的版本。**
+- **同一提交的 `ci` 红在 actionlint，暴露的是我自己的本地验证盲区**：`release.yml:163 SC2004:style`（`$((${i} * 10))`）。原因＝本机跑 actionlint 时用 `-shellcheck=` 只验结构、替换式 shellcheck 又只到 `-S warning`，style 级从两个网眼里同时漏掉。修掉那行，并把本机口径固定为「抽 run 块 → `${{ }}` 换占位符 → `shellcheck -S style`」——**只关后端或只查 warning 都等于留一个盲区**。
 
 ## [Unreleased] — 2026-09-26 升级路径演练（0.9.0 → 0.9.2）抓到一条每次重启都会复发的客户可见缺陷
 

@@ -175,7 +175,7 @@ jobs:
                   echo "::error::cosign verify 连续 5 次失败：不是 GHCR 写后读延迟，签名确实不在 ${IMG}"
                   exit 1
               fi
-              echo "第 ${i} 次 verify 未命中（GHCR 写后读窗口），$((${i} * 10))s 后重试"
+              echo "第 ${i} 次 verify 未命中（GHCR 写后读窗口），$((i * 10))s 后重试"
               sleep $((i * 10))
           done
 
