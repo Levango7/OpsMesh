@@ -247,7 +247,8 @@ jobs:
 
           # operator 与 services/*（含 tf-provider 工具链模块）同列：
           # 它们都是根 ./... 剪枝掉的独立模块。
-          mapfile -t MODS < <(ls -d operator services/*/ | sort)
+          # 用 glob + printf 而不是 ls：SC2012（actionlint 首跑报出）。
+          mapfile -t MODS < <(printf '%s\n' operator services/*/ | sort)
           if [ "${#MODS[@]}" -eq 0 ]; then echo "::error::未发现任何子模块（门禁空转）"; exit 1; fi
           for d in "${MODS[@]}"; do
             echo "== [$d] build =="
