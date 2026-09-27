@@ -32,6 +32,8 @@
 - **文档同步**：`docs/image-pinning.md` 里那句"CI：在镜像构建流水线中添加 `cosign verify`"（读起来像待办）改为现在时的实现说明 + 消费方验证命令；`docs/test-specification.md` 的 cosign 行从"key-based（非 keyless）"改为双路径实况。
 - **本机验证**：`actionlint -shellcheck=` 对该 workflow 0 问题；把 `run` 块抽出并把 `${{ … }}` 换成占位符后 `bash -n` + `shellcheck -S warning` 干净。**顺带记一个坑**：直接对未替换的 `run` 块跑 shellcheck 会报一片 SC2296（"参数展开以 `{` 开头"），那是 Actions 层替换机制造成的假象，不要照着"修"。
 - **真跑以重切标签后的 `release` run 为准**（这三步首次执行就在发版那一刻，属 §19 第 5 类"只在发版时执行"的路径）。
+- **首跑（run `36326611245`）结果：自验证当场拦下一批**——`build-and-push (deploy-svc)` 在"自验证签名"失败、矩阵 fail-fast 取消其余。**但这正是它该做的事**：同一步骤在 `aio-svc` 等 4 个 job 上是 success（检查有效），失败 job 的日志显示 `Pushing signature to: ghcr.io/levango7/deploy-svc` + `tlog entry created with index: 2976354703`（签名确实推上去了），两秒后的 verify 报 `no signatures found`；**几分钟后复查同一 digest 的 `.sig` → 200** ⇒ 根因是 **GHCR 写后读窗口**，不是漏签。
+- **处置**：verify 改为**有界退避重试**（5 次 / 10·20·30·40s），**判据不放宽**——5 次都验不过仍判红。经验一条：`cosign sign` 的 tlog 索引只证明透明日志写成功，不证明注册表已可读。
 
 ## [Unreleased] — 2026-09-26 升级路径演练（0.9.0 → 0.9.2）抓到一条每次重启都会复发的客户可见缺陷
 

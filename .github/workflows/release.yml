@@ -154,13 +154,30 @@ jobs:
         # 为什么要自验：`cosign sign` 变成空转（例如 OIDC 权限没给、或将来被人加 if 跳过）会让
         # job 保持绿色而镜像其实没签名——正是本项目反复抓到的"报告与实际不符"形态。
         # 用身份正则锁到本 workflow 文件，验不过直接失败。
+        #
+        # 为什么要重试（2026-09-27 首次真跑实测）：GHCR 存在**写后读窗口**——`cosign sign` 报告
+        # `Pushing signature to: ghcr.io/levango7/<svc>` 并拿到 tlog 索引之后，紧接着的 verify
+        # 仍报 `Error: no signatures found`；几分钟后复查同一个 digest 的 `.sig` → **200**。
+        # 同一次运行里 aio-svc 等 4 个 job 的同一步骤是通过的，属竞态而非配置错。
+        # 因此这里**退避重试而不是放宽判据**：5 次都验不过仍判红（那才是真没签上）。
         run: |
           set -euo pipefail
-          cosign verify \
-            --certificate-identity-regexp "^https://github\.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "${{ steps.meta.outputs.image }}:${{ github.sha }}" >/dev/null
-          echo "签名已验证：${{ matrix.service }}"
+          IMG="${{ steps.meta.outputs.image }}:${{ github.sha }}"
+          for i in 1 2 3 4 5; do
+              if cosign verify \
+                  --certificate-identity-regexp "^https://github\.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@" \
+                  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+                  "${IMG}" >/dev/null; then
+                  echo "签名已验证：${{ matrix.service }}（第 ${i} 次尝试）"
+                  exit 0
+              fi
+              if [ "$i" = 5 ]; then
+                  echo "::error::cosign verify 连续 5 次失败：不是 GHCR 写后读延迟，签名确实不在 ${IMG}"
+                  exit 1
+              fi
+              echo "第 ${i} 次 verify 未命中（GHCR 写后读窗口），$((${i} * 10))s 后重试"
+              sleep $((i * 10))
+          done
 
   changelog:
     runs-on: ubuntu-latest
