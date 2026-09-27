@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -9,16 +10,18 @@ import (
 // TestSafeGo_RecoversAndRestarts 验证 panic 循环被捕获并重启（CB-9）。
 // fn 前两次调用 panic，第三次正常返回计数；断言 safeGo 至少执行到第三次
 // （即 panic 后确有重启），且测试进程不崩溃（recover 生效的直接证据）。
+// 计数走 atomic + channel 回传：裸 int 会被循环 goroutine 与测试协程并发读写，
+// CI 带 -race 时会直接判失败（同 TestSafeGo_EarlyReturnRestarts 的处理）。
 func TestSafeGo_RecoversAndRestarts(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	calls := make(chan int, 4)
-	n := 0
+	var n atomic.Int32
 	safeGo(ctx, "test-panic-loop", func(context.Context) {
-		n++
-		calls <- n
-		if n <= 2 {
+		seq := int(n.Add(1))
+		calls <- seq
+		if seq <= 2 {
 			panic("boom")
 		}
 		// 第三次：正常挂住直到 ctx 取消，模拟真实循环的 for-select。
@@ -30,13 +33,17 @@ func TestSafeGo_RecoversAndRestarts(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("safeGo 未启动循环")
 	}
-	// 等待 panic→重启链路走完（两次 panic + 第三次正常进入）。
-	deadline := time.Now().Add(3*safeGoRestartDelay + 2*time.Second)
-	for n < 3 && time.Now().Before(deadline) {
-		time.Sleep(50 * time.Millisecond)
-	}
-	if n < 3 {
-		t.Fatalf("panic 后未重启：期望 n>=3，实际 n=%d", n)
+	// 等 panic→重启链路走完（两次 panic + 第三次正常进入）。只从 channel 取数，
+	// 不去读循环侧持有的变量——那正是要修的 data race。
+	got := 1
+	timeout := time.After(3*safeGoRestartDelay + 2*time.Second)
+	for got < 3 {
+		select {
+		case <-calls:
+			got++
+		case <-timeout:
+			t.Fatalf("panic 后未重启：期望至少 3 次调用，实际 %d", got)
+		}
 	}
 }
 

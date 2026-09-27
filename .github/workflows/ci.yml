@@ -207,35 +207,61 @@ jobs:
           # 已配置 CODECOV_TOKEN 时，上报失败阻断 CI；未配置 token（fork/无 secret PR）则不失败。
           fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
 
-  # services：根模块 ./... 会被 Go 模块系统剪枝嵌套 go.mod（services/ 18 个
-  # 独立子模块永不编译/测试）。本 job 显式循环 services/*/ 逐个 go build + go test，
-  # 把游离的 18 个微服务纳入 CI（根 go.work 已统一 workspace，见仓库根 go.work）。
+  # services/operator 门禁 —— 根模块 ./... 会被 Go 模块系统剪枝嵌套 go.mod
+  # （services/* 18 个独立子模块 + operator 永不被根 CI 编译/测试）。
+  # 本 job 逐模块跑 build + vet + golangci-lint + test(-race)，
+  # 把游离模块全部纳入与根模块同强度的门禁。
+  # 为什么必须显式逐模块（2026-09-27 教训）：operator 的 go.mod 模块路径
+  # （opsmesh/operator）与代码 import 路径（github.com/Levango7/OpsMesh/operator/...）
+  # 不一致导致**整个模块无法编译**，而它此前不在任何 CI job 里——缺陷一路潜伏。
+  # 「根模块全绿」对 services/operator 是零证据，嵌套模块必须显式点名。
   services:
     runs-on: ubuntu-latest
     needs: build-test
+    env:
+      # 与 build-test 同口径：测试期 bcrypt 降 cost；TSan 内存上限防分配器 OOM。
+      OPSMESH_TEST_BCRYPT_COST: "4"
+      TSAN_OPTIONS: "hardlimit_mb=2560 exitcode=66"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version: "1.26.6"
-      - name: Build all services modules
-        # 每个 services/*/ 都是独立 go.mod + func main；workspace 模式下子模块
-        # 由根 go.work 统一管理。循环遍历，任一失败 exit 1 阻断 CI。
+      - name: 逐模块 Build + Vet + golangci-lint + Test（-race）
+        # golangci-lint 用 go install 钉版（与 build-test 的 action 同版 v2.13.2）：
+        # golangci-lint-action 不支持在循环里逐模块执行；binary 从子目录运行会
+        # 向上找到根 .golangci.yml —— services 与根模块共用同一套规则与豁免。
+        # 此前本 job 只有 build + 无 race 的 test：vet/lint/race 三个门禁对
+        # services 全部缺席（2026-09-27 用 -race 扫 services 一开跑即抓出
+        # workflow-svc 引擎可崩进程的竞态，证明这些门禁不是形式主义）。
         run: |
-          for d in services/*/; do
-            echo "== build $d =="
-            (cd "$d" && go build ./...) || exit 1
+          set -euo pipefail
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+          GOBIN="$(go env GOPATH)/bin"
+          export PATH="${GOBIN}:$PATH"
+          golangci-lint version | grep -q "2.13.2" || { echo "::error::golangci-lint 版本不是钉死的 2.13.2"; exit 1; }
+          # 服务子模块用独立配置（根 .golangci.yml 的 path 豁免按根模块相对路径编写，
+          # 会与 services/<svc> 自己的 internal/... 误配对；理由与规则集见该文件头注释）。
+          CONFIG="$(git rev-parse --show-toplevel)/.golangci.services.yml"
+          test -f "$CONFIG" || { echo "::error::未找到 $CONFIG"; exit 1; }
+
+          # operator 与 services/*（含 tf-provider 工具链模块）同列：
+          # 它们都是根 ./... 剪枝掉的独立模块。
+          mapfile -t MODS < <(ls -d operator services/*/ | sort)
+          if [ "${#MODS[@]}" -eq 0 ]; then echo "::error::未发现任何子模块（门禁空转）"; exit 1; fi
+          for d in "${MODS[@]}"; do
+            echo "== [$d] build =="
+            (cd "$d" && go build ./...)
+            echo "== [$d] vet =="
+            (cd "$d" && go vet ./...)
+            echo "== [$d] golangci-lint（.golangci.services.yml）=="
+            (cd "$d" && golangci-lint run -c "$CONFIG" ./...)
+            echo "== [$d] test -race =="
+            # -timeout 1200s：services 各模块 -race 实测秒级到分钟级，1200s 仅防意外挂死。
+            # 依赖真实环境（DSN/broker）的用例自带 Skip 机制会自行跳过。
+            (cd "$d" && go test -race -count=1 -timeout 1200s ./...)
           done
-          echo "✅ all services build OK"
-      - name: Test all services modules
-        # 依赖真实环境（DSN/broker 等）的用例自带 Skip 机制会自行跳过；
-        # 能跑的照跑，任一失败 exit 1 阻断 CI（超时 300s 与根模块一致）。
-        run: |
-          for d in services/*/; do
-            echo "== test $d =="
-            (cd "$d" && go test -timeout 300s ./...) || exit 1
-          done
-          echo "✅ all services test OK"
+          echo "✅ operator + services 全部模块（${#MODS[@]} 个）：build / vet / lint / race-test 通过"
 
   # ：SQL 后端集成测试 —— 默认 build-test 中 SQL Store 测试因无 DSN 被 Skip，
   # 此处起 mysql:8 + redis:7 真实后端，激活 OPSMESH_TEST_* 集成测试（报告 缺口）。

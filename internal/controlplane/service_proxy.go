@@ -22,16 +22,20 @@ package controlplane
 //   - 只透传方法与 body，剥离 Cookie（下游不消费会话；鉴权已完成）。
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 )
 
 // serviceProxyRule 一条微服务转发规则。
 type serviceProxyRule struct {
+	// domain 域标识（开关 OPSMESH_SERVICE_PROXY 用），如 gpu / portal / device。
+	domain string
 	// publicPrefix 聚合层对外路径前缀（mux 注册用），如 /api/v1/gpu。
 	publicPrefix string
 	// upstreamPrefix 后端服务真实路径前缀。publicPrefix 剥去 domainPrefix
@@ -57,6 +61,7 @@ type serviceProxyRule struct {
 // 多服务时必须用 env 覆盖（*_SVC_URL 或各服务 *_SVC_HTTP_PORT）区分。
 var serviceProxyRules = []serviceProxyRule{
 	{
+		domain:         "gpu",
 		publicPrefix:   "/api/v1/gpu",
 		upstreamPrefix: "/api/v1/gpu",
 		domainPrefix:   "/api/v1/gpu",
@@ -65,6 +70,7 @@ var serviceProxyRules = []serviceProxyRule{
 		perm:           "gpu:read",
 	},
 	{
+		domain:         "runbook",
 		publicPrefix:   "/api/v1/runbooks",
 		upstreamPrefix: "/api/v1/runbooks",
 		domainPrefix:   "/api/v1/runbooks",
@@ -73,6 +79,7 @@ var serviceProxyRules = []serviceProxyRule{
 		perm:           "runbook:read",
 	},
 	{
+		domain:         "incident",
 		publicPrefix:   "/api/v1/incidents",
 		upstreamPrefix: "/api/v1/incidents",
 		domainPrefix:   "/api/v1/incidents",
@@ -83,6 +90,7 @@ var serviceProxyRules = []serviceProxyRule{
 	{
 		// autoscaler-svc 路径不含域前缀（/api/v1/rules 而非 /api/v1/autoscaler/rules，
 		// 见 services/autoscaler-svc/internal/handler/handler.go:24-28），需路径改写。
+		domain:         "autoscaler",
 		publicPrefix:   "/api/v1/autoscaler",
 		upstreamPrefix: "/api/v1",
 		domainPrefix:   "/api/v1/autoscaler",
@@ -93,6 +101,7 @@ var serviceProxyRules = []serviceProxyRule{
 	{
 		// portal-svc 同理：/api/v1/requests 而非 /api/v1/portal/requests
 		// （见 services/portal-svc/internal/handler/handler.go:27-34）。
+		domain:         "portal",
 		publicPrefix:   "/api/v1/portal",
 		upstreamPrefix: "/api/v1",
 		domainPrefix:   "/api/v1/portal",
@@ -123,6 +132,7 @@ var serviceProxyRules = []serviceProxyRule{
 // （agent 自举直连 device-svc）。
 var deviceProxyExtras = []serviceProxyRule{
 	{
+		domain:         "device",
 		publicPrefix:   "/api/v1/device-svc/devices",
 		upstreamPrefix: "/api/v1/devices",
 		domainPrefix:   "/api/v1/device-svc/devices",
@@ -131,6 +141,7 @@ var deviceProxyExtras = []serviceProxyRule{
 		perm:           "device:read",
 	},
 	{
+		domain:         "device",
 		publicPrefix:   "/api/v1/device-svc/agents",
 		upstreamPrefix: "/api/v1/agents",
 		domainPrefix:   "/api/v1/device-svc/agents",
@@ -139,6 +150,7 @@ var deviceProxyExtras = []serviceProxyRule{
 		perm:           "device:read",
 	},
 	{
+		domain:         "device",
 		publicPrefix:   "/api/v1/device-svc/cmdb",
 		upstreamPrefix: "/api/v1/cmdb",
 		domainPrefix:   "/api/v1/device-svc/cmdb",
@@ -147,6 +159,7 @@ var deviceProxyExtras = []serviceProxyRule{
 		perm:           "cmdb:read",
 	},
 	{
+		domain:         "device",
 		publicPrefix:   "/api/v1/device-svc/discovery",
 		upstreamPrefix: "/api/v1/discovery",
 		domainPrefix:   "/api/v1/device-svc/discovery",
@@ -194,6 +207,186 @@ func (r *serviceProxyRule) upstreamBase() *url.URL {
 	return u
 }
 
+// ── 自环防护（2026-09-26）────────────────────────────────────────────
+//
+// 出厂事故：docker-compose.prod.yml 从未设置 *_SVC_URL，代理回落到硬编码的
+// localhost 默认值，其中 autoscaler/portal 的默认值是 127.0.0.1:8080——
+// 那正是 controlplane 自己的 HTTP 监听端口。于是
+//
+//	/api/v1/portal/quotas → 改写成 /api/v1/quotas → 转发回自己 → 返回单体的数据
+//
+// 静默、无错、无日志，比 503 难查一个数量级。gpu/runbook/incident 的默认值
+// 端口上没人在听，表现为 503，反而更容易发现——**故障的可见性差异掩盖了
+// 同一个配置错误的两种表现**。
+//
+// 下面这个检查把「代理后端指向控制面自己」变成启动期的硬失败。
+
+// isLoopbackHost 判断主机名是否指向本机回环（127.0.0.0/8、::1、localhost）。
+func isLoopbackHost(host string) bool {
+	h := strings.TrimSpace(host)
+	if h == "" {
+		return false
+	}
+	if strings.EqualFold(h, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(strings.Trim(h, "[]")); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// proxySelfLoopTarget 检出「代理后端与控制面自身监听端口重合」的配置。
+//
+// 只在主机为回环时判定：跨主机/跨容器的同名端口是不同监听者，不构成自环
+// （compose 里各服务用服务名寻址，如 http://gpu-svc:8107，天然不在此列）。
+func proxySelfLoopTarget(target *url.URL, httpPort, grpcPort, metricsPort int) (int, bool) {
+	if target == nil || !isLoopbackHost(target.Hostname()) {
+		return 0, false
+	}
+	port := target.Port()
+	if port == "" {
+		return 0, false // 无显式端口按 80/443 解析，无法与监听端口比对
+	}
+	p := 0
+	for _, c := range port {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		p = p*10 + int(c-'0')
+	}
+	switch p {
+	case httpPort:
+		return httpPort, true
+	case grpcPort:
+		return grpcPort, true
+	case metricsPort:
+		return metricsPort, true
+	}
+	return 0, false
+}
+
+// validateServiceProxyTargets 启动期自检：返回所有自环配置的描述（无则 nil）。
+//
+// 为什么只是「记录」而不是「拒绝启动」：控制面单体还承载鉴权、任务下发、
+// 设备纳管等全部核心流量。为了 GPU 域的转发地址写错就把整个控制面拖停，
+// 是用五个功能的故障换全站故障——可用性优先于严格性。真正的兜底在请求侧：
+// handleServiceProxy 命中自环时直接 503 并说明原因，绝不把请求转发回自己。
+func validateServiceProxyTargets(httpPort, grpcPort, metricsPort int) []string {
+	var problems []string
+	for _, group := range [][]serviceProxyRule{serviceProxyRules, deviceProxyExtras} {
+		for i := range group {
+			r := &group[i]
+			if r.publicPrefix == "" {
+				continue
+			}
+			if _, self := proxySelfLoopTarget(r.upstreamBase(), httpPort, grpcPort, metricsPort); self {
+				src := r.defaultURL
+				if r.envKey != "" {
+					if v := os.Getenv(r.envKey); v != "" {
+						src = r.envKey + "=" + v
+					}
+				}
+				problems = append(problems, fmt.Sprintf(
+					"域 %q 的转发后端 %s 指向控制面自身的监听端口（HTTP=%d gRPC=%d metrics=%d）："+
+						"该域已按 503 隔离。容器化部署必须设置 %s 指向服务地址",
+					r.domain, src, httpPort, grpcPort, metricsPort, r.envKey))
+			}
+		}
+	}
+	return problems
+}
+
+// ── 路由开关（2026-09-26）────────────────────────────────────────────
+//
+// 为什么必须先有开关：没有它，任何「切流」都是改二进制 + 重启的不可逆硬改，
+// 出问题只能回滚版本重发。这是 TD-60 全部方案都卡住的同一个根因。
+//
+// 语义（OPSMESH_SERVICE_PROXY）：
+//   - 未设置 / "on" / "all"  ：全部域转发（默认，保持既有行为）
+//   - "off" / "none"        ：全部域停用，回落单体本地实现
+//   - "gpu,portal"          ：仅列出的域停用，其余照常转发
+//
+// 停用的实现方式是**不注册该前缀的代理路由**，而不是在 handler 里返回 503：
+// 这样请求自然落到单体自己的同名 handler（真正的回退），若单体本就没有该域
+// 实现，mux 直接 404——这比「停用后返回一句 503」更诚实，也不会掩盖
+// 「这个域根本没有单体实现」这一事实。
+
+// serviceProxyEnvKey 路由开关的环境变量名。
+const serviceProxyEnvKey = "OPSMESH_SERVICE_PROXY"
+
+// parseDisabledProxyDomains 解析路由开关，返回需要停用的域集合。
+//
+// 无法识别的取值按「全部启用」处理并在错误里报出：宁可不切换，也不要因为
+// 一个拼错的开关值把生产流量静默切走。
+func parseDisabledProxyDomains(raw string) (map[string]bool, error) {
+	disabled := map[string]bool{}
+	v := strings.ToLower(strings.TrimSpace(raw))
+	switch v {
+	case "", "on", "all":
+		return disabled, nil
+	case "off", "none":
+		for _, r := range allProxyRules() {
+			disabled[r.domain] = true
+		}
+		return disabled, nil
+	}
+	for _, part := range strings.Split(v, ",") {
+		d := strings.TrimSpace(part)
+		if d == "" {
+			continue
+		}
+		if !proxyDomainExists(d) {
+			return nil, fmt.Errorf("%s 含未知域 %q（可用：%s）", serviceProxyEnvKey, d, strings.Join(proxyDomainNames(), "/"))
+		}
+		disabled[d] = true
+	}
+	return disabled, nil
+}
+
+// allProxyRules 返回两张规则表的全部条目（空条目已剔除）。
+func allProxyRules() []serviceProxyRule {
+	out := make([]serviceProxyRule, 0, len(serviceProxyRules)+len(deviceProxyExtras))
+	for _, group := range [][]serviceProxyRule{serviceProxyRules, deviceProxyExtras} {
+		for i := range group {
+			if group[i].publicPrefix != "" {
+				out = append(out, group[i])
+			}
+		}
+	}
+	return out
+}
+
+// proxyDomainNames 返回全部域标识（去重、升序）。
+func proxyDomainNames() []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, r := range allProxyRules() {
+		if !seen[r.domain] {
+			seen[r.domain] = true
+			out = append(out, r.domain)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// proxyDomainExists 判断域标识是否已知。
+func proxyDomainExists(d string) bool {
+	for _, r := range allProxyRules() {
+		if r.domain == d {
+			return true
+		}
+	}
+	return false
+}
+
+// disabledProxyDomains 读取并解析路由开关。解析失败时退化为「全部启用」，
+// 由调用方在启动日志中显式报出——开关写错不应导致生产流量被静默切走。
+func disabledProxyDomains() (map[string]bool, error) {
+	return parseDisabledProxyDomains(os.Getenv(serviceProxyEnvKey))
+}
+
 // rewriteProxyPath 把聚合层路径改写为后端真实路径：
 // 剥 domainPrefix，剩余子路径拼到 upstreamPrefix 之后。
 // 例：/api/v1/autoscaler/rules/123 → /api/v1/rules/123。
@@ -231,6 +424,18 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 	target := rule.upstreamBase()
 	if target == nil {
 		writeProxyErrorJSON(w, http.StatusServiceUnavailable, "service backend address invalid: "+rule.envKey)
+		return
+	}
+	// 自环拦截：后端指向控制面自身时**必须**停在这里。
+	// 放过去的后果是请求被改写后转发回本进程，命中单体自己的同名 handler，
+	// 返回另一个子系统的数据且无任何错误信号（出厂即命中：portal 域的
+	// 默认值 127.0.0.1:8080 正是控制面监听端口，/api/v1/portal/quotas
+	// 会被改写成 /api/v1/quots 而返回单体的配额数据）。
+	if port, self := proxySelfLoopTarget(target, s.httpPort, s.grpcPort, s.metricsPort); self {
+		writeProxyErrorJSON(w, http.StatusServiceUnavailable, fmt.Sprintf(
+			"service backend for %s points at the control plane itself (%s:%d); "+
+				"set %s to the service address",
+			rule.domain, target.Hostname(), port, rule.envKey))
 		return
 	}
 	// 连接预检：后端不可达直接 503（带服务名），比 ReverseProxy 空响应体

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"opsmesh.io/log-svc/api/proto/v1"
+	logv1 "opsmesh.io/log-svc/api/proto/v1"
 	"opsmesh.io/log-svc/pkg/logstore"
 )
 

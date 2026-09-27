@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -410,6 +411,103 @@ func TestEngine_GetExecutionNotFound(t *testing.T) {
 	result := e.GetExecution("nonexistent")
 	if result != nil {
 		t.Fatal("expected nil for nonexistent execution")
+	}
+}
+
+// TestEngine_ConcurrentSnapshotReads 覆盖真实故障：引擎在后台 goroutine 里改 Execution，
+// HTTP handler 同时把 Execution 序列化成 JSON 读它的字段与 map。
+// 修法是所有出口返回深拷贝快照，这个用例在 -race 下能守住该性质；
+// 若哪天有人图省事改回直接返回内部指针，这里必然报 DATA RACE。
+func TestEngine_ConcurrentSnapshotReads(t *testing.T) {
+	e := NewEngine()
+	ctx := context.Background()
+
+	wf := &models.Workflow{
+		ID:     "wf-concurrent",
+		Name:   "Concurrent",
+		Status: models.WorkflowStatusActive,
+		Nodes: []models.Node{
+			{ID: "n1", Type: models.NodeTypeTask, Name: "A"},
+			{ID: "n2", Type: models.NodeTypeTask, Name: "B"},
+			{ID: "n3", Type: models.NodeTypeTask, Name: "C"},
+		},
+		Edges: []models.Edge{
+			{From: "n1", To: "n2"},
+			{From: "n2", To: "n3"},
+		},
+	}
+
+	exec, err := e.StartExecution(ctx, wf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	done := make(chan struct{})
+	readerErr := make(chan error, 1)
+	go func() {
+		defer close(done)
+		// 模拟 handler 持续拉取执行态：读标量字段 + 遍历 NodeStates map。
+		for i := 0; i < 2000; i++ {
+			snap := e.GetExecution(exec.ID)
+			if snap == nil {
+				readerErr <- errors.New("execution disappeared")
+				return
+			}
+			_ = snap.Status
+			_ = snap.ErrorMessage
+			for _, st := range snap.NodeStates {
+				_ = st
+			}
+			for _, ex := range e.ListExecutions() {
+				_ = ex.WorkflowID
+			}
+		}
+	}()
+
+	<-done
+	select {
+	case err := <-readerErr:
+		t.Fatalf("reader: %v", err)
+	default:
+	}
+
+	final := e.GetExecution(exec.ID)
+	if final == nil {
+		t.Fatal("execution not found")
+	}
+	if final.Status != models.ExecutionStatusCompleted {
+		t.Fatalf("expected completed, got %s", final.Status)
+	}
+}
+
+// TestEngine_SnapshotIsDetached 确认快照与引擎内部状态解耦：
+// 改返回值不能反过来改到引擎里的对象。
+func TestEngine_SnapshotIsDetached(t *testing.T) {
+	e := NewEngine()
+	ctx := context.Background()
+
+	wf := &models.Workflow{
+		ID:     "wf-detached",
+		Name:   "Detached",
+		Status: models.WorkflowStatusActive,
+		Nodes:  []models.Node{{ID: "n1", Type: models.NodeTypeTask, Name: "A"}},
+	}
+
+	exec, err := e.StartExecution(ctx, wf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	exec.Status = "被调用方改坏了"
+	exec.NodeStates["n1"] = "也被改了"
+
+	fresh := e.GetExecution(exec.ID)
+	if fresh.Status == exec.Status {
+		t.Errorf("调用方改了自己的快照，引擎内部状态却跟着变了：Status=%s", fresh.Status)
+	}
+	if fresh.NodeStates["n1"] == models.NodeStatus("也被改了") {
+		t.Error("NodeStates 是浅拷贝，调用方改快照污染了引擎内部 map")
 	}
 }
 

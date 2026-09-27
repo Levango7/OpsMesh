@@ -50,11 +50,11 @@ func (s *SQLStore) checkLeaderFence(ctx context.Context, op string) bool {
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT EXISTS(SELECT 1 FROM leader_lease WHERE id=1 AND holder=? AND expires_at > NOW())`,
 		s.instanceID).Scan(&fenced); err != nil {
-		log.Printf("[store] %s fencing 检查失败: %v", op, err)
+		recordStoreFailure("[store] %s fencing 检查失败: %v", op, err)
 		return false
 	}
 	if !fenced && s.IsLeader() {
-		log.Printf("[store] %s fencing 失败：自认 leader 但租约不匹配/过期，主动放弃 leader", op)
+		recordStoreFailure("[store] %s fencing 失败：自认 leader 但租约不匹配/过期，主动放弃 leader", op)
 		s.mu.Lock()
 		s.isLeader = false
 		s.mu.Unlock()
@@ -77,7 +77,7 @@ func (s *SQLStore) ApproveTask(id, tenantID, approvedBy string) bool {
 	}
 	res, err := s.db.ExecContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ApproveTask 失败 %s: %v", id, err)
+		recordStoreFailure("[store] ApproveTask 失败 %s: %v", id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
@@ -106,7 +106,7 @@ func (s *SQLStore) RejectTask(id, tenantID, approvedBy string) bool {
 	}
 	res, err := s.db.ExecContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] RejectTask 失败 %s: %v", id, err)
+		recordStoreFailure("[store] RejectTask 失败 %s: %v", id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
@@ -127,7 +127,7 @@ func (s *SQLStore) GetTasks(agentID string) []*proto.Task {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT task_id, agent_id, type, command, content, path, status, created_at FROM tasks WHERE agent_id=? AND (status IS NULL OR status='pending')`, agentID)
 	if err != nil {
-		log.Printf("[store] GetTasks 查询失败 %s: %v", agentID, err)
+		recordStoreFailure("[store] GetTasks 查询失败 %s: %v", agentID, err)
 		return nil
 	}
 	defer rows.Close()
@@ -138,7 +138,7 @@ func (s *SQLStore) GetTasks(agentID string) []*proto.Task {
 		var content, path sql.NullString
 		var createdAt time.Time
 		if err := rows.Scan(&t.TaskID, &t.AgentID, &t.Type, &t.Command, &content, &path, &t.Status, &createdAt); err != nil {
-			log.Printf("[store] GetTasks 扫描失败: %v", err)
+			recordStoreFailure("[store] GetTasks 扫描失败: %v", err)
 			continue
 		}
 		t.Content = content.String
@@ -147,7 +147,7 @@ func (s *SQLStore) GetTasks(agentID string) []*proto.Task {
 		out = append(out, &t)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] GetTasks 遍历失败 %s: %v", agentID, err)
+		recordStoreFailure("[store] GetTasks 遍历失败 %s: %v", agentID, err)
 	}
 	return out
 }
@@ -160,7 +160,7 @@ func (s *SQLStore) TasksByParent(parentID string) []*proto.Task {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT task_id, agent_id, tenant_id, type, command, status, parent_id FROM tasks WHERE parent_id=?`, parentID)
 	if err != nil {
-		log.Printf("[store] TasksByParent 查询失败 %s: %v", parentID, err)
+		recordStoreFailure("[store] TasksByParent 查询失败 %s: %v", parentID, err)
 		return nil
 	}
 	defer rows.Close()
@@ -168,13 +168,13 @@ func (s *SQLStore) TasksByParent(parentID string) []*proto.Task {
 	for rows.Next() {
 		var t proto.Task
 		if err := rows.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &t.Command, &t.Status, &t.ParentID); err != nil {
-			log.Printf("[store] TasksByParent 扫描失败: %v", err)
+			recordStoreFailure("[store] TasksByParent 扫描失败: %v", err)
 			continue
 		}
 		out = append(out, &t)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] TasksByParent 遍历失败 %s: %v", parentID, err)
+		recordStoreFailure("[store] TasksByParent 遍历失败 %s: %v", parentID, err)
 	}
 	return out
 }
@@ -192,7 +192,7 @@ VALUES (?, ?, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE
 	exit_code=VALUES(exit_code), stdout=VALUES(stdout), stderr=VALUES(stderr), finished_at=VALUES(finished_at)
 `, res.TaskID, res.AgentID, res.ExitCode, res.Stdout, res.Stderr, res.FinishedAt.UTC()); err != nil {
-		log.Printf("[store] SubmitResult 写入 task_results 失败 %s: %v", res.TaskID, err)
+		recordStoreFailure("[store] SubmitResult 写入 task_results 失败 %s: %v", res.TaskID, err)
 	}
 
 	success := res.ExitCode == 0
@@ -214,7 +214,7 @@ ON DUPLICATE KEY UPDATE
 			if r, uerr := s.db.ExecContext(ctx,
 				`UPDATE tasks SET status='done' WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch),
 				claimEpochArgs(res.TaskID, res.ClaimEpoch)...); uerr != nil {
-				log.Printf("[store] SubmitResult done 更新失败 %s: %v", res.TaskID, uerr)
+				recordStoreFailure("[store] SubmitResult done 更新失败 %s: %v", res.TaskID, uerr)
 			} else if n, raErr := r.RowsAffected(); raErr == nil && n > 0 {
 				accepted = true
 			} else if res.ClaimEpoch > 0 {
@@ -225,7 +225,7 @@ ON DUPLICATE KEY UPDATE
 				`UPDATE tasks SET status='pending', claimed_by=NULL, claimed_at=NULL, retry_count=retry_count+1 WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch),
 				claimEpochArgs(res.TaskID, res.ClaimEpoch)...)
 			if uerr != nil {
-				log.Printf("[store] SubmitResult retry 更新失败 %s: %v", res.TaskID, uerr)
+				recordStoreFailure("[store] SubmitResult retry 更新失败 %s: %v", res.TaskID, uerr)
 			} else if n, raErr := r.RowsAffected(); raErr == nil && n > 0 {
 				accepted = true
 				s.publish(events.Event{Action: "task_retry", Target: res.TaskID, TenantID: tenantID,
@@ -238,7 +238,7 @@ ON DUPLICATE KEY UPDATE
 				`UPDATE tasks SET status='failed', dead_letter=1 WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch),
 				claimEpochArgs(res.TaskID, res.ClaimEpoch)...)
 			if uerr != nil {
-				log.Printf("[store] SubmitResult dead-letter 更新失败 %s: %v", res.TaskID, uerr)
+				recordStoreFailure("[store] SubmitResult dead-letter 更新失败 %s: %v", res.TaskID, uerr)
 			} else if n, raErr := r.RowsAffected(); raErr == nil && n > 0 {
 				accepted = true
 				s.addAlert(ctx, &proto.Alert{
@@ -271,7 +271,7 @@ ON DUPLICATE KEY UPDATE
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE devices SET task_state=?, last_result=?, last_result_at=? WHERE agent_id=?`,
 		taskState, lastResult, time.Now().UTC(), res.AgentID); err != nil {
-		log.Printf("[store] SubmitResult 更新 devices 失败 %s: %v", res.AgentID, err)
+		recordStoreFailure("[store] SubmitResult 更新 devices 失败 %s: %v", res.AgentID, err)
 	}
 
 	lvl := events.LevelInfo
@@ -309,7 +309,7 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 		blocked = append(blocked, r)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] releaseDeps 查询 blocked 任务遍历失败 %s: %v", agentID, err)
+		recordStoreFailure("[store] releaseDeps 查询 blocked 任务遍历失败 %s: %v", agentID, err)
 		return
 	}
 	if len(blocked) == 0 {
@@ -331,7 +331,7 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 		byID[id] = &proto.Task{TaskID: id, Status: st}
 	}
 	if err := all.Err(); err != nil {
-		log.Printf("[store] releaseDeps 查询任务状态遍历失败 %s: %v", agentID, err)
+		recordStoreFailure("[store] releaseDeps 查询任务状态遍历失败 %s: %v", agentID, err)
 		return
 	}
 
@@ -339,7 +339,7 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 		var deps []string
 		if b.deps != "" {
 			if err := json.Unmarshal([]byte(b.deps), &deps); err != nil {
-				log.Printf("[store] 解析阻塞任务 %s 依赖 JSON 失败: %v", b.id, err)
+				recordStoreFailure("[store] 解析阻塞任务 %s 依赖 JSON 失败: %v", b.id, err)
 			}
 		}
 		t := &proto.Task{TaskID: b.id, DependsOn: deps, Status: "blocked"}
@@ -366,7 +366,7 @@ func (s *SQLStore) AllTasks(tenantID string) []*proto.Task {
 	}
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] AllTasks 查询失败: %v", err)
+		recordStoreFailure("[store] AllTasks 查询失败: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -376,7 +376,7 @@ func (s *SQLStore) AllTasks(tenantID string) []*proto.Task {
 		var content, path sql.NullString
 		var createdAt time.Time
 		if err := rows.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &t.Command, &content, &path, &t.Status, &createdAt); err != nil {
-			log.Printf("[store] AllTasks 扫描失败: %v", err)
+			recordStoreFailure("[store] AllTasks 扫描失败: %v", err)
 			continue
 		}
 		t.Content = content.String
@@ -385,7 +385,7 @@ func (s *SQLStore) AllTasks(tenantID string) []*proto.Task {
 		out = append(out, &t)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] AllTasks 遍历失败: %v", err)
+		recordStoreFailure("[store] AllTasks 遍历失败: %v", err)
 	}
 	return out
 }
@@ -402,7 +402,7 @@ func (s *SQLStore) TaskByID(taskID string) *proto.Task {
 	var createdAt time.Time
 	if err := row.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &t.Command, &content, &path, &t.Status, &createdAt); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] TaskByID 查询失败 %s: %v", taskID, err)
+			recordStoreFailure("[store] TaskByID 查询失败 %s: %v", taskID, err)
 		}
 		return nil
 	}
@@ -420,7 +420,7 @@ func (s *SQLStore) Results(agentID string) []*proto.TaskResult {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT task_id, agent_id, exit_code, stdout, stderr, finished_at FROM task_results WHERE agent_id=? ORDER BY finished_at DESC`, agentID)
 	if err != nil {
-		log.Printf("[store] Results 查询失败 %s: %v", agentID, err)
+		recordStoreFailure("[store] Results 查询失败 %s: %v", agentID, err)
 		return nil
 	}
 	defer rows.Close()
@@ -429,14 +429,14 @@ func (s *SQLStore) Results(agentID string) []*proto.TaskResult {
 		var r proto.TaskResult
 		var finishedAt time.Time
 		if err := rows.Scan(&r.TaskID, &r.AgentID, &r.ExitCode, &r.Stdout, &r.Stderr, &finishedAt); err != nil {
-			log.Printf("[store] Results 扫描失败: %v", err)
+			recordStoreFailure("[store] Results 扫描失败: %v", err)
 			continue
 		}
 		r.FinishedAt = finishedAt
 		out = append(out, &r)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] Results 遍历失败 %s: %v", agentID, err)
+		recordStoreFailure("[store] Results 遍历失败 %s: %v", agentID, err)
 	}
 	return out
 }
@@ -471,7 +471,7 @@ func (s *SQLStore) CreateTask(t *proto.Task) *proto.Task {
 		t.TaskID, t.AgentID, t.TenantID, t.Type, t.Command, t.Content, t.Path, t.Status,
 		t.RetryCount, t.MaxRetries, t.DeadLetter, t.Schedule, t.ParentID, t.CreatedAt,
 		t.Timeout, t.RetryDelay); err != nil {
-		log.Printf("[store] CreateTask 失败 %s: %v", t.TaskID, err)
+		recordStoreFailure("[store] CreateTask 失败 %s: %v", t.TaskID, err)
 	}
 	s.publish(events.Event{Action: "create_task", Target: t.TaskID, TenantID: t.TenantID, Detail: t.Command, Level: events.LevelInfo})
 	return t
@@ -495,7 +495,7 @@ func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		log.Printf("[store] ClaimTask begin 失败 %s: %v", agentID, err)
+		recordStoreFailure("[store] ClaimTask begin 失败 %s: %v", agentID, err)
 		return nil
 	}
 	defer tx.Rollback()
@@ -516,17 +516,17 @@ func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 		if err == sql.ErrNoRows {
 			return nil
 		}
-		log.Printf("[store] ClaimTask 查询失败 %s: %v", agentID, err)
+		recordStoreFailure("[store] ClaimTask 查询失败 %s: %v", agentID, err)
 		return nil
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE tasks SET status='running', claimed_by=?, claimed_at=?, claim_epoch=claim_epoch+1 WHERE task_id=?`,
 		agentID, time.Now().UTC(), taskID); err != nil {
-		log.Printf("[store] ClaimTask 更新失败 %s: %v", taskID, err)
+		recordStoreFailure("[store] ClaimTask 更新失败 %s: %v", taskID, err)
 		return nil
 	}
 	if err := tx.Commit(); err != nil {
-		log.Printf("[store] ClaimTask commit 失败 %s: %v", taskID, err)
+		recordStoreFailure("[store] ClaimTask commit 失败 %s: %v", taskID, err)
 		return nil
 	}
 	return &proto.Task{
@@ -564,7 +564,7 @@ func (s *SQLStore) ReclaimStaleTasks(maxAge time.Duration) int {
 		   AND NOT EXISTS (SELECT 1 FROM agents a WHERE a.agent_id = tasks.claimed_by AND a.last_seen > ?)`,
 		cutoff, cutoff)
 	if err != nil {
-		log.Printf("[store] ReclaimStaleTasks 失败: %v", err)
+		recordStoreFailure("[store] ReclaimStaleTasks 失败: %v", err)
 		return 0
 	}
 	n, rowsErr := res.RowsAffected()
@@ -595,7 +595,7 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 	// 派生原子化：整批 SELECT→INSERT→UPDATE 包在单事务内，失败 Rollback。
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		log.Printf("[store] FireDueSchedules begin 失败: %v", err)
+		recordStoreFailure("[store] FireDueSchedules begin 失败: %v", err)
 		return 0
 	}
 	defer tx.Rollback()
@@ -606,7 +606,7 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 		 FROM tasks WHERE (parent_id IS NULL OR parent_id='') AND schedule <> '' AND (status IS NULL OR status='pending')
 		 FOR UPDATE`)
 	if err != nil {
-		log.Printf("[store] FireDueSchedules 查询失败: %v", err)
+		recordStoreFailure("[store] FireDueSchedules 查询失败: %v", err)
 		return 0
 	}
 	defer rows.Close()
@@ -626,7 +626,7 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 		// 与本文件 PendingTasks/:138、ListTasks/:376、GetTask/:401 的处理一致。
 		var content, command, path sql.NullString
 		if err := rows.Scan(&tp.id, &tp.agentID, &tp.tenantID, &tp.typ, &command, &content, &path, &tp.maxRetries, &tp.schedule, &lf, &tp.timeout, &tp.retryDelay); err != nil {
-			log.Printf("[store] FireDueSchedules 扫描失败: %v", err)
+			recordStoreFailure("[store] FireDueSchedules 扫描失败: %v", err)
 			continue
 		}
 		if content.Valid {
@@ -652,7 +652,7 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 		due = append(due, tp)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] FireDueSchedules 遍历失败: %v", err)
+		recordStoreFailure("[store] FireDueSchedules 遍历失败: %v", err)
 		return 0
 	}
 	fired := 0
@@ -662,12 +662,12 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 			`INSERT INTO tasks (task_id, agent_id, tenant_id, type, command, content, path, status, retry_count, max_retries, schedule, parent_id, created_at, timeout, retry_delay)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, '', ?, ?, ?, ?)`,
 			instID, tp.agentID, tp.tenantID, tp.typ, tp.command, tp.content, tp.path, tp.maxRetries, tp.id, now.UTC(), tp.timeout, tp.retryDelay); err != nil {
-			log.Printf("[store] FireDueSchedules 派生实例失败 %s: %v", instID, err)
+			recordStoreFailure("[store] FireDueSchedules 派生实例失败 %s: %v", instID, err)
 			continue
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE tasks SET last_fired_at=? WHERE task_id=?`, now.UTC(), tp.id); err != nil {
-			log.Printf("[store] FireDueSchedules 回写 last_fired_at 失败 %s: %v", tp.id, err)
+			recordStoreFailure("[store] FireDueSchedules 回写 last_fired_at 失败 %s: %v", tp.id, err)
 			continue
 		}
 		fired++
@@ -675,7 +675,7 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 			Detail: "parent=" + tp.id + " cron=" + tp.schedule, Level: events.LevelInfo})
 	}
 	if err := tx.Commit(); err != nil {
-		log.Printf("[store] FireDueSchedules commit 失败: %v", err)
+		recordStoreFailure("[store] FireDueSchedules commit 失败: %v", err)
 		return 0
 	}
 	return fired
@@ -689,7 +689,7 @@ func (s *SQLStore) PendingDepth() int {
 	var n int
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM tasks WHERE status IS NULL OR status='pending'`).Scan(&n); err != nil {
-		log.Printf("[store] PendingDepth 失败: %v", err)
+		recordStoreFailure("[store] PendingDepth 失败: %v", err)
 		return 0
 	}
 	return n
@@ -706,7 +706,7 @@ func (s *SQLStore) TaskResult(taskID string) *proto.TaskResult {
 	var finishedAt time.Time
 	if err := row.Scan(&r.TaskID, &r.AgentID, &r.ExitCode, &r.Stdout, &r.Stderr, &finishedAt); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] TaskResult 查询失败 %s: %v", taskID, err)
+			recordStoreFailure("[store] TaskResult 查询失败 %s: %v", taskID, err)
 		}
 		return nil
 	}
@@ -724,7 +724,7 @@ func (s *SQLStore) CancelTask(id, tenantID string) bool {
 		 AND (tenant_id=? OR ?='')`,
 		id, tenantID, tenantID)
 	if err != nil {
-		log.Printf("[store] CancelTask 失败 %s: %v", id, err)
+		recordStoreFailure("[store] CancelTask 失败 %s: %v", id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
@@ -742,7 +742,7 @@ func (s *SQLStore) CancelledTaskIDs(agentID string) []string {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT task_id FROM tasks WHERE agent_id=? AND status='cancelled'`, agentID)
 	if err != nil {
-		log.Printf("[store] CancelledTaskIDs 失败 %s: %v", agentID, err)
+		recordStoreFailure("[store] CancelledTaskIDs 失败 %s: %v", agentID, err)
 		return nil
 	}
 	defer rows.Close()
@@ -755,7 +755,7 @@ func (s *SQLStore) CancelledTaskIDs(agentID string) []string {
 		out = append(out, id)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] CancelledTaskIDs 遍历失败 %s: %v", agentID, err)
+		recordStoreFailure("[store] CancelledTaskIDs 遍历失败 %s: %v", agentID, err)
 	}
 	return out
 }

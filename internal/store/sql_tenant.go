@@ -19,7 +19,6 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"time"
 )
 
@@ -38,12 +37,12 @@ func scanTenant(row rowScanner) *Tenant {
 	t.UpdatedAt = updatedAt
 	if quotaJSON != "" {
 		if err := json.Unmarshal([]byte(quotaJSON), &t.Quota); err != nil {
-			log.Printf("[store] scanTenant 解析 quota JSON 失败 (tenant=%s): %v", t.ID, err)
+			recordStoreFailure("[store] scanTenant 解析 quota JSON 失败 (tenant=%s): %v", t.ID, err)
 		}
 	}
 	if usageJSON != "" {
 		if err := json.Unmarshal([]byte(usageJSON), &t.Usage); err != nil {
-			log.Printf("[store] scanTenant 解析 usage JSON 失败 (tenant=%s): %v", t.ID, err)
+			recordStoreFailure("[store] scanTenant 解析 usage JSON 失败 (tenant=%s): %v", t.ID, err)
 		}
 	}
 	return &t
@@ -110,7 +109,7 @@ func (s *SQLStore) CreateTenant(tenant *Tenant) *Tenant {
 		 status=VALUES(status), quota=VALUES(quota), usage_data=VALUES(usage_data), updated_at=VALUES(updated_at)`,
 		tenant.ID, tenant.Name, tenant.DisplayName, string(tenant.Status),
 		quotaJSON, usageJSON, tenant.CreatedAt, tenant.UpdatedAt); err != nil {
-		log.Printf("[store] CreateTenant 插入失败 (tenant=%s): %v", tenant.ID, err)
+		recordStoreFailure("[store] CreateTenant 插入失败 (tenant=%s): %v", tenant.ID, err)
 		return nil
 	}
 	return cloneTenant(tenant)
@@ -156,7 +155,7 @@ func (s *SQLStore) UpdateTenant(tenant *Tenant) (*Tenant, bool) {
 		 WHERE id=?`,
 		tenant.Name, tenant.DisplayName, string(tenant.Status), quotaJSON, usageJSON,
 		tenant.UpdatedAt, tenant.ID); err != nil {
-		log.Printf("[store] UpdateTenant 更新失败 (tenant=%s): %v", tenant.ID, err)
+		recordStoreFailure("[store] UpdateTenant 更新失败 (tenant=%s): %v", tenant.ID, err)
 		return nil, false
 	}
 	return cloneTenant(tenant), true
@@ -168,7 +167,7 @@ func (s *SQLStore) ListTenants() []*Tenant {
 		`SELECT id, name, display_name, status, quota, usage_data, created_at, updated_at
 		  FROM tenants ORDER BY created_at ASC`)
 	if err != nil {
-		log.Printf("[store] ListTenants 查询失败: %v", err)
+		recordStoreFailure("[store] ListTenants 查询失败: %v", err)
 		return []*Tenant{}
 	}
 	defer rows.Close()
@@ -179,7 +178,7 @@ func (s *SQLStore) ListTenants() []*Tenant {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListTenants 遍历失败: %v", err)
+		recordStoreFailure("[store] ListTenants 遍历失败: %v", err)
 	}
 	return out
 }
@@ -189,12 +188,12 @@ func (s *SQLStore) DeleteTenant(id string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM tenants WHERE id=?`, id)
 	if err != nil {
-		log.Printf("[store] DeleteTenant 失败 (tenant=%s): %v", id, err)
+		recordStoreFailure("[store] DeleteTenant 失败 (tenant=%s): %v", id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeleteTenant RowsAffected 失败 (tenant=%s): %v", id, rowsErr)
+		recordStoreFailure("[store] DeleteTenant RowsAffected 失败 (tenant=%s): %v", id, rowsErr)
 		return false
 	}
 	return n > 0

@@ -18,7 +18,6 @@ package store
 import (
 	"context"
 
-	"log"
 	"time"
 )
 
@@ -79,7 +78,7 @@ func (s *SQLStore) CreatePlugin(plugin *Plugin) *Plugin {
 		plugin.ID, plugin.Name, plugin.Version, plugin.Description, plugin.Author, plugin.Type,
 		plugin.DownloadURL, plugin.Checksum, pluginBoolInt(plugin.Installed),
 		pluginBoolInt(plugin.Enabled), plugin.CreatedAt); err != nil {
-		log.Printf("[store] CreatePlugin 插入失败 (plugin=%s): %v", plugin.ID, err)
+		recordStoreFailure("[store] CreatePlugin 插入失败 (plugin=%s): %v", plugin.ID, err)
 		return nil
 	}
 	return clonePlugin(plugin)
@@ -122,7 +121,7 @@ func (s *SQLStore) UpdatePlugin(plugin *Plugin) (*Plugin, bool) {
 		plugin.Name, plugin.Version, plugin.Description, plugin.Author, plugin.Type,
 		plugin.DownloadURL, plugin.Checksum, pluginBoolInt(plugin.Installed),
 		pluginBoolInt(plugin.Enabled), plugin.ID); err != nil {
-		log.Printf("[store] UpdatePlugin 更新失败 (plugin=%s): %v", plugin.ID, err)
+		recordStoreFailure("[store] UpdatePlugin 更新失败 (plugin=%s): %v", plugin.ID, err)
 		return nil, false
 	}
 	return clonePlugin(plugin), true
@@ -134,7 +133,7 @@ func (s *SQLStore) ListPlugins() []*Plugin {
 		`SELECT id, name, version, description, author, type, download_url, checksum, installed, enabled, created_at
 		  FROM plugins ORDER BY created_at ASC`)
 	if err != nil {
-		log.Printf("[store] ListPlugins 查询失败: %v", err)
+		recordStoreFailure("[store] ListPlugins 查询失败: %v", err)
 		return []*Plugin{}
 	}
 	defer rows.Close()
@@ -145,7 +144,7 @@ func (s *SQLStore) ListPlugins() []*Plugin {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListPlugins 遍历失败: %v", err)
+		recordStoreFailure("[store] ListPlugins 遍历失败: %v", err)
 	}
 	return out
 }
@@ -155,12 +154,12 @@ func (s *SQLStore) DeletePlugin(id string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM plugins WHERE id=?`, id)
 	if err != nil {
-		log.Printf("[store] DeletePlugin 失败 (plugin=%s): %v", id, err)
+		recordStoreFailure("[store] DeletePlugin 失败 (plugin=%s): %v", id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeletePlugin RowsAffected 失败 (plugin=%s): %v", id, rowsErr)
+		recordStoreFailure("[store] DeletePlugin RowsAffected 失败 (plugin=%s): %v", id, rowsErr)
 		return false
 	}
 	return n > 0

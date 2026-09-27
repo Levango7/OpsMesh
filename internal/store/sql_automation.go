@@ -24,7 +24,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"log"
 	"time"
 )
 
@@ -118,7 +117,7 @@ func (s *SQLStore) CreateAutomationRule(tenantID string, r *AutomationRule) *Aut
 		r.ID, r.TenantID, r.Name, r.Description, r.TriggerType,
 		marshalTriggerParams(r.TriggerParams), marshalActions(r.Actions),
 		enabled, r.CreatedAt, r.UpdatedAt); err != nil {
-		log.Printf("[store] CreateAutomationRule 插入失败 (tenant=%s id=%s): %v", tenantID, r.ID, err)
+		recordStoreFailure("[store] CreateAutomationRule 插入失败 (tenant=%s id=%s): %v", tenantID, r.ID, err)
 		return nil
 	}
 	return r
@@ -144,7 +143,7 @@ func (s *SQLStore) ListAutomationRules(tenantID string) []*AutomationRule {
 		         enabled, created_at, updated_at
 		   FROM automation_rules WHERE tenant_id=? ORDER BY created_at DESC`, tenantID)
 	if err != nil {
-		log.Printf("[store] ListAutomationRules 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] ListAutomationRules 查询失败 (tenant=%s): %v", tenantID, err)
 		return []*AutomationRule{}
 	}
 	defer rows.Close()
@@ -155,7 +154,7 @@ func (s *SQLStore) ListAutomationRules(tenantID string) []*AutomationRule {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListAutomationRules 遍历失败: %v", err)
+		recordStoreFailure("[store] ListAutomationRules 遍历失败: %v", err)
 	}
 	return out
 }
@@ -185,7 +184,7 @@ func (s *SQLStore) UpdateAutomationRule(tenantID string, r *AutomationRule) (*Au
 		r.Name, r.Description, r.TriggerType,
 		marshalTriggerParams(r.TriggerParams), marshalActions(r.Actions),
 		enabled, r.UpdatedAt, r.ID, tenantID); err != nil {
-		log.Printf("[store] UpdateAutomationRule 更新失败 (tenant=%s id=%s): %v", tenantID, r.ID, err)
+		recordStoreFailure("[store] UpdateAutomationRule 更新失败 (tenant=%s id=%s): %v", tenantID, r.ID, err)
 		return nil, false
 	}
 	return r, true
@@ -196,12 +195,12 @@ func (s *SQLStore) DeleteAutomationRule(tenantID, id string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM automation_rules WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
-		log.Printf("[store] DeleteAutomationRule 失败 (tenant=%s id=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] DeleteAutomationRule 失败 (tenant=%s id=%s): %v", tenantID, id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeleteAutomationRule RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, id, rowsErr)
+		recordStoreFailure("[store] DeleteAutomationRule RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, id, rowsErr)
 		return false
 	}
 	return n > 0
@@ -229,7 +228,7 @@ func (s *SQLStore) toggleAutomationRule(tenantID, id string, enable bool) (*Auto
 	if _, err := s.db.ExecContext(context.Background(),
 		`UPDATE automation_rules SET enabled=?, updated_at=? WHERE id=? AND tenant_id=?`,
 		enabled, now, id, tenantID); err != nil {
-		log.Printf("[store] toggleAutomationRule 更新失败 (tenant=%s id=%s enable=%v): %v",
+		recordStoreFailure("[store] toggleAutomationRule 更新失败 (tenant=%s id=%s enable=%v): %v",
 			tenantID, id, enable, err)
 		return nil, false
 	}
@@ -288,7 +287,7 @@ func (s *SQLStore) CreateAutomationExecution(tenantID string, e *AutomationExecu
 		   rule_id=VALUES(rule_id), rule_name=VALUES(rule_name), status=VALUES(status),
 		   detail=VALUES(detail), started_at=VALUES(started_at), ended_at=VALUES(ended_at)`,
 		e.ID, e.TenantID, e.RuleID, e.RuleName, e.Status, e.Detail, e.StartedAt, endedAt); err != nil {
-		log.Printf("[store] CreateAutomationExecution 插入失败 (tenant=%s id=%s): %v", tenantID, e.ID, err)
+		recordStoreFailure("[store] CreateAutomationExecution 插入失败 (tenant=%s id=%s): %v", tenantID, e.ID, err)
 		return nil
 	}
 	return e
@@ -325,7 +324,7 @@ func (s *SQLStore) ListAutomationExecutions(tenantID string, limit int) []*Autom
 			tenantID)
 	}
 	if err != nil {
-		log.Printf("[store] ListAutomationExecutions 查询失败 (tenant=%s limit=%d): %v", tenantID, limit, err)
+		recordStoreFailure("[store] ListAutomationExecutions 查询失败 (tenant=%s limit=%d): %v", tenantID, limit, err)
 		return []*AutomationExecution{}
 	}
 	defer rows.Close()
@@ -336,7 +335,7 @@ func (s *SQLStore) ListAutomationExecutions(tenantID string, limit int) []*Autom
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListAutomationExecutions 遍历失败: %v", err)
+		recordStoreFailure("[store] ListAutomationExecutions 遍历失败: %v", err)
 	}
 	return out
 }

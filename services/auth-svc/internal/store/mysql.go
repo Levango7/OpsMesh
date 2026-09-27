@@ -111,10 +111,12 @@ func (s *MySQLStore) seedDefaults() error {
 		if err != nil {
 			return fmt.Errorf("query permissions for admin: %w", err)
 		}
+		// defer 统一回收：两个提前 return 分支此前各自手工 Close，
+		// 漏写一条就是泄漏（sqlclosecheck 报点出处）。
+		defer rows.Close()
 		for rows.Next() {
 			var name string
 			if err := rows.Scan(&name); err != nil {
-				rows.Close()
 				return fmt.Errorf("scan permission name: %w", err)
 			}
 			_, err = s.db.Exec(
@@ -122,11 +124,12 @@ func (s *MySQLStore) seedDefaults() error {
 				"role-admin", name,
 			)
 			if err != nil {
-				rows.Close()
 				return fmt.Errorf("seed role_permission: %w", err)
 			}
 		}
-		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate permissions: %w", err)
+		}
 	}
 
 	err = s.db.QueryRow("SELECT COUNT(*) FROM users WHERE username = ?", "admin").Scan(&count)

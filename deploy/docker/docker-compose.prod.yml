@@ -402,6 +402,25 @@ services:
       OPSMESH_PUBLIC_REGISTER: ${PUBLIC_REGISTER:-false}
       OPSMESH_ALLOW_PUBLIC_REGISTER: ${ALLOW_PUBLIC_REGISTER:-false}
       OPSMESH_TRUST_PROXY: ${TRUST_PROXY:-false}
+      # ---- 微服务转发后端（TD-60）----
+      # 这三个变量此前**从未被设置**，聚合代理因此回落到源码里的硬编码 localhost
+      # 默认值，其中 autoscaler/portal 的默认值 127.0.0.1:8080 正是控制面自己的
+      # 监听端口：/api/v1/portal/quotas 会被改写成 /api/v1/quotas 并**静默转发回
+      # 自己**，返回单体的配额数据、无错误、无告警。控制面现已对该情况硬拦为 503
+      # （service_proxy.go proxySelfLoopTarget），但根因是这里必须显式给地址。
+      #
+      # 地址用 compose 服务名（容器网络内可解析），端口与文件下方各服务
+      # *_SVC_HTTP_PORT 保持一致。
+      # runbook/incident/autoscaler 三个域的微服务**未包含在本栈中**，故不设置：
+      # 保持默认值 → 请求得到 503（可见故障），而不是指向一个不存在的服务。
+      # 一域当前由谁处理、后端是什么、自检结论如何，查 GET /api/v1/admin/service-routing。
+      GPU_SVC_URL: http://gpu-svc:8107
+      PORTAL_SVC_URL: http://portal-svc:8109
+      DEVICE_SVC_URL: http://device-svc:8101
+      # 可逆切流开关（默认空=全部转发）。回退某域到单体本地实现：
+      #   OPSMESH_SERVICE_PROXY=gpu,portal
+      # 全部停用用 off。取值非法会被忽略并按「全转发」继续——宁可不动，也不误切。
+      OPSMESH_SERVICE_PROXY: ${OPSMESH_SERVICE_PROXY:-}
       # 可支撑性（P1-6）：日志级别与 pprof 开关（pprof 开启后仍受 METRICS_ALLOW_CIDR 准入）。
       # 默认 info/false；debug 仅排障期间使用（日志量级显著上升）。
       OPSMESH_LOG_LEVEL: ${LOG_LEVEL:-info}

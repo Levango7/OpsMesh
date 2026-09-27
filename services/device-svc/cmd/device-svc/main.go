@@ -36,6 +36,11 @@ func main() {
 	lgr := applog.Init("device-svc")
 	cfg := config.Load()
 
+	// P0 安全门禁：租户签名密钥必须显式注入且达到最小强度，否则拒绝启动。
+	if err := cfg.Validate(); err != nil {
+		lgr.Fatalf("[device-svc] 配置校验失败，停止启动: %v", err)
+	}
+
 	metrics.Init("device-svc")
 
 	shutdown, err := trace.InitTracer("device-svc", cfg.OTelEndpoint)

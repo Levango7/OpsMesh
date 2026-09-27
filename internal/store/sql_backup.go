@@ -15,7 +15,6 @@ package store
 
 import (
 	"context"
-	"log"
 	"time"
 )
 
@@ -70,7 +69,7 @@ func (s *SQLStore) CreateBackup(tenantID string, b *BackupRecord) *BackupRecord 
 		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE type=VALUES(type), status=VALUES(status), size=VALUES(size), path=VALUES(path)`,
 		b.ID, b.TenantID, b.Type, b.Status, b.Size, b.Path, b.CreatedAt); err != nil {
-		log.Printf("[store] CreateBackup 插入失败 (tenant=%s id=%s): %v", tenantID, b.ID, err)
+		recordStoreFailure("[store] CreateBackup 插入失败 (tenant=%s id=%s): %v", tenantID, b.ID, err)
 		return nil
 	}
 	return b
@@ -92,7 +91,7 @@ func (s *SQLStore) ListBackups(tenantID string) []*BackupRecord {
 	rows, err := s.db.QueryContext(context.Background(),
 		`SELECT `+backupRecordColumns+` FROM backup_records WHERE tenant_id=? ORDER BY created_at DESC`, tenantID)
 	if err != nil {
-		log.Printf("[store] ListBackups 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] ListBackups 查询失败 (tenant=%s): %v", tenantID, err)
 		return []*BackupRecord{}
 	}
 	defer rows.Close()
@@ -103,7 +102,7 @@ func (s *SQLStore) ListBackups(tenantID string) []*BackupRecord {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListBackups 遍历失败: %v", err)
+		recordStoreFailure("[store] ListBackups 遍历失败: %v", err)
 	}
 	return out
 }
@@ -113,12 +112,12 @@ func (s *SQLStore) DeleteBackup(tenantID, id string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM backup_records WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
-		log.Printf("[store] DeleteBackup 失败 (tenant=%s id=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] DeleteBackup 失败 (tenant=%s id=%s): %v", tenantID, id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeleteBackup RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, id, rowsErr)
+		recordStoreFailure("[store] DeleteBackup RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, id, rowsErr)
 		return false
 	}
 	return n > 0
@@ -136,12 +135,12 @@ func (s *SQLStore) UpdateBackup(tenantID string, rec *BackupRecord) bool {
 		`UPDATE backup_records SET status=?, size=?, path=? WHERE id=? AND tenant_id=?`,
 		rec.Status, rec.Size, rec.Path, rec.ID, tenantID)
 	if err != nil {
-		log.Printf("[store] UpdateBackup 失败 (tenant=%s id=%s): %v", tenantID, rec.ID, err)
+		recordStoreFailure("[store] UpdateBackup 失败 (tenant=%s id=%s): %v", tenantID, rec.ID, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] UpdateBackup RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, rec.ID, rowsErr)
+		recordStoreFailure("[store] UpdateBackup RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, rec.ID, rowsErr)
 		return false
 	}
 	return n > 0

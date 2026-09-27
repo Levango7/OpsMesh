@@ -35,6 +35,11 @@ func main() {
 	lgr := applog.Init("config-svc")
 	cfg := config.Load()
 
+	// P0 安全门禁：密文加密密钥必须显式注入且达到最小强度，否则拒绝启动。
+	if err := cfg.Validate(); err != nil {
+		lgr.Fatalf("[config-svc] 配置校验失败，停止启动: %v", err)
+	}
+
 	shutdown, err := trace.InitTracer("config-svc", cfg.OTelEndpoint)
 	if err != nil {
 		lgr.Fatalf("Failed to initialize tracer: %v", err)

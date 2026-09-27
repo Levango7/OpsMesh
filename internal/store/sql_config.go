@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"log"
 	"sort"
 	"time"
 )
@@ -65,7 +64,7 @@ func (s *SQLStore) SetConfig(item *ConfigItem) *ConfigItem {
 
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
-		log.Printf("[store] SetConfig 开启事务失败: %v", err)
+		recordStoreFailure("[store] SetConfig 开启事务失败: %v", err)
 		return nil
 	}
 	defer tx.Rollback() // 提交后 Rollback 为 no-op
@@ -88,13 +87,13 @@ func (s *SQLStore) SetConfig(item *ConfigItem) *ConfigItem {
 			`INSERT INTO config_history (tenant_id, key_name, version, value, format, description, updated_by, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			item.TenantID, item.Key, oldVersion, oldValue, oldFormat, oldDesc, oldBy, oldUpdatedAt); hErr != nil {
-			log.Printf("[store] SetConfig 写历史版本失败: %v", hErr)
+			recordStoreFailure("[store] SetConfig 写历史版本失败: %v", hErr)
 			return nil
 		}
 		newVersion = oldVersion + 1
 	} else if err != sql.ErrNoRows {
 		// 非"不存在"的真实错误。
-		log.Printf("[store] SetConfig 查现有配置失败: %v", err)
+		recordStoreFailure("[store] SetConfig 查现有配置失败: %v", err)
 		return nil
 	}
 
@@ -105,12 +104,12 @@ func (s *SQLStore) SetConfig(item *ConfigItem) *ConfigItem {
 		 ON DUPLICATE KEY UPDATE value=VALUES(value), format=VALUES(format), version=VALUES(version),
 		 description=VALUES(description), updated_by=VALUES(updated_by), updated_at=VALUES(updated_at)`,
 		item.TenantID, item.Key, item.Value, item.Format, newVersion, item.Description, item.UpdatedBy, now); uErr != nil {
-		log.Printf("[store] SetConfig UPSERT configs 失败: %v", uErr)
+		recordStoreFailure("[store] SetConfig UPSERT configs 失败: %v", uErr)
 		return nil
 	}
 
 	if cErr := tx.Commit(); cErr != nil {
-		log.Printf("[store] SetConfig 提交事务失败: %v", cErr)
+		recordStoreFailure("[store] SetConfig 提交事务失败: %v", cErr)
 		return nil
 	}
 
@@ -123,7 +122,7 @@ func (s *SQLStore) SetConfig(item *ConfigItem) *ConfigItem {
 func (s *SQLStore) DeleteConfig(tenantID, key string) bool {
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
-		log.Printf("[store] DeleteConfig 开启事务失败: %v", err)
+		recordStoreFailure("[store] DeleteConfig 开启事务失败: %v", err)
 		return false
 	}
 	defer tx.Rollback()
@@ -131,23 +130,23 @@ func (s *SQLStore) DeleteConfig(tenantID, key string) bool {
 	res, err := tx.ExecContext(context.Background(),
 		`DELETE FROM configs WHERE tenant_id=? AND key_name=?`, tenantID, key)
 	if err != nil {
-		log.Printf("[store] DeleteConfig 删除 configs 失败: %v", err)
+		recordStoreFailure("[store] DeleteConfig 删除 configs 失败: %v", err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeleteConfig 取行数失败: %v", rowsErr)
+		recordStoreFailure("[store] DeleteConfig 取行数失败: %v", rowsErr)
 		return false
 	}
 
 	if _, err := tx.ExecContext(context.Background(),
 		`DELETE FROM config_history WHERE tenant_id=? AND key_name=?`, tenantID, key); err != nil {
-		log.Printf("[store] DeleteConfig 删除 config_history 失败: %v", err)
+		recordStoreFailure("[store] DeleteConfig 删除 config_history 失败: %v", err)
 		return false
 	}
 
 	if cErr := tx.Commit(); cErr != nil {
-		log.Printf("[store] DeleteConfig 提交事务失败: %v", cErr)
+		recordStoreFailure("[store] DeleteConfig 提交事务失败: %v", cErr)
 		return false
 	}
 	return n > 0
@@ -159,7 +158,7 @@ func (s *SQLStore) ListConfigs(tenantID string) []*ConfigItem {
 		`SELECT key_name, value, format, version, description, tenant_id, updated_by, updated_at
 		 FROM configs WHERE tenant_id=? ORDER BY key_name`, tenantID)
 	if err != nil {
-		log.Printf("[store] ListConfigs 查询失败: %v", err)
+		recordStoreFailure("[store] ListConfigs 查询失败: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -171,7 +170,7 @@ func (s *SQLStore) ListConfigs(tenantID string) []*ConfigItem {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListConfigs 遍历失败: %v", err)
+		recordStoreFailure("[store] ListConfigs 遍历失败: %v", err)
 	}
 	// SQL 已 ORDER BY key_name；此处排序为防御性保证（与 MemoryStore 语义一致）。
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
@@ -184,7 +183,7 @@ func (s *SQLStore) ConfigHistory(tenantID, key string) []*ConfigItem {
 		`SELECT key_name, value, format, version, description, tenant_id, updated_by, updated_at
 		 FROM config_history WHERE tenant_id=? AND key_name=? ORDER BY version`, tenantID, key)
 	if err != nil {
-		log.Printf("[store] ConfigHistory 查询失败: %v", err)
+		recordStoreFailure("[store] ConfigHistory 查询失败: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -196,7 +195,7 @@ func (s *SQLStore) ConfigHistory(tenantID, key string) []*ConfigItem {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ConfigHistory 遍历失败: %v", err)
+		recordStoreFailure("[store] ConfigHistory 遍历失败: %v", err)
 	}
 	return out
 }
@@ -210,7 +209,7 @@ func (s *SQLStore) PublishConfig(tenantID, key string) (*ConfigItem, bool) {
 	}
 	if _, err := s.db.ExecContext(context.Background(),
 		`UPDATE configs SET published_at=NOW() WHERE tenant_id=? AND key_name=?`, tenantID, key); err != nil {
-		log.Printf("[store] PublishConfig 更新发布时间失败: %v", err)
+		recordStoreFailure("[store] PublishConfig 更新发布时间失败: %v", err)
 		return nil, false
 	}
 	return item, true

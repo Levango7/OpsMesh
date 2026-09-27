@@ -16,7 +16,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -66,7 +65,7 @@ func (s *SQLStore) SaveOSTemplate(t *OSTemplate) error {
 		 ON DUPLICATE KEY UPDATE name=VALUES(name), os=VALUES(os), version=VALUES(version), arch=VALUES(arch),
 		   install_url=VALUES(install_url), config=VALUES(config), updated_at=VALUES(updated_at)`,
 		t.ID, t.TenantID, t.Name, t.OS, t.Version, t.Arch, t.InstallURL, t.Config, t.CreatedAt, t.UpdatedAt); err != nil {
-		log.Printf("[store] SaveOSTemplate 失败: %v", err)
+		recordStoreFailure("[store] SaveOSTemplate 失败: %v", err)
 		return fmt.Errorf("os template: save: %w", err)
 	}
 	return nil
@@ -85,7 +84,7 @@ func (s *SQLStore) ListOSTemplates(tenantID string) []*OSTemplate {
 	q += ` ORDER BY created_at ASC`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListOSTemplates 失败: %v", err)
+		recordStoreFailure("[store] ListOSTemplates 失败: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -96,7 +95,7 @@ func (s *SQLStore) ListOSTemplates(tenantID string) []*OSTemplate {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListOSTemplates 遍历失败: %v", err)
+		recordStoreFailure("[store] ListOSTemplates 遍历失败: %v", err)
 	}
 	return out
 }
@@ -115,7 +114,7 @@ func (s *SQLStore) DeleteOSTemplate(id string) bool {
 	defer cancel()
 	res, err := s.db.ExecContext(ctx, `DELETE FROM os_templates WHERE id=?`, id)
 	if err != nil {
-		log.Printf("[store] DeleteOSTemplate 失败 %s: %v", id, err)
+		recordStoreFailure("[store] DeleteOSTemplate 失败 %s: %v", id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
@@ -170,7 +169,7 @@ func (s *SQLStore) SaveMiddlewareTemplate(t *MiddlewareTemplate) error {
 		 ON DUPLICATE KEY UPDATE name=VALUES(name), type=VALUES(type), version=VALUES(version),
 		   config=VALUES(config), updated_at=VALUES(updated_at)`,
 		t.ID, t.TenantID, t.Name, t.Type, t.Version, t.Config, t.CreatedAt, t.UpdatedAt); err != nil {
-		log.Printf("[store] SaveMiddlewareTemplate 失败: %v", err)
+		recordStoreFailure("[store] SaveMiddlewareTemplate 失败: %v", err)
 		return fmt.Errorf("middleware template: save: %w", err)
 	}
 	return nil
@@ -189,7 +188,7 @@ func (s *SQLStore) ListMiddlewareTemplates(tenantID string) []*MiddlewareTemplat
 	q += ` ORDER BY created_at ASC`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListMiddlewareTemplates 失败: %v", err)
+		recordStoreFailure("[store] ListMiddlewareTemplates 失败: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -200,7 +199,7 @@ func (s *SQLStore) ListMiddlewareTemplates(tenantID string) []*MiddlewareTemplat
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListMiddlewareTemplates 遍历失败: %v", err)
+		recordStoreFailure("[store] ListMiddlewareTemplates 遍历失败: %v", err)
 	}
 	return out
 }
@@ -219,7 +218,7 @@ func (s *SQLStore) DeleteMiddlewareTemplate(id string) bool {
 	defer cancel()
 	res, err := s.db.ExecContext(ctx, `DELETE FROM middleware_templates WHERE id=?`, id)
 	if err != nil {
-		log.Printf("[store] DeleteMiddlewareTemplate 失败 %s: %v", id, err)
+		recordStoreFailure("[store] DeleteMiddlewareTemplate 失败 %s: %v", id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()

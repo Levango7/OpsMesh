@@ -74,12 +74,18 @@ func TestNetworkTopologyCache_Expired(t *testing.T) {
 
 func TestBuildPingCommand(t *testing.T) {
 	// Linux
-	got := buildPingCommand("10.0.0.1", 3, 2, "linux")
+	got, err := buildPingCommand("10.0.0.1", 3, 2, "linux")
+	if err != nil {
+		t.Fatalf("linux ping 构造失败: %v", err)
+	}
 	if !strings.Contains(got, "ping -c 3") || !strings.Contains(got, "10.0.0.1") {
 		t.Fatalf("linux ping = %q", got)
 	}
 	// Windows
-	got = buildPingCommand("10.0.0.1", 3, 2, "windows")
+	got, err = buildPingCommand("10.0.0.1", 3, 2, "windows")
+	if err != nil {
+		t.Fatalf("windows ping 构造失败: %v", err)
+	}
 	if !strings.Contains(got, "ping -n 3") || !strings.Contains(got, "-w 2000") {
 		t.Fatalf("windows ping = %q", got)
 	}

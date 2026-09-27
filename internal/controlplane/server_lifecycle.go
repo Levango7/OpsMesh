@@ -42,6 +42,10 @@ func (s *Server) Start() error {
 	// 把要观察的状态本身打乱。
 	mux.HandleFunc("/api/v1/admin/loglevel", s.handleAdminLogLevel)
 	mux.HandleFunc("/api/v1/admin/diagnostics", s.handleAdminDiagnostics)
+	// 存储层被吞掉的写/读错误（Store 接口不返回 error，失败此前不可见；见 internal/store/failures.go）。
+	mux.HandleFunc("/api/v1/admin/store-failures", s.handleAdminStoreFailures)
+	// TD-60 切流可见性：域 → 实际后端 → 启用状态 → 自检结论。
+	mux.HandleFunc("/api/v1/admin/service-routing", s.handleServiceRouting)
 	// P1-6 可支撑性：pprof（默认关闭；开启后仍受 --metrics-allow-cidr 白名单约束）。
 	s.registerPprof(mux)
 	mux.HandleFunc("/api/v1/audits", s.handleAudits)                // GET 审计检索
@@ -73,8 +77,34 @@ func (s *Server) Start() error {
 	// M13 微服务聚合代理：gpu/runbook/incident/autoscaler/portal 五域转发到
 	// services/* 独立进程（规则表见 service_proxy.go；bot 域由 bot_bridge.go 提供
 	// 聚合 handler，契约与前端 src/api/bot.js 对齐）。鉴权在代理层统一完成。
+	//
+	// 启动期两道闸：
+	//  1. 自环自检：转发后端指向控制面自身时在**请求侧**已硬拦为 503（见
+	//     handleServiceProxy），这里只负责把问题在启动日志里说清楚。
+	//     不选择「拒绝启动」：控制面单体还承载鉴权/任务/设备等核心流量，
+	//     为一个域的地址配置错误拖停全站，可用性代价远大于收益。
+	//  2. 路由开关 OPSMESH_SERVICE_PROXY：被停用的域**不注册**代理路由，
+	//     请求自然回落到单体同名 handler——这才是可逆的切流。
+	disabled, switchErr := disabledProxyDomains()
+	if switchErr != nil {
+		// 开关写错不等于该切换：按全部启用继续启动，但必须留下醒目痕迹。
+		logx.Warn(context.Background(), "微服务转发开关取值非法，已忽略并按「全部转发」处理",
+			"env", serviceProxyEnvKey, "err", switchErr)
+		disabled = map[string]bool{}
+	} else if len(disabled) > 0 {
+		logx.Info(context.Background(), "微服务转发已按开关停用部分域（回落到单体本地实现）",
+			"env", serviceProxyEnvKey, "disabled", fmt.Sprint(disabled))
+	}
+	if problems := validateServiceProxyTargets(s.httpPort, s.grpcPort, s.metricsPort); len(problems) > 0 {
+		for _, p := range problems {
+			logx.Error(context.Background(), "微服务转发配置有误，该域将被 503 隔离", nil, "detail", p)
+		}
+	}
 	for i := range serviceProxyRules {
 		if serviceProxyRules[i].publicPrefix == "" {
+			continue
+		}
+		if disabled[serviceProxyRules[i].domain] {
 			continue
 		}
 		mux.HandleFunc(serviceProxyRules[i].publicPrefix, s.handleServiceProxy)
@@ -86,6 +116,9 @@ func (s *Server) Start() error {
 	// 前缀带 device-svc 域名：controlplane 本地已有 /api/v1/devices 等同名 handler
 	//（server_lifecycle.go:25-34），同 mux 重复注册会 panic；双轨期新旧并存。
 	for i := range deviceProxyExtras {
+		if disabled[deviceProxyExtras[i].domain] {
+			continue
+		}
 		mux.HandleFunc(deviceProxyExtras[i].publicPrefix, s.handleServiceProxy)
 		mux.HandleFunc(deviceProxyExtras[i].publicPrefix+"/", s.handleServiceProxy)
 	}

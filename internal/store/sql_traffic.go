@@ -20,7 +20,6 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"time"
 )
 
@@ -43,7 +42,7 @@ func scanTrafficPolicy(row rowScanner) *TrafficPolicy {
 	if len(canaryJSON) > 0 {
 		// 反序列化失败不致命：保留空 CanaryWeights，避免单条坏数据让整个 List 崩，但必须留痕。
 		if err := json.Unmarshal(canaryJSON, &p.CanaryWeights); err != nil {
-			log.Printf("[store] scanTrafficPolicy 反序列化 canary_weights 失败（保留空 CanaryWeights 继续）: %v", err)
+			recordStoreFailure("[store] scanTrafficPolicy 反序列化 canary_weights 失败（保留空 CanaryWeights 继续）: %v", err)
 		}
 	}
 	return &p
@@ -60,7 +59,7 @@ func marshalCanaryWeights(w map[string]int) []byte {
 	}
 	b, err := json.Marshal(w)
 	if err != nil {
-		log.Printf("[store] marshalCanaryWeights 失败: %v", err)
+		recordStoreFailure("[store] marshalCanaryWeights 失败: %v", err)
 		return nil
 	}
 	return b
@@ -105,7 +104,7 @@ func (s *SQLStore) CreatePolicy(tenantID string, p *TrafficPolicy) *TrafficPolic
 		p.ID, p.TenantID, p.Name, p.ServiceName, p.Type, canaryJSON,
 		p.MirrorPercent, p.Timeout, p.Retries, p.RetryTimeout,
 		p.MaxConns, p.MaxRequests, p.Status, p.CreatedAt, p.UpdatedAt); err != nil {
-		log.Printf("[store] CreatePolicy 插入失败 (tenant=%s id=%s): %v", tenantID, p.ID, err)
+		recordStoreFailure("[store] CreatePolicy 插入失败 (tenant=%s id=%s): %v", tenantID, p.ID, err)
 		return nil
 	}
 	return p
@@ -147,7 +146,7 @@ func (s *SQLStore) UpdatePolicy(tenantID string, p *TrafficPolicy) (*TrafficPoli
 		p.Name, p.ServiceName, p.Type, canaryJSON, p.MirrorPercent,
 		p.Timeout, p.Retries, p.RetryTimeout, p.MaxConns, p.MaxRequests, p.Status, p.UpdatedAt,
 		p.ID, tenantID); err != nil {
-		log.Printf("[store] UpdatePolicy 失败 (tenant=%s id=%s): %v", tenantID, p.ID, err)
+		recordStoreFailure("[store] UpdatePolicy 失败 (tenant=%s id=%s): %v", tenantID, p.ID, err)
 		return nil, false
 	}
 	return p, true
@@ -158,7 +157,7 @@ func (s *SQLStore) ListPolicies(tenantID string) []*TrafficPolicy {
 	rows, err := s.db.QueryContext(context.Background(),
 		`SELECT `+trafficPolicyColumns+` FROM traffic_policies WHERE tenant_id=? ORDER BY created_at DESC`, tenantID)
 	if err != nil {
-		log.Printf("[store] ListPolicies 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] ListPolicies 查询失败 (tenant=%s): %v", tenantID, err)
 		return []*TrafficPolicy{}
 	}
 	defer rows.Close()
@@ -169,7 +168,7 @@ func (s *SQLStore) ListPolicies(tenantID string) []*TrafficPolicy {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListPolicies 遍历失败: %v", err)
+		recordStoreFailure("[store] ListPolicies 遍历失败: %v", err)
 	}
 	return out
 }
@@ -179,12 +178,12 @@ func (s *SQLStore) DeletePolicy(tenantID, id string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM traffic_policies WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
-		log.Printf("[store] DeletePolicy 失败 (tenant=%s id=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] DeletePolicy 失败 (tenant=%s id=%s): %v", tenantID, id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeletePolicy RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, id, rowsErr)
+		recordStoreFailure("[store] DeletePolicy RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, id, rowsErr)
 		return false
 	}
 	return n > 0
@@ -204,7 +203,7 @@ func (s *SQLStore) EnablePolicy(tenantID, id string) (*TrafficPolicy, bool) {
 	if _, err := s.db.ExecContext(context.Background(),
 		`UPDATE traffic_policies SET status='active', updated_at=? WHERE id=? AND tenant_id=?`,
 		now, id, tenantID); err != nil {
-		log.Printf("[store] EnablePolicy 失败 (tenant=%s id=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] EnablePolicy 失败 (tenant=%s id=%s): %v", tenantID, id, err)
 		return nil, false
 	}
 	existing.Status = "active"
@@ -226,7 +225,7 @@ func (s *SQLStore) DisablePolicy(tenantID, id string) (*TrafficPolicy, bool) {
 	if _, err := s.db.ExecContext(context.Background(),
 		`UPDATE traffic_policies SET status='inactive', updated_at=? WHERE id=? AND tenant_id=?`,
 		now, id, tenantID); err != nil {
-		log.Printf("[store] DisablePolicy 失败 (tenant=%s id=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] DisablePolicy 失败 (tenant=%s id=%s): %v", tenantID, id, err)
 		return nil, false
 	}
 	existing.Status = "inactive"

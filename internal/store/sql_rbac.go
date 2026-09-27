@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -41,7 +42,7 @@ func scanUser(row rowScanner) *User {
 	u.TenantID = normalizeTenantID(strings.TrimSpace(tenantID.String))
 	if len(roleIDsJSON) > 0 {
 		if err := json.Unmarshal(roleIDsJSON, &u.RoleIDs); err != nil {
-			log.Printf("store: scanUser 解析 role_ids JSON 失败 (user=%s): %v", u.ID, err)
+			recordStoreFailure("store: scanUser 解析 role_ids JSON 失败 (user=%s): %v", u.ID, err)
 		}
 	}
 	return &u
@@ -58,7 +59,7 @@ func scanRole(row rowScanner) *Role {
 	r.CreatedAt = createdAt
 	if len(permsJSON) > 0 {
 		if err := json.Unmarshal(permsJSON, &r.Permissions); err != nil {
-			log.Printf("store: scanRole 解析 permissions JSON 失败 (role=%s): %v", r.ID, err)
+			recordStoreFailure("store: scanRole 解析 permissions JSON 失败 (role=%s): %v", r.ID, err)
 		}
 	}
 	return &r
@@ -100,7 +101,7 @@ func (s *SQLStore) ListUsers() []*User {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListUsers 遍历失败: %v", err)
+		recordStoreFailure("[store] ListUsers 遍历失败: %v", err)
 	}
 	return out
 }
@@ -196,7 +197,7 @@ func (s *SQLStore) ListRoles() []*Role {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListRoles 遍历失败: %v", err)
+		recordStoreFailure("[store] ListRoles 遍历失败: %v", err)
 	}
 	return out
 }
@@ -264,7 +265,7 @@ func (s *SQLStore) ListPermissions() []*Permission {
 		out = append(out, &p)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListPermissions 遍历失败: %v", err)
+		recordStoreFailure("[store] ListPermissions 遍历失败: %v", err)
 	}
 	return out
 }
@@ -416,6 +417,18 @@ func (s *SQLStore) seedRBAC(ctx context.Context) error {
 			r.id, r.name, r.desc, perms, now); err != nil {
 			return err
 		}
+		// 权限目录补种只对「新库」够用；对老库，角色行首建后 INSERT IGNORE 永不再动——
+		// 目录里新增的权限点永远到不了预置角色（2026-09-27 实测：0.9.0 建库 → 升级重启，
+		// role-admin 的权限快照停在 86 项、缺 diagnostics:execute/dump，用户中心登录的
+		// admin 调 /api/v1/admin/* 全部 403）。此处对预置角色做**并集回填**：只加不减，
+		// 管理员经角色管理 API 的自定义授予不会被清掉；无变化则不写。
+		changed, err := s.refreshPresetRolePermissions(ctx, r.id, r.perms)
+		if err != nil {
+			return err
+		}
+		if changed {
+			log.Printf("[store] 预置角色 %s 的权限快照落后于权限目录，已按并集回填", r.id)
+		}
 	}
 	// 3. 默认用户（bcrypt 哈希；与 memory.go 保持一致）。
 	// 安全债：预置弱口令首登强制改密（must_change_password=1）。老库升级后仍用预置口令的账号
@@ -463,6 +476,61 @@ func (s *SQLStore) seedRBAC(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// refreshPresetRolePermissions 把权限点并集回填进一个预置角色的存量权限快照。
+// 返回是否发生了写入。存量 JSON 缺失/损坏时按空列表处理（回填为目录并集，
+// 比带着坏 JSON 让角色永远 403 好）。
+func (s *SQLStore) refreshPresetRolePermissions(ctx context.Context, roleID string, computed []string) (bool, error) {
+	var storedJSON string
+	err := s.db.QueryRowContext(ctx, `SELECT permissions FROM roles WHERE id = ?`, roleID).Scan(&storedJSON)
+	if err != nil {
+		return false, fmt.Errorf("read role %s permissions: %w", roleID, err)
+	}
+	var stored []string
+	if storedJSON != "" {
+		if err := json.Unmarshal([]byte(storedJSON), &stored); err != nil {
+			log.Printf("[store] 角色 %s 的 permissions 不是合法 JSON（%v），按空快照回填", roleID, err)
+			stored = nil
+		}
+	}
+	merged, addedCount := mergePermissionLists(stored, computed)
+	if addedCount == 0 {
+		return false, nil
+	}
+	mergedJSON, err := json.Marshal(merged)
+	if err != nil {
+		return false, fmt.Errorf("marshal merged permissions for %s: %w", roleID, err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE roles SET permissions = ? WHERE id = ?`, mergedJSON, roleID); err != nil {
+		return false, fmt.Errorf("update role %s permissions: %w", roleID, err)
+	}
+	return true, nil
+}
+
+// mergePermissionLists 返回 stored ∪ computed 的去重排序结果与新增个数。
+// 只加不减：computed 里消失的条目不动（权限点下线属于显式迁移的职责，不能靠
+// 每次启动的重算悄悄吊销管理员手动授予的权限）。
+func mergePermissionLists(stored, computed []string) ([]string, int) {
+	seen := make(map[string]bool, len(stored)+len(computed))
+	merged := make([]string, 0, len(stored)+len(computed))
+	for _, p := range stored {
+		if p != "" && !seen[p] {
+			seen[p] = true
+			merged = append(merged, p)
+		}
+	}
+	added := 0
+	for _, p := range computed {
+		if p != "" && !seen[p] {
+			seen[p] = true
+			merged = append(merged, p)
+			added++
+		}
+	}
+	sort.Strings(merged)
+	return merged, added
 }
 
 // RolePermissions 返回预置角色名→权限集合映射，与 seedRBAC 的角色定义保持一致。

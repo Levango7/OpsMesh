@@ -25,7 +25,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"log"
 	"time"
 )
 
@@ -52,7 +51,7 @@ func scanAPIKey(row rowScanner) *APIKey {
 	}
 	if scopesJSON != "" {
 		if err := json.Unmarshal([]byte(scopesJSON), &k.Scopes); err != nil {
-			log.Printf("[store] scanAPIKey 解析 scopes JSON 失败 (apikey=%s): %v", k.ID, err)
+			recordStoreFailure("[store] scanAPIKey 解析 scopes JSON 失败 (apikey=%s): %v", k.ID, err)
 		}
 	}
 	return &k
@@ -122,7 +121,7 @@ func (s *SQLStore) CreateAPIKey(tenantID string, key *APIKey) *APIKey {
 		key.ID, key.TenantID, key.Name, key.Key, scopesJSON, key.RateLimitPerSec,
 		timeToNullTime(key.ExpiresAt), timeToNullTime(key.LastUsedAt),
 		apiKeyEnabledInt(key.Enabled), key.CreatedAt); err != nil {
-		log.Printf("[store] CreateAPIKey 插入失败 (tenant=%s apikey=%s): %v", tenantID, key.ID, err)
+		recordStoreFailure("[store] CreateAPIKey 插入失败 (tenant=%s apikey=%s): %v", tenantID, key.ID, err)
 		return nil
 	}
 	return cloneAPIKey(key)
@@ -177,7 +176,7 @@ func (s *SQLStore) UpdateAPIKey(tenantID string, key *APIKey) (*APIKey, bool) {
 		key.Name, key.Key, scopesJSON, key.RateLimitPerSec,
 		timeToNullTime(key.ExpiresAt), timeToNullTime(key.LastUsedAt),
 		apiKeyEnabledInt(key.Enabled), key.ID, key.TenantID); err != nil {
-		log.Printf("[store] UpdateAPIKey 更新失败 (tenant=%s apikey=%s): %v", tenantID, key.ID, err)
+		recordStoreFailure("[store] UpdateAPIKey 更新失败 (tenant=%s apikey=%s): %v", tenantID, key.ID, err)
 		return nil, false
 	}
 	return cloneAPIKey(key), true
@@ -198,7 +197,7 @@ func (s *SQLStore) ListAPIKeys(tenantID string) []*APIKey {
 			  FROM api_keys WHERE tenant_id=? ORDER BY created_at DESC`, tenantID)
 	}
 	if err != nil {
-		log.Printf("[store] ListAPIKeys 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] ListAPIKeys 查询失败 (tenant=%s): %v", tenantID, err)
 		return []*APIKey{}
 	}
 	defer rows.Close()
@@ -209,7 +208,7 @@ func (s *SQLStore) ListAPIKeys(tenantID string) []*APIKey {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListAPIKeys 遍历失败: %v", err)
+		recordStoreFailure("[store] ListAPIKeys 遍历失败: %v", err)
 	}
 	return out
 }
@@ -227,12 +226,12 @@ func (s *SQLStore) DeleteAPIKey(tenantID, id string) bool {
 			`DELETE FROM api_keys WHERE id=? AND tenant_id=?`, id, tenantID)
 	}
 	if err != nil {
-		log.Printf("[store] DeleteAPIKey 失败 (tenant=%s apikey=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] DeleteAPIKey 失败 (tenant=%s apikey=%s): %v", tenantID, id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeleteAPIKey RowsAffected 失败 (tenant=%s apikey=%s): %v", tenantID, id, rowsErr)
+		recordStoreFailure("[store] DeleteAPIKey RowsAffected 失败 (tenant=%s apikey=%s): %v", tenantID, id, rowsErr)
 		return false
 	}
 	return n > 0

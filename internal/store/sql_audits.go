@@ -6,8 +6,6 @@ package store
 
 import (
 	"context"
-
-	"log"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/proto"
@@ -35,7 +33,7 @@ func (s *SQLStore) Audit(e *proto.AuditEvent) {
 		}
 		// 链式写入失败也绝不丢审计：降级为非链式写入并高声告警。该行 entry_hash 为空，
 		// 校验端如实计入 LegacyRows（链前遗留行），不会被误报成篡改。
-		log.Printf("[store] 链式审计写入失败，降级为非链式写入（该行不计入哈希链）: %v", err)
+		recordStoreFailure("[store] 链式审计写入失败，降级为非链式写入（该行不计入哈希链）: %v", err)
 	}
 	// 持久化 trace_id（列存在时写入，列不存在时回退到无 trace_id 写入）。
 	// trace_id 列由 migrations/004_add_audit_trace_id.sql 添加；
@@ -45,7 +43,7 @@ func (s *SQLStore) Audit(e *proto.AuditEvent) {
 			`INSERT INTO audit_log (tenant_id, user_id, action, target, detail, created_at, trace_id)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			e.TenantID, e.UserID, e.Action, e.Target, e.Detail, e.CreatedAt, e.TraceID); err != nil {
-			log.Printf("[store] Audit 写入失败: %v", err)
+			recordStoreFailure("[store] Audit 写入失败: %v", err)
 		}
 		return
 	}
@@ -53,7 +51,7 @@ func (s *SQLStore) Audit(e *proto.AuditEvent) {
 		`INSERT INTO audit_log (tenant_id, user_id, action, target, detail, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		e.TenantID, e.UserID, e.Action, e.Target, e.Detail, e.CreatedAt); err != nil {
-		log.Printf("[store] Audit 写入失败: %v", err)
+		recordStoreFailure("[store] Audit 写入失败: %v", err)
 	}
 }
 
@@ -71,7 +69,7 @@ func (s *SQLStore) Audits() []*proto.AuditEvent {
 	}
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
-		log.Printf("[store] Audits 查询失败: %v", err)
+		recordStoreFailure("[store] Audits 查询失败: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -81,12 +79,12 @@ func (s *SQLStore) Audits() []*proto.AuditEvent {
 		var createdAt time.Time
 		if hasTrace {
 			if err := rows.Scan(&e.TenantID, &e.UserID, &e.Action, &e.Target, &e.Detail, &createdAt, &e.TraceID); err != nil {
-				log.Printf("[store] Audits 扫描失败: %v", err)
+				recordStoreFailure("[store] Audits 扫描失败: %v", err)
 				continue
 			}
 		} else {
 			if err := rows.Scan(&e.TenantID, &e.UserID, &e.Action, &e.Target, &e.Detail, &createdAt); err != nil {
-				log.Printf("[store] Audits 扫描失败: %v", err)
+				recordStoreFailure("[store] Audits 扫描失败: %v", err)
 				continue
 			}
 		}
@@ -94,7 +92,7 @@ func (s *SQLStore) Audits() []*proto.AuditEvent {
 		out = append(out, &e)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] Audits 遍历失败: %v", err)
+		recordStoreFailure("[store] Audits 遍历失败: %v", err)
 	}
 	return out
 }
@@ -136,7 +134,7 @@ func (s *SQLStore) QueryAudits(tenant, action string, since, until time.Time, li
 	}
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] QueryAudits 查询失败: %v", err)
+		recordStoreFailure("[store] QueryAudits 查询失败: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -146,12 +144,12 @@ func (s *SQLStore) QueryAudits(tenant, action string, since, until time.Time, li
 		var createdAt time.Time
 		if hasTrace {
 			if err := rows.Scan(&e.TenantID, &e.UserID, &e.Action, &e.Target, &e.Detail, &createdAt, &e.TraceID); err != nil {
-				log.Printf("[store] QueryAudits 扫描失败: %v", err)
+				recordStoreFailure("[store] QueryAudits 扫描失败: %v", err)
 				continue
 			}
 		} else {
 			if err := rows.Scan(&e.TenantID, &e.UserID, &e.Action, &e.Target, &e.Detail, &createdAt); err != nil {
-				log.Printf("[store] QueryAudits 扫描失败: %v", err)
+				recordStoreFailure("[store] QueryAudits 扫描失败: %v", err)
 				continue
 			}
 		}
@@ -159,7 +157,7 @@ func (s *SQLStore) QueryAudits(tenant, action string, since, until time.Time, li
 		out = append(out, &e)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] QueryAudits 遍历失败: %v", err)
+		recordStoreFailure("[store] QueryAudits 遍历失败: %v", err)
 	}
 	return out
 }

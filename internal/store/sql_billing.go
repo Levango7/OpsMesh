@@ -31,7 +31,6 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"time"
 )
 
@@ -53,12 +52,12 @@ func scanBillingPlan(row rowScanner) *SubscriptionPlan {
 	p.CreatedAt = createdAt
 	if featuresJSON != "" {
 		if err := json.Unmarshal([]byte(featuresJSON), &p.Features); err != nil {
-			log.Printf("[store] scanBillingPlan 解析 features JSON 失败 (plan=%s): %v", p.ID, err)
+			recordStoreFailure("[store] scanBillingPlan 解析 features JSON 失败 (plan=%s): %v", p.ID, err)
 		}
 	}
 	if resourceLimitsJSON != "" {
 		if err := json.Unmarshal([]byte(resourceLimitsJSON), &p.ResourceLimits); err != nil {
-			log.Printf("[store] scanBillingPlan 解析 resource_limits JSON 失败 (plan=%s): %v", p.ID, err)
+			recordStoreFailure("[store] scanBillingPlan 解析 resource_limits JSON 失败 (plan=%s): %v", p.ID, err)
 		}
 	}
 	return &p
@@ -117,7 +116,7 @@ func (s *SQLStore) CreateBillingPlan(plan *SubscriptionPlan) *SubscriptionPlan {
 		 features=VALUES(features), resource_limits=VALUES(resource_limits)`,
 		plan.ID, plan.Name, plan.Price, plan.Interval, featuresJSON, resourceLimitsJSON,
 		plan.CreatedAt); err != nil {
-		log.Printf("[store] CreateBillingPlan 插入失败 (plan=%s): %v", plan.ID, err)
+		recordStoreFailure("[store] CreateBillingPlan 插入失败 (plan=%s): %v", plan.ID, err)
 		return nil
 	}
 	return cloneBillingPlan(plan)
@@ -141,7 +140,7 @@ func (s *SQLStore) ListBillingPlans() []*SubscriptionPlan {
 		`SELECT id, name, price, interval_spec, features, resource_limits, created_at
 		  FROM billing_plans ORDER BY created_at ASC`)
 	if err != nil {
-		log.Printf("[store] ListBillingPlans 查询失败: %v", err)
+		recordStoreFailure("[store] ListBillingPlans 查询失败: %v", err)
 		return []*SubscriptionPlan{}
 	}
 	defer rows.Close()
@@ -152,7 +151,7 @@ func (s *SQLStore) ListBillingPlans() []*SubscriptionPlan {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListBillingPlans 遍历失败: %v", err)
+		recordStoreFailure("[store] ListBillingPlans 遍历失败: %v", err)
 	}
 	return out
 }
@@ -182,7 +181,7 @@ func (s *SQLStore) UpdateBillingPlan(plan *SubscriptionPlan) (*SubscriptionPlan,
 		`UPDATE billing_plans SET name=?, price=?, interval_spec=?, features=?, resource_limits=?
 		 WHERE id=?`,
 		plan.Name, plan.Price, plan.Interval, featuresJSON, resourceLimitsJSON, plan.ID); err != nil {
-		log.Printf("[store] UpdateBillingPlan 更新失败 (plan=%s): %v", plan.ID, err)
+		recordStoreFailure("[store] UpdateBillingPlan 更新失败 (plan=%s): %v", plan.ID, err)
 		return nil, false
 	}
 	return cloneBillingPlan(plan), true
@@ -193,12 +192,12 @@ func (s *SQLStore) DeleteBillingPlan(id string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM billing_plans WHERE id=?`, id)
 	if err != nil {
-		log.Printf("[store] DeleteBillingPlan 失败 (plan=%s): %v", id, err)
+		recordStoreFailure("[store] DeleteBillingPlan 失败 (plan=%s): %v", id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeleteBillingPlan RowsAffected 失败 (plan=%s): %v", id, rowsErr)
+		recordStoreFailure("[store] DeleteBillingPlan RowsAffected 失败 (plan=%s): %v", id, rowsErr)
 		return false
 	}
 	return n > 0
@@ -259,7 +258,7 @@ func (s *SQLStore) CreateSubscription(sub *Subscription) *Subscription {
 		 started_at=VALUES(started_at), expires_at=VALUES(expires_at)`,
 		sub.ID, sub.TenantID, sub.PlanID, sub.Status, sub.StartedAt, sub.ExpiresAt,
 		sub.CreatedAt); err != nil {
-		log.Printf("[store] CreateSubscription 插入失败 (sub=%s): %v", sub.ID, err)
+		recordStoreFailure("[store] CreateSubscription 插入失败 (sub=%s): %v", sub.ID, err)
 		return nil
 	}
 	return cloneSubscription(sub)
@@ -298,7 +297,7 @@ func (s *SQLStore) ListSubscriptions(tenantID string) []*Subscription {
 			  FROM subscriptions WHERE tenant_id=? ORDER BY created_at DESC`, tenantID)
 	}
 	if err != nil {
-		log.Printf("[store] ListSubscriptions 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] ListSubscriptions 查询失败 (tenant=%s): %v", tenantID, err)
 		return []*Subscription{}
 	}
 	defer rows.Close()
@@ -309,7 +308,7 @@ func (s *SQLStore) ListSubscriptions(tenantID string) []*Subscription {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListSubscriptions 遍历失败: %v", err)
+		recordStoreFailure("[store] ListSubscriptions 遍历失败: %v", err)
 	}
 	return out
 }
@@ -338,7 +337,7 @@ func (s *SQLStore) UpdateSubscription(sub *Subscription) (*Subscription, bool) {
 		`UPDATE subscriptions SET plan_id=?, status=?, started_at=?, expires_at=?
 		 WHERE id=?`,
 		sub.PlanID, sub.Status, sub.StartedAt, sub.ExpiresAt, sub.ID); err != nil {
-		log.Printf("[store] UpdateSubscription 更新失败 (sub=%s): %v", sub.ID, err)
+		recordStoreFailure("[store] UpdateSubscription 更新失败 (sub=%s): %v", sub.ID, err)
 		return nil, false
 	}
 	return cloneSubscription(sub), true
@@ -350,12 +349,12 @@ func (s *SQLStore) DeleteSubscription(id string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM subscriptions WHERE id=?`, id)
 	if err != nil {
-		log.Printf("[store] DeleteSubscription 失败 (sub=%s): %v", id, err)
+		recordStoreFailure("[store] DeleteSubscription 失败 (sub=%s): %v", id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeleteSubscription RowsAffected 失败 (sub=%s): %v", id, rowsErr)
+		recordStoreFailure("[store] DeleteSubscription RowsAffected 失败 (sub=%s): %v", id, rowsErr)
 		return false
 	}
 	return n > 0
@@ -381,7 +380,7 @@ func scanInvoice(row rowScanner) *Invoice {
 	inv.CreatedAt = createdAt
 	if itemsJSON != "" {
 		if err := json.Unmarshal([]byte(itemsJSON), &inv.Items); err != nil {
-			log.Printf("[store] scanInvoice 解析 items JSON 失败 (invoice=%s): %v", inv.ID, err)
+			recordStoreFailure("[store] scanInvoice 解析 items JSON 失败 (invoice=%s): %v", inv.ID, err)
 		}
 	}
 	return &inv
@@ -436,7 +435,7 @@ func (s *SQLStore) CreateInvoice(inv *Invoice) *Invoice {
 		 items=VALUES(items)`,
 		inv.ID, inv.TenantID, inv.SubscriptionID, inv.Amount, inv.PeriodStart, inv.PeriodEnd,
 		inv.Status, itemsJSON, inv.CreatedAt); err != nil {
-		log.Printf("[store] CreateInvoice 插入失败 (invoice=%s): %v", inv.ID, err)
+		recordStoreFailure("[store] CreateInvoice 插入失败 (invoice=%s): %v", inv.ID, err)
 		return nil
 	}
 	return cloneInvoice(inv)
@@ -475,7 +474,7 @@ func (s *SQLStore) ListInvoices(tenantID string) []*Invoice {
 			  FROM invoices WHERE tenant_id=? ORDER BY created_at DESC`, tenantID)
 	}
 	if err != nil {
-		log.Printf("[store] ListInvoices 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] ListInvoices 查询失败 (tenant=%s): %v", tenantID, err)
 		return []*Invoice{}
 	}
 	defer rows.Close()
@@ -486,7 +485,7 @@ func (s *SQLStore) ListInvoices(tenantID string) []*Invoice {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListInvoices 遍历失败: %v", err)
+		recordStoreFailure("[store] ListInvoices 遍历失败: %v", err)
 	}
 	return out
 }
@@ -518,13 +517,13 @@ func (s *SQLStore) CalculateUsage(tenantID string) (*Usage, bool) {
 	}
 
 	if err := s.db.QueryRowContext(context.Background(), deviceQuery, deviceArgs...).Scan(&usage.DeviceCount); err != nil {
-		log.Printf("[store] CalculateUsage 查询设备数失败: %v", err)
+		recordStoreFailure("[store] CalculateUsage 查询设备数失败: %v", err)
 	}
 	if err := s.db.QueryRowContext(context.Background(), taskQuery, taskArgs...).Scan(&usage.TaskCount); err != nil {
-		log.Printf("[store] CalculateUsage 查询任务数失败: %v", err)
+		recordStoreFailure("[store] CalculateUsage 查询任务数失败: %v", err)
 	}
 	if err := s.db.QueryRowContext(context.Background(), alertQuery, alertArgs...).Scan(&usage.AlertCount); err != nil {
-		log.Printf("[store] CalculateUsage 查询告警数失败: %v", err)
+		recordStoreFailure("[store] CalculateUsage 查询告警数失败: %v", err)
 	}
 
 	return usage, true

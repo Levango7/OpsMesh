@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"time"
 )
 
@@ -65,7 +64,7 @@ func (s *SQLStore) RegisterService(inst *ServiceInstance) *ServiceInstance {
 		if b, err := json.Marshal(inst.Metadata); err == nil {
 			metadataJSON = string(b)
 		} else {
-			log.Printf("[store] RegisterService 序列化 metadata 失败 service_id=%s: %v", inst.ServiceID, err)
+			recordStoreFailure("[store] RegisterService 序列化 metadata 失败 service_id=%s: %v", inst.ServiceID, err)
 		}
 	}
 	// INSERT ... ON DUPLICATE KEY UPDATE 实现 upsert（按 service_id 幂等）。
@@ -76,7 +75,7 @@ func (s *SQLStore) RegisterService(inst *ServiceInstance) *ServiceInstance {
 		 ON DUPLICATE KEY UPDATE service_name=VALUES(service_name), address=VALUES(address), port=VALUES(port),
 		 metadata=VALUES(metadata), status=VALUES(status), tenant_id=VALUES(tenant_id), last_heartbeat=VALUES(last_heartbeat)`,
 		inst.ServiceID, inst.TenantID, inst.ServiceName, inst.Address, inst.Port, metadataJSON, inst.Status, inst.LastHeartbeat, inst.CreatedAt); err != nil {
-		log.Printf("[store] RegisterService 失败 service_id=%s: %v", inst.ServiceID, err)
+		recordStoreFailure("[store] RegisterService 失败 service_id=%s: %v", inst.ServiceID, err)
 		return nil
 	}
 	return cloneServiceInstance(inst)
@@ -93,12 +92,12 @@ func (s *SQLStore) DeregisterService(tenantID, serviceID string) bool {
 	}
 	res, err := s.db.ExecContext(context.Background(), q, args...)
 	if err != nil {
-		log.Printf("[store] DeregisterService 失败 service_id=%s: %v", serviceID, err)
+		recordStoreFailure("[store] DeregisterService 失败 service_id=%s: %v", serviceID, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeregisterService RowsAffected 失败 service_id=%s: %v", serviceID, rowsErr)
+		recordStoreFailure("[store] DeregisterService RowsAffected 失败 service_id=%s: %v", serviceID, rowsErr)
 		return false
 	}
 	return n > 0
@@ -125,7 +124,7 @@ SELECT service_id, tenant_id, service_name, address, port, metadata, status, las
 `
 	rows, err := s.db.QueryContext(context.Background(), q, args...)
 	if err != nil {
-		log.Printf("[store] ServiceInstances 失败 service_name=%s: %v", serviceName, err)
+		recordStoreFailure("[store] ServiceInstances 失败 service_name=%s: %v", serviceName, err)
 		return nil
 	}
 	defer rows.Close()
@@ -136,7 +135,7 @@ SELECT service_id, tenant_id, service_name, address, port, metadata, status, las
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ServiceInstances 遍历失败 service_name=%s: %v", serviceName, err)
+		recordStoreFailure("[store] ServiceInstances 遍历失败 service_name=%s: %v", serviceName, err)
 	}
 	sortServiceInstances(out)
 	return out
@@ -163,7 +162,7 @@ SELECT service_id, tenant_id, service_name, address, port, metadata, status, las
 `
 	rows, err := s.db.QueryContext(context.Background(), q, args...)
 	if err != nil {
-		log.Printf("[store] AllServices 失败 tenant_id=%s: %v", tenantID, err)
+		recordStoreFailure("[store] AllServices 失败 tenant_id=%s: %v", tenantID, err)
 		return nil
 	}
 	defer rows.Close()
@@ -174,7 +173,7 @@ SELECT service_id, tenant_id, service_name, address, port, metadata, status, las
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] AllServices 遍历失败 tenant_id=%s: %v", tenantID, err)
+		recordStoreFailure("[store] AllServices 遍历失败 tenant_id=%s: %v", tenantID, err)
 	}
 	sortServiceInstances(out)
 	return out
@@ -200,12 +199,12 @@ func (s *SQLStore) HeartbeatService(tenantID, serviceID, status string) bool {
 	}
 	res, err := s.db.ExecContext(context.Background(), q, args...)
 	if err != nil {
-		log.Printf("[store] HeartbeatService 失败 service_id=%s: %v", serviceID, err)
+		recordStoreFailure("[store] HeartbeatService 失败 service_id=%s: %v", serviceID, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] HeartbeatService RowsAffected 失败 service_id=%s: %v", serviceID, rowsErr)
+		recordStoreFailure("[store] HeartbeatService RowsAffected 失败 service_id=%s: %v", serviceID, rowsErr)
 		return false
 	}
 	return n > 0
@@ -237,7 +236,7 @@ SELECT service_id, tenant_id, service_name, address, port, metadata, status, las
 `
 	rows, err := s.db.QueryContext(context.Background(), q, args...)
 	if err != nil {
-		log.Printf("[store] StaleServices 失败 tenant_id=%s: %v", tenantID, err)
+		recordStoreFailure("[store] StaleServices 失败 tenant_id=%s: %v", tenantID, err)
 		return nil
 	}
 	defer rows.Close()
@@ -248,7 +247,7 @@ SELECT service_id, tenant_id, service_name, address, port, metadata, status, las
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] StaleServices 遍历失败 tenant_id=%s: %v", tenantID, err)
+		recordStoreFailure("[store] StaleServices 遍历失败 tenant_id=%s: %v", tenantID, err)
 	}
 	sortServiceInstances(out)
 	return out

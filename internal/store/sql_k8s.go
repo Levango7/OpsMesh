@@ -13,7 +13,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -59,7 +58,7 @@ SELECT id, tenant_id, name, server, kubeconfig, status, created_at, updated_at F
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListK8sClusters 遍历失败: %v", err)
+		recordStoreFailure("[store] ListK8sClusters 遍历失败: %v", err)
 	}
 	return out
 }
@@ -106,7 +105,7 @@ func (s *SQLStore) SaveK8sCluster(c *K8sCluster) error {
 		 status=VALUES(status), updated_at=VALUES(updated_at)`,
 		c.ID, c.TenantID, c.Name, c.Server, c.Kubeconfig, c.Status, c.CreatedAt, c.UpdatedAt); err != nil {
 		// ：DB 持久化失败上抛错误（调用方据此返回非 2xx，不再假装成功）。
-		log.Printf("k8s: SaveK8sCluster 失败: %v", err)
+		recordStoreFailure("k8s: SaveK8sCluster 失败: %v", err)
 		return fmt.Errorf("k8s: save cluster: %w", err)
 	}
 	return nil

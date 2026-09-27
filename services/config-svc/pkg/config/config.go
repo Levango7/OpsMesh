@@ -1,10 +1,14 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"time"
 )
+
+// MinEncryptionKeyLen 对称加密密钥的最小字节数（AES-256 = 32 字节）。
+const MinEncryptionKeyLen = 32
 
 // Config holds all configuration for the config-svc.
 type Config struct {
@@ -16,6 +20,10 @@ type Config struct {
 	ShutdownTimeout time.Duration `json:"shutdownTimeout"`
 	EncryptionKey   string        `json:"encryptionKey"`  // Key for secrets encryption at rest
 	MaxHistorySize  int           `json:"maxHistorySize"` // Max versions to retain per config/secret
+
+	// AllowInsecureDevSecret 仅供本地开发/CI 放行空加密密钥的显式逃生舱。
+	// P0 安全修复：EncryptionKey 此前默认值是公开字面量，改为空 + 启动期强制校验。
+	AllowInsecureDevSecret bool `json:"allowInsecureDevSecret"`
 
 	// OTel tracing settings.
 	OTelEndpoint string `json:"otelEndpoint"` // OTLP gRPC collector address (empty = disabled)
@@ -31,11 +39,39 @@ func Load() *Config {
 		DSN:             getEnv("CONFIG_SVC_DSN", ""),
 		RedisAddr:       getEnv("CONFIG_SVC_REDIS_ADDR", ""),
 		ShutdownTimeout: getEnvDuration("CONFIG_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
-		EncryptionKey:   getEnv("CONFIG_SVC_ENCRYPTION_KEY", "default-encryption-key-change-in-production"),
+		EncryptionKey:   getEnv("CONFIG_SVC_ENCRYPTION_KEY", ""),
 		MaxHistorySize:  getEnvInt("CONFIG_SVC_MAX_HISTORY_SIZE", 50),
 		OTelEndpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
+
+		AllowInsecureDevSecret: getEnv("CONFIG_SVC_ALLOW_INSECURE_DEV_SECRET", "false") == "true",
 	}
+}
+
+// Validate 校验不可静默降级的配置项。
+//
+// P0 安全修复：EncryptionKey 此前有公开默认值
+// "default-encryption-key-change-in-production"。config-svc 用它加密下发的配置
+// 密文（secret 轮换、配置版本），拿到该字面量即可解密任意租户的存量密文。
+// 改为默认值空 + 启动期强制校验。
+func (c *Config) Validate() error {
+	if c.EncryptionKey == "" {
+		if c.AllowInsecureDevSecret {
+			return nil
+		}
+		return fmt.Errorf(
+			"CONFIG_SVC_ENCRYPTION_KEY 未设置：config-svc 用它加密下发的配置密文，"+
+				"缺失等价于密文可被任意人解密。生产环境必须显式注入（≥%d 字节）。"+
+				"本地开发可设 CONFIG_SVC_ALLOW_INSECURE_DEV_SECRET=true 显式放行",
+			MinEncryptionKeyLen)
+	}
+	if len(c.EncryptionKey) < MinEncryptionKeyLen && !c.AllowInsecureDevSecret {
+		return fmt.Errorf(
+			"CONFIG_SVC_ENCRYPTION_KEY 过短（%d 字节 < %d 字节）：弱密钥可被离线爆破后解密存量密文。"+
+				"本地开发可设 CONFIG_SVC_ALLOW_INSECURE_DEV_SECRET=true 显式放行",
+			len(c.EncryptionKey), MinEncryptionKeyLen)
+	}
+	return nil
 }
 
 func getEnv(key, def string) string {

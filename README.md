@@ -437,7 +437,7 @@ Chart 要点：
 
 ### 微服务部署（可选，默认不启用）
 
-`services/` 下的微服务默认不经 Helm 部署——values 中 `services.*` 全部 `enabled: false`，`templates/microservices.yaml` 渲染为空，**存量部署行为 100% 不变**。已建 Dockerfile 的 11 个服务（auth/device/task/alert/config/log/deploy/plugin/portal/aio-svc、grafana-bridge）可按需单独开启：
+`services/` 下的微服务默认不经 Helm 部署——values 中 `services.*` 全部 `enabled: false`，`templates/microservices.yaml` 渲染为空，**存量部署行为 100% 不变**。服务镜像统一由仓库根的 `Dockerfile.service` 模板构建（`--build-arg SERVICE=<svc>`，与 `release.yml` / `deploy/docker/docker-compose.prod.yml` 同一契约；各服务目录下不再有独立 Dockerfile），全部服务均可按需单独开启：
 
 ```bash
 # 开启单个微服务（键名用下划线，K8s 资源名自动转连字符：opsmesh-task-svc）

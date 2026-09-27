@@ -22,7 +22,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
 	cryptoRand "crypto/rand"
@@ -54,7 +53,7 @@ func scanSilence(row rowScanner) *SilenceRule {
 	}
 	if len(matchLabelsJSON) > 0 {
 		if err := json.Unmarshal(matchLabelsJSON, &r.MatchLabels); err != nil {
-			log.Printf("[store] scanSilence 解析 match_labels JSON 失败 (id=%s): %v", r.ID, err)
+			recordStoreFailure("[store] scanSilence 解析 match_labels JSON 失败 (id=%s): %v", r.ID, err)
 		}
 	}
 	r.StartAt = startAt.Time
@@ -93,7 +92,7 @@ func (s *SQLStore) CreateSilence(sr *SilenceRule) *SilenceRule {
 		   reason=VALUES(reason)`,
 		sr.ID, sr.TenantID, matchLabels, nullTime(sr.StartAt), nullTime(sr.EndAt),
 		nullString(sr.CreatedBy), nullString(sr.Reason), sr.CreatedAt); err != nil {
-		log.Printf("[store] CreateSilence 失败: %v", err)
+		recordStoreFailure("[store] CreateSilence 失败: %v", err)
 		return nil
 	}
 	cp := *sr
@@ -128,7 +127,7 @@ func (s *SQLStore) DeleteSilence(id, tenantID string) bool {
 	}
 	res, err := s.db.ExecContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] DeleteSilence 失败 %s: %v", id, err)
+		recordStoreFailure("[store] DeleteSilence 失败 %s: %v", id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
@@ -151,7 +150,7 @@ func (s *SQLStore) ListSilences(tenantID string) []*SilenceRule {
 	q += ` ORDER BY created_at ASC`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListSilences 失败: %v", err)
+		recordStoreFailure("[store] ListSilences 失败: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -162,7 +161,7 @@ func (s *SQLStore) ListSilences(tenantID string) []*SilenceRule {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListSilences 遍历失败: %v", err)
+		recordStoreFailure("[store] ListSilences 遍历失败: %v", err)
 	}
 	return out
 }
@@ -220,7 +219,7 @@ func (s *SQLStore) CreateNotifyChannel(c *NotifyChannel) *NotifyChannel {
 		 ON DUPLICATE KEY UPDATE name=VALUES(name), type=VALUES(type), config=VALUES(config),
 		   enabled=VALUES(enabled), updated_at=VALUES(updated_at)`,
 		c.ID, c.TenantID, c.Name, c.Type, c.Config, boolToInt(c.Enabled), c.CreatedAt, c.UpdatedAt); err != nil {
-		log.Printf("[store] CreateNotifyChannel 失败: %v", err)
+		recordStoreFailure("[store] CreateNotifyChannel 失败: %v", err)
 		return nil
 	}
 	cp := *c
@@ -239,7 +238,7 @@ func (s *SQLStore) UpdateNotifyChannel(c *NotifyChannel) bool {
 		`UPDATE notify_channels SET name=?, type=?, config=?, enabled=?, updated_at=? WHERE id=?`,
 		c.Name, c.Type, c.Config, boolToInt(c.Enabled), now, c.ID)
 	if err != nil {
-		log.Printf("[store] UpdateNotifyChannel 失败 %s: %v", c.ID, err)
+		recordStoreFailure("[store] UpdateNotifyChannel 失败 %s: %v", c.ID, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
@@ -265,7 +264,7 @@ func (s *SQLStore) DeleteNotifyChannel(id, tenantID string) bool {
 	}
 	res, err := s.db.ExecContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] DeleteNotifyChannel 失败 %s: %v", id, err)
+		recordStoreFailure("[store] DeleteNotifyChannel 失败 %s: %v", id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
@@ -296,7 +295,7 @@ func (s *SQLStore) ListNotifyChannels(tenantID string) []*NotifyChannel {
 	q += ` ORDER BY created_at ASC`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListNotifyChannels 失败: %v", err)
+		recordStoreFailure("[store] ListNotifyChannels 失败: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -307,7 +306,7 @@ func (s *SQLStore) ListNotifyChannels(tenantID string) []*NotifyChannel {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListNotifyChannels 遍历失败: %v", err)
+		recordStoreFailure("[store] ListNotifyChannels 遍历失败: %v", err)
 	}
 	return out
 }
@@ -367,7 +366,7 @@ func (s *SQLStore) CreateNotifyTemplate(t *NotifyTemplate) *NotifyTemplate {
 		 ON DUPLICATE KEY UPDATE name=VALUES(name), type=VALUES(type), title=VALUES(title),
 		   body=VALUES(body), format=VALUES(format), updated_at=VALUES(updated_at)`,
 		t.ID, t.TenantID, t.Name, t.Type, t.Title, t.Body, nullString(t.Format), t.CreatedAt, t.UpdatedAt); err != nil {
-		log.Printf("[store] CreateNotifyTemplate 失败: %v", err)
+		recordStoreFailure("[store] CreateNotifyTemplate 失败: %v", err)
 		return nil
 	}
 	cp := *t
@@ -386,7 +385,7 @@ func (s *SQLStore) UpdateNotifyTemplate(t *NotifyTemplate) bool {
 		`UPDATE notify_templates SET name=?, type=?, title=?, body=?, format=?, updated_at=? WHERE id=?`,
 		t.Name, t.Type, t.Title, t.Body, nullString(t.Format), now, t.ID)
 	if err != nil {
-		log.Printf("[store] UpdateNotifyTemplate 失败 %s: %v", t.ID, err)
+		recordStoreFailure("[store] UpdateNotifyTemplate 失败 %s: %v", t.ID, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
@@ -412,7 +411,7 @@ func (s *SQLStore) DeleteNotifyTemplate(id, tenantID string) bool {
 	}
 	res, err := s.db.ExecContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] DeleteNotifyTemplate 失败 %s: %v", id, err)
+		recordStoreFailure("[store] DeleteNotifyTemplate 失败 %s: %v", id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
@@ -443,7 +442,7 @@ func (s *SQLStore) ListNotifyTemplates(tenantID string) []*NotifyTemplate {
 	q += ` ORDER BY created_at ASC`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListNotifyTemplates 失败: %v", err)
+		recordStoreFailure("[store] ListNotifyTemplates 失败: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -454,7 +453,7 @@ func (s *SQLStore) ListNotifyTemplates(tenantID string) []*NotifyTemplate {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListNotifyTemplates 遍历失败: %v", err)
+		recordStoreFailure("[store] ListNotifyTemplates 遍历失败: %v", err)
 	}
 	return out
 }
@@ -485,7 +484,7 @@ func (s *SQLStore) UpdateAlertRule(r *AlertRule) bool {
 		r.TenantID, r.Metric, r.Op, r.Threshold, r.ForDuration,
 		r.Severity, r.Message, boolToInt(r.Enabled), nullString(r.CreatedBy), r.ID)
 	if err != nil {
-		log.Printf("[store] UpdateAlertRule 失败 %s: %v", r.ID, err)
+		recordStoreFailure("[store] UpdateAlertRule 失败 %s: %v", r.ID, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()

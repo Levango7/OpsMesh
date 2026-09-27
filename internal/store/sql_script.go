@@ -25,7 +25,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"log"
 	"time"
 )
 
@@ -100,7 +99,7 @@ func (s *SQLStore) CreateScript(tenantID string, sc *Script) *Script {
 		 enabled=VALUES(enabled), updated_at=VALUES(updated_at)`,
 		sc.ID, sc.TenantID, sc.Name, sc.Language, sc.Content, sc.Params,
 		sc.TimeoutSec, scriptEnabledInt(sc.Enabled), sc.CreatedAt, sc.UpdatedAt); err != nil {
-		log.Printf("[store] CreateScript 插入失败 (tenant=%s script=%s): %v", tenantID, sc.ID, err)
+		recordStoreFailure("[store] CreateScript 插入失败 (tenant=%s script=%s): %v", tenantID, sc.ID, err)
 		return nil
 	}
 	return cloneScript(sc)
@@ -145,7 +144,7 @@ func (s *SQLStore) UpdateScript(tenantID string, sc *Script) (*Script, bool) {
 		 WHERE id=? AND tenant_id=?`,
 		sc.Name, sc.Language, sc.Content, sc.Params, sc.TimeoutSec,
 		scriptEnabledInt(sc.Enabled), sc.UpdatedAt, sc.ID, sc.TenantID); err != nil {
-		log.Printf("[store] UpdateScript 更新失败 (tenant=%s script=%s): %v", tenantID, sc.ID, err)
+		recordStoreFailure("[store] UpdateScript 更新失败 (tenant=%s script=%s): %v", tenantID, sc.ID, err)
 		return nil, false
 	}
 	return cloneScript(sc), true
@@ -157,7 +156,7 @@ func (s *SQLStore) ListScripts(tenantID string) []*Script {
 		`SELECT id, tenant_id, name, language, content, params, timeout_sec, enabled, created_at, updated_at
 		  FROM scripts WHERE tenant_id=? ORDER BY created_at DESC`, tenantID)
 	if err != nil {
-		log.Printf("[store] ListScripts 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] ListScripts 查询失败 (tenant=%s): %v", tenantID, err)
 		return []*Script{}
 	}
 	defer rows.Close()
@@ -168,7 +167,7 @@ func (s *SQLStore) ListScripts(tenantID string) []*Script {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListScripts 遍历失败: %v", err)
+		recordStoreFailure("[store] ListScripts 遍历失败: %v", err)
 	}
 	return out
 }
@@ -178,12 +177,12 @@ func (s *SQLStore) DeleteScript(tenantID, id string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM scripts WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
-		log.Printf("[store] DeleteScript 失败 (tenant=%s script=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] DeleteScript 失败 (tenant=%s script=%s): %v", tenantID, id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeleteScript RowsAffected 失败 (tenant=%s script=%s): %v", tenantID, id, rowsErr)
+		recordStoreFailure("[store] DeleteScript RowsAffected 失败 (tenant=%s script=%s): %v", tenantID, id, rowsErr)
 		return false
 	}
 	return n > 0
@@ -228,7 +227,7 @@ func (s *SQLStore) ListScriptExecutions(tenantID, scriptID string) []*ScriptExec
 		  FROM script_executions WHERE tenant_id=? AND script_id=? ORDER BY started_at DESC`,
 		tenantID, scriptID)
 	if err != nil {
-		log.Printf("[store] ListScriptExecutions 查询失败 (tenant=%s script=%s): %v", tenantID, scriptID, err)
+		recordStoreFailure("[store] ListScriptExecutions 查询失败 (tenant=%s script=%s): %v", tenantID, scriptID, err)
 		return []*ScriptExecution{}
 	}
 	defer rows.Close()
@@ -239,7 +238,7 @@ func (s *SQLStore) ListScriptExecutions(tenantID, scriptID string) []*ScriptExec
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListScriptExecutions 遍历失败: %v", err)
+		recordStoreFailure("[store] ListScriptExecutions 遍历失败: %v", err)
 	}
 	return out
 }
@@ -276,7 +275,7 @@ func (s *SQLStore) RecordScriptExecution(tenantID, scriptID, deviceID, status, s
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.TenantID, e.ScriptID, e.DeviceID, e.Status, e.Stdout, e.Stderr,
 		e.StartedAt, scriptFinishedAtValue(e.FinishedAt)); err != nil {
-		log.Printf("[store] RecordScriptExecution 插入失败 (tenant=%s script=%s exec=%s): %v", tenantID, scriptID, e.ID, err)
+		recordStoreFailure("[store] RecordScriptExecution 插入失败 (tenant=%s script=%s exec=%s): %v", tenantID, scriptID, e.ID, err)
 		return nil
 	}
 	return cloneScriptExecution(e)

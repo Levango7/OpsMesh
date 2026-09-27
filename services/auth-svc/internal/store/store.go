@@ -12,11 +12,16 @@ import (
 )
 
 // User represents a user in the store.
+//
+// P0 安全修复：PasswordHash 必须带 `json:"-"`。此前该字段无序列化屏蔽，
+// handleUserDetail(GET) 与 handleUpdateUser 直接把本结构体交给 writeJSON，
+// 导致任何持有 user:read 的调用方（含被伪造 token 提升的 attacker）都能批量
+// 拉取 cost-12 bcrypt 哈希离线爆破。对齐 controlplane internal/store/models.go:24 的做法。
 type User struct {
 	ID                 string
 	Username           string
 	Email              string
-	PasswordHash       string
+	PasswordHash       string `json:"-"`
 	Status             string
 	RoleIDs            []string
 	CreatedAt          time.Time

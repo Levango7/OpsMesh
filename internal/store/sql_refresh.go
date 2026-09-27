@@ -62,7 +62,7 @@ func (s *SQLStore) SaveRefreshToken(rt *RefreshToken) error {
 		 ON DUPLICATE KEY UPDATE user_id=VALUES(user_id), tenant_id=VALUES(tenant_id),
 		 device_fp=VALUES(device_fp), expires_at=VALUES(expires_at), created_at=VALUES(created_at)`,
 		rt.TokenHash, rt.UserID, rt.TenantID, rt.DeviceFP, rt.ExpiresAt, rt.CreatedAt); err != nil {
-		log.Printf("store: SaveRefreshToken 失败: %v", err)
+		recordStoreFailure("store: SaveRefreshToken 失败: %v", err)
 		return fmt.Errorf("store: save refresh token: %w", err)
 	}
 	return nil
@@ -103,7 +103,7 @@ func (s *SQLStore) CleanupRefreshTokens() int {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM refresh_tokens WHERE expires_at < ?`, time.Now().UTC())
 	if err != nil {
-		log.Printf("store: CleanupRefreshTokens 失败: %v", err)
+		recordStoreFailure("store: CleanupRefreshTokens 失败: %v", err)
 		return 0
 	}
 	n, rowsErr := res.RowsAffected()

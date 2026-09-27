@@ -1974,14 +1974,20 @@ func TestValidateDiagnoseTool_Invalid(t *testing.T) {
 // =============================================================================
 
 func TestBuildPingCommand_Windows(t *testing.T) {
-	cmd := buildPingCommand("1.2.3.4", 3, 2, "windows")
+	cmd, err := buildPingCommand("1.2.3.4", 3, 2, "windows")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !strings.Contains(cmd, "-n") {
 		t.Fatalf("windows ping should use -n: %s", cmd)
 	}
 }
 
 func TestBuildPingCommand_Linux(t *testing.T) {
-	cmd := buildPingCommand("1.2.3.4", 3, 2, "linux")
+	cmd, err := buildPingCommand("1.2.3.4", 3, 2, "linux")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !strings.Contains(cmd, "-c") {
 		t.Fatalf("linux ping should use -c: %s", cmd)
 	}

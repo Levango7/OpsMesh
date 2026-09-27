@@ -52,6 +52,17 @@ func (m *M) SetAppGauges(devices, devicesOnline, devicesOffline, alertsActive, t
 	m.ticketsOpen = int64(ticketsOpen)
 }
 
+// SetStoreFailures 写入存储层吞错累计数（来自 store.StoreFailureStats 的 total）。
+//
+// 之所以是「推送快照」而不是 metrics 直接 import store：保持 metrics 为无业务依赖的
+// 纯注册表，依赖方向单一（controlplane → metrics，controlplane → store），
+// 避免日后 store 或 metrics 任一侧新增依赖时形成环。
+func (m *M) SetStoreFailures(total uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.storeFailures = total
+}
+
 // appendAppGaugeMetrics 输出应用级仪表值。调用方已持锁。
 func (m *M) appendAppGaugeMetrics(b []byte) []byte {
 	b = append(b, "# HELP opsmesh_devices_total 已纳管设备总数\n"...)
@@ -71,5 +82,9 @@ func (m *M) appendAppGaugeMetrics(b []byte) []byte {
 	b = append(b, "# HELP opsmesh_tickets_open 未关闭工单数\n"...)
 	b = append(b, "# TYPE opsmesh_tickets_open gauge\n"...)
 	b = append(b, fmt.Sprintf("opsmesh_tickets_open %d\n", m.ticketsOpen)...)
+
+	b = append(b, "# HELP opsmesh_store_write_failures_total 存储层被吞掉的写/读错误累计数（Store 接口不返回 error，失败仅经此序列可见）\n"...)
+	b = append(b, "# TYPE opsmesh_store_write_failures_total counter\n"...)
+	b = append(b, fmt.Sprintf("opsmesh_store_write_failures_total %d\n", m.storeFailures)...)
 	return b
 }

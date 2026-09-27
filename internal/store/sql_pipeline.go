@@ -26,7 +26,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"log"
 	"time"
 )
 
@@ -47,7 +46,7 @@ func scanPipelineTemplate(row rowScanner) *PipelineTemplate {
 	if len(paramsJSON) > 0 {
 		// 反序列化失败不致命：保留空 Parameters，避免单条坏数据让整个 List 崩，但必须留痕。
 		if err := json.Unmarshal(paramsJSON, &t.Parameters); err != nil {
-			log.Printf("[store] scanPipelineTemplate 反序列化 parameters 失败（保留空 Parameters 继续）: %v", err)
+			recordStoreFailure("[store] scanPipelineTemplate 反序列化 parameters 失败（保留空 Parameters 继续）: %v", err)
 		}
 	}
 	return &t
@@ -83,7 +82,7 @@ func scanPipelineRun(row rowScanner) *PipelineRun {
 	if len(paramsJSON) > 0 {
 		// 反序列化失败不致命：保留空 Parameters，避免单条坏数据让整个 List 崩，但必须留痕。
 		if err := json.Unmarshal(paramsJSON, &r.Parameters); err != nil {
-			log.Printf("[store] scanPipelineRun 反序列化 parameters 失败（保留空 Parameters 继续）: %v", err)
+			recordStoreFailure("[store] scanPipelineRun 反序列化 parameters 失败（保留空 Parameters 继续）: %v", err)
 		}
 	}
 	return &r
@@ -100,7 +99,7 @@ func marshalPipelineParams(params []PipelineParam) []byte {
 	}
 	b, err := json.Marshal(params)
 	if err != nil {
-		log.Printf("[store] marshalPipelineParams 失败: %v", err)
+		recordStoreFailure("[store] marshalPipelineParams 失败: %v", err)
 		return nil
 	}
 	return b
@@ -113,7 +112,7 @@ func marshalRunParams(params map[string]string) []byte {
 	}
 	b, err := json.Marshal(params)
 	if err != nil {
-		log.Printf("[store] marshalRunParams 失败: %v", err)
+		recordStoreFailure("[store] marshalRunParams 失败: %v", err)
 		return nil
 	}
 	return b
@@ -149,7 +148,7 @@ func (s *SQLStore) CreateTemplate(tenantID string, t *PipelineTemplate) *Pipelin
 		 ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description), type=VALUES(type),
 		 yaml=VALUES(yaml), agent_id=VALUES(agent_id), parameters=VALUES(parameters), updated_at=VALUES(updated_at)`,
 		t.ID, t.TenantID, t.Name, t.Description, t.Type, t.YAML, t.AgentID, paramsJSON, t.CreatedAt, t.UpdatedAt); err != nil {
-		log.Printf("[store] CreateTemplate 插入失败 (tenant=%s id=%s): %v", tenantID, t.ID, err)
+		recordStoreFailure("[store] CreateTemplate 插入失败 (tenant=%s id=%s): %v", tenantID, t.ID, err)
 		return nil
 	}
 	return t
@@ -171,7 +170,7 @@ func (s *SQLStore) ListTemplates(tenantID string) []*PipelineTemplate {
 	rows, err := s.db.QueryContext(context.Background(),
 		`SELECT `+pipelineTemplateColumns+` FROM pipeline_templates WHERE tenant_id=? ORDER BY created_at DESC`, tenantID)
 	if err != nil {
-		log.Printf("[store] ListTemplates 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] ListTemplates 查询失败 (tenant=%s): %v", tenantID, err)
 		return []*PipelineTemplate{}
 	}
 	defer rows.Close()
@@ -182,7 +181,7 @@ func (s *SQLStore) ListTemplates(tenantID string) []*PipelineTemplate {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListTemplates 遍历失败: %v", err)
+		recordStoreFailure("[store] ListTemplates 遍历失败: %v", err)
 	}
 	return out
 }
@@ -192,12 +191,12 @@ func (s *SQLStore) DeleteTemplate(tenantID, id string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM pipeline_templates WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
-		log.Printf("[store] DeleteTemplate 失败 (tenant=%s id=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] DeleteTemplate 失败 (tenant=%s id=%s): %v", tenantID, id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeleteTemplate RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, id, rowsErr)
+		recordStoreFailure("[store] DeleteTemplate RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, id, rowsErr)
 		return false
 	}
 	return n > 0
@@ -245,7 +244,7 @@ func (s *SQLStore) CreateRun(tenantID string, r *PipelineRun) *PipelineRun {
 		 started_at=VALUES(started_at), finished_at=VALUES(finished_at)`,
 		r.ID, r.TenantID, r.TemplateID, r.TemplateName, r.Status, paramsJSON, r.Logs,
 		startedAt, finishedAt, r.CreatedAt); err != nil {
-		log.Printf("[store] CreateRun 插入失败 (tenant=%s id=%s): %v", tenantID, r.ID, err)
+		recordStoreFailure("[store] CreateRun 插入失败 (tenant=%s id=%s): %v", tenantID, r.ID, err)
 		return nil
 	}
 	return r
@@ -275,7 +274,7 @@ func (s *SQLStore) ListRuns(tenantID string, templateID string) []*PipelineRun {
 	q += ` ORDER BY created_at DESC`
 	rows, err := s.db.QueryContext(context.Background(), q, args...)
 	if err != nil {
-		log.Printf("[store] ListRuns 查询失败 (tenant=%s template=%s): %v", tenantID, templateID, err)
+		recordStoreFailure("[store] ListRuns 查询失败 (tenant=%s template=%s): %v", tenantID, templateID, err)
 		return []*PipelineRun{}
 	}
 	defer rows.Close()
@@ -286,7 +285,7 @@ func (s *SQLStore) ListRuns(tenantID string, templateID string) []*PipelineRun {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListRuns 遍历失败: %v", err)
+		recordStoreFailure("[store] ListRuns 遍历失败: %v", err)
 	}
 	return out
 }
@@ -336,7 +335,7 @@ func (s *SQLStore) UpdateRun(tenantID string, r *PipelineRun) (*PipelineRun, boo
 		 started_at=?, finished_at=? WHERE id=? AND tenant_id=?`,
 		r.TemplateID, r.TemplateName, r.Status, paramsJSON, r.Logs,
 		startedAt, finishedAt, r.ID, tenantID); err != nil {
-		log.Printf("[store] UpdateRun 失败 (tenant=%s id=%s): %v", tenantID, r.ID, err)
+		recordStoreFailure("[store] UpdateRun 失败 (tenant=%s id=%s): %v", tenantID, r.ID, err)
 		return nil, false
 	}
 	return r, true

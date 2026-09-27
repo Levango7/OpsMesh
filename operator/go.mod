@@ -1,4 +1,4 @@
-module opsmesh/operator
+module github.com/Levango7/OpsMesh/operator
 
 go 1.26.0
 

@@ -21,7 +21,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"log"
 	"time"
 )
 
@@ -47,7 +46,7 @@ func scanTicket(row rowScanner) *Ticket {
 	}
 	if tagsJSON != "" {
 		if err := json.Unmarshal([]byte(tagsJSON), &t.Tags); err != nil {
-			log.Printf("[store] scanTicket 解析 tags JSON 失败 (ticket=%s): %v", t.ID, err)
+			recordStoreFailure("[store] scanTicket 解析 tags JSON 失败 (ticket=%s): %v", t.ID, err)
 		}
 	}
 	return &t
@@ -126,7 +125,7 @@ func (s *SQLStore) CreateTicket(tenantID string, t *Ticket) *Ticket {
 		t.ID, t.TenantID, t.Title, t.Description, t.Status, t.Priority, t.Category,
 		t.AssigneeID, t.CreatorID, t.RelatedDevice, t.RelatedTask, tagsJSON,
 		t.CreatedAt, t.UpdatedAt, resolvedAtValue(t.ResolvedAt)); err != nil {
-		log.Printf("[store] CreateTicket 插入失败 (tenant=%s ticket=%s): %v", tenantID, t.ID, err)
+		recordStoreFailure("[store] CreateTicket 插入失败 (tenant=%s ticket=%s): %v", tenantID, t.ID, err)
 		return nil
 	}
 	return cloneTicket(t)
@@ -175,7 +174,7 @@ func (s *SQLStore) UpdateTicket(tenantID string, t *Ticket) (*Ticket, bool) {
 		t.Title, t.Description, t.Status, t.Priority, t.Category, t.AssigneeID,
 		t.CreatorID, t.RelatedDevice, t.RelatedTask, tagsJSON, t.UpdatedAt,
 		resolvedAtValue(t.ResolvedAt), t.ID, t.TenantID); err != nil {
-		log.Printf("[store] UpdateTicket 更新失败 (tenant=%s ticket=%s): %v", tenantID, t.ID, err)
+		recordStoreFailure("[store] UpdateTicket 更新失败 (tenant=%s ticket=%s): %v", tenantID, t.ID, err)
 		return nil, false
 	}
 	return cloneTicket(t), true
@@ -209,7 +208,7 @@ func (s *SQLStore) ListTickets(tenantID string, filter TicketFilter) []*Ticket {
 	q += ` ORDER BY created_at DESC`
 	rows, err := s.db.QueryContext(context.Background(), q, args...)
 	if err != nil {
-		log.Printf("[store] ListTickets 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] ListTickets 查询失败 (tenant=%s): %v", tenantID, err)
 		return []*Ticket{}
 	}
 	defer rows.Close()
@@ -220,7 +219,7 @@ func (s *SQLStore) ListTickets(tenantID string, filter TicketFilter) []*Ticket {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListTickets 遍历失败: %v", err)
+		recordStoreFailure("[store] ListTickets 遍历失败: %v", err)
 	}
 	return out
 }
@@ -237,7 +236,7 @@ func (s *SQLStore) CloseTicket(tenantID, id string) (*Ticket, bool) {
 	if _, err := s.db.ExecContext(context.Background(),
 		`UPDATE tickets SET status='closed', resolved_at=?, updated_at=?
 		 WHERE id=? AND tenant_id=?`, now, now, id, tenantID); err != nil {
-		log.Printf("[store] CloseTicket 更新失败 (tenant=%s ticket=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] CloseTicket 更新失败 (tenant=%s ticket=%s): %v", tenantID, id, err)
 		return nil, false
 	}
 	// 返回更新后的工单（在 existing 基础上应用关闭语义，避免再次查询）。

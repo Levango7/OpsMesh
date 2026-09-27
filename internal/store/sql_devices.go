@@ -22,7 +22,7 @@ func (s *SQLStore) agentTenant(ctx context.Context, agentID string) (string, boo
 	// COALESCE：tenant_id 列可为 NULL（老库手工插入的行），NULL 扫描到 string 会报错。
 	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(tenant_id,'') FROM agents WHERE agent_id=?`, agentID).Scan(&tenant); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] 查询 agent 既有租户失败（跳过跨租户校验）%s: %v", agentID, err)
+			recordStoreFailure("[store] 查询 agent 既有租户失败（跳过跨租户校验）%s: %v", agentID, err)
 		}
 		return "", false
 	}
@@ -86,7 +86,7 @@ func (s *SQLStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 				"addr=VALUES(addr), grpc_port=VALUES(grpc_port), metrics_port=VALUES(metrics_port), "+
 				"status=VALUES(status), `load`=VALUES(`load`), last_seen=VALUES(last_seen)", a.AgentID, a.Hostname, a.Segment, a.TenantID, a.Addr, a.GRPCPort, a.MetricsPort, a.Status, 1, now, agentSecret)
 		if err != nil {
-			log.Printf("[store] Register upsert agents 失败 %s: %v", a.AgentID, err)
+			recordStoreFailure("[store] Register upsert agents 失败 %s: %v", a.AgentID, err)
 		}
 	} else {
 		_, err = s.db.ExecContext(ctx,
@@ -97,7 +97,7 @@ func (s *SQLStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 				"status=VALUES(status), `load`=VALUES(`load`), last_seen=VALUES(last_seen)",
 			a.AgentID, a.Hostname, a.Segment, a.TenantID, a.Addr, a.GRPCPort, a.MetricsPort, a.Status, 1, now)
 		if err != nil {
-			log.Printf("[store] Register upsert agents 失败 %s: %v", a.AgentID, err)
+			recordStoreFailure("[store] Register upsert agents 失败 %s: %v", a.AgentID, err)
 		}
 	}
 	// 缓存 agent secret 供 AgentSecret O(1) 查询
@@ -115,7 +115,7 @@ func (s *SQLStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 		// 先查候选设备当前租户，校验一致性后再翻转（agent 租户空=单租户放行）。
 		var curTenant string
 		if qerr := s.db.QueryRowContext(ctx, `SELECT tenant_id FROM devices WHERE device_id=?`, a.OnboardDeviceID).Scan(&curTenant); qerr != nil && qerr != sql.ErrNoRows {
-			log.Printf("[store] Register onboard 查询候选设备 %s 租户失败: %v", a.OnboardDeviceID, qerr)
+			recordStoreFailure("[store] Register onboard 查询候选设备 %s 租户失败: %v", a.OnboardDeviceID, qerr)
 		}
 		if a.TenantID != "" && curTenant != "" && curTenant != a.TenantID {
 			log.Printf("[store] Register onboard 拒绝跨租户翻转 %s（device tenant=%q, agent tenant=%q）", a.OnboardDeviceID, curTenant, a.TenantID)
@@ -126,7 +126,7 @@ VALUES (?, ?, ?, ?, ?, 'online', 'idle', 1, ?, ?, ?)
 ON DUPLICATE KEY UPDATE segment=VALUES(segment), tenant_id=VALUES(tenant_id), ip=VALUES(ip), agent_id=VALUES(agent_id), state='online', task_state='idle', managed=1, hostname=VALUES(hostname), os=VALUES(os), arch=VALUES(arch)
 `, a.OnboardDeviceID, a.Segment, a.TenantID, a.Addr, a.AgentID, a.Hostname, a.OS, a.Arch)
 			if err != nil {
-				log.Printf("[store] Register onboard 设备失败 %s: %v", a.OnboardDeviceID, err)
+				recordStoreFailure("[store] Register onboard 设备失败 %s: %v", a.OnboardDeviceID, err)
 			}
 		}
 	} else {
@@ -138,7 +138,7 @@ ON DUPLICATE KEY UPDATE
 `, "dev-"+a.AgentID, a.Segment, a.TenantID, a.Addr, a.AgentID, a.Hostname, a.OS, a.Arch)
 	}
 	if err != nil {
-		log.Printf("[store] Register insert devices 失败 %s: %v", a.AgentID, err)
+		recordStoreFailure("[store] Register insert devices 失败 %s: %v", a.AgentID, err)
 	}
 
 	// 演示模式：仅 --demo 开启时预置 uname -a 示例任务，避免污染生产。
@@ -149,7 +149,7 @@ VALUES (?, ?, ?, ?, ?, 'pending', ?)
 ON DUPLICATE KEY UPDATE type=VALUES(type), command=VALUES(command), status=VALUES(status)
 `, "task-"+a.AgentID+"-1", a.AgentID, a.TenantID, "shell", "uname -a", now)
 		if err != nil {
-			log.Printf("[store] Register insert tasks 失败 %s: %v", a.AgentID, err)
+			recordStoreFailure("[store] Register insert tasks 失败 %s: %v", a.AgentID, err)
 		}
 	}
 
@@ -174,7 +174,7 @@ func (s *SQLStore) Heartbeat(agentID, status string, load int) bool {
 		"UPDATE agents SET status=?, `load`=?, last_seen=? WHERE agent_id=?",
 		status, load, time.Now().UTC(), agentID)
 	if err != nil {
-		log.Printf("[store] Heartbeat 更新失败 %s: %v", agentID, err)
+		recordStoreFailure("[store] Heartbeat 更新失败 %s: %v", agentID, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
@@ -192,7 +192,7 @@ func (s *SQLStore) Heartbeat(agentID, status string, load int) bool {
 			"lastSeen": time.Now().UTC(),
 		})
 		if err := s.rdb.HSet(c2, "opsmesh:agents", agentID, string(b)).Err(); err != nil {
-			log.Printf("[store] redis 缓存 heartbeat 失败 %s: %v", agentID, err)
+			recordStoreFailure("[store] redis 缓存 heartbeat 失败 %s: %v", agentID, err)
 		}
 	}
 	return true
@@ -214,7 +214,7 @@ func (s *SQLStore) Snapshot(tenantID string) map[string][]proto.DeviceInfo {
 	q += ` WHERE ` + strings.Join(where, " AND ")
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] Snapshot 查询失败: %v", err)
+		recordStoreFailure("[store] Snapshot 查询失败: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -228,7 +228,7 @@ func (s *SQLStore) Snapshot(tenantID string) map[string][]proto.DeviceInfo {
 		var hostname, osName, arch sql.NullString
 		if err := rows.Scan(&d.DeviceID, &d.Segment, &d.TenantID, &d.IP, &d.AgentID,
 			&d.State, &d.TaskState, &managed, &lastResult, &lastResultAt, &retired, &hostname, &osName, &arch); err != nil {
-			log.Printf("[store] Snapshot 扫描失败: %v", err)
+			recordStoreFailure("[store] Snapshot 扫描失败: %v", err)
 			continue
 		}
 		d.Managed = managed
@@ -251,7 +251,7 @@ func (s *SQLStore) Snapshot(tenantID string) map[string][]proto.DeviceInfo {
 		out[d.Segment] = append(out[d.Segment], d)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] Snapshot 遍历失败: %v", err)
+		recordStoreFailure("[store] Snapshot 遍历失败: %v", err)
 	}
 	return out
 }
@@ -271,7 +271,7 @@ func (s *SQLStore) Device(id string) *proto.DeviceInfo {
 	if err := row.Scan(&d.DeviceID, &d.Segment, &d.TenantID, &d.IP, &d.AgentID,
 		&d.State, &d.TaskState, &managed, &lastResult, &lastResultAt, &retired, &hostname, &osName, &arch); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] Device 查询失败 %s: %v", id, err)
+			recordStoreFailure("[store] Device 查询失败 %s: %v", id, err)
 		}
 		return nil
 	}
@@ -309,7 +309,7 @@ func (s *SQLStore) Agents(tenantID string) []*proto.AgentInfo {
 	}
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] Agents 查询失败: %v", err)
+		recordStoreFailure("[store] Agents 查询失败: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -320,14 +320,14 @@ func (s *SQLStore) Agents(tenantID string) []*proto.AgentInfo {
 		var lastSeen time.Time
 		if err := rows.Scan(&a.AgentID, &a.Hostname, &a.Segment, &a.TenantID, &a.Addr,
 			&a.GRPCPort, &a.MetricsPort, &a.Status, &a.Load, &lastSeen); err != nil {
-			log.Printf("[store] Agents 扫描失败: %v", err)
+			recordStoreFailure("[store] Agents 扫描失败: %v", err)
 			continue
 		}
 		a.LastSeen = lastSeen
 		out = append(out, &a)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] Agents 遍历失败: %v", err)
+		recordStoreFailure("[store] Agents 遍历失败: %v", err)
 	}
 	return out
 }
@@ -344,7 +344,7 @@ func (s *SQLStore) Agent(id string) *proto.AgentInfo {
 	if err := row.Scan(&a.AgentID, &a.Hostname, &a.Segment, &a.TenantID, &a.Addr,
 		&a.GRPCPort, &a.MetricsPort, &a.Status, &a.Load, &lastSeen); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] Agent 查询失败 %s: %v", id, err)
+			recordStoreFailure("[store] Agent 查询失败 %s: %v", id, err)
 		}
 		return nil
 	}
@@ -392,7 +392,7 @@ ON DUPLICATE KEY UPDATE segment=VALUES(segment), tenant_id=VALUES(tenant_id), ip
 	managed=VALUES(managed), last_result=VALUES(last_result), last_result_at=VALUES(last_result_at), retired=VALUES(retired)
 `, d.DeviceID, d.Segment, d.TenantID, d.IP, d.AgentID, d.State, d.TaskState,
 		boolToInt(d.Managed), nullString(d.LastResult), nullTime(d.LastResultAt), boolToInt(d.Retired)); err != nil {
-		log.Printf("[store] UpsertDevice 失败 %s: %v", d.DeviceID, err)
+		recordStoreFailure("[store] UpsertDevice 失败 %s: %v", d.DeviceID, err)
 	}
 }
 
@@ -405,7 +405,7 @@ func (s *SQLStore) RetireDevice(id, tenantID string) bool {
 		`UPDATE devices SET retired=1, state='offline' WHERE device_id=? AND (tenant_id=? OR ?='')`,
 		id, tenantID, tenantID)
 	if err != nil {
-		log.Printf("[store] RetireDevice 失败 %s: %v", id, err)
+		recordStoreFailure("[store] RetireDevice 失败 %s: %v", id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
@@ -436,7 +436,7 @@ func (s *SQLStore) RetireStaleDevices(maxAge time.Duration) int {
 		  AND (a.last_seen IS NULL OR a.last_seen < ?)`,
 		time.Now().UTC().Add(-maxAge))
 	if err != nil {
-		log.Printf("[store] RetireStaleDevices 失败: %v", err)
+		recordStoreFailure("[store] RetireStaleDevices 失败: %v", err)
 		return 0
 	}
 	n, rowsErr := res.RowsAffected()
@@ -502,7 +502,7 @@ func (s *SQLStore) cacheAgent(a *proto.AgentInfo) {
 		return
 	}
 	if err := s.rdb.HSet(ctx, "opsmesh:agents", a.AgentID, string(b)).Err(); err != nil {
-		log.Printf("[store] redis 缓存 agent 失败 %s: %v", a.AgentID, err)
+		recordStoreFailure("[store] redis 缓存 agent 失败 %s: %v", a.AgentID, err)
 	}
 }
 

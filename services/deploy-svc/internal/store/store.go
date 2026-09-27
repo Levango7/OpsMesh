@@ -5,8 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Levango7/OpsMesh/services/deploy-svc/internal/models"
 	"github.com/google/uuid"
+
+	"github.com/Levango7/OpsMesh/services/deploy-svc/internal/models"
 )
 
 // ErrNotFound is returned when a record is not found.

@@ -14,12 +14,13 @@ import (
 	"syscall"
 	"time"
 
-	applog "github.com/Levango7/OpsMesh/pkg/log"
 	_ "github.com/go-sql-driver/mysql"
 	"opsmesh.io/log-svc/internal/server"
 	"opsmesh.io/log-svc/internal/service"
 	"opsmesh.io/log-svc/pkg/config"
 	"opsmesh.io/log-svc/pkg/logstore"
+
+	applog "github.com/Levango7/OpsMesh/pkg/log"
 )
 
 func main() {
@@ -125,7 +126,9 @@ func initLogStore(cfg *config.Config) (logstore.LogStore, error) {
 		return logstore.NewMemory(cfg.LogStore.Memory.Capacity), nil
 
 	case "sql":
-		db, err := sql.Open("mysql", cfg.LogStore.SQL.DSN)
+		// ensureParseTime：自备 DSN 不保证带 parseTime=true，缺了 time 列扫描即报错，
+		// 服务会静默退回内存存储（见 dsn.go 注释）。
+		db, err := sql.Open("mysql", ensureParseTime(cfg.LogStore.SQL.DSN))
 		if err != nil {
 			return nil, fmt.Errorf("failed to open MySQL connection: %w", err)
 		}

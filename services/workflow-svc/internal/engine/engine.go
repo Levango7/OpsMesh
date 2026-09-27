@@ -30,6 +30,9 @@ func NewEngine() *Engine {
 }
 
 // StartExecution begins executing a workflow and returns the execution record.
+//
+// 返回的是快照副本而不是引擎内部持有的指针：run goroutine 一直在改这个对象，
+// 把它直接交给调用方，调用方读字段就变成无锁并发读（见 cloneExecution）。
 func (e *Engine) StartExecution(ctx context.Context, wf *models.Workflow) (*models.Execution, error) {
 	g := dag.NewGraph(wf.Nodes, wf.Edges)
 	if err := g.Validate(); err != nil {
@@ -51,25 +54,53 @@ func (e *Engine) StartExecution(ctx context.Context, wf *models.Workflow) (*mode
 
 	e.mu.Lock()
 	e.executions[execution.ID] = execution
+	snapshot := cloneExecution(execution)
 	e.mu.Unlock()
 
 	go e.run(context.Background(), g, wf, execution)
 
-	return execution, nil
+	return snapshot, nil
 }
 
-// GetExecution retrieves an execution by ID.
+// cloneExecution 复制一份可安全交给外部的快照。NodeStates/Context 是 map，
+// 必须深拷贝：浅拷贝的话调用方遍历 map 时引擎写入会触发 Go 运行时的
+// concurrent map read and map write，那是 fatal throw，recover 拦不住，整个进程直接没。
+func cloneExecution(src *models.Execution) *models.Execution {
+	if src == nil {
+		return nil
+	}
+	dst := *src
+	dst.NodeStates = make(map[string]models.NodeStatus, len(src.NodeStates))
+	for k, v := range src.NodeStates {
+		dst.NodeStates[k] = v
+	}
+	dst.Context = make(map[string]string, len(src.Context))
+	for k, v := range src.Context {
+		dst.Context[k] = v
+	}
+	return &dst
+}
+
+func cloneApproval(src *models.Approval) *models.Approval {
+	if src == nil {
+		return nil
+	}
+	dst := *src
+	return &dst
+}
+
+// GetExecution retrieves a snapshot of an execution by ID.
 func (e *Engine) GetExecution(id string) *models.Execution {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return e.executions[id]
+	return cloneExecution(e.executions[id])
 }
 
-// GetApproval retrieves an approval by ID.
+// GetApproval retrieves a snapshot of an approval by ID.
 func (e *Engine) GetApproval(id string) *models.Approval {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return e.approvals[id]
+	return cloneApproval(e.approvals[id])
 }
 
 // ApproveApproval marks an approval as approved and resumes execution.
@@ -286,24 +317,24 @@ func (e *Engine) ResumeExecution(ctx context.Context, executionID string) error 
 	return nil
 }
 
-// ListExecutions returns all executions.
+// ListExecutions returns snapshots of all executions.
 func (e *Engine) ListExecutions() []*models.Execution {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	result := make([]*models.Execution, 0, len(e.executions))
 	for _, ex := range e.executions {
-		result = append(result, ex)
+		result = append(result, cloneExecution(ex))
 	}
 	return result
 }
 
-// ListApprovals returns all approvals.
+// ListApprovals returns snapshots of all approvals.
 func (e *Engine) ListApprovals() []*models.Approval {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	result := make([]*models.Approval, 0, len(e.approvals))
 	for _, a := range e.approvals {
-		result = append(result, a)
+		result = append(result, cloneApproval(a))
 	}
 	return result
 }

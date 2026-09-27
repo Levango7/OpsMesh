@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"opsmesh.io/log-svc/api/proto/v1"
+	logv1 "opsmesh.io/log-svc/api/proto/v1"
 )
 
 // jsonCodec implements grpc.Codec for JSON serialization.

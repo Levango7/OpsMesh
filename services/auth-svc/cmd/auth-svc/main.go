@@ -38,6 +38,12 @@ func main() {
 	lgr := applog.Init("auth-svc")
 	cfg := config.Load()
 
+	// P0 安全门禁：签名密钥必须显式注入且达到最小强度，否则拒绝启动。
+	// 放在最前面是为了让配置错误在建立任何监听端口之前就暴露出来。
+	if err := cfg.Validate(); err != nil {
+		lgr.Fatalf("[auth-svc] 配置校验失败，停止启动: %v", err)
+	}
+
 	shutdown, err := trace.InitTracer("auth-svc", cfg.OTelEndpoint)
 	if err != nil {
 		lgr.Fatalf("Failed to initialize tracer: %v", err)

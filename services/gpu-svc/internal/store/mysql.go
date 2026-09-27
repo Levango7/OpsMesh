@@ -9,8 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/models"
 	_ "github.com/go-sql-driver/mysql"
+
+	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/models"
 )
 
 // MySQLStore is a MySQL-backed implementation of GPUStore.

@@ -18,8 +18,6 @@ package store
 
 import (
 	"context"
-
-	"log"
 	"time"
 )
 
@@ -88,7 +86,7 @@ func (s *SQLStore) CreateApp(tenantID string, a *ArgoCDApp) *ArgoCDApp {
 		 updated_at=VALUES(updated_at)`,
 		a.ID, a.TenantID, a.Name, a.Namespace, a.RepoURL, a.Path, a.TargetRevision,
 		a.ClusterURL, a.SyncPolicy, a.Status, a.HealthStatus, a.CreatedAt, a.UpdatedAt); err != nil {
-		log.Printf("[store] CreateApp 插入失败 (tenant=%s id=%s): %v", tenantID, a.ID, err)
+		recordStoreFailure("[store] CreateApp 插入失败 (tenant=%s id=%s): %v", tenantID, a.ID, err)
 		return nil
 	}
 	return a
@@ -129,7 +127,7 @@ func (s *SQLStore) UpdateApp(tenantID string, a *ArgoCDApp) (*ArgoCDApp, bool) {
 		a.Name, a.Namespace, a.RepoURL, a.Path, a.TargetRevision,
 		a.ClusterURL, a.SyncPolicy, a.Status, a.HealthStatus, a.UpdatedAt,
 		a.ID, tenantID); err != nil {
-		log.Printf("[store] UpdateApp 失败 (tenant=%s id=%s): %v", tenantID, a.ID, err)
+		recordStoreFailure("[store] UpdateApp 失败 (tenant=%s id=%s): %v", tenantID, a.ID, err)
 		return nil, false
 	}
 	return a, true
@@ -140,7 +138,7 @@ func (s *SQLStore) ListApps(tenantID string) []*ArgoCDApp {
 	rows, err := s.db.QueryContext(context.Background(),
 		`SELECT `+argocdAppColumns+` FROM argocd_apps WHERE tenant_id=? ORDER BY created_at DESC`, tenantID)
 	if err != nil {
-		log.Printf("[store] ListApps 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] ListApps 查询失败 (tenant=%s): %v", tenantID, err)
 		return []*ArgoCDApp{}
 	}
 	defer rows.Close()
@@ -151,7 +149,7 @@ func (s *SQLStore) ListApps(tenantID string) []*ArgoCDApp {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListApps 遍历失败: %v", err)
+		recordStoreFailure("[store] ListApps 遍历失败: %v", err)
 	}
 	return out
 }
@@ -161,12 +159,12 @@ func (s *SQLStore) DeleteApp(tenantID, id string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM argocd_apps WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
-		log.Printf("[store] DeleteApp 失败 (tenant=%s id=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] DeleteApp 失败 (tenant=%s id=%s): %v", tenantID, id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeleteApp RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, id, rowsErr)
+		recordStoreFailure("[store] DeleteApp RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, id, rowsErr)
 		return false
 	}
 	return n > 0
@@ -187,7 +185,7 @@ func (s *SQLStore) SyncApp(tenantID, id string) (*ArgoCDApp, bool) {
 	if _, err := s.db.ExecContext(context.Background(),
 		`UPDATE argocd_apps SET status='synced', health_status='healthy', updated_at=?
 		 WHERE id=? AND tenant_id=?`, now, id, tenantID); err != nil {
-		log.Printf("[store] SyncApp 失败 (tenant=%s id=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] SyncApp 失败 (tenant=%s id=%s): %v", tenantID, id, err)
 		return nil, false
 	}
 	existing.Status = "synced"

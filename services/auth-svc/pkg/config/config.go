@@ -1,10 +1,15 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"time"
 )
+
+// MinJWTSecretLen HS256 签名密钥的最小字节数，与 controlplane
+// internal/config 的生产校验保持一致（32 字节 = 256 bit）。
+const MinJWTSecretLen = 32
 
 // Config holds all configuration for the auth-svc.
 type Config struct {
@@ -52,6 +57,13 @@ type Config struct {
 	PasswordMinLen int `json:"passwordMinLen"`
 	// PasswordRequireSpecial 强口令是否要求特殊字符（默认 true；false 降级到旧策略）。
 	PasswordRequireSpecial bool `json:"passwordRequireSpecial"`
+
+	// AllowInsecureDevSecret 仅供本地开发/CI 放行空签名密钥的显式逃生舱。
+	// P0 安全修复：此前 JWTSecret 的默认值是公开字面量
+	// "default-jwt-secret-change-in-production"，任何读过本仓库的人都能据此伪造
+	// 携带任意 roles/permissions 的 HS256 token（requirePermission 直接信任
+	// token 内的 permissions，不回查数据库）。默认值已改为空，改为启动期强制校验。
+	AllowInsecureDevSecret bool `json:"allowInsecureDevSecret"`
 }
 
 // Load returns a Config populated from environment variables with defaults.
@@ -59,7 +71,7 @@ func Load() *Config {
 	return &Config{
 		GRPCPort:        getEnvInt("AUTH_SVC_GRPC_PORT", 50052),
 		HTTPPort:        getEnvInt("AUTH_SVC_HTTP_PORT", 8081),
-		JWTSecret:       getEnv("AUTH_SVC_JWT_SECRET", "default-jwt-secret-change-in-production"),
+		JWTSecret:       getEnv("AUTH_SVC_JWT_SECRET", ""),
 		AccessTokenTTL:  getEnvDuration("AUTH_SVC_ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL: getEnvDuration("AUTH_SVC_REFRESH_TOKEN_TTL", 7*24*time.Hour),
 		RedisAddr:       getEnv("AUTH_SVC_REDIS_ADDR", ""),
@@ -80,7 +92,33 @@ func Load() *Config {
 		SessionTTL:             getEnvDuration("AUTH_SVC_SESSION_TTL", 24*time.Hour),
 		PasswordMinLen:         getEnvInt("AUTH_SVC_PASSWORD_MIN_LEN", 12),
 		PasswordRequireSpecial: getEnv("AUTH_SVC_PASSWORD_REQUIRE_SPECIAL", "true") != "false",
+
+		AllowInsecureDevSecret: getEnv("AUTH_SVC_ALLOW_INSECURE_DEV_SECRET", "false") == "true",
 	}
+}
+
+// Validate 校验配置中不可静默降级的项。
+//
+// P0 安全修复：JWTSecret 不再有内置默认值，必须由部署方显式注入。
+// 空密钥或过短密钥一律拒绝启动——这是唯一能杜绝"公开字面量可伪造任意权限 token"的位置。
+func (c *Config) Validate() error {
+	if c.JWTSecret == "" {
+		if c.AllowInsecureDevSecret {
+			return nil
+		}
+		return fmt.Errorf(
+			"AUTH_SVC_JWT_SECRET 未设置：auth-svc 用它签发并校验 HS256 access token，"+
+				"缺失将导致任意身份可被伪造。生产环境必须显式注入（≥%d 字节）。"+
+				"本地开发可设 AUTH_SVC_ALLOW_INSECURE_DEV_SECRET=true 显式放行",
+			MinJWTSecretLen)
+	}
+	if len(c.JWTSecret) < MinJWTSecretLen && !c.AllowInsecureDevSecret {
+		return fmt.Errorf(
+			"AUTH_SVC_JWT_SECRET 过短（%d 字节 < %d 字节）：弱签名密钥可被离线爆破后伪造任意身份。"+
+				"本地开发可设 AUTH_SVC_ALLOW_INSECURE_DEV_SECRET=true 显式放行",
+			len(c.JWTSecret), MinJWTSecretLen)
+	}
+	return nil
 }
 
 func getEnv(key, def string) string {

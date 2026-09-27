@@ -1,0 +1,70 @@
+# OpsMesh services/operator 子模块 golangci-lint 配置（v2，与根 .golangci.yml 分离）
+#
+# 为什么不直接用根配置（两个原因，2026-09-27 实测）：
+# 1. 路径误配对：根配置的豁免规则按根模块相对路径编写（path: internal/agent/...），
+#    而从 services/<svc> 目录运行 lint 时，服务自己的文件相对路径也叫 internal/...——
+#    根的豁免会**静默命中服务的同名路径**，豁免语义完全失控。
+# 2. 存量债不同：根模块经多轮治理可达全绿；services/operator 存量报点 457 项
+#    （errcheck 321 / gosec 72 / staticcheck 32 / unused 10 / govet 9 / ineffassign 2，
+#    已登记 docs/tech-debt.md），一次性清偿属独立工程，不能让门禁从首跑就永久红
+#    （长期红的门禁会被整体忽略——见 ci.yml 教训 11）。
+#
+# 本配置 = 当日实测零报点的规则集，新代码由这些规则把守；存量债按 tech-debt
+# 的偿清节奏逐步把 errcheck/gosec/staticcheck 等移入 enable。每收编一条规则，
+# 先在本地 19 个模块全量试跑再改本文件。
+#
+# 正确性门禁不缩水：ci.yml services job 另行跑 go vet ./...（标准 vet 全开）与
+# go test -race（竞态检测——2026-09-27 开启当日即抓出 workflow-svc 可崩进程的
+# map 并发读写，是本仓服务侧最有杀伤力的门禁）。
+
+version: "2"
+run:
+  go: "1.26"
+linters:
+  default: none
+  enable:
+    - bodyclose        # http.Response.Body 必须 Close
+    - copyloopvar      # 循环变量拷贝检查（Go 1.22 loopvar 兼容）
+    - misspell         # 注释/字符串拼写
+    - revive           # 风格检查（exported 关闭，与根配置一致）
+    - sqlclosecheck    # sql.Rows/Stmt/Conn 必须 Close
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+exclusions:
+  generated: lax
+  presets:
+    - comments
+    - common-false-positives
+    - legacy
+    - std-error-handling
+  paths:
+    - .*\.gen\.go$
+    - .*\.pb\.go$
+    - vendor
+    - docs
+    - third_party$
+    - builtin$
+    - examples$
+    - node_modules
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  fix: false
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/Levango7/OpsMesh
+  exclusions:
+    generated: lax
+    paths:
+      - .*\.gen\.go$
+      - .*\.pb\.go$
+      - vendor
+      - docs

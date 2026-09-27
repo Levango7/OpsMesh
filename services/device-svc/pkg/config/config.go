@@ -1,10 +1,14 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"time"
 )
+
+// MinJWTSecretLen HS256 签名密钥的最小字节数，与 controlplane 保持一致。
+const MinJWTSecretLen = 32
 
 // Config holds all configuration for the device-svc.
 type Config struct {
@@ -56,6 +60,10 @@ type Config struct {
 	// AgentBinDir agent 二进制分发目录（按平台/架构组织：opsmesh-agent-{os}-{arch}）。
 	// 空=回退当前进程二进制（仅开发/单机部署）。
 	AgentBinDir string `json:"agentBinDir"`
+
+	// AllowInsecureDevSecret 仅供本地开发/CI 放行空签名密钥的显式逃生舱。
+	// P0 安全修复：JWTSecret 此前默认值是公开字面量，改为空 + 启动期强制校验。
+	AllowInsecureDevSecret bool `json:"allowInsecureDevSecret"`
 }
 
 // Load returns a Config populated from environment variables with defaults.
@@ -63,7 +71,7 @@ func Load() *Config {
 	return &Config{
 		GRPCPort:                getEnvInt("DEVICE_SVC_GRPC_PORT", 50052),
 		HTTPPort:                getEnvInt("DEVICE_SVC_HTTP_PORT", 8081),
-		JWTSecret:               getEnv("DEVICE_SVC_JWT_SECRET", "default-jwt-secret-change-in-production"),
+		JWTSecret:               getEnv("DEVICE_SVC_JWT_SECRET", ""),
 		ProvisionSecret:         getEnv("DEVICE_SVC_PROVISION_SECRET", ""), // 空=启动时随机生成（每次重启 token 失效，生产建议固定配置）
 		StoreType:               getEnv("DEVICE_SVC_STORE_TYPE", "memory"),
 		DSN:                     getEnv("DEVICE_SVC_DSN", ""),
@@ -83,7 +91,35 @@ func Load() *Config {
 		AutoProvisionMaxBackoff: getEnvDuration("DEVICE_SVC_AUTO_PROVISION_MAX_BACKOFF", 30*time.Minute),
 		SegmentCIDR:             getEnv("DEVICE_SVC_SEGMENT_CIDR", ""),
 		AgentBinDir:             getEnv("DEVICE_SVC_AGENT_BIN_DIR", ""),
+
+		AllowInsecureDevSecret: getEnv("DEVICE_SVC_ALLOW_INSECURE_DEV_SECRET", "false") == "true",
 	}
+}
+
+// Validate 校验不可静默降级的配置项。
+//
+// P0 安全修复：JWTSecret 此前有公开默认值 "default-jwt-secret-change-in-production"。
+// device-svc 用同一个密钥挂 tenant.Middleware 做 HTTP 网关鉴权，拿到该字面量的人
+// 可自行签发任意 tenant_id 的 token，配合 X-Tenant-ID 头即可跨租户读取数据。
+// 改为默认值空 + 启动期强制校验。
+func (c *Config) Validate() error {
+	if c.JWTSecret == "" {
+		if c.AllowInsecureDevSecret {
+			return nil
+		}
+		return fmt.Errorf(
+			"DEVICE_SVC_JWT_SECRET 未设置：device-svc 用它签发/校验租户 token，"+
+				"缺失将导致任意租户身份可被伪造。生产环境必须显式注入（≥%d 字节）。"+
+				"本地开发可设 DEVICE_SVC_ALLOW_INSECURE_DEV_SECRET=true 显式放行",
+			MinJWTSecretLen)
+	}
+	if len(c.JWTSecret) < MinJWTSecretLen && !c.AllowInsecureDevSecret {
+		return fmt.Errorf(
+			"DEVICE_SVC_JWT_SECRET 过短（%d 字节 < %d 字节）：弱密钥可被离线爆破后伪造租户身份。"+
+				"本地开发可设 DEVICE_SVC_ALLOW_INSECURE_DEV_SECRET=true 显式放行",
+			len(c.JWTSecret), MinJWTSecretLen)
+	}
+	return nil
 }
 
 func valBool(env string, def bool, _ string) bool {

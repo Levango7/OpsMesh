@@ -68,6 +68,10 @@ type M struct {
 	devicesOffline int64
 	alertsActive   int64
 	ticketsOpen    int64
+	// storeFailures 自进程启动以来被存储层吞掉的错误累计数（见 internal/store/failures.go）。
+	// 它是"静默数据丢失"从不可见变为可告警的关键序列：counter 单调递增，
+	// 配 rate() > 0 即可在数据库开始拒绝写入时立刻报警，而不必等业务方反馈数据丢了。
+	storeFailures uint64
 
 	// HTTP 指标。
 	// httpReqs: (method|path|status) -> count；httpHist: 同 key -> 直方图统计。

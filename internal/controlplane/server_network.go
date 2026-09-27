@@ -21,8 +21,11 @@
 package controlplane
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -268,7 +271,12 @@ func (s *Server) probeEdges(tenant string, devs []proto.DeviceInfo) []NetworkEdg
 			source := devs[i]
 			target := devs[j]
 			// 构造 ping 命令（按 source.OS 区分 Linux/Windows）。
-			cmd := buildPingCommand(target.IP, 3, 2, source.OS)
+			// 目标 IP 来自存储，非用户直接输入；仍经 buildPingCommand 内的白名单校验，
+			// 校验失败则跳过这对探测边，不影响其余边。
+			cmd, err := buildPingCommand(target.IP, 3, 2, source.OS)
+			if err != nil {
+				continue
+			}
 			task := s.store.CreateTask(&proto.Task{
 				AgentID:    source.AgentID,
 				TenantID:   tenant,
@@ -314,13 +322,18 @@ func (s *Server) probeEdges(tenant string, devs []proto.DeviceInfo) []NetworkEdg
 // Linux:   ping -c {count} -W {timeout} {target}
 // Windows: ping -n {count} -w {timeout*1000} {target}
 // 其他（darwin 等）: ping -c {count} -W {timeout} {target}
-func buildPingCommand(target string, count, timeout int, os string) string {
+//
+// target 经 validateNetworkTarget 校验后才拼接（P0：命令注入）。
+func buildPingCommand(target string, count, timeout int, os string) (string, error) {
+	if err := validateNetworkTarget(target); err != nil {
+		return "", err
+	}
 	if os == "windows" {
 		// Windows ping -w 单位为毫秒。
-		return fmt.Sprintf("ping -n %d -w %d %s", count, timeout*1000, target)
+		return fmt.Sprintf("ping -n %d -w %d %s", count, timeout*1000, target), nil
 	}
 	// Linux/darwin/其他: -c count -W timeout（秒）。
-	return fmt.Sprintf("ping -c %d -W %d %s", count, timeout, target)
+	return fmt.Sprintf("ping -c %d -W %d %s", count, timeout, target), nil
 }
 
 // parsePingOutput 解析 ping 命令输出，提取平均延迟（ms）、丢包率（%）、是否可达。
@@ -633,11 +646,97 @@ func validateDiagnoseTool(tool string) error {
 	}
 }
 
+// networkHostLabelRe 匹配 hostname 的单个 label：字母数字开头结尾，中间可含连字符，长度 ≤63。
+var networkHostLabelRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
+
+// validateNetworkTarget 校验诊断目标（host 或 IP），从命令构造源头消除注入面。
+//
+// P0 安全修复：原实现只校验 target 非空，随后直接 fmt.Sprintf 拼进 shell 命令下发给
+// agent 执行。三道既有防线同时漏过——
+//  1. validateCommand 显式放行 `&&`（其注释论证"短路语义不引入任意命令执行"，
+//     但 target 位于命令行尾部，右侧命令在左侧成功时会无条件执行）；
+//  2. agent 端 checkShellMetachars 同样放行 `&&`；
+//  3. agent 端 checkShellWhitelist 对网络诊断命令无条件放行 curl/nc/powershell，
+//     splitShellSegments 切分后每段首 token 仍落在该白名单内。
+//
+// 叠加默认 operator 角色即拥有 task:write，最终效果是 operator 可在租户内任一 agent
+// 上以 agent 运行身份执行任意命令。此处改为白名单收口：只接受 IP 字面量或合法 hostname，
+// 两者字符集都不含任何 shell 元字符，拼接后不可能逃逸出预期参数。
+func validateNetworkTarget(target string) error {
+	if target == "" {
+		return errors.New("target is required")
+	}
+	// 上限取 DNS 规定的完整域名长度 253 字节。
+	if len(target) > 253 {
+		return fmt.Errorf("target too long (max 253 bytes, got %d)", len(target))
+	}
+	// IP 字面量（v4/v6）直接放行。
+	if net.ParseIP(target) != nil {
+		return nil
+	}
+	// 允许 FQDN 尾点写法（example.com.），内网单标签名（localhost、db-master）同样合法。
+	host := strings.TrimSuffix(target, ".")
+	if host == "" {
+		return errors.New("target is not a valid host or IP")
+	}
+	for _, label := range strings.Split(host, ".") {
+		if !networkHostLabelRe.MatchString(label) {
+			return fmt.Errorf("target %q is not a valid host or IP", target)
+		}
+	}
+	return nil
+}
+
+// networkURLRe curl 目标的字符白名单：RFC 3986 的 unreserved(sub-delims 去掉了具 shell
+// 含义的 & ; ' ( )) + gen-delims(:/?#[]@) + 百分号编码。
+// 刻意采用白名单而非黑名单——黑名单需要穷举 shell 元字符，漏一个即成注入（本次修复前
+// 的漏洞正是黑名单漏放 && 的结果）。白名单下未列出的字符一律拒绝。
+var networkURLRe = regexp.MustCompile(`^[A-Za-z0-9\-._~:/?#\[\]@%+=,]+$`)
+
+// validateNetworkURL 校验 curl 诊断目标：仅接受 http/https 绝对 URL。
+//
+// 与 validateNetworkTarget 分开是因为 curl 的 target 语义是 URL（含 scheme 与 path），
+// 不能套用 hostname 白名单；但 URL 同样不能带 shell 元字符——引号会截断
+// `powershell -Command "..."` 形式，`&` 是后台分隔符，`$`/反引号是命令替换。
+func validateNetworkURL(raw string) error {
+	if raw == "" {
+		return errors.New("target is required")
+	}
+	if len(raw) > 2048 {
+		return fmt.Errorf("target too long (max 2048 bytes, got %d)", len(raw))
+	}
+	if !networkURLRe.MatchString(raw) {
+		return fmt.Errorf("target contains characters not allowed in a URL: %q", raw)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("target is not a valid URL: %v", err)
+	}
+	// 限定协议：避免 file://、gopher:// 等被下游工具以非预期语义解释。
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("curl target scheme must be http or https, got %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return errors.New("target is missing host")
+	}
+	return nil
+}
+
 // buildDiagnoseCommand 按工具类型 + OS 构造诊断命令。
+//
+// target 在此统一校验：curl 走 URL 白名单，其余工具走 host/IP 白名单。所有调用方
+// （handleNetworkDiagnose、handleNetworkConnectivity、probeEdges）因此自动获得同等级保护。
 func buildDiagnoseCommand(tool, target string, opts diagnoseOptions, os string) (string, error) {
+	if tool == "curl" {
+		if err := validateNetworkURL(target); err != nil {
+			return "", err
+		}
+	} else if err := validateNetworkTarget(target); err != nil {
+		return "", err
+	}
 	switch tool {
 	case "ping":
-		return buildPingCommand(target, opts.Count, opts.Timeout, os), nil
+		return buildPingCommand(target, opts.Count, opts.Timeout, os)
 	case "traceroute":
 		if os == "windows" {
 			// Windows: tracert -h 30 -w 2000 {target}
@@ -756,7 +855,11 @@ func (s *Server) handleNetworkConnectivity(w http.ResponseWriter, r *http.Reques
 			cmd = c
 		} else {
 			// ping 检测。
-			cmd = buildPingCommand(tgt.IP, 3, 2, agent.OS)
+			c, err := buildPingCommand(tgt.IP, 3, 2, agent.OS)
+			if err != nil {
+				continue
+			}
+			cmd = c
 			isPing = true
 		}
 		if err := validateCommand(cmd); err != nil {

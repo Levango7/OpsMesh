@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -39,7 +38,7 @@ func scanSLO(row rowScanner) *SLO {
 	s.UpdatedAt = updatedAt
 	if slisJSON != "" {
 		if err := json.Unmarshal([]byte(slisJSON), &s.SLIs); err != nil {
-			log.Printf("[store] scanSLO 解析 slis JSON 失败 (slo=%s): %v", s.ID, err)
+			recordStoreFailure("[store] scanSLO 解析 slis JSON 失败 (slo=%s): %v", s.ID, err)
 		}
 	}
 	return &s
@@ -78,7 +77,7 @@ func (s *SQLStore) CreateSLO(tenantID string, slo *SLO) *SLO {
 	if slo.SLIs != nil {
 		b, err := json.Marshal(slo.SLIs)
 		if err != nil {
-			log.Printf("[store] CreateSLO 序列化 slis 失败 (slo=%s): %v", slo.ID, err)
+			recordStoreFailure("[store] CreateSLO 序列化 slis 失败 (slo=%s): %v", slo.ID, err)
 			return nil
 		}
 		slisJSON = string(b)
@@ -91,7 +90,7 @@ func (s *SQLStore) CreateSLO(tenantID string, slo *SLO) *SLO {
 		 slis=VALUES(slis), updated_at=VALUES(updated_at)`,
 		slo.ID, slo.TenantID, slo.Name, slo.Description, slo.ServiceName,
 		slo.Target, slo.Window, slisJSON, slo.CreatedAt, slo.UpdatedAt); err != nil {
-		log.Printf("[store] CreateSLO 插入失败 (tenant=%s slo=%s): %v", tenantID, slo.ID, err)
+		recordStoreFailure("[store] CreateSLO 插入失败 (tenant=%s slo=%s): %v", tenantID, slo.ID, err)
 		return nil
 	}
 	return cloneSLO(slo)
@@ -136,7 +135,7 @@ func (s *SQLStore) UpdateSLO(tenantID string, slo *SLO) (*SLO, bool) {
 	if slo.SLIs != nil {
 		b, err := json.Marshal(slo.SLIs)
 		if err != nil {
-			log.Printf("[store] UpdateSLO 序列化 slis 失败 (slo=%s): %v", slo.ID, err)
+			recordStoreFailure("[store] UpdateSLO 序列化 slis 失败 (slo=%s): %v", slo.ID, err)
 			return nil, false
 		}
 		slisJSON = string(b)
@@ -146,7 +145,7 @@ func (s *SQLStore) UpdateSLO(tenantID string, slo *SLO) (*SLO, bool) {
 		 WHERE id=? AND tenant_id=?`,
 		slo.Name, slo.Description, slo.ServiceName, slo.Target, slo.Window, slisJSON,
 		slo.UpdatedAt, slo.ID, slo.TenantID); err != nil {
-		log.Printf("[store] UpdateSLO 更新失败 (tenant=%s slo=%s): %v", tenantID, slo.ID, err)
+		recordStoreFailure("[store] UpdateSLO 更新失败 (tenant=%s slo=%s): %v", tenantID, slo.ID, err)
 		return nil, false
 	}
 	return cloneSLO(slo), true
@@ -159,7 +158,7 @@ func (s *SQLStore) ListSLOs(tenantID string) []*SLO {
 		`SELECT id, tenant_id, name, description, service_name, target, window_spec, slis, created_at, updated_at
 		  FROM slos WHERE tenant_id=? ORDER BY created_at ASC`, tenantID)
 	if err != nil {
-		log.Printf("[store] ListSLOs 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] ListSLOs 查询失败 (tenant=%s): %v", tenantID, err)
 		return []*SLO{}
 	}
 	defer rows.Close()
@@ -170,7 +169,7 @@ func (s *SQLStore) ListSLOs(tenantID string) []*SLO {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListSLOs 遍历失败: %v", err)
+		recordStoreFailure("[store] ListSLOs 遍历失败: %v", err)
 	}
 	return out
 }
@@ -180,12 +179,12 @@ func (s *SQLStore) DeleteSLO(tenantID, id string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM slos WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
-		log.Printf("[store] DeleteSLO 失败 (tenant=%s slo=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] DeleteSLO 失败 (tenant=%s slo=%s): %v", tenantID, id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeleteSLO RowsAffected 失败 (tenant=%s slo=%s): %v", tenantID, id, rowsErr)
+		recordStoreFailure("[store] DeleteSLO RowsAffected 失败 (tenant=%s slo=%s): %v", tenantID, id, rowsErr)
 		return false
 	}
 	return n > 0
@@ -232,7 +231,7 @@ func (s *SQLStore) querySLIMetric(metricName, serviceName, tenantID string) floa
 	query := fmt.Sprintf(`SELECT AVG(%s) FROM network_metrics WHERE tenant_id=? AND timestamp >= ?`, column)
 	err := s.db.QueryRowContext(context.Background(), query, tenantID, since).Scan(&avgValue)
 	if err != nil {
-		log.Printf("[store] querySLIMetric %q 查询失败: %v", metricName, err)
+		recordStoreFailure("[store] querySLIMetric %q 查询失败: %v", metricName, err)
 		return -1
 	}
 	return avgValue

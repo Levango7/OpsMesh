@@ -25,7 +25,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"log"
 	"time"
 )
 
@@ -82,7 +81,7 @@ func (s *SQLStore) CreateNetworkDevice(tenantID string, d *NetworkDevice) *Netwo
 		d.ID, d.TenantID, d.Name, d.Type, d.Vendor, d.Model,
 		d.IP, d.Mask, d.Mac, d.Location, d.SnmpCommunity,
 		d.Status, d.Config, d.CreatedAt, d.UpdatedAt); err != nil {
-		log.Printf("[store] CreateNetworkDevice 插入失败 (tenant=%s id=%s): %v", tenantID, d.ID, err)
+		recordStoreFailure("[store] CreateNetworkDevice 插入失败 (tenant=%s id=%s): %v", tenantID, d.ID, err)
 		return nil
 	}
 	return d
@@ -108,7 +107,7 @@ func (s *SQLStore) ListNetworkDevices(tenantID string) []*NetworkDevice {
 		         snmp_community, status, config, created_at, updated_at
 		   FROM network_devices WHERE tenant_id=? ORDER BY created_at DESC`, tenantID)
 	if err != nil {
-		log.Printf("[store] ListNetworkDevices 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] ListNetworkDevices 查询失败 (tenant=%s): %v", tenantID, err)
 		return []*NetworkDevice{}
 	}
 	defer rows.Close()
@@ -119,7 +118,7 @@ func (s *SQLStore) ListNetworkDevices(tenantID string) []*NetworkDevice {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListNetworkDevices 遍历失败: %v", err)
+		recordStoreFailure("[store] ListNetworkDevices 遍历失败: %v", err)
 	}
 	return out
 }
@@ -144,7 +143,7 @@ func (s *SQLStore) UpdateNetworkDevice(tenantID string, d *NetworkDevice) (*Netw
 		 WHERE id=? AND tenant_id=?`,
 		d.Name, d.Type, d.Vendor, d.Model, d.IP, d.Mask, d.Mac, d.Location,
 		d.SnmpCommunity, d.Status, d.Config, d.UpdatedAt, d.ID, tenantID); err != nil {
-		log.Printf("[store] UpdateNetworkDevice 更新失败 (tenant=%s id=%s): %v", tenantID, d.ID, err)
+		recordStoreFailure("[store] UpdateNetworkDevice 更新失败 (tenant=%s id=%s): %v", tenantID, d.ID, err)
 		return nil, false
 	}
 	return d, true
@@ -155,12 +154,12 @@ func (s *SQLStore) DeleteNetworkDevice(tenantID, id string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM network_devices WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
-		log.Printf("[store] DeleteNetworkDevice 失败 (tenant=%s id=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] DeleteNetworkDevice 失败 (tenant=%s id=%s): %v", tenantID, id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeleteNetworkDevice RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, id, rowsErr)
+		recordStoreFailure("[store] DeleteNetworkDevice RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, id, rowsErr)
 		return false
 	}
 	return n > 0
@@ -195,7 +194,7 @@ func (s *SQLStore) StoreNetworkMetrics(deviceID string, m *NetworkMetrics) {
 		   (device_id, tenant_id, timestamp, cpu_usage, memory_usage, temperature, uptime)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		m.DeviceID, m.TenantID, m.Timestamp, m.CPUUsage, m.MemoryUsage, m.Temperature, m.Uptime); err != nil {
-		log.Printf("[store] StoreNetworkMetrics 插入失败 (device=%s): %v", deviceID, err)
+		recordStoreFailure("[store] StoreNetworkMetrics 插入失败 (device=%s): %v", deviceID, err)
 	}
 }
 
@@ -224,7 +223,7 @@ func (s *SQLStore) UpdateNetworkConfig(tenantID, id, config string) (*NetworkDev
 	if _, err := s.db.ExecContext(context.Background(),
 		`UPDATE network_devices SET config=?, updated_at=? WHERE id=? AND tenant_id=?`,
 		config, now, id, tenantID); err != nil {
-		log.Printf("[store] UpdateNetworkConfig 更新失败 (tenant=%s id=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] UpdateNetworkConfig 更新失败 (tenant=%s id=%s): %v", tenantID, id, err)
 		return nil, false
 	}
 	existing.Config = config
@@ -241,7 +240,7 @@ func (s *SQLStore) QueryNetworkMetrics(tenantID string, since time.Time) map[str
 	var cpuAvg, memAvg, tempAvg sql.NullFloat64
 	err := s.db.QueryRowContext(context.Background(), query, tenantID, since).Scan(&cpuAvg, &memAvg, &tempAvg)
 	if err != nil {
-		log.Printf("[store] QueryNetworkMetrics 查询失败: %v", err)
+		recordStoreFailure("[store] QueryNetworkMetrics 查询失败: %v", err)
 		return map[string]float64{"cpu_usage": 0, "memory_usage": 0, "temperature": 0}
 	}
 	return map[string]float64{

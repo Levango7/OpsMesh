@@ -290,7 +290,7 @@ func (m *MemoryStore) SeedDemoTopology() {
 func (m *MemoryStore) publish(e events.Event) {
 	if m.bus != nil {
 		if err := m.bus.Publish(context.Background(), e); err != nil {
-			log.Printf("store: memory 发布事件 %s 失败: %v", e.Action, err)
+			recordStoreFailure("store: memory 发布事件 %s 失败: %v", e.Action, err)
 		}
 	}
 }

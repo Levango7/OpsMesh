@@ -1,0 +1,15 @@
+# TD-60 第 3 步「本地运行时模拟」专用覆盖层（2026-09-27）
+#
+# 用途：把重编后的控制面（含微服务转发自环拦截、OPSMESH_SERVICE_PROXY 开关、
+# GET /api/v1/admin/service-routing 端点）以独立标签混入 prod 栈做路由取证，
+# 不覆盖已发布的 opsmesh/controlplane:0.9.0 本地镜像标签。
+#
+# 用法（在 deploy/docker 下）：
+#   docker compose --env-file .env \
+#     -f docker-compose.prod.yml -f docker-compose.sim.yml \
+#     up -d --no-build mysql redis loki controlplane gpu-svc portal-svc device-svc
+#
+# 仅限本地模拟，禁止用于生产交付。
+services:
+  controlplane:
+    image: opsmesh/controlplane:0.9.3-sim

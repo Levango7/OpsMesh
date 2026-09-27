@@ -112,7 +112,7 @@ func (s *SQLStore) WithSecret(secret string) *SQLStore {
 func (s *SQLStore) publish(e events.Event) {
 	if s.bus != nil {
 		if err := s.bus.Publish(context.Background(), e); err != nil {
-			log.Printf("store: 发布事件 %s 失败: %v", e.Action, err)
+			recordStoreFailure("store: 发布事件 %s 失败: %v", e.Action, err)
 		}
 	}
 }
@@ -134,7 +134,7 @@ func NewSQLStore(dsn, redisAddr, redisPassword string) (*SQLStore, error) {
 	db.SetConnMaxLifetime(30 * time.Minute)
 	// Ping 失败不阻塞启动（MVP 允许延迟连接），仅日志提示。
 	if err := db.Ping(); err != nil {
-		log.Printf("[store] mysql ping 失败（将延迟重连）: %v", err)
+		recordStoreFailure("[store] mysql ping 失败（将延迟重连）: %v", err)
 	}
 
 	var rdb *redis.Client
@@ -193,7 +193,7 @@ func (s *SQLStore) initWithRetry() error {
 			log.Printf("[store] 迁移致命错误（不重试，立即拒绝启动）: %v", err)
 			return err
 		}
-		log.Printf("[store] 迁移失败（第 %d/%d 次，%.0fs 后重试）: %v", i+1, migrationInitAttempts, migrationInitDelay.Seconds(), err)
+		recordStoreFailure("[store] 迁移失败（第 %d/%d 次，%.0fs 后重试）: %v", i+1, migrationInitAttempts, migrationInitDelay.Seconds(), err)
 		time.Sleep(migrationInitDelay)
 	}
 	return lastErr
@@ -298,7 +298,7 @@ func (s *SQLStore) acquireMigrationLockTimeout(ctx context.Context, timeoutSec i
 		rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if _, err := conn.ExecContext(rctx, `SELECT RELEASE_LOCK(?)`, lockName); err != nil {
-			log.Printf("[store] 释放迁移锁 %s 失败（连接关闭时由 MySQL 自动释放）: %v", lockName, err)
+			recordStoreFailure("[store] 释放迁移锁 %s 失败（连接关闭时由 MySQL 自动释放）: %v", lockName, err)
 		}
 		_ = conn.Close()
 	}
@@ -763,7 +763,7 @@ func (s *SQLStore) applyLegacyColumnFixups(ctx context.Context) {
 		`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='tasks' AND column_name='tenant_id'`,
 	).Scan(&cnt); err == nil && cnt == 0 {
 		if _, err := s.db.ExecContext(ctx, `ALTER TABLE tasks ADD COLUMN tenant_id VARCHAR(64)`); err != nil {
-			log.Printf("[store] 迁移 tasks.tenant_id 失败（非致命）: %v", err)
+			recordStoreFailure("[store] 迁移 tasks.tenant_id 失败（非致命）: %v", err)
 		}
 	}
 	// 后续列迁移（F2/F3/F4/F5/B1/新增字段）统一走 alterColumnIfMissing，避免破坏已存在库。
@@ -846,7 +846,7 @@ func (s *SQLStore) createIndexIfMissing(ctx context.Context, table, indexName, i
 		return
 	}
 	if _, err := s.db.ExecContext(ctx, `CREATE INDEX `+indexName+` ON `+table+` `+indexSpec); err != nil {
-		log.Printf("[store] 建索引 %s.%s 失败（非致命，可能缺列）: %v", table, indexName, err)
+		recordStoreFailure("[store] 建索引 %s.%s 失败（非致命，可能缺列）: %v", table, indexName, err)
 	}
 }
 
@@ -860,7 +860,7 @@ func (s *SQLStore) alterColumnIfMissing(ctx context.Context, table, column, def 
 		return
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` `+def); err != nil {
-		log.Printf("[store] 迁移 %s.%s 失败（非致命）: %v", table, column, err)
+		recordStoreFailure("[store] 迁移 %s.%s 失败（非致命）: %v", table, column, err)
 	}
 }
 
@@ -913,7 +913,7 @@ func (s *SQLStore) RenewLeadership(ttl time.Duration) bool {
 			expires_at=IF(expires_at < ? OR holder=VALUES(holder), VALUES(expires_at), expires_at),
 			updated_at=IF(expires_at < ? OR holder=VALUES(holder), VALUES(updated_at), updated_at)
 	`, s.instanceID, exp, now, now, now, now); err != nil {
-		log.Printf("[store] RenewLeadership 抢占失败: %v", err)
+		recordStoreFailure("[store] RenewLeadership 抢占失败: %v", err)
 		s.mu.Lock()
 		s.isLeader = false
 		s.mu.Unlock()
@@ -924,7 +924,7 @@ func (s *SQLStore) RenewLeadership(ttl time.Duration) bool {
 	var expiresAt time.Time
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT holder, expires_at FROM leader_lease WHERE id=1`).Scan(&holder, &expiresAt); err != nil {
-		log.Printf("[store] RenewLeadership 读取失败: %v", err)
+		recordStoreFailure("[store] RenewLeadership 读取失败: %v", err)
 		s.mu.Lock()
 		s.isLeader = false
 		s.mu.Unlock()

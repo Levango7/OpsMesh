@@ -94,7 +94,7 @@ func (s *SQLStore) ConsumeToken(token string) (deviceID, tenantID string, ok boo
 		`UPDATE install_tokens SET consumed=1 WHERE token=? AND consumed=0 AND expires_at > ?`,
 		hash, time.Now().UTC())
 	if err != nil {
-		log.Printf("[store] ConsumeToken 抢占失败: %v", err)
+		recordStoreFailure("[store] ConsumeToken 抢占失败: %v", err)
 		return "", "", false
 	}
 	n, rowsErr := res.RowsAffected()
@@ -105,7 +105,7 @@ func (s *SQLStore) ConsumeToken(token string) (deviceID, tenantID string, ok boo
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT device_id, tenant_id FROM install_tokens WHERE token=?`, hash,
 	).Scan(&deviceID, &tenantID); err != nil {
-		log.Printf("[store] ConsumeToken 读回失败: %v", err)
+		recordStoreFailure("[store] ConsumeToken 读回失败: %v", err)
 		return "", "", false
 	}
 	return deviceID, tenantID, true
@@ -125,7 +125,7 @@ func (s *SQLStore) CleanupTokens(batch int) int {
 	}
 	res, err := s.db.ExecContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] CleanupTokens 失败: %v", err)
+		recordStoreFailure("[store] CleanupTokens 失败: %v", err)
 		return 0
 	}
 	n, rowsErr := res.RowsAffected()

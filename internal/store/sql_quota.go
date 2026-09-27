@@ -17,7 +17,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -42,7 +41,7 @@ func (s *SQLStore) GetQuota(tenantID string) (*QuotaConfig, error) {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
-		log.Printf("[store] GetQuota 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] GetQuota 查询失败 (tenant=%s): %v", tenantID, err)
 		return nil, nil
 	}
 	return &cfg, nil
@@ -63,7 +62,7 @@ func (s *SQLStore) SetQuota(tenantID string, cfg *QuotaConfig) error {
 	if cfg == nil {
 		if _, err := s.db.ExecContext(ctx,
 			`DELETE FROM quota_configs WHERE tenant_id=?`, tenantID); err != nil {
-			log.Printf("[store] SetQuota 删除失败 (tenant=%s): %v", tenantID, err)
+			recordStoreFailure("[store] SetQuota 删除失败 (tenant=%s): %v", tenantID, err)
 			return err
 		}
 		return nil
@@ -75,7 +74,7 @@ func (s *SQLStore) SetQuota(tenantID string, cfg *QuotaConfig) error {
 		 ON DUPLICATE KEY UPDATE max_devices=VALUES(max_devices), max_tasks=VALUES(max_tasks),
 		   max_alerts=VALUES(max_alerts), updated_at=VALUES(updated_at)`,
 		tenantID, cfg.MaxDevices, cfg.MaxTasks, cfg.MaxAlerts, now); err != nil {
-		log.Printf("[store] SetQuota upsert 失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] SetQuota upsert 失败 (tenant=%s): %v", tenantID, err)
 		return err
 	}
 	return nil

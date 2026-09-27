@@ -525,7 +525,7 @@ func (g *Gateway) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "user not found")
 			return
 		}
-		writeJSON(w, http.StatusOK, u)
+		writeJSON(w, http.StatusOK, toPublicStoreUser(u))
 	case http.MethodDelete:
 		if _, err := g.svc.DeleteUser(r.Context(), &authv1.DeleteUserRequest{Id: rest}); err != nil {
 			writeError(w, http.StatusNotFound, "user not found")
@@ -566,8 +566,10 @@ func (g *Gateway) handleUpdateUser(w http.ResponseWriter, r *http.Request, id st
 		writeError(w, http.StatusNotFound, "user not found")
 		return
 	}
-	// 响应与 GET 分支一致：返回 store.User。
-	writeJSON(w, http.StatusOK, g.svc.Store().GetUser(id))
+	// 响应与 GET 分支一致：返回 store.User 的公开视图。
+	// P0 安全修复：不得直接序列化 store.User —— PasswordHash 虽已加 json:"-"，
+	// 但显式走 toPublicUser 才能保证「将来给 User 加字段」不会重新变成泄露通道。
+	writeJSON(w, http.StatusOK, toPublicStoreUser(g.svc.Store().GetUser(id)))
 }
 
 // handleRoles GET 列表 / POST 创建。
@@ -745,11 +747,33 @@ func toPublicUser(u *authv1.User) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"id":       u.Id,
-		"username": u.Username,
-		"email":    u.Email,
-		"status":   u.Status,
-		"roleIds":  u.RoleIds,
+		"id":                 u.Id,
+		"username":           u.Username,
+		"email":              u.Email,
+		"status":             u.Status,
+		"roleIds":            u.RoleIds,
+		"mustChangePassword": u.MustChangePassword,
+	}
+}
+
+// toPublicStoreUser store.User → 网关公开字段（显式白名单，绝不透出 PasswordHash）。
+//
+// P0 安全修复：store.User 此前被直接交给 writeJSON，PasswordHash 未做序列化屏蔽，
+// 任何持有 user:read 的调用方都能拉取 cost-12 bcrypt 哈希离线爆破。
+// 这里用「显式列出允许字段」而非「序列化整个结构体」：即使将来有人删掉
+// store.User 上的 `json:"-"`，本函数也不会跟着一起泄露。
+func toPublicStoreUser(u *store.User) map[string]any {
+	if u == nil {
+		return nil
+	}
+	return map[string]any{
+		"id":                 u.ID,
+		"username":           u.Username,
+		"email":              u.Email,
+		"status":             u.Status,
+		"roleIds":            u.RoleIDs,
+		"createdAt":          u.CreatedAt,
+		"mustChangePassword": u.MustChangePassword,
 	}
 }
 

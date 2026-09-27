@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"log"
 	"time"
 )
 
@@ -44,7 +43,7 @@ func (s *SQLStore) GetSecret(tenantID, key string) (*SecretItem, bool) {
 		if err == sql.ErrNoRows {
 			return nil, false
 		}
-		log.Printf("[store] GetSecret 查询失败 (tenant=%s key=%s): %v", tenantID, key, err)
+		recordStoreFailure("[store] GetSecret 查询失败 (tenant=%s key=%s): %v", tenantID, key, err)
 		return nil, false
 	}
 	return &SecretItem{Key: key, Value: value, KeyType: keyType}, true
@@ -70,7 +69,7 @@ func (s *SQLStore) SetSecret(item *SecretItem, tenantID string) *SecretMeta {
 	if err := s.db.QueryRowContext(context.Background(),
 		`SELECT MAX(version) FROM secrets WHERE tenant_id=? AND key_name=?`,
 		tenantID, item.Key).Scan(&maxVersion); err != nil {
-		log.Printf("[store] SetSecret 查询最大版本失败 (tenant=%s key=%s): %v", tenantID, item.Key, err)
+		recordStoreFailure("[store] SetSecret 查询最大版本失败 (tenant=%s key=%s): %v", tenantID, item.Key, err)
 		return nil
 	}
 	newVersion := int(maxVersion.Int64) + 1
@@ -79,7 +78,7 @@ func (s *SQLStore) SetSecret(item *SecretItem, tenantID string) *SecretMeta {
 		`INSERT INTO secrets (tenant_id, key_name, version, value, key_type, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		tenantID, item.Key, newVersion, item.Value, item.KeyType, now, now); err != nil {
-		log.Printf("[store] SetSecret 插入失败 (tenant=%s key=%s version=%d): %v", tenantID, item.Key, newVersion, err)
+		recordStoreFailure("[store] SetSecret 插入失败 (tenant=%s key=%s version=%d): %v", tenantID, item.Key, newVersion, err)
 		return nil
 	}
 	return &SecretMeta{
@@ -97,12 +96,12 @@ func (s *SQLStore) DeleteSecret(tenantID, key string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM secrets WHERE tenant_id=? AND key_name=?`, tenantID, key)
 	if err != nil {
-		log.Printf("[store] DeleteSecret 失败 (tenant=%s key=%s): %v", tenantID, key, err)
+		recordStoreFailure("[store] DeleteSecret 失败 (tenant=%s key=%s): %v", tenantID, key, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeleteSecret RowsAffected 失败 (tenant=%s key=%s): %v", tenantID, key, rowsErr)
+		recordStoreFailure("[store] DeleteSecret RowsAffected 失败 (tenant=%s key=%s): %v", tenantID, key, rowsErr)
 		return false
 	}
 	return n > 0
@@ -119,7 +118,7 @@ func (s *SQLStore) ListSecrets(tenantID string) []*SecretMeta {
 		    ON s.tenant_id=m.tenant_id AND s.key_name=m.key_name AND s.version=m.max_ver
 		 ORDER BY s.key_name`, tenantID)
 	if err != nil {
-		log.Printf("[store] ListSecrets 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] ListSecrets 查询失败 (tenant=%s): %v", tenantID, err)
 		return nil
 	}
 	defer rows.Close()
@@ -130,7 +129,7 @@ func (s *SQLStore) ListSecrets(tenantID string) []*SecretMeta {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListSecrets 遍历失败: %v", err)
+		recordStoreFailure("[store] ListSecrets 遍历失败: %v", err)
 	}
 	return out
 }
@@ -151,7 +150,7 @@ func (s *SQLStore) SecretVersions(tenantID, key string) []*SecretMeta {
 		`SELECT tenant_id, key_name, key_type, version, created_at, updated_at
 		  FROM secrets WHERE tenant_id=? AND key_name=? ORDER BY version`, tenantID, key)
 	if err != nil {
-		log.Printf("[store] SecretVersions 查询失败 (tenant=%s key=%s): %v", tenantID, key, err)
+		recordStoreFailure("[store] SecretVersions 查询失败 (tenant=%s key=%s): %v", tenantID, key, err)
 		return nil
 	}
 	defer rows.Close()
@@ -162,7 +161,7 @@ func (s *SQLStore) SecretVersions(tenantID, key string) []*SecretMeta {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] SecretVersions 遍历失败: %v", err)
+		recordStoreFailure("[store] SecretVersions 遍历失败: %v", err)
 	}
 	return out
 }

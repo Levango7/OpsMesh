@@ -5,10 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/emptypb"
+
 	authv1 "github.com/Levango7/OpsMesh/services/auth-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/auth"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/store"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func newTestService() *Service {

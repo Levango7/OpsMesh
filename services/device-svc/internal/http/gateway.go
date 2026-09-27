@@ -549,10 +549,10 @@ func (g *Gateway) handleDiscoveryJobs(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "cidr is required")
 			return
 		}
-		// A-1 阶段说明：StartDiscovery 的 service 层是硬编码 stub（写死 3/254）。
-		// HTTP 网关照实透传 store 行为——真实 Sweep 移植属 P1（见 tech-debt TD-60）。
-		// ID 生成与 service.go StartDiscovery 同款（job- + uuid 前 8 位）——
-		// store.CreateJob 不代填 ID，缺省会以空 ID 入库导致无法回查。
+		// service 层 StartDiscovery 已是真实 Sweep 扫描（见 service.go StartDiscovery
+		// 的 D2 真实化注释）：白名单校验 + 异步 job + pkg/discover.Sweep 存活探测。
+		// 此处 HTTP 侧自建 job 记录的原因：store.CreateJob 不代填 ID，缺省会以
+		// 空 ID 入库导致无法回查，故与 service 层同款手工生成（job- + uuid 前 8 位）。
 		job := &models.DiscoveryJob{
 			ID:       "job-" + uuid.New().String()[:8],
 			TenantID: body.TenantID,

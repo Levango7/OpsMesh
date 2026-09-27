@@ -9,8 +9,6 @@ package store
 import (
 	"context"
 	"database/sql"
-
-	"log"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/proto"
@@ -58,7 +56,7 @@ func (s *SQLStore) CreateAlertRule(r *AlertRule) *AlertRule {
 		   message=VALUES(message), enabled=VALUES(enabled), created_by=VALUES(created_by)`,
 		r.ID, r.TenantID, r.Metric, r.Op, r.Threshold, r.ForDuration, r.Severity, r.Message,
 		boolToInt(r.Enabled), r.CreatedAt, nullString(r.CreatedBy)); err != nil {
-		log.Printf("[store] CreateAlertRule 失败: %v", err)
+		recordStoreFailure("[store] CreateAlertRule 失败: %v", err)
 		return nil
 	}
 	cp := *r
@@ -78,7 +76,7 @@ func (s *SQLStore) ListAlertRules(tenantID string) []*AlertRule {
 	q += ` ORDER BY created_at ASC`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListAlertRules 失败: %v", err)
+		recordStoreFailure("[store] ListAlertRules 失败: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -89,7 +87,7 @@ func (s *SQLStore) ListAlertRules(tenantID string) []*AlertRule {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListAlertRules 遍历失败: %v", err)
+		recordStoreFailure("[store] ListAlertRules 遍历失败: %v", err)
 	}
 	return out
 }
@@ -100,7 +98,7 @@ func (s *SQLStore) DeleteAlertRule(id string) bool {
 	defer cancel()
 	res, err := s.db.ExecContext(ctx, `DELETE FROM alert_rules WHERE id=?`, id)
 	if err != nil {
-		log.Printf("[store] DeleteAlertRule 失败 %s: %v", id, err)
+		recordStoreFailure("[store] DeleteAlertRule 失败 %s: %v", id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
@@ -124,7 +122,7 @@ func (s *SQLStore) addAlert(ctx context.Context, a *proto.Alert) {
 		nullString(a.Severity), nullString(a.Message), nullTime(a.CreatedAt),
 		nullString(a.AlertID), nullString(a.Status), nullString(a.AcknowledgedBy),
 		nullTime(a.SilencedUntil), nullString(a.Comment), nullTime(a.UpdatedAt)); err != nil {
-		log.Printf("[store] addAlert 失败: %v", err)
+		recordStoreFailure("[store] addAlert 失败: %v", err)
 	}
 }
 
@@ -142,7 +140,7 @@ func (s *SQLStore) Alerts(tenantID string) []*proto.Alert {
 	q += ` ORDER BY created_at DESC`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] Alerts 查询失败: %v", err)
+		recordStoreFailure("[store] Alerts 查询失败: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -153,7 +151,7 @@ func (s *SQLStore) Alerts(tenantID string) []*proto.Alert {
 		var alertID, status, ackBy, comment sql.NullString
 		if err := rows.Scan(&a.TenantID, &a.DeviceID, &a.AgentID, &a.Severity, &a.Message, &createdAt,
 			&alertID, &status, &ackBy, &silencedUntil, &comment, &updatedAt); err != nil {
-			log.Printf("[store] Alerts 扫描失败: %v", err)
+			recordStoreFailure("[store] Alerts 扫描失败: %v", err)
 			continue
 		}
 		a.CreatedAt = createdAt
@@ -166,7 +164,7 @@ func (s *SQLStore) Alerts(tenantID string) []*proto.Alert {
 		out = append(out, &a)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] Alerts 遍历失败: %v", err)
+		recordStoreFailure("[store] Alerts 遍历失败: %v", err)
 	}
 	return out
 }
@@ -191,7 +189,7 @@ func (s *SQLStore) Alert(id string) *proto.Alert {
 	if err := row.Scan(&a.TenantID, &a.DeviceID, &a.AgentID, &a.Severity, &a.Message, &createdAt,
 		&alertID, &status, &ackBy, &silencedUntil, &comment, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] Alert 查询失败: %v", err)
+			recordStoreFailure("[store] Alert 查询失败: %v", err)
 		}
 		return nil
 	}
@@ -214,7 +212,7 @@ func (s *SQLStore) AckAlert(id, tenantID, by string) bool {
 		`UPDATE alerts SET status=?, acknowledged_by=?, updated_at=? WHERE alert_id=? AND (tenant_id=? OR ?='')`,
 		proto.AlertStatusAcknowledged, by, time.Now().UTC(), id, tenantID, tenantID)
 	if err != nil {
-		log.Printf("[store] AckAlert 失败: %v", err)
+		recordStoreFailure("[store] AckAlert 失败: %v", err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
@@ -236,7 +234,7 @@ func (s *SQLStore) SilenceAlert(id, tenantID, by string, until time.Time, commen
 		`UPDATE alerts SET status=?, acknowledged_by=?, silenced_until=?, comment=?, updated_at=? WHERE alert_id=? AND (tenant_id=? OR ?='')`,
 		proto.AlertStatusSilenced, by, until, comment, time.Now().UTC(), id, tenantID, tenantID)
 	if err != nil {
-		log.Printf("[store] SilenceAlert 失败: %v", err)
+		recordStoreFailure("[store] SilenceAlert 失败: %v", err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()

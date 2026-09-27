@@ -17,7 +17,6 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"time"
 )
 
@@ -39,7 +38,7 @@ func scanComplianceReport(row rowScanner) *ComplianceReport {
 	if len(resultsJSON) > 0 {
 		// 反序列化失败不致命：保留空 Results，避免单条坏数据让整个 List 崩，但必须留痕。
 		if err := json.Unmarshal(resultsJSON, &r.Results); err != nil {
-			log.Printf("[store] scanComplianceReport 反序列化 results 失败（保留空 Results 继续）: %v", err)
+			recordStoreFailure("[store] scanComplianceReport 反序列化 results 失败（保留空 Results 继续）: %v", err)
 		}
 	}
 	return &r
@@ -52,7 +51,7 @@ func marshalComplianceResults(results []ComplianceResult) []byte {
 	}
 	b, err := json.Marshal(results)
 	if err != nil {
-		log.Printf("[store] marshalComplianceResults 失败: %v", err)
+		recordStoreFailure("[store] marshalComplianceResults 失败: %v", err)
 		return nil
 	}
 	return b
@@ -88,7 +87,7 @@ func (s *SQLStore) SaveReport(tenantID string, r *ComplianceReport) *ComplianceR
 		 VALUES (?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE device_id=VALUES(device_id), results=VALUES(results), score=VALUES(score)`,
 		r.ID, r.TenantID, r.DeviceID, resultsJSON, r.Score, r.CreatedAt); err != nil {
-		log.Printf("[store] SaveReport 插入失败 (tenant=%s id=%s): %v", tenantID, r.ID, err)
+		recordStoreFailure("[store] SaveReport 插入失败 (tenant=%s id=%s): %v", tenantID, r.ID, err)
 		return nil
 	}
 	return r
@@ -110,7 +109,7 @@ func (s *SQLStore) ListReports(tenantID string) []*ComplianceReport {
 	rows, err := s.db.QueryContext(context.Background(),
 		`SELECT `+complianceReportColumns+` FROM compliance_reports WHERE tenant_id=? ORDER BY created_at DESC`, tenantID)
 	if err != nil {
-		log.Printf("[store] ListReports 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] ListReports 查询失败 (tenant=%s): %v", tenantID, err)
 		return []*ComplianceReport{}
 	}
 	defer rows.Close()
@@ -121,7 +120,7 @@ func (s *SQLStore) ListReports(tenantID string) []*ComplianceReport {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListReports 遍历失败: %v", err)
+		recordStoreFailure("[store] ListReports 遍历失败: %v", err)
 	}
 	return out
 }
@@ -131,12 +130,12 @@ func (s *SQLStore) DeleteReport(tenantID, id string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM compliance_reports WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
-		log.Printf("[store] DeleteReport 失败 (tenant=%s id=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] DeleteReport 失败 (tenant=%s id=%s): %v", tenantID, id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeleteReport RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, id, rowsErr)
+		recordStoreFailure("[store] DeleteReport RowsAffected 失败 (tenant=%s id=%s): %v", tenantID, id, rowsErr)
 		return false
 	}
 	return n > 0

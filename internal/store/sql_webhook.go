@@ -25,7 +25,6 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"time"
 )
 
@@ -46,12 +45,12 @@ func scanWebhook(row rowScanner) *Webhook {
 	wh.UpdatedAt = updatedAt
 	if eventsJSON != "" {
 		if err := json.Unmarshal([]byte(eventsJSON), &wh.Events); err != nil {
-			log.Printf("[store] scanWebhook 解析 events JSON 失败 (webhook=%s): %v", wh.ID, err)
+			recordStoreFailure("[store] scanWebhook 解析 events JSON 失败 (webhook=%s): %v", wh.ID, err)
 		}
 	}
 	if headersJSON != "" {
 		if err := json.Unmarshal([]byte(headersJSON), &wh.Headers); err != nil {
-			log.Printf("[store] scanWebhook 解析 headers JSON 失败 (webhook=%s): %v", wh.ID, err)
+			recordStoreFailure("[store] scanWebhook 解析 headers JSON 失败 (webhook=%s): %v", wh.ID, err)
 		}
 	}
 	return &wh
@@ -127,7 +126,7 @@ func (s *SQLStore) CreateWebhook(tenantID string, wh *Webhook) *Webhook {
 		 retry_count=VALUES(retry_count), retry_interval_sec=VALUES(retry_interval_sec), updated_at=VALUES(updated_at)`,
 		wh.ID, wh.TenantID, wh.Name, wh.URL, eventsJSON, headersJSON, wh.BodyTemplate,
 		webhookEnabledInt(wh.Enabled), wh.RetryCount, wh.RetryIntervalSec, wh.CreatedAt, wh.UpdatedAt); err != nil {
-		log.Printf("[store] CreateWebhook 插入失败 (tenant=%s webhook=%s): %v", tenantID, wh.ID, err)
+		recordStoreFailure("[store] CreateWebhook 插入失败 (tenant=%s webhook=%s): %v", tenantID, wh.ID, err)
 		return nil
 	}
 	return cloneWebhook(wh)
@@ -175,7 +174,7 @@ func (s *SQLStore) UpdateWebhook(tenantID string, wh *Webhook) (*Webhook, bool) 
 		wh.Name, wh.URL, eventsJSON, headersJSON, wh.BodyTemplate,
 		webhookEnabledInt(wh.Enabled), wh.RetryCount, wh.RetryIntervalSec, wh.UpdatedAt,
 		wh.ID, wh.TenantID); err != nil {
-		log.Printf("[store] UpdateWebhook 更新失败 (tenant=%s webhook=%s): %v", tenantID, wh.ID, err)
+		recordStoreFailure("[store] UpdateWebhook 更新失败 (tenant=%s webhook=%s): %v", tenantID, wh.ID, err)
 		return nil, false
 	}
 	return cloneWebhook(wh), true
@@ -187,7 +186,7 @@ func (s *SQLStore) ListWebhooks(tenantID string) []*Webhook {
 		`SELECT id, tenant_id, name, url, events, headers, body_template, enabled, retry_count, retry_interval_sec, created_at, updated_at
 		  FROM webhooks WHERE tenant_id=? ORDER BY created_at DESC`, tenantID)
 	if err != nil {
-		log.Printf("[store] ListWebhooks 查询失败 (tenant=%s): %v", tenantID, err)
+		recordStoreFailure("[store] ListWebhooks 查询失败 (tenant=%s): %v", tenantID, err)
 		return []*Webhook{}
 	}
 	defer rows.Close()
@@ -198,7 +197,7 @@ func (s *SQLStore) ListWebhooks(tenantID string) []*Webhook {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListWebhooks 遍历失败: %v", err)
+		recordStoreFailure("[store] ListWebhooks 遍历失败: %v", err)
 	}
 	return out
 }
@@ -208,12 +207,12 @@ func (s *SQLStore) DeleteWebhook(tenantID, id string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM webhooks WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
-		log.Printf("[store] DeleteWebhook 失败 (tenant=%s webhook=%s): %v", tenantID, id, err)
+		recordStoreFailure("[store] DeleteWebhook 失败 (tenant=%s webhook=%s): %v", tenantID, id, err)
 		return false
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] DeleteWebhook RowsAffected 失败 (tenant=%s webhook=%s): %v", tenantID, id, rowsErr)
+		recordStoreFailure("[store] DeleteWebhook RowsAffected 失败 (tenant=%s webhook=%s): %v", tenantID, id, rowsErr)
 		return false
 	}
 	return n > 0
@@ -241,7 +240,7 @@ func (s *SQLStore) ListWebhookDeliveries(tenantID, webhookID string) []*WebhookD
 		  FROM webhook_deliveries WHERE tenant_id=? AND webhook_id=? ORDER BY delivered_at DESC`,
 		tenantID, webhookID)
 	if err != nil {
-		log.Printf("[store] ListWebhookDeliveries 查询失败 (tenant=%s webhook=%s): %v", tenantID, webhookID, err)
+		recordStoreFailure("[store] ListWebhookDeliveries 查询失败 (tenant=%s webhook=%s): %v", tenantID, webhookID, err)
 		return []*WebhookDelivery{}
 	}
 	defer rows.Close()
@@ -252,7 +251,7 @@ func (s *SQLStore) ListWebhookDeliveries(tenantID, webhookID string) []*WebhookD
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[store] ListWebhookDeliveries 遍历失败: %v", err)
+		recordStoreFailure("[store] ListWebhookDeliveries 遍历失败: %v", err)
 	}
 	return out
 }
@@ -284,7 +283,7 @@ func (s *SQLStore) RecordWebhookDelivery(tenantID, webhookID, event, payload str
 		`INSERT INTO webhook_deliveries (id, tenant_id, webhook_id, event, payload, status_code, response, error, delivered_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.ID, d.TenantID, d.WebhookID, d.Event, d.Payload, d.StatusCode, d.Response, d.Error, d.DeliveredAt); err != nil {
-		log.Printf("[store] RecordWebhookDelivery 插入失败 (tenant=%s webhook=%s delivery=%s): %v", tenantID, webhookID, d.ID, err)
+		recordStoreFailure("[store] RecordWebhookDelivery 插入失败 (tenant=%s webhook=%s delivery=%s): %v", tenantID, webhookID, d.ID, err)
 		return nil
 	}
 	return cloneWebhookDelivery(d)

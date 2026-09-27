@@ -25,11 +25,13 @@ import (
 	"runtime"
 	"runtime/debug"
 	runtimepprof "runtime/pprof"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/store"
 	"github.com/Levango7/OpsMesh/internal/version"
 )
 
@@ -433,6 +435,44 @@ func logxLevelName() string {
 
 // ── 健康与指标复用（诊断包与 /healthz、/metrics 同源，避免两处口径漂移）──
 
+// handleAdminStoreFailures 处理 GET /api/v1/admin/store-failures：查询存储层被吞掉的错误。
+//
+// 背景（P0 修复的运维出口）：internal/store 的 220 个 Store 接口方法里只有 11 个返回
+// error，SQL 后端的写失败此前只写一行日志就返回「成功」，于是 HTTP 层无法区分
+// 「写成功」与「数据库挂了」——客户端拿到 201，随后的 GET 是 404，而监控上一切正常。
+// internal/store/failures.go 把这些错误集中记录后，这里提供人工排障入口：
+// 累计总数 + 按操作聚合的 Top N + 最近样本，用于判断「到底哪类写入在失败」。
+//
+// 权限：与 /api/v1/admin/* 其余端点同档（RBAC 派生规则下仅 admin）。
+func (s *Server) handleAdminStoreFailures(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if _, ok := s.requireProd(w, r, levelPermission); !ok {
+		return
+	}
+	total, byOp := store.StoreFailureStats()
+	recent := store.RecentStoreFailures()
+	limit := 20
+	if raw := r.URL.Query().Get("top"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	// byOp 已由 store 返回副本，这里只取 Top N，避免把全部操作名塞进响应。
+	ops := store.TopStoreFailureOps(limit)
+	paginate.WriteJSON(w, http.StatusOK, map[string]any{
+		"total":            total,
+		"byOp":             byOp,
+		"topOps":           ops,
+		"recentFailures":   recent,
+		"note":             "这些错误此前仅写日志即丢弃，接口层无法感知；本端点与 opsmesh_store_write_failures_total 指标用于补上这一缺口。",
+		"remediation":      "根治需把 Store 接口改为返回 error（209 个方法签名变更），属独立重构；当前修复保证存量吞错点全部可见可告警。",
+		"memoryStoreCount": s.store != nil && s.cfg.Store == "memory",
+	})
+}
+
 // healthSnapshot 复用 pingStore 做与 /healthz 相同的深度检查。
 func (s *Server) healthSnapshot(ctx context.Context) map[string]any {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -454,6 +494,10 @@ func (s *Server) renderPrometheus(ctx context.Context) string {
 		return "# metrics 未启用\n"
 	}
 	s.metrics.SetAgents(len(s.store.Agents("")))
+	// 把存储层吞错累计数推给指标注册表。推送而非 metrics 直接 import store，
+	// 是为了保持依赖方向单一（controlplane → metrics / store），避免日后成环。
+	total, _ := store.StoreFailureStats()
+	s.metrics.SetStoreFailures(total)
 	return s.metrics.Render()
 }
 
