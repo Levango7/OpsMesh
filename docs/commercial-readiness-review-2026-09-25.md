@@ -2075,6 +2075,29 @@ CI 也看不见，因为它只跑代码测试与静态清单，没有任何一�
   ② 其余 13 个微服务未注册 `/metrics`（现只有 device/task/alert 三个）；
   ③ node_exporter 是否纳入出厂栈（决定主机级告警能否默认可用）。
 
+### 21.6 `/metrics` 到底在哪些微服务上"上线"了（2026-09-27 逐进程实跑，取 v0.9.2 树）
+
+§21.5 的遗留②一直写作"其余 13 个微服务未注册 /metrics"——那是**静态印象**。这次把它做实：
+为不被并行会话的在途改动污染，取 `git worktree v0.9.2` 那棵树，**逐个构建二进制、起进程、打 `/metrics`**
+（并区分"起来了但没这个端点"与"没起来"两种失败）：
+
+| 判定 | 服务 | 证据 |
+|---|---|---|
+| **暴露 Prometheus 指标（3）** | `alert-svc` / `device-svc` / `task-svc` | HTTP 200 + `Content-Type: text/plain`，首行 `# HELP http_requests_total` |
+| **端点存在但不是 Prometheus 格式（1）** | `grafana-bridge` | HTTP 200 但 `Content-Type: application/json`，体为 `{"service":"grafana-bridge","status":"ok"…}` |
+| **无该端点（13）** | auth / autoscaler / bot / config / deploy / gpu / incident / log / plugin / portal / runbook / workflow / aio | HTTP 404（服务本身正常起来了） |
+| 不适用 | `tf-provider` | Terraform 插件，非 HTTP 服务（已从镜像矩阵豁免，见 §19.6） |
+
+**与抓取配置对账（这是关键，不是只看服务端）**：`deploy/monitoring/prometheus.yml` 的 job 恰为
+`controlplane:9091` / `device-svc:8101` / `task-svc:8102` / `alert-svc:8103`（外加 mysql/redis 拨测）。
+⇒ **配置只抓暴露了的那 3 个，没有"配了但抓不到"的坏目标**；缺口纯粹在能力侧：13 个服务在监控面板上
+永远是空的。`grafana-bridge` 那个 JSON 端点**没有被抓**，所以不产生坏数据，但端点名叫 `/metrics`
+却不返回 Prometheus 文本，属于会给运维制造误判的命名（建议改名或改名+补真指标）。
+
+**顺带两条实测发现**：① `aio-svc` 与 `log-svc` **不认** `<SVC>_HTTP_PORT` 约定，硬编码 `:8100` / `:8080`（+gRPC `:9090`）——
+后者正是控制面的默认端口，同机裸跑会撞；② 因此"用统一 env 探针遍历所有服务"会在它们身上得到假阴性（本次先踩到，
+补测后才拿到 404 的真结论）——**端口约定不统一本身就是一个可运维性缺陷**。
+
 ## 22. 交付脚本第一次被静态检查：三处"哑按钮 + 不实陈述"（2026-09-26）
 
 起因很小：给 `validate-deploy-assets.sh` 加第 9 节时，顺手对 `deploy/scripts/*.sh` 跑了一次 shellcheck。
@@ -2147,7 +2170,7 @@ CI 也看不见，因为它只跑代码测试与静态清单，没有任何一�
 | 3 | P1-7 许可与第三方合规（NOTICE/THIRD_PARTY、MPL-2.0 依赖的再分发含义、基础镜像来源目录） | 唯一剩下的 P1 大块，属商务 + 法务判定 |
 | 4 | 外部 GitOps chart 的 values 结构核对（需该仓库读权限） | §20.3 遗留的最后一处不确定 |
 | 5 | 统一控制面与微服务的 HTTP 指标命名（`opsmesh_http_*` vs 无前缀 `http_*`） | 破坏性变更，需随版本走；当前出厂规则/面板已用 `__name__` 并集兜住（§21.3） |
-| 6 | 其余 13 个微服务未注册 `/metrics`（现只有 device/task/alert） | 并集写法目前只能覆盖已开端点的三个；不注册就永远没有它们的数据 |
+| 6 | 微服务 `/metrics` 覆盖：**实跑已定论**（§21.6）——只有 device/task/alert 三个暴露 Prometheus 指标，13 个服务 404，`grafana-bridge` 的 `/metrics` 返回 JSON 而非 Prometheus 文本；抓取配置与能力一致（无坏目标） | 缺口在能力侧：这 13 个服务在面板上永远空白。补法是把 `pkg/metrics` 的 handler 接到各服务（3 个已有先例），再同步 prometheus.yml / chart ServiceMonitor / §21.4 的契约测试；`grafana-bridge` 建议改名或改名+补真指标 |
 | 7 | node_exporter 是否纳入出厂栈 | 决定主机级告警（磁盘等）能否默认可用；现在只能以 `.example` 形式提供（§21.2） |
 | 8 | 微服务剩余约 250 处 `Printf` 的逐点严重级别升级 | 增量改进，统一管道已就位 |
 | 9 | 把交付脚本的 shellcheck 口径从 `-S warning` 提到 `-S info`（余 39×SC2015、3×SC2012） | 可读性而非正确性；提口径前要逐条判"是否真死变量"，与本轮 SC2034 的处置同法，不宜顺手 |

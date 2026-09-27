@@ -20,6 +20,16 @@
 - **验证**：`rand_pw` 从 `deploy.sh` 抽出**真实定义**跑 300 次（长度 / 越界字符为空 / 必含特殊字符）⇒ 0 失败，且故意把校验集合写窄会立刻报错（断言是活的）；`/tmp` 沙箱真跑 `deploy.sh init` ⇒ `.env` 生成成功、四条口令均落在新字符集内、`docker compose config` rc=0（插值链路可用）；13 个脚本 `shellcheck -S warning` + `bash -n` 全绿。
 - **口径如实分层**：`-S info` 级仍有 39×SC2015、3×SC2012 未动（可读性而非正确性，提口径前需逐条判"是否真死变量"），已列入 §23 待办第 9 项。shellcheck 门禁本身以 CI 该 step 为准。
 
+## [Unreleased] — 2026-09-27 `/metrics` 在微服务上的覆盖：逐进程实跑定论（不是静态印象）
+
+> 证据：`docs/commercial-readiness-review-2026-09-25.md` §21.6。取 `git worktree v0.9.2` 那棵树（避免被并行会话的在途改动污染），逐个构建二进制、起进程、打端点。
+
+- **暴露 Prometheus 指标的只有 3 个**：`alert-svc` / `device-svc` / `task-svc`（200 + `text/plain` + 首行 `# HELP http_requests_total`）。
+- **13 个服务 404**（auth / autoscaler / bot / config / deploy / gpu / incident / log / plugin / portal / runbook / workflow / aio）；`tf-provider` 是插件，不适用。
+- **`grafana-bridge` 的 `/metrics` 返回 JSON 而非 Prometheus 文本**（`{"service":…,"status":"ok"}`）：端点名会误导运维，但它**没有被抓取**，因此不产生坏数据。
+- **与抓取配置对账**：`prometheus.yml` 的 job 恰好只有 controlplane:9091 + device/task/alert 三个 ⇒ **没有"配了但抓不到"的坏目标**，缺口纯在能力侧（13 个服务在面板上永远空白）。
+- **顺带两条**：① `aio-svc`（:8100）与 `log-svc`（:8080，gRPC :9090）**不认** `<SVC>_HTTP_PORT` 约定、硬编码端口——后者与控制面默认端口相同，同机裸跑会撞；② 我第一版探针假设所有服务都认那个 env，在这两个上得到"未启动"的**假阴性**，按真实端口补测才拿到 404 真结论（端口约定不统一本身就是可运维性缺陷）。
+
 ## [Unreleased] — 2026-09-26 给 17 个微服务镜像补上签名与 SBOM（验收第 ④ 条暴露的缺口）
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §19.9。v0.9.2 四条验收里唯一没全过的一条。
