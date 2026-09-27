@@ -630,7 +630,7 @@ func (g *Gateway) handleProvisionAuto(w http.ResponseWriter, r *http.Request) {
 		},
 	}, provision.Config{
 		AdvertiseAddr:     g.advertiseAddr,
-		FallbackAdvertise: fmt.Sprintf("http://127.0.0.1:8081"),
+		FallbackAdvertise: "http://127.0.0.1:8081",
 	}, cidrs, tenant)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -728,8 +728,9 @@ func (g *Gateway) resolveAgentBinary(osName, arch string) string {
 }
 
 // fileExists 检查文件存在且非目录。
+// G703：path 为 agent 分发探测路径（调用方已做目录白名单前缀校验），非用户可控穿越。
 func fileExists(path string) bool {
-	info, err := os.Stat(path)
+	info, err := os.Stat(path) //nolint:gosec // G703 见函数注释
 	if err != nil {
 		return false
 	}

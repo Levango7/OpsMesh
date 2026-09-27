@@ -2,7 +2,6 @@ package store
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -638,11 +637,4 @@ func NewStore(dbDSN string) (Store, error) {
 		return NewMySQLStore(dbDSN)
 	}
 	return NewMemoryStore(), nil
-}
-
-// jsonSlice is a helper for scanning string slices from JSON columns.
-func jsonSlice(data []byte) []string {
-	var s []string
-	_ = json.Unmarshal(data, &s)
-	return s
 }

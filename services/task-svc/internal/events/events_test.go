@@ -62,15 +62,7 @@ func TestNoopSSEBridge(t *testing.T) {
 	bridge.Forward(context.Background(), "task_status", "tenant-1", nil)
 }
 
-// TestServiceEmitAudit_NilReceivers 验证 service 层 emitAudit 在所有注入为 nil 时不 panic。
-// （通过 events 包侧验证接口 nil 安全；service 层的集成在 service_test.go 覆盖）
-func TestEvent_NilSafe(t *testing.T) {
-	var bus EventBus // nil
-	if bus != nil {
-		t.Error("nil EventBus should be nil")
-	}
-	// 模拟 service.emitAudit 的 nil 检查模式
-	if bus != nil {
-		_ = bus.Publish(context.Background(), Event{})
-	}
-}
+// TestServiceEmitAudit_NilReceivers：events 包侧的接口 nil 安全已由上面各
+// stub 用例覆盖；service 层 emitAudit 对 nil 注入的防护在 service_test.go
+// 集成覆盖。原「var bus EventBus; if bus != nil」用例删除——nil 接口的
+// 比较恒为假（govet nilness），它验证不了任何运行时行为。

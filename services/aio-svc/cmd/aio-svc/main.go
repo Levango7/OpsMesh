@@ -53,10 +53,13 @@ func main() {
 	gpuDetector := gpuanomaly.NewDetector()
 
 	// Initialize Prometheus client with configurable URL.
-	promClient := prometheus.NewClient(os.Getenv("PROMETHEUS_URL"), 10*time.Second)
+	promURL := os.Getenv("PROMETHEUS_URL")
+	promClient := prometheus.NewClient(promURL, 10*time.Second)
 	if promClient.Available() {
-		log.Printf("[aio-svc] Prometheus connected: %s", os.Getenv("PROMETHEUS_URL"))
-	} else if os.Getenv("PROMETHEUS_URL") != "" {
+		// G706：URL 来自 env，且 taint 分析无法被消毒函数说服——干脆不把
+		// 地址打进日志（连接目标在配置里可见，日志只报状态）。
+		log.Printf("[aio-svc] Prometheus connected")
+	} else if promURL != "" {
 		log.Printf("[aio-svc] Prometheus unreachable, using simulated mode")
 	} else {
 		log.Printf("[aio-svc] Prometheus disabled (set PROMETHEUS_URL to enable)")

@@ -117,11 +117,6 @@ func (g *Gateway) clearCookies(w http.ResponseWriter) {
 	g.setCookie(w, refreshTokenCookieName, "", -1)
 }
 
-// deviceFP 从 X-Device-FP 头读取设备指纹（与 controlplane deviceFingerprint 同源）。
-func deviceFP(r *http.Request) string {
-	return strings.TrimSpace(r.Header.Get("X-Device-FP"))
-}
-
 // RegisterRoutes 注册全部 HTTP 路由。仅当 HTTP 网关启用（R1 开关）时由 main 调用。
 func (g *Gateway) RegisterRoutes(mux *http.ServeMux) {
 	// 认证流（Cookie 语义端点——与前端 web/enterprise/src/api/auth.js 契约对齐）。

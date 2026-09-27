@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	applog "github.com/Levango7/OpsMesh/pkg/log"
 	"github.com/Levango7/OpsMesh/services/grafana-bridge/internal/handler"
@@ -38,8 +39,9 @@ func main() {
 	})
 
 	httpServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: mux,
+		ReadHeaderTimeout: 15 * time.Second, // G112 Slowloris 防护
+		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
+		Handler:           mux,
 	}
 
 	go func() {

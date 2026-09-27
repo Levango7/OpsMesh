@@ -126,7 +126,7 @@ func main() {
 			redisCache = cache.NewWithAddr("auth:", cfg.RedisAddr)
 			defer redisCache.Close()
 			if redisCache.Enabled() {
-				log.Printf("Redis cache enabled at %s — guard/deviceFP backed by Redis", cfg.RedisAddr)
+				log.Printf("Redis cache enabled — guard/deviceFP backed by Redis")
 			}
 		}
 		if cfg.SessionStoreEnabled && cfg.RedisAddr != "" {

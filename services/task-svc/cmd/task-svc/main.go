@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net"
@@ -37,6 +38,62 @@ import (
 
 // cronMatch 包装 pkg/cron.Match——main.go 不希望每次 fire 闭包都写完整包名。
 func cronMatch(expr string, now time.Time) (bool, error) { return cron.Match(expr, now) }
+
+// leaseElectorWithDB 给 K8sLeaseElector 补上自有 sql.DB 的释放：
+// K8sLeaseElector.Close 只还租约，不知道后端连接池的存在。
+type leaseElectorWithDB struct {
+	leader.LeaderElector
+	db *sql.DB
+}
+
+func (w leaseElectorWithDB) Close() error {
+	err := w.LeaderElector.Close()
+	if cerr := w.db.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// buildElector 按配置构造选主器（2026-09-27 补齐多副本安全，TD-60 评估遗留缺陷）。
+//   - stub（默认）：永真，仅单副本语义；
+//   - mysql：租约真选主（复用 K8sLeaseElector 状态机 + MySQLLeaseOps 后端，
+//     私有化部署不依赖 K8s；需 StoreType=sql 且 DSN 非空）。
+//
+// 声明 mysql 但前置不满足时返回错误由 main fail-fast：声明了 HA 却静默回落
+// stub，多副本会重复执行 fire/reclaim——比拒绝启动危险得多（TD-68 同哲学）。
+func buildElector(cfg *config.Config) (leader.LeaderElector, error) {
+	if cfg.LeaderMode != "mysql" {
+		if cfg.LeaderMode != "stub" {
+			log.Printf("[task-svc] TASK_SVC_LEADER_MODE=%q 无法识别，按 stub（永真）继续", cfg.LeaderMode)
+		}
+		log.Printf("[task-svc] 选主=stub（永真，单副本语义）：多副本部署必须设置 TASK_SVC_LEADER_MODE=mysql（需 StoreType=sql）")
+		return leader.NewStub(), nil
+	}
+	if cfg.StoreType != "sql" || cfg.DSN == "" {
+		return nil, fmt.Errorf("TASK_SVC_LEADER_MODE=mysql 需要 TASK_SVC_STORE_TYPE=sql 且 TASK_SVC_DSN 非空（当前 store=%q dsn=%q）",
+			cfg.StoreType, cfg.DSN)
+	}
+	db, err := sql.Open("mysql", cfg.DSN)
+	if err != nil {
+		return nil, fmt.Errorf("open elector db: %w", err)
+	}
+	// 选主流量极小（每周期一条 UPDATE），独立小连接池，不与业务 store 抢配额。
+	db.SetMaxOpenConns(2)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	ops := leader.NewMySQLLeaseOps(db)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := ops.EnsureTable(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("ensure lease table: %w", err)
+	}
+	log.Printf("[task-svc] 选主=mysql lease=%s holder=%s ttl=%s", cfg.LeaderLeaseName, cfg.LeaderHolderID, cfg.LeaderTTL)
+	return leaseElectorWithDB{
+		LeaderElector: leader.NewK8sLease(ops, cfg.LeaderLeaseName, cfg.LeaderHolderID),
+		db:            db,
+	}, nil
+}
 
 func main() {
 	// P1-6 结构化日志统一：把标准库 log 接入统一 JSON 管道（级别由 OPSMESH_LOG_LEVEL 控制）。
@@ -144,8 +201,9 @@ func main() {
 	handler = trace.HTTPMiddleware("github.com/Levango7/OpsMesh/task-svc")(handler)
 
 	httpServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: handler,
+		ReadHeaderTimeout: 15 * time.Second, // G112 Slowloris 防护
+		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
+		Handler:           handler,
 	}
 
 	// schedulerRootCtx 是 scheduler 三循环的共享生命周期上下文：信号触发 cancel
@@ -159,7 +217,13 @@ func main() {
 	// 回收规则：status=running + ClaimAt 早于 maxAge + 持有者无活跃心跳。
 	// A-2 阶段：renew 通过 LeaderElector 接口注入（stub 永真为默认，
 	// 生产环境可注入 K8sLeaseElector 实现多副本选主）。
-	elector := leader.NewStub() // A-2 默认：stub 永真（单进程/CI）；生产注入 K8sLeaseElector
+	// 选主（2026-09-27 补齐，TD-60 评估登记的"扩容即重复执行"缺陷）：
+	// stub=永真（单副本语义，默认）；mysql=租约真选主（多副本部署必须）。
+	// 声明 mysql 但前置不满足时 fail-fast——静默回落 stub 是多副本重复调度的温床。
+	elector, err := buildElector(cfg)
+	if err != nil {
+		lgr.Fatalf("选主初始化失败，停止启动: %v", err)
+	}
 	defer elector.Close()
 	// ShadowMode=true 时，task-svc 不执行 fire/reclaim（真正只读），只有 controlplane 调度。
 	// 这防止共库双调度器并发写 tasks 表。

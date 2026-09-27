@@ -4,7 +4,6 @@ package logstore
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -149,17 +148,6 @@ func matchEntry(e Entry, q Query) bool {
 		return false
 	}
 	return true
-}
-
-// validateQuery checks if a query is valid.
-func validateQuery(q Query) error {
-	if q.Limit < 0 {
-		return fmt.Errorf("limit must be non-negative")
-	}
-	if q.Offset < 0 {
-		return fmt.Errorf("offset must be non-negative")
-	}
-	return nil
 }
 
 // NewMemoryWithIndex creates an in-memory backend with inverted index.

@@ -129,7 +129,7 @@ func (d *Detector) BatchDetect(requests []BatchRequest) []BatchResult {
 			AnomalyIndices: indices,
 			Scores:         scores,
 			Method:         req.Method,
-			TotalAnalyzed:  int32(len(req.MetricValues)),
+			TotalAnalyzed:  int32(math.Min(float64(len(req.MetricValues)), math.MaxInt32)),
 		})
 	}
 	return results

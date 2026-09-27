@@ -71,7 +71,6 @@ var (
 type Manager struct {
 	mu        sync.RWMutex
 	workloads map[string]*AIWorkload
-	counter   uint64
 }
 
 // NewManager creates a new AI workload Manager.

@@ -33,15 +33,15 @@ type RootCause struct {
 
 // AnalysisResult contains the root cause analysis output.
 type AnalysisResult struct {
-	AlertId    string
+	alertID    string
 	Causes     []RootCause
 	AnalyzedAt time.Time
 }
 
 // AnalyzeRootCause performs root cause analysis for an alert given its context events.
-func (a *Analyzer) AnalyzeRootCause(alertId string, events []Event) AnalysisResult {
+func (a *Analyzer) AnalyzeRootCause(alertID string, events []Event) AnalysisResult {
 	result := AnalysisResult{
-		AlertId:    alertId,
+		alertID:    alertID,
 		Causes:     make([]RootCause, 0),
 		AnalyzedAt: time.Now(),
 	}

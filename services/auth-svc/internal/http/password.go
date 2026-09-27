@@ -10,8 +10,6 @@
 package http
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"strings"
 )
 
@@ -95,16 +93,14 @@ func validatePasswordWithPolicy(pw string, policy *PasswordPolicy) string {
 	if minLen <= 0 {
 		minLen = 12
 	}
-	requireUpper := policy.RequireUpper || policy.MinLen == 0 && policy.RequireUpper
 	// 简化：零值 Policy 等价默认（全部 true）。非零值时尊重显式设置。
 	if policy.MinLen == 0 && !policy.RequireUpper && !policy.RequireLower && !policy.RequireDigit && !policy.RequireSpecial {
-		requireUpper = true
+		policy.RequireUpper = true
 		policy.RequireLower = true
 		policy.RequireDigit = true
 		policy.RequireSpecial = true
-	} else {
-		requireUpper = policy.RequireUpper
 	}
+	requireUpper := policy.RequireUpper
 
 	if len(pw) < minLen {
 		return "password too short (min " + itoa(minLen) + " chars)"
@@ -149,14 +145,6 @@ func validatePasswordWithPolicy(pw string, policy *PasswordPolicy) string {
 	}
 
 	return ""
-}
-
-// hashPasswordForBlacklist 计算口令的 SHA-256 摘要（用于大黑名单集合的 O(1) 查找）。
-// 当前黑名单规模 ≤1000，线性扫描足够；超 1000 时可改用 map[hash]struct{}。
-// 保留供未来扩展（如加载 top-1000 文件时预构建 hash 集合）。
-func hashPasswordForBlacklist(pw string) string {
-	h := sha256.Sum256([]byte(strings.ToLower(pw)))
-	return hex.EncodeToString(h[:])
 }
 
 // itoa 轻量 int→string（避免引入 strconv 仅为此一处）。

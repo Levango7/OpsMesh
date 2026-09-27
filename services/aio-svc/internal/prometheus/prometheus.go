@@ -9,8 +9,19 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
+
+// readAllString 尽力读取响应体用于错误消息；读取失败返回空串——
+// 错误消息里少一段 body 不值得让调用链多一层错误传播。
+func readAllString(r io.Reader) string {
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
 
 // MetricSample represents a single timestamped metric value.
 type MetricSample struct {
@@ -41,11 +52,6 @@ type RangeResult struct {
 			Values []json.RawMessage `json:"values"`
 		} `json:"result"`
 	} `json:"data"`
-}
-
-// prometheusResponse is a minimal structure for decoding status-only responses.
-type prometheusResponse struct {
-	Status string `json:"status"`
 }
 
 // Client communicates with a Prometheus server via its HTTP API.
@@ -120,8 +126,7 @@ func (c *Client) Query(query string, t time.Time) (QueryResult, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return QueryResult{}, fmt.Errorf("prometheus returned %d: %s", resp.StatusCode, string(body))
+		return QueryResult{}, fmt.Errorf("prometheus returned %d: %s", resp.StatusCode, readAllString(resp.Body))
 	}
 
 	var result QueryResult
@@ -155,8 +160,7 @@ func (c *Client) QueryRange(query, start, end, step string) (RangeResult, error)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return RangeResult{}, fmt.Errorf("prometheus returned %d: %s", resp.StatusCode, string(body))
+		return RangeResult{}, fmt.Errorf("prometheus returned %d: %s", resp.StatusCode, readAllString(resp.Body))
 	}
 
 	var result RangeResult
@@ -179,8 +183,7 @@ func (c *Client) GetMetricNames() ([]string, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("prometheus returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("prometheus returned %d: %s", resp.StatusCode, readAllString(resp.Body))
 	}
 
 	var result struct {
@@ -214,8 +217,7 @@ func (c *Client) GetSeries(selector string) ([]string, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("prometheus returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("prometheus returned %d: %s", resp.StatusCode, readAllString(resp.Body))
 	}
 
 	var result struct {
@@ -309,8 +311,22 @@ func extractSamples(qr QueryResult) []MetricSample {
 		}
 		var ts float64
 		var val float64
-		_ = json.Unmarshal(r.Value[0], &ts)
-		_ = json.Unmarshal(r.Value[1], &val)
+		// Prometheus 契约：value=[<unix秒>, "<数值字符串>"]——时间戳是数字、
+		// 数值是字符串。此前 `_ =` 吞掉「字符串→float64」的必然失败，
+		// 所有样本的值都被静默写成 0（监控数据恒为零的真凶）。
+		// 时间戳/数值解析失败的样本直接跳过：0 值样本会污染下游统计。
+		if err := json.Unmarshal(r.Value[0], &ts); err != nil {
+			continue
+		}
+		if err := json.Unmarshal(r.Value[1], &val); err != nil {
+			var s string
+			if err2 := json.Unmarshal(r.Value[1], &s); err2 != nil {
+				continue
+			}
+			if val, err = strconv.ParseFloat(s, 64); err != nil {
+				continue
+			}
+		}
 		samples = append(samples, MetricSample{
 			Labels: r.Metric,
 			Value:  val,

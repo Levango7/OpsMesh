@@ -23,9 +23,6 @@ func NewService(store logstore.LogStore) *Service {
 	return &Service{store: store}
 }
 
-// ensure Service implements the gRPC interface
-func (s *Service) mustEmbedUnimplementedLogServiceServer() {}
-
 // SearchLogs searches log entries with the given filters.
 func (s *Service) SearchLogs(ctx context.Context, req *logv1.SearchLogsRequest) (*logv1.SearchLogsResponse, error) {
 	if req == nil {

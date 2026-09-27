@@ -418,9 +418,10 @@ func (s *Service) GetSavingsAnalysis(tenantID string) (*models.SavingsAnalysis, 
 	var totalSavings, idleCost, overProvCost float64
 	for _, r := range recs {
 		totalSavings += r.Savings
-		if r.Category == "idle" {
+		switch r.Category {
+		case "idle":
 			idleCost += r.Savings
-		} else if r.Category == "over_provisioned" {
+		case "over_provisioned":
 			overProvCost += r.Savings
 		}
 	}

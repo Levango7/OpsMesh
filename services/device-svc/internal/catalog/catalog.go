@@ -84,9 +84,7 @@ func (c *Catalog) BuildTopology(tenantID string) *CatalogGraph {
 		graph.Nodes = append(graph.Nodes, n)
 	}
 
-	for _, e := range c.edges {
-		graph.Edges = append(graph.Edges, e)
-	}
+	graph.Edges = append(graph.Edges, c.edges...)
 
 	c.tenants[tenantID] = graph
 	return graph

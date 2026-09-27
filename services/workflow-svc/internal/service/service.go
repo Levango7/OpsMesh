@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,7 +31,6 @@ type WorkflowStore interface {
 
 // Service implements the workflow service business logic.
 type Service struct {
-	mu     sync.RWMutex
 	store  WorkflowStore
 	engine *engine.Engine
 }

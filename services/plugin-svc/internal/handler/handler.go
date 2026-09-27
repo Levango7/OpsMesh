@@ -218,20 +218,20 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeServiceError(w http.ResponseWriter, err error) {
-	switch {
-	case err == service.ErrPluginNotFound:
+	switch err {
+	case service.ErrPluginNotFound:
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
-	case err == service.ErrPluginInvalid:
+	case service.ErrPluginInvalid:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-	case err == service.ErrPluginExists:
+	case service.ErrPluginExists:
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
-	case err == service.ErrPluginInstalled:
+	case service.ErrPluginInstalled:
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
-	case err == service.ErrPluginNotInstalled:
+	case service.ErrPluginNotInstalled:
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
-	case err == service.ErrInvalidURL, err == service.ErrSSRFBlocked:
+	case service.ErrInvalidURL, service.ErrSSRFBlocked:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-	case err == service.ErrVersionNotFound:
+	case service.ErrVersionNotFound:
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

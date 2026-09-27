@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -303,8 +304,9 @@ func main() {
 	})
 
 	httpServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: metrics.HTTPMiddleware(mux),
+		ReadHeaderTimeout: 15 * time.Second, // G112 Slowloris 防护
+		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
+		Handler:           metrics.HTTPMiddleware(mux),
 	}
 
 	go func() {

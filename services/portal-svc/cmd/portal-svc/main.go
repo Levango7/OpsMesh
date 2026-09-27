@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	applog "github.com/Levango7/OpsMesh/pkg/log"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
@@ -55,8 +56,9 @@ func main() {
 	mux.Handle("/metrics", metrics.GetHandler())
 
 	httpServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: metrics.HTTPMiddleware(mux),
+		ReadHeaderTimeout: 15 * time.Second, // G112 Slowloris 防护
+		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
+		Handler:           metrics.HTTPMiddleware(mux),
 	}
 
 	go func() {

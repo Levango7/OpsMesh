@@ -14,7 +14,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
@@ -156,10 +155,7 @@ func TestServeAgent_ResolveAgentBinary(t *testing.T) {
 	if path == "" {
 		t.Fatal("未配置 agentBinDir 时应回退当前进程二进制，不应返回空")
 	}
-	if !strings.HasSuffix(path, "test") && !strings.Contains(path, ".test") && !strings.Contains(path, "go-build") {
-		// 当前进程是 go test 二进制，路径应包含 test 或 go-build 相关片段。
-		// 此断言较宽松，主要验证非空。
-	}
+	// 当前进程是 go test 二进制时路径应包含 test/go-build 片段；断言宽松，主要验证非空。
 
 	// 配置不存在的目录 → 回退当前进程二进制。
 	g.SetAgentBinDir("/nonexistent/dir/for/test")

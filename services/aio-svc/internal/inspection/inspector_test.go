@@ -42,11 +42,11 @@ func TestRunInspection_DeviceStatus(t *testing.T) {
 func TestGetRiskScore(t *testing.T) {
 	in := NewInspector()
 	result := in.GetRiskScore("tenant-1", "srv-01")
-	if result.TenantId != "tenant-1" {
-		t.Errorf("expected tenant-1, got %s", result.TenantId)
+	if result.tenantID != "tenant-1" {
+		t.Errorf("expected tenant-1, got %s", result.tenantID)
 	}
-	if result.DeviceId != "srv-01" {
-		t.Errorf("expected srv-01, got %s", result.DeviceId)
+	if result.deviceID != "srv-01" {
+		t.Errorf("expected srv-01, got %s", result.deviceID)
 	}
 	if result.Score < 0 || result.Score > 100 {
 		t.Errorf("expected score 0-100, got %d", result.Score)
@@ -82,8 +82,8 @@ func TestGenerateReport(t *testing.T) {
 	in := NewInspector()
 	deviceIds := []string{"srv-01", "srv-02", "srv-03", "db-01", "db-02"}
 	report := in.GenerateReport("tenant-1", deviceIds)
-	if report.TenantId != "tenant-1" {
-		t.Errorf("expected tenant-1, got %s", report.TenantId)
+	if report.tenantID != "tenant-1" {
+		t.Errorf("expected tenant-1, got %s", report.tenantID)
 	}
 	if report.TotalDevices != 5 {
 		t.Errorf("expected 5 devices, got %d", report.TotalDevices)

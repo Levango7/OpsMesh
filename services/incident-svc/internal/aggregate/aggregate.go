@@ -126,11 +126,7 @@ func (e *Engine) matchesRule(rule *AggregationRule, alert *models.Alert, now tim
 			break
 		}
 	}
-	if !metricMatch {
-		return false
-	}
-
-	return true
+	return metricMatch
 }
 
 // ShouldEscalate determines if an incident should be escalated based on alert count and severity.

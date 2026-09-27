@@ -3,9 +3,15 @@ package noise
 import (
 	"hash/fnv"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// int32Clamp 把 int 收敛到 int32 值域（G115：len 的理论溢出护栏）。
+func int32Clamp(n int) int32 {
+	return int32(min(n, 1<<31-1)) //nolint:gosec // 已由 min 收敛到 int32 值域
+}
 
 // Reducer provides alert noise reduction capabilities.
 type Reducer struct{}
@@ -17,11 +23,10 @@ func NewReducer() *Reducer {
 
 // Alert represents an alert for noise reduction operations.
 type Alert struct {
-	Id       string
-	TenantId string
-	RuleId   string
+	ID       string
+	RuleID   string
 	RuleName string
-	DeviceId string
+	deviceID string
 	Severity string
 	Message  string
 	FiredAt  time.Time
@@ -39,7 +44,7 @@ type AlertCluster struct {
 
 // FlappingResult contains flapping detection output.
 type FlappingResult struct {
-	AlertId      string
+	alertID      string
 	IsFlapping   bool
 	StateChanges int32
 	Frequency    float64
@@ -47,16 +52,16 @@ type FlappingResult struct {
 
 // ClusterKey generates a clustering key for an alert.
 func clusterKey(a Alert) string {
-	return a.RuleId + ":" + devicePrefix(a.DeviceId) + ":" + a.Severity
+	return a.RuleID + ":" + devicePrefix(a.deviceID) + ":" + a.Severity
 }
 
 // devicePrefix extracts the prefix of a device ID for grouping.
-func devicePrefix(deviceId string) string {
-	parts := strings.Split(deviceId, "-")
+func devicePrefix(deviceID string) string {
+	parts := strings.Split(deviceID, "-")
 	if len(parts) >= 2 {
 		return parts[0] + "-" + parts[1]
 	}
-	return deviceId
+	return deviceID
 }
 
 // ClusterAlerts groups similar alerts together.
@@ -87,7 +92,7 @@ func (r *Reducer) ClusterAlerts(alerts []Alert) []AlertCluster {
 		clusters = append(clusters, AlertCluster{
 			ClusterKey: key,
 			Alerts:     group,
-			Count:      int32(len(group)),
+			Count:      int32Clamp(len(group)),
 			FirstFired: first,
 			LastFired:  last,
 		})
@@ -103,9 +108,9 @@ func (r *Reducer) ClusterAlerts(alerts []Alert) []AlertCluster {
 
 // DetectFlapping detects if an alert is flapping (repeatedly firing/resolving).
 // An alert is flapping if it changes state more than 3 times within the window.
-func (r *Reducer) DetectFlapping(alertId string, window time.Duration, states []AlertState) FlappingResult {
+func (r *Reducer) DetectFlapping(alertID string, window time.Duration, states []AlertState) FlappingResult {
 	result := FlappingResult{
-		AlertId: alertId,
+		alertID: alertID,
 	}
 
 	if len(states) < 2 {
@@ -190,11 +195,12 @@ type AlertState struct {
 // compressKey generates a deduplication key for an alert.
 func compressKey(a Alert) uint64 {
 	h := fnv.New64a()
-	h.Write([]byte(a.RuleId))
-	h.Write([]byte(a.DeviceId))
+	h.Write([]byte(a.RuleID))
+	h.Write([]byte(a.deviceID))
 	h.Write([]byte(a.Message))
-	// Round to 1-minute bucket
+	// Round to 1-minute bucket：把分钟桶写进哈希要走十进制文本——
+	// 此前的 string(rune(bucket)) 会把所有 < rune 宽度的桶坍缩成同一个码点。
 	bucket := a.FiredAt.Unix() / 60
-	h.Write([]byte(string(rune(bucket))))
+	h.Write([]byte(strconv.FormatInt(bucket, 10)))
 	return h.Sum64()
 }

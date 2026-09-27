@@ -56,7 +56,7 @@ func New(prefix string) *Cache {
 
 	enabled := true
 	if err := client.Ping(ctx).Err(); err != nil {
-		log.Printf("[cache] Redis unreachable at %s (graceful fallback active): %v", addr, err)
+		log.Printf("[cache] Redis unreachable (graceful fallback active): %v", err)
 		enabled = false
 	}
 

@@ -106,8 +106,9 @@ func main() {
 	handler = trace.HTTPMiddleware("github.com/Levango7/OpsMesh/config-svc")(handler)
 
 	httpServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: handler,
+		ReadHeaderTimeout: 15 * time.Second, // G112 Slowloris 防护
+		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
+		Handler:           handler,
 	}
 
 	go func() {

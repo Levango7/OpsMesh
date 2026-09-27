@@ -196,9 +196,9 @@ func (c *Client) UpdateDeployment(ctx context.Context, namespace string, spec *D
 		},
 	}
 	if spec.Labels != nil {
-		deploy.ObjectMeta.Labels = spec.Labels
+		deploy.Labels = spec.Labels
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: spec.Labels}
-		deploy.Spec.Template.ObjectMeta.Labels = spec.Labels
+		deploy.Spec.Template.Labels = spec.Labels
 	}
 
 	return c.clientset.AppsV1().Deployments(namespace).Update(ctx, deploy, metav1.UpdateOptions{})

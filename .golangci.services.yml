@@ -1,21 +1,15 @@
-# OpsMesh services/operator 子模块 golangci-lint 配置（v2，与根 .golangci.yml 分离）
+﻿# OpsMesh services/operator 子模块 golangci-lint 配置（v2，与根 .golangci.yml 分离）
 #
 # 为什么不直接用根配置（两个原因，2026-09-27 实测）：
 # 1. 路径误配对：根配置的豁免规则按根模块相对路径编写（path: internal/agent/...），
 #    而从 services/<svc> 目录运行 lint 时，服务自己的文件相对路径也叫 internal/...——
 #    根的豁免会**静默命中服务的同名路径**，豁免语义完全失控。
-# 2. 存量债不同：根模块经多轮治理可达全绿；services/operator 存量报点 457 项
-#    （errcheck 321 / gosec 72 / staticcheck 32 / unused 10 / govet 9 / ineffassign 2，
-#    已登记 docs/tech-debt.md），一次性清偿属独立工程，不能让门禁从首跑就永久红
-#    （长期红的门禁会被整体忽略——见 ci.yml 教训 11）。
+# 2. 存量债节奏不同：根模块经多轮治理全绿；services 存量债（TD-71/72）按类偿清，
+#    每清完一类即把该类 linter 收编进 enable——2026-09-27 已收编 gosec/staticcheck/
+#    govet/unused/ineffassign（对应报点全部修复或按下列有据豁免），errcheck 为
+#    最后一类（约 150 处逐点判断型修复，见 TD-71 收官批次）。
 #
-# 本配置 = 当日实测零报点的规则集，新代码由这些规则把守；存量债按 tech-debt
-# 的偿清节奏逐步把 errcheck/gosec/staticcheck 等移入 enable。每收编一条规则，
-# 先在本地 19 个模块全量试跑再改本文件。
-#
-# 正确性门禁不缩水：ci.yml services job 另行跑 go vet ./...（标准 vet 全开）与
-# go test -race（竞态检测——2026-09-27 开启当日即抓出 workflow-svc 可崩进程的
-# map 并发读写，是本仓服务侧最有杀伤力的门禁）。
+# 正确性门禁不缩水：ci.yml services job 另行跑 go vet ./... 与 go test -race。
 
 version: "2"
 run:
@@ -25,30 +19,111 @@ linters:
   enable:
     - bodyclose        # http.Response.Body 必须 Close
     - copyloopvar      # 循环变量拷贝检查（Go 1.22 loopvar 兼容）
+    - gosec            # 安全静态分析（豁免见 rules，逐条有据）
+    - ineffassign      # 无效赋值
     - misspell         # 注释/字符串拼写
     - revive           # 风格检查（exported 关闭，与根配置一致）
     - sqlclosecheck    # sql.Rows/Stmt/Conn 必须 Close
+    - staticcheck      # 含 ST1003 命名等（QF/SA 修复后收编）
+    - unused           # 未使用符号（TD-72 死代码清偿后收编）
+    - govet            # enable-all 除 shadow/fieldalignment（与根一致）
   settings:
+    govet:
+      enable-all: true
+      disable:
+        - shadow
+        - fieldalignment
     revive:
       rules:
         - name: exported
           disabled: true
-exclusions:
-  generated: lax
-  presets:
-    - comments
-    - common-false-positives
-    - legacy
-    - std-error-handling
-  paths:
-    - .*\.gen\.go$
-    - .*\.pb\.go$
-    - vendor
-    - docs
-    - third_party$
-    - builtin$
-    - examples$
-    - node_modules
+    staticcheck:
+      checks:
+        - all
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # 测试文件放宽（与根配置同款）：常故意忽略 err / 弱口令 fixture / 测试构造
+      # 结构体给未读字段赋值（govet unusedwrite）。
+      - linters:
+          - errcheck
+          - gosec
+          - unparam
+          - wastedassign
+        path: _test\.go
+      - linters:
+          - govet
+        path: _test\.go
+        text: "unusedwrite:"
+      # unusedwrite（非测试）：rows.Scan 的目标结构体字段是完整行映射，
+      # 部分字段由 JSON 序列化在别的链路读取——静态分析不可见，属 scan 惯用法。
+      - linters:
+          - govet
+        text: "unusedwrite:"
+      # G115：值域安全转换——protobuf 兼容层/端口/长度字段（值域有界），
+      # 与根配置 internal/(grpcx|agent|controlplane) 同款理由，扩展到 services。
+      - linters:
+          - gosec
+        text: "G115"
+      # G404 弱随机数：grafana-bridge 是模拟数据源（随机性即职责）、gpu-svc
+      # metrics 模拟兜底——与根配置 cmd/device-sim、pkg/retry 豁免同理由。
+      # services 内全部 G404 均为模拟数据场景（2026-09-27 逐点核实）。
+      - linters:
+          - gosec
+        text: "G404"
+      # G101：cookie 名称常量（opsmesh_at/rt）非凭据，误报——根配置同款。
+      # services 内 G101 仅 auth-svc cookie 常量一处（2026-09-27 核实）。
+      - linters:
+          - gosec
+        text: "G101"
+      # G124：cookie Secure 由配置显式控制（TLS 推断/显式注入）——根配置同款。
+      # services 内 G124 仅 auth-svc setCookie 一处（2026-09-27 核实）。
+      - linters:
+          - gosec
+        text: "G124"
+      # G202：SQL 拼接——各服务 list 查询只拼固定 WHERE 结构片段（列名字面量），
+      # 值一律走 ? 占位符（args...），与根配置 internal/(store|logstore) 豁免同理由。
+      - linters:
+          - gosec
+        text: "G202"
+      # G118：后台 goroutine 刻意脱离请求 ctx（job 自带超时兜底），
+      # 与根配置 agent/deploy 豁免同理由。services 内仅 device/workflow 各一处。
+      - linters:
+          - gosec
+        text: "G118"
+      # G204：runbook runner 的职责就是执行脚本命令（受信内容），与根配置
+      # agent/helm 豁免同理由。services 内仅 runbook runner 一处。
+      - linters:
+          - gosec
+        text: "G204"
+      # SA1019：grpc.CustomCodec 整个 1.x 均支持（官方注明），替换属行为变更，
+      # 与根配置 grpc.DialContext 豁免同理由。
+      - linters:
+          - staticcheck
+        text: "SA1019: .*CustomCodec is deprecated"
+      # tx.Rollback：Go 惯用法（Commit 后为 no-op），根配置同款。
+      - linters:
+          - errcheck
+        text: "tx.Rollback"
+      # tf-provider：Terraform SDK 惯用法——d.Get 类型断言由 schema 契约保证、
+      # d.Set 失败= schema 键拼错属开发期错误（155 处），整模块豁免 errcheck。
+      # 该模块为工具链二进制，非运行时服务。
+      - linters:
+          - errcheck
+        path: tf-provider/
+    paths:
+      - .*\.gen\.go$
+      - .*\.pb\.go$
+      - vendor
+      - docs
+      - third_party$
+      - builtin$
+      - examples$
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
@@ -66,5 +141,4 @@ formatters:
     paths:
       - .*\.gen\.go$
       - .*\.pb\.go$
-      - vendor
-      - docs
+

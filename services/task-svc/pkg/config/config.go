@@ -36,6 +36,19 @@ type Config struct {
 	// 空串=仅租户隔离（从头/context 提取租户，不校验 token）。
 	// 与 controlplane/auth-svc 的 JWT_SECRET 同源。
 	JWTSecret string `json:"jwtSecret"`
+
+	// LeaderMode 选主模式（多副本安全的核心开关，2026-09-27 补齐）：
+	//   - "stub"（默认）：永真，单副本语义。多副本部署下 fire/reclaim 会
+	//     重复执行——这是 TD-60 评估登记的缺陷，扩容前必须切 mysql。
+	//   - "mysql"：基于 MySQL 租约的真选主（需 StoreType=sql 且 DSN 非空，
+	//     否则启动即失败——声明了 HA 却静默跑 stub 属于静默降级，参照 TD-68 哲学）。
+	LeaderMode string `json:"leaderMode"`
+	// LeaderLeaseName 选主锁名（同库多套环境隔离时区分用）。
+	LeaderLeaseName string `json:"leaderLeaseName"`
+	// LeaderHolderID 本实例标识（K8s 下为 Pod 名；单机默认 hostname）。
+	LeaderHolderID string `json:"leaderHolderID"`
+	// LeaderTTL 租约有效期。副本失联后其余副本等待该时长方可接管。
+	LeaderTTL time.Duration `json:"leaderTTL"`
 }
 
 // Load returns a Config populated from environment variables with defaults.
@@ -54,6 +67,10 @@ func Load() *Config {
 		ShadowMode:         getEnv("TASK_SVC_SHADOW_MODE", "false") == "true",
 		HTTPGatewayEnabled: getEnv("TASK_SVC_HTTP_GATEWAY_ENABLED", "true") != "false",
 		JWTSecret:          getEnv("JWT_SECRET", ""),
+		LeaderMode:         getEnv("TASK_SVC_LEADER_MODE", "stub"),
+		LeaderLeaseName:    getEnv("TASK_SVC_LEADER_LEASE", "task-svc-leader"),
+		LeaderHolderID:     getEnv("TASK_SVC_LEADER_HOLDER", getEnv("HOSTNAME", "task-svc-single")),
+		LeaderTTL:          getEnvDuration("TASK_SVC_LEADER_TTL", 15*time.Second),
 	}
 }
 

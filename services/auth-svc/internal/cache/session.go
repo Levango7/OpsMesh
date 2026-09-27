@@ -70,7 +70,7 @@ func NewSessionStore(addr string, ttl time.Duration) *SessionStore {
 
 	enabled := true
 	if err := client.Ping(ctx).Err(); err != nil {
-		log.Printf("[session] Redis unreachable at %s (degraded to stateless JWT mode): %v", addr, err)
+		log.Printf("[session] Redis unreachable (degraded to stateless JWT mode): %v", err)
 		enabled = false
 	}
 

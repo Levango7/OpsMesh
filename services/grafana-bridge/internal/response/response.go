@@ -23,10 +23,6 @@ func WriteError(w http.ResponseWriter, status int, msg string) {
 // WriteTimeseriesResponse writes a Grafana timeseries response.
 // Format: [{"target": "series_name", "datapoints": [[value, timestamp_ms], ...]}]
 func WriteTimeseriesResponse(w http.ResponseWriter, series []models.TimeSeries) {
-	type datapoint struct {
-		Value     float64 `json:"-"`
-		Timestamp int64   `json:"-"`
-	}
 	type seriesResponse struct {
 		Target     string      `json:"target"`
 		Datapoints [][]float64 `json:"datapoints"`

@@ -17,9 +17,9 @@ func TestClusterAlerts_GroupsByRule(t *testing.T) {
 	r := NewReducer()
 	now := time.Now()
 	alerts := []Alert{
-		{Id: "1", RuleId: "rule-a", DeviceId: "srv-01-web", Severity: "critical", FiredAt: now},
-		{Id: "2", RuleId: "rule-a", DeviceId: "srv-01-db", Severity: "critical", FiredAt: now},
-		{Id: "3", RuleId: "rule-b", DeviceId: "srv-01-web", Severity: "warning", FiredAt: now},
+		{ID: "1", RuleID: "rule-a", deviceID: "srv-01-web", Severity: "critical", FiredAt: now},
+		{ID: "2", RuleID: "rule-a", deviceID: "srv-01-db", Severity: "critical", FiredAt: now},
+		{ID: "3", RuleID: "rule-b", deviceID: "srv-01-web", Severity: "warning", FiredAt: now},
 	}
 	clusters := r.ClusterAlerts(alerts)
 	if len(clusters) != 2 {
@@ -31,10 +31,10 @@ func TestClusterAlerts_CountSorted(t *testing.T) {
 	r := NewReducer()
 	now := time.Now()
 	alerts := []Alert{
-		{Id: "1", RuleId: "rule-a", DeviceId: "srv-01-web", Severity: "critical", FiredAt: now},
-		{Id: "2", RuleId: "rule-a", DeviceId: "srv-01-db", Severity: "critical", FiredAt: now},
-		{Id: "3", RuleId: "rule-a", DeviceId: "srv-01-api", Severity: "critical", FiredAt: now},
-		{Id: "4", RuleId: "rule-b", DeviceId: "srv-01-web", Severity: "warning", FiredAt: now},
+		{ID: "1", RuleID: "rule-a", deviceID: "srv-01-web", Severity: "critical", FiredAt: now},
+		{ID: "2", RuleID: "rule-a", deviceID: "srv-01-db", Severity: "critical", FiredAt: now},
+		{ID: "3", RuleID: "rule-a", deviceID: "srv-01-api", Severity: "critical", FiredAt: now},
+		{ID: "4", RuleID: "rule-b", deviceID: "srv-01-web", Severity: "warning", FiredAt: now},
 	}
 	clusters := r.ClusterAlerts(alerts)
 	if len(clusters) != 2 {
@@ -94,9 +94,9 @@ func TestCompressAlerts_Deduplicates(t *testing.T) {
 	r := NewReducer()
 	now := time.Now()
 	alerts := []Alert{
-		{Id: "1", RuleId: "rule-a", DeviceId: "srv-01", Message: "CPU high", FiredAt: now},
-		{Id: "2", RuleId: "rule-a", DeviceId: "srv-01", Message: "CPU high", FiredAt: now.Add(10 * time.Second)},
-		{Id: "3", RuleId: "rule-b", DeviceId: "srv-02", Message: "Memory low", FiredAt: now},
+		{ID: "1", RuleID: "rule-a", deviceID: "srv-01", Message: "CPU high", FiredAt: now},
+		{ID: "2", RuleID: "rule-a", deviceID: "srv-01", Message: "CPU high", FiredAt: now.Add(10 * time.Second)},
+		{ID: "3", RuleID: "rule-b", deviceID: "srv-02", Message: "Memory low", FiredAt: now},
 	}
 	compressed, orig, comp, err := r.CompressAlerts(alerts)
 	if err != nil {
@@ -129,7 +129,7 @@ func TestCompressAlerts_Empty(t *testing.T) {
 
 func TestDevicePrefix(t *testing.T) {
 	tests := []struct {
-		deviceId string
+		deviceID string
 		want     string
 	}{
 		{"srv-01-web", "srv-01"},
@@ -137,9 +137,9 @@ func TestDevicePrefix(t *testing.T) {
 		{"single", "single"},
 	}
 	for _, tt := range tests {
-		got := devicePrefix(tt.deviceId)
+		got := devicePrefix(tt.deviceID)
 		if got != tt.want {
-			t.Errorf("devicePrefix(%s) = %s, want %s", tt.deviceId, got, tt.want)
+			t.Errorf("devicePrefix(%s) = %s, want %s", tt.deviceID, got, tt.want)
 		}
 	}
 }

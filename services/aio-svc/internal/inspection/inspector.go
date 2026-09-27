@@ -15,7 +15,7 @@ func NewInspector() *Inspector {
 
 // DeviceInspection contains inspection results for a single device.
 type DeviceInspection struct {
-	DeviceId  string
+	deviceID  string
 	RiskScore int
 	Status    string
 	Findings  []RiskFinding
@@ -30,7 +30,7 @@ type RiskFinding struct {
 
 // InspectionReport contains the full inspection report.
 type InspectionReport struct {
-	TenantId      string
+	tenantID      string
 	Devices       []DeviceInspection
 	TotalDevices  int
 	HealthyCount  int
@@ -41,8 +41,8 @@ type InspectionReport struct {
 
 // RiskScoreResult contains a device's risk score.
 type RiskScoreResult struct {
-	TenantId string
-	DeviceId string
+	tenantID string
+	deviceID string
 	Score    int
 	Level    string
 	Factors  []string
@@ -50,7 +50,7 @@ type RiskScoreResult struct {
 
 // Report contains a summary report.
 type Report struct {
-	TenantId      string
+	tenantID      string
 	GeneratedAt   time.Time
 	TotalDevices  int
 	HealthyCount  int
@@ -61,16 +61,16 @@ type Report struct {
 }
 
 // RunInspection performs risk inspection on a set of devices.
-func (in *Inspector) RunInspection(tenantId string, deviceIds []string) InspectionReport {
+func (in *Inspector) RunInspection(tenantID string, deviceIds []string) InspectionReport {
 	report := InspectionReport{
-		TenantId:     tenantId,
+		tenantID:     tenantID,
 		Devices:      make([]DeviceInspection, 0, len(deviceIds)),
 		TotalDevices: len(deviceIds),
 		InspectedAt:  time.Now(),
 	}
 
-	for _, deviceId := range deviceIds {
-		inspection := in.inspectDevice(deviceId)
+	for _, deviceID := range deviceIds {
+		inspection := in.inspectDevice(deviceID)
 		report.Devices = append(report.Devices, inspection)
 
 		switch inspection.Status {
@@ -87,32 +87,32 @@ func (in *Inspector) RunInspection(tenantId string, deviceIds []string) Inspecti
 }
 
 // inspectDevice performs risk assessment on a single device.
-func (in *Inspector) inspectDevice(deviceId string) DeviceInspection {
+func (in *Inspector) inspectDevice(deviceID string) DeviceInspection {
 	inspection := DeviceInspection{
-		DeviceId: deviceId,
+		deviceID: deviceID,
 		Findings: make([]RiskFinding, 0),
 	}
 
 	// Generate deterministic risk based on device ID hash
-	score := computeDeviceRisk(deviceId)
+	score := computeDeviceRisk(deviceID)
 	inspection.RiskScore = score
 	inspection.Status = riskLevel(score)
 
 	// Generate findings based on risk factors
-	inspection.Findings = generateFindings(deviceId, score)
+	inspection.Findings = generateFindings(deviceID, score)
 
 	return inspection
 }
 
 // GetRiskScore returns the risk score for a specific device.
-func (in *Inspector) GetRiskScore(tenantId, deviceId string) RiskScoreResult {
-	score := computeDeviceRisk(deviceId)
+func (in *Inspector) GetRiskScore(tenantID, deviceID string) RiskScoreResult {
+	score := computeDeviceRisk(deviceID)
 	level := riskLevel(score)
-	factors := getRiskFactors(deviceId, score)
+	factors := getRiskFactors(deviceID, score)
 
 	return RiskScoreResult{
-		TenantId: tenantId,
-		DeviceId: deviceId,
+		tenantID: tenantID,
+		deviceID: deviceID,
 		Score:    score,
 		Level:    level,
 		Factors:  factors,
@@ -120,10 +120,10 @@ func (in *Inspector) GetRiskScore(tenantId, deviceId string) RiskScoreResult {
 }
 
 // GenerateReport generates a summary report for a tenant.
-func (in *Inspector) GenerateReport(tenantId string, deviceIds []string) Report {
+func (in *Inspector) GenerateReport(tenantID string, deviceIds []string) Report {
 	now := time.Now()
 	report := Report{
-		TenantId:     tenantId,
+		tenantID:     tenantID,
 		GeneratedAt:  now,
 		TotalDevices: len(deviceIds),
 		TopRisks:     make([]RiskScoreResult, 0),
@@ -131,13 +131,13 @@ func (in *Inspector) GenerateReport(tenantId string, deviceIds []string) Report 
 
 	// Score all devices
 	scores := make([]RiskScoreResult, 0, len(deviceIds))
-	for _, deviceId := range deviceIds {
-		score := computeDeviceRisk(deviceId)
+	for _, deviceID := range deviceIds {
+		score := computeDeviceRisk(deviceID)
 		level := riskLevel(score)
-		factors := getRiskFactors(deviceId, score)
+		factors := getRiskFactors(deviceID, score)
 		result := RiskScoreResult{
-			TenantId: tenantId,
-			DeviceId: deviceId,
+			tenantID: tenantID,
+			deviceID: deviceID,
 			Score:    score,
 			Level:    level,
 			Factors:  factors,
@@ -184,10 +184,10 @@ func (in *Inspector) GenerateReport(tenantId string, deviceIds []string) Report 
 }
 
 // computeDeviceRisk computes a deterministic risk score (0-100) for a device.
-func computeDeviceRisk(deviceId string) int {
+func computeDeviceRisk(deviceID string) int {
 	// Simple hash-based scoring for demonstration
 	hash := 0
-	for _, c := range deviceId {
+	for _, c := range deviceID {
 		hash = (hash*31 + int(c)) % 1000
 	}
 	// Map to 0-100 range with some devices being riskier
@@ -210,7 +210,7 @@ func riskLevel(score int) string {
 }
 
 // generateFindings generates risk findings for a device.
-func generateFindings(deviceId string, score int) []RiskFinding {
+func generateFindings(deviceID string, score int) []RiskFinding {
 	findings := make([]RiskFinding, 0)
 
 	if score >= 80 {
@@ -239,7 +239,7 @@ func generateFindings(deviceId string, score int) []RiskFinding {
 }
 
 // getRiskFactors returns the risk factors for a device.
-func getRiskFactors(deviceId string, score int) []string {
+func getRiskFactors(deviceID string, score int) []string {
 	factors := make([]string, 0)
 	if score >= 80 {
 		factors = append(factors, "high_risk_score")

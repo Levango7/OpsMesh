@@ -203,10 +203,8 @@ func computeCurrentValue(rule SLORule, goodCount, totalCount, errorCount int) fl
 }
 
 func calculateBurnRate(currentValue, target float64, window string) float64 {
-	windowDays := parseWindowDays(window)
-	if windowDays <= 0 {
-		windowDays = 30.0
-	}
+	// window 参数保留给调用方语义（哪个观察窗口的burn rate），公式本身
+	// = 实际错误率 / 允许错误率，与窗口长度无关——此前的窗口换算是死代码。
 
 	allowableError := 100.0 - target
 	if allowableError <= 0 {
@@ -233,35 +231,6 @@ func determineStatus(currentValue, target, burnRate float64) SLOStatus {
 		return StatusWarning
 	}
 	return StatusHealthy
-}
-
-func parseWindowDays(window string) float64 {
-	if len(window) < 2 {
-		return 30.0
-	}
-	num := 0.0
-	for i := 0; i < len(window); i++ {
-		c := window[i]
-		if c >= '0' && c <= '9' {
-			num = num*10 + float64(c-'0')
-		} else {
-			break
-		}
-	}
-	if len(window) > 0 {
-		unit := window[len(window)-1]
-		switch unit {
-		case 'd':
-			return num
-		case 'h':
-			return num / 24.0
-		case 'w':
-			return num * 7.0
-		case 'M':
-			return num * 30.0
-		}
-	}
-	return 30.0
 }
 
 func roundTo(val float64, precision int) float64 {
