@@ -1780,6 +1780,34 @@ github-release                 → skipped   ⇒ Release 资产仍是 0
 **演练环境已清理**：停掉两个演练控制面进程、删除 `opsmesh-updrill-mysql` 容器与其卷、
 移除 `v0.9.0` worktree 与临时二进制；用户在跑的那套 `opsmesh-*` 容器与 `opsmesh-mysql-data` 全程未被触碰。
 
+### 19.9 微服务镜像从未被签名：验收第 ④ 条暴露的覆盖面缺口（2026-09-26）
+
+四条验收里第 ④ 条是唯一没全过的：核心镜像 `opsmesh-binary:0.9.2` 的 `.sig` → 200，
+而 `auth-svc:0.9.2` 的 `.sig` → **404**。查下去是结构性的：
+
+- **签名只在 `ci.yml` 的 `image` / `image-agent`（两个核心镜像）里有**；17 个微服务镜像**只**由
+  `release.yml` 的 `build-and-push` 发布，而那个 job 里**没有任何 cosign / SBOM 步骤**。
+  也就是说：抓取面上永远只有 2/19 个镜像带签名证据，且这 2 个还是"顺带"签的（它们的 job 恰好走了签名逻辑）。
+- **不是声明造假**：grep 过 `docs/`、`README.md`、`DELIVERY.md`，没有"所有镜像均已签名"的表述；
+  `docs/test-specification.md` 只把 cosign 记在 `image` job 一行（描述当时的真实覆盖），
+  反倒说明这条缺口是"能力没铺到"，不是"说了没做"。
+- **处置（对齐 `ci.yml` 口径，不另起一套）**：`build-and-push` 补四步——
+  ① `syft`（钉版 v1.51.1）对推送后的镜像出 SPDX JSON 并上传 artifact；
+  ② `sigstore/cosign-installer`（钉 commit，cosign v2.2.4）；
+  ③ `cosign sign --yes`（keyless，走 Fulcio OIDC + Rekor）；
+  ④ **`cosign verify` 自验**，身份正则锁到本 workflow 文件
+  （`^https://github\.com/<repo>/\.github/workflows/release\.yml@`）——验不过即失败。
+  第 ④ 步是刻意的：本项目已经多次被"步骤空转但 job 绿"咬过，签完不验等于没签。
+- **权限按最小集给**：`build-and-push` 单独声明 `contents: read` + `packages: write` + `id-token: write`
+  （keyless 必需），不再继承 workflow 级的 `contents: write`（那个是 `changelog` / `github-release` 需要的）。
+- **顺序**：SBOM 与签名放在 **Trivy 之后**——不给一个即将被判红（HIGH/CRITICAL 退出码 1）的镜像留签名。
+- **本机验证口径**：`actionlint -shellcheck=` 对该 workflow 0 问题（表达式与结构层面）；
+  把 `run` 块抽出、`${{ … }}` 替换为占位符后 `bash -n` + `shellcheck -S warning` 干净。
+  **注意**：直接对未替换的 `run` 块跑 shellcheck 会报一片 SC2296，那是"参数展开以 `{` 开头"的假象——
+  Actions 在 bash 之前就把 `${{ }}` 替换掉了，裸 shellcheck 不知道这层。别把它当真问题去"修"。
+- **真跑以重切标签后的 `release` run 为准**：这三步第一次执行就在发版那一刻（§19 第 5 类"只在发版时执行"），
+  所以移动标签前必须保证本机静态验证全过；`ci.yml` 的 `image` job 提供同口径的既有真跑证据。
+
 ## 20. 镜像发布名与消费方引用的对齐（把 §19.4 的两个待决项做掉，2026-09-26）
 
 §19.4 留下两条需要拍板的开口，本轮按「不改变对外契约的最小正确解」处理：

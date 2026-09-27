@@ -18,6 +18,12 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    # keyless cosign 需要 id-token:write（Fulcio OIDC）；推送镜像需要 packages:write。
+    # 不给 contents:write——本 job 不写仓库内容，权限按最小集给。
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     strategy:
       matrix:
         # 只列**常驻服务**：Dockerfile.service 假设 `services/<svc>/cmd/<svc>` 布局并以
@@ -107,6 +113,54 @@ jobs:
           image-ref: ${{ steps.meta.outputs.image }}:${{ github.sha }}
           severity: HIGH,CRITICAL
           exit-code: "1"
+
+      # 供应链证据：SBOM + 镜像签名。**放在 Trivy 之后**：不给会被判红的镜像留签名。
+      # 为什么必须补在这里：核心镜像由 ci.yml 的 image job 签名，而这 17 个微服务镜像**只**
+      # 由本 job 发布——此前本文件没有任何 cosign/SBOM 步骤，于是 v0.9.2 的 17 个镜像全部未签名
+      # （实测 `auth-svc:0.9.2` 的 `.sig` → 404），抓取面上就是"两个核心镜像有签名、其余没有"。
+      # 口径刻意与 ci.yml 逐字一致（同一 installer 钉同 commit、同一 cosign 版本、同一 keyless 模式），
+      # 避免两条发布路径产出不同强度的证据。
+      - name: 生成镜像 SBOM（syft v1.51.1，钉版）
+        run: |
+          set -euo pipefail
+          command -v syft >/dev/null 2>&1 || {
+              curl -sSfL "https://github.com/anchore/syft/releases/download/v1.51.1/syft_1.51.1_linux_amd64.tar.gz" -o /tmp/syft.tar.gz
+              tar -xzf /tmp/syft.tar.gz -C /tmp syft
+              sudo mv /tmp/syft /usr/local/bin/syft
+          }
+          syft version
+          syft "${{ steps.meta.outputs.image }}:${{ github.sha }}" -o spdx-json > "sbom-${{ matrix.service }}-${GITHUB_SHA}.spdx.json"
+          python3 -c 'import json,sys;print("SBOM 包条目数:", len(json.load(open(sys.argv[1]))["packages"]))' "sbom-${{ matrix.service }}-${GITHUB_SHA}.spdx.json"
+
+      - name: 上传 SBOM 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.service }}
+          path: sbom-${{ matrix.service }}-${{ github.sha }}.spdx.json
+          retention-days: 30
+
+      - name: 安装 cosign（官方 installer，钉死 commit）
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
+        with:
+          cosign-release: 'v2.2.4'
+
+      - name: cosign 签名镜像（keyless OIDC）
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${{ steps.meta.outputs.image }}:${{ github.sha }}"
+          echo "已签名（keyless/OIDC）: ${{ steps.meta.outputs.image }}"
+
+      - name: 自验证签名（签完必须验得过，否则这里就红）
+        # 为什么要自验：`cosign sign` 变成空转（例如 OIDC 权限没给、或将来被人加 if 跳过）会让
+        # job 保持绿色而镜像其实没签名——正是本项目反复抓到的"报告与实际不符"形态。
+        # 用身份正则锁到本 workflow 文件，验不过直接失败。
+        run: |
+          set -euo pipefail
+          cosign verify \
+            --certificate-identity-regexp "^https://github\.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${{ steps.meta.outputs.image }}:${{ github.sha }}" >/dev/null
+          echo "签名已验证：${{ matrix.service }}"
 
   changelog:
     runs-on: ubuntu-latest

@@ -20,6 +20,19 @@
 - **验证**：`rand_pw` 从 `deploy.sh` 抽出**真实定义**跑 300 次（长度 / 越界字符为空 / 必含特殊字符）⇒ 0 失败，且故意把校验集合写窄会立刻报错（断言是活的）；`/tmp` 沙箱真跑 `deploy.sh init` ⇒ `.env` 生成成功、四条口令均落在新字符集内、`docker compose config` rc=0（插值链路可用）；13 个脚本 `shellcheck -S warning` + `bash -n` 全绿。
 - **口径如实分层**：`-S info` 级仍有 39×SC2015、3×SC2012 未动（可读性而非正确性，提口径前需逐条判"是否真死变量"），已列入 §23 待办第 9 项。shellcheck 门禁本身以 CI 该 step 为准。
 
+## [Unreleased] — 2026-09-26 给 17 个微服务镜像补上签名与 SBOM（验收第 ④ 条暴露的缺口）
+
+> 证据：`docs/commercial-readiness-review-2026-09-25.md` §19.9。v0.9.2 四条验收里唯一没全过的一条。
+
+- **事实**：签名只存在于 `ci.yml` 的 `image` / `image-agent`（两个核心镜像）；17 个微服务镜像**只**由 `release.yml` 的 `build-and-push` 发布，而那个 job **没有任何 cosign / SBOM 步骤**。实测 `opsmesh-binary:0.9.2` 的 `.sig` → 200、`auth-svc:0.9.2` 的 `.sig` → **404** ⇒ 抓取面上永远只有 2/19 个镜像带签名证据。
+- **不是声明造假**：grep 过 `docs/`、`README.md`、`DELIVERY.md`，没有"所有镜像均已签名"的说法——是能力没铺到，不是说了没做。
+- **补法（与 `ci.yml` 逐字同口径，不另起一套）**：`build-and-push` 新增四步——`syft`（钉版 v1.51.1）出 SPDX JSON 并上传 artifact；`sigstore/cosign-installer`（钉 commit，cosign v2.2.4）；`cosign sign --yes`（keyless，Fulcio OIDC + Rekor）；**`cosign verify` 自验**并把身份正则锁到 `release.yml` 自身——**验不过即失败**（签完不验，等于给"步骤空转但 job 绿"留门）。
+- **权限最小集**：该 job 单独声明 `contents: read` + `packages: write` + `id-token: write`（keyless 必需），不再继承 workflow 级的 `contents: write`。
+- **顺序**：SBOM/签名放在 **Trivy 之后**——不给即将被判红的镜像留签名。
+- **文档同步**：`docs/image-pinning.md` 里那句"CI：在镜像构建流水线中添加 `cosign verify`"（读起来像待办）改为现在时的实现说明 + 消费方验证命令；`docs/test-specification.md` 的 cosign 行从"key-based（非 keyless）"改为双路径实况。
+- **本机验证**：`actionlint -shellcheck=` 对该 workflow 0 问题；把 `run` 块抽出并把 `${{ … }}` 换成占位符后 `bash -n` + `shellcheck -S warning` 干净。**顺带记一个坑**：直接对未替换的 `run` 块跑 shellcheck 会报一片 SC2296（"参数展开以 `{` 开头"），那是 Actions 层替换机制造成的假象，不要照着"修"。
+- **真跑以重切标签后的 `release` run 为准**（这三步首次执行就在发版那一刻，属 §19 第 5 类"只在发版时执行"的路径）。
+
 ## [Unreleased] — 2026-09-26 升级路径演练（0.9.0 → 0.9.2）抓到一条每次重启都会复发的客户可见缺陷
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §19.8。此前所有验证都是**全新装**；客户手上是**有存量数据的旧库**。

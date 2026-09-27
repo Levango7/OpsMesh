@@ -442,7 +442,7 @@ graph LR
 | `govulncheck` v1.1.4 | security | `./...` | — | 官方 Go 漏洞数据库扫描 |
 | `trivy` v0.36.0 (fs) | security | `.` | severity < HIGH | 文件系统扫描，HIGH/CRITICAL 失败 |
 | `trivy` v0.36.0 (image) | image | 推送镜像 | severity < HIGH | 镜像扫描，钉死版本防供应链漂移 |
-| `cosign` | image | 推送镜像 | — | 供应链安全，key-based 签名（非 keyless） |
+| `cosign` | image / build-and-push | 推送镜像 | — | 供应链安全：私有路径 **key-based**（`COSIGN_PRIVATE_KEY` + `--tlog-upload=false`）；GHCR 路径 **keyless**（Fulcio OIDC + Rekor）。两条路径都在签名后 `cosign verify` 自验，验不过即失败 |
 
 **gosec 豁免理由摘要**：
 

@@ -34,7 +34,10 @@ FROM golang:1.26-bookworm@sha256:abc123... AS build
 
 - **Renovate**：配置 `regexManagers` 自动检测并更新 digest
 - **Dependabot**：GitHub 原生支持 Dockerfile 依赖更新
-- **CI**：在镜像构建流水线中添加 `cosign verify` 验证签名
+- **CI**：镜像构建流水线已内置签名与自验证——`ci.yml` 的 `image` / `image-agent`（核心镜像）与
+  `release.yml` 的 `build-and-push`（17 个微服务镜像）在推送后 `cosign sign`，随即
+  `cosign verify --certificate-identity-regexp '…/<workflow>\.yml@' --certificate-oidc-issuer https://token.actions.githubusercontent.com`
+  自验一遍；**验不过即失败**（避免签名步骤空转却 job 绿）。消费方验证命令同上。
 
 ## OpsMesh 涉及的 Base Image
 
