@@ -222,6 +222,9 @@ else
 fi
 
 sec "5. 微服务 /metrics 真实性核对"
+# 预期值 = 源码中是否注册了 mux.Handle("/metrics", metrics.GetHandler())：
+# device/task/alert/auth/log/config/gpu/aio/portal 均已注册 → yes；
+# grafana-bridge 的 /metrics 返回 JSON（非 Prometheus 文本格式），仍为 no。
 check_metrics() {
   local name="$1" port="$2" expect="$3"
   local c; c="$(curl -sS --max-time 6 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/metrics" 2>/dev/null)"
@@ -234,12 +237,12 @@ check_metrics() {
 check_metrics device-svc "$(env_val DEVICE_SVC_HTTP_PORT 8101)" yes
 check_metrics task-svc   "$(env_val TASK_SVC_HTTP_PORT 8102)"   yes
 check_metrics alert-svc  "$(env_val ALERT_SVC_HTTP_PORT 8103)"  yes
-check_metrics auth-svc   "$(env_val AUTH_SVC_HTTP_PORT 8100)"   no
-check_metrics config-svc "$(env_val CONFIG_SVC_HTTP_PORT 8106)" no
-check_metrics log-svc    "$(env_val LOG_SVC_HTTP_PORT 8105)"    no
-check_metrics gpu-svc    "$(env_val GPU_SVC_HTTP_PORT 8107)"    no
-check_metrics aio-svc    "$(env_val AIO_SVC_HTTP_PORT 8108)"    no
-check_metrics portal-svc "$(env_val PORTAL_SVC_HTTP_PORT 8109)" no
+check_metrics auth-svc   "$(env_val AUTH_SVC_HTTP_PORT 8100)"   yes
+check_metrics config-svc "$(env_val CONFIG_SVC_HTTP_PORT 8106)" yes
+check_metrics log-svc    "$(env_val LOG_SVC_HTTP_PORT 8105)"    yes
+check_metrics gpu-svc    "$(env_val GPU_SVC_HTTP_PORT 8107)"    yes
+check_metrics aio-svc    "$(env_val AIO_SVC_HTTP_PORT 8108)"    yes
+check_metrics portal-svc "$(env_val PORTAL_SVC_HTTP_PORT 8109)" yes
 
 sec "6. 微服务健康检查（9 个）"
 for e in "auth-svc:$(env_val AUTH_SVC_HTTP_PORT 8100):/health" \

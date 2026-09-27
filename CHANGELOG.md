@@ -20,6 +20,17 @@
 - **验证**：`rand_pw` 从 `deploy.sh` 抽出**真实定义**跑 300 次（长度 / 越界字符为空 / 必含特殊字符）⇒ 0 失败，且故意把校验集合写窄会立刻报错（断言是活的）；`/tmp` 沙箱真跑 `deploy.sh init` ⇒ `.env` 生成成功、四条口令均落在新字符集内、`docker compose config` rc=0（插值链路可用）；13 个脚本 `shellcheck -S warning` + `bash -n` 全绿。
 - **口径如实分层**：`-S info` 级仍有 39×SC2015、3×SC2012 未动（可读性而非正确性，提口径前需逐条判"是否真死变量"），已列入 §23 待办第 9 项。shellcheck 门禁本身以 CI 该 step 为准。
 
+## [Unreleased] — 2026-09-28 微服务 `/metrics` 覆盖补齐到 16/17：抓取配置对齐 + 双向门禁
+
+> 证据：`docs/commercial-readiness-review-2026-09-25.md` §21.7。起因是上一轮的实跑定论（§21.6：只有 3 个服务暴露）。
+
+- **13 个微服务补上 Prometheus 端点**（auth / autoscaler / bot / config / deploy / gpu / incident / log / plugin / portal / runbook / workflow / aio），逐服务按既有三先例的口径：`metrics.Init("<svc>")` + `mux.Handle("/metrics", metrics.GetHandler())` + `metrics.HTTPMiddleware` 包住 handler（有中间件链的插进链里）。`gpu-svc` 因已 import 自带的 `internal/metrics` 采集器而用 `pkgmetrics` 别名，两个同名包不合并。
+- **抓取侧同步**：`prometheus.yml` 补 6 个 compose 栈内服务的 job（容器端口取自 compose env）；chart `values.yaml` 12 个条目置 `metrics: true`（`workflow_svc` 不在 chart 的 services 段，故无对象可改，已写明待纳入）；`verify-runtime.sh` 的 `check_metrics` 期望值 6 个 no→yes；相关注释全部改为实况。
+- **门禁两处升级（防下次漂移）**：① ServiceMonitor 期望值从**硬编码 4** 改为**由 values.yaml 派生**（控制面 + `metrics: true` 条目数，当前 16），"谁暴露 /metrics"从此单一事实源；② **新增第 11 节：抓取配置 ↔ 服务能力双向核对**——每个微服务 job 必须在源码里找到 `GetHandler()` 注册行（防"配了却恒 DOWN 的坏目标"，2026-09-25 真实发生过 9 个），已暴露的服务也必须有 job 或在带理由的豁免表里（7 个走 chart + `tf-provider` 无 HTTP 面 + `grafana-bridge` 刻意不抓）。
+- **`grafana-bridge` 的误导端点收窄**：它的 `/` 原本是 catch-all，**任意路径**（含 `/metrics`）都返回 `{"status":"ok"}` JSON。现在只服务 `/` 与显式 `/status`，其余 404；chart 探针走的 `/health` 一并确认可达。
+- **真机复核（逐进程起停 17 个服务）**：**16 个**返回 200 + `text/plain` + `# HELP http_requests_total`；`grafana-bridge` `/metrics` → 404、`/status`/`/health` → 200；`tf-provider` 不适用。
+- **探针自身的两个坑（都不是产品缺陷，记下来免得下次误报）**：① `aio-svc` 读 `AIO_SVC_PORT`、`log-svc` 读 `LOG_SVC_HEALTH_ADDR`，套统一的 `<SVC>_HTTP_PORT` 模板会得到 conn-fail **假阴性**；② `auth/config/device-svc` 缺密钥时 fail-fast 退出（P0-1/P1-8 既定行为），不带密钥探针同样"探不到"，带临时密钥后立刻 200。**先怀疑探针，再怀疑产品。**
+
 ## [Unreleased] — 2026-09-27 `/metrics` 在微服务上的覆盖：逐进程实跑定论（不是静态印象）
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §21.6。取 `git worktree v0.9.2` 那棵树（避免被并行会话的在途改动污染），逐个构建二进制、起进程、打端点。

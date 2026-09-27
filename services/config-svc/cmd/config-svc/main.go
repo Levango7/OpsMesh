@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	applog "github.com/Levango7/OpsMesh/pkg/log"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/pkg/trace"
 	configv1 "github.com/Levango7/OpsMesh/services/config-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/drift"
@@ -39,6 +40,8 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		lgr.Fatalf("[config-svc] 配置校验失败，停止启动: %v", err)
 	}
+
+	metrics.Init("config-svc")
 
 	shutdown, err := trace.InitTracer("config-svc", cfg.OTelEndpoint)
 	if err != nil {
@@ -93,11 +96,13 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready"))
 	})
+	mux.Handle("/metrics", metrics.GetHandler())
 
 	registerDriftHandlers(mux, det)
 	registerRotationHandlers(mux, rot)
 
 	var handler http.Handler = mux
+	handler = metrics.HTTPMiddleware(handler)
 	handler = trace.HTTPMiddleware("github.com/Levango7/OpsMesh/config-svc")(handler)
 
 	httpServer := &http.Server{

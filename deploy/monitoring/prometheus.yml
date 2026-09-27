@@ -38,13 +38,18 @@ scrape_configs:
 
   # OpsMesh Microservices
   #
-  # 事实（2026-09-25 逐服务对照源码核验）：微服务【没有】独立 metrics 端口——
-  # services/** 无任何 9091 监听；/metrics 由服务在自身 HTTP 端口注册
-  # （cmd/<svc>/main.go: mux.Handle("/metrics", metrics.GetHandler())）。
-  # 当前仅 device-svc / task-svc / alert-svc 注册了该路径；auth / config / log /
-  # gpu / portal / aio 尚未暴露 Prometheus 指标。此前为 9 个服务配置的 :9091
-  # 抓取任务全部指向无监听端口（target 恒 DOWN，属虚假配置），已按实际情况删减；
-  # 其余服务补齐 /metrics 后再在此追加 job。
+  # 事实（2026-09-25 逐服务对照源码核验，2026-09-28 /metrics 覆盖补齐后复核）：微服务
+  # 【没有】独立 metrics 端口——services/** 无任何 9091 监听；/metrics 由服务在自身
+  # HTTP 端口注册（cmd/<svc>/main.go: mux.Handle("/metrics", metrics.GetHandler())）。
+  # 本 compose 栈内 9 个服务（device-svc / task-svc / alert-svc / auth-svc / log-svc /
+  # config-svc / gpu-svc / aio-svc / portal-svc）均已注册该路径，抓取任务如下；
+  # autoscaler-svc / bot-svc / deploy-svc / incident-svc / plugin-svc / runbook-svc
+  # 不在本 compose 栈里，由 Helm chart 的 ServiceMonitor 按 http 端口抓取
+  # （deploy/helm/opsmesh/values.yaml services.<name>.metrics: true）；workflow-svc
+  # 同样不在 compose 栈里，且尚未纳入 chart 的 services 段（无对应 ServiceMonitor），
+  # 待纳入后按同口径开启。
+  # 此前为 9 个服务配置的 :9091 抓取任务全部指向无监听端口（target 恒 DOWN，属虚假
+  # 配置），已按实际情况删减。
   - job_name: "device-svc"
     static_configs:
       - targets: ["device-svc:8101"]
@@ -58,6 +63,36 @@ scrape_configs:
   - job_name: "alert-svc"
     static_configs:
       - targets: ["alert-svc:8103"]
+    metrics_path: /metrics
+
+  - job_name: "auth-svc"
+    static_configs:
+      - targets: ["auth-svc:8100"]
+    metrics_path: /metrics
+
+  - job_name: "log-svc"
+    static_configs:
+      - targets: ["log-svc:8105"]
+    metrics_path: /metrics
+
+  - job_name: "config-svc"
+    static_configs:
+      - targets: ["config-svc:8106"]
+    metrics_path: /metrics
+
+  - job_name: "gpu-svc"
+    static_configs:
+      - targets: ["gpu-svc:8107"]
+    metrics_path: /metrics
+
+  - job_name: "aio-svc"
+    static_configs:
+      - targets: ["aio-svc:8108"]
+    metrics_path: /metrics
+
+  - job_name: "portal-svc"
+    static_configs:
+      - targets: ["portal-svc:8109"]
     metrics_path: /metrics
 
   # Infrastructure（经 blackbox_exporter 做 TCP 可达性拨测）

@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	applog "github.com/Levango7/OpsMesh/pkg/log"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/services/bot-svc/internal/client"
 	"github.com/Levango7/OpsMesh/services/bot-svc/internal/handler"
 	"github.com/Levango7/OpsMesh/services/bot-svc/pkg/config"
@@ -21,15 +22,18 @@ func main() {
 	lgr := applog.Init("bot-svc")
 	cfg := config.Load()
 
+	metrics.Init("bot-svc")
+
 	apiClient := client.NewOpsMeshClient(cfg.OpsMeshAPIURL)
 	h := handler.NewHandler(cfg, apiClient)
 
 	mux := http.NewServeMux()
+	mux.Handle("/metrics", metrics.GetHandler())
 	h.RegisterRoutes(mux)
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: mux,
+		Handler: metrics.HTTPMiddleware(mux),
 	}
 
 	go func() {

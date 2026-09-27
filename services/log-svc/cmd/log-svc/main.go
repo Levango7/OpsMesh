@@ -21,6 +21,7 @@ import (
 	"opsmesh.io/log-svc/pkg/logstore"
 
 	applog "github.com/Levango7/OpsMesh/pkg/log"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 )
 
 func main() {
@@ -53,6 +54,8 @@ func main() {
 	if v := os.Getenv("LOG_SVC_SQL_DSN"); v != "" {
 		cfg.LogStore.SQL.DSN = v
 	}
+
+	metrics.Init("log-svc")
 
 	// Initialize logstore backend
 	store, err := initLogStore(cfg)
@@ -186,10 +189,11 @@ func newHealthServer(addr string, store logstore.LogStore) *http.Server {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, `{"status":"ready"}`)
 	})
+	mux.Handle("/metrics", metrics.GetHandler())
 
 	return &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           metrics.HTTPMiddleware(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 }

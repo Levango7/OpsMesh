@@ -4,8 +4,8 @@
 # 端口约定：各微服务 httpPort/grpcPort 独立配置（见各服务段，对照源码默认值）。
 # 指标暴露：微服务【没有】独立 metrics 端口（services/** 无 9091 监听），/metrics
 # 由服务在自身 HTTP 端口注册（cmd/<svc>/main.go: mux.Handle("/metrics", metrics.GetHandler())）。
-# 当前仅 device-svc / task-svc / alert-svc 注册了该路径，因此只有这三段 metrics: true，
-# ServiceMonitor 按 http 端口抓取；其余服务补齐 /metrics 后再开启。
+# 除 grafana-bridge 外（其 /metrics 返回 JSON 而非 Prometheus 文本格式，保持 metrics: false），
+# 各服务段已按源码注册情况置 metrics: true，ServiceMonitor 按 http 端口抓取。
 
 ## @section Global
 global:
@@ -271,6 +271,8 @@ services:
     httpPort: 8081
     # gRPC 端口（=AUTH_SVC_GRPC_PORT 代码默认 50052）；纯 HTTP 服务填 0（不渲染 gRPC 端口）
     grpcPort: 50052
+    # /metrics 已注册在 HTTP 端口（auth-svc/cmd/auth-svc/main.go），ServiceMonitor 据此生成
+    metrics: true
     replicas: 1
     # 环境变量前缀（auth-svc/pkg/config/config.go）：模板渲染 <前缀>_STORE_TYPE / <前缀>_DSN
     storeEnvPrefix: "AUTH_SVC"
@@ -455,6 +457,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8083
     grpcPort: 50054
+    # /metrics 已注册在 HTTP 端口（config-svc/cmd/config-svc/main.go），ServiceMonitor 据此生成
+    metrics: true
     replicas: 1
     storeEnvPrefix: "CONFIG_SVC"
     storeType: "memory"
@@ -498,6 +502,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8080
     grpcPort: 9090
+    # /metrics 已注册在健康检查 HTTP 端口（log-svc/cmd/log-svc/main.go newHealthServer），ServiceMonitor 据此生成
+    metrics: true
     replicas: 1
     storeEnvPrefix: ""
     storeType: "memory"
@@ -541,6 +547,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8081
     grpcPort: 50052
+    # /metrics 已注册在 HTTP 端口（deploy-svc/cmd/deploy-svc/main.go），ServiceMonitor 据此生成
+    metrics: true
     replicas: 1
     storeEnvPrefix: "DEPLOY_SVC"
     storeType: "memory"
@@ -583,6 +591,8 @@ services:
     httpPort: 8082
     # 无 gRPC 服务端 → 0（模板不渲染 gRPC 端口）
     grpcPort: 0
+    # /metrics 已注册在 HTTP 端口（plugin-svc/cmd/plugin-svc/main.go），ServiceMonitor 据此生成
+    metrics: true
     replicas: 1
     storeEnvPrefix: "PLUGIN_SVC"
     storeType: "memory"
@@ -624,6 +634,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8080
     grpcPort: 50051
+    # /metrics 已注册在 HTTP 端口（portal-svc/cmd/portal-svc/main.go），ServiceMonitor 据此生成
+    metrics: true
     replicas: 1
     storeEnvPrefix: "PORTAL_SVC"
     storeType: "memory"
@@ -666,6 +678,8 @@ services:
     httpPort: 8100
     # 无 gRPC 服务端 → 0（模板不渲染 gRPC 端口）
     grpcPort: 0
+    # /metrics 已注册在 HTTP 端口（aio-svc/cmd/aio-svc/main.go），ServiceMonitor 据此生成
+    metrics: true
     replicas: 1
     # aio-svc 无 STORE_TYPE/DSN env（SLO/异常检测引擎内存态）
     storeEnvPrefix: ""
@@ -755,6 +769,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8090
     grpcPort: 0
+    # /metrics 已注册在 HTTP 端口（gpu-svc/cmd/gpu-svc/main.go），ServiceMonitor 据此生成
+    metrics: true
     replicas: 1
     # gpu-svc 无 STORE_TYPE/DSN env（Ollama 集成为外部依赖 OLLAMA_URL）
     storeEnvPrefix: ""
@@ -797,6 +813,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8080
     grpcPort: 0
+    # /metrics 已注册在 HTTP 端口（bot-svc/cmd/bot-svc/main.go），ServiceMonitor 据此生成
+    metrics: true
     replicas: 1
     # bot-svc 无 STORE_TYPE/DSN env（IM 平台 token 各自 env）
     storeEnvPrefix: ""
@@ -839,6 +857,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8082
     grpcPort: 0
+    # /metrics 已注册在 HTTP 端口（runbook-svc/cmd/runbook-svc/main.go），ServiceMonitor 据此生成
+    metrics: true
     replicas: 1
     storeEnvPrefix: "RUNBOOK_SVC"
     storeType: "memory"
@@ -880,6 +900,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8082
     grpcPort: 50052
+    # /metrics 已注册在 HTTP 端口（incident-svc/cmd/incident-svc/main.go），ServiceMonitor 据此生成
+    metrics: true
     replicas: 1
     storeEnvPrefix: "INCIDENT_SVC"
     storeType: "memory"
@@ -921,6 +943,8 @@ services:
       pullPolicy: IfNotPresent
     httpPort: 8080
     grpcPort: 0
+    # /metrics 已注册在 HTTP 端口（autoscaler-svc/cmd/autoscaler-svc/main.go），ServiceMonitor 据此生成
+    metrics: true
     replicas: 1
     storeEnvPrefix: "AUTOSCALER_SVC"
     storeType: "memory"

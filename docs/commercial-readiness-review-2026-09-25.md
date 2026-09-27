@@ -2075,6 +2075,43 @@ CI 也看不见，因为它只跑代码测试与静态清单，没有任何一�
   ② 其余 13 个微服务未注册 `/metrics`（现只有 device/task/alert 三个）；
   ③ node_exporter 是否纳入出厂栈（决定主机级告警能否默认可用）。
 
+### 21.7 补齐微服务 `/metrics` 覆盖：16/17 暴露、抓取配置对齐、门禁双向（2026-09-28）
+
+§21.6 定论之后按指示把它补上——但**不是只加代码**，三件事一起做：
+
+- **13 个服务补端点**：`auth / autoscaler / bot / config / deploy / gpu / incident / log / plugin / portal / runbook / workflow / aio`，
+  逐个按三个既有先例的口径接线：`metrics.Init("<svc>")` + `mux.Handle("/metrics", metrics.GetHandler())` +
+  `metrics.HTTPMiddleware` 包住 HTTP handler（有中间件链的插进链里，`Handler: mux` 的直接包裹）。
+  `gpu-svc` 因已 import 自带的 `internal/metrics`（GPU 采集器）而用了 `pkgmetrics` 别名——同名的两个包，不合并。
+- **抓取侧同步**：`prometheus.yml` 为**本 compose 栈内**的 6 个服务补 job（auth:8100 / log:8105 / config:8106 /
+  gpu:8107 / aio:8108 / portal:8109，容器端口取自 compose 的 env），文件里那段"当前仅 3 个注册"的注释改写为实况；
+  chart 的 `values.yaml` 把 12 个条目 `metrics: true`（`workflow_svc` 不在 chart 的 services 段里，故无对象可改，
+  已在注释与报告里写明它待纳入 chart 后再开）；`verify-runtime.sh` 的 `check_metrics` 期望值把 6 个 `no` 改 `yes`。
+- **门禁两处升级（这是关键，否则下次必然漂移）**：
+  ① 第 3c 节的 ServiceMonitor 期望值从**硬编码 4** 改为**由 `values.yaml` 派生**
+  （`控制面 + metrics: true 的条目数`，当前 16）——"哪个服务暴露 /metrics"从此只有一个事实源，新增服务不会再撞死断言；
+  ② **新增第 11 节：抓取配置 ↔ 服务能力双向核对**——`prometheus.yml` 里每个微服务 job 都必须在
+  `services/<svc>/cmd/<svc>/main.go` 找到 `GetHandler()` 注册行（防"配了但没暴露"的恒 DOWN 坏目标，2026-09-25 真实发生过 9 个），
+  反向则是"已暴露却没有任何抓取配置、也不在带理由的豁免表里"（防监控盲区）。豁免表 9 项带理由：
+  7 个不在 compose 栈（走 chart ServiceMonitor）+ `tf-provider`（插件无 HTTP 面）+ `grafana-bridge`（刻意不抓）。
+- **`grafana-bridge` 的误导端点已收窄**：它的 `/` 是 catch-all，于是**任意路径**（含 `/metrics`）都返回
+  `{"status":"ok"}` 的 JSON。现在只服务 `/` 与显式 `/status`（chart 探针走 `/health`，也已确认可达），其余一律 404。
+  改名后 `net/http` 不再给它一个"看起来像指标端点"的假象。
+
+**真机复核（工作区当前树，逐进程起停 17 个服务）**：
+
+| 结果 | 服务 |
+|---|---|
+| **Prometheus 指标 200 + `text/plain`（16）** | device / task / alert（原有）+ auth / autoscaler / bot / config / deploy / gpu / incident / log / plugin / portal / runbook / workflow / aio（新增） |
+| 刻意不暴露（1） | `grafana-bridge`：`/metrics` → **404**、`/status` → 200、`/health` → 200 |
+| 不适用 | `tf-provider`（Terraform 插件，无 HTTP 面） |
+
+探针本身也踩到两个"看起来像缺陷其实不是"的坑，值得记：① 首版探针给每个服务套同一个 `<SVC>_HTTP_PORT`
+env 模板，但 `aio-svc` 读的是 `AIO_SVC_PORT`、`log-svc` 读的是 `LOG_SVC_HEALTH_ADDR` ⇒ 得到 conn-fail
+**假阴性**，按真实 env 补测后都是 200；② `auth-svc` / `config-svc` / `device-svc` 在缺密钥时
+**fail-fast 退出**（P0-1/P1-8 的既定行为）⇒ 不带密钥探针同样得到"未启动"，带上临时密钥后立刻 200。
+**"探针没探到"永远要先怀疑探针**，别急着报缺陷。
+
 ### 21.6 `/metrics` 到底在哪些微服务上"上线"了（2026-09-27 逐进程实跑，取 v0.9.2 树）
 
 §21.5 的遗留②一直写作"其余 13 个微服务未注册 /metrics"——那是**静态印象**。这次把它做实：
@@ -2170,7 +2207,7 @@ CI 也看不见，因为它只跑代码测试与静态清单，没有任何一�
 | 3 | P1-7 许可与第三方合规（NOTICE/THIRD_PARTY、MPL-2.0 依赖的再分发含义、基础镜像来源目录） | 唯一剩下的 P1 大块，属商务 + 法务判定 |
 | 4 | 外部 GitOps chart 的 values 结构核对（需该仓库读权限） | §20.3 遗留的最后一处不确定 |
 | 5 | 统一控制面与微服务的 HTTP 指标命名（`opsmesh_http_*` vs 无前缀 `http_*`） | 破坏性变更，需随版本走；当前出厂规则/面板已用 `__name__` 并集兜住（§21.3） |
-| 6 | 微服务 `/metrics` 覆盖：**实跑已定论**（§21.6）——只有 device/task/alert 三个暴露 Prometheus 指标，13 个服务 404，`grafana-bridge` 的 `/metrics` 返回 JSON 而非 Prometheus 文本；抓取配置与能力一致（无坏目标） | 缺口在能力侧：这 13 个服务在面板上永远空白。补法是把 `pkg/metrics` 的 handler 接到各服务（3 个已有先例），再同步 prometheus.yml / chart ServiceMonitor / §21.4 的契约测试；`grafana-bridge` 建议改名或改名+补真指标 |
+| 6 | ~~微服务 `/metrics` 覆盖~~ **已补齐**（§21.7）：16/17 服务暴露 Prometheus 指标（真机逐进程复核），`grafana-bridge` 刻意不暴露且端点已收窄为 `/`+`/status`，`tf-provider` 不适用；`prometheus.yml` 补 6 个 compose 服务 job、chart `metrics: true` 12 条、`verify-runtime.sh` 期望同步；ServiceMonitor 期望值改为**由 values 派生**、并新增**抓取配置 ↔ 服务能力双向门禁**（第 11 节） | 仍留两处非阻断项：`workflow_svc` 未纳入 chart 的 services 段（无 ServiceMonitor，k8s 部署该服务时需先补条目）；13 个服务目前只有 `pkg/metrics` 的通用指标，**业务维度指标**（队列深度/业务计数器）仍是逐个服务后续接 |
 | 7 | node_exporter 是否纳入出厂栈 | 决定主机级告警（磁盘等）能否默认可用；现在只能以 `.example` 形式提供（§21.2） |
 | 8 | 微服务剩余约 250 处 `Printf` 的逐点严重级别升级 | 增量改进，统一管道已就位 |
 | 9 | 把交付脚本的 shellcheck 口径从 `-S warning` 提到 `-S info`（余 39×SC2015、3×SC2012） | 可读性而非正确性；提口径前要逐条判"是否真死变量"，与本轮 SC2034 的处置同法，不宜顺手 |

@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	applog "github.com/Levango7/OpsMesh/pkg/log"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/services/autoscaler-svc/internal/evaluator"
 	"github.com/Levango7/OpsMesh/services/autoscaler-svc/internal/handler"
 	"github.com/Levango7/OpsMesh/services/autoscaler-svc/internal/k8s"
@@ -24,6 +25,8 @@ func main() {
 	lgr := applog.Init("autoscaler-svc")
 	cfg := config.Load()
 
+	metrics.Init("autoscaler-svc")
+
 	eng := evaluator.NewEvaluator(nil)
 	reader := prometheus.NewClient(cfg.PrometheusURL)
 	scaler := k8s.NewClient()
@@ -31,11 +34,12 @@ func main() {
 	h := handler.NewHandler(svc)
 
 	mux := http.NewServeMux()
+	mux.Handle("/metrics", metrics.GetHandler())
 	h.RegisterRoutes(mux)
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: mux,
+		Handler: metrics.HTTPMiddleware(mux),
 	}
 
 	go func() {

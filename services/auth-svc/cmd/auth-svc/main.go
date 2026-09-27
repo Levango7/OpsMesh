@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	applog "github.com/Levango7/OpsMesh/pkg/log"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/pkg/security"
 	"github.com/Levango7/OpsMesh/pkg/tenant"
 	"github.com/Levango7/OpsMesh/pkg/trace"
@@ -43,6 +44,8 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		lgr.Fatalf("[auth-svc] 配置校验失败，停止启动: %v", err)
 	}
+
+	metrics.Init("auth-svc")
 
 	shutdown, err := trace.InitTracer("auth-svc", cfg.OTelEndpoint)
 	if err != nil {
@@ -111,6 +114,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready"))
 	})
+	mux.Handle("/metrics", metrics.GetHandler())
 
 	// A1 HTTP 网关（方案 B 用户中心后端）：AUTH_SVC_HTTP_ENABLED 默认 false——
 	// 关闭时 auth-svc 仅 gRPC+health，与 controlplane 并存期不产生双轨 Cookie 冲突（R1）。
@@ -153,6 +157,7 @@ func main() {
 	}
 
 	var handler http.Handler = mux
+	handler = metrics.HTTPMiddleware(handler)
 	handler = security.SecurityHeadersMiddleware()(handler)
 	handler = security.ConnectionLimit(100)(handler)
 	handler = security.RequestSizeLimit(1 << 20)(handler)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	applog "github.com/Levango7/OpsMesh/pkg/log"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/anomaly"
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/gpuanomaly"
 	"github.com/Levango7/OpsMesh/services/aio-svc/internal/inspection"
@@ -33,6 +34,8 @@ func main() {
 	readTimeout := envDuration("AIO_SVC_READ_TIMEOUT", 30*time.Second)
 	writeTimeout := envDuration("AIO_SVC_WRITE_TIMEOUT", 60*time.Second)
 	shutdownTimeout := envDuration("AIO_SVC_SHUTDOWN_TIMEOUT", 10*time.Second)
+
+	metrics.Init("aio-svc")
 
 	// 初始化 5 个引擎。
 	detector := anomaly.NewDetector()
@@ -68,6 +71,7 @@ func main() {
 	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "engines": "5/5"})
 	})
+	mux.Handle("/metrics", metrics.GetHandler())
 
 	// 异常检测。
 	mux.HandleFunc("/api/v1/anomaly/detect", func(w http.ResponseWriter, r *http.Request) {
@@ -463,7 +467,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", port),
-		Handler:      mux,
+		Handler:      metrics.HTTPMiddleware(mux),
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
 	}

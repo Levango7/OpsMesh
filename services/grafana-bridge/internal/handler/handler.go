@@ -31,8 +31,15 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/tag-values", h.handleTagValues)
 }
 
-// handleRoot handles the health check endpoint (GET /).
+// handleRoot 只服务健康检查：`/` 与显式的 `/status`（chart 探针路径见 values.yaml）。
+// 其余路径一律 404——此前它是 catch-all，任意路径（含 `/metrics`）都会返回
+// {"status":"ok",...} 的 JSON：Prometheus 会把它当坏 target，运维也会误以为这是指标端点
+// （2026-09-27 逐服务实跑发现，见报告 §21.6）。改名后语义清楚，且没有消费方受影响。
 func (h *Handler) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" && r.URL.Path != "/status" {
+		response.WriteError(w, http.StatusNotFound, "not found")
+		return
+	}
 	if r.Method != http.MethodGet {
 		response.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return

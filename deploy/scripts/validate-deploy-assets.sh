@@ -16,6 +16,7 @@
 #   8. 构建上下文自洽：Dockerfile 字面 COPY 源必须存在且不被 .gitignore 排除
 #   9. 提交内容不得含**行内**孤立 CR（会随 blob 推送、被渲染器当换行）
 #  10. 镜像矩阵每个服务的构建目标必须存在（cmd/<svc> + package main），豁免表须带理由
+#  11. 抓取配置 ↔ 服务能力一致性（prometheus.yml 的 job ↔ 源码 /metrics 注册行，双向）
 #
 # 用法：bash deploy/scripts/validate-deploy-assets.sh
 set -uo pipefail
@@ -147,9 +148,11 @@ if command -v helm >/dev/null 2>&1; then
         run_helm template t deploy/helm/opsmesh -f deploy/helm/opsmesh/values-production.yaml 2>&1 | tail -10 | sed 's/^/         /'
     fi
 
-    # 3c ServiceMonitor 门禁：只允许为「真实暴露 /metrics」的服务生成采集项。
-    # 源码依据：仅 device-svc / task-svc / alert-svc 在自身 HTTP 端口注册 /metrics，
-    # 控制面为独立 metrics 端口 9091。
+    # 3c ServiceMonitor 门禁：期望数量**由 values.yaml 派生**（控制面 + 所有 metrics: true 的服务）。
+    # 此前把 4 硬编码在断言里（控制面 + device/task/alert），一旦有服务补上 /metrics 就必然漂移。
+    # 现在"哪些服务暴露 /metrics"只有两个事实源：values 的 metrics 字段 + 服务源码的注册行，
+    # 而后者的正确性由第 11 节（抓取配置 ↔ 服务能力）来核对。
+    EXPECT_SM="$(( $(grep -cE '^    metrics: true' deploy/helm/opsmesh/values.yaml || true) + 1 ))"
     RENDER_BIN="$(mktemp)"
     if run_helm template t deploy/helm/opsmesh \
         --set observability.serviceMonitor.enabled=true \
@@ -171,10 +174,11 @@ if command -v helm >/dev/null 2>&1; then
         --set services.grafana_bridge.enabled=true \
         > "$RENDER_BIN" 2>/dev/null; then
         sm_count="$(grep -c 'kind: ServiceMonitor' "$RENDER_BIN" || true)"
-        if [[ "$sm_count" = "4" ]]; then
-            ok "ServiceMonitor 数量 = 4（控制面 + device/task/alert，符合源码）"
+        if [[ "$sm_count" = "$EXPECT_SM" ]]; then
+            ok "ServiceMonitor 数量 = ${sm_count}（控制面 + values.yaml 中 $((EXPECT_SM - 1)) 个 metrics:true 服务）"
         else
-            bad "ServiceMonitor 数量 = ${sm_count}（期望 4：控制面 + device/task/alert）"
+            bad "ServiceMonitor 数量 = ${sm_count}（期望 ${EXPECT_SM}：控制面 + values 中 $((EXPECT_SM - 1)) 个 metrics:true 服务）"
+            echo "         若刚给某服务补了 /metrics：把 values.yaml 对应条目的 metrics 改为 true；反之改回 false"
         fi
         # 微服务 Service 不应再暴露 metrics 端口（控制面 Service 有独立 metrics 端口，属正常）
         ms_metrics=""
@@ -645,6 +649,47 @@ if [[ -n "${NO_REASON// }" ]]; then
     bad "豁免表条目缺理由或指向不存在的模块：${NO_REASON}"
 else
     ok "豁免表 $(printf '%s\n' "$NON_SERVICE" | grep -c . || true) 条：均有理由且模块真实存在"
+fi
+
+# ---------------------------------------------------------------
+sec "11. 抓取配置 ↔ 服务能力一致性（prometheus.yml 的微服务 job ↔ 源码注册行）"
+# ---------------------------------------------------------------
+# 为什么单列（§21.6 实测教训）：prometheus.yml 曾为 9 个服务配了 :9091 job，而 services/** 里
+# 没有任何 9091 监听 ⇒ 9 个 target 恒 DOWN（"配置看起来齐全，其实全是坏目标"）。
+# 反方向同样有害：服务暴露了 /metrics 却没配 job = 面板永远空白。两个方向都要静态兜住。
+# 判定口径：job 的 target 主机名若对应 services/<name>/ 目录，则该服务 main.go 必须有 GetHandler() 注册行。
+PROM="deploy/monitoring/prometheus.yml"
+# 豁免表（带理由）：暴露了 /metrics 但不进 prometheus.yml 的服务。
+# 前 7 个不在 compose 生产栈里（走 chart 的 ServiceMonitor）；tf-provider 是 Terraform 插件无 HTTP 面；
+# grafana-bridge 的 /metrics 返回 JSON 不是 Prometheus 文本，刻意不抓（见报告 §21.6）。
+NOT_SCRAPED_EXEMPT="autoscaler-svc bot-svc deploy-svc incident-svc plugin-svc runbook-svc workflow-svc tf-provider grafana-bridge"
+JOB_MISS=""
+while IFS= read -r tgt; do
+    [[ -n "$tgt" ]] || continue
+    svc="${tgt%%:*}"
+    [ -d "services/$svc" ] || continue   # 非服务目标（controlplane/mysql/redis/otel/blackbox）跳过
+    if ! grep -qs 'GetHandler()' "services/$svc/cmd/$svc/main.go"; then
+        JOB_MISS="${JOB_MISS} ${svc}"
+    fi
+done <<< "$(grep -oE 'targets: \["[a-zA-Z0-9._-]+:[0-9]+"\]' "$PROM" | sed -E 's/.*\["([^"]+)"\]/\1/' | sort -u)"
+NOT_SCRAPED=""
+while IFS= read -r svc; do
+    [[ -n "$svc" ]] || continue
+    grep -qs 'GetHandler()' "services/$svc/cmd/$svc/main.go" || continue
+    grep -qE "targets: \[\"${svc}:" "$PROM" && continue
+    printf '%s\n' "$NOT_SCRAPED_EXEMPT" | grep -qw "$svc" && continue
+    NOT_SCRAPED="${NOT_SCRAPED} ${svc}"
+done <<< "$(ls services/)"
+if [[ -n "${JOB_MISS// }" ]]; then
+    bad "prometheus.yml 配了 job 但源码没有 /metrics 注册：${JOB_MISS}（这些 target 会恒 DOWN）"
+else
+    ok "prometheus.yml 的每个微服务 job 都有对应的 /metrics 注册（无坏目标）"
+fi
+if [[ -n "${NOT_SCRAPED// }" ]]; then
+    bad "已暴露 /metrics 却没有任何抓取配置、也不在豁免表：${NOT_SCRAPED}"
+    echo "         要么在 prometheus.yml 加 job（compose 栈）或 chart 的 values.services.<x>.metrics=true（k8s），要么进豁免表并写明理由"
+else
+    ok "已暴露 /metrics 的服务都有抓取配置，或落在带理由的豁免表里"
 fi
 
 echo ""

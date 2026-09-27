@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	applog "github.com/Levango7/OpsMesh/pkg/log"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/services/plugin-svc/internal/handler"
 	"github.com/Levango7/OpsMesh/services/plugin-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/plugin-svc/internal/store"
@@ -21,6 +22,8 @@ func main() {
 	// 必须最先调用——早于任何日志输出。
 	lgr := applog.Init("plugin-svc")
 	cfg := config.Load()
+
+	metrics.Init("plugin-svc")
 
 	// Store 初始化：StoreType=sql 且 DSN 非空时接 MySQL（自动建表）；失败或未配置回退内存。
 	var st store.PluginStore = store.NewMemoryStore()
@@ -39,11 +42,12 @@ func main() {
 	h := handler.NewHandler(svc)
 
 	mux := http.NewServeMux()
+	mux.Handle("/metrics", metrics.GetHandler())
 	h.RegisterRoutes(mux)
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: mux,
+		Handler: metrics.HTTPMiddleware(mux),
 	}
 
 	go func() {

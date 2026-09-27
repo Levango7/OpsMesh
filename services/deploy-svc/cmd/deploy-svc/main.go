@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	applog "github.com/Levango7/OpsMesh/pkg/log"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 	deployv1 "github.com/Levango7/OpsMesh/services/deploy-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/deploy-svc/internal/aiworkload"
 	"github.com/Levango7/OpsMesh/services/deploy-svc/internal/cloud"
@@ -32,6 +33,8 @@ func main() {
 	// 必须最先调用——早于任何日志输出。
 	lgr := applog.Init("deploy-svc")
 	cfg := config.Load()
+
+	metrics.Init("deploy-svc")
 
 	// Initialize Kubernetes client with graceful fallback.
 	k8sClient := k8s.NewClient(k8s.ClientConfig{})
@@ -88,6 +91,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready"))
 	})
+	mux.Handle("/metrics", metrics.GetHandler())
 
 	mux.HandleFunc("/api/v1/cloud/providers", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -300,7 +304,7 @@ func main() {
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: mux,
+		Handler: metrics.HTTPMiddleware(mux),
 	}
 
 	go func() {

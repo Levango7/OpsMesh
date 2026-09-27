@@ -898,8 +898,11 @@ curl "$CP/api/v1/tasks/<task-id>/result" -H "$AUTH" -H "X-Tenant-ID: $TENANT"
 | `go_goroutines` / `go_memstats_*` / `go_gc_duration_seconds_*` | gauge/summary | Go 运行时指标 |
 
 > **两套命名并存（接监控前必读）**：控制面（`internal/metrics`）导出上表这些 `opsmesh_` 前缀名；
-> 微服务（`pkg/metrics`，目前 device-svc / task-svc / alert-svc 注册了 `/metrics`）导出**无前缀**的
-> `http_requests_total` 等。两类 job 都被抓取，所以按概念写的规则与面板必须同时覆盖两种名字——
+> 微服务（`pkg/metrics`）导出**无前缀**的
+> `http_requests_total` 等。**覆盖情况（2026-09-28 逐进程实跑复核）**：17 个服务里 16 个已注册 `/metrics`
+> ——device / task / alert / auth / autoscaler / bot / config / deploy / gpu / incident / log / plugin / portal /
+> runbook / workflow / aio；`grafana-bridge` 刻意不暴露（其端点已收窄为 `/`+`/status`），`tf-provider` 是插件无 HTTP 面。
+> 抓取侧：compose 栈内 9 个走 `prometheus.yml`，其余走 chart 的 ServiceMonitor（`values.services.<name>.metrics: true`）。两类 job 都被抓取，所以按概念写的规则与面板必须同时覆盖两种名字——
 > 出厂规则与总览面板已用 `{__name__=~"opsmesh_http_requests_total|http_requests_total"}` 表达并集。
 > 彻底统一命名属破坏性变更（客户已有面板/告警按现名写死），已记入商用就绪报告 §23 待办。
 

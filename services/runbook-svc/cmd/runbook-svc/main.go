@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	applog "github.com/Levango7/OpsMesh/pkg/log"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/services/runbook-svc/internal/handler"
 	"github.com/Levango7/OpsMesh/services/runbook-svc/internal/runner"
 	"github.com/Levango7/OpsMesh/services/runbook-svc/internal/service"
@@ -23,17 +24,20 @@ func main() {
 	lgr := applog.Init("runbook-svc")
 	cfg := config.Load()
 
+	metrics.Init("runbook-svc")
+
 	st := store.NewMemoryStore()
 	r := runner.NewRunner()
 	svc := service.NewService(st, r)
 	h := handler.NewHandler(svc)
 
 	mux := http.NewServeMux()
+	mux.Handle("/metrics", metrics.GetHandler())
 	h.RegisterRoutes(mux)
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: mux,
+		Handler: metrics.HTTPMiddleware(mux),
 	}
 
 	go func() {

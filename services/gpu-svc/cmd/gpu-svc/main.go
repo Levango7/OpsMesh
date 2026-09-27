@@ -11,6 +11,7 @@ import (
 	"time"
 
 	applog "github.com/Levango7/OpsMesh/pkg/log"
+	pkgmetrics "github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/pkg/trace"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/gpu"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/handler"
@@ -29,6 +30,8 @@ func main() {
 	// 必须最先调用——早于任何日志输出。
 	lgr := applog.Init("gpu-svc")
 	cfg := config.Load()
+
+	pkgmetrics.Init("gpu-svc")
 
 	shutdown, err := trace.InitTracer("gpu-svc", cfg.OTelEndpoint)
 	if err != nil {
@@ -78,8 +81,10 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ready"}`))
 	})
+	mux.Handle("/metrics", pkgmetrics.GetHandler())
 
 	var handler http.Handler = mux
+	handler = pkgmetrics.HTTPMiddleware(handler)
 	handler = trace.HTTPMiddleware("github.com/Levango7/OpsMesh/gpu-svc")(handler)
 
 	httpServer := &http.Server{

@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	applog "github.com/Levango7/OpsMesh/pkg/log"
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/services/workflow-svc/internal/engine"
 	"github.com/Levango7/OpsMesh/services/workflow-svc/internal/handler"
 	"github.com/Levango7/OpsMesh/services/workflow-svc/internal/models"
@@ -79,17 +80,20 @@ func main() {
 	lgr := applog.Init("workflow-svc")
 	cfg := config.Load()
 
+	metrics.Init("workflow-svc")
+
 	st := newWorkflowStore()
 	e := engine.NewEngine()
 	svc := service.NewService(st, e)
 	h := handler.NewHandler(svc)
 
 	mux := http.NewServeMux()
+	mux.Handle("/metrics", metrics.GetHandler())
 	h.RegisterRoutes(mux)
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: mux,
+		Handler: metrics.HTTPMiddleware(mux),
 	}
 
 	go func() {
