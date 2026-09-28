@@ -4,6 +4,17 @@
 
 > 当前最新已发布版本：`v0.9.2`（2026-09-27，商用就绪收口 + 发版链路加固；上一版 `v0.9.1` 2026-09-17 为全面评估 35 项修复）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-29 TD-60 阶段 2：task-svc 接通（第二域）+ RBAC 目录补齐 15 项（全站性 403 缺陷）
+
+> 证据：本地 Docker 模拟（`opsmesh/controlplane:0.9.4-sim` + `task-svc`，prod 栈 + `docker-compose.sim.yml` 覆盖层）实测输出 + `internal/controlplane`、`internal/store` 相关测试全绿。
+
+- **task-svc 接通（C 案「保留并接通」三域第二域）**：新增双轨前缀 `/api/v1/task-svc/*` 转发到 task-svc HTTP 网关（8102）——旧路径 `/api/v1/tasks`、`/api/v1/schedules`、`/api/v1/approval/*` 与单体本地 handler 同 mux 冲突（重复注册 panic），切流裁决前新旧并存。代理注入 `X-Tenant-ID`（令牌租户已交叉校验）；`TASK_SVC_URL=http://task-svc:8102` 进 `deploy/docker/docker-compose.prod.yml` 与 `docker-compose.dual-track.yaml`。
+- **权限逐条镜像本地（新机制 `permRules`）**：方法+路径→权限点、首条命中；GET→`task:read`、cancel→`task:cancel`、approve/reject→`task:approve`、schedules→`schedule:read/write`、approval→`approval:read/approve/write`。规则路径按**上游（后端改写后）形态**书写，匹配前先 `rewriteProxyPath` 改写——初版按公开路径匹配导致全部前缀规则静默失效、回落粗粒度权限，被约 50 例权限矩阵单测抓住后修复，约定已写入结构体注释。
+- **同批修复两处代理越权**：device 域 DELETE 设备 / provision / 写操作此前统一只查 `device:read`（只读凭证可经代理删除）→ 对齐 `device:delete` / `provision:execute` / `device:write`；六域（gpu/runbook/incident/autoscaler/portal）写方法从 `*:read` 收紧为 `*:write`（前端页面守卫只要求 read，API 层有真实写调用）。
+- **RBAC 权限目录补齐 15 项（全站性缺陷）**：`schedule:read`、`approval:read` 等 15 个被 handler `requireProd` 引用的权限串**从未进过 `rbacPermSpecs` 目录**（`git log -S` 证实）→ 任何角色（含 admin=全量）都不可能持有、直接 403。sim 实测暴露（admin 调 `GET /api/v1/schedules`、`GET /api/v1/approval/flows` 403，本地与代理路径同结果——先证明镜像忠实）。全量审计 controlplane 82 个权限字面量比对目录，恰好 15 个缺口（alert:write、approval:{read,write,approve}、helm:{read,write}、middleware:write、os:write、quota:{read,write}、schedule:{read,write}、secrets:{read,write}、task:approve）；前端 32 个路由守卫 `*:read` 全部在目录内（前端无漂移）。修复：目录 87→102 条；预置角色并集回填令老库重启自愈；新增 `internal/store/sql_rbac_catalog_test.go` 守护（15 项必在 admin 集 + 派生效果锁定：viewer 增 5 个 read、operator 增 alert/middleware/os 的 write，审批类仅 admin）。
+- **sim 端到端证据（重启后第二幕）**：启动日志 3 行「预置角色 role-admin/operator/viewer … 已按并集回填」；admin 4 个此前 403 的端点（本地/代理 × schedules/approval）全部转 200；对照证据证明代理真打到 task-svc——本地 `/api/v1/schedules` 载荷 `{"schedules":[],"total":0}`（单体）vs 代理 `{"schedules":[]}`（task-svc 网关）；viewer 首登闭环（`changePasswordToken` → 改密 → 正式会话，登录响应 `token` 为空串不泄漏）；viewer 矩阵 GET 200 / GET 200 / POST tasks 403 `task:write` / POST approve 403 `approval:approve`（403 精确到点）。首批另实测：未认证 401；`POST /api/v1/task-svc/tasks` → 201 真实 UUID 且 `tenantID=default`。
+- **auth-svc 有据暂缓接通**：`deploy/` 全量清单均未设 `AUTH_SVC_HTTP_ENABLED`（代码默认关闭，`services/auth-svc/cmd/auth-svc/main.go:119,150`「serves gRPC only; controlplane remains the sole login entry」）；helm `services.auth_svc.enabled` 默认 false、`storeType: memory`（`deploy/helm/opsmesh/values.yaml:263-283`）——现行部署形态没有可接的 HTTP 代理域，留待最终裁决。详见 `docs/td60-decision-2026-09-26.md` §5.4。
+
 ## [Unreleased] — 2026-09-29 aio-svc 噪声压缩测试偶发失败修复：分钟桶边界（CI run 36453413667）
 
 > 证据：CI run 36453413667（文档提交 208ebba，仅改文档却红在 services job）日志 `reducer_test.go:109: expected compressed count 2, got 3`，失败时刻 17:00:53Z（恰在每分钟第 50~59 秒窗口内）。根因实测：固定 S=53 的样本经生产代码 `CompressAlerts` 得 comp=3，S=20 得 comp=2（一次性实验文件已删）。
