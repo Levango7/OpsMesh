@@ -153,8 +153,8 @@ func (a *AWSProvider) Deploy(config DeploymentConfig) (DeploymentResult, error) 
 			}
 			if rep, ok := config.Parameters["replicas"]; ok {
 				var r int32
-				fmt.Sscanf(rep, "%d", &r)
-				if r > 0 {
+				if _, err := fmt.Sscanf(rep, "%d", &r); err == nil && r > 0 {
+
 					spec.Replicas = r
 				}
 			}
@@ -309,8 +309,8 @@ func (h *HuaweiProvider) Deploy(config DeploymentConfig) (DeploymentResult, erro
 			}
 			if rep, ok := config.Parameters["replicas"]; ok {
 				var r int32
-				fmt.Sscanf(rep, "%d", &r)
-				if r > 0 {
+				if _, err := fmt.Sscanf(rep, "%d", &r); err == nil && r > 0 {
+
 					spec.Replicas = r
 				}
 			}
@@ -465,8 +465,8 @@ func (a *AliProvider) Deploy(config DeploymentConfig) (DeploymentResult, error) 
 			}
 			if rep, ok := config.Parameters["replicas"]; ok {
 				var r int32
-				fmt.Sscanf(rep, "%d", &r)
-				if r > 0 {
+				if _, err := fmt.Sscanf(rep, "%d", &r); err == nil && r > 0 {
+
 					spec.Replicas = r
 				}
 			}

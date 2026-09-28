@@ -417,7 +417,10 @@ func (h *Handler) handleAllocationReport(w http.ResponseWriter, r *http.Request)
 	dimension := r.URL.Query().Get("dimension")
 	totalCost := 0.0
 	if v := r.URL.Query().Get("total_cost"); v != "" {
-		fmt.Sscanf(v, "%f", &totalCost)
+		if _, err := fmt.Sscanf(v, "%f", &totalCost); err != nil {
+			writeError(w, http.StatusBadRequest, "total_cost must be a number")
+			return
+		}
 	}
 	report, err := h.alloc.GetAllocationReport(cost.Dimension(dimension), totalCost, nil)
 	if err != nil {

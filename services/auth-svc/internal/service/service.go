@@ -231,7 +231,9 @@ func (s *Service) CreateUser(ctx context.Context, req *authv1.CreateUserRequest)
 	u := s.store.GetUserByUsername(req.Username)
 	// store.CreateUser 不落 PasswordHash（建用户与密码解耦），密码经
 	// ChangePassword 二次写入——hash 已在上方算好，此处直接复用。
-	s.store.ChangePassword(u.ID, hash)
+	if err := s.store.ChangePassword(u.ID, hash); err != nil {
+		return nil, fmt.Errorf("set initial password: %w", err)
+	}
 	return toProtoUser(u), nil
 }
 

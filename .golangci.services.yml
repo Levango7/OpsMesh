@@ -19,6 +19,7 @@ linters:
   enable:
     - bodyclose        # http.Response.Body 必须 Close
     - copyloopvar      # 循环变量拷贝检查（Go 1.22 loopvar 兼容）
+    - errcheck         # 未检查的错误返回（2026-09-27 收官批次后全量收编）
     - gosec            # 安全静态分析（豁免见 rules，逐条有据）
     - ineffassign      # 无效赋值
     - misspell         # 注释/字符串拼写
@@ -28,6 +29,20 @@ linters:
     - unused           # 未使用符号（TD-72 死代码清偿后收编）
     - govet            # enable-all 除 shadow/fieldalignment（与根一致）
   settings:
+    errcheck:
+      # 2026-09-27 按 errcheck 默认严格度收编（捕获所有未检查的错误返回）。
+      # check-blank / check-type-assertions 两项收紧（+138 处，与根配置同档）登记为
+      # TD-71 下一批次——先让"裸调用未检查错误"归零。
+      exclude-functions:
+        - (*bufio.Writer).WriteString
+        - (*bytes.Buffer).Write
+        - (io.Writer).Write
+        # 序列化失败仅遇 channel/func 等不支持类型，仓库模型均为纯数据结构。
+        - encoding/json.Marshal
+        # HTTP 响应写回：状态码已发出后调用方无法补救（CLI stdout 同理）。
+        - (*encoding/json.Encoder).Encode
+        - (net/http.ResponseWriter).Write
+        - (*encoding/csv.Writer).Write
     govet:
       enable-all: true
       disable:
@@ -110,6 +125,12 @@ linters:
       - linters:
           - errcheck
         text: "tx.Rollback"
+      # main 退出路径的 defer shutdown：进程即将退出，返回值无从补救——
+      # 根配置 cmd/opsmesh/main.go 同款豁免（main.go 范围内 errcheck 整体豁免，
+      # Encode 等已由 exclude-functions 覆盖，其余为退出路径输出）。
+      - linters:
+          - errcheck
+        path: cmd/[a-z-]+/main\.go
       # tf-provider：Terraform SDK 惯用法——d.Get 类型断言由 schema 契约保证、
       # d.Set 失败= schema 键拼错属开发期错误（155 处），整模块豁免 errcheck。
       # 该模块为工具链二进制，非运行时服务。

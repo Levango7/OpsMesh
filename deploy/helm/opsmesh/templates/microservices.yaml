@@ -89,6 +89,14 @@ spec:
                   name: {{ include "opsmesh.fullname" $ }}-secret
                   key: mysql-dsn
             {{- end }}
+            {{- if and (eq $name "task_svc") (gt (int $svc.replicas) 1) }}
+            # 多副本必须真选主（TD-73）：replicas>1 时自动切 MySQL 租约选主，
+            # 否则 fire/reclaim 会在每个副本重复执行（评估登记的"扩容即重复执行"缺陷）。
+            # 前置：上方已渲染 TASK_SVC_DSN（mysql.enabled + controlplane.store=mysql），
+            # 不满足时 task-svc 启动即 fail-fast——比静默 stub 危害小。
+            - name: TASK_SVC_LEADER_MODE
+              value: mysql
+            {{- end }}
             {{- end }}
             {{- range $k, $v := $svc.env }}
             # 用户自定义 env（渲染在派生项之后，同名键可覆盖上方默认）
