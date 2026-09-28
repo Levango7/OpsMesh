@@ -399,12 +399,14 @@ func TestDeviceProxyLookup(t *testing.T) {
 }
 
 // TestDeviceProxyForwardWithTenantHeader 端到端：device 代理转发时
-// 聚合层验证的租户身份以 X-Tenant-ID 头注入后端（五域规则不注入）。
+// 聚合层验证的租户/用户身份以 X-Tenant-ID / X-User-Id 头剥离重注入后端
+// （身份头统一治理后全代理域同路径，五域不再例外）。
 func TestDeviceProxyForwardWithTenantHeader(t *testing.T) {
-	var gotPath, gotTenant, gotCookie string
+	var gotPath, gotTenant, gotUser, gotCookie string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotTenant = r.Header.Get("X-Tenant-ID")
+		gotUser = r.Header.Get("X-User-Id")
 		gotCookie = r.Header.Get("Cookie")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"devices": []}`))
@@ -432,6 +434,9 @@ func TestDeviceProxyForwardWithTenantHeader(t *testing.T) {
 	}
 	if gotTenant != "default" {
 		t.Errorf("后端 X-Tenant-ID = %q, want default（loginAsAdmin JWT 租户应被注入转发）", gotTenant)
+	}
+	if want := s.store.GetUserByUsername("admin").ID; gotUser != want {
+		t.Errorf("后端 X-User-Id = %q, want %q（loginAsAdmin JWT 用户应被注入转发）", gotUser, want)
 	}
 	if gotCookie != "" {
 		t.Errorf("后端不应收到 Cookie（会话凭证不下落内部服务）: %q", gotCookie)
@@ -590,8 +595,8 @@ func TestProxyPermResolution(t *testing.T) {
 }
 
 // TestTaskProxyForwardWithTenantHeader 端到端：task 代理转发时路径改写 +
-// 注入 X-Tenant-ID（task-svc 网关消费租户上下文并与 token tenant_id 交叉校验）+
-// 剥离 Cookie（会话凭证不下落内部服务，与 device 域同语义）。
+// 注入 X-Tenant-ID/X-User-Id（task-svc 网关消费租户上下文并与 token tenant_id
+// 交叉校验）+ 剥离 Cookie（会话凭证不下落内部服务，与 device 域同语义）。
 func TestTaskProxyForwardWithTenantHeader(t *testing.T) {
 	var gotPath, gotTenant, gotCookie string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -686,5 +691,165 @@ func TestProxyPermEscalationClosed(t *testing.T) {
 	}
 	if backendHits != hitsAfterRead {
 		t.Errorf("越权请求不应触达后端：读取后命中 %d 次，最终 %d 次", hitsAfterRead, backendHits)
+	}
+}
+
+// ============ 身份头统一治理（全代理域注入 + 伪造防护，§5.6 遗留项收口） ============
+
+// TestProxyIdentityHeadersForAllDomains 验证代理对全部域（五域 + device/task）
+// 统一剥离客户端身份头并重注入已校验身份：
+//   - X-Tenant-ID / X-User-Id 取自令牌（requireTenantContext 校验后的 actx，
+//     修复前仅 device/task 注入、五域透传客户端值或缺失）；
+//   - 客户端自带 X-User-Roles 被剥离（下游无消费方，防伪造留存）。
+func TestProxyIdentityHeadersForAllDomains(t *testing.T) {
+	var gotTenant, gotUser, gotRoles string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotTenant = r.Header.Get("X-Tenant-ID")
+		gotUser = r.Header.Get("X-User-Id")
+		gotRoles = r.Header.Get("X-User-Roles")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer backend.Close()
+	t.Setenv("GPU_SVC_URL", backend.URL)
+	t.Setenv("DEVICE_SVC_URL", backend.URL)
+	t.Setenv("TASK_SVC_URL", backend.URL)
+
+	s := newServiceProxyTestServer()
+	auth := loginAsAdmin(t, s)
+	adminID := s.store.GetUserByUsername("admin").ID
+	if adminID == "" {
+		t.Fatal("内存库 admin 用户 ID 为空（测试前置不成立）")
+	}
+
+	for _, path := range []string{
+		"/api/v1/gpu/nodes",          // 五域规则
+		"/api/v1/device-svc/devices", // device 域（治理前唯一注入方）
+		"/api/v1/task-svc/tasks",     // task 域（治理前唯一注入方之二）
+	} {
+		gotTenant, gotUser, gotRoles = "unset", "unset", "unset"
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", auth)
+		req.Header.Set("X-User-Roles", "admin,superuser") // 客户端伪造角色头：应被剥离
+		w := httptest.NewRecorder()
+		s.handleServiceProxy(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want 200; body=%s", path, w.Code, w.Body.String())
+		}
+		if gotTenant != "default" {
+			t.Errorf("%s 后端 X-Tenant-ID = %q, want default（令牌租户应注入）", path, gotTenant)
+		}
+		if gotUser != adminID {
+			t.Errorf("%s 后端 X-User-Id = %q, want %s（令牌用户应注入）", path, gotUser, adminID)
+		}
+		if gotRoles != "" {
+			t.Errorf("%s 后端不应收到 X-User-Roles（应剥离防伪造）: %q", path, gotRoles)
+		}
+	}
+}
+
+// TestProxyIdentityUserForgeryRejected 验证 X-User-Id 与令牌 user 交叉校验：
+// 已认证客户端携有效令牌 + 伪造用户头 → 403，拒绝发生在聚合层（不触达后端）。
+// 覆盖租户头携带/缺省两条路径——缺省路径（回退令牌租户）此前不校验用户头，
+// 伪造值会经代理落到下游审计（本批收口）。
+func TestProxyIdentityUserForgeryRejected(t *testing.T) {
+	var backendHits int
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendHits++
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer backend.Close()
+	t.Setenv("GPU_SVC_URL", backend.URL)
+
+	s := newServiceProxyTestServer()
+	auth := loginAsAdmin(t, s)
+
+	for _, tenantHdr := range []string{"default", ""} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/gpu/nodes", nil)
+		req.Header.Set("Authorization", auth)
+		if tenantHdr != "" {
+			req.Header.Set("X-Tenant-ID", tenantHdr)
+		}
+		req.Header.Set("X-User-Id", "mallory")
+		w := httptest.NewRecorder()
+		s.handleServiceProxy(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("租户头=%q 伪造用户请求 status = %d, want 403; body=%s", tenantHdr, w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "user mismatch") {
+			t.Errorf("拒绝文案应指明 user mismatch: %s", w.Body.String())
+		}
+	}
+	if backendHits != 0 {
+		t.Errorf("伪造身份请求不应触达后端: %d 次", backendHits)
+	}
+}
+
+// TestRequireTenantContextUserCrossCheck 直接验证 requireTenantContext 的
+// 用户交叉校验语义与 trust-gateway-headers 跳过行为（租户交叉校验回归在内）。
+func TestRequireTenantContextUserCrossCheck(t *testing.T) {
+	s := newServiceProxyTestServer()
+	auth := loginAsAdmin(t, s)
+	adminID := s.store.GetUserByUsername("admin").ID
+
+	cases := []struct {
+		name      string
+		tenantHdr string
+		userHdr   string
+		wantOK    bool
+	}{
+		{"用户头一致放行", "default", adminID, true},
+		{"用户头不一致 403", "default", "mallory", false},
+		{"租户头缺省 + 用户头不一致 403", "", "mallory", false},
+		{"租户头不一致仍 403（租户交叉校验回归）", "other", adminID, false},
+	}
+	for _, c := range cases {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/gpu/nodes", nil)
+		req.Header.Set("Authorization", auth)
+		if c.tenantHdr != "" {
+			req.Header.Set("X-Tenant-ID", c.tenantHdr)
+		}
+		if c.userHdr != "" {
+			req.Header.Set("X-User-Id", c.userHdr)
+		}
+		w := httptest.NewRecorder()
+		actx, ok := s.requireTenantContext(w, req)
+		if ok != c.wantOK {
+			t.Fatalf("%s: ok=%v, want %v; code=%d body=%s", c.name, ok, c.wantOK, w.Code, w.Body.String())
+		}
+		if c.wantOK && actx.UserID != adminID {
+			t.Errorf("%s: actx.UserID = %q, want %q", c.name, actx.UserID, adminID)
+		}
+	}
+
+	// trustGateway 模式：网关注入头为权威声明——无令牌的头注入请求直通。
+	s2 := newServiceProxyTestServer()
+	s2.cfg.TrustGatewayHeaders = true
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/gpu/nodes", nil)
+	req.Header.Set("X-Tenant-ID", "acme")
+	req.Header.Set("X-User-Id", "gw-user")
+	w := httptest.NewRecorder()
+	actx, ok := s2.requireTenantContext(w, req)
+	if !ok {
+		t.Fatalf("trustGateway 头注入请求应放行: code=%d body=%s", w.Code, w.Body.String())
+	}
+	if actx.TenantID != "acme" || actx.UserID != "gw-user" {
+		t.Errorf("trustGateway 应保留网关注入身份: %+v", actx)
+	}
+
+	// trustGateway 模式 + 令牌：用户交叉校验跳过（头值保留，网关权威）。
+	s3 := newServiceProxyTestServer()
+	s3.cfg.TrustGatewayHeaders = true
+	auth3 := loginAsAdmin(t, s3)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/gpu/nodes", nil)
+	req.Header.Set("Authorization", auth3)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("X-User-Id", "gw-user")
+	w = httptest.NewRecorder()
+	actx, ok = s3.requireTenantContext(w, req)
+	if !ok {
+		t.Fatalf("trustGateway + 令牌请求应放行: code=%d body=%s", w.Code, w.Body.String())
+	}
+	if actx.UserID != "gw-user" {
+		t.Errorf("trustGateway 模式应保留网关注入的用户头: %q", actx.UserID)
 	}
 }

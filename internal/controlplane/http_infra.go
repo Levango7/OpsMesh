@@ -55,7 +55,7 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) error
 
 // requireTenantContext 提取并校验网关注入的租户身份上下文（认证防御）。
 //
-// 行为矩阵（修复 1+2 + CI E2E-sec 越权漏洞真修）：
+// 行为矩阵（修复 1+2 + CI E2E-sec 越权漏洞真修 + 修复 3 用户交叉校验）：
 //   - 头非空（X-Tenant-ID 已注入）：
 //   - token 也携带 tenant_id 且一致 → 返回 actx, true
 //   - token 也携带 tenant_id 但不一致 → 403 Forbidden（防绕过网关伪造租户头）
@@ -65,9 +65,14 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) error
 //   - 头为空且 token 无 tenant_id 且 requireAuth=true → 401 Unauthorized
 //   - 头为空且 token 无 tenant_id 且 requireAuth=false 且 demo=true → 自动填充 default/demo
 //   - 头为空且 token 无 tenant_id 且 requireAuth=false 且 demo=false → 400 Bad Request
+//   - X-User-Id 头与 token user 不一致（两者均非空且未开 --trust-gateway-headers）→ 403，
+//     在租户分支判定之前执行（租户头空/非空两条路径都覆盖）。
 //
 // 安全语义：
 //   - Bearer token 中的 tenant_id 与 X-Tenant-ID 头交叉校验，防绕过网关伪造租户头；
+//   - Bearer token 中的 user（user_id claim）与 X-User-Id 头交叉校验：已认证客户端
+//     携本租户有效令牌 + 伪造用户头时下游会记录被伪用户（同租户内审计伪造），故不一致
+//     即 403；--trust-gateway-headers 模式跳过（该模式下网关注入头为权威声明）。
 //   - **头非空但无任何凭证**：requireAuth 开启时拒绝（CI E2E-sec 实测捕获的越权——
 //     此前该分支直接放行，攻击者只发 X-Tenant-ID: victim 头即可冒充任意租户。
 //     信任边界：requireAuth=true 意味着"所有请求必须携带可验证身份"（网关注入头
@@ -79,6 +84,13 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 	actx := authctx.FromHTTPHeader(r.Header)
 	// 修复 1+2：从 Bearer token/Cookie 提取 tenant_id 作为回退/交叉校验。
 	tokenTenant, tokenUser := s.tenantFromBearer(r)
+	trustGateway := s.cfg != nil && s.cfg.TrustGatewayHeaders
+	// 修复 3：X-User-Id 与令牌 user 交叉校验（同租户内审计伪造防护）。
+	// 置于租户分支之前：租户头空、令牌带租户的回退路径同样覆盖。
+	if !trustGateway && tokenUser != "" && actx.UserID != "" && actx.UserID != tokenUser {
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "user mismatch between X-User-Id header and JWT claims"})
+		return actx, false
+	}
 	if actx.TenantID != "" {
 		// 头非空：若 token 也携带 tenant_id，校验两者一致，防绕过网关伪造租户头。
 		if tokenTenant != "" && tokenTenant != actx.TenantID {
@@ -90,7 +102,6 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 		// 处置：requireAuth 下默认拒绝；仅当部署方显式 --trust-gateway-headers=true
 		// （声明有可信网关认证后剥离凭证只留头转发，即 README IAM 路径 B）才放行。
 		// requireAuth=false 保留内网头直通（部署方自行保证前置）。
-		trustGateway := s.cfg != nil && s.cfg.TrustGatewayHeaders
 		if tokenTenant == "" && s.requireAuth && !trustGateway {
 			paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "identity header without verifiable credential (require-auth; enable --trust-gateway-headers if behind a trusted gateway)"})
 			return actx, false

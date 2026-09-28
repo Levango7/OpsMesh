@@ -20,7 +20,8 @@ package controlplane
 //     产品结构而非运行期配置，重启不丢；
 //   - 后端地址 env 可覆盖（GPU_SVC_URL 等），默认 localhost:<默认端口>；
 //   - 后端不可达 → 503（含服务名提示），不吞错；
-//   - 只透传方法与 body，剥离 Cookie（下游不消费会话；鉴权已完成）。
+//   - 透传方法与 body，剥离 Cookie 与客户端自带的身份头（会话下游不消费；
+//     身份头由聚合层校验后统一剥离重注入，见 handleServiceProxy 的 director）。
 
 import (
 	"fmt"
@@ -185,8 +186,8 @@ var serviceProxyRules = []serviceProxyRule{
 
 // deviceProxyExtras device 域（D1/D3 后 device-svc 已有完整 REST 网关）额外转发规则。
 // 与 serviceProxyRules 分表的原因：device 域的网关直连 store 层、鉴权走
-// tenant.Middleware（X-Tenant-ID 头或 JWT）——代理层完成鉴权后需显式注入
-// X-Tenant-ID 头再转发（五域微服务不消费租户上下文，device 消费）。
+// tenant.Middleware（X-Tenant-ID 头或 JWT）——代理层完成鉴权后统一剥离客户端身份头
+// 并以已校验身份重注入再转发（见 handleServiceProxy 的 director）。
 //
 // 路径设计：publicPrefix 用 /api/v1/device-svc 域前缀（剥去后拼回 /api/v1/*），
 // 如 /api/v1/device-svc/devices → 后端 /api/v1/devices。不能用 /api/v1/devices
@@ -260,7 +261,7 @@ var deviceProxyExtras = []serviceProxyRule{
 // taskProxyExtras task 域转发规则（TD-60 阶段 2「三域接通」：task-svc REST 网关接线）。
 //
 // 与 device 同型：task-svc 的 HTTP 网关消费租户上下文（extractAuth 读 X-Tenant-ID
-// 头，且与 token 内 tenant_id 交叉校验），代理层鉴权后须注入该头再转发。
+// 头，且与 token 内 tenant_id 交叉校验），代理层鉴权后统一剥离重注入身份头再转发。
 //
 // 前缀设计 /api/v1/task-svc/*：controlplane 本地已有 /api/v1/tasks、/api/v1/schedules、
 // /api/v1/approval/* 等同名 handler（server_lifecycle.go:33-34、:52 与 approval 注册），
@@ -597,31 +598,27 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 		// 下游微服务不消费会话 Cookie；鉴权已在聚合层完成，剥除防止
 		// 会话凭证意外落地到内部服务的访问日志。
 		req.Header.Del("Cookie")
-		// device/task 域网关消费租户上下文（tenant.Middleware / extractAuth 读
-		// X-Tenant-ID 头，且与 token 内 tenant_id 交叉校验）：聚合层已验证的
-		// 租户身份注入头后再转发，防下游兜底 default 造成跨租户数据可见
-		//（五域微服务不消费租户上下文，此头对它们无影响）。
-		if ruleInjectsTenantHeader(rule) {
+		// 身份头统一治理：客户端自带的租户/用户/角色头一律剥离，再以聚合层
+		// 已校验的 actx 重注入（requireTenantContext 已完成令牌交叉校验；
+		// 头注入模式下即为网关已认证值）。下游消费面：device/task 域网关读
+		// X-Tenant-ID 做租户过滤，gpu-svc / portal-svc 读 X-Tenant-ID 与
+		// X-User-Id 做租户归置与审计留痕——不注入则下游兜底 default，多租户
+		// 下数据落错租户桶；不剥离则客户端可直通伪造值（X-User-Roles 下游
+		// 无消费方，仅剥离防伪造留存）。
+		req.Header.Del("X-Tenant-ID")
+		req.Header.Del("X-User-Id")
+		req.Header.Del("X-User-Roles")
+		if actx.TenantID != "" {
 			req.Header.Set("X-Tenant-ID", actx.TenantID)
+		}
+		if actx.UserID != "" {
+			req.Header.Set("X-User-Id", actx.UserID)
 		}
 	}
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
 		writeProxyErrorJSON(rw, http.StatusBadGateway, "service backend error: "+err.Error())
 	}
 	proxy.ServeHTTP(w, r)
-}
-
-// ruleInjectsTenantHeader 判断规则对应的微服务网关是否消费租户上下文
-// （device/task 域的网关读 X-Tenant-ID 头；五域微服务不消费）。
-func ruleInjectsTenantHeader(r *serviceProxyRule) bool {
-	for _, group := range [][]serviceProxyRule{deviceProxyExtras, taskProxyExtras} {
-		for i := range group {
-			if &group[i] == r {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // writeProxyErrorJSON 代理层错误响应（与站内 {"error": msg} 约定一致）。
