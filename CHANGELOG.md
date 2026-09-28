@@ -2,7 +2,7 @@
 
 本文件记录 OpsMesh 所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [Semantic Versioning](https://semver.org/)。
 
-> 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
+> 当前最新已发布版本：`v0.9.2`（2026-09-27，商用就绪收口 + 发版链路加固；上一版 `v0.9.1` 2026-09-17 为全面评估 35 项修复）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
 ## [Unreleased] — 2026-09-29 aio-svc 噪声压缩测试偶发失败修复：分钟桶边界（CI run 36453413667）
 
@@ -20,21 +20,6 @@
 - **19 处有据豁免**（best-effort：失败仅影响可观测性/旁路/降级，不影响主流程；规则按服务相对路径 + 调用点精确匹配，逐条注明理由）：alert notifier/breaker/notifyFn ×8；auth 会话 Create/Revoke/Logout/UpdateUser + cache save/baseCmd.Err ×7（Redis 降级设计）；task 回调空 body ×2（EventBus.Publish 走 `exclude-functions`，与根配置 `internal/events.Bus` 同款）；device TrackUsage ×1（计量失败不回滚注册）；bot io.Copy ×1（DrainBody 刻意排空）。
 - **门禁收紧**：`check-blank: true` + `check-type-assertions: true` 打开（与根配置最严档对齐），其余 80 处修复点与 19 处豁免恰好覆盖测量基数。
 - **过程发现**：新增的 limit 解析日志（`%q` 打印用户输入）被 gosec G706 拦住（log injection，taint 分析不认转义）——按 services 既有先例（aio-svc URL 不打日志）改为不落用户原值。
-## [Unreleased] — 2026-09-26 交付脚本第一次被静态检查：抓到三处"哑按钮 + 不实陈述"
-
-> 证据：`docs/commercial-readiness-review-2026-09-25.md` §22。起因只是给部署资产门禁加一节，顺手对 `deploy/**/*.sh` 跑了 shellcheck。
-> 为什么此前没人看见：**CI 的 actionlint 只检查 workflow 里的内联 `run` 块，不会跟进被调用的脚本**，而这 13 个 bash 入口是客户在生产机上直接执行的东西。
-
-- **① `--skip-images` 是个哑按钮**：`deploy/k8s/deploy-opsmesh.sh` 的 usage 承诺了它，参数解析把值存进一个**从未被读取**的变量，`load_images()` 只看 `LOAD_IMAGES` ⇒ 传与不传行为完全一致，且无人报错。改为与 `--load-images` 共用开关（`--skip-images` → `LOAD_IMAGES=false`），并写明两者都给时**以最后出现者为准**。
-- **② 口令字符集是声明，不是事实**：`deploy.sh` 里的 `PASSWORD_SPECIAL_CHARS` 上方三段注释认真解释了要避开 `@`/`#`/`$`/`"`/`\`/反引号/空白的理由，但**这个常量从未被任何代码引用**，而口令生成走 `openssl rand -base64`——其字母表含 `/`，不在声明的集合内。新增 `rand_pw`：字符集严格 ⊆ `[0-9a-f] ∪ PASSWORD_SPECIAL_CHARS`、末位恒为特殊字符；四个口令（MySQL user/root、Redis、Grafana）改用之。**`JWT_SECRET`/`ENCRYPTION_KEY` 刻意不动**——后者必须是合法 base64 且解码后正好 32 字节，剥字符会让它失效。
-- **③ "权限 0600" 是一句不实陈述**：`chmod 600 … || true` 在无 POSIX 权限的文件系统（NTFS/Git-Bash）上静默失败，文件仍是 0644，而日志、`.env` 头注释、部署摘要三处都说"权限 0600"。改为**先 `stat` 实测再陈述**：只有真的是 0600 才说 0600，否则 WARN 报出实际 mode 并给平台 ACL 处置建议。本机实测走 WARN 分支（缺陷复现与修复在同一次运行里被看见）。
-- **另有 11 处死代码**：从未使用的颜色变量（`logs.sh`/`simulate.sh`/`status.sh`）、`status.sh` 的 `COMPOSE_FILE`（该脚本按容器名 `docker inspect`，根本不碰 compose）、两个脚本的 `SCRIPT_DIR`、`print_access_info` 的 `port_adv`、轮询计数 `attempt` → `_`；`load-test.sh` 的 `target_replicas` 被解析却从不参与判定，现在真的进入三态结论（达标 / 已扩容未达标 / 未触发）。
-- **新门禁 A：CI `security` job 的 shellcheck step**（钉版 v0.10.0）。取二进制而非 docker 镜像（本机 Docker 配了镜像白名单代理拉不到 `shellcheck-alpine`，runner 侧则要扛 Docker Hub 匿名限额——同一个门禁不该有两种环境失效方式）；**断言 `version:` 行**（下到别的版本=门禁强度变了却看不出来）；空清单直接 `::error::`（清单为空不等于脚本干净）；下载 5 次退避。故障注入：往 `proto/scripts/gen.sh` 加一行未使用变量 → SC2034 + rc=1；还原 → 0 findings。
-- **新门禁 B：`validate-deploy-assets.sh` 第 9 节——提交内容里的行内孤立 CR**。与第 6 节不重叠：第 6 节只扫部署资产且判"含任何 CR"（放全仓会把 Windows 检出的正常 CRLF 全判成缺陷）。第 9 节走 `git grep -IP --cached '\r(?!\n)'` 读**暂存 blob**（clean filter 已归一化行尾），剩下任何 CR 必是真杂质；rc≥2 判红为"门禁失明"而不是判绿。
-- **本轮被抓到的是我自己**：一处孤立 `\r` 已经在 `CHANGELOG.md` 的 bullet 中间**推到 main 上了**（markdown 渲染器会把它当换行）。三重隐蔽：Git-Bash 的 `grep`/`awk` 看不见 CR；git 的 CRLF 归一化只管行尾、行内原样入库；diff 视图不 highlight 它。全仓扫跟踪文件后只有这 1 处。删除用 latin1 逐字节 splice，改后断言 UTF-8 合法且字节数只减 1。B 门禁的两向验证是自然发生的：修复未暂存时 index 仍是带 CR 的 HEAD 版本 → 红；暂存修复 → 绿。
-- **顺带**：`confirm()` 在非 tty 下把**问题本身**印成 `[ERROR] 确认覆盖 .env？`（运维会以为已经出错），改为一句"已按拒绝处理"的说明。
-- **验证**：`rand_pw` 从 `deploy.sh` 抽出**真实定义**跑 300 次（长度 / 越界字符为空 / 必含特殊字符）⇒ 0 失败，且故意把校验集合写窄会立刻报错（断言是活的）；`/tmp` 沙箱真跑 `deploy.sh init` ⇒ `.env` 生成成功、四条口令均落在新字符集内、`docker compose config` rc=0（插值链路可用）；13 个脚本 `shellcheck -S warning` + `bash -n` 全绿。
-- **口径如实分层**：`-S info` 级仍有 39×SC2015、3×SC2012 未动（可读性而非正确性，提口径前需逐条判"是否真死变量"），已列入 §23 待办第 9 项。shellcheck 门禁本身以 CI 该 step 为准。
 
 ## [Unreleased] — 2026-09-28 微服务 `/metrics` 覆盖补齐到 16/17：抓取配置对齐 + 双向门禁
 
@@ -56,6 +41,24 @@
 - **`grafana-bridge` 的 `/metrics` 返回 JSON 而非 Prometheus 文本**（`{"service":…,"status":"ok"}`）：端点名会误导运维，但它**没有被抓取**，因此不产生坏数据。
 - **与抓取配置对账**：`prometheus.yml` 的 job 恰好只有 controlplane:9091 + device/task/alert 三个 ⇒ **没有"配了但抓不到"的坏目标**，缺口纯在能力侧（13 个服务在面板上永远空白）。
 - **顺带两条**：① `aio-svc`（:8100）与 `log-svc`（:8080，gRPC :9090）**不认** `<SVC>_HTTP_PORT` 约定、硬编码端口——后者与控制面默认端口相同，同机裸跑会撞；② 我第一版探针假设所有服务都认那个 env，在这两个上得到"未启动"的**假阴性**，按真实端口补测才拿到 404 真结论（端口约定不统一本身就是可运维性缺陷）。
+
+## [0.9.2] — 2026-09-27（商用就绪收口 + 发版链路加固 + TD-60 阶段 2 推进）
+
+## [Unreleased] — 2026-09-26 交付脚本第一次被静态检查：抓到三处"哑按钮 + 不实陈述"（已归入 0.9.2）
+
+> 证据：`docs/commercial-readiness-review-2026-09-25.md` §22。起因只是给部署资产门禁加一节，顺手对 `deploy/**/*.sh` 跑了 shellcheck。
+> 为什么此前没人看见：**CI 的 actionlint 只检查 workflow 里的内联 `run` 块，不会跟进被调用的脚本**，而这 13 个 bash 入口是客户在生产机上直接执行的东西。
+
+- **① `--skip-images` 是个哑按钮**：`deploy/k8s/deploy-opsmesh.sh` 的 usage 承诺了它，参数解析把值存进一个**从未被读取**的变量，`load_images()` 只看 `LOAD_IMAGES` ⇒ 传与不传行为完全一致，且无人报错。改为与 `--load-images` 共用开关（`--skip-images` → `LOAD_IMAGES=false`），并写明两者都给时**以最后出现者为准**。
+- **② 口令字符集是声明，不是事实**：`deploy.sh` 里的 `PASSWORD_SPECIAL_CHARS` 上方三段注释认真解释了要避开 `@`/`#`/`$`/`"`/`\`/反引号/空白的理由，但**这个常量从未被任何代码引用**，而口令生成走 `openssl rand -base64`——其字母表含 `/`，不在声明的集合内。新增 `rand_pw`：字符集严格 ⊆ `[0-9a-f] ∪ PASSWORD_SPECIAL_CHARS`、末位恒为特殊字符；四个口令（MySQL user/root、Redis、Grafana）改用之。**`JWT_SECRET`/`ENCRYPTION_KEY` 刻意不动**——后者必须是合法 base64 且解码后正好 32 字节，剥字符会让它失效。
+- **③ "权限 0600" 是一句不实陈述**：`chmod 600 … || true` 在无 POSIX 权限的文件系统（NTFS/Git-Bash）上静默失败，文件仍是 0644，而日志、`.env` 头注释、部署摘要三处都说"权限 0600"。改为**先 `stat` 实测再陈述**：只有真的是 0600 才说 0600，否则 WARN 报出实际 mode 并给平台 ACL 处置建议。本机实测走 WARN 分支（缺陷复现与修复在同一次运行里被看见）。
+- **另有 11 处死代码**：从未使用的颜色变量（`logs.sh`/`simulate.sh`/`status.sh`）、`status.sh` 的 `COMPOSE_FILE`（该脚本按容器名 `docker inspect`，根本不碰 compose）、两个脚本的 `SCRIPT_DIR`、`print_access_info` 的 `port_adv`、轮询计数 `attempt` → `_`；`load-test.sh` 的 `target_replicas` 被解析却从不参与判定，现在真的进入三态结论（达标 / 已扩容未达标 / 未触发）。
+- **新门禁 A：CI `security` job 的 shellcheck step**（钉版 v0.10.0）。取二进制而非 docker 镜像（本机 Docker 配了镜像白名单代理拉不到 `shellcheck-alpine`，runner 侧则要扛 Docker Hub 匿名限额——同一个门禁不该有两种环境失效方式）；**断言 `version:` 行**（下到别的版本=门禁强度变了却看不出来）；空清单直接 `::error::`（清单为空不等于脚本干净）；下载 5 次退避。故障注入：往 `proto/scripts/gen.sh` 加一行未使用变量 → SC2034 + rc=1；还原 → 0 findings。
+- **新门禁 B：`validate-deploy-assets.sh` 第 9 节——提交内容里的行内孤立 CR**。与第 6 节不重叠：第 6 节只扫部署资产且判"含任何 CR"（放全仓会把 Windows 检出的正常 CRLF 全判成缺陷）。第 9 节走 `git grep -IP --cached '\r(?!\n)'` 读**暂存 blob**（clean filter 已归一化行尾），剩下任何 CR 必是真杂质；rc≥2 判红为"门禁失明"而不是判绿。
+- **本轮被抓到的是我自己**：一处孤立 `\r` 已经在 `CHANGELOG.md` 的 bullet 中间**推到 main 上了**（markdown 渲染器会把它当换行）。三重隐蔽：Git-Bash 的 `grep`/`awk` 看不见 CR；git 的 CRLF 归一化只管行尾、行内原样入库；diff 视图不 highlight 它。全仓扫跟踪文件后只有这 1 处。删除用 latin1 逐字节 splice，改后断言 UTF-8 合法且字节数只减 1。B 门禁的两向验证是自然发生的：修复未暂存时 index 仍是带 CR 的 HEAD 版本 → 红；暂存修复 → 绿。
+- **顺带**：`confirm()` 在非 tty 下把**问题本身**印成 `[ERROR] 确认覆盖 .env？`（运维会以为已经出错），改为一句"已按拒绝处理"的说明。
+- **验证**：`rand_pw` 从 `deploy.sh` 抽出**真实定义**跑 300 次（长度 / 越界字符为空 / 必含特殊字符）⇒ 0 失败，且故意把校验集合写窄会立刻报错（断言是活的）；`/tmp` 沙箱真跑 `deploy.sh init` ⇒ `.env` 生成成功、四条口令均落在新字符集内、`docker compose config` rc=0（插值链路可用）；13 个脚本 `shellcheck -S warning` + `bash -n` 全绿。
+- **口径如实分层**：`-S info` 级仍有 39×SC2015、3×SC2012 未动（可读性而非正确性，提口径前需逐条判"是否真死变量"），已列入 §23 待办第 9 项。shellcheck 门禁本身以 CI 该 step 为准。
 
 ## [Unreleased] — 2026-09-26 给 17 个微服务镜像补上签名与 SBOM（验收第 ④ 条暴露的缺口）
 
@@ -566,7 +569,9 @@
   `internal` 网络 + 宿主端口）门禁正确点名 8 个服务。
 - 完整记录：`docs/commercial-readiness-review-2026-09-25.md` §9。
 
-## [Unreleased] — 2026-09-10 双轨观察 GH Actions 落地 + 双 NULL 扫描 bug 清剿（07447da → 9506f8c）
+## [0.9.1] — 2026-09-17（全面评估修复 35 项全量落地 + TD-60 双轨批次）
+
+## [Unreleased] — 2026-09-10 双轨观察 GH Actions 落地 + 双 NULL 扫描 bug 清剿（07447da → 9506f8c）（已归入 0.9.1）
 
 > TD-60 A-2 阶段 2 启动：task-svc 影子双轨对照观察在 GitHub Actions 免费跑（用户设备需休息，用户拍板云端方案）。观察栈本身首战即抓出两个生产路径真 bug。
 
