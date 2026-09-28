@@ -77,14 +77,14 @@ func clearMustChangeFlag(s *Server, username string) {
 
 // expectedPermCount 动态派生预期权限数（取自 store.RolePermissions()["admin"]，
 // 即 rbacPermSpecs 单一来源，与 seedRBAC 完全一致）。
-// 供 TestPredefinedData/TestListPermissions 复用，防止硬编码数字（如 72）与权限定义漂移：
+// 供 TestPredefinedData/TestListPermissions 复用，防止硬编码数字（历史上曾写 72）与权限定义漂移：
 // 新增/删除权限时只需改 rbacPermSpecs，本 helper 自动跟随，无需同步修改测试断言。
 func expectedPermCount() int {
 	return len(store.RolePermissions()["admin"])
 }
 
 // minExpectedPermCount 是权限数下限守护阈值。
-// 当前 rbacPermSpecs 含 72 个权限（P1-P6 全域），下限取 60 留余量：
+// 当前 rbacPermSpecs 含 102 条权限定义（P1-P6 全域 + 2026-09-29 目录补齐 15 项），下限取 60 留余量：
 // 若权限被误删导致 want < 60，下限守护触发失败，防止权限静默丢失致 RBAC 闸漏放行。
 const minExpectedPermCount = 60
 

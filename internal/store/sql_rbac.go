@@ -382,6 +382,34 @@ var rbacPermSpecs = []struct {
 	// "diagnostics" 让 operator 也能提级别（现场排障的人不该为此找管理员要 token），
 	// 同时 diagnostics:dump（含内部拓扑）仍严格 admin-only。
 	{"diagnostics", "diagnostics:execute", "调整进程日志级别"},
+	// 2026-09-29 目录补齐（15 项）：以下权限点被 controlplane handler 的 requireProd
+	// 校验引用，但从未进入权限目录——RolePermissions 派生集不含它们，任何内置角色
+	//（含 admin）都无法持有，对应端点对全部角色恒 403。sim 实测证据：admin 携合法
+	// 会话 token 调 GET /api/v1/schedules 与 GET /api/v1/approval/flows 均 403
+	//（permission denied: schedule:read / approval:read）；本地单体与 task-svc
+	// 平行代理路径行为一致（双轨等价，代理映射如实镜像本地语义）。
+	// 与 cmdb:approve（见上）同类缺陷的批量修复；机制同 M13 六域补种（INSERT IGNORE
+	// 幂等补种 + 角色快照并集回填，升级部署下次启动自动生效）。
+	// 派生效应（如实记录，防误判）：viewer（全部 *:read）自动获得
+	// approval/helm/quota/schedule/secrets 的 read；operator（operatorGroups ×
+	// read/write/execute）自动获得 alert:write、middleware:write、os:write。
+	// approval:approve 与 task:approve 不属派生动作集（approve ∉ {read,write,execute}），
+	// 与 cmdb:approve 同策：仅 admin 可用（最小权限）。
+	{"alert", "alert:write", "编辑告警规则"},
+	{"approval", "approval:read", "查看审批流程与请求"},
+	{"approval", "approval:write", "编辑审批流程/请求"},
+	{"approval", "approval:approve", "审批通过/驳回"},
+	{"helm", "helm:read", "查看Helm应用商店"},
+	{"helm", "helm:write", "管理Helm应用"},
+	{"middleware", "middleware:write", "编辑中间件模板"},
+	{"os", "os:write", "编辑OS优化模板"},
+	{"quota", "quota:read", "查看租户配额"},
+	{"quota", "quota:write", "管理租户配额"},
+	{"schedule", "schedule:read", "查看定时任务"},
+	{"schedule", "schedule:write", "管理定时任务"},
+	{"secrets", "secrets:read", "查看密钥服务配置"},
+	{"secrets", "secrets:write", "测试/管理密钥服务"},
+	{"task", "task:approve", "审批高风险任务"},
 }
 
 // seedRBAC 在 initSchema 末尾调用，幂等写入默认权限/角色/用户。
