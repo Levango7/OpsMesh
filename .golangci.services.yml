@@ -30,10 +30,12 @@ linters:
     - govet            # enable-all 除 shadow/fieldalignment（与根一致）
   settings:
     errcheck:
-      # 2026-09-27 按 errcheck 默认严格度收编（捕获所有未检查的错误返回）。
-      # check-blank / check-type-assertions 两项收紧（+138 处，与根配置同档）登记为
-      # TD-71 下一批次——先让"裸调用未检查错误"归零。
-      exclude-functions:
+      # 当前：errcheck 默认严格度（捕获所有未检查的错误返回）——2026-09-27 收编并清零。
+      # check-blank + check-type-assertions 收紧（+150 处）已逐点勘完、按类登记在
+      # TD-71（RowsAffected ×40 / json.Unmarshal 行扫描 ×40 / handler Decode ×7 /
+      # 类型断言 ×15 / best-effort 通知计量 ×20 / io.ReadAll ×8 / 其余 ×20），
+      # 修法取决于各函数返回签名，属逐点判断批次——完成后本处解除注释即收紧。
+      # exclude-functions:
         - (*bufio.Writer).WriteString
         - (*bytes.Buffer).Write
         - (io.Writer).Write
