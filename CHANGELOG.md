@@ -4,6 +4,14 @@
 
 > 当前最新已发布版本：`v0.9.2`（2026-09-27，商用就绪收口 + 发版链路加固；上一版 `v0.9.1` 2026-09-17 为全面评估 35 项修复）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-29 代理身份头统一治理：§5.6 遗留项收口（全代理域剥离重注入 + X-User-Id 令牌交叉校验）
+
+> 证据：`go build ./...`/`go vet ./...` 全绿；`go test ./internal/controlplane/... ./tests/... -count=1` 全绿；新增用例 `-race` 通过（CGO_ENABLED=1 + msys64 gcc）。缺口取证与设计留档见 `docs/td60-decision-2026-09-26.md` §5.7（代码提交 `0030aeb`）。
+
+- **五域未获身份注入（多租户落错桶）**：`service_proxy.go` 注释「五域微服务不消费租户上下文」与事实矛盾（gpu-svc `handler.go:199-202,469`、portal-svc `handler.go:728` 都消费 X-Tenant-ID），`ruleInjectsTenantHeader` 仅对 device/task 注入——Bearer 令牌路径下控制面已解析出租户，下游 portal/gpu 却兜底 `default`。修复：director 对全部代理域统一 `Del(X-Tenant-ID/X-User-Id/X-User-Roles)` 后以已校验 actx 重注入（空值不注入）；`ruleInjectsTenantHeader` 退役、四处过期注释改写。
+- **X-User-Id 可伪造（同租户内审计伪造）**：`requireTenantContext` 只交叉校验租户不校验用户，已认证客户端可携本租户令牌 + 伪造 X-User-Id（头空/非空两路径均无校验）。修复：租户分支前增补 header user vs token user 交叉校验（不一致 403 `user mismatch`；`--trust-gateway-headers` 模式跳过）。
+- **测试**：新增 `TestProxyIdentityHeadersForAllDomains`（gpu/device/task 三路径注入 + 角色头剥离）、`TestProxyIdentityUserForgeryRejected`（伪造用户 403、不触达后端、租户头两态）、`TestRequireTenantContextUserCrossCheck`（含 trustGateway 跳过两例）；`TestDeviceProxyForwardWithTenantHeader` 补 X-User-Id 断言。
+
 ## [Unreleased] — 2026-09-29 「保留但需决策」域完善批次①：portal-svc 前端契约补齐 + autoscaler-svc 指标读取修复
 
 > 证据：前端契约源 `web/enterprise/src/api/portal.js` 注释与服务侧路由/载荷逐项核对；两服务 `go test ./...` 全绿（新增 17 例防回归锚，`gofmt` 净）。执行记录与代理身份头遗留项取证见 `docs/td60-decision-2026-09-26.md` §5.6。
