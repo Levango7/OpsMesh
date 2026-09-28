@@ -4,6 +4,14 @@
 
 > 当前最新已发布版本：`v0.9.2`（2026-09-27，商用就绪收口 + 发版链路加固；上一版 `v0.9.1` 2026-09-17 为全面评估 35 项修复）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-29 「保留但需决策」域完善批次①：portal-svc 前端契约补齐 + autoscaler-svc 指标读取修复
+
+> 证据：前端契约源 `web/enterprise/src/api/portal.js` 注释与服务侧路由/载荷逐项核对；两服务 `go test ./...` 全绿（新增 17 例防回归锚，`gofmt` 净）。执行记录与代理身份头遗留项取证见 `docs/td60-decision-2026-09-26.md` §5.6。
+
+- **portal-svc 前端契约补齐**（`e72ab6c`）：前端声明的 `GET /api/v1/approvals`、`POST /api/v1/approvals/{id}/approve|reject`、`GET /api/v1/cost` 三端点服务侧此前 404、`GET /api/v1/requests` 返回 snake_case 裸数组（前端列全空）、`POST /api/v1/requests` 因缺 title 400——前端 Portal 页三个数据面全部不可用。修复：新增三组端点（approve 体可空容忍 `io.EOF`、reject 收 `{reason}` 记入 `ApprovalNote`、cost 聚合 14 天窗口且仅 approved/fulfilled 计入）；`requestView` camelCase 视图层 + 列表 `{requests:[...]}` 包裹；`createRequest` 双解析兼容前端体与旧 snake_case 体；租户/请求人从 X-Tenant-ID / X-User-Id 头回退（缺省 `default`/`unknown`，与 gpu-svc 同口径）。
+- **autoscaler-svc 指标读取修复**（`b84572f`）：`ReadMetric` 请求 `/api/v1/query`（JSON API）却按 exposition 文本逐行解析，真实 Prometheus 下恒报 `no metric found`、评估器恒 no_action——自动伸缩核心链路第一步即断。改按 JSON 契约解析（status/errorType 报错、空 result 保留原语义、value[1] 非数字显式报错）；选择器 `%q` + `url.Values` 编码。
+- **遗留发现（已取证，待裁决）**：聚合层注释「五域微服务不消费租户上下文」与 gpu-svc `handler.go:199-202,469` / portal-svc `handler.go:728` 实际消费 X-Tenant-ID 矛盾——五域未获代理注入，Bearer 令牌路径下多租户数据会落 `default` 桶；且 X-User-Id 不与令牌交叉校验（`http_infra.go:103-104`），已认证客户端可同租户内伪造审计主体。详见 §5.6。
+
 ## [Unreleased] — 2026-09-29 五服务删除：deploy-svc / plugin-svc / bot-svc / workflow-svc / grafana-bridge（单体与聚合层能力替代）
 
 > 证据：删除前全仓 grep 复核（唯一引用面 = `release.yml` 矩阵、chart services 段、`init-mysql.sql` 段与文档；无代码 / 前端 / 部署消费方）；删除后 `deploy/scripts/validate-deploy-assets.sh` 全量 **PASS=36 FAIL=0**、根模块与 12 个存量服务模块 build/vet/测试全绿。执行记录与逐服务替代性证据见 `docs/td60-decision-2026-09-26.md` §5.5。
