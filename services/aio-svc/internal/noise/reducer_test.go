@@ -92,7 +92,10 @@ func TestDetectFlapping_EmptyStates(t *testing.T) {
 
 func TestCompressAlerts_Deduplicates(t *testing.T) {
 	r := NewReducer()
-	now := time.Now()
+	// 去重键按分钟桶（FiredAt.Unix()/60）哈希——基准时间须固定且落在桶内：
+	// 若用 time.Now()，墙钟在每分钟第 50~59 秒时 now+10s 跨桶 → 偶发不合并
+	// （CI run 36453413667 实测 17:00:53Z 红）。1700000000 = 分钟内第 20 秒。
+	now := time.Unix(1700000000, 0)
 	alerts := []Alert{
 		{ID: "1", RuleID: "rule-a", deviceID: "srv-01", Message: "CPU high", FiredAt: now},
 		{ID: "2", RuleID: "rule-a", deviceID: "srv-01", Message: "CPU high", FiredAt: now.Add(10 * time.Second)},

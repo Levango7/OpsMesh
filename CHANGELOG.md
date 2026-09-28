@@ -4,6 +4,13 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-29 aio-svc 噪声压缩测试偶发失败修复：分钟桶边界（CI run 36453413667）
+
+> 证据：CI run 36453413667（文档提交 208ebba，仅改文档却红在 services job）日志 `reducer_test.go:109: expected compressed count 2, got 3`，失败时刻 17:00:53Z（恰在每分钟第 50~59 秒窗口内）。根因实测：固定 S=53 的样本经生产代码 `CompressAlerts` 得 comp=3，S=20 得 comp=2（一次性实验文件已删）。
+
+- **根因**：去重键按分钟桶（`FiredAt.Unix()/60`，`internal/noise/reducer.go:203`）哈希；测试样本用 `time.Now()` + `now+10s`——墙钟落在每分钟第 50~59 秒时两时间戳跨桶不合并（命中概率 10/60≈17%）。该隐性依赖潜伏于 d1124a9a（`string(rune(bucket))` 把桶坍缩为同一码点、时间实际未参与哈希、测试恒过），0c24722c 修正桶编码后生效。
+- **修复**：`reducer_test.go` 基准时间固定为桶内时间戳 `time.Unix(1700000000, 0)`（分钟内第 20 秒，+10s 不跨桶），断言确定化；生产逻辑与语义不变。验证：noise 包 `-count=20` 连跑 + 全服务测试 + 严格档 lint 0 issues 全绿。
+- **边界说明**：桶式去重与代码注释 "within 1 minute" 在跨分钟边界时行为不同（相邻两秒的告警可能不合并）——现有设计近似，如需严格滚动窗口另行决策。
 ## [Unreleased] — 2026-09-28 errcheck 收紧档全量收口：+150 处逐点勘验（131 修 + 19 有据豁免），19 模块严格档零报点（TD-71 收官）
 
 > 证据：`golangci-lint v2.13.2`（与 CI 钉死同版）逐模块 `-c .golangci.services.yml` 复扫——operator + 18 services **0 issues**（改动后逐模块重扫）；`go build`/`go vet` 全绿；15 个受影响模块 `go test -count=1` 全绿（本机无 C 编译器，`-race` 由 CI 该 job 承担）。严格档测量（99 处基数）与逐点修法登记见 TD-71。
