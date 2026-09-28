@@ -853,3 +853,45 @@ func TestRequireTenantContextUserCrossCheck(t *testing.T) {
 		t.Errorf("trustGateway 模式应保留网关注入的用户头: %q", actx.UserID)
 	}
 }
+
+// TestProxyIdentityHeadersCarryNonDefaultTenant 非 default 租户注入的直接证据：
+// 现有用例均以 admin（default 租户）验证，无法区分"注入取自令牌"与"注入默认值"。
+// 此处以 t-acme 租户 + viewer 角色（最小只读权限）用户经令牌请求，断言后端收到的
+// 租户/用户头为令牌实际值——多租户下数据归置正确性的关键路径。
+func TestProxyIdentityHeadersCarryNonDefaultTenant(t *testing.T) {
+	var gotTenant, gotUser string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotTenant = r.Header.Get("X-Tenant-ID")
+		gotUser = r.Header.Get("X-User-Id")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer backend.Close()
+	t.Setenv("GPU_SVC_URL", backend.URL)
+
+	s := newServiceProxyTestServer()
+	u := s.store.CreateUser(&store.User{
+		ID: "u-acme-1", Username: "acme-user", TenantID: "t-acme",
+		Status: "active", RoleIDs: []string{"role-viewer"},
+	})
+	if u == nil {
+		t.Fatal("CreateUser 失败（测试前置不成立）")
+	}
+	token, err := s.issueUserToken(u)
+	if err != nil {
+		t.Fatalf("签发令牌失败: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/gpu/nodes", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	s.handleServiceProxy(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if gotTenant != "t-acme" {
+		t.Errorf("后端 X-Tenant-ID = %q, want t-acme（应注入令牌租户，而非默认值）", gotTenant)
+	}
+	if gotUser != "u-acme-1" {
+		t.Errorf("后端 X-User-Id = %q, want u-acme-1（应注入令牌用户）", gotUser)
+	}
+}
