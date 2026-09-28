@@ -1,15 +1,21 @@
-# TD-60 第 3 步「本地运行时模拟」专用覆盖层（2026-09-27）
+# TD-60 本地运行时模拟专用覆盖层（2026-09-27 建；2026-09-29 更新至阶段 2 接线批次）
 #
-# 用途：把重编后的控制面（含微服务转发自环拦截、OPSMESH_SERVICE_PROXY 开关、
-# GET /api/v1/admin/service-routing 端点）以独立标签混入 prod 栈做路由取证，
-# 不覆盖已发布的 opsmesh/controlplane:0.9.0 本地镜像标签。
+# 用途：把重编后的控制面以独立标签混入 prod 栈做路由取证，不覆盖已发布的
+# opsmesh/controlplane:<version> 本地镜像标签。
+#   - 0.9.3-sim（2026-09-27）：自环拦截、OPSMESH_SERVICE_PROXY 开关、
+#     GET /api/v1/admin/service-routing 端点、RBAC 权限快照回填 —— 第 3 步模拟取证。
+#   - 0.9.4-sim（2026-09-29）：在上者基础上含 TD-60 阶段 2 接线批次——task-svc
+#     代理域（/api/v1/task-svc/*）、permRules 权限分级（device 越权修复 + 六域
+#     写方法收紧）、task 域注册与 TASK_SVC_URL；另含 sim 本批次取证揪出的
+#     RBAC 权限目录补齐（15 个 handler 引用但缺目录的权限点，含 schedule/
+#     approval/task:approve 等——不补则任何角色含 admin 对应端点恒 403）。
 #
 # 用法（在 deploy/docker 下）：
 #   docker compose --env-file .env \
 #     -f docker-compose.prod.yml -f docker-compose.sim.yml \
-#     up -d --no-build mysql redis loki controlplane gpu-svc portal-svc device-svc
+#     up -d --no-build mysql redis loki controlplane gpu-svc portal-svc device-svc task-svc
 #
 # 仅限本地模拟，禁止用于生产交付。
 services:
   controlplane:
-    image: opsmesh/controlplane:0.9.3-sim
+    image: opsmesh/controlplane:0.9.4-sim

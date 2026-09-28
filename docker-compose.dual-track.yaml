@@ -52,6 +52,9 @@ services:
       # 转发后端指向本栈真实启动的服务。此前未设置，代理回落到默认值
       # 127.0.0.1:8081（device-svc 实际监听 8101）→ /api/v1/device-svc/* 全 503。
       DEVICE_SVC_URL: http://device-svc:8101
+      # task-svc 同理：本栈 task-svc 监听 8102，未设置时回落 127.0.0.1:8081
+      #（与 device-svc 默认端口相同，同样 503）。
+      TASK_SVC_URL: http://task-svc:8102
       # 本栈只起了 auth/device/task 三个服务，其余五域的微服务不在栈内：
       # 显式停用，使「域不存在」成为可查询的 disabled 状态，而不是悬空的 503。
       OPSMESH_SERVICE_PROXY: runbook,incident,autoscaler,portal,gpu

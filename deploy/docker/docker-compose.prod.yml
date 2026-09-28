@@ -417,6 +417,10 @@ services:
       GPU_SVC_URL: http://gpu-svc:8107
       PORTAL_SVC_URL: http://portal-svc:8109
       DEVICE_SVC_URL: http://device-svc:8101
+      # task-svc（TD-60 阶段 2 三域接通第二域）：HTTP 网关监听 8102 在下方本栈内。
+      # auth-svc 暂不接通（HTTP 网关默认关闭 + 独立内存用户库，双轨 Cookie/数据边界
+      # 待裁决），故此处不设 AUTH_SVC_URL——设了也没有对应域的代理规则可读。
+      TASK_SVC_URL: http://task-svc:8102
       # 可逆切流开关（默认空=全部转发）。回退某域到单体本地实现：
       #   OPSMESH_SERVICE_PROXY=gpu,portal
       # 全部停用用 off。取值非法会被忽略并按「全转发」继续——宁可不动，也不误切。
