@@ -46,6 +46,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/admin/store-failures", s.handleAdminStoreFailures)
 	// TD-60 切流可见性：域 → 实际后端 → 启用状态 → 自检结论。
 	mux.HandleFunc("/api/v1/admin/service-routing", s.handleServiceRouting)
+	// TD-60 逐域裁决取数：域 → 自启动以来真实请求数（按归一化路径前缀聚合）。
+	mux.HandleFunc("/api/v1/admin/service-traffic", s.handleAdminServiceTraffic)
 	// P1-6 可支撑性：pprof（默认关闭；开启后仍受 --metrics-allow-cidr 白名单约束）。
 	s.registerPprof(mux)
 	mux.HandleFunc("/api/v1/audits", s.handleAudits)                // GET 审计检索

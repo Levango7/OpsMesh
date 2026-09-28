@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/metrics"
 )
 
 // proxyDomainView 单个域的转发状态。
@@ -49,57 +50,40 @@ func (s *Server) handleServiceRouting(w http.ResponseWriter, r *http.Request) {
 		disabled = map[string]bool{}
 	}
 
-	// 按域聚合：同一域可能有多条规则（device 有 4 条）。
-	type agg struct {
-		prefixes []string
-		envKey   string
-		backend  string
-		from     string
-	}
-	order := []string{}
-	byDomain := map[string]*agg{}
-
-	for _, r := range allProxyRules() {
-		a := byDomain[r.domain]
-		if a == nil {
-			a = &agg{envKey: r.envKey, backend: r.defaultURL, from: "default"}
-			if r.envKey != "" {
-				if v := os.Getenv(r.envKey); v != "" {
-					a.backend, a.from = v, "env"
-				}
+	groups := groupProxyDomains()
+	order := make([]string, 0, len(groups))
+	views := make([]proxyDomainView, 0, len(groups))
+	for _, g := range groups {
+		order = append(order, g.domain)
+		backend, from := g.first.defaultURL, "default"
+		if g.first.envKey != "" {
+			if v := os.Getenv(g.first.envKey); v != "" {
+				backend, from = v, "env"
 			}
-			byDomain[r.domain] = a
-			order = append(order, r.domain)
 		}
-		a.prefixes = append(a.prefixes, r.publicPrefix)
-	}
-
-	views := make([]proxyDomainView, 0, len(order))
-	for _, d := range order {
-		a := byDomain[d]
 		v := proxyDomainView{
-			Domain:       d,
-			PublicPrefix: a.prefixes,
-			EnvKey:       a.envKey,
-			Backend:      a.backend,
-			BackendFrom:  a.from,
+			Domain:       g.domain,
+			PublicPrefix: g.prefixes,
+			EnvKey:       g.first.envKey,
+			Backend:      backend,
+			BackendFrom:  from,
 		}
 		switch {
-		case disabled[d]:
+		case disabled[g.domain]:
 			v.Status = "disabled"
 			v.Note = "已按 " + serviceProxyEnvKey + " 停用转发，请求回落到单体本地实现"
 		default:
 			// 自环判定与 handleServiceProxy 用的是同一个函数，结论必然一致。
-			if _, self := proxySelfLoopTarget(parseBackendURL(a.backend), s.httpPort, s.grpcPort, s.metricsPort); self {
+			if _, self := proxySelfLoopTarget(parseBackendURL(backend), s.httpPort, s.grpcPort, s.metricsPort); self {
 				v.Status = "self-loop"
 				v.Note = "后端指向控制面自身，该域已被 503 隔离（不转发、不返回单体数据）"
-			} else if probeBackend(a.backend) {
+			} else if probeBackend(backend) {
 				healthy := true
 				v.Healthy, v.Status = &healthy, "ok"
 			} else {
 				healthy := false
 				v.Healthy, v.Status = &healthy, "unreachable"
-				v.Note = "后端不可达，请求会得到 503；确认服务已启动且 " + a.envKey + " 指向正确地址"
+				v.Note = "后端不可达，请求会得到 503；确认服务已启动且 " + g.first.envKey + " 指向正确地址"
 			}
 			// Forwarded 的含义是「请求会被真正发往微服务」：自环被就地拦下、
 			// 停用域不注册路由，两者都不算转发；unreachable 仍算（会尝试并 503）。
@@ -118,6 +102,74 @@ func (s *Server) handleServiceRouting(w http.ResponseWriter, r *http.Request) {
 		},
 		"domains":   views,
 		"switchErr": errText(switchErr),
+	})
+}
+
+// proxyDomainGroup 转发路由表按域聚合后的一行。
+// 同一域可能有多条规则（device 4 条、task 数条），后端地址取首条规则的
+// envKey/defaultURL——同域各规则本就指向同一服务，首条即代表。
+type proxyDomainGroup struct {
+	domain   string
+	prefixes []string
+	first    serviceProxyRule
+}
+
+// groupProxyDomains 按域聚合 allProxyRules()，保持域首次出现的顺序。
+// service-routing 与 service-traffic 两个只读端点共用：「域→对外前缀」的派生
+// 逻辑只此一份，新增域不会在某个端点里静默缺席。
+func groupProxyDomains() []proxyDomainGroup {
+	order := []string{}
+	byDomain := map[string]*proxyDomainGroup{}
+	for _, r := range allProxyRules() {
+		g := byDomain[r.domain]
+		if g == nil {
+			g = &proxyDomainGroup{domain: r.domain, first: r}
+			byDomain[r.domain] = g
+			order = append(order, r.domain)
+		}
+		g.prefixes = append(g.prefixes, r.publicPrefix)
+	}
+	out := make([]proxyDomainGroup, 0, len(order))
+	for _, d := range order {
+		out = append(out, *byDomain[d])
+	}
+	return out
+}
+
+// handleAdminServiceTraffic 处理 GET /api/v1/admin/service-traffic：逐域真实流量计数。
+//
+// 为什么需要：TD-60 §5.3 把五个「保留但需决策」域（gpu/portal/incident/runbook/
+// autoscaler）的最终裁决定为「待真实流量」，但此前没有任何出口能回答这个问题——
+// 只能翻访问日志或指望 Prometheus 已抓取，于是裁决一直悬着（§5.5 那五个被删的服务
+// 之所以判得动，正因为有「从未进部署清单」这类静态事实；有对等实现的域必须看流量）。
+// 数据其实一直在记（opsmesh_http_requests_total 按归一化路径记账），缺的只是按域
+// 汇总这一步，所以这里只做只读聚合，不新增计数器。
+//
+// 权限：与 /api/v1/admin/* 其余只读端点同档（diagnostics:execute，operator 亦可）。
+func (s *Server) handleAdminServiceTraffic(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if _, ok := s.requireProd(w, r, levelPermission); !ok {
+		return
+	}
+	groups := groupProxyDomains()
+	domains := make(map[string][]string, len(groups))
+	for _, g := range groups {
+		domains[g.domain] = g.prefixes
+	}
+	buckets := s.metrics.HTTPTrafficByPrefix(domains)
+	if buckets == nil {
+		// 序列化为 [] 而非 null：前端/脚本可直接遍历，无需判空。
+		buckets = []metrics.TrafficBucket{}
+	}
+	paginate.WriteJSON(w, http.StatusOK, map[string]any{
+		"domains": buckets,
+		"window":  "自控制面进程启动以来（进程内计数，重启归零）",
+		"crossRestart": "跨重启/多副本取数走 PromQL：sum(increase(opsmesh_http_requests_total" +
+			"{path=~\"/api/v1/<域前缀>(/.*)?\"}[7d]))",
+		"note": "requests=0 是裁决证据而非缺数据——该域前缀自启动以来无任何请求。",
 	})
 }
 
