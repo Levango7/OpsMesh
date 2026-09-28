@@ -456,12 +456,12 @@ helm upgrade opsmesh ./deploy/helm/opsmesh -n opsmesh \
   --set services.task_svc.image.digest=sha256:<hex>
 ```
 
-每个启用的服务渲染 `Deployment` + `Service`（HTTP/gRPC 双端口，gRPC 缺省的服务如 plugin/aio/grafana-bridge 自动省略 gRPC 端口）：
+每个启用的服务渲染 `Deployment` + `Service`（HTTP/gRPC 双端口，gRPC 缺省的服务如 aio-svc 自动省略 gRPC 端口）：
 
-- **端口对照源码**：HTTP/gRPC 端口取各服务 `pkg/config/config.go` 默认值（auth/device/task 8081/50052、alert 8080/50051、config 8083/50054、log 8080/9090、deploy 8081/50052、plugin 8082（纯 HTTP）、portal 8080/50051、aio 8100（纯 HTTP）、grafana-bridge 8080（纯 HTTP））。
+- **端口对照源码**：HTTP/gRPC 端口取各服务 `pkg/config/config.go` 默认值（auth/device/task 8081/50052、alert 8080/50051、config 8083/50054、log 8080/9090、portal 8080/50051、aio 8100（纯 HTTP））。
 - **健康探针**：liveness/readiness 探各服务 HTTP 端口的健康路径（多数为 `/health`，log-svc 为 `/healthz`，见 `services/*/cmd/*/main.go`）。
 - **镜像来源**：release.yml 推送至 `ghcr.io/<owner>/<service>`，三连 tag：`v<version>` / `<github.sha>` / `latest`；默认 `latest`，生产用 `values-production.yaml` 的 `services` 注释示例钉 semver/digest。
-- **存储接线**：`storeEnvPrefix` 非空时渲染 `<前缀>_STORE_TYPE`；chart 全局 MySQL 可用时同步注入 `<前缀>_DSN`（与控制面同库同凭据）。log-svc 后端选择走 `LOG_SVC_BACKEND`（env），aio-svc / grafana-bridge 无存储 env。
+- **存储接线**：`storeEnvPrefix` 非空时渲染 `<前缀>_STORE_TYPE`；chart 全局 MySQL 可用时同步注入 `<前缀>_DSN`（与控制面同库同凭据）。log-svc 后端选择走 `LOG_SVC_BACKEND`（env），aio-svc 无存储 env。
 
 
 > 旧版文档曾标注"Helm 规划中"，与当前仓库实际不符——现已纠正：Chart 已落地可用。Argo CD ApplicationSet 网段批量渲染仍属规划中能力。
@@ -1108,19 +1108,21 @@ internal/                 ← 35 个包，按 8 个领域分组（详见上文"i
 ├── tlsutil/              ← gRPC TLS / mTLS 工具 + 证书热重载
 └── version/              ← 构建版本注入
 operator/                 ← K8s Operator 子模块（独立 go.mod，controller-runtime OpsMeshInstance CRD）
-services/                 ← 微服务化拆分（18 个独立服务，见下表；与主模块双轨并存，收敛计划见 docs/tech-debt.md TD-60）
+services/                 ← 微服务化拆分（13 个独立服务，见下表；与主模块双轨并存，收敛计划见 docs/tech-debt.md TD-60）
 proto/                    ← protobuf API 定义（buf 管理，与 internal/grpcx 双轨）
 web/enterprise/           ← Vue3 企业版前端源码（构建产物经脚本装配进 internal/controlplane/embed/enterprise/）
 deploy/                   ← 部署资产：helm/ + systemd/ + docker-compose.yaml + Dockerfile*
 docs/                     ← 24 篇设计文档（产品/架构/数据库/接口/安全/UI/模块/功能/测试/运维/AI/多系统/部署场景）
 ```
 
-### services/ 微服务目录（18 个）
+### services/ 微服务目录（13 个）
 
 > 2026-08-29 起仓库新增 `services/` 微服务化拆分（详见 `docs/architecture/adr-001-microservice-strategy.md`）。
 > 当前状态：**与主模块（`internal/` + `cmd/opsmesh`）双轨并存**——控制面单体仍是默认运行形态，
 > 微服务为渐进式拆分产物（各服务已具备独立 main + MySQL schema，但多数默认接内存 store，
-> 生产接线与双轨收敛计划见 `docs/tech-debt.md` TD-60/TD-65）。各服务职责：
+> 生产接线与双轨收敛计划见 `docs/tech-debt.md` TD-60/TD-65）。2026-09-29 删除五个已被单体
+> 能力替代或为 mock 实现的模块（deploy-svc / plugin-svc / bot-svc / workflow-svc /
+> grafana-bridge，见 `docs/td60-decision-2026-09-26.md` §5.5）。各服务职责：
 
 | 服务 | 职责 |
 |---|---|
@@ -1130,17 +1132,12 @@ docs/                     ← 24 篇设计文档（产品/架构/数据库/接�
 | `alert-svc` | 告警规则/静默/抑制 |
 | `log-svc` | 日志检索（gRPC + 独立 health） |
 | `config-svc` | 配置中心/热推送 |
-| `deploy-svc` | 部署计划/灰度/回滚 |
-| `workflow-svc` | DAG 工作流 |
 | `aio-svc` | AIOps 智能引擎（异常检测/根因/预测/降噪/GPU 异常） |
 | `gpu-svc` | GPU 资源管理/AI 工作负载调度 |
 | `incident-svc` | 事件管理/升级策略 |
-| `plugin-svc` | 插件服务 |
 | `portal-svc` | 门户聚合 |
 | `runbook-svc` | 运维手册 |
 | `autoscaler-svc` | 自动扩缩容 |
-| `bot-svc` | ChatOps 机器人 |
-| `grafana-bridge` | Grafana 数据源桥接 |
 | `tf-provider` | Terraform provider |
 
 > **端口注意**：各服务端口经 `<NAME>_SVC_HTTP_PORT` / `<NAME>_SVC_GRPC_PORT` 环境变量配置，

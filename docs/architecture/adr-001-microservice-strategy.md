@@ -117,16 +117,19 @@ Lite（单体）:
 Professional（微服务）:
 ┌──────────────────────────────────────────────────────────┐
 │  APISIX / Envoy Gateway                                  │
-│  ├─ auth-svc    (JWT/RBAC)                               │
-│  ├─ device-svc  (设备/CMDB)                              │
-│  ├─ task-svc    (任务生命周期)                           │
-│  ├─ alert-svc   (告警引擎)                               │
-│  ├─ deploy-svc  (部署编排)                               │
-│  ├─ config-svc  (配置/密钥)                              │
-│  ├─ log-svc     (日志检索)                               │
-│  ├─ aio-svc     (AIOps 5 引擎)                           │
-│  ├─ plugin-svc  (插件市场)                               │
-│  ├─ portal-svc  (自助门户)                               │
-│  └─ grafana-bridge (Grafana 数据源)                      │
+│  ├─ auth-svc       (JWT/RBAC)                            │
+│  ├─ device-svc     (设备/CMDB)                           │
+│  ├─ task-svc       (任务生命周期)                        │
+│  ├─ alert-svc      (告警引擎)                            │
+│  ├─ config-svc     (配置/密钥)                           │
+│  ├─ log-svc        (日志检索)                            │
+│  ├─ aio-svc        (AIOps 5 引擎)                        │
+│  ├─ gpu-svc        (GPU 管理)                            │
+│  ├─ incident-svc   (事件/复盘)                           │
+│  ├─ runbook-svc    (Runbook 执行)                        │
+│  ├─ autoscaler-svc (弹性伸缩)                            │
+│  └─ portal-svc     (自助门户)                            │
 └──────────────────────────────────────────────────────────┘
 ```
+
+> 2026-09-29 更新：原列 `deploy-svc` / `plugin-svc` / `grafana-bridge` 已删除（另有未列出的 `bot-svc`、`workflow-svc` 同批删除）——部署编排由单体 `internal/deploy/`、插件市场由 `internal/plugin`、工作流引擎由 `internal/orchestration`、ChatOps 由聚合层 `bot_bridge.go` 承接；`grafana-bridge` 无消费方（面板直连 Prometheus 抓取的 `/metrics`）。`gpu / incident / runbook / autoscaler / portal` 五域补充入列。裁决与证据见 `docs/td60-decision-2026-09-26.md` §5.5。

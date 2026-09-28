@@ -4,6 +4,14 @@
 
 > 当前最新已发布版本：`v0.9.2`（2026-09-27，商用就绪收口 + 发版链路加固；上一版 `v0.9.1` 2026-09-17 为全面评估 35 项修复）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-29 五服务删除：deploy-svc / plugin-svc / bot-svc / workflow-svc / grafana-bridge（单体与聚合层能力替代）
+
+> 证据：删除前全仓 grep 复核（唯一引用面 = `release.yml` 矩阵、chart services 段、`init-mysql.sql` 段与文档；无代码 / 前端 / 部署消费方）；删除后 `deploy/scripts/validate-deploy-assets.sh` 全量 **PASS=36 FAIL=0**、根模块与 12 个存量服务模块 build/vet/测试全绿。执行记录与逐服务替代性证据见 `docs/td60-decision-2026-09-26.md` §5.5。
+
+- **裁决与执行**：TD-60 裁决表「候选删除或长期冻结」五服务确定删除（用户决定；口径 = 从未进任何部署清单 + 无消费方 + 能力已被替代）：`deploy-svc`（→ 单体 `internal/deploy`/`internal/helm`）、`plugin-svc`（→ `internal/plugin` + 迁移 015 plugins 表）、`bot-svc`（→ 聚合层 `bot_bridge.go`，Web 契约此前已独任，IM webhook 从未被部署清单启用）、`workflow-svc`（→ `internal/orchestration` workflow_defs/workflow_runs）、`grafana-bridge`（→ 面板直连 Prometheus 抓取的 `/metrics`，无消费方）。
+- **构建/部署面收敛**：`go.work` 去 5 行 `use`；`release.yml` 矩阵 17→12（存量 = 12 服务 + `tf-provider` 工具链模块）；chart `values.yaml` 删 4 个服务段（`_svc` 键 12 条、`metrics: true` 12 条，与矩阵逐一对齐）；`init-mysql.sql` 删 workflow/plugin 建库段；`prometheus.yml`、`validate-deploy-assets.sh`（`NOT_SCRAPED_EXEMPT` 收敛为 autoscaler/incident/runbook/tf-provider）、`verify-runtime.sh` 同步；集成测试端口表 12→9。
+- **代码与文档一致**：`service_proxy.go` 六域→五域（bot 注释占位规则删除，bot 契约归 `bot_bridge.go`）；`bot_bridge.go` 头部改写为 bot 域唯一权威实现；README / operations / product-design / adr-001 / v1-roadmap / DELIVERY / image-pinning 等文档计数与拓扑同步（存量服务数、`/metrics` 与 `pkg/log.Init` 覆盖均按 12 复核）。
+
 ## [Unreleased] — 2026-09-29 TD-60 阶段 2：task-svc 接通（第二域）+ RBAC 目录补齐 15 项（全站性 403 缺陷）
 
 > 证据：本地 Docker 模拟（`opsmesh/controlplane:0.9.4-sim` + `task-svc`，prod 栈 + `docker-compose.sim.yml` 覆盖层）实测输出 + `internal/controlplane`、`internal/store` 相关测试全绿。

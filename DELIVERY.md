@@ -10,7 +10,7 @@
 
 ## 2. 代码规模（实测 2026-09-16 更新，含 services/ 18 微服务 + GPU/AIOps/ChatOps 新域）
 
-> 统计口径：`git ls-files` 实测。主模块 + operator 子模块 + `services/` 18 个微服务子模块（各自独立 go.mod，2026-08-29 起新增）。
+> 统计口径：`git ls-files` 实测。主模块 + operator 子模块 + `services/` 18 个微服务子模块（各自独立 go.mod，2026-08-29 起新增）。**2026-09-29 起 services/ 收敛为 12 个服务 + `tf-provider`（删除 5 个未被部署的模块，见 `docs/td60-decision-2026-09-26.md` §5.5），本节数值为该日之前的 2026-09-16 快照。**
 > 前端按 `web/enterprise/src/` 下 `.js` + `.vue` 统计（不含 `.json` i18n 资源）。
 
 | 指标 | 数值（实测 2026-09-16） |

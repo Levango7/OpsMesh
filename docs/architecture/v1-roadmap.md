@@ -41,9 +41,9 @@
 | 5 | 配置/密钥/通知通道表 | config-svc | P0 |
 | 6 | 资源申请/审批/配额表 | portal-svc | P0 |
 | 7 | 成本分摊/用量统计表 | portal-svc | P1 |
-| 8 | 插件/版本/安装记录表 | plugin-svc | P1 |
+| 8 | 插件/版本/安装记录表 | 主模块（internal/plugin + 迁移 015） | P1 |
 | 9 | Runbook/执行历史表 | runbook-svc | P1 |
-| 10 | 工作流定义/执行记录表 | workflow-svc | P1 |
+| 10 | 工作流定义/执行记录表 | 主模块（internal/orchestration） | P1 |
 | 11 | 事件/时间线/复盘表 | incident-svc | P1 |
 | 12 | 审计日志全局表 | 全局 | P0 |
 
