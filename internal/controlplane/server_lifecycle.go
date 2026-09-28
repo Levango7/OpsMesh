@@ -122,6 +122,18 @@ func (s *Server) Start() error {
 		mux.HandleFunc(deviceProxyExtras[i].publicPrefix, s.handleServiceProxy)
 		mux.HandleFunc(deviceProxyExtras[i].publicPrefix+"/", s.handleServiceProxy)
 	}
+	// task 域（TD-60 阶段 2「三域接通」：task-svc REST 网关接线）：/api/v1/task-svc/*
+	// 转发（规则见 service_proxy.go taskProxyExtras；权限按方法+路径分级对齐单体
+	// 本地要求，代理层鉴权后注入 X-Tenant-ID 头——task-svc 网关消费租户上下文）。
+	// 前缀带 task-svc 域名：controlplane 本地已有 /api/v1/tasks、/api/v1/schedules、
+	// /api/v1/approval/* 等同名 handler，同 mux 重复注册会 panic；双轨期新旧并存。
+	for i := range taskProxyExtras {
+		if disabled[taskProxyExtras[i].domain] {
+			continue
+		}
+		mux.HandleFunc(taskProxyExtras[i].publicPrefix, s.handleServiceProxy)
+		mux.HandleFunc(taskProxyExtras[i].publicPrefix+"/", s.handleServiceProxy)
+	}
 	// ChatOps Web 命令台（bot_bridge.go）：命令语法与 bot-svc IM webhook 一致
 	//（/opsmesh status|devices|alerts|ack|metrics|help），历史进程级内存。
 	mux.HandleFunc("/api/v1/bot/command", s.handleBotCommand)

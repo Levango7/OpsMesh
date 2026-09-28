@@ -49,8 +49,58 @@ type serviceProxyRule struct {
 	envKey string
 	// defaultURL 默认后端地址（本机默认端口；与各 svc pkg/config 默认值一致）。
 	defaultURL string
-	// perm 聚合层鉴权所需权限（requirePermission）。
+	// perm 聚合层鉴权所需权限（requirePermission）——permRules 未命中时的兜底。
 	perm string
+	// permRules 域内权限分级（可选）：按声明顺序 first-match，未命中回落 perm。
+	// 用于同一转发前缀下不同操作对应不同权限点的场景（如 tasks 的
+	// GET/POST/cancel/approve 分别是 task:read/task:write/task:cancel/task:approve）。
+	permRules []proxyPermRule
+}
+
+// proxyPermRule 域内权限分级规则：按「方法 + 子路径前缀/后缀」把请求映射到权限点。
+//
+// 为什么需要：规则级单一 perm 在方法维度上是粗粒度的——device 域此前对
+// DELETE /devices/{id}（controlplane 本地要求 device:delete）与
+// POST /devices/{id}/provision（本地要求 provision:execute）都只校验
+// device:read，持有只读权限的凭证可经代理前缀完成删除/纳管，构成权限放大。
+// 分级后代理与本地单体对同一操作的权限要求逐一对齐（双轨期行为等价，
+// 也是阶段 3 裁决时两边可比的前提）。
+// 注意：pathPrefix / pathSuffix 按**上游（后端改写后）路径**书写，如
+// /api/v1/schedules 而非公开前缀形态 /api/v1/task-svc/schedules——这样规则
+// 表达的是"后端 API 的子路径语义"（与本地单体 handler 的路径一致，便于逐条
+// 比对），且公开前缀在切流阶段变更（如剥掉 -svc 后缀直连）时分级规则不失效。
+type proxyPermRule struct {
+	method     string // 空=任意方法
+	pathPrefix string // 空=任意路径（按上游路径）；非空要求 path == prefix 或 HasPrefix(path, prefix+"/")
+	pathSuffix string // 空=不校验；非空要求 HasSuffix(path, suffix)
+	perm       string // 命中后要求持有的权限点
+}
+
+// matches 判定请求（方法 + 完整路径）是否命中本条分级规则。
+func (pr *proxyPermRule) matches(method, path string) bool {
+	if pr.method != "" && pr.method != method {
+		return false
+	}
+	if pr.pathPrefix != "" && path != pr.pathPrefix && !strings.HasPrefix(path, pr.pathPrefix+"/") {
+		return false
+	}
+	if pr.pathSuffix != "" && !strings.HasSuffix(path, pr.pathSuffix) {
+		return false
+	}
+	return true
+}
+
+// resolvePerm 解析本次请求所需的权限点：permRules 首条命中优先，否则回落 perm。
+// 入参 path 为**公开请求路径**（如 /api/v1/task-svc/schedules）；匹配前先经
+// rewriteProxyPath 改写为上游路径（permRules 的路径字段按上游形态书写）。
+func (r *serviceProxyRule) resolvePerm(method, path string) string {
+	upstream := r.rewriteProxyPath(path)
+	for i := range r.permRules {
+		if r.permRules[i].matches(method, upstream) {
+			return r.permRules[i].perm
+		}
+	}
+	return r.perm
 }
 
 // serviceProxyRules 六域转发映射表。端口依据各服务 pkg/config 默认值：
@@ -59,6 +109,12 @@ type serviceProxyRule struct {
 //
 // 注意 runbook 与 incident、autoscaler 与 portal 默认端口两两相同——单机同跑
 // 多服务时必须用 env 覆盖（*_SVC_URL 或各服务 *_SVC_HTTP_PORT）区分。
+//
+// 权限分级：GET → *:read，其余方法 → *:write（permRules 首条命中，跨出即兜底）。
+// 此前全体方法统一校验 *:read——持有只读凭证的调用方可经代理完成写操作
+// （建 GPU 工作负载、执行 Runbook、审批门户请求等），与 device 域同一类权限
+// 放大；2026-09-29 随 task 域接通一并修复。前端路由门禁本就是 *:read（页面准入），
+// 动作级校验在服务端——收紧写权限不影响「只读角色进页面、点按钮被拒」的既有模型。
 var serviceProxyRules = []serviceProxyRule{
 	{
 		domain:         "gpu",
@@ -67,7 +123,10 @@ var serviceProxyRules = []serviceProxyRule{
 		domainPrefix:   "/api/v1/gpu",
 		envKey:         "GPU_SVC_URL",
 		defaultURL:     "http://127.0.0.1:8090",
-		perm:           "gpu:read",
+		perm:           "gpu:write",
+		permRules: []proxyPermRule{
+			{method: http.MethodGet, perm: "gpu:read"},
+		},
 	},
 	{
 		domain:         "runbook",
@@ -76,7 +135,10 @@ var serviceProxyRules = []serviceProxyRule{
 		domainPrefix:   "/api/v1/runbooks",
 		envKey:         "RUNBOOK_SVC_URL",
 		defaultURL:     "http://127.0.0.1:8082",
-		perm:           "runbook:read",
+		perm:           "runbook:write",
+		permRules: []proxyPermRule{
+			{method: http.MethodGet, perm: "runbook:read"},
+		},
 	},
 	{
 		domain:         "incident",
@@ -85,7 +147,10 @@ var serviceProxyRules = []serviceProxyRule{
 		domainPrefix:   "/api/v1/incidents",
 		envKey:         "INCIDENT_SVC_URL",
 		defaultURL:     "http://127.0.0.1:8082",
-		perm:           "incident:read",
+		perm:           "incident:write",
+		permRules: []proxyPermRule{
+			{method: http.MethodGet, perm: "incident:read"},
+		},
 	},
 	{
 		// autoscaler-svc 路径不含域前缀（/api/v1/rules 而非 /api/v1/autoscaler/rules，
@@ -96,7 +161,10 @@ var serviceProxyRules = []serviceProxyRule{
 		domainPrefix:   "/api/v1/autoscaler",
 		envKey:         "AUTOSCALER_SVC_URL",
 		defaultURL:     "http://127.0.0.1:8080",
-		perm:           "autoscaler:read",
+		perm:           "autoscaler:write",
+		permRules: []proxyPermRule{
+			{method: http.MethodGet, perm: "autoscaler:read"},
+		},
 	},
 	{
 		// portal-svc 同理：/api/v1/requests 而非 /api/v1/portal/requests
@@ -107,7 +175,10 @@ var serviceProxyRules = []serviceProxyRule{
 		domainPrefix:   "/api/v1/portal",
 		envKey:         "PORTAL_SVC_URL",
 		defaultURL:     "http://127.0.0.1:8080",
-		perm:           "portal:read",
+		perm:           "portal:write", // 含审批动作（approve/reject 为 POST）
+		permRules: []proxyPermRule{
+			{method: http.MethodGet, perm: "portal:read"},
+		},
 	},
 	{
 		// bot-svc 暴露的是 ChatOps 平台回调（/webhook/{wecom,feishu,slack,dingtalk}）
@@ -138,7 +209,16 @@ var deviceProxyExtras = []serviceProxyRule{
 		domainPrefix:   "/api/v1/device-svc/devices",
 		envKey:         "DEVICE_SVC_URL",
 		defaultURL:     "http://127.0.0.1:8081",
-		perm:           "device:read",
+		perm:           "device:write", // 兜底：注册/更新/心跳等写操作
+		permRules: []proxyPermRule{
+			{method: http.MethodGet, perm: "device:read"},
+			// DELETE /devices/{id} 退役：与本地 handleRetireDevice（server_devices.go:218）
+			// 的 device:delete 对齐——此前统一 device:read 允许只读者经代理删除设备。
+			{method: http.MethodDelete, perm: "device:delete"},
+			// POST /devices/{id}/provision 纳管：与本地 handleProvision
+			//（server_devices.go:248）的 provision:execute 对齐。
+			{method: http.MethodPost, pathSuffix: "/provision", perm: "provision:execute"},
+		},
 	},
 	{
 		domain:         "device",
@@ -147,7 +227,10 @@ var deviceProxyExtras = []serviceProxyRule{
 		domainPrefix:   "/api/v1/device-svc/agents",
 		envKey:         "DEVICE_SVC_URL",
 		defaultURL:     "http://127.0.0.1:8081",
-		perm:           "device:read",
+		perm:           "device:write", // 兜底：agent 注册/心跳等写操作
+		permRules: []proxyPermRule{
+			{method: http.MethodGet, perm: "device:read"},
+		},
 	},
 	{
 		domain:         "device",
@@ -156,7 +239,12 @@ var deviceProxyExtras = []serviceProxyRule{
 		domainPrefix:   "/api/v1/device-svc/cmdb",
 		envKey:         "DEVICE_SVC_URL",
 		defaultURL:     "http://127.0.0.1:8081",
-		perm:           "cmdb:read",
+		perm:           "cmdb:write", // 兜底：CI 创建/更新/删除
+		permRules: []proxyPermRule{
+			// device-svc 的 cmdb 面只有 cis CRUD + relations 查询，无
+			// changes/approve 子域（gateway.go:84-86）——cmdb:approve 不经此路径。
+			{method: http.MethodGet, perm: "cmdb:read"},
+		},
 	},
 	{
 		domain:         "device",
@@ -165,27 +253,84 @@ var deviceProxyExtras = []serviceProxyRule{
 		domainPrefix:   "/api/v1/device-svc/discovery",
 		envKey:         "DEVICE_SVC_URL",
 		defaultURL:     "http://127.0.0.1:8081",
-		perm:           "device:read",
+		perm:           "network:write", // 兜底：POST /discovery/jobs 触发扫描
+		permRules: []proxyPermRule{
+			// discovery 子域的本地对应实现是 POST /api/v1/network/discover
+			// （network.go handleNetworkDiscover，network:write）——权限映射跟随
+			// 本地语义，而不是设备域权限：能触发网段扫描的凭证应与本地一致。
+			{method: http.MethodGet, perm: "network:read"},
+		},
+	},
+}
+
+// taskProxyExtras task 域转发规则（TD-60 阶段 2「三域接通」：task-svc REST 网关接线）。
+//
+// 与 device 同型：task-svc 的 HTTP 网关消费租户上下文（extractAuth 读 X-Tenant-ID
+// 头，且与 token 内 tenant_id 交叉校验），代理层鉴权后须注入该头再转发。
+//
+// 前缀设计 /api/v1/task-svc/*：controlplane 本地已有 /api/v1/tasks、/api/v1/schedules、
+// /api/v1/approval/* 等同名 handler（server_lifecycle.go:33-34、:52 与 approval 注册），
+// 同 mux 重复注册会 panic；双轨期新旧路径并存（旧=controlplane 本地实现，
+// 新=task-svc 网关），切流阶段再评估替换。上游路径整段剥前缀：/api/v1/task-svc/tasks
+// → /api/v1/tasks（task-svc 网关的路径与单体一致）。
+//
+// 权限映射逐条对齐单体本地要求（server_tasks.go / server_schedules.go /
+// server_approval.go），双轨期「换一条路径不改变权限边界」：
+//   - tasks:        GET → task:read；POST {id}/cancel → task:cancel；
+//     POST {id}/approve|/reject → task:approve；其余写 → task:write
+//   - schedules:    GET → schedule:read；其余（含 pause/resume）→ schedule:write
+//   - approval:     GET → approval:read；POST {id}/approve|/reject → approval:approve；
+//     其余 → approval:write
+//
+// 注意 task:approve / schedule:* / approval:* 这组权限点在接线时并不在 rbacPermSpecs
+// 目录里（单体本地同样如此）——sim 取证暴露后已随 2026-09-29 目录补齐入册（15 项
+// 批量修复，老库经并集回填自愈）；approve 类不属派生动作集，仍仅 admin 恒可。
+// 此处映射永远如实镜像单体本地要求，不做「代理更宽松」或「代理更严格」的偏离。
+var taskProxyExtras = []serviceProxyRule{
+	{
+		domain:         "task",
+		publicPrefix:   "/api/v1/task-svc",
+		upstreamPrefix: "/api/v1",
+		domainPrefix:   "/api/v1/task-svc",
+		envKey:         "TASK_SVC_URL",
+		// 默认端口与 task-svc pkg/config 一致（8081，与 device-svc 默认相同——
+		// 单机裸进程同跑两服务时需 env 覆盖区分；容器内 compose 已显式设置
+		// TASK_SVC_URL=http://task-svc:8102）。
+		defaultURL: "http://127.0.0.1:8081",
+		perm:       "task:write", // 兜底：创建/触发类写操作
+		permRules: []proxyPermRule{
+			// schedules 子域（prefix 判别须先于下面的 task 后缀规则）。
+			{method: http.MethodGet, pathPrefix: "/api/v1/schedules", perm: "schedule:read"},
+			{pathPrefix: "/api/v1/schedules", perm: "schedule:write"},
+			// approval 子域。approve/reject 的专属权限必须在通用 write 之前命中
+			// （单体 server_approval.go:343/:379 要求 approval:approve）。
+			{method: http.MethodGet, pathPrefix: "/api/v1/approval", perm: "approval:read"},
+			{method: http.MethodPost, pathPrefix: "/api/v1/approval", pathSuffix: "/approve", perm: "approval:approve"},
+			{method: http.MethodPost, pathPrefix: "/api/v1/approval", pathSuffix: "/reject", perm: "approval:approve"},
+			{pathPrefix: "/api/v1/approval", perm: "approval:write"},
+			// tasks 子域的专属动作（单体：cancel → task:cancel，approve/reject → task:approve）。
+			{method: http.MethodPost, pathSuffix: "/cancel", perm: "task:cancel"},
+			{method: http.MethodPost, pathSuffix: "/approve", perm: "task:approve"},
+			{method: http.MethodPost, pathSuffix: "/reject", perm: "task:approve"},
+			// 剩余 GET 全部只读（列表/详情/result/batch 状态/canary 状态）。
+			{method: http.MethodGet, perm: "task:read"},
+		},
 	},
 }
 
 // lookupServiceProxyRule 按请求路径匹配转发规则（最长前缀语义由注册顺序保证：
 // server_lifecycle.go 按本表顺序注册，ServeMux 自身按最长模式匹配）。
-// device 域规则（deviceProxyExtras）与六域共用同一匹配语义。
+// device/task 域规则（*ProxyExtras）与六域共用同一匹配语义。
 func lookupServiceProxyRule(path string) *serviceProxyRule {
-	for i := range serviceProxyRules {
-		r := &serviceProxyRules[i]
-		if r.publicPrefix == "" {
-			continue
-		}
-		if path == r.publicPrefix || strings.HasPrefix(path, r.publicPrefix+"/") {
-			return r
-		}
-	}
-	for i := range deviceProxyExtras {
-		r := &deviceProxyExtras[i]
-		if path == r.publicPrefix || strings.HasPrefix(path, r.publicPrefix+"/") {
-			return r
+	for _, group := range [][]serviceProxyRule{serviceProxyRules, deviceProxyExtras, taskProxyExtras} {
+		for i := range group {
+			r := &group[i]
+			if r.publicPrefix == "" {
+				continue
+			}
+			if path == r.publicPrefix || strings.HasPrefix(path, r.publicPrefix+"/") {
+				return r
+			}
 		}
 	}
 	return nil
@@ -274,7 +419,7 @@ func proxySelfLoopTarget(target *url.URL, httpPort, grpcPort, metricsPort int) (
 // handleServiceProxy 命中自环时直接 503 并说明原因，绝不把请求转发回自己。
 func validateServiceProxyTargets(httpPort, grpcPort, metricsPort int) []string {
 	var problems []string
-	for _, group := range [][]serviceProxyRule{serviceProxyRules, deviceProxyExtras} {
+	for _, group := range [][]serviceProxyRule{serviceProxyRules, deviceProxyExtras, taskProxyExtras} {
 		for i := range group {
 			r := &group[i]
 			if r.publicPrefix == "" {
@@ -344,10 +489,10 @@ func parseDisabledProxyDomains(raw string) (map[string]bool, error) {
 	return disabled, nil
 }
 
-// allProxyRules 返回两张规则表的全部条目（空条目已剔除）。
+// allProxyRules 返回三张规则表的全部条目（空条目已剔除）。
 func allProxyRules() []serviceProxyRule {
-	out := make([]serviceProxyRule, 0, len(serviceProxyRules)+len(deviceProxyExtras))
-	for _, group := range [][]serviceProxyRule{serviceProxyRules, deviceProxyExtras} {
+	out := make([]serviceProxyRule, 0, len(serviceProxyRules)+len(deviceProxyExtras)+len(taskProxyExtras))
+	for _, group := range [][]serviceProxyRule{serviceProxyRules, deviceProxyExtras, taskProxyExtras} {
 		for i := range group {
 			if group[i].publicPrefix != "" {
 				out = append(out, group[i])
@@ -414,11 +559,14 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	// 聚合层鉴权：与站内其他 API 同一守卫（第七轮越权修复后 requireAuth 语义：
 	// 无凭证的裸租户头在此被拒，绝不透传到无鉴权的微服务）。
+	// 权限点按「方法 + 路径」分级解析（permRules），与单体本地对同一操作的
+	// 要求逐条对齐——例如 DELETE /device-svc/devices/{id} 要求 device:delete，
+	// 而不是规则级兜底的 device:read。
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
-	if _, ok := s.requirePermission(w, r, rule.perm); !ok {
+	if _, ok := s.requirePermission(w, r, rule.resolvePerm(r.Method, r.URL.Path)); !ok {
 		return
 	}
 	target := rule.upstreamBase()
@@ -455,10 +603,11 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 		// 下游微服务不消费会话 Cookie；鉴权已在聚合层完成，剥除防止
 		// 会话凭证意外落地到内部服务的访问日志。
 		req.Header.Del("Cookie")
-		// device 域网关消费租户上下文（tenant.Middleware 读 X-Tenant-ID 头）：
-		// 聚合层已验证的租户身份注入头后再转发，防下游兜底 default 造成
-		// 跨租户数据可见（六域微服务不消费租户上下文，此头对它们无影响）。
-		if isDeviceProxyRule(rule) {
+		// device/task 域网关消费租户上下文（tenant.Middleware / extractAuth 读
+		// X-Tenant-ID 头，且与 token 内 tenant_id 交叉校验）：聚合层已验证的
+		// 租户身份注入头后再转发，防下游兜底 default 造成跨租户数据可见
+		//（六域微服务不消费租户上下文，此头对它们无影响）。
+		if ruleInjectsTenantHeader(rule) {
 			req.Header.Set("X-Tenant-ID", actx.TenantID)
 		}
 	}
@@ -468,11 +617,14 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
-// isDeviceProxyRule 判断规则是否属于 device 域附加表（deviceProxyExtras）。
-func isDeviceProxyRule(r *serviceProxyRule) bool {
-	for i := range deviceProxyExtras {
-		if &deviceProxyExtras[i] == r {
-			return true
+// ruleInjectsTenantHeader 判断规则对应的微服务网关是否消费租户上下文
+// （device/task 域的网关读 X-Tenant-ID 头；六域微服务不消费）。
+func ruleInjectsTenantHeader(r *serviceProxyRule) bool {
+	for _, group := range [][]serviceProxyRule{deviceProxyExtras, taskProxyExtras} {
+		for i := range group {
+			if &group[i] == r {
+				return true
+			}
 		}
 	}
 	return false

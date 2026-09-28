@@ -453,3 +453,241 @@ func TestDeviceProxyPermDenied(t *testing.T) {
 		t.Fatalf("未登录请求 status = %d, want 401", w.Code)
 	}
 }
+
+// ============ task 域代理（TD-60 阶段 2 三域接通） ============
+
+// TestTaskProxyRuleRewrite 验证 task 域路径改写：/api/v1/task-svc/* 整段剥域前缀
+// 拼回 /api/v1/*（task-svc 网关路径与单体一致：tasks/schedules/approval 同名）。
+func TestTaskProxyRuleRewrite(t *testing.T) {
+	cases := []struct {
+		requestPath string
+		wantPath    string
+	}{
+		{"/api/v1/task-svc", "/api/v1"},
+		{"/api/v1/task-svc/tasks", "/api/v1/tasks"},
+		{"/api/v1/task-svc/tasks/t-1", "/api/v1/tasks/t-1"},
+		{"/api/v1/task-svc/tasks/t-1/cancel", "/api/v1/tasks/t-1/cancel"},
+		{"/api/v1/task-svc/tasks/batch-exec", "/api/v1/tasks/batch-exec"},
+		{"/api/v1/task-svc/tasks/batch/b-1", "/api/v1/tasks/batch/b-1"},
+		{"/api/v1/task-svc/tasks/canary/c-1/advance", "/api/v1/tasks/canary/c-1/advance"},
+		{"/api/v1/task-svc/schedules", "/api/v1/schedules"},
+		{"/api/v1/task-svc/schedules/s-1/pause", "/api/v1/schedules/s-1/pause"},
+		{"/api/v1/task-svc/approval/flows", "/api/v1/approval/flows"},
+		{"/api/v1/task-svc/approval/requests/r-1/approve", "/api/v1/approval/requests/r-1/approve"},
+	}
+	for i := range taskProxyExtras {
+		r := &taskProxyExtras[i]
+		for _, c := range cases {
+			if got := r.rewriteProxyPath(c.requestPath); got != c.wantPath {
+				t.Errorf("rule %s: rewrite(%s) = %s, want %s", r.publicPrefix, c.requestPath, got, c.wantPath)
+			}
+		}
+	}
+}
+
+// TestTaskProxyLookup 验证 task 域路径命中规则表 + 单体本地路径不命中（双轨边界）。
+func TestTaskProxyLookup(t *testing.T) {
+	for _, p := range []string{
+		"/api/v1/task-svc/tasks",
+		"/api/v1/task-svc/tasks/t-1/cancel",
+		"/api/v1/task-svc/schedules",
+		"/api/v1/task-svc/approval/requests",
+	} {
+		r := lookupServiceProxyRule(p)
+		if r == nil {
+			t.Fatalf("task 路径 %s 应命中规则", p)
+		}
+		if r.envKey != "TASK_SVC_URL" {
+			t.Errorf("task 路径 %s 命中的 envKey=%s, want TASK_SVC_URL", p, r.envKey)
+		}
+	}
+	// 单体本地路径（tasks/schedules/approval）不命中代理——同 mux 重复注册会 panic。
+	for _, p := range []string{"/api/v1/tasks", "/api/v1/tasks/t-1", "/api/v1/schedules", "/api/v1/approval/flows"} {
+		if lookupServiceProxyRule(p) != nil {
+			t.Fatalf("%s 是 controlplane 本地 handler 域，不应命中代理", p)
+		}
+	}
+	// device 与六域不受影响（回归）。
+	if r := lookupServiceProxyRule("/api/v1/device-svc/devices"); r == nil || r.envKey != "DEVICE_SVC_URL" {
+		t.Fatalf("device 规则回归失败: %v", r)
+	}
+	if r := lookupServiceProxyRule("/api/v1/gpu/nodes"); r == nil || r.publicPrefix != "/api/v1/gpu" {
+		t.Fatalf("gpu 规则回归失败: %v", r)
+	}
+}
+
+// TestProxyPermResolution 权限分级矩阵：代理对每个操作要求的权限点必须与
+// controlplane 本地同名 handler 逐条一致（双轨期「换路径不换权限边界」）。
+// device 列同时覆盖越权修复断言（此前统一 device:read，DELETE/provision 只读可过）。
+func TestProxyPermResolution(t *testing.T) {
+	cases := []struct {
+		method, path, wantPerm string
+	}{
+		// task 域（镜像 server_tasks.go / server_batch.go / server_schedules.go /
+		// server_approval.go 的 requirePermission 取值）。
+		{http.MethodGet, "/api/v1/task-svc/tasks", "task:read"},
+		{http.MethodPost, "/api/v1/task-svc/tasks", "task:write"},
+		{http.MethodGet, "/api/v1/task-svc/tasks/t-1", "task:read"},
+		{http.MethodGet, "/api/v1/task-svc/tasks/t-1/result", "task:read"},
+		{http.MethodPost, "/api/v1/task-svc/tasks/t-1/cancel", "task:cancel"},
+		{http.MethodPost, "/api/v1/task-svc/tasks/t-1/approve", "task:approve"},
+		{http.MethodPost, "/api/v1/task-svc/tasks/t-1/reject", "task:approve"},
+		{http.MethodPost, "/api/v1/task-svc/tasks/batch-exec", "task:write"},
+		{http.MethodGet, "/api/v1/task-svc/tasks/batch/b-1", "task:read"},
+		{http.MethodPost, "/api/v1/task-svc/tasks/canary", "task:write"},
+		{http.MethodGet, "/api/v1/task-svc/tasks/canary/c-1", "task:read"},
+		{http.MethodPost, "/api/v1/task-svc/tasks/canary/c-1/advance", "task:write"},
+		{http.MethodGet, "/api/v1/task-svc/schedules", "schedule:read"},
+		{http.MethodPost, "/api/v1/task-svc/schedules", "schedule:write"},
+		{http.MethodGet, "/api/v1/task-svc/schedules/s-1", "schedule:read"},
+		{http.MethodPut, "/api/v1/task-svc/schedules/s-1", "schedule:write"},
+		{http.MethodDelete, "/api/v1/task-svc/schedules/s-1", "schedule:write"},
+		{http.MethodPost, "/api/v1/task-svc/schedules/s-1/pause", "schedule:write"},
+		{http.MethodPost, "/api/v1/task-svc/schedules/s-1/resume", "schedule:write"},
+		{http.MethodGet, "/api/v1/task-svc/approval/flows", "approval:read"},
+		{http.MethodPost, "/api/v1/task-svc/approval/flows", "approval:write"},
+		{http.MethodGet, "/api/v1/task-svc/approval/requests", "approval:read"},
+		{http.MethodPost, "/api/v1/task-svc/approval/requests", "approval:write"},
+		{http.MethodPost, "/api/v1/task-svc/approval/requests/r-1/approve", "approval:approve"},
+		{http.MethodPost, "/api/v1/task-svc/approval/requests/r-1/reject", "approval:approve"},
+		{http.MethodPost, "/api/v1/task-svc/approval/requests/r-1/cancel", "approval:write"},
+		{http.MethodGet, "/api/v1/task-svc/approval/requests/r-1/history", "approval:read"},
+		{http.MethodGet, "/api/v1/task-svc/approval/pending", "approval:read"},
+		// device 域（与 server_devices.go 对齐；越权修复断言）。
+		{http.MethodGet, "/api/v1/device-svc/devices", "device:read"},
+		{http.MethodPost, "/api/v1/device-svc/devices", "device:write"},
+		{http.MethodPut, "/api/v1/device-svc/devices/d-1", "device:write"},
+		{http.MethodDelete, "/api/v1/device-svc/devices/d-1", "device:delete"},
+		{http.MethodPost, "/api/v1/device-svc/devices/d-1/provision", "provision:execute"},
+		{http.MethodPost, "/api/v1/device-svc/devices/d-1/heartbeat", "device:write"},
+		{http.MethodGet, "/api/v1/device-svc/agents", "device:read"},
+		{http.MethodPost, "/api/v1/device-svc/agents/a-1/heartbeat", "device:write"},
+		{http.MethodGet, "/api/v1/device-svc/cmdb/cis", "cmdb:read"},
+		{http.MethodPost, "/api/v1/device-svc/cmdb/cis", "cmdb:write"},
+		{http.MethodDelete, "/api/v1/device-svc/cmdb/cis/c-1", "cmdb:write"},
+		{http.MethodGet, "/api/v1/device-svc/discovery/jobs", "network:read"},
+		{http.MethodPost, "/api/v1/device-svc/discovery/jobs", "network:write"},
+		// 六域（写方法从 *:read 收紧为 *:write，2026-09-29 同类越权修复）。
+		{http.MethodGet, "/api/v1/gpu/nodes", "gpu:read"},
+		{http.MethodPost, "/api/v1/gpu/workloads", "gpu:write"},
+		{http.MethodDelete, "/api/v1/gpu/workloads/w-1", "gpu:write"},
+		{http.MethodGet, "/api/v1/runbooks", "runbook:read"},
+		{http.MethodPost, "/api/v1/runbooks/rb-1/execute", "runbook:write"},
+		{http.MethodGet, "/api/v1/incidents", "incident:read"},
+		{http.MethodPost, "/api/v1/incidents/i-1/timeline", "incident:write"},
+		{http.MethodGet, "/api/v1/autoscaler/rules", "autoscaler:read"},
+		{http.MethodPost, "/api/v1/autoscaler/scale", "autoscaler:write"},
+		{http.MethodGet, "/api/v1/portal/requests", "portal:read"},
+		{http.MethodPost, "/api/v1/portal/approvals/ap-1/approve", "portal:write"},
+	}
+	for _, c := range cases {
+		r := lookupServiceProxyRule(c.path)
+		if r == nil {
+			t.Errorf("%s %s 未命中规则", c.method, c.path)
+			continue
+		}
+		if got := r.resolvePerm(c.method, c.path); got != c.wantPerm {
+			t.Errorf("%s %s resolvePerm = %s, want %s", c.method, c.path, got, c.wantPerm)
+		}
+	}
+}
+
+// TestTaskProxyForwardWithTenantHeader 端到端：task 代理转发时路径改写 +
+// 注入 X-Tenant-ID（task-svc 网关消费租户上下文并与 token tenant_id 交叉校验）+
+// 剥离 Cookie（会话凭证不下落内部服务，与 device 域同语义）。
+func TestTaskProxyForwardWithTenantHeader(t *testing.T) {
+	var gotPath, gotTenant, gotCookie string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotTenant = r.Header.Get("X-Tenant-ID")
+		gotCookie = r.Header.Get("Cookie")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"tasks": []}`))
+	}))
+	defer backend.Close()
+
+	t.Setenv("TASK_SVC_URL", backend.URL)
+
+	s := newServiceProxyTestServer()
+	auth := loginAsAdmin(t, s)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/task-svc/tasks", nil)
+	req.Header.Set("Authorization", auth)
+	req.Header.Set("Cookie", "opsmesh_at=leak-me")
+	w := httptest.NewRecorder()
+	s.handleServiceProxy(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if gotPath != "/api/v1/tasks" {
+		t.Errorf("后端收到路径 %s, want /api/v1/tasks（task-svc 域前缀应剥除）", gotPath)
+	}
+	if gotTenant != "default" {
+		t.Errorf("后端 X-Tenant-ID = %q, want default（loginAsAdmin JWT 租户应被注入转发）", gotTenant)
+	}
+	if gotCookie != "" {
+		t.Errorf("后端不应收到 Cookie: %q", gotCookie)
+	}
+}
+
+// TestProxyPermEscalationClosed 权限放大回归：viewer（仅 *:read）经代理前缀
+// 不得完成写操作。修复前规则级单一 perm（*:read）放行全部方法——viewer 可经
+// /api/v1/device-svc/devices/{id} DELETE 删设备、POST provision 纳管设备、
+// 经 /api/v1/gpu/workloads 建 GPU 负载、经 /api/v1/task-svc/tasks/{id}/cancel
+// 取消任务。现在这些逐一 403，且拒绝发生在聚合层（不触达后端）。
+func TestProxyPermEscalationClosed(t *testing.T) {
+	var backendHits int
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer backend.Close()
+	t.Setenv("DEVICE_SVC_URL", backend.URL)
+	t.Setenv("TASK_SVC_URL", backend.URL)
+	t.Setenv("GPU_SVC_URL", backend.URL)
+
+	s := newServiceProxyTestServer()
+	auth := loginAsViewer(t, s)
+
+	// viewer 的 task:read 应放行只读路径（真正转发到后端）。
+	okReq := httptest.NewRequest(http.MethodGet, "/api/v1/task-svc/tasks", nil)
+	okReq.Header.Set("Authorization", auth)
+	okReq.Header.Set("X-Tenant-ID", "default")
+	okW := httptest.NewRecorder()
+	s.handleServiceProxy(okW, okReq)
+	if okW.Code != http.StatusOK {
+		t.Fatalf("viewer GET /task-svc/tasks status = %d, want 200; body=%s", okW.Code, okW.Body.String())
+	}
+	hitsAfterRead := backendHits
+
+	denied := []struct {
+		method, path, wantPerm string
+	}{
+		{http.MethodDelete, "/api/v1/device-svc/devices/d-1", "device:delete"},
+		{http.MethodPost, "/api/v1/device-svc/devices/d-1/provision", "provision:execute"},
+		{http.MethodPost, "/api/v1/device-svc/devices", "device:write"},
+		{http.MethodPost, "/api/v1/task-svc/tasks/t-1/cancel", "task:cancel"},
+		{http.MethodPost, "/api/v1/task-svc/tasks/t-1/approve", "task:approve"},
+		{http.MethodPost, "/api/v1/task-svc/approval/requests/r-1/approve", "approval:approve"},
+		{http.MethodPost, "/api/v1/gpu/workloads", "gpu:write"},
+	}
+	for _, c := range denied {
+		req := httptest.NewRequest(c.method, c.path, nil)
+		req.Header.Set("Authorization", auth)
+		req.Header.Set("X-Tenant-ID", "default")
+		w := httptest.NewRecorder()
+		s.handleServiceProxy(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("viewer %s %s status = %d, want 403; body=%s", c.method, c.path, w.Code, w.Body.String())
+			continue
+		}
+		if !strings.Contains(w.Body.String(), c.wantPerm) {
+			t.Errorf("viewer %s %s 拒绝响应应指明权限点 %s: %s", c.method, c.path, c.wantPerm, w.Body.String())
+		}
+	}
+	if backendHits != hitsAfterRead {
+		t.Errorf("越权请求不应触达后端：读取后命中 %d 次，最终 %d 次", hitsAfterRead, backendHits)
+	}
+}
