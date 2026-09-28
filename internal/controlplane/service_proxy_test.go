@@ -4,7 +4,7 @@ package controlplane
 //
 // 覆盖范围：
 //  1. 路径改写：autoscaler/portal 的域前缀剥离（/api/v1/autoscaler/rules → /api/v1/rules）
-//  2. 六域路由注册：Start() 注册的 mux 对六域路径分发到 handleServiceProxy/bot handler
+//  2. 五域路由注册：Start() 注册的 mux 对五域路径分发到 handleServiceProxy；/api/v1/bot/* 分发到 bot handler
 //  3. bot 命令台契约：POST /api/v1/bot/command 执行+历史；GET history/platforms/quick-commands
 //  4. 权限点目录：六域权限在 rbacPermSpecs 中（viewer 派生获得 *:read）
 //  5. 后端不可达：503 service unreachable（不裸 500）
@@ -58,9 +58,6 @@ func TestRewriteProxyPath(t *testing.T) {
 	}
 	for i := range serviceProxyRules {
 		r := &serviceProxyRules[i]
-		if r.publicPrefix == "" {
-			continue // bot 注释占位项
-		}
 		found := false
 		for _, c := range cases {
 			if c.publicPath == r.publicPrefix {
@@ -369,7 +366,7 @@ func TestDeviceProxyRuleRewrite(t *testing.T) {
 	}
 }
 
-// TestDeviceProxyLookup 验证 device 域路径命中规则表 + 六域规则不受影响。
+// TestDeviceProxyLookup 验证 device 域路径命中规则表 + 五域规则不受影响。
 func TestDeviceProxyLookup(t *testing.T) {
 	// device 域四前缀命中。
 	for _, p := range []string{
@@ -387,7 +384,7 @@ func TestDeviceProxyLookup(t *testing.T) {
 			t.Errorf("device 路径 %s 命中的 envKey=%s, want DEVICE_SVC_URL", p, r.envKey)
 		}
 	}
-	// 六域不受影响（回归）。
+	// 五域不受影响（回归）。
 	if r := lookupServiceProxyRule("/api/v1/gpu/nodes"); r == nil || r.publicPrefix != "/api/v1/gpu" {
 		t.Fatalf("gpu 规则回归失败: %v", r)
 	}
@@ -402,7 +399,7 @@ func TestDeviceProxyLookup(t *testing.T) {
 }
 
 // TestDeviceProxyForwardWithTenantHeader 端到端：device 代理转发时
-// 聚合层验证的租户身份以 X-Tenant-ID 头注入后端（六域规则不注入）。
+// 聚合层验证的租户身份以 X-Tenant-ID 头注入后端（五域规则不注入）。
 func TestDeviceProxyForwardWithTenantHeader(t *testing.T) {
 	var gotPath, gotTenant, gotCookie string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -507,7 +504,7 @@ func TestTaskProxyLookup(t *testing.T) {
 			t.Fatalf("%s 是 controlplane 本地 handler 域，不应命中代理", p)
 		}
 	}
-	// device 与六域不受影响（回归）。
+	// device 与五域不受影响（回归）。
 	if r := lookupServiceProxyRule("/api/v1/device-svc/devices"); r == nil || r.envKey != "DEVICE_SVC_URL" {
 		t.Fatalf("device 规则回归失败: %v", r)
 	}
@@ -567,7 +564,7 @@ func TestProxyPermResolution(t *testing.T) {
 		{http.MethodDelete, "/api/v1/device-svc/cmdb/cis/c-1", "cmdb:write"},
 		{http.MethodGet, "/api/v1/device-svc/discovery/jobs", "network:read"},
 		{http.MethodPost, "/api/v1/device-svc/discovery/jobs", "network:write"},
-		// 六域（写方法从 *:read 收紧为 *:write，2026-09-29 同类越权修复）。
+		// 五域（写方法从 *:read 收紧为 *:write，2026-09-29 同类越权修复）。
 		{http.MethodGet, "/api/v1/gpu/nodes", "gpu:read"},
 		{http.MethodPost, "/api/v1/gpu/workloads", "gpu:write"},
 		{http.MethodDelete, "/api/v1/gpu/workloads/w-1", "gpu:write"},

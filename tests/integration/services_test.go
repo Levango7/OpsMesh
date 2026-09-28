@@ -14,7 +14,7 @@
 // 中 `OPSMESH_TEST_MYSQL_DSN` 的既有 skip 模式：
 //
 //   - `OPSMESH_TEST_SERVICES_ADDR=<host>`：按内置端口表（见 defaultServicePorts）
-//     一次性展开 12 个服务的 base URL，如 `OPSMESH_TEST_SERVICES_ADDR=127.0.0.1`。
+//     一次性展开 9 个服务的 base URL，如 `OPSMESH_TEST_SERVICES_ADDR=127.0.0.1`。
 //
 //   - `OPSMESH_INTEGRATION_BASE_URLS=<name>=<url>[,<name>=<url>...]`：逐个显式
 //     指定服务地址，优先级高于前者；只配置了的才会被探测，如
@@ -62,13 +62,10 @@ var defaultServicePorts = []struct {
 	{"device-svc", "8101"},
 	{"task-svc", "8102"},
 	{"alert-svc", "8103"},
-	{"deploy-svc", "8104"},
 	{"log-svc", "8105"},
 	{"config-svc", "8106"},
 	{"aio-svc", "8107"},
-	{"plugin-svc", "8108"},
 	{"portal-svc", "8109"},
-	{"grafana-bridge", "8110"},
 }
 
 // integrationBaseURLs 解析集成环境配置，返回 服务名 -> base URL。
@@ -218,7 +215,7 @@ func TestServiceHealth(t *testing.T) {
 	}
 }
 
-// TestMicroservicePipelineContracts 校验 aio-svc / plugin-svc 三个业务端点的真实 HTTP 契约。
+// TestMicroservicePipelineContracts 校验 aio-svc 业务端点的真实 HTTP 契约。
 //
 // 只断言"端点存在且返回合法 JSON"——不断言业务数值，因为各服务的数据依赖其自身
 // 存储后端，跨环境数值不稳定；业务正确性由各服务模块内单测保证。
@@ -254,7 +251,6 @@ func TestMicroservicePipelineContracts(t *testing.T) {
 	}{
 		{"aio-svc", "anomaly_detect", http.MethodPost, "/api/v1/anomaly/detect", detectBody},
 		{"aio-svc", "noise_compress", http.MethodPost, "/api/v1/noise/compress", compressBody},
-		{"plugin-svc", "plugin_list", http.MethodGet, "/api/v1/plugins", nil},
 	}
 
 	for _, tc := range cases {
@@ -295,34 +291,6 @@ func TestResourceRequestPipeline(t *testing.T) {
 			base, code, truncate(string(body), 200))
 	}
 	assertJSON(t, "GET /api/v1/requests", body)
-}
-
-// TestGrafanaQueryPipeline 校验 grafana-bridge 查询端点（POST /query）的真实 HTTP 契约。
-func TestGrafanaQueryPipeline(t *testing.T) {
-	urls := integrationBaseURLs(t)
-	base := requireService(t, urls, "grafana-bridge")
-	client := newIntegrationClient()
-
-	reqBody, err := json.Marshal(map[string]interface{}{
-		"range": map[string]interface{}{
-			"from": time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
-			"to":   time.Now().Format(time.RFC3339),
-		},
-		"targets": []map[string]interface{}{
-			{"target": "cpu_usage", "type": "timeseries"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("构造 Grafana 查询请求体失败: %v", err)
-	}
-
-	code, body := doHTTP(t, client, http.MethodPost, base+"/query", reqBody)
-	if code != http.StatusOK {
-		t.Fatalf("Grafana 查询链路失败：POST %s/query -> %d，期望 200；响应体=%s",
-			base, code, truncate(string(body), 200))
-	}
-	// /query 返回时序数组（table 类型时返回对象），二者都是合法 JSON。
-	assertJSON(t, "POST /query", body)
 }
 
 // ============================================================================

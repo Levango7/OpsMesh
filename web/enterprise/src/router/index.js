@@ -92,11 +92,11 @@ const routes = [
   { path: '/traffic', name: 'traffic', component: () => import('@/views/TrafficPoliciesView.vue'), meta: { title: 'nav.traffic', group: '交付中心', icon: 'flow', requirePerm: 'traffic:read' } },
 
   // ======================================================================
-  // 六域已接线（M13 聚合层补齐，2026-09）：
+  // 六域接线现状（M13 聚合层补齐，2026-09；bot 域 2026-09-29 收敛）：
   //   gpu/runbooks/incidents/autoscaler/portal → controlplane service_proxy.go
   //     转发到 services/* 独立进程（后端地址 env 覆盖：*_SVC_URL）；
-  //   bot → controlplane bot_bridge.go（Web 命令台，命令语法与 bot-svc IM
-  //     webhook 一致：/opsmesh status|devices|alerts|ack|metrics|help）。
+  //   bot → controlplane bot_bridge.go（Web 命令台；原 bot-svc 已删除，本处为
+  //     唯一实现：/opsmesh status|devices|alerts|ack|metrics|help）。
   // 后端服务未启动时代理返回 503 service unreachable（页面报错但不 404）。
   // ======================================================================
   // GPU 资源管理

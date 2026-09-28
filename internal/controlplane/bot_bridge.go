@@ -2,23 +2,23 @@ package controlplane
 
 // bot_bridge.go — ChatOps Web 命令台聚合 handler（/api/v1/bot/*）。
 //
-// 背景（M13 六域接线的 bot 域）：bot-svc（services/bot-svc/）是企业 IM 平台
-// 的 webhook 入口（/webhook/{wecom,feishu,slack,dingtalk}，X-Bot-Token 鉴权），
-// 而 web 前端 BotView 调的是另一组契约（src/api/bot.js）：
+// 背景（M13 六域接线的 bot 域，2026-09-29 收敛）：原实现有两套入口——bot-svc
+// （services/bot-svc/，企业 IM 平台 webhook：/webhook/{wecom,feishu,slack,dingtalk}，
+// X-Bot-Token 鉴权）与聚合层本文件（web 前端 BotView 的契约，src/api/bot.js）：
 //
 //	POST /api/v1/bot/command        {command, platform}  → 执行并返回记录
 //	GET  /api/v1/bot/history        ?platform=&limit=    → 命令历史
 //	GET  /api/v1/bot/platforms                           → 平台开关
 //	GET  /api/v1/bot/quick-commands                     → 快捷命令
 //
-// 两者是同一命令引擎（bot-svc internal/bot.Parse 的 /opsmesh 语法）的两个
-// 入口。bot-svc 的 webhook 模式不适合浏览器（无平台回调上下文），本 bridge
-// 在聚合层实现 Web 契约：命令语法与 bot-svc 保持一致（/opsmesh help 查看），
-// 数据源复用站内 store（设备/告警/指标），命令历史内存保留（进程级，重启清空
-// ——与 gateway 路由规则的运行期配置语义一致）。
+// bot-svc 的 webhook 模式从未被任何部署清单启用/消费，也不适配浏览器（无平台
+// 回调上下文）——2026-09-29 随"被新机制替代即删除"裁决整体删除，本文件成为
+// bot 域唯一实现与 /opsmesh 命令语法的权威（此后新增命令只改这里）。数据源复
+// 用站内 store（设备/告警/指标），命令历史内存保留（进程级，重启清空——与
+// gateway 路由规则的运行期配置语义一致）。
 //
 // 鉴权：bot:read/bot:write 权限 + requireTenantContext（历史按租户隔离）。
-// 限流：每用户 12 次/分钟（与 bot-svc 默认 RateLimitPerMin 一致，防命令台
+// 限流：每用户 12 次/分钟（沿用 bot-svc 默认 RateLimitPerMin 的口径，防命令台
 // 成为绕过任务审批的旁路——写类命令 ack/task 单独要求 bot:write）。
 
 import (
@@ -66,7 +66,7 @@ type botPlatformDef struct {
 	Enabled bool   `json:"enabled"`
 }
 
-// botDefaultPlatforms 平台清单（与 bot-svc platforms 包四平台一致）。
+// botDefaultPlatforms 平台清单（沿用原 bot-svc platforms 包的四平台+web；bot-svc 已删，此处为权威）。
 var botDefaultPlatforms = []botPlatformDef{
 	{ID: "wecom", Name: "企业微信", Enabled: false},
 	{ID: "feishu", Name: "飞书", Enabled: false},
@@ -75,7 +75,7 @@ var botDefaultPlatforms = []botPlatformDef{
 	{ID: "web", Name: "Web 控制台", Enabled: true},
 }
 
-// botQuickCommandDefs 快捷命令（与 bot-svc HelpText 语法一致；label 由 i18n
+// botQuickCommandDefs 快捷命令（语法沿用原 bot-svc HelpText；label 由 i18n
 // 前端渲染——这里给命令原文，前端 quick-btn 显示 label）。
 type botQuickCommandDef struct {
 	Label   string `json:"label"`
@@ -139,8 +139,8 @@ func (s *Server) handleBotCommand(w http.ResponseWriter, r *http.Request) {
 	paginate.WriteJSON(w, http.StatusOK, rec)
 }
 
-// executeBotCommand 执行 /opsmesh 语法命令（与 bot-svc internal/bot.Parse
-// 同语法；数据源为站内 store，租户隔离天然继承）。
+// executeBotCommand 执行 /opsmesh 语法命令（语法源自原 bot-svc internal/bot.Parse，
+// 该服务已删、此处为权威；数据源为站内 store，租户隔离天然继承）。
 // callerLabel 供 ack 记录确认人（用户中心登录名或网关注入标识）。
 func callerLabel(actx authctx.Context, raw string) string {
 	_ = raw
@@ -242,8 +242,8 @@ func diskAvgUsage(m *proto.DeviceMetrics) float64 {
 	return sum / float64(len(m.Disks))
 }
 
-// botHelpLines 帮助文本（与 bot-svc HelpText 语法一致；task/deploy 属于
-// 高危写操作，Web 台不开放——保留在 IM webhook 入口，web 命令台仅只读+ack）。
+// botHelpLines 帮助文本（语法沿用原 bot-svc HelpText；task/deploy 属于
+// 高危写操作，Web 台不开放——web 命令台仅只读+ack）。
 func botHelpLines() map[string]any {
 	return map[string]any{
 		"commands": []string{

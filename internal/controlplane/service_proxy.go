@@ -1,11 +1,12 @@
 package controlplane
 
-// service_proxy.go — 微服务聚合代理：把 6 个独立微服务域转发到对应 services/* 进程。
+// service_proxy.go — 微服务聚合代理：把独立微服务域转发到对应 services/* 进程。
 //
-// 背景（M13 拆分后的接线层）：gpu/bot/runbook/incident/autoscaler/portal 六域
+// 背景（M13 拆分后的接线层）：gpu/runbook/incident/autoscaler/portal 五域
 // 已有独立微服务（services/<svc>/）+ 前端视图（web/enterprise/src/views/）+
 // API 封装（src/api/*.js），但 controlplane 聚合层未注册路由，前端路由被迫
-// 全量停用（router/index.js 注释块）。本文件补齐"最后一公里"：
+// 全量停用（router/index.js 注释块）。本文件补齐"最后一公里"（bot 域的
+// bot-svc 已于 2026-09-29 删除——Web 契约由 bot_bridge.go 独任，见该文件）：
 //
 //   - 前端 request.js baseURL=/api/v1，调 /api/v1/{domain}/*；
 //   - 各微服务监听 /api/v1/{svc 路径}/*（部分服务路径不含自身域前缀，
@@ -103,9 +104,9 @@ func (r *serviceProxyRule) resolvePerm(method, path string) string {
 	return r.perm
 }
 
-// serviceProxyRules 六域转发映射表。端口依据各服务 pkg/config 默认值：
+// serviceProxyRules 五域转发映射表。端口依据各服务 pkg/config 默认值：
 //
-//	gpu:8090 / runbook:8082 / incident:8082 / autoscaler:8080 / portal:8080 / bot:8080
+//	gpu:8090 / runbook:8082 / incident:8082 / autoscaler:8080 / portal:8080
 //
 // 注意 runbook 与 incident、autoscaler 与 portal 默认端口两两相同——单机同跑
 // 多服务时必须用 env 覆盖（*_SVC_URL 或各服务 *_SVC_HTTP_PORT）区分。
@@ -180,19 +181,12 @@ var serviceProxyRules = []serviceProxyRule{
 			{method: http.MethodGet, perm: "portal:read"},
 		},
 	},
-	{
-		// bot-svc 暴露的是 ChatOps 平台回调（/webhook/{wecom,feishu,slack,dingtalk}）
-		// 与前端契约（/bot/command、/bot/history…）不同构——本条目只透传
-		// /api/v1/bot/platforms 等只读探活类端点不可行，因此 bot 域在聚合层
-		// 由 bot_bridge.go 提供与前端契约一致的 handler（本表不注册 bot）。
-		// 保留此注释作为六域清单的完整性说明。
-	},
 }
 
 // deviceProxyExtras device 域（D1/D3 后 device-svc 已有完整 REST 网关）额外转发规则。
 // 与 serviceProxyRules 分表的原因：device 域的网关直连 store 层、鉴权走
 // tenant.Middleware（X-Tenant-ID 头或 JWT）——代理层完成鉴权后需显式注入
-// X-Tenant-ID 头再转发（六域微服务不消费租户上下文，device 消费）。
+// X-Tenant-ID 头再转发（五域微服务不消费租户上下文，device 消费）。
 //
 // 路径设计：publicPrefix 用 /api/v1/device-svc 域前缀（剥去后拼回 /api/v1/*），
 // 如 /api/v1/device-svc/devices → 后端 /api/v1/devices。不能用 /api/v1/devices
@@ -320,7 +314,7 @@ var taskProxyExtras = []serviceProxyRule{
 
 // lookupServiceProxyRule 按请求路径匹配转发规则（最长前缀语义由注册顺序保证：
 // server_lifecycle.go 按本表顺序注册，ServeMux 自身按最长模式匹配）。
-// device/task 域规则（*ProxyExtras）与六域共用同一匹配语义。
+// device/task 域规则（*ProxyExtras）与五域共用同一匹配语义。
 func lookupServiceProxyRule(path string) *serviceProxyRule {
 	for _, group := range [][]serviceProxyRule{serviceProxyRules, deviceProxyExtras, taskProxyExtras} {
 		for i := range group {
@@ -544,7 +538,7 @@ func (r *serviceProxyRule) rewriteProxyPath(path string) string {
 	return r.upstreamPrefix + rest
 }
 
-// handleServiceProxy 六域统一代理 handler：
+// handleServiceProxy 五域统一代理 handler：
 // 鉴权（requirePermission）→ 匹配规则 → ReverseProxy 转发（路径已改写）。
 //
 // 错误语义：
@@ -606,7 +600,7 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 		// device/task 域网关消费租户上下文（tenant.Middleware / extractAuth 读
 		// X-Tenant-ID 头，且与 token 内 tenant_id 交叉校验）：聚合层已验证的
 		// 租户身份注入头后再转发，防下游兜底 default 造成跨租户数据可见
-		//（六域微服务不消费租户上下文，此头对它们无影响）。
+		//（五域微服务不消费租户上下文，此头对它们无影响）。
 		if ruleInjectsTenantHeader(rule) {
 			req.Header.Set("X-Tenant-ID", actx.TenantID)
 		}
@@ -618,7 +612,7 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 // ruleInjectsTenantHeader 判断规则对应的微服务网关是否消费租户上下文
-// （device/task 域的网关读 X-Tenant-ID 头；六域微服务不消费）。
+// （device/task 域的网关读 X-Tenant-ID 头；五域微服务不消费）。
 func ruleInjectsTenantHeader(r *serviceProxyRule) bool {
 	for _, group := range [][]serviceProxyRule{deviceProxyExtras, taskProxyExtras} {
 		for i := range group {
