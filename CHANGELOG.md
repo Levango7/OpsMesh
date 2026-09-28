@@ -4,6 +4,17 @@
 
 > 当前最新已发布版本：`v0.9.2`（2026-09-27，商用就绪收口 + 发版链路加固；上一版 `v0.9.1` 2026-09-17 为全面评估 35 项修复）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-29 逐域真实流量取数出口（TD-60 §5.3 裁决前提补齐）+ 批次① errcheck 红点收口
+
+> 证据：`go build ./...`/`go vet ./...` 全绿；`go test ./internal/controlplane/ ./internal/metrics/` 全绿；新代码 `-race` 通过（CGO_ENABLED=1 + msys64 gcc）；根 `.golangci.yml` 与 `.golangci.services.yml` 均 `0 issues`（golangci-lint 2.13.2，与 CI 同版）。实现与裁决阈值口径见 `docs/td60-decision-2026-09-26.md` §5.8（代码提交 `983d49b`、红点收口 `9c40380`）。
+
+- **裁决取数缺口（TD-60 悬置的根因）**：§5.3 把五个「保留但需决策」域（gpu/portal/incident/runbook/autoscaler）的最终裁决定为**待真实流量**，而控制面此前没有任何出口能回答「这个域到底有没有人在用」——只能翻访问日志或指望 Prometheus 已抓取。对照 §5.5 五个被删服务判得动，正因为「从未进部署清单」是静态事实；有对等实现的域必须看流量才能判。
+- **先纠正一处事实**：数据一直在记——`opsmesh_http_requests_total{method,path,status}` 由 `server_middleware.go:158` 按归一化路径记账（带 2000 时序基数熔断）。缺的只是按域汇总，故本批**只做只读聚合、不新增计数器**（新加采集面要么与中间件双写、要么改中间件签名）。
+- **实现**：`metrics.HTTPTrafficByPrefix`（域→前缀来自调用方从转发路由表派生，不接受硬编码；完整路径段命中防 `/api/v1/gpu` 吞 `/api/v1/gpu-svc`；最长前缀命中防嵌套重复计数；`:other` 折叠流量不归属任何域；**零流量域显式返回 `requests=0`**——「没人用」正是要的证据）+ `GET /api/v1/admin/service-traffic`（`diagnostics:execute`，与 `/api/v1/admin/*` 其余只读端点同档）。域→前缀派生抽为 `groupProxyDomains()` 与 `service-routing` 共用，新增域不会在某端点静默缺席。响应明示窗口口径与跨重启取数方式（进程内计数重启归零；长期窗口用 PromQL `increase(...[7d])`）。
+- **判读陷阱已写入文档**：被 `OPSMESH_SERVICE_PROXY` 停用的纯代理域，同前缀请求会以 **404** 计入该域桶（路由未注册），故须看 `byStatus` 再下结论；sim/预生产栈全为探测与自测流量，五域返回 0 属正常，真实观察期须在有业务流量的现场环境跑。
+- **批次①红点收口**：`e72ab6c` 引入的 `_ = json.NewDecoder(...).Decode(...)` 被 errcheck `check-blank`（TD-71 收紧档）拦下，令 CI run 36483888125 与 36486129249 的 `services` job 红（两 run 失败点唯一且相同，身份头代码自身无红）。改为仓库既有 best-effort 写法（同 `controlplane/pipeline.go:273`、`script.go:285`）：`io.EOF` 按零值继续（前端 approve 不带 body 的契约不变），其余解析失败落日志留痕。**门禁教训**：改 `services/*` 必须本机跑 `golangci-lint run -c .golangci.services.yml ./...`，只跑 build/vet/test 不足够。
+- **测试**：新增 10 例——metrics 侧 7 例（按域计数/零流量域显式/前缀边界/同域多前缀合并/最长前缀不重复计数/`:other` 排除/nil 注册表），controlplane 侧 3 例（端点按域汇总且域集合等于路由表、405/403/401 三道闸、`groupProxyDomains` 与路由表一致性）。
+
 ## [Unreleased] — 2026-09-29 代理身份头统一治理：§5.6 遗留项收口（全代理域剥离重注入 + X-User-Id 令牌交叉校验）
 
 > 证据：`go build ./...`/`go vet ./...` 全绿；`go test ./internal/controlplane/... ./tests/... -count=1` 全绿；新增用例 `-race` 通过（CGO_ENABLED=1 + msys64 gcc）。缺口取证与设计留档见 `docs/td60-decision-2026-09-26.md` §5.7（代码提交 `0030aeb`）。
