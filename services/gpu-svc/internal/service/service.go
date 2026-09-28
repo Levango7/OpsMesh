@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/metrics"
@@ -167,7 +168,9 @@ func (s *Service) CancelWorkload(id string) error {
 	}
 
 	// Release quota
-	_ = s.quotas.ReleaseAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1)
+	if err := s.quotas.ReleaseAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
+		log.Printf("[service] release quota for workload %s: %v", wl.ID, err)
+	}
 	return nil
 }
 
@@ -182,10 +185,20 @@ func (s *Service) TriggerScheduling() []*models.ScheduleResult {
 	pending := s.workloads.GetPendingWorkloads()
 
 	for _, wl := range pending {
-		result, _ := s.scheduler.Schedule(wl, s.nodes)
+		result, schedErr := s.scheduler.Schedule(wl, s.nodes)
+		if schedErr != nil {
+			log.Printf("[service] schedule workload %s: %v", wl.ID, schedErr)
+		}
+		if result == nil {
+			continue
+		}
 		if result.Assigned {
-			_ = s.workloads.AssignNode(wl.ID, result.NodeIDs)
-			_ = s.quotas.RecordAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1)
+			if err := s.workloads.AssignNode(wl.ID, result.NodeIDs); err != nil {
+				log.Printf("[service] assign node for workload %s: %v", wl.ID, err)
+			}
+			if err := s.quotas.RecordAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
+				log.Printf("[service] record quota for workload %s: %v", wl.ID, err)
+			}
 		}
 		results = append(results, result)
 	}

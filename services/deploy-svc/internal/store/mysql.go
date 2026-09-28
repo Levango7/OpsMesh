@@ -147,7 +147,9 @@ func (m *MySQLStore) scanDeployment(row rowScanner) *models.Deployment {
 		return nil
 	}
 	if len(targetIDs) > 0 {
-		_ = json.Unmarshal(targetIDs, &d.TargetIDs)
+		if err := json.Unmarshal(targetIDs, &d.TargetIDs); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if createdAt.Valid {
 		d.CreatedAt = createdAt.Time
@@ -231,7 +233,10 @@ func (m *MySQLStore) UpdateDeployment(d *models.Deployment) error {
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	if n == 0 {
 		return ErrNotFound
 	}
@@ -282,7 +287,9 @@ func (m *MySQLStore) scanTemplate(row rowScanner) *models.Template {
 		return nil
 	}
 	if len(params) > 0 {
-		_ = json.Unmarshal(params, &t.Parameters)
+		if err := json.Unmarshal(params, &t.Parameters); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if createdAt.Valid {
 		t.CreatedAt = createdAt.Time
@@ -306,7 +313,10 @@ func (m *MySQLStore) UpdateTemplate(t *models.Template) error {
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	if n == 0 {
 		return ErrNotFound
 	}
@@ -326,7 +336,10 @@ func (m *MySQLStore) DeleteTemplate(id, tenantID string) error {
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	if n == 0 {
 		return ErrNotFound
 	}
@@ -405,7 +418,9 @@ func (m *MySQLStore) scanStrategy(row rowScanner) *models.Strategy {
 	}
 	if len(params) > 0 {
 		var m map[string]interface{}
-		_ = json.Unmarshal(params, &m)
+		if err := json.Unmarshal(params, &m); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 		if v, ok := m["canary_weight"].(float64); ok {
 			s.CanaryWeight = int(v)
 		}
@@ -449,7 +464,10 @@ func (m *MySQLStore) UpdateStrategy(s *models.Strategy) error {
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	if n == 0 {
 		return ErrNotFound
 	}
@@ -469,7 +487,10 @@ func (m *MySQLStore) DeleteStrategy(id, tenantID string) error {
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	if n == 0 {
 		return ErrNotFound
 	}
@@ -563,7 +584,10 @@ func (m *MySQLStore) UpdateCanary(c *models.Canary) error {
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	if n == 0 {
 		return ErrNotFound
 	}

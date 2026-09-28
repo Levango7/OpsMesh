@@ -232,7 +232,10 @@ func (s *MySQLStore) DeleteConfig(tenantID, key string) bool {
 		log.Printf("[store] DeleteConfig 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -416,7 +419,10 @@ func (s *MySQLStore) DeleteSecret(tenantID, key string) bool {
 		log.Printf("[store] DeleteSecret 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -549,7 +555,10 @@ func (s *MySQLStore) UpdateChannel(item *models.ChannelEntry) bool {
 		log.Printf("[store] UpdateChannel 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -567,7 +576,10 @@ func (s *MySQLStore) DeleteChannel(id, tenantID string) bool {
 		log.Printf("[store] DeleteChannel 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -647,7 +659,9 @@ func (s *MySQLStore) GetTemplate(id string) *models.TemplateEntry {
 		return nil
 	}
 	if len(vars) > 0 {
-		_ = json.Unmarshal(vars, &t.Variables)
+		if err := json.Unmarshal(vars, &t.Variables); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if createdAt.Valid {
 		t.CreatedAt = createdAt.Time
@@ -672,7 +686,10 @@ func (s *MySQLStore) UpdateTemplate(item *models.TemplateEntry) bool {
 		log.Printf("[store] UpdateTemplate 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -690,7 +707,10 @@ func (s *MySQLStore) DeleteTemplate(id, tenantID string) bool {
 		log.Printf("[store] DeleteTemplate 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -719,7 +739,9 @@ func (s *MySQLStore) ListTemplates(tenantID string) []*models.TemplateEntry {
 			continue
 		}
 		if len(vars) > 0 {
-			_ = json.Unmarshal(vars, &t.Variables)
+			if err := json.Unmarshal(vars, &t.Variables); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if createdAt.Valid {
 			t.CreatedAt = createdAt.Time

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -351,7 +352,10 @@ func (s *MySQLStore) ChangePassword(userID, newHash string) error {
 	if err != nil {
 		return fmt.Errorf("update password: %w", err)
 	}
-	rows, _ := res.RowsAffected()
+	rows, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	if rows == 0 {
 		return fmt.Errorf("user not found")
 	}
@@ -371,7 +375,10 @@ func (s *MySQLStore) SetMustChangePassword(userID string, mustChange bool) error
 	if err != nil {
 		return fmt.Errorf("set must-change-password: %w", err)
 	}
-	rows, _ := res.RowsAffected()
+	rows, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	if rows == 0 {
 		return fmt.Errorf("user not found")
 	}
@@ -558,11 +565,13 @@ func (s *MySQLStore) ListPermissions() []*Permission {
 
 // SaveRefreshToken saves a refresh token.
 func (s *MySQLStore) SaveRefreshToken(rt *RefreshToken) {
-	_, _ = s.db.Exec(
+	if _, err := s.db.Exec(
 		"INSERT INTO refresh_tokens (token_hash, user_id, tenant_id, device_fp, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE expires_at = ?, user_id = ?",
 		rt.TokenHash, rt.UserID, rt.TenantID, rt.DeviceFP, rt.ExpiresAt, rt.CreatedAt,
 		rt.ExpiresAt, rt.UserID,
-	)
+	); err != nil {
+		log.Printf("[store] best-effort exec: %v", err)
+	}
 }
 
 // GetRefreshToken returns a refresh token by hash.
@@ -584,7 +593,10 @@ func (s *MySQLStore) DeleteRefreshToken(tokenHash string) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -603,10 +615,12 @@ func (s *MySQLStore) ConsumeRefreshToken(tokenHash string) (*RefreshToken, bool)
 // BlacklistJTI blacklists a JWT JTI.
 func (s *MySQLStore) BlacklistJTI(jti string, ttl time.Duration) {
 	expiresAt := time.Now().Add(ttl)
-	_, _ = s.db.Exec(
+	if _, err := s.db.Exec(
 		"INSERT INTO jti_blacklist (jti, expires_at) VALUES (?, ?) ON DUPLICATE KEY UPDATE expires_at = ?",
 		jti, expiresAt, expiresAt,
-	)
+	); err != nil {
+		log.Printf("[store] best-effort exec: %v", err)
+	}
 }
 
 // IsBlacklisted checks if a JTI is blacklisted.
@@ -621,7 +635,9 @@ func (s *MySQLStore) IsBlacklisted(jti string) bool {
 
 // PurgeBlacklist removes expired blacklist entries.
 func (s *MySQLStore) PurgeBlacklist() {
-	_, _ = s.db.Exec("DELETE FROM jti_blacklist WHERE expires_at < ?", time.Now())
+	if _, err := s.db.Exec("DELETE FROM jti_blacklist WHERE expires_at < ?", time.Now()); err != nil {
+		log.Printf("[store] best-effort exec: %v", err)
+	}
 }
 
 // Ensure MemoryStore implements Store.

@@ -119,12 +119,24 @@ func ParseCSVOutput(output string) []GPUInfo {
 			ComputeCapability: fields[9],
 		}
 
-		gpu.MemoryTotalMB, _ = strconv.Atoi(fields[2])
-		gpu.MemoryUsedMB, _ = strconv.Atoi(fields[3])
-		gpu.UtilizationGPU, _ = strconv.ParseFloat(fields[4], 64)
-		gpu.UtilizationMemory, _ = strconv.ParseFloat(fields[5], 64)
-		gpu.Temperature, _ = strconv.ParseFloat(fields[6], 64)
-		gpu.PowerDraw, _ = strconv.ParseFloat(fields[7], 64)
+		if v, pErr := strconv.Atoi(fields[2]); pErr == nil {
+			gpu.MemoryTotalMB = v
+		}
+		if v, pErr := strconv.Atoi(fields[3]); pErr == nil {
+			gpu.MemoryUsedMB = v
+		}
+		if v, pErr := strconv.ParseFloat(fields[4], 64); pErr == nil {
+			gpu.UtilizationGPU = v
+		}
+		if v, pErr := strconv.ParseFloat(fields[5], 64); pErr == nil {
+			gpu.UtilizationMemory = v
+		}
+		if v, pErr := strconv.ParseFloat(fields[6], 64); pErr == nil {
+			gpu.Temperature = v
+		}
+		if v, pErr := strconv.ParseFloat(fields[7], 64); pErr == nil {
+			gpu.PowerDraw = v
+		}
 
 		gpus = append(gpus, gpu)
 	}

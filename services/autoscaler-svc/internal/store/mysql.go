@@ -173,7 +173,10 @@ func (m *MySQLStore) DeleteRule(id string) bool {
 		log.Printf("[store] DeleteRule 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 

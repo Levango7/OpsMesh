@@ -6,6 +6,22 @@ import (
 	"strings"
 )
 
+// asString/asMap：webhook payload 是异构 JSON，缺键/类型不符时取零值是既定语义——
+// 用 helper 收敛 comma-ok 断言，替代散落的 `_` 丢弃（errcheck check-blank）。
+func asString(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func asMap(v any) map[string]any {
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	return nil
+}
+
 // Platform represents an enterprise messaging platform.
 type Platform string
 
@@ -92,8 +108,8 @@ func (f *wecomFormatter) ParseWebhook(body []byte) (*WebhookPayload, error) {
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("invalid wecom payload: %w", err)
 	}
-	text, _ := raw["text"].(string)
-	userID, _ := raw["userid"].(string)
+	text := asString(raw["text"])
+	userID := asString(raw["userid"])
 	return &WebhookPayload{
 		Platform: Wecom,
 		UserID:   userID,
@@ -123,12 +139,12 @@ func (f *feishuFormatter) ParseWebhook(body []byte) (*WebhookPayload, error) {
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("invalid feishu payload: %w", err)
 	}
-	event, _ := raw["event"].(map[string]any)
-	message, _ := event["message"].(map[string]any)
-	text, _ := message["text"].(string)
-	sender, _ := event["sender"].(map[string]any)
-	senderID, _ := sender["sender_id"].(map[string]any)
-	userID, _ := senderID["open_id"].(string)
+	event := asMap(raw["event"])
+	message := asMap(event["message"])
+	text := asString(message["text"])
+	sender := asMap(event["sender"])
+	senderID := asMap(sender["sender_id"])
+	userID := asString(senderID["open_id"])
 	return &WebhookPayload{
 		Platform: Feishu,
 		UserID:   userID,
@@ -172,9 +188,9 @@ func (f *slackFormatter) ParseWebhook(body []byte) (*WebhookPayload, error) {
 		}
 		return nil, fmt.Errorf("invalid slack payload: %w", err)
 	}
-	text, _ := raw["text"].(string)
-	userID, _ := raw["user_id"].(string)
-	command, _ := raw["command"].(string)
+	text := asString(raw["text"])
+	userID := asString(raw["user_id"])
+	command := asString(raw["command"])
 	if command != "" && text == "" {
 		text = command + " " + text
 	}
@@ -208,9 +224,9 @@ func (f *dingtalkFormatter) ParseWebhook(body []byte) (*WebhookPayload, error) {
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("invalid dingtalk payload: %w", err)
 	}
-	text, _ := raw["text"].(map[string]any)
-	content, _ := text["content"].(string)
-	userID, _ := raw["senderId"].(string)
+	text := asMap(raw["text"])
+	content := asString(text["content"])
+	userID := asString(raw["senderId"])
 	return &WebhookPayload{
 		Platform: Dingtalk,
 		UserID:   userID,

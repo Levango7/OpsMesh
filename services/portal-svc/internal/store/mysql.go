@@ -235,7 +235,10 @@ func (m *MySQLStore) UpdateRequest(r *models.ResourceRequest) bool {
 		log.Printf("[store] UpdateRequest 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -247,7 +250,10 @@ func (m *MySQLStore) DeleteRequest(id string) bool {
 		log.Printf("[store] DeleteRequest 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 

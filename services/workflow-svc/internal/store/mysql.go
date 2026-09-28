@@ -133,10 +133,14 @@ func (m *MySQLStore) GetWorkflow(id string) (*models.Workflow, bool) {
 		return nil, false
 	}
 	if len(nodes) > 0 {
-		_ = json.Unmarshal(nodes, &w.Nodes)
+		if err := json.Unmarshal(nodes, &w.Nodes); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if len(edges) > 0 {
-		_ = json.Unmarshal(edges, &w.Edges)
+		if err := json.Unmarshal(edges, &w.Edges); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if createdAt.Valid {
 		w.CreatedAt = createdAt.Time
@@ -170,7 +174,10 @@ func (m *MySQLStore) DeleteWorkflow(id string) bool {
 		log.Printf("[store] DeleteWorkflow 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -198,10 +205,14 @@ func (m *MySQLStore) ListWorkflows(status string) []*models.Workflow {
 			continue
 		}
 		if len(nodes) > 0 {
-			_ = json.Unmarshal(nodes, &w.Nodes)
+			if err := json.Unmarshal(nodes, &w.Nodes); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if len(edges) > 0 {
-			_ = json.Unmarshal(edges, &w.Edges)
+			if err := json.Unmarshal(edges, &w.Edges); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if createdAt.Valid {
 			w.CreatedAt = createdAt.Time
@@ -252,10 +263,14 @@ func (m *MySQLStore) GetExecution(id string) (*models.Execution, bool) {
 		return nil, false
 	}
 	if len(nodeStates) > 0 {
-		_ = json.Unmarshal(nodeStates, &e.NodeStates)
+		if err := json.Unmarshal(nodeStates, &e.NodeStates); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if len(ctxData) > 0 {
-		_ = json.Unmarshal(ctxData, &e.Context)
+		if err := json.Unmarshal(ctxData, &e.Context); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if startedAt.Valid {
 		e.StartedAt = startedAt.Time
@@ -304,10 +319,14 @@ func (m *MySQLStore) ListExecutions(workflowID string) []*models.Execution {
 			continue
 		}
 		if len(nodeStates) > 0 {
-			_ = json.Unmarshal(nodeStates, &e.NodeStates)
+			if err := json.Unmarshal(nodeStates, &e.NodeStates); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if len(ctxData) > 0 {
-			_ = json.Unmarshal(ctxData, &e.Context)
+			if err := json.Unmarshal(ctxData, &e.Context); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if startedAt.Valid {
 			e.StartedAt = startedAt.Time

@@ -239,7 +239,10 @@ func (c *Client) pullModelReal(name string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, rErr := io.ReadAll(resp.Body)
+		if rErr != nil {
+			respBody = nil
+		}
 		return fmt.Errorf("ollama /api/pull returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 	return nil
@@ -302,7 +305,10 @@ func (c *Client) removeModelReal(name string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, rErr := io.ReadAll(resp.Body)
+		if rErr != nil {
+			respBody = nil
+		}
 		return fmt.Errorf("ollama /api/delete returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 	return nil
@@ -474,7 +480,10 @@ func (c *Client) chatReal(model, message string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, rErr := io.ReadAll(resp.Body)
+		if rErr != nil {
+			respBody = nil
+		}
 		return "", fmt.Errorf("ollama /api/chat returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 

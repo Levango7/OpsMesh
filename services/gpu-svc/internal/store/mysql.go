@@ -159,10 +159,14 @@ func (m *MySQLStore) GetNode(id string) (*models.GPUNode, bool) {
 		return nil, false
 	}
 	if len(gpus) > 0 {
-		_ = json.Unmarshal(gpus, &n.GPUs)
+		if err := json.Unmarshal(gpus, &n.GPUs); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if len(labels) > 0 {
-		_ = json.Unmarshal(labels, &n.Labels)
+		if err := json.Unmarshal(labels, &n.Labels); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if lastHeartbeat.Valid {
 		n.LastHeartbeat = lastHeartbeat.Time
@@ -200,10 +204,14 @@ func (m *MySQLStore) ListNodes(status string) []*models.GPUNode {
 			continue
 		}
 		if len(gpus) > 0 {
-			_ = json.Unmarshal(gpus, &n.GPUs)
+			if err := json.Unmarshal(gpus, &n.GPUs); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if len(labels) > 0 {
-			_ = json.Unmarshal(labels, &n.Labels)
+			if err := json.Unmarshal(labels, &n.Labels); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if lastHeartbeat.Valid {
 			n.LastHeartbeat = lastHeartbeat.Time
@@ -227,7 +235,10 @@ func (m *MySQLStore) DeleteNode(id string) bool {
 		log.Printf("[store] DeleteNode 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -276,16 +287,24 @@ func (m *MySQLStore) GetWorkload(id string) (*models.Workload, bool) {
 		return nil, false
 	}
 	if len(gpuReq) > 0 {
-		_ = json.Unmarshal(gpuReq, &w.GPURequest)
+		if err := json.Unmarshal(gpuReq, &w.GPURequest); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if len(nodeIDs) > 0 {
-		_ = json.Unmarshal(nodeIDs, &w.NodeIDs)
+		if err := json.Unmarshal(nodeIDs, &w.NodeIDs); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if len(cmd) > 0 {
-		_ = json.Unmarshal(cmd, &w.Command)
+		if err := json.Unmarshal(cmd, &w.Command); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if len(env) > 0 {
-		_ = json.Unmarshal(env, &w.Env)
+		if err := json.Unmarshal(env, &w.Env); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if createdAt.Valid {
 		w.CreatedAt = createdAt.Time
@@ -344,16 +363,24 @@ func (m *MySQLStore) ListWorkloads(status string) []*models.Workload {
 			continue
 		}
 		if len(gpuReq) > 0 {
-			_ = json.Unmarshal(gpuReq, &w.GPURequest)
+			if err := json.Unmarshal(gpuReq, &w.GPURequest); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if len(nodeIDs) > 0 {
-			_ = json.Unmarshal(nodeIDs, &w.NodeIDs)
+			if err := json.Unmarshal(nodeIDs, &w.NodeIDs); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if len(cmd) > 0 {
-			_ = json.Unmarshal(cmd, &w.Command)
+			if err := json.Unmarshal(cmd, &w.Command); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if len(env) > 0 {
-			_ = json.Unmarshal(env, &w.Env)
+			if err := json.Unmarshal(env, &w.Env); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if createdAt.Valid {
 			w.CreatedAt = createdAt.Time

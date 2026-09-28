@@ -99,7 +99,9 @@ func scanStringSlice(data []byte) []string {
 	if len(data) == 0 {
 		return nil
 	}
-	_ = json.Unmarshal(data, &s)
+	if err := json.Unmarshal(data, &s); err != nil {
+		log.Printf("[store] scan Unmarshal: %v", err)
+	}
 	return s
 }
 
@@ -109,7 +111,9 @@ func scanStringMap(data []byte) map[string]string {
 	if len(data) == 0 {
 		return nil
 	}
-	_ = json.Unmarshal(data, &m)
+	if err := json.Unmarshal(data, &m); err != nil {
+		log.Printf("[store] scan Unmarshal: %v", err)
+	}
 	return m
 }
 
@@ -232,7 +236,10 @@ func (s *MySQLStore) UpdateDevice(d *models.Device) (*models.Device, bool) {
 		log.Printf("[store] UpdateDevice %s 更新失败: %v", d.ID, err)
 		return nil, false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	if n == 0 {
 		return nil, false
 	}
@@ -245,7 +252,10 @@ func (s *MySQLStore) DeleteDevice(id string) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -265,7 +275,10 @@ func (s *MySQLStore) Heartbeat(deviceID, status string) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -398,7 +411,10 @@ func (s *MySQLStore) UpdateAgentStatus(agentID, status string, load int) (*model
 	if err != nil {
 		return nil, false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	if n == 0 {
 		return nil, false
 	}
@@ -421,7 +437,10 @@ func (s *MySQLStore) AgentHeartbeat(agentID, status string, load int) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -528,7 +547,10 @@ func (s *MySQLStore) DeleteCI(id, tenantID string) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -588,7 +610,10 @@ func (s *MySQLStore) CreateRelation(rel *models.CIRelation) *models.CIRelation {
 	if err != nil {
 		return nil
 	}
-	rel.ID, _ = res.LastInsertId()
+	rel.ID, err = res.LastInsertId()
+	if err != nil {
+		log.Printf("[store] LastInsertId: %v", err)
+	}
 	return rel
 }
 
@@ -701,7 +726,10 @@ func (s *MySQLStore) UpdateJob(job *models.DiscoveryJob) (*models.DiscoveryJob, 
 	if err != nil {
 		return nil, false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	if n == 0 {
 		return nil, false
 	}

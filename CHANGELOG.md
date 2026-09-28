@@ -4,6 +4,15 @@
 
 > 当前最新已发布版本：`v0.9.0`（2026-09-05）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-28 errcheck 收紧档全量收口：+150 处逐点勘验（131 修 + 19 有据豁免），19 模块严格档零报点（TD-71 收官）
+
+> 证据：`golangci-lint v2.13.2`（与 CI 钉死同版）逐模块 `-c .golangci.services.yml` 复扫——operator + 18 services **0 issues**（改动后逐模块重扫）；`go build`/`go vet` 全绿；15 个受影响模块 `go test -count=1` 全绿（本机无 C 编译器，`-race` 由 CI 该 job 承担）。严格档测量（99 处基数）与逐点修法登记见 TD-71。
+
+- **顺手修 P0**：`.golangci.services.yml` 的 `exclude-functions` 键在 HEAD（50baf6c）处于“键被注释、列表悬空”状态——YAML 解析直接失败（`'linters.settings.errcheck' expected a map, got 'slice'`），HEAD 的 CI run 36384661953 中 `services` job 实测死在这里（日志：`Error: can't load config: ... 'linters.settings.errcheck' expected a map, got 'slice'`——第一个模块 operator 即中断，其余 services 门禁全被拖红）。
+- **131 处修复**（行为语义均与原 `_` 一致，只是把失败路径显式化）：RowsAffected/LastInsertId → err+log ×41；行扫描 `_ = json.Unmarshal` → err+log ×39（失败保持零值、不再静默）；void 方法的 DB 写/清理 exec → 日志 ×10；handler `_ = Decode` → 400 ×7（device/agent 心跳、incident resolve/close、runbook trigger、workflow approve/reject）；`io.ReadAll` 错误消息体 → 显式降级 ×6；limit/硬件解析 → 显式检查 ×9（device limit ×3、gpu nvidia-smi ×6）；gpu 调度链/配额 ×4（Schedule 空结果防护 + AssignNode/RecordAllocation/ReleaseAllocation 日志）；device 租户上下文 ×1；bot payload 类型断言 → `asString`/`asMap` 收敛 ×14（缺键/类型不符零值语义不变）。
+- **19 处有据豁免**（best-effort：失败仅影响可观测性/旁路/降级，不影响主流程；规则按服务相对路径 + 调用点精确匹配，逐条注明理由）：alert notifier/breaker/notifyFn ×8；auth 会话 Create/Revoke/Logout/UpdateUser + cache save/baseCmd.Err ×7（Redis 降级设计）；task 回调空 body ×2（EventBus.Publish 走 `exclude-functions`，与根配置 `internal/events.Bus` 同款）；device TrackUsage ×1（计量失败不回滚注册）；bot io.Copy ×1（DrainBody 刻意排空）。
+- **门禁收紧**：`check-blank: true` + `check-type-assertions: true` 打开（与根配置最严档对齐），其余 80 处修复点与 19 处豁免恰好覆盖测量基数。
+- **过程发现**：新增的 limit 解析日志（`%q` 打印用户输入）被 gosec G706 拦住（log injection，taint 分析不认转义）——按 services 既有先例（aio-svc URL 不打日志）改为不落用户原值。
 ## [Unreleased] — 2026-09-26 交付脚本第一次被静态检查：抓到三处"哑按钮 + 不实陈述"
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §22。起因只是给部署资产门禁加一节，顺手对 `deploy/**/*.sh` 跑了 shellcheck。

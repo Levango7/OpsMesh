@@ -119,7 +119,9 @@ func (m *MySQLStore) List() []*models.Plugin {
 			continue
 		}
 		if len(tags) > 0 {
-			_ = json.Unmarshal(tags, &p.Tags)
+			if err := json.Unmarshal(tags, &p.Tags); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if createdAt.Valid {
 			p.CreatedAt = createdAt.Time
@@ -147,7 +149,9 @@ func (m *MySQLStore) Get(id string) (*models.Plugin, bool) {
 		return nil, false
 	}
 	if len(tags) > 0 {
-		_ = json.Unmarshal(tags, &p.Tags)
+		if err := json.Unmarshal(tags, &p.Tags); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if createdAt.Valid {
 		p.CreatedAt = createdAt.Time
@@ -202,7 +206,10 @@ func (m *MySQLStore) Update(p *models.Plugin) (*models.Plugin, bool) {
 		log.Printf("[store] Update 失败: %v", err)
 		return nil, false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return p, n > 0
 }
 
@@ -214,9 +221,14 @@ func (m *MySQLStore) Delete(id string) bool {
 		log.Printf("[store] Delete 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	if n > 0 {
-		_, _ = m.db.ExecContext(ctx, `DELETE FROM plugin_versions WHERE plugin_id=?`, id)
+		if _, err := m.db.ExecContext(ctx, `DELETE FROM plugin_versions WHERE plugin_id=?`, id); err != nil {
+			log.Printf("[store] best-effort exec: %v", err)
+		}
 	}
 	return n > 0
 }

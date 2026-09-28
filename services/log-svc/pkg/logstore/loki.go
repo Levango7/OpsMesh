@@ -75,7 +75,10 @@ func (s *LokiStore) Query(ctx context.Context, q Query) ([]Entry, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, rErr := io.ReadAll(resp.Body)
+		if rErr != nil {
+			body = nil
+		}
 		return nil, fmt.Errorf("loki query_range: status=%d body=%s", resp.StatusCode, string(body))
 	}
 

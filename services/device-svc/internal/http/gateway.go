@@ -103,7 +103,11 @@ func (g *Gateway) handleDevices(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		q := r.URL.Query()
-		limit, _ := strconv.Atoi(q.Get("limit"))
+		limit, aErr := strconv.Atoi(q.Get("limit"))
+		if aErr != nil {
+			// G706：limit 是用户输入，taint 分析不认 %q 转义——原值不落日志。
+			log.Printf("[gateway] invalid limit query param: %v", aErr)
+		}
 		devs := g.devices.ListDevices(q.Get("tenantID"), q.Get("status"), q.Get("group"), limit)
 		// 响应格式对齐 controlplane GET /api/v1/devices：按 segment 分组返回
 		// map[segment][]DeviceInfo（无分页时）。
@@ -145,7 +149,10 @@ func (g *Gateway) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Status string `json:"status"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
 		if !g.devices.Heartbeat(id, body.Status) {
 			writeError(w, http.StatusNotFound, "device not found")
 			return
@@ -379,7 +386,11 @@ func (g *Gateway) handleAgents(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		q := r.URL.Query()
-		limit, _ := strconv.Atoi(q.Get("limit"))
+		limit, aErr := strconv.Atoi(q.Get("limit"))
+		if aErr != nil {
+			// G706：limit 是用户输入，taint 分析不认 %q 转义——原值不落日志。
+			log.Printf("[gateway] invalid limit query param: %v", aErr)
+		}
 		tenantID := q.Get("tenantID")
 		agents := g.agents.ListAgents(tenantID, q.Get("status"), limit)
 		// 响应格式对齐 controlplane GET /api/v1/agents：返回裸数组
@@ -437,7 +448,10 @@ func (g *Gateway) handleAgentDetail(w http.ResponseWriter, r *http.Request) {
 			Status string `json:"status"`
 			Load   int    `json:"load"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
 		if !g.agents.AgentHeartbeat(id, body.Status, body.Load) {
 			writeError(w, http.StatusNotFound, "agent not found")
 			return
@@ -468,7 +482,11 @@ func (g *Gateway) handleCIs(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		q := r.URL.Query()
-		limit, _ := strconv.Atoi(q.Get("limit"))
+		limit, aErr := strconv.Atoi(q.Get("limit"))
+		if aErr != nil {
+			// G706：limit 是用户输入，taint 分析不认 %q 转义——原值不落日志。
+			log.Printf("[gateway] invalid limit query param: %v", aErr)
+		}
 		cis := g.cis.ListCIs(q.Get("tenantID"), q.Get("ciType"), q.Get("status"), limit)
 		writeJSON(w, http.StatusOK, map[string]any{"cis": cis})
 	case http.MethodPost:

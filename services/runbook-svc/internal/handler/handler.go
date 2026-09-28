@@ -223,7 +223,10 @@ func (h *Handler) triggerRunbook(w http.ResponseWriter, r *http.Request, id stri
 	var body struct {
 		TriggeredBy string `json:"triggered_by"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
 
 	record, err := h.svc.TriggerRunbook(r.Context(), id, body.TriggeredBy)
 	if err != nil {

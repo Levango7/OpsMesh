@@ -162,7 +162,10 @@ func (c *PagerDutyClient) send(event *PagerDutyEvent) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, rErr := io.ReadAll(resp.Body)
+	if rErr != nil {
+		respBody = nil
+	}
 
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("pagerduty: unexpected status %d: %s", resp.StatusCode, string(respBody))

@@ -234,7 +234,10 @@ func (m *MySQLStore) AckAlert(id, tenantID, by string) bool {
 		log.Printf("[store] AckAlert 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -252,7 +255,10 @@ func (m *MySQLStore) SilenceAlert(id, tenantID, by string, until time.Time, comm
 		log.Printf("[store] SilenceAlert 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -267,7 +273,10 @@ func (m *MySQLStore) ResolveAlert(id, tenantID, by string) bool {
 		log.Printf("[store] ResolveAlert 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -340,7 +349,10 @@ func (m *MySQLStore) DeleteAlertRule(id string) bool {
 		log.Printf("[store] DeleteAlertRule 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -381,7 +393,10 @@ func (m *MySQLStore) UpdateAlertRule(r *AlertRule) bool {
 		log.Printf("[store] UpdateAlertRule 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 

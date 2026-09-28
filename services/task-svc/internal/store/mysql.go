@@ -73,7 +73,9 @@ func scanStringSlice(data []byte) []string {
 	if len(data) == 0 {
 		return nil
 	}
-	_ = json.Unmarshal(data, &s)
+	if err := json.Unmarshal(data, &s); err != nil {
+		log.Printf("[store] scan Unmarshal: %v", err)
+	}
 	return s
 }
 
@@ -390,7 +392,10 @@ func (s *MySQLStore) CancelTask(taskID, tenantID string) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -407,7 +412,10 @@ func (s *MySQLStore) ApproveTask(taskID, tenantID, approvedBy string) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -424,7 +432,10 @@ func (s *MySQLStore) RejectTask(taskID, tenantID, rejectedBy string) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -537,7 +548,10 @@ func (s *MySQLStore) UpdateTask(t *models.Task) bool {
 		log.Printf("[store] UpdateTask 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -624,7 +638,10 @@ func (s *MySQLStore) DeleteSchedule(id string) bool {
 	if err != nil {
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	return n > 0
 }
 
@@ -662,11 +679,13 @@ func (s *MySQLStore) ListSchedules(tenantID string) []*models.Schedule {
 
 // SaveResult saves a task result.
 func (s *MySQLStore) SaveResult(r *models.TaskResult) {
-	_, _ = s.db.Exec(
+	if _, err := s.db.Exec(
 		"INSERT INTO task_results (task_id, agent_id, exit_code, stdout, stderr, duration_ms, finished_at, claim_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE agent_id = ?, exit_code = ?, stdout = ?, stderr = ?, duration_ms = ?, finished_at = ?, claim_epoch = ?",
 		r.TaskID, r.AgentID, r.ExitCode, r.Stdout, r.Stderr, r.DurationMs, r.FinishedAt, r.ClaimEpoch,
 		r.AgentID, r.ExitCode, r.Stdout, r.Stderr, r.DurationMs, r.FinishedAt, r.ClaimEpoch,
-	)
+	); err != nil {
+		log.Printf("[store] best-effort exec: %v", err)
+	}
 }
 
 // GetTaskResult returns a task result by task ID.
@@ -726,12 +745,16 @@ func (s *MySQLStore) SaveLogs(taskID string, logs []models.LogLine) {
 	if len(logs) == 0 {
 		return
 	}
-	_, _ = s.db.Exec("DELETE FROM task_logs WHERE task_id = ?", taskID)
+	if _, err := s.db.Exec("DELETE FROM task_logs WHERE task_id = ?", taskID); err != nil {
+		log.Printf("[store] best-effort exec: %v", err)
+	}
 	for _, line := range logs {
-		_, _ = s.db.Exec(
+		if _, err := s.db.Exec(
 			"INSERT INTO task_logs (task_id, log_timestamp, level, message) VALUES (?, ?, ?, ?)",
 			taskID, line.Timestamp, line.Level, line.Message,
-		)
+		); err != nil {
+			log.Printf("[store] best-effort exec: %v", err)
+		}
 	}
 }
 
@@ -789,10 +812,12 @@ func (s *MySQLStore) GetBatch(batchID string) *models.BatchTask {
 
 // UpdateBatch updates a batch.
 func (s *MySQLStore) UpdateBatch(b *models.BatchTask) {
-	_, _ = s.db.Exec(
+	if _, err := s.db.Exec(
 		"UPDATE batches SET tenant_id = ?, name = ?, total_count = ?, success_count = ?, failed_count = ?, pending_count = ?, status = ? WHERE batch_id = ?",
 		b.TenantID, b.Name, b.TotalCount, b.SuccessCount, b.FailedCount, b.PendingCount, b.Status, b.BatchID,
-	)
+	); err != nil {
+		log.Printf("[store] best-effort exec: %v", err)
+	}
 }
 
 // ListBatches returns batches, optionally filtered by tenant.
@@ -824,10 +849,12 @@ func (s *MySQLStore) ListBatches(tenantID string) []*models.BatchTask {
 
 // AddTaskToBatch adds a task to a batch.
 func (s *MySQLStore) AddTaskToBatch(batchID, taskID string) {
-	_, _ = s.db.Exec(
+	if _, err := s.db.Exec(
 		"INSERT IGNORE INTO batch_tasks (batch_id, task_id) VALUES (?, ?)",
 		batchID, taskID,
-	)
+	); err != nil {
+		log.Printf("[store] best-effort exec: %v", err)
+	}
 }
 
 // GetBatchTasks returns task IDs in a batch.

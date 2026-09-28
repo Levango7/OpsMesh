@@ -141,13 +141,19 @@ func (m *MySQLStore) GetIncident(id string) *models.Incident {
 		return nil
 	}
 	if len(alertIDs) > 0 {
-		_ = json.Unmarshal(alertIDs, &inc.AlertIDs)
+		if err := json.Unmarshal(alertIDs, &inc.AlertIDs); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if len(deviceIDs) > 0 {
-		_ = json.Unmarshal(deviceIDs, &inc.DeviceIDs)
+		if err := json.Unmarshal(deviceIDs, &inc.DeviceIDs); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if len(tags) > 0 {
-		_ = json.Unmarshal(tags, &inc.Tags)
+		if err := json.Unmarshal(tags, &inc.Tags); err != nil {
+			log.Printf("[store] scan Unmarshal: %v", err)
+		}
 	}
 	if detectedAt.Valid {
 		inc.DetectedAt = detectedAt.Time
@@ -195,9 +201,14 @@ func (m *MySQLStore) DeleteIncident(id string) bool {
 		log.Printf("[store] DeleteIncident 失败: %v", err)
 		return false
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] RowsAffected: %v", err)
+	}
 	if n > 0 {
-		_, _ = m.db.ExecContext(ctx, `DELETE FROM timeline_events WHERE incident_id=?`, id)
+		if _, err := m.db.ExecContext(ctx, `DELETE FROM timeline_events WHERE incident_id=?`, id); err != nil {
+			log.Printf("[store] best-effort exec: %v", err)
+		}
 	}
 	return n > 0
 }
@@ -235,13 +246,19 @@ func (m *MySQLStore) ListIncidents(status string, severity models.Severity) []*m
 			continue
 		}
 		if len(alertIDs) > 0 {
-			_ = json.Unmarshal(alertIDs, &inc.AlertIDs)
+			if err := json.Unmarshal(alertIDs, &inc.AlertIDs); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if len(deviceIDs) > 0 {
-			_ = json.Unmarshal(deviceIDs, &inc.DeviceIDs)
+			if err := json.Unmarshal(deviceIDs, &inc.DeviceIDs); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if len(tags) > 0 {
-			_ = json.Unmarshal(tags, &inc.Tags)
+			if err := json.Unmarshal(tags, &inc.Tags); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if detectedAt.Valid {
 			inc.DetectedAt = detectedAt.Time
@@ -325,13 +342,19 @@ func (m *MySQLStore) Incidents() []*models.Incident {
 			continue
 		}
 		if len(alertIDs) > 0 {
-			_ = json.Unmarshal(alertIDs, &inc.AlertIDs)
+			if err := json.Unmarshal(alertIDs, &inc.AlertIDs); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if len(deviceIDs) > 0 {
-			_ = json.Unmarshal(deviceIDs, &inc.DeviceIDs)
+			if err := json.Unmarshal(deviceIDs, &inc.DeviceIDs); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if len(tags) > 0 {
-			_ = json.Unmarshal(tags, &inc.Tags)
+			if err := json.Unmarshal(tags, &inc.Tags); err != nil {
+				log.Printf("[store] scan Unmarshal: %v", err)
+			}
 		}
 		if detectedAt.Valid {
 			inc.DetectedAt = detectedAt.Time

@@ -279,7 +279,10 @@ func (h *Handler) resolveIncident(w http.ResponseWriter, r *http.Request, id str
 	var req struct {
 		Author string `json:"author"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
 
 	inc, err := h.svc.ResolveIncident(id, req.Author)
 	if err != nil {
@@ -298,7 +301,10 @@ func (h *Handler) closeIncident(w http.ResponseWriter, r *http.Request, id strin
 	var req struct {
 		Author string `json:"author"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
 
 	inc, err := h.svc.CloseIncident(id, req.Author)
 	if err != nil {

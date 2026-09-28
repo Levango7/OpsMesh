@@ -242,7 +242,10 @@ func (h *Handler) approveApproval(w http.ResponseWriter, r *http.Request, id str
 		ResolvedBy string `json:"resolved_by"`
 		Comment    string `json:"comment"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
 
 	if err := h.svc.ApproveApproval(r.Context(), id, body.ResolvedBy, body.Comment); err != nil {
 		switch err {
@@ -265,7 +268,10 @@ func (h *Handler) rejectApproval(w http.ResponseWriter, r *http.Request, id stri
 		ResolvedBy string `json:"resolved_by"`
 		Comment    string `json:"comment"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
 
 	if err := h.svc.RejectApproval(r.Context(), id, body.ResolvedBy, body.Comment); err != nil {
 		switch err {

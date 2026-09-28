@@ -449,8 +449,8 @@ func (s *Service) RegisterDevice(ctx context.Context, req *devicev1.RegisterDevi
 
 	// Track device usage for the tenant.
 	if s.tenantMgr != nil {
-		tenantID, _ := tenant.TenantIDFromContext(ctx)
-		if tenantID == "" {
+		tenantID, tErr := tenant.TenantIDFromContext(ctx)
+		if tErr != nil {
 			tenantID = d.TenantId
 		}
 		_ = s.tenantMgr.TrackUsage(ctx, tenantID, tenant.ResourceDevices, 1)

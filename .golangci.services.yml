@@ -6,8 +6,8 @@
 #    根的豁免会**静默命中服务的同名路径**，豁免语义完全失控。
 # 2. 存量债节奏不同：根模块经多轮治理全绿；services 存量债（TD-71/72）按类偿清，
 #    每清完一类即把该类 linter 收编进 enable——2026-09-27 已收编 gosec/staticcheck/
-#    govet/unused/ineffassign（对应报点全部修复或按下列有据豁免），errcheck 为
-#    最后一类（约 150 处逐点判断型修复，见 TD-71 收官批次）。
+#    govet/unused/ineffassign；errcheck 于 2026-09-28 全量收编（含收紧档
+#    check-blank + check-type-assertions：80 处逐点修复 + 19 处按类豁免，见下）。
 #
 # 正确性门禁不缩水：ci.yml services job 另行跑 go vet ./... 与 go test -race。
 
@@ -19,7 +19,7 @@ linters:
   enable:
     - bodyclose        # http.Response.Body 必须 Close
     - copyloopvar      # 循环变量拷贝检查（Go 1.22 loopvar 兼容）
-    - errcheck         # 未检查的错误返回（2026-09-27 收官批次后全量收编）
+    - errcheck         # 未检查的错误返回（2026-09-28 含收紧档 check-blank/type-assertions）
     - gosec            # 安全静态分析（豁免见 rules，逐条有据）
     - ineffassign      # 无效赋值
     - misspell         # 注释/字符串拼写
@@ -30,12 +30,14 @@ linters:
     - govet            # enable-all 除 shadow/fieldalignment（与根一致）
   settings:
     errcheck:
-      # 当前：errcheck 默认严格度（捕获所有未检查的错误返回）——2026-09-27 收编并清零。
-      # check-blank + check-type-assertions 收紧（+150 处）已逐点勘完、按类登记在
-      # TD-71（RowsAffected ×40 / json.Unmarshal 行扫描 ×40 / handler Decode ×7 /
-      # 类型断言 ×15 / best-effort 通知计量 ×20 / io.ReadAll ×8 / 其余 ×20），
-      # 修法取决于各函数返回签名，属逐点判断批次——完成后本处解除注释即收紧。
-      # exclude-functions:
+      # 2026-09-28 收官：收紧档（check-blank + check-type-assertions）开启后全量勘验——
+      # 80 处逐点修复（RowsAffected/LastInsertId ×41、Unmarshal 行扫描 ×39、ReadAll ×6、
+      # limit/硬件解析 ×9、handler Decode→400 ×7 等；失败均记日志或显式降级，行为与
+      # 原 `_` 语义一致），19 处 best-effort 按类豁免登记在下方 exclusions.rules
+      #（失败仅影响可观测性/旁路能力/降级路径，不影响主流程）。
+      check-blank: true
+      check-type-assertions: true
+      exclude-functions:
         - (*bufio.Writer).WriteString
         - (*bytes.Buffer).Write
         - (io.Writer).Write
@@ -45,6 +47,9 @@ linters:
         - (*encoding/json.Encoder).Encode
         - (net/http.ResponseWriter).Write
         - (*encoding/csv.Writer).Write
+        # task-svc 事件总线：内存总线发布失败无补救路径（订阅者各自兜底），
+        # 与根配置 best-effort 通知类豁免同理由（TD-71，2026-09-28）。
+        - (github.com/Levango7/OpsMesh/services/task-svc/internal/events.EventBus).Publish
     govet:
       enable-all: true
       disable:
@@ -139,6 +144,48 @@ linters:
       - linters:
           - errcheck
         path: tf-provider/
+      # ===== errcheck 收紧档（check-blank/check-type-assertions）19 处豁免 =====
+      # 均为 best-effort 语义：失败仅影响可观测性/旁路能力/降级路径，不影响主流程。
+      # 2026-09-28 逐点勘验（TD-71）；其余 80 处已改为显式检查（记日志/400/降级），
+      # 两批合计与收紧档测量值 99 处一一对应。path 为服务相对路径（CI 从各服务
+      # 目录运行 lint，见 ci.yml services job）。
+      # alert-svc：notifier/breaker 为注入的接口实现，通知失败=旁路降级，不阻断主流程。
+      - linters:
+          - errcheck
+        path: internal/service/service\.go
+        text: 's\.(notifier\.(TriggerEvent|AcknowledgeEvent|ResolveEvent)|breaker\.Execute)'
+      # alert-svc：escalation 的 notifyFn 是 func 字段，errcheck 无法给出被调名（通用
+      # 文案）；该文件仅此 3 处，逐点核对均为通知旁路。
+      - linters:
+          - errcheck
+        path: internal/escalation/escalation\.go
+        text: 'Error return value is not checked'
+      # auth-svc：会话创建/吊销/登出为 Redis 降级设计——失败回落 JWT/本地清理，
+      # 接口本身无错误返回契约，主流程照常（根配置 auth 同理由）。
+      - linters:
+          - errcheck
+        path: internal/http/gateway\.go
+        text: 'sessions\.(Create|Revoke)|svc\.Logout|Store\)\.UpdateUser'
+      - linters:
+          - errcheck
+        path: internal/cache/session\.go
+        text: 's\.save|baseCmd\)\.Err'
+      # task-svc：webhook/回调入口允许空 body（best-effort 解析，空值走默认分支），
+      # 与 handler 其他入口的 400 严格契约不同（此处为回调协议，非用户输入）。
+      - linters:
+          - errcheck
+        path: internal/http/gateway\.go
+        text: 'json\.Decoder\)\.Decode'
+      # device-svc：注册后用量计量失败不回滚注册（根配置 pkg/tenant 调用同理由）。
+      - linters:
+          - errcheck
+        path: internal/service/service\.go
+        text: 'TrackUsage'
+      # bot-svc：DrainBody 刻意排空响应体（保证连接复用），读取错误无补救路径。
+      - linters:
+          - errcheck
+        path: internal/client/client\.go
+        text: 'io\.Copy'
     paths:
       - .*\.gen\.go$
       - .*\.pb\.go$
