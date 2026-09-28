@@ -92,9 +92,9 @@ linters:
       - linters:
           - gosec
         text: "G115"
-      # G404 弱随机数：grafana-bridge 是模拟数据源（随机性即职责）、gpu-svc
-      # metrics 模拟兜底——与根配置 cmd/device-sim、pkg/retry 豁免同理由。
-      # services 内全部 G404 均为模拟数据场景（2026-09-27 逐点核实）。
+      # G404 弱随机数：gpu-svc metrics 模拟兜底——与根配置 cmd/device-sim、
+      # pkg/retry 豁免同理由（grafana-bridge 模拟数据源已于 2026-09-29 删除）。
+      # services 内现存 G404 均为模拟数据场景（删除后复扫，仅 gpu-svc 一处）。
       - linters:
           - gosec
         text: "G404"
@@ -181,11 +181,6 @@ linters:
           - errcheck
         path: internal/service/service\.go
         text: 'TrackUsage'
-      # bot-svc：DrainBody 刻意排空响应体（保证连接复用），读取错误无补救路径。
-      - linters:
-          - errcheck
-        path: internal/client/client\.go
-        text: 'io\.Copy'
     paths:
       - .*\.gen\.go$
       - .*\.pb\.go$

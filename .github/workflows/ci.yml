@@ -208,7 +208,7 @@ jobs:
           fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
 
   # services/operator 门禁 —— 根模块 ./... 会被 Go 模块系统剪枝嵌套 go.mod
-  # （services/* 18 个独立子模块 + operator 永不被根 CI 编译/测试）。
+  # （services/* 独立子模块（2026-09-29 删除 5 服务后 13 个）+ operator 永不被根 CI 编译/测试）。
   # 本 job 逐模块跑 build + vet + golangci-lint + test(-race)，
   # 把游离模块全部纳入与根模块同强度的门禁。
   # 为什么必须显式逐模块（2026-09-27 教训）：operator 的 go.mod 模块路径
@@ -250,7 +250,8 @@ jobs:
         # 向上找到根 .golangci.yml —— services 与根模块共用同一套规则与豁免。
         # 此前本 job 只有 build + 无 race 的 test：vet/lint/race 三个门禁对
         # services 全部缺席（2026-09-27 用 -race 扫 services 一开跑即抓出
-        # workflow-svc 引擎可崩进程的竞态，证明这些门禁不是形式主义）。
+        # workflow-svc 引擎可崩进程的竞态，证明这些门禁不是形式主义；该服务已于
+        # 2026-09-29 因单体 orchestration 覆盖而删除，门禁对存量服务的价值不变）。
         run: |
           set -euo pipefail
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2

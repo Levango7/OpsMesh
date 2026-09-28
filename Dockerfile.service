@@ -28,8 +28,8 @@ WORKDIR /src
 # 0.8.0 / 0.9.0 / latest / <sha>，无 0.9.1）。
 # 不入库的依赖校验并未因此丢失：各模块自己的 go.sum 仍在（下方 COPY），
 # `go mod download` 在 workspace 模式下会自行生成 go.work.sum。
-# 反证：CI 的 services job 在同样的干净检出（无 go.work.sum）下对 17 个模块逐个
-# `go build ./...` 全绿——workspace 无 sum 文件可正常构建。
+# 反证：CI 的 services job 在同样的干净检出（无 go.work.sum）下对 services/ 全部子模块
+# 逐个 `go build ./...` 全绿——workspace 无 sum 文件可正常构建。
 COPY go.work ./
 COPY go.mod go.sum ./
 COPY operator/ operator/
