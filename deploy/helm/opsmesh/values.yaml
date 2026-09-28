@@ -4,7 +4,6 @@
 # 端口约定：各微服务 httpPort/grpcPort 独立配置（见各服务段，对照源码默认值）。
 # 指标暴露：微服务【没有】独立 metrics 端口（services/** 无 9091 监听），/metrics
 # 由服务在自身 HTTP 端口注册（cmd/<svc>/main.go: mux.Handle("/metrics", metrics.GetHandler())）。
-# 除 grafana-bridge 外（其 /metrics 返回 JSON 而非 Prometheus 文本格式，保持 metrics: false），
 # 各服务段已按源码注册情况置 metrics: true，ServiceMonitor 按 http 端口抓取。
 
 ## @section Global
@@ -248,7 +247,7 @@ redis:
   tolerations: []
 
 ## @section Microservices（微服务，默认全部禁用）
-# services/ 下 18 个微服务默认不经 Helm 部署——所有子项 enabled=false，
+# services/ 下 12 个微服务默认不经 Helm 部署——所有子项 enabled=false，
 # templates/microservices.yaml 渲染为空，存量 chart 行为 100% 不变（兼容红线）。
 # 键名统一用下划线（auth_svc 而非 auth-svc）：规避 helm --set 与模板 range 的连字符键坑。
 # 开启单个服务：helm upgrade <release> ./deploy/helm/opsmesh --set services.task_svc.enabled=true
@@ -537,93 +536,6 @@ services:
     podLabels: {}
     securityContext: {}
 
-  deploy_svc:
-    # 部署/模板/策略/金丝雀服务（deploy-svc/pkg/config：DEPLOY_SVC_HTTP_PORT 8081 / GRPC 50052）
-    enabled: false
-    image:
-      repository: ghcr.io/levango7/deploy-svc
-      tag: "latest"
-      digest: ""
-      pullPolicy: IfNotPresent
-    httpPort: 8081
-    grpcPort: 50052
-    # /metrics 已注册在 HTTP 端口（deploy-svc/cmd/deploy-svc/main.go），ServiceMonitor 据此生成
-    metrics: true
-    replicas: 1
-    storeEnvPrefix: "DEPLOY_SVC"
-    storeType: "memory"
-    probe:
-      # deploy-svc/cmd/deploy-svc/main.go 健康路径 /health
-      path: /health
-      liveness:
-        initialDelaySeconds: 10
-        periodSeconds: 30
-        timeoutSeconds: 3
-        failureThreshold: 3
-      readiness:
-        initialDelaySeconds: 5
-        periodSeconds: 10
-        timeoutSeconds: 3
-        failureThreshold: 3
-    resources:
-      requests:
-        cpu: 50m
-        memory: 64Mi
-      limits:
-        cpu: 500m
-        memory: 256Mi
-    env: {}
-    nodeSelector: {}
-    affinity: {}
-    tolerations: []
-    podAnnotations: {}
-    podLabels: {}
-    securityContext: {}
-
-  plugin_svc:
-    # 插件市场服务（纯 HTTP，无 gRPC；plugin-svc/pkg/config：PLUGIN_SVC_HTTP_PORT 8082）
-    enabled: false
-    image:
-      repository: ghcr.io/levango7/plugin-svc
-      tag: "latest"
-      digest: ""
-      pullPolicy: IfNotPresent
-    httpPort: 8082
-    # 无 gRPC 服务端 → 0（模板不渲染 gRPC 端口）
-    grpcPort: 0
-    # /metrics 已注册在 HTTP 端口（plugin-svc/cmd/plugin-svc/main.go），ServiceMonitor 据此生成
-    metrics: true
-    replicas: 1
-    storeEnvPrefix: "PLUGIN_SVC"
-    storeType: "memory"
-    probe:
-      # plugin-svc/internal/handler/handler.go 注册 /health
-      path: /health
-      liveness:
-        initialDelaySeconds: 10
-        periodSeconds: 30
-        timeoutSeconds: 3
-        failureThreshold: 3
-      readiness:
-        initialDelaySeconds: 5
-        periodSeconds: 10
-        timeoutSeconds: 3
-        failureThreshold: 3
-    resources:
-      requests:
-        cpu: 50m
-        memory: 64Mi
-      limits:
-        cpu: 500m
-        memory: 256Mi
-    env: {}
-    nodeSelector: {}
-    affinity: {}
-    tolerations: []
-    podAnnotations: {}
-    podLabels: {}
-    securityContext: {}
-
   portal_svc:
     # 统一门户 BFF（portal-svc/pkg/config：PORTAL_SVC_HTTP_PORT 8080 / GRPC 50051）
     enabled: false
@@ -713,49 +625,6 @@ services:
     podLabels: {}
     securityContext: {}
 
-  grafana_bridge:
-    # Grafana 数据源桥（纯 HTTP；grafana-bridge/pkg/config：GRAFANA_BRIDGE_HTTP_PORT 默认 8080）
-    enabled: false
-    image:
-      repository: ghcr.io/levango7/grafana-bridge
-      tag: "latest"
-      digest: ""
-      pullPolicy: IfNotPresent
-    httpPort: 8080
-    # 无 gRPC 服务端 → 0（模板不渲染 gRPC 端口）
-    grpcPort: 0
-    replicas: 1
-    # grafana-bridge 无 STORE_TYPE/DSN env
-    storeEnvPrefix: ""
-    storeType: "memory"
-    probe:
-      # grafana-bridge/cmd/grafana-bridge/main.go 健康路径 /health
-      path: /health
-      liveness:
-        initialDelaySeconds: 10
-        periodSeconds: 30
-        timeoutSeconds: 3
-        failureThreshold: 3
-      readiness:
-        initialDelaySeconds: 5
-        periodSeconds: 10
-        timeoutSeconds: 3
-        failureThreshold: 3
-    resources:
-      requests:
-        cpu: 50m
-        memory: 64Mi
-      limits:
-        cpu: 500m
-        memory: 256Mi
-    env: {}
-    nodeSelector: {}
-    affinity: {}
-    tolerations: []
-    podAnnotations: {}
-    podLabels: {}
-    securityContext: {}
-
   # ---- 以下 5 域为 M13 六域接线（controlplane service_proxy.go 转发）对应服务 ----
   # 聚合层默认转发地址 http://127.0.0.1:<默认端口>；K8s 部署时由
   # controlplane 的 env *_SVC_URL 指向 Service DNS（如 http://opsmesh-gpu-svc:8090）。
@@ -777,50 +646,6 @@ services:
     storeType: "memory"
     probe:
       # gpu-svc/cmd/gpu-svc/main.go 健康路径 /health
-      path: /health
-      liveness:
-        initialDelaySeconds: 10
-        periodSeconds: 30
-        timeoutSeconds: 3
-        failureThreshold: 3
-      readiness:
-        initialDelaySeconds: 5
-        periodSeconds: 10
-        timeoutSeconds: 3
-        failureThreshold: 3
-    resources:
-      requests:
-        cpu: 50m
-        memory: 64Mi
-      limits:
-        cpu: 500m
-        memory: 256Mi
-    env: {}
-    nodeSelector: {}
-    affinity: {}
-    tolerations: []
-    podAnnotations: {}
-    podLabels: {}
-    securityContext: {}
-
-  bot_svc:
-    # ChatOps IM webhook 入口（纯 HTTP；bot-svc/pkg/config：BOT_SVC_HTTP_PORT 默认 8080）
-    enabled: false
-    image:
-      repository: ghcr.io/levango7/bot-svc
-      tag: "latest"
-      digest: ""
-      pullPolicy: IfNotPresent
-    httpPort: 8080
-    grpcPort: 0
-    # /metrics 已注册在 HTTP 端口（bot-svc/cmd/bot-svc/main.go），ServiceMonitor 据此生成
-    metrics: true
-    replicas: 1
-    # bot-svc 无 STORE_TYPE/DSN env（IM 平台 token 各自 env）
-    storeEnvPrefix: ""
-    storeType: "memory"
-    probe:
-      # bot-svc/internal/handler/handler.go:38 健康路径 /health
       path: /health
       liveness:
         initialDelaySeconds: 10

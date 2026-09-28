@@ -43,11 +43,9 @@ scrape_configs:
   # HTTP 端口注册（cmd/<svc>/main.go: mux.Handle("/metrics", metrics.GetHandler())）。
   # 本 compose 栈内 9 个服务（device-svc / task-svc / alert-svc / auth-svc / log-svc /
   # config-svc / gpu-svc / aio-svc / portal-svc）均已注册该路径，抓取任务如下；
-  # autoscaler-svc / bot-svc / deploy-svc / incident-svc / plugin-svc / runbook-svc
-  # 不在本 compose 栈里，由 Helm chart 的 ServiceMonitor 按 http 端口抓取
-  # （deploy/helm/opsmesh/values.yaml services.<name>.metrics: true）；workflow-svc
-  # 同样不在 compose 栈里，且尚未纳入 chart 的 services 段（无对应 ServiceMonitor），
-  # 待纳入后按同口径开启。
+  # autoscaler-svc / incident-svc / runbook-svc 不在本 compose 栈里，由 Helm chart
+  # 的 ServiceMonitor 按 http 端口抓取（deploy/helm/opsmesh/values.yaml
+  # services.<name>.metrics: true）。
   # 此前为 9 个服务配置的 :9091 抓取任务全部指向无监听端口（target 恒 DOWN，属虚假
   # 配置），已按实际情况删减。
   - job_name: "device-svc"

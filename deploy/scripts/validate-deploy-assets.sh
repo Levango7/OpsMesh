@@ -96,7 +96,7 @@ DIR_SVCS="$(ls services/ 2>/dev/null | sort)"
 NON_SERVICE="tf-provider|Terraform 插件（main.go 里 plugin.Serve）：装进容器会在启动瞬间打印 \"This binary is a plugin\" 并以码 1 退出 ⇒ 出镜像=发布一个必定 CrashLoop 的产物"
 NS_NAMES="$(printf '%s\n' "$NON_SERVICE" | cut -d'|' -f1 | sed '/^$/d' | sort)"
 CHART_SVCS="$(grep -E '^  [a-z_]+_?[a-z_]*:' deploy/helm/opsmesh/values.yaml \
-    | sed -E 's/^  ([a-z_]+):.*/\1/' | grep -E '_svc$|^grafana_bridge$' | sort)"
+    | sed -E 's/^  ([a-z_]+):.*/\1/' | grep -E '_svc$' | sort)"
 
 n_rel="$(echo "$RELEASE_SVCS" | grep -c . || true)"
 n_dir="$(echo "$DIR_SVCS" | grep -c . || true)"
@@ -166,12 +166,8 @@ if command -v helm >/dev/null 2>&1; then
         --set services.portal_svc.enabled=true \
         --set services.aio_svc.enabled=true \
         --set services.autoscaler_svc.enabled=true \
-        --set services.bot_svc.enabled=true \
-        --set services.deploy_svc.enabled=true \
         --set services.incident_svc.enabled=true \
-        --set services.plugin_svc.enabled=true \
         --set services.runbook_svc.enabled=true \
-        --set services.grafana_bridge.enabled=true \
         > "$RENDER_BIN" 2>/dev/null; then
         sm_count="$(grep -c 'kind: ServiceMonitor' "$RENDER_BIN" || true)"
         if [[ "$sm_count" = "$EXPECT_SM" ]]; then
@@ -660,9 +656,9 @@ sec "11. 抓取配置 ↔ 服务能力一致性（prometheus.yml 的微服务 jo
 # 判定口径：job 的 target 主机名若对应 services/<name>/ 目录，则该服务 main.go 必须有 GetHandler() 注册行。
 PROM="deploy/monitoring/prometheus.yml"
 # 豁免表（带理由）：暴露了 /metrics 但不进 prometheus.yml 的服务。
-# 前 7 个不在 compose 生产栈里（走 chart 的 ServiceMonitor）；tf-provider 是 Terraform 插件无 HTTP 面；
-# grafana-bridge 的 /metrics 返回 JSON 不是 Prometheus 文本，刻意不抓（见报告 §21.6）。
-NOT_SCRAPED_EXEMPT="autoscaler-svc bot-svc deploy-svc incident-svc plugin-svc runbook-svc workflow-svc tf-provider grafana-bridge"
+# 前三者不在 compose 生产栈里（走 chart 的 ServiceMonitor）；tf-provider 是 Terraform 插件无 HTTP 面。
+# （bot-svc / deploy-svc / plugin-svc / workflow-svc / grafana-bridge 已于 2026-09-29 删除。）
+NOT_SCRAPED_EXEMPT="autoscaler-svc incident-svc runbook-svc tf-provider"
 JOB_MISS=""
 while IFS= read -r tgt; do
     [[ -n "$tgt" ]] || continue

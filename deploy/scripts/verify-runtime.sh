@@ -223,8 +223,7 @@ fi
 
 sec "5. 微服务 /metrics 真实性核对"
 # 预期值 = 源码中是否注册了 mux.Handle("/metrics", metrics.GetHandler())：
-# device/task/alert/auth/log/config/gpu/aio/portal 均已注册 → yes；
-# grafana-bridge 的 /metrics 返回 JSON（非 Prometheus 文本格式），仍为 no。
+# device/task/alert/auth/log/config/gpu/aio/portal 均已注册 → yes。
 check_metrics() {
   local name="$1" port="$2" expect="$3"
   local c; c="$(curl -sS --max-time 6 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/metrics" 2>/dev/null)"

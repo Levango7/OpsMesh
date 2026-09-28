@@ -1,6 +1,6 @@
 -- OpsMesh Unified MySQL Schema
 -- Auto-generated: combined from all service schema.sql files
--- Services: auth, device, task, alert, config, gpu, portal, log, workflow, incident, autoscaler, plugin
+-- Services: auth, device, task, alert, config, gpu, portal, log, incident, autoscaler
 --
 -- 微服务独立库（表名冲突规避，与 docker-compose.prod.yml 对齐）：
 --   controlplane 主模块用 opsmesh 主库；device/task/alert/config/log 微服务各用独立库。
@@ -553,35 +553,6 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- =============================================================================
--- workflow-svc :: workflows, executions
--- =============================================================================
-
-CREATE TABLE IF NOT EXISTS workflows (
-    id VARCHAR(64) PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    status VARCHAR(32) DEFAULT 'draft',
-    nodes JSON,
-    edges JSON,
-    created_at DATETIME,
-    updated_at DATETIME,
-    INDEX idx_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS executions (
-    id VARCHAR(64) PRIMARY KEY,
-    workflow_id VARCHAR(64) NOT NULL,
-    status VARCHAR(32) DEFAULT 'running',
-    node_states JSON,
-    context JSON,
-    started_at DATETIME,
-    completed_at DATETIME,
-    error_message TEXT,
-    INDEX idx_workflow (workflow_id),
-    INDEX idx_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- =============================================================================
 -- incident-svc :: incidents, timeline_events
 -- =============================================================================
 
@@ -649,39 +620,4 @@ CREATE TABLE IF NOT EXISTS scaling_decisions (
     timestamp DATETIME,
     INDEX idx_rule (rule_id),
     INDEX idx_timestamp (timestamp)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- =============================================================================
--- plugin-svc :: plugins, plugin_versions
--- =============================================================================
-
-CREATE TABLE IF NOT EXISTS plugins (
-    id VARCHAR(64) PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    version VARCHAR(64),
-    description TEXT,
-    author VARCHAR(255),
-    type VARCHAR(32),
-    category VARCHAR(64),
-    tags JSON,
-    download_url VARCHAR(512),
-    checksum VARCHAR(128),
-    status VARCHAR(32) DEFAULT 'pending',
-    installed TINYINT(1) DEFAULT 0,
-    enabled TINYINT(1) DEFAULT 0,
-    created_at DATETIME,
-    updated_at DATETIME,
-    INDEX idx_status (status),
-    INDEX idx_type (type)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS plugin_versions (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    plugin_id VARCHAR(64) NOT NULL,
-    version VARCHAR(64) NOT NULL,
-    checksum VARCHAR(128),
-    download_url VARCHAR(512),
-    released_at DATETIME,
-    changelog TEXT,
-    INDEX idx_plugin (plugin_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
