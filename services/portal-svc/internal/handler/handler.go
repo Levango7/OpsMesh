@@ -2,7 +2,10 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -248,9 +251,14 @@ type approvalContractInput struct {
 	Note     string `json:"note"`
 }
 
+// decodeApprovalContractInput 解析审批动作请求体。
+// 请求体可选：空体（io.EOF）按零值继续——前端 approve 动作不带 body；
+// 其余解析失败不 4xx 拒绝（body 保持零值），但必须留痕（非静默吞错）。
 func decodeApprovalContractInput(r *http.Request) approvalContractInput {
 	var in approvalContractInput
-	_ = json.NewDecoder(r.Body).Decode(&in) // io.EOF（空体）与 JSON 错误均按零值继续
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil && !errors.Is(err, io.EOF) {
+		log.Printf("[portal-svc] approvals: 可选请求体解析失败（按空体继续）: %v", err)
+	}
 	return in
 }
 
