@@ -44,19 +44,22 @@ func (m *MySQLLeaseOps) EnsureTable(ctx context.Context) error {
 
 // Acquire 尝试获取租约（K8sLeaseOps 语义）：
 //   - 表中无记录 → INSERT（成功）；
-//   - 租约已过期或本就由我持有 → 条件 UPDATE 改写持有者（成功）；
+//   - 租约已过期、当前**无持有者**（已被 Release 清空），或本就由我持有 → 条件 UPDATE 改写持有者（成功）；
 //   - 被其他持有者持有且未过期 → 条件不命中、UPDATE 零行（失败）。
 //
 // 条件更新在 InnoDB 行锁下原子完成，多副本并发 Acquire 只有一个赢家；
 // 受影响行数 ≥1 即获胜（ON DUPLICATE KEY UPDATE：INSERT=1，更新且变更=2）。
+//
+// 「无持有者」这一支是优雅退出的接管前提：Release 把 lease_until 写成 NOW(3)
+// （DATETIME(3) 毫秒精度），若只判 `lease_until < NOW(3)`，同一毫秒内的接管尝试
+// 会因边界相等而落空——「不必等自然过期即可接管」在释放那一刻不成立。
 func (m *MySQLLeaseOps) Acquire(ctx context.Context, leaseName, holderID string, ttl time.Duration) bool {
+	const free = "holder_identity = '' OR lease_until < NOW(3) OR holder_identity = VALUES(holder_identity)"
 	const q = `INSERT INTO task_svc_leader_lease (lease_name, holder_identity, lease_until, updated_at)
 		VALUES (?, ?, DATE_ADD(NOW(3), INTERVAL ? MICROSECOND), NOW(3))
 		ON DUPLICATE KEY UPDATE
-			holder_identity = IF(lease_until < NOW(3) OR holder_identity = VALUES(holder_identity),
-				VALUES(holder_identity), holder_identity),
-			lease_until     = IF(lease_until < NOW(3) OR holder_identity = VALUES(holder_identity),
-				VALUES(lease_until), lease_until),
+			holder_identity = IF(` + free + `, VALUES(holder_identity), holder_identity),
+			lease_until     = IF(` + free + `, VALUES(lease_until), lease_until),
 			updated_at      = NOW(3)`
 	res, err := m.db.ExecContext(ctx, q, leaseName, holderID, ttl.Microseconds())
 	if err != nil {

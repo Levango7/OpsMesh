@@ -131,6 +131,31 @@ func TestMySQLLeaseOps_StateMachineMultiReplica(t *testing.T) {
 	}
 }
 
+// TestMySQLLeaseOps_ImmediateTakeoverAfterRelease 释放后的接管不得受毫秒边界影响：
+// 循环内 Release 与接管 Acquire **相邻执行、不放任何 sleep**，因此必然多次撞上同一毫秒。
+// 接管条件若只判 `lease_until < NOW(3)`（Release 写入的正是 NOW(3)），边界相等时
+// 条件不命中 → 接管落空，表现为「偶发失败」；本用例把它变成必然失败/必然通过的判据。
+// 首个暴露形态：CI services job 的选主状态机用例（run 36508601227，真 MySQL 后端）。
+func TestMySQLLeaseOps_ImmediateTakeoverAfterRelease(t *testing.T) {
+	ops, cleanup := newTestMySQLLeaseOps(t)
+	defer cleanup()
+	ctx := context.Background()
+	const ttl = 5 * time.Second
+
+	for i := 0; i < 20; i++ {
+		lease := fmt.Sprintf("lease-test-immediate-%d", i)
+		if !ops.Acquire(ctx, lease, "holder-a", ttl) {
+			t.Fatalf("第 %d 轮 A 首次 Acquire 应成功", i)
+		}
+		if err := ops.Release(ctx, lease, "holder-a"); err != nil {
+			t.Fatalf("第 %d 轮 Release: %v", i, err)
+		}
+		if !ops.Acquire(ctx, lease, "holder-b", ttl) {
+			t.Fatalf("第 %d 轮 B 应在释放后立即接管，不得等 lease_until 自然过期", i)
+		}
+	}
+}
+
 // TestMySQLLeaseOps_ConcurrentAcquire 并发抢锁：N 个 goroutine 争同一租约，
 // 恰好一个赢家（InnoDB 行锁 + 条件更新的原子性回归）。
 func TestMySQLLeaseOps_ConcurrentAcquire(t *testing.T) {
