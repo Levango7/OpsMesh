@@ -495,3 +495,138 @@ func TestSQLQuery_QWithBaseFilters(t *testing.T) {
 		t.Fatalf("expectations: %v", err)
 	}
 }
+
+// ===========================================================================
+// 写入能力矩阵 + 只读后端下的 Append 语义
+// ===========================================================================
+
+// readOnlyStub 是"只读且统计调用次数"的后端桩：用于证明调用方在循环**之前**就跳过写入，
+// 而不是逐条 Append 再各自吞掉 ErrAppendUnsupported（后者等于零写入 + 零痕迹）。
+type readOnlyStub struct{ appends int }
+
+func (r *readOnlyStub) Append(_ context.Context, _ *Entry) error {
+	r.appends++
+	return ErrAppendUnsupported
+}
+func (r *readOnlyStub) Query(_ context.Context, _ Query) ([]Entry, error) { return nil, nil }
+func (r *readOnlyStub) Close() error                                      { return nil }
+func (r *readOnlyStub) AppendUnsupported() bool                           { return true }
+
+// opaqueStore 模拟"未声明写入能力"的新后端：SupportsAppend 须按支持处理，
+// 否则凭空给未标注的后端加了限制（memory/sql 都会被误判为只读）。
+type opaqueStore struct{ inner LogStore }
+
+func (o opaqueStore) Append(ctx context.Context, e *Entry) error { return o.inner.Append(ctx, e) }
+func (o opaqueStore) Query(ctx context.Context, q Query) ([]Entry, error) {
+	return o.inner.Query(ctx, q)
+}
+func (o opaqueStore) Close() error { return o.inner.Close() }
+
+// TestSupportsAppend 验证四后端能力矩阵 + 未知后端默认放行。
+func TestSupportsAppend(t *testing.T) {
+	sqlStore, _ := newSQLMock(t)
+	cases := []struct {
+		name string
+		ls   LogStore
+		want bool
+	}{
+		{"memory", NewMemory(0), true},
+		{"memory-with-index", NewMemoryWithIndex(0), true},
+		{"sql", sqlStore, true},
+		{"elasticsearch", NewESStore("http://es:9200", "opsmesh-logs"), false},
+		{"loki", NewLokiStore("http://loki:3100"), false},
+		{"unknown-impl-defaults-to-supported", opaqueStore{inner: NewMemory(0)}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := SupportsAppend(c.ls); got != c.want {
+				t.Fatalf("SupportsAppend(%s) = %v, want %v", c.name, got, c.want)
+			}
+		})
+	}
+}
+
+// postLogs 发一条 POST /api/v1/logs（与 doLogs 的 GET 侧对称）。
+func postLogs(t *testing.T, h *Handler, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/logs", strings.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "t1")
+	rec := httptest.NewRecorder()
+	h.handleLogs(rec, req)
+	return rec
+}
+
+// TestHandler_PostUnsupportedReturns501 验证只读后端下 POST /api/v1/logs 回 501（能力不匹配），
+// 而不是 500：500 会把排障方向带向"服务端故障"，真实原因是该部署缺采集器/选错后端。
+// 同时锁定 5xx 响应体只回固定文案（不吐内部错误原文，与 SEC-1 守护同口径）。
+func TestHandler_PostUnsupportedReturns501(t *testing.T) {
+	cases := []struct {
+		name string
+		ls   LogStore
+	}{
+		{"elasticsearch", NewESStore("http://es:9200", "opsmesh-logs")},
+		{"loki", NewLokiStore("http://loki:3100")},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := postLogs(t, NewHandler(c.ls), `{"level":"error","message":"boom"}`)
+			if rec.Code != http.StatusNotImplemented {
+				t.Fatalf("want 501, got %d: %s", rec.Code, rec.Body.String())
+			}
+			var body map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v (%s)", err, rec.Body.String())
+			}
+			if !strings.Contains(body["error"], "filebeat") || !strings.Contains(body["error"], "memory/sql") {
+				t.Fatalf("501 响应须给出可执行指引（采集器 + 可写后端），got %q", body["error"])
+			}
+		})
+	}
+}
+
+// TestHandler_PostWritableBackendReturns201 验证可写后端不受 501 分支影响（防止一刀切拒绝写入）。
+func TestHandler_PostWritableBackendReturns201(t *testing.T) {
+	ls := NewMemory(0)
+	rec := postLogs(t, NewHandler(ls), `{"level":"error","message":"boom"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("want 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var e Entry
+	if err := json.Unmarshal(rec.Body.Bytes(), &e); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if e.Message != "boom" || e.TenantID != "t1" {
+		t.Fatalf("回显字段错误: %#v", e)
+	}
+	// 写没写进去以检索结果为准（比响应体更能证明"可写后端未被误伤"）。
+	got, err := ls.Query(context.Background(), Query{TenantID: "t1"})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 stored entry, got %d", len(got))
+	}
+}
+
+// TestHandler_RecordTaskResultSkipsReadOnly 验证只读后端下任务输出不产生任何 Append 调用。
+// 旧实现逐条 `_ = h.ls.Append(...)`，在 ES/Loki 部署下 stdout/stderr 从未进索引却毫无痕迹。
+func TestHandler_RecordTaskResultSkipsReadOnly(t *testing.T) {
+	stub := &readOnlyStub{}
+	NewHandler(stub).RecordTaskResult(context.Background(), "t1", "a1", "T1", 1, "stdout-line", "stderr-line")
+	if stub.appends != 0 {
+		t.Fatalf("只读后端不应被逐条 Append，实际调用 %d 次", stub.appends)
+	}
+}
+
+// TestHandler_RecordTaskResultWritesMemory 验证可写后端仍照旧落地 stdout+stderr 两条。
+func TestHandler_RecordTaskResultWritesMemory(t *testing.T) {
+	ls := NewMemory(0)
+	NewHandler(ls).RecordTaskResult(context.Background(), "t1", "a1", "T1", 1, "stdout-line", "stderr-line")
+	got, err := ls.Query(context.Background(), Query{TenantID: "t1", Source: "task"})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want stdout+stderr 2 条, got %d: %#v", len(got), got)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +24,12 @@ var (
 	ErrRuleInvalid   = errors.New("alert rule invalid")
 	ErrAlertNotFound = errors.New("alert not found")
 )
+
+// externalNotifyFailureMetric 记 ack/resolve 侧"本地已落库、外部通知失败"的累计次数。
+// 与触发侧已有的 alert_notifications / alert_notification_failures 不重复计：那两个
+// 只覆盖 TriggerEvent，本指标补的正是此前完全无人记录的两条 ack/resolve 路径。
+// action 标签只取 "ack"/"resolve" 两个字面量（本文件控制），不会引入无界基数。
+const externalNotifyFailureMetric = "alert_external_notify_failures"
 
 // Service implements the alert service business logic.
 type Service struct {
@@ -48,6 +55,27 @@ func (s *Service) SetNotifier(n notify.Notifier) {
 // SetCircuitBreaker sets the circuit breaker for notifications (optional).
 func (s *Service) SetCircuitBreaker(cb *circuit.Breaker) {
 	s.breaker = cb
+}
+
+// recordExternalNotifyFailure 把 ack/resolve 的外部通知失败变成可见的信号。
+//
+// 缺陷背景：调用点原先写成 `_ = s.breaker.Execute(...)`，本地状态已经改成功、请求返回
+// OK，而 PagerDuty 侧根本没收到——运维据此以为 on-call 已被通知，比直接报错更危险。
+//
+// 刻意不把 err 返回给调用方：ack/resolve 的事实来源是本地告警状态，让远端故障把它
+// 升级成 5xx 会诱导操作者反复点击，且熔断器打开期间会彻底无法确认告警。
+//
+// 日志走标准库 log（服务名 [alert-svc] 前缀）：cmd/alert-svc/main.go 的
+// applog.Init 已把标准库 logger 接管成 JSON，因此不 import 根的 internal/logx
+// ——微服务只依赖 pkg/*，这条边界一旦破，服务镜像就会跟着控制面的内部包一起变。
+func (s *Service) recordExternalNotifyFailure(action, alertID string, err error) {
+	// 措辞按动作区分：resolve 记成"确认"会把排障线索指错方向。
+	verb := "解决"
+	if action == "ack" {
+		verb = "确认"
+	}
+	log.Printf("[alert-svc] WARN 告警%s已落库但外部通知失败: action=%s alertID=%s err=%v", verb, action, alertID, err)
+	metrics.AddBusinessMetric(externalNotifyFailureMetric, 1, map[string]string{"action": action})
 }
 
 // CreateRule creates a new alert rule.
@@ -244,11 +272,13 @@ func (s *Service) AckAlert(ctx context.Context, req *alertv1.AckAlertRequest) er
 			source = a.DeviceID
 		}
 		if s.breaker != nil {
-			_ = s.breaker.Execute(func() error {
+			if err := s.breaker.Execute(func() error {
 				return s.notifier.AcknowledgeEvent(source, "alert acknowledged", req.Id, nil)
-			})
-		} else {
-			_ = s.notifier.AcknowledgeEvent(source, "alert acknowledged", req.Id, nil)
+			}); err != nil {
+				s.recordExternalNotifyFailure("ack", req.Id, err)
+			}
+		} else if err := s.notifier.AcknowledgeEvent(source, "alert acknowledged", req.Id, nil); err != nil {
+			s.recordExternalNotifyFailure("ack", req.Id, err)
 		}
 	}
 	return nil
@@ -268,11 +298,13 @@ func (s *Service) ResolveAlert(ctx context.Context, req *alertv1.ResolveAlertReq
 			source = a.DeviceID
 		}
 		if s.breaker != nil {
-			_ = s.breaker.Execute(func() error {
+			if err := s.breaker.Execute(func() error {
 				return s.notifier.ResolveEvent(source, "alert resolved", req.Id, nil)
-			})
-		} else {
-			_ = s.notifier.ResolveEvent(source, "alert resolved", req.Id, nil)
+			}); err != nil {
+				s.recordExternalNotifyFailure("resolve", req.Id, err)
+			}
+		} else if err := s.notifier.ResolveEvent(source, "alert resolved", req.Id, nil); err != nil {
+			s.recordExternalNotifyFailure("resolve", req.Id, err)
 		}
 	}
 	return nil

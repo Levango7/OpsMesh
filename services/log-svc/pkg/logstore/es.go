@@ -29,8 +29,12 @@ func NewESStore(endpoint, index string) *ESStore {
 	}
 }
 
-// Append is a noop for ES (logs are pushed by agents via filebeat).
-func (s *ESStore) Append(_ context.Context, _ *Entry) error { return nil }
+// Append 在 ES 后端显式回 ErrAppendUnsupported：日志由 agent 经 filebeat 直推，本服务不写入。
+// 旧实现 return nil ⇒ 调用方（AppendLog / 控制面转发）把丢弃当成功，日志静默消失无人知晓。
+func (s *ESStore) Append(_ context.Context, _ *Entry) error { return ErrAppendUnsupported }
+
+// AppendUnsupported 声明 ES 为只读后端，供调用方用 SupportsAppend 在写入前一次性判定。
+func (s *ESStore) AppendUnsupported() bool { return true }
 
 // Query translates Query to ES DSL and calls ES search API.
 func (s *ESStore) Query(ctx context.Context, q Query) ([]Entry, error) {

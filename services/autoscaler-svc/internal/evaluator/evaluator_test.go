@@ -1,9 +1,14 @@
 package evaluator
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/services/autoscaler-svc/internal/models"
 )
 
@@ -515,5 +520,174 @@ func TestDecisionsHistory(t *testing.T) {
 	decisions := e.Decisions()
 	if len(decisions) != 1 {
 		t.Errorf("expected 1 decision in history, got %d", len(decisions))
+	}
+}
+
+// renderMetrics 抓取 /metrics 文本（与 device-svc 的指标断言同一口径），
+// 断言"真实暴露出来的那一行"而不是内部 map 的值——后者会放过家族写错的用例。
+func renderMetrics(t *testing.T) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	metrics.GetHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	return rec.Body.String()
+}
+
+// TestDecisionHistoryTrimmedToCap 验证历史上限：走真实 Evaluate 路径灌入 上限+200 条
+// 之后，长度必须停在上限（缺陷是每轮只 append、从不裁剪，进程生命周期内单调增长）。
+// 顺带断言占用量落在 **gauge** 家族：Set/Add 配错在渲染面上只差一个 _total 后缀，
+// 语义却是"当前值"与"累计量"两种，后者会让 rate() 恒为无意义。
+func TestDecisionHistoryTrimmedToCap(t *testing.T) {
+	metrics.Init("autoscaler-svc-test")
+	e := newTestEvaluator()
+	rule := &models.ScaleRule{
+		ID:                 "rule-1",
+		Name:               "History Cap",
+		Deployment:         "web-app",
+		Namespace:          "default",
+		Metric:             "cpu_usage",
+		ScaleUpThreshold:   80.0,
+		ScaleDownThreshold: 20.0,
+		MinReplicas:        1,
+		MaxReplicas:        10,
+		Enabled:            true,
+	}
+	if err := e.AddRule(rule); err != nil {
+		t.Fatalf("AddRule failed: %v", err)
+	}
+	// 指标落在阈值区间内：每轮产出一条 no_action 决策，不触碰副本数，
+	// 于是灌入量完全由 Evaluate 的历史写入路径决定。
+	reader := &mockMetricsReader{values: map[string]float64{"web-app/default/cpu_usage": 50.0}}
+	scaler := &mockK8sScaler{replicas: map[string]int32{"default/web-app": 3}}
+
+	const inserted = maxDecisionHistory + 200
+	for i := 0; i < inserted; i++ {
+		if _, err := e.Evaluate(reader, scaler, ""); err != nil {
+			t.Fatalf("Evaluate #%d failed: %v", i, err)
+		}
+	}
+
+	if got := e.DecisionHistoryLen(); got != maxDecisionHistory {
+		t.Errorf("灌入 %d 条后 DecisionHistoryLen=%d，期望上限 %d", inserted, got, maxDecisionHistory)
+	}
+	if got := len(e.Decisions()); got != maxDecisionHistory {
+		t.Errorf("Decisions() 返回 %d 条，期望 %d", got, maxDecisionHistory)
+	}
+
+	body := renderMetrics(t)
+	// 期望值从常量派生：改上限时这条断言跟着走，而不是留下一个只会误报的硬编码 500。
+	wantGauge := fmt.Sprintf(`business_metrics{name="autoscaler_decision_history_entries"} %d`, maxDecisionHistory)
+	if !strings.Contains(body, wantGauge) {
+		t.Errorf("占用量 gauge 缺失或不为 %d\n---输出:\n%s", maxDecisionHistory, body)
+	}
+	if strings.Contains(body, `business_metrics_total{name="autoscaler_decision_history_entries"}`) {
+		t.Errorf("占用量被写进了 counter 家族 business_metrics_total（gauge 用了 Add 语义）")
+	}
+}
+
+// TestDecisionHistoryKeepsMostRecent 验证裁剪丢的是**最旧**：保留段必须正好是
+// 最后 maxDecisionHistory 条且顺序不变。方向写反（丢尾部）时长度断言依然通过，
+// 但冷却判定读的是尾部——所以这条用例单独盯住内容而不是条数。
+func TestDecisionHistoryKeepsMostRecent(t *testing.T) {
+	e := newTestEvaluator()
+
+	const inserted = maxDecisionHistory + 200
+	ids := make([]string, inserted)
+	for i := 0; i < inserted; i++ {
+		ids[i] = fmt.Sprintf("rule-%04d", i)
+		e.RecordDecision(&models.ScaleDecision{
+			RuleID:     ids[i],
+			Deployment: "web-app",
+			Action:     "no_action",
+		})
+	}
+
+	got := e.Decisions()
+	if len(got) != maxDecisionHistory {
+		t.Fatalf("长度 %d，期望 %d", len(got), maxDecisionHistory)
+	}
+	if last := got[len(got)-1].RuleID; last != ids[inserted-1] {
+		t.Errorf("尾部是 %s，期望最新一条 %s", last, ids[inserted-1])
+	}
+	oldestKept := inserted - maxDecisionHistory
+	if first := got[0].RuleID; first != ids[oldestKept] {
+		t.Errorf("头部是 %s，期望最早保留的 %s", first, ids[oldestKept])
+	}
+	if got[0].RuleID == ids[0] {
+		t.Error("最早一条决策仍在历史里，说明没丢最旧")
+	}
+	for i, d := range got {
+		if want := ids[oldestKept+i]; d.RuleID != want {
+			t.Fatalf("第 %d 位是 %s，期望 %s（保留段顺序被打乱）", i, d.RuleID, want)
+		}
+	}
+}
+
+// TestCooldownStillWorksAfterHistoryWrap 是裁剪方向的守护用例：缓冲区绕回之后，
+// 仍在 60s 冷却窗口里的那条 scale_up 必须还读得到。丢了它，症状不是报错而是
+// "同一规则在冷却期内被反复扩容"——静默且难从日志回溯。
+func TestCooldownStillWorksAfterHistoryWrap(t *testing.T) {
+	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	e := NewEvaluator(func() time.Time { return now })
+
+	// 先把历史灌满 filler：与 rule-1 无关（ruleID 不同、action=no_action 不参与冷却判定），
+	// 但会占满容量，使随后的任何写入都触发一次绕回。
+	for i := 0; i < maxDecisionHistory; i++ {
+		e.RecordDecision(&models.ScaleDecision{
+			RuleID:     "filler",
+			Deployment: "other-app",
+			Action:     "no_action",
+			Timestamp:  now.Add(-time.Duration(maxDecisionHistory-i) * time.Second),
+		})
+	}
+
+	rule := &models.ScaleRule{
+		ID:                 "rule-1",
+		Name:               "Wrap Cooldown",
+		Deployment:         "web-app",
+		Namespace:          "default",
+		Metric:             "cpu_usage",
+		ScaleUpThreshold:   80.0,
+		ScaleDownThreshold: 20.0,
+		MinReplicas:        1,
+		MaxReplicas:        10,
+		CooldownUp:         60 * time.Second,
+		Enabled:            true,
+	}
+	if err := e.AddRule(rule); err != nil {
+		t.Fatalf("AddRule failed: %v", err)
+	}
+	reader := &mockMetricsReader{values: map[string]float64{"web-app/default/cpu_usage": 95.0}}
+	scaler := &mockK8sScaler{replicas: map[string]int32{"default/web-app": 3}}
+
+	decisions, err := e.Evaluate(reader, scaler, "")
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if len(decisions) != 1 || decisions[0].Action != "scale_up" {
+		t.Fatalf("绕回前首轮应扩容，got %+v", decisions)
+	}
+
+	// 绕回继续发生：scale_up 被挤到缓冲区中段（既不在头也不在尾）。
+	for i := 0; i < 5; i++ {
+		e.RecordDecision(&models.ScaleDecision{
+			RuleID:     "filler",
+			Deployment: "other-app",
+			Action:     "no_action",
+		})
+	}
+	if got := e.DecisionHistoryLen(); got != maxDecisionHistory {
+		t.Fatalf("绕回后长度 %d，期望 %d", got, maxDecisionHistory)
+	}
+
+	scaler.replicas["default/web-app"] = 4
+	decisions, err = e.Evaluate(reader, scaler, "")
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if decisions[0].Action != "no_action" {
+		t.Errorf("绕回后冷却失效：期望 no_action，got %s", decisions[0].Action)
+	}
+	if decisions[0].Reason != "scale up in cooldown period" {
+		t.Errorf("绕回后冷却原因缺失，got %q", decisions[0].Reason)
 	}
 }

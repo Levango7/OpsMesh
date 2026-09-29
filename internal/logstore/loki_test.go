@@ -3,6 +3,7 @@ package logstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -160,15 +161,30 @@ func TestLokiQueryNonSuccessStatus(t *testing.T) {
 	}
 }
 
-// TestLokiAppendNoop 验证 Append 为 noop（不报错、不实际写入）。
-func TestLokiAppendNoop(t *testing.T) {
+// TestLokiAppendUnsupported 验证 Loki.Append 显式回 ErrAppendUnsupported（旧实现 return nil
+// ⇒ 调用方误判成功，agent 日志/任务输出从未进 Loki 也无从发现）。
+func TestLokiAppendUnsupported(t *testing.T) {
 	s := NewLokiStore("http://loki:3100")
-	if err := s.Append(context.Background(), &Entry{Message: "x"}); err != nil {
-		t.Fatalf("append noop should not error: %v", err)
+	cases := []struct {
+		name  string
+		entry *Entry
+	}{
+		{"正常条目", &Entry{Message: "x"}},
+		{"nil 条目", nil},
 	}
-	// nil entry 也应安全。
-	if err := s.Append(context.Background(), nil); err != nil {
-		t.Fatalf("append nil should not error: %v", err)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := s.Append(context.Background(), c.entry)
+			if err == nil {
+				t.Fatal("Loki.Append 必须回错误（return nil 即为静默丢失）")
+			}
+			if !errors.Is(err, ErrAppendUnsupported) {
+				t.Fatalf("want ErrAppendUnsupported, got %v", err)
+			}
+		})
+	}
+	if !s.AppendUnsupported() {
+		t.Fatal("Loki 须自报只读，否则 SupportsAppend 仍会放行写入")
 	}
 }
 

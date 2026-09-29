@@ -5,8 +5,42 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/services/autoscaler-svc/internal/models"
 )
+
+// maxDecisionHistory 是进程内决策历史的容量上限。
+//
+// 缺陷背景：decisions 以前只增不减——Evaluate 每轮 append 且从不裁剪，长驻进程的
+// 内存与 Decisions() 的拷贝出量都按"每轮每条规则 +1"单调增长到进程生命周期结束。
+//
+// 取 500 的依据：冷却窗口默认 up=60s、down=300s（见 evaluateRule），外部按约 30s
+// 一轮驱动 /api/v1/evaluate，所以单条规则在一个 down 窗口里最多贡献约 10 条决策；
+// 500 条相当于"50 条规则各占满一个 down 窗口"，对常规部署留有数倍余量，同时把历史
+// 钉在千字节量级。
+//
+// 超限丢**最旧**而不是丢最新：isInCooldown 从尾部倒序扫、Cooldowns 取每规则最近一次、
+// Decisions() 供前端读——三条路径都只关心最近的决策，反向裁剪会表现为"冷却静默失效"。
+const maxDecisionHistory = 500
+
+// decisionHistoryGauge 报历史的当前占用条数。当前值语义 → 配 SetBusinessMetric，
+// 名字不带 _total：counter 家族里的"当前值"会让 rate()/increase() 失去意义
+// （见 pkg/metrics 包注释记录的同名前科）。
+const decisionHistoryGauge = "autoscaler_decision_history_entries"
+
+// appendDecisionLocked 追加一条决策并把历史裁剪回上限（调用方须持 e.mu 写锁）。
+//
+// 裁剪用"整体左移 + 截断"而不是每次新建切片：稳态下 len 回到上限而 cap 保持 append
+// 首次扩容出的容量，后续 append 不再分配新底层数组——否则每轮评估都多一次全量复制，
+// 让 isInCooldown 的 O(n) 倒序扫描雪上加霜。
+func (e *Evaluator) appendDecisionLocked(d *models.ScaleDecision) {
+	e.decisions = append(e.decisions, d)
+	if over := len(e.decisions) - maxDecisionHistory; over > 0 {
+		copy(e.decisions, e.decisions[over:])
+		e.decisions = e.decisions[:maxDecisionHistory]
+	}
+	metrics.SetBusinessMetric(decisionHistoryGauge, float64(len(e.decisions)), nil)
+}
 
 // MetricsReader defines the interface for reading metrics.
 type MetricsReader interface {
@@ -21,8 +55,9 @@ type K8sScaler interface {
 
 // Evaluator evaluates scaling rules and produces decisions.
 type Evaluator struct {
-	mu        sync.RWMutex
-	rules     map[string]*models.ScaleRule
+	mu    sync.RWMutex
+	rules map[string]*models.ScaleRule
+	// decisions 是有界历史（尾部为最新，超限丢最旧），所有写入必须经 appendDecisionLocked。
 	decisions []*models.ScaleDecision
 	now       func() time.Time
 }
@@ -32,11 +67,14 @@ func NewEvaluator(now func() time.Time) *Evaluator {
 	if now == nil {
 		now = time.Now
 	}
-	return &Evaluator{
+	e := &Evaluator{
 		rules:     make(map[string]*models.ScaleRule),
 		decisions: make([]*models.ScaleDecision, 0),
 		now:       now,
 	}
+	// 起量前先落一个 0：没有这条序列时，面板上"历史为空"和"该版本从没写入过"长得一模一样。
+	metrics.SetBusinessMetric(decisionHistoryGauge, 0, nil)
+	return e
 }
 
 // AddRule adds a new scaling rule.
@@ -144,7 +182,7 @@ func (e *Evaluator) Evaluate(reader MetricsReader, scaler K8sScaler, ruleID stri
 		decision := e.evaluateRule(rule, reader, scaler, now)
 		if decision != nil {
 			decisions = append(decisions, decision)
-			e.decisions = append(e.decisions, decision)
+			e.appendDecisionLocked(decision)
 		}
 	}
 
@@ -333,13 +371,20 @@ func (e *Evaluator) isInCooldown(ruleID, action string, cooldown time.Duration, 
 	return false
 }
 
-// Decisions returns the decision history.
+// Decisions returns the decision history（最近的至多 maxDecisionHistory 条，尾部最新）。
 func (e *Evaluator) Decisions() []*models.ScaleDecision {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	out := make([]*models.ScaleDecision, len(e.decisions))
 	copy(out, e.decisions)
 	return out
+}
+
+// DecisionHistoryLen 返回决策历史的当前占用条数（巡检/容量告警用，上限见 maxDecisionHistory）。
+func (e *Evaluator) DecisionHistoryLen() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return len(e.decisions)
 }
 
 // RecordDecision appends a decision to the history (for manual scaling etc. to record via service.Scale,
@@ -354,7 +399,7 @@ func (e *Evaluator) RecordDecision(d *models.ScaleDecision) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.decisions = append(e.decisions, d)
+	e.appendDecisionLocked(d)
 }
 
 // CooldownStatus 是单条规则的冷却状态快照（只读查询用，前端契约字段

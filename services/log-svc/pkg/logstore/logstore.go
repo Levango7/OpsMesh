@@ -4,12 +4,14 @@ package logstore
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"time"
 )
 
 // LogStore is the backend abstraction for log storage.
+// Memory / SQL 可写；Elasticsearch / Loki 只读（日志由采集器直推，见 SupportsAppend）。
 type LogStore interface {
 	Append(ctx context.Context, e *Entry) error
 	Query(ctx context.Context, q Query) ([]Entry, error)
@@ -18,6 +20,24 @@ type LogStore interface {
 
 // maxQueryLimit is the hard limit for single query results.
 const maxQueryLimit = 1000
+
+// ErrAppendUnsupported 表示该后端按设计不接受 OpsMesh 侧写入（日志由 filebeat / promtail /
+// fluent-bit 等采集器直推）。它必须是**显式错误**而不是 return nil：
+// 返回 nil 会让调用方以为写入成功，agent 日志与任务输出就变成静默丢失。
+var ErrAppendUnsupported = errors.New(
+	"该后端不接受 OpsMesh 侧写入：Elasticsearch/Loki 的日志须由 filebeat/promtail/fluent-bit 等采集器直推；" +
+		"若需 OpsMesh 写入日志（agent 上报 / 任务输出），请把 log-backend 配成 memory 或 sql")
+
+// appendUnsupported 由"只读"后端实现。
+type appendUnsupported interface{ AppendUnsupported() bool }
+
+// SupportsAppend 报告该后端是否接受 OpsMesh 侧写入。
+// 未知实现按"支持"处理，避免给 memory/sql 后端凭空加限制。
+// 调用方应在写入入口**之前**问一次，而不是等 Append 逐条回错。
+func SupportsAppend(ls LogStore) bool {
+	a, ok := ls.(appendUnsupported)
+	return !ok || !a.AppendUnsupported()
+}
 
 // Entry is a single log record.
 type Entry struct {

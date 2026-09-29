@@ -3,13 +3,21 @@ package logstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
+
+// msgAppendUnsupported 是只读后端（ES/Loki）拒绝写入时回给客户端的固定文案。
+// 5xx 响应体禁止回吐 err.Error()（SEC-1 守护：内部错误原文会带出后端拓扑/配置细节），
+// 且这里的文案本来就是可执行指引，不需要携带任何内部信息。
+const msgAppendUnsupported = "log backend does not accept writes: " +
+	"push logs via filebeat/promtail/fluent-bit, or switch log-backend to memory/sql"
 
 // Handler 是 M6 日志检索的 HTTP 处理器。
 type Handler struct {
@@ -137,6 +145,12 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 			e.Source = "system"
 		}
 		if err := h.ls.Append(r.Context(), &e); err != nil {
+			// 能力不匹配不是服务端故障：ES/Loki 按设计只读（采集器直推），
+			// 回 501 让调用方拿到"该部署不支持此操作"的明确语义，而不是 500 误导排障。
+			if errors.Is(err, ErrAppendUnsupported) {
+				writeJSON(w, http.StatusNotImplemented, map[string]string{"error": msgAppendUnsupported})
+				return
+			}
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
@@ -153,6 +167,15 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 // stdout 记为 info，stderr 记为 error（exitCode!=0 时；exitCode==0 且 stderr 非空记为 warn，便于区分告警与错误）。
 func (h *Handler) RecordTaskResult(ctx context.Context, tenantID, agentID, taskID string, exitCode int, stdout, stderr string) {
 	if h == nil {
+		return
+	}
+	// 只读后端（ES/Loki）下逐条 Append 恒失败：与其"尽力而为地假装尝试"，
+	// 不如一次判定后跳过并把原因留痕——否则任务 stdout/stderr 从未进过索引，
+	// 而代码里看不出这里曾经失败过（旧实现正是这样静默丢的）。
+	// 级别取 Debug：本函数在每个任务结果上报时调用，刷屏由 gRPC 侧的一次性 WARN 承担。
+	if !SupportsAppend(h.ls) {
+		logx.Debug(ctx, "任务输出未写入 M6 检索后端（只读后端，日志须由采集器直推）",
+			"taskID", taskID, "agentID", agentID, "reason", ErrAppendUnsupported.Error())
 		return
 	}
 	ts := time.Now()

@@ -4,7 +4,7 @@
 // 本适配层仅实现查询接口（Query）：将 OpsMesh Query 翻译为 LogQL，
 // 调用 Loki /loki/api/v1/query_range HTTP API，解析 stream 结果为 Entry 切片。
 // Keyword 翻译为 LogQL 字面子串管道 |=（向后兼容，避免正则元字符改变匹配语义）。
-// Append 为 noop——日志由 agent 通过 promtail / loki-push 直接推送至 Loki，
+// Append 显式回 ErrAppendUnsupported——日志由 agent 通过 promtail / loki-push 直接推送至 Loki，
 // 控制面仅做查询检索（与 Memory/SQL 后端写入语义解耦，避免控制面成为日志写入瓶颈）。
 package logstore
 
@@ -23,7 +23,7 @@ import (
 // LokiStore 是 Grafana Loki 后端适配，实现 LogStore 接口。
 //
 // 查询路径：OpsMesh Query → LogQL → GET /loki/api/v1/query_range → 解析 streams。
-// 写入路径：noop（日志由 agent 经 promtail 推送，控制面不写入 Loki）。
+// 写入路径：只读（日志由 agent 经 promtail 推送，控制面不写入 Loki）。
 type LokiStore struct {
 	endpoint string       // Loki base URL（如 http://loki:3100），不含路径
 	client   *http.Client // 复用 HTTP 连接池
@@ -41,9 +41,13 @@ func NewLokiStore(endpoint string) *LokiStore {
 	}
 }
 
-// Append 在 Loki 后端为 noop：日志由 agent 通过 promtail / loki-push 直接推送至 Loki，
-// 控制面仅做查询。返回 nil 以满足 LogStore 接口契约。
-func (s *LokiStore) Append(_ context.Context, _ *Entry) error { return nil }
+// Append 在 Loki 后端显式回 ErrAppendUnsupported：日志由 agent 通过 promtail / loki-push
+// 直接推送至 Loki，控制面不写入。返 nil 会让上层以为已入库（真实事故形态：
+// agent 收到 OK、日志却从未出现在 Loki），故能力边界用哨兵错误摊开。
+func (s *LokiStore) Append(_ context.Context, _ *Entry) error { return ErrAppendUnsupported }
+
+// AppendUnsupported 声明 Loki 为只读后端，供调用方在循环前用 SupportsAppend 一次性判定。
+func (s *LokiStore) AppendUnsupported() bool { return true }
 
 // Query 将 OpsMesh 查询翻译为 LogQL，调用 Loki query_range API，解析 stream 结果。
 //

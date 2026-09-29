@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	logv1 "opsmesh.io/log-svc/api/proto/v1"
 	"opsmesh.io/log-svc/pkg/logstore"
@@ -499,5 +501,66 @@ func TestEntryToProto_Nil(t *testing.T) {
 	result := entryToProto(nil)
 	if result != nil {
 		t.Error("entryToProto(nil) should return nil")
+	}
+}
+
+// TestAppendLog_UnsupportedBackendYieldsUnimplemented 验证只读后端（ES/Loki）下 AppendLog
+// 回 codes.Unimplemented 且不返回任何 entry。
+// 旧实现在 Append 之后照常回 entryToProto(entry)：客户端拿到"成功 + ID=0"，
+// 日志其实一条都没写 —— 静默丢失对外表现为"写入成功"。
+func TestAppendLog_UnsupportedBackendYieldsUnimplemented(t *testing.T) {
+	cases := []struct {
+		name  string
+		store logstore.LogStore
+	}{
+		{"elasticsearch", logstore.NewESStore("http://es:9200", "opsmesh-logs")},
+		{"loki", logstore.NewLokiStore("http://loki:3100")},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc := NewService(c.store)
+			defer svc.Close()
+
+			entry, err := svc.AppendLog(context.Background(), &logv1.AppendLogRequest{
+				TenantId: "t1",
+				AgentId:  "agent-1",
+				Level:    "error",
+				Message:  "boom",
+			})
+			if err == nil {
+				t.Fatal("want error, got nil")
+			}
+			if entry != nil {
+				t.Fatalf("只读后端不得回伪成功载荷, got %#v", entry)
+			}
+			st, ok := status.FromError(err)
+			if !ok {
+				t.Fatalf("err 应为 gRPC status 错误, got %v", err)
+			}
+			if st.Code() != codes.Unimplemented {
+				t.Fatalf("code = %v, want Unimplemented", st.Code())
+			}
+			if st.Message() != logstore.ErrAppendUnsupported.Error() {
+				t.Fatalf("message = %q, want 哨兵可执行指引 %q", st.Message(), logstore.ErrAppendUnsupported.Error())
+			}
+		})
+	}
+}
+
+// TestAppendLog_WritableBackendStillSucceeds 反向锚点：可写后端不得被 Unimplemented 分支误伤。
+func TestAppendLog_WritableBackendStillSucceeds(t *testing.T) {
+	svc := NewService(logstore.NewMemory(0))
+	defer svc.Close()
+
+	entry, err := svc.AppendLog(context.Background(), &logv1.AppendLogRequest{
+		TenantId: "t1",
+		Level:    "error",
+		Message:  "boom",
+	})
+	if err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+	if entry == nil || entry.Id == 0 {
+		t.Fatalf("可写后端应返回带 ID 的 entry, got %#v", entry)
 	}
 }

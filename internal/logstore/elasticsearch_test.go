@@ -3,6 +3,7 @@ package logstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -188,14 +189,30 @@ func TestESQueryEmptyHits(t *testing.T) {
 	}
 }
 
-// TestESAppendNoop 验证 Append 为 noop。
-func TestESAppendNoop(t *testing.T) {
+// TestESAppendUnsupported 验证 ES.Append 显式回 ErrAppendUnsupported（而不是 return nil）。
+// 旧实现 return nil 会让 Handler/gRPC 调用方以为写入成功，agent 日志与任务输出静默丢失。
+func TestESAppendUnsupported(t *testing.T) {
 	s := NewESStore("http://es:9200", "opsmesh-logs")
-	if err := s.Append(context.Background(), &Entry{Message: "x"}); err != nil {
-		t.Fatalf("append noop should not error: %v", err)
+	cases := []struct {
+		name  string
+		entry *Entry
+	}{
+		{"正常条目", &Entry{Message: "x"}},
+		{"nil 条目", nil},
 	}
-	if err := s.Append(context.Background(), nil); err != nil {
-		t.Fatalf("append nil should not error: %v", err)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := s.Append(context.Background(), c.entry)
+			if err == nil {
+				t.Fatal("ES.Append 必须回错误（return nil 即为静默丢失）")
+			}
+			if !errors.Is(err, ErrAppendUnsupported) {
+				t.Fatalf("want ErrAppendUnsupported, got %v", err)
+			}
+		})
+	}
+	if !s.AppendUnsupported() {
+		t.Fatal("ES 须自报只读，否则 SupportsAppend 仍会放行写入")
 	}
 }
 

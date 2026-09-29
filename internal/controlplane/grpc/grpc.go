@@ -79,6 +79,11 @@ type GrpcServerImpl struct {
 	// 上限 sigWarnMaxKeys，防止 agentID 无界增长撑爆内存。
 	sigWarnMu   sync.Mutex
 	sigWarnSeen map[string]struct{}
+
+	// appendWarnMu/appendWarned ：M6 只读后端（ES/Loki）"不接收写入"告警的一次性闸门。
+	// 该事实与部署配置相关、与单次上报无关，逐行/逐批刷屏只会淹没真正的异常日志。
+	appendWarnMu sync.Mutex
+	appendWarned bool
 }
 
 // sigWarnOnce 按 key 只告警一次（键总量封顶 sigWarnMaxKeys，超出后新键静默）。
@@ -101,6 +106,23 @@ func (g *GrpcServerImpl) sigWarnOnce(key, msg string, kv ...interface{}) {
 	g.sigWarnSeen[key] = struct{}{}
 	g.sigWarnMu.Unlock()
 	logx.Warn(context.Background(), msg, kv...)
+}
+
+// appendWarnOnce 对「M6 检索后端不接收 OpsMesh 写入」只告警一次（进程级闸门，首次命中即打）。
+// 为什么必须去重且不能等到首次之后都不打：agent 日志上报是高频循环，逐行 Append 会把
+// 一次能力错配刷成成千上万条无效日志，而完全不打则运维永远看不到「日志为何查不到」。
+func (g *GrpcServerImpl) appendWarnOnce(backend string) {
+	g.appendWarnMu.Lock()
+	seen := g.appendWarned
+	g.appendWarned = true
+	g.appendWarnMu.Unlock()
+	if seen {
+		return
+	}
+	logx.Warn(context.Background(),
+		"M6 检索后端只读，agent 日志未进 /api/v1/logs 检索（仅存于采集库 SaveLogs）："+
+			"请配 filebeat/promtail/fluent-bit 直推该后端，或把 log-backend 改为 memory/sql",
+		"backend", backend, "reason", logstore.ErrAppendUnsupported.Error())
 }
 
 // signingSecrets 返回验签候选密钥，按优先级排列：per-agent 密钥优先，预共享密钥兜底。
@@ -722,21 +744,28 @@ func (g *GrpcServerImpl) ReportLogs(ctx context.Context, req *grpcx.ReportLogsRe
 	// 与 ReportResult 的 RecordTaskResult 模式一致：source=agent，level 取自 LogLine.Level。
 	if g.Logs != nil && len(req.Report.Lines) > 0 {
 		ls := g.Logs.Store()
-		deviceID := "dev-" + agentID
-		for _, line := range req.Report.Lines {
-			lvl := strings.ToLower(line.Level)
-			if lvl == "" {
-				lvl = "info"
+		// 只读后端（ES/Loki）先行判定并整轮跳过：旧写法逐行 `_ = ls.Append(...)`，
+		// 在 ES/Loki 部署下每条 agent 日志都被丢弃，而 agent 仍收到 OK —— 静默丢失。
+		// 跳过时打一条（且仅一条）WARN，让「M6 检索查不到 agent 日志」这件事在日志里可见。
+		if !logstore.SupportsAppend(ls) {
+			g.appendWarnOnce(fmt.Sprintf("%T", ls))
+		} else {
+			deviceID := "dev-" + agentID
+			for _, line := range req.Report.Lines {
+				lvl := strings.ToLower(line.Level)
+				if lvl == "" {
+					lvl = "info"
+				}
+				_ = ls.Append(ctx, &logstore.Entry{
+					TenantID:  tenantID,
+					DeviceID:  deviceID,
+					AgentID:   agentID,
+					Timestamp: line.Timestamp,
+					Level:     lvl,
+					Source:    "agent",
+					Message:   line.Message,
+				})
 			}
-			_ = ls.Append(ctx, &logstore.Entry{
-				TenantID:  tenantID,
-				DeviceID:  deviceID,
-				AgentID:   agentID,
-				Timestamp: line.Timestamp,
-				Level:     lvl,
-				Source:    "agent",
-				Message:   line.Message,
-			})
 		}
 	}
 

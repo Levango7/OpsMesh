@@ -3,10 +3,13 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	logv1 "opsmesh.io/log-svc/api/proto/v1"
 	"opsmesh.io/log-svc/pkg/logstore"
@@ -65,6 +68,7 @@ func (s *Service) SearchLogs(ctx context.Context, req *logv1.SearchLogsRequest) 
 }
 
 // AppendLog appends a single log entry.
+// 只读后端（Elasticsearch/Loki）下返回 codes.Unimplemented，不回伪 entry。
 func (s *Service) AppendLog(ctx context.Context, req *logv1.AppendLogRequest) (*logv1.LogEntry, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request cannot be nil")
@@ -81,6 +85,11 @@ func (s *Service) AppendLog(ctx context.Context, req *logv1.AppendLogRequest) (*
 	}
 
 	if err := s.store.Append(ctx, entry); err != nil {
+		// 只读后端（ES/Loki）必须显式回 Unimplemented：这里若仍返回 entryToProto(entry)，
+		// 客户端会拿到"写入成功 + ID=0"的伪响应，日志实际从未落库（静默丢失的源头）。
+		if errors.Is(err, logstore.ErrAppendUnsupported) {
+			return nil, status.Error(codes.Unimplemented, logstore.ErrAppendUnsupported.Error())
+		}
 		return nil, fmt.Errorf("append failed: %w", err)
 	}
 

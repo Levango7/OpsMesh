@@ -2427,3 +2427,74 @@ auth-svc 的 `status=pending` 注册积压（`gateway.go:287-289`）、alert-svc
 autoscaler 的 `e.decisions` **无界增长**（`evaluator.go:147,357`）、gpu-svc 的占位队列
 （`scheduler.go:123-126`）、runbook-svc 内存存储重启即失。
 其中 log-svc 的静默 no-op 与 autoscaler 的无界历史本身是缺陷，属"先修再计量"还是"先计量暴露"需一次决策。
+
+## 26. 三处"已经在线但看不见"的失败（2026-09-30，③b 第 2 批前置）
+
+用户定的路线是"先修缺陷再计量"。§25.5 列出的候选面里，有三条不是"缺指标"，而是
+**失败已经发生却没有任何观测面**——给它们加指标之前，先得让"有没有失败"成为事实。
+
+### 26.1 缺陷 A：ES/Loki 的 `Append` 是 `return nil` 的 no-op（两条孪生实现）
+
+| 位置 | 原行为 | 后果 |
+|---|---|---|
+| `services/log-svc/pkg/logstore/es.go:33`、`loki.go:33`；`internal/logstore/elasticsearch.go:45`、`loki.go:46` | `Append` 返回 nil（注释写"由采集器直推"） | 接口契约上"成功" |
+| `internal/controlplane/grpc/grpc.go` ReportLogs 的 M6 桥接（逐行 `_ = ls.Append(...)`） | agent 日志每行被丢弃，agent 仍收 OK（`SaveLogs` 是另一个存储，成功了） | **静默丢失整条 agent 日志检索面** |
+| `internal/logstore/handler.go` `POST /api/v1/logs` | 检查 err 后回 **500** | 能力不匹配被报成服务端故障，误导排障 |
+| `services/log-svc/.../service.go` AppendLog | no-op 后仍 `return entryToProto(entry)` | 客户端拿到 **ID=0 的"写入成功"载荷** |
+| `handler.go` `RecordTaskResult`（`_ =`） | 任务 stdout/stderr 从未进索引 | 静默 |
+
+**修法**：`ErrAppendUnsupported` 哨兵 + `SupportsAppend(LogStore) bool` 能力探针（只读后端实现
+`AppendUnsupported() bool { return true }`）。设计要点是**在循环之前判一次**：能力错配是一个
+部署事实，不是一个每行错误——逐行拿到同一个哨兵只会把一次错配放大成上万次无效调用，
+仍然一条都写不进去。`POST /logs` 改 **501 + 固定文案**（5xx 不回吐 `err.Error()`，
+守 `TestNoRawErrInServerErrorResponses`）；gRPC 桥接整轮跳过并只打**一条** WARN
+（`appendWarnOnce` 进程级闸门）；`AppendLog` 映射 `codes.Unimplemented`，不再伪造成功载荷。
+
+**客户可见变化**：ES/Loki 部署下 `POST /api/v1/logs` 由 201 → 501。`docs/api-reference.md`
+原文写的是"loki/es 模式下为 noop"，已同步为新语义与迁移指引。
+
+### 26.2 缺陷 B：autoscaler 决策历史无界增长
+
+`e.decisions` 每次评估 append、从不裁剪，同时冷却判定要从尾部反向扫 ⇒ 内存与每次评估的
+扫描成本一起无穷增长。修法 `maxDecisionHistory = 500`（依据取自本包自己的默认：scaleUp 60s /
+scaleDown 300s × ~30s 评估节奏 ≈ 每规则每窗口 10 条 ⇒ 500 够 50 个规则用满，量级 KB）、
+**头部丢弃 + `copy` 复用底层数组**（不每次新建切片，否则把 O(n) 扫描变得更糟），
+并新增 gauge `autoscaler_decision_history_entries` 让占用可告警。
+
+**方向是关键**：冷却扫描读尾部，若裁剪保最旧，缓冲区绕回后**冷却静默失效**并引发扩缩容抖动。
+`TestCooldownStillWorksAfterHistoryWrap` 就是钉这一点的变异诱饵。
+
+### 26.3 缺陷 C：ack/resolve 的外部通知失败被 `_ =` 吞掉
+
+`services/alert-svc/internal/service/service.go` 四个调用点（ack/resolve × 走熔断器/直调）
+丢弃错误：本地状态已改、请求返回 OK，而 PagerDuty 侧没收到——**运维以为 on-call 已被通知**，
+这比直接报错更危险。修法：捕获 → WARN（`action`/`alertID`/错误文本）+
+`business_metrics_total{name="alert_external_notify_failures",action=…}`。
+**刻意不向上返回 err**：ack/resolve 的事实来源是本地状态，让远端故障升级成 5xx 会诱导操作者
+反复点击，且熔断器打开期间会彻底无法确认告警。与触发侧已有的 `alert_notifications*` 不重复计数。
+
+### 26.4 一处边界纪律（实现过程中自造，已纠）
+
+服务层原本没有日志器，实现时引入了根的内部包 `internal/logx` ——复核后发现这是**全仓唯一**一处
+服务模块 import 根 `internal/`（`grep -rn "OpsMesh/internal/" services/` 生产代码命中 1 处即它）。
+后果是这些服务的构建与控制面内部包绑死（本仓既有边界：服务只依赖 `pkg/*` 与顶层包，
+所以"改 internal/store|internal/metrics 只需重建控制面镜像"才成立）。已改回服务层惯例
+（标准库 `log.Printf("[alert-svc] WARN …")`，由 `cmd` 侧 `pkg/log.Init` 接管成 JSON），
+并复核 `services/` 全域无残留。
+**教训**：并行实现的代码要按"这条依赖会不会改变构建边界"审一遍，光看编译过不过是不够的。
+
+### 26.5 验证（含独立复做的变异）
+
+- 四条腿 `go build ./...` + `go test -count=1 ./...` 全绿（`internal/logstore`、
+  `internal/controlplane/grpc`、log-svc、autoscaler-svc、alert-svc）；
+  `golangci-lint 2.13.2` 对 `./internal/...` 与三个服务模块均 **0 issues**。
+- **我自己独立复做的变异**（不采信转述）：① `grpc.go` 守卫改 `if false && !SupportsAppend(ls)`
+  → `TestReportLogs_UnsupportedBackendSkipsForwarding: 只读后端须整轮跳过写入，实际被 Append 3 次`；
+  ② autoscaler 裁剪改保最旧 → `TestDecisionHistoryKeepsMostRecent` 四条断言 +
+  `TestCooldownStillWorksAfterHistoryWrap` 同时判红；两处均 `finally` 还原并复跑全量绿。
+- 子代理自报"一次 Edit 误删了既有测试的一行、已恢复"——我用 `git diff --numstat` 复核为
+  **174 插入 / 0 删除**，属真恢复（这类自伤必须机器复核，不能采信描述）。
+- 第 12 节业务指标门禁对新标签 `action`（两个字面量）放行，对实体 ID 标签仍判红。
+- **诚实边界**：`go test -race` 本机无 C 编译器不可用，由 CI 的 `Race detector` 覆盖；
+  本批**未跑真机栈**（ES/Loki 后端需要外部服务），501 与 WARN 单次去重的运行时表现由
+  CI 单测 + 后续部署验证，不称"已现场复现"。

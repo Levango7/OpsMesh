@@ -29,8 +29,12 @@ func NewLokiStore(endpoint string) *LokiStore {
 	}
 }
 
-// Append is a noop for Loki (logs are pushed by agents via promtail).
-func (s *LokiStore) Append(_ context.Context, _ *Entry) error { return nil }
+// Append 在 Loki 后端显式回 ErrAppendUnsupported：日志由 agent 经 promtail 直推，本服务不写入。
+// 旧实现 return nil ⇒ 客户端收到"写入成功 + ID=0"的伪响应，日志实际从未进 Loki。
+func (s *LokiStore) Append(_ context.Context, _ *Entry) error { return ErrAppendUnsupported }
+
+// AppendUnsupported 声明 Loki 为只读后端，供调用方用 SupportsAppend 在写入前一次性判定。
+func (s *LokiStore) AppendUnsupported() bool { return true }
 
 // Query translates OpsMesh Query to LogQL and calls Loki API.
 func (s *LokiStore) Query(ctx context.Context, q Query) ([]Entry, error) {

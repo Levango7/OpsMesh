@@ -2481,7 +2481,14 @@ M6 日志检索：双后端（Memory/SQL/Loki/ES）+ offset 分页。
 
 ### POST /api/v1/logs
 
-追加日志（agent 经 gRPC 上报时由控制面代写入；loki/es 模式下为 noop）。
+追加日志（agent 经 gRPC 上报时由控制面代写入）。
+
+> **ES / Loki 后端下返回 `501 Not Implemented`**：这两种后端按设计只读，日志须由
+> filebeat / promtail / fluent-bit 直推，控制面不写入。此前该场景返回 `200/201` 却什么都没落
+> （`Append` 是 `return nil` 的 noop），属静默丢数据；现改为显式能力错误。
+> 要让 OpsMesh 写入日志，请把 `log-backend` 配成 `memory` 或 `sql`。
+> 同样地，agent 日志上报的 M6 检索桥接在只读后端下**整轮跳过**并只打一条 WARN，
+> 日志仍进 `SaveLogs`（`GET /api/v1/agent-logs` 可查），只是不进 `/api/v1/logs` 检索面。
 
 - **请求体**：
 

@@ -3,8 +3,9 @@
 // Elasticsearch 是分布式搜索分析引擎，使用 DSL（JSON）查询。
 // 本适配层仅实现查询接口（Query）：将 OpsMesh Query 翻译为 ES bool query DSL，
 // 调用 POST /<index>/_search HTTP API，解析 hits 为 Entry 切片。
-// Append 为 noop——日志由 agent 通过 filebeat / fluent-bit / ES bulk API 直接推送，
-// 控制面仅做查询检索（与 Memory/SQL 后端写入语义解耦）。
+// Append 显式回 ErrAppendUnsupported——日志由 agent 通过 filebeat / fluent-bit / ES bulk API
+// 直接推送，控制面仅做查询检索（与 Memory/SQL 后端写入语义解耦）。
+// 静默 return nil 会让上层把丢弃当成功，故此处用哨兵把能力边界摊开。
 package logstore
 
 import (
@@ -22,7 +23,7 @@ import (
 // ESStore 是 Elasticsearch 后端适配，实现 LogStore 接口。
 //
 // 查询路径：OpsMesh Query → ES bool query DSL → POST /<index>/_search → 解析 hits。
-// 写入路径：noop（日志由 agent 经 filebeat 推送，控制面不写入 ES）。
+// 写入路径：只读（日志由 agent 经 filebeat 推送，控制面不写入 ES）。
 type ESStore struct {
 	endpoint string       // ES base URL（如 http://es:9200），不含路径
 	index    string       // ES 索引名（如 opsmesh-logs）
@@ -40,9 +41,14 @@ func NewESStore(endpoint, index string) *ESStore {
 	}
 }
 
-// Append 在 ES 后端为 noop：日志由 agent 通过 filebeat / fluent-bit / ES bulk 直接推送，
-// 控制面仅做查询。返回 nil 以满足 LogStore 接口契约。
-func (s *ESStore) Append(_ context.Context, _ *Entry) error { return nil }
+// Append 在 ES 后端显式回 ErrAppendUnsupported：日志由 agent 通过 filebeat / fluent-bit /
+// ES bulk 直接推送，控制面不写入。这里曾返 nil 以"满足接口契约"，代价是调用方把丢弃
+// 当成成功——agent 日志与任务输出静默消失，且没有任何一处能看出发生过。
+func (s *ESStore) Append(_ context.Context, _ *Entry) error { return ErrAppendUnsupported }
+
+// AppendUnsupported 声明 ES 为只读后端，供调用方在循环前用 SupportsAppend 一次性判定，
+// 避免逐行调用后各自吞掉同一个错误。
+func (s *ESStore) AppendUnsupported() bool { return true }
 
 // Query 翻译为 ES DSL，POST /<index>/_search，解析 hits。
 //

@@ -14,6 +14,25 @@
 2. **代理域写方法权限收紧**（六域 `*:read`→`*:write`，device DELETE→`device:delete`、provision→`provision:execute`）——只读凭证经代理做写操作现在开始 403。
 3. **代理身份头一律剥离重注入 + X-User-Id 与令牌交叉校验**——依赖「自发身份头直连控制面」的部署必须显式开 `--trust-gateway-headers=true`（生产模式强制 false）。
 
+## [Unreleased] — 2026-09-30 三处静默失败显式化（③b 第 2 批的前置）：日志后端只读、扩缩容历史无界、外部通知失败被吞
+
+> 证据：log-svc 与 autoscaler/alert 四条腿 `go build ./...` + `go test -count=1 ./...` 全绿；`golangci-lint 2.13.2`（CI 同版）对 `internal/...` 与三个服务模块均 0 issues；**变异检验 4 项独立复现被杀**（守卫改永假、ack 分支退回 `_ =`、trim 改尾部丢弃、`Append` 退回 `return nil`）；`validate-deploy-assets.sh` 第 12 节对新标签 `action` 放行（非实体 ID）。详见报告 §26。
+
+- **为什么这批先于业务指标**：用户定的路线是"先修缺陷再计量"。下面三条都是**已经在线但看不见**的失败——给它们加指标之前，先把"失败到底有没有发生"变成事实。
+- **缺陷 A｜ES/Loki 后端的 `Append` 是 `return nil` 的 no-op，三条生产路径据此以为写成功**（`services/log-svc/pkg/logstore/es.go:33`、`loki.go:33`，控制面孪生 `internal/logstore/elasticsearch.go:45`、`loki.go:46`）：
+  - `internal/controlplane/grpc/grpc.go` 的 agent 日志上报里逐行 `_ = ls.Append(...)` ⇒ **ES/Loki 部署下每条 agent 日志都被丢弃，而 agent 仍收到 OK**；
+  - `internal/logstore/handler.go` 的 `POST /api/v1/logs` 走 500（把能力不匹配报成服务端故障）；
+  - `log-svc` 的 `AppendLog` 更糟：no-op 之后仍 `return entryToProto(entry)`，客户端拿到 **ID=0 的"写入成功"载荷**。
+  - 修法：`ErrAppendUnsupported` 哨兵 + `SupportsAppend(LogStore)` 能力探针（只读后端实现 `AppendUnsupported() bool`），调用方**在循环之前**判一次而不是逐条吞错；`POST /logs` 回 **501 + 固定文案**（5xx 不回吐 err 原文，守 SEC-1 守护测试）；gRPC 桥接整轮跳过并只打**一条** WARN（`appendWarnOnce`，进程级闸门——逐行刷屏会淹没真异常，完全不打则运维永远看不到"日志为何查不到"）；`AppendLog` 映射成 gRPC `codes.Unimplemented`，不再伪造成功载荷。`RecordTaskResult` 保留 best-effort 语义但改为一次判定 + Debug 留痕。
+  - **行为变化（客户可见）**：ES/Loki 部署下 `POST /api/v1/logs` 由 `201` 变 `501`。这是把假成功换成真语义，`docs/api-reference.md` 已同步（原文写的是"noop"）。
+- **缺陷 B｜autoscaler-svc 的决策历史无界增长**：`e.decisions` 每次评估都 append 且从不裁剪（`evaluator.go:147`），同时冷却判定要从尾部反向扫 ⇒ 内存与每次评估的扫描成本一起涨到无穷。
+  - 修法：`maxDecisionHistory = 500`（依据是本包自己的冷却默认值：scaleUp 60s / scaleDown 300s × 约 30s 评估节奏 ≈ 每规则一个窗口 10 条，500 条够 50 个规则用满窗口，量级为 KB），**头部丢弃 + `copy` 复用底层数组**（不每次新建切片，否则把 O(n) 扫描变得更糟）；新增 gauge `autoscaler_decision_history_entries` 让占用量可告警。两处写入点（`Evaluate` / `RecordDecision`）都走裁剪器。
+  - 关键取舍：裁剪方向必须保**最新**——冷却扫描读尾部，若按"保留最旧"的方向裁剪，冷却会在缓冲区绕回后**静默失效**并导致抖动扩缩容。用例 `TestCooldownStillWorksAfterHistoryWrap` 就是钉这一点的。
+- **缺陷 C｜alert-svc 的 ack/resolve 外部通知失败被 `_ =` 吞掉**（`services/alert-svc/internal/service/service.go` 4 处：ack/resolve × 走熔断器/直调）：本地状态改成功、请求返回 OK，而 PagerDuty 侧根本没收到——**运维据此以为 on-call 已被通知，比直接报错更危险**。
+  - 修法：捕获错误 → 打 WARN（带 `action`/`alertID`/错误文本）+ 计入 counter `business_metrics_total{name="alert_external_notify_failures",action="ack"|"resolve"}`。**刻意不把 err 返回给调用方**：ack/resolve 的事实来源是本地告警状态，让远端故障把它升级成 5xx 会诱导操作者反复点击，且熔断器打开期间会彻底无法确认告警。与触发侧已有的 `alert_notifications` / `alert_notification_failures` 不重复计数。
+- **一处边界纪律**：服务层原先没有日志器，实现时引入了 `internal/logx`（根的内部包）——这是全仓**唯一**一处服务模块 import 根 `internal/` 的破窗，会把这些服务的构建与控制面内部包绑死。已改回本仓服务层惯例（标准库 `log.Printf("[alert-svc] WARN …")`，由 `cmd` 侧 `pkg/log.Init` 接管成 JSON），并复核 `services/` 全域已无 `OpsMesh/internal/` 残留。
+- **仍未修（有意留着，等定夺）**：`grpc.go` 可写分支里的 `_ = ls.Append(...)` 仍吞错（memory/sql 后端的真实写入失败）；`docs/api-reference.md` 其余只读端点描述未逐条复核。
+
 ## [Unreleased] — 2026-09-29 微服务指标管道修复（③b 第 1 批）：基数上限 + counter 语义 + 清除恒零仪表
 
 > 破坏性变更（拟随 v0.11.0 发布，不进补丁版本）。证据：`pkg/metrics` 27 个用例全绿（新增 10 个）；**变异检验 9 项全部被杀**（放宽两个上限 / counter 退回覆盖 / 去 sanitize / 方法不提前收敛 / histKey 用原始 method / 不登记折叠键 / 去路径归一化 / 状态码不进标签 / `service_info` 丢服务名）；根模块 + 12 个服务模块 `go build ./...` 全过；`validate-deploy-assets.sh` 新增第 12 节并**做过双向故障注入**。详见 `docs/commercial-readiness-review-2026-09-25.md` §25。
