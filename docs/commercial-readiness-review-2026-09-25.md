@@ -2349,3 +2349,81 @@ verify-attestation --type='custom': 同一集合
 只有 `release` 是 skip），且 GHCR 回落路径零 secret。⇒ attest + 自验证会在**下一次推送**就被真跑一遍，
 `release.yml` 里的同形步骤届时已被证过；本轮本机只证到"旗标存在 + 断言会判红 + 门禁 0 findings"，
 `.att` 真的落注册表要等那次 push 的 CI 结果（不谎称已完成）。
+
+## 25. 微服务指标管道的四处"声明了但不成立"（2026-09-29，③b 第一步）
+
+补业务指标前的调研没直接产出指标清单，而是先把 `pkg/metrics`（12 个微服务共用）挖出四个缺陷。
+**顺序上必须先修管道**：在"名字带 `_total` 其实是恒为 1 的 gauge"之上再加 12 个业务指标，
+等于把同一类错误复制十二遍。
+
+### 25.1 四个缺陷（每条都有文件:行号，修前实测）
+
+| # | 缺陷 | 修前事实 | 客户视角后果 |
+|---|---|---|---|
+| 1 | **`RecordBusinessMetric` 是 SET 不是 ADD** | `metrics.go:137` 做 `r.business[key] = value`；而 device/task/alert 三处共 **9 个调用点传字面量 `1`**（`service.go:475,478,605,608` / `199,211,249,272` / `190,192`） | `business_metrics{name="task_claims_total"}` 恒为 1，`rate()/increase()` 全无意义；`*_failures` 永远只能取 0/1，无法算失败率 |
+| 2 | **HTTP 家族零基数上限** | `HTTPMiddleware` 把 `r.URL.Path` **原样**当标签（`metrics.go:304`），无归一化、无上限、无 `:other`；控制面有 `maxHTTPSeries=2000`（`internal/metrics/metrics.go:37`），共用包一个都没有 | 未鉴权端口上扫描器遍历随机路径即可把 map 撑到 OOM——**P1-5 那一类 DoS 的真实暴露面在微服务侧**，此前只补了控制面 |
+| 3 | **恒零假仪表** | `RecordQueueDepth` / `RecordActiveConnections` **全仓零生产调用方**（`grep` 只命中自身与测试），但 `queue_depth 0` / `active_connections 0` 每次抓取都输出 | 面板上"队列深度=0"看起来一切正常，实际那个值从来没人写（§21"出厂规则引用不存在的指标"的镜像形态：这里是"存在但从不被喂"） |
+| 4 | **`Init(serviceName)` 是哑按钮** | 参数存进 `Registry.service` 后**从不被读**（只在 `:30/:51/:53/:55` 出现） | 12 个微服务产出的家族名逐字相同（无前缀），本地 `curl` 对比时分不出来源；§22 抓到的 `--skip-images` 同族 |
+
+### 25.2 修法
+
+1. **拆类型**：`SetBusinessMetric`（gauge → `business_metrics`）与 `AddBusinessMetric`（counter →
+   新家族 `business_metrics_total`）。同名 gauge/counter 靠键前缀 `g:`/`c:` 不互相覆盖。
+   9 个错误调用点迁到 counter 并**去掉名字里冗余的 `_total` 后缀**（家族已带）：
+   `device_heartbeats` / `agent_heartbeats` / `task_claims` / `task_reports` /
+   `alert_notifications` / 两个 `*_failures` 等。
+2. **基数三层**：`NormalizePath`（数字段/超长段/非法字符段 → `:id`，整路径超长 → `/:overlong`）→
+   方法**总是**先收敛到 7 个标准方法 + `:other`（原来只在超限时收敛，意味着任意方法文本可先占满 2000 个名额）→
+   上限 `maxHTTPSeries=2000` / `maxBusinessSeries=2000` 超限折叠 `path=":other"` / `folded=":other"`，
+   并导出 `http_metrics_series`、`http_metrics_series_dropped_total`、`business_metrics_series{,_dropped_total}`
+   让折叠**可告警**。标签值另加 `sanitizeLabelValue`（非白名单字符或超长 → `:other`）。
+   直方图键改为**从折叠后的键派生**：`histKey := k[:LastIndexByte(k,'|')]`——用原始 method 拼会绕开上限。
+3. **恒零仪表**：`active_connections` 由中间件按在途请求 `+1/-1` 真实喂数（含新增用例断言）；
+   `queue_depth` 连同 `RecordQueueDepth` **删除**（没有真实 backlog 数据来源就不该出现在抓取面上；
+   task-svc 的真实待执行量属第 2 批，见 §25.5）。
+4. **哑按钮**：`Init` 的服务名渲染成 `service_info{service="..."} 1`。
+5. **调用点侧的基数修复**：心跳/领取/上报的 `device_id` / `agent_id` / `task_id` 标签**去掉**
+   （每台设备一条序列才是问题根源，上限只是兜底），`auto_provision_loop_failures` 去掉 `backoff` 标签
+   （退避时长每次翻倍都是新取值，本质无界）。`tenant_id` 保留（租户数由商务决定，有界）。
+6. **防复发的静态门禁**（`validate-deploy-assets.sh` 第 12 节）：生产代码里
+   `Set/AddBusinessMetric` 附近出现以 `_id` 结尾的标签键（`tenant_id` 例外）即判红；
+   counter 指标名重复 `_total` 后缀也判红。**已故障注入验证**：把 `agent_id` 标签和
+   `task_claims_total` 加回 `task-svc/internal/service/service.go:211` → 两条 `[FAIL]` 同时命中，还原后转绿。
+
+### 25.3 这是破坏性变更（升级必读）
+
+- 序列类型变化：原先 9 个 `business_metrics{name="*_total"|*_failures"}` gauge →
+  现在是对应的 `business_metrics_total{name="..."}` counter。**已有查询/告警必须改写**
+  （好在出厂规则与面板一个都没引用它们——`grep -r 'business_metrics' deploy/ docs/` 只命中本轮新代码，
+  实测确认，所以本轮不背客户断更的债）。
+- 删除 `queue_depth` 序列。
+- 所有 HTTP/直方图序列的 `path` 标签值被归一化（`/api/v1/devices/123` → `/api/v1/devices/:id`）。
+- 因此这批归到 **v0.11.0 的破坏性清单**，不进补丁版本。
+
+### 25.4 验证与两处自己的失误（主动披露）
+
+- `pkg/metrics` **27 个用例全绿**（新增 10 个：归一化、上限折叠、未知方法折叠、gauge/counter 同名不撞、
+  TYPE 行、标签 sanitize、业务折叠、中间件喂在途数、数字 ID 并集、counter 累加）。
+- **变异检验 9 项全部被杀**：放宽两个上限、counter 退回覆盖、去掉 sanitize、方法不提前收敛、
+  histKey 用原始 method、不登记折叠键、去掉路径归一化、状态码不进标签、`service_info` 丢服务名。
+- 失误一：**测试最初用实现常量推导期望**（`maxHTTPSeries+500` 次写入、断言
+  `http_metrics_series <code>maxHTTPSeries+1</code>`），于是"把上限改大"这个变异**同时改大了用例自己**
+  ⇒ 变异存活。改成写死 2500 / `2001` / `500` 后同一变异被判红。教训：**用例的输入与断言都不能引用被测实现的常量**。
+- 失误二：**变异脚本没有 `finally` 恢复**。一次后台超时终止把 `maxHTTPSeries = 100000000` 和
+  `agent_id` 标签留在了源码里，靠事后 `grep` 才发现并回滚。故障注入必须自带无条件恢复，
+  且变异幅度要有界（1e8 会让用例真去分配百万个键）。
+- 构建面：根模块 + **12 个服务模块** `go build ./...` 全过；`alert-svc` / `device-svc` / `task-svc`
+  全量 `go test ./...` 绿；`gofmt -l` 干净。门禁 `PASS=36 / FAIL=0 / SKIP=1`
+  （SKIP 是离线取不到 kubeconform schema 的既有分流，非本轮引入）。
+
+### 25.5 第 2 批（真业务指标）待办
+
+管道已就绪，逐服务挑业务指标时可直接用 `AddBusinessMetric`（事件计数）与
+`SetBusinessMetric`（当前存量），标签预算受第 12 节门禁约束。已调研出的候选面（含证据行号）：
+task-svc 的 `dead_letter` 与 `retry_count` 耗尽（`mysql.go:361-374`）、真实待执行队列深度、
+auth-svc 的 `status=pending` 注册积压（`gateway.go:287-289`）、alert-svc 熔断器吞掉的错误
+（`service.go:246,270` 的 `_ = s.breaker.Execute(...)`）、log-svc 在 ES/Loki 后端下
+`Append` **静默不落盘**（`pkg/logstore/es.go:33`、`loki.go:33`）与内存环形缓冲丢行、
+autoscaler 的 `e.decisions` **无界增长**（`evaluator.go:147,357`）、gpu-svc 的占位队列
+（`scheduler.go:123-126`）、runbook-svc 内存存储重启即失。
+其中 log-svc 的静默 no-op 与 autoscaler 的无界历史本身是缺陷，属"先修再计量"还是"先计量暴露"需一次决策。

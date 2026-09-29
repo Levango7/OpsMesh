@@ -113,9 +113,9 @@ func (s *ShadowLoop) evaluate(now time.Time) {
 	}
 
 	// 写 Prometheus 观察点。
-	metrics.RecordBusinessMetric(shadowMetricPrefix+"_fire_would_fire", float64(fireWouldFire), nil)
-	metrics.RecordBusinessMetric(shadowMetricPrefix+"_reclaim_would_id", float64(reclaimWouldID), nil)
-	metrics.RecordBusinessMetric(shadowMetricPrefix+"_derived_active", float64(derivedActive), nil)
+	metrics.SetBusinessMetric(shadowMetricPrefix+"_fire_would_fire", float64(fireWouldFire), nil)
+	metrics.SetBusinessMetric(shadowMetricPrefix+"_reclaim_would_id", float64(reclaimWouldID), nil)
+	metrics.SetBusinessMetric(shadowMetricPrefix+"_derived_active", float64(derivedActive), nil)
 
 	if fireWouldFire > 0 || reclaimWouldID > 0 {
 		log.Printf("[shadow] fire_would_fire=%d reclaim_would_id=%d derived_active=%d",

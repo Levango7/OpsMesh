@@ -689,6 +689,42 @@ else
 fi
 
 echo ""
+echo "=== 12. 业务指标写法（实体 ID 当标签 / counter 名字重复 _total）==="
+# 依据：pkg/metrics 以前没有基数上限，而 device-svc / task-svc 把 device_id / agent_id /
+# task_id 直接当标签 ⇒ 序列数随设备数线性增长（P1-5 同族，只是暴露在微服务侧）。
+# 上限现在补上了，但**上限是兜底不是许可**：新代码再写实体 ID 标签就该判红。
+# tenant_id 例外——租户数量由商务决定，是有界维度。
+# 另一条：counter 家族名已带 _total，指标名再带后缀会渲染成 business_metrics_total{name="x_total"}。
+BIZ_HITS="$("$PY" - "$ROOT" <<'PY'
+import pathlib, re, sys
+root = sys.argv[1]
+hits = []
+for p in sorted(pathlib.Path(root, "services").glob("*/internal/**/*.go")):
+    if p.name.endswith("_test.go"):
+        continue
+    rel = str(p.relative_to(root)).replace("\\", "/")
+    lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+    for i, l in enumerate(lines):
+        if "BusinessMetric(" not in l:
+            continue
+        window = "\n".join(lines[i:i + 6])
+        for k in sorted(set(re.findall(r'"([a-z0-9_]+_id)"\s*:', window))):
+            if k != "tenant_id":
+                hits.append(f"{rel}:{i + 1} 用实体 ID 当标签（{k}）⇒ 序列数随实体数增长")
+        nm = re.search(r'BusinessMetric\("([^"]+)"', l)
+        if nm and nm.group(1).endswith("_total") and "Add" in l:
+            hits.append(f"{rel}:{i + 1} counter 指标名重复 _total 后缀（{nm.group(1)}）")
+print("\n".join(hits))
+PY
+)"
+if [[ -z "${BIZ_HITS// }" ]]; then
+    ok "业务指标调用无实体 ID 标签、counter 命名合规"
+else
+    bad "业务指标写法不合规："
+    printf '%s\n' "$BIZ_HITS" | sed 's/^/         /'
+fi
+
+echo ""
 echo "==================================================="
 echo "  部署资产门禁：PASS=${PASS}  FAIL=${FAIL}  SKIP=${SKIP}"
 echo "==================================================="

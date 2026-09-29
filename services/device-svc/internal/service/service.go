@@ -183,9 +183,8 @@ func (s *Service) AutoProvisionLoop(ctx context.Context) {
 				currentInterval = maxBackoff
 			}
 			ticker.Reset(currentInterval)
-			metrics.RecordBusinessMetric("auto_provision_loop_failures", 1, map[string]string{
-				"cidr":    s.autoProvisionCfg.SegmentCIDR,
-				"backoff": currentInterval.String(),
+			metrics.AddBusinessMetric("auto_provision_loop_failures", 1, map[string]string{
+				"cidr": s.autoProvisionCfg.SegmentCIDR,
 			})
 		} else {
 			// 成功：恢复基础间隔（退出退避）。
@@ -193,7 +192,7 @@ func (s *Service) AutoProvisionLoop(ctx context.Context) {
 				currentInterval = s.autoProvisionCfg.LoopInterval
 				ticker.Reset(currentInterval)
 			}
-			metrics.RecordBusinessMetric("auto_provision_loop_success", 1, map[string]string{
+			metrics.AddBusinessMetric("auto_provision_loop_success", 1, map[string]string{
 				"cidr": s.autoProvisionCfg.SegmentCIDR,
 			})
 		}
@@ -251,14 +250,14 @@ func (s *Service) RecordDeviceMetrics() {
 			offline++
 		}
 	}
-	metrics.RecordBusinessMetric("device_total", float64(total), nil)
-	metrics.RecordBusinessMetric("device_online", float64(online), nil)
-	metrics.RecordBusinessMetric("device_offline", float64(offline), nil)
+	metrics.SetBusinessMetric("device_total", float64(total), nil)
+	metrics.SetBusinessMetric("device_online", float64(online), nil)
+	metrics.SetBusinessMetric("device_offline", float64(offline), nil)
 	successRate := 0.0
 	if total > 0 {
 		successRate = float64(managed) / float64(total) * 100.0
 	}
-	metrics.RecordBusinessMetric("provision_success_rate", successRate, nil)
+	metrics.SetBusinessMetric("provision_success_rate", successRate, nil)
 }
 
 // discoverWhitelist 返回生效的白名单（未注入配置时为空=不校验）。
@@ -472,10 +471,10 @@ func (s *Service) HeartbeatDevice(ctx context.Context, req *devicev1.HeartbeatRe
 		return nil
 	}, 3, 50*time.Millisecond)
 	if err != nil {
-		metrics.RecordBusinessMetric("device_heartbeat_failures", 1, map[string]string{"device_id": req.DeviceId})
+		metrics.AddBusinessMetric("device_heartbeat_failures", 1, nil)
 		return lastErr
 	}
-	metrics.RecordBusinessMetric("device_heartbeats_total", 1, map[string]string{"device_id": req.DeviceId})
+	metrics.AddBusinessMetric("device_heartbeats", 1, nil)
 	s.RecordDeviceMetrics()
 	return nil
 }
@@ -602,10 +601,10 @@ func (s *Service) HeartbeatAgent(ctx context.Context, req *devicev1.AgentHeartbe
 		return nil
 	}, 3, 50*time.Millisecond)
 	if err != nil {
-		metrics.RecordBusinessMetric("agent_heartbeat_failures", 1, map[string]string{"agent_id": req.AgentId})
+		metrics.AddBusinessMetric("agent_heartbeat_failures", 1, nil)
 		return lastErr
 	}
-	metrics.RecordBusinessMetric("agent_heartbeats_total", 1, map[string]string{"agent_id": req.AgentId})
+	metrics.AddBusinessMetric("agent_heartbeats", 1, nil)
 	return nil
 }
 

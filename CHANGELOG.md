@@ -14,6 +14,22 @@
 2. **代理域写方法权限收紧**（六域 `*:read`→`*:write`，device DELETE→`device:delete`、provision→`provision:execute`）——只读凭证经代理做写操作现在开始 403。
 3. **代理身份头一律剥离重注入 + X-User-Id 与令牌交叉校验**——依赖「自发身份头直连控制面」的部署必须显式开 `--trust-gateway-headers=true`（生产模式强制 false）。
 
+## [Unreleased] — 2026-09-29 微服务指标管道修复（③b 第 1 批）：基数上限 + counter 语义 + 清除恒零仪表
+
+> 破坏性变更（拟随 v0.11.0 发布，不进补丁版本）。证据：`pkg/metrics` 27 个用例全绿（新增 10 个）；**变异检验 9 项全部被杀**（放宽两个上限 / counter 退回覆盖 / 去 sanitize / 方法不提前收敛 / histKey 用原始 method / 不登记折叠键 / 去路径归一化 / 状态码不进标签 / `service_info` 丢服务名）；根模块 + 12 个服务模块 `go build ./...` 全过；`validate-deploy-assets.sh` 新增第 12 节并**做过双向故障注入**。详见 `docs/commercial-readiness-review-2026-09-25.md` §25。
+
+- **为什么先修管道**：在"名字带 `_total` 其实是恒为 1 的 gauge"之上再加 12 套业务指标，等于把同一类错误复制十二遍。
+- **缺陷 1｜SET 冒充 counter**：`pkg/metrics/metrics.go` 的 `RecordBusinessMetric` 做的是 `map[key]=value`（覆盖），而 device/task/alert 三个服务共 **9 个调用点传字面量 `1`** ——`device_heartbeats_total`、`agent_heartbeats_total`、`task_claims_total`、`task_reports_total`、`alert_notifications_total` 及三个 `*_failures` 全是**恒为 1 的 gauge**，`rate()/increase()` 无意义、失败率算不出来。
+  - 修法：拆成 `SetBusinessMetric`（gauge → `business_metrics`）与 `AddBusinessMetric`（counter → 新家族 `business_metrics_total`），同名靠键前缀 `g:`/`c:` 不互相覆盖；9 个调用点迁到 counter 并去掉冗余的 `_total` 后缀。
+- **缺陷 2｜HTTP 家族零基数上限**：中间件把 `r.URL.Path` **原样**当标签，无归一化无上限（控制面 P1-5 补过 `maxHTTPSeries=2000`，12 个微服务共用的这个包一个都没有）⇒ 未鉴权端口上扫描器遍历随机路径即可把 map 撑到 OOM。**P1-5 那类 DoS 的真实暴露面一直在微服务侧。**
+  - 修法三层：`NormalizePath`（数字/超长/非法字符段 → `:id`，整路径超长 → `/:overlong`）→ HTTP 方法**总是**先收敛到 7 个标准方法 + `:other`（原来只在超限时才收敛，等于允许任意方法文本先占满 2000 个名额）→ 上限 2000，超限折叠并导出 `http_metrics_series{,_dropped_total}` / `business_metrics_series{,_dropped_total}` 让折叠**可告警**。标签值另过 `sanitizeLabelValue`。直方图键改为从**折叠后**的键派生（用原始 method 拼会绕开上限）。
+- **缺陷 3｜恒零假仪表**：`RecordQueueDepth` 与 `RecordActiveConnections` 全仓**零生产调用方**，却每次抓取都输出 `queue_depth 0` / `active_connections 0`——面板读到 0 看着像"一切正常"。修法：`active_connections` 由中间件按在途请求真实喂数（`+1/-1`，含新用例断言）；`queue_depth` 连同函数**删除**（没有真实来源就不该出现在抓取面上；task-svc 的真实待执行量放第 2 批）。
+- **缺陷 4｜`Init(serviceName)` 是哑按钮**：参数存进字段后从不被读（§22 `--skip-images` 同族）。修法：渲染成 `service_info{service="..."} 1`。
+- **调用点侧的真基数修复**：心跳/领取/上报的 `device_id` / `agent_id` / `task_id` 标签**删除**（每台设备一条序列才是根因，上限只是兜底），`auto_provision_loop_failures` 删除 `backoff` 标签（退避时长每次翻倍都是新取值，本质无界）；`tenant_id` 保留（租户数由商务决定，有界）。
+- **防复发门禁**（`validate-deploy-assets.sh` 第 12 节，静态）：生产代码里 `Set/AddBusinessMetric` 附近出现以 `_id` 结尾的标签键（`tenant_id` 例外）即判红；counter 指标名重复 `_total` 后缀也判红。故障注入：把 `agent_id` 标签与 `task_claims_total` 加回 `services/task-svc/internal/service/service.go:211` → 两条 `[FAIL]` 同时命中，还原后转绿。
+- **升级影响（必读）**：① 上述 9 个序列从 `business_metrics{name="X_total"}` gauge 变成 `business_metrics_total{name="X"}` counter，**已有查询/告警必须改写**（实测出厂规则与面板**一个都没引用**它们，故本轮不背客户断更的债）；② `queue_depth` 序列被删除；③ 所有 HTTP/直方图序列的 `path` 标签值被归一化（`/api/v1/devices/123` → `/api/v1/devices/:id`）。
+- **两处自己的失误（主动披露）**：① 测试最初用实现常量推导期望（`maxHTTPSeries+500` 次写入、断言 `maxHTTPSeries+1`），于是"把上限改大"这个变异**同时改大了用例自己** ⇒ 变异存活；改成写死 2500/2001/500 后同一变异被判红——**用例的输入与断言都不能引用被测实现的常量**。② 变异脚本没有 `finally` 恢复，一次后台超时终止把 `maxHTTPSeries = 100000000` 和 `agent_id` 标签留在了源码里，靠事后 grep 才发现并回滚——故障注入必须自带无条件恢复，且变异幅度要有界。
+
 ## [Unreleased] — 2026-09-29 镜像侧 SBOM 证据链：cosign attest 产出 .att（12 微服务 + 2 核心镜像）
 
 > 证据：钉版 cosign **v2.2.4 二进制**的权威旗标表实测（`attest` 与 `verify-attestation` 的 `--type` 取值集合均含 `cyclonedx`，本机拉不到 `ghcr.io/sigstore/cosign/v2.2.4` 镜像故改下二进制）；SBOM 空证据门禁 7 例 fixture 全按退出码断言（非空放行 / 空清单判红 / 缺字段判红）；`actionlint -shellcheck=` 结构面 rc=0，逐 run 块 `shellcheck -S style --shell=bash` 本轮涉及的 18 个步骤 0 findings。详见 `docs/commercial-readiness-review-2026-09-25.md` §24.6。

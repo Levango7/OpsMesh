@@ -196,7 +196,7 @@ func (s *Service) ClaimTask(ctx context.Context, req *taskv1.ClaimTaskRequest) (
 			return nil
 		})
 		if err != nil {
-			metrics.RecordBusinessMetric("task_claim_failures", 1, map[string]string{"agent_id": req.AgentId})
+			metrics.AddBusinessMetric("task_claim_failures", 1, nil)
 			if execErr != nil {
 				return nil, execErr
 			}
@@ -208,7 +208,7 @@ func (s *Service) ClaimTask(ctx context.Context, req *taskv1.ClaimTaskRequest) (
 			return nil, ErrTaskNotFound
 		}
 	}
-	metrics.RecordBusinessMetric("task_claims_total", 1, map[string]string{"agent_id": req.AgentId})
+	metrics.AddBusinessMetric("task_claims", 1, nil)
 	// A-2 阶段：任务生命周期事件审计（分配/领取）
 	s.emitAudit(ctx, mt.TenantID, req.AgentId, "claim_task", mt.TaskID, "claimed by agent", events.LevelInfo, map[string]string{
 		"taskID":  mt.TaskID,
@@ -246,7 +246,7 @@ func (s *Service) ReportResult(ctx context.Context, req *taskv1.ReportResultRequ
 			return nil
 		})
 		if err != nil {
-			metrics.RecordBusinessMetric("task_report_failures", 1, map[string]string{"task_id": r.TaskId})
+			metrics.AddBusinessMetric("task_report_failures", 1, nil)
 			if reportErr != nil {
 				if errors.Is(reportErr, store.ErrClaimEpochMismatch) {
 					return nil, ErrClaimEpochMismatch
@@ -269,7 +269,7 @@ func (s *Service) ReportResult(ctx context.Context, req *taskv1.ReportResultRequ
 		}
 	}
 
-	metrics.RecordBusinessMetric("task_reports_total", 1, map[string]string{"task_id": r.TaskId})
+	metrics.AddBusinessMetric("task_reports", 1, nil)
 	// A-2 阶段：任务生命周期事件审计（完成/失败）
 	// ExitCode==0 → 完成（info）；ExitCode!=0 → 失败（warn）
 	action := "report_result"

@@ -187,9 +187,9 @@ func (s *Service) Evaluate(ctx context.Context, req *alertv1.EvaluateRequest) (*
 					)
 				})
 				if err != nil {
-					metrics.RecordBusinessMetric("alert_notification_failures", 1, map[string]string{"tenant_id": ev.TenantID})
+					metrics.AddBusinessMetric("alert_notification_failures", 1, map[string]string{"tenant_id": ev.TenantID})
 				} else {
-					metrics.RecordBusinessMetric("alert_notifications_total", 1, map[string]string{"tenant_id": ev.TenantID})
+					metrics.AddBusinessMetric("alert_notifications", 1, map[string]string{"tenant_id": ev.TenantID})
 				}
 			} else {
 				_ = s.notifier.TriggerEvent(
