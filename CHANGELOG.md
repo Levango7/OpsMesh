@@ -14,6 +14,19 @@
 2. **代理域写方法权限收紧**（六域 `*:read`→`*:write`，device DELETE→`device:delete`、provision→`provision:execute`）——只读凭证经代理做写操作现在开始 403。
 3. **代理身份头一律剥离重注入 + X-User-Id 与令牌交叉校验**——依赖「自发身份头直连控制面」的部署必须显式开 `--trust-gateway-headers=true`（生产模式强制 false）。
 
+## [Unreleased] — 2026-09-30 业务指标接线第 1 步：调度吞吐与日志容量淘汰成为可告警事实
+
+> 证据：log-svc / task-svc 两模块 `go build ./...` + `go test -count=1 ./...` 全绿，`golangci-lint 2.13.2`（CI 同版）对两模块均 0 issues，`gofmt -l` 干净；新用例 `TestMemoryRingDroppedCounted` **做过变异检验**（把计数改成 `+= 0` ⇒ `淘汰计数 = 0, 期望 4` 判红，`finally` 还原后复跑全绿）；`validate-deploy-assets.sh` PASS=37 / FAIL=0 / SKIP=0（第 12 节对新序列放行，因为标签是 `nil`）。
+
+- **先做数据源核查，再决定做什么指标**：§25.5 列的候选面逐条核实后，**多数被否**——task-svc 的"待执行队列深度"没有现成的 `COUNT`，只能靠 `ListTasks` 拉全行（含 `content`/`command` 两个 TEXT 列）；auth-svc 的 `pending` 注册数只能靠 `ListUsers()` 全表 + 每行一次 N+1 角色查询；alert-svc 的 `firing`/升级中数量同样只有全量扫描；gpu-svc 的 `GetQueue()` 是**字面返回空切片的占位实现**（`scheduler.go:123-125`），在它上面出"队列深度"就是编造数字。**这五条本轮都不做**，与其出一个恒 0 或靠扫全表才能出的指标，不如没有。
+- **做的两条是"代码已经算出来、只是没人报"的**：
+  - **task-svc 调度吞吐**：`cmd/task-svc/main.go` 的 `reclaimFn` / `fireFn` 本来就逐轮算出 `reclaimed` / `fired` 并 `return` 给调度器，本轮就地补 counter `task_reclaimed`、`task_scheduled_fired`，并**各补一列失败数**（`task_reclaim_failures` / `task_scheduled_fire_failures`）。失败必须单独成序列：只有成功数时，"这一轮全部 `UpdateTask` 失败"与"这一轮确实没有可回收/到点任务"在指标面上同形——而前者是数据库在拒绝写入。计数就地出而不上抛重算，属"别用派生指标代替判定面"。
+  - **log-svc 内存环形缓冲淘汰数**：`MemoryLogStore` 原先静默挤掉最旧条目，`Dropped()` 计数与 `log_memory_dropped` counter 一并补上。淘汰前"这条日志被容量挤掉了"和"这条从没写过"在检索面完全同形，运维只能猜。计数**自己记账**而不是 `seq - len(buf)` 反推：后者在并发写入下取不到一致快照，而这是要被告警读的数字。
+- **边界与诚实说明**：
+  - `task_scheduled_*` 四条序列**没有单测覆盖**——发出点在 `package main` 的闭包里，测它要把闭包提出去重构，本批没做。它们的正确性依据是：编译 + 所在函数已有测试 + 门禁第 12 节的标签校验。不称"已测"。
+  - gpu-svc / runbook-svc 的两处是**产品决策不是指标缺口**（调度队列只有占位实现；runbook 只有内存存储、执行历史重启即失），已记入 §23，不靠加指标掩盖。
+- 报告 §27。
+
 ## [Unreleased] — 2026-09-30 三处静默失败显式化（③b 第 2 批的前置）：日志后端只读、扩缩容历史无界、外部通知失败被吞
 
 > 证据：log-svc 与 autoscaler/alert 四条腿 `go build ./...` + `go test -count=1 ./...` 全绿；`golangci-lint 2.13.2`（CI 同版）对 `internal/...` 与三个服务模块均 0 issues；**变异检验 4 项独立复现被杀**（守卫改永假、ack 分支退回 `_ =`、trim 改尾部丢弃、`Append` 退回 `return nil`）；`validate-deploy-assets.sh` 第 12 节对新标签 `action` 放行（非实体 ID）。详见报告 §26。

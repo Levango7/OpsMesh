@@ -2498,3 +2498,45 @@ scaleDown 300s × ~30s 评估节奏 ≈ 每规则每窗口 10 条 ⇒ 500 够 50
 - **诚实边界**：`go test -race` 本机无 C 编译器不可用，由 CI 的 `Race detector` 覆盖；
   本批**未跑真机栈**（ES/Loki 后端需要外部服务），501 与 WARN 单次去重的运行时表现由
   CI 单测 + 后续部署验证，不称"已现场复现"。
+
+## 27. 业务指标接线第 1 步：先否掉一半候选（2026-09-30）
+
+§25.5 那份候选面是"看起来该有指标"的清单，本轮先逐条核**数据源是否已经存在**，结果是
+**五条被否、两条落地**。否掉的比重复列一遍更有价值：它们说明"加指标"这个动作本身
+不能替代实现。
+
+### 27.1 被否的候选（附证据）
+
+| 候选 | 核查结论 | 为什么不做 |
+|---|---|---|
+| task-svc 待执行队列深度 | 无 `COUNT` 方法；最便宜路径是 `ListTasks(tenant,"pending",…)`（`store/mysql.go:162-188` 选 24 列，含 `content`/`command` 两个 TEXT，并逐行 `scanTasks` 物化） | 抓取间隔内周期性拉全表换一个数字，指标自身变成负载源。要做得先加 `SELECT COUNT(*)` 存储方法（另批） |
+| task-svc dead-letter 计数 | `dead_letter` 列存在（`mysql.go:361-364`、memory `store.go:176-179`）但**没有任何聚合查询**，`ListTasks` 也不支持按它过滤 | 同上，只能全表扫 |
+| auth-svc 待审批注册数 | `ListUsers()` 无过滤，且 MySQL 实现对每行再查一次角色（`store/mysql.go:220-239` 的 N+1），`users` 表也没有 status 索引 | 数一个"有多少人在排队审批"要付全表+N+1 的代价 |
+| alert-svc firing / 升级中数量 | 只有 `Alerts()` 全切片扫（`store/store.go:71-83`）；`ListActiveEscalations` 是 RLock 下复制全部活跃项（`escalation.go:348-360`） | 同上 |
+| gpu-svc 调度队列深度 | `GetQueue()` 是**字面返回空切片的占位实现**（`scheduler/scheduler.go:123-125`），并沿 `service.go:219-220 → handler.go:314-320` 传出去 ⇒ `/schedule/queue` 恒 `[]` | **在它上面出指标就是编造数字**。要做的是先决定该服务是否需要真队列（产品决策） |
+
+顺带确认：`runbook-svc` 只有内存存储（`cmd/runbook-svc/main.go:30` 唯一构造点，整模块零 `mysql` 引用），
+执行历史重启即失——这也是产品决策，不用指标掩盖。
+
+### 27.2 落地的两条：代码早就算出来了，只是没人报
+
+- **task-svc 调度吞吐**：`cmd/task-svc/main.go` 的 `reclaimFn` / `fireFn` 每轮都算出 `reclaimed` /
+  `fired` 并 `return` 给调度器，成本为零。补 counter `task_reclaimed`、`task_scheduled_fired`，
+  并各补一列失败数 `task_reclaim_failures`、`task_scheduled_fire_failures`。
+  **失败单独成序列是关键**：只有成功数时，"这一轮全部 `UpdateTask` 失败"（=数据库在拒绝写入）
+  与"这一轮确实没有可回收/到点任务"在指标面上完全同形。计数就地出、不上抛重算，
+  免得又变成一个派生指标。
+- **log-svc 内存环形缓冲淘汰数**：`MemoryLogStore` 原先静默挤掉最旧条目。补 `dropped` 字段 +
+  `Dropped()` + `log_memory_dropped` counter。淘汰前"这条日志被容量挤掉了"和"这条从没写过"
+  在检索面同形。计数**自己记账**而不是 `seq - len(buf)` 反推——后者并发下取不到一致快照，
+  而这正是要被告警读的数字。
+
+### 27.3 验证与未覆盖面（如实）
+
+- 新用例 `TestMemoryRingDroppedCounted`：未超容量不计数、超 4 条计 4、只留最新 `cap` 条、
+  `/metrics` 里出现在 **counter 家族**且不在 gauge 家族（写成 gauge 就恒值、`increase()` 无意义）。
+  **变异检验**：把计数改成 `+= 0` ⇒ `淘汰计数 = 0, 期望 4` 判红；`finally` 还原后复跑全绿。
+- `task_scheduled_*` 四条序列**没有单测**：发出点在 `package main` 的闭包里，要测得先把闭包
+  提出去重构，本批没做。依据只有：编译通过、所在函数已有测试、门禁第 12 节校验标签。
+- log-svc / task-svc 两模块 `go build` + `go test -count=1 ./...` 全绿，
+  `golangci-lint 2.13.2` 0 issues，`gofmt -l` 干净，门禁 `PASS=37 / FAIL=0 / SKIP=0`。

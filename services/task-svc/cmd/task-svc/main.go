@@ -236,6 +236,7 @@ func main() {
 			}
 			cutoff := time.Now().Add(-maxAge)
 			reclaimed := 0
+			reclaimFailed := 0
 			for _, t := range ts.AllTasks() {
 				if t.Status != "running" || t.ClaimedAt.IsZero() || !t.ClaimedAt.Before(cutoff) {
 					continue
@@ -246,13 +247,20 @@ func main() {
 				if ts.UpdateTask(t) {
 					reclaimed++
 				} else {
+					reclaimFailed++
 					log.Printf("[reclaim] UpdateTask failed for task %s", t.TaskID)
 				}
 			}
+			// 计数在这里出，不在调度器里出：reclaimed/reclaimFailed 是这一轮的事实来源，
+			// 再往上抛一层去重算就是"用派生指标代替判定面"。失败必须单独成序列——
+			// 只有 reclaimed 时，"一轮全部更新失败"与"本轮确实无可回收任务"无法区分。
+			metrics.AddBusinessMetric("task_reclaimed", float64(reclaimed), nil)
+			metrics.AddBusinessMetric("task_reclaim_failures", float64(reclaimFailed), nil)
 			return reclaimed
 		}
 		fireFn = func(_ context.Context, now time.Time) int {
 			fired := 0
+			fireFailed := 0
 			minuteStart := now.Truncate(time.Minute)
 			for _, t := range ts.AllTasks() {
 				if t.ParentID != "" || t.Schedule == "" {
@@ -269,9 +277,13 @@ func main() {
 				if ts.UpdateTask(t) {
 					fired++
 				} else {
+					fireFailed++
 					log.Printf("[fire] UpdateTask failed for task %s", t.TaskID)
 				}
 			}
+			// 同 reclaimFn：本轮事实就地成序列，失败单独一列（见上）。
+			metrics.AddBusinessMetric("task_scheduled_fired", float64(fired), nil)
+			metrics.AddBusinessMetric("task_scheduled_fire_failures", float64(fireFailed), nil)
 			return fired
 		}
 	}

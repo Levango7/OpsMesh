@@ -3,8 +3,12 @@ package logstore
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 )
 
 // readOnlyBackends 列出"只读"后端（日志须由采集器直推，OpsMesh 侧不写入）。
@@ -106,3 +110,51 @@ func (o opaqueStore) Query(ctx context.Context, q Query) ([]Entry, error) {
 	return o.inner.Query(ctx, q)
 }
 func (o opaqueStore) Close() error { return o.inner.Close() }
+
+// TestMemoryRingDroppedCounted —— 容量淘汰必须成为可告警的事实。
+// 淘汰前这里什么都不记：「这条日志被挤掉了」和「这条从没写过」在检索面上完全同形。
+func TestMemoryRingDroppedCounted(t *testing.T) {
+	metrics.Init("log-svc-test")
+	m := NewMemory(3)
+	ctx := context.Background()
+
+	// 未超容量：一次都不该计。
+	for i := 0; i < 3; i++ {
+		if err := m.Append(ctx, &Entry{TenantID: "t1", Message: "x"}); err != nil {
+			t.Fatalf("Append 失败: %v", err)
+		}
+	}
+	if got := m.Dropped(); got != 0 {
+		t.Fatalf("未超容量却计了淘汰 %d 条", got)
+	}
+
+	// 超容量 4 条 ⇒ 淘汰 4 条（每次只挤掉最旧一条）。
+	for i := 0; i < 4; i++ {
+		if err := m.Append(ctx, &Entry{TenantID: "t1", Message: "y"}); err != nil {
+			t.Fatalf("Append 失败: %v", err)
+		}
+	}
+	if got := m.Dropped(); got != 4 {
+		t.Fatalf("淘汰计数 = %d, 期望 4", got)
+	}
+
+	// 只保留最新 cap 条：被淘汰的必须是旧的那批，否则"查不到最近日志"会变成常态。
+	got, err := m.Query(ctx, Query{TenantID: "t1", Limit: 10})
+	if err != nil {
+		t.Fatalf("Query 失败: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("缓冲保留 %d 条, 期望 3", len(got))
+	}
+
+	// 同一个数字要能从 /metrics 读到（counter 家族；写成 gauge 就成了恒值、increase() 无意义）。
+	rec := httptest.NewRecorder()
+	metrics.GetHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, `business_metrics_total{name="log_memory_dropped"} 4`) {
+		t.Fatalf("淘汰计数未进 counter 家族\n---%s", body)
+	}
+	if strings.Contains(body, `business_metrics{name="log_memory_dropped"}`) {
+		t.Fatalf("淘汰计数被写进 gauge 家族（应为 counter）\n---%s", body)
+	}
+}

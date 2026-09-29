@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 )
 
 // LogStore is the backend abstraction for log storage.
@@ -81,6 +83,17 @@ type MemoryLogStore struct {
 	buf []Entry
 	cap int
 	seq int64
+	// dropped 是因容量上限被淘汰的最旧条数（累计，自进程启动）。
+	// 单独记账而不是靠 seq-len(buf) 推算：后者在并发写入下取不到一致快照，
+	// 而"丢了多少"是要被告警读的数字，必须自己就是事实来源。
+	dropped int64
+}
+
+// Dropped 返回自进程启动以来因容量上限被淘汰的日志条数。
+func (m *MemoryLogStore) Dropped() int64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.dropped
 }
 
 // Append writes a log entry, auto-assigning timestamp and ID.
@@ -97,8 +110,12 @@ func (m *MemoryLogStore) Append(_ context.Context, e *Entry) error {
 	e.ID = m.seq
 	cp := *e
 	m.buf = append(m.buf, cp)
-	if len(m.buf) > m.cap {
-		m.buf = m.buf[len(m.buf)-m.cap:]
+	if over := len(m.buf) - m.cap; over > 0 {
+		m.buf = m.buf[over:]
+		// 淘汰必须留痕：没有这个计数，"这条日志被容量挤掉了"和"这条日志从没写过"
+		// 在检索面上完全同形，运维只能靠猜。计数就地出，避免上层用 seq-len(buf) 反推。
+		m.dropped += int64(over)
+		metrics.AddBusinessMetric("log_memory_dropped", float64(over), nil)
 	}
 	return nil
 }
