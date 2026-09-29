@@ -754,12 +754,15 @@ jobs:
           }
           syft version
           syft "${IMAGE}" -o spdx-json > "sbom-controlplane-${GITHUB_SHA}.spdx.json"
-          python3 -c 'import json,sys;print("SBOM 包条目数:", len(json.load(open(sys.argv[1]))["packages"]))' "sbom-controlplane-${GITHUB_SHA}.spdx.json"
+          python3 -c 'import json,sys; ps=(json.load(open(sys.argv[1])) or {}).get("packages") or []; sys.exit("SPDX packages 为空——SBOM 没抓到任何组件，判红（空证据比没证据更坏）") if not ps else print("SBOM 包条目数:", len(ps))' "sbom-controlplane-${GITHUB_SHA}.spdx.json"
+          # 第二份 CycloneDX 专供 `cosign attest --type cyclonedx` 当谓词（cosign 无 --type spdx）。
+          syft "${IMAGE}" -o cyclonedx-json > "sbom-controlplane-${GITHUB_SHA}.cdx.json"
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); cs=d.get("components") or []; sys.exit("CycloneDX components 为空或缺 bomFormat/specVersion——attest 谓词不可用，判红") if (not cs or "bomFormat" not in d or "specVersion" not in d) else print("CycloneDX 组件数:", len(cs), "/ bomFormat", d["bomFormat"], "/ specVersion", d["specVersion"])' "sbom-controlplane-${GITHUB_SHA}.cdx.json"
       - name: 上传 SBOM 产物
         uses: actions/upload-artifact@v4
         with:
           name: sbom-controlplane-${{ github.sha }}
-          path: sbom-controlplane-*.spdx.json
+          path: sbom-controlplane-*.json
           retention-days: 30
       # 供应链安全：对推送的镜像做 cosign 签名，两条互斥路径：
       # ① 私有路径（COSIGN_PRIVATE_KEY 已配置）→ key-based，--tlog-upload=false（内网无 OIDC 场景）。
@@ -792,6 +795,51 @@ jobs:
           # --yes 跳过多镜像确认；默认上传 Rekor 透明日志（keyless 的可验证性正来自此）。
           cosign sign --yes "${IMAGE}"
           echo "已签名（keyless/OIDC）: ${IMAGE}"
+      # 签名只回答"这镜像是我们发的"，回答不了"里面有什么"。attest 把 SBOM 作为镜像的
+      # 内联证据挂上去（`.att` tag），客户 `cosign verify-attestation` 即可离线核对成分，
+      # 不必登录 Actions 下载 artifact。v0.10.0 实测：`.sig` 14/14 在位而 `.att` 0/14（报告 §24.1）。
+      - name: cosign 出具 SBOM 证据（attest，产出 .att）
+        if: env.COSIGN_PRIVATE_KEY != '' || steps.check.outputs.mode == 'ghcr'
+        env:
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          PRED="sbom-controlplane-${GITHUB_SHA}.cdx.json"
+          if [ -n "${COSIGN_PRIVATE_KEY:-}" ]; then
+              cosign attest --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false \
+                  --type cyclonedx --predicate "$PRED" "$IMAGE"
+              echo "attestation 已出具（key-based）: ${IMAGE}"
+          else
+              cosign attest --yes --type cyclonedx --predicate "$PRED" "$IMAGE"
+              echo "attestation 已出具（keyless/OIDC）: ${IMAGE}"
+          fi
+      - name: 自验证 attestation（出完必须验得过，判据不放宽）
+        if: env.COSIGN_PRIVATE_KEY != '' || steps.check.outputs.mode == 'ghcr'
+        # 与 release.yml 的签名自验证同一套形态：GHCR 存在写后读窗口（§19.9 实测于 .sig），
+        # 故退避重试；5 次仍验不过判红——那才是证据真不在注册表上。
+        env:
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "${COSIGN_PRIVATE_KEY:-}" ]; then
+              VERIFY=(cosign verify-attestation --key env://COSIGN_PRIVATE_KEY --type cyclonedx)
+          else
+              VERIFY=(cosign verify-attestation --type cyclonedx
+                      --certificate-identity-regexp "^https://github\.com/${GITHUB_REPOSITORY}/\.github/workflows/ci\.yml@"
+                      --certificate-oidc-issuer https://token.actions.githubusercontent.com)
+          fi
+          for i in 1 2 3 4 5; do
+              if "${VERIFY[@]}" "$IMAGE" >/dev/null; then
+                  echo "SBOM 证据已验证：controlplane（第 ${i} 次尝试）"
+                  exit 0
+              fi
+              if [ "$i" = 5 ]; then
+                  echo "::error::cosign verify-attestation 连续 5 次失败：attestation 确实不在 ${IMAGE}"
+                  exit 1
+              fi
+              echo "第 ${i} 次 verify-attestation 未命中（写后读窗口），$((i * 10))s 后重试"
+              sleep $((i * 10))
+          done
       # 自述本次实际覆盖到的链路，缺 secret 的可选段显式列出——
       # 直接针对"job 报了 success 但整段没跑"这类假绿（报告 §15.2）。
       - name: 本次覆盖范围自述（防空转绿）
@@ -821,8 +869,9 @@ jobs:
             echo "|---|---|"
             echo "| 构建 + 推送 | \`${PREFIX}:${{ github.sha }}\`（模式=${MODE}） |"
             echo "| Trivy 扫描 | HIGH/CRITICAL 门禁 |"
-            echo "| SBOM | syft SPDX JSON（artifact） |"
+            echo "| SBOM | syft SPDX + CycloneDX JSON（artifact） |"
             echo "| cosign 签名 | ${cosign_mode} |"
+            echo "| cosign attest（镜像侧 .att 证据） | ${cosign_mode}（未启用即无） |"
             echo "| GitOps 写回 | ${gitops_mode} |"
           } >>"$GITHUB_STEP_SUMMARY"
       # 闭环：构建后把镜像 tag 钉死写回 GitOps chart。若 GitOps 仓库未就绪则安全跳过（不再失败）。
@@ -997,12 +1046,15 @@ jobs:
           }
           syft version
           syft "${IMAGE}" -o spdx-json > "sbom-agent-${GITHUB_SHA}.spdx.json"
-          python3 -c 'import json,sys;print("SBOM 包条目数:", len(json.load(open(sys.argv[1]))["packages"]))' "sbom-agent-${GITHUB_SHA}.spdx.json"
+          python3 -c 'import json,sys; ps=(json.load(open(sys.argv[1])) or {}).get("packages") or []; sys.exit("SPDX packages 为空——SBOM 没抓到任何组件，判红（空证据比没证据更坏）") if not ps else print("SBOM 包条目数:", len(ps))' "sbom-agent-${GITHUB_SHA}.spdx.json"
+          # 第二份 CycloneDX 专供 `cosign attest --type cyclonedx` 当谓词（cosign 无 --type spdx）。
+          syft "${IMAGE}" -o cyclonedx-json > "sbom-agent-${GITHUB_SHA}.cdx.json"
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); cs=d.get("components") or []; sys.exit("CycloneDX components 为空或缺 bomFormat/specVersion——attest 谓词不可用，判红") if (not cs or "bomFormat" not in d or "specVersion" not in d) else print("CycloneDX 组件数:", len(cs), "/ bomFormat", d["bomFormat"], "/ specVersion", d["specVersion"])' "sbom-agent-${GITHUB_SHA}.cdx.json"
       - name: 上传 agent SBOM 产物
         uses: actions/upload-artifact@v4
         with:
           name: sbom-agent-${{ github.sha }}
-          path: sbom-agent-*.spdx.json
+          path: sbom-agent-*.json
           retention-days: 30
       # 供应链安全：agent 镜像同样做 cosign 签名，与 controlplane image job 对称（两条互斥路径见其注释）。
       # 同 controlplane image job：官方 installer action 钉死 commit，内部链式校验。
@@ -1027,6 +1079,47 @@ jobs:
           set -euo pipefail
           cosign sign --yes "${IMAGE}"
           echo "已签名（keyless/OIDC）: ${IMAGE}"
+      # 与 controlplane image job 对称：agent 镜像同样出具 SBOM 证据（.att）并自验证。
+      - name: cosign 出具 SBOM 证据（attest，产出 .att）
+        if: env.COSIGN_PRIVATE_KEY != '' || steps.check.outputs.mode == 'ghcr'
+        env:
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          PRED="sbom-agent-${GITHUB_SHA}.cdx.json"
+          if [ -n "${COSIGN_PRIVATE_KEY:-}" ]; then
+              cosign attest --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false \
+                  --type cyclonedx --predicate "$PRED" "$IMAGE"
+              echo "attestation 已出具（key-based）: ${IMAGE}"
+          else
+              cosign attest --yes --type cyclonedx --predicate "$PRED" "$IMAGE"
+              echo "attestation 已出具（keyless/OIDC）: ${IMAGE}"
+          fi
+      - name: 自验证 attestation（出完必须验得过，判据不放宽）
+        if: env.COSIGN_PRIVATE_KEY != '' || steps.check.outputs.mode == 'ghcr'
+        env:
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "${COSIGN_PRIVATE_KEY:-}" ]; then
+              VERIFY=(cosign verify-attestation --key env://COSIGN_PRIVATE_KEY --type cyclonedx)
+          else
+              VERIFY=(cosign verify-attestation --type cyclonedx
+                      --certificate-identity-regexp "^https://github\.com/${GITHUB_REPOSITORY}/\.github/workflows/ci\.yml@"
+                      --certificate-oidc-issuer https://token.actions.githubusercontent.com)
+          fi
+          for i in 1 2 3 4 5; do
+              if "${VERIFY[@]}" "$IMAGE" >/dev/null; then
+                  echo "SBOM 证据已验证：agent（第 ${i} 次尝试）"
+                  exit 0
+              fi
+              if [ "$i" = 5 ]; then
+                  echo "::error::cosign verify-attestation 连续 5 次失败：attestation 确实不在 ${IMAGE}"
+                  exit 1
+              fi
+              echo "第 ${i} 次 verify-attestation 未命中（写后读窗口），$((i * 10))s 后重试"
+              sleep $((i * 10))
+          done
       - name: 本次覆盖范围自述（防空转绿）
         # 同 image job：可选 secret 用 ${VAR:-} 取值，避免 set -u 下未定义即失败。
         run: |
@@ -1047,8 +1140,9 @@ jobs:
             echo "|---|---|"
             echo "| 构建 + 推送 | \`${PREFIX}:${{ github.sha }}\`（模式=${MODE}） |"
             echo "| Trivy 扫描 | HIGH/CRITICAL 门禁 |"
-            echo "| SBOM | syft SPDX JSON（artifact） |"
+            echo "| SBOM | syft SPDX + CycloneDX JSON（artifact） |"
             echo "| cosign 签名 | ${cosign_mode} |"
+            echo "| cosign attest（镜像侧 .att 证据） | ${cosign_mode}（未启用即无） |"
           } >>"$GITHUB_STEP_SUMMARY"
 
   # Release：推送 v* tag 时触发 goreleaser 跨平台发布（linux/amd64+arm64）。

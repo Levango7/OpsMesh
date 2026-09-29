@@ -14,6 +14,18 @@
 2. **代理域写方法权限收紧**（六域 `*:read`→`*:write`，device DELETE→`device:delete`、provision→`provision:execute`）——只读凭证经代理做写操作现在开始 403。
 3. **代理身份头一律剥离重注入 + X-User-Id 与令牌交叉校验**——依赖「自发身份头直连控制面」的部署必须显式开 `--trust-gateway-headers=true`（生产模式强制 false）。
 
+## [Unreleased] — 2026-09-29 镜像侧 SBOM 证据链：cosign attest 产出 .att（12 微服务 + 2 核心镜像）
+
+> 证据：钉版 cosign **v2.2.4 二进制**的权威旗标表实测（`attest` 与 `verify-attestation` 的 `--type` 取值集合均含 `cyclonedx`，本机拉不到 `ghcr.io/sigstore/cosign/v2.2.4` 镜像故改下二进制）；SBOM 空证据门禁 7 例 fixture 全按退出码断言（非空放行 / 空清单判红 / 缺字段判红）；`actionlint -shellcheck=` 结构面 rc=0，逐 run 块 `shellcheck -S style --shell=bash` 本轮涉及的 18 个步骤 0 findings。详见 `docs/commercial-readiness-review-2026-09-25.md` §24.6。
+
+- **补什么**：签名只回答"这镜像是我们发的"，回答不了"里面有什么"。此前 SBOM 仅是 workflow artifact，客户核对成分要登录 Actions。现在 `release.yml`（12 个微服务）与 `ci.yml` 的 `image` / `image-agent`（2 个核心镜像）都执行 `cosign attest --type cyclonedx`，`.att` 随镜像同 digest 落在注册表，`cosign verify-attestation` 可离线核对。
+- **为什么多出一份 CycloneDX**：cosign v2.2.4 的 `--type` 集合里没有可直接吃的 SPDX 文档形态（`spdx`/`spdxjson` 是校验器类型，而 attest 谓词按 `cyclonedx` 走最稳），故 syft 出两份：SPDX 继续作为 artifact 原样保留，CycloneDX 作谓词——**并存不替换**，两份一起上传，离线复核时谓词原件要能对上。
+- **出完必须验得过**：`cosign verify-attestation --type cyclonedx` 自验证 + GHCR 写后读退避重试（5 次不过判红），沿用 §19.9 的形态；核心镜像按既有 key-based / keyless 双路径分支，守卫条件与 `cosign sign` 逐字一致；覆盖范围自述表新增 `.att` 一行，未启用即明说"无证据"。
+- **顺手补掉一处空证据**：原先两处 `python3 -c 'print(len(...))'` 只打印条目数，**0 个组件照样绿**。改为空即判红并带原因（空证据比没证据更坏）。
+- **本轮我自造并抓到的缺陷**：给自述表加行时在双引号字符串里用反引号包裹 `.att` 想当 markdown 代码块——**双引号里的反引号是命令替换**，不是 markdown。靠"逐 run 块 `shellcheck -S style`"抓到（SC2006）。
+- **本机 actionlint 的新事实**：带 shellcheck 后端时本机长时间无响应（并发四实例互相拖死），`-shellcheck=` 单跑全部 workflow 仅 0.15s 且 rc=0 ⇒ 本机可靠口径是**两件套**：`actionlint -shellcheck=`（结构/表达式）+ 逐块 shellcheck（shell），二者合一才等价 CI 的 actionlint，取其一当其二就是 §18"门禁后端不在场"的同族。
+- **为什么不必等下次发版才第一次跑**：`image`/`image-agent` 每次 push 都执行且 GHCR 回落零 secret（实测 run `36545861598` 13 job 含二者、仅 `release` skip）⇒ attest 与自验证会在下一次推送真跑，`release.yml` 里的同形步骤届时已被证过。**本轮未证到的部分如实列出**：`.att` 真落注册表只能等那次 CI 收口（本机无注册表凭据）。
+
 ## [Unreleased] — 2026-09-29 P1-7 第三方许可清单工程化（离线生成 + 三条硬断言门禁 + NOTICE 逐字汇编）
 
 > 证据：`deploy/scripts/gen-third-party-licenses.sh` 三模式本机跑通；`--check` 的 **8 例故障注入**全部按退出码断言（删除模块行 / 版本漂移 / 判定变化 / 缓存全缺 / 下限 101% / 恢复为绿 / 判红不改写文档 / 生成器内部报错不覆盖文档）；`semver_key` 单测 6 例；`NOTICE` 7 段与上游文件**字节级逐字一致**；`shellcheck -S style` 与 `actionlint v1.7.7` 0 问题。详见 `docs/commercial-readiness-review-2026-09-25.md` §24.4。

@@ -125,13 +125,19 @@ jobs:
           }
           syft version
           syft "${{ steps.meta.outputs.image }}:${{ github.sha }}" -o spdx-json > "sbom-${{ matrix.service }}-${GITHUB_SHA}.spdx.json"
-          python3 -c 'import json,sys;print("SBOM 包条目数:", len(json.load(open(sys.argv[1]))["packages"]))' "sbom-${{ matrix.service }}-${GITHUB_SHA}.spdx.json"
+          python3 -c 'import json,sys; ps=(json.load(open(sys.argv[1])) or {}).get("packages") or []; sys.exit("SPDX packages 为空——SBOM 没抓到任何组件，判红（空证据比没证据更坏）") if not ps else print("SBOM 包条目数:", len(ps))' "sbom-${{ matrix.service }}-${GITHUB_SHA}.spdx.json"
+          # 第二份 CycloneDX 是给 `cosign attest --type cyclonedx` 当谓词用的：
+          # cosign 的 attest 只认 cyclonedx/slsa/default 这几种谓词类型，SPDX 文档不能直接喂
+          # （--type spdx 不存在）。SPDX 那份继续作为 workflow 产物原样保留，两者并存不替换。
+          syft "${{ steps.meta.outputs.image }}:${{ github.sha }}" -o cyclonedx-json > "sbom-${{ matrix.service }}-${GITHUB_SHA}.cdx.json"
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); cs=d.get("components") or []; sys.exit("CycloneDX components 为空或缺 bomFormat/specVersion——attest 谓词不可用，判红") if (not cs or "bomFormat" not in d or "specVersion" not in d) else print("CycloneDX 组件数:", len(cs), "/ bomFormat", d["bomFormat"], "/ specVersion", d["specVersion"])' "sbom-${{ matrix.service }}-${GITHUB_SHA}.cdx.json"
 
       - name: 上传 SBOM 产物
         uses: actions/upload-artifact@v4
         with:
           name: sbom-${{ matrix.service }}
-          path: sbom-${{ matrix.service }}-${{ github.sha }}.spdx.json
+          # 两份都留：SPDX 供人读/工具吃，CycloneDX 是 .att 的谓词原件（离线复核证据链时要对得上）
+          path: sbom-${{ matrix.service }}-${{ github.sha }}.*.json
           retention-days: 30
 
       - name: 安装 cosign（官方 installer，钉死 commit）
@@ -171,6 +177,42 @@ jobs:
                   exit 1
               fi
               echo "第 ${i} 次 verify 未命中（GHCR 写后读窗口），$((i * 10))s 后重试"
+              sleep $((i * 10))
+          done
+
+      - name: cosign 出具 SBOM 证据（attest，产出 .att）
+        # 为什么还要这一步：签名只回答"这镜像确实是我们发的"，回答不了"里面有什么"。
+        # 此前 SBOM 仅作为 workflow 产物存在 ⇒ 客户必须登录 Actions 才能核对成分。
+        # attest 之后，`cosign verify-attestation <image>` 可以直接**从镜像本身**问到成分。
+        # 现状取证：v0.10.0 发布后 14 个镜像 `.sig` 全在位，`.att` 为 0/14（报告 §24.1）。
+        run: |
+          set -euo pipefail
+          cosign attest --yes \
+            --type cyclonedx \
+            --predicate "sbom-${{ matrix.service }}-${GITHUB_SHA}.cdx.json" \
+            "${{ steps.meta.outputs.image }}:${{ github.sha }}"
+          echo "attestation 已出具（keyless/OIDC）: ${{ steps.meta.outputs.image }}"
+
+      - name: 自验证 attestation（出完必须验得过）
+        # 与签名同一套判据与退避：attest 空转（将来被加 if 跳过 / OIDC 权限没给）不能让 job 保持绿；
+        # GHCR 的写后读窗口同样适用于 .att（§19.9 实测发生在 .sig 上）。
+        # 判据不放宽：5 次退避后仍验不过就判红——那才是证据真不在注册表上。
+        run: |
+          set -euo pipefail
+          IMG="${{ steps.meta.outputs.image }}:${{ github.sha }}"
+          for i in 1 2 3 4 5; do
+              if cosign verify-attestation --type cyclonedx \
+                  --certificate-identity-regexp "^https://github\.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@" \
+                  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+                  "${IMG}" >/dev/null; then
+                  echo "SBOM 证据已验证：${{ matrix.service }}（第 ${i} 次尝试）"
+                  exit 0
+              fi
+              if [ "$i" = 5 ]; then
+                  echo "::error::cosign verify-attestation 连续 5 次失败：不是写后读延迟，attestation 确实不在 ${IMG}"
+                  exit 1
+              fi
+              echo "第 ${i} 次 verify-attestation 未命中（GHCR 写后读窗口），$((i * 10))s 后重试"
               sleep $((i * 10))
           done
 

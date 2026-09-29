@@ -2213,7 +2213,7 @@ env 模板，但 `aio-svc` 读的是 `AIO_SVC_PORT`、`log-svc` 读的是 `LOG_S
 | 9 | 把交付脚本的 shellcheck 口径从 `-S warning` 提到 `-S info`（余 39×SC2015、3×SC2012） | 可读性而非正确性；提口径前要逐条判"是否真死变量"，与本轮 SC2034 的处置同法，不宜顺手 |
 | 10 | ~~版本源仍写 0.9.0~~ **已处理**：全量对齐到 0.9.2，并在 `release.yml` 加「标签 == Chart appVersion」硬门禁（见 §19.7）。**残留待办**：本机在跑的 `deploy/docker/.env` 仍是 `OPSMESH_VERSION=0.9.0`（未跟踪、属用户部署状态），升级到 0.9.2 需显式执行数据卷兼容的镜像替换而不是直接改 tag | 直接改 `.env` 的 tag 会让已在跑的容器换镜像；MySQL 数据卷的迁移是 §P0-5 那条链路，需要按升级流程走而不是改标签 |
 | 11 | **Release 单一所有者化**（§24.3）：删掉 `release.yml` 的 `github-release` job，把正文/release-notes 收进 goreleaser，并在 goreleaser 之后加 `gh release view --json assets` 长度断言 | 实测 `v0.10.0` 有 **约 24 分钟**（09:42:36Z→10:09:06Z）Release 已发布但零资产；两个 workflow 共同拥有同一个 Release，谁先到谁建。改完必须下一次发版才能验，故单列不宜顺手 |
-| 12 | `cosign attest` 产出 `.att`（SBOM 作为镜像侧证据链）——目前 `.att` **0/14**，SBOM 只作为 workflow 产物存在 | 客户用 `cosign verify-attestation` 应当能**从镜像本身**问到"里面有什么"，而不是去翻 CI 界面下载附件 |
+| 12 | ~~`cosign attest` 产出 `.att`~~ **已实现**（§24.6：12 微服务 + 2 核心镜像，带自验证与写后读退避）。**待办只剩取证**：下一次 push 的 `image`/`image-agent` job 里确认 `.att` 真落注册表（本机拉不到 cosign 镜像、也无注册表凭据，只能到 CI 收口） | 客户用 `cosign verify-attestation` 应当能**从镜像本身**问到"里面有什么"，而不是去翻 CI 界面下载附件 |
 | 13 | 许可清单另两条供应链线未覆盖：`web/enterprise/node_modules`（npm 依赖）与镜像内操作系统包（基础镜像的 GPL/LGPL 二进制再分发义务） | 属**已知缺口**而非"已确认无风险"；前者可复用同一套分类器，后者要接 Trivy/SBOM 侧数据 |
 
 ## 24. v0.10.0 发布验收 + P1-7 许可清单工程化（2026-09-29）
@@ -2296,3 +2296,56 @@ manifest（.sig）  Accept: application/vnd.oci.image.manifest.v1+json   ← 少
 ```
 
 `tags/list` 能直接看见 `sha256-<digest>.sig` 条目，是区分"探针错"与"真没签"的最快反证。与 §19.1 那条（查 index 必须带 OCI index 类型）同族：**探针的媒体类型不匹配时，注册表回答的是"我没法用这个类型给你"，不是"不存在"**。
+
+### 24.6 `.att` 证据链补齐（任务 ③a）——把 SBOM 从"CI 附件"变成"镜像自带的问题答案"
+
+签名回答"这镜像是我们发的"，回答不了"里面有什么"。此前 SBOM 只作为 workflow artifact 存在，
+客户要核对成分必须登录 Actions；本轮给 **12 个微服务镜像 + 2 个核心镜像**都补上 `cosign attest`。
+
+改动面（`release.yml` 的 build-and-push、`ci.yml` 的 image / image-agent 三处，口径逐字一致）：
+
+1. syft 出**第二份 CycloneDX** 当 attest 谓词——cosign v2.2.4 的 `--type` 取值里**没有 spdx 之外的
+   CycloneDX 替代品**（权威口径见下），故 SPDX 那份继续作为 artifact 原样保留，两份并存不替换；
+2. `cosign attest --yes --type cyclonedx --predicate <cdx> <image>`（核心镜像按既有的
+   key-based / keyless 双路径分支，与 `cosign sign` 的守卫条件完全一致）；
+3. **自验证 `cosign verify-attestation --type cyclonedx`** + GHCR 写后读退避重试，5 次不过判红
+   （§19.9 的教训：能"空转"的步骤必须自己作证）；
+4. 覆盖范围自述表新增 `cosign attest（镜像侧 .att 证据）` 一行，未启用时明说"即无"。
+
+**为什么能在本机拿到权威依据**：`ghcr.io/sigstore/cosign/v2.2.4` 镜像在本机 Docker 拉不动
+（`dialing ghcr.io:443 … connectex` ——Docker Desktop 无该路由的 HTTPS 代理，属 [[opsmesh-deploy-env-hazards]]
+的镜像白名单族），改**直接下载钉版二进制** `cosign-windows-amd64.exe`（v2.2.4，`GitVersion` 自证），
+读其权威旗标表：
+
+```
+attest            --type='custom': (slsaprovenance|…|spdx|spdxjson|cyclonedx|vuln|openvex|custom)
+verify-attestation --type='custom': 同一集合
+```
+
+⇒ `--type cyclonedx` 在**出证据的一侧和验证据的一侧都存在**，这是断言而非猜测。
+（syft 的 windows 二进制本轮下载三次均被网络截断，未取得；故 CycloneDX 的字段形态不靠本机断言，
+改由下一步的运行时硬门禁兜住。）
+
+**空证据比没证据更坏**：原先两处 `python3 -c 'print(len(...))'` 只**打印**条目数，0 个组件照样绿。
+本轮改为空即判红并给出原因；7 例 fixture 本机全过：
+
+| 输入 | 期望 | 实测 |
+|---|---|---|
+| SPDX packages 非空 / 空 / 缺键 | 放行 / 判红 / 判红 | rc=0 / 1 / 1 |
+| CDX 正常 / 空 components / 缺 bomFormat / 缺 specVersion | 放行 / 判红 ×3 | rc=0 / 1 / 1 / 1 |
+
+**本轮又一次自造缺陷（主动披露）**：给自述表加行时写了 `echo "| cosign attest（镜像侧 \`.att\` 证据） |"`——
+**双引号里的反引号是命令替换**，不是 markdown 代码块。是 `shellcheck -S style` 的 SC2006 抓出来的，
+而抓到的前提是换了口径：不再依赖 `actionlint` 带 shell 后端（本机那样会**挂死**——见下），
+而是「抽出每个 run 块 → 替换 `${{ }}` → 逐块 `shellcheck -S style --shell=bash`」。
+
+**本机 actionlint 的新事实**：带 shellcheck 后端时在本机长时间无输出（四个并发实例互相拖死后被终止），
+而 `-shellcheck=` 单跑全部 workflow 只需 0.15s 且 rc=0。⇒ 本机可靠口径是**两件套**：
+`actionlint -shellcheck=`（结构/表达式面）+ 上述逐块 shellcheck（shell 面），
+并显式声明"两件套合起来才等价于 CI 的 actionlint"，不能拿其一当其二（这正是 §18"门禁后端不在场"的同族）。
+
+**为什么这个改动不会被推迟到下次发版才第一次执行**（§19.1/教训 15 的口径）：
+`ci.yml` 的 `image` / `image-agent` **每次 push 都跑**（实测 run `36545861598` 的 13 个 job 含这两个，
+只有 `release` 是 skip），且 GHCR 回落路径零 secret。⇒ attest + 自验证会在**下一次推送**就被真跑一遍，
+`release.yml` 里的同形步骤届时已被证过；本轮本机只证到"旗标存在 + 断言会判红 + 门禁 0 findings"，
+`.att` 真的落注册表要等那次 push 的 CI 结果（不谎称已完成）。
