@@ -4,6 +4,56 @@
 
 ---
 
+## v0.10.0 — 2026-09-29 TD-60 阶段 2 收口：五服务删除 + 域完善与身份头治理 + 流量取数出口
+
+本次发布把 TD-60「先接通、再裁决」推进到**可裁决**状态：五域接线与权限逐条镜像本地、五个从未进部署清单的服务删除、两个真 bug 修复（自动伸缩指标读取恒失败、RBAC 权限目录缺失导致含 admin 一律 403）、代理身份头统一治理（多租户落错桶 + 同租户内审计伪造），并补上裁决所缺的真实流量取数出口。因含三类破坏性变更，按 0.x 惯例走 minor。
+
+### 破坏性变更（升级前必读）
+
+1. **五个服务模块删除**：`deploy-svc` / `plugin-svc` / `bot-svc` / `workflow-svc` / `grafana-bridge`。判据 = 从未进任何部署清单 + 无消费方 + 能力已被替代（`internal/deploy`+`internal/helm`、`internal/plugin`+迁移 015、聚合层 `bot_bridge.go`、`internal/orchestration`、Prometheus 直抓 `/metrics`）。**影响面**：`services/` 18→13（12 服务 + tf-provider 工具链）、`release.yml` 镜像矩阵 17→12、Helm chart 删 4 个服务段、`init-mysql.sql` 删 workflow/plugin 建库段、`prometheus.yml` / `verify-runtime.sh` / 抓取豁免清单同步、集成测试端口表 12→9。自建镜像流水线或直接引用上述镜像 tag 的客户需清理引用。
+2. **代理域写方法权限收紧**：gpu/runbook/incident/autoscaler/portal 五域与 device/task 的写方法此前统一只校验 `*:read`——持有只读凭证可经代理完成创建 GPU 负载、执行 Runbook、审批门户请求甚至删除设备。现按 `permRules` 逐条镜像本地：写方法→`*:write`、`DELETE /device-svc/devices/{id}`→`device:delete`、provision→`provision:execute`。**影响**：以只读角色经代理前缀做写操作的集成会开始 403（前端页面守卫不变，仍是 `*:read` 准入；动作级校验本就该在服务端）。
+3. **代理身份头一律剥离重注入 + X-User-Id 交叉校验**：客户端自带的 `X-Tenant-ID` / `X-User-Id` / `X-User-Roles` 在 director 里全部剥离，改以聚合层已校验身份重注入（`X-User-Roles` 仅剥离，下游无消费方）；令牌用户与 `X-User-Id` 头不一致直接 403 `user mismatch`。**影响**：依赖「自发身份头直连控制面」的部署（README IAM 路径 B）必须显式声明 `--trust-gateway-headers=true`（生产模式强制 false，该模式下网关头为权威声明）。**收益**：gpu-svc / portal-svc 多租户数据不再兜底落 `default` 桶；同租户内伪造审计主体的链路关闭。
+
+### 新增能力
+
+- **task-svc 接通为第二代理域**：双轨前缀 `/api/v1/task-svc/*` → task-svc HTTP 网关（容器内 8102），`TASK_SVC_URL` 进 prod / dual-track compose；新机制 `permRules`（方法+路径→权限点，首条命中）使代理与本地对同一操作的权限要求逐一对齐。**约定**：规则路径按上游（改写后）形态书写，匹配前先 `rewriteProxyPath`。
+- **`GET /api/v1/admin/service-traffic`**：逐域真实流量聚合（域→前缀派生自转发路由表，与 `/admin/service-routing` 同源）。TD-60 §5.3 把五域裁决定为「待真实流量」却无取数出口，本端点补上；零流量域显式返回 `requests=0`。窗口是进程内计数（重启归零），跨重启/多副本用 PromQL `increase(opsmesh_http_requests_total{path=~"/api/v1/<前缀>(/.*)?"}[Nd])`。裁决阈值口径与两条判读陷阱见 `docs/td60-decision-2026-09-26.md` §5.8。
+- **portal-svc 前端契约补齐**：`GET /api/v1/approvals`、`POST /api/v1/approvals/{id}/approve|reject`、`GET /api/v1/cost`（14 天窗口，仅 approved/fulfilled 计入分摊）三组端点；`requestView` camelCase 视图层 + 列表 `{requests:[...]}` 包裹；`createRequest` 双解析兼容前端体与旧 snake_case 体；租户/请求人从身份头回退。
+- **RBAC 权限目录 87→102**：15 个被 handler 的 `requireProd` 引用却从未进 `rbacPermSpecs` 的权限串（`schedule:*` / `approval:*` / `task:approve` / `helm:*` / `quota:*` / `secrets:*` / `alert·middleware·os:write`）⇒ **任何角色含 admin 恒 403**（`git log -S` 印证从未存在，全站性缺陷）。修复含老库预置角色并集回填自愈 + `sql_rbac_catalog_test.go` 守护（含派生效应断言）。
+
+### 缺陷修复
+
+- **autoscaler-svc 指标读取恒失败**：`ReadMetric` 请求 `/api/v1/query`（JSON API）却按 exposition 文本逐行解析，真实 Prometheus 下恒报 `no metric found`、评估器恒 `no_action`——自动伸缩链路第一步即断。改按 JSON 契约解析（`status`/`errorType` 报错、空 `result` 保留原语义、`value[1]` 非数字显式报错）。
+- **portal 前端数据面全不可用**：三端点 404、`GET /api/v1/requests` 返回 snake_case 裸数组致前端列表全空、`POST /api/v1/requests` 因缺 title 400。
+- **aio-svc 噪声压缩测试偶发失败**：去重按分钟桶（`FiredAt.Unix()/60`）而样本用 `time.Now()`+10s，跨分钟边界不合并（CI run 36453413667 实测）→ 测试改用固定桶内时间戳。
+- **本仓 self-inflicted**：批次① 在 portal-svc 引入的 `_ = json.NewDecoder(...).Decode(...)` 被 errcheck `check-blank`（TD-71 收紧档）拦下，令 `services` job 红；改用仓库既有 best-effort 惯例（`io.EOF` 按零值继续、其余落日志留痕）。
+
+### 工程与门禁
+
+- **errcheck 收紧档全量收口（TD-71 收官）**：`check-blank` + `check-type-assertions` 开启后 +150 处清零（131 修 + 19 有据豁免），19 模块严格档零报点；`.golangci.services.yml` YAML 坏损修复（此前 HEAD 加载必失败，CI 实测红）。
+- **`-race` 打通**：本机补 PATH（msys64 gcc 16.1.0）后开启竞态检测，全量跑根模块 + 全部服务模块，抓到两处普通测试视野外的竞态并修复。
+
+### 升级须知
+
+- **版本源已同步至 0.10.0**：`Chart.yaml`（version/appVersion）、`values-production.yaml` 两处 tag、`gitops/segments/production-segment.yaml` tag、`internal/version.Version`、`deploy/k8s/deployments/*.yaml` 五份镜像 tag、`deploy-opsmesh.sh` 默认 `IMAGE_TAG`。`release.yml` 的「标签==appVersion」硬门禁与 `validate-deploy-assets.sh` 第 1 节共同兜住版本一致性。
+- **数据卷升级走 P0-5 迁移链路**（勿直接改 `.env` 的 `OPSMESH_VERSION` 后原地起服务）。
+- **逐域开关判读**：被 `OPSMESH_SERVICE_PROXY` 停用的纯代理域，同前缀请求会以 **404** 计入该域流量桶（路由未注册）——读 `service-traffic` 时先看 `byStatus`。
+
+### 验证
+
+- `deploy/scripts/validate-deploy-assets.sh` → **PASS=36 / FAIL=0**；根模块 + 12 个存量服务模块 build / vet / 测试全绿。
+- 两套 lint 配置均 `0 issues`（golangci-lint 2.13.2，与 CI 同版）：根 `.golangci.yml`、服务 `.golangci.services.yml`。
+- 新增/收口测试：身份头治理 5 例（含非 default 租户传播直接证据）、流量聚合 10 例、RBAC 目录守护、portal/autoscaler 防回归 17 例；controlplane 全包 `-race` 由 CI `Race detector` job 复验。
+- tag 触发的真发版验收（Release assets、12 镜像 + `.sig`、SBOM）以该 tag 的 run 结果为准，发布后回填本小节。
+
+### 已知问题（本版未覆盖，已在册）
+
+- 五域最终裁决仍**待真实流量观察期**（取数出口已具备，见新增能力与 §5.8 口径）；`auth-svc` 有据暂缓接通（部署侧 `AUTH_SVC_HTTP_ENABLED` 全量未设置，helm `auth_svc.enabled=false` + `storeType: memory`）。
+- 微服务存储层测试覆盖极低（config-svc 0.7% / alert-svc 1.7% / gpu-svc 1.6% / auth-svc 2.4%）却在 prod 以 `*_STORE_TYPE=sql` 跑真 DSN——单体侧 P0-4 的修复不覆盖它们。
+- TD-61 父包下沉（controlplane 顶层 134 文件 / store 96 文件）、TD-63 `buf generate` 根治、P1-7 许可与第三方合规（NOTICE / MPL-2.0 再分发）。
+
+---
+
 ## v0.9.2 — 2026-09-27 商用就绪收口 + 发版链路加固
 
 本次发布为**商用就绪评估收口批次**：P0/P1 全量修复、可支撑性能力补齐、发布链路从「首次真跑」推进到「带签名与 SBOM 的全链产物」，并推进 TD-60 阶段 2 三域生产路径。重切 tag `9347554` 后四条验收全部达成。

@@ -2,7 +2,17 @@
 
 本文件记录 OpsMesh 所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [Semantic Versioning](https://semver.org/)。
 
-> 当前最新已发布版本：`v0.9.2`（2026-09-27，商用就绪收口 + 发版链路加固；上一版 `v0.9.1` 2026-09-17 为全面评估 35 项修复）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
+> 当前最新已发布版本：`v0.10.0`（2026-09-29，TD-60 阶段 2 收口——五服务删除 + 域完善与身份头治理 + 逐域流量取数出口；上一版 `v0.9.2` 2026-09-27 为商用就绪收口 + 发版链路加固）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
+
+## [0.10.0] — 2026-09-29（TD-60 阶段 2 收口：五服务删除 + 域完善与身份头治理 + 流量取数出口）
+
+本版把 TD-60「先接通、再裁决」推进到**可裁决**状态：五域接线与权限逐条镜像、五个从未部署的服务删除、两个真 bug（autoscaler 指标读取恒失败、RBAC 目录 15 项缺失致含 admin 一律 403）、代理身份头统一治理（多租户落错桶 + 同租户内审计伪造），并补上裁决所缺的真实流量取数出口。详细分组见 `docs/release-notes.md` 的 v0.10.0 小节。
+
+**破坏性变更（升级前必读，逐条影响面见 release-notes）**：
+
+1. **五个服务模块删除**（deploy-svc / plugin-svc / bot-svc / workflow-svc / grafana-bridge）——`services/` 18→13、release.yml 矩阵 17→12、chart 删 4 个服务段、init-mysql.sql 删 2 个建库段。
+2. **代理域写方法权限收紧**（六域 `*:read`→`*:write`，device DELETE→`device:delete`、provision→`provision:execute`）——只读凭证经代理做写操作现在开始 403。
+3. **代理身份头一律剥离重注入 + X-User-Id 与令牌交叉校验**——依赖「自发身份头直连控制面」的部署必须显式开 `--trust-gateway-headers=true`（生产模式强制 false）。
 
 ## [Unreleased] — 2026-09-29 逐域真实流量取数出口（TD-60 §5.3 裁决前提补齐）+ 批次① errcheck 红点收口
 
