@@ -382,6 +382,22 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           govulncheck ./...
+      - name: 第三方依赖许可证清单门禁（P1-7）
+        # 为什么不做「重新生成 + 全文 diff」（第一版就是这么写的，随即改掉）：
+        # 许可证识别依赖本地 Go 模块缓存，CI 的缓存必然比开发机残缺 ⇒ 全文 diff 只会得到
+        # **假红**；反过来把读不到的项整段忽略，又变成「CI 读不到就当已确认」的**空转绿**
+        # （本项目至此已集齐五类"绿而不实"，这是第三类的又一个形态）。故 --check 改为
+        # 三条与环境无关的硬断言：清单集合相等 / 双读结果一致 / 源码覆盖率下限。
+        # 版本号变了会改变集合 ⇒ 最常见的漂移形态仍被完整覆盖。
+        run: |
+          set -uo pipefail
+          # 尽力把源码拉全（提高覆盖率⇒ 真核对）；单点失败不阻断，缺多少由下限兜住并显式 WARN。
+          go mod download all 2>&1 | tail -3 || echo "::warning::根模块 go mod download all 未全部成功"
+          (cd operator && go mod download all) >/dev/null 2>&1 || echo "::warning::operator go mod download all 未全部成功"
+          for d in services/*/; do
+              (cd "$d" && go mod download all) >/dev/null 2>&1 || true
+          done
+          bash deploy/scripts/gen-third-party-licenses.sh --check
       # Helm chart 门禁：lint 语法 + 双 values（默认/生产 overlay）模板渲染冒烟
       # + digest 钉死渲染回归断言。用 alpine/helm 钉版 docker 镜像，免安装步骤。
       - name: Helm chart lint + 模板渲染冒烟

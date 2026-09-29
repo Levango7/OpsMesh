@@ -2204,11 +2204,95 @@ env 模板，但 `aio-svc` 读的是 `AIO_SVC_PORT`、`log-svc` 读的是 `LOG_S
 |---|---|---|
 | 1 | ~~看本轮 commit 的 CI step 级证据~~ **已完成**：run `36205827115`（13 job success，shellcheck step 与门禁第 9 节的输出行已取证）、run `36218894361`（矩阵修复 + 第 10 节） | 留下的唯一在办项是发布本身（第 2 项） |
 | 2 | ~~重切 `v0.9.2` 并验收产物~~ **已完成**（tag `9347554`，run `36327166836` 19/19 success）：Release assets 5 个、19/19 镜像带 `.sig`、17 份 SBOM 产物。过程里修掉两处只在发版时才暴露的问题（矩阵混入非服务模块 §19.6、签名自验证撞 GHCR 写后读窗口 §19.9） | 由此 0.9.2 成为**第一个镜像与二进制都真实发布成功、且带签名与 SBOM** 的版本 |
-| 3 | P1-7 许可与第三方合规（NOTICE/THIRD_PARTY、MPL-2.0 依赖的再分发含义、基础镜像来源目录） | 唯一剩下的 P1 大块，属商务 + 法务判定 |
+| 3 | ~~P1-7 许可与第三方合规~~ **技术面已收口**（§24.4）：离线清单 + 三条硬断言门禁（8 例故障注入）+ `NOTICE` 逐字汇编 7 段上游署名。**未收口的是判定面**：24 个 MPL-2.0（`go-sql-driver/mysql` 直接 + `hashicorp/*` 间接）能否随商用版分发＝商务 + 法务决定 | 脚本刻意只"分类与暴露"，不替法务签字；基础镜像的系统包与 `web/enterprise/node_modules` 是两条**已知未覆盖**的供应链线 |
 | 4 | 外部 GitOps chart 的 values 结构核对（需该仓库读权限） | §20.3 遗留的最后一处不确定 |
 | 5 | 统一控制面与微服务的 HTTP 指标命名（`opsmesh_http_*` vs 无前缀 `http_*`） | 破坏性变更，需随版本走；当前出厂规则/面板已用 `__name__` 并集兜住（§21.3） |
-| 6 | ~~微服务 `/metrics` 覆盖~~ **已补齐**（§21.7）：16/17 服务暴露 Prometheus 指标（真机逐进程复核），`grafana-bridge` 刻意不暴露且端点已收窄为 `/`+`/status`，`tf-provider` 不适用；`prometheus.yml` 补 6 个 compose 服务 job、chart `metrics: true` 12 条、`verify-runtime.sh` 期望同步；ServiceMonitor 期望值改为**由 values 派生**、并新增**抓取配置 ↔ 服务能力双向门禁**（第 11 节） | 仍留两处非阻断项：`workflow_svc` 未纳入 chart 的 services 段（无 ServiceMonitor，k8s 部署该服务时需先补条目）；13 个服务目前只有 `pkg/metrics` 的通用指标，**业务维度指标**（队列深度/业务计数器）仍是逐个服务后续接 |
+| 6 | ~~微服务 `/metrics` 覆盖~~ **已补齐**（§21.7）：16/17 服务暴露 Prometheus 指标（真机逐进程复核），`grafana-bridge` 刻意不暴露且端点已收窄为 `/`+`/status`，`tf-provider` 不适用；`prometheus.yml` 补 6 个 compose 服务 job、chart `metrics: true` 12 条、`verify-runtime.sh` 期望同步；ServiceMonitor 期望值改为**由 values 派生**、并新增**抓取配置 ↔ 服务能力双向门禁**（第 11 节） | 仍留一处非阻断项：`workflow_svc` 那条已**作废**（TD-60 阶段 2 把该服务连同另外四个一起删除，见 v0.10.0 破坏性变更第 1 条 ⇒ 无对象可补条目）；现存 12 个服务目前只有 `pkg/metrics` 的通用指标，**业务维度指标**（队列深度/业务计数器）仍是逐个服务后续接 |
 | 7 | node_exporter 是否纳入出厂栈 | 决定主机级告警（磁盘等）能否默认可用；现在只能以 `.example` 形式提供（§21.2） |
 | 8 | 微服务剩余约 250 处 `Printf` 的逐点严重级别升级 | 增量改进，统一管道已就位 |
 | 9 | 把交付脚本的 shellcheck 口径从 `-S warning` 提到 `-S info`（余 39×SC2015、3×SC2012） | 可读性而非正确性；提口径前要逐条判"是否真死变量"，与本轮 SC2034 的处置同法，不宜顺手 |
 | 10 | ~~版本源仍写 0.9.0~~ **已处理**：全量对齐到 0.9.2，并在 `release.yml` 加「标签 == Chart appVersion」硬门禁（见 §19.7）。**残留待办**：本机在跑的 `deploy/docker/.env` 仍是 `OPSMESH_VERSION=0.9.0`（未跟踪、属用户部署状态），升级到 0.9.2 需显式执行数据卷兼容的镜像替换而不是直接改 tag | 直接改 `.env` 的 tag 会让已在跑的容器换镜像；MySQL 数据卷的迁移是 §P0-5 那条链路，需要按升级流程走而不是改标签 |
+| 11 | **Release 单一所有者化**（§24.3）：删掉 `release.yml` 的 `github-release` job，把正文/release-notes 收进 goreleaser，并在 goreleaser 之后加 `gh release view --json assets` 长度断言 | 实测 `v0.10.0` 有 **约 24 分钟**（09:42:36Z→10:09:06Z）Release 已发布但零资产；两个 workflow 共同拥有同一个 Release，谁先到谁建。改完必须下一次发版才能验，故单列不宜顺手 |
+| 12 | `cosign attest` 产出 `.att`（SBOM 作为镜像侧证据链）——目前 `.att` **0/14**，SBOM 只作为 workflow 产物存在 | 客户用 `cosign verify-attestation` 应当能**从镜像本身**问到"里面有什么"，而不是去翻 CI 界面下载附件 |
+| 13 | 许可清单另两条供应链线未覆盖：`web/enterprise/node_modules`（npm 依赖）与镜像内操作系统包（基础镜像的 GPL/LGPL 二进制再分发义务） | 属**已知缺口**而非"已确认无风险"；前者可复用同一套分类器，后者要接 Trivy/SBOM 侧数据 |
+
+## 24. v0.10.0 发布验收 + P1-7 许可清单工程化（2026-09-29）
+
+### 24.1 v0.10.0 四条验收全过（tag `c517df5`）
+
+| 验收项 | 实测结果 |
+|---|---|
+| ① Release assets 非空 | **5 个**：`checksums.txt` + linux/amd64 与 arm64 各一对（`tar.gz` + `.sbom.json`），`isDraft=false`、`prerelease=false` |
+| ② 核心镜像版本化标签 | `opsmesh-binary:0.10.0`、`opsmesh-agent:0.10.0` 均 HTTP 200 |
+| ③ 微服务镜像齐备 | 矩阵 12 条 × `:0.10.0` = **12/12 200**（`services/` 13 目录 − `tf-provider` 豁免，与门禁第 2/10 节一致） |
+| ④ 签名与 SBOM | **`.sig` 14/14**（含 2 个核心镜像）；**`.att` 0/14**（尚未做 `cosign attest`，见 §23 追加项）；SBOM 产物 **12/12**（`sbom-<svc>`）+ 二进制 SBOM 已在 Release 资产里 |
+
+取证 run：`36550147571`（ci.yml，tag 触发，13 job 全 success，含 `release`=goreleaser）与 `36550147538`（release.yml，镜像矩阵）。
+
+### 24.2 我自己的一次误判（记下来，别把"还没跑到"读成"回归"）
+
+`gh release view v0.10.0 --json assets` 一度返回 `assets=0`，我据 §19.1 的先例（v0.9.1 空壳发布）判成回归。**错**：那次执行发生在 goreleaser 之前。真实时序是
+
+```
+09:42:27Z → 09:42:36Z   release.yml 的 github-release job（softprops）建好并发布 Release，资产 0 个
+10:06:09Z → 10:09:06Z   ci.yml 的 release job（goreleaser）跑完，补上 5 个资产
+```
+
+⇒ 结论层面：**"资产为 0" 只有在该 run 的 `release` job 终态之后才有意义**。判定发布物要先确认拥有发布职责的那个 job 已经 `completed`。
+
+### 24.3 同时量化出一处真隐患：两个 workflow 共同拥有同一个 Release
+
+上面的时序不是巧合，而是结构问题：
+
+- `release.yml` 的 `github-release` 只 `needs: [build-and-push, changelog]`——镜像推完就发布；
+- `ci.yml` 的 `release`（goreleaser）`needs` 八个质量门禁 job，天然晚 ~24 分钟；
+- 两者对**同一个 tag 的 Release** 各自 `create`，谁先到谁建，后者复用（本轮实测：goreleaser 复用了 softprops 建的 Release 并成功追加资产——这条行为此前从未被真实发布验证过）。
+
+**客户可见后果**：`v0.10.0` 发布后有 **约 24 分钟** Release 页面存在但没有任何二进制（09:42→10:09）。这期间按 Release 页"最新二进制"安装的脚本会拿到 404。0.9.2 之所以没暴露，是因为那一轮 ci.yml 的 tag run 是红的、goreleaser 早在另一轮就跑过了——**没暴露不等于不存在**。
+
+**建议改法（未动，需下一次发版才能验）**：单一所有者——把 Release 正文/`generate_release_notes` 收进 goreleaser（`.goreleaser.yml` 的 `release.header` + changelog 已具备），删掉 `release.yml` 的 `github-release` job；并在 goreleaser 之后加一条 `gh release view "$TAG" --json assets` 的长度断言（≥5 判红），让"发布成功但没产物"从此不可能绿。
+
+### 24.4 P1-7：第三方许可从"主观描述"变成"可机器复算 + 可门禁"
+
+交付物三件：
+
+- `deploy/scripts/gen-third-party-licenses.sh`——**完全离线**：依赖全集取各模块 `go.sum`（跳过 `/go.mod` 哈希行），许可证文本取本地 Go 模块缓存里上游自带的 `LICENSE`，按签名表分类成 SPDX 名。三种模式：生成 / `--check` / `--emit-notice`。
+- `docs/third-party-licenses.md`——162 个模块，`Apache-2.0 50 / MIT 47 / BSD-3-Clause 31 / MPL-2.0 24 / BSD-2-Clause 9 / ISC 1`，**UNKNOWN 0**；24 项进「需法务确认」= 全部 MPL-2.0（`go-sql-driver/mysql` 直接依赖 + `hashicorp/*` 间接）。
+- `NOTICE`——由 `--emit-notice` 汇编，逐字保留 7 个上游自带 NOTICE 的署名（Apache-2.0 §4(d) 是**可机械核实**的义务，不是判断题）。已逐段比对字节级一致：`agext/levenshtein`、`prometheus/{client_golang,client_model,common,procfs}`、`grpc`、`gopkg.in/yaml.v3`。
+
+**分类器踩过的四个坑**（都已进注释，防止下次"修好又改回去"）：
+
+1. `go.sum` 同一模块有 `<ver> h1:` 与 `<ver>/go.mod h1:` 两类行，后者只是 go.mod 的哈希 ⇒ 版本必须取第二列并**跳过 `/go.mod`**；
+2. 模块缓存对大写路径做转义（`X` → `!x`），不转义则整批目录找不到；
+3. Apache/GPL 的标题在原文里跨行缩进 ⇒ 必须折叠空白再匹配，否则第一版实测把 50 个 Apache 全判成 UNKNOWN；
+4. **copyleft 只能看文件头部**：MPL-2.0 的 "Incompatible With Secondary Licenses" 附录里出现 "GNU AFFERO GENERAL PUBLIC LICENSE" 字样 ⇒ 整篇扫会把 24 个 MPL 误判成 AGPL；而 MPL §10 又提到 "version 1.1" ⇒ 版本号只能从**标题行**读，否则 24 个 MPL-2.0 降级成 MPL-1.1。**AGPL 误报足以阻断商用决策**，这两处误判的代价是不对称的。
+
+**门禁形态的取舍（这轮最有价值的一条）**：`--check` 最初写成"重新生成 + 全文 diff"，随即改掉——许可证识别依赖模块缓存，CI 的缓存必然比开发机残缺 ⇒ 全文 diff 得到的是**假红**；反过来把读不到的项整段忽略，又变成"CI 读不到就当已确认"的**空转绿**（§15.2 第三类的又一个形态）。改成三条与环境无关的硬断言：
+
+1. `(module, version)` 集合相等（版本变了集合就变 ⇒ 最常见的漂移形态完整覆盖）；
+2. 两侧都读到 LICENSE 文本的模块，判定必须一致；
+3. 源码覆盖率 `< MIN_COVERAGE_PCT`（默认 90）直接判红，并在通过但未满时打 `[WARN] …未被核对，不等于已确认`。
+
+**故障注入 8 例全过**（每条都断言退出码，不只是看输出）：删 1 个模块行 → rc=1；版本号漂移 → rc=1；同 module@version 判定变化 → rc=1（47 处）；缓存全缺 → rc=1 且打"本轮等于没检查"；下限调 101% → rc=1（证门禁下限算术真生效）；恢复 → rc=0；`--check` 判红时不得改写文档；生成器内部报错（把 `go` 从 PATH 摘掉）时**不得覆盖**已提交文档。
+
+**顺手抓到的两处正确性问题**：
+
+- **`--check` 的退出码被末命令吞了**：重排脚本后收尾是 `rm -f "$TMP"` ⇒ 无论判出什么都绿灯，`--check` 的三条断言全部形同虚设。改为显式 `exit "$PYRC"`。这正是本项目反复踩的"输出与退出码不许被管道/末命令吞"，**这次是我自己造的**。
+- **版本选择靠字典序最大值**：`sorted(vs)[-1]` 会把 `v1.10.0` 排在 `v1.9.0` **之前**，即清单可能给某模块配上根本没在用的旧版本，许可证判定跟着错。当前 6 个多版本模块恰好两种序一致（实测），那是运气不是性质 ⇒ 改成语义序 `semver_key`（预发布/伪版本判低、`+incompatible` 正确），并单测 6 例。同时把「同一模块在 go.sum 里有多个版本」这 6 个模块显式列进文档，并注明 **`go.sum` 是构建清单（`go list -m all`）的超集**，产物级依赖请以镜像 SBOM 为准。
+
+**诚实边界（写清楚，别让清单替自己签字）**：
+
+- 脚本**只分类与暴露，不判定可否分发**。24 个 MPL-2.0 的处置（是否触发文件级 copyleft 义务、是否需要在文档中告知客户源码获取方式）属**商务 + 法务决定**，P1-7 的技术部分到此收口，结论部分未收口。
+- 镜像里的操作系统包是**另一条供应链线**（基础镜像 `debian:bookworm-slim` 的 GPL/LGPL 二进制再分发义务），本清单不含，文档单列了一节指向 `FROM` 与 Trivy。
+- 前端 `web/enterprise/node_modules` 的 npm 依赖未纳入（本轮范围是 Go 侧）——这是**已知缺口**，不是"已确认无风险"。
+
+### 24.5 GHCR 探针的第二个媒体类型坑
+
+`.sig` / `.att` 是**单个 manifest**，不是 index。用 `Accept: application/vnd.oci.image.index.v1+json`（或多类型串里只有 index/list）去取会得 **404 假阴性**——本轮一度据此判"14/14 全未签名"。正确口径：
+
+```
+manifest（镜像）  Accept: application/vnd.oci.image.index.v1+json
+manifest（.sig）  Accept: application/vnd.oci.image.manifest.v1+json   ← 少这一条就全 404
+```
+
+`tags/list` 能直接看见 `sha256-<digest>.sig` 条目，是区分"探针错"与"真没签"的最快反证。与 §19.1 那条（查 index 必须带 OCI index 类型）同族：**探针的媒体类型不匹配时，注册表回答的是"我没法用这个类型给你"，不是"不存在"**。

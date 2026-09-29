@@ -14,6 +14,17 @@
 2. **代理域写方法权限收紧**（六域 `*:read`→`*:write`，device DELETE→`device:delete`、provision→`provision:execute`）——只读凭证经代理做写操作现在开始 403。
 3. **代理身份头一律剥离重注入 + X-User-Id 与令牌交叉校验**——依赖「自发身份头直连控制面」的部署必须显式开 `--trust-gateway-headers=true`（生产模式强制 false）。
 
+## [Unreleased] — 2026-09-29 P1-7 第三方许可清单工程化（离线生成 + 三条硬断言门禁 + NOTICE 逐字汇编）
+
+> 证据：`deploy/scripts/gen-third-party-licenses.sh` 三模式本机跑通；`--check` 的 **8 例故障注入**全部按退出码断言（删除模块行 / 版本漂移 / 判定变化 / 缓存全缺 / 下限 101% / 恢复为绿 / 判红不改写文档 / 生成器内部报错不覆盖文档）；`semver_key` 单测 6 例；`NOTICE` 7 段与上游文件**字节级逐字一致**；`shellcheck -S style` 与 `actionlint v1.7.7` 0 问题。详见 `docs/commercial-readiness-review-2026-09-25.md` §24.4。
+
+- **动机**：P1-7 此前只有一句「依赖含 MPL-2.0」的主观描述，企业客户尽调要的是**可复算的事实**。新增完全离线生成器：依赖全集取各模块 `go.sum`（跳过 `/go.mod` 哈希行），许可证文本取本地 Go 模块缓存里上游自带的 `LICENSE`，按签名表归到 SPDX 名。产出 `docs/third-party-licenses.md`：**162 个模块，UNKNOWN 0**（Apache-2.0 50 / MIT 47 / BSD-3-Clause 31 / MPL-2.0 24 / BSD-2-Clause 9 / ISC 1），24 项进「需法务确认」＝全部 MPL-2.0（`go-sql-driver/mysql` 直接依赖 + `hashicorp/*` 间接）。
+- **只分类不判定**：脚本明确写出「本清单不做的事」——能否随商用版分发是商务 + 法务决定；`go.sum` 是构建清单（`go list -m all`）的**超集**，产物级依赖以镜像 SBOM 为准；镜像内系统包与前端 `node_modules` 是另两条**未覆盖**的供应链线（已记入 §23 第 13 项，不是"已确认无风险"）。
+- **`NOTICE` 由机器汇编**：Apache-2.0 §4(d) 要求上游自带 NOTICE 的署名必须在再分发时保留——这是可机械核实的义务而非判断题。`--emit-notice` 逐个逐字收进仓库根 `NOTICE`（7 个模块：`agext/levenshtein`、`prometheus/{client_golang,client_model,common,procfs}`、`grpc`、`gopkg.in/yaml.v3`）。
+- **门禁形态是这轮的关键取舍**：`--check` 最初写成"重新生成 + 全文 diff"，随即改掉——CI 的模块缓存必然比开发机残缺 ⇒ 全文 diff 只会**假红**；整段忽略读不到的项又变成"CI 读不到就当已确认"的**空转绿**。改为三条与环境无关的硬断言：`(module, version)` 集合相等 / 双读结果一致 / 源码覆盖率 `< MIN_COVERAGE_PCT`（默认 90）即判红，未满时还打 `[WARN] …未被核对，不等于已确认`。CI 的 `security` job 已接入。
+- **自己造的两处回归，主动披露**：① 重排脚本后收尾是 `rm -f "$TMP"`，**`--check` 的退出码被末命令吞掉**——三条断言全写对了却恒绿灯，故障注入第一步就抓出来，改 `exit "$PYRC"`；② 分类器的版本选择用 `sorted(vs)[-1]`（字典序），会把 `v1.10.0` 排在 `v1.9.0` 之前 ⇒ 可能给模块配上根本没在用的旧版本。当前 6 个多版本模块恰好两种序一致（实测，属运气），已改成语义序 `semver_key`（预发布/伪版本判低、`+incompatible` 正确）并把这 6 个模块显式列进文档。
+- **签名探针的媒体类型坑**（取证过程中自造过一次"14/14 全未签名"的假阴性）：`.sig`/`.att` 是**单个 manifest** 不是 index，`Accept` 必须是 `application/vnd.oci.image.manifest.v1+json`；用 index 类型或 `*/*` 都会得 404。与 §19.1 同族——注册表回答的是"这个类型我给不了"，不是"不存在"。
+
 ## [Unreleased] — 2026-09-29 逐域真实流量取数出口（TD-60 §5.3 裁决前提补齐）+ 批次① errcheck 红点收口
 
 > 证据：`go build ./...`/`go vet ./...` 全绿；`go test ./internal/controlplane/ ./internal/metrics/` 全绿；新代码 `-race` 通过（CGO_ENABLED=1 + msys64 gcc）；根 `.golangci.yml` 与 `.golangci.services.yml` 均 `0 issues`（golangci-lint 2.13.2，与 CI 同版）。实现与裁决阈值口径见 `docs/td60-decision-2026-09-26.md` §5.8（代码提交 `983d49b`、红点收口 `9c40380`）。
