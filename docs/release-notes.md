@@ -26,6 +26,7 @@
 - **autoscaler-svc 指标读取恒失败**：`ReadMetric` 请求 `/api/v1/query`（JSON API）却按 exposition 文本逐行解析，真实 Prometheus 下恒报 `no metric found`、评估器恒 `no_action`——自动伸缩链路第一步即断。改按 JSON 契约解析（`status`/`errorType` 报错、空 `result` 保留原语义、`value[1]` 非数字显式报错）。
 - **portal 前端数据面全不可用**：三端点 404、`GET /api/v1/requests` 返回 snake_case 裸数组致前端列表全空、`POST /api/v1/requests` 因缺 title 400。
 - **aio-svc 噪声压缩测试偶发失败**：去重按分钟桶（`FiredAt.Unix()/60`）而样本用 `time.Now()`+10s，跨分钟边界不合并（CI run 36453413667 实测）→ 测试改用固定桶内时间戳。
+- **task-svc 选主租约：释放后同毫秒不可接管**（边界缺陷，非回归——同一代码在上一个绿 run 通过，真 MySQL 后端撞上毫秒边界才现形）。`Release` 写 `lease_until = NOW(3)`，而 `Acquire` 的接管条件只判 `lease_until < NOW(3)`，落在同一毫秒时接管落空，「优雅退出后其余副本不必等自然过期即可接管」的语义在释放那一刻不成立。接管条件补 `holder_identity = ''`（无持有者即空闲），并发单赢家语义不变；新增不等 sleep 的 20 轮回归用例把偶发固化为必然判据。**影响**：`TASK_SVC_LEADER_MODE=mysql` 且 `replicas>1` 时，接管可能延迟到一个续租周期之后（生产上是可用性毛刺，不是双主风险）。
 - **本仓 self-inflicted**：批次① 在 portal-svc 引入的 `_ = json.NewDecoder(...).Decode(...)` 被 errcheck `check-blank`（TD-71 收紧档）拦下，令 `services` job 红；改用仓库既有 best-effort 惯例（`io.EOF` 按零值继续、其余落日志留痕）。
 
 ### 工程与门禁
