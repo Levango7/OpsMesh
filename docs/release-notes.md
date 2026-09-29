@@ -45,11 +45,17 @@
 - `deploy/scripts/validate-deploy-assets.sh` → **PASS=36 / FAIL=0**；根模块 + 12 个存量服务模块 build / vet / 测试全绿。
 - 两套 lint 配置均 `0 issues`（golangci-lint 2.13.2，与 CI 同版）：根 `.golangci.yml`、服务 `.golangci.services.yml`。
 - 新增/收口测试：身份头治理 5 例（含非 default 租户传播直接证据）、流量聚合 10 例、RBAC 目录守护、portal/autoscaler 防回归 17 例；controlplane 全包 `-race` 由 CI `Race detector` job 复验。
-- tag 触发的真发版验收（Release assets、12 镜像 + `.sig`、SBOM）以该 tag 的 run 结果为准，发布后回填本小节。
+- **发布链实测（tag `v0.10.0` = commit `c517df5`）**：
+  - `release.yml` run `36550147538` **success**——12 个微服务 `build-and-push` 矩阵 + `github-release` 全通过（矩阵 17→12 之后的第一次真发版）。
+  - GitHub Release `v0.10.0` 已发布（非 draft），assets **5 个**：`checksums.txt` + `opsmesh-0.10.0-linux-{amd64,arm64}.tar.gz` 及各自 `.sbom.json`。
+  - GHCR 逐镜像实测（取 `manifests/0.10.0` 的 `docker-content-digest`，再请求 `<digest>.sig`）：**14/14 镜像 tag 可解析且 cosign 签名在位**（12 微服务 + `opsmesh-binary` + `opsmesh-agent`），无缺失。
+  - **一处缺口如实登记**：`<digest>.att`（镜像级 SBOM 证明链）**14/14 全 404**——该链由 tag 之后的 `b092df5` 才引入，v0.10.0 产物不可能含它；Release 页那 2 份 `.sbom.json` 只覆盖核心二进制的 tarball，不覆盖任何镜像。镜像级 SBOM 需下一版 tag 才成为交付物。
+- 同 head 的 `ci` run `36545861598`：**12 job success**（`release` skipped 属非 tag 触发预期）。其中 `services` job 在真 MySQL 后端上实跑了 task-svc 选主租约三条用例 ⇒ §5.8 之后那处「释放后同毫秒不可接管」的修复属**已复验**（本机无 Docker/无 `OPSMESH_TEST_MYSQL_DSN`，这些用例在本地只能 SKIP）。
 
 ### 已知问题（本版未覆盖，已在册）
 
-- 五域最终裁决仍**待真实流量观察期**（取数出口已具备，见新增能力与 §5.8 口径）；`auth-svc` 有据暂缓接通（部署侧 `AUTH_SVC_HTTP_ENABLED` 全量未设置，helm `auth_svc.enabled=false` + `storeType: memory`）。
+- 五域最终裁决：`gpu` / `portal` / `autoscaler` 仍**待真实流量观察期**（取数出口已具备，见新增能力与 §5.8 口径）；`incident-svc` / `runbook-svc` 经静态取证改判为**「已接线但部署不可达、流量恒 0 是结构性的」**，不必等观察期，需按 §5.9 的三条路（转正 / 冻结 / 删除）择一。`auth-svc` 有据暂缓接通（部署侧 `AUTH_SVC_HTTP_ENABLED` 全量未设置，helm `auth_svc.enabled=false` + `storeType: memory`）。
+- **三域能力缺陷（§5.9 登记，本版未修）**：gpu 指标来自 `math/rand` 且无样本时回退到模拟值（面板利用率非观测值）+ 节点表 4/6 列无数据源；incident 复盘读不到 `content`、MTTD 恒 0、时间轴 `evt.content` vs `description`；runbook 只有内存 store（重启全丢）+ 编辑器 Save 是 `alert()` 假动作。另：`operator` 角色因权限白名单不含这三域，**连页面都进不去（403）**。
 - 微服务存储层测试覆盖极低（config-svc 0.7% / alert-svc 1.7% / gpu-svc 1.6% / auth-svc 2.4%）却在 prod 以 `*_STORE_TYPE=sql` 跑真 DSN——单体侧 P0-4 的修复不覆盖它们。
 - TD-61 父包下沉（controlplane 顶层 134 文件 / store 96 文件）、TD-63 `buf generate` 根治、P1-7 许可与第三方合规（NOTICE / MPL-2.0 再分发）。
 

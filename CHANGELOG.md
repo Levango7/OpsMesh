@@ -4,6 +4,16 @@
 
 > 当前最新已发布版本：`v0.10.0`（2026-09-29，TD-60 阶段 2 收口——五服务删除 + 域完善与身份头治理 + 逐域流量取数出口；上一版 `v0.9.2` 2026-09-27 为商用就绪收口 + 发版链路加固）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-09-30 v0.10.0 发布链验收回填 + 三域静态契约取证（TD-60 两域改判）
+
+> 证据：release run `36550147538`（success）+ `gh release view v0.10.0`（assets 5）+ GHCR 逐镜像 HTTP 实测（14/14 `0.10.0` 可解析、`.sig` 200、`.att` 404）；三域取证为静态证据（file:line + grep 计数），子代理全量扫 + 本人逐条抽查。详见 `docs/release-notes.md` v0.10.0 验证段与 `docs/td60-decision-2026-09-26.md` §5.9。
+
+- **验收回填**：v0.10.0 的 release-notes 验证段此前留了「发布后回填」占位，现补实测数字——12 微服务 `build-and-push` 矩阵 + `github-release` 全 success；GitHub Release 非 draft、assets 5 个；**14/14 镜像 tag 可解析且 cosign 签名在位**（12 服务 + binary + agent，逐个取 digest 再请求 `<digest>.sig`）。
+- **一处缺口如实登记**：`<digest>.att`（镜像级 SBOM 证明链）**14/14 全 404**——该链由 tag 之后的 `b092df5` 才引入，v0.10.0 产物不可能含；Release 页那 2 份 `.sbom.json` 只覆盖核心二进制 tarball。**镜像级 SBOM 需下一版 tag 才成为交付物。**
+- **三域取证改判（§5.9）**：`incident-svc` / `runbook-svc` 在生产栈里**根本不可达**（compose prod 出现 0 次、全 `deploy/` 无 `INCIDENT_SVC_URL`/`RUNBOOK_SVC_URL`、helm 两者 `enabled:false`、默认后端 127.0.0.1:8082 预检失败即 503）⇒ 「待真实流量」对它们是伪前提，流量恒 0 属结构性事实，改判为「已接线但部署不可达」，按转正/冻结/删除三选一；`gpu-svc` 指标来自 `math/rand`（`CollectMetrics` 注释自陈 simulates，且 `service.go:308-313` 无样本时回退到它）+ 节点表 4/6 列无数据源 ⇒ 「可达但数据面失真」。观察期只对 gpu/portal/autoscaler 有意义。
+- **另立独立缺陷**：`operator` 角色因 `operatorGroups` 不含 gpu/incident/runbook（`sql_rbac.go:576-583`）而**连三域页面都进不去 403**（前端门是 `*:read`），与裁决正交、无论走哪条路都要修。runbook 另有两处硬缺陷：只有内存 store（`main.go:30` 重启全丢）、编辑器 Save 是 `alert()` 假动作。
+- **抽查剔除一条误报**：子代理称 `OPSMESH_SERVICE_PROXY=off` 的注释假设单体有同名 handler 与实际矛盾——复核 `service_proxy.go:445-452`，注释**已明说**「单体没有该域实现时 mux 直接 404，这比返回 503 更诚实、也不掩盖该事实」，语义与实现一致，不成立。**记录以免下轮把扫描产出的假矛盾当成待修项。**
+
 ## [0.10.0] — 2026-09-29（TD-60 阶段 2 收口：五服务删除 + 域完善与身份头治理 + 流量取数出口）
 
 本版把 TD-60「先接通、再裁决」推进到**可裁决**状态：五域接线与权限逐条镜像、五个从未部署的服务删除、两个真 bug（autoscaler 指标读取恒失败、RBAC 目录 15 项缺失致含 admin 一律 403）、代理身份头统一治理（多租户落错桶 + 同租户内审计伪造），并补上裁决所缺的真实流量取数出口。详细分组见 `docs/release-notes.md` 的 v0.10.0 小节。
