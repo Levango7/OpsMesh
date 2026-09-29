@@ -2,8 +2,8 @@ apiVersion: v2
 name: opsmesh
 description: OpsMesh 自动化部署与运维平台
 type: application
-version: 0.9.2
-appVersion: "0.9.2"
+version: 0.10.0
+appVersion: "0.10.0"
 keywords:
   - ops
   - automation
