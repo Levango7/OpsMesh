@@ -218,7 +218,11 @@ func (m *MySQLStore) DeleteRunbook(id string) bool {
 		return false
 	}
 	if n > 0 {
-		_, _ = m.db.ExecContext(ctx, `DELETE FROM runbook_executions WHERE runbook_id = ?`, id)
+		// 执行历史随 runbook 一并清理；失败只记日志（下个删除周期无重放入口，
+		// 但 runbook 本体已删，孤儿执行记录不影响正确性）。
+		if _, err := m.db.ExecContext(ctx, `DELETE FROM runbook_executions WHERE runbook_id = ?`, id); err != nil {
+			log.Printf("[store] 清理执行历史失败: %v", err)
+		}
 	}
 	return n > 0
 }
