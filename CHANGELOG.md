@@ -4,6 +4,14 @@
 
 > 当前最新已发布版本：`v0.10.0`（2026-09-29，TD-60 阶段 2 收口——五服务删除 + 域完善与身份头治理 + 逐域流量取数出口；上一版 `v0.9.2` 2026-09-27 为商用就绪收口 + 发版链路加固）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-01 供应链：axios 1.19.0 → 1.20.0（Trivy 刷新库后暴露 7 条 HIGH）
+
+> 证据：CI security job 的 Trivy fs 报告（trivy-fs-report 产物，v0.70.0 + 当日刷新库）——`web/enterprise/package-lock.json` 的 npm 目标 7 条 HIGH（全部在 axios 1.19.0，Fixed Version 1.20.0），**Go 侧 14 个 go.mod 全部 0 命中**；升级后本地 `npm run build` 通过、前端 52 个测试文件 / 1126 例全绿，`axios/package.json` 实测 `1.20.0`。
+> 性质说明：与本次代码改动无关——同一个 job 在 4 小时前的 `1d5127f` 上是绿的，是漏洞库刷新后暴露的**存量**依赖问题。**Fixed Version 存在 ⇒ 不适用 `.trivyignore` 的「无修复版本」豁免条件**，故选择升级而非豁免。
+
+- **升级｜axios 1.19.0 → 1.20.0**（`web/enterprise/package.json`：`^1.7.7` → `^1.20.0`）：7 条 HIGH 均由 1.20.0 修复（HTTP/2 代理与 DNS 设置未生效导致安全控制绕过、HTTP/2 会话初始化 DoS、畸形 data URL DoS、继承 `createConnection` 导致请求 socket 劫持、构造重定向主机名 DoS、fetch 适配器重定向限制绕过导致 SSRF、表单序列化原型污染 gadget）。lockfile 只改 3 行（version/resolved/integrity）。
+- **一处供应链细节**：本机 npm 默认走镜像源，首次安装把 lockfile 的 `resolved` 改写成第三方镜像地址；已用 `--registry=https://registry.npmjs.org/` 重装纠正（integrity 哈希不变，内容寻址）——**不把第三方镜像固化进交付物**。
+
 ## [Unreleased] — 2026-10-01 TD-60 收尾：转正落地回写 + cron 双实现差异中的三个真缺陷 + gpu 来源可见
 
 > 证据：`gofmt -l internal/cron pkg/cron services/incident-svc/internal/store` 干净；根模块 `go build ./...` + `go vet ./internal/... ./pkg/...` RC=0；`go test ./internal/cron/ ./pkg/cron/ ./internal/controlplane/ ./internal/store/ -count=1` 全绿；`services/task-svc` 与 `services/incident-svc` 模块 `go build ./...` + `go test ./... -count=1` 全绿；前端 `npm run build` + 52 个测试文件/1126 例全绿；`validate-deploy-assets.sh` PASS=32 / FAIL=0（另归一化了 compose 工作区行尾：门禁第 6 节只认工作区字节，HEAD blob 本就是 LF）。守卫测试均经**变异检验**：拆掉周 7 兜底/单值越界检查、删 DDL 里的 `occurred_at`、把迁移语句改名——四次全被判红，还原后复绿。详见 `docs/td60-decision-2026-09-26.md` §5.11。
