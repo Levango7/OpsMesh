@@ -72,6 +72,7 @@ func initSchema(db *sql.DB) error {
 			device_ids JSON,
 			assignee VARCHAR(64),
 			tags JSON,
+			occurred_at DATETIME,
 			detected_at DATETIME,
 			resolved_at DATETIME,
 			closed_at DATETIME,
@@ -95,6 +96,37 @@ func initSchema(db *sql.DB) error {
 			return err
 		}
 	}
+	return ensureIncidentColumns(db)
+}
+
+// ensureIncidentColumns 给**既有**表补上后加的列。
+//
+// 背景（2026-10-01 复核出的部署路径依赖缺陷）：occurred_at（MTTD 起点）最初只加进了
+// deploy/docker/scripts/init-mysql.sql，而本包 initSchema 的 CREATE TABLE IF NOT EXISTS
+// 不含该列——于是在「服务自建表」的部署（K8s / 自备 MySQL，即本服务默认路径）里，
+// 表根本没有 occurred_at，CreateIncident 的 INSERT 每次都以 Unknown column 失败；
+// 而已有库上 IF NOT EXISTS 是 no-op，永远不会补列。
+//
+// MySQL 8 无 ADD COLUMN IF NOT EXISTS，故先查 information_schema 再决定是否 ALTER
+// （幂等：重复启动不会报 Duplicate column）。失败即返回错误——由 NewMySQLStore 向上抛，
+// cmd 侧 fail-fast 阻断启动：声明了持久化却写不进去，比启动失败更难发现。
+func ensureIncidentColumns(db *sql.DB) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.columns
+		  WHERE table_schema = DATABASE() AND table_name = 'incidents' AND column_name = 'occurred_at'`).Scan(&n); err != nil {
+		return fmt.Errorf("检查 incidents.occurred_at: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx,
+		`ALTER TABLE incidents ADD COLUMN occurred_at DATETIME NULL COMMENT '最早已知故障发生时刻（MTTD 起点，可空=未知不计入）'`); err != nil {
+		return fmt.Errorf("补列 incidents.occurred_at: %w", err)
+	}
+	log.Printf("[store] incidents 表已补列 occurred_at（既有库迁移）")
 	return nil
 }
 

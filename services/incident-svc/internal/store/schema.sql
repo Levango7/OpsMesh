@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS incidents (
     device_ids JSON,
     assignee VARCHAR(64),
     tags JSON,
+    -- occurred_at：最早已知故障发生时刻（MTTD 起点，可空=未知不计入）
+    occurred_at DATETIME,
     detected_at DATETIME,
     resolved_at DATETIME,
     closed_at DATETIME,
