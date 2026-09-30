@@ -13,6 +13,8 @@
     "utilizationChart": "GPU Utilization",
     "selectNodeHint": "Select a node to view metrics",
     "noMetrics": "No metrics data",
+    "sourceSimulated": "Metrics are simulated (no usable nvidia-smi on this node) — not a basis for capacity or alerting decisions",
+    "sourceReal": "Source: nvidia-smi (live collection)",
     "addWorkload": "Add Workload",
     "pullModel": "Pull Model",
     "metrics": "Metrics",

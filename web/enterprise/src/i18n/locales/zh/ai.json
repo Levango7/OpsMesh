@@ -13,6 +13,8 @@
     "utilizationChart": "GPU 利用率",
     "selectNodeHint": "选择节点查看指标",
     "noMetrics": "暂无指标数据",
+    "sourceSimulated": "指标来源为模拟数据（该节点无可用 nvidia-smi），不可作为容量规划或告警依据",
+    "sourceReal": "指标来源：nvidia-smi 真实采集",
     "addWorkload": "添加工作负载",
     "pullModel": "拉取模型",
     "metrics": "指标",

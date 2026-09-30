@@ -411,8 +411,10 @@ services:
       #
       # 地址用 compose 服务名（容器网络内可解析），端口与文件下方各服务
       # *_SVC_HTTP_PORT 保持一致。
-      # runbook/incident/autoscaler 三个域的微服务**未包含在本栈中**，故不设置：
-      # 保持默认值 → 请求得到 503（可见故障），而不是指向一个不存在的服务。
+      # runbook/incident/autoscaler 三域已转正入栈（TD-60 §5.11，2026-10-01；服务定义见本文件
+      # 下方 runbook-svc / incident-svc / autoscaler-svc 段），故一并显式给出地址。
+      # 此前不设置这三条时，请求会得到 503（可见故障）而不是指向不存在的服务——
+      # 该“可见故障”行为仍由控制面的 proxySelfLoopTarget/预检失败路径保留给未接通的域。
       # 一域当前由谁处理、后端是什么、自检结论如何，查 GET /api/v1/admin/service-routing。
       GPU_SVC_URL: http://gpu-svc:8107
       PORTAL_SVC_URL: http://portal-svc:8109

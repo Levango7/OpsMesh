@@ -224,4 +224,43 @@ describe('useGpuStore', () => {
       expect(store.activeWorkloads).toBe(1)
     })
   })
+
+  // 指标来源判定（TD-60 §5.11）：后端在无 nvidia-smi 时回退模拟并标 source=simulated，
+  // 视图据此显示「不可作运维依据」。这一组断言钉住"不把未知当可信"的属性：
+  // 只有明确 nvidia-smi 才是真实，缺省/未知/混合都算合成数据。
+  describe('metricsSynthetic（指标来源判定）', () => {
+    it('source=simulated 判为合成数据', () => {
+      const store = useGpuStore()
+      store.metrics = [{ avg_utilization: 72, source: 'simulated' }]
+
+      expect(store.metricsSynthetic).toBe(true)
+    })
+
+    it('source 缺省判为合成数据（不把未知当可信）', () => {
+      const store = useGpuStore()
+      store.metrics = [{ avg_utilization: 72 }]
+
+      expect(store.metricsSynthetic).toBe(true)
+    })
+
+    it('source=nvidia-smi 判为真实采集', () => {
+      const store = useGpuStore()
+      store.metrics = [{ avg_utilization: 72, source: 'nvidia-smi' }]
+
+      expect(store.metricsSynthetic).toBe(false)
+    })
+
+    it('同一节点多台 GPU 只要有合成数据即告警', () => {
+      const store = useGpuStore()
+      store.metrics = [{ source: 'nvidia-smi' }, { source: 'simulated' }]
+
+      expect(store.metricsSynthetic).toBe(true)
+    })
+
+    it('无指标样本时不误报', () => {
+      const store = useGpuStore()
+
+      expect(store.metricsSynthetic).toBe(false)
+    })
+  })
 })

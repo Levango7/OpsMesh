@@ -8,7 +8,9 @@
 //   POST   /api/v1/gpu/models        {name,nodeId}         → 200 {status,message}
 //   DELETE /api/v1/gpu/models/{name}                        → 204
 //   GET    /api/v1/gpu/quotas                               → 200 {quotas: [{tenantId,totalGpu,usedGpu,limit}]}
-//   GET    /api/v1/gpu/metrics?nodeId={id}&range={range}    → 200 {metrics: [{timestamp,utilization,memory,temperature}]}
+//   GET    /api/v1/gpu/metrics?nodeId={id}&range={range}    → 200 {metrics: [{node_id,timestamp,source,gpus:[{index,utilization_pct,memory_used_mb,temperature_c,...}],avg_utilization,total_memory_used_mb,avg_temperature_c}]}
+//         字段名为 snake_case（后端 models.GPUMetrics 的 json tag）；source=nvidia-smi 为真实采集，
+//         simulated 为无 GPU/无该工具时的兜底——GpuView 据此显示来源提示，消费方不得把 simulated 当容量依据。
 import { getJSON, postJSON, deleteJSON } from './request'
 
 // ---------- GPU 节点 ----------

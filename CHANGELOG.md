@@ -4,6 +4,18 @@
 
 > 当前最新已发布版本：`v0.10.0`（2026-09-29，TD-60 阶段 2 收口——五服务删除 + 域完善与身份头治理 + 逐域流量取数出口；上一版 `v0.9.2` 2026-09-27 为商用就绪收口 + 发版链路加固）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-01 TD-60 收尾：转正落地回写 + cron 双实现差异中的三个真缺陷 + gpu 来源可见
+
+> 证据：`gofmt -l internal/cron pkg/cron` 干净；根模块 `go build ./...` RC=0；`go vet ./internal/cron/ ./pkg/cron/` RC=0；`go test ./internal/cron/ ./pkg/cron/ -count=1` 全绿；`services/task-svc` 模块 `go build ./...` + `go test ./... -count=1` 全绿；守卫测试经**变异检验**（拆掉周 7 兜底、拆掉单值越界检查——两次都被 `TestParity_*` 判红，还原后复绿）。详见 `docs/td60-decision-2026-09-26.md` §5.11。
+
+- **裁决落地回写**：§5.10 ④ 的「冻结（b）」作废 → 三域（incident / runbook / autoscaler）**转正（a）已落地**：compose prod 含三段服务定义（`deploy/docker/docker-compose.prod.yml:875/915/955`）+ 三条 `*_SVC_URL`（`:420-422`），`init-databases.sql` 新增 `opsmesh_runbook` 库与 incident `occurred_at` 列，runbook 落地 MySQL 持久化、编辑器 Save 由假动作改真实 PUT，incident 的 MTTD 补上「发生时刻」来源。`(c) 删除` 不再在桌上。
+- **修｜侧栏第六个入口 `bot`**：`navGroups.aiops` 此前只有 5 个入口，`/bot`（`bot:read` + `nav.bot` + `BotView.vue` + 权限点均已在位）仍是只能手敲 URL 的孤儿路由。补齐后六域孤儿路由归零。
+- **修｜gpu 的「模拟数据不可见」**：① 利用率图读 `m.utilization`，而 API 返回 `avg_utilization` ⇒ **柱高恒 0、tooltip 显示 `undefined%`**；② 后端已标注的 `source` 字段从未呈现到界面。图表改用真实字段名，并按来源显示徽标——**只有 `source === "nvidia-smi"` 才标「真实采集」，缺省/未知/simulated 一律告警呈现**（不把未知当可信）。`web/enterprise/src/api/gpu.js` 契约注释同步修正（原文写的是不存在的 camelCase 字段）。
+- **修｜cron 双实现差异中有三个真缺陷**（此前被登记为「故意差异、需手动同步」）：① 周字段 `7` 在 `pkg/cron` 永不匹配（文件头注释却声称 7=周日）⇒ 同一条 `0 3 * * 7` 在控制面执行、在 task-svc **静默不执行**；② 单值越界（`60 * * * *`）在 pkg 静默不匹配而非报错 ⇒ 非法表达式与「还没到点」在指标面上同形；③ pkg 逐字段短路返回 ⇒ `0 24 * * *` 只在整点前 1 分钟报错。三处已对齐 internal 语义，并新增 `internal/cron/parity_test.go`：共同语法面 × 六个时刻逐条断言两份实现结论一致、错误与否一致，**差异治理由「注释承诺手动同步」变为「CI 强制一致」**。保留差异只剩语法超集（`1,3-10/2,15`），已在守卫测试中显式断言。
+- **更正｜一处过期注释**：`deploy/docker/docker-compose.prod.yml:414` 仍写「runbook/incident/autoscaler 三个域的微服务未包含在本栈中，故不设置」，与同文件 `:420-422`/`:875+` 直接矛盾，已改为实际状态。
+- **登记｜仍未决项**（登记在 §5.11 ⑤，不替产品/法务决定）：24 个 MPL-2.0 依赖的商用分发（法务）、gpu 模拟兜底的替代数据源、微服务 `internal/store` 补测试、`node_modules` 与基础镜像 OS 包的供应链口径、`tenant.go` 级联清理、`operator` 是否下放三域 write。
+- **澄清｜一条不是缺口的差异**：helm chart 全部 `services.*_svc.enabled: false`（含在出厂栈内的 gpu/log/task）——K8s 路径的微服务是显式开启制，与 compose 出厂栈装配策略不同，不是「三域转正未同步 helm」。**记录以免下轮把扫描出的这个差异当成待修项。**
+
 ## [Unreleased] — 2026-09-30 TD-60 §5.10 裁决与回写：operator 三域 403 已修 + autoscaler 误判更正
 
 > 证据：`go build ./...` OK；`go vet ./internal/store/ ./internal/controlplane/` OK；`gofmt -l internal/store/` 干净；`go test ./internal/store/ -run TestRolePermissions -count=1` 全绿；`go test ./internal/controlplane/ -run 'Perm|RBAC|Role|Auth|Diagnostic|Operator|Seed' -count=1` 全绿（3.65s）。静态取证口径为 file:line + grep 计数，**未做运行时验证**。详见 `docs/td60-decision-2026-09-26.md` §5.10。

@@ -61,6 +61,14 @@
         <div class="card">
           <h3>{{ $t('gpu.utilizationChart') }}</h3>
           <p class="hint">{{ store.selectedNode ? store.selectedNode.name : $t('gpu.selectNodeHint') }}</p>
+          <!-- 数据来源显式化（TD-60 §5.11）：只有 nvidia-smi 采到的才算真实指标；
+               模拟兜底必须让运维看见——否则 40%~90% 的随机利用率会被当成容量依据。 -->
+          <p v-if="store.metricsSynthetic" class="src-warn" data-testid="gpu-metrics-source-warn">
+            <Icon name="warning" :size="14" /> {{ $t('gpu.sourceSimulated') }}
+          </p>
+          <p v-else-if="store.metrics.length" class="src-ok" data-testid="gpu-metrics-source-real">
+            <Icon name="success" :size="14" /> {{ $t('gpu.sourceReal') }}
+          </p>
           <div class="chart-area">
             <div v-if="store.metricsLoading" class="muted">{{ $t('common.loading') }}</div>
             <div v-else-if="!store.metrics.length" class="muted chart-empty">{{ $t('gpu.noMetrics') }}</div>
@@ -69,8 +77,8 @@
                 v-for="(m, idx) in store.metrics"
                 :key="idx"
                 class="chart-bar"
-                :style="{ height: (m.utilization || 0) + '%' }"
-                :title="m.utilization + '%'"
+                :style="{ height: (m.avgUtilization || 0) + '%' }"
+                :title="(m.avgUtilization || 0) + '%'"
               />
             </div>
           </div>
@@ -391,6 +399,12 @@ onMounted(() => {
   background: var(--fail-soft); border: 1px solid var(--fail-bg);
   color: var(--fail); font-size: 12.5px; font-weight: 500;
 }
+.src-warn, .src-ok {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px; margin: 6px 0; border-radius: var(--radius-sm); font-size: 12.5px;
+}
+.src-warn { background: var(--warn-soft); border: 1px solid var(--warn-bg); color: var(--warn); font-weight: 500; }
+.src-ok { background: var(--ok-soft); border: 1px solid var(--ok-bg); color: var(--ok); }
 .flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .row-actions { display: inline-flex; gap: 6px; }
 .metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }

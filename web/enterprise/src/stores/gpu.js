@@ -31,7 +31,11 @@ export const useGpuStore = defineStore('gpu', {
     selectedNode: (s) => s.nodes.find((n) => n.id === s.selectedNodeId) || null,
     totalGpu: (s) => s.nodes.length,
     healthyNodes: (s) => s.nodes.filter((n) => n.health === 'healthy').length,
-    activeWorkloads: (s) => s.workloads.filter((w) => w.status === 'running').length
+    activeWorkloads: (s) => s.workloads.filter((w) => w.status === 'running').length,
+    // 指标来源判定（TD-60 §5.11）：只有明确 source === 'nvidia-smi' 的样本才算真实；
+    // 缺省/未知/simulated 一律按「不可作运维依据」——不把未知当可信。
+    // 放在 store 而不是视图里：这条判断必须能被单测钉住（视图层无测试惯例）。
+    metricsSynthetic: (s) => s.metrics.some((m) => m && m.source !== 'nvidia-smi')
   },
   actions: {
     async fetchNodes() {
