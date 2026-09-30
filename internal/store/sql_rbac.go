@@ -581,6 +581,19 @@ func RolePermissions() map[string][]string {
 		// 但 diagnostics:dump 的动作名是 dump（不属 read/write/execute），故 operator 拿不到。
 		"diagnostics": true,
 	}
+	// operatorReadOnlyGroups：只授予 read 的资源组（operator 持有其 *:read，但无 write/execute）。
+	// 背景（TD-60 §5.9 缺陷 ④，2026-09-30 复核）：gpu/runbook/incident 三域此前不在
+	// operatorGroups 里，而 operator 派生**不等于**全部 *:read（只有 viewer 才派生全部 read），
+	// 于是 operator 连 read 都没有 —— 角色层级倒挂（operator 反而低于 viewer）。
+	// 前端路由门正是 requirePerm: 'gpu:read'/'runbook:read'/'incident:read'
+	// （web/enterprise/src/router/index.js:103/109/112），缺 read 即 403。
+	// 刻意**只补 read、不补 write**：gpu:write（管理工作负载/模型）、runbook:write（编辑/执行 Runbook）、
+	// incident:write（编辑事件）是否下放 operator 属产品语义，需另行确认，先按最小权限处理。
+	// k8s 同理（见上："K8s 集群管理仅 admin 可写/删，operator/viewer 仅读"）——派生循环此前
+	// 也只把 k8s:read 给了 viewer，与本注释自述矛盾，一并按只读补齐。
+	operatorReadOnlyGroups := map[string]bool{
+		"gpu": true, "runbook": true, "incident": true, "k8s": true,
+	}
 	for _, p := range allPerms {
 		idx := strings.Index(p, ":")
 		if idx <= 0 {
@@ -590,7 +603,8 @@ func RolePermissions() map[string][]string {
 		if strings.HasSuffix(p, ":read") {
 			viewerPerms = append(viewerPerms, p)
 		}
-		if operatorGroups[group] && (action == "read" || action == "write" || action == "execute") {
+		if (operatorGroups[group] && (action == "read" || action == "write" || action == "execute")) ||
+			(operatorReadOnlyGroups[group] && action == "read") {
 			operatorPerms = append(operatorPerms, p)
 		}
 	}
