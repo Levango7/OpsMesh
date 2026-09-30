@@ -566,6 +566,7 @@ CREATE TABLE IF NOT EXISTS incidents (
     device_ids JSON,
     assignee VARCHAR(64),
     tags JSON,
+    occurred_at DATETIME NULL COMMENT '最早已知故障发生时刻（MTTD 起点，可空=未知不计入）',
     detected_at DATETIME,
     resolved_at DATETIME,
     closed_at DATETIME,
@@ -573,6 +574,34 @@ CREATE TABLE IF NOT EXISTS incidents (
     updated_at DATETIME,
     INDEX idx_status (status),
     INDEX idx_severity (severity)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- =============================================================================
+-- runbook-svc :: runbooks, runbook_executions
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS runbooks (
+    id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    content LONGTEXT,
+    triggers JSON,
+    steps JSON,
+    enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at DATETIME(3),
+    updated_at DATETIME(3)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS runbook_executions (
+    id VARCHAR(64) PRIMARY KEY,
+    runbook_id VARCHAR(64) NOT NULL,
+    triggered_by VARCHAR(255) NOT NULL DEFAULT '',
+    status VARCHAR(32) NOT NULL DEFAULT 'running',
+    step_results JSON,
+    started_at DATETIME(3),
+    completed_at DATETIME(3) NULL,
+    error_message TEXT,
+    INDEX idx_exec_runbook (runbook_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS timeline_events (

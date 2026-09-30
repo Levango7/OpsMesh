@@ -112,14 +112,14 @@ func (m *MySQLStore) CreateIncident(inc *models.Incident) *models.Incident {
 	deviceIDs, _ := json.Marshal(inc.DeviceIDs)
 	tags, _ := json.Marshal(inc.Tags)
 	_, err := m.db.ExecContext(ctx,
-		`INSERT INTO incidents (id, title, description, severity, status, alert_ids, device_ids, assignee, tags, detected_at, resolved_at, closed_at, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO incidents (id, title, description, severity, status, alert_ids, device_ids, assignee, tags, occurred_at, detected_at, resolved_at, closed_at, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE title=VALUES(title), description=VALUES(description), severity=VALUES(severity),
 		   status=VALUES(status), alert_ids=VALUES(alert_ids), device_ids=VALUES(device_ids),
-		   assignee=VALUES(assignee), tags=VALUES(tags), detected_at=VALUES(detected_at),
+		   assignee=VALUES(assignee), tags=VALUES(tags), occurred_at=VALUES(occurred_at), detected_at=VALUES(detected_at),
 		   resolved_at=VALUES(resolved_at), closed_at=VALUES(closed_at), updated_at=VALUES(updated_at)`,
 		inc.ID, inc.Title, inc.Description, inc.Severity, inc.Status, alertIDs, deviceIDs, inc.Assignee,
-		tags, nullTime(inc.DetectedAt), nullTimePtr(inc.ResolvedAt), nullTimePtr(inc.ClosedAt), nullTime(inc.CreatedAt), nullTime(inc.UpdatedAt))
+		tags, nullTimePtr(inc.OccurredAt), nullTime(inc.DetectedAt), nullTimePtr(inc.ResolvedAt), nullTimePtr(inc.ClosedAt), nullTime(inc.CreatedAt), nullTime(inc.UpdatedAt))
 	if err != nil {
 		log.Printf("[store] CreateIncident 失败: %v", err)
 	}
@@ -130,11 +130,11 @@ func (m *MySQLStore) GetIncident(id string) *models.Incident {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	row := m.db.QueryRowContext(ctx,
-		`SELECT id, title, description, severity, status, alert_ids, device_ids, assignee, tags, detected_at, resolved_at, closed_at, created_at, updated_at FROM incidents WHERE id=?`, id)
+		`SELECT id, title, description, severity, status, alert_ids, device_ids, assignee, tags, occurred_at, detected_at, resolved_at, closed_at, created_at, updated_at FROM incidents WHERE id=?`, id)
 	inc := &models.Incident{}
 	var alertIDs, deviceIDs, tags []byte
-	var detectedAt, resolvedAt, closedAt, createdAt, updatedAt sql.NullTime
-	if err := row.Scan(&inc.ID, &inc.Title, &inc.Description, &inc.Severity, &inc.Status, &alertIDs, &deviceIDs, &inc.Assignee, &tags, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
+	var occurredAt, detectedAt, resolvedAt, closedAt, createdAt, updatedAt sql.NullTime
+	if err := row.Scan(&inc.ID, &inc.Title, &inc.Description, &inc.Severity, &inc.Status, &alertIDs, &deviceIDs, &inc.Assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] GetIncident 查询失败: %v", err)
 		}
@@ -157,6 +157,10 @@ func (m *MySQLStore) GetIncident(id string) *models.Incident {
 	}
 	if detectedAt.Valid {
 		inc.DetectedAt = detectedAt.Time
+	}
+	if occurredAt.Valid {
+		t := occurredAt.Time
+		inc.OccurredAt = &t
 	}
 	if resolvedAt.Valid {
 		inc.ResolvedAt = &resolvedAt.Time
@@ -216,7 +220,7 @@ func (m *MySQLStore) DeleteIncident(id string) bool {
 func (m *MySQLStore) ListIncidents(status string, severity models.Severity) []*models.Incident {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	q := `SELECT id, title, description, severity, status, alert_ids, device_ids, assignee, tags, detected_at, resolved_at, closed_at, created_at, updated_at FROM incidents`
+	q := `SELECT id, title, description, severity, status, alert_ids, device_ids, assignee, tags, occurred_at, detected_at, resolved_at, closed_at, created_at, updated_at FROM incidents`
 	var args []interface{}
 	var where []string
 	if status != "" {
@@ -241,8 +245,8 @@ func (m *MySQLStore) ListIncidents(status string, severity models.Severity) []*m
 	for rows.Next() {
 		inc := &models.Incident{}
 		var alertIDs, deviceIDs, tags []byte
-		var detectedAt, resolvedAt, closedAt, createdAt, updatedAt sql.NullTime
-		if err := rows.Scan(&inc.ID, &inc.Title, &inc.Description, &inc.Severity, &inc.Status, &alertIDs, &deviceIDs, &inc.Assignee, &tags, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
+		var occurredAt, detectedAt, resolvedAt, closedAt, createdAt, updatedAt sql.NullTime
+		if err := rows.Scan(&inc.ID, &inc.Title, &inc.Description, &inc.Severity, &inc.Status, &alertIDs, &deviceIDs, &inc.Assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
 			continue
 		}
 		if len(alertIDs) > 0 {
@@ -262,6 +266,10 @@ func (m *MySQLStore) ListIncidents(status string, severity models.Severity) []*m
 		}
 		if detectedAt.Valid {
 			inc.DetectedAt = detectedAt.Time
+		}
+		if occurredAt.Valid {
+			t := occurredAt.Time
+			inc.OccurredAt = &t
 		}
 		if resolvedAt.Valid {
 			inc.ResolvedAt = &resolvedAt.Time
@@ -327,7 +335,7 @@ func (m *MySQLStore) Incidents() []*models.Incident {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	rows, err := m.db.QueryContext(ctx,
-		`SELECT id, title, description, severity, status, alert_ids, device_ids, assignee, tags, detected_at, resolved_at, closed_at, created_at, updated_at FROM incidents`)
+		`SELECT id, title, description, severity, status, alert_ids, device_ids, assignee, tags, occurred_at, detected_at, resolved_at, closed_at, created_at, updated_at FROM incidents`)
 	if err != nil {
 		log.Printf("[store] Incidents 失败: %v", err)
 		return nil
@@ -337,8 +345,8 @@ func (m *MySQLStore) Incidents() []*models.Incident {
 	for rows.Next() {
 		inc := &models.Incident{}
 		var alertIDs, deviceIDs, tags []byte
-		var detectedAt, resolvedAt, closedAt, createdAt, updatedAt sql.NullTime
-		if err := rows.Scan(&inc.ID, &inc.Title, &inc.Description, &inc.Severity, &inc.Status, &alertIDs, &deviceIDs, &inc.Assignee, &tags, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
+		var occurredAt, detectedAt, resolvedAt, closedAt, createdAt, updatedAt sql.NullTime
+		if err := rows.Scan(&inc.ID, &inc.Title, &inc.Description, &inc.Severity, &inc.Status, &alertIDs, &deviceIDs, &inc.Assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
 			continue
 		}
 		if len(alertIDs) > 0 {
@@ -358,6 +366,10 @@ func (m *MySQLStore) Incidents() []*models.Incident {
 		}
 		if detectedAt.Valid {
 			inc.DetectedAt = detectedAt.Time
+		}
+		if occurredAt.Valid {
+			t := occurredAt.Time
+			inc.OccurredAt = &t
 		}
 		if resolvedAt.Valid {
 			inc.ResolvedAt = &resolvedAt.Time

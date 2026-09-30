@@ -27,7 +27,21 @@ func main() {
 
 	metrics.Init("runbook-svc")
 
-	st := store.NewMemoryStore()
+	// 存储初始化：sql 模式任何失败都 fail-fast——声明了持久化却静默退回内存，
+	// runbook 重启即丢（TD-68 同哲学）。
+	var st store.RunbookStore = store.NewMemoryStore()
+	if cfg.StoreType == "sql" {
+		if cfg.DSN == "" {
+			lgr.Fatalf("RUNBOOK_SVC_STORE_TYPE=sql 需要 RUNBOOK_SVC_DSN")
+		}
+		ms, err := store.NewMySQLStore(cfg.DSN)
+		if err != nil {
+			lgr.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
+		}
+		st = ms
+		log.Printf("MySQL store 已启用")
+		defer func() { _ = ms.Close() }()
+	}
 	r := runner.NewRunner()
 	svc := service.NewService(st, r)
 	h := handler.NewHandler(svc)
