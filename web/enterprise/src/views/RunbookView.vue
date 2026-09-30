@@ -234,12 +234,21 @@ async function viewLogs(executionId) {
   await store.fetchLogs(store.currentRunbookId, executionId)
 }
 
-function saveEditor() {
-  if (!store.currentRunbookId) {
+async function saveEditor() {
+  if (!store.currentRunbookId || !store.currentRunbook) {
     alert(t('runbook.selectRunbookFirst'))
     return
   }
-  alert(t('runbook.saved'))
+  // 此前是 alert(t('runbook.saved')) 假动作——编辑器内容从未落库（§5.10 取证的
+  // runbook 硬缺陷之一）。现在真实调用 PUT /runbooks/{id} 持久化 Content。
+  try {
+    const rb = store.currentRunbook
+    await store.editRunbook(store.currentRunbookId, rb.name, rb.description, editorContent.value, rb.triggers || [])
+    await store.fetchRunbooks()
+    alert(t('runbook.saved'))
+  } catch (e) {
+    alert(e.j?.error || t('runbook.saveFail'))
+  }
 }
 
 onMounted(() => {
