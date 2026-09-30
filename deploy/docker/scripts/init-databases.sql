@@ -22,10 +22,14 @@ CREATE DATABASE IF NOT EXISTS opsmesh_task   CHARACTER SET utf8mb4 COLLATE utf8m
 CREATE DATABASE IF NOT EXISTS opsmesh_alert  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS opsmesh_config CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS opsmesh_log    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS opsmesh_incident CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS opsmesh_runbook CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 GRANT ALL PRIVILEGES ON opsmesh_device.* TO 'opsmesh'@'%';
 GRANT ALL PRIVILEGES ON opsmesh_task.*   TO 'opsmesh'@'%';
 GRANT ALL PRIVILEGES ON opsmesh_alert.*  TO 'opsmesh'@'%';
 GRANT ALL PRIVILEGES ON opsmesh_config.* TO 'opsmesh'@'%';
 GRANT ALL PRIVILEGES ON opsmesh_log.*    TO 'opsmesh'@'%';
+GRANT ALL PRIVILEGES ON opsmesh_incident.* TO 'opsmesh'@'%';
+GRANT ALL PRIVILEGES ON opsmesh_runbook.* TO 'opsmesh'@'%';
 FLUSH PRIVILEGES;

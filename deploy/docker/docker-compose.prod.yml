@@ -417,6 +417,9 @@ services:
       GPU_SVC_URL: http://gpu-svc:8107
       PORTAL_SVC_URL: http://portal-svc:8109
       DEVICE_SVC_URL: http://device-svc:8101
+      INCIDENT_SVC_URL: http://incident-svc:8104
+      RUNBOOK_SVC_URL: http://runbook-svc:8110
+      AUTOSCALER_SVC_URL: http://autoscaler-svc:8111
       # task-svc（TD-60 阶段 2 三域接通第二域）：HTTP 网关监听 8102 在下方本栈内。
       # auth-svc 暂不接通（HTTP 网关默认关闭 + 独立内存用户库，双轨 Cookie/数据边界
       # 待裁决），故此处不设 AUTH_SVC_URL——设了也没有对应域的代理规则可读。
@@ -869,6 +872,125 @@ services:
     logging: *default-logging
     <<: *restart-policy
 
+  incident-svc:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE: incident-svc
+        VERSION: ${OPSMESH_VERSION}
+    image: opsmesh/incident-svc:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION}
+    container_name: opsmesh-incident-svc
+    ports:
+      - "127.0.0.1:${INCIDENT_SVC_HTTP_PORT:-8104}:8104"
+    environment:
+      INCIDENT_SVC_HTTP_PORT: 8104
+      INCIDENT_SVC_STORE_TYPE: ${INCIDENT_STORE_TYPE:-sql}
+      INCIDENT_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:?请在 .env 设置 MYSQL_PASSWORD}@tcp(mysql:3306)/opsmesh_incident?parseTime=true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8104/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging: *default-logging
+    <<: *restart-policy
+
+  runbook-svc:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE: runbook-svc
+        VERSION: ${OPSMESH_VERSION}
+    image: opsmesh/runbook-svc:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION}
+    container_name: opsmesh-runbook-svc
+    ports:
+      - "127.0.0.1:${RUNBOOK_SVC_HTTP_PORT:-8110}:8110"
+    environment:
+      RUNBOOK_SVC_HTTP_PORT: 8110
+      RUNBOOK_SVC_STORE_TYPE: ${RUNBOOK_STORE_TYPE:-sql}
+      RUNBOOK_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:?请在 .env 设置 MYSQL_PASSWORD}@tcp(mysql:3306)/opsmesh_runbook?parseTime=true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8110/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging: *default-logging
+    <<: *restart-policy
+
+  autoscaler-svc:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE: autoscaler-svc
+        VERSION: ${OPSMESH_VERSION}
+    image: opsmesh/autoscaler-svc:${OPSMESH_VERSION:?请在 .env 设置 OPSMESH_VERSION}
+    container_name: opsmesh-autoscaler-svc
+    ports:
+      - "127.0.0.1:${AUTOSCALER_SVC_HTTP_PORT:-8111}:8111"
+    environment:
+      AUTOSCALER_SVC_HTTP_PORT: 8111
+      PROMETHEUS_URL: "http://prometheus:9090"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8111/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - backend_net
+      - monitoring_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging: *default-logging
+    <<: *restart-policy
 # ============================================================
 # Networks
 # ============================================================

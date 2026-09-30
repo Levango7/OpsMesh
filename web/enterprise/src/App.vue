@@ -171,6 +171,16 @@ const navGroups = [
     ]
   },
   {
+    group: 'aiops', labelKey: 'nav.aiops',
+    items: [
+      { name: 'gpu', icon: 'device', labelKey: 'nav.gpu', required: 'gpu:read' },
+      { name: 'portal', icon: 'cmdb', labelKey: 'nav.portal', required: 'portal:read' },
+      { name: 'runbooks', icon: 'flow', labelKey: 'nav.runbooks', required: 'runbook:read' },
+      { name: 'incidents', icon: 'alerts', labelKey: 'nav.incidents', required: 'incident:read' },
+      { name: 'autoscaler', icon: 'task', labelKey: 'nav.autoscaler', required: 'autoscaler:read' }
+    ]
+  },
+  {
     group: 'observability', labelKey: 'nav.observability',
     items: [{ name: 'logs', icon: 'logs', labelKey: 'nav.logs', required: 'log:read' }]
   },
