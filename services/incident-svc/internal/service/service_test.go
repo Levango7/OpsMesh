@@ -17,7 +17,7 @@ func newTestService() *Service {
 func TestCreateIncident(t *testing.T) {
 	svc := newTestService()
 
-	inc, err := svc.CreateIncident("CPU Spike", "High CPU on server", models.SeverityHigh, []string{"device-1"})
+	inc, err := svc.CreateIncident(CreateIncidentInput{Title: "CPU Spike", Description: "High CPU on server", Severity: models.SeverityHigh, DeviceIDs: []string{"device-1"}})
 	if err != nil {
 		t.Fatalf("CreateIncident failed: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestCreateIncident(t *testing.T) {
 func TestCreateIncidentEmptyTitle(t *testing.T) {
 	svc := newTestService()
 
-	_, err := svc.CreateIncident("", "desc", models.SeverityHigh, nil)
+	_, err := svc.CreateIncident(CreateIncidentInput{Title: "", Description: "desc", Severity: models.SeverityHigh, DeviceIDs: nil})
 	if err == nil {
 		t.Error("expected error for empty title")
 	}
@@ -45,7 +45,7 @@ func TestCreateIncidentEmptyTitle(t *testing.T) {
 func TestGetIncident(t *testing.T) {
 	svc := newTestService()
 
-	created, err := svc.CreateIncident("Test", "desc", models.SeverityMedium, nil)
+	created, err := svc.CreateIncident(CreateIncidentInput{Title: "Test", Description: "desc", Severity: models.SeverityMedium, DeviceIDs: nil})
 	if err != nil {
 		t.Fatalf("CreateIncident failed: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestListIncidents(t *testing.T) {
 	svc := newTestService()
 
 	for i := 0; i < 3; i++ {
-		_, err := svc.CreateIncident("Incident", "desc", models.SeverityHigh, nil)
+		_, err := svc.CreateIncident(CreateIncidentInput{Title: "Incident", Description: "desc", Severity: models.SeverityHigh, DeviceIDs: nil})
 		if err != nil {
 			t.Fatalf("CreateIncident failed: %v", err)
 		}
@@ -87,7 +87,7 @@ func TestListIncidents(t *testing.T) {
 func TestListIncidentsFilterByStatus(t *testing.T) {
 	svc := newTestService()
 
-	inc, _ := svc.CreateIncident("Test", "desc", models.SeverityHigh, nil)
+	inc, _ := svc.CreateIncident(CreateIncidentInput{Title: "Test", Description: "desc", Severity: models.SeverityHigh, DeviceIDs: nil})
 	_, _ = svc.ResolveIncident(inc.ID, "tester")
 
 	list := svc.ListIncidents(string(models.StatusResolved), "")
@@ -99,7 +99,7 @@ func TestListIncidentsFilterByStatus(t *testing.T) {
 func TestUpdateIncident(t *testing.T) {
 	svc := newTestService()
 
-	inc, _ := svc.CreateIncident("Original", "desc", models.SeverityHigh, nil)
+	inc, _ := svc.CreateIncident(CreateIncidentInput{Title: "Original", Description: "desc", Severity: models.SeverityHigh, DeviceIDs: nil})
 	updated, err := svc.UpdateIncident(inc.ID, "Updated", "new desc", "user-1", models.SeverityCritical)
 	if err != nil {
 		t.Fatalf("UpdateIncident failed: %v", err)
@@ -128,7 +128,7 @@ func TestUpdateIncidentNotFound(t *testing.T) {
 func TestDeleteIncident(t *testing.T) {
 	svc := newTestService()
 
-	inc, _ := svc.CreateIncident("ToDelete", "desc", models.SeverityLow, nil)
+	inc, _ := svc.CreateIncident(CreateIncidentInput{Title: "ToDelete", Description: "desc", Severity: models.SeverityLow, DeviceIDs: nil})
 	err := svc.DeleteIncident(inc.ID)
 	if err != nil {
 		t.Fatalf("DeleteIncident failed: %v", err)
@@ -152,7 +152,7 @@ func TestDeleteIncidentNotFound(t *testing.T) {
 func TestResolveIncident(t *testing.T) {
 	svc := newTestService()
 
-	inc, _ := svc.CreateIncident("Test", "desc", models.SeverityHigh, nil)
+	inc, _ := svc.CreateIncident(CreateIncidentInput{Title: "Test", Description: "desc", Severity: models.SeverityHigh, DeviceIDs: nil})
 	resolved, err := svc.ResolveIncident(inc.ID, "tester")
 	if err != nil {
 		t.Fatalf("ResolveIncident failed: %v", err)
@@ -178,7 +178,7 @@ func TestResolveIncidentNotFound(t *testing.T) {
 func TestCloseIncident(t *testing.T) {
 	svc := newTestService()
 
-	inc, _ := svc.CreateIncident("Test", "desc", models.SeverityHigh, nil)
+	inc, _ := svc.CreateIncident(CreateIncidentInput{Title: "Test", Description: "desc", Severity: models.SeverityHigh, DeviceIDs: nil})
 	closed, err := svc.CloseIncident(inc.ID, "tester")
 	if err != nil {
 		t.Fatalf("CloseIncident failed: %v", err)
@@ -195,7 +195,7 @@ func TestCloseIncident(t *testing.T) {
 func TestAddTimelineEvent(t *testing.T) {
 	svc := newTestService()
 
-	inc, _ := svc.CreateIncident("Test", "desc", models.SeverityHigh, nil)
+	inc, _ := svc.CreateIncident(CreateIncidentInput{Title: "Test", Description: "desc", Severity: models.SeverityHigh, DeviceIDs: nil})
 	ev, err := svc.AddTimelineEvent(inc.ID, "comment", "Investigating issue", "user-1")
 	if err != nil {
 		t.Fatalf("AddTimelineEvent failed: %v", err)
@@ -212,7 +212,7 @@ func TestAddTimelineEvent(t *testing.T) {
 func TestGetTimeline(t *testing.T) {
 	svc := newTestService()
 
-	inc, _ := svc.CreateIncident("Test", "desc", models.SeverityHigh, nil)
+	inc, _ := svc.CreateIncident(CreateIncidentInput{Title: "Test", Description: "desc", Severity: models.SeverityHigh, DeviceIDs: nil})
 	_, _ = svc.AddTimelineEvent(inc.ID, "comment", "First", "user-1")
 	_, _ = svc.AddTimelineEvent(inc.ID, "comment", "Second", "user-2")
 
@@ -229,7 +229,7 @@ func TestGetTimeline(t *testing.T) {
 func TestGeneratePostmortem(t *testing.T) {
 	svc := newTestService()
 
-	inc, _ := svc.CreateIncident("Test Incident", "desc", models.SeverityHigh, []string{"device-1"})
+	inc, _ := svc.CreateIncident(CreateIncidentInput{Title: "Test Incident", Description: "desc", Severity: models.SeverityHigh, DeviceIDs: []string{"device-1"}})
 	inc.DetectedAt = time.Now().Add(-30 * time.Minute)
 	svc.store.UpdateIncident(inc)
 	_, _ = svc.ResolveIncident(inc.ID, "tester")
@@ -302,7 +302,7 @@ func TestIngestAlertNoMatch(t *testing.T) {
 func TestGetResponseMetrics(t *testing.T) {
 	svc := newTestService()
 
-	inc, _ := svc.CreateIncident("Test", "desc", models.SeverityHigh, nil)
+	inc, _ := svc.CreateIncident(CreateIncidentInput{Title: "Test", Description: "desc", Severity: models.SeverityHigh, DeviceIDs: nil})
 	_, _ = svc.ResolveIncident(inc.ID, "tester")
 
 	metrics := svc.GetResponseMetrics()

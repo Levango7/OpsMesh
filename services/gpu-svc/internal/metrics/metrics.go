@@ -3,6 +3,7 @@ package metrics
 import (
 	"math/rand"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/models"
@@ -28,12 +29,21 @@ func NewCollector(now func() time.Time) *Collector {
 	}
 }
 
-// CollectMetrics simulates collecting GPU metrics for a node.
+// CollectMetrics collects GPU metrics for a node：优先本机 nvidia-smi 真实采集；
+// 本机无 GPU/无该工具时回退到模拟（Source="simulated" 显式标注，消费方可区分）。
 func (c *Collector) CollectMetrics(nodeID string, gpuCount int) *models.GPUMetrics {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	now := c.now()
+	// go test 下恒走模拟：测试断言的是模拟分布；真机验证走真实二进制。
+	if !testing.Testing() && nvidiaSmiAvailable() {
+		if m, err := collectFromNvidiaSmi(nodeID, now); err == nil {
+			c.metrics[nodeID] = m
+			return m
+		}
+	}
+
 	gpus := make([]models.GPUMetricsPerGPU, gpuCount)
 	totalUtil := 0.0
 	totalMemUsed := 0
@@ -83,6 +93,7 @@ func (c *Collector) CollectMetrics(nodeID string, gpuCount int) *models.GPUMetri
 	metrics := &models.GPUMetrics{
 		NodeID:             nodeID,
 		Timestamp:          now,
+		Source:             sourceSimulated,
 		GPUs:               gpus,
 		AvgUtilization:     avgUtil,
 		TotalMemoryUsedMB:  totalMemUsed,

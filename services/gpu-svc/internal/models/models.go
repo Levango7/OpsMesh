@@ -173,8 +173,11 @@ type QuotaUsage struct {
 
 // GPUMetrics represents GPU metrics for a specific node.
 type GPUMetrics struct {
-	NodeID             string             `json:"node_id"`
-	Timestamp          time.Time          `json:"timestamp"`
+	NodeID    string    `json:"node_id"`
+	Timestamp time.Time `json:"timestamp"`
+	// Source 指标来源：nvidia-smi（真实采集）或 simulated（本机无 GPU/无该
+	// 工具时的兜底）。观察期消费方据此区分数据可信度（TD-60 §5.9 取证）。
+	Source             string             `json:"source"`
 	GPUs               []GPUMetricsPerGPU `json:"gpus"`
 	AvgUtilization     float64            `json:"avg_utilization"`
 	TotalMemoryUsedMB  int                `json:"total_memory_used_mb"`

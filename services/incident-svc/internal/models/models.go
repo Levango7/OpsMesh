@@ -38,11 +38,15 @@ type Incident struct {
 	DeviceIDs   []string          `json:"device_ids"`
 	Assignee    string            `json:"assignee"`
 	Tags        map[string]string `json:"tags"`
-	DetectedAt  time.Time         `json:"detected_at"`
-	ResolvedAt  *time.Time        `json:"resolved_at,omitempty"`
-	ClosedAt    *time.Time        `json:"closed_at,omitempty"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
+	// OccurredAt 最早已知故障发生时刻（来自触发告警的触发时间或人工回填）。
+	// 此前模型只有 DetectedAt 且创建时 DetectedAt==CreatedAt，导致 MTTD 结构恒 0
+	//（TD-60 §5.10 取证）——MTTD = DetectedAt - OccurredAt，缺省时不计入统计。
+	OccurredAt *time.Time `json:"occurred_at,omitempty"`
+	DetectedAt time.Time  `json:"detected_at"`
+	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
+	ClosedAt   *time.Time `json:"closed_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
 // TimelineEvent represents a single event in an incident timeline.

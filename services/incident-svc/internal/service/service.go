@@ -35,20 +35,31 @@ func NewService(store models.IncidentStore, eng *aggregate.Engine) *Service {
 	}
 }
 
+// CreateIncidentInput 创建事故的入参。OccurredAt 为最早已知故障发生时刻
+// （来自触发告警或人工回填）；缺省表示未知，MTTD 统计将不计入该条。
+type CreateIncidentInput struct {
+	Title       string
+	Description string
+	Severity    models.Severity
+	DeviceIDs   []string
+	OccurredAt  *time.Time
+}
+
 // CreateIncident creates a new incident.
-func (s *Service) CreateIncident(title, description string, severity models.Severity, deviceIDs []string) (*models.Incident, error) {
-	if title == "" {
+func (s *Service) CreateIncident(in CreateIncidentInput) (*models.Incident, error) {
+	if in.Title == "" {
 		return nil, errors.New("incident title is required")
 	}
 
 	now := time.Now()
 	inc := &models.Incident{
 		ID:          uuid.New().String(),
-		Title:       title,
-		Description: description,
-		Severity:    severity,
+		Title:       in.Title,
+		Description: in.Description,
+		Severity:    in.Severity,
 		Status:      models.StatusDetected,
-		DeviceIDs:   deviceIDs,
+		DeviceIDs:   in.DeviceIDs,
+		OccurredAt:  in.OccurredAt,
 		DetectedAt:  now,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -62,7 +73,7 @@ func (s *Service) CreateIncident(title, description string, severity models.Seve
 		IncidentID:  inc.ID,
 		Timestamp:   now,
 		Type:        "created",
-		Description: "Incident created: " + title,
+		Description: "Incident created: " + in.Title,
 		Author:      "system",
 	})
 
@@ -330,7 +341,14 @@ func (s *Service) IngestAlert(alert *models.Alert) (*models.Incident, error) {
 	inc, err := s.GetIncident(result.IncidentID)
 	if err != nil {
 		title := fmt.Sprintf("Incident for %s", alert.DeviceID)
-		inc, err = s.CreateIncident(title, alert.Message, alert.Severity, []string{alert.DeviceID})
+		firedAt := alert.Timestamp
+		inc, err = s.CreateIncident(CreateIncidentInput{
+			Title:       title,
+			Description: alert.Message,
+			Severity:    alert.Severity,
+			DeviceIDs:   []string{alert.DeviceID},
+			OccurredAt:  &firedAt, // 告警触发时刻即最早已知故障时刻，MTTD 由此起算
+		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create incident: %w", err)
 		}
@@ -377,6 +395,16 @@ func (s *Service) GetResponseMetrics() *models.ResponseMetrics {
 				mttrCount++
 			}
 		}
+
+		// MTTD = 检测时刻 - 故障发生时刻。OccurredAt 缺省（历史数据/未回填）时不
+		// 计入统计——此前 totalMTTD 声明后从未累加、以 `_ =` 吞掉的正是这里。
+		if inc.OccurredAt != nil {
+			mttd := inc.DetectedAt.Sub(*inc.OccurredAt)
+			if mttd > 0 {
+				totalMTTD += mttd
+				mttdCount++
+			}
+		}
 	}
 
 	if mttrCount > 0 {
@@ -385,7 +413,6 @@ func (s *Service) GetResponseMetrics() *models.ResponseMetrics {
 	if mttdCount > 0 {
 		metrics.AvgMTTD = totalMTTD / time.Duration(mttdCount)
 	}
-	_ = totalMTTD
 
 	return metrics
 }

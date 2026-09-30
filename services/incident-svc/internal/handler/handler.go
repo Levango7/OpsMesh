@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Levango7/OpsMesh/services/incident-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/incident-svc/internal/service"
@@ -132,6 +133,9 @@ func (h *Handler) createIncident(w http.ResponseWriter, r *http.Request) {
 		Severity    string   `json:"severity"`
 		Assignee    string   `json:"assignee"`
 		DeviceIDs   []string `json:"device_ids"`
+		// OccurredAt 最早已知故障发生时刻（RFC3339，如触发告警的 fired_at）；
+		// 提供时计入 MTTD 统计，缺省表示未知。
+		OccurredAt string `json:"occurred_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -143,7 +147,22 @@ func (h *Handler) createIncident(w http.ResponseWriter, r *http.Request) {
 		severity = models.SeverityMedium
 	}
 
-	inc, err := h.svc.CreateIncident(req.Title, req.Description, severity, req.DeviceIDs)
+	in := service.CreateIncidentInput{
+		Title:       req.Title,
+		Description: req.Description,
+		Severity:    severity,
+		DeviceIDs:   req.DeviceIDs,
+	}
+	if req.OccurredAt != "" {
+		t, err := time.Parse(time.RFC3339, req.OccurredAt)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "occurred_at must be RFC3339")
+			return
+		}
+		in.OccurredAt = &t
+	}
+
+	inc, err := h.svc.CreateIncident(in)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
