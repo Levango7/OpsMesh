@@ -93,7 +93,7 @@ func TestMySQLStore_Executions(t *testing.T) {
 		RunbookID:   r.ID,
 		TriggeredBy: "itest",
 		Status:      "success",
-		StepResults: []models.StepResult{{Name: "step-1", Status: "success"}},
+		StepResults: []models.StepResult{{StepName: "step-1", Status: "success"}},
 		CompletedAt: time.Now(),
 	}
 	m.AddExecution(e)
