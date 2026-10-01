@@ -93,7 +93,7 @@
       "title": "Error Rate",
       "type": "timeseries",
       "targets": [
-        { "expr": "sum(rate({__name__=~\"opsmesh_http_requests_total|http_requests_total\"}{status=~\"5..\"}[5m])) / clamp_min(sum(rate({__name__=~\"opsmesh_http_requests_total|http_requests_total\"}[5m])), 1)", "legendFormat": "{{job}}" }
+        { "expr": "sum(rate({__name__=~\"opsmesh_http_requests_total|http_requests_total\", status=~\"5..\"}[5m])) / clamp_min(sum(rate({__name__=~\"opsmesh_http_requests_total|http_requests_total\"}[5m])), 1)", "legendFormat": "{{job}}" }
       ]
     },
     {
@@ -105,6 +105,61 @@
       "type": "logs",
       "targets": [
         { "expr": "{job=~'.+'} | json", "legendFormat": "" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "task-svc 调度循环的两侧：成功侧（到点派发 fired / 超期回收 reclaimed）与失败侧（写库失败的 fire/reclaim/claim/report failures）。失败线一直贴着 0 才算正常——失败意味着触发事实已不可信（可能重复派发或漏派）。序列来源：pkg/metrics 的 business_metrics_total，用 name 标签区分（不带 opsmesh_ 前缀）。",
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "id": 7,
+      "title": "Task Scheduler: throughput vs write failures",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum(increase(business_metrics_total{name=~\"task_scheduled_fired|task_reclaimed\"}[10m]))", "legendFormat": "派发/回收成功" },
+        { "expr": "sum(increase(business_metrics_total{name=~\"task_scheduled_fire_failures|task_reclaim_failures\"}[10m]))", "legendFormat": "调度落库失败" },
+        { "expr": "sum(increase(business_metrics_total{name=~\"task_claim_failures|task_report_failures\"}[10m]))", "legendFormat": "领取/回报落库失败" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "告警外发与日志留存。alert_external_notify_failures 是 critical 级信号的来源：告警状态已落库、接口返回成功，但外部通道没收到（on-call 其实没被呼叫）。log_memory_dropped 只在 log-svc 用内存后端时增长，出现即说明该实例在用内存缓冲跑，被淘汰的日志不可恢复。",
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "id": 8,
+      "title": "Alert delivery failures & log eviction",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum by (action) (increase(business_metrics_total{name=\"alert_external_notify_failures\"}[10m]))", "legendFormat": "外发失败 action={{action}}" },
+        { "expr": "sum(increase(business_metrics_total{name=\"alert_notification_failures\"}[10m]))", "legendFormat": "规则推送失败" },
+        { "expr": "sum(increase(business_metrics_total{name=\"log_memory_dropped\"}[10m]))", "legendFormat": "内存后端淘汰" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "指标基数防线是否正在工作。上半是各进程当前占用的时序数（上限 2000）；下半是被折叠到 :other 的写入次数——非 0 说明有调用方在打未注册路由（扫描器/拼错的 SDK/把 ID 塞进路径），此时按路径的面板与告警已失去分辨率。控制面用 opsmesh_ 前缀、微服务不用，故用 __name__ 正则并集。",
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "id": 9,
+      "title": "Metric cardinality guard (folding to :other)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "max by (job, __name__) ({__name__=~\"http_metrics_series|business_metrics_series|opsmesh_http_metrics_series\"})", "legendFormat": "{{job}}/{{__name__}}" },
+        { "expr": "sum by (job) (increase({__name__=~\"http_metrics_series_dropped_total|business_metrics_series_dropped_total|opsmesh_http_metrics_series_dropped_total\"}[10m]))", "legendFormat": "{{job}} 折叠" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "微服务侧的当前值（gauge 家族 business_metrics）。device_* 是 device-svc 自己的口径，与控制面 opsmesh_devices_total / opsmesh_device_status 并存、可能因缓存时点不同而短暂不一致；autoscaler_decision_history_entries 接近 500 即表示决策历史开始从头丢弃。",
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "id": 10,
+      "title": "Service gauges (device / autoscaler)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "business_metrics{name=~\"device_total|device_online|device_offline\"}", "legendFormat": "{{name}}" },
+        { "expr": "business_metrics{name=\"provision_success_rate\"}", "legendFormat": "纳管成功率" },
+        { "expr": "business_metrics{name=\"autoscaler_decision_history_entries\"}", "legendFormat": "决策历史条数（上限 500）" }
       ]
     }
   ],

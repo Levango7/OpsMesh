@@ -903,7 +903,11 @@ curl "$CP/api/v1/tasks/<task-id>/result" -H "$AUTH" -H "X-Tenant-ID: $TENANT"
 > ——device / task / alert / auth / autoscaler / config / gpu / incident / log / portal /
 > runbook / aio；`tf-provider` 是插件无 HTTP 面。（bot / deploy / plugin / workflow / grafana-bridge
 > 五服务已于 2026-09-29 删除，其中 grafana-bridge 原为唯一刻意不暴露者。）
-> 抓取侧：compose 栈内 9 个走 `prometheus.yml`，其余走 chart 的 ServiceMonitor（`values.services.<name>.metrics: true`）。两类 job 都被抓取，所以按概念写的规则与面板必须同时覆盖两种名字——
+> 抓取侧：**出厂 compose 栈里的 12 个微服务全部有 `prometheus.yml` 抓取任务**（2026-10-02 补齐
+> incident/runbook/autoscaler——三域在 v0.10.0 已进栈，但抓取配置落后了两个版本，结果是这三个服务
+> 的指标从不进入 Prometheus，任何引用它们的告警恒为 no data）。K8s 路径走 chart 的 ServiceMonitor
+> （`values.services.<name>.metrics: true`，且需 `services.<name>.enabled=true`）。
+> 两类 job 都被抓取，所以按概念写的规则与面板必须同时覆盖两种名字——
 > 出厂规则与总览面板已用 `{__name__=~"opsmesh_http_requests_total|http_requests_total"}` 表达并集。
 > 彻底统一命名属破坏性变更（客户已有面板/告警按现名写死），已记入商用就绪报告 §23 待办。
 
@@ -912,6 +916,49 @@ curl "$CP/api/v1/tasks/<task-id>/result" -H "$AUTH" -H "X-Tenant-ID: $TENANT"
 > 里可见。写这条门禁的当口它就抓到了事：此前表里列有 `opsmesh_alerts_total{severity}`、
 > `opsmesh_grpc_request_total`、`opsmesh_leader_elections_total` 三条**代码里从未实现**的指标，
 > 而照着文档接告警的人只会拿到永久空序列——文档一侧此前没有任何机制能发现这件事。
+
+#### 4.1.1 微服务侧业务序列（`pkg/metrics`，无 `opsmesh_` 前缀）
+
+12 个微服务的 `/metrics` 注册在**各自 HTTP 端口**（没有独立 metrics 端口），由 `pkg/metrics` 渲染。
+两套家族名按语义分工，**接告警前先认清选哪个**：
+
+- `business_metrics_total{name="…", …}` — **counter**（`AddBusinessMetric`，进程启动以来累计）→ 用 `rate()/increase()`
+- `business_metrics{name="…", …}` — **gauge**（`SetBusinessMetric`，当前值）→ 直接比较大小
+
+给 counter 配 `increase()` 却选中 gauge 家族**不会报错**，只会得到一条恒为 no data 的规则，
+所以出厂规则与面板里出现的每个 `name` 值都由 `internal/controlplane/metrics_contract_msvc_test.go`
+对账到 `services/**` 里真实的 `Add/SetBusinessMetric` 调用，并核对**所属服务是否在抓取面内**。
+
+| 指标 | 类型 | 产出服务 | 说明 |
+|---|---|---|---|
+| `business_metrics_total{name="task_claims"}` | counter | task-svc | agent 领取任务成功次数 |
+| `business_metrics_total{name="task_claim_failures"}` | counter | task-svc | 领取失败次数（占比进告警口径） |
+| `business_metrics_total{name="task_reports"}` | counter | task-svc | 结果回报成功次数 |
+| `business_metrics_total{name="task_report_failures"}` | counter | task-svc | 回报落库失败次数（失败=控制面看到的任务状态是陈旧的） |
+| `business_metrics_total{name="task_scheduled_fired"}` | counter | task-svc | 定时任务到点派发次数（调度循环每轮就地计数） |
+| `business_metrics_total{name="task_scheduled_fire_failures"}` | counter | task-svc | 派发写 `last_fired_at` 失败次数——失败即"本分钟到底触发过没有"失去事实来源 |
+| `business_metrics_total{name="task_reclaimed"}` | counter | task-svc | 超期 running 任务回收次数 |
+| `business_metrics_total{name="task_reclaim_failures"}` | counter | task-svc | 回收失败次数——失败即任务永久显示"执行中" |
+| `business_metrics_total{name="alert_external_notify_failures", action}` | counter | alert-svc | 告警 ack/resolve **已落库但外部通道未送达**（`action=ack\|resolve`）。这是 critical 级信号：接口返回成功、运维以为 on-call 被呼叫 |
+| `business_metrics_total{name="alert_notifications", tenant_id}` / `business_metrics_total{name="alert_notification_failures", tenant_id}` | counter | alert-svc | 规则事件 → 通知器的成功/失败（经熔断器；失败占比高说明下游通道故障） |
+| `business_metrics_total{name="log_memory_dropped"}` | counter | log-svc | 内存后端环形缓冲被淘汰的条数。`LOG_SVC_BACKEND` 默认 `loki`，且后端初始化失败是 `Fatalf` 不静默回落 ⇒ **该序列增长本身就说明实例在用内存后端** |
+| `business_metrics_total{name="device_heartbeats"}` / `business_metrics_total{name="device_heartbeat_failures"}` | counter | device-svc | 设备心跳成功/失败（失败常见成因：设备未纳管 → `ErrDeviceNotFound`） |
+| `business_metrics_total{name="agent_heartbeats"}` / `business_metrics_total{name="agent_heartbeat_failures"}` | counter | device-svc | agent 心跳成功/失败 |
+| `business_metrics_total{name="auto_provision_loop_success"}` / `business_metrics_total{name="auto_provision_loop_failures"}` | counter | device-svc | 自动纳管循环（D3）成功/失败轮次，带 `cidr` 标签；失败侧另有 `backoff` 标签显示当前退避间隔。**仅 `--auto-provision` 开启时产生** |
+| `business_metrics{name="device_total"}` / `business_metrics{name="device_online"}` / `business_metrics{name="device_offline"}` | gauge | device-svc | device-svc 自己的设备计数，与控制面 `opsmesh_devices_total`/`opsmesh_device_status` 并存，缓存时点不同会短暂不一致 |
+| `business_metrics{name="provision_success_rate"}` | gauge | device-svc | 最近一次纳管的成功率 |
+| `business_metrics{name="autoscaler_decision_history_entries"}` | gauge | autoscaler-svc | 决策历史缓冲占用；上限 500（`maxDecisionHistory`），到达即从头丢弃最旧记录 |
+| `service_info{service}` | gauge | 全部 12 个 | 恒为 1，标签是 `metrics.Init()` 传入的服务名——用来区分同名序列的来源 |
+| `http_requests_total{method,path,status}` | counter | 全部 12 个 | HTTP 请求数（路径已归一） |
+| `http_request_duration_seconds_bucket` / `http_request_duration_seconds_sum` / `http_request_duration_seconds_count` | histogram | 全部 12 个 | 耗时分布（`histogram_quantile` 用 `_bucket`） |
+| `active_connections` | gauge | 全部 12 个 | 处理中的请求数（由 `HTTPMiddleware` ±1 维护） |
+| `http_metrics_series` / `business_metrics_series` | gauge | 全部 12 个 | 当前已分配的时序数（上限各 2000） |
+| `http_metrics_series_dropped_total` / `business_metrics_series_dropped_total` | counter | 全部 12 个 | 因超限被折叠到 `:other` 的写入数。**持续增长=有调用方在打未注册路由**，此时按路径/按标签的面板已失去分辨率 |
+
+> 这些名字不写进 §4.1 那张表：`TestDocumentedMetricsAreExported` 只解析控制面 §4.1 一节，
+> 而控制面的 exposition 里没有微服务家族。本节由同目录的
+> `TestDocumentedMicroserviceMetricsAreScraped` 约束：每个 `name` 值必须真的被某个服务产出，
+> 且该服务在 `deploy/monitoring/prometheus.yml` 里有抓取任务。
 
 ### 4.2 ServiceMonitor 配置
 
@@ -935,7 +982,12 @@ podAnnotations:
 
 ### 4.3 内置告警规则
 
-Helm Chart 内置 `templates/prometheusrule.yaml`，开启方式：
+出厂规则有**两份装载副本**，覆盖两条交付路径：
+
+| 路径 | 文件 | 加载方式 |
+|---|---|---|
+| Docker Compose | `deploy/monitoring/prometheus-alerts.yml` | 挂进容器 `/etc/prometheus/alerts.yml`，由 `prometheus.yml` 的 `rule_files` 加载 |
+| Kubernetes | `deploy/helm/opsmesh/templates/prometheusrule.yaml` | `observability.prometheusRule.enabled=true` 时渲染成 `PrometheusRule` CR，由 Prometheus Operator 加载 |
 
 ```yaml
 observability:
@@ -943,13 +995,44 @@ observability:
     enabled: true
 ```
 
-内置三条规则：
+两份副本各有一批**路径独有**的规则（compose 侧的 `MySQLDown`/`RedisDown` 依赖 blackbox exporter
+的 `job` 名，K8s 侧的 `OpsMeshAgentsOffline` 依赖 DaemonSet 部署形态），这部分不对称是刻意的。
+但 **`opsmesh_microservice_business_alerts` 这一组必须逐条一致**（9 条）：由
+`TestBusinessRuleMirrorBetweenComposeAndChart` 比对 alert 名 / `expr` / `for` / `severity`，
+漏一侧或改了一侧的语义都会判红——K8s 客户不该"看起来配了告警、实际少几条"。
+
+控制面规则（`opsmesh_*`）：
 
 | 告警名 | 表达式 | 触发条件 | 严重级别 |
 |---|---|---|---|
-| `OpsMeshAgentsOffline` | `opsmesh_agents_total < 1` | 在线 agent 数 <1 持续 5m | critical |
-| `OpsMeshTaskFailureRateHigh` | `opsmesh_tasks_total > 1000` | 任务总数 >1000 持续 5m（`opsmesh_tasks_total` 为不带 label 的 gauge，无法按状态拆分做失败率；按状态过滤请用 REST `/api/v1/tasks?status=failed` 拉取后在告警器侧计算比例） | warning |
-| `OpsMeshTaskQueueBacklog` | `opsmesh_task_queue_depth > 100` | 队列深度 >100 持续 5m | warning |
+| `OpsMeshAgentsOffline`（仅 chart） | `opsmesh_agents_total < 1` | 在线 agent 数 <1 持续 5m | critical |
+| `OpsMeshTaskFailureRateHigh`（仅 chart） | `rate(opsmesh_tasks_total{status="failed"}[5m]) / rate(opsmesh_tasks_total[5m]) > 0.3` | 任务失败率 >30% 持续 5m | warning |
+| `OpsMeshTaskQueueBacklog`（仅 chart） | `opsmesh_task_queue_depth > 100` | 队列深度 >100 持续 5m | warning |
+| `OpsMeshAuditChainBroken` | `opsmesh_audit_chain_supported == 1 and opsmesh_audit_chain_ok == 0` | 审计哈希链校验不通过（疑似篡改/删行） | critical |
+| `OpsMeshAuditChainCheckStale` | `increase(opsmesh_audit_chain_checks_total[15m]) == 0` | 链自检 15m 未执行（leader 维护循环停摆） | warning |
+| `OpsMeshAgentSignatureRejected` | `rate(opsmesh_agent_signature_verifications_total{result="rejected"}[5m]) > 0` | agent 验签持续被拒 | critical |
+| `OpsMeshAgentSignatureLegacyAlg` | `rate(opsmesh_agent_signature_verifications_total{alg="v1",result="ok"}[10m]) > 0` | 仍有 agent 用 v1 签名（不覆盖载荷） | warning |
+| `OpsMeshAgentFleetKeyInUse` | `rate(opsmesh_agent_signing_key_source_total{source="fleet"}[10m]) > 0` | 仍依赖全舰队预共享密钥 | warning |
+
+微服务业务规则（`opsmesh_microservice_business_alerts`，2026-10-02 接入；序列口径见 §4.1.1）：
+
+| 告警名 | 选中的业务序列 | 触发条件 | 严重级别 |
+|---|---|---|---|
+| `OpsMeshTaskScheduledFireFailed` | `name="task_scheduled_fire_failures"` | 10m 内出现派发落库失败，持续 5m | warning |
+| `OpsMeshTaskReclaimFailed` | `name="task_reclaim_failures"` | 10m 内出现回收落库失败，持续 5m | warning |
+| `OpsMeshTaskClaimFailureRate` | `task_claim_failures` / `task_claims` | 10m 领取失败占比 >20%，持续 10m | warning |
+| `OpsMeshTaskReportFailureRate` | `task_report_failures` / `task_reports` | 10m 回报失败占比 >20%，持续 10m | warning |
+| `OpsMeshAlertExternalNotifyFailed` | `name="alert_external_notify_failures"`（按 `action` 分） | 10m 内出现"已落库但外部通知失败"，持续 5m | critical |
+| `OpsMeshAlertNotifyFailureRate` | `alert_notification_failures` / `alert_notifications`（按 `tenant_id`） | 10m 推送失败占比 >20%，持续 10m | warning |
+| `OpsMeshLogMemoryBackendDropping` | `name="log_memory_dropped"` | 10m 内内存后端淘汰过日志，持续 5m | warning |
+| `OpsMeshAutoscalerDecisionHistorySaturated` | `name="autoscaler_decision_history_entries"` | 决策历史 ≥500（等于代码常量 `maxDecisionHistory`，两者由测试对账）持续 10m | warning |
+| `OpsMeshMetricsCardinalityFolding` | `*_series_dropped_total`（两套命名并集） | 30m 内有写入被折叠到 `:other`，持续 5m | warning |
+
+> **出厂栈里没有 Alertmanager**（`prometheus.yml` 的 `alerting:` 段是注释状态，compose 服务清单里也
+> 没有 alertmanager）。因此上面这些规则只产生**告警状态**（Prometheus UI 与 `/api/v1/rules` 可见），
+> 不会自动送到任何渠道。要真正收告警，二选一：接客户已有的 Alertmanager（取消 `alerting:` 段注释并
+> 填地址），或让外部告警器按 Prometheus 的 rules API 取数。把这条写清楚是因为"配了告警规则"
+> 与"出事有人会打电话"不是同一件事，交付时不该让客户按后一种理解验收。
 
 ### 4.4 自定义告警规则
 

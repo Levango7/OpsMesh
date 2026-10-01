@@ -2598,3 +2598,148 @@ scaleDown 300s × ~30s 评估节奏 ≈ 每规则每窗口 10 条 ⇒ 500 够 50
 2. 一个 bash 监视循环里 jq 写成 `(…)|join(",") or "无"`，jq 的 `or` 返回布尔，
    于是"完成 0/13 | 红:true"这种无意义输出被我自己当成信号看了几分钟。
    监视表达式要先确认它会打印什么，再拿去盯东西。
+
+## 29. 「配了告警」与「收得到告警」之间差三层（2026-10-02）
+
+本轮的触发点很小：把 v0.11.0 新产出的业务序列接进出厂告警。做完之后它变成一次
+"三层静默"的取证——每一层都不报错，每一层都足以让告警永远不响。
+
+### 29.1 第一层：三域进栈两个月，抓取面从来没跟上
+
+`deploy/monitoring/prometheus.yml` 只有 9 个微服务 job。incident-svc / runbook-svc /
+autoscaler-svc 三个 job **不存在**，而这三个容器在 `docker-compose.prod.yml:877/917/957`
+里是**默认启动**的（该 compose 文件没有任何 `profiles:`，所以"按需启用"这种解释不成立）。
+服务侧 `/metrics` 是注册好的（`services/incident-svc/cmd/incident-svc/main.go:49`、
+`runbook-svc:50`、`autoscaler-svc:38`），所以缺的不是能力，是**采集配置**。
+
+也就是说：v0.10.0 把三域"转正"，v0.11.0 给 autoscaler 加了 `autoscaler_decision_history_entries`，
+但这条序列在出厂 compose 栈里**从未进过 Prometheus**。假如当时已经写过对应告警，
+它会是一条语法正确、评审通过、永远不响的规则。
+
+### 29.2 第二层：门禁把「注释」当成了「事实」
+
+§11 本来是有双向判定的（有 job 必须有 `/metrics`；有 `/metrics` 必须有 job 或进豁免表）。
+它仍然判绿，原因在豁免表：
+
+```
+NOT_SCRAPED_EXEMPT="autoscaler-svc incident-svc runbook-svc tf-provider"
+# 前三者不在 compose 生产栈里（走 chart 的 ServiceMonitor）
+```
+
+**注释这句话在 2026-09-29 之后就过期了**，但门禁读的是表里的名字，不读理由，也不核对
+"它到底在不在栈里"。这就是本项目登记过很多次的形态：*一条人工维护的理由，被当作机器判定用*。
+三域转正那次改了 compose、改了 values、改了 init-databases，唯独没人回头看 prometheus.yml 的注释。
+
+修法不是把注释改对（下一次变动还会再过期），而是把理由换成可核验的事实，新增 §11c：
+
+- 出厂 compose 栈里 + 暴露了 `/metrics` ⇒ **必须**有抓取任务，豁免表对这类服务一律无效；
+- 豁免表里挂着仍在栈里的服务 ⇒ 直接判红（豁免条目必须自己经得起核验）。
+
+`tf-provider` 成为唯一合法豁免（Terraform 插件，无 HTTP 面）。
+
+同一处还有 §12 的扫描面缺陷：业务指标命名/标签规则只扫 `services/*/internal/**`，
+而 task-svc 的 `task_reclaimed`/`task_scheduled_fire_failures` 写在 `cmd/task-svc/main.go`
+（计数就地出，见 §27.2 的理由），完全不在规则管辖内。已扩到 `cmd/` 与 `pkg/`。
+
+### 29.3 第三层：名字对不对，前缀式契约测试根本看不见
+
+`internal/controlplane/metrics_contract_test.go` 是 §21 那轮立的功：从出厂规则里抽
+`opsmesh_*` / `process_*` 的序列名，逐个要求在控制面真实 exposition 里出现。
+但微服务侧（`pkg/metrics`）**不带前缀**，业务序列更是共用家族名靠标签区分：
+
+```
+business_metrics_total{name="task_reclaim_failures"} 3     ← counter
+business_metrics{name="autoscaler_decision_history_entries"} 500   ← gauge
+```
+
+于是两类错误对老测试完全隐形：
+
+1. `name="task_reclm_failures"`（少一个字母）——PromQL 合法，Prometheus 不报错，恒 no data；
+2. 给 counter 配 `increase()` 却选中 `business_metrics{}`（gauge 家族）——同样合法、同样静默。
+
+新增 `metrics_contract_msvc_test.go` 五条判定，把这一族纳入机器对账：
+
+| # | 判定 | 立它的理由 |
+|---|---|---|
+| ① | 规则/面板里每个 `name` 值都必须由某服务的 `Add/SetBusinessMetric` 真的产出 | 名字打错=永久静默；常量写法（`externalNotifyFailureMetric`、`decisionHistoryGauge`）与常量拼接（`shadowMetricPrefix+"_…"`）都要能解析，解析不出**判红而不是跳过** |
+| ② | 产出该序列的服务必须在 `prometheus.yml` 里有 job | 把 §29.1 那类漏采直接钉成红；引用得到、抓不到，等于没引用 |
+| ③ | `{__name__=~"a|b|c"}` 的每个分支必须有渲染器 `# TYPE` 声明 | 两套命名族并集是这类栈里最容易只写对一半的写法；histogram 还要派生 `_bucket/_sum/_count` |
+| ④ | compose 与 chart 两份装载点的 alert 名 / `expr` / `for` / `severity` 逐条相等 | 两条交付路径两份副本必然漂移；K8s 客户不该"看起来配了告警、实际少几条" |
+| ⑤ | 规则里写死的 500 必须等于 `maxDecisionHistory` | 阈值与代码常量脱钩是双向失效：写高永不触发，写低天天误报 |
+
+顺带修了老测试一处**名不副实**：它的注释说只解析 §4.1 表格，实际是全文扫描。新增 §4.1.1
+（微服务序列口径表）时这条会立刻误判——`business_metrics_total` 是微服务家族，控制面 exposition
+里当然没有。已把解析范围收紧到小节边界（`### 4.1 ` 到下一个 3/4 级标题），文档侧新增
+`TestDocumentedMicroserviceMetricsAreScraped` 管 §4.1.1：**每个名字还要归对服务**
+（把 task-svc 的指标写成 device-svc 产出会指错排查方向与抓取排期）。
+
+### 29.4 一条已发布就坏、九个月无人知的面板
+
+写新面板时对全部表达式做了一次真实语法校验（用模块缓存里的 `promql/parser` v0.314.0，
+在仓库外起临时 Go 模块，**没给仓库加依赖**）。37 条规则表达式全通过，面板里却抓出一条：
+
+```
+sum(rate({__name__=~"opsmesh_http_requests_total|http_requests_total"}{status=~"5.."}[5m])) …
+                                                                        ^^^^^^^^^^^^^^^^^^^
+```
+
+选择器后面紧跟第二个 `{…}` 不是合法 PromQL——应当合进同一个花括号用逗号分隔。
+这是 "Error Rate" 面板，**自 v0.9.x 就在出厂仪表盘里**，也就是说这条错误率曲线从来没画出过东西。
+告警侧同概念的 `HighErrorRate` 写对了，所以只有面板坏；这类缺陷 YAML 解析、Grafana provisioning、
+`helm lint`、shellcheck 全都不报警，只有真去解析表达式才会露出来。
+
+CI 里跑不了 promtool（镜像不在白名单、也不值得为此引入依赖），所以 §14 只钉四类**确定性结构错**：
+相邻选择器、括号不配平、`rate/irate/increase/delta` 缺区间、`histogram_quantile` 作用在非 `_bucket`。
+LogQL 面板（Loki 数据源）显式跳过——判据不能把另一种查询语言当 PromQL 判红。
+本节所有"门禁有效"的说法都经过重新注入验证（见 29.6）。
+
+### 29.5 阈值口径为什么这么选
+
+- **比率优先于绝对次数**（领取/回报/推送失败）：绝对阈值在 20 节点小集群永不触发、
+  在 5000 节点上又太迟钝，这与 §21 里 `DeviceOffline` 从"离线 > 10 台"改成占比 >20% 是同一个理由。
+- **分母一律 `clamp_min(…,1)`**：零流量时 `0/0 = NaN`，而 NaN 在 Prometheus 里等于"不评估"——
+  那正是本轮要消灭的静默形态，不能自己在告警里再造一遍。
+- **单次事件即告警的只有三条**（`task_scheduled_fire_failures`、`task_reclaim_failures`、
+  `alert_external_notify_failures`）：它们的事实来源是"已经落库失败"，量小不代表不要紧；
+  其中外部通知失败给 critical，因为它的用户可见症状是**运维以为 on-call 被呼叫了**。
+- **缺席不告警**：事件驱动序列在没有事件时本就不出序列。把"还没发生"当"没接线"判红会造出一堆
+  假红；所以缺席靠 §11c/②（抓取面存在性）与文档口径保证，而不是靠 `absent()`。
+- 没有加"调度停摆"类告警（`task_scheduled_fired` 长时间为 0）：一个没有定时任务的栈合法地恒 0，
+  这条规则出厂即误报，属于要先有产品口径才能定的东西，登记而非实现。
+
+### 29.6 验证与变异（9 项全判红）
+
+| 手段 | 结果 |
+|---|---|
+| `go build ./...` / `go vet ./internal/... ./pkg/...` | RC=0 |
+| `go test ./internal/controlplane/ -count=1`（整包） | ok 42.4s（含新增 5 条测试） |
+| `validate-deploy-assets.sh` | PASS=40 / FAIL=0 / SKIP=1（SKIP 是需 docker 的 helm 渲染项） |
+| `helm lint` + `helm template --set observability.prometheusRule.enabled=true`（原生 v3.14.0） | 通过；渲染产物再用 YAML 解析确认 **9 条规则结构存在**——第一版我插的块缩进不对，`helm template` 照样成功而 `rules` 解析成 `null`，是这一步把它逼出来的 |
+| PromQL 表达式逐条 `ParseExpr`（真实 parser） | 规则侧 37 条全通过；面板侧 16 条 PromQL 全通过（第 17 个面板是 Loki 数据源的 LogQL，不参与 PromQL 校验）。**修复前面板里有 1 条不合法**（§29.4），修复后复跑 16/16 |
+| 变异 9 项 | M1 名字打错、M2 删抓取 job、M3 chart 删一条、M4 两份一起改阈值、M5 `increase` 丢区间、M6 放回坏面板、M7 豁免表挂回在栈里的服务、M8 文档服务归属写错、M9 文档写不存在的名字——**全部按预期判红**；跑完 `md5sum -c` 六/七个文件一致（无残留） |
+| `verify-runtime.sh` §7 新断言 | 三种合成输入自证：齐（紧凑 JSON）→ 绿；齐（带空格 JSON）→ 绿；抽掉 autoscaler → 只报 autoscaler。第一版判据写死紧凑排版，在带空格输入下把 13 个全报缺——**假红**，改成容忍排版后才对 |
+
+没做的事，写清楚：
+
+1. **没有活栈证据**。本机 Docker 守护进程未运行，没有起 compose 栈，所以「规则能被 Prometheus 成功加载」
+   「告警在真实序列上会 pending→firing」这两点本轮**未验证**（语法与引用存在性 ≠ 加载成功）。
+   `verify-runtime.sh` §5b/§6/§7 才是这一层的工具，需要一次起栈运行。
+2. **Alertmanager 不在出厂栈**：`prometheus.yml` 的 `alerting:` 段是注释状态，compose 服务清单里也没有它。
+   所以本轮所有规则只产生**状态**。已在 §4.3 明写，并给出两条接法（接客户已有 Alertmanager / 外部告警器读 rules API）。
+3. chart 侧 `services.<name>.enabled` 默认 false：K8s 客户不显式开服务时，这组规则就是 no data——
+   文件里已注明「没有告警不等于健康」。
+4. `shadowMetricPrefix` 系三个名字带 `opsmesh_` 前缀却是**微服务侧** gauge（影子模式对照用）。
+   它们故意不进规则：一旦写进 `prometheus-alerts.yml`，老的 §21 契约测试会因为 `opsmesh_` 前缀
+   去控制面 exposition 里找它们而误判红。这是一个真实的判据交叉污染，本轮记下不修（要修应先让
+   老测试排除 business 选择器内的名字）。
+5. 未加的告警：device-svc 的 `device_heartbeat_failures` / `agent_heartbeat_failures`
+   （调用方已拿到错误、5xx 面可见，再告属重复）与 `auto_provision_loop_*`（默认关闭的 D3 特性，
+   出厂规则里放一条常态 no data 的规则是"看起来有覆盖"而非覆盖）。
+
+### 29.7 两处自伤（都当场发现）
+
+1. 变异脚本的 `GO_TESTS` 清单是我手写的四条测试名，**漏列新加的文档测试**，于是 M8/M9 首轮显示
+   "漏判"。补进清单后两条都判红。这条要留着：*变异脚本自己的清单也是一种门禁*，
+   新增测试不同步它，就会把"测试有效"写成"看起来漏判"。
+2. 让变异脚本在后台跑的同时用 Edit 改它备份清单里的同一个文件——`restore()` 把我刚加的测试
+   覆盖掉一次。变异/还原类脚本运行期间不要并发编辑它管辖的文件；备份要在工作树处于目标状态时重做。

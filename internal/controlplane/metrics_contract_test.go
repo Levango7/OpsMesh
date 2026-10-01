@@ -183,6 +183,37 @@ func TestShippedDashboardsReferenceExportedMetrics(t *testing.T) {
 // docMetricRowRe 匹配 operations.md §4.1 表格行的第一列（`| \`opsmesh_xxx{label}\` | 类型 | 说明 |`）。
 var docMetricRowRe = regexp.MustCompile("(?m)^\\|\\s*`([a-z_][a-z0-9_]*)(?:\\{[^`]*\\})?`\\s*\\|")
 
+// headingRunRe 认三级/四级标题行，用于把文档切成一节一节的。
+var headingRunRe = regexp.MustCompile("(?m)^#{3,4} ")
+
+// markdownSection 返回从 startPrefix 命中的标题行起、到下一个 3/4 级标题之前的文本。
+//
+// 为什么要按节取范围而不是全文扫：本文件早先的版本号称只解析 §4.1 表，实际是全文扫，
+// 于是任何新增小节里"以反引号指标名开头的表格行"都会被要求出现在**控制面** exposition 里。
+// 微服务家族（business_metrics*）正是这种情况——它们根本不由控制面渲染。
+// 范围化之后，§4.1 归这条测试，§4.1.1 归 metrics_contract_msvc_test.go 的对应测试。
+func markdownSection(raw, startPrefix string) (string, bool) {
+	lines := strings.Split(raw, "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, startPrefix) {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return "", false
+	}
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		if headingRunRe.MatchString(lines[i]) {
+			end = i
+			break
+		}
+	}
+	return strings.Join(lines[start:end], "\n"), true
+}
+
 // TestDocumentedMetricsAreExported：文档里承诺给客户的每个指标，必须真的能抓到。
 //
 // 为什么也要管文档：此前 operations.md 的指标表里写着 opsmesh_alerts_total{severity}、
@@ -195,8 +226,12 @@ func TestDocumentedMetricsAreExported(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读 docs/operations.md 失败: %v", err)
 	}
+	section, ok := markdownSection(string(raw), "### 4.1 ")
+	if !ok {
+		t.Fatalf("operations.md 里没有 `### 4.1 ` 小节——文档结构变了，请同步本测试")
+	}
 	seen := map[string]bool{}
-	for _, m := range docMetricRowRe.FindAllStringSubmatch(string(raw), -1) {
+	for _, m := range docMetricRowRe.FindAllStringSubmatch(section, -1) {
 		seen[m[1]] = true
 	}
 	if len(seen) < 10 {

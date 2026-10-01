@@ -304,16 +304,22 @@ else
   bad "task-svc 有 ${nseq} 条 /api/v1/tasks/<数字> 原始路径序列 ⇒ NormalizePath 未生效，基数熔断可被绕过"
 fi
 
-sec "6. 微服务健康检查（9 个）"
+sec "6. 微服务健康检查（12 个，与出厂 compose 栈的服务清单一致）"
+# 12 个而不是 9 个：incident/runbook/autoscaler 三域已于 v0.10.0 进栈，此前这里漏列，
+# 症状是「部署自检全绿但从没探过那三个容器」——它们的健康路径还与其它服务不同（/api/v1/health），
+# 直接照抄 /health 会得到假的失败，所以逐个按 compose 的 healthcheck 写。
 for e in "auth-svc:$(env_val AUTH_SVC_HTTP_PORT 8100):/health" \
          "device-svc:$(env_val DEVICE_SVC_HTTP_PORT 8101):/health" \
          "task-svc:$(env_val TASK_SVC_HTTP_PORT 8102):/health" \
          "alert-svc:$(env_val ALERT_SVC_HTTP_PORT 8103):/health" \
+         "incident-svc:$(env_val INCIDENT_SVC_HTTP_PORT 8104):/api/v1/health" \
          "log-svc:$(env_val LOG_SVC_HTTP_PORT 8105):/healthz" \
          "config-svc:$(env_val CONFIG_SVC_HTTP_PORT 8106):/health" \
          "gpu-svc:$(env_val GPU_SVC_HTTP_PORT 8107):/health" \
          "aio-svc:$(env_val AIO_SVC_HTTP_PORT 8108):/health" \
-         "portal-svc:$(env_val PORTAL_SVC_HTTP_PORT 8109):/health"; do
+         "portal-svc:$(env_val PORTAL_SVC_HTTP_PORT 8109):/health" \
+         "runbook-svc:$(env_val RUNBOOK_SVC_HTTP_PORT 8110):/api/v1/health" \
+         "autoscaler-svc:$(env_val AUTOSCALER_SVC_HTTP_PORT 8111):/api/v1/health"; do
   n="${e%%:*}"; r="${e#*:}"; p="${r%%:*}"; path="${r#*:}"
   c="$(curl -sS --max-time 6 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${p}${path}" 2>/dev/null)"
   [ "$c" = "200" ] && ok "${n} :${p}${path} → 200" || bad "${n} :${p}${path} → ${c:-无响应}"
@@ -340,6 +346,23 @@ print(f'  [{'PASS' if bad==0 else 'FAIL'}] UP={len(ts)-bad} DOWN={bad}')
 " 2>/dev/null || warn "python 解析 targets 失败"
   else
     echo "$tjson" | head -c 500
+  fi
+  # 上面只看 DOWN，但**漏配一个 job 时该 target 根本不存在**，不会以下降形式暴露——
+  # 这就是 incident/runbook/autoscaler 三域进栈后指标长期无人抓却没被发现的原因。
+  # 所以把出厂栈的目标清单写成显式断言，缺一即红。
+  MISS_JOBS=""
+  for j in opsmesh-controlplane auth-svc device-svc task-svc alert-svc incident-svc \
+           log-svc config-svc gpu-svc aio-svc portal-svc runbook-svc autoscaler-svc; do
+    # 容忍 `"job":"x"` 与 `"job": "x"` 两种 JSON 排版：Prometheus 自己出的是紧凑形，
+    # 但经代理/pretty-print 之后带空格，判据不能靠运气。
+    if ! printf '%s' "$tjson" | grep -qE "\"job\"[[:space:]]*:[[:space:]]*\"${j}\""; then
+      MISS_JOBS="${MISS_JOBS} ${j}"
+    fi
+  done
+  if [ -n "${MISS_JOBS// }" ]; then
+    bad "Prometheus activeTargets 缺少出厂栈目标：${MISS_JOBS}（漏配 job 不显示为 DOWN，只会静默不采）"
+  else
+    ok "13 个 OpsMesh 目标均在 activeTargets 内（无静默漏采）"
   fi
 else
   bad "Prometheus /api/v1/targets 无响应"

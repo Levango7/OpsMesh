@@ -4,6 +4,21 @@
 
 > 当前最新已发布版本：`v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化；上一版 `v0.10.0` 2026-09-29 为 TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-02 新序列接进出厂告警：顺带抓到「三域进栈但抓取面落后两个版本」和一条已发布就坏的面板
+
+> 证据：`go build ./...` + `go vet ./internal/... ./pkg/...` RC=0；`go test ./internal/controlplane/ -count=1` 整包 42.4s 全绿（含本轮新增 5 条契约测试）；`validate-deploy-assets.sh` **PASS=40 / FAIL=0 / SKIP=1**；`helm lint` + `helm template --set observability.prometheusRule.enabled=true` 原生 v3.14.0 通过（渲染产物再用 YAML 解析核对结构）；出厂规则与面板的 **37 条表达式**用真实 Prometheus 解析器（模块缓存里的 `promql/parser` v0.314.0，仓库外临时模块，未加依赖）逐条 ParseExpr 全通过；9 项变异全部判红（明细见下）。**未做真机起栈验证**：本机 Docker 守护进程未运行，规则的**加载与触发**没有活栈证据，本轮只到「语法 + 引用存在性 + 抓取面」这一层。详见报告 §29。
+
+- **修｜出厂栈里 3 个服务的指标从来没人抓**：`deploy/monitoring/prometheus.yml` 缺 incident-svc(8104) / runbook-svc(8110) / autoscaler-svc(8111) 三个抓取任务，而该文件自己的注释和三域转正的事实相互矛盾——注释写「这三个不在 compose 栈里，走 chart 的 ServiceMonitor」，可三域已于 v0.10.0 进栈（`docker-compose.prod.yml:877/917/957`，且无 profiles，默认全起）。**后果不是报错而是恒 no data**：这三个服务的任何出厂告警都不会触发，而 §11 门禁当时判绿，因为「不在栈里」这句话只是豁免表的注释、没人核验。补 3 个 job（服务侧 `/metrics` 注册已逐个 grep 确认，不会产生 DOWN 目标）并改写注释。
+- **门禁｜§11c（`validate-deploy-assets.sh`）**：新增两条判定——① 出厂 compose 栈里、且暴露了 `/metrics` 的服务，**必须**有抓取任务（不再允许用豁免表兜）；② 豁免表里若挂着仍在栈里的服务则判红（「豁免理由」必须能被核验）。豁免表随之从 4 项收敛到 1 项（只剩 `tf-provider` 成立）。同时把 §12 的扫描面从 `services/*/internal/**` 扩到 `cmd/` 与 `pkg/`——task-svc 的 reclaim/fire 计数就写在 `cmd/task-svc/main.go`，之前那条命名规则完全管不到它。
+- **新增｜9 条微服务业务告警**（`opsmesh_microservice_business_alerts`，`prometheus-alerts.yml` + Helm `prometheusrule.yaml` 两份装载点各一份）：`OpsMeshTaskScheduledFireFailed`、`OpsMeshTaskReclaimFailed`、`OpsMeshTaskClaimFailureRate`、`OpsMeshTaskReportFailureRate`、`OpsMeshAlertExternalNotifyFailed`（critical：已落库但外部通道没收到）、`OpsMeshAlertNotifyFailureRate`、`OpsMeshLogMemoryBackendDropping`、`OpsMeshAutoscalerDecisionHistorySaturated`（阈值 = 代码常量 `maxDecisionHistory`）、`OpsMeshMetricsCardinalityFolding`（基数熔断正在折叠）。比率类一律 `clamp_min(…,1)` 防 NaN 静默；事件驱动序列「没发生」不等于「没接线」，所以不拿缺席当告警。
+- **新增｜`internal/controlplane/metrics_contract_msvc_test.go`（5 条测试）**：同包那份契约测试只认 `opsmesh_`/`process_` 前缀，而微服务侧是 `business_metrics{,}_total{name="X"}`——**名字打错一个字母 PromQL 完全合法**，于是一整族静默失效在它视野之外。新增：① 规则/面板引用的每个 `name` 值必须由某服务的 `Add/SetBusinessMetric` 真的产出（含 `const` 与常量拼接的间接写法）；② 产出服务必须在抓取面里；③ `__name__=~"a|b|c"` 的每个分支必须有渲染器声明；④ compose 与 chart 两份镜像的 alert/expr/for/severity **逐条相等**；⑤ 规则里写死的 500 必须等于 `maxDecisionHistory`。另把 §4.1 文档测试的解析范围**收紧到该小节**（它自述只看 §4.1 表格、实际全文扫描，新增微服务表格会被误判为「控制面没输出的幽灵指标」）。
+- **修｜一条出厂即坏、且此前无人发现的 Grafana 面板**：`opsmesh-overview.json` 的 "Error Rate" 写成 `rate({__name__=~"…"}{status=~"5.."})` —— 选择器后紧跟另一个 `{…}` 不是合法 PromQL（应合进同一个花括号用逗号分隔），也就是**这条错误率曲线自发布以来从未画出过东西**；告警侧同概念的规则写对了，所以只有面板坏。已修，并新增门禁 **§14**（不假装是 promtool，只钉四类确定性结构错：相邻选择器、括号不配平、`rate/increase` 缺区间、`histogram_quantile` 作用在非 `_bucket`）——这条门禁对同一条坏表达式重新注入即判红。
+- **补｜面板与文档**：总览面板新增 4 个面板（调度吞吐 vs 落库失败 / 告警外发失败与日志淘汰 / 基数折叠守卫 / 微服务 gauge 当前值），名字同样受上述契约测试约束；`docs/operations.md` 新增 §4.1.1（23 行微服务序列口径表，含「该序列什么时候才会有数据」这种只有源码作者知道的细节，例：`log_memory_dropped` 只在 `LOG_SVC_BACKEND=memory` 时增长、内存容量 5000 **没有环境变量入口**）、§4.3 重写（此前写「内置三条规则」并给了一个与 chart 代码不符的表达式，实际 compose 23 条 / chart 12 条）。
+- **登记｜「有告警」不等于「有人被叫醒」**：出厂 compose 栈**不含 Alertmanager**（`prometheus.yml` 的 `alerting:` 段是注释状态，服务清单里也没有），所以上面这些规则只产生告警**状态**，不会送到任何渠道。已在 §4.3 明确写出与两条接法，避免客户按「会打电话」验收。
+- **修｜verify-runtime 的两处覆盖面**：§6 健康检查 9 个 → 12 个（三域进栈后一直没探，且它们的健康路径是 `/api/v1/health` 与其它服务不同，照抄 `/health` 会假失败）；§7 新增「13 个 OpsMesh 目标必须都在 `activeTargets` 里」——原来的 §7 只数 DOWN，而**漏配 job 的 target 压根不存在**，不会以下降形式暴露，正是本轮那个漏采的成因形态。该断言在三种合成输入（紧凑 JSON / 带空格 JSON / 抽掉 autoscaler）上自证：齐则绿、缺哪个报哪个。
+- **过程中的两处自伤（都当场发现）**：① 变异脚本的 `GO_TESTS` 清单漏列新加的文档测试，导致 M8/M9 首轮显示「漏判」——补列后两条都判红，**这是脚本的洞不是门禁的洞**，但若不跑变异就会把「门禁有效」写成结论；② 变异脚本边跑边被我用 Edit 改同一个测试文件，`restore()` 把新加的测试覆盖掉一次——变异类脚本跑期间不要并发编辑它备份的文件。
+- 验证汇总：9 项变异全部按预期判红（M1 名字打错 / M2 删抓取 job / M3 chart 删一条规则 / M4 两份一起改阈值 / M5 `increase` 丢区间 / M6 放回坏面板 / M7 豁免表挂回在栈里的服务 / M8 文档服务归属写错 / M9 文档写不存在的名字），跑完 `md5sum -c` 六个文件全部一致（无变异残留）。
+
 ## [Unreleased] — 2026-10-01 verify-runtime 补 5b 节：微服务指标语义的黑盒断言
 
 > 证据：Docker 未运行，故**不靠跑整栈**取证——在仓库外起一个用同一个 `pkg/metrics` 渲染 `/metrics` 的探针进程，`awk` 抽出脚本里 5b 的**真实代码**（不是复制一份）对着它跑：硬断言全 PASS、软断言正向路径 PASS、反向断言在坏样本上确认命中。临时目录已删除，仓库工作树全程只有 `verify-runtime.sh` 一处改动。

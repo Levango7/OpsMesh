@@ -38,14 +38,16 @@ scrape_configs:
 
   # OpsMesh Microservices
   #
-  # 事实（2026-09-25 逐服务对照源码核验，2026-09-28 /metrics 覆盖补齐后复核）：微服务
+  # 事实（2026-09-25 逐服务对照源码核验，2026-09-28 /metrics 覆盖补齐后复核，
+  # 2026-10-02 随 incident/runbook/autoscaler 三域转正补齐）：微服务
   # 【没有】独立 metrics 端口——services/** 无任何 9091 监听；/metrics 由服务在自身
   # HTTP 端口注册（cmd/<svc>/main.go: mux.Handle("/metrics", metrics.GetHandler())）。
-  # 本 compose 栈内 9 个服务（device-svc / task-svc / alert-svc / auth-svc / log-svc /
-  # config-svc / gpu-svc / aio-svc / portal-svc）均已注册该路径，抓取任务如下；
-  # autoscaler-svc / incident-svc / runbook-svc 不在本 compose 栈里，由 Helm chart
-  # 的 ServiceMonitor 按 http 端口抓取（deploy/helm/opsmesh/values.yaml
-  # services.<name>.metrics: true）。
+  # 本 compose 栈内 12 个服务（auth・device・task・alert・incident・log・config・gpu・
+  # aio・portal・runbook・autoscaler）均已注册该路径，故 12 个抓取任务全部列出。
+  # 上一版此处写着「autoscaler-svc / incident-svc / runbook-svc 不在本 compose 栈里」——
+  # 三域已于 v0.10.0 进栈（docker-compose.prod.yml:877/917/957），那句话随之过期，
+  # 后果是这三个服务的指标长期无人抓：autoscaler_decision_history_entries 一类
+  # 告警即使写进规则也恒为 no data（"配了告警其实抓不到"）。
   # 此前为 9 个服务配置的 :9091 抓取任务全部指向无监听端口（target 恒 DOWN，属虚假
   # 配置），已按实际情况删减。
   - job_name: "device-svc"
@@ -91,6 +93,21 @@ scrape_configs:
   - job_name: "portal-svc"
     static_configs:
       - targets: ["portal-svc:8109"]
+    metrics_path: /metrics
+
+  - job_name: "incident-svc"
+    static_configs:
+      - targets: ["incident-svc:8104"]
+    metrics_path: /metrics
+
+  - job_name: "runbook-svc"
+    static_configs:
+      - targets: ["runbook-svc:8110"]
+    metrics_path: /metrics
+
+  - job_name: "autoscaler-svc"
+    static_configs:
+      - targets: ["autoscaler-svc:8111"]
     metrics_path: /metrics
 
   # Infrastructure（经 blackbox_exporter 做 TCP 可达性拨测）

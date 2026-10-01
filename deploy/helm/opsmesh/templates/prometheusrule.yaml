@@ -40,4 +40,90 @@ spec:
           annotations:
             summary: "OpsMesh task queue backlog"
             description: "任务队列深度超过 100 已持续 5m，请检查调度器吞吐与 agent 容量。"
+    # ------------------------------------------------------------------
+    # 微服务业务面告警（2026-10-02 接入）——与 deploy/monitoring/prometheus-alerts.yml
+    # 里同名分组是**同一组规则的两份装载副本**：compose 路径由 prometheus.yml 的 rule_files
+    # 读那个文件，K8s 路径由 Prometheus Operator 读这里的 PrometheusRule CR。
+    # 手抄两份必然漂移，所以漂移由机器钉：internal/controlplane/metrics_contract_test.go 的
+    # TestBusinessRuleMirrorBetweenComposeAndChart 逐条比对 alert 名 / expr / for / severity。
+    # 未启用对应微服务（values 里 services.<name>.enabled=false）时这组规则恒为 no data——
+    # 不触发也不误报，但请把「没有告警」和「健康」当成两件事。
+    # 注：注解里的 PromQL 模板占位符在本文件必须写成「双花括号 + 引号包裹」的形式，
+    # 否则它们在 Helm 渲染期就被执行（上面 OpsMeshAgentsOffline 就是这么写的）。
+    # ------------------------------------------------------------------
+    - name: opsmesh_microservice_business_alerts
+      interval: 1m
+      rules:
+        - alert: OpsMeshTaskScheduledFireFailed
+          expr: sum by (job) (increase(business_metrics_total{name="task_scheduled_fire_failures"}[10m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: 定时任务派发落库失败（{{ "{{ $labels.job }}" }}）
+            description: 近 10 分钟有 {{ "{{ $value }}" }} 条到点任务更新 last_fired_at 失败：这些任务的触发事实已不可信，可能重复派发或漏派。请查 task-svc 的存储后端（TASK_SVC_STORE_TYPE / TASK_SVC_DSN）与 tasks 表写入错误日志（[fire] UpdateTask failed）。
+        - alert: OpsMeshTaskReclaimFailed
+          expr: sum by (job) (increase(business_metrics_total{name="task_reclaim_failures"}[10m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: 卡死任务回收落库失败（{{ "{{ $labels.job }}" }}）
+            description: 近 10 分钟有 {{ "{{ $value }}" }} 条超期 running 任务回收失败：它们会一直显示执行中，agent 已死的任务不再重新排队。请查 task-svc 存储后端与 [reclaim] UpdateTask failed 日志。
+        - alert: OpsMeshTaskClaimFailureRate
+          expr: sum(increase(business_metrics_total{name="task_claim_failures"}[10m])) / clamp_min(sum(increase(business_metrics_total{name="task_claims"}[10m])) + sum(increase(business_metrics_total{name="task_claim_failures"}[10m])), 1) > 0.2
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: 任务领取失败率 {{ "{{ $value | humanizePercentage }}" }}
+            description: 近 10 分钟 agent 领取任务的失败占比超过 20%：常见成因是租户不匹配（领取侧按 tenant 过滤后无可领任务）、任务已被他人领取、或存储后端抖动。
+        - alert: OpsMeshTaskReportFailureRate
+          expr: sum(increase(business_metrics_total{name="task_report_failures"}[10m])) / clamp_min(sum(increase(business_metrics_total{name="task_reports"}[10m])) + sum(increase(business_metrics_total{name="task_report_failures"}[10m])), 1) > 0.2
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: 任务结果回报失败率 {{ "{{ $value | humanizePercentage }}" }}
+            description: 近 10 分钟 agent 回报执行结果的失败占比超过 20%：结果没落库 ⇒ 控制面看到的任务状态是陈旧的，重试会重复执行副作用。
+        - alert: OpsMeshAlertExternalNotifyFailed
+          expr: sum by (action) (increase(business_metrics_total{name="alert_external_notify_failures"}[10m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: 告警状态已落库但外部通知失败（action={{ "{{ $labels.action }}" }}）
+            description: 近 10 分钟有 {{ "{{ $value }}" }} 次 action={{ "{{ $labels.action }}" }} 的外部通知未送达（本地状态已变更、接口返回成功）：on-call 实际没被通知。ack=确认、resolve=解决，两者的排查方向不同故保留标签。请核对告警通道配置与 alert-svc 日志中的「外部通知失败」行，必要时在通道恢复后重放。
+        - alert: OpsMeshAlertNotifyFailureRate
+          expr: sum by (tenant_id) (increase(business_metrics_total{name="alert_notification_failures"}[10m])) / clamp_min(sum by (tenant_id) (increase(business_metrics_total{name="alert_notifications"}[10m])) + sum by (tenant_id) (increase(business_metrics_total{name="alert_notification_failures"}[10m])), 1) > 0.2
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: 租户 {{ "{{ $labels.tenant_id }}" }} 的告警推送失败率 {{ "{{ $value | humanizePercentage }}" }}
+            description: 近 10 分钟告警推送失败占比超过 20%：熔断器可能已打开（下游通道故障），此时告警只入库不外发。
+        - alert: OpsMeshLogMemoryBackendDropping
+          expr: sum(increase(business_metrics_total{name="log_memory_dropped"}[10m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: 日志内存缓冲已淘汰 {{ "{{ $value }}" }} 条（不可恢复）
+            description: log-svc 的内存后端按容量截断（MemoryConfig.Capacity=5000，当前无环境变量/配置文件入口可调），被淘汰的条目在检索面上与「从未写入」同形——故有此计数。生产应改用 LOG_SVC_BACKEND=loki 或 sql；出现本告警即说明该实例正在用内存后端跑。
+        - alert: OpsMeshAutoscalerDecisionHistorySaturated
+          expr: business_metrics{name="autoscaler_decision_history_entries"} >= 500
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: 弹性决策历史已达缓冲上限（开始丢弃最旧记录）
+            description: autoscaler-svc 的决策历史驻留内存且上限 500 条，超出即从头丢弃。需要更长保留周期时应落库，而不是调大内存缓冲（多副本部署下内存历史还各不相同）。
+        - alert: OpsMeshMetricsCardinalityFolding
+          expr: sum by (job) (increase({__name__=~"http_metrics_series_dropped_total|business_metrics_series_dropped_total|opsmesh_http_metrics_series_dropped_total"}[30m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: '{{ "{{ $labels.job }}" }} 的指标基数已触顶并折叠到 :other'
+            description: 近 30 分钟有 {{ "{{ $value }}" }} 次写入被折叠：内存保住了，但按路径/按标签的看板与告警已失去分辨率。排查方向——谁在打未注册路由（扫描器、拼错的 SDK、把 ID 塞进路径的调用方），必要时收紧入口鉴权与限流。
 {{- end -}}

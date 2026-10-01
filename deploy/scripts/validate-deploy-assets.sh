@@ -655,10 +655,13 @@ sec "11. 抓取配置 ↔ 服务能力一致性（prometheus.yml 的微服务 jo
 # 反方向同样有害：服务暴露了 /metrics 却没配 job = 面板永远空白。两个方向都要静态兜住。
 # 判定口径：job 的 target 主机名若对应 services/<name>/ 目录，则该服务 main.go 必须有 GetHandler() 注册行。
 PROM="deploy/monitoring/prometheus.yml"
-# 豁免表（带理由）：暴露了 /metrics 但不进 prometheus.yml 的服务。
-# 前三者不在 compose 生产栈里（走 chart 的 ServiceMonitor）；tf-provider 是 Terraform 插件无 HTTP 面。
+# 豁免表（带理由）：暴露了 /metrics 但【不在出厂 compose 栈里】、因此不进 prometheus.yml 的服务。
+# tf-provider 是 Terraform 插件，没有 HTTP 面。
+# 曾经这张表里有 autoscaler-svc / incident-svc / runbook-svc，理由是「不在 compose 生产栈里」——
+# 该理由在 2026-09-29 三域转正后就过期了，而门禁只看表不看理由，于是三个在跑的服务的指标
+# 长期无人抓取（规则写了也恒 no data）。故下面 11c 把「在出厂栈里」变成判定而不是注释。
 # （bot-svc / deploy-svc / plugin-svc / workflow-svc / grafana-bridge 已于 2026-09-29 删除。）
-NOT_SCRAPED_EXEMPT="autoscaler-svc incident-svc runbook-svc tf-provider"
+NOT_SCRAPED_EXEMPT="tf-provider"
 JOB_MISS=""
 while IFS= read -r tgt; do
     [[ -n "$tgt" ]] || continue
@@ -688,6 +691,43 @@ else
     ok "已暴露 /metrics 的服务都有抓取配置，或落在带理由的豁免表里"
 fi
 
+# 11c：出厂 compose 栈里的每个微服务都必须被抓取——豁免表对在栈里的服务一律不适用。
+# 为什么还要再加一层：上面那条只在「不在豁免表」时报红，而豁免表的理由是**注释**；
+# 注释会过期（三域转正后「不在 compose 栈里」即为假），过期注释让门禁继续放行，
+# 症状却是某个正在运行的服务整块指标没人抓——规则、面板、告警全都恒 no data。
+# 「在不在栈里」是可静态核验的事实，所以核验事实，不相信理由。
+COMPOSE_IN_STACK=""
+while IFS= read -r svc; do
+    [[ -n "$svc" ]] || continue
+    [ -d "services/$svc" ] || continue
+    COMPOSE_IN_STACK="${COMPOSE_IN_STACK}${svc}"$'\n'
+done <<< "$(grep -oE '^  [a-z][a-z0-9_-]+:[[:space:]]*$' deploy/docker/docker-compose.prod.yml \
+        | sed -E 's/^  //; s/:.*$//')"
+STACK_NO_JOB=""
+while IFS= read -r svc; do
+    [[ -n "$svc" ]] || continue
+    grep -qs 'GetHandler()' "services/$svc/cmd/$svc/main.go" || continue   # 无 /metrics 的服务由 §11 前两条管
+    grep -qE "targets: \[\"${svc}:" "$PROM" && continue
+    STACK_NO_JOB="${STACK_NO_JOB} ${svc}"
+done <<< "$COMPOSE_IN_STACK"
+EXEMPT_CONTRADICTION=""
+while IFS= read -r svc; do
+    [[ -n "$svc" ]] || continue
+    printf '%s\n' "$NOT_SCRAPED_EXEMPT" | grep -qw "$svc" || continue
+    EXEMPT_CONTRADICTION="${EXEMPT_CONTRADICTION} ${svc}"
+done <<< "$COMPOSE_IN_STACK"
+if [[ -n "${STACK_NO_JOB// }" ]]; then
+    bad "在出厂 compose 栈里、暴露了 /metrics，却没有抓取任务：${STACK_NO_JOB}"
+    echo "         后果：这些服务的指标从不进入 Prometheus，任何引用它们的出厂告警恒为 no data"
+else
+    ok "出厂栈内 $(printf '%s\n' "$COMPOSE_IN_STACK" | grep -c . || true) 个服务键与 services/ 交集里，凡暴露 /metrics 者均有抓取任务"
+fi
+if [[ -n "${EXEMPT_CONTRADICTION// }" ]]; then
+    bad "豁免表与出厂栈冲突（豁免理由已失效）：${EXEMPT_CONTRADICTION}"
+else
+    ok "豁免表没有覆盖任何在出厂栈里的服务"
+fi
+
 echo ""
 echo "=== 12. 业务指标写法（实体 ID 当标签 / counter 名字重复 _total）==="
 # 依据：pkg/metrics 以前没有基数上限，而 device-svc / task-svc 把 device_id / agent_id /
@@ -699,7 +739,11 @@ BIZ_HITS="$("$PY" - "$ROOT" <<'PY'
 import pathlib, re, sys
 root = sys.argv[1]
 hits = []
-for p in sorted(pathlib.Path(root, "services").glob("*/internal/**/*.go")):
+# 扫描面含 cmd/：task-svc 的 reclaim/fire 计数就写在 cmd/task-svc/main.go，
+# 只看 internal/ 会让 cmd/ 里的调用完全不受这条规则约束。
+files = [p for pat in ("*/internal/**/*.go", "*/cmd/**/*.go", "*/pkg/**/*.go")
+         for p in sorted(pathlib.Path(root, "services").glob(pat))]
+for p in files:
     if p.name.endswith("_test.go"):
         continue
     rel = str(p.relative_to(root)).replace("\\", "/")
@@ -777,6 +821,97 @@ if [[ -z "${BOOT_HITS// }" ]]; then
 else
     bad "引导脚本/库集合不合规："
     printf '%s\n' "$BOOT_HITS" | sed 's/^/         /'
+fi
+
+# ---------------------------------------------------------------
+sec "14. 出厂 PromQL 结构检查（CI 里跑不了 promtool，所以钉住最常犯的四类写法错）"
+# ---------------------------------------------------------------
+# 为什么单列：规则文件与面板里的表达式**只有到运行期才会被发现是错的**——
+# Prometheus 加载坏规则会整份文件拒绝加载（于是一条告警都没有），Grafana 坏面板显示 parse error。
+# 2026-10-02 就是靠这套判据抓到一条**已发布**的坏面板：opsmesh-overview.json 的 Error Rate
+# 写成 rate({__name__=~"…"}{status=~"5.."}) ——两个花括号相邻不是合法 PromQL（应合成一个 {…} 用逗号分隔），
+# 出厂面板里那条错误率曲线从来没画出来过。
+# 这里不假装是 promtool：只做四类确定性的结构判定（相邻选择器 / 括号配平 /
+# rate|increase 缺区间 / histogram_quantile 作用在非 _bucket 序列），
+# 语义级校验（函数名拼错、标签是否存在）仍由 §11 与 metrics_contract_*_test.go 负责。
+PROMQL_HITS="$("$PY" - <<'PY'
+import glob, json, os, re
+
+LOGQL_HINTS = ("| json", "|~", "| line_format", "| unwrap")
+
+def check(expr, where, hits):
+    if not expr or any(h in expr for h in LOGQL_HINTS):
+        return  # Loki 面板的 expr 是 LogQL，不适用 PromQL 判据
+    if "}{" in expr.replace(" ", ""):
+        hits.append(f"{where}: 选择器后紧跟另一个 {{…}}（非法 PromQL；应合进同一个花括号用逗号分隔）")
+    for a, b in (("(", ")"), ("[", "]"), ("{", "}")):
+        if expr.count(a) != expr.count(b):
+            hits.append(f"{where}: {a}{b} 不配平（{expr.count(a)} vs {expr.count(b)}）")
+    for fn in ("rate", "irate", "increase", "delta"):
+        for m in re.finditer(r"\b" + fn + r"\(", expr):
+            depth, i, end = 0, m.end() - 1, None
+            while i < len(expr):
+                if expr[i] == "(":
+                    depth += 1
+                elif expr[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        end = i
+                        break
+                i += 1
+            if end is None:
+                break  # 不配平已经报过，不重复报
+            if "[" not in expr[m.end():end]:
+                hits.append(f"{where}: {fn}() 的参数没有区间选择 [..]（传即时向量在运行期才报错）")
+    if "histogram_quantile" in expr and "_bucket" not in expr:
+        hits.append(f"{where}: histogram_quantile 只作用于 …_bucket，缺该后缀等于查询必然为空")
+
+hits, seen = [], 0
+for rel in ["deploy/monitoring/prometheus-alerts.yml",
+            "deploy/monitoring/prometheus-alerts.host.example.yml",
+            "deploy/helm/opsmesh/templates/prometheusrule.yaml"]:
+    if not os.path.exists(rel):
+        hits.append(f"{rel}: 文件不存在（出厂规则丢了）")
+        continue
+    src = open(rel, encoding="utf-8", errors="replace").read()
+    lines = src.split("\n")
+    exprs = re.findall(r"(?m)^[ \t]*(?:-[ \t]*)?\{?[ \t]*[\"']?(?:expr|expression)[\"']?[ \t]*:[ \t]*(.*)$", src)
+    seen += len(exprs)
+    for n, e in enumerate(exprs, 1):
+        check(e.replace('\\"', '"').strip().rstrip('",'), f"{rel}#{n}", hits)
+    if not exprs:
+        hits.append(f"{rel}: 没解析到任何 expr（本节对它空转）")
+
+for rel in sorted(glob.glob("deploy/monitoring/grafana/dashboards/*.json")):
+    try:
+        doc = json.load(open(rel, encoding="utf-8"))
+    except Exception as exc:
+        hits.append(f"{rel}: JSON 解析失败 {exc}")
+        continue
+    n = 0
+    for p in doc.get("panels", []):
+        title = p.get("title", "?")
+        for t in p.get("targets", []):
+            e = t.get("expr") or t.get("query")
+            if not e:
+                continue
+            n += 1
+            ds = (t.get("datasource") or p.get("datasource") or {}).get("type", "")
+            check(e if ds == "loki" else e.replace('\\"', '"'), f"{rel}[{title}]", hits)
+    seen += n
+    if n == 0:
+        hits.append(f"{rel}: 面板里没解析到任何表达式（本节对它空转）")
+
+if seen < 20:
+    hits.append(f"出厂资产合计只解析到 {seen} 条表达式（阈值 20）——抽取正则失配，本节在空转")
+print("\n".join(hits))
+PY
+)"
+if [[ -z "${PROMQL_HITS// }" ]]; then
+    ok "出厂规则与面板的 PromQL 结构合规（无相邻选择器 / 配平错 / 缺区间 / quantile 用错家族）"
+else
+    bad "出厂 PromQL 结构问题："
+    printf '%s\n' "$PROMQL_HITS" | sed 's/^/         /'
 fi
 
 echo ""
