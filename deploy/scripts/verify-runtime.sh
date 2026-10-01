@@ -222,8 +222,9 @@ else
 fi
 
 sec "5. 微服务 /metrics 真实性核对"
-# 预期值 = 源码中是否注册了 mux.Handle("/metrics", metrics.GetHandler())：
-# device/task/alert/auth/log/config/gpu/aio/portal 均已注册 → yes。
+# 预期值 = 源码中是否注册了 mux.Handle("/metrics", metrics.GetHandler())。
+# 本节只覆盖端口连通性（9 个）；三域转正后暴露 /metrics 的服务已达 12 个，
+# 全 12 个的**内容**断言在下面的 5b 节做（那里连不上正文即判红，故不缺口的不是本节）。
 check_metrics() {
   local name="$1" port="$2" expect="$3"
   local c; c="$(curl -sS --max-time 6 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/metrics" 2>/dev/null)"
@@ -242,6 +243,66 @@ check_metrics log-svc    "$(env_val LOG_SVC_HTTP_PORT 8105)"    yes
 check_metrics gpu-svc    "$(env_val GPU_SVC_HTTP_PORT 8107)"    yes
 check_metrics aio-svc    "$(env_val AIO_SVC_HTTP_PORT 8108)"    yes
 check_metrics portal-svc "$(env_val PORTAL_SVC_HTTP_PORT 8109)" yes
+
+sec "5b. 微服务指标语义（SET 冒充 counter / 恒零仪表 / 基数熔断 的黑盒回归）"
+# 断言对象 = pkg/metrics 的 exposition：12 个服务的 /metrics 全部走它（gpu-svc 用的是同一个包，
+# 只是 import 别名不同；它自己的 internal/metrics 是领域采集器，不是 /metrics 处理器）。
+#
+# 硬断言只放**启动后必然成立**的事实；事件驱动的序列一律放软断言。
+# 反过来若为了怕假红而全部放软，就又退回"有指标无验证"——所以分档，而不是一律放宽。
+SVC_PORTS="auth-svc:8100 device-svc:8101 task-svc:8102 alert-svc:8103 incident-svc:8104 \
+log-svc:8105 config-svc:8106 gpu-svc:8107 aio-svc:8108 portal-svc:8109 runbook-svc:8110 \
+autoscaler-svc:8111"
+svc_port() { local e; e="$(printf '%s' "$1" | tr 'a-z-' 'A-Z_')"; env_val "${e}_SVC_HTTP_PORT" "$2"; }
+
+mbad=0
+for sp in $SVC_PORTS; do
+  svc="${sp%%:*}"; dflt="${sp##*:}"; port="$(svc_port "$svc" "$dflt")"
+  body="$(curl -sS --max-time 8 "http://127.0.0.1:${port}/metrics" 2>/dev/null)"
+  if [ -z "$body" ]; then bad "${svc} :${port}/metrics 取不到正文（进程未响应，指标语义无从判定）"; mbad=$((mbad+1)); continue; fi
+  probs=""
+  grep -q '^# TYPE business_metrics gauge$'                     <<<"$body" || probs="${probs} business_metrics 的 TYPE 不是 gauge"
+  grep -q '^# TYPE business_metrics_total counter$'             <<<"$body" || probs="${probs} business_metrics_total 的 TYPE 不是 counter"
+  grep -q '^# TYPE active_connections gauge$'                   <<<"$body" || probs="${probs} active_connections 家族缺失"
+  grep -qE "^service_info\{service=\"${svc}\"\} 1$"          <<<"$body"   || probs="${probs} service_info 未带 service=\"${svc}\"（Init 的参数没落到 exposition）"
+  for f in http_metrics_series http_metrics_series_dropped_total business_metrics_series business_metrics_series_dropped_total; do
+    grep -qE "^${f} [0-9]" <<<"$body" || probs="${probs} 缺 ${f}（基数熔断不可观测）"
+  done
+  # 反向断言：这两类"复生"就是本轮修掉的缺陷回来了
+  if g="$(grep -oE '^business_metrics\{name="[^"]*_total"' <<<"$body" | head -1)"; [ -n "$g" ]; then
+      probs="${probs} gauge 家族里出现 *_total 名（${g}）＝SET 冒充 counter 的旧缺陷复生"
+  fi
+  grep -qE '^queue_depth([ {]|$)' <<<"$body" && probs="${probs} queue_depth 又出现了（该序列因恒零已删除）"
+
+  if [ -z "$probs" ]; then ok "${svc} :${port} 指标语义正确（家族/类型/熔断可观测/无恒零仪表）"
+  else bad "${svc} :${port} 指标语义不符:${probs}"; mbad=$((mbad+1)); fi
+done
+
+# 软断言：只在事件发生后才会出现的序列，存在就记 PASS，不存在只 WARN。
+# 不断言之所以合理：它们要么等调度 tick、要么等真实丢弃/失败发生，缺席不代表没接线。
+soft() { local svc="$1" port="$2" pat="$3" why="$4"
+  if curl -sS --max-time 8 "http://127.0.0.1:${port}/metrics" 2>/dev/null | grep -qE "$pat"; then
+      ok "${svc} 已产出业务序列 ${pat}（事件驱动，本轮真发生了）"
+  else
+      warn "${svc} 暂无 ${pat} —— ${why}（缺席不等于未接线，故不判红）"
+  fi; }
+soft task-svc   "$(svc_port task-svc 8102)"     'business_metrics_total\{name="task_reclaimed"'      '调度器 reclaim tick 未到（约 30s 一次）'
+soft task-svc   "$(svc_port task-svc 8102)"     'business_metrics_total\{name="task_scheduled_fired"' '调度器 fire tick 未到'
+soft device-svc "$(svc_port device-svc 8101)"   'business_metrics\{name="device_total"'             'RecordDeviceMetrics 由请求/自动纳管触发，尚无该路径'
+soft log-svc    "$(svc_port log-svc 8105)"    'business_metrics_total\{name="log_memory_dropped"' '内存环形缓冲尚未发生淘汰（未写满 cap）'
+soft autoscaler-svc "$(svc_port autoscaler-svc 8111)" 'business_metrics\{name="autoscaler_decision_history_entries"' '尚无任何扩缩容决策（RPC 触发型）'
+
+# 熔断不可绕过：路径归一化必须真把数字 ID 并掉，否则上限形同虚设。
+tp="$(svc_port task-svc 8102)"
+for junk in 1 99999; do
+  curl -sS --max-time 5 -o /dev/null "http://127.0.0.1:${tp}/api/v1/tasks/${junk}" 2>/dev/null
+done
+nseq="$(curl -sS --max-time 8 "http://127.0.0.1:${tp}/metrics" 2>/dev/null | grep -cE '^http_requests_total\{.*path="/api/v1/tasks/[0-9]+"' || true)"
+if [ "${nseq:-0}" = "0" ]; then
+  ok "task-svc 数字 ID 路径未各自成序列（NormalizePath 生效，上限不被同路由的实例撑爆）"
+else
+  bad "task-svc 有 ${nseq} 条 /api/v1/tasks/<数字> 原始路径序列 ⇒ NormalizePath 未生效，基数熔断可被绕过"
+fi
 
 sec "6. 微服务健康检查（9 个）"
 for e in "auth-svc:$(env_val AUTH_SVC_HTTP_PORT 8100):/health" \
