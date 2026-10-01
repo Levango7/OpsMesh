@@ -4,6 +4,74 @@
 
 ---
 
+## v0.11.0 — 2026-10-01 可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化
+
+本版主线不是加功能，而是把**已经在线但看不见**的东西变成事实：微服务指标的类型与基数、
+只读日志后端的静默丢弃、无界的调度历史、被吞掉的外部通知失败、以及镜像侧的成分证据链。
+
+### 破坏性变更（升级前必读）
+
+1. **微服务指标家族与类型变更**（`pkg/metrics`，12 个服务共用）：
+   - 9 个 `business_metrics{name="*_total" | *_failures}` **gauge 序列**迁为 `business_metrics_total{name="*"}` **counter**。
+     原实现是 SET 语义、每事件写 1 ⇒ 恒为 1 的 gauge，`rate()/increase()` 与失败率计算全部无意义。
+   - **删除 `queue_depth` 序列**（全仓零生产调用方，每次抓取恒输出 0）。
+   - HTTP 与直方图的 `path` 标签值一律归一化（`/api/v1/devices/123` → `/api/v1/devices/:id`）；非标准方法
+     收敛为 `:other`；超 2000 条时序后折叠，丢弃数暴露在 `http_metrics_series_dropped_total`。
+   - 已核实**出厂告警规则与面板均未引用**上述名字 ⇒ 不断既有查询；自建查询的部署需按上表改写。
+2. **ES/Loki 日志后端不再假装写入**：`POST /api/v1/logs` 由 `200/201` 改 **`501 Not Implemented`**，
+   `log-svc` 的 `AppendLog` 改 gRPC `codes.Unimplemented`。此前 `Append` 是 `return nil` 的 no-op，
+   agent 日志与任务输出被逐条丢弃而调用方收到成功。gRPC 侧改为**整轮跳过 + 仅一条 WARN**。
+   需要 OpsMesh 写日志请把 `log-backend` 配成 `memory` 或 `sql`。
+3. **cron 双实现语义对齐**（`pkg/cron` ← `internal/cron`）：`0 3 * * 7`（周字段 7）此前在 task-svc 侧
+   **静默不执行**、在控制面正常执行 ⇒ 升级后这类表达式**会开始执行**；`60 * * * *` 这类单值越界由
+   「静默不匹配」改为**报错**。新增 `internal/cron/parity_test.go`，两轨一致性由注释承诺变为 CI 强制。
+4. **`deploy/docker/scripts/init-mysql.sql` 不再携带建表语句**（删 43 张表 DDL，只建库+授权）：该脚本自称
+   只建库却带着与代码漂移的 DDL（6 张表 / 13 列零兜底），一旦被挂载，控制面 `INSERT INTO agents` 即
+   `Unknown column 'agent_id'`。建表职责归代码迁移与服务自建 schema。
+5. **`operator` 角色新增 gpu / runbook / incident / k8s 四组只读权限**：修正此前「operator 权限反而低于
+   viewer」的层级倒挂。只补 read 不补 write（write 下放属产品未决）。
+6. **autoscaler 决策历史上限 500 条**（此前无界增长且每次评估反向扫全量）：绕回后**保留最新**——
+   冷却判定依赖尾部语义，裁剪方向是正确性的一部分。
+
+### 新增能力
+
+- **镜像级 SBOM 证据链（首个带 `.att` 的版本）**：12 个微服务 + 2 个核心镜像执行
+  `cosign attest --type cyclonedx`，`cosign verify-attestation <image>` 可直接从镜像问到成分，
+  不必登录 Actions 下载附件。v0.10.0 时 `.att` 为 0/14。
+- **第三方许可合规工程化**：`deploy/scripts/gen-third-party-licenses.sh`（离线，gen / `--check` /
+  `--emit-notice` 三模式）+ `docs/third-party-licenses.md`（162 模块、UNKNOWN 0、24 项 MPL-2.0 列入
+  「需法务确认」）+ 仓库根 `NOTICE`（7 段上游署名逐字保留，满足 Apache-2.0 §4(d)）。CI `security`
+  job 接入 `--check` 门禁（清单集合相等 / 双读判定一致 / 源码覆盖率下限）。
+  **MPL-2.0 能否随商用分发属商务 + 法务判定，脚本不替它签字。**
+- **三域转正落地**：incident / runbook / autoscaler 进 compose 生产栈（三段服务定义 + 三条 `*_SVC_URL`），
+  `init-databases.sql` 补 `opsmesh_runbook` / `opsmesh_incident`；runbook 落地 MySQL 持久化、编辑器 Save
+  由 `alert()` 假动作改真实 PUT；incident 的 MTTD 补上「发生时刻」来源 `occurred_at`。
+- **业务指标接线第 1 步**：`task_reclaimed` / `task_scheduled_fired`（+ 各自失败数）、`log_memory_dropped`、
+  `autoscaler_decision_history_entries`。另有 5 条候选经核查**不做**——要么只能全表扫描换数字，
+  要么数据源是占位实现（在其上出指标等于编造数字）。
+- 前端侧栏补第六个入口 `bot`（此前 `/bot` 只能手敲 URL 到达）；gpu 利用率图修正字段读取
+  （`avg_utilization`）并按 `source` 显示徽标——**只有 `nvidia-smi` 标「真实采集」**，
+  缺省/未知/simulated 一律告警呈现，不把未知当可信。
+
+### 缺陷修复
+
+- `incident-svc` 在「服务自建表」部署（K8s / 自备 MySQL）里**每次 `CreateIncident` 都失败**：
+  `occurred_at` 只加进了引导脚本而没进服务自己的 `CREATE TABLE`。修法：DDL 补列 +
+  `ensureIncidentColumns`（`information_schema` 预检 + 幂等 `ALTER`）+ `schema_drift_test.go` 防复发。
+- `alert-svc` 的 ack/resolve 外部通知失败此前被 4 处 `_ =` 吞掉（本地已改、请求返回 OK，而 PagerDuty
+  侧没收到）⇒ 现在 WARN + `alert_external_notify_failures{action}` 计数，且刻意不向上抛错
+  （远端故障不应阻塞本地告警流转）。
+- `aio-svc` 噪声压缩用例的分钟桶边界偶发失败；errcheck 收紧档 150 处逐点勘验（131 修 + 19 有据豁免）。
+
+### 供应链与门禁
+
+- **axios `1.19.0 → 1.20.0`**：Trivy 刷新漏洞库后暴露 7 条 HIGH（全在 axios、均有修复版本），与本次代码
+  改动无关，属存量依赖问题 ⇒ 选择升级而非 `.trivyignore` 豁免。lockfile 的 `resolved` 已用官方 registry
+  纠正，**不把第三方镜像固化进交付物**。
+- `validate-deploy-assets.sh` 新增**第 12 节**（业务指标禁止实体 ID 当标签、counter 命名不重复 `_total`）与
+  **第 13 节**（引导脚本不得含 `CREATE TABLE`；compose 每个 `*_SVC_DSN` 指向的库必须有建库来源），
+  两节均经故障/变异注入验证。
+
 ## v0.10.0 — 2026-09-29 TD-60 阶段 2 收口：五服务删除 + 域完善与身份头治理 + 流量取数出口
 
 本次发布把 TD-60「先接通、再裁决」推进到**可裁决**状态：五域接线与权限逐条镜像本地、五个从未进部署清单的服务删除、两个真 bug 修复（自动伸缩指标读取恒失败、RBAC 权限目录缺失导致含 admin 一律 403）、代理身份头统一治理（多租户落错桶 + 同租户内审计伪造），并补上裁决所缺的真实流量取数出口。因含三类破坏性变更，按 0.x 惯例走 minor。

@@ -2,16 +2,43 @@
 
 本文件记录 OpsMesh 所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [Semantic Versioning](https://semver.org/)。
 
-> 当前最新已发布版本：`v0.10.0`（2026-09-29，TD-60 阶段 2 收口——五服务删除 + 域完善与身份头治理 + 逐域流量取数出口；上一版 `v0.9.2` 2026-09-27 为商用就绪收口 + 发版链路加固）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
+> 当前最新已发布版本：`v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化；上一版 `v0.10.0` 2026-09-29 为 TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
-## [Unreleased] — 2026-10-01 引导脚本不再携带建表语句（删 43 张表 DDL + 门禁第 13 节）
+## [0.11.0] — 2026-10-01（可观测性语义收口 + 供应链证据链 + 三域转正 + 许可合规工程化）
+
+本版把「指标/日志/发布证据」三条面上**已经在线但看不见**的失败全部显式化，并首次让镜像自带可验证的 SBOM 证据。
+明细保留在下方各 `[Unreleased]` 块中（本仓约定：明细原地留存 + 标题标注已归入），本节只做分组与升级判断。
+上一版 `v0.10.0`（2026-09-29）为 TD-60 阶段 2 收口。
+
+**破坏性 / 行为变更（升级前必读）**：
+
+1. **微服务指标家族与类型变更**（`pkg/metrics`，12 个服务共用）：9 个 `business_metrics{name="*_total"|*_failures}` 序列迁为 `business_metrics_total{name="*"}` **counter**（此前是 SET 语义、恒为 1，`rate()/increase()` 无意义）；**`queue_depth` 序列删除**（全仓零调用方，恒输出 0）；HTTP/直方图的 `path` 标签值一律归一化（`/api/v1/devices/123` → `/api/v1/devices/:id`）。已核出厂告警与面板**未引用**这些名字，故不断既有查询。
+2. **`POST /api/v1/logs` 在 ES/Loki 后端由成功改回 `501`**，`log-svc` 的 `AppendLog` 改 `codes.Unimplemented`：该后端按设计只读（日志须由 filebeat/promtail 直推），此前返回 `nil` 让上层以为写成功、agent 日志与任务输出**静默丢失**。
+3. **cron 双实现语义对齐**（`pkg/cron` ← `internal/cron`）：`0 3 * * 7`（周字段 7）此前在 task-svc 侧**静默不执行**、在控制面正常执行 ⇒ 升级后这类表达式**会开始执行**；`60 * * * *` 这类单值越界由「静默不匹配」改为**报错**。新增 `internal/cron/parity_test.go` 把两轨一致性变成 CI 强制。
+4. **引导脚本 `init-mysql.sql` 不再携带建表语句**（删 43 张表 DDL，只建库+授权）：此前它与代码期望漂移（6 张表 / 13 列零兜底），一旦被挂载，控制面 `INSERT INTO agents` 即 `Unknown column 'agent_id'`。建表职责归代码迁移 / 服务自建。
+5. **`operator` 角色新增 gpu / runbook / incident / k8s 四组只读权限**（修此前「operator 反而低于 viewer」的层级倒挂）。只补 read 不补 write——write 下放仍属产品未决。
+6. **autoscaler 决策历史上限 500 条**（此前无界增长，且每次评估反向扫全量）：绕回后保最新，冷却判定依赖尾部语义。
+
+**新增能力**：
+
+- **镜像级 SBOM 证据链**：`cosign attest --type cyclonedx` 为 12 个微服务 + 2 个核心镜像产出 `.att`，客户 `cosign verify-attestation` 可直接从镜像问到成分（v0.10.0 时 `.att` 为 0/14，本版是首个带证据链的发布）。
+- **P1-7 第三方许可工程化**：离线生成器 `deploy/scripts/gen-third-party-licenses.sh`（gen / `--check` / `--emit-notice`）+ `docs/third-party-licenses.md`（162 模块、UNKNOWN 0、24 项 MPL-2.0 进「需法务确认」）+ 仓库根 `NOTICE`（7 段上游署名逐字保留）。CI `security` job 已接 `--check` 门禁。**MPL-2.0 能否随商用分发仍属商务+法务判定。**
+- **三域转正落地**：incident / runbook / autoscaler 进 compose 生产栈（`docker-compose.prod.yml:877/917/957` + 三条 `*_SVC_URL`）；runbook 补 MySQL 持久化、编辑器 Save 由 `alert()` 假动作改真实 PUT；incident 的 MTTD 补上「发生时刻」来源 `occurred_at`。
+- **业务指标接线第 1 步**：task-svc 调度吞吐（`task_reclaimed` / `task_scheduled_fired` + 各自失败数）、log-svc 内存环形淘汰数（`log_memory_dropped`）、autoscaler 历史占用 gauge。**另有 5 条候选经核查后不做**——理由与证据见报告 §27（要么只能全表扫、要么数据源是占位实现，后者出指标等于编造数字）。
+- 前端侧栏补第六个入口 `bot`（此前 `/bot` 只能手敲 URL 到达）；gpu 利用率图改用真实字段 `avg_utilization` 并按 `source` 显示徽标（**只有 `nvidia-smi` 标「真实采集」**，未知/simulated 一律告警呈现）。
+
+**修复**：`incident-svc` 在服务自建表部署（K8s / 自备 MySQL）里每次 `CreateIncident` 都因缺 `occurred_at` 列失败；`aio-svc` 噪声压缩用例的分钟桶边界偶发失败；errcheck 收紧档 150 处逐点勘验；两处 CI 红点（runbook 测试字段名、exec 返回值未判错）。
+
+**依赖与门禁**：axios `1.19.0 → 1.20.0`（Trivy 刷新库后 7 条 HIGH 均有修复版本，非本次代码引入）；`validate-deploy-assets.sh` 新增第 12 节（业务指标标签/命名，防实体 ID 基数）与第 13 节（引导脚本不得建表 + compose 库名必须有建库来源）。
+
+## [Unreleased] — 2026-10-01 引导脚本不再携带建表语句（删 43 张表 DDL + 门禁第 13 节）（已归入 0.11.0）
 
 > 证据：三方一致性审计（`CREATE TABLE IF NOT EXISTS <t> (…)` 从 Go 原始字符串与 `.sql` 提取，剥 `INDEX`/`PRIMARY KEY` 行取首字段做列集合，对同名表求差集）；`deploy/scripts/validate-deploy-assets.sh` 当前 **PASS=33 / FAIL=0 / SKIP=2**，新第 13 节经**两次变异检验**（塞回 `CREATE TABLE` → 判红；把某 DSN 的库从两个脚本都删掉 → 判红并指向「连库即 Access denied」）。详见 `docs/td60-decision-2026-09-26.md` §5.11 ①c。
 
 - **修｜`deploy/docker/scripts/init-mysql.sql` 收敛为「只建库+授权」（删 43 张表 DDL）**：该文件自称「此处只建库+授权」，实际带着 43 张表 DDL。**先确认影响面**：它不是出厂栈的脚本——compose 只挂 `init-databases.sql`（`docker-compose.prod.yml:87`）并在 `:39-42` 写明「不要改挂它」，唯一执行它的是手工脚本 `run-mysql-init.ps1`。**但它确实已经漂移且是静默形态**：`CREATE TABLE IF NOT EXISTS` 会让先落地的那份胜出、后到者不报错；实测 7 张表有「代码期望、deploy 副本没有」的列；**扣掉迁移 `ALTER` 与代码兜底 `applyLegacyColumnFixups`（`internal/store/sql.go:758`）后，仍剩 6 张表 / 13 列零兜底**：`agents`（`agent_id` 主键/`segment`/`load`/`last_seen`）、`devices`（`device_id` 主键/`segment`/`state`/`task_state`）、`ci_items`（`approval_status`/`attrs`）、`permissions`（`group_name`）、`roles`（`permissions`）、`users`（`role_ids`）（`tasks.last_fired_at` 由兜底函数补，不计入）⇒ 一旦被挂载，控制面 `INSERT INTO agents`（`internal/store/sql_devices.go:83`）即 Unknown column 'agent_id'。**删除无损**：43 张表在代码来源里均有定义（控制面迁移 / 服务 `schema.sql`（auth・device・task 三服务 `go:embed`）/ 其余服务内联 `initSchema`），「只在 deploy 脚本里存在」的表 = 0。补上转正新增的 `opsmesh_incident`/`opsmesh_runbook` 两库；`run-mysql-init.ps1` 头部同步说明。
 - **门禁｜`validate-deploy-assets.sh` 新增第 13 节（防复发）**：① `deploy/docker/scripts/*.sql` 不得含 `CREATE TABLE`（**先剥 `--` 注释**——脚本头部故意引用该短语解释为何禁止，不剥会把「解释」当「违规」）；② compose 每个 `*_SVC_DSN` 指向的库必须由引导脚本建库、或等于 `MYSQL_DATABASE`（自动建库）。
 
-## [Unreleased] — 2026-10-01 供应链：axios 1.19.0 → 1.20.0（Trivy 刷新库后暴露 7 条 HIGH）
+## [Unreleased] — 2026-10-01 供应链：axios 1.19.0 → 1.20.0（Trivy 刷新库后暴露 7 条 HIGH）（已归入 0.11.0）
 
 > 证据：CI security job 的 Trivy fs 报告（trivy-fs-report 产物，v0.70.0 + 当日刷新库）——`web/enterprise/package-lock.json` 的 npm 目标 7 条 HIGH（全部在 axios 1.19.0，Fixed Version 1.20.0），**Go 侧 14 个 go.mod 全部 0 命中**；升级后本地 `npm run build` 通过、前端 52 个测试文件 / 1126 例全绿，`axios/package.json` 实测 `1.20.0`。
 > 性质说明：与本次代码改动无关——同一个 job 在 4 小时前的 `1d5127f` 上是绿的，是漏洞库刷新后暴露的**存量**依赖问题。**Fixed Version 存在 ⇒ 不适用 `.trivyignore` 的「无修复版本」豁免条件**，故选择升级而非豁免。
@@ -19,7 +46,7 @@
 - **升级｜axios 1.19.0 → 1.20.0**（`web/enterprise/package.json`：`^1.7.7` → `^1.20.0`）：7 条 HIGH 均由 1.20.0 修复（HTTP/2 代理与 DNS 设置未生效导致安全控制绕过、HTTP/2 会话初始化 DoS、畸形 data URL DoS、继承 `createConnection` 导致请求 socket 劫持、构造重定向主机名 DoS、fetch 适配器重定向限制绕过导致 SSRF、表单序列化原型污染 gadget）。lockfile 只改 3 行（version/resolved/integrity）。
 - **一处供应链细节**：本机 npm 默认走镜像源，首次安装把 lockfile 的 `resolved` 改写成第三方镜像地址；已用 `--registry=https://registry.npmjs.org/` 重装纠正（integrity 哈希不变，内容寻址）——**不把第三方镜像固化进交付物**。
 
-## [Unreleased] — 2026-10-01 TD-60 收尾：转正落地回写 + cron 双实现差异中的三个真缺陷 + gpu 来源可见
+## [Unreleased] — 2026-10-01 TD-60 收尾：转正落地回写 + cron 双实现差异中的三个真缺陷 + gpu 来源可见（已归入 0.11.0）
 
 > 证据：`gofmt -l internal/cron pkg/cron services/incident-svc/internal/store` 干净；根模块 `go build ./...` + `go vet ./internal/... ./pkg/...` RC=0；`go test ./internal/cron/ ./pkg/cron/ ./internal/controlplane/ ./internal/store/ -count=1` 全绿；`services/task-svc` 与 `services/incident-svc` 模块 `go build ./...` + `go test ./... -count=1` 全绿；前端 `npm run build` + 52 个测试文件/1126 例全绿；`validate-deploy-assets.sh` PASS=32 / FAIL=0（另归一化了 compose 工作区行尾：门禁第 6 节只认工作区字节，HEAD blob 本就是 LF）。守卫测试均经**变异检验**：拆掉周 7 兜底/单值越界检查、删 DDL 里的 `occurred_at`、把迁移语句改名——四次全被判红，还原后复绿。详见 `docs/td60-decision-2026-09-26.md` §5.11。
 
@@ -32,7 +59,7 @@
 - **登记｜仍未决项**（登记在 §5.11 ⑤，不替产品/法务决定）：24 个 MPL-2.0 依赖的商用分发（法务）、gpu 模拟兜底的替代数据源、微服务 `internal/store` 补测试、`node_modules` 与基础镜像 OS 包的供应链口径、`tenant.go` 级联清理、`operator` 是否下放三域 write。
 - **澄清｜一条不是缺口的差异**：helm chart 全部 `services.*_svc.enabled: false`（含在出厂栈内的 gpu/log/task）——K8s 路径的微服务是显式开启制，与 compose 出厂栈装配策略不同，不是「三域转正未同步 helm」。**记录以免下轮把扫描出的这个差异当成待修项。**
 
-## [Unreleased] — 2026-09-30 TD-60 §5.10 裁决与回写：operator 三域 403 已修 + autoscaler 误判更正
+## [Unreleased] — 2026-09-30 TD-60 §5.10 裁决与回写：operator 三域 403 已修 + autoscaler 误判更正（已归入 0.11.0）
 
 > 证据：`go build ./...` OK；`go vet ./internal/store/ ./internal/controlplane/` OK；`gofmt -l internal/store/` 干净；`go test ./internal/store/ -run TestRolePermissions -count=1` 全绿；`go test ./internal/controlplane/ -run 'Perm|RBAC|Role|Auth|Diagnostic|Operator|Seed' -count=1` 全绿（3.65s）。静态取证口径为 file:line + grep 计数，**未做运行时验证**。详见 `docs/td60-decision-2026-09-26.md` §5.10。
 
@@ -42,7 +69,7 @@
 - **证伪一条隐含前提**：单体对 incident/runbook **没有任何实现**——`internal/` 全域 `/api/v1/runbooks`、`/api/v1/incidents` 共 14 处命中**全部**落在 `internal/controlplane/service_proxy.go`（代理表本身）与其测试里，**0 处 handler 注册**；`internal/store/` 内 `runbook` 3 处全是权限目录条目。⇒ 「删除」在此不是去重，是直接砍掉能力；选 (c) 须显式写成「我们不要这个能力」，**不能拿「去重」当技术理由**。
 - **新事实（纠正一处隐含前提）**：六域在企业版**没有侧栏入口**——`web/enterprise/src/App.vue` 的 `navGroups`（`:146`，经 `navView`（`:190`）渲染于 `:82`）只含 overview/ops/assets/delivery/observability/system，**不含** gpu/runbooks/incidents/autoscaler/portal/bot；`nav.gpu` 等 key 在 `web/enterprise/src` 下唯一出现处是 `router/index.js` 的 `meta.title`。即这六页**只能手敲 URL 到达**——对 incident/runbook 而言「前端入口下线」**本来就没上线过**，失真面小于原判，故冻结**不做**路由删除（正收益近于 0，却会移除 (a) 落地时的挂载点）。
 
-## [Unreleased] — 2026-09-30 v0.10.0 发布链验收回填 + 三域静态契约取证（TD-60 两域改判）
+## [Unreleased] — 2026-09-30 v0.10.0 发布链验收回填 + 三域静态契约取证（TD-60 两域改判）（已归入 0.11.0）
 
 > 证据：release run `36550147538`（success）+ `gh release view v0.10.0`（assets 5）+ GHCR 逐镜像 HTTP 实测（14/14 `0.10.0` 可解析、`.sig` 200、`.att` 404）；三域取证为静态证据（file:line + grep 计数），子代理全量扫 + 本人逐条抽查。详见 `docs/release-notes.md` v0.10.0 验证段与 `docs/td60-decision-2026-09-26.md` §5.9。
 
@@ -62,7 +89,7 @@
 2. **代理域写方法权限收紧**（六域 `*:read`→`*:write`，device DELETE→`device:delete`、provision→`provision:execute`）——只读凭证经代理做写操作现在开始 403。
 3. **代理身份头一律剥离重注入 + X-User-Id 与令牌交叉校验**——依赖「自发身份头直连控制面」的部署必须显式开 `--trust-gateway-headers=true`（生产模式强制 false）。
 
-## [Unreleased] — 2026-09-30 业务指标接线第 1 步：调度吞吐与日志容量淘汰成为可告警事实
+## [Unreleased] — 2026-09-30 业务指标接线第 1 步：调度吞吐与日志容量淘汰成为可告警事实（已归入 0.11.0）
 
 > 证据：log-svc / task-svc 两模块 `go build ./...` + `go test -count=1 ./...` 全绿，`golangci-lint 2.13.2`（CI 同版）对两模块均 0 issues，`gofmt -l` 干净；新用例 `TestMemoryRingDroppedCounted` **做过变异检验**（把计数改成 `+= 0` ⇒ `淘汰计数 = 0, 期望 4` 判红，`finally` 还原后复跑全绿）；`validate-deploy-assets.sh` PASS=37 / FAIL=0 / SKIP=0（第 12 节对新序列放行，因为标签是 `nil`）。
 
@@ -75,7 +102,7 @@
   - gpu-svc / runbook-svc 的两处是**产品决策不是指标缺口**（调度队列只有占位实现；runbook 只有内存存储、执行历史重启即失），已记入 §23，不靠加指标掩盖。
 - 报告 §27。
 
-## [Unreleased] — 2026-09-30 三处静默失败显式化（③b 第 2 批的前置）：日志后端只读、扩缩容历史无界、外部通知失败被吞
+## [Unreleased] — 2026-09-30 三处静默失败显式化（③b 第 2 批的前置）：日志后端只读、扩缩容历史无界、外部通知失败被吞（已归入 0.11.0）
 
 > 证据：log-svc 与 autoscaler/alert 四条腿 `go build ./...` + `go test -count=1 ./...` 全绿；`golangci-lint 2.13.2`（CI 同版）对 `internal/...` 与三个服务模块均 0 issues；**变异检验 4 项独立复现被杀**（守卫改永假、ack 分支退回 `_ =`、trim 改尾部丢弃、`Append` 退回 `return nil`）；`validate-deploy-assets.sh` 第 12 节对新标签 `action` 放行（非实体 ID）。详见报告 §26。
 
@@ -94,7 +121,7 @@
 - **一处边界纪律**：服务层原先没有日志器，实现时引入了 `internal/logx`（根的内部包）——这是全仓**唯一**一处服务模块 import 根 `internal/` 的破窗，会把这些服务的构建与控制面内部包绑死。已改回本仓服务层惯例（标准库 `log.Printf("[alert-svc] WARN …")`，由 `cmd` 侧 `pkg/log.Init` 接管成 JSON），并复核 `services/` 全域已无 `OpsMesh/internal/` 残留。
 - **仍未修（有意留着，等定夺）**：`grpc.go` 可写分支里的 `_ = ls.Append(...)` 仍吞错（memory/sql 后端的真实写入失败）；`docs/api-reference.md` 其余只读端点描述未逐条复核。
 
-## [Unreleased] — 2026-09-29 微服务指标管道修复（③b 第 1 批）：基数上限 + counter 语义 + 清除恒零仪表
+## [Unreleased] — 2026-09-29 微服务指标管道修复（③b 第 1 批）：基数上限 + counter 语义 + 清除恒零仪表（已归入 0.11.0）
 
 > 破坏性变更（拟随 v0.11.0 发布，不进补丁版本）。证据：`pkg/metrics` 27 个用例全绿（新增 10 个）；**变异检验 9 项全部被杀**（放宽两个上限 / counter 退回覆盖 / 去 sanitize / 方法不提前收敛 / histKey 用原始 method / 不登记折叠键 / 去路径归一化 / 状态码不进标签 / `service_info` 丢服务名）；根模块 + 12 个服务模块 `go build ./...` 全过；`validate-deploy-assets.sh` 新增第 12 节并**做过双向故障注入**。详见 `docs/commercial-readiness-review-2026-09-25.md` §25。
 
@@ -110,7 +137,7 @@
 - **升级影响（必读）**：① 上述 9 个序列从 `business_metrics{name="X_total"}` gauge 变成 `business_metrics_total{name="X"}` counter，**已有查询/告警必须改写**（实测出厂规则与面板**一个都没引用**它们，故本轮不背客户断更的债）；② `queue_depth` 序列被删除；③ 所有 HTTP/直方图序列的 `path` 标签值被归一化（`/api/v1/devices/123` → `/api/v1/devices/:id`）。
 - **两处自己的失误（主动披露）**：① 测试最初用实现常量推导期望（`maxHTTPSeries+500` 次写入、断言 `maxHTTPSeries+1`），于是"把上限改大"这个变异**同时改大了用例自己** ⇒ 变异存活；改成写死 2500/2001/500 后同一变异被判红——**用例的输入与断言都不能引用被测实现的常量**。② 变异脚本没有 `finally` 恢复，一次后台超时终止把 `maxHTTPSeries = 100000000` 和 `agent_id` 标签留在了源码里，靠事后 grep 才发现并回滚——故障注入必须自带无条件恢复，且变异幅度要有界。
 
-## [Unreleased] — 2026-09-29 镜像侧 SBOM 证据链：cosign attest 产出 .att（12 微服务 + 2 核心镜像）
+## [Unreleased] — 2026-09-29 镜像侧 SBOM 证据链：cosign attest 产出 .att（12 微服务 + 2 核心镜像）（已归入 0.11.0）
 
 > 证据：钉版 cosign **v2.2.4 二进制**的权威旗标表实测（`attest` 与 `verify-attestation` 的 `--type` 取值集合均含 `cyclonedx`，本机拉不到 `ghcr.io/sigstore/cosign/v2.2.4` 镜像故改下二进制）；SBOM 空证据门禁 7 例 fixture 全按退出码断言（非空放行 / 空清单判红 / 缺字段判红）；`actionlint -shellcheck=` 结构面 rc=0，逐 run 块 `shellcheck -S style --shell=bash` 本轮涉及的 18 个步骤 0 findings。详见 `docs/commercial-readiness-review-2026-09-25.md` §24.6。
 
@@ -122,7 +149,7 @@
 - **本机 actionlint 的新事实**：带 shellcheck 后端时本机长时间无响应（并发四实例互相拖死），`-shellcheck=` 单跑全部 workflow 仅 0.15s 且 rc=0 ⇒ 本机可靠口径是**两件套**：`actionlint -shellcheck=`（结构/表达式）+ 逐块 shellcheck（shell），二者合一才等价 CI 的 actionlint，取其一当其二就是 §18"门禁后端不在场"的同族。
 - **为什么不必等下次发版才第一次跑**：`image`/`image-agent` 每次 push 都执行且 GHCR 回落零 secret（实测 run `36545861598` 13 job 含二者、仅 `release` skip）⇒ attest 与自验证会在下一次推送真跑，`release.yml` 里的同形步骤届时已被证过。**本轮未证到的部分如实列出**：`.att` 真落注册表只能等那次 CI 收口（本机无注册表凭据）。
 
-## [Unreleased] — 2026-09-29 P1-7 第三方许可清单工程化（离线生成 + 三条硬断言门禁 + NOTICE 逐字汇编）
+## [Unreleased] — 2026-09-29 P1-7 第三方许可清单工程化（离线生成 + 三条硬断言门禁 + NOTICE 逐字汇编）（已归入 0.11.0）
 
 > 证据：`deploy/scripts/gen-third-party-licenses.sh` 三模式本机跑通；`--check` 的 **8 例故障注入**全部按退出码断言（删除模块行 / 版本漂移 / 判定变化 / 缓存全缺 / 下限 101% / 恢复为绿 / 判红不改写文档 / 生成器内部报错不覆盖文档）；`semver_key` 单测 6 例；`NOTICE` 7 段与上游文件**字节级逐字一致**；`shellcheck -S style` 与 `actionlint v1.7.7` 0 问题。详见 `docs/commercial-readiness-review-2026-09-25.md` §24.4。
 
