@@ -4,6 +4,13 @@
 
 > 当前最新已发布版本：`v0.10.0`（2026-09-29，TD-60 阶段 2 收口——五服务删除 + 域完善与身份头治理 + 逐域流量取数出口；上一版 `v0.9.2` 2026-09-27 为商用就绪收口 + 发版链路加固）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-01 引导脚本不再携带建表语句（删 43 张表 DDL + 门禁第 13 节）
+
+> 证据：三方一致性审计（`CREATE TABLE IF NOT EXISTS <t> (…)` 从 Go 原始字符串与 `.sql` 提取，剥 `INDEX`/`PRIMARY KEY` 行取首字段做列集合，对同名表求差集）；`deploy/scripts/validate-deploy-assets.sh` 当前 **PASS=33 / FAIL=0 / SKIP=2**，新第 13 节经**两次变异检验**（塞回 `CREATE TABLE` → 判红；把某 DSN 的库从两个脚本都删掉 → 判红并指向「连库即 Access denied」）。详见 `docs/td60-decision-2026-09-26.md` §5.11 ①c。
+
+- **修｜`deploy/docker/scripts/init-mysql.sql` 收敛为「只建库+授权」（删 43 张表 DDL）**：该文件自称「此处只建库+授权」，实际带着 43 张表 DDL。**先确认影响面**：它不是出厂栈的脚本——compose 只挂 `init-databases.sql`（`docker-compose.prod.yml:87`）并在 `:39-42` 写明「不要改挂它」，唯一执行它的是手工脚本 `run-mysql-init.ps1`。**但它确实已经漂移且是静默形态**：`CREATE TABLE IF NOT EXISTS` 会让先落地的那份胜出、后到者不报错；实测 7 张表有「代码期望、deploy 副本没有」的列；**扣掉迁移 `ALTER` 与代码兜底 `applyLegacyColumnFixups`（`internal/store/sql.go:758`）后，仍剩 6 张表 / 13 列零兜底**：`agents`（`agent_id` 主键/`segment`/`load`/`last_seen`）、`devices`（`device_id` 主键/`segment`/`state`/`task_state`）、`ci_items`（`approval_status`/`attrs`）、`permissions`（`group_name`）、`roles`（`permissions`）、`users`（`role_ids`）（`tasks.last_fired_at` 由兜底函数补，不计入）⇒ 一旦被挂载，控制面 `INSERT INTO agents`（`internal/store/sql_devices.go:83`）即 Unknown column 'agent_id'。**删除无损**：43 张表在代码来源里均有定义（控制面迁移 / 服务 `schema.sql`（auth・device・task 三服务 `go:embed`）/ 其余服务内联 `initSchema`），「只在 deploy 脚本里存在」的表 = 0。补上转正新增的 `opsmesh_incident`/`opsmesh_runbook` 两库；`run-mysql-init.ps1` 头部同步说明。
+- **门禁｜`validate-deploy-assets.sh` 新增第 13 节（防复发）**：① `deploy/docker/scripts/*.sql` 不得含 `CREATE TABLE`（**先剥 `--` 注释**——脚本头部故意引用该短语解释为何禁止，不剥会把「解释」当「违规」）；② compose 每个 `*_SVC_DSN` 指向的库必须由引导脚本建库、或等于 `MYSQL_DATABASE`（自动建库）。
+
 ## [Unreleased] — 2026-10-01 供应链：axios 1.19.0 → 1.20.0（Trivy 刷新库后暴露 7 条 HIGH）
 
 > 证据：CI security job 的 Trivy fs 报告（trivy-fs-report 产物，v0.70.0 + 当日刷新库）——`web/enterprise/package-lock.json` 的 npm 目标 7 条 HIGH（全部在 axios 1.19.0，Fixed Version 1.20.0），**Go 侧 14 个 go.mod 全部 0 命中**；升级后本地 `npm run build` 通过、前端 52 个测试文件 / 1126 例全绿，`axios/package.json` 实测 `1.20.0`。

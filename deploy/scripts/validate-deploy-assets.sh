@@ -724,6 +724,61 @@ else
     printf '%s\n' "$BIZ_HITS" | sed 's/^/         /'
 fi
 
+# ---------------------------------------------------------------
+sec "13. 引导脚本只建库+授权（建表职责归代码；同名表静默让位是已证伪的高危形态）"
+# ---------------------------------------------------------------
+# 判据依据（2026-10-01 实测）：deploy/docker/scripts/init-mysql.sql 原是「单库版合并脚本」，
+# 含 43 张表 DDL，其中 7 张与代码定义漂移（agents / devices / ci_items / permissions /
+# roles / users / tasks 存在「只由代码 CREATE 定义、且无 ALTER 兜底」的列）。
+# 一旦被挂载执行，CREATE TABLE IF NOT EXISTS 会让先落地的那份**静默胜出**、后到者不报错，
+# 随后控制面的 INSERT 就是 Unknown column——排查成本极高。故这里钉两条硬断言：
+#   ① deploy/docker/scripts/*.sql 不得出现 CREATE TABLE（建表归迁移与服务 initSchema）；
+#   ② compose 每个服务 DSN 指向的库，必须由引导脚本建库，或等于 MYSQL_DATABASE（自动建库）。
+BOOT_HITS=$( "$PY" - <<'PY'
+import glob, os, re
+root = os.getcwd()
+hits = []
+
+def strip_comments(src):
+    # SQL 行注释 `--` 要剥掉：这两个脚本的头部注释里**故意**引用了 CREATE TABLE（讲清为什么
+    # 禁止它），不剥会把「解释」当成「违规」——门禁假阳性比漏报更耗人。
+    out = []
+    for ln in src.split("\n"):
+        i = ln.find("--")
+        out.append(ln[:i] if i >= 0 else ln)
+    return "\n".join(out)
+
+scripts = sorted(glob.glob(os.path.join(root, "deploy/docker/scripts/*.sql")))
+created = set()
+for p in scripts:
+    raw = open(p, encoding="utf-8", errors="replace").read()
+    src = strip_comments(raw)
+    for m in re.finditer(r"CREATE\s+TABLE\b", src, re.I):
+        line = src[:m.start()].count("\n") + 1
+        hits.append(f"{os.path.relpath(p, root)}:{line} 含 CREATE TABLE（建表职责应归代码）")
+    created |= {m.group(1).lower() for m in re.finditer(
+        r"CREATE\s+DATABASE\s+IF\s+NOT\s+EXISTS\s+`?(\w+)`?", src, re.I)}
+compose = os.path.join(root, "deploy/docker/docker-compose.prod.yml")
+if os.path.exists(compose):
+    cs = open(compose, encoding="utf-8", errors="replace").read()
+    auto = re.search(r"MYSQL_DATABASE:\s*([\w.-]+)", cs)
+    auto_db = auto.group(1).lower() if auto else ""
+    dsn_dbs = {m.group(1).lower() for m in re.finditer(r"\w*_DSN:\s*\"[^\"]*/([\w-]+)\?", cs)}
+    for db in sorted(dsn_dbs):
+        if db not in created and db != auto_db:
+            hits.append(f"compose DSN 指向 `{db}`，但引导脚本没建它、也不等于 MYSQL_DATABASE ⇒ 连库即 Access denied（库不存在或无授权）")
+    if not dsn_dbs:
+        hits.append("未从 compose 解析到任何 *_DSN（正则失配，本节在空转）")
+print("\n".join(hits))
+PY
+)
+if [[ -z "${BOOT_HITS// }" ]]; then
+    ok "引导脚本只建库+授权（无 CREATE TABLE），compose 每个 DSN 的库都有来源"
+else
+    bad "引导脚本/库集合不合规："
+    printf '%s\n' "$BOOT_HITS" | sed 's/^/         /'
+fi
+
 echo ""
 echo "==================================================="
 echo "  部署资产门禁：PASS=${PASS}  FAIL=${FAIL}  SKIP=${SKIP}"
