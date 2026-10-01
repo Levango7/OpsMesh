@@ -1315,24 +1315,25 @@ jobs:
       - name: Install Playwright browsers
         run: |
           export PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/
-          # --with-deps 内部会跑 apt-get：被 timeout 打断时 apt-get 作为子进程仍在运行并持有
-          # dpkg 前锁，立刻重试必撞「E: Could not get lock」——实测 run 36891256812 的
-          # E2E (real backend)：下载超时 → 重试 → 锁冲突 → exit 100，整条腿因基础设施假红。
-          # 故重试前先等锁释放；下载窗口也从 300s 放宽到 420s（实测一次正常下载就要 5 分钟）。
-          wait_apt_lock() {
-              command -v fuser >/dev/null 2>&1 || { sleep 20; return 0; }
-              for _ in $(seq 1 60); do
-                  fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || return 0
-                  sleep 5
-              done
-              return 0
+          # 拆成两步：OS 依赖（apt）与浏览器下载（网络）的失败模式不同，混在
+          # `install --with-deps` 里就会互相污染。
+          #
+          # 两版反面教训（都有 run 号可查）：
+          #   v1 `timeout 300 … || timeout 300 …`（run 36891256812）：下载超时被杀后
+          #      apt-get 子进程仍在跑，重试立刻撞 E: Could not get lock → exit 100。
+          #   v2 重试前 fuser 等 dpkg 锁（run 36900780035 的 E2E (security) 仍红）：
+          #      17:59:55 检查时锁确实自由（apt 还在 Get 下载阶段），11 秒后 apt 进入
+          #      解包阶段才拿 lock-frontend，重试正好撞上。
+          #      ⇒ 等锁治不了「两个 apt 生命周期重叠」，只能不让它们并存。
+          # 现在：OS 依赖单独装且**不被 timeout 打断**（窗口给足），浏览器下载才做超时+重试
+          # ——它不碰 apt，杀掉再重试不会留下持锁的孤儿子进程。
+          timeout 900 npx playwright install-deps chromium || {
+              echo "::warning::OS 依赖安装失败/超时（网络抖动），重试一次"
+              timeout 900 npx playwright install-deps chromium || echo "::warning::OS 依赖两次均未装成；若浏览器因此启动失败，会在随后的用例里暴露"
           }
-          wait_apt_lock
-          timeout 420 npx playwright install --with-deps chromium || {
-              echo "浏览器下载失败/超时（网络问题），等 dpkg 锁释放后重试一次"
-              wait_apt_lock
-              sleep 10
-              timeout 420 npx playwright install --with-deps chromium
+          timeout 420 npx playwright install chromium || {
+              echo "浏览器下载失败/超时（网络问题），重试一次"
+              timeout 420 npx playwright install chromium
           }
         working-directory: web/enterprise
       - name: E2E (mock)
@@ -1383,24 +1384,25 @@ jobs:
           cd web/enterprise
           npm ci
           export PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/
-          # --with-deps 内部会跑 apt-get：被 timeout 打断时 apt-get 作为子进程仍在运行并持有
-          # dpkg 前锁，立刻重试必撞「E: Could not get lock」——实测 run 36891256812 的
-          # E2E (real backend)：下载超时 → 重试 → 锁冲突 → exit 100，整条腿因基础设施假红。
-          # 故重试前先等锁释放；下载窗口也从 300s 放宽到 420s（实测一次正常下载就要 5 分钟）。
-          wait_apt_lock() {
-              command -v fuser >/dev/null 2>&1 || { sleep 20; return 0; }
-              for _ in $(seq 1 60); do
-                  fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || return 0
-                  sleep 5
-              done
-              return 0
+          # 拆成两步：OS 依赖（apt）与浏览器下载（网络）的失败模式不同，混在
+          # `install --with-deps` 里就会互相污染。
+          #
+          # 两版反面教训（都有 run 号可查）：
+          #   v1 `timeout 300 … || timeout 300 …`（run 36891256812）：下载超时被杀后
+          #      apt-get 子进程仍在跑，重试立刻撞 E: Could not get lock → exit 100。
+          #   v2 重试前 fuser 等 dpkg 锁（run 36900780035 的 E2E (security) 仍红）：
+          #      17:59:55 检查时锁确实自由（apt 还在 Get 下载阶段），11 秒后 apt 进入
+          #      解包阶段才拿 lock-frontend，重试正好撞上。
+          #      ⇒ 等锁治不了「两个 apt 生命周期重叠」，只能不让它们并存。
+          # 现在：OS 依赖单独装且**不被 timeout 打断**（窗口给足），浏览器下载才做超时+重试
+          # ——它不碰 apt，杀掉再重试不会留下持锁的孤儿子进程。
+          timeout 900 npx playwright install-deps chromium || {
+              echo "::warning::OS 依赖安装失败/超时（网络抖动），重试一次"
+              timeout 900 npx playwright install-deps chromium || echo "::warning::OS 依赖两次均未装成；若浏览器因此启动失败，会在随后的用例里暴露"
           }
-          wait_apt_lock
-          timeout 420 npx playwright install --with-deps chromium || {
-              echo "浏览器下载失败/超时（网络问题），等 dpkg 锁释放后重试一次"
-              wait_apt_lock
-              sleep 10
-              timeout 420 npx playwright install --with-deps chromium
+          timeout 420 npx playwright install chromium || {
+              echo "浏览器下载失败/超时（网络问题），重试一次"
+              timeout 420 npx playwright install chromium
           }
           # --grep-invert "安全契约"：安全场景需 e2e-sec compose（require-auth+mTLS），
           # 由独立 e2e-sec job 跑（docker-compose.e2e-sec.yaml），避免本 job 缺 require-auth 误判。
@@ -1491,24 +1493,25 @@ jobs:
           cd web/enterprise
           npm ci
           export PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/
-          # --with-deps 内部会跑 apt-get：被 timeout 打断时 apt-get 作为子进程仍在运行并持有
-          # dpkg 前锁，立刻重试必撞「E: Could not get lock」——实测 run 36891256812 的
-          # E2E (real backend)：下载超时 → 重试 → 锁冲突 → exit 100，整条腿因基础设施假红。
-          # 故重试前先等锁释放；下载窗口也从 300s 放宽到 420s（实测一次正常下载就要 5 分钟）。
-          wait_apt_lock() {
-              command -v fuser >/dev/null 2>&1 || { sleep 20; return 0; }
-              for _ in $(seq 1 60); do
-                  fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || return 0
-                  sleep 5
-              done
-              return 0
+          # 拆成两步：OS 依赖（apt）与浏览器下载（网络）的失败模式不同，混在
+          # `install --with-deps` 里就会互相污染。
+          #
+          # 两版反面教训（都有 run 号可查）：
+          #   v1 `timeout 300 … || timeout 300 …`（run 36891256812）：下载超时被杀后
+          #      apt-get 子进程仍在跑，重试立刻撞 E: Could not get lock → exit 100。
+          #   v2 重试前 fuser 等 dpkg 锁（run 36900780035 的 E2E (security) 仍红）：
+          #      17:59:55 检查时锁确实自由（apt 还在 Get 下载阶段），11 秒后 apt 进入
+          #      解包阶段才拿 lock-frontend，重试正好撞上。
+          #      ⇒ 等锁治不了「两个 apt 生命周期重叠」，只能不让它们并存。
+          # 现在：OS 依赖单独装且**不被 timeout 打断**（窗口给足），浏览器下载才做超时+重试
+          # ——它不碰 apt，杀掉再重试不会留下持锁的孤儿子进程。
+          timeout 900 npx playwright install-deps chromium || {
+              echo "::warning::OS 依赖安装失败/超时（网络抖动），重试一次"
+              timeout 900 npx playwright install-deps chromium || echo "::warning::OS 依赖两次均未装成；若浏览器因此启动失败，会在随后的用例里暴露"
           }
-          wait_apt_lock
-          timeout 420 npx playwright install --with-deps chromium || {
-              echo "浏览器下载失败/超时（网络问题），等 dpkg 锁释放后重试一次"
-              wait_apt_lock
-              sleep 10
-              timeout 420 npx playwright install --with-deps chromium
+          timeout 420 npx playwright install chromium || {
+              echo "浏览器下载失败/超时（网络问题），重试一次"
+              timeout 420 npx playwright install chromium
           }
           npx playwright test --config playwright.real.config.js --grep "安全契约" || {
             echo "=== 安全 E2E 失败，转储容器状态与日志 ==="
