@@ -250,15 +250,11 @@ type ruleShape struct {
 func parseRuleGroup(t *testing.T, path, group string) map[string]ruleShape {
 	t.Helper()
 	lines := strings.Split(repoRead(t, path), "\n")
-	inGroup := false
-	if group == "" {
-		inGroup = true
-	}
+	inGroup := group == "" // group="" 表示整份文件都要解析
 	var (
 		cur   string
 		block []string
 		out   = map[string]ruleShape{}
-		order []string
 		flush = func() {
 			if cur == "" {
 				return
@@ -276,7 +272,6 @@ func parseRuleGroup(t *testing.T, path, group string) map[string]ruleShape {
 				}
 			}
 			out[cur] = shape
-			order = append(order, cur)
 		}
 	)
 	for _, l := range lines {
