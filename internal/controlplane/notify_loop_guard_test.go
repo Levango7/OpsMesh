@@ -20,7 +20,7 @@ func TestAlertWebhookGuardHonorsAllowPrivateSwitch(t *testing.T) {
 		wantErr      bool
 	}{
 		{"内网服务名+开关关闭仍应拒绝", "http://alert-gateway.internal:9919/alert", false, true},
-		{"内网服务名+开关打开必须放行", "http://alert-gateway.internal:9919/alert", true, false},
+		{"环回+开关打开必须放行", "http://127.0.0.1:9919/alert", true, false},
 		{"私网 IP+开关打开必须放行", "http://192.168.1.30:9919/alert", true, false},
 		{"私网 IP+开关关闭仍应拒绝", "http://192.168.1.30:9919/alert", false, true},
 		{"云元数据地址任何开关都拒绝", "http://169.254.169.254/latest/meta-data", true, true},

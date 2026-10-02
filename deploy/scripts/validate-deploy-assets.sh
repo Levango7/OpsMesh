@@ -1068,6 +1068,30 @@ else
     printf '%s\n' "$AM_HITS" | sed 's/^/         /'
 fi
 
+# M7 业务告警通道必须在**出厂 compose** 里有入口：它过去只有代码里的旗标
+# （--alert-webhook-url / OPSMESH_ALERT_WEBHOOK_URL），Docker 客户不改 compose 就配不了，
+# 于是"业务告警可以外发"这句话对 compose 部署形态其实不成立。
+M7_HITS=""
+if ! grep -q 'OPSMESH_ALERT_WEBHOOK_URL' "$AM_COMPOSE"; then
+    M7_HITS="${M7_HITS} compose 的 controlplane 没暴露 OPSMESH_ALERT_WEBHOOK_URL"
+fi
+if ! grep -q 'OPSMESH_WEBHOOK_ALLOW_PRIVATE' "$AM_COMPOSE"; then
+    M7_HITS="${M7_HITS} compose 没暴露 OPSMESH_WEBHOOK_ALLOW_PRIVATE（内网收件端无法显式放行）"
+fi
+# compose 引用了就必须出现在 .env 模板里，否则新装时是一个没人能填的空引用。
+if ! grep -q 'CONTROLPLANE_ALERT_WEBHOOK_URL=' deploy/docker/scripts/deploy.sh; then
+    M7_HITS="${M7_HITS} deploy.sh 的 .env 模板缺 CONTROLPLANE_ALERT_WEBHOOK_URL"
+fi
+if ! grep -q 'ALERT_WEBHOOK_ALLOW_PRIVATE=' deploy/docker/scripts/deploy.sh; then
+    M7_HITS="${M7_HITS} deploy.sh 的 .env 模板缺 ALERT_WEBHOOK_ALLOW_PRIVATE"
+fi
+if [ -z "${M7_HITS// }" ]; then
+    ok "M7 业务告警通道在 compose 与 .env 模板两侧都有入口（变量对齐，不会渲染出没人能填的空引用）"
+else
+    bad "M7 业务告警通道入口不全："
+    printf '%s\n' "$M7_HITS" | sed 's/^/         /'
+fi
+
 echo ""
 echo "==================================================="
 echo "  部署资产门禁：PASS=${PASS}  FAIL=${FAIL}  SKIP=${SKIP}"

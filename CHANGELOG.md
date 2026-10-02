@@ -63,7 +63,50 @@
 - **修｜顺手收紧一处安全语义**：`ValidateWebhookURL` 在 `allowPrivate=true` 时是**跳过全部 IP 校验**，于是云元数据地址 `169.254.169.254` 也被放行。M7 路径上叠加一层 link-local/元数据拒绝（任何开关都不放行）；共享校验器本身没动——它还有两个调用点，收窄语义应另开一轮并配齐那两侧的用例。
 - **新增｜`notifyLoop` 启动即打印一行**（脱敏 webhook 值 + webhook/email 两个通道是否生效）：这条通道此前"配了也不知道有没有生效"。
 - 测试：`notify_loop_guard_test.go` 六个用例覆盖（内网服务名/私网 IP × 开关两态 + 元数据 + 非 http 协议）；把 guard 退回 `validateURLSSRF` ⇒ "私网 IP + 开关打开必须放行"立刻判红。
-- **本轮未做（别当成已做）**：① M7 外发通道的活体投递未验——修的是启动准入判定，有单元与变异证据，但没有"真实发出一条业务告警并到达收件端"的活证据（要做需要重建控制面镜像 + 造 firing 业务告警 + 假网关，与上一轮 AM 那条腿同级的工作量）；② compose 里**没有**暴露 `OPSMESH_ALERT_WEBHOOK_URL`，所以 Docker 客户仍无法在不改 compose 的情况下配置这条通道；③ 控制面 M7 告警与 Alertmanager 两条外发路径**并存且载荷形状不兼容**（自家格式 vs AM 的 `[{labels,…}]`），"合并成单一总线"需要一层转换或改语义，本轮只做了决策前置的事实核对：AM 负责监控规则分发、控制面/alert-svc 负责业务告警与 ack/resolve 事件，`PAGERDUTY_*` 与 `OPSMESH_ALERT_WEBHOOK_URL` 是独立能力而非同一处配置的两个别名——文档写清了边界，代码未合并。
+- **本轮未做（别当成已做）**：① M7 外发通道的活体投递未验——修的是启动准入判定，有单元与变异证据，但没有"真实发出一条业务告警并到达收件端"的活证据（要做需要重建控制面镜像 + 造 firing 业务告警 + 假网关，与上一轮 AM 那条腿同级的工作量）；**〔2026-10-03 已做，见下一条块〕**② compose 里**没有**暴露 `OPSMESH_ALERT_WEBHOOK_URL`，所以 Docker 客户仍无法在不改 compose 的情况下配置这条通道；**〔2026-10-03 已做，见下一条块〕**③ 控制面 M7 告警与 Alertmanager 两条外发路径**并存且载荷形状不兼容**（自家格式 vs AM 的 `[{labels,…}]`），"合并成单一总线"需要一层转换或改语义，本轮只做了决策前置的事实核对：AM 负责监控规则分发、控制面/alert-svc 负责业务告警与 ack/resolve 事件，`PAGERDUTY_*` 与 `OPSMESH_ALERT_WEBHOOK_URL` 是独立能力而非同一处配置的两个别名——文档写清了边界，代码未合并。
+
+## [Unreleased] — 2026-10-03 M7 业务告警通道补齐：入口进 compose、开关收口到共享校验器、活体投递验完
+
+> 证据：真机双向验证（一次性 HTTP 收件端 + 重建控制面镜像 `0.11.0-m7fix`）——
+> 开关关：`不启动 notifyLoop` + 收件端 0 条；开关开：`notifyLoop 已启动…` → 10 秒内
+> `告警推送成功` → 收件端收到 `POST /m7`。`go test ./internal/controlplane ./internal/store -count=1` 两包全绿；
+> `gosec v2.25.0` 与 CI 同串 exclude ⇒ 0 findings；`shellcheck -S warning` 全量 14 个脚本 0 findings；
+> `validate-deploy-assets.sh` **PASS=45 / FAIL=0 / SKIP=1**。
+
+- **新增｜M7 通道在出厂 compose 里有了入口**：`docker-compose.prod.yml` 的 controlplane 增加
+  `OPSMESH_ALERT_WEBHOOK_URL: ${CONTROLPLANE_ALERT_WEBHOOK_URL:-}` 与
+  `OPSMESH_WEBHOOK_ALLOW_PRIVATE: ${ALERT_WEBHOOK_ALLOW_PRIVATE:-false}`，`.env` 模板同步加这两个键。
+  此前这条通道只有代码里的旗标，**Docker 客户不改 compose 就配不了**——"业务告警可以外发"
+  这句话对 compose 形态其实不成立。刻意与 Alertmanager 的 `ALERT_WEBHOOK_URL` **分开命名**：
+  两者告警来源不同（规则触发 vs 落库业务告警），填同一个地址是"两类内容进同一收件端"，
+  而不是重复投递同一条。
+- **新增｜`deploy.sh` 的 `check_alert_channel_shape`**：部署阶段就预判"配了但不会启动"——
+  URL 主机像私网/Docker 服务名而 `ALERT_WEBHOOK_ALLOW_PRIVATE` 没开 ⇒ 直接 WARN 说明后果；
+  两个 URL 相同 ⇒ INFO 提示两类告警会进同一端。门禁 §15 补一条双向核对（compose 暴露的变量
+  必须出现在 .env 模板里，反之亦然），防止这次补齐日后悄悄退化回"只有旗标"。
+- **变更（契约收紧，请留意）｜`ValidateWebhookURL` 在 `allowPrivate=true` 时不再放行云元数据段**：
+  旧实现是 `if allowPrivate { return nil }`——连 DNS 都不做，于是"允许内网收件端"这个开关
+  顺带放行 `169.254.169.254`（IMDS 凭证窃取的头号目标）、`0.0.0.0/8`、`fe80::/10`、`::`。
+  现在 true 分支只放行**私网与环回**，仍解析域名并拒绝"内网域名解析到元数据"这一形态。
+  **这不是修 bug**：`server_netsec_test.go` 里原先**明确断言**过 true 应放行元数据，
+  即那是被测试固定下来的既有决策，所以按行为变更申报——若你的部署确实需要指向那一段，
+  请说，我们另开一个开关而不是把这个改回去。副作用是**解析不出来的主机名会被拒绝**（fail-closed）。
+- **重构｜元数据底线从 M7 调用点**上收**到共享校验器**：`alertWebhookGuard()` 退回一行转发，
+  三条外发路径（notifyLoop / Webhook CRUD / notify-channels）共用同一底线，不再各写一份。
+- **活体证据（上一轮登记为"未做"的那条）**：开关关闭时控制面日志
+  `告警 Webhook URL 校验失败，不启动 notifyLoop` + `webhookAllowPrivate:false` + 具体 error + 放行 hint，
+  收件端 0 条；开关打开时 `notifyLoop 已启动（M7 业务告警外发通道生效）` →
+  `告警推送成功 alertID=alert-task-… severity=critical` → 收件端 `POST /m7`（UA `Go-http-client/1.1`）。
+  顺带**捕获到 M7 的真实载荷形状**（单对象、camelCase：`alertID/tenantID/deviceID/agentID/severity/
+  message/metric/status/createdAt/acknowledgedBy/silencedUntil/comment/updatedAt`），
+  这就是它与 AM 的 `[{labels,annotations,startsAt,endsAt}]` **不兼容**的实证——
+  "合并成单一总线"需要一层转换，且 notifyLoop 的聚合/抑制/指纹去重语义要一起搬进
+  `group_by`/`inhibit_rules` 才不丢能力，故维持两条通道 + 文档分工（§4.6.0）。
+- 变异核对：把 `allowPrivate` 分支的元数据底线改成永假 ⇒ `TestValidateWebhookURL_MetadataRefusedEvenWithAllowPrivate` 立刻判红；
+  把 guard 退回无开关的 `validateURLSSRF` ⇒ `TestAlertWebhookGuard…` 判红（上一轮已记）。
+- **仍未做**：alert-svc 的 PagerDuty 外发腿没做活体（本轮只补控制面这条；`PAGERDUTY_API_URL`
+  可指向假端点，做法与本轮同构）；真实 SaaS 的载荷契约核对仍在。
+
 
 
 

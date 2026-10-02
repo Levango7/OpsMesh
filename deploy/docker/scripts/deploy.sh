@@ -723,6 +723,14 @@ PAGERDUTY_API_URL=https://events.pagerduty.com/v2/enqueue
 # 填了 ⇒ deploy.sh 用它渲染 deploy/docker/generated/alertmanager.yml 的 webhook 外发段。
 # 之所以要渲染成文件而不是写死一份：Alertmanager 的配置不读环境变量。
 ALERT_WEBHOOK_URL=
+# M7 业务告警外发（控制面 notifyLoop）——与上面的 ALERT_WEBHOOK_URL 是**两条不同来源**的通道：
+# ALERT_WEBHOOK_URL 发的是 Prometheus 规则触发的监控告警，这条发的是落库的业务告警
+# （设备/任务/巡检）。留空则该通道不启动；填成同一个地址会同时收到两类内容（不去重）。
+# 分工详见 docs/operations.md §4.6.0。
+CONTROLPLANE_ALERT_WEBHOOK_URL=
+# 内网收件端开关：上面两条通道指向私网/环回地址（集群内服务、内网 IM 网关）时需置 true。
+# 注意：链路本地 / 云元数据段（169.254.169.254 等）任何取值都不放行。
+ALERT_WEBHOOK_ALLOW_PRIVATE=false
 # 可选：Bearer Token。留空则渲染出的配置不含 authorization 段
 # （Alertmanager 对空 bearer 会报 "authorization: expected type string"，所以不能无条件写进去）。
 ALERT_WEBHOOK_BEARER=
@@ -1254,6 +1262,51 @@ print_access_info() {
 ALERTMANAGER_TEMPLATE="${PROJECT_DIR}/../monitoring/alertmanager.yml.template"
 ALERTMANAGER_OUT="${PROJECT_DIR}/generated/alertmanager.yml"
 
+# ============================================================
+# M7 业务告警通道的形状提示（不阻断，只把"配了但不生效"提前说出来）
+# ============================================================
+# 控制面的 notifyLoop 在 URL 指向私网/环回时会被 SSRF 闸拒绝、**整个通道不启动**，
+# 而容器照样 Up + healthy（本轮刚修的就是"开关不生效"那一半）。部署阶段能预判的先预判：
+# 主机名看起来是内网/服务名而开关没开，就直接说清楚会发生什么。
+check_alert_channel_shape() {
+    local cp_url am_url allow host
+    cp_url="$(env_val CONTROLPLANE_ALERT_WEBHOOK_URL)"
+    am_url="$(env_val ALERT_WEBHOOK_URL)"
+    allow="$(env_val ALERT_WEBHOOK_ALLOW_PRIVATE false)"
+
+    if [ -z "$cp_url" ]; then
+        log_info "未设置 CONTROLPLANE_ALERT_WEBHOOK_URL ——M7 业务告警不外发（只落库；监控规则告警仍走 Alertmanager）。"
+        return 0
+    fi
+
+    host="$(printf '%s' "$cp_url" | awk -F'//' '{print $2}' | awk -F'/' '{print $1}' | awk -F':' '{print $1}')"
+    case "$host" in
+        127.*|10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|localhost|*.svc.cluster.local)
+            if [ "$allow" != "true" ]; then
+                log_warn "CONTROLPLANE_ALERT_WEBHOOK_URL 指向内网地址（${host}），而 ALERT_WEBHOOK_ALLOW_PRIVATE=${allow}。"
+                log_warn "  控制面会以 SSRF 为由**不启动**业务告警外发循环（容器仍然健康）——内网收件端需置 true。"
+            else
+                log_ok "M7 业务告警外发已启用，指向内网收件端且已显式放行（${host}）。"
+            fi
+            ;;
+        *)
+            if printf '%s' "$host" | grep -q '\.'; then
+                log_ok "M7 业务告警外发已启用：${host}（含点的域名，SSRF 闸按其解析结果判定）"
+            elif [ "$allow" = "true" ]; then
+                log_ok "M7 业务告警外发已启用：${host}（Docker 服务名，已显式放行内网收件端）。"
+            else
+                log_warn "CONTROLPLANE_ALERT_WEBHOOK_URL 的主机 ${host} 像 Docker 服务名（会解析到私网 IP），"
+                log_warn "  而 ALERT_WEBHOOK_ALLOW_PRIVATE=${allow}：该通道很可能不会启动。"
+            fi
+            ;;
+    esac
+
+    if [ -n "$am_url" ] && [ "$am_url" = "$cp_url" ]; then
+        log_info "CONTROLPLANE_ALERT_WEBHOOK_URL 与 ALERT_WEBHOOK_URL 相同：监控规则告警与业务告警会进同一收件端（两类内容、各自去重，互不抑制）。"
+    fi
+    return 0
+}
+
 render_alertmanager_config() {
     local url bearer receiver
     url="$(env_val ALERT_WEBHOOK_URL)"
@@ -1372,6 +1425,7 @@ do_up() {
     preflight_checks
     build_images
     render_alertmanager_config || { log_error "Alertmanager 配置渲染失败，停止部署。"; exit 1; }
+    check_alert_channel_shape
     start_infrastructure
     start_observability
     start_services

@@ -1166,8 +1166,23 @@ Kubernetes 路径不重复造轮子：生产集群一般已有 kube-prometheus-s
 | 通道 | 告警来源 | 配置入口 | 出厂默认 | 载荷形状 |
 |---|---|---|---|---|
 | **Alertmanager** | Prometheus 出厂规则（监控面：服务 DOWN、错误率、基数折叠、存储吞错…） | `.env` 的 `ALERT_WEBHOOK_URL` / `ALERT_WEBHOOK_BEARER`，由 `deploy.sh` 渲染进 `generated/alertmanager.yml` | 起 AM 容器、**不外发**（未配 URL 时大声 WARN） | Alertmanager 标准 webhook（`version=4`、`alerts[].labels/annotations/status`） |
-| **控制面 `notifyLoop`（M7）** | 数据库里 firing 的**业务告警**（设备/任务/巡检产生并落库的那些） | 旗标 `--alert-webhook-url` / env `OPSMESH_ALERT_WEBHOOK_URL`；收件端在内网时需 `--webhook-allow-private=true` | **关闭**（compose 未暴露该 env，需自行加或用 `docker compose ... -e`） | OpsMesh 自定义 JSON（按 URL 域名自动识别 Slack / 企业微信形态） |
+| **控制面 `notifyLoop`（M7）** | 数据库里 firing 的**业务告警**（设备/任务/巡检产生并落库的那些） | `.env` 的 `CONTROLPLANE_ALERT_WEBHOOK_URL`（compose 已透传为 `OPSMESH_ALERT_WEBHOOK_URL`）；收件端在内网时需 `ALERT_WEBHOOK_ALLOW_PRIVATE=true` | **关闭**（键留空即不启动） | OpsMesh 自定义 JSON（单个对象、camelCase，按 URL 域名自动识别 Slack / 企业微信形态） |
 | **alert-svc 的 PagerDuty** | 告警的 **ack / resolve 事件**（值班动作回写外部系统） | `PAGERDUTY_ENABLED` / `PAGERDUTY_ROUTING_KEY` / `PAGERDUTY_API_URL`（compose 里有） | `PAGERDUTY_ENABLED=false` | PagerDuty Events V2 |
+
+两条真机实测记录（2026-10-03，一次性 HTTP 收件端，非读码推断）：
+
+- **开关关着时这条通道确实不启动，而且说得出原因**：`CONTROLPLANE_ALERT_WEBHOOK_URL=http://alert-sink:9919/m7`
+  且 `ALERT_WEBHOOK_ALLOW_PRIVATE=false` ⇒ 控制面日志
+  `告警 Webhook URL 校验失败，不启动 notifyLoop`，字段里带 `webhookAllowPrivate:false`、
+  具体 error 与"怎么放行"的 hint；收件端一条都没收到。`deploy.sh` 在部署阶段就先行 WARN
+  （`check_alert_channel_shape`：主机名像 Docker 服务名/私网而开关没开时直接说明后果）。
+- **开关打开后真的发出去了**：同一 URL + `ALERT_WEBHOOK_ALLOW_PRIVATE=true` ⇒
+  `notifyLoop 已启动（M7 业务告警外发通道生效）` → 10 秒内 `告警推送成功 alertID=… severity=critical`
+  → 收件端收到 `POST /m7`（`User-Agent: Go-http-client/1.1`）。捕获到的载荷形状：
+  `alertID / tenantID / deviceID / agentID / severity / message / metric / status / createdAt /
+  acknowledgedBy / silencedUntil / comment / updatedAt`（**单对象、camelCase、无 `labels`/`annotations`/`version`**）
+  —— 这就是它与 Alertmanager `/api/v2/alerts`（要求 `[{labels,annotations,startsAt,endsAt}]` 数组）
+  **不兼容**的实证，也是"合并成单一总线"需要一层转换的原因。
 
 要点：
 
@@ -1177,8 +1192,15 @@ Kubernetes 路径不重复造轮子：生产集群一般已有 kube-prometheus-s
 - 第 2 条有个容易踩的坑，本轮已修：`notifyLoop` 过去调用的是**不读开关**的旧 SSRF 校验，
   于是"收件端在内网"（钉钉/飞书内网网关、集群内自建服务）会被**静默拒启动**，
   容器照样 healthy。现在它走 `ValidateWebhookURL(..., --webhook-allow-private)`，
-  并额外**始终**拒绝云元数据段（169.254.0.0/16，任何开关都不放行）；
   启动成功会打印一行 `notifyLoop 已启动…`，失败时 error 里带 `webhookAllowPrivate` 当前值与放行办法。
+- **`--webhook-allow-private=true` 的边界（2026-10-03 的契约变更，值得单独一条）**：
+  开关放行的是**私网与环回**；链路本地 / 云元数据（`169.254.0.0/16`，含
+  `169.254.169.254`）、`0.0.0.0/8`、IPv6 `fe80::/10` 与 `::` **任何取值都拒绝**。
+  旧实现是"开关一开就跳过全部 IP 校验（连 DNS 都不做）"，与它自己的文档注释矛盾，
+  也把 SSRF 最值钱的那一段一起放行了；此前还有一条测试明确断言过"true 放行元数据"，
+  所以这是**改契约**而非修 bug——若你的部署真的需要把外发地址指向那一段，请说，我们另开开关。
+  开关打开时域名仍会解析后判定（否则"内网域名解析到元数据"这种形态就被绕过了），
+  代价是**解析不出来的主机名会被拒绝**（fail-closed）。
 - 第 2 条与第 3 条的失败可见性不同：AM 的发送结果读它自己的
   `alertmanager_notifications_total` / `..._requests_failed_total`（见 §4.5 表）；
   alert-svc 的外发失败读业务序列 `business_metrics_total{name="alert_external_notify_failures"}`，

@@ -12,9 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
-	neturl "net/url"
 	"strings"
 	"time"
 
@@ -109,32 +107,11 @@ func (s *Server) notifyLoop(ctx context.Context) {
 // alertWebhookGuard 是 M7 外发通道的 URL 准入判定，抽成独立方法只为让"开关键是否真的被读"
 // 这件事可被单元测试直接钉住（notifyLoop 本身是无限循环，不便断言）。
 //
-// 语义 = ValidateWebhookURL（含 --webhook-allow-private）**再叠一层**云元数据地址拒绝：
-// ValidateWebhookURL 在 allowPrivate=true 时是"跳过全部 IP 校验"，于是开了内网开关会把
-// 169.254.169.254 一起放行——而它恰恰是 SSRF 的头号目标，且没有任何"内网 IM 网关"需要它。
-// 这里刻意不改那个共享校验器（它还有 Webhook CRUD / notify-channels 两个调用点，
-// 收窄语义属另一轮改动），只保证这条外发路径不弱于改动前的 validateURLSSRF。
+// 历史：这里曾经叠了一层"再拒绝云元数据段"的逻辑，因为共享校验器在 allowPrivate=true 时
+// 是 `return nil`（跳过全部 IP 校验）。那层现已上收到 ValidateWebhookURL 本身
+// （见 isRestrictedEvenWhenAllowed），三条外发路径共用同一个底线，不再各写一份。
 func (s *Server) alertWebhookGuard() error {
-	if err := ValidateWebhookURL(s.cfg.AlertWebhookURL, s.cfg.WebhookAllowPrivate); err != nil {
-		return err
-	}
-	u, err := neturl.Parse(s.cfg.AlertWebhookURL)
-	if err != nil {
-		return err
-	}
-	host := u.Hostname()
-	candidates := []net.IP{}
-	if ip := net.ParseIP(host); ip != nil {
-		candidates = append(candidates, ip)
-	} else if ips, lookupErr := net.LookupIP(host); lookupErr == nil {
-		candidates = append(candidates, ips...)
-	}
-	for _, ip := range candidates {
-		if ip4 := ip.To4(); ip4 != nil && ip4[0] == 169 && ip4[1] == 254 {
-			return fmt.Errorf("host %q resolves to link-local/metadata address %s（--webhook-allow-private 不放行云元数据段）", host, ip)
-		}
-	}
-	return nil
+	return ValidateWebhookURL(s.cfg.AlertWebhookURL, s.cfg.WebhookAllowPrivate)
 }
 
 // alertSentRetention 已推送指纹条目的保留时长：超过后被 notifyLoop 周期清理。

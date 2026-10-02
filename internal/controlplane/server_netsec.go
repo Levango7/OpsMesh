@@ -435,6 +435,34 @@ func (s *Server) pingStore(ctx context.Context) error {
 // 通过 context.WithTimeout 控制 net.LookupIP，避免恶意域名解析拖垮 API。
 const ssrfDNSTimeout = 5 * time.Second
 
+// isRestrictedEvenWhenAllowed 是"任何开关都不放行"的地址段：链路本地（含云元数据
+// 169.254.169.254）、0.0.0.0/8 本网、IPv6 的 fe80::/10 与未指定地址 ::。
+//
+// 与 isPrivateIP 的分工是刻意的：私网/环回属于"内网部署确实要用"的范围，由
+// --webhook-allow-private 决定放不放；而这一段没有任何合法收件端住在里面，
+// 开了内网开关也不该把它们一起放行（SSRF 的实际收益恰恰集中在这一段）。
+func isRestrictedEvenWhenAllowed(ip net.IP) bool {
+	if ip4 := ip.To4(); ip4 != nil {
+		if ip4[0] == 169 && ip4[1] == 254 {
+			return true
+		}
+		if ip4[0] == 0 {
+			return true
+		}
+		return false
+	}
+	return ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+}
+
+// lookupSSRFHostIPs 带超时地解析主机名。单独抽出来是因为 allowPrivate 分支现在也要
+// 解析（否则"域名指向元数据"这一形态会被完全跳过），而两处各写一遍
+// WithTimeout+cancel 很容易漏掉 cancel。
+func lookupSSRFHostIPs(host string) ([]net.IP, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), ssrfDNSTimeout)
+	defer cancel()
+	return net.DefaultResolver.LookupIP(ctx, "ip", host)
+}
+
 // ValidateWebhookURL 校验 webhook URL 防止 SSRF 攻击。
 //
 // 规则：
@@ -442,7 +470,9 @@ const ssrfDNSTimeout = 5 * time.Second
 //   - 主机名非空
 //   - 解析主机名：若是 IP 字面量直接校验；若是域名做 DNS 解析后校验每个返回 IP
 //   - 默认拒绝私网/loopback/链路本地/云元数据地址（isPrivateIP）
-//   - allowPrivate=true 时放行私网地址（用于内网部署场景，如钉钉/飞书内网网关）
+//   - allowPrivate=true 时放行**私网与环回**（内网部署场景，如钉钉/飞书内网网关），
+//     但链路本地 / 云元数据 / 0.0.0.0-8 / IPv6 fe80::\/10 这段仍然拒绝——见
+//     isRestrictedEvenWhenAllowed（2026-10-03 的契约变更点）。
 //
 // 拒绝的地址范围（isPrivateIP）：
 //   - 127.0.0.0/8（loopback）
@@ -474,14 +504,37 @@ func ValidateWebhookURL(rawURL string, allowPrivate bool) error {
 		return fmt.Errorf("empty host in URL")
 	}
 	// 3. 解析主机名：IP 字面量直接校验；域名做 DNS 解析后校验每个 IP。
-	//    若 allowPrivate=true 则跳过私网校验（内网部署场景）。
-	if allowPrivate {
-		return nil // 显式允许内网：仅校验协议 + 主机非空，不做 IP 校验
-	}
-	// 先尝试 IP 字面量（避免触发 DNS 解析，性能优化）。
+	//
+	// allowPrivate=true 的语义**收窄为"放行私网与环回"**，不再放行链路本地/云元数据段：
+	// 旧实现在这里直接 return nil（连 DNS 都不做），于是"允许内网收件端"这个开关
+	// 顺带把 169.254.169.254（IMDS 凭证窃取的头号目标）和 0.0.0.0/8 一起放行，
+	// 还与本函数自己的文档注释矛盾——上面那句"拒绝的地址范围…169.254.0.0/16（链路本地 + 云元数据）"
+	// 在开关打开时根本不成立。
+	// 这是一次**契约变更**（此前 server_netsec_test.go 明确断言过 true 放行元数据），
+	// 理由是没有任何"钉钉/飞书内网网关"住在链路本地段，而 SSRF 的实际价值恰恰在这一段。
 	if ip := net.ParseIP(host); ip != nil {
+		if allowPrivate {
+			if isRestrictedEvenWhenAllowed(ip) {
+				return fmt.Errorf("host %q is link-local/unspecified/metadata address %s（--webhook-allow-private 不放行该段）", host, ip)
+			}
+			return nil
+		}
 		if isPrivateIP(ip) {
 			return fmt.Errorf("host %q is private/loopback/metadata address %s", host, ip)
+		}
+		return nil
+	}
+	if allowPrivate {
+		// 开关打开时仍要解析域名：否则"域名解析到 169.254.169.254"这条最常见的
+		// rebinding/内网指向元数据的形态会被完全跳过。
+		ips, err := lookupSSRFHostIPs(host)
+		if err != nil {
+			return fmt.Errorf("cannot resolve host %q: %w", host, err)
+		}
+		for _, ip := range ips {
+			if isRestrictedEvenWhenAllowed(ip) {
+				return fmt.Errorf("host %q resolves to link-local/unspecified/metadata address %s（--webhook-allow-private 不放行该段）", host, ip)
+			}
 		}
 		return nil
 	}

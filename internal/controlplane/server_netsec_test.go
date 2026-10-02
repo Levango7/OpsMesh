@@ -102,18 +102,59 @@ func TestValidateWebhookURL_BadProtocol(t *testing.T) {
 	}
 }
 
-// TestValidateWebhookURL_AllowPrivate allowPrivate=true 时私网 URL 通过（内网部署场景）。
+// TestValidateWebhookURL_AllowPrivate allowPrivate=true 时**私网与环回** URL 通过
+// （内网部署场景：钉钉/飞书内网网关、集群内自建收件端）。
 func TestValidateWebhookURL_AllowPrivate(t *testing.T) {
 	cases := []string{
 		"http://10.0.0.1/webhook",
 		"http://192.168.1.1/webhook",
+		"http://172.16.5.9/webhook",
 		"http://127.0.0.1/webhook",
-		"http://169.254.169.254/latest/meta-data/",
 	}
 	for _, url := range cases {
 		if err := ValidateWebhookURL(url, true); err != nil {
-			t.Errorf("ValidateWebhookURL(%q, true) = %v, want nil (allowPrivate should bypass)", url, err)
+			t.Errorf("ValidateWebhookURL(%q, true) = %v, want nil (allowPrivate 应放行私网/环回)", url, err)
 		}
+	}
+}
+
+// TestValidateWebhookURL_MetadataRefusedEvenWithAllowPrivate 是 2026-10-03 的**契约变更点**。
+//
+// 旧行为：allowPrivate=true 时函数直接 return nil（连 DNS 都不做），于是"允许内网收件端"
+// 这个开关顺带放行了 169.254.169.254 / 0.0.0.0-8 / fe80:: —— 正是 SSRF 拿云凭证的目标段，
+// 而且与本函数文档里自己写的"拒绝的地址范围含 169.254.0.0/16（链路本地 + 云元数据）"矛盾。
+// 上一版 TestValidateWebhookURL_AllowPrivate 把元数据 URL 断言成"应通过"，即那次决策是
+// 被测试固定下来的，因此这里不是修 bug 而是**收紧一条已记录的契约**：
+// 开关只管"私网/环回"，链路本地/元数据/本网段任何开关都不放行。
+func TestValidateWebhookURL_MetadataRefusedEvenWithAllowPrivate(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+	}{
+		{"AWS/GCP 元数据", "http://169.254.169.254/latest/meta-data/"},
+		{"链路本地其他地址", "http://169.254.1.1/hook"},
+		{"本网 0.0.0.0", "http://0.0.0.0/webhook"},
+		{"本网 0.1.2.3", "http://0.1.2.3/webhook"},
+		{"IPv6 链路本地", "http://[fe80::1]:9919/hook"},
+		{"IPv6 未指定地址", "http://[::]:9919/hook"},
+	}
+	for _, c := range cases {
+		if err := ValidateWebhookURL(c.url, true); err == nil {
+			t.Errorf("%s：ValidateWebhookURL(%q, true) = nil，期望仍拒绝（allowPrivate 不放行链路本地/元数据/本网段）", c.name, c.url)
+		}
+	}
+}
+
+// TestValidateWebhookURL_AllowPrivateStillResolvesDomains 钉住"开了开关也要解析域名"：
+// 否则"内网域名解析到元数据地址"这一形态会被 allowPrivate 分支整个跳过。
+func TestValidateWebhookURL_AllowPrivateStillResolvesDomains(t *testing.T) {
+	// 解析不了的主名必须报错（fail-closed），而不是"跳过校验当它安全"。
+	if err := ValidateWebhookURL("http://no-such-host.invalid:9919/hook", true); err == nil {
+		t.Errorf("无法解析的域名在 allowPrivate=true 下被放行，期望拒绝（fail-closed）")
+	}
+	// localhost 在绝大多数环境解析到环回，开关打开时应放行。
+	if err := ValidateWebhookURL("http://localhost:9919/hook", true); err != nil {
+		t.Logf("localhost 未解析到环回（本环境 DNS 特殊）：%v —— 不判红", err)
 	}
 }
 

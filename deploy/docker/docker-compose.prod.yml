@@ -440,6 +440,13 @@ services:
       OPSMESH_REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 设置 REDIS_PASSWORD（Redis --requirepass 口令）}
       # ---- 运行模式与安全开关 ----
       OPSMESH_PRODUCTION: ${PRODUCTION_MODE:-true}
+      # M7 业务告警外发（notifyLoop）。刻意与 Alertmanager 的 ALERT_WEBHOOK_URL **分开配**：
+      # 两者的告警来源不同（规则触发 vs 落库的业务告警），填成同一个地址会收到两类内容，
+      # 填成不同地址则各发各的——分工见 docs/operations.md §4.6.0。留空=该通道不启动。
+      OPSMESH_ALERT_WEBHOOK_URL: ${CONTROLPLANE_ALERT_WEBHOOK_URL:-}
+      # 内网收件端开关：SSRF 闸默认拒绝私网/环回地址，指向集群内或内网 IM 网关时需显式放行。
+      # 链路本地/云元数据段（169.254.0.0/16 等）任何取值都不放行。
+      OPSMESH_WEBHOOK_ALLOW_PRIVATE: ${ALERT_WEBHOOK_ALLOW_PRIVATE:-false}
       OPSMESH_REQUIRE_AUTH: ${REQUIRE_AUTH:-true}
       # 直连 HTTPS：Cookie 必须带 Secure（明文形态由反代 overlay 覆盖）。
       OPSMESH_COOKIE_SECURE: ${COOKIE_SECURE:-true}
