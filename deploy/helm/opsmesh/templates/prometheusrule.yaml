@@ -40,6 +40,20 @@ spec:
           annotations:
             summary: "OpsMesh task queue backlog"
             description: "任务队列深度超过 100 已持续 5m，请检查调度器吞吐与 agent 容量。"
+        # 存储层吞错（与 deploy/monitoring/prometheus-alerts.yml 的 StoreSwallowedErrors 同一条）。
+        # 名字刻意与 compose 侧**完全一致**而不是套本分组的 OpsMesh 前缀：alertname 是值班侧
+        # 静默规则、抑制规则与 runbook 检索的键，两条装载路径用两个名字就等于两条不同的告警。
+        # 注：这条不进 compose↔chart 的镜像测试范围（那个测试只管
+        # opsmesh_microservice_business_alerts 这一组），所以它的漂移目前靠文档与人工评审拦。
+        - alert: StoreSwallowedErrors
+          expr: increase(opsmesh_store_write_failures_total[10m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+            component: controlplane
+          annotations:
+            summary: "OpsMesh store swallowed errors"
+            description: "存储层近 10 分钟吞掉读写错误：Store 不返回 error，表现是数据静默丢失。用 kubectl logs 抓 [store] 行，或 GET /api/v1/admin/store-failures 看按操作聚合。"
     # ------------------------------------------------------------------
     # 微服务业务面告警（2026-10-02 接入）——与 deploy/monitoring/prometheus-alerts.yml
     # 里同名分组是**同一组规则的两份装载副本**：compose 路径由 prometheus.yml 的 rule_files

@@ -1105,6 +1105,13 @@ kubectl apply -f opsmesh-custom-rules.yaml -n opsmesh
 | 真的发到外部渠道 | `verify-runtime.sh` §7d | Alertmanager 已加载的配置里含 `webhook_configs` 收件段，否则明确 WARN |
 | 外发**发得出去**（不是只配了） | `verify-runtime.sh` §7e | AM 自己的 `alertmanager_notifications_total{integration="webhook"}` > 0，且**请求级**与**通知级**两个失败计数都为 0 |
 | 存储层没有静默丢数据 | `verify-runtime.sh` §8b | 容器日志近 10 分钟无 `[store] … 失败`，且 `opsmesh_store_write_failures_total` 与之一致（两者矛盾即红） |
+| 吞错正在发生就**有人被通知** | 出厂规则 `StoreSwallowedErrors`（compose + chart 两份装载点，**同名**） | `increase(opsmesh_store_write_failures_total[10m]) > 0` 持续 5m，severity=warning |
+
+> `StoreSwallowedErrors` 为什么用 `increase()` 而不是 `> 0` 的绝对值：这条计数是
+> **自进程启动累计**，写绝对值会让任何"曾经抖过一次"的长期实例永久 firing。窗口取 10m
+> 配 `for: 5m`——单次瞬时失败不会被刷成告警，而成规模丢数据不会像 30m 窗口那样拖半小时。
+> 名字在两条装载路径上刻意保持一致（不套 chart 那组的 `OpsMesh` 前缀）：`alertname` 是值班侧
+> 静默规则、抑制规则与 runbook 检索的键，两个名字等于两条告警。
 
 > §7e 为什么要读 AM 的指标而不是读配置：对端 DNS 解析不了 / 连不上 / 超时这类**传输层失败**
 > 只体现在 `alertmanager_notification_requests_failed_total`，而按 HTTP 状态归类的

@@ -104,6 +104,21 @@ groups:
           summary: "High task failure rate"
           description: "Task failure rate is {{ $value }} per second."
 
+      # 存储层吞错。为什么值得单列一条：Store 接口的读路径**不返回 error**，失败只进容器日志与
+      # 这条计数，所以表现不是报错而是**静默丢数据**——v0.11.0 真机实测：alerts 可空列读回丢行，
+      # 1844 次失败期间接口一直"正常地"返回空列表，客户看到的是"告警页是空的"。
+      # 用 increase() 而不是绝对值：该计数是**自进程启动累计**，写 >0 会让任何长期运行的实例
+      # 在有过一次抖动后永久 firing；窗口取 10m，配合 for: 5m 既不被单次瞬时失败刷成告警，
+      # 也不会像 30m 那样把一次成规模的丢数据拖到半小时后才响。
+      - alert: StoreSwallowedErrors
+        expr: increase(opsmesh_store_write_failures_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "存储层近 10 分钟吞掉 {{ $value | humanize }} 次读写错误"
+          description: "数据正在静默丢失（Store 不返回 error）。定位：docker logs opsmesh-controlplane 2>&1 | grep 「\\[store\\]」 | tail -20；明细：GET /api/v1/admin/store-failures（按操作聚合 + 最近样本）。"
+
   - name: opsmesh_audit_chain_alerts
     interval: 30s
     rules:
