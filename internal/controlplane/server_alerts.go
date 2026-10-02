@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"time"
 
@@ -33,7 +35,8 @@ import (
 // 跨租户告警/多副本时钟偏差下会漏推（任一租户推送后水位前移，其它租户 CreatedAt 更早的
 // 告警被永久跳过）；指纹去重对上述场景免疫。
 // 聚合/抑制：相同 metric+device 在 5 分钟窗口内只推送一次；critical 已触发时抑制同源 warning。
-// 修复 7：启动时对 webhook URL 做 SSRF 校验，拒绝私网/元数据地址。
+// 修复 7：启动时对 webhook URL 做 SSRF 校验；私网/元数据地址默认拒绝，
+// 由 --webhook-allow-private（env OPSMESH_WEBHOOK_ALLOW_PRIVATE）显式放行。
 func (s *Server) notifyLoop(ctx context.Context) {
 	// 启动条件放宽——Webhook 或 Email 任一配置即启动。
 	webhookConfigured := s.cfg.AlertWebhookURL != ""
@@ -42,14 +45,28 @@ func (s *Server) notifyLoop(ctx context.Context) {
 		return // 无任何告警通道配置，不启动 notifyLoop
 	}
 	// 修复 7：SSRF 校验 webhook URL，防告警推送被利用做 SSRF（访问云元数据/内网服务）。
+	// 这里必须走 ValidateWebhookURL 而不是 validateURLSSRF：后者是无开关的旧实现，
+	// 会把 --webhook-allow-private / OPSMESH_WEBHOOK_ALLOW_PRIVATE 直接忽略掉。
+	// 真机语义后果：该开关在 Webhook CRUD 与 notify-channels 上都生效，唯独 M7 外发循环
+	// 不认它 ⇒ 客户按文档开了"允许内网收件端"，钉钉/飞书内网网关仍连不上，而且只在日志里
+	// 留一行 error（容器照样 healthy）。
 	if webhookConfigured {
-		if err := validateURLSSRF(s.cfg.AlertWebhookURL); err != nil {
-			logx.Error(ctx, "告警 Webhook URL SSRF 校验失败，不启动 notifyLoop", err, "url", s.cfg.AlertWebhookURL)
+		if err := s.alertWebhookGuard(); err != nil {
+			logx.Error(ctx, "告警 Webhook URL 校验失败，不启动 notifyLoop", err,
+				"url", redactURL(s.cfg.AlertWebhookURL),
+				"webhookAllowPrivate", s.cfg.WebhookAllowPrivate,
+				"hint", "内网收件端（钉钉/飞书网关、集群内 Alertmanager）需显式设 --webhook-allow-private=true 或 OPSMESH_WEBHOOK_ALLOW_PRIVATE=true")
 			return
 		}
 	}
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
+	// 启动即打印一行：这条通道此前"配了也不知道有没有生效"。
+	// 尤其是私网地址被 SSRF 闸拦掉的场景——上面 return 时只有 error 日志，
+	// 而部署者通常只看"容器 Up + 健康"，于是"配了推送地址却一条都没发"再次成为静默失效。
+	logx.Info(ctx, "notifyLoop 已启动（M7 业务告警外发通道生效）",
+		"webhook", redactURL(s.cfg.AlertWebhookURL), "webhookConfigured", webhookConfigured,
+		"emailConfigured", emailConfigured)
 	for {
 		select {
 		case <-ctx.Done():
@@ -87,6 +104,37 @@ func (s *Server) notifyLoop(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// alertWebhookGuard 是 M7 外发通道的 URL 准入判定，抽成独立方法只为让"开关键是否真的被读"
+// 这件事可被单元测试直接钉住（notifyLoop 本身是无限循环，不便断言）。
+//
+// 语义 = ValidateWebhookURL（含 --webhook-allow-private）**再叠一层**云元数据地址拒绝：
+// ValidateWebhookURL 在 allowPrivate=true 时是"跳过全部 IP 校验"，于是开了内网开关会把
+// 169.254.169.254 一起放行——而它恰恰是 SSRF 的头号目标，且没有任何"内网 IM 网关"需要它。
+// 这里刻意不改那个共享校验器（它还有 Webhook CRUD / notify-channels 两个调用点，
+// 收窄语义属另一轮改动），只保证这条外发路径不弱于改动前的 validateURLSSRF。
+func (s *Server) alertWebhookGuard() error {
+	if err := ValidateWebhookURL(s.cfg.AlertWebhookURL, s.cfg.WebhookAllowPrivate); err != nil {
+		return err
+	}
+	u, err := neturl.Parse(s.cfg.AlertWebhookURL)
+	if err != nil {
+		return err
+	}
+	host := u.Hostname()
+	candidates := []net.IP{}
+	if ip := net.ParseIP(host); ip != nil {
+		candidates = append(candidates, ip)
+	} else if ips, lookupErr := net.LookupIP(host); lookupErr == nil {
+		candidates = append(candidates, ips...)
+	}
+	for _, ip := range candidates {
+		if ip4 := ip.To4(); ip4 != nil && ip4[0] == 169 && ip4[1] == 254 {
+			return fmt.Errorf("host %q resolves to link-local/metadata address %s（--webhook-allow-private 不放行云元数据段）", host, ip)
+		}
+	}
+	return nil
 }
 
 // alertSentRetention 已推送指纹条目的保留时长：超过后被 notifyLoop 周期清理。
