@@ -731,6 +731,10 @@ CONTROLPLANE_ALERT_WEBHOOK_URL=
 # 内网收件端开关：上面两条通道指向私网/环回地址（集群内服务、内网 IM 网关）时需置 true。
 # 注意：链路本地 / 云元数据段（169.254.169.254 等）任何取值都不放行。
 ALERT_WEBHOOK_ALLOW_PRIVATE=false
+# alert-svc 的 gRPC 宿主端口（ack/resolve 的唯一入口；服务侧无 REST 路由）。
+# 只绑 127.0.0.1，且该 gRPC 面无身份鉴权（只有 trace + ratelimit）——跨机使用请自行前置认证。
+# 容器内监听端口固定 50053，改这里只改宿主侧。
+ALERT_SVC_GRPC_PORT=50053
 # 可选：Bearer Token。留空则渲染出的配置不含 authorization 段
 # （Alertmanager 对空 bearer 会报 "authorization: expected type string"，所以不能无条件写进去）。
 ALERT_WEBHOOK_BEARER=

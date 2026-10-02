@@ -679,6 +679,15 @@ services:
     container_name: opsmesh-alert-svc
     ports:
       - "127.0.0.1:${ALERT_SVC_HTTP_PORT:-8103}:8103"
+      # ack/resolve（值班动作回写 PagerDuty 的唯一入口）**只有 gRPC 面**，服务侧没有对应的
+      # REST 路由，也没有 grpc-gateway/reflection。不发布这个端口时，下面 environment 里的
+      # ALERT_SVC_GRPC_PORT 只在容器内可达 ⇒ PAGERDUTY_ENABLED 是个"配了也没人调用得到"的死开关
+      # （2026-10-03 实测：全仓无任何组件 dial 它）。发布后运维可从本机 loopback 调用。
+      # 注意：容器内监听端口取自下面 environment 的字面量 50053，**不**读 .env；
+      # 因此这里映射的目标端口必须保持 50053，只让宿主侧端口可配（与上面 HTTP 那行同形）。
+      # 安全口径：该 gRPC 面只有 trace + ratelimit 拦截器，**没有身份鉴权**——
+      # 绑定 127.0.0.1 是刻意的（跨机暴露需自行前置认证或在反代侧限制），详见 docs/operations.md §4.6.0。
+      - "127.0.0.1:${ALERT_SVC_GRPC_PORT:-50053}:50053"
     environment:
       ALERT_SVC_GRPC_PORT: 50053
       ALERT_SVC_HTTP_PORT: 8103

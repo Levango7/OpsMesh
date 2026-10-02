@@ -1189,6 +1189,16 @@ Kubernetes 路径不重复造轮子：生产集群一般已有 kube-prometheus-s
 - **想"值班群收到监控告警"配第 1 条即可**；想"业务告警也进群"必须再配第 2 条，
   两者不会互相代劳。第 2 条的 URL 与第 1 条**填成同一个地址是可以的**（IM 群机器人一般按
   文本渲染，不校验形状），但要清楚你会同时收到两类内容、去重逻辑各不相同。
+- **PagerDuty 这条腿的入口是 gRPC，且无身份鉴权**（2026-10-03 实测后补齐）。`ack`/`resolve`
+  在服务侧**没有 REST 路由**（HTTP 面只有 escalation/oncall 四个 GET），也没有 grpc-gateway 与
+  reflection；因此 `PAGERDUTY_ENABLED=true` 唯一的触发方式是调用 alert-svc 的 gRPC
+  `AcknowledgeAlert` / `ResolveAlert`。出厂 compose 现在把该端口发布到
+  `127.0.0.1:${ALERT_SVC_GRPC_PORT:-50053}`（此前只在容器网络内可达，全仓也没有任何组件
+  dial 它 ⇒ 对 Docker 部署形态而言是个"配了也没人调用得到"的死开关）。
+  安全口径要读清楚：这条 gRPC 面只有 trace + ratelimit 拦截器，**没有租户校验也没有鉴权**，
+  所以刻意只绑 loopback；要从别的机器调用请在前面自行加认证或在反代侧限制。
+  另外这条链只在 `ALERT_STORE_TYPE=sql`（出厂默认）时对**已存在的告警 ID** 生效——
+  `ResolveAlert` 找不到 ID 会直接返回 not-found，外发不会触发。
 - 第 2 条有个容易踩的坑，本轮已修：`notifyLoop` 过去调用的是**不读开关**的旧 SSRF 校验，
   于是"收件端在内网"（钉钉/飞书内网网关、集群内自建服务）会被**静默拒启动**，
   容器照样 healthy。现在它走 `ValidateWebhookURL(..., --webhook-allow-private)`，
