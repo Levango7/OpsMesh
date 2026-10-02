@@ -64,6 +64,19 @@ func (s *Server) appMetricsCounts() appCounts {
 // 收敛成一个渲染器后，"两个端口指标集合不同"这类问题在结构上不再可能。
 // 访问控制仍由各 handler 自己负责（8080 走 CIDR 准入，9091 独立监听）。
 func (s *Server) writeMetricsBody(w http.ResponseWriter) {
+	body := s.metricsBody()
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, body)
+}
+
+// metricsBody 装配并渲染指标文本，是 **抓取面（8080/9091）与诊断包 metrics.txt 共用的一份**。
+//
+// 为什么要把装配单独抽出来：opsmesh_store_write_failures_total 原先只在
+// renderPrometheus()（诊断包路径）里 SetStoreFailures，抓取路径从不推 ⇒ Prometheus 上该序列
+// **恒为 0**。真机实测：同一段时间日志记了 1844 次存储吞错，指标读数仍是 0——
+// "被吞掉的错误只有在这里才看得见"这句话本身就变成了被吞掉的错误。
+func (s *Server) metricsBody() string {
 	cnt := s.appMetricsCounts()
 	reg := s.metrics
 	if reg == nil {
@@ -74,9 +87,9 @@ func (s *Server) writeMetricsBody(w http.ResponseWriter) {
 	}
 	reg.SetAgents(cnt.agents)
 	reg.SetAppGauges(cnt.devices, cnt.devicesOnline, cnt.devicesOffline, cnt.alerts, cnt.ticketsOpen)
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, reg.Render())
+	total, _ := store.StoreFailureStats()
+	reg.SetStoreFailures(total)
+	return reg.Render()
 }
 
 // handlePrometheusMetrics 处理 GET /metrics（Web 端口 8080）：输出与 9091 同一份注册表内容。

@@ -488,17 +488,17 @@ func (s *Server) healthSnapshot(ctx context.Context) map[string]any {
 	return out
 }
 
-// renderPrometheus 复用与 /metrics 相同的渲染路径。
+// renderPrometheus 复用与 /metrics **完全相同**的装配 + 渲染路径（见 metricsBody）。
+//
+// 此前它自己 SetAgents/SetStoreFailures 再 Render：装配只覆盖了一半仪表，
+// 于是"诊断包里的指标"和"Prometheus 抓到的指标"形状不同——而 2026-09-26 收敛两个端口时
+// 写下的注释恰恰声称这里是"相同渲染路径"。反过来更糟：抓取路径不推 store failures，
+// 该序列在 Prometheus 侧恒为 0（真机实测 1844 次吞错 vs 指标 0）。
 func (s *Server) renderPrometheus(ctx context.Context) string {
 	if s.metrics == nil {
 		return "# metrics 未启用\n"
 	}
-	s.metrics.SetAgents(len(s.store.Agents("")))
-	// 把存储层吞错累计数推给指标注册表。推送而非 metrics 直接 import store，
-	// 是为了保持依赖方向单一（controlplane → metrics / store），避免日后成环。
-	total, _ := store.StoreFailureStats()
-	s.metrics.SetStoreFailures(total)
-	return s.metrics.Render()
+	return s.metricsBody()
 }
 
 // ── 小工具 ─────────────────────────────────────────────────────────
