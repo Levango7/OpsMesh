@@ -2805,3 +2805,114 @@ job=task-svc  value=488.48  activeAt=2026-10-01T23:53:23Z  state=firing
 3. 其余 8 条新告警没有逐条触发（需要各自的真实事件：写库失败、外部通知失败、内存淘汰、
    500 条决策历史）。已验证的是：它们引用的序列在真实服务上存在、规则本身 health=ok 且能被评估。
 4. Alertmanager 仍不在出厂栈里——firing 只到 Prometheus 的状态面，没人被通知（§23 / 任务 #52）。
+
+## 30. 把本机存量卷升到发布版 0.11.0：一次部署路径的总清算（2026-10-02）
+
+用户点头之后做的两件事：**Alertmanager 进出厂栈**（#52）与**存量卷升版 + verify-runtime 整脚本**（#53）。
+后者才是本轮真正的收获：它一次性暴露了 4 个"发布版跑不到、CI 也跑不到、只有真升级才会遇到"的缺陷，
+并且顺手证明 `verify-runtime.sh` 里有 5 处判据本身是错的。
+
+取证口径先说清：13 个镜像全部 `docker pull` 自 `ghcr.io/levango7/*:0.11.0`（发布产物），
+不用本地重建冒充；控制面短暂换成本地构建的**修复镜像**只为验证修复本身，验证完换回发布版。
+
+### 30.1 头号缺陷：防篡改闸把存量部署 brick 掉
+
+第一次 `deploy.sh up` 的结果是控制面无限 crash-loop：
+
+```
+[store] 迁移致命错误（不重试，立即拒绝启动）: migration 1 (001_initial.sql) checksum mismatch:
+recorded=43c39a49… expected=c2c92b63… (迁移文件已被篡改，拒绝启动)
+```
+
+逐条比对 19 个迁移的指纹后：**17 条不一致**，不是偶发。三条独立证据把它定性成"构建习惯污染"而非篡改：
+
+1. 库里 `applied_at = 2026-09-24`，是**本地构建的 `-sim` 镜像**建的库；
+2. `git rev-list --all -- internal/store/migrations/001_initial.sql` 里**没有任何已提交版本**算得出 `43c39a…`；
+3. `43c39a…` 精确等于同一文件**换成 CRLF** 的 sha256。
+
+根因是一行缺失的 `.gitattributes`：go/sh/yml/yaml/md/tpl 都钉了 `eol=lf`，**`*.sql` 没有**。
+于是 Windows 检出给出 CRLF 的迁移文件，本地构建把它编进镜像（`embed`），首启写库时把
+CRLF 指纹记进 `schema_migrations`；此后跑官方（LF）镜像就必然撞闸——而且闸的语义是
+"确定性故障 ⇒ fatal 不重试"，**没有任何受控的再基线出口**，运维只剩"手改数据库"这一条野路子。
+
+三道修法（缺一不可）：
+
+| # | 修法 | 单独存在的不足 |
+|---|---|---|
+| ① | `.gitattributes` 补 `*.sql text eol=lf` | 只挡未来检出，救不了已被污染的存量库 |
+| ② | 指纹改为**行尾与 BOM 无关**（`normalizeMigrationContent` 后再 sha256） | 只让**新**记录一致，存量库记录的仍是旧 CRLF 值 |
+| ③ | 识别 `legacyCRLFChecksum` 后**一次性、留日志的再基线**；其它任何不符照旧 fatal | 没有①②就会一直靠再基线兜底，等于纵容行尾漂移 |
+
+真机验证（不靠推断）：修复镜像启动时逐条打出 17 条再基线 WARN 并正常服务；
+台账 19/19 与发布版一致；**换回发布版 0.11.0 镜像后仍能健康启动、且不再出现任何再基线 WARN**
+（幂等，且发布版→发布版本来就该无恙）。测试两道：
+`TestMigrationChecksum_LineEndingAgnostic`（纯逻辑，钉"行尾不同指纹必须相同"与"改语义必须不同"），
+`TestRunMigrations_RebaselinesLegacyCRLFChecksum`（真 MySQL：植入遗留指纹→必须自愈；再植入随机指纹→必须仍 fatal）。
+
+### 30.2 升级路径不补新服务的库
+
+`init-databases.sql` 只挂在 `/docker-entrypoint-initdb.d/`，**仅在空数据目录执行**。三域转正新增的
+`opsmesh_incident` / `opsmesh_runbook` 在存量卷里不存在，而两服务是 fail-fast（不静默退回内存），
+症状就是"新版本容器起不来"。修法 `ensure_service_databases()`：每次 `up` 幂等重放建库脚本，
+并用 `SHOW DATABASES` **按观察值**核对每个库真的在（不信退出码），实测输出
+"微服务库齐备（按 init-databases.sql 核对 7 个，存量卷升级同样补齐）"。
+顺带把该脚本头部那句"建库是一次性动作"的注释改成实话——它正是这次踩空的假设。
+
+### 30.3 "热加载成功"原来不可信：bind mount 跟的是 inode
+
+`deploy.sh` 只 `POST /-/reload` 并打印"已热加载"。本轮加了 `alerting` 段与三个新 job 之后：
+reload 返回 200，但 `/-/config` 里没有 `alerting`、`activeAlertmanagers` 为空。
+原因是宿主文件被整体重写时 inode 改变，而 bind mount 跟 inode ⇒ 容器看到的还是旧文件，
+reload 读的是那份旧文件，**当然成功**。`--force-recreate` 之后 18 个 job 全部在抓取面上。
+
+于是 `verify_prometheus_effective_config()` 取代那句自我表扬：把 prometheus.yml 声明的 `job_name`
+与运行中的 `/api/v1/targets` 逐个对账，缺则重建容器再核一次，仍缺即判失败。
+写这个函数时它自己也先红了一次：`sed` 的 BRE 写法 `"\{0,1\}"` 在这台 Git-Bash 上抽不出任何
+`job_name`——因为函数对"解析结果为空"**主动判红**而不是静默通过，缺陷当场暴露（改 `sed -E`）。
+这条留给以后：**新写的核对逻辑必须自带"我是不是什么也没解析到"的判据。**
+
+### 30.4 Alertmanager：三跳送达各自有观察点
+
+出厂交付以前是"有规则、有 firing、无人收到"。现在：compose 起 `alertmanager`（仅绑 `127.0.0.1:9094`）、
+`prometheus.yml` 的 `alerting` 段生效、`deploy.sh` 的分组启动把它带上并 `wait_for_healthy`
+（原来分组启动漏了它，即使装了也不会被起来）。配置不写死而是渲染——
+Alertmanager **不读环境变量**，仓里放死配置等于放一个假的外发能力：模板 + `render_alertmanager_config()`
+读 `.env` 的 `ALERT_WEBHOOK_URL` / `ALERT_WEBHOOK_BEARER` 生成 `deploy/docker/generated/alertmanager.yml`
+（0600 + `.gitignore`），没配 URL 时**大声 WARN**，`bearer` 为空时整段省略（AM 对空 bearer 直接报错）。
+
+过程中真实 AM 帮我们抓了两个错：
+① 键名写成 `webhook:` 而非 `webhook_configs:`——YAML 合法、路由引用检查也过，AM 报
+`field webhook not found in type config.plain` 拒绝加载；于是渲染校验加了 receiver 集成键名白名单。
+② `${ALERTMANAGER_CONFIG:-generated/alertmanager.yml}` 少 `./` 前缀被 compose 当**命名卷**
+（"refers to undefined volume"），由门禁 §4 就地判红。
+
+门禁 §15 把这条链路钉住（alerting 未注释 / compose 有 AM / 挂的是渲染物 / deploy.sh 调用渲染且失败即中止 /
+`generated/` 不入库 / 默认配置去占位后合法且含 inhibit）；`verify-runtime.sh` §7d 在运行时逐个观察三跳。
+**未做的**：没有真实可达的 webhook 收件端，所以"告警真的落到群里"仍未端到端验证——只验到
+渲染物被真实 AM 接受（含/不含 bearer 两份）、Prometheus 有活动 AM 端点、未配置时明确 WARN。
+
+### 30.5 `verify-runtime.sh` 的 19 条红里，15 条是脚本自己的锅
+
+| 症状 | 根因 | 修法 |
+|---|---|---|
+| §5b 12 个服务"TYPE 不对 / 缺 service_info / 缺 active_connections" | `svc_port` 把 `task-svc`→`TASK_SVC` 后又拼 `_SVC_HTTP_PORT`，得到 `TASK_SVC_SVC_HTTP_PORT`；端口为空 ⇒ 读空正文 ⇒ 全判红 | 键名改回 `${SVC}_HTTP_PORT` |
+| §5b/§6 三域红、其它绿 | `env_val` **只接一个参数**，调用点写的第二参数（默认端口）被静默吞掉；`.env` 缺 `INCIDENT/RUNBOOK/AUTOSCALER_SVC_HTTP_PORT` 时拿到空端口 | `env_val KEY [DEFAULT]` |
+| §4c "未返回 mustChangePassword=true" ×3 | 判据把"首登"写死；存量库里 admin 早已改密（`must_change_password=0`），必然假红 | 以**库里的标记**为独立观测量，断言 API 与之双向一致（两条分支都是硬判定） |
+| §15 "/version 与 .env 不一致" | `.env` 存不带 `v` 的镜像 tag，构建期注入的是带 `v` 的 git tag，字符串相等必假红 | 只归一化前导 `v`，不做模糊匹配 |
+| §7d "AM 不健康"（其实 healthy） | `/-/healthy` 成功时**响应体为空**，用 grep 文本判健康判不出来 | 改判 HTTP 状态码 |
+
+顺带一条反向确认：`operator` 仍用预置口令 ⇒ 库里标记为 1、admin 改过 ⇒ 0，
+说明 P0-1 那套强制改密在 **SQL 后端也确实生效**（以前只有内存后端被断言过）。
+
+### 30.6 结果与仍未覆盖
+
+- `deploy.sh up --no-build -y`：**DEPLOY_RC=0**，13 个服务全部 healthy，冒烟全过，18 个抓取目标 0 DOWN；
+- `verify-runtime.sh`：**PASS=123 / FAIL=1**，唯一那条红是我自己灌出来的 `OpsMeshMetricsCardinalityFolding`
+  （基数上限打穿后的真告警，`value=490`，随 30m 窗口自然 resolve）——不是缺陷，也不去掩盖；
+  `WARN` 6 条均为"事件尚未发生/需真实流量"类，逐条写明原因；
+- `validate-deploy-assets.sh`：**PASS=42 / FAIL=0 / SKIP=1**（SKIP 是 kubeconform 离线取不到 schema）；
+- `golangci-lint run ./...` 0 issues、`gofmt -l .` 空、契约测试与 store 测试全绿。
+
+仍未覆盖，写清楚免得下轮误读：① 真实 webhook 收件端未做端到端；② K8s 侧不做送达断言
+（chart 明确复用集群自带的 Alertmanager）；③ 其余 8 条新告警仍未逐条真实触发；
+④ 数据保全只核到 `users/tasks/devices` 三个计数与建库数（6→8），没有做全量行级比对。

@@ -21,6 +21,14 @@
 Makefile text eol=lf
 *.md text eol=lf
 
+# 迁移 SQL：LF —— **这不是风格问题，是防 brick**（2026-10-02 真机升级实测）。
+# 缺这条时 Windows 检出会把 internal/store/migrations/*.sql 变成 CRLF，本地构建的镜像
+# 把 CRLF 版 sha256 写进 schema_migrations；之后改跑官方（LF）镜像就出现 19 条里 17 条
+# "checksum mismatch: 迁移文件已被篡改，拒绝启动" ⇒ 控制面永久 crash-loop，
+# 而且存量库没有任何受控的再基线手段。代码侧已把指纹改成行尾无关（见 sql.go 的
+# normalizeMigrationContent）并允许对遗留 CRLF 指纹自我再基线，这里从来源上再钉一道。
+*.sql text eol=lf
+
 # Dockerfile 与 .dockerignore：强制 LF（**实测必需**，不是风格问题）。
 # 2026-09-26 对照实验：同一 Dockerfile 仅行尾不同——
 #   LF   → docker build 成功

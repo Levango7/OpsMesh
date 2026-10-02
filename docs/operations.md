@@ -1080,9 +1080,50 @@ spec:
 kubectl apply -f opsmesh-custom-rules.yaml -n opsmesh
 ```
 
-### 4.5 通知渠道配置
+### 4.5 Alertmanager 与外发通道
 
-#### 4.5.1 单渠道（环境变量）
+出厂 compose 栈**默认起 Alertmanager**（服务 `alertmanager`，镜像 `prom/alertmanager:v0.27.0`，
+宿主端口 `ALERTMANAGER_PORT` 默认 127.0.0.1:9094），且 `prometheus.yml` 的 `alerting:` 段是**生效的**
+（指向 `alertmanager:9093`）。
+
+这一条 2026-10-02 之前不成立：当时 `alerting:` 段是注释状态、栈里也没有 alertmanager 容器，
+于是 30+ 条出厂规则**照常评估、照常 firing，却没有任何人收到**。
+交付口径上"有告警状态"与"有人被叫醒"是两件事，所以送达链路的三跳现在有门禁：
+
+| 跳 | 谁检查 | 检查什么 |
+|---|---|---|
+| 规则评估不报错 | `verify-runtime.sh` §7c | `/api/v1/rules` 里没有任何规则 `health≠ok` 或有 `lastError` |
+| 告警离开 Prometheus | `verify-runtime.sh` §7d + 门禁 §15 | Prometheus 的 `activeAlertmanagers` 非空；compose 有 alertmanager 服务；`alerting:` 段未被注释 |
+| 真的发到外部渠道 | `verify-runtime.sh` §7d | Alertmanager 已加载的配置里含 webhook 收件段，否则明确 WARN |
+
+#### 4.5.1 配置怎么来（为什么不放一份写死的配置）
+
+Alertmanager 的配置**不读环境变量**。所以出厂链路是：
+
+- 模板：`deploy/monitoring/alertmanager.yml.template`（含占位 `__ALERT_WEBHOOK_RECEIVER__`）
+- 渲染：`deploy/scripts/deploy.sh` 的 `render_alertmanager_config()` 在 `up` 里执行，读 `.env` 的
+  `ALERT_WEBHOOK_URL` / `ALERT_WEBHOOK_BEARER`，生成 `deploy/docker/generated/alertmanager.yml`
+  （权限 0600，且 `deploy/docker/generated/` 已进 `.gitignore`——里面可能有 bearer token）
+- 挂载：compose 用 `${ALERTMANAGER_CONFIG:-./generated/alertmanager.yml}` 挂进去，操作者可改指自己的文件
+
+**没配 `ALERT_WEBHOOK_URL` 时不静默**：deploy.sh 大声 WARN
+
+```
+[WARN] 未设置 ALERT_WEBHOOK_URL ——告警只进 Alertmanager、不外发。
+[WARN]   在 .../.env 里填 ALERT_WEBHOOK_URL（以及可选 ALERT_WEBHOOK_BEARER）后重跑 up 即可启用。
+```
+
+渲染完 deploy.sh 还会解析一遍生成的 YAML（路由引用的 receiver 必须存在、占位必须被替换），
+校验失败即中止部署；`bearer` 为空时**整段省略**，因为 Alertmanager 对空 bearer 会直接报
+`authorization: expected type string, got object`。
+
+Kubernetes 路径不重复造轮子：生产集群一般已有 kube-prometheus-stack 的 Alertmanager，
+把 PrometheusRule CR（`observability.prometheusRule.enabled=true`）与集群既有 Alertmanager
+对接即可，chart 不再单独起一套。
+
+### 4.6 通知渠道配置
+
+#### 4.6.1 单渠道（环境变量）
 
 命令示例：配置飞书告警
 
@@ -1093,7 +1134,7 @@ export OPSMESH_ALERT_NOTIFIER_TYPE="feishu"
 
 通知类型自动识别：URL 含 `slack.com` 走 Slack Block Kit；含 `qyapi.weixin.qq.com` 走企业微信 markdown。
 
-#### 4.5.2 多渠道（JSON 配置文件）
+#### 4.6.2 多渠道（JSON 配置文件）
 
 ```json:notify-channels.json
 {
@@ -1111,7 +1152,7 @@ export OPSMESH_ALERT_NOTIFIER_TYPE="feishu"
 ./opsmesh --mode=controlplane --notify-channels-config=/etc/opsmesh/notify-channels.json
 ```
 
-#### 4.5.3 告警抑制
+#### 4.6.3 告警抑制
 
 ```json:inhibit-rules.json
 [
@@ -1127,7 +1168,7 @@ export OPSMESH_ALERT_NOTIFIER_TYPE="feishu"
 ./opsmesh --mode=controlplane --inhibit-rules-file=/etc/opsmesh/inhibit-rules.json
 ```
 
-### 4.6 OpenTelemetry 链路追踪
+### 4.7 OpenTelemetry 链路追踪
 
 ```bash
 export OPSMESH_OTEL_ENDPOINT="otel-collector:4317"

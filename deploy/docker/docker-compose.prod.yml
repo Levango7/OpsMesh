@@ -204,6 +204,50 @@ services:
     logging: *default-logging
     <<: *restart-policy
 
+  # Alertmanager：把「已产生的告警状态」变成「有人会收到」。
+  #
+  # 为什么出厂栈里必须有它（2026-10-02）：此前 prometheus.yml 的 `alerting:` 段是注释状态、
+  # 栈里也没有 alertmanager 容器，于是 30+ 条出厂规则**只产生状态、不送达任何人**——
+  # 客户按"会打电话"理解就验收错了对象。现在默认起 AM，配置由 deploy.sh 从
+  # `deploy/monitoring/alertmanager.yml.template` 渲染到 `deploy/docker/generated/alertmanager.yml`：
+  #   • .env 设了 ALERT_WEBHOOK_URL ⇒ 渲染出真实外发段；
+  #   • 没设 ⇒ 生成"合法但无外发"的 receiver，并由 deploy.sh **大声 WARN**，
+  #     因为 Alertmanager 不读环境变量，把死配置挂进容器只会让人以为外发已生效。
+  # 生成物含 bearer token，故 deploy/docker/generated/ 已进 .gitignore。
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: opsmesh-alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.listen-address=:9093
+    ports:
+      - "127.0.0.1:${ALERTMANAGER_PORT:-9094}:9093"
+    volumes:
+      # 必须是 ./ 开头的路径：短语法里不带 ./ 的 `名字:容器路径` 会被 compose 当**命名卷**，
+      # 渲染直接报 "refers to undefined volume generated/alertmanager.yml"（本条由门禁 §4 抓到）。
+      - ${ALERTMANAGER_CONFIG:-./generated/alertmanager.yml}:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    environment:
+      - TZ=${TZ:-UTC}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - monitoring_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging: *default-logging
+    <<: *restart-policy
+
   # 黑盒拨测（blackbox_exporter）：prometheus.yml 的 opsmesh-mysql / opsmesh-redis
   # 用 metrics_path=/probe + module=tcp_connect（即本 exporter 的协议）。
   #
@@ -1056,6 +1100,9 @@ volumes:
   prometheus_data:
     driver: local
     name: opsmesh-prometheus-data
+  alertmanager_data:
+    driver: local
+    name: opsmesh-alertmanager-data
   grafana_data:
     driver: local
     name: opsmesh-grafana-data

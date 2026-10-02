@@ -379,19 +379,36 @@ func (s *SQLStore) runMigrations() error {
 		return fmt.Errorf("list migration files: %w", err)
 	}
 
-	// 3.5 G5 / 防篡改校验：已应用迁移的 checksum 必须与当前文件 sha256 一致，
-	//     不一致则拒绝启动（避免迁移文件被静默篡改导致 schema 漂移）。
-	//     这是确定性故障（文件被改动或版本不符），标记 fatal 立即返回，不做退避重试。
+	// 3.5 G5 / 防篡改校验：已应用迁移的指纹必须与当前文件一致，不一致则拒绝启动
+	//     （避免迁移文件被静默篡改导致 schema 漂移）。确定性故障 → fatal，不重试。
+	//
+	//     指纹按**行尾无关**的方式计算（见 normalizeMigrationContent）。这条不是洁癖：
+	//     2026-10-02 真机升级 0.9.x→0.11.0 实测，`.gitattributes` 当时没给 *.sql 钉 eol=lf，
+	//     Windows 检出把迁移文件变成 CRLF，本地构建的镜像把 CRLF 版指纹写进 schema_migrations；
+	//     之后跑官方（LF）镜像就是 19 条里 17 条"指纹不符"，控制面以"迁移文件已被篡改"为由
+	//     永久 crash-loop。行尾不属于 SQL 语义，把它当篡改证据只会把**自己的构建习惯**
+	//     变成客户的 bricks；真实改 DDL 的篡改仍然判红。
+	//     对已被 CRLF 指纹污染的存量库，这里做一次**大声的再基线**（改写记录为规范指纹），
+	//     而不是要求操作者手工 UPDATE 数据库——后者没有审计痕迹。
 	for _, mf := range files {
 		recorded, ok := applied[mf.version]
 		if !ok {
 			continue
 		}
-		expected := sha256Hex(mf.content)
-		if recorded.checksum != "" && recorded.checksum != expected {
-			return fatalMigration(fmt.Errorf("migration %d (%s) checksum mismatch: recorded=%s expected=%s (迁移文件已被篡改，拒绝启动)",
-				mf.version, mf.name, recorded.checksum, expected))
+		expected := migrationChecksum(mf.content)
+		if recorded.checksum == "" || recorded.checksum == expected {
+			continue
 		}
+		if recorded.checksum == legacyCRLFChecksum(mf.content) {
+			if err := s.rebaselineChecksum(context.Background(), mf.version, expected); err != nil {
+				return fatalMigration(fmt.Errorf("再基线迁移 %d (%s) 的指纹失败: %w", mf.version, mf.name, err))
+			}
+			log.Printf("[store] WARN 迁移 %d (%s) 的库内指纹由 CRLF 检出产生（recorded=%s），已再基线为行尾无关的规范值 %s；"+
+				"若非行尾差异请核查是否真有篡改（本次改写已留日志）", mf.version, mf.name, recorded.checksum, expected)
+			continue
+		}
+		return fatalMigration(fmt.Errorf("migration %d (%s) checksum mismatch: recorded=%s expected=%s (迁移文件已被篡改，拒绝启动)",
+			mf.version, mf.name, recorded.checksum, expected))
 	}
 
 	// 3.6 版本门禁（P0-5）：库中已应用的版本高于本二进制已知的最高版本，
@@ -417,7 +434,7 @@ func (s *SQLStore) runMigrations() error {
 		if err := s.applyMigration(ctx, mf); err != nil {
 			return fmt.Errorf("apply migration %d (%s): %w", mf.version, mf.name, err)
 		}
-		log.Printf("[store] 迁移 %d (%s) 已应用 (checksum=%s)", mf.version, mf.name, sha256Hex(mf.content))
+		log.Printf("[store] 迁移 %d (%s) 已应用 (checksum=%s)", mf.version, mf.name, migrationChecksum(mf.content))
 	}
 
 	// 5. 兼容老库增量补列/补索引（历史遗留，待后续转为正式 002+ 迁移）。
@@ -528,7 +545,7 @@ func (s *SQLStore) applyMigration(ctx context.Context, mf migrationFile) error {
 	}
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO schema_migrations (version, applied_at, checksum) VALUES (?, ?, ?)`,
-		mf.version, time.Now().UTC(), sha256Hex(mf.content)); err != nil {
+		mf.version, time.Now().UTC(), migrationChecksum(mf.content)); err != nil {
 		return fmt.Errorf("record migration: %w", err)
 	}
 	return nil
@@ -719,6 +736,33 @@ func (s *SQLStore) ddlTargetExists(ctx context.Context, t idempotentDDL) (bool, 
 func sha256Hex(content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:])
+}
+
+// normalizeMigrationContent 把迁移内容压成「与检出平台无关」的形式：去 UTF-8 BOM，
+// CRLF/CR 统一成 LF。指纹因此只对**语义内容**敏感，不再对行尾敏感。
+func normalizeMigrationContent(content string) string {
+	content = strings.TrimPrefix(content, "\ufeff")
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
+	return content
+}
+
+// migrationChecksum 是写入/校验 schema_migrations.checksum 的规范指纹。
+func migrationChecksum(content string) string {
+	return sha256Hex(normalizeMigrationContent(content))
+}
+
+// legacyCRLFChecksum 复现「迁移由 CRLF 检出的构建应用过」时留在库里的旧指纹，
+// 用来区分两种不符：行尾差异（自动再基线）与内容真被改动（照旧拒绝启动）。
+func legacyCRLFChecksum(content string) string {
+	return sha256Hex(strings.ReplaceAll(normalizeMigrationContent(content), "\n", "\r\n"))
+}
+
+// rebaselineChecksum 把某条已应用迁移的记录改写为规范指纹。
+// 只改 checksum 列——不碰任何 DDL/数据，因此幂等；旧值已打进 WARN 日志，可追溯。
+func (s *SQLStore) rebaselineChecksum(ctx context.Context, version int, sum string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE schema_migrations SET checksum=? WHERE version=?`, sum, version)
+	return err
 }
 
 // splitSQLStatements 将多语句 SQL 文件按分号拆分为可逐条 Exec 的语句列表。

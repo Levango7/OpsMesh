@@ -22,7 +22,16 @@ bad()  { echo -e "  [FAIL] $*"; FAIL=$((FAIL+1)); }
 warn() { echo -e "  [WARN] $*"; }
 sec()  { echo -e "\n=== $* ==="; }
 
-env_val() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2-; }
+# env_val KEY [DEFAULT]：从 .env 取值，取不到时用 DEFAULT。
+# 必须有 DEFAULT：本函数原先只接一个参数，而调用点普遍写成 `env_val X 8080`
+# ——第二个参数被静默吞掉，于是 **.env 里没有这个键的服务拿到空端口**，
+# 断言拿到空响应体后全部判红（2026-10-02 实测：三域转正新增的
+# INCIDENT/RUNBOOK/AUTOSCALER_SVC_HTTP_PORT 不在老 .env 里，§5b/§6 共 15 条假红）。
+env_val() {
+    local v
+    v="$(grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r')"
+    if [ -n "$v" ]; then printf '%s' "$v"; else printf '%s' "${2:-}"; fi
+}
 PW="$(env_val ADMIN_PASSWORD)"
 CP="https://127.0.0.1:$(env_val CONTROLPLANE_HTTP_PORT 8080)"
 
@@ -201,25 +210,44 @@ w2="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' -X POST "$CP/api/v1/auth/log
   -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}' 2>/dev/null)"
 [ "$w2" = "401" ] && ok "预置弱口令 admin123 被拒（401）" || bad "预置弱口令 admin123 返回 ${w2}（期望 401，P0-1 回归！）"
 
-# 4c 正确口令：期望 mustChangePassword=true + changePasswordToken
+# 4c 正确口令登录。判据必须按「这个账号当前该不该改密」来定，而不是假设每次都是首登：
+#    原判据写死 mustChangePassword=true，在存量库上必然假红（2026-10-02 升级实测），
+#    而反过来若在首登态放行会话 token 又是在削弱 P0-1。所以取**独立观测量**——
+#    数据库里的 must_change_password 标记——再断言 API 行为与它一致，两个方向都是硬判定。
+flag="$(docker exec opsmesh-mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "SELECT must_change_password FROM opsmesh.users WHERE username=\"admin\""' 2>/dev/null | tr -d '\r' | tail -1)"
 resp="$(curl "${K[@]}" -X POST "$CP/api/v1/auth/login" \
   -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$PW\"}" 2>/dev/null)"
 echo "  登录响应（脱敏，token 截断）: $(echo "$resp" | sed -E 's/("(token|changePasswordToken|accessToken|refreshToken)"[[:space:]]*:[[:space:]]*")[^"]*/\1<...>/g')"
-if echo "$resp" | grep -q '"mustChangePassword"[[:space:]]*:[[:space:]]*true'; then
-  ok "首次登录强制改密（mustChangePassword=true）"
-else
-  bad "未返回 mustChangePassword=true"
-fi
-if echo "$resp" | grep -q '"changePasswordToken"'; then
-  ok "下发一次性 changePasswordToken"
-else
-  bad "未下发 changePasswordToken"
-fi
-if printf '%s' "$resp" | grep -qE '"(token|accessToken|refreshToken)"[[:space:]]*:[[:space:]]*"[^"]+"'; then
-  bad "强制改密期间仍下发了非空会话 token（docs/operations.md：改密前不签发正式 token）"
-else
-  ok "强制改密期间未下发可用会话 token（响应中 token 字段为空）"
-fi
+forced="no"
+printf '%s' "$resp" | grep -q '"mustChangePassword"[[:space:]]*:[[:space:]]*true' && forced="yes"
+hasToken="no"
+printf '%s' "$resp" | grep -qE '"(token|accessToken|refreshToken)"[[:space:]]*:[[:space:]]*"[^"]+"' && hasToken="yes"
+
+case "$flag" in
+  1)
+    # 库里要求改密（预置口令仍在用 / 首次交付）：必须强制改密、必须发一次性令牌、不得发会话 token
+    [ "$forced" = "yes" ] && ok "库内 must_change_password=1 ⇒ API 返回强制改密标记" \
+                           || bad "库内要求改密（must_change_password=1）但 API 未标记强制改密（P0-1 回归）"
+    printf '%s' "$resp" | grep -q '"changePasswordToken"' \
+        && ok "下发一次性 changePasswordToken" \
+        || bad "未下发 changePasswordToken（无法完成强制改密，等于锁死账号）"
+    [ "$hasToken" = "no" ] && ok "强制改密期间未下发可用会话 token" \
+                           || bad "强制改密期间仍下发了会话 token（改密闸失效）"
+    ;;
+  0)
+    # 库里已不需要改密（口令被改过）：不得再卡改密流程，且必须能拿到正常会话 token
+    [ "$forced" = "no" ] && ok "库内 must_change_password=0 ⇒ 不再要求改密（标记与真实口令一致）" \
+                          || bad "库内不要求改密却返回 mustChangePassword=true（seedRBAC 标记未随口令状态收敛，重启即锁死管理员）"
+    printf '%s' "$resp" | grep -q '"changePasswordToken"' \
+        && bad "不需要改密却下发 changePasswordToken" \
+        || ok "不需要改密时不下发一次性改密令牌（语义一致）"
+    [ "$hasToken" = "yes" ] && ok "已改过口令的账号能拿到会话 token（不被误锁在改密流程）" \
+                            || bad "口令已改过却拿不到会话 token（登录卡在改密流程，P0-1 的反向缺陷）"
+    ;;
+  *)
+    warn "读不到 opsmesh.users.must_change_password（MySQL 容器不可用？），跳过 4c 的一致性判定"
+    ;;
+esac
 
 sec "5. 微服务 /metrics 真实性核对"
 # 预期值 = 源码中是否注册了 mux.Handle("/metrics", metrics.GetHandler())。
@@ -253,7 +281,10 @@ sec "5b. 微服务指标语义（SET 冒充 counter / 恒零仪表 / 基数熔�
 SVC_PORTS="auth-svc:8100 device-svc:8101 task-svc:8102 alert-svc:8103 incident-svc:8104 \
 log-svc:8105 config-svc:8106 gpu-svc:8107 aio-svc:8108 portal-svc:8109 runbook-svc:8110 \
 autoscaler-svc:8111"
-svc_port() { local e; e="$(printf '%s' "$1" | tr 'a-z-' 'A-Z_')"; env_val "${e}_SVC_HTTP_PORT" "$2"; }
+# svc_port 名字→宿主端口：服务目录名 task-svc 经大小写/下划线转换已是 TASK_SVC，
+# 所以键名是 TASK_SVC_HTTP_PORT（早先写成拼 "_SVC_HTTP_PORT" 会变成 TASK_SVC_SVC_HTTP_PORT，
+# 查不到 ⇒ 端口为空 ⇒ 12 个服务的指标断言全读空正文、全判红）。
+svc_port() { local e; e="$(printf '%s' "$1" | tr 'a-z-' 'A-Z_')"; env_val "${e}_HTTP_PORT" "$2"; }
 
 mbad=0
 for sp in $SVC_PORTS; do
@@ -438,6 +469,33 @@ sys.exit(0)
   rm -f /tmp/rules-health.out
 fi
 
+sec "7d. 告警送达链路（规则 → Alertmanager → 外发通道）"
+# 为什么单独一节：出厂规则一直在全绿评估，而 `alerting:` 段曾长期是注释状态、栈里没有
+# alertmanager 容器 —— 那种情况下 /api/v1/alerts 照样显示 firing，却没有任何人会被叫醒。
+# "配了告警"与"有人收到"之间差的正是下面这三跳，所以每一跳都要有可观察的证据。
+# 判据用 HTTP 状态码，不用响应体：Alertmanager 的 /-/healthy 成功时**响应体是空的**
+# （本机实测：容器 healthy、curl 200，但 grep "healthy" 匹配不到任何字）。
+am_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "http://127.0.0.1:${ALERTMANAGER_PORT:-9094}/-/healthy" 2>/dev/null)"
+if [ "$am_code" = "200" ]; then
+  ok "Alertmanager 健康（:$(env_val ALERTMANAGER_PORT 9094)/-/healthy → 200）"
+else
+  bad "Alertmanager 不健康或未启动（:$(env_val ALERTMANAGER_PORT 9094)/-/healthy → ${am_code:-无响应}）"
+fi
+# Prometheus 是否真的把 AM 当作活动通知端（这一条断了，规则再对也不会发）。
+am_disc="$(curl -sS --max-time 8 "$PT/api/v1/alertmanagers" 2>/dev/null)"
+if printf '%s' "$am_disc" | grep -q '"activeAlertmanagers":\[{'; then
+  ok "Prometheus 有活动 Alertmanager 端点（告警会离开 Prometheus）"
+else
+  bad "Prometheus 的 activeAlertmanagers 为空——规则会评估、会 firing，但不会送到任何人"
+  printf '%s' "$am_disc" | head -c 200 | sed 's/^/         /'; echo ""
+fi
+# 最后一段：AM 里是否真的有外发通道。没有就明说，不假装配好了。
+am_status="$(curl -sS --max-time 8 "http://127.0.0.1:${ALERTMANAGER_PORT:-9094}/api/v2/status" 2>/dev/null)"
+if printf '%s' "$am_status" | grep -q 'webhook'; then
+  ok "Alertmanager 已加载外发通道（配置里含 webhook 收件段）"
+else
+  warn "Alertmanager 无外发通道：告警停在 AM 里，不会转发给任何渠道 —— 在 .env 设 ALERT_WEBHOOK_URL 后重跑 deploy.sh up"
+fi
 sec "8. 数据库落库核对（P0-14 device-svc 建表回归 + 多库隔离）"
 MYSQL_C="$(docker ps --filter name=opsmesh-mysql --format '{{.Names}}' | head -1)"
 if [ -n "$MYSQL_C" ]; then
@@ -785,10 +843,16 @@ else
 fi
 want_ver="$(env_val OPSMESH_VERSION)"
 got_ver="$(printf '%s' "$ver_body" | tr ',' '\n' | sed -nE 's/^\s*"version"\s*:\s*"([^"]*)".*/\1/p' | head -1)"
-if [ -n "$want_ver" ] && [ "$got_ver" = "$want_ver" ]; then
+# 两侧的书写习惯本就不同：.env 的 OPSMESH_VERSION 是**镜像 tag**（0.11.0，不带 v），
+# 而发布流水线给 -X version.Version 注入的是 **git tag**（v0.11.0，带 v）。
+# 直接字符串相等会把一次完全正常的部署判成"版本注入未生效"（2026-10-02 升 0.11.0 实测）。
+# 归一化只去掉前导 v——不做模糊匹配，避免把 0.11.1 说成 0.11.0。
+gv="$(printf '%s' "$got_ver" | sed 's/^[vV]//')"
+wv="$(printf '%s' "$want_ver" | sed 's/^[vV]//')"
+if [ -n "$wv" ] && [ -n "$gv" ] && [ "$gv" = "$wv" ]; then
   ok "/version 版本与 .env OPSMESH_VERSION 一致（${got_ver}，构建期 -ldflags 注入生效）"
 else
-  bad "/version 版本='${got_ver:-空}' 与 .env OPSMESH_VERSION='${want_ver:-空}' 不一致（版本注入未生效？查 Dockerfile 的 -X 包路径是否为模块路径）"
+  bad "/version 版本='${got_ver:-空}' 与 .env OPSMESH_VERSION='${want_ver:-空}' 不一致（版本注入未生效？查 Dockerfile 的 -X 包路径是否为模块路径，以及镜像是否由本次 .env 的版本构建）"
 fi
 for f in commit goVersion uptimeSeconds; do
   if printf '%s' "$ver_body" | grep -q "\"$f\""; then ok "/version 含字段 $f"; else bad "/version 缺字段 $f"; fi

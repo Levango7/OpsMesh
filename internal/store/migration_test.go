@@ -708,3 +708,74 @@ func newTestSQLStoreSameSchema(t *testing.T, s *SQLStore) (*SQLStore, func()) {
 		deviceMetrics: make(map[string]*metricsRing), agentSecretCache: make(map[string]string)}
 	return store, func() { st.Close() }
 }
+
+// TestMigrationChecksum_LineEndingAgnostic 钉住 2026-10-02 真机升级抓到的那条缺陷：
+// `.gitattributes` 没给 *.sql 钉 eol=lf 时，Windows 检出得到 CRLF 版文件，本地构建的镜像
+// 把 CRLF 指纹写进 schema_migrations；之后跑官方（LF）镜像就有 17/19 条"指纹不符"，
+// 控制面以"迁移文件已被篡改"为由永久 crash-loop。行尾不是 SQL 语义，不能当篡改证据。
+func TestMigrationChecksum_LineEndingAgnostic(t *testing.T) {
+	content := "CREATE TABLE t (\n  a int\n);\n"
+	crlf := strings.ReplaceAll(content, "\n", "\r\n")
+	bom := "\ufeff" + content
+
+	if migrationChecksum(content) != migrationChecksum(crlf) {
+		t.Error("CRLF 检出与 LF 检出的规范指纹必须相同（否则 Windows 构建会 brick 官方镜像）")
+	}
+	if migrationChecksum(content) != migrationChecksum(bom) {
+		t.Error("BOM 不该改变指纹")
+	}
+	if migrationChecksum(content) == legacyCRLFChecksum(content) {
+		t.Error("规范指纹与遗留 CRLF 指纹必须可区分，否则无法识别旧库")
+	}
+	// 真实语义篡改仍必须判红：这是放宽行尾之后必须保住的底线。
+	tampered := strings.ReplaceAll(content, "int", "varchar(64)")
+	if migrationChecksum(tampered) == migrationChecksum(content) {
+		t.Error("改动 SQL 语义内容后指纹必须变化（防篡改能力不能被行尾归一化顺带削掉）")
+	}
+	// 已应用记录里若是遗留 CRLF 指纹，必须被识别为「可再基线」而不是篡改。
+	if legacyCRLFChecksum(content) != sha256Hex(crlf) {
+		t.Error("legacyCRLFChecksum 必须精确复现旧算法对 CRLF 文件算出的值")
+	}
+}
+
+// TestRunMigrations_RebaselinesLegacyCRLFChecksum 用真实 MySQL 走一遍升级路径：
+// 库里留一条 CRLF 时代算出的旧指纹 ⇒ 启动应**自我修复**（改写为规范指纹并放行），
+// 而不是拒绝启动；同时随便改一个字符仍必须拒绝。
+func TestRunMigrations_RebaselinesLegacyCRLFChecksum(t *testing.T) {
+	s, cleanup := newTestSQLStore(t)
+	defer cleanup()
+
+	// 取真实迁移文件内容，算出「旧算法 + CRLF 检出」会写进库里的那个值。
+	mf, err := migrationFiles()
+	if err != nil || len(mf) == 0 {
+		t.Fatalf("读取迁移文件失败: %v", err)
+	}
+	legacy := legacyCRLFChecksum(mf[0].content)
+	if _, err := s.db.Exec(`UPDATE schema_migrations SET checksum=? WHERE version=?`, legacy, mf[0].version); err != nil {
+		t.Fatalf("植入遗留指纹失败: %v", err)
+	}
+	if err := s.runMigrations(); err != nil {
+		t.Fatalf("遗留 CRLF 指纹应被再基线而不是拒启: %v", err)
+	}
+	var now string
+	if err := s.db.QueryRow(`SELECT checksum FROM schema_migrations WHERE version=?`, mf[0].version).Scan(&now); err != nil {
+		t.Fatalf("读回指纹失败: %v", err)
+	}
+	if now != migrationChecksum(mf[0].content) {
+		t.Fatalf("再基线后应等于规范指纹：got=%s want=%s", now, migrationChecksum(mf[0].content))
+	}
+
+	// 底线：真被改动的内容不能因为上面那条放宽而被放过。
+	if _, err := s.db.Exec(`UPDATE schema_migrations SET checksum=? WHERE version=?`,
+		strings.Repeat("0", 64), mf[0].version); err != nil {
+		t.Fatalf("植入随机指纹失败: %v", err)
+	}
+	err = s.runMigrations()
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("非行尾差异的不符必须仍然判红，实得: %v", err)
+	}
+	var fe *fatalMigrationError
+	if !errors.As(err, &fe) {
+		t.Fatal("真篡改应标记 fatal（不重试）")
+	}
+}

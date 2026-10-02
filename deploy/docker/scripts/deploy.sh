@@ -717,6 +717,19 @@ PAGERDUTY_ENABLED=false
 PAGERDUTY_ROUTING_KEY=
 PAGERDUTY_API_URL=https://events.pagerduty.com/v2/enqueue
 
+# === Alertmanager 外发通道 ===
+# 出厂栈默认起 Alertmanager（docker-compose.prod.yml 的 alertmanager 段），
+# 但"发到哪儿"必须是**操作者的事实**：留空 ⇒ 告警只到 Alertmanager 为止（deploy.sh 会 WARN），
+# 填了 ⇒ deploy.sh 用它渲染 deploy/docker/generated/alertmanager.yml 的 webhook 外发段。
+# 之所以要渲染成文件而不是写死一份：Alertmanager 的配置不读环境变量。
+ALERT_WEBHOOK_URL=
+# 可选：Bearer Token。留空则渲染出的配置不含 authorization 段
+# （Alertmanager 对空 bearer 会报 "authorization: expected type string"，所以不能无条件写进去）。
+ALERT_WEBHOOK_BEARER=
+# 生成物路径（相对 compose 文件所在目录）。**必须带 ./ 前缀**：短语法里不带 ./ 的
+# "名字:容器路径" 会被 compose 当命名卷（本机实测报 refers to undefined volume）。
+ALERTMANAGER_CONFIG=./generated/alertmanager.yml
+
 # === 可选集成 ===
 OLLAMA_URL=http://ollama:11434
 
@@ -835,12 +848,44 @@ wait_for_healthy() {
 # ============================================================
 # 启动各层
 # ============================================================
+# ensure_service_databases：把「建库」从只在空数据卷首启时跑一次，变成每次 up 都幂等补一遍。
+#
+# 为什么必须补这一道（2026-10-02 真机升级实测）：官方 mysql 镜像的 initdb.d 只在
+# **数据目录为空**时执行，所以"新增一个用独立库的服务"在存量部署上必然漏建库。
+# 本机 0.9.x 卷升 0.11.0 时，incident-svc / runbook-svc 的 opsmesh_incident / opsmesh_runbook
+# 就不存在——而两个服务的存储后端是 fail-fast（不会静默退回内存），表现为容器反复崩溃，
+# 现场看起来像"新版本起了不来"，实际是升级路径缺一步。
+# 判据不信退出码：跑完必须用 SHOW DATABASES 核对每个库真的在（观察值才算证据）。
+ensure_service_databases() {
+    local sql="${SCRIPT_DIR}/init-databases.sql" want have missing
+    if [ ! -f "$sql" ]; then
+        log_error "缺少建库脚本 ${sql}（compose 首启也依赖它，不能跳过）"
+        return 1
+    fi
+    if ! compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' < "$sql" 2>/dev/null; then
+        log_error "执行 init-databases.sql 失败（MySQL 未就绪或 root 口令不匹配）"
+        return 1
+    fi
+    want="$(grep -oE 'CREATE DATABASE IF NOT EXISTS[[:space:]]+[A-Za-z0-9_]+' "$sql" \
+            | awk '{print $NF}' | sort -u)"
+    have="$(compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "SHOW DATABASES"' 2>/dev/null \
+            | tr -d '\r' | sort -u)"
+    missing="$(comm -23 <(printf '%s\n' "$want") <(printf '%s\n' "$have") | tr '\n' ' ')"
+    if [ -n "${missing// }" ]; then
+        log_error "建库脚本执行后仍缺数据库：${missing}（权限/建库语句未生效，微服务连库会 Access denied）"
+        return 1
+    fi
+    log_ok "微服务库齐备（按 init-databases.sql 核对 $(printf '%s\n' "$want" | grep -c .) 个，存量卷升级同样补齐）"
+    return 0
+}
+
 start_infrastructure() {
     log_section "启动基础设施"
     log_info "启动 MySQL..."
     compose up -d mysql
     wait_for_healthy mysql 180
     verify_mysql_app_auth
+    ensure_service_databases || exit 1
 
     log_info "启动 Redis..."
     compose up -d redis
@@ -873,19 +918,58 @@ verify_mysql_app_auth() {
     exit 1
 }
 
+# verify_prometheus_effective_config：核对「文件里声明的抓取任务」真的出现在运行中的抓取面上。
+#
+# 为什么不能只看 reload 的返回值（2026-10-02 实测踩过）：宿主机上的 prometheus.yml 被
+# **整文件重写**时 inode 会变，而 bind mount 跟的是 inode ⇒ 容器里看到的还是旧内容，
+# `POST /-/reload` 照样返回成功（它确实读了"它此刻看到的文件"），但 alerting 段与新 job
+# 一个都没生效。当时是给 alertmanager 加了 alerting 配置、又给三域补了抓取任务，宿主侧
+# curl /-/config 查不到 alerting，`--force-recreate` 之后才出现。
+# 所以判据必须是"观察到的运行态"，不是命令退出码。
+verify_prometheus_effective_config() {
+    local want have missing attempt
+    for attempt in 1 2; do
+        want="$(sed -n -E 's/^[[:space:]]*-?[[:space:]]*job_name:[[:space:]]*"?([A-Za-z0-9._-]{1,64})"?[[:space:]]*$/\1/p' \
+            "${PROJECT_DIR}/../monitoring/prometheus.yml" | sort -u)"
+        if [ -z "$want" ]; then
+            log_error "没能从 prometheus.yml 解析出任何 job_name（这道核对本身在空转，拒绝当作通过）"
+            return 1
+        fi
+        have="$(compose exec -T prometheus wget -qO- --timeout=10 http://127.0.0.1:9090/api/v1/targets 2>/dev/null \
+                | tr ',' '\n' | sed -n 's/.*"job"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | sort -u)"
+        missing="$(comm -23 <(printf '%s\n' "$want") <(printf '%s\n' "${have:-}") | tr '\n' ' ')"
+        if [ -z "${missing// }" ]; then
+            log_ok "Prometheus 运行态与配置文件一致（$(printf '%s\n' "$want" | grep -c .) 个 job 全部在抓取面上）"
+            return 0
+        fi
+        if [ "$attempt" = 1 ]; then
+            log_warn "运行态缺少 job：${missing}——容器看到的仍是旧文件（bind mount inode 漂移），重建 prometheus 让挂载重新解析"
+            compose up -d --force-recreate prometheus >/dev/null 2>&1 || true
+            wait_for_healthy prometheus 90 || return 1
+            continue
+        fi
+        log_error "重建后运行态仍缺少 job：${missing}"
+        return 1
+    done
+}
+
 start_observability() {
     log_section "启动可观测栈"
-    log_info "启动 Prometheus / Loki / OTel Collector / Grafana..."
-    compose up -d prometheus loki otel-collector grafana
+    log_info "启动 Prometheus / Alertmanager / Loki / OTel Collector / Grafana..."
+    # alertmanager 必须在这一组里：只靠 `compose up -d` 全量启动会把它带起来，但 deploy.sh
+    # 是分组启动的，漏写就等于**出厂栈里没有 Alertmanager**——规则照常 firing 却没人收到。
+    # 并且要 wait_for_healthy：AM 的配置是渲染出来的，坏配置必须在这里就失败。
+    compose up -d prometheus alertmanager loki otel-collector grafana
     wait_for_healthy prometheus 90
-    # 告警规则热加载：alerts.yml 是宿主机 bind mount，升级后文件内容已变，但 Prometheus
-    # 不会自动重读（实测：新增 opsmesh_audit_chain_alerts 组在不 reload 时始终不生效）。
-    # 容器未重建 → 必须显式 reload，否则客户升级后静默沿用旧告警规则。
+    wait_for_healthy alertmanager 60
+    # 告警规则与抓取配置的生效核对：alerts.yml/prometheus.yml 都是宿主机 bind mount，
+    # 升级后文件内容变了但 Prometheus 不会自动重读，所以先 reload 再**按观察值核对**。
     if compose exec -T prometheus wget -qO- --post-data='' http://127.0.0.1:9090/-/reload >/dev/null 2>&1; then
-        log_ok "Prometheus 告警规则已热加载"
+        log_info "已请求 Prometheus 重载配置与规则"
     else
-        log_warn "Prometheus 热加载失败（--web.enable-lifecycle 未开启？）——告警规则将在容器重建后生效"
+        log_warn "Prometheus 热加载请求失败（--web.enable-lifecycle 未开启？）"
     fi
+    verify_prometheus_effective_config || exit 1
     wait_for_healthy loki 90
     wait_for_healthy otel-collector 90
     wait_for_healthy grafana 90
@@ -1142,11 +1226,108 @@ print_access_info() {
 }
 
 # ============================================================
+# Alertmanager 配置渲染
+# ============================================================
+# 为什么必须渲染成文件，而不是在仓里放一份能用的配置：
+# **Alertmanager 的配置不读环境变量**。仓里那份死配置里的外发地址只能是某个假占位，
+# 装完以后客户会以为"告警会自动发到值班群"，实际什么都不会发——这正是本项目反复登记的
+# "看起来配好了、其实没人收到"。所以：
+#   • 模板 deploy/monitoring/alertmanager.yml.template 里留 __ALERT_WEBHOOK_RECEIVER__ 占位；
+#   • .env 的 ALERT_WEBHOOK_URL 非空 ⇒ 渲染出真实 webhook 外发段；
+#   • 为空 ⇒ 渲染成"合法但无外发"，并**大声 WARN**，让缺口在安装当场暴露；
+#   • ALERT_WEBHOOK_BEARER 为空时**整段省略**：Alertmanager 对空 bearer 会直接报错
+#     （"authorization: expected type string, got object"），无条件写进去等于让默认配置起不来。
+# 生成物可能含 bearer token，因此 deploy/docker/generated/ 必须不入库（见 .gitignore）。
+ALERTMANAGER_TEMPLATE="${PROJECT_DIR}/../monitoring/alertmanager.yml.template"
+ALERTMANAGER_OUT="${PROJECT_DIR}/generated/alertmanager.yml"
+
+render_alertmanager_config() {
+    local url bearer receiver
+    url="$(env_val ALERT_WEBHOOK_URL)"
+    bearer="$(env_val ALERT_WEBHOOK_BEARER)"
+
+    if [ ! -f "$ALERTMANAGER_TEMPLATE" ]; then
+        log_error "Alertmanager 模板缺失：${ALERTMANAGER_TEMPLATE}"
+        return 1
+    fi
+    mkdir -p "$(dirname "$ALERTMANAGER_OUT")" || { log_error "无法创建 $(dirname "$ALERTMANAGER_OUT")"; return 1; }
+
+    if [ -n "$url" ]; then
+        if [ -n "$bearer" ]; then
+            receiver="    webhook_configs:
+      - url: \"${url}\"
+        send_resolved: true
+        http_headers:
+          Authorization: \"Bearer ${bearer}\""
+        else
+            receiver="    webhook_configs:
+      - url: \"${url}\"
+        send_resolved: true"
+        fi
+        log_ok "Alertmanager 外发通道已渲染：${url%%\?*}（收件段写入 $(basename "$ALERTMANAGER_OUT")）"
+    else
+        receiver="    # 未配置外发通道：告警到 Alertmanager 为止，不会转发给任何人。"
+        log_warn "未设置 ALERT_WEBHOOK_URL ——告警只进 Alertmanager、不外发。"
+        log_warn "  在 ${ENV_FILE} 里填 ALERT_WEBHOOK_URL（以及可选 ALERT_WEBHOOK_BEARER）后重跑 up 即可启用。"
+    fi
+
+    # 用 awk 做占位替换：sed 会把 URL 里的 / 与 & 当特殊字符，awk 的 index+拼接没有这个问题。
+    awk -v recv="$receiver" '
+        { p = index($0, "__ALERT_WEBHOOK_RECEIVER__") }
+        p { print recv; next }
+        { print }
+    ' "$ALERTMANAGER_TEMPLATE" > "$ALERTMANAGER_OUT" || { log_error "渲染 Alertmanager 配置失败"; return 1; }
+
+    # 渲染完必须验一遍结构（占位漏替换、或 URL 里的引号把 YAML 截断，都会让 AM 起不来）：
+    # 用 python 解析 YAML 并核对 route.receiver 在 receivers 里真实存在。
+    local py=""
+    for _c in python3 python; do
+        command -v "$_c" >/dev/null 2>&1 && { py="$_c"; break; }
+    done
+    if [ -z "$py" ]; then
+        log_warn "本机没有 python3/python：跳过渲染后的结构校验（配置坏时 AM 健康检查会暴露）"
+    elif ! "$py" - "$ALERTMANAGER_OUT" <<'PY' >/dev/null 2>&1
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+names = {r.get("name") for r in d.get("receivers", [])}
+route = d.get("route", {})
+missing = [route.get("receiver")] + [r.get("receiver") for r in route.get("routes", [])]
+missing = [m for m in missing if m not in names]
+if missing:
+    print("route 引用了不存在的 receiver:", missing); sys.exit(1)
+if "__ALERT_WEBHOOK_RECEIVER__" in open(sys.argv[1], encoding="utf-8").read():
+    print("占位未被替换"); sys.exit(1)
+# receiver 里的集成键名必须是 Alertmanager 认识的：YAML 合法 ≠ 配置可用。
+# 本机实测踩过——写成 webhook: 时 YAML 完全合法、这里的引用检查也过，但真实 AM 报
+# "field webhook not found in type config.plain" 并拒绝加载配置。
+ALLOWED = {"name", "webhook_configs", "email_configs", "slack_configs", "pagerduty_configs",
+           "opsgenie_configs", "victorops_configs", "wechat_configs", "msteams_configs",
+           "telegram_configs", "pushover_configs", "sns_configs", "discord_configs",
+           "jira_configs", "servicenow_configs", "inhibition_configs", "status"}
+for r in d.get("receivers", []):
+    unknown = [k for k in r if k not in ALLOWED]
+    if unknown:
+        print("receiver %s 含 Alertmanager 不认识的键 %s（应为 *_configs 形式）" % (r.get("name"), unknown)); sys.exit(1)
+    for cfg in r.get("webhook_configs", []) or []:
+        if not cfg.get("url"):
+            print("webhook_configs 缺 url"); sys.exit(1)
+PY
+    then
+        log_error "Alertmanager 配置校验失败：$(cat "$ALERTMANAGER_OUT" 2>/dev/null | tail -3)"
+        return 1
+    fi
+    chmod 600 "$ALERTMANAGER_OUT" 2>/dev/null || true
+    log_ok "Alertmanager 配置已渲染并通过结构校验：${ALERTMANAGER_OUT}"
+    return 0
+}
+
+# ============================================================
 # 子命令
 # ============================================================
 do_up() {
     preflight_checks
     build_images
+    render_alertmanager_config || { log_error "Alertmanager 配置渲染失败，停止部署。"; exit 1; }
     start_infrastructure
     start_observability
     start_services

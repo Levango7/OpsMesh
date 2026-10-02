@@ -19,6 +19,23 @@
 - **过程中的两处自伤（都当场发现）**：① 变异脚本的 `GO_TESTS` 清单漏列新加的文档测试，导致 M8/M9 首轮显示「漏判」——补列后两条都判红，**这是脚本的洞不是门禁的洞**，但若不跑变异就会把「门禁有效」写成结论；② 变异脚本边跑边被我用 Edit 改同一个测试文件，`restore()` 把新加的测试覆盖掉一次——变异类脚本跑期间不要并发编辑它备份的文件。
 - 验证汇总：9 项变异全部按预期判红（M1 名字打错 / M2 删抓取 job / M3 chart 删一条规则 / M4 两份一起改阈值 / M5 `increase` 丢区间 / M6 放回坏面板 / M7 豁免表挂回在栈里的服务 / M8 文档服务归属写错 / M9 文档写不存在的名字），跑完 `md5sum -c` 六个文件全部一致（无变异残留）。
 
+## [Unreleased] — 2026-10-02 Alertmanager 接进出厂栈 + 存量卷升 0.11.0 暴露的四个部署路径缺陷
+
+> 证据：本机把 0.9.x 存量卷升到 **发布版 0.11.0 镜像**（13 个全部 `docker pull` 自 `ghcr.io/levango7/*:0.11.0`，不是本地重建），数据保全实测 `users=3 / tasks=1` 前后一致；`verify-runtime.sh` 整脚本从 **PASS=103/FAIL=19** 修到 **PASS=123/FAIL=1**（剩下那 1 条是我自己灌出来的真告警，见下）；`validate-deploy-assets.sh` **PASS=42/FAIL=0/SKIP=1**；`golangci-lint run ./...` 0 issues；gofmt 全仓无输出。详见报告 §30。
+
+- **新增｜Alertmanager 进出厂栈，把「有告警状态」补成「有人收到」**：`prometheus.yml` 的 `alerting:` 段此前是**注释状态**、compose 里也没有 alertmanager 容器 ⇒ 30+ 条规则照常评估、照常 firing，**没有任何人会被通知**。现在：compose 加 `alertmanager` 服务（`prom/alertmanager:v0.27.0`，仅绑 `127.0.0.1:9094`）、`alerting` 段生效、`deploy.sh` 的 `start_observability` 把它一起起并 `wait_for_healthy`（漏写这一句，`deploy.sh up` 根本不会起它）。
+- **配置来源做成渲染而非死配置**：Alertmanager **不读环境变量**，所以仓里只放模板 `deploy/monitoring/alertmanager.yml.template`，由 `deploy.sh` 的 `render_alertmanager_config()` 读 `.env` 的 `ALERT_WEBHOOK_URL` / `ALERT_WEBHOOK_BEARER` 渲染到 `deploy/docker/generated/alertmanager.yml`（0600，且新增 `.gitignore` 规则——里面可能有 bearer）。没配 URL 时**大声 WARN 而不是静默**；渲染后解析 YAML 核对路由与 receiver 引用，失败即中止部署。`bearer` 为空时整段省略（AM 对空 bearer 直接报 `expected type string, got object`）。
+- **修｜一个会把存量部署永久 brick 的指纹缺陷**（本轮真机升级的头号发现）：`.gitattributes` 给 go/sh/yml/md/tpl 都钉了 `eol=lf`，**唯独没管 `*.sql`**。Windows 检出因此把 `internal/store/migrations/*.sql` 变成 CRLF，本地构建的镜像把 **CRLF 版 sha256** 写进 `schema_migrations`；之后改跑官方（LF）镜像，防篡改闸把 19 条里的 **17 条**判成"迁移文件已被篡改，拒绝启动" ⇒ 控制面 crash-loop，而**没有任何受控的再基线手段**（只能手改数据库）。三道修法：① `.gitattributes` 补 `*.sql text eol=lf`；② 指纹改为**行尾无关**（`normalizeMigrationContent` 去 BOM、CRLF/CR→LF），真实改 DDL 仍判红；③ 对已被 CRLF 指纹污染的存量库做**一次性大声再基线**（识别 `legacyCRLFChecksum` 后改写记录并 WARN 留痕）。实测：控制面日志逐条打出 17 条再基线 WARN 后正常启动，台账 19/19 与发布版一致，随后换回**发布版镜像**仍健康启动且不再出现任何再基线 WARN（幂等）。
+- **修｜升级路径不补新服务的库**：`init-databases.sql` 挂在 `/docker-entrypoint-initdb.d/`，**只在空数据目录执行**。三域转正新增的 `opsmesh_incident` / `opsmesh_runbook` 在存量卷里不存在，而两个服务的存储是 fail-fast（不会静默退回内存）⇒ 表现是"新版本容器反复起不来"。新增 `ensure_service_databases()`：每次 `up` 都幂等重放建库脚本，并用 `SHOW DATABASES` **按观察值核对**（不信退出码），实测打印"微服务库齐备（按 init-databases.sql 核对 7 个，存量卷升级同样补齐）"。
+- **修｜`deploy.sh` 的"热加载成功"是不可信的**：`POST /-/reload` 返回 200 只说明 Prometheus 读了**它此刻看到的文件**。bind mount 跟的是 inode，宿主文件被整文件重写（git 切版本、编辑器换 inode）后容器仍看到旧内容——本轮实测：`alerting` 段与三个新 job 加进去之后 reload 200 但 `/api/v1/alertmanagers` 为空、`/-/config` 里没有 alerting，`--force-recreate` 才生效。新增 `verify_prometheus_effective_config()`：把 prometheus.yml 里声明的 `job_name` 与运行中的 `/api/v1/targets` 逐个对账，缺了就重建容器再核一次，仍缺即判失败（实测"Prometheus 运行态与配置文件一致（18 个 job 全部在抓取面上）"）。
+- **修｜verify-runtime 自己的 5 处判据缺陷**（这 19 条红里有 15 条是脚本的锅，不是产品的）：① `env_val` **只接一个参数**，而调用点普遍写成 `env_val KEY 8100` —— 第二参数被静默吞掉，于是 **.env 里没有该键的服务拿到空端口**（三域正是），断言读空正文后全判红；已支持默认值。② `svc_port` 把 `task-svc` 转成 `TASK_SVC` 后又拼 `_SVC_HTTP_PORT` ⇒ `TASK_SVC_SVC_HTTP_PORT`，12 个服务的 §5b 断言全读空正文。③ §4c 把"首次登录必须强制改密"写死，在**已经改过口令的存量库**上必然假红；改为取独立观测量（库里 `must_change_password`）再断言 API 与之一致，**两个方向都是硬判定**（顺带证明：operator 仍用预置口令 ⇒ 标记为 1，机制在 SQL 后端也生效）。④ `/version` 直接字符串相等，而 `.env` 是不带 `v` 的镜像 tag、构建期注入的是带 `v` 的 git tag ⇒ 每次正常部署都会假红。⑤ AM 健康判定用响应体文本，而 `/-/healthy` 成功时**响应体为空** ⇒ 假红；改用 HTTP 状态码。
+- **新增｜门禁 §15「告警送达链路接通性」**：`alerting` 段不得被注释、compose 必须有 alertmanager、必须挂**渲染出的**配置（不是仓里死配置）、`deploy.sh` 必须调用且渲染失败要中止部署、`generated/` 必须不入库、默认配置去掉占位后必须是合法 YAML 且带 inhibit 规则。**这条门禁在本轮就地抓到东西**：`generated/alertmanager.yml` 不带 `./` 前缀会被 compose 当**命名卷**（"refers to undefined volume"），§4 渲染检查直接判红。
+- **新增｜`verify-runtime.sh` §7d**：三跳逐个观察——AM `/-/healthy` 200、Prometheus `activeAlertmanagers` 非空、AM 已加载配置里是否真含外发通道（没有就 WARN 并说明怎么开）。配套把 `alertmanager` 的宿主端口加上（原先不绑宿主，脚本与运维都无从查）。
+- 过程记录（同一轮的自我纠错）：`ensure_service_databases` 与 `verify_prometheus_effective_config` 的初版各有一处自己的错——`sed` 的 BRE 写法在这台 Git-Bash 上抽不出任何 `job_name`（我让它**主动判红**而不是静默通过，所以当场暴露），改用 `sed -E` 后核出 18 个 job；`ALERTMANAGER_CONFIG` 默认值先写成不带 `./` 的形式（就是上面那条命名卷红）。
+- **仍然未做**：AM 的**真实外发**没验到端到端（需要一个真实可达的 webhook 收件端；本轮只验到"配置被真实 AM 接受 + Prometheus 有活动 AM 端点 + 未配置时明确 WARN"）；K8s 路径继续依赖集群自带的 Alertmanager（文档已写明），chart 不再另起一套。
+
+
+
 ## [Unreleased] — 2026-10-02 真机验证新告警：抓出一条「语法合法但 Prometheus 评估失败」的规则，并补上拦住它的运行时门禁
 
 > 证据：真实 `prom/prometheus:v2.55.0` 挂载仓库内 `prometheus.yml`/`prometheus-alerts.yml` 起进程（`Completed loading of configuration file … rules=26.8ms`，无 error；`/api/v1/rules` 6 组全部注册；`/api/v1/targets` 18 个活动 target，13 个 OpsMesh 目标一个不缺）；再拉**已发布的** `ghcr.io/levango7/task-svc:0.11.0` 镜像（不是本地重建产物）单跑，配只抓它的 Prometheus + 出厂规则，匀速打 2400 条不同路径把基数上限打穿：服务侧 `http_metrics_series 2001 / http_metrics_series_dropped_total 488`，告警侧 `OpsMeshMetricsCardinalityFolding` 先 pending、5 分钟后 **firing（job=task-svc value=488.48）**，同组业务侧那条保持 inactive（跟着事实走，不是恒真）。新门禁 §7c 用三个输入自证：真机（rc=0）／注入 `health=err`（rc=1 并打印 group+alert+lastError）／空规则集（rc=1，拒绝空转）。详见报告 §29.8。
@@ -27,7 +44,7 @@
 - 修法：拆成两条。HTTP 侧留并集（两族互斥，安全），业务侧单独一条 `increase(business_metrics_series_dropped_total[30m])` ⇒ 新告警 `OpsMeshBusinessMetricCardinalityFolding`。compose 与 chart 两份同步，**上一块里写的「9 条」随之变成 10 条**（镜像对账测试自动跟上并逐条一致）。
 - **门禁｜`verify-runtime.sh` §7c**：读 `/api/v1/rules?type=alert`，任何规则 `health≠ok` 或有 `lastError` 即判红，规则数为 0 也判红（拒绝空转）。这一节把"规则写在文件里"与"规则在 Prometheus 里可用"分开——以后同类错误会在部署自检被拦住，而不是等客户出事才发现没有告警。
 - **顺带实测到的两条链路事实**（不是缺陷，记下来免得下轮误判）：① 默认 `IP_RPS=30` 的限流器包在指标中间件**外面**，被 429 掉的请求不进指标（3000 条突发里 2879 条 429、只有 121 条建了序列）——所以"扫描器把基数撑到 OOM"这条路径实际被两层挡着，基数上限是第二层兜底；② task-svc 以内存 store 启动即 `晋升为 leader`，调度循环每轮就地产出 4 条业务计数（`business_metrics_series 4` 实测可见）。
-- **仍未覆盖**：没有起完整 12 服务 compose 栈（本机另有一个 0.9.x 的 `opsmesh` 项目在运行，升版会重建它并动到 mysql/redis 卷，属要用户点头的动作），所以 `verify-runtime.sh` 整脚本尚未跑过一次完整绿；其余 8 条新告警未逐条真实触发（需要各自的真实事件）。Alertmanager 仍不在出厂栈里：firing 只到状态面，没人被通知。
+- **仍未覆盖**（**同日晚些时候已补齐**：升版走完 `deploy.sh up` 与 `verify-runtime.sh` 整脚本，见上一块）：没有起完整 12 服务 compose 栈（本机当时另有一个 0.9.x 的 `opsmesh` 项目在运行，升版会重建它并动到 mysql/redis 卷，属要用户点头的动作），所以 `verify-runtime.sh` 整脚本尚未跑过一次完整绿；其余 8 条新告警未逐条真实触发（需要各自的真实事件）。Alertmanager 仍不在出厂栈里：firing 只到状态面，没人被通知。
 
 
 

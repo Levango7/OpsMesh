@@ -93,3 +93,7 @@ go.work.sum
 # 本地覆盖率产物（CI 生成自己的）
 cover.out
 cover-func.txt
+
+# deploy.sh 渲染出的 Alertmanager 配置：可能含 bearer token，绝不入库
+# （模板在 deploy/monitoring/alertmanager.yml.template，生成物只在本机）
+deploy/docker/generated/

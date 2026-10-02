@@ -914,6 +914,72 @@ else
     printf '%s\n' "$PROMQL_HITS" | sed 's/^/         /'
 fi
 
+# ---------------------------------------------------------------
+sec "15. 告警送达链路（规则 → Alertmanager → 外发通道）接通性"
+# ---------------------------------------------------------------
+# 为什么必须有这一节：出厂规则一直在增加（现在 33 条），而 `prometheus.yml` 的 `alerting:` 段
+# 长期是**注释状态**、栈里也没有 alertmanager 容器——后果不是报错，是静默：规则照常评估、
+# 照常进 firing，但没有任何人收到。"有告警状态"与"有人被叫醒"之间就是这一段，
+# 它必须以机器判定的形式钉住，否则任何一次"顺手注释掉"都会让整套告警变成装饰。
+AM_PROM="deploy/monitoring/prometheus.yml"
+AM_COMPOSE="deploy/docker/docker-compose.prod.yml"
+AM_TPL="deploy/monitoring/alertmanager.yml.template"
+AM_HITS=""
+# ① prometheus.yml 的 alerting 段必须存在且未被注释，且指向 alertmanager 服务。
+if ! grep -qE '^alerting:' "$AM_PROM"; then
+    AM_HITS="${AM_HITS} prometheus.yml 没有生效的 alerting 段（缺失或被注释＝规则不送达）"
+elif ! grep -A 6 '^alerting:' "$AM_PROM" | grep -qE 'alertmanager:[0-9]+'; then
+    AM_HITS="${AM_HITS} alerting 段里没有 alertmanager 目标"
+fi
+# ② compose 必须真的起 alertmanager，且挂载的是渲染出的配置（不是仓里一份死配置）。
+if ! grep -qE '^  alertmanager:' "$AM_COMPOSE"; then
+    AM_HITS="${AM_HITS} docker-compose.prod.yml 里没有 alertmanager 服务"
+fi
+if ! grep -q 'ALERTMANAGER_CONFIG' "$AM_COMPOSE"; then
+    AM_HITS="${AM_HITS} compose 没有用 \${ALERTMANAGER_CONFIG} 挂载 AM 配置（外发地址将无法由操作者决定）"
+fi
+# ③ 模板与渲染步骤必须成对存在（只加模板不加渲染 = 挂进去的仍是死配置）。
+if [ ! -f "$AM_TPL" ]; then
+    AM_HITS="${AM_HITS} 缺少 $AM_TPL"
+elif ! grep -q '__ALERT_WEBHOOK_RECEIVER__' "$AM_TPL"; then
+    AM_HITS="${AM_HITS} 模板里没有 __ALERT_WEBHOOK_RECEIVER__ 占位（渲染步骤会替换不到东西）"
+fi
+if ! grep -q 'render_alertmanager_config' deploy/docker/scripts/deploy.sh; then
+    AM_HITS="${AM_HITS} deploy.sh 未调用 render_alertmanager_config"
+elif ! grep -q 'render_alertmanager_config ||' deploy/docker/scripts/deploy.sh; then
+    AM_HITS="${AM_HITS} deploy.sh 的 do_up 里渲染失败没有拦住部署（会带着坏配置起 AM）"
+fi
+# ④ 生成物含 bearer token，必须不入库。
+if ! grep -q 'deploy/docker/generated' .gitignore; then
+    AM_HITS="${AM_HITS} .gitignore 没有排除 deploy/docker/generated/（渲染出的 bearer 会入库）"
+fi
+# ⑤ 用空外发段渲染一遍模板，确认出厂默认配置本身是合法 YAML 且路由指得到 receiver。
+AM_RENDER_CHECK="$("$PY" - "$AM_TPL" <<'PY'
+import sys, yaml
+raw = open(sys.argv[1], encoding="utf-8").read()
+d = yaml.safe_load(raw.replace("__ALERT_WEBHOOK_RECEIVER__", "    # 未配置外发通道"))
+names = {r.get("name") for r in d.get("receivers", [])}
+route = d.get("route", {})
+need = [route.get("receiver")] + [r.get("receiver") for r in route.get("routes", [])]
+bad = [x for x in need if x not in names]
+if bad:
+    print("route 引用了不存在的 receiver: %s" % bad); sys.exit(1)
+if not d.get("inhibit_rules"):
+    print("没有 inhibit 规则：ServiceDown 会带着成堆的下游 warning 一起刷屏"); sys.exit(1)
+PY
+)" || AM_HITS="${AM_HITS} 出厂默认 AM 配置不合规：${AM_RENDER_CHECK}"
+if [ -z "${AM_HITS// }" ]; then
+    ok "告警送达链路接通：alerting 段生效 + compose 起 AM + 配置由 .env 渲染 + 默认配置合法"
+    if grep -q 'ALERT_WEBHOOK_URL=' deploy/docker/scripts/deploy.sh; then
+        ok "deploy.sh 的 .env 模板含 ALERT_WEBHOOK_URL/BEARER 键（外发地址由操作者决定，不留死值）"
+    else
+        bad "deploy.sh 的 .env 模板缺 ALERT_WEBHOOK_URL 键——操作者没有可控的外发入口"
+    fi
+else
+    bad "告警送达链路有问题："
+    printf '%s\n' "$AM_HITS" | sed 's/^/         /'
+fi
+
 echo ""
 echo "==================================================="
 echo "  部署资产门禁：PASS=${PASS}  FAIL=${FAIL}  SKIP=${SKIP}"

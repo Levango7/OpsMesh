@@ -1,0 +1,48 @@
+# Alertmanager 出厂配置（由 deploy.sh 渲染生成，请勿直接编辑生成物）
+#
+# 生成物路径：deploy/docker/generated/alertmanager.yml
+# 模板路径：  deploy/monitoring/alertmanager.yml.template
+# 谁生成它：  deploy/scripts/deploy.sh 的 render_alertmanager_config()，在 up 前执行；
+#             变量来自 deploy/docker/.env（ALERT_WEBHOOK_URL / ALERT_WEBHOOK_BEARER）。
+#
+# 为什么要有这一步而不是直接把一份写死的 YAML 挂进容器：
+# Alertmanager 的配置文件**不读环境变量**，收件地址只能落进文件。若仓里放一份死配置，
+# 客户装完会以为"告警会自动发到值班群"，实际外发地址根本没法改——这正是本项目反复登记的
+# "看起来配好了、其实没人收到"的形态。所以：出厂默认只到 Alertmanager 为止（合法但无外发），
+# 并由 deploy.sh 在检测到 ALERT_WEBHOOK_URL 时把外发段渲染进去；没配时 deploy.sh 会大声 WARN，
+# 让"没有外发通道"这件事在安装当场就暴露，而不是等到出事才发现。
+
+global:
+  resolve_timeout: 5m
+
+route:
+  # 默认不静默任何级别：出厂阶段宁可多通知，也不要"配了等于没配"。
+  receiver: "default"
+  group_by: ["alertname", "severity", "job"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 3h
+  routes:
+    # critical 单独更短的 repeat_interval：值班类告警不该三小时才提醒第二次。
+    - matchers:
+        - severity = "critical"
+      receiver: "default"
+      group_wait: 15s
+      repeat_interval: 30m
+
+receivers:
+  - name: "default"
+__ALERT_WEBHOOK_RECEIVER__
+
+inhibit_rules:
+  # 服务整体 DOWN 时不要再刷它派生的高层告警（延迟/错误率）——这是最常见的告警风暴来源。
+  - source_matchers:
+      - alertname = "ServiceDown"
+    target_matchers:
+      - severity = "warning"
+    equal: ["job"]
+  - source_matchers:
+      - alertname = "MySQLDown"
+    target_matchers:
+      - severity = "warning"
+    equal: []

@@ -13,12 +13,18 @@ global:
 rule_files:
   - "alerts.yml"
 
-# Alertmanager (uncomment when alertmanager is deployed)
-# alerting:
-#   alertmanagers:
-#     - static_configs:
-#         - targets:
-#           - alertmanager:9093
+# Alertmanager
+#
+# 这一段以前是注释状态（写着"uncomment when alertmanager is deployed"），而出厂 compose 栈里
+# 确实没有 alertmanager 容器 —— 后果不是报错，是**静默**：30+ 条规则正常评估、正常进 firing，
+# 但没有任何人收到。"配了告警"与"出事有人被叫醒"之间差的这一段，必须在默认交付里接通。
+# 自 2026-10-02 起 compose 默认起 alertmanager（见 docker-compose.prod.yml 的 alertmanager 段），
+# 外发通道本身由 deploy.sh 渲染的配置决定；未配置 ALERT_WEBHOOK_URL 时 deploy.sh 会大声 WARN。
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
 
 scrape_configs:
   # Self-monitoring
