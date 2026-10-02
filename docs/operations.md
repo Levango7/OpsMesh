@@ -49,6 +49,14 @@ bash scripts/deploy.sh --help          # 全部子命令与参数
 
 - Docker 20.10+ 与 Docker Compose v2
 - 端口 8080 / 9090 / 9091 未被占用
+- 可观测性侧另需 9092（Prometheus）/ 9094（Alertmanager）/ 4317-4318（OTLP）/ 3100（Loki）/ 8888（collector 自身指标）
+  - **Windows + Docker Desktop 的一条实测陷阱**：`netsh int ipv4 show excludedportrange protocol=tcp`
+    列出的"系统保留段"里若含 4317/4318（本机实测落在 `4311-4410`），`netstat` 看是空闲、
+    但绑定会报 `ports are not available: … WSAEACCES`。更阴的是**宿主机重启后**，
+    原本已绑上的容器可能变成"Up + 健康检查通过 + 宿主端口其实没发布"——
+    `deploy.sh` 的宿主侧端口预检看不见这种保留段，靠 `verify-runtime.sh` §1b
+    （比对 `HostConfig.PortBindings` 与 `NetworkSettings.Ports`）才能抓到。
+    处置：换宿主端口（如 `OTEL_GRPC_PORT=14317`，容器内仍是 4317，服务间调用不受影响）。
 - 仓库根目录可写（构建镜像与挂载卷）
 
 #### 1.1.2 启动与停止（开发/演示形态）
@@ -1094,7 +1102,19 @@ kubectl apply -f opsmesh-custom-rules.yaml -n opsmesh
 |---|---|---|
 | 规则评估不报错 | `verify-runtime.sh` §7c | `/api/v1/rules` 里没有任何规则 `health≠ok` 或有 `lastError` |
 | 告警离开 Prometheus | `verify-runtime.sh` §7d + 门禁 §15 | Prometheus 的 `activeAlertmanagers` 非空；compose 有 alertmanager 服务；`alerting:` 段未被注释 |
-| 真的发到外部渠道 | `verify-runtime.sh` §7d | Alertmanager 已加载的配置里含 webhook 收件段，否则明确 WARN |
+| 真的发到外部渠道 | `verify-runtime.sh` §7d | Alertmanager 已加载的配置里含 `webhook_configs` 收件段，否则明确 WARN |
+| 外发**发得出去**（不是只配了） | `verify-runtime.sh` §7e | AM 自己的 `alertmanager_notifications_total{integration="webhook"}` > 0，且**请求级**与**通知级**两个失败计数都为 0 |
+| 存储层没有静默丢数据 | `verify-runtime.sh` §8b | 容器日志近 10 分钟无 `[store] … 失败`，且 `opsmesh_store_write_failures_total` 与之一致（两者矛盾即红） |
+
+> §7e 为什么要读 AM 的指标而不是读配置：对端 DNS 解析不了 / 连不上 / 超时这类**传输层失败**
+> 只体现在 `alertmanager_notification_requests_failed_total`，而按 HTTP 状态归类的
+> `alertmanager_notifications_failed_total` 会一直是 0（本机实测：收件端停掉后
+> 请求级 12 次失败、通知级 0）。只看后者就是"配了 = 收到了"的假绿。
+>
+> 端到端投递的活证据（2026-10-02，一次性 HTTP 收件端接进 `opsmesh-monitoring`）：
+> 停 `aio-svc` → 规则 `for: 1m` 后 firing → 90 秒内收件端收到 `POST /alert`
+> （`User-Agent: Alertmanager/0.27.0`、`Authorization: Bearer <token>` 原样送达、
+> `version=4`、`receiver=default`）→ 服务恢复后收到 `status=resolved`（`send_resolved` 生效）。
 
 #### 4.5.1 配置怎么来（为什么不放一份写死的配置）
 
@@ -1113,9 +1133,17 @@ Alertmanager 的配置**不读环境变量**。所以出厂链路是：
 [WARN]   在 .../.env 里填 ALERT_WEBHOOK_URL（以及可选 ALERT_WEBHOOK_BEARER）后重跑 up 即可启用。
 ```
 
-渲染完 deploy.sh 还会解析一遍生成的 YAML（路由引用的 receiver 必须存在、占位必须被替换），
-校验失败即中止部署；`bearer` 为空时**整段省略**，因为 Alertmanager 对空 bearer 会直接报
-`authorization: expected type string, got object`。
+渲染完 deploy.sh 还会解析一遍生成的 YAML（路由引用的 receiver 必须存在、占位必须被替换、
+字段名必须在 AM 认得的集合里），校验失败即中止部署；`bearer` 为空时**整段省略**，
+不给收件端发一个空的 `Bearer` 头。
+
+> **字段名坑（2026-10-02 实测）**：外发段的 bearer 必须写成
+> `http_config.authorization.{type,credentials}`，**不能**写 `http_headers` / `headers` / `timeout`。
+> 后三者 YAML 完全合法，但 `prom/alertmanager:v0.27.0` 逐个报
+> `field X not found in type config.plain` 并**崩溃重启循环**——也就是"填了外发地址"的客户
+> 会摊上一个起不来的告警组件。这三个键的可用性是用同一镜像里的 `amtool check-config`
+> 逐键实测出来的（`max_alerts` 可用、`timeout` 不可用），门禁见
+> `validate-deploy-assets.sh` §15 第 ⑥ 项（含变异样本）。
 
 Kubernetes 路径不重复造轮子：生产集群一般已有 kube-prometheus-stack 的 Alertmanager，
 把 PrometheusRule CR（`observability.prometheusRule.enabled=true`）与集群既有 Alertmanager

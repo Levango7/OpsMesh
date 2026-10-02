@@ -2930,3 +2930,182 @@ Alertmanager **不读环境变量**，仓里放死配置等于放一个假的外
 仍未覆盖，写清楚免得下轮误读：① 真实 webhook 收件端未做端到端；② K8s 侧不做送达断言
 （chart 明确复用集群自带的 Alertmanager）；③ 其余 8 条新告警仍未逐条真实触发；
 ④ 数据保全只核到 `users/tasks/devices` 三个计数与建库数（6→8），没有做全量行级比对。
+
+---
+
+## 31. 2026-10-02（第三次）外发投递端到端跑通；代价是当场抓到三个缺陷
+
+§30 末尾留的"仍然未做"是同一件事：Alertmanager 往**真实渠道**推那一段没有活证据。本轮把它跑完了，
+三个缺陷都是这条链顺带抓出来的——共同形态仍然是本项目反复登记的那一句：
+**"看起来配好了"与"客户真的收到了"之间，每一跳都要有独立观测量**。
+
+### 31.1 端到端时间线（本机 UTC+8，一次性 HTTP 收件端）
+
+收件端是仓库外的临时容器（`python:3.12-slim` + 58 行 stdlib 服务器），接进出厂网络
+`opsmesh-monitoring`、别名 `alert-sink`、不落宿主端口；载荷逐条落盘到宿主目录，判定面是
+**收件端收到了什么**，不是任何一环的退出码。
+
+| 时刻 | 事件 | 观测量 |
+|---|---|---|
+| 22:40:04 | `docker stop opsmesh-aio-svc` | 容器 stopped |
+| 22:40:37 | 规则 `ServiceDown` 转 active | `/api/v1/rules` `activeAt=14:40:37.813Z` |
+| 22:41:37 | 满足 `for: 1m` ⇒ firing | 载荷 `startsAt=14:41:37Z`（= activeAt + 1m） |
+| **22:42:07** | **收件端收到 firing** | `POST /alert`、`User-Agent: Alertmanager/0.27.0`、`Authorization: Bearer <测试 token>` 原样送达 |
+| 22:43:55 | 服务起回来 | `health=healthy`，随后 `up{job="aio-svc"}=1` |
+| **22:47:07** | **收件端收到 resolved** | `status=resolved`（证明 `send_resolved: true` 真的生效，不是配了不响） |
+
+载荷原文关键字段（`version=4`）：`receiver=default`、
+`groupKey={}/{severity="critical"}:{alertname="ServiceDown", job="aio-svc", severity="critical"}`、
+`labels={alertname, cluster=opsmesh-prod, environment=production, instance=aio-svc:8108, job=aio-svc, severity=critical}`、
+`annotations.summary="Service aio-svc is down"`、`generatorURL` 可点回规则。
+中间两跳也各自可观察：Prometheus `/api/v1/alertmanagers` 的
+`activeAlertmanagers=[http://alertmanager:9093/api/v2/alerts]` 且 `droppedAlertmanagers=[]`；
+AM `alertmanager_alerts_received_total{status="firing"}=2`。
+
+> 顺带修正一个标签口径：`job` 的值是 `aio-svc` 而不是 `opsmesh-aio-svc`（prometheus.yml 里
+> `job_name` 就是这么写的）。我的第一版轮询脚本按 `opsmesh-aio-svc` 过滤，于是"什么都没抓到"——
+> 这是脚本的错，不是链路的错；两处判定面对不上时，先怀疑脚本。
+> 第二版脚本又被 AM `/api/v2/alerts` 的响应形状绊崩一次：那里的 `status` 是**对象**
+> （`{"state":"active","inhibitedBy":[],"silencedBy":[]}`）而不是字符串。
+
+### 31.2 缺陷 A｜客户一填 `ALERT_WEBHOOK_URL` 就得到崩溃重启的 Alertmanager
+
+`render_alertmanager_config()` 生成的 bearer 段写成 `http_headers:`，而 `prom/alertmanager:v0.27.0`
+不认这个键。真机表现不是"配置不生效"而是 **配置加载失败 → 容器 restart 循环**：
+
+```
+caller=coordinator.go:118 level=error component=configuration msg="Loading configuration file failed"
+  err="yaml: unmarshal errors:\n  line 38: field http_headers not found in type config.plain"
+```
+
+这条缺陷能连过两轮，是因为它**在 YAML 层完全合法**：`deploy.sh` 的 python 校验只核 receiver 层的
+键名（`webhook_configs` 之类），没往下核条目层的键名。
+
+修法不是查文档，而是用**同一镜像里的真二进制**逐键实测（`amtool check-config`，权威且免费）：
+
+| webhook 条目层的键 | v0.27.0 判定 | 备注 |
+|---|---|---|
+| `url` / `send_resolved` / `max_alerts` | ACCEPT | |
+| `http_config.authorization.{type,credentials}` | ACCEPT | 正确的 bearer 写法 |
+| `http_config.basic_auth` | ACCEPT | |
+| `http_headers` | REJECT | 上一轮我用的写法（<0.22 旧名） |
+| `headers` | REJECT | 我先"改对了"的写法，其实也错 |
+| `timeout` | REJECT | **与预期相反**：印象里文档有它 |
+| `http_config.authorization.credentials=""` | ACCEPT | 于是"空 bearer 会报错"那句旧结论作废 |
+
+出厂渲染结果改为 `http_config.authorization` + `max_alerts: 512`；渲染函数另加值的形状校验
+（URL / bearer 含双引号或控制字符 ⇒ 装完当场报错，不再生成一份被截断的 YAML）。
+CHANGELOG 里上一轮那句"AM 对空 bearer 直接报 `expected type string, got object`"已就地标注作废：
+省略空 bearer 段的真实理由是"不给收件端发一个空 Bearer 头"，属语义选择而非加载失败。
+
+### 31.3 缺陷 B｜`/api/v1/alerts` 在真机 MySQL 上返回空列表，而没有任何地方报错
+
+发现路径很偶然：为写投递证据而起的服务，日志里每 10 秒一条
+
+```
+[store] Alerts 扫描失败: sql: Scan error on column index 9, name "silenced_until":
+  unsupported Scan, storing driver.Value type <nil> into type *time.Time
+```
+
+累计 **1844 次**（近 10 分钟 50 次）。根因：`migrations/001_initial.sql:134-148` 的 `alerts` 表
+**没有一列带 NOT NULL**，写入侧统一走 `nullString()/nullTime()`（零值 ⇒ NULL），而
+`internal/store/sql_alerts.go` 的两个读点把 `silenced_until` / `updated_at` / `created_at`
+直接 `Scan` 进 `time.Time`。NULL 进值类型会让**整行**失败，而这两个函数对失败分别是
+`continue` 与 `return nil`——症状因此不是报错而是**数据凭空消失**：库里 1 条告警，
+`opsmesh_alerts_active 0`。客户视角就是"告警页是空的"，而 `Alerts()` 的调用点（含 /metrics 装配、
+告警列表、ack/silence 定位）全部静默拿到空集。
+
+修法：两个读点逐列换成 `sql.NullString` / `sql.NullTime`（不只时间列）。A/B（同一台机器、同一份存量卷）：
+
+| | 出厂镜像 `opsmesh/controlplane:0.11.0` | 本地修复镜像（commit `493b318-scanfix`） |
+|---|---|---|
+| `opsmesh_alerts_active` | 0（库里 1 行） | **1** |
+| 近 10 分钟 `Alerts 扫描失败` | 50 | **0** |
+
+换回出厂镜像后两项立刻复发，所以这不是环境抖动而是代码差异。
+
+### 31.4 缺陷 C｜"被吞掉的错误只有这个指标看得见"这句话本身是假的
+
+`docs/td60-decision-2026-09-26.md` §6 第 1 条写"已用 `opsmesh_store_write_failures_total` +
+`/api/v1/admin/store-failures` 让存量吞错点全部可见"。真机读数：日志 1844 次吞错，
+**同一时刻抓取面该指标 = 0**。原因在装配位置：`SetStoreFailures` 只出现在
+`support_endpoints.go` 的 `renderPrometheus()`（诊断包 `metrics.txt` 路径），而 `/metrics` 的
+**抓取路径**走 `writeMetricsBody()`——它推 `SetAgents` 与 `SetAppGauges`，从不推吞错计数。
+两条路径的注释还自称"复用与 /metrics 相同的渲染路径"，那句话当时也不成立
+（诊断包路径反过来漏推 app gauges）。
+
+修法：抽出 `metricsBody()` 作为两条出口的**唯一装配**（含 `StoreFailureStats()` 推送），
+`writeMetricsBody` 与 `renderPrometheus` 都只调它。活体证明指标真的会动：临时
+`RENAME TABLE opsmesh.alerts → alerts_probe55` 制造读失败，45 秒内抓取面
+`opsmesh_store_write_failures_total` 由 `0 → 5`（每 10 秒一次）；改名还原后按
+`SELECT COUNT(*)` 与指标两侧核对，行数与告警仪表复原。
+
+td60 那条结论已就地加更正并保留原文——它示范的正是本项目反复登记的形态：
+**可见性通道本身也需要被验证**。
+
+### 31.5 本轮新增的门禁与变异（每条都证明"删掉修复就红"）
+
+| 门禁 | 位置 | 变异输入 | 结果 |
+|---|---|---|---|
+| 渲染后校验扩到 webhook 条目层 | `deploy.sh` `render_alertmanager_config()` | 写回 `http_headers` | 报错并中止部署（且不再把校验器输出丢进 `/dev/null`） |
+| §15 第 ⑥ 项：真 amtool 校验渲染结果 | `validate-deploy-assets.sh` | 合成 `.env` → 调产品自己的渲染函数 → `amtool check-config` | 好配置 ACCEPT；`http_headers` 样本 REJECT（若 ACCEPT 则判红"本节在空转"） |
+| alerts 可空列 MySQL 回归 | `internal/store/sql_alerts_null_test.go` | `sql.NullTime` 退回 `time.Time` | **判红，错误文本与生产日志同一条**（`column index 9 … silenced_until`） |
+| 抓取面必须推吞错计数 | `internal/controlplane/metrics_store_failures_test.go` | 摘掉 `SetStoreFailures` | 判红（渲染值仍是哨兵 12345） |
+| 两条出口序列集合一致 | 同上第二条测试 | 任一条路径少推一组仪表 | 判红；并自检"解析到的序列名 < 10 即空转" |
+| §7e 外发落地 | `verify-runtime.sh` | 停掉收件端容器 + 往 AM 注入合成告警 | 判红："请求级失败 12 次"，并打印 `grep 'Notify attempt failed'` 定位指令 |
+| §8b 存储层吞错（日志 × 指标交叉） | `verify-runtime.sh` | 直接在**出厂镜像**上跑 | 两条都红（50 次 / 指标 0，并指出两者矛盾）；修复镜像上两条都绿 |
+
+§7e 顺带纠正两个判定面：① §7d 的 `grep -q 'webhook'` 会泛匹配 AM 回显的整份生效配置，
+收紧为 `webhook_configs:`；② **传输层失败（DNS 解析不了 / 连不上 / 超时）只进
+`alertmanager_notification_requests_failed_total`**，而按 HTTP 状态归类的
+`alertmanager_notifications_failed_total` 会一直是 0——只看后者就是"配了 = 收到了"的假绿，
+所以两个都判。
+
+也登记一处我自己写进门禁的缺陷：§7e 初版调用了 `skip()`，而 `verify-runtime.sh` **没有这个辅助函数**
+（只有 ok/bad/warn/sec）。因为脚本没有 `set -e`，症状只是一行 `skip: command not found` 然后继续跑完
+——"门禁自己坏掉但不吭声"。已改用 `warn` 并复跑整脚本确认（`command not found` 计数 0）。
+
+整脚本状态（出厂镜像 + 出厂默认 AM 配置）：`PASS=124 / FAIL=3`，其中
+`§1b otel`（见 31.6）、`§8b` 两条是本机已确诊的真缺陷，`§7d WARN + §7e WARN` 是出厂默认的
+诚实表述（没有外发通道）。修复镜像上 `§8b` 两条转绿。
+
+### 31.6 环境侧一条（不是产品缺陷，但会咬到企业客户的 Windows 安装）
+
+Docker Desktop 重启后，`opsmesh-otel` 变成"容器 Up、健康检查过、**四个宿主端口其实没发布**"，
+`verify-runtime.sh` §1b 判红。显式 `--force-recreate` 才把真因逼出来：
+
+```
+Error response from daemon: ports are not available: exposing port TCP 127.0.0.1:4317 -> 127.0.0.1:0:
+  listen tcp4 127.0.0.1:4317: bind: An attempt was made to access a socket in a way forbidden by its access permissions.
+```
+
+`netsh int ipv4 show excludedportrange protocol=tcp` 显示 **4311–4410 整段被系统保留**
+（winnat/Hyper-V 重启后抢占），4317/4318 落在段内，而 `netstat` 看是"空闲"。含义两条：
+① `deploy.sh` 的宿主侧端口预检**看不见**这种"保留但没人用"的端口；
+② 重启后的存量栈可能出现端口静默失效的形态，§1b 正是为此存在（本轮是它第二次抓到真事）。
+本机处置：`.env`（不入库）把 `OTEL_GRPC_PORT/OTEL_HTTP_PORT` 挪到 14317/14318，容器内仍是
+4317/4318，服务间调用不受影响；栈恢复 `21/21`、otel 四端口 `OPEN`。文档 §1.1.1 已写入这条前置与处置。
+
+### 31.7 恢复出厂形状与残留核对
+
+`.env` 的两个 `ALERT_WEBHOOK*` 键与临时收件端容器均已撤除（与备份 `env.before54` 比对一致），
+AM 重新渲染为"合法但无外发"并通过 `amtool check-config`；`/api/v2/status` 里 `webhook_configs`
+不存在、`/api/v2/alerts` 空；临时容器 0、临时 MySQL 用户 0（按 `SELECT … FROM mysql.user` 核对）、
+临时库 0（按 `SHOW DATABASES` 核对——第一次删因反引号穿过 bash 双引号被本地 shell 吃掉而**静默没执行**，
+复核才发现残留库，所以这一节结论一律看观察值而不是退出码）。业务库 8 个完好。
+本地另留了两个镜像标签以便复核：`opsmesh/controlplane:0.11.0-scanfix`（修复版）与
+`:0.11.0-published`（出厂版），运行中的栈指回出厂版。
+
+**仍然未做 / 残留**：
+
+1. 真实渠道（飞书 / PagerDuty / 邮件）的投递仍未验证——本轮是自建 HTTP 收件端，能证明
+   "AM 会发、头会带、resolved 会发"，不能证明"某个 SaaS 接受这个载荷形状"。
+2. `alertmanager.yml.template` 只支持 webhook 一种收件端；PagerDuty/邮件等需要 AM 侧配置块，
+   目前仍走控制面自带的 `OPSMESH_ALERT_WEBHOOK_URL` 单渠道路径（**两套渠道并存**这件事要写清）。
+3. "全列可空 + 值类型 Scan"这一形态在 `internal/store` 里是否还有第二处：本轮只交叉核对过
+   `nullTime()` 的写入点与读侧（`devices.last_result_at`、`sql_m2.go` 的 `end_at` 已用 `sql.NullTime`，
+   `leader_lease.expires_at` 由代码保证非零），**没有逐列穷举**；§8b 补上了"现场有吞错就报红"这一层，
+   静态穷举仍是待办。
+4. 出厂规则里还没有引用 `opsmesh_store_write_failures_total` 的告警（指标刚证明会在抓取面动；
+   加规则要同步 Helm 镜像与 §15 契约测试，另开一轮）。
+5. K8s 路径继续依赖集群自带的 Alertmanager（chart 不另起一套），本轮的送达断言只覆盖 compose 栈。
