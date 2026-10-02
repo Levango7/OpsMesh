@@ -992,13 +992,26 @@ else
         AM_TMP="$(mktemp -d)"
         printf 'ALERT_WEBHOOK_URL=http://sink.invalid:9919/alert\nALERT_WEBHOOK_BEARER=schema-probe-token\n' \
             > "${AM_TMP}/.env.probe"
+        # 探针产物必须放开读权限——这条是 CI 教我的（2026-10-03）：
+        # render_alertmanager_config() 结尾对**真实生成物**做 `chmod 600`（里面有 bearer），
+        # 而 prom/alertmanager 镜像的默认用户是 `nobody`(65534)；`mktemp -d` 又是 0700。
+        # 于是在 Linux 上 amtool 直接 `stat /c/rendered.yml: permission denied`，
+        # 门禁报的是"配置不合法"这种假红；本机 Windows 上 NTFS 不强制权限，同一条命令全绿
+        # ⇒ 这类缺陷只在 CI 暴露，别拿本机结果当数。
+        # 探针文件里只有合成值（sink.invalid + schema-probe-token），放开读没有泄露面；
+        # **绝不要把这里的 .env.probe 换成真 .env**，那等于把 bearer 变成全局可读。
+        chmod 755 "$AM_TMP" 2>/dev/null || true
         # 调产品自己的渲染函数（子 shell 里 source：deploy.sh 顶部有 set -euo pipefail，
         # 直接在主进程 source 会把 -e 带进本门禁，之后任何非零返回都会让整脚本中途退出）。
         # ENV_FILE / ALERTMANAGER_OUT 在 source 之后覆盖：合成外发键、且绝不碰真 .env 与生成物。
         (
             # shellcheck disable=SC1091  # 被 source 的脚本由仓库提供，非固定路径可静态解析
             source deploy/docker/scripts/deploy.sh >/dev/null 2>&1 || exit 91
+            # 这两个变量是被 source 进来的 render_alertmanager_config 读的；shellcheck 看不穿
+            # source，才报 SC2034"未使用"。禁用精确到 SC2034，不做整文件/整脚本的 -e。
+            # shellcheck disable=SC2034
             ENV_FILE="${AM_TMP}/.env.probe"
+            # shellcheck disable=SC2034
             ALERTMANAGER_OUT="${AM_TMP}/rendered.yml"
             render_alertmanager_config >/dev/null 2>&1
         )
@@ -1010,6 +1023,7 @@ else
         else
             # Git Bash 下 docker.exe 需要宿主形态路径；MSYS_NO_PATHCONV 保证容器内 /c 不被改写。
             AM_WIN="$(cd "${AM_TMP}" && pwd -W 2>/dev/null || pwd)"
+            chmod 644 "${AM_TMP}/rendered.yml" 2>/dev/null || true
             amtool_check() {
                 MSYS_NO_PATHCONV=1 docker run --rm -v "${AM_WIN}:/c:ro" --entrypoint amtool \
                     "$AM_IMG" check-config "/c/$1" 2>&1
@@ -1032,6 +1046,7 @@ receivers:
         http_headers:
           Authorization: "Bearer x"
 EOF
+            chmod 644 "${AM_TMP}/mutant.yml" 2>/dev/null || true
             if BAD_OUT="$(amtool_check mutant.yml)"; then
                 AM_HITS="${AM_HITS} 变异样本 http_headers 被 amtool 接受——第 ⑥ 项在空转：$(printf '%s' "$BAD_OUT" | tr '\n' ' ')"
             else
