@@ -968,6 +968,79 @@ if not d.get("inhibit_rules"):
     print("没有 inhibit 规则：ServiceDown 会带着成堆的下游 warning 一起刷屏"); sys.exit(1)
 PY
 )" || AM_HITS="${AM_HITS} 出厂默认 AM 配置不合规：${AM_RENDER_CHECK}"
+
+# ⑥ 用**真 Alertmanager 的 schema** 校验渲染结果：YAML 合法 ≠ AM 认这些字段。
+#    本机实测（2026-10-02，#54 端到端投递验证）：deploy.sh 渲染出的 http_headers / headers /
+#    timeout 三个键 YAML 全合法、上面 ⑤ 的引用检查也全过，但 prom/alertmanager:v0.27.0
+#    逐个报 "field X not found in type config.plain" 并进入崩溃重启循环——填了
+#    ALERT_WEBHOOK_URL 的客户会摊上一个起不来的告警组件，而 ⑤ 和 CI 当时都毫无感觉。
+#    amtool 就在那个镜像里，是同一份 schema 的权威实现，比查文档可靠（timeout 是否存在
+#    这件事，实测结论就和我的预期相反）。
+AM_IMG="$(grep -oE 'image: prom/alertmanager:[^ ]+' "$AM_COMPOSE" | head -1 | sed 's/^image: //')"
+if [ -z "$AM_IMG" ]; then
+    AM_HITS="${AM_HITS} 无法从 $AM_COMPOSE 读出 alertmanager 镜像 tag（第 ⑥ 项无从下手）"
+elif ! command -v docker >/dev/null 2>&1; then
+    skip "无 docker：跳过真 amtool 校验 AM 配置（第 ⑤ 项的 YAML/引用检查仍在）"
+else
+    if ! docker image inspect "$AM_IMG" >/dev/null 2>&1; then
+        if ! docker pull "$AM_IMG" >/dev/null 2>&1; then
+            skip "取不到镜像 $AM_IMG（离线或限流）：真 amtool 校验跳过，第 ⑤ 项仍在"
+            AM_IMG=""
+        fi
+    fi
+    if [ -n "$AM_IMG" ]; then
+        AM_TMP="$(mktemp -d)"
+        printf 'ALERT_WEBHOOK_URL=http://sink.invalid:9919/alert\nALERT_WEBHOOK_BEARER=schema-probe-token\n' \
+            > "${AM_TMP}/.env.probe"
+        # 调产品自己的渲染函数（子 shell 里 source：deploy.sh 顶部有 set -euo pipefail，
+        # 直接在主进程 source 会把 -e 带进本门禁，之后任何非零返回都会让整脚本中途退出）。
+        # ENV_FILE / ALERTMANAGER_OUT 在 source 之后覆盖：合成外发键、且绝不碰真 .env 与生成物。
+        (
+            # shellcheck disable=SC1091  # 被 source 的脚本由仓库提供，非固定路径可静态解析
+            source deploy/docker/scripts/deploy.sh >/dev/null 2>&1 || exit 91
+            ENV_FILE="${AM_TMP}/.env.probe"
+            ALERTMANAGER_OUT="${AM_TMP}/rendered.yml"
+            render_alertmanager_config >/dev/null 2>&1
+        )
+        if [ ! -s "${AM_TMP}/rendered.yml" ]; then
+            AM_HITS="${AM_HITS} 用合成 ALERT_WEBHOOK_URL 渲染失败（deploy.sh 的渲染函数返回非零或产出空文件）"
+        elif ! grep -q 'webhook_configs' "${AM_TMP}/rendered.yml"; then
+            # 空转检测：渲染结果里根本没有外发段，那"amtool 接受"就只证明了默认配置能起。
+            AM_HITS="${AM_HITS} 渲染产物里没有 webhook_configs 段——第 ⑥ 项无从判定外发形状"
+        else
+            # Git Bash 下 docker.exe 需要宿主形态路径；MSYS_NO_PATHCONV 保证容器内 /c 不被改写。
+            AM_WIN="$(cd "${AM_TMP}" && pwd -W 2>/dev/null || pwd)"
+            amtool_check() {
+                MSYS_NO_PATHCONV=1 docker run --rm -v "${AM_WIN}:/c:ro" --entrypoint amtool \
+                    "$AM_IMG" check-config "/c/$1" 2>&1
+            }
+            if GOOD_OUT="$(amtool_check rendered.yml)"; then
+                ok "真 amtool（${AM_IMG##*:}）接受渲染出的外发配置"
+            else
+                AM_HITS="${AM_HITS} 真 amtool 拒绝渲染出的外发配置：$(printf '%s' "$GOOD_OUT" | tr '\n' ' ')"
+            fi
+            # 变异样本：证明上面那句真的会红。用本次实测到的**历史缺陷形状**（http_headers），
+            # 它必须被拒；amtool 若接受，说明第 ⑥ 项在空转。
+            cat > "${AM_TMP}/mutant.yml" <<EOF
+route:
+  receiver: "default"
+receivers:
+  - name: "default"
+    webhook_configs:
+      - url: "http://sink.invalid:9919/alert"
+        send_resolved: true
+        http_headers:
+          Authorization: "Bearer x"
+EOF
+            if BAD_OUT="$(amtool_check mutant.yml)"; then
+                AM_HITS="${AM_HITS} 变异样本 http_headers 被 amtool 接受——第 ⑥ 项在空转：$(printf '%s' "$BAD_OUT" | tr '\n' ' ')"
+            else
+                ok "变异样本 http_headers 被真 amtool 拒绝（第 ⑥ 项确实在判定）"
+            fi
+        fi
+        rm -rf "${AM_TMP}"
+    fi
+fi
 if [ -z "${AM_HITS// }" ]; then
     ok "告警送达链路接通：alerting 段生效 + compose 起 AM + 配置由 .env 渲染 + 默认配置合法"
     if grep -q 'ALERT_WEBHOOK_URL=' deploy/docker/scripts/deploy.sh; then

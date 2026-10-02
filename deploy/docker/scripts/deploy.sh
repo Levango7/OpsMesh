@@ -1266,16 +1266,28 @@ render_alertmanager_config() {
     mkdir -p "$(dirname "$ALERTMANAGER_OUT")" || { log_error "无法创建 $(dirname "$ALERTMANAGER_OUT")"; return 1; }
 
     if [ -n "$url" ]; then
+        # 值里的双引号会截断我们生成的 YAML（同一天在 alerts.yml 上被中文引号咬过一次），
+        # 控制字符则让 AM 收到一个不可预测的头。装完当场报错比让 AM 崩溃重启好排查。
+        case "$url$bearer" in
+            *\"*|*[[:cntrl:]]*)
+                log_error "ALERT_WEBHOOK_URL / ALERT_WEBHOOK_BEARER 含双引号或控制字符，无法安全渲染。"
+                return 1
+                ;;
+        esac
         if [ -n "$bearer" ]; then
             receiver="    webhook_configs:
       - url: \"${url}\"
         send_resolved: true
-        http_headers:
-          Authorization: \"Bearer ${bearer}\""
+        max_alerts: 512
+        http_config:
+          authorization:
+            type: Bearer
+            credentials: \"${bearer}\""
         else
             receiver="    webhook_configs:
       - url: \"${url}\"
-        send_resolved: true"
+        send_resolved: true
+        max_alerts: 512"
         fi
         log_ok "Alertmanager 外发通道已渲染：${url%%\?*}（收件段写入 $(basename "$ALERTMANAGER_OUT")）"
     else
@@ -1299,7 +1311,11 @@ render_alertmanager_config() {
     done
     if [ -z "$py" ]; then
         log_warn "本机没有 python3/python：跳过渲染后的结构校验（配置坏时 AM 健康检查会暴露）"
-    elif ! "$py" - "$ALERTMANAGER_OUT" <<'PY' >/dev/null 2>&1
+    else
+        # 校验输出必须留下来打印：上一版把 python 的 stdout/stderr 全丢进 /dev/null，
+        # 失败时只回显配置的 tail -3 —— 等于"门禁报了红却不说为什么"。
+        local py_out=""
+        py_out="$("$py" - "$ALERTMANAGER_OUT" <<'PY' 2>&1
 import sys, yaml
 d = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 names = {r.get("name") for r in d.get("receivers", [])}
@@ -1317,6 +1333,12 @@ ALLOWED = {"name", "webhook_configs", "email_configs", "slack_configs", "pagerdu
            "opsgenie_configs", "victorops_configs", "wechat_configs", "msteams_configs",
            "telegram_configs", "pushover_configs", "sns_configs", "discord_configs",
            "jira_configs", "servicenow_configs", "inhibition_configs", "status"}
+# webhook_configs 条目层的键同样要核对——这一层昨天（2026-10-02，#54 端到端投递验证）刚踩：
+# 渲染出的 http_headers / headers / timeout 三个键 YAML 全合法，但 prom/alertmanager:v0.27.0
+# 逐个报 "field X not found in type config.plain" 并崩溃重启。三者的可用性是用
+# `amtool check-config`（同一个镜像里的真二进制）逐键实测出来的，不是查文档得来的。
+WHOOK_KEYS = {"url", "max_alerts", "send_resolved", "http_config"}
+REMOVED = {"headers", "http_headers", "timeout", "bearer_token", "basic_auth", "tls_config"}
 for r in d.get("receivers", []):
     unknown = [k for k in r if k not in ALLOWED]
     if unknown:
@@ -1324,10 +1346,19 @@ for r in d.get("receivers", []):
     for cfg in r.get("webhook_configs", []) or []:
         if not cfg.get("url"):
             print("webhook_configs 缺 url"); sys.exit(1)
+        gone = sorted(k for k in cfg if k in REMOVED and k not in WHOOK_KEYS)
+        if gone:
+            print("webhook_configs 含 v0.27.0 已移除的键 %s；bearer 走 http_config.authorization" % gone); sys.exit(1)
+        bad_keys = sorted(k for k in cfg if k not in WHOOK_KEYS)
+        if bad_keys:
+            print("webhook_configs 含未实测过的键 %s（v0.27.0 白名单 %s）"
+                  % (bad_keys, sorted(WHOOK_KEYS))); sys.exit(1)
 PY
-    then
-        log_error "Alertmanager 配置校验失败：$(cat "$ALERTMANAGER_OUT" 2>/dev/null | tail -3)"
-        return 1
+)"
+        if [ -n "$py_out" ]; then
+            log_error "Alertmanager 配置校验失败：${py_out}"
+            return 1
+        fi
     fi
     chmod 600 "$ALERTMANAGER_OUT" 2>/dev/null || true
     log_ok "Alertmanager 配置已渲染并通过结构校验：${ALERTMANAGER_OUT}"

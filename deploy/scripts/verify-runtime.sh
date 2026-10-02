@@ -490,11 +490,54 @@ else
   printf '%s' "$am_disc" | head -c 200 | sed 's/^/         /'; echo ""
 fi
 # 最后一段：AM 里是否真的有外发通道。没有就明说，不假装配好了。
+# 匹配串必须是 webhook_configs:（带下划线和冒号）——早先写的是 grep -q 'webhook'，
+# 而 AM 的 /api/v2/status 会回显整份生效配置（含 pagerduty_url 等默认值），
+# 泛匹配会让"没有外发通道"的栈被误报成"已配置"。
 am_status="$(curl -sS --max-time 8 "http://127.0.0.1:${ALERTMANAGER_PORT:-9094}/api/v2/status" 2>/dev/null)"
-if printf '%s' "$am_status" | grep -q 'webhook'; then
-  ok "Alertmanager 已加载外发通道（配置里含 webhook 收件段）"
+if printf '%s' "$am_status" | grep -q 'webhook_configs:'; then
+  ok "Alertmanager 已加载外发通道（生效配置里含 webhook_configs 收件段）"
 else
   warn "Alertmanager 无外发通道：告警停在 AM 里，不会转发给任何渠道 —— 在 .env 设 ALERT_WEBHOOK_URL 后重跑 deploy.sh up"
+fi
+
+sec "7e. 外发是否真的落地（用 Alertmanager 自己的计数，不看它配了什么）"
+# 7d 证明的是"配置里有收件段"，而配置在不代表发得出去：地址写错、对端要证书、
+# 网络不通、 bearer 过期——都只会在**真正出事那条通知**上暴露。AM 暴露了按 integration
+# 维度的发送计数，所以这里直接读它，把"最后一公里"变成可机器判定的事实。
+# 注意口径：这些计数是 **AM 进程启动以来的累计值**（重启即归零），不是本次部署的增量。
+if printf '%s' "$am_status" | grep -q 'webhook_configs:'; then
+  am_metrics="$(curl -sS --max-time 8 "http://127.0.0.1:${ALERTMANAGER_PORT:-9094}/metrics" 2>/dev/null)"
+  got_f="$(printf '%s' "$am_metrics" | grep -E '^alertmanager_alerts_received_total\{status="firing"' | awk '{print $2}' | head -1)"
+  sent="$(printf '%s' "$am_metrics" | grep -E '^alertmanager_notifications_total\{integration="webhook"' | awk '{print $2}' | head -1)"
+  failed="$(printf '%s' "$am_metrics" | grep -E '^alertmanager_notifications_failed_total\{integration="webhook"' | awk '{s+=$2} END{printf "%g", s+0}')"
+  req_failed="$(printf '%s' "$am_metrics" | grep -E '^alertmanager_notification_requests_failed_total\{integration="webhook"' | awk '{s+=$2} END{printf "%g", s+0}')"
+
+  if [ -z "$sent" ]; then
+    warn "读不到 alertmanager_notifications_total{integration=\"webhook\"}：AM 版本或指标名变了，本节判定失效"
+  else
+    # 第二跳的落地量（Prometheus → AM 真的收到过规则告警）。
+    if [ -n "$got_f" ] && [ "$got_f" != "0" ]; then
+      ok "Prometheus 已投递过 ${got_f} 条 firing 告警到 AM（alerts_received_total）"
+    else
+      warn "AM 至今没收到任何 firing 告警：activeAlertmanagers 非空只证明「指得到」，不证明「送得过」"
+    fi
+    if [ "$sent" = "0" ]; then
+      warn "外发段已配置但 AM 一次都没发过：要么还没告警触发，要么路由没指到这个 receiver——最后一公里未经证明"
+    elif [ "$failed" != "0" ] || [ "$req_failed" != "0" ]; then
+      # 两个计数不是同一回事（本机实测）：notifications_failed_total 只统计**拿到了 HTTP 响应**
+      # 且状态不合规的失败（带 reason 标签）；对端 DNS 解析不了 / 连不上 / 超时这类传输层失败
+      # 只进 notification_requests_failed_total，前者会一直是 0。只看一个就会漏报。
+      bad "Alertmanager 外发失败：请求级失败 ${req_failed} 次（对端不可达/超时这一类），通知级失败 ${failed} 次（累计发送 ${sent} 次）"
+      printf '%s\n' "$am_metrics" | grep -E '^alertmanager_notifications_failed_total\{integration="webhook"' \
+        | awk '$2+0>0 {print "         ", $0}'
+      echo "         AM 仍在按 repeat_interval 重试；单次瞬时失败会累计在请求级计数里"
+      echo "         排查：docker logs opsmesh-alertmanager | grep -i 'Notify attempt failed'（err= 里是原话）、收件端可达性与凭证"
+    else
+      ok "外发已成功 ${sent} 次、失败 0 次（AM 自计；计数为 AM 启动以来累计）"
+    fi
+  fi
+else
+  warn "无外发通道，本节无从判定（先按 7d 的提示配 ALERT_WEBHOOK_URL 再重跑 deploy.sh up）"
 fi
 sec "8. 数据库落库核对（P0-14 device-svc 建表回归 + 多库隔离）"
 MYSQL_C="$(docker ps --filter name=opsmesh-mysql --format '{{.Names}}' | head -1)"
@@ -535,6 +578,35 @@ if [ -n "$MYSQL_C" ]; then
   done
 else
   bad "未找到 opsmesh-mysql 容器"
+fi
+
+sec "8b. 存储层吞错（Store 不返回 error，静默丢数据只能在这里看见）"
+# 为什么单独一节：Store 接口的读路径不返回 error，失败只进日志与
+# opsmesh_store_write_failures_total。真机实测（v0.11.0，2026-10-02）：alerts 表每一列都可空
+# （migrations/001_initial.sql:134-148），写入侧统一走 nullString()/nullTime()，而读侧把
+# silenced_until / updated_at 直接 Scan 进 time.Time ⇒「从未被静默过的告警」整行读不回来，
+# 每 10 秒报一次 Alerts 扫描失败、累计 1844 次，而客户看到的现象只是"告警页是空的"。
+# 先看日志（独立观测量），再看指标，最后交叉核对两者——v0.11.0 的真实形态正是"日志一直报、
+# 指标一直 0"，任何一侧单独看都会漏。
+scan_drop="$(docker logs --since 10m opsmesh-controlplane 2>&1 | grep -c 'Alerts 扫描失败' || true)"
+if [ "${scan_drop:-0}" = "0" ]; then
+  ok "近 10 分钟无 Alerts 扫描丢行"
+else
+  bad "近 10 分钟 Alerts 扫描失败 ${scan_drop} 次：alerts 可空列必须用 sql.Null* 读回，否则整行被静默丢弃"
+fi
+sf="$(curl -sS --max-time 8 "http://127.0.0.1:${MP}/metrics" 2>/dev/null \
+    | awk '/^opsmesh_store_write_failures_total /{print $2}')"
+if [ -z "$sf" ]; then
+  bad "抓取面上没有 opsmesh_store_write_failures_total 序列——吞错无从监控，本节判红（不判跳过）"
+elif [ "$sf" = "0" ] && [ "${scan_drop:-0}" != "0" ]; then
+  bad "指标与日志矛盾：日志近 10 分钟有 ${scan_drop} 次吞错，而抓取面 opsmesh_store_write_failures_total=0"
+  echo "         ⇒ /metrics 这条装配路径没推该计数（v0.11.0 实测形态：1844 次吞错 vs 指标 0）"
+elif [ "$sf" = "0" ]; then
+  ok "存储层吞错 0（自控制面进程启动以来累计）"
+else
+  bad "存储层累计吞掉 ${sf} 次读写错误：接口不报错，但数据在悄悄丢"
+  echo "         定位：docker logs opsmesh-controlplane 2>&1 | grep '\\[store\\]' | tail -20"
+  echo "         明细：GET /api/v1/admin/store-failures（需管理员身份；含按操作聚合 + 最近样本）"
 fi
 
 sec "9. 反代/入口形态"
