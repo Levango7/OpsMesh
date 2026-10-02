@@ -284,12 +284,29 @@ groups:
       # 基数熔断的可观测性：达到上限后新路径折进 path=":other"、新标签折进 folded=":other"。
       # 这是**故意的**（否则未鉴权入口上的任意 URL 会把注册表撑到 OOM），但副作用是按路径的
       # 面板与告警会失真，所以必须让"正在折叠"这件事本身可告警。
-      # 两套命名族都要覆盖：控制面 opsmesh_http_metrics_series_dropped_total，微服务无前缀。
+      #
+      # 为什么是两条而不是一条并集（2026-10-02 真机跑出来的教训）：`increase()` 的结果会丢掉
+      # `__name__`，所以把**同一进程上共存的两条序列**放进一个 `{__name__=~"a|b"}` 里再喂给
+      # increase()，Prometheus 会报 `vector cannot contain metrics with the same labelset`
+      # ——规则 health=err、永不触发，而**语法完全合法**，语法检查与引用对账都拦不住它。
+      # 下面 HTTP 侧那条并集是安全的：控制面只出 `opsmesh_` 前缀名、微服务只出无前缀名，
+      # 两个名字不会落在同一个 instance 上（与 HighErrorRate 同构）。
       - alert: OpsMeshMetricsCardinalityFolding
-        expr: sum by (job) (increase({__name__=~"http_metrics_series_dropped_total|business_metrics_series_dropped_total|opsmesh_http_metrics_series_dropped_total"}[30m])) > 0
+        expr: sum by (job) (increase({__name__=~"http_metrics_series_dropped_total|opsmesh_http_metrics_series_dropped_total"}[30m])) > 0
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "{{ $labels.job }} 的指标基数已触顶并折叠到 :other"
-          description: "近 30 分钟有 {{ $value }} 次写入被折叠：内存保住了，但按路径/按标签的看板与告警已失去分辨率。排查方向——谁在打未注册路由（扫描器、拼错的 SDK、把 ID 塞进路径的调用方），必要时收紧入口鉴权与限流。"
+          summary: "{{ $labels.job }} 的 HTTP 指标基数已触顶并折叠到 :other"
+          description: "近 30 分钟有 {{ $value }} 次路径写入被折叠：内存保住了，但按路径的看板与告警已失去分辨率。排查方向——谁在打未注册路由（扫描器、拼错的 SDK、把 ID 塞进路径的调用方），必要时收紧入口鉴权与限流。"
+
+      # 业务标签侧的折叠只能单独一条：business_metrics_series_dropped_total 与 HTTP 侧那条
+      # 在每个微服务上同时存在，合进一个 increase() 就会撞上面那条 labelset 冲突。
+      - alert: OpsMeshBusinessMetricCardinalityFolding
+        expr: sum by (job) (increase(business_metrics_series_dropped_total[30m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }} 的业务指标标签基数已触顶并折叠到 :other"
+          description: "近 30 分钟有 {{ $value }} 次业务指标写入被折叠：说明 name 维度或标签值在膨胀（常见成因是把实体 ID 当标签、或把可变字符串拼进指标名）。按 name 的看板与告警此后不再可信。"

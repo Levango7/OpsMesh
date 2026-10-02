@@ -19,6 +19,18 @@
 - **过程中的两处自伤（都当场发现）**：① 变异脚本的 `GO_TESTS` 清单漏列新加的文档测试，导致 M8/M9 首轮显示「漏判」——补列后两条都判红，**这是脚本的洞不是门禁的洞**，但若不跑变异就会把「门禁有效」写成结论；② 变异脚本边跑边被我用 Edit 改同一个测试文件，`restore()` 把新加的测试覆盖掉一次——变异类脚本跑期间不要并发编辑它备份的文件。
 - 验证汇总：9 项变异全部按预期判红（M1 名字打错 / M2 删抓取 job / M3 chart 删一条规则 / M4 两份一起改阈值 / M5 `increase` 丢区间 / M6 放回坏面板 / M7 豁免表挂回在栈里的服务 / M8 文档服务归属写错 / M9 文档写不存在的名字），跑完 `md5sum -c` 六个文件全部一致（无变异残留）。
 
+## [Unreleased] — 2026-10-02 真机验证新告警：抓出一条「语法合法但 Prometheus 评估失败」的规则，并补上拦住它的运行时门禁
+
+> 证据：真实 `prom/prometheus:v2.55.0` 挂载仓库内 `prometheus.yml`/`prometheus-alerts.yml` 起进程（`Completed loading of configuration file … rules=26.8ms`，无 error；`/api/v1/rules` 6 组全部注册；`/api/v1/targets` 18 个活动 target，13 个 OpsMesh 目标一个不缺）；再拉**已发布的** `ghcr.io/levango7/task-svc:0.11.0` 镜像（不是本地重建产物）单跑，配只抓它的 Prometheus + 出厂规则，匀速打 2400 条不同路径把基数上限打穿：服务侧 `http_metrics_series 2001 / http_metrics_series_dropped_total 488`，告警侧 `OpsMeshMetricsCardinalityFolding` 先 pending、5 分钟后 **firing（job=task-svc value=488.48）**，同组业务侧那条保持 inactive（跟着事实走，不是恒真）。新门禁 §7c 用三个输入自证：真机（rc=0）／注入 `health=err`（rc=1 并打印 group+alert+lastError）／空规则集（rc=1，拒绝空转）。详见报告 §29.8。
+
+- **修｜一条我自己写的坏规则**：`OpsMeshMetricsCardinalityFolding` 原本写成 `{__name__=~"http_metrics_series_dropped_total|business_metrics_series_dropped_total|opsmesh_…"}` 并集喂给 `increase()` —— `increase()` 的结果**会丢掉 `__name__`**，而前两个名字在每个微服务上**同时存在**，丢弃后两条序列标签集相同 ⇒ Prometheus 报 `vector cannot contain metrics with the same labelset`，规则 `health=err`、**永不触发**。要点是它**静态检查全过**：YAML、真实 PromQL parser 的 `ParseExpr`、以及"名字必须存在 + 服务必须被抓取"的契约测试都拦不住——同文件 `HighErrorRate` 用同样写法却没事，因为控制面前缀名与微服务无前缀名不会落在同一个 instance 上。**这类缺陷取决于"同一实例上是否共存"，是静态面的结构性盲区，只有真实评估过一次才暴露。**
+- 修法：拆成两条。HTTP 侧留并集（两族互斥，安全），业务侧单独一条 `increase(business_metrics_series_dropped_total[30m])` ⇒ 新告警 `OpsMeshBusinessMetricCardinalityFolding`。compose 与 chart 两份同步，**上一块里写的「9 条」随之变成 10 条**（镜像对账测试自动跟上并逐条一致）。
+- **门禁｜`verify-runtime.sh` §7c**：读 `/api/v1/rules?type=alert`，任何规则 `health≠ok` 或有 `lastError` 即判红，规则数为 0 也判红（拒绝空转）。这一节把"规则写在文件里"与"规则在 Prometheus 里可用"分开——以后同类错误会在部署自检被拦住，而不是等客户出事才发现没有告警。
+- **顺带实测到的两条链路事实**（不是缺陷，记下来免得下轮误判）：① 默认 `IP_RPS=30` 的限流器包在指标中间件**外面**，被 429 掉的请求不进指标（3000 条突发里 2879 条 429、只有 121 条建了序列）——所以"扫描器把基数撑到 OOM"这条路径实际被两层挡着，基数上限是第二层兜底；② task-svc 以内存 store 启动即 `晋升为 leader`，调度循环每轮就地产出 4 条业务计数（`business_metrics_series 4` 实测可见）。
+- **仍未覆盖**：没有起完整 12 服务 compose 栈（本机另有一个 0.9.x 的 `opsmesh` 项目在运行，升版会重建它并动到 mysql/redis 卷，属要用户点头的动作），所以 `verify-runtime.sh` 整脚本尚未跑过一次完整绿；其余 8 条新告警未逐条真实触发（需要各自的真实事件）。Alertmanager 仍不在出厂栈里：firing 只到状态面，没人被通知。
+
+
+
 ## [Unreleased] — 2026-10-01 verify-runtime 补 5b 节：微服务指标语义的黑盒断言
 
 > 证据：Docker 未运行，故**不靠跑整栈**取证——在仓库外起一个用同一个 `pkg/metrics` 渲染 `/metrics` 的探针进程，`awk` 抽出脚本里 5b 的**真实代码**（不是复制一份）对着它跑：硬断言全 PASS、软断言正向路径 PASS、反向断言在坏样本上确认命中。临时目录已删除，仓库工作树全程只有 `verify-runtime.sh` 一处改动。

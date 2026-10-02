@@ -997,7 +997,7 @@ observability:
 
 两份副本各有一批**路径独有**的规则（compose 侧的 `MySQLDown`/`RedisDown` 依赖 blackbox exporter
 的 `job` 名，K8s 侧的 `OpsMeshAgentsOffline` 依赖 DaemonSet 部署形态），这部分不对称是刻意的。
-但 **`opsmesh_microservice_business_alerts` 这一组必须逐条一致**（9 条）：由
+但 **`opsmesh_microservice_business_alerts` 这一组必须逐条一致**（10 条）：由
 `TestBusinessRuleMirrorBetweenComposeAndChart` 比对 alert 名 / `expr` / `for` / `severity`，
 漏一侧或改了一侧的语义都会判红——K8s 客户不该"看起来配了告警、实际少几条"。
 
@@ -1026,7 +1026,17 @@ observability:
 | `OpsMeshAlertNotifyFailureRate` | `alert_notification_failures` / `alert_notifications`（按 `tenant_id`） | 10m 推送失败占比 >20%，持续 10m | warning |
 | `OpsMeshLogMemoryBackendDropping` | `name="log_memory_dropped"` | 10m 内内存后端淘汰过日志，持续 5m | warning |
 | `OpsMeshAutoscalerDecisionHistorySaturated` | `name="autoscaler_decision_history_entries"` | 决策历史 ≥500（等于代码常量 `maxDecisionHistory`，两者由测试对账）持续 10m | warning |
-| `OpsMeshMetricsCardinalityFolding` | `*_series_dropped_total`（两套命名并集） | 30m 内有写入被折叠到 `:other`，持续 5m | warning |
+| `OpsMeshMetricsCardinalityFolding` | `{__name__=~"http_metrics_series_dropped_total\|opsmesh_http_metrics_series_dropped_total"}` | 30m 内有路径写入被折叠到 `:other`，持续 5m | warning |
+| `OpsMeshBusinessMetricCardinalityFolding` | `business_metrics_series_dropped_total` | 30m 内有业务指标写入被折叠到 `:other`，持续 5m | warning |
+
+> **这两条为什么是拆开的而不是并集**（2026-10-02 真机实测）：`increase()` 的结果会丢掉 `__name__`，
+> 而 `http_metrics_series_dropped_total` 与 `business_metrics_series_dropped_total` **在每个微服务上同时存在**，
+> 合进一个 `{__name__=~"a|b"}` 会让结果向量出现两个标签集完全相同的序列，Prometheus 直接报
+> `vector cannot contain metrics with the same labelset` —— 规则 `health=err`、**永不触发**，
+> 而 YAML、语法、名字对账三道静态检查都看不出问题。上面 HTTP 侧那条的并集是安全的：
+> 控制面只出 `opsmesh_` 前缀名、微服务只出无前缀名，两个名字不会落在同一个 instance 上。
+> 这类失败只能由真实 Prometheus 评估过一次才暴露，因此 `verify-runtime.sh` §7c 会检查
+> `/api/v1/rules` 里**没有任何规则处于 health≠ok 或有 lastError**。
 
 > **出厂栈里没有 Alertmanager**（`prometheus.yml` 的 `alerting:` 段是注释状态，compose 服务清单里也
 > 没有 alertmanager）。因此上面这些规则只产生**告警状态**（Prometheus UI 与 `/api/v1/rules` 可见），

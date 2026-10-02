@@ -2743,3 +2743,65 @@ LogQL 面板（Loki 数据源）显式跳过——判据不能把另一种查询
    新增测试不同步它，就会把"测试有效"写成"看起来漏判"。
 2. 让变异脚本在后台跑的同时用 Edit 改它备份清单里的同一个文件——`restore()` 把我刚加的测试
    覆盖掉一次。变异/还原类脚本运行期间不要并发编辑它管辖的文件；备份要在工作树处于目标状态时重做。
+
+### 29.8 真机跑了一次，抓出一件静态检查永远抓不到的事（2026-10-02）
+
+Docker 起来之后做了三件事：① 用真实 `prom/prometheus:v2.55.0` 挂载仓库里那份
+`prometheus.yml` + `prometheus-alerts.yml` 起 Prometheus，验证出厂配置与规则**被成功加载**；
+② 拉 **已发布的 `ghcr.io/levango7/task-svc:0.11.0`** 镜像（不是本地重建，是要交付的那个产物）
+单独跑起来，配一个只抓它的 Prometheus，把出厂规则原样挂进去；③ 对它打满路径，
+真实触发一次基数折叠，看新告警到底会不会响。
+
+**加载面**：`Completed loading of configuration file … rules=26.8ms`，无 error；
+`/api/v1/rules` 给出 6 组 23 条（当时）全部注册成功；`/api/v1/targets` 有 18 个活动 target，
+verify-runtime §7 新断言里那 13 个 OpsMesh 目标**一个不缺**（incident/runbook/autoscaler 三条
+新 job 都在，只是本环境没有对应容器所以 DOWN——这正是漏配 job 与"配了但服务没起"的区别）。
+
+**抓到一条我自己写的坏规则**（这就是跑真机的回报）：
+
+```
+OpsMeshMetricsCardinalityFolding | health=err
+lastError = vector cannot contain metrics with the same labelset
+```
+
+成因：`increase({__name__=~"http_metrics_series_dropped_total|business_metrics_series_dropped_total|opsmesh_…"})`。
+`increase()` 的结果**会丢掉 `__name__`**，而前两个名字在**每个微服务上同时存在**，
+丢弃后两条序列的标签集完全相同 → 结果向量非法 → 规则评估失败、永不触发。
+关键点在于它**语法完全合法**：§14 的四类结构判定、真实 PromQL parser 的 `ParseExpr`、
+以及"名字必须存在 + 服务必须被抓取"的契约测试全都放行。同文件里 `HighErrorRate` 用同样的
+并集写法却没事，因为前后缀两族不会落在同一个 instance 上——**这类缺陷取决于"同一实例上是否共存"**，
+是静态检查的结构性盲区。
+
+修法：拆成两条。HTTP 侧保留并集（控制面 `opsmesh_` 与微服务无前缀名互斥，安全）；
+业务侧单独一条 `increase(business_metrics_series_dropped_total[30m])`。compose 与 chart 两份同步
+（镜像对账测试自动跟上：10 条逐条一致）。
+
+**折叠与告警是真的发生了**：对 task-svc 打 2400 条不同路径（匀速 28/s，避开 `IP_RPS=30` 的默认限流；
+顺带实测到 3000 条突发里 2879 条被限流器 429 掉，而限流器包在指标中间件**外面**，
+所以被拒的请求不进指标——这条链路本身是健康的），服务侧
+`http_metrics_series 2001 / http_metrics_series_dropped_total 488`，
+随后 `OpsMeshMetricsCardinalityFolding` 先 pending、5 分钟后 **firing**：
+
+```
+job=task-svc  value=488.48  activeAt=2026-10-01T23:53:23Z  state=firing
+```
+
+同组的 `OpsMeshBusinessMetricCardinalityFolding` 保持 inactive（业务侧确实没折叠）——
+说明这条告警不是"恒真"，它跟着事实走。
+
+**新增运行时门禁 §7c**（`verify-runtime.sh`）：读 `/api/v1/rules?type=alert`，
+只要有规则 `health≠ok` 或 `lastError` 非空就判红，并在规则数为 0 时判红（拒绝空转）。
+三个输入自证：真机修好的规则 → rc=0；注入一条 `health=err` → rc=1 并打印 group/alert/lastError；
+空规则集 → rc=1。这一节把"规则在文件里存在"与"规则在 Prometheus 里可用"分开了，
+以后任何人写出同类规则，部署自检就会拦住。
+
+仍未覆盖的（别再写成已验证）：
+
+1. 只在**单个服务 + 单个 Prometheus** 上跑过，没有起完整 12 服务 compose 栈——
+   本机原有一个 0.9.x 的 `opsmesh` 项目仍在运行（controlplane/device/gpu/portal/task + mysql/redis/loki），
+   升版会重建它并动到那些卷，属于要用户点头的动作，所以没做。
+2. 因此 `verify-runtime.sh` 整脚本（含 §5b 的 12 服务指标内容、§6 的 12 服务健康、§7 的 13 目标）
+   **没有跑过一次完整绿**；本轮只单独验了 §7c 的判定逻辑与 §7 的目标清单在真实 Prometheus 上成立。
+3. 其余 8 条新告警没有逐条触发（需要各自的真实事件：写库失败、外部通知失败、内存淘汰、
+   500 条决策历史）。已验证的是：它们引用的序列在真实服务上存在、规则本身 health=ok 且能被评估。
+4. Alertmanager 仍不在出厂栈里——firing 只到 Prometheus 的状态面，没人被通知（§23 / 任务 #52）。

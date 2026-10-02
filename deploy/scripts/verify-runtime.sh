@@ -384,6 +384,60 @@ else
   bad "Prometheus /api/v1/alerts 无响应"
 fi
 
+sec "7c. 出厂告警规则的运行时健康（health=err 的规则＝永不触发的假告警）"
+# 为什么单列（2026-10-02 真机实测教训）：一条规则可以**语法合法、引用的序列真实存在、
+# 服务也确实被抓取**，却在真实 Prometheus 里评估失败——本轮就抓到一条：
+#   increase({__name__=~"http_metrics_series_dropped_total|business_metrics_series_dropped_total"}[30m])
+# 报 "vector cannot contain metrics with the same labelset"（函数结果会丢掉 __name__，
+# 而这两个名字在每个微服务上同时存在）。后果与其它静默同类：规则在，告警永远不会来。
+# 静态检查拦不住它，只有真实评估过一次才是证据。
+rjson="$(curl -sS --max-time 10 "$PT/api/v1/rules?type=alert" 2>/dev/null)"
+PYBIN="$(command -v python3 || command -v python)"
+if [ -z "$rjson" ]; then
+  bad "Prometheus /api/v1/rules 无响应"
+elif [ -z "$PYBIN" ]; then
+  warn "没有 python，跳过规则运行时健康检查"
+else
+  printf '%s' "$rjson" | "$PYBIN" -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception as e:
+    print("  rules JSON 解析失败:", e); sys.exit(1)
+groups = d.get("data", {}).get("groups", [])
+tot = 0
+broken = []
+states = {}
+for g in groups:
+    for r in g.get("rules", []):
+        if r.get("type") != "alerting" and "alerts" not in r:
+            continue          # 记录规则（recording rule）不参与本判定
+        tot += 1
+        h = r.get("health")
+        err = r.get("lastError")
+        if h != "ok" or err:
+            broken.append((g.get("name"), r.get("name"), h, err))
+        for a in (r.get("alerts") or []):
+            states[a.get("state")] = states.get(a.get("state"), 0) + 1
+print("  规则组=%d 告警规则=%d 状态分布=%s" % (len(groups), tot, states or "（全部 inactive）"))
+if tot == 0:
+    print("  没有取到任何告警规则——本节会空转"); sys.exit(1)
+if broken:
+    for b in broken:
+        print("  规则评估异常：group=%s alert=%s health=%s lastError=%s" % b)
+    sys.exit(1)
+sys.exit(0)
+' >/tmp/rules-health.out 2>&1
+  rhrc=$?
+  cat /tmp/rules-health.out | sed 's/^/          /'
+  if [ "$rhrc" = "0" ]; then
+    ok "出厂告警规则在真实 Prometheus 里全部 health=ok（无评估失败的哑规则）"
+  else
+    bad "有告警规则在 Prometheus 里评估失败（见上面 lastError）——它语法合法但永远不会触发"
+  fi
+  rm -f /tmp/rules-health.out
+fi
+
 sec "8. 数据库落库核对（P0-14 device-svc 建表回归 + 多库隔离）"
 MYSQL_C="$(docker ps --filter name=opsmesh-mysql --format '{{.Names}}' | head -1)"
 if [ -n "$MYSQL_C" ]; then

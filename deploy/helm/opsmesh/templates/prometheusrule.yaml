@@ -119,11 +119,19 @@ spec:
             summary: 弹性决策历史已达缓冲上限（开始丢弃最旧记录）
             description: autoscaler-svc 的决策历史驻留内存且上限 500 条，超出即从头丢弃。需要更长保留周期时应落库，而不是调大内存缓冲（多副本部署下内存历史还各不相同）。
         - alert: OpsMeshMetricsCardinalityFolding
-          expr: sum by (job) (increase({__name__=~"http_metrics_series_dropped_total|business_metrics_series_dropped_total|opsmesh_http_metrics_series_dropped_total"}[30m])) > 0
+          expr: sum by (job) (increase({__name__=~"http_metrics_series_dropped_total|opsmesh_http_metrics_series_dropped_total"}[30m])) > 0
           for: 5m
           labels:
             severity: warning
           annotations:
-            summary: '{{ "{{ $labels.job }}" }} 的指标基数已触顶并折叠到 :other'
-            description: 近 30 分钟有 {{ "{{ $value }}" }} 次写入被折叠：内存保住了，但按路径/按标签的看板与告警已失去分辨率。排查方向——谁在打未注册路由（扫描器、拼错的 SDK、把 ID 塞进路径的调用方），必要时收紧入口鉴权与限流。
+            summary: '{{ "{{ $labels.job }}" }} 的 HTTP 指标基数已触顶并折叠到 :other'
+            description: 近 30 分钟有 {{ "{{ $value }}" }} 次路径写入被折叠：内存保住了，但按路径的看板与告警已失去分辨率。排查方向——谁在打未注册路由（扫描器、拼错的 SDK、把 ID 塞进路径的调用方），必要时收紧入口鉴权与限流。
+        - alert: OpsMeshBusinessMetricCardinalityFolding
+          expr: sum by (job) (increase(business_metrics_series_dropped_total[30m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: '{{ "{{ $labels.job }}" }} 的业务指标标签基数已触顶并折叠到 :other'
+            description: 近 30 分钟有 {{ "{{ $value }}" }} 次业务指标写入被折叠：说明 name 维度或标签值在膨胀（常见成因是把实体 ID 当标签、或把可变字符串拼进指标名）。按 name 的看板与告警此后不再可信。
 {{- end -}}
