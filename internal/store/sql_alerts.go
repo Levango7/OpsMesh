@@ -147,20 +147,31 @@ func (s *SQLStore) Alerts(tenantID string) []*proto.Alert {
 	var out []*proto.Alert
 	for rows.Next() {
 		var a proto.Alert
-		var createdAt, silencedUntil, updatedAt time.Time
+		// 表里**每一列**都可空（migrations/001_initial.sql:134-148 没有一列带 NOT NULL），
+		// 写入侧又统一走 nullString()/nullTime()（零值 ⇒ NULL）。silenced_until 尤其如此——
+		// 没被静默过的告警它就是 NULL。用值类型直接扫 NULL 会让整行 Scan 失败，而本函数对
+		// 失败行是 `continue`，所以症状不是报错而是"告警列表凭空变空"：
+		// 真机 MySQL 实测 1844 次 `Alerts 扫描失败`、接口返回 0 条（v0.11.0，2026-10-02）。
+		var tenantID, deviceID, agentID, severity, message sql.NullString
+		var createdAt, silencedUntil, updatedAt sql.NullTime
 		var alertID, status, ackBy, comment sql.NullString
-		if err := rows.Scan(&a.TenantID, &a.DeviceID, &a.AgentID, &a.Severity, &a.Message, &createdAt,
+		if err := rows.Scan(&tenantID, &deviceID, &agentID, &severity, &message, &createdAt,
 			&alertID, &status, &ackBy, &silencedUntil, &comment, &updatedAt); err != nil {
 			recordStoreFailure("[store] Alerts 扫描失败: %v", err)
 			continue
 		}
-		a.CreatedAt = createdAt
+		a.TenantID = tenantID.String
+		a.DeviceID = deviceID.String
+		a.AgentID = agentID.String
+		a.Severity = severity.String
+		a.Message = message.String
+		a.CreatedAt = createdAt.Time
 		a.AlertID = alertID.String
 		a.Status = status.String
 		a.AcknowledgedBy = ackBy.String
-		a.SilencedUntil = silencedUntil
+		a.SilencedUntil = silencedUntil.Time
 		a.Comment = comment.String
-		a.UpdatedAt = updatedAt
+		a.UpdatedAt = updatedAt.Time
 		out = append(out, &a)
 	}
 	if err := rows.Err(); err != nil {
@@ -184,22 +195,30 @@ func (s *SQLStore) Alert(id string) *proto.Alert {
 		`SELECT tenant_id, device_id, agent_id, severity, message, created_at, alert_id, status, acknowledged_by, silenced_until, comment, updated_at FROM alerts WHERE alert_id=?`,
 		id)
 	var a proto.Alert
-	var createdAt, silencedUntil, updatedAt time.Time
+	// 同 Alerts()：alerts 全列可空，读侧必须逐列用 Null*，否则单条查询在 NULL 上行上
+	// 直接返回 nil（表现是"确认/静默告警点了没反应"）。
+	var tenantID, deviceID, agentID, severity, message sql.NullString
+	var createdAt, silencedUntil, updatedAt sql.NullTime
 	var alertID, status, ackBy, comment sql.NullString
-	if err := row.Scan(&a.TenantID, &a.DeviceID, &a.AgentID, &a.Severity, &a.Message, &createdAt,
+	if err := row.Scan(&tenantID, &deviceID, &agentID, &severity, &message, &createdAt,
 		&alertID, &status, &ackBy, &silencedUntil, &comment, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
 			recordStoreFailure("[store] Alert 查询失败: %v", err)
 		}
 		return nil
 	}
-	a.CreatedAt = createdAt
+	a.TenantID = tenantID.String
+	a.DeviceID = deviceID.String
+	a.AgentID = agentID.String
+	a.Severity = severity.String
+	a.Message = message.String
+	a.CreatedAt = createdAt.Time
 	a.AlertID = alertID.String
 	a.Status = status.String
 	a.AcknowledgedBy = ackBy.String
-	a.SilencedUntil = silencedUntil
+	a.SilencedUntil = silencedUntil.Time
 	a.Comment = comment.String
-	a.UpdatedAt = updatedAt
+	a.UpdatedAt = updatedAt.Time
 	return &a
 }
 
