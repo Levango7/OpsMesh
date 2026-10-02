@@ -2843,9 +2843,15 @@ CRLF 指纹记进 `schema_migrations`；此后跑官方（LF）镜像就必然�
 | ② | 指纹改为**行尾与 BOM 无关**（`normalizeMigrationContent` 后再 sha256） | 只让**新**记录一致，存量库记录的仍是旧 CRLF 值 |
 | ③ | 识别 `legacyCRLFChecksum` 后**一次性、留日志的再基线**；其它任何不符照旧 fatal | 没有①②就会一直靠再基线兜底，等于纵容行尾漂移 |
 
-真机验证（不靠推断）：修复镜像启动时逐条打出 17 条再基线 WARN 并正常服务；
-台账 19/19 与发布版一致；**换回发布版 0.11.0 镜像后仍能健康启动、且不再出现任何再基线 WARN**
-（幂等，且发布版→发布版本来就该无恙）。测试两道：
+**A/B 对照（把"确实是它"这件事钉死）**：把台账改回 CRLF 时代的 17 个值后——
+
+| 镜像 | 结果 |
+|---|---|
+| 发布版 `opsmesh/controlplane:0.11.0` | `Restarting (1)`，日志 `迁移致命错误…checksum mismatch recorded=43c39a49…` |
+| 同一库 + 含修复的镜像 | `Up (healthy)`，日志逐条打出 **17 条**「已再基线为行尾无关的规范值」WARN |
+| 再基线后再换回发布版 0.11.0 | `Up (healthy)`，**0 条**再基线 WARN（幂等，且发布版→发布版本来无恙） |
+
+台账最终与发布版规范指纹 19/19 一致。测试两道：
 `TestMigrationChecksum_LineEndingAgnostic`（纯逻辑，钉"行尾不同指纹必须相同"与"改语义必须不同"），
 `TestRunMigrations_RebaselinesLegacyCRLFChecksum`（真 MySQL：植入遗留指纹→必须自愈；再植入随机指纹→必须仍 fatal）。
 
@@ -2907,9 +2913,17 @@ Alertmanager **不读环境变量**，仓里放死配置等于放一个假的外
 ### 30.6 结果与仍未覆盖
 
 - `deploy.sh up --no-build -y`：**DEPLOY_RC=0**，13 个服务全部 healthy，冒烟全过，18 个抓取目标 0 DOWN；
-- `verify-runtime.sh`：**PASS=123 / FAIL=1**，唯一那条红是我自己灌出来的 `OpsMeshMetricsCardinalityFolding`
-  （基数上限打穿后的真告警，`value=490`，随 30m 窗口自然 resolve）——不是缺陷，也不去掩盖；
-  `WARN` 6 条均为"事件尚未发生/需真实流量"类，逐条写明原因；
+- `verify-runtime.sh`：**PASS=124 / FAIL=1**，唯一那条红是我自己灌出来的 `OpsMeshMetricsCardinalityFolding`
+  （`job=task-svc`，把 HTTP 时序上限打穿后的真告警，`value≈490`），它同时是**送达链的活证据**：
+  Prometheus 里 firing、Alertmanager `/api/v2/alerts` 收到同一条且 `inhibitedBy/silencedBy` 均为空。
+  随 30m 窗口自然 resolve——不是缺陷，也不去掩盖；`WARN` 6 条均为"事件尚未发生/需真实流量"类，逐条写明原因；
+- **`deploy.sh smoke` 原来在健康栈上会中途退出**（新发现，两个独立问题）：
+  ① 它是**裸调用** `run_smoke_tests`，errexit 真的生效，而 4b 那段
+  `down_jobs="$(… | grep -o '"job":"…" | …)"` 在**没有 DOWN 目标（好情况）**时 grep 返回 1，
+  紧跟的 `[ -z "$down_jobs" ] && break` 在坏情况下也返回 1 ⇒ 健康栈跑到 4b 就 rc=1 中断，
+  后面的微服务检查根本不执行；`do_up` 写成 `if ! run_smoke_tests` 恰好把这个问题整段遮住了。
+  ② 冒烟清单只有 9 个服务，三域转正后新增的三个从未加入——与 prometheus.yml、verify-runtime §6
+  同一类"转正后清单落后"。两处都已修，修完 `deploy.sh smoke` rc=0 且 12/12 服务逐个通过。
 - `validate-deploy-assets.sh`：**PASS=42 / FAIL=0 / SKIP=1**（SKIP 是 kubeconform 离线取不到 schema）；
 - `golangci-lint run ./...` 0 issues、`gofmt -l .` 空、契约测试与 store 测试全绿。
 

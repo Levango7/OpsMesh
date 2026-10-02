@@ -1100,9 +1100,16 @@ run_smoke_tests() {
             sleep 5
             continue
         fi
+        # 两处 errexit 陷阱（`deploy.sh smoke` 是裸调用 run_smoke_tests ⇒ set -e 真的生效；
+        # 而 do_up 里写成 `if ! run_smoke_tests` 会把它们全遮住，所以平时看不出来）：
+        #   ① grep **没匹配到**（= 没有 DOWN 目标，好情况）退出码 1 → 命令替换失败即中断；
+        #   ② `[ -z … ] && break` 在 down_jobs 非空时整条 AND 列表返回 1 → 同样中断。
+        # 结果健康栈反而只跑到 4b 就返回 1（2026-10-02 实测），冒烟自检形同半跑。
         down_jobs="$(printf '%s' "$q_resp" | grep -o '"job":"[^"]*"' \
-            | sed 's/"job":"//; s/"$//' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
-        [ -z "$down_jobs" ] && break
+            | sed 's/"job":"//; s/"$//' | sort -u | tr '\n' ' ' | sed 's/ *$//' || true)"
+        if [ -z "$down_jobs" ]; then
+            break
+        fi
         sleep 5
     done
     if [ -z "$down_jobs" ]; then
@@ -1137,17 +1144,23 @@ run_smoke_tests() {
     fi
 
     # 5) 微服务健康检查（端口仅绑 127.0.0.1）
+    # 12 个而不是 9 个：incident / runbook / autoscaler 三域在 v0.10.0 已进出厂栈，
+    # 冒烟清单却落后了两个版本（2026-10-02 升 0.11.0 时发现——deploy.sh 会对它们的
+    # 起不来完全无感）。健康路径也与其它服务不同（/api/v1/health），照抄 /health 会假失败。
     local entry svc_name svc_rest svc_var svc_port svc_path
     for entry in \
         auth-svc:AUTH_SVC_HTTP_PORT:8100:/health \
         device-svc:DEVICE_SVC_HTTP_PORT:8101:/health \
         task-svc:TASK_SVC_HTTP_PORT:8102:/health \
         alert-svc:ALERT_SVC_HTTP_PORT:8103:/health \
+        incident-svc:INCIDENT_SVC_HTTP_PORT:8104:/api/v1/health \
         config-svc:CONFIG_SVC_HTTP_PORT:8106:/health \
         log-svc:LOG_SVC_HTTP_PORT:8105:/healthz \
         gpu-svc:GPU_SVC_HTTP_PORT:8107:/health \
         aio-svc:AIO_SVC_HTTP_PORT:8108:/health \
-        portal-svc:PORTAL_SVC_HTTP_PORT:8109:/health
+        portal-svc:PORTAL_SVC_HTTP_PORT:8109:/health \
+        runbook-svc:RUNBOOK_SVC_HTTP_PORT:8110:/api/v1/health \
+        autoscaler-svc:AUTOSCALER_SVC_HTTP_PORT:8111:/api/v1/health
     do
         svc_name="${entry%%:*}"
         svc_rest="${entry#*:}"

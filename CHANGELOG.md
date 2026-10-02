@@ -32,6 +32,8 @@
 - **新增｜门禁 §15「告警送达链路接通性」**：`alerting` 段不得被注释、compose 必须有 alertmanager、必须挂**渲染出的**配置（不是仓里死配置）、`deploy.sh` 必须调用且渲染失败要中止部署、`generated/` 必须不入库、默认配置去掉占位后必须是合法 YAML 且带 inhibit 规则。**这条门禁在本轮就地抓到东西**：`generated/alertmanager.yml` 不带 `./` 前缀会被 compose 当**命名卷**（"refers to undefined volume"），§4 渲染检查直接判红。
 - **新增｜`verify-runtime.sh` §7d**：三跳逐个观察——AM `/-/healthy` 200、Prometheus `activeAlertmanagers` 非空、AM 已加载配置里是否真含外发通道（没有就 WARN 并说明怎么开）。配套把 `alertmanager` 的宿主端口加上（原先不绑宿主，脚本与运维都无从查）。
 - 过程记录（同一轮的自我纠错）：`ensure_service_databases` 与 `verify_prometheus_effective_config` 的初版各有一处自己的错——`sed` 的 BRE 写法在这台 Git-Bash 上抽不出任何 `job_name`（我让它**主动判红**而不是静默通过，所以当场暴露），改用 `sed -E` 后核出 18 个 job；`ALERTMANAGER_CONFIG` 默认值先写成不带 `./` 的形式（就是上面那条命名卷红）。
+- **修｜`deploy.sh smoke` 在健康栈上中途退出**（写清单/跑 smoke 时才暴露）：`smoke` 是**裸调用**冒烟函数，errexit 真生效，而采集目标核对那段 `down_jobs="$(… | grep -o '"job":"…"' …)"` 在**没有 DOWN 目标（也就是好情况）**时 grep 退出码 1，紧跟的 `[ -z "$down_jobs" ] && break` 在坏情况下同样返回 1 ⇒ 健康栈跑到 4b 就 `rc=1` 中断，**后面的微服务健康检查一条都没跑**；`do_up` 因为写成 `if ! run_smoke_tests` 恰好把整件事遮住。同处另一条：冒烟清单只有 9 个服务，三域转正后又落后一次（与 prometheus.yml、verify-runtime §6 同一类）。改法是 `|| true` + `if…then break`，清单补到 12 个（三域健康路径是 `/api/v1/health`）。修后 `deploy.sh smoke` **rc=0、12/12 逐个通过**。
+- **送达链的活证据（本轮唯一一次真端到端）**：`OpsMeshMetricsCardinalityFolding` 在 Prometheus 里 firing 的同时，Alertmanager `/api/v2/alerts` 收到同一条、`inhibitedBy`/`silencedBy` 均为空 ⇒ "规则评估 → 送到 AM"这半条链第一次有真机证据；AM 之后往真实渠道推那一段仍未验证。
 - **仍然未做**：AM 的**真实外发**没验到端到端（需要一个真实可达的 webhook 收件端；本轮只验到"配置被真实 AM 接受 + Prometheus 有活动 AM 端点 + 未配置时明确 WARN"）；K8s 路径继续依赖集群自带的 Alertmanager（文档已写明），chart 不再另起一套。
 
 
