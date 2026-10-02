@@ -54,6 +54,19 @@
 
 
 
+## [Unreleased] — 2026-10-03 吞错计数接进告警规则；顺带抓到"开关存在但那条路径不读它"
+
+> 证据：新规则在真机 Prometheus 上 `health=ok / lastError 空` → 制造吞错后 `increase(...[10m])` 从 0 线性爬到 54 → `pending(+105s)` → **`firing(+405s)`** → 收件端 00:40:56 收到（`severity=warning`、`Authorization` 头在）；`helm template` 渲染产物按 YAML 解析核对（`opsmesh.rules` 4 条、镜像组 10 条）；`go build ./...` RC=0、`gofmt` 干净、`go test ./internal/controlplane/ -run TestAlertWebhookGuard` 绿且**变异判红**；验证完把表名、`.env`、AM 配置、控制面镜像全部还原（`.env` 键集合与本轮开始前逐名一致，并顺手去掉我自己造成的 OTEL 端口重复键）。
+
+- **新增｜出厂规则 `StoreSwallowedErrors`**：`increase(opsmesh_store_write_failures_total[10m]) > 0`，`for: 5m`，severity=warning。上一轮修的是"这条计数在抓取面从不被推送"，但**没有任何规则引用它**——"看得见"仍不等于"有人被通知"。取 `increase()` 而非绝对值：该计数自进程启动累计，写 `> 0` 会让抖过一次的长期实例永久 firing。compose 与 chart 两份装载点刻意用**同一个 alertname**（不套 chart 那组的 `OpsMesh` 前缀），因为 alertname 是静默规则/抑制规则/runbook 检索的键，两个名字等于两条告警。
+- **修｜`--webhook-allow-private` 在 M7 外发循环上根本不生效**：`notifyLoop` 调的是无开关的旧实现 `validateURLSSRF`，而同一份配置里的 Webhook CRUD 与 notify-channels 都调开关版 `ValidateWebhookURL`。后果是企业客户最常见的部署方式（钉钉/飞书**内网**网关、集群内自建收件端）被静默拒绝——notifyLoop 不启动，容器照样 `Up + healthy`，只在日志留一行 error。这是"开关存在但那条路径不读它"的教科书形态：配置项、文档、另一半代码都齐了，唯独执行点接错。
+- **修｜顺手收紧一处安全语义**：`ValidateWebhookURL` 在 `allowPrivate=true` 时是**跳过全部 IP 校验**，于是云元数据地址 `169.254.169.254` 也被放行。M7 路径上叠加一层 link-local/元数据拒绝（任何开关都不放行）；共享校验器本身没动——它还有两个调用点，收窄语义应另开一轮并配齐那两侧的用例。
+- **新增｜`notifyLoop` 启动即打印一行**（脱敏 webhook 值 + webhook/email 两个通道是否生效）：这条通道此前"配了也不知道有没有生效"。
+- 测试：`notify_loop_guard_test.go` 六个用例覆盖（内网服务名/私网 IP × 开关两态 + 元数据 + 非 http 协议）；把 guard 退回 `validateURLSSRF` ⇒ "私网 IP + 开关打开必须放行"立刻判红。
+- **本轮未做（别当成已做）**：① M7 外发通道的活体投递未验——修的是启动准入判定，有单元与变异证据，但没有"真实发出一条业务告警并到达收件端"的活证据（要做需要重建控制面镜像 + 造 firing 业务告警 + 假网关，与上一轮 AM 那条腿同级的工作量）；② compose 里**没有**暴露 `OPSMESH_ALERT_WEBHOOK_URL`，所以 Docker 客户仍无法在不改 compose 的情况下配置这条通道；③ 控制面 M7 告警与 Alertmanager 两条外发路径**并存且载荷形状不兼容**（自家格式 vs AM 的 `[{labels,…}]`），"合并成单一总线"需要一层转换或改语义，本轮只做了决策前置的事实核对：AM 负责监控规则分发、控制面/alert-svc 负责业务告警与 ack/resolve 事件，`PAGERDUTY_*` 与 `OPSMESH_ALERT_WEBHOOK_URL` 是独立能力而非同一处配置的两个别名——文档写清了边界，代码未合并。
+
+
+
 ## [Unreleased] — 2026-10-02 真机验证新告警：抓出一条「语法合法但 Prometheus 评估失败」的规则，并补上拦住它的运行时门禁
 
 > 证据：真实 `prom/prometheus:v2.55.0` 挂载仓库内 `prometheus.yml`/`prometheus-alerts.yml` 起进程（`Completed loading of configuration file … rules=26.8ms`，无 error；`/api/v1/rules` 6 组全部注册；`/api/v1/targets` 18 个活动 target，13 个 OpsMesh 目标一个不缺）；再拉**已发布的** `ghcr.io/levango7/task-svc:0.11.0` 镜像（不是本地重建产物）单跑，配只抓它的 Prometheus + 出厂规则，匀速打 2400 条不同路径把基数上限打穿：服务侧 `http_metrics_series 2001 / http_metrics_series_dropped_total 488`，告警侧 `OpsMeshMetricsCardinalityFolding` 先 pending、5 分钟后 **firing（job=task-svc value=488.48）**，同组业务侧那条保持 inactive（跟着事实走，不是恒真）。新门禁 §7c 用三个输入自证：真机（rc=0）／注入 `health=err`（rc=1 并打印 group+alert+lastError）／空规则集（rc=1，拒绝空转）。详见报告 §29.8。

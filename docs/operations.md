@@ -1158,6 +1158,37 @@ Kubernetes 路径不重复造轮子：生产集群一般已有 kube-prometheus-s
 
 ### 4.6 通知渠道配置
 
+#### 4.6.0 三条外发通道分别是谁在发、配在哪（先看这张表）
+
+产品里有**三条互相独立**的外发路径。它们的**告警来源不同**，所以不是同一处配置的三个别名；
+只配其中一条，另外两类事件不会发出去。
+
+| 通道 | 告警来源 | 配置入口 | 出厂默认 | 载荷形状 |
+|---|---|---|---|---|
+| **Alertmanager** | Prometheus 出厂规则（监控面：服务 DOWN、错误率、基数折叠、存储吞错…） | `.env` 的 `ALERT_WEBHOOK_URL` / `ALERT_WEBHOOK_BEARER`，由 `deploy.sh` 渲染进 `generated/alertmanager.yml` | 起 AM 容器、**不外发**（未配 URL 时大声 WARN） | Alertmanager 标准 webhook（`version=4`、`alerts[].labels/annotations/status`） |
+| **控制面 `notifyLoop`（M7）** | 数据库里 firing 的**业务告警**（设备/任务/巡检产生并落库的那些） | 旗标 `--alert-webhook-url` / env `OPSMESH_ALERT_WEBHOOK_URL`；收件端在内网时需 `--webhook-allow-private=true` | **关闭**（compose 未暴露该 env，需自行加或用 `docker compose ... -e`） | OpsMesh 自定义 JSON（按 URL 域名自动识别 Slack / 企业微信形态） |
+| **alert-svc 的 PagerDuty** | 告警的 **ack / resolve 事件**（值班动作回写外部系统） | `PAGERDUTY_ENABLED` / `PAGERDUTY_ROUTING_KEY` / `PAGERDUTY_API_URL`（compose 里有） | `PAGERDUTY_ENABLED=false` | PagerDuty Events V2 |
+
+要点：
+
+- **想"值班群收到监控告警"配第 1 条即可**；想"业务告警也进群"必须再配第 2 条，
+  两者不会互相代劳。第 2 条的 URL 与第 1 条**填成同一个地址是可以的**（IM 群机器人一般按
+  文本渲染，不校验形状），但要清楚你会同时收到两类内容、去重逻辑各不相同。
+- 第 2 条有个容易踩的坑，本轮已修：`notifyLoop` 过去调用的是**不读开关**的旧 SSRF 校验，
+  于是"收件端在内网"（钉钉/飞书内网网关、集群内自建服务）会被**静默拒启动**，
+  容器照样 healthy。现在它走 `ValidateWebhookURL(..., --webhook-allow-private)`，
+  并额外**始终**拒绝云元数据段（169.254.0.0/16，任何开关都不放行）；
+  启动成功会打印一行 `notifyLoop 已启动…`，失败时 error 里带 `webhookAllowPrivate` 当前值与放行办法。
+- 第 2 条与第 3 条的失败可见性不同：AM 的发送结果读它自己的
+  `alertmanager_notifications_total` / `..._requests_failed_total`（见 §4.5 表）；
+  alert-svc 的外发失败读业务序列 `business_metrics_total{name="alert_external_notify_failures"}`，
+  出厂规则 `OpsMeshAlertExternalNotifyFailed` 已引用它。控制面这条通道失败只打日志
+  （推送失败会**撤销去重标记**并在下一轮重试，所以偶发失败不会永久丢通知）。
+- "合并成单一总线"（业务告警也先投 AM `/api/v2/alerts`、由 AM 统一路由）在形状上不兼容：
+  控制面发的是自家 JSON，AM 要的是 `[{labels,annotations,startsAt,endsAt}]`，
+  且 notifyLoop 自带的聚合/抑制/按指纹去重语义需要一并搬进 AM 的 `group_by`/`inhibit_rules`
+  才不丢能力。因此现阶段**刻意保持两条**，本节负责把边界说清；真要合并请单开一轮。
+
 #### 4.6.1 单渠道（环境变量）
 
 命令示例：配置飞书告警
