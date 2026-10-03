@@ -219,6 +219,11 @@ type Server struct {
 	// 即使多个 handler goroutine 同时进入 ensureGateway，也只会赋值一次。
 	gatewayOnce sync.Once
 
+	// lic 商业授权状态，启动时定稿（见 license_gate.go）。
+	// nil=未初始化；测试直接构造 Server 而不经 NewServer 时为 nil，
+	// 此时 licensed() 返回 false、企业版闸门按未授权处理（fail-closed）。
+	lic *licenseState
+
 	// automationEvalInterval 自动化引擎评估周期（来自 cfg.AutomationEvalInterval）。
 	// server_lifecycle.go Start 中 startAutomationEvalLoop(ctx, automationEvalInterval)
 	// 周期调用 processAutomationRules 评估 enabled 规则并执行命中动作。
@@ -352,6 +357,8 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		alertSent: make(map[string]time.Time),
 		// Phase 5 API 网关运行期状态（路由规则 + 限流器 + 统计）。
 		gateway: newGatewayState(),
+		// 商业授权状态：启动时定稿一次，之后只读（见 license_gate.go）。
+		lic: initLicenseState(cfg),
 		// 自动化引擎评估周期（startAutomationEvalLoop 消费；<=0 时 loop 内部按 30s 兜底）。
 		automationEvalInterval: cfg.AutomationEvalInterval,
 		// 灾备备份归档目录：data-dir/backups（与 CLI backup 子命令同源，便于运维统一备份数据目录）。

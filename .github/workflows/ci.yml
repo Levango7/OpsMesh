@@ -1272,10 +1272,16 @@ jobs:
       # 黑盒验收：构建真实二进制、启动、断言 /enterprise/ 可用且确实内置了产物（非占位页）。
       # 这一层是防「测试通过但交付物里没有前端」的关键——P0-3 的成因正是「代码看起来支持、产物里没有」。
       - name: 黑盒验证二进制内置企业版前端
+        # 商业授权门禁落地后，本步必须带**运行时生成的一次性授权**——否则拿到的
+        # 是「未授权说明页」而非企业版应用（授权控制见 internal/config/license.go
+        # 与 docs/license-decision-2026-10-03.md）。密钥对在 CI 内现生成，
+        # 仓库零私钥；真实签发私钥只在签发端。
         run: |
           set -euo pipefail
           go build -o /tmp/opsmesh ./cmd/opsmesh
-          /tmp/opsmesh --mode=controlplane --store=memory --demo --http-port=18099 --grpc-port=19099 --metrics-port=19098 > /tmp/cp.log 2>&1 &
+          go run ./deploy/scripts/license-ci -out-dir /tmp/lic
+          /tmp/opsmesh --mode=controlplane --store=memory --demo --http-port=18099 --grpc-port=19099 --metrics-port=19098 \
+            --license-public-key="$(cat /tmp/lic/public.key)" --license-key="$(cat /tmp/lic/license.key)" > /tmp/cp.log 2>&1 &
           CP_PID=$!
           trap 'kill $CP_PID 2>/dev/null || true' EXIT
           for _ in $(seq 1 60); do
@@ -1312,6 +1318,29 @@ jobs:
       # 必须先 playwright install 下载浏览器，否则 CI 上浏览器二进制不存在（78 用例全挂）。
       # PLAYWRIGHT_DOWNLOAD_HOST 用 npmmirror 镜像：cdn.playwright.dev 偶发卡死
       # （曾 30+ 分钟无进展，GitHub 网络抖动）。
+      - name: 黑盒验证未授权态被门禁隔离
+        # 授权门禁的另一半契约：未授权时企业版应用不可得——外壳页不引用任何
+        # assets 分包（防止直接拉走分包自行拼壳），且 /api/v1/license 报未授权。
+        run: |
+          set -euo pipefail
+          go build -o /tmp/opsmesh-nolic ./cmd/opsmesh
+          /tmp/opsmesh-nolic --mode=controlplane --store=memory --demo --http-port=18098 --grpc-port=19098 --metrics-port=19097 > /tmp/cp-nolic.log 2>&1 &
+          CP_PID=$!
+          trap 'kill $CP_PID 2>/dev/null || true' EXIT
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:18098/healthz > /dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -s -o /tmp/ent-nolic.html http://127.0.0.1:18098/enterprise/
+          if grep -q '/enterprise/assets/' /tmp/ent-nolic.html; then
+            echo "::error::未授权外壳仍引用 assets 分包——门禁失效"
+            exit 1
+          fi
+          grep -qE '未授权|未许可|unlicensed' /tmp/ent-nolic.html || {
+            echo "::error::未授权外壳未呈现授权提示（门禁可能未生效）"
+            exit 1
+          }
+          echo "✅ 未授权态：外壳隔离 + 授权提示均在位"
       - name: Install Playwright browsers
         run: |
           export PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/

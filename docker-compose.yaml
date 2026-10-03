@@ -4,6 +4,27 @@
 # 停止：docker compose down
 # 清理数据卷：docker compose down -v
 #
+# ============================================================================
+# ⚠️ 本文件是「开发/演示」栈，含多处刻意的降级，**禁止直接用于任何可被他人访问的环境**。
+#
+# 降级项清单（每一项都是安全开关的关闭，改端口/改密码并不能修复）：
+#   1. --demo：一次性关闭四道防线——
+#        · bootstrap token 校验直接放行 → /install.sh 与 /bin/opsmesh-agent 对全网开放
+#          （后者直接分发 agent 二进制本体）
+#        · 跳过 CSRF Origin 校验
+#        · 无身份即放行（RBAC 兜底关闭）
+#        · 关闭 gRPC agent 身份签名
+#      同时它也是 admin/admin123 可直接登录的原因（非 demo 模式首登会强制改密）。
+#   2. MySQL 口令 rootpass / opsmesh 为版本库内的固定弱口令。
+#   3. OPSMESH_JWT_SECRET 默认为空 → 控制面启动时随机生成，**重启即会话全失**；
+#      多副本各自随机密钥互不相认。
+#   4. 未配置 TLS（--http-tls 默认 auto，无证书即明文 HTTP）。
+#
+# 要交付给客户 / 上生产，请用以下任一路径，它们从机制上杜绝上述降级：
+#   - Helm：helm install opsmesh ./deploy/helm/opsmesh -f deploy/helm/opsmesh/values-production.yaml
+#   - Compose：deploy/docker/docker-compose.prod.yml（凭据统一 ${VAR:?必填}，缺失即报错）
+#   - 裸机：deploy/systemd/
+# ============================================================================
 # 服务拓扑：
 #   controlplane (HTTP 8080 / gRPC 9090 / metrics 9091) → mysql:3306 + redis:6379
 #   agent → controlplane:8080

@@ -2,7 +2,11 @@ package controlplane
 
 import (
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 // ============================================================================
@@ -334,4 +338,112 @@ func parseIPMust(t *testing.T, s string) net.IP {
 		t.Fatalf("net.ParseIP(%q) = nil", s)
 	}
 	return parsed
+}
+
+// ============================================================================
+// 出网 client 的 SSRF 防护（newEgressClient）
+// ============================================================================
+//
+// 回归背景：ValidateWebhookURL 只在保存配置时跑一次，而 DNS 记录此后可被改动
+// （rebinding），且 Go 的 http.Client 默认跟随最多 10 次重定向。两者叠加，
+// "校验通过的外网 URL"可以在投递时把请求送到 169.254.169.254。
+// newEgressClient 在**建连时**逐 IP 复检，并对每一跳重定向重新做 URL 级校验。
+
+// TestSSRFRebinding_RejectsMetadataLiteralAtDialTime 验证直连元数据地址在拨号层被拒。
+//
+// 用 169.254.169.254（云 IMDS 凭证窃取的头号目标）作为目标：即使调用方
+// （如网关 TargetBackend 复检）选择了放行私网的策略，拨号层仍必须硬拒。
+func TestSSRF_EgressClientRejectsMetadataDial(t *testing.T) {
+	client := newEgressClient(2*time.Second, true) // allowPrivate=true 仍应拒元数据
+	resp, err := client.Get("http://169.254.169.254/latest/meta-data/")
+	if err == nil {
+		defer func() { _ = resp.Body.Close() }()
+		t.Fatalf("拨号层未拦截元数据地址，status=%d（SSRF 防护失效）", resp.StatusCode)
+	}
+	if !strings.Contains(err.Error(), "SSRF") {
+		t.Errorf("错误信息应说明被 SSRF 防护拦截，实际: %v", err)
+	}
+}
+
+// TestSSRF_EgressClientRejectsLoopbackWhenPrivateDisallowed 验证 allowPrivate=false 时
+// 连回环地址都被拒（拨号层与 ValidateWebhookURL 口径一致）。
+func TestSSRF_EgressClientRejectsLoopbackWhenPrivateDisallowed(t *testing.T) {
+	client := newEgressClient(2*time.Second, false)
+	resp, err := client.Get("http://127.0.0.1:1/")
+	if err == nil {
+		defer func() { _ = resp.Body.Close() }()
+		t.Fatal("allowPrivate=false 时回环地址应被拨号层拒绝")
+	}
+}
+
+// TestSSRF_EgressClientFollowsRedirectPolicy 验证重定向被逐跳校验：
+// 第一个 URL（127.0.0.1）在 allowPrivate=true 下合法，其 302 目标
+// （169.254.169.254）必须被 CheckRedirect 拦下——这正是"外网 302 打到元数据"的形态。
+func TestSSRF_EgressClientRedirectToMetadataRejected(t *testing.T) {
+	metaHit := false
+	// 假"外网"服务：302 指向云元数据。
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	// 该测试服务端自身监听在 127.0.0.1，故 allowPrivate=true 才允许发起首个请求。
+	client := newEgressClient(2*time.Second, true)
+	resp, err := client.Get(srv.URL)
+	if err == nil {
+		defer func() { _ = resp.Body.Close() }()
+		t.Fatalf("重定向到元数据未被拦截，status=%d", resp.StatusCode)
+	}
+	if metaHit {
+		t.Error("请求不应真正抵达元数据端点")
+	}
+}
+
+// TestSSRF_EgressClientBlocksTooManyRedirects 验证重定向跳数上限。
+func TestSSRF_EgressClientBlocksTooManyRedirects(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 指向自身，形成无限重定向链。
+		http.Redirect(w, r, srv.URL+"/loop", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	client := newEgressClient(2*time.Second, true)
+	resp, err := client.Get(srv.URL + "/loop")
+	if err == nil {
+		defer func() { _ = resp.Body.Close() }()
+		t.Fatal("无限重定向链应被跳数上限截断")
+	}
+	if !strings.Contains(err.Error(), "too many redirects") {
+		t.Errorf("错误应提及重定向跳数超限，实际: %v", err)
+	}
+}
+
+// TestSSRF_IPRejectionMatchesWebhookPolicy 验证拨号层与 ValidateWebhookURL 的 IP 判定口径一致。
+//
+// 两处策略分叉是这类防护最常见的失效方式，故用同一张表驱动两边的期望值。
+func TestSSRF_IPRejectionMatchesWebhookPolicy(t *testing.T) {
+	cases := []struct {
+		ip           string
+		wantPrivate  bool // allowPrivate=false 时是否应拒
+		wantAllowAny bool // allowPrivate=true 时是否仍应拒
+	}{
+		{"169.254.169.254", true, true}, // 云元数据：任何策略都拒
+		{"169.254.1.1", true, true},     // 链路本地整段
+		{"0.0.0.0", true, true},         // 未指定
+		{"10.1.2.3", true, false},       // 私网：内网开关可放行
+		{"192.168.1.1", true, false},
+		{"172.16.0.1", true, false},
+		{"127.0.0.1", true, false}, // 环回：内网开关可放行
+		{"8.8.8.8", false, false},  // 公网
+	}
+	for _, c := range cases {
+		ip := parseIPMust(t, c.ip)
+		if got := ssrfIPRejection(ip, false) != ""; got != c.wantPrivate {
+			t.Errorf("ssrfIPRejection(%s, allowPrivate=false) 拒绝=%v, want %v", c.ip, got, c.wantPrivate)
+		}
+		if got := ssrfIPRejection(ip, true) != ""; got != c.wantAllowAny {
+			t.Errorf("ssrfIPRejection(%s, allowPrivate=true) 拒绝=%v, want %v", c.ip, got, c.wantAllowAny)
+		}
+	}
 }

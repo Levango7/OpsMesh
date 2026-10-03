@@ -913,7 +913,18 @@ Webhook 通道（generic/feishu/dingtalk/slack/企业微信）与邮件通道（
 | `--otel-service-name` | string | "" | OPSMESH_OTEL_SERVICE_NAME | OTel 服务名标识（如 opsmesh-controlplane / opsmesh-agent）；空=回退 opsmesh |
 | `--otel-stdout` | bool | false | OPSMESH_OTEL_STDOUT | OTel 导出到 stderr（调试用，与 --otel-endpoint 互斥，stdout 优先） |
 
-> 共 **119 个 flag**，覆盖基础/存储/安全/网络/告警/日志/调度/纳管/高级九大领域。所有 flag 均支持同名 `OPSMESH_*` 环境变量兜底，命令行显式设置优先级最高。
+### 商业授权配置
+
+Open-Core 双许可（内核 Apache-2.0，企业版前端商业授权）。未配置时按社区版运行，内核功能完全不受影响。
+
+| Flag | 类型 | 默认值 | 环境变量 | 说明 |
+|------|------|--------|----------|------|
+| `--license-public-key` | string | "" | OPSMESH_LICENSE_PUBLIC_KEY | 厂商 Ed25519 公钥（PEM 文本 / 文件路径 / 裸 base64 / 裸 hex）；空=不校验授权，按社区版运行 |
+| `--license-key` | string | "" | OPSMESH_LICENSE_KEY | 授权凭据（`base64url(payloadJSON).base64url(signature)`）；空=未授权 |
+
+> 任何校验失败（公钥配错、凭据过期、签名不符）都**降级为社区版而不拒绝启动**，原因可通过 `GET /api/v1/license` 查询。多副本部署时 `--license-public-key` 必须一致，否则负载均衡到不同副本时功能时有时无。
+
+> 共 **121 个 flag**，覆盖基础/存储/安全/网络/告警/日志/调度/纳管/高级/授权九大领域。所有 flag 均支持同名 `OPSMESH_*` 环境变量兜底，命令行显式设置优先级最高。
 
 ---
 
@@ -1150,4 +1161,21 @@ docs/                     ← 24 篇设计文档（产品/架构/数据库/接�
 
 ## License
 
-内部项目，私有部署。管控通道为自研 gRPC（direct + proxy）；原蓝鲸 GSE 社区版底座已移出 MVP，降格为可选增强（见 `DELIVERY.md`）。
+**Open-Core 双许可**：
+
+| 部分 | 许可 | 说明 |
+|---|---|---|
+| 内核（Go 控制面 + agent + Operator + Helm Chart + 文档） | [Apache-2.0](LICENSE) | 任何人可自由使用、修改、分发（含闭源衍生），**无授权限制** |
+| 企业版前端（Vue3 + Vite 完整功能控制台） | 商业授权 | 需 `--license-key`，未授权时 `/enterprise/` 返回未授权说明页 |
+
+授权校验为**离线 Ed25519 验签**，不依赖 License Server，私有化内网可直接使用：
+
+```bash
+opsmesh --license-key="<凭据>" --license-public-key="<厂商公钥>"
+```
+
+未授权时内核功能（`/api/v1/**`、agent 通道、监控）**完全可用**；授权状态可随时查 `GET /api/v1/license`。
+
+依赖许可审计结论：依赖树中 GPL/LGPL/AGPL/CDDL/EPL 依赖数为 **0**（仅 24 个 MPL-2.0，均为文件级 copyleft 且未被 patch），详见 `docs/license-decision-2026-10-03.md`。
+
+> 管控通道为自研 gRPC（direct + proxy）；原蓝鲸 GSE 社区版底座已移出 MVP，降格为可选增强（见 `DELIVERY.md`）。

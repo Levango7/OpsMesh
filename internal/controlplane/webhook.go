@@ -265,14 +265,16 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request, id st
 	event := "test.event"
 	payload := `{"event":"test.event","message":"webhook test delivery"}`
 
-	// SSRF 校验：拒绝私网/元数据地址。
-	if err := ValidateWebhookURL(wh.URL, false); err != nil {
+	// SSRF 校验：默认拒绝私网/元数据地址；--webhook-allow-private 开启时放行内网收件端
+	// （但链路本地/云元数据/0.0.0.0/8 恒拒，见 ValidateWebhookURL）。
+	allowPrivate := s.cfg != nil && s.cfg.WebhookAllowPrivate
+	if err := ValidateWebhookURL(wh.URL, allowPrivate); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("webhook URL rejected: %v", err)})
 		return
 	}
 
 	// 真实投递：HTTP POST。
-	statusCode, respBody, err := deliverWebhook(wh.URL, event, payload)
+	statusCode, respBody, err := deliverWebhook(wh.URL, event, payload, allowPrivate)
 	if err != nil {
 		// 投递失败：记录失败状态。
 		delivery := s.store.RecordWebhookDelivery(actx.TenantID, id, event, payload, 0, err.Error(), err.Error())
@@ -302,7 +304,19 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request, id st
 }
 
 // deliverWebhook 执行真实的 HTTP POST 投递。
-func deliverWebhook(rawURL, event, payload string) (int, string, error) {
+//
+// allowPrivate 与 ValidateWebhookURL 同义（--webhook-allow-private）：内网收件端场景
+// 需为 true，但链路本地/云元数据/0.0.0.0/8 恒拒。
+//
+// 用 newEgressClient 而非裸 http.Client 的原因：webhook URL 在**保存时**校验过，
+// 但 DNS 记录此后可被改动（rebinding），且裸 client 默认跟随最多 10 次重定向——
+// 两者叠加即可让"校验通过的外网 URL"在投递时打到 169.254.169.254。
+// newEgressClient 在建连时逐 IP 复检，并对每一跳重定向重新做 URL 级校验。
+func deliverWebhook(rawURL, event, payload string, allowPrivate bool) (int, string, error) {
+	// 投递期二次校验：配置是持久化的，保存时的结论不能代表此刻仍然安全。
+	if err := ValidateWebhookURL(rawURL, allowPrivate); err != nil {
+		return 0, "", fmt.Errorf("webhook URL rejected at delivery time: %w", err)
+	}
 	req, err := http.NewRequest(http.MethodPost, rawURL, strings.NewReader(payload))
 	if err != nil {
 		return 0, "", fmt.Errorf("create request: %w", err)
@@ -311,7 +325,7 @@ func deliverWebhook(rawURL, event, payload string) (int, string, error) {
 	req.Header.Set("User-Agent", "OpsMesh-Webhook/1.0")
 	req.Header.Set("X-OpsMesh-Event", event)
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := newEgressClient(10*time.Second, allowPrivate)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, "", fmt.Errorf("HTTP POST: %w", err)

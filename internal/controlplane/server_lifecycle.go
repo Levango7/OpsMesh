@@ -30,6 +30,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/devices", s.handleDevices)
 	mux.HandleFunc("/api/v1/agents", s.handleAgents)
 	mux.HandleFunc("/api/v1/me", s.handleMe)
+	// 商业授权状态（Open-Core）：社区版与授权版都能查，但需登录——
+	// 授权态含客户名与设备上限，属商务信息。端点本身不受 requireEnterpriseGate 约束，
+	// 否则未授权用户恰好无法查"为什么没授权"。
+	mux.HandleFunc("/api/v1/license", s.handleLicenseStatus)
 	mux.HandleFunc("/api/v1/tasks", s.handleListTasks)
 	mux.HandleFunc("/api/v1/tasks/", s.handleTaskRouting) // 子路径：{id}/cancel、{id}/result
 	mux.HandleFunc("/healthz", s.handleHealthz)           // K8s liveness 探针（+ 深度检查）

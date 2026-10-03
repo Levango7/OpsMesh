@@ -169,7 +169,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | 日志检索 | 内置 + Loki/ES 适配 + 全文本倒排 | 无 | 无 | 日志平台独立 | 云日志服务 | 云日志服务 |
 | 告警 | 规则引擎 + 异常检测 + 多通道 + 聚合抑制 | 无 | 无 | 监控平台独立 | 云监控 | 云监控 |
 | 学习曲线 | 单二进制 30 秒起步，116 flag 渐进 | 低（YAML + SSH） | 中（YAML + master） | 高（多组件 + CMDB） | 低（云控制台） | 低（云控制台） |
-| License | 私有（内部项目） | 开源 GPL | 开源 Apache | 开源 MIT（社区版受限） | 商业 | 商业 |
+| License | Apache-2.0 内核 + 商业授权企业版 | 开源 GPL | 开源 Apache | 开源 MIT（社区版受限） | 商业 | 商业 |
 
 ### 4.3 优势与劣势总结
 
@@ -185,7 +185,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 **OpsMesh 劣势**：
 1. **生态广度不及 Ansible**：Ansible Galaxy 模块生态庞大，OpsMesh 模块自研为主。
 2. **学习曲线在 116 flag**：虽渐进但全量配置心智负担，需文档引导（已有 `flag-matrix.md`）。
-3. **License 私有**：非开源，社区贡献受限，与开源竞品相比生态扩散慢。
+3. **生态仍在建设**：内核已按 Apache-2.0 开源（依赖树无 GPL/AGPL 阻断项），但社区贡献与案例积累尚在早期，生态扩散慢于成熟开源项目。
 4. **云原生场景不及阿里/腾讯**：OpsMesh 不绑定云，云原生集成（云监控/云日志/云资产自动同步）需自配。
 5. **品牌与案例积累不及蓝鲸**：蓝鲸在腾讯内部大规模验证，OpsMesh 案例积累尚在早期。
 6. **前端工程化历史包袱**：原生 JS 个人版虽已收敛，但 Vue3 企业版仍在持续演进。
@@ -196,15 +196,22 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 
 ### 5.1 开源策略
 
-当前 License 为**私有（内部项目）**，未开源。若未来开源，建议策略：
+**已落地：Open-Core 双许可。** 内核（Go 控制面 + agent + Operator + Helm Chart + 文档）按 [Apache-2.0](../LICENSE) 开源，企业版前端走商业授权。授权闸门已实装（`internal/config/license.go` + `internal/controlplane/license_gate.go`）：
 
-| 项 | 建议 |
+| 项 | 现状 |
 |---|---|
-| License | Apache 2.0（商业友好，便于企业采用） |
-| 开源范围 | 内核（Go 控制面 + agent + Operator）+ Helm Chart + 文档 |
-| 保留范围 | 企业版前端（Vue3 高级组件）、企业级 SSO/JWT 集成插件、Vault/KMS 密钥管理 UI、商业支持 |
-| 社区治理 | 接受社区 PR（内核 bugfix + 模块贡献），企业版独立仓库 |
-| 版本策略 | 内核开源版本与企业版同步发布，企业版功能以插件/flag 开关形式存在 |
+| 内核 License | Apache-2.0（仓库根 `LICENSE`） |
+| 保留范围 | 企业版前端（Vue3 完整功能控制台）、商业支持、SLA |
+| 授权机制 | 离线 Ed25519 签名凭据，`--license-key` / `--license-public-key` 传入，无需重新编译 |
+| 闸门位置 | 交付层：`/enterprise/` 未授权返回说明页、`/enterprise/assets/*` 返回 402 |
+| 内核可用性 | `/api/v1/**`、agent 通道、监控在任何授权状态下**完全可用** |
+| 状态查询 | `GET /api/v1/license`（需登录；未授权也可查，否则无从自查） |
+| 依赖合规 | GPL/LGPL/AGPL/CDDL/EPL 依赖数 = 0；24 个 MPL-2.0 未被 patch，不构成 copyleft 传播 |
+| 社区治理 | 接受社区 PR（内核 bugfix + 模块贡献） |
+
+> 完整论证（含"为何 Apache-2.0 无法律阻断项"与"Open-Core 优于闭源的理由"）见 `license-decision-2026-10-03.md`。
+
+**已知代价（须如实评估）**：Apache-2.0 允许任何人再分发与闭源衍生，无法阻止竞品。这是**商业模式层面**的代价，不是法律风险——若后续需要更强的排他性，路径是把企业版拆为独立进程 + 独立仓库（内核仍 Apache-2.0），而非改内核 License。
 
 ### 5.2 企业版
 

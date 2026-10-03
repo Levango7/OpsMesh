@@ -14,6 +14,14 @@
 // 鉴权边界：/enterprise/ 只服务静态外壳（HTML/JS/CSS），**不做租户头校验**——
 // 浏览器不会带 X-Tenant-ID，且空白外壳必须先在未登录状态下加载出登录页；
 // 真正的鉴权与租户隔离由 /api/v1/* 的 RequireAuth / authctx 承担（外壳内无任何数据）。
+//
+// 授权边界（Open-Core，见 license_gate.go）：外壳是**商业交付物**，未授权时不得完整交付。
+// 未授权时按调用方形态分流：
+//   - 浏览器导航（Accept 含 text/html）→ 200 返回「未授权」说明页（能力清单 + 联系方式，
+//     转化路径不阻断；用户能看到产品长什么样、差什么才能用）；
+//   - XHR / JSON / 资源请求 → 402 Payment Required，与 401（未登录）、403（无权限）语义区分。
+//
+// 社区控制台（GET /）是 Apache-2.0 内核，**任何授权状态下都完整可用**。
 package controlplane
 
 import (
@@ -87,6 +95,7 @@ func (s *Server) handleEnterpriseUI(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/enterprise/", http.StatusMovedPermanently)
 		return
 	}
+	// 授权闸门在「是否内置」之后：未内置时给的是构建指引（更可操作，且此时授权与否都打不开）。
 	if !bundleAvailable() {
 		w.Header().Set("X-OpsMesh-Enterprise-Bundle", "placeholder")
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -98,6 +107,15 @@ func (s *Server) handleEnterpriseUI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeEnterpriseBody(w, r, data)
+		return
+	}
+	// 已内置但未授权：外壳不交付。handleEnterpriseUI 只处理 HTML 外壳与 SPA 深链
+	//（静态资源由更精确的 /enterprise/assets/ 路由分走），故直接返回说明页。
+	if !s.licensed() {
+		w.Header().Set("X-OpsMesh-License", "community")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		writeEnterpriseBody(w, r, enterpriseUnlicensedPage(s.licenseSnapshot()))
 		return
 	}
 
@@ -127,6 +145,9 @@ func (s *Server) handleEnterpriseUI(w http.ResponseWriter, r *http.Request) {
 
 // handleEnterpriseAsset 服务企业版前端静态资源（/enterprise/assets/*）。
 // 与个人版 handleAsset 同思路：只读 embed.FS，不回落宿主文件系统（杜绝路径穿越）。
+//
+// 授权闸门：未授权时资源一律 402。外壳（handleEnterpriseUI）已拦住，理论上到不了这里；
+// 保留闸门是为了防止有人直接猜 URL 拉走分包自行拼壳——属于纵深防御，不是主要防线。
 func (s *Server) handleEnterpriseAsset(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
@@ -145,6 +166,14 @@ func (s *Server) handleEnterpriseAsset(w http.ResponseWriter, r *http.Request) {
 	data, err := readEnterpriseFile(rel)
 	if err != nil {
 		http.NotFound(w, r)
+		return
+	}
+	// 授权闸门放在"文件确实存在"之后：路径穿越与不存在的资源一律 404（无论授权态），
+	// 402 只回答"这个资源存在但你没用企业版"。反过来会让 /enterprise/assets/ 这种
+	// 目录请求在社区版下返回 402，把"路径不存在"伪装成"商业问题"，误导排障。
+	if !s.licensed() {
+		w.Header().Set("X-OpsMesh-License", "community")
+		s.requireEnterpriseGate(w, r)
 		return
 	}
 	serveEnterpriseStatic(w, r, rel, data)

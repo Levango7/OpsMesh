@@ -86,7 +86,12 @@ func (s *Server) processAutomationRules() {
 //   - alert：租户存在活跃告警时填充 ctx["alert"]（引擎据此触发）；
 //   - metric_threshold：从设备最新指标解析 trigger.Params["metric"] 对应值填充 ctx["value"]，
 //     引擎按 ctx["value"] >= trigger.Params["threshold"] 判定；
-//   - schedule/event：恒命中（引擎对这两类直接返回 true），上下文可为空。
+//   - schedule：不需要上下文——引擎直接按 trigger.Params["schedule"] 的 cron 表达式
+//     对当前时刻求值（并做 1 分钟去重）。这是修复点：此前引擎对 schedule/event
+//     无条件返回 true，而本循环每 30s 遍历全部 enabled 规则，导致定时规则
+//     每 30 秒执行一次动作；
+//   - event：不填充。本循环是周期扫描而非事件源，不注入 ctx["event"]，
+//     该类型在此不会触发（须由事件侧显式调用）。
 func (s *Server) buildAutomationEvalContext(rule *automation.Rule) map[string]string {
 	if rule == nil || s.store == nil {
 		return map[string]string{}
@@ -106,8 +111,10 @@ func (s *Server) buildAutomationEvalContext(rule *automation.Rule) map[string]st
 		if v, ok := s.deviceMetricValue(tenantID, rule.Trigger.Params["metric"]); ok {
 			ctx["value"] = strconv.FormatFloat(v, 'f', 2, 64)
 		}
-	case automation.TriggerTypeSchedule, automation.TriggerTypeEvent:
-		// 恒命中：引擎对 schedule/event 类型 Evaluate 直接返回 true。
+	case automation.TriggerTypeSchedule:
+		// 无需上下文：引擎自取当前时刻做 cron 求值。
+	case automation.TriggerTypeEvent:
+		// 本循环非事件源，不注入 ctx["event"]，该类型在此不触发。
 	default:
 		// 未知触发器类型：留空上下文（引擎 Evaluate 返回 false，不触发）。
 	}

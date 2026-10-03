@@ -37,6 +37,25 @@
 
 ---
 
+## 2.1 商业授权 flag（Open-Core）
+
+| Flag | 语义 | 缺失后果 |
+|---|---|---|
+| `--license-public-key` | 厂商 Ed25519 公钥（PEM 文本 / 文件路径 / 裸 base64 / 裸 hex） | **不配即社区版**。不是配置错误——Apache-2.0 内核本就无需授权 |
+| `--license-key` | 授权凭据（`base64url(payloadJSON).base64url(signature)`） | 配了公钥但没配凭据 → 社区版，`GET /api/v1/license` 的 `reason` 会说明缺失 |
+
+关键约束（与 §3 高危组合表风格一致，此处为**不阻止启动**的刻意设计）：
+
+| 情形 | 行为 | 理由 |
+|---|---|---|
+| 公钥配错 / 凭据过期 / 签名不符 / edition 不符 | ⚠️ 降级为社区版 + `reason` 说明原因，**不拒绝启动** | 授权降级不该让已交付的内核不可用；这是商业问题不是运行问题 |
+| 多副本部署 | `--license-public-key` **必须各副本一致** | 不一致会出现"同一集群里部分副本是企业版、部分是社区版"，负载均衡到不同副本时功能时有时无 |
+| `--license-key` | 可用 Secret 注入，无需硬编码 | 凭据本身是公开信息（不含机密），但仍建议走 Secret 以便轮换与留痕 |
+
+状态查询：`GET /api/v1/license`（需登录；**未授权也可查**——否则用户无从得知原因）。校验逻辑见 `internal/config/license.go`，闸门见 `internal/controlplane/license_gate.go`，决策论证见 `license-decision-2026-10-03.md`。
+
+---
+
 ## 3. 高危组合表（启动期会被 fail-fast 或强警告）
 
 | 组合 | 行为 |
@@ -53,6 +72,7 @@
 | `--session-store` 不是 `redis://` 前缀 | ❌ 拒绝启动 |
 | `--metrics-allow-cidr` 任意项非合法 CIDR | ❌ 拒绝启动 |
 | `--allow-public-register=true` + `--production=true` | 未强校验，**文档建议不要启用** |
+| `--production=true` + `--demo=true` | ❌ 拒绝启动（demo 会关掉 bootstrap 凭据校验、CSRF Origin 校验、RBAC 兜底与 gRPC agent 身份签名四道防线） |
 
 ---
 

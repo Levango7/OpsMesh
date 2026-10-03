@@ -45,6 +45,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	// 企业版入口按需显示（P0-3）：本二进制未内置企业版前端（只有占位页）时，
 	// 隐藏「进入企业版前端 →」按钮，避免把用户送到一个打不开的页面。
+	//
+	// 注意：未授权时**保留**入口（只由 bundleAvailable 门控）。授权闸门的分流是
+	// /enterprise/ 返回「未授权」说明页而非 4xx——那正是转化路径；把按钮藏起来
+	// 等于让潜在客户连"有没有企业版"都不知道。
 	data = stripEnterpriseCTA(data)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")

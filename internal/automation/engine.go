@@ -13,7 +13,10 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/cron"
 )
 
 // TriggerType 触发器类型。
@@ -126,6 +129,21 @@ func ValidateRule(r *Rule) error {
 	if !ValidTriggerType(r.Trigger.Type) {
 		return fmt.Errorf("invalid trigger type: %q", r.Trigger.Type)
 	}
+	// schedule 触发必须带合法 cron 表达式。
+	//
+	// 此前不校验，导致规则可带着空的/垃圾的 Trigger.Params["schedule"] 被创建成功，
+	// 而引擎当时对 schedule 无条件返回 true——于是「创建一个没配表达式的定时规则」
+	// 就足以让动作进入无节流的重复执行。引擎侧现已改为缺表达式即不触发，
+	// 这里再于入口拦截，把错误提前到创建时反馈给用户。
+	if r.Trigger.Type == TriggerTypeSchedule {
+		expr := scheduleExpr(r.Trigger)
+		if expr == "" {
+			return fmt.Errorf("schedule trigger requires a cron expression in trigger.params.schedule")
+		}
+		if _, err := cron.Match(expr, time.Now()); err != nil {
+			return fmt.Errorf("invalid cron expression %q: %w", expr, err)
+		}
+	}
 	if len(r.Actions) == 0 {
 		return fmt.Errorf("rule must have at least one action")
 	}
@@ -158,16 +176,32 @@ type Executor interface {
 // Engine 自动化规则引擎。
 type Engine struct {
 	executor Executor
+
+	// mu 保护 lastFire。评估循环（controlplane automation_eval）与规则增删可能并发。
+	mu sync.Mutex
+	// lastFire 记录 schedule 类规则上次判定命中的时刻，用于最小触发间隔去重。
+	//
+	// 为什么需要：cron 表达式最细粒度是"分钟"（5 字段），而评估循环默认每 30s 跑一次。
+	// 若只靠 cron.Match 判定，`* * * * *` 这类表达式会在同一分钟内命中两次。
+	lastFire map[string]time.Time
+	// now 取当前时刻，测试可注入以获得确定性行为。
+	now func() time.Time
 }
+
+// scheduleMinInterval schedule 类规则的最小触发间隔。
+//
+// cron 5 字段表达式的最细粒度是 1 分钟，故取 1 分钟：
+// 既消除"每 30s 评估一次导致同一分钟重复触发"，又不会误伤合法的每分钟规则。
+const scheduleMinInterval = time.Minute
 
 // NewEngine 构造自动化规则引擎。
 func NewEngine() *Engine {
-	return &Engine{}
+	return &Engine{lastFire: make(map[string]time.Time), now: time.Now}
 }
 
 // NewEngineWithExecutor 构造带执行器的自动化规则引擎。
 func NewEngineWithExecutor(exec Executor) *Engine {
-	return &Engine{executor: exec}
+	return &Engine{executor: exec, lastFire: make(map[string]time.Time), now: time.Now}
 }
 
 // SetExecutor 设置执行器（用于延迟注入，避免循环依赖）。
@@ -175,16 +209,43 @@ func (e *Engine) SetExecutor(exec Executor) {
 	e.executor = exec
 }
 
-// Evaluate 评估规则是否应触发（MVP：始终返回 true 表示触发，生产实现应检查触发条件）。
+// clock 返回当前时刻（测试可注入）。
+func (e *Engine) clock() time.Time {
+	if e.now != nil {
+		return e.now()
+	}
+	return time.Now()
+}
+
+// SetClock 注入时钟（仅供测试使用）。
 //
-// ctx 包含触发上下文（如告警事件、指标值、定时时刻）。
+// schedule 触发的判定依赖"当前时刻是否落在 cron 命中区间"，不注入时钟就无法写出
+// 与运行时刻无关的确定性用例。传 nil 恢复为 time.Now。
+func (e *Engine) SetClock(fn func() time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.now = fn
+}
+
+// Evaluate 评估规则是否应触发。
+//
+// 触发语义（按类型）：
+//   - alert：ctx["alert"] 非空即触发（由告警侧注入）；
+//   - metric_threshold：ctx["value"] >= trigger.Params["threshold"]；
+//   - schedule：按 trigger.Params["schedule"] 的 5 字段 cron 表达式求值，
+//     并受最小触发间隔去重；
+//   - event：ctx["event"] 非空即触发（由事件侧注入）。
+//
+// 安全修复（P0）：schedule/event 原实现无条件 `return true`。设计意图是
+// "由调度器/事件总线决定何时调用"，但实际调用方是 controlplane 的周期评估循环——
+// 它每 30s 对**全部** enabled 规则调用一次 Evaluate。于是创建一条 schedule 规则
+// （动作如 execute_task / send_notify）会导致该动作每 30 秒被执行一次，
+// 无 cron 解析、无去重、无冷却，可造成任务风暴与通知轰炸。
+// 现改为：schedule 走真实 cron 求值且缺表达式即不触发；event 要求事件上下文存在。
 func (e *Engine) Evaluate(rule *Rule, ctx map[string]string) bool {
 	if rule == nil || !rule.Enabled {
 		return false
 	}
-	// MVP：alert 类型只要有 ctx["alert"] 即触发；
-	// metric_threshold 类型比较 ctx["value"] 与 trigger.Params["threshold"]；
-	// schedule/event 类型始终触发（由调度器/事件总线决定何时调用）。
 	switch rule.Trigger.Type {
 	case TriggerTypeAlert:
 		_, ok := ctx["alert"]
@@ -202,10 +263,65 @@ func (e *Engine) Evaluate(rule *Rule, ctx map[string]string) bool {
 			return false
 		}
 		return v >= t
-	case TriggerTypeSchedule, TriggerTypeEvent:
-		return true
+	case TriggerTypeSchedule:
+		return e.evaluateSchedule(rule)
+	case TriggerTypeEvent:
+		// 事件驱动：必须由事件侧显式注入 ctx["event"] 才触发。
+		// 周期评估循环不提供该键，故此类型在评估循环中不会误触发。
+		_, ok := ctx["event"]
+		return ok
 	}
 	return false
+}
+
+// scheduleExpr 提取 schedule 触发器的 cron 表达式。
+//
+// 主键 "schedule"（与 metric_threshold 用 "metric"/"threshold" 同构：键名即语义），
+// 另容忍 "cron"/"expr" 两个常见别名——前端触发参数是用户手填的自由 JSON，
+// 不认别名会导致规则静默失效。三个键都取不到时返回 ""（表示"未配置"）。
+func scheduleExpr(t Trigger) string {
+	if t.Params == nil {
+		return ""
+	}
+	for _, k := range []string{"schedule", "cron", "expr"} {
+		if v := strings.TrimSpace(t.Params[k]); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// evaluateSchedule 按 cron 表达式 + 最小触发间隔判定 schedule 类规则。
+//
+// 缺表达式/表达式非法 → 不触发（安全默认：宁可不执行，也不做无节流的动作风暴）。
+// 非法表达式只记日志不返回 error：Evaluate 是热路径（每 30s × 全部规则），
+// 且 ValidateRule 已在规则创建/更新时拦截，此处是兜底防御。
+func (e *Engine) evaluateSchedule(rule *Rule) bool {
+	expr := scheduleExpr(rule.Trigger)
+	if expr == "" {
+		log.Printf("automation: 规则 %s（%s）为 schedule 触发但未配置 cron 表达式，跳过本轮评估", rule.ID, rule.Name)
+		return false
+	}
+	now := e.clock()
+	match, err := cron.Match(expr, now)
+	if err != nil {
+		log.Printf("automation: 规则 %s（%s）的 cron 表达式 %q 非法: %v", rule.ID, rule.Name, expr, err)
+		return false
+	}
+	if !match {
+		return false
+	}
+	// 去重：同一分钟只触发一次（评估循环周期可能小于 1 分钟）。
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.lastFire == nil {
+		e.lastFire = make(map[string]time.Time)
+	}
+	if last, ok := e.lastFire[rule.ID]; ok && now.Sub(last) < scheduleMinInterval {
+		return false
+	}
+	e.lastFire[rule.ID] = now
+	return true
 }
 
 // Execute 执行规则的动作。

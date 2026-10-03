@@ -233,6 +233,12 @@ type Config struct {
 	// 建议生成：openssl rand 32 | base64（输出 44 字符 base64，解码后 32 字节 AES-256 密钥）。
 	EncryptionKey string // base64 编码的 32 字节 AES-256 密钥；空=不加密（非生产）
 
+	// 商业授权（Open-Core 闸门）：企业版能力解锁凭据与验签公钥。
+	// 二者都空 = 社区版（内核功能全可用，企业版功能降级为只读演示态）。
+	// 注意这是**许可控制而非安全边界**——详见 license.go 顶部的说明。
+	LicenseKey       string // 授权凭据；空=未授权
+	LicensePublicKey string // 验签公钥（PEM/路径/base64/hex）；空=不校验
+
 	// 日志检索后端选择：memory（默认，环形缓冲） | sql（MySQL） | loki（Grafana Loki） | es（Elasticsearch）。
 	// 与 Store（控制面持久化后端）解耦：Store 管 agent/device 状态，LogBackend 管日志检索。
 	// loki/es 模式下日志由 agent 经 promtail/filebeat 直接推送，控制面仅做查询（Append 为 noop）。
@@ -527,6 +533,9 @@ func Load() *Config {
 	jwtIssuer := flag.String("jwt-issuer", "", "预期 JWT issuer（iss claim）；非空时校验 iss 必须匹配（或 env OPSMESH_JWT_ISSUER）")
 	jwtSecret := flag.String("jwt-secret", "", "用户中心 JWT 签发密钥（HS256）；空=随机生成（重启后旧 token 失效）（或 env OPSMESH_JWT_SECRET）")
 	encryptionKey := flag.String("encryption-key", "", "kubeconfig AES-256-GCM 加密密钥（base64 编码 32 字节）；空=不加密（仅开发/demo，生产必须配置）；或 env OPSMESH_ENCRYPTION_KEY")
+	// 商业授权闸门（Open-Core）：企业版能力需凭据解锁，内核功能不受影响。
+	licenseKey := flag.String("license-key", "", "商业授权凭据（base64url(payload).base64url(ed25519签名)）；空=社区版，企业版功能降级；或 env OPSMESH_LICENSE_KEY")
+	licensePublicKey := flag.String("license-public-key", "", "授权验签公钥（PEM / 文件路径 / 裸 base64 或 hex 的 32 字节 Ed25519 公钥）；空=不做授权校验（等同社区版）；或 env OPSMESH_LICENSE_PUBLIC_KEY")
 	// 初始管理员口令交付：非 demo 模式下内置 admin 的 admin123 会被替换，替换后的口令
 	// 必须通过这些通道之一交给运维，否则管理员被锁死（见 controlplane.enforceInitialCredentials）。
 	adminPassword := flag.String("admin-password", "", "初始 admin 口令（须≥8 位且含大小写字母与数字）；非 demo 模式下替换内置弱口令 admin123；推荐改用 env OPSMESH_ADMIN_PASSWORD（避免进 shell history）")
@@ -748,6 +757,8 @@ func Load() *Config {
 		JWTIssuer:                val("jwt-issuer", *jwtIssuer, "OPSMESH_JWT_ISSUER"),
 		JWTSecret:                val("jwt-secret", *jwtSecret, "OPSMESH_JWT_SECRET"),
 		EncryptionKey:            val("encryption-key", *encryptionKey, "OPSMESH_ENCRYPTION_KEY"),
+		LicenseKey:               val("license-key", *licenseKey, "OPSMESH_LICENSE_KEY"),
+		LicensePublicKey:         val("license-public-key", *licensePublicKey, "OPSMESH_LICENSE_PUBLIC_KEY"),
 		AdminPassword:            val("admin-password", *adminPassword, "OPSMESH_ADMIN_PASSWORD"),
 		AdminPasswordFile:        val("admin-password-file", *adminPasswordFile, "OPSMESH_ADMIN_PASSWORD_FILE"),
 		AdminPasswordForceReset:  valBool("admin-password-force-reset", *adminPasswordForceReset, "OPSMESH_ADMIN_PASSWORD_FORCE_RESET"),
@@ -845,10 +856,12 @@ func Load() *Config {
 		cfg.PublicRegister = false
 	}
 	// gRPC agent 身份绑定：
-	//   - demo 模式强制关闭签名验证（向后兼容，demo 不需要签名）。
+	//   - demo 模式默认关闭签名验证（向后兼容，demo 不需要签名），但**尊重显式设置**——
+	//     原实现是无条件覆盖（cfg.Demo 直接把 GRPCRequireSignature 置 false），
+	//     导致显式 --grpc-require-signature=true 也压不过，等于 demo 成了全局安全降级开关。
 	//   - 生产模式但未显式设置 --grpc-require-signature 时默认开启（纵深防御）。
 	//   - 已启用 mTLS（tls-cert + client-ca 均非空）时可不开启（mTLS 本身提供身份绑定），但仍可显式开启叠加防御。
-	if cfg.Demo {
+	if cfg.Demo && !explicit["grpc-require-signature"] {
 		cfg.GRPCRequireSignature = false
 	} else if cfg.Production && !explicit["grpc-require-signature"] {
 		cfg.GRPCRequireSignature = true
@@ -1083,6 +1096,19 @@ func (c *Config) Validate() error {
 		if _, _, err := net.ParseCIDR(c.SegmentCIDR); err != nil {
 			return fmt.Errorf("非法 --segment-cidr=%q: %w", c.SegmentCIDR, err)
 		}
+	}
+	// 生产模式与 demo 模式互斥（安全修复）。
+	//
+	// demo 不是"演示配色"，而是一组全局安全降级开关的集合：
+	//   - server_bootstrap.go: Demo 直接让 bootstrap token 校验 return true
+	//     → /install.sh 与 /bin/opsmesh-agent 对全网开放（后者分发二进制本体）；
+	//   - server_middleware.go: Demo 跳过 CSRF Origin 校验；
+	//   - auth.go: Demo 无身份即放行（RBAC 兜底关闭）；
+	//   - config.go: Demo 关闭 gRPC agent 身份签名。
+	// 一次误配（--production=true --demo=true）即同时关掉这四道防线，
+	// 而 Validate() 此前对二者同时为真**零检查**。这里改为 fail-fast。
+	if c.Production && c.Demo {
+		return fmt.Errorf("--production=true 与 --demo=true 互斥：demo 模式会关闭 bootstrap 凭据校验、CSRF Origin 校验、RBAC 兜底与 gRPC agent 身份签名（--demo 会让 /install.sh 与 /bin/opsmesh-agent 对全网开放）；请只保留 --production，或在纯本地演示时去掉 --production")
 	}
 	// 生产模式 TLS 强制：Production==true 且未配置 TLS 证书时直接拒绝启动，
 	// 避免 agent↔控制面明文通信（等保三级要求）。agent 与 controlplane 同样适用：

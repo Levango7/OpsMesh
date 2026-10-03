@@ -159,6 +159,8 @@ func TestHandleGatewayProxy_ForwardsAndStats(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/gw/api/echo/hello", nil)
+	req.Header.Set("Authorization", loginAsAdmin(t, s))
+	req.Header.Set("X-Tenant-ID", "default")
 	w := httptest.NewRecorder()
 	s.handleGatewayProxy(w, req)
 
@@ -184,10 +186,107 @@ func TestHandleGatewayProxy_ForwardsAndStats(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// P0 回归：/gw/ 数据面鉴权（此前无任何鉴权 + 跨租户聚合路由）
+// =============================================================================
+
+// TestHandleGatewayProxy_RequiresAuth 验证无凭证请求被拒（401）。
+//
+// 回归背景：handleGatewayProxy 曾是全仓唯一不做鉴权的反向代理——任何能访问 8080 端口的
+// 主体，无需登录即可经管理员配置的路由访问内部后端，绕过全部 RBAC。
+// 本用例把该行为固化为"必须 401"，防止后续重构再次摘掉鉴权。
+func TestHandleGatewayProxy_RequiresAuth(t *testing.T) {
+	s := newGatewayRouteTestServer()
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("未鉴权请求不应触达后端")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	addGatewayRouteForTest(s, &extension.RouteRule{
+		ID: "r-auth", TenantID: "default", Name: "echo",
+		PathPrefix: "/api/echo/", TargetBackend: backend.URL,
+		Methods: []string{"GET"}, Enabled: true,
+	})
+
+	// 无 Authorization / 无 Cookie / 无网关注入角色 → requireProd 走不到任何身份分支。
+	req := httptest.NewRequest(http.MethodGet, "/gw/api/echo/hello", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	w := httptest.NewRecorder()
+	s.handleGatewayProxy(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want 401（/gw/ 必须鉴权）; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleGatewayProxy_TenantIsolation 验证 A 租户凭证无法命中 B 租户的路由。
+//
+// 回归背景：原实现遍历 gw.routes 全量聚合，路由池天然跨租户——任一租户的合法凭证
+// 都能命中其他租户管理员配置的 TargetBackend。现只取 actx.TenantID 名下路由。
+func TestHandleGatewayProxy_TenantIsolation(t *testing.T) {
+	s := newGatewayRouteTestServer()
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("跨租户请求不应触达后端")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	// 路由属于 victim 租户。
+	addGatewayRouteForTest(s, &extension.RouteRule{
+		ID: "r-victim", TenantID: "victim", Name: "echo",
+		PathPrefix: "/api/echo/", TargetBackend: backend.URL,
+		Methods: []string{"GET"}, Enabled: true,
+	})
+
+	// 攻击者以 default 租户合法身份请求同一路径。
+	req := httptest.NewRequest(http.MethodGet, "/gw/api/echo/hello", nil)
+	req.Header.Set("Authorization", loginAsAdmin(t, s))
+	req.Header.Set("X-Tenant-ID", "default")
+	w := httptest.NewRecorder()
+	s.handleGatewayProxy(w, req)
+
+	// 路由池为空 → 与"无匹配路由"同义，404。
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status=%d, want 404（跨租户路由不可见）; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleGatewayProxy_RejectsMetadataTarget 验证 targetBackend 指向云元数据段被拒。
+//
+// 网关后端本就是内网微服务，故走 allowPrivate=true（放行私网/环回）；
+// 但该模式仍硬拒链路本地/云元数据/0.0.0.0/8——169.254.169.254 是 SSRF 的头号目标。
+func TestHandleGatewayProxy_RejectsMetadataTarget(t *testing.T) {
+	s := newGatewayRouteTestServer()
+	addGatewayRouteForTest(s, &extension.RouteRule{
+		ID: "r-imds", TenantID: "default", Name: "imds",
+		PathPrefix: "/api/imds/", TargetBackend: "http://169.254.169.254:80",
+		Methods: []string{"GET"}, Enabled: true,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/gw/api/imds/latest/meta-data/", nil)
+	req.Header.Set("Authorization", loginAsAdmin(t, s))
+	req.Header.Set("X-Tenant-ID", "default")
+	w := httptest.NewRecorder()
+	s.handleGatewayProxy(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d, want 502（元数据段应被拒）; body=%s", w.Code, w.Body.String())
+	}
+	// 拒绝原因不得回吐：ValidateWebhookURL 的错误含解析出的 IP 与拒绝类别，
+	// 放进响应体等于把内网地址段与网关出网策略送给调用方。
+	if body := w.Body.String(); strings.Contains(body, "169.254") || strings.Contains(body, "link-local") ||
+		strings.Contains(body, "metadata") {
+		t.Fatalf("502 响应体泄露了拒绝细节/内网地址；body=%s", body)
+	}
+}
+
 // TestHandleGatewayProxy_NoRoute404 验证无匹配路由返回 404 且计入 TotalErrors。
 func TestHandleGatewayProxy_NoRoute404(t *testing.T) {
 	s := newGatewayRouteTestServer()
 	req := httptest.NewRequest(http.MethodGet, "/gw/api/nomatch/x", nil)
+	req.Header.Set("Authorization", loginAsAdmin(t, s))
+	req.Header.Set("X-Tenant-ID", "default")
 	w := httptest.NewRecorder()
 	s.handleGatewayProxy(w, req)
 	if w.Code != http.StatusNotFound {
@@ -224,6 +323,8 @@ func TestHandleGatewayProxy_BackendError500(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/gw/api/err/x", nil)
+	req.Header.Set("Authorization", loginAsAdmin(t, s))
+	req.Header.Set("X-Tenant-ID", "default")
 	w := httptest.NewRecorder()
 	s.handleGatewayProxy(w, req)
 	if w.Code != http.StatusInternalServerError {
@@ -244,9 +345,16 @@ func TestHandleGatewayStats_RealCounts(t *testing.T) {
 	auth := loginAsAdmin(t, s)
 
 	// 先打一次 404 请求产生错误计数。
+	// 必须带凭证：/gw/ 数据面自 P0 修复起有鉴权（原先零鉴权是全仓唯一裸奔的反向代理），
+	// 无凭证请求会被 401 拦下且不计入 stats——那样这个测试就测不到统计逻辑了。
 	req := httptest.NewRequest(http.MethodGet, "/gw/nope", nil)
+	req.Header.Set("Authorization", auth)
+	req.Header.Set("X-Tenant-ID", "default")
 	w := httptest.NewRecorder()
 	s.handleGatewayProxy(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("前置请求应得 404（无匹配路由）；got=%d body=%s", w.Code, w.Body.String())
+	}
 
 	// 查 /gateway/stats。
 	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/gateway/stats", nil)

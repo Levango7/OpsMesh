@@ -23,6 +23,7 @@ package controlplane
 // 统计为内存计数器，进程级聚合（多副本各自统计，未做跨副本聚合）。
 
 import (
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -406,16 +407,39 @@ func (w *gwStatResponseWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
-// handleGatewayProxy 实现 API 网关最小数据面：按 PathPrefix+Methods 匹配 enabled 路由，
+// handleGatewayProxy 实现 API 网关数据面：按 PathPrefix+Methods 匹配 enabled 路由，
 // 用 httputil.ReverseProxy 反向代理转发到 targetBackend。
 //
-// 设计要点（MVP 降级方案，完整数据面——独立端口/多租户鉴权留待 v2）：
-//   - 挂载 /gw/ 前缀：剥前缀后用剩余路径按 extension.MatchRoute 匹配（跨租户，最小数据面不做租户鉴权）；
+// 设计要点：
+//   - 挂载 /gw/ 前缀：剥前缀后用剩余路径按 extension.MatchRoute 匹配；
 //   - 命中 enabled 路由 → 构造 ReverseProxy 转发；路由限流（RateLimitPerSec>0）超出返回 429；
 //   - 统计：每次请求递增 TotalRequests；错误（404 无路由 / 429 限流 / >=500 代理失败）递增 TotalErrors；
 //     维护 AvgLatencyMs 增量平均（newAvg = oldAvg + (latency-oldAvg)/count）；
-//   - grpc:// 后端不支持（最小数据面仅 http/https），返回 502 并计入错误。
+//   - grpc:// 后端不支持（数据面仅 http/https），返回 502 并计入错误。
+//
+// 鉴权（P0 修复）：本 handler 曾是全仓唯一不做鉴权的反向代理——无凭证请求可直接经管理员
+// 配置的路由访问内部后端、绕过全部 RBAC，且因聚合 gw.routes 全量而天然跨租户。
+// 现与 service_proxy.go 的 handleServiceProxy 对齐，走同一条双闸：
+//  1. subsystemAuthorize = requireTenantContext（租户头/令牌交叉校验）
+//     + requireProd（JWT / API Key / 网关注入角色 / 联邦验签 / demo 五路身份）；
+//  2. 路由池只取 actx.TenantID 名下的路由，不再全租户聚合（gw.routes 在
+//     handleCreateGatewayRoute 创建时即以 actx.TenantID 为键，此处只是把该键用起来）；
+//  3. TargetBackend 过 ValidateWebhookURL(allowPrivate=true)：网关后端本就是内网微服务，
+//     故放行私网/环回，但该模式仍硬拒链路本地/云元数据/0.0.0.0/8，且对域名做 DNS 解析，
+//     以拦住"域名解析到 169.254.169.254"这条 rebinding 形态。
 func (s *Server) handleGatewayProxy(w http.ResponseWriter, r *http.Request) {
+	// 权限按方法语义分级：只读方法要 gateway:read，其余（POST/PUT/DELETE…）要 gateway:write。
+	perm := "gateway:read"
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+	default:
+		perm = "gateway:write"
+	}
+	actx, ok := s.subsystemAuthorize(w, r, perm)
+	if !ok {
+		return
+	}
+
 	gw := s.ensureGateway()
 
 	// 剥 /gw 前缀得到路由匹配路径（如 /gw/api/v1/devices → /api/v1/devices）。
@@ -424,14 +448,12 @@ func (s *Server) handleGatewayProxy(w http.ResponseWriter, r *http.Request) {
 		path = "/"
 	}
 
-	// 汇总全部 enabled 路由（跨租户），按 extension.MatchRoute 匹配。
+	// 只汇总**本租户**的路由（原实现遍历 gw.routes 全量，任意租户凭证可命中他租户路由）。
 	gw.mu.RLock()
 	routes := make([]*extension.RouteRule, 0, 8)
-	for _, tenantRoutes := range gw.routes {
-		for _, e := range tenantRoutes {
-			if e != nil && e.rule != nil {
-				routes = append(routes, e.rule)
-			}
+	for _, e := range gw.routes[actx.TenantID] {
+		if e != nil && e.rule != nil {
+			routes = append(routes, e.rule)
 		}
 	}
 	gw.mu.RUnlock()
@@ -474,10 +496,21 @@ func (s *Server) handleGatewayProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 后端解析：最小数据面仅支持 http/https；grpc:// 与非法 scheme 返回 502。
+	// 后端解析：数据面仅支持 http/https；grpc:// 与非法 scheme 返回 502。
 	target, err := url.Parse(rule.TargetBackend)
 	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" {
 		paginate.WriteJSON(rw, http.StatusBadGateway, map[string]string{"error": "unsupported targetBackend: " + rule.TargetBackend})
+		return
+	}
+	// 投递期复检 SSRF：路由是持久化配置，创建时校验过不等于此刻仍安全——
+	// 域名的 DNS 记录可随时变更（rebinding）。allowPrivate=true 放行内网微服务后端，
+	// 但仍硬拒链路本地/云元数据/0.0.0.0/8。
+	//
+	// 拒绝原因只进服务端日志，不进响应体：ValidateWebhookURL 的错误里含解析出的
+	// IP 与拒绝类别，回吐等于把内网地址段与网关拓扑送给未授权调用方。
+	if err := ValidateWebhookURL(rule.TargetBackend, true); err != nil {
+		log.Printf("controlplane: /gw/ 后端 %s SSRF 复检拒绝: %v", rule.TargetBackend, err)
+		paginate.WriteJSON(rw, http.StatusBadGateway, map[string]string{"error": "gateway target rejected by egress policy"})
 		return
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)

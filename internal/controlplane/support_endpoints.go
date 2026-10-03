@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/config"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/store"
@@ -372,7 +373,7 @@ func (s *Server) configSnapshot() map[string]any {
 			"alertEmailFrom":           c.AlertEmailFrom,
 			"alertEmailTo":             c.AlertEmailTo,
 			"alertEmailPassConfigured": c.AlertEmailPass != "",
-			"notifyChannels":           c.NotifyChannels,
+			"notifyChannels":           redactNotifyChannels(c.NotifyChannels),
 		},
 		"limits": map[string]any{
 			"taskTimeout":            c.TaskTimeout.String(),
@@ -407,6 +408,42 @@ func (s *Server) configSnapshot() map[string]any {
 // 为什么必须脱敏：`--log-push-endpoint` / `--alert-webhook-url` 这类 URL 常被写成
 // `https://user:pass@host/path` 或 `?token=...`，直接回显等于把凭证写进诊断包。
 // 非 URL 或解析失败：返回是否非空的布尔描述，绝不回显原文（原文可能含凭证）。
+// redactNotifyChannels 脱敏通知渠道配置，仅保留排障必需的形态信息。
+//
+// 为什么必须脱敏：诊断包（GET /api/v1/admin/diagnostics）的设计用途正是
+// "客户现场 → 厂商支持团队"流转，其 README 承诺"所有口令、密钥、令牌、
+// 连接串中的凭证均不落盘，仅输出 configured=true|false"。而
+// NotifyChannelConfig 原样输出是这条承诺的唯一破例——紧邻的
+// alertEmailPass / vault.token / kms.token 都做了布尔化。
+//
+// 泄露面（原样输出的字段）：
+//   - WebhookURL：钉钉/飞书/企微/slack 的 access_token、key、hook 路径全在 URL 里
+//   - Secret：钉钉/飞书加签密钥
+//   - Password：SMTP 密码
+//
+// 拿到任一条即可冒充该渠道继续向真实收件端发通知（钓鱼/告警淹没）。
+func redactNotifyChannels(channels []config.NotifyChannelConfig) []map[string]any {
+	out := make([]map[string]any, 0, len(channels))
+	for _, ch := range channels {
+		m := map[string]any{
+			"type":               ch.Type,
+			"webhookUrlRedacted": redactURL(ch.WebhookURL),
+			"secretConfigured":   strings.TrimSpace(ch.Secret) != "",
+			"channel":            ch.Channel,
+			"smtpHost":           ch.SMTPHost,
+			"smtpPort":           ch.SMTPPort,
+			"username":           ch.Username,
+			"passwordConfigured": ch.Password != "",
+			"from":               ch.From,
+			"to":                 ch.To,
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// redactURL 脱敏 URL：仅保留 scheme://host/path，丢弃 Query（access_token/key/secret
+// 都在这里）与 Userinfo。非标准 URL 不做解析展示，避免把凭证原文当路径回显。
 func redactURL(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

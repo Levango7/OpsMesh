@@ -454,6 +454,101 @@ func isRestrictedEvenWhenAllowed(ip net.IP) bool {
 	return ip.IsLinkLocalUnicast() || ip.IsUnspecified()
 }
 
+// ssrfIPRejection 返回该 IP 在当前 allowPrivate 策略下是否应被拒绝拨号，
+// 返回 "" 表示放行。
+//
+// 与 ValidateWebhookURL 的 IP 判定共用同一套谓词（isPrivateIP /
+// isRestrictedEvenWhenAllowed），保证"保存时校验"与"建连时复检"口径一致——
+// 两处策略分叉是这类防护最常见的失效方式。
+func ssrfIPRejection(ip net.IP, allowPrivate bool) string {
+	if allowPrivate {
+		if isRestrictedEvenWhenAllowed(ip) {
+			return "链路本地/未指定/云元数据地址（任何开关均不放行）"
+		}
+		return ""
+	}
+	if isPrivateIP(ip) {
+		return "私网/环回/元数据地址"
+	}
+	return ""
+}
+
+// newEgressClient 构造带 SSRF 防护的出网 HTTP client。
+//
+// 解决的问题：ValidateWebhookURL 只在**保存配置时**跑一次，而 DNS 记录在此后
+// 可被随时改动（DNS rebinding），且 Go 的 http.Client 默认跟随最多 10 次重定向。
+// 两者叠加，"校验通过的外网 URL"可以在投递时把请求送到 169.254.169.254。
+//
+// 三层防护：
+//  1. DialContext 建连时解析主机名并逐 IP 复检——这是抗 rebinding 的正确位置
+//     （校验发生在真正建连的那一刻，而不是几十秒前的保存时刻）；
+//     TLS 的 ServerName 仍取自 URL 主机名，故按 IP 拨号不影响证书校验。
+//  2. CheckRedirect 对每一跳重新做 URL 级校验，并限制跳数——堵"外网 302 → 内网"。
+//  3. 沿用既有超时设置，不改变各调用方的超时语义。
+//
+// allowPrivate 语义与 ValidateWebhookURL 一致：true 放行私网/环回（内网收件端场景），
+// 但链路本地/云元数据/0.0.0.0/8 恒拒。
+func newEgressClient(timeout time.Duration, allowPrivate bool) *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	transport := &http.Transport{
+		// Proxy 刻意置 nil，不用 http.ProxyFromEnvironment。
+		//
+		// 原因：本 client 存在的意义就是让"建连时逐 IP 复检"成为权威判定。
+		// 一旦启用环境代理，Go 会把请求交给代理、由**代理**去解析并连接目标主机，
+		// 下面的 DialContext 拿到的是代理地址而非目标地址，IP 级校验形同虚设——
+		// 实测：设置了 HTTP_PROXY 时，直连 169.254.169.254 的请求会绕过 DialContext
+		// 直接发给代理（返回 502 而非被 SSRF 守卫拒绝）。
+		// 需要出网代理的部署应改在网络层（sidecar / 网关 / iptables）做，而非在此处。
+		Proxy:                 nil,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          32,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, fmt.Errorf("invalid dial address %q: %w", addr, err)
+			}
+			ips, err := lookupSSRFHostIPs(host)
+			if err != nil {
+				return nil, fmt.Errorf("resolve %q: %w", host, err)
+			}
+			var lastErr error
+			for _, ip := range ips {
+				if reason := ssrfIPRejection(ip, allowPrivate); reason != "" {
+					lastErr = fmt.Errorf("dial %s blocked by SSRF guard: %s", ip, reason)
+					continue
+				}
+				conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+				if err == nil {
+					return conn, nil
+				}
+				lastErr = err
+			}
+			if lastErr == nil {
+				lastErr = fmt.Errorf("host %q resolved to no usable address", host)
+			}
+			return nil, lastErr
+		},
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("too many redirects (>5)")
+			}
+			// 每一跳重新做 URL 级校验：这是"外网 URL 返回 302 打到云元数据"这条
+			// 最常见 SSRF 形态的唯一阻断点。
+			if err := ValidateWebhookURL(req.URL.String(), allowPrivate); err != nil {
+				return fmt.Errorf("redirect target rejected by SSRF guard: %w", err)
+			}
+			return nil
+		},
+	}
+}
+
 // lookupSSRFHostIPs 带超时地解析主机名。单独抽出来是因为 allowPrivate 分支现在也要
 // 解析（否则"域名指向元数据"这一形态会被完全跳过），而两处各写一遍
 // WithTimeout+cancel 很容易漏掉 cancel。

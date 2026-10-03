@@ -196,3 +196,66 @@ func TestValidate_AdminPasswordForceResetRequiresPassword(t *testing.T) {
 		t.Fatalf("提供 --admin-password 后应通过校验: %v", err)
 	}
 }
+
+// =============================================================================
+// Production 与 Demo 互斥（demo 是全局安全降级开关，不可与生产同时开启）
+// =============================================================================
+
+// TestValidate_ProductionAndDemoMutuallyExclusive 验证 --production 与 --demo 同时为真被拒绝启动。
+//
+// demo 不是"演示配色"，而是一组安全降级开关的集合：
+//   - server_bootstrap.go: Demo 让 bootstrap token 校验直接 return true
+//     → /install.sh 与 /bin/opsmesh-agent 对全网开放（后者分发二进制本体）；
+//   - server_middleware.go: Demo 跳过 CSRF Origin 校验；
+//   - auth.go: Demo 无身份即放行（RBAC 兜底关闭）；
+//   - config.go: Demo 关闭 gRPC agent 身份签名。
+//
+// 一次误配即同时关掉这四道防线，故 Validate 必须 fail-fast。
+func TestValidate_ProductionAndDemoMutuallyExclusive(t *testing.T) {
+	c := base()
+	c.Production = true
+	c.Demo = true
+	if err := c.Validate(); err == nil {
+		t.Fatal("--production=true 与 --demo=true 同时设置应被拒绝启动")
+	}
+	// 单独开启任一个都不应因互斥而失败（生产侧还须自备 TLS/密钥，
+	// 这里的断言只关心"不再收到互斥错误"）。
+	only := base()
+	only.Production = true
+	only.Demo = false
+	if err := only.Validate(); err != nil && strings.Contains(err.Error(), "互斥") {
+		t.Fatalf("仅 --production 不应触发互斥错误: %v", err)
+	}
+	onlyDemo := base()
+	onlyDemo.Production = false
+	onlyDemo.Demo = true
+	if err := onlyDemo.Validate(); err != nil {
+		t.Fatalf("仅 --demo 应通过校验: %v", err)
+	}
+}
+
+// TestLoad_DemoRespectsExplicitGRPCRequireSignature 验证 demo 模式尊重显式的
+// --grpc-require-signature=true。
+//
+// 回归背景：原实现是 `if cfg.Demo { cfg.GRPCRequireSignature = false }`——无条件覆盖，
+// 连用户显式 `--grpc-require-signature=true` 都压不过，等于 demo 成了一个可以把
+// 安全开关关掉的全局后门。现改为仅在未显式设置时才默认关闭。
+func TestLoad_DemoRespectsExplicitGRPCRequireSignature(t *testing.T) {
+	restore := clearOpsmeshEnv()
+	defer restore()
+	cfg := loadForTest("--demo=true", "--grpc-require-signature=true")
+	if !cfg.GRPCRequireSignature {
+		t.Fatal("demo 模式下显式 --grpc-require-signature=true 应被尊重")
+	}
+}
+
+// TestLoad_DemoDefaultsGRPCRequireSignatureOff 验证未显式设置时 demo 仍默认关闭签名
+// （保持向后兼容：本地一键体验不需要 agent 签名）。
+func TestLoad_DemoDefaultsGRPCRequireSignatureOff(t *testing.T) {
+	restore := clearOpsmeshEnv()
+	defer restore()
+	cfg := loadForTest("--demo=true")
+	if cfg.GRPCRequireSignature {
+		t.Fatal("demo 模式未显式设置时应默认关闭 gRPC 签名（向后兼容）")
+	}
+}

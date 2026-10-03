@@ -1,4 +1,16 @@
 # 安全 E2E 专用栈（roadmap 4.5）：require-auth / 租户越权 / mTLS / 任务取消。
+#
+# ============================================================================
+# 仅供 CI（.github/workflows/ci.yml 的 e2e-sec job）与本地安全回归使用。
+# 禁止用于任何可被他人访问的环境。
+#
+# 凭据说明：OPSMESH_JWT_SECRET / MYSQL_ROOT_PASSWORD 等在本文件里带**兜底默认值**，
+# 但 CI 在 `env:` 里显式注入同名变量（见 ci.yml e2e-sec job），因此实际生效值
+# 来自 CI 配置而非下面的字面量。保留兜底是为了让本地能零准备复现该栈。
+# 这也意味着：直接 `docker compose -f docker-compose.e2e-sec.yaml up` 时会退回到
+# 版本库里的固定 JWT 密钥——该值可被任何人用于离线签发 token，故本栈不得对外暴露。
+# ============================================================================
+#
 # 与 docker-compose.yaml 的区别：
 #   - controlplane 开启 --require-auth（缺失身份拒绝 401）
 #   - controlplane 开启 gRPC mTLS（--tls-cert/key + --client-ca 要求客户端证书）

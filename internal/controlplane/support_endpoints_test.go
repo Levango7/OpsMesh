@@ -59,6 +59,24 @@ func newSupportTestServer(t *testing.T) *Server {
 			LokiEndpoint:    "https://loki-user:" + secretSentinel + "-LOKIPASS@loki.internal:3100/loki/api/v1/push?token=" + secretSentinel + "-TOKEN",
 			AlertWebhookURL: "https://hooks.example.com/notify?token=" + secretSentinel + "-WEBHOOK",
 			LogPushEndpoint: secretSentinel + "-NOT-A-URL",
+			// 通知渠道：webhook URL 的 query 里就是 access_token/key，另有加签密钥与
+			// SMTP 口令。此前 NotifyChannels 原样输出，是诊断包"凭证不落盘"承诺的
+			// 唯一破例——哨兵在此铺开，让既有的 assertNoSecrets 真正覆盖该字段。
+			NotifyChannels: []config.NotifyChannelConfig{
+				{
+					Type:       "dingtalk",
+					WebhookURL: "https://oapi.dingtalk.com/robot/send?access_token=" + secretSentinel + "-DINGTALK",
+					Secret:     secretSentinel + "-DINGSECRET",
+				},
+				{
+					Type:     "email",
+					SMTPHost: "smtp.example.com",
+					Username: "ops",
+					Password: secretSentinel + "-SMTPPW",
+					From:     "ops@example.com",
+					To:       []string{"ops1@example.com"},
+				},
+			},
 		},
 		jwtSecret:    []byte("test-jwt-secret-for-support-test-32b!"),
 		sessionStore: ss,
@@ -147,6 +165,55 @@ func TestConfigSnapshot_Redaction(t *testing.T) {
 	obs, _ := snap["observability"].(map[string]any)
 	if got, _ := obs["lokiEndpoint"].(string); got != "https://loki.internal:3100/loki/api/v1/push" {
 		t.Errorf("lokiEndpoint 未正确脱敏: %q", got)
+	}
+	// 通知渠道：凭证必须布尔化，webhook URL 必须剥 query，且不得出现原始字段名。
+	notif, _ := obs["notifyChannels"].([]map[string]any)
+	if len(notif) != 2 {
+		t.Fatalf("notifyChannels 应保留 2 条渠道的排障信息，实际 %d 条: %v", len(notif), obs["notifyChannels"])
+	}
+	for _, m := range notif {
+		for _, forbidden := range []string{"webhook_url", "secret", "password", "WebhookURL", "Secret", "Password"} {
+			if _, has := m[forbidden]; has {
+				t.Errorf("notifyChannels 条目不应包含原样凭证字段 %q: %v", forbidden, m)
+			}
+		}
+	}
+	if got, _ := notif[0]["webhookUrlRedacted"].(string); got != "https://oapi.dingtalk.com/robot/send" {
+		t.Errorf("notifyChannels webhook URL 未剥 query: %q", got)
+	}
+	if notif[0]["secretConfigured"] != true {
+		t.Errorf("notifyChannels 应输出 secretConfigured=true: %v", notif[0])
+	}
+	if notif[1]["passwordConfigured"] != true {
+		t.Errorf("notifyChannels 应输出 passwordConfigured=true: %v", notif[1])
+	}
+	// 非敏感项应保留，否则配置转储失去排障价值。
+	if notif[1]["smtpHost"] != "smtp.example.com" {
+		t.Errorf("notifyChannels 应保留 smtpHost: %v", notif[1])
+	}
+}
+
+// TestRedactNotifyChannels_Direct 单测脱敏函数本身（不依赖 configSnapshot 装配）。
+func TestRedactNotifyChannels_Direct(t *testing.T) {
+	in := []config.NotifyChannelConfig{
+		{Type: "slack", WebhookURL: "https://hooks.slack.com/services/T0/B0/XXXX?token=abc", Channel: "#ops"},
+		{Type: "wechat", WebhookURL: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=k"},
+		{Type: "email", SMTPHost: "smtp.x", SMTPPort: 465, Username: "u", Password: "", To: []string{"a@b.c"}},
+	}
+	out := redactNotifyChannels(in)
+	if len(out) != 3 {
+		t.Fatalf("len=%d, want 3", len(out))
+	}
+	// 未配置口令 → false（而非 true，避免"没配"被误读成"已配"）。
+	if out[2]["passwordConfigured"] != false {
+		t.Errorf("空口令应输出 passwordConfigured=false: %v", out[2])
+	}
+	// 全部条目都不得出现 query 残留。
+	for i, m := range out {
+		u, _ := m["webhookUrlRedacted"].(string)
+		if strings.Contains(u, "?") {
+			t.Errorf("第 %d 条 webhookUrlRedacted 仍带 query: %q", i, u)
+		}
 	}
 }
 

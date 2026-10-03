@@ -17,11 +17,18 @@ import (
 // 因此断言分两类：与状态无关的不变量（路由可达、路径穿越被拒、方法限制、缓存策略）
 // 直接断言；与状态相关的行为按 bundleAvailable() 分支断言。
 
-// newEnterpriseServer 构造一个要求鉴权的控制面 Server（企业版外壳必须免鉴权可达）。
+// newEnterpriseServer 构造一个要求鉴权、且**已授权**的控制面 Server。
+//
+// 已授权是必要前提：企业版外壳现在受商业授权闸门约束（license_gate.go），
+// 社区版访问 /enterprise/ 会拿到「未授权」说明页而非外壳。
+// 本文件关心的是**外壳交付机制**（鉴权豁免、路径穿越、缓存、SPA 回退），
+// 授权闸门本身由 license_gate_test.go 单独覆盖——两者互不干扰，
+// 且这个分工让"外壳机制坏了"与"授权坏了"能被分别定位。
 func newEnterpriseServer(t *testing.T) *Server {
 	t.Helper()
 	s := newTestServer()
 	s.requireAuth = true
+	s.lic, _ = enterpriseState(t)
 	return s
 }
 

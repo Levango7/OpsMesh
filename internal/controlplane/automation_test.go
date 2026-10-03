@@ -23,7 +23,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Levango7/OpsMesh/internal/automation"
 	"github.com/Levango7/OpsMesh/internal/config"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
@@ -441,23 +443,107 @@ func newEvalTestServer(t *testing.T) *Server {
 	return s
 }
 
-// TestProcessAutomationRules_ScheduleHit 验证 schedule 触发器恒命中：评估后产生执行记录。
+// withFixedAutomationClock 把全局 automationEngine 换成时钟固定在 ts 的新实例，
+// 返回恢复函数。schedule 触发的判定依赖"当前时刻是否落在 cron 命中区间"，
+// 不固定时钟就写不出与运行时刻无关的确定性用例。
+func withFixedAutomationClock(t *testing.T, ts time.Time) func() {
+	t.Helper()
+	prev := automationEngine
+	replacement := automation.NewEngine()
+	replacement.SetExecutor(nil)
+	replacement.SetClock(func() time.Time { return ts })
+	automationEngine = replacement
+	return func() { automationEngine = prev }
+}
+
+// TestProcessAutomationRules_ScheduleHit 验证 schedule 触发器按 cron 表达式命中时产生执行记录。
+//
+// 回归背景：原用例名为 "..._ScheduleHit"、断言"恒命中"，固化的是缺陷行为——
+// 评估循环每 30s 遍历全部 enabled 规则，而引擎对 schedule 无条件返回 true，
+// 于是任何定时规则都会每 30 秒执行一次动作。现改为按真实 cron 求值。
 func TestProcessAutomationRules_ScheduleHit(t *testing.T) {
+	// 2026-10-03 是周六，09:00 对应 cron "0 9 * * *" 的命中区间。
+	fireAt := time.Date(2026, 10, 3, 9, 0, 0, 0, time.Local)
+	defer withFixedAutomationClock(t, fireAt)()
+
 	s := newEvalTestServer(t)
 	s.store.CreateAutomationRule("default", &store.AutomationRule{
 		Name:          "daily-report",
 		TriggerType:   "schedule",
-		TriggerParams: map[string]string{"cron": "0 9 * * *"},
+		TriggerParams: map[string]string{"schedule": "0 9 * * *"},
 		Actions:       []store.AutomationAction{{Type: "send_notify", Params: map[string]string{"channel": "email", "message": "daily report"}}},
 		Enabled:       true,
 	})
 	s.processAutomationRules()
 	execs := s.store.ListAutomationExecutions("default", 10)
 	if len(execs) != 1 {
-		t.Fatalf("executions=%d, want 1（schedule 恒命中应产生执行记录）", len(execs))
+		t.Fatalf("executions=%d, want 1（cron 命中应产生执行记录）", len(execs))
 	}
 	if execs[0].RuleID == "" || execs[0].RuleName != "daily-report" {
 		t.Fatalf("execution 归属错误: %+v", execs[0])
+	}
+}
+
+// TestProcessAutomationRules_ScheduleNoCronNoFire 回归：未配置 cron 表达式的 schedule 规则
+// 必须一次都不触发。这是本次修复的核心断言——修复前该规则每 30 秒触发一次动作。
+func TestProcessAutomationRules_ScheduleNoCronNoFire(t *testing.T) {
+	fireAt := time.Date(2026, 10, 3, 9, 0, 0, 0, time.Local)
+	defer withFixedAutomationClock(t, fireAt)()
+
+	s := newEvalTestServer(t)
+	s.store.CreateAutomationRule("default", &store.AutomationRule{
+		Name:        "no-cron",
+		TriggerType: "schedule",
+		Actions:     []store.AutomationAction{{Type: "send_notify", Params: map[string]string{"channel": "email"}}},
+		Enabled:     true,
+	})
+	// 模拟评估循环连续跑多轮（原缺陷下会产生多条执行记录）。
+	for i := 0; i < 5; i++ {
+		s.processAutomationRules()
+	}
+	if execs := s.store.ListAutomationExecutions("default", 10); len(execs) != 0 {
+		t.Fatalf("executions=%d, want 0（无 cron 表达式不得触发）", len(execs))
+	}
+}
+
+// TestProcessAutomationRules_ScheduleCronMissNoFire 验证 cron 未命中时不触发。
+func TestProcessAutomationRules_ScheduleCronMissNoFire(t *testing.T) {
+	// 09:00 评估，但规则配的是 09:30。
+	at := time.Date(2026, 10, 3, 9, 0, 0, 0, time.Local)
+	defer withFixedAutomationClock(t, at)()
+
+	s := newEvalTestServer(t)
+	s.store.CreateAutomationRule("default", &store.AutomationRule{
+		Name:          "later",
+		TriggerType:   "schedule",
+		TriggerParams: map[string]string{"schedule": "30 9 * * *"},
+		Actions:       []store.AutomationAction{{Type: "send_notify", Params: map[string]string{"channel": "email"}}},
+		Enabled:       true,
+	})
+	s.processAutomationRules()
+	if execs := s.store.ListAutomationExecutions("default", 10); len(execs) != 0 {
+		t.Fatalf("executions=%d, want 0（cron 未命中不得触发）", len(execs))
+	}
+}
+
+// TestProcessAutomationRules_EventNoContextNoFire 回归：event 触发器在周期评估循环中
+// 不再每 30s 触发一次——评估循环不注入 ctx["event"]。
+func TestProcessAutomationRules_EventNoContextNoFire(t *testing.T) {
+	fireAt := time.Date(2026, 10, 3, 9, 0, 0, 0, time.Local)
+	defer withFixedAutomationClock(t, fireAt)()
+
+	s := newEvalTestServer(t)
+	s.store.CreateAutomationRule("default", &store.AutomationRule{
+		Name:        "on-event",
+		TriggerType: "event",
+		Actions:     []store.AutomationAction{{Type: "send_notify", Params: map[string]string{"channel": "email"}}},
+		Enabled:     true,
+	})
+	for i := 0; i < 5; i++ {
+		s.processAutomationRules()
+	}
+	if execs := s.store.ListAutomationExecutions("default", 10); len(execs) != 0 {
+		t.Fatalf("executions=%d, want 0（评估循环无事件上下文，不得触发）", len(execs))
 	}
 }
 

@@ -280,8 +280,11 @@ func downloadAndVerifyPlugin(p *store.Plugin) error {
 		return fmt.Errorf("download URL rejected: %w", err)
 	}
 
-	// 下载。
-	client := &http.Client{Timeout: 5 * time.Minute}
+	// 下载。使用带 SSRF 防护的出网 client：上面的 ValidateWebhookURL 是"此刻"的判断，
+	// 而 DNS 记录在下载前可能已变更（rebinding），且默认 http.Client 会跟随重定向
+	// ——"校验通过的外网 URL"返回 302 → 169.254.169.254 即可打到云元数据。
+	// newEgressClient 在建连时逐 IP 复检、且对每一跳重定向重新校验。
+	client := newEgressClient(5*time.Minute, false)
 	resp, err := client.Get(p.DownloadURL)
 	if err != nil {
 		return fmt.Errorf("download: %w", err)
