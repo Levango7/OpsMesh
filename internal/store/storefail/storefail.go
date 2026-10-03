@@ -1,4 +1,8 @@
-// failures.go 存储层失败可观测性。
+// Package storefail 存储层失败可观测性（自 internal/store 抽出的独立层，TD-61 批次 1）。
+//
+// 搬迁说明：本包与 store 主包无任何内部依赖（仅标准库），是 god-package 拆分的
+// 第一个独立层。父包 internal/store 经 failures_shim.go 以类型别名 + 薄包装回导，
+// 保证 327 个 store 内调用点与全部外部引用零改动。
 //
 // # 为什么需要它
 //
@@ -26,7 +30,7 @@
 // （Memory/SQL/MultiSchema）与全部调用方，是一次独立的、有明确回归面的重构，
 // 应当独立评估与排期，不应与可观测性补丁混在同一次改动里。
 // 两者是互补关系：本文件让存量吞错点立刻可见，签名重构则从根上消除它们。
-package store
+package storefail
 
 import (
 	"fmt"
@@ -49,8 +53,8 @@ func storeLogf(format string, args ...any) {
 	log.Printf(format, args...)
 }
 
-// failureRingSize 最近失败样本的保留条数。内存有界，避免长期运行后无上限增长。
-const failureRingSize = 256
+// FailureRingSize 最近失败样本的保留条数。内存有界，避免长期运行后无上限增长。
+const FailureRingSize = 256
 
 // StoreFailure 一条被吞掉的存储层错误样本。
 type StoreFailure struct {
@@ -66,7 +70,7 @@ type failureSink struct {
 	mu     sync.Mutex
 	total  uint64
 	byOp   map[string]uint64
-	recent [failureRingSize]StoreFailure
+	recent [FailureRingSize]StoreFailure
 	next   int
 	filled bool
 }
@@ -74,7 +78,7 @@ type failureSink struct {
 // defaultFailureSink 全局单例：包级零状态，无初始化顺序问题。
 var defaultFailureSink = &failureSink{byOp: make(map[string]uint64)}
 
-// recordStoreFailure 供存储层内部记录一次被吞掉的错误。
+// Record 供存储层内部记录一次被吞掉的错误。
 //
 // 仍会写日志（保留原有可观测行为与 trace 排查线索），额外把错误送进 sink。
 // 形参与 log.Printf 完全一致，因此可以机械地把
@@ -83,10 +87,10 @@ var defaultFailureSink = &failureSink{byOp: make(map[string]uint64)}
 //
 // 替换为
 //
-//	recordStoreFailure("[store] ...失败...: %v", args..., err)
+//	Record("[store] ...失败...: %v", args..., err)
 //
 // 而不改变任何调用点的语义或输出格式。
-func recordStoreFailure(format string, args ...any) {
+func Record(format string, args ...any) {
 	storeLogf(format, args...)
 
 	// 从 format 里取出操作名（形如 "[store] UpsertDevice 失败 ..."），
@@ -205,7 +209,7 @@ func (s *failureSink) record(f StoreFailure) {
 	s.total++
 	s.byOp[f.Op]++
 	s.recent[s.next] = f
-	s.next = (s.next + 1) % failureRingSize
+	s.next = (s.next + 1) % FailureRingSize
 	if s.next == 0 {
 		s.filled = true
 	}
@@ -251,18 +255,18 @@ func StoreFailureStats() (total uint64, byOp map[string]uint64) {
 	return defaultFailureSink.total, out
 }
 
-// RecentStoreFailures 返回最近的失败样本，最新的排在最前。最多 failureRingSize 条。
+// RecentStoreFailures 返回最近的失败样本，最新的排在最前。最多 FailureRingSize 条。
 func RecentStoreFailures() []StoreFailure {
 	defaultFailureSink.mu.Lock()
 	defer defaultFailureSink.mu.Unlock()
 	n := defaultFailureSink.next
 	if defaultFailureSink.filled {
-		n = failureRingSize
+		n = FailureRingSize
 	}
 	out := make([]StoreFailure, 0, n)
 	// 从 next-1 倒着走，即为时间倒序。
 	for i := 0; i < n; i++ {
-		idx := (defaultFailureSink.next - 1 - i + failureRingSize*2) % failureRingSize
+		idx := (defaultFailureSink.next - 1 - i + FailureRingSize*2) % FailureRingSize
 		out = append(out, defaultFailureSink.recent[idx])
 	}
 	return out
