@@ -184,6 +184,12 @@ func (h *Handler) listIncidents(w http.ResponseWriter, r *http.Request) {
 	severity := r.URL.Query().Get("severity")
 
 	incidents := h.svc.ListIncidents(status, models.Severity(severity))
+	// 空列表必须序列化为 [] 而非 null：nil 切片直出 JSON 是 null，前端列表
+	// v-for/.map() 会炸。转正运行时验收（2026-10-03）实测发现——其余域
+	// （gpu/runbook/autoscaler）空列表都是 []，仅本域返回 null。
+	if incidents == nil {
+		incidents = []*models.Incident{}
+	}
 	writeJSON(w, http.StatusOK, incidents)
 }
 
