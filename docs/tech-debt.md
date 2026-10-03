@@ -11,15 +11,15 @@
 
 | ID | 问题 | 解决方式 |
 |---|---|---|
-| TD-01 | Store 巨型接口（40+ 方法违反 ISP） | `internal/store/store.go` 已拆成 15 个领域小接口 + 编译期双实现断言 |
+| TD-01 | Store 巨型接口（40+ 方法违反 ISP） | ✅ `internal/store/store.go` 已拆成 15 个领域小接口 + 编译期双实现断言
 | TD-02 | 个人版前端死重 + 企业版前端未接线 | ✅ 2026-09-25 已解决（P0-3）：个人版已收敛为极简引导页（`internal/controlplane/embed/web/index.html`，保留 `GET /` 租户语义与 bootstrap 端点）；企业版前端（Vue3）改由**构建期 `go:embed` 装配进控制面二进制**，经 `/enterprise/` 提供（装配脚本 `deploy/docker/scripts/build-enterprise-web.sh`，两个 Dockerfile 均内置 node 构建阶段）。未装配时返回带 `X-OpsMesh-Enterprise-Bundle: placeholder` 的 200 说明页且剥离引导页 CTA，不静默不 404。设计取舍与独立部署路径见 `docs/deployment-guide.md` §企业版前端部署 |
-| TD-03 | `docker-compose.yaml` 硬编码 MySQL 弱口令 | 改为 `${MYSQL_ROOT_PASSWORD:-rootpass}` 等环境变量插值，CLI 强制注入 |
-| TD-04 | Dockerfile 缺 `go mod verify` | 已加入构建阶段（防供应链投毒） |
-| TD-05 | CI GitOps 写回步骤必失败 | `.github/workflows/ci.yml` 新增 clone/path 守卫，仓库未就绪时安全跳过（`::warning::`） |
-| TD-06 | kafka-go 钉版本说明过期 | README/roadmap 已删除"必须钉 v0.4.48"的旧约束 |
-| TD-07 | 双前端描述不一致 | README 删去"Deprecated v0.2→v0.4"表述，改为"已收敛为引导页" |
-| TD-08 | TD-22 误登记：agent "每次 RPC 重新 Dial" | **误登记**：`grpcclient.go` 的 `连接复用` 已实现（conns 按 target 缓存长连接 + 错误淘汰重 Dial），从债务清单移除 |
-| TD-09 | TD-23 误登记：domain "无业务行为" | **误登记**：`domain.go` 已有 Cancel/CanRetry/MarkDead/TransitionToProvisioning/Acknowledge/Silence 等 10+ 行为方法，从债务清单移除 |
+| TD-03 | `docker-compose.yaml` 硬编码 MySQL 弱口令 | ✅ 改为 `${MYSQL_ROOT_PASSWORD:-rootpass}` 等环境变量插值，CLI 强制注入
+| TD-04 | Dockerfile 缺 `go mod verify` | ✅ 已加入构建阶段（防供应链投毒）
+| TD-05 | CI GitOps 写回步骤必失败 | ✅ `.github/workflows/ci.yml` 新增 clone/path 守卫，仓库未就绪时安全跳过（`::warning::`）
+| TD-06 | kafka-go 钉版本说明过期 | ✅ README/roadmap 已删除"必须钉 v0.4.48"的旧约束
+| TD-07 | 双前端描述不一致 | ✅ README 删去"Deprecated v0.2→v0.4"表述，改为"已收敛为引导页"
+| TD-08 | TD-22 误登记：agent "每次 RPC 重新 Dial" | ✅ **误登记**：`grpcclient.go` 的 `连接复用` 已实现（conns 按 target 缓存长连接 + 错误淘汰重 Dial），从债务清单移除
+| TD-09 | TD-23 误登记：domain "无业务行为" | ✅ **误登记**：`domain.go` 已有 Cancel/CanRetry/MarkDead/TransitionToProvisioning/Acknowledge/Silence 等 10+ 行为方法，从债务清单移除
 | TD-10 | 前端 E2E 只有 mock，无真实后端联调 | ✅ 已完成：`playwright.real.config.js` + `e2e-real/health.spec.js`（探活）+ `core.spec.js`（登录/任务 CRUD/SSE 契约）+ CI `e2e-real` job（docker compose 起栈真跑）。剩余可选增强：任务执行等待 agent 回执的长链路用例 |
 | TD-11 | Store 消费方仍多依赖完整 Store 接口 | ✅ 核查发现 早已落地：Registry 薄转发层已删（registry.go 仅留 package 占位），消费方直连子接口；仅 factory 的类型断言分发保留完整 Store，属合理用途。无进一步工作。 |
 | TD-20 | `internal/controlplane` 单包 14,489 行 | ✅ 已完成：server.go 1954→387 行，按主题拆出 8 个 server_*.go；✓ 现单文件 ≤500 行 |
@@ -30,8 +30,8 @@
 | TD-27 | Windows agent 假支持 | ✅ README 已声明"agent 仅 Linux"；如需 Windows 支持须专项立项（位置：`internal/agent/exec_other.go`） |
 | TD-28 | CI 无增量覆盖率门禁 | ✅ 已新增 `codecov.yml`：patch ≥70%、project ≥45%（位置：ci.yml；原登记 50% 超实际可达水平，已按 CI 实测调回 45%，见 ci.yml 覆盖率门禁步骤注释） |
 | TD-29 | operator Go 版本与主模块不一致 | ✅ `operator/go.mod` 已对齐 go 1.26.0，`go mod tidy && go build` 通过（见 TD-30） |
-| TD-30 | operator Go 版本与主模块割裂 | `operator/go.mod` 从 go 1.22 对齐至 go 1.26.0，`go mod tidy && go build` 已验证通过 |
-| TD-42 | CSP 保留 `unsafe-inline` | `script-src` 已去除 `unsafe-inline`（落地：前端 inline onclick 改用 addEventListener + server_middleware.go CSP 去掉 unsafe-inline） |
+| TD-30 | operator Go 版本与主模块割裂 | ✅ `operator/go.mod` 从 go 1.22 对齐至 go 1.26.0，`go mod tidy && go build` 已验证通过
+| TD-42 | CSP 保留 `unsafe-inline` | ✅ `script-src` 已去除 `unsafe-inline`（落地：前端 inline onclick 改用 addEventListener + server_middleware.go CSP 去掉 unsafe-inline）
 | TD-50 | `internal/controlplane` 测试覆盖率不足 | ✅ 已完成：补充 `handler_extra_test.go` / `handler_m4_test.go` / `integration_m4_test.go` / `integration_m5_test.go` / `observability_m1_4_test.go` / `loop_m4_test.go` / `endpoint_test.go` / `command_validation_test.go` / `shell_safe_test.go` / `integration_inhibit_test.go` 等多个测试文件，controlplane 覆盖率提升至 56.9%（Batch2），按 `server_*.go` 主题拆分后单文件 ≤500 行可测性显著改善 |
 | TD-51 | Helm Chart 测试覆盖率不足 | ✅ 已完成：`deploy/helm/opsmesh/` 全套 17 个模板落地（含 ServiceMonitor / PrometheusRule / Ingress / HPA / NetworkPolicy / PodDisruptionBudget），`server_helm_extra_test.go` 补充 handler 测试；CI `image` job 把 chart `global.image.tag` 钉死为本 commit sha（含占位符守卫）；`helm` 包覆盖率经 `internal/helm/` catalog 测试覆盖 |
 | TD-52 | `internal/discover` 与 `internal/discovery` 包边界混淆 | ✅ 已完成：两包 `doc.go` 明确职责边界——`discover` = 设备发现（控制面→网段找设备，TCP 存活扫描），`discovery` = 控制面服务发现 + 负载均衡（agent→控制面 failover/round-robin）；README「internal 包职责」章节与「discover vs discovery 边界说明」表格明确区分，分属设备纳管域与 agent 高可用域，无相互依赖 |
