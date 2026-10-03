@@ -221,6 +221,34 @@ redis:
 #         cpu: 1000m
 #         memory: 512Mi
 #     env: {}
+#
+# TD-60 转正三域的启用覆盖块（2026-10-03 转正落地后随附，格式同上）：
+# incident / runbook / autoscaler 已进出厂 compose 栈并经运行时验收（七域全
+# ok、六域接口 200）。生产启用时把下面整段取消注释并按需调 tag/digest/replicas：
+# 注意 incident/runbook 走 MySQL（与 task_svc 同样的 storeType: "sql" 前提：
+# controlplane.store=mysql + mysql.enabled=true，自动渲染 <前缀>_DSN）；
+# autoscaler 无存储层，且读 Prometheus 指标（确认 monitoring 栈就绪）。
+#   incident_svc:
+#     enabled: true
+#     image:
+#       repository: ghcr.io/levango7/incident-svc
+#       tag: "0.11.0"
+#       digest: ""
+#     storeType: "sql"
+#   runbook_svc:
+#     enabled: true
+#     image:
+#       repository: ghcr.io/levango7/runbook-svc
+#       tag: "0.11.0"
+#       digest: ""
+#     # runbook 重启不丢数据的转正前置（2026-09-30 落地 MySQL store）
+#     storeType: "sql"
+#   autoscaler_svc:
+#     enabled: true
+#     image:
+#       repository: ghcr.io/levango7/autoscaler-svc
+#       tag: "0.11.0"
+#       digest: ""
 services: {}
 
 ## @section ServiceAccount
