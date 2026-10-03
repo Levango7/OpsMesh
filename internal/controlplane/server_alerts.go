@@ -172,6 +172,11 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	alerts := s.store.Alerts(actx.TenantID)
+	// 空列表必须序列化为 [] 而非 null：nil 切片直出 JSON 是 null，前端列表
+	// v-for/.map() 会炸。转正运行时巡检（2026-10-03）与 incident-svc 同款缺陷。
+	if alerts == nil {
+		alerts = []*proto.Alert{}
+	}
 	// 修复 3：分页（向后兼容：不传 page 返回全量）。
 	page, pageSize := paginate.ParsePagination(r.URL.Query())
 	if page == 0 {
