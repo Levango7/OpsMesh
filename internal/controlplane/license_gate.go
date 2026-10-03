@@ -193,9 +193,9 @@ func (s *Server) requireEnterpriseGate(w http.ResponseWriter, r *http.Request) b
 // 页面内容全部由授权状态渲染，不含任何密钥材料；reason 已由 licenseReasonText
 // 转成运维可读文案，不透出验签内部细节。
 func enterpriseUnlicensedPage(snap map[string]any) []byte {
-	reason, _ := snap["reason"].(string)
-	if reason == "" {
-		reason = "未配置企业版授权"
+	reason := "未配置企业版授权"
+	if s, ok := snap["reason"].(string); ok && s != "" {
+		reason = s
 	}
 	return []byte(`<!doctype html>
 <html lang="zh-CN">

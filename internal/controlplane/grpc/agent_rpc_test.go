@@ -140,7 +140,6 @@ func TestCheckAgentTenant_EmptyAgentIDDeferred(t *testing.T) {
 // 这一组是 agent 身份绑定的核心：签名缺失、算法未知、时间戳超窗、
 // 密钥不匹配都必须 Unauthenticated；而合法 v2 签名必须放行。
 func TestVerifyAgentSignature_Matrix(t *testing.T) {
-	const secret = "per-agent-secret-for-test"
 	g, st := newTestServer(t, false, true)
 	st.Register(&proto.AgentInfo{AgentID: "a1", TenantID: "t1", Segment: "seg"})
 	// per-agent 密钥在 Register 时自动生成（store memory.go:569），验签优先取它。

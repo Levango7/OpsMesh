@@ -509,7 +509,7 @@ func (s *Server) handleGatewayProxy(w http.ResponseWriter, r *http.Request) {
 	// 拒绝原因只进服务端日志，不进响应体：ValidateWebhookURL 的错误里含解析出的
 	// IP 与拒绝类别，回吐等于把内网地址段与网关拓扑送给未授权调用方。
 	if err := ValidateWebhookURL(rule.TargetBackend, true); err != nil {
-		log.Printf("controlplane: /gw/ 后端 %s SSRF 复检拒绝: %v", rule.TargetBackend, err)
+		log.Printf("controlplane: /gw/ 后端 SSRF 复检拒绝（target 不入日志：属用户配置数据）: %v", err)
 		paginate.WriteJSON(rw, http.StatusBadGateway, map[string]string{"error": "gateway target rejected by egress policy"})
 		return
 	}

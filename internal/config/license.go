@@ -144,7 +144,7 @@ func ParsePublicKey(raw string) (ed25519.PublicKey, error) {
 	// 2) 文件路径：含换行（多行裸串粘贴）或以 PEM 后缀结尾时才尝试读文件。
 	if strings.ContainsAny(s, "\r\n") || strings.HasSuffix(strings.ToLower(s), ".pem") ||
 		strings.HasSuffix(strings.ToLower(s), ".pub") {
-		b, err := os.ReadFile(s)
+		b, err := os.ReadFile(s) //nolint:gosec // G703：路径来自运维配置（--license-public-key），与根配置 config 文件读取豁免同款
 		if err != nil {
 			return nil, fmt.Errorf("license: read public key file: %w", err)
 		}
@@ -152,7 +152,7 @@ func ParsePublicKey(raw string) (ed25519.PublicKey, error) {
 	}
 	// 3) 文件路径：像路径（含路径分隔符）且确实存在。
 	if strings.ContainsAny(s, `/\`) {
-		if b, err := os.ReadFile(s); err == nil {
+		if b, err := os.ReadFile(s); err == nil { //nolint:gosec // G703 同上：运维配置的路径，非外部用户输入
 			return ParsePublicKey(strings.TrimSpace(string(b)))
 		}
 		// 路径不存在时继续按裸串尝试（slash 可能只是 base64 里的字符）。

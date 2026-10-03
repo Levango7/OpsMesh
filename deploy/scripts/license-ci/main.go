@@ -72,7 +72,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "license-ci: 建目录失败: %v\n", err)
 		os.Exit(1)
 	}
-	if err := os.WriteFile(filepath.Join(*outDir, "public.key"), []byte(enc.EncodeToString(pub)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(*outDir, "public.key"), []byte(enc.EncodeToString(pub)), 0o600); err != nil {
 		fmt.Fprintf(os.Stderr, "license-ci: 写公钥失败: %v\n", err)
 		os.Exit(1)
 	}
