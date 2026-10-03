@@ -142,3 +142,17 @@
 **批次 1 的执行结论**：不执行「按域搬」（会破编译且无过渡手段）；先出**形态 A 的
 搬迁清单**（哪些文件进 memory/sqlstore、哪些共享符号需上提、上提后的父包别名面），
 供下一批动手。
+## 6. 形态 A 搬迁清单（实测数据，2026-10-03）
+
+| 分类 | 文件数 | 内容 |
+|---|---|---|
+| `memory_*.go` | 26 | MemoryStore 方法集 |
+| `sql_*.go` | 32 | SQLStore 方法集 + 迁移框架（`sql.go`） |
+| 共享/其他 | 17 | `models.go`（**43 个领域类型**）、`store.go`（**29 个 Store 接口 + 全量 Store**）、`multi_schema*.go`（8 个包装层）、`session.go`/`redis_session.go`（SessionStore）、`failures.go`、`stub_guard.go` |
+
+**关键实测结论**：
+
+1. **跨后端类型耦合 = 0** —— `sql_*` 不引用 `memory_*` 的任何定义，两端可各拆一子包、彼此无依赖。形态 A 技术上成立。
+2. **必须留在父包的**：`store.go`（29 个 Store 接口是契约，两端实现它）、`multi_schema*`（8 个聚合包装）、`session*`、`failures`、`stub_guard`、4 个构造函数（`NewMemoryStore`/`NewSQLStore`/`NewMultiSchemaStore`/`NewRedisSessionStore`）——**外部 129 个 import 方对 `store.X` 零感知**。
+3. **搬迁的真实成本点**：`models.go` 的 43 个类型被两端共用。若下沉到中性包（如 `internal/store/model`），memory/sqlstore 子包 import 它、父包用**类型别名**回导（`type User = model.User` 别名合法且零外部改动）——但两个后端子包内 58 个文件里所有 `User`/`Task`/`Role` 这类短名都要加 `model.` 前缀。**这一步不能用 `gofmt -r` 做**（它基于标识符匹配，会误伤同名局部变量），需要 gopls rename 或人工逐文件——这是形态 A 的第一个真实卡点，也是批次 1 之后要解决的工具前提。
+4. 可独立推进的小切口候选：`session.go`/`redis_session.go`（SessionStore，与两端无关联）与 `failures.go`（StoreFailure 统计，仅 /admin/store-failures 端点消费）——外部引用面待测，若各 ≤10 处即为低风险起步批次。
