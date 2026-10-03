@@ -7,7 +7,7 @@
 //
 // 与现有 6 领域（Device/Task/Alert/Audit/Token/Leader）解耦，
 // 通过 UserStore/RoleStore/PermissionStore 三个小接口暴露，组合进 Store。
-package store
+package model
 
 import "time"
 
@@ -18,7 +18,7 @@ type User struct {
 	Username string `json:"username"`
 	Email    string `json:"email"`
 	// TenantID 为用户所属租户，决定登录后签发的 JWT 租户（进而决定可见设备/任务/脚本范围）。
-	// 空值按 default 归一（见 normalizeTenantID）：用户中心为平台级，未显式指派租户的用户
+	// 空值按 default 归一（见 NormalizeTenantID）：用户中心为平台级，未显式指派租户的用户
 	// 归入平台默认租户，与迁移前行为一致。
 	TenantID           string    `json:"tenantId"`
 	PasswordHash       string    `json:"-"`      // bcrypt 哈希；JSON 序列化时不输出（防泄露）
@@ -37,7 +37,7 @@ const DefaultTenantID = "default"
 // normalizeTenantID 将空租户归一为 DefaultTenantID，供用户实体读写与 JWT 签发统一取值。
 // 空值语义必须收敛到单一实现：否则「空租户用户」会在不同子系统落到不同桶
 // （任务队列按 tenant_id 过滤、审计按 tenant_id 归集），造成同一用户跨域不可见。
-func normalizeTenantID(tenantID string) string {
+func NormalizeTenantID(tenantID string) string {
 	if tenantID == "" {
 		return DefaultTenantID
 	}
