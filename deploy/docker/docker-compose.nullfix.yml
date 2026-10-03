@@ -1,0 +1,14 @@
+# 本地运行时验证覆盖层（2026-10-04）：让两处 nil→null 修复在运行栈生效。
+#
+# 背景：/api/v1/alerts（controlplane）与 /api/v1/incidents（incident-svc）的空列表
+# 返回 null 缺陷已修入 main（c7cf3fc/1546f87），但运行中的 0.11.0 镜像早于修复。
+# 本层把这两个服务钉到含修复的重编镜像（tag 后缀与既有 -m7fix/-scanfix 同款惯例），
+# 供 verify-runtime 与 probe-collection-shapes.sh 验证；正式生效随下一版镜像发布。
+#
+# 用法：docker compose --env-file .env -f docker-compose.prod.yml -f docker-compose.nullfix.yml \
+#         up -d --no-build --force-recreate controlplane incident-svc
+services:
+  controlplane:
+    image: opsmesh/controlplane:0.11.0-nullfix
+  incident-svc:
+    image: opsmesh/incident-svc:0.11.0-nullfix

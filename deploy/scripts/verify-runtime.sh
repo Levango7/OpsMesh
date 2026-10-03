@@ -952,6 +952,21 @@ for ep in api/v1/admin/config api/v1/admin/diagnostics; do
     bad "匿名 GET /$ep → ${ac}（期望 401）"
   fi
 done
+
+# 集合端点空值形状（null-vs-[] 契约）。独立脚本单源：本处只调用与记账，
+# 断言细节与其自身报告见 deploy/scripts/probe-collection-shapes.sh。
+# 该缺陷类（nil 切片直出 null → 前端列表崩）静态检查全盲，2026-10-03 由本巡检
+# 在真实栈上抓到 alerts/incidents 两处，修复后此处应恒绿。
+sec "16. 集合端点空值形状（null-vs-[] 契约，18 端点）"
+SHAPES_LOG="$(mktemp)"
+if BASE_URL="$CP" bash "$(dirname "$0")/probe-collection-shapes.sh" >"$SHAPES_LOG" 2>&1; then
+  ok "集合端点形状巡检：18 端点全部 200 且为 []/{…:[]}"
+else
+  bad "集合端点形状巡检失败（详见 ${SHAPES_LOG}）"
+  sed 's/^/    /' "$SHAPES_LOG" | tail -8
+fi
+rm -f "$SHAPES_LOG"
+
 echo ""
 echo "==================================================="
 echo "  断言汇总：PASS=${PASS}  FAIL=${FAIL}"
