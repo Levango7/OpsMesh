@@ -16,10 +16,11 @@ import (
 	"testing"
 	"time"
 
-	alertv1 "github.com/Levango7/OpsMesh/services/alert-svc/api/proto/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
+
+	alertv1 "github.com/Levango7/OpsMesh/services/alert-svc/api/proto/v1"
 )
 
 // stubServer 只实现本测试需要的一条方法，其余由生成的 Unimplemented* 兜底。
