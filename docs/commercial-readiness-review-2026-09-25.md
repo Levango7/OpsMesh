@@ -3355,4 +3355,83 @@ pipefail 把"整条管道失败"升格为判定失败。于是**明明命中了�
 ③ `cosign verify` + `.att` provenance 能验通；④ `helm template` 默认渲染出来的镜像名
 在 ① 的集合里。§19 那次（v0.9.1 有 tag 无镜像）、这次（v0.12.0 有 pins 无 tag）都是只做了前三步的一部分。
 
+---
+
+## 33. 2026-10-04｜v0.12.0 真实发布 + 用**官方镜像**做存量库升级演练（12 个镜像逐个起）
+
+### 33.1 发布链的终判，以及 tag 一次推送为什么会起两条 workflow
+
+- tag：annotated `v0.12.0`（tag 对象 `49f0e44`，peel 到 `9f79dda1`）。打之前核过
+  `git ls-remote origin main == HEAD == 9f79dda1`，且那条 branch run **37219235030** 是
+  12 job 全 success（含 `Race detector`、真实 MySQL 的 integration、E2E real/security、
+  `image`/`image-agent` 的构建 + keyless 签名 + SBOM）。
+- 推 tag 一次起**两条** workflow，各自都要单独看终判，"CI 绿了"在这个场景下不是单数：
+  - `release.yml` run **37221272686** → 版本源对账（`v0.12.0` vs `Chart.yaml appVersion`）→
+    12 个微服务镜像 build/Trivy/syft/cosign → `changelog` → `github-release`（正文取自
+    `docs/release-notes.md` 的本版小节）。**已 completed/success**。
+  - `ci.yml` run **37221272683** → 在 tag 上把 12 条腿重跑一遍，全绿之后才轮到 `release` job
+    用 goreleaser 出**版本化二进制产物**并挂到同一个 GitHub Release 上（GHCR 的
+    `opsmesh-binary:0.12.0` / `opsmesh-agent:0.12.0` 也由它的 `image`/`image-agent` 两条腿产出）。
+
+### 33.2 为什么这次演练刻意不走本机 compose 路径
+
+`deploy/docker/docker-compose.prod.yml` 里每个服务**同时**有 `build:`（context=仓库根）和 `image:`，
+`deploy.sh up` 走的是从源码构建。用它做"升级演练"有两处不成立：
+
+1. 它证明的是"我这台机器的工作树能跑"，**证明不了客户拉到的发布物能跑**（§32.9 那条教训的同一类）；
+2. 此刻工作树里有并行 agent 的 9 个未提交条目（`internal/controlplane/plugin_host.go`、
+   `internal/plugin/hooks.go`、`internal/controlplane/server_netsec.go` 等），
+   从它构建出来的"0.12.0"会把在途改动混进已发布版本的证据里。
+
+⇒ 全部改用 `docker pull` 下来的官方镜像（`ghcr.io/levango7/alert-svc:0.12.0`，
+digest `sha256:3c9e34ae…`），跑在既有 MySQL 所在的那个 Docker 网络（`opsmesh-backend`）上。
+
+### 33.3 存量形状是造出来的，不是靠记忆
+
+把 `git show v0.11.0:services/alert-svc/internal/store/schema.sql` 应用到同一 MySQL 实例上的
+新库 `opsmesh_alert_rehearsal`，再按 v0.11.0 的 `AddAlert` 列清单插两行"老版本写的行"
+（A 行 `severity/device_id/metric` 全 NULL，B 行填满）。落库后的可观察前置：
+`rule_id_col_count=0`、`alerts_col_count=14`、`rows=2`、`null_severity_rows=1`。
+
+### 33.4 同一条测量在两个官方镜像上的前后对照（这才是"修好了"的证据形态）
+
+| 观测量 | `alert-svc:0.11.0`（已发布） | `alert-svc:0.12.0`（已发布） |
+|---|---|---|
+| gRPC `ListAlerts` | `LIST_ERR … failed to unmarshal, message is *alertv1.ListAlertsRequest, want proto.Message` —— #59 在**发布物**上原形复现 | `ALERT_COUNT=2`，其中包含那条全 NULL 的老行（#64 的判定点） |
+| 升级动作本身 | — | 启动后 `alerts_col_count` 14→15，`rule_id` 落在 ordinal=4、类型 `varchar(64) NULL`，与 `schema.sql` 一致 |
+| `Evaluate` 产出新告警 | 走不到（编解码就失败） | `EVAL_ALERTS=1 EVALUATED_RULES=1`，`PENDING/NO_DATA/INVALID` 三段全空；新告警 `rule_id="rehearse-rule-1"`（#60 + rule_id 落库） |
+| 重启幂等 | — | `docker restart` 后无 1060、无 fatal，`rule_id_col_count=1`、`rows=3`（老 2 + 新 1）全部仍在 |
+| 首次失败可见性（#66） | `/metrics` 中 `alert_external_notify_failures` 出现次数 **0** ⇒ 序列不存在，`increase()` 结构上看不到第一次失败 | `PAGERDUTY_ENABLED=true` 启动即有 `action="ack"` 与 `action="resolve"` 两条且值为 0 |
+
+读回用的是**一次性 gRPC 探针**（不在仓库里，`HEAD` 的 detached worktree 内交叉编译 linux 静态二进制，
+容器内跑）：alert-svc 只有 gRPC 读路径、没有 REST 列表端点，用 HTTP 侧的任何东西都证不了 #64。
+对照期间的 PagerDuty 端点指向一个**不可解析的主机名**（`http://rehearse-no-such-host:9/`），
+保证演练全程零真实外发。
+
+### 33.5 12 个官方镜像逐个真起 + 各自的健康端点（这一层 CI 从来没有证明过）
+
+先记我自己造出来的假阴性，因为它和 §32.8 是同一类错误：**第一轮统一按 `:8080/health` 探**，
+结果 4 个 `000` + 3 个 `Exited(1)`。逐条取证后：
+
+- 3 个 `Exited(1)` 是**按设计的 fail-fast**，不是缺陷——auth/device/config 缺
+  `AUTH_SVC_JWT_SECRET` / `DEVICE_SVC_JWT_SECRET` / `CONFIG_SVC_ENCRYPTION_KEY`，
+  日志逐字写明原因并给出显式放行开关 `*_ALLOW_INSECURE_DEV_SECRET=true`（TD-68 的同一哲学：
+  宁可不起，不静默降级）。
+- `000` 是**探针打错了目标**：各服务出厂默认端口本来就是分叉的（8081/8083/8090/8082/8080），
+  且 `aio-svc` 读的键是 `AIO_SVC_PORT`（代码默认 **8100**，`services/aio-svc/cmd/aio-svc/main.go:33`），
+  而 compose 发布宿主端口用的是 `AIO_SVC_HTTP_PORT`（默认 8108，`docker-compose.prod.yml:904-906`）；
+  容器内 `netstat` + 自身日志（`AIOps 引擎启动 :8100`）才是端口归属的判据。
+
+按 compose 的容器侧端口与各自健康路径（`/health` × 8、`/healthz`(log-svc)、`/api/v1/health` × 3）逐一对账后：
+**12/12 全部 Up，健康端点全部 200**。⇒ 由此登记 TD-76（微服务镜像注入了版本号却没有任何读得出的面）
+与 TD-77（健康路径三套并存 + 端口环境变量名分叉，改 `.env` 只动宿主侧不动容器内监听）。
+
+### 33.6 核心镜像的版本可观测面（§19 那类静默失效的正面对照）
+
+`docker run --rm --entrypoint /usr/local/bin/opsmesh ghcr.io/levango7/opsmesh-binary:0.12.0 --version`
+实测输出 `opsmesh v0.12.0 (commit=9f79dda1a30be5fc09ac6f429db670de3837c14b date=2026-10-04T17:55:02Z)`，
+`opsmesh-agent:0.12.0` 同值 ⇒ ldflags 的 `-X` 注入在**发布物**上是生效的（这条以前只能靠"CI 里有这一步"来相信）。
+微服务侧则相反：`Dockerfile.service:60` 同样注入了版本，但 `/health` 正文是纯文本 `ok`、没有 `/version`、
+没有 `build_info` 指标 ⇒ 已记 TD-76。
+
 
