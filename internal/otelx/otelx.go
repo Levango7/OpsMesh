@@ -11,6 +11,7 @@ package otelx
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -38,6 +39,66 @@ type ShutdownFunc func(ctx context.Context) error
 
 // noopShutdown 是 no-op 模式下的空关闭函数。
 func noopShutdown(context.Context) error { return nil }
+
+// normalizeEndpoint 把用户/交付配置里的 OTLP 端点规范化成 gRPC 能拨的 "host:port"，
+// 并给出该走明文还是 TLS。
+//
+// 为什么必须有这一步（2026-10-04 真机实测）：12 个微服务出厂 env 用的是 OTel 规范写法
+// `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317`（带 scheme），而旧实现把整个
+// 字符串原样交给 otlptracegrpc.WithEndpoint —— gRPC 把它当**目标地址**而不是 URL，
+// 于是拨号报 `address http://otel-collector:4317:443: too many colons in address`，
+// 每个服务的 span 导出持续失败并只留一条 INFO 日志：链路追踪在出厂栈里从未生效。
+//
+// 刻意不用 url.Parse：`url.Parse("otel-collector:4317")` 会把 "otel" 当成 scheme、
+// "4317" 当成 opaque，恰好把无 scheme 的旗标形态解析错。
+func normalizeEndpoint(raw string) (hostPort string, insecure bool, err error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", false, fmt.Errorf("endpoint 为空")
+	}
+
+	var scheme string
+	if i := strings.Index(s, "://"); i >= 0 {
+		scheme, s = strings.ToLower(s[:i]), s[i+3:]
+	}
+
+	// 去掉 path/query/fragment：OTLP/HTTP 的端点常带 /v1/traces，gRPC 侧只认 host:port。
+	if j := strings.IndexAny(s, "/?#"); j >= 0 {
+		s = s[:j]
+	}
+	if s == "" {
+		return "", false, fmt.Errorf("endpoint %q 去掉 scheme/path 后为空", raw)
+	}
+
+	switch scheme {
+	case "http":
+		insecure = true
+	case "https":
+		insecure = false
+	case "":
+		// 无 scheme：保留"443 视为标准 TLS 端口，其余按内网明文"的历史口径，
+		// 免得改了这一步把控制面/agent 既有旗标行为顺带改掉。
+		insecure = !strings.HasSuffix(s, ":443")
+	default:
+		return "", false, fmt.Errorf("endpoint %q 的 scheme %q 不是 http/https", raw, scheme)
+	}
+
+	// gRPC 默认端口 4317（OTel 规范）；只给 host 时补上，避免 WithEndpoint 再猜出 :443。
+	// 用 net.SplitHostPort 而不是"看有没有冒号"：裸 IPv6（"[::1]"）也含冒号却没有端口，
+	// 而 "a:b:c" 这种多冒号形态正是 #65 现场里 gRPC 报的那句话——宁可在初始化就判掉，
+	// 也不要"启动成功、span 每 5s 失败一次"。
+	if host, port, perr := net.SplitHostPort(s); perr != nil {
+		withPort := s + ":4317"
+		h2, p2, err2 := net.SplitHostPort(withPort)
+		if err2 != nil || h2 == "" || p2 == "" {
+			return "", false, fmt.Errorf("endpoint %q 不是合法的 host:port（%v）", raw, perr)
+		}
+		s = withPort
+	} else if host == "" || port == "" {
+		return "", false, fmt.Errorf("endpoint %q 的 host 或 port 为空", raw)
+	}
+	return s, insecure, nil
+}
 
 // Init 根据配置初始化 OTel SDK：构造 TracerProvider + 导出器 + 全局 propagator。
 //   - endpoint 为空且 stdout=false：返回 no-op TracerProvider（不启用追踪，零开销）。
@@ -86,13 +147,19 @@ func Init(cfg Config) (ShutdownFunc, error) {
 			return nil, fmt.Errorf("otelx: 构造 stdout exporter 失败: %w", err)
 		}
 	} else {
-		// OTLP gRPC 导出。endpoint 形如 "host:port"。
-		opts := []otlptracegrpc.Option{
-			otlptracegrpc.WithEndpoint(cfg.Endpoint),
+		// OTLP gRPC 导出。endpoint 允许两种写法（都是出厂交付里真实存在的）：
+		//   "otel-collector:4317"          —— 控制面/agent 的旗标形态（无 scheme）
+		//   "http://otel-collector:4317"   —— OTel 规范环境变量 OTEL_EXPORTER_OTLP_ENDPOINT 的形态
+		// 见 normalizeEndpoint：直接把带 scheme 的字符串交给 WithEndpoint 会让拨号失败，
+		// 从而**全部微服务的 span 一条也送不到 collector**（2026-10-04 实测）。
+		hostPort, insecure, err := normalizeEndpoint(cfg.Endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("otelx: OTLP endpoint 无法解析: %w", err)
 		}
-		// TLS 策略：端口 443 视为标准 TLS 端口（用系统 TLS），其余用 insecure（内网/调试）。
-		// 生产环境如需 TLS，应扩展 Config 携带 TLS 凭据（WithTLSCredentials）。
-		if !strings.HasSuffix(cfg.Endpoint, ":443") {
+		opts := []otlptracegrpc.Option{
+			otlptracegrpc.WithEndpoint(hostPort),
+		}
+		if insecure {
 			opts = append(opts, otlptracegrpc.WithInsecure())
 		}
 		exporter, err = otlptracegrpc.New(context.Background(), opts...)
