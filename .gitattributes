@@ -14,6 +14,11 @@
 # Go 源码：强制 LF（gofmt/golangci-lint 契约）
 *.go text eol=lf
 
+# proto IDL：强制 LF。重新生成用的 protoc 与 CI 里的 buf 都按字节读文件，
+# 检出成 CRLF 会让"本机重生成 → git diff 全文变更"这种噪音长期存在，
+# 而 #59 的门禁恰恰要求生成物与 .proto 保持可比对。
+*.proto text eol=lf
+
 # CI/配置/脚本：LF（bash 脚本 CRLF 会直接坏掉）
 *.sh text eol=lf
 *.yml text eol=lf
