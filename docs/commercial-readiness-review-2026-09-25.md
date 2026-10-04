@@ -3109,3 +3109,183 @@ AM 重新渲染为"合法但无外发"并通过 `amtool check-config`；`/api/v2
 4. 出厂规则里还没有引用 `opsmesh_store_write_failures_total` 的告警（指标刚证明会在抓取面动；
    加规则要同步 Helm 镜像与 §15 契约测试，另开一轮）。
 5. K8s 路径继续依赖集群自带的 Alertmanager（chart 不另起一套），本轮的送达断言只覆盖 compose 栈。
+
+---
+
+## 32. 2026-10-04｜#57 外发腿活体：链是通的，代价是当场抓到三条"线上从未生效"
+
+§31 末尾"仍然未做"的第一条（alert-svc 的 PagerDuty 外发腿）本轮跑完了。
+结论先给：**这条链本身是通的**——三条动作（trigger / acknowledge / resolve）都经真 gRPC 线路
+进来、真评估命中、真落 MySQL、真发到外部端点，且失败侧的指标、日志、出厂告警三层都齐。
+但为了造出一条真告警而走过的每一跳都抓出了缺陷，其中两条的性质比"外发腿没验过"严重得多：
+**它们的症状是"一切正常"，而实际上有一条通道从来没通过**。
+
+### 32.1 验证装置与判定面
+
+| 部件 | 形态 | 为什么这样做 |
+|---|---|---|
+| 被测代码 | 从 main HEAD 现编的 `opsmesh/alert-svc:57verify`（镜像 ID 逐次记录） | 出厂的 `0.11.0` 镜像不含 #60 的真实评估，造不出"带读数才命中"的告警 |
+| 部署形态 | `docker-compose.prod.yml` + 一次性覆盖层（只改 image 与 `PAGERDUTY_*` 三项） | **不动 `.env`**：那里存的是真实密钥，改它就有"忘记回滚"的暴露面；compose 的 environment 按键深合并，DSN/端口/健康检查/资源限制全部继承出厂值 |
+| 调用入口 | 静态 gRPC 客户端（生成的 typed client + 真 codec），打宿主发布的 `127.0.0.1:50053` | 本机没有 grpcurl；同时这条路径顺带复验了 #59（pb 生成物真能过线路） |
+| 收件端 | 自建假 PagerDuty（挂在 `opsmesh-backend`、别名 `pagerduty-mock`），逐条落盘并**按公开契约校验载荷** | 判定面是"对端收到了什么"，不是任何一环的退出码 |
+| 模式开关 | 端点读 `MODE` 文件：`ok` / `503` / `hang` | 同一实例上同时验成功腿与失败腿，不需要重建容器 |
+
+装置的自检：先用一条**故意非法**的载荷（ack 带 `"severity":""`）打假端点 ⇒ 它回 400 并写明
+`INVALID payload.severity=""`。校验器本身有牙，后面的"check= OK"才是证据而不是默认值。
+诚实边界：这台校验器是我按 PagerDuty 公开文档复述的**自己的实现**，不是 PagerDuty 的服务端；
+它证明载荷形状符合公开契约，不证明"真实 SaaS 接受了它、on-call 真的被叫醒"（仓库内无集成密钥）。
+
+### 32.2 缺陷 A（P0）｜可空列把整行吞掉：告警写得进去、读不出来
+
+现场症状是探针的 `get` 回 `NotFound`，而同一秒数据库里那条行确实在：
+
+```
+[store] Alert 查询失败: sql: Scan error on column index 3, name "agent_id":
+        converting NULL to string is unsupported
+```
+
+`alerts` 表除 `alert_id`/`tenant_id` 外**全部可空**，写侧对空字符串一律走 `nullString()` 落成 NULL，
+而读侧把这些列 Scan 进 `string`/`time.Time`。database/sql 遇 NULL 直接报错，于是：
+`GetAlert` 恒 NotFound、`ListAlerts` 恒空、`AckAlert` 里"取 device_id 当 source"拿到 nil ⇒
+**外发给 PagerDuty 的 `payload.source` 是空的**（值班看到"有个告警被确认了"，不知道是哪台机器）。
+健康检查、RPC 返回码、指标全部正常——典型的"接口活着、数据没了"。
+
+修法与门禁（`services/alert-svc/internal/store/`）：
+
+- 读侧改成**全列 `sql.Null*`**，两张表共用一份映射（`nullAlert` / `nullAlertRule`），
+  列清单与 Scan 目标各只有一个出处。
+- 三条静态对账（无真库也能跑，CI 每次都跑）：① SELECT 列数 == Scan 目标数；
+  ② `schema.sql` 里没写 NOT NULL 的列，读侧目标必须是 `sql.Null*`；
+  ③ `initSchema` 内联 DDL 与 `schema.sql` 的列集合一致（同一段结构写了两遍，本身就是漂移面）。
+  `PRIMARY KEY` 按 MySQL 语义视作 NOT NULL，否则门禁会把一张健康的表判成缺陷——这条是写测试时
+  自己被绊了一下才补的。
+- 真库回归用仓内既有约定 `OPSMESH_TEST_MYSQL_DSN`，**CI 的 services job 已经提供这个变量**
+  ⇒ 它在流水线里是真跑，不是"写了但没人跑"。
+- 变异验证五条全部判红：删一个 Scan 目标、把 `comment` 列从内联 DDL 里改掉、
+  基线函数改空实现、启用分支里不调用基线、`omitempty` 摘掉。
+- **"改动前真的读不出来"用 worktree 单独证了一次**：在 `c5d9fa2`（修复前）上跑同一份真库用例，
+  得到 `Alert(...) 返回 nil —— 整行被可空列的 Scan 错误吞掉`；在修复后的代码上同一用例绿。
+  A/B 都做过，才敢说这不是我对修复的自我安慰。
+
+§31 残留第 3 条预言的就是这一类（"全列可空 + 值类型 Scan 未逐列穷举"）。它当时命中的是控制面的
+`internal/store`，这次是 alert-svc 自己的 store——**同一个形态在第二个库里第二次发生**。
+控制面侧的逐列穷举仍未做，已按事实登记为技术债（不是"已解决"）。
+
+### 32.3 缺陷 B（P0）｜12 个微服务的链路追踪从未到达 collector
+
+假端点不需要日志就能看出来，这条是顺带在 alert-svc 日志里撞见的：
+
+```
+traces export: exporter export timeout: invalid target address http://otel-collector:4317,
+error info: address http://otel-collector:4317:443: too many colons in address
+```
+
+出厂 compose 给 12 个微服务下发的是 OTel 规范写法 `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317`，
+而 `internal/otelx` 把整个字符串原样交给 `otlptracegrpc.WithEndpoint`——gRPC 把它当**目标地址**
+而不是 URL，于是自己又补了一个 `:443`。alert-svc 4 分钟里刷了 15 条这种 INFO；
+控制面/agent 用的是无 scheme 的 `OPSMESH_OTEL_ENDPOINT=otel-collector:4317`，所以只有微服务这一侧全灭。
+"出厂栈带链路追踪"这句话在微服务侧从来没成立过。
+
+修法：`normalizeEndpoint()` 剥 scheme、按 scheme 决定 TLS（无 scheme 时保留"443 才 TLS"的旧口径，
+不顺手改控制面行为）、剥 path、缺端口补 `:4317`、并用 `net.SplitHostPort` 把
+"多冒号/空端口/空主机"这类**在初始化就判掉**（错误一路抛到 `Init`，生产形态 fail-fast）。
+刻意不用 `url.Parse`：它会把 `otel-collector:4317` 解析成 scheme=`otel`——恰好把无 scheme 的
+旗标形态解析错，这一条写在注释里。
+
+观测量（两条独立）：
+- 修复后 alert-svc 日志里 `too many colons|traces export` 命中数 = **0**（修复前同一实例 15）。
+- 归因到"是 alert-svc 在发"：静默 60s collector 的 `otelcol_receiver_accepted_spans` 只 +8，
+  紧接着 300 次 alert-svc RPC ⇒ **+296**。
+
+顺带登记两条如实口径（见 `docs/operations.md` §4.7）：collector 的 traces pipeline 只接 `logging`
+exporter，仓库内没有 Jaeger/Tempo ⇒ 出厂交付能"看到 span 计数"，不能"打开一张调用链图"；
+且 `tail_sampling` 对非错误、非慢请求只保留 10%。
+
+### 32.4 缺陷 C（P1）｜第一次失败不报警：increase() 看不见惰性创建的序列
+
+这条推翻了我自己上一轮的判断。§31 里我曾断言"序列不存在 ⇒ 规则会错过第一次失败"，
+随后又撤回，理由是"`rate()/increase()` 会向窗口边界外推，新建序列给出的是非零值而不是 no data"。
+本轮实测：**我的撤回撤错了，原判断基本成立**，只是机制不是"no data"而是"增量为 0"。
+
+实测两个样本：
+
+| 序列 | 事件 | Prometheus 观察 |
+|---|---|---|
+| `action="resolve"` | 进程内**只**失败过一次 | 样本序列一直是 `1,1,1,…`；`increase([10m]) = 0` ⇒ 规则不动 |
+| `action="ack"` | 失败两次（1→2） | 窗口内出现 `1,…,1,2,2,2` ⇒ `increase = 1.197` ⇒ pending → firing |
+
+`increase()` 取的是窗口内**样本之差**。计数器原来到失败时才惰性创建，第一个样本就已经是 1，
+没有 0 可比 ⇒ 增量算成 0。而这条规则要等的恰恰是"第一次外部通知失败"（critical 级、
+语义就是"on-call 其实没被叫醒"）。
+
+修法：`InitNotifyFailureBaseline()` 在 PagerDuty 启用时把这两条固定标签的序列登记为 0。
+配对门禁两条，都做过变异：① 函数被清空 ⇒ `/metrics` 里没有基线 ⇒ 判红；
+② 启用分支里不调用它 ⇒ 按块取 main.go 文本判红（这是"PAGERDUTY_ENABLED 是死开关"那一类
+的第三次，所以门禁刻意钉在**调用点**而不是函数存在性上）。
+活体重测：只失败一次 ⇒ `increase = 1.021` ⇒ 规则 pending，`for: 5m` 后 firing。
+诚实边界：触发侧的 `alert_notification_failures{tenant_id}` 无法预置（标签值是调用方传来的租户，
+启动时无从枚举），它的出厂规则本来就是"占比 + 持续 10m"的趋势判据，本轮没有把它验成 firing
+（`OpsMeshAlertNotifyFailureRate` 实测维持 inactive，未触发≠无效，是 `for: 10m` 没跑够）。
+
+### 32.5 缺陷 D｜告警无法回溯到规则（`rule_id` 从来没落库）
+
+`Evaluate` 的**响应**里 rule_id 是对的，但 `store.Alert` 没这个字段、`alerts` 表没这一列，
+于是落库再读出来就空了（`ListAlerts`/`GetAlert` 的 `rule_id` 恒空——上一版文档把它登记为待办）。
+补齐：模型字段 + `schema.sql` 列 + 内联 DDL + INSERT + 两侧读路径 + `storeToProtoAlert`。
+
+升级路径是这里唯一有真实风险的一步：`CREATE TABLE IF NOT EXISTS` 对**已存在**的表什么都不做，
+存量库不补列就会在升级后第一次 INSERT 炸 `Unknown column 'rule_id' in 'field list'`。
+MySQL 的 `ADD COLUMN` 没有 `IF NOT EXISTS`（重复执行报 1060），所以走 `information_schema` 判缺再 ALTER。
+两段都在真库回归里跑：先写读闭合，然后**主动 `DROP COLUMN` 模拟老库**、重建 store、断言列被补回来且写读通。
+活体也走了一遍真实升级：出厂库里 `rule_id` 列计数 0 ⇒ 换新镜像后 1，老行是 NULL（读侧全列
+`sql.Null*` 在这里正好接住了——否则补列反而会引入新的丢行）。
+
+`Alert.rule_name` 刻意**不回填**：规则改名后历史告警显示新名字，属于"看起来对、其实是错的"信息；
+`rule_id` 已可用，`GetRule` 一跳就能拿到当时真正的名字。这条口径写进了 `docs/api-reference.md`。
+
+### 32.6 成功腿与失败腿的完整记录
+
+成功腿（MODE=ok）：
+
+| 步骤 | 观测量 |
+|---|---|
+| `CreateRule`（mem > 70, critical） | 规则 ID `5b914c95…`，经真 gRPC 线路 |
+| `Evaluate(mem=88)` | `evaluated_rules=1 metrics_supplied=1`，命中 1 条 ⇒ 证明 #60 的引擎真读指标 |
+| 假端点收到 `trigger` | `check= OK`、`http 202`、`source=dev-final`、`severity` 键存在、`dedup_key=1505b4d0…`（= 告警 ID） |
+| `AckAlert` | 端点收到 `acknowledge`，`check= OK`、**`severity` 键不出现**、`dedup_key` 与 trigger 同值 |
+| `ResolveAlert` | 端点收到 `resolve`，同上 |
+| `GetAlert` | `status` 正确、`rule_id` 与规则 ID 逐字相同（缺陷 A/D 都在这条上留了证据） |
+| MySQL | `SELECT … FROM opsmesh_alert.alerts` 里状态确实翻转 |
+
+失败腿（MODE=503）：`ack`/`resolve` 各自把 `alert_external_notify_failures{action}` 从 0 推到 1，
+本地状态**照常落库**、RPC 照常返回成功（既定意图：远端故障不许把值班动作升级成 5xx），
+日志是 `[alert-svc] WARN 告警确认已落库但外部通知失败: action=ack alertID=… err=pagerduty: unexpected status 503: …`
+——错误文本、动作、告警 ID 三样齐，`!BADKEY` 零命中。
+
+规则侧两次真实触发（同一实例、两个进程），差别正是缺陷 C 的内容：
+
+| 轮次 | 代码 | 事件 | Prometheus | Alertmanager |
+|---|---|---|---|---|
+| 第一轮 | 修复前（无基线） | `ack` 失败 **2 次**（1→2） | pending `13:35:23` → firing，`increase=1.04` | `13:40:23Z` active |
+| 第一轮 | 修复前（无基线） | `resolve` 只失败 **1 次** | 序列恒 `1` ⇒ `increase=0` ⇒ **规则不动** | 无 |
+| 第二轮 | 修复后（基线 0） | `ack` 只失败 **1 次** | pending `14:08:23` → firing，`increase=1.021` | `14:13:23Z` active |
+
+时序上有个别踩一次的坑值得记下：这组规则的 `interval` 是 **60s**（不是全局 15s），
+所以 `for: 5m` 到点后要等下一个 60s tick 才翻 firing——`14:13:23` 满足条件、`14:15:17` 才在
+`/api/v1/rules` 上看到 firing。按 15s 的节奏去判"是不是没生效"会误诊。
+
+这一节是 #57 的正题：**"配了 PagerDuty"到"对端收到符合契约的事件"之间的每一跳都有独立观测量**，
+而其中三跳（读库、拨 collector、第一次失败）在验证之前实际上是断的。
+
+### 32.7 本轮的诚实边界
+
+1. 未打过真实 PagerDuty SaaS：载荷契约由自建校验器判定，它是我对公开文档的复述。
+2. `OpsMeshAlertNotifyFailureRate`（触发侧占比规则）本轮未验到 firing（`for: 10m` 需持续 10 分钟
+   的失败占比），只验到它的两个输入序列在抓取面上正确增长。
+3. hang 模式（客户端 10s 超时 ⇒ 熔断计数）设计了但没跑：需要另开一轮 10s 级等待，
+   且与 503 走同一条 `recordExternalNotifyFailure`，判据面重叠。
+4. 可空列逐列穷举只在 alert-svc 的两个 store 上做了；控制面 `internal/store` 仍是抽样核对，
+   已在技术债里单列。
+5. gRPC 面无鉴权这一条**没有擅自改**：它是 #58 遗留的交付口径决定（见 §29/§31 的挂起项），
+   需要用户定"默认发布给 loopback 还是显式开关"。
+

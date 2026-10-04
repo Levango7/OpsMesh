@@ -949,7 +949,7 @@ curl "$CP/api/v1/tasks/<task-id>/result" -H "$AUTH" -H "X-Tenant-ID: $TENANT"
 | `business_metrics_total{name="task_reclaim_failures"}` | counter | task-svc | 回收失败次数——失败即任务永久显示"执行中" |
 | `business_metrics_total{name="task_dead_lettered", tenant_id}` | counter | task-svc | **进入死信**的次数：重试耗尽后任务永久不再下发。只在状态翻转那一刻计数（同一任务重复回报不会累加）|
 | `business_metrics{name="gpu_queue_depth"}` | gauge | gpu-svc | 调度队列 pending 深度（读 `/api/v1/gpu/schedule/queue` 时更新）。注意 `deploy/k8s/hpa/gpu-svc-hpa.yaml` **没有**用它做 HPA 目标：按该指标扩容还需 prometheus-adapter 配映射，此前那份 HPA 引用的指标名根本无人产出，属假自动扩缩容 |
-| `business_metrics_total{name="alert_external_notify_failures", action}` | counter | alert-svc | 告警 ack/resolve **已落库但外部通道未送达**（`action=ack\|resolve`）。这是 critical 级信号：接口返回成功、运维以为 on-call 被呼叫 |
+| `business_metrics_total{name="alert_external_notify_failures", action}` | counter | alert-svc | 告警 ack/resolve **已落库但外部通道未送达**（`action=ack\|resolve`）。这是 critical 级信号：接口返回成功、运维以为 on-call 被呼叫。两条序列在 PagerDuty 启用时**启动即登记为 0**——不是摆设：`increase()` 取的是窗口内样本之差，序列若到第一次失败才创建，第一个样本就已经是 1，没有 0 可比 ⇒ 增量算成 0 ⇒ 出厂规则漏掉第一次失败（2026-10-04 实测：resolve 单次失败 increase=0） |
 | `business_metrics_total{name="alert_notifications", tenant_id}` / `business_metrics_total{name="alert_notification_failures", tenant_id}` | counter | alert-svc | 规则事件 → 通知器的成功/失败（经熔断器；失败占比高说明下游通道故障） |
 | `business_metrics_total{name="log_memory_dropped"}` | counter | log-svc | 内存后端环形缓冲被淘汰的条数。`LOG_SVC_BACKEND` 默认 `loki`，且后端初始化失败是 `Fatalf` 不静默回落 ⇒ **该序列增长本身就说明实例在用内存后端** |
 | `business_metrics_total{name="device_heartbeats"}` / `business_metrics_total{name="device_heartbeat_failures"}` | counter | device-svc | 设备心跳成功/失败（失败常见成因：设备未纳管 → `ErrDeviceNotFound`） |
@@ -1277,6 +1277,30 @@ export OPSMESH_OTEL_SERVICE_NAME="opsmesh-controlplane"
 ```
 
 启用后控制面 HTTP + agent gRPC 自动埋点，trace_id 贯穿 agent → 控制面 → store。
+
+端点两种写法都接受（`internal/otelx` 规范化后才交给 gRPC 拨号）：
+
+| 写法 | 解析结果 | 出处 |
+|---|---|---|
+| `otel-collector:4317`（无 scheme） | 明文；仅端口 443 走 TLS | 控制面/agent 的 `--otel-endpoint` 旗标 |
+| `http://otel-collector:4317` | 明文（由 scheme 决定，不看端口） | 微服务侧 `OTEL_EXPORTER_OTLP_ENDPOINT`，OTel 规范的写法；出厂 compose 里 12 个服务都是这一形态 |
+| `https://collector:4317` | TLS | 外部 collector |
+| 只给 host 无端口 | 补 OTel 默认端口 `:4317` | 手写的简短配置 |
+| 带 path（`.../v1/traces`） | path 剥掉，gRPC 只认 host:port | OTLP/HTTP 的习惯串到了 gRPC 端点 |
+
+⚠️ 这张表背后的缺陷是 2026-10-04 现场抓的：带 scheme 的值原先被**原样**交给
+`otlptracegrpc.WithEndpoint`，gRPC 把它当目标地址而不是 URL，报
+`address http://otel-collector:4317:443: too many colons in address` ⇒ 出厂栈里
+12 个微服务的链路追踪一条都没到过 collector（实测 alert-svc 4 分钟 15 条导出失败日志），
+而服务健康检查、RPC、指标全部正常。修复后同一实例的导出失败日志为 0，
+且 300 次 alert-svc RPC 期间 collector 的 `otelcol_receiver_accepted_spans` 增加 296
+（静默 60s 只涨 8）——"修好了"与"确实有数据过去"分别有独立观测量。
+门禁两处：`internal/otelx` 的端点解析表驱动测试，以及直接读 `docker-compose.prod.yml`
+字面量的耦合测试 `TestFactoryComposeEndpointIsDialable`（改交付值而解析跟不上会立刻判红）。
+
+链路追踪的**查询侧不在出厂交付里**：collector 的 traces pipeline 只接 `logging` exporter
+（span 落日志后即丢），仓库内没有 Jaeger/Tempo；且 `tail_sampling` 对非错误、非慢请求只留 10%。
+所以"能排障"目前的意思是能在 collector 日志里看到 span 计数，不是能打开一张调用链图。
 
 ---
 
