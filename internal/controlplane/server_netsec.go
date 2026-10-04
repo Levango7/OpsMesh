@@ -429,11 +429,8 @@ func (s *Server) pingStore(ctx context.Context) error {
 //     供通知渠道 CRUD（createNotifyChannel/updateNotifyChannel）保存前校验。
 //   - isPrivateIP：复用 server_security.go 中已有的实现（已增强为拒 0.0.0.0/8）。
 //
-// DNS 解析超时：5 秒（要求合理默认值，避免恶意域名拖垮 API）。
-
-// ssrfDNSTimeout 是 SSRF 校验中 DNS 解析的超时时间（5 秒合理默认）。
-// 通过 context.WithTimeout 控制 net.LookupIP，避免恶意域名解析拖垮 API。
-const ssrfDNSTimeout = 5 * time.Second
+// DNS 解析超时与全部判定谓词现在都在 `internal/egress`（单一权威实现）：本包只剩
+// newEgressClient / ValidateWebhookURL 两个转发入口，避免"两份 SSRF 逻辑各自漂移"。
 
 // newEgressClient 构造带 SSRF 防护的出网 HTTP client。
 //
@@ -476,7 +473,7 @@ func newEgressClient(timeout time.Duration, allowPrivate bool) *http.Client {
 //   - fe80::/10（IPv6 link-local）
 //   - fc00::/7（IPv6 ULA 私网）
 //
-// DNS 解析超时 5 秒（ssrfDNSTimeout），避免恶意域名拖垮 API。
+// DNS 解析超时 5 秒（egress.DNSTimeout），避免恶意域名拖垮 API。
 //
 // 返回 nil 表示安全，非 nil error 描述拒绝原因（调用方应返回 400 + 错误信息）。
 func ValidateWebhookURL(rawURL string, allowPrivate bool) error {

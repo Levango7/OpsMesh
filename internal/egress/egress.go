@@ -319,8 +319,10 @@ func AllowsPrivate(c *http.Client) bool {
 		return false
 	}
 	if v, ok := policies.Load(c); ok {
-		b, _ := v.(bool)
-		return b
+		// 断言失败也落回 false（安全基线）：登记表里若混进非 bool 值，
+		// 宁可拒绝私网也不放行。
+		b, isBool := v.(bool)
+		return isBool && b
 	}
 	return false
 }

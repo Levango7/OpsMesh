@@ -105,7 +105,13 @@ func run(genKey bool, privPath, outDir, customer string, devices int, ttl time.D
 			return err
 		}
 		priv = p
-		pub = p.Public().(ed25519.PublicKey)
+		// 必须判类型断言结果：私钥文件被换成 RSA/EC 时，不判就会拿到一个零长
+		// slice 继续往下签，产出的凭据在客户侧永远验不过，且报错指向"签名不匹配"。
+		edPub, ok := p.Public().(ed25519.PublicKey)
+		if !ok {
+			return fmt.Errorf("私钥文件 %s 的公钥类型不是 ed25519（实际 %T）", privPath, p.Public())
+		}
+		pub = edPub
 	}
 
 	if err := writePublicKey(filepath.Join(outDir, "public.key"), pub); err != nil {
@@ -197,9 +203,13 @@ func readPrivateKey(path string) (ed25519.PrivateKey, error) {
 }
 
 // writePublicKey 写 base64url 公钥（与 --license-public-key 的输入形式一致）。
+//
+// 权限用 0o600 而不是 0o644：公钥本身不是秘密（值可以公开写进 values.yaml），但
+// gosec G306 对 WriteFile 一律要求 ≤0600，而"给厂商产物开一个更宽的默认权限"没有
+// 实际需求支撑——分发方式是运维把内容贴进 Secret，不是靠文件可读权限共享。
 func writePublicKey(path string, pub ed25519.PublicKey) error {
 	s := base64.RawURLEncoding.EncodeToString(pub)
-	return os.WriteFile(path, []byte(s), 0o644)
+	return os.WriteFile(path, []byte(s), 0o600)
 }
 
 func splitComma(s string) []string {
