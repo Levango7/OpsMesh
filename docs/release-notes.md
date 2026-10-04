@@ -81,6 +81,12 @@ Chart.yaml `appVersion`、`values-production.yaml` 的镜像 tag、gitops produc
 - gRPC 契约：6 个服务 100 个 unary 方法过真 codec；pb 生成物版本漂移门禁不依赖 protoc。
 - CI：本版本各批次在 main 上均为 12 job 全绿（含 `-race`、真实 MySQL 集成、E2E real/security、
   镜像构建+keyless 签名+SBOM），`release` 按设计仅在 tag 上运行。
+- 发布后验收（2026-10-04，`deploy/scripts/verify-release-artifacts.sh 0.12.0`）：**PASS=6 / FAIL=0**
+  —— 14 个镜像仓库都有 `:0.12.0` 且 `.sig`/`.att` 齐备、GitHub Release 有 5 个 assets（含本节正文）、
+  chart 默认渲染出的 4 个镜像引用全部真实存在。另用**已发布镜像**做过存量库升级演练：
+  同一测量在 `0.11.0` 上报 `want proto.Message`，在 `0.12.0` 上 `alerts` 表 14→15 列、
+  两条 0.11.0 时代的老行（含全 NULL 可空列那条）全部读得回、重启不重复 ALTER；
+  12 个官方镜像逐个起并各自命中健康端点。全文见报告 §33。
 
 ## v0.11.0 — 2026-10-01 可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化
 
