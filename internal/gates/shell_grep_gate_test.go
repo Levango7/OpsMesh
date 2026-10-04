@@ -122,3 +122,83 @@ func collectShellAndWorkflowFiles(t *testing.T, root string) []string {
 	}
 	return out
 }
+
+// containerShellRegionHerestrings 找出"容器侧 sh 里用了 bash 的 herestring"的行号。
+//
+// 缺陷来源就是本仓 2026-10-04 自己犯的：把 `producer | grep -q` 全量换成 `grep -q X <<<"$v"` 时，
+// 没注意那行位于 `docker run … sh -c '…'` 里面——**容器里是 BusyBox/POSIX sh，没有 <<<**，
+// 于是 release-dryrun 的产物自检 step 直接语法报错。修判定写法的动作本身造出了新红。
+// 区域识别刻意保守：从"含 ` -c '` 的行"开始，到"整行只剩一个右单引号"结束；
+// 区域外的 `<<<` 属于外层 bash（runner 默认 bash），不报。
+// 区域识别刻意保守，三条都要满足才算"容器侧 sh"：
+//   ① 行里有 `docker `（run/exec）——runner 自己的 bash 块不带它；
+//   ② 行里有 ` -c '`（把脚本交给容器里的 sh）；
+//   ③ `-c '` 之后同一行没有再出现右单引号（有就是同一行闭合的单行命令，如 `python3 -c '…'`）。
+// 结束条件是"整行以单引号开头"（yml 里就是那段脚本的收尾）；区域内的注释行跳过。
+func containerShellRegionHerestrings(content string) []int {
+	var hits []int
+	in := false
+	for i, line := range strings.Split(content, "\n") {
+		if !in {
+			idx := strings.Index(line, ` -c '`)
+			if idx < 0 || !strings.Contains(line, "docker ") {
+				continue
+			}
+			if strings.Contains(line[idx+len(` -c '`):], "'") {
+				continue // 同一行就闭合，是单行命令
+			}
+			in = true
+			continue
+		}
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "'") {
+			in = false // 这段容器侧脚本的收尾
+			continue
+		}
+		if strings.HasPrefix(t, "#") {
+			continue // 区域内的注释不参与判定（缺陷说明本身常会提到被禁的写法）
+		}
+		if strings.Contains(line, "<<<") {
+			hits = append(hits, i+1)
+		}
+	}
+	return hits
+}
+
+func TestContainerShellRegionDetector(t *testing.T) {
+	pos := "run: |\n  docker run --rm --entrypoint sh img -c '\n    grep -q x <<<\"$v\"\n  '\n"
+	if got := containerShellRegionHerestrings(pos); len(got) != 1 || got[0] != 3 {
+		t.Errorf("探测器漏报（容器侧 sh 里的 <<< 必须指到行号），got=%v", got)
+	}
+	neg := "run: |\n  grep -q x <<<\"$v\"\n  docker run --rm --entrypoint sh img -c '\n    case \"$m\" in 7f454c46) ;; esac\n  '\n"
+	if got := containerShellRegionHerestrings(neg); len(got) != 0 {
+		t.Errorf("探测器误报（外层 bash 的 herestring 是正确写法），got=%v", got)
+	}
+}
+
+func TestNoHerestringInsideContainerSh(t *testing.T) {
+	wf, err := filepath.Glob(filepath.Join("..", "..", ".github", "workflows", "*.yml"))
+	if err != nil || len(wf) < 3 {
+		t.Fatalf("工作流文件只扫到 %d 个（扫描面塌了，本门禁会空转）", len(wf))
+	}
+	var bad []string
+	scanned := 0
+	for _, f := range wf {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("读取 %s 失败: %v", f, err)
+		}
+		scanned += strings.Count(string(b), "\n")
+		for _, ln := range containerShellRegionHerestrings(string(b)) {
+			bad = append(bad, filepath.Base(f)+":"+strconv.Itoa(ln))
+		}
+	}
+	if scanned < 2000 {
+		t.Fatalf("只核对到 %d 行工作流内容（异常，判红而不是放行）", scanned)
+	}
+	if len(bad) > 0 {
+		t.Errorf("容器侧 sh 里出现 herestring <<<（BusyBox/POSIX sh 不支持，step 会语法报错）：%v。"+
+			"改法：用 case/命令替换，或把这段挪到外层 bash 里", bad)
+	}
+	t.Logf("扫描面：%d 个工作流 / %d 行，容器侧 herestring %d 处", len(wf), scanned, len(bad))
+}

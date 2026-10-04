@@ -66,6 +66,18 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
 | 企业版前端 | 社区授权下 `/enterprise/` 返回"未授权"说明页，SPA 资产链路只在企业授权下可验 | `internal/controlplane/enterprise_ui.go` |
 | 许可合规 | MPL-2.0 / npm 依赖的法务判定待法务（工程侧清单与门禁已就绪） | P1-7 |
 
+- **修｜我自己修判定写法时造出的新红：容器侧 sh 不支持 herestring**。上一批把
+  `producer | grep -q` 全量换成 `grep -q X <<<"$v"` 时，漏看了其中一处位于
+  `docker run … sh -c '…'` 里面——CI 的 `release-dryrun` 产物自检 step 因此在容器内
+  报语法错误（run `37212099238` 的 `产物自检（入口存在且为 ELF、且非 root）` 判红）。
+  BusyBox/POSIX sh 没有 bash 的 here-string。改成 `case "$magic" in 7f454c46) …` 的
+  POSIX 写法（顺带把魔数比较从"文本里含空格"变成去空格后精确比较，判定更强）。
+  **新增门禁**（同文件 `internal/gates/shell_grep_gate_test.go`）：扫 `.github/workflows/*.yml`，
+  识别"`docker … -c '` 开始、到独行 `'` 结束"的**容器侧脚本区域**，区域内出现 `<<<` 即判红；
+  区域识别三条约束（含 `docker `、含 ` -c '`、同行未闭合）用来避开 `python3 -c '…'` 这类
+  单行命令与 runner 自己的 bash 块。探测器有正/反例自检；**变异验证**：把那行坏代码塞回去 ⇒
+  判红并指到 `ci.yml:600`；还原 ⇒ 绿。教训：**改判定写法的动作本身也要过门禁**，
+  否则"修一个假红"换来一条真红（而且只在发版链路上，平时不跑）。
 - **修｜交付脚本的判定写法本身会造假的"缺指标"（`producer | grep -q` + pipefail ⇒ 命中了也判成没命中）**。这是本轮最费时间的一类缺陷，因为它**表现得像产品坏了**：`verify-runtime.sh` 连跑四次给出四份不同的"缺失序列清单"（一次缺 `path="/api/v1/:id"`、一次缺审计链两个 gauge、一次只缺 `opsmesh_audit_chain_ok`），而单独复查时它们全都在抓取面上。机制：这些脚本开头是 `set -euo pipefail`，而 `grep -q` **一命中就退出**，生产者（`printf` / `curl` / `docker logs`）还在写就被 SIGPIPE 打死 ⇒ 管道退出码变 141 ⇒ pipefail 把"成功命中"升格成"整条管道失败"。是否踩中取决于输出量与样式位置：越过约 64KB 管道缓冲区才会中招，所以小输出时永远正常、`/metrics` 这种几十 KB 的快照就偶发失败。**定量的判定证据**（同一份 679 行快照，样式确实在第 27 行）：带 pipefail ⇒ 连续 10 次全 MISS；去掉 pipefail ⇒ 连续 10 次全 HIT。
   - 修法统一成"先落变量再判"：`grep -q PAT <<<"$var"`。herestring 由 bash 落成临时文件，没有管道、没有可被杀的生产者，且 `^` 行锚语义与原来逐字一致。刻意**不**换成 `[[ $s == *PAT* ]]`——那是整串子串匹配、`^anchor` 会失效，而指标名互为前缀（`opsmesh_http_metrics_series` vs `..._dropped_total`）时会假命中。
   - 覆盖面：`verify-runtime.sh` 24 处、`deploy.sh` 5 处、`validate-deploy-assets.sh` 6 处、`gen-tls.sh`/`create-cluster.sh`/`deploy-opsmesh.sh` 各 1 处、`.github/workflows/ci.yml` 9 处、`shadow-observe.yml` 1 处（含 `curl … | grep -q`、`docker compose logs … | grep -q`、`openssl … | grep -q` 这类命令生产者——改成命令替换落变量后再判）。

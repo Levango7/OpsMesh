@@ -594,7 +594,13 @@ jobs:
           set -euo pipefail
           docker run --rm --entrypoint sh opsmesh-dryrun/auth-svc:local -c '
             test -x /usr/local/bin/svc || { echo "缺可执行入口 /usr/local/bin/svc"; exit 1; }
-            magic="$(head -c 4 /usr/local/bin/svc | od -An -tx1)"; grep -q "7f 45 4c 46" <<<"$magic" || { echo "入口不是 ELF 二进制"; exit 1; }
+            # 容器侧是 BusyBox/POSIX sh，**不支持 bash 的 here-string**，也不能沿用仓库脚本里
+            # "先落变量再 grep" 的写法——那是给外层 bash 修的。这里用 case 比较十六进制魔数。
+            magic="$(head -c 4 /usr/local/bin/svc | od -An -tx1 | tr -d " \n")"
+            case "$magic" in
+              7f454c46) ;;
+              *) echo "入口不是 ELF 二进制（magic=$magic）"; exit 1 ;;
+            esac
             if [ "$(id -u)" = "0" ]; then echo "以 root 运行，H16 非 root 基线失效"; exit 1; fi
             echo "dryrun 产物 OK：ELF 入口存在且以非 root 运行"
           '
