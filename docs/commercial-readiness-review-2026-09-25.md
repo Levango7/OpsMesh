@@ -3434,4 +3434,36 @@ digest `sha256:3c9e34ae…`），跑在既有 MySQL 所在的那个 Docker 网�
 微服务侧则相反：`Dockerfile.service:60` 同样注入了版本，但 `/health` 正文是纯文本 `ok`、没有 `/version`、
 没有 `build_info` 指标 ⇒ 已记 TD-76。
 
+### 33.7 发布物四点验收终判，以及"两个 workflow 写同一个 Release"会不会互相覆盖
+
+`deploy/scripts/verify-release-artifacts.sh 0.12.0` 终判 **PASS=6 / FAIL=0**：
+① 14 个镜像仓库都有 `:0.12.0`；② 14 个都有 cosign `.sig`；③ 14 个都有 `.att` 证据链；
+④ GitHub Release `v0.12.0` 有 **5 个 assets**；⑤ 正文含「能力降级清单」；⑥ chart 默认渲染出的
+4 个 ghcr 镜像引用全部存在于已发布集合里。
+
+中途那个 1-FAIL 是**真实时序**而不是缺陷：先跑的那次 `github-release`（release.yml）已完成、
+而挂 assets 的 `release` job（ci.yml 里的 goreleaser）还在排队，所以③报 `assets=0`。
+这也验证了脚本本身没有"存在即通过"的宽松判定。
+
+顺带把一条从未证实过的担心量掉了：**同一 tag 上 `release.yml` 与 `goreleaser` 会写同一个 Release，
+后者会不会把前者的正文覆盖掉**。实测：`release.yml` 的正文先落地（4350 字符、含能力降级清单），
+goreleaser 完成后再次取同样的两个字段——`assets=5`、`body_len=4350`、`has_degraded=true`
+⇒ `.goreleaser.yml` 的默认 append 语义**只加产物不改正文**，这条发布链是可用的。
+（此前我只能靠"读 goreleaser 文档"来判断；现在它是一次可复现的观测。）
+
+### 33.8 本轮诚实边界
+
+- 演练用的是同一 MySQL 实例上的**独立库**（`opsmesh_alert_rehearsal`，用 v0.11.0 的 DDL 造形状），
+  不是客户栈里的 `opsmesh_alert`。选它的理由是可逆性与可证形：能精确控制"升级前 14 列、无 rule_id、
+  含 NULL 的老行"这个前置，而不必改动用户正在用的库。迁移代码路径与库名无关（DSN 级），
+  但**整栈滚动升级（12 个服务一起换 0.12.0）没有做**——本机 compose 走源码构建，
+  做它只会得到"工作树能跑"的证据。
+- 微服务镜像"能不能起 + 健康端点"这一层本轮逐个验过了（12/12），但**没有**验证它们之间的
+  跨服务调用链（那需要整栈）。
+- `OpsMeshAlertNotifyFailureRate`（`for: 10m`）仍未观测到真实 firing：要让它亮，需要一个被抓取
+  的 alert-svc 目标在 10 分钟窗口内失败占比 >20%（出厂栈 `PAGERDUTY_ENABLED=false` 时该路径
+  根本不产失败样本）。规则的生产者已核实存在（`services/alert-svc/internal/service/service.go:246/248`），
+  同族的 `OpsMeshAlertExternalNotifyFailed` 在 §32 里真实 firing 过，所以这不是"引用了不存在的指标"
+  （#37 那一类），只是这条需要更长的注入窗口。
+
 
