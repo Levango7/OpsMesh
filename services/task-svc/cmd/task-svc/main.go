@@ -118,7 +118,15 @@ func main() {
 		rs store.ResultStore   = memStore
 		bs store.BatchStore    = memStore
 	)
-	if cfg.StoreType == "sql" && cfg.DSN != "" {
+	if cfg.StoreType == "sql" {
+		// 显式要求 sql 却没配 DSN ⇒ 拒绝启动。
+		// 修前的条件是 `StoreType == "sql" && DSN != ""`，于是 STORE_TYPE=sql 而 DSN 漏配时
+		// 服务会**静默跑在内存上**：/health 照样 200、指标照常上报，重启即丢全部数据
+		// ——这正是本仓反复修过的"假装持久化"形态（对齐 task-svc 与 controlplane 的
+		// fail-fast 策略；与"初始化失败不回退内存"是同一条原则的两半）。
+		if cfg.DSN == "" {
+			lgr.Fatalf("STORE_TYPE=sql 但未配置 DSN：拒绝启动（静默退回内存等于假装持久化）")
+		}
 		if ms, err := store.NewMySQLStore(cfg.DSN); err != nil {
 			lgr.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
 		} else {

@@ -89,6 +89,13 @@ spec:
                   name: {{ include "opsmesh.fullname" $ }}-secret
                   key: mysql-dsn
             {{- end }}
+            {{- if and (eq $svc.storeType "sql") (not (and $.Values.mysql.enabled (eq $.Values.controlplane.store "mysql"))) }}
+            # storeType=sql 但 DSN 不会被注入 = 配置自相矛盾。各服务 main.go 现在对
+            # "要求 sql 却没配 DSN"是**拒绝启动**（此前静默退回内存：/health 照样 200，
+            # 重启却丢光数据）。把矛盾在渲染期就拦下来，比让 Pod  CrashLoopBackOff
+            # 让运维去猜原因便宜得多。
+            {{- fail (printf "services.%s.storeType=sql 需要 MySQL：DSN 仅在 mysql.enabled=true 且 controlplane.store=mysql 时注入。请满足这两个前置，或把该服务 storeType 留作 memory。" $name) }}
+            {{- end }}
             {{- if and (eq $name "task_svc") (gt (int $svc.replicas) 1) }}
             # 多副本必须真选主（TD-73）：replicas>1 时自动切 MySQL 租约选主，
             # 否则 fire/reclaim 会在每个副本重复执行（评估登记的"扩容即重复执行"缺陷）。

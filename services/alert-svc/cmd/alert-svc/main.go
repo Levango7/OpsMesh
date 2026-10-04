@@ -50,7 +50,15 @@ func main() {
 	// 注意：显式配置了 sql+DSN 却初始化失败 = 直接阻断启动，不回退内存。
 	// 资源泄漏修复：MySQL 分支成功后 defer ms.Close() 释放连接池（对齐 task-svc main）。
 	var st store.AlertStore = store.NewMemoryStore()
-	if cfg.StoreType == "sql" && cfg.DSN != "" {
+	if cfg.StoreType == "sql" {
+		// 显式要求 sql 却没配 DSN ⇒ 拒绝启动。
+		// 修前的条件是 `StoreType == "sql" && DSN != ""`，于是 STORE_TYPE=sql 而 DSN 漏配时
+		// 服务会**静默跑在内存上**：/health 照样 200、指标照常上报，重启即丢全部数据
+		// ——这正是本仓反复修过的"假装持久化"形态（对齐 task-svc 与 controlplane 的
+		// fail-fast 策略；与"初始化失败不回退内存"是同一条原则的两半）。
+		if cfg.DSN == "" {
+			lgr.Fatalf("STORE_TYPE=sql 但未配置 DSN：拒绝启动（静默退回内存等于假装持久化）")
+		}
 		if ms, err := store.NewMySQLStore(cfg.DSN); err != nil {
 			// StoreType=sql 且 DSN 已显式配置 = 运维明确要求持久化存储。此时回退内存会让
 			// 服务看起来正常（/health 仍 200）却在重启后丢光数据，属静默数据丢失陷阱；
