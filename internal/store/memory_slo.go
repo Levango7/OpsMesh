@@ -8,8 +8,8 @@
 // 设计要点（与 memory_ticket.go 风格一致）：
 //   - ListSLOs 返回深拷贝避免外部修改破坏内部状态；
 //   - CreateSLO 分配随机 ID（"slo-" + 16 字节 hex）；
-//   - SLIStatus 返回模拟状态（CurrentValue=99.5, Status="met" 作为 MVP），
-//     后续可接入 Prometheus 真实评估。
+//   - SLIStatus 按 networkMetricsHistory 真实聚合（无样本 ⇒ nodata），
+//     指标支持集见 slo_eval.go。
 package store
 
 import (
@@ -158,12 +158,12 @@ func (m *MemoryStore) DeleteSLO(tenantID, id string) bool {
 	return true
 }
 
-// SLIStatus 返回指定 SLO 下各 SLI 的当前状态（MVP 返回模拟状态）。
+// SLIStatus 返回指定 SLO 下各 SLI 的当前状态。
 //
-// MVP 行为：
-//   - SLO 不存在或租户不匹配返回 nil；
-//   - 对每个 SLI 返回模拟状态：CurrentValue=99.5, Status="met"（满足目标），
-//     LastEvaluated=now。后续可接入 Prometheus 真实评估。
+// 2026-10-03 修掉的假数据面：这里原先硬编码 `CurrentValue: 99.5` + `Status: "met"`
+// （注释自认"MVP 模拟值 / 假定满足"），而 `/api/v1/slos/{id}/status` 是对外承诺的 SLA 口径
+// ⇒ 内存后端下任何 SLO 都恒报达标，客户据此做的 SLA 复盘是编造出来的。
+// 现在按真实聚合走：有样本就算均值、没样本就 nodata，判定与 SQL 后端共用 evaluateSLI。
 func (m *MemoryStore) SLIStatus(tenantID, id string) []*SLIStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -176,15 +176,61 @@ func (m *MemoryStore) SLIStatus(tenantID, id string) []*SLIStatus {
 		return nil
 	}
 	now := time.Now()
+	const window = 5 * time.Minute
+	since := now.Add(-window)
 	out := make([]*SLIStatus, 0, len(slo.SLIs))
 	for _, sli := range slo.SLIs {
+		// -1 = 无数据；不支持的指标同样落到 nodata，绝不编值。
+		current := m.avgSLIMetric(tenantID, sli.Metric, since)
 		out = append(out, &SLIStatus{
 			SLIName:       sli.Name,
-			CurrentValue:  99.5, // MVP 模拟值
+			CurrentValue:  current,
 			TargetValue:   sli.Target,
-			Status:        "met", // MVP 假定满足
+			Status:        evaluateSLI(current, sli.Target, sli.Operator),
 			LastEvaluated: now,
 		})
 	}
 	return out
+}
+
+// avgSLIMetric 求租户在 since 之后所有网络指标里该字段的均值；无样本或不支持返回 -1。
+//
+// 过滤口径与 QueryNetworkMetrics 完全一致（设备登记的 tenantID + 样本自带的 tenantID
+// 都要匹配），但不沿用它的"无数据返回 0"行为——那正是本次要消除的形态。
+// uptime 在内存后端没有聚合来源，故落 -1（nodata）而不是猜一个值。
+func (m *MemoryStore) avgSLIMetric(tenantID, metric string, since time.Time) float64 {
+	field := metricFieldFor(metric)
+	if field != "cpu_usage" && field != "memory_usage" && field != "temperature" {
+		return -1
+	}
+	var sum float64
+	var count int
+	for deviceID, hist := range m.networkMetricsHistory {
+		if d, ok := m.networkDevices[deviceID]; ok && d.TenantID != "" && tenantID != "" && d.TenantID != tenantID {
+			continue
+		}
+		for _, nm := range hist {
+			if nm.Timestamp.Before(since) {
+				continue
+			}
+			// 与 QueryNetworkMetrics 同一口径：样本自带 tenant_id 不匹配则不计入。
+			if nm.TenantID != "" && tenantID != "" && nm.TenantID != tenantID {
+				continue
+			}
+			// 与 QueryNetworkMetrics 同一口径：样本自带 tenant_id 不匹配则不计入。
+			switch field {
+			case "cpu_usage":
+				sum += nm.CPUUsage
+			case "memory_usage":
+				sum += nm.MemoryUsage
+			case "temperature":
+				sum += nm.Temperature
+			}
+			count++
+		}
+	}
+	if count == 0 {
+		return -1
+	}
+	return sum / float64(count)
 }

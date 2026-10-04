@@ -23,6 +23,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Levango7/OpsMesh/internal/config"
 	"github.com/Levango7/OpsMesh/internal/store"
@@ -125,7 +126,7 @@ func TestHandleCreateSLO(t *testing.T) {
 	s := newSLOTestServer()
 	auth := loginAsAdmin(t, s)
 
-	body := `{"name":"test-slo","description":"test desc","serviceName":"api","target":99.9,"window":"30d","slis":[{"name":"availability","metric":"up","target":99.9,"operator":">="}]}`
+	body := `{"name":"test-slo","description":"test desc","serviceName":"api","target":99.9,"window":"30d","slis":[{"name":"cpu-low","metric":"cpu_usage","target":0.8,"operator":"<"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/slos", strings.NewReader(body))
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("Content-Type", "application/json")
@@ -151,13 +152,44 @@ func TestHandleCreateSLO(t *testing.T) {
 	if len(slo.SLIs) != 1 {
 		t.Fatalf("SLIs=%d, want 1", len(slo.SLIs))
 	}
-	if slo.SLIs[0].Name != "availability" {
-		t.Fatalf("SLIs[0].Name=%q, want availability", slo.SLIs[0].Name)
+	if slo.SLIs[0].Name != "cpu-low" {
+		t.Fatalf("SLIs[0].Name=%q, want cpu-low", slo.SLIs[0].Name)
 	}
 	// 确认 SLO 已持久化到 store
 	got, ok := s.store.GetSLO("default", slo.ID)
 	if !ok || got == nil {
 		t.Fatal("GetSLO returned nil after create")
+	}
+}
+
+// TestHandleCreateSLO_UnsupportedSLIMetric 验证引用无真实数据来源的指标返回 400 而不是静默接受。
+//
+// 这条断言存在的原因：SLI 的 metric 只能是 store 有取值路径的那几个（见 store/slo_eval.go）。
+// 修前 `metric:"up"` 会被 201 接受，然后状态永远 nodata（SQL 后端）或恒 "met"/99.5
+// （修前的内存后端）——即"配置成功、结果造假"。写入时就拒，比交付一份看不出破绽的
+// 空报告诚实（2026-10-04）。
+func TestHandleCreateSLO_UnsupportedSLIMetric(t *testing.T) {
+	s := newSLOTestServer()
+	auth := loginAsAdmin(t, s)
+
+	body := `{"name":"bad-slo","target":99.9,"window":"30d","slis":[{"name":"availability","metric":"up","target":99.9,"operator":">="}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/slos", strings.NewReader(body))
+	req.Header.Set("Authorization", auth)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.handleSLOs(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "unsupported SLI metric") {
+		t.Fatalf("body=%s, want 包含 unsupported SLI metric 文案", w.Body.String())
+	}
+	// 必须"拒了就什么都没写"：不能出现 400 与半条持久化并存。
+	for _, slo := range s.store.ListSLOs("default") {
+		if slo.Name == "bad-slo" {
+			t.Fatal("400 之后 bad-slo 仍被写入 store")
+		}
 	}
 }
 
@@ -313,7 +345,11 @@ func TestHandleDeleteSLO_NotFound(t *testing.T) {
 // handleSLOStatus（GET /api/v1/slos/{id}/status）
 // ============================================================================
 
-// TestHandleSLOStatus 验证正常获取 SLI 状态。
+// TestHandleSLOStatus 验证 SLI 状态来自真实样本聚合，且无样本时诚实报 nodata。
+//
+// 修前这条测试断言的是 CurrentValue==99.5 / Status=="met"（注释写着"MVP 模拟值"），
+// 等于把编造的达标报告钉成了期望值——/slos/{id}/status 是对外 SLA 口径，恒 met 会让
+// 客户据此做复盘（2026-10-04 反转该断言）。
 func TestHandleSLOStatus(t *testing.T) {
 	s := newSLOTestServer()
 	auth := loginAsAdmin(t, s)
@@ -322,37 +358,56 @@ func TestHandleSLOStatus(t *testing.T) {
 		Name:   "status-test",
 		Target: 99.9,
 		SLIs: []store.SLI{
+			{Name: "cpu-low", Metric: "cpu_usage", Target: 0.5, Operator: "<"},
 			{Name: "availability", Metric: "up", Target: 99.9, Operator: ">="},
-			{Name: "latency_p99", Metric: "latency", Target: 100, Operator: "<="},
 		},
 	})
 	if created == nil {
 		t.Fatal("CreateSLO returned nil")
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/slos/"+created.ID+"/status", nil)
-	req.Header.Set("Authorization", auth)
-	w := httptest.NewRecorder()
-	s.handleSLORouting(w, req)
+	call := func() []*store.SLIStatus {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/slos/"+created.ID+"/status", nil)
+		req.Header.Set("Authorization", auth)
+		w := httptest.NewRecorder()
+		s.handleSLORouting(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status=%d, want 200; body=%s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Statuses []*store.SLIStatus `json:"statuses"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(resp.Statuses) != 2 {
+			t.Fatalf("statuses=%d, want 2", len(resp.Statuses))
+		}
+		return resp.Statuses
+	}
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d, want 200; body=%s", w.Code, w.Body.String())
+	// 无样本：两条都必须是 nodata，CurrentValue=-1（-1 是"没有观测"的哨兵，不是测到的值）。
+	st := call()
+	for _, x := range st {
+		if x.Status != "nodata" || x.CurrentValue != -1 {
+			t.Fatalf("无样本时状态 = %+v，期望 nodata/-1", x)
+		}
 	}
-	var resp struct {
-		Statuses []*store.SLIStatus `json:"statuses"`
+
+	// 放入真实样本：cpu_usage 均值 0.9，目标 "< 0.5" ⇒ breached（证明判定跟着观测值走）。
+	s.store.StoreNetworkMetrics("dev-slo", &store.NetworkMetrics{
+		TenantID: "default", CPUUsage: 0.9, Timestamp: time.Now(),
+	})
+	st = call()
+	if st[0].Status != "breached" || st[0].CurrentValue < 0.89 || st[0].CurrentValue > 0.91 {
+		t.Fatalf("有样本时 cpu-low = %+v，期望 breached 且 CurrentValue≈0.9", st[0])
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
+	// 第二条没有取值路径（up），放了样本也必须仍是 nodata——不能被别的指标"顺带"算出来。
+	if st[1].Status != "nodata" {
+		t.Fatalf("无取值路径的指标 = %+v，期望仍是 nodata", st[1])
 	}
-	if len(resp.Statuses) != 2 {
-		t.Fatalf("statuses=%d, want 2", len(resp.Statuses))
-	}
-	// MVP 模拟值：CurrentValue=99.5, Status="met"
-	if resp.Statuses[0].CurrentValue != 99.5 {
-		t.Fatalf("CurrentValue=%v, want 99.5 (MVP)", resp.Statuses[0].CurrentValue)
-	}
-	if resp.Statuses[0].Status != "met" {
-		t.Fatalf("Status=%q, want met (MVP)", resp.Statuses[0].Status)
+	if st[0].LastEvaluated.IsZero() {
+		t.Fatal("LastEvaluated 为空")
 	}
 }
 

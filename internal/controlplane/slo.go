@@ -16,6 +16,7 @@
 package controlplane
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -56,6 +57,28 @@ func (s *Server) handleListSLOs(w http.ResponseWriter, r *http.Request) {
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"slos": slos})
 }
 
+// sloSLIValidationError 校验 SLI 引用的指标是否有真实数据来源，返回给客户端的错误文案。
+//
+// 为什么必须在创建/更新时拒绝而不是运行期给 nodata：内存/SQL 两侧都只对有限指标有真实来源，
+// 过去文档示例里的 metric:"up" 会被静默接受、然后状态永远 nodata 或（修前的内存后端）恒 "met"。
+// 让配置在写入时就说"我不支持这个指标"，比让客户拿一份看不出来的空报告诚实得多。
+func sloSLIValidationError(slis []store.SLI) string {
+	var bad []string
+	for _, sl := range slis {
+		if sl.Metric == "" {
+			continue // 允许不带 metric 的 SLI（仅按 target 记录）
+		}
+		if !store.IsValidSLIMetric(sl.Metric) {
+			bad = append(bad, sl.Metric)
+		}
+	}
+	if len(bad) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("unsupported SLI metric(s): %s（受支持：%s）",
+		strings.Join(bad, ", "), strings.Join(store.SupportedSLIMetrics(), ", "))
+}
+
 // handleCreateSLO 处理 POST /api/v1/slos：创建 SLO。
 // 请求体：{name, description, serviceName, target, window, slis}；name 必填。
 func (s *Server) handleCreateSLO(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +108,10 @@ func (s *Server) handleCreateSLO(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Name == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+	if msg := sloSLIValidationError(body.SLIs); msg != "" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
 	slo := &store.SLO{
@@ -194,6 +221,10 @@ func (s *Server) handleUpdateSLO(w http.ResponseWriter, r *http.Request, id stri
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if msg := sloSLIValidationError(body.SLIs); msg != "" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
 	slo := &store.SLO{

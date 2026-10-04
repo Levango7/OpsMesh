@@ -3627,12 +3627,12 @@ Phase 1 服务台：工单管理 + SLO 管理，均按租户隔离（`X-Tenant-I
     {
       "id": "slo-001",
       "tenantID": "t1",
-      "name": "api 可用性",
-      "description": "核心 API 月度可用性",
+      "name": "api CPU 水位",
+      "description": "核心 API 宿主 CPU 使用率不超过 0.8",
       "serviceName": "api-gateway",
       "target": 99.9,
       "window": "30d",
-      "slis": [{"name": "availability", "metric": "up", "target": 0.999, "operator": ">="}],
+      "slis": [{"name": "cpu-low", "metric": "cpu_usage", "target": 0.8, "operator": "<"}],
       "createdAt": "2026-08-17T09:00:00Z",
       "updatedAt": "2026-08-17T09:00:00Z"
     }
@@ -3649,17 +3649,38 @@ Phase 1 服务台：工单管理 + SLO 管理，均按租户隔离（`X-Tenant-I
 
 ```json
 {
-  "name": "api 可用性",
-  "description": "核心 API 月度可用性",
+  "name": "api CPU 水位",
+  "description": "核心 API 宿主 CPU 使用率不超过 0.8",
   "serviceName": "api-gateway",
   "target": 99.9,
   "window": "30d",
-  "slis": [{"name": "availability", "metric": "up", "target": 0.999, "operator": ">="}]
+  "slis": [{"name": "cpu-low", "metric": "cpu_usage", "target": 0.8, "operator": "<"}]
 }
 ```
 
 - `name`：必填；`target` 如 99.9 表示 99.9%；`window` 如 `30d` / `7d`
 - **响应**：`201 Created`，返回完整 `SLO`
+- SLI 引用了无真实数据来源的指标：`400`，
+  `{"error": "unsupported SLI metric(s): up（受支持：…）"}`
+
+#### SLI 指标支持集（重要）
+
+`slis[].metric` 只能是**存储里有取值路径**的指标，权威清单见
+`internal/store/slo_eval.go`（`SupportedSLIMetrics()`）：
+
+| metric（含别名） | 含义 | 内存后端 | SQL 后端 |
+|---|---|---|---|
+| `cpu_usage` / `cpu` | CPU 使用率（0–1） | ✅ | ✅ |
+| `memory_usage` / `mem_usage` / `memory` | 内存使用率（0–1） | ✅ | ✅ |
+| `temperature` / `temp` | 设备温度 | ✅ | ✅ |
+| `uptime` | 设备在线时长 | ❌（无聚合来源 ⇒ `nodata`） | ✅ |
+
+- 清单外的写法（如早期文档示例里的 `up`、或 `latency`）在**创建/更新时即被 400 拒绝**。
+  此前它们会被 201 静默接受，然后状态永远算不出来——"配置成功、结果造假"比直接报错危险得多。
+- ⚠️ **数据面现状**：`network_metrics` 在出厂部署里**没有采集方**（控制面与 agent 都无写入路径，
+  仅存储层的 `StoreNetworkMetrics` 可供内部/测试调用）。因此真实栈里 SLI 状态通常恒为 `nodata`，
+  直到接入采集链路为止。这是能力边界而非隐藏缺陷：宁可对客户显示"没有数据"，
+  也不给一份算出来是 99.5、状态恒为 `met` 的假达标报告。
 
 ### GET /api/v1/slos/{id}
 
@@ -3696,12 +3717,17 @@ SLO 详情。
 ```json
 {
   "statuses": [
-    {"sliName": "availability", "currentValue": 0.9995, "targetValue": 0.999, "status": "met", "lastEvaluated": "2026-08-17T09:00:00Z"}
+    {"sliName": "cpu-low", "currentValue": 0.62, "targetValue": 0.8, "status": "met", "lastEvaluated": "2026-08-17T09:00:00Z"},
+    {"sliName": "mem", "currentValue": -1, "targetValue": 0.9, "status": "nodata", "lastEvaluated": "2026-08-17T09:00:00Z"}
   ]
 }
 ```
 
 - `status`：`met` | `breached` | `nodata`
+- `currentValue` 为该租户最近 5 分钟窗口的**真实均值**；`-1` 是"没有可观测样本"的哨兵值，
+  不是测出来的 0。判定方向由 `operator` 决定（如 CPU 这类越低越好，`< 0.8` 达标即 `met`）。
+- 早期实现在内存后端把 `currentValue` 硬编码为 `99.5`、`status` 恒为 `met`
+  （注释自认"MVP 模拟值"）——那份"永远达标"的报告不再存在，2026-10-04 起改为真实聚合。
 - SLO 不存在：`404`，`{"error": "slo not found"}`
 
 ---

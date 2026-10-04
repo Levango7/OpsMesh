@@ -200,6 +200,13 @@ func (m *MemoryStore) QueryNetworkMetrics(tenantID string, since time.Time) map[
 			if m.Timestamp.Before(since) {
 				continue
 			}
+			if m.TenantID != "" && tenantID != "" && m.TenantID != tenantID {
+				continue
+			}
+			// 样本自带的 tenant_id 也必须匹配：SQL 后端这条查询是
+			// `WHERE tenant_id=? AND timestamp>=?`（sql_network.go），只看设备登记
+			// 信息会让"设备未登记"的样本串到别的租户桶里——两后端口径分叉
+			// 正是本仓反复出过的 P0 形态（2026-10-04）。
 			cpuSum += m.CPUUsage
 			memSum += m.MemoryUsage
 			tempSum += m.Temperature

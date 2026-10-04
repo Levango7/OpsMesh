@@ -273,17 +273,9 @@ func evaluateSLI(current, target float64, operator string) string {
 }
 
 // metricColumn 将 SLI metric 名映射到 network_metrics 表列名。
+//
+// 映射表在 slo_eval.go 的 sliMetricFields（单一事实源）——此前这里与内存后端各写一份，
+// 于是"支持哪些指标"没有唯一答案，文档里的 metric:"up" 才能一路静默走到 nodata。
 func metricColumn(metricName string) string {
-	switch metricName {
-	case "cpu_usage", "cpu":
-		return "cpu_usage"
-	case "memory_usage", "mem_usage", "memory":
-		return "memory_usage"
-	case "temperature", "temp":
-		return "temperature"
-	case "uptime":
-		return "uptime"
-	default:
-		return ""
-	}
+	return metricFieldFor(metricName)
 }

@@ -849,11 +849,15 @@ func TestMemoryStore_SLO_CRUD_SLIStatus(t *testing.T) {
 		t.Fatal("unknown SLO get should fail")
 	}
 
-	// SLIStatus（更新前）：模拟值 met/99.5，TargetValue 取自 SLI.Target。
+	// SLIStatus（无样本）：必须是 nodata。
+	//
+	// 这里原先断言的是 `Status=="met" && CurrentValue==99.5` —— 即把"内存后端的模拟值"
+	// 钉成了期望值。而 `/slos/{id}/status` 是对外承诺的 SLA 口径，恒 met 等于给客户
+	// 一份编造的达标报告，所以这是**测试固化了桩行为**，改代码时必须一并改测试（2026-10-03）。
 	st := m.SLIStatus("t1", slo.ID)
-	if len(st) != 1 || st[0].SLIName != "availability" || st[0].Status != "met" ||
-		st[0].CurrentValue != 99.5 || st[0].TargetValue != 99.9 {
-		t.Fatalf("SLIStatus = %+v", st)
+	if len(st) != 1 || st[0].SLIName != "availability" || st[0].Status != "nodata" ||
+		st[0].CurrentValue != -1 || st[0].TargetValue != 99.9 {
+		t.Fatalf("无样本时 SLIStatus = %+v，期望 nodata/CurrentValue=-1", sliStatusValues(st))
 	}
 	if st[0].LastEvaluated.IsZero() {
 		t.Fatal("LastEvaluated should be filled")
@@ -887,7 +891,7 @@ func TestMemoryStore_SLO_CRUD_SLIStatus(t *testing.T) {
 	// 更新后 SLIStatus 的 TargetValue 反映整体替换后的 SLI。
 	st2 := m.SLIStatus("t1", slo.ID)
 	if len(st2) != 1 || st2[0].TargetValue != 99.95 {
-		t.Fatalf("SLIStatus after update = %+v, want TargetValue 99.95", st2)
+		t.Fatalf("SLIStatus after update = %+v, want TargetValue 99.95", sliStatusValues(st2))
 	}
 
 	// List：升序 + 租户过滤。
@@ -910,6 +914,64 @@ func TestMemoryStore_SLO_CRUD_SLIStatus(t *testing.T) {
 	// Delete：跨租户拒绝 → 成功 → 二次 false。
 	if m.DeleteSLO("t2", slo.ID) || !m.DeleteSLO("t1", slo.ID) || m.DeleteSLO("t1", slo.ID) {
 		t.Fatal("delete semantics broken")
+	}
+}
+
+// sliStatusValues 把 []*SLIStatus 拆成值切片。Fatalf 用 %+v 打指针切片只会输出地址，
+// 失败时看不到任何字段（2026-10-04 变异验证时踩到），断言前先拆值。
+func sliStatusValues(st []*SLIStatus) []SLIStatus {
+	out := make([]SLIStatus, 0, len(st))
+	for _, s := range st {
+		if s != nil {
+			out = append(out, *s)
+		}
+	}
+	return out
+}
+
+// TestMemoryStore_SLIStatus_UsesRealMetrics 钉住 #61 的修复面：SLIStatus 必须来自真实
+// 样本聚合，而不是桩值。三段断言各自排除一种"看起来也对"的假实现：
+//   - 无样本 ⇒ nodata（排除"猜一个 99.5"）
+//   - 有样本 ⇒ 按均值判定（排除"恒 nodata"或"恒 met"）
+//   - 同一指标换操作符 ⇒ 结论翻转（排除"判定不跟随真实值"）
+//
+// 独立成测试而不是塞进上面的 CRUD 用例：那个用例断言了租户下 SLO 条数，往这里加 SLO
+// 会把它弄红（2026-10-04 实测）。
+func TestMemoryStore_SLIStatus_UsesRealMetrics(t *testing.T) {
+	m := NewMemoryStore()
+
+	// `cpu_usage` 这类没有真实来源的指标（见 slo_eval.go 支持集）必须是 nodata，不能猜值。
+	cpuSLO := m.CreateSLO("t1", &SLO{Name: "cpu-slo", ServiceName: "api", Target: 99.0, Window: "7d",
+		SLIs: []SLI{{Name: "cpu", Metric: "cpu_usage", Target: 0.5, Operator: ">="}}})
+	if got := sliStatusValues(m.SLIStatus("t1", cpuSLO.ID)); len(got) != 1 || got[0].Status != "nodata" {
+		t.Fatalf("存了 SLO 但没有指标样本时应为 nodata，实际 %+v", got)
+	}
+
+	// 放入样本后必须变成真实计算结果：CPUUsage 均值 0.9，target 0.5 且 op >= ⇒ met。
+	m.StoreNetworkMetrics("dev-sli", &NetworkMetrics{TenantID: "t1", CPUUsage: 0.9, MemoryUsage: 0.4, Timestamp: time.Now()})
+	if got := sliStatusValues(m.SLIStatus("t1", cpuSLO.ID)); len(got) != 1 || got[0].Status != "met" || got[0].CurrentValue < 0.89 {
+		t.Fatalf("有样本时应按真实均值判定，实际 %+v", got)
+	}
+
+	// 同一条指标换个方向就要翻成 breached（证明判定跟着真实值走，不是恒 met）。
+	// 语义：op "<" 表示"低于目标才算达标"（CPU 这类越低越好），实测均值 0.9 > 0.5 ⇒ breached。
+	tightSLO := m.CreateSLO("t1", &SLO{Name: "tight", ServiceName: "api", Target: 99.0, Window: "7d",
+		SLIs: []SLI{{Name: "cpu", Metric: "cpu_usage", Target: 0.5, Operator: "<"}}})
+	if got := sliStatusValues(m.SLIStatus("t1", tightSLO.ID)); len(got) != 1 || got[0].Status != "breached" {
+		t.Fatalf("0.9 均值对 \"< 0.5\" 目标应为 breached，实际 %+v", got)
+	}
+
+	// 不支持的指标名（`up`）即使有样本也必须 nodata：没有真实取值路径就不能给结论。
+	upSLO := m.CreateSLO("t1", &SLO{Name: "up-slo", ServiceName: "api", Target: 99.0, Window: "7d",
+		SLIs: []SLI{{Name: "avail", Metric: "up", Target: 99.9, Operator: ">="}}})
+	if got := sliStatusValues(m.SLIStatus("t1", upSLO.ID)); len(got) != 1 || got[0].Status != "nodata" || got[0].CurrentValue != -1 {
+		t.Fatalf("不支持的指标应为 nodata/-1，实际 %+v", got)
+	}
+
+	// 租户隔离：t2 的样本不能喂给 t1 的 SLO。
+	m.StoreNetworkMetrics("dev-other", &NetworkMetrics{TenantID: "t2", CPUUsage: 0.1, Timestamp: time.Now()})
+	if got := m.SLIStatus("t2", cpuSLO.ID); got != nil {
+		t.Fatalf("跨租户 SLIStatus 应为 nil，实际 %+v", sliStatusValues(got))
 	}
 }
 
