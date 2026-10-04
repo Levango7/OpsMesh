@@ -243,9 +243,40 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: 组装发布说明（正文取自 docs/release-notes.md 的本版小节）
+        id: notes
+        # 为什么必须自己取而不是只用 github-tag-action 生成的那份：那个正文是"两个 tag 之间的
+        # commit 标题清单"，而客户要的是**本版做了什么 + 哪些能力是降级的**（升级前必读的
+        # 破坏性变更、以及"能力表里这条现在验不了"）。此前 Release 正文里这两样都不存在，
+        # 明细只写在仓库内 docs/release-notes.md 里——GitHub 上的发布物看不到。
+        # 小节缺失直接判红，而不是悄悄退化回 commit 清单（发出去的东西也必须"有锚点"）。
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          test -f docs/release-notes.md || { echo "::error::仓库内缺 docs/release-notes.md"; exit 1; }
+          awk -v t="## ${TAG}" '
+            index($0, t " ") == 1 || $0 == t { found = 1 }
+            found && /^## / && index($0, t " ") != 1 && $0 != t { exit }
+            found { print }
+          ' docs/release-notes.md > /tmp/release-notes.md
+          if [ ! -s /tmp/release-notes.md ]; then
+            echo "::error::docs/release-notes.md 里没有 ${TAG} 的小节：请先补发布说明再打标签"
+            exit 1
+          fi
+          if ! grep -q "能力降级清单" /tmp/release-notes.md; then
+            echo "::error::${TAG} 的发布说明缺「能力降级清单」小节：降级能力必须随版本发布对外说明"
+            exit 1
+          fi
+          if ! grep -q "破坏性" /tmp/release-notes.md; then
+            echo "::error::${TAG} 的发布说明缺「破坏性 / 行为变更」小节（无此类变更也要显式写「无」）"
+            exit 1
+          fi
+          echo "取到 $(wc -l < /tmp/release-notes.md) 行发布说明（首行：$(head -1 /tmp/release-notes.md)）"
+          { echo "body<<__NOTES_EOF__"; cat /tmp/release-notes.md; echo "__NOTES_EOF__"; } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          body: ${{ needs.changelog.outputs.release_body }}
+          body: ${{ steps.notes.outputs.body }}
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}

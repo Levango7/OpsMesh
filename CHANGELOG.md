@@ -66,6 +66,17 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
 | 企业版前端 | 社区授权下 `/enterprise/` 返回"未授权"说明页，SPA 资产链路只在企业授权下可验 | `internal/controlplane/enterprise_ui.go` |
 | 许可合规 | MPL-2.0 / npm 依赖的法务判定待法务（工程侧清单与门禁已就绪） | P1-7 |
 
+- **修｜GitHub Release 的正文此前只是自动生成的 commit 清单**：`release.yml` 的 `github-release` job 把
+  `github-tag-action` 产出的"两个 tag 之间的 commit 标题"当发布正文，而客户升级前真正要看的两样东西
+  ——本版做了什么/哪些是破坏性变更、以及**哪些能力当前是降级的**——只写在仓库内
+  `docs/release-notes.md` 里，GitHub 上的发布物看不到。现在正文改为**取 `docs/release-notes.md` 里
+  本版小节**（awk 从 `## v<tag>` 抽到下一个 `## `），并三条硬断言：小节不存在 ⇒ 判红（绝不让正文
+  悄悄退化回 commit 清单）、缺「能力降级清单」⇒ 判红、缺「破坏性 / 行为变更」⇒ 判红
+  （没有此类变更也要显式写「无」）。保留 `generate_release_notes: true`，自动那份排在人工那份之后。
+  本地验证：抽取 v0.12.0 得 76 行且首行正确；`GITHUB_REF_NAME=v9.9.9` 反向对照 ⇒ 退出码 1 并报
+  「没有 v9.9.9 的小节」；shellcheck -S warning 对该 step 无实质报点。
+  **诚实边界**：actionlint 在本机会挂死（`PATH` 里放了 `shellcheck.exe` 时 rc=124 超时；不带 shellcheck
+  时 0 报点），所以 step 内的 shell 只过了 shellcheck 单测与实跑，actionlint 的完整分析仍以 CI 为准。
 - **修｜我自己修判定写法时造出的新红：容器侧 sh 不支持 herestring**。上一批把
   `producer | grep -q` 全量换成 `grep -q X <<<"$v"` 时，漏看了其中一处位于
   `docker run … sh -c '…'` 里面——CI 的 `release-dryrun` 产物自检 step 因此在容器内
