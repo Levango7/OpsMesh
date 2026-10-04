@@ -2,11 +2,11 @@
 
 ## 第1章 概述
 
-本文档对 OpsMesh 内核 `internal/` 下 36 个 Go 包进行系统化模块设计说明，覆盖每个包的职责、关键接口、核心数据结构、关键算法、并发安全策略与扩展点。文档面向架构 review、新成员 onboarding 与跨团队协作，作为代码导航的"地图"。
+本文档对 OpsMesh 内核 `internal/` 下 37 个 Go 包进行系统化模块设计说明，覆盖每个包的职责、关键接口、核心数据结构、关键算法、并发安全策略与扩展点。文档面向架构 review、新成员 onboarding 与跨团队协作，作为代码导航的"地图"。
 
 ### 1.1 文档范围
 
-- 涵盖范围：`F:\Nexus\OpsMesh\internal\` 下全部 36 个包
+- 涵盖范围：`F:\Nexus\OpsMesh\internal\` 下全部 37 个包
 - 分组维度：按领域职责划分为核心 / 运维 / 告警 / 数据 / 安全 / 基础 / 其他 共 7 组
 - 信息来源：每个包的 `*.go` 源文件（不含 `_test.go`）的包注释与关键类型/接口定义
 - 不涵盖：第三方依赖、`cmd/` 入口、`pkg/` 公共库、前端资源
@@ -24,11 +24,11 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构：
 - 控制面（`--mode=controlplane`）：HTTP 8080（B/S 仪表盘 + REST API）+ gRPC 9090（agent 通道）+ metrics 9091
 - 数据面（`--mode=agent`）：经 gRPC 9090 注册 / 心跳 / 拉任务 / 上报结果，本地 `os/exec` 执行任务
 
-36 个 internal 包按领域分层组合，控制面通过 `controlplane.Server` 装配各域 handler，agent 通过 `agent.Agent` 装配 gRPC 客户端 + worker 池。
+37 个 internal 包按领域分层组合，控制面通过 `controlplane.Server` 装配各域 handler，agent 通过 `agent.Agent` 装配 gRPC 客户端 + worker 池。
 
 ## 第2章 包总览表
 
-下表汇总 36 个 internal 包的核心属性，详细设计见第3章。
+下表汇总 37 个 internal 包的核心属性，详细设计见第3章。
 
 > ⚠️ 计数口径：只数 `internal/` 下真实存在的目录，CI 的 `Verify internal package count` 门禁会
 > 与 README、本节数字三方对账。原第 6 行的 `provision` 已于 D3-a/b 迁至 `pkg/provision`
@@ -74,6 +74,7 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构：
 | 34 | plugin | 基础 | 插件框架：注册/反注册/钩子触发/生命周期管理 | `Plugin`/`Hook`/`Manager`/`Event` | — | ✓ |
 | 35 | extension | 其他 | API 网关引擎：路由规则匹配 + 令牌桶限流 + 统计聚合 | `RouteRule`/`RateLimiter`/`GatewayStats` | — | ✓ |
 | 36 | platform | 其他 | 平台化业务引擎：租户管理 + API Key + 插件市场 + 计费 | `Tenant`/`APIKey`/`SubscriptionPlan`/`Plugin` | — | ✓ |
+| 37 | gates | 其他 | 跨模块结构性门禁（包内只有测试）：静默退内存、幻影 HPA 指标、包数三方对账 | `TestNoSilentSQLFallbackInServiceMains`/`TestHPAPodMetricsMustBeProduced` | 无（仅测试） | ✓ |
 
 ## 第3章 详细设计
 
@@ -1736,7 +1737,7 @@ OpsMesh 包依赖遵循"核心 → 领域 → 基础"自顶向下分层，避免
 | k8s | 2 | 2 | ~500 |
 | discovery | 6 | 4 | ~800 |
 | config | 1 | 4 | ~1500 |
-| 其他 21 个包（含 egress） | — | — | ~3000 |
+| 其他 22 个包（含 egress / gates） | — | — | ~3000 |
 
 ### 6.2 术语表
 
@@ -1768,4 +1769,4 @@ OpsMesh 包依赖遵循"核心 → 领域 → 基础"自顶向下分层，避免
 
 ---
 
-文档版本：v1.2  |  生成日期：2026-08-17  |  更新日期：2026-10-04  |  覆盖包数：36  |  维护者：OpsMesh 技术文档工程师
+文档版本：v1.2  |  生成日期：2026-08-17  |  更新日期：2026-10-04  |  覆盖包数：37  |  维护者：OpsMesh 技术文档工程师

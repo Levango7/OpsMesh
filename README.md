@@ -119,9 +119,9 @@
 | 联邦 | gRPC (mTLS) | 9090 | 跨控制面任务转发/设备视图同步 |
 | Metrics | HTTP | 9091 | Prometheus 指标采集（HTTP 延迟/Go runtime） |
 
-### internal 包职责（36 个）
+### internal 包职责（37 个）
 
-> 完整设计见 `docs/module-design.md`。下表按 8 个领域分组列出 36 个 internal 包的职责简述。
+> 完整设计见 `docs/module-design.md`。下表按 8 个领域分组列出 37 个 internal 包的职责简述。
 >
 > ⚠️ 计数口径：**只数 `internal/` 下真实存在的目录**（CI 的 `Verify internal package count`
 > 门禁会拿 `find internal -maxdepth 1 -type d` 与本节标题里的数字对账，三处必须一致）。
@@ -187,6 +187,7 @@
 | `internal/platform` | 平台化业务引擎：租户管理 + API Key（`om_` 前缀 + SHA-256 hash）+ 插件市场 + 计费（计划/订阅/账单） |
 | `internal/plugin` | 插件框架：Plugin 接口 + Hook 扩展点 + HookHandler + Manager（注册/钩子触发/生命周期），不改核心代码扩展控制面行为 |
 | `internal/extension` | API 网关引擎：路由规则匹配（PathPrefix 前缀 + 方法白名单）+ 令牌桶限流 + 网关统计聚合 |
+| `internal/gates` | 跨模块**结构性门禁**测试（包内只有测试）：扫 `services/*/cmd/*/main.go` 拦"要求 sql 却没配 DSN 就静默退内存"，扫 HPA 清单拦"引用没产出的 Pods 指标"，并对账 internal 包数与文档三处数字 |
 
 #### 可观测与基础设施域
 
@@ -1085,7 +1086,7 @@ server {
 
 ```
 cmd/opsmesh/              ← 入口 main：解析 --mode 分派 controlplane / agent
-internal/                 ← 36 个包，按 8 个领域分组（详见上文"internal 包职责"）
+internal/                 ← 37 个包，按 8 个领域分组（详见上文"internal 包职责"）
 ├── agent/                ← agent 运行时（注册/心跳/worker 池/执行器 + log_collect 日志采集 v2.0）
 ├── alertengine/          ← 告警规则引擎（多条件 + Z-Score/EWMA 异常检测 + 静默 + 抑制 + 聚合）
 ├── approval/             ← 审批引擎（审批流 + 请求 + approve/reject）
@@ -1105,6 +1106,7 @@ internal/                 ← 36 个包，按 8 个领域分组（详见上文"i
 ├── egress/               ← 出网策略唯一实现（SSRF 三层防护 + allowPrivate 语义收口）
 ├── events/               ← 可插拔事件总线（noop/log/kafka）
 ├── extension/            ← API 网关引擎（路由规则 + 令牌桶限流 + 网关统计）
+├── gates/                ← 跨模块结构性门禁（只有测试：静默退内存、幻影 HPA 指标、包数对账）
 ├── grpcx/                ← gRPC ServiceDesc / JSON codec / 消息类型
 ├── helm/                 ← Helm 应用商店（仓库/Chart/Release + 24 个预置应用）
 ├── k8s/                  ← K8s 多集群管理（client-go + ClusterManager + 资源 CRUD）

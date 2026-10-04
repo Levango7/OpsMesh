@@ -8,6 +8,8 @@
 
 > 待归版。
 
+- **修｜包数对账连续把 CI 判红两次，遂把这条门禁搬到本地可跑的位置**：`Verify internal package count (H4 防回归)` 只存在于 `.github/workflows/ci.yml`，本地 `go build` / `go test` / lint 都碰不到它 —— 新增 `internal/egress` 红一次（已在上一批修过），新增 `internal/gates` 又红一次。同一个坑踩两次说明"记得改文档"不是修复。现在 `internal/gates/package_count_gate_test.go` 把同一套三方对账（`internal/` 目录数 vs README 职责表标题 vs module-design 覆盖包数）做成本地测试，`go test ./internal/gates/` 即可判红；两条防自转断言：数到 <30 个包判红（扫描面塌了不许绿）、README 里找不到计数正则也判红（CI 的 `grep -oP` 同样会失败）。变异验证：把 README 数字改成 35 ⇒ 判红并给出三处该改哪儿。文档同步：README 36→37 + 新增 `internal/gates` 职责行与目录树条目；`module-design.md` 五处计数与总览表第 37 行。
+
 - **修｜gpu-svc 的 HPA 按一个"从来没被产出的指标"扩容 = 配了等于没配（#62 第四项）**。`deploy/k8s/hpa/gpu-svc-hpa.yaml` 的 `metrics` 只有一条 `type: Pods / name: opsmesh_gpu_queue_depth`，而这个指标名**全仓零命中**（两条独立检索：`grep` 与 Grep 工具都只在这份 manifest 自己里面找到它）。HPA 对这种情况**不报错**，只是永远拿不到 desired 值 —— `kubectl get hpa` 显示 `<unknown>`，弹性伸缩静默失效，而资产看起来是配好的。现在：① 指标改回与其余四个 HPA 一致的 `Resource cpu`（metrics-server 提供，开箱真能扩）；② gpu-svc 把队列深度作为业务 gauge 真实产出（`business_metrics{name="gpu_queue_depth"}`，在 `handleScheduleQueue` 里更新 —— 该服务没有后台循环，这是唯一拿得到 pending 数的位置），注释写明"要按队列扩容还差 prometheus-adapter 的 CustomResourceDefinition 映射这一环"，不把前提省掉。
 - **新增门禁｜HPA 引用的 Pods 型指标必须有代码产出**（`internal/gates/hpa_metric_gate_test.go`）：解析 `deploy/k8s/hpa/*.yaml`，逐层锚定 `type: Pods → pods: → metric: → name:`（`behavior.policies` 里也有 `- type: Pods / value: N`，那是"每次增减几个副本"，宽松正则会把紧随其后的 `Resource` 段 `name: cpu` 误抓成指标 —— 第一版就误报了，改正则时才暴露）。同时要求"一个业务指标名都没扫到"判红，防扫描面塌掉导致的空转绿。**变异验证**：注入真幻影名 `opsmesh_bogus_queue_metric` ⇒ 判红并指名道姓；还原 ⇒ 绿。
 
