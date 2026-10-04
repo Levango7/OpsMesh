@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -157,4 +158,34 @@ func countCall(file *ast.File, fn string) int {
 		return true
 	})
 	return n
+}
+
+// TestReadyEndpointIsNotAHardcodedClaim 钉住 /ready 的诚实性（#61 同族的最后一个写死值）。
+//
+// 这里用源码结构断言而不是起 HTTP 服务：/ready 的注册在 main() 里，测试无从复用；
+// 而要防的恰恰是"回包里那个字段是常量"这件事，源码层面判得最干净。
+// 断言两件事：① 不再有 "5/5" 这种不读任何依赖的字面量；
+// ② 回包必须把数据源（source + simulated）带出来——就绪面至少要说清" readiness 依据什么"。
+func TestReadyEndpointIsNotAHardcodedClaim(t *testing.T) {
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("读取 main.go 失败（结构门禁没有代码可读时必须判红）: %v", err)
+	}
+	src := string(b)
+	if strings.Contains(src, `"engines": "5/5"`) {
+		t.Errorf(`/ready 又回退了写死的 engines:"5/5"（不读数、永远为真的就绪宣称）`)
+	}
+	i := strings.Index(src, `mux.HandleFunc("/ready"`)
+	if i < 0 {
+		t.Fatal(`找不到 /ready 注册点（交付形态已变，本测试失去覆盖面）`)
+	}
+	block := src[i:]
+	if j := strings.Index(block, "\n\t})"); j >= 0 {
+		block = block[:j]
+	}
+	for _, want := range []string{"data_source", "simulated", "IsSimulated()"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("/ready 处理块里没有 %s（就绪面没有回报数据源状态就是在宣称一个它没验过的事实）", want)
+		}
+	}
 }

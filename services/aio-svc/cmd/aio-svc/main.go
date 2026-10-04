@@ -72,7 +72,23 @@ func main() {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "healthy"})
 	})
 	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "engines": "5/5"})
+		// 这里原本写死 {"engines":"5/5"}：不查任何依赖、不看数据源，永远为真，
+		// 于是"就绪"变成了一个装饰性字符串（#61 那一类"声明了但不成立"的对外面）。
+		// 现在报的是能报的事实：五个引擎在本进程内确实实现了（结构事实），
+		// 而它们能不能拿到真实指标取决于 Prometheus 是否可达——可达性如实标出来。
+		// 消费方（compose/k8s 探针）只看状态码，改响应体不影响探针。
+		src, sim := promClient.Source(), promClient.IsSimulated()
+		note := "数据源为模拟：引擎结论来自推断，不是观测"
+		if !sim {
+			note = "数据源为真实 Prometheus 查询"
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":              "ready",
+			"engines_implemented": 5,
+			"data_source":         src,
+			"simulated":           sim,
+			"note":                note,
+		})
 	})
 	mux.Handle("/metrics", metrics.GetHandler())
 

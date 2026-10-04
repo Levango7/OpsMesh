@@ -2,11 +2,69 @@
 
 本文件记录 OpsMesh 所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [Semantic Versioning](https://semver.org/)。
 
-> 当前最新已发布版本：`v0.12.0`（2026-10-03，license 门禁 + 转正验收 + 门禁化 null 修复；上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化；上一版 `v0.10.0` 2026-09-29 为 TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
+> 当前最新已发布版本：`v0.12.0`（**tag 与产物于 2026-10-04 生成**；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 但从未打 tag、GHCR 上也没有 0.12.0 镜像，见本节开头）。上一版真正有产物的是 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化；再上一版 `v0.10.0` 2026-09-29 为 TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
-## [Unreleased]
+## [0.12.0] — 2026-10-04（v0.11.0 之后全部改动归版；本版**首次真实发布**，同时纠正"版本声明领先于产物"两处）
 
-> 待归版。
+> 本节以下 7 个 `[0.12.0] — 2026-10-0x …` 明细块是本次归版的内容（本仓约定：明细原地留存）。
+
+**先说这件事本身**：`deda995`（2026-10-03「归版 v0.12.0」）把 Chart.yaml 的 version/appVersion、
+values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag 都钉到了 **0.12.0**，
+但**从未打过 `v0.12.0` tag**。2026-10-04 实测 GHCR：`levango7/opsmesh-binary`、`opsmesh-agent`、
+`auth-svc` 的版本 tag 都只到 **0.11.0**（+ `latest`），GitHub Release 列表最新也是 v0.11.0。
+后果不是"文档落后"而是**客户装不起来**：按生产默认值 `helm install` 的人会对三个镜像拿到
+`ErrImagePull`。这与 §20 那条"chart 默认镜像名从未被发布"是同一类缺陷，只是这次错在版本号上。
+本节由 `v0.12.0` 标签的真实发布来把 pins 变成真话。
+
+**同一次归版还弄坏了 CHANGELOG 的历史**：`deda995` 用整篇替换把 `## [Unreleased]` 一次性改成
+`## [0.12.0]`，连带把**早已归入 0.11.0 / 0.10.0 / 0.9.x 的 54 个明细块**也标成了 0.12.0
+（本仓约定是"明细原地留存 + 标题标注已归入 X"，那些块的标题本来就写着"（已归入 0.11.0）"）。
+这等于对外宣称这半年的东西都在 0.12.0 里。已按 `v0.11.0` 标签里的原标签逐条还原（含
+`## [Unreleased] — 2026-08-12` 这类无标记的历史块），只保留 v0.11.0 之后新增的 7 块在 0.12.0 名下。
+防复发：`deploy/scripts/validate-deploy-assets.sh` 第 1 节现在把 `internal/version.Version`
+也纳入版本源对账（实测它当时比 Chart.yaml 落后一整版 0.11.0 vs 0.12.0 而门禁毫无反应），
+并已把 `internal/version` bump 到 0.12.0。
+
+**破坏性 / 行为变更（升级前必读）**：
+
+1. **数据库结构自动补列**：alert-svc 的 `alerts` 表新增 `rule_id VARCHAR(64)`。启动期按
+   `information_schema` 判缺后执行 `ALTER`（`ensureColumn`），存量库自动升级；**不会自动回滚**
+   （本仓 `.down.sql` 永不自动执行）。老行的 `rule_id` 是 NULL，读侧已按全列 `sql.Null*` 处理。
+2. **OTLP 端点解释改变**：带 scheme 的 `http://host:4317` 以前拨不通（span 全丢），现在按
+   OTel 规范解析；`https://host:4317` 现在**会走 TLS**（以前只看端口是否为 443）。
+   如果有人给的是 `https://` 而 collector 只监听明文，升级后会连不上——这是纠正，不是回归。
+3. **PagerDuty 载荷**：`acknowledge`/`resolve` 不再发送 `payload.severity` 键（此前发的是空字符串，
+   属非法枚举值）。`trigger` 不变。
+4. **规则评估真实化（#60）**：`op=">"` 且阈值 <100 的规则不再"每次评估必触发"；
+   未携带读数的评估一律落 `no_data_rules`（响应新增 `evaluated_rules`/`pending_rules`/
+   `no_data_rules`/`invalid_rules`/`metrics_supplied`）。客户会看到告警量与以前不同——
+   以前那个量是假的。
+5. **失败计数序列启动即存在**：`alert_external_notify_failures{action="ack"|"resolve"}` 在
+   `PAGERDUTY_ENABLED=true` 时以 0 出现于抓取面（否则 `increase()` 看不见第一次失败）。
+   抓取面上会多出恒为 0 的序列，属预期。
+6. **SLO 状态不再恒 99.5/met**（返回 `nodata`/`breached`/`met`，见 §18）；**gpu-svc 的 HPA**
+   从"引用一个从没被产出的 Pods 指标"改回 `Resource cpu`；**autoscaler-svc 默认 executor**
+   为 `simulated`（不做真实扩缩容，除非显式配置）。
+7. **gRPC 契约补齐（#59）**：6 个微服务的 pb 由手写 struct 换成 protoc 生成物，
+   新增字段（`Alert.device_id/metric`、`TokenResponse.must_change_password` 等）向后兼容；
+   **此前的手写类型无法过 gRPC codec，任何 RPC 都会失败**，所以这一条是"从无到有"。
+
+**能力降级清单（本版如实标注，勿按能力表逐项验收这些）**：
+
+| 能力 | 现状 | 依据 |
+|---|---|---|
+| SLO/SLI 达成度 | 多数指标**没有生产者**，`/api/v1/slo/status` 通常返回 `nodata` | §18 实测；支持指标清单见 `internal/store/slo_eval.go` |
+| 自动扩缩容 | 默认 `simulated`，只记决策不改集群 | `AUTOSCALER_K8S_EXECUTOR`，`docs/api-reference.md` autoscaler 节 |
+| AIOps 数据端点 | 可能是模拟数据（响应带 `source`/`simulated`），且**没有宿主代理/前端消费者** | `services/aio-svc/internal/prometheus`；`/ready` 现在回报 `data_source`（此前写死 `engines:"5/5"`） |
+| alert-svc 规则触发 | 读数由调用方推，服务**不拉 Prometheus**；要自动按指标告警请走出厂 Prometheus+Alertmanager | `docs/operations.md` §4.6.0 |
+| 插件/市场"可插拔扩展" | 只有框架，控制面没有任何钩子触发点；市场条目无加载器 | TD-62 |
+| 事故回溯规则 | incident-svc 的记录**不含 rule_id 字段**（alert-svc 侧本次已补） | `services/incident-svc/internal/store` |
+| 链路追踪可查询性 | collector 的 traces pipeline 只接 `logging` exporter，无 Jaeger/Tempo；`tail_sampling` 对非错误/非慢请求只留 10% | TD-75，`docs/operations.md` §4.7 |
+| 可空列逐列穷举 | 只在 alert-svc 的两个 store 上有门禁；控制面 `internal/store` 仍是抽样核对 | TD-74 |
+| PagerDuty 真实 SaaS | 载荷契约由自建校验端点判定，**未打过真实端点**（仓库内无集成密钥） | 报告 §32.7 |
+| 微服务 gRPC 面鉴权 | alert-svc 的 gRPC 面只有 trace+ratelimit 拦截器，**无鉴权无租户校验**；默认发布在 `127.0.0.1` | #58 遗留的交付口径，待产品定 |
+| 企业版前端 | 社区授权下 `/enterprise/` 返回"未授权"说明页，SPA 资产链路只在企业授权下可验 | `internal/controlplane/enterprise_ui.go` |
+| 许可合规 | MPL-2.0 / npm 依赖的法务判定待法务（工程侧清单与门禁已就绪） | P1-7 |
 
 - **修｜交付脚本的判定写法本身会造假的"缺指标"（`producer | grep -q` + pipefail ⇒ 命中了也判成没命中）**。这是本轮最费时间的一类缺陷，因为它**表现得像产品坏了**：`verify-runtime.sh` 连跑四次给出四份不同的"缺失序列清单"（一次缺 `path="/api/v1/:id"`、一次缺审计链两个 gauge、一次只缺 `opsmesh_audit_chain_ok`），而单独复查时它们全都在抓取面上。机制：这些脚本开头是 `set -euo pipefail`，而 `grep -q` **一命中就退出**，生产者（`printf` / `curl` / `docker logs`）还在写就被 SIGPIPE 打死 ⇒ 管道退出码变 141 ⇒ pipefail 把"成功命中"升格成"整条管道失败"。是否踩中取决于输出量与样式位置：越过约 64KB 管道缓冲区才会中招，所以小输出时永远正常、`/metrics` 这种几十 KB 的快照就偶发失败。**定量的判定证据**（同一份 679 行快照，样式确实在第 27 行）：带 pipefail ⇒ 连续 10 次全 MISS；去掉 pipefail ⇒ 连续 10 次全 HIT。
   - 修法统一成"先落变量再判"：`grep -q PAT <<<"$var"`。herestring 由 bash 落成临时文件，没有管道、没有可被杀的生产者，且 `^` 行锚语义与原来逐字一致。刻意**不**换成 `[[ $s == *PAT* ]]`——那是整串子串匹配、`^anchor` 会失效，而指标名互为前缀（`opsmesh_http_metrics_series` vs `..._dropped_total`）时会假命中。
@@ -251,14 +309,14 @@
 
 **依赖与门禁**：axios `1.19.0 → 1.20.0`（Trivy 刷新库后 7 条 HIGH 均有修复版本，非本次代码引入）；`validate-deploy-assets.sh` 新增第 12 节（业务指标标签/命名，防实体 ID 基数）与第 13 节（引导脚本不得建表 + compose 库名必须有建库来源）。
 
-## [0.12.0] — 2026-10-01 引导脚本不再携带建表语句（删 43 张表 DDL + 门禁第 13 节）（已归入 0.11.0）
+## [Unreleased] — 2026-10-01 引导脚本不再携带建表语句（删 43 张表 DDL + 门禁第 13 节）（已归入 0.11.0）
 
 > 证据：三方一致性审计（`CREATE TABLE IF NOT EXISTS <t> (…)` 从 Go 原始字符串与 `.sql` 提取，剥 `INDEX`/`PRIMARY KEY` 行取首字段做列集合，对同名表求差集）；`deploy/scripts/validate-deploy-assets.sh` 当前 **PASS=33 / FAIL=0 / SKIP=2**，新第 13 节经**两次变异检验**（塞回 `CREATE TABLE` → 判红；把某 DSN 的库从两个脚本都删掉 → 判红并指向「连库即 Access denied」）。详见 `docs/td60-decision-2026-09-26.md` §5.11 ①c。
 
 - **修｜`deploy/docker/scripts/init-mysql.sql` 收敛为「只建库+授权」（删 43 张表 DDL）**：该文件自称「此处只建库+授权」，实际带着 43 张表 DDL。**先确认影响面**：它不是出厂栈的脚本——compose 只挂 `init-databases.sql`（`docker-compose.prod.yml:87`）并在 `:39-42` 写明「不要改挂它」，唯一执行它的是手工脚本 `run-mysql-init.ps1`。**但它确实已经漂移且是静默形态**：`CREATE TABLE IF NOT EXISTS` 会让先落地的那份胜出、后到者不报错；实测 7 张表有「代码期望、deploy 副本没有」的列；**扣掉迁移 `ALTER` 与代码兜底 `applyLegacyColumnFixups`（`internal/store/sql.go:758`）后，仍剩 6 张表 / 13 列零兜底**：`agents`（`agent_id` 主键/`segment`/`load`/`last_seen`）、`devices`（`device_id` 主键/`segment`/`state`/`task_state`）、`ci_items`（`approval_status`/`attrs`）、`permissions`（`group_name`）、`roles`（`permissions`）、`users`（`role_ids`）（`tasks.last_fired_at` 由兜底函数补，不计入）⇒ 一旦被挂载，控制面 `INSERT INTO agents`（`internal/store/sql_devices.go:83`）即 Unknown column 'agent_id'。**删除无损**：43 张表在代码来源里均有定义（控制面迁移 / 服务 `schema.sql`（auth・device・task 三服务 `go:embed`）/ 其余服务内联 `initSchema`），「只在 deploy 脚本里存在」的表 = 0。补上转正新增的 `opsmesh_incident`/`opsmesh_runbook` 两库；`run-mysql-init.ps1` 头部同步说明。
 - **门禁｜`validate-deploy-assets.sh` 新增第 13 节（防复发）**：① `deploy/docker/scripts/*.sql` 不得含 `CREATE TABLE`（**先剥 `--` 注释**——脚本头部故意引用该短语解释为何禁止，不剥会把「解释」当「违规」）；② compose 每个 `*_SVC_DSN` 指向的库必须由引导脚本建库、或等于 `MYSQL_DATABASE`（自动建库）。
 
-## [0.12.0] — 2026-10-01 供应链：axios 1.19.0 → 1.20.0（Trivy 刷新库后暴露 7 条 HIGH）（已归入 0.11.0）
+## [Unreleased] — 2026-10-01 供应链：axios 1.19.0 → 1.20.0（Trivy 刷新库后暴露 7 条 HIGH）（已归入 0.11.0）
 
 > 证据：CI security job 的 Trivy fs 报告（trivy-fs-report 产物，v0.70.0 + 当日刷新库）——`web/enterprise/package-lock.json` 的 npm 目标 7 条 HIGH（全部在 axios 1.19.0，Fixed Version 1.20.0），**Go 侧 14 个 go.mod 全部 0 命中**；升级后本地 `npm run build` 通过、前端 52 个测试文件 / 1126 例全绿，`axios/package.json` 实测 `1.20.0`。
 > 性质说明：与本次代码改动无关——同一个 job 在 4 小时前的 `1d5127f` 上是绿的，是漏洞库刷新后暴露的**存量**依赖问题。**Fixed Version 存在 ⇒ 不适用 `.trivyignore` 的「无修复版本」豁免条件**，故选择升级而非豁免。
@@ -266,7 +324,7 @@
 - **升级｜axios 1.19.0 → 1.20.0**（`web/enterprise/package.json`：`^1.7.7` → `^1.20.0`）：7 条 HIGH 均由 1.20.0 修复（HTTP/2 代理与 DNS 设置未生效导致安全控制绕过、HTTP/2 会话初始化 DoS、畸形 data URL DoS、继承 `createConnection` 导致请求 socket 劫持、构造重定向主机名 DoS、fetch 适配器重定向限制绕过导致 SSRF、表单序列化原型污染 gadget）。lockfile 只改 3 行（version/resolved/integrity）。
 - **一处供应链细节**：本机 npm 默认走镜像源，首次安装把 lockfile 的 `resolved` 改写成第三方镜像地址；已用 `--registry=https://registry.npmjs.org/` 重装纠正（integrity 哈希不变，内容寻址）——**不把第三方镜像固化进交付物**。
 
-## [0.12.0] — 2026-10-01 TD-60 收尾：转正落地回写 + cron 双实现差异中的三个真缺陷 + gpu 来源可见（已归入 0.11.0）
+## [Unreleased] — 2026-10-01 TD-60 收尾：转正落地回写 + cron 双实现差异中的三个真缺陷 + gpu 来源可见（已归入 0.11.0）
 
 > 证据：`gofmt -l internal/cron pkg/cron services/incident-svc/internal/store` 干净；根模块 `go build ./...` + `go vet ./internal/... ./pkg/...` RC=0；`go test ./internal/cron/ ./pkg/cron/ ./internal/controlplane/ ./internal/store/ -count=1` 全绿；`services/task-svc` 与 `services/incident-svc` 模块 `go build ./...` + `go test ./... -count=1` 全绿；前端 `npm run build` + 52 个测试文件/1126 例全绿；`validate-deploy-assets.sh` PASS=32 / FAIL=0（另归一化了 compose 工作区行尾：门禁第 6 节只认工作区字节，HEAD blob 本就是 LF）。守卫测试均经**变异检验**：拆掉周 7 兜底/单值越界检查、删 DDL 里的 `occurred_at`、把迁移语句改名——四次全被判红，还原后复绿。详见 `docs/td60-decision-2026-09-26.md` §5.11。
 
@@ -279,7 +337,7 @@
 - **登记｜仍未决项**（登记在 §5.11 ⑤，不替产品/法务决定）：24 个 MPL-2.0 依赖的商用分发（法务）、gpu 模拟兜底的替代数据源、微服务 `internal/store` 补测试、`node_modules` 与基础镜像 OS 包的供应链口径、`tenant.go` 级联清理、`operator` 是否下放三域 write。
 - **澄清｜一条不是缺口的差异**：helm chart 全部 `services.*_svc.enabled: false`（含在出厂栈内的 gpu/log/task）——K8s 路径的微服务是显式开启制，与 compose 出厂栈装配策略不同，不是「三域转正未同步 helm」。**记录以免下轮把扫描出的这个差异当成待修项。**
 
-## [0.12.0] — 2026-09-30 TD-60 §5.10 裁决与回写：operator 三域 403 已修 + autoscaler 误判更正（已归入 0.11.0）
+## [Unreleased] — 2026-09-30 TD-60 §5.10 裁决与回写：operator 三域 403 已修 + autoscaler 误判更正（已归入 0.11.0）
 
 > 证据：`go build ./...` OK；`go vet ./internal/store/ ./internal/controlplane/` OK；`gofmt -l internal/store/` 干净；`go test ./internal/store/ -run TestRolePermissions -count=1` 全绿；`go test ./internal/controlplane/ -run 'Perm|RBAC|Role|Auth|Diagnostic|Operator|Seed' -count=1` 全绿（3.65s）。静态取证口径为 file:line + grep 计数，**未做运行时验证**。详见 `docs/td60-decision-2026-09-26.md` §5.10。
 
@@ -289,7 +347,7 @@
 - **证伪一条隐含前提**：单体对 incident/runbook **没有任何实现**——`internal/` 全域 `/api/v1/runbooks`、`/api/v1/incidents` 共 14 处命中**全部**落在 `internal/controlplane/service_proxy.go`（代理表本身）与其测试里，**0 处 handler 注册**；`internal/store/` 内 `runbook` 3 处全是权限目录条目。⇒ 「删除」在此不是去重，是直接砍掉能力；选 (c) 须显式写成「我们不要这个能力」，**不能拿「去重」当技术理由**。
 - **新事实（纠正一处隐含前提）**：六域在企业版**没有侧栏入口**——`web/enterprise/src/App.vue` 的 `navGroups`（`:146`，经 `navView`（`:190`）渲染于 `:82`）只含 overview/ops/assets/delivery/observability/system，**不含** gpu/runbooks/incidents/autoscaler/portal/bot；`nav.gpu` 等 key 在 `web/enterprise/src` 下唯一出现处是 `router/index.js` 的 `meta.title`。即这六页**只能手敲 URL 到达**——对 incident/runbook 而言「前端入口下线」**本来就没上线过**，失真面小于原判，故冻结**不做**路由删除（正收益近于 0，却会移除 (a) 落地时的挂载点）。
 
-## [0.12.0] — 2026-09-30 v0.10.0 发布链验收回填 + 三域静态契约取证（TD-60 两域改判）（已归入 0.11.0）
+## [Unreleased] — 2026-09-30 v0.10.0 发布链验收回填 + 三域静态契约取证（TD-60 两域改判）（已归入 0.11.0）
 
 > 证据：release run `36550147538`（success）+ `gh release view v0.10.0`（assets 5）+ GHCR 逐镜像 HTTP 实测（14/14 `0.10.0` 可解析、`.sig` 200、`.att` 404）；三域取证为静态证据（file:line + grep 计数），子代理全量扫 + 本人逐条抽查。详见 `docs/release-notes.md` v0.10.0 验证段与 `docs/td60-decision-2026-09-26.md` §5.9。
 
@@ -309,7 +367,7 @@
 2. **代理域写方法权限收紧**（六域 `*:read`→`*:write`，device DELETE→`device:delete`、provision→`provision:execute`）——只读凭证经代理做写操作现在开始 403。
 3. **代理身份头一律剥离重注入 + X-User-Id 与令牌交叉校验**——依赖「自发身份头直连控制面」的部署必须显式开 `--trust-gateway-headers=true`（生产模式强制 false）。
 
-## [0.12.0] — 2026-09-30 业务指标接线第 1 步：调度吞吐与日志容量淘汰成为可告警事实（已归入 0.11.0）
+## [Unreleased] — 2026-09-30 业务指标接线第 1 步：调度吞吐与日志容量淘汰成为可告警事实（已归入 0.11.0）
 
 > 证据：log-svc / task-svc 两模块 `go build ./...` + `go test -count=1 ./...` 全绿，`golangci-lint 2.13.2`（CI 同版）对两模块均 0 issues，`gofmt -l` 干净；新用例 `TestMemoryRingDroppedCounted` **做过变异检验**（把计数改成 `+= 0` ⇒ `淘汰计数 = 0, 期望 4` 判红，`finally` 还原后复跑全绿）；`validate-deploy-assets.sh` PASS=37 / FAIL=0 / SKIP=0（第 12 节对新序列放行，因为标签是 `nil`）。
 
@@ -322,7 +380,7 @@
   - gpu-svc / runbook-svc 的两处是**产品决策不是指标缺口**（调度队列只有占位实现；runbook 只有内存存储、执行历史重启即失），已记入 §23，不靠加指标掩盖。
 - 报告 §27。
 
-## [0.12.0] — 2026-09-30 三处静默失败显式化（③b 第 2 批的前置）：日志后端只读、扩缩容历史无界、外部通知失败被吞（已归入 0.11.0）
+## [Unreleased] — 2026-09-30 三处静默失败显式化（③b 第 2 批的前置）：日志后端只读、扩缩容历史无界、外部通知失败被吞（已归入 0.11.0）
 
 > 证据：log-svc 与 autoscaler/alert 四条腿 `go build ./...` + `go test -count=1 ./...` 全绿；`golangci-lint 2.13.2`（CI 同版）对 `internal/...` 与三个服务模块均 0 issues；**变异检验 4 项独立复现被杀**（守卫改永假、ack 分支退回 `_ =`、trim 改尾部丢弃、`Append` 退回 `return nil`）；`validate-deploy-assets.sh` 第 12 节对新标签 `action` 放行（非实体 ID）。详见报告 §26。
 
@@ -341,7 +399,7 @@
 - **一处边界纪律**：服务层原先没有日志器，实现时引入了 `internal/logx`（根的内部包）——这是全仓**唯一**一处服务模块 import 根 `internal/` 的破窗，会把这些服务的构建与控制面内部包绑死。已改回本仓服务层惯例（标准库 `log.Printf("[alert-svc] WARN …")`，由 `cmd` 侧 `pkg/log.Init` 接管成 JSON），并复核 `services/` 全域已无 `OpsMesh/internal/` 残留。
 - **仍未修（有意留着，等定夺）**：`grpc.go` 可写分支里的 `_ = ls.Append(...)` 仍吞错（memory/sql 后端的真实写入失败）；`docs/api-reference.md` 其余只读端点描述未逐条复核。
 
-## [0.12.0] — 2026-09-29 微服务指标管道修复（③b 第 1 批）：基数上限 + counter 语义 + 清除恒零仪表（已归入 0.11.0）
+## [Unreleased] — 2026-09-29 微服务指标管道修复（③b 第 1 批）：基数上限 + counter 语义 + 清除恒零仪表（已归入 0.11.0）
 
 > 破坏性变更（拟随 v0.11.0 发布，不进补丁版本）。证据：`pkg/metrics` 27 个用例全绿（新增 10 个）；**变异检验 9 项全部被杀**（放宽两个上限 / counter 退回覆盖 / 去 sanitize / 方法不提前收敛 / histKey 用原始 method / 不登记折叠键 / 去路径归一化 / 状态码不进标签 / `service_info` 丢服务名）；根模块 + 12 个服务模块 `go build ./...` 全过；`validate-deploy-assets.sh` 新增第 12 节并**做过双向故障注入**。详见 `docs/commercial-readiness-review-2026-09-25.md` §25。
 
@@ -357,7 +415,7 @@
 - **升级影响（必读）**：① 上述 9 个序列从 `business_metrics{name="X_total"}` gauge 变成 `business_metrics_total{name="X"}` counter，**已有查询/告警必须改写**（实测出厂规则与面板**一个都没引用**它们，故本轮不背客户断更的债）；② `queue_depth` 序列被删除；③ 所有 HTTP/直方图序列的 `path` 标签值被归一化（`/api/v1/devices/123` → `/api/v1/devices/:id`）。
 - **两处自己的失误（主动披露）**：① 测试最初用实现常量推导期望（`maxHTTPSeries+500` 次写入、断言 `maxHTTPSeries+1`），于是"把上限改大"这个变异**同时改大了用例自己** ⇒ 变异存活；改成写死 2500/2001/500 后同一变异被判红——**用例的输入与断言都不能引用被测实现的常量**。② 变异脚本没有 `finally` 恢复，一次后台超时终止把 `maxHTTPSeries = 100000000` 和 `agent_id` 标签留在了源码里，靠事后 grep 才发现并回滚——故障注入必须自带无条件恢复，且变异幅度要有界。
 
-## [0.12.0] — 2026-09-29 镜像侧 SBOM 证据链：cosign attest 产出 .att（12 微服务 + 2 核心镜像）（已归入 0.11.0）
+## [Unreleased] — 2026-09-29 镜像侧 SBOM 证据链：cosign attest 产出 .att（12 微服务 + 2 核心镜像）（已归入 0.11.0）
 
 > 证据：钉版 cosign **v2.2.4 二进制**的权威旗标表实测（`attest` 与 `verify-attestation` 的 `--type` 取值集合均含 `cyclonedx`，本机拉不到 `ghcr.io/sigstore/cosign/v2.2.4` 镜像故改下二进制）；SBOM 空证据门禁 7 例 fixture 全按退出码断言（非空放行 / 空清单判红 / 缺字段判红）；`actionlint -shellcheck=` 结构面 rc=0，逐 run 块 `shellcheck -S style --shell=bash` 本轮涉及的 18 个步骤 0 findings。详见 `docs/commercial-readiness-review-2026-09-25.md` §24.6。
 
@@ -369,7 +427,7 @@
 - **本机 actionlint 的新事实**：带 shellcheck 后端时本机长时间无响应（并发四实例互相拖死），`-shellcheck=` 单跑全部 workflow 仅 0.15s 且 rc=0 ⇒ 本机可靠口径是**两件套**：`actionlint -shellcheck=`（结构/表达式）+ 逐块 shellcheck（shell），二者合一才等价 CI 的 actionlint，取其一当其二就是 §18"门禁后端不在场"的同族。
 - **为什么不必等下次发版才第一次跑**：`image`/`image-agent` 每次 push 都执行且 GHCR 回落零 secret（实测 run `36545861598` 13 job 含二者、仅 `release` skip）⇒ attest 与自验证会在下一次推送真跑，`release.yml` 里的同形步骤届时已被证过。**本轮未证到的部分如实列出**：`.att` 真落注册表只能等那次 CI 收口（本机无注册表凭据）。
 
-## [0.12.0] — 2026-09-29 P1-7 第三方许可清单工程化（离线生成 + 三条硬断言门禁 + NOTICE 逐字汇编）（已归入 0.11.0）
+## [Unreleased] — 2026-09-29 P1-7 第三方许可清单工程化（离线生成 + 三条硬断言门禁 + NOTICE 逐字汇编）（已归入 0.11.0）
 
 > 证据：`deploy/scripts/gen-third-party-licenses.sh` 三模式本机跑通；`--check` 的 **8 例故障注入**全部按退出码断言（删除模块行 / 版本漂移 / 判定变化 / 缓存全缺 / 下限 101% / 恢复为绿 / 判红不改写文档 / 生成器内部报错不覆盖文档）；`semver_key` 单测 6 例；`NOTICE` 7 段与上游文件**字节级逐字一致**；`shellcheck -S style` 与 `actionlint v1.7.7` 0 问题。详见 `docs/commercial-readiness-review-2026-09-25.md` §24.4。
 
@@ -380,7 +438,7 @@
 - **自己造的两处回归，主动披露**：① 重排脚本后收尾是 `rm -f "$TMP"`，**`--check` 的退出码被末命令吞掉**——三条断言全写对了却恒绿灯，故障注入第一步就抓出来，改 `exit "$PYRC"`；② 分类器的版本选择用 `sorted(vs)[-1]`（字典序），会把 `v1.10.0` 排在 `v1.9.0` 之前 ⇒ 可能给模块配上根本没在用的旧版本。当前 6 个多版本模块恰好两种序一致（实测，属运气），已改成语义序 `semver_key`（预发布/伪版本判低、`+incompatible` 正确）并把这 6 个模块显式列进文档。
 - **签名探针的媒体类型坑**（取证过程中自造过一次"14/14 全未签名"的假阴性）：`.sig`/`.att` 是**单个 manifest** 不是 index，`Accept` 必须是 `application/vnd.oci.image.manifest.v1+json`；用 index 类型或 `*/*` 都会得 404。与 §19.1 同族——注册表回答的是"这个类型我给不了"，不是"不存在"。
 
-## [0.12.0] — 2026-09-29 逐域真实流量取数出口（TD-60 §5.3 裁决前提补齐）+ 批次① errcheck 红点收口
+## [Unreleased] — 2026-09-29 逐域真实流量取数出口（TD-60 §5.3 裁决前提补齐）+ 批次① errcheck 红点收口
 
 > 证据：`go build ./...`/`go vet ./...` 全绿；`go test ./internal/controlplane/ ./internal/metrics/` 全绿；新代码 `-race` 通过（CGO_ENABLED=1 + msys64 gcc）；根 `.golangci.yml` 与 `.golangci.services.yml` 均 `0 issues`（golangci-lint 2.13.2，与 CI 同版）。实现与裁决阈值口径见 `docs/td60-decision-2026-09-26.md` §5.8（代码提交 `983d49b`、红点收口 `9c40380`）。
 
@@ -392,7 +450,7 @@
 - **另一处红点（非本批引入，同毫秒边界缺陷）**：lint 红清除后 run 36508601227 的 `services` job 转而红在 `task-svc/internal/leader`——`TestMySQLLeaseOps_StateMachineMultiReplica` 断言「B 释放后 A 应能立即接管」失败。同一份代码在上一个绿 run 36468207807 里是 `ok (2.661s)` ⇒ 不是回归，是边界时序被真后端撞上：`Release` 把 `lease_until` 写成 `NOW(3)`（DATETIME(3) 毫秒精度），而 `Acquire` 的接管条件只有 `lease_until < NOW(3)`，释放与接管落在同一毫秒时边界相等、条件不命中，「不必等自然过期即可接管」在释放那一刻不成立。修复：接管条件补 `holder_identity = ''`（Release 清空的正是该列），单赢家语义不变；新增 `TestMySQLLeaseOps_ImmediateTakeoverAfterRelease`（Release 与接管相邻、不放 sleep，20 轮必然撞同一毫秒）把偶发变成必然判据。**验证边界**：该组用例门控于 `OPSMESH_TEST_MYSQL_DSN`（ci.yml:224-241 的 services job 起真 MySQL 才执行），本机无 Docker/MySQL 全 SKIP ⇒ SQL 语义只能由 CI 复验。
 - **测试**：新增 10 例——metrics 侧 7 例（按域计数/零流量域显式/前缀边界/同域多前缀合并/最长前缀不重复计数/`:other` 排除/nil 注册表），controlplane 侧 3 例（端点按域汇总且域集合等于路由表、405/403/401 三道闸、`groupProxyDomains` 与路由表一致性）。
 
-## [0.12.0] — 2026-09-29 代理身份头统一治理：§5.6 遗留项收口（全代理域剥离重注入 + X-User-Id 令牌交叉校验）
+## [Unreleased] — 2026-09-29 代理身份头统一治理：§5.6 遗留项收口（全代理域剥离重注入 + X-User-Id 令牌交叉校验）
 
 > 证据：`go build ./...`/`go vet ./...` 全绿；`go test ./internal/controlplane/... ./tests/... -count=1` 全绿；新增用例 `-race` 通过（CGO_ENABLED=1 + msys64 gcc）。缺口取证与设计留档见 `docs/td60-decision-2026-09-26.md` §5.7（代码提交 `0030aeb`）。
 
@@ -400,7 +458,7 @@
 - **X-User-Id 可伪造（同租户内审计伪造）**：`requireTenantContext` 只交叉校验租户不校验用户，已认证客户端可携本租户令牌 + 伪造 X-User-Id（头空/非空两路径均无校验）。修复：租户分支前增补 header user vs token user 交叉校验（不一致 403 `user mismatch`；`--trust-gateway-headers` 模式跳过）。
 - **测试**：新增 `TestProxyIdentityHeadersForAllDomains`（gpu/device/task 三路径注入 + 角色头剥离）、`TestProxyIdentityUserForgeryRejected`（伪造用户 403、不触达后端、租户头两态）、`TestRequireTenantContextUserCrossCheck`（含 trustGateway 跳过两例）；`TestDeviceProxyForwardWithTenantHeader` 补 X-User-Id 断言。
 
-## [0.12.0] — 2026-09-29 「保留但需决策」域完善批次①：portal-svc 前端契约补齐 + autoscaler-svc 指标读取修复
+## [Unreleased] — 2026-09-29 「保留但需决策」域完善批次①：portal-svc 前端契约补齐 + autoscaler-svc 指标读取修复
 
 > 证据：前端契约源 `web/enterprise/src/api/portal.js` 注释与服务侧路由/载荷逐项核对；两服务 `go test ./...` 全绿（新增 17 例防回归锚，`gofmt` 净）。执行记录与代理身份头遗留项取证见 `docs/td60-decision-2026-09-26.md` §5.6。
 
@@ -408,7 +466,7 @@
 - **autoscaler-svc 指标读取修复**（`b84572f`）：`ReadMetric` 请求 `/api/v1/query`（JSON API）却按 exposition 文本逐行解析，真实 Prometheus 下恒报 `no metric found`、评估器恒 no_action——自动伸缩核心链路第一步即断。改按 JSON 契约解析（status/errorType 报错、空 result 保留原语义、value[1] 非数字显式报错）；选择器 `%q` + `url.Values` 编码。
 - **遗留发现（已取证，待裁决）**：聚合层注释「五域微服务不消费租户上下文」与 gpu-svc `handler.go:199-202,469` / portal-svc `handler.go:728` 实际消费 X-Tenant-ID 矛盾——五域未获代理注入，Bearer 令牌路径下多租户数据会落 `default` 桶；且 X-User-Id 不与令牌交叉校验（`http_infra.go:103-104`），已认证客户端可同租户内伪造审计主体。详见 §5.6。
 
-## [0.12.0] — 2026-09-29 五服务删除：deploy-svc / plugin-svc / bot-svc / workflow-svc / grafana-bridge（单体与聚合层能力替代）
+## [Unreleased] — 2026-09-29 五服务删除：deploy-svc / plugin-svc / bot-svc / workflow-svc / grafana-bridge（单体与聚合层能力替代）
 
 > 证据：删除前全仓 grep 复核（唯一引用面 = `release.yml` 矩阵、chart services 段、`init-mysql.sql` 段与文档；无代码 / 前端 / 部署消费方）；删除后 `deploy/scripts/validate-deploy-assets.sh` 全量 **PASS=36 FAIL=0**、根模块与 12 个存量服务模块 build/vet/测试全绿。执行记录与逐服务替代性证据见 `docs/td60-decision-2026-09-26.md` §5.5。
 
@@ -416,7 +474,7 @@
 - **构建/部署面收敛**：`go.work` 去 5 行 `use`；`release.yml` 矩阵 17→12（存量 = 12 服务 + `tf-provider` 工具链模块）；chart `values.yaml` 删 4 个服务段（`_svc` 键 12 条、`metrics: true` 12 条，与矩阵逐一对齐）；`init-mysql.sql` 删 workflow/plugin 建库段；`prometheus.yml`、`validate-deploy-assets.sh`（`NOT_SCRAPED_EXEMPT` 收敛为 autoscaler/incident/runbook/tf-provider）、`verify-runtime.sh` 同步；集成测试端口表 12→9。
 - **代码与文档一致**：`service_proxy.go` 六域→五域（bot 注释占位规则删除，bot 契约归 `bot_bridge.go`）；`bot_bridge.go` 头部改写为 bot 域唯一权威实现；README / operations / product-design / adr-001 / v1-roadmap / DELIVERY / image-pinning 等文档计数与拓扑同步（存量服务数、`/metrics` 与 `pkg/log.Init` 覆盖均按 12 复核）。
 
-## [0.12.0] — 2026-09-29 TD-60 阶段 2：task-svc 接通（第二域）+ RBAC 目录补齐 15 项（全站性 403 缺陷）
+## [Unreleased] — 2026-09-29 TD-60 阶段 2：task-svc 接通（第二域）+ RBAC 目录补齐 15 项（全站性 403 缺陷）
 
 > 证据：本地 Docker 模拟（`opsmesh/controlplane:0.9.4-sim` + `task-svc`，prod 栈 + `docker-compose.sim.yml` 覆盖层）实测输出 + `internal/controlplane`、`internal/store` 相关测试全绿。
 
@@ -427,14 +485,14 @@
 - **sim 端到端证据（重启后第二幕）**：启动日志 3 行「预置角色 role-admin/operator/viewer … 已按并集回填」；admin 4 个此前 403 的端点（本地/代理 × schedules/approval）全部转 200；对照证据证明代理真打到 task-svc——本地 `/api/v1/schedules` 载荷 `{"schedules":[],"total":0}`（单体）vs 代理 `{"schedules":[]}`（task-svc 网关）；viewer 首登闭环（`changePasswordToken` → 改密 → 正式会话，登录响应 `token` 为空串不泄漏）；viewer 矩阵 GET 200 / GET 200 / POST tasks 403 `task:write` / POST approve 403 `approval:approve`（403 精确到点）。首批另实测：未认证 401；`POST /api/v1/task-svc/tasks` → 201 真实 UUID 且 `tenantID=default`。
 - **auth-svc 有据暂缓接通**：`deploy/` 全量清单均未设 `AUTH_SVC_HTTP_ENABLED`（代码默认关闭，`services/auth-svc/cmd/auth-svc/main.go:119,150`「serves gRPC only; controlplane remains the sole login entry」）；helm `services.auth_svc.enabled` 默认 false、`storeType: memory`（`deploy/helm/opsmesh/values.yaml:263-283`）——现行部署形态没有可接的 HTTP 代理域，留待最终裁决。详见 `docs/td60-decision-2026-09-26.md` §5.4。
 
-## [0.12.0] — 2026-09-29 aio-svc 噪声压缩测试偶发失败修复：分钟桶边界（CI run 36453413667）
+## [Unreleased] — 2026-09-29 aio-svc 噪声压缩测试偶发失败修复：分钟桶边界（CI run 36453413667）
 
 > 证据：CI run 36453413667（文档提交 208ebba，仅改文档却红在 services job）日志 `reducer_test.go:109: expected compressed count 2, got 3`，失败时刻 17:00:53Z（恰在每分钟第 50~59 秒窗口内）。根因实测：固定 S=53 的样本经生产代码 `CompressAlerts` 得 comp=3，S=20 得 comp=2（一次性实验文件已删）。
 
 - **根因**：去重键按分钟桶（`FiredAt.Unix()/60`，`internal/noise/reducer.go:203`）哈希；测试样本用 `time.Now()` + `now+10s`——墙钟落在每分钟第 50~59 秒时两时间戳跨桶不合并（命中概率 10/60≈17%）。该隐性依赖潜伏于 d1124a9a（`string(rune(bucket))` 把桶坍缩为同一码点、时间实际未参与哈希、测试恒过），0c24722c 修正桶编码后生效。
 - **修复**：`reducer_test.go` 基准时间固定为桶内时间戳 `time.Unix(1700000000, 0)`（分钟内第 20 秒，+10s 不跨桶），断言确定化；生产逻辑与语义不变。验证：noise 包 `-count=20` 连跑 + 全服务测试 + 严格档 lint 0 issues 全绿。
 - **边界说明**：桶式去重与代码注释 "within 1 minute" 在跨分钟边界时行为不同（相邻两秒的告警可能不合并）——现有设计近似，如需严格滚动窗口另行决策。
-## [0.12.0] — 2026-09-28 errcheck 收紧档全量收口：+150 处逐点勘验（131 修 + 19 有据豁免），19 模块严格档零报点（TD-71 收官）
+## [Unreleased] — 2026-09-28 errcheck 收紧档全量收口：+150 处逐点勘验（131 修 + 19 有据豁免），19 模块严格档零报点（TD-71 收官）
 
 > 证据：`golangci-lint v2.13.2`（与 CI 钉死同版）逐模块 `-c .golangci.services.yml` 复扫——operator + 18 services **0 issues**（改动后逐模块重扫）；`go build`/`go vet` 全绿；15 个受影响模块 `go test -count=1` 全绿（本机无 C 编译器，`-race` 由 CI 该 job 承担）。严格档测量（99 处基数）与逐点修法登记见 TD-71。
 
@@ -444,7 +502,7 @@
 - **门禁收紧**：`check-blank: true` + `check-type-assertions: true` 打开（与根配置最严档对齐），其余 80 处修复点与 19 处豁免恰好覆盖测量基数。
 - **过程发现**：新增的 limit 解析日志（`%q` 打印用户输入）被 gosec G706 拦住（log injection，taint 分析不认转义）——按 services 既有先例（aio-svc URL 不打日志）改为不落用户原值。
 
-## [0.12.0] — 2026-09-28 微服务 `/metrics` 覆盖补齐到 16/17：抓取配置对齐 + 双向门禁
+## [Unreleased] — 2026-09-28 微服务 `/metrics` 覆盖补齐到 16/17：抓取配置对齐 + 双向门禁
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §21.7。起因是上一轮的实跑定论（§21.6：只有 3 个服务暴露）。
 
@@ -455,7 +513,7 @@
 - **真机复核（逐进程起停 17 个服务）**：**16 个**返回 200 + `text/plain` + `# HELP http_requests_total`；`grafana-bridge` `/metrics` → 404、`/status`/`/health` → 200；`tf-provider` 不适用。
 - **探针自身的两个坑（都不是产品缺陷，记下来免得下次误报）**：① `aio-svc` 读 `AIO_SVC_PORT`、`log-svc` 读 `LOG_SVC_HEALTH_ADDR`，套统一的 `<SVC>_HTTP_PORT` 模板会得到 conn-fail **假阴性**；② `auth/config/device-svc` 缺密钥时 fail-fast 退出（P0-1/P1-8 既定行为），不带密钥探针同样"探不到"，带临时密钥后立刻 200。**先怀疑探针，再怀疑产品。**
 
-## [0.12.0] — 2026-09-27 `/metrics` 在微服务上的覆盖：逐进程实跑定论（不是静态印象）
+## [Unreleased] — 2026-09-27 `/metrics` 在微服务上的覆盖：逐进程实跑定论（不是静态印象）
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §21.6。取 `git worktree v0.9.2` 那棵树（避免被并行会话的在途改动污染），逐个构建二进制、起进程、打端点。
 
@@ -467,7 +525,7 @@
 
 ## [0.9.2] — 2026-09-27（商用就绪收口 + 发版链路加固 + TD-60 阶段 2 推进）
 
-## [0.12.0] — 2026-09-26 交付脚本第一次被静态检查：抓到三处"哑按钮 + 不实陈述"（已归入 0.9.2）
+## [Unreleased] — 2026-09-26 交付脚本第一次被静态检查：抓到三处"哑按钮 + 不实陈述"（已归入 0.9.2）
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §22。起因只是给部署资产门禁加一节，顺手对 `deploy/**/*.sh` 跑了 shellcheck。
 > 为什么此前没人看见：**CI 的 actionlint 只检查 workflow 里的内联 `run` 块，不会跟进被调用的脚本**，而这 13 个 bash 入口是客户在生产机上直接执行的东西。
@@ -483,7 +541,7 @@
 - **验证**：`rand_pw` 从 `deploy.sh` 抽出**真实定义**跑 300 次（长度 / 越界字符为空 / 必含特殊字符）⇒ 0 失败，且故意把校验集合写窄会立刻报错（断言是活的）；`/tmp` 沙箱真跑 `deploy.sh init` ⇒ `.env` 生成成功、四条口令均落在新字符集内、`docker compose config` rc=0（插值链路可用）；13 个脚本 `shellcheck -S warning` + `bash -n` 全绿。
 - **口径如实分层**：`-S info` 级仍有 39×SC2015、3×SC2012 未动（可读性而非正确性，提口径前需逐条判"是否真死变量"），已列入 §23 待办第 9 项。shellcheck 门禁本身以 CI 该 step 为准。
 
-## [0.12.0] — 2026-09-26 给 17 个微服务镜像补上签名与 SBOM（验收第 ④ 条暴露的缺口）
+## [Unreleased] — 2026-09-26 给 17 个微服务镜像补上签名与 SBOM（验收第 ④ 条暴露的缺口）
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §19.9。v0.9.2 四条验收里唯一没全过的一条。
 
@@ -500,7 +558,7 @@
 - **重切后四条验收全部达成**（tag `9347554`，run `36327166836`，19/19 job success）：① Release assets 5 个；② 核心镜像 `:0.9.2` 可解析且 `.sig` 200；③ 微服务镜像 17/17；④ **17/17 微服务镜像带 `.sig`**（加核心共 19/19）+ **17 份 `sbom-<svc>` 产物**。⇒ **0.9.2 是第一个镜像与二进制都真实发布成功、且带签名与 SBOM 的版本。**
 - **同一提交的 `ci` 红在 actionlint，暴露的是我自己的本地验证盲区**：`release.yml:163 SC2004:style`（`$((${i} * 10))`）。原因＝本机跑 actionlint 时用 `-shellcheck=` 只验结构、替换式 shellcheck 又只到 `-S warning`，style 级从两个网眼里同时漏掉。修掉那行，并把本机口径固定为「抽 run 块 → `${{ }}` 换占位符 → `shellcheck -S style`」——**只关后端或只查 warning 都等于留一个盲区**。
 
-## [0.12.0] — 2026-09-26 升级路径演练（0.9.0 → 0.9.2）抓到一条每次重启都会复发的客户可见缺陷
+## [Unreleased] — 2026-09-26 升级路径演练（0.9.0 → 0.9.2）抓到一条每次重启都会复发的客户可见缺陷
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §19.8。此前所有验证都是**全新装**；客户手上是**有存量数据的旧库**。
 
@@ -514,7 +572,7 @@
 - **待你决定的尾巴**：已发布的 `v0.9.2` 镜像/二进制是在这条修复**之前**构建的。要么再移动一次标签重发，要么留给 0.9.3 并在 Release 说明里写明。
 - **演练环境已清理**：两个控制面进程、演练 MySQL 容器与卷、`v0.9.0` worktree、临时二进制全部删除；用户在跑的 `opsmesh-*` 与 `opsmesh-mysql-data` 未被触碰。
 
-## [0.12.0] — 2026-09-26 v0.9.2 第一次发版尝试失败：矩阵里混进了一个不是服务的模块
+## [Unreleased] — 2026-09-26 v0.9.2 第一次发版尝试失败：矩阵里混进了一个不是服务的模块
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §19.6。§19.1 那行 `COPY` 修好之后第一次真发版（tag `v0.9.2` → run `36217841524`）**仍然没有产物**，只是根因往下挪了一层。
 
@@ -535,7 +593,7 @@
 - **发布动作（用户已授权）**：把 `v0.9.2` 移到修复后的提交重发（该标签此前从未产出 Release 或核心镜像，仅 `bot-svc:0.9.2` 一次成功残留——按决定**保留不动**）。
 - **下一步需要授权**：移动/重打公开标签是对外可见动作。可选：把 `v0.9.2` 移到修复后的提交（该标签至今没产出任何 Release 或镜像，仅 `bot-svc:0.9.2` 一次成功残留）／改切 `v0.9.3`／先只合入修复。
 
-## [0.12.0] — 2026-09-26 监控资产对账：出厂告警引用了根本不存在的指标
+## [Unreleased] — 2026-09-26 监控资产对账：出厂告警引用了根本不存在的指标
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §21。起因是清单里那条长期开口——「`/metrics` 在 8080 与 9091 返回不同序列集」。当真去查，结论严重得多：**Prometheus 只抓 9091，而出厂规则与面板引用的一批序列在 9091 上不存在**。
 
@@ -552,7 +610,7 @@
 - **验证**：真机 `opsmesh_device_status{status="online"} 3` / `{offline} 0` / `opsmesh_devices_total 3` / `opsmesh_alerts_active 2` 在 9091 可见，8080 与 9091 序列名集合 md5 相同；`internal/controlplane` + `internal/metrics` 全绿；`gofmt`/`go vet`/`golangci-lint`/`actionlint`/`validate-deploy-assets.sh` 见下方「本轮验证」段。
 - **明确未做**（记入 §23 待办）：① 统一控制面与微服务的 HTTP 指标命名（破坏性，随版本走）；② 其余 13 个微服务仍未注册 `/metrics`（现只有 device/task/alert 三个）；③ node_exporter 是否纳入出厂栈（决定主机级告警能否默认可用）。
 
-## [0.12.0] — 2026-09-26 镜像发布名与消费方引用收敛（Helm 开箱即 ErrImagePull 的根治）
+## [Unreleased] — 2026-09-26 镜像发布名与消费方引用收敛（Helm 开箱即 ErrImagePull 的根治）
 
 > 证据：`docs/commercial-readiness-review-2026-09-25.md` §20。**这是 §19.4 留下的两条待决项的落地。**
 
@@ -617,7 +675,7 @@
 - **终局验证**（run `36155335631`，commit `0dc4ece`）：**12 个 job 全部真跑且全绿**——本项目第一次每个 job 都真的执行并通过。`image` 推送 `ghcr.io/levango7/opsmesh-binary@sha256:5ede99…`（keyless 签名落 Rekor `index: 2957978033`，SBOM 89 条）；`image-agent` 推送 `ghcr.io/levango7/opsmesh-agent@sha256:962c21…`（SBOM 172 条，Trivy 在 `ignore-unfixed` 下通过）。
 - **同轮发现的第二个 CI 可靠性问题：`build-test` OOM flaky**。首跑 `Test (unit, …)` 红，但 `./internal/agent/` 批次最后一条是 `--- PASS`、随后才 `fatal error: runtime: cannot allocate memory`（GC worker 堆栈）——**测试全绿却被判红**，同 commit **重跑即绿**。与代码无关（该步骤注释已写明"无 race 下仍 7GB OOM"），但 `build-test` 是唯一门禁、它一挂 7 个下游全 skip，故影响被放大。间歇性红与长期红同属"门禁不可信"，建议后续单独处理（拆细 agent 批次 / 降 GOMEMLIMIT），本轮未改。
 
-## [0.12.0] — 2026-09-26 商用就绪 P1-6：可支撑性（版本端点 / 日志级别 / 配置转储 / 诊断包 / pprof）
+## [Unreleased] — 2026-09-26 商用就绪 P1-6：可支撑性（版本端点 / 日志级别 / 配置转储 / 诊断包 / pprof）
 
 > 解决 §3 P1-6「客户现场排障必须 SSH + 看源码，无法远程定位问题」。证据：`docs/commercial-readiness-review-2026-09-25.md` §17。
 
@@ -674,7 +732,7 @@
 - **原「待跑项」已真机跑掉（2026-09-26）**：匿名 `POST /api/v1/admin/loglevel` → **401**（响应体 `missing identity (no bearer token or gateway role header)`），同实例复验 `GET /api/v1/admin/config`、`/admin/diagnostics` 均 401、`/version` 200、`/debug/pprof/` 出厂 404。做法：`--store=memory --require-auth=true` 起本机独立实例于临时端口 18099/19090/19091，验毕销毁。**边界**：这条验的是本机二进制实例；`verify-runtime.sh` 中针对**重建后的容器镜像**的同一条仍未跑（不该为它去承担重建整栈的内存代价）。取证坑：`opsmesh serve --flag=…` 会让 Go flag 包在第一个非旗标参数处**静默停止解析**（实测它去监听默认 8080 而非 18099），控制面无 `serve` 子命令——起实例后必须回读启动日志的 `http/grpc/metrics` 字段确认旗标生效。详见报告 §17.5.1。
 - **诚实边界**：剩余约 250 处 `Printf/Println` 的逐点级别升级（`Infof/Warnf/Errorf/Debugf` 已在 `pkg/log` 备好）为后续增量，不谎称已完。
 
-## [0.12.0] — 2026-09-26 `build-test` 内存型 flaky：复核 + 可观测 + 仅 OOM 重试一次
+## [Unreleased] — 2026-09-26 `build-test` 内存型 flaky：复核 + 可观测 + 仅 OOM 重试一次
 
 > 承接下一节的镜像链路修复。`build-test` 在 run `36155335631` 首跑时红了——但**不是测试失败**：`./internal/agent/` 批次最后一个用例是 `--- PASS`，随后进程才 `fatal error: runtime: cannot allocate memory`（mmap 型 ENOMEM）死亡。该 job 是唯一门禁，一挂则 7 个下游全 skip，故列为门禁可信度问题处理。
 
@@ -699,7 +757,7 @@
 - **本地实测 6 场景全部符合预期**：成功 / 非内存失败即红 / OOM 一次后成功 / OOM 两次仍红 / TSan OOM 重试 / GNU time 峰值打印；`bash -n` 通过，`actionlint v1.7.7` 仍 0 问题。
 - **诚实边界**：这是「让门禁可信 + 下次可诊断」，**不是**根因修复。
 
-## [0.12.0] — 2026-09-25 CI 首跑全绿 + 消除镜像 job 的「空转绿」
+## [Unreleased] — 2026-09-25 CI 首跑全绿 + 消除镜像 job 的「空转绿」
 
 > 承接下一节的 4 处修复（`68ff539`）。推送后 CI 首跑（run `36143704673`）**`completed / success`，12 个 job 全绿**——2026-09-20 以来下游 7 个 job **第一次真正执行**。但同一次首跑暴露出第三类假绿：`image` / `image-agent` 结论 `success`，实际只跑了「探测 secret」一步。本节记录该结论与本轮修复。证据：`docs/commercial-readiness-review-2026-09-25.md` §15。
 
@@ -718,7 +776,7 @@
 - **实测（本地可脱离 GitHub 运行的部分全部实跑）**：仓库解析三分支（齐备/全缺/半配置）注入 env 后执行 → 前缀与原值一致或正确回落；自述步骤 4 场景 × 2 job = 8 组全部正确输出（**首轮实测抓到真 bug**：`set -u` 下未定义的可选 env 直接 `unbound variable` 失败，已改 `${VAR:-}`）；11 个 `run` 块 `bash -n` 0 错误；**actionlint v1.7.7** 对 `ci.yml` 及全部 workflow **0 问题**。
 - **诚实边界**：GHCR 推送、keyless cosign 的 Fulcio/Rekor 交互、artifact 上传均需推送后由 CI 首跑确认（本机无法模拟 OIDC 与 GHCR 权限模型）；GHCR 包可见性由 GitHub 侧策略决定；**命名对齐待核对**——CI 推的 leaf 名是 `opsmesh-binary`/`opsmesh-agent`，而仓库内 `deploy/helm/opsmesh` 用 `opsmesh/opsmesh`、`opsmesh/opsmesh-agent`，`opsmesh-binary` 全仓只出现在 `ci.yml`，原注释称它对齐的是**外部 GitOps chart**（不在本仓库），本轮无法核实。
 
-## [0.12.0] — 2026-09-25 CI 首次真跑暴露的 3 处失败 + 本地复现暴露的第 4 处夹具缺陷
+## [Unreleased] — 2026-09-25 CI 首次真跑暴露的 3 处失败 + 本地复现暴露的第 4 处夹具缺陷
 
 > 背景：P1-2 推送后 CI 第一次真正跑完整流水线（run `36122648074`），`security`、`E2E (real backend)`、`E2E (security)` 三个 job 失败——前两个此前**从未执行过**（一直被更早的 lint 失败静默跳过），后两个的失败则分别是 P1-1 与 P0-2 两次修复的**真实回归/兼容性影响**。四处均已修复并**本地按 CI 同款命令实测**。
 
@@ -759,11 +817,11 @@
 
 > 环境说明：本机 Docker VM 曾被闲置的 kind 演练集群（4 节点，约 6.9 GiB / 3000 PID）压到 `fatal error: newosproc`（`errno=11`，agent 注册成功后创建线程失败），导致首次 e2e-real 起栈时 agent 崩溃重启。停掉闲置集群后两个 E2E 栈均正常——**与本次改动无关，属宿主资源压力**，但记此以免误判为 agent 缺陷。
 
-## [0.12.0] — 2026-09-25 商用就绪 P1 批次（P1-1 / P1-3 / P1-4 / P1-5）
+## [Unreleased] — 2026-09-25 商用就绪 P1 批次（P1-1 / P1-3 / P1-4 / P1-5）
 
 > 承接 P0 两批。本批解决「命令白名单可绕过 / 审计日志可被静默篡改且无保留策略 / 无界内存缓冲 / 指标内存耗尽 DoS + 无准入 + 无限流」四项 P1 高风险。证据：`docs/commercial-readiness-review-2026-09-25.md` §3、§10。
 
-## [0.12.0] — 2026-09-25 商用就绪 P1 批次（二）：P1-2 agent 身份与密钥
+## [Unreleased] — 2026-09-25 商用就绪 P1 批次（二）：P1-2 agent 身份与密钥
 
 > 承接上一批（P1-1 / P1-3 / P1-4 / P1-5）。本批解决 §3 P1-2：**全机群共用一个 HMAC 密钥 + 签名不覆盖载荷 + 任务子进程继承 agent 全量环境**。证据：`docs/commercial-readiness-review-2026-09-25.md` §3 P1-2、§13。
 
@@ -920,7 +978,7 @@
 - **附带修复（本批实测发现）**：① `deploy.sh` 启动可观测栈后自动 `POST /-/reload` 热加载告警规则——`alerts.yml` 是 bind mount，容器未重建时 Prometheus 不会自动重读，实测新增的审计链告警组一直不生效，客户升级后会静默沿用旧规则；② 多租户冒烟用例补充 `t.Cleanup` 回收 per-tenant 库，此前每跑一次就在真实库留下 `opsmesh_tenant_sqlsmokea/b`。
 - **验证（真机，2026-09-25）**：`verify-runtime.sh` **PASS=86 / FAIL=0**（新增第 13 节 19 条 P1-3 专项断言）；在线库迁移 019 生效（checksum `05ad9446cc5751a9…`）且链头与最新链式行一致；**在线篡改—自检—告警—恢复全周期实证**：改写一行 `detail` → 60s 内 `opsmesh_audit_chain_ok` 1→0 并定位 `first_bad_id=26` → Prometheus `OpsMeshAuditChainBroken` 进入 firing(critical) → 还原后 `ok→1`、告警自动清零。详见报告 §12。
 
-## [0.12.0] — 2026-09-25 商用就绪 P0 批次（二）：P0-3 / P0-5 / P0-6 / P1-8
+## [Unreleased] — 2026-09-25 商用就绪 P0 批次（二）：P0-3 / P0-5 / P0-6 / P1-8
 
 > 承接上一批（P0-1 / P0-2 / P0-4 / P0-7）。本批解决「前端交付路径 / 迁移安全 / 多租户隔离」三块上线硬伤 + 一项 P1 可靠性项。证据：`docs/commercial-readiness-review-2026-09-25.md`。
 
@@ -953,7 +1011,7 @@
 
 - 生产模式下子存储初始化失败由「打日志继续」改为 fail-fast，与既有 `--production` / `StoreType=sql` 的阻断先例一致，避免带病启动后表现为「功能时好时坏」。
 
-## [0.12.0] — 2026-09-25 商用就绪 P0 批次（P0-1 / P0-2 / P0-4 / P0-7）
+## [Unreleased] — 2026-09-25 商用就绪 P0 批次（P0-1 / P0-2 / P0-4 / P0-7）
 
 > 来源：`docs/commercial-readiness-review-2026-09-25.md`（静态六维 + 真机黑盒双证据）。本批验收统一以「真机把生产栈跑起来」为准，不以静态结论收口。
 
@@ -994,7 +1052,7 @@
 
 ## [0.9.1] — 2026-09-17（全面评估修复 35 项全量落地 + TD-60 双轨批次）
 
-## [0.12.0] — 2026-09-10 双轨观察 GH Actions 落地 + 双 NULL 扫描 bug 清剿（07447da → 9506f8c）（已归入 0.9.1）
+## [Unreleased] — 2026-09-10 双轨观察 GH Actions 落地 + 双 NULL 扫描 bug 清剿（07447da → 9506f8c）（已归入 0.9.1）
 
 > TD-60 A-2 阶段 2 启动：task-svc 影子双轨对照观察在 GitHub Actions 免费跑（用户设备需休息，用户拍板云端方案）。观察栈本身首战即抓出两个生产路径真 bug。
 
@@ -1057,7 +1115,7 @@
 - **CVE-2026-84445**（d3f04e6）：grpc v1.83.1 xDS servers DoS（crash via missing validation）新 advisory，Trivy 10 模块同报——10 个 go.mod 全升 v1.83.2（主模块+8 服务+tf-provider），tidy+build+回归全绿。与 D3 改动无关（上游新入库，同 CVE-2026-84304 处置模式）
 - **TestBuildMetrics_PortInUse flaky 清零**（71edcd9）：原版先 buildMetrics(:0 随机端口) 再同端口重绑——buildMetrics 绑 0.0.0.0:port，Linux SO_REUSEADDR 放宽 TIME_WAIT 端口重绑，-count=3 或上轮 listener 刚关闭窗口期偶发绑定成功（changelog-only run 也复现实证与代码无关）。修复：手动持有活跃通配 listener（同 0.0.0.0:port 地址对）再触发重绑——活跃占用不受 SO_REUSEADDR 放宽，确定性失败。本地 6 轮 × count=3 = 18 次全绿
 
-## [0.12.0] — 2026-09-09 A1+A2：auth-svc 方案 B 用户中心后端（3aae39b + 1761793）
+## [Unreleased] — 2026-09-09 A1+A2：auth-svc 方案 B 用户中心后端（3aae39b + 1761793）
 
 > TD-60 阶段 2 auth 域收官（方案 B：controlplane 121 处热路径本地验签零触碰；auth-svc 作为平行用户中心补齐能力+HTTP 网关）。方案 V2 经 8 项风险点（R1-R8）代码级实证完善后执行。
 
@@ -1083,7 +1141,7 @@
 - E2E exit 124（超时）→ 重跑 success（flaky：auth-svc 不进 E2E 整栈——compose 只 build controlplane+agent）
 - 测试设计修正：账号锁集成用例 4 次<阈值 5 改为 5 次错密+第 6 次正确密码被拒；IP 闸与账号闸分散 IP 隔离验证
 
-## [0.12.0] — 2026-09-09 D2：Discovery 真实化（1e1d0aa）
+## [Unreleased] — 2026-09-09 D2：Discovery 真实化（1e1d0aa）
 
 > device-svc 的 StartDiscovery 从硬编码 stub（写死 FoundDevices=3/ScannedHosts=254）替换为真实 Sweep 存活扫描——侦察确认 18 项 device-svc 缺口中网络发现先落地（其余自动纳管链属 D3 独立立项）。
 
@@ -1093,7 +1151,7 @@
 - **单测 5 用例**：真实网段扫描（本地 9100 listener+异步轮询终态+设备入库 discovered）/坏 CIDR failed+Error 留痕/白名单 6 子用例（含 SSRF 防护核心 169.254.169.254/32）/幂等入库（重复扫描同网段不产生重复设备）/旧 stub 断言更新为异步 running
 - 全量验证：build+vet+gofmt 净+**8 包测试绿**（pkg/discover/device-svc×5/agent 55s/provision/grpc）；CI 全绿
 
-## [0.12.0] — 2026-09-09 阶段 2 D1：device-svc HTTP 网关接入 + Shadow 模式落地（7aeb388）
+## [Unreleased] — 2026-09-09 阶段 2 D1：device-svc HTTP 网关接入 + Shadow 模式落地（7aeb388）
 
 > TD-60 阶段 2 继续：方案审核后按风险分级执行——D1（gateway 接入，收益明显/风险极小）+ S1（Shadow 观测代码就位）立即做；D2（真实 Sweep）/D3（自动纳管）/A1+A2（auth 域）因触及网络 IO/写路径/鉴权基座而缓做、各自独立立项。
 
@@ -1117,7 +1175,7 @@
 - CI 编译红：config.go `ShadowMode` 字段 getEnv 少传默认参（签名 `getEnv(key, def)`）→ 补默认参（7aeb388）
 - CI E2E compose 启动红：flaky（Docker Hub 拉取超时，与改动无关——E2E 整栈只 build controlplane+agent 不含 device/task-svc）→ 重跑即绿
 
-## [0.12.0] — 2026-09-05 阶段 2 第一批（a4d819d）：task-svc 双轨对照补齐
+## [Unreleased] — 2026-09-05 阶段 2 第一批（a4d819d）：task-svc 双轨对照补齐
 
 > TD-60 选项 A 用户已拍板（"微服务化为正式方向"，先双轨并行验证稳定后切流 + 下掉旧实现）。
 > 本批 = A-1 = "task-svc 补齐任务必达核心能力，与 controlplane 实现字节级等价"，是阶段 2 双轨对照的**字节级基线建立**。
@@ -1144,7 +1202,7 @@
 - `pkg/cron/cron_test.go` 新增：4 测试函数覆盖 cron.Match 边界（Basic/Step/RangeEnum/Invalid）
 - 验证：`go test ./internal/cron/ ./pkg/cron/ ./services/task-svc/internal/scheduler/ ./services/task-svc/internal/service/` 全 ok；`go vet` 零告警；`gofmt -l services pkg` 零输出
 
-## [0.12.0] — 2026-09-05 第十二轮：技术债 TD-60~64 全量复核 + 留档小项清零（be272e8）
+## [Unreleased] — 2026-09-05 第十二轮：技术债 TD-60~64 全量复核 + 留档小项清零（be272e8）
 
 > 对审计遗留的最后一块技术债（TD-60~64）逐项侦察复核——结论是"五项中两项基于过期事实"，如实登记优于盲动；顺带清掉三处文档/测试留档项。
 
@@ -1196,7 +1254,7 @@
 - 并行工具 11 提交收编验证（前端测试 631→1121 全绿）+ 36 文件 BOM 污染字节级剥离
 - gofmt/staticcheck 修复（golangci-lint v2.13.2 钉版复验）
 
-## [0.12.0] — 2026-09-02 第十轮：部署配置补齐 + pkg 测试清零 + 3 个真 bug 修复（已归入 0.9.0）
+## [Unreleased] — 2026-09-02 第十轮：部署配置补齐 + pkg 测试清零 + 3 个真 bug 修复（已归入 0.9.0）
 
 > 三线并行收官（A=部署配置/B=数据库文档/C=pkg 测试 6 包 130+ 用例，2 subagent 协作）：六域接线的部署侧（compose/helm/Dockerfile）补齐、database-design.md 补档 11 个迁移、pkg/ 全部 12 包有测试且全绿——测试驱动开发实抓 3 个真 bug。
 
@@ -1232,7 +1290,7 @@
 - adf57d6 红：Race detector（即上面 tenant data race）→ 锁内快照修复
 - 终态 **093bc89 CI 全绿**（含 Race detector -count=3）
 
-## [0.12.0] — 2026-09-01 第九轮：UI 覆盖面清零 + 六域微服务接线（M13 最后一公里）
+## [Unreleased] — 2026-09-01 第九轮：UI 覆盖面清零 + 六域微服务接线（M13 最后一公里）
 
 > 两大留档项一次收官：①"6 个微服务域路由停用"——查明并非缺 UI（前端组件/API 封装/独立微服务全在），只缺 controlplane 聚合层路由，属纯接线问题；②"20+ 后端域无前端 UI"——后端 endpoint 早已全部注册，纯缺页面。3 个并行 subagent 交付 19 张页面，全部独立抽验。
 
@@ -1261,7 +1319,7 @@
 - 首推两轮 build-test 红：golangci-lint v2.13.2 报 gofmt 2 文件（本地未格式化直写）→ gofmt 修复 + 本地钉版复验 0 issues（510fc1c）
 - 终态 **11 success + 1 skipped（release job 仅 tag 触发）全绿**（run 33547881837）
 
-## [0.12.0] — 2026-09-01 第八轮：release tag 全链真跑攻坚（10 轮迭代 × 2 workflow）
+## [Unreleased] — 2026-09-01 第八轮：release tag 全链真跑攻坚（10 轮迭代 × 2 workflow）
 
 > CI 11/11 全绿后遗留的最后一道：`v*` tag 触发的 **release.yml（服务镜像发布）+ ci.yml release job（goreleaser 二进制发布）** 两条链从未真跑。本轮从 tag 打下到全链绿共 10 轮迭代，每一层失败均由真实 CI 日志取证。
 
@@ -1296,7 +1354,7 @@
 
 ## [0.8.0] — 2026-09-01（五/六/七轮合并发布）
 
-## [0.12.0] — 2026-09-01 第七轮：CI 23 连红 → 全绿攻坚（11 job × 19 提交）
+## [Unreleased] — 2026-09-01 第七轮：CI 23 连红 → 全绿攻坚（11 job × 19 提交）
 
 > 本轮从「CI 从未跑通过」打到全绿：23+ 次真实 CI 运行、19 个修复提交、每一项修复均由真实 CI 日志取证（gh run logs），不凭猜测。**结束时 11/11 job 全绿**（build-test / integration / security / services / proto / Frontend / E2E-real / E2E-sec / Race / image / image-agent）。
 
@@ -1328,7 +1386,7 @@
 - **教训（写入 memory）**：目录被外部清空 3 次（workbuddy 侧），工作区两次重建（现 OpsMesh-ci）；PowerShell Set-Content 写 Go 文件必炸（BOM/CRLF 双雷），本轮 go.work.sum 事故后禁用，统一 Read+Edit
 - 修复完成即 commit+push（不留未提交状态防目录事故）
 
-## [0.12.0] — 2026-08-30 第六轮：留档项四项补齐（告警正确性 + Helm 微服务 + UX 收尾 + 文档保真）
+## [Unreleased] — 2026-08-30 第六轮：留档项四项补齐（告警正确性 + Helm 微服务 + UX 收尾 + 文档保真）
 
 ### 告警推送正确性修复（notifyLoop 水位线 → 指纹去重）
 - **根因**：`lastAlertSent` 全局单一时间高水位跨租户合并——任何租户告警推送后水位前移，其它租户/乱序插入/CreatedAt 更早的告警被**永久漏推**（多副本时钟偏差同样触发）。运维平台漏告警属核心正确性缺陷
@@ -1353,7 +1411,7 @@
 - 前端 vitest 631/631 + build 5.1s ✅；K8s/Portal 残留 grep 清零 ✅
 - Helm 模板：语法配对 77/77、helper 引用全有效、values-模板键路径 30 处逐一对照零多余、4 case 渲染模拟通过（CI helm lint 兜底）
 
-## [0.12.0] — 2026-08-30 第五轮：四路审计问题全量修复（认证链 4C + 后端安全 4 项 + 交付链 4C + UX 包）
+## [Unreleased] — 2026-08-30 第五轮：四路审计问题全量修复（认证链 4C + 后端安全 4 项 + 交付链 4C + UX 包）
 
 > 基线：四路并行深度审计（架构/前端/测试CICD/文档）发现的 Critical/High 问题，四组 subagent 并行修复，文件边界零重叠，全部经独立抽验 + 全仓回归。
 
@@ -1390,7 +1448,7 @@
 - 前端 vitest 631/631 + 生产构建 ✅ gofmt 全仓清零 ✅
 - 四组文件边界零重叠，交叉核对无互相回退（CORS 反射行确认已删、MustChangePassword 分支在位）
 
-## [0.12.0] — 2026-08-30 第四轮：注册流程 UX 修复 + 浅色主题提亮
+## [Unreleased] — 2026-08-30 第四轮：注册流程 UX 修复 + 浅色主题提亮
 
 ### 登录注册功能修复（用户反馈"登录注册好像有问题"）
 - **根因（实测定位）**：后端注册默认走安全基线（`--allow-public-register=false`），返回 `{"status":"pending"}` 且**不签发 token**；但 RegisterView 无视该语义——显示"注册成功"后 600ms 强跳 `/devices`，被路由守卫（未登录）弹回 `/login`。用户看到"注册了却进不去"，体验即"登录注册坏了"。登录流程本身无 bug（`must_change_password` 分支正确跳改密页）
@@ -1408,7 +1466,7 @@
 - `golang-jwt/jwt/v4`、`gogo/protobuf` 等旧包仅存在于 go.sum（`go mod why` 确认主模块不引用，`go mod tidy` 无变化）——传递依赖痕迹非直接风险
 - 结论留档：技术栈当前状态良好，无需升级动作；CI 已有 govulncheck+gosec+Trivy 持续扫描兜底
 
-## [0.12.0] — 2026-08-30 第三轮：微服务 MySQL 接线（TD-65）+ 前端可测性补齐
+## [Unreleased] — 2026-08-30 第三轮：微服务 MySQL 接线（TD-65）+ 前端可测性补齐
 
 ### 微服务持久化接线（TD-65）
 - **9 个微服务 main 接线 MySQL store**：alert / auth / config / deploy / device / incident / plugin / portal / task——此前 `NewMySQLStore` 已实现（12 处定义）但 **0 处调用**，main 全部硬编码内存 store，重启数据全丢。现按统一模式接线：`<NAME>_SVC_STORE_TYPE=sql` + `<NAME>_SVC_DSN` 非空时启用 MySQL（构造时自动建表），初始化失败回退 memory 并打日志；auth/device/task 的 MySQLStore 有 `Close()` 的在分支内 defer 调用
@@ -1431,7 +1489,7 @@
 - 前端 `npx vitest run`（631/631）+ `npm run build` ✅（8.2s）
 - `gofmt -l` 全仓清零 ✅（修复 device-svc main 一处残留）
 
-## [0.12.0] — 2026-08-30 第二轮安全加固与文档补全批次
+## [Unreleased] — 2026-08-30 第二轮安全加固与文档补全批次
 
 ### 安全加固（SEC 系列）
 - **SEC-1 错误信息脱敏（收尾 + 守护测试）**：在 60+ 处 500 路径改用 `writeInternalError`/`writeSanitizedError`（k8s_manage 19 处、quota/apikey/middleware/os_optimize 等）的基础上，完成全量 4xx 泄露面核查——59 处输入回显 + 15 处固定鉴权文案 + 60 处 sentinel 校验文案均确认安全；新增 `http_infra_leak_test.go` 静态扫描守护测试：**禁止任何 5xx 响应携带原始 `err.Error()`**（金丝雀注入验证有效，CI 防回退）
@@ -1454,7 +1512,7 @@
 ### 验证
 - `go build ./...` ✅ `go vet ./...` ✅ `go test ./internal/controlplane/ ./internal/agent/ ./internal/store/` ✅ 全绿（含新增 safego/leak-guard 测试）
 
-## [0.12.0] — 2026-08-27 SQL 持久化全域落地（P0.3 + P1-P6 共 18 域）
+## [Unreleased] — 2026-08-27 SQL 持久化全域落地（P0.3 + P1-P6 共 18 域）
 
 ### SQL 持久化实现
 - **P0.3（3 域）**：secret / discovery / config — 迁移 007/008/009，sql_secret.go / sql_discovery.go / sql_config.go 从内存 map 重写为 MySQL CRUD
@@ -1479,7 +1537,7 @@
 ### 验证
 - `go build ./...` ✅ `go vet ./...` ✅ `go test ./...` ✅ 全绿无失败
 
-## [0.12.0] — 2026-08-27 技术债务清偿批次（测试覆盖率提升 + 编码修复 + 架构文档）
+## [Unreleased] — 2026-08-27 技术债务清偿批次（测试覆盖率提升 + 编码修复 + 架构文档）
 
 ### 测试覆盖率提升（Go 单元测试）
 - **internal/store**：50.9% → 74.6%，新增 `memory_crud_extra_test.go` 覆盖 apikey / argocd / automation / backup / billing / compliance / network / pipeline / plugin / slo / traffic 十一个此前零覆盖领域，以及 MultiSchemaStore 委托层（p03~p6）与 config/secret/discovery/script/tenant/ticket/webhook 缺口方法
@@ -1494,7 +1552,7 @@
 ### 架构文档
 - **README 架构图重绘**：Unicode 框线改纯 ASCII（`+-|/` 等），同步 internal 包数 30 → 36（补 automation / compliance / extension / network / platform / plugin），store 子接口 15 → 35，补全企业版 Vue3 前端 / K8s Operator / 联邦通道（--federation-peers）/ mTLS / Metrics / SSE / protobuf gRPC 双轨 / 多租户 schema 隔离 / API Key（`om_` 前缀）/ log_collect v2.0 / alertengine（Z-Score+EWMA）等组件
 
-## [0.12.0] — 2026-08-26 第四轮质量审查修复批次（31 项）
+## [Unreleased] — 2026-08-26 第四轮质量审查修复批次（31 项）
 
 ### 安全加固
 - **API Key 认证体系**（H5）：platform 层新增 ValidateKey/HasScope + `ConstantTimeCompare` 恒时比较，controlplane 认证链支持 `Bearer om_` 前缀 API Key，PUT 白名单字段合并防篡改（M2）
@@ -1535,7 +1593,7 @@
 - **Phase0 清偿测试**（H8-C3/C4）：日志截断边界多轮分片拼接还原 + store clone 并发 race 断言
 - **审查文档归档**：docs/design/REVIEW-phase1-6.md（31 项发现）+ FIXPLAN-phase1-6.md（修复方案）
 
-## [0.12.0] — 2026-08-24 文档全面同步批次
+## [Unreleased] — 2026-08-24 文档全面同步批次
 
 ### 文档同步
 - **README.md**：功能矩阵扩展为 14 个功能域（设备管理 / 任务执行 / 监控告警 / CMDB / 日志检索 / 编排部署 / OS 优化 / 中间件部署 / K8s 管理 / 用户中心 / 审计日志 / 联邦 / SSE 实时推送 / 工作流），对齐 `docs/feature-design.md` F1–F18 与 `docs/product-roadmap.md` M1–M4
@@ -1649,7 +1707,7 @@
 
 ---
 
-## [0.12.0] — 2026-08-16 CI 全绿
+## [Unreleased] — 2026-08-16 CI 全绿
 
 ### 里程碑：GitHub Actions 8/8 job 全绿（首次真正全绿）
 
@@ -1681,7 +1739,7 @@
 
 - store 包覆盖率门禁 65% → 32%（实测真实 mysql 集成环境 34.6%，65% 系 CI 未跑通时设定；同 build-test 50%→45% 先例）。
 
-## [0.12.0] — 2026-08-12
+## [Unreleased] — 2026-08-12
 
 ### 已解决
 

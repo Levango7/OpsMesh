@@ -4,6 +4,84 @@
 
 ---
 
+---
+
+## v0.12.0 — 2026-10-04 gRPC 契约真实化 + 规则引擎真实化 + 八处"声明了但不成立"的收口
+
+本版的主线不是新功能，而是把**此前对外宣称存在、实际不成立**的能力逐条变成事实，
+并把两条"版本声明领先于产物"的发布链缺陷纠正掉。评估全文见
+`docs/commercial-readiness-review-2026-09-25.md` §31–§32。
+
+### 先说发布本身（客户会直接撞到）
+
+`v0.12.0` 的 tag 与镜像在 **2026-10-04** 才真实生成。2026-10-03 那次"归版"把
+Chart.yaml `appVersion`、`values-production.yaml` 的镜像 tag、gitops production-segment 的 tag
+都写成了 0.12.0，却从未打 tag；实测 GHCR 上 `opsmesh-binary` / `opsmesh-agent` / `auth-svc`
+的版本 tag 都停在 0.11.0。后果是**按生产默认值 `helm install` 的客户对三个镜像 `ErrImagePull`**。
+同一次归版还把 CHANGELOG 里 54 个"已归入 0.11.0/0.10.0/0.9.x"的历史明细块整批改成了
+`## [0.12.0]`，等于宣称半年的东西都在这一版里——已按 `v0.11.0` 原状逐条还原。
+防复发：`validate-deploy-assets.sh` 第 1 节的版本源对账现已包含 `internal/version.Version`
+（实测它当时比 Chart.yaml 落后一整版而门禁毫无反应）。
+
+### 破坏性 / 行为变更（升级前必读）
+
+1. **alert-svc `alerts` 表新增 `rule_id` 列**，启动期按 `information_schema` 判缺后幂等 `ALTER`；
+   存量库自动补列，**不自动回滚**（本仓 `.down.sql` 永不自动执行）。老行该列为 NULL 且读得回来。
+2. **OTLP 端点解释改变**：`http://host:4317` 这类带 scheme 的写法以前**拨不通**（12 个微服务的
+   span 一条都没到过 collector），现在按 OTel 规范解析；`https://host:4317` 现在**会走 TLS**
+   （以前只看端口是否 443）。若 collector 只监听明文而配置写了 `https://`，升级后会连不上。
+3. **PagerDuty `acknowledge`/`resolve` 不再发 `payload.severity` 键**：此前发的是空字符串，
+   而 `severity` 是枚举（`critical|error|warning|info`），空串属非法值、真实端点会判 400。
+4. **告警规则评估真实化**：引擎现在真读调用方传入的读数并输出五态
+   （`met`/`not_matched`/`pending`/`no_data`/`invalid`）。以前 `op=">"` 且阈值 <100 的规则
+   **每次评估都触发**（假告警风暴），其他写法**永不触发**（假健康）。升级后看到的告警量
+   与历史不同是预期——历史那个数是假的。
+5. **抓取面新增恒为 0 的序列**：`PAGERDUTY_ENABLED=true` 时
+   `alert_external_notify_failures{action="ack"|"resolve"}` 启动即以 0 注册。
+   这不是噪声：`increase()` 取窗口内样本之差，序列若到第一次失败才创建，第一个样本就是 1、
+   没有 0 可比 ⇒ 增量算成 0 ⇒ 出厂 critical 规则**漏掉第一次失败**（实测：单次失败
+   `increase=0`；两次才有 1.197）。
+6. **SLO 状态不再恒 99.5/`met`**（返回真实的 `nodata`/`breached`/`met`）；
+   **gpu-svc HPA** 从"引用一个从来没被产出的 Pods 指标"改回 `Resource cpu`；
+   **autoscaler-svc** 默认 executor 为 `simulated`（决策记录有、集群副作用无）。
+7. **6 个微服务的 gRPC pb 换成 protoc 生成物**：此前 `api/proto/v1` 下是**手写 Go struct**，
+   不满足 gRPC 默认 codec 对 `proto.Message` 的要求 ⇒ 线上任何一次调用都会
+   `failed to marshal, message is *alertv1.CreateRuleRequest, want proto.Message`，
+   而所有测试都是进程内直调 Service，永远碰不到编解码路径——CI 全绿、健康检查全绿、
+   **API 100% 不可用**。现在 100 个 unary 方法逐个过真编解码验证。新增字段向后兼容。
+
+### 能力降级清单（本版如实标注；按能力表验收时请跳过这些或先确认前置）
+
+| 能力 | 实际状态 | 前置 / 替代路径 |
+|---|---|---|
+| SLO/SLI 达成度 | 多数指标**没有生产者**，`/api/v1/slo/status` 通常 `nodata` | 先接指标来源；支持指标清单见 `internal/store/slo_eval.go` |
+| 自动扩缩容 | 默认 `simulated`，不真改集群副本 | `AUTOSCALER_K8S_EXECUTOR` + kubeconfig（合并补丁只动 `spec.replicas`） |
+| AIOps 智能分析 | 端点可能返回模拟数据（响应带 `source`/`simulated`）；`/ready` 现回报数据源，此前写死 `engines:"5/5"` | 配 `PROMETHEUS_URL`；且**没有宿主代理/前端消费者** |
+| alert-svc 按指标自动告警 | 读数由调用方推，服务**不拉 Prometheus** | 要自动触发请走出厂 Prometheus + Alertmanager 链路 |
+| 插件 / 应用市场"可插拔扩展" | 只有 Manager 框架，**控制面零钩子触发点**；市场条目无加载器 | TD-62（含四个待决策点） |
+| 事故回溯到规则 | incident-svc 的记录**没有 `rule_id` 字段**（alert-svc 侧本版已补） | 目前靠 alert ↔ incident 的时间与设备关联 |
+| 链路追踪可查询 | collector 的 traces pipeline 只接 `logging` exporter，**无 Jaeger/Tempo**；`tail_sampling` 对非错误、非慢请求只留 10% | TD-75；现在能做的是"看 span 计数"，不是"打开调用链图" |
+| 可空列逐列穷举 | 门禁只覆盖 alert-svc 两个 store；控制面 `internal/store` 仍是抽样核对 | TD-74 |
+| PagerDuty 真实 SaaS 送达 | 载荷契约由**自建校验端点**判定，未打过真实端点（无集成密钥） | 报告 §32.7 |
+| 微服务 gRPC 面鉴权 | alert-svc 的 gRPC 只有 trace + ratelimit 拦截器，**无鉴权、无租户校验**，默认发布在 `127.0.0.1` | 跨机暴露需前置认证或反代限制；默认口径待产品定 |
+| 企业版前端 | 社区授权下 `/enterprise/` 返回"企业版 · 未授权"页，SPA 资产链路只在企业授权下验得到 | 企业授权 + `make frontend` 装配 |
+| 第三方许可 | MPL-2.0 / npm 依赖的**法务结论未出**（工程侧清单与 CI 门禁已就绪） | P1-7 |
+
+### 本版可复核的验证证据（都带观测量，不是静态结论）
+
+- 出厂栈真机 `verify-runtime.sh`：`PASS=123 / FAIL=1`（唯一 FAIL 是本机跑着本地覆盖层镜像
+  `0.11.0-nullfix` 与 `.env` 版本不一致，属真陈述的本地态）。改前是"连跑四次、
+  每次报的缺失序列各不相同"——根因是门禁自己的 `producer | grep -q` 在 `pipefail` 下
+  被 SIGPIPE 打成假阴性，已全量改为 herestring 并加门禁（见 §32.8）。
+- `validate-deploy-assets.sh`：`PASS=45 / FAIL=0 / SKIP=1`。
+- alert-svc 外发腿活体：`trigger`/`acknowledge`/`resolve` 三段都被按公开契约校验的端点收下（202），
+  `dedup_key` 三段同值、`payload.source` 为真实设备名、ack/resolve 无 `severity` 键；
+  失败腿（注入 503）本地状态照常落库、counter 0→1、WARN 带错误文本，
+  出厂 critical 规则 `OpsMeshAlertExternalNotifyFailed` 真实 firing 并被 Alertmanager 收到。
+- gRPC 契约：6 个服务 100 个 unary 方法过真 codec；pb 生成物版本漂移门禁不依赖 protoc。
+- CI：本版本各批次在 main 上均为 12 job 全绿（含 `-race`、真实 MySQL 集成、E2E real/security、
+  镜像构建+keyless 签名+SBOM），`release` 按设计仅在 tag 上运行。
+
 ## v0.11.0 — 2026-10-01 可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化
 
 本版主线不是加功能，而是把**已经在线但看不见**的东西变成事实：微服务指标的类型与基数、

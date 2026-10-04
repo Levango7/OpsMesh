@@ -71,6 +71,10 @@ check_kv() {
 check_kv deploy/helm/opsmesh/Chart.yaml                    '^appVersion:'      "Chart.yaml appVersion"
 check_kv deploy/helm/opsmesh/values-production.yaml        '^[[:space:]]*tag:[[:space:]]*"' "values-production controlplane 镜像 tag"
 check_kv deploy/gitops/segments/production-segment.yaml    '^[[:space:]]*tag:[[:space:]]*"' "gitops production-segment 镜像 tag"
+# internal/version 的默认值也在版本源之列：`opsmesh --version` 与 GET /version 在
+# **源码直构**（无 -ldflags 注入）时回的就是它，2026-10-04 实测它比 Chart.yaml 落后一整版
+# （0.11.0 vs 0.12.0）而门禁毫无反应——第 1 节当时只比对清单，不知道二进制里也写着一个版本。
+check_kv internal/version/version.go                       '^var Version'      "internal/version.Version 默认值"
 
 # compose 的镜像 tag 来自 .env 的 OPSMESH_VERSION，这里校验默认值/示例值不写死旧版本
 if grep -qE 'image:[[:space:]]*opsmesh/[a-z-]+:latest' deploy/docker/docker-compose.prod.yml; then
