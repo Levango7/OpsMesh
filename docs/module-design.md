@@ -2,11 +2,11 @@
 
 ## 第1章 概述
 
-本文档对 OpsMesh 内核 `internal/` 下 35 个 Go 包进行系统化模块设计说明，覆盖每个包的职责、关键接口、核心数据结构、关键算法、并发安全策略与扩展点。文档面向架构 review、新成员 onboarding 与跨团队协作，作为代码导航的"地图"。
+本文档对 OpsMesh 内核 `internal/` 下 36 个 Go 包进行系统化模块设计说明，覆盖每个包的职责、关键接口、核心数据结构、关键算法、并发安全策略与扩展点。文档面向架构 review、新成员 onboarding 与跨团队协作，作为代码导航的"地图"。
 
 ### 1.1 文档范围
 
-- 涵盖范围：`F:\Nexus\OpsMesh\internal\` 下全部 35 个包
+- 涵盖范围：`F:\Nexus\OpsMesh\internal\` 下全部 36 个包
 - 分组维度：按领域职责划分为核心 / 运维 / 告警 / 数据 / 安全 / 基础 / 其他 共 7 组
 - 信息来源：每个包的 `*.go` 源文件（不含 `_test.go`）的包注释与关键类型/接口定义
 - 不涵盖：第三方依赖、`cmd/` 入口、`pkg/` 公共库、前端资源
@@ -24,11 +24,15 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构：
 - 控制面（`--mode=controlplane`）：HTTP 8080（B/S 仪表盘 + REST API）+ gRPC 9090（agent 通道）+ metrics 9091
 - 数据面（`--mode=agent`）：经 gRPC 9090 注册 / 心跳 / 拉任务 / 上报结果，本地 `os/exec` 执行任务
 
-35 个 internal 包按领域分层组合，控制面通过 `controlplane.Server` 装配各域 handler，agent 通过 `agent.Agent` 装配 gRPC 客户端 + worker 池。
+36 个 internal 包按领域分层组合，控制面通过 `controlplane.Server` 装配各域 handler，agent 通过 `agent.Agent` 装配 gRPC 客户端 + worker 池。
 
 ## 第2章 包总览表
 
-下表汇总 35 个 internal 包的核心属性，详细设计见第3章。
+下表汇总 36 个 internal 包的核心属性，详细设计见第3章。
+
+> ⚠️ 计数口径：只数 `internal/` 下真实存在的目录，CI 的 `Verify internal package count` 门禁会
+> 与 README、本节数字三方对账。原第 6 行的 `provision` 已于 D3-a/b 迁至 `pkg/provision`
+> （commit 36cc7e1b），该位置现列 2026-10-04 新增的 `egress`。
 
 表：internal 包总览对照表
 
@@ -39,7 +43,7 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构：
 | 3 | store | 核心 | 可插拔持久化抽象 + Memory/SQL/MultiSchema 实现 | `Store`/`MemoryStore`/`SQLStore`/`MultiSchemaStore`/`SessionStore` | proto | ✓✓ |
 | 4 | domain | 核心 | 纯领域模型 + 状态机行为 + 防腐映射 | `Task`/`Device`/`Alert`/`Agent` | — | ✓✓ |
 | 5 | config | 核心 | 统一配置：flag + env 兜底 | `Config` | — | ✓✓ |
-| 6 | provision | 运维 | 自动纳管 SSH 推送 agent | `PushAndExec` | — | ✓ |
+| 6 | egress | 安全 | 出网策略唯一实现：SSRF 三层防护 + allowPrivate 语义收口 | `NewClient`/`ValidateURL`/`IPRejection`/`AllowsPrivate` | — | ✓ |
 | 7 | deploy | 运维 | M3 部署中心：滚动/金丝雀/蓝绿 + 联邦 | `Handler`/`DeployTask`/`Dispatcher` | authctx/proto | ✓✓ |
 | 8 | helm | 运维 | Helm Release 生命周期管理（CLI 适配） | `ReleaseManager`/`RepoManager`/`Release` | — | ✓✓ |
 | 9 | k8s | 运维 | K8s 多集群连接管理（client-go 封装） | `K8sClient`/`ClusterManager` | k8s.io/client-go | ✓ |
@@ -1063,6 +1067,38 @@ gRPC 传输层 TLS / mTLS 凭证的构造助手+ TLS 证书热重载。内核默
 - `CheckScript`：可自定义检查命令（由 agent 侧执行）
 - `Remediation`：可扩展修复建议格式（如自动修复脚本）
 
+#### 3.5.5 egress
+
+**职责描述**
+
+全仓**唯一**的出网（egress）安全策略实现：SSRF 防护。此前这份逻辑长在
+`internal/controlplane`，而 `internal/notify` 用裸 `http.DefaultClient` 出网——
+于是 `--webhook-allow-private` 这个开关对告警通知**完全无效**（管理员设了 false，
+通知照样能打内网；设了 true 通知层也不知道），且默认跟随最多 10 跳重定向，
+一个"已通过校验的外网 URL"返回 302 就能把请求送到 169.254.169.254。
+
+**关键接口**
+
+| 接口 | 语义 |
+|------|------|
+| `NewClient(timeout, allowPrivate) *http.Client` | 三层防护 client：DialContext 建连时逐 IP 复检（抗 DNS rebinding）、CheckRedirect 每跳复检、整体超时。**`Proxy` 恒为 nil**——走环境代理会让 DialContext 拿到代理地址，IP 级校验形同虚设 |
+| `ValidateURL(rawURL, allowPrivate) error` | URL 级校验：协议白名单 http/https、主机名非空、IP 字面量直判、域名 DNS 解析后逐 IP 校验 |
+| `IPRejection(ip, allowPrivate) string` | 单一谓词，"保存时校验"与"建连时复检"共用，避免两处口径分叉 |
+| `IsRestrictedEvenWhenAllowed(ip) bool` | 任何开关都不放行的段：链路本地（含云元数据）、0.0.0.0/8、fe80::/10、`::` |
+| `AllowsPrivate(c) bool` | 反查某 client 的构造口径，供调用方的前置校验保持一致 |
+
+**allowPrivate 的语义边界（刻意收窄）**
+
+`allowPrivate=true` 只放行**私网与环回**（内网钉钉/飞书/企微网关这类真实收件端），
+链路本地 / 云元数据 / 0.0.0.0-8 仍恒拒；且开关打开时**仍然做 DNS 解析**，
+否则"域名解析到 169.254.169.254"这一最常见形态会被整段跳过。
+
+**扩展点与约束**
+
+新增出网调用方一律 `egress.NewClient(...)`，不得再写第二份 SSRF 判定——
+本包存在的理由就是消除"两份实现各自漂移"。修改任何谓词都必须同步改
+`egress_test.go` 的门禁用例，并作为独立安全变更评审。
+
 ### 3.6 基础包
 
 基础包提供 OpsMesh 的通用基础设施：gRPC 服务描述、DAG 引擎、熔断器、审批引擎、CMDB、定时任务、作业编排。
@@ -1700,7 +1736,7 @@ OpsMesh 包依赖遵循"核心 → 领域 → 基础"自顶向下分层，避免
 | k8s | 2 | 2 | ~500 |
 | discovery | 6 | 4 | ~800 |
 | config | 1 | 4 | ~1500 |
-| 其他 15 个包 | — | — | ~3000 |
+| 其他 21 个包（含 egress） | — | — | ~3000 |
 
 ### 6.2 术语表
 
@@ -1732,4 +1768,4 @@ OpsMesh 包依赖遵循"核心 → 领域 → 基础"自顶向下分层，避免
 
 ---
 
-文档版本：v1.1  |  生成日期：2026-08-17  |  更新日期：2026-09-16  |  覆盖包数：35  |  维护者：OpsMesh 技术文档工程师
+文档版本：v1.2  |  生成日期：2026-08-17  |  更新日期：2026-10-04  |  覆盖包数：36  |  维护者：OpsMesh 技术文档工程师

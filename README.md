@@ -119,9 +119,13 @@
 | 联邦 | gRPC (mTLS) | 9090 | 跨控制面任务转发/设备视图同步 |
 | Metrics | HTTP | 9091 | Prometheus 指标采集（HTTP 延迟/Go runtime） |
 
-### internal 包职责（35 个）
+### internal 包职责（36 个）
 
-> 完整设计见 `docs/module-design.md`。下表按 8 个领域分组列出 35 个 internal 包的职责简述。
+> 完整设计见 `docs/module-design.md`。下表按 8 个领域分组列出 36 个 internal 包的职责简述。
+>
+> ⚠️ 计数口径：**只数 `internal/` 下真实存在的目录**（CI 的 `Verify internal package count`
+> 门禁会拿 `find internal -maxdepth 1 -type d` 与本节标题里的数字对账，三处必须一致）。
+> `internal/provision` 已在 D3-a/b 迁到 `pkg/provision`（commit 36cc7e1b），故不在下表。
 
 #### 设备与纳管域
 
@@ -130,7 +134,6 @@
 | `internal/agent` | agent 运行时：经 gRPC 注册/心跳/拉任务/上报结果，本地 worker 池执行 shell/svc/file 任务 |
 | `internal/discover` | **设备发现**：扫描指定网段（TCP 存活），发现可纳管设备（SSH/agent 已安装），返回设备清单供控制面注册 |
 | `internal/discovery` | **控制面服务发现 + 负载均衡**：agent 启动时发现控制面地址（静态/动态），经 balancer 做 failover/round-robin，实现多控制面 HA |
-| `internal/provision` | 自动纳管闭环：install token 签发/消费 + SSH 推送 bootstrap + 候选设备状态机 |
 | `internal/domain` | 纯领域模型（DDD）：与 proto 解耦，含 Cancel/CanRetry/MarkDead 等业务行为方法 + 防腐层 mapper |
 
 #### 控制面域
@@ -173,6 +176,7 @@
 |---|---|
 | `internal/store` | Store 接口 + MemoryStore + SQLStore：35 个领域子接口 + 编译期双实现断言 + 多租户 schema 隔离（MultiSchemaStore） |
 | `internal/secrets` | 密钥管理：env/file/Vault/KMS 多 provider + 工厂模式 + SSRF 防护 |
+| `internal/egress` | **出网（egress）策略唯一实现**：SSRF 三层防护（建连时逐 IP 复检 / 每一跳重定向复检 / 整体超时）+ `allowPrivate` 语义收口（放行私网与环回，链路本地/云元数据/0.0.0.0-8 恒拒）。控制面保存前校验与 `internal/notify` 投递共用它，杜绝"两份 SSRF 逻辑各自漂移" |
 | `internal/circuitbreaker` | 通用熔断器：Closed → Open → HalfOpen 状态机，agent 任务执行 + 控制 API 限流降级 |
 | `internal/compliance` | 安全合规检查引擎：CIS Benchmark 基线规则（SSH 加固/防火墙/文件权限/密码策略等）+ 自定义规则 + 扫描编排（agent 执行、控制面聚合报告） |
 
@@ -215,7 +219,7 @@
 
 | # | 功能域 | 关键能力 | 状态 | 主入口 |
 |---|---|---|---|---|
-| 1 | **设备管理** | Agent 即设备（零依赖）/ 真实网段发现（TCP 存活扫描，`--discover`）/ 候选设备纳管（discovered → provisioning → onboarded）/ 设备退役（离线超龄自动归档）/ SSH 自动推送 bootstrap / 设备指纹采集 | ✅ | `internal/controlplane/server_devices.go`、`internal/discover/`、`internal/provision/` |
+| 1 | **设备管理** | Agent 即设备（零依赖）/ 真实网段发现（TCP 存活扫描，`--discover`）/ 候选设备纳管（discovered → provisioning → onboarded）/ 设备退役（离线超龄自动归档）/ SSH 自动推送 bootstrap / 设备指纹采集 | ✅ | `internal/controlplane/server_devices.go`、`internal/discover/`、`pkg/provision/` |
 | 2 | **任务执行** | Shell 命令 / 系统服务管理（systemctl）/ 文件分发（原子写入 + rename）/ 超时自动中止（exec.CommandContext）/ 失败重试 + 死信队列 / 任务取消（pending 拦截 + running 强杀）/ 定时周期调度（5 字段 cron）/ 批量下发 / 租约回收 / 审批门禁 | ✅ | `internal/controlplane/server_tasks.go`、`internal/agent/`、`internal/cron/` |
 | 3 | **监控告警** | 任务死信 → critical 告警 / 告警面板 + HTTP 查询 / 告警规则引擎（多条件 + 静默 + 抑制 + 聚合）/ Webhook/飞书/钉钉/企业微信/Slack/邮件多通道 / 告警规则 CRUD / 通知模板 | ✅ | `internal/controlplane/server_alerts.go`、`internal/alertengine/`、`internal/notify/` |
 | 4 | **CMDB** | 模型 + 实例 CRUD + SQL 持久化 + 采集自动化 / 关系图谱可视化（SVG 力导向图）/ 变更审批流 / 全文本检索倒排索引（TF-IDF + 短语/布尔/通配符） | ✅ | `internal/cmdb/`、`internal/controlplane/cmdb_*.go` |
@@ -1081,7 +1085,7 @@ server {
 
 ```
 cmd/opsmesh/              ← 入口 main：解析 --mode 分派 controlplane / agent
-internal/                 ← 35 个包，按 8 个领域分组（详见上文"internal 包职责"）
+internal/                 ← 36 个包，按 8 个领域分组（详见上文"internal 包职责"）
 ├── agent/                ← agent 运行时（注册/心跳/worker 池/执行器 + log_collect 日志采集 v2.0）
 ├── alertengine/          ← 告警规则引擎（多条件 + Z-Score/EWMA 异常检测 + 静默 + 抑制 + 聚合）
 ├── approval/             ← 审批引擎（审批流 + 请求 + approve/reject）
@@ -1098,6 +1102,7 @@ internal/                 ← 35 个包，按 8 个领域分组（详见上文"i
 ├── discover/             ← 设备发现：TCP 存活扫描网段（控制面→网段找设备）
 ├── discovery/            ← 控制面服务发现 + 负载均衡（agent→控制面 failover/round-robin）
 ├── domain/               ← 纯领域模型（DDD）+ 防腐层 mapper
+├── egress/               ← 出网策略唯一实现（SSRF 三层防护 + allowPrivate 语义收口）
 ├── events/               ← 可插拔事件总线（noop/log/kafka）
 ├── extension/            ← API 网关引擎（路由规则 + 令牌桶限流 + 网关统计）
 ├── grpcx/                ← gRPC ServiceDesc / JSON codec / 消息类型
@@ -1113,7 +1118,6 @@ internal/                 ← 35 个包，按 8 个领域分组（详见上文"i
 ├── platform/             ← 平台化业务引擎（租户/API Key/插件市场/计费）
 ├── plugin/               ← 插件框架（Plugin/Hook/HookHandler/Manager）
 ├── proto/                ← 共享数据类型（AgentInfo/DeviceInfo/Task/…）
-├── provision/            ← 自动纳管闭环（install token + SSH 推送 + 候选设备状态机）
 ├── secrets/              ← 密钥管理（env/file/Vault/KMS 多 provider）
 ├── store/                ← Store 接口 + MemoryStore + SQLStore（35 个领域子接口）
 ├── tlsutil/              ← gRPC TLS / mTLS 工具 + 证书热重载
