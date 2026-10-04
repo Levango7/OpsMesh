@@ -11,6 +11,21 @@ package controlplane
 //   - POST   /api/v1/marketplace/plugins/{id}/uninstall  卸载插件
 //   - POST   /api/v1/marketplace/plugins/{id}/enable     启用插件
 //   - POST   /api/v1/marketplace/plugins/{id}/disable    禁用插件
+//
+// ⚠️ 能力边界（2026-10-04 复核，务必如实告知使用者）：
+//
+// 本文件实现的是插件的**注册 / 下载 / 完整性校验 / 落盘 / 启停状态管理**，
+// **没有运行时**——全仓不存在任何读取或加载 plugin.bin 的代码。含义是：
+//
+//   - Installed=true  → 插件文件已下载、校验通过并落盘到 data/plugins/<id>/
+//   - Enabled=true    → 该插件被标记为"允许使用"（当前无消费者，故无实际效果）
+//
+// 即：安装成功**不代表插件会被执行**。补执行层是架构决策（Go plugin 机制在
+// 跨版本/跨平台下极不可靠；WASM 运行时需引入较重依赖并重定义安全模型；或改为
+// 独立进程 + RPC 契约），不属实现细节，须先定方案再动手。
+//
+// 在有执行层之前，本模块的真实定位是"插件资产的分发与生命周期管理"，
+// 对外不应宣称"可安装并运行插件"。相关文档见 docs/product-design.md §5.2。
 
 import (
 	"crypto/sha256"
@@ -217,6 +232,9 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request, id 
 
 	p.Installed = true
 	p.Enabled = true
+	// 语义澄清（勿误读为"插件已生效"）：此处只把插件标记为已落盘且允许使用。
+	// 本文件无执行层——全仓无任何代码加载 plugin.bin，故 Enabled 暂无消费者。
+	// 详见文件头「能力边界」说明。补执行层属架构决策，未定方案前不擅自实现。
 	updated, ok := s.store.UpdatePlugin(p)
 	if !ok || updated == nil {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "install plugin failed"})
