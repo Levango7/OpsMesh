@@ -156,3 +156,21 @@
 2. **必须留在父包的**：`store.go`（29 个 Store 接口是契约，两端实现它）、`multi_schema*`（8 个聚合包装）、`session*`、`failures`、`stub_guard`、4 个构造函数（`NewMemoryStore`/`NewSQLStore`/`NewMultiSchemaStore`/`NewRedisSessionStore`）——**外部 129 个 import 方对 `store.X` 零感知**。
 3. **搬迁的真实成本点**：`models.go` 的 43 个类型被两端共用。若下沉到中性包（如 `internal/store/model`），memory/sqlstore 子包 import 它、父包用**类型别名**回导（`type User = model.User` 别名合法且零外部改动）——但两个后端子包内 58 个文件里所有 `User`/`Task`/`Role` 这类短名都要加 `model.` 前缀。**这一步不能用 `gofmt -r` 做**（它基于标识符匹配，会误伤同名局部变量），需要 gopls rename 或人工逐文件——这是形态 A 的第一个真实卡点，也是批次 1 之后要解决的工具前提。
 4. 可独立推进的小切口候选：`session.go`/`redis_session.go`（SessionStore，与两端无关联）与 `failures.go`（StoreFailure 统计，仅 /admin/store-failures 端点消费）——外部引用面待测，若各 ≤10 处即为低风险起步批次。
+## 7. 批次3（后端拆包）执行配方——2026-10-04 快核
+
+前置状态：批次1（storefail）与批次2（model）已落地并 CI 绿。
+
+**障碍与解法（实测）**：
+
+1. `recordStoreFailure` 在后端文件内 **302 处** → 机械替换为 `storefail.Record` + import
+   （批次1 抽出的子包正是无环出口，无须再解耦）；
+2. `var _ Store = (*MemoryStore)(nil)` 类编译期断言引用父包 `Store` 接口 →
+   断言行从后端文件**删除**、在父包集中重建（一行/后端），否则子包 import 父包成环；
+3. `MemoryStore`/`SQLStore`/`DB` 命中含**定义者自身**（memory_*.go 定义其方法必命中）——
+   判归属时须区分 definer/consumer，不能按计数一刀切。
+
+**执行顺序**（每步独立绿）：memory 批（26 文件 + memory.go 类型定义）先做 →
+sql 批（32 文件 + sql.go）后做 → multi_schema 包装层最后。
+
+**开工条件**：另一会话的 36 文件现场（含 10 个 internal/controlplane 文件）已提交——
+58 文件搬迁不与活跃现场同树混做。
