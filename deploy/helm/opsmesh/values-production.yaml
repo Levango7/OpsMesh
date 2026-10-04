@@ -249,7 +249,50 @@ redis:
 #       repository: ghcr.io/levango7/autoscaler-svc
 #       tag: "0.12.0"
 #       digest: ""
-services: {}
+# 刻意给出 12 条只钉 tag 的覆盖（enabled 仍继承 values.yaml 的 false ⇒ 渲染结果与改前逐字相同）。
+# 为什么必须有这段而不只靠上面的注释示例：`--set services.task_svc.enabled=true` 是
+# values.yaml 第 273 行主动建议的启用方式，而本文件此前是 `services: {}`——深合并下该服务会
+# 继承 values.yaml 的 `tag: "latest"`，于是"按生产 values 装的客户拿到浮动镜像"，
+# 与本文件第 208 行「生产禁止 latest」自相矛盾。改前实测：
+# `helm template -f values-production.yaml --set services.task_svc.enabled=true`
+#   → ghcr.io/levango7/task-svc:latest
+services:
+  auth_svc:
+    image:
+      tag: "0.12.0"
+  device_svc:
+    image:
+      tag: "0.12.0"
+  alert_svc:
+    image:
+      tag: "0.12.0"
+  task_svc:
+    image:
+      tag: "0.12.0"
+  config_svc:
+    image:
+      tag: "0.12.0"
+  log_svc:
+    image:
+      tag: "0.12.0"
+  aio_svc:
+    image:
+      tag: "0.12.0"
+  autoscaler_svc:
+    image:
+      tag: "0.12.0"
+  gpu_svc:
+    image:
+      tag: "0.12.0"
+  incident_svc:
+    image:
+      tag: "0.12.0"
+  portal_svc:
+    image:
+      tag: "0.12.0"
+  runbook_svc:
+    image:
+      tag: "0.12.0"
 
 ## @section ServiceAccount
 serviceAccount:

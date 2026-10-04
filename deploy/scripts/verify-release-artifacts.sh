@@ -128,10 +128,25 @@ if ! command -v helm >/dev/null 2>&1; then
     bad "本机没有 helm，无法渲染 chart 核对镜像引用（判红而不是跳过）"
 else
     ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-    rendered="$(
-        { helm template x "${ROOT}/deploy/helm/opsmesh" 2>/dev/null
-          helm template x "${ROOT}/deploy/helm/opsmesh" -f "${ROOT}/deploy/helm/opsmesh/values-production.yaml" 2>/dev/null
+    CHART="${ROOT}/deploy/helm/opsmesh"
+    # 第三次渲染刻意把 12 个微服务全部 --set enabled=true（仍用生产 values）：
+    # 默认/生产两次渲染合起来只有 4 个引用（服务默认禁用），单靠它们会漏掉
+    # "启用服务后拿到浮动镜像"这一整类——实测改前 `-f values-production.yaml
+    # --set services.task_svc.enabled=true` 得到的是 task-svc:latest。
+    SVC_SETS=()
+    for k in auth_svc device_svc alert_svc task_svc config_svc log_svc \
+             aio_svc autoscaler_svc gpu_svc incident_svc portal_svc runbook_svc; do
+        SVC_SETS+=(--set "services.${k}.enabled=true")
+    done
+    prod_rendered="$(
+        { helm template x "${CHART}" -f "${CHART}/values-production.yaml" 2>/dev/null
+          helm template x "${CHART}" -f "${CHART}/values-production.yaml" "${SVC_SETS[@]}" 2>/dev/null
         } | sed -n 's/^[[:space:]]*image:[[:space:]]*//p' | tr -d '"' | sort -u
+    )"
+    rendered="$(
+        { helm template x "${CHART}" 2>/dev/null
+          printf '%s\n' "${prod_rendered}"
+        } | sort -u
     )"
     n=0; badrefs=""
     while IFS= read -r ref; do
@@ -152,10 +167,32 @@ else
     if [ "$n" -eq 0 ]; then
         bad "chart 里一个 ghcr.io/${NS}/* 的 image 都没渲染出来（扫描面塌了，判红）"
     elif [ -z "$badrefs" ]; then
-        ok "chart 渲染的 ${n} 个 ghcr 镜像引用（含 :${VER} 与 latest）全部存在于 GHCR"
+        ok "chart 渲染的 ${n} 个 ghcr 镜像引用（含生产全服务启用态）全部存在于 GHCR"
     else
         bad "chart 引用了 GHCR 上不存在的镜像:${badrefs# }"
         echo "         ⇒ 客户 helm install 会 ErrImagePull（§32.9 的成因正是这一条）"
+    fi
+
+    # 生产态禁止浮动 tag：values-production.yaml 自己的注释写着「生产禁止 latest」，
+    # 但这句话此前没有任何门禁守住——本断言把它变成可判定的。
+    # 判定走 herestring 而不是 `producer | grep -q`（后者在本脚本的 pipefail 下是假阴性写法）。
+    if [ -z "${prod_rendered}" ]; then
+        bad "生产 values 一次镜像引用都没渲染出来（本节在空转，判红）"
+    else
+        floating=""
+        while IFS= read -r ref; do
+            [ -z "$ref" ] && continue
+            case "$ref" in
+                ghcr.io/"${NS}"/*:latest) floating="${floating} ${ref}" ;;
+            esac
+        done <<< "${prod_rendered}"
+        if [ -z "${floating}" ]; then
+            ok "生产 values（含 12 服务全启用态）渲染出的引用没有一个 :latest"
+        else
+            bad "生产 values 渲染出浮动镜像:${floating}"
+            echo "         ⇒ 按生产清单装的客户会拉到任意新推送的镜像：版本不可追溯，"
+            echo "           升级与回滚都不受控（应钉 tag，或钉 image.digest）"
+        fi
     fi
 fi
 

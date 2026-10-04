@@ -3466,4 +3466,76 @@ goreleaser 完成后再次取同样的两个字段——`assets=5`、`body_len=4
   同族的 `OpsMeshAlertExternalNotifyFailed` 在 §32 里真实 firing 过，所以这不是"引用了不存在的指标"
   （#37 那一类），只是这条需要更长的注入窗口。
 
+---
+
+## 34. 2026-10-05｜验收脚本第 ④ 项的覆盖面本身是个陷阱：生产 values 启用微服务会跑 `:latest`
+
+### 34.1 怎么撞上的
+
+写 §33.7 时我把"chart 渲染的 4 个引用全部存在"这句话当真去核了一遍——**4 个**这个数字不对劲：
+chart 里有 12 个微服务条目，为什么只渲染出 4 个引用？查下来是两层原因叠在一起：
+
+1. `values.yaml:270-273` 明确写了 12 个服务默认 `enabled=false`（"存量 chart 行为 100% 不变"），
+   所以默认渲染只有核心镜像的 `:0.12.0` 与 `:latest`；
+2. `values-production.yaml:252` 是 `services: {}`——**它不给任何 tag**。
+
+于是第 ④ 项"合并默认+生产两次渲染"永远只看得到核心镜像，微服务的引用一个都没进过判定。
+把它撑开就能看见真相：
+
+```
+helm template x deploy/helm/opsmesh -f deploy/helm/opsmesh/values-production.yaml \
+  --set services.task_svc.enabled=true
+→ ghcr.io/levango7/task-svc:latest          # 生产清单，浮动镜像
+```
+
+`values-production.yaml:208` 自己的注释就是「**生产禁止 latest**：钉 semver 或由 CI GitOps 写回 digest」，
+而 `values.yaml:273` 又主动建议用 `--set services.<x>.enabled=true` 来启用单个服务——
+两条放在一起构成自相矛盾，且**没有任何门禁守着这句话**。深合并的语义是：只给 `enabled` 不给 `image`，
+`image.tag` 就从 values.yaml 继承 `"latest"`（`_helpers.tpl` 的 `opsmesh.image` 直接用 `$img.tag`，
+空串会渲染成 `repo:`，所以"留空自动用 appVersion"这条路在本 chart 里不存在）。
+
+### 34.2 修法：把注释变成结构，再让门禁去钉它
+
+1. **`values-production.yaml`**：`services: {}` 换成 12 条**只钉 tag** 的覆盖
+   （`services.<key>.image.tag: "0.12.0"`，`enabled` 不写 ⇒ 继承 false）。
+   实测生产默认态的渲染**结构逐字不变**（`diff <(helm template -f 旧) <(helm template -f 新)`
+   共 32 行差异，全部是 chart 每次渲染都重新随机生成的 Secret 值 + 由它派生的
+   `checksum/secret` 注解，与 `<`/`>` 成对出现；镜像、Deployment、Service 的行一条都没变）。
+   而 `--set enabled=true` 从此继承的是钉死版本：
+   全服务启用态下 14 个引用**全部 `:0.12.0`、`:latest` 计数 0**。
+2. **`verify-release-artifacts.sh` 第 ④ 项**：新增第三次渲染（生产 values + 12 服务全启用），
+   并加一条独立断言「生产 values 渲染出的引用没有一个 `:latest`」。
+   判定走 `case` 匹配而不是 `producer | grep -q`（§32.8 那条铁律），且"生产渲染为空集"单独判红——
+   否则本节会在扫描面塌掉时假绿。
+   引用存在性检查从 4 个变成 14 个：**PASS=6/FAIL=0 → PASS=7/FAIL=0**（多出的那条就是新断言）。
+3. **`validate-deploy-assets.sh` 第 1 节**：原有的 `check_kv` 只取**第一条**匹配（`head -1`）。
+   我这次一次加 12 个 pin，如果不动它，就等于"11 个 pin 可以静默落后一个版本"——
+   那正是 §32.9 记过的同一类（声明与产物脱节）。新增 `check_all_kv`：**每一处** `tag:` 都必须等于
+   `Chart.yaml` 版本，输出带 `文件:行号=实际值`，匹配数为 0 判红。
+   门禁从 `PASS=46/FAIL=0` 变成 `PASS=48/FAIL=0/SKIP=1`。
+
+### 34.3 两条新断言都做过变异验证
+
+- 第 ④ 项的新断言：把 `values-production.yaml` 改回 `services: {}`（改前 `md5sum` 两侧一致），
+  跑验收 → `PASS=6 FAIL=1`，红行逐字是
+  `[FAIL] 生产 values 渲染出浮动镜像: ghcr.io/levango7/aio-svc:latest … （12 个名字全列出）`；
+  同一轮里"14 个引用都存在"仍然 **PASS**——这正好证明"存在"与"可追溯"是两个独立的判定，
+  旧脚本只做了前者。还原后 `md5sum | sort -u | wc -l == 1`，再跑 → `PASS=7 FAIL=0`。
+- `check_all_kv`：把 `runbook_svc` 的 tag 改成 `0.11.0` →
+  `[FAIL] values-production 全部镜像 tag：14 处里有 1 处不等于 0.12.0: …values-production.yaml:295=0.11.0`
+  （退出码 1）；改回后 `PASS=48/FAIL=0`。
+- 两个脚本都过了 `shellcheck -S warning`（与 CI 同版 v0.10.0）与 `bash -n`。
+
+### 34.4 诚实边界（这条关系到已发出去的 0.12.0）
+
+- **v0.12.0 的 tag 内容没有这个修复**：修复在 main 上，等下一个版本（0.12.1）才会随
+  `deploy/helm/opsmesh` 一起发布。也就是说**按 v0.12.0 chart + 生产 values 用 `--set` 启用微服务的客户，
+  现在拿到的仍是 `:latest`**。规避办法（可直接给客户）：启用时同时给 tag——
+  `--set services.task_svc.enabled=true --set services.task_svc.image.tag=0.12.0`，
+  或按 values-production 里那段注释示例整段取消注释（示例本来就钉了 tag）。
+- 本轮没有改 `values.yaml` 的默认 `latest`：默认态是开发形态，`:latest` 在那里是被验收脚本
+  显式允许的（① 已经证明 GHCR 上 `latest` 与 `:0.12.0` 同时存在且随 main 前移）。
+- 变异验证期间我**并发编辑过正在运行的门禁脚本**（上一轮 `validate-deploy-assets.sh` 的后台运行
+  与我插入 `check_all_kv` 撞在一起），那次结果不算数，已重跑取终判——记录在此以免有人引用它。
+
 

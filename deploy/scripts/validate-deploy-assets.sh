@@ -71,6 +71,41 @@ check_kv() {
 check_kv deploy/helm/opsmesh/Chart.yaml                    '^appVersion:'      "Chart.yaml appVersion"
 check_kv deploy/helm/opsmesh/values-production.yaml        '^[[:space:]]*tag:[[:space:]]*"' "values-production controlplane 镜像 tag"
 check_kv deploy/gitops/segments/production-segment.yaml    '^[[:space:]]*tag:[[:space:]]*"' "gitops production-segment 镜像 tag"
+
+# check_kv 只看**第一条**匹配（head -1）。这条在只有一个 pin 时够用，
+# 但 values-production 从 2026-10-05 起给 12 个微服务各钉了一个 tag——
+# 只核对第一条就等于"11 个 pin 可以静默落后一个版本"，而那正是 §32.9 记过的那一类
+# （声明与产物脱节）。所以再加一层：**全部**匹配都必须等于 appVersion。
+# 计数为 0 判红：模式失配时本节在空转，"绿"没有意义。
+check_all_kv() {
+    local file="$1" pattern="$2" label="$3"
+    local hits v n=0 m=0 bad_vals="" lineno content
+    hits="$(grep -nE "$pattern" "$file" 2>/dev/null || true)"
+    if [[ -z "$hits" ]]; then
+        bad "${label}：在 ${file} 没匹配到任何 ${pattern}（扫描面塌了，判红）"
+        return
+    fi
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        n=$((n + 1))
+        # grep -n 的前缀是 "行号:"；带上行号报点，否则判红只说"有一处不对"，
+        # 下一次 bump 的人还得自己去找是哪一行——门禁的输出也是交付物。
+        lineno="${line%%:*}"
+        content="${line#*:}"
+        # 只剥掉第一对引号之间的值：不 eval、不用 sed 反向引用拼命令，避免值里有特殊字符时炸开。
+        v="${content#*\"}"; v="${v%%\"*}"
+        if [[ "$v" != "$CHART_VERSION" ]]; then
+            m=$((m + 1)); bad_vals="${bad_vals} ${file}:${lineno}=${v}"
+        fi
+    done <<< "$hits"
+    if [[ "$m" -eq 0 ]]; then
+        ok "${label}：${n} 处 tag 全部 = ${CHART_VERSION}"
+    else
+        bad "${label}：${n} 处里有 ${m} 处不等于 ${CHART_VERSION}:${bad_vals}"
+    fi
+}
+check_all_kv deploy/helm/opsmesh/values-production.yaml     '^[[:space:]]*tag:[[:space:]]*"' "values-production 全部镜像 tag"
+check_all_kv deploy/gitops/segments/production-segment.yaml '^[[:space:]]*tag:[[:space:]]*"' "gitops production-segment 全部镜像 tag"
 # internal/version 的默认值也在版本源之列：`opsmesh --version` 与 GET /version 在
 # **源码直构**（无 -ldflags 注入）时回的就是它，2026-10-04 实测它比 Chart.yaml 落后一整版
 # （0.11.0 vs 0.12.0）而门禁毫无反应——第 1 节当时只比对清单，不知道二进制里也写着一个版本。
