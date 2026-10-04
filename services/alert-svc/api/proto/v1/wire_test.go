@@ -20,8 +20,19 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/Levango7/OpsMesh/pkg/grpcwire"
 	alertv1 "github.com/Levango7/OpsMesh/services/alert-svc/api/proto/v1"
 )
+
+// TestAllMethodsCrossCodec 逐条把本包所有 unary 方法的请求与响应过一遍真 codec
+// （其余 5 个服务同形态，见各自 wire_test.go）。上面的 typed 往返只覆盖一条方法，
+// 而 #59 的缺陷是"每一条都失败"，所以覆盖必须是全量而不是抽样。
+func TestAllMethodsCrossCodec(t *testing.T) {
+	if got := grpcwire.AssertUnaryMethodsCrossCodec(t, "opsmesh.alert.v1"); got != 11 {
+		t.Fatalf("只覆盖到 %d 条 unary 方法，与本包 .proto 的条数不符——说明有方法没真过 codec，或包名/生成物漂移", got)
+	}
+	grpcwire.AssertGeneratedFilesLookGenerated(t, "alert.pb.go", "alert_grpc.pb.go")
+}
 
 // stubServer 只实现本测试需要的一条方法，其余由生成的 Unimplemented* 兜底。
 type stubServer struct {

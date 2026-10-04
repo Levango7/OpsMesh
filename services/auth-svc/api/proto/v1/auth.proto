@@ -101,6 +101,12 @@ message TokenResponse {
   string refresh_token = 2;
   int64 expires_in = 3;
   User user = 4;
+  // must_change_password / change_password_token 是"首登强制改密"这条安全特性的载体
+  // （HTTP 侧字段名 mustChangePassword / changePasswordToken，前端 stores/auth.js 与
+  // ChangePasswordView 依赖它们）。此前手写 struct 里有这两个字段而 .proto 没有，
+  // 于是 gRPC 契约里它们根本不存在——补回来，否则重新生成后这条链路会静默丢字段。
+  bool must_change_password = 5;
+  string change_password_token = 6;
 }
 
 // LogoutRequest is the request to logout.
