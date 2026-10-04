@@ -3,8 +3,11 @@ package cmdb
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/fulltext"
 )
 
 // MemoryCiStore 内存实现 CMDB 存储（单机 MVP）。
@@ -17,6 +20,12 @@ type MemoryCiStore struct {
 	templates map[int]CiAttrTemplate // id -> template
 	tmplSeq   int
 	seq       int
+
+	// idx 是 CI 全文检索的倒排索引，键为 CI ID。
+	// 只做候选召回（精确判定由 matchCI 负责），因此它与 items 短暂不一致时
+	// 最坏结果是"漏召回"——SearchCIs 会在发现条目数对不上时全量重建来兜底。
+	// 它有自己的锁，不与 s.mu 嵌套持有（避免与写入路径形成 AB-BA）。
+	idx *fulltext.Index[string]
 }
 
 // NewMemoryCiStore 构造内存 CMDB 存储并初始化内置 CI 类型。
@@ -26,6 +35,7 @@ func NewMemoryCiStore() *MemoryCiStore {
 		items:     make(map[string]CiItem),
 		rels:      make(map[int64]CiRelation),
 		templates: make(map[int]CiAttrTemplate),
+		idx:       fulltext.NewIndex[string](),
 	}
 	now := time.Now()
 	for _, t := range []struct{ name, display string }{
@@ -120,10 +130,19 @@ func (s *MemoryCiStore) CreateCI(_ context.Context, ci *CiItem) error {
 		ci.ApprovalStatus = ApprovalApproved
 	}
 	s.items[ci.ID] = *ci
+	s.indexCILocked(ci)
 	return nil
 }
 
-// GetCIsByApproval 按审批状态列出 CI（Phase-3 待审列表）。
+// indexCILocked 同步一条 CI 到检索索引（调用方持 s.mu 写锁）。
+// 索引为 nil 时（例如测试里直接组装 store 而没走构造函数）跳过，
+// 由 SearchCIs 发现条目数不一致后全量重建。
+func (s *MemoryCiStore) indexCILocked(ci *CiItem) {
+	if s.idx == nil {
+		return
+	}
+	s.idx.Add(ci.ID, ciSearchText(ci))
+}
 func (s *MemoryCiStore) GetCIsByApproval(_ context.Context, approvalStatus, tenantID string) ([]CiItem, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -174,6 +193,8 @@ func (s *MemoryCiStore) UpdateCI(_ context.Context, ci *CiItem) error {
 		ci.Attrs = existing.Attrs
 	}
 	s.items[ci.ID] = *ci
+	// 更新必须重新入索引：名称/属性变了，旧的 posting 会让检索命中已不存在的内容。
+	s.indexCILocked(ci)
 	return nil
 }
 
@@ -199,6 +220,92 @@ func (s *MemoryCiStore) GetCIHistory(ctx context.Context, ciID, tenantID string,
 		return nil, err
 	}
 	return []CiItem{*item}, nil
+}
+
+// === 全文检索 ===
+
+// SearchCIs 按检索词做全文本检索（见 internal/cmdb/search.go 的设计说明）。
+//
+// 两段式：先用倒排索引前缀展开召回候选（超集），再用 matchCI 精确判定与排序。
+func (s *MemoryCiStore) SearchCIs(_ context.Context, tenantID string, q CiSearchQuery) ([]CiSearchHit, error) {
+	tokens, mode, limit, status := normalizeCiSearch(q)
+	if len(tokens) == 0 {
+		return []CiSearchHit{}, nil
+	}
+	s.mu.RLock()
+	if s.idx == nil || s.idx.Size() != len(s.items) {
+		s.mu.RUnlock()
+		// 索引缺失，或条目数与 items 对不上（有写入路径绕过了索引维护）。
+		// 升级为写锁全量重建：漏召回比慢一次严重得多。
+		s.mu.Lock()
+		s.rebuildSearchIndexLocked()
+		defer s.mu.Unlock()
+	} else {
+		defer s.mu.RUnlock()
+	}
+	return s.searchCIsLocked(tokens, mode, limit, tenantID, q.CiType, status), nil
+}
+
+// rebuildSearchIndexLocked 按当前 items 全量重建检索索引（调用方持 s.mu 写锁）。
+func (s *MemoryCiStore) rebuildSearchIndexLocked() {
+	idx := fulltext.NewIndex[string]()
+	for _, it := range s.items {
+		idx.Add(it.ID, ciSearchText(&it))
+	}
+	s.idx = idx
+}
+
+// searchCIsLocked 在持锁状态下完成"召回 → 过滤 → 打分 → 排序 → 截断"。
+func (s *MemoryCiStore) searchCIsLocked(tokens []string, mode CiSearchMode, limit int, tenantID, ciType, status string) []CiSearchHit {
+	ids := s.candidateIDsLocked(tokens)
+	hits := make([]CiSearchHit, 0, len(ids))
+	for _, id := range ids {
+		it, ok := s.items[id]
+		if !ok {
+			continue
+		}
+		if !ciMatchesFilter(&it, tenantID, ciType, status) {
+			continue
+		}
+		score, matched := matchCI(&it, tokens, mode)
+		if score <= 0 {
+			continue
+		}
+		hits = append(hits, CiSearchHit{CiItem: it, Score: score, Matched: matched})
+	}
+	sortCiSearchHits(hits)
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits
+}
+
+// candidateIDsLocked 用倒排索引做候选召回：各检索词前缀展开后取并集。
+//
+// 并集对 all / any / phrase 三种模式都是命中集合的超集（交集 ⊆ 并集），
+// 所以一种召回逻辑即可服务全部模式，最终判定交给 matchCI。
+func (s *MemoryCiStore) candidateIDsLocked(tokens []string) []string {
+	if s.idx == nil {
+		// 无索引：退化为全量扫描，宁可慢也不能漏结果。
+		out := make([]string, 0, len(s.items))
+		for id := range s.items {
+			out = append(out, id)
+		}
+		sort.Strings(out)
+		return out
+	}
+	seen := make(map[string]struct{})
+	for _, tok := range tokens {
+		for _, id := range s.idx.SearchPrefix(tok) {
+			seen[id] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Strings(out) // 候选有序，配合 sortCiSearchHits 的 ID 兜底保证结果稳定
+	return out
 }
 
 // === Phase 2: 关系拓扑 ===

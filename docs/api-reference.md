@@ -1772,6 +1772,43 @@ CI 实例列表。
 
 - **响应**：`201 Created`
 
+### GET /api/v1/cmdb/ci/search
+
+CI 全文检索（2026-10-05 新增）。按相关度降序返回命中项。
+
+- **权限**：`cmdb:read`
+- **查询参数**：
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `q` | 是 | 检索词。中英文混合；按分词**前缀**匹配（`web` 命中 `web-01` 与 `webserver`），中文按字切分 |
+| `type` | 否 | 按 CI 类型过滤 |
+| `status` | 否 | 按状态过滤，默认 `active` |
+| `limit` | 否 | 返回条数上限，默认 50，上限 500 |
+| `mode` | 否 | `all`（默认，全部词命中）/ `any`（任一词命中）/ `phrase`（须连续出现在同一字段内） |
+
+- **检索范围**：`name`、`ciType`、`attrs`（键与值）、`id`、`agentID`、`deviceID`、`source`
+- **已知限制**：SQL 后端召回窗口上限 1000 条候选，超出部分不参与排序；彻底解决需为 `ci_items` 建 FULLTEXT 索引。
+
+- **响应**：`200 OK`
+
+```json
+[
+  {
+    "id": "ci-1",
+    "ciType": "machine",
+    "name": "web-01",
+    "status": "active",
+    "attrs": {"ip": "10.0.0.1"},
+    "score": 6.0,
+    "matched": ["web"]
+  }
+]
+```
+
+`score` 为字段加权相关度（`name` 3.0 / `attrs` 2.0 / `ciType` 1.5 / 标识类 1.0，词频取对数饱和）；
+`matched` 为命中的检索词，供前端高亮。
+
 ### GET /api/v1/cmdb/ci/{id}
 
 CI 实例详情。

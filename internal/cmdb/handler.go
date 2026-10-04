@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,6 +66,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/cmdb/ci", h.authorize(h.handleCIs, "cmdb:read", "cmdb:write"))
 	mux.HandleFunc("/api/v1/cmdb/types", h.authorize(h.handleCITypes, "cmdb:read", "cmdb:write"))
 	// Phase 3: 导入导出 + 待审列表（比 /ci/ 子树更具体，优先匹配）
+	mux.HandleFunc("/api/v1/cmdb/ci/search", h.authorize(h.handleCISearch, "cmdb:read", "cmdb:write"))
 	mux.HandleFunc("/api/v1/cmdb/ci/export", h.authorize(h.handleCIExport, "cmdb:read", "cmdb:write"))
 	mux.HandleFunc("/api/v1/cmdb/ci/import", h.authorize(h.handleCIImport, "cmdb:read", "cmdb:write"))
 	mux.HandleFunc("/api/v1/cmdb/ci/pending", h.authorize(h.handleCIPending, "cmdb:read", "cmdb:write"))
@@ -356,6 +358,62 @@ func (h *Handler) handleCIImport(w http.ResponseWriter, r *http.Request) {
 		"updated": updated,
 		"errors":  errs,
 	})
+}
+
+// === 全文检索 ===
+
+// handleCISearch 处理 GET /api/v1/cmdb/ci/search。
+//
+// 查询参数：
+//   - q（必填）：检索词，支持中英文混合；按分词前缀匹配 name/ciType/attrs/id/agentID/deviceID/source
+//   - type：按 CI 类型过滤
+//   - status：按状态过滤，默认 active（与列表接口口径一致）
+//   - limit：返回条数上限，默认 50，上限 500
+//   - mode：all（默认，全部词命中）/ any（任一词命中）/ phrase（须连续出现在同一字段）
+//
+// 响应为 CiSearchHit 数组，按 score 降序。
+func (h *Handler) handleCISearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	actx := authctx.FromHTTPHeader(r.Header)
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "q required"})
+		return
+	}
+	limit := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		n, convErr := strconv.Atoi(raw)
+		if convErr != nil || n <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid limit"})
+			return
+		}
+		limit = n
+	}
+	mode := CiSearchMode(r.URL.Query().Get("mode"))
+	switch mode {
+	case "", SearchModeAll, SearchModeAny, SearchModePhrase:
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid mode: use all|any|phrase"})
+		return
+	}
+	hits, err := h.store.SearchCIs(r.Context(), actx.TenantID, CiSearchQuery{
+		Query:  query,
+		CiType: r.URL.Query().Get("type"),
+		Status: r.URL.Query().Get("status"),
+		Limit:  limit,
+		Mode:   mode,
+	})
+	if err != nil {
+		writeInternalError(w, "SearchCIs", err)
+		return
+	}
+	if hits == nil {
+		hits = []CiSearchHit{}
+	}
+	writeJSON(w, http.StatusOK, hits)
 }
 
 // handleCIPending 处理 GET /api/v1/cmdb/ci/pending。

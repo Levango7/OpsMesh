@@ -119,9 +119,9 @@
 | 联邦 | gRPC (mTLS) | 9090 | 跨控制面任务转发/设备视图同步 |
 | Metrics | HTTP | 9091 | Prometheus 指标采集（HTTP 延迟/Go runtime） |
 
-### internal 包职责（37 个）
+### internal 包职责（38 个）
 
-> 完整设计见 `docs/module-design.md`。下表按 8 个领域分组列出 37 个 internal 包的职责简述。
+> 完整设计见 `docs/module-design.md`。下表按 8 个领域分组列出 38 个 internal 包的职责简述。
 >
 > ⚠️ 计数口径：**只数 `internal/` 下真实存在的目录**（CI 的 `Verify internal package count`
 > 门禁会拿 `find internal -maxdepth 1 -type d` 与本节标题里的数字对账，三处必须一致）。
@@ -161,7 +161,8 @@
 
 | 包 | 职责 |
 |---|---|
-| `internal/cmdb` | 配置库 CMDB（M2）：模型 + 实例 CRUD + SQL + 采集 + 关系图谱 + 变更审批 |
+| `internal/cmdb` | 配置库 CMDB（M2）：模型 + 实例 CRUD + SQL + 采集 + 关系图谱 + 变更审批 + 全文检索 |
+| `internal/fulltext` | 通用检索原语（2026-10-05 从 logstore 下沉）：中英文混合分词 + 泛型倒排索引（`Index[K]`）+ TF-IDF，被 `logstore` 与 `cmdb` 共用 |
 | `internal/logstore` | 日志检索（M6）：双后端（Memory/SQL）+ 外部后端（Loki/ES）+ 倒排索引 + offset 分页 |
 | `internal/alertengine` | 告警规则引擎：多条件匹配 + Z-Score/EWMA 异常检测 + 静默 + 抑制 + 聚合 + 通知分发 |
 | `internal/notify` | 通知渠道：Webhook / 飞书 / 钉钉 / 企业微信 / Slack / 邮件（SMTP）+ 通知模板 |
@@ -224,8 +225,8 @@
 | | ↳ 设备指纹采集 | 🟡 **仅认证侧，非设备台账（2026-10-05 复核）**：`DeviceFP` 由 UA+IP+TLS 计算并绑定 refresh token（`auth_login.go:265/296`），属**登录会话设备绑定**；`server_devices.go` 与设备台账侧**零命中**，即设备详情里没有独立指纹字段/采集。若按"设备资产指纹"理解会落空 | `internal/controlplane/auth_login.go` |
 | 2 | **任务执行** | Shell 命令 / 系统服务管理（systemctl）/ 文件分发（原子写入 + rename）/ 超时自动中止（exec.CommandContext）/ 失败重试 + 死信队列 / 任务取消（pending 拦截 + running 强杀）/ 定时周期调度（5 字段 cron）/ 批量下发 / 租约回收 / 审批门禁 | ✅ | `internal/controlplane/server_tasks.go`、`internal/agent/`、`internal/cron/` |
 | 3 | **监控告警** | 任务死信 → critical 告警 / 告警面板 + HTTP 查询 / 告警规则引擎（多条件 + 静默 + 抑制 + 聚合）/ Webhook/飞书/钉钉/企业微信/Slack/邮件多通道 / 告警规则 CRUD / 通知模板 | ✅ | `internal/controlplane/server_alerts.go`、`internal/alertengine/`、`internal/notify/` |
-| 4 | **CMDB** | 模型 + 实例 CRUD + SQL 持久化 + 采集自动化 / 关系图谱可视化（SVG 力导向图，含 force/topology/list 三模式）/ 变更审批流 | ✅ 全文本检索**除外，见下行** | `internal/cmdb/`、`internal/controlplane/cmdb_*.go` |
-| | ↳ 全文本检索倒排索引（TF-IDF + 短语/布尔/通配符） | ❌ **未实现（2026-10-05 复核）**：全仓 `TF-IDF`/`tfidf`/`InvertedIndex` 只命中 `internal/logstore/`（日志模块确有倒排索引引擎），`internal/cmdb/` 与 `internal/controlplane/cmdb_*.go` 下**零命中**且无任何检索端点 —— 该行系从日志模块漂移而来。当前 CMDB 检索只有列表/过滤，无全文检索 | `internal/logstore/inverted.go`（**属日志，非 CMDB**） |
+| 4 | **CMDB** | 模型 + 实例 CRUD + SQL 持久化 + 采集自动化 / 关系图谱可视化（SVG 力导向图，含 force/topology/list 三模式）/ 变更审批流 | ✅ | `internal/cmdb/`、`internal/controlplane/cmdb_*.go` |
+| | ↳ 全文本检索 | ✅ **2026-10-05 补齐**（此前该行系从日志模块漂移而来）：检索范围 `name`/`ciType`/`attrs`（键与值）/`id`/`agentID`/`deviceID`/`source`，字段加权打分；支持前缀匹配（`web` 命中 `webserver`）、中英文混合（中文按字切分）、`all`/`any`/`phrase` 三种模式；端点 `GET /api/v1/cmdb/ci/search`。分词与倒排索引下沉到 `internal/fulltext/`，与日志检索共用同一实现；**命中判定与排序只有一份打分器**，故 Memory / SQL 两后端结果一致（有门禁测试对账）。已知限制：SQL 后端受"不改 `ci_items` 表结构"约束，召回走 `LIKE` 子串匹配且窗口上限 1000 条，彻底解决需建 FULLTEXT 索引 | `internal/cmdb/search.go`、`internal/fulltext/` |
 | 5 | **日志检索** | 双后端（Memory/SQL）+ 外部后端（Loki/ES）/ offset 分页 / 关键词 + 级别 + 时间窗过滤 / agent gRPC 上报日志 / 倒排索引 | ✅ | `internal/logstore/` |
 | 6 | **编排部署** | 服务部署计划 + fan-out 执行 + Reconcile + Rollback / 三策略（rolling/canary/bluegreen）/ 发布门禁（失败率/延迟阈值）+ 自动回滚 + Promote 拥级 / 灰度自适应推进 / 多集群联邦发布 | ✅ | `internal/deploy/`、`internal/controlplane/server_deploy.go` |
 | 7 | **OS 优化** | 14+ 预置模板（内核/网络/安全/时间同步/SSH/磁盘/系统/用户）/ 在线 CRUD / 在指定 agent 执行 / 模板 store 持久化 + 幂等 seed | ✅ | `internal/controlplane/os_optimize.go` |
@@ -705,6 +706,7 @@ Agent 端多控制面 failover：`--control-addrs="cp1:9090,cp2:9090"`，客户�
 | GET | `/api/v1/alerts` | 告警列表（M7） |
 | GET | `/api/v1/audits` | 审计事件（可查：?tenant=&action=&from=&to=&limit=） |
 | \* | `/api/v1/cmdb/*` | CMDB 配置项：模型 / 实例 CRUD + 采集（M2） |
+| GET | `/api/v1/cmdb/ci/search` | CMDB 全文检索：`?q=`（必填）+ `type` / `status` / `limit` / `mode=all\|any\|phrase`，返回按相关度降序的命中（`score` + `matched`） |
 | \* | `/api/v1/workflows/*` | 作业编排：DAG 创建 / 触发 / 状态查询（M5） |
 | \* | `/api/v1/deploys/*` | 服务部署：计划 / fan-out 执行 / Reconcile / Rollback（M3） |
 | GET | `/api/v1/logs` | 日志检索：双后端(Memory/SQL) + offset 分页（M6） |
@@ -1096,7 +1098,7 @@ internal/                 ← 37 个包，按 8 个领域分组（详见上文"i
 ├── authctx/              ← HTTP 头 / gRPC metadata 身份提取
 ├── automation/           ← 自动化闭环引擎（规则条件→动作 + 多类型触发器）
 ├── circuitbreaker/       ← 通用熔断器（Closed→Open→HalfOpen 状态机）
-├── cmdb/                 ← 配置库 CMDB（M2）：模型 + 实例 CRUD + SQL + 采集 + 关系图谱
+├── cmdb/                 ← 配置库 CMDB（M2）：模型 + 实例 CRUD + SQL + 采集 + 关系图谱 + 全文检索
 ├── compliance/           ← 安全合规检查引擎（CIS Benchmark 基线 + 扫描编排）
 ├── config/               ← 统一配置（133 个 flag + env 兜底）
 ├── controlplane/         ← 控制面（HTTP 路由/gRPC server/Registry/dashboard + 14 个功能域 handler）
@@ -1109,6 +1111,7 @@ internal/                 ← 37 个包，按 8 个领域分组（详见上文"i
 ├── egress/               ← 出网策略唯一实现（SSRF 三层防护 + allowPrivate 语义收口）
 ├── events/               ← 可插拔事件总线（noop/log/kafka）
 ├── extension/            ← API 网关引擎（路由规则 + 令牌桶限流 + 网关统计）
+├── fulltext/             ← 通用检索原语：中英文混合分词 + 泛型倒排索引 + TF-IDF（logstore 与 cmdb 共用）
 ├── gates/                ← 跨模块结构性门禁（只有测试：静默退内存、幻影 HPA 指标、包数对账）
 ├── grpcx/                ← gRPC ServiceDesc / JSON codec / 消息类型
 ├── helm/                 ← Helm 应用商店（仓库/Chart/Release + 24 个预置应用）

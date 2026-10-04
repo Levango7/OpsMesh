@@ -75,6 +75,7 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构：
 | 35 | extension | 其他 | API 网关引擎：路由规则匹配 + 令牌桶限流 + 统计聚合 | `RouteRule`/`RateLimiter`/`GatewayStats` | — | ✓ |
 | 36 | platform | 其他 | 平台化业务引擎：租户管理 + API Key + 插件市场 + 计费 | `Tenant`/`APIKey`/`SubscriptionPlan`/`Plugin` | — | ✓ |
 | 37 | gates | 其他 | 跨模块结构性门禁（包内只有测试）：静默退内存、幻影 HPA 指标、包数三方对账 | `TestNoSilentSQLFallbackInServiceMains`/`TestHPAPodMetricsMustBeProduced` | 无（仅测试） | ✓ |
+| 38 | fulltext | 数据 | 通用检索原语（2026-10-05 从 logstore 下沉）：中英文混合分词 + 泛型倒排索引 + TF-IDF + 前缀检索 | `Tokenize`/`Index[K]`/`NewIndex[K]` | 无（零依赖） | ✓✓ |
 
 ## 第3章 详细设计
 
@@ -767,7 +768,7 @@ M6 日志检索：集中采集 agent / 任务 / 系统日志，支持按租户 /
 - `NewMemoryWithIndex(cap) *MemoryLogStore`：启用倒排索引的内存后端
 - `NewSQL(db) (*SQLLogStore, error)`：MySQL 后端
 - `NewLokiStore(endpoint)`/`NewESStore(endpoint, index)`：Loki/ES 后端
-- `InvertedIndex`：倒排索引
+- `InvertedIndex`：倒排索引（2026-10-05 起为 `internal/fulltext.Index[int64]` 的类型别名——实现已下沉到 `fulltext`，与 CMDB 检索共用同一份分词与打分，详见 §3.4.x fulltext）
 
 **核心数据结构**
 
@@ -1728,12 +1729,13 @@ OpsMesh 包依赖遵循"核心 → 领域 → 基础"自顶向下分层，避免
 | alertengine | 6 | 4 | ~2000 |
 | notify | 9 | 6 | ~2500 |
 | approval | 6 | 5 | ~2000 |
-| cmdb | 5 | 1 | ~1500 |
+| cmdb | 6 | 4 | ~1900 |
 | cron | 6 | 5 | ~1500 |
 | orchestration | 4 | 5 | ~1500 |
 | deploy | 6 | 4 | ~2000 |
 | helm | 5 | 5 | ~1500 |
 | logstore | 10 | 5 | ~2500 |
+| fulltext | 2 | 1 | ~700 |
 | k8s | 2 | 2 | ~500 |
 | discovery | 6 | 4 | ~800 |
 | config | 1 | 4 | ~1500 |
@@ -1769,4 +1771,4 @@ OpsMesh 包依赖遵循"核心 → 领域 → 基础"自顶向下分层，避免
 
 ---
 
-文档版本：v1.2  |  生成日期：2026-08-17  |  更新日期：2026-10-04  |  覆盖包数：37  |  维护者：OpsMesh 技术文档工程师
+文档版本：v1.2  |  生成日期：2026-08-17  |  更新日期：2026-10-04  |  覆盖包数：38  |  维护者：OpsMesh 技术文档工程师

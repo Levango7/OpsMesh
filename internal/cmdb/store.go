@@ -26,6 +26,15 @@ type CiStore interface {
 	// 属性历史
 	GetCIHistory(ctx context.Context, ciID, tenantID string, limit int) ([]CiItem, error)
 
+	// === 全文检索 ===
+
+	// SearchCIs 按检索词做全文本检索，返回按相关度降序的命中列表。
+	//
+	// 检索范围：name / ciType / attrs（键与值）/ id / agentID / deviceID / source。
+	// 两个后端（Memory / SQL）的召回方式不同，但命中判定与排序共用同一个打分器，
+	// 因此同一查询在两个后端必须得到相同的结果与顺序。
+	SearchCIs(ctx context.Context, tenantID string, q CiSearchQuery) ([]CiSearchHit, error)
+
 	// === Phase 2: 关系拓扑 ===
 
 	// CreateRelation 创建 CI 间关系。

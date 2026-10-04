@@ -36,6 +36,13 @@
 
 **①（插件运行时模型：Go plugin / WASM / 独立进程+RPC）仍开放，不替产品拍板。** ②③④ 是①任意方案的公共前置。
 
+## 本侧 2026-10-05 追加完成（CMDB 全文检索）
+
+- **新增 `internal/fulltext/`**：把 `internal/logstore/inverted.go` 的分词器与倒排索引下沉为泛型共享包（`Index[K cmp.Ordered]`）。logstore 改为类型别名委托，**对外 API 与既有测试一字未改**（已实测 `go test ./internal/logstore/` 通过）。
+- **`internal/cmdb/search.go`（新）**：`CiSearchQuery`/`CiSearchHit` + 字段加权打分器 `matchCI`；`CiStore` 接口新增 `SearchCIs`，Memory / SQL 两后端各自实现。
+- **端点**：`GET /api/v1/cmdb/ci/search`（`cmdb:read`）。
+- **不碰 `internal/store/**`**：`ci_items` 表定义在 `internal/store/migrations/` 下，故 SQL 后端**零 schema 变更**（用 `LIKE` 召回），FULLTEXT 索引作为后续项另行规划，不在本轮动迁移文件。
+
 ---
 
 ## 需要双方注意的耦合点（唯一交叉面）

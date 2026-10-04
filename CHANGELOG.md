@@ -342,6 +342,16 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
 
 **依赖与门禁**：axios `1.19.0 → 1.20.0`（Trivy 刷新库后 7 条 HIGH 均有修复版本，非本次代码引入）；`validate-deploy-assets.sh` 新增第 12 节（业务指标标签/命名，防实体 ID 基数）与第 13 节（引导脚本不得建表 + compose 库名必须有建库来源）。
 
+## [Unreleased] — 2026-10-05 CMDB 全文检索：把能力表里那行 ❌ 补成真实能力
+
+- **实装｜CMDB 此前没有任何全文检索**（同日能力表清查结论：全仓 `TF-IDF`/`InvertedIndex` 只命中 `internal/logstore/`，`internal/cmdb/` 零命中且无检索端点，该行系从日志模块漂移而来）。本批补成可用能力：检索范围覆盖 `name`/`ciType`/`attrs`（键与值）/`id`/`agentID`/`deviceID`/`source`，按字段加权打分（`name` 3.0 / `attrs` 2.0 / `ciType` 1.5 / 标识类 1.0，词频取对数饱和），支持**前缀匹配**（敲 `web` 能命中 `webserver` 这种未切分的整词）、中英文混合（中文按字切分）、`all`/`any`/`phrase` 三种模式。端点 `GET /api/v1/cmdb/ci/search?q=&type=&status=&limit=&mode=`，走 `cmdb:read` 权限，租户隔离与其它 CMDB 端点同口径。
+- **分词与倒排索引下沉到 `internal/fulltext/`**（泛型 `Index[K cmp.Ordered]`），`internal/logstore/inverted.go` 改为类型别名委托，**对外 API 与既有测试一字未改**。理由是避免两套分词/打分规则漂移：这类漂移既没有编译期也没有测试期信号，只能靠人工比对发现，而它一旦发生，"同一查询在两个模块结果不同"会表现为偶发的、无法复现的"检索不准"。
+- **两后端口径一致的保证方式**：Memory 用倒排索引前缀展开召回，SQL 用 `LIKE` 子串匹配召回，**召回只需是命中集合的超集**，最终判定与排序统一由 `matchCI` 完成。打分器只有一份，因此后端切换不会改变结果；新增 `TestSQLAndMemoryBackendsAgree` 用同一批语料喂两个后端逐条比对 ID 与得分。
+- **两条门禁（都是针对"最容易悄悄腐烂的环节"）**：
+  - `TestGateSearchIndexEquivalentToBruteForce`：200 条随机语料 × 20 个查询 × 3 种模式 × 6 组过滤，逐条比对"索引召回"与"暴力扫描"的 ID 与得分。将来任何人新增一条写入 CI 的路径却忘了同步索引，召回漏项会立刻转红——这是本次实现最大的风险点（索引漏项表现为"某些 CI 搜不到"，很难被人工发现）。
+  - `TestGateSQLLikeRecallIsSuperset`：验证"凡是 `matchCI` 命中的 token，必定是某列原始文本的子串"。SQL 后端不存索引，召回全靠 `LIKE`；这条性质一旦破坏，SQL 后端就会静默漏掉整类 CI，而 **sqlmock 永远测不出来**（mock 直接返回我们塞进去的行，召回环节被短路了）。
+- **刻意接受的取舍（都写进了代码注释，不是遗漏）**：① **不做任何 schema 变更**——`ci_items` 表在 `internal/store/migrations/` 下（另一条工作线的地盘），所以 SQL 召回只能走 `LIKE`，且窗口上限 `ciSearchSQLRecallCap=1000`，候选过多时最相关的少数 CI 可能落在窗口外；彻底解决需建 FULLTEXT 索引（属迁移变更，另行规划）。② SQL 召回**不加 `ESCAPE` 转义** `'%'`/`'_'`——未转义只会放宽匹配（超集仍成立），省掉转义同时规避不同驱动对 `ESCAPE` 子句的语法差异。③ 短语模式要求词**落在同一字段内**连续，跨字段相邻（`nginx` 在 `name`、`prod` 在 `attrs`）不算短语。④ 属性键按字典序遍历后再拼文本——map 遍历顺序随机，不排序会让短语检索结果不可复现。
+
 ## [Unreleased] — 2026-10-05 TD-62 宿主接线：让「可插拔扩展」从框架变成能力（决策点 ②③④，①仍开放）
 
 - **实装｜插件框架此前零宿主触发，`internal/plugin` 的 Manager 从未被控制面调用过**：`FireHook(` / `RegisterHook(` 在 `internal/controlplane/` 下**零调用点**，唯一调用者是示例 `plugins/hello/hello.go`（自己建 Manager、自己 fire，属自证）。结果是 README 宣称的"不改核心代码扩展控制面行为"**不是产品能力**——客户接入任何扩展都得先自己补宿主接线。本批把三个决策点中**不需要产品拍板的三项**做完：
@@ -351,7 +361,7 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
 - **为什么①（运行时模型）仍然开放**：Go plugin 跨版本/跨平台极不可靠、WASM 需引运行时并重定义安全模型、独立进程+RPC 契约最稳但工作量最大——这是架构选型，不替产品拍板。**②③④ 是①任意一种方案的公共前置**：无论插件最终以什么形态加载，都要通过本批的 `firePluginHook` 被触发。
 - **一处设计取舍**：`task.preClaim` 阻断时 `ClaimTask` 返回 `nil` 而非错误——与"当前无待领任务"同形，**不向 agent 泄露"你有任务但被策略拦了"**（准入策略本身不应被探测），拒绝原因只进服务端日志。
 - **能力表清查｜对 README 全部 ✅ 做符号级复核，抓出 3 处「声称与实现不符」**（2026-10-05）。方法：对每个高风险项（复杂度高、最易部分实现）做**两条独立检索**再下结论——本项目此前已出现过 4 次同类问题（插件执行层、链路追踪、SSO、密钥轮转），碰一个改一个不如一次性清查。三项均**不改动**其余子声明（其余经核实属实：CMDB 的 CRUD/持久化/采集/力导向图/审批流、编排的 auto_advance 与自动回滚、工作流的条件分支与子工作流）：
-  - **CMDB 全文本检索倒排索引（TF-IDF + 短语/布尔/通配符）→ ❌ 未实现**：全仓 `TF-IDF`/`tfidf`/`InvertedIndex` 只命中 `internal/logstore/`（**日志模块**确有倒排索引引擎 `inverted.go`），`internal/cmdb/` 与 `internal/controlplane/cmdb_*.go` 下零命中，且无任何检索端点。**该行系从日志模块漂移而来**——复制能力描述时的典型文档漂移形态。
+  - **CMDB 全文本检索倒排索引（TF-IDF + 短语/布尔/通配符）→ ❌ 未实现**：全仓 `TF-IDF`/`tfidf`/`InvertedIndex` 只命中 `internal/logstore/`（**日志模块**确有倒排索引引擎 `inverted.go`），`internal/cmdb/` 与 `internal/controlplane/cmdb_*.go` 下零命中，且无任何检索端点。**该行系从日志模块漂移而来**——复制能力描述时的典型文档漂移形态（**已于同日补齐为真实能力，见上方「CMDB 全文检索」块**）。
   - **工作流「执行历史回放」→ 拆开**：执行历史本身有（`ListRuns`/`CreateRun`/`UpdateRun`），但**回放未实现**——全仓 `func.*[Rr]eplay` 零命中。原表述把"有历史"和"可回放"合成一项，易被读成"可回看并重跑"。
   - **设备管理「设备指纹采集」→ 🟡 归属澄清**：`DeviceFP` 由 UA+IP+TLS 计算并绑定 refresh token，属**登录会话设备绑定**（`auth_login.go:265/296`）；`server_devices.go` 与设备台账侧零命中。按"设备资产指纹"理解会落空。
 - **过程中的两次自伤（都靠"还原后复跑"才暴露，记下来是因为这类错误比没做更危险）**：① 门禁第一版**只做单向对账**（清单里⇒有触发点），变异检验时"从清单删掉一个已接线的扩展点"门禁仍是绿的——删了反而没东西可查。改为双向后才堵住。② 改双向时两侧 key 形态不一致（正则捕获 `HookConfigPreSet`，映射表却返回 `plugin.HookConfigPreSet`），导致门禁**恒红**；而当时两个变异都"判红"，看起来像门禁有效——**只有还原后再跑一次才发现是假阳性**。结论：变异检验必须包含"还原后复绿"这一步，否则恒红的门禁会被误判成有效的门禁。

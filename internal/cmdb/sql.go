@@ -239,6 +239,96 @@ func (s *SQLCiStore) GetCIHistory(ctx context.Context, ciID, tenantID string, li
 	return []CiItem{*ci}, nil
 }
 
+// === 全文检索 ===
+
+// ciSearchColumns 是 SQL 召回阶段参与 LIKE 匹配的列表达式。
+//
+// 必须与 ciSearchText 覆盖的字段集合严格一致，否则会出现"内存后端搜得到、
+// SQL 后端搜不到"的口径分裂。JSON 列 attrs 需显式 CAST 成字符串再做 LIKE。
+var ciSearchColumns = []string{"name", "ci_type", "CAST(attrs AS CHAR)", "agent_id", "device_id", "source", "id"}
+
+// SearchCIs 按检索词做全文本检索（见 internal/cmdb/search.go 的设计说明）。
+//
+// 约束：ci_items 表结构在 internal/store/migrations 下，本次实现**不做任何 schema 变更**，
+// 所以用 LIKE 子串匹配做召回，精确判定与排序仍统一交给 matchCI。
+//
+// 两个刻意的取舍：
+//   - 不加 ESCAPE 转义 '%' 与 '_'：未转义只会放宽匹配，而召回只需是命中集合的超集；
+//     省掉转义同时规避了不同驱动对 ESCAPE 子句的语法差异。
+//   - 召回窗口是 ciSearchSQLRecallCap：候选过多时，最相关的少数 CI 可能落在窗口外。
+//     彻底解决需要 FULLTEXT 索引（属 migrations 变更，另行规划）。
+func (s *SQLCiStore) SearchCIs(ctx context.Context, tenantID string, q CiSearchQuery) ([]CiSearchHit, error) {
+	tokens, mode, limit, status := normalizeCiSearch(q)
+	if len(tokens) == 0 {
+		return []CiSearchHit{}, nil
+	}
+	sqlText := `SELECT id, ci_type, tenant_id, name, status, approval_status, attrs, source, agent_id, device_id, version, created_at, updated_at
+	FROM ci_items WHERE 1=1`
+	var args []interface{}
+	if tenantID != "" {
+		sqlText += " AND tenant_id=?"
+		args = append(args, tenantID)
+	}
+	if status != "" {
+		sqlText += " AND status=?"
+		args = append(args, status)
+	}
+	if q.CiType != "" {
+		sqlText += " AND ci_type=?"
+		args = append(args, q.CiType)
+	}
+	// 每个检索词都必须至少命中一个列（AND across tokens）。
+	for _, tok := range tokens {
+		sqlText += " AND ("
+		for i, col := range ciSearchColumns {
+			if i > 0 {
+				sqlText += " OR "
+			}
+			sqlText += col + " LIKE ?"
+			args = append(args, "%"+tok+"%")
+		}
+		sqlText += ")"
+	}
+	sqlText += " ORDER BY updated_at DESC LIMIT ?"
+	args = append(args, ciSearchSQLRecallCap)
+
+	rows, err := s.db.QueryContext(ctx, sqlText, args...)
+	if err != nil {
+		return nil, fmt.Errorf("SearchCIs: %w", err)
+	}
+	defer rows.Close()
+	var hits []CiSearchHit
+	for rows.Next() {
+		item, err := scanCI(rows)
+		if err != nil {
+			return nil, err
+		}
+		// 租户/类型/状态在 SQL 里已经过滤过一遍，这里再判一次：
+		// 租户隔离值得多一道防线——将来谁改了 WHERE 拼装或参数绑定，
+		// 少这一层就是静默的跨租户数据泄漏；而它只对候选集做一次 O(1) 判断。
+		// 附带收益：SQL 与 memory 两个后端的过滤口径因此完全等价。
+		if !ciMatchesFilter(item, tenantID, q.CiType, status) {
+			continue
+		}
+		score, matched := matchCI(item, tokens, mode)
+		if score <= 0 {
+			continue
+		}
+		hits = append(hits, CiSearchHit{CiItem: *item, Score: score, Matched: matched})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("SearchCIs rows: %w", err)
+	}
+	if hits == nil {
+		hits = []CiSearchHit{}
+	}
+	sortCiSearchHits(hits)
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits, nil
+}
+
 // scanner 接口统一 row 与 rows 的 Scan。
 type scanner interface {
 	Scan(dest ...interface{}) error
