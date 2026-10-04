@@ -1711,6 +1711,8 @@ OpsMesh 包依赖遵循"核心 → 领域 → 基础"自顶向下分层，避免
 ### 5.5 可观测性
 
 - **链路追踪**：OTel SDK + gRPC/HTTP 自动埋点 + W3C Trace Context 透传
+  （**埋点与导出✅，查询❌**：出厂 collector 的 traces pipeline 只接 `logging` exporter、无 Jaeger/Tempo，
+  且非错误/非慢请求仅 10% 抽样 ⇒ 能看 span 计数，不能打开调用链图。详见 TD-75）
 - **分布式可观测**：日志/SSE 事件/审计日志自动关联 OTel trace_id
 - **指标**：零依赖 Prometheus 文本格式 + HTTP 请求延迟直方图 + Go runtime 指标
 - **事件总线**：noop/log/kafka 三实现 + 事件信封含 SchemaVersion 跨版本演进

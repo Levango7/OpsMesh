@@ -342,6 +342,28 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
 
 **依赖与门禁**：axios `1.19.0 → 1.20.0`（Trivy 刷新库后 7 条 HIGH 均有修复版本，非本次代码引入）；`validate-deploy-assets.sh` 新增第 12 节（业务指标标签/命名，防实体 ID 基数）与第 13 节（引导脚本不得建表 + compose 库名必须有建库来源）。
 
+## [Unreleased] — 2026-10-05 三项技术债收口：TD-76 版本可观测面 / TD-63 契约对账 / TD-75 口径收口
+
+按「风险可控、收益明显、兼容性要协调、可持续性不能有问题」四条排序执行。**动过的每一项都先验证是否已被做过**——TD-63 的低成本缓解其实上一轮已完成（锚注释 + 字段数一致性测试都在），故本批不重复做，而是把它从数字对账升级为字段名对账。
+
+- **修｜TD-76：12 个微服务注入的版本号此前既读不出、也根本没生效**（`pkg/metrics`，一处改动覆盖全部 12 个服务）：
+  - 缺可观测面：`Dockerfile.service:60` 用 `-ldflags -X …/internal/version.Version=${VERSION}` 注入版本，但微服务没有 `/version` 端点也没有 `build_info` 类指标，`/health` 只回纯文本 `ok` ⇒ **不 exec 进容器就无法确认某个微服务在跑哪个版本**。
+  - 更根本的一条（本次才发现）：`go list -deps ./cmd/alert-svc` 里 `internal/version` 计数为 **0** —— 服务压根没链入该包，而 Go 链接器对**未链入包的 `-X` 静默忽略**。也就是说那行注入**一直是空转的**，正是 `internal/version` 自己在注释里记过的那个坑。
+  - 修法：`pkg/metrics.Init` 注册 `opsmesh_build_info{service,version,commit}`（值恒为 1、信息全在标签，Prometheus 生态通行做法），并 import `internal/version` 使其进入链接闭包、让既有 `-ldflags` 真正生效。**不改 `/health` 的既有判定**——那是健康探针契约，不为版本让路。
+  - 实测：默认构建 `opsmesh_build_info{...,version="0.12.0",...}`；带 `-ldflags` 构建 `version="9.9.9-verify"`。13 个服务模块 `go build ./...` 全通过。
+  - **刻意不做**：`/version` HTTP 端点（需改 12 处 `main.go`，收益低于 gauge 方案）。
+- **补强｜TD-63：Task 双 schema 门禁从「字段数」升级为「字段名集合双向对账」**（`internal/proto/task_schema_test.go`）。原有测试在文件头**自陈了局限**：「两边可能字段数相同但字段集不同（一侧加 X 删 Y），浅校验无法发现」——本次正是补这个洞。
+  - 做法：解析 `task.proto` 的 `message Task` 字段名 + 反射 `proto.Task` 的 json tag，统一归一化（转小写、去下划线，消除 `claimed_at` / `claimedAt` 差异）后**双向**求差集。双向而非单向：只查单侧的话把另一侧字段删掉也能判绿。
+  - 另加自检：任一侧解析结果塌成空集即判红（防扫描面塌陷后门禁空转），并断言"字段名解析"与"字段数解析"看到同一份数据（防两处解析逻辑悄悄分叉）。
+  - **变异检验**：把 `BatchID` 的 json tag 改成 `batchCode`（字段数不变、字段名漂移）⇒ 旧测试 **PASS**（25=25，漏洞坐实）、新测试 **FAIL** 并精确报出 `[batchid]` vs `[batchcode]`；还原后复绿且 `model.go` md5 一致。
+- **修｜TD-75：链路追踪口径在 `docs/architecture.md` 与 `docs/module-design.md` 收口**。这两处只写「链路追踪：OpenTelemetry」，客户扫一眼会当成"能打开调用链图"。已补注：埋点与导出 ✅、**查询 ❌**（collector 的 traces pipeline 只接 `logging` exporter、无 Jaeger/Tempo、非错误/非慢请求仅 10% 抽样）。README 能力表那行上一轮已改为 🟡，`docs/operations.md` / `docs/release-notes.md` 已是如实口径，本次不重复改。
+- **未做，并说明原因（不越界）**：
+  - **CMDB 检索的 FULLTEXT 索引**：`ci_items` 表定义在 `internal/store/migrations/` 下（属另一条工作线地盘），而本仓只有**一套**迁移机制；另建 `internal/cmdb/migrations/` 会引入第二套迁移系统，可持续性更差。故本轮维持"零 schema 变更"的 LIKE 召回 + 1000 条窗口，已在 README 写明限制与解法。需要动迁移时先走协调。
+  - **TD-62 ① 插件运行时模型**：`docs/tech-debt.md` 明写"需产品决策，勿擅自定"，三种路线（Go plugin / WASM / 独立进程+RPC）牵涉运行时依赖与安全模型重定义，不自行拍板。
+  - **TD-77 端口/健康路径统一**：涉及 `*_SVC_PORT` 与 `*_SVC_HTTP_PORT` 的兼容过渡，需先定过渡期策略，风险高于前三项，留待下一轮。
+
+验证：`gofmt` 全仓干净；`go build ./...` 与 13 个服务模块均 RC=0；`internal/proto`、`pkg/metrics`、`internal/gates` 全绿；`git status internal/store/` = 0。
+
 ## [Unreleased] — 2026-10-05 CMDB 全文检索：把能力表里那行 ❌ 补成真实能力
 
 - **实装｜CMDB 此前没有任何全文检索**（同日能力表清查结论：全仓 `TF-IDF`/`InvertedIndex` 只命中 `internal/logstore/`，`internal/cmdb/` 零命中且无检索端点，该行系从日志模块漂移而来）。本批补成可用能力：检索范围覆盖 `name`/`ciType`/`attrs`（键与值）/`id`/`agentID`/`deviceID`/`source`，按字段加权打分（`name` 3.0 / `attrs` 2.0 / `ciType` 1.5 / 标识类 1.0，词频取对数饱和），支持**前缀匹配**（敲 `web` 能命中 `webserver` 这种未切分的整词）、中英文混合（中文按字切分）、`all`/`any`/`phrase` 三种模式。端点 `GET /api/v1/cmdb/ci/search?q=&type=&status=&limit=&mode=`，走 `cmdb:read` 权限，租户隔离与其它 CMDB 端点同口径。

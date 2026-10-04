@@ -449,7 +449,7 @@ stateDiagram-v2
 | 序列化 | JSON codec + pb stub 双轨 | JSON codec 是当前正式契约；pb stub 在 `internal/grpcx/pb/` 供未来 buf 工具链迁移；tech-selection §3 已记录取舍 |
 | 事件总线 | noop/log/kafka 可插拔 | 默认 noop 零开销；log 供调试；kafka 供规模化异步解耦 |
 | 日志后端 | Memory/SQL/Loki/ES 可插拔 | 默认 Memory 零依赖；SQL 持久化；Loki/ES 对接外部栈 |
-| 链路追踪 | OpenTelemetry | HTTP + gRPC 自动埋点；trace_id 贯穿 agent→控制面→store；endpoint 空时 no-op |
+| 链路追踪 | OpenTelemetry | HTTP + gRPC 自动埋点；trace_id 贯穿 agent→控制面→store；endpoint 空时 no-op。**查询侧不在出厂交付内**：collector 的 traces pipeline 只接 `logging` exporter，仓库内无 Jaeger/Tempo，且 `tail_sampling` 对非错误/非慢请求只留 10% ⇒ 当前能给的是 span 计数，不是一张调用链图（TD-75） |
 | 配置 | 133 个 flag + env 兜底 | 命令行 flag 优先、`OPSMESH_` 前缀环境变量兜底；生产模式 fail-fast 校验 |
 | 部署 | 单二进制 + Helm + systemd + docker-compose | 单二进制 30 秒体验；Helm Chart 17 模板生产部署；systemd 裸机；compose 一键 |
 

@@ -36,6 +36,16 @@
 
 **①（插件运行时模型：Go plugin / WASM / 独立进程+RPC）仍开放，不替产品拍板。** ②③④ 是①任意方案的公共前置。
 
+## 跨线需求：CMDB 检索要建 FULLTEXT 索引，需动 `internal/store/migrations`（**未动手，等协调**）
+
+- **诉求**：`ci_items` 的 SQL 召回目前走 `LIKE` 子串匹配 + 1000 条候选窗口（因本轮刻意"零 schema 变更"）。要消除窗口限制、让中文属性可被索引召回，需要在该表上建 `FULLTEXT INDEX ... WITH PARSER ngram`。
+- **为什么不自己做**：
+  1. `ci_items` 的 DDL 在 `internal/store/migrations/001_initial.sql`，属 TD-61 地盘；
+  2. 本仓**只有一套**迁移机制。在 `internal/cmdb/` 下另建一套迁移会引入**第二套迁移系统**——那比窗口限制更不可持续，直接否决。
+  3. 正确做法是新增一个迁移文件（如 `0xx_add_ci_fulltext.sql`），而这必须由动 `internal/store/**` 的一方来做，或经其同意。
+- **请求对方（或后续协调时）**：在 `internal/store/migrations/` 新增一条迁移，为 `ci_items` 加 `FULLTEXT INDEX ... WITH PARSER ngram`（覆盖 `name` / `ci_type` / `attrs` / `agent_id` / `device_id`）。加完后本侧只需把 `internal/cmdb/sql.go` 的召回从 `LIKE` 换成 `MATCH ... AGAINST`，**打分器与结果口径不变**（`matchCI` 不动，故两后端一致性不受影响）。
+- **在此之前**：本侧维持现状，限制已如实写进 README 能力表与 `docs/api-reference.md`，不会对客户过度声称。
+
 ## 本侧 2026-10-05 追加完成（CMDB 全文检索）
 
 - **新增 `internal/fulltext/`**：把 `internal/logstore/inverted.go` 的分词器与倒排索引下沉为泛型共享包（`Index[K cmp.Ordered]`）。logstore 改为类型别名委托，**对外 API 与既有测试一字未改**（已实测 `go test ./internal/logstore/` 通过）。

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/version"
 )
 
 func TestRegistryRecordAndRender(t *testing.T) {
@@ -442,6 +444,45 @@ func TestInitOverwrite(t *testing.T) {
 	out := defaultRegistry.render()
 	if strings.Contains(out, "/a") {
 		t.Fatalf("re-init should clear old metrics\n---%s", out)
+	}
+}
+
+// TestRenderBuildInfo 覆盖版本可观测面（TD-76）：
+// 12 个微服务此前没有任何能读出自身版本的面（/health 只回纯文本 "ok"），
+// 交付核验时只能 exec 进容器。这里保证 /metrics 里一定有 build_info。
+func TestRenderBuildInfo(t *testing.T) {
+	Init("test-svc")
+	out := defaultRegistry.render()
+
+	for _, want := range []string{
+		"# TYPE opsmesh_build_info gauge",
+		`opsmesh_build_info{service="test-svc"`,
+		`version="`,
+		`commit="`,
+		"} 1",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render() 缺少 %q\n---\n%s", want, out)
+		}
+	}
+	// 值必须是 1：build_info 是"信息载体"，拿它做 rate()/sum() 没有意义。
+	if !strings.Contains(out, `commit="`+defaultRegistry.commit+`"} 1`) {
+		t.Errorf("build_info 的值应为 1（信息全在标签里）:\n%s", out)
+	}
+}
+
+// TestBuildInfoVersionComesFromLinkedPackage 守住"注入真的生效"这条前提：
+// 若 internal/version 没被链进二进制，-ldflags -X 会被链接器静默忽略，
+// 于是 build_info 里的 version 永远是源码默认值——面有了，内容却是假的。
+// 本包 import internal/version 正是为了让服务链上它（go list -deps 可复核）。
+func TestBuildInfoVersionComesFromLinkedPackage(t *testing.T) {
+	Init("test-svc")
+	if defaultRegistry.version == "" {
+		t.Fatal("version 为空：internal/version 未链入或 Version 被清空")
+	}
+	if defaultRegistry.version != version.Version {
+		t.Errorf("registry.version=%q 与 internal/version.Version=%q 不一致",
+			defaultRegistry.version, version.Version)
 	}
 }
 

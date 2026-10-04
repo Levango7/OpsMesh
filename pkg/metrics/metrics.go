@@ -6,6 +6,7 @@
 //   - http_request_duration_seconds{method,path} - Histogram
 //   - active_connections - Gauge（由 HTTPMiddleware 按在途请求真实喂数）
 //   - service_info{service} - Gauge=1（Init 传入的服务名，用于区分同名序列的来源）
+//   - opsmesh_build_info{service,version,commit} - Gauge=1（进程自证版本，见 Init 注释）
 //   - business_metrics{name,...} - Gauge（Set 语义：当前值）
 //   - business_metrics_total{name,...} - Counter（Add 语义：自进程启动以来的累计量）
 //
@@ -26,6 +27,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/version"
 )
 
 // Default histogram buckets (seconds), matching prometheus.DefBuckets.
@@ -48,8 +51,12 @@ const (
 
 // Registry holds all metric state.
 type Registry struct {
-	mu       sync.Mutex
-	service  string
+	mu      sync.Mutex
+	service string
+	// version / commit 是进程自证版本的**标签值来源**（渲染进 opsmesh_build_info）。
+	// 取自 internal/version，由构建期 -ldflags -X 注入。
+	version  string
+	commit   string
 	reqTotal map[string]uint64          // "method|path|status" -> count
 	reqHist  map[string]*histogramStats // "method|path" -> histogram
 	conn     int64                      // active connections
@@ -81,9 +88,17 @@ var defaultRegistry *Registry
 //
 // 服务名会渲染成 service_info{service="..."}——以前这个参数只是存进字段再没人读，
 // 等于一个"声明了但从不生效"的哑按钮（与 §22 抓到的 --skip-images 同类）。
+//
+// 同时把 internal/version 的 Version/Commit 落进 opsmesh_build_info（TD-76）：
+// 12 个微服务是用 Dockerfile.service 的 -ldflags 把 version.Version 编进二进制的，
+// 但此前**服务根本没链进 internal/version**（`go list -deps ./cmd/alert-svc` 里
+// 该包计数为 0），链接器对未链入包的 -X **静默忽略**——那行注入一直是空转。
+// 本包被全部 12 个服务引用，在此 import 即让注入真正生效，并给出可查面。
 func Init(serviceName string) {
 	defaultRegistry = &Registry{
 		service:    serviceName,
+		version:    version.Version,
+		commit:     version.Commit,
 		reqTotal:   make(map[string]uint64),
 		reqHist:    make(map[string]*histogramStats),
 		business:   make(map[string]businessEntry),
@@ -443,6 +458,15 @@ func (r *Registry) render() string {
 	b = append(b, "# HELP service_info Constant 1 carrying the service name given to Init.\n"...)
 	b = append(b, "# TYPE service_info gauge\n"...)
 	b = append(b, fmt.Sprintf("service_info{service=%q} 1\n", r.service)...)
+
+	// --- opsmesh_build_info ---
+	// 版本可观测面（TD-76）：不 exec 进容器就该知道某个微服务在跑哪个版本。
+	// 值恒为 1、信息全在标签里（Prometheus 生态 build_info 的通行做法），
+	// 且**不触碰 /health 的既有判定**——那是健康探针契约，不为版本让路。
+	b = append(b, "# HELP opsmesh_build_info Build metadata of this process (value is always 1; info lives in labels).\n"...)
+	b = append(b, "# TYPE opsmesh_build_info gauge\n"...)
+	b = append(b, fmt.Sprintf("opsmesh_build_info{service=%q,version=%q,commit=%q} 1\n",
+		r.service, sanitizeLabelValue(r.version), sanitizeLabelValue(r.commit))...)
 
 	// --- active_connections ---
 	b = append(b, "# HELP active_connections Current number of in-flight HTTP requests.\n"...)
