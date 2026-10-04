@@ -223,7 +223,8 @@ if ! cert_key_match "$DIR/tls.crt" "$DIR/tls.key"; then
     exit 1
 fi
 
-if ! openssl x509 -in "$DIR/tls.crt" -noout -text 2>/dev/null | grep -q "DNS:localhost"; then
+certtext="$(openssl x509 -in "$DIR/tls.crt" -noout -text 2>/dev/null || true)"
+if ! grep -q "DNS:localhost" <<<"$certtext"; then
     log_error "证书 SAN 异常（未包含 localhost），请检查 openssl 版本与配置模板"
     exit 1
 fi

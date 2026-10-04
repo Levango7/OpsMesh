@@ -108,7 +108,8 @@ jobs:
           # 重试——影子评估全程空库，对照失效。检测到回退即重启容器直到 SQL 生效。
           for i in $(seq 1 6); do
             sleep 5
-            if docker compose -f docker-compose.shadow-observe.yaml logs task-svc 2>&1 | grep -q "MySQL store 已启用"; then
+            svclogs="$(docker compose -f docker-compose.shadow-observe.yaml logs task-svc 2>&1 || true)"
+            if grep -q "MySQL store 已启用" <<<"$svclogs"; then
               echo "task-svc SQL store 生效（第 $i 次检测）"; break
             fi
             echo "task-svc 未连上 MySQL（第 $i 次），重启容器重试..."

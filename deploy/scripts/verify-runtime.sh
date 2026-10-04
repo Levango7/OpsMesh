@@ -43,7 +43,7 @@ missing=""
 for c in $(docker ps --filter name=opsmesh --format '{{.Names}}'); do
   pb="$(docker inspect "$c" --format '{{len .HostConfig.PortBindings}}' 2>/dev/null)"
   ns="$(docker inspect "$c" --format '{{json .NetworkSettings.Ports}}' 2>/dev/null)"
-  if [ -n "$pb" ] && [ "$pb" != "0" ] && ! printf '%s' "$ns" | grep -q 'HostPort'; then
+  if [ -n "$pb" ] && [ "$pb" != "0" ] && ! grep -q 'HostPort' <<<"$ns"; then
     missing="$missing ${c#opsmesh-}"
   fi
 done
@@ -75,6 +75,53 @@ METRICS_CIDR="$(env_val METRICS_ALLOW_CIDR)"
 [ -z "$METRICS_CIDR" ] && METRICS_CIDR="127.0.0.0/8,172.28.0.0/16（compose 默认）"
 echo "  METRICS_ALLOW_CIDR=${METRICS_CIDR}"
 
+# metrics_snapshot：取一份**完整**的控制面 /metrics 文本。
+#
+# 为什么需要"完整性判据"而不是"非空判据"：抓取有两条路径（docker exec 进 prometheus 容器 wget，
+# 回退到宿主 curl）。2026-10-04 为"某序列不存在"的间歇性判红在这里反复量过四轮，最终定位到
+# 元凶最终查明是**判定写法本身**（`printf … | grep -q` 撞上 pipefail 的 SIGPIPE 假阴性，见下面的写法约定）。
+# process_cpu_seconds_total 由进程采集器无条件产出且位于渲染**末尾**，尾部缺失即快照被截过。
+metrics_snapshot() {
+  local body=""
+  for _i in 1 2 3 4 5; do
+    body="$(docker exec opsmesh-prometheus wget -qO- --timeout=8 http://controlplane:9091/metrics 2>/dev/null)"
+    if [ -z "$body" ]; then
+      body="$(curl -sS --max-time 8 "http://127.0.0.1:${MP}/metrics" 2>/dev/null)"
+    fi
+    if grep -qE '^process_cpu_seconds_total ' <<<"$body"; then
+      printf '%s' "$body"
+      return 0
+    fi
+    sleep 1
+  done
+  printf '%s' "$body"
+  return 1
+}
+
+# dump_snapshot <名字> <快照>：把"当次读到的那一份"落盘并打印路径。
+# 间歇性"某序列不存在"只有拿着那份快照才判得清是渲染没产出、读取被截，还是判定写法有问题；
+# 没有 artifact 时所有解释都只是猜测（本轮为此多跑了四轮脚本）。
+dump_snapshot() {
+  d="/tmp/opsmesh-verify-$1-$(date -u +%Y%m%dT%H%M%SZ).txt"
+  printf '%s\n' "$2" > "$d"
+  echo "         当次快照已存 ${d}（$(wc -l < "$d") 行）"
+}
+
+# 写法约定（本脚本、以及 deploy.sh / validate-deploy-assets.sh 都适用）：
+# **判定已捕获的字符串时不许用管道**，一律 `grep -q PAT <<<"$var"`。
+#
+# 原因不是风格问题而是退出码。本脚本开头是 `set -uo pipefail`，而原先到处写着
+# `printf '%s' "$var" | grep -q PAT`：grep -q 命中后**立刻退出**，printf 还在写就被 SIGPIPE 打死，
+# 管道退出码变成 141；pipefail 把它升格成"整条管道失败" ⇒ **命中了却判成没命中**。
+# 2026-10-04 用同一份 679 行 /metrics 快照实测（样式确实在第 27 行）：
+#   带 pipefail ⇒ 连续 10 次全部 MISS；去掉 pipefail ⇒ 连续 10 次全部 HIT。
+# 之所以此前"有时是绿的"：快照体积在 64KB 管道缓冲区附近来回，样式位置又各不相同，
+# 于是同一台机器连跑两次能给出**不同的**"缺序列清单"——这种假红会把人一路引向"产品缺指标"，
+# 本轮就为此多跑了四轮脚本才定位到判定写法。
+# herestring 由 bash 落成临时文件供 grep 读取：没有管道、没有生产者可被 SIGPIPE 打死，
+# 行首锚 `^` 的语义与原来逐字一致（刻意不改用 `[[ == *… ]]`：那是整串子串匹配，
+# `^opsmesh_http_metrics_series` 这类锚会失效，而指标名互为前缀时就会假命中）。
+
 # 3a 8080 公开端点：来源在白名单内 → 200；不在 → 403（fail-closed，属预期而非缺陷）。
 mcode="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' "$CP/metrics" 2>/dev/null)"
 case "$mcode" in
@@ -84,59 +131,83 @@ case "$mcode" in
 esac
 
 # 3b 9091 独立 metrics 端口：Prometheus 抓取路径必须可达（monitoring 网段，走容器内抓取最稳）。
-mbody="$(docker exec opsmesh-prometheus wget -qO- --timeout=8 http://controlplane:9091/metrics 2>/dev/null)"
-[ -z "$mbody" ] && mbody="$(curl -sS --max-time 8 "http://127.0.0.1:${MP}/metrics" 2>/dev/null)"
+mbody="$(metrics_snapshot)" || bad "9091 /metrics 快照残缺（尾部哨兵缺失，重试 5 次仍不完整）——本节按不可信处理"
 if [ -z "$mbody" ]; then
   bad "9091 /metrics 抓取为空（Prometheus → controlplane:9091 与宿主 127.0.0.1:${MP} 均失败）"
 else
-  ok "9091 /metrics 可抓取（$(printf '%s' "$mbody" | wc -l | tr -d ' ') 行）"
-  sline="$(printf '%s\n' "$mbody" | grep -E '^opsmesh_http_metrics_series [0-9]+$' | head -1)"
+  ok "9091 /metrics 可抓取（$(printf '%s\n' "$mbody" | wc -l | tr -d ' ') 行，尾部哨兵完整）"
+  sline="$(grep -E '^opsmesh_http_metrics_series [0-9]+$' <<<"$mbody" | head -1)"
   if [ -z "$sline" ]; then
     bad "缺少 opsmesh_http_metrics_series（P1-5 基数熔断自观测未生效）"
+    dump_snapshot metrics-3b "$mbody"
   else
     nseries="${sline##* }"
     [ "$nseries" -le 2000 ] && ok "HTTP 指标时序数 ${nseries} ≤ 2000（基数硬上限生效）" \
                              || bad "HTTP 指标时序数 ${nseries} > 2000（基数上限失效！）"
   fi
-  printf '%s\n' "$mbody" | grep -q '^opsmesh_http_metrics_series_dropped_total [0-9]' \
-    && ok "折叠计数器 opsmesh_http_metrics_series_dropped_total 已暴露（超限请求可观测）" \
-    || bad "缺少 opsmesh_http_metrics_series_dropped_total（超限请求不可观测）"
+  if grep -q '^opsmesh_http_metrics_series_dropped_total [0-9]' <<<"$mbody"; then
+    ok "折叠计数器 opsmesh_http_metrics_series_dropped_total 已暴露（超限请求可观测）"
+  else
+    bad "缺少 opsmesh_http_metrics_series_dropped_total（超限请求不可观测）"
+    dump_snapshot metrics-3b "$mbody"
+  fi
 fi
 
 # 3c 路径归一化（基数护栏第一层）：超长/危险字符段与超长整体路径必须折叠，绝不原样入标签。
 probe="$(printf 'zzprobe-%058d' 0)"      # 66 字节 > 48 上限，且含独特前缀
 longpath="$(printf '/%0220d' 0)"         # 221 字节 > 200 上限
-curl "${K[@]}" -o /dev/null --max-time 8 "${CP}/api/v1/${probe}" 2>/dev/null
-curl "${K[@]}" -o /dev/null --max-time 8 "${CP}${longpath}" 2>/dev/null
-mbody2="$(docker exec opsmesh-prometheus wget -qO- --timeout=8 http://controlplane:9091/metrics 2>/dev/null)"
-[ -z "$mbody2" ] && mbody2="$(curl -sS --max-time 8 "http://127.0.0.1:${MP}/metrics" 2>/dev/null)"
-if [ -n "$mbody2" ]; then
-  printf '%s\n' "$mbody2" | grep -qF 'path="/api/v1/:id"' \
-    && ok "超长路径段归一化为 path=\"/api/v1/:id\"" \
-    || bad "未观察到 path=\"/api/v1/:id\"（超长段未被归一化）"
-  if printf '%s\n' "$mbody2" | grep -qF "$probe"; then
+probe_code="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' --max-time 8 "${CP}/api/v1/${probe}" 2>/dev/null)"
+long_code="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' --max-time 8 "${CP}${longpath}" 2>/dev/null)"
+echo "  探针返回：超长段=${probe_code:-无响应} 超长整路径=${long_code:-无响应}（折叠标签只在请求真进入埋点链时才会出现）"
+# 最多重试 5 次（每次隔 1s）等两个折叠标签出现：/metrics 的应用级计数带 TTL 缓存
+# （--metrics-cache-ttl 默认 1s，P1-6），探针刚发完就抓有概率读到旧快照。
+# 但**本轮真正的元凶不是缓存**——是 `printf | grep -q` 在 pipefail 下的 SIGPIPE 假阴性，
+# 见文件头"写法约定"；改成 herestring 后这条断言从"偶发假红"变成稳定判定。
+mbody2=""
+for _try in 1 2 3 4 5; do
+  mbody2="$(metrics_snapshot)" || true
+  if grep -qF 'path="/api/v1/:id"' <<<"$mbody2" && grep -qF 'path="/:overlong"' <<<"$mbody2"; then
+    break
+  fi
+  sleep 1
+done
+if [ -z "$mbody2" ]; then
+  bad "3c 拿不到任何 /metrics 快照，无法判定路径归一化（按未验证判红）"
+else
+  if grep -qF 'path="/api/v1/:id"' <<<"$mbody2"; then
+    ok "超长路径段归一化为 path=\"/api/v1/:id\"（探针 HTTP=${probe_code:-?}）"
+  else
+    bad "未观察到 path=\"/api/v1/:id\"（探针 HTTP=${probe_code:-无响应}）——超长段未被归一化，或请求没进入埋点链"
+    dump_snapshot metrics-3c "$mbody2"
+  fi
+  if grep -qF "$probe" <<<"$mbody2"; then
     bad "原始超长路径串泄漏进指标标签（基数护栏失效！）"
+    dump_snapshot metrics-3c-leak "$mbody2"
   else
     ok "原始超长路径未进入指标标签（无标签膨胀）"
   fi
-  printf '%s\n' "$mbody2" | grep -qF 'path="/:overlong"' \
-    && ok "超长整体路径归一化为 path=\"/:overlong\"" \
-    || warn "未观察到 path=\"/:overlong\"（上游可能先行拒绝该请求，非回归）"
+  if grep -qF 'path="/:overlong"' <<<"$mbody2"; then
+    ok "超长整体路径归一化为 path=\"/:overlong\""
+  else
+    # 刻意 warn：整路径超过 200 字节时上游路由可能先返回 404 而不进埋点，
+    # 探针状态码就是区分"折叠没生效"与"请求没到埋点"的那一维。
+    warn "未观察到 path=\"/:overlong\"（探针 HTTP=${long_code:-无响应}；上游先行拒绝则该折叠标签本就不会产生）"
+  fi
 fi
 
 # 3d 生产默认限流（P1-5）：.env 未显式设置时须以 200 req/s/IP 启动（此前默认关闭）。
 rl="$(env_val CB_RATE_LIMIT_PER_SEC)"
 clog="$(docker logs opsmesh-controlplane 2>&1)"
 if [ -z "$rl" ]; then
-  printf '%s' "$clog" | grep -q '生产模式默认启用 API 限流 200' \
+  grep -q '生产模式默认启用 API 限流 200' <<<"$clog" \
     && ok "生产模式默认启用限流 200 req/s/IP（启动期提示可见）" \
     || bad "未见默认限流启动提示（P1-5 默认启用失效）"
-  printf '%s' "$clog" | grep -q 'API 限流已启用' \
+  grep -q 'API 限流已启用' <<<"$clog" \
     && ok "限流器已装载（日志含「API 限流已启用」）" \
     || bad "限流器未装载（生产默认限流未生效）"
 elif [ "$rl" = "0" ]; then
   warn "CB_RATE_LIMIT_PER_SEC=0：限流被显式关闭（下方 429 实测将跳过）"
-  printf '%s' "$clog" | grep -q '生产模式未启用 API 限流' \
+  grep -q '生产模式未启用 API 限流' <<<"$clog" \
     && ok "显式关闭限流时打印告警（可审计）" \
     || warn "显式关闭限流但未见启动告警"
 else
@@ -219,16 +290,16 @@ resp="$(curl "${K[@]}" -X POST "$CP/api/v1/auth/login" \
   -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$PW\"}" 2>/dev/null)"
 echo "  登录响应（脱敏，token 截断）: $(echo "$resp" | sed -E 's/("(token|changePasswordToken|accessToken|refreshToken)"[[:space:]]*:[[:space:]]*")[^"]*/\1<...>/g')"
 forced="no"
-printf '%s' "$resp" | grep -q '"mustChangePassword"[[:space:]]*:[[:space:]]*true' && forced="yes"
+grep -q '"mustChangePassword"[[:space:]]*:[[:space:]]*true' <<<"$resp" && forced="yes"
 hasToken="no"
-printf '%s' "$resp" | grep -qE '"(token|accessToken|refreshToken)"[[:space:]]*:[[:space:]]*"[^"]+"' && hasToken="yes"
+grep -qE '"(token|accessToken|refreshToken)"[[:space:]]*:[[:space:]]*"[^"]+"' <<<"$resp" && hasToken="yes"
 
 case "$flag" in
   1)
     # 库里要求改密（预置口令仍在用 / 首次交付）：必须强制改密、必须发一次性令牌、不得发会话 token
     [ "$forced" = "yes" ] && ok "库内 must_change_password=1 ⇒ API 返回强制改密标记" \
                            || bad "库内要求改密（must_change_password=1）但 API 未标记强制改密（P0-1 回归）"
-    printf '%s' "$resp" | grep -q '"changePasswordToken"' \
+    grep -q '"changePasswordToken"' <<<"$resp" \
         && ok "下发一次性 changePasswordToken" \
         || bad "未下发 changePasswordToken（无法完成强制改密，等于锁死账号）"
     [ "$hasToken" = "no" ] && ok "强制改密期间未下发可用会话 token" \
@@ -238,7 +309,7 @@ case "$flag" in
     # 库里已不需要改密（口令被改过）：不得再卡改密流程，且必须能拿到正常会话 token
     [ "$forced" = "no" ] && ok "库内 must_change_password=0 ⇒ 不再要求改密（标记与真实口令一致）" \
                           || bad "库内不要求改密却返回 mustChangePassword=true（seedRBAC 标记未随口令状态收敛，重启即锁死管理员）"
-    printf '%s' "$resp" | grep -q '"changePasswordToken"' \
+    grep -q '"changePasswordToken"' <<<"$resp" \
         && bad "不需要改密却下发 changePasswordToken" \
         || ok "不需要改密时不下发一次性改密令牌（语义一致）"
     [ "$hasToken" = "yes" ] && ok "已改过口令的账号能拿到会话 token（不被误锁在改密流程）" \
@@ -311,8 +382,11 @@ done
 
 # 软断言：只在事件发生后才会出现的序列，存在就记 PASS，不存在只 WARN。
 # 不断言之所以合理：它们要么等调度 tick、要么等真实丢弃/失败发生，缺席不代表没接线。
-soft() { local svc="$1" port="$2" pat="$3" why="$4"
-  if curl -sS --max-time 8 "http://127.0.0.1:${port}/metrics" 2>/dev/null | grep -qE "$pat"; then
+soft() { local svc="$1" port="$2" pat="$3" why="$4" mtext=""
+  # 先落变量再判：`curl … | grep -q` 在 pipefail 下会因为 grep 早退、curl 被 SIGPIPE 打死而
+  # **假阴性**（微服务 /metrics 有几十 KB，越过管道缓冲就会踩到），见文件头的写法约定。
+  mtext="$(curl -sS --max-time 8 "http://127.0.0.1:${port}/metrics" 2>/dev/null)"
+  if grep -qE "$pat" <<<"$mtext"; then
       ok "${svc} 已产出业务序列 ${pat}（事件驱动，本轮真发生了）"
   else
       warn "${svc} 暂无 ${pat} —— ${why}（缺席不等于未接线，故不判红）"
@@ -386,7 +460,7 @@ print(f'  [{'PASS' if bad==0 else 'FAIL'}] UP={len(ts)-bad} DOWN={bad}')
            log-svc config-svc gpu-svc aio-svc portal-svc runbook-svc autoscaler-svc; do
     # 容忍 `"job":"x"` 与 `"job": "x"` 两种 JSON 排版：Prometheus 自己出的是紧凑形，
     # 但经代理/pretty-print 之后带空格，判据不能靠运气。
-    if ! printf '%s' "$tjson" | grep -qE "\"job\"[[:space:]]*:[[:space:]]*\"${j}\""; then
+    if ! grep -qE "\"job\"[[:space:]]*:[[:space:]]*\"${j}\"" <<<"$tjson"; then
       MISS_JOBS="${MISS_JOBS} ${j}"
     fi
   done
@@ -483,7 +557,7 @@ else
 fi
 # Prometheus 是否真的把 AM 当作活动通知端（这一条断了，规则再对也不会发）。
 am_disc="$(curl -sS --max-time 8 "$PT/api/v1/alertmanagers" 2>/dev/null)"
-if printf '%s' "$am_disc" | grep -q '"activeAlertmanagers":\[{'; then
+if grep -q '"activeAlertmanagers":\[{' <<<"$am_disc" ; then
   ok "Prometheus 有活动 Alertmanager 端点（告警会离开 Prometheus）"
 else
   bad "Prometheus 的 activeAlertmanagers 为空——规则会评估、会 firing，但不会送到任何人"
@@ -494,7 +568,7 @@ fi
 # 而 AM 的 /api/v2/status 会回显整份生效配置（含 pagerduty_url 等默认值），
 # 泛匹配会让"没有外发通道"的栈被误报成"已配置"。
 am_status="$(curl -sS --max-time 8 "http://127.0.0.1:${ALERTMANAGER_PORT:-9094}/api/v2/status" 2>/dev/null)"
-if printf '%s' "$am_status" | grep -q 'webhook_configs:'; then
+if grep -q 'webhook_configs:' <<<"$am_status" ; then
   ok "Alertmanager 已加载外发通道（生效配置里含 webhook_configs 收件段）"
 else
   warn "Alertmanager 无外发通道：告警停在 AM 里，不会转发给任何渠道 —— 在 .env 设 ALERT_WEBHOOK_URL 后重跑 deploy.sh up"
@@ -505,7 +579,7 @@ sec "7e. 外发是否真的落地（用 Alertmanager 自己的计数，不看它
 # 网络不通、 bearer 过期——都只会在**真正出事那条通知**上暴露。AM 暴露了按 integration
 # 维度的发送计数，所以这里直接读它，把"最后一公里"变成可机器判定的事实。
 # 注意口径：这些计数是 **AM 进程启动以来的累计值**（重启即归零），不是本次部署的增量。
-if printf '%s' "$am_status" | grep -q 'webhook_configs:'; then
+if grep -q 'webhook_configs:' <<<"$am_status" ; then
   am_metrics="$(curl -sS --max-time 8 "http://127.0.0.1:${ALERTMANAGER_PORT:-9094}/metrics" 2>/dev/null)"
   got_f="$(printf '%s' "$am_metrics" | grep -E '^alertmanager_alerts_received_total\{status="firing"' | awk '{print $2}' | head -1)"
   sent="$(printf '%s' "$am_metrics" | grep -E '^alertmanager_notifications_total\{integration="webhook"' | awk '{print $2}' | head -1)"
@@ -594,19 +668,32 @@ if [ "${scan_drop:-0}" = "0" ]; then
 else
   bad "近 10 分钟 Alerts 扫描失败 ${scan_drop} 次：alerts 可空列必须用 sql.Null* 读回，否则整行被静默丢弃"
 fi
-sf="$(curl -sS --max-time 8 "http://127.0.0.1:${MP}/metrics" 2>/dev/null \
-    | awk '/^opsmesh_store_write_failures_total /{print $2}')"
+sf="$(metrics_snapshot | awk '/^opsmesh_store_write_failures_total /{print $2}' | head -1)"
+# 判据取"近 10 分钟的增量"而不是累计值，理由是断言的可信度而不是这条计数本身：
+# 它是"进程启动以来累计"，长跑实例迟早非零（DB 抖动、context deadline exceeded 都会进来；
+# 本轮真机就有 74 次这类历史吞错），按累计判红 ⇒ 这一节**永远红** ⇒ 运维学会无视它，
+# 那才是真正的失效。日志侧（scan_drop）本来就是 10 分钟窗口，两侧现在同一个窗口。
+win="$(curl -sS --max-time 8 --get \
+    --data-urlencode 'query=sum(increase(opsmesh_store_write_failures_total[10m]))' \
+    "$PT/api/v1/query" 2>/dev/null \
+    | sed -n 's/.*"value":\[[^,]*,"\([0-9.eE+-]*\)"\].*/\1/p')"
+win_gt0="$(awk -v v="${win:-0}" 'BEGIN{print (v+0>0)?"1":"0"}')"
 if [ -z "$sf" ]; then
   bad "抓取面上没有 opsmesh_store_write_failures_total 序列——吞错无从监控，本节判红（不判跳过）"
 elif [ "$sf" = "0" ] && [ "${scan_drop:-0}" != "0" ]; then
   bad "指标与日志矛盾：日志近 10 分钟有 ${scan_drop} 次吞错，而抓取面 opsmesh_store_write_failures_total=0"
   echo "         ⇒ /metrics 这条装配路径没推该计数（v0.11.0 实测形态：1844 次吞错 vs 指标 0）"
-elif [ "$sf" = "0" ]; then
-  ok "存储层吞错 0（自控制面进程启动以来累计）"
-else
-  bad "存储层累计吞掉 ${sf} 次读写错误：接口不报错，但数据在悄悄丢"
+elif [ -z "$win" ]; then
+  bad "取不到窗口增量（Prometheus 不可达或该序列没被抓取）——按'无法证明没有吞错'判红，不判跳过"
+elif [ "$win_gt0" = "1" ]; then
+  bad "近 10 分钟存储层吞掉 ${win} 次读写（进程累计 ${sf}）：接口不报错，但数据在悄悄丢"
   echo "         定位：docker logs opsmesh-controlplane 2>&1 | grep '\\[store\\]' | tail -20"
   echo "         明细：GET /api/v1/admin/store-failures（需管理员身份；含按操作聚合 + 最近样本）"
+elif [ "$sf" != "0" ]; then
+  ok "近 10 分钟无新增存储层吞错（进程启动以来累计 ${sf} 次，均在窗口之外）"
+  echo "         历史吞错多为 DB 抖动/超时；按操作聚合看：GET /api/v1/admin/store-failures"
+else
+  ok "存储层吞错 0（自控制面进程启动以来累计）"
 fi
 
 sec "9. 反代/入口形态"
@@ -623,20 +710,41 @@ sec "10. 企业版前端内置（P0-3 回归）"
 ehead="$(curl "${K[@]}" -D - -o /dev/null -w '%{http_code}' "$CP/enterprise/" 2>/dev/null)"
 ecode="$(printf '%s' "$ehead" | tail -1)"
 ebody="$(curl "${K[@]}" "$CP/enterprise/" 2>/dev/null)"
+# 授权面决定这一节验什么：社区授权下 /enterprise/ 返回的就是「企业版 · 未授权」说明页
+# （license_gate 的既定契约，见 internal/controlplane/enterprise_ui.go），
+# 此时拿不到 SPA 入口与 assets 引用属**预期**。一律按企业授权去断言，会把交付口径读反成假红
+# （2026-10-04 本机栈就是社区授权，SPA 那条连续判红）。
+lic_hdr="$(grep -i '^x-opsmesh-license:' <<<"$ehead" | tr -d '\r')"
+lic_community=0
+case "$lic_hdr" in *[Cc]ommunity*) lic_community=1 ;; esac
+echo "  X-OpsMesh-License=${lic_hdr:-（未带该头）}"
 
 if [ "$ecode" != "200" ]; then
   bad "GET $CP/enterprise/ → ${ecode:-无响应}（企业版前端未交付：镜像未装配？）"
 else
   ok "GET $CP/enterprise/ → 200"
-  if printf '%s' "$ehead" | grep -qi 'X-OpsMesh-Enterprise-Bundle: *placeholder'; then
+  if grep -qi 'X-OpsMesh-Enterprise-Bundle: *placeholder' <<<"$ehead" ; then
     bad "企业版前端为占位页（镜像构建未装配前端产物，P0-3 回归！）"
-  elif printf '%s' "$ebody" | grep -q 'OPSMESH_ENTERPRISE_BUNDLE_PLACEHOLDER'; then
+  elif grep -q 'OPSMESH_ENTERPRISE_BUNDLE_PLACEHOLDER' <<<"$ebody" ; then
     bad "企业版前端 body 含占位标记（P0-3 回归！）"
   else
-    ok "企业版前端为真实构建产物（非占位页）"
+    if [ "$lic_community" = "1" ]; then
+      # 社区授权下拿到的是未授权说明页，**看不出**镜像里是否真装配了前端产物；
+      # 这一条只在企业授权下才是"非占位"的证明，措辞必须与判据一致。
+      ok "未见占位标记（社区授权下不足以证明已装配真产物，需企业授权才验得到）"
+    else
+      ok "企业版前端为真实构建产物（非占位页）"
+    fi
   fi
   # 入口必须引用 /enterprise/assets/ 下的资源，且首个 JS 资源可 200 取到。
-  if printf '%s' "$ebody" | grep -q '/enterprise/assets/'; then
+  if [ "$lic_community" = "1" ]; then
+    if grep -q '企业版 · 未授权' <<<"$ebody"; then
+      ok "社区授权：/enterprise/ 按契约返回未授权说明页（SPA 资产断言需企业授权，本实例不适用）"
+    else
+      bad "授权头是 community，但页面既不是未授权说明页也没有 SPA 引用（内容来源不明）"
+      dump_snapshot enterprise-community "$ebody"
+    fi
+  elif grep -q '/enterprise/assets/' <<<"$ebody" ; then
     ok "SPA 入口引用 /enterprise/assets/ 资源"
     asset="$(printf '%s' "$ebody" | grep -o '/enterprise/assets/[^"'"'"']*\.js' | head -1)"
     if [ -n "$asset" ]; then
@@ -697,7 +805,8 @@ fi
 # 个人版引导页：已装配时保留企业版入口 CTA（占位时应被服务端剥离，此处仅在 200 时校验）。
 dcode="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' -H 'X-Tenant-ID: default' "$CP/" 2>/dev/null)"
 if [ "$dcode" = "200" ]; then
-  if curl "${K[@]}" -H 'X-Tenant-ID: default' "$CP/" 2>/dev/null | grep -q 'href="/enterprise/"'; then
+  roothtml="$(curl "${K[@]}" -H 'X-Tenant-ID: default' "$CP/" 2>/dev/null)"
+  if grep -q 'href="/enterprise/"' <<<"$roothtml"; then
     ok "个人版引导页提供企业版入口（/enterprise/）"
   else
     warn "个人版引导页未见 /enterprise/ 入口（若前端为占位状态属预期，占位时应剥离 CTA）"
@@ -824,13 +933,12 @@ case "$vcode" in
 esac
 
 # 13e 链自检循环的运行时自观测：leader 每 60s 归档 + 自检，指标须为「已支持且自洽」。
-mbody2="$(docker exec opsmesh-prometheus wget -qO- --timeout=8 http://controlplane:9091/metrics 2>/dev/null)"
-[ -z "$mbody2" ] && mbody2="$(curl -sS --max-time 8 "http://127.0.0.1:${MP}/metrics" 2>/dev/null)"
+mbody2="$(metrics_snapshot)"
 if [ -z "$mbody2" ]; then
-  warn "无法抓取 9091 指标，跳过审计链自观测断言"
+  bad "无法抓取 9091 指标——审计链自观测断言无法执行，按未验证判红（warn 会让这一节在人眼里变成绿的）"
 else
   for m in opsmesh_audit_chain_supported opsmesh_audit_chain_ok opsmesh_audit_chain_checked_rows opsmesh_audit_chain_checks_total; do
-    printf '%s\n' "$mbody2" | grep -q "^${m} [0-9]" && ok "指标 ${m} 已暴露" || bad "缺少指标 ${m}（P1-3 自检不可观测）"
+    if grep -q "^${m} [0-9]" <<<"$mbody2"; then ok "指标 ${m} 已暴露"; else bad "缺少指标 ${m}（P1-3 自检不可观测）"; dump_snapshot metrics-13e "$mbody2"; fi
   done
   ctot="$(printf '%s\n' "$mbody2" | grep -E '^opsmesh_audit_chain_checks_total [0-9]+$' | head -1 | awk '{print $2}')"
   csup="$(printf '%s\n' "$mbody2" | grep -E '^opsmesh_audit_chain_supported [0-9]+$' | head -1 | awk '{print $2}')"
@@ -863,15 +971,19 @@ else
   sigmiss=""
   for a in v1 v2 none unknown; do
     for r in ok rejected; do
-      printf '%s\n' "$mbody3" | grep -q "^opsmesh_agent_signature_verifications_total{alg=\"${a}\",result=\"${r}\"} [0-9]" \
+      grep -q "^opsmesh_agent_signature_verifications_total{alg=\"${a}\",result=\"${r}\"} [0-9]" <<<"$mbody3" \
         || sigmiss="${sigmiss} ${a}/${r}"
     done
   done
   [ -z "$sigmiss" ] && ok "验签指标全标签集已暴露（alg∈{v1,v2,none,unknown} × result∈{ok,rejected}）" \
                     || bad "验签指标缺时序：${sigmiss}（P1-2 可观测性未接线）"
   for s in per_agent fleet; do
-    printf '%s\n' "$mbody3" | grep -q "^opsmesh_agent_signing_key_source_total{source=\"${s}\"} [0-9]" \
-      && ok "密钥来源指标已暴露（source=${s}）" || bad "缺少 opsmesh_agent_signing_key_source_total{source=\"${s}\"}（P1-2）"
+    if grep -q "^opsmesh_agent_signing_key_source_total{source=\"${s}\"} [0-9]" <<<"$mbody3"; then
+      ok "密钥来源指标已暴露（source=${s}）"
+    else
+      bad "缺少 opsmesh_agent_signing_key_source_total{source=\"${s}\"}（P1-2）"
+      dump_snapshot metrics-sig "$mbody3"
+    fi
   done
   # 运行期活性（条件式）：本次部署后若尚无 agent 流量，如实 WARN 而不是伪造 PASS。
   v2ok="$(printf '%s\n' "$mbody3" | grep -E '^opsmesh_agent_signature_verifications_total\{alg="v2",result="ok"\} [0-9]+$' | head -1 | awk '{print $2}')"
@@ -927,7 +1039,7 @@ else
   bad "/version 版本='${got_ver:-空}' 与 .env OPSMESH_VERSION='${want_ver:-空}' 不一致（版本注入未生效？查 Dockerfile 的 -X 包路径是否为模块路径，以及镜像是否由本次 .env 的版本构建）"
 fi
 for f in commit goVersion uptimeSeconds; do
-  if printf '%s' "$ver_body" | grep -q "\"$f\""; then ok "/version 含字段 $f"; else bad "/version 缺字段 $f"; fi
+  if grep -q "\"$f\"" <<<"$ver_body" ; then ok "/version 含字段 $f"; else bad "/version 缺字段 $f"; fi
 done
 
 # 15b 诊断面在出厂形态下默认关闭 / 需鉴权（安全断言：这些面不能对匿名来源开放）
@@ -959,7 +1071,10 @@ done
 # 在真实栈上抓到 alerts/incidents 两处，修复后此处应恒绿。
 sec "16. 集合端点空值形状（null-vs-[] 契约，18 端点）"
 SHAPES_LOG="$(mktemp)"
-if BASE_URL="$CP" bash "$(dirname "$0")/probe-collection-shapes.sh" >"$SHAPES_LOG" 2>&1; then
+# 必须用 ${SCRIPT_DIR}（绝对路径）：本脚本开头已 cd 到 deploy/docker，
+# 而 "$(dirname "$0")" 在从仓库根调用时是**相对**路径 `deploy/scripts`，在新 cwd 下不存在，
+# 于是巡检永远报 "No such file or directory" —— 一条**永远红**的断言（2026-10-04 实测连红四轮）。
+if BASE_URL="$CP" bash "${SCRIPT_DIR}/probe-collection-shapes.sh" >"$SHAPES_LOG" 2>&1; then
   ok "集合端点形状巡检：18 端点全部 200 且为 []/{…:[]}"
 else
   bad "集合端点形状巡检失败（详见 ${SHAPES_LOG}）"

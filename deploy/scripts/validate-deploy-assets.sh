@@ -334,11 +334,11 @@ elif command -v kubeconform >/dev/null 2>&1; then
     #     若无条件按 Errors SKIP，等于给坏清单开后门。
     #   无 Summary 行                                → kubeconform 异常退出，FAIL（不得假绿）。
     kc_schema_msg=0
-    if printf '%s' "$kc_out" | grep -qE 'failed (downloading|parsing) schema'; then
+    if grep -qE 'failed (downloading|parsing) schema' <<<"$kc_out" ; then
         kc_schema_msg=1
     fi
     kc_parse_err=0
-    if printf '%s' "$kc_out" | grep -qE 'error unmarshalling resource'; then
+    if grep -qE 'error unmarshalling resource' <<<"$kc_out" ; then
         kc_parse_err=1
     fi
     if [[ -z "$kc_summary" ]]; then
@@ -615,7 +615,7 @@ done <<< "$RELEASE_SVCS"
 # 反方向同样要判：有 cmd/<name> 布局却不在矩阵里 ⇒ 一个忘发镜像的真服务
 while IFS= read -r d; do
     [[ -n "$d" ]] || continue
-    printf '%s\n' "$RELEASE_SVCS" | grep -qx "$d" && continue
+    grep -qx "$d" <<<"$RELEASE_SVCS" && continue
     [ -d "services/${d}/cmd/${d}" ] && FORGOTTEN="${FORGOTTEN} ${d}"
 done <<< "$DIR_SVCS"
 if [[ -n "${BAD_TARGET// }" ]]; then
@@ -676,7 +676,7 @@ while IFS= read -r svc; do
     [[ -n "$svc" ]] || continue
     grep -qs 'GetHandler()' "services/$svc/cmd/$svc/main.go" || continue
     grep -qE "targets: \[\"${svc}:" "$PROM" && continue
-    printf '%s\n' "$NOT_SCRAPED_EXEMPT" | grep -qw "$svc" && continue
+    grep -qw "$svc" <<<"$NOT_SCRAPED_EXEMPT" && continue
     NOT_SCRAPED="${NOT_SCRAPED} ${svc}"
 done <<< "$(ls services/)"
 if [[ -n "${JOB_MISS// }" ]]; then
@@ -713,7 +713,7 @@ done <<< "$COMPOSE_IN_STACK"
 EXEMPT_CONTRADICTION=""
 while IFS= read -r svc; do
     [[ -n "$svc" ]] || continue
-    printf '%s\n' "$NOT_SCRAPED_EXEMPT" | grep -qw "$svc" || continue
+    grep -qw "$svc" <<<"$NOT_SCRAPED_EXEMPT" || continue
     EXEMPT_CONTRADICTION="${EXEMPT_CONTRADICTION} ${svc}"
 done <<< "$COMPOSE_IN_STACK"
 if [[ -n "${STACK_NO_JOB// }" ]]; then
@@ -928,7 +928,7 @@ AM_HITS=""
 # ① prometheus.yml 的 alerting 段必须存在且未被注释，且指向 alertmanager 服务。
 if ! grep -qE '^alerting:' "$AM_PROM"; then
     AM_HITS="${AM_HITS} prometheus.yml 没有生效的 alerting 段（缺失或被注释＝规则不送达）"
-elif ! grep -A 6 '^alerting:' "$AM_PROM" | grep -qE 'alertmanager:[0-9]+'; then
+elif am_alert="$(grep -A 6 '^alerting:' "$AM_PROM" 2>/dev/null)"; ! grep -qE 'alertmanager:[0-9]+' <<<"$am_alert"; then
     AM_HITS="${AM_HITS} alerting 段里没有 alertmanager 目标"
 fi
 # ② compose 必须真的起 alertmanager，且挂载的是渲染出的配置（不是仓里一份死配置）。

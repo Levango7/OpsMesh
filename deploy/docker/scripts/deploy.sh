@@ -316,7 +316,7 @@ check_tls_certs() {
         # -noout -text 在各 openssl 版本均可用（-ext 需 ≥1.1.1，缺失时会误报无 SAN）
         local san
         if san="$(openssl x509 -in "$crt" -noout -text 2>/dev/null)"; then
-            if ! printf '%s' "$san" | grep -q "DNS:"; then
+            if ! grep -q "DNS:" <<<"$san" ; then
                 log_warn "证书未包含任何 DNS SAN——agent 通过主机名连接时会因名称不匹配握手失败。"
             fi
         fi
@@ -337,7 +337,7 @@ is_self_signed() {
 port_in_use() {
     local port="$1" ports
     if ports="$(listening_ports)"; then
-        printf '%s\n' "$ports" | grep -qx "$port" && return 0
+        grep -qx "$port" <<<"$ports" && return 0
         return 1
     fi
     # 无可用工具（或非 Linux/macOS 的 netstat）：退化为连接测试——能连上即认为被占用
@@ -353,7 +353,7 @@ listening_ports() {
     local raw="" ports=""
     if command -v ss &>/dev/null; then
         raw="$(ss -tln 2>/dev/null || true)"
-        if printf '%s\n' "$raw" | grep -q "LISTEN"; then
+        if grep -q "LISTEN" <<<"$raw"; then
             printf '%s\n' "$raw" | awk 'NR>1 {print $4}' | sed -n 's/.*[:.]\([0-9]\{1,5\}\)$/\1/p'
             return 0
         fi
@@ -1205,7 +1205,8 @@ run_smoke_tests() {
     grpc_port="$(env_val CONTROLPLANE_GRPC_PORT 9090)"
     if command -v openssl &>/dev/null; then
         log_info "控制面 gRPC TLS 握手（127.0.0.1:${grpc_port}）..."
-        if openssl s_client -connect "127.0.0.1:${grpc_port}" -brief </dev/null 2>&1 | grep -qE "CONNECTION ESTABLISHED|Protocol version"; then
+        local schelp=""; schelp="$(openssl s_client -connect "127.0.0.1:${grpc_port}" -brief </dev/null 2>&1 || true)"
+        if grep -qE "CONNECTION ESTABLISHED|Protocol version" <<<"$schelp"; then
             log_ok "gRPC 端口 TLS 握手正常"
         else
             log_warn "gRPC 端口 TLS 握手异常——agent 将无法注册，请检查证书挂载"
@@ -1307,7 +1308,7 @@ check_alert_channel_shape() {
             fi
             ;;
         *)
-            if printf '%s' "$host" | grep -q '\.'; then
+            if grep -q '\.' <<<"$host" ; then
                 log_ok "M7 业务告警外发已启用：${host}（含点的域名，SSRF 闸按其解析结果判定）"
             elif [ "$allow" = "true" ]; then
                 log_ok "M7 业务告警外发已启用：${host}（Docker 服务名，已显式放行内网收件端）。"

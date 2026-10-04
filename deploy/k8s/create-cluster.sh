@@ -47,7 +47,8 @@ check_prerequisites() {
 create_cluster() {
     log_step "Creating Kind cluster '${CLUSTER_NAME}'..."
 
-    if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
+    existing="$(kind get clusters 2>/dev/null || true)"
+    if grep -q "^${CLUSTER_NAME}$" <<<"$existing"; then
         log_warn "Cluster '${CLUSTER_NAME}' already exists. Skipping creation."
     else
         kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}" --wait 120s

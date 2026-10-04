@@ -60,7 +60,8 @@ check_cluster() {
         exit 1
     fi
 
-    if ! kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
+    existing="$(kind get clusters 2>/dev/null || true)"
+    if ! grep -q "^${CLUSTER_NAME}$" <<<"$existing"; then
         log_error "Kind cluster '${CLUSTER_NAME}' not found. Run ./create-cluster.sh first."
         exit 1
     fi

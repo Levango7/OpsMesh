@@ -257,7 +257,7 @@ jobs:
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
           GOBIN="$(go env GOPATH)/bin"
           export PATH="${GOBIN}:$PATH"
-          golangci-lint version | grep -q "2.13.2" || { echo "::error::golangci-lint 版本不是钉死的 2.13.2"; exit 1; }
+          glv="$(golangci-lint version 2>&1)"; grep -q "2.13.2" <<<"$glv" || { echo "::error::golangci-lint 版本不是钉死的 2.13.2"; exit 1; }
           # 服务子模块用独立配置（根 .golangci.yml 的 path 豁免按根模块相对路径编写，
           # 会与 services/<svc> 自己的 internal/... 误配对；理由与规则集见该文件头注释）。
           CONFIG="$(git rev-parse --show-toplevel)/.golangci.services.yml"
@@ -415,13 +415,13 @@ jobs:
           # 断言的是**CI 真正推送的名字**（ghcr.io/levango7/opsmesh-binary|opsmesh-agent）。
           # 此前这两行断言的是 opsmesh/opsmesh —— 与 image job 的推送名不一致却照样绿，
           # 因为断言只比对 chart 自己的渲染结果：chart 与 CI 各说各话时它必然看不见（报告 §19.4）。
-          echo "$out" | grep -q "image: ghcr.io/levango7/opsmesh-binary@sha256:aaaa1111" || { echo "::error::controlplane digest 引用渲染失效"; exit 1; }
-          echo "$out" | grep -q "image: ghcr.io/levango7/opsmesh-agent@sha256:bbbb2222" || { echo "::error::agent digest 引用渲染失效"; exit 1; }
+          grep -q "image: ghcr.io/levango7/opsmesh-binary@sha256:aaaa1111" <<<"$out" || { echo "::error::controlplane digest 引用渲染失效"; exit 1; }
+          grep -q "image: ghcr.io/levango7/opsmesh-agent@sha256:bbbb2222" <<<"$out" || { echo "::error::agent digest 引用渲染失效"; exit 1; }
           echo "--- 渲染：默认值必须是 CI 发布名（防 chart 与发布链路再次分叉）---"
           dflt=$(helm template deploy/helm/opsmesh)
           for pair in "controlplane:ghcr.io/levango7/opsmesh-binary" "agent:ghcr.io/levango7/opsmesh-agent"; do
             ref="${pair#*:}"
-            echo "$dflt" | grep -q "image: ${ref}:latest" || { echo "::error::chart 默认镜像名不含 ${ref}:latest（CI 推的就是它）"; exit 1; }
+            grep -q "image: ${ref}:latest" <<<"$dflt" || { echo "::error::chart 默认镜像名不含 ${ref}:latest（CI 推的就是它）"; exit 1; }
           done
           echo "--- 渲染：私有 registry 不得把已含主机的 repository 拼成双前缀 ---"
           dbl=$(helm template deploy/helm/opsmesh --set global.imageRegistry=registry.example.com | grep -c "image: registry.example.com/ghcr.io" || true)
@@ -465,7 +465,7 @@ jobs:
           # 断言版本：下到别的版本 = 门禁强度变了却看不出来。
           # 注意输出格式（本机 v0.10.0 实测）：首行是 "ShellCheck - shell script analysis tool"，
           # 版本在第二行 "version: 0.10.0"——按 "ShellCheck 0.10.0" grep 永远不匹配。
-          "$SC" --version | grep -q "version: ${ver}" || { echo "::error::shellcheck 版本不是钉死的 ${ver}"; exit 1; }
+          scv="$("$SC" --version 2>&1)"; grep -q "version: ${ver}" <<<"$scv" || { echo "::error::shellcheck 版本不是钉死的 ${ver}"; exit 1; }
           mapfile -t SH < <(git ls-files '*.sh')
           if [ "${#SH[@]}" -eq 0 ]; then
               echo "::error::git ls-files 未返回任何 .sh —— 门禁空转，不等于「脚本都干净」"
@@ -492,7 +492,7 @@ jobs:
           missing=0
           for f in Dockerfile Dockerfile.agent operator/Dockerfile; do
             while IFS= read -r line; do
-              if echo "$line" | grep -qE '^\s*FROM\s+' && ! echo "$line" | grep -q '@sha256:'; then
+              if grep -qE '^\s*FROM\s+' <<<"$line" && ! grep -q '@sha256:' <<<"$line"; then
                 image=$(echo "$line" | sed -E 's/^\s*FROM\s+//; s/\s+AS\s+.*//I')
                 echo "::warning file=$f::base image 未钉死 digest: $image（Renovate 会自动创建 PR 钉死）"
                 missing=$((missing + 1))
@@ -594,7 +594,7 @@ jobs:
           set -euo pipefail
           docker run --rm --entrypoint sh opsmesh-dryrun/auth-svc:local -c '
             test -x /usr/local/bin/svc || { echo "缺可执行入口 /usr/local/bin/svc"; exit 1; }
-            head -c 4 /usr/local/bin/svc | od -An -tx1 | grep -q "7f 45 4c 46" || { echo "入口不是 ELF 二进制"; exit 1; }
+            magic="$(head -c 4 /usr/local/bin/svc | od -An -tx1)"; grep -q "7f 45 4c 46" <<<"$magic" || { echo "入口不是 ELF 二进制"; exit 1; }
             if [ "$(id -u)" = "0" ]; then echo "以 root 运行，H16 非 root 基线失效"; exit 1; fi
             echo "dryrun 产物 OK：ELF 入口存在且以非 root 运行"
           '
@@ -1304,7 +1304,7 @@ jobs:
             eh=$(curl -s -D - -H "Accept-Encoding: $enc" -o /dev/null "http://127.0.0.1:18099$asset" | grep -i '^content-encoding:' | tr -d '\r')
             elen=$(curl -s -H "Accept-Encoding: $enc" -o /dev/null -w '%{size_download}' "http://127.0.0.1:18099$asset")
             if [ -n "$eh" ]; then
-              echo "$eh" | grep -q "$enc" || { echo "::error::Accept-Encoding: $enc 返回 $eh"; exit 1; }
+              grep -q "$enc" <<<"$eh" || { echo "::error::Accept-Encoding: $enc 返回 $eh"; exit 1; }
               test "$elen" -lt "$ilen" || { echo "::error::$enc 旁路体积未变小（$elen >= $ilen）"; exit 1; }
               echo "  ✓ $enc 旁路生效：${elen}B < ${ilen}B"
             fi
@@ -1312,7 +1312,7 @@ jobs:
           # SPA 回退（vue-router history 模式）与个人版入口联动
           fcode=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18099/enterprise/devices)
           test "$fcode" = "200" || { echo "::error::/enterprise/devices 应回退外壳 200，实际 $fcode"; exit 1; }
-          curl -s http://127.0.0.1:18099/ | grep -q '/enterprise/' || { echo "::error::个人版首页未展示企业版入口"; exit 1; }
+          rootpage="$(curl -s http://127.0.0.1:18099/)"; grep -q '/enterprise/' <<<"$rootpage" || { echo "::error::个人版首页未展示企业版入口"; exit 1; }
           echo "✅ 企业版前端已随二进制交付：外壳/资源/SPA 回退/个人版入口 全部可用"
       # Playwright mock 用例（现有 5 个 spec，覆盖页面渲染与交互）
       # 必须先 playwright install 下载浏览器，否则 CI 上浏览器二进制不存在（78 用例全挂）。
