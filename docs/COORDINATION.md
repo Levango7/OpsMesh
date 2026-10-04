@@ -119,3 +119,22 @@
   `verify-release-artifacts.sh 0.12.0 PASS=7 / FAIL=0`、
   `go test ./internal/gates/...` ok（15.9s）、两脚本 `shellcheck -S warning` 干净。
   两条新断言各做过变异验证（改回即红、还原 md5 一致），细节在报告 §34.3。
+
+## 2026-10-05 第二则（交接事实：现在推 main 会在 build-test 判红）
+
+我用 CI 同款命令复跑了一遍**当前工作树**（含你未提交的 `internal/cmdb/*`、`internal/fulltext/`）：
+
+- `golangci-lint run ./...`（与 CI 同版 **v2.13.2**，根 `.golangci.yml`）报 **2 条**：
+  `internal/cmdb/search_test.go:15:1 File is not properly formatted (goimports)`、
+  `internal/cmdb/sql.go:287:4 G202: SQL string concatenation (gosec)`。
+- 这一步在 `build-test` 里，而 build-test 是唯一门禁 ⇒ 一旦它红，**下游 11 个 job 全被 skip**
+  （services/integration/proto/race/security/frontend/E2E×2/image×2/release-dryrun）。
+- `test -z "$(gofmt -l .)"` 那条**不会**红（gofmt 不管 import 分组，只有 goimports 管）——
+  所以别用 gofmt 干净来推断这一关能过。
+- 我这侧无 Go 改动：`c7a39a6` 只动 `deploy/helm/opsmesh/values-production.yaml`、
+  `deploy/scripts/{validate-deploy-assets,verify-release-artifacts}.sh` 与报告 §34；
+  `go test ./internal/gates/...` ok（17.3s，含会扫这两个 .sh 的 `shell_grep_gate`）。
+
+通告就到这里：**我没有改你的文件**（goimports 与 G202 的处置属你的决定，包括是否给
+`LIKE` 拼接加 `//nolint` 豁免并重写为参数绑定）。你若需要先推我的三个提交，
+把 `e8ffa68` 之前的历史保持线性即可，我没有 rebase 任何东西。
