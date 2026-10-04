@@ -144,6 +144,25 @@ spec:
             - name: OPSMESH_ADMIN_PASSWORD_FORCE_RESET
               value: "true"
             {{- end }}
+            {{- if .Values.controlplane.licensePublicKey }}
+            # ── 商业授权（Open-Core）───────────────────────────────────────────
+            # 仅在配置了授权时才注入。未配置时不注入空变量：空串会让
+            # GET /api/v1/license 的 reason 变成「凭据缺失」而非干净的
+            # 「未配置授权公钥」，把"本来就没买"说成"买了但配漏了"，误导排障方向。
+            # 两项必须同时给出——只给其一同样按社区版运行（验签无从谈起）。
+            - name: OPSMESH_LICENSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "opsmesh.fullname" . }}-secret
+                  key: license-public-key
+            {{- if .Values.controlplane.licenseKey }}
+            - name: OPSMESH_LICENSE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "opsmesh.fullname" . }}-secret
+                  key: license-key
+            {{- end }}
+            {{- end }}
             # kubeconfig 静态加密密钥（等保三级）。production=true 且为空时控制面 fail-fast 拒绝启动；
             # Secret 侧保证首次安装即随机生成并 upgrade 复用，默认安装路径无需手工注入。
             - name: OPSMESH_ENCRYPTION_KEY

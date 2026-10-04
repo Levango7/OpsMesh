@@ -111,7 +111,10 @@ func (s *Server) handleEnterpriseUI(w http.ResponseWriter, r *http.Request) {
 	}
 	// 已内置但未授权：外壳不交付。handleEnterpriseUI 只处理 HTML 外壳与 SPA 深链
 	//（静态资源由更精确的 /enterprise/assets/ 路由分走），故直接返回说明页。
-	if !s.licensed() {
+	//
+	// 判据是 featureEnabled 而非 licensed：一份 features 不含 "frontend" 的凭据
+	// （例如只买了 SSO 适配器的客户）同样不该拿到企业版前端。
+	if !s.featureEnabled(FeatureEnterpriseUI) {
 		w.Header().Set("X-OpsMesh-License", "community")
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -171,7 +174,7 @@ func (s *Server) handleEnterpriseAsset(w http.ResponseWriter, r *http.Request) {
 	// 授权闸门放在"文件确实存在"之后：路径穿越与不存在的资源一律 404（无论授权态），
 	// 402 只回答"这个资源存在但你没用企业版"。反过来会让 /enterprise/assets/ 这种
 	// 目录请求在社区版下返回 402，把"路径不存在"伪装成"商业问题"，误导排障。
-	if !s.licensed() {
+	if !s.featureEnabled(FeatureEnterpriseUI) {
 		w.Header().Set("X-OpsMesh-License", "community")
 		s.requireEnterpriseGate(w, r)
 		return

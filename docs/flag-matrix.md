@@ -1,6 +1,6 @@
 # OpsMesh 配置项治理矩阵（flag-matrix）
 
-> 目的：约束 119 个 flag 的语义边界、组合约束与生产默认值，避免"能配但不知道该怎么配"。
+> 目的：约束 133 个 flag 的语义边界、组合约束与生产默认值，避免"能配但不知道该怎么配"。
 > 权威定义在 `internal/config/config.go` 与 `Config.Validate()`（启动期 fail-fast 校验）。
 > 本文件从属于 README「配置参考」，只记录**组合约束**与**默认值差异**，不再单独罗列字段。
 
@@ -33,7 +33,7 @@
 | `--tls-cert` / `--tls-key` / `--client-ca` | agent↔控制面通信加密；生产强制 |
 | `--http-port` / `--grpc-port` | 进程对外端口契约 |
 
-其余 104 项皆为 **Advanced**，详见 README 配置参考表。
+其余 121 项皆为 **Advanced**，详见 README 配置参考表。
 
 ---
 

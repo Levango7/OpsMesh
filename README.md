@@ -138,7 +138,7 @@
 | 包 | 职责 |
 |---|---|
 | `internal/controlplane` | 控制面核心：HTTP 路由 + gRPC server + Registry + dashboard + 14 个功能域 handler（按 `server_*.go` 拆分） |
-| `internal/config` | 统一配置：119 个 flag，命令行优先 + `OPSMESH_*` 环境变量兜底 |
+| `internal/config` | 统一配置：133 个 flag，命令行优先 + `OPSMESH_*` 环境变量兜底 |
 | `internal/authctx` | 网关注入身份提取：从 HTTP 头 / gRPC metadata 提取 X-Tenant-ID / X-User-Id / X-User-Roles |
 | `internal/grpcx` | 自研 gRPC 传输层：JSON codec + 手写 ServiceDesc + pb stub 双轨（`proto/` buf 代码生成） |
 | `internal/tlsutil` | gRPC TLS / mTLS 工具 + 证书热重载（fsnotify watch，无需重启更新 TLS 配置） |
@@ -374,7 +374,7 @@ helm install opsmesh ./deploy/helm/opsmesh -n opsmesh --create-namespace \
 ### 配置速查
 
 ```bash
-# 所有配置项（119 个 flag）
+# 所有配置项（133 个 flag）
 ./opsmesh --help
 # 查看版本
 ./opsmesh --version
@@ -724,7 +724,7 @@ Agent 端多控制面 failover：`--control-addrs="cp1:9090,cp2:9090"`，客户�
 
 ## 配置参考
 
-OpsMesh 启动参数共 **119 个 flag**，全部支持"命令行 flag 优先、环境变量兜底"语义（同名环境变量前缀 `OPSMESH_`）。下表按功能分组列出全部 flag。完整定义见 `internal/config/config.go`。
+OpsMesh 启动参数共 **133 个 flag**，全部支持"命令行 flag 优先、环境变量兜底"语义（同名环境变量前缀 `OPSMESH_`）。下表按功能分组列出全部 flag。完整定义见 `internal/config/config.go`。
 
 ### 基础配置
 
@@ -924,7 +924,7 @@ Open-Core 双许可（内核 Apache-2.0，企业版前端商业授权）。未�
 
 > 任何校验失败（公钥配错、凭据过期、签名不符）都**降级为社区版而不拒绝启动**，原因可通过 `GET /api/v1/license` 查询。多副本部署时 `--license-public-key` 必须一致，否则负载均衡到不同副本时功能时有时无。
 
-> 共 **121 个 flag**，覆盖基础/存储/安全/网络/告警/日志/调度/纳管/高级/授权九大领域。所有 flag 均支持同名 `OPSMESH_*` 环境变量兜底，命令行显式设置优先级最高。
+> 共 **133 个 flag**，覆盖基础/存储/安全/网络/告警/日志/调度/纳管/高级/授权九大领域。所有 flag 均支持同名 `OPSMESH_*` 环境变量兜底，命令行显式设置优先级最高。
 
 ---
 
@@ -1090,7 +1090,7 @@ internal/                 ← 35 个包，按 8 个领域分组（详见上文"i
 ├── circuitbreaker/       ← 通用熔断器（Closed→Open→HalfOpen 状态机）
 ├── cmdb/                 ← 配置库 CMDB（M2）：模型 + 实例 CRUD + SQL + 采集 + 关系图谱
 ├── compliance/           ← 安全合规检查引擎（CIS Benchmark 基线 + 扫描编排）
-├── config/               ← 统一配置（119 个 flag + env 兜底）
+├── config/               ← 统一配置（133 个 flag + env 兜底）
 ├── controlplane/         ← 控制面（HTTP 路由/gRPC server/Registry/dashboard + 14 个功能域 handler）
 ├── cron/                 ← 5 字段 cron 表达式匹配
 ├── dag/                  ← DAG 引擎（M5 作业编排）：拓扑排序 + 环检测 + 依赖就绪判定
@@ -1175,6 +1175,30 @@ opsmesh --license-key="<凭据>" --license-public-key="<厂商公钥>"
 ```
 
 未授权时内核功能（`/api/v1/**`、agent 通道、监控）**完全可用**；授权状态可随时查 `GET /api/v1/license`。
+
+### 签发与启用
+
+厂商侧签发（首次投产先生成密钥对，**私钥绝不分发**）：
+
+```bash
+# 1) 生成厂商密钥对 → vendor-keys/{private.pem, public.key}
+go run ./deploy/scripts/license-issue -gen-key -out-dir ./vendor-keys
+
+# 2) 给客户签授权 → license.key
+go run ./deploy/scripts/license-issue \
+    -priv-key ./vendor-keys/private.pem \
+    -customer "acme-corp" -devices 100 -ttl 8760h
+```
+
+客户端启用（两项必须**同时**给出，只给其一仍按社区版运行）：
+
+| 部署方式 | 做法 |
+|---|---|
+| **Helm** | `--set controlplane.licensePublicKey="$(cat public.key)" --set-file controlplane.licenseKey=./license.key` |
+| **docker compose** | 取消 `docker-compose.yaml` 中 `OPSMESH_LICENSE_*` 注释，建议经 `.env` 注入 |
+| **裸二进制** | `--license-key=... --license-public-key=...` |
+
+> Helm 的两项经 chart 内置 Secret 以 `secretKeyRef` 注入，**空值不注入变量**（否则 `GET /api/v1/license` 的原因会从"未配置授权"变成误导性的"凭据缺失"）。多副本部署时两项须各副本一致，否则负载均衡到不同副本会出现功能时有时无。
 
 依赖许可审计结论：依赖树中 GPL/LGPL/AGPL/CDDL/EPL 依赖数为 **0**（仅 24 个 MPL-2.0，均为文件级 copyleft 且未被 patch），详见 `docs/license-decision-2026-10-03.md`。
 

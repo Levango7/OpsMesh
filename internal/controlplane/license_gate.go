@@ -27,6 +27,7 @@ import (
 	"errors"
 	"html"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,7 +54,17 @@ type licenseState struct {
 	expires  time.Time
 	reason   string          // 未授权原因（面向运维，不含密钥材料）
 	license  *config.License // 解析出的载荷；未授权时为 nil
+	// features 是 license.Features 的**归一化**结果（小写、去空白、去重）。
+	// 归一化在解析时做一次，而非每次查询时——闸门在请求路径上，不该反复清洗字符串。
+	features []string
 }
+
+// FeatureEnterpriseUI 是企业版前端交付对应的功能标识。
+//
+// 命名取"能力"而非"页面"：一张授权凭据可以只买前端（features=["frontend"]），
+// 也可以买前端 + 未来的 SSO/Vault UI（features 多个）。闸门只认这张清单，
+// 于是"哪些能力要付费"从**代码里的硬编码 if** 变成**签发时写进凭据的数据**。
+const FeatureEnterpriseUI = "frontend"
 
 // initLicenseState 解析配置中的授权凭据并定稿状态。
 //
@@ -94,7 +105,30 @@ func initLicenseState(cfg *config.Config) *licenseState {
 	st.devices = lic.Devices
 	st.expires = lic.Expires
 	st.license = lic
+	st.features = normalizeFeatures(lic.Features)
 	return st
+}
+
+// normalizeFeatures 归一化功能清单：小写、去空白、去重、保持原顺序。
+//
+// 为什么归一化：功能名会同时出现在三个地方——签发工具的 -features 参数、
+// 凭据 JSON、前端展示。任一处写成 "Frontend" 或 " frontend " 都不该导致
+// 闸门误判为"未授权该功能"（这类 bug 表现为付费客户被拦，且极难自查）。
+func normalizeFeatures(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, raw := range in {
+		f := strings.ToLower(strings.TrimSpace(raw))
+		if f == "" || seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return out
 }
 
 // licenseReasonText 把哨兵错误翻成运维可读的中文原因。
@@ -128,6 +162,38 @@ func (s *Server) licensed() bool {
 	return s.lic.licensed
 }
 
+// featureEnabled 报告本次授权是否覆盖指定能力。
+//
+// 三态语义（顺序不可调换）：
+//  1. 未授权 → 一律 false。未授权时不该有任何能力可用；
+//  2. 已授权但 features 为空 → true。该 edition 下**全部**功能（向后兼容：
+//     早于功能清单机制签发的凭据不带 features，不能因此被拦）；
+//  3. 已授权且 features 非空 → 按清单判定，未列出即未购买。
+//
+// 这让"付费边界"成为凭据里的数据而非代码里的 if：签发时决定买什么，
+// 闸门只负责对照。新增付费能力时在闸门加一行 featureEnabled("xxx") 即可，
+// 无需改动签发格式，也无需为每个客户改代码。
+func (s *Server) featureEnabled(name string) bool {
+	if s.lic == nil {
+		return false
+	}
+	s.lic.mu.RLock()
+	defer s.lic.mu.RUnlock()
+	if !s.lic.licensed {
+		return false
+	}
+	if len(s.lic.features) == 0 {
+		return true
+	}
+	want := strings.ToLower(strings.TrimSpace(name))
+	for _, f := range s.lic.features {
+		if f == want {
+			return true
+		}
+	}
+	return false
+}
+
 // licenseSnapshot 返回可对外展示的授权状态（不含任何密钥材料）。
 func (s *Server) licenseSnapshot() map[string]any {
 	if s.lic == nil {
@@ -144,6 +210,19 @@ func (s *Server) licenseSnapshot() map[string]any {
 		out["customer"] = s.lic.customer
 		out["devices"] = s.lic.devices
 		out["expiresAt"] = rfc3339OrEmpty(s.lic.expires)
+		// 明确回显功能清单：支持与销售/客户核对"这份凭据到底买了什么"。
+		// 空数组（而非省略）表示"该 edition 下全部功能"，与 featureEnabled 的三态一致。
+		feats := s.lic.features
+		if feats == nil {
+			feats = []string{}
+		}
+		out["features"] = feats
+		// devices 目前是**告知性**字段，未做强制（超过设备数不阻断任何功能）。
+		// 理由：强制策略需先定义"超限后降级什么"（阻断企业前端？拒绝下发任务？），
+		// 那是产品决策不是技术决策。在定义之前如实标注，避免运维误以为已生效。
+		if s.lic.devices > 0 {
+			out["devicesEnforced"] = false
+		}
 	} else {
 		out["reason"] = s.lic.reason
 	}

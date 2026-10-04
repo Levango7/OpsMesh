@@ -122,7 +122,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | 多租户 | 行级隔离（tenant_id）+ schema 级隔离（`--multi-schema`）+ 租户级资源配额与计费 | ✅ | `internal/controlplane/quota.go`、`internal/store/sql.go` |
 | RBAC | 持久化三表（users/roles/permissions）+ 种子幂等 + JWT 双 Token + 网关注入身份头双路径 | ✅ | `internal/store/sql_rbac.go`、`internal/controlplane/auth.go` |
 | 联邦 | 控制面联邦 mTLS + HMAC 签名验签 + 跨网段任务转发 + 联邦级设备/任务视图 + 多集群联邦发布协调 | ✅ | `internal/controlplane/federation.go`、`internal/deploy/federation.go` |
-| 密钥管理 | Env/File/Vault/Chain provider + `--secret-provider` 配置 + `${vault:key}` 引用解析 + 告警通道密钥外置 + 前端 SecretsView UI + kubeconfig AES-256-GCM 加密 | ✅ | `internal/secrets/`、`web/enterprise/src/views/SecretsView.vue` |
+| 密钥管理 | Env/File/Vault/Chain provider + `--secret-provider` 配置 + `${vault:key}` 引用解析 + 告警通道密钥外置 + 前端 SecretsView UI + kubeconfig AES-256-GCM 加密 | ✅ | `internal/secrets/`、`web/enterprise/src/views/secrets/SecretsView.vue` |
 | 日志检索 | 双后端（Memory/SQL）+ offset 分页 + 全文本检索（倒排索引 + 中英文分词 + TF-IDF + 短语/布尔/通配符）+ Loki/ES 适配 | ✅ | `internal/logstore/` |
 | 审计 | 100% 留痕（AuditEvent → audit_log / memory ring）+ 可查（租户/动作/时间窗过滤）+ 6 月留存规划 | ✅ | `internal/controlplane/server.go`、`internal/store/sql.go` |
 | HA | 多副本 leader 选举（leader_lease 表）+ 超期任务自动回收 + agent 多控制面 failover + PodDisruptionBudget | ✅ | `internal/controlplane/server.go`（leaderLoop） |
@@ -223,9 +223,10 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | 多租户 schema 隔离 | ✅ | ✅ |
 | 租户配额与计费 | 🟡 基础 | ✅ 完整计费 API + 报表 |
 | 联邦跨网段 | ✅ | ✅ + 联邦级发布协调 UI |
-| SSO/JWT 集成 | 头注入模式 | ✅ + OIDC/SAML/LDAP 适配器 |
-| 密钥管理 | Env/File | ✅ + Vault/KMS + 前端 UI + 轮转 |
+| SSO/JWT 集成 | 头注入模式 + JWT（用户中心登录/Cookie/API Key） | ❌ **OIDC/SAML/LDAP 适配器未实现**（2026-10-04 复核：Go 代码零命中，仅 authctx 注释提及"网关校验 OIDC"——指外部网关行为，非本项目实现） |
+| 密钥管理 | Env/File/Vault/KMS provider + 前端 SecretsView UI | 🟡 Vault/KMS 后端已实现（`internal/secrets/`）；**密钥轮转未实现**（全仓无 rotate 实现） |
 | 审计合规 | 100% 留痕 | ✅ + 6 月归档 + 导出 + 等保三级报告 |
+| 插件市场 | 🟡 资产分发（注册/下载/SHA256 校验/落盘/启停） | 🟡 同左，**但无执行层**：全仓无代码加载 `plugin.bin`，安装成功≠插件会运行（2026-10-04 复核）。补运行时属架构决策（Go plugin / WASM / 独立进程三选一），未定方案 |
 | 商业支持 | 社区 issue | SLA 保障 + 工单系统 + 专属技术支持 |
 
 ### 5.3 云服务
@@ -446,7 +447,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | `DELIVERY.md` | 交付说明 + 代码规模 + 验证结果 + 功能矩阵 |
 | `docs/product-roadmap.md` | 产品方向与演进路线图（详细） |
 | `docs/api-reference.md` | HTTP REST + gRPC API 完整参考 |
-| `docs/flag-matrix.md` | 119 个 flag 全量配置矩阵 |
+| `docs/flag-matrix.md` | 133 个 flag 全量配置矩阵 |
 | `docs/deployment-guide.md` | 部署指南（控制面/agent/前端各场景） |
 | `docs/sse-protocol.md` | SSE 事件流契约 |
 | `docs/tech-selection.md` | 技术选型决策记录 |

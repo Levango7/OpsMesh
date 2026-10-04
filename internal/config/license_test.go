@@ -310,6 +310,41 @@ func TestParsePublicKey_Errors(t *testing.T) {
 	}
 }
 
+// TestIssueToVerifyRoundTrip 锁定"签发器产出 → 服务端解析链"的端到端格式契约。
+//
+// deploy/scripts/license-issue 写出的 public.key 是**裸 base64url**（32 字节 → 43 字符），
+// license.key 是 base64url(payload).base64url(sig)。服务端消费方是
+// ParsePublicKey(--license-public-key) + VerifyLicense(--license-key)。
+// 这两端任意一个改了编码（比如签发器改成 PEM 而服务端没跟上、或反之），
+// 生产上只会表现为"客户拿到凭据但始终未授权"，且现场无从判断是哪一侧的问题。
+// 本用例把这条链路钉住：改任一端编码都必须同步改这里。
+func TestIssueToVerifyRoundTrip(t *testing.T) {
+	pub, priv := testKeyPair(t)
+	tok, err := SignLicense(validLicense(), priv)
+	if err != nil {
+		t.Fatalf("签发失败: %v", err)
+	}
+	// 签发器写出的公钥形态（裸 base64url），须与 license-issue 的实现保持一致。
+	pubFile := base64.RawURLEncoding.EncodeToString(pub)
+
+	parsed, err := ParsePublicKey(pubFile)
+	if err != nil {
+		t.Fatalf("服务端 ParsePublicKey 吃不下签发器的 public.key 格式: %v", err)
+	}
+	lic, err := VerifyLicense(tok, parsed, fixedNow())
+	if err != nil {
+		t.Fatalf("服务端 VerifyLicense 拒收签发器的 license.key: %v", err)
+	}
+	if lic.Customer != "acme-corp" {
+		t.Fatalf("往返后载荷丢失字段; got=%+v", lic)
+	}
+	// 同一凭据换一把公钥必须拒收——确认这条链路不是在"无条件放行"。
+	wrong, _ := testKeyPair(t)
+	if _, err := VerifyLicense(tok, wrong, fixedNow()); err == nil {
+		t.Fatal("异公钥验签必须失败")
+	}
+}
+
 // TestVerifyLicense_EdgePublicKeyWrongBit 换一个**合法长度但不同**的公钥验签必须失败。
 // 覆盖"公钥长度对但内容错"这条路径（配置串错一位字符的常见场景）。
 func TestVerifyLicense_EdgePublicKeyWrongBit(t *testing.T) {

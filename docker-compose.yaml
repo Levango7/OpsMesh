@@ -96,6 +96,23 @@ services:
       #
       # metrics 访问控制（--metrics-allow-cidr）：CIDR 白名单，空=不限制。生产建议配置内网监控网段。
       # OPSMESH_METRICS_ALLOW_CIDR: "10.0.0.0/8"
+      #
+      # ── 商业授权（Open-Core）──
+      # 内核（控制面 + agent + API + 监控）按 Apache-2.0 **完全可用，无需授权**；
+      # 下面两项只决定**企业版前端**（/enterprise/）是否交付。默认注释掉 = 社区版，属正常形态。
+      #
+      # 启用方式（取消注释并填入厂商签发的凭据）：
+      #   OPSMESH_LICENSE_PUBLIC_KEY: "<厂商公钥：PEM 文本 / 文件路径 / 裸 base64 / 裸 hex>"
+      #   OPSMESH_LICENSE_KEY: "<凭据：base64url(payload).base64url(signature)>"
+      #
+      # 建议走 .env 注入而非写死本文件（凭据代表付费资格，不该进版本库）：
+      #   OPSMESH_LICENSE_PUBLIC_KEY: ${OPSMESH_LICENSE_PUBLIC_KEY:-}
+      #   OPSMESH_LICENSE_KEY: ${OPSMESH_LICENSE_KEY:-}
+      #
+      # 两项必须**同时**给出——只给其一同样按社区版运行（没有公钥就无从验签）。
+      # 签发：go run ./deploy/scripts/license-issue -gen-key -customer "<客户>" -out-dir ./vendor
+      # 校验：curl -u <用户> http://localhost:8080/api/v1/license
+      # 详见 docs/license-decision-2026-10-03.md §5。
     depends_on:
       mysql:
         condition: service_healthy

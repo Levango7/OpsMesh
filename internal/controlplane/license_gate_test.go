@@ -500,6 +500,197 @@ func TestHandleLicenseStatus_ViewerCanQuery(t *testing.T) {
 	}
 }
 
+// featureState 构造带指定功能清单的已授权状态。
+func featureState(t *testing.T, features ...string) *licenseState {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("生成密钥对失败: %v", err)
+	}
+	tok, err := config.SignLicense(config.License{
+		Edition:  config.LicenseEditionEnterprise,
+		Customer: "acme-corp",
+		Devices:  50,
+		IssuedAt: time.Now(),
+		Features: features,
+	}, priv)
+	if err != nil {
+		t.Fatalf("签发失败: %v", err)
+	}
+	return initLicenseState(&config.Config{
+		LicenseKey:       tok,
+		LicensePublicKey: base64.RawURLEncoding.EncodeToString(pub),
+	})
+}
+
+// mustEnterprise 返回一个已授权状态（devices=50, features 为空 = 全部功能）。
+// 用于只关心"已授权"这一前提、不关心凭据内容的用例。
+func mustEnterprise(t *testing.T) *licenseState {
+	t.Helper()
+	st, _ := enterpriseState(t)
+	return st
+}
+
+// TestFeatureEnabled_ThreeStates 三态语义是这套机制的全部，任何一条错了都会
+// 变成"付费客户被拦"或"未付费白拿功能"，所以逐条钉死。
+func TestFeatureEnabled_ThreeStates(t *testing.T) {
+	cases := []struct {
+		name    string
+		st      *licenseState
+		feature string
+		want    bool
+		why     string
+	}{
+		{
+			name: "未授权态一律 false（哪怕 features 字段有值）",
+			st:   communityState(), feature: FeatureEnterpriseUI, want: false,
+			why: "未授权时不得有任何能力可用",
+		},
+		{
+			name: "已授权 + features 为空 = 全部功能（向后兼容老凭据）",
+			st:   mustEnterprise(t), feature: FeatureEnterpriseUI, want: true,
+			why: "早于功能清单机制签发的凭据不带 features，不能因此被拦",
+		},
+		{
+			name: "已授权 + features 含该能力 = 允许",
+			st:   featureState(t, "frontend", "sso"), feature: FeatureEnterpriseUI, want: true,
+			why: "买了就应能用",
+		},
+		{
+			name: "已授权 + features 不含该能力 = 拒绝（付费边界的核心）",
+			st:   featureState(t, "sso"), feature: FeatureEnterpriseUI, want: false,
+			why: "只买了 SSO 的客户不应拿到企业版前端",
+		},
+		{
+			name: "大小写与空白不敏感（手写凭据易犯）",
+			st:   featureState(t, "  FrontEnd  "), feature: "frontend", want: true,
+			why: "'Frontend'/' frontend ' 不该导致付费客户被拦",
+		},
+		{
+			name: "重复项不影响判定",
+			st:   featureState(t, "frontend", "frontend", "frontend"), feature: FeatureEnterpriseUI, want: true,
+			why: "去重是归一化的一部分",
+		},
+		{
+			name: "空串项被忽略（' , ,frontend'）",
+			st:   featureState(t, "", "  ", "frontend"), feature: FeatureEnterpriseUI, want: true,
+			why: "空串不应占位把真实能力挤掉",
+		},
+		{
+			name: "lic 为 nil 时 fail-closed",
+			st:   nil, feature: FeatureEnterpriseUI, want: false,
+			why: "漏初始化不得等于默认放行",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := newTestServer()
+			if c.st != nil {
+				s.lic = c.st
+			}
+			if got := s.featureEnabled(c.feature); got != c.want {
+				t.Fatalf("featureEnabled(%q)=%v, want %v（%s）", c.feature, got, c.want, c.why)
+			}
+		})
+	}
+}
+
+// TestFeatureEnabled_UnknownFeatureIsDenied 未在清单中登记的能力名一律拒绝。
+// 这条是 fail-closed 兜底：将来新增能力时若忘记加进某张已知清单，
+// 应当"拦住并暴露"，而不是"因为名字没匹配到任何东西就放行"。
+func TestFeatureEnabled_UnknownFeatureIsDenied(t *testing.T) {
+	s := newTestServer()
+	s.lic = featureState(t, "frontend")
+	if s.featureEnabled("some-future-feature") {
+		t.Fatal("未登记的能力名必须拒绝（fail-closed），不得因清单未提及而放行")
+	}
+}
+
+// TestLicenseSnapshot_ExposesFeatures 快照回显功能清单，支持与销售核对买了什么。
+func TestLicenseSnapshot_ExposesFeatures(t *testing.T) {
+	t.Run("有清单", func(t *testing.T) {
+		s := newTestServer()
+		s.lic = featureState(t, "frontend", "sso")
+		snap := s.licenseSnapshot()
+		feats, ok := snap["features"].([]string)
+		if !ok {
+			t.Fatalf("features 字段类型应为 []string；got=%T", snap["features"])
+		}
+		if len(feats) != 2 || feats[0] != "frontend" || feats[1] != "sso" {
+			t.Fatalf("features 内容不正确；got=%v", feats)
+		}
+	})
+	t.Run("无清单仍返回空数组而非 nil", func(t *testing.T) {
+		s := newTestServer()
+		s.lic = mustEnterprise(t)
+		snap := s.licenseSnapshot()
+		feats, ok := snap["features"].([]string)
+		if !ok {
+			t.Fatalf("features 应存在且为空数组；got=%T(%v)", snap["features"], snap["features"])
+		}
+		if len(feats) != 0 {
+			t.Fatalf("空清单应为空数组；got=%v", feats)
+		}
+	})
+	t.Run("社区态不带 features", func(t *testing.T) {
+		s := newTestServer()
+		s.lic = communityState()
+		if _, ok := s.licenseSnapshot()["features"]; ok {
+			t.Fatal("社区态不应带 features 字段")
+		}
+	})
+}
+
+// TestLicenseSnapshot_DevicesEnforcementIsDisclosed 设了设备上限时必须显式告知
+// "未强制"。不披露等于让人以为超限会被拦——真到超限时才发现拦不住，
+// 就是"承诺了但没实现"，比明确说"暂不强制"更糟。
+func TestLicenseSnapshot_DevicesEnforcementIsDisclosed(t *testing.T) {
+	s := newTestServer()
+	s.lic = mustEnterprise(t) // devices=50
+	snap := s.licenseSnapshot()
+	if snap["devicesEnforced"] != false {
+		t.Fatalf("设了设备上限时必须显式标注 devicesEnforced=false；got=%v", snap["devicesEnforced"])
+	}
+	// 无上限（0）时不出现该字段——没有承诺就不需要声明。
+	s2 := newTestServer()
+	s2.lic = featureState(t, "frontend")
+	s2.lic.mu.Lock()
+	s2.lic.devices = 0
+	s2.lic.mu.Unlock()
+	if _, ok := s2.licenseSnapshot()["devicesEnforced"]; ok {
+		t.Fatal("未设设备上限时不应出现 devicesEnforced 字段（无承诺不需声明）")
+	}
+}
+
+// TestEnterpriseUI_FeatureListGatesShell 功能清单要真的作用在外壳交付上，
+// 否则它只是一堆没接线的字段（这正是本机制上线前的状态）。
+func TestEnterpriseUI_FeatureListGatesShell(t *testing.T) {
+	if !bundleAvailable() {
+		t.Skip("未组装企业版产物：外壳交付闸门需真实产物")
+	}
+	t.Run("清单含 frontend 则交付", func(t *testing.T) {
+		s := newEnterpriseServer(t)
+		s.lic = featureState(t, "frontend")
+		rec := httptest.NewRecorder()
+		s.handleEnterpriseUI(rec, httptest.NewRequest(http.MethodGet, "/enterprise/", nil))
+		if !strings.Contains(rec.Body.String(), "/enterprise/assets/") {
+			t.Fatal("features 含 frontend 时应正常交付外壳")
+		}
+	})
+	t.Run("清单不含 frontend 则拦截", func(t *testing.T) {
+		s := newEnterpriseServer(t)
+		s.lic = featureState(t, "sso") // 已授权但没买前端
+		rec := httptest.NewRecorder()
+		s.handleEnterpriseUI(rec, httptest.NewRequest(http.MethodGet, "/enterprise/", nil))
+		if strings.Contains(rec.Body.String(), "/enterprise/assets/") {
+			t.Fatal("features 不含 frontend 时不得交付外壳（否则付费边界形同虚设）")
+		}
+		if rec.Header().Get("X-OpsMesh-License") != "community" {
+			t.Fatalf("应声明授权态便于排障；headers=%v", rec.Header())
+		}
+	})
+}
+
 // TestLicenseState_ConcurrentAccessSnapshot 并发读授权状态不得 data race / 死锁。
 // 授权状态被 /api/v1/license、/enterprise/ 与闸门并发读，RWMutex 用错会直接崩服务。
 func TestLicenseState_ConcurrentAccessSnapshot(t *testing.T) {

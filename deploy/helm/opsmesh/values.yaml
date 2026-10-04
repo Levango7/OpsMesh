@@ -101,6 +101,26 @@ controlplane:
   # 严禁轮换：已加密的 kubeconfig 只能用同一密钥解密，换掉=被托管主机全部失控需重新纳管。
   # production=true 且为空时控制面 Validate 拒绝启动（fail-fast，不静默降级为明文存储）。
   encryptionKey: ""
+  # ── 商业授权（Open-Core）───────────────────────────────────────────────────
+  # 内核（控制面 + agent + API + 监控）按 Apache-2.0 完全可用，无需授权。
+  # 这两项只影响**企业版前端**（/enterprise/）是否交付；都留空 = 社区版，属正常形态。
+  #
+  # 与上面几个密钥的关键差异：**不会随机生成默认值**。随机串必然验签失败，
+  # 只会把「未配置授权」这一个干净的原因，变成误导性的「签名校验失败」，
+  # 让运维去查一个根本不存在的签名问题。空值就是社区版的正确默认。
+  #
+  # 签发方式（厂商侧）：go run ./deploy/scripts/license-issue -gen-key ...
+  # 详见 docs/license-decision-2026-10-03.md §5。
+  #
+  # 厂商 Ed25519 公钥（PEM 文本 / 文件路径 / 裸 base64 / 裸 hex）。非机密，可明文。
+  licensePublicKey: ""
+  # 授权凭据（base64url(payload).base64url(signature)）。非机密但代表付费资格，
+  # 建议用 --set-file 或从 Secret 注入，避免进 values 文件被误提交：
+  #   helm upgrade <release> ./deploy/helm/opsmesh \
+  #     --set controlplane.licensePublicKey="$(cat ./vendor/public.key)" \
+  #     --set-file controlplane.licenseKey=./client/license.key
+  # 多副本部署时两项必须各副本一致，否则负载均衡到不同副本会出现"功能时有时无"。
+  licenseKey: ""
   # 多副本会话状态后端：JWT 黑名单 / 限流计数 / 改密令牌的共享存储。
   # 空=进程内 map（单副本/demo）；redis://host:port=Redis 后端（多副本 HA 必需）。
   # 留空且 redis.enabled=true、且副本>1（或开 HPA）时，模板自动指向 chart 内置 Redis；

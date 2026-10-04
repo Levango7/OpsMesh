@@ -150,7 +150,43 @@ Open-Core 要成立，技术上必须有"企业版功能不是白给"的闸门�
 
 **不按 API 路径前缀大面积设闸的理由**：内核 API 闸掉会让社区版形同残废，且与 LICENSE 的声明自相矛盾。企业版的独占价值在**前端交付物 + 商业支持 + SLA**，交付层设闸即可覆盖。
 
-### 5.3 已验证的关键行为
+### 5.3 付费边界：功能清单机制（已实装）
+
+原先 `License.Features` 字段**解析了但从不被查询**——"哪些能力要付费"因此只能硬编码成代码里的 `if`，
+每加一个付费能力就要改一次代码。已改为可执行机制：
+
+| 情形 | `featureEnabled(name)` |
+|---|---|
+| 未授权 | `false`（未授权时无任何能力可用） |
+| 已授权，`features` 为空 | `true`（该 edition 下全部功能；**向后兼容**早于本机制签发的凭据） |
+| 已授权，`features` 非空且含该能力 | `true` |
+| 已授权，`features` 非空但不含 | `false` |
+| 未在代码中登记的能力名 | `false`（fail-closed 兜底） |
+
+已接入的实际闸门：企业版前端交付（能力标识 `frontend`），见 `enterprise_ui.go`。
+
+**为什么这样设计**：付费边界成为**凭据里的数据**而非代码里的分支。签发时用
+`-features frontend,sso` 决定客户买什么，闸门只负责对照。新增付费能力时在闸门加一行
+`featureEnabled("xxx")` 即可——签发格式不变，也不需要为每个客户改代码。
+
+功能名在解析时统一归一化（小写 / 去空白 / 去重），避免 `"Frontend"` 与 `"frontend"`
+被判为两种能力而把付费客户拦在门外。
+
+**尚未接闸门的能力**（`product-design.md` §5.2 现状栏已如实标注）：
+- OIDC/SAML/LDAP：**代码零实现**，无从谈闸门（先补实现）
+- 密钥轮转：**未实现**（`internal/secrets/` 有 Vault/KMS provider 但无 rotate）
+- 多租户 schema 隔离：已实现但**当前归内核免费**——是否收费是产品决策，不在技术侧预设
+
+### 5.4 设备数上限：暂不强制，并显式声明
+
+`License.Devices` 同样只被解析不被执行。**不擅自补强制逻辑**，因为"超限后降级什么"
+（阻断企业前端？拒绝下发任务？只告警？）是产品决策而非技术决策。
+
+未定义前，选择**如实披露**而非沉默：`GET /api/v1/license` 在 `devices > 0` 时返回
+`devicesEnforced: false`。理由是"承诺了但没实现"比明确说"暂不强制"更糟——
+运维真到超限时才发现拦不住，已经晚了。
+
+### 5.5 已验证的关键行为
 
 | 行为 | 测试 |
 |---|---|
@@ -164,13 +200,18 @@ Open-Core 要成立，技术上必须有"企业版功能不是白给"的闸门�
 | 快照/页面永不泄露凭据原文 | `TestLicenseSnapshot_NeverLeaksCredential` |
 | 授权态与社区态下社区控制台均正常 | `TestEnterpriseUI_CommunityCoreUnaffected` |
 | 授权端点权限点必须真实存在于 RBAC 规格 | `TestHandleLicenseStatus_PermissionPointExists` |
+| 功能清单三态语义（含老凭据兼容、大小写、去重、未知能力 fail-closed） | `TestFeatureEnabled_ThreeStates`（8 子用例）+ `_UnknownFeatureIsDenied` |
+| 快照回显 features；无清单返回空数组而非 nil | `TestLicenseSnapshot_ExposesFeatures` |
+| 设备上限如实标注 `devicesEnforced: false` | `TestLicenseSnapshot_DevicesEnforcementIsDisclosed` |
+| 功能清单**真的**作用在外壳交付上（不是没接线的字段） | `TestEnterpriseUI_FeatureListGatesShell` |
+| 签发器产出 → 服务端解析链的格式契约 | `TestIssueToVerifyRoundTrip` |
 
-### 5.4 两个必须知悉的边界
+### 5.6 两个必须知悉的边界
 
 1. **这是许可控制，不是安全边界。** 校验逻辑与二进制都在客户手里，改二进制即可绕过。它的价值是给"付费能力"一个明确的授权语义与可留档凭据，**不是防破解**——防破解需配合服务端校验或硬件信任根，不在当前范围。
 2. **多副本必须一致**：`--license-public-key` 各副本不一致时，负载均衡到不同副本会出现"功能时有时无"。已在 `docs/flag-matrix.md` §2.1 记录。
 
-实现见 `internal/config/license.go`、`internal/config/license_pem.go`、`internal/controlplane/license_gate.go`；测试见对应的 `*_test.go`（config 32 项 + controlplane 22 项）。
+实现见 `internal/config/license.go`、`internal/config/license_pem.go`、`internal/controlplane/license_gate.go`；签发工具见 `deploy/scripts/license-issue/`（厂商侧签发真实授权）与 `deploy/scripts/license-ci/`（CI 用临时密钥，两者职责不可混用）。部署接线见 Helm `controlplane.licensePublicKey` / `licenseKey` 与 `docker-compose.yaml` 的 `OPSMESH_LICENSE_*`。
 
 ---
 
