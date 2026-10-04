@@ -96,11 +96,11 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 
 | 功能模块 | 能力描述 | 成熟度 | 落地文件 / 入口 |
 |---|---|---|---|
-| 设备纳管 | 网段 TCP 存活扫描 + 候选设备登记 + 令牌闭环自动纳管 + 设备退役归档 | ✅ | `internal/discover/`、`internal/controlplane/provision.go` |
-| 任务执行 | Shell 命令 / 系统服务管理 / 文件分发（原子写入 + rename）/ 超时自动中止 / 批量下发 | ✅ | `internal/agent/`、`internal/controlplane/tasks.go` |
+| 设备纳管 | 网段 TCP 存活扫描 + 候选设备登记 + 令牌闭环自动纳管 + 设备退役归档 | ✅ | `internal/discover/`、`pkg/provision/`、`internal/controlplane/server_devices.go` |
+| 任务执行 | Shell 命令 / 系统服务管理 / 文件分发（原子写入 + rename）/ 超时自动中止 / 批量下发 | ✅ | `internal/agent/`、`internal/controlplane/server_tasks.go` |
 | 配置下发 | 文件分发 + CMDB 配置项驱动 + OS 优化模板 | ✅ | `internal/controlplane/os_optimize.go` |
 | 服务管理 | systemctl start/stop/restart/status + 中间件部署（10+ 中间件 × docker/systemd） | ✅ | `internal/controlplane/middleware_deploy.go` |
-| 文件分发 | 原子写入 + rename + 路径白名单（`--agent-file-root-whitelist`）+ 路径遍历防护 | ✅ | `internal/agent/`、`internal/controlplane/tasks.go` |
+| 文件分发 | 原子写入 + rename + 路径白名单（`--agent-file-root-whitelist`）+ 路径遍历防护 | ✅ | `internal/agent/`、`internal/controlplane/server_tasks.go` |
 | 状态监控 | agent 心跳 + 设备在线状态 + Prometheus 指标 + /healthz + /readyz | ✅ | `internal/metrics/`、`internal/controlplane/server.go` |
 | 告警 | 规则引擎 + alert（Status/Ack/Silence）+ Webhook/飞书/钉钉/Slack/企业微信/邮件 + 异常检测（Z-Score + EWMA）+ 聚合抑制 | ✅ | `internal/alertengine/`、`internal/notify/` |
 
@@ -110,7 +110,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 |---|---|---|---|
 | CMDB | Phase1 模型 + CRUD + SQL + 采集 + 关系图谱可视化（力导向图）+ 变更审批 | ✅ | `internal/cmdb/`、`web/enterprise/src/views/CMDBView.vue` |
 | 作业编排 | DAG 引擎 + store 阻塞→释放链路 + 画布 + 子工作流 + 并行/串行/条件分支 + 节点级超时重试 + 执行历史回放 | ✅ | `internal/dag/`、`internal/orchestration/` |
-| 部署编排 | 计划 + fan-out 执行 + Reconcile + Rollback + 蓝绿/金丝雀/滚动 + 发布门禁 + 自动回滚 + 多集群联邦发布 + 灰度指标自适应推进 | ✅ | `internal/deploy/`、`internal/controlplane/deploys.go` |
+| 部署编排 | 计划 + fan-out 执行 + Reconcile + Rollback + 蓝绿/金丝雀/滚动 + 发布门禁 + 自动回滚 + 多集群联邦发布 + 灰度指标自适应推进 | ✅ | `internal/deploy/`、`internal/controlplane/server_deploy.go` |
 | K8s 管理 | 集群增删查 + 测试连接 + 资源只读/写（namespace/pod/deployment/service/configmap/secret/node）+ scale/restart/rollback + client-go 无 kubectl 依赖 + 租户隔离 | ✅ | `internal/controlplane/k8s_cluster.go`、`k8s_manage.go`、`internal/k8s/` |
 | OS 优化 | 预置模板（内核/网络/安全/时间同步/SSH/磁盘/系统/用户）+ 在线 CRUD + 在指定 agent 执行 + 模板 store 持久化 + 幂等 seed | ✅ | `internal/controlplane/os_optimize.go` |
 | 中间件部署 | 10+ 中间件（MySQL/Redis/Kafka/Nginx/Tomcat/Zookeeper/PostgreSQL/MongoDB/RabbitMQ/Elasticsearch）× docker/systemd 双模式 + CRUD + 实例查询 | ✅ | `internal/controlplane/middleware_deploy.go` |
