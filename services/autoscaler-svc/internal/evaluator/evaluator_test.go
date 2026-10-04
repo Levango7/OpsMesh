@@ -52,6 +52,10 @@ func (m *mockK8sScaler) SetReplicas(deployment, namespace string, replicas int32
 	return nil
 }
 
+// Executor 实现 K8sScaler。测试替身刻意报"模拟"标识：它确实只在内存 map 里改值，
+// 报告身份与实际行为一致，避免让断言依赖一个不存在的集群。
+func (m *mockK8sScaler) Executor() string { return "memory-simulated" }
+
 func newTestEvaluator() *Evaluator {
 	return NewEvaluator(func() time.Time {
 		return time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)

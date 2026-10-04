@@ -742,6 +742,19 @@ ALERT_WEBHOOK_BEARER=
 # "名字:容器路径" 会被 compose 当命名卷（本机实测报 refers to undefined volume）。
 ALERTMANAGER_CONFIG=./generated/alertmanager.yml
 
+# === autoscaler-svc 扩缩容执行器 ===
+# simulated   = 只改 autoscaler-svc 进程内的副本数账本，**不会改动任何集群**；
+#               API 响应与决策历史都会带 executor=memory-simulated 标注（出厂默认）。
+# in-cluster  = 服务运行在被管理集群内，用它自己 Pod 的 ServiceAccount 真实 patch
+#               Deployment 的 spec.replicas（该 SA 需要 apps/deployments 的 patch 权限，
+#               本 compose 形态不创建 SA，所以这条只适用于 K8s 部署）。
+# kubeconfig  = 用 AUTOSCALER_KUBECONFIG 指向的 kubeconfig 连远端集群。该文件需自行以
+#               只读卷挂进容器；含 exec / auth-provider 凭据插件的 kubeconfig 会被直接拒绝
+#               （client-go 会在本地执行插件，等于把 RCE 交给一个"配置文件"）。
+# 选了真实模式而凭据不可用 ⇒ 容器启动即失败，不会静默退回 simulated。
+AUTOSCALER_K8S_EXECUTOR=simulated
+AUTOSCALER_KUBECONFIG=
+
 # === 可选集成 ===
 OLLAMA_URL=http://ollama:11434
 

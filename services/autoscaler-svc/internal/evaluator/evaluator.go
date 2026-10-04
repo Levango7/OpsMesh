@@ -48,9 +48,13 @@ type MetricsReader interface {
 }
 
 // K8sScaler defines the interface for adjusting replica counts.
+//
+// Executor() 是刻意带上的：一条 action=scale_up 的决策历史必须能说清"这次真的动了
+// 集群，还是只写了模拟执行器的内存"。没有这个字段时，两条路径在历史里长得一模一样。
 type K8sScaler interface {
 	GetReplicas(deployment, namespace string) (int32, error)
 	SetReplicas(deployment, namespace string, replicas int32) error
+	Executor() string
 }
 
 // Evaluator evaluates scaling rules and produces decisions.
@@ -181,6 +185,11 @@ func (e *Evaluator) Evaluate(reader MetricsReader, scaler K8sScaler, ruleID stri
 	for _, rule := range rulesToEvaluate {
 		decision := e.evaluateRule(rule, reader, scaler, now)
 		if decision != nil {
+			// 标注执行器身份：模拟执行器改的是进程内 map，真实执行器改的是集群。
+			// 缺这一层标注时，GET /api/v1/decisions 里的 scale_up 无法区分两者。
+			if decision.Executor == "" {
+				decision.Executor = scaler.Executor()
+			}
 			decisions = append(decisions, decision)
 			e.appendDecisionLocked(decision)
 		}

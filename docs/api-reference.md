@@ -4757,6 +4757,33 @@ Phase 3 审计查询：事件检索与导出（与 `GET /api/v1/audits` 互补�
 - `GET /api/v1/autoscaler/decisions` — 扩缩容决策历史
 - `GET /api/v1/autoscaler/cooldowns` — 冷却期列表
 
+#### `POST /api/v1/autoscaler/scale` 的执行器语义（必读）
+
+响应体除 `{status,message}` 外固定带两个字段：
+
+```json
+{
+  "status": "ok",
+  "message": "scaled default/web to 4 replicas（执行器 memory-simulated：未改动任何集群，重启即丢）",
+  "executor": "memory-simulated",
+  "simulated": true
+}
+```
+
+| `executor` | 含义 | 触发条件 |
+|---|---|---|
+| `memory-simulated` | 只改 autoscaler-svc **进程内**的副本数账本，集群没有任何变化 | 默认（未设置 `AUTOSCALER_K8S_EXECUTOR`） |
+| `k8s-in-cluster` | 真实 patch 本集群 Deployment 的 `spec.replicas` | `AUTOSCALER_K8S_EXECUTOR=in-cluster`（需 Pod ServiceAccount 有 `apps/deployments` 的 patch 权限） |
+| `k8s-kubeconfig` | 真实 patch 远端集群的 Deployment | `AUTOSCALER_K8S_EXECUTOR=kubeconfig` + `AUTOSCALER_KUBECONFIG=<路径>` |
+
+- 决策历史（`/autoscaler/decisions`）每条也带 `executor`，因此"这次扩容有没有真的发生"
+  在审计里是可判定的，而不是只能靠 `action=scale_up` 猜。
+- 选了真实模式而凭据不可用（路径为空 / kubeconfig 解析失败 / 不在集群内）时
+  **服务启动即失败**，不会静默退回 `memory-simulated`。
+- 另有一条彼此独立的真实扩容入口：控制面的 K8s 集群 API
+  `POST /api/v1/k8s/clusters/{id}/deployments/{ns}/{name}/scale`（用纳管集群时登记的
+  kubeconfig）。它不经过 autoscaler-svc，也就**不会**产生上面的决策历史记录。
+
 ### 门户（代理到 portal-svc）
 
 - `GET /api/v1/portal/approvals` — 门户审批列表

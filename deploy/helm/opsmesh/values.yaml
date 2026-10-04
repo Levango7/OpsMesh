@@ -813,7 +813,16 @@ services:
       limits:
         cpu: 500m
         memory: 256Mi
-    env: {}
+    # 扩缩容执行器（autoscaler-svc/pkg/config.go:K8sExecutor）：
+    #   simulated  = 只改 autoscaler-svc 进程内存，**不会改动任何集群**；
+    #                响应与决策历史都会带 executor=memory-simulated 标注。默认即此安全值。
+    #   in-cluster = 真实 patch 本集群 Deployment 的 spec.replicas。前置条件：该 Pod 的
+    #                ServiceAccount 必须持有 apps/deployments 的 patch 权限（chart 默认 SA
+    #                只给控制面用、没有这条权限），否则第一次扩容就是 403。
+    #   kubeconfig = 用 AUTOSCALER_KUBECONFIG 指向的 kubeconfig 连远端集群（需自行挂载）。
+    # 选了真实模式而凭据/权限不可用时，容器启动即失败，不会静默退回 simulated。
+    env:
+      AUTOSCALER_K8S_EXECUTOR: "simulated"
     nodeSelector: {}
     affinity: {}
     tolerations: []

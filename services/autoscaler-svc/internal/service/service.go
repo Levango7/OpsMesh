@@ -20,14 +20,17 @@ var (
 )
 
 // Service implements the autoscaler business logic.
+//
+// scaler 是 k8s.Scaler 接口而非具体的内存实现：这样"用真实执行器"与"用模拟执行器"
+// 在业务层是同一条代码路径，而执行器身份仍可经 Executor() 对外披露。
 type Service struct {
 	evaluator *evaluator.Evaluator
 	reader    evaluator.MetricsReader
-	scaler    *k8s.Client
+	scaler    k8s.Scaler
 }
 
 // NewService creates a new Service.
-func NewService(eng *evaluator.Evaluator, reader evaluator.MetricsReader, scaler *k8s.Client) *Service {
+func NewService(eng *evaluator.Evaluator, reader evaluator.MetricsReader, scaler k8s.Scaler) *Service {
 	return &Service{
 		evaluator: eng,
 		reader:    reader,
@@ -141,9 +144,15 @@ type ScaleRequest struct {
 }
 
 // ScaleResponse is the reply for manual scale (frontend contract: {status,message}).
+//
+// Executor / Simulated 是新增的对外口径：模拟执行器下"scaled ... to N replicas"
+// 这句话只对本进程内的 map 成立，集群没被改动过。以前响应里没有任何信号，
+// 前端与 runbook 都按"已生效"处理（#61 造假面之二）。
 type ScaleResponse struct {
-	Status  string `json:"status"`
-	Message string `json:"message"`
+	Status    string `json:"status"`
+	Message   string `json:"message"`
+	Executor  string `json:"executor"`
+	Simulated bool   `json:"simulated"`
 }
 
 // parseScaleTarget parses target in the form "namespace/deployment" or bare "deployment",
@@ -185,6 +194,7 @@ func (s *Service) Scale(ctx context.Context, req *ScaleRequest) (*ScaleResponse,
 		return nil, fmt.Errorf("failed to set replicas: %w", err)
 	}
 
+	executor := s.scaler.Executor()
 	s.evaluator.RecordDecision(&models.ScaleDecision{
 		ID:           uuid.New().String(),
 		RuleID:       "",
@@ -194,12 +204,20 @@ func (s *Service) Scale(ctx context.Context, req *ScaleRequest) (*ScaleResponse,
 		FromReplicas: fromReplicas,
 		ToReplicas:   req.Replicas,
 		Reason:       req.Reason,
+		Executor:     executor,
 		Timestamp:    time.Now(),
 	})
 
+	msg := fmt.Sprintf("scaled %s/%s to %d replicas", namespace, deployment, req.Replicas)
+	if k8s.IsSimulated(executor) {
+		// 模拟执行器：这句话目前只对进程内存成立，必须随响应说清楚。
+		msg += "（执行器 memory-simulated：未改动任何集群，重启即丢）"
+	}
 	return &ScaleResponse{
-		Status:  "ok",
-		Message: fmt.Sprintf("scaled %s/%s to %d replicas", namespace, deployment, req.Replicas),
+		Status:    "ok",
+		Message:   msg,
+		Executor:  executor,
+		Simulated: k8s.IsSimulated(executor),
 	}, nil
 }
 

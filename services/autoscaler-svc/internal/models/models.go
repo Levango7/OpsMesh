@@ -22,16 +22,19 @@ type ScaleRule struct {
 
 // ScaleDecision records a scaling action that was taken.
 type ScaleDecision struct {
-	ID           string    `json:"id"`
-	RuleID       string    `json:"ruleId"`
-	Deployment   string    `json:"deployment"`
-	Namespace    string    `json:"namespace"`
-	Action       string    `json:"action"` // "scale_up", "scale_down", "no_action"
-	FromReplicas int32     `json:"fromReplicas"`
-	ToReplicas   int32     `json:"toReplicas"`
-	Reason       string    `json:"reason"`
-	MetricValue  float64   `json:"metricValue"`
-	Timestamp    time.Time `json:"timestamp"`
+	ID           string  `json:"id"`
+	RuleID       string  `json:"ruleId"`
+	Deployment   string  `json:"deployment"`
+	Namespace    string  `json:"namespace"`
+	Action       string  `json:"action"` // "scale_up", "scale_down", "no_action"
+	FromReplicas int32   `json:"fromReplicas"`
+	ToReplicas   int32   `json:"toReplicas"`
+	Reason       string  `json:"reason"`
+	MetricValue  float64 `json:"metricValue"`
+	// Executor 记录这条决策由哪个执行器执行（memory-simulated / k8s-kubeconfig /
+	// k8s-in-cluster）。"memory-simulated" 意味着副本数只改了进程内的账，集群没动。
+	Executor  string    `json:"executor,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // EvaluateRequest triggers evaluation of all rules or a specific rule.
