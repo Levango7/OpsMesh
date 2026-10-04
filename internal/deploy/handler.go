@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -132,7 +133,7 @@ func (h *Handler) handleDeploys(w http.ResponseWriter, r *http.Request) {
 		status := r.URL.Query().Get("status")
 		list, err := h.store.List(r.Context(), actx.TenantID, status)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "List", err)
 			return
 		}
 		if list == nil {
@@ -175,7 +176,7 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 			}
 			dt, gerr := h.store.Get(r.Context(), id, actx.TenantID)
 			if gerr != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": gerr.Error()})
+				writeInternalError(w, "Get", gerr)
 				return
 			}
 			writeJSON(w, http.StatusOK, dt)
@@ -191,7 +192,7 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 			}
 			dt, gerr := h.store.Get(r.Context(), id, actx.TenantID)
 			if gerr != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": gerr.Error()})
+				writeInternalError(w, "Get", gerr)
 				return
 			}
 			writeJSON(w, http.StatusOK, dt)
@@ -208,7 +209,7 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 			}
 			dt, gerr := h.store.Get(r.Context(), id, actx.TenantID)
 			if gerr != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": gerr.Error()})
+				writeInternalError(w, "Get", gerr)
 				return
 			}
 			writeJSON(w, http.StatusOK, dt)
@@ -240,7 +241,7 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "deploy not found"})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(w, "Get", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, dt)
@@ -656,6 +657,20 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// internalErrorBody 是 5xx 响应体的固定文案。
+//
+// 不回显原始 err 是因为 store/SQL 错误会带出表名、SQL 片段与部署拓扑。
+// 见 internal/controlplane/http_infra_leak_test.go 门禁——本包此前不在该门禁
+// 扫描面内（它只扫 controlplane 一个包），同类问题长期未被看见。
+const internalErrorBody = "internal server error"
+
+// writeInternalError 是 5xx 的唯一出口：原始错误只进服务端日志，响应体只给固定文案。
+// op 用于日志定位（哪一步失败），不进响应体。
+func writeInternalError(w http.ResponseWriter, op string, err error) {
+	log.Printf("[deploy] %s 失败: %v", op, err)
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": internalErrorBody})
+}
+
 // =============================================================================
 // 多集群联邦发布 HTTP API
 // =============================================================================
@@ -702,7 +717,7 @@ func (h *Handler) handleFederationDeploys(w http.ResponseWriter, r *http.Request
 		status := r.URL.Query().Get("status")
 		list, err := h.fed.Store().List(r.Context(), actx.TenantID, status)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "FedList", err)
 			return
 		}
 		if list == nil {
@@ -749,7 +764,7 @@ func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Requ
 			}
 			f, gerr := h.fed.Store().Get(r.Context(), id, actx.TenantID)
 			if gerr != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": gerr.Error()})
+				writeInternalError(w, "FedGetAfterStart", gerr)
 				return
 			}
 			writeJSON(w, http.StatusOK, f)
@@ -765,7 +780,7 @@ func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Requ
 			}
 			f, gerr := h.fed.Store().Get(r.Context(), id, actx.TenantID)
 			if gerr != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": gerr.Error()})
+				writeInternalError(w, "FedGetAfterPromote", gerr)
 				return
 			}
 			writeJSON(w, http.StatusOK, f)
@@ -781,7 +796,7 @@ func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Requ
 			}
 			f, gerr := h.fed.Store().Get(r.Context(), id, actx.TenantID)
 			if gerr != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": gerr.Error()})
+				writeInternalError(w, "FedGetAfterRollback", gerr)
 				return
 			}
 			writeJSON(w, http.StatusOK, f)
@@ -797,7 +812,7 @@ func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Requ
 					writeJSON(w, http.StatusNotFound, map[string]string{"error": "federation not found"})
 					return
 				}
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				writeInternalError(w, "FedStatus", err)
 				return
 			}
 			writeJSON(w, http.StatusOK, st)
@@ -819,7 +834,7 @@ func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Requ
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "federation not found"})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(w, "FedGet", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, f)

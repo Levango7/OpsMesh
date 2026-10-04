@@ -76,7 +76,7 @@ func (h *Handler) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		list, err := h.store.List(r.Context(), actx.TenantID)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "List", err)
 			return
 		}
 		if list == nil {
@@ -102,7 +102,7 @@ func (h *Handler) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 			wf.Status = StatusDraft
 		}
 		if err := h.store.Create(r.Context(), &wf); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "Create", err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, wf)
@@ -206,7 +206,7 @@ func (h *Handler) updateWorkflow(w http.ResponseWriter, r *http.Request, id int6
 		}
 	}
 	if err := h.store.Update(r.Context(), wf); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(w, "Update", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wf)
@@ -236,7 +236,7 @@ func (h *Handler) runWorkflow(w http.ResponseWriter, r *http.Request, id int64, 
 	}
 	wf, gerr := h.store.Get(r.Context(), id, tenantID)
 	if gerr != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": gerr.Error()})
+		writeInternalError(w, "Get", gerr)
 		return
 	}
 	writeJSON(w, http.StatusOK, wf)
@@ -619,7 +619,7 @@ func (h *Handler) listRuns(w http.ResponseWriter, r *http.Request, id int64, ten
 	}
 	runs, err := h.store.ListRuns(r.Context(), id, tenantID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(w, "ListRuns", err)
 		return
 	}
 	if runs == nil {
@@ -751,4 +751,17 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// internalErrorBody 是 5xx 响应体的固定文案。
+//
+// 不回显原始 err 是因为 store/SQL 错误会带出表名、SQL 片段与部署拓扑。
+// 见 internal/controlplane/http_infra_leak_test.go 门禁——本包此前不在该门禁
+// 扫描面内（它只扫 controlplane 一个包），同类问题长期未被看见。
+const internalErrorBody = "internal server error"
+
+// writeInternalError 是 5xx 的唯一出口：原始错误只进服务端日志，响应体只给固定文案。
+func writeInternalError(w http.ResponseWriter, op string, err error) {
+	log.Printf("[orchestration] %s 失败: %v", op, err)
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": internalErrorBody})
 }

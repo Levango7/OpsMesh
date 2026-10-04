@@ -25,6 +25,7 @@ package controlplane
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -616,7 +617,12 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
-		writeProxyErrorJSON(rw, http.StatusBadGateway, "service backend error: "+err.Error())
+		// 原始 err 只进日志：httputil 的代理错误含**上游服务的 host:port 与失败
+		// 原因**（连接被拒 / TLS 握手失败 / 超时），回吐给客户端等于把内部
+		// 服务拓扑与网络策略一并暴露。502 对客户端的含义是"后端不可用"，
+		// 排查所需信息服务端日志里都有。
+		log.Printf("[controlplane] service proxy backend error: %v", err)
+		writeProxyErrorJSON(rw, http.StatusBadGateway, "service backend unavailable")
 	}
 	proxy.ServeHTTP(w, r)
 }

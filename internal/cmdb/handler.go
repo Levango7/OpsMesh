@@ -85,6 +85,21 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	}
 }
 
+// internalErrorBody 是 5xx 响应体的固定文案。
+//
+// 不回显原始 err 是因为 store/SQL 错误会带出表名、SQL 片段与部署拓扑
+// （见 internal/controlplane/http_infra_leak_test.go 门禁，本包 18 处同类问题
+// 曾因门禁只扫 controlplane 一个包而长期未被发现）。
+const internalErrorBody = "internal server error"
+
+// writeInternalError 是 5xx 的唯一出口：原始错误只进服务端日志，响应体只给固定文案。
+//
+// op 用于日志定位（哪一步失败了），不进响应体。
+func writeInternalError(w http.ResponseWriter, op string, err error) {
+	log.Printf("[cmdb] %s 失败: %v", op, err)
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": internalErrorBody})
+}
+
 // handleCIs 处理 GET/POST /api/v1/cmdb/ci。
 func (h *Handler) handleCIs(w http.ResponseWriter, r *http.Request) {
 	actx := authctx.FromHTTPHeader(r.Header)
@@ -97,7 +112,7 @@ func (h *Handler) handleCIs(w http.ResponseWriter, r *http.Request) {
 		}
 		items, err := h.store.GetCIs(r.Context(), ciType, status, actx.TenantID)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "GetCIs", err)
 			return
 		}
 		if items == nil {
@@ -122,7 +137,7 @@ func (h *Handler) handleCIs(w http.ResponseWriter, r *http.Request) {
 		ci.CreatedAt = now
 		ci.UpdatedAt = now
 		if err := h.store.CreateCI(r.Context(), &ci); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "CreateCI", err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, ci)
@@ -186,14 +201,14 @@ func (h *Handler) handleCIByID(w http.ResponseWriter, r *http.Request) {
 		update.ID = id
 		update.TenantID = actx.TenantID
 		if err := h.store.UpdateCI(r.Context(), &update); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "UpdateCI", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, update)
 
 	case http.MethodDelete:
 		if err := h.store.DeleteCI(r.Context(), id, actx.TenantID); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "DeleteCI", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -211,7 +226,7 @@ func (h *Handler) handleCITypes(w http.ResponseWriter, r *http.Request) {
 		actx := authctx.FromHTTPHeader(r.Header)
 		types, err := h.store.CiTypes(r.Context(), actx.TenantID)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "CiTypes", err)
 			return
 		}
 		if types == nil {
@@ -229,7 +244,7 @@ func (h *Handler) handleCITypes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.store.CreateCiType(r.Context(), &t); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "CreateCiType", err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, t)
@@ -250,7 +265,7 @@ func (h *Handler) handleCIExport(w http.ResponseWriter, r *http.Request) {
 	actx := authctx.FromHTTPHeader(r.Header)
 	items, err := h.store.GetCIs(r.Context(), "", "active", actx.TenantID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(w, "GetCIs", err)
 		return
 	}
 	if items == nil {
@@ -353,7 +368,7 @@ func (h *Handler) handleCIPending(w http.ResponseWriter, r *http.Request) {
 	actx := authctx.FromHTTPHeader(r.Header)
 	items, err := h.store.GetCIsByApproval(r.Context(), ApprovalPending, actx.TenantID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(w, "GetCIsByApproval", err)
 		return
 	}
 	if items == nil {
@@ -536,7 +551,7 @@ func (h *Handler) handleRelations(w http.ResponseWriter, r *http.Request) {
 		}
 		rels, err := h.store.GetCIRelations(r.Context(), ciID, actx.TenantID)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "GetCIRelations", err)
 			return
 		}
 		if rels == nil {
@@ -552,7 +567,7 @@ func (h *Handler) handleRelations(w http.ResponseWriter, r *http.Request) {
 		}
 		rel.TenantID = actx.TenantID
 		if err := h.store.CreateRelation(r.Context(), &rel); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "CreateRelation", err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, rel)
@@ -571,7 +586,7 @@ func (h *Handler) handleCIRelations(w http.ResponseWriter, r *http.Request, ciID
 	actx := authctx.FromHTTPHeader(r.Header)
 	rels, err := h.store.GetCIRelations(r.Context(), ciID, actx.TenantID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(w, "GetCIRelations", err)
 		return
 	}
 	if rels == nil {
@@ -589,7 +604,7 @@ func (h *Handler) handleCIRelationGraph(w http.ResponseWriter, r *http.Request, 
 	actx := authctx.FromHTTPHeader(r.Header)
 	graph, err := h.store.GetCIRelationGraph(r.Context(), ciID, actx.TenantID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(w, "GetCIRelationGraph", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, graph)
@@ -605,7 +620,7 @@ func (h *Handler) handleAttrTemplates(w http.ResponseWriter, r *http.Request) {
 		ciType := r.URL.Query().Get("type")
 		tmpls, err := h.store.GetAttrTemplates(r.Context(), ciType, actx.TenantID)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "GetAttrTemplates", err)
 			return
 		}
 		if tmpls == nil {
@@ -621,7 +636,7 @@ func (h *Handler) handleAttrTemplates(w http.ResponseWriter, r *http.Request) {
 		}
 		tmpl.TenantID = actx.TenantID
 		if err := h.store.CreateAttrTemplate(r.Context(), &tmpl); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "CreateAttrTemplate", err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, tmpl)
@@ -648,7 +663,7 @@ func (h *Handler) handleAttrTemplateByID(w http.ResponseWriter, r *http.Request)
 	case http.MethodGet:
 		tmpls, err := h.store.GetAttrTemplates(r.Context(), "", actx.TenantID)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "GetAttrTemplates", err)
 			return
 		}
 		for _, t := range tmpls {
@@ -668,14 +683,14 @@ func (h *Handler) handleAttrTemplateByID(w http.ResponseWriter, r *http.Request)
 		tmpl.ID = tmplID
 		tmpl.TenantID = actx.TenantID
 		if err := h.store.UpdateAttrTemplate(r.Context(), &tmpl); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "UpdateAttrTemplate", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, tmpl)
 
 	case http.MethodDelete:
 		if err := h.store.DeleteAttrTemplate(r.Context(), tmplID, actx.TenantID); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeInternalError(w, "DeleteAttrTemplate", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
