@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -173,5 +174,63 @@ func TestAckResolveExternalNotifyFailureNotCountedOnSuccess(t *testing.T) {
 	body := renderMetrics(t)
 	if strings.Contains(body, "alert_external_notify_failures") {
 		t.Errorf("通知成功却被记成失败\n---输出:\n%s", body)
+	}
+}
+
+// TestNotifyFailureBaselineIsExportedAtStartup 钉住 #66：两条失败计数序列必须**在第一次失败之前**
+// 就存在于 /metrics 上（值为 0）。
+//
+// 判据为什么是"序列先存在"而不是"值对不对"：Prometheus 的 increase() 取的是窗口内样本之差，
+// 计数器若到失败时才惰性创建，第一个样本已经是 1，没有 0 可比 ⇒ increase 恒 0 ⇒
+// 出厂规则 OpsMeshAlertExternalNotifyFailed 漏掉第一次失败。2026-10-04 真机实测过这一形态
+// （只有一次 resolve 失败时 increase=0，规则不动；ack 到第二次失败才被算出 1.197）。
+func TestNotifyFailureBaselineIsExportedAtStartup(t *testing.T) {
+	metrics.Init("alert-svc-test")
+	InitNotifyFailureBaseline()
+
+	body := renderMetrics(t)
+	for _, action := range []string{"ack", "resolve"} {
+		want := `business_metrics_total{name="alert_external_notify_failures",action="` + action + `"} 0`
+		if !strings.Contains(body, want) {
+			t.Errorf("InitNotifyFailureBaseline 之后仍没有 %q\n---输出:\n%s", want, body)
+		}
+	}
+
+	// 基线不得把"已经失败过"洗掉：Add 是在基线之上累加的。
+	svc := newTestService()
+	st := store.NewMemoryStore()
+	st.AddAlert(&store.Alert{AlertID: "alert-base", TenantID: "tenant-1", DeviceID: "device-1", Status: "firing"})
+	svc.store = st
+	svc.SetNotifier(&failingNotifier{err: errors.New("pagerduty: 503")})
+	svc.SetCircuitBreaker(circuit.New("notify-base", 5, time.Minute))
+	if err := svc.AckAlert(context.Background(), &alertv1.AckAlertRequest{Id: "alert-base"}); err != nil {
+		t.Fatalf("AckAlert: %v", err)
+	}
+	if got := `business_metrics_total{name="alert_external_notify_failures",action="ack"} 1`; !strings.Contains(renderMetrics(t), got) {
+		t.Errorf("基线之后第一次失败没有累加到 1（找 %q）\n---输出:\n%s", got, renderMetrics(t))
+	}
+}
+
+// TestMainWiresBaseline 钉住调用点：基线函数存在但没人调用 = 又是一条"配了却没接到线上"的死开关
+// （PAGERDUTY_ENABLED 在 #58 之前就是这个形态，同一类缺陷不打算再犯第三次）。
+// 这里按块取文本而不是反射：cmd 包不能 import 进 service 包测试，而"调用是否落在启用分支内"
+// 恰恰是这段接线的语义所在。
+func TestMainWiresBaseline(t *testing.T) {
+	path := filepath.Join("..", "..", "cmd", "alert-svc", "main.go")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读取 %s 失败（接线门禁没有代码可读时必须判红）: %v", path, err)
+	}
+	src := string(b)
+	i := strings.Index(src, "if cfg.PagerDutyEnabled {")
+	if i < 0 {
+		t.Fatalf("main.go 里找不到 PagerDuty 启用分支（交付形态已变，本测试失去覆盖面）")
+	}
+	block := src[i:]
+	if j := strings.Index(block, "\n\t}"); j >= 0 {
+		block = block[:j]
+	}
+	if !strings.Contains(block, "InitNotifyFailureBaseline()") {
+		t.Errorf("PagerDuty 启用分支内没有调用 InitNotifyFailureBaseline()（第一次失败将不被 increase() 看见）")
 	}
 }

@@ -4783,11 +4783,46 @@ GetAlert/ListAlerts/AckAlert/SilenceAlert…），**没有 REST 路由**；出�
 - 触发告警的 `message` 带现场值（如 `High CPU: cpu_usage=95 > 80`），`values`
   带各指标的实测值；`alert.metric` 是**指标名**（修前被误填成 rule_id，
   于是"按指标查告警"整条口径是错的）。
-- ⚠️ 已知缺口：`alert-svc` 的 `alerts` 表没有 `rule_id` 列，因此 `ListAlerts` 回过来的
-  `rule_id` **恒为空**（补列属 schema 迁移，已登记待办，不用别的字段糊过去）。
+- ✅ `alert.rule_id` 现在会回读（2026-10-04 补列）：`alerts` 表新增 `rule_id VARCHAR(64)`，
+  写侧（`Evaluate` 落库）与读侧（`GetAlert`/`ListAlerts`）都接上，存量库由启动期的
+  幂等 `ALTER`（`information_schema` 判缺才加）补列。实测：`GetAlert` 回到的 `rule_id`
+  与 `CreateRule` 返回的规则 ID 逐字相同。
+  真机顺带暴露的另一件事：`alerts` 表除 `alert_id`/`tenant_id` 外**全部可空**，而读侧曾把
+  这些列 Scan 进 `string`/`time.Time` —— 一列 NULL 就让整行读不出来（`GetAlert` 恒 NotFound、
+  `ListAlerts` 恒空）。现在读侧全列走 `sql.Null*`，并由真库回归 + 三条静态对账门禁钉住。
+- ⚠️ `alert.rule_name` **不回填**，请由 `rule_id` 调 `GetRule` 反查。刻意不在告警行里冗余
+  规则名：规则改名后历史告警会显示新名字（而不是"当时那条规则叫什么"），这种"看起来对、
+  其实是错的"信息比缺字段更糟；`message` 里已经带了触发时的规则名与实测值。
 - 评估器读数来源仍是"调用方推"：服务**不会**自己去 Prometheus 拉指标。
   要自动按指标告警，请用出厂 Prometheus + Alertmanager 那条链路
   （见 `docs/operations.md` §4.3/§4.6.0）。
+
+#### 外发通道：PagerDuty Events API v2 的载荷形状
+
+`PAGERDUTY_ENABLED=true` 且配了 `PAGERDUTY_ROUTING_KEY` 时，三条 RPC 会向外发事件
+（`AckAlert`/`ResolveAlert` 反向同步 + `Evaluate` 命中时的正向推送）：
+
+| 触发动作 | `event_action` | 必填字段 | `payload.severity` |
+|---|---|---|---|
+| 规则命中并落库 | `trigger` | `routing_key`、`event_action`、`dedup_key`、`payload.{summary,source,severity}` | 规则的 severity 映射，缺省 `warning` |
+| `AckAlert` | `acknowledge` | `routing_key`、`event_action`、`dedup_key` | **不发这个键** |
+| `ResolveAlert` | `resolve` | 同上 | **不发这个键** |
+
+三个容易踩的点（2026-10-04 活体实测）：
+
+- `dedup_key` 三条都用**同一个告警 ID**，这是 PagerDuty 把 acknowledge/resolve 关联回原
+  incident 的唯一线索；换成别的值就等于"每次确认都开一个新事件"。
+- `severity` 是枚举（`critical|error|warning|info`）。ack/resolve 不填它，早先的序列化会发出
+  `"severity":""`——空字符串**是非法值**而不是"字段缺省"，真实端点会判 400。现在这个键
+  在 ack/resolve 的载荷里整个不出现（`internal/notify/pagerduty_payload_contract_test.go`
+  按"原始 JSON 里有没有这个键"断言，因为按 struct 反序列化看不出这个差别）。
+- `payload.source` 取告警的 `device_id`。它曾因读侧丢行而恒为空（见上一节），
+  实测修复后带回真实设备名。
+
+> 诚实边界：以上契约按 PagerDuty 公开文档
+> （docs.pagerduty.com/developer/api/reference/events-v2/send-event/create-v2-event，2026-10-04 取读）
+> 复述并在自建校验端点上验证；**没有打过真实 SaaS 端点**（仓库内无集成密钥），
+> 因此"PagerDuty 侧确实建了 incident、确实叫醒了人"这一段仍未被证明。
 
 ### AIOps 智能引擎（aio-svc，直连 `:8100`）
 

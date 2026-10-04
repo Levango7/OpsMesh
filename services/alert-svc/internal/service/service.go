@@ -57,6 +57,23 @@ func (s *Service) SetCircuitBreaker(cb *circuit.Breaker) {
 	s.breaker = cb
 }
 
+// InitNotifyFailureBaseline 在启动时把两条"外部通知失败"计数序列登记出来，值为 0。
+//
+// 为什么"启动就有、值为 0"是必要的而不是洁癖：Prometheus 的 increase() 比较的是窗口内
+// **样本之间的差**，而计数器原本要到第一次失败时才惰性创建——那时第一个样本已经是 1，
+// 没有任何 0 样本可比，于是 increase([10m]) 恒为 0，出厂规则
+// OpsMeshAlertExternalNotifyFailed 对"第一次失败"必然漏报。
+// 2026-10-04 真机实测坐实：只发生一次 resolve 失败时 increase=0（规则不动），
+// 而 ack 失败发生到第二次（1→2）才被算出 increase=1.197 并进入 pending。
+// 规则要等的恰恰是第一次。
+//
+// 刻意不覆盖触发侧的 alert_notification_failures{tenant_id}：标签值是调用方传来的租户，
+// 启动时无从枚举；它的出厂规则本来就是"占比 + 持续 10m"的趋势判据，不是首次判据。
+func InitNotifyFailureBaseline() {
+	metrics.AddBusinessMetric(externalNotifyFailureMetric, 0, map[string]string{"action": "ack"})
+	metrics.AddBusinessMetric(externalNotifyFailureMetric, 0, map[string]string{"action": "resolve"})
+}
+
 // recordExternalNotifyFailure 把 ack/resolve 的外部通知失败变成可见的信号。
 //
 // 缺陷背景：调用点原先写成 `_ = s.breaker.Execute(...)`，本地状态已经改成功、请求返回
@@ -201,6 +218,7 @@ func (s *Service) Evaluate(ctx context.Context, req *alertv1.EvaluateRequest) (*
 		s.store.AddAlert(&store.Alert{
 			AlertID:   alert.Id,
 			TenantID:  ev.TenantID,
+			RuleID:    ev.RuleID,
 			DeviceID:  ev.DeviceID,
 			Severity:  ev.Severity,
 			Message:   ev.Message,
@@ -397,11 +415,11 @@ func storeToProtoAlert(a *store.Alert) *alertv1.Alert {
 		FiredAt:   timestamppb.New(a.CreatedAt),
 		UpdatedAt: timestamppb.New(a.UpdatedAt),
 		DeviceId:  a.DeviceID,
-		// ⚠️ RuleId 在这里只能留空：alert-svc 自己的 alerts 表（internal/store/mysql.go
-		// 的 CREATE TABLE）没有 rule_id 列，store.Alert 也没有该字段。
-		// 修前这里把 Metric 当 RuleID 用，于是"按指标查告警"整条口径都是错的；
-		// 现在 Metric 存回真指标，rule_id 的缺口就显式留在这里（补列属 schema 迁移，
-		// 已登记为待办，不用错字段糊过去）。
+		// RuleId 曾经只能留空：alerts 表没有 rule_id 列、store.Alert 也没有该字段，
+		// 于是"这条告警由哪条规则产生"在写侧就被丢掉（2026-10-04 真机实测：
+		// Evaluate 的响应里 rule_id 是对的，但落库再读出来就空了）。
+		// 现在列、字段、读写两侧都补齐；补列走 initSchema 的幂等 ALTER（存量库同样适用）。
+		RuleId: a.RuleID,
 		Metric: a.Metric,
 	}
 }

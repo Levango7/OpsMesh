@@ -66,6 +66,7 @@ func initSchema(db *sql.DB) error {
 			id BIGINT AUTO_INCREMENT PRIMARY KEY,
 			alert_id VARCHAR(64) NOT NULL,
 			tenant_id VARCHAR(64) NOT NULL,
+			rule_id VARCHAR(64),
 			device_id VARCHAR(64),
 			agent_id VARCHAR(64),
 			severity VARCHAR(16),
@@ -112,6 +113,35 @@ func initSchema(db *sql.DB) error {
 			return err
 		}
 	}
+
+	// 升级路径：alerts.rule_id 是后加的列（2026-10-04）。CREATE TABLE IF NOT EXISTS 对
+	// **已存在**的表什么都不做，存量库不补列就会在第一次 INSERT 时炸
+	// `Unknown column 'rule_id' in 'field list'`，升级即服务不可用。
+	// MySQL 的 ADD COLUMN 没有 IF NOT EXISTS，重复执行报 1060，所以先查 information_schema
+	// 再决定加不加——与主仓 migrations 对幂等的口径一致。
+	if err := ensureColumn(ctx, db, "alerts", "rule_id",
+		`ALTER TABLE alerts ADD COLUMN rule_id VARCHAR(64) AFTER tenant_id`); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureColumn 在列不存在时执行给定 DDL 补列；已存在则什么都不做。
+// 表名/列名只用于查询条件，DDL 语句本身由调用方以字面量提供（不接受外部输入拼接）。
+func ensureColumn(ctx context.Context, db *sql.DB, table, column, ddl string) error {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.COLUMNS
+		 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`, table, column).Scan(&n)
+	if err != nil {
+		return fmt.Errorf("ensureColumn: 检查 %s.%s 失败: %w", table, column, err)
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, ddl); err != nil {
+		return fmt.Errorf("ensureColumn: 补列 %s.%s 失败: %w", table, column, err)
+	}
 	return nil
 }
 
@@ -123,11 +153,116 @@ func (m *MySQLStore) Close() error {
 	return m.db.Close()
 }
 
+// alertColumns / alertRuleColumns 是两张表的读取列清单，必须与下面 nullAlert.dest() /
+// nullAlertRule.dest() 的目标顺序逐位对齐（TestAlertColumnCountMatchesScanTargets 钉这一点）。
+const alertColumns = "alert_id, tenant_id, rule_id, device_id, agent_id, severity, message, metric, " +
+	"status, acknowledged_by, silenced_until, comment, created_at, updated_at"
+
+const alertRuleColumns = "id, tenant_id, metric, op, threshold, for_duration, severity, message, " +
+	"enabled, created_at, created_by"
+
+// nullAlert 承接 alerts 表一行的原始值——**每**一列都用 sql.Null*。
+//
+// 为什么不能"能空的才用 Null*"：schema 里除 alert_id/tenant_id 外全部可空，而写侧
+// AddAlert 对空字符串一律走 nullString() 落成 NULL，于是"这列没值"是常态而不是异常。
+// database/sql 把 NULL Scan 进 string / time.Time 会直接报
+// `converting NULL to string is unsupported`，一列 NULL 就让**整行**读不出来。
+// 真机实测（2026-10-04，#57 外发腿活体）：agent_id 为 NULL ⇒
+// GetAlert 恒 NotFound、ListAlerts 恒空、AckAlert 里取 DeviceID 拿到 nil ⇒
+// 外发给 PagerDuty 的 source 字段是空的。写进去的告警在读侧整体消失，
+// 而健康检查与 RPC 返回码全程正常——属于"接口活着、数据没了"那一类。
+type nullAlert struct {
+	alertID        sql.NullString
+	tenantID       sql.NullString
+	ruleID         sql.NullString
+	deviceID       sql.NullString
+	agentID        sql.NullString
+	severity       sql.NullString
+	message        sql.NullString
+	metric         sql.NullString
+	status         sql.NullString
+	acknowledgedBy sql.NullString
+	silencedUntil  sql.NullTime
+	comment        sql.NullString
+	createdAt      sql.NullTime
+	updatedAt      sql.NullTime
+}
+
+func (n *nullAlert) dest() []any {
+	return []any{&n.alertID, &n.tenantID, &n.ruleID, &n.deviceID, &n.agentID, &n.severity, &n.message,
+		&n.metric, &n.status, &n.acknowledgedBy, &n.silencedUntil, &n.comment, &n.createdAt, &n.updatedAt}
+}
+
+func (n *nullAlert) toAlert() *Alert {
+	a := &Alert{
+		AlertID:        n.alertID.String,
+		TenantID:       n.tenantID.String,
+		RuleID:         n.ruleID.String,
+		DeviceID:       n.deviceID.String,
+		AgentID:        n.agentID.String,
+		Severity:       n.severity.String,
+		Message:        n.message.String,
+		Metric:         n.metric.String,
+		Status:         n.status.String,
+		AcknowledgedBy: n.acknowledgedBy.String,
+		Comment:        n.comment.String,
+	}
+	if n.silencedUntil.Valid {
+		a.SilencedUntil = n.silencedUntil.Time
+	}
+	if n.createdAt.Valid {
+		a.CreatedAt = n.createdAt.Time
+	}
+	if n.updatedAt.Valid {
+		a.UpdatedAt = n.updatedAt.Time
+	}
+	return a
+}
+
+// nullAlertRule 同 nullAlert：全列 sql.Null*，理由一致（阈值/持续时间等列同样可空）。
+type nullAlertRule struct {
+	id          sql.NullString
+	tenantID    sql.NullString
+	metric      sql.NullString
+	op          sql.NullString
+	threshold   sql.NullFloat64
+	forDuration sql.NullInt64
+	severity    sql.NullString
+	message     sql.NullString
+	enabled     sql.NullInt64
+	createdAt   sql.NullTime
+	createdBy   sql.NullString
+}
+
+func (n *nullAlertRule) dest() []any {
+	return []any{&n.id, &n.tenantID, &n.metric, &n.op, &n.threshold, &n.forDuration,
+		&n.severity, &n.message, &n.enabled, &n.createdAt, &n.createdBy}
+}
+
+func (n *nullAlertRule) toRule() *AlertRule {
+	r := &AlertRule{
+		ID:          n.id.String,
+		TenantID:    n.tenantID.String,
+		Metric:      n.metric.String,
+		Op:          n.op.String,
+		Threshold:   n.threshold.Float64,
+		ForDuration: int(n.forDuration.Int64),
+		Severity:    n.severity.String,
+		Message:     n.message.String,
+		Enabled:     n.enabled.Int64 != 0,
+		CreatedBy:   n.createdBy.String,
+	}
+	if n.createdAt.Valid {
+		r.CreatedAt = n.createdAt.Time
+	}
+	return r
+}
+
 // Alerts returns alerts, optionally filtered by tenant.
 func (m *MySQLStore) Alerts(tenantID string) []*Alert {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	q := `SELECT alert_id, tenant_id, device_id, agent_id, severity, message, metric, status, acknowledged_by, silenced_until, comment, created_at, updated_at FROM alerts`
+	q := `SELECT ` + alertColumns + ` FROM alerts`
 	var args []interface{}
 	if tenantID != "" {
 		q += ` WHERE tenant_id=?`
@@ -142,27 +277,12 @@ func (m *MySQLStore) Alerts(tenantID string) []*Alert {
 	defer rows.Close()
 	var out []*Alert
 	for rows.Next() {
-		a := &Alert{}
-		var createdAt, silencedUntil, updatedAt sql.NullTime
-		var alertID, status, ackBy, comment sql.NullString
-		if err := rows.Scan(&alertID, &a.TenantID, &a.DeviceID, &a.AgentID, &a.Severity, &a.Message, &a.Metric, &status, &ackBy, &silencedUntil, &comment, &createdAt, &updatedAt); err != nil {
+		var na nullAlert
+		if err := rows.Scan(na.dest()...); err != nil {
 			log.Printf("[store] Alerts 扫描失败: %v", err)
 			continue
 		}
-		a.AlertID = alertID.String
-		a.Status = status.String
-		a.AcknowledgedBy = ackBy.String
-		if silencedUntil.Valid {
-			a.SilencedUntil = silencedUntil.Time
-		}
-		a.Comment = comment.String
-		if createdAt.Valid {
-			a.CreatedAt = createdAt.Time
-		}
-		if updatedAt.Valid {
-			a.UpdatedAt = updatedAt.Time
-		}
-		out = append(out, a)
+		out = append(out, na.toAlert())
 	}
 	return out
 }
@@ -181,9 +301,9 @@ func (m *MySQLStore) AddAlert(a *Alert) {
 		a.Status = "firing"
 	}
 	_, err := m.db.ExecContext(ctx,
-		`INSERT INTO alerts (alert_id, tenant_id, device_id, agent_id, severity, message, metric, status, acknowledged_by, silenced_until, comment, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		nullString(a.AlertID), nullString(a.TenantID), nullString(a.DeviceID), nullString(a.AgentID),
+		`INSERT INTO alerts (alert_id, tenant_id, rule_id, device_id, agent_id, severity, message, metric, status, acknowledged_by, silenced_until, comment, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		nullString(a.AlertID), nullString(a.TenantID), nullString(a.RuleID), nullString(a.DeviceID), nullString(a.AgentID),
 		nullString(a.Severity), nullString(a.Message), nullString(a.Metric), nullString(a.Status),
 		nullString(a.AcknowledgedBy), nullTime(a.SilencedUntil), nullString(a.Comment),
 		nullTime(a.CreatedAt), nullTime(a.UpdatedAt))
@@ -196,31 +316,15 @@ func (m *MySQLStore) AddAlert(a *Alert) {
 func (m *MySQLStore) Alert(id string) *Alert {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	row := m.db.QueryRowContext(ctx,
-		`SELECT alert_id, tenant_id, device_id, agent_id, severity, message, metric, status, acknowledged_by, silenced_until, comment, created_at, updated_at FROM alerts WHERE alert_id=?`, id)
-	a := &Alert{}
-	var createdAt, silencedUntil, updatedAt sql.NullTime
-	var alertID, status, ackBy, comment sql.NullString
-	if err := row.Scan(&alertID, &a.TenantID, &a.DeviceID, &a.AgentID, &a.Severity, &a.Message, &a.Metric, &status, &ackBy, &silencedUntil, &comment, &createdAt, &updatedAt); err != nil {
+	row := m.db.QueryRowContext(ctx, `SELECT `+alertColumns+` FROM alerts WHERE alert_id=?`, id)
+	var na nullAlert
+	if err := row.Scan(na.dest()...); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] Alert 查询失败: %v", err)
 		}
 		return nil
 	}
-	a.AlertID = alertID.String
-	a.Status = status.String
-	a.AcknowledgedBy = ackBy.String
-	if silencedUntil.Valid {
-		a.SilencedUntil = silencedUntil.Time
-	}
-	a.Comment = comment.String
-	if createdAt.Valid {
-		a.CreatedAt = createdAt.Time
-	}
-	if updatedAt.Valid {
-		a.UpdatedAt = updatedAt.Time
-	}
-	return a
+	return na.toAlert()
 }
 
 // AckAlert acknowledges an alert.
@@ -309,7 +413,7 @@ func (m *MySQLStore) CreateAlertRule(r *AlertRule) *AlertRule {
 func (m *MySQLStore) ListAlertRules(tenantID string) []*AlertRule {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	q := `SELECT id, tenant_id, metric, op, threshold, for_duration, severity, message, enabled, created_at, created_by FROM alert_rules`
+	q := `SELECT ` + alertRuleColumns + ` FROM alert_rules`
 	var args []interface{}
 	if tenantID != "" {
 		q += ` WHERE tenant_id=?`
@@ -324,18 +428,12 @@ func (m *MySQLStore) ListAlertRules(tenantID string) []*AlertRule {
 	defer rows.Close()
 	var out []*AlertRule
 	for rows.Next() {
-		r := &AlertRule{}
-		var createdAt sql.NullTime
-		var createdBy sql.NullString
-		if err := rows.Scan(&r.ID, &r.TenantID, &r.Metric, &r.Op, &r.Threshold, &r.ForDuration, &r.Severity, &r.Message, &r.Enabled, &createdAt, &createdBy); err != nil {
+		var nr nullAlertRule
+		if err := rows.Scan(nr.dest()...); err != nil {
 			log.Printf("[store] ListAlertRules 扫描失败: %v", err)
 			continue
 		}
-		if createdAt.Valid {
-			r.CreatedAt = createdAt.Time
-		}
-		r.CreatedBy = createdBy.String
-		out = append(out, r)
+		out = append(out, nr.toRule())
 	}
 	return out
 }
@@ -360,22 +458,15 @@ func (m *MySQLStore) DeleteAlertRule(id string) bool {
 func (m *MySQLStore) GetAlertRule(id string) *AlertRule {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	row := m.db.QueryRowContext(ctx,
-		`SELECT id, tenant_id, metric, op, threshold, for_duration, severity, message, enabled, created_at, created_by FROM alert_rules WHERE id=?`, id)
-	r := &AlertRule{}
-	var createdAt sql.NullTime
-	var createdBy sql.NullString
-	if err := row.Scan(&r.ID, &r.TenantID, &r.Metric, &r.Op, &r.Threshold, &r.ForDuration, &r.Severity, &r.Message, &r.Enabled, &createdAt, &createdBy); err != nil {
+	row := m.db.QueryRowContext(ctx, `SELECT `+alertRuleColumns+` FROM alert_rules WHERE id=?`, id)
+	var nr nullAlertRule
+	if err := row.Scan(nr.dest()...); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] GetAlertRule 查询失败: %v", err)
 		}
 		return nil
 	}
-	if createdAt.Valid {
-		r.CreatedAt = createdAt.Time
-	}
-	r.CreatedBy = createdBy.String
-	return r
+	return nr.toRule()
 }
 
 // UpdateAlertRule updates a rule.

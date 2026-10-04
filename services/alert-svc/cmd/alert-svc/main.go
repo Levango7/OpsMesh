@@ -80,6 +80,8 @@ func main() {
 		cb = circuit.New("pagerduty", 5, 30*time.Second)
 		svc.SetNotifier(pdClient)
 		svc.SetCircuitBreaker(cb)
+		// 通道已启用 ⇒ 先把失败计数的两条序列登记成 0，让"第一次失败"就能被 increase() 看见。
+		service.InitNotifyFailureBaseline()
 		log.Printf("PagerDuty notifications enabled (routing key: %s)", maskRoutingKey(cfg.PagerDutyRoutingKey))
 	}
 

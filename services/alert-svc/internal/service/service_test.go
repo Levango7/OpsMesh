@@ -345,11 +345,12 @@ func TestEvaluate_RuleMetricFieldIsMetricNotRuleID(t *testing.T) {
 	if got.GetMetric() != "temperature" {
 		t.Fatalf("Metric = %q, want temperature", got.GetMetric())
 	}
-	// rule_id 目前只能为空：alerts 表没有 rule_id 列（缺口已在 service.go 的
-	// storeToProtoAlert 注释里写明并登记待办）。这里断言它为空，是为了让
-	// "以后补了列却忘了改这里"或者"又拿 Metric 当 RuleID"都能被判红。
-	if got.GetRuleId() != "" {
-		t.Fatalf("rule_id 现在应为空（无该列），实际 %q", got.GetRuleId())
+	// 这一段原本断言 rule_id **必须为空**（当时 alerts 表没有 rule_id 列，缺口显式留在
+	// storeToProtoAlert 的注释里）。2026-10-04 补列之后，断言随之翻转为"必须等于规则 ID"——
+	// 断言写在读侧（ListAlerts 走完整存储往返），所以"列加了但写/读任一侧漏了"都会被判红。
+	if got.GetRuleId() != created.GetId() {
+		t.Fatalf("rule_id = %q，期望回读到规则 ID %q（评估响应里是对的，落库读回却丢了）",
+			got.GetRuleId(), created.GetId())
 	}
 	if created.GetId() == "" {
 		t.Fatal("前置不成立：规则没有 ID")

@@ -7,10 +7,14 @@ import (
 
 // Alert represents an alert event in the store.
 type Alert struct {
-	AlertID        string
-	TenantID       string
-	DeviceID       string
-	AgentID        string
+	AlertID  string
+	TenantID string
+	DeviceID string
+	AgentID  string
+	// RuleID 是"这条告警由哪条规则产生"。缺失时告警就无法回溯到规则/阈值/负责人，
+	// 值班只能看到一句 message。alerts 表原本没有这一列，写侧直接把 ev.RuleID 丢了，
+	// 于是 ListAlerts/GetAlert 返回的 rule_id 恒空（2026-10-04 真机实测）。
+	RuleID         string
 	Severity       string
 	Message        string
 	Metric         string

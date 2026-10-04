@@ -46,10 +46,14 @@ type PagerDutyEvent struct {
 }
 
 // EventPayload is the payload field of a PagerDuty event.
+//
+// Severity 带 omitempty：acknowledge/resolve 两条路径不填它，而 PagerDuty 的 severity
+// 是枚举字段（critical/error/warning/info），序列化成 `""` 发出去是**非法值**，
+// 会被真实端点判 400——空字符串比缺字段更糟，所以这里宁可不发这个键。
 type EventPayload struct {
 	Summary   string                 `json:"summary"`
 	Source    string                 `json:"source"`
-	Severity  string                 `json:"severity"`
+	Severity  string                 `json:"severity,omitempty"`
 	Component string                 `json:"component,omitempty"`
 	Group     string                 `json:"group,omitempty"`
 	Class     string                 `json:"class,omitempty"`
