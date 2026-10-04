@@ -14,7 +14,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	neturl "net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -25,6 +24,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
+	"github.com/Levango7/OpsMesh/internal/egress"
 	"github.com/Levango7/OpsMesh/internal/grpcx"
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/otelx"
@@ -435,44 +435,6 @@ func (s *Server) pingStore(ctx context.Context) error {
 // 通过 context.WithTimeout 控制 net.LookupIP，避免恶意域名解析拖垮 API。
 const ssrfDNSTimeout = 5 * time.Second
 
-// isRestrictedEvenWhenAllowed 是"任何开关都不放行"的地址段：链路本地（含云元数据
-// 169.254.169.254）、0.0.0.0/8 本网、IPv6 的 fe80::/10 与未指定地址 ::。
-//
-// 与 isPrivateIP 的分工是刻意的：私网/环回属于"内网部署确实要用"的范围，由
-// --webhook-allow-private 决定放不放；而这一段没有任何合法收件端住在里面，
-// 开了内网开关也不该把它们一起放行（SSRF 的实际收益恰恰集中在这一段）。
-func isRestrictedEvenWhenAllowed(ip net.IP) bool {
-	if ip4 := ip.To4(); ip4 != nil {
-		if ip4[0] == 169 && ip4[1] == 254 {
-			return true
-		}
-		if ip4[0] == 0 {
-			return true
-		}
-		return false
-	}
-	return ip.IsLinkLocalUnicast() || ip.IsUnspecified()
-}
-
-// ssrfIPRejection 返回该 IP 在当前 allowPrivate 策略下是否应被拒绝拨号，
-// 返回 "" 表示放行。
-//
-// 与 ValidateWebhookURL 的 IP 判定共用同一套谓词（isPrivateIP /
-// isRestrictedEvenWhenAllowed），保证"保存时校验"与"建连时复检"口径一致——
-// 两处策略分叉是这类防护最常见的失效方式。
-func ssrfIPRejection(ip net.IP, allowPrivate bool) string {
-	if allowPrivate {
-		if isRestrictedEvenWhenAllowed(ip) {
-			return "链路本地/未指定/云元数据地址（任何开关均不放行）"
-		}
-		return ""
-	}
-	if isPrivateIP(ip) {
-		return "私网/环回/元数据地址"
-	}
-	return ""
-}
-
 // newEgressClient 构造带 SSRF 防护的出网 HTTP client。
 //
 // 解决的问题：ValidateWebhookURL 只在**保存配置时**跑一次，而 DNS 记录在此后
@@ -489,73 +451,7 @@ func ssrfIPRejection(ip net.IP, allowPrivate bool) string {
 // allowPrivate 语义与 ValidateWebhookURL 一致：true 放行私网/环回（内网收件端场景），
 // 但链路本地/云元数据/0.0.0.0/8 恒拒。
 func newEgressClient(timeout time.Duration, allowPrivate bool) *http.Client {
-	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	transport := &http.Transport{
-		// Proxy 刻意置 nil，不用 http.ProxyFromEnvironment。
-		//
-		// 原因：本 client 存在的意义就是让"建连时逐 IP 复检"成为权威判定。
-		// 一旦启用环境代理，Go 会把请求交给代理、由**代理**去解析并连接目标主机，
-		// 下面的 DialContext 拿到的是代理地址而非目标地址，IP 级校验形同虚设——
-		// 实测：设置了 HTTP_PROXY 时，直连 169.254.169.254 的请求会绕过 DialContext
-		// 直接发给代理（返回 502 而非被 SSRF 守卫拒绝）。
-		// 需要出网代理的部署应改在网络层（sidecar / 网关 / iptables）做，而非在此处。
-		Proxy:                 nil,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          32,
-		IdleConnTimeout:       60 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, fmt.Errorf("invalid dial address %q: %w", addr, err)
-			}
-			ips, err := lookupSSRFHostIPs(host)
-			if err != nil {
-				return nil, fmt.Errorf("resolve %q: %w", host, err)
-			}
-			var lastErr error
-			for _, ip := range ips {
-				if reason := ssrfIPRejection(ip, allowPrivate); reason != "" {
-					lastErr = fmt.Errorf("dial %s blocked by SSRF guard: %s", ip, reason)
-					continue
-				}
-				conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
-				if err == nil {
-					return conn, nil
-				}
-				lastErr = err
-			}
-			if lastErr == nil {
-				lastErr = fmt.Errorf("host %q resolved to no usable address", host)
-			}
-			return nil, lastErr
-		},
-	}
-	return &http.Client{
-		Timeout:   timeout,
-		Transport: transport,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return fmt.Errorf("too many redirects (>5)")
-			}
-			// 每一跳重新做 URL 级校验：这是"外网 URL 返回 302 打到云元数据"这条
-			// 最常见 SSRF 形态的唯一阻断点。
-			if err := ValidateWebhookURL(req.URL.String(), allowPrivate); err != nil {
-				return fmt.Errorf("redirect target rejected by SSRF guard: %w", err)
-			}
-			return nil
-		},
-	}
-}
-
-// lookupSSRFHostIPs 带超时地解析主机名。单独抽出来是因为 allowPrivate 分支现在也要
-// 解析（否则"域名指向元数据"这一形态会被完全跳过），而两处各写一遍
-// WithTimeout+cancel 很容易漏掉 cancel。
-func lookupSSRFHostIPs(host string) ([]net.IP, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), ssrfDNSTimeout)
-	defer cancel()
-	return net.DefaultResolver.LookupIP(ctx, "ip", host)
+	return egress.NewClient(timeout, allowPrivate)
 }
 
 // ValidateWebhookURL 校验 webhook URL 防止 SSRF 攻击。
@@ -584,73 +480,7 @@ func lookupSSRFHostIPs(host string) ([]net.IP, error) {
 //
 // 返回 nil 表示安全，非 nil error 描述拒绝原因（调用方应返回 400 + 错误信息）。
 func ValidateWebhookURL(rawURL string, allowPrivate bool) error {
-	u, err := neturl.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("invalid URL: %w", err)
-	}
-	// 1. 协议白名单：仅允许 http/https（拒绝 file/gopher/dict/ftp 等可触发 SSRF/RFI 的协议）。
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return fmt.Errorf("scheme %q not allowed (only http/https)", u.Scheme)
-	}
-	// 2. 主机名非空校验。
-	host := u.Hostname()
-	if host == "" {
-		return fmt.Errorf("empty host in URL")
-	}
-	// 3. 解析主机名：IP 字面量直接校验；域名做 DNS 解析后校验每个 IP。
-	//
-	// allowPrivate=true 的语义**收窄为"放行私网与环回"**，不再放行链路本地/云元数据段：
-	// 旧实现在这里直接 return nil（连 DNS 都不做），于是"允许内网收件端"这个开关
-	// 顺带把 169.254.169.254（IMDS 凭证窃取的头号目标）和 0.0.0.0/8 一起放行，
-	// 还与本函数自己的文档注释矛盾——上面那句"拒绝的地址范围…169.254.0.0/16（链路本地 + 云元数据）"
-	// 在开关打开时根本不成立。
-	// 这是一次**契约变更**（此前 server_netsec_test.go 明确断言过 true 放行元数据），
-	// 理由是没有任何"钉钉/飞书内网网关"住在链路本地段，而 SSRF 的实际价值恰恰在这一段。
-	if ip := net.ParseIP(host); ip != nil {
-		if allowPrivate {
-			if isRestrictedEvenWhenAllowed(ip) {
-				return fmt.Errorf("host %q is link-local/unspecified/metadata address %s（--webhook-allow-private 不放行该段）", host, ip)
-			}
-			return nil
-		}
-		if isPrivateIP(ip) {
-			return fmt.Errorf("host %q is private/loopback/metadata address %s", host, ip)
-		}
-		return nil
-	}
-	if allowPrivate {
-		// 开关打开时仍要解析域名：否则"域名解析到 169.254.169.254"这条最常见的
-		// rebinding/内网指向元数据的形态会被完全跳过。
-		ips, err := lookupSSRFHostIPs(host)
-		if err != nil {
-			return fmt.Errorf("cannot resolve host %q: %w", host, err)
-		}
-		for _, ip := range ips {
-			if isRestrictedEvenWhenAllowed(ip) {
-				return fmt.Errorf("host %q resolves to link-local/unspecified/metadata address %s（--webhook-allow-private 不放行该段）", host, ip)
-			}
-		}
-		return nil
-	}
-	// 域名：DNS 解析（带 5 秒超时），校验每个返回 IP。
-	// 任一 IP 落入私网即拒绝（防 DNS rebinding：域名解析到内网地址）。
-	resolver := net.DefaultResolver
-	lookupCtx, cancel := context.WithTimeout(context.Background(), ssrfDNSTimeout)
-	defer cancel()
-	ips, err := resolver.LookupIP(lookupCtx, "ip", host)
-	if err != nil {
-		return fmt.Errorf("cannot resolve host %q: %w", host, err)
-	}
-	if len(ips) == 0 {
-		return fmt.Errorf("host %q resolved to no IP addresses", host)
-	}
-	for _, ip := range ips {
-		if isPrivateIP(ip) {
-			return fmt.Errorf("host %q resolves to private/loopback/metadata address %s", host, ip)
-		}
-	}
-	return nil
+	return egress.ValidateURL(rawURL, allowPrivate)
 }
 
 // ValidateCIDR 校验目标 CIDR 是否在允许的白名单内（autoProvision 网段校验）。

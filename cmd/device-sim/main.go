@@ -287,6 +287,17 @@ func createDevice(index int) *Device {
 	return dev
 }
 
+// simHTTPClient 是模拟器的出网 client。
+//
+// 为什么不用 http.DefaultClient（修复记录 2026-10-04）：
+// DefaultClient.Timeout 为 0，只在 ctx 带 deadline 时才受保护。模拟器注册/
+// 心跳的 ctx 来自主流程，父上下文未必有 deadline；一旦对端 TCP 建连后不回
+// 数据（防火墙丢包、连接被劫持后静默），请求会无限期挂着，心跳 goroutine
+// 逐个卡死，模拟器"还活着但一台设备都没注册上"，且没有任何日志线索。
+//
+// 8 秒对模拟器足够宽裕（它打的是自家控制面），又能保证故障可观测。
+var simHTTPClient = &http.Client{Timeout: 8 * time.Second}
+
 func registerDevice(ctx context.Context, cfg Configuration, d *Device) error {
 	payload, err := json.Marshal(d)
 	if err != nil {
@@ -294,17 +305,26 @@ func registerDevice(ctx context.Context, cfg Configuration, d *Device) error {
 	}
 
 	url := fmt.Sprintf("%s/api/v1/devices/register", cfg.ControlPlaneURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return fmt.Errorf("request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	// 重试必须**重建** request，不能复用同一个 req：
+	// http.Request 的 Body 是 io.ReadCloser，第一次 Do 已被读完（读到 EOF），
+	// 第二次 Do 会发出空 body。控制面收到空 body 会解析失败，
+	// 于是"重试"变成"发一个更坏的请求"，且现象是注册莫名失败而非重试成功。
+	// （此处此前即存在该缺陷——DefaultClient 掩盖了它，因为没人注意到重试路径。）
+	send := func() (*http.Response, error) {
+		req, rerr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		if rerr != nil {
+			return nil, fmt.Errorf("request: %w", rerr)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return simHTTPClient.Do(req)
+	}
+
+	resp, err := send()
 	if err != nil {
 		// Retry once
 		time.Sleep(time.Second)
-		resp, err = http.DefaultClient.Do(req)
+		resp, err = send()
 		if err != nil {
 			return fmt.Errorf("do: %w", err)
 		}
@@ -370,7 +390,7 @@ func sendHeartbeat(ctx context.Context, cfg Configuration, d *Device) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := simHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("do: %w", err)
 	}
@@ -412,7 +432,7 @@ func reportTaskResult(ctx context.Context, cfg Configuration, result TaskResult)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := simHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}

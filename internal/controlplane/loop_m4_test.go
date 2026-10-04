@@ -30,11 +30,26 @@ import (
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/deploy"
+	"github.com/Levango7/OpsMesh/internal/egress"
 	"github.com/Levango7/OpsMesh/internal/notify"
 	"github.com/Levango7/OpsMesh/internal/orchestration"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
+
+// allowLoopbackEgress 把 notify 包的出网策略换成"放行私网/环回"，等价于生产上的
+// --webhook-allow-private=true。
+//
+// 为什么本文件必须显式声明：2026-10-04 起 internal/notify 不再用裸 http.DefaultClient
+// 出网，投递前会按注入策略复检 URL（见 internal/egress）。本组用例的收件端是
+// httptest.Server（恒绑 127.0.0.1），不声明就变成"想验 notifyLoop 的接线，却被投递
+// 策略拒绝"——那验的是策略而不是接线。策略本身的正/反例在 notify 包内覆盖。
+func allowLoopbackEgress(t *testing.T) {
+	t.Helper()
+	prev := notify.EgressClient()
+	notify.SetEgressClient(egress.NewClient(5*time.Second, true))
+	t.Cleanup(func() { notify.SetEgressClient(prev) })
+}
 
 // newLoopM4Server 构造带 alertAggr/alertChannels 的测试控制面（newLoopTestServer 未初始化这两个字段）。
 // notifyLoop 行为测试需要 alertChannels.Push 真正推送，故在此补齐。
@@ -99,7 +114,10 @@ func TestLoopM4_NotifyLoop_PushesFiringAlert(t *testing.T) {
 	defer srv.Close()
 
 	s := newLoopM4Server()
-	// 构造 alertChannels 指向 httptest.Server（绕过 SSRF 校验直接构造 Channels 结构）。
+	// 收件端是 127.0.0.1 上的 httptest.Server：必须显式声明"放行环回"，
+	// 否则 notify 的出网策略会先拒掉请求，本用例验的就不是 notifyLoop 的接线了。
+	allowLoopbackEgress(t)
+	// 构造 alertChannels 指向 httptest.Server（绕开渠道 CRUD 校验，直接装配数据面）。
 	s.alertChannels = &notify.Channels{
 		NotifierType: "generic",
 		WebhookURL:   srv.URL,
@@ -166,7 +184,10 @@ func TestLoopM4_NotifyLoop_OutOfOrderAlertsBothPushed(t *testing.T) {
 	defer srv.Close()
 
 	s := newLoopM4Server()
-	// 构造 alertChannels 指向 httptest.Server（绕过 SSRF 校验直接构造 Channels 结构）。
+	// 收件端是 127.0.0.1 上的 httptest.Server：必须显式声明"放行环回"，
+	// 否则 notify 的出网策略会先拒掉请求，本用例验的就不是 notifyLoop 的接线了。
+	allowLoopbackEgress(t)
+	// 构造 alertChannels 指向 httptest.Server（绕开渠道 CRUD 校验，直接装配数据面）。
 	s.alertChannels = &notify.Channels{
 		NotifierType: "generic",
 		WebhookURL:   srv.URL,

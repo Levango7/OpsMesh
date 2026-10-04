@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/egress"
 )
 
 // ============================================================================
@@ -439,11 +441,11 @@ func TestSSRF_IPRejectionMatchesWebhookPolicy(t *testing.T) {
 	}
 	for _, c := range cases {
 		ip := parseIPMust(t, c.ip)
-		if got := ssrfIPRejection(ip, false) != ""; got != c.wantPrivate {
-			t.Errorf("ssrfIPRejection(%s, allowPrivate=false) 拒绝=%v, want %v", c.ip, got, c.wantPrivate)
+		if got := egress.IPRejection(ip, false) != ""; got != c.wantPrivate {
+			t.Errorf("egress.IPRejection(%s, allowPrivate=false) 拒绝=%v, want %v", c.ip, got, c.wantPrivate)
 		}
-		if got := ssrfIPRejection(ip, true) != ""; got != c.wantAllowAny {
-			t.Errorf("ssrfIPRejection(%s, allowPrivate=true) 拒绝=%v, want %v", c.ip, got, c.wantAllowAny)
+		if got := egress.IPRejection(ip, true) != ""; got != c.wantAllowAny {
+			t.Errorf("egress.IPRejection(%s, allowPrivate=true) 拒绝=%v, want %v", c.ip, got, c.wantAllowAny)
 		}
 	}
 }

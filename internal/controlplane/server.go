@@ -24,6 +24,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/controlplane/factory"
 	"github.com/Levango7/OpsMesh/internal/cron"
 	"github.com/Levango7/OpsMesh/internal/deploy"
+	"github.com/Levango7/OpsMesh/internal/egress"
 	"github.com/Levango7/OpsMesh/internal/events"
 	"github.com/Levango7/OpsMesh/internal/helm"
 	"github.com/Levango7/OpsMesh/internal/k8s"
@@ -364,6 +365,13 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		// 灾备备份归档目录：data-dir/backups（与 CLI backup 子命令同源，便于运维统一备份数据目录）。
 		backupDir: filepath.Join(cfg.DataDir, "backups"),
 	}
+	// 告警通知出网策略注入（必须在开始接收流量前完成，notify 侧之后只读）。
+	//
+	// 为什么需要注入：internal/notify 此前用裸 http.DefaultClient 出网，**完全绕过**
+	// 了 --webhook-allow-private 这个开关——管理员设了安全基线，通知照样能打内网。
+	// 现在 notify 复用 egress 包，与 API 层的通知渠道 CRUD 校验**共用同一条策略**，
+	// 消除"保存时一套口径、投递时另一套口径"的自相矛盾。
+	notify.SetEgressClient(egress.NewClient(notifyEgressTimeout, cfg.WebhookAllowPrivate))
 	// G1 鉴权修复：给 CMDB/部署/日志/编排子包 handler 注入统一鉴权回调
 	// （requireTenantContext + requireProd RBAC 权限闸），堵住全域匿名可达漏洞。
 	// 回调内按请求方法映射权限点（各包 RegisterRoutes 已按 read/write 语义包装）。

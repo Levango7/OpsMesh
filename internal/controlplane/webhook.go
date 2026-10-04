@@ -37,6 +37,13 @@ import (
 	"github.com/Levango7/OpsMesh/internal/store"
 )
 
+// notifyEgressTimeout 是 webhook / 告警通知出网的整体超时（10 秒）。
+//
+// API 层投递（deliverWebhook）与告警通知层（notify.SetEgressClient 注入的 client）
+// 共用同一个值，避免两条出网路径超时不一致——运维排障时"告警到了但事件没到"
+// 这种现象有一半来自超时配置不同。
+const notifyEgressTimeout = 10 * time.Second
+
 // handleWebhooks 统一处理 /api/v1/webhooks：
 //   - GET：列出 Webhook
 //   - POST：创建 Webhook
@@ -325,7 +332,7 @@ func deliverWebhook(rawURL, event, payload string, allowPrivate bool) (int, stri
 	req.Header.Set("User-Agent", "OpsMesh-Webhook/1.0")
 	req.Header.Set("X-OpsMesh-Event", event)
 
-	client := newEgressClient(10*time.Second, allowPrivate)
+	client := newEgressClient(notifyEgressTimeout, allowPrivate)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, "", fmt.Errorf("HTTP POST: %w", err)
