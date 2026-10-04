@@ -100,6 +100,17 @@ spec:
           annotations:
             summary: 任务结果回报失败率 {{ "{{ $value | humanizePercentage }}" }}
             description: 近 10 分钟 agent 回报执行结果的失败占比超过 20%：结果没落库 ⇒ 控制面看到的任务状态是陈旧的，重试会重复执行副作用。
+        # 死信此前是静默路径：重试耗尽后任务永久不再下发，既无指标也无告警。
+        # 与 deploy/monitoring/prometheus-alerts.yml 里同名规则是同一组规则的两份装载副本，
+        # 漂移由 TestBusinessRuleMirrorBetweenComposeAndChart 逐条钉住。
+        - alert: OpsMeshTaskDeadLettered
+          expr: sum(increase(business_metrics_total{name="task_dead_lettered"}[15m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: 有任务进入死信（重试已耗尽）
+            description: 近 15 分钟有任务因重试次数耗尽被判死信，之后不会再被下发。请查任务结果的 exit code 与 stderr：常见成因是命令本身失败、agent 执行环境缺依赖、或 timeout 设置过短导致每次都跑到超时。
         - alert: OpsMeshAlertExternalNotifyFailed
           expr: sum by (action) (increase(business_metrics_total{name="alert_external_notify_failures"}[10m])) > 0
           for: 5m

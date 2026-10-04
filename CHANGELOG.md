@@ -8,6 +8,9 @@
 
 > 待归版。
 
+- **修｜任务进入死信是一条完全静默的路径（#62 第三项）**：重试耗尽后 `store` 会把任务置 `DeadLetter=true` 并永久不再下发（memory 与 MySQL 两侧都有这段状态机），但**既没有指标也没有告警**——运维侧只能靠"这个任务的结果怎么一直没出来"反推。现在 `task-svc` 在**状态翻转那一刻**记 `task_dead_lettered{tenant_id}` 计数并打一行含 taskID/重试次数/exit code 的日志，SSE 载荷补 `deadLetter`；两份装载点（`prometheus-alerts.yml` 与 chart 的 `prometheusrule.yaml`）各加一条 `OpsMeshTaskDeadLettered`（15m 内出现即 warning，expr/for/severity 逐条相同，由既有镜像契约测试钉住不漂移）；`docs/operations.md` §4.1.1 与 §4.3 两处表格同步。
+  刻意只在翻转时计数：同一死信任务被重复回报（agent 重试路径确实会）会把计数推高，那条告警就变成了"看起来在恶化"的假趋势。**验证**：新增 `TestReportResult_DeadLetterIsObservable` —— 走 `/metrics` **渲染文本**读回计数（"计数器存在于内部 map 里"不等于"抓取面拿得到"，本仓为此付过学费），断言 ① 状态真翻成死信 ② 首翻计 1 ③ 重复回报不累加；变异验证：摘掉那次 `AddBusinessMetric` 调用 ⇒ 判红（`task_dead_lettered 计数 = -1`）。task-svc 全模块 7 包含 `internal/controlplane` 的微服务指标契约测试均绿。
+
 - **修｜incident-svc 的"告警聚合"从来没成立过，事故自动升级也从未被调用（#62 第二项）**。两处独立缺陷叠在一起：
   1. `Service.IngestAlert` 把 `Aggregate()` 的返回值当事故 ID 用（`GetIncident(result.IncidentID)`），而 `aggregate.go` 拼出来的其实是**聚合键** `deviceID+"-"+ruleID` ⇒ 永远查不到 ⇒ **每条告警都新建一个事故**（10 条同类告警 = 10 个事故），"把同一故障的多条告警归并成一个事故"这项对外能力形同虚设。
   2. `aggregate.ShouldEscalate` 有完整单元测试、**全仓零调用点** ⇒ 事故级别永远停在第一条告警的级别，后续 critical 告警再多也不升级，值班按级别排序就会漏看正在恶化的事故。

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -228,6 +229,11 @@ func (s *Service) ReportResult(ctx context.Context, req *taskv1.ReportResultRequ
 		r.FinishedAt = timestamppb.Now()
 	}
 
+	var wasDeadLetter bool
+	if prev := s.taskStore.GetTask(r.TaskId); prev != nil {
+		wasDeadLetter = prev.DeadLetter
+	}
+
 	var reportErr error
 	if s.breaker != nil {
 		err := s.breaker.Execute(func() error {
@@ -281,14 +287,27 @@ func (s *Service) ReportResult(ctx context.Context, req *taskv1.ReportResultRequ
 	}
 	// 从 store 拿当前任务状态用于 SSE 载荷（不额外引入 req 字段）
 	var sseStatus string
+	var deadLetter bool
 	if mt := s.taskStore.GetTask(r.TaskId); mt != nil {
 		sseStatus = mt.Status
+		deadLetter = mt.DeadLetter
+		// 死信计数只在**状态翻转**时增长（重试耗尽的那一刻）。
+		// 修前死信是一条完全静默的路径：任务被永久判死，既没有指标也没有出厂告警，
+		// 于是"任务再也不跑了"只能靠用户发现结果没出来。
+		if mt.DeadLetter && !wasDeadLetter {
+			metrics.AddBusinessMetric("task_dead_lettered", 1, map[string]string{
+				"tenant_id": mt.TenantID,
+			})
+			log.Printf("[task-svc] 任务进入死信：task=%s retry=%d/%d exit=%d tenant=%s（重试已耗尽，不会再被下发）",
+				mt.TaskID, mt.RetryCount, mt.MaxRetries, r.ExitCode, mt.TenantID)
+		}
 	}
 	s.emitAudit(ctx, "", r.AgentId, action, r.TaskId, detail, level, map[string]string{
-		"taskID":   r.TaskId,
-		"status":   sseStatus,
-		"agentID":  r.AgentId,
-		"exitCode": fmt.Sprintf("%d", r.ExitCode),
+		"taskID":     r.TaskId,
+		"status":     sseStatus,
+		"agentID":    r.AgentId,
+		"exitCode":   fmt.Sprintf("%d", r.ExitCode),
+		"deadLetter": strconv.FormatBool(deadLetter),
 	})
 	return r, nil
 }

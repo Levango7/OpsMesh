@@ -947,6 +947,7 @@ curl "$CP/api/v1/tasks/<task-id>/result" -H "$AUTH" -H "X-Tenant-ID: $TENANT"
 | `business_metrics_total{name="task_scheduled_fire_failures"}` | counter | task-svc | 派发写 `last_fired_at` 失败次数——失败即"本分钟到底触发过没有"失去事实来源 |
 | `business_metrics_total{name="task_reclaimed"}` | counter | task-svc | 超期 running 任务回收次数 |
 | `business_metrics_total{name="task_reclaim_failures"}` | counter | task-svc | 回收失败次数——失败即任务永久显示"执行中" |
+| `business_metrics_total{name="task_dead_lettered", tenant_id}` | counter | task-svc | **进入死信**的次数：重试耗尽后任务永久不再下发。只在状态翻转那一刻计数（同一任务重复回报不会累加）|
 | `business_metrics_total{name="alert_external_notify_failures", action}` | counter | alert-svc | 告警 ack/resolve **已落库但外部通道未送达**（`action=ack\|resolve`）。这是 critical 级信号：接口返回成功、运维以为 on-call 被呼叫 |
 | `business_metrics_total{name="alert_notifications", tenant_id}` / `business_metrics_total{name="alert_notification_failures", tenant_id}` | counter | alert-svc | 规则事件 → 通知器的成功/失败（经熔断器；失败占比高说明下游通道故障） |
 | `business_metrics_total{name="log_memory_dropped"}` | counter | log-svc | 内存后端环形缓冲被淘汰的条数。`LOG_SVC_BACKEND` 默认 `loki`，且后端初始化失败是 `Fatalf` 不静默回落 ⇒ **该序列增长本身就说明实例在用内存后端** |
@@ -1030,6 +1031,7 @@ observability:
 | `OpsMeshTaskReclaimFailed` | `name="task_reclaim_failures"` | 10m 内出现回收落库失败，持续 5m | warning |
 | `OpsMeshTaskClaimFailureRate` | `task_claim_failures` / `task_claims` | 10m 领取失败占比 >20%，持续 10m | warning |
 | `OpsMeshTaskReportFailureRate` | `task_report_failures` / `task_reports` | 10m 回报失败占比 >20%，持续 10m | warning |
+| `OpsMeshTaskDeadLettered` | `name="task_dead_lettered"` | 15m 内出现重试耗尽进死信的任务，持续 5m | warning |
 | `OpsMeshAlertExternalNotifyFailed` | `name="alert_external_notify_failures"`（按 `action` 分） | 10m 内出现"已落库但外部通知失败"，持续 5m | critical |
 | `OpsMeshAlertNotifyFailureRate` | `alert_notification_failures` / `alert_notifications`（按 `tenant_id`） | 10m 推送失败占比 >20%，持续 10m | warning |
 | `OpsMeshLogMemoryBackendDropping` | `name="log_memory_dropped"` | 10m 内内存后端淘汰过日志，持续 5m | warning |

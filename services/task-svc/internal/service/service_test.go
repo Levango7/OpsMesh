@@ -2,8 +2,13 @@ package service
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/Levango7/OpsMesh/pkg/metrics"
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/store"
@@ -576,4 +581,77 @@ func TestGetTaskLogs(t *testing.T) {
 	if len(resp.Logs) != 0 {
 		t.Errorf("expected 0 logs, got %d", len(resp.Logs))
 	}
+}
+
+// TestReportResult_DeadLetterIsObservable 钉住 #62 的"死信静默"缺陷：
+// 重试耗尽把任务永久判死之后，既没有指标也没有日志，用户只能靠"结果一直没出来"反推。
+// 现在必须：① 状态真的翻成死信；② 指标在**翻转那一刻**计一次；③ 重复回报不重复计数。
+func TestReportResult_DeadLetterIsObservable(t *testing.T) {
+	metrics.Init("task-svc-test-deadletter") // AddBusinessMetric 在 registry 未初始化时是 no-op
+	svc := newTestService()
+	ctx := context.Background()
+
+	created, err := svc.CreateTask(ctx, &taskv1.CreateTaskRequest{
+		Task: &taskv1.Task{AgentId: "agent-dl", TenantId: "tenant-dl", Command: "exit 1", MaxRetries: 1},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.ClaimTask(ctx, &taskv1.ClaimTaskRequest{AgentId: "agent-dl"}); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+
+	report := func() {
+		t.Helper()
+		if _, err := svc.ReportResult(ctx, &taskv1.ReportResultRequest{
+			Result: &taskv1.TaskResult{TaskId: created.TaskId, AgentId: "agent-dl", ExitCode: 1, Stderr: "boom"},
+		}); err != nil {
+			t.Fatalf("ReportResult: %v", err)
+		}
+	}
+
+	// MaxRetries=1 ⇒ 第一次失败回报即耗尽重试 ⇒ 死信。
+	report()
+	task := svc.taskStore.GetTask(created.TaskId)
+	if task == nil {
+		t.Fatal("任务查不到了")
+	}
+	if !task.DeadLetter {
+		t.Fatalf("重试耗尽后未进死信：status=%s retry=%d/%d", task.Status, task.RetryCount, task.MaxRetries)
+	}
+	if got := deadLetterCount(t); got != 1 {
+		t.Fatalf("task_dead_lettered 计数 = %v，期望 1", got)
+	}
+
+	// 同一任务再回报一次失败：死信标记早已成立，不该再计一次。
+	report()
+	if got := deadLetterCount(t); got != 1 {
+		t.Fatalf("重复回报把死信计数推到 %v，期望仍为 1（只在状态翻转时增长）", got)
+	}
+}
+
+// deadLetterCount 从 /metrics 渲染文本里读 task_dead_lettered 的值。
+//
+// 走渲染文本而不是内部结构：这是运维与告警实际消费的那份表示，
+// "计数存在于某个 map 里"不等于"抓取面拿得到"（本仓在这条上栽过多次）。
+func deadLetterCount(t *testing.T) float64 {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metrics.GetHandler().ServeHTTP(w, req)
+	for _, line := range strings.Split(w.Body.String(), "\n") {
+		if !strings.Contains(line, `name="task_dead_lettered"`) {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		v, err := strconv.ParseFloat(fields[len(fields)-1], 64)
+		if err != nil {
+			t.Fatalf("解析指标行失败：%q (%v)", line, err)
+		}
+		return v
+	}
+	return -1
 }

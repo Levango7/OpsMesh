@@ -249,6 +249,18 @@ groups:
           summary: "任务结果回报失败率 {{ $value | humanizePercentage }}"
           description: "近 10 分钟 agent 回报执行结果的失败占比超过 20%：结果没落库 ⇒ 控制面看到的任务状态是陈旧的，重试会重复执行副作用。"
 
+      # 死信此前是静默路径：重试耗尽后任务永久不再下发，既无指标也无告警，
+      # 用户只能靠"结果一直没出来"反推。这条把它变成可观测事件（指标由
+      # task-svc 在状态翻转的那一刻计数，见 internal/service/service.go ReportResult）。
+      - alert: OpsMeshTaskDeadLettered
+        expr: sum(increase(business_metrics_total{name="task_dead_lettered"}[15m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "有任务进入死信（重试已耗尽）"
+          description: "近 15 分钟有任务因重试次数耗尽被判死信，之后不会再被下发。请查任务结果的 exit code 与 stderr：常见成因是命令本身失败、agent 执行环境缺依赖、或 timeout 设置过短导致每次都跑到超时。"
+
       # 这条刻意是 critical：它对应的缺陷形态是"本地状态改成功、请求返回 200，而外部通道什么都没收到"。
       # 运维据此以为 on-call 已被呼叫，比直接返回 5xx 危险得多（此前这些调用点写作 `_ = breaker.Execute(...)`）。
       # 保留 action 标签（ack / resolve）：把 resolve 的失败说成"确认失败"会把排查方向指错。
