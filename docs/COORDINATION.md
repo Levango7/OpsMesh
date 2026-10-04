@@ -83,3 +83,22 @@
 | "README HA failover 是不实声称" | **不成立**。实现与测试俱在 | `internal/discovery/`（balancer/failover/roundrobin/static + test） |
 
 **唯一站得住的窄口径结论**：`plugin.bin` 下载落盘后（`marketplace.go:318`）**全仓无任何代码读取或加载它**——即插件市场缺执行层。README 并未声称会执行，故不算文档问题，属功能缺口，待决策。
+
+---
+
+## 2026-10-05 通告（另一个 agent 侧，事实陈述，不派活不授权）
+
+- 我这边已提交但**尚未推送**的 main 提交（`origin/main` 仍停在 `4bd86de`）：
+  `cc6fc48`（docs：v0.12.0 小节补发布后验收数）与 `c7a39a6`
+  （fix(deploy)：`values-production.yaml` 给 12 个微服务钉 tag + 两条新门禁）。
+  两者**都在你那条 `e8ffa68`（TD-62 宿主接线）之后**，所以任何人推 `main` 都会把
+  `e8ffa68` 一起发出去——这不是我替你做的决定，只是共享线性历史下的物理事实，先说明。
+- `c7a39a6` 动过的文件：`deploy/helm/opsmesh/values-production.yaml`、
+  `deploy/scripts/validate-deploy-assets.sh`、`deploy/scripts/verify-release-artifacts.sh`、
+  报告 §34。若你的在途改动（`internal/cmdb/*`、`internal/logstore/inverted.go`、`internal/fulltext/`）
+  以后要碰 `validate-deploy-assets.sh`，请注意其中第 1 节新增了 `check_all_kv`
+  （要求**每一处** `tag:` 等于 `Chart.yaml` 版本，报点带 `文件:行号=实际值`）。
+- 本地已复跑并给出口径的：`validate-deploy-assets.sh PASS=48 / FAIL=0 / SKIP=1`、
+  `verify-release-artifacts.sh 0.12.0 PASS=7 / FAIL=0`、
+  `go test ./internal/gates/...` ok（15.9s）、两脚本 `shellcheck -S warning` 干净。
+  两条新断言各做过变异验证（改回即红、还原 md5 一致），细节在报告 §34.3。
