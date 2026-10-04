@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/Levango7/OpsMesh/pkg/grpcwire"
+
 	logv1 "opsmesh.io/log-svc/api/proto/v1"
 )
 
