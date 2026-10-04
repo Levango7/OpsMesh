@@ -128,12 +128,12 @@ func collectShellAndWorkflowFiles(t *testing.T, root string) []string {
 // 缺陷来源就是本仓 2026-10-04 自己犯的：把 `producer | grep -q` 全量换成 `grep -q X <<<"$v"` 时，
 // 没注意那行位于 `docker run … sh -c '…'` 里面——**容器里是 BusyBox/POSIX sh，没有 <<<**，
 // 于是 release-dryrun 的产物自检 step 直接语法报错。修判定写法的动作本身造出了新红。
-// 区域识别刻意保守：从"含 ` -c '` 的行"开始，到"整行只剩一个右单引号"结束；
-// 区域外的 `<<<` 属于外层 bash（runner 默认 bash），不报。
 // 区域识别刻意保守，三条都要满足才算"容器侧 sh"：
-//   ① 行里有 `docker `（run/exec）——runner 自己的 bash 块不带它；
-//   ② 行里有 ` -c '`（把脚本交给容器里的 sh）；
-//   ③ `-c '` 之后同一行没有再出现右单引号（有就是同一行闭合的单行命令，如 `python3 -c '…'`）。
+//
+//	① 行里有 `docker `（run/exec）——runner 自己的 bash 块不带它；
+//	② 行里有 ` -c '`（把脚本交给容器里的 sh）；
+//	③ `-c '` 之后同一行没有再出现右单引号（有就是同一行闭合的单行命令，如 `python3 -c '…'`）。
+//
 // 结束条件是"整行以单引号开头"（yml 里就是那段脚本的收尾）；区域内的注释行跳过。
 func containerShellRegionHerestrings(content string) []int {
 	var hits []int
