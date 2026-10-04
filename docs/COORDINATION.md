@@ -7,14 +7,34 @@
 
 ---
 
-## 当前占用
+## 当前占用（2026-10-05 更新）
 
 | Agent | 任务 | 占用路径 | 状态 |
 |---|---|---|---|
-| TD-61 store 拆分 | `internal/store` 按后端拆（形态 A） | **仅** `internal/store/**` | 进行中：批次 1（`failures.go` → `storefail`） |
-| 安全/授权修复 | P0 安全修复 + Open-Core 授权门禁 | `internal/config`、`internal/controlplane/**`、`internal/automation`、`internal/controlplane/grpc`、`deploy/scripts/license-*`、`docs/`、**不含** `internal/store` | 批次已提交；剩余见下 |
+| TD-61 store 拆分 | `internal/store` 按后端拆（形态 A） | **仅** `internal/store/**` | **已暂停**（对方"暂时不做了"）；已提交至批次 2（`model.go` → `store/model/`） |
+| 安全/授权 + 插件宿主接线 | P0 安全修复 + Open-Core 授权 + egress 合并 + TD-62 ②③④ | `internal/config`、`internal/controlplane/**`（含 `grpc` 子包）、`internal/egress`（新）、`internal/notify`、`internal/plugin`、`internal/{cmdb,deploy,orchestration,logstore}`、`cmd/device-sim`、`deploy/`、`docs/`、**不含** `internal/store` | **进行中** |
 
-**两者零重叠**：TD-61 只碰 `internal/store`；授权侧不碰该目录。
+**边界不变**：本侧全程不碰 `internal/store/**`。截至 2026-10-05，`git status --short internal/store/` = 0。
+
+---
+
+## 对方已完成的（勿重复动手）
+
+对方在暂停前提交了大批工作，其中**把本侧上一轮的未提交改动一并提交**了（`ade9605` egress 合并、`f4b3d2d` 对应 lint 清理）。重复劳动会直接撞车：
+
+- `4714c77` **插件缺口已登记为 TD-62**，并做了比本侧更精确的取证：`internal/plugin` 的 `Manager` 完整，但 `FireHook(`/`RegisterHook(` 在 `internal/controlplane/` 下**零调用点**
+- `2f4186b` otelx OTLP 端点解析（12 个微服务链路从未到达 collector）
+- `d98cd39` alert-svc 三个真缺陷、`e7a8414`/#57 外发腿活体验证
+- `c5d9fa2` 能力表证据路径必须真实存在（抓到 4 条假证据）
+
+## 本侧 2026-10-05 完成（TD-62 ②③④）
+
+- **`internal/plugin/hooks.go`（新）**：冻结扩展点常量 `HookConfigPreSet`/`HookConfigPostSet`/`HookTaskPreClaim` + `AllHooks()` 权威清单
+- **`internal/controlplane/plugin_host.go`（新）**：`firePluginHook` + `SetPluginManager`；pre 阻断 / post 不回滚的失败语义
+- **接线点**：`handleUpdatePlatformConfig`（pre+post）、`storeAgentService.ClaimTask` 经 `NewStoreAgentServiceWithHooks`（preClaim）
+- **`internal/controlplane/plugin_hook_gate_test.go`（新）**：每个冻结 Hook 必须有宿主触发点 + 三条端到端触发断言
+
+**①（插件运行时模型：Go plugin / WASM / 独立进程+RPC）仍开放，不替产品拍板。** ②③④ 是①任意方案的公共前置。
 
 ---
 

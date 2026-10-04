@@ -220,10 +220,12 @@
 
 | # | 功能域 | 关键能力 | 状态 | 主入口 |
 |---|---|---|---|---|
-| 1 | **设备管理** | Agent 即设备（零依赖）/ 真实网段发现（TCP 存活扫描，`--discover`）/ 候选设备纳管（discovered → provisioning → onboarded）/ 设备退役（离线超龄自动归档）/ SSH 自动推送 bootstrap / 设备指纹采集 | ✅ | `internal/controlplane/server_devices.go`、`internal/discover/`、`pkg/provision/` |
+| 1 | **设备管理** | Agent 即设备（零依赖）/ 真实网段发现（TCP 存活扫描，`--discover`）/ 候选设备纳管（discovered → provisioning → onboarded）/ 设备退役（离线超龄自动归档）/ SSH 自动推送 bootstrap | ✅ **指纹项见下行** | `internal/controlplane/server_devices.go`、`internal/discover/`、`pkg/provision/` |
+| | ↳ 设备指纹采集 | 🟡 **仅认证侧，非设备台账（2026-10-05 复核）**：`DeviceFP` 由 UA+IP+TLS 计算并绑定 refresh token（`auth_login.go:265/296`），属**登录会话设备绑定**；`server_devices.go` 与设备台账侧**零命中**，即设备详情里没有独立指纹字段/采集。若按"设备资产指纹"理解会落空 | `internal/controlplane/auth_login.go` |
 | 2 | **任务执行** | Shell 命令 / 系统服务管理（systemctl）/ 文件分发（原子写入 + rename）/ 超时自动中止（exec.CommandContext）/ 失败重试 + 死信队列 / 任务取消（pending 拦截 + running 强杀）/ 定时周期调度（5 字段 cron）/ 批量下发 / 租约回收 / 审批门禁 | ✅ | `internal/controlplane/server_tasks.go`、`internal/agent/`、`internal/cron/` |
 | 3 | **监控告警** | 任务死信 → critical 告警 / 告警面板 + HTTP 查询 / 告警规则引擎（多条件 + 静默 + 抑制 + 聚合）/ Webhook/飞书/钉钉/企业微信/Slack/邮件多通道 / 告警规则 CRUD / 通知模板 | ✅ | `internal/controlplane/server_alerts.go`、`internal/alertengine/`、`internal/notify/` |
-| 4 | **CMDB** | 模型 + 实例 CRUD + SQL 持久化 + 采集自动化 / 关系图谱可视化（SVG 力导向图）/ 变更审批流 / 全文本检索倒排索引（TF-IDF + 短语/布尔/通配符） | ✅ | `internal/cmdb/`、`internal/controlplane/cmdb_*.go` |
+| 4 | **CMDB** | 模型 + 实例 CRUD + SQL 持久化 + 采集自动化 / 关系图谱可视化（SVG 力导向图，含 force/topology/list 三模式）/ 变更审批流 | ✅ 全文本检索**除外，见下行** | `internal/cmdb/`、`internal/controlplane/cmdb_*.go` |
+| | ↳ 全文本检索倒排索引（TF-IDF + 短语/布尔/通配符） | ❌ **未实现（2026-10-05 复核）**：全仓 `TF-IDF`/`tfidf`/`InvertedIndex` 只命中 `internal/logstore/`（日志模块确有倒排索引引擎），`internal/cmdb/` 与 `internal/controlplane/cmdb_*.go` 下**零命中**且无任何检索端点 —— 该行系从日志模块漂移而来。当前 CMDB 检索只有列表/过滤，无全文检索 | `internal/logstore/inverted.go`（**属日志，非 CMDB**） |
 | 5 | **日志检索** | 双后端（Memory/SQL）+ 外部后端（Loki/ES）/ offset 分页 / 关键词 + 级别 + 时间窗过滤 / agent gRPC 上报日志 / 倒排索引 | ✅ | `internal/logstore/` |
 | 6 | **编排部署** | 服务部署计划 + fan-out 执行 + Reconcile + Rollback / 三策略（rolling/canary/bluegreen）/ 发布门禁（失败率/延迟阈值）+ 自动回滚 + Promote 拥级 / 灰度自适应推进 / 多集群联邦发布 | ✅ | `internal/deploy/`、`internal/controlplane/server_deploy.go` |
 | 7 | **OS 优化** | 14+ 预置模板（内核/网络/安全/时间同步/SSH/磁盘/系统/用户）/ 在线 CRUD / 在指定 agent 执行 / 模板 store 持久化 + 幂等 seed | ✅ | `internal/controlplane/os_optimize.go` |
@@ -233,7 +235,8 @@
 | 11 | **审计日志** | 100% 留痕（AuditEvent → audit_log / memory ring）/ 审计检索（租户/动作/时间窗过滤）/ 等保三级 ≥6 月导出 / bootstrap 端点审计 | ✅ | `internal/controlplane/server_audits.go` |
 | 12 | **联邦** | 跨网段任务转发 / 联邦设备视图聚合 / 独立 mTLS 监听 / HMAC 签名验签（防伪造/重放）/ 多集群联邦发布协调 | ✅ | `internal/controlplane/federation.go`、`internal/deploy/federation.go` |
 | 13 | **SSE 实时推送** | 任务状态/告警/设备上下线事件流 / 替代 5s 轮询 / 心跳保活 / 契约守护测试（9 事件名 + 信封 + 心跳） | ✅ | `internal/controlplane/sse.go`、`docs/sse-protocol.md` |
-| 14 | **工作流** | DAG 引擎（拓扑排序 + 环检测 + 依赖就绪判定）/ 子工作流展开 + 条件分支 + 节点级超时重试 + 执行历史回放 / 画布编辑 / cron 触发 + reconcile | ✅ | `internal/orchestration/`、`internal/dag/` |
+| 14 | **工作流** | DAG 引擎（拓扑排序 + 环检测 + 依赖就绪判定）/ 子工作流展开 + 条件分支 + 节点级超时重试 / 执行历史（ListRuns）/ 画布编辑 / cron 触发 + reconcile | ✅ **回放除外，见下行** | `internal/orchestration/`、`internal/dag/` |
+| | ↳ 执行历史**回放** | ❌ **未实现（2026-10-05 复核）**：执行历史本身有（`ListRuns` + `CreateRun`/`UpdateRun`），但全仓 `func.*[Rr]eplay` **零命中** —— 有"历史"无"回放"（重放某次执行的能力不存在）。易被误读为"可回看并重跑" | `internal/orchestration/sql.go:233 ListRuns` |
 
 ### 横切能力
 
@@ -249,7 +252,7 @@
 | | CSP / SSRF / 限流 / 请求体 1 MiB 上限 | ✅ |
 | **观测** | Prometheus 文本指标 (agent/队列深度/duration) | ✅ |
 | | /healthz 深度检查 + /readyz 就绪探针 | ✅ |
-| | OTel 链路追踪（HTTP/gRPC 自动埋点 + OTLP 导出） | ✅ |
+| | OTel 链路追踪（HTTP/gRPC 自动埋点 + OTLP 导出） | 🟡 **埋点与导出已实现，但出厂栈查不到调用链**：collector 的 traces pipeline 只接 `logging` exporter（span 落日志后即丢），仓库内无 Jaeger/Tempo 类查询后端；且 `tail_sampling` 对非错误、非慢请求只保留 **10%**（`deploy/monitoring/otel-config.yaml:49-50`）。当前能给的是采集器日志里的 span 计数，不是一张调用链图。要"查得到"需另接查询后端（含采样率与保留期，属产品决策）——详见 `docs/tech-debt.md` TD-75 |
 | **事件** | 可插拔事件总线 (noop/log/kafka) | ✅ |
 | **部署** | 单二进制双模式 (--mode=controlplane|agent) | ✅ |
 | | 零依赖启动 (MemoryStore, 无 MySQL/Redis) | ✅ |

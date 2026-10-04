@@ -10,12 +10,14 @@ package controlplane
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"runtime"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
+	"github.com/Levango7/OpsMesh/internal/plugin"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -110,6 +112,19 @@ func (s *Server) handleUpdatePlatformConfig(w http.ResponseWriter, r *http.Reque
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
+	// 扩展点 config.preSet（可阻断）：插件可在此拒绝本次配置写入。
+	// 无插件注册时 FireHook 直接返回 nil（len(handlers)==0），零开销零副作用。
+	if err := s.firePluginHook(r.Context(), plugin.HookConfigPreSet, plugin.Event{
+		Name:    "platform/config",
+		Payload: &body,
+		Ctx:     r.Context(),
+	}); err != nil {
+		// pre 阶段阻断 = 业务尚未落库，按 4xx 回给客户端，错误详情不回吐内部细节。
+		log.Printf("[controlplane] config.preSet 钩子阻断配置写入: %v", err)
+		paginate.WriteJSON(w, http.StatusBadRequest,
+			map[string]string{"error": "config update rejected by plugin policy"})
+		return
+	}
 	body.UpdatedAt = time.Now().Format(time.RFC3339)
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -132,6 +147,22 @@ func (s *Server) handleUpdatePlatformConfig(w http.ResponseWriter, r *http.Reque
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "platform_config_update", Target: platformConfigStoreKey, Detail: "persisted to store",
 	})
+	// 扩展点 config.postSet（不可阻断）：配置**已落库**，此处的失败不回滚。
+	//
+	// 为什么失败也不回滚：此时业务事实已经提交，若因插件失败把响应改成 5xx，
+	// 客户端会认为"没生效"而重试，实际第一次已经写入——比插件失败本身更糟。
+	// 故 error 只进日志与审计（post 语义见 internal/plugin/hooks.go）。
+	if err := s.firePluginHook(r.Context(), plugin.HookConfigPostSet, plugin.Event{
+		Name:    "platform/config",
+		Payload: &body,
+		Ctx:     r.Context(),
+	}); err != nil {
+		log.Printf("[controlplane] config.postSet 钩子失败（配置已落库，不回滚）: %v", err)
+		s.audit(r.Context(), &proto.AuditEvent{
+			TenantID: "default", UserID: caller.ID, Action: "plugin_hook_failed",
+			Target: string(plugin.HookConfigPostSet), Detail: "post 钩子失败，配置已落库未回滚",
+		})
+	}
 	paginate.WriteJSON(w, http.StatusOK, body)
 }
 

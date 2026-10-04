@@ -1,6 +1,9 @@
 package grpc
 
 import (
+	"context"
+	"log"
+
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -46,14 +49,33 @@ type AgentService interface {
 
 // storeAgentService 适配 store.Store 实现 AgentService 接口。
 // 纯薄转发，不添加任何业务逻辑；是当前唯一实现。
+//
+// preClaim 是 task.preClaim 扩展点钩子（TD-62 ③）。nil 表示未接线，
+// ClaimTask 行为与接线前**逐字节一致**——扩展点是可选增强，不是必经路径。
 type storeAgentService struct {
-	store store.Store
+	store    store.Store
+	preClaim func(ctx context.Context, agentID string) error
 }
 
 // NewStoreAgentService 从 store.Store 创建 AgentService 适配器。
 // s 为 nil 时返回的适配器方法调用会 panic（与原 g.Store.* 在 Store 为 nil 时行为一致）。
+//
+// 返回的适配器**未接线任何扩展点**；需要 task.preClaim 时用
+// NewStoreAgentServiceWithHooks。
 func NewStoreAgentService(s store.Store) AgentService {
 	return &storeAgentService{store: s}
+}
+
+// NewStoreAgentServiceWithHooks 创建带 task.preClaim 扩展点的适配器。
+//
+// 为什么单独一个构造函数而不是改 NewStoreAgentService 的签名：
+// 扩展点是**可选**能力，把它塞进必选参数会让每个调用方（含只想要纯转发的
+// 测试）都被迫传 nil，而"传 nil"在调用点上看不出是"没接线"还是"忘了接线"。
+// 两个名字把这两种意图分开，也让门禁能直接搜到接线点。
+//
+// preClaim 为 nil 时等价 NewStoreAgentService。
+func NewStoreAgentServiceWithHooks(s store.Store, preClaim func(ctx context.Context, agentID string) error) AgentService {
+	return &storeAgentService{store: s, preClaim: preClaim}
 }
 
 // Token 领域
@@ -94,7 +116,21 @@ func (a *storeAgentService) StoreDeviceMetrics(deviceID string, metrics *proto.D
 
 // Task 领域
 
+// ClaimTask agent 领取下一个待执行任务。
+//
+// 接线 task.preClaim 扩展点（TD-62 ③）：钩子返回 error 时**不下发任务**。
+//
+// 阻断时返回 nil 而非错误，是刻意的：store.ClaimTask 在无待领任务时同样返回 nil，
+// 因此"被插件策略拒绝"与"当前没有任务"对 agent 而言同形——
+// 不向 agent 泄露"你有任务但被策略拦了"这一信息（准入策略本身不应被探测）。
+// 拒绝原因只进服务端日志，供运维排查。
 func (a *storeAgentService) ClaimTask(agentID string) *proto.Task {
+	if a.preClaim != nil {
+		if err := a.preClaim(context.Background(), agentID); err != nil {
+			log.Printf("[controlplane-grpc] task.preClaim 钩子拒绝 agent %s 领取任务: %v", agentID, err)
+			return nil
+		}
+	}
 	return a.store.ClaimTask(agentID)
 }
 

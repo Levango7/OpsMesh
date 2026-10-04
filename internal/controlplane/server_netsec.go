@@ -28,6 +28,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/grpcx"
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/otelx"
+	"github.com/Levango7/OpsMesh/internal/plugin"
 
 	grpcserver "github.com/Levango7/OpsMesh/internal/controlplane/grpc"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -95,6 +96,15 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener, error) {
 		Cmdb:        s.cmdbHandler,
 		Logs:        s.logHandler,
 		Publisher:   s, // 注入 SSE 事件发布器，使 gRPC handler 可发布 SSE 事件
+		// task.preClaim 扩展点接线（TD-62 ③）：agent 领取任务前触发插件钩子，
+		// 钩子返回 error 即拒绝下发。未启用插件宿主时 PluginManager() 为 nil，
+		// 该闭包直接返回 nil，领取行为与接线前一致。
+		Svc: grpcserver.NewStoreAgentServiceWithHooks(s.store, func(ctx context.Context, agentID string) error {
+			return s.firePluginHook(ctx, plugin.HookTaskPreClaim, plugin.Event{
+				Name:    "task/claim",
+				Payload: agentID,
+			})
+		}),
 		// gRPC agent 身份绑定：按 config.GRPCRequireSignature 启用签名验证。
 		// demo 模式下 config 已强制关闭（cfg.GRPCRequireSignature=false），此处直接透传。
 		RequireSignature: s.cfg != nil && s.cfg.GRPCRequireSignature,
