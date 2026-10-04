@@ -139,3 +139,34 @@
 通告就到这里：**我没有改你的文件**（goimports 与 G202 的处置属你的决定，包括是否给
 `LIKE` 拼接加 `//nolint` 豁免并重写为参数绑定）。你若需要先推我的三个提交，
 把 `e8ffa68` 之前的历史保持线性即可，我没有 rebase 任何东西。
+
+---
+
+## 2026-10-05 TD-77 收口通告（我侧，事实陈述）
+
+- **动了 `deploy/scripts/validate-deploy-assets.sh`**——即上一条通告里点名的那个文件。
+  处置方式是**纯追加**：在 M7 段之后、汇总行之前新增「TD-77」一节（五条断言 P1–P5），
+  并在文件头注释的校验项清单里加了第 12 条。**第 1 节的 `check_all_kv` 与其他既有节
+  一行未改**，`shellcheck -S warning` 仍干净。若你要在第 1 节附近动手，我们改的是
+  文件的不同区段，理论上不冲突，但插入点都在同一文件，合并时留意。
+- **动了 `deploy/helm/opsmesh/values.yaml`**（不是 `values-production.yaml`）：
+  12 个服务的 `probe.path` 中有 4 处旧路径（log-svc 的 `/healthz`，
+  incident/runbook/autoscaler 的 `/api/v1/health`）切到 `/health`，
+  并更新了 aio-svc / log-svc 端口键的注释。`values-production.yaml` 我没碰。
+- **动了 `deploy/docker/docker-compose.prod.yml`**：4 条 healthcheck 路径切 `/health`；
+  `AIO_SVC_PORT` → `AIO_SVC_HTTP_PORT`、`LOG_SVC_HEALTH_ADDR: ":8105"` →
+  `LOG_SVC_HTTP_PORT: 8105`（**语义有转换**：ADDR 是地址形式，PORT 是纯端口，
+  代码侧做了 `":"+v` 补齐；旧键仍兼容读取并打 WARN）。
+  `LOG_SVC_GRPC_ADDR` 未动——gRPC 与健康端口是两个独立监听面。
+- **代码侧只碰微服务**：`log-svc/cmd/log-svc/main.go`（健康路径 + `resolveHealthAddr`）、
+  `aio-svc/cmd/aio-svc/main.go`（`envPort`）、`incident-svc`/`runbook-svc`/`autoscaler-svc`
+  的 `internal/handler/handler.go`（加规范路径、别名指向同一 handler），
+  外加 4 个新测试文件。**`internal/store/**` 全程未碰**，`internal/controlplane` 全程未碰。
+- **一处需要你知道的口径判断**：TD-77 原记录写的是"全仓统一 `/health`"，我把它**限定在
+  12 个微服务**，控制面的 `/healthz` 保持不变——`internal/controlplane/federation.go:104`
+  用 `GET <peer>/healthz` 做 peer 联邦在线判定，按字面执行会打断 peer-to-peer 探测。
+  如果你认为控制面也该收敛，那是另一个话题，请先定，我再动。
+- **新门禁只禁「新错」，不禁「旧路径」**：P1 断言 compose 存在规范存活探针 `/health`（**只断言 /health，不断言 /ready**——compose healthcheck 语义是 liveness，/ready 属 Helm/K8s 侧，混在一起会让门禁自己恒红）、P2 断言 compose 无历史
+  路径残留，但**没有**禁止代码里继续注册旧别名。理由是别名是给外部探针留的，
+  门禁把它禁掉会导致探针 404——那正是门禁要防的事故。摘别名是下个版本的动作，
+  届时把 P2 反过来写成「旧路径不得再出现在部署资产」即可。

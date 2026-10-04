@@ -17,6 +17,8 @@
 #   9. 提交内容不得含**行内**孤立 CR（会随 blob 推送、被渲染器当换行）
 #  10. 镜像矩阵每个服务的构建目标必须存在（cmd/<svc> + package main），豁免表须带理由
 #  11. 抓取配置 ↔ 服务能力一致性（prometheus.yml 的 job ↔ 源码 /metrics 注册行，双向）
+#  12. 微服务健康路径与端口键统一（TD-77：规范 /health+/ready、<N>_SVC_HTTP_PORT，
+#      compose ↔ Helm 探针路径逐服务一致）
 #
 # 用法：bash deploy/scripts/validate-deploy-assets.sh
 set -uo pipefail
@@ -1129,6 +1131,208 @@ if [ -z "${M7_HITS// }" ]; then
 else
     bad "M7 业务告警通道入口不全："
     printf '%s\n' "$M7_HITS" | sed 's/^/         /'
+fi
+
+# ---------------------------------------------------------------------------
+# TD-77：微服务健康路径与端口环境变量名的统一口径门禁
+#
+# 背景：此前健康端点三套并存（/health、/healthz、/api/v1/health），端口键也三套
+# （<N>_SVC_HTTP_PORT、AIO_SVC_PORT、LOG_SVC_HEALTH_ADDR）。这类分叉的代价不是
+# "起不来"——出厂栈能跑纯粹因为 compose 把两侧写死成同一个数——而是"改不动"：
+# 改 .env 的 *_HTTP_PORT 只动宿主侧、不动容器内监听。本门禁把三条不变量钉住，
+# 让分叉不能再无声长回来。
+#
+# 为什么用追加式而不是并进已有节：本脚本第 1 节的 check_all_kv 由另一条工作线
+# 维护（见 docs/COORDINATION.md 通告），改动他人正在维护的节会制造无谓冲突。
+# ---------------------------------------------------------------------------
+
+# P0 前置：被断言的文件必须真的读得到。
+#
+# 这不是形式主义。首版 TD-77 段没有这道前置，结果在「工作目录不对」时
+# grep 与 python 双双报 "No such file or directory"，而 P2–P5 因为
+# 「没匹配到任何违规」而**全部判绿**——门禁在最需要它的时候（部署资产真的
+# 出了问题）恰恰给出假信号。一条永远绿的检查比没有检查更坏：
+# 它让人以为这块有网。
+#
+# 判红而不是跳过：读不到 compose 意味着后面五条断言的结论全部无意义。
+if [ ! -r "$AM_COMPOSE" ]; then
+    bad "TD-77-P0 读不到 ${AM_COMPOSE}（工作目录或文件权限不对）——后续 TD-77 断言全部无意义，已判红"
+    echo "         （当前工作目录：$(pwd)）"
+elif [ ! -r deploy/helm/opsmesh/values.yaml ]; then
+    bad "TD-77-P0 读不到 deploy/helm/opsmesh/values.yaml（工作目录或文件权限不对）——跨资产比对无法进行"
+else
+    ok "TD-77-P0 部署资产可读（compose 与 Helm values 均在位）"
+fi
+
+# P1 规范存活路径必须存在。
+#
+# 这里刻意**不禁止**旧路径（/healthz、/api/v1/health）：过渡期它们是合法的别名，
+# 目的是外部探针不断。真正的收口动作是下个版本摘别名，届时把本断言反过来写成
+# "旧路径不得再出现在部署资产里"即可。只禁新路径的话，别名消失会导致探针 404，
+# 而那正是本门禁要防的事故。
+#
+# 这里只断言 /health，**不断言 /ready**：compose healthcheck 只有一个 test 字段，
+# 语义是存活（liveness）；/ready 是 Helm/K8s 侧的 readiness 探针，compose 里本就不该有。
+# 早先这里把两个路径一起断言，结果 /ready 恒缺——门禁自己变成假失败。
+# /ready 的存在性由 P5 与各服务的 Go 契约测试覆盖，不在此处重复。
+HEALTH_HITS=""
+if ! grep -q '"http://localhost:[0-9]\{1,5\}/health"' "$AM_COMPOSE" 2>/dev/null; then
+    HEALTH_HITS="${HEALTH_HITS} compose 无任何服务使用规范存活探针路径 /health"
+fi
+if [ -z "${HEALTH_HITS// }" ]; then
+    ok "TD-77-P1 compose 存活探针使用规范路径 /health"
+else
+    bad "TD-77-P1 规范健康路径缺失："
+    printf '%s\n' "$HEALTH_HITS" | sed 's/^/         /'
+fi
+
+# P2 compose 里不得再出现已废弃的探针路径。
+# 容器 healthcheck 一旦指向不存在的路径，容器永远 unhealthy——症状是
+# "部署成功但服务永远不起来"，且日志里只有 wget 失败，很容易误判成镜像问题。
+DEPRECATED_PROBE=""
+if grep -qE '"http://localhost:[0-9]{1,5}/(healthz|readyz|api/v1/health)"' "$AM_COMPOSE" 2>/dev/null; then
+    DEPRECATED_PROBE="$(grep -nE '"http://localhost:[0-9]{1,5}/(healthz|readyz|api/v1/health)"' "$AM_COMPOSE" 2>/dev/null | head -5)"
+elif [ ! -r "$AM_COMPOSE" ]; then
+    # 文件读不到时"没匹配到违规"是假绿，必须显式判红（见 P0 说明）。
+    DEPRECATED_PROBE="compose 不可读，无法判定是否残留历史探针路径"
+fi
+if [ -z "${DEPRECATED_PROBE// }" ]; then
+    ok "TD-77-P2 compose 探针无历史路径残留（/healthz、/readyz、/api/v1/health 已全部切走）"
+else
+    bad "TD-77-P2 compose 仍有服务在探历史路径（应为规范路径 /health）："
+    printf '%s\n' "$DEPRECATED_PROBE" | sed 's/^/         /'
+fi
+
+# P3 端口键口径：compose 不得再注入已废弃的键。
+# 容器注入了 AIO_SVC_PORT 而宿主映射读 AIO_SVC_HTTP_PORT 时，改 .env 只会改到
+# 宿主侧——服务仍在旧端口上监听，表现为"改了配置没生效"，是最难自查的一类。
+DEPRECATED_ENV=""
+for _k in AIO_SVC_PORT LOG_SVC_HEALTH_ADDR; do
+    if grep -qE "^      $_k:" "$AM_COMPOSE" 2>/dev/null; then
+        DEPRECATED_ENV="${DEPRECATED_ENV} $_k"
+    fi
+done
+if [ -z "${DEPRECATED_ENV// }" ]; then
+    ok "TD-77-P3 compose 无废弃端口键注入（AIO_SVC_PORT、LOG_SVC_HEALTH_ADDR 已切规范键）"
+else
+    bad "TD-77-P3 compose 仍注入已废弃的端口键：${DEPRECATED_ENV}"
+    echo "         （宿主映射与容器注入必须用同一个 *_SVC_HTTP_PORT，否则改 .env 只动一侧）"
+fi
+
+# P4 端口键宿主侧 ↔ 容器侧必须同名。
+# 断言的是「同一个键出现在 ports 映射与 environment 注入两侧」，
+# 而不是端口数值相等——数值相等是巧合，同名才是可维护性。
+# 逐服务检查，任何一个服务两侧键名不同即报出服务名与两个键。
+if [ -z "$PY" ]; then
+    skip "未找到 python3/python，跳过 TD-77-P4 端口键宿主/容器同名校验"
+else
+    PORTKEY_OUT="$("$PY" - "$AM_COMPOSE" <<'PY'
+import re, sys, io
+
+path = sys.argv[1]
+text = io.open(path, encoding="utf-8", newline="").read().replace("\r\n", "\n")
+
+# 按顶层服务名切块（缩进 2 空格的 "<name>:"）。
+blocks = {}
+cur = None
+for line in text.split("\n"):
+    m = re.match(r"^  ([A-Za-z0-9_.-]+):\s*$", line)
+    if m:
+        cur = m.group(1)
+        blocks[cur] = []
+        continue
+    if cur is not None:
+        blocks[cur].append(line)
+
+bad = []
+for name, lines in blocks.items():
+    body = "\n".join(lines)
+    # 宿主映射："127.0.0.1:${KEY:-NNNN}:NNNN"
+    host_keys = set(re.findall(r'\$\{([A-Z0-9_]*SVC_HTTP_PORT)[:-]', body))
+    # 容器注入："      KEY: NNNN"
+    env_keys = set(re.findall(r"^      ([A-Z0-9_]*SVC_HTTP_PORT):\s*\d+", body, re.M))
+    if not host_keys and not env_keys:
+        continue  # 该服务不经 *_SVC_HTTP_PORT 暴露（如 mysql/loki/prometheus），不在本门禁范围
+    for k in sorted(host_keys | env_keys):
+        in_host = k in host_keys
+        in_env = k in env_keys
+        if in_host and not in_env:
+            bad.append(f"{name}: 宿主映射用 {k}，但容器未注入该键（容器监听端口将回落到代码默认值）")
+        if in_env and not in_host:
+            bad.append(f"{name}: 容器注入 {k}，但宿主映射未引用该键（改 .env 不会影响已注入的容器）")
+
+print("\n".join(bad))
+PY
+)" || PORTKEY_OUT="${PORTKEY_OUT:-compose 或脚本执行失败，无法判定端口键一致性}"
+    if [ -z "${PORTKEY_OUT// }" ]; then
+        ok "TD-77-P4 compose 每个微服务的端口键宿主映射与容器注入同名（改一次 .env 两侧都生效）"
+    else
+        bad "TD-77-P4 端口键宿主/容器不同名："
+        printf '%s\n' "$PORTKEY_OUT" | sed 's/^/         /'
+    fi
+fi
+
+# P5 12 个微服务的健康路径在 compose 与 Helm values 两侧必须逐字一致。
+# 跨资产漂移的症状极隐蔽：helm 部署探针 404，容器照常跑，只是永远 not ready。
+if [ -z "$PY" ]; then
+    skip "未找到 python3/python，跳过 TD-77-P5 compose ↔ Helm 探针路径一致性校验"
+else
+    PROBEPATH_OUT="$("$PY" - "$AM_COMPOSE" deploy/helm/opsmesh/values.yaml <<'PY'
+import re, sys, io
+
+compose_path, values_path = sys.argv[1], sys.argv[2]
+ctext = io.open(compose_path, encoding="utf-8", newline="").read().replace("\r\n", "\n")
+vtext = io.open(values_path, encoding="utf-8", newline="").read().replace("\r\n", "\n")
+
+# compose：服务名 -> 探针路径
+cur = None
+compose_probe = {}
+for line in ctext.split("\n"):
+    m = re.match(r"^  ([A-Za-z0-9_.-]+):\s*$", line)
+    if m:
+        cur = m.group(1)
+        continue
+    m = re.search(r'wget.*?-q",\s*"http://localhost:\d{1,5}(/[\w/-]*)"', line)
+    if m and cur:
+        compose_probe[cur] = m.group(1)
+
+# values.yaml：<svc>_svc 段 -> probe.path
+values_probe = {}
+cur = None
+for line in vtext.split("\n"):
+    m = re.match(r"^  ([a-z0-9_]+):\s*$", line)
+    if m:
+        cur = m.group(1)
+        continue
+    m = re.match(r"^      path:\s*(/\S*)\s*$", line)
+    if m and cur:
+        values_probe[cur] = m.group(1)
+
+bad = []
+for svc, path in sorted(compose_probe.items()):
+    if not svc.endswith("-svc"):
+        continue
+    key = svc.replace("-", "_")
+    if key not in values_probe:
+        continue  # helm 未纳管该服务（如 tf-provider），不在比对范围
+    if values_probe[key] != path:
+        bad.append(f"{svc}: compose 探针 {path}，Helm 探针 {values_probe[key]}")
+
+# 反向：helm 纳管但 compose 没有对应服务的键，报出来避免"只改了一边"。
+for key, path in sorted(values_probe.items()):
+    svc = key.replace("_", "-")
+    if svc.endswith("-svc") and svc not in compose_probe:
+        bad.append(f"{key}: Helm 探针 {path}，但 compose 无该服务（两侧服务矩阵应一致）")
+
+print("\n".join(bad))
+PY
+)" || PROBEPATH_OUT="${PROBEPATH_OUT:-compose 或 values 读取失败，无法判定跨资产探针一致性}"
+    if [ -z "${PROBEPATH_OUT// }" ]; then
+        ok "TD-77-P5 compose ↔ Helm 探针路径逐服务一致（两侧不会各自漂移）"
+    else
+        bad "TD-77-P5 探针路径跨资产漂移："
+        printf '%s\n' "$PROBEPATH_OUT" | sed 's/^/         /'
+    fi
 fi
 
 echo ""

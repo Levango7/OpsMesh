@@ -126,6 +126,74 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 控制面 Web/REST 可能明文也可能 HTTPS（见下节 `--http-tls`），探针**自动适配两种协议**
 （先 HTTPS 后 HTTP），无需按部署形态改健康检查配置。
 
+### 微服务健康端点与端口环境变量（TD-77 统一口径）
+
+> 本节说的是 **12 个微服务**（`services/*-svc`）。控制面（`opsmesh` 二进制）另有一套：
+> 它提供 `/healthz` + `/readyz`，且 `federation.go` 用 `GET <peer>/healthz` 做 peer 联邦
+> 在线判定——**不要把控制面改成 `/health`**，那会直接打断 peer-to-peer 探测。
+
+**健康路径**：12 个微服务统一为
+
+| 用途 | 规范路径 | 说明 |
+|---|---|---|
+| 存活（liveness） | `/health` | 进程活着即 200，不查下游 |
+| 就绪（readiness） | `/ready` | 检查下游依赖（log-svc 会探一次 store） |
+
+历史路径 `/healthz`（log-svc）与 `/api/v1/health`（incident/runbook/autoscaler）
+在过渡期**仍注册在同一 handler 上**，外部探针不会因升级而 404；计划在下个版本摘除。
+若你有自建监控/探针指向旧路径，可择机切到 `/health`。
+
+> #### ⚠️ 升级顺序：代码与部署资产必须同版本发布
+>
+> 本次统一**同时**改了服务代码与部署清单（compose / Helm 探针路径）。二者必须一起发布，
+> 否则升级窗口内会出现探针 404 → 容器永远 unhealthy。实测证据（对运行中的 0.11.0
+> 容器逐路径探测，`%{http_code}`）：
+
+> | 服务 | `/health` | `/ready` | 历史路径 |
+> |---|---|---|---|
+> | log-svc（0.11.0 实测） | **404** | **404** | `/healthz` 200 |
+> | runbook-svc（0.11.0 实测） | **404** | **404** | `/api/v1/health` 200 |
+> | autoscaler-svc（0.11.0 实测） | **404** | **404** | `/api/v1/health` 200 |
+> | incident-svc（0.11.0 实测） | **404** | 200 | `/api/v1/health` 200 |
+> | alert-svc（0.11.0 实测，对照组） | 200 | 200 | — |
+>
+> 即：**新清单配旧镜像 = 全部 unhealthy**。所以发布时先推新镜像、再改探针，
+> 或两者同批。历史别名仍保留的意义也在这里——它让"新代码配旧清单"这一方向依然可用，
+> 只是反方向（新产品配新资产）不成立。
+
+**端口环境变量**：统一为 `<NAME>_SVC_HTTP_PORT`（纯端口号）。
+
+| 服务 | 环境变量 | 代码默认值 | compose 端口 |
+|---|---|---|---|
+| aio-svc | `AIO_SVC_HTTP_PORT` | 8100 | 8108 |
+| log-svc | `LOG_SVC_HTTP_PORT` | 8080 | 8105 |
+| alert-svc | `ALERT_SVC_HTTP_PORT` | 8080 | 8103 |
+| auth-svc | `AUTH_SVC_HTTP_PORT` | 8081 | 8100 |
+| config-svc | `CONFIG_SVC_HTTP_PORT` | 8083 | 8106 |
+| device-svc | `DEVICE_SVC_HTTP_PORT` | 8081 | 8101 |
+| gpu-svc | `GPU_SVC_HTTP_PORT` | 8090 | 8107 |
+| incident-svc | `INCIDENT_SVC_HTTP_PORT` | 8082 | 8104 |
+| portal-svc | `PORTAL_SVC_HTTP_PORT` | 8080 | 8109 |
+| runbook-svc | `RUNBOOK_SVC_HTTP_PORT` | 8082 | 8110 |
+| task-svc | `TASK_SVC_HTTP_PORT` | 8081 | 8102 |
+| autoscaler-svc | `AUTOSCALER_SVC_HTTP_PORT` | 8080 | 8111 |
+
+两个已废弃的键仍兼容读取，命中时服务会在启动日志打一条 WARN：
+
+- `AIO_SVC_PORT`（aio-svc）——规范键未设置时回退读它
+- `LOG_SVC_HEALTH_ADDR`（log-svc，**地址形式**如 `:8105`）——规范键未设置时回退读它。
+  该键额外承载「只监听某个 IP」这种纯端口表达不了的需求，故短期内不会直接删。
+
+> log-svc 的 gRPC 端口仍用 `LOG_SVC_GRPC_ADDR`（地址形式 `:9095`），**不在本次统一范围内**——
+> 它与健康端口是两个独立监听面。如需一并收敛，另开一轮。
+
+**代码默认值 ≠ compose 端口是正常的**：代码默认值面向本地裸跑，compose 显式注入容器侧端口。
+判断"改配置是否生效"的正确方法是看容器侧注入值，不是代码默认值。
+
+上述三条不变量（规范路径存在、无历史路径残留、端口键宿主/容器同名）已由
+`deploy/scripts/validate-deploy-assets.sh` 的 TD-77 段做门禁，compose ↔ Helm
+两侧探针路径逐服务比对，改错即红。
+
 ### TLS 证书挂载
 
 `--tls-cert` / `--tls-key` 同时作用于两条链路：gRPC（agent↔控制面 mTLS）与 Web/REST（B/S 端口）。

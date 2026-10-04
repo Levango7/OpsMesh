@@ -527,8 +527,9 @@ services:
     storeEnvPrefix: ""
     storeType: "memory"
     probe:
-      # log-svc/cmd/log-svc/main.go newHealthServer 注册的是 /healthz（唯一非 /health 的服务）
-      path: /healthz
+      # log-svc/cmd/log-svc/main.go newHealthServer：规范路径 /health（TD-77 统一口径；
+      # 历史别名 /healthz 仍注册在同一 handler 上，过渡期保留）
+      path: /health
       liveness:
         initialDelaySeconds: 10
         periodSeconds: 30
@@ -600,7 +601,8 @@ services:
     securityContext: {}
 
   aio_svc:
-    # AIOps 引擎（纯 HTTP；cmd/aio-svc/main.go：AIO_SVC_PORT 默认 8100）
+    # AIOps 引擎（纯 HTTP；cmd/aio-svc/main.go：AIO_SVC_HTTP_PORT 默认 8100，
+    # 历史键 AIO_SVC_PORT 仍兼容读取，过渡期保留）
     enabled: false
     image:
       repository: ghcr.io/levango7/aio-svc
@@ -708,8 +710,8 @@ services:
     storeEnvPrefix: "RUNBOOK_SVC"
     storeType: "memory"
     probe:
-      # runbook-svc/internal/handler/handler.go:28 健康路径 /api/v1/health
-      path: /api/v1/health
+      # runbook-svc/internal/handler/handler.go：规范路径 /health（TD-77 统一口径）
+      path: /health
       liveness:
         initialDelaySeconds: 10
         periodSeconds: 30
@@ -751,8 +753,8 @@ services:
     storeEnvPrefix: "INCIDENT_SVC"
     storeType: "memory"
     probe:
-      # incident-svc/internal/handler/handler.go:28 健康路径 /api/v1/health
-      path: /api/v1/health
+      # incident-svc/internal/handler/handler.go：规范路径 /health（TD-77 统一口径）
+      path: /health
       liveness:
         initialDelaySeconds: 10
         periodSeconds: 30
@@ -794,8 +796,8 @@ services:
     storeEnvPrefix: "AUTOSCALER_SVC"
     storeType: "memory"
     probe:
-      # autoscaler-svc/internal/handler/handler.go:28 健康路径 /api/v1/health
-      path: /api/v1/health
+      # autoscaler-svc/internal/handler/handler.go：规范路径 /health（TD-77 统一口径）
+      path: /health
       liveness:
         initialDelaySeconds: 10
         periodSeconds: 30

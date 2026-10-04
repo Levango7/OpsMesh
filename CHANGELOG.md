@@ -342,6 +342,42 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
 
 **依赖与门禁**：axios `1.19.0 → 1.20.0`（Trivy 刷新库后 7 条 HIGH 均有修复版本，非本次代码引入）；`validate-deploy-assets.sh` 新增第 12 节（业务指标标签/命名，防实体 ID 基数）与第 13 节（引导脚本不得建表 + compose 库名必须有建库来源）。
 
+## [Unreleased] — 2026-10-05 TD-77：12 个微服务的健康路径与端口键统一（兼容过渡版）
+
+原记录写的是"全仓统一 `/health`"。**实测后把范围限定在 12 个微服务，控制面不动**——
+`internal/controlplane/federation.go:104` 用 `GET <peer>/healthz` 做 peer 联邦在线判定，
+按字面执行会直接打断 peer-to-peer 探测。这条债的代价从来不是"起不来"（出厂栈能跑纯粹
+因为 compose 把两侧写死成同一个数），而是**"改不动"**：改 `.env` 的 `*_HTTP_PORT` 只动宿主侧、
+不动容器内监听。
+
+- **健康路径**：4 个服务加规范路径 `/health`（存活）+ `/ready`（就绪）——`log-svc` 补 `/health`+`/ready`，
+  `incident-svc` 补 `/health`，`runbook-svc`/`autoscaler-svc` 补 `/health`+`/ready`。
+  历史路径 `/healthz`、`/api/v1/health` **注册到同一 handler**（不是第二份实现，故两份路径永不漂移），
+  外部探针升级不断。**净增能力**：runbook/autoscaler 此前根本没有就绪端点。
+- **端口键**：统一为 `<NAME>_SVC_HTTP_PORT`。`aio-svc`（原 `AIO_SVC_PORT`）与
+  `log-svc`（原 `LOG_SVC_HEALTH_ADDR`，**地址**形式 `:8105`）改为规范键优先、旧键回退，
+  命中旧键打一条 WARN 而非静默忽略。compose 的宿主映射与容器注入改为**同一个键**——
+  此前 `aio-svc` 宿主读 `AIO_SVC_HTTP_PORT`、容器读 `AIO_SVC_PORT`，改 `.env` 只动一半。
+  `LOG_SVC_GRPC_ADDR` 未收敛：gRPC 与健康端口是两个独立监听面，另开一轮。
+- **部署资产同步**：compose 12 条 healthcheck、Helm `values.yaml` 12 个 `probe.path` 全部切规范路径
+  （`deploy/k8s/deployments/` 5 个 manifest 本来就是 `/health`，无需改）。
+  `validate-deploy-assets.sh` 新增 TD-77 段五条门禁：规范路径存在／compose 无历史路径残留／
+  无废弃键注入／**端口键宿主映射与容器注入同名**／compose ↔ Helm 探针路径逐服务一致。
+  跨资产漂移的症状极隐蔽——helm 探针 404 而容器照常跑，只是永远 not ready。
+- **三处对原记录的修正**（实测得出，不是事后美化）：① 控制面 `/healthz` 是对的，不是债；
+  ② `aio-svc` 代码默认 8100 不是缺陷（compose 显式注入了 8108），真债是键名分裂；
+  ③ `log-svc` 第三个键是**地址**形式的 `LOG_SVC_HEALTH_ADDR`，与纯端口键语义不同，
+  且它额外承载"只监听某个 IP"这种 PORT 表达不了的需求，故短期内不删。
+- **⚠️ 发布约束（实测确认）**：本次**同时**改了服务代码与部署清单，二者必须同版本发布。
+  对本机运行中的 0.11.0 容器逐路径实测：`log-svc`/`runbook-svc`/`autoscaler-svc`/
+  `incident-svc` 的 `/health` **全为 404**（历史路径分别为 `/healthz`、`/api/v1/health`，
+  均 200），而本来就统一的 `alert-svc` 两个路径都 200。
+  ⇒ **新清单配旧镜像 = 容器永远 unhealthy**。保留历史别名的意义正在于此：
+  它让"新代码配旧清单"仍可用，但反方向不成立。发布时先推镜像再改探针，或两者同批。
+
+**仍未做**：摘除历史别名与废弃键（下个版本，需先确认无外部依赖）；
+`LOG_SVC_GRPC_ADDR` 未纳入统一。
+
 ## [Unreleased] — 2026-10-05 三项技术债收口：TD-76 版本可观测面 / TD-63 契约对账 / TD-75 口径收口
 
 按「风险可控、收益明显、兼容性要协调、可持续性不能有问题」四条排序执行。**动过的每一项都先验证是否已被做过**——TD-63 的低成本缓解其实上一轮已完成（锚注释 + 字段数一致性测试都在），故本批不重复做，而是把它从数字对账升级为字段名对账。

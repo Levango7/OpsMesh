@@ -30,7 +30,7 @@ func main() {
 	// P1-6 结构化日志统一：把标准库 log 接入统一 JSON 管道（级别由 OPSMESH_LOG_LEVEL 控制）。
 	// 必须最先调用——早于任何日志输出。
 	lgr := applog.Init("aio-svc")
-	port := envInt("AIO_SVC_PORT", 8100)
+	port := envPort("AIO_SVC_HTTP_PORT", "AIO_SVC_PORT", 8100, lgr)
 	readTimeout := envDuration("AIO_SVC_READ_TIMEOUT", 30*time.Second)
 	writeTimeout := envDuration("AIO_SVC_WRITE_TIMEOUT", 60*time.Second)
 	shutdownTimeout := envDuration("AIO_SVC_SHUTDOWN_TIMEOUT", 10*time.Second)
@@ -542,6 +542,31 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 func envInt(key string, defaultVal int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return defaultVal
+}
+
+// envPort 读取 HTTP 监听端口，规范键优先、历史键回退（TD-77）。
+//
+// 为什么需要它：本服务此前只读 AIO_SVC_PORT，而 compose 发布宿主端口用的键是
+// AIO_SVC_HTTP_PORT——两个名字各管一头，改 .env 只动一半。统一到
+// AIO_SVC_HTTP_PORT 后，键名与其余 11 个服务一致，宿主侧与容器侧同一个键。
+//
+// 兼容期保留旧键：命中旧键时打一条 deprecation 警告而不是静默忽略，
+// 这样手工拼部署的人会立刻知道自己踩的是即将摘除的键。
+func envPort(canonicalKey, legacyKey string, defaultVal int, lgr *applog.Logger) int {
+	if v := os.Getenv(canonicalKey); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	if v := os.Getenv(legacyKey); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			lgr.Warn(context.Background(),
+				fmt.Sprintf("环境变量 %s 已废弃，请改用 %s（值 %d 已生效）；该键将在下个版本摘除",
+					legacyKey, canonicalKey, n))
 			return n
 		}
 	}

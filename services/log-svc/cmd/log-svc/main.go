@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -34,9 +35,7 @@ func main() {
 	if addr := os.Getenv("LOG_SVC_GRPC_ADDR"); addr != "" {
 		cfg.Server.Address = addr
 	}
-	if addr := os.Getenv("LOG_SVC_HEALTH_ADDR"); addr != "" {
-		cfg.Health.Address = addr
-	}
+	cfg.Health.Address = resolveHealthAddr(cfg.Health.Address, lgr)
 	if backend := os.Getenv("LOG_SVC_BACKEND"); backend != "" {
 		cfg.LogStore.Backend = backend
 	}
@@ -163,15 +162,45 @@ func initLogStore(cfg *config.Config) (logstore.LogStore, error) {
 	}
 }
 
+// resolveHealthAddr 解析健康/指标 HTTP 监听地址，规范键优先、历史键回退（TD-77）。
+//
+// 为什么需要它：本服务此前只认 LOG_SVC_HEALTH_ADDR（地址形式 ":8105"），
+// 而其余 11 个服务统一用 <NAME>_SVC_HTTP_PORT（纯端口）。统一后本服务也读
+// LOG_SVC_HTTP_PORT，键名与其余服务一致，compose 的宿主侧与容器侧可用同一个键。
+//
+// 两个键语义不同——ADDR 是完整监听地址（可含 IP），PORT 是纯端口号，
+// 所以这里不是简单改名，而是「PORT → ":PORT"」的转换。ADDR 键继续可用，
+// 因为它额外承载了「只监听某个 IP」这种 PORT 表达不了的需求。
+func resolveHealthAddr(fallback string, lgr *applog.Logger) string {
+	if v := os.Getenv("LOG_SVC_HTTP_PORT"); v != "" {
+		if _, err := strconv.Atoi(v); err == nil {
+			return ":" + v
+		}
+		lgr.Warn(context.Background(),
+			fmt.Sprintf("环境变量 LOG_SVC_HTTP_PORT=%q 不是合法端口号，已忽略并回退默认值", v))
+	}
+	if v := os.Getenv("LOG_SVC_HEALTH_ADDR"); v != "" {
+		lgr.Warn(context.Background(),
+			fmt.Sprintf("环境变量 LOG_SVC_HEALTH_ADDR 已废弃，请改用 LOG_SVC_HTTP_PORT（值 %s 已生效）；该键将在下个版本摘除", v))
+		return v
+	}
+	return fallback
+}
+
 // newHealthServer creates an HTTP health check server.
+//
+// 路径口径（TD-77）：全仓微服务的规范路径是 /health（存活）+ /ready（就绪）。
+// 本服务此前只提供 /healthz+/readyz，为避免打断既有外部探针，两者同时注册、
+// 指向同一个 handler——别名不是拷贝实现，故两份路径永远同生同死。
+// 旧路径计划在下个版本摘除，摘除前请先确认无外部依赖（见 docs/tech-debt.md TD-77）。
 func newHealthServer(addr string, store logstore.LogStore) *http.Server {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	handleHealth := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, `{"status":"ok"}`)
-	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+	}
+	handleReady := func(w http.ResponseWriter, r *http.Request) {
 		// Check store health
 		if store != nil {
 			// Try a simple query to verify store is working
@@ -188,7 +217,13 @@ func newHealthServer(addr string, store logstore.LogStore) *http.Server {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, `{"status":"ready"}`)
-	})
+	}
+	// 规范路径。
+	mux.HandleFunc("/health", handleHealth)
+	mux.HandleFunc("/ready", handleReady)
+	// 兼容别名（TD-77 过渡期，指向同一 handler）。
+	mux.HandleFunc("/healthz", handleHealth)
+	mux.HandleFunc("/readyz", handleReady)
 	mux.Handle("/metrics", metrics.GetHandler())
 
 	return &http.Server{

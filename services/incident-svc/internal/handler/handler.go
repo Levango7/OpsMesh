@@ -30,6 +30,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// GET /incidents/metrics 必须在此子树内提供；/api/v1/metrics/response
 	// 在子树外，前端不可达。
 	mux.HandleFunc("/api/v1/incidents/metrics", h.handleIncidentsMetrics)
+	// 健康端点口径（TD-77）：规范路径 /health（存活），/ready（就绪）由 cmd 层注册。
+	// /api/v1/health 是本服务的历史路径，保留为别名指向同一 handler。
+	mux.HandleFunc("/health", h.handleHealth)
 	mux.HandleFunc("/api/v1/health", h.handleHealth)
 }
 

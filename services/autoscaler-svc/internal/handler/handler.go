@@ -32,7 +32,23 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// 前端 manualScale / cooldowns 两个入口必须在此注册。
 	mux.HandleFunc("/api/v1/scale", h.handleScale)
 	mux.HandleFunc("/api/v1/cooldowns", h.handleCooldowns)
+	// 健康端点口径（TD-77）：规范路径 /health（存活）+ /ready（就绪）。
+	// 本服务此前只有 /api/v1/health 且**没有就绪端点**，统一后净增 /ready。
+	// /api/v1/health 保留为别名，与 /health 指向同一 handler。
+	mux.HandleFunc("/health", h.handleHealth)
+	mux.HandleFunc("/ready", h.handleReady)
 	mux.HandleFunc("/api/v1/health", h.handleHealth)
+}
+
+// handleReady 报就绪。本服务无外部依赖（Prometheus 是拉取侧依赖，不影响接单），
+// 故就绪等价于存活；仍单列一个端点，是为了让探针配置在 12 个服务间可以逐字对齐——
+// 统一口径的价值在于「所有服务的 readiness 都指向一个必然存在的路径」。
+func (h *Handler) handleReady(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
 func (h *Handler) handleRules(w http.ResponseWriter, r *http.Request) {

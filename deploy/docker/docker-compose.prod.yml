@@ -779,7 +779,7 @@ services:
       - "127.0.0.1:${LOG_SVC_GRPC_PORT:-9095}:9095"
     environment:
       LOG_SVC_GRPC_ADDR: ":9095"
-      LOG_SVC_HEALTH_ADDR: ":8105"
+      LOG_SVC_HTTP_PORT: 8105
       LOG_SVC_BACKEND: ${LOG_BACKEND:-loki}
       # 端点此前无任何环境变量入口（服务只读 LOG_SVC_BACKEND），
       # 容器化部署下 loki 永远拿到空 endpoint；现已支持 LOG_SVC_LOKI_ENDPOINT / LOG_SVC_SQL_DSN。
@@ -794,8 +794,10 @@ services:
       loki:
         condition: service_started
     healthcheck:
-      # 探针路径为 /healthz（该服务从未提供 /health，此前探针恒 404 → 容器永远 unhealthy）。
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8105/healthz"]
+      # 探针路径为 /health（TD-77 统一口径：12 个微服务一律 /health 存活探针）。
+      # 本服务此前只提供 /healthz，探针指向不存在的路径 → 容器永远 unhealthy；
+      # 现已同时注册 /health 与历史别名 /healthz，两者指向同一 handler。
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8105/health"]
       interval: 30s
       timeout: 5s
       start_period: 10s
@@ -903,7 +905,7 @@ services:
     ports:
       - "127.0.0.1:${AIO_SVC_HTTP_PORT:-8108}:8108"
     environment:
-      AIO_SVC_PORT: 8108
+      AIO_SVC_HTTP_PORT: 8108
       AIO_SVC_READ_TIMEOUT: 30s
       AIO_SVC_WRITE_TIMEOUT: 60s
       AIO_SVC_SHUTDOWN_TIMEOUT: 10s
@@ -956,7 +958,7 @@ services:
       mysql:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8104/api/v1/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8104/health"]
       interval: 30s
       timeout: 5s
       start_period: 10s
@@ -996,7 +998,7 @@ services:
       mysql:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8110/api/v1/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8110/health"]
       interval: 30s
       timeout: 5s
       start_period: 10s
@@ -1042,7 +1044,7 @@ services:
       prometheus:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8111/api/v1/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8111/health"]
       interval: 30s
       timeout: 5s
       start_period: 10s
