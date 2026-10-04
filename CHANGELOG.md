@@ -6,6 +6,16 @@
 
 ## [0.12.0] — 2026-10-04（v0.11.0 之后全部改动归版；本版**首次真实发布**，同时纠正"版本声明领先于产物"两处）
 
+- **新增工具｜`deploy/scripts/verify-release-artifacts.sh <版本>`：把"这个版本真的发布出去了"变成一条命令**。四项判据：
+  ① 14 个镜像仓库（`opsmesh-binary`/`opsmesh-agent` + release 矩阵的 12 个常驻微服务）都有 `:<版本>` tag；
+  ② 每个镜像的 `.sig`/`.att` 必须**对得上本版本 manifest 的 digest**（GHCR 里签名与证明是按 `sha256-<digest>` 命名的，
+  只看"仓库里有个 .sig"会把别的版本当成这个版本）；③ GitHub Release 存在、assets 非空、正文含「能力降级清单」；
+  ④ `helm template`（默认 values 与 values-production 两种）渲染出的每个 `ghcr.io/<ns>/*` 引用都必须真实存在。
+  取不到 token / 解析不到 digest / 没有 helm 或 gh 命令 ⇒ **判红而不是跳过**。
+  两个对照都跑过：**正向** `0.11.0` ⇒ ①② 全绿（14/14 + 14/14），③ 报"正文没有能力降级清单"（v0.11.0 发布时确实没有），
+  ④ 报"chart 引用了 GHCR 上不存在的 opsmesh-binary:0.12.0"——**独立复现了 §32.9 那条 ErrImagePull 成因**；
+  **反向** `0.12.0` ⇒ `PASS=0 FAIL=30`（当前尚未发布）。`shellcheck -S warning` 0 findings。
+
 > 本节以下 7 个 `[0.12.0] — 2026-10-0x …` 明细块是本次归版的内容（本仓约定：明细原地留存）。
 
 **先说这件事本身**：`deda995`（2026-10-03「归版 v0.12.0」）把 Chart.yaml 的 version/appVersion、
