@@ -158,17 +158,22 @@ func (x *AlertRule) GetUpdatedAt() *timestamppb.Timestamp {
 
 // Alert 告警事件。
 type Alert struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	TenantId      string                 `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	RuleId        string                 `protobuf:"bytes,3,opt,name=rule_id,json=ruleId,proto3" json:"rule_id,omitempty"`
-	RuleName      string                 `protobuf:"bytes,4,opt,name=rule_name,json=ruleName,proto3" json:"rule_name,omitempty"`
-	Severity      string                 `protobuf:"bytes,5,opt,name=severity,proto3" json:"severity,omitempty"`
-	Message       string                 `protobuf:"bytes,6,opt,name=message,proto3" json:"message,omitempty"`
-	Values        map[string]float64     `protobuf:"bytes,7,rep,name=values,proto3" json:"values,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"fixed64,2,opt,name=value"`
-	Status        string                 `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"` // firing|acknowledged|silenced|resolved
-	FiredAt       *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=fired_at,json=firedAt,proto3" json:"fired_at,omitempty"`
-	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Id        string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	TenantId  string                 `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	RuleId    string                 `protobuf:"bytes,3,opt,name=rule_id,json=ruleId,proto3" json:"rule_id,omitempty"`
+	RuleName  string                 `protobuf:"bytes,4,opt,name=rule_name,json=ruleName,proto3" json:"rule_name,omitempty"`
+	Severity  string                 `protobuf:"bytes,5,opt,name=severity,proto3" json:"severity,omitempty"`
+	Message   string                 `protobuf:"bytes,6,opt,name=message,proto3" json:"message,omitempty"`
+	Values    map[string]float64     `protobuf:"bytes,7,rep,name=values,proto3" json:"values,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"fixed64,2,opt,name=value"`
+	Status    string                 `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"` // firing|acknowledged|silenced|resolved
+	FiredAt   *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=fired_at,json=firedAt,proto3" json:"fired_at,omitempty"`
+	UpdatedAt *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	// device_id / metric 是告警最基本的两个事实——"哪台设备、哪个指标"。
+	// 修前 Alert 消息里根本没有这两个字段（store 里有），于是 gRPC 侧列出告警时
+	// 客户看到的是"有个告警"但不知道是谁的；按指标查告警也无从下手。
+	DeviceId      string `protobuf:"bytes,11,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	Metric        string `protobuf:"bytes,12,opt,name=metric,proto3" json:"metric,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -271,6 +276,20 @@ func (x *Alert) GetUpdatedAt() *timestamppb.Timestamp {
 		return x.UpdatedAt
 	}
 	return nil
+}
+
+func (x *Alert) GetDeviceId() string {
+	if x != nil {
+		return x.DeviceId
+	}
+	return ""
+}
+
+func (x *Alert) GetMetric() string {
+	if x != nil {
+		return x.Metric
+	}
+	return ""
 }
 
 // CreateRuleRequest 创建规则请求。
@@ -560,11 +579,27 @@ func (x *EvaluateRequest) GetMetrics() map[string]float64 {
 }
 
 // EvaluateResponse 评估响应。
+//
+// 光返回 alerts 是不够的：修前引擎根本不读指标（见 internal/engine），
+// "0 条告警"既可能是"读数都没超阈值"也可能是"你没给读数"，两者对客户完全不同。
+// 因此把评估面本身也作为契约输出。
 type EvaluateResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Alerts        []*Alert               `protobuf:"bytes,1,rep,name=alerts,proto3" json:"alerts,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Alerts []*Alert               `protobuf:"bytes,1,rep,name=alerts,proto3" json:"alerts,omitempty"`
+	// evaluated_rules：真正拿到读数并完成判定的规则条数。
+	EvaluatedRules int32 `protobuf:"varint,2,opt,name=evaluated_rules,json=evaluatedRules,proto3" json:"evaluated_rules,omitempty"`
+	// pending_rules：已命中但还没满足 duration（"for"）的规则 ID。
+	PendingRules []string `protobuf:"bytes,3,rep,name=pending_rules,json=pendingRules,proto3" json:"pending_rules,omitempty"`
+	// no_data_rules：引用了本次没有读数的指标、因此无法判定的规则 ID。
+	// ⚠️ "没数据"不等于"没命中"，把它混进 alerts=空就是假装健康。
+	NoDataRules []string `protobuf:"bytes,4,rep,name=no_data_rules,json=noDataRules,proto3" json:"no_data_rules,omitempty"`
+	// invalid_rules：规则本身配错（如操作符不认识）而无法判定的规则 ID。
+	InvalidRules []string `protobuf:"bytes,5,rep,name=invalid_rules,json=invalidRules,proto3" json:"invalid_rules,omitempty"`
+	// metrics_supplied：本次请求带来的读数条数。为 0 而规则又不是 0 条时，
+	// 结论必然全是 no_data——把这个数字回给调用方，"你忘了传指标"才看得见。
+	MetricsSupplied int32 `protobuf:"varint,6,opt,name=metrics_supplied,json=metricsSupplied,proto3" json:"metrics_supplied,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *EvaluateResponse) Reset() {
@@ -602,6 +637,41 @@ func (x *EvaluateResponse) GetAlerts() []*Alert {
 		return x.Alerts
 	}
 	return nil
+}
+
+func (x *EvaluateResponse) GetEvaluatedRules() int32 {
+	if x != nil {
+		return x.EvaluatedRules
+	}
+	return 0
+}
+
+func (x *EvaluateResponse) GetPendingRules() []string {
+	if x != nil {
+		return x.PendingRules
+	}
+	return nil
+}
+
+func (x *EvaluateResponse) GetNoDataRules() []string {
+	if x != nil {
+		return x.NoDataRules
+	}
+	return nil
+}
+
+func (x *EvaluateResponse) GetInvalidRules() []string {
+	if x != nil {
+		return x.InvalidRules
+	}
+	return nil
+}
+
+func (x *EvaluateResponse) GetMetricsSupplied() int32 {
+	if x != nil {
+		return x.MetricsSupplied
+	}
+	return 0
 }
 
 // GetAlertRequest 获取告警请求。
@@ -926,7 +996,7 @@ const file_alert_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xa2\x03\n" +
+	"updated_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xd7\x03\n" +
 	"\x05Alert\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x17\n" +
@@ -939,7 +1009,9 @@ const file_alert_proto_rawDesc = "" +
 	"\bfired_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\afiredAt\x129\n" +
 	"\n" +
 	"updated_at\x18\n" +
-	" \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x1a9\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12\x1b\n" +
+	"\tdevice_id\x18\v \x01(\tR\bdeviceId\x12\x16\n" +
+	"\x06metric\x18\f \x01(\tR\x06metric\x1a9\n" +
 	"\vValuesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\x01R\x05value:\x028\x01\"D\n" +
@@ -959,9 +1031,14 @@ const file_alert_proto_rawDesc = "" +
 	"\ametrics\x18\x03 \x03(\v2..opsmesh.alert.v1.EvaluateRequest.MetricsEntryR\ametrics\x1a:\n" +
 	"\fMetricsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x01R\x05value:\x028\x01\"C\n" +
+	"\x05value\x18\x02 \x01(\x01R\x05value:\x028\x01\"\x85\x02\n" +
 	"\x10EvaluateResponse\x12/\n" +
-	"\x06alerts\x18\x01 \x03(\v2\x17.opsmesh.alert.v1.AlertR\x06alerts\"!\n" +
+	"\x06alerts\x18\x01 \x03(\v2\x17.opsmesh.alert.v1.AlertR\x06alerts\x12'\n" +
+	"\x0fevaluated_rules\x18\x02 \x01(\x05R\x0eevaluatedRules\x12#\n" +
+	"\rpending_rules\x18\x03 \x03(\tR\fpendingRules\x12\"\n" +
+	"\rno_data_rules\x18\x04 \x03(\tR\vnoDataRules\x12#\n" +
+	"\rinvalid_rules\x18\x05 \x03(\tR\finvalidRules\x12)\n" +
+	"\x10metrics_supplied\x18\x06 \x01(\x05R\x0fmetricsSupplied\"!\n" +
 	"\x0fGetAlertRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"^\n" +
 	"\x11ListAlertsRequest\x12\x1b\n" +

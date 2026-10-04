@@ -56,6 +56,9 @@ type AlertEvent struct {
 	Labels   map[string]string
 	FiredAt  time.Time
 	Values   map[string]float64
+	// Metric 是规则第一个条件的指标名。落库时 Alert.Metric 用它——
+	// 修前这里被填成 RuleID，于是"按指标查告警"的口径整个是错的。
+	Metric string
 }
 
 // Engine is the alert rule engine.
@@ -63,6 +66,15 @@ type Engine struct {
 	mu    sync.RWMutex
 	rules map[string]*AlertRule
 	now   func() time.Time
+
+	// pendingSince 记录 (设备,规则) 首次命中的时刻，用于 duration（"for"）判定；
+	// 条件不再成立时删除。
+	pendingSince map[string]time.Time
+	// lastFired 记录 (设备,规则) 上次真正产出告警的时刻，用于重复抑制。
+	//
+	// 两个 map 都是**进程内状态**：多副本部署下各自计自己的时长，这一点写在
+	// docs/api-reference.md 的评估语义里，不假装它是全局的。
+	lastFired map[string]time.Time
 }
 
 // NewEngine creates a new Engine.
@@ -71,8 +83,10 @@ func NewEngine(now func() time.Time) *Engine {
 		now = time.Now
 	}
 	return &Engine{
-		rules: make(map[string]*AlertRule),
-		now:   now,
+		rules:        make(map[string]*AlertRule),
+		now:          now,
+		pendingSince: make(map[string]time.Time),
+		lastFired:    make(map[string]time.Time),
 	}
 }
 
@@ -152,37 +166,5 @@ func (e *Engine) ListRules(tenantID string) ([]*AlertRule, error) {
 		out = append(out, &cp)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
-}
-
-// Evaluate evaluates all enabled rules for a device.
-func (e *Engine) Evaluate(deviceID string) ([]*AlertEvent, error) {
-	e.mu.RLock()
-	now := e.now()
-	out := make([]*AlertEvent, 0)
-	for _, r := range e.rules {
-		if !r.Enabled {
-			continue
-		}
-		matched := false
-		for _, c := range r.Conditions {
-			if c.Operator == ">" && c.Threshold < 100 {
-				matched = true
-			}
-		}
-		if matched {
-			out = append(out, &AlertEvent{
-				RuleID:   r.ID,
-				TenantID: r.TenantID,
-				DeviceID: deviceID,
-				Severity: r.Severity,
-				Message:  "rule triggered",
-				FiredAt:  now,
-				Values:   make(map[string]float64),
-			})
-		}
-	}
-	e.mu.RUnlock()
-	sort.Slice(out, func(i, j int) bool { return out[i].RuleID < out[j].RuleID })
 	return out, nil
 }

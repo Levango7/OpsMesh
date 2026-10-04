@@ -167,15 +167,23 @@ func (s *Service) DeleteRule(ctx context.Context, req *alertv1.DeleteRuleRequest
 	return nil
 }
 
-// Evaluate evaluates metrics against rules and returns triggered alerts.
+// Evaluate 用请求携带的读数评估规则，返回触发的告警**与评估面本身的状态**。
+//
+// 为什么响应里不只有 alerts（#60）：修前引擎根本不读指标（`operator==">" && threshold<100`
+// 就算命中），空 alerts 既可能是"读数都正常"也可能是"你根本没给读数"。
+// 这两种情况对客户是两个事实，混在一起就等于把"监控没数据"卖成"系统健康"。
 func (s *Service) Evaluate(ctx context.Context, req *alertv1.EvaluateRequest) (*alertv1.EvaluateResponse, error) {
-	events, err := s.engine.Evaluate(req.DeviceId)
+	report, err := s.engine.Evaluate(req.GetTenantId(), req.GetDeviceId(), req.GetMetrics())
 	if err != nil {
 		return nil, err
 	}
+	if len(req.GetMetrics()) == 0 && len(report.Evaluations) > 0 {
+		log.Printf("[alert-svc] 评估未携带任何读数：device=%s tenant=%s 规则=%d 条，全部按 no_data 处理",
+			req.GetDeviceId(), req.GetTenantId(), len(report.Evaluations))
+	}
 
-	out := make([]*alertv1.Alert, 0, len(events))
-	for _, ev := range events {
+	out := make([]*alertv1.Alert, 0, len(report.Events))
+	for _, ev := range report.Events {
 		alert := &alertv1.Alert{
 			Id:       uuid.New().String(),
 			TenantId: ev.TenantID,
@@ -185,6 +193,8 @@ func (s *Service) Evaluate(ctx context.Context, req *alertv1.EvaluateRequest) (*
 			Values:   ev.Values,
 			Status:   "firing",
 			FiredAt:  timestamppb.New(ev.FiredAt),
+			DeviceId: ev.DeviceID,
+			Metric:   ev.Metric,
 		}
 		out = append(out, alert)
 
@@ -195,7 +205,7 @@ func (s *Service) Evaluate(ctx context.Context, req *alertv1.EvaluateRequest) (*
 			Severity:  ev.Severity,
 			Message:   ev.Message,
 			Status:    "firing",
-			Metric:    ev.RuleID,
+			Metric:    ev.Metric,
 			CreatedAt: ev.FiredAt,
 		})
 
@@ -230,7 +240,14 @@ func (s *Service) Evaluate(ctx context.Context, req *alertv1.EvaluateRequest) (*
 			}
 		}
 	}
-	return &alertv1.EvaluateResponse{Alerts: out}, nil
+	return &alertv1.EvaluateResponse{
+		Alerts:          out,
+		EvaluatedRules:  int32(report.Evaluated()),
+		PendingRules:    report.IDs(engine.StatePending),
+		NoDataRules:     report.IDs(engine.StateNoData),
+		InvalidRules:    report.IDs(engine.StateInvalid),
+		MetricsSupplied: int32(len(req.GetMetrics())),
+	}, nil
 }
 
 // GetAlert retrieves an alert by ID.
@@ -379,5 +396,12 @@ func storeToProtoAlert(a *store.Alert) *alertv1.Alert {
 		Status:    a.Status,
 		FiredAt:   timestamppb.New(a.CreatedAt),
 		UpdatedAt: timestamppb.New(a.UpdatedAt),
+		DeviceId:  a.DeviceID,
+		// ⚠️ RuleId 在这里只能留空：alert-svc 自己的 alerts 表（internal/store/mysql.go
+		// 的 CREATE TABLE）没有 rule_id 列，store.Alert 也没有该字段。
+		// 修前这里把 Metric 当 RuleID 用，于是"按指标查告警"整条口径都是错的；
+		// 现在 Metric 存回真指标，rule_id 的缺口就显式留在这里（补列属 schema 迁移，
+		// 已登记为待办，不用错字段糊过去）。
+		Metric: a.Metric,
 	}
 }

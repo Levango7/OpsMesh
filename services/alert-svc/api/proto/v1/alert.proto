@@ -62,6 +62,11 @@ message Alert {
   string status = 8;  // firing|acknowledged|silenced|resolved
   google.protobuf.Timestamp fired_at = 9;
   google.protobuf.Timestamp updated_at = 10;
+  // device_id / metric 是告警最基本的两个事实——"哪台设备、哪个指标"。
+  // 修前 Alert 消息里根本没有这两个字段（store 里有），于是 gRPC 侧列出告警时
+  // 客户看到的是"有个告警"但不知道是谁的；按指标查告警也无从下手。
+  string device_id = 11;
+  string metric = 12;
 }
 
 // CreateRuleRequest 创建规则请求。
@@ -97,8 +102,24 @@ message EvaluateRequest {
 }
 
 // EvaluateResponse 评估响应。
+//
+// 光返回 alerts 是不够的：修前引擎根本不读指标（见 internal/engine），
+// "0 条告警"既可能是"读数都没超阈值"也可能是"你没给读数"，两者对客户完全不同。
+// 因此把评估面本身也作为契约输出。
 message EvaluateResponse {
   repeated Alert alerts = 1;
+  // evaluated_rules：真正拿到读数并完成判定的规则条数。
+  int32 evaluated_rules = 2;
+  // pending_rules：已命中但还没满足 duration（"for"）的规则 ID。
+  repeated string pending_rules = 3;
+  // no_data_rules：引用了本次没有读数的指标、因此无法判定的规则 ID。
+  // ⚠️ "没数据"不等于"没命中"，把它混进 alerts=空就是假装健康。
+  repeated string no_data_rules = 4;
+  // invalid_rules：规则本身配错（如操作符不认识）而无法判定的规则 ID。
+  repeated string invalid_rules = 5;
+  // metrics_supplied：本次请求带来的读数条数。为 0 而规则又不是 0 条时，
+  // 结论必然全是 no_data——把这个数字回给调用方，"你忘了传指标"才看得见。
+  int32 metrics_supplied = 6;
 }
 
 // GetAlertRequest 获取告警请求。

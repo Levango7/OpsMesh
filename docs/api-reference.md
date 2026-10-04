@@ -4749,6 +4749,46 @@ Phase 3 审计查询：事件检索与导出（与 `GET /api/v1/audits` 互补�
 - `GET /api/v1/runbooks/{id}/executions` — Runbook 执行历史
 - `GET /api/v1/runbooks/{id}/executions/{execId}/logs` — 执行日志
 
+### 告警服务（alert-svc，gRPC `:50053`）
+
+alert-svc 只有 gRPC 面（`AlertService`：CreateRule/UpdateRule/DeleteRule/ListRules/Evaluate/
+GetAlert/ListAlerts/AckAlert/SilenceAlert…），**没有 REST 路由**；出厂 compose 里宿主端口
+`ALERT_SVC_GRPC_PORT`（默认 50053，只绑 127.0.0.1，且该面无身份鉴权）。
+
+#### `Evaluate` 的读数与结论口径（必读）
+
+请求：`{tenant_id, device_id, metrics}` —— **`metrics` 是判定唯一的读数来源**，
+键就是规则 `condition.metric` 的名字。修前引擎根本不读它
+（`operator==">" && threshold<100` 即算命中），所以"按阈值触发"这个能力实际不存在（#60）。
+
+响应除 `alerts` 外还回评估面本身：
+
+| 字段 | 含义 |
+|---|---|
+| `evaluated_rules` | 真正拿到读数并完成判定的规则条数 |
+| `pending_rules` | 已命中但仍在 `duration`（"for"）窗口内，或处于重复触发抑制期 |
+| `no_data_rules` | 规则引用的指标本次**没有读数**，因此无法判定 |
+| `invalid_rules` | 规则本身配错（未知操作符、没有条件） |
+| `metrics_supplied` | 本次请求带来的读数条数（为 0 且有规则 ⇒ 结论必然全是 `no_data`） |
+
+五态语义里最关键的一条：**"没读数"不等于"没命中"**。断采/忘传指标时引擎不会
+按 0 参与比较（那会让 `temperature > 100` 永远正常、`disk_free < 10` 误报），
+而是落到 `no_data_rules`。同样，操作符写错（如 `=>`）落 `invalid_rules`，
+不会被悄悄当成"条件不成立"。
+
+- `duration`（"for"）与重复抑制是**进程内状态**，键为 `(device_id, rule_id)`：
+  多副本部署下每个副本各自计时，同一条规则在两台设备上互不影响。
+- 命中状态未翻转且在重复间隔内不再产出新告警（间隔 = 规则的 `duration`，
+  无 `duration` 时默认 5 分钟），否则每轮评估都会新增一条告警并各发一次通知。
+- 触发告警的 `message` 带现场值（如 `High CPU: cpu_usage=95 > 80`），`values`
+  带各指标的实测值；`alert.metric` 是**指标名**（修前被误填成 rule_id，
+  于是"按指标查告警"整条口径是错的）。
+- ⚠️ 已知缺口：`alert-svc` 的 `alerts` 表没有 `rule_id` 列，因此 `ListAlerts` 回过来的
+  `rule_id` **恒为空**（补列属 schema 迁移，已登记待办，不用别的字段糊过去）。
+- 评估器读数来源仍是"调用方推"：服务**不会**自己去 Prometheus 拉指标。
+  要自动按指标告警，请用出厂 Prometheus + Alertmanager 那条链路
+  （见 `docs/operations.md` §4.3/§4.6.0）。
+
 ### AIOps 智能引擎（aio-svc，直连 `:8100`）
 
 aio-svc 的 5 个引擎（异常检测 / 根因 / 降噪 / 预测 / 巡检）+ GPU 异常 + Prometheus 取数：
