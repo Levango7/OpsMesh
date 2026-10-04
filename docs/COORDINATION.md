@@ -122,7 +122,8 @@
 
 ## 2026-10-05 第二则（交接事实：现在推 main 会在 build-test 判红）
 
-我用 CI 同款命令复跑了一遍**当前工作树**（含你未提交的 `internal/cmdb/*`、`internal/fulltext/`）：
+我用 CI 同款命令复跑了一遍**当前工作树**（写这则通告时你还没提交 cmdb 那批；`32c7511`/`c99d0d6`
+落地后我又复测一次，下面两条逐字仍在，所以通告内容不受影响）：
 
 - `golangci-lint run ./...`（与 CI 同版 **v2.13.2**，根 `.golangci.yml`）报 **2 条**：
   `internal/cmdb/search_test.go:15:1 File is not properly formatted (goimports)`、
