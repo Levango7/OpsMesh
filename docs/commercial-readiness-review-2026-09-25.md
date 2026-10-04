@@ -3338,4 +3338,21 @@ pipefail 把"整条管道失败"升格为判定失败。于是**明明命中了�
    同时给折叠标签判定加上探针状态码回显（`超长段=404`）与失败快照落盘（`dump_snapshot`），
    `/metrics` 读取加尾部哨兵与重试；§14"抓不到就 warn 跳过"改成判红——跳过在人眼里等于绿。
 
+### 32.9 发布链本身的三条（切版前核"声明与产物是否对得上"，比代码缺陷更影响成交）
+
+| 问题 | 实测证据 | 后果 |
+|---|---|---|
+| **0.12.0 从未真实发布** | `git ls-remote --tags` 最新 v0.11.0；`gh release list` 最新 v0.11.0；GHCR 匿名探测 `levango7/opsmesh-binary`、`opsmesh-agent`、`auth-svc` 的版本 tag 都只到 **0.11.0**（`tags/list?n=2000` 过滤掉 sha 后） | Chart.yaml `appVersion`、`values-production.yaml` 三处镜像 tag、gitops production-segment 的 tag **全都钉在 0.12.0** ⇒ 按生产默认值 `helm install` 的客户直接 `ErrImagePull`。这是 §20"chart 默认镜像名从未被发布"的同一类，只是这次错在版本号上 |
+| **CHANGELOG 历史被整篇改名毁掉** | `deda995` 把 61 个 `## [Unreleased]` 标题一次性替换成 `## [0.12.0]`，连带把早已标注"（已归入 0.11.0）/0.10.0/0.9.x"的 **54 个历史明细块**也改名 | 对外等于宣称"这半年的东西都在 0.12.0 里"。本仓约定是"明细原地留存 + 标题标注已归入 X"，整篇替换恰好把这个约定抹了。修复靠 `git show v0.11.0:CHANGELOG.md` 的标题集逐条还原（54 还原 / 7 保留），**不是**手工凭记忆改 |
+| **GitHub Release 正文只是 commit 清单** | `release.yml` 的 body 取 `github-tag-action` 产出（两个 tag 之间的 commit 标题）+ `generate_release_notes: true` | 客户在 Releases 页看不到"本版有哪些破坏性变更""哪些能力当前是降级的"——这两样恰好是采购/升级评审要看的，而它们只写在仓库内 `docs/release-notes.md`。现在正文改为抽 `docs/release-notes.md` 的本版小节，并三条硬断言：小节缺失判红、缺「能力降级清单」判红、缺「破坏性 / 行为变更」判红（没有也要显式写「无」）。本地验证：v0.12.0 抽到 76 行；`v9.9.9` 反向对照 ⇒ 退出码 1 并报"没有该小节" |
+
+还有一条同族的、这次没犯但容易犯的：`internal/version.Version` 落后一整版（0.11.0 vs Chart.yaml 的 0.12.0），
+而"版本源一致性"门禁**只比对清单、不知道二进制里也写着一个版本** ⇒ 当时 PASS=45 全绿。
+现把它纳入 `check_kv`（变异验证：改回 0.11.0 立刻判红）。
+
+**给下一位切版的人**：打完 tag 之后必须做的四点验收不是"看 CI 绿"，而是
+① GHCR 三个仓库都有 `:<版本号>` tag；② GitHub Release 有 assets 且**非空**；
+③ `cosign verify` + `.att` provenance 能验通；④ `helm template` 默认渲染出来的镜像名
+在 ① 的集合里。§19 那次（v0.9.1 有 tag 无镜像）、这次（v0.12.0 有 pins 无 tag）都是只做了前三步的一部分。
+
 
