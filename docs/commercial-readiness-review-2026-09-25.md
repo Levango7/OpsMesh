@@ -3289,3 +3289,53 @@ MySQL 的 `ADD COLUMN` 没有 `IF NOT EXISTS`（重复执行报 1060），所以
 5. gRPC 面无鉴权这一条**没有擅自改**：它是 #58 遗留的交付口径决定（见 §29/§31 的挂起项），
    需要用户定"默认发布给 loopback 还是显式开关"。
 
+### 32.8 缺陷 E（第四类假红）｜判定写法自己会造出"产品缺指标"
+
+§32 的正题跑完后，本机 `verify-runtime.sh` 给出了四份**互不相同**的"缺失序列清单"：
+一次缺 `path="/api/v1/:id"`，一次缺审计链的两个 gauge，一次只缺 `opsmesh_audit_chain_ok`。
+而每一次单独复查抓取面，那些序列都在。这一共花掉四轮脚本运行才定位——值得整节记下来，
+因为它的表象是"产品坏了"，而坏的是**门禁**。
+
+机制：这些脚本开头都是 `set -euo pipefail`。`grep -q` **一命中就退出**，而生产者
+（`printf '%s' "$metrics_body"`）还在往管道里写 ⇒ 被 SIGPIPE 打死 ⇒ 管道退出码变成 141；
+pipefail 把"整条管道失败"升格为判定失败。于是**明明命中了却判成没命中**。
+是否踩中取决于生产者输出量与样式位置：只有当输出越过管道缓冲区（约 64KB）才会中招，
+所以小输出的场景永远正常，而 `/metrics` 这种几十 KB 的快照就偶发失败。
+
+定量证据（同一份 679 行快照，样式确实在第 27 行）：
+
+| 脚本选项 | 连续 10 次判定结果 |
+|---|---|
+| `set -uo pipefail` | **MISS × 10**（样式确实存在） |
+| 去掉 pipefail | HIT × 10 |
+
+修法统一成"先落变量再判"：`grep -q PAT <<<"$var"`。herestring 由 bash 落成临时文件供 grep 读，
+没有管道、没有可被杀的生产者，且 `^` 行锚语义逐字不变。刻意**不**换成 `[[ $s == *PAT* ]]`：
+那是整串子串匹配，`^anchor` 会失效，而指标名互为前缀时（`opsmesh_http_metrics_series` 与
+`..._dropped_total`）会**假命中**——把一个假红换成另一个更难查的假绿。
+覆盖面 52 处（`verify-runtime.sh` 24、`deploy.sh` 5、`validate-deploy-assets.sh` 6、
+`gen-tls.sh`/`create-cluster.sh`/`deploy-opsmesh.sh` 各 1、`ci.yml` 9、`shadow-observe.yml` 1），
+含 `curl … | grep -q`、`docker compose logs … | grep -q`、`openssl … | grep -q` 这类命令生产者。
+门禁 `internal/gates/shell_grep_gate_test.go` 扫 `deploy/**/*.sh` + `.github/workflows/*.yml`
+的非注释行，任何 `| grep -q` 判红；探测器自带正/反例自检（否则"扫到 0 处违规"只是"扫描器坏了"
+的另一种说法），并设"文件数 <10 或行数 <2000 直接 fatal"的防空转断言。
+**变异验证**：往 `gen-tls.sh` 塞回一条 `printf '%s' "$certtext" | grep -q "DNS:localhost"` ⇒ 判红
+指到文件:行号；还原 ⇒ 绿（17 个文件 / 8227 行 / 违规 0）。
+
+顺带查出的另外三条门禁口径错误（都是"红得毫无道理"或"绿得毫无依据"那一类）：
+
+1. **永远红的巡检**：`bash "$(dirname "$0")/probe-collection-shapes.sh` —— 脚本开头已 `cd` 到
+   `deploy/docker`，而 `$(dirname "$0")` 从仓库根调用时是相对路径 `deploy/scripts`，在新 cwd 下不存在
+   ⇒ `No such file or directory`。改用 `${SCRIPT_DIR}` 后 18 端点全绿。这条红了好几轮，
+   没有一次是真的。
+2. **永远红的吞错断言**：按 `opsmesh_store_write_failures_total` 的**累计值**判红。本机那 74 次全是
+   `RenewLeadership`/`Snapshot` 的 `context deadline exceeded`（DB 抖动，不是丢数据）。
+   长跑实例迟早非零 ⇒ 这一节永远红 ⇒ 运维学会无视它，那才是真正的失效。现在判据取
+   `sum(increase(…[10m]))`（与日志侧同一个窗口），累计值只作信息；取不到窗口增量按"无法证明"判红。
+3. **把交付口径读反的断言**：本机是**社区授权**，`/enterprise/` 按契约返回"企业版 · 未授权"页
+   （`enterprise_ui.go` 带 `X-OpsMesh-License: community`），于是"SPA 入口未引用 /enterprise/assets/"
+   必然红。现在按授权头分支，且"非占位页"那条改成如实措辞（社区授权下看不到是否真装配）。
+   同时给折叠标签判定加上探针状态码回显（`超长段=404`）与失败快照落盘（`dump_snapshot`），
+   `/metrics` 读取加尾部哨兵与重试；§14"抓不到就 warn 跳过"改成判红——跳过在人眼里等于绿。
+
+
