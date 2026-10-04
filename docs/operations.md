@@ -948,6 +948,7 @@ curl "$CP/api/v1/tasks/<task-id>/result" -H "$AUTH" -H "X-Tenant-ID: $TENANT"
 | `business_metrics_total{name="task_reclaimed"}` | counter | task-svc | 超期 running 任务回收次数 |
 | `business_metrics_total{name="task_reclaim_failures"}` | counter | task-svc | 回收失败次数——失败即任务永久显示"执行中" |
 | `business_metrics_total{name="task_dead_lettered", tenant_id}` | counter | task-svc | **进入死信**的次数：重试耗尽后任务永久不再下发。只在状态翻转那一刻计数（同一任务重复回报不会累加）|
+| `business_metrics{name="gpu_queue_depth"}` | gauge | gpu-svc | 调度队列 pending 深度（读 `/api/v1/gpu/schedule/queue` 时更新）。注意 `deploy/k8s/hpa/gpu-svc-hpa.yaml` **没有**用它做 HPA 目标：按该指标扩容还需 prometheus-adapter 配映射，此前那份 HPA 引用的指标名根本无人产出，属假自动扩缩容 |
 | `business_metrics_total{name="alert_external_notify_failures", action}` | counter | alert-svc | 告警 ack/resolve **已落库但外部通道未送达**（`action=ack\|resolve`）。这是 critical 级信号：接口返回成功、运维以为 on-call 被呼叫 |
 | `business_metrics_total{name="alert_notifications", tenant_id}` / `business_metrics_total{name="alert_notification_failures", tenant_id}` | counter | alert-svc | 规则事件 → 通知器的成功/失败（经熔断器；失败占比高说明下游通道故障） |
 | `business_metrics_total{name="log_memory_dropped"}` | counter | log-svc | 内存后端环形缓冲被淘汰的条数。`LOG_SVC_BACKEND` 默认 `loki`，且后端初始化失败是 `Fatalf` 不静默回落 ⇒ **该序列增长本身就说明实例在用内存后端** |

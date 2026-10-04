@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	pkgmetrics "github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/service"
 )
@@ -317,6 +318,13 @@ func (h *Handler) handleScheduleQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	queue := h.svc.GetScheduleQueue()
+	// 队列深度顺手记成 gauge（business_metrics{name="gpu_queue_depth"}）。
+	//
+	// 为什么在这儿更新：gpu-svc 没有后台循环，而这是唯一能拿到 pending 数量的地方；
+	// 采集侧（Prometheus 抓取 /metrics）与读队列是同一条链路上的事，不需要为此起 goroutine。
+	// 注意 deploy/k8s/hpa/gpu-svc-hpa.yaml 引用的必须是**已产出的**指标名——
+	// 它此前写的是 opsmesh_gpu_queue_depth，全仓零命中，那条 HPA 因此永远拿不到目标值。
+	pkgmetrics.SetBusinessMetric("gpu_queue_depth", float64(len(queue)), nil)
 	writeJSON(w, http.StatusOK, queue)
 }
 

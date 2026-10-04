@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	pkgmetrics "github.com/Levango7/OpsMesh/pkg/metrics"
 
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/metrics"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/node"
@@ -178,5 +181,31 @@ func TestPullModelNodeIdKept(t *testing.T) {
 	}
 	if created.NodeID != "node-1" {
 		t.Fatalf("expected node_id node-1, got %q", created.NodeID)
+	}
+}
+
+// TestScheduleQueueExportsGauge 证明队列深度真的出现在抓取面上。
+//
+// #62 的教训：gpu-svc 的 HPA 原先按 `opsmesh_gpu_queue_depth` 扩容，而这个名字
+// 全仓没有任何代码产出 ⇒ HPA 只是不报错地永远拿不到目标值。所以"指标存在"的判据
+// 必须是 /metrics 的渲染文本，而不是"代码里调了某个 Set 函数"。
+func TestScheduleQueueExportsGauge(t *testing.T) {
+	pkgmetrics.Init("gpu-svc-test")
+	h := newTestHandler()
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/gpu/schedule/queue", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("读取队列失败：%d", w.Code)
+	}
+
+	mw := httptest.NewRecorder()
+	pkgmetrics.GetHandler().ServeHTTP(mw, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(mw.Body.String(), `business_metrics{name="gpu_queue_depth"`) {
+		t.Fatalf("/metrics 里没有 gpu_queue_depth gauge；抓取面拿不到就等于指标不存在\n---\n%s",
+			mw.Body.String())
 	}
 }

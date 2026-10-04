@@ -14,13 +14,22 @@ spec:
   minReplicas: 1
   maxReplicas: 3
   metrics:
-    - type: Pods
-      pods:
-        metric:
-          name: opsmesh_gpu_queue_depth
+    # 此前这里写的是 `- type: Pods / name: opsmesh_gpu_queue_depth`，而那个指标名
+    # **全仓零产出**（grep 只在本文档命中）：HPA 拿不到目标值就不会扩容，而且不会报错，
+    # 只在 `kubectl get hpa` 显示 <unknown> ——即"配了等于没配"的假自动扩缩容。
+    #
+    # 换成与其余四个 HPA 一致的 Resource cpu（metrics-server 提供，开箱可用）。
+    # 真要按调度队列深度扩容，前提是先装 prometheus-adapter 并给它配一条
+    # CustomResourceDefinition 映射（seriesquery: business_metrics{name="gpu_queue_depth"}），
+    # 之后再这里改回 type: Pods 并使用 adapter 侧的指标名。
+    # 服务端已经把该 gauge 真实产出了（gpu-svc handler：business_metrics{name="gpu_queue_depth"}），
+    # 缺的只是 adapter 那一环。
+    - type: Resource
+      resource:
+        name: cpu
         target:
-          type: AverageValue
-          averageValue: "10"
+          type: Utilization
+          averageUtilization: 70
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 30

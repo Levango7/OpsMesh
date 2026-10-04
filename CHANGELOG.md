@@ -8,6 +8,9 @@
 
 > 待归版。
 
+- **修｜gpu-svc 的 HPA 按一个"从来没被产出的指标"扩容 = 配了等于没配（#62 第四项）**。`deploy/k8s/hpa/gpu-svc-hpa.yaml` 的 `metrics` 只有一条 `type: Pods / name: opsmesh_gpu_queue_depth`，而这个指标名**全仓零命中**（两条独立检索：`grep` 与 Grep 工具都只在这份 manifest 自己里面找到它）。HPA 对这种情况**不报错**，只是永远拿不到 desired 值 —— `kubectl get hpa` 显示 `<unknown>`，弹性伸缩静默失效，而资产看起来是配好的。现在：① 指标改回与其余四个 HPA 一致的 `Resource cpu`（metrics-server 提供，开箱真能扩）；② gpu-svc 把队列深度作为业务 gauge 真实产出（`business_metrics{name="gpu_queue_depth"}`，在 `handleScheduleQueue` 里更新 —— 该服务没有后台循环，这是唯一拿得到 pending 数的位置），注释写明"要按队列扩容还差 prometheus-adapter 的 CustomResourceDefinition 映射这一环"，不把前提省掉。
+- **新增门禁｜HPA 引用的 Pods 型指标必须有代码产出**（`internal/gates/hpa_metric_gate_test.go`）：解析 `deploy/k8s/hpa/*.yaml`，逐层锚定 `type: Pods → pods: → metric: → name:`（`behavior.policies` 里也有 `- type: Pods / value: N`，那是"每次增减几个副本"，宽松正则会把紧随其后的 `Resource` 段 `name: cpu` 误抓成指标 —— 第一版就误报了，改正则时才暴露）。同时要求"一个业务指标名都没扫到"判红，防扫描面塌掉导致的空转绿。**变异验证**：注入真幻影名 `opsmesh_bogus_queue_metric` ⇒ 判红并指名道姓；还原 ⇒ 绿。
+
 - **修｜任务进入死信是一条完全静默的路径（#62 第三项）**：重试耗尽后 `store` 会把任务置 `DeadLetter=true` 并永久不再下发（memory 与 MySQL 两侧都有这段状态机），但**既没有指标也没有告警**——运维侧只能靠"这个任务的结果怎么一直没出来"反推。现在 `task-svc` 在**状态翻转那一刻**记 `task_dead_lettered{tenant_id}` 计数并打一行含 taskID/重试次数/exit code 的日志，SSE 载荷补 `deadLetter`；两份装载点（`prometheus-alerts.yml` 与 chart 的 `prometheusrule.yaml`）各加一条 `OpsMeshTaskDeadLettered`（15m 内出现即 warning，expr/for/severity 逐条相同，由既有镜像契约测试钉住不漂移）；`docs/operations.md` §4.1.1 与 §4.3 两处表格同步。
   刻意只在翻转时计数：同一死信任务被重复回报（agent 重试路径确实会）会把计数推高，那条告警就变成了"看起来在恶化"的假趋势。**验证**：新增 `TestReportResult_DeadLetterIsObservable` —— 走 `/metrics` **渲染文本**读回计数（"计数器存在于内部 map 里"不等于"抓取面拿得到"，本仓为此付过学费），断言 ① 状态真翻成死信 ② 首翻计 1 ③ 重复回报不累加；变异验证：摘掉那次 `AddBusinessMetric` 调用 ⇒ 判红（`task_dead_lettered 计数 = -1`）。task-svc 全模块 7 包含 `internal/controlplane` 的微服务指标契约测试均绿。
 
