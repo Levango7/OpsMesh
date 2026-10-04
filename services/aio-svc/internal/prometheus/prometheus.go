@@ -102,6 +102,32 @@ func (c *Client) Available() bool {
 	return c.available
 }
 
+// 数据来源标识。**这两个字符串是对外口径**（API 响应与文档都按字面量匹配），
+// 改名必须同步改调用方与测试。
+const (
+	// SourcePrometheus：数值来自真实 Prometheus 查询。
+	SourcePrometheus = "prometheus"
+	// SourceSimulated：数值由本包 simulatedXXX 生成，**不是观测值**。
+	SourceSimulated = "simulated"
+)
+
+// IsSimulated 报告本 client 当前是否会返回生成数值。
+//
+// 判定：未配置 baseURL，或最近一次健康检查没通过。
+// 之所以由 client 来说，而不是每个调用方各自猜：调用点各猜一次迟早有一处猜错，
+// 而"把生成的数值当成观测值交付出去"正是本服务最该防的口径事故（#61 造假面之三）。
+func (c *Client) IsSimulated() bool {
+	return c.baseURL == "" || !c.available
+}
+
+// Source 返回数据来源标识（与 IsSimulated 同一判定，避免两处口径分叉）。
+func (c *Client) Source() string {
+	if c.IsSimulated() {
+		return SourceSimulated
+	}
+	return SourcePrometheus
+}
+
 // Query executes an instant PromQL query at the given time.
 func (c *Client) Query(query string, t time.Time) (QueryResult, error) {
 	if c.baseURL == "" {

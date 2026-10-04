@@ -412,7 +412,7 @@ func main() {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"samples": samples})
+		writeSamples(w, promClient, samples)
 	})
 
 	// Prometheus 节点内存查询。
@@ -423,7 +423,7 @@ func main() {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"samples": samples})
+		writeSamples(w, promClient, samples)
 	})
 
 	// Prometheus 节点磁盘查询。
@@ -434,7 +434,7 @@ func main() {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"samples": samples})
+		writeSamples(w, promClient, samples)
 	})
 
 	// Prometheus GPU 利用率查询。
@@ -444,7 +444,7 @@ func main() {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"samples": samples})
+		writeSamples(w, promClient, samples)
 	})
 
 	// Prometheus 自定义 PromQL 查询。
@@ -493,6 +493,28 @@ func main() {
 		log.Printf("[aio-svc] 停机失败: %v", err)
 	}
 	log.Println("[aio-svc] 已停止")
+}
+
+// samplesResponse 是 /api/v1/prometheus/{cpu,memory,disk,gpu} 的统一响应形状。
+//
+// 为什么必须带 source/simulated（#61 造假面之三）：Prometheus 不可达或未配置
+// PROMETHEUS_URL 时，client 会退回 simulatedXXX 生成的数值，而这些数值形状与真实
+// 指标完全一样（时间序列、合理取值）。修前响应只有 {"samples":[...]}，调用方无从
+// 区分"节点真实 CPU"和"客户端编出来的一条曲线"，前端拿它画容量趋势就是在画虚构。
+type samplesResponse struct {
+	Samples   []prometheus.MetricSample `json:"samples"`
+	Source    string                    `json:"source"`
+	Simulated bool                      `json:"simulated"`
+	Note      string                    `json:"note,omitempty"`
+}
+
+// writeSamples 输出带来源标注的样本响应。判定只问 client，不在此处重复猜。
+func writeSamples(w http.ResponseWriter, c *prometheus.Client, samples []prometheus.MetricSample) {
+	resp := samplesResponse{Samples: samples, Source: c.Source(), Simulated: c.IsSimulated()}
+	if resp.Simulated {
+		resp.Note = "samples 由 aio-svc 生成（PROMETHEUS_URL 未配置或 Prometheus 不可达），不是观测值，勿用于容量与告警决策"
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

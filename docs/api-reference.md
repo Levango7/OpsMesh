@@ -4749,6 +4749,38 @@ Phase 3 审计查询：事件检索与导出（与 `GET /api/v1/audits` 互补�
 - `GET /api/v1/runbooks/{id}/executions` — Runbook 执行历史
 - `GET /api/v1/runbooks/{id}/executions/{execId}/logs` — 执行日志
 
+### AIOps 智能引擎（aio-svc，直连 `:8100`）
+
+aio-svc 的 5 个引擎（异常检测 / 根因 / 降噪 / 预测 / 巡检）+ GPU 异常 + Prometheus 取数：
+
+- `POST /api/v1/anomaly/detect`、`POST /api/v1/anomaly/batch`
+- `POST /api/v1/rootcause/analyze`
+- `POST /api/v1/noise/cluster`、`/noise/flapping`、`/noise/compress`
+- `POST /api/v1/prediction/capacity`、`/prediction/trend`
+- `POST /api/v1/inspection/run`
+- `GET /api/v1/prometheus/status` — 数据来源自检（`available` / `simulated`）
+- `GET /api/v1/prometheus/{cpu,memory,disk,gpu}?node_id=` — 取数
+- `POST /api/v1/prometheus/query` — 自定义 PromQL
+
+#### 取数端点的来源标注（必读）
+
+`/cpu|/memory|/disk|/gpu` 四条响应固定带来源：
+
+```json
+{
+  "samples": [{"labels": {}, "value": 0.42, "time": "2026-10-04T09:00:00Z"}],
+  "source": "simulated",
+  "simulated": true,
+  "note": "samples 由 aio-svc 生成（PROMETHEUS_URL 未配置或 Prometheus 不可达），不是观测值，勿用于容量与告警决策"
+}
+```
+
+- `PROMETHEUS_URL` 未配置或 `/-/healthy` 探不通时，`source=simulated`：**这些数值是本包生成的曲线，形状与真实指标一样**。此前响应只有 `{"samples": [...]}`，调用方无从分辨"节点真实 CPU"与"客户端编出来的一条曲线"（2026-10-04 修）。
+- `source=prometheus` 时无 `note` 字段，样本来自真实查询。
+- 引擎类端点（anomaly/rootcause/…）的输入由调用方在 body 里给，不经过这条模拟路径。
+- ⚠️ 控制面的服务代理**没有** aio 域规则（`service_proxy.go` 的 `serviceProxyRules` 里无 aio），
+  所以这些端点只能直连 `aio-svc:8100`，企业版前端也没有调用它们的视图。
+
 ### 自动扩缩容（代理到 autoscaler-svc）
 
 - `GET /api/v1/autoscaler/rules` — 扩缩容规则列表
