@@ -75,7 +75,7 @@ for leaf in $LEAVES; do
         bad "${leaf}: tag 列表为空响应"
         MISSING_TAG+=("$leaf"); continue
     fi
-    if printf '%s' "$body" | grep -qE "\"${VER}\""; then
+    if grep -qE "\"${VER}\"" <<<"$body"; then
         PUBLISHED+=("${leaf}:${VER}")
     else
         bad "${leaf}: 没有 :${VER} tag（release job 未跑成功，或该仓库没进矩阵）"
@@ -90,9 +90,9 @@ for leaf in $LEAVES; do
         bad "${leaf}:${VER} 解析不到 manifest digest（无法核对签名，按未验证判红）"
         MISSING_SIG+=("$leaf"); MISSING_ATT+=("$leaf"); continue
     fi
-    printf '%s' "$body" | grep -q "sha256-${dig}\.sig" \
+    grep -q "sha256-${dig}\.sig" <<<"$body" \
         || { bad "${leaf}:${VER} 没有对应的 .sig（cosign 签名缺失）"; MISSING_SIG+=("$leaf"); }
-    printf '%s' "$body" | grep -q "sha256-${dig}\.att" \
+    grep -q "sha256-${dig}\.att" <<<"$body" \
         || { bad "${leaf}:${VER} 没有对应的 .att（provenance/SBOM attest 缺失）"; MISSING_ATT+=("$leaf"); }
 done
 [ ${#MISSING_TAG[@]} -eq 0 ] && ok "${NLEAVES} 个镜像仓库都有 :${VER}" || echo "         缺 tag: ${MISSING_TAG[*]-}"
@@ -112,8 +112,8 @@ else
             bad "Release v${VER} 存在但 **assets=0**（§19 那个形态：版本有 tag 无产物）"
         fi
         # 发布正文必须带降级能力清单（release.yml 里是硬断言，这里复核产物）
-        if printf '%s' "$(gh release view "v${VER}" --repo "$REPO" --json body --jq '.body' 2>/dev/null)" \
-           | grep -q "能力降级清单"; then
+        rbody="$(gh release view "v${VER}" --repo "$REPO" --json body --jq '.body' 2>/dev/null)"
+        if grep -q "能力降级清单" <<<"$rbody"; then
             ok "Release 正文含「能力降级清单」（${body_len:-?} 字符）"
         else
             bad "Release 正文没有「能力降级清单」——客户在 Releases 页看不到当前哪些能力是降级的"
@@ -145,7 +145,7 @@ else
         n=$((n + 1))
         # :latest 在生产 values 里是缺陷（不可追溯），在默认 values 里允许由 ① 的 latest tag 兜住
         body="$(tags_of "$leaf")"
-        if [ -z "$body" ] || ! printf '%s' "$body" | grep -qE "\"${tag}\""; then
+        if [ -z "$body" ] || ! grep -qE "\"${tag}\"" <<<"$body"; then
             badrefs="${badrefs} ${leaf}:${tag}"
         fi
     done <<< "$rendered"
