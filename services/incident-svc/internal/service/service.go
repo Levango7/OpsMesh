@@ -321,6 +321,32 @@ func (s *Service) GeneratePostmortem(incidentID string) (*models.Postmortem, err
 }
 
 // IngestAlert ingests an alert and auto-aggregates it into an incident.
+// aggregationKeyTag 把"聚合键 → 事故"这层关系记在**事故自己身上**，而不是记在服务内存里。
+//
+// 为什么不用 map[groupingKey]incidentID：进程内 map 在重启后是空的（于是重启后第一条
+// 同类告警又开一个新事故），多副本部署下每个副本各一份、互相看不见。放进 Tags 之后，
+// 归并关系与事故同生命周期，SQL 后端下跨重启、跨副本都成立。
+const aggregationKeyTag = "opsmesh.aggregation_key"
+
+// findOpenIncidentByGroup 在未结束的事故里找同聚合键的那一个。
+//
+// resolved / closed 不参与归并：已结案的事故不该把复发的告警吞进去——那会让新一轮故障
+// 看起来"早就在处理了"。
+func (s *Service) findOpenIncidentByGroup(key string) *models.Incident {
+	for _, inc := range s.store.Incidents() {
+		if inc == nil {
+			continue
+		}
+		if inc.Status == models.StatusResolved || inc.Status == models.StatusClosed {
+			continue
+		}
+		if inc.Tags[aggregationKeyTag] == key {
+			return inc
+		}
+	}
+	return nil
+}
+
 func (s *Service) IngestAlert(alert *models.Alert) (*models.Incident, error) {
 	if alert == nil {
 		return nil, errors.New("alert is nil")
@@ -338,11 +364,16 @@ func (s *Service) IngestAlert(alert *models.Alert) (*models.Incident, error) {
 		return nil, errors.New("alert did not match any aggregation rule")
 	}
 
-	inc, err := s.GetIncident(result.IncidentID)
-	if err != nil {
+	// ⚠️ result.IncidentID 装的是**聚合键**（aggregate.go 拼的是 deviceID+"-"+ruleID），
+	// 不是事故 ID。修前这里把它当 ID 直接 GetIncident，于是永远查不到 ⇒
+	// **每条告警都新建一个事故**，"聚合"这件事从来没成立过（10 条同类告警 = 10 个事故），
+	// 顺带让按告警数升级级别的条件永远只看得到 1 条。
+	groupingKey := result.IncidentID
+	inc := s.findOpenIncidentByGroup(groupingKey)
+	if inc == nil {
 		title := fmt.Sprintf("Incident for %s", alert.DeviceID)
 		firedAt := alert.Timestamp
-		inc, err = s.CreateIncident(CreateIncidentInput{
+		created, err := s.CreateIncident(CreateIncidentInput{
 			Title:       title,
 			Description: alert.Message,
 			Severity:    alert.Severity,
@@ -352,9 +383,31 @@ func (s *Service) IngestAlert(alert *models.Alert) (*models.Incident, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create incident: %w", err)
 		}
+		inc = created
+		if inc.Tags == nil {
+			inc.Tags = make(map[string]string)
+		}
+		inc.Tags[aggregationKeyTag] = groupingKey
 	}
 
 	inc.AlertIDs = append(inc.AlertIDs, alert.ID)
+
+	// 事故升级：按"已累计告警数 + 当前最高严重度"决定级别，**只升不降**。
+	//
+	// 修前 aggregate.ShouldEscalate 只有单元测试、全仓没有任何调用点，于是
+	// "事故自动升级"这条对外能力实际不存在：无论后续进来多少条 critical 告警，
+	// 事故级别永远停在第一条告警的级别上，值班按级别排序就会漏看真正在恶化的事故。
+	maxSeverity := inc.Severity
+	if aggregate.SeverityRank(alert.Severity) > aggregate.SeverityRank(maxSeverity) {
+		maxSeverity = alert.Severity
+	}
+	target := aggregate.ShouldEscalate(len(inc.AlertIDs), maxSeverity)
+	escalated := aggregate.SeverityRank(target) > aggregate.SeverityRank(inc.Severity)
+	from := inc.Severity
+	if escalated {
+		inc.Severity = target
+	}
+
 	s.store.UpdateIncident(inc)
 
 	_ = s.store.AddTimelineEvent(&models.TimelineEvent{
@@ -365,6 +418,18 @@ func (s *Service) IngestAlert(alert *models.Alert) (*models.Incident, error) {
 		Description: "Alert ingested: " + alert.Message,
 		Author:      "system",
 	})
+	if escalated {
+		// 时间线单独记一条：升级是值班与复盘要看得到的事件，不是悄悄改字段。
+		_ = s.store.AddTimelineEvent(&models.TimelineEvent{
+			ID:         uuid.New().String(),
+			IncidentID: inc.ID,
+			Timestamp:  time.Now(),
+			Type:       "escalated",
+			Description: fmt.Sprintf("Severity escalated %s → %s（累计 %d 条告警，最高 %s）",
+				from, target, len(inc.AlertIDs), maxSeverity),
+			Author: "system",
+		})
+	}
 
 	return inc, nil
 }

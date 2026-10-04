@@ -8,6 +8,12 @@
 
 > 待归版。
 
+- **修｜incident-svc 的"告警聚合"从来没成立过，事故自动升级也从未被调用（#62 第二项）**。两处独立缺陷叠在一起：
+  1. `Service.IngestAlert` 把 `Aggregate()` 的返回值当事故 ID 用（`GetIncident(result.IncidentID)`），而 `aggregate.go` 拼出来的其实是**聚合键** `deviceID+"-"+ruleID` ⇒ 永远查不到 ⇒ **每条告警都新建一个事故**（10 条同类告警 = 10 个事故），"把同一故障的多条告警归并成一个事故"这项对外能力形同虚设。
+  2. `aggregate.ShouldEscalate` 有完整单元测试、**全仓零调用点** ⇒ 事故级别永远停在第一条告警的级别，后续 critical 告警再多也不升级，值班按级别排序就会漏看正在恶化的事故。
+  修法：归并关系写进事故自己的 `Tags["opsmesh.aggregation_key"]`（不用服务内存 map —— 那样重启即失效、多副本互不可见；SQL 侧 tags 是 JSON 列且 upsert 已覆盖，跨重启/副本成立），`resolved/closed` 的事故不参与归并（复发必须开新事故，不能吞进已结案的老事故）；接入 `ShouldEscalate` 做**只升不降**的级别抬升（新增 `SeverityRank`，因为字符串比较会把 "high" < "low" 判对），并把 `escalated` 单独记进时间线。
+- **新增｜incident 升级/归并的 3 条行为测试 + 两条变异判红**：按告警数升级（1→low、3→medium、5→high、10→critical）、critical 事故不因后续 info 告警被降级、进来的告警比事故更严重时抬级别且留时间线。变异：`escalated=false` 写死 ⇒ 2 条红；关掉归并查找（每条都新建）⇒ 3 条全红。incident-svc 全模块 `go test ./...` 绿（既有 handler/store/schema 漂移测试未受影响）。
+
 - **修｜7 个服务"要求 sql 却没配 DSN"时静默跑在内存上（#62 第一项）**：`services/{alert,auth,config,device,incident,portal,task}-svc/cmd/*/main.go` 的分支条件都是 `if cfg.StoreType == "sql" && cfg.DSN != ""`。此前一轮已把"MySQL 初始化失败"改成 fail-fast，但**漏配 DSN 这条路仍在静默降级**：`STORE_TYPE=sql` + DSN 忘配 ⇒ 服务照常起、`/health` 200、指标照常上报、读写全在内存，直到某次重启把数据洗光。现改为要求 sql 而无 DSN 即 `Fatalf`（"静默退回内存等于假装持久化"），与既有的"初始化失败不回退内存"是同一条原则的两半。**行为变更**：以前这种配法能起（跑内存），现在起不来 —— 这是刻意的，且出厂资产没有受害方（compose 里 6 处 `*_STORE_TYPE=sql` 都成对给了 `*_DSN`，`MYSQL_PASSWORD` 还是 `:?` 必填；chart 默认 `storeType: memory`）。
 - **新增｜Helm 渲染期拦截 + 根模块结构性门禁**：`microservices.yaml` 在 `storeType=sql` 而 DSN 不会被注入（`mysql.enabled` 或 `controlplane.store=mysql` 未满足）时直接 `fail`，把矛盾拦在模板期而不是留一个 CrashLoopBackOff 让运维猜；三条方向实测（sql 无 MySQL ⇒ 渲染失败并给出修法、sql+MySQL ⇒ `ALERT_SVC_DSN` 正常注入、默认值 ⇒ 绿，`helm lint` 0 failed）。新增根模块 `internal/gates`（包内只有测试）扫描 `services/*/cmd/*/main.go`：既禁被合并的条件形态，也要求"有 sql 分支必须有 DSN 空值失败"（只查前者的话"把分支整个删掉"也能判绿）。**为什么门禁要放在根模块**：这些 main 属于 go.work 里的独立模块，根模块的 build/vet/lint 与单测都碰不到它们。两条变异判红（改回合并条件 ⇒ 第一条红；删掉 DSN 检查 ⇒ 第二条红）；7 个模块 `go test ./...` 全绿。
 - **教训｜多模块仓库的 lint 必须逐模块跑**：本轮 `services` job 判红一条，而我在仓库根跑过 `golangci-lint run ./...` 得到 0 issues —— 根模块的 `./...` **不覆盖** `services/*` 这些独立模块。CI 的 services job 是逐模块 build+vet+lint+test(-race) 的，所以"根模块绿"从来不等价于"门禁绿"。此后改 `services/*` 一律补跑 `golangci-lint run -c ../../.golangci.yml ./...`（本次那条 `log-svc/api/proto/v1/wire_test.go` 的 goimports 分组即由此暴露并已修）。

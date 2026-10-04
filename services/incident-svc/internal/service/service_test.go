@@ -313,3 +313,126 @@ func TestGetResponseMetrics(t *testing.T) {
 		t.Errorf("expected 1 resolved incident, got %d", metrics.ResolvedIncidents)
 	}
 }
+
+// TestIngestAlert_EscalatesByAlertCount 是 #62 那条"ShouldEscalate 从未被调用"的回归位：
+// 事故级别必须随后续告警上升，而不是永远停在第一条告警的级别上。
+func TestIngestAlert_EscalatesByAlertCount(t *testing.T) {
+	svc := newTestService()
+	svc.engine.AddRule(&aggregate.AggregationRule{
+		ID: "rule-1", DeviceIDs: []string{"device-1"}, MetricPatterns: []string{"cpu_usage"}, Enabled: true,
+	})
+
+	var last *models.Incident
+	for i := 1; i <= 5; i++ {
+		inc, err := svc.IngestAlert(&models.Alert{
+			ID: "alert-" + string(rune('a'+i)), DeviceID: "device-1", Metric: "cpu_usage",
+			Severity: models.SeverityLow, Message: "cpu high",
+		})
+		if err != nil {
+			t.Fatalf("IngestAlert(%d): %v", i, err)
+		}
+		last = inc
+		switch i {
+		case 3:
+			// 第 3 条起 ShouldEscalate 判 medium（低级别 + 计数≥3）。
+			if inc.Severity != models.SeverityMedium {
+				t.Fatalf("第 3 条后 severity = %s, want medium", inc.Severity)
+			}
+		case 5:
+			if inc.Severity != models.SeverityHigh {
+				t.Fatalf("第 5 条后 severity = %s, want high", inc.Severity)
+			}
+		}
+	}
+
+	// 升级必须留时间线痕迹（值班与复盘要看得到"什么时候被抬过级别"）。
+	events, err := svc.GetTimeline(last.ID)
+	if err != nil {
+		t.Fatalf("GetTimeline: %v", err)
+	}
+	var escalated int
+	for _, e := range events {
+		if e.Type == "escalated" {
+			escalated++
+		}
+	}
+	if escalated != 2 {
+		t.Fatalf("escalated 事件 %d 条，期望 2（low→medium、medium→high）：%+v", escalated, events)
+	}
+
+	// 第 10 条 ⇒ critical。
+	for i := 6; i <= 10; i++ {
+		inc, err := svc.IngestAlert(&models.Alert{
+			ID: "alert-x" + string(rune('a'+i)), DeviceID: "device-1", Metric: "cpu_usage",
+			Severity: models.SeverityLow, Message: "cpu high",
+		})
+		if err != nil {
+			t.Fatalf("IngestAlert(%d): %v", i, err)
+		}
+		if i == 10 && inc.Severity != models.SeverityCritical {
+			t.Fatalf("第 10 条后 severity = %s, want critical", inc.Severity)
+		}
+	}
+}
+
+// TestIngestAlert_NeverDowngrades 钉住"只升不降"：
+// 一条 critical 事故不会因为后续进来低级别告警被拉回 low。
+func TestIngestAlert_NeverDowngrades(t *testing.T) {
+	svc := newTestService()
+	svc.engine.AddRule(&aggregate.AggregationRule{
+		ID: "rule-1", DeviceIDs: []string{"device-1"}, MetricPatterns: []string{"cpu_usage"}, Enabled: true,
+	})
+
+	inc, err := svc.IngestAlert(&models.Alert{
+		ID: "a-1", DeviceID: "device-1", Metric: "cpu_usage", Severity: models.SeverityCritical, Message: "down",
+	})
+	if err != nil {
+		t.Fatalf("IngestAlert: %v", err)
+	}
+	if inc.Severity != models.SeverityCritical {
+		t.Fatalf("首条 critical 事故 severity = %s", inc.Severity)
+	}
+
+	inc2, err := svc.IngestAlert(&models.Alert{
+		ID: "a-2", DeviceID: "device-1", Metric: "cpu_usage", Severity: models.SeverityInfo, Message: "noise",
+	})
+	if err != nil {
+		t.Fatalf("IngestAlert(2): %v", err)
+	}
+	if inc2.Severity != models.SeverityCritical {
+		t.Fatalf("critical 事故被降级成 %s", inc2.Severity)
+	}
+}
+
+// TestIngestAlert_EscalatesOnIncomingHigherSeverity 验证"进来的告警比事故更严重"这条
+// 也会被抬级别（修前只按事故自己的级别算，升级条件永远追不上现场）。
+func TestIngestAlert_EscalatesOnIncomingHigherSeverity(t *testing.T) {
+	svc := newTestService()
+	svc.engine.AddRule(&aggregate.AggregationRule{
+		ID: "rule-1", DeviceIDs: []string{"device-1"}, MetricPatterns: []string{"cpu_usage"}, Enabled: true,
+	})
+	if _, err := svc.IngestAlert(&models.Alert{
+		ID: "b-1", DeviceID: "device-1", Metric: "cpu_usage", Severity: models.SeverityLow, Message: "warm",
+	}); err != nil {
+		t.Fatalf("IngestAlert: %v", err)
+	}
+	inc, err := svc.IngestAlert(&models.Alert{
+		ID: "b-2", DeviceID: "device-1", Metric: "cpu_usage", Severity: models.SeverityCritical, Message: "on fire",
+	})
+	if err != nil {
+		t.Fatalf("IngestAlert(2): %v", err)
+	}
+	if inc.Severity != models.SeverityCritical {
+		t.Fatalf("收到 critical 告警后事故仍是 %s", inc.Severity)
+	}
+	events, _ := svc.GetTimeline(inc.ID)
+	var found bool
+	for _, e := range events {
+		if e.Type == "escalated" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("升级没有留时间线痕迹：%+v", events)
+	}
+}

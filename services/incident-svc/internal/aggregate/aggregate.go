@@ -142,3 +142,26 @@ func ShouldEscalate(alertCount int, maxSeverity models.Severity) models.Severity
 	}
 	return models.SeverityLow
 }
+
+// SeverityRank 给严重度排序（数值越大越严重）。
+//
+// 为什么要单独有：升级判定必须是"只升不降"，而字符串没法直接比大小
+// （"high" < "low" 按字典序反而是 true）。没有这个函数的地方就开始用 == 或 len()
+// 猜顺序，于是升级逻辑会静默降级事故。未知严重度返回 -1，让调用方能把它和
+// 真实等级区分开。
+func SeverityRank(s models.Severity) int {
+	switch s {
+	case models.SeverityInfo:
+		return 0
+	case models.SeverityLow:
+		return 1
+	case models.SeverityMedium:
+		return 2
+	case models.SeverityHigh:
+		return 3
+	case models.SeverityCritical:
+		return 4
+	default:
+		return -1
+	}
+}
