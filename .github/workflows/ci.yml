@@ -687,13 +687,20 @@ jobs:
           #   默认分支 push → 追加 :latest（开发/体验环境的默认标签由此有了出处）
           #   tag push      → 追加 :<版本号>（剥掉前导 v）与 :latest
           # 刻意不给 feature 分支打 latest：否则 latest 会被"最后合入者之外"的推送改写。
+          # 构建只推不可变的 :<sha>。:latest 与 :<版本> 改成"门禁全绿后再提权"，
+          # 由本 job 末尾的提权步骤用 registry 侧改标完成（不重建 ⇒ digest 不变，
+          # 被 Trivy 与签名看过的那份，就是客户最终拉到的那份）。
+          # 为什么必须从构建步挪走（原形态是实测缺陷）：这些 tag 原先跟 :<sha> 一起推送，
+          # 而 Trivy（下一步，exit-code 1）、SBOM、签名、attest 自验全排在推送之后 ⇒
+          # 扫描判红的镜像已经是客户能拉到的 :latest，而 chart 与文档默认值恰恰是 :latest。
           TAGS="${PREFIX}:${GITHUB_SHA}"
+          MOVE_TAGS=""
           if [ "${GITHUB_REF:-}" = "refs/heads/main" ]; then
-            TAGS="${TAGS}"$'\n'"${PREFIX}:latest"
+            MOVE_TAGS="${PREFIX}:latest"
           fi
           if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
             VERSION="${GITHUB_REF_NAME#v}"
-            TAGS="${TAGS}"$'\n'"${PREFIX}:${VERSION}"$'\n'"${PREFIX}:latest"
+            MOVE_TAGS="${MOVE_TAGS}"$'\n'"${PREFIX}:${VERSION}"$'\n'"${PREFIX}:latest"
           fi
           # 多行输出**必须**用 heredoc 定界符写 GITHUB_OUTPUT：直接 echo "k=多行值" 只会
           # 取到第一行（其余行被当成新的 key=value 解析），于是 tags 静默退化成单个 :<sha>
@@ -707,6 +714,9 @@ jobs:
             echo "tags<<TAGSEOF"
             printf '%s\n' "${TAGS}"
             echo "TAGSEOF"
+            echo "move_tags<<MOVEEOF"
+            printf '%s\n' "${MOVE_TAGS}"
+            echo "MOVEEOF"
           } >>"$GITHUB_OUTPUT"
           echo "本次推送标签集（${STEP_MODE} 路径）："
           printf '  - %s\n' "${TAGS}"
@@ -890,6 +900,65 @@ jobs:
           } >>"$GITHUB_STEP_SUMMARY"
       # 闭环：构建后把镜像 tag 钉死写回 GitOps chart。若 GitOps 仓库未就绪则安全跳过（不再失败）。
       # 启用条件：secrets.GITOPS_REPO 与 secrets.GITOPS_PAT 均已配置，且仓库中 charts/opsmesh-controlplane/values.yaml 存在。
+      - name: 提权 latest/版本 tag（门禁全绿后才落，registry 侧改标、不重建）
+        # 与 release.yml 的 promote job 同一口径，只是这里每个 job 只出一个镜像，
+        # 所以在本 job 末尾提权即可（前一个 gate 步骤红，就跑不到这里）。
+        # MOVE_TAGS 为空是合法状态：feature 分支只推不可变 :<sha>，刻意不动 :latest
+        # （否则 latest 会被"最后合入者之外"的推送改写）——如实跳过并说明，不静默。
+        env:
+          PREFIX: ${{ steps.check.outputs.prefix }}
+          MOVE_TAGS: ${{ steps.check.outputs.move_tags }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(printf '%s' "$MOVE_TAGS" | tr -d '[:space:]')" ]; then
+            echo "本次 ref 不需要提权（非默认分支、非 tag）：只保留 :${GITHUB_SHA}，跳过";
+            exit 0
+          fi
+          SRC="${PREFIX}:${GITHUB_SHA}"
+          n=0
+          while IFS= read -r t; do
+            [ -z "$t" ] && continue
+            docker buildx imagetools create -t "$t" "$SRC"
+            echo "已提权: ${t} <- ${SRC}"
+            n=$((n + 1))
+          done <<< "$MOVE_TAGS"
+          [ "$n" -gt 0 ] || { echo "::error::MOVE_TAGS 非空却一个都没提权，判红"; exit 1; }
+      - name: 自验提权后的 digest 与被扫的那份是同一份
+        # 判据是"digest 相同"而不是"tag 存在"：改标若被解析成重新构建，就会推出一份
+        # Trivy 从没看过的镜像，而 job 照样全绿。
+        # 重试是必需的：GHCR 有写后读窗口（本仓在 .sig 上实测过），但 5 次退避后仍拿不到
+        # 就判红，并把"读不到"与"digest 不一致"分开报——前者重跑，后者是发布事故。
+        env:
+          PREFIX: ${{ steps.check.outputs.prefix }}
+          MOVE_TAGS: ${{ steps.check.outputs.move_tags }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(printf '%s' "$MOVE_TAGS" | tr -d '[:space:]')" ]; then
+            echo "无需提权，跳过核对"; exit 0
+          fi
+          # --raw 取回 manifest 原文再求 sha256：两边同一个函数，断言的是"两个 tag 指向同一份内容"。
+          dig() { docker buildx imagetools inspect --raw "$1" | sha256sum | awk '{print "sha256:"$1}'; }
+          SRC="${PREFIX}:${GITHUB_SHA}"
+          SRC_DIGEST=""
+          for i in 1 2 3 4 5; do
+            if SRC_DIGEST=$(dig "$SRC") && [ -n "$SRC_DIGEST" ]; then break; fi
+            if [ "$i" = 5 ]; then echo "::error::读不到源 tag ${SRC} 的 manifest"; exit 1; fi
+            echo "第 ${i} 次未读到源 manifest（GHCR 写后读窗口），$((i * 10))s 后重试"; sleep $((i * 10))
+          done
+          while IFS= read -r t; do
+            [ -z "$t" ] && continue
+            got=""
+            for i in 1 2 3 4 5; do
+              if got=$(dig "$t") && [ -n "$got" ]; then break; fi
+              if [ "$i" = 5 ]; then echo "::error::提权后读不到 ${t}——没核对上就不当它已提权"; exit 1; fi
+              echo "第 ${i} 次未读到 ${t}，$((i * 10))s 后重试"; sleep $((i * 10))
+            done
+            if [ "$got" != "$SRC_DIGEST" ]; then
+              echo "::error::digest 不一致：${t}=${got} 而源 ${SRC}=${SRC_DIGEST}"
+              echo "::error::⇒ 提权后的 tag 指向的不是被 Trivy/签名看过的那份，属发布事故"; exit 1
+            fi
+            echo "digest 一致: ${t} = ${got}"
+          done <<< "$MOVE_TAGS"
       - name: 钉死镜像 tag 写回 GitOps values（E4，可选）
         if: env.GITOPS_REPO != '' && env.GITOPS_PAT != ''
         env:
@@ -986,13 +1055,20 @@ jobs:
           #   默认分支 push → 追加 :latest（开发/体验环境的默认标签由此有了出处）
           #   tag push      → 追加 :<版本号>（剥掉前导 v）与 :latest
           # 刻意不给 feature 分支打 latest：否则 latest 会被"最后合入者之外"的推送改写。
+          # 构建只推不可变的 :<sha>。:latest 与 :<版本> 改成"门禁全绿后再提权"，
+          # 由本 job 末尾的提权步骤用 registry 侧改标完成（不重建 ⇒ digest 不变，
+          # 被 Trivy 与签名看过的那份，就是客户最终拉到的那份）。
+          # 为什么必须从构建步挪走（原形态是实测缺陷）：这些 tag 原先跟 :<sha> 一起推送，
+          # 而 Trivy（下一步，exit-code 1）、SBOM、签名、attest 自验全排在推送之后 ⇒
+          # 扫描判红的镜像已经是客户能拉到的 :latest，而 chart 与文档默认值恰恰是 :latest。
           TAGS="${PREFIX}:${GITHUB_SHA}"
+          MOVE_TAGS=""
           if [ "${GITHUB_REF:-}" = "refs/heads/main" ]; then
-            TAGS="${TAGS}"$'\n'"${PREFIX}:latest"
+            MOVE_TAGS="${PREFIX}:latest"
           fi
           if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
             VERSION="${GITHUB_REF_NAME#v}"
-            TAGS="${TAGS}"$'\n'"${PREFIX}:${VERSION}"$'\n'"${PREFIX}:latest"
+            MOVE_TAGS="${MOVE_TAGS}"$'\n'"${PREFIX}:${VERSION}"$'\n'"${PREFIX}:latest"
           fi
           # 多行输出**必须**用 heredoc 定界符写 GITHUB_OUTPUT：直接 echo "k=多行值" 只会
           # 取到第一行（其余行被当成新的 key=value 解析），于是 tags 静默退化成单个 :<sha>
@@ -1006,6 +1082,9 @@ jobs:
             echo "tags<<TAGSEOF"
             printf '%s\n' "${TAGS}"
             echo "TAGSEOF"
+            echo "move_tags<<MOVEEOF"
+            printf '%s\n' "${MOVE_TAGS}"
+            echo "MOVEEOF"
           } >>"$GITHUB_OUTPUT"
           echo "本次推送标签集（${STEP_MODE} 路径）："
           printf '  - %s\n' "${TAGS}"
@@ -1158,6 +1237,66 @@ jobs:
             echo "| cosign 签名 | ${cosign_mode} |"
             echo "| cosign attest（镜像侧 .att 证据） | ${cosign_mode}（未启用即无） |"
           } >>"$GITHUB_STEP_SUMMARY"
+      - name: 提权 latest/版本 tag（门禁全绿后才落，registry 侧改标、不重建）
+        # 与 release.yml 的 promote job 同一口径，只是这里每个 job 只出一个镜像，
+        # 所以在本 job 末尾提权即可（前一个 gate 步骤红，就跑不到这里）。
+        # MOVE_TAGS 为空是合法状态：feature 分支只推不可变 :<sha>，刻意不动 :latest
+        # （否则 latest 会被"最后合入者之外"的推送改写）——如实跳过并说明，不静默。
+        env:
+          PREFIX: ${{ steps.check.outputs.prefix }}
+          MOVE_TAGS: ${{ steps.check.outputs.move_tags }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(printf '%s' "$MOVE_TAGS" | tr -d '[:space:]')" ]; then
+            echo "本次 ref 不需要提权（非默认分支、非 tag）：只保留 :${GITHUB_SHA}，跳过";
+            exit 0
+          fi
+          SRC="${PREFIX}:${GITHUB_SHA}"
+          n=0
+          while IFS= read -r t; do
+            [ -z "$t" ] && continue
+            docker buildx imagetools create -t "$t" "$SRC"
+            echo "已提权: ${t} <- ${SRC}"
+            n=$((n + 1))
+          done <<< "$MOVE_TAGS"
+          [ "$n" -gt 0 ] || { echo "::error::MOVE_TAGS 非空却一个都没提权，判红"; exit 1; }
+      - name: 自验提权后的 digest 与被扫的那份是同一份
+        # 判据是"digest 相同"而不是"tag 存在"：改标若被解析成重新构建，就会推出一份
+        # Trivy 从没看过的镜像，而 job 照样全绿。
+        # 重试是必需的：GHCR 有写后读窗口（本仓在 .sig 上实测过），但 5 次退避后仍拿不到
+        # 就判红，并把"读不到"与"digest 不一致"分开报——前者重跑，后者是发布事故。
+        env:
+          PREFIX: ${{ steps.check.outputs.prefix }}
+          MOVE_TAGS: ${{ steps.check.outputs.move_tags }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(printf '%s' "$MOVE_TAGS" | tr -d '[:space:]')" ]; then
+            echo "无需提权，跳过核对"; exit 0
+          fi
+          # --raw 取回 manifest 原文再求 sha256：两边同一个函数，断言的是"两个 tag 指向同一份内容"。
+          dig() { docker buildx imagetools inspect --raw "$1" | sha256sum | awk '{print "sha256:"$1}'; }
+          SRC="${PREFIX}:${GITHUB_SHA}"
+          SRC_DIGEST=""
+          for i in 1 2 3 4 5; do
+            if SRC_DIGEST=$(dig "$SRC") && [ -n "$SRC_DIGEST" ]; then break; fi
+            if [ "$i" = 5 ]; then echo "::error::读不到源 tag ${SRC} 的 manifest"; exit 1; fi
+            echo "第 ${i} 次未读到源 manifest（GHCR 写后读窗口），$((i * 10))s 后重试"; sleep $((i * 10))
+          done
+          while IFS= read -r t; do
+            [ -z "$t" ] && continue
+            got=""
+            for i in 1 2 3 4 5; do
+              if got=$(dig "$t") && [ -n "$got" ]; then break; fi
+              if [ "$i" = 5 ]; then echo "::error::提权后读不到 ${t}——没核对上就不当它已提权"; exit 1; fi
+              echo "第 ${i} 次未读到 ${t}，$((i * 10))s 后重试"; sleep $((i * 10))
+            done
+            if [ "$got" != "$SRC_DIGEST" ]; then
+              echo "::error::digest 不一致：${t}=${got} 而源 ${SRC}=${SRC_DIGEST}"
+              echo "::error::⇒ 提权后的 tag 指向的不是被 Trivy/签名看过的那份，属发布事故"; exit 1
+            fi
+            echo "digest 一致: ${t} = ${got}"
+          done <<< "$MOVE_TAGS"
+
 
   # Release：推送 v* tag 时触发 goreleaser 跨平台发布（linux/amd64+arm64）。
   # 产物：tar.gz 归档 + sha256 checksums + SBOM（配置见 .goreleaser.yml）。

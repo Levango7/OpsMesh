@@ -33,7 +33,9 @@ jobs:
         # 它仍被 ci.yml 的 services job 逐个 `go build ./...` 覆盖（编译/测试不受影响）。
         # 这类"模块 vs 服务"的差集必须写进 validate-deploy-assets.sh 的豁免表（含理由），
         # 否则第 2/10 节会红——刻意不允许静默漂移。
-        service:
+        # 锚点 &releaseServices 是**唯一**的服务清单定义源：promote job 用同一份 alias。
+        # 两处各抄一份的话，"发出去的"与"提权的"就可能不是同一批服务（本项目在孪生清单上吃过亏）。
+        service: &releaseServices
           - auth-svc
           - device-svc
           - alert-svc
@@ -91,14 +93,20 @@ jobs:
         # 上下文限单服务目录时容器内无主模块，go mod verify 必报
         # "replaced by ../../: open /go.mod"——首跑实测）。统一走根级
         # Dockerfile.service 模板，服务名经 --build-arg SERVICE 注入。
+      - name: Build Docker image（只推不可变的 :<sha>，版本 tag 与 :latest 交给 promote job）
+        # 为什么拆两段（原形态是实测缺陷）：一条 buildx 同时推 :sha、:<版本> 与 :latest，
+        # 而 Trivy（下一步，exit-code 1）、SBOM、签名全部排在推送**之后**——扫描判红的镜像
+        # 早已是客户 `helm install` 能拉到的那一份（chart/文档默认值就是 :latest）。
+        # 现在 :<sha> 只当"待验对象"落地；全部门禁绿了才由 promote job 在 registry 侧改标提权，
+        # 不重建 ⇒ digest 不变 ⇒ "被扫的那份"与"被推的那份"是同一份。
+        # 证据不用重出：cosign 的签名/attestation 挂在 **digest** 上而非 tag，
+        # 提权后的 :<版本>/:latest 依旧能直接 `cosign verify` 问到。
         run: |
           docker buildx build \
             --file Dockerfile.service \
             --build-arg VERSION=${{ steps.meta.outputs.version }} \
             --build-arg SERVICE=${{ matrix.service }} \
             --tag ${{ steps.meta.outputs.image }}:${{ github.sha }} \
-            --tag ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }} \
-            --tag ${{ steps.meta.outputs.image }}:latest \
             --push \
             .
 
@@ -216,6 +224,92 @@ jobs:
               sleep $((i * 10))
           done
 
+  # 提权（gate-before-promote）：build-and-push **整批** 12 个服务都过了 Trivy/SBOM/签名/attest
+  # 自验，才把 :<sha> 复制成 :<版本> 与 :latest。
+  # 为什么不直接在 build-and-push 末尾加一步：matrix 条目各自跑，某个服务判红时其余条目仍会
+  # 跑到最后一步 ⇒ `:latest` 只对一半服务挪动，形成"半挪动的 latest 舰队"，而 chart 与文档默认值
+  # 恰恰就是 :latest。needs 让整个 job 在任一条目红时根本不启动 ⇒ 要么 12 个一起提，要么一个都不提。
+  # github-release 依赖本 job，所以提权失败连对外 Release 都不会有。
+  # 范围说明：这里只管 12 个微服务镜像；opsmesh-binary / opsmesh-agent 由 ci.yml 的 image job 发布。
+  promote:
+    runs-on: ubuntu-latest
+    needs: [build-and-push]
+    # 只写包，不写仓库内容；id-token 不需要（证据已挂在 digest 上，提权不产生新签名）。
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        service: *releaseServices
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 提权 :<sha> → :<版本> + :latest（registry 侧改标，不重建）
+        # 版本号的剥 v 规则必须与 build-and-push 的 "Extract metadata" 一致，否则提上去的 tag
+        # 与 chart 里 pin 的值对不上——这正是 deda995 那次"pin 指向从未发布的版本"的成因形态。
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          IMG="${{ env.IMAGE_PREFIX }}/${{ matrix.service }}"
+          docker buildx imagetools create \
+            -t "${IMG}:${VERSION}" \
+            -t "${IMG}:latest" \
+            "${IMG}:${GITHUB_SHA}"
+          echo "提权完成: ${IMG} -> ${VERSION} + latest（源 digest=${GITHUB_SHA}）"
+
+      - name: 自验提权后的 digest 与被扫的那份是同一份
+        # 判据不是"tag 存在"而是"digest 相同"：改标若被解析成重新构建，就会推出一份
+        # 没被 Trivy 看过的镜像，而 job 依旧全绿。
+        # 重试是必需的：GHCR 有写后读窗口（本文件 §19.9 在 .sig 上实测过），
+        # 但 5 次退避后仍拿不到就判红，并**分开报**"读不到"与"digest 不一致"——
+        # 前者该重跑，后者是发布事故。
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          IMG="${{ env.IMAGE_PREFIX }}/${{ matrix.service }}"
+          # --raw 取回 manifest 原文，对其字节求 sha256 即该 tag 的 manifest digest。
+          # 两边用同一个函数算，所以这里断言的是"两个 tag 指向同一份内容"，
+          # 不是拿它去对 registry 报告的 digest 字符串。
+          dig() { docker buildx imagetools inspect --raw "$1" | sha256sum | awk '{print "sha256:"$1}'; }
+          SRC_DIGEST=""
+          for i in 1 2 3 4 5; do
+            if SRC_DIGEST=$(dig "${IMG}:${GITHUB_SHA}") && [ -n "$SRC_DIGEST" ]; then
+              break
+            fi
+            if [ "$i" = 5 ]; then
+              echo "::error::读不到 ${IMG}:${GITHUB_SHA} 的 manifest：源 tag 不在，提权前提就不成立"
+              exit 1
+            fi
+            echo "第 ${i} 次未读到源 manifest（GHCR 写后读窗口），$((i * 10))s 后重试"
+            sleep $((i * 10))
+          done
+          for tgt in "${IMG}:${VERSION}" "${IMG}:latest"; do
+            got=""
+            for i in 1 2 3 4 5; do
+              if got=$(dig "$tgt") && [ -n "$got" ]; then break; fi
+              if [ "$i" = 5 ]; then
+                echo "::error::提权后读不到 ${tgt}——没能核对，不当它已提权"
+                exit 1
+              fi
+              echo "第 ${i} 次未读到 ${tgt}，$((i * 10))s 后重试"
+              sleep $((i * 10))
+            done
+            if [ "$got" != "$SRC_DIGEST" ]; then
+              echo "::error::digest 不一致：${tgt}=${got} 而源 :${GITHUB_SHA}=${SRC_DIGEST}"
+              echo "::error::⇒ 提权后的 tag 指向的不是被 Trivy/签名看过的那份，属发布事故"
+              exit 1
+            fi
+            echo "digest 一致: ${tgt} = ${got}"
+          done
+
   changelog:
     runs-on: ubuntu-latest
     outputs:
@@ -237,7 +331,10 @@ jobs:
 
   github-release:
     runs-on: ubuntu-latest
-    needs: [build-and-push, changelog]
+    # 依赖从 build-and-push 换成 promote：对外 Release 必须在"版本 tag 真的提上去"之后才有意义。
+    # promote 已经把 build-and-push 整批串在前面，这里不再重复列它——
+    # 重复列反而会诱使人以为"build 绿了就会发 Release"，而中间还隔着提权这道闸。
+    needs: [promote, changelog]
     steps:
       - uses: actions/checkout@v5
         with:
