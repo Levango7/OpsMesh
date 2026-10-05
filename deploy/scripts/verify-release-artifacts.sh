@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify-release-artifacts.sh —— 「这个版本真的发布出去了」的四点验收（只读，不改任何东西）
+# verify-release-artifacts.sh —— 「这个版本真的发布出去了」的五点验收（只读，不改任何东西）
 #
 # 为什么需要这么一条脚本（两次真实事故，同一形状）：
 #   · §19：GitHub Release v0.9.1 存在但 **assets=0**、GHCR 无 0.9.1 镜像矩阵（18 条全灭），
@@ -10,17 +10,23 @@
 # 两条的共性是：**CI 全绿不等于产物存在**。release job 只在 tag 上跑，
 # 而"打了 tag"这一步没有任何自动检查会回头核对产物。
 #
-# 四项判据（任一缺位即非零退出，绝不"跳过当通过"）：
+# 五项判据（任一缺位即非零退出，绝不"跳过当通过"）：
 #   ① 14 个镜像仓库（controlplane 的 opsmesh-binary + agent + 12 个微服务）都有 :<版本> tag；
 #   ② 每个镜像都有 .sig 与 .att（cosign 签名 + provenance/SBOM 证据链）；
 #   ③ GitHub Release 存在且 assets 非空；
 #   ④ chart 默认渲染与生产 values 渲染出来的 image 引用，其 **仓库 + tag** 必须在 ① 的集合里
 #      （这一条专治"清单指向一个谁都不发布的产品名/版本号"）。
+#   ⑤ :<版本> 与 :<发布提交> 必须指向**同一个 manifest digest**——发布链是"先推不可变 sha、
+#      门禁全绿后在 registry 侧改标提权"，所以提权不产生新镜像。digest 不一致就意味着有人
+#      把版本 tag 重新构建了一遍：那份镜像从没被 Trivy/签名看过，而 ①②③④ 照样全绿。
 #
 # 用法：
 #   bash deploy/scripts/verify-release-artifacts.sh 0.12.0        # 版本不带 v
 #   GH=/path/to/gh bash deploy/scripts/verify-release-artifacts.sh 0.11.0
 #   GHCR_ATTEMPTS=5 bash deploy/scripts/verify-release-artifacts.sh 0.12.0   # 网络差时加大重试
+#   RELEASE_SHA=<40位提交> bash deploy/scripts/verify-release-artifacts.sh 0.12.0
+#       （第 ⑤ 项要拿"发布提交"与版本 tag 比 digest。CI 里由 release.yml 直接给 github.sha；
+#        本地不给就退到 `git rev-list -n1 v<版本>`，仓库里没有那个 tag 时如实报未核对。）
 # 依赖：curl（匿名打 GHCR token）、gh（读 Release；缺失时第 ③ 项判红而不是跳过）。
 #
 # 三种结论，各有不同处置（这是本脚本能否被信任的关键）：
@@ -140,6 +146,7 @@ tags_of() {
 }
 
 declare -a PUBLISHED=()
+declare -A DIG_VER=()   # leaf → :<版本> 的 manifest digest，供第 ⑤ 项复用（不留第二个来源）
 echo "== ① + ② 镜像 tag 与签名/证据链（${NS}/*:${VER}）=="
 MISSING_TAG=(); MISSING_SIG=(); MISSING_ATT=()
 for leaf in $LEAVES; do
@@ -191,6 +198,7 @@ for leaf in $LEAVES; do
         fi
         MISSING_SIG+=("$leaf"); MISSING_ATT+=("$leaf"); continue
     fi
+    DIG_VER["$leaf"]="$dig"
     grep -q "sha256-${dig}\.sig" <<<"$body" \
         || { bad "${leaf}:${VER} 没有对应的 .sig（cosign 签名缺失）"; MISSING_SIG+=("$leaf"); }
     grep -q "sha256-${dig}\.att" <<<"$body" \
@@ -305,6 +313,70 @@ else
             echo "         ⇒ 按生产清单装的客户会拉到任意新推送的镜像：版本不可追溯，"
             echo "           升级与回滚都不受控（应钉 tag，或钉 image.digest）"
         fi
+    fi
+fi
+
+echo "== ⑤ 提权未重建（:${VER} 与 :<发布提交> 必须是同一个 manifest digest）=="
+# 为什么单独核这一条：①②③④ 核的都是"存在与挂接"，没有一个能发现"版本 tag 被重新构建过"。
+# 发布链现在是"先推不可变 :<sha> → 门禁 → registry 侧改标提权"，提权不产生新镜像，
+# 所以 :<版本> 与 :<sha> 必须同 digest；一旦不同，客户拉到的那份就没被 Trivy 与签名看过，
+# 而前面四项照样全绿。这条断言核对的是**提权这个动作**，不是它的产物存在与否。
+# 发布提交有两个来源，都拿不到就如实报未核对，不猜：
+#   · CI：release.yml 的 verify-artifacts job 直接把 github.sha 传进 RELEASE_SHA；
+#   · 本地：退到 `git rev-list -n1 v<版本>`。
+SHA="${RELEASE_SHA:-}"
+if [ -z "$SHA" ]; then
+    SHA="$(git rev-list -n 1 "v${VER}" 2>/dev/null || true)"
+fi
+if ! printf '%s' "$SHA" | grep -qE '^[0-9a-fA-F]{40}$'; then
+    unver "拿不到 v${VER} 的 40 位发布提交（既没给 RELEASE_SHA，本地也解析不出该 tag）——第 ⑤ 项未核对"
+else
+    SHA="$(printf '%s' "$SHA" | tr 'A-F' 'a-f')"
+    echo "   发布提交=${SHA}"
+    MISMATCH=(); NO_SHA_TAG=()
+    for leaf in $LEAVES; do
+        want="${DIG_VER[$leaf]-}"
+        if [ -z "$want" ]; then
+            unver "${leaf}: 第 ② 项没取到 :${VER} 的 digest，第 ⑤ 项无从比对"
+            continue
+        fi
+        tk="$(token "$leaf")"; tkrc=$?
+        if [ "$tkrc" -ne 0 ]; then
+            if [ "$tkrc" -eq 1 ]; then
+                unver "${leaf}: 取匿名 pull token 重试耗尽——第 ⑤ 项未核对"
+            else
+                bad "${leaf}: GHCR 确定性拒绝匿名 pull token"
+                NO_SHA_TAG+=("$leaf")
+            fi
+            continue
+        fi
+        h2=""; c2=""
+        if ! ghcr_get h2 c2 -I -H "Authorization: Bearer $tk" -H "$ACCEPT" \
+            "https://ghcr.io/v2/${NS}/${leaf}/manifests/${SHA}"; then
+            unver "${leaf}: 解析 :${SHA} 的 manifest 重试耗尽（最后 HTTP=${c2}）——未核对"
+            continue
+        fi
+        d2="$(tr -d '\r' <<<"$h2" \
+            | sed -n 's/^ *[Dd]ocker-[Cc]ontent-[Dd]igest: *sha256:\([0-9a-f]\{64\}\).*/\1/p' | head -1)"
+        if [ -z "$d2" ]; then
+            if [ "$c2" = "404" ]; then
+                bad "${leaf}: GHCR 上没有 :${SHA}（不可变锚点缺失）⇒ 无法证明 :${VER} 就是被门禁看过的那份"
+                NO_SHA_TAG+=("$leaf")
+            else
+                unver "${leaf}:${SHA} 解析不到 digest（HTTP=${c2}）"
+            fi
+            continue
+        fi
+        if [ "$d2" != "$want" ]; then
+            bad "${leaf}: :${VER} 与 :${SHA} 的 digest 不一致（${want:0:12}… vs ${d2:0:12}…）——版本 tag 被重建过，它从没被 Trivy/签名看过"
+            MISMATCH+=("$leaf")
+        fi
+    done
+    if [ "${#MISMATCH[@]}" -eq 0 ] && [ "${#NO_SHA_TAG[@]}" -eq 0 ]; then
+        ok "提权是改标不是重建：${NLEAVES} 个镜像的 :${VER} 与 :${SHA} 指向同一 manifest digest"
+    else
+        [ "${#MISMATCH[@]}" -gt 0 ] && echo "         digest 不一致: ${MISMATCH[*]-}"
+        [ "${#NO_SHA_TAG[@]}" -gt 0 ] && echo "         缺 :<发布提交> tag: ${NO_SHA_TAG[*]-}"
     fi
 fi
 

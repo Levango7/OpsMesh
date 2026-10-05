@@ -405,9 +405,13 @@ jobs:
             -c 'cp "$(command -v helm)" /out/helm && chmod +x /out/helm'
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           helm version --short
-      - name: 四项判据核对（14 镜像 tag / .sig+.att / Release assets 与降级清单 / chart 引用）
+      - name: 五项判据核对（14 镜像 tag / .sig+.att / Release assets 与降级清单 / chart 引用 / 提权未重建）
         env:
           GHCR_ATTEMPTS: "5"
+          # 第 ⑤ 项要拿"发布提交"与版本 tag 比 manifest digest。这里直接给 github.sha，
+          # 不让脚本去 git 解析 tag——verify-artifacts job 的 checkout 深度不足以可靠拿到
+          # tag 指向的提交，而解析不到时脚本会退成"未核对"，那就等于这道判据在 CI 里空转。
+          RELEASE_SHA: ${{ github.sha }}
         # 三种结论分开处置（脚本自己已经分好，这里只是把它们接到 CI 语义上）：
         #   FAIL>0        ⇒ job 判红：核对到了缺失，属发布事故，必须人去看；
         #   UNVERIFIED>0  ⇒ 只出 warning 并放行：GHCR 是公网服务，传输失败可恢复，
