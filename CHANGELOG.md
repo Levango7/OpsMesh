@@ -377,6 +377,33 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
   中文写入即损坏，须显式 `--default-character-set=utf8mb4` 并用 `HEX()` 校验——我第一轮探针的
   样本数据就是坏的。**探针本身也要有自检对照**，否则错的是探针、结论全反。
 
+**复核补记（另一条 work 线，2026-10-05）：上面这套改动经逐条抽查是真实的，但「已解决」的范围比正文更窄，以下三条已实测核清并各自动手补齐**：
+
+- **收益边界（收窄口径，不是收回结论）**：查询侧 token 全部来自 `fulltext.Tokenize`，而它把中文按**单字**切
+  ⇒ 中文查询产出的 token 长度恒为 1 ⇒ 按分流判据**恒走 LIKE**。所以 MATCH/ngram 这条路实际只服务
+  ASCII/数字词，**中文检索的召回面与全表扫描特性本次没有变**。正文「不能整体切 MATCH」的结论成立，
+  但据此把 TD-79 记成「已解决」会高估收益；要让中文真正吃到索引，得改**查询侧分词**（切双字组），
+  而那会把匹配语义从「每个字都出现」变成「这些字连续出现」——属检索行为变更，需单独裁决，本次不顺手做。
+  新增 `TestChineseQueryTokensNeverReachFulltext` 把这条根因钉成断言：分词器一旦改成按词切中文即判红，
+  届时必须重新实测 MATCH 口径，不得沿用现有这份「只在单字上做过」的实测。
+- **探测加了一道闸（`ciSearchNgramTokenSize`）**：分流判据只在 `ngram_token_size=2` 的库上实测过，
+  而该变量全局可配。设成 3 时长度=2 的检索词短于词元、MATCH 返回空——正是本模块自己证明的
+  「漏召回无补救」那一类，而「索引在不在」的探测看不出任何异常（在位、类型也对）。故探测改为同时读
+  `@@ngram_token_size`，**只放行实测过的 2**，其余一律连同索引在位一起判未就绪、整体退回 LIKE。
+  配两条新用例：`TestFulltextProbeRejectsOtherNgramTokenSize`（size=1/3/4）与
+  `TestNgramTokenSizeGateReachesRecallPath`（端到端——闸门必须真的改变发出去的 SQL，否则探测与召回之间
+  那层 `useFulltext` 传递读错值时，只断言探测返回值的那条仍然全绿）。变异检验两处：去掉闸门 → 这 2 条判红；
+  把按字符判长度改成按字节 → 5 条判红（含新增的根因断言）。
+- **一处注释与代码不符，已更正**：`SearchCIs` 注释原写「召回窗口 `ciSearchSQLRecallCap` 仅在走 LIKE 的路径上生效」，
+  但 `LIMIT` 拼在 token 循环**之外**，MATCH 路径同样被截断；而 MATCH 是 LIKE 的超集、召回更宽，触发截断的概率
+  不降反升。故 TD-79 的「最相关 CI 落在 1000 条窗口外」只是被缓解、未消除。本次只把注释改成如实陈述，行为未动
+  （把排序下推给索引是另一件事，不该混在这批里）。
+- **刻意没动 020 迁移文件**：`schema_migrations` 带 checksum 门禁（见 `TestRunMigrations_ChecksumGateFatal`），
+  改动已应用迁移的字节内容会让存量库下次启动直接 fatal。上述口径更正因此只落在代码注释与本条，不回写 020 头注释。
+- **真库这一步本机没能复跑**：本机 Docker daemon 不可达（`npipe …/dockerDesktopLinuxEngine` 连不上），
+  探测 SQL 新增的 `@@ngram_token_size` 只在 sqlmock 上验过返回值形状与闸门语义；真库执行路径由该包 4 条
+  gated 集成用例在 CI `integration` job（带 `OPSMESH_TEST_MYSQL_DSN`）覆盖。如实标注，不冒充已验证。
+
 ## [Unreleased] — 2026-10-05 清掉会阻断 CI 的 lint 债，并把行尾门禁从 17 分钟压到 2.7 秒
 
 上一条 work 线交接时用 CI 同款 `golangci-lint v2.13.2` 复跑当前工作树，报出 2 条

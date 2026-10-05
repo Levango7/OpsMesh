@@ -266,3 +266,41 @@
      看着像 bug 其实是 `_` 通配符（`LOCATE('server_prod', …)=0` 证明不是子串），
      据此才定性了下划线语义差异。**探针本身也要有自检对照**，否则错的是探针。
 - **我这边新增测试没跑 `-race`**（本机无 C 编译器，与既有约定一致），留 CI 承担。
+
+## 2026-10-05 第六则（另一条 work 线：对第五则那批的抽查结论 + 已补的三处，含一处口径更正）
+
+先说结论：**第五则记录的实测与实现都是真的，我复跑过它的关键部分**（`go build ./...` 0、
+`internal/cmdb` 单测 ok、`golangci-lint ./internal/cmdb/...` 0 issues、CRLF 门禁空、
+`validate-deploy-assets.sh` FAIL=0）。它「不能整体切 MATCH」的核心判断成立，分流实现正确。
+下面三条是它自己没看到的面，我已在 `internal/cmdb` 补齐——**只动 `sql.go` 与
+`search_fulltext_test.go`，没碰迁移文件，也没碰 TD-74 那条线在途的 `internal/store/*`**。
+
+- **收益边界（口径更正，最重要）**：查询侧 token 全部来自 `fulltext.Tokenize`，而它把中文按**单字**切
+  ⇒ 中文查询的每个 token 长度都是 1 ⇒ 按 `ciSearchTokenUseFulltext` **恒走 LIKE**。
+  所以 MATCH/ngram 实际只服务 ASCII/数字词，**中文检索的召回面与全表扫描本次没有改善**。
+  第五则的单元表里 `ciSearchTokenUseFulltext("生产") == true` 断言的是查询链路**产不出**的 token 形态。
+  我加 `TestChineseQueryTokensNeverReachFulltext` 把根因钉住：分词器若改成按词切中文即判红，
+  那时必须重新实测 MATCH 口径，不得沿用这份「只在单字上做过」的实测。
+  **因此 TD-79 那行的「已解决」应收窄为**：ASCII 词已解决；中文路径未变，要真解决需改查询侧分词
+  （切双字组）而那会改变匹配语义、属产品裁决。TD-79 行现在在未提交的 `docs/tech-debt.md` 工作树里，
+  我不便替 TD-74 那条线提交，完整措辞见 CHANGELOG「复核补记」块。
+- **探测加了一道闸（`ciSearchNgramTokenSize`）**：分流判据只在 `ngram_token_size=2` 上实测过，
+  而它是全局可配变量。设成 3 时长度=2 的检索词短于词元 → MATCH 返回空 → 正是第五则自己证明的
+  「漏召回无补救」那一类，而只查「索引在不在」的探测对此毫无信号（索引在位、类型也正确）。
+  探测 SQL 现同时读 `@@ngram_token_size`，**只放行实测过的 2**，其余整体退回 LIKE。
+  两个值写成标量子查询而不是 `COUNT(*), MAX(...)`：后者零行时 MAX 返回 NULL，
+  会把「索引不存在」这个正常状态错报成探测错误。新增两条用例，其中
+  `TestNgramTokenSizeGateReachesRecallPath` 测到端到端——只断言探测返回值不够，
+  探测与召回之间那层 `useFulltext` 传递若读错值，前者仍会全绿。
+  变异检验：去掉闸门 → 2 条判红；按字节而非字符判长度 → 5 条判红（含新增的根因断言）。
+- **一处注释与代码不符，已更正**：原注释写「召回窗口 `ciSearchSQLRecallCap` 仅在走 LIKE 的路径上生效」，
+  但 `LIMIT` 拼在 token 循环**之外**，MATCH 路径同样被截断；MATCH 又是 LIKE 的超集、召回更宽，
+  触发截断的概率不降反升。故 TD-79 的「最相关 CI 落在 1000 条窗口外」只是被缓解、未消除。
+  本次只改注释，**行为未动**（把排序下推给索引是另一件事，不该混进这批）。
+- **刻意没回写 020 的头注释**：`schema_migrations` 有 checksum 门禁（`TestRunMigrations_ChecksumGateFatal`），
+  改动已应用迁移的字节内容会让存量库下次启动直接 fatal。口径更正因此只落在代码注释、CHANGELOG 与本则。
+- **两条要更正的末注**：①本机 Docker daemon 对我不可达（`npipe …/dockerDesktopLinuxEngine`），
+  真库那 4 条 gated 集成用例我没复跑，`@@ngram_token_size` 的新形状目前只有 sqlmock 层证据，
+  真库覆盖要靠 CI `integration` job——这点我按实际标注，不冒充已验证；
+  ②上条「本机无 C 编译器」不成立：`D:\msys64\mingw64\bin\gcc.exe`（16.1.0）在，
+  补 `CGO_ENABLED=1` + 该目录进 PATH 即可跑 `-race`（根模块 `internal/store` 需 `-timeout 2400s`）。

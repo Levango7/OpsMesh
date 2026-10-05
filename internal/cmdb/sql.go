@@ -278,16 +278,37 @@ func buildCISearchTokenCond() string {
 // 020 新增的 STORED 生成列（JSON 展平成 TEXT，JSON 列本身不能建 FULLTEXT）。
 const ciSearchFulltextCond = " AND MATCH(name, ci_type, ci_attrs_text) AGAINST(? IN BOOLEAN MODE)"
 
-// ciSearchFulltextProbeSQL 探测全文索引是否存在。
+// ciSearchNgramTokenSize 是本分流判据**唯一实测过**的 ngram 词元长度。
+//
+// 分流规则（长度=1 走 LIKE、长度>=2 走 MATCH）是在 ngram_token_size=2 的库上逐 token
+// 实测出来的（见 020 迁移注释与 TD-79）。但词元长度是全局可配的：若某部署设成 3，
+// 长度=2 的检索词就短于词元，MATCH 一律召回为空——正是本模块实测证明「漏召回无补救」
+// 的那一类，而「索引在不在」的探测完全看不出异常（索引存在且类型正确）。
+// 故探测必须同时核对 @@ngram_token_size，只放行实测过的 2，其余一律退回 LIKE：慢，但不漏。
+const ciSearchNgramTokenSize = 2
+
+// ciSearchFulltextProbeSQL 探测全文索引是否**可用**，而不只是是否存在：
+// 索引在位（且类型确为 FULLTEXT）+ 词元长度是被实测过的 2。
 //
 // 查 information_schema 而不是试一条 MATCH 查询：后者在索引缺失时会在**执行计划阶段**
 // 报错并让整条查询失败，而 information_schema 查询只读元数据、恒成功。
 // 同时限定 index_type='FULLTEXT'，避免同名普通索引误判为就绪。
-const ciSearchFulltextProbeSQL = `SELECT COUNT(*) FROM information_schema.statistics
-	WHERE table_schema = DATABASE() AND table_name = 'ci_items'
-	  AND index_name = 'ft_ci_items_search' AND index_type = 'FULLTEXT'`
+//
+// 两个值写成标量子查询而不是 `COUNT(*), MAX(@@var)`：后者在零行时 MAX 返回 NULL，
+// Scan 进 int 会失败，把「索引不存在」这个**正常**状态错报成探测错误。
+// MariaDB 既无 ngram 插件也无 @@ngram_token_size，本查询会报 1193 Unknown system variable
+// → 落进「探测失败退 LIKE」分支，方向安全。
+const ciSearchFulltextProbeSQL = `SELECT
+		(SELECT COUNT(*) FROM information_schema.statistics
+		 WHERE table_schema = DATABASE() AND table_name = 'ci_items'
+		   AND index_name = 'ft_ci_items_search' AND index_type = 'FULLTEXT'),
+		@@ngram_token_size`
 
 // isCISearchFulltextReady 探测 020 迁移建的全文索引是否可用，结果缓存。
+//
+// 「可用」有两个条件：索引在位，且词元长度是本模块实测过的 2（见 ciSearchNgramTokenSize）。
+// 只查「在位」是不够的——索引存在但 ngram_token_size 被改成 3 时，MATCH 会对长度 2 的
+// 检索词返回空，而那是静默的漏召回，没有任何错误信号。
 //
 // 为什么需要运行时探测而不是直接依赖索引：020 迁移与本代码的发布顺序不敏感。
 // 先跑迁移 → 索引在 → 走 MATCH；先发代码后跑迁移（或回滚了 020）→ 探不到 → 退回 LIKE。
@@ -308,16 +329,22 @@ func (s *SQLCiStore) isCISearchFulltextReady(ctx context.Context) bool {
 
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	var n int
-	if err := s.db.QueryRowContext(probeCtx, ciSearchFulltextProbeSQL).Scan(&n); err != nil {
+	var idxCount, ngramSize int
+	if err := s.db.QueryRowContext(probeCtx, ciSearchFulltextProbeSQL).Scan(&idxCount, &ngramSize); err != nil {
 		log.Printf("[cmdb] 全文索引探测失败，本次退回 LIKE 召回: %v", err)
 		return false
 	}
-	s.fulltextReady = n > 0
-	if s.fulltextReady {
-		log.Printf("[cmdb] 检测到 ci_items 全文索引，长度>=2 的检索词走 MATCH 召回")
-	} else {
+	s.fulltextReady = idxCount > 0 && ngramSize == ciSearchNgramTokenSize
+	switch {
+	case s.fulltextReady:
+		log.Printf("[cmdb] 检测到 ci_items 全文索引（ngram_token_size=%d），长度>=2 的检索词走 MATCH 召回", ngramSize)
+	case idxCount == 0:
 		log.Printf("[cmdb] 未检测到 ci_items 全文索引（020 迁移未执行？），全部走 LIKE 召回")
+	default:
+		// 索引在位但词元长度不是实测过的值：此时 MATCH 的召回行为未经验证，
+		// 而「未验证」在本模块里等于「可能静默漏召回」，故不冒险，整体退回 LIKE。
+		log.Printf("[cmdb] ci_items 全文索引在位但 ngram_token_size=%d（分流判据仅在 %d 上实测过），全部走 LIKE 召回",
+			ngramSize, ciSearchNgramTokenSize)
 	}
 	return s.fulltextReady
 }
@@ -356,16 +383,25 @@ func ciSearchTokenUseFulltext(tok string) bool {
 // 分流不是可选优化而是正确性要求：ngram 按双字切索引而分词器按单字切中文，
 // 单字 token 走 MATCH 会召回为空（详见 ciSearchTokenUseFulltext 与 020 迁移注释）。
 //
-// 全文索引不存在时（020 未执行或已回滚）整体退回 LIKE，检索仍可用——只是退回
-// 「候选窗口」取舍：ciSearchSQLRecallCap 之外最相关的 CI 可能取不到。
+// 全文索引不可用（020 未执行、已回滚，或 ngram_token_size 不是实测过的 2）时整体退回 LIKE，
+// 检索仍可用——只是退回「候选窗口」取舍：ciSearchSQLRecallCap 之外最相关的 CI 可能取不到。
+//
+// 收益边界（别把本次改动读成「中文检索已走索引」）：查询侧 token 全部来自
+// fulltext.Tokenize（search.go 的 normalizeCiSearch），而它把中文**按单字**切，
+// 于是中文查询产出的 token 长度恒为 1，按上面的判据**恒走 LIKE**；MATCH 路径实际只服务
+// ASCII/数字词（webserver、db01 这类）。要让中文真正走 ngram，得改**查询侧分词**
+// （中文切双字组），而那会把匹配语义从「每个字都出现」变成「这些字连续出现」——
+// 属检索行为变更，需单独裁决，不在本改动里顺手做。
 //
 // 两个刻意的取舍：
 //   - 不加 ESCAPE 转义 '%' 与 '_'：未转义只会放宽匹配（'_' 成为通配符），
 //     而召回只需是命中集合的超集；省掉转义同时规避了不同驱动对 ESCAPE 子句的语法差异。
 //     含下划线的 token 因此一律不走 MATCH——ngram 按字面量处理下划线，与 LIKE 的
 //     通配符语义不同，硬换会造成漏召回。
-//   - 召回窗口是 ciSearchSQLRecallCap：仅在走 LIKE 的路径上生效。走 MATCH 时候选已被
-//     索引收窄，但仍保留 LIMIT 以防超大结果集拖垮内存。
+//   - 召回窗口 ciSearchSQLRecallCap **对两条路径都生效**（LIMIT 在 token 循环之外无条件拼接）。
+//     本注释此前写作「仅在 LIKE 路径上生效」，与代码不符，已更正。MATCH 是 LIKE 的超集、
+//     召回更宽，触发截断的概率不降反升——故 TD-79 的「最相关 CI 落在窗口外」只是被缓解，
+//     没有被消除。
 func (s *SQLCiStore) SearchCIs(ctx context.Context, tenantID string, q CiSearchQuery) ([]CiSearchHit, error) {
 	tokens, mode, limit, status := normalizeCiSearch(q)
 	if len(tokens) == 0 {

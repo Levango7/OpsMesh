@@ -78,7 +78,11 @@ func TestCISearchTokenUseFulltextCountsRunes(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // newProbeMock 构造一个只预期"全文索引探测查询"的 sqlmock。
-func newProbeMock(t *testing.T, count int) (*SQLCiStore, sqlmock.Sqlmock) {
+//
+// 两列对应探测 SQL 的两个返回值：索引计数与 @@ngram_token_size。
+// 只给一列会让 Scan 失败并落进「探测出错退 LIKE」分支——那等于用错误路径冒充「未就绪」，
+// 断言看起来通过，实际测的却是另一件事（同文件 pinFulltextProbe 记的就是这个教训）。
+func newProbeMock(t *testing.T, idxCount, ngramSize int) (*SQLCiStore, sqlmock.Sqlmock) {
 	t.Helper()
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -86,15 +90,15 @@ func newProbeMock(t *testing.T, count int) (*SQLCiStore, sqlmock.Sqlmock) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	mock.ExpectQuery("information_schema.statistics").
-		WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(count))
+		WillReturnRows(sqlmock.NewRows([]string{"idx_count", "ngram_token_size"}).AddRow(idxCount, ngramSize))
 	return &SQLCiStore{db: db}, mock
 }
 
-// TestFulltextProbeDetectsIndex 索引存在时探测为就绪。
+// TestFulltextProbeDetectsIndex 索引存在且词元长度为实测过的 2 时为就绪。
 func TestFulltextProbeDetectsIndex(t *testing.T) {
-	s, mock := newProbeMock(t, 3)
+	s, mock := newProbeMock(t, 3, ciSearchNgramTokenSize)
 	if !s.isCISearchFulltextReady(context.Background()) {
-		t.Error("索引存在时应探测为就绪")
+		t.Error("索引存在且 ngram_token_size=2 时应探测为就绪")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("探测查询未按预期执行: %v", err)
@@ -103,9 +107,26 @@ func TestFulltextProbeDetectsIndex(t *testing.T) {
 
 // TestFulltextProbeDetectsMissingIndex 索引不存在时退回 LIKE。
 func TestFulltextProbeDetectsMissingIndex(t *testing.T) {
-	s, _ := newProbeMock(t, 0)
+	s, _ := newProbeMock(t, 0, ciSearchNgramTokenSize)
 	if s.isCISearchFulltextReady(context.Background()) {
 		t.Error("索引不存在时应探测为未就绪")
+	}
+}
+
+// TestFulltextProbeRejectsOtherNgramTokenSize 索引在位但词元长度不是 2 时必须判未就绪。
+//
+// 这条守的是分流判据的前提：判据（长度=1 走 LIKE、>=2 走 MATCH）只在 ngram_token_size=2
+// 的库上实测过。词元长度是全局可配变量——设成 3 时长度=2 的检索词短于词元，MATCH 返回空，
+// 而「索引存在」的探测一切正常，于是表现为**静默漏召回**。size=1 虽大概率只是变宽，
+// 但同样没实测过，故一并拒绝：未验证在本模块里按「可能漏召回」处理。
+func TestFulltextProbeRejectsOtherNgramTokenSize(t *testing.T) {
+	for _, size := range []int{1, 3, 4} {
+		t.Run(fmt.Sprintf("size=%d", size), func(t *testing.T) {
+			s, _ := newProbeMock(t, 1, size) // 索引计数正常，只有词元长度不符
+			if s.isCISearchFulltextReady(context.Background()) {
+				t.Errorf("ngram_token_size=%d 时应判未就绪（退回 LIKE），不能只看索引在不在", size)
+			}
+		})
 	}
 }
 
@@ -114,7 +135,7 @@ func TestFulltextProbeDetectsMissingIndex(t *testing.T) {
 // 需求来源：探测是元数据查询，若每次检索都打一次，等于给每次查询加一次额外往返。
 // 这里连打三次 SearchCIs，断言 information_schema 查询只发生一次。
 func TestFulltextProbeCachedPerStore(t *testing.T) {
-	s, mock := newProbeMock(t, 1)
+	s, mock := newProbeMock(t, 1, ciSearchNgramTokenSize)
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
 		if !s.isCISearchFulltextReady(ctx) {
@@ -212,8 +233,15 @@ func captureSearchSQL(t *testing.T, s *SQLCiStore, query, ciType string) (string
 	return captured, gotArgs
 }
 
-// newStoreWithProbe 构造一个探测结果为指定值的 store（探测已在构造时完成）。
+// newStoreWithProbe 构造一个探测结果为指定索引计数的 store（探测已在构造时完成）。
+// 词元长度固定为实测过的 2，故计数 >0 即「就绪」。
 func newStoreWithProbe(t *testing.T, indexCnt int) *SQLCiStore {
+	t.Helper()
+	return newStoreWithProbeSize(t, indexCnt, ciSearchNgramTokenSize)
+}
+
+// newStoreWithProbeSize 同上，但可指定 ngram_token_size，用于验证词元长度这道闸。
+func newStoreWithProbeSize(t *testing.T, indexCnt, ngramSize int) *SQLCiStore {
 	t.Helper()
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -222,7 +250,7 @@ func newStoreWithProbe(t *testing.T, indexCnt int) *SQLCiStore {
 	t.Cleanup(func() { _ = db.Close() })
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery("information_schema.statistics").
-		WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(indexCnt))
+		WillReturnRows(sqlmock.NewRows([]string{"idx_count", "ngram_token_size"}).AddRow(indexCnt, ngramSize))
 	s := &SQLCiStore{db: db}
 	// 立刻探测一次，把结果固化进缓存，后续检索不再打探测查询。
 	s.isCISearchFulltextReady(context.Background())
@@ -304,6 +332,65 @@ func TestSearchCIsFallsBackToLikeWhenNoIndex(t *testing.T) {
 	if n := strings.Count(sqlText, "LIKE ?"); n != wantTokens*len(ciSearchColumns) {
 		t.Errorf("LIKE 占位符数 = %d, want %d\n%s", n, wantTokens*len(ciSearchColumns), sqlText)
 	}
+}
+
+// TestNgramTokenSizeGateReachesRecallPath 词元长度这道闸必须真的改变发出去的 SQL。
+//
+// 只断言探测函数的返回值不够：探测与召回之间还隔着一次 useFulltext 传递。若那里读错了
+// 值（例如仍只看索引计数），就会出现本闸要防的形态——探测判未就绪、查询照旧走 MATCH，
+// 而 MATCH 在非实测的词元长度上可能是静默漏召回。故这条测到端到端形状。
+func TestNgramTokenSizeGateReachesRecallPath(t *testing.T) {
+	s := newStoreWithProbeSize(t, 1, 3) // 索引在位，词元长度不是实测过的 2
+	sqlText, args := captureSearchSQL(t, s, "web 生产", "")
+
+	if strings.Contains(sqlText, "MATCH(") {
+		t.Errorf("ngram_token_size≠2 时不得走 MATCH:\n%s", sqlText)
+	}
+	if containsArg(args, "+web") {
+		t.Errorf("不应出现 MATCH 的 + 前缀参数（说明闸门没生效）: %v", args)
+	}
+	// web / 生 / 产 三个 token 全部退回 LIKE
+	if n := strings.Count(sqlText, "LIKE ?"); n != 3*len(ciSearchColumns) {
+		t.Errorf("LIKE 占位符数 = %d, want %d（3 个 token × %d 列）\n%s",
+			n, 3*len(ciSearchColumns), len(ciSearchColumns), sqlText)
+	}
+}
+
+// TestChineseQueryTokensNeverReachFulltext 钉住「收益边界」的根因：查询侧把中文按**单字**切。
+//
+// 这条补的是分流判据与真实链路之间缺失的一环：ciSearchTokenUseFulltext("生产") 返回 true，
+// 但 Tokenize 从不产出长度 >=2 的中文 token，所以 MATCH 对中文恒不可达（中文检索的收益为零，
+// 改善面只在 ASCII 词）。哪天把 Tokenize 改成按词切中文，这条会立刻判红——那时必须
+// **重新实测** MATCH 的召回口径（现有实测只在单字 token 与 ASCII 词上做过），而不是默认沿用旧结论。
+func TestChineseQueryTokensNeverReachFulltext(t *testing.T) {
+	for _, q := range []string{"生产机房", "张伟", "订单服务", "核心交易库", "生产 web", "机房-02"} {
+		toks := fulltext.Tokenize(q)
+		if len(toks) == 0 {
+			t.Fatalf("查询 %q 分词为空，用例前提不成立", q)
+		}
+		for _, tok := range toks {
+			if !containsCJK(tok) {
+				continue
+			}
+			if n := len([]rune(tok)); n != 1 {
+				t.Errorf("查询 %q 切出长度 %d 的中文 token %q：中文按字切的前提已变，"+
+					"分流判据与 MATCH 召回口径都必须重新实测", q, n, tok)
+			}
+			if ciSearchTokenUseFulltext(tok) {
+				t.Errorf("中文 token %q 竟被放行到 MATCH（单字走 MATCH 会漏召回）", tok)
+			}
+		}
+	}
+}
+
+// containsCJK 判断 token 里是否含中日韩统一表意文字（测试侧自实现，不依赖被测包的私有判据）。
+func containsCJK(s string) bool {
+	for _, r := range s {
+		if r >= 0x4E00 && r <= 0x9FFF {
+			return true
+		}
+	}
+	return false
 }
 
 // TestSearchCIsPreservesFilterCondsWhenFulltext 分流不得破坏租户/状态/类型过滤。
