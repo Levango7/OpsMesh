@@ -490,6 +490,13 @@ TD-74 的守卫按包名只扫 `internal/store`；顺着这条边界往外量，
 - 默认装配不触发（compose `LOG_BACKEND:-loki`、helm `LOG_SVC_BACKEND: "memory"`），但 `sql` 是
   `values.yaml:550` 明写的可选后端 ⇒ 客户一切就中。
 
+**并补真库往返 + 一个 CI 缺口**：`TestSQLNullRoundTripRealMySQL`（DSN 门控）证明"写入侧真产 NULL"
+与"读取侧真容得下"在同一个驱动上成立——先断言 `task_id IS NULL` 再断言读回，避免退化成
+"空串读写"的假验证。配套发现：`integration` job 原本只跑 `./internal/store/...`，
+所以 `internal/logstore` 里任何 DSN 门控用例都会**以 skip 的姿态永远通过**；因此在 CI 里补一步
+`go test -race ./internal/logstore/...`（单独一步，不复用 `store.cover.out`，
+免得把 32% 覆盖率门禁的分母悄悄改掉）。本机该用例如实 SKIP（无 DSN），不冒充跑过。
+
 修法：可空列改 `sql.Null*` 承接（NULL ⇒ 空串），补 `TestSQLQueryReadsNullColumns`（三列 NULL 与六列全 NULL 两行）。
 **变异检验是实证过的**：把承接改回裸 `string`，用例一字不差复现
 `sql: Scan error on column index 2, name "device_id": converting NULL to string is unsupported` 并判红；还原复绿。

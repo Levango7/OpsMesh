@@ -343,6 +343,14 @@ jobs:
           echo "store 包覆盖率: ${store_total}%"
           awk -v t="$store_total" -v th=32 'BEGIN { if (t+0 < th) { printf "ERROR: store 包覆盖率 %.2f%% < %d%%\n", t, th; exit 1 } else { printf "OK: store 包覆盖率 %.2f%% >= %d%%\n", t, th } }'
 
+      - name: 日志 SQL 后端的真库往返（缺这步，logstore 的 DSN 门控用例在 CI 里永远 skip）
+        # integration job 原本只跑 ./internal/store/...。internal/logstore 里的真库用例
+        # 没有对应的执行方，就会**永远以 skip 通过**——一条从不执行的真库测试比没有测试更糟，
+        # 因为它让人以为这条路径已被覆盖（本项目已经吃过"门禁存在但从不下场"的两次亏）。
+        # 单列一步而不是并进上面那条命令：上面产出 store.cover.out 并喂给 32% 覆盖率门禁，
+        # 把 logstore 混进同一次 go test 会悄悄改掉那个门禁的分母。
+        run: go test -race -count=1 -timeout 300s -v ./internal/logstore/...
+
   security:
     runs-on: ubuntu-latest
     needs: build-test
