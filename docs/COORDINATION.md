@@ -363,3 +363,28 @@
   build/vet/gofmt/`internal/cmdb` 全量（含 `-race`）/13 个 `services/*` 与 `tf-provider` 的
   build+vet+CI 同款 lint+`-race` 测试；真库那层由 CI `integration` 给（run 37306035747 已绿，
   覆盖 021 迁移执行、7 列 MATCH、列集合探测与新补的 agent_id/device_id 语料）。
+
+## 2026-10-05 第九则（我侧：发布物验收现在会区分「缺陷」与「没核对上」，附一条我的错误结论收回）
+
+- **先更正我自己上一轮说过的话**：我说过「`verify-release-artifacts.sh 0.12.0` 抓到两条真 FAIL，
+  其中 `autoscaler-svc:0.12.0` 不存在、客户 `helm install` 会 ErrImagePull」。**这条结论是错的**，
+  别按它采取行动。反证：release run `37221272686` 的 12 个 `build-and-push` 全 success
+  （矩阵里就含 autoscaler-svc，`release.yml:44`），我又用同一 token 端点直查
+  `levango7/{autoscaler-svc,portal-svc,task-svc,auth-svc,incident-svc,gpu-svc}/0.12.0`
+  的 manifest，**3 轮 18 次全部 200**。v0.12.0 的产物是齐的。
+- **根因在工具，不在发布**：那条脚本把「取不到 token / 空响应 / 解析不到 digest」一律判 `[FAIL]`，
+  且不重试。于是同一条命令**连跑两遍给出不同的 FAIL 集**（第一遍 portal-svc 缺 `.att` + autoscaler 引用不存在；
+  第二遍换成 5 个仓库取不到 token，而第一遍那两条自己绿了）。这种红不可复现、不可行动，
+  真正的代价是逼人不再信这条门禁，而它守的是客户装不装得起来。
+- **现在的语义**（别人再读这条脚本的输出，按三种结论分别行动）：
+  `[FAIL]` = 核对到了且不符合预期（确定性 401/404、缺 tag、缺 `.sig`/`.att`）→ 去查发布；
+  `[UNVERIFIED]` = 重试耗尽没能核对上 → 重跑、或 `GHCR_ATTEMPTS=5`、或换网络，**不要**当成缺陷；
+  `[PASS]` = 核对通过。未知同样非零退出，不混进通过。
+  双向都验过：`0.12.0` ⇒ `PASS=7 FAIL=0`、exit 0；从未发布的 `0.9.9` ⇒ `FAIL=29`、exit 1；
+  不存在的仓库 ⇒ 确定性拒绝（判红）与不可达（UNVERIFIED）分流正确。`bash -n`、`shellcheck -S warning` 干净。
+- **给所有人的一条 shell 编程坑**：我第一版的 `ghcr_get` 用 `printf -v "$输出变量名"` 回写结果，
+  却同时声明了同名 `local code`——**bash 动态作用域下，被调函数的 local 遮蔽了调用方传进来的输出变量**，
+  输出永远为空，`set -u` 报未绑定，调用方按失败处理，一次跑出 **28 项「GHCR 不可达」**
+  （= 14 仓库 × ①④ 两处），而实际一个网络错误都没有。
+  凡是「传变量名当输出参数」的写法，被调函数的内部变量都不能与可能的传入名同名。
+  定位手段是把那几个函数抽进 `/tmp` 单独驱动，而不是加日志猜。

@@ -20,7 +20,17 @@
 # 用法：
 #   bash deploy/scripts/verify-release-artifacts.sh 0.12.0        # 版本不带 v
 #   GH=/path/to/gh bash deploy/scripts/verify-release-artifacts.sh 0.11.0
+#   GHCR_ATTEMPTS=5 bash deploy/scripts/verify-release-artifacts.sh 0.12.0   # 网络差时加大重试
 # 依赖：curl（匿名打 GHCR token）、gh（读 Release；缺失时第 ③ 项判红而不是跳过）。
+#
+# 三种结论，各有不同处置（这是本脚本能否被信任的关键）：
+#   [PASS]        核对到了，符合预期；
+#   [FAIL]        核对到了，**不符合**预期——真的没发布 / 引用指向不存在的镜像，属发布事故；
+#   [UNVERIFIED]  **没能核对上**（GHCR 传输失败，重试耗尽）。既不是通过也不是缺陷。
+# FAIL 或 UNVERIFIED 任一非零都退出非零（不把未知当通过），但计数分开、文案分开：
+# 前者要查发布，后者只要重跑。把它们混成一条红，实测代价就是本会话里那次误报——
+# 同一脚本连跑两遍给出不同 FAIL 集，第一条红还指着"客户会 ErrImagePull"这种严重后果，
+# 而 release run 37221272686 的 12 个 build-and-push 全是 success、直查 tag 三轮全 200。
 set -uo pipefail
 
 VER="${1:-}"
@@ -32,9 +42,58 @@ if [ -z "$VER" ]; then
 fi
 case "$REPO" in */*) ;; *) echo "仓库需为 owner/name 形式（实际：$REPO）" >&2; exit 2 ;; esac
 
-PASS=0; FAIL=0
+PASS=0; FAIL=0; UNVERIFIED=0
 ok()  { printf '  [PASS] %s\n' "$*"; PASS=$((PASS+1)); }
 bad() { printf '  [FAIL] %s\n' "$*"; FAIL=$((FAIL+1)); }
+# unver() 记「没能核对」而不是「核对失败」：仍然非零退出（不把没验的东西当通过），
+# 但输出上与真缺陷分开——这两种红的处置动作完全相反（前者重跑/换网络，后者是发布事故）。
+unver() { printf '  [UNVERIFIED] %s\n' "$*"; UNVERIFIED=$((UNVERIFIED+1)); }
+
+# GHCR_ATTEMPTS：单次 HTTP 请求的重试次数（可用环境变量覆盖，方便排障时调大）。
+GHCR_ATTEMPTS="${GHCR_ATTEMPTS:-3}"
+
+# ghcr_get <放响应体的变量名> <放HTTP码的变量名> <curl 参数...>
+#   返回 0 = 拿到**确定性**响应（HTTP 码写进第二个变量，含 401/404）；
+#   返回 1 = 重试耗尽（curl 自身失败，或 429/5xx）。
+#
+# 为什么必须有这一层：GHCR 是公网服务，本机偶发连接失败是常态——实测复刻脚本的请求形态
+# 连打 30 轮，约 5% 是传输层失败（URLError / 拿不到 token），而**一次 429 都没有**。
+# 原脚本把「取不到 token / 空响应」一律写成「仓库不存在或 GHCR 不可达」并判红，
+# 于是一次抖动就能产出一份"看起来像发布缺陷"的红；同一份脚本连跑两遍给出不同 FAIL 集
+# （第一遍报 portal-svc 缺 .att + autoscaler-svc 引用不存在，第二遍这两条都变绿，
+# 却换成 5 个仓库取不到 token），即为证据。这类假红的代价不是噪音，
+# 是让人开始不信这条门禁——而它守的是客户能不能装起来。
+ghcr_get() {
+    # 内部变量一律用 __gh_ 前缀：调用方传进来的**输出变量名**（如 body/code）会被
+    # printf -v 直接写入，而被调函数里同名的 local 会在动态作用域下遮蔽它——
+    # 表现是"输出永远是空 + set -u 报未绑定 + 调用方按失败处理"，整条门禁静默失去牙齿。
+    # （本函数第一版就是这样：28 项 UNVERIFIED 全由这个遮蔽造成，而不是网络。）
+    local __out_var="$1" __code_var="$2" __gh_i __gh_out __gh_code
+    shift 2
+    __gh_out=""
+    __gh_code=""
+    for ((__gh_i = 1; __gh_i <= GHCR_ATTEMPTS; __gh_i++)); do
+        if __gh_out="$(curl -s --max-time 25 -w $'\n%{http_code}' "$@" 2>/dev/null)"; then
+            __gh_code="${__gh_out##*$'\n'}"
+            __gh_out="${__gh_out%$'\n'*}"
+            case "$__gh_code" in
+                429|500|502|503|504)
+                    sleep $((__gh_i * 2))
+                    continue
+                    ;;
+                *)
+                    printf -v "$__out_var" '%s' "$__gh_out"
+                    printf -v "$__code_var" '%s' "$__gh_code"
+                    return 0
+                    ;;
+            esac
+        fi
+        sleep $((__gh_i * 2))
+    done
+    printf -v "$__out_var" '%s' "$__gh_out"
+    printf -v "$__code_var" '%s' "retry-exhausted"
+    return 1
+}
 
 # 14 个仓库叶子名：两个核心镜像 + release.yml 矩阵里的 12 个常驻微服务。
 # 这里刻意写死而不是去 parse release.yml：本脚色的职责是"核对产物"，
@@ -43,9 +102,23 @@ LEAVES="opsmesh-binary opsmesh-agent
 auth-svc device-svc alert-svc task-svc config-svc log-svc
 aio-svc autoscaler-svc gpu-svc incident-svc portal-svc runbook-svc"
 
+# token <仓库叶子名>：成功时把匿名 pull token 打到 stdout 并返回 0。
+#   返回 1 = 传输层重试耗尽（够不着 GHCR——这**不能**推出"仓库不存在"）；
+#   返回 2 = GHCR 给出确定性拒绝（非 200，或响应里没有 token，等价于该公开仓库不存在/不可拉）。
+# 区分这两种是本次改动的核心：原脚本把它们并成一类判红，于是抖动会伪装成发布缺陷。
 token() {
-    curl -s --max-time 20 "https://ghcr.io/token?scope=repository:${NS}/$1:pull" \
-        | sed -n 's/.*"token":"\([^"]*\)".*/\1/p'
+    local body code tk
+    if ! ghcr_get body code "https://ghcr.io/token?scope=repository:${NS}/$1:pull"; then
+        return 1
+    fi
+    if [ "$code" != "200" ]; then
+        return 2
+    fi
+    tk="$(printf '%s\n' "$body" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+    if [ -z "$tk" ]; then
+        return 2
+    fi
+    printf '%s' "$tk"
 }
 
 # 注意 Accept 必须含 OCI index，否则 buildx 推的 OCI manifest 会被**误报成 404**
@@ -53,26 +126,41 @@ token() {
 ACCEPT='Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
 NLEAVES=$(printf '%s\n' $LEAVES | grep -c .)
 tags_of() {
-    local leaf="$1" tk
-    tk="$(token "$leaf")"
-    [ -z "$tk" ] && return 1
-    curl -s --max-time 25 -H "Authorization: Bearer $tk" \
-        "https://ghcr.io/v2/${NS}/${leaf}/tags/list?n=4000"
+    local leaf="$1" tk body code rc
+    tk="$(token "$leaf")"; rc=$?
+    [ "$rc" -ne 0 ] && return "$rc"      # 1=GHCR 不可达（重试耗尽）；2=确定性拒绝
+    if ! ghcr_get body code -H "Authorization: Bearer $tk" \
+        "https://ghcr.io/v2/${NS}/${leaf}/tags/list?n=4000"; then
+        return 1
+    fi
+    if [ "$code" != "200" ]; then
+        return 2
+    fi
+    printf '%s' "$body"
 }
 
 declare -a PUBLISHED=()
 echo "== ① + ② 镜像 tag 与签名/证据链（${NS}/*:${VER}）=="
 MISSING_TAG=(); MISSING_SIG=(); MISSING_ATT=()
 for leaf in $LEAVES; do
-    tk="$(token "$leaf")"
-    if [ -z "$tk" ]; then
-        bad "${leaf}: 取不到匿名 pull token（仓库不存在或 GHCR 不可达）"
-        MISSING_TAG+=("$leaf"); continue
+    tk="$(token "$leaf")"; tkrc=$?
+    if [ "$tkrc" -ne 0 ]; then
+        if [ "$tkrc" -eq 1 ]; then
+            unver "${leaf}: 取匿名 pull token 时 GHCR 不可达（已重试 ${GHCR_ATTEMPTS} 次）——这是**没核对上**，不是说它没发布"
+        else
+            bad "${leaf}: GHCR 确定性拒绝匿名 pull token（仓库不存在或不可匿名拉取）"
+            MISSING_TAG+=("$leaf")
+        fi
+        continue
     fi
-    body="$(curl -s --max-time 25 -H "Authorization: Bearer $tk" \
-        "https://ghcr.io/v2/${NS}/${leaf}/tags/list?n=4000")"
-    if [ -z "$body" ]; then
-        bad "${leaf}: tag 列表为空响应"
+    body=""; code=""
+    if ! ghcr_get body code -H "Authorization: Bearer $tk" \
+        "https://ghcr.io/v2/${NS}/${leaf}/tags/list?n=4000"; then
+        unver "${leaf}: 取 tag 列表重试耗尽（最后 HTTP=${code}）——未核对，不计入缺失"
+        continue
+    fi
+    if [ "$code" != "200" ] || [ -z "$body" ]; then
+        bad "${leaf}: tag 列表返回 HTTP=${code}$([ -z "$body" ] && printf '（且响应体为空）')"
         MISSING_TAG+=("$leaf"); continue
     fi
     if grep -qE "\"${VER}\"" <<<"$body"; then
@@ -83,11 +171,24 @@ for leaf in $LEAVES; do
     fi
     # .sig/.att 在 GHCR 里以**本版本 manifest 的 digest**命名（sha256-<digest>.sig），
     # 所以必须先把 :VER 解析成 digest 再找，否则"仓库里有个 .sig"会被当成"这个版本签过名"。
-    dig="$(curl -sI --max-time 25 -H "Authorization: Bearer $tk" -H "$ACCEPT" \
-        "https://ghcr.io/v2/${NS}/${leaf}/manifests/${VER}" | tr -d '\r' \
-        | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: *sha256:\([0-9a-f]\{64\}\).*/\1/p' | head -1)"
+    hdrs=""; hcode=""
+    if ! ghcr_get hdrs hcode -I -H "Authorization: Bearer $tk" -H "$ACCEPT" \
+        "https://ghcr.io/v2/${NS}/${leaf}/manifests/${VER}"; then
+        unver "${leaf}:${VER} 解析 manifest 重试耗尽（最后 HTTP=${hcode}）——签名/证据链**未核对**"
+        continue
+    fi
+    dig="$(tr -d '\r' <<<"$hdrs" \
+        | sed -n 's/^ *[Dd]ocker-[Cc]ontent-[Dd]igest: *sha256:\([0-9a-f]\{64\}\).*/\1/p' | head -1)"
     if [ -z "$dig" ]; then
-        bad "${leaf}:${VER} 解析不到 manifest digest（无法核对签名，按未验证判红）"
+        if [ "$hcode" = "404" ]; then
+            if grep -qE "\"${VER}\"" <<<"$body"; then
+                bad "${leaf}:${VER} 的 tag 列表里有它，但 manifest 返回 404（tag 与 manifest 不一致，判红）"
+            else
+                bad "${leaf}:${VER} 的 manifest 404——与上面「没有该 tag」同源，签名/证据链无从核对"
+            fi
+        else
+            bad "${leaf}:${VER} 解析不到 manifest digest（HTTP=${hcode}；无法核对签名，判红）"
+        fi
         MISSING_SIG+=("$leaf"); MISSING_ATT+=("$leaf"); continue
     fi
     grep -q "sha256-${dig}\.sig" <<<"$body" \
@@ -159,7 +260,18 @@ else
         tag="${ref##*:}"
         n=$((n + 1))
         # :latest 在生产 values 里是缺陷（不可追溯），在默认 values 里允许由 ① 的 latest tag 兜住
-        body="$(tags_of "$leaf")"
+        # 这里必须分「没核对上」与「核对到不存在」：run 1 那次报
+        # "chart 引用了 GHCR 上不存在的镜像 autoscaler-svc:0.12.0 ⇒ 客户会 ErrImagePull"，
+        # 而 release run 37221272686 的 12 个 build-and-push 全 success、
+        # 直查该 tag 三轮都是 200——假红来自这一行原来的 tags_of 无重试。
+        # 假红在这条门禁上尤其贵：它给出的正是让人不敢重跑、只能人工去核的那句话。
+        body="$(tags_of "$leaf")"; src=$?
+        case "$src" in
+            1) unver "④ ${leaf}:${tag} 未能核对（GHCR 不可达，已重试 ${GHCR_ATTEMPTS} 次）——不计入缺失"
+               continue ;;
+            2) badrefs="${badrefs} ${leaf}:${tag}(GHCR 拒绝匿名拉取)"
+               continue ;;
+        esac
         if [ -z "$body" ] || ! grep -qE "\"${tag}\"" <<<"$body"; then
             badrefs="${badrefs} ${leaf}:${tag}"
         fi
@@ -198,6 +310,15 @@ fi
 
 echo
 echo "==================================================="
-echo "  发布物验收 ${VER}：PASS=${PASS} FAIL=${FAIL}"
+sum="  发布物验收 ${VER}：PASS=${PASS} FAIL=${FAIL}"
+[ "$UNVERIFIED" -gt 0 ] && sum="${sum} UNVERIFIED=${UNVERIFIED}"
+echo "$sum"
 echo "==================================================="
-[ "$FAIL" -eq 0 ]
+if [ "$UNVERIFIED" -gt 0 ]; then
+    echo "  有 ${UNVERIFIED} 项**没能核对上**（GHCR 传输失败，已重试 ${GHCR_ATTEMPTS} 次）。" >&2
+    echo "  它既不代表发布有缺陷、也不代表发布没问题——是「未知」。处置动作是重跑本脚本" >&2
+    echo "  （或调大 GHCR_ATTEMPTS / 换网络），而不是去查镜像有没有推。" >&2
+fi
+# 「未知」同样非零退出（绝不把没核对的东西当通过），但与「核对到缺失」分开计数——
+# 这两种红的处置动作相反，混在一起就会让人开始不信这条门禁。
+[ "$FAIL" -eq 0 ] && [ "$UNVERIFIED" -eq 0 ]

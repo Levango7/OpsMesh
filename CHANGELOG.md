@@ -449,6 +449,33 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
   `ADD FULLTEXT INDEX x (…)`，正则先撞上它、把 `x` 当成索引名。改为**先剥 `--` 行注释再匹配**，
   与部署资产门禁第 13 节是同一课：门禁若不剥散文，就会给出看似精确的错误结论。
 
+## [Unreleased] — 2026-10-05 发布物验收脚本会把网络抖动判成发布缺陷（含一次我自己的误报）
+
+- **先收回一句话**：我在本轮报告里说过「验收抓到两条真 FAIL，其中 autoscaler-svc 会让客户 ErrImagePull」——
+  **这个结论是错的**，成因见下。真实事实是：release run `37221272686` 的 **12 个 `build-and-push` 全 success**
+  （含 autoscaler-svc / incident-svc），直查 GHCR `levango7/*/0.12.0` 的 manifest **三轮全 200**，
+  脚本改完后正向判据是 **① 14/14 tag、② 14/14 `.sig` + 14/14 `.att`、③ Release 5 assets + 能力降级清单、
+  ④ 14 个 chart 引用全部存在 ⇒ PASS=7 FAIL=0**。
+- **缺陷本身**：`verify-release-artifacts.sh` 的四项判据设计是「取不到 token / 空响应 / 解析不到 digest ⇒ 判红」，
+  fail-closed 方向没错，但它**把「没核对上」和「核对到不存在」并成同一个 [FAIL]**，且一次 HTTP 失败不重试。
+  后果是同一条命令连跑两遍给出**两个不同的 FAIL 集**（第一遍：portal-svc 缺 `.att` + autoscaler-svc 引用不存在；
+  第二遍：换成 5 个仓库取不到 token，而第一遍那两条自己变绿了）。这种红不可复现、不可行动，
+  代价是让人开始不信这条门禁——而它守的恰是「客户装不装得起来」。
+- **改法**：新增 `ghcr_get`（传输失败与 429/5xx 重试 `GHCR_ATTEMPTS` 次，默认 3），
+  结论从两种变三种：`[PASS]` / `[FAIL]`（确定性 401/404、tag 缺失等——发布事故）/ `[UNVERIFIED]`
+  （重试耗尽——未知）。**未知仍然非零退出**（绝不把没核对当通过），但与缺陷分开计数、分开文案：
+  前者只需重跑或换网络，后者要去查发布。④ 引用核对同样分流，不再把取不到 tag 列表的引用算成「不存在」。
+- **过程里我自己写进了一处更阴的 bug**：`ghcr_get` 用 `printf -v "$输出变量名"` 回写，
+  却同时声明了同名 `local code`——bash 动态作用域下被调函数的 local **遮蔽了调用方传进来的输出变量**，
+  于是输出永远为空、`set -u` 报未绑定、调用方按失败处理，一次运行冒出 **28 项 UNVERIFIED**
+  （= 14 仓库 × ①④ 两处），看起来全是「GHCR 不可达」，其实一个网络错误都没有。
+  定位方式是把三个函数抽进 `/tmp` 单独驱动（不是改日志、不是猜），修好后内部变量统一加 `__gh_` 前缀。
+  **教训：`printf -v` 这种「输出参数」写法里，被调函数的任何 local 都不能与调用方可能传入的变量同名。**
+- **验收（双向都跑过，不是只测正向）**：正向 `0.12.0` ⇒ `PASS=7 FAIL=0`、exit 0；
+  反向 `0.9.9`（从未发布的版本号）⇒ `FAIL=29`、exit 1，确认 fail-closed 没被改成 fail-open；
+  另测「不存在的仓库」⇒ `token` 返回确定性拒绝（rc=2 → 判红），与「不可达」（rc=1 → UNVERIFIED）分流正确。
+  `bash -n` 与 `shellcheck -S warning` 均干净。
+
 ## [Unreleased] — 2026-10-05 清掉会阻断 CI 的 lint 债，并把行尾门禁从 17 分钟压到 2.7 秒
 
 上一条 work 线交接时用 CI 同款 `golangci-lint v2.13.2` 复跑当前工作树，报出 2 条
