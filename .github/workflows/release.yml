@@ -33,9 +33,12 @@ jobs:
         # 它仍被 ci.yml 的 services job 逐个 `go build ./...` 覆盖（编译/测试不受影响）。
         # 这类"模块 vs 服务"的差集必须写进 validate-deploy-assets.sh 的豁免表（含理由），
         # 否则第 2/10 节会红——刻意不允许静默漂移。
-        # 锚点 &releaseServices 是**唯一**的服务清单定义源：promote job 用同一份 alias。
-        # 两处各抄一份的话，"发出去的"与"提权的"就可能不是同一批服务（本项目在孪生清单上吃过亏）。
-        service: &releaseServices
+        # 服务清单在 build-and-push 与 promote **两处各一份**（GitHub Actions 的
+        # workflow 解析器不支持 YAML 锚点/别名——release.yml 曾用 &releaseServices/
+        # *releaseServices 做单一清单源，结果整个 workflow 0 秒挂：GitHub 端解析
+        # 直接拒绝，actionlint 同时判红，2026-10-05 修复）。新增服务必须两处同步改，
+        # 漏一处就是「发出去的」与「提权的」不是同一批服务（本项目在孪生清单上吃过亏）。
+        service:
           - auth-svc
           - device-svc
           - alert-svc
@@ -88,11 +91,12 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "image=${{ env.IMAGE_PREFIX }}/${{ matrix.service }}" >> "$GITHUB_OUTPUT"
 
-      - name: Build Docker image
-        # 构建上下文=仓库根（services/<svc> 的 go.mod 均 replace opsmesh => ../..，
-        # 上下文限单服务目录时容器内无主模块，go mod verify 必报
-        # "replaced by ../../: open /go.mod"——首跑实测）。统一走根级
-        # Dockerfile.service 模板，服务名经 --build-arg SERVICE 注入。
+      # 构建上下文=仓库根（services/<svc> 的 go.mod 均 replace opsmesh => ../..，
+      # 上下文限单服务目录时容器内无主模块，go mod verify 必报
+      # "replaced by ../../: open /go.mod"——首跑实测）。统一走根级
+      # Dockerfile.service 模板，服务名经 --build-arg SERVICE 注入。
+      # （此位置曾有一个拆分时遗留的悬空步骤头「Build Docker image」，缺 run/uses
+      #   被 actionlint 判红，2026-10-05 删除；上面这段构建上下文理由属于下面的 buildx 步骤。）
       - name: Build Docker image（只推不可变的 :<sha>，版本 tag 与 :latest 交给 promote job）
         # 为什么拆两段（原形态是实测缺陷）：一条 buildx 同时推 :sha、:<版本> 与 :latest，
         # 而 Trivy（下一步，exit-code 1）、SBOM、签名全部排在推送**之后**——扫描判红的镜像
@@ -240,7 +244,21 @@ jobs:
       packages: write
     strategy:
       matrix:
-        service: *releaseServices
+        # 与 build-and-push 的 matrix.service 是同一份清单（见该处的同步警告：
+        # GitHub Actions 不支持锚点，只能两处各一份，新增服务必须两处同步改）。
+        service:
+          - auth-svc
+          - device-svc
+          - alert-svc
+          - task-svc
+          - config-svc
+          - log-svc
+          - aio-svc
+          - autoscaler-svc
+          - gpu-svc
+          - incident-svc
+          - portal-svc
+          - runbook-svc
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
