@@ -409,22 +409,89 @@ else
   bad "task-svc 有 ${nseq} 条 /api/v1/tasks/<数字> 原始路径序列 ⇒ NormalizePath 未生效，基数熔断可被绕过"
 fi
 
+# ── 5c. 微服务版本可观测面（TD-76 收尾）────────────────────────────────────
+# 为什么这条必须在黑盒侧断言：12 个微服务是用 Dockerfile.service 的
+#   -ldflags "-X …/internal/version.Version=${VERSION}"
+# 把版本编进二进制的，但控制面有 /version 端点、微服务此前**没有任何可读出口**。
+# 更根本的是那次 -ldflags 一直空转——服务没链入 internal/version 包，
+# 链接器对未链入包的 -X **静默忽略**：构建成功、产物照跑、版本恒为默认值。
+# 也就是说"构建期注入了版本"这件事，过去既没有出口、也根本没生效。
+#
+# 现在 pkg/metrics.Init 把 version/commit 渲染进 opsmesh_build_info，
+# 于是不 exec 进容器就能从 /metrics 读到进程自证版本。本段逐服务比对
+# 「.env 的 OPSMESH_VERSION」与「该进程自报的 version」。
+#
+# 与 §15a 控制面 /version 断言同构：那边查控制面，这边查 12 个微服务；
+# 归一化口径也共用同一个坑——镜像 tag 是 0.11.0（不带 v）而 -X 注入的是 v0.11.0（带 v），
+# 直接字符串相等会把一次完全正常的部署判成"版本注入未生效"（2026-10-02 实测踩过）。
+sec "5c. 微服务版本可观测面（TD-76：不 exec 进容器即可自证版本）"
+svc_want_ver="$(env_val OPSMESH_VERSION)"
+svc_want_norm="$(printf '%s' "$svc_want_ver" | sed 's/^[vV]//')"
+vbad=0; vchecked=0
+for sp in $SVC_PORTS; do
+  svc="${sp%%:*}"; dflt="${sp##*:}"; port="$(svc_port "$svc" "$dflt")"
+  mbody="$(curl -sS --max-time 8 "http://127.0.0.1:${port}/metrics" 2>/dev/null)"
+  line="$(grep -E '^opsmesh_build_info\{' <<<"$mbody" | head -1)"
+  if [ -z "$line" ]; then
+    bad "${svc} :${port}/metrics 无 opsmesh_build_info —— 该进程无法自证版本（TD-76 未生效？）"
+    vbad=$((vbad+1)); continue
+  fi
+  # ① 指标值恒为 1、信息全在标签里（Prometheus 生态 build_info 的通行做法）。
+  if ! grep -qE '^opsmesh_build_info\{[^}]*\} 1$' <<<"$line"; then
+    bad "${svc} opsmesh_build_info 的值不是 1（实际：${line}）"
+    vbad=$((vbad+1)); continue
+  fi
+  # ② service 标签必须与本服务同名，否则 12 个服务的版本会互相张冠李戴。
+  if ! grep -qE "^opsmesh_build_info\{service=\"${svc}\"," <<<"$line"; then
+    bad "${svc} opsmesh_build_info 的 service 标签不匹配（实际：${line}）"
+    vbad=$((vbad+1)); continue
+  fi
+  # ③ 版本与 .env 一致（去 v 归一后比较，不做模糊匹配）。
+  #    提取式要写 `v?([^"]*)` 而不是 `[^vV]*([0-9][^"]*)`：后者里的字符类
+  #    `[^vV]*` 是"任意非 v 字符"（贪婪），实测会把 "0.12.0" 解析成 "4"、
+  #    把 "v0.11.0" 解析成空——门禁拿一个错值去比对，会把正常的部署判成注入未生效。
+  got_norm="$(sed -nE 's/.*version="v?([^"]*)".*/\1/p' <<<"$line" | head -1)"
+  if [ -z "$svc_want_norm" ]; then
+    warn "${svc} .env 未设 OPSMESH_VERSION，跳过版本比对（仍已确认 build_info 可读且 service 标签正确）"
+  elif [ "$got_norm" != "$svc_want_norm" ]; then
+    bad "${svc} 自报版本='${got_norm:-解析不出}' ≠ .env OPSMESH_VERSION='${svc_want_norm}'（版本注入未生效？查 Dockerfile.service 的 -X 包路径是否真的在链接闭包里）"
+    vbad=$((vbad+1))
+  else
+    vchecked=$((vchecked+1))
+  fi
+  # ④ commit 标签不能为空：空 commit 说明 -X 链了包但没注入值，比"没这个指标"更难查。
+  cval="$(sed -nE 's/.*commit="([^"]*)".*/\1/p' <<<"$line" | head -1)"
+  if [ -z "$cval" ]; then
+    bad "${svc} opsmesh_build_info 的 commit 标签为空（-X 链了包但没注入值？）"
+    vbad=$((vbad+1))
+  fi
+done
+if [ "$vbad" -eq 0 ]; then
+  ok "12 个微服务的 opsmesh_build_info 均存在、值=1、service 标签自洽${vchecked:+、${vchecked} 个版本与 .env 一致}"
+else
+  echo "         （共 ${vbad} 个服务不合规；微服务镜像比 .env 旧时会命中——升级期需先推镜像）"
+fi
+
 sec "6. 微服务健康检查（12 个，与出厂 compose 栈的服务清单一致）"
 # 12 个而不是 9 个：incident/runbook/autoscaler 三域已于 v0.10.0 进栈，此前这里漏列，
-# 症状是「部署自检全绿但从没探过那三个容器」——它们的健康路径还与其它服务不同（/api/v1/health），
-# 直接照抄 /health 会得到假的失败，所以逐个按 compose 的 healthcheck 写。
+# 症状是「部署自检全绿但从没探过那三个容器」。
+#
+# 路径统一到 /health（TD-77）：此前这里是逐个按各服务历史路径写的
+# （incident/runbook/autoscaler 用 /api/v1/health、log-svc 用 /healthz），
+# 2026-10-05 已全部切到规范路径——代码侧旧路径仍注册为别名，所以两种写法都能探到，
+# 但**统一后这一段才可能与 compose 的 healthcheck 逐字一致**，否则改了一处就会漏另一处。
 for e in "auth-svc:$(env_val AUTH_SVC_HTTP_PORT 8100):/health" \
          "device-svc:$(env_val DEVICE_SVC_HTTP_PORT 8101):/health" \
          "task-svc:$(env_val TASK_SVC_HTTP_PORT 8102):/health" \
          "alert-svc:$(env_val ALERT_SVC_HTTP_PORT 8103):/health" \
-         "incident-svc:$(env_val INCIDENT_SVC_HTTP_PORT 8104):/api/v1/health" \
-         "log-svc:$(env_val LOG_SVC_HTTP_PORT 8105):/healthz" \
+         "incident-svc:$(env_val INCIDENT_SVC_HTTP_PORT 8104):/health" \
+         "log-svc:$(env_val LOG_SVC_HTTP_PORT 8105):/health" \
          "config-svc:$(env_val CONFIG_SVC_HTTP_PORT 8106):/health" \
          "gpu-svc:$(env_val GPU_SVC_HTTP_PORT 8107):/health" \
          "aio-svc:$(env_val AIO_SVC_HTTP_PORT 8108):/health" \
          "portal-svc:$(env_val PORTAL_SVC_HTTP_PORT 8109):/health" \
-         "runbook-svc:$(env_val RUNBOOK_SVC_HTTP_PORT 8110):/api/v1/health" \
-         "autoscaler-svc:$(env_val AUTOSCALER_SVC_HTTP_PORT 8111):/api/v1/health"; do
+         "runbook-svc:$(env_val RUNBOOK_SVC_HTTP_PORT 8110):/health" \
+         "autoscaler-svc:$(env_val AUTOSCALER_SVC_HTTP_PORT 8111):/health"; do
   n="${e%%:*}"; r="${e#*:}"; p="${r%%:*}"; path="${r#*:}"
   c="$(curl -sS --max-time 6 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${p}${path}" 2>/dev/null)"
   [ "$c" = "200" ] && ok "${n} :${p}${path} → 200" || bad "${n} :${p}${path} → ${c:-无响应}"

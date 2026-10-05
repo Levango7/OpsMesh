@@ -342,6 +342,41 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
 
 **依赖与门禁**：axios `1.19.0 → 1.20.0`（Trivy 刷新库后 7 条 HIGH 均有修复版本，非本次代码引入）；`validate-deploy-assets.sh` 新增第 12 节（业务指标标签/命名，防实体 ID 基数）与第 13 节（引导脚本不得建表 + compose 库名必须有建库来源）。
 
+## [Unreleased] — 2026-10-05 CMDB 检索走全文索引（迁移 020）+ 按 token 分流召回 + verify-runtime 版本断言
+
+**这一版的核心是一个被实测推翻的方案**：原计划把 `SearchCIs` 的召回从 `LIKE` 整体换成
+`MATCH … AGAINST`，并已在迁移注释里写下「实测命中集合与 LIKE 完全一致」。动手前逐 token 实测
+（MySQL 8.0.46，10 行中英混合语料，49 个 token）发现**这句话只对纯 ASCII 词成立**：
+
+- `fulltext.Tokenize` 把中文按**单字**切，`WITH PARSER ngram` 按**双字**切（`ngram_token_size=2`），
+  粒度不一致 ⇒ **长度=1 的 token 35/35 全部召回为空**。照原方案实施，**中文检索会全部返回空结果**。
+- 含下划线的 token（`server_prod`）同样漏召回：ngram 按字面量处理 `_`，而 LIKE 里 `_` 是
+  单字符通配符（实测 `webserver-prod LIKE '%server_prod%'` 命中，而 `LOCATE(...)=0` 证明不是子串），
+  两者语义本就不同。
+- 长度 ≥ 2 且无下划线的 13 个 token，MATCH 命中集合均为 LIKE 的**超集或相等**。
+
+所以实现改为**逐 token 分流**（`ciSearchTokenUseFulltext`）：长度=1 或含 `_` 走 7 列 `LIKE`，
+其余走 `MATCH`。允许 MATCH 略微多召回（ngram 跨字会把「订单1」匹到「订单服务」）是安全的——
+精确判定与排序仍由 `matchCI` 的**前缀匹配**复核；反向的漏召回无补救手段，必须避免。
+
+- **迁移 020**：`ci_attrs_text TEXT GENERATED ALWAYS AS (CAST(attrs AS CHAR)) STORED`
+  （MySQL 的 FULLTEXT 不能建在 JSON 列上）+ `FULLTEXT INDEX ft_ci_items_search
+  (name, ci_type, ci_attrs_text) WITH PARSER ngram`。不动任何既有 store 文件，与并行的
+  TD-74 改动零重叠。
+- **运行时探测**：`isCISearchFulltextReady` 查 `information_schema.statistics`（不试跑 MATCH——
+  索引缺失时那会让整条查询在执行计划阶段失败），结果缓存、一进程只探一次，出错按未就绪处理。
+  **020 与代码的发布顺序不敏感**：先迁移走索引、后迁移退回 LIKE，回滚 020 也不影响检索可用。
+- **测试**：单元 12 条 + 真库集成 4 条（gated on `OPSMESH_TEST_MYSQL_DSN`）。集成里有两条是
+  **性质断言**而非样例断言：「带索引 vs 不带索引，同一批查询结果必须逐条相同」与「不得比纯 LIKE
+  实现漏召回」。变异检验 4 处（整体切 MATCH / 去探测缓存 / rune 长度改成字节长度 / 分流恒真），
+  最后一处含真库共 4 个中文子用例全部判红。
+- **TD-76 收尾**：`verify-runtime.sh` 新增 §5c，对 12 个服务逐个断言 `opsmesh_build_info` 存在、
+  值恒为 1、`service` 标签自洽、`version` 与 `.env` 的 `OPSMESH_VERSION` 一致（去 `v` 归一）、
+  `commit` 非空。顺带修掉该脚本第 6 段遗留的 TD-77 漏项（4 个服务健康路径仍是旧值）。
+- **踩坑记录（已写进协调文档）**：本机 MySQL 客户端默认 `collation_connection=latin1_swedish_ci`，
+  中文写入即损坏，须显式 `--default-character-set=utf8mb4` 并用 `HEX()` 校验——我第一轮探针的
+  样本数据就是坏的。**探针本身也要有自检对照**，否则错的是探针、结论全反。
+
 ## [Unreleased] — 2026-10-05 清掉会阻断 CI 的 lint 债，并把行尾门禁从 17 分钟压到 2.7 秒
 
 上一条 work 线交接时用 CI 同款 `golangci-lint v2.13.2` 复跑当前工作树，报出 2 条

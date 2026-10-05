@@ -422,6 +422,9 @@ func searchRowsCols() []string {
 }
 
 // TestSQLSearchCIsQueryShape 校验召回 SQL 的形状：租户/状态/类型过滤 + 每 token 一组 LIKE + LIMIT。
+//
+// 本用例刻意在"索引未就绪"状态下运行，因此断言的是全 LIKE 召回的形状；
+// MATCH 分流的形状由 search_fulltext_test.go 覆盖。
 func TestSQLSearchCIsQueryShape(t *testing.T) {
 	var captured string
 	// QueryMatcherFunc 只用于捕获真实 SQL，因此 mock 本身不需要使用。
@@ -437,7 +440,7 @@ func TestSQLSearchCIsQueryShape(t *testing.T) {
 	}
 	defer db.Close()
 	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows(searchRowsCols()))
-	s := &SQLCiStore{db: db}
+	s := pinFulltextProbe(&SQLCiStore{db: db}, false)
 
 	_, _ = s.SearchCIs(context.Background(), "t1", CiSearchQuery{
 		Query: "web 生产", CiType: "machine", Status: "active", Limit: 5,
@@ -473,7 +476,7 @@ func TestSQLSearchCIsScoring(t *testing.T) {
 		t.Fatalf("sqlmock.New: %v", err)
 	}
 	defer db.Close()
-	s := &SQLCiStore{db: db}
+	s := pinFulltextProbe(&SQLCiStore{db: db}, false)
 	now := time.Now()
 
 	rows := sqlmock.NewRows(searchRowsCols())
@@ -532,7 +535,7 @@ func TestSQLAndMemoryBackendsAgree(t *testing.T) {
 				t.Fatalf("sqlmock.New: %v", err)
 			}
 			mock.ExpectQuery("SELECT id, ci_type").WillReturnRows(rows)
-			sqlStore := &SQLCiStore{db: db}
+			sqlStore := pinFulltextProbe(&SQLCiStore{db: db}, false)
 
 			memHits, mErr := memStore.SearchCIs(context.Background(), tenant, CiSearchQuery{Query: q, Limit: ciSearchMaxLimit})
 			if mErr != nil {
