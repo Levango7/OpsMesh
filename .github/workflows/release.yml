@@ -329,8 +329,17 @@ jobs:
             echo "::error::${VER} 的发布物核对到缺失（FAIL=${fails}）：客户按发布说明安装会拿不到产物（§19 / §32.9 就是这个形状）"
             exit 1
           fi
+          if [ "$rc" -ne 0 ] && [ "$unver" -eq 0 ] && [ -z "$summary" ]; then
+            # 脚本没给出任何结论（崩溃、参数错、找不到 gh/helm 之外的意外）：
+            # 这不是"未知"而是"没跑成"，必须判红——否则一条从未执行过的门禁会看起来像通过了。
+            echo "::error::verify-release-artifacts.sh 未产出验收结论（exit=${rc}），无法判定发布物是否存在"
+            exit 1
+          fi
           if [ "$rc" -ne 0 ] || [ "$unver" -gt 0 ]; then
-            echo "::warning::有 ${unver} 项没能核对上（GHCR 传输失败，已重试 ${GHCR_ATTEMPTS} 次）——既不是缺陷也不是通过，请重跑本 job"
+            # 注意：这里刻意用 ${GHCR_ATTEMPTS:-5} 而不是 ${GHCR_ATTEMPTS}——本 job 开了 set -u，
+            # 未定义的变量会在这里直接把"警告并放行"变成 exit 1（本地跑分支时实测踩过）。
+            # 一条负责区分"未知"与"缺陷"的门禁，不能因为自己的引用方式而伪装成缺陷。
+            echo "::warning::有 ${unver} 项没能核对上（GHCR 传输失败，已重试 ${GHCR_ATTEMPTS:-5} 次）——既不是缺陷也不是通过，请重跑本 job"
             exit 0
           fi
           echo "✅ 发布物回核通过：${summary}"

@@ -464,6 +464,13 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
   从**钉版** `alpine/helm:3.14.4` 镜像里取二进制，不引外部安装脚本
   （否则这道门禁的可用性取决于第三方站点的当下状态——正是它要防的那类事）。
 - 验证：YAML 解析通过（4 个 job、needs/permissions/3 steps 与预期一致），两段内联脚本 `bash -n` 干净。
+- **把分支真跑一遍抓到了我自己写进去的 bug**：第一版 warning 分支引用 `${GHCR_ATTEMPTS}`，
+  而该 step 开了 `set -u` —— 变量缺失时"警告并放行"会直接变成 **exit 1**，也就是
+  把可恢复的网络抖动做成红色发布门禁（正是本 job 设计要避免的事）。改为 `${GHCR_ATTEMPTS:-5}`，
+  并补一条此前没有的分支：脚本没产出任何验收结论（崩溃/参数错）时判红，而不是让它看起来像通过。
+  五分支实测结果：干净→0+✅；FAIL>0→1+error；未知(有 env)→0+warning；未知(无 env)→0+warning；无结论→1+error。
+- 教训一句话：**只在 tag 上才会执行的 CI 逻辑，等于永远不会被执行**——所以它的分支必须在本地用合成输出
+  跑一遍，否则第一次真跑就是发布现场。
 
 **这条还没覆盖的部分，写清楚**：`:latest` 是在 `build-and-push` 里与版本 tag 同一次 buildx 推出的，
 事后回核无法阻止一个坏版本把 latest 带走。要做到"核对不过就不动 latest"，得把那次 buildx 拆成
