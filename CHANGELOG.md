@@ -449,6 +449,37 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
   `ADD FULLTEXT INDEX x (…)`，正则先撞上它、把 `x` 当成索引名。改为**先剥 `--` 行注释再匹配**，
   与部署资产门禁第 13 节是同一课：门禁若不剥散文，就会给出看似精确的错误结论。
 
+## [Unreleased] — 2026-10-05 TD-74 收口：可空列↔Scan 门禁从「抽样」换成「账目」，并修好守卫自身的三个假绿
+
+接手时 `internal/store/nullable_scan_guard_test.go` 跑出来是全绿的。把它的**判定面量化**之后发现绿不等于覆盖：
+全包 87 个 `.Scan(` 站点里只有 56 个参与判定，而参数 ≥3 的宽扫描有 6 处两头不管。三处根因都在守卫自己身上，
+且每一处的症状都是「看起来判过了」：
+
+- **`enclosingFuncName` 对方法形态取到空串**：原实现取「第一个左括号之前的文本」当函数名，
+  而 `func (s *SQLStore) Alerts(...)` 的第一个左括号是**接收者**的括号 ⇒ 返回 ""。
+  登记表 `helperScanTables` 按函数名绑定表，空串永远绑不上 ⇒ 凡内联在方法里的大扫描（含 12 列的 `Alerts`）全都对门禁隐形。
+- **嵌套字段用第一个点切分**：`&r.Event.TenantID` 取到 `Event.TenantID`，camelToSnake 之后对不上任何列名 ⇒
+  这类站点被计入「已判定」却一条都判不到（改 `LastIndex` 后当场浮出 6 处报点）。
+- **「就近归属」在列数不等时其实抓的是上一条语句**：例如 `VerifyAuditChain` 里抓到 `audit_chain_head` 的 2 列，
+  列数≠目标数 ⇒ ①跳过判定，而③「必须登记」又因为「已经归属到表了」而不要求登记 ⇒ 4 处从两条测试中间溜走。
+
+修好后浮出两个真站点并按 `scanAuditRow` 的同一套 idiom 收口：`scanAutomationExecution`
+（`automation_executions.rule_name`/`detail`）与 `VerifyAuditChain` 的内联扫描（`audit_log` 六个可空列，
+**没有任何 IS NOT NULL 守着**——上一位排除的 `entry_hash` 理由成立，但那六列不在其内）。
+定性是**潜伏**而不是现行：两者写侧都原样入库（空串写成 `''`），所以 NULL 只可能来自人工改数、外部导入
+或将来改用 `nullString()`；一旦发生，前者表现为执行记录凭空消失（helper 出错 `return nil`），
+后者更重——整次审计链校验硬失败。
+
+**把抽样变成账目**（这条才是"穷举"二字真正的含义）：新增
+`TestEveryWideScanSiteIsJudgedOrExempted`——每个宽扫描站点要么参与判定、要么带理由进 `scanSiteExemptions`；
+豁免条目**过期即判红**（站点没了必须删，否则"曾经合理"会变成永久免检）；再加覆盖只许上调的棘轮
+`judgedSitesFloor=56`。当前账目：87 站点 = 56 参与判定 + 31 处 `args<=2` 的标量/聚合读取（`COUNT(*)`、
+`SELECT version, checksum` 一类），参数 ≥3 者全部要么判定要么豁免。
+
+验证：变异检验把两处可空列改回裸字段扫描 ⇒ 守卫精确点名 `sql_automation.go:254` 两处并判红，还原复绿；
+`go build ./...` 0、`go vet` 0、`internal/store` 全量测试 ok（40.2s）、CI 同款 `golangci-lint` **0 issues**、gofmt 干净。
+`-race` 与真库回归（`sql_devices_agents_scan_test.go` 等）由 CI 的 race / integration job 覆盖——本机 Docker 不可达，不冒充跑过。
+
 ## [Unreleased] — 2026-10-05 发布物验收脚本会把网络抖动判成发布缺陷（含一次我自己的误报）
 
 - **先收回一句话**：我在本轮报告里说过「验收抓到两条真 FAIL，其中 autoscaler-svc 会让客户 ErrImagePull」——
