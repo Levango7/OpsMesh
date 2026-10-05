@@ -220,15 +220,12 @@ func unmarshalGate(raw []byte) *GateConfig {
 // scanDeploy 扫描单行（*sql.Row）。
 func scanDeploy(row *sql.Row) (*DeployTask, error) {
 	dt := &DeployTask{}
-	var (
-		repoURL, content, path, targetIDs, taskIDs, createdBy sql.NullString
-		canaryTargets, stableTargets                          sql.NullString
-		strategy                                              sql.NullString
-		gateRaw                                               []byte
-		canaryWeight                                          int
-		autoRollback                                          bool
-		createdAt, updatedAt                                  time.Time
-	)
+	var repoURL, content, path, targetIDs, taskIDs, createdBy sql.NullString
+	var canaryTargets, stableTargets, strategy sql.NullString
+	var gateRaw []byte
+	var canaryWeight int
+	var autoRollback bool
+	var createdAt, updatedAt sql.NullTime
 	err := row.Scan(&dt.ID, &dt.TenantID, &dt.Name, &dt.Type,
 		&repoURL, &content, &path, &targetIDs, &taskIDs, &createdBy,
 		&dt.Status, &createdAt, &updatedAt,
@@ -245,8 +242,12 @@ func scanDeploy(row *sql.Row) (*DeployTask, error) {
 	dt.TargetIDs = targetIDs.String
 	dt.TaskIDs = taskIDs.String
 	dt.CreatedBy = createdBy.String
-	dt.CreatedAt = createdAt
-	dt.UpdatedAt = updatedAt
+	if createdAt.Valid {
+		dt.CreatedAt = createdAt.Time
+	}
+	if updatedAt.Valid {
+		dt.UpdatedAt = updatedAt.Time
+	}
 	dt.Strategy = strategy.String
 	dt.CanaryWeight = canaryWeight
 	dt.AutoRollback = autoRollback
@@ -259,15 +260,12 @@ func scanDeploy(row *sql.Row) (*DeployTask, error) {
 // scanDeployRow 扫描多行结果的一行（*sql.Rows）。
 func scanDeployRow(rows *sql.Rows) (*DeployTask, error) {
 	dt := &DeployTask{}
-	var (
-		repoURL, content, path, targetIDs, taskIDs, createdBy sql.NullString
-		canaryTargets, stableTargets                          sql.NullString
-		strategy                                              sql.NullString
-		gateRaw                                               []byte
-		canaryWeight                                          int
-		autoRollback                                          bool
-		createdAt, updatedAt                                  time.Time
-	)
+	var repoURL, content, path, targetIDs, taskIDs, createdBy sql.NullString
+	var canaryTargets, stableTargets, strategy sql.NullString
+	var gateRaw []byte
+	var canaryWeight int
+	var autoRollback bool
+	var createdAt, updatedAt sql.NullTime
 	err := rows.Scan(&dt.ID, &dt.TenantID, &dt.Name, &dt.Type,
 		&repoURL, &content, &path, &targetIDs, &taskIDs, &createdBy,
 		&dt.Status, &createdAt, &updatedAt,
@@ -281,8 +279,12 @@ func scanDeployRow(rows *sql.Rows) (*DeployTask, error) {
 	dt.TargetIDs = targetIDs.String
 	dt.TaskIDs = taskIDs.String
 	dt.CreatedBy = createdBy.String
-	dt.CreatedAt = createdAt
-	dt.UpdatedAt = updatedAt
+	if createdAt.Valid {
+		dt.CreatedAt = createdAt.Time
+	}
+	if updatedAt.Valid {
+		dt.UpdatedAt = updatedAt.Time
+	}
 	dt.Strategy = strategy.String
 	dt.CanaryWeight = canaryWeight
 	dt.AutoRollback = autoRollback

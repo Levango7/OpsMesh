@@ -165,8 +165,9 @@ func scanWorkflow(s scanner) (*WorkflowDef, error) {
 	var dag, cron sql.NullString
 	var lastRunAt sql.NullTime
 	var lastRunStatus sql.NullString
+	var createdAt, updatedAt sql.NullTime
 	if err := s.Scan(&wf.ID, &wf.Name, &wf.AgentID, &wf.TenantID, &dag, &cron,
-		&wf.Status, &lastRunAt, &lastRunStatus, &wf.CreatedAt, &wf.UpdatedAt); err != nil {
+		&wf.Status, &lastRunAt, &lastRunStatus, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	wf.DAG = dag.String
@@ -175,6 +176,12 @@ func scanWorkflow(s scanner) (*WorkflowDef, error) {
 		wf.LastRunAt = lastRunAt.Time
 	}
 	wf.LastRunStatus = lastRunStatus.String
+	if createdAt.Valid {
+		wf.CreatedAt = createdAt.Time
+	}
+	if updatedAt.Valid {
+		wf.UpdatedAt = updatedAt.Time
+	}
 	if wf.Status == "" {
 		wf.Status = StatusDraft
 	}

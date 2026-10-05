@@ -57,8 +57,14 @@ func (s *SQLCiStore) CiTypes(ctx context.Context, tenantID string) ([]CiType, er
 	var out []CiType
 	for rows.Next() {
 		var t CiType
-		if err := rows.Scan(&t.ID, &t.Name, &t.DisplayName, &t.Builtin, &t.CreatedAt); err != nil {
+		var displayName sql.NullString
+		var createdAt sql.NullTime
+		if err := rows.Scan(&t.ID, &t.Name, &displayName, &t.Builtin, &createdAt); err != nil {
 			return nil, fmt.Errorf("CiTypes scan: %w", err)
+		}
+		t.DisplayName = displayName.String
+		if createdAt.Valid {
+			t.CreatedAt = createdAt.Time
 		}
 		out = append(out, t)
 	}
@@ -555,8 +561,9 @@ func scanCI(s scanner) (*CiItem, error) {
 	var ci CiItem
 	var attrsStr sql.NullString
 	var source, agentID, deviceID, approvalStatus sql.NullString
+	var createdAt, updatedAt sql.NullTime
 	err := s.Scan(&ci.ID, &ci.CiType, &ci.TenantID, &ci.Name, &ci.Status, &approvalStatus,
-		&attrsStr, &source, &agentID, &deviceID, &ci.Version, &ci.CreatedAt, &ci.UpdatedAt)
+		&attrsStr, &source, &agentID, &deviceID, &ci.Version, &createdAt, &updatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("CI not found")
@@ -566,6 +573,12 @@ func scanCI(s scanner) (*CiItem, error) {
 	ci.Source = source.String
 	ci.AgentID = agentID.String
 	ci.DeviceID = deviceID.String
+	if createdAt.Valid {
+		ci.CreatedAt = createdAt.Time
+	}
+	if updatedAt.Valid {
+		ci.UpdatedAt = updatedAt.Time
+	}
 	if approvalStatus.Valid {
 		ci.ApprovalStatus = approvalStatus.String
 	} else {
@@ -711,9 +724,16 @@ func (s *SQLCiStore) GetAttrTemplates(ctx context.Context, ciType, tenantID stri
 	var out []CiAttrTemplate
 	for rows.Next() {
 		var t CiAttrTemplate
+		var defaultValue, tenantID sql.NullString
+		var createdAt sql.NullTime
 		if err := rows.Scan(&t.ID, &t.CiType, &t.AttrKey, &t.Label, &t.AttrType,
-			&t.Required, &t.DefaultValue, &t.TenantID, &t.CreatedAt); err != nil {
+			&t.Required, &defaultValue, &tenantID, &createdAt); err != nil {
 			return nil, fmt.Errorf("GetAttrTemplates scan: %w", err)
+		}
+		t.DefaultValue = defaultValue.String
+		t.TenantID = tenantID.String
+		if createdAt.Valid {
+			t.CreatedAt = createdAt.Time
 		}
 		out = append(out, t)
 	}
@@ -760,10 +780,16 @@ func (s *SQLCiStore) DeleteAttrTemplate(ctx context.Context, id int, tenantID st
 func scanRelation(s scanner) (*CiRelation, error) {
 	var rel CiRelation
 	var attrsJSON sql.NullString
+	var tenantID sql.NullString
+	var createdAt sql.NullTime
 	err := s.Scan(&rel.ID, &rel.SourceCIID, &rel.TargetCIID, &rel.RelationType,
-		&rel.TenantID, &attrsJSON, &rel.CreatedAt)
+		&tenantID, &attrsJSON, &createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("scanRelation: %w", err)
+	}
+	rel.TenantID = tenantID.String
+	if createdAt.Valid {
+		rel.CreatedAt = createdAt.Time
 	}
 	rel.Attrs = make(map[string]string)
 	if attrsJSON.Valid && attrsJSON.String != "" {
