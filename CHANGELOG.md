@@ -506,6 +506,32 @@ TD-74 的守卫按包名只扫 `internal/store`；顺着这条边界往外量，
 （`git show v0.11.0:internal/logstore/sql.go` 实测 nullStr 2 处、`sql.Null*` 0 处 ⇒ 那版就有）。
 release-notes 的 v0.11.0 表格已把该行插在表首，原正文与其余行未改。
 
+## [Unreleased] — 2026-10-06 补上 TD-74 在控制面的最后一处空白面：`internal/logstore` 的静态可空列门禁
+
+上一条修的是产品代码，**守卫本身仍按包名只扫 `internal/store`** ⇒ `internal/logstore` 整包
+还在门禁之外。对照很刺眼：`services/log-svc/pkg/logstore`（孪生实现）已有同名门禁，控制面
+这份反而没有——而现行缺陷恰恰是在控制面这个包里第一次被真驱动复现的。所以"按包名划门禁
+范围会留下同形态空白面"这条教训，本身还欠一次闭环。
+
+新增 `internal/logstore/mysql_scan_test.go`（移植孪生那份的判定口径：可空且无 DEFAULT 才算风险、
+`sql.Null*` 与 `[]byte` 均视为已保护、只判列数==目标数的站点、嵌套字段按最后一段推列名），
+带覆盖账目（`TestEveryWideScanSiteIsJudgedOrExempted`）与只许上调的棘轮 `judgedSitesFloor=1`。
+建表语句内联在 `sql.go`（本包无 `schema.sql`），门禁走 Go 内联 DDL 解析这条路。
+
+**与真库往返测试是互补而非重复**：`TestSQLNullRoundTripRealMySQL` 证"NULL 确实能读回来"，
+但它门控于 `OPSMESH_TEST_MYSQL_DSN`——没有 DSN 的环境里一条都不跑。本门禁任何环境都跑，
+守的是"以后有人加可空列又裸扫"。CI 侧不需要再改 workflow：`internal/logstore/...` 已整体
+进入 integration job 的那一步。
+
+**敏感性是实测的**（第一次变异脚本 anchor 命中 0，是断言挡住了假结论——我凭印象把跨两行的
+`rows.Scan` 写成了单行）：改成行锚定后把六列改回裸 `string`，门禁判红并逐列点名
+`log_entries.device_id/agent_id/task_id/level/source/message`（带文件行号）；还原后哈希一致。
+验证：`gofmt -l` 空、`go vet` 0、`go test ./internal/logstore/...` ok、CI 同款 `golangci-lint` 0 issues。
+
+**顺带剔除一个我自己算错的空白面**：`internal/controlplane` 曾被计为"有 Scan 却无门禁"，
+实测那处是 `compliance.go:136` 的 `eng.Scan(...)`——合规引擎调用，不是 database/sql。
+按名字推断范围会把它算进来，按语义核对才不会。
+
 ## [Unreleased] — 2026-10-06 v0.11.0 补写对外「能力降级清单」（那版发布时这条断言还不存在）
 
 `release.yml:266` 要求"发布正文必须含能力降级清单"是 v0.12.0 才加上的，所以 **v0.11.0 的 Release 页上没有降级说明**。
