@@ -117,7 +117,7 @@ linters:
       # SA1019: httputil.ReverseProxy.Director 自 Go 1.26 deprecated（Rewrite 替代）。
       # 迁移 Rewrite 需重写网关代理的请求改写逻辑（Director 改 outreq、Rewrite 改
       # ProxyRequest——含 hop-by-hop header 处理归属变化），属行为变更；网关数据面
-      # 当前为最小代理（TD-62 待重构），与其一并进行而非现在盲迁。
+      # 当前为最小代理（TD-66 待重构），与其一并进行而非现在盲迁。
       - linters:
           - staticcheck
         text: "SA1019: \\(net/http/httputil\\.ReverseProxy\\)\\.Director has been deprecated"
