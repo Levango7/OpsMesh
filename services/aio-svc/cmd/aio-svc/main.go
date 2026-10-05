@@ -539,15 +539,6 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func envInt(key string, defaultVal int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-	return defaultVal
-}
-
 // envPort 读取 HTTP 监听端口，规范键优先、历史键回退（TD-77）。
 //
 // 为什么需要它：本服务此前只读 AIO_SVC_PORT，而 compose 发布宿主端口用的键是
