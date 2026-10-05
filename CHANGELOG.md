@@ -449,6 +449,27 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
   `ADD FULLTEXT INDEX x (…)`，正则先撞上它、把 `x` 当成索引名。改为**先剥 `--` 行注释再匹配**，
   与部署资产门禁第 13 节是同一课：门禁若不剥散文，就会给出看似精确的错误结论。
 
+## [Unreleased] — 2026-10-06 发布链补上「回核产物」这一环：release.yml 新增 verify-artifacts job
+
+补的是一个结构性缺口：`release` 只在 tag 上跑，而"打了 tag"这一步**没有任何自动检查回头核对产物**。
+本仓库两次事故都是这个形状——§19（v0.9.1 有 tag、Release 也建了，GHCR 却没有该版本镜像矩阵）、
+§32.9（归版把 Chart/values/gitops 钉到从未发布的 0.12.0，客户 `helm install` 直接 ErrImagePull）。
+
+- 新 job `verify-artifacts`，`needs: [github-release]`，跑 `verify-release-artifacts.sh <版本>` 的四项判据。
+- **三种结论接到三种 CI 语义**：`FAIL>0` ⇒ job 判红（核对到缺失，发布事故）；
+  `UNVERIFIED>0` ⇒ 只出 `::warning::` 并放行——GHCR 是公网服务，传输失败可恢复，
+  把可恢复的抖动做成红色发布门禁的代价是以后没人再看这条 job 的红。
+- `GHCR_ATTEMPTS=5`（比本机默认 3 高一档，CI 里宁可慢一点也要少出未知）。
+- 第 ④ 项判据要 `helm template`，runner 不预装 helm：沿用 `ci.yml:405` 的既有做法，
+  从**钉版** `alpine/helm:3.14.4` 镜像里取二进制，不引外部安装脚本
+  （否则这道门禁的可用性取决于第三方站点的当下状态——正是它要防的那类事）。
+- 验证：YAML 解析通过（4 个 job、needs/permissions/3 steps 与预期一致），两段内联脚本 `bash -n` 干净。
+
+**这条还没覆盖的部分，写清楚**：`:latest` 是在 `build-and-push` 里与版本 tag 同一次 buildx 推出的，
+事后回核无法阻止一个坏版本把 latest 带走。要做到"核对不过就不动 latest"，得把那次 buildx 拆成
+"先推版本 tag → 验 manifest 可解析 → 再推 latest"三步——那是发布主路径的结构改动，本轮没做，
+留作下一步单独评估（它会让每次发布多一轮网络往返，且失败时的清理语义要先定）。
+
 ## [Unreleased] — 2026-10-06 日志 SQL 后端读侧 NULL 让整条检索失败（TD-74 门禁范围之外的现行缺陷）
 
 TD-74 的守卫按包名只扫 `internal/store`；顺着这条边界往外量，`internal/logstore` 落着一个**现行**缺陷。
