@@ -84,37 +84,65 @@ func TestCISearchTokenUseFulltextCountsRunes(t *testing.T) {
 
 // newProbeMock 构造一个只预期"全文索引探测查询"的 sqlmock。
 //
-// 两列对应探测 SQL 的两个返回值：索引计数与 @@ngram_token_size。
-// 只给一列会让 Scan 失败并落进「探测出错退 LIKE」分支——那等于用错误路径冒充「未就绪」，
+// 两列对应探测 SQL 的两个返回值：索引列清单（GROUP_CONCAT）与 @@ngram_token_size。
+// idxCols 传空串表示索引不存在——探测子查询此时返回 **NULL** 而不是空串，这里如实模拟 NULL，
+// 否则拿空串测会把「索引不存在」与「列集合不一致」两条分支混成一条。
+// 只给一列则会让 Scan 失败并落进「探测出错退 LIKE」分支——那等于用错误路径冒充「未就绪」，
 // 断言看起来通过，实际测的却是另一件事（同文件 pinFulltextProbe 记的就是这个教训）。
-func newProbeMock(t *testing.T, idxCount, ngramSize int) (*SQLCiStore, sqlmock.Sqlmock) {
+func newProbeMock(t *testing.T, idxCols string, ngramSize int) (*SQLCiStore, sqlmock.Sqlmock) {
 	t.Helper()
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock.New: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	mock.ExpectQuery("information_schema.statistics").
-		WillReturnRows(sqlmock.NewRows([]string{"idx_count", "ngram_token_size"}).AddRow(idxCount, ngramSize))
+	rows := sqlmock.NewRows([]string{"index_columns", "ngram_token_size"})
+	if idxCols == "" {
+		rows.AddRow(nil, ngramSize)
+	} else {
+		rows.AddRow(idxCols, ngramSize)
+	}
+	mock.ExpectQuery("information_schema.statistics").WillReturnRows(rows)
 	return &SQLCiStore{db: db}, mock
 }
 
-// TestFulltextProbeDetectsIndex 索引存在且词元长度为实测过的 2 时为就绪。
+// TestFulltextProbeDetectsIndex 索引在位、列集合与代码一致、词元长度为 2 时才为就绪。
 func TestFulltextProbeDetectsIndex(t *testing.T) {
-	s, mock := newProbeMock(t, 3, ciSearchNgramTokenSize)
+	s, mock := newProbeMock(t, ciSearchFulltextColumnList, ciSearchNgramTokenSize)
 	if !s.isCISearchFulltextReady(context.Background()) {
-		t.Error("索引存在且 ngram_token_size=2 时应探测为就绪")
+		t.Error("索引列集合与代码一致且 ngram_token_size=2 时应探测为就绪")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("探测查询未按预期执行: %v", err)
 	}
 }
 
-// TestFulltextProbeDetectsMissingIndex 索引不存在时退回 LIKE。
+// TestFulltextProbeDetectsMissingIndex 索引不存在（探测返回 NULL）时退回 LIKE。
 func TestFulltextProbeDetectsMissingIndex(t *testing.T) {
-	s, _ := newProbeMock(t, 0, ciSearchNgramTokenSize)
+	s, _ := newProbeMock(t, "", ciSearchNgramTokenSize)
 	if s.isCISearchFulltextReady(context.Background()) {
 		t.Error("索引不存在时应探测为未就绪")
+	}
+}
+
+// TestFulltextProbeRejectsColumnSetDrift 索引在位但列集合与代码不一致时必须判未就绪。
+//
+// 这是 021 引入的新中间态：滚动发布时新二进制（MATCH 要 7 列）配还没跑 021 的旧库
+// （020 只建了 3 列索引）。若只按索引名判断，这种状态会被判成「就绪」，随后 MATCH 的列数
+// 与索引不符 → MySQL 报 1191 → **整条检索失败**：一次索引升级变成检索不可用。
+// 第三种形态（集合相同、顺序不同）也要拒，因为 MATCH 的列清单必须与索引定义同序对应。
+func TestFulltextProbeRejectsColumnSetDrift(t *testing.T) {
+	for _, cols := range []string{
+		"name,ci_type,ci_attrs_text",
+		"name,ci_type,ci_attrs_text,agent_id,device_id,source",
+		"ci_attrs_text,name,ci_type,agent_id,device_id,source,id",
+	} {
+		t.Run(cols, func(t *testing.T) {
+			s, _ := newProbeMock(t, cols, ciSearchNgramTokenSize)
+			if s.isCISearchFulltextReady(context.Background()) {
+				t.Errorf("索引列集合 %q 与代码清单 %q 不一致时应判未就绪", cols, ciSearchFulltextColumnList)
+			}
+		})
 	}
 }
 
@@ -127,11 +155,28 @@ func TestFulltextProbeDetectsMissingIndex(t *testing.T) {
 func TestFulltextProbeRejectsOtherNgramTokenSize(t *testing.T) {
 	for _, size := range []int{1, 3, 4} {
 		t.Run(fmt.Sprintf("size=%d", size), func(t *testing.T) {
-			s, _ := newProbeMock(t, 1, size) // 索引计数正常，只有词元长度不符
+			s, _ := newProbeMock(t, ciSearchFulltextColumnList, size) // 列集合正常，只有词元长度不符
 			if s.isCISearchFulltextReady(context.Background()) {
 				t.Errorf("ngram_token_size=%d 时应判未就绪（退回 LIKE），不能只看索引在不在", size)
 			}
 		})
+	}
+}
+
+// TestExtractMatchColumnListIsSingleSourced 期望列清单必须确实是从 MATCH 常量解析出来的。
+//
+// 探测拿这个清单比对库里的索引，而清单来自 ciSearchFulltextCond 的解析；解析一旦写错
+// （例如把 AGAINST 里的内容也吃进来），探测会恒判不一致、全文索引**静默失效**——
+// 现象与「没建索引」一模一样，很难往回查。故把解析结果本身钉成断言。
+func TestExtractMatchColumnListIsSingleSourced(t *testing.T) {
+	if ciSearchFulltextColumnList == "" {
+		t.Fatal("列清单解析为空：探测将恒判未就绪，全文索引静默失效")
+	}
+	if !slices.Equal(strings.Split(ciSearchFulltextColumnList, ","), matchColumnsOf(t, ciSearchFulltextCond)) {
+		t.Errorf("规范化清单 %q 与逐列解析结果不一致", ciSearchFulltextColumnList)
+	}
+	if strings.Contains(ciSearchFulltextColumnList, "AGAINST") || strings.Contains(ciSearchFulltextColumnList, "?") {
+		t.Errorf("解析越界，把匹配表达式当成了列名: %q", ciSearchFulltextColumnList)
 	}
 }
 
@@ -140,7 +185,7 @@ func TestFulltextProbeRejectsOtherNgramTokenSize(t *testing.T) {
 // 需求来源：探测是元数据查询，若每次检索都打一次，等于给每次查询加一次额外往返。
 // 这里连打三次 SearchCIs，断言 information_schema 查询只发生一次。
 func TestFulltextProbeCachedPerStore(t *testing.T) {
-	s, mock := newProbeMock(t, 1, ciSearchNgramTokenSize)
+	s, mock := newProbeMock(t, ciSearchFulltextColumnList, ciSearchNgramTokenSize)
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
 		if !s.isCISearchFulltextReady(ctx) {
@@ -238,15 +283,19 @@ func captureSearchSQL(t *testing.T, s *SQLCiStore, query, ciType string) (string
 	return captured, gotArgs
 }
 
-// newStoreWithProbe 构造一个探测结果为指定索引计数的 store（探测已在构造时完成）。
-// 词元长度固定为实测过的 2，故计数 >0 即「就绪」。
-func newStoreWithProbe(t *testing.T, indexCnt int) *SQLCiStore {
+// newStoreWithProbe 构造一个探测结果为指定就绪状态的 store（探测已在构造时完成）。
+// 列集合取代码里的期望值，词元长度取实测过的 2，故 ready=true 就是「三条件全满足」。
+func newStoreWithProbe(t *testing.T, ready bool) *SQLCiStore {
 	t.Helper()
-	return newStoreWithProbeSize(t, indexCnt, ciSearchNgramTokenSize)
+	if !ready {
+		return newStoreWithProbeSize(t, "", ciSearchNgramTokenSize) // 索引不存在
+	}
+	return newStoreWithProbeSize(t, ciSearchFulltextColumnList, ciSearchNgramTokenSize)
 }
 
-// newStoreWithProbeSize 同上，但可指定 ngram_token_size，用于验证词元长度这道闸。
-func newStoreWithProbeSize(t *testing.T, indexCnt, ngramSize int) *SQLCiStore {
+// newStoreWithProbeSize 同上，但可分别指定索引列清单与 ngram_token_size，
+// 用来验证「列集合一致」和「词元长度为 2」这两道闸。idxCols 为空串表示索引不存在。
+func newStoreWithProbeSize(t *testing.T, idxCols string, ngramSize int) *SQLCiStore {
 	t.Helper()
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -254,8 +303,13 @@ func newStoreWithProbeSize(t *testing.T, indexCnt, ngramSize int) *SQLCiStore {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	mock.MatchExpectationsInOrder(false)
-	mock.ExpectQuery("information_schema.statistics").
-		WillReturnRows(sqlmock.NewRows([]string{"idx_count", "ngram_token_size"}).AddRow(indexCnt, ngramSize))
+	rows := sqlmock.NewRows([]string{"index_columns", "ngram_token_size"})
+	if idxCols == "" {
+		rows.AddRow(nil, ngramSize)
+	} else {
+		rows.AddRow(idxCols, ngramSize)
+	}
+	mock.ExpectQuery("information_schema.statistics").WillReturnRows(rows)
 	s := &SQLCiStore{db: db}
 	// 立刻探测一次，把结果固化进缓存，后续检索不再打探测查询。
 	s.isCISearchFulltextReady(context.Background())
@@ -271,7 +325,7 @@ func newStoreWithProbeSize(t *testing.T, indexCnt, ngramSize int) *SQLCiStore {
 // 若实现图省事把整个查询切成一种路径，这个用例会立刻失败——而它恰恰是最容易
 // 被"看起来能跑"掩盖的错误形态。
 func TestSearchCIsMixedTokensDispatchPerToken(t *testing.T) {
-	s := newStoreWithProbe(t, 1)
+	s := newStoreWithProbe(t, true)
 	sqlText, args := captureSearchSQL(t, s, "web 生产", "machine")
 
 	// 断言用常量本身而不是硬写列清单：列集合由迁移与代码对账守住
@@ -303,7 +357,7 @@ func TestSearchCIsMixedTokensDispatchPerToken(t *testing.T) {
 // 这是最关键的一条回归防线：单字 token 走 MATCH 会让中文检索返回空。
 // 索引就绪也必须走 LIKE。
 func TestSearchCIsAllSingleCharTokensUseLike(t *testing.T) {
-	s := newStoreWithProbe(t, 1)
+	s := newStoreWithProbe(t, true)
 	sqlText, _ := captureSearchSQL(t, s, "生产机房", "")
 
 	if strings.Contains(sqlText, "MATCH(") {
@@ -317,7 +371,7 @@ func TestSearchCIsAllSingleCharTokensUseLike(t *testing.T) {
 
 // TestSearchCIsUnderscoreTokenUsesLike 含下划线的 token 必须走 LIKE。
 func TestSearchCIsUnderscoreTokenUsesLike(t *testing.T) {
-	s := newStoreWithProbe(t, 1)
+	s := newStoreWithProbe(t, true)
 	sqlText, _ := captureSearchSQL(t, s, "server_prod", "")
 
 	if strings.Contains(sqlText, "MATCH(") {
@@ -330,7 +384,7 @@ func TestSearchCIsUnderscoreTokenUsesLike(t *testing.T) {
 
 // TestSearchCIsFallsBackToLikeWhenNoIndex 索引不存在时全部走 LIKE，且不影响检索成功。
 func TestSearchCIsFallsBackToLikeWhenNoIndex(t *testing.T) {
-	s := newStoreWithProbe(t, 0) // 索引不存在
+	s := newStoreWithProbe(t, false) // 索引不存在
 	sqlText, _ := captureSearchSQL(t, s, "web 生产", "machine")
 
 	if strings.Contains(sqlText, "MATCH(") {
@@ -348,7 +402,7 @@ func TestSearchCIsFallsBackToLikeWhenNoIndex(t *testing.T) {
 // 值（例如仍只看索引计数），就会出现本闸要防的形态——探测判未就绪、查询照旧走 MATCH，
 // 而 MATCH 在非实测的词元长度上可能是静默漏召回。故这条测到端到端形状。
 func TestNgramTokenSizeGateReachesRecallPath(t *testing.T) {
-	s := newStoreWithProbeSize(t, 1, 3) // 索引在位，词元长度不是实测过的 2
+	s := newStoreWithProbeSize(t, ciSearchFulltextColumnList, 3) // 索引在位，词元长度不是实测过的 2
 	sqlText, args := captureSearchSQL(t, s, "web 生产", "")
 
 	if strings.Contains(sqlText, "MATCH(") {
@@ -360,6 +414,28 @@ func TestNgramTokenSizeGateReachesRecallPath(t *testing.T) {
 	// web / 生 / 产 三个 token 全部退回 LIKE
 	if n := strings.Count(sqlText, "LIKE ?"); n != 3*len(ciSearchColumns) {
 		t.Errorf("LIKE 占位符数 = %d, want %d（3 个 token × %d 列）\n%s",
+			n, 3*len(ciSearchColumns), len(ciSearchColumns), sqlText)
+	}
+}
+
+// TestColumnSetDriftFallsBackToLike 索引列集合与代码不一致时，检索必须整体退回 LIKE。
+//
+// 这条测的是 021 自己带来的新风险：滚动发布时新二进制（MATCH 要 7 列）配还没跑 021 的旧库
+// （只有 020 的 3 列索引）。那种状态下发出 MATCH 会当场报 1191，**整条检索失败**——
+// 比慢更糟，也直接推翻「迁移与代码发布顺序不敏感」。断到 SQL 形状而不是只断探测返回值，
+// 是因为「判未就绪」和「真的没发 MATCH」之间还隔着一次 useFulltext 传递。
+func TestColumnSetDriftFallsBackToLike(t *testing.T) {
+	s := newStoreWithProbeSize(t, "name,ci_type,ci_attrs_text", ciSearchNgramTokenSize) // 020 的形态
+	sqlText, args := captureSearchSQL(t, s, "web 生产", "")
+
+	if strings.Contains(sqlText, "MATCH(") {
+		t.Errorf("索引列集合与代码不一致时不得发出 MATCH（MySQL 会报 1191，检索整体失败）:\n%s", sqlText)
+	}
+	if containsArg(args, "+web") {
+		t.Errorf("不应出现 MATCH 的 + 前缀参数（说明列集合这道闸没生效）: %v", args)
+	}
+	if n := strings.Count(sqlText, "LIKE ?"); n != 3*len(ciSearchColumns) {
+		t.Errorf("LIKE 占位符数 = %d, want %d（web/生/产 三个 token × %d 列）\n%s",
 			n, 3*len(ciSearchColumns), len(ciSearchColumns), sqlText)
 	}
 }
@@ -468,10 +544,11 @@ func latestFulltextIndexColumns(t *testing.T) (string, []string) {
 		if err != nil {
 			t.Fatalf("读 %s: %v", name, err)
 		}
-		if !strings.Contains(string(data), "ci_items") {
+		content := stripSQLLineComments(string(data))
+		if !strings.Contains(content, "ci_items") {
 			continue
 		}
-		m := ftIndexAddRe.FindStringSubmatch(string(data))
+		m := ftIndexAddRe.FindStringSubmatch(content)
 		if m == nil {
 			continue
 		}
@@ -513,6 +590,24 @@ func splitColumnList(s string) []string {
 	return cols
 }
 
+// stripSQLLineComments 去掉 `--` 整行注释，只留可执行语句。
+//
+// 必须剥：021 的头注释里就写了一句 `ADD FULLTEXT INDEX x (…)`（用来解释解析器把关键字
+// 当成列名那个坑），不剥注释的话正则先撞上这句散文，对账会拿「x」当索引名——
+// **门禁被自己的说明文字骗过**，比没有门禁更糟，因为它会给出看似精确的错误结论。
+// 这与部署资产门禁第 13 节「先剥 `--` 注释再查 CREATE TABLE」是同一条教训的第二次应用。
+func stripSQLLineComments(s string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--") {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 // recallColumnToIndexed 把 LIKE 侧的列表达式映射到它在全文索引里的列名。
 // attrs 是 JSON、不能直接建 FULLTEXT，020 用 STORED 生成列 ci_attrs_text 承载同一份文本。
 func recallColumnToIndexed(col string) string {
@@ -528,15 +623,15 @@ func recallColumnToIndexed(col string) string {
 // 跨租户数据泄漏——过滤条件失效，且检索照常返回结果，测试期不易察觉。
 func TestSearchCIsPreservesFilterCondsWhenFulltext(t *testing.T) {
 	cases := []struct {
-		name     string
-		indexCnt int
+		name       string
+		indexReady bool
 	}{
-		{"索引就绪", 1},
-		{"索引未就绪", 0},
+		{"索引就绪", true},
+		{"索引未就绪", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newStoreWithProbe(t, tc.indexCnt)
+			s := newStoreWithProbe(t, tc.indexReady)
 			sqlText, args := captureSearchSQL(t, s, "web 生产", "machine")
 			for _, want := range []string{"tenant_id=?", "status=?", "ci_type=?", "LIMIT ?"} {
 				if !strings.Contains(sqlText, want) {
@@ -562,17 +657,17 @@ func TestSearchCIsPreservesFilterCondsWhenFulltext(t *testing.T) {
 // TestSearchCIsCondsArgsAligned 分流后 conds 与 args 仍严格一一对应。
 func TestSearchCIsCondsArgsAligned(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		indexCnt int
-		query    string
+		name       string
+		indexReady bool
+		query      string
 	}{
-		{"索引就绪-混合 token", 1, "web 生产"},
-		{"索引未就绪-混合 token", 0, "web 生产"},
-		{"索引就绪-纯中文", 1, "生产机房"},
-		{"索引就绪-下划线", 1, "server_prod"},
+		{"索引就绪-混合 token", true, "web 生产"},
+		{"索引未就绪-混合 token", false, "web 生产"},
+		{"索引就绪-纯中文", true, "生产机房"},
+		{"索引就绪-下划线", true, "server_prod"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newStoreWithProbe(t, tc.indexCnt)
+			s := newStoreWithProbe(t, tc.indexReady)
 			sqlText, args := captureSearchSQL(t, s, tc.query, "machine")
 			placeholders := strings.Count(sqlText, "?")
 			if placeholders != len(args) {

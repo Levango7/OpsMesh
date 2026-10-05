@@ -333,6 +333,11 @@
   探针是临时的，跑完已删，未进任何提交。
 - **TD-79 那行现在需要第二次更正**（同一未提交文件）：不只是「中文路径未受益」（第六则），
   还有「020 曾引入静默漏召回、已由 021 修」。两处措辞我都没替你们改，理由同上。
+- **探测口径变了，部署侧值得知道**：021 让代码的 MATCH 依赖 7 列索引，于是「新二进制 + 只跑过 020 的库」
+  成了一种会**报 1191 让检索整体失败**的中间态。探测现在比对索引列集合
+  （`GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX)` 对代码解析出的期望清单，逐列同序），
+  不一致就退回 LIKE。所以 021 与二进制谁先落地都不影响可用性，只影响快慢——
+  这是原设计承诺的「顺序不敏感」，之前按索引名判断时它并不成立。
 - 本机验证口径：`go build ./...` 0、`go vet` 0、`internal/cmdb` 全量 ok、`golangci-lint ./internal/cmdb/...` 0 issues、
   `internal/gates` ok、`-run Migration` 的 store 用例 ok、`validate-deploy-assets.sh` FAIL=0、gofmt 干净。
   真库那 4 条集成用例本机跑不了（Docker 不可达），由 CI `integration` job 覆盖。

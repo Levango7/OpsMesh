@@ -293,28 +293,59 @@ const ciSearchFulltextCond = " AND MATCH(name, ci_type, ci_attrs_text, agent_id,
 // 故探测必须同时核对 @@ngram_token_size，只放行实测过的 2，其余一律退回 LIKE：慢，但不漏。
 const ciSearchNgramTokenSize = 2
 
-// ciSearchFulltextProbeSQL 探测全文索引是否**可用**，而不只是是否存在：
-// 索引在位（且类型确为 FULLTEXT）+ 词元长度是被实测过的 2。
+// ciSearchFulltextProbeSQL 探测全文索引是否**可用**，三个条件缺一不可：
+// 索引在位（类型确为 FULLTEXT）、列集合与代码里 MATCH 的集合**逐列同序一致**、
+// 词元长度是被实测过的 2。
+//
+// 为什么必须比到列集合而不止看索引名：021 把索引从 3 列扩到 7 列，于是「代码要的列集合」
+// 与「库里实际的索引」之间新增了一种中间态——020 已应用、021 还没应用（滚动发布时新二进制
+// 配旧库）。这时 MATCH 的列数与索引不符，MySQL 报 1191（ER_FT_MATCHING_KEY_NOT_FOUND），
+// **整条检索直接失败**。只查索引名会把这种状态判成「就绪」，正好推翻本模块承诺的
+// 「迁移与代码发布顺序不敏感」。列集合不符 → 退回 LIKE，才是那个承诺的样子。
 //
 // 查 information_schema 而不是试一条 MATCH 查询：后者在索引缺失时会在**执行计划阶段**
 // 报错并让整条查询失败，而 information_schema 查询只读元数据、恒成功。
-// 同时限定 index_type='FULLTEXT'，避免同名普通索引误判为就绪。
-//
-// 两个值写成标量子查询而不是 `COUNT(*), MAX(@@var)`：后者在零行时 MAX 返回 NULL，
-// Scan 进 int 会失败，把「索引不存在」这个**正常**状态错报成探测错误。
-// MariaDB 既无 ngram 插件也无 @@ngram_token_size，本查询会报 1193 Unknown system variable
-// → 落进「探测失败退 LIKE」分支，方向安全。
+// 索引进不存在时子查询返回 NULL（不是空串），用 sql.NullString 接。
+// GROUP_CONCAT 的默认上限是 1024 字节，本清单远小于它；真被截断也只会误判为「不一致」，
+// 方向仍是退回 LIKE。MariaDB 无 ngram 插件也无 @@ngram_token_size，本查询会报 1193
+// Unknown system variable → 落进「探测失败退 LIKE」分支，方向安全。
 const ciSearchFulltextProbeSQL = `SELECT
-		(SELECT COUNT(*) FROM information_schema.statistics
+		(SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) FROM information_schema.statistics
 		 WHERE table_schema = DATABASE() AND table_name = 'ci_items'
 		   AND index_name = 'ft_ci_items_search' AND index_type = 'FULLTEXT'),
 		@@ngram_token_size`
 
-// isCISearchFulltextReady 探测 020 迁移建的全文索引是否可用，结果缓存。
+// ciSearchFulltextColumnList 是探测用来比对的期望列清单（逗号分隔、无空格）。
 //
-// 「可用」有两个条件：索引在位，且词元长度是本模块实测过的 2（见 ciSearchNgramTokenSize）。
-// 只查「在位」是不够的——索引存在但 ngram_token_size 被改成 3 时，MATCH 会对长度 2 的
-// 检索词返回空，而那是静默的漏召回，没有任何错误信号。
+// 从 ciSearchFulltextCond 里解析，而不是再抄一份数组：MATCH 的列集合只有一个定义源，
+// 探测口径自动跟着它走。解析只做一次（包级变量），失败则留空串——空串与任何真实索引
+// 都不相等，后果是恒判未就绪、退回 LIKE，是可看见且安全的失败方向。
+var ciSearchFulltextColumnList = extractMatchColumnList(ciSearchFulltextCond)
+
+// extractMatchColumnList 取出 `MATCH(a, b, c) AGAINST(...)` 里的列清单并规范化。
+func extractMatchColumnList(cond string) string {
+	start := strings.Index(cond, "MATCH(")
+	if start < 0 {
+		return ""
+	}
+	rest := cond[start+len("MATCH("):]
+	end := strings.Index(rest, ")")
+	if end < 0 {
+		return ""
+	}
+	cols := strings.Split(rest[:end], ",")
+	for i := range cols {
+		cols[i] = strings.TrimSpace(cols[i])
+	}
+	return strings.Join(cols, ",")
+}
+
+// isCISearchFulltextReady 探测 020/021 迁移建的全文索引是否可用，结果缓存。
+//
+// 「可用」有三个条件：索引在位、列集合与代码里的 MATCH 清单逐列一致、
+// 词元长度是本模块实测过的 2（见 ciSearchNgramTokenSize 与 ciSearchFulltextProbeSQL）。
+// 后两个条件各挡一种静默故障：词元长度不对 ⇒ MATCH 对短词返回空（漏召回，无错误信号）；
+// 列集合不一致 ⇒ MATCH 直接报 1191（检索整体失败）。两种都退回 LIKE，方向是「慢但不漏、不炸」。
 //
 // 为什么需要运行时探测而不是直接依赖索引：020 迁移与本代码的发布顺序不敏感。
 // 先跑迁移 → 索引在 → 走 MATCH；先发代码后跑迁移（或回滚了 020）→ 探不到 → 退回 LIKE。
@@ -335,17 +366,26 @@ func (s *SQLCiStore) isCISearchFulltextReady(ctx context.Context) bool {
 
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	var idxCount, ngramSize int
-	if err := s.db.QueryRowContext(probeCtx, ciSearchFulltextProbeSQL).Scan(&idxCount, &ngramSize); err != nil {
+	var cols sql.NullString
+	var ngramSize int
+	if err := s.db.QueryRowContext(probeCtx, ciSearchFulltextProbeSQL).Scan(&cols, &ngramSize); err != nil {
 		log.Printf("[cmdb] 全文索引探测失败，本次退回 LIKE 召回: %v", err)
 		return false
 	}
-	s.fulltextReady = idxCount > 0 && ngramSize == ciSearchNgramTokenSize
+	colsOK := cols.Valid && cols.String == ciSearchFulltextColumnList
+	s.fulltextReady = colsOK && ngramSize == ciSearchNgramTokenSize
 	switch {
 	case s.fulltextReady:
-		log.Printf("[cmdb] 检测到 ci_items 全文索引（ngram_token_size=%d），长度>=2 的检索词走 MATCH 召回", ngramSize)
-	case idxCount == 0:
-		log.Printf("[cmdb] 未检测到 ci_items 全文索引（020 迁移未执行？），全部走 LIKE 召回")
+		log.Printf("[cmdb] ci_items 全文索引可用（列集合 %s，ngram_token_size=%d），长度>=2 的检索词走 MATCH 召回",
+			ciSearchFulltextColumnList, ngramSize)
+	case !cols.Valid:
+		log.Printf("[cmdb] 未检测到 ci_items 全文索引（020/021 迁移未执行？），全部走 LIKE 召回")
+	case !colsOK:
+		// 020 已应用、021 还没应用时就是这个形态：索引在，但列集合比代码少。
+		// 这里若判成就绪，MATCH 的列数与索引不符会当场报 1191、整条检索失败——
+		// 那是把一次索引升级变成检索不可用。
+		log.Printf("[cmdb] ci_items 全文索引列集合与代码不一致（库里是 %q，代码要 %q；021 迁移未执行？），全部走 LIKE 召回",
+			cols.String, ciSearchFulltextColumnList)
 	default:
 		// 索引在位但词元长度不是实测过的值：此时 MATCH 的召回行为未经验证，
 		// 而「未验证」在本模块里等于「可能静默漏召回」，故不冒险，整体退回 LIKE。
