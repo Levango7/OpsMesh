@@ -342,6 +342,31 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
 
 **依赖与门禁**：axios `1.19.0 → 1.20.0`（Trivy 刷新库后 7 条 HIGH 均有修复版本，非本次代码引入）；`validate-deploy-assets.sh` 新增第 12 节（业务指标标签/命名，防实体 ID 基数）与第 13 节（引导脚本不得建表 + compose 库名必须有建库来源）。
 
+## [Unreleased] — 2026-10-05 清掉会阻断 CI 的 lint 债，并把行尾门禁从 17 分钟压到 2.7 秒
+
+上一条 work 线交接时用 CI 同款 `golangci-lint v2.13.2` 复跑当前工作树，报出 2 条
+（`internal/cmdb/search_test.go` 的 goimports、`internal/cmdb/sql.go` 的 G202）。
+这两条是**上一轮 CMDB 检索留下的**，且后果比任何技术债都紧急——它们在 `build-test` 里，
+而 build-test 是 CI 唯一门禁，一旦红则**下游 11 个 job 全被 skip**。
+
+- **goimports**：`.golangci.yml` 的 `goimports.local-prefixes` 是
+  `github.com/Levango7/OpsMesh`，本地前缀包必须单独分组；`github.com/DATA-DOG/go-sqlmock`
+  原与它同组，拆开即过。
+- **G202/G201**：先试改写、实测证明绕不过，才用收窄豁免。同文件并列三种写法实测
+  （v2.13.2 = CI 同版）：`` `字面量` + strings.Join(...) `` ⇒ G202；
+  `fmt.Sprintf("...%s", ...)` 与 `fmt.Sprintf(tmpl, ...)` ⇒ G201。
+  两条规则夹击下没有能过的写法——检索词数量不定，WHERE 片段组数随之变，静态写不出来。
+  故按 `internal/(store|logstore)/` 的同构理由加 `text: "G20[12]" path: internal/cmdb/`，
+  并把「检索词从不进 SQL 文本、只作 `?` 占位符参数」写进豁免注释。
+  改写本身仍做了：逐条 `sqlText +=` 改为「收集 conds → 一次 `strings.Join`」，
+  片段顺序与 args 顺序合到同一次循环，避免改错一边。
+- **行尾门禁提速（第 6 节）**：原实现每个文件起 2 个管道进程（`wc` + `tr`）做字节数比对，
+  41 个文件 = 82 次进程创建，**Windows 上实测跑 17 分钟未结束**——门禁事实等于不存在。
+  改为单次 Python 二进制遍历，**2.7 秒**，模式集严格对齐原 `find`，
+  对账两种实现命中文件数均为 41。变异验证：向 compose 注入 CRLF → 精确报出该文件；
+  还原后 md5 一致。
+- 结果：`golangci-lint run ./internal/cmdb/...` **0 issues**，`go test ./internal/cmdb/...` ok。
+
 ## [Unreleased] — 2026-10-05 TD-77：12 个微服务的健康路径与端口键统一（兼容过渡版）
 
 原记录写的是"全仓统一 `/health`"。**实测后把范围限定在 12 个微服务，控制面不动**——

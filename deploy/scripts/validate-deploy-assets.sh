@@ -39,6 +39,20 @@ for _c in python3 python; do
     if command -v "$_c" >/dev/null 2>&1; then PY="$_c"; break; fi
 done
 
+# pyyaml 缺失探测（2026-10-05 实测加的）。
+#
+# 为什么必须单独探：多处判据是 `"$PY" - <<'PY' ... import yaml ... PY" || bad(...)`。
+# 依赖缺失时 Python 抛 ModuleNotFoundError，退出码非 0，被 `||` 兜底吞成**业务判红**——
+# 实测本机未装 pyyaml 时，alertmanager 判据报的是「出厂默认 AM 配置不合规」，
+# 而配置本身完全合规（装上 pyyaml 后同段判据输出「出厂默认 AM 配置合规」）。
+# 「环境缺依赖」被说成「资产不合规」会把排查带偏：去查配置，其实要装包。
+#
+# 这里只提示、不阻断：判据 ①②③④ 不依赖 yaml，缺包时它们仍有效。
+if [[ -n "$PY" ]] && ! "$PY" -c 'import yaml' >/dev/null 2>&1; then
+    echo "  [提示] 当前 ${PY} 缺 PyYAML：依赖 YAML 解析的判据（告警链路 ⑤、微服务 metrics 端口等）"
+    echo "         会因 ModuleNotFoundError 被兜底成业务判红。装法：${PY} -m pip install pyyaml"
+fi
+
 # helm 在本地/CI 多以「docker run -v "$PWD:/apps" -w /apps alpine/helm」包装提供。
 # Git Bash（MSYS）会把该容器内路径改写成 Windows 路径（`-w /apps` → `-w C:/.../git/apps`），
 # 导致 helm 渲染报 "working directory ... is invalid" 的**假失败**。
@@ -434,30 +448,60 @@ sec "6. 行尾一致性（CRLF 会让 Dockerfile / Helm / bash 开箱即坏）"
 #   LF   → docker build 成功
 #   CRLF → ERROR: failed to solve: dockerfile parse error on line 3: unknown instruction: &&
 # 原因：RUN 续行的行尾变成 CR+LF，Docker 解析器识别不到续行。
-# 检测手段必须走 tr 做字节比对，不能用 grep/awk：
+# 检测必须按字节看 CR，不能用 grep/awk：
 # 2026-09-26 实测 Git-Bash 的 `grep -c $'\r'` 与 `awk '/\r/'` 对确实含 CRLF 的文件都返回 0
-# （MSYS 文本模式在读时吞 CR，而 `tr -d '\r'` 能看到：32 → 31 字节）。
-# 也就是说"用 grep 写的 CRLF 门禁在 Windows 上空转"——而 Windows 正是它唯一要防的平台。
-has_crlf() { # $1=文件；含 CR 则返回 0
-    local raw stripped
-    raw="$(wc -c < "$1" | tr -d ' ')"
-    stripped="$(tr -d '\r' < "$1" | wc -c | tr -d ' ')"
-    [[ "$raw" != "$stripped" ]]
-}
-CRLF_BAD=""
-while IFS= read -r f; do
-    [[ -n "$f" && -f "$f" ]] || continue
-    if has_crlf "$f"; then
-        CRLF_BAD="${CRLF_BAD} ${f#./}"
-    fi
-done < <(find . -path ./.git -prune -o -type f \
-            \( -name 'Dockerfile*' -o -name '.dockerignore' -o -name 'docker-compose*.yml' \
-               -o -name '*.sh' -o -name '*.tpl' -o -name 'Chart.yaml' -o -name 'values*.yaml' \) -print 2>/dev/null)
-if [[ -n "$CRLF_BAD" ]]; then
-    bad "以下部署资产含 CRLF（Windows 检出后 docker/helm/bash 会坏）：$CRLF_BAD"
-    echo "         修法：git add --renormalize <file>，并确认 .gitattributes 覆盖该文件类型"
+# （MSYS 文本模式在读时吞 CR）。也就是说"用 grep 写的 CRLF 门禁在 Windows 上空转"——
+# 而 Windows 正是它唯一要防的平台。Python 的二进制读同样能看见 CR，且不依赖 MSYS 文本模式。
+#
+# 为什么改成单次 Python 遍历（2026-10-05）：原实现对每个文件起 2 个管道进程
+# （wc + tr）做字节数比对，41 个文件 = 82 次进程创建。**Windows 上实测这一节跑到
+# 17 分钟仍未结束**，门禁事实等于不存在。改为单次遍历后同一范围 2.7 秒（对账：
+# 两种实现命中文件数均为 41）。
+if [[ -z "$PY" ]]; then
+    skip "未找到 python3/python，跳过 CRLF 检查（本节需要字节级读取，grep/awk 在 MSYS 下不可靠）"
 else
-    ok "Dockerfile/compose/脚本/Helm 模板均为 LF（无 CRLF 破坏风险）"
+    CRLF_BAD="$("$PY" - <<'PY'
+import os, fnmatch, sys
+
+# 模式集严格对齐原 find：'Dockerfile*' '.dockerignore' 'docker-compose*.yml'
+# '*.sh' '*.tpl' 'Chart.yaml' 'values*.yaml'。改这里等于改扫描范围——
+# 变异验证时正是靠"少扫一个"来证明本断言不是恒绿。
+EXACT = {".dockerignore", "Chart.yaml"}
+
+def hit(fn):
+    return (fn in EXACT
+            or fn.startswith("Dockerfile")
+            or fnmatch.fnmatch(fn, "docker-compose*.yml")
+            or fn.endswith(".sh")
+            or fn.endswith(".tpl")
+            or fnmatch.fnmatch(fn, "values*.yaml"))
+
+bad = []
+for root, dirs, files in os.walk(".", topdown=True):
+    dirs[:] = [d for d in dirs if d != ".git"]
+    for fn in files:
+        if not hit(fn):
+            continue
+        p = os.path.join(root, fn)
+        if not os.path.isfile(p):
+            continue
+        try:
+            with open(p, "rb") as fh:
+                if b"\r" in fh.read():
+                    bad.append(p[2:] if p.startswith("./") else p)
+        except OSError as e:
+            # 读不到就报出来，不能静默跳过——否则「没扫到」会被当成「没问题」。
+            bad.append(f"{p} (读取失败: {e})")
+
+print(" ".join(bad))
+PY
+)"
+    if [[ -n "${CRLF_BAD// }" ]]; then
+        bad "以下部署资产含 CRLF（Windows 检出后 docker/helm/bash 会坏）：$CRLF_BAD"
+        echo "         修法：git add --renormalize <file>，并确认 .gitattributes 覆盖该文件类型"
+    else
+        ok "Dockerfile/compose/脚本/Helm 模板均为 LF（无 CRLF 破坏风险）"
+    fi
 fi
 # 根因防护：问 git 本身而不是解析 .gitattributes——check-attr 覆盖显式规则与继承，
 # 不会因为规则写法不同而误判通过。
