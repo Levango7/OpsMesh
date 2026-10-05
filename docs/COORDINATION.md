@@ -341,3 +341,25 @@
 - 本机验证口径：`go build ./...` 0、`go vet` 0、`internal/cmdb` 全量 ok、`golangci-lint ./internal/cmdb/...` 0 issues、
   `internal/gates` ok、`-run Migration` 的 store 用例 ok、`validate-deploy-assets.sh` FAIL=0、gofmt 干净。
   真库那 4 条集成用例本机跑不了（Docker 不可达），由 CI `integration` job 覆盖。
+
+## 2026-10-05 第八则（我侧：同族缺陷普查——全文索引目前只有一处，但窗口形态还有一处）
+
+顺 021 那条做了一次全仓普查，两件事要落档，免得下一轮又被当成新发现：
+
+- **`MATCH`/`FULLTEXT` 全仓只有 `ci_items` 一处**（`internal/store/migrations/020_*.sql`、`021_*.sql`
+  及其 down）。所以「索引列集合 ⊉ 召回列集合」这类漏召回现在只可能存在于一处，
+  而它已由 `TestCISearchFulltextIndexCoversRecallColumns` 静态对账守住。
+  020 行 56 仍写着 3 列**不是不一致**：020 已被 checksum 门禁锁死不可回写，终态由 021 的同名索引重建决定，
+  对账取的是**版本号最大**的那份定义。
+- **`internal/logstore/sql.go` 的检索有 TD-79 ① 同一个「按时间截断在排序打分之前」的形态，
+  但没有漏召回风险**：关键词只有 `message LIKE ?` 一列（`sql.go:136`），没有第二套列集合可以失配；
+  「策略 A」在带 AST 表达式时把 SQL 层粗筛固定为 `maxQueryLimit` 条（`sql.go:148-153`，
+  常量定义在 `logstore.go:24`，值 **1000**），`ORDER BY ts DESC LIMIT ?`，
+  再在内存里做 AST 过滤 + Offset/Limit（`sql.go:189`）。
+  ⇒ 命中数超过 1000 时，较旧但真正相关的日志会被时间序截断掉——**这是正确性问题，不只是性能**，
+  与 CMDB 那条同源。但它需要产品先定日志检索的语义（是否允许按相关度跨时间取、
+  要不要给 logs 也上 ngram 索引），所以**只登记不动手**，也不在这轮顺手加迁移。
+- 本轮 CI 实测口径（写清楚哪些是 CI 给的、哪些是本机给的）：本机跑的是
+  build/vet/gofmt/`internal/cmdb` 全量（含 `-race`）/13 个 `services/*` 与 `tf-provider` 的
+  build+vet+CI 同款 lint+`-race` 测试；真库那层由 CI `integration` 给（run 37306035747 已绿，
+  覆盖 021 迁移执行、7 列 MATCH、列集合探测与新补的 agent_id/device_id 语料）。
