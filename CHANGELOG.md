@@ -400,6 +400,12 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
   （把排序下推给索引是另一件事，不该混在这批里）。
 - **刻意没动 020 迁移文件**：`schema_migrations` 带 checksum 门禁（见 `TestRunMigrations_ChecksumGateFatal`），
   改动已应用迁移的字节内容会让存量库下次启动直接 fatal。上述口径更正因此只落在代码注释与本条，不回写 020 头注释。
+- **探测并发守卫补了一条真并发的用例**：原有的「只探一次」断言是**串行**连打三次，
+  串行下把 `fulltextMu` 删掉照样全绿、`-race` 也不会报（没有并发访问）。
+  新增 `TestFulltextProbeConcurrentFirstTouch`：32 个 goroutine 同时首次触碰探测，
+  sqlmock 只注册一条期望，重复查询会被拒 → 那一路判未就绪，断言因此能抓到重复探测。
+  本机 `-race`（`CGO_ENABLED=1` + `D:\msys64\mingw64\bin` 的 gcc 16.1.0）实测：
+  删掉 `fulltextMu` 立刻 DATA RACE 判红，还原后复绿——这条是本包唯一的并发正确性证据。
 - **真库这一步本机没能复跑**：本机 Docker daemon 不可达（`npipe …/dockerDesktopLinuxEngine` 连不上），
   探测 SQL 新增的 `@@ngram_token_size` 只在 sqlmock 上验过返回值形状与闸门语义；真库执行路径由该包 4 条
   gated 集成用例在 CI `integration` job（带 `OPSMESH_TEST_MYSQL_DSN`）覆盖。如实标注，不冒充已验证。

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -212,6 +213,52 @@ func TestFulltextProbeErrorTreatedAsNotReady(t *testing.T) {
 	s := &SQLCiStore{db: db}
 	if s.isCISearchFulltextReady(context.Background()) {
 		t.Error("探测出错时应按未就绪处理（退回 LIKE），不应报就绪")
+	}
+}
+
+// TestFulltextProbeConcurrentFirstTouch 并发首次触碰只能打一次探测，且所有 goroutine 结论一致。
+//
+// 为什么这条不是 TestFulltextProbeCachedPerStore 的重复：那条是**串行**连打三次，
+// 串行下把 fulltextMu 删掉照样全绿，-race 也不会报（没有并发访问）。而真实形态是多个请求
+// 同时首次触碰探测。这里用 start channel 让 N 个 goroutine 同时冲进去：
+// sqlmock 只注册一条期望，任何重复查询都会报 "was not expected" → 那一路判未就绪，
+// 于是「全部为 true」这条断言能抓到重复探测，同时 -race 覆盖 fulltextProbed/fulltextReady
+// 两个字段。**没有 -race 的全绿不构成并发正确性证据**，这条是本包唯一的并发证据。
+func TestFulltextProbeConcurrentFirstTouch(t *testing.T) {
+	const n = 32
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	mock.MatchExpectationsInOrder(false)
+	mock.ExpectQuery("information_schema.statistics").
+		WillReturnRows(sqlmock.NewRows([]string{"index_columns", "ngram_token_size"}).
+			AddRow(ciSearchFulltextColumnList, ciSearchNgramTokenSize))
+
+	s := &SQLCiStore{db: db}
+	results := make([]bool, n)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			results[i] = s.isCISearchFulltextReady(context.Background())
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i, ok := range results {
+		if !ok {
+			t.Errorf("goroutine %d 判未就绪：并发下探测被打穿（重复查询会被 sqlmock 拒绝）", i)
+			break
+		}
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("探测查询应恰好一次: %v", err)
 	}
 }
 
