@@ -176,9 +176,21 @@ func (s *SQLLogStore) Query(ctx context.Context, q Query) ([]Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var ts time.Time
-		if err := rows.Scan(&e.ID, &e.TenantID, &e.DeviceID, &e.AgentID, &e.TaskID, &ts, &e.Level, &e.Source, &e.Message); err != nil {
+		// 写入侧对 device_id / agent_id / task_id 走 nullStr()（空串 ⇒ NULL），而建表语句里
+		// level / source / message 也没有 NOT NULL。用裸 string 扫这些列时，任一列为 NULL
+		// 就让 database/sql 报 "converting NULL to string is unsupported"，而本函数的错误处理
+		// 是向上抛 ⇒ 症状不是"少一条日志"，而是**整条检索失败**。
+		// 触发条件是常规形态：agent / system 来源的日志没有 task 关联，task_id 就是 NULL。
+		// 默认装配不受影响（compose 是 LOG_BACKEND=loki、helm 是 memory），但 LOG_BACKEND=sql
+		// 是 values.yaml 里明写的可选后端，一开就中。既有 SQL 测试全用 sqlmock 且从不喂 NULL，
+		// 所以这条一直没人踩过——回归见 TestSQLQueryReadsNullColumns（sqlmock 显式给 NULL）。
+		var deviceID, agentID, taskID, level, source, message sql.NullString
+		if err := rows.Scan(&e.ID, &e.TenantID, &deviceID, &agentID, &taskID, &ts,
+			&level, &source, &message); err != nil {
 			return nil, err
 		}
+		e.DeviceID, e.AgentID, e.TaskID = deviceID.String, agentID.String, taskID.String
+		e.Level, e.Source, e.Message = level.String, source.String, message.String
 		e.Timestamp = ts
 		all = append(all, e)
 	}

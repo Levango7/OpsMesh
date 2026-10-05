@@ -164,6 +164,7 @@ v0.11.0 发布时该断言还不存在，所以 Release 页上客户看不到降
 
 | 能力 | 在 v0.11.0 当时的实际状态 | 前置 / 替代路径 | 证据 |
 |---|---|---|---|
+| 日志检索（SQL 后端） | **现行缺陷**：`log_entries.device_id/agent_id/task_id` 由写入侧 `nullStr()` **主动写成 NULL**（agent / system 来源的日志本来就没有 task 关联），而读侧用裸 `string` 承接 ⇒ 任一列为 NULL 就 `converting NULL to string is unsupported`，`Query` 向上抛错 ⇒ **整条日志检索失败**，不是少一条。默认装配不触发（compose `LOG_BACKEND:-loki`、helm `LOG_SVC_BACKEND: "memory"`），但 `sql` 是 `values.yaml:550` 明写的可选后端，一开就中 | 先用 loki / es / memory；要用 sql 需含本次修复的版本 | `git show v0.11.0:internal/logstore/sql.go` 实测 nullStr 2 处、`sql.Null*` 0 处；回归 `TestSQLQueryReadsNullColumns` 复现出该驱动错误文本 |
 | 告警列表读取（控制面 + alert-svc） | **现行缺陷**：写入成功，但可空列为 NULL 时整行读不出来，列表"凭空变空" | 无——这是缺陷不是配置问题 | 真机实测 `Alerts 扫描失败` 1844 次（2026-10-02，记于 TD-74）；alert-svc 侧修复 `d98cd39` 在 tag **之后**；控制面 `sql.Null*` 收口在 `b0156ed`（2026-10-05） |
 | 链路追踪可查询 | 只有"发得出去"，没有"查得到"：collector 的 traces pipeline 仅接 `logging` exporter，无 Jaeger/Tempo；`tail_sampling` 对非错误非慢请求只留 10% | 自建 Jaeger/Tempo 后改 pipeline | TD-75（至今仍 open，未修） |
 | 插件 / 应用市场"可插拔扩展" | 只有 Manager 框架，控制面**零钩子触发点**；市场条目无加载器 | 等 TD-62 宿主接线 | 接线提交 `e8ffa68` 在 tag **之后** |

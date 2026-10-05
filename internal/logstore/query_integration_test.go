@@ -449,6 +449,48 @@ func TestSQLQuery_InvalidQReturnsError(t *testing.T) {
 	}
 }
 
+// TestSQLQueryReadsNullColumns 是可空列回归：写入侧对 device_id/agent_id/task_id 走
+// nullStr()（空串 ⇒ NULL），agent / system 来源的日志本来就带 task_id=NULL，所以这是**常规形态**
+// 而不是边角。修复前这些列扫进裸 string 会让 sql 驱动报
+// "converting NULL to string is unsupported"，而 Query 的错误处理是向上抛 ⇒
+// 整条日志检索失败，不是少一条。
+//
+// 为什么这条以前不存在：本文件的 SQL 用例全用 sqlmock，而 sqlmock 只会返回测试自己喂的行——
+// 没人喂过 NULL，于是这个缺陷在测试面上完全不可见（"测试覆盖了 SQL 后端"与"覆盖了 NULL"是两件事）。
+func TestSQLQueryReadsNullColumns(t *testing.T) {
+	store, mock := newSQLMock(t)
+	ctx := context.Background()
+	ts := time.Now()
+
+	mock.ExpectQuery("SELECT id, tenant_id, device_id, agent_id, task_id, ts, level, source, message FROM log_entries").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "device_id", "agent_id", "task_id", "ts", "level", "source", "message"}).
+			// 第 1 行：三条关联列全 NULL（无设备/无 agent/无任务的系统日志）。
+			AddRow(1, "t1", nil, nil, nil, ts, "warn", "system", "clock skew").
+			// 第 2 行：连 level/source/message 也为 NULL——schema 里它们同样没有 NOT NULL。
+			AddRow(2, "t1", nil, nil, nil, ts, nil, nil, nil))
+
+	out, err := store.Query(ctx, Query{TenantID: "t1", Limit: 10})
+	if err != nil {
+		t.Fatalf("含 NULL 的行必须能读出来，不能让整个查询失败: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("want 2 hits, got %d (%#v)", len(out), out)
+	}
+	if out[0].DeviceID != "" || out[0].AgentID != "" || out[0].TaskID != "" {
+		t.Errorf("NULL 应映射为空字符串，实际 device=%q agent=%q task=%q",
+			out[0].DeviceID, out[0].AgentID, out[0].TaskID)
+	}
+	if out[0].Level != "warn" || out[0].Message != "clock skew" {
+		t.Errorf("非 NULL 列必须原样读出，实际 level=%q message=%q", out[0].Level, out[0].Message)
+	}
+	if out[1].Level != "" || out[1].Source != "" || out[1].Message != "" {
+		t.Errorf("全 NULL 行应退化成空串而不是丢行或报错，实际 %#v", out[1])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("查询未按预期发出: %v", err)
+	}
+}
+
 func TestSQLQuery_BackwardCompat(t *testing.T) {
 	store, mock := newSQLMock(t)
 	ctx := context.Background()

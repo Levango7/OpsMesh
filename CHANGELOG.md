@@ -449,6 +449,28 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
   `ADD FULLTEXT INDEX x (…)`，正则先撞上它、把 `x` 当成索引名。改为**先剥 `--` 行注释再匹配**，
   与部署资产门禁第 13 节是同一课：门禁若不剥散文，就会给出看似精确的错误结论。
 
+## [Unreleased] — 2026-10-06 日志 SQL 后端读侧 NULL 让整条检索失败（TD-74 门禁范围之外的现行缺陷）
+
+TD-74 的守卫按包名只扫 `internal/store`；顺着这条边界往外量，`internal/logstore` 落着一个**现行**缺陷。
+
+- 写侧对 `device_id` / `agent_id` / `task_id` 用 `nullStr()`：空串 ⇒ **NULL**。agent / system 来源的日志
+  本来就没有 task 关联，所以 NULL 是常规形态而非边角。
+- 读侧 `Query` 用裸 `string` 扫这些列（schema 里 level/source/message 同样无 NOT NULL），任一列为 NULL
+  ⇒ `converting NULL to string is unsupported`，而错误处理是 `return nil, err` ⇒ **整条日志检索失败**。
+- 为什么长期没人发现：本包 SQL 用例全用 sqlmock，而 sqlmock 只返回测试自己喂的行——**没人喂过 NULL**。
+  "覆盖了 SQL 后端"与"覆盖了 NULL 列"是两件事。
+- 默认装配不触发（compose `LOG_BACKEND:-loki`、helm `LOG_SVC_BACKEND: "memory"`），但 `sql` 是
+  `values.yaml:550` 明写的可选后端 ⇒ 客户一切就中。
+
+修法：可空列改 `sql.Null*` 承接（NULL ⇒ 空串），补 `TestSQLQueryReadsNullColumns`（三列 NULL 与六列全 NULL 两行）。
+**变异检验是实证过的**：把承接改回裸 `string`，用例一字不差复现
+`sql: Scan error on column index 2, name "device_id": converting NULL to string is unsupported` 并判红；还原复绿。
+验证：`internal/logstore` 全量 ok、`golangci-lint` 0 issues、`services/log-svc` 模块 build/vet/测试全绿。
+
+**同时更正昨日那条计数**：v0.11.0 降级清单我写的是"现行缺陷 1 条"，加上这条应为 **2 条**
+（`git show v0.11.0:internal/logstore/sql.go` 实测 nullStr 2 处、`sql.Null*` 0 处 ⇒ 那版就有）。
+release-notes 的 v0.11.0 表格已把该行插在表首，原正文与其余行未改。
+
 ## [Unreleased] — 2026-10-06 v0.11.0 补写对外「能力降级清单」（那版发布时这条断言还不存在）
 
 `release.yml:266` 要求"发布正文必须含能力降级清单"是 v0.12.0 才加上的，所以 **v0.11.0 的 Release 页上没有降级说明**。
