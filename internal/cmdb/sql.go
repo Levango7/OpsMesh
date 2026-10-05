@@ -273,10 +273,16 @@ func buildCISearchTokenCond() string {
 
 // ciSearchFulltextCond 是走全文索引时的召回片段，恰好 1 个占位符。
 //
-// 覆盖列必须与 020 迁移建的索引 ft_ci_items_search(name, ci_type, ci_attrs_text)
-// 完全一致，否则 MySQL 报 ER_FT_MATCHING_KEY_NOT_FOUND（1191）。ci_attrs_text 是
-// 020 新增的 STORED 生成列（JSON 展平成 TEXT，JSON 列本身不能建 FULLTEXT）。
-const ciSearchFulltextCond = " AND MATCH(name, ci_type, ci_attrs_text) AGAINST(? IN BOOLEAN MODE)"
+// 覆盖列必须与索引 ft_ci_items_search 的列清单**逐列一致**（020 建 3 列，021 补齐到 7 列），
+// 否则 MySQL 报 ER_FT_MATCHING_KEY_NOT_FOUND（1191）。这条不变量由
+// TestCISearchFulltextIndexCoversRecallColumns 静态对账迁移文件守住，不需要数据库。
+//
+// 为什么必须与 ciSearchColumns 同集合（而不是只索引 name/ci_type/attrs）：分流是**独占**的
+// ——token 一旦判给 MATCH，就不再对这 7 列做 LIKE。索引若只覆盖 3 列，只命中
+// agent_id / device_id / source / id 的行会在召回阶段整行丢失，而 matchCI 只能判定**已召回**
+// 的行，救不回来。020 头注释里「标识符由 matchCI 前缀匹配覆盖」混淆了判定层与召回层，
+// 推理见 021 迁移注释。ci_attrs_text 是 020 的 STORED 生成列，对应 LIKE 侧的 CAST(attrs AS CHAR)。
+const ciSearchFulltextCond = " AND MATCH(name, ci_type, ci_attrs_text, agent_id, device_id, source, id) AGAINST(? IN BOOLEAN MODE)"
 
 // ciSearchNgramTokenSize 是本分流判据**唯一实测过**的 ngram 词元长度。
 //

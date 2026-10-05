@@ -304,3 +304,35 @@
   真库覆盖要靠 CI `integration` job——这点我按实际标注，不冒充已验证；
   ②上条「本机无 C 编译器」不成立：`D:\msys64\mingw64\bin\gcc.exe`（16.1.0）在，
   补 `CGO_ENABLED=1` + 该目录进 PATH 即可跑 `-race`（根模块 `internal/store` 需 `-timeout 2400s`）。
+
+## 2026-10-05 第七则（我侧：抽查发现的漏召回已修，附一条给 TD-74 线的实测缺陷）
+
+- **020 的索引列集合少了 4 列，构成静默漏召回，已用迁移 021 修掉。**
+  召回侧 `ciSearchColumns` 有 7 列（`name/ci_type/CAST(attrs AS CHAR)/agent_id/device_id/source/id`），
+  020 的索引只有 3 列，而 `SearchCIs` 的分流是**独占**的（判给 MATCH 就不再做那 7 列 LIKE）——
+  只命中 `agent_id`/`device_id`/`source`/`id` 的行在召回阶段就整行丢失，`matchCI` 永远看不到它。
+  表现是「按 CI id / agent id / source 值检索返回空」，无报错无日志。
+  这恰好违反本仓写在 `search.go` `ciSearchText` 注释里的不变量（召回 token 集合必须与判定层一致）。
+  第五则 38-43 行那段「标识符不进索引，由 matchCI 前缀匹配覆盖」的推理把判定层覆盖当成了召回层覆盖。
+- **你们那两条真库用例当时抓不到，原因值得记**：`newFulltextTestDB` 的语料从不给
+  `agent_id`/`device_id` 写值，查询词里也没有只命中 `source`/`id` 的词，
+  所以「不得比 LIKE 漏召回」这条性质断言是空转的。我已把语料补上（`ag<id>`/`dv<id>`）
+  并加了 4 个只命中这些列的查询词；集成用例的索引 DDL 改成**从迁移文件推导**，
+  不再硬写列清单（原来那是第三处定义源）。静态对账守卫是
+  `TestCISearchFulltextIndexCoversRecallColumns`，变异检验按 020 实际形态做过：判红并点名这 4 列。
+- **给 TD-74 线（你们正在改 `internal/store/sql.go`）一条实测缺陷，顺手可修**：
+  `parseIdempotentDDL` 对 `ALTER TABLE ci_items ADD FULLTEXT INDEX ft_ci_items_search (...)`
+  返回 `{kind:column, table:ci_items, name:FULLTEXT, expectExists:true}`——把关键字 `FULLTEXT`
+  当成了列名（`ddlAddNonColumnKeywords` 只列了 INDEX/UNIQUE/KEY/…，没有 FULLTEXT/SPATIAL）。
+  后果：这类语句一旦撞上报错码 1061（索引名已存在），二次核实会去查「有没有 fulltext 这一列」，
+  必然判「状态与预期不符」→ 硬失败。也就是说 **020 头注释承诺的「重放安全由 1050/1060/1061 兜底」
+  对它自己的第二条语句不成立**。建议修法：`ADD` 分支先跳过 `FULLTEXT`/`SPATIAL` 修饰词再看下一个
+  token，命中 `INDEX|KEY` 时返回 `{kind:index, name:<索引名>, expectExists:true}`。
+  021 目前是靠「ADD 前必有一条同名 DROP」绕开该路径（因此**语句顺序不可调换**，已写进迁移注释），
+  但那是规避，不是修复——所以我没动你们的文件，只在这里登记。
+  探针是临时的，跑完已删，未进任何提交。
+- **TD-79 那行现在需要第二次更正**（同一未提交文件）：不只是「中文路径未受益」（第六则），
+  还有「020 曾引入静默漏召回、已由 021 修」。两处措辞我都没替你们改，理由同上。
+- 本机验证口径：`go build ./...` 0、`go vet` 0、`internal/cmdb` 全量 ok、`golangci-lint ./internal/cmdb/...` 0 issues、
+  `internal/gates` ok、`-run Migration` 的 store 用例 ok、`validate-deploy-assets.sh` FAIL=0、gofmt 干净。
+  真库那 4 条集成用例本机跑不了（Docker 不可达），由 CI `integration` job 覆盖。

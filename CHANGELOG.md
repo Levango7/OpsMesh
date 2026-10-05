@@ -404,6 +404,33 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
   探测 SQL 新增的 `@@ngram_token_size` 只在 sqlmock 上验过返回值形状与闸门语义；真库执行路径由该包 4 条
   gated 集成用例在 CI `integration` job（带 `OPSMESH_TEST_MYSQL_DSN`）覆盖。如实标注，不冒充已验证。
 
+**补记 2（同一线，2026-10-05）：抽查又发现一条会静默返回空的漏召回，已修**
+
+- **缺陷**：SQL 召回侧 `ciSearchColumns` 是 7 列（含 `agent_id` / `device_id` / `source` / `id`），
+  而 020 的全文索引只覆盖 3 列，且分流是**独占**的——token 判给 MATCH 后就不再对这 7 列做 LIKE。
+  于是只出现在那 4 列里的命中在**召回阶段**就整行丢失，永远进不了 `matchCI`：
+  按 CI 的 id、agent id、device id 或 source 值检索会**静默返回空**（无报错、无日志）。
+  这打破的是本仓自己写下的不变量——`internal/cmdb/search.go` 的 `ciSearchText` 注释：
+  「索引召回看到的 token 集合与 matchCI 逐字段判定看到的一致，一旦打破索引就会漏召回」。
+  020 头注释「标识符由 matchCI 前缀匹配覆盖」把**判定层覆盖**当成了**召回层覆盖**，推理不成立。
+- **修法**：新增迁移 **021** 把索引补齐到与召回列同集合（先 DROP 同名索引再重建；沿用同名
+  是为了不动存在性探测的口径）。down 文件写明：回滚 021 必须同时回滚代码的 MATCH 列清单，
+  否则报 1191、检索不可用。
+- **守卫用结构对账而不是样例断言**：`TestCISearchFulltextIndexCoversRecallColumns` 直接读迁移文件，
+  比对「索引列 ↔ `ciSearchFulltextCond` 的 MATCH 列 ↔ 7 个 LIKE 召回列」三方一致，不需要数据库也不需要语料。
+  变异检验按 020 的**实际**形态做（代码与索引一起缩回 3 列，让「①一致」成立）：判红并逐列点名
+  `agent_id`/`device_id`/`source`/`id`。**为什么非要静态对账**：原有的 4 条真库用例抓不到这条，
+  因为它自建语料从不往那 4 列写值——「不得漏召回」的性质断言当时在空转。
+  现已补上 `agent_id`/`device_id` 的实际取值与 4 个只命中这些列的查询词，并把集成用例的索引 DDL
+  改为**从迁移文件推导**（原来硬写 3 列，等于第三处定义源，也正是它与 020 一起错掉的原因）。
+- **顺带实测出一条门禁盲区（登记，本次未修）**：用真解析器干跑发现
+  `parseIdempotentDDL` 把 `ALTER TABLE … ADD FULLTEXT INDEX x (…)` 误判为
+  `{kind:column, name:FULLTEXT, expectExists:true}`——把关键字 FULLTEXT 当成了列名。
+  因此 020 头注释所说「重放安全由 1050/1060/1061 二次核实兜底」对**它自己的第二条语句并不成立**：
+  重放撞 1061 时会去核实「ci_items 有没有 fulltext 这一列」，必然判「状态与预期不符」而硬失败。
+  021 靠「ADD 前必有一条同名 DROP」避开该路径（迁移注释里写明**语句顺序不可调换**）；
+  根治要改 `internal/store/sql.go` 的解析分支，而该文件正被 TD-74 那条线改动中，故本次不动、只登记。
+
 ## [Unreleased] — 2026-10-05 清掉会阻断 CI 的 lint 债，并把行尾门禁从 17 分钟压到 2.7 秒
 
 上一条 work 线交接时用 CI 同款 `golangci-lint v2.13.2` 复跑当前工作树，报出 2 条

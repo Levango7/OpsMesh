@@ -52,8 +52,21 @@ const ftIntegrationSchema = `CREATE TABLE ci_items (
 	ci_attrs_text TEXT GENERATED ALWAYS AS (CAST(attrs AS CHAR)) STORED
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
 
-const ftIntegrationFulltextDDL = `CREATE FULLTEXT INDEX ft_ci_items_search
-	ON ci_items (name, ci_type, ci_attrs_text) WITH PARSER ngram`
+// ftIntegrationIndexDDL 从**迁移文件本身**取出终态索引定义，再据此建索引。
+//
+// 为什么不留第二份列清单（原先这里硬写 3 列，与 020 一致）：索引列集合一旦与代码的
+// `ciSearchFulltextCond` 不一致，要么报 1191，要么**静默漏召回**（少覆盖的召回列上，
+// 只命中该列的行在召回阶段就整行丢失）。把 DDL 从迁移里推导出来，就只剩一处定义源，
+// 漂移在编译期之后、真库执行之前由 TestCISearchFulltextIndexCoversRecallColumns 拦住。
+//
+// 顺带说明这个用例原来为什么测不到 020 的那个缺陷：它自建语料从不往
+// agent_id / device_id 写值，而 4 条查询里也没有任何只命中 source / id 的词——
+// 「不得漏召回」的断言在空转。现在补齐了值与查询（见 ftIntegrationRows 与 queries）。
+func ftIntegrationIndexDDL(t *testing.T) string {
+	t.Helper()
+	name, cols := latestFulltextIndexColumns(t)
+	return fmt.Sprintf("CREATE FULLTEXT INDEX %s\n\tON ci_items (%s) WITH PARSER ngram", name, strings.Join(cols, ", "))
+}
 
 // ftIntegrationRows 是测试语料。中英文混合，覆盖：纯 ASCII 名、带下划线名、
 // 中文名、中文属性值、中英混合名（gateway-cn-北京）、无命中词。
@@ -132,17 +145,21 @@ func newFulltextTestDB(t *testing.T, withIndex bool) (*SQLCiStore, func()) {
 		t.Fatalf("create table: %v", err)
 	}
 	for _, r := range ftIntegrationRows {
+		// agent_id / device_id 必须写值，且写的 token 只存在于这两列：
+		// 它们是 ciSearchColumns 的一部分、也进 matchCI 的 ident 字段，但 020 的索引
+		// 没覆盖它们。语料留空就等于把这条召回口径的守卫整条关掉。
 		_, err := db.Exec(
-			`INSERT INTO ci_items (id,ci_type,tenant_id,name,status,approval_status,attrs,source,created_at,updated_at)
-			 VALUES (?,?,?,?,?,?,?,'agent',NOW(),NOW())`,
-			r.id, r.ciType, r.tenant, r.name, r.status, ApprovalApproved, r.attrs)
+			`INSERT INTO ci_items (id,ci_type,tenant_id,name,status,approval_status,attrs,source,agent_id,device_id,created_at,updated_at)
+			 VALUES (?,?,?,?,?,?,?,'agent',?,?,NOW(),NOW())`,
+			r.id, r.ciType, r.tenant, r.name, r.status, ApprovalApproved, r.attrs,
+			"ag"+r.id, "dv"+r.id)
 		if err != nil {
 			cleanup()
 			t.Fatalf("insert %s: %v", r.id, err)
 		}
 	}
 	if withIndex {
-		if _, err := db.Exec(ftIntegrationFulltextDDL); err != nil {
+		if _, err := db.Exec(ftIntegrationIndexDDL(t)); err != nil {
 			cleanup()
 			t.Fatalf("create fulltext index: %v", err)
 		}
@@ -249,6 +266,10 @@ func TestSearchCIsFulltextIntegrationMatchesLikeWithoutIndex(t *testing.T) {
 		"db_slave_01", "server", "k8s", "master", "edge", "redis", "cache",
 		"张伟", "李娜", "北京", "north", "w", "a", "张", "机", "订",
 		"生产机房", "web01", "nosuchtoken", "10.0.0.1",
+		// 只命中「020 没索引、但 matchCI 会判定」的那几列：source / agent_id / device_id / id。
+		// 加这组词之前，本用例对 020 的漏召回是完全无感的——索引少覆盖一列，
+		// 只出现在这些列里的行连召回都进不来，两轮对比自然「一致」。
+		"agent", "agci1", "dvci4", "ci1",
 	}
 	for _, qy := range queries {
 		gotIdx, err := withIdx.SearchCIs(t.Context(), "t1", CiSearchQuery{Query: qy, Limit: 100})
@@ -285,6 +306,10 @@ func TestSearchCIsFulltextIntegrationRecallNotNarrowed(t *testing.T) {
 		"web", "生产", "机房", "订单", "服务", "支付", "网关", "张伟", "李娜",
 		"web 生产", "机房 生产", "db_slave_01", "北京", "north", "web01", "k8s",
 		"生", "产", "机", "房", "订", "单", "服", "务", "支", "付", "网", "关", "北", "w",
+		// 基准是「7 列 LIKE + matchCI」，而 ident 字段含 id/agent_id/device_id/source
+		// （search.go:125）。索引少覆盖其中任何一列，这里就必须报漏召回——
+		// 这 4 个词是 020 那个缺陷的直接复现件（当时全绿，因为语料没往这些列写值）。
+		"agent", "agci1", "dvci4", "ci1",
 	}
 	for _, qy := range queries {
 		hits, err := store.SearchCIs(t.Context(), "t1", CiSearchQuery{Query: qy, Limit: 100})

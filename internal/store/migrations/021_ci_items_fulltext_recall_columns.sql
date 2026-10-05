@@ -1,0 +1,58 @@
+-- 021_ci_items_fulltext_recall_columns.sql — 把全文索引的列集合补齐到与召回列一致
+--
+-- 修的是 020 留下的**漏召回**，不是覆盖面优化。
+--
+-- 事实对照（本文件落地前的状态）：
+--   * SQL 召回侧 LIKE 覆盖 7 列（internal/cmdb/sql.go 的 ciSearchColumns）：
+--     name、ci_type、CAST(attrs AS CHAR)、agent_id、device_id、source、id
+--   * 020 建的全文索引只覆盖其中 3 列：name、ci_type、ci_attrs_text
+--   * 而分流是**独占**的：一个 token 一旦被 ciSearchTokenUseFulltext 判给 MATCH，
+--     sql.go 就只拼 MATCH 片段（`continue`），该 token 不再对这 4 列做 LIKE
+--
+-- 后果：只出现在 agent_id / device_id / source / id 里的命中，在索引就绪的环境里
+-- **整行召不回来**，因而永远到不了 matchCI 那层判定。按 CI 的 id、agent id、device id
+-- 或 source 值检索是 CMDB 的常规用法，这些查询会静默返回空。
+-- 方向上这正是 020 自己确立的原则所禁止的那一类——「MATCH 多召回是安全的（下游 matchCI
+-- 会过滤），漏召回无补救手段，必须避免」。
+--
+-- 020 头注释里「它们是标识符，用户按前缀搜已由 matchCI 的前缀匹配覆盖」这句推理是错的：
+-- matchCI 只能对**已经召回的行**做判定。召回阶段没返回的行，判定层根本看不见，
+-- 前缀匹配再准也无从生效。这是把「判定层覆盖」当成了「召回层覆盖」。
+-- （020 文件本身不回写：schema_migrations 有 checksum 门禁，改已应用迁移的字节内容
+--   会让存量库下次启动直接 fatal。口径更正见 CHANGELOG 与 docs/COORDINATION.md。）
+--
+-- 为什么用「先 DROP 再 ADD 同名索引」而不是一条复合 ALTER：
+--   * 复合 ALTER 不被 tolerateIdempotentDDLError 解析（internal/store/sql.go 的
+--     parseIdempotentDDL 明确「形态不认识 → 不吞错」），重放会硬失败；
+--   * 拆成两条后，DROP 走 1091（键不存在）这条**已核实可用**的幂等路径
+--     （实测 parseIdempotentDDL("ALTER TABLE ci_items DROP INDEX ft_ci_items_search")
+--     → {kind:index, name:ft_ci_items_search, expectExists:false}，判定正确）；
+--   * **语句顺序不可调换**（重要，实测）：parseIdempotentDDL 把
+--     `ALTER TABLE ... ADD FULLTEXT INDEX x (...)` 误判成
+--     {kind:column, name:FULLTEXT, expectExists:true}——它把关键字 FULLTEXT 当成了列名。
+--     于是若 ADD 撞上报错码 1061（索引名已存在），二次核实会去查「ci_items 有没有
+--     fulltext 这一列」，答案当然是没有 → 直接判「状态与预期不符」而硬失败，
+--     根本走不到幂等放行。020 头注释里「重放安全由 1050/1060/1061 二次核实兜底」
+--     这句对**它自己的第二条语句并不成立**（020 文件不回写，见下）。
+--     本文件之所以安全，是因为 ADD 前面必有一条 DROP 同名的语句：重放时索引总先被删掉，
+--     ADD 不会撞 1061。把顺序改成 ADD 在前，就同时踩中「无 1061 容忍」与「误判为列」。
+--   * 沿用同名索引，是为了让代码侧的存在性探测（ciSearchFulltextProbeSQL 按
+--     index_name='ft_ci_items_search' 查）不用改判定口径。
+--
+-- 升级窗口要如实说：两条语句之间存在**秒级的无全文索引窗口**。这期间已经缓存过
+-- 「就绪」的进程若发出 MATCH，MySQL 会报 1191（ER_FT_MATCHING_KEY_NOT_FOUND），
+-- SearchCIs 返回错误而不是静默返回空——可见且有错可查，比漏召回好，但仍建议
+-- 按既有惯例「先迁移后放量」执行。新进程在此窗口内探测会判未就绪并退回 LIKE。
+--
+-- 与代码的耦合：ciSearchFulltextCond 的 MATCH 列清单必须与本索引的列清单**逐列一致**，
+-- 否则报 1191。这条不变量由 internal/cmdb/search_fulltext_test.go 的
+-- TestCISearchFulltextIndexCoversRecallColumns 静态对账守住（读这里的文件内容比对，
+-- 不需要数据库），变异检验已验证：把本文件的列清单缩回 3 列会当场判红。
+--
+-- 回滚见 021_ci_items_fulltext_recall_columns.down.sql（恢复 020 的 3 列索引形态）。
+-- 本迁移纯结构变更，不动任何行。
+
+ALTER TABLE ci_items DROP INDEX ft_ci_items_search;
+
+ALTER TABLE ci_items
+  ADD FULLTEXT INDEX ft_ci_items_search (name, ci_type, ci_attrs_text, agent_id, device_id, source, id) WITH PARSER ngram;

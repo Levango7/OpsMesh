@@ -5,6 +5,11 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -269,8 +274,11 @@ func TestSearchCIsMixedTokensDispatchPerToken(t *testing.T) {
 	s := newStoreWithProbe(t, 1)
 	sqlText, args := captureSearchSQL(t, s, "web 生产", "machine")
 
-	if !strings.Contains(sqlText, "MATCH(name, ci_type, ci_attrs_text) AGAINST(? IN BOOLEAN MODE)") {
-		t.Errorf("长度>=2 的 token 应产生 MATCH 片段:\n%s", sqlText)
+	// 断言用常量本身而不是硬写列清单：列集合由迁移与代码对账守住
+	// （TestCISearchFulltextIndexCoversRecallColumns），这里再抄一份 3 列/7 列字符串
+	// 只会变成第三处定义源，改一处就得跟着改这里。
+	if !strings.Contains(sqlText, ciSearchFulltextCond) {
+		t.Errorf("长度>=2 的 token 应产生 MATCH 片段（应为 %q）:\n%s", ciSearchFulltextCond, sqlText)
 	}
 	// "web 生产" → 生、产 两个单字 token，每个 7 个 LIKE 占位符
 	if n := strings.Count(sqlText, "LIKE ?"); n != 2*len(ciSearchColumns) {
@@ -391,6 +399,127 @@ func containsCJK(s string) bool {
 		}
 	}
 	return false
+}
+
+// TestCISearchFulltextIndexCoversRecallColumns 静态对账「索引列 ↔ MATCH 列 ↔ LIKE 召回列」三方一致。
+//
+// 为什么这条必须用读迁移文件的方式守，而不是连库或用例覆盖：
+//   - 破了①（MATCH 列清单与索引不一致）⇒ MySQL 报 1191，检索当场失败，好发现；
+//   - 破了②（索引/ MATCH 少覆盖一个 LIKE 召回列）⇒ **没有任何信号**。分流是独占的，
+//     只命中未覆盖列的行在召回阶段就整行丢失，永远到不了 matchCI 的判定层。
+//     020 就是这个形态：ciSearchColumns 有 7 列，索引只覆盖 3 列，
+//     于是按 agent_id / device_id / source / id 检索会静默返回空。
+//
+// 这两种破法都不是形状断言（只数片段个数）能发现的，也不是真库用例能发现的——
+// 那份语料压根没往这 4 列写值，「不得漏召回」的性质断言因此在空转。
+// 结构对账不依赖语料，比样例断言强，且不需要数据库。
+func TestCISearchFulltextIndexCoversRecallColumns(t *testing.T) {
+	idxName, idxCols := latestFulltextIndexColumns(t)
+	matchCols := matchColumnsOf(t, ciSearchFulltextCond)
+
+	// ① MATCH 的列清单必须与索引定义逐列同序一致，否则 1191。
+	if !slices.Equal(idxCols, matchCols) {
+		t.Errorf("MATCH 列清单 %v 与索引 %s 的定义 %v 不一致（MySQL 会报 1191，检索直接失败）:\n%s",
+			matchCols, idxName, idxCols, ciSearchFulltextCond)
+	}
+
+	// ② 召回列集合必须被完整覆盖：分流独占，少一列就是漏召回。
+	for _, col := range ciSearchColumns {
+		indexed := recallColumnToIndexed(col)
+		if !slices.Contains(matchCols, indexed) {
+			t.Errorf("LIKE 召回列 %q（对应索引列 %q）未被 MATCH 覆盖：只命中该列的行会在召回阶段整行丢失，"+
+				"matchCI 看不到它、无从补救", col, indexed)
+		}
+	}
+
+	// ③ 探测 SQL 里写死的索引名必须与迁移一致，否则探测恒判未就绪、静默退回 LIKE。
+	if !strings.Contains(ciSearchFulltextProbeSQL, "'"+idxName+"'") {
+		t.Errorf("探测 SQL 引用的索引名与迁移中定义的 %q 不一致:\n%s", idxName, ciSearchFulltextProbeSQL)
+	}
+}
+
+var (
+	// ftIndexAddRe 匹配迁移里的 `ADD FULLTEXT INDEX <name> (<cols>)` 定义（可跨行）。
+	ftIndexAddRe = regexp.MustCompile(`(?is)ADD\s+FULLTEXT\s+INDEX\s+(\w+)\s*\(([^)]*)\)`)
+	// migrationVersionRe 取迁移文件名的数字前缀，用于挑「版本号最大」的定义。
+	migrationVersionRe = regexp.MustCompile(`^(\d+)`)
+	matchColsRe        = regexp.MustCompile(`(?i)MATCH\s*\(([^)]*)\)`)
+)
+
+// latestFulltextIndexColumns 返回 internal/store/migrations 里**最后一次**为 ci_items
+// 定义全文索引的迁移的索引名与列清单（按定义顺序）。
+//
+// 只看非 .down.sql、且必须同文件提到 ci_items；取版本前缀最大的那份，因为索引可能被
+// 后续迁移重建（020 建 3 列、021 补齐到 7 列），代码必须对齐**终态**而不是首个定义。
+func latestFulltextIndexColumns(t *testing.T) (string, []string) {
+	t.Helper()
+	dir := filepath.Join("..", "store", "migrations")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("读迁移目录失败（用例假定的相对路径是否变了？）: %v", err)
+	}
+	bestVer, bestName, bestCols, bestFile := -1, "", "", ""
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".sql") || strings.HasSuffix(name, ".down.sql") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("读 %s: %v", name, err)
+		}
+		if !strings.Contains(string(data), "ci_items") {
+			continue
+		}
+		m := ftIndexAddRe.FindStringSubmatch(string(data))
+		if m == nil {
+			continue
+		}
+		vm := migrationVersionRe.FindStringSubmatch(name)
+		if vm == nil {
+			continue
+		}
+		ver, err := strconv.Atoi(vm[1])
+		if err != nil {
+			continue
+		}
+		if ver > bestVer {
+			bestVer, bestName, bestCols, bestFile = ver, m[1], m[2], name
+		}
+	}
+	if bestFile == "" {
+		t.Fatal("在 internal/store/migrations 里找不到定义 ci_items 全文索引的迁移")
+	}
+	return bestName, splitColumnList(bestCols)
+}
+
+// matchColumnsOf 从召回片段常量里取出 MATCH(...) 的列清单。
+func matchColumnsOf(t *testing.T, cond string) []string {
+	t.Helper()
+	m := matchColsRe.FindStringSubmatch(cond)
+	if m == nil {
+		t.Fatalf("无法从召回片段里取出 MATCH 列清单: %q", cond)
+	}
+	return splitColumnList(m[1])
+}
+
+func splitColumnList(s string) []string {
+	var cols []string
+	for _, c := range strings.Split(s, ",") {
+		if c = strings.TrimSpace(c); c != "" {
+			cols = append(cols, c)
+		}
+	}
+	return cols
+}
+
+// recallColumnToIndexed 把 LIKE 侧的列表达式映射到它在全文索引里的列名。
+// attrs 是 JSON、不能直接建 FULLTEXT，020 用 STORED 生成列 ci_attrs_text 承载同一份文本。
+func recallColumnToIndexed(col string) string {
+	if col == "CAST(attrs AS CHAR)" {
+		return "ci_attrs_text"
+	}
+	return col
 }
 
 // TestSearchCIsPreservesFilterCondsWhenFulltext 分流不得破坏租户/状态/类型过滤。
