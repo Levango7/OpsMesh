@@ -66,7 +66,9 @@ func TestNullableSchemaColumnsScanIntoNullTypes(t *testing.T) {
 func TestInitSchemaMatchesSchemaSQL(t *testing.T) {
 	schema := readInto(t, "schema.sql")
 	src := readInto(t, "mysql.go")
-	for _, table := range []string{"alerts", "alert_rules"} {
+	// silences 今天没有读侧，但建表定义同样不能与 schema.sql 漂移——
+	// 一旦漂移，将来第一处 silences 读侧就会按错的列集合写。
+	for _, table := range []string{"alerts", "alert_rules", "silences"} {
 		want := nullableColumns(schema, table)
 		got := columnSet(tableColumnsFromGoDDL(src, table))
 		if len(want) == 0 || len(got) == 0 {
