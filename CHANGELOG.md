@@ -571,6 +571,26 @@ cosign 签名与 attest 自验**全部排在推送之后** ⇒ 扫描判红的�
 **未实跑的部分**：`docker buildx imagetools create` 的实际提权要到下次 tag 发布才见真章
 （本机 Docker daemon 不可达，改不动成实测）。
 
+## [Unreleased] — 2026-10-06 发布物验收加第 ⑤ 项：`:<版本>` 与 `:<发布提交>` 必须同一个 manifest digest
+
+上一条改完推送时序，就多出一条**新语义需要回核**：提权到底有没有重建。
+`verify-release-artifacts.sh` 原有的四项判据核的都是"tag 存在 / 证据挂接 / 清单引用"，
+没有一项能发现"版本 tag 被重新构建了一遍"——真发生那种事（例如有人把提权写成再次 build），
+客户拉到的那份镜像从没被 Trivy 与签名看过，而四项判据照样全绿。
+
+- 判据：14 个镜像仓库逐个比对 `:<版本>` 与 `:<发布提交>` 的 `Docker-Content-Digest`，不同即判红；
+- 发布提交两条来源：CI 由 `release.yml` 的 verify-artifacts job 传 `RELEASE_SHA=${{ github.sha }}`，
+  本地退到 `git rev-list -n1 v<版本>`；两条都拿不到 ⇒ 记 UNVERIFIED 而不是猜一个
+  （在 CI 里靠 git 解析 tag 是不可靠的：checkout 深度不够，那样第 ⑤ 项会长期空转）；
+- digest 复用第 ② 项已解析出的值（`DIG_VER` 关联数组）——同一事实不留第二个来源；
+- 缺 `:<发布提交>` tag 归 FAIL（不可变锚点缺失，无从证明门禁看过的那份就是交付的那份），
+  传输失败归 UNVERIFIED，延续"缺陷"与"没核对上"分开计数那条口径。
+
+**双向自测**（本仓规矩：验证脚本必须拿"从不存在的版本"反着跑一遍，否则它可能全绿地验一个
+自己合成的命题）：正向 `0.12.0` ⇒ `[PASS] 14 个镜像的 :0.12.0 与 :9f79dda1… 同 digest`，
+`PASS=8 FAIL=0`；反向 `RELEASE_SHA=0000…`（格式合法、GHCR 上不存在）⇒ 14 条 `[FAIL]`、退出码 1。
+`shellcheck -S warning` 0 findings、`bash -n` 通过、`release.yml` yaml 解析通过。
+
 ## [Unreleased] — 2026-10-06 v0.11.0 补写对外「能力降级清单」（那版发布时这条断言还不存在）
 
 `release.yml:266` 要求"发布正文必须含能力降级清单"是 v0.12.0 才加上的，所以 **v0.11.0 的 Release 页上没有降级说明**。
