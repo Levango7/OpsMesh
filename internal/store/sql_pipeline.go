@@ -33,14 +33,19 @@ import (
 // 列顺序：id, tenant_id, name, description, type, yaml, agent_id, parameters, created_at, updated_at。
 func scanPipelineTemplate(row rowScanner) *PipelineTemplate {
 	var t PipelineTemplate
+	// pipeline_templates 的 description/yaml/parameters 均可空（migrations/011），
+	// agent_id 更是 migration 016 后补列（补到已存在的表时存量行为 NULL）。
+	// 裸目标扫描遇 NULL 会让整行读不出来——模板清单漏条目。
+	var description, yamlStr, agentID sql.NullString
 	var paramsJSON []byte
 	var createdAt, updatedAt time.Time
 	if err := row.Scan(
-		&t.ID, &t.TenantID, &t.Name, &t.Description, &t.Type, &t.YAML, &t.AgentID,
+		&t.ID, &t.TenantID, &t.Name, &description, &t.Type, &yamlStr, &agentID,
 		&paramsJSON, &createdAt, &updatedAt,
 	); err != nil {
 		return nil
 	}
+	t.Description, t.YAML, t.AgentID = description.String, yamlStr.String, agentID.String
 	t.CreatedAt = createdAt
 	t.UpdatedAt = updatedAt
 	if len(paramsJSON) > 0 {
@@ -61,15 +66,19 @@ const pipelineTemplateColumns = `id, tenant_id, name, description, type, yaml, a
 // started_at, finished_at, created_at。
 func scanPipelineRun(row rowScanner) *PipelineRun {
 	var r PipelineRun
+	// pipeline_runs 的 template_name/parameters/logs 均可空（migrations/011）；
+	// 运行中的实例没有结束日志是常态。裸目标扫描遇 NULL 会让整行读不出来。
+	var templateName, logs sql.NullString
 	var paramsJSON []byte
 	var startedAt, finishedAt sql.NullTime
 	var createdAt time.Time
 	if err := row.Scan(
-		&r.ID, &r.TenantID, &r.TemplateID, &r.TemplateName, &r.Status,
-		&paramsJSON, &r.Logs, &startedAt, &finishedAt, &createdAt,
+		&r.ID, &r.TenantID, &r.TemplateID, &templateName, &r.Status,
+		&paramsJSON, &logs, &startedAt, &finishedAt, &createdAt,
 	); err != nil {
 		return nil
 	}
+	r.TemplateName, r.Logs = templateName.String, logs.String
 	r.CreatedAt = createdAt
 	if startedAt.Valid {
 		st := startedAt.Time

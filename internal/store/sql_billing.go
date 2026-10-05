@@ -30,6 +30,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"time"
 )
@@ -43,20 +44,23 @@ import (
 // 无行或扫描失败返回 nil。
 func scanBillingPlan(row rowScanner) *SubscriptionPlan {
 	var p SubscriptionPlan
-	var featuresJSON, resourceLimitsJSON string
+	// billing_plans 的 features/resource_limits 均为 TEXT JSON 且可空（migrations/015），
+	// 「没配特性/没配配额」是合法状态。裸 string 目标遇 NULL 会让整行读不出来，
+	// 症状是「订阅计划查不到」。
+	var featuresJSON, resourceLimitsJSON sql.NullString
 	var createdAt time.Time
 	if err := row.Scan(&p.ID, &p.Name, &p.Price, &p.Interval, &featuresJSON, &resourceLimitsJSON,
 		&createdAt); err != nil {
 		return nil
 	}
 	p.CreatedAt = createdAt
-	if featuresJSON != "" {
-		if err := json.Unmarshal([]byte(featuresJSON), &p.Features); err != nil {
+	if featuresJSON.String != "" {
+		if err := json.Unmarshal([]byte(featuresJSON.String), &p.Features); err != nil {
 			recordStoreFailure("[store] scanBillingPlan 解析 features JSON 失败 (plan=%s): %v", p.ID, err)
 		}
 	}
-	if resourceLimitsJSON != "" {
-		if err := json.Unmarshal([]byte(resourceLimitsJSON), &p.ResourceLimits); err != nil {
+	if resourceLimitsJSON.String != "" {
+		if err := json.Unmarshal([]byte(resourceLimitsJSON.String), &p.ResourceLimits); err != nil {
 			recordStoreFailure("[store] scanBillingPlan 解析 resource_limits JSON 失败 (plan=%s): %v", p.ID, err)
 		}
 	}
@@ -369,7 +373,9 @@ func (s *SQLStore) DeleteSubscription(id string) bool {
 // items, created_at。无行或扫描失败返回 nil。
 func scanInvoice(row rowScanner) *Invoice {
 	var inv Invoice
-	var itemsJSON string
+	// invoices.items 为 TEXT JSON 且可空（migrations/015）；裸 string 目标遇 NULL
+	// 会让整行读不出来——账单连金额/周期一起丢，客户侧表现为「账单消失」。
+	var itemsJSON sql.NullString
 	var periodStart, periodEnd, createdAt time.Time
 	if err := row.Scan(&inv.ID, &inv.TenantID, &inv.SubscriptionID, &inv.Amount,
 		&periodStart, &periodEnd, &inv.Status, &itemsJSON, &createdAt); err != nil {
@@ -378,8 +384,8 @@ func scanInvoice(row rowScanner) *Invoice {
 	inv.PeriodStart = periodStart
 	inv.PeriodEnd = periodEnd
 	inv.CreatedAt = createdAt
-	if itemsJSON != "" {
-		if err := json.Unmarshal([]byte(itemsJSON), &inv.Items); err != nil {
+	if itemsJSON.String != "" {
+		if err := json.Unmarshal([]byte(itemsJSON.String), &inv.Items); err != nil {
 			recordStoreFailure("[store] scanInvoice 解析 items JSON 失败 (invoice=%s): %v", inv.ID, err)
 		}
 	}

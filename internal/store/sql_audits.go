@@ -6,6 +6,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/proto"
@@ -76,19 +77,10 @@ func (s *SQLStore) Audits() []*proto.AuditEvent {
 	var out []*proto.AuditEvent
 	for rows.Next() {
 		var e proto.AuditEvent
-		var createdAt time.Time
-		if hasTrace {
-			if err := rows.Scan(&e.TenantID, &e.UserID, &e.Action, &e.Target, &e.Detail, &createdAt, &e.TraceID); err != nil {
-				recordStoreFailure("[store] Audits 扫描失败: %v", err)
-				continue
-			}
-		} else {
-			if err := rows.Scan(&e.TenantID, &e.UserID, &e.Action, &e.Target, &e.Detail, &createdAt); err != nil {
-				recordStoreFailure("[store] Audits 扫描失败: %v", err)
-				continue
-			}
+		if err := scanAuditRow(rows, &e, hasTrace); err != nil {
+			recordStoreFailure("[store] Audits 扫描失败: %v", err)
+			continue
 		}
-		e.CreatedAt = createdAt
 		out = append(out, &e)
 	}
 	if err := rows.Err(); err != nil {
@@ -141,25 +133,47 @@ func (s *SQLStore) QueryAudits(tenant, action string, since, until time.Time, li
 	var out []*proto.AuditEvent
 	for rows.Next() {
 		var e proto.AuditEvent
-		var createdAt time.Time
-		if hasTrace {
-			if err := rows.Scan(&e.TenantID, &e.UserID, &e.Action, &e.Target, &e.Detail, &createdAt, &e.TraceID); err != nil {
-				recordStoreFailure("[store] QueryAudits 扫描失败: %v", err)
-				continue
-			}
-		} else {
-			if err := rows.Scan(&e.TenantID, &e.UserID, &e.Action, &e.Target, &e.Detail, &createdAt); err != nil {
-				recordStoreFailure("[store] QueryAudits 扫描失败: %v", err)
-				continue
-			}
+		if err := scanAuditRow(rows, &e, hasTrace); err != nil {
+			recordStoreFailure("[store] QueryAudits 扫描失败: %v", err)
+			continue
 		}
-		e.CreatedAt = createdAt
 		out = append(out, &e)
 	}
 	if err := rows.Err(); err != nil {
 		recordStoreFailure("[store] QueryAudits 遍历失败: %v", err)
 	}
 	return out
+}
+
+// auditRowScanner 是 *sql.Row 与 *sql.Rows 的共同最小子集。
+type auditRowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanAuditRow 读 audit_log 的 6（或 7）列：
+// tenant_id, user_id, action, target, detail, created_at [, trace_id]
+//
+// audit_log 除 id（自增主键）外全部列可空——migrations/001 未声明 NOT NULL，
+// trace_id 更是 migration 004 后补的列（补到已存在的表时存量行为 NULL）。
+// 用标量目标扫描时，任一列为 NULL 就让整行读不出来，
+// 症状是「审计记录凭空消失」，对等保三级留痕是不可接受的，故一律 sql.Null* 承接。
+func scanAuditRow(row auditRowScanner, e *proto.AuditEvent, hasTrace bool) error {
+	var tenantID, userID, action, target, detail sql.NullString
+	var createdAt sql.NullTime
+	var traceID sql.NullString
+	if hasTrace {
+		if err := row.Scan(&tenantID, &userID, &action, &target, &detail, &createdAt, &traceID); err != nil {
+			return err
+		}
+	} else {
+		if err := row.Scan(&tenantID, &userID, &action, &target, &detail, &createdAt); err != nil {
+			return err
+		}
+	}
+	e.TenantID, e.UserID, e.Action = tenantID.String, userID.String, action.String
+	e.Target, e.Detail, e.CreatedAt = target.String, detail.String, createdAt.Time
+	e.TraceID = traceID.String
+	return nil
 }
 
 // columnExists 检查表是否存在指定列（用于 trace_id 列的向后兼容检测）。

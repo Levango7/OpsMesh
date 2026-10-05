@@ -222,31 +222,9 @@ func (s *SQLStore) Snapshot(tenantID string) map[string][]proto.DeviceInfo {
 	out := make(map[string][]proto.DeviceInfo)
 	for rows.Next() {
 		var d proto.DeviceInfo
-		var managed, retired bool
-		var lastResult sql.NullString
-		var lastResultAt sql.NullTime
-		var hostname, osName, arch sql.NullString
-		if err := rows.Scan(&d.DeviceID, &d.Segment, &d.TenantID, &d.IP, &d.AgentID,
-			&d.State, &d.TaskState, &managed, &lastResult, &lastResultAt, &retired, &hostname, &osName, &arch); err != nil {
+		if err := scanDeviceRow(rows, &d); err != nil {
 			recordStoreFailure("[store] Snapshot 扫描失败: %v", err)
 			continue
-		}
-		d.Managed = managed
-		d.Retired = retired
-		if lastResult.Valid {
-			d.LastResult = lastResult.String
-		}
-		if lastResultAt.Valid {
-			d.LastResultAt = lastResultAt.Time
-		}
-		if hostname.Valid {
-			d.Hostname = hostname.String
-		}
-		if osName.Valid {
-			d.OS = osName.String
-		}
-		if arch.Valid {
-			d.Arch = arch.String
 		}
 		out[d.Segment] = append(out[d.Segment], d)
 	}
@@ -264,35 +242,45 @@ func (s *SQLStore) Device(id string) *proto.DeviceInfo {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT device_id, segment, tenant_id, ip, agent_id, state, task_state, managed, last_result, last_result_at, retired, hostname, os, arch FROM devices WHERE device_id=?`, id)
 	var d proto.DeviceInfo
-	var managed, retired bool
-	var lastResult sql.NullString
-	var lastResultAt sql.NullTime
-	var hostname, osName, arch sql.NullString
-	if err := row.Scan(&d.DeviceID, &d.Segment, &d.TenantID, &d.IP, &d.AgentID,
-		&d.State, &d.TaskState, &managed, &lastResult, &lastResultAt, &retired, &hostname, &osName, &arch); err != nil {
+	if err := scanDeviceRow(row, &d); err != nil {
 		if err != sql.ErrNoRows {
 			recordStoreFailure("[store] Device 查询失败 %s: %v", id, err)
 		}
 		return nil
 	}
-	d.Managed = managed
-	d.Retired = retired
-	if lastResult.Valid {
-		d.LastResult = lastResult.String
-	}
-	if lastResultAt.Valid {
-		d.LastResultAt = lastResultAt.Time
-	}
-	if hostname.Valid {
-		d.Hostname = hostname.String
-	}
-	if osName.Valid {
-		d.OS = osName.String
-	}
-	if arch.Valid {
-		d.Arch = arch.String
-	}
 	return &d
+}
+
+// deviceRowScanner 是 *sql.Row 与 *sql.Rows 的共同最小子集。
+type deviceRowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanDeviceRow 读 devices 的 14 列：
+// device_id, segment, tenant_id, ip, agent_id, state, task_state, managed,
+// last_result, last_result_at, retired, hostname, os, arch
+//
+// devices 表除 device_id（主键）外全部列可空：migrations/001 未声明 NOT NULL，
+// 且 managed/last_result/last_result_at/retired/hostname/os/arch 都是
+// alterColumnIfMissing 后补到已存在的表——补列时存量行为 NULL。
+// 任何一列用标量目标都会让整行读不出来（设备从清单与详情里同时消失），
+// 故 14 列一律 sql.Null* 承接。
+func scanDeviceRow(row deviceRowScanner, d *proto.DeviceInfo) error {
+	var segment, tenantID, ip, agentID, state, taskState sql.NullString
+	var managed, retired sql.NullBool
+	var lastResult, hostname, osName, arch sql.NullString
+	var lastResultAt sql.NullTime
+	if err := row.Scan(&d.DeviceID, &segment, &tenantID, &ip, &agentID,
+		&state, &taskState, &managed, &lastResult, &lastResultAt, &retired,
+		&hostname, &osName, &arch); err != nil {
+		return err
+	}
+	d.Segment, d.TenantID, d.IP, d.AgentID = segment.String, tenantID.String, ip.String, agentID.String
+	d.State, d.TaskState = state.String, taskState.String
+	d.Managed, d.Retired = managed.Bool, retired.Bool
+	d.LastResult, d.LastResultAt = lastResult.String, lastResultAt.Time
+	d.Hostname, d.OS, d.Arch = hostname.String, osName.String, arch.String
+	return nil
 }
 
 // Results 返回某 agent 的上报结果（供设备详情端点）。
@@ -317,13 +305,10 @@ func (s *SQLStore) Agents(tenantID string) []*proto.AgentInfo {
 	var out []*proto.AgentInfo
 	for rows.Next() {
 		var a proto.AgentInfo
-		var lastSeen time.Time
-		if err := rows.Scan(&a.AgentID, &a.Hostname, &a.Segment, &a.TenantID, &a.Addr,
-			&a.GRPCPort, &a.MetricsPort, &a.Status, &a.Load, &lastSeen); err != nil {
+		if err := scanAgentRow(rows, &a); err != nil {
 			recordStoreFailure("[store] Agents 扫描失败: %v", err)
 			continue
 		}
-		a.LastSeen = lastSeen
 		out = append(out, &a)
 	}
 	if err := rows.Err(); err != nil {
@@ -340,16 +325,46 @@ func (s *SQLStore) Agent(id string) *proto.AgentInfo {
 	row := s.db.QueryRowContext(ctx,
 		"SELECT agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, `load`, last_seen FROM agents WHERE agent_id=?", id)
 	var a proto.AgentInfo
-	var lastSeen time.Time
-	if err := row.Scan(&a.AgentID, &a.Hostname, &a.Segment, &a.TenantID, &a.Addr,
-		&a.GRPCPort, &a.MetricsPort, &a.Status, &a.Load, &lastSeen); err != nil {
+	if err := scanAgentRow(row, &a); err != nil {
 		if err != sql.ErrNoRows {
 			recordStoreFailure("[store] Agent 查询失败 %s: %v", id, err)
 		}
 		return nil
 	}
-	a.LastSeen = lastSeen
 	return &a
+}
+
+// agentRowScanner 是 rows.RowScanner 的最小子集：*sql.Row 与 *sql.Rows 都满足它，
+// 使 Agents/Agent 共用同一份「列清单 ↔ Scan 目标」映射，避免两处各写一遍而漂移。
+type agentRowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanAgentRow 把 agents 的一行读进 a。
+//
+// agents 表除 agent_id（PRIMARY KEY）外全部列可空（001_initial.sql 未声明 NOT NULL），
+// 且历史上多经 alterColumnIfMissing / 迁移 017 补列——补到已存在的表时存量行为 NULL。
+// 用标量目标扫描时，**任一列为 NULL 就让整行读不出来**：Agent() 返回 nil（设备凭空消失），
+// Agents() 则 continue 把该 agent 从清单里抹掉。这与 devices 读侧曾踩的坑同源，
+// 故此处与 Snapshot/Device 保持一致，一律走 sql.Null* 目标。
+func scanAgentRow(row agentRowScanner, a *proto.AgentInfo) error {
+	var hostname, segment, tenantID, addr, status sql.NullString
+	var grpcPort, metricsPort, load sql.NullInt64
+	var lastSeen sql.NullTime
+	if err := row.Scan(&a.AgentID, &hostname, &segment, &tenantID, &addr,
+		&grpcPort, &metricsPort, &status, &load, &lastSeen); err != nil {
+		return err
+	}
+	a.Hostname = hostname.String
+	a.Segment = segment.String
+	a.TenantID = tenantID.String
+	a.Addr = addr.String
+	a.Status = status.String
+	a.GRPCPort = int(grpcPort.Int64)
+	a.MetricsPort = int(metricsPort.Int64)
+	a.Load = int(load.Int64)
+	a.LastSeen = lastSeen.Time
+	return nil
 }
 
 // AgentSecret 返回该 agent 的 HMAC 签名密钥（gRPC 身份绑定）。

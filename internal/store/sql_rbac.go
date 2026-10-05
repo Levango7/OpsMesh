@@ -32,13 +32,18 @@ type rowScanner interface {
 // 租户隔离：扫描 tenant_id 列（迁移 018 补列；空/NULL 归一为 default）。
 func scanUser(row rowScanner) *User {
 	var u User
+	// users 的 email/password_hash/status/role_ids/created_at 均可空（migrations/001
+	// 未声明 NOT NULL；tenant_id 是 migration 018 补列）。裸目标扫描遇 NULL 会让
+	// **整行读不出来**——该用户直接查不到，表现为「账号不存在」而无法登录/改密。
+	var email, passwordHash, status sql.NullString
 	var roleIDsJSON []byte
-	var createdAt time.Time
+	var createdAt sql.NullTime
 	var tenantID sql.NullString
-	if err := row.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Status, &roleIDsJSON, &createdAt, &u.MustChangePassword, &tenantID); err != nil {
+	if err := row.Scan(&u.ID, &u.Username, &email, &passwordHash, &status, &roleIDsJSON, &createdAt, &u.MustChangePassword, &tenantID); err != nil {
 		return nil
 	}
-	u.CreatedAt = createdAt
+	u.Email, u.PasswordHash, u.Status = email.String, passwordHash.String, status.String
+	u.CreatedAt = createdAt.Time
 	u.TenantID = normalizeTenantID(strings.TrimSpace(tenantID.String))
 	if len(roleIDsJSON) > 0 {
 		if err := json.Unmarshal(roleIDsJSON, &u.RoleIDs); err != nil {
@@ -51,12 +56,16 @@ func scanUser(row rowScanner) *User {
 // scanRole 从一行扫描出 *Role（permissions 为 JSON 文本列）。
 func scanRole(row rowScanner) *Role {
 	var r Role
+	// roles 的 description/permissions/created_at 均可空；permissions 是 JSON 列，
+	// NULL 与空数组语义不同但都读回「无权限」，裸目标扫描会让 NULL 吞掉整行（角色查不到）。
+	var description sql.NullString
 	var permsJSON []byte
-	var createdAt time.Time
-	if err := row.Scan(&r.ID, &r.Name, &r.Description, &permsJSON, &createdAt); err != nil {
+	var createdAt sql.NullTime
+	if err := row.Scan(&r.ID, &r.Name, &description, &permsJSON, &createdAt); err != nil {
 		return nil
 	}
-	r.CreatedAt = createdAt
+	r.Description = description.String
+	r.CreatedAt = createdAt.Time
 	if len(permsJSON) > 0 {
 		if err := json.Unmarshal(permsJSON, &r.Permissions); err != nil {
 			recordStoreFailure("store: scanRole 解析 permissions JSON 失败 (role=%s): %v", r.ID, err)
@@ -259,9 +268,13 @@ func (s *SQLStore) ListPermissions() []*Permission {
 	out := make([]*Permission, 0)
 	for rows.Next() {
 		var p Permission
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Group); err != nil {
+		// permissions 表的 description/group_name 未声明 NOT NULL，
+		// 裸 string 目标遇 NULL 会让整行读不出来（权限项从清单里消失）。
+		var description, groupName sql.NullString
+		if err := rows.Scan(&p.ID, &p.Name, &description, &groupName); err != nil {
 			continue
 		}
+		p.Description, p.Group = description.String, groupName.String
 		out = append(out, &p)
 	}
 	if err := rows.Err(); err != nil {

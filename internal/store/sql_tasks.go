@@ -135,15 +135,10 @@ func (s *SQLStore) GetTasks(agentID string) []*proto.Task {
 	var out []*proto.Task
 	for rows.Next() {
 		var t proto.Task
-		var content, path sql.NullString
-		var createdAt time.Time
-		if err := rows.Scan(&t.TaskID, &t.AgentID, &t.Type, &t.Command, &content, &path, &t.Status, &createdAt); err != nil {
+		if err := scanTaskListRow(rows, &t); err != nil {
 			recordStoreFailure("[store] GetTasks 扫描失败: %v", err)
 			continue
 		}
-		t.Content = content.String
-		t.Path = path.String
-		t.CreatedAt = createdAt
 		out = append(out, &t)
 	}
 	if err := rows.Err(); err != nil {
@@ -167,10 +162,17 @@ func (s *SQLStore) TasksByParent(parentID string) []*proto.Task {
 	var out []*proto.Task
 	for rows.Next() {
 		var t proto.Task
-		if err := rows.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &t.Command, &t.Status, &t.ParentID); err != nil {
+		// tasks 表除 task_id（主键）外全部列可空：migrations/001 未声明 NOT NULL，
+		// 且 path/content/schedule/parent_id/depends_on/last_fired_at 等列历史上由
+		// alterColumnIfMissing 补到已存在的表——补列时无 DEFAULT，存量行即 NULL。
+		// 用标量目标扫描时任一列为 NULL 就让整行读不出来（任务凭空消失）。
+		var agentID, tenantID, typ, command, status, parentID sql.NullString
+		if err := rows.Scan(&t.TaskID, &agentID, &tenantID, &typ, &command, &status, &parentID); err != nil {
 			recordStoreFailure("[store] TasksByParent 扫描失败: %v", err)
 			continue
 		}
+		t.AgentID, t.TenantID, t.Type = agentID.String, tenantID.String, typ.String
+		t.Command, t.Status, t.ParentID = command.String, status.String, parentID.String
 		out = append(out, &t)
 	}
 	if err := rows.Err(); err != nil {
@@ -202,14 +204,15 @@ ON DUPLICATE KEY UPDATE
 	// RowsAffected==0 表示状态被并发改写 → 跳过后续事件/告警。
 	// 防双跑：UPDATE 附带 AND claim_epoch=? 校验持有者令牌，拒绝旧持有者（任务被回收重派后）上报。
 	// res.ClaimEpoch > 0 时校验（新 agent 填充）；= 0 时跳过（兼容旧 agent/测试）。
-	var tid, tenantID, status string
-	var rc, mr int
+	var tid string
+	var tenantID, status sql.NullString
+	var rc, mr sql.NullInt64
 	accepted := false
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT task_id, tenant_id, status, retry_count, max_retries FROM tasks WHERE task_id=?`, res.TaskID,
 	).Scan(&tid, &tenantID, &status, &rc, &mr); err == nil && tid != "" {
-		if status != "running" {
-			log.Printf("[store] SubmitResult 忽略非 running 任务 %s (status=%s exitCode=%d)", res.TaskID, status, res.ExitCode)
+		if status.String != "running" {
+			log.Printf("[store] SubmitResult 忽略非 running 任务 %s (status=%s exitCode=%d)", res.TaskID, status.String, res.ExitCode)
 		} else if success {
 			if r, uerr := s.db.ExecContext(ctx,
 				`UPDATE tasks SET status='done' WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch),
@@ -220,7 +223,7 @@ ON DUPLICATE KEY UPDATE
 			} else if res.ClaimEpoch > 0 {
 				log.Printf("[store] SubmitResult 拒绝旧持有者上报 %s (claim_epoch=%d 不匹配)", res.TaskID, res.ClaimEpoch)
 			}
-		} else if rc < mr {
+		} else if rc.Int64 < mr.Int64 {
 			r, uerr := s.db.ExecContext(ctx,
 				`UPDATE tasks SET status='pending', claimed_by=NULL, claimed_at=NULL, retry_count=retry_count+1 WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch),
 				claimEpochArgs(res.TaskID, res.ClaimEpoch)...)
@@ -228,8 +231,8 @@ ON DUPLICATE KEY UPDATE
 				recordStoreFailure("[store] SubmitResult retry 更新失败 %s: %v", res.TaskID, uerr)
 			} else if n, raErr := r.RowsAffected(); raErr == nil && n > 0 {
 				accepted = true
-				s.publish(events.Event{Action: "task_retry", Target: res.TaskID, TenantID: tenantID,
-					Detail: fmt.Sprintf("retry %d/%d", rc+1, mr), Level: events.LevelWarn})
+				s.publish(events.Event{Action: "task_retry", Target: res.TaskID, TenantID: tenantID.String,
+					Detail: fmt.Sprintf("retry %d/%d", rc.Int64+1, mr.Int64), Level: events.LevelWarn})
 			} else if res.ClaimEpoch > 0 {
 				log.Printf("[store] SubmitResult 拒绝旧持有者重试 %s (claim_epoch=%d 不匹配)", res.TaskID, res.ClaimEpoch)
 			}
@@ -243,11 +246,11 @@ ON DUPLICATE KEY UPDATE
 				accepted = true
 				s.addAlert(ctx, &proto.Alert{
 					AlertID:   "alert-" + res.TaskID,
-					TenantID:  tenantID,
+					TenantID:  tenantID.String,
 					DeviceID:  "dev-" + res.AgentID,
 					AgentID:   res.AgentID,
 					Severity:  "critical",
-					Message:   fmt.Sprintf("task %s dead-letter after %d retries (exitCode=%d)", res.TaskID, rc, res.ExitCode),
+					Message:   fmt.Sprintf("task %s dead-letter after %d retries (exitCode=%d)", res.TaskID, rc.Int64, res.ExitCode),
 					CreatedAt: time.Now().UTC(),
 				})
 			} else if res.ClaimEpoch > 0 {
@@ -303,9 +306,11 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 	var blocked []rec
 	for rows.Next() {
 		var r rec
-		if serr := rows.Scan(&r.id, &r.deps); serr != nil {
+		var deps sql.NullString
+		if serr := rows.Scan(&r.id, &deps); serr != nil {
 			continue
 		}
+		r.deps = deps.String
 		blocked = append(blocked, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -324,11 +329,12 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 	defer all.Close()
 	byID := make(map[string]*proto.Task)
 	for all.Next() {
-		var id, st string
+		var id string
+		var st sql.NullString
 		if err := all.Scan(&id, &st); err != nil {
 			continue
 		}
-		byID[id] = &proto.Task{TaskID: id, Status: st}
+		byID[id] = &proto.Task{TaskID: id, Status: st.String}
 	}
 	if err := all.Err(); err != nil {
 		recordStoreFailure("[store] releaseDeps 查询任务状态遍历失败 %s: %v", agentID, err)
@@ -373,15 +379,10 @@ func (s *SQLStore) AllTasks(tenantID string) []*proto.Task {
 	var out []*proto.Task
 	for rows.Next() {
 		var t proto.Task
-		var content, path sql.NullString
-		var createdAt time.Time
-		if err := rows.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &t.Command, &content, &path, &t.Status, &createdAt); err != nil {
+		if err := scanTaskListRow(rows, &t); err != nil {
 			recordStoreFailure("[store] AllTasks 扫描失败: %v", err)
 			continue
 		}
-		t.Content = content.String
-		t.Path = path.String
-		t.CreatedAt = createdAt
 		out = append(out, &t)
 	}
 	if err := rows.Err(); err != nil {
@@ -398,18 +399,37 @@ func (s *SQLStore) TaskByID(taskID string) *proto.Task {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT task_id, agent_id, tenant_id, type, command, content, path, status, created_at FROM tasks WHERE task_id=?`, taskID)
 	var t proto.Task
-	var content, path sql.NullString
-	var createdAt time.Time
-	if err := row.Scan(&t.TaskID, &t.AgentID, &t.TenantID, &t.Type, &t.Command, &content, &path, &t.Status, &createdAt); err != nil {
+	if err := scanTaskListRow(row, &t); err != nil {
 		if err != sql.ErrNoRows {
 			recordStoreFailure("[store] TaskByID 查询失败 %s: %v", taskID, err)
 		}
 		return nil
 	}
-	t.Content = content.String
-	t.Path = path.String
-	t.CreatedAt = createdAt
 	return &t
+}
+
+// taskRowScanner 是 *sql.Row 与 *sql.Rows 的共同最小子集，
+// 使共用同一列清单的读侧（GetTasks/AllTasks/TaskByID）只写一遍 Scan 目标映射。
+type taskRowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanTaskListRow 读 tasks 的 9 列子集：
+// task_id, agent_id, tenant_id, type, command, content, path, status, created_at
+//
+// 除 task_id（主键）外全部可空，故一律用 sql.Null* 承接——
+// 裸 string/time.Time 目标遇 NULL 会让整行读不出来（"converting NULL to string is
+// unsupported"），表现为任务在列表与直查里同时消失。
+func scanTaskListRow(row taskRowScanner, t *proto.Task) error {
+	var agentID, tenantID, typ, command, content, path, status sql.NullString
+	var createdAt sql.NullTime
+	if err := row.Scan(&t.TaskID, &agentID, &tenantID, &typ, &command, &content, &path, &status, &createdAt); err != nil {
+		return err
+	}
+	t.AgentID, t.TenantID, t.Type = agentID.String, tenantID.String, typ.String
+	t.Command, t.Content, t.Path = command.String, content.String, path.String
+	t.Status, t.CreatedAt = status.String, createdAt.Time
+	return nil
 }
 
 // Device 按 deviceID 返回单台设备（供设备详情端点）。
@@ -427,12 +447,10 @@ func (s *SQLStore) Results(agentID string) []*proto.TaskResult {
 	var out []*proto.TaskResult
 	for rows.Next() {
 		var r proto.TaskResult
-		var finishedAt time.Time
-		if err := rows.Scan(&r.TaskID, &r.AgentID, &r.ExitCode, &r.Stdout, &r.Stderr, &finishedAt); err != nil {
+		if err := scanTaskResultRow(rows, &r); err != nil {
 			recordStoreFailure("[store] Results 扫描失败: %v", err)
 			continue
 		}
-		r.FinishedAt = finishedAt
 		out = append(out, &r)
 	}
 	if err := rows.Err(); err != nil {
@@ -500,13 +518,15 @@ func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 	}
 	defer tx.Rollback()
 
-	var taskID, typ, command string
-	var tenantID, content, path sql.NullString
-	var createdAt time.Time
-	var claimEpoch int64
-	var timeout, retryDelay int
+	var taskID string
+	var tenantID, typ, command, content, path sql.NullString
+	var createdAt sql.NullTime
+	var claimEpoch sql.NullInt64
+	var timeout, retryDelay sql.NullInt64
 	// (tenant_id IS NULL OR tenant_id='' OR tenant_id=?)：空租户任务视为「无租户标记」放行，
 	// 与下发侧对存量数据的兼容策略一致。
+	// 同理 status/schedule 也可能是 NULL——查询显式把 NULL 视为 pending，
+	// 扫描却必须用 sql.Null* 承接，否则这些行会被驱动判成转换错误而整行丢弃（agent 领不到任务）。
 	if err := tx.QueryRowContext(ctx,
 		`SELECT task_id, tenant_id, type, command, content, path, created_at, claim_epoch, timeout, retry_delay FROM tasks
 		 WHERE agent_id=? AND (status IS NULL OR status='pending') AND (schedule IS NULL OR schedule='')
@@ -530,12 +550,12 @@ func (s *SQLStore) ClaimTask(agentID string) *proto.Task {
 		return nil
 	}
 	return &proto.Task{
-		TaskID: taskID, AgentID: agentID, TenantID: tenantID.String, Type: typ, Command: command,
+		TaskID: taskID, AgentID: agentID, TenantID: tenantID.String, Type: typ.String, Command: command.String,
 		Content: content.String, Path: path.String,
-		Status: "running", CreatedAt: createdAt, ClaimedBy: agentID, ClaimedAt: time.Now().UTC(),
-		ClaimEpoch: claimEpoch + 1,
-		Timeout:    timeout,
-		RetryDelay: retryDelay,
+		Status: "running", CreatedAt: createdAt.Time, ClaimedBy: agentID, ClaimedAt: time.Now().UTC(),
+		ClaimEpoch: claimEpoch.Int64 + 1,
+		Timeout:    int(timeout.Int64),
+		RetryDelay: int(retryDelay.Int64),
 	}
 }
 
@@ -624,11 +644,15 @@ func (s *SQLStore) FireDueSchedules(now time.Time) int {
 		// "converting NULL to string is unsupported"（双轨观察栈实测：
 		// shadow-seed 模板 content=NULL 时 FireDueSchedules 每轮静默失败）。
 		// 与本文件 PendingTasks/:138、ListTasks/:376、GetTask/:401 的处理一致。
-		var content, command, path sql.NullString
-		if err := rows.Scan(&tp.id, &tp.agentID, &tp.tenantID, &tp.typ, &command, &content, &path, &tp.maxRetries, &tp.schedule, &lf, &tp.timeout, &tp.retryDelay); err != nil {
+		var content, command, path, agentID, tenantID, typ, schedule sql.NullString
+		var maxRetries, timeout, retryDelay sql.NullInt64
+		if err := rows.Scan(&tp.id, &agentID, &tenantID, &typ, &command, &content, &path, &maxRetries, &schedule, &lf, &timeout, &retryDelay); err != nil {
 			recordStoreFailure("[store] FireDueSchedules 扫描失败: %v", err)
 			continue
 		}
+		tp.agentID, tp.tenantID, tp.typ = agentID.String, tenantID.String, typ.String
+		tp.maxRetries, tp.schedule = int(maxRetries.Int64), schedule.String
+		tp.timeout, tp.retryDelay = int(timeout.Int64), int(retryDelay.Int64)
 		if content.Valid {
 			tp.content = content.String
 		}
@@ -703,15 +727,31 @@ func (s *SQLStore) TaskResult(taskID string) *proto.TaskResult {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT task_id, agent_id, exit_code, stdout, stderr, finished_at FROM task_results WHERE task_id=?`, taskID)
 	var r proto.TaskResult
-	var finishedAt time.Time
-	if err := row.Scan(&r.TaskID, &r.AgentID, &r.ExitCode, &r.Stdout, &r.Stderr, &finishedAt); err != nil {
+	if err := scanTaskResultRow(row, &r); err != nil {
 		if err != sql.ErrNoRows {
 			recordStoreFailure("[store] TaskResult 查询失败 %s: %v", taskID, err)
 		}
 		return nil
 	}
-	r.FinishedAt = finishedAt
 	return &r
+}
+
+// scanTaskResultRow 读 task_results 的 6 列：
+// task_id, agent_id, exit_code, stdout, stderr, finished_at
+//
+// task_id 是主键，其余列在 migrations/001 里均未声明 NOT NULL；
+// SubmitResult 对空 stdout/stderr 与零值 FinishedAt 是照写的（agent 上报允许空输出），
+// 裸目标扫描会让这类行整行读不出来（执行结果凭空消失）。
+func scanTaskResultRow(row taskRowScanner, r *proto.TaskResult) error {
+	var agentID, stdout, stderr sql.NullString
+	var exitCode sql.NullInt64
+	var finishedAt sql.NullTime
+	if err := row.Scan(&r.TaskID, &agentID, &exitCode, &stdout, &stderr, &finishedAt); err != nil {
+		return err
+	}
+	r.AgentID, r.ExitCode = agentID.String, int(exitCode.Int64)
+	r.Stdout, r.Stderr, r.FinishedAt = stdout.String, stderr.String, finishedAt.Time
+	return nil
 }
 
 // CancelTask 取消任务（F3）：pending/running -> cancelled；已 done/failed/cancelled 不可取消。

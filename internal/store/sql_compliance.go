@@ -16,6 +16,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"time"
 )
@@ -29,11 +30,16 @@ const complianceReportColumns = `id, tenant_id, device_id, results, score, creat
 // results 反序列化失败不致命：保留空 Results，避免单条坏数据让整个 List 崩。
 func scanComplianceReport(row rowScanner) *ComplianceReport {
 	var r ComplianceReport
+	// compliance_reports 的 device_id/results 均可空（migrations/012）；
+	// 全网扫描（未指定设备）的合规报告其device_id 本就是空。
+	// 裸目标扫描遇 NULL 会让整行读不出来——合规报告凭空消失。
+	var deviceID sql.NullString
 	var resultsJSON []byte
 	var createdAt time.Time
-	if err := row.Scan(&r.ID, &r.TenantID, &r.DeviceID, &resultsJSON, &r.Score, &createdAt); err != nil {
+	if err := row.Scan(&r.ID, &r.TenantID, &deviceID, &resultsJSON, &r.Score, &createdAt); err != nil {
 		return nil
 	}
+	r.DeviceID = deviceID.String
 	r.CreatedAt = createdAt
 	if len(resultsJSON) > 0 {
 		// 反序列化失败不致命：保留空 Results，避免单条坏数据让整个 List 崩，但必须留痕。

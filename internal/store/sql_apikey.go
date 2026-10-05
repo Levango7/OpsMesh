@@ -33,7 +33,9 @@ import (
 // last_used_at, enabled, created_at。无行或扫描失败返回 nil。
 func scanAPIKey(row rowScanner) *APIKey {
 	var k APIKey
-	var scopesJSON string
+	// scopes 是 api_keys 里唯一可空的扫描列（TEXT，NULL 表示无 scope）；
+	// 裸 string 目标遇 NULL 会让整行读不出来——API Key 凭空失效（认证 401）。
+	var scopesJSON sql.NullString
 	var expiresAt, lastUsedAt sql.NullTime
 	var enabled int
 	var createdAt time.Time
@@ -49,8 +51,8 @@ func scanAPIKey(row rowScanner) *APIKey {
 	if lastUsedAt.Valid {
 		k.LastUsedAt = lastUsedAt.Time
 	}
-	if scopesJSON != "" {
-		if err := json.Unmarshal([]byte(scopesJSON), &k.Scopes); err != nil {
+	if scopesJSON.String != "" {
+		if err := json.Unmarshal([]byte(scopesJSON.String), &k.Scopes); err != nil {
 			recordStoreFailure("[store] scanAPIKey 解析 scopes JSON 失败 (apikey=%s): %v", k.ID, err)
 		}
 	}

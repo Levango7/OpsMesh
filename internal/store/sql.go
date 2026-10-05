@@ -964,8 +964,11 @@ func (s *SQLStore) RenewLeadership(ttl time.Duration) bool {
 		return false
 	}
 	// 读取当前 holder 以确认本实例是否为主。
-	var holder string
-	var expiresAt time.Time
+	// leader_lease 的 holder/expires_at 均未声明 NOT NULL，且历史上有过
+	// 「表已存在但缺列」的库（补列前 holder/expires_at 为 NULL）——
+	// 裸目标扫描会让 RenewLeadership 直接失败、把本实例判成非主（假性失去领导权）。
+	var holder sql.NullString
+	var expiresAt sql.NullTime
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT holder, expires_at FROM leader_lease WHERE id=1`).Scan(&holder, &expiresAt); err != nil {
 		recordStoreFailure("[store] RenewLeadership 读取失败: %v", err)
@@ -974,10 +977,10 @@ func (s *SQLStore) RenewLeadership(ttl time.Duration) bool {
 		s.mu.Unlock()
 		return false
 	}
-	leader := holder == s.instanceID && expiresAt.After(now)
+	leader := holder.String == s.instanceID && holder.Valid && expiresAt.Valid && expiresAt.Time.After(now)
 	s.mu.Lock()
 	s.isLeader = leader
-	s.leaseUntil = expiresAt
+	s.leaseUntil = expiresAt.Time
 	s.mu.Unlock()
 	return leader
 }

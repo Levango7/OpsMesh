@@ -17,6 +17,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 
 	"time"
 )
@@ -26,12 +27,18 @@ import (
 // installed, enabled, created_at。无行或扫描失败返回 nil。
 func scanPlugin(row rowScanner) *Plugin {
 	var p Plugin
+	// plugins 的 version/description/author/download_url/checksum 均可空
+	// （migrations/015）；未上架完整信息的插件是合法状态。裸目标扫描遇 NULL 会让
+	// 整行读不出来——插件市场清单漏条目。
+	var version, description, author, downloadURL, checksum sql.NullString
 	var installed, enabled int
 	var createdAt time.Time
-	if err := row.Scan(&p.ID, &p.Name, &p.Version, &p.Description, &p.Author, &p.Type,
-		&p.DownloadURL, &p.Checksum, &installed, &enabled, &createdAt); err != nil {
+	if err := row.Scan(&p.ID, &p.Name, &version, &description, &author, &p.Type,
+		&downloadURL, &checksum, &installed, &enabled, &createdAt); err != nil {
 		return nil
 	}
+	p.Version, p.Description, p.Author = version.String, description.String, author.String
+	p.DownloadURL, p.Checksum = downloadURL.String, checksum.String
 	p.Installed = installed != 0
 	p.Enabled = enabled != 0
 	p.CreatedAt = createdAt

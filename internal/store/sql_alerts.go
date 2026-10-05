@@ -17,13 +17,26 @@ import (
 // scanAlertRule 从一行扫描出 *AlertRule。
 func scanAlertRule(row rowScanner) *AlertRule {
 	var r AlertRule
-	var createdAt time.Time
+	// alert_rules 除 id 外全部可空（migrations/001 未声明 NOT NULL），
+	// created_by 更是 M2 补列。裸目标扫描遇 NULL 会让整行读不出来——
+	// 告警规则凭空消失，规则引擎随之失效。
+	var tenantID, metric, op sql.NullString
+	var threshold sql.NullFloat64
+	var forDuration sql.NullInt64
+	var severity, message sql.NullString
+	var enabled sql.NullBool
+	var createdAt sql.NullTime
 	var createdBy sql.NullString
-	if err := row.Scan(&r.ID, &r.TenantID, &r.Metric, &r.Op, &r.Threshold,
-		&r.ForDuration, &r.Severity, &r.Message, &r.Enabled, &createdAt, &createdBy); err != nil {
+	if err := row.Scan(&r.ID, &tenantID, &metric, &op, &threshold,
+		&forDuration, &severity, &message, &enabled, &createdAt, &createdBy); err != nil {
 		return nil
 	}
-	r.CreatedAt = createdAt
+	r.TenantID, r.Metric, r.Op = tenantID.String, metric.String, op.String
+	r.Threshold = threshold.Float64
+	r.ForDuration = int(forDuration.Int64)
+	r.Severity, r.Message = severity.String, message.String
+	r.Enabled = enabled.Bool
+	r.CreatedAt = createdAt.Time
 	r.CreatedBy = createdBy.String
 	return &r
 }

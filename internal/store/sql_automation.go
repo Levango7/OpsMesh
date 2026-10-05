@@ -33,15 +33,20 @@ import (
 //	enabled, created_at, updated_at。
 func scanAutomationRule(row rowScanner) *AutomationRule {
 	var r AutomationRule
+	// automation_rules 的 description/trigger_params/actions 均可空（migrations/013）；
+	// 未配触发参数或未配动作的规则是合法状态。裸目标扫描遇 NULL 会让整行读不出来，
+	// 症状是「自动化规则凭空消失」，且 enabled/时间列在其后跟着一起丢。
+	var description sql.NullString
 	var triggerParamsJSON, actionsJSON []byte
 	var enabled int
 	var createdAt, updatedAt time.Time
 	if err := row.Scan(
-		&r.ID, &r.TenantID, &r.Name, &r.Description, &r.TriggerType,
+		&r.ID, &r.TenantID, &r.Name, &description, &r.TriggerType,
 		&triggerParamsJSON, &actionsJSON, &enabled, &createdAt, &updatedAt,
 	); err != nil {
 		return nil
 	}
+	r.Description = description.String
 	r.Enabled = enabled != 0
 	r.CreatedAt = createdAt
 	r.UpdatedAt = updatedAt
@@ -241,11 +246,17 @@ func scanAutomationExecution(row rowScanner) *AutomationExecution {
 	var e AutomationExecution
 	var startedAt time.Time
 	var endedAt sql.NullTime
+	// rule_name / detail 在 013 建表时未声明 NOT NULL：NULL 扫进裸 string 会让整行读不出来，
+	// 而本 helper 出错是 `return nil` —— 症状是"执行记录凭空消失"而不是报错。
+	// 当前写侧原样入库（空串写成 ''），所以这是**潜伏**缺陷；但人工改数、外部导入
+	// 或将来改用 nullString() 都会立刻触发，按门禁口径一并收口。
+	var ruleName, detail sql.NullString
 	if err := row.Scan(
-		&e.ID, &e.TenantID, &e.RuleID, &e.RuleName, &e.Status, &e.Detail, &startedAt, &endedAt,
+		&e.ID, &e.TenantID, &e.RuleID, &ruleName, &e.Status, &detail, &startedAt, &endedAt,
 	); err != nil {
 		return nil
 	}
+	e.RuleName, e.Detail = ruleName.String, detail.String
 	e.StartedAt = startedAt
 	if endedAt.Valid {
 		t := endedAt.Time

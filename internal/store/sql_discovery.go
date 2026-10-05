@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"time"
 )
@@ -22,15 +23,19 @@ import (
 // 无行或扫描失败返回 nil。
 func scanServiceInstance(row rowScanner) *ServiceInstance {
 	var s ServiceInstance
-	var metadataStr string
+	// services 的 address/port/metadata 均可空（migrations/009）；地址尚未解析出来时
+	// address/port 就是 NULL。裸目标扫描会让这类实例整行读不出来——服务发现清单漏条目。
+	var address, metadataStr sql.NullString
+	var port sql.NullInt64
 	var lastHeartbeat, createdAt time.Time
-	if err := row.Scan(&s.ServiceID, &s.TenantID, &s.ServiceName, &s.Address, &s.Port, &metadataStr, &s.Status, &lastHeartbeat, &createdAt); err != nil {
+	if err := row.Scan(&s.ServiceID, &s.TenantID, &s.ServiceName, &address, &port, &metadataStr, &s.Status, &lastHeartbeat, &createdAt); err != nil {
 		return nil
 	}
-	if metadataStr != "" {
+	s.Address, s.Port = address.String, int(port.Int64)
+	if metadataStr.String != "" {
 		// 反序列化失败时保留 nil Metadata，不阻断读取。
 		var metadata map[string]string
-		if err := json.Unmarshal([]byte(metadataStr), &metadata); err == nil {
+		if err := json.Unmarshal([]byte(metadataStr.String), &metadata); err == nil {
 			s.Metadata = metadata
 		}
 	}

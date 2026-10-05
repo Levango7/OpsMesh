@@ -15,6 +15,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 )
@@ -26,13 +27,17 @@ import (
 // scanOSTemplate 从一行扫描出 *OSTemplate。
 func scanOSTemplate(row rowScanner) *OSTemplate {
 	var t OSTemplate
-	var createdAt, updatedAt time.Time
-	if err := row.Scan(&t.ID, &t.TenantID, &t.Name, &t.OS, &t.Version, &t.Arch,
-		&t.InstallURL, &t.Config, &createdAt, &updatedAt); err != nil {
+	// os_templates 除 id/name 外全部可空（migrations/003），
+	// 且 tenant_id 是逐版本补齐的列。裸目标扫描遇 NULL 会让整行读不出来。
+	var tenantID, osName, version, arch, installURL, config sql.NullString
+	var createdAt, updatedAt sql.NullTime
+	if err := row.Scan(&t.ID, &tenantID, &t.Name, &osName, &version, &arch,
+		&installURL, &config, &createdAt, &updatedAt); err != nil {
 		return nil
 	}
-	t.CreatedAt = createdAt
-	t.UpdatedAt = updatedAt
+	t.TenantID, t.OS, t.Version, t.Arch = tenantID.String, osName.String, version.String, arch.String
+	t.InstallURL, t.Config = installURL.String, config.String
+	t.CreatedAt, t.UpdatedAt = createdAt.Time, updatedAt.Time
 	return &t
 }
 
@@ -131,12 +136,15 @@ func (s *SQLStore) DeleteOSTemplate(id string) bool {
 // scanMiddlewareTemplate 从一行扫描出 *MiddlewareTemplate。
 func scanMiddlewareTemplate(row rowScanner) *MiddlewareTemplate {
 	var t MiddlewareTemplate
-	var createdAt, updatedAt time.Time
-	if err := row.Scan(&t.ID, &t.TenantID, &t.Name, &t.Type, &t.Version, &t.Config, &createdAt, &updatedAt); err != nil {
+	// middleware_templates 除 id/name 外全部可空（migrations/003），tenant_id 为补列。
+	// 裸目标扫描遇 NULL 会让整行读不出来——中间件模板清单漏条目。
+	var tenantID, typ, version, config sql.NullString
+	var createdAt, updatedAt sql.NullTime
+	if err := row.Scan(&t.ID, &tenantID, &t.Name, &typ, &version, &config, &createdAt, &updatedAt); err != nil {
 		return nil
 	}
-	t.CreatedAt = createdAt
-	t.UpdatedAt = updatedAt
+	t.TenantID, t.Type, t.Version, t.Config = tenantID.String, typ.String, version.String, config.String
+	t.CreatedAt, t.UpdatedAt = createdAt.Time, updatedAt.Time
 	return &t
 }
 

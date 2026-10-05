@@ -23,13 +23,17 @@ import (
 // RegisterService 等方法在 sql_discovery.go；此处仅 ConfigStore 方法。
 
 // scanConfigItem 从一行扫描出 *ConfigItem（列顺序：key_name, value, format, version, description, tenant_id, updated_by, updated_at）。
+//
+// configs 的 value/description/updated_by 均可空（migrations/008），
+// 且 value 为空是合法业务状态（配置项占位）。裸目标扫描遇NULL 会让整行读不出来，
+// 症状是「配置项查不到」——发布流程会在此静默失败。
 func scanConfigItem(row rowScanner) *ConfigItem {
 	var c ConfigItem
-	var updatedAt time.Time
-	if err := row.Scan(&c.Key, &c.Value, &c.Format, &c.Version, &c.Description, &c.TenantID, &c.UpdatedBy, &updatedAt); err != nil {
+	var value, description, updatedBy sql.NullString
+	if err := row.Scan(&c.Key, &value, &c.Format, &c.Version, &description, &c.TenantID, &updatedBy, &c.UpdatedAt); err != nil {
 		return nil
 	}
-	c.UpdatedAt = updatedAt
+	c.Value, c.Description, c.UpdatedBy = value.String, description.String, updatedBy.String
 	return &c
 }
 

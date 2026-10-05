@@ -33,12 +33,16 @@ import (
 // created_at, updated_at。无行或扫描失败返回 nil。
 func scanScript(row rowScanner) *Script {
 	var sc Script
+	// scripts 的 content/params 均可空（migrations/014）。裸目标扫描遇 NULL 会让
+	// 整行读不出来——脚本清单漏条目，其后的 enabled/时间列跟着一起丢。
+	var content, params sql.NullString
 	var enabled int
 	var createdAt, updatedAt time.Time
-	if err := row.Scan(&sc.ID, &sc.TenantID, &sc.Name, &sc.Language, &sc.Content,
-		&sc.Params, &sc.TimeoutSec, &enabled, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&sc.ID, &sc.TenantID, &sc.Name, &sc.Language, &content,
+		&params, &sc.TimeoutSec, &enabled, &createdAt, &updatedAt); err != nil {
 		return nil
 	}
+	sc.Content, sc.Params = content.String, params.String
 	sc.Enabled = enabled != 0
 	sc.CreatedAt = createdAt
 	sc.UpdatedAt = updatedAt
@@ -193,12 +197,17 @@ func (s *SQLStore) DeleteScript(tenantID, id string) bool {
 // started_at, finished_at。无行或扫描失败返回 nil。
 func scanScriptExecution(row rowScanner) *ScriptExecution {
 	var e ScriptExecution
+	// script_executions 的 device_id/stdout/stderr 均可空（migrations/014）；
+	// stdout/stderr 为空是正常结果（命令无输出），device_id 为空表示未绑定设备。
+	// 裸目标扫描遇 NULL 会让整行读不出来——执行记录连状态一起消失。
+	var deviceID, stdout, stderr sql.NullString
 	var startedAt time.Time
 	var finishedAt sql.NullTime
-	if err := row.Scan(&e.ID, &e.TenantID, &e.ScriptID, &e.DeviceID, &e.Status,
-		&e.Stdout, &e.Stderr, &startedAt, &finishedAt); err != nil {
+	if err := row.Scan(&e.ID, &e.TenantID, &e.ScriptID, &deviceID, &e.Status,
+		&stdout, &stderr, &startedAt, &finishedAt); err != nil {
 		return nil
 	}
+	e.DeviceID, e.Stdout, e.Stderr = deviceID.String, stdout.String, stderr.String
 	e.StartedAt = startedAt
 	if finishedAt.Valid {
 		ft := finishedAt.Time

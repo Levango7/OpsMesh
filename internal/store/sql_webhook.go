@@ -24,6 +24,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"time"
 )
@@ -33,23 +34,27 @@ import (
 // retry_count, retry_interval_sec, created_at, updated_at。无行或扫描失败返回 nil。
 func scanWebhook(row rowScanner) *Webhook {
 	var wh Webhook
-	var eventsJSON, headersJSON string
+	// webhooks 的 url/events/headers/body_template 均可空（migrations/014）。
+	// 裸目标扫描遇 NULL 会让整行读不出来——Webhook 配置连同其投递统计一起消失。
+	var url, bodyTemplate sql.NullString
+	var eventsJSON, headersJSON sql.NullString
 	var enabled int
 	var createdAt, updatedAt time.Time
-	if err := row.Scan(&wh.ID, &wh.TenantID, &wh.Name, &wh.URL, &eventsJSON, &headersJSON,
-		&wh.BodyTemplate, &enabled, &wh.RetryCount, &wh.RetryIntervalSec, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&wh.ID, &wh.TenantID, &wh.Name, &url, &eventsJSON, &headersJSON,
+		&bodyTemplate, &enabled, &wh.RetryCount, &wh.RetryIntervalSec, &createdAt, &updatedAt); err != nil {
 		return nil
 	}
+	wh.URL, wh.BodyTemplate = url.String, bodyTemplate.String
 	wh.Enabled = enabled != 0
 	wh.CreatedAt = createdAt
 	wh.UpdatedAt = updatedAt
-	if eventsJSON != "" {
-		if err := json.Unmarshal([]byte(eventsJSON), &wh.Events); err != nil {
+	if eventsJSON.String != "" {
+		if err := json.Unmarshal([]byte(eventsJSON.String), &wh.Events); err != nil {
 			recordStoreFailure("[store] scanWebhook 解析 events JSON 失败 (webhook=%s): %v", wh.ID, err)
 		}
 	}
-	if headersJSON != "" {
-		if err := json.Unmarshal([]byte(headersJSON), &wh.Headers); err != nil {
+	if headersJSON.String != "" {
+		if err := json.Unmarshal([]byte(headersJSON.String), &wh.Headers); err != nil {
 			recordStoreFailure("[store] scanWebhook 解析 headers JSON 失败 (webhook=%s): %v", wh.ID, err)
 		}
 	}
@@ -223,11 +228,17 @@ func (s *SQLStore) DeleteWebhook(tenantID, id string) bool {
 // delivered_at。无行或扫描失败返回 nil。
 func scanWebhookDelivery(row rowScanner) *WebhookDelivery {
 	var d WebhookDelivery
+	// webhook_deliveries 的 event/payload/response/error 均可空（migrations/014）；
+	// 投递失败时 response/error 为空是常态。裸目标扫描遇 NULL 会让整行读不出来——
+	// 失败投递记录凭空消失，排查时看不到任何线索。
+	var event, payload, response, errMsg sql.NullString
 	var deliveredAt time.Time
-	if err := row.Scan(&d.ID, &d.TenantID, &d.WebhookID, &d.Event, &d.Payload,
-		&d.StatusCode, &d.Response, &d.Error, &deliveredAt); err != nil {
+	if err := row.Scan(&d.ID, &d.TenantID, &d.WebhookID, &event, &payload,
+		&d.StatusCode, &response, &errMsg, &deliveredAt); err != nil {
 		return nil
 	}
+	d.Event, d.Payload = event.String, payload.String
+	d.Response, d.Error = response.String, errMsg.String
 	d.DeliveredAt = deliveredAt
 	return &d
 }

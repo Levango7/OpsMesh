@@ -301,8 +301,21 @@ func (s *SQLStore) VerifyAuditChain(tenant string, limit int) (*AuditChainVerify
 	// 取最近 limit 条链式行（倒序取再反转，保证窗口是「最新的一段」）。
 	cols := `id, tenant_id, user_id, action, target, detail, created_at, trace_id, prev_hash, entry_hash`
 	scan := func(rows *sql.Rows, r *auditChainRow) error {
-		return rows.Scan(&r.ID, &r.Event.TenantID, &r.Event.UserID, &r.Event.Action,
-			&r.Event.Target, &r.Event.Detail, &r.Event.CreatedAt, &r.Event.TraceID, &r.PrevHash, &r.EntryHash)
+		// audit_log 除自增 id 外全部列可空（001 建表未声明 NOT NULL，trace_id 是后补列），
+		// 与 scanAuditRow 同一个理由。本函数对 Scan 错误是**向上抛**，所以症状比
+		// "某条记录消失"更重：一条 NULL 就让整次链校验失败。
+		var tenantID, userID, action, target, detail, traceID sql.NullString
+		var createdAt sql.NullTime
+		var prevHash, entryHash sql.NullString
+		if err := rows.Scan(&r.ID, &tenantID, &userID, &action, &target, &detail,
+			&createdAt, &traceID, &prevHash, &entryHash); err != nil {
+			return err
+		}
+		r.Event.TenantID, r.Event.UserID, r.Event.Action = tenantID.String, userID.String, action.String
+		r.Event.Target, r.Event.Detail, r.Event.CreatedAt = target.String, detail.String, createdAt.Time
+		r.Event.TraceID = traceID.String
+		r.PrevHash, r.EntryHash = prevHash.String, entryHash.String
+		return nil
 	}
 	where := `WHERE entry_hash IS NOT NULL AND entry_hash<>''` + tenantFilter
 	q := `SELECT ` + cols + ` FROM audit_log ` + where + ` ORDER BY id DESC LIMIT ?`

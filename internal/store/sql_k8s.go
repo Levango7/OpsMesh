@@ -12,19 +12,26 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 )
 
 // scanK8sCluster 从一行扫描出 *K8sCluster。
+//
+// k8s_clusters 8 列里除 id 外全部可空（migrations/001 未声明 NOT NULL），
+// kubeconfig/server/status 更是逐版本补齐的列。裸目标扫描时任一列为 NULL
+// 就让整行读不出来——集群从清单里消失，表现为「配过的集群查不到」。
 func scanK8sCluster(row rowScanner) *K8sCluster {
 	var c K8sCluster
-	var createdAt, updatedAt time.Time
-	if err := row.Scan(&c.ID, &c.TenantID, &c.Name, &c.Server, &c.Kubeconfig, &c.Status, &createdAt, &updatedAt); err != nil {
+	var tenantID, name, server, kubeconfig, status sql.NullString
+	var createdAt, updatedAt sql.NullTime
+	if err := row.Scan(&c.ID, &tenantID, &name, &server, &kubeconfig, &status, &createdAt, &updatedAt); err != nil {
 		return nil
 	}
-	c.CreatedAt = createdAt
-	c.UpdatedAt = updatedAt
+	c.TenantID, c.Name, c.Server = tenantID.String, name.String, server.String
+	c.Kubeconfig, c.Status = kubeconfig.String, status.String
+	c.CreatedAt, c.UpdatedAt = createdAt.Time, updatedAt.Time
 	return &c
 }
 

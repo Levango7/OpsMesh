@@ -18,6 +18,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -28,16 +29,20 @@ import (
 // created_at, updated_at。无行或扫描失败返回 nil。
 func scanSLO(row rowScanner) *SLO {
 	var s SLO
-	var slisJSON string
+	// slos 的 description/service_name/window_spec/slis 均可空（migrations/010）；
+	// 未绑定服务或未配 SLI 的 SLO 是合法状态。裸目标扫描遇 NULL 会让整行读不出来。
+	var description, serviceName sql.NullString
+	var slisJSON sql.NullString
 	var createdAt, updatedAt time.Time
-	if err := row.Scan(&s.ID, &s.TenantID, &s.Name, &s.Description, &s.ServiceName,
+	if err := row.Scan(&s.ID, &s.TenantID, &s.Name, &description, &serviceName,
 		&s.Target, &s.Window, &slisJSON, &createdAt, &updatedAt); err != nil {
 		return nil
 	}
+	s.Description, s.ServiceName = description.String, serviceName.String
 	s.CreatedAt = createdAt
 	s.UpdatedAt = updatedAt
-	if slisJSON != "" {
-		if err := json.Unmarshal([]byte(slisJSON), &s.SLIs); err != nil {
+	if slisJSON.String != "" {
+		if err := json.Unmarshal([]byte(slisJSON.String), &s.SLIs); err != nil {
 			recordStoreFailure("[store] scanSLO 解析 slis JSON 失败 (slo=%s): %v", s.ID, err)
 		}
 	}

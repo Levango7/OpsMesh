@@ -18,6 +18,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 )
 
@@ -26,14 +27,20 @@ import (
 // cluster_url, sync_policy, status, health_status, created_at, updated_at。
 func scanArgoCDApp(row rowScanner) *ArgoCDApp {
 	var a ArgoCDApp
+	// argocd_apps 的 namespace/repo_url/path/target_revision/cluster_url 均可空
+	// （migrations/011）。裸目标扫描遇 NULL 会让整行读不出来——应用列表漏条目，
+	// 且 sync_policy/status 等 NOT NULL 列排在其后跟着一起丢。
+	var namespace, repoURL, path, targetRevision, clusterURL sql.NullString
 	var createdAt, updatedAt time.Time
 	if err := row.Scan(
-		&a.ID, &a.TenantID, &a.Name, &a.Namespace, &a.RepoURL, &a.Path,
-		&a.TargetRevision, &a.ClusterURL, &a.SyncPolicy, &a.Status, &a.HealthStatus,
+		&a.ID, &a.TenantID, &a.Name, &namespace, &repoURL, &path,
+		&targetRevision, &clusterURL, &a.SyncPolicy, &a.Status, &a.HealthStatus,
 		&createdAt, &updatedAt,
 	); err != nil {
 		return nil
 	}
+	a.Namespace, a.RepoURL, a.Path = namespace.String, repoURL.String, path.String
+	a.TargetRevision, a.ClusterURL = targetRevision.String, clusterURL.String
 	a.CreatedAt = createdAt
 	a.UpdatedAt = updatedAt
 	return &a

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strconv"
@@ -48,9 +49,142 @@ func (m *mockRowScanner) Scan(dest ...interface{}) error {
 	for i, d := range dest {
 		// 用 reflect 将 m.vals[i] 赋给 dest[i] 指向的变量。
 		rv := reflect.ValueOf(d).Elem()
-		rv.Set(reflect.ValueOf(m.vals[i]))
+		v := reflect.ValueOf(m.vals[i])
+		// 读侧大量使用 sql.Null* 目标（可空列遇 NULL 不应让整行读不出来，见 TD-74）。
+		// 真实驱动会把 NULL 转成 Null* 的零值、把具体值转成 Valid=true；
+		// 这里照做，于是用例仍可只写「人类可读的标量数据」，
+		// 不必为每个可空列在测试里堆 sql.NullString{…} 样板。
+		if conv, ok := nullWrapperFor(rv.Type(), m.vals[i]); ok {
+			rv.Set(conv)
+			continue
+		}
+		if !v.IsValid() {
+			rv.Set(reflect.Zero(rv.Type()))
+			continue
+		}
+		if !v.Type().AssignableTo(rv.Type()) {
+			return fmt.Errorf("mockRowScanner: 第 %d 个值 %T 不能赋给 %s", i, m.vals[i], rv.Type())
+		}
+		rv.Set(v)
 	}
 	return nil
+}
+
+// nullWrapperFor 在目标类型是 sql.Null* 且传入值是对应标量时，构造 Valid=true 的包装值；
+// 传入 nil 时返回零值 Null*（Valid=false），与驱动行为一致。
+func nullWrapperFor(tp reflect.Type, val interface{}) (reflect.Value, bool) {
+	switch tp {
+	case reflect.TypeOf(sql.NullString{}):
+		return wrapNull(tp, val, func(v interface{}) interface{} { return sql.NullString{String: v.(string), Valid: true} })
+	case reflect.TypeOf(sql.NullInt64{}):
+		return wrapNull(tp, val, func(v interface{}) interface{} { return sql.NullInt64{Int64: toInt64(v), Valid: true} })
+	case reflect.TypeOf(sql.NullFloat64{}):
+		return wrapNull(tp, val, func(v interface{}) interface{} { return sql.NullFloat64{Float64: toFloat64(v), Valid: true} })
+	case reflect.TypeOf(sql.NullBool{}):
+		return wrapNull(tp, val, func(v interface{}) interface{} { return sql.NullBool{Bool: v.(bool), Valid: true} })
+	case reflect.TypeOf(sql.NullTime{}):
+		return wrapNull(tp, val, func(v interface{}) interface{} {
+			return sql.NullTime{Time: toTime(v), Valid: true}
+		})
+	}
+	return reflect.Value{}, false
+}
+
+func wrapNull(tp reflect.Type, val interface{}, mk func(interface{}) interface{}) (reflect.Value, bool) {
+	if val == nil {
+		return reflect.Zero(tp), true
+	}
+	v := reflect.ValueOf(val)
+	if !v.Type().AssignableTo(reflect.TypeOf(val)) {
+		return reflect.Value{}, false
+	}
+	// 只有当标量类型确实与包装器内部字段一致时才包装，否则交回调用方按原类型赋值。
+	switch tp {
+	case reflect.TypeOf(sql.NullString{}):
+		if _, ok := val.(string); !ok {
+			return reflect.Value{}, false
+		}
+	case reflect.TypeOf(sql.NullInt64{}):
+		if !isIntLike(val) {
+			return reflect.Value{}, false
+		}
+	case reflect.TypeOf(sql.NullFloat64{}):
+		if !isFloatLike(val) {
+			return reflect.Value{}, false
+		}
+	case reflect.TypeOf(sql.NullBool{}):
+		if _, ok := val.(bool); !ok {
+			return reflect.Value{}, false
+		}
+	case reflect.TypeOf(sql.NullTime{}):
+		if _, ok := val.(time.Time); !ok {
+			return reflect.Value{}, false
+		}
+	}
+	return reflect.ValueOf(mk(val)), true
+}
+
+func isIntLike(v interface{}) bool {
+	switch v.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return true
+	}
+	return false
+}
+
+func isFloatLike(v interface{}) bool {
+	switch v.(type) {
+	case float32, float64, int, int64:
+		return true
+	}
+	return false
+}
+
+func toInt64(v interface{}) int64 {
+	switch n := v.(type) {
+	case int:
+		return int64(n)
+	case int8:
+		return int64(n)
+	case int16:
+		return int64(n)
+	case int32:
+		return int64(n)
+	case int64:
+		return n
+	case uint:
+		return int64(n)
+	case uint8:
+		return int64(n)
+	case uint16:
+		return int64(n)
+	case uint32:
+		return int64(n)
+	case uint64:
+		return int64(n)
+	}
+	return 0
+}
+
+func toFloat64(v interface{}) float64 {
+	switch n := v.(type) {
+	case float32:
+		return float64(n)
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	}
+	return 0
+}
+
+func toTime(v interface{}) time.Time {
+	if t, ok := v.(time.Time); ok {
+		return t
+	}
+	return time.Time{}
 }
 
 // ============================================================================

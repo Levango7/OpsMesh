@@ -13,20 +13,28 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"time"
 )
 
 // scanRefreshToken 从一行扫描出 *RefreshToken。无行或扫描失败返回 nil。
+//
+// refresh_tokens 除 token_hash（主键）外全部列可空（migrations/001 未声明 NOT NULL），
+// 且 user_id/tenant_id/device_fp 是逐版本补齐的列。用标量目标扫描时，任一列为 NULL
+// 就让整行读不出来——后果是**该用户的刷新令牌整体失效**（刷新链路返回未认证）。
+// 其中 device_fp 尤其关键：字段语义是「空=不校验设备」，NULL 本就该降级为空串，
+// 而不是让整个令牌读不出来。
 func scanRefreshToken(row rowScanner) *RefreshToken {
 	var rt RefreshToken
-	var expiresAt, createdAt time.Time
-	if err := row.Scan(&rt.TokenHash, &rt.UserID, &rt.TenantID, &rt.DeviceFP, &expiresAt, &createdAt); err != nil {
+	var userID, tenantID, deviceFP sql.NullString
+	var expiresAt, createdAt sql.NullTime
+	if err := row.Scan(&rt.TokenHash, &userID, &tenantID, &deviceFP, &expiresAt, &createdAt); err != nil {
 		return nil
 	}
-	rt.ExpiresAt = expiresAt
-	rt.CreatedAt = createdAt
+	rt.UserID, rt.TenantID, rt.DeviceFP = userID.String, tenantID.String, deviceFP.String
+	rt.ExpiresAt, rt.CreatedAt = expiresAt.Time, createdAt.Time
 	return &rt
 }
 

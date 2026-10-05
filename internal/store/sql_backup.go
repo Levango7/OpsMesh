@@ -15,6 +15,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 )
 
@@ -26,10 +27,15 @@ const backupRecordColumns = `id, tenant_id, type, status, size, path, created_at
 // 无行或扫描失败返回 nil（含 sql.ErrNoRows，由调用方解释为不存在）。
 func scanBackupRecord(row rowScanner) *BackupRecord {
 	var b BackupRecord
+	// backup_records 的 path 可空（migrations/012）；未指定归档位置是合法状态。
+	// 裸目标扫描遇 NULL 会让整行读不出来——备份记录连 size/status 一起丢，
+	// 灾备审计因此看不出「哪些备份没落到盘上」。
+	var path sql.NullString
 	var createdAt time.Time
-	if err := row.Scan(&b.ID, &b.TenantID, &b.Type, &b.Status, &b.Size, &b.Path, &createdAt); err != nil {
+	if err := row.Scan(&b.ID, &b.TenantID, &b.Type, &b.Status, &b.Size, &path, &createdAt); err != nil {
 		return nil
 	}
+	b.Path = path.String
 	b.CreatedAt = createdAt
 	return &b
 }

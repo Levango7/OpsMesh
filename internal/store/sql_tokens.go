@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -102,12 +103,17 @@ func (s *SQLStore) ConsumeToken(token string) (deviceID, tenantID string, ok boo
 		return "", "", false // 已被消费 / 已过期 / 不存在
 	}
 	// 消费成功后读回设备与租户（token 行此时已唯一锁定为本实例）。
+	// install_tokens 的 device_id/tenant_id 未声明 NOT NULL：裸目标扫描遇 NULL 会让
+	// 整个读回失败，而 consumed 已被置 1 —— 调用方拿到 ok=false，token 却已作废
+	//（自动纳管永久失败且无法重试）。故此处必须容忍 NULL。
+	var devNull, tenantNull sql.NullString
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT device_id, tenant_id FROM install_tokens WHERE token=?`, hash,
-	).Scan(&deviceID, &tenantID); err != nil {
+	).Scan(&devNull, &tenantNull); err != nil {
 		recordStoreFailure("[store] ConsumeToken 读回失败: %v", err)
 		return "", "", false
 	}
+	deviceID, tenantID = devNull.String, tenantNull.String
 	return deviceID, tenantID, true
 }
 

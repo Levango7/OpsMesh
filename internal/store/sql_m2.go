@@ -46,9 +46,9 @@ func scanSilence(row rowScanner) *SilenceRule {
 	var r SilenceRule
 	var matchLabelsJSON []byte
 	var startAt, endAt, createdAt sql.NullTime
-	var createdBy sql.NullString
+	var createdBy, reason sql.NullString
 	if err := row.Scan(&r.ID, &r.TenantID, &matchLabelsJSON, &startAt, &endAt,
-		&createdBy, &r.Reason, &createdAt); err != nil {
+		&createdBy, &reason, &createdAt); err != nil {
 		return nil
 	}
 	if len(matchLabelsJSON) > 0 {
@@ -59,6 +59,7 @@ func scanSilence(row rowScanner) *SilenceRule {
 	r.StartAt = startAt.Time
 	r.EndAt = endAt.Time
 	r.CreatedBy = createdBy.String
+	r.Reason = reason.String
 	r.CreatedAt = createdAt.Time
 	return &r
 }
@@ -182,12 +183,17 @@ func randSQLChannelID() string {
 // scanNotifyChannel 从一行扫描出 *NotifyChannel。
 func scanNotifyChannel(row rowScanner) *NotifyChannel {
 	var c NotifyChannel
-	var createdAt, updatedAt time.Time
-	if err := row.Scan(&c.ID, &c.TenantID, &c.Name, &c.Type, &c.Config, &c.Enabled, &createdAt, &updatedAt); err != nil {
+	// notify_channels 的 config/enabled/created_at/updated_at 均可空（migrations/005）。
+	// 裸目标扫描遇 NULL 会让整行读不出来——通知渠道消失，告警静默送达不到人。
+	var config sql.NullString
+	var enabled sql.NullBool
+	var createdAt, updatedAt sql.NullTime
+	if err := row.Scan(&c.ID, &c.TenantID, &c.Name, &c.Type, &config, &enabled, &createdAt, &updatedAt); err != nil {
 		return nil
 	}
-	c.CreatedAt = createdAt
-	c.UpdatedAt = updatedAt
+	c.Config = config.String
+	c.Enabled = enabled.Bool
+	c.CreatedAt, c.UpdatedAt = createdAt.Time, updatedAt.Time
 	return &c
 }
 
@@ -327,14 +333,15 @@ func randSQLTemplateID() string {
 // scanNotifyTemplate 从一行扫描出 *NotifyTemplate。
 func scanNotifyTemplate(row rowScanner) *NotifyTemplate {
 	var t NotifyTemplate
-	var createdAt, updatedAt time.Time
-	var format sql.NullString
-	if err := row.Scan(&t.ID, &t.TenantID, &t.Name, &t.Type, &t.Title, &t.Body, &format, &createdAt, &updatedAt); err != nil {
+	// notify_templates 的 title/body/format/created_at/updated_at 均可空（migrations/005）。
+	// 裸目标扫描遇 NULL 会让整行读不出来——通知模板连同其绑定渠道一起丢。
+	var title, body, format sql.NullString
+	var createdAt, updatedAt sql.NullTime
+	if err := row.Scan(&t.ID, &t.TenantID, &t.Name, &t.Type, &title, &body, &format, &createdAt, &updatedAt); err != nil {
 		return nil
 	}
-	t.Format = format.String
-	t.CreatedAt = createdAt
-	t.UpdatedAt = updatedAt
+	t.Title, t.Body, t.Format = title.String, body.String, format.String
+	t.CreatedAt, t.UpdatedAt = createdAt.Time, updatedAt.Time
 	return &t
 }
 

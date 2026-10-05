@@ -30,22 +30,28 @@ import (
 // 无行或扫描失败返回 nil。
 func scanTicket(row rowScanner) *Ticket {
 	var t Ticket
-	var tagsJSON string
+	// tickets 的 description/assignee_id/creator_id/related_device/related_task/tags
+	// 均可空（migrations/010）；未指派/未关联的工单是常态。裸目标扫描遇 NULL 会让
+	// 整行读不出来——工单凭空消失，看板与SLO 统计同时失真。
+	var description, assigneeID, creatorID, relatedDevice, relatedTask sql.NullString
+	var tagsJSON sql.NullString
 	var createdAt, updatedAt time.Time
 	var resolvedAt sql.NullTime
-	if err := row.Scan(&t.ID, &t.TenantID, &t.Title, &t.Description, &t.Status,
-		&t.Priority, &t.Category, &t.AssigneeID, &t.CreatorID, &t.RelatedDevice,
-		&t.RelatedTask, &tagsJSON, &createdAt, &updatedAt, &resolvedAt); err != nil {
+	if err := row.Scan(&t.ID, &t.TenantID, &t.Title, &description, &t.Status,
+		&t.Priority, &t.Category, &assigneeID, &creatorID, &relatedDevice,
+		&relatedTask, &tagsJSON, &createdAt, &updatedAt, &resolvedAt); err != nil {
 		return nil
 	}
+	t.Description, t.AssigneeID, t.CreatorID = description.String, assigneeID.String, creatorID.String
+	t.RelatedDevice, t.RelatedTask = relatedDevice.String, relatedTask.String
 	t.CreatedAt = createdAt
 	t.UpdatedAt = updatedAt
 	if resolvedAt.Valid {
 		rt := resolvedAt.Time
 		t.ResolvedAt = &rt
 	}
-	if tagsJSON != "" {
-		if err := json.Unmarshal([]byte(tagsJSON), &t.Tags); err != nil {
+	if tagsJSON.String != "" {
+		if err := json.Unmarshal([]byte(tagsJSON.String), &t.Tags); err != nil {
 			recordStoreFailure("[store] scanTicket 解析 tags JSON 失败 (ticket=%s): %v", t.ID, err)
 		}
 	}

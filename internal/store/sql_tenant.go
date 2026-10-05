@@ -18,6 +18,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"time"
 )
@@ -27,21 +28,24 @@ import (
 // 无行或扫描失败返回 nil。
 func scanTenant(row rowScanner) *Tenant {
 	var t Tenant
-	var quotaJSON, usageJSON string
+	// tenants 的 display_name/quota/usage_data 均可空（migrations/015）；未配配额是常态。
+	// 裸目标扫描遇 NULL 会让整行读不出来——租户清单漏条目。
+	var displayName, quotaJSON, usageJSON sql.NullString
 	var createdAt, updatedAt time.Time
-	if err := row.Scan(&t.ID, &t.Name, &t.DisplayName, &t.Status, &quotaJSON, &usageJSON,
+	if err := row.Scan(&t.ID, &t.Name, &displayName, &t.Status, &quotaJSON, &usageJSON,
 		&createdAt, &updatedAt); err != nil {
 		return nil
 	}
+	t.DisplayName = displayName.String
 	t.CreatedAt = createdAt
 	t.UpdatedAt = updatedAt
-	if quotaJSON != "" {
-		if err := json.Unmarshal([]byte(quotaJSON), &t.Quota); err != nil {
+	if quotaJSON.String != "" {
+		if err := json.Unmarshal([]byte(quotaJSON.String), &t.Quota); err != nil {
 			recordStoreFailure("[store] scanTenant 解析 quota JSON 失败 (tenant=%s): %v", t.ID, err)
 		}
 	}
-	if usageJSON != "" {
-		if err := json.Unmarshal([]byte(usageJSON), &t.Usage); err != nil {
+	if usageJSON.String != "" {
+		if err := json.Unmarshal([]byte(usageJSON.String), &t.Usage); err != nil {
 			recordStoreFailure("[store] scanTenant 解析 usage JSON 失败 (tenant=%s): %v", t.ID, err)
 		}
 	}

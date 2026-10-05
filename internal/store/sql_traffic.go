@@ -19,6 +19,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"time"
 )
@@ -28,15 +29,21 @@ import (
 // timeout, retries, retry_timeout, max_conns, max_requests, status, created_at, updated_at。
 func scanTrafficPolicy(row rowScanner) *TrafficPolicy {
 	var p TrafficPolicy
+	// traffic_policies 的 service_name/canary_weights/timeout/retry_timeout 均可空
+	// （migrations/011）；非金丝雀策略本就没有权重。裸目标扫描遇 NULL 会让整行读不出来，
+	// 且 status 等 NOT NULL 列排在其后跟着一起丢。
+	var serviceName, timeout, retryTimeout sql.NullString
 	var canaryJSON []byte
 	var createdAt, updatedAt time.Time
 	if err := row.Scan(
-		&p.ID, &p.TenantID, &p.Name, &p.ServiceName, &p.Type, &canaryJSON,
-		&p.MirrorPercent, &p.Timeout, &p.Retries, &p.RetryTimeout,
+		&p.ID, &p.TenantID, &p.Name, &serviceName, &p.Type, &canaryJSON,
+		&p.MirrorPercent, &timeout, &p.Retries, &retryTimeout,
 		&p.MaxConns, &p.MaxRequests, &p.Status, &createdAt, &updatedAt,
 	); err != nil {
 		return nil
 	}
+	p.ServiceName = serviceName.String
+	p.Timeout, p.RetryTimeout = timeout.String, retryTimeout.String
 	p.CreatedAt = createdAt
 	p.UpdatedAt = updatedAt
 	if len(canaryJSON) > 0 {

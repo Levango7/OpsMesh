@@ -34,16 +34,22 @@ import (
 //	snmp_community, status, config, created_at, updated_at。
 func scanNetworkDevice(row rowScanner) *NetworkDevice {
 	var d NetworkDevice
-	var createdAt, updatedAt time.Time
+	// network_devices 15 列里除 id/tenant_id/name 外全部可空（migrations/013 未声明
+	// NOT NULL），type/vendor/model/ip/mask/mac/location/snmp_community/config 均为
+	// 可选填写项。裸目标扫描时任一列为 NULL 就让整行读不出来——设备从拓扑里消失。
+	var devType, vendor, model, ip, mask, mac, location, snmpCommunity, status, config sql.NullString
+	var createdAt, updatedAt sql.NullTime
 	if err := row.Scan(
-		&d.ID, &d.TenantID, &d.Name, &d.Type, &d.Vendor, &d.Model,
-		&d.IP, &d.Mask, &d.Mac, &d.Location, &d.SnmpCommunity,
-		&d.Status, &d.Config, &createdAt, &updatedAt,
+		&d.ID, &d.TenantID, &d.Name, &devType, &vendor, &model,
+		&ip, &mask, &mac, &location, &snmpCommunity,
+		&status, &config, &createdAt, &updatedAt,
 	); err != nil {
 		return nil
 	}
-	d.CreatedAt = createdAt
-	d.UpdatedAt = updatedAt
+	d.Type, d.Vendor, d.Model = devType.String, vendor.String, model.String
+	d.IP, d.Mask, d.Mac, d.Location = ip.String, mask.String, mac.String, location.String
+	d.SnmpCommunity, d.Status, d.Config = snmpCommunity.String, status.String, config.String
+	d.CreatedAt, d.UpdatedAt = createdAt.Time, updatedAt.Time
 	return &d
 }
 
