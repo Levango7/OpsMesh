@@ -532,6 +532,45 @@ release-notes 的 v0.11.0 表格已把该行插在表首，原正文与其余行
 实测那处是 `compliance.go:136` 的 `eng.Scan(...)`——合规引擎调用，不是 database/sql。
 按名字推断范围会把它算进来，按语义核对才不会。
 
+## [Unreleased] — 2026-10-06 发布链改成「先过门禁、再提权」：`:latest` 与版本 tag 不再跟构建一起推送
+
+**这条改的是门禁与推送的先后次序，而不是加一道新门禁**。实测形态：`release.yml` 里一条
+`docker buildx build --push` 同时推 `:sha`、`:<版本>` 与 `:latest`；`ci.yml` 的 `image` /
+`image-agent` job 同形（`push: true` 之后才是 Trivy）。而 Trivy（`exit-code: "1"`）、SBOM、
+cosign 签名与 attest 自验**全部排在推送之后** ⇒ 扫描判红的那一刻，镜像早已是客户 `helm install`
+拉得到的那一份——`ci.yml:684` 自己的注释就写着"chart 与全部文档默认值是 `:latest`"。
+所以那几道门禁在这个位置上只能事后通知，拦不住任何一次交付。
+
+改成两段（**不重建 ⇒ digest 不变 ⇒ "被扫的那份"与"被推的那份"是同一份**）：
+
+- 构建只推不可变的 `:<sha>`；
+- `release.yml` 新增 `promote` job（`needs: [build-and-push]`），用
+  `docker buildx imagetools create` 在 registry 侧把 `:<sha>` 改标成 `:<版本>` 与 `:latest`；
+  `github-release` 的 `needs` 相应从 `build-and-push` 改为 `promote`。
+- **为什么独立成 job 而不是在 matrix 末尾加一步**：matrix 条目各自跑，某个服务判红时其余条目
+  照样会跑到最后一步 ⇒ `:latest` 只对一半服务挪动，形成"半挪动的 latest 舰队"。让 `promote`
+  依赖整个 `build-and-push`，任一服务红 ⇒ 这个 job 根本不启动 ⇒ 要么 12 个一起提，要么一个都不提。
+  `ci.yml` 那两个 job 各自只出一个镜像，所以在本 job 末尾提权即可（前一道门禁红就跑不到这里）。
+- 服务清单用 YAML 锚点 `&releaseServices` 单一来源，`build-and-push` 与 `promote` 共用同一份
+  alias。两处各抄一份，迟早让"发出去的"和"提权的"不是同一批服务——本仓在孪生清单上吃过亏。
+- 提权后紧跟一道 **digest 自验**：判据不是"tag 存在"而是"manifest digest 与源 `:<sha>` 相同"，
+  因为改标若被解析成重新构建，就会推出一份 Trivy 从没看过的镜像而 job 照样全绿。
+  GHCR 有写后读窗口（本仓在 `.sig` 上实测过），故 5 次退避重试，并把**「读不到」与
+  「digest 不一致」分开报**——前者重跑，后者按发布事故判红。
+- `feature` 分支的 `MOVE_TAGS` 为空是合法状态（刻意不动 `:latest`，否则 latest 被"最后合入者之外"
+  的推送改写），步骤如实打印跳过原因，不静默通过。
+- 证据不需要重出：cosign 的签名与 attestation 挂在 **digest** 上而非 tag，提权后的
+  `:<版本>`/`:latest` 一样能直接 `cosign verify` 问到。
+
+验证：`python yaml` 解析通过，且 build 与 promote 两份矩阵在解析后是**同一个对象**（锚点确实单源）；
+提权步位于全部门禁步之后（门禁第 12 步 / 提权第 15 步，两个 job 各自核对）；两个 workflow 共
+85 段 `run` 块 `bash -n` 0 错；新增 6 步 `shellcheck -S warning` 0 findings；
+`validate-deploy-assets.sh` PASS=52 FAIL=0，其第 2 节仍解析到 14 个发布名（promote 的 alias 矩阵
+没有造成重复计数——这点必须实测，因为该节是用 `sed` 从 `matrix:` range 到 `steps:` 抓的，
+多一个带矩阵的 job 就可能翻倍）；`go test ./internal/gates/` ok。
+**未实跑的部分**：`docker buildx imagetools create` 的实际提权要到下次 tag 发布才见真章
+（本机 Docker daemon 不可达，改不动成实测）。
+
 ## [Unreleased] — 2026-10-06 v0.11.0 补写对外「能力降级清单」（那版发布时这条断言还不存在）
 
 `release.yml:266` 要求"发布正文必须含能力降级清单"是 v0.12.0 才加上的，所以 **v0.11.0 的 Release 页上没有降级说明**。
