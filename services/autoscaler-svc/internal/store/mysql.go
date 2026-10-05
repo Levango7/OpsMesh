@@ -133,14 +133,21 @@ func (m *MySQLStore) GetRule(id string) (*models.ScaleRule, bool) {
 	row := m.db.QueryRowContext(ctx,
 		`SELECT id, name, deployment, namespace, metric, scale_up_threshold, scale_down_threshold, min_replicas, max_replicas, cooldown_up, cooldown_down, enabled, created_at, updated_at FROM scaling_rules WHERE id=?`, id)
 	r := &models.ScaleRule{}
+	var deployment, namespace, metric sql.NullString
+	var scaleUp, scaleDown sql.NullFloat64
+	var minReplicas, maxReplicas, cooldownUp, cooldownDown sql.NullInt64
 	var createdAt, updatedAt sql.NullTime
-	if err := row.Scan(&r.ID, &r.Name, &r.Deployment, &r.Namespace, &r.Metric, &r.ScaleUpThreshold, &r.ScaleDownThreshold,
-		&r.MinReplicas, &r.MaxReplicas, &r.CooldownUp, &r.CooldownDown, &r.Enabled, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&r.ID, &r.Name, &deployment, &namespace, &metric, &scaleUp, &scaleDown,
+		&minReplicas, &maxReplicas, &cooldownUp, &cooldownDown, &r.Enabled, &createdAt, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] GetRule 查询失败: %v", err)
 		}
 		return nil, false
 	}
+	r.Deployment, r.Namespace, r.Metric = deployment.String, namespace.String, metric.String
+	r.ScaleUpThreshold, r.ScaleDownThreshold = scaleUp.Float64, scaleDown.Float64
+	r.MinReplicas, r.MaxReplicas = int32(minReplicas.Int64), int32(maxReplicas.Int64)
+	r.CooldownUp, r.CooldownDown = time.Duration(cooldownUp.Int64), time.Duration(cooldownDown.Int64)
 	if createdAt.Valid {
 		r.CreatedAt = createdAt.Time
 	}
@@ -193,11 +200,18 @@ func (m *MySQLStore) ListRules() []*models.ScaleRule {
 	var out []*models.ScaleRule
 	for rows.Next() {
 		r := &models.ScaleRule{}
+		var deployment, namespace, metric sql.NullString
+		var scaleUp, scaleDown sql.NullFloat64
+		var minReplicas, maxReplicas, cooldownUp, cooldownDown sql.NullInt64
 		var createdAt, updatedAt sql.NullTime
-		if err := rows.Scan(&r.ID, &r.Name, &r.Deployment, &r.Namespace, &r.Metric, &r.ScaleUpThreshold, &r.ScaleDownThreshold,
-			&r.MinReplicas, &r.MaxReplicas, &r.CooldownUp, &r.CooldownDown, &r.Enabled, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &deployment, &namespace, &metric, &scaleUp, &scaleDown,
+			&minReplicas, &maxReplicas, &cooldownUp, &cooldownDown, &r.Enabled, &createdAt, &updatedAt); err != nil {
 			continue
 		}
+		r.Deployment, r.Namespace, r.Metric = deployment.String, namespace.String, metric.String
+		r.ScaleUpThreshold, r.ScaleDownThreshold = scaleUp.Float64, scaleDown.Float64
+		r.MinReplicas, r.MaxReplicas = int32(minReplicas.Int64), int32(maxReplicas.Int64)
+		r.CooldownUp, r.CooldownDown = time.Duration(cooldownUp.Int64), time.Duration(cooldownDown.Int64)
 		if createdAt.Valid {
 			r.CreatedAt = createdAt.Time
 		}
@@ -250,9 +264,15 @@ func (m *MySQLStore) ListDecisions(ruleID string, limit int) []*models.ScaleDeci
 	for rows.Next() {
 		d := &models.ScaleDecision{}
 		var ts sql.NullTime
-		if err := rows.Scan(&d.ID, &d.RuleID, &d.Deployment, &d.Namespace, &d.Action, &d.FromReplicas, &d.ToReplicas, &d.Reason, &d.MetricValue, &ts); err != nil {
+		var deployment, namespace, action, reason sql.NullString
+		var fromReplicas, toReplicas sql.NullInt64
+		var metricValue sql.NullFloat64
+		if err := rows.Scan(&d.ID, &d.RuleID, &deployment, &namespace, &action, &fromReplicas, &toReplicas, &reason, &metricValue, &ts); err != nil {
 			continue
 		}
+		d.Deployment, d.Namespace, d.Action = deployment.String, namespace.String, action.String
+		d.FromReplicas, d.ToReplicas = int32(fromReplicas.Int64), int32(toReplicas.Int64)
+		d.Reason, d.MetricValue = reason.String, metricValue.Float64
 		if ts.Valid {
 			d.Timestamp = ts.Time
 		}

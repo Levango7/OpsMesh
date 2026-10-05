@@ -593,15 +593,17 @@ func (s *MySQLStore) CreateSchedule(sch *models.Schedule) (*models.Schedule, err
 func (s *MySQLStore) GetSchedule(id string) *models.Schedule {
 	var sch models.Schedule
 	var enabled int
+	var command, content sql.NullString
 	var lastFired sql.NullTime
 	err := s.db.QueryRow(
 		"SELECT id, tenant_id, name, cron_expr, task_type, command, content, path, agent_id, enabled, last_fired_at, created_at, updated_at FROM schedules WHERE id = ?",
 		id,
-	).Scan(&sch.ID, &sch.TenantID, &sch.Name, &sch.CronExpr, &sch.TaskType, &sch.Command, &sch.Content,
+	).Scan(&sch.ID, &sch.TenantID, &sch.Name, &sch.CronExpr, &sch.TaskType, &command, &content,
 		&sch.Path, &sch.AgentID, &enabled, &lastFired, &sch.CreatedAt, &sch.UpdatedAt)
 	if err != nil {
 		return nil
 	}
+	sch.Command, sch.Content = command.String, content.String
 	sch.Enabled = enabled != 0
 	if lastFired.Valid {
 		sch.LastFiredAt = lastFired.Time
@@ -664,11 +666,17 @@ func (s *MySQLStore) ListSchedules(tenantID string) []*models.Schedule {
 	var schedules []*models.Schedule
 	for rows.Next() {
 		var sch models.Schedule
+		// schedules 的 command/content 可空无DEFAULT、last_fired_at 显式 NULL——
+		// 「还没触发过的定时任务」正是 last_fired_at 为 NULL 的常态。
+		// 裸目标扫描会让这类行整行读不出来（continue 掉），即新建的定时任务在列表里看不到。
+		var command, content sql.NullString
+		var lastFiredAt sql.NullTime
 		var enabled int
-		if err := rows.Scan(&sch.ID, &sch.TenantID, &sch.Name, &sch.CronExpr, &sch.TaskType, &sch.Command, &sch.Content,
-			&sch.Path, &sch.AgentID, &enabled, &sch.LastFiredAt, &sch.CreatedAt, &sch.UpdatedAt); err != nil {
+		if err := rows.Scan(&sch.ID, &sch.TenantID, &sch.Name, &sch.CronExpr, &sch.TaskType, &command, &content,
+			&sch.Path, &sch.AgentID, &enabled, &lastFiredAt, &sch.CreatedAt, &sch.UpdatedAt); err != nil {
 			continue
 		}
+		sch.Command, sch.Content, sch.LastFiredAt = command.String, content.String, lastFiredAt.Time
 		sch.Enabled = enabled != 0
 		schedules = append(schedules, &sch)
 	}
@@ -691,13 +699,19 @@ func (s *MySQLStore) SaveResult(r *models.TaskResult) {
 // GetTaskResult returns a task result by task ID.
 func (s *MySQLStore) GetTaskResult(taskID string) *models.TaskResult {
 	var r models.TaskResult
+	// task_results 的 stdout/stderr 可空无 DEFAULT（命令无输出即无内容），
+	// finished_at 显式 NULL（未跑完的任务没有结束时间）。
+	// 裸目标扫描会让这类行读不出来——执行结果连退出码一起消失。
+	var stdout, stderr sql.NullString
+	var finishedAt sql.NullTime
 	err := s.db.QueryRow(
 		"SELECT task_id, agent_id, exit_code, stdout, stderr, duration_ms, finished_at, claim_epoch FROM task_results WHERE task_id = ?",
 		taskID,
-	).Scan(&r.TaskID, &r.AgentID, &r.ExitCode, &r.Stdout, &r.Stderr, &r.DurationMs, &r.FinishedAt, &r.ClaimEpoch)
+	).Scan(&r.TaskID, &r.AgentID, &r.ExitCode, &stdout, &stderr, &r.DurationMs, &finishedAt, &r.ClaimEpoch)
 	if err != nil {
 		return nil
 	}
+	r.Stdout, r.Stderr, r.FinishedAt = stdout.String, stderr.String, finishedAt.Time
 	return &r
 }
 
@@ -732,9 +746,14 @@ func (s *MySQLStore) ListTaskResults(tenantID, agentID string, limit int) []*mod
 	var results []*models.TaskResult
 	for rows.Next() {
 		var r models.TaskResult
-		if err := rows.Scan(&r.TaskID, &r.AgentID, &r.ExitCode, &r.Stdout, &r.Stderr, &r.DurationMs, &r.FinishedAt, &r.ClaimEpoch); err != nil {
+		// task_results 的 stdout/stderr 可空无 DEFAULT、finished_at 显式 NULL，
+		// 与 GetTaskResult 同一组列——列表侧同样不能裸扫。
+		var stdout, stderr sql.NullString
+		var finishedAt sql.NullTime
+		if err := rows.Scan(&r.TaskID, &r.AgentID, &r.ExitCode, &stdout, &stderr, &r.DurationMs, &finishedAt, &r.ClaimEpoch); err != nil {
 			continue
 		}
+		r.Stdout, r.Stderr, r.FinishedAt = stdout.String, stderr.String, finishedAt.Time
 		results = append(results, &r)
 	}
 	return results
@@ -772,9 +791,13 @@ func (s *MySQLStore) GetTaskLogs(taskID string) []models.LogLine {
 	var logs []models.LogLine
 	for rows.Next() {
 		var line models.LogLine
-		if err := rows.Scan(&line.Timestamp, &line.Level, &line.Message); err != nil {
+		// task_logs.message 可空无DEFAULT（空日志行是合法的）。
+		// 裸目标扫描会让这类行整行读不出来——日志丢行，排障时看不到上下文。
+		var message sql.NullString
+		if err := rows.Scan(&line.Timestamp, &line.Level, &message); err != nil {
 			continue
 		}
+		line.Message = message.String
 		logs = append(logs, line)
 	}
 	return logs

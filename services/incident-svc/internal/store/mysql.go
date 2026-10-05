@@ -165,13 +165,16 @@ func (m *MySQLStore) GetIncident(id string) *models.Incident {
 		`SELECT id, title, description, severity, status, alert_ids, device_ids, assignee, tags, occurred_at, detected_at, resolved_at, closed_at, created_at, updated_at FROM incidents WHERE id=?`, id)
 	inc := &models.Incident{}
 	var alertIDs, deviceIDs, tags []byte
+	var description, severity, assignee sql.NullString
 	var occurredAt, detectedAt, resolvedAt, closedAt, createdAt, updatedAt sql.NullTime
-	if err := row.Scan(&inc.ID, &inc.Title, &inc.Description, &inc.Severity, &inc.Status, &alertIDs, &deviceIDs, &inc.Assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&inc.ID, &inc.Title, &description, &severity, &inc.Status, &alertIDs, &deviceIDs, &assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] GetIncident 查询失败: %v", err)
 		}
 		return nil
 	}
+	inc.Description, inc.Assignee = description.String, assignee.String
+	inc.Severity = models.Severity(severity.String)
 	if len(alertIDs) > 0 {
 		if err := json.Unmarshal(alertIDs, &inc.AlertIDs); err != nil {
 			log.Printf("[store] scan Unmarshal: %v", err)
@@ -277,10 +280,13 @@ func (m *MySQLStore) ListIncidents(status string, severity models.Severity) []*m
 	for rows.Next() {
 		inc := &models.Incident{}
 		var alertIDs, deviceIDs, tags []byte
+		var description, severity, assignee sql.NullString
 		var occurredAt, detectedAt, resolvedAt, closedAt, createdAt, updatedAt sql.NullTime
-		if err := rows.Scan(&inc.ID, &inc.Title, &inc.Description, &inc.Severity, &inc.Status, &alertIDs, &deviceIDs, &inc.Assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&inc.ID, &inc.Title, &description, &severity, &inc.Status, &alertIDs, &deviceIDs, &assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
 			continue
 		}
+		inc.Description, inc.Assignee = description.String, assignee.String
+		inc.Severity = models.Severity(severity.String)
 		if len(alertIDs) > 0 {
 			if err := json.Unmarshal(alertIDs, &inc.AlertIDs); err != nil {
 				log.Printf("[store] scan Unmarshal: %v", err)
@@ -352,9 +358,11 @@ func (m *MySQLStore) GetTimeline(incidentID string) []models.TimelineEvent {
 	for rows.Next() {
 		ev := models.TimelineEvent{}
 		var ts sql.NullTime
-		if err := rows.Scan(&ev.ID, &ev.IncidentID, &ts, &ev.Type, &ev.Description, &ev.Author); err != nil {
+		var evType, evDesc, author sql.NullString
+		if err := rows.Scan(&ev.ID, &ev.IncidentID, &ts, &evType, &evDesc, &author); err != nil {
 			continue
 		}
+		ev.Type, ev.Description, ev.Author = evType.String, evDesc.String, author.String
 		if ts.Valid {
 			ev.Timestamp = ts.Time
 		}
@@ -377,10 +385,13 @@ func (m *MySQLStore) Incidents() []*models.Incident {
 	for rows.Next() {
 		inc := &models.Incident{}
 		var alertIDs, deviceIDs, tags []byte
+		var description, severity, assignee sql.NullString
 		var occurredAt, detectedAt, resolvedAt, closedAt, createdAt, updatedAt sql.NullTime
-		if err := rows.Scan(&inc.ID, &inc.Title, &inc.Description, &inc.Severity, &inc.Status, &alertIDs, &deviceIDs, &inc.Assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&inc.ID, &inc.Title, &description, &severity, &inc.Status, &alertIDs, &deviceIDs, &assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
 			continue
 		}
+		inc.Description, inc.Assignee = description.String, assignee.String
+		inc.Severity = models.Severity(severity.String)
 		if len(alertIDs) > 0 {
 			if err := json.Unmarshal(alertIDs, &inc.AlertIDs); err != nil {
 				log.Printf("[store] scan Unmarshal: %v", err)

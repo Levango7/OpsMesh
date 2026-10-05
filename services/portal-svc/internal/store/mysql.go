@@ -163,13 +163,16 @@ func (m *MySQLStore) GetRequest(id string) *models.ResourceRequest {
 	row := m.db.QueryRowContext(ctx,
 		`SELECT id, tenant_id, requester, title, description, resource_type, cpu, memory_gb, storage_gb, cost_estimate, status, approver, approval_note, created_at, updated_at FROM resource_requests WHERE id=?`, id)
 	r := &models.ResourceRequest{}
+	var requester, description, resourceType, approver, approvalNote sql.NullString
 	var createdAt, updatedAt sql.NullTime
-	if err := row.Scan(&r.ID, &r.TenantID, &r.Requester, &r.Title, &r.Description, &r.ResourceType, &r.CPU, &r.MemoryGB, &r.StorageGB, &r.CostEstimate, &r.Status, &r.Approver, &r.ApprovalNote, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&r.ID, &r.TenantID, &requester, &r.Title, &description, &resourceType, &r.CPU, &r.MemoryGB, &r.StorageGB, &r.CostEstimate, &r.Status, &approver, &approvalNote, &createdAt, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] GetRequest 查询失败: %v", err)
 		}
 		return nil
 	}
+	r.Requester, r.Description, r.ResourceType = requester.String, description.String, resourceType.String
+	r.Approver, r.ApprovalNote = approver.String, approvalNote.String
 	if createdAt.Valid {
 		r.CreatedAt = createdAt.Time
 	}
@@ -206,10 +209,13 @@ func (m *MySQLStore) ListRequests(tenantID, status string) []*models.ResourceReq
 	var out []*models.ResourceRequest
 	for rows.Next() {
 		r := &models.ResourceRequest{}
+		var requester, description, resourceType, approver, approvalNote sql.NullString
 		var createdAt, updatedAt sql.NullTime
-		if err := rows.Scan(&r.ID, &r.TenantID, &r.Requester, &r.Title, &r.Description, &r.ResourceType, &r.CPU, &r.MemoryGB, &r.StorageGB, &r.CostEstimate, &r.Status, &r.Approver, &r.ApprovalNote, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.TenantID, &requester, &r.Title, &description, &resourceType, &r.CPU, &r.MemoryGB, &r.StorageGB, &r.CostEstimate, &r.Status, &approver, &approvalNote, &createdAt, &updatedAt); err != nil {
 			continue
 		}
+		r.Requester, r.Description, r.ResourceType = requester.String, description.String, resourceType.String
+		r.Approver, r.ApprovalNote = approver.String, approvalNote.String
 		if createdAt.Valid {
 			r.CreatedAt = createdAt.Time
 		}
@@ -350,9 +356,12 @@ func (m *MySQLStore) ListRecommendations(tenantID string) []*models.CostRecommen
 	var out []*models.CostRecommendation
 	for rows.Next() {
 		r := &models.CostRecommendation{}
-		if err := rows.Scan(&r.ID, &r.TenantID, &r.Category, &r.ResourceID, &r.Description, &r.Savings, &r.Priority); err != nil {
+		var category, resourceID, description, priority sql.NullString
+		if err := rows.Scan(&r.ID, &r.TenantID, &category, &resourceID, &description, &r.Savings, &priority); err != nil {
 			continue
 		}
+		r.Category, r.ResourceID = category.String, resourceID.String
+		r.Description, r.Priority = description.String, priority.String
 		out = append(out, r)
 	}
 	return out
@@ -423,9 +432,12 @@ func (m *MySQLStore) ListActivity(tenantID string, limit int) []*models.Activity
 	for rows.Next() {
 		a := &models.ActivityEvent{}
 		var ts sql.NullTime
-		if err := rows.Scan(&a.TenantID, &a.UserID, &a.Action, &a.Target, &a.Detail, &ts); err != nil {
+		var userID, action, target, detail sql.NullString
+		if err := rows.Scan(&a.TenantID, &userID, &action, &target, &detail, &ts); err != nil {
 			continue
 		}
+		a.UserID, a.Action = userID.String, action.String
+		a.Target, a.Detail = target.String, detail.String
 		if ts.Valid {
 			a.Timestamp = ts.Time
 		}

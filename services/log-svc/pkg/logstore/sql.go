@@ -130,9 +130,12 @@ func (s *SQLLogStore) Query(ctx context.Context, q Query) ([]Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var ts time.Time
-		if err := rows.Scan(&e.ID, &e.TenantID, &e.DeviceID, &e.AgentID, &e.TaskID, &ts, &e.Level, &e.Source, &e.Message); err != nil {
+		var deviceID, agentID, taskID, level, source, message sql.NullString
+		if err := rows.Scan(&e.ID, &e.TenantID, &deviceID, &agentID, &taskID, &ts, &level, &source, &message); err != nil {
 			return nil, err
 		}
+		e.DeviceID, e.AgentID, e.TaskID = deviceID.String, agentID.String, taskID.String
+		e.Level, e.Source, e.Message = level.String, source.String, message.String
 		e.Timestamp = ts
 		entries = append(entries, e)
 	}

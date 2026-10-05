@@ -151,13 +151,15 @@ func (m *MySQLStore) GetNode(id string) (*models.GPUNode, bool) {
 		`SELECT id, name, address, gpus, status, labels, total_vram_mb, used_vram_mb, gpu_errors, last_heartbeat, created_at, updated_at FROM gpu_nodes WHERE id=?`, id)
 	n := &models.GPUNode{}
 	var gpus, labels []byte
+	var address sql.NullString
 	var lastHeartbeat, createdAt, updatedAt sql.NullTime
-	if err := row.Scan(&n.ID, &n.Name, &n.Address, &gpus, &n.Status, &labels, &n.TotalVRAMMB, &n.UsedVRAMMB, &n.GPUErrors, &lastHeartbeat, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&n.ID, &n.Name, &address, &gpus, &n.Status, &labels, &n.TotalVRAMMB, &n.UsedVRAMMB, &n.GPUErrors, &lastHeartbeat, &createdAt, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] GetNode 查询失败: %v", err)
 		}
 		return nil, false
 	}
+	n.Address = address.String
 	if len(gpus) > 0 {
 		if err := json.Unmarshal(gpus, &n.GPUs); err != nil {
 			log.Printf("[store] scan Unmarshal: %v", err)
@@ -199,10 +201,12 @@ func (m *MySQLStore) ListNodes(status string) []*models.GPUNode {
 	for rows.Next() {
 		n := &models.GPUNode{}
 		var gpus, labels []byte
+		var address sql.NullString
 		var lastHeartbeat, createdAt, updatedAt sql.NullTime
-		if err := rows.Scan(&n.ID, &n.Name, &n.Address, &gpus, &n.Status, &labels, &n.TotalVRAMMB, &n.UsedVRAMMB, &n.GPUErrors, &lastHeartbeat, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.Name, &address, &gpus, &n.Status, &labels, &n.TotalVRAMMB, &n.UsedVRAMMB, &n.GPUErrors, &lastHeartbeat, &createdAt, &updatedAt); err != nil {
 			continue
 		}
+		n.Address = address.String
 		if len(gpus) > 0 {
 			if err := json.Unmarshal(gpus, &n.GPUs); err != nil {
 				log.Printf("[store] scan Unmarshal: %v", err)
@@ -279,13 +283,16 @@ func (m *MySQLStore) GetWorkload(id string) (*models.Workload, bool) {
 		`SELECT id, name, tenant_id, type, status, gpu_request, node_ids, priority, image, command, env, replicas, model_name, created_at, updated_at, started_at, finished_at, error_message FROM gpu_workloads WHERE id=?`, id)
 	w := &models.Workload{}
 	var gpuReq, nodeIDs, cmd, env []byte
+	var wType, image, modelName, errorMsg sql.NullString
 	var createdAt, updatedAt, startedAt, finishedAt sql.NullTime
-	if err := row.Scan(&w.ID, &w.Name, &w.TenantID, &w.Type, &w.Status, &gpuReq, &nodeIDs, &w.Priority, &w.Image, &cmd, &env, &w.Replicas, &w.ModelName, &createdAt, &updatedAt, &startedAt, &finishedAt, &w.ErrorMsg); err != nil {
+	if err := row.Scan(&w.ID, &w.Name, &w.TenantID, &wType, &w.Status, &gpuReq, &nodeIDs, &w.Priority, &image, &cmd, &env, &w.Replicas, &modelName, &createdAt, &updatedAt, &startedAt, &finishedAt, &errorMsg); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] GetWorkload 查询失败: %v", err)
 		}
 		return nil, false
 	}
+	w.Image, w.ModelName, w.ErrorMsg = image.String, modelName.String, errorMsg.String
+	w.Type = models.WorkloadType(wType.String)
 	if len(gpuReq) > 0 {
 		if err := json.Unmarshal(gpuReq, &w.GPURequest); err != nil {
 			log.Printf("[store] scan Unmarshal: %v", err)
@@ -358,10 +365,13 @@ func (m *MySQLStore) ListWorkloads(status string) []*models.Workload {
 	for rows.Next() {
 		w := &models.Workload{}
 		var gpuReq, nodeIDs, cmd, env []byte
+		var wType, image, modelName, errorMsg sql.NullString
 		var createdAt, updatedAt, startedAt, finishedAt sql.NullTime
-		if err := rows.Scan(&w.ID, &w.Name, &w.TenantID, &w.Type, &w.Status, &gpuReq, &nodeIDs, &w.Priority, &w.Image, &cmd, &env, &w.Replicas, &w.ModelName, &createdAt, &updatedAt, &startedAt, &finishedAt, &w.ErrorMsg); err != nil {
+		if err := rows.Scan(&w.ID, &w.Name, &w.TenantID, &wType, &w.Status, &gpuReq, &nodeIDs, &w.Priority, &image, &cmd, &env, &w.Replicas, &modelName, &createdAt, &updatedAt, &startedAt, &finishedAt, &errorMsg); err != nil {
 			continue
 		}
+		w.Image, w.ModelName = image.String, modelName.String
+		w.Type = models.WorkloadType(wType.String)
 		if len(gpuReq) > 0 {
 			if err := json.Unmarshal(gpuReq, &w.GPURequest); err != nil {
 				log.Printf("[store] scan Unmarshal: %v", err)
@@ -422,13 +432,15 @@ func (m *MySQLStore) GetModel(name string) (*models.GPUModel, bool) {
 	row := m.db.QueryRowContext(ctx,
 		`SELECT name, size_bytes, parameter_count, quantized, serving, port, node_id, replicas, last_pulled FROM gpu_models WHERE name=?`, name)
 	mod := &models.GPUModel{}
+	var parameterCount, nodeID sql.NullString
 	var lastPulled sql.NullTime
-	if err := row.Scan(&mod.Name, &mod.SizeBytes, &mod.ParameterCount, &mod.Quantized, &mod.Serving, &mod.Port, &mod.NodeID, &mod.Replicas, &lastPulled); err != nil {
+	if err := row.Scan(&mod.Name, &mod.SizeBytes, &parameterCount, &mod.Quantized, &mod.Serving, &mod.Port, &nodeID, &mod.Replicas, &lastPulled); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] GetModel 查询失败: %v", err)
 		}
 		return nil, false
 	}
+	mod.ParameterCount, mod.NodeID = parameterCount.String, nodeID.String
 	if lastPulled.Valid {
 		mod.LastPulled = lastPulled.Time
 	}
@@ -447,10 +459,12 @@ func (m *MySQLStore) ListModels() []*models.GPUModel {
 	var out []*models.GPUModel
 	for rows.Next() {
 		mod := &models.GPUModel{}
+		var parameterCount, nodeID sql.NullString
 		var lastPulled sql.NullTime
-		if err := rows.Scan(&mod.Name, &mod.SizeBytes, &mod.ParameterCount, &mod.Quantized, &mod.Serving, &mod.Port, &mod.NodeID, &mod.Replicas, &lastPulled); err != nil {
+		if err := rows.Scan(&mod.Name, &mod.SizeBytes, &parameterCount, &mod.Quantized, &mod.Serving, &mod.Port, &nodeID, &mod.Replicas, &lastPulled); err != nil {
 			continue
 		}
+		mod.ParameterCount, mod.NodeID = parameterCount.String, nodeID.String
 		if lastPulled.Valid {
 			mod.LastPulled = lastPulled.Time
 		}

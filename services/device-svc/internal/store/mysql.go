@@ -674,13 +674,15 @@ func (s *MySQLStore) CreateJob(job *models.DiscoveryJob) *models.DiscoveryJob {
 func (s *MySQLStore) GetJob(id string) *models.DiscoveryJob {
 	var job models.DiscoveryJob
 	var startedAt, completedAt sql.NullTime
+	var errorMsg sql.NullString
 	err := s.db.QueryRow(
 		"SELECT id, tenant_id, cidr, status, total_hosts, scanned_hosts, found_devices, error_msg, started_at, completed_at FROM discovery_jobs WHERE id = ?",
 		id,
-	).Scan(&job.ID, &job.TenantID, &job.CIDR, &job.Status, &job.TotalHosts, &job.ScannedHosts, &job.FoundDevices, &job.Error, &startedAt, &completedAt)
+	).Scan(&job.ID, &job.TenantID, &job.CIDR, &job.Status, &job.TotalHosts, &job.ScannedHosts, &job.FoundDevices, &errorMsg, &startedAt, &completedAt)
 	if err != nil {
 		return nil
 	}
+	job.Error = errorMsg.String
 	job.StartedAt, job.CompletedAt = scanNullTime(startedAt), scanNullTime(completedAt)
 	return &job
 }
@@ -705,9 +707,11 @@ func (s *MySQLStore) ListJobs(tenantID string) []*models.DiscoveryJob {
 	for rows.Next() {
 		var job models.DiscoveryJob
 		var startedAt, completedAt sql.NullTime
-		if err := rows.Scan(&job.ID, &job.TenantID, &job.CIDR, &job.Status, &job.TotalHosts, &job.ScannedHosts, &job.FoundDevices, &job.Error, &startedAt, &completedAt); err != nil {
+		var errorMsg sql.NullString
+		if err := rows.Scan(&job.ID, &job.TenantID, &job.CIDR, &job.Status, &job.TotalHosts, &job.ScannedHosts, &job.FoundDevices, &errorMsg, &startedAt, &completedAt); err != nil {
 			continue
 		}
+		job.Error = errorMsg.String
 		job.StartedAt, job.CompletedAt = scanNullTime(startedAt), scanNullTime(completedAt)
 		jobs = append(jobs, &job)
 	}

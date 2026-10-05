@@ -153,20 +153,38 @@ func (s *MySQLStore) GetConfig(tenantID, key string) (*models.ConfigEntry, bool)
 	row := s.db.QueryRowContext(ctx,
 		`SELECT tenant_id, key_name, value, format, version, description, updated_by, created_at, updated_at FROM config_entries WHERE tenant_id=? AND key_name=?`, tenantID, key)
 	e := &models.ConfigEntry{}
-	var createdAt, updatedAt sql.NullTime
-	if err := row.Scan(&e.TenantID, &e.Key, &e.Value, &e.Format, &e.Version, &e.Description, &e.UpdatedBy, &createdAt, &updatedAt); err != nil {
+	if err := scanConfigEntryRow(row, e); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] GetConfig 查询失败: %v", err)
 		}
 		return nil, false
 	}
-	if createdAt.Valid {
-		e.CreatedAt = createdAt.Time
-	}
-	if updatedAt.Valid {
-		e.UpdatedAt = updatedAt.Time
-	}
 	return e, true
+}
+
+// configRowScanner 是 *sql.Row 与 *sql.Rows 的共同最小子集。
+type configRowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanConfigEntryRow 读 config_entries / config_history 的 9 列：
+// tenant_id, key_name, value, format, version, description, updated_by, created_at, updated_at
+//
+// value/format/description/updated_by 可空且无 DEFAULT（config_history 的 version 同样），
+// 裸目标扫描遇NULL 会让整行读不出来——配置项在列表与直查里同时消失。
+func scanConfigEntryRow(row configRowScanner, e *models.ConfigEntry) error {
+	var value, format, description, updatedBy sql.NullString
+	var version sql.NullInt64
+	var createdAt, updatedAt sql.NullTime
+	if err := row.Scan(&e.TenantID, &e.Key, &value, &format, &version,
+		&description, &updatedBy, &createdAt, &updatedAt); err != nil {
+		return err
+	}
+	e.Value, e.Format = value.String, format.String
+	e.Version = int(version.Int64)
+	e.Description, e.UpdatedBy = description.String, updatedBy.String
+	e.CreatedAt, e.UpdatedAt = createdAt.Time, updatedAt.Time
+	return nil
 }
 
 func (s *MySQLStore) SetConfig(item *models.ConfigEntry) *models.ConfigEntry {
@@ -202,15 +220,8 @@ func (s *MySQLStore) getConfigInternal(ctx context.Context, tenantID, key string
 	row := s.db.QueryRowContext(ctx,
 		`SELECT tenant_id, key_name, value, format, version, description, updated_by, created_at, updated_at FROM config_entries WHERE tenant_id=? AND key_name=?`, tenantID, key)
 	e := &models.ConfigEntry{}
-	var createdAt, updatedAt sql.NullTime
-	if err := row.Scan(&e.TenantID, &e.Key, &e.Value, &e.Format, &e.Version, &e.Description, &e.UpdatedBy, &createdAt, &updatedAt); err != nil {
+	if err := scanConfigEntryRow(row, e); err != nil {
 		return nil, false
-	}
-	if createdAt.Valid {
-		e.CreatedAt = createdAt.Time
-	}
-	if updatedAt.Valid {
-		e.UpdatedAt = updatedAt.Time
 	}
 	return e, true
 }
@@ -258,15 +269,8 @@ func (s *MySQLStore) ListConfigs(tenantID string) []*models.ConfigEntry {
 	var out []*models.ConfigEntry
 	for rows.Next() {
 		e := &models.ConfigEntry{}
-		var createdAt, updatedAt sql.NullTime
-		if err := rows.Scan(&e.TenantID, &e.Key, &e.Value, &e.Format, &e.Version, &e.Description, &e.UpdatedBy, &createdAt, &updatedAt); err != nil {
+		if err := scanConfigEntryRow(rows, e); err != nil {
 			continue
-		}
-		if createdAt.Valid {
-			e.CreatedAt = createdAt.Time
-		}
-		if updatedAt.Valid {
-			e.UpdatedAt = updatedAt.Time
 		}
 		out = append(out, e)
 	}
@@ -286,15 +290,8 @@ func (s *MySQLStore) GetConfigHistory(tenantID, key string) []*models.ConfigEntr
 	var out []*models.ConfigEntry
 	for rows.Next() {
 		e := &models.ConfigEntry{}
-		var createdAt, updatedAt sql.NullTime
-		if err := rows.Scan(&e.TenantID, &e.Key, &e.Value, &e.Format, &e.Version, &e.Description, &e.UpdatedBy, &createdAt, &updatedAt); err != nil {
+		if err := scanConfigEntryRow(rows, e); err != nil {
 			continue
-		}
-		if createdAt.Valid {
-			e.CreatedAt = createdAt.Time
-		}
-		if updatedAt.Valid {
-			e.UpdatedAt = updatedAt.Time
 		}
 		out = append(out, e)
 	}
@@ -365,20 +362,29 @@ func (s *MySQLStore) GetSecret(tenantID, key string) (*models.SecretEntry, bool)
 	row := s.db.QueryRowContext(ctx,
 		`SELECT tenant_id, key_name, value, key_type, version, created_at, updated_at FROM config_secrets WHERE tenant_id=? AND key_name=?`, tenantID, key)
 	e := &models.SecretEntry{}
-	var createdAt, updatedAt sql.NullTime
-	if err := row.Scan(&e.TenantID, &e.Key, &e.Value, &e.KeyType, &e.Version, &createdAt, &updatedAt); err != nil {
+	if err := scanSecretRow(row, e); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] GetSecret 查询失败: %v", err)
 		}
 		return nil, false
 	}
-	if createdAt.Valid {
-		e.CreatedAt = createdAt.Time
-	}
-	if updatedAt.Valid {
-		e.UpdatedAt = updatedAt.Time
-	}
 	return e, true
+}
+
+// scanSecretRow 读 config_secrets 的 7 列：
+// tenant_id, key_name, value, key_type, version, created_at, updated_at
+//
+// value 与 key_type 可空且无 DEFAULT。裸目标扫描遇 NULL 会让整行读不出来——
+// 密钥读不到，轮转（RotateSecret）与更新（UpdateSecret）都以「查不到」告终。
+func scanSecretRow(row configRowScanner, e *models.SecretEntry) error {
+	var value, keyType sql.NullString
+	var createdAt, updatedAt sql.NullTime
+	if err := row.Scan(&e.TenantID, &e.Key, &value, &keyType, &e.Version, &createdAt, &updatedAt); err != nil {
+		return err
+	}
+	e.Value, e.KeyType = value.String, keyType.String
+	e.CreatedAt, e.UpdatedAt = createdAt.Time, updatedAt.Time
+	return nil
 }
 
 func (s *MySQLStore) UpdateSecret(item *models.SecretEntry) *models.SecretEntry {
@@ -388,24 +394,19 @@ func (s *MySQLStore) UpdateSecret(item *models.SecretEntry) *models.SecretEntry 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var existing models.SecretEntry
-	var createdAt, updatedAt sql.NullTime
-	err := s.db.QueryRowContext(ctx,
+	row := s.db.QueryRowContext(ctx,
 		`SELECT tenant_id, key_name, value, key_type, version, created_at, updated_at FROM config_secrets WHERE tenant_id=? AND key_name=?`, item.TenantID, item.Key,
-	).Scan(&existing.TenantID, &existing.Key, &existing.Value, &existing.KeyType, &existing.Version, &createdAt, &updatedAt)
-	if err != nil {
+	)
+	if err := scanSecretRow(row, &existing); err != nil {
 		log.Printf("[store] UpdateSecret 查询失败: %v", err)
 		return nil
-	}
-	if createdAt.Valid {
-		existing.CreatedAt = createdAt.Time
 	}
 	item.Version = existing.Version + 1
 	item.CreatedAt = existing.CreatedAt
 	item.UpdatedAt = time.Now().UTC()
-	_, err = s.db.ExecContext(ctx,
+	if _, err := s.db.ExecContext(ctx,
 		`UPDATE config_secrets SET value=?, key_type=?, version=?, updated_at=? WHERE tenant_id=? AND key_name=?`,
-		item.Value, item.KeyType, item.Version, nullTime(item.UpdatedAt), item.TenantID, item.Key)
-	if err != nil {
+		item.Value, item.KeyType, item.Version, nullTime(item.UpdatedAt), item.TenantID, item.Key); err != nil {
 		log.Printf("[store] UpdateSecret 失败: %v", err)
 	}
 	return item
@@ -445,10 +446,12 @@ func (s *MySQLStore) ListSecrets(tenantID string) []*models.SecretMeta {
 	var out []*models.SecretMeta
 	for rows.Next() {
 		m := &models.SecretMeta{}
+		var keyType sql.NullString
 		var createdAt, updatedAt sql.NullTime
-		if err := rows.Scan(&m.TenantID, &m.Key, &m.KeyType, &m.Version, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&m.TenantID, &m.Key, &keyType, &m.Version, &createdAt, &updatedAt); err != nil {
 			continue
 		}
+		m.KeyType = keyType.String
 		if createdAt.Valid {
 			m.CreatedAt = createdAt.Time
 		}
@@ -464,25 +467,20 @@ func (s *MySQLStore) RotateSecret(tenantID, key, newValue string) *models.Secret
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var existing models.SecretEntry
-	var createdAt, updatedAt sql.NullTime
-	err := s.db.QueryRowContext(ctx,
+	row := s.db.QueryRowContext(ctx,
 		`SELECT tenant_id, key_name, value, key_type, version, created_at, updated_at FROM config_secrets WHERE tenant_id=? AND key_name=?`, tenantID, key,
-	).Scan(&existing.TenantID, &existing.Key, &existing.Value, &existing.KeyType, &existing.Version, &createdAt, &updatedAt)
-	if err != nil {
+	)
+	if err := scanSecretRow(row, &existing); err != nil {
 		log.Printf("[store] RotateSecret 查询失败: %v", err)
 		return nil
 	}
 	newVersion := existing.Version + 1
 	now := time.Now().UTC()
-	_, err = s.db.ExecContext(ctx,
+	if _, err := s.db.ExecContext(ctx,
 		`UPDATE config_secrets SET value=?, version=?, updated_at=? WHERE tenant_id=? AND key_name=?`,
-		newValue, newVersion, now, tenantID, key)
-	if err != nil {
+		newValue, newVersion, now, tenantID, key); err != nil {
 		log.Printf("[store] RotateSecret 失败: %v", err)
 		return nil
-	}
-	if createdAt.Valid {
-		existing.CreatedAt = createdAt.Time
 	}
 	return &models.SecretMeta{
 		ID:        existing.ID,
@@ -525,14 +523,14 @@ func (s *MySQLStore) GetChannel(id string) *models.ChannelEntry {
 		`SELECT id, tenant_id, name, type, config, enabled, created_at, updated_at FROM notify_channels WHERE id=?`, id)
 	c := &models.ChannelEntry{}
 	var createdAt, updatedAt sql.NullTime
-	var config sql.NullString
-	if err := row.Scan(&c.ID, &c.TenantID, &c.Name, &c.Type, &config, &c.Enabled, &createdAt, &updatedAt); err != nil {
+	var config, channelType sql.NullString
+	if err := row.Scan(&c.ID, &c.TenantID, &c.Name, &channelType, &config, &c.Enabled, &createdAt, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] GetChannel 查询失败: %v", err)
 		}
 		return nil
 	}
-	c.Config = config.String
+	c.Config, c.Type = config.String, channelType.String
 	if createdAt.Valid {
 		c.CreatedAt = createdAt.Time
 	}
@@ -603,11 +601,11 @@ func (s *MySQLStore) ListChannels(tenantID string) []*models.ChannelEntry {
 	for rows.Next() {
 		c := &models.ChannelEntry{}
 		var createdAt, updatedAt sql.NullTime
-		var config sql.NullString
-		if err := rows.Scan(&c.ID, &c.TenantID, &c.Name, &c.Type, &config, &c.Enabled, &createdAt, &updatedAt); err != nil {
+		var config, channelType sql.NullString
+		if err := rows.Scan(&c.ID, &c.TenantID, &c.Name, &channelType, &config, &c.Enabled, &createdAt, &updatedAt); err != nil {
 			continue
 		}
-		c.Config = config.String
+		c.Config, c.Type = config.String, channelType.String
 		if createdAt.Valid {
 			c.CreatedAt = createdAt.Time
 		}
@@ -652,12 +650,14 @@ func (s *MySQLStore) GetTemplate(id string) *models.TemplateEntry {
 	t := &models.TemplateEntry{}
 	var createdAt, updatedAt sql.NullTime
 	var vars []byte
-	if err := row.Scan(&t.ID, &t.TenantID, &t.Name, &t.Description, &t.Content, &vars, &createdAt, &updatedAt); err != nil {
+	var desc, content sql.NullString
+	if err := row.Scan(&t.ID, &t.TenantID, &t.Name, &desc, &content, &vars, &createdAt, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] GetTemplate 查询失败: %v", err)
 		}
 		return nil
 	}
+	t.Description, t.Content = desc.String, content.String
 	if len(vars) > 0 {
 		if err := json.Unmarshal(vars, &t.Variables); err != nil {
 			log.Printf("[store] scan Unmarshal: %v", err)
@@ -735,9 +735,11 @@ func (s *MySQLStore) ListTemplates(tenantID string) []*models.TemplateEntry {
 		t := &models.TemplateEntry{}
 		var createdAt, updatedAt sql.NullTime
 		var vars []byte
-		if err := rows.Scan(&t.ID, &t.TenantID, &t.Name, &t.Description, &t.Content, &vars, &createdAt, &updatedAt); err != nil {
+		var desc, content sql.NullString
+		if err := rows.Scan(&t.ID, &t.TenantID, &t.Name, &desc, &content, &vars, &createdAt, &updatedAt); err != nil {
 			continue
 		}
+		t.Description, t.Content = desc.String, content.String
 		if len(vars) > 0 {
 			if err := json.Unmarshal(vars, &t.Variables); err != nil {
 				log.Printf("[store] scan Unmarshal: %v", err)
