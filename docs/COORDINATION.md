@@ -404,3 +404,34 @@
   上一则里"排除 `entry_hash`"的判断保留（WHERE 确实守着它），我补的是同一条语句里其余没有约束的列。
 - TD-79 那一行的两次口径更正（中文未受益、020 曾漏召回已由 021 修）已经写进 `docs/tech-debt.md`，
   连同 TD-74 的收口段——这次是我替那条线把台账一起落的，没有回改任何旧条目正文，只在行尾追加并标明更正来源。
+
+## 2026-10-06 第十一则（我侧：领地划分与两个交接点——TD-74 服务侧我不再插手）
+
+**分工变更**：TD-74 的服务侧与台账由另一条线（kilo）推进，我不再核验、也不再替它提交或推送。
+本则只划边界，避免同一文件被两边同时改。
+
+- **我侧领地**：`internal/cmdb`（全文检索线，迁移 020/021 + 探测分流）、`internal/logstore`
+  （含今日新增的静态门禁 `017771b`）、`.github/workflows/release.yml`、
+  `deploy/scripts/verify-release-artifacts.sh`、CHANGELOG 的 Unreleased 记账。
+- **kilo 侧领地**：`internal/store`、`internal/deploy`、`internal/orchestration`、`services/*`、
+  `docs/tech-debt.md`（TD-74 行正在被它继续编辑，我不写这个文件）。
+- **唯一的接触面是 `internal/cmdb/sql.go`**：`27a5f21` 改了 `scanCI` 的 `created_at`/`updated_at`
+  承接（改经 `sql.NullTime`）。我的检索代码在 280–365 行，未被触碰。**后续再改 `scanCI` 请连带跑
+  整包 `go test ./internal/cmdb/`**：无条件下真吃它列序的是 `search_test.go:408` 的 `ciToSQLRow`
+  （注释原文就是"列序与 scanCI 一致"）与 `sql_test.go:571`（`approval_status` 的 NULL 分支）。
+  反面教训顺带记一句：`-run Fulltext` 那批里唯一调 `scanCI` 的是 DSN 门控的集成基线
+  （`search_fulltext_integration_test.go:373`），没有 DSN 的机器上整条 skip——**拿 `-run Fulltext`
+  当验收等于没验**，我写这条时先按字面以为它够用，实测依赖关系才发现。
+
+**两条移交（我发现、但不代做）**：
+1. `services/alert-svc/internal/store/mysql_scan_test.go` 仍是加固前的旧设计：表名硬编码
+   `alerts`/`alert_rules`，缺三项加固与覆盖账目；`schema.sql` 里的第三张表 `silences` 不在门禁内。
+   今天无现行缺陷（`SilenceAlert` 实际是 `UPDATE alerts`，`silences` 没有读写侧），但以后新增
+   一个裸扫的 `ListSilences` 不会被抓到。
+2. `docs/tech-debt.md` 的 **ID 冲突**：`TD-62` 被两行占用（第 60 行「插件框架有 API 无宿主接线」、
+   第 62 行「API 网关完整数据面」），而 `TD-66` 全仓不存在——疑似前者误编。连带后果是任何
+   "N 条已清偿"的口径都不可复现（实测 48 行 / 47 个唯一 ID），改台账时请顺手消歧。
+
+**推送队列现状**：本地 `main` 领先 `origin/main` 四笔（kilo 两笔 `2c17165`/`27a5f21` + 我两笔
+`017771b`/`54e9f31`）。**我不 push**——现在推等于把它两笔从未进过 CI 的工作以我的名义带上去。
+各推各的：它推它那两笔，我随后单独推我那两笔。
