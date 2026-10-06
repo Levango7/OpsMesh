@@ -1,6 +1,7 @@
 package proto
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"reflect"
@@ -10,17 +11,21 @@ import (
 	"testing"
 )
 
-// TD-63: Task schema 双份定义字段数一致性浅校验。
+// TD-63: Task schema 多份定义的机器对账（根治后形态）。
 //
-// task.proto: services/task-svc/api/proto/v1/task.proto  (task-svc 独立 gRPC API)
-// model.go:   internal/proto/model.go                    (controlplane JSON codec 主契约)
+// canonical: proto/opsmesh/task/v1/task.proto           (受 CI buf lint/breaking 守护)
+// 服务副本:  services/task-svc/api/proto/v1/task.proto  (stub 生成与运行消费路径，与 canonical 逐字节锁定)
+// model.go:  internal/proto/model.go                    (controlplane JSON codec 主契约，字段对账)
 //
-// 本测试是低成本守门，仅校验字段数一致，不校验字段名/类型/顺序。
-// 已知局限：两边可能字段数相同但字段集不同（如一侧加 X 删 Y），浅校验无法发现。
-// 根治方案见 docs/tech-debt.md TD-63（buf generate 单一来源，前置 TD-60 架构决策）。
+// 用例：字段数一致性、字段名双向对账、canonical↔副本字节相等（文件末尾）。
+// 已知边界：类型/顺序层面的分叉不在判据内；model.go 保持手写（JSON 通道语义面不同），以对账锁死。
 
-// taskProtoRelPath 是 task.proto 相对于本测试包目录(internal/proto/)的路径。
-const taskProtoRelPath = "../../services/task-svc/api/proto/v1/task.proto"
+// taskProtoCanonicalRelPath 是 canonical Task 契约相对本测试包目录(internal/proto/)的路径。
+const taskProtoCanonicalRelPath = "../../proto/opsmesh/task/v1/task.proto"
+
+// taskProtoServiceCopyRelPath 是 task-svc 服务侧副本（stub 生成与运行消费路径），
+// 与 canonical 必须逐字节一致（行尾归一后比较），由 TestTaskProtoCanonicalMatchesServiceCopy 锁定。
+const taskProtoServiceCopyRelPath = "../../services/task-svc/api/proto/v1/task.proto"
 
 // expectedTaskFields 是 Task 定义的期望字段数（手工维护）。
 // 当任一侧 Task 增删字段时，须同步更新此值 + 两份定义。
@@ -35,12 +40,12 @@ func TestTaskSchemaFieldCountConsistency(t *testing.T) {
 	modelFields := reflect.TypeOf(Task{}).NumField()
 
 	// 统计 task.proto Task message 实际字段数（文件解析）
-	protoFields, err := countProtoTaskFields(taskProtoRelPath)
+	protoFields, err := countProtoTaskFields(taskProtoCanonicalRelPath)
 	if err != nil {
-		t.Fatalf("读取/解析 task.proto 失败 (%s): %v", taskProtoRelPath, err)
+		t.Fatalf("读取/解析 task.proto 失败 (%s): %v", taskProtoCanonicalRelPath, err)
 	}
 
-	t.Logf("Task schema 字段数: model.go=%d, task.proto=%d, expected=%d",
+	t.Logf("Task schema 字段数: model.go=%d, canonical=%d, expected=%d",
 		modelFields, protoFields, expectedTaskFields)
 
 	// 断言 1: model.go 字段数 == 硬编码期望值
@@ -49,7 +54,7 @@ func TestTaskSchemaFieldCountConsistency(t *testing.T) {
 			"⚠️ 演进须同步：若你修改了 Task 字段定义，请同步更新\n"+
 			"expectedTaskFields 常量，并同步两份定义：\n"+
 			"  - internal/proto/model.go Task struct\n"+
-			"  - services/task-svc/api/proto/v1/task.proto Task message",
+			"  - proto/opsmesh/task/v1/task.proto Task message（canonical）",
 			modelFields, expectedTaskFields)
 	}
 
@@ -58,7 +63,7 @@ func TestTaskSchemaFieldCountConsistency(t *testing.T) {
 		t.Errorf("Task schema 字段数不一致: model.go Task struct has %d fields, "+
 			"task.proto Task message has %d fields.\n"+
 			"⚠️ 演进须同步两份定义：\n"+
-			"  - services/task-svc/api/proto/v1/task.proto Task message\n"+
+			"  - proto/opsmesh/task/v1/task.proto Task message（canonical）\n"+
 			"  - internal/proto/model.go Task struct",
 			modelFields, protoFields)
 	}
@@ -73,9 +78,9 @@ func TestTaskSchemaFieldCountConsistency(t *testing.T) {
 // 双向而不是单向：只查"proto 有而 Go 没有"的话，把 Go 侧字段删掉也能判绿；
 // 两个方向的差集都要为空。
 func TestTaskSchemaFieldNamesStayInSync(t *testing.T) {
-	protoNames, err := protoTaskFieldNames(taskProtoRelPath)
+	protoNames, err := protoTaskFieldNames(taskProtoCanonicalRelPath)
 	if err != nil {
-		t.Fatalf("读取/解析 task.proto 失败 (%s): %v", taskProtoRelPath, err)
+		t.Fatalf("读取/解析 task.proto 失败 (%s): %v", taskProtoCanonicalRelPath, err)
 	}
 	modelNames := modelTaskFieldNames()
 
@@ -104,7 +109,7 @@ func TestTaskSchemaFieldNamesStayInSync(t *testing.T) {
 			"  仅存在于 task.proto: %v\n"+
 			"  仅存在于 model.go:   %v\n"+
 			"⚠️ 演进须同步两份定义：\n"+
-			"  - services/task-svc/api/proto/v1/task.proto Task message\n"+
+			"  - proto/opsmesh/task/v1/task.proto Task message（canonical）\n"+
 			"  - internal/proto/model.go Task struct",
 			onlyInProto, onlyInModel)
 	}
@@ -170,11 +175,11 @@ func TestTaskSchemaCountingHelperStillParses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("解析 task.proto: %v", err)
 	}
-	names, err := protoTaskFieldNames(taskProtoRelPath)
+	names, err := protoTaskFieldNames(taskProtoCanonicalRelPath)
 	if err != nil {
 		t.Fatalf("解析字段名: %v", err)
 	}
-	count, err := countProtoTaskFields(taskProtoRelPath)
+	count, err := countProtoTaskFields(taskProtoCanonicalRelPath)
 	if err != nil {
 		t.Fatalf("统计字段数: %v", err)
 	}
@@ -190,9 +195,9 @@ func TestTaskSchemaCountingHelperStillParses(t *testing.T) {
 // readTaskProto 读取 task.proto 全文（供自检用例使用）。
 func readTaskProto(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(taskProtoRelPath)
+	b, err := os.ReadFile(taskProtoCanonicalRelPath)
 	if err != nil {
-		t.Fatalf("读 %s: %v", taskProtoRelPath, err)
+		t.Fatalf("读 %s: %v", taskProtoCanonicalRelPath, err)
 	}
 	return string(b)
 }
@@ -258,4 +263,34 @@ func readFileOrDie(path string) string {
 		panic(fmt.Sprintf("读 %s: %v", path, err))
 	}
 	return string(b)
+}
+
+// TestTaskProtoCanonicalMatchesServiceCopy 锁定 canonical 与 task-svc 服务侧副本一致（TD-63 根治面）。
+//
+// 为什么按行尾归一后比较：本仓 .gitattributes 将 *.proto 固定为 LF，但 Windows 工作区
+// 可能被外部工具以 CRLF 回写（实测发生过）；行尾差异不构成契约分叉，归一后比较才不假红。
+func TestTaskProtoCanonicalMatchesServiceCopy(t *testing.T) {
+	canonical, err := os.ReadFile(taskProtoCanonicalRelPath)
+	if err != nil {
+		t.Fatalf("读 canonical 失败 (%s): %v", taskProtoCanonicalRelPath, err)
+	}
+	serviceCopy, err := os.ReadFile(taskProtoServiceCopyRelPath)
+	if err != nil {
+		t.Fatalf("读服务侧副本失败 (%s): %v", taskProtoServiceCopyRelPath, err)
+	}
+	if len(canonical) == 0 || len(serviceCopy) == 0 {
+		t.Fatalf("契约文件疑似塌陷为空：canonical=%d 字节, 副本=%d 字节", len(canonical), len(serviceCopy))
+	}
+	if !bytes.Equal(normalizeProtoEOL(canonical), normalizeProtoEOL(serviceCopy)) {
+		t.Errorf("canonical 与服务侧副本已分叉（行尾归一后仍不一致）：\n"+
+			"  canonical: %s\n"+
+			"  副本:      %s\n"+
+			"⚠️ TD-63：两份必须逐字节一致——改 canonical 后同步复制到副本（或反之），不要只动一份。",
+			taskProtoCanonicalRelPath, taskProtoServiceCopyRelPath)
+	}
+}
+
+// normalizeProtoEOL 归一 CRLF→LF，供字节相等断言使用（见用例注释）。
+func normalizeProtoEOL(b []byte) []byte {
+	return bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
 }

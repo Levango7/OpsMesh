@@ -106,10 +106,10 @@ docker:
 helm:
 	helm lint deploy/helm/opsmesh/
 
-# 生成 protobuf（如果需要）
+# 生成 protobuf（只生成注册通道 stub；task canonical 的 stub 生成见 proto/README.md）
 .PHONY: proto
 proto:
-	cd proto && buf generate
+	cd proto && buf generate --path opsmesh/v1
 
 # 帮助
 .PHONY: help

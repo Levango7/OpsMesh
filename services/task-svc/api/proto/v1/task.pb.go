@@ -24,9 +24,10 @@ const (
 )
 
 // Task 任务。
-// ⚠️ 演进须同步：本 message 字段变更须同步 internal/proto/model.go Task struct。
-// CI 守护：internal/proto/task_schema_test.go 做字段数一致性断言。
-// 详见 docs/tech-debt.md TD-63（根治=buf generate 单一来源，前置 TD-60 架构决策）。
+// ⚠️ 演进须同步：本 message 有两份逐字节锁定文本——canonical 在 proto/opsmesh/task/v1/task.proto
+// （受 buf lint/breaking 守护），服务侧副本在 services/task-svc/api/proto/v1/task.proto。
+// 字段变更须同步 internal/proto/model.go Task struct；CI 守护见 internal/proto/task_schema_test.go（字段对账 + 字节相等断言）。
+// 详见 docs/tech-debt.md TD-63。
 type Task struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	TaskId           string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`

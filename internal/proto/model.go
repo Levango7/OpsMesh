@@ -136,9 +136,10 @@ const (
 
 // Task 控制面下发给 agent 的自动化任务。
 //
-// ⚠️ 演进须同步：本 struct 字段变更须同步 services/task-svc/api/proto/v1/task.proto Task message。
-// CI 守护：internal/proto/task_schema_test.go 做字段数一致性断言。
-// 详见 docs/tech-debt.md TD-63（根治=buf generate 单一来源，前置 TD-60 架构决策）。
+// ⚠️ 演进须同步：本 struct 字段变更须同步 canonical 契约 proto/opsmesh/task/v1/task.proto
+// （受 buf lint/breaking 守护；服务侧副本 services/task-svc/api/proto/v1/task.proto 与它逐字节锁定）。
+// CI 守护：internal/proto/task_schema_test.go 做字段数/字段名对账与字节相等断言。
+// 详见 docs/tech-debt.md TD-63。
 type Task struct {
 	TaskID    string    `json:"taskID"`
 	AgentID   string    `json:"agentID"`

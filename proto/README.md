@@ -11,8 +11,10 @@ proto/
 ├── buf.gen.yaml          # buf 代码生成配置（go + go-grpc 插件）
 ├── opsmesh/v1/
 │   └── registration.proto  # Registration 服务 + 12 个消息定义
+├── opsmesh/task/v1/
+│   └── task.proto          # Task 契约 canonical（受 lint/breaking 守护，见下节）
 └── scripts/
-    └── gen.sh            # Docker buf 生成脚本（无需本机装 buf/protoc）
+    └── gen.sh            # Docker buf 生成脚本（--path opsmesh/v1，只生成注册通道 stub）
 ```
 
 ## 生成 Go stub
@@ -26,6 +28,22 @@ bash proto/scripts/gen.sh
 - `registration_grpc.pb.go`：`RegistrationServer`/`RegistrationClient` 接口 + `Registration_ServiceDesc`
 
 生成结果**提交到仓库**，避免无 Docker 的开发者重新生成（沙箱无 Docker 时直接用已提交的 stub）。
+
+## Task 契约 canonical（proto/opsmesh/task/v1/task.proto）
+
+task-svc 的 Task 契约 canonical 落在此处，随本目录的 buf 模块受 CI lint/breaking 守护。
+`services/task-svc/api/proto/v1/task.proto` 是它的**逐字节锁定副本**（stub 生成与运行消费走副本路径）：
+
+- CI 断言在 `internal/proto/task_schema_test.go`：`TestTaskProtoCanonicalMatchesServiceCopy`
+  （行尾归一后字节相等）+ 字段数/字段名对账（锚定 canonical 与 `internal/proto/model.go`）。
+- 编辑规矩：改 canonical 后把同一字节同步到副本（或反之），**不要只动一份**；
+  两份都受 `.gitattributes` 的 `*.proto eol=lf` 约束。
+- 编辑任一文件后须用钉版 protoc 重生成 `services/task-svc/api/proto/v1` 的 stub
+  （命令见下节「重新生成命令」；proto 注释会进入生成物头部）。
+- 为什么不直接从 canonical 跑 buf 生成：buf 会把生成物里的 descriptor 文件名校为
+  `opsmesh/task/v1/task.proto` 并重命名导出符号（`file_task_proto` → `file_opsmesh_task_v1_task_proto`），
+  属无谓 churn；两份 proto 逐字节一致，从副本生成与 canonical 同语义。
+- `gen.sh` / `make proto` 已用 `--path opsmesh/v1` 限定，避免 task 生成物误写进 `internal/grpcx/pb/`。
 
 ## 兼容期切换
 
@@ -57,6 +75,9 @@ gs.RegisterService(&pbv1.Registration_ServiceDesc, grpcx.NewStubAdapter(&grpcSer
 生成物 `*.pb.go` + `*_grpc.pb.go` 同样提交入库。**这些文件此前是手写 Go struct**，
 导致该服务的每一条 gRPC RPC 都在 proto codec 的 marshal 阶段失败（缺陷登记 #59）。
 
+task-svc 例外：它的 `task.proto` 已升格为 canonical 的逐字节锁定副本（见上节
+「Task 契约 canonical」），其余 5 个服务的 proto 仍是本服务独占的 IDL。
+
 ### 重新生成命令（钉死工具链）
 
 | 组件 | 版本 | 说明 |
@@ -80,6 +101,9 @@ protoc -I "$d" -I "$INC" \
 - **`require_unimplemented_methods` 保持默认 true**：各服务 `internal/server` 已经嵌了
   `Unimplemented*`，所以生成物与调用点同名同签名，调用点零改动；关掉它等于放弃
   "接口加方法时编译期报错"这一保护。
+
+task-svc 的 `task.proto` 是同一形态（`d=services/task-svc/api/proto/v1`，输入 `task.proto`），
+但它必须从服务侧副本这个路径生成（descriptor 名保持 `task.proto`，见上节「Task 契约 canonical」）。
 
 ### 漂移门禁（不需要在 CI 里装 protoc，也能判红）
 
