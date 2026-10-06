@@ -797,6 +797,12 @@ cosign 签名与 attest 自验**全部排在推送之后** ⇒ 扫描判红的�
 
 边界：本门禁抓"日期早于最新发布版本却仍标未发布"这一整类，抓不住"切版当天新写、次日才归版"的短窗错标；后者要靠切版工序本身。
 
+**同批连带（同一个 TD-62 过期结论在对外文档里的三处残留）**：
+
+- `README.md:189` 的 `internal/plugin` 行原写"控制面**没有任何扩展点触发它**（零调用点）……不是已交付的产品能力"——这方向与台账相反，是**低估已交付**。改为复测事实：3 个扩展点全部有触发点（`platform_config.go:117`/`:155`、`server_netsec.go:103` → `plugin_host.go:74`），并明确仍未交付的两件（市场 `plugin.bin` 无加载器、运行时模型未决），口径落在"3 个钩子可用"而不是"任意扩展点可用"。`plugin.Open(` 全仓命中数实测 **0**（所以"无加载器"这句仍成立，没有顺手夸大）。
+- `internal/plugin/plugin.go` 的包注释同样停在 10-04 的"零调用点"版本，改为同一份 10-06 复测结论（注释里点名触发点文件:行号，避免下一个人再去重新检索）。改后 `gofmt -l .` 全仓空输出、文件仍是 0 个 CR（Edit 工具会重新引入 CRLF，这是本仓反复踩过的），`go test ./internal/plugin/ ./internal/controlplane -run 'Plugin|Hook'` 与 `./internal/gates/...` 全绿。
+- `docs/roadmap-2026-10-03.md:11/22` 的 "61 个 Unreleased 块未归版" 与 A1 项的验收口径 "归版后 Unreleased 归零"：**该判据本身不成立**——归零只在切版那一刻可能，之后每条新条目都以 Unreleased 起步，恒要求归零等于要求停写台账。已在原位标注 10-03 快照属性（"未归版"≠"未交付"），并把可执行判据换成门禁第 16 节 PASS。表格结构用按表分段取基准的校验器复核：README 与 roadmap 在改动前后问题行数不变（25/25、0/0），确认没撑破任何一行。
+
 ## [0.11.0] — 2026-10-01 引导脚本不再携带建表语句（删 43 张表 DDL + 门禁第 13 节）（已归入 0.11.0）
 
 > 证据：三方一致性审计（`CREATE TABLE IF NOT EXISTS <t> (…)` 从 Go 原始字符串与 `.sql` 提取，剥 `INDEX`/`PRIMARY KEY` 行取首字段做列集合，对同名表求差集）；`deploy/scripts/validate-deploy-assets.sh` 当前 **PASS=33 / FAIL=0 / SKIP=2**，新第 13 节经**两次变异检验**（塞回 `CREATE TABLE` → 判红；把某 DSN 的库从两个脚本都删掉 → 判红并指向「连库即 Access denied」）。详见 `docs/td60-decision-2026-09-26.md` §5.11 ①c。

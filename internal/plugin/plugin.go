@@ -3,10 +3,14 @@
 // 设计目标：在不修改控制面核心代码的前提下，允许通过插件扩展控制面行为
 // （如审计增强、自定义通知渠道、配置变更钩子、准入校验等）。
 //
-// ⚠️ 现状（2026-10-04 实测，别把这段注释当交付承诺读）：本包只提供框架与并发安全的
-// Manager，**控制面里没有任何一处触发钩子**（`FireHook`/`RegisterHook` 在
-// internal/controlplane 下零调用点，唯一调用者是示例 plugins/hello 自己 fire 自己），
-// 插件市场下载的 plugin.bin 也没有加载器。也就是说"可插拔扩展"目前不是产品能力。
+// ⚠️ 现状（2026-10-06 复测，替换 10-04 的"零调用点"口径；也别把这段注释当交付承诺读）：
+// AllHooks() 冻结的 3 个扩展点都已有控制面触发点——internal/controlplane/platform_config.go:117
+// （config.preSet）、:155（config.postSet）、server_netsec.go:103（task.preClaim），统一经
+// plugin_host.go:74 调用本包的 Manager.FireHook；internal/controlplane/plugin_hook_gate_test.go
+// 强制"新增扩展点必须同时有触发点与测试"，所以"接线只覆盖一部分"这种漂移会被门禁拦住。
+// 仍未交付的两件：① 插件市场下载的 plugin.bin 没有加载器（全仓 plugin.Open 命中 0，
+// internal/controlplane/marketplace.go:18 自述）；② 插件运行时模型未决。
+// ⇒ "可插拔扩展"目前的真实形状是"3 个钩子可用"，不是"任意扩展点可用"。
 // 立项与所需决策见 docs/tech-debt.md TD-62。
 //
 // 核心抽象：

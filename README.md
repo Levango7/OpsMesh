@@ -186,7 +186,7 @@
 | 包 | 职责 |
 |---|---|
 | `internal/platform` | 平台化业务引擎：租户管理 + API Key（`om_` 前缀 + SHA-256 hash）+ 插件市场 + 计费（计划/订阅/账单） |
-| `internal/plugin` | 插件框架：Plugin 接口 + Hook 扩展点 + HookHandler + Manager（注册/钩子触发/生命周期）。⚠️ **能力边界（2026-10-04 实测）**：框架与单测齐备，但控制面**没有任何扩展点触发它**（`FireHook`/`RegisterHook` 在 `internal/controlplane` 下零调用点），插件市场的 `plugin.bin` 也无加载器 —— "不改核心代码扩展控制面行为"目前只是框架能力，不是已交付的产品能力，立项见 `docs/tech-debt.md` TD-62 |
+| `internal/plugin` | 插件框架：Plugin 接口 + Hook 扩展点 + HookHandler + Manager（注册/钩子触发/生命周期）。**能力边界（2026-10-06 复测，替换 10-04 的"零接线"口径）**：`AllHooks()` 冻结的 3 个扩展点**都已有控制面触发点**——`platform_config.go:117`（`config.preSet`，可阻断）、`:155`（`config.postSet`，只记审计）、`server_netsec.go:103`（`task.preClaim`，可阻断），统一经 `plugin_host.go:74` 落到 `Manager.FireHook`，并由 `plugin_hook_gate_test.go` 强制"新增扩展点必须同时有触发点与测试"。仍未交付的两件：① 插件市场的 `plugin.bin` **无加载器**（`internal/controlplane/marketplace.go:18` 自述，全仓 `plugin.Open(` 命中 0）；② 插件**运行时模型**未决（Go plugin / WASM / 独立进程 + RPC）。⇒ "不改核心代码扩展控制面行为"现在是**3 个具体钩子**可用，而不是任意扩展点可用；立项见 `docs/tech-debt.md` TD-62 |
 | `internal/extension` | API 网关引擎：路由规则匹配（PathPrefix 前缀 + 方法白名单）+ 令牌桶限流 + 网关统计聚合 |
 | `internal/gates` | 跨模块**结构性门禁**测试（包内只有测试）：扫 `services/*/cmd/*/main.go` 拦"要求 sql 却没配 DSN 就静默退内存"，扫 HPA 清单拦"引用没产出的 Pods 指标"，并对账 internal 包数与文档三处数字 |
 
