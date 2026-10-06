@@ -1576,6 +1576,33 @@ gr = needs("github-release")
 if gr is not None and "promote" not in gr:
     errs.append("github-release 不再 needs promote ⇒ 提权失败也会对外发布 Release")
 
+# 串行闸：发布链必须是"同一时刻只跑一条"。两个 tag 短间隔推送时，promote 会并发重打 :latest，
+# 最终 :latest 由最后完成者而不是版本最新者决定（与 §20 里"feature 分支刻意不打 latest"同源）。
+# cancel-in-progress 必须显式为 false：true 会掐断正在发布的 run——镜像推一半、Release 建一半，
+# 比排队等它跑完危险得多。
+conc = (doc or {}).get("concurrency")
+if conc is None:
+    conc_desc = "缺失"
+    errs.append("release.yml 没有顶层 concurrency ⇒ 两个 tag 短间隔推送会并发跑两条发布链，:latest 由最后完成者决定")
+elif isinstance(conc, str):
+    conc_desc = f"{conc}(cancel 未显式设置)"
+    errs.append("concurrency 只给了 group 字符串、没显式写 cancel-in-progress: false ⇒ 形态漂移时容易误开取消")
+elif isinstance(conc, dict):
+    grp = conc.get("group")
+    cip = conc.get("cancel-in-progress")
+    if not grp:
+        errs.append("concurrency 缺 group（每条 run 自成一组 = 串行效果为零）")
+    elif "${{" in str(grp) or "github." in str(grp) or "run_id" in str(grp) or "run_number" in str(grp):
+        # 关键一条：group 带任何"每条 run / 每个 ref 唯一"的量，跨 tag 就不同组 ⇒ 并发照旧，
+        # 而判据若只看"有没有 concurrency"就会给这种写法开绿灯（实测漏过一次，见报告 §41）。
+        errs.append(f"concurrency.group 含动态量（{grp}）⇒ 每条 run 自成一组或按 ref 分组，跨 tag 的串行效果为零；group 必须是字面量")
+    if cip is not False:
+        errs.append(f"concurrency.cancel-in-progress 必须显式为 false（当前={cip!r}）⇒ true 会掐断正在发布的 run")
+    conc_desc = f"group={grp} cancel={cip}"
+else:
+    conc_desc = str(type(conc))
+    errs.append(f"concurrency 形态不认识（既不是映射也不是字符串）：{type(conc)}")
+
 # 构建腿的 tag 集合：docker buildx 的 --tag 实参，以及 build-push-action 的 with.tags
 steps = (jobs.get("build-and-push") or {}).get("steps") or []
 refs = []
@@ -1599,7 +1626,7 @@ for r in refs:
     elif "github.sha" not in r and "GITHUB_SHA" not in r:
         errs.append(f"构建腿推送了非 :<sha> 的可变 tag（版本 tag 应交由 promote 改标）：{r}")
 
-print(f"SUMMARY build_tags={len(refs)} promote_needs={needs('promote')} gr_needs={gr}")
+print(f"SUMMARY build_tags={len(refs)} promote_needs={needs('promote')} gr_needs={gr} concurrency={conc_desc}")
 print("\n".join(errs))
 PY
 )"

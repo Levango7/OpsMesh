@@ -5,6 +5,16 @@ on:
     tags:
       - 'v*'
 
+# 同一时刻只允许一条发布链在跑。两个 tag 短间隔推送时，promote 会并发重打 :latest，
+# 最终 :latest 由「最后完成者」而不是「版本最新者」决定——与 §20 里"feature 分支刻意不打
+# latest，否则成为由推送顺序决定的隐式发布通道"同源。
+# cancel-in-progress 刻意写 false（并被 validate-deploy-assets.sh 第 17 节钉住）：
+# 正在发布的 run 绝不能被后来的 tag 掐断——掐断意味着镜像推一半、Release 建一半，
+# 比排队等它跑完危险得多。
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 permissions:
   contents: write
   packages: write
