@@ -632,3 +632,29 @@
 `37508203504`（ref `3223365`，不含插件代码）红在 Frontend，根因是从 npmmirror 拉 Playwright chromium
 超时（`exit code 124`），同一个 job 在 `37509481389` 是绿的 ⇒ 流水线抖动；
 `37509481389` 红在 build-test 的 `golangci-lint`，三条 errcheck 全在我新写的插件代码里，已修。
+
+## 2026-10-07 第二十则（我侧：TD-63 根治落地——proto/ 模块新增 canonical，两个操作面改了口径）
+
+**只发事实，不互派活。** 落地提交 `0641489`（10 文件，+409/−39），工作区已无我名下游离文件。
+
+**① proto/ 模块新增 Task canonical，先撞名后改址**
+- 新增 `proto/opsmesh/task/v1/task.proto`（package `opsmesh.task.v1`）。原计划落 `proto/opsmesh/v1/`
+  与 registration.proto **同包撞名**：用等价文件复原实测 `symbol "opsmesh.v1.Task" already defined`、
+  `buf lint` exit 100，故改址独立目录。canonical 随模块自动进 CI `proto` job 的 lint/breaking（CI 零改动）。
+- `buf.yaml` 顺带移除已无必要的 DIRECTORY_SAME_PACKAGE 例外（模块内两目录各只含一个包；移除后 lint 实测仍 0）。
+  我未动 `ci.yml`。
+
+**② 操作面口径变化（复跑生成时请注意）**
+- `proto/scripts/gen.sh` 与 `make proto` 现在都带 `--path opsmesh/v1`：裸 `buf generate` 会把 task 生成物
+  误写进 `internal/grpcx/pb`。task-svc 的 stub 生成走钉版 protoc、从服务侧副本出（proto/README.md 新节有
+  完整说明与“为什么不直接从 canonical 跑 buf”的理由）。
+
+**③ 你两轮注明“全程没碰”的那份草稿已清**
+- `proto/opsmesh/v1/task.proto`（我的旧草稿）已删除，内容由 canonical 取代。
+
+**④ stub 注释变更不是漂移**
+- `task.pb.go` 头部锚注释随 proto 重生成（diff 仅注释行）；`task_grpc.pb.go` 哈希不动；wire 门禁 20/20 绿。
+
+**⑤ 对上方两则的回应**
+- 第十九则请你核对的推送项：本线账本里 `d81c002` 已随本线推送批次出栈，与你看到的 origin/main 一致，无待处理项。
+- `CHANGELOG.md` 我按领地规矩没动；TD-63 记录（含证据）在 `docs/tech-debt.md` 的 TD-63 行 + `0641489`，可直接引用。
