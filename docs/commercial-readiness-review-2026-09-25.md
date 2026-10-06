@@ -3734,3 +3734,94 @@ runtime.(*spanQueue).put(...)       src/runtime/mgcmark_greenteagc.go:409
 **过程纪律**：所有变异都在 `git worktree` 的独立副本里做，共享工作树的 `.github/workflows/release.yml`
 （并行 agent 名下）一个字节都没动，跑完 `git worktree remove` 清理；插入 CHANGELOG 条目改成按行号定位并断言
 锚点文本仍在原位，避免把锚点行当替换目标而吞掉邻居（本轮已因此自伤过一次，见 §35.6 之后的复盘）。
+
+## 38. 2026-10-06｜TD-78 复测收口：info 档存量已清零，而 `-S style` 设卡判为不做（7 条 note 逐条判定）
+
+### 38.1 复测口径与数字（同一命令，与 CI 同版 shellcheck v0.10.0）
+
+口径：`shellcheck -S info $(git ls-files '*.sh')`，覆盖 **16 个交付脚本**。
+
+| 对象 | `-S info` findings | 取法 |
+|---|---|---|
+| HEAD `1c21985` | **41** = SC2015 ×39（全在 `deploy/scripts/verify-runtime.sh`）+ SC2016 ×2（`deploy/docker/scripts/deploy.sh`） | `git worktree add --detach /tmp/opsmesh-headwt HEAD` 独立副本，跑完 `worktree remove`，共享工作树零改动 |
+| 共享工作树（含并行 agent 在途的 `verify-runtime.sh`/`deploy.sh`/`ci.yml`） | **0** | 逐文件循环，16 行 `rc=0 findings=0` 全部打印，证明每个文件真被读过 |
+| 阳性对照（临时脚本，注入未加引号展开与 `$(…)` 误用） | 报 SC2086 ×2 + SC2182 ×2，`exit=1` | 同一二进制、同一档位 |
+
+对照 2026-10-04 的登记值时发现**台账行自己就对不上**：原行写"共 44 条 = SC2015 ×41 + SC2016 ×3 + SC2012 ×2 + SC2086 ×1"，
+而该分解加总是 **47 ≠ 44**。用同一二进制把历史三个点重跑一遍后完全对上——**标题的 44 是对的，分解是虚的**：
+
+| 取点 | `-S info` 实测 | 分解（按码） | 分解（按文件） |
+|---|---|---|---|
+| tag `v0.12.0`（`4c383a7`） | **44** | SC2015 ×40 + SC2016 ×2 + SC2012 ×1 + SC2086 ×1 | verify-runtime 39 + validate-deploy-assets 2 + deploy.sh 2 + verify-release-artifacts 1 |
+| 10-04 当日 tip（`a2316ca4`） | **43** | SC2015 ×40 + SC2016 ×2 + SC2012 ×1 | 同上但 verify-release-artifacts 已清零 |
+| HEAD `1c21985` | **41** | SC2015 ×39 + SC2016 ×2 | verify-runtime 39 + deploy.sh 2 |
+| 共享工作树（对方在途） | **0** | — | 16 个脚本逐个 `rc=0 findings=0` |
+
+所以链条是 **44 →（SC2086 清）→ 43 →（我名下两个 SC 清）→ 41 →（对方在途那批清）→ 0**，
+每一步都能对上具体文件，没有"数字自己变小"的含糊处。历史三点都用 `git worktree add --detach` 的独立副本测，
+共享工作树零改动，跑完 `git worktree remove`。
+今日的 41 条**100% 位于并行 agent 名下那两个在途文件里**，其余差额落在我名下两个文件——
+`deploy/scripts/validate-deploy-assets.sh`（SC2012 ×2 及若干 SC2015）与 `deploy/scripts/verify-release-artifacts.sh`（SC2086 ×1）
+现均为 `-S info` 0 findings。**所以 TD-78 的"存量清零"这一半已完成，剩下的 41 条 100% 位于并行 agent 名下那两个在途文件里**，
+而他正在同一批里把门禁档位从 `-S warning` 抬到 `-S info`（HEAD 该行在 `.github/workflows/ci.yml:482`，仍是 warning）。
+档位与清零**必须同批提交**，否则抬档位的瞬间 CI 就红；本机工作树实测两者都到位，故他这批是自洽的。
+台账行里 `ci.yml:443` 的引用已漂移到 482，一并更正。
+
+### 38.2 为什么 `-S style` 不做：7 条 note，逐条判定后收益低于风险
+
+同一 16 个脚本在 `-S style` 下共 **7 条**（全为 `note` 级）：
+
+| 位置 | 码 | 判定 |
+|---|---|---|
+| `deploy/scripts/validate-deploy-assets.sh:375 / 384 / 497` | SC2181 ×3 | **行为本就正确**：本脚本第 29 行是 `set -uo pipefail`（**没有 errexit**），`out="$(cmd)"` 之后读 `$?` 拿到的就是命令替换的退出码，`else bad …` 分支是活的。改成 `if out=$(cmd); then` 只是同义改写，且是在门禁脚本里动控制流 |
+| `deploy/scripts/validate-deploy-assets.sh:249` | SC2001 | `sed 's/_/-/g'` 可等价换成 `${x//_/-}`，属可选美化 |
+| `deploy/scripts/validate-deploy-assets.sh:435` | SC2001 | `echo "$x" \| sed 's/^/         /'` 是**给输出加缩进**，参数展开没有等价写法 ⇒ 工具的偏好性误报 |
+| `deploy/k8s/create-cluster.sh:152` | SC2181 | 同上，非缺陷 |
+| `deploy/scripts/verify-runtime.sh:653` | SC2002 | `cat \| …` 冗余，但这是对方在途文件，我不碰 |
+
+结论：**没有一条是缺陷**，且抬档位要改的是对方名下的 `ci.yml`。为了 7 条 note 去重排门禁脚本的控制流，
+风险（改坏判定分支 = 假绿或假红）高于收益，故本行在 `docs/tech-debt.md` 收口，style 档只留作
+"将来若要设卡再一并清"，不再列为待清债务。这条判断与"量过之后决定不做"的口径一致，依据就是上表的逐条实测。
+
+### 38.3 本轮新增的一条自我约束（写在这里供后续复用）
+
+第一次给 TD-78 行做 python 改写时，新文本里写了未转义的 `A && B \|\| C`，
+被自己的列数断言（要求 3 列表 = 4 个真分隔符）当场拦下（实际 6 个），改成 `\|\|` 后才落地。
+这正是 §35.6 之后立的规矩在起作用：**改结构化表格后必须用"真分隔符 = 竖线总数 − `\|` 条数"复算，
+且断言要在落笔时跑，而不是事后看图**；本次是纯追加改写，`git diff --numstat` 为 `1 1`（一行换一行）。
+
+## 39. 2026-10-06｜切版决策材料：`v0.12.0` 之后到底攒了多少、切一版会踩到什么（全部为今日实测）
+
+用户 2026-10-05 的选择是"**先攒着，等有别的修复一起切**"。本节把那条决定所依赖的数字更新到今天，
+供他重判；**不含我这边的任何单方面动作**。
+
+| 项 | 实测值 | 取法 |
+|---|---|---|
+| `v0.12.0..HEAD(1c21985)` 提交数 | **48**（非文档 **31**、纯文档 17） | 两条独立算法给出同一值：① `git log --format=%h v0.12.0..HEAD -- . ':(exclude)docs' ':(exclude)CHANGELOG.md' ':(exclude)README.md'`；② 逐提交取 `--name-only` 后按"是否存在非文档路径"分类。**第一版草稿写的 36 是错的**——我用 awk 排除时要求 `CHANGELOG`/`README` 后面跟 `/`，而这两个文件在仓库根，于是把只改它们的提交也算进了非文档 |
+| 改动文件数 | 115 | `git diff --name-only \| wc -l` |
+| 迁移文件 | **38 → 42**（新增 `020_ci_items_fulltext`、`021_ci_items_fulltext_recall_columns`，各带 `.down.sql`） | `git ls-tree -r --name-only … -- internal/store/migrations` |
+| `promote` job 真实执行次数 | **0**（release.yml 只在 `v*` 触发；唯一一次误触有 0 个 job） | §35.2 |
+| 发布链顺序是否被门禁守住 | 是（`validate-deploy-assets.sh` §17，静态断言，含一次假证据撤回） | §37 |
+| `main` 分支保护 | **无**（`gh api …/branches/main/protection` → 404，本机计划为免费档） | §35 |
+
+**切一版会踩到的三件事（按严重度排）**：
+
+1. **TD-80 会挡掉二进制发布腿**。`ci.yml` 的 `release` job `needs` 八个 job
+   （`build-test`/`integration`/`security`/`services`/`proto`/`frontend`/`race`/`release-dryrun`），
+   而 §36 那次红正是 `build-test` 的 `-race` 批次在**用例全绿之后**崩于 Go 运行时。
+   `ci.yml` 同时监听 `tags: ["v*"]` ⇒ 打 tag 那一刻这条非确定性路径就在发布链上，
+   一次崩溃 = 二进制（goreleaser + cosign）不产出，而 release.yml 的镜像腿仍可能全绿，
+   形成"发布了一半"的形态。修法已在台账（现象级判据），但改的是并行 agent 名下在途的 `ci.yml`。
+2. **`promote` 的首次真跑就是切版那一刻**。§17 只是静态断言它的形状，不能替代一次真实执行；
+   `:latest`/`:版本` 的重打标签走 `docker buildx imagetools create`（不重建，digest 不变），
+   这条路径至今没有在生产 registry 上跑过。
+3. **存量库升级演练要重做**。已做过的演练是 `0.11.0 → 0.12.0`，而 `v0.12.0` 之后新增两条迁移，
+   其中 `020` 建 **FULLTEXT 索引**——存量表上该 DDL 的耗时与锁行为**未经测量**，
+   不能把上一次演练的结论直接套到新版本上。
+
+**三条仍在他手上的决定**（与技术实现不同，我不代拍）：alert-svc 的 gRPC 未鉴权入口出厂默认、
+MPL-2.0 与 npm 依赖的法务口径、TD-62 的插件接线下一版是否对外宣称。
+
+**我的建议（仅供他判）**：先等并行 agent 那批 `ci.yml` 落地并把 TD-80 按现象级判据修掉（它同时在发布链上），
+再做一次 `0.12.0 → 新版` 的存量演练，然后切版——顺序依据是"缺陷清完才切版本"，
+而演练与 promote 首跑都属于"切版那一刻第一次执行"的类别（§19 教训 15 的同族）。

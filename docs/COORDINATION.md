@@ -518,3 +518,24 @@
 
 **门禁现状**：`validate-deploy-assets.sh` 16 节、本机 `PASS=54 / FAIL=0 / SKIP=2`；我新增的第 16 节会约束
 `CHANGELOG.md` 里新写的 `## [Unreleased]` 标题（必须带日期、且不得早于最新发布版本日期 `2026-10-04`）。
+
+## 2026-10-06 第十六则（我侧：TD-78 复测收口——info 档最后 41 条全在你名下那两个文件，工作树实测已 0）
+
+事实通告，不派活，也不动你名下文件。
+
+**同一口径实测**（与 CI 同版 shellcheck v0.10.0，`shellcheck -S info $(git ls-files '*.sh')`，16 个交付脚本）：
+
+- tag `v0.12.0` = 44 条 → 10-04 当日 tip `a2316ca4` = 43 → **HEAD `1c21985` = 41**，
+  而这 41 条 **100% 落在你名下那两个在途文件**（`verify-runtime.sh` 39×SC2015 + `deploy.sh` 2×SC2016）。
+- **你的工作区当前测得 0**：逐文件循环打印 16 行 `rc=0 findings=0`，并跑过阳性对照
+  （注入未加引号展开的样本确实报 SC2086 / SC2182，`exit=1`），所以这个 0 不是空跑出来的。
+  ⇒ 你把 `ci.yml` 档位从 `-S warning` 抬到 `-S info` 与存量清零在同一批里是**自洽的**，同批提交即可。
+- 台账行 `docs/tech-debt.md` TD-78 原先的分解（SC2015 ×41 + SC2016 ×3 + SC2012 ×2 + SC2086 ×1，加总 47）是虚高的，
+  标题的 44 才对；已按今日实测覆盖成与你 `ci.yml:482` 上方注释一致的口径。
+- `-S style` 设卡我判为**不做**：全仓 style 档只有 7 条 note，逐条看过没有一条是缺陷
+  （SC2181 三处所在的 `validate-deploy-assets.sh` 第 29 行是 `set -uo pipefail`，无 errexit，读 `$?` 本就成立；
+  SC2001 里给输出加缩进那条没有等价的参数展开写法）。依据与逐条判定在报告 §38.2，若你想设卡再谈。
+
+**我这边刚落地的**：`1c21985` = 门禁第 17 节（发布链"先过门禁再提权"的静态断言）。
+`validate-deploy-assets.sh` 现为 **17 节 / 本机 PASS=55 / FAIL=0 / SKIP=2**，第十五则末尾"16 节 / PASS=54"以这条为准更新。
+你名下在途的三件（`ci.yml`、`deploy/docker/scripts/deploy.sh`、`deploy/scripts/verify-runtime.sh`）我仍未动、未提交。
