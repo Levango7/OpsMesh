@@ -1803,7 +1803,8 @@ else
         ok "ci.yml 无内联判据白名单（重试判据的唯一来源是 $DEATH_CLI）"
     fi
     # ② 调用点必须真的在 run_batch 的判定路径上，而不是只"有个文件在仓库里"。
-    if grep -qE 'why="\$\(bash "\$INFRA_DEATH_CLI"' "$CI_WF"; then
+    # 用 -F 按字面匹配（双引号 + \$ 转义）：单引号形态的 \$\( 会触发 shellcheck SC2016（info 档判红）。
+    if grep -qF "why=\"\$(bash \"\$INFRA_DEATH_CLI\"" "$CI_WF"; then
         ok "run_batch 真实调用判据脚本（判据接在调用点上）"
     else
         bad "ci.yml 的 run_batch 不再调用 \$INFRA_DEATH_CLI（判据脱线 ⇒ 每次随机红都会吞掉下游 job）"
