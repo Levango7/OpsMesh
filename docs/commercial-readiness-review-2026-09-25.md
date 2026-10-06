@@ -3631,3 +3631,71 @@ shellcheck 步骤在 `v0.9.2` 的 `ci.yml` 里存在而 `v0.9.1` 里没有；`07
 用户此前选的是"先攒着，等有别的修复一起切"，这条事实让"攒"的成本多了一项：攒得越久，首次真跑 promote 时同时在变的量越多。
 已有缓解是 `39c3718` 加的第 ⑤ 项判据（`:版本` 与 `:发布提交` 必须同 manifest digest，本轮 PASS=8 里就含它），
 残留风险是 ⑤ 排在 `github-release` 之后且 main 无分支保护 ⇒ 真出事故时 Release 页已挂出去。
+
+## 36. 2026-10-06｜`-race` 批次在测试全绿之后崩在 Go 运行时 GC 里：一次真实的"红不是我的改动"，以及分类器的判据缺陷
+
+我推的 `9d88d88` 上 CI run `37414728836` **attempt 1 判红**，唯一红点是 `build-test` 的步骤
+`Test (unit, memory store, -race + coverage)`，下游 11 个 job 全部 skip。取证如下。
+
+### 36.1 现象（逐条可复核）
+
+```
+--- PASS: TestTaskTimeoutFor_NegativeTimeout (0.00s)
+PASS                                     ← 测试二进制已经打印 PASS
+SIGSEGV: segmentation violation          ← 之后才崩
+PC=0x439c7d m=5 sigcode=1 addr=0x0
+goroutine 0 gp=0x6e4378041e0 m=5 mp=0x6e437800008 [idle]:
+runtime.(*spanQueue).tryDrain(...)  src/runtime/mgcmark_greenteagc.go:520 +0x5d
+runtime.(*spanQueue).drain(...)     src/runtime/mgcmark_greenteagc.go:473
+runtime.(*spanQueue).put(...)       src/runtime/mgcmark_greenteagc.go:409
+[agent_JZ]  Maximum resident set size (kbytes): 260244
+[mem] agent_JZ MemTotal=15989MB MemAvailable=14952MB
+##[error][agent_JZ] 失败 rc=1（重试后仍失败，或非内存型失败）
+```
+
+要点：**用例一条都没失败**（`PASS` 已在），崩在 GC 标记队列、goroutine 0、idle M、`addr=0x0`；
+峰值 RSS 260MB、宿主还有 14.9GB 可用 ⇒ **不是内存不足**。该批次是 `-race` 批次。
+
+### 36.2 判定为"非确定性"的依据是同 sha 重跑，不是我的推断
+
+`gh run rerun 37414728836 --failed` ⇒ attempt 2 在**同一提交** `9d88d88` 上
+`build-test / security / services / integration / proto / Race detector / image / image-agent / release-dryrun / E2E×2 / Frontend`
+**12 个 job 全 success**（`release` 设计内 skip）。
+
+诚实边界：**重跑转绿比一次跑绿证据弱**。它能证明"不是我的改动导致的确定性失败"，
+不能证明"这条腿稳定"——按现状它随时可能再红一次。
+
+### 36.3 历史对照：这是本仓的新形态，不是长期已知 flaky
+
+最近 12 条 main run 里，四连红（`a002c6a`/`e5b4d00`/`c4f2cab`/`0fb9896`）的 `build-test` 腿日志逐条取回并核对
+（日志行数 1406 / 1408 / 1092 / 263 ——先证明取到了，再看命中数）：`SIGSEGV` **命中 0**；
+而且 `0fb9896` 与 `c4f2cab` 两条的 `build-test` 结论其实是 **success**（那两轮红在别处），
+`e5b4d00` 那次 build-test 真红但没有该签名。⇒ 这个签名在本仓此前没出现过。
+
+### 36.4 上游有同形状缺陷，但**不能据此说"升 Go 就好"**
+
+`golang/go#78059`（`runtime: go runtime.GC() can cause segfault with -race builds`）由维护者 prattmic 定性为
+"This is a bug in TSAN that causes **effectively random crashes in -race mode**"，2026-03-23 在 master 修复，
+1.26 的 backport（`#78087`）2026-03-26 关闭；Go 1.26 点版本表：1.26.2=2026-04-07 … **1.26.6=2026-08-13**。
+我们 CI 钉的是 `go-version: "1.26.6"`（`ci.yml:24`），**晚于该 backport**。
+所以诚实的结论只到这里：形状相同（`-race` + GC 标记路径 + 随机崩）、上游同类缺陷已修、
+我们的版本已含修复——因此这**要么是回归、要么是另一个未修的缺陷**，我没有证据把它归给任一个，
+也不据此改 Go 版本（改版本会让"验证对象是要推的 HEAD"这条纪律失效）。
+
+### 36.5 真正的缺陷在我自己：重试分类器的判据是"文本白名单"而不是"现象"
+
+步骤里的判据是
+`OOM_PAT='fatal error: runtime: (cannot allocate memory|out of memory)|ThreadSanitizer: internal allocator is out of memory'`，
+命中才重试一次。这条判据把"内存型死亡"当成现象本身，实际读的只是**两种历史报错文本**，
+于是任何新的运行时死亡形态（这次是 SIGSEGV in GC）都被归为"确定性失败"⇒ 整条流水线红 + 11 个下游 skip。
+这正是本项目反复强调的那一类：**判据挂在代理指标上**，代理指标漏一种形态就误判一次。
+
+待改方案（等 `ci.yml` 的在途改动落地后做，现在不动它）：
+判据改为**现象级**且足够窄——同时满足 ① 测试二进制已打印 `PASS`（用例侧无失败）、
+② 崩溃栈的故障 PC 落在 `runtime.*` 内（GC/分配器路径）、③ 非断言失败文本——才重试一次，
+并且**每次发生都要留下痕迹**（`::warning::` + 计数进 step summary），否则 flaky 会被"重跑绿"消化掉、
+下次又当成新缺陷查。反向要求：真断言失败（`--- FAIL:`）与业务 panic 一律不重试。
+这一改必须做变异验证（造一个"PASS 后 runtime SIGSEGV"的假日志与一个"FAIL"的假日志，分别验重试/不重试）。
+
+**本轮不做的事**：不放宽 `-race`、不给该批次加 `GODEBUG` 关闭 green-tea GC（那会把 CI 变成"绕过缺陷"的样子），
+也不因为 attempt 2 绿了就宣布"CI 全绿"——记录的是"同一提交上 attempt1 红于运行时崩溃、attempt2 全绿"。

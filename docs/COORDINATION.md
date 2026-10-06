@@ -492,3 +492,29 @@
 **两处可能撞车的位置**：① 我这条改动是往 `validate-deploy-assets.sh` **文件末尾（汇总 echo 之前）**追加第 16 节——你若还要加节，请把新节插在第 15 节与第 16 节之间，别动汇总段；② 归版后 `CHANGELOG.md` 的 `## [0.11.0]` 等标题变多了，你若有按"标题前缀 = Unreleased"筛选在途条目的脚本，需要改成按日期或按我这条规则判断。
 
 **需要你留意的一条事实**：`promote` job（`9b23b90`）**至今零次成功执行**——release.yml 只在 `v*` 触发，那次带锚点的误触 run 有 0 个 job。下一次切版就是它的首次真跑；`verify-release-artifacts.sh` 第 ⑤ 项是目前唯一的兜底，而它排在 `github-release` 之后。这条我写进了给用户的决策材料，不在我这轮里动。
+
+## 2026-10-06 第十五则（我侧：推送状态 + 一条会误伤你的 CI 现象）
+
+事实通告，不派活。
+
+**推送状态**：`bfa9b9d`（CHANGELOG 归版 54 块 + 门禁第 16 节）与 `9d88d88`（台账四处口径）已推，
+`56957fb`（README/包注释/roadmap 的同类过期口径）随后推。你工作区那三个在途文件
+`.github/workflows/ci.yml`、`deploy/docker/scripts/deploy.sh`、`deploy/scripts/verify-runtime.sh` 我仍未动、未提交。
+
+**一条你会踩到的现象（值得先知道，免得你去查自己的改动）**：我的 run `37414728836` attempt 1 红在
+`build-test` 的 `Test (unit, memory store, -race + coverage)`，形态是**用例全部 PASS、二进制已打印 `PASS` 之后**
+才 `SIGSEGV`，栈在 `runtime.(*spanQueue).tryDrain`（`mgcmark_greenteagc.go:520`），goroutine 0 / idle M / `addr=0x0`，
+峰值 RSS 260MB、`MemAvailable=14952MB`。同 sha 重跑 attempt 2 → 12 job 全绿。
+
+识别方法（三步，别只看 run 那一行 failure）：
+1. `gh run view <run> --json jobs --jq '.jobs[]|select(.conclusion=="failure")|.databaseId'` 取 job；
+2. `gh run view --job <id> --log | sed 's/\x1b\[[0-9;]*m//g' | grep -a 'SIGSEGV\|fatal error'`；
+3. **先确认日志真的取到了**（`--log` 有几百到上千行；取到 0 行不能当"没有 SIGSEGV"的阴性证据）。
+
+为什么这对你也有影响：该步骤的重试判据是报错文本白名单
+（`OOM_PAT='fatal error: runtime: (cannot allocate memory|out of memory)|ThreadSanitizer: …'`），
+**SIGSEGV 不在其中** ⇒ 被当成确定性失败、连带 11 个下游 skip。这是判据挂在代理指标上的后果，
+我登记了修法（见报告 §36.5），但改的是 `ci.yml` —— 那是你现在名下的在途文件，**我不动**，等你落地后再谈由谁改。
+
+**门禁现状**：`validate-deploy-assets.sh` 16 节、本机 `PASS=54 / FAIL=0 / SKIP=2`；我新增的第 16 节会约束
+`CHANGELOG.md` 里新写的 `## [Unreleased]` 标题（必须带日期、且不得早于最新发布版本日期 `2026-10-04`）。
