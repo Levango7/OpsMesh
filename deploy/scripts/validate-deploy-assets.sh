@@ -23,6 +23,7 @@
 #  14. 出厂 PromQL 结构检查（CI 跑不了 promtool，钉住最常犯的四类写法错）
 #  15. 告警送达链路接通性（规则 → Alertmanager → 外发通道）
 #  16. CHANGELOG 归版账目（[Unreleased] 不得早于已发布版本日期）
+#  17. 发布链顺序（构建腿只推不可变 :<sha>；promote 必须是提权唯一入口且在 Release 之前）
 #
 # 用法：bash deploy/scripts/validate-deploy-assets.sh
 set -uo pipefail
@@ -1525,6 +1526,100 @@ PY
     fi
 else
     bad "找不到 CHANGELOG.md，第 16 节无从核对（判红）"
+fi
+
+echo ""
+echo "=== 17. 发布链顺序（gate-before-promote：构建腿只推不可变 :<sha>，浮动 tag 必须在门禁之后）==="
+# 为什么钉这一节：`9b23b90` 把 release.yml 改成"构建只推 :<sha>，:版本 与 :latest 由 promote job
+# 在 Trivy/SBOM/签名全绿后改标"。这条性质**只在打 tag 那一刻才第一次执行**（release.yml 只在 v* 触发），
+# 而本项目已经在"只在发版时才执行的路径"上栽过两次（v0.9.1 有 tag 无产物、v0.12.0 归版把 pin 指到
+# 从未发布的版本）。谁日后把 needs 顺序调回去、或在构建腿里顺手加回 `--tag …:latest`，
+# 常规 CI 完全看不见——直到下一次真实发布把未过扫描的镜像推成客户默认拉到的那一份。
+# 实测依据（2026-10-06）：run `37379548900` 就是 main 推送误触发 release.yml，job 数为 0，
+# 靠 needs 链才没有让 promote 启动；那次侥幸不能当下一次保障。
+if [[ -f .github/workflows/release.yml ]]; then
+    if [[ -z "$PY" ]]; then
+        bad "本机/CI 没有 python，第 17 节无法执行（判红而不是跳过）"
+    else
+        CHAIN_OUT="$("$PY" - .github/workflows/release.yml <<'PY'
+import re, sys
+try:
+    import yaml
+except ImportError:
+    print("NO_YAML")
+    sys.exit(0)
+
+doc = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+jobs = (doc or {}).get("jobs") or {}
+if not jobs:
+    print("NO_JOBS")
+    sys.exit(0)
+
+def needs(name):
+    j = jobs.get(name)
+    if j is None:
+        return None
+    n = j.get("needs")
+    if n is None:
+        return []
+    return [n] if isinstance(n, str) else list(n)
+
+errs = []
+required = ["build-and-push", "promote", "github-release"]
+for j in required:
+    if j not in jobs:
+        errs.append(f"缺少 job：{j}（发布链结构变了，本节失去比较对象）")
+
+if "promote" in jobs and "build-and-push" not in needs("promote"):
+    errs.append("promote 不再 needs build-and-push ⇒ 未过扫描的镜像可能被提权成 :<版本>/:latest")
+gr = needs("github-release")
+if gr is not None and "promote" not in gr:
+    errs.append("github-release 不再 needs promote ⇒ 提权失败也会对外发布 Release")
+
+# 构建腿的 tag 集合：docker buildx 的 --tag 实参，以及 build-push-action 的 with.tags
+steps = (jobs.get("build-and-push") or {}).get("steps") or []
+refs = []
+for st in steps:
+    run = st.get("run") or ""
+    # --tag 的实参里带 `${{ … }}`（内含空格），所以必须**按行取到行尾**再去掉续行反斜杠，
+    # 不能按"空白分隔的单 token"取——那样只会截到 `${{`，判据整体失真。
+    for line in run.splitlines():
+        m = re.match(r"\s*--tag\s+(.+?)\s*\\?\s*$", line)
+        if m:
+            refs.append(m.group(1).strip().strip('"').strip("'"))
+    for k, v in (st.get("with") or {}).items():
+        if str(st.get("uses", "")).startswith("docker/build-push-action") and k == "tags":
+            refs += [x.strip() for x in str(v).split(",") if x.strip()]
+
+if not refs:
+    errs.append("build-and-push 里一个 --tag/tags 都没解析出来（本节在空转，判红）")
+for r in refs:
+    if r.endswith(":latest"):
+        errs.append(f"构建腿直接推送 :latest ⇒ 扫描判红的镜像会立刻成为客户默认拉到的那份：{r}")
+    elif "github.sha" not in r and "GITHUB_SHA" not in r:
+        errs.append(f"构建腿推送了非 :<sha> 的可变 tag（版本 tag 应交由 promote 改标）：{r}")
+
+print(f"SUMMARY build_tags={len(refs)} promote_needs={needs('promote')} gr_needs={gr}")
+print("\n".join(errs))
+PY
+)"
+        if grep -qE '^(NO_YAML|NO_JOBS)$' <<<"$CHAIN_OUT"; then
+            bad "第 17 节无法解析 release.yml（缺 pyyaml 或 jobs 为空）——判红而不是静默跳过"
+        else
+            CHAIN_SUMMARY="$(grep -F 'SUMMARY build_tags=' <<<"$CHAIN_OUT" | head -1)"
+            nbad="$(grep -cvE '^(SUMMARY |$)' <<<"$CHAIN_OUT")"
+            if [[ -z "$CHAIN_SUMMARY" ]]; then
+                bad "第 17 节没解析出 SUMMARY（判据在空转，判红）"
+            elif [[ "$nbad" -gt 0 ]]; then
+                bad "发布链顺序被破坏（${nbad} 处）："
+                grep -vE '^SUMMARY ' <<<"$CHAIN_OUT" | grep -vE '^[[:space:]]*$' | sed 's/^/         /'
+            else
+                ok "发布链顺序成立（${CHAIN_SUMMARY#SUMMARY }）"
+            fi
+        fi
+    fi
+else
+    bad "找不到 .github/workflows/release.yml，第 17 节无从核对（判红）"
 fi
 
 echo ""

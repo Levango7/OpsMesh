@@ -803,6 +803,38 @@ cosign 签名与 attest 自验**全部排在推送之后** ⇒ 扫描判红的�
 - `internal/plugin/plugin.go` 的包注释同样停在 10-04 的"零调用点"版本，改为同一份 10-06 复测结论（注释里点名触发点文件:行号，避免下一个人再去重新检索）。改后 `gofmt -l .` 全仓空输出、文件仍是 0 个 CR（Edit 工具会重新引入 CRLF，这是本仓反复踩过的），`go test ./internal/plugin/ ./internal/controlplane -run 'Plugin|Hook'` 与 `./internal/gates/...` 全绿。
 - `docs/roadmap-2026-10-03.md:11/22` 的 "61 个 Unreleased 块未归版" 与 A1 项的验收口径 "归版后 Unreleased 归零"：**该判据本身不成立**——归零只在切版那一刻可能，之后每条新条目都以 Unreleased 起步，恒要求归零等于要求停写台账。已在原位标注 10-03 快照属性（"未归版"≠"未交付"），并把可执行判据换成门禁第 16 节 PASS。表格结构用按表分段取基准的校验器复核：README 与 roadmap 在改动前后问题行数不变（25/25、0/0），确认没撑破任何一行。
 
+## [Unreleased] — 2026-10-06 发布链的"先过门禁再提权"从一句约定变成静态断言（门禁第 17 节）
+
+`9b23b90` 把 release.yml 改成构建腿只推不可变 `:<sha>`、`:版本` 与 `:latest` 由 `promote` job 在 Trivy/SBOM/签名全绿后
+在 registry 侧改标。这条性质**只在打 tag 那一刻才第一次执行**（release.yml 的触发条件是 `push: tags: v*`），
+而本项目已经两次栽在"只在发版时才执行的路径"上（v0.9.1 有 tag 无产物、v0.12.0 归版把镜像 pin 指到从未发布的版本）。
+谁能把 `needs` 顺序调回去、或在构建腿里顺手加回 `--tag …:latest`，常规 CI 完全看不见——直到下一次真实发布
+把未过扫描的镜像推成客户默认拉到的那一份。所以新增门禁第 17 节，把三件事变成 push 期的静态断言：
+`promote` 必须 `needs: [build-and-push]`；`github-release` 必须 `needs` 含 `promote`；构建腿的 `--tag` 实参
+只能是 `:<sha>` 形态（出现 `:latest` 或任何非 sha 的可变 tag 即判红）。解析不到的 job 或一个 `--tag` 都没取到时
+**判红而不是跳过**——一条从未跑成的门禁看起来像通过了，比没门禁更糟。
+
+判据用 YAML 解析（`yaml.safe_load`）而不是 grep 行匹配：`needs` 在 GitHub Actions 里可以是字符串或列表，
+按行匹配会在写法变化时静默失配。PASS 行会把解析结果原样打出来（`build_tags=1 promote_needs=['build-and-push']
+gr_needs=['promote', 'changelog']`），便于核对判据是真读到了东西。
+
+**变异验证（含一次我自己造的假证据，值得记）**：
+- 第一版判据我写成 `if "promote" not in needs("promote")`——检查的是"promote 的依赖里有没有 promote"，恒真。
+  当时三处变异同时注入，输出三条消息，看着"全被抓到"；**但我没有先跑干净基线**。补做还原后立刻暴露：
+  未变异的 release.yml 也报 "promote 不再 needs build-and-push"。改成 `if "build-and-push" not in needs("promote")`。
+  教训固化为一条顺序：**先证明干净态 0 报错，再看变异态报什么**；否则变异证据里可能混着恒真分支。
+- 修正后重验：干净态 `PASS=55 / FAIL=0 / SKIP=2`（第 17 节 `[PASS] 发布链顺序成立`，exit=0）；
+  三处变异同时在场时恰好报出三条并 `exit=1`（promote 去掉依赖 / github-release 去掉 promote / 构建腿多推一个 `:latest`）。
+- `--tag` 的三个分支单独用同一份判定逻辑在内存变体上验（不污染工作树）：版本 tag ⇒ 判"非 sha 可变 tag"；
+  `:latest` ⇒ 判 latest；`:github.sha` ⇒ 合规。
+
+**过程记录**：变异全部在 `git worktree` 的独立副本里做，共享工作树的 `.github/workflows/release.yml` 未被改动过
+（该文件是并行 agent 名下），跑完 `git worktree remove` 清理，`git worktree list` 只剩主工作树。
+插入 CHANGELOG 块改用按行号定位并断言锚点文本，避免"把锚点行当替换目标"再次吞掉邻居。
+另外第一次的 `--tag` 正则按空白取单 token，而实参里有 `${{ … }}`（内含空格），只截到 `${{` 就差点报出
+"构建腿推送了非法 tag"的假阳性——改为整行取值再去续行反斜杠。
+
+
 ## [0.11.0] — 2026-10-01 引导脚本不再携带建表语句（删 43 张表 DDL + 门禁第 13 节）（已归入 0.11.0）
 
 > 证据：三方一致性审计（`CREATE TABLE IF NOT EXISTS <t> (…)` 从 Go 原始字符串与 `.sql` 提取，剥 `INDEX`/`PRIMARY KEY` 行取首字段做列集合，对同名表求差集）；`deploy/scripts/validate-deploy-assets.sh` 当前 **PASS=33 / FAIL=0 / SKIP=2**，新第 13 节经**两次变异检验**（塞回 `CREATE TABLE` → 判红；把某 DSN 的库从两个脚本都删掉 → 判红并指向「连库即 Access denied」）。详见 `docs/td60-decision-2026-09-26.md` §5.11 ①c。

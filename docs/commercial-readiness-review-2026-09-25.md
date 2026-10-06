@@ -3699,3 +3699,38 @@ runtime.(*spanQueue).put(...)       src/runtime/mgcmark_greenteagc.go:409
 
 **本轮不做的事**：不放宽 `-race`、不给该批次加 `GODEBUG` 关闭 green-tea GC（那会把 CI 变成"绕过缺陷"的样子），
 也不因为 attempt 2 绿了就宣布"CI 全绿"——记录的是"同一提交上 attempt1 红于运行时崩溃、attempt2 全绿"。
+
+## 37. 2026-10-06｜把"先过门禁再提权"从约定变成静态断言（门禁第 17 节），并撤回一次我自己造的有效假象
+
+`9b23b90` 建立的性质是：**构建腿只推不可变 `:<sha>`，`:版本` 与 `:latest` 只能由 `promote` 在 Trivy/SBOM/签名
+全绿之后改标**。但它没有任何东西在守——`release.yml` 只在 `v*` 触发，所以这个性质**要到下一次真实发布才第一次被检验**。
+本项目已经两次栽在同形的位置（§19：v0.9.1 有 tag 无产物；§34：v0.12.0 归版把 pin 指到从未发布的版本）。
+
+新增 `validate-deploy-assets.sh` 第 17 节，push 期就断言三件事：
+`promote.needs ∋ build-and-push`、`github-release.needs ∋ promote`、构建腿的 `--tag` 实参只能是 `:<sha>` 形态
+（出现 `:latest` 或任何非 sha 的可变 tag 即判红）；解析不出 job 或一个 `--tag` 都没取到 → 判红而不是跳过。
+用 YAML 解析而非 grep 行匹配，因为 `needs` 在 Actions 里可以是字符串也可以是列表，行匹配会在写法变化时静默失配。
+
+### 37.1 一次值得单独记的自伤：我的"变异验证通过"是假的
+
+第一版判据我写成 `if "promote" not in needs("promote")`——问的是"promote 的依赖里有没有 promote"，**恒真**。
+我当时把三处变异同时注入，输出正好三条消息、`exit=1`，看起来"三项都被抓住"。**我没有先跑干净基线。**
+补做还原后立刻暴露：未变异的 `release.yml` 同样报 "promote 不再 needs build-and-push"。
+修正为 `if "build-and-push" not in needs("promote")` 之后：
+
+| 态 | 结果 |
+|---|---|
+| 干净（`release.yml` = HEAD） | 第 17 节 `[PASS] 发布链顺序成立（build_tags=1 promote_needs=['build-and-push'] gr_needs=['promote','changelog']）`，整脚本 `PASS=55 / FAIL=0 / SKIP=2`，exit=0 |
+| 三处变异同时在场 | 恰好报出三条（去掉 promote 依赖 / Release 不再依赖提权 / 构建腿多推 `:latest`），`FAIL=1`，exit=1 |
+| `--tag` 三个分支单独验 | 版本 tag ⇒ "非 sha 可变 tag"；`:latest` ⇒ "直接推送 :latest"；`:github.sha` ⇒ 合规 |
+
+**可迁移的一条规矩：变异验证的顺序必须是"先证明干净态 0 报错，再看变异态报什么"。**
+只看变异态有输出，分不清"抓住变异"和"这条分支恒报"——后者会把真缺陷混在噪音里，而且看起来证据充分。
+同族前科：恒红的断言等于没有断言（§32.8）、空转的 job 等于通过的 job（§15.2）。
+
+另一处判据错：`--tag` 我最初按空白切单 token，而实参 `${{ steps.meta.outputs.image }}:${{ github.sha }}`
+里 `${{ … }}` 内含空格，只截到 `${{` 就会误报"构建腿推送了非法 tag"。改为整行取值再去掉续行反斜杠。
+
+**过程纪律**：所有变异都在 `git worktree` 的独立副本里做，共享工作树的 `.github/workflows/release.yml`
+（并行 agent 名下）一个字节都没动，跑完 `git worktree remove` 清理；插入 CHANGELOG 条目改成按行号定位并断言
+锚点文本仍在原位，避免把锚点行当替换目标而吞掉邻居（本轮已因此自伤过一次，见 §35.6 之后的复盘）。
