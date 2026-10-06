@@ -960,6 +960,52 @@ gr_needs=['promote', 'changelog']`），便于核对判据是真读到了东西�
 - 台账：`docs/tech-debt.md` TD-62 行改为"已闭合"并保留全部历史口径与复测差值；TD-79 行尾的"仍未做"去掉 TD-62。
     详见 `docs/commercial-readiness-review-2026-09-25.md` §41–§42。
 
+## [Unreleased] — 2026-10-07 TD-80：`build-test` 的重试判据从"报错文本白名单"换成现象级三条件（门禁第 19 节守住它）
+
+- **修的是判据本身，不是那次抖动**：原判据 `OOM_PAT` 只是两条历史报错字符串。真实事故
+    （run `37414728836` attempt 1）里 `agent_JZ` 在**全部用例通过、二进制已打印 `PASS` 之后**才崩，
+    崩溃头是裸的 `SIGSEGV: segmentation violation`，整份日志 `^fatal error: ` 计数为 **0** ⇒ 白名单不命中
+    ⇒ 判成确定性失败 ⇒ 连带 11 个下游 job skip；同 sha 的 attempt 2 十二个 job 全绿。
+    峰值 RSS 260244 KB、`MemAvailable=14952MB` ⇒ 与宿主内存无关。
+- **新判据**：`deploy/scripts/ci-infra-death.sh`（退出码 0=可重试 / 1=判红 / 2=判据失明，调用方把 2 当判红），
+    三条同时成立才重试一次：① 用例跑完、② 崩溃段**每个**栈帧都属 runtime、③ 日志里没有 `--- FAIL:`；
+    另留一条具名例外给 ThreadSanitizer 自己的分配器 OOM（它没有 Go 的崩溃头与栈）。
+- **真实日志把我预想的写法证伪了两次**（这是本轮最值钱的部分）：
+    ① 若按"`fatal error: unexpected signal…`"写崩溃头，门禁对那起事故永不命中——真实形态是裸信号行；
+    ② 若 ① 只认裸 `PASS` 行，四条 `-race` 腿的重试会**永不触发**而 CI 全绿——本机 go1.26.6 实测
+    单包 `-v` 才有裸 `PASS`（命中 1），单包非 `-v` 与多包非 `-v` 都是 0（go 收走了子进程输出，只打印结果行）。
+- **② 为什么不是"只看顶帧"**：本机造 8 goroutine 抢同一张 map 的用例，崩溃段是
+    `internal/runtime/maps.fatal(...)` 紧跟业务帧——顶帧看着像 runtime，只看顶帧会把产品级并发缺陷判成"可重试"。
+    同批样本另证两条：真实 nil 解引用 **先**打印 `--- FAIL:`（③ 真挡得住）；runtime 与二进制同写一个 fd 不加锁，
+    实测出现 `fatal error: PASS` / `concurrent map writes` 被劈开的行，**而 go 仍打印 `ok` 并返回 0** ⇒ ① 只是必要条件。
+- **证据**：自测 `ci-infra-death.selftest.sh` 16 例全过（阳性 5 / 阴性 9）+ 夹具形态自检 10/10；
+    真实事故日志判 retry（崩溃段 10 帧全属 runtime），6 份本机真实产物逐份判红；
+    从 `ci.yml` 抽出**线上那段** `run_batch` 驱动三场景（崩两次→重试一次后判红、崩一次后通过→留痕"通过"、
+    真断言失败→不重试）；留痕经 EXIT trap 落进 step summary，"步骤中途判红"也能把账写出来。
+- **门禁第 19 节**（5 条断言：无内联白名单 / run_batch 真调用 / 自测步骤在 / 留痕在 / 现场跑一次自测）
+    的变异验证 M1–M5 逐条判红、基线 5/5，两份被变异文件 `sha256sum` 双向核对还原。
+    M5 变异的是**判据自己**（去掉 TSan 行首锚定），靠"§19 真的执行自测"才被抓到——纯静态对账会一路绿灯。
+- 判据搬出 `ci.yml` 的第二条理由：它此前谁都不验——`actionlint` 只看内联 `run:` 块、
+    `shellcheck` 那一步只看 `git ls-files '*.sh'`，内联 bash 落在两道门禁的缝隙里。
+- 整跑：`validate-deploy-assets.sh` **PASS=63 / FAIL=0 / SKIP=1**；新脚本 `shellcheck -S style` 0 告警；
+    `actionlint -shellcheck=` 对 `ci.yml` 0 告警，且把该 run 块整段抽出替换 `${{ }}` 后单独 `shellcheck -S warning` 亦 0 告警。
+- 台账：`docs/tech-debt.md` TD-80 行改为"已闭合"（保留原判据缺陷描述与阻塞条件已解除的事实）；
+    详见 `docs/commercial-readiness-review-2026-09-25.md` §43。
+
+## [Unreleased] — 2026-10-07 修掉本轮 CI 红因：TD-62 新代码的三条 errcheck，并记下本地清单缺 `golangci-lint` 这个洞
+
+- **两个红不是一个原因**：`37508203504`（base `3223365`，不含插件代码）红在 Frontend，
+    根因是从 npmmirror 下载 Playwright chromium 超时（`exit code 124`），同一 job 在 `37509481389` 绿 ⇒ 流水线抖动；
+    `37509481389`（我的 HEAD）红在 build-test 的 `golangci-lint`，三条 errcheck 来自我新写的插件代码：
+    `internal/plugin/remote.go:190`（`io.Copy` 未检查）、`plugins/remote-example/main.go:55`（`io.WriteString`）、`:146`（`srv.Shutdown`）。
+- **修法不是加 `//nolint`、也不是往 `.golangci.yml` 塞豁免**：`remote.go` 那处排空本就是冗余（响应体在随后的
+    `ReadAll` 已读完，上限 1 MiB）⇒ 删掉只留 `Close`；示例插件的写出换成配置已豁免的 `ResponseWriter.Write` 形态；
+    `srv.Shutdown` 改成真检查并打到 stderr——示例插件是写给宿主作者看的，静默吞错会被当成"可以忽略"。
+    本仓 `.golangci.yml` 是 `check-blank: true`，所以"我用了 `_ =`"在这里不构成理由。
+- **流程债（比三条告警更该记）**：推之前跑了 `gofmt`、`go vet`、五个包 `go test`、门禁整跑、Helm 渲染，
+    **唯独没跑 `golangci-lint`** ⇒ 告警只能在 CI 暴露，白花一轮约 15 分钟。现已补进固定动作
+    `golangci-lint run ./...`（本机 v2.14.0 现测 0 issues；CI 钉 v2.13.2 ⇒ **终判仍在 CI**，本机只用于"别再犯同一类"）。
+
 ## [0.11.0] — 2026-10-01 引导脚本不再携带建表语句（删 43 张表 DDL + 门禁第 13 节）（已归入 0.11.0）
 
 > 证据：三方一致性审计（`CREATE TABLE IF NOT EXISTS <t> (…)` 从 Go 原始字符串与 `.sql` 提取，剥 `INDEX`/`PRIMARY KEY` 行取首字段做列集合，对同名表求差集）；`deploy/scripts/validate-deploy-assets.sh` 当前 **PASS=33 / FAIL=0 / SKIP=2**，新第 13 节经**两次变异检验**（塞回 `CREATE TABLE` → 判红；把某 DSN 的库从两个脚本都删掉 → 判红并指向「连库即 Access denied」）。详见 `docs/td60-decision-2026-09-26.md` §5.11 ①c。

@@ -61,6 +61,12 @@ jobs:
           version: v2.13.2
       - name: Gofmt
         run: test -z "$(gofmt -l .)"
+      - name: 判据自测（TD-80 重试判据 ci-infra-death.sh）
+        # 放在跑测试之前：这套夹具验的是"重试判据本身"，判红就不该再花 10 分钟跑测试去
+        # 依赖一个不可信的判据。16 例覆盖两种崩溃头（fatal error / 裸 SIGSEGV）、
+        # 两种"跑完"证据（裸 PASS / ok 结果行）、以及必须判红的业务形状
+        # （--- FAIL、包内帧崩溃、map 并发写、编译失败、交错输出）。
+        run: bash deploy/scripts/ci-infra-death.selftest.sh
       - name: Test (unit, memory store, -race + coverage)
         # -race 启用竞态检测；-coverprofile 产出覆盖率。
         # OPSMESH_TEST_BCRYPT_COST=4：400+ 测试每个都 NewMemoryStore→seedRBAC
@@ -104,14 +110,15 @@ jobs:
           set -e
           rm -f coverage.out
 
-          # ── 内存可观测 + 内存型失败重试（2026-09-25 加入）────────────────────
-          # 背景：本步骤曾出现「全部用例 PASS 之后」以 fatal error: runtime: cannot
-          # allocate memory 死掉的间歇失败（1/4 轮次），而本机同口径实测 agent 批峰值堆
-          # 仅 223–227MB → 现有日志无法判断真实峰值（attempt-1 日志已被重跑覆盖）。
-          # 两手应对：
-          #   ① mem_line + GNU time 记录每批峰值 RSS 与 runner 内存 → 下次复现留硬数字；
-          #   ② 仅对「内存型死亡」重试一次并打 warning —— 该类失败与断言失败性质不同
-          #      （机器不给内存）。确定性回归重试后仍红，门禁不被削弱。
+          # ── 内存可观测 + 基础设施型死亡重试 ──────────────────────────────────
+          # 2026-09-25 加入内存可观测；2026-10-07（TD-80）把"重试判据"从内联文本白名单
+          # 换成独立、可被夹具钉住的判据脚本 deploy/scripts/ci-infra-death.sh。
+          # 为什么要换：旧判据 OOM_PAT 只是两条历史报错字符串。2026-10-06 run 37414728836
+          # attempt 1 里 agent_JZ 在全部用例通过、测试二进制已打印 PASS 之后才崩在 GC
+          # ——崩溃头是裸的 `SIGSEGV: segmentation violation`，整份日志里 `^fatal error: ` 计数为 0
+          # ⇒ 白名单不命中 ⇒ 判成确定性失败 ⇒ 连带 11 个下游 job skip；同一 sha 的 attempt 2 全绿。
+          # 内联判据还有第二条代价：它没法被单测。所以三条判据写进脚本，由
+          # ci-infra-death.selftest.sh 用真实日志形状的夹具逐条钉住（16 例，含两条本机实产的崩溃形状）。
           TIMEBIN=""
           # 只在确认是能用的 GNU time 时才启用（BSD time 没有 -v/-o，误用会把步骤弄红）
           if [ -x /usr/bin/time ] && /usr/bin/time -v -o /tmp/.time_probe true 2>/dev/null && grep -q "Maximum resident set size" /tmp/.time_probe 2>/dev/null; then
@@ -125,11 +132,39 @@ jobs:
               echo "[mem] $1 /proc/meminfo 不可读"
             fi
           }
-          # 内存型死亡判据：Go 运行时 ENOMEM/OOM，或 TSan 内部分配器 OOM（配 exitcode=66）。
-          OOM_PAT='fatal error: runtime: (cannot allocate memory|out of memory)|ThreadSanitizer: internal allocator is out of memory'
+          INFRA_DEATH_CLI="deploy/scripts/ci-infra-death.sh"
+          # 判据脚本缺席必须判红：少了它，run_batch 会把每次非零退出都当真实失败——
+          # 看起来"更严"，实际是悄悄丢掉重试能力，而 CI 日志与"本来就没有这类死亡"无法区分。
+          if [ ! -r "$INFRA_DEATH_CLI" ]; then
+            echo "::error::重试判据脚本缺失：${INFRA_DEATH_CLI}（判红，不回落到默认行为）"
+            exit 1
+          fi
+          INFRA_RETRY_FILE="$(mktemp)"
+          # 留痕：重试不许把随机红消化掉。每次发生都写进 step summary（批次/依据/结果），
+          # 并用 EXIT trap 保证"步骤中途判红"时这份账也能写出去。
+          write_retry_trace() {
+            [ -s "$INFRA_RETRY_FILE" ] || return 0
+            local n
+            n="$(wc -l < "$INFRA_RETRY_FILE" | tr -d '[:space:]')"
+            echo "::warning::本轮有 ${n} 个批次被判为基础设施型死亡并重试（TD-80 留痕，明细见 step summary）"
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              {
+                echo "### TD-80 基础设施型死亡重试留痕"
+                echo
+                echo "判据三条同时成立才重试一次：①用例跑完 ②崩溃段全属 runtime ③日志里没有 --- FAIL。"
+                echo
+                echo "| 批次 | 判定依据 | 重试后 |"
+                echo "|---|---|---|"
+                while IFS='|' read -r rb why outcome; do
+                  echo "| ${rb} | ${why} | ${outcome} |"
+                done < "$INFRA_RETRY_FILE"
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+          trap 'write_retry_trace; rm -f "$INFRA_RETRY_FILE"' EXIT
           run_batch() {
             local label="$1"; shift
-            local log="/tmp/${label}.log" tf="/tmp/${label}.time" attempt=1 rc=0
+            local log="/tmp/${label}.log" tf="/tmp/${label}.time" attempt=1 rc=0 why=""
             while true; do
               set +e
               if [ -n "$TIMEBIN" ]; then
@@ -144,16 +179,26 @@ jobs:
               fi
               mem_line "$label"
               if [ "$rc" -eq 0 ]; then
+                if [ "$attempt" -eq 2 ]; then
+                  printf '%s|%s|%s\n' "$label" "$why" "通过（随机红被重试消化，需按批次继续查）" >> "$INFRA_RETRY_FILE"
+                fi
                 echo "[${label}] OK"
                 return 0
               fi
-              if [ "$attempt" -eq 1 ] && grep -qE "$OOM_PAT" "$log"; then
-                echo "::warning::[${label}] 内存型死亡（非断言失败），重试一次；若重试仍失败则判红"
-                grep -m1 -E "$OOM_PAT" "$log" | sed "s|^|[${label}] 首次死因: |"
-                attempt=2
-                continue
+              if [ "$attempt" -eq 1 ]; then
+                # 判据脚本 rc=2（读不到日志/用法错）也落在这一侧 ⇒ 不重试、直接判红：失明不等于干净。
+                if why="$(bash "$INFRA_DEATH_CLI" "$log" 2>&1)"; then
+                  echo "::warning::[${label}] ${why}"
+                  echo "::warning::[${label}] 判为基础设施型死亡，重试一次；重试仍失败则判红"
+                  attempt=2
+                  continue
+                fi
+                echo "[${label}] 判据结论: ${why}"
               fi
-              echo "::error::[${label}] 失败 rc=${rc}（重试后仍失败，或非内存型失败）"
+              if [ "$attempt" -eq 2 ]; then
+                printf '%s|%s|%s\n' "$label" "$why" "仍失败 ⇒ 判红" >> "$INFRA_RETRY_FILE"
+              fi
+              echo "::error::[${label}] 失败 rc=${rc}（判据判为真实失败，或重试后仍失败）"
               return "$rc"
             done
           }

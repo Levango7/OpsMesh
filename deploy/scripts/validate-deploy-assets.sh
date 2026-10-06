@@ -25,6 +25,7 @@
 #  16. CHANGELOG 归版账目（[Unreleased] 不得早于已发布版本日期）
 #  17. 发布链顺序（构建腿只推不可变 :<sha>；promote 必须是提权唯一入口且在 Release 之前）
 #  18. 入站边界（出厂 compose 发布的宿主端口除白名单外必须只绑环回；含条目数与独立正则对账，防判定面静默缩小）
+#  19. CI 重试判据的接线与自测（TD-80：判据必须是可执行脚本且真的被调用，并现场跑一次自测）
 #
 # 用法：bash deploy/scripts/validate-deploy-assets.sh
 set -uo pipefail
@@ -1779,6 +1780,53 @@ PY
         else
             bad "第 18 节没解析出 SUMMARY（判据在空转，判红而不是跳过）"
         fi
+fi
+
+sec "19. CI 重试判据的接线与自测（TD-80：判据必须是可执行脚本，不许回退成内联文本白名单）"
+# 为什么还要单独一节：把判据换成 ci-infra-death.sh 之后，仍有两种失效方式肉眼看不见——
+#   ① 有人把内联 OOM_PAT 白名单抄回 ci.yml（脚本沦为死代码，CI 一样绿）；
+#   ② run_batch 不再调用脚本（判据存在但没接线——"框架齐备、零接线"正是 TD-62 的老病）。
+# 所以这里既做静态对账（调用点在不在、内联白名单在不在、自测步骤在不在），
+# 也**真跑一次自测**：文本断言会跟着实现一起说谎，跑过一次才算证据。
+DEATH_CLI="deploy/scripts/ci-infra-death.sh"
+DEATH_TEST="deploy/scripts/ci-infra-death.selftest.sh"
+CI_WF=".github/workflows/ci.yml"
+if [ ! -f "$CI_WF" ]; then
+    bad "找不到 $CI_WF，第 19 节无从核对（判红）"
+elif [ ! -r "$DEATH_CLI" ] || [ ! -r "$DEATH_TEST" ]; then
+    bad "重试判据脚本或其自测缺失（$DEATH_CLI / $DEATH_TEST）——ci.yml 会在运行时判红，这里先判红"
+else
+    # ① 内联白名单不得复活。只判"赋值"形态：注释里提到 OOM_PAT 是在解释历史，不算回退。
+    if grep -qE '^[[:space:]]*OOM_PAT=' "$CI_WF"; then
+        bad "ci.yml 重新出现内联 OOM_PAT 赋值——判据又变成不可单测的文本白名单（TD-80 复发）"
+    else
+        ok "ci.yml 无内联判据白名单（重试判据的唯一来源是 $DEATH_CLI）"
+    fi
+    # ② 调用点必须真的在 run_batch 的判定路径上，而不是只"有个文件在仓库里"。
+    if grep -qE 'why="\$\(bash "\$INFRA_DEATH_CLI"' "$CI_WF"; then
+        ok "run_batch 真实调用判据脚本（判据接在调用点上）"
+    else
+        bad "ci.yml 的 run_batch 不再调用 \$INFRA_DEATH_CLI（判据脱线 ⇒ 每次随机红都会吞掉下游 job）"
+    fi
+    # ③ 判据自身要有门禁跑它，否则它就是一份没人执行的注释。
+    if grep -qF "bash $DEATH_TEST" "$CI_WF"; then
+        ok "判据自测已挂进 ci.yml（先跑自测，再跑测试）"
+    else
+        bad "ci.yml 缺「bash $DEATH_TEST」这一步（判据无人验证）"
+    fi
+    # ④ 留痕侧：重试必须写 step summary，不然"重跑绿"会把 flaky 消化掉、没人再查。
+    if grep -qF 'TD-80 基础设施型死亡重试留痕' "$CI_WF" && grep -qF 'GITHUB_STEP_SUMMARY' "$CI_WF"; then
+        ok "重试留痕挂在 step summary 上（发生次数与批次可对账）"
+    else
+        bad "ci.yml 缺重试留痕（step summary）——静默重试等于把随机红藏起来"
+    fi
+    # ⑤ 真跑一次：这一步同时证明"判据可用"和"上面的静态对账不是空转"。
+    if DEATH_SELFTEST_OUT="$(bash "$DEATH_TEST" 2>&1)"; then
+        ok "判据自测通过：$(grep -F 'SUMMARY cases=' <<<"$DEATH_SELFTEST_OUT" | head -1)"
+    else
+        bad "判据自测判红（重试判据不可信，build-test 不得依赖它）："
+        printf '%s\n' "$DEATH_SELFTEST_OUT" | sed 's/^/         /'
+    fi
 fi
 
 echo ""

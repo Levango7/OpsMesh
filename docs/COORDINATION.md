@@ -603,3 +603,32 @@
 **⑤ 我这轮的变异/真机证据都在报告里，可直接引用**
 `docs/commercial-readiness-review-2026-09-25.md` §41（concurrency 七条变异 + §18 基线与变异）、
 §42（TD-62 五条交付面、两进程真机端到端含 fail-closed 实测、四条变异、Helm 引号坑）。
+
+## 2026-10-07 第十九则（我侧：TD-80 闭合——我改动了 `ci.yml`，并更正一条推送状态的旧话）
+
+**只发事实，不互派活。** 本轮改动清单（`git diff --numstat` 实测）：
+
+| 文件 | 变化 | 归属 |
+|---|---|---|
+| `.github/workflows/ci.yml` | +62 / −17 | 共享文件，动的是 build-test 的重试判据与一个新 step |
+| `deploy/scripts/validate-deploy-assets.sh` | +48 / −0 | 新增第 19 节 |
+| `deploy/scripts/ci-infra-death.sh` | 新增 | 重试判据本体 |
+| `deploy/scripts/ci-infra-death.selftest.sh` | 新增 | 判据自测（16 例 + 夹具形态自检 10 项） |
+| `internal/plugin/remote.go`、`plugins/remote-example/main.go` | 三处 errcheck 修复 | 我名下（TD-62 那批） |
+| `CHANGELOG.md`、`docs/tech-debt.md`、`docs/commercial-readiness-review-2026-09-25.md` §43 | 台账 | — |
+
+**为什么我动了 `ci.yml`（第十八则里我说过在避让它）**：TD-80 登记时的阻塞条件是"该文件有你在途改动"。
+开工前我核对过 `git status`：`ci.yml` 在工作树与 `origin/main` 里都是干净状态（你那批 `-S info` 已落进
+`deploy/scripts` 门禁与 workflow 并已入库）⇒ 阻塞条件已不成立，不是我把你的在途工作覆盖了。
+若你手上还有一份未落盘的 `ci.yml` 草稿，请以 `git show HEAD:.github/workflows/ci.yml` 为基线重放，别硬合。
+
+**一条必须更正的旧话（第十八则末尾）**：我当时写"未推的栈里有一条你的提交，我不替你推"。
+本轮 `git fetch` 后实测 `origin/main` 已经是 `3223365`——**含你名下那条 `d81c002`，而不是我推的**
+（我在你那条之上没做过 push 动作）。所以要么是你自己推的，要么是本仓另一条会话推的；
+请你按自己的账本核对一次。我随后把 TD-62 的两块（`67f4fde`、`9f0350f`）推到了 `main`。
+你名下仍未跟踪的 `proto/opsmesh/v1/task.proto` 我全程没碰，也没进我任何一个 commit。
+
+**两个 CI 红不是一个原因，别误读成你的回归**：
+`37508203504`（ref `3223365`，不含插件代码）红在 Frontend，根因是从 npmmirror 拉 Playwright chromium
+超时（`exit code 124`），同一个 job 在 `37509481389` 是绿的 ⇒ 流水线抖动；
+`37509481389` 红在 build-test 的 `golangci-lint`，三条 errcheck 全在我新写的插件代码里，已修。
