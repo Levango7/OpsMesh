@@ -104,9 +104,12 @@ ghcr_get() {
 # 14 个仓库叶子名：两个核心镜像 + release.yml 矩阵里的 12 个常驻微服务。
 # 这里刻意写死而不是去 parse release.yml：本脚色的职责是"核对产物"，
 # 矩阵漂移由 validate-deploy-assets.sh 的第 2/10 节负责（两处职责不重叠，避免自我印证）。
-LEAVES="opsmesh-binary opsmesh-agent
-auth-svc device-svc alert-svc task-svc config-svc log-svc
-aio-svc autoscaler-svc gpu-svc incident-svc portal-svc runbook-svc"
+# 用数组而不是空格分隔的字符串：字符串形态下每个消费点都得靠**未加引号**的展开去做词分割
+# （shellcheck SC2086），而那些位置看着像漏引号的 bug——真正的修法是把集合做成数组，
+# 计数用 ${#LEAVES[@]}（不再靠 printf|grep 数行数），遍历用 "${LEAVES[@]}"（带引号也不会粘连）。
+LEAVES=(opsmesh-binary opsmesh-agent
+    auth-svc device-svc alert-svc task-svc config-svc log-svc
+    aio-svc autoscaler-svc gpu-svc incident-svc portal-svc runbook-svc)
 
 # token <仓库叶子名>：成功时把匿名 pull token 打到 stdout 并返回 0。
 #   返回 1 = 传输层重试耗尽（够不着 GHCR——这**不能**推出"仓库不存在"）；
@@ -130,7 +133,7 @@ token() {
 # 注意 Accept 必须含 OCI index，否则 buildx 推的 OCI manifest 会被**误报成 404**
 # （本仓 §19 取证时踩过一次，差点把"存在"写成"不存在"）。
 ACCEPT='Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
-NLEAVES=$(printf '%s\n' $LEAVES | grep -c .)
+NLEAVES=${#LEAVES[@]}
 tags_of() {
     local leaf="$1" tk body code rc
     tk="$(token "$leaf")"; rc=$?
@@ -149,7 +152,7 @@ declare -a PUBLISHED=()
 declare -A DIG_VER=()   # leaf → :<版本> 的 manifest digest，供第 ⑤ 项复用（不留第二个来源）
 echo "== ① + ② 镜像 tag 与签名/证据链（${NS}/*:${VER}）=="
 MISSING_TAG=(); MISSING_SIG=(); MISSING_ATT=()
-for leaf in $LEAVES; do
+for leaf in "${LEAVES[@]}"; do
     tk="$(token "$leaf")"; tkrc=$?
     if [ "$tkrc" -ne 0 ]; then
         if [ "$tkrc" -eq 1 ]; then
@@ -328,13 +331,13 @@ SHA="${RELEASE_SHA:-}"
 if [ -z "$SHA" ]; then
     SHA="$(git rev-list -n 1 "v${VER}" 2>/dev/null || true)"
 fi
-if ! printf '%s' "$SHA" | grep -qE '^[0-9a-fA-F]{40}$'; then
+if ! grep -qE '^[0-9a-fA-F]{40}$' <<<"$SHA"; then
     unver "拿不到 v${VER} 的 40 位发布提交（既没给 RELEASE_SHA，本地也解析不出该 tag）——第 ⑤ 项未核对"
 else
     SHA="$(printf '%s' "$SHA" | tr 'A-F' 'a-f')"
     echo "   发布提交=${SHA}"
     MISMATCH=(); NO_SHA_TAG=()
-    for leaf in $LEAVES; do
+    for leaf in "${LEAVES[@]}"; do
         want="${DIG_VER[$leaf]-}"
         if [ -z "$want" ]; then
             unver "${leaf}: 第 ② 项没取到 :${VER} 的 digest，第 ⑤ 项无从比对"
