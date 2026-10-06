@@ -142,10 +142,64 @@ fi
 # ---------------------------------------------------------------
 sec "2. 服务矩阵对齐"
 # ---------------------------------------------------------------
-RELEASE_SVCS="$(grep -A40 'matrix:' .github/workflows/release.yml \
-    | grep -E '^\s+-\s+\S+$' \
-    | sed -E 's/^\s+-\s+//' | sort)"
-DIR_SVCS="$(ls services/ 2>/dev/null | sort)"
+# 服务清单在 release.yml 里**存在两份**（build-and-push 与 promote 各一个 matrix）：
+# GitHub Actions 的 workflow 解析器不支持 YAML 锚点/别名（2026-10-05 实测：用
+# &releaseServices / *releaseServices 做单一来源，整条 workflow 在 GitHub 端 0 秒挂，
+# actionlint 同时判红），所以清单只能两处各抄一份。
+# 于是本节不能再用 `grep -A40 'matrix:'`：那种抓法把两份清单叠成 24 行，
+# 还会越界把 matrix 后面的普通 `- xxx` 行算进来。改成**按 matrix 块逐个解析**，
+# 并顺带把"两处必须一致"从口头约定变成断言——漏改一处就是"发出去的"与"提权的"不是同一批服务。
+if [[ -z "$PY" ]]; then
+    skip "未找到 python3/python，跳过 matrix 分块解析（回退到旧的全量 grep，第 2 节可能误判）"
+    RELEASE_SVCS="$(grep -A40 'matrix:' .github/workflows/release.yml \
+        | grep -E '^\s+-\s+\S+$' | sed -E 's/^\s+-\s+//' | sort -u)"
+    MATRIX_COUNT=0
+    MATRIX_SAME=1
+else
+    MATRIX_JSON="$("$PY" - .github/workflows/release.yml <<'PY'
+import json
+import re
+import sys
+
+lines = open(sys.argv[1], encoding='utf-8').read().split('\n')
+blocks = []
+cur = None
+for line in lines:
+    if re.match(r'^      matrix:\s*$', line):
+        cur = []
+        blocks.append(cur)
+        continue
+    if cur is None:
+        continue
+    m = re.match(r'^          -\s+([A-Za-z0-9][A-Za-z0-9_-]*)\s*$', line)
+    if m:
+        cur.append(m.group(1))
+        continue
+    # 缩回到 job 层级即认为本 matrix 块结束（避免把 steps 里的 "- xxx" 收进来）
+    if re.match(r'^    \S', line):
+        cur = None
+blocks = [b for b in blocks if b]
+union = sorted({s for b in blocks for s in b})
+same = len(blocks) >= 1 and all(b == blocks[0] for b in blocks)
+print(json.dumps({'count': len(blocks), 'same': same, 'services': union,
+                  'blocks': [sorted(b) for b in blocks]}))
+PY
+)"
+    # Windows 的 python print 走文本模式 ⇒ 行尾 CRLF。comm 会把 "aio-svc\r" 当成
+    # 与 "aio-svc" 不同的名字，于是同一批服务同时被报成"只在矩阵、不在目录"和反向。
+    # 在捕获处统一剥掉 \r（Linux/CI 上无行可剥，判据不变）。
+    MATRIX_JSON="$(printf '%s' "$MATRIX_JSON" | tr -d '\r')"
+    # 必须再过一道 shell 的 sort：comm 要求两侧**同一种**排序，而 python 的 sorted() 是字节序、
+    # shell sort 在 MSYS 下按语言序（会忽略连字符，"aio-svc" 排在 "alert-svc" 之后）。
+    # 两边各排各的，comm 就会把同一批名字同时报成"只在左/只在右"。
+    RELEASE_SVCS="$(printf '%s' "$MATRIX_JSON" | "$PY" -c 'import json,sys;print("\n".join(json.load(sys.stdin)["services"]))' | tr -d '\r' | sort)"
+    MATRIX_COUNT="$(printf '%s' "$MATRIX_JSON" | "$PY" -c 'import json,sys;print(json.load(sys.stdin)["count"])')"
+    MATRIX_SAME="$(printf '%s' "$MATRIX_JSON" | "$PY" -c 'import json,sys;print(1 if json.load(sys.stdin)["same"] else 0)')"
+fi
+# 不用 `ls services/ | sort`：SC2012 之外更要紧的是，管道左端换成 find 后，
+# 目录名里的空格/前缀路径都不会污染结果（这里比对的是集合差，多一个字符就是误判）。
+DIR_SVCS="$(find services -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+    | sed 's|^services/||' | sort)"
 # 豁免表：`services/` 下有模块、但**不是常驻服务**因而不出镜像的东西。必须带理由，
 # 否则"豁免"就成了第二个静默漂移的入口。与 release.yml 矩阵注释同源。
 NON_SERVICE="tf-provider|Terraform 插件（main.go 里 plugin.Serve）：装进容器会在启动瞬间打印 \"This binary is a plugin\" 并以码 1 退出 ⇒ 出镜像=发布一个必定 CrashLoop 的产物"
@@ -167,6 +221,23 @@ if [[ -z "${only_rel// }" && -z "${only_dir// }" ]]; then
 else
     [[ -n "${only_rel// }" ]] && bad "release.yml 有但 services/ 无目录：${only_rel}"
     [[ -n "${only_dir// }" ]] && bad "services/ 有目录，但既不在 release.yml 矩阵也不在豁免表：${only_dir}"
+fi
+
+# 两份 matrix 必须逐字一致（锚点不可用 ⇒ 一致性只能靠这里守）。
+# 漂移的后果不是"数字难看"：build-and-push 少一个服务 ⇒ 那个服务没有 :<sha> 可提权，
+# promote 会对着不存在的源 tag 失败；promote 少一个服务 ⇒ 该服务发得出 :<sha> 却永远
+# 拿不到 :<版本>/:latest，客户按 chart 装就是 ErrImagePull。
+if [[ "$MATRIX_COUNT" -eq 0 ]]; then
+    skip "没解析出任何 matrix 块（release.yml 结构变了？本节其余比对仍按 union 走）"
+elif [[ "$MATRIX_COUNT" -eq 1 ]]; then
+    bad "release.yml 只解析出 1 个 matrix.service 清单——build-and-push 与 promote 应当各有一份"
+    echo "         ⇒ 少一份通常意味着 promote job 的矩阵被删/改名，提权会漏发或整批不启动"
+elif [[ "$MATRIX_SAME" -eq 1 ]]; then
+    ok "release.yml 的 ${MATRIX_COUNT} 份 matrix.service 清单逐字一致（${n_rel} 个服务，各份都含全集）"
+else
+    bad "release.yml 的多份 matrix.service 清单**已经漂移**（${MATRIX_COUNT} 份，去重后 ${n_rel} 个）"
+    echo "         ⇒ 各份内容：$(printf '%s' "$MATRIX_JSON" | "$PY" -c 'import json,sys;print(" | ".join(",".join(b) for b in json.load(sys.stdin)["blocks"]))')"
+    echo "           发出去的镜像集合与被提权的集合不是同一批，必须同步（本项目在孪生清单上吃过亏）"
 fi
 
 # chart 未覆盖的服务是允许的（例如纯 CLI 工具），但必须显式声明为豁免，避免静默漂移
@@ -1107,7 +1178,9 @@ else
             AM_HITS="${AM_HITS} 渲染产物里没有 webhook_configs 段——第 ⑥ 项无从判定外发形状"
         else
             # Git Bash 下 docker.exe 需要宿主形态路径；MSYS_NO_PATHCONV 保证容器内 /c 不被改写。
-            AM_WIN="$(cd "${AM_TMP}" && pwd -W 2>/dev/null || pwd)"
+            # `pwd -W` 只有 MSYS/Git Bash 有；把它做成显式的"前者不成则后者"分组，
+            # 而不是 `cd && pwd -W || pwd`——后者在 cd 失败时也会跑 fallback，那才是真语义错。
+            AM_WIN="$(cd "${AM_TMP}" && { pwd -W 2>/dev/null || pwd; })"
             chmod 644 "${AM_TMP}/rendered.yml" 2>/dev/null || true
             amtool_check() {
                 MSYS_NO_PATHCONV=1 docker run --rm -v "${AM_WIN}:/c:ro" --entrypoint amtool \
