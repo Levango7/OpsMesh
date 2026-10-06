@@ -24,6 +24,7 @@
 #  15. 告警送达链路接通性（规则 → Alertmanager → 外发通道）
 #  16. CHANGELOG 归版账目（[Unreleased] 不得早于已发布版本日期）
 #  17. 发布链顺序（构建腿只推不可变 :<sha>；promote 必须是提权唯一入口且在 Release 之前）
+#  18. 入站边界（出厂 compose 发布的宿主端口除白名单外必须只绑环回；含条目数与独立正则对账，防判定面静默缩小）
 #
 # 用法：bash deploy/scripts/validate-deploy-assets.sh
 set -uo pipefail
@@ -1647,6 +1648,137 @@ PY
     fi
 else
     bad "找不到 .github/workflows/release.yml，第 17 节无从核对（判红）"
+fi
+
+sec "18. 入站边界（出厂 compose 发布的宿主端口除白名单外必须只绑环回）"
+# 为什么要钉这一节：P0-2 之后产品的入站模型是"容器网络内部互通，宿主侧只暴露控制面两个口 +
+# 反代 overlay 的 80/443"。未鉴权的微服务 gRPC（如 alert-svc 50053）与 MySQL/Redis/Loki 等
+# 后端，**全靠"端口只绑 127.0.0.1"这一层兜住**——而这一层此前没有任何检查：
+# 谁在 compose 里把 "127.0.0.1:50053:50053" 写成 "50053:50053"（或删掉绑定前缀），
+# CI 不会红、真机验收也不会红，因为 verify-runtime 只断言"该可达的确实可达"，
+# 从不测"不该可达的是否也可达"。这是典型的"声明了但没人验证"的边界。
+# 实测基线（2026-10-06，两种独立算法互证：pyyaml 解析 vs 本节的文本解析）：
+# docker-compose.prod.yml 27 个发布端口 / 25 个绑环回，例外只有 controlplane 的 8080 与 9090；
+# docker-compose.prod-proxy.yml 4 个 / 1 个绑环回，例外是 controlplane 9090 与 gateway 80/443；
+# sim 与 nullfix 两份不发布任何宿主端口（"没有 ports 段"不等于空转，见下方判定）。
+COMPOSE_INBOUND=(
+    deploy/docker/docker-compose.prod.yml
+    deploy/docker/docker-compose.prod-proxy.yml
+    deploy/docker/docker-compose.sim.yml
+    deploy/docker/docker-compose.nullfix.yml
+)
+if [[ -z "$PY" ]]; then
+    bad "本机/CI 没有 python，第 18 节无法判定入站边界（判红而不是跳过）"
+else
+    INBOUND_OUT="$("$PY" - "${COMPOSE_INBOUND[@]}" <<'PY'
+import re, sys
+
+# 刻意外部可达的入口：控制面 B/S 与 agent gRPC；反代 overlay 的 HTTP/HTTPS 终止点。
+# 加新例外必须同时在这里点名——这条清单本身就是入站攻击面的账本。
+EXEMPT = {("controlplane", "8080"), ("controlplane", "9090"), ("gateway", "80"), ("gateway", "443")}
+LOOP = ("127.0.0.1", "localhost", "::1")
+
+
+def mask(s):
+    """把 ${VAR:-default} 里的冒号换成占位符。
+    不这么做的话 split(':') 会把一个端口项拆成 4 段，绑定/宿端口/容器端口全错位（本节的原型踩过）。"""
+    out, i = [], 0
+    for m in re.finditer(r"\$\{[^}]*\}", s):
+        out.append(s[i:m.start()])
+        out.append(m.group(0).replace(":", "\x00"))
+        i = m.end()
+    out.append(s[i:])
+    return "".join(out)
+
+
+def parse(text):
+    """返回 [(service, bind, container_port, indent)]；只认 compose 短语法（实测四份出厂文件都是短语法）。"""
+    items, svc, in_ports = [], None, False
+    for raw in text.split("\n"):
+        line = raw.rstrip("\r")
+        if re.match(r"^  [A-Za-z0-9_.-]+:\s*$", line):
+            svc, in_ports = line.strip().rstrip(":"), False
+            continue
+        if re.match(r"^    ports:\s*(!\S+)?\s*$", line):
+            in_ports = True
+            continue
+        if not in_ports:
+            continue
+        st = line.strip()
+        if st == "" or st.startswith("#"):
+            # 出厂文件在 ports: 下写了带安全理由的注释行；把它们当成块结束会静默丢掉后续条目
+            # （原型就是这样少算了 5 个端口 ⇒ 判定面凭空缩小）。
+            continue
+        m = re.match(r"^( +)-\s*(.+)$", line)
+        if not m:
+            in_ports = False
+            continue
+        indent = len(m.group(1))
+        s = mask(m.group(2).strip().strip('"').strip("'"))
+        parts = [p.replace("\x00", ":") for p in s.split(":")]
+        if len(parts) >= 3:
+            items.append((svc, parts[0], parts[2].split("/")[0], indent))
+        elif len(parts) == 2:
+            items.append((svc, "", parts[1].split("/")[0], indent))
+        else:
+            items.append((svc, "", parts[0].split("/")[0], indent))
+    return items
+
+
+errs, per_file = [], []
+tot = loop_n = 0
+for f in sys.argv[1:]:
+    try:
+        text = open(f, encoding="utf-8").read()
+    except OSError as exc:
+        errs.append(f"读不到 {f}：{exc}")
+        continue
+    items = parse(text)
+    declares = bool(re.search(r"^    ports:", text, re.M))
+    if declares and not items:
+        errs.append(f"{f} 有 ports: 段却一个条目都没解析出来（本节在空转，判红）")
+        continue
+    if not declares:
+        per_file.append(f"{f.split('/')[-1]}=无ports段")
+        continue
+    # 独立对照：用一条与状态机无关的正则，把"看起来就是端口映射"的条目数出来。
+    # 为什么需要：状态机若在块中途被一行不合约定的写法打断，后续条目会**静默消失**
+    # （既不触发上面的空转判据，也不触发缩进判据），判定面凭空缩小而输出照样是绿的。
+    oracle = len(re.findall(r'^\s{6,}-\s+"?[\w:.${}/\-]*:\s*\d{2,5}(?:/\w+)?\s*"?$', text, re.M))
+    if oracle != len(items):
+        errs.append(f"{f} 状态机解析到 {len(items)} 个端口条目，独立正则数到 {oracle} 个"
+                    f"⇒ 有条目被静默丢弃，本节的判定面已缩小（判红）")
+        continue
+    lp = sum(1 for _, b, _, _ in items if b in LOOP)
+    tot += len(items)
+    loop_n += lp
+    for svc, b, cp, indent in items:
+        if indent != 6:
+            # 丢一个条目不会触发上面的"空转"判据（只要有其它项就仍 >0），所以缩进偏离约定就判红：
+            # 这是"判定面静默缩小"唯一的可见信号（变异验证实测过：改坏一条的缩进，本节点位不报）。
+            errs.append(f"{f}:{svc} 端口条目缩进为 {indent} 空格（约定 6）⇒ 本节可能漏项，判红")
+        if b in LOOP:
+            continue
+        if (svc, cp) not in EXEMPT:
+            errs.append(f"{f}:{svc} 把容器端口 {cp} 发布到所有网卡（绑定={b or '<空=0.0.0.0>'}），不在入站白名单")
+    per_file.append(f"{f.split('/')[-1]}={len(items)}/{lp}")
+
+print(f"SUMMARY published={tot} loopback={loop_n} exceptions={len(EXEMPT)} detail={per_file}")
+print("\n".join(errs))
+PY
+)"
+        if grep -qF 'SUMMARY published=' <<<"$INBOUND_OUT"; then
+            INBOUND_SUMMARY="$(grep -F 'SUMMARY published=' <<<"$INBOUND_OUT" | head -1)"
+            inboundbad="$(grep -cvE '^(SUMMARY |$)' <<<"$INBOUND_OUT")"
+            if [[ "$inboundbad" -gt 0 ]]; then
+                bad "入站边界被破坏（${inboundbad} 处）："
+                grep -vE '^SUMMARY ' <<<"$INBOUND_OUT" | grep -vE '^[[:space:]]*$' | sed 's/^/         /'
+            else
+                ok "入站边界成立：发布的宿主端口除白名单外全部只绑环回（${INBOUND_SUMMARY#SUMMARY }）"
+            fi
+        else
+            bad "第 18 节没解析出 SUMMARY（判据在空转，判红而不是跳过）"
+        fi
 fi
 
 echo ""
