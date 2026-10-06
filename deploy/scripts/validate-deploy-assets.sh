@@ -19,6 +19,10 @@
 #  11. 抓取配置 ↔ 服务能力一致性（prometheus.yml 的 job ↔ 源码 /metrics 注册行，双向）
 #  12. 微服务健康路径与端口键统一（TD-77：规范 /health+/ready、<N>_SVC_HTTP_PORT，
 #      compose ↔ Helm 探针路径逐服务一致）
+#  13. 引导脚本只建库+授权（建表职责归代码）
+#  14. 出厂 PromQL 结构检查（CI 跑不了 promtool，钉住最常犯的四类写法错）
+#  15. 告警送达链路接通性（规则 → Alertmanager → 外发通道）
+#  16. CHANGELOG 归版账目（[Unreleased] 不得早于已发布版本日期）
 #
 # 用法：bash deploy/scripts/validate-deploy-assets.sh
 set -uo pipefail
@@ -1450,6 +1454,77 @@ PY
         bad "TD-77-P5 探针路径跨资产漂移："
         printf '%s\n' "$PROBEPATH_OUT" | sed 's/^/         /'
     fi
+fi
+
+echo ""
+echo "=== 16. CHANGELOG 归版账目（[Unreleased] 不得早于已发布版本）==="
+# 为什么必须钉这一条（2026-10-06 实测）：CHANGELOG 里有 68 个 `## [Unreleased]` 块，其中 54 个
+# 的正文早已出现在 v0.8.0…v0.11.0 的**发布正文**里。取证例：CHANGELOG.md:1885「刷新 401 自等待
+# 死锁」所属块由提交 0f77e0d（2026-08-30）写入，`git tag --contains 0f77e0d` 含 v0.8.0——
+# 也就是随 0.8.0 就发出去了，标题却一直写着未发布。历次切版只往文件顶部加 `## [0.x.y]` 摘要，
+# 从未重命名过这些历史标题（各 tag 上的计数：v0.10.0=44、v0.11.0=54、v0.12.0=54，净变更 0）。
+# 客户按 Keep-a-Changelog 读这份文件，会把 41 项已交付的东西当成欠账。
+#
+# 判据为什么是"日期比较"而不是"查 git tag"：本门禁所在的 CI job 是浅检出（未设 fetch-depth: 0），
+# 拿不到 tag 列表；真要查 tag 会让这道门禁在 CI 里静默空转——那是比没门禁更糟的形态。
+# "早于最新发布版本日期却仍标 Unreleased"只用文件自身就能判红，且能抓住本次这一整类错标。
+if [[ -f CHANGELOG.md ]]; then
+    if [[ -z "$PY" ]]; then
+        bad "本机/CI 没有 python，第 16 节无法执行（判红而不是跳过）"
+    else
+        CL_OUT="$("$PY" - CHANGELOG.md <<'PY'
+import re, sys
+lines = open(sys.argv[1], encoding="utf-8").read().split("\n")
+# 标题行的严格定义：`## [x.y.z]` / `## [Unreleased]` 独占一行，或后跟 " — 描述"。
+# 为什么这么严：正文里存在以 `## [Unreleased]` 开头的**散文行**（例如"把 `## [Unreleased]`
+# 一次性改成 `## [0.12.0]`"），变异验证时它被当成了无日期标题 → 假阳性判红。
+# 判据一旦会因散文误报，下一次真错标就会被当成"又是老毛病"而被忽略。
+def is_unreleased(l):
+    return l == "## [Unreleased]" or l.startswith("## [Unreleased] — ")
+
+def is_version(l):
+    return bool(re.match(r"^## \[\d+\.\d+\.\d+\]( — |$)", l))
+
+date = re.compile(r" — (\d{4}-\d{2}-\d{2})")
+rel_dates = [date.search(l).group(1) for l in lines if is_version(l) and date.search(l)]
+if not rel_dates:
+    print("NO_RELEASED_VERSION")
+    sys.exit(0)
+cut = max(rel_dates)
+n_ver = sum(1 for l in lines if is_version(l))
+bad, n_un = [], 0
+for i, l in enumerate(lines, 1):
+    if not is_unreleased(l):
+        continue
+    n_un += 1
+    m = date.search(l)
+    d = m.group(1) if m else None
+    if not d:
+        bad.append(f"L{i}: [Unreleased] 标题没有日期，无法判它是否该归版：{l[:56]}")
+    elif d < cut:
+        bad.append(f"L{i}: 日期 {d} 早于最新发布版本日期 {cut}，却仍标 [Unreleased]：{l[:56]}")
+print(f"SUMMARY released_max={cut} released_blocks={n_ver} unreleased={n_un} offenders={len(bad)}")
+print("\n".join(bad))
+PY
+)"
+        if grep -qF 'NO_RELEASED_VERSION' <<<"$CL_OUT"; then
+            bad "CHANGELOG.md 里一个已发布版本标题（## [x.y.z] — 日期）都没有——本节失去基准，判红而不是放行"
+        else
+            CL_SUMMARY="$(grep -F 'SUMMARY released_max=' <<<"$CL_OUT" | head -1)"
+            offenders="$(printf '%s' "$CL_SUMMARY" | sed -n 's/.*offenders=\([0-9][0-9]*\).*/\1/p')"
+            offenders="${offenders:-}"
+            if [[ -z "$offenders" ]]; then
+                bad "第 16 节没解析出 SUMMARY（判据在空转，判红）：${CL_SUMMARY:-空}"
+            elif [[ "$offenders" -gt 0 ]]; then
+                bad "CHANGELOG 归版账目错标 ${offenders} 处（已发货却仍标 [Unreleased]）：${CL_SUMMARY#SUMMARY }"
+                grep -vE '^(SUMMARY |NO_RELEASED_VERSION$)' <<<"$CL_OUT" | grep -vE '^[[:space:]]*$' | sed 's/^/         /'
+            else
+                ok "CHANGELOG 归版账目自洽（${CL_SUMMARY#SUMMARY }）"
+            fi
+        fi
+    fi
+else
+    bad "找不到 CHANGELOG.md，第 16 节无从核对（判红）"
 fi
 
 echo ""
