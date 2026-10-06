@@ -187,7 +187,9 @@ func (p *RemotePlugin) call(h Hook, ev Event) error {
 	if err != nil {
 		return fmt.Errorf("plugin: 远程插件 %q 调用失败（hook=%s，按不可达处理，pre 钩子会因此阻断）: %w", p.cfg.Name, h, err)
 	}
-	defer func() { _, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, remoteBodyLimit)); _ = resp.Body.Close() }()
+	// 只关闭，不再排空：响应体在下面的 ReadAll 里已经读完（有 1 MiB 上限），
+	// 再 Copy 到 io.Discard 是一次纯冗余的读，而且它返回值不可忽略、也无从补救。
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, remoteBodyLimit))
 	if err != nil {

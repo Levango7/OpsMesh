@@ -52,7 +52,8 @@ type server struct {
 }
 
 func (s *server) health(w http.ResponseWriter, _ *http.Request) {
-	_, _ = io.WriteString(w, "ok\n")
+	// 状态码已发出，写失败无从补救；本仓 errcheck 对 ResponseWriter.Write 有显式豁免。
+	_, _ = w.Write([]byte("ok\n"))
 }
 
 // hook 是唯一的扩展点入口：三种结局——放行、拒绝、鉴权失败。
@@ -143,7 +144,10 @@ func main() {
 		<-sig
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(ctx)
+		// 关闭失败要说出来：示例插件是给宿主作者看的，静默吞错会被当成"可以忽略"。
+		if err := srv.Shutdown(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "优雅关闭失败（5s 内有连接未完成）：%v\n", err)
+		}
 	}()
 
 	fmt.Fprintf(os.Stderr, "opsmesh-plugin-example 监听 %s（token-env=%s）\n", srv.Addr, *tokenEnv)
