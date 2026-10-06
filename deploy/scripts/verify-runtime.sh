@@ -55,7 +55,11 @@ fi
 
 sec "2. 控制面对外入口（TLS + 健康）"
 code="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' "$CP/healthz" 2>/dev/null)"
-[ "$code" = "200" ] && ok "GET $CP/healthz → 200" || bad "GET $CP/healthz → ${code:-无响应}"
+if [ "$code" = "200" ]; then
+    ok "GET $CP/healthz → 200"
+else
+    bad "GET $CP/healthz → ${code:-无响应}"
+fi
 
 # 明文 HTTP 打到 TLS 端口必须拿不到业务响应（P0-2 回归断言）。
 # 合法结果：000（连接被拒/重置）或 400（Go TLS 服务器对明文的固定回应
@@ -142,8 +146,11 @@ else
     dump_snapshot metrics-3b "$mbody"
   else
     nseries="${sline##* }"
-    [ "$nseries" -le 2000 ] && ok "HTTP 指标时序数 ${nseries} ≤ 2000（基数硬上限生效）" \
-                             || bad "HTTP 指标时序数 ${nseries} > 2000（基数上限失效！）"
+    if [ "$nseries" -le 2000 ]; then
+        ok "HTTP 指标时序数 ${nseries} ≤ 2000（基数硬上限生效）"
+    else
+        bad "HTTP 指标时序数 ${nseries} > 2000（基数上限失效！）"
+    fi
   fi
   if grep -q '^opsmesh_http_metrics_series_dropped_total [0-9]' <<<"$mbody"; then
     ok "折叠计数器 opsmesh_http_metrics_series_dropped_total 已暴露（超限请求可观测）"
@@ -199,17 +206,23 @@ fi
 rl="$(env_val CB_RATE_LIMIT_PER_SEC)"
 clog="$(docker logs opsmesh-controlplane 2>&1)"
 if [ -z "$rl" ]; then
-  grep -q '生产模式默认启用 API 限流 200' <<<"$clog" \
-    && ok "生产模式默认启用限流 200 req/s/IP（启动期提示可见）" \
-    || bad "未见默认限流启动提示（P1-5 默认启用失效）"
-  grep -q 'API 限流已启用' <<<"$clog" \
-    && ok "限流器已装载（日志含「API 限流已启用」）" \
-    || bad "限流器未装载（生产默认限流未生效）"
+  if grep -q '生产模式默认启用 API 限流 200' <<<"$clog"; then
+      ok "生产模式默认启用限流 200 req/s/IP（启动期提示可见）"
+  else
+      bad "未见默认限流启动提示（P1-5 默认启用失效）"
+  fi
+  if grep -q 'API 限流已启用' <<<"$clog"; then
+      ok "限流器已装载（日志含「API 限流已启用」）"
+  else
+      bad "限流器未装载（生产默认限流未生效）"
+  fi
 elif [ "$rl" = "0" ]; then
   warn "CB_RATE_LIMIT_PER_SEC=0：限流被显式关闭（下方 429 实测将跳过）"
-  grep -q '生产模式未启用 API 限流' <<<"$clog" \
-    && ok "显式关闭限流时打印告警（可审计）" \
-    || warn "显式关闭限流但未见启动告警"
+  if grep -q '生产模式未启用 API 限流' <<<"$clog"; then
+      ok "显式关闭限流时打印告警（可审计）"
+  else
+      warn "显式关闭限流但未见启动告警"
+  fi
 else
   warn "CB_RATE_LIMIT_PER_SEC=${rl}：自定义限流阈值，按实际值实测"
 fi
@@ -274,12 +287,20 @@ sec "4. 鉴权链路（P0-1 回归）"
 # 4a 错误口令必须被拒
 wcode="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' -X POST "$CP/api/v1/auth/login" \
   -H 'Content-Type: application/json' -d '{"username":"admin","password":"WrongPass123"}' 2>/dev/null)"
-[ "$wcode" = "401" ] && ok "错误口令被拒（401）" || bad "错误口令返回 ${wcode}（期望 401）"
+if [ "$wcode" = "401" ]; then
+    ok "错误口令被拒（401）"
+else
+    bad "错误口令返回 ${wcode}（期望 401）"
+fi
 
 # 4b 预置弱口令 admin123 必须被拒
 w2="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' -X POST "$CP/api/v1/auth/login" \
   -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}' 2>/dev/null)"
-[ "$w2" = "401" ] && ok "预置弱口令 admin123 被拒（401）" || bad "预置弱口令 admin123 返回 ${w2}（期望 401，P0-1 回归！）"
+if [ "$w2" = "401" ]; then
+    ok "预置弱口令 admin123 被拒（401）"
+else
+    bad "预置弱口令 admin123 返回 ${w2}（期望 401，P0-1 回归！）"
+fi
 
 # 4c 正确口令登录。判据必须按「这个账号当前该不该改密」来定，而不是假设每次都是首登：
 #    原判据写死 mustChangePassword=true，在存量库上必然假红（2026-10-02 升级实测），
@@ -297,23 +318,39 @@ grep -qE '"(token|accessToken|refreshToken)"[[:space:]]*:[[:space:]]*"[^"]+"' <<
 case "$flag" in
   1)
     # 库里要求改密（预置口令仍在用 / 首次交付）：必须强制改密、必须发一次性令牌、不得发会话 token
-    [ "$forced" = "yes" ] && ok "库内 must_change_password=1 ⇒ API 返回强制改密标记" \
-                           || bad "库内要求改密（must_change_password=1）但 API 未标记强制改密（P0-1 回归）"
-    grep -q '"changePasswordToken"' <<<"$resp" \
-        && ok "下发一次性 changePasswordToken" \
-        || bad "未下发 changePasswordToken（无法完成强制改密，等于锁死账号）"
-    [ "$hasToken" = "no" ] && ok "强制改密期间未下发可用会话 token" \
-                           || bad "强制改密期间仍下发了会话 token（改密闸失效）"
+    if [ "$forced" = "yes" ]; then
+        ok "库内 must_change_password=1 ⇒ API 返回强制改密标记"
+    else
+        bad "库内要求改密（must_change_password=1）但 API 未标记强制改密（P0-1 回归）"
+    fi
+    if grep -q '"changePasswordToken"' <<<"$resp"; then
+        ok "下发一次性 changePasswordToken"
+    else
+        bad "未下发 changePasswordToken（无法完成强制改密，等于锁死账号）"
+    fi
+    if [ "$hasToken" = "no" ]; then
+        ok "强制改密期间未下发可用会话 token"
+    else
+        bad "强制改密期间仍下发了会话 token（改密闸失效）"
+    fi
     ;;
   0)
     # 库里已不需要改密（口令被改过）：不得再卡改密流程，且必须能拿到正常会话 token
-    [ "$forced" = "no" ] && ok "库内 must_change_password=0 ⇒ 不再要求改密（标记与真实口令一致）" \
-                          || bad "库内不要求改密却返回 mustChangePassword=true（seedRBAC 标记未随口令状态收敛，重启即锁死管理员）"
-    grep -q '"changePasswordToken"' <<<"$resp" \
-        && bad "不需要改密却下发 changePasswordToken" \
-        || ok "不需要改密时不下发一次性改密令牌（语义一致）"
-    [ "$hasToken" = "yes" ] && ok "已改过口令的账号能拿到会话 token（不被误锁在改密流程）" \
-                            || bad "口令已改过却拿不到会话 token（登录卡在改密流程，P0-1 的反向缺陷）"
+    if [ "$forced" = "no" ]; then
+        ok "库内 must_change_password=0 ⇒ 不再要求改密（标记与真实口令一致）"
+    else
+        bad "库内不要求改密却返回 mustChangePassword=true（seedRBAC 标记未随口令状态收敛，重启即锁死管理员）"
+    fi
+    if grep -q '"changePasswordToken"' <<<"$resp"; then
+        bad "不需要改密却下发 changePasswordToken"
+    else
+        ok "不需要改密时不下发一次性改密令牌（语义一致）"
+    fi
+    if [ "$hasToken" = "yes" ]; then
+        ok "已改过口令的账号能拿到会话 token（不被误锁在改密流程）"
+    else
+        bad "口令已改过却拿不到会话 token（登录卡在改密流程，P0-1 的反向缺陷）"
+    fi
     ;;
   *)
     warn "读不到 opsmesh.users.must_change_password（MySQL 容器不可用？），跳过 4c 的一致性判定"
@@ -328,9 +365,17 @@ check_metrics() {
   local name="$1" port="$2" expect="$3"
   local c; c="$(curl -sS --max-time 6 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/metrics" 2>/dev/null)"
   if [ "$expect" = "yes" ]; then
-    [ "$c" = "200" ] && ok "${name} :${port}/metrics → 200（源码声明暴露）" || bad "${name} :${port}/metrics → ${c}（源码声明应暴露）"
+    if [ "$c" = "200" ]; then
+        ok "${name} :${port}/metrics → 200（源码声明暴露）"
+    else
+        bad "${name} :${port}/metrics → ${c}（源码声明应暴露）"
+    fi
   else
-    [ "$c" = "404" ] && ok "${name} :${port}/metrics → 404（源码声明未暴露，符合预期）" || warn "${name} :${port}/metrics → ${c}（预期 404，请复核）"
+    if [ "$c" = "404" ]; then
+        ok "${name} :${port}/metrics → 404（源码声明未暴露，符合预期）"
+    else
+        warn "${name} :${port}/metrics → ${c}（预期 404，请复核）"
+    fi
   fi
 }
 check_metrics device-svc "$(env_val DEVICE_SVC_HTTP_PORT 8101)" yes
@@ -494,7 +539,11 @@ for e in "auth-svc:$(env_val AUTH_SVC_HTTP_PORT 8100):/health" \
          "autoscaler-svc:$(env_val AUTOSCALER_SVC_HTTP_PORT 8111):/health"; do
   n="${e%%:*}"; r="${e#*:}"; p="${r%%:*}"; path="${r#*:}"
   c="$(curl -sS --max-time 6 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${p}${path}" 2>/dev/null)"
-  [ "$c" = "200" ] && ok "${n} :${p}${path} → 200" || bad "${n} :${p}${path} → ${c:-无响应}"
+  if [ "$c" = "200" ]; then
+      ok "${n} :${p}${path} → 200"
+  else
+      bad "${n} :${p}${path} → ${c:-无响应}"
+  fi
 done
 
 sec "7. Prometheus 采集目标真实性"
@@ -707,7 +756,11 @@ if [ -n "$MYSQL_C" ]; then
   for pair in "opsmesh:users" "opsmesh:devices" "opsmesh_device:devices" "opsmesh_task:tasks"; do
     d="${pair%%:*}"; t="${pair#*:}"
     cnt="$(docker exec "$MYSQL_C" sh -c "mysql -u'$U' -p'$PWDB' -D $d -N -e 'SELECT COUNT(*) FROM $t;'" 2>/dev/null)"
-    [ -n "$cnt" ] && ok "${d}.${t} 可查（${cnt} 行）" || warn "${d}.${t} 不可查（表名可能不同）"
+    if [ -n "$cnt" ]; then
+        ok "${d}.${t} 可查（${cnt} 行）"
+    else
+        warn "${d}.${t} 不可查（表名可能不同）"
+    fi
   done
   echo "  ---- P0-7 修复实证（alert/config 持久化必须真实可用）----"
   for pair in "opsmesh_alert:alerts" "opsmesh_config:config_entries"; do
@@ -816,8 +869,11 @@ else
     asset="$(printf '%s' "$ebody" | grep -o '/enterprise/assets/[^"'"'"']*\.js' | head -1)"
     if [ -n "$asset" ]; then
       acode="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' "$CP$asset" 2>/dev/null)"
-      [ "$acode" = "200" ] && ok "SPA 首个 JS 资源可取（${asset##*/} → 200）" \
-                           || bad "SPA 首个 JS 资源不可取（${asset##*/} → ${acode:-无响应}）"
+      if [ "$acode" = "200" ]; then
+          ok "SPA 首个 JS 资源可取（${asset##*/} → 200）"
+      else
+          bad "SPA 首个 JS 资源不可取（${asset##*/} → ${acode:-无响应}）"
+      fi
       # 带内容哈希的 assets 应长缓存。
       acc="$(curl "${K[@]}" -D - -o /dev/null "$CP$asset" 2>/dev/null | grep -i '^cache-control:' | tr -d '\r')"
       case "$acc" in
@@ -843,8 +899,11 @@ else
           esac
         else
           # 无旁路文件属正常（vite 只对超阈值资源产出），但此时必须是未压缩原文。
-          [ "$elen" = "$ident_len" ] && warn "$asset 无 .$([ "$enc" = gzip ] && echo gz || echo br) 旁路（返回未压缩原文，功能正确）" \
-                                     || warn "$asset 未声明 Content-Encoding 但体积异常（${elen}B vs ${ident_len}B）"
+          if [ "$elen" = "$ident_len" ]; then
+              warn "$asset 无 .$([ "$enc" = gzip ] && echo gz || echo br) 旁路（返回未压缩原文，功能正确）"
+          else
+              warn "$asset 未声明 Content-Encoding 但体积异常（${elen}B vs ${ident_len}B）"
+          fi
         fi
       done
     else
@@ -855,12 +914,18 @@ else
   fi
   # SPA 路由回退（Vue Router createWebHistory）
   fbcode="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' "$CP/enterprise/devices" 2>/dev/null)"
-  [ "$fbcode" = "200" ] && ok "SPA 深链回退 /enterprise/devices → 200" \
-                        || bad "SPA 深链回退 /enterprise/devices → ${fbcode:-无响应}（应 200 回退 index.html）"
+  if [ "$fbcode" = "200" ]; then
+      ok "SPA 深链回退 /enterprise/devices → 200"
+  else
+      bad "SPA 深链回退 /enterprise/devices → ${fbcode:-无响应}（应 200 回退 index.html）"
+  fi
   # 缺包必须 404：回退 HTML 会让浏览器报 MIME 错误，排障成本高。
   mcode="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' "$CP/enterprise/assets/__missing__.js" 2>/dev/null)"
-  [ "$mcode" = "404" ] && ok "缺失分包 → 404（未回退 HTML）" \
-                       || bad "缺失分包返回 ${mcode}（应 404）"
+  if [ "$mcode" = "404" ]; then
+      ok "缺失分包 → 404（未回退 HTML）"
+  else
+      bad "缺失分包返回 ${mcode}（应 404）"
+  fi
   # 路径穿越不得命中任何文件
   tcode="$(curl "${K[@]}" -o /dev/null -w '%{http_code}' --path-as-is "$CP/enterprise/assets/../../healthz" 2>/dev/null)"
   case "$tcode" in
@@ -910,31 +975,43 @@ if [ -n "${MYSQL_C:-}" ] && [ -n "${U:-}" ]; then
     fi
     # 防篡改基线：每条已应用迁移都须有非空 checksum（改动既有迁移文件会在启动期被 checksum 门禁拦下）。
     nock="$(docker exec "$MYSQL_C" sh -c "mysql -u'$U' -p'$PWDB' -D opsmesh -N -e \"SELECT COUNT(*) FROM schema_migrations WHERE checksum IS NULL OR checksum='';\"" 2>/dev/null | tr -d ' \r')"
-    [ "$nock" = "0" ] && ok "全部已应用迁移均有 checksum（防篡改基线就绪）" \
-                      || bad "有 ${nock} 条迁移缺 checksum（checksum 门禁失效）"
+    if [ "$nock" = "0" ]; then
+        ok "全部已应用迁移均有 checksum（防篡改基线就绪）"
+    else
+        bad "有 ${nock} 条迁移缺 checksum（checksum 门禁失效）"
+    fi
     # P0-6：用户表租户列 + 唯一索引须真实落库（否则 JWT 无法携带租户、隔离退化）。
     tcol="$(docker exec "$MYSQL_C" sh -c "mysql -u'$U' -p'$PWDB' -D opsmesh -N -e \"SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='opsmesh' AND table_name='users' AND column_name='tenant_id';\"" 2>/dev/null | tr -d ' \r')"
     if [ "$tcol" = "1" ]; then
       ok "users.tenant_id 列已落库（P0-6 数据模型就绪）"
       # 迁移 018 须把历史行回填为默认租户，否则存量用户的 JWT 租户为空 → 隔离静默退化。
       nempty="$(docker exec "$MYSQL_C" sh -c "mysql -u'$U' -p'$PWDB' -D opsmesh -N -e \"SELECT COUNT(*) FROM users WHERE tenant_id IS NULL OR tenant_id='';\"" 2>/dev/null | tr -d ' \r')"
-      [ "$nempty" = "0" ] && ok "users 历史行租户已回填（无空租户用户）" \
-                         || bad "有 ${nempty} 个用户 tenant_id 为空（P0-6 回填缺失，隔离会退化）"
+      if [ "$nempty" = "0" ]; then
+          ok "users 历史行租户已回填（无空租户用户）"
+      else
+          bad "有 ${nempty} 个用户 tenant_id 为空（P0-6 回填缺失，隔离会退化）"
+      fi
     else
       bad "users.tenant_id 列缺失（P0-6 迁移未生效！）"
     fi
     # 领取侧租户过滤依赖 tasks.tenant_id 可比较，列缺失会导致过滤静默失效。
     tcol2="$(docker exec "$MYSQL_C" sh -c "mysql -u'$U' -p'$PWDB' -D opsmesh -N -e \"SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='opsmesh' AND table_name='tasks' AND column_name='tenant_id';\"" 2>/dev/null | tr -d ' \r')"
-    [ "$tcol2" = "1" ] && ok "tasks.tenant_id 列已落库（领取侧租户过滤可生效）" \
-                       || warn "tasks.tenant_id 列缺失（若领取侧过滤未依赖此列可忽略）"
+    if [ "$tcol2" = "1" ]; then
+        ok "tasks.tenant_id 列已落库（领取侧租户过滤可生效）"
+    else
+        warn "tasks.tenant_id 列缺失（若领取侧过滤未依赖此列可忽略）"
+    fi
   else
     bad "无法读取 opsmesh.schema_migrations（迁移体系未生效？）"
   fi
   # 回滚脚本齐备性：每个迁移都应随附 .down.sql（P0-5 可回滚交付物）。
   upf="$(count_sql "${ROOT}/internal/store/migrations" no)"
   dnf="$(count_sql "${ROOT}/internal/store/migrations" yes)"
-  [ "$upf" = "$dnf" ] && ok "回滚脚本齐备（up=${upf} down=${dnf}）" \
-                      || bad "回滚脚本缺失：up=${upf} down=${dnf}（P0-5 可回滚性不达标）"
+  if [ "$upf" = "$dnf" ]; then
+      ok "回滚脚本齐备（up=${upf} down=${dnf}）"
+  else
+      bad "回滚脚本缺失：up=${upf} down=${dnf}（P0-5 可回滚性不达标）"
+  fi
 else
   warn "未取得 MySQL 容器/凭据上下文，跳过 P0-5/P0-6 落库断言"
 fi
@@ -959,34 +1036,59 @@ sec "13. 审计链防篡改与保留策略（P1-3 回归）"
 if [ -n "${MYSQL_C:-}" ] && [ -n "${U:-}" ]; then
   q() { docker exec "$MYSQL_C" sh -c "mysql -u'$U' -p'$PWDB' -D opsmesh -N -e \"$1\"" 2>/dev/null | tr -d ' \r'; }
   ccol="$(q "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='opsmesh' AND table_name='audit_log' AND column_name IN ('prev_hash','entry_hash');")"
-  [ "$ccol" = "2" ] && ok "audit_log 已落 prev_hash/entry_hash 链式列" \
-                    || bad "audit_log 链式列缺失（期望 2 列，实为 ${ccol:-查询失败}；P1-3 迁移未生效！）"
+  if [ "$ccol" = "2" ]; then
+      ok "audit_log 已落 prev_hash/entry_hash 链式列"
+  else
+      bad "audit_log 链式列缺失（期望 2 列，实为 ${ccol:-查询失败}；P1-3 迁移未生效！）"
+  fi
   for t in audit_chain_head audit_log_archive audit_archive_meta; do
     tcnt="$(q "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='opsmesh' AND table_name='$t';")"
-    [ "$tcnt" = "1" ] && ok "表 ${t} 已建" || bad "表 ${t} 缺失（P1-3 迁移未生效！）"
+    if [ "$tcnt" = "1" ]; then
+        ok "表 ${t} 已建"
+    else
+        bad "表 ${t} 缺失（P1-3 迁移未生效！）"
+    fi
   done
   icnt="$(q "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema='opsmesh' AND table_name='audit_log' AND index_name='idx_audit_entry_hash';")"
-  [ "${icnt:-0}" -ge 1 ] && ok "audit_log.idx_audit_entry_hash 已建（链式窗口查询不全表扫）" \
-                         || bad "链式索引 idx_audit_entry_hash 缺失（P1-3 迁移未生效！）"
+  if [ "${icnt:-0}" -ge 1 ]; then
+      ok "audit_log.idx_audit_entry_hash 已建（链式窗口查询不全表扫）"
+  else
+      bad "链式索引 idx_audit_entry_hash 缺失（P1-3 迁移未生效！）"
+  fi
   hrow="$(q "SELECT COUNT(*) FROM audit_chain_head WHERE id=1;")"
-  [ "$hrow" = "1" ] && ok "audit_chain_head 单行链头就绪（多副本串行化基线）" \
-                    || bad "audit_chain_head 无 id=1 单行（并发写入将无法串行化）"
+  if [ "$hrow" = "1" ]; then
+      ok "audit_chain_head 单行链头就绪（多副本串行化基线）"
+  else
+      bad "audit_chain_head 无 id=1 单行（并发写入将无法串行化）"
+  fi
   # 13b 链写入活性（真实运行期证据，非静态配置）：最新审计行必须已纳入链，且链头指向它。
   chalive="$(q "SELECT IFNULL((SELECT entry_hash<>'' FROM audit_log ORDER BY id DESC LIMIT 1),0);")"
-  [ "$chalive" = "1" ] && ok "最新审计行已带 entry_hash（运行期链式写入生效）" \
-                       || warn "最新审计行无 entry_hash（可能尚无审计事件，或写入降级为非链式——查控制面日志）"
+  if [ "$chalive" = "1" ]; then
+      ok "最新审计行已带 entry_hash（运行期链式写入生效）"
+  else
+      warn "最新审计行无 entry_hash（可能尚无审计事件，或写入降级为非链式——查控制面日志）"
+  fi
   if [ "$chalive" = "1" ]; then
     hcons="$(q "SELECT (last_hash = (SELECT entry_hash FROM audit_log WHERE entry_hash<>'' ORDER BY id DESC LIMIT 1)) FROM audit_chain_head WHERE id=1;")"
-    [ "$hcons" = "1" ] && ok "链头 last_hash == 最新链式行 entry_hash（链头跟随，尾部未被删改）" \
-                       || bad "链头与最新链式行不一致（尾部行被删除或链头被改动，P1-3 完整性告警！）"
+    if [ "$hcons" = "1" ]; then
+        ok "链头 last_hash == 最新链式行 entry_hash（链头跟随，尾部未被删改）"
+    else
+        bad "链头与最新链式行不一致（尾部行被删除或链头被改动，P1-3 完整性告警！）"
+    fi
   fi
   nlegacy="$(q "SELECT COUNT(*) FROM audit_log WHERE entry_hash IS NULL OR entry_hash='';")"
-  [ "${nlegacy:-0}" = "0" ] && ok "无链前遗留行（全部审计行已纳入哈希链）" \
-                            || warn "有 ${nlegacy} 条链前遗留行（迁移 019 之前写入，未纳入链，自检会如实计数）"
+  if [ "${nlegacy:-0}" = "0" ]; then
+      ok "无链前遗留行（全部审计行已纳入哈希链）"
+  else
+      warn "有 ${nlegacy} 条链前遗留行（迁移 019 之前写入，未纳入链，自检会如实计数）"
+  fi
   # 13c 保留策略配置已接线（--audit-retention-days 出现在控制面启动参数中）。
   ret="$(docker inspect opsmesh-controlplane --format '{{json .Config.Cmd}}' 2>/dev/null | grep -o 'audit-retention-days=[0-9]*' | head -1)"
-  [ -n "$ret" ] && ok "控制面已接线保留策略（${ret}）" \
-                || bad "控制面启动参数未见 --audit-retention-days（P1-3 保留策略未接线！）"
+  if [ -n "$ret" ]; then
+      ok "控制面已接线保留策略（${ret}）"
+  else
+      bad "控制面启动参数未见 --audit-retention-days（P1-3 保留策略未接线！）"
+  fi
 else
   warn "未取得 MySQL 容器/凭据上下文，跳过 P1-3 落库断言"
 fi
@@ -1012,12 +1114,21 @@ else
   cok="$(printf '%s\n' "$mbody2" | grep -E '^opsmesh_audit_chain_ok [0-9]+$' | head -1 | awk '{print $2}')"
   crow="$(printf '%s\n' "$mbody2" | grep -E '^opsmesh_audit_chain_checked_rows [0-9]+$' | head -1 | awk '{print $2}')"
   echo "  supported=${csup:-?} ok=${cok:-?} checked_rows=${crow:-?} checks_total=${ctot:-?}"
-  [ "${ctot:-0}" -ge 1 ] && ok "链自检已实际执行（checks_total=${ctot}，leader 循环在跑）" \
-                         || bad "链自检从未执行（checks_total=0，leader 维护循环未生效！）"
-  [ "${csup:-0}" = "1" ] && ok "存储后端支持链式校验（supported=1）" \
-                         || bad "supported=${csup:-0}（SQL 后端应支持链式校验）"
-  [ "${cok:-0}" = "1" ] && ok "链自检结论自洽（ok=1）" \
-                        || bad "ok=${cok:-0}（链完整性校验未通过，P1-3 告警：疑似篡改或尾部删除）"
+  if [ "${ctot:-0}" -ge 1 ]; then
+      ok "链自检已实际执行（checks_total=${ctot}，leader 循环在跑）"
+  else
+      bad "链自检从未执行（checks_total=0，leader 维护循环未生效！）"
+  fi
+  if [ "${csup:-0}" = "1" ]; then
+      ok "存储后端支持链式校验（supported=1）"
+  else
+      bad "supported=${csup:-0}（SQL 后端应支持链式校验）"
+  fi
+  if [ "${cok:-0}" = "1" ]; then
+      ok "链自检结论自洽（ok=1）"
+  else
+      bad "ok=${cok:-0}（链完整性校验未通过，P1-3 告警：疑似篡改或尾部删除）"
+  fi
 fi
 
 sec "14. agent 身份绑定与 per-agent 密钥（P1-2 回归）"
@@ -1042,8 +1153,11 @@ else
         || sigmiss="${sigmiss} ${a}/${r}"
     done
   done
-  [ -z "$sigmiss" ] && ok "验签指标全标签集已暴露（alg∈{v1,v2,none,unknown} × result∈{ok,rejected}）" \
-                    || bad "验签指标缺时序：${sigmiss}（P1-2 可观测性未接线）"
+  if [ -z "$sigmiss" ]; then
+      ok "验签指标全标签集已暴露（alg∈{v1,v2,none,unknown} × result∈{ok,rejected}）"
+  else
+      bad "验签指标缺时序：${sigmiss}（P1-2 可观测性未接线）"
+  fi
   for s in per_agent fleet; do
     if grep -q "^opsmesh_agent_signing_key_source_total{source=\"${s}\"} [0-9]" <<<"$mbody3"; then
       ok "密钥来源指标已暴露（source=${s}）"
@@ -1060,11 +1174,17 @@ else
     warn "本次部署后尚无 agent 验签流量（v2/ok=0）——纳管 agent 后应转为 ≥1，届时可复跑本脚本复查"
   fi
   v1ok="$(printf '%s\n' "$mbody3" | grep -E '^opsmesh_agent_signature_verifications_total\{alg="v1",result="ok"\} [0-9]+$' | head -1 | awk '{print $2}')"
-  [ "${v1ok:-0}" = "0" ] && ok "无 v1（不覆盖载荷）遗留算法流量" \
-                         || warn "存在 v1 签名流量（v1/ok=${v1ok}，滚动升级未收尾；v1 不覆盖载荷，见告警 OpsMeshAgentSignatureLegacyAlg）"
+  if [ "${v1ok:-0}" = "0" ]; then
+      ok "无 v1（不覆盖载荷）遗留算法流量"
+  else
+      warn "存在 v1 签名流量（v1/ok=${v1ok}，滚动升级未收尾；v1 不覆盖载荷，见告警 OpsMeshAgentSignatureLegacyAlg）"
+  fi
   flt="$(printf '%s\n' "$mbody3" | grep -E '^opsmesh_agent_signing_key_source_total\{source="fleet"\} [0-9]+$' | head -1 | awk '{print $2}')"
-  [ "${flt:-0}" = "0" ] && ok "无全舰队预共享密钥兜底使用（per-agent 密钥隔离生效）" \
-                        || warn "存在全舰队预共享密钥兜底验签（fleet=${flt}，单机泄漏即全舰队可冒充）"
+  if [ "${flt:-0}" = "0" ]; then
+      ok "无全舰队预共享密钥兜底使用（per-agent 密钥隔离生效）"
+  else
+      warn "存在全舰队预共享密钥兜底验签（fleet=${flt}，单机泄漏即全舰队可冒充）"
+  fi
 fi
 
 # 14c 落库：per-agent 密钥列已生成（有 agent 时）。

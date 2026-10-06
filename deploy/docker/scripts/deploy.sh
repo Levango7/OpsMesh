@@ -887,12 +887,17 @@ ensure_service_databases() {
         log_error "缺少建库脚本 ${sql}（compose 首启也依赖它，不能跳过）"
         return 1
     fi
+    # SC2016 是刻意的：这里的 $MYSQL_ROOT_PASSWORD 必须**原样**送进容器由容器内的 sh 展开，
+    # 口令只存在于 mysql 容器的 env 里，宿主机没有它——改成双引号反而会把空串传进去。
+    # shellcheck disable=SC2016
     if ! compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' < "$sql" 2>/dev/null; then
         log_error "执行 init-databases.sql 失败（MySQL 未就绪或 root 口令不匹配）"
         return 1
     fi
     want="$(grep -oE 'CREATE DATABASE IF NOT EXISTS[[:space:]]+[A-Za-z0-9_]+' "$sql" \
             | awk '{print $NF}' | sort -u)"
+    # 同上：口令在容器内展开，宿主机拿不到，单引号是刻意的。
+    # shellcheck disable=SC2016
     have="$(compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "SHOW DATABASES"' 2>/dev/null \
             | tr -d '\r' | sort -u)"
     missing="$(comm -23 <(printf '%s\n' "$want") <(printf '%s\n' "$have") | tr '\n' ' ')"

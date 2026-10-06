@@ -479,8 +479,12 @@ jobs:
               echo "::error::git ls-files 未返回任何 .sh —— 门禁空转，不等于「脚本都干净」"
               exit 1
           fi
-          "$SC" -S warning "${SH[@]}"
-          echo "✅ ${#SH[@]} 个交付脚本在 shellcheck -S warning 下 0 findings"
+          # 档位：-S info（TD-78，2026-10-06 从 warning 收紧）。此前 44 处 info 级发现长期隐形：
+          # verify-runtime 39×SC2015、validate-deploy-assets SC2012/SC2015、deploy.sh 2×SC2016、
+          # verify-release-artifacts SC2086——"0 findings"此前只对 warning 档成立，门禁名不副实。
+          # 清零后档位收到 info；style 级仍不设卡（格式化偏好不进交付门禁）。
+          "$SC" -S info "${SH[@]}"
+          echo "✅ ${#SH[@]} 个交付脚本在 shellcheck -S info 下 0 findings"
       - name: 部署资产一致性门禁
         run: |
           # 先赋值再 export：合在一行会让 export 的退出码盖掉 go env 的（shellcheck SC2155，
