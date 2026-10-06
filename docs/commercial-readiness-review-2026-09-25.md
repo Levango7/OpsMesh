@@ -3804,7 +3804,7 @@ runtime.(*spanQueue).put(...)       src/runtime/mgcmark_greenteagc.go:409
 | 发布链顺序是否被门禁守住 | 是（`validate-deploy-assets.sh` §17，静态断言，含一次假证据撤回） | §37 |
 | `main` 分支保护 | **无**（`gh api …/branches/main/protection` → 404，本机计划为免费档） | §35 |
 
-**切一版会踩到的三件事（按严重度排）**：
+**切一版会踩到的四件事（按严重度排）**：
 
 1. **TD-80 会挡掉二进制发布腿**。`ci.yml` 的 `release` job `needs` 八个 job
    （`build-test`/`integration`/`security`/`services`/`proto`/`frontend`/`race`/`release-dryrun`），
@@ -3815,9 +3815,29 @@ runtime.(*spanQueue).put(...)       src/runtime/mgcmark_greenteagc.go:409
 2. **`promote` 的首次真跑就是切版那一刻**。§17 只是静态断言它的形状，不能替代一次真实执行；
    `:latest`/`:版本` 的重打标签走 `docker buildx imagetools create`（不重建，digest 不变），
    这条路径至今没有在生产 registry 上跑过。
-3. **存量库升级演练要重做**。已做过的演练是 `0.11.0 → 0.12.0`，而 `v0.12.0` 之后新增两条迁移，
-   其中 `020` 建 **FULLTEXT 索引**——存量表上该 DDL 的耗时与锁行为**未经测量**，
-   不能把上一次演练的结论直接套到新版本上。
+3. **存量库升级演练要重做，而且有明确的预算冲突**。已做过的演练是 `0.11.0 → 0.12.0`，而 `v0.12.0` 之后新增两条迁移，
+   两条都没写 `ALGORITHM`/`LOCK`，于是按 MySQL 8.0 在线 DDL 的默认语义执行
+   （出处：[InnoDB Online DDL Operations](https://dev.mysql.com/doc/refman/8.0/en/innodb-online-ddl-operations.html)，生成列表 17.19、索引表 17.16）：
+
+   * `020` 加 STORED 生成列 `ci_attrs_text` → **Instant No、In Place No、Rebuilds Table Yes、Permits Concurrent DML No**
+     （官方原文：`ADD COLUMN is not an in-place operation for stored columns … because the expression must be evaluated by the server`）
+   * `020` 建**首个** FULLTEXT 索引（表内无自定义 `FTS_DOC_ID`）→ In Place Yes 但**仍重建整表**、期间不放开并发写
+     （官方原文：`Adding the first FULLTEXT index rebuilds the table if there is no user-defined FTS_DOC_ID column`）
+   * `021` DROP 同名索引后在 7 列上重建 → 属"后续 FULLTEXT 索引"，不重建表，但并发写仍不放开
+
+   即 `ci_items` 在升级窗口里至少被**整表重建两次**、且**期间不允许并发写入**。
+   而交付侧的等待预算是固定的：`deploy/docker/scripts/deploy.sh:1014` 是 `wait_for_healthy controlplane 120`，
+   控制面健康检查为 `start_period: 30s / interval: 30s / retries: 3 / timeout: 5s`（`docker-compose.prod.yml` 的 `controlplane.healthcheck`）。
+   **推论（这是要演练的硬理由，不是猜测）**：存量 `ci_items` 行数大到让迁移超过这个预算时，`deploy.sh up` 会报
+   "120s 内未就绪"并返回 1——症状长得像"新版本部署失败"，实际是数据量导致的迁移耗时。
+   演练必须在**有代表性的行数**下取数（而不是空库或几百行），并同时记录 `020`+`021` 各自墙钟时间。
+4. **发布链没有 `concurrency` 串行闸**。`ci.yml` 与 `release.yml` 都**没有** `concurrency` 块（工作树与 HEAD 均如此），
+   后果分两面：好的一面是分支推送不会互相取消（每次 push 各跑一轮 12 job，归因清楚）；
+   坏的一面是**两个 tag 短间隔推送时，两条发布链会并发跑**，而 `promote` 是按 tag 重打 `:latest`/`:版本`，
+   最终 `:latest` 由**最后完成者**决定而不是版本最新者——这与 §20 里"feature 分支刻意不打 latest"要避免的形态同源。
+   建议动作很小（`concurrency: {group: release, cancel-in-progress: false}`，只排队不取消），
+   但它**属于"只在发版那一刻才第一次执行"的步骤**（§19 教训 15 的同族），我没有盲改：
+   要么随下一次切版一起真跑验证，要么先在 `release-dryrun` 里造一个可执行的最小复现路径再落地。
 
 **三条仍在他手上的决定**（与技术实现不同，我不代拍）：alert-svc 的 gRPC 未鉴权入口出厂默认、
 MPL-2.0 与 npm 依赖的法务口径、TD-62 的插件接线下一版是否对外宣称。
