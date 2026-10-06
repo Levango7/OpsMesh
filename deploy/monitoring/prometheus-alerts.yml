@@ -337,3 +337,31 @@ groups:
         annotations:
           summary: "{{ $labels.job }} 的业务指标标签基数已触顶并折叠到 :other"
           description: "近 30 分钟有 {{ $value }} 次业务指标写入被折叠：说明 name 维度或标签值在膨胀（常见成因是把实体 ID 当标签、或把可变字符串拼进指标名）。按 name 的看板与告警此后不再可信。"
+
+  # --------------------------------------------------------------------
+  # 独立进程插件（TD-62）——扩展点调用是同步发生在请求路径上的，
+  # 所以"插件不可达"的客户症状不是"少了一条日志"，而是"平台配置改不动了"。
+  # 两条规则分别对应两种必须区分开的结局：outcome="error" 是运维故障（要打电话），
+  # outcome="denied" 是策略正在否决（正常业务，除非突然批量出现）。
+  # 没配 --plugin-manifest 时这两条恒为 no data：opsmesh_plugin_hook_calls_total 全为 0，
+  # increase() 不满足 > 0，因此默认部署不会产生噪声告警。
+  # --------------------------------------------------------------------
+  - name: opsmesh_plugin_alerts
+    rules:
+      - alert: OpsMeshPluginHookFailed
+        expr: sum by (hook) (increase(opsmesh_plugin_hook_calls_total{outcome="error"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "插件扩展点 {{ $labels.hook }} 调用失败（近 10 分钟 {{ $value }} 次）"
+          description: "独立进程插件不可达/超时/返回非 2xx 或坏响应。后果与扩展点有关：config.preSet 与 task.preClaim 是 fail-closed——配置写入会被拒 400、任务领取会返回空；config.postSet 只丢一次变更通知（业务已落库不回滚）。排查顺序：① 插件进程是否存活（GET 它的 /health）；② 令牌两侧是否一致（清单 tokenEnv 指向的环境变量 vs 插件启动时读的）；③ 控制面日志里「插件钩子」行的错误文本；④ 若插件确已停用，请同时从清单里删掉该绑定并重启，不要留着让它把写入挡完。"
+
+      - alert: OpsMeshPluginHookDeniedBurst
+        expr: sum by (hook) (increase(opsmesh_plugin_hook_calls_total{outcome="denied"}[15m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "插件在批量否决扩展点 {{ $labels.hook }}（近 15 分钟 {{ $value }} 次）"
+          description: "denied 本身说明策略在正常工作，但批量出现通常是两种情况之一：有人改了插件策略把合法请求也挡了，或客户端在拿被挡的参数反复重试。先看插件侧日志的 reason（宿主不回吐给客户端，只在这里可见），再决定是回滚插件策略还是修调用方。"

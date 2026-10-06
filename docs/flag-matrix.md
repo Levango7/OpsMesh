@@ -1,6 +1,6 @@
 # OpsMesh 配置项治理矩阵（flag-matrix）
 
-> 目的：约束 133 个 flag 的语义边界、组合约束与生产默认值，避免"能配但不知道该怎么配"。
+> 目的：约束 135 个 flag 的语义边界、组合约束与生产默认值，避免"能配但不知道该怎么配"。
 > 权威定义在 `internal/config/config.go` 与 `Config.Validate()`（启动期 fail-fast 校验）。
 > 本文件从属于 README「配置参考」，只记录**组合约束**与**默认值差异**，不再单独罗列字段。
 
@@ -75,6 +75,12 @@
 | `--production=true` + `--demo=true` | ❌ 拒绝启动（demo 会关掉 bootstrap 凭据校验、CSRF Origin 校验、RBAC 兜底与 gRPC agent 身份签名四道防线） |
 
 ---
+
+| `--plugin-manifest` 指向的文件解析或校验失败 + `--production=true` | ❌ 拒绝启动（非生产模式打 Warning 并按「未启用插件宿主」继续，不留半注册状态） |
+| `--plugin-manifest` 非空 + 清单里 `tokenEnv` 指向的环境变量为空 | ❌ 拒绝启动：没有令牌的控制面调用无法被插件侧鉴权，等于开一条不可验证的准入通道 |
+| 清单里 URL 指向私网/环回 + `--plugin-allow-private=false` | ❌ 拒绝启动（SSRF 基线与通知渠道同一条 `internal/egress` 策略；链路本地/云元数据段即使 true 也恒拒） |
+| `--plugin-allow-private` 与 `--webhook-allow-private` | 刻意**各自独立**：合并会让「放开通知渠道」顺带放开插件出站，两个出路面各开一次 |
+| 插件进程不可达 + `config.preSet` / `task.preClaim` | ⚠️ **fail-closed**：平台配置写入被拒 400、任务领取返回空。停掉一个准入插件不等于绕过准入；出厂告警 `OpsMeshPluginHookFailed` |
 
 ## 4. 多副本必须一致的密钥清单
 

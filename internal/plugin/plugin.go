@@ -3,15 +3,20 @@
 // 设计目标：在不修改控制面核心代码的前提下，允许通过插件扩展控制面行为
 // （如审计增强、自定义通知渠道、配置变更钩子、准入校验等）。
 //
-// ⚠️ 现状（2026-10-06 复测，替换 10-04 的"零调用点"口径；也别把这段注释当交付承诺读）：
+// ⚠️ 现状（2026-10-07 更新，替换 10-06 的"两件未交付"口径；也别把这段注释当交付承诺读）：
 // AllHooks() 冻结的 3 个扩展点都已有控制面触发点——internal/controlplane/platform_config.go:117
 // （config.preSet）、:155（config.postSet）、server_netsec.go:103（task.preClaim），统一经
-// plugin_host.go:74 调用本包的 Manager.FireHook；internal/controlplane/plugin_hook_gate_test.go
+// plugin_host.go:77 调用本包的 Manager.FireHook；internal/controlplane/plugin_hook_gate_test.go
 // 强制"新增扩展点必须同时有触发点与测试"，所以"接线只覆盖一部分"这种漂移会被门禁拦住。
-// 仍未交付的两件：① 插件市场下载的 plugin.bin 没有加载器（全仓 plugin.Open 命中 0，
-// internal/controlplane/marketplace.go:18 自述）；② 插件运行时模型未决。
-// ⇒ "可插拔扩展"目前的真实形状是"3 个钩子可用"，不是"任意扩展点可用"。
-// 立项与所需决策见 docs/tech-debt.md TD-62。
+// 运行时模型已定并交付：**独立进程 + HTTP 契约**（remote.go），由
+// internal/controlplane/plugin_remote.go 从 --plugin-manifest 装载，并在 NewServer 里接进启动路径
+// （真机证据见 docs/commercial-readiness-review-2026-09-25.md §42；用法与契约见 plugins/remote-example/README.md）。
+// 仍未交付的一件：① 插件市场下载的 plugin.bin 没有加载器（全仓 plugin.Open 命中 0，
+// internal/controlplane/marketplace.go:18 自述）——那是"把二进制丢进市场就能装载"的另一件事，
+// 与本轮交付的"独立进程插件"是两条不同路径，不要混为一句宣传。
+// ⇒ "可插拔扩展"目前的真实形状是"3 个扩展点可被外部进程接管（需显式配置清单）"，
+// 而不是"任意扩展点可用"，也不是"市场里的插件可装载"。
+// 立项与剩余决策见 docs/tech-debt.md TD-62。
 //
 // 核心抽象：
 //   - Plugin：插件实例接口（Name/Version/Init/Close）。

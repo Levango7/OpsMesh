@@ -97,6 +97,11 @@ type M struct {
 	// 且 agentID 绝不出现在标签里——算法声明由 agent 自选，入标签等于把基数控制权交给对方。
 	sigVerifs map[string]uint64
 	sigKeySrc map[string]uint64
+
+	// 插件扩展点调用指标（TD-62）：pluginHooks 键为 "hook|outcome"，两侧标签都是固定集合
+	// （见 plugin.go）；pluginRemoteCount 为当前注册的独立进程插件数。
+	pluginRemoteCount int64
+	pluginHooks       map[string]uint64
 }
 
 // 验签指标的固定标签取值。渲染时按这些取值全量输出（计数为 0 也输出），
@@ -110,12 +115,13 @@ var (
 // New 构造空指标注册表。
 func New() *M {
 	return &M{
-		tasks:      make(map[string]int64),
-		httpReqs:   make(map[string]uint64),
-		httpHist:   make(map[string]*httpHistStats),
-		httpSeries: make(map[string]struct{}),
-		sigVerifs:  make(map[string]uint64),
-		sigKeySrc:  make(map[string]uint64),
+		tasks:       make(map[string]int64),
+		httpReqs:    make(map[string]uint64),
+		httpHist:    make(map[string]*httpHistStats),
+		httpSeries:  make(map[string]struct{}),
+		sigVerifs:   make(map[string]uint64),
+		sigKeySrc:   make(map[string]uint64),
+		pluginHooks: make(map[string]uint64),
 	}
 }
 
@@ -352,6 +358,7 @@ func (m *M) Render() string {
 	b = m.appendHTTPMetrics(b)
 	b = m.appendAuditChainMetrics(b)
 	b = m.appendAgentSignatureMetrics(b)
+	b = m.appendPluginMetrics(b)
 	b = m.appendAppGaugeMetrics(b)
 	b = m.appendRuntimeMetrics(b)
 	return string(b)

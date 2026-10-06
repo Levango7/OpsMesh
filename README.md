@@ -141,7 +141,7 @@
 | 包 | 职责 |
 |---|---|
 | `internal/controlplane` | 控制面核心：HTTP 路由 + gRPC server + Registry + dashboard + 14 个功能域 handler（按 `server_*.go` 拆分） |
-| `internal/config` | 统一配置：133 个 flag，命令行优先 + `OPSMESH_*` 环境变量兜底 |
+| `internal/config` | 统一配置：135 个 flag，命令行优先 + `OPSMESH_*` 环境变量兜底 |
 | `internal/authctx` | 网关注入身份提取：从 HTTP 头 / gRPC metadata 提取 X-Tenant-ID / X-User-Id / X-User-Roles |
 | `internal/grpcx` | 自研 gRPC 传输层：JSON codec + 手写 ServiceDesc + pb stub 双轨（`proto/` buf 代码生成） |
 | `internal/tlsutil` | gRPC TLS / mTLS 工具 + 证书热重载（fsnotify watch，无需重启更新 TLS 配置） |
@@ -186,7 +186,7 @@
 | 包 | 职责 |
 |---|---|
 | `internal/platform` | 平台化业务引擎：租户管理 + API Key（`om_` 前缀 + SHA-256 hash）+ 插件市场 + 计费（计划/订阅/账单） |
-| `internal/plugin` | 插件框架：Plugin 接口 + Hook 扩展点 + HookHandler + Manager（注册/钩子触发/生命周期）。**能力边界（2026-10-06 复测，替换 10-04 的"零接线"口径）**：`AllHooks()` 冻结的 3 个扩展点**都已有控制面触发点**——`platform_config.go:117`（`config.preSet`，可阻断）、`:155`（`config.postSet`，只记审计）、`server_netsec.go:103`（`task.preClaim`，可阻断），统一经 `plugin_host.go:74` 落到 `Manager.FireHook`，并由 `plugin_hook_gate_test.go` 强制"新增扩展点必须同时有触发点与测试"。仍未交付的两件：① 插件市场的 `plugin.bin` **无加载器**（`internal/controlplane/marketplace.go:18` 自述，全仓 `plugin.Open(` 命中 0）；② 插件**运行时模型**未决（Go plugin / WASM / 独立进程 + RPC）。⇒ "不改核心代码扩展控制面行为"现在是**3 个具体钩子**可用，而不是任意扩展点可用；立项见 `docs/tech-debt.md` TD-62 |
+| `internal/plugin` | 插件框架：Plugin 接口 + Hook 扩展点 + HookHandler + Manager（注册/钩子触发/生命周期）+ 远程插件传输。**能力边界（2026-10-07 复测，替换 10-06 的"两件未交付"口径）**：`AllHooks()` 冻结的 3 个扩展点**都已有控制面触发点**——`platform_config.go:117`（`config.preSet`，可阻断）、`:155`（`config.postSet`，只记审计）、`server_netsec.go:103`（`task.preClaim`，可阻断），统一经 `plugin_host.go:77` 落到 `Manager.FireHook`，并由 `plugin_hook_gate_test.go` 强制"新增扩展点必须同时有触发点与测试"。**运行时模型已选定并交付：独立进程 + HTTP 契约**——传输 `internal/plugin/remote.go`，清单装载与 SSRF/令牌校验 `internal/controlplane/plugin_remote.go`，启动接线在 `internal/controlplane/server.go` 的插件宿主段（开关 `--plugin-manifest` / `OPSMESH_PLUGIN_MANIFEST`，环回插件端点需 `--plugin-allow-private`），参考实现与契约见 `plugins/remote-example/README.md`，可观测面 `opsmesh_plugin_remote_plugins` 与 `opsmesh_plugin_hook_calls_total`（按扩展点区分 ok / denied / error），出厂告警 `OpsMeshPluginHookFailed` 见 `deploy/monitoring/prometheus-alerts.yml`。仍未交付的一件：插件市场的 `plugin.bin` **无加载器**（`internal/controlplane/marketplace.go:18` 自述，全仓 `plugin.Open(` 命中 0）——那是"把二进制丢进市场就能装载"的另一件事，与上面这条路径不要混为一句宣传。⇒ "不改核心代码扩展控制面行为"现在的形状是**3 个扩展点可被外部进程接管**（需显式配清单并重启；插件不可达时准入类扩展点 fail-closed，配置写入会被拒），而不是"任意扩展点可用"，也不是"市场里的插件可装载"；立项与剩余项见 `docs/tech-debt.md` TD-62 |
 | `internal/extension` | API 网关引擎：路由规则匹配（PathPrefix 前缀 + 方法白名单）+ 令牌桶限流 + 网关统计聚合 |
 | `internal/gates` | 跨模块**结构性门禁**测试（包内只有测试）：扫 `services/*/cmd/*/main.go` 拦"要求 sql 却没配 DSN 就静默退内存"，扫 HPA 清单拦"引用没产出的 Pods 指标"，并对账 internal 包数与文档三处数字 |
 
@@ -383,7 +383,7 @@ helm install opsmesh ./deploy/helm/opsmesh -n opsmesh --create-namespace \
 ### 配置速查
 
 ```bash
-# 所有配置项（133 个 flag）
+# 所有配置项（135 个 flag）
 ./opsmesh --help
 # 查看版本
 ./opsmesh --version
@@ -734,7 +734,7 @@ Agent 端多控制面 failover：`--control-addrs="cp1:9090,cp2:9090"`，客户�
 
 ## 配置参考
 
-OpsMesh 启动参数共 **133 个 flag**，全部支持"命令行 flag 优先、环境变量兜底"语义（同名环境变量前缀 `OPSMESH_`）。下表按功能分组列出全部 flag。完整定义见 `internal/config/config.go`。
+OpsMesh 启动参数共 **135 个 flag**，全部支持"命令行 flag 优先、环境变量兜底"语义（同名环境变量前缀 `OPSMESH_`）。下表按功能分组列出全部 flag。完整定义见 `internal/config/config.go`。
 
 ### 基础配置
 
@@ -808,6 +808,8 @@ OpsMesh 启动参数共 **133 个 flag**，全部支持"命令行 flag 优先、
 | `--cb-half-open-max-calls` | int | 1 | OPSMESH_CB_HALF_OPEN_MAX_CALLS | 熔断器：HalfOpen 状态下允许的最大并发探测调用数 |
 | `--cb-rate-limit-per-sec` | int | 0 | OPSMESH_CB_RATE_LIMIT_PER_SEC | 控制面 API 限流阈值：每秒每 IP/tenant 最大请求数；0=禁用 API 限流（向后兼容） |
 | `--webhook-allow-private` | bool | false | OPSMESH_WEBHOOK_ALLOW_PRIVATE | SSRF 防护：允许内网 webhook URL（私网/loopback/链路本地）；默认 false=拒绝内网 webhook（安全基线，防 SSRF 访问云元数据/内网服务）；true=放行内网 webhook（内网部署场景，如钉钉/飞书内网网关） |
+| `--plugin-manifest` | string | "" | OPSMESH_PLUGIN_MANIFEST | 独立进程插件清单 JSON 路径（TD-62 运行时模型）。空=不启用插件宿主，三个扩展点零行为变化；非空则解析+校验（未知字段判错、扩展点必须在冻结清单里、令牌只经 tokenEnv 引用、URL 过 SSRF 校验），生产模式失败即终止启动。契约与格式见 `plugins/remote-example/README.md` |
+| `--plugin-allow-private` | bool | false | OPSMESH_PLUGIN_ALLOW_PRIVATE | SSRF 防护：允许插件 URL 指向私网/环回（集群内 sidecar 场景）。与 `--webhook-allow-private` **各自独立**（合并会让"放开通知渠道"顺带放开插件出站）；链路本地/云元数据段即使 true 也恒拒 |
 | `--allowed-origins` | string | "" | OPSMESH_ALLOWED_ORIGINS | CORS 白名单：逗号分隔的允许跨域来源（如 https://console.example.com）；空=同源策略（不输出 CORS 头）；非空=仅精确匹配的 Origin 放行（带凭证）；禁止配置 *（与凭证互斥） |
 
 ### 网络配置
@@ -934,7 +936,7 @@ Open-Core 双许可（内核 Apache-2.0，企业版前端商业授权）。未�
 
 > 任何校验失败（公钥配错、凭据过期、签名不符）都**降级为社区版而不拒绝启动**，原因可通过 `GET /api/v1/license` 查询。多副本部署时 `--license-public-key` 必须一致，否则负载均衡到不同副本时功能时有时无。
 
-> 共 **133 个 flag**，覆盖基础/存储/安全/网络/告警/日志/调度/纳管/高级/授权九大领域。所有 flag 均支持同名 `OPSMESH_*` 环境变量兜底，命令行显式设置优先级最高。
+> 共 **135 个 flag**，覆盖基础/存储/安全/网络/告警/日志/调度/纳管/高级/授权九大领域。所有 flag 均支持同名 `OPSMESH_*` 环境变量兜底，命令行显式设置优先级最高。
 
 ---
 
@@ -1100,7 +1102,7 @@ internal/                 ← 37 个包，按 8 个领域分组（详见上文"i
 ├── circuitbreaker/       ← 通用熔断器（Closed→Open→HalfOpen 状态机）
 ├── cmdb/                 ← 配置库 CMDB（M2）：模型 + 实例 CRUD + SQL + 采集 + 关系图谱 + 全文检索
 ├── compliance/           ← 安全合规检查引擎（CIS Benchmark 基线 + 扫描编排）
-├── config/               ← 统一配置（133 个 flag + env 兜底）
+├── config/               ← 统一配置（135 个 flag + env 兜底）
 ├── controlplane/         ← 控制面（HTTP 路由/gRPC server/Registry/dashboard + 14 个功能域 handler）
 ├── cron/                 ← 5 字段 cron 表达式匹配
 ├── dag/                  ← DAG 引擎（M5 作业编排）：拓扑排序 + 环检测 + 依赖就绪判定

@@ -54,6 +54,29 @@ spec:
           annotations:
             summary: "OpsMesh store swallowed errors"
             description: "存储层近 10 分钟吞掉读写错误：Store 不返回 error，表现是数据静默丢失。用 kubectl logs 抓 [store] 行，或 GET /api/v1/admin/store-failures 看按操作聚合。"
+        # 独立进程插件（TD-62）：扩展点调用同步发生在请求路径上，
+        # "插件不可达"的客户症状是"平台配置改不动了"（config.preSet 是 fail-closed）。
+        # expr 与 compose 侧 deploy/monitoring/prometheus-alerts.yml 的 opsmesh_plugin_alerts 一致，
+        # 命名也保持一致——alertname 是值班侧检索与静默规则的键。
+        # 未配 --plugin-manifest 时 opsmesh_plugin_hook_calls_total 恒为 0 ⇒ 这两条不触发。
+        - alert: OpsMeshPluginHookFailed
+          expr: sum by (hook) (increase(opsmesh_plugin_hook_calls_total{outcome="error"}[10m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+            component: controlplane
+          annotations:
+            summary: '插件扩展点 {{ "{{ $labels.hook }}" }} 调用失败（近 10 分钟 {{ "{{ $value }}" }} 次）'
+            description: "独立进程插件不可达/超时/返回非 2xx 或坏响应。config.preSet 与 task.preClaim 是 fail-closed（配置写入被拒 400、领取返回空）；config.postSet 只丢一次变更通知。排查：插件 /health、两侧令牌是否一致、控制面日志「插件钩子」行。"
+        - alert: OpsMeshPluginHookDeniedBurst
+          expr: sum by (hook) (increase(opsmesh_plugin_hook_calls_total{outcome="denied"}[15m])) > 5
+          for: 5m
+          labels:
+            severity: warning
+            component: controlplane
+          annotations:
+            summary: '插件在批量否决扩展点 {{ "{{ $labels.hook }}" }}'
+            description: "denied 说明策略在正常工作，批量出现通常是插件策略过严或调用方在拿被挡的参数反复重试。先看插件侧日志的 reason（宿主不回吐给客户端）。"
     # ------------------------------------------------------------------
     # 微服务业务面告警（2026-10-02 接入）——与 deploy/monitoring/prometheus-alerts.yml
     # 里同名分组是**同一组规则的两份装载副本**：compose 路径由 prometheus.yml 的 rule_files

@@ -384,6 +384,16 @@ type Config struct {
 	WebhookAllowPrivate    bool   // 允许内网 webhook URL（SSRF 防护，默认 false）
 	ProvisionCIDRWhitelist string // autoProvision CIDR 白名单（逗号分隔，空=不限制）
 
+	// 插件运行时模型（TD-62）：独立进程 + HTTP 契约。
+	//   - PluginManifest：插件清单 JSON 文件路径。空（默认）=不启用插件宿主，
+	//     与启用前**零行为差异**（三个扩展点无 handler 时 FireHook 直接放行）。
+	//   - PluginAllowPrivate：插件 URL 是否允许指向私网/环回。默认 false，
+	//     与 --webhook-allow-private **各自独立**：插件端点几乎总是本机/内网 sidecar，
+	//     但把两个开关合并会让"放开通知渠道"顺带放开插件出站，故各开一个、各判一次 SSRF。
+	//     注意链路本地/元数据段（169.254.169.254 等）即使 true 也恒拒（复用同一 egress 判据）。
+	PluginManifest     string // 插件清单 JSON 路径（空=不启用）
+	PluginAllowPrivate bool   // 插件 URL 允许私网/环回（SSRF，默认 false）
+
 	// 告警抑制集成：告警抑制规则 JSON 文件路径。
 	// 空（默认）=不启用告警抑制（向后兼容，alertInhibitor 为 nil，评估流程跳过抑制检查）；
 	// 非空=NewServer 启动时调用 alertengine.LoadInhibitRules 加载规则并构造 AlertInhibitor，
@@ -607,6 +617,9 @@ func Load() *Config {
 	// SSRF 防护配置。
 	webhookAllowPrivate := flag.Bool("webhook-allow-private", false, "SSRF 防护：允许内网 webhook URL（私网/loopback/链路本地）；默认 false=拒绝内网 webhook（安全基线，防 SSRF 访问云元数据/内网服务）；true=放行内网 webhook（内网部署场景，如钉钉/飞书内网网关）；或 env OPSMESH_WEBHOOK_ALLOW_PRIVATE")
 	provisionCidrWhitelist := flag.String("provision-cidr-whitelist", "", "SSRF 防护：autoProvision 扫描网段白名单（逗号分隔的 CIDR 列表，如 10.30.0.0/24,10.31.0.0/24）；空=不校验（向后兼容）；非空=扫描前校验目标 CIDR 必须完全落在白名单内，防扫描任意网段；或 env OPSMESH_PROVISION_CIDR_WHITELIST")
+	// 插件运行时模型（TD-62）：--plugin-manifest 指定清单文件，--plugin-allow-private 放开内网插件端点。
+	pluginManifest := flag.String("plugin-manifest", "", "独立进程插件清单 JSON 路径（空=不启用插件宿主，零行为变化）；清单格式见 plugins/remote-example/README.md；生产模式下解析/校验失败即终止启动；或 env OPSMESH_PLUGIN_MANIFEST")
+	pluginAllowPrivate := flag.Bool("plugin-allow-private", false, "SSRF 防护：允许插件 URL 指向私网/环回（集群内 sidecar 场景）；默认 false=拒绝；链路本地/云元数据段即使 true 也恒拒；与 --webhook-allow-private 各自独立；或 env OPSMESH_PLUGIN_ALLOW_PRIVATE")
 	// 告警抑制集成：--inhibit-rules-file 指定抑制规则 JSON 文件路径。
 	inhibitRulesFile := flag.String("inhibit-rules-file", "", "告警抑制规则 JSON 文件路径（空=不启用告警抑制，向后兼容）；非空时加载规则构造 AlertInhibitor，告警评估前先过抑制规则（父告警活跃时抑制子告警）；文件格式见 alertengine.LoadInhibitRules 文档；或 env OPSMESH_INHIBIT_RULES_FILE")
 	// 异常检测：基于基线偏离的告警规则（滑动窗口 Z-Score + EWMA 突变检测）。
@@ -797,6 +810,8 @@ func Load() *Config {
 		CBRateLimitPerSec:          valInt("cb-rate-limit-per-sec", *cbRateLimitPerSec, "OPSMESH_CB_RATE_LIMIT_PER_SEC"),
 		WebhookAllowPrivate:        valBool("webhook-allow-private", *webhookAllowPrivate, "OPSMESH_WEBHOOK_ALLOW_PRIVATE"),
 		ProvisionCIDRWhitelist:     val("provision-cidr-whitelist", *provisionCidrWhitelist, "OPSMESH_PROVISION_CIDR_WHITELIST"),
+		PluginManifest:             val("plugin-manifest", *pluginManifest, "OPSMESH_PLUGIN_MANIFEST"),
+		PluginAllowPrivate:         valBool("plugin-allow-private", *pluginAllowPrivate, "OPSMESH_PLUGIN_ALLOW_PRIVATE"),
 		InhibitRulesFile:           val("inhibit-rules-file", *inhibitRulesFile, "OPSMESH_INHIBIT_RULES_FILE"),
 		AnomalyDetection:           valBool("anomaly-detection", *anomalyDetection, "OPSMESH_ANOMALY_DETECTION"),
 		AnomalyWindowSize:          valInt("anomaly-window-size", *anomalyWindowSize, "OPSMESH_ANOMALY_WINDOW_SIZE"),

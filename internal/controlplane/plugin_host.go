@@ -20,11 +20,14 @@
 //	pre*  : 可阻断 —— error ⇒ 拒绝操作（4xx），不落库
 //	post* : 不可阻断 —— 已落库的事实不回滚，error 只进日志与审计
 //
-// # 未决（决策点 ①，本文件不拍板）
+// # 已决（决策点 ①，2026-10-07）
 //
-// 插件的**运行时模型**（Go plugin / WASM / 独立进程 + RPC）仍然开放。
-// 无论最终选哪种，插件都要通过本文件的 firePluginHook 被触发——
-// 也就是说本文件是三种方案的公共前置，不替产品做运行时选型。
+// 插件运行时模型选定为**独立进程 + HTTP 契约**：装载与校验在 plugin_remote.go，
+// 传输在 internal/plugin/remote.go，本文件仍是三种候选下都成立的公共前置——
+// 插件最终都通过本文件的 firePluginHook 被触发。
+//
+// 本文件另一处未决也已闭合：SetPluginManager 此前只有测试调用（即"能力在源码里成立、
+// 在交付物里不存在"），现由 NewServer 在启动路径上调用（server.go 的插件宿主接线段）。
 package controlplane
 
 import (

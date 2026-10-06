@@ -77,9 +77,29 @@ func TestEveryFrozenHookHasAFireSiteInControlPlane(t *testing.T) {
 		t.Fatalf("扫描面为空（0 个 go 文件）——门禁已失效，检查 scanDir=%s", scanDir)
 	}
 
+	// 引用面必须先用 hooks.go 里**真实声明的 Hook 常量**过滤一遍。
+	// 起因（2026-10-07 实测）：TD-62 交付时新文件里写了 `plugin.HookHandler`（那是 handler 的**函数类型**），
+	// 正则 `plugin\.(Hook[A-Za-z]+)` 把它当成扩展点常量捕获，门禁据此报"清单漂移"——
+	// 一条**假阳性**。假阳性在这类门禁上比漏报更贵：它会让人去"修"一个本来对的东西
+	// （本仓已有先例：把已修好的表格行按错误计数改回去）。
+	// 过滤的判据是确定性的：只有 `^\s*(HookXxx) Hook = ` 这种声明才算扩展点常量。
+	declared := declaredHookConsts(t, root)
+	for name := range srcRefs {
+		if !declared[name] {
+			delete(srcRefs, name)
+		}
+	}
+
 	frozen := map[string]bool{} // 常量名 -> 在 AllHooks 里
 	for _, h := range plugin.AllHooks() {
-		frozen[constNameOf(h)] = true
+		name := constNameOf(h)
+		if name == "" {
+			// 不这样处理的话，未收录的 Hook 会往 frozen 里塞一个空串键，
+			// 报错文案就变成"扩展点常量  在 AllHooks() 里"（名字是空的，读的人无从下手）。
+			t.Errorf("plugin.AllHooks() 里的 %q 没有被 constNameOf 收录——请同步本函数（两侧 key 必须同形态）", h)
+			continue
+		}
+		frozen[name] = true
 	}
 
 	// A. 清单里有 ⇒ 必须有触发点。
@@ -96,12 +116,52 @@ func TestEveryFrozenHookHasAFireSiteInControlPlane(t *testing.T) {
 				"冻结清单已漂移。若确为新增扩展点，请加入 AllHooks() 并补测试", name)
 		}
 	}
-	t.Logf("宿主接线门禁：AllHooks=%d 项，控制面引用 %d 项，双向一致（扫描 %d 个文件）",
-		len(frozen), len(srcRefs), files)
+	// C. hooks.go 里声明了却没进 AllHooks() ⇒ 判红。
+	// 加了这第三向后，门禁的判定面从"引用 ↔ 清单"升级成"声明 ↔ 清单 ↔ 触发点"三向：
+	// 一个常量只要声明出来，就必须同时出现在冻结清单里，无论有没有人引用它。
+	for name := range declared {
+		if !frozen[name] {
+			t.Errorf("internal/plugin/hooks.go 声明了扩展点常量 %s，但它不在 AllHooks() 里——"+
+				"声明而未冻结的扩展点不会有任何触发点保证，属 TD-62 原来那类缺口的变体", name)
+		}
+	}
+	// 只在真的没失败时记成功日志：原先无条件打「双向一致」，而 t.Errorf 已经发生，
+	// 读者翻到最后一行看到的是自相矛盾的两句话（这条日志本身就是给人看的证据，不能说谎）。
+	if !t.Failed() {
+		t.Logf("宿主接线门禁：hooks.go 声明 %d 项，AllHooks=%d 项，控制面引用 %d 项，三向一致（扫描 %d 个文件）",
+			len(declared), len(frozen), len(srcRefs), files)
+	}
+}
+
+// declaredHookConsts 读出 internal/plugin/hooks.go 里真正声明的 Hook 常量名。
+//
+// 判据是声明形态而不是名字形状：`^\s*(HookXxx) Hook = "..."`。
+// 这样 `plugin.HookHandler`（函数类型）、`plugin.Hook`（类型本身）都不会被误当扩展点常量。
+func declaredHookConsts(t *testing.T, root string) map[string]bool {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, "internal", "plugin", "hooks.go"))
+	if err != nil {
+		t.Fatalf("读 internal/plugin/hooks.go 失败：%v（本门禁的过滤面就是它，读不到就等于门禁失明）", err)
+	}
+	out := map[string]bool{}
+	for _, m := range hookConstDecl.FindAllStringSubmatch(string(data), -1) {
+		out[m[1]] = true
+	}
+	if len(out) == 0 {
+		t.Fatalf("hooks.go 里没解析到任何 Hook 常量声明——正则失配或文件被清空，本节在空转")
+	}
+	return out
 }
 
 // hookConstRef 提取控制面源码里对插件扩展点常量的引用（含间接传给 firePluginHook 的写法）。
 var hookConstRef = regexp.MustCompile(`plugin\.(Hook[A-Za-z]+)`)
+
+// hookConstDecl 匹配 hooks.go 里的常量声明行。
+//
+// 两种写法都要认：`const (...)` 块内的缩进行，以及独立一行 `const HookXxx Hook = "…"`。
+// 第一版只认缩进形态，于是变异检验里"声明一个独立 const 而不进 AllHooks"这条**照样判绿**——
+// 漏掉的那一类声明会同时废掉两件事：它不会被 C 方向抓到，而引用它的代码会被过滤面误删。
+var hookConstDecl = regexp.MustCompile(`(?m)^\s*(?:const\s+)?(Hook[A-Za-z]+)\s+Hook\s*=`)
 
 // constNameOf 返回该 Hook 对应的常量**裸名**（不含 "plugin." 前缀），
 // 与 hookConstRef 正则捕获到的形态保持一致。

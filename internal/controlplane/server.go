@@ -372,6 +372,26 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// 现在 notify 复用 egress 包，与 API 层的通知渠道 CRUD 校验**共用同一条策略**，
 	// 消除"保存时一套口径、投递时另一套口径"的自相矛盾。
 	notify.SetEgressClient(egress.NewClient(notifyEgressTimeout, cfg.WebhookAllowPrivate))
+	// 插件宿主接线（TD-62）：把 internal/plugin 框架接进启动路径。
+	//
+	// 为什么必须在这里而不是别处：SetPluginManager 此前只有测试调用，
+	// 于是"可插拔扩展"在源码里成立、在交付物里不存在。放在 NewServer 里，
+	// 配置错误的代价就从"运行期静默无插件"变成"启动期报错"。
+	//
+	// --plugin-manifest 为空 ⇒ 返回 (nil,0,nil)，**不调用 SetPluginManager**：
+	// 保持默认部署零行为变化，也让测试里自行注入的管理器不被覆盖。
+	hostMgr, pluginN, pluginErr := initPluginHost(cfg, s.metrics)
+	if pluginErr != nil {
+		if cfg.Production {
+			return nil, fmt.Errorf("插件宿主初始化失败（生产模式 fail-fast）: %w", pluginErr)
+		}
+		logx.Warn(context.Background(), "插件宿主初始化失败，非生产模式按未启用继续", "err", pluginErr)
+	}
+	if pluginN > 0 {
+		SetPluginManager(hostMgr)
+		s.metrics.SetPluginRemotePlugins(pluginN)
+		logx.Info(context.Background(), "插件宿主已启用", "plugins", pluginN, "manifest", cfg.PluginManifest)
+	}
 	// G1 鉴权修复：给 CMDB/部署/日志/编排子包 handler 注入统一鉴权回调
 	// （requireTenantContext + requireProd RBAC 权限闸），堵住全域匿名可达漏洞。
 	// 回调内按请求方法映射权限点（各包 RegisterRoutes 已按 read/write 语义包装）。
