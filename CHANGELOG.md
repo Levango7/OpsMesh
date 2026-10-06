@@ -870,6 +870,96 @@ gr_needs=['promote', 'changelog']`），便于核对判据是真读到了东西�
 本次新增的 14 条已走官方源）。客户做 SBOM / 供应链审查时会问"tarball 从哪个源取的"，
 但把 133 条一次性换成官方源等于整档重写、且需要真跑一次 `npm ci` 证明可用，属独立一件事 → 记为 TD-81 待决。
 
+## [Unreleased] — 2026-10-07 ② 发布链加 concurrency 串行闸（门禁第 17 节把它钉住，含"group 必须是字面量"这条判据）
+
+- **为什么这不是可有可无的装饰**：`ci.yml` 与 `release.yml` 此前都没有 `concurrency` 块（工作树与 HEAD 双向核对）。
+    两个 tag 短间隔推送时**两条发布链会并发跑**，而 `promote` 是按 tag 重打 `:latest`/`:版本`，
+    于是 `:latest` 最终指向**最后完成者**而不是版本最新者——这与 §20 里"feature 分支刻意不打 latest"
+    要避免的"由推送顺序决定的隐式发布通道"是同一个失效形态，只是触发条件换成了一次手快的连续打 tag。
+- **改动形态**：`concurrency: {group: release, cancel-in-progress: false}`，纯增量（`release.yml` +10/−0）。
+    `cancel-in-progress` 必须是 `false`：正在发布的 run 绝不能被后来的 tag 掐断（镜像推一半、Release 建一半）。
+    `group` 必须是**字面量**——写成 `${{ github.run_id }}` / `${{ github.ref }}` 一样能通过 actionlint，
+    但串行效果归零，所以这条判据落进 `validate-deploy-assets.sh` 第 17 节而不是留在注释里。
+- **门禁第 17 节的变异检验（按 §37.1 的教训：先证基线不报红，再看每条变异报什么）**：
+    基线 `[PASS] … concurrency=group=release cancel=False`（PASS=58 / FAIL=0 / SKIP=1，exit 0）；
+    七条坏样本**各恰好命中一次**——整块删除 / `group` 带 `run_id` / `group` 按 `ref` 分组 /
+    `cancel-in-progress: true` / 只删 `group` / 只删 `cancel-in-progress`（隐式 true 也抓）/ 写成裸字符串形态。
+    后两条是专门设计来打自己判据的：如果只断言"concurrency 存在"，它们会静默通过。
+- **其余同轮核对**：`actionlint .github/workflows/release.yml` exit 0；`shellcheck -S info $(git ls-files '*.sh')` 0 findings；
+    CI 上 `origin/main`（`d59fce6`）run `37463198876` conclusion=success；`release.yml` 重解析后 5 个 job、
+    steps 数 15/4/2/3/3、needs 关系与改动前逐项一致。
+
+## [Unreleased] — 2026-10-07 ③ 门禁第 18 节：把"入站只绑环回"从口头前提变成断言
+
+- **前提此前只存在于注释里**：出厂 compose 把 MySQL/Redis/Loki/Prometheus/Alertmanager/Grafana 的宿主端口写成
+    `127.0.0.1:<宿主>:<容器>` 并注释"仅本机可达"，而**没有任何断言核对它**。alert-svc 的未鉴权 gRPC 面正在这一类里，
+    这类前提的失效方式是静默的：一次"顺手改端口映射"就能把它开到 0.0.0.0，而所有测试仍然全绿。
+- **判据**：`deploy/scripts/validate-deploy-assets.sh` 第 18 节解析三个出厂 compose 的 `ports:` 块，
+    非环回发布的宿主端口必须落在白名单里（只有 `controlplane:8080/9090`、`gateway:80/443` 四项），
+    否则判红。本机实测 `published=31 loopback=26 exceptions=4`，合计 **PASS=58 / FAIL=0 / SKIP=1**
+    （SKIP 是 kubeconform 离线取不到 schema，如实计数不冒充通过）。
+- **解析器的三个坑当场修掉**：`${VAR:-default}` 里的冒号把拆分打断、块内注释行被当成块结束（曾静默少读 5 条）、
+    把"这个文件没有 ports 段"当成空洞通过。防线是一条**独立正则的条目数对账**：状态机数出来的条目数与正则数出来的
+    不一致就报红——"解析器自己漏读"没有其它发现途径，而它给出的红是"门禁看不见"而不是"没问题"。
+- **口径说明**：`verify-runtime.sh` 的运行动态断言不属本条（那是并行 agent 名下文件），本轮交付的是**静态防回退闸**。
+
+## [Unreleased] — 2026-10-07 ⑤ TD-62 闭合：插件运行时模型定为"独立进程 + HTTP 契约"，并第一次在控制面启动路径上被构造
+
+- **缺口定位（本轮复测，不是引用旧结论）**：框架、钩子、触发点都对，但 `SetPluginManager(` 在**生产代码里零调用点**
+    （只有测试调用），`NewServer` 也从不构造 `plugin.NewManager()`。⇒ 能力在源码里成立、在交付物里不存在。
+    这比"零接线"更隐蔽：**测试自己注入依赖，所以"生产里没人构造它"永远不会让任何测试变红**。
+- **选型与否决理由**：Go `plugin.Open` 要求插件与宿主同 Go 版本/同依赖图/同平台，在二进制交付形态下不可运维；
+    WASM 要为 3 个扩展点引入一个需要跟进 CVE 的运行时，收益不成立；
+    **独立进程 + HTTP** 与本产品既有形态同构（微服务=独立进程+gRPC，告警外发=HTTP+SSRF 校验+令牌），
+    插件作者用任何语言写一个 HTTP 服务即可接入。
+- **交付五件**：① 传输 `internal/plugin/remote.go`（契约 `POST {plugin,hook,name,payload}` + `Bearer` 令牌；
+    非 2xx/超时/坏 JSON/未知 decision 一律判错；响应体上限 1 MiB；`ErrDenied` 用 `errors.Is` 判定，不靠错误文本）；
+    ② 清单装载 `internal/controlplane/plugin_remote.go`（`--plugin-manifest` / `OPSMESH_PLUGIN_ALLOW_PRIVATE`；
+    `DisallowUnknownFields` 让字段拼错判错而非静默取默认；令牌只能经 `tokenEnv` 引用；扩展点必须 ∈ `AllHooks()`；
+    超时默认 2s 上限 30s；URL 复用 `internal/egress.ValidateURL` 这一条共用策略）；
+    ③ **启动接线 `internal/controlplane/server.go`**（空清单 ⇒ 不启用且**不碰全局管理器**，未启用时零行为变化；
+    生产模式配错 ⇒ 终止启动）；④ 指标 `opsmesh_plugin_remote_plugins` + `opsmesh_plugin_hook_calls_total{hook,outcome}`
+    恒零预渲染，标签取值固定集合且**插件名刻意不进标签**（自由文本入标签等于把基数控制权交给配置文件）；
+    ⑤ 出厂告警 `OpsMeshPluginHookFailed`(critical) / `OpsMeshPluginHookDeniedBurst`(warning) 两份装载路径同名同 expr，
+    参考实现与契约文档 `plugins/remote-example/`。
+- **真机端到端证据**（两个真实进程，非测试注入；条件：本机 Windows、`--store=memory --demo=true`、
+    HTTP 28080 / metrics 28091 / 插件 29101 环回、清单绑 `config.preSet`+`config.postSet`、走真实首登强制改密拿 token）：
+    启动日志 `插件宿主已启用 plugins=1`；未发生任何调用时 12 条恒零序列已在；
+    `PUT {"maxTenants":0}` ⇒ **400** 且插件日志 `decision=deny`（reason 不回吐给客户端）；
+    `PUT {"maxTenants":5}` ⇒ 200 且 `GET` 读回 5（pre 与 post 各被触发一次）；
+    指标 `preSet ok=1 / preSet denied=1 / postSet ok=1`；
+    **杀掉插件进程后**再 `PUT {"maxTenants":7}` ⇒ **400** 且 `outcome="error"` +1 ⇒ 拔掉插件不等于绕过准入（fail-closed）。
+- **四条变异检验**（同样先证基线）：从标签集合删掉一个扩展点 ⇒ 对账测试判红；改成"只渲染非零计数" ⇒ 恒零测试与
+    基数收敛测试双双判红；把 `oneOf` 收敛去掉 ⇒ 基数测试判红；把 compose 告警 expr 的指标名改成拼错的名字 ⇒
+    `TestShippedAlertRulesReferenceExportedMetrics` 判红并点名该名字（证明它确实在扫这条新规则，不是恰好通过）。
+- **过程中的两处自伤与一处外部陷阱（都当场抓到）**：① 我最初用 `alertRetentionDays` 做"改写落库"的断言字段，
+    而 `PlatformConfig` 根本没有这个字段——JSON 解码静默忽略，断言会在不存在的字段上恒真，改用真实字段 `maxTenants` 后才有意义；
+    ② 我最初把日志打成 `hooks=<AllHooks 全量>`，读起来像三个扩展点都已被接管而实际只绑了两个，改为打印插件数与清单路径；
+    ③ chart 里占位符按 YAML 双引号 + `\"` 转义写会直接 `helm template` 解析失败——**Helm 在 YAML 解析之前按原始字节取模板**，
+    必须沿用本文件的单引号写法 `'{{ "{{ $labels.job }}" }}'`。另外端口占用自查挡下了一次真实冲突：候选端口 18080/18091
+    被别的项目的容器占用，脚本第一步就退出，没有抢绑定也没有动那些容器。
+- **对外宣传的边界（不合并、不含糊）**：插件市场的 `plugin.bin` **仍然没有加载器**（`plugin.Open` 命中 0），
+    本轮交付的是"外部进程接管 3 个扩展点"，两者是不同路径，README 与 `docs/product-design.md` 已拆成两行写；
+    默认部署不启用（需显式配清单并重启）；fail-closed 的代价（插件不可达 ⇒ 平台配置写入被拒）随告警说明一并交付。
+- **我的新代码让一条既有门禁报了假阳性，修它的过程中又发现那条门禁漏了一整类**：
+    `plugin_hook_gate_test.go`（TD-62 ④ 的对账门禁）用正则 `plugin\.(Hook[A-Za-z]+)` 抓"扩展点引用"，
+    而我新写的 `plugin_remote.go` 里 `plugin.HookHandler` 是 handler 的**函数类型**、不是常量 ⇒ 门禁判红说
+    "触发了扩展点常量 HookHandler，但它不在 AllHooks() 里"。**假阳性比漏报更贵**（它会诱导人去改一个本来对的东西），
+    所以修法不是放宽名字形状，而是**按声明事实过滤**：从 `hooks.go` 读出真正声明为 `Hook` 的常量集合，只有落在这个集合里的
+    引用才算扩展点引用。判定面顺带从双向升级成**三向**（新增 C：声明了却没进 `AllHooks()` ⇒ 判红）。
+    五条变异验证（M-A 合法类型引用不报红 / M-B 独立 `const` 未冻结判红 / M-C2 完整新增但未接线判红 /
+    M-D 删清单保留声明判红 / 基线判绿），跑完逐文件字节比对还原。**两条自伤一并记**：
+    ① 我的声明正则第一版只认 `const (...)` 块内缩进行，独立 `const` 行被漏掉 ⇒ M-B 第一次"没报红"，
+    差点让我把不存在的 C 方向当已生效；② 第一版 harness 把 `restore()` 写在 `go test` **之前**，
+    于是 M-A/M-C 那两轮"结果"测的都是干净基线——同一个变异在 bash 版判红、python 版判 ok 才暴露。
+    **harness 自己的顺序也是判定面**，详见报告 §42.8。
+- **登记｜`internal/tlsutil` 那条证书重载测试在本机 Windows 恒红（TD-82）**：
+    `TestCertificateReloader_ReloadFailureKeepsOld` 在**净 HEAD 副本**（临时 worktree checkout `3223365`，不含本轮改动）
+    `-count=3` 3/3 复现红在 `reloader_test.go:201`，而 CI（Linux）同一条绿 ⇒ 归因是既有测试用固定 `time.Sleep` 等 fsnotify，
+    不是代码回归。**没有擅自改那条测试**（改等待策略等于改判定强度，需要一次真机红→绿对照才算数），只登记 TD-82 并给出修法。
+- 台账：`docs/tech-debt.md` TD-62 行改为"已闭合"并保留全部历史口径与复测差值；TD-79 行尾的"仍未做"去掉 TD-62。
+    详见 `docs/commercial-readiness-review-2026-09-25.md` §41–§42。
+
 ## [0.11.0] — 2026-10-01 引导脚本不再携带建表语句（删 43 张表 DDL + 门禁第 13 节）（已归入 0.11.0）
 
 > 证据：三方一致性审计（`CREATE TABLE IF NOT EXISTS <t> (…)` 从 Go 原始字符串与 `.sql` 提取，剥 `INDEX`/`PRIMARY KEY` 行取首字段做列集合，对同名表求差集）；`deploy/scripts/validate-deploy-assets.sh` 当前 **PASS=33 / FAIL=0 / SKIP=2**，新第 13 节经**两次变异检验**（塞回 `CREATE TABLE` → 判红；把某 DSN 的库从两个脚本都删掉 → 判红并指向「连库即 Access denied」）。详见 `docs/td60-decision-2026-09-26.md` §5.11 ①c。

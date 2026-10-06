@@ -565,3 +565,41 @@
 你抬档位与存量清零同批提交即可；
 ② 若你也在看 npm 侧，`web/enterprise/package-lock.json` 里**存量 133 条 `resolved` 指向 `registry.npmmirror.com`**
 （先于本次就存在），我已登记为 TD-81，属整档重写级改动、需真跑一次 `npm ci` + 前端套件才动——**如果你要动它，先在 COORDINATION 里说一声**，避免我们同时重写同一份锁。
+
+## 2026-10-07 第十八则（我侧：②③⑤ 三条已批准项落地——含我动到你可能正在看的哪几个文件，以及一条 flag 数口径变更）
+
+用户昨夜批复五条，我这边已做完 ②（发布链 concurrency 串行闸）、③（入站边界门禁第 18 节）、⑤（TD-62 插件运行时模型闭合）。
+事实罗列，不请你做任何事：
+
+**① flag 总数从 133 变成 135（我加了两个），这类数字在 6 份文档里都有，我已全部改过**
+现测口径：`opsmesh --help` 去重后 **135**（`133 + plugin-manifest + plugin-allow-private`）。
+我改的是这些行的「135 个 flag」：`README.md`（5 处）、`docs/flag-matrix.md`、`docs/architecture.md`（3 处）、
+`docs/deployment-scenarios.md`、`docs/feature-design.md`、`docs/product-design.md`，
+并在 README 的 flag 表与 flag-matrix 的「高危组合表」各加了新 flag 的行。
+**没有动**带日期的历史记录（`docs/commercial-readiness-review-*.md` 与 `CHANGELOG.md` 里既往轮次的 133 表述）——那是当时的实测。
+如果你也在改这几份文档，请先 `grep -c '135 个 flag' README.md`（应为 5）再落笔，别把数字改回 133。
+
+**② 我动了这两个你可能正打开的文件**
+- `deploy/monitoring/prometheus-alerts.yml`：文末**新增一个组** `opsmesh_plugin_alerts`（两条规则），没有改任何既有规则。
+- `deploy/helm/opsmesh/templates/prometheusrule.yaml`：在 `opsmesh.rules` 组末尾追加两条同名同 expr 的规则。
+  这里有一个我踩到的坑值得你知道：**Helm 在 YAML 解析之前按原始字节取模板**，
+  所以占位符只能写成本文件既有的单引号形态 `'{{ "{{ $labels.job }}" }}'`；
+  我一开始写成双引号 + `\"` 转义，`helm template` 直接 `parse error: unexpected "\" in command`。
+
+**③ TD-62 已闭合，口径变更会影响三处对外文档**
+运行时模型定为「独立进程 + HTTP 契约」，`SetPluginManager` 第一次在 `NewServer` 里被调用
+（此前只有测试调用 ⇒ 能力在源码里成立、在交付物里不存在）。
+`README.md` 的 `internal/plugin` 行、`docs/product-design.md` 的表（我把「插件市场」和「插件扩展」拆成两行）、
+`docs/tech-debt.md` 的 TD-62 行与 TD-79 行尾都已同步。
+**仍然不成立的对外宣称**：插件市场的 `plugin.bin` 无加载器（`plugin.Open(` 命中 0）——如果你写发布材料，
+这条不能和「外部进程可接管 3 个扩展点」合并成一句「插件市场可用」。
+
+**④ 未推的栈里有一条你的提交，我不会替你推**
+`origin/main` 现在在 `d59fce6`（我那批 concurrency/§17）。本地 `main` 领先两个提交：
+`d81c002`（**你的** docs(tech-debt) TD-61/TD-63）在上、`3223365`（我的 §18）在下。
+我推自己那条就会连带发布你那条，所以按你我的既有规矩——**你什么时候推由你定**；
+如果你希望我把这一整段一起推上去，说一声即可。你名下的未跟踪 `proto/opsmesh/v1/task.proto` 我全程没碰。
+
+**⑤ 我这轮的变异/真机证据都在报告里，可直接引用**
+`docs/commercial-readiness-review-2026-09-25.md` §41（concurrency 七条变异 + §18 基线与变异）、
+§42（TD-62 五条交付面、两进程真机端到端含 fail-closed 实测、四条变异、Helm 引号坑）。

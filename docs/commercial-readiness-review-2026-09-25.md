@@ -3888,3 +3888,228 @@ MPL-2.0 与 npm 依赖的法务口径、TD-62 的插件接线下一版是否对�
 而 `--exit-status` 真正的非零被吞在中间——差点把一条红当成绿推下一步。
 规矩补一句：**要判成败的那条命令必须是命令串的最后一条**，或者单独跑、把它的退出码立刻写进变量；
 本轮之所以没出事，是因为我按既有习惯又用 `gh run view …jobs` 复算了一遍状态。
+
+## 41. 2026-10-07｜② 发布链串行闸 + ③ 入站边界：把两条"只在评审里成立"的性质变成断言
+
+用户批复是「如果加确实更好，能提升产品的能力就加。只要收益性明确、风险性可控、整体的兼容性良好、
+未来开发与拓展的可持续性可以」，所以我按这四个维度各自给了理由，而不是只写"加了个 concurrency"。
+
+### 41.1 收益：一条能被两个 tag 复现的失败形态
+
+`ci.yml` 与 `release.yml` 此前**都没有** `concurrency` 块（工作树与 HEAD 双向核对）。
+后果不是"CI 互取消"那种可见问题，而是**两个 tag 短间隔推送时两条发布链并发跑**，
+`promote` 按 tag 重打 `:latest`/`:版本`，最终 `:latest` 由**最后完成者**而不是版本最新者决定。
+这与 §20 里"feature 分支刻意不打 latest"是同源的失效面，只是触发条件从"分支合并顺序"换成"打 tag 的手速"。
+
+### 41.2 风险可控：只排队、不取消，且不碰任何既有 job
+
+```yaml
+concurrency:
+  group: release
+  cancel-in-progress: false
+```
+
+`cancel-in-progress: false` 是这条改动的全部风险来源——正在发布的 run 绝不被动。
+`group` **必须是字面量**：任何 `${{ github.run_id }}` / `run_number` / `ref` 都会让每条 run 自成一组，
+串行效果归零而 YAML 看起来完全正常。actionlint 只校 schema，不会告诉你这件事，所以判据落进门禁第 17 节。
+提交是纯增量（`release.yml` +10/−0），既有 5 个 job、needs 关系、steps 数（15/4/2/3/3）重解析后逐一对齐。
+
+### 41.3 兼容性 + 可持续性：断言与变异
+
+`deploy/scripts/validate-deploy-assets.sh` §17 现在同时核对发布链顺序与串行闸形态。
+变异检验按新规矩**先证干净态不报红**，再逐条打坏（临时 detached worktree `opsmesh-verify-wt`，
+HEAD=`3223365`，绝不在主工作树上改）：
+
+| 变异 | 期望 | 实测（§17 判定 + 唯一报错文本） |
+|---|---|---|
+| M0 基线 | 不报红 | `[PASS] 发布链顺序成立（… concurrency=group=release cancel=False）`，PASS=58 / FAIL=0 / SKIP=1，exit 0 |
+| M1 整块删除 | 报「没有顶层 concurrency」 | FAIL=1，gate exit 1，文本命中 |
+| M2 `group: release-${{ github.run_id }}` | 报「group 含动态量」 | FAIL=1，文本含被注入的具体值 |
+| M3 `group: ${{ github.ref }}` | 同上 | FAIL=1（两个 tag = 两个 ref = 仍并发，这正是只看"有没有 concurrency"会漏的形态） |
+| M4 `cancel-in-progress: true` | 报「必须显式为 false」 | FAIL=1，打印 `当前=True` |
+| M5 只删 `group` | 报「缺 group」 | FAIL=1 |
+| M6 只删 `cancel-in-progress` | 报「必须显式为 false」 | FAIL=1，打印 `当前=None`（隐式 true 也被抓） |
+| M7 写成裸字符串 `concurrency: release` | 报「只给了 group 字符串」 | FAIL=1 |
+
+七条各命中一次、且基线为 0——这是 §37.1 那次"恒真判据伪装成证据"之后按新规矩跑的第一组。
+其余同轮核对：`shellcheck -S info $(git ls-files '*.sh')` 0 findings、`actionlint .github/workflows/release.yml` exit 0、
+CI 上 `origin/main`（`d59fce6`）run `37463198876` conclusion=success。
+M2/M3 这两条变异是我专门设计来**打自己的判据**的：如果判据只写"concurrency 存在"，它们都会静默通过。
+
+### 41.4 ③ 入站边界：一个此前只存在于注释里的前提
+
+`deploy/docker/docker-compose.prod.yml` 里 MySQL/Redis/Loki/Prometheus/Alertmanager/Grafana 的宿主端口
+都写成 `127.0.0.1:<宿主端口>:<容器端口>`，注释说"仅本机可达"，但**没有任何断言核对它**。
+这类前提的失效方式是静默的：某次"顺手改一下端口映射"就会把一个未鉴权面开到 0.0.0.0，
+而 alert-svc 的 gRPC 正在这一类里（用户批复③选择的稳妥路线是"未鉴权 gRPC 只绑环回"，不改协议）。
+
+新增 §18 的判据（同一命令，本机）：`published=31 loopback=26 exceptions=4`，
+白名单例外只有 `controlplane:8080/9090` 与 `gateway:80/443`，其余全部要求环回前缀；
+门禁合计 **PASS=58 / FAIL=0 / SKIP=1**（SKIP 是 kubeconform 取不到 JSON schema，离线网络下如实跳过并计数）。
+解析器自己的三个坑都在这轮被抓出来并修掉（`${VAR:-default}` 的冒号、块内注释行终结块、把"没有 ports 段"当空洞通过），
+修法是加一条**独立正则的条目数对账**——状态机漏读时两个计数不等即报红，这类"解析器静默少读"没有别的发现途径。
+
+变异验证（同一 worktree、每条打坏后立刻还原并核对 sha256）见 §41.5。
+
+### 41.5 §18 的变异检验（先证基线不报红，再逐条打坏）
+
+| 变异 | 期望 | 实测 |
+|---|---|---|
+| M0 基线 | 不报红 | `[PASS] … published=31 loopback=26 exceptions=4`，PASS=58 / FAIL=0 / SKIP=1 |
+| M1 Redis 去掉 `127.0.0.1:` 前缀 | 报该服务越界 | FAIL=1，文本 `redis 把容器端口 6379 发布到所有网卡（绑定=<空=0.0.0.0>）` |
+| M2 Alertmanager 显式绑 `0.0.0.0:` | 同上 | FAIL=1，`alertmanager … 9093 …（绑定=0.0.0.0）` |
+| M3 mysql 的 `ports:` 留空 | 我原以为 §18 的"零条目"会报 | **§18 判 PASS、整条门禁 FAIL=2**——红来自第 1/2 节 `compose 渲染失败`（空 `ports:` 让 `docker compose config` 直接报错），并连带 2 个 SKIP |
+| M4 Loki 条目缩进改成 4 空格 | 报"解析面缩小" | FAIL=1，文本点名两个计数：`状态机解析到 27 个端口条目，独立正则数到 26 个` |
+| M5 grafana 的 ports 块中间插注释行 | 不报红且条目数不变 | PASS，`27/25` 与基线逐位相同 ⇒ "注释终结块"那个旧漏读点没有回归 |
+
+M3 这一条值得单独记，因为它同时纠正我的**两个**错误预期：
+① §18 的"零条目"判据是按**整个文件**生效而不是按服务（我按服务写了预期）；
+② 这个变异确实被门禁抓住了，但抓它的是**别的面**（compose 渲染层）。
+所以"变异检验通过"的断言必须落到"红出现在第几节、报的是哪句文本"，
+只看整体 exit code 或 FAIL 总数会把"A 节抓住了"记成"我的节抓住了"——这与 §37.1 那次假证据是同族。
+每条变异跑完都 `git checkout --` / `sha256sum` 双向核对还原（M5 后对照 `24d774bd…` 两份一致）。
+
+## 42. 2026-10-07｜⑤ TD-62 闭合：插件运行时模型定成"独立进程 + HTTP 契约"，并且第一次在生产启动路径上被构造
+
+用户批复是「也可以现在完成，发版对外宣传」。宣传的前提是能力真的存在于交付物里，
+所以这一轮的重心不是"再写一个插件框架"，而是**把最后那半缺口补掉**。
+
+### 42.1 缺口精确定位在哪（复测，不是引用旧结论）
+
+10-06 的复测把"三个扩展点零接线"改成了"三个扩展点都有触发点"，但本轮 grep 出来的是另一件事：
+
+- `SetPluginManager(` 在**生产代码里零调用点**（只有测试在调）；
+- `NewServer` 里没有任何一处构造 `plugin.NewManager()`。
+
+也就是说：框架对、钩子对、触发点对，但**从来没有一个真实进程持有过管理器**。
+这是 [[feedback-boundary-wiring-criterion]] 的第三种形态——"函数正确 ≠ 被调用；接线存在 ≠ 调用能通过；
+被打印的身份要能被跨进程解析"之外再加一条：**测试自己注入依赖，会让"生产里没人构造它"永远不红**。
+`plugin.Open(` 命中 0 也复测确认（所以市场 `plugin.bin` 无加载器这半句仍然成立，没顺手夸大）。
+
+### 42.2 选型理由（为什么不是另外两种）
+
+| 候选 | 否决/采纳依据 |
+|---|---|
+| Go `plugin.Open` | 要求插件与宿主**同 Go 版本、同依赖图、同平台架构**；本产品对外交付的是 goreleaser 二进制 + 固定基础镜像，客户改一行依赖就得重编插件——运维上不可交付。且 `plugin.Open` 命中 0 说明这条路从来没人走通过 |
+| WASM | 要引入运行时（wazero/wasmtime），依赖面从"零依赖手写指标"变成"多一个沙箱要跟进 CVE"，而扩展点只有 3 个，收益不成立 |
+| **独立进程 + HTTP** | 与本产品既有形态同构：12 个微服务就是独立进程 + gRPC，告警外发就是 HTTP + SSRF 校验 + 令牌。插件作者用任何语言写一个 HTTP 服务即可，不碰宿主工具链 ⇒ 收益明确、风险可控（只新增一种 handler 后端，不动既有 Manager 与 3 个扩展点）、兼容良好、可持续（新增扩展点的门禁不变） |
+
+### 42.3 交付面（五件，缺一件就只是"函数正确"）
+
+1. **传输** `internal/plugin/remote.go`：契约 `POST {plugin,hook,name,payload}` + `Authorization: Bearer`；
+   响应 `{"decision":"allow|deny","reason":…,"payload":…}`；非 2xx / 超时 / 坏 JSON / 未知 decision 全部判错；
+   响应体上限 1 MiB（与 P1-4「无界缓冲加上限」同判据）；`ErrDenied` 用 `errors.Is` 判定，
+   不用错误文本比对——改一句文案就会把"策略拒绝"记成"运维故障"。
+2. **装载与校验** `internal/controlplane/plugin_remote.go`：`--plugin-manifest` / `OPSMESH_PLUGIN_ALLOW_PRIVATE`；
+   `DisallowUnknownFields`（`timeoutMs` 拼成 `timeout_ms`、`token` 代替 `tokenEnv` 都判错而不是静默取默认）；
+   令牌**只能**经 env 引用；扩展点必须 ∈ `AllHooks()`；超时默认 2s、上限 30s；
+   URL 走 `internal/egress.ValidateURL` 这一条共用策略（M7 的教训：保存时一套口径、运行期另一套）。
+3. **启动接线** `internal/controlplane/server.go`：空清单 ⇒ 返回 `(nil,0,nil)` 且**不碰全局管理器**
+   （保住"未启用时零行为变化"这条既有承诺，也让测试注入不被覆盖）；生产模式配错 ⇒ 终止启动。
+4. **可观测面** `opsmesh_plugin_remote_plugins` + `opsmesh_plugin_hook_calls_total{hook,outcome}`，
+   恒零预渲染；**插件名刻意不进标签**（自由文本入标签＝把基数控制权交给配置文件，与 P1-5 同判据）；
+   `outcome` 三值 `ok/denied/error` 的区分是这条链路最重要的可观测点。
+   标签集合与 `AllHooks()` 的一致性由 `internal/metrics/plugin_hook_labels_test.go` 对账（三条变异验证，见 §42.5）。
+5. **出厂告警 + 参考实现**：`OpsMeshPluginHookFailed`（critical）/ `OpsMeshPluginHookDeniedBurst`（warning），
+   compose 与 chart 两份、命名与 expr 一致；`plugins/remote-example/`（含契约文档 README）。
+
+### 42.4 真机端到端（两个真实进程，不是测试注入）
+
+条件：本机 Windows、`opsmesh.exe --mode=controlplane --store=memory --demo=true`、
+HTTP 28080 / metrics 28091、插件进程 29101（环回）、清单绑定 `config.preSet` + `config.postSet`、
+令牌经 `OPSMESH_PLUGIN_EXAMPLE_TOKEN` 注入；鉴权走真实的"首登强制改密"流程拿 token。
+
+| 步骤 | 实测 |
+|---|---|
+| 启动 | 日志 `插件宿主已启用 plugins=1 manifest=…`、`[plugin] 注册成功: capacity-guard@1.0.0`（TD-62 原缺陷的直接反证） |
+| 恒零基线 | 12 条 `opsmesh_plugin_hook_calls_total{…} 0` + `opsmesh_plugin_remote_plugins 1` 在**任何调用发生之前**就存在 |
+| deny 路径 | `PUT {"maxTenants":0}` ⇒ **HTTP 400** `config update rejected by plugin policy`；插件日志 `decision=deny reason="maxTenants=0 会移除租户容量上限策略"`；响应体里**没有** reason（内部策略不外泄） |
+| allow 路径 | `PUT {"maxTenants":5}` ⇒ 200，`GET` 读回 `maxTenants:5` |
+| postSet | 插件日志同一次请求里第三条 `hook=config.postSet decision=allow`（pre 与 post 都被真实触发） |
+| 指标 | `preSet ok=1`、`preSet denied=1`、`postSet ok=1`，其余仍为 0 |
+| **fail-closed** | `kill` 掉插件进程后再 `PUT {"maxTenants":7}` ⇒ **HTTP 400**，且 `outcome="error"` +1（拔掉插件 ≠ 绕过准入） |
+| 收尾 | 只杀本轮两个 pid，`ps -W` 复查残留为空 |
+
+顺带被这条真机路径**证伪的一个草稿结论**：我原本用 `alertRetentionDays` 做改写断言的字段，
+而 `PlatformConfig`（`platform_config.go:26-35`）**根本没有这个字段**——JSON 解码会静默忽略，
+于是"改写生效"会在一个不存在的字段上恒真。改成真实字段 `maxTenants` 后断言才有意义。
+这是 [[feedback-probe-target-verify]] 的同一课：**探针必须先自证目标存在**，否则测的是自己的想象。
+
+也修掉一处会误导运维的日志：我最初打的是 `hooks=<AllHooks 全量>`，
+读起来像"三个扩展点都已被接管"，而实际只绑了两个 ⇒ 改为打印 `plugins` 数与清单路径。
+
+### 42.5 本轮的变异检验（四条，全部先证基线再打坏）
+
+| 判据 | 变异 | 结果 |
+|---|---|---|
+| 标签集合 ↔ `AllHooks()` 对账 | 从 `pluginHookValues` 删掉 `task.preClaim` | `TestPluginHookLabelSetMatchesFrozenHooks` 判红 |
+| 恒零预渲染 | 只渲染非零计数 | `TestPluginSeriesRenderAtZero` 与 `TestIncPluginHookConvergesLabels` 双双判红 |
+| 标签基数收敛 | `oneOf(...)` 改成直接用入参拼 key | `TestIncPluginHookConvergesLabels` 判红（时序新增） |
+| 告警引用的序列真在抓取面上 | 把 compose 里的 expr 指标名改成 `..._TYPO_total` | `TestShippedAlertRulesReferenceExportedMetrics` 判红并**点名该指标名**（证明它确实在扫我新加的这条规则，不是恰好通过） |
+
+前两条变异跑完后 `sha256sum` 与被测文件一致（还原无残留），第三条同法。
+
+### 42.6 Helm 渲染踩到的一处引号陷阱（值得记）
+
+我在 chart 里把占位符写成 `"… {{ \"{{ $labels.hook }}\" }} …"`（YAML 双引号 + 反斜杠转义），
+`helm template` 直接 `parse error … unexpected "\" in command`：
+**Helm 是在 YAML 解析之前按原始字节取模板的**，所以转义不会被消掉。
+本文件的既有约定是单引号包裹 `'{{ "{{ $labels.job }}" }}'`，改回后渲染通过：
+8 个文档、`PrometheusRule` 1 个、规则 17 条，两条插件告警的 `expr/for/severity/summary` 都解析正确
+（`summary` 渲染后仍是 `{{ $labels.hook }}`，即占位符活到了 Prometheus 求值期）。
+
+### 42.7 一处诚实边界（写清楚，不发对外宣传里含糊过去）
+
+- **市场 `plugin.bin` 仍然不能装载运行**（`plugin.Open` 命中 0）。本轮交付的是"外部进程接管 3 个扩展点"，
+  两条路径不能合并成一句"插件市场可用"。README 与 `product-design.md` 已分两行写。
+- **默认部署不启用**：需要显式配 `--plugin-manifest` 并重启；`opsmesh_plugin_remote_plugins` 为 0 就是没启用。
+- **fail-closed 的代价已在 §42.4 实测**：插件不可达会让平台配置写入被拒。
+  这条必须进对外文档与告警说明，否则客户会把"改不动配置"当成控制面故障。
+- 端口占用自查在这一轮真的救了一次：候选端口 18080/18091 被别的项目的容器（`fs-iam`/`fs-datadev`）占用，
+  脚本在第一步就退出而没有抢绑定，也没有去动那些容器。
+
+### 42.8 我的新代码让一条**既有门禁**报了假阳性——而修它的过程中发现那条门禁还漏了一整类
+
+全量本地测试跑出两条红，逐条归因（不是"看着不像我造成的就当别人的"）：
+
+1. `internal/tlsutil` 的 `TestCertificateReloader_ReloadFailureKeepsOld` 在**净 HEAD 副本**里 3/3 复现
+   （临时 worktree checkout `3223365`，不含本轮任何改动）⇒ 与我的改动无关。
+   机理：该测试用固定 `time.Sleep(reloadWait)` 等 fsnotify，而 Windows 上 watcher 更慢；
+   CI（Linux）同一条是绿的 ⇒ 属**本机环境 + 测试健壮性**问题，登记为 TD-82 而不是擅自改那条测试。
+2. `internal/controlplane` 的 `TestEveryFrozenHookHasAFireSiteInControlPlane`（TD-62 ④ 那条门禁）
+   被我新写的 `plugin_remote.go` 判红，报的是"触发了扩展点常量 **HookHandler**，但它不在 AllHooks() 里"。
+   而 `HookHandler` 是 handler 的**函数类型**、不是扩展点常量——抓取正则 `plugin\.(Hook[A-Za-z]+)`
+   把类型名当常量捕获了。这是一条**假阳性**，而假阳性的代价在本仓已记过一次：它会诱导人去"修"一个本来正确的东西。
+
+修法不是放宽名字形状，而是**按声明事实过滤**：从 `internal/plugin/hooks.go` 读出真正声明为 `Hook` 类型的常量集合，
+只有落在这个集合里的引用才算扩展点引用。判定面因此从双向升级成三向：
+A. `AllHooks()` 里有 ⇒ 必须有触发点；B. 有触发点 ⇒ 必须在 `AllHooks()` 里；
+C. **hooks.go 里声明了 ⇒ 必须进 `AllHooks()`**（新增：声明而未冻结的常量同样没有任何接线保证）。
+
+五条变异验证（每条跑完立刻还原，三个被改文件事后逐字节比对 = 基线一致）：
+
+| 变异 | 期望 | 实测 |
+|---|---|---|
+| M-A `plugin_remote.go` 里加一条**合法的**类型引用 `var _probe plugin.HookHandler = func(plugin.Event) error {…}` | 不报红 | `ok`——过滤面改按"hooks.go 里有没有声明过这个常量"判定，不再看名字形状；修前同一条代码会让门禁判红 |
+| M-B hooks.go 加独立一行 `const HookGhostProbe Hook = "ghost.probe"` 而不进 AllHooks | C 方向判红 | **第一版没报红**——我的声明正则只认 `const (...)` 块内的缩进行，独立 `const` 行被漏掉。补 `(?:const\s+)?` 后重跑，判红并点名 `HookGhostProbe` |
+| M-C2 声明 + 进 AllHooks + 登记 `constNameOf` 三处都补齐，但控制面无触发点 | A 方向判红 | 判红：`扩展点常量 HookGhostProbe 在 AllHooks() 里，但 internal/controlplane 下没有触发点` |
+| M-D 从 AllHooks 删掉仍被触发的 `HookTaskPreClaim` | B 方向判红 | 判红，且 B 与 C 两个方向同时报（符合预期：删了清单没删声明） |
+| 基线（全部还原后） | 不报红 | `ok`，日志 `hooks.go 声明 3 项，AllHooks=3 项，控制面引用 3 项，三向一致（扫描 96 个文件）` |
+
+中途还修掉一处会误导人的文案：`constNameOf` 未收录某个 Hook 时返回空串，那个空串会被塞进 `frozen` 当键，
+报错文案就成"扩展点常量  在 AllHooks() 里"（名字是空的，读者无从下手）；改成直接报"请同步 `constNameOf`"。
+
+**跑变异这件事自己也出了一次自伤，必须记**：第一版 python harness 把 `restore()` 写在 `go test` **之前**，
+于是 M-A 与 M-C 那两轮的"结果"测的都是干净基线——`M-A ok`（看着像"过滤面生效"）、
+`M-C ok`（看着像"A 方向失灵，这条门禁是假的"）。两个结论都是**我的验证器没把变异留在场上**造出来的，
+而后者如果被采信，我会去"修"一条本来正确的门禁。发现契机是同一个变异在 bash 版里判红、python 版里判 ok，
+两边互相矛盾才回头查语句顺序。规矩补一句：
+**harness 的"施加变异 → 跑测试 → 还原"三步顺序要在代码里显式注释钉住，
+且跑测试前先把"变异标记仍在场"打出来**（`grep` 一次被插入的那一行即可）；
+否则"我根本没测到"会被记成"它没抓到"。与 §37.1（恒真判据）、[[feedback-probe-target-verify]] 同族。
+
+**值得记住的两点，不是"我修了个 bug"**：
+① 门禁的**过滤面本身也是判定面**——M-B 第一次"没报红"如果我不跑变异就宣称"三向对账已生效"，
+留下的就是一个我以为存在、实际不存在的方向（与 §37.1 同族）；
+② 新代码让既有门禁变红时，先用净副本判归因，再判"门禁错还是我错"：这次两边都有错
+（门禁的形状判据太宽，而我的新引用恰好踩在它边界上）。
