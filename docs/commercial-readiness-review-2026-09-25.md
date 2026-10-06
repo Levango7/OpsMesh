@@ -3845,3 +3845,46 @@ MPL-2.0 与 npm 依赖的法务口径、TD-62 的插件接线下一版是否对�
 **我的建议（仅供他判）**：先等并行 agent 那批 `ci.yml` 落地并把 TD-80 按现象级判据修掉（它同时在发布链上），
 再做一次 `0.12.0 → 新版` 的存量演练，然后切版——顺序依据是"缺陷清完才切版本"，
 而演练与 promote 首跑都属于"切版那一刻第一次执行"的类别（§19 教训 15 的同族）。
+
+## 40. 2026-10-06｜一条 docs 提交把 CI 打红：Trivy 公告库当日新增两条 npm HIGH，以及"红不是我造成的"之后该做什么
+
+### 40.1 取证路径（三步，每步都换了工具，避免单一读法骗人）
+
+1. **job 级**：`gh run view 37430420614 --json jobs` ⇒ `security=failure`、`image`/`image-agent`/`release`=skipped、其余 9 绿。
+   只看 run 那一行 `failure` 会以为要查全部改动。
+2. **step 级**：同一条命令取 `jobs[].steps[]` 里 `conclusion=="failure"` 的项 ⇒ 只有一个：`Trivy 文件系统扫描`。
+   归因范围立刻从"我这条提交"缩到"一个扫描步骤"。
+3. **产物级**：该 job 的日志里 **stdout 没有漏洞表**（`trivy` 被配成 `--output trivy-fs-report.txt`），
+   所以我没有从日志硬抠结论，而是下载红时自动上传的取证 artifact：
+   `gh run download 37430420614 -n trivy-fs-report` ⇒ `Report Summary` 显示
+   16 个 go.mod 目标全 0、`web/enterprise/package-lock.json (npm) Total: 2 (HIGH 2, CRITICAL 0)`。
+   **这一步是"门禁自己坏了也不吭声"的对照组**：正是"红时取证"这个上传步骤存在，本次才能在
+   日志无表的情况下拿到 (package, installed, fixed) 三列。
+
+判定"不是我的回归"用了两条独立证据，而不是一条：① `git show --stat abda748` = 1 个 docs 文件（+24 −4）；
+② **同一份锁文件**在 30 分钟前的 run `37426660878` 里 `Trivy 文件系统扫描` 是 success（job steps 查得）。
+两条一起才够写进结论，单用第②条会把"扫描器今天新认了这些告警"误写成"CI 抖动"。
+
+### 40.2 修，而不是解释
+
+即使红因在公告库，这两条确实存在于**会交付给客户前端的锁文件**里，所以按依赖修复的正常流程做：
+以扫描表的 (package, installed, fixed) 为准，再回查官方 advisory 的**全部**受影响区间确认落点
+（`@vue/server-renderer` `< 3.5.42` 与 `>= 3.6.0-rc.0, < 3.6.0-rc.6`；`source-map-js` `>= 1.0.0, < 1.2.2`），
+然后 `npm update vue source-map-js --registry=https://registry.npmjs.org`。细节与本机验证见 CHANGELOG 同日块，
+这里只记三个方法性点：
+
+- **两个目标都是传递依赖**，走 `npm update` 而不是塞 override；`package.json` 因此一字未改，锁只 71 行等值替换。
+- **指定官方源**是有意的：本机 npm 默认源是 `registry.npmmirror.com`，第一遍 update 把 14 条新条目写成了镜像 URL
+  （`resolved` 计数从 224 npmjs / 133 mirror 变成 210 / 147）。重做一遍才做到"新增条目全部官方源、存量 133 条不动"。
+  存量那 133 条登记成 TD-81（供应链卫生，不是缺陷）。
+- **本机 `npm audit` 不可用**（npmmirror 未实现 `/-/npm/v1/security/*`，返回 `NOT_IMPLEMENTED`），
+  所以我不能拿"本机 audit 没报"当阴性证据——**告警面归零只能由 CI 的 Trivy 重跑给出终判**，
+  这也是我把这条写进诚实边界的原因：版本号变了不等于修好了。
+
+### 40.3 一处自伤（退出码类，同族第四次）
+
+盯 CI 时我写的是 `gh run watch <id> --exit-status > log 2>&1; echo WATCH_EXIT=$?; gh run view …`，
+后台任务的"completed (exit code 0)"通知报的是**整条命令串**的退出码（最后一个 `gh run view` 成功），
+而 `--exit-status` 真正的非零被吞在中间——差点把一条红当成绿推下一步。
+规矩补一句：**要判成败的那条命令必须是命令串的最后一条**，或者单独跑、把它的退出码立刻写进变量；
+本轮之所以没出事，是因为我按既有习惯又用 `gh run view …jobs` 复算了一遍状态。

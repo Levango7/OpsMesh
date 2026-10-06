@@ -835,6 +835,41 @@ gr_needs=['promote', 'changelog']`），便于核对判据是真读到了东西�
 "构建腿推送了非法 tag"的假阳性——改为整行取值再去续行反斜杠。
 
 
+## [Unreleased] — 2026-10-06 企业版前端两条 npm HIGH 依赖修复（Trivy 公告库当日新增，非本仓回归但确实存在于我们 ship 的锁文件里）
+
+**触发形态值得记**：run `37430420614`（`abda748`，**只改了一个 docs 文件**，`git show --stat` = 1 file / +24 −4）
+红在 `security` job 的 `Trivy 文件系统扫描`，连带 `image`/`image-agent`/`release` 三个下游被 skip；
+而**同一份锁文件**在 30 分钟前的 run `37426660878`（`97fdb2e`）里该步是 success。
+⇒ 红因是公告库当日新增，不是本次改动引入的回归。但这不等于可以解释掉了：
+这两条确实躺在我们会打给客户前端的 `web/enterprise/package-lock.json` 里。
+
+**扫描表给出的三列（判定只认这个，不认别名）**：`@vue/server-renderer` 3.5.40 → 修复线 3.5.42 / 3.6.0-rc.6
+（GHSA-g2v6-rqmx-r4w6，XSS：属性名黑名单漏掉 CR）；`source-map-js` 1.2.1 → 修复线 1.2.2
+（GHSA-68fv-2mgg-jv7q / CVE-2026-93749，恶意 indexed source map 造成事件循环 DoS）。
+另查官方 advisory 的**全部**受影响区间确认落点：`@vue/server-renderer` 为 `< 3.5.42`（另一段 `>= 3.6.0-rc.0, < 3.6.0-rc.6`），
+`source-map-js` 为 `>= 1.0.0, < 1.2.2` ⇒ 升到的 3.5.43 与 1.2.2 都在区间外。
+
+**改法**：`npm update vue source-map-js --registry=https://registry.npmjs.org`。
+两个目标都是传递依赖（`@vue/server-renderer` 由 `vue` 精确锁定、`source-map-js` 由 `postcss` 以 `^1.2.1` 依赖），
+所以走 update 而不是加 override；指定官方源是为了**让本次新增条目不落第三方镜像 URL**。
+结果：`vue` 与全部 `@vue/*`（compiler-core/dom/sfc/ssr、reactivity、runtime-core/dom、server-renderer、shared）3.5.40 → 3.5.43、
+`source-map-js` 1.2.1 → 1.2.2，连带 `postcss` 8.5.25 → 8.5.29、`@babel/parser` 7.29.7 → 7.29.9、`@babel/types` → 7.29.8。
+`package.json` **未改**（既有 `^3.5.13` 区间本就允许），锁文件只 71 行等值替换、`lockfileVersion` 仍 3、条目数 358 → 358（无增删）。
+
+**本机按 CI 同款命令逐条跑过**：`npm ci` exit 0 且**跑完不再回写锁文件**（这是锁/清单一致性的判据）、
+`npx eslint src` 0 问题（CI 用 `eslint src --fix`，不加 `--fix` 也干净意味着它不会改写源码）、
+`npm run build` 成功、`npx vitest run` **52 个文件 / 1126 个用例全过**、
+`build-enterprise-web.sh --no-build` 组装 447 个文件、`go test ./internal/controlplane/ -run TestEnterprise -count=1` ok。
+
+**诚实边界（两条）**：① 本机是 node 26 / npm 12，CI 钉 node 20，**终判只能是 CI 上 Trivy 那一步归零**——
+安全修复的合格证据是同类扫描重跑后告警清零，不是"版本号变了"，所以下一次 CI 我会专门看这一个 step 的结论；
+② 本机 `npm audit` **不可用**（`registry.npmmirror.com` 未实现 `/-/npm/v1/security/*`，直接返回 `NOT_IMPLEMENTED`），
+所以"是否还有别的 npm 告警"只能由 CI 的 Trivy 回答，我不能拿空输出当阴性证据。
+
+**顺带登记一条供应链卫生问题**：这份锁文件里 **133 条 `resolved` 指向 `registry.npmmirror.com`**（先于本次改动就存在，
+本次新增的 14 条已走官方源）。客户做 SBOM / 供应链审查时会问"tarball 从哪个源取的"，
+但把 133 条一次性换成官方源等于整档重写、且需要真跑一次 `npm ci` 证明可用，属独立一件事 → 记为 TD-81 待决。
+
 ## [0.11.0] — 2026-10-01 引导脚本不再携带建表语句（删 43 张表 DDL + 门禁第 13 节）（已归入 0.11.0）
 
 > 证据：三方一致性审计（`CREATE TABLE IF NOT EXISTS <t> (…)` 从 Go 原始字符串与 `.sql` 提取，剥 `INDEX`/`PRIMARY KEY` 行取首字段做列集合，对同名表求差集）；`deploy/scripts/validate-deploy-assets.sh` 当前 **PASS=33 / FAIL=0 / SKIP=2**，新第 13 节经**两次变异检验**（塞回 `CREATE TABLE` → 判红；把某 DSN 的库从两个脚本都删掉 → 判红并指向「连库即 Access denied」）。详见 `docs/td60-decision-2026-09-26.md` §5.11 ①c。

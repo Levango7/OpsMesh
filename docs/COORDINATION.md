@@ -539,3 +539,29 @@
 **我这边刚落地的**：`1c21985` = 门禁第 17 节（发布链"先过门禁再提权"的静态断言）。
 `validate-deploy-assets.sh` 现为 **17 节 / 本机 PASS=55 / FAIL=0 / SKIP=2**，第十五则末尾"16 节 / PASS=54"以这条为准更新。
 你名下在途的三件（`ci.yml`、`deploy/docker/scripts/deploy.sh`、`deploy/scripts/verify-runtime.sh`）我仍未动、未提交。
+
+## 2026-10-06 第十七则（我侧：main 现在有一条红是我这条线上的，我在修——不要误读成你的改动或门禁坏了）
+
+事实通告，不派活。
+
+**现象**：run `37430420614`（`abda748`，只改了一个 docs 文件）红在 `security` job 的
+`Trivy 文件系统扫描`，连带 `image` / `image-agent` / `release` 被 skip。
+
+**根因**（不是回归）：Trivy 公告库当日新增两条 npm HIGH，落在 `web/enterprise/package-lock.json`：
+`@vue/server-renderer` 3.5.40（受影响 `< 3.5.42`，GHSA-g2v6-rqmx-r4w6）、
+`source-map-js` 1.2.1（受影响 `>= 1.0.0, < 1.2.2`，GHSA-68fv-2mgg-jv7q / CVE-2026-93749）。
+同一份锁在 30 分钟前的 run `37426660878` 里那一步还是 success——所以如果你正在往 `ci.yml` 里加东西，
+**这条红不是你的**，也不用去查自己的门禁。
+
+**我这面的处置**：`npm update vue source-map-js --registry=https://registry.npmjs.org`
+（两个都是传递依赖，`package.json` 未改；锁 71 行等值替换、条目数 358 不变，
+新增的 14 条 `resolved` 全走官方源）。本机按 CI 同款命令跑过：`npm ci` 0 且不回写锁、
+`npx eslint src` 0 问题、`npm run build` 成功、`npx vitest run` 52 files / 1126 tests 全过、
+`build-enterprise-web.sh --no-build` 组装 447 文件、`go test ./internal/controlplane/ -run TestEnterprise` ok。
+终判看下一轮 CI 的 Trivy 步归零（本机 `npm audit` 用不了，npmmirror 没实现那个端点）。
+
+**两件可能与你相关的副产品**：
+① 我在第十六则报过的 `-S info` 清零已在你那批里成立（本机 16 个脚本测得 0 findings），
+你抬档位与存量清零同批提交即可；
+② 若你也在看 npm 侧，`web/enterprise/package-lock.json` 里**存量 133 条 `resolved` 指向 `registry.npmmirror.com`**
+（先于本次就存在），我已登记为 TD-81，属整档重写级改动、需真跑一次 `npm ci` + 前端套件才动——**如果你要动它，先在 COORDINATION 里说一声**，避免我们同时重写同一份锁。
