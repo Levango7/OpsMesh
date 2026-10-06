@@ -67,6 +67,26 @@ Chart.yaml `appVersion`、`values-production.yaml` 的镜像 tag、gitops produc
 | 企业版前端 | 社区授权下 `/enterprise/` 返回"企业版 · 未授权"页，SPA 资产链路只在企业授权下验得到 | 企业授权 + `make frontend` 装配 |
 | 第三方许可 | MPL-2.0 / npm 依赖的**法务结论未出**（工程侧清单与 CI 门禁已就绪） | P1-7 |
 
+**这张表的基准（2026-10-06 补）**：它记的是**已发货的 v0.12.0**（tag `v0.12.0` → 提交 `9f79dda1`）那一刻的实际交付状态，
+不是 main 的当下状态，两种口径在同一条线上会分叉。逐行按 `file:line` 复核后，**有 2 行在 main 上已经不成立、
+但对拿到 0.12.0 镜像的客户仍然成立**：
+
+| 行 | 在 main 上的现状 | 对已发货 0.12.0 是否仍成立 | 证据 |
+|---|---|---|---|
+| 插件 / 应用市场"可插拔扩展"——控制面零钩子触发点 | **不再成立**：`AllHooks()` 冻结的 3 个扩展点全部有宿主触发点（`platform_config.go:117`、`:155`、`server_netsec.go:103` → `plugin_host.go:74`），并由 `plugin_hook_gate_test.go` 要求"新增扩展点必须同时有触发点与测试" | **仍成立**（接线在 tag 之后） | `git diff --name-only v0.12.0..HEAD -- internal/controlplane/plugin_host.go` 有输出；市场条目无加载器这半句在两侧都成立 |
+| 可空列逐列穷举——门禁只覆盖 alert-svc，控制面 `internal/store` 仍是抽样核对 | **不再成立**：改为穷举门禁 `internal/store/nullable_scan_guard_test.go`，另有 15 份 `mysql_scan_test.go`（`internal/{cmdb,deploy,logstore,orchestration}` + 11 个服务 store 包）与 `services/alert-svc/internal/store/nullable_scan_guard_test.go` | **仍成立**（收口在 tag 之后） | `find . -name 'mysql_scan_test.go' \| wc -l` = 15；`internal/store/nullable_scan_guard_test.go:1-20` 自述"把抽样换成穷举" |
+
+其余 12 行本轮逐条重测**仍然成立**，判据是"该能力对应的资产在 tag 之后没被动过，或动了但结论未变"：
+`otel-config.yaml`（traces 仍只接 `logging`）与 `internal/store/slo_eval.go` 在 `v0.12.0..HEAD` 区间**零改动文件**；
+alert-svc 里 `grep -rl prometheus services/alert-svc/internal` 无结果（仍不自行取数）；incident-svc 无 `rule_id`；
+`grpc.ChainUnaryInterceptor` 的实参仍只有 `trace` + `ratelimit`（`services/alert-svc/cmd/alert-svc/main.go:97`）；
+`values.yaml:827` 与 `docker-compose.prod.yml:1038` 的 `AUTOSCALER_K8S_EXECUTOR` 默认值仍为 `simulated`。
+AIOps 那行的"`/ready` 现回报数据源"经核对**在 tag 上就已成立**（`services/aio-svc/cmd/aio-svc/main.go:75,87` 在
+`v0.12.0` 里已是自检版本），所以它不属于上面的分叉行。
+
+> 记账一处口径更正：本报告 §33 之前的口头结论说这张表"有 3 行在 main 上不再成立"，逐行取证后是 **2 行**——
+> 第三行（AIOps `/ready`）我当时按"TD-76 的 `c99d0d6` 在 tag 之后"推断，没有实际比对 tag 上的源码，推断错了。
+
 ### 本版可复核的验证证据（都带观测量，不是静态结论）
 
 - 出厂栈真机 `verify-runtime.sh`：`PASS=123 / FAIL=1`（唯一 FAIL 是本机跑着本地覆盖层镜像

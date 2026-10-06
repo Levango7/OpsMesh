@@ -3539,3 +3539,95 @@ helm template x deploy/helm/opsmesh -f deploy/helm/opsmesh/values-production.yam
   与我插入 `check_all_kv` 撞在一起），那次结果不算数，已重跑取终判——记录在此以免有人引用它。
 
 
+
+## 35. 2026-10-06｜交付账目落后于现实：54 个早已发货的块仍标 `[Unreleased]`，以及一次 main 推送误触 release.yml 的险情
+
+起因是给用户做现状评估。评估过程中重测的每一行都留了命令与出处，其中两处**推翻了我自己先前的说法**，一并记在这里。
+
+### 35.1 现状数字（全部本轮重测）
+
+| 项 | 值 | 取法 |
+|---|---|---|
+| HEAD / 远端 | `68011fd`，`origin/main == HEAD`，未推 0 | `git rev-list --left-right --count origin/main...HEAD` → `0 0` |
+| CI 终判 | success（run `37406009220`，push） | `gh run list --branch main --limit 6` |
+| tag 之后 | 43 提交，其中非文档 28 | `git rev-list --count v0.12.0..HEAD`；`git log v0.12.0..HEAD -- . ':(exclude)docs/' ':(exclude)CHANGELOG.md'` |
+| 迁移文件 | 38 → 42（新增 `020_ci_items_fulltext`、`021_ci_items_fulltext_recall_columns`，各含 `.down`） | `git ls-tree -r <ref> --name-only`；**路径是 `internal/store/migrations/`**（我曾记成 `deploy/migrations/`，该目录 0 个文件） |
+| 出厂资产门禁 | PASS=54 / FAIL=0 / SKIP=2（含新加的第 16 节） | `bash deploy/scripts/validate-deploy-assets.sh` |
+| 发布物回核 | PASS=8 / FAIL=0 | `bash deploy/scripts/verify-release-artifacts.sh 0.12.0` |
+| main 分支保护 | 无 | `gh api repos/Levango7/OpsMesh/branches/main/protection` → 404 `Branch not protected` |
+
+### 35.2 一次真实险情：main 推送触发了 release.yml，而新的提权门拦住了它
+
+`gh run list --workflow release.yml` 里有一条 **run `37379548900`，event=push，headBranch=main，headSha=`a002c6a8`**。
+但 `release.yml:3-6` 的触发条件是 `push: tags: v*`，main 分支推送**本不该**产生这条 run。
+
+实测它**一个 job 都没跑**：`gh api .../runs/37379548900/jobs` 的 `workflow_jobs` 为 null，`gh run view --log` 报 `log not found`。
+最可信的解释是该提交里的文件带着 GitHub 解析器不接受的 YAML 锚点——下一提交 `e5b4d00` 的说明就是"锚点不被支持"，
+`release.yml:37-38` 如今留着这条注释。解析失败 ⇒ 过滤器没被应用 ⇒ 给这次 push 建了 run，但 job 图建不出来。
+
+后果我单独核了，**registry 没有被动过**：`alert-svc / task-svc / device-svc / auth-svc / runbook-svc` 五个镜像的
+`:latest`、`:0.12.0`、`:9f79dda1`（发布提交）三个 tag 的 manifest digest 两两相同，且这些查询退出码都是 0；
+`alert-svc:a002c6a8…` 返回 `not found`。取数方式：`docker buildx imagetools inspect <ref>`，
+**Digest 从 stdout 读、错误从 stderr 读、退出码单独判**。
+
+这件事的价值在于：`9b23b90` 把发布链改成"构建只推不可变 `:<sha>`，`:版本` 与 `:latest` 由 `promote` job（`needs: [build-and-push]`）
+在门禁全绿后改标"，而这次误触正好是一次**非人为设计的实战检验**——job 图没建起来 ⇒ `promote` 根本没启动 ⇒ `:latest` 原地不动。
+
+### 35.3 我自己造的一个假信号（已撤回）
+
+第一次核 digest 时我写成 `docker buildx imagetools inspect --raw <ref> 2>&1 | sha256sum`。
+`2>&1` 把 **stderr 的报错文本也喂进了哈希**，于是"读不到的 tag"照样输出一个 `sha256:…`。
+我差点据此报"GHCR 上存在未经发布的 main 镜像"。改成退出码与输出分离重测后，那个"不同 digest"根本不存在。
+这是"判定成败不许经管道"这条在我身上的第三次复发，记这里是为了让下一个人不再踩：
+**任何"我读到了 X"的断言，必须同时证明"读不到时会输出什么"**。
+
+### 35.4 账目落后于现实：CHANGELOG 的 54 个块
+
+`CHANGELOG.md` 有 **68 个 `## [Unreleased]` 块**。取证不必推测：条目"刷新 401 自等待死锁"（`CHANGELOG.md:1885`）所属块由
+提交 `0f77e0d`（2026-08-30）写入，`git tag --contains 0f77e0d` 覆盖 v0.8.0 直到 v0.12.0——**随 0.8.0 就发货了，标题仍写未发布**。
+再看各 tag 上的块数：v0.10.0=44、v0.11.0=54、v0.12.0=54 ⇒ 历次切版只加顶部摘要标题，**从未重命名历史块**，0.12.0 那次净变更 0。
+
+归版规则用可机械验证的事实：对每个块取"其描述文字（剥掉 `（已归入 …）` 后）最早出现在哪个 tag 的 `CHANGELOG.md` 里"。
+结果 **54 个归版**（0.8.0×13、0.9.0×2、0.9.1×6、0.9.2×14、0.10.0×9、0.11.0×10）、**14 个保持未发布**（全是 10-05/10-06 新写）。
+两处标注与首次出现不一致（自称归入 0.9.2 / 0.9.1，文本却到 0.10.0 才出现），都独立验真后才采信标注：
+shellcheck 步骤在 `v0.9.2` 的 `ci.yml` 里存在而 `v0.9.1` 里没有；`07447da` 经 `git merge-base --is-ancestor` 确认在 v0.9.1 祖先链上。
+差异来源是标注写在切版之后，不是归版归错。
+
+改动形态：`git diff --numstat` = **76 增 / 54 删**，其中 **109 行是 `## [` 标题行**，正文行只增不减（新增 21 行是本轮条目本身）。
+
+### 35.5 防复发门禁（第 16 节）与其判据边界
+
+判据：任何 `[Unreleased]` 标题的日期**不得早于**最新发布版本标题的日期，且标题必须带日期；取不到任何已发布版本基准时**判红而不是跳过**。
+刻意不用 git tag——本门禁所在 CI job 是浅检出（`fetch-depth: 0` 只出现在 4 个 job 里），真去查 tag 会让它在 CI 里静默不跑。
+
+变异证据（注入点在真标题行位置，两次都判红、还原 `md5sum` 双向一致）：
+`## [Unreleased] — 2026-08-01 变异探针A` ⇒ `日期 2026-08-01 早于最新发布版本日期 2026-10-04，却仍标 [Unreleased]`；
+裸 `## [Unreleased]` ⇒ `标题没有日期`。整脚本 FAIL=1、exit=1。
+另外该节在一次我自己写错的中间态里（日期提取用了行首锚定的 `match`）直接报"一个已发布版本标题都没有"——
+说明基准缺失分支真能判红，不是摆设。标题识别也收紧了：正文里有以 `## [Unreleased]` 开头的**散文行**，
+宽松匹配会把它当无日期标题造成假阳性。
+
+边界：这一节抓"日期早于最新发布版本却仍标未发布"这一整类，**抓不住**"切版当天新写、次日才归版"的短窗错标；那要靠切版工序。
+
+### 35.6 三处台账口径 + 两处表格结构缺陷
+
+- TD-62（`docs/tech-debt.md:60`）原称 `FireHook(` 在 controlplane 下**零调用点**（2026-10-04 结论）。2026-10-06 复测：
+  `AllHooks()` 的 3 个扩展点全部有宿主触发点（`platform_config.go:117`、`:155`、`server_netsec.go:103` → `plugin_host.go:74`），
+  并由 `plugin_hook_gate_test.go` 强制"新增扩展点必须同时有触发点与测试"。行内改为"②③④ 已落地，只剩 ①（运行时模型）待产品决策"。
+- TD-74（`:74`）同一格并存"已收口 / 保持 open / 收口，可关闭"三种口径（同日推进过程的叠加）。改为行首给**当前状态 = 已收口**、
+  中间口径原位标注为历史，并补写收口后仍存在的判据边界（只判"列数 == Scan 目标数"的站点、`IS NOT NULL`/`COALESCE` 跳过的列、
+  可空性来源是 `migrations/*.sql` ⇒ 运行时 `ALTER` 加的列不在视野内）。收口声明独立复核：**15 份 `mysql_scan_test.go` + 2 份 `nullable_scan_guard_test.go`**。
+- `docs/release-notes.md:53` 的 v0.12.0 降级清单补 as-of 基准段。**逐行取证后是 2 行**在 main 上已不成立、对已发货 0.12.0 仍成立
+  （插件零钩子、可空列只覆盖 alert-svc）；其余 12 行仍成立。**我先前口头说"3 行"是错的**——第三行（AIOps `/ready` 自检）我当时是从
+  "TD-76 的 `c99d0d6` 在 tag 之后"推出来的，没去比对 tag 上的源码；实际 `services/aio-svc/cmd/aio-svc/main.go:75,87` 在 `v0.12.0` 里已是自检版本。
+- 顺带抓到的结构缺陷：TD-73 行里 `（stub|mysql）` 未转义 ⇒ 该行撑出第 4 个单元格；表内还夹了一个空行（TD-73 与 TD-74 之间）⇒
+  TD-74 之后的行会甩出表头作用域。两处已修。校验器本身也被证明会"空转"：我第一版按全文件单一基准数，把另一张 3 列表误报成 11 行缺陷，
+  改为按表分段取基准后 HEAD=11 / 工作树=10，差的那一行正是被修掉的 TD-73。
+
+### 35.7 这轮对"什么时候切版"的影响（判断材料，不是结论）
+
+`promote` 这条新腿**至今零次成功执行**：`release.yml` 只在 `v*` 触发，`9b23b90` 之后唯一一条 release run 就是 35.2 里那条零 job 的红，
+上一条 success 是 `37221272686`（v0.12.0，早于 promote 存在）。也就是说**下一次切版就是它的第一次真跑**。
+用户此前选的是"先攒着，等有别的修复一起切"，这条事实让"攒"的成本多了一项：攒得越久，首次真跑 promote 时同时在变的量越多。
+已有缓解是 `39c3718` 加的第 ⑤ 项判据（`:版本` 与 `:发布提交` 必须同 manifest digest，本轮 PASS=8 里就含它），
+残留风险是 ⑤ 排在 `github-release` 之后且 main 无分支保护 ⇒ 真出事故时 Release 页已挂出去。
