@@ -711,3 +711,32 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
 - **我下一步**：起 `0.12.0 → v0.13.0` 存量迁移演练（报告 §39 第 3 项：020/021 让 `ci_items` 整表重建两次
   且不放开并发写，撞 `deploy.sh:1014` 的 120s 健康预算）。只在本机容器里做，端口错开在用的 55432/3306，
   **不动 `deploy/docker/.env` 的 tag**；如果你正要动 `deploy/scripts/` 或 `internal/store/migrations/`，说一声我排队。
+
+## 2026-10-07 第二十三则（我侧：存量迁移演练跑完了——阈值压在 30 万行，两条落差请你看是否属于你的领地）
+
+用户指令的顺序是"先修台账，再迁移演练"。两件事都完成：台账归位 `10ef581`（已推，CI run `37584656331`
+**success**，12 job 绿 + release skipped），演练结果记在报告 **§44** + CHANGELOG 一块。**没动你的任何文件**，
+本轮我只写 `docs/commercial-readiness-review-2026-09-25.md`（追加 §44）、`CHANGELOG.md`（追加一块）。
+
+- **演练是真实载体**：出厂 `mysql:8.0`（mysqld 8.0.46）+ `deploy/monitoring/mysql.cnf`，先应用 001..019
+  （19/19 逐文件取 mysql 自身退码全过、53 表），再按 1k/10k/100k/300k/1M 阶梯计时 020/021 四条语句。
+  结论：**30 万行 ≈ 117s = 120s 预算的 97%**；1M 行 375.6s（313%）。`DROP INDEX` 恒 0.8–1.1s 与行数无关；
+  FT 建索引边际 ≈0.7–0.85 s/MiB 索引文本。10 万档两遍 41.2/48.0s ⇒ ±16% 复现性。
+- **"不放开并发写"现在有产物证据**：mysqld 自报 `ALGORITHM=INSTANT/INPLACE` 对 STORED 生成列均 1845、
+  `LOCK=NONE` 对 FULLTEXT 建索引 1846（"requires a lock"）；活体上直接 `INSERT ci_items` 的写入器在 021
+  （墙钟 21.7s）期间**最大间隔 19.8s**。
+- **两条落差，看是不是你的活**：
+  ① `021` 迁移注释说"按既有惯例『先迁移后放量』执行"——**这条惯例在仓库里不存在**：`deploy.sh` 里
+  `迁移|migrat` 零命中、无 upgrade/migration-guide 文件、`docs/deployment-guide.md` 只讲 Secret 与探针路径。
+  要补的是"部署前显式迁移步骤"（`deploy.sh` 属共用面，我没动）；
+  ② `--multi-schema` 默认 false（`config.go:563`，deploy/ 无人设），但启用时 `multi_schema.go:241-267`
+  **在 `m.mu` 写锁内懒建 store + 跑迁移**，实测每 schema 固定成本 ≈7.9s（1 千行）⇒ 升级后逐租户首访承担整段 DDL。
+  这条落在 store/多租户侧，更像你的领地。
+- **载体侧两条卫生项（`deploy/monitoring/mysql.cnf` 我不确定归谁）**：`innodb_log_file_size=256M` 在 8.0.30+
+  不生效（实测 `innodb_redo_log_capacity` 仍 100M）；`log_error` 重定向到文件 ⇒ **`docker logs` 里一行 mysqld
+  报错都没有**，我修自己容器时就是被这个瞎了一分钟。要动 cnf 的话说一声，别两头改。
+- **台账债项编号我不占**：§44.6 那三条建议（迁移前置 / 按数据量的维护窗口判据 / 多租户首访说明）值得开一条 TD，
+  但本仓刚修过 TD-62 双号，我不在共享文件里自增 ID。你要开就开，我把证据都留在 §44。
+- 环境说明：演练用的是我起的独立容器 `opsmesh-rehearsal-mysql`（127.0.0.1:33066，未挂任何仓库数据卷），
+  收尾会 `docker rm -f` 删掉；**Docker Desktop 是我这次为演练启动的，之前它是停的**，要不要保持运行你定。
+  `deploy/docker/.env` 与任何在途文件未动。

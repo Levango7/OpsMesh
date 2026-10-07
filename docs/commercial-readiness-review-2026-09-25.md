@@ -4224,3 +4224,106 @@ E. 部署资产门禁整跑：**PASS=63 FAIL=0 SKIP=1**（原 58 + 本节 5 条�
 本仓 `.golangci.yml` 是 `check-blank: true`（`_ =` 也必须显式豁免），所以"我用 `_ =` 了"在这里不是理由。
 现在补进固定动作：`golangci-lint run ./...`（本机 v2.14.0，CI 钉 v2.13.2 ⇒ **终判仍在 CI**，
 本机只用于"别再犯同一类"，不能声称等价）。
+
+---
+
+## 44. 2026-10-07｜存量迁移演练：020/021 的阈值实测压在 **30 万行**，而"先迁移后放量"这条惯例并不存在
+
+§39 第 3 项给了"切版前要重做存量演练"的硬理由（020/021 重建 `ci_items`、窗口内不放开并发写、撞
+`deploy.sh` 的 120s 健康预算）。本节是那次演练的**执行结果**（用户 14:4x 指令"先修台账，再迁移演练"）。
+载体：`mysql:8.0`（实测 mysqld **8.0.46**）+ 出厂 `deploy/monitoring/mysql.cnf`，独立容器、127.0.0.1:33066；
+先真实应用 001..019（**19/19 逐文件取 mysql 自己的退码全过、53 张表**），再按行数阶梯只计时 020/021 四条语句。
+
+### 44.1 载体先骗了我两次（这两条本身也是交付事实）
+
+- **配置没生效**：Windows bind-mount 的权限让 mysqld 打
+  `World-writable config file '/etc/mysql/conf.d/custom.cnf' is ignored`，第一遍 `@@innodb_buffer_pool_size`
+  实测 **0.125G**（默认值）而不是出厂的 1G。改成 `docker cp` + `chmod 644` 后才拿到
+  `bp=1G | sync_binlog=1 | trx_commit=1 | O_DIRECT | ngram=2`。
+  **教训：挂进去 ≠ 读进去，配置类断言要问运行中的进程自己。**
+- **被我弄坏过一次**：我在 entrypoint 首次初始化尚未完成时 `docker restart`，数据目录处于未干净关闭状态，
+  之后 redo 改大小报 `Cannot create redo log files because data files are corrupt or the database was not
+  shut down cleanly`，容器 exit=1。而因为 cnf 把 `log_error` 重定向到 `/var/lib/mysql/error.log`，
+  **`docker logs` 里一行 mysqld 报错都没有**——这既是我当时的排障障碍，也是对客户的真实影响：
+  宿主机上 `docker logs opsmesh-mysql` 看不到数据库的错误。
+- 顺带一条卫生项：cnf 里的 `innodb_log_file_size = 256M` 在 8.0.30+ **已不生效**（实测
+  `innodb_redo_log_capacity` 仍是默认 100M）——属于"以为调过了"的参数。
+- 行数取值有出处，不是我拍的：`docs/deployment-scenarios.md:66-70`（分布式 ≤10000 纳管设备）、`:138`
+  （单机房 ≤500 台）⇒ CI 数按设备数的倍数外推，**10 万行即文档上限的保守值**，100 万行是"超宣称规模 10×"
+  的压力界。种子 attrs 为 8 键 JSON、中英混合，**约 220 B/行**，所以表里同时记"索引文本量"——成本跟着文本量走。
+
+### 44.2 阈值曲线（同容器、同 schema、逐条计时；单位秒）
+
+| ci_items | 索引文本量 | 020#1 加 STORED 生成列 | 020#2 建 FT(3 列) | 021#1 DROP INDEX | 021#2 建 FT(7 列) | 合计 | 占 120s 预算 |
+|---|---|---|---|---|---|---|---|
+| 1 000 | 0.2 MiB | 1.6 | 2.7 | 1.1 | 1.7 | **7.9** | 7% |
+| 10 000 | 2.2 MiB | 1.3 | 6.0 | 0.8 | 3.8 | **12.5** | 10% |
+| 100 000 | 22.0 MiB | 3.0 / 4.4 | 16.8 / 20.1 | 0.8 / 1.0 | 20.0 / 21.7 | **41.2 / 48.0** | 34–40% |
+| 300 000 | 65.9 MiB | 6.8 | 56.0 | 0.8 | 52.7 | **117.0** | **97%** |
+| 1 000 000 | 219.7 MiB | 17.2 | 157.2 | 0.8 | 199.9 | **375.6** | 313% |
+
+- 10 万档**跑了两遍**（41.2 / 48.0）⇒ 单次测量约 ±16%，量级与阈值结论不受影响。
+- `DROP INDEX` 与行数无关（恒 0.8–1.1s）；成本全在两条"建"和一条"加列"。
+- 边际速率：**建全文索引 ≈ 0.7–0.85 s / MiB 索引文本**；**加 STORED 生成列 ≈ 0.017 s / 千行**（COPY 整表重建）。
+- **阈值压在 30 万行（≈66 MiB 索引文本）= 预算的 97%**。更慢的盘、更肥的 attrs、或同一 ctx 里别的迁移多占几秒，
+  都会把它推过 120s。
+- 方向上这些数是**下界**：载体是 32 核本机 NVMe + 1G 缓冲池，客户 VM（4 核 / 云盘 / 更小 bp）几乎必然更慢。
+
+### 44.3 "不放开并发写"——从引文档升级为 MySQL 自己的裁决，再加活体实测
+
+三条 `ALGORITHM=`/`LOCK=` 探针（支持性是能力问题、与行数无关，故空表即可判定）：
+
+```
+ALTER … ADD COLUMN … STORED, ALGORITHM=INSTANT
+  → ERROR 1845 (0A000): ALGORITHM=INSTANT is not supported for this operation.
+ALTER … ADD COLUMN … STORED, ALGORITHM=INPLACE
+  → ERROR 1845 (0A000): ALGORITHM=INPLACE is not supported for this operation. Try ALGORITHM=COPY.
+ALTER … ADD FULLTEXT INDEX … WITH PARSER ngram, ALGORITHM=INPLACE, LOCK=NONE
+  → ERROR 1846 (0A000): LOCK=NONE is not supported. Reason: Fulltext index creation requires a lock. Try LOCK=SHARED.
+```
+
+即：**加 STORED 生成列必须整表重建（COPY），建全文索引期间禁止并发写**——§39 靠 MySQL 文档说的话，
+mysqld 自己说了一遍。
+
+活体停顿实测（10 万行）：独立客户端**持续直接 INSERT `ci_items`**，每条成功后由 MySQL 自己盖 `NOW(3)`
+时间戳，同时执行 021 的 DROP+ADD（墙钟 21.7s）⇒ **最大相邻间隔 19 826 ms ≈ 19.8s**，>3s 的写入 1 条，
+整个窗口只完成 10 条。写侧被禁时长≈建索引时长，实证成立。
+
+（第一版探针我把写入器写到另一张表 `_writer_log`，于是测出"最大间隔 1.0s、没有停顿"的**假结论**——
+锁的是 `ci_items`，写别的表当然不受影响。判据改对后重跑。记这条是因为它正是"我的验证动作在骗我"的形状。）
+
+### 44.4 预算其实有两道，不是一道
+
+- 交付侧：`deploy/docker/scripts/deploy.sh:1014` `wait_for_healthy controlplane 120`。
+- 应用侧：`internal/store/sql.go:242-244` `migrationLockTimeoutSec=60` + `migrationWorkBudgetSec=60`，
+  `:346-349` 把两者之和做成**一次 `runMigrations` 的 ctx 上限（120s，含 GET_LOCK 等待）**，
+  `:187` 之后按 `migrationInitAttempts=20 × 3s` 重试。
+- 迁移在**监听之前**：`cmd/opsmesh/main.go:93` 先 `controlplane.NewServer(cfg)`（内部同步建 store → 跑迁移），
+  `:98` 才 `srv.Start()` ⇒ 迁移期间 8080 根本还没起、`/health` 不存在。
+- 合起来：**30 万行时两道 120s 同时贴边**。越过阈值后客户看到的症状是 `deploy.sh up` 报"120s 内未就绪"，
+  而真实原因是数据量导致的迁移耗时——症状与成因不同名，正是这类问题最难归因的地方。
+
+### 44.5 顺带查到的两条落差（各自独立成立）
+
+1. **021 注释说"按既有惯例『先迁移后放量』执行"，而这个惯例在仓库里不存在**：`deploy.sh` 里 `迁移|migrat`
+   **零命中**；`git ls-files | grep -iE 'upgrade|migration-guide'` 为空；`docs/deployment-guide.md` 只有
+   `helm upgrade` 的 Secret 复用注意（:378-385）与探针路径的升级顺序（:146-157）。
+   ⇒ 演练恰恰需要的那一步（离线迁移）**既无脚本也无文档**。
+2. **多租户 schema 模式下成本是"每 schema 一份 + 全局写锁内首触"**：`--multi-schema` 默认 false
+   （`internal/config/config.go:563`，deploy/ 里无人设置 ⇒ 出厂形态是单 schema，上面的阈值直接适用）。
+   但若客户启用：`MultiSchemaStore.storeFor()`（`internal/store/multi_schema.go:241-267`）**懒建 per-tenant
+   store 且在 `m.mu` 写锁内构造**，构造即跑迁移。实测每 schema 固定成本 ≈ **7.9s（1 千行）**，之后随该租户
+   自身行数上升 ⇒ 升级后每个租户的**第一个请求**承担整段 DDL，并把其他冷租户一起挡在写锁后面；
+   症状是"健康检查早过了但首访极慢/超时"，比启动超时更难归因。
+
+### 44.6 建议（等你拍；本轮只补证据与判据，未改任何产品行为）
+
+1. 把 020/021 这类"重建表 + 禁写"的迁移从**启动内联**改成**部署前显式步骤**（`deploy.sh` 加 `migrate`
+   子命令，或 `up` 之前跑一次性容器），启动只做版本校验；等待预算随数据量可配（如
+   `MIGRATION_WAIT_BUDGET`，默认仍 120s）。
+2. 给客户一条可执行的判据：升级前查 `SELECT COUNT(*), SUM(LENGTH(CAST(attrs AS CHAR))) FROM ci_items`，
+   超过约 **20 万行 / 45 MiB** 就预约维护窗口（按 0.85 s/MiB 外推并留一倍余量）。
+3. `--multi-schema` 的发布说明要写明"升级后逐租户首访会慢"，或提供一个按租户串行的预热脚本。
+4. 台账侧建议**新开一条债项**承接 1/2/3；**编号我不占**，避免与并行线撞号（本仓刚修过 TD-62 双号）。
+5. 载体侧两条卫生项顺手可修：cnf 的 `innodb_log_file_size` 换成 `innodb_redo_log_capacity`；
+   若保持 `log_error` 重定向，交付文档要写明去哪儿看，否则客户面对的是空的 `docker logs`。
