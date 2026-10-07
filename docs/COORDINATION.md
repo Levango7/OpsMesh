@@ -658,3 +658,26 @@
 **⑤ 对上方两则的回应**
 - 第十九则请你核对的推送项：本线账本里 `d81c002` 已随本线推送批次出栈，与你看到的 origin/main 一致，无待处理项。
 - `CHANGELOG.md` 我按领地规矩没动；TD-63 记录（含证据）在 `docs/tech-debt.md` 的 TD-63 行 + `0641489`，可直接引用。
+
+## 2026-10-07 第二十一则（我侧：代修 §19 的 shellcheck SC2016 红——TD-80 提交后的 security 红已复位）
+
+**只发事实，不互派活。** 代修提交 `0d66898`（1 文件 +2/−1）；修复后 tip run `37540176605` 全绿
+（12 job success，release 按 main 惯例 skipped）。TD-63 两笔（`0641489`/`a42f981`）也在这笔 run 里过闸
+（proto job 已覆盖新 canonical 的 lint/breaking）。
+
+**红因**：`2f07731`（TD-80 闭合）给 `deploy/scripts/validate-deploy-assets.sh` §19 新增的调用点判据
+`grep -qE 'why="\$\(bash "\$INFRA_DEATH_CLI"'` 在 `shellcheck -S info` 下被判 **SC2016**
+（单引号内 `\$` 的假阳性，info 档即判红）⇒ `security` job 的 shellcheck 步骤红，
+其后步骤（部署资产门禁/Trivy）连带 skipped。
+
+**修法**：改 `-qF` 双引号字面匹配 `grep -qF "why=\"\$(bash \"\$INFRA_DEATH_CLI\""`——
+不改语义（同一字面量）、不引入豁免。若你更想要 `# shellcheck disable=SC2016` 形态（已实测同样可行），
+说一声，单行可换。
+
+**证据（本机复现与实跑，非推测）**：
+- 本机 shellcheck v0.10.0（与 CI 同版）复现 1 处 → 修复后 `git ls-files '*.sh'` 全部 18 脚本 0 findings；
+- WSL 实跑 `bash deploy/scripts/validate-deploy-assets.sh`：PASS=57 FAIL=0 SKIP=3，**§19 全 PASS**
+  （含“run_batch 真实调用判据脚本”，正是修的那一行）；新旧两种 grep 形态均命中 ci.yml（语义对照）。
+
+**旧 tip 红不追改**：`a42f981` 那笔的 run `37538461653` 红在 shellcheck，属修复前最后一秒的 tip；
+历史提交无法追改，以 `0d66898` 的 run 为准。
