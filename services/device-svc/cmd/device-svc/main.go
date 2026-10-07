@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/Levango7/OpsMesh/internal/version"
 	"github.com/Levango7/OpsMesh/pkg/compress"
 	applog "github.com/Levango7/OpsMesh/pkg/log"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
@@ -165,6 +167,21 @@ func main() {
 	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready"))
+	})
+	// 版本面（TD-76）：与 controlplane 的 GET /version 对齐——不 exec 进
+	// 容器即可确认实例版本。Dockerfile.service 的 -ldflags
+	// -X internal/version.Version 注入此前是死注入（服务二进制不引用
+	// internal/version，链接器无符号可改）；本端点使其生效。
+	mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{
+			"service":   "device-svc",
+			"version":   version.Version,
+			"commit":    version.Commit,
+			"date":      version.Date,
+			"goVersion": runtime.Version(),
+			"goos":      runtime.GOOS,
+			"goarch":    runtime.GOARCH,
+		})
 	})
 	mux.Handle("/metrics", metrics.GetHandler())
 	mux.HandleFunc("/api/v1/catalog/topology", func(w http.ResponseWriter, r *http.Request) {

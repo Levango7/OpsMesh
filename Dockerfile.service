@@ -56,8 +56,17 @@ RUN set -eu; \
 # 注意：-X 的包路径必须是模块路径（github.com/Levango7/OpsMesh/...）。写成 opsmesh/...
 # 时链接器会**静默忽略**（构建成功但版本注入不生效，2026-09-26 实测确认，产物仍报默认值）。
 # 注释不得写在 RUN 续行中间：Dockerfile 解析器会在注释处截断该指令。
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
-    -ldflags="-s -w -X github.com/Levango7/OpsMesh/internal/version.Version=${VERSION}" \
+# 版本注入按模块路径分派（TD-76）：11 个服务模块路径在 github.com/Levango7/OpsMesh
+# 树下，共享根模块 internal/version（internal 可见性规则允许跨模块引用同前缀包）；
+# log-svc 模块路径是 opsmesh.io/log-svc（历史命名），不在该树下、不能引用根模块
+# internal 包，故自带 main 包版本变量，-X 路径按其自身模块路径书写。
+RUN if [ "${SERVICE}" = "log-svc" ]; then \
+      VERSION_LDFLAGS="-X opsmesh.io/log-svc/cmd/log-svc.version=${VERSION}"; \
+    else \
+      VERSION_LDFLAGS="-X github.com/Levango7/OpsMesh/internal/version.Version=${VERSION}"; \
+    fi; \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath \
+    -ldflags="-s -w ${VERSION_LDFLAGS}" \
     -o /svc ./cmd/${SERVICE}
 
 # P2-2 供应链安全：base image digest 由 Renovate 自动钉死（见 .github/renovate.json）。

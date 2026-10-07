@@ -5,8 +5,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"runtime"
 	"strings"
 
+	"github.com/Levango7/OpsMesh/internal/version"
 	"github.com/Levango7/OpsMesh/services/runbook-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/runbook-svc/internal/service"
 )
@@ -32,6 +34,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/health", h.handleHealth)
 	mux.HandleFunc("/ready", h.handleReady)
 	mux.HandleFunc("/api/v1/health", h.handleHealth)
+	// 版本面（TD-76）：与 controlplane 的 GET /version 对齐。
+	mux.HandleFunc("/version", h.handleVersion)
 }
 
 // handleReady 报就绪。本服务无外部依赖（存储在请求时才访问），故就绪等价于存活；
@@ -51,6 +55,26 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleVersion 报构建信息（TD-76）：与 controlplane 的 GET /version 对齐——
+// 不 exec 进容器即可确认实例版本。Dockerfile.service 的 -ldflags
+// -X internal/version.Version 注入此前是死注入（服务二进制不引用
+// internal/version，链接器无符号可改）；本端点使其生效。
+func (h *Handler) handleVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"service":   "runbook-svc",
+		"version":   version.Version,
+		"commit":    version.Commit,
+		"date":      version.Date,
+		"goVersion": runtime.Version(),
+		"goos":      runtime.GOOS,
+		"goarch":    runtime.GOARCH,
+	})
 }
 
 func (h *Handler) handleRunbooks(w http.ResponseWriter, r *http.Request) {

@@ -5,12 +5,14 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"syscall"
 	"time"
@@ -23,6 +25,18 @@ import (
 
 	applog "github.com/Levango7/OpsMesh/pkg/log"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
+)
+
+// 版本信息（TD-76）：log-svc 模块路径是 opsmesh.io/log-svc（历史命名），
+// 不在 github.com/Levango7/OpsMesh 路径树下，按 Go 的 internal 可见性
+// 规则**不能**引用根模块的 internal/version——故本服务自带版本变量，
+// 由 Dockerfile.service 的 -ldflags -X opsmesh.io/log-svc/cmd/log-svc.version
+// 注入（源码直构时回默认值）。其余 11 个服务模块路径在 OpsMesh 树下，
+// 共享根模块 internal/version。
+var (
+	version = "dev"
+	commit  = "dev"
+	date    = "unknown"
 )
 
 func main() {
@@ -224,6 +238,22 @@ func newHealthServer(addr string, store logstore.LogStore) *http.Server {
 	// 兼容别名（TD-77 过渡期，指向同一 handler）。
 	mux.HandleFunc("/healthz", handleHealth)
 	mux.HandleFunc("/readyz", handleReady)
+	// 版本面（TD-76）：与 controlplane 的 GET /version 对齐——不 exec 进
+	// 容器即可确认实例版本。Dockerfile.service 的 -ldflags
+	// -X opsmesh.io/log-svc/cmd/log-svc.version 注入此前是死注入
+	// （服务二进制无版本符号，链接器无符号可改）；本端点使其生效。
+	mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"service":   "log-svc",
+			"version":   version,
+			"commit":    commit,
+			"date":      date,
+			"goVersion": runtime.Version(),
+			"goos":      runtime.GOOS,
+			"goarch":    runtime.GOARCH,
+		})
+	})
 	mux.Handle("/metrics", metrics.GetHandler())
 
 	return &http.Server{
