@@ -6,6 +6,109 @@
 
 ---
 
+## v0.13.0 — 2026-10-07 CMDB 检索真实化 + 插件宿主可接线 + 发布链"先过门禁再提权"，并首次量出存量升级阈值
+
+三件事：把能力表里那行 ❌ 的 CMDB 检索换成真的全文索引召回；把"可插拔扩展"从框架变成**能接线的功能**
+（默认不启用）；把发布链门禁挪到提权之前，并给客户一条可自查产物的验收命令。证据与过程见
+`docs/commercial-readiness-review-2026-09-25.md` §38–§44、`CHANGELOG.md` 的 `[0.13.0]` 各明细块。
+
+### 先说发布本身（客户会直接撞到）
+
+**本版是发布链改造后的第一次真实执行**。`promote`（registry 侧改标、不重建）、`:latest`/版本 tag 的提权时序、
+验收脚本第 ⑤ 项 digest 等式，此前只被本地跑与静态断言验过形状，**真实提权执行次数为 0**（§39 实测）。
+tag 推上去后请用 `deploy/scripts/verify-release-artifacts.sh 0.13.0` 自查五项判据（镜像 tag 存在 / `.sig`+`.att`
+挂在本版本 digest 上 / Release 存在且正文含能力降级清单 / chart 渲染出的引用真实存在 /
+`:0.13.0` 与 `:<发布提交>` 同一个 manifest digest）。任一项不符请以门禁结果为准，**不要手工补 tag**。
+
+### 破坏性 / 行为变更（升级前必读）
+
+1. **存量库升级会把 `ci_items` 整表重建两次，且窗口内禁止并发写**。迁移 020（加 STORED 生成列 + 建首个
+   FULLTEXT 索引）与 021（先 `DROP` 再按 7 列重建）不是普通加索引：mysqld 自己拒绝
+   `ALGORITHM=INSTANT`/`INPLACE`（`ERROR 1845`）与 `LOCK=NONE`（`ERROR 1846 ... requires a lock`）。
+   实测阈值（出厂 `mysql:8.0` + 出厂 `mysql.cnf`，mysqld 8.0.46）：1 千行 7.9s ｜ 10 万行 41–48s ｜
+   **30 万行 117s ＝ 120s 等待预算的 97%** ｜ 100 万行 375.6s。
+   **判据：升级前查 `SELECT COUNT(*), SUM(LENGTH(CAST(attrs AS CHAR))) FROM ci_items`，超过约 20 万行 /
+   45 MiB 请预约维护窗口**（按 0.85 s/MiB 外推并留一倍余量）。因为迁移在控制面启动路径上同步执行且**早于
+   HTTP 监听**，大表下的症状是 `deploy.sh up` 报"120s 内未就绪"——看着像新版本部署失败，实际是数据量导致的
+   迁移耗时。该缺口已记 **TD-83**，本版未修（本版没有"部署前迁移"这一步）。
+2. **微服务健康路径与端口环境变量名统一（TD-77）**：规范路径为 `/health` + `/ready`；历史别名
+   `/healthz`（log-svc）与 `/api/v1/health`（incident/runbook/autoscaler）**本版仍注册在同一 handler 上**，
+   外部探针不会因升级而 404，计划下个版本摘除。净增能力：runbook-svc / autoscaler-svc 此前**没有就绪端点**，
+   统一后 `/ready` 可用。废弃端口键不再注入。
+3. **MySQL 容器的日志与 redo 容量**：`deploy/monitoring/mysql.cnf` 原写的 `innodb_log_file_size = 256M`
+   在 MySQL 8.0.30+ **静默失效**（挂载后实测生效值仍是默认 100M），本版改用 `innodb_redo_log_capacity = 256M`
+   ⇒ **redo 空间首次真正按 256M 分配**（磁盘占用与 checkpoint 行为会变）。同时移除 `log_error` 文件重定向，
+   mysqld 错误改走 stderr ⇒ **`docker logs opsmesh-mysql` 从"空白"变成有内容**；若你的日志采集假设是
+   "读容器内文件"，需要改成采集 stdout/stderr。
+4. **交付镜像 tag 的推送时序**：`:latest` 与 `:<版本>` 不再跟构建一起推送，而是在 Trivy/SBOM/cosign 全绿后
+   由 `promote` 改标（不重建 ⇒ digest 不变，被扫的那份就是交付的那份）。依赖"每次构建都会刷新 latest"的
+   自动化需改为按版本 tag 或 digest 取镜像。
+5. **插件宿主（TD-62）默认不启用、零行为变化**：`--plugin-manifest` 默认为空 ⇒ 不构造宿主、不注入管理器，
+   `opsmesh_plugin_hook_calls_total` 恒为 0（出厂 Prometheus 规则已按"未配置时不触发"编写）。本版把它做成
+   **可接线的功能**，不是"已经在跑的插件系统"——请按前者规划验收。
+
+### 新增能力
+
+- **CMDB 检索走全文索引**（迁移 020/021）：`ci_attrs_text` STORED 生成列 + `ngram` 全文索引覆盖 7 个召回列；
+  检索按 token 分流（长度=1 或含下划线的 token 回退 `LIKE`，其余走 `MATCH`）。**分流是必要的而非可选项**：
+  实测单字 token 在 MATCH 下一律召回为空，整体换索引会把中文检索变窄（漏召回无补救，多召回可由下游
+  `matchCI` 前缀匹配过滤——这个非对称性就是设计约束本身）。
+- **版本自证面（TD-76）**：`opsmesh_build_info{service,version,commit}` 进入抓取面，确认镜像里编进去的版本
+  不再需要 exec 进容器。
+- **发布物验收命令**：`deploy/scripts/verify-release-artifacts.sh <版本>`，五项判据、PASS/FAIL/UNVERIFIED 分立。
+- **插件运行时模型**：独立进程 + HTTP 契约（`internal/plugin/remote.go`）；清单格式与示例见
+  `plugins/remote-example/README.md`。生产模式下清单解析/校验失败**即终止启动**（fail-fast），非生产模式
+  告警后按未启用继续。
+
+### 缺陷修复
+
+- **日志检索整次查询失败**：`internal/logstore` 写侧主动把空值落成 NULL，而读侧用裸 `string` 扫描 ⇒
+  任一可空列为 NULL 时整条 Query 报错。修法为可空列经 `sql.Null*` 中转 + 真库往返用例
+  （`TestSQLNullRoundTripRealMySQL`，CI 首次执行即 PASS），并把该包单列进 integration job——此前它
+  永远以 skip 姿态"通过"。
+- **发布物验收把网络抖动判成产物缺失**（含一次真实误报的收回）：取不到 token / 传输失败现记 `UNVERIFIED`
+  而非 `FAIL`，只有确定 404 才算缺陷；判据本身不再"看起来全绿但没核对上"。
+- **可空列↔Scan 守卫自身的三个假绿**（TD-74）：门禁从"抽样"换成"逐站点账目"，修好函数名取空、
+  宽扫描两头不管、mock 从不喂 NULL 三类失明；覆盖率下限以棘轮方式钉住。
+
+### 供应链与门禁
+
+- 企业版前端 2 条 npm HIGH 清零（`1c21985`；Trivy 公告库当日新增，非本仓回归但确实存在于我们的 lockfile）。
+- shellcheck 门禁从 `-S warning` 抬到 **`-S info`**：此前隐形的 44 处存量清零，现 18 个交付脚本 0 findings
+  （本机与 CI 同为 v0.10.0；`-S style` 经逐条判定**不设卡**，理由记在台账 TD-78）。
+- CI 基础设施死亡的**重试判据**从"报错文本白名单"换成现象级三条件（`deploy/scripts/ci-infra-death.sh`：
+  0 可重试 / 1 判红 / 2 判据失明，调用方把 2 当判红），并由门禁第 19 节守住"判据真的被调用"。
+- 发布链 `concurrency` 串行闸（排队不取消）；门禁第 17 节把"先过门禁再提权"、第 18 节把"入站只绑环回"
+  从口头约定变成静态断言；第 16 节防 CHANGELOG 归版失真复发。
+
+### 能力降级清单（本版如实标注；按能力表验收时请跳过这些或先确认前置）
+
+| 能力 | 本版状态 | 前置 / 说明 |
+|---|---|---|
+| 插件式扩展 | **需显式启用** | `--plugin-manifest` 为空即完全不启用（默认）；示例仅 `plugins/remote-example`，无插件市场或第三方分发 |
+| CMDB 相关性窗口 | 缓解但**未消除** | `LIMIT` 仍拼在 token 循环之外，"最相关 CI 落在窗口外"只是被全文召回缓解（TD-79 在册） |
+| 单字 / 含下划线 token | 走 `LIKE` | 与 ngram 粒度不一致，MATCH 空召回，故显式回退；这类 token 从索引得到的收益为零 |
+| 链路追踪 | 只有"发得出去" | 无查询后端（TD-75）：OTLP 导出可用，平台内查不到 trace |
+| 微服务 gRPC 面 | **无鉴权** | 出厂 compose 把宿主端口除白名单外**只绑环回**（门禁第 18 节断言）；跨主机调用需自建 mTLS |
+| 外发告警真实送达 | 未端到端复验 | PagerDuty 载荷已按契约修正，真实送达仍未在客户环境复验 |
+| 存量大表升级窗口 | **未处理** | 见"破坏性 1"与 TD-83：本版无"部署前迁移"步骤，`deploy.sh` 内不存在迁移入口 |
+| 许可与第三方合规 | 法务结论未出 | MPL-2.0 再分发口径、NOTICE/THIRD_PARTY 完备性属商务 + 法务项 |
+| `main` 分支保护 | 无 | 免费档限制；推送即入主干，靠 CI 与门禁事后拦 |
+
+### 本版可复核的验证证据（都带观测量，不是静态结论）
+
+- 版本源一致性：门禁第 1 节 [PASS] `Chart.yaml version/appVersion = 0.13.0`、`values-production` **14 处 tag**
+  全等、`gitops production-segment` 全等（`internal/version.Version` 已纳入对账）。
+- 部署资产门禁整跑：**PASS=63 FAIL=0 SKIP=1**；第 16 节对归版后的 CHANGELOG 判 `offenders=0`。
+- 存量迁移演练：1 千→100 万行完整曲线（§44.2）；10 万行跑两遍 41.2 / 48.0s（±16%）；活体写入器直接
+  INSERT 被锁表时**最大间隔 19.8s**（021 墙钟 21.7s）。
+- `verify-release-artifacts.sh 0.12.0` 正向 **PASS=8 FAIL=0**（含第 ⑤ 项 14 个镜像 digest 等式命中）；
+  反向 `RELEASE_SHA=0000…` ⇒ 14 条 `[FAIL]`、退出码 1。
+- `go build ./...` rc=0；`shellcheck -S info` 18 脚本 0 findings；CI 各 job（含 Race detector / E2E 真实后端）
+  在归版前最后一笔上为绿。
+
+---
+
 ## v0.12.0 — 2026-10-04 gRPC 契约真实化 + 规则引擎真实化 + 八处"声明了但不成立"的收口
 
 本版的主线不是新功能，而是把**此前对外宣称存在、实际不成立**的能力逐条变成事实，
