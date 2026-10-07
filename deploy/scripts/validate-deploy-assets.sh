@@ -25,8 +25,10 @@
 #  16. CHANGELOG 归版账目（[Unreleased] 不得早于已发布版本日期）
 #  17. 发布链顺序（构建腿只推不可变 :<sha>；promote 必须是提权唯一入口且在 Release 之前）
 #  18. 入站边界（出厂 compose 发布的宿主端口除白名单外必须只绑环回；含条目数与独立正则对账，防判定面静默缩小）
-#  19. CI 重试判据的接线与自测（TD-80：判据必须是可执行脚本且真的被调用，并现场跑一次自测）
-#  20. 样例与 GitOps 段文件的版本字面量（K8s 样例 / gitops segment / values-production 自述）必须 = Chart.yaml version
+ #  19. CI 重试判据的接线与自测（TD-80：判据必须是可执行脚本且真的被调用，并现场跑一次自测）
+ #  20. 样例与 GitOps 段文件的版本字面量（K8s 样例 / gitops segment / values-production 自述）必须 = Chart.yaml version
+ #  22. 部署前显式迁移（TD-83：deploy.sh migrate 子命令 / 二进制 migrate 子命令 /
+ #      预算旋钮 MIGRATION_WAIT_BUDGET+OPSMESH_MIGRATION_BUDGET_SEC / 升级指南维护窗口判据）
 #
 # 用法：bash deploy/scripts/validate-deploy-assets.sh
 set -uo pipefail
@@ -1923,6 +1925,86 @@ else
     else
         bad "values-production.yaml 自述版本与 Chart.yaml 不一致：${VP_SYNC_BAD}（期望 ${CHART_VERSION}）"
     fi
+fi
+
+# ---------------------------------------------------------------
+sec "22. 部署前显式迁移（TD-83：migrate 子命令 / 预算旋钮 / 维护窗口判据）"
+# ---------------------------------------------------------------
+# 背景：020/021 是"重建表 + 禁写"型迁移（§44 实测 30 万行 ≈117s、
+# 100 万行 ≈376s），此前只在控制面启动内联执行，吃掉 up 时
+# controlplane 的 120s 健康预算并在窗口内阻塞 CMDB 写入。
+# 本节守住 TD-83 三件套的接线：deploy.sh migrate 子命令、二进制
+# migrate 子命令、预算旋钮，以及客户可见的维护窗口判据。
+
+# 22.1 deploy.sh：子命令定义 / dispatch / 预算默认值 / 版本核对判据
+MG_SH=deploy/docker/scripts/deploy.sh
+MG_BAD=""
+grep -q '^do_migrate()' "$MG_SH" || MG_BAD="${MG_BAD} do_migrate定义"
+# dispatch 行含 $PROJECT_DIR 变量引用，拆成两个无 $ 的固定串对账
+grep -qF 'migrate)' "$MG_SH" || MG_BAD="${MG_BAD} dispatch"
+grep -qF 'do_migrate ;;' "$MG_SH" || MG_BAD="${MG_BAD} dispatch"
+grep -qF 'env_val MIGRATION_WAIT_BUDGET 120' "$MG_SH" || MG_BAD="${MG_BAD} 预算默认值"
+# 判据不信退出码：migrate 跑完必须核对库内版本（二进制携带数 vs 库内 MAX）
+grep -qF 'SELECT MAX(version) FROM opsmesh.schema_migrations' "$MG_SH" || MG_BAD="${MG_BAD} 版本核对"
+if [[ -z "$MG_BAD" ]]; then
+    ok "deploy.sh migrate 子命令接线完整（定义/dispatch/预算默认 120/版本核对）"
+else
+    bad "deploy.sh migrate 接线不完整：${MG_BAD}"
+fi
+
+# 22.2 二进制：migrate 子命令分派 + 实现 + 非 mysql 显式拒绝
+# （factory.SelectStore 对非 mysql 后端返回 MemoryStore 且无错误，
+# 不显式拒绝会让 migrate"成功"地什么都不做——假成功防线）
+MN_GO=cmd/opsmesh/main.go
+MN_BAD=""
+grep -qF 'case "migrate":' "$MN_GO" || MN_BAD="${MN_BAD} 分派"
+grep -qF 'func runMigrate() int' "$MN_GO" || MN_BAD="${MN_BAD} runMigrate"
+grep -qF 'cfg.Store != "mysql"' "$MN_GO" || MN_BAD="${MN_BAD} 非mysql拒绝"
+if [[ -z "$MN_BAD" ]]; then
+    ok "二进制 migrate 子命令在位（含非 mysql 显式拒绝，防假成功）"
+else
+    bad "二进制 migrate 子命令缺失或防线不完整：${MN_BAD}"
+fi
+
+# 22.3 迁移总预算可配：内部 ctx 预算经 OPSMESH_MIGRATION_BUDGET_SEC 放宽
+# （默认 120s = 锁等待 60 + 工作 60；大表迁移远超时会掐断持锁工作）
+SQL_GO=internal/store/sql.go
+if grep -qF 'OPSMESH_MIGRATION_BUDGET_SEC' "$SQL_GO" \
+   && grep -qF 'migrationBudgetSec()' "$SQL_GO"; then
+    ok "迁移总预算可配（OPSMESH_MIGRATION_BUDGET_SEC，默认 120s）"
+else
+    bad "迁移总预算不可配（internal/store/sql.go 缺 OPSMESH_MIGRATION_BUDGET_SEC / migrationBudgetSec）"
+fi
+
+# 22.4 compose：一次性容器经环境变量补齐 command 被覆盖后失效的参数，
+# 且 OPSMESH_MYSQL_DSN 与 command 的 --mysql-dsn 逐字一致（防两处漂移）
+CP_YML=deploy/docker/docker-compose.prod.yml
+CP_BAD=""
+for kv in OPSMESH_STORE OPSMESH_MYSQL_DSN OPSMESH_TLS_CERT OPSMESH_TLS_KEY; do
+    grep -qF "      ${kv}:" "$CP_YML" || CP_BAD="${CP_BAD} ${kv}"
+done
+CMD_DSN="$(grep -oE -- '--mysql-dsn=.*' "$CP_YML" | head -1 | sed 's/^--mysql-dsn=//')"
+ENV_DSN="$(grep -oE 'OPSMESH_MYSQL_DSN: .*' "$CP_YML" | head -1 | sed 's/^OPSMESH_MYSQL_DSN: //')"
+if [[ -z "$CMD_DSN" || -z "$ENV_DSN" || "$CMD_DSN" != "$ENV_DSN" ]]; then
+    CP_BAD="${CP_BAD} dsn漂移(command=${CMD_DSN:-空} env=${ENV_DSN:-空})"
+fi
+if [[ -z "$CP_BAD" ]]; then
+    ok "compose 预迁移环境变量齐备且 DSN 与 command 逐字一致"
+else
+    bad "compose 预迁移环境变量问题：${CP_BAD}（四个 env 键须在位，DSN 不得漂移）"
+fi
+
+# 22.5 升级指南：维护窗口判据（规模 SQL + 阈值 + §44 曲线取数命令）客户可见
+UG_MD=docs/upgrade-guide.md
+UG_BAD=""
+[[ -f "$UG_MD" ]] || UG_BAD="${UG_BAD} 文件缺失"
+grep -qF 'SELECT COUNT(*), SUM(LENGTH(CAST(attrs AS CHAR))) FROM ci_items' "$UG_MD" || UG_BAD="${UG_BAD} 规模SQL"
+grep -qF '> 20 万行 / 45 MiB' "$UG_MD" || UG_BAD="${UG_BAD} 阈值判据"
+grep -qF 'docker cp deploy/monitoring/mysql.cnf' "$UG_MD" || UG_BAD="${UG_BAD} 曲线取数"
+if [[ -z "$UG_BAD" ]]; then
+    ok "升级指南维护窗口判据齐备（规模 SQL / 20 万行 45 MiB 阈值 / §44 取数命令）"
+else
+    bad "升级指南判据不完整：${UG_BAD}"
 fi
 
 echo ""

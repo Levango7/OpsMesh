@@ -500,3 +500,54 @@ func TestFilterSubcmdArgs_SubcmdAnywhere(t *testing.T) {
 		t.Fatalf("子命令名任意位置移除错误, got=%v want=%v", got, want)
 	}
 }
+
+// ---------- migrate 子命令测试（TD-83） ----------
+
+// TestRunMigrate_RequiresMySQL 验证 runMigrate 的假成功防线：
+// 默认 store=memory 时 factory.SelectStore 会返回 MemoryStore 且无错误，
+// 对 migrate 那是"什么都没做"的假成功——必须显式拒绝返回 1。
+func TestRunMigrate_RequiresMySQL(t *testing.T) {
+	defer withCLIArgs([]string{"opsmesh", "migrate"})()
+	if code := runMigrate(); code != 1 {
+		t.Fatalf("runMigrate 默认 memory store=%d, want 1（显式拒绝，不做假成功）", code)
+	}
+}
+
+// TestRunMigrate_BadDSN 验证 runMigrate 的 Store 初始化失败路径：
+// 经环境变量兜底注入 --store=mysql + 非法格式 DSN（migrate 无特有 flag，
+// 与生产用法一致走 OPSMESH_* env 兜底）→ sql.Open 由 go-sql-driver
+// OpenConnector 立即解析报错（无网络 IO）→ 返回 1。
+func TestRunMigrate_BadDSN(t *testing.T) {
+	defer withEnv("OPSMESH_STORE", "mysql")()
+	defer withEnv("OPSMESH_MYSQL_DSN", "!!!invalid dsn!!!")()
+	defer withCLIArgs([]string{"opsmesh", "migrate"})()
+	if code := runMigrate(); code != 1 {
+		t.Fatalf("runMigrate 非法 DSN=%d, want 1 (Store 初始化失败)", code)
+	}
+}
+
+// TestRunMigrate_MySQLSuccess 验证 migrate 成功路径（真实 MySQL）：
+// 在 OPSMESH_TEST_MYSQL_DSN 指向的库上跑全部迁移（幂等重放），
+// 返回 0。未设置该环境变量时跳过——与 internal/store 的 MySQL
+// 集成测试同口径（CI 由 OPSMESH_TEST_MYSQL_DSN 注入）。
+func TestRunMigrate_MySQLSuccess(t *testing.T) {
+	dsn := os.Getenv("OPSMESH_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("未设置 OPSMESH_TEST_MYSQL_DSN，跳过真实 MySQL 迁移测试")
+	}
+	defer withCLIArgs([]string{"opsmesh", "migrate", "--store=mysql", "--mysql-dsn=" + dsn})()
+	if code := runMigrate(); code != 0 {
+		t.Fatalf("runMigrate 真实 MySQL=%d, want 0", code)
+	}
+}
+
+// TestRunMainMigrate 验证 runMain 识别 "migrate" 子命令并分派到
+// runMigrate（默认 memory store → 显式拒绝返回 1）。若分派缺失，
+// "migrate" 会落到 controlplane 启动路径（阻塞起服务），本测试
+// 快速返回 1 即证明短路分派在位。
+func TestRunMainMigrate(t *testing.T) {
+	defer withCLIArgs([]string{"opsmesh", "migrate"})()
+	if code := runMain(); code != 1 {
+		t.Fatalf("runMain migrate=%d, want 1（分派到 runMigrate 的显式拒绝）", code)
+	}
+}

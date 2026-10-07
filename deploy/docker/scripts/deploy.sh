@@ -1011,7 +1011,11 @@ start_services() {
 
     log_info "启动 controlplane..."
     compose up -d controlplane
-    wait_for_healthy controlplane 120
+    # 健康等待预算与迁移预算共用 MIGRATION_WAIT_BUDGET（默认 120s）：
+    # 迁移已在 deploy.sh migrate 阶段显式跑完，启动内只剩幂等重放，
+    # 但存量部署若跳过 migrate 直接 up，大表 DDL 仍会吃这个预算，
+    # 故预算必须可配（§44：100 万行 ≈376s）。
+    wait_for_healthy controlplane "$(env_val MIGRATION_WAIT_BUDGET 120)"
 
     local svc
     for svc in auth-svc device-svc task-svc alert-svc config-svc log-svc gpu-svc aio-svc portal-svc; do
@@ -1461,6 +1465,62 @@ do_up() {
     print_access_info
 }
 
+# do_migrate：部署前显式迁移（TD-83 ①）。
+#
+# 为什么需要：020/021 是"重建表 + 禁写"型迁移（§44 实测 30 万行 ≈117s、
+# 100 万行 ≈376s），此前只在控制面启动内联执行——既吃掉 up 时
+# controlplane 的健康等待预算（超时即判部署失败），又在迁移窗口内
+# 阻塞 CMDB 写入（mysqld 自报 STORED 生成列必须整表 COPY、FULLTEXT
+# 建索引 requires a lock）。本子命令把迁移提前到放量前单独跑：
+# 一次性容器执行 migrate 子命令（与启动内联同一条代码路径：
+# factory.SelectStore → NewSQLStore → runMigrations），并报出耗时。
+# 之后的 up 启动时迁移已应用，幂等重放近乎瞬时，健康预算不再被 DDL 占用。
+#
+# 用法：./scripts/deploy.sh migrate   （前置：MySQL 已起，本子命令幂等可重放）
+do_migrate() {
+    preflight_checks
+    build_images
+    start_infrastructure
+
+    log_section "预迁移（部署前显式步骤，TD-83）"
+    # 迁移总预算：.env 的 MIGRATION_WAIT_BUDGET（默认 120s）。
+    # 一次性容器内的迁移 ctx（OPSMESH_MIGRATION_BUDGET_SEC）与 up 时
+    # 的健康等待共用同一个旋钮——大表放宽后两处同时生效，
+    # 不会出现"容器内迁移跑完了、up 等待却按 120s 判失败"的口径错位。
+    local budget start end elapsed expected actual base v
+    budget="$(env_val MIGRATION_WAIT_BUDGET 120)"
+    log_info "迁移总预算 ${budget}s（MIGRATION_WAIT_BUDGET，可配）"
+    start="$(date +%s)"
+    if ! compose run --rm --no-deps -T \
+        -e "OPSMESH_MIGRATION_BUDGET_SEC=${budget}" \
+        controlplane migrate; then
+        log_error "预迁移失败。迁移可重放（幂等）：排除故障后重跑本子命令即可"
+        exit 1
+    fi
+    end="$(date +%s)"
+    elapsed=$((end - start))
+
+    # 判据不信退出码：核对库内已应用版本号 = 二进制携带的迁移文件最大号。
+    # 退出码 0 只代表进程正常跑完；版本号对不上（如迁移文件没进镜像）
+    # 才是"没迁上"的真证据。
+    expected=0
+    for f in internal/store/migrations/[0-9]*.sql; do
+        [ -f "$f" ] || continue
+        base="${f##*/}"
+        v="$((10#${base%%_*}))" || continue
+        [ "$v" -gt "$expected" ] && expected="$v"
+    done
+    # SC2016 是刻意的：$MYSQL_ROOT_PASSWORD 必须原样送进容器由容器内的
+    # sh 展开，口令只存在于 mysql 容器的 env 里（与 ensure_service_databases 同款）。
+    # shellcheck disable=SC2016
+    actual="$(compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "SELECT MAX(version) FROM opsmesh.schema_migrations"' 2>/dev/null | tr -d '\r')"
+    if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+        log_error "迁移版本对不上：二进制携带 ${expected:-未知}，库内已应用 ${actual:-空}（判红）"
+        exit 1
+    fi
+    log_ok "预迁移完成（耗时 ${elapsed}s，库内版本 ${actual} = 二进制携带 ${expected}）。后续 up 时启动内迁移幂等跳过，${budget}s 健康预算不再被 DDL 占用"
+}
+
 do_down() {
     log_section "停止 OpsMesh"
     if [ ! -f "$ENV_FILE" ]; then
@@ -1503,6 +1563,7 @@ OpsMesh 生产部署脚本
 子命令:
   init                生成 .env（随机口令/密钥）+ 自签 TLS 证书（幂等，不覆盖已有 .env）
   up                  预检 → 构建镜像 → 启动基础设施/可观测/服务 → 冒烟测试（默认子命令）
+  migrate             部署前显式迁移（一次性容器跑完 schema 迁移并核对库内版本；大表升级前必跑）
   down                停止并移除容器（保留数据卷）
   smoke               只跑冒烟测试（需服务已在运行）
   config              只做 .env 校验 + docker compose 渲染校验（打印前 40 行）
@@ -1549,6 +1610,7 @@ main() {
         -h|--help|help) usage; exit 0 ;;
         init)   cd "$PROJECT_DIR"; do_init ;;
         up)     cd "$PROJECT_DIR"; do_up ;;
+        migrate) cd "$PROJECT_DIR"; do_migrate ;;
         down)   cd "$PROJECT_DIR"; do_down ;;
         smoke)  cd "$PROJECT_DIR"; do_smoke ;;
         config) cd "$PROJECT_DIR"; do_config ;;

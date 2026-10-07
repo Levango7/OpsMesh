@@ -4,6 +4,14 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-07（TD-83 根治：存量升级的"重建表 + 禁写"型迁移从启动内联改成部署前显式步骤）
+
+- **新增子命令｜`opsmesh migrate` / `deploy.sh migrate`：把 020/021 这类"重建表 + 禁写"型迁移从控制面启动内联执行，提前到放量前单独跑**（一次性容器，与启动内联同一条代码路径 `factory.SelectStore → NewSQLStore → runMigrations`），报出耗时并核对库内版本号（判据不信退出码：进程跑完不代表迁移真的落库）。背景是 §44 实测：`ci_items` 30 万行 ⇒ 020+021 墙钟 117s ＝ 120s 等待预算的 97%、100 万行 ≈ 376s——此前迁移只在启动内联执行，既吃掉 `deploy.sh` 的健康等待预算（超时即判部署失败），又在迁移窗口内阻塞 CMDB 写入（mysqld 自报 STORED 生成列对 INSTANT/INPLACE 均返回 1845、FULLTEXT 建索引对 LOCK=NONE 报 1846，即无法在线无锁完成）。
+- **预算旋钮可配**：`.env` 的 `MIGRATION_WAIT_BUDGET`（默认 120s）同时控制 `up` 时 controlplane 的健康等待上限与 `migrate` 一次性容器内的迁移 ctx（`OPSMESH_MIGRATION_BUDGET_SEC`；`internal/store/sql.go` 的迁移总预算此前写死 120s，大表迁移会在持锁工作中途被 ctx 掐断，表现为"升级失败"的假症状）。
+- **新增 `docs/upgrade-guide.md`**：升级前必查的维护窗口判据（`SELECT COUNT(*), SUM(LENGTH(CAST(attrs AS CHAR))) FROM ci_items`；**超约 20 万行 / 45 MiB 需预约维护窗口**，按 FT 建索引边际 ≈0.85 s/MiB 外推并留一倍余量）、标准升级流程（`migrate` → `up`）、§44 演练曲线的可复现取数命令（含两个实测坑：Windows bind-mount 静默忽略 cnf；cnf 必须首启前就位，否则 InnoDB 判 "data files are corrupt"）、`--multi-schema` 首触说明（每租户首个请求承担整段 DDL，实测 ≈7.9s/schema@1 千行）。
+- 门禁新增第 22 节（五条判据：deploy.sh migrate 接线 / 二进制 migrate 子命令含非 mysql 显式拒绝 / 迁移总预算可配 / compose 预迁移环境变量与 command 的 DSN 不漂移 / 升级指南判据齐备），变异检验 5/5 判红、还原后基线复绿；`shellcheck -S info` 0 findings。
+- 真机验证：一次性 mysql:8.0 容器（仓库 `deploy/monitoring/mysql.cnf` 经 docker cp 在首启前就位）上 `opsmesh migrate` 21 条迁移全应用（首跑 12.3s、幂等重放 0.9s），库内 `schema_migrations` 21/21 与二进制携带迁移文件数一致；非法 DSN 与默认 memory 后端均显式退出码 1（防"成功"地什么都不做）。
+
 ## [0.13.0] — 2026-10-07（v0.12.0 之后全部改动归版；本版**首次量出存量升级的迁移阈值**，也是 `promote`「先过门禁再提权」路径的第一次真实执行）
 
 本版主线三件事：CMDB 检索从 `LIKE` 全表扫 + 1000 条候选窗口换成全文索引召回（迁移 020/021，按 token 分流）；

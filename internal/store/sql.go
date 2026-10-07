@@ -248,6 +248,27 @@ const (
 	migrationInitDelay    = 3 * time.Second
 )
 
+// migrationBudgetSec 返回迁移总预算（锁等待 + 持锁工作，秒）。
+//
+// 默认 120（= migrationLockTimeoutSec + migrationWorkBudgetSec），与部署侧
+// deploy.sh 的 MIGRATION_WAIT_BUDGET 默认值对齐。"重建表 + 禁写"型迁移
+// （020/021）在大表上可远超 120s（§44 实测：30 万行 ≈117s、100 万行
+// ≈376s），此前总预算写死会让迁移在持锁工作中途被 ctx 掐断——表现为
+// "升级失败"的假症状。故经 OPSMESH_MIGRATION_BUDGET_SEC 整体放宽
+// （deploy.sh migrate 会把 .env 的 MIGRATION_WAIT_BUDGET 透传给一次性
+// 容器，两处共用同一个旋钮）。
+// 非法值（空/非数/≤锁等待）回落默认：笔误不应把启动卡死，回落至少
+// 保持历史行为，且 deploy.sh 侧的 MIGRATION_WAIT_BUDGET 仍会按配置值
+// 等待健康检查，口径不一致时以"启动内迁移先完成"为准。
+func migrationBudgetSec() int {
+	if v := strings.TrimSpace(os.Getenv("OPSMESH_MIGRATION_BUDGET_SEC")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > migrationLockTimeoutSec {
+			return n
+		}
+	}
+	return migrationLockTimeoutSec + migrationWorkBudgetSec
+}
+
 // fatalMigrationError 标记「重试不会自愈」的迁移错误（迁移文件 checksum 被篡改、
 // 二进制与 schema 版本门禁不通过）。initWithRetry 对其立即返回，不做退避重试。
 type fatalMigrationError struct{ err error }
@@ -345,7 +366,7 @@ func (s *SQLStore) databaseName(ctx context.Context, conn *sql.Conn) string {
 // information_schema 二次核实后放行（见 applyMigration / idempotentDDL）。
 func (s *SQLStore) runMigrations() error {
 	ctx, cancel := context.WithTimeout(context.Background(),
-		time.Duration(migrationLockTimeoutSec+migrationWorkBudgetSec)*time.Second)
+		time.Duration(migrationBudgetSec())*time.Second)
 	defer cancel()
 
 	// 0. 串行化：并发迁移是「第一次带 replicas>1 的滚动升级」最常见的事故源。

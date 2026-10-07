@@ -438,6 +438,15 @@ services:
       # （替代此前"随机口令不输出导致管理员被静默锁死"）。生成：openssl rand -base64 24
       OPSMESH_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请在 .env 设置 ADMIN_PASSWORD（初始 admin 口令，至少 8 位含大小写与数字）}
       OPSMESH_REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 设置 REDIS_PASSWORD（Redis --requirepass 口令）}
+      # ---- 预迁移子命令（deploy.sh migrate，TD-83）----
+      # deploy.sh migrate 经 `compose run controlplane migrate` 覆盖服务 command，
+      # 命令行上的 --store/--mysql-dsn/--tls-cert/--tls-key 随之失效。
+      # 这里经环境变量补齐同一组值（config.Load 优先级：命令行显式 > 环境变量 > 默认，
+      # 正常启动路径仍以 command 的显式 flag 为准，行为不变）。
+      OPSMESH_STORE: mysql
+      OPSMESH_MYSQL_DSN: ${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:?请在 .env 设置 MYSQL_PASSWORD}@tcp(mysql:3306)/opsmesh?parseTime=true
+      OPSMESH_TLS_CERT: /etc/opsmesh/tls/tls.crt
+      OPSMESH_TLS_KEY: /etc/opsmesh/tls/tls.key
       # ---- 运行模式与安全开关 ----
       OPSMESH_PRODUCTION: ${PRODUCTION_MODE:-true}
       # M7 业务告警外发（notifyLoop）。刻意与 Alertmanager 的 ALERT_WEBHOOK_URL **分开配**：

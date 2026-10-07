@@ -61,7 +61,8 @@ func runMain() int {
 		}
 	}
 
-	// backup/restore 子命令：导出/导入控制面数据，供离线备份/迁移/灾备恢复。
+	// backup/restore/migrate 子命令：导出/导入控制面数据（备份/灾备恢复），
+	// 或只执行启动期 schema 迁移（部署前显式步骤，TD-83）。
 	// 必须在 config.Load 之前短路：特有 flag（--output/--format 等）未注册到全局 flag 表，
 	// flag.Parse 会因未知 flag 退出。子命令内部用独立 FlagSet 解析特有参数，
 	// 再过滤掉特有 flag 后调用 config.Load 解析 store 相关参数（--store/--mysql-dsn 等）。
@@ -71,6 +72,8 @@ func runMain() int {
 			return runBackup()
 		case "restore":
 			return runRestore()
+		case "migrate":
+			return runMigrate()
 		}
 	}
 
@@ -194,6 +197,12 @@ var restoreFlagSpecs = map[string]bool{
 	"dry-run":   false,
 	"overwrite": false,
 }
+
+// migrateFlagSpecs 定义 migrate 子命令特有 flag。
+// migrate 不注册任何特有 flag（复用 --store/--mysql-dsn 等全局参数），
+// specs 为空表：filterSubcmdArgs 只移除子命令名，其余参数全部透传给
+// config.Load 的全局 flag 表解析。
+var migrateFlagSpecs = map[string]bool{}
 
 // filterSubcmdArgs 从 args 中移除子命令名及其特有 flag，返回剩余参数（供 config.Load 解析）。
 //
@@ -391,5 +400,56 @@ func runRestore() int {
 		res.Devices, res.Agents, res.Tasks, res.Alerts)
 	fmt.Fprintf(os.Stderr, "  告警规则: %d, 用户: %d, 角色: %d, 跳过: %d\n",
 		res.AlertRules, res.Users, res.Roles, res.Skipped)
+	return 0
+}
+
+// runMigrate 实现 migrate 子命令：只执行启动期 schema 迁移然后退出。
+//
+// 用法：
+//
+//	opsmesh migrate [--store=mysql] [--mysql-dsn ...] [其余全局参数]
+//
+// 背景（TD-83）：020/021 是"重建表 + 禁写"型迁移，大表上耗时远超启动
+// 健康预算（§44 实测 30 万行 ≈117s、100 万行 ≈376s）。此前迁移只在
+// 控制面启动内联执行，吃掉 deploy.sh 的 120s 健康预算并在窗口内阻塞
+// CMDB 写入。本子命令把迁移提前到放量前单独跑（deploy.sh migrate），
+// 与启动内联走同一条代码路径（factory.SelectStore → NewSQLStore →
+// runMigrations），不启动 HTTP/gRPC/metrics，短生命周期。
+//
+// 设计要点（与 backup/restore 同型）：
+//   - 过滤掉子命令名后复用 config.Load 解析全部全局参数；
+//   - 迁移在 Store 构造内执行，失败显式返回 1，不静默回退 memory——
+//     factory.SelectStore 对非 mysql 后端返回 MemoryStore 且无错误，
+//     对 migrate 那是"什么都没做"的假成功，故 store 非 mysql 或
+//     DSN 缺失时显式拒绝（默认 store=memory 不会执行任何迁移）；
+//   - 退出码：0=成功，1=运行错误，2=参数错误（本命令无特有 flag，
+//     参数错误由 config.Load 的全局 flag.Parse 以退出码 2 报出）；
+//   - 耗时输出到 stderr，stdout 保持空，便于编排系统解析退出码。
+func runMigrate() int {
+	cfgArgs := filterSubcmdArgs(os.Args[1:], "migrate", migrateFlagSpecs)
+	oldArgs := os.Args
+	os.Args = append([]string{"opsmesh"}, cfgArgs...)
+	cfg := config.Load()
+	os.Args = oldArgs
+
+	if code := applyLogLevel(cfg); code != 0 {
+		return code
+	}
+
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "[migrate] 配置校验失败: %v\n", err)
+		return 1
+	}
+	if cfg.Store != "mysql" || cfg.MySQLDSN == "" {
+		fmt.Fprintln(os.Stderr, "[migrate] 迁移仅对 mysql 后端有意义：请显式 --store=mysql --mysql-dsn=...（默认 store=memory 不会执行任何迁移）")
+		return 1
+	}
+
+	start := time.Now()
+	if _, err := backup.NewStoreForCLI(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "[migrate] 迁移失败: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "[migrate] 迁移完成（耗时 %.1fs）\n", time.Since(start).Seconds())
 	return 0
 }
