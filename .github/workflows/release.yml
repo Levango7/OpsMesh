@@ -448,22 +448,43 @@ jobs:
         run: |
           set -uo pipefail
           VER="${GITHUB_REF_NAME#v}"
-          out="$(bash deploy/scripts/verify-release-artifacts.sh "$VER" 2>&1)"; rc=$?
-          printf '%s\n' "$out"
-          summary="$(printf '%s\n' "$out" | grep '发布物验收' | tail -1)"
-          fails="$(printf '%s' "$summary" | sed -n 's/.*FAIL=\([0-9][0-9]*\).*/\1/p')"
-          unver="$(printf '%s' "$summary" | sed -n 's/.*UNVERIFIED=\([0-9][0-9]*\).*/\1/p')"
-          fails="${fails:-0}"; unver="${unver:-0}"
-          if [ "$fails" -gt 0 ]; then
-            echo "::error::${VER} 的发布物核对到缺失（FAIL=${fails}）：客户按发布说明安装会拿不到产物（§19 / §32.9 就是这个形状）"
-            exit 1
-          fi
-          if [ "$rc" -ne 0 ] && [ "$unver" -eq 0 ] && [ -z "$summary" ]; then
-            # 脚本没给出任何结论（崩溃、参数错、找不到 gh/helm 之外的意外）：
-            # 这不是"未知"而是"没跑成"，必须判红——否则一条从未执行过的门禁会看起来像通过了。
-            echo "::error::verify-release-artifacts.sh 未产出验收结论（exit=${rc}），无法判定发布物是否存在"
-            exit 1
-          fi
+          # 为什么要等：`opsmesh-binary` / `opsmesh-agent` 两个核心镜像与 GitHub Release 的 assets
+          # 都由 **ci.yml 的 tag 事件**产出，与本 workflow 并行；GitHub Actions 的 `needs` 不能跨 workflow
+          # 表达依赖。2026-10-07 v0.13.0 首跑实测：12 个服务镜像与 12 次 promote 全绿，本 job 仍红在
+          # 「binary/agent 没有 :0.13.0 + assets=0」——那是还没做出来，不是做坏了。
+          # 等待范围刻意收窄到「失败集只含这几条竞态行」；出现任何其它缺失立刻判红，
+          # 否则这道门禁会退化成"晚点自然会好"的噪音，而 §32.9 的教训恰恰是它必须拦得住。
+          CORE_WAIT="${CORE_WAIT_LIMIT_SEC:-2700}"
+          waited=0
+          while :; do
+            out="$(bash deploy/scripts/verify-release-artifacts.sh "$VER" 2>&1)"; rc=$?
+            printf '%s\n' "$out"
+            summary="$(printf '%s\n' "$out" | grep '发布物验收' | tail -1)"
+            fails="$(printf '%s' "$summary" | sed -n 's/.*FAIL=\([0-9][0-9]*\).*/\1/p')"
+            unver="$(printf '%s' "$summary" | sed -n 's/.*UNVERIFIED=\([0-9][0-9]*\).*/\1/p')"
+            fails="${fails:-0}"; unver="${unver:-0}"
+            if [ "$rc" -ne 0 ] && [ -z "$summary" ]; then
+              # 脚本没给出任何结论（崩溃、参数错、找不到 gh/helm 之外的意外）：
+              # 这不是"未知"而是"没跑成"，必须判红——否则一条从未执行过的门禁会看起来像通过了。
+              echo "::error::verify-release-artifacts.sh 未产出验收结论（exit=${rc}），无法判定发布物是否存在"
+              exit 1
+            fi
+            if [ "$fails" -eq 0 ]; then break; fi
+            # 与竞态无关的 FAIL 条数（核心两镜像的 tag/manifest/chart 引用行 + assets=0 行都属竞态）
+            other="$(printf '%s\n' "$out" | grep '\[FAIL\]' \
+              | grep -vcE 'opsmesh-binary:|opsmesh-agent:|assets=0')"
+            if [ "$other" -gt 0 ]; then
+              echo "::error::${VER} 的发布物核对到缺失（FAIL=${fails}，其中 ${other} 条与并行 workflow 无关）：客户按发布说明安装会拿不到产物（§19 / §32.9 就是这个形状）"
+              exit 1
+            fi
+            if [ "$waited" -ge "$CORE_WAIT" ]; then
+              echo "::error::等满 ${CORE_WAIT}s 后 opsmesh-binary / opsmesh-agent 的 :${VER} 或 Release assets 仍缺失——它们由 ci.yml 的 tag 事件（refs/tags/v${VER}）产出，请查那条 run 是否失败或被 runner 饥饿卡住"
+              exit 1
+            fi
+            echo "::notice::${VER}：核心镜像/assets 尚未由 ci.yml 的 tag 腿产出（FAIL=${fails} 全部落在竞态集合内），120s 后重试；已等 ${waited}s / ${CORE_WAIT}s"
+            sleep 120
+            waited=$((waited + 120))
+          done
           if [ "$rc" -ne 0 ] || [ "$unver" -gt 0 ]; then
             # 注意：这里刻意用 ${GHCR_ATTEMPTS:-5} 而不是 ${GHCR_ATTEMPTS}——本 job 开了 set -u，
             # 未定义的变量会在这里直接把"警告并放行"变成 exit 1（本地跑分支时实测踩过）。
@@ -471,4 +492,4 @@ jobs:
             echo "::warning::有 ${unver} 项没能核对上（GHCR 传输失败，已重试 ${GHCR_ATTEMPTS:-5} 次）——既不是缺陷也不是通过，请重跑本 job"
             exit 0
           fi
-          echo "✅ 发布物回核通过：${summary}"
+          echo "✅ 发布物回核通过（等待竞态 ${waited}s）：${summary}"

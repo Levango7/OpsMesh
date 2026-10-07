@@ -336,7 +336,7 @@ if ! grep -qE '^[0-9a-fA-F]{40}$' <<<"$SHA"; then
 else
     SHA="$(printf '%s' "$SHA" | tr 'A-F' 'a-f')"
     echo "   发布提交=${SHA}"
-    MISMATCH=(); NO_SHA_TAG=()
+    MISMATCH=(); NO_SHA_TAG=(); CHECKED=0
     for leaf in "${LEAVES[@]}"; do
         want="${DIG_VER[$leaf]-}"
         if [ -z "$want" ]; then
@@ -373,10 +373,23 @@ else
         if [ "$d2" != "$want" ]; then
             bad "${leaf}: :${VER} 与 :${SHA} 的 digest 不一致（${want:0:12}… vs ${d2:0:12}…）——版本 tag 被重建过，它从没被 Trivy/签名看过"
             MISMATCH+=("$leaf")
+        else
+            # 只在这里计数「真的比对过」。早先这行 PASS 打的是 ${NLEAVES}（=全部仓库数），
+            # 于是有两个仓库因缺 :<版本> 而走了 UNVERIFIED 分支时，它仍宣称「14 个镜像一致」——
+            # 门禁宣称的覆盖面大于实际覆盖面，比没有门禁更糟（2026-10-07 v0.13.0 首跑暴露）。
+            CHECKED=$((CHECKED + 1))
         fi
     done
-    if [ "${#MISMATCH[@]}" -eq 0 ] && [ "${#NO_SHA_TAG[@]}" -eq 0 ]; then
-        ok "提权是改标不是重建：${NLEAVES} 个镜像的 :${VER} 与 :${SHA} 指向同一 manifest digest"
+    if [ "$CHECKED" -eq 0 ]; then
+        # 一次都没比对成功：既不是"通过"也不是"不一致"，是**没核对上**。
+        # 早先这里会直接走 ok 分支，于是 14 个仓库全缺 tag 时仍打出一行 [PASS]（0/14），
+        # 属于"零比对也自称通过"的假绿形状——2026-10-07 用一个不存在的版本号验穿后补上。
+        unver "第 ⑤ 项一次都没能比对（没有任何镜像同时拿到 :${VER} 与 :${SHA} 的 digest）——不能记为通过"
+    elif [ "${#MISMATCH[@]}" -eq 0 ] && [ "${#NO_SHA_TAG[@]}" -eq 0 ]; then
+        ok "提权是改标不是重建：${CHECKED}/${NLEAVES} 个镜像的 :${VER} 与 :${SHA} 指向同一 manifest digest"
+        if [ "$CHECKED" -ne "$NLEAVES" ]; then
+            echo "         注：其余 $((NLEAVES - CHECKED)) 个未参与本项比对（其 :${VER} digest 在上游已按 FAIL/UNVERIFIED 计），不要把本行读成全量通过"
+        fi
     else
         [ "${#MISMATCH[@]}" -gt 0 ] && echo "         digest 不一致: ${MISMATCH[*]-}"
         [ "${#NO_SHA_TAG[@]}" -gt 0 ] && echo "         缺 :<发布提交> tag: ${NO_SHA_TAG[*]-}"
