@@ -1298,9 +1298,19 @@ export OPSMESH_OTEL_SERVICE_NAME="opsmesh-controlplane"
 门禁两处：`internal/otelx` 的端点解析表驱动测试，以及直接读 `docker-compose.prod.yml`
 字面量的耦合测试 `TestFactoryComposeEndpointIsDialable`（改交付值而解析跟不上会立刻判红）。
 
-链路追踪的**查询侧不在出厂交付里**：collector 的 traces pipeline 只接 `logging` exporter
-（span 落日志后即丢），仓库内没有 Jaeger/Tempo；且 `tail_sampling` 对非错误、非慢请求只留 10%。
-所以"能排障"目前的意思是能在 collector 日志里看到 span 计数，不是能打开一张调用链图。
+链路追踪的**查询侧**：collector 的 traces pipeline 除 `logging` exporter 外
+还接 **Jaeger**（`deploy/monitoring/otel-config.yaml` 的 `jaeger` exporter，
+gRPC 推数到 compose 的 `jaeger` 服务；TD-75 入栈）。打开
+`http://127.0.0.1:16686`（`JAEGER_UI_PORT` 可改）即可按服务、操作、标签
+检索调用链图——"能排障"从"collector 日志里的 span 计数"升级为可回溯的
+完整链路。采样策略：错误与慢请求（>1s）100% 保留，默认策略 100% 保留
+（此前为 10%，是"无查询后端"时代的节流参数；流量上来后把
+`tail_sampling.policies.default.sampling_percentage` 调低即可，错误/慢请求
+样本不受影响）。Jaeger 存储为内置内存（与 loki/prometheus 同为单容器
+自托管形态），需要持久化检索历史时换 external storage 配置。
+验证口径：启用后 Jaeger UI 的服务列表应出现各 `service.name`
+（控制面 `opsmesh-controlplane`、各微服务名），且一次业务调用在
+"Search" 里能展开完整 span 树。
 
 ---
 

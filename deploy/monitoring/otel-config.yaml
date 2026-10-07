@@ -1,5 +1,5 @@
 # OpenTelemetry Collector Configuration for OpsMesh Production
-# Receives OTLP, exports to Prometheus, Loki, and console
+# Receives OTLP, exports to Prometheus, Loki, Jaeger, and console
 
 receivers:
   otlp:
@@ -45,9 +45,15 @@ processors:
       - name: slow
         type: latency
         latency: {threshold_ms: 1000}
+      # TD-75：默认策略此前只留 10%——那是「没有查询后端、span 落日志即丢」
+      # 时代的节流参数。Jaeger 入栈后，链路追踪的价值就是「能打开一张
+      # 完整的调用链图」，默认策略改为全量保留（错误/慢请求两条策略本就
+      # 100%）。自托管小规模部署全量保留无压力；若流量上来后存储吃紧，
+      # 把这里的 sampling_percentage 调低即可（ Jaeger 侧仍保有错误/慢
+      # 请求的完整样本）。
       - name: default
         type: probabilistic
-        probabilistic: {sampling_percentage: 10}
+        probabilistic: {sampling_percentage: 100}
 
 exporters:
   prometheus:
@@ -61,11 +67,14 @@ exporters:
     sampling_initial: 5
     sampling_thereafter: 2
 
-  # Uncomment for Jaeger export
-  # jaeger:
-  #   endpoint: "jaeger:14250"
-  #   tls:
-  #     insecure: true
+  # Jaeger export（TD-75：查询侧入栈——此前 traces pipeline 只接
+  # logging exporter，span 落日志后即丢，仓库内没有查询后端；
+  # 启用后 Jaeger UI（compose 的 jaeger 服务，宿主 127.0.0.1:16686）
+  # 提供按服务/操作/标签检索的调用链图）。
+  jaeger:
+    endpoint: "jaeger:14250"
+    tls:
+      insecure: true
 
   # Uncomment for OTLP export to external system
   # otlp/external:
@@ -92,7 +101,7 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, tail_sampling, batch, resource]
-      exporters: [logging]
+      exporters: [jaeger, logging]
 
 extensions:
   health_check:

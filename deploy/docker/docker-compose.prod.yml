@@ -387,6 +387,31 @@ services:
     logging: *default-logging
     <<: *restart-policy
 
+  # TD-75：链路追踪查询侧。otel-collector 的 traces pipeline 此前
+  # 只接 logging exporter（span 落日志即丢），本服务入栈后提供
+  # 按服务/操作/标签检索的调用链图（宿主仅发布 UI 口 16686 到
+  # 127.0.0.1；collector 走 monitoring_net 内 14250 gRPC 推数，
+  # 不发布到宿主）。存储为内置内存（与 loki/prometheus 同为
+  # 单容器自托管形态）；需要持久化检索历史时换 external storage
+  # （cassandra/elasticsearch）配置，见 Jaeger 官方文档。
+  jaeger:
+    image: jaegertracing/all-in-one:1.61
+    container_name: opsmesh-jaeger
+    ports:
+      - "127.0.0.1:${JAEGER_UI_PORT:-16686}:16686"
+    networks:
+      - monitoring_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging: *default-logging
+    <<: *restart-policy
+
   # ============================================================
   # OpsMesh Core Services
   # ============================================================
