@@ -84,7 +84,50 @@ func certSerial(t *testing.T, c *tls.Certificate) *big.Int {
 
 // reloadWait 等待 watcher 触发 reload：防抖 100ms + fsnotify 事件传递延迟 + 余量。
 // Windows/CI 环境下 fsnotify 事件传递可能较慢，给 1s 余量。
+// 仅用于「断言什么都不发生」的负向场景（Close 后不再 reload）；
+// 正向等待一律用下方的轮询 helper——固定 sleep 在事件面延迟大的
+// 环境（本机 Windows 实测）会把「事件尚未到达」误判为「reload 未发生」（TD-82）。
 const reloadWait = 1 * time.Second
+
+// pollInterval 是轮询 helper 的采样间隔。
+const pollInterval = 50 * time.Millisecond
+
+// pollDeadline 是轮询 helper 的截止时间：远大于任何合理的事件面延迟，
+// 又远小于 go test 默认超时，失败时能留下可诊断的余量。
+const pollDeadline = 10 * time.Second
+
+// waitReloadAttempts 轮询等待 reload 尝试次数达到 want。
+// 计数增加是「事件已过防抖、reload 已被调用」的确定性信号。
+func waitReloadAttempts(t *testing.T, r *CertificateReloader, want int64) {
+	t.Helper()
+	deadline := time.Now().Add(pollDeadline)
+	for r.ReloadAttempts() < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("等待 reload 尝试次数超时：期望 ≥%d，实际 %d（%s 内 watcher 未触发）",
+				want, r.ReloadAttempts(), pollDeadline)
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
+// waitCertSerial 轮询等待当前生效证书的序列号等于 want。
+func waitCertSerial(t *testing.T, r *CertificateReloader, want *big.Int) {
+	t.Helper()
+	deadline := time.Now().Add(pollDeadline)
+	for {
+		c, err := r.GetCertificate(nil)
+		if err != nil {
+			t.Fatalf("GetCertificate 失败: %v", err)
+		}
+		if certSerial(t, c).Cmp(want) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("等待证书序列号超时：期望 %s（%s 内未生效）", want.String(), pollDeadline)
+		}
+		time.Sleep(pollInterval)
+	}
+}
 
 // ---------------------------------------------------------------------------
 // TestCertificateReloader_BasicLoad
@@ -147,16 +190,10 @@ func TestCertificateReloader_HotReload(t *testing.T) {
 		t.Fatal("新证书 SerialNumber 与旧证书相同（不应发生）")
 	}
 
-	// 等待 watcher 触发 reload。
-	time.Sleep(reloadWait)
-
-	c2, err := r.GetCertificate(nil)
-	if err != nil {
-		t.Fatalf("GetCertificate 热重载后失败: %v", err)
-	}
-	if certSerial(t, c2).Cmp(serialB) != 0 {
-		t.Fatalf("热重载后证书未更新为 B：期望 serial=%s，实际=%s", serialB.String(), certSerial(t, c2).String())
-	}
+	// 等待 watcher 触发 reload（轮询：事件面延迟在不同 OS 上差异极大，
+	// 固定 sleep 会把「事件尚未到达」误判为「reload 未发生」）。
+	waitReloadAttempts(t, r, 1)
+	waitCertSerial(t, r, serialB)
 }
 
 // ---------------------------------------------------------------------------
@@ -181,8 +218,10 @@ func TestCertificateReloader_ReloadFailureKeepsOld(t *testing.T) {
 		t.Fatalf("写入无效内容失败: %v", err)
 	}
 
-	// 等待 watcher 触发 reload（reload 会失败但保持旧证书）。
-	time.Sleep(reloadWait)
+	// 等待 watcher 触发 reload（无效证书 ⇒ reload 失败、保持旧证书）。
+	// 轮询尝试次数而非 sleep：计数增加证明事件已被处理，此时断言
+	// 「仍为旧证书」才是对「失败保持」的真实检验（TD-82 根因）。
+	waitReloadAttempts(t, r, 1)
 
 	// 验证旧证书仍可用。
 	c, err := r.GetCertificate(nil)
@@ -195,11 +234,8 @@ func TestCertificateReloader_ReloadFailureKeepsOld(t *testing.T) {
 
 	// 恢复有效证书，验证 reload 恢复正常（旧证书仍可用 → 新证书可用）。
 	serialB := writeCertTo(t, certPath, keyPath)
-	time.Sleep(reloadWait)
-	c2, _ := r.GetCertificate(nil)
-	if certSerial(t, c2).Cmp(serialB) != 0 {
-		t.Fatal("恢复有效证书后应 reload 为新证书")
-	}
+	waitReloadAttempts(t, r, 2)
+	waitCertSerial(t, r, serialB)
 }
 
 // ---------------------------------------------------------------------------

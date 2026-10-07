@@ -17,6 +17,7 @@ import (
 	"log"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -34,14 +35,18 @@ const reloadDebounce = 100 * time.Millisecond
 //   - mu：保护 cert 字段的读写锁，GetCertificate 持读锁、reload 持写锁；
 //   - cert：当前生效的 tls.Certificate，由 reload 原子替换；
 //   - watcher：fsnotify Watcher，监听证书/私钥文件变更；
-//   - closed：Close 时 close 该 channel，通知 watcher 循环退出。
+//   - closed：Close 时 close 该 channel，通知 watcher 循环退出；
+//   - reloadAttempts：自构造以来 reload 尝试次数（含失败），供测试与运维
+//     观测热重载活动——事件到达并过防抖后计数必然增加，据此可轮询等待
+//     「事件已被处理」，替代在不同文件系统上延迟差异极大的固定 sleep。
 type CertificateReloader struct {
-	certFile string
-	keyFile  string
-	mu       sync.RWMutex
-	cert     tls.Certificate
-	watcher  *fsnotify.Watcher
-	closed   chan struct{}
+	certFile      string
+	keyFile       string
+	mu            sync.RWMutex
+	cert          tls.Certificate
+	watcher       *fsnotify.Watcher
+	closed        chan struct{}
+	reloadAttempts atomic.Int64
 }
 
 // NewCertificateReloader 构造 CertificateReloader：初始加载证书 + 启动 watcher 监听变更。
@@ -163,6 +168,7 @@ func (r *CertificateReloader) GetCertificate(_ *tls.ClientHelloInfo) (*tls.Certi
 //
 // 并发安全：持写锁更新 cert。GetCertificate 持读锁不会读到半更新状态。
 func (r *CertificateReloader) reload() {
+	r.reloadAttempts.Add(1)
 	cert, err := tls.LoadX509KeyPair(r.certFile, r.keyFile)
 	if err != nil {
 		// reload 失败：保持旧证书，仅打日志。避免半成品文件导致服务不可用。
@@ -173,6 +179,16 @@ func (r *CertificateReloader) reload() {
 	r.cert = cert
 	r.mu.Unlock()
 	log.Printf("tlsutil: 证书热重载成功")
+}
+
+// ReloadAttempts 返回自构造以来 reload 的尝试次数（含失败）。
+//
+// 用途：测试与运维观测。文件变更事件经防抖后必然使计数增加，
+// 故「等待计数达到 N」是「事件已被 watcher 处理」的确定性信号，
+// 可替代固定 sleep——后者在事件面延迟大的环境（如本机 Windows）
+// 会把「事件尚未到达」误判为「reload 未发生」（TD-82）。
+func (r *CertificateReloader) ReloadAttempts() int64 {
+	return r.reloadAttempts.Load()
 }
 
 // Close 关闭 watcher 与退出 watchLoop goroutine，释放资源。
