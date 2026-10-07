@@ -318,6 +318,10 @@ jobs:
           curl -sSfL --retry 3 --retry-delay 5 -o "/tmp/${gll_tar}" \
             "https://github.com/golangci/golangci-lint/releases/download/v${gll_ver}/${gll_tar}" \
             || { echo "::error::下载 ${gll_tar} 失败（已重试 3 次）——这是取数失败，不是代码问题"; exit 1; }
+          # 把**实测**摘要打出来（不是把钉值再念一遍）：CI 日志因此自带可审计的复算凭证，
+          # 而本机拿不到完整产物（release asset 直链被重置、api 取 15.4MB 四次分别截在
+          # 10.7/13.4/12.2/0 MB），所以"第一次独立复算"就是这一跑。
+          echo "实测 sha256=$(sha256sum "/tmp/${gll_tar}" | cut -d' ' -f1)  size=$(wc -c < "/tmp/${gll_tar}")"
           printf '%s  %s\n' "$gll_sha" "/tmp/${gll_tar}" | sha256sum -c - \
             || { echo "::error::${gll_tar} 的 sha256 与钉死值不符：别改这个值去迁就下载，先确认上游是否重新打过包"; exit 1; }
           mkdir -p /tmp/gll-extract
