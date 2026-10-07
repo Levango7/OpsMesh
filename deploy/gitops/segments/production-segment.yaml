@@ -42,7 +42,7 @@ controlplane:
   # digest 为不可变引用的最终防线，建议由 CI 在发布时经本文件或 GitOps 仓库写回
   # （opsmesh.image helper 中 digest 非空时优先于 tag）。
   image:
-    tag: "0.12.0"
+    tag: "0.13.0"
     digest: ""
     pullPolicy: IfNotPresent
   # gRPC TLS / mTLS：生产强制开启，证书以 Secret 形式预置

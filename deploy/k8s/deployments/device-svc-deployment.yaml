@@ -31,7 +31,7 @@ spec:
     spec:
       containers:
         - name: device-svc
-          image: opsmesh/device-svc:0.11.0
+          image: opsmesh/device-svc:0.13.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

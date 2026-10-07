@@ -6,7 +6,7 @@ package version
 // 它是"版本源"之一：`opsmesh --version` 与 GET /version 在源码直构（没有 -ldflags 注入）时
 // 回的就是这个值，所以 deploy/scripts/validate-deploy-assets.sh 第 1 节把它和
 // Chart.yaml appVersion / values-production / gitops segment 一起对账。
-var Version = "0.12.0"
+var Version = "0.13.0"
 
 // Commit / Date 由 CI 注入。**注入路径必须写模块路径**
 // `-X github.com/Levango7/OpsMesh/internal/version.Commit=...`；
