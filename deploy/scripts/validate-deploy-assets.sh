@@ -29,6 +29,7 @@
  #  20. 样例与 GitOps 段文件的版本字面量（K8s 样例 / gitops segment / values-production 自述）必须 = Chart.yaml version
  #  21. 微服务建表列集合 ⊇ SQL 引用列（DDL=schema.sql+内联 CREATE；兜底=ALTER ADD COLUMN；常量拼接列清单的服务由其 Go 守卫管）
  #  22. 部署前显式迁移（TD-83：deploy.sh migrate 子命令 / 二进制 migrate 子命令 /
+#  23. golangci-lint 两条腿版本对账（action 钉版 == services 的 gll_ver；gll_sha 格式与成对；归档名与版本断言不得写死字面量）
  #      预算旋钮 MIGRATION_WAIT_BUDGET+OPSMESH_MIGRATION_BUDGET_SEC / 升级指南维护窗口判据）
 #
 # 用法：bash deploy/scripts/validate-deploy-assets.sh
@@ -2163,6 +2164,77 @@ if [[ -z "$UG_BAD" ]]; then
     ok "升级指南维护窗口判据齐备（规模 SQL / 20 万行 45 MiB 阈值 / §44 取数命令）"
 else
     bad "升级指南判据不完整：${UG_BAD}"
+fi
+
+
+echo ""
+echo "=== 23. golangci-lint 的两条腿必须同版（版本三处钉一致性）==="
+# 为什么钉这一条：本仓现在有两条腿各自装 lint ——
+#   ① build-test 用 golangci/golangci-lint-action（ci.yml 里 `version: vX.Y.Z`）；
+#   ② services 用「钉版本 + 钉 sha256 的预编译产物」（gll_ver / gll_sha，2026-10-08 起）。
+# 两处版本串只要有一处被单独改动，结果就是**同一个仓库被两个不同版本的 linter 各扫一遍、两边都绿**，
+# 而两边的规则集并不相同（v2.6→v2.13 曾新增 G702/G703 报点、SA1019 消息格式变化，见 ci.yml 那段注释）。
+# 这类漂移本地看不出来、CI 也判绿，只会表现为"某条规则忽然又不生效了"——正是本仓反复出事的那一形状。
+# 刻意**不**把 sha256 再抄一份进本门禁：第二份摘要本身就是新的漂移面（升版本要同步两处，
+# 漏改的那处以"首跑红"暴露而不是以假绿暴露，已由 services 那一步的实跑校验兜底）。
+# 本节因此只判"取得到 + 相等 + 格式合法 + 归档名由变量拼出"，四件事都能被变异证明非空跑。
+GL_CI=".github/workflows/ci.yml"
+if [[ ! -f "$GL_CI" ]]; then
+    bad "golangci-lint 版本对账：找不到 $GL_CI，本节无从核对（判红而不是跳过）"
+else
+    # 注释行一律先剥掉：ci.yml 的说明文字里合法地出现过 golangci-lint-2.13.2-checksums.txt
+    # 与归档全名，不剥就是拿散文当代码判，必然假阳性。
+    GL_CODE="$(grep -vE '^[[:space:]]*#' "$GL_CI")"
+
+    # ① action 的钉版：只在「uses: golangci/golangci-lint-action@」之后、下一个步骤开始之前取 version
+    GL_ACTION_VER="$(awk '
+        /uses: golangci\/golangci-lint-action@/ { f = 1; next }
+        f && /^[[:space:]]+version:[[:space:]]+v[0-9][0-9.]*[[:space:]]*$/ {
+            sub(/^[[:space:]]+version:[[:space:]]+v/, ""); gsub(/[[:space:]]+$/, ""); print; exit }
+        f && /^[[:space:]]*- / { f = 0 }
+    ' <<<"$GL_CODE")"
+    # ② services 的钉版与钉摘要
+    GL_VER="$(sed -n 's/^[[:space:]]*gll_ver=\([0-9][0-9.]*\)[[:space:]]*$/\1/p' <<<"$GL_CODE" | head -1)"
+    GL_SHA="$(sed -n 's/^[[:space:]]*gll_sha=\([0-9a-f]\{64\}\)[[:space:]]*$/\1/p' <<<"$GL_CODE" | head -1)"
+    GL_SHA_LINES="$(grep -cE '^[[:space:]]*gll_sha=' <<<"$GL_CODE")"
+
+    if [[ -z "$GL_ACTION_VER" ]]; then
+        bad "取不到 golangci-lint-action 的钉版（action 步形状变了，本节失去基准）"
+    elif [[ -z "$GL_VER" ]]; then
+        bad "取不到 services 步的 gll_ver 钉版（安装步形状变了，本节失去基准）"
+    elif [[ "$GL_ACTION_VER" != "$GL_VER" ]]; then
+        bad "两条腿的 golangci-lint 版本不一致：action 钉 ${GL_ACTION_VER}，services 钉 ${GL_VER} ⇒ 同一棵树会被两个版本的规则集各扫一遍还全绿；升版本必须两处同改"
+    else
+        ok "两条腿的 golangci-lint 同版（action 与 services 均 ${GL_VER}）"
+    fi
+
+    if [[ -n "$GL_VER" ]]; then
+        if [[ "$GL_SHA_LINES" -ne 1 ]]; then
+            bad "gll_sha 的赋值行有 ${GL_SHA_LINES} 处（应为恰好 1 处）——对账面无从确定"
+        elif [[ -z "$GL_SHA" ]]; then
+            bad "gll_sha 不是 64 位小写十六进制：钉摘要写坏了（升版本忘改摘要，或粘了校验和文件以外的值）"
+        else
+            ok "gll_sha 恰好 1 处且为 64 位十六进制（${GL_SHA:0:12}…）"
+        fi
+
+        # ③ 归档名必须由 ${gll_ver} 拼出：出现写死的 golangci-lint-<字面版本>-linux… 就说明
+        #    版本号被复制进了文件名，将来改 gll_ver 时这里会静默留在旧版。
+        GL_HARDCODED="$(grep -nE 'golangci-lint-[0-9]+\.[0-9]+\.[0-9]+-linux' <<<"$GL_CODE" || true)"
+        if [[ -n "$GL_HARDCODED" ]]; then
+            bad "ci.yml 的非注释行里出现写死的归档文件名（应一律由 \${gll_ver} 拼出）：$(head -1 <<<"$GL_HARDCODED" | cut -c1-90)"
+        else
+            ok "归档名由 \${gll_ver} 拼出，非注释行无写死版本文件名"
+        fi
+
+        # ④ 版本断言必须跟着变量走：`grep -q "<字面版本>"` 会在改版本后变成永不触发的死断言
+        #    （本机与 CI 用不同版本也照样绿）——TD-71 那轮就栽过"判据与被判对象各写一份"。
+        GL_ASSERT_LITERAL="$(grep -E 'glv="\$\(golangci-lint version' <<<"$GL_CODE" | grep -E 'grep -q[[:space:]]+"[0-9]+\.[0-9]+' || true)"
+        if [[ -n "$GL_ASSERT_LITERAL" ]]; then
+            bad "版本断言里写的是字面版本号而不是 \"\$gll_ver\"（改版本后这条断言永不触发）：$(cut -c1-90 <<<"$GL_ASSERT_LITERAL")"
+        else
+            ok "版本断言引用 \$gll_ver（随钉版联动，不是第二份字面量）"
+        fi
+    fi
 fi
 
 echo ""

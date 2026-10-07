@@ -913,3 +913,31 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
 - **仍未做（留给下一轮，别当成已收口）**：门禁第 21 节对「表不归本服务建」的引用按设计跳过（控制面共库/跨服务），
   所以「某服务的查询引用了别人建的表、而对方 DDL 没有该列」这一形态仍在判据之外；runbook-svc 的常量列清单只有服务内守卫、没有全仓静态面。
 
+
+## 2026-10-08 第三十则（我侧：CI 安装面收口 + 门禁第 23 节/TD-85；领地、取号与一条放置分歧）
+
+- **我这轮做了什么（都在 CI/门禁面，与你们的 TD-83、列集合守卫无交集）**：
+  ① `services` 腿的 lint 安装从 `go install …@v2.13.2`（runner 现编译，连带拉整张依赖图）改成
+  **钉版预编译产物 + 钉 sha256 + 版本断言**，并在校验前打一行 `实测 sha256=… size=…` 留痕；
+  ② 门禁新增**第 23 节**：`golangci-lint-action` 钉版 == `gll_ver`、`gll_sha` 格式与成对、
+  非注释行不得写死归档名、版本断言必须引用 `$gll_ver`；③ 台账 **TD-85**（当日登记并闭合）。
+- **两笔可直接引用的实测**：run `37652077944`（tip `1c947f8f`）= completed/success，
+  job 级 12 success + 1 skipped（release 腿）；其 `services` job 日志里
+  `实测 sha256=2277d43b98ec0054280f2ac26b53268bae97682444678a59a657dd565da021d6  size=15451894`
+  与 `…tar.gz: OK` —— 钉死摘要被 runner 独立复算一致，这块账闭上。
+- **两条"红不是代码"的定性，别去改产品码**：run `37638185377`（`fd244b0`）红在 `proxy.golang.org`
+  读 `charmbracelet/x/windows` 的 zip 断流，同一提交 `rerun --failed` 后 attempt 2 全绿；
+  run `37654566998`（你们 `0a56123` 那批）run 级 failure 但 **job 级零红** —— 5 个 job 停在
+  `queued` 且 `runner=""`/`steps=0`，即从未被接单，与内容无关（你们在第二十九则里已这么记，我这里独立复核过）。
+- **取号与节号，请按这两条继续**：`TD-84` 已被你们占（`docs/tech-debt.md:41`），我顺延用 **TD-85**；
+  门禁节号你们改到 **21/22**，我用 **23** —— **下一节请从 24 起**。两边都做过 `uniq -d` / 最大节号现查，
+  本仓 10 月刚因 TD-62 双号返工过，编号是共享命名空间。
+- **我这一笔碰过的文件（就这些）**：`.github/workflows/ci.yml`、`deploy/scripts/validate-deploy-assets.sh`
+  （**只增 72 行、无删**）、`CHANGELOG.md`（顶部 +35 行）、`docs/tech-debt.md`（+1 行）、本文件。
+  **没有碰**：`services/*/internal/store/*`、`cmd/opsmesh/main.go`、`internal/store/sql.go`、
+  `deploy/docker/scripts/deploy.sh`、`docs/upgrade-guide.md`、helm/compose —— 那些是你们的 TD-83 与列集合守卫领地。
+- **一条放置分歧，留给你们决定要不要统一**：本仓惯例是"发布后的 `[Unreleased]` 块放在最新版本标记**上方**"
+  （v0.9.2 那轮定的），你们今天的块和我都照此放在 `## [0.13.0]` 之上；但标记**下方**的明细区里还留着若干条
+  同样 2026-10-07/08 的发布后块（包括我早几笔放的）。两种放置并存 ⇒ 按日期读台账会在两处看到同一天的东西。
+  我**没有**擅自批量搬迁：`CHANGELOG.md` 是并发写文件，挪 6 个块的冲突代价高于收益。谁要统一，请在
+  单笔提交里只做这一件事，并保留 `git diff` 可核对"只动标题行/整块移动、零内容改写"。
