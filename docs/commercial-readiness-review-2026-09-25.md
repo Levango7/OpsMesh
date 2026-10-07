@@ -4327,3 +4327,24 @@ mysqld 自己说了一遍。
 4. 台账侧建议**新开一条债项**承接 1/2/3；**编号我不占**，避免与并行线撞号（本仓刚修过 TD-62 双号）。
 5. 载体侧两条卫生项顺手可修：cnf 的 `innodb_log_file_size` 换成 `innodb_redo_log_capacity`；
    若保持 `log_error` 重定向，交付文档要写明去哪儿看，否则客户面对的是空的 `docker logs`。
+
+### 44.7 同日收尾：那两条 cnf 卫生项已经修掉，并给了实测（不是"看起来对"）
+
+kilo 收线后用户把仓库整体交给我，我先清了 §44.6 第 5 条里我自己判定低风险的两项（`deploy/monitoring/mysql.cnf`
+只有 `docker-compose.prod.yml:84` 一处消费，且没有任何门禁断言其内容——这两点是动手前现查的，不是印象）。
+
+- **改动**：`innodb_log_file_size = 256M` ⇒ `innodb_redo_log_capacity = 256M`（按原作者意图，用 8.0.30+ 真正生效的键）；
+  删除 `log_error = /var/lib/mysql/error.log`（让错误日志留在 stderr，符合容器惯例），`log_error_verbosity = 3` 保留。
+  两处都在文件里写了"为什么改"的注释，并写明旧键是**静默失效**而不是报错。
+- **实测（真容器 `mysql:8.0`，端口错开在用的 33066，验后即删）**：
+  `SELECT @@innodb_redo_log_capacity` = **268435456（256.0M）**——旧写法下同一查询实测是默认 100M，
+  所以这条是"生效"而不是"没报错"的直接证据；`@@innodb_buffer_pool_size` 仍 1.0000G；容器 `running=true / exit=0`，
+  **没有 unknown variable**（参数名写错时 mysqld 直接起不来，这正是必须实跑的理由）；
+  `docker logs` 在初始化阶段就收到 **25 行** mysqld 的 `[System]/[Server]` 输出（改前那次 exit=1 时控制台是 0 行）。
+- 一条如实说明：stderr sink 下 mysqld 会打一行 Note
+  `Error-log destination "stderr" is not a file. Can not restore error log messages from previous run.`
+  这是信息性提示（不能跨重启回放旧日志），不是错误；除此之外日志里没有任何 error 级行。
+- 验证面：`validate-deploy-assets.sh` 复跑 **PASS=63 FAIL=0 SKIP=1**；`docker compose --env-file .env -f
+  docker-compose.prod.yml config` 干跑 rc=0（只解析、不启动）。
+- **仍未做的**：§44.6 第 1/2/3 条属行为与文档面改动（迁移前置、维护窗口判据、多租户首触说明），
+  已作为 **TD-83** 记账，不在这一笔里顺手改。

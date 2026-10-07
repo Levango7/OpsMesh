@@ -11,7 +11,11 @@ interactive_timeout = 600
 # InnoDB Settings
 innodb_buffer_pool_size = 1G
 innodb_buffer_pool_instances = 4
-innodb_log_file_size = 256M
+# 2026-10-07 更正：原先写的是 `innodb_log_file_size = 256M`，该键在 MySQL 8.0.30+ 已被
+# `innodb_redo_log_capacity` 取代并**静默失效**——实测（mysqld 8.0.46 挂载本文件后
+# `SELECT @@innodb_redo_log_capacity`）仍是默认 100M，也就是"以为调过了但没调"。
+# 这里按原意图（256M）改用生效的键。
+innodb_redo_log_capacity = 256M
 innodb_log_buffer_size = 64M
 innodb_flush_log_at_trx_commit = 1
 innodb_flush_method = O_DIRECT
@@ -35,7 +39,11 @@ max_heap_table_size = 128M
 slow_query_log = 1
 slow_query_log_file = /var/lib/mysql/slow.log
 long_query_time = 2
-log_error = /var/lib/mysql/error.log
+# 2026-10-07 更正：删掉原先的 `log_error = /var/lib/mysql/error.log`。
+# 把错误日志重定向到文件后，容器里 `docker logs opsmesh-mysql` **一行 mysqld 报错都没有**——
+# 这不是理论问题：本机一次容器启动失败（exit 1）时控制台完全静默，只能 docker cp 把
+# error.log 取出来才看到根因。留给 stderr 才符合"容器日志就是 stdout/stderr"的惯例，
+# 也让 compose 的日志驱动/外部采集能收到。verbosity 保留（对 stderr sink 同样生效）。
 log_error_verbosity = 3
 
 # Binary Logging (for replication)

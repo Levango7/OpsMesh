@@ -1098,6 +1098,26 @@ upgrade guide，021 注释引用的"既有惯例『先迁移后放量』"并不�
 19.8s；以及"Windows bind-mount 会让 mysqld 静默忽略 cnf，必须 `docker cp` + `chmod 644` 并用 `SELECT @@...` 复核"）。
 本轮**未改任何产品行为**，也仍未动 `deploy/monitoring/mysql.cnf` 的两条卫生项（归属未定，见协调第二十三/廿四则）。
 
+## [Unreleased] — 2026-10-07 交付侧 MySQL 配置两条"以为调过了"的卫生项修掉（redo 容量真正生效 + 错误日志回到 stderr）
+
+§44.6 第 5 条，kilo 收线后由我执行。动手前现查两点：`deploy/monitoring/mysql.cnf` 只有
+`docker-compose.prod.yml:84` 一处消费；无任何门禁断言其内容。
+
+- `innodb_log_file_size = 256M` ⇒ **`innodb_redo_log_capacity = 256M`**。旧键在 MySQL 8.0.30+ 已被取代且
+  **静默失效**（不报错、不生效），实测挂载旧写法时 `@@innodb_redo_log_capacity` 仍是默认 100M。
+- 删除 `log_error = /var/lib/mysql/error.log`，错误日志留在 stderr（容器惯例，也是 `docker logs` 唯一能看到的通道）；
+  `log_error_verbosity = 3` 保留。起因是本轮演练里一次真实的排障障碍：容器 exit=1 时控制台**一行 mysqld 报错都没有**，
+  只能把文件从容器里 `docker cp` 出来才看到根因。客户侧同形。
+- **验证是真跑出来的**（不是"看起来对"）：独立容器 `mysql:8.0` 上 `SELECT @@innodb_redo_log_capacity` =
+  **268435456（256.0M）**、`@@innodb_buffer_pool_size` = 1.0000G、`running=true / exit=0` 且**无 unknown variable**
+  ——参数名写错时 mysqld 会直接起不来，这条正是必须实跑的理由；`docker logs` 初始化阶段捕获 **25 行** mysqld
+  `[System]/[Server]` 输出。如实记一条副作用：stderr sink 下 mysqld 会打一行信息性 Note
+  （"Can not restore error log messages from previous run"，指不能跨重启回放旧日志），非错误。
+- 复跑：`validate-deploy-assets.sh` **PASS=63 FAIL=0 SKIP=1**；`docker compose --env-file .env -f
+  docker-compose.prod.yml config` 干跑 rc=0（只解析不启动）。
+- **未做**：§44.6 第 1/2/3 条（迁移前置 + 预算可配 / 维护窗口数字判据 / 多租户首触说明）是行为与文档面改动，
+  已记为 **TD-83**，不在这一笔里顺手改。
+
 ## [0.11.0] — 2026-10-01 引导脚本不再携带建表语句（删 43 张表 DDL + 门禁第 13 节）（已归入 0.11.0）
 
 > 证据：三方一致性审计（`CREATE TABLE IF NOT EXISTS <t> (…)` 从 Go 原始字符串与 `.sql` 提取，剥 `INDEX`/`PRIMARY KEY` 行取首字段做列集合，对同名表求差集）；`deploy/scripts/validate-deploy-assets.sh` 当前 **PASS=33 / FAIL=0 / SKIP=2**，新第 13 节经**两次变异检验**（塞回 `CREATE TABLE` → 判红；把某 DSN 的库从两个脚本都删掉 → 判红并指向「连库即 Access denied」）。详见 `docs/td60-decision-2026-09-26.md` §5.11 ①c。

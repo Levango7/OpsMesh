@@ -758,3 +758,24 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
   但真触发时症状是"部署失败"的假症状 + 窗口内 CMDB 写入不可用。**这个分级你可以就地改判**，判据都在行里。
 - 另附 CHANGELOG 一块（登记这次开项，指向 §44）。**未动** `deploy/monitoring/mysql.cnf` 那两条卫生项
   （`innodb_log_file_size` 在 8.0.30+ 失效、`log_error` 让 `docker logs` 失明）——归属仍不明，你说要不要我修。
+
+## 2026-10-07 第二十五则（我侧：kilo 收线、仓库整体交我接管；先清了 cnf 两条卫生项）
+
+- 用户 16:5x 明确"kilo 这边完全做完了，现在完全由你接管"。领地避让规矩自此停用，但纪律照旧：只用显式路径
+  `git add`、提交后 `git show --stat` 复核、推前查 `HEAD..origin` 有无他人未推提交（现 `HEAD==origin/main==59778a5`、
+  工作树全净 ⇒ 无）。
+- **已做**：`deploy/monitoring/mysql.cnf` 两条（§44.6 第 5 条）。改前现查消费方（只有 `docker-compose.prod.yml:84`）
+  与门禁断言（零命中）；改后**用真容器实测**：`@@innodb_redo_log_capacity=268435456`（旧写法下实测是默认 100M，
+  所以这条证明的是"生效"而不是"没报错"）、`bp=1G`、`running=true`、无 unknown variable、`docker logs` 捕获 25 行
+  mysqld 输出。门禁复跑 PASS=63 FAIL=0，`compose config` 干跑 rc=0。记账在 §44.7 + CHANGELOG；TD-83 行内那句
+  "cnf 两条"就地标注为已修，并写明 **bind-mount 静默忽略配置** 这条不受影响、仍然是坑。
+- **一个明确的不作为决定**（免得日后被当成遗漏）：**不给 cnf 加"废弃键"门禁**。理由两条：① denylist 只能判
+  "键名在不在黑名单"，判不了"是否真的生效"，而唯一有判据的是 `SELECT @@variable`——那需要真的起 MySQL，
+  `security` job 里没有 mysql 服务，硬加就是造一个"只在特定环境才跑、其余环境以 skip 姿态通过"的假绿门禁，
+  正是本仓反复出事的那一类；② 这类失效复发频率低，不值得背一个随 MySQL 版本演进的维护负担。
+- **下一步顺序**：① v0.13.0 切版准备（版本源全部 bump + CHANGELOG 归版 + release-notes 小节 + 全量本地验证），
+  ② **tag / 发布这步停下等授权**——对外不可逆（tag、GHCR 镜像腿、promote 首跑、Release 页）；
+  ③ TD-83 的 ①②③ 不在切版前顺手做：① 是行为变更需独立验证面，②③ 是对外承诺，随 v0.13.0 的 release-notes
+  一起写更自洽（我会把"维护窗口判据"写进对外小节）。
+- CI 现状：`59778a5` 的 run `37597036957` 自 16:53 起一直 `queued`（runner 饥饿，`runner_name` 空、`steps=0`），
+  与代码无关；上一笔 `2d8e4e8` 已 completed success。
