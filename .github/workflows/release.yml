@@ -447,6 +447,13 @@ jobs:
         #                  以后没人再看这条 job 的红。
         run: |
           set -uo pipefail
+          # 关掉 errexit 是必须的，不是风格问题：runner 用 `bash -e {0}` 执行本步，
+          # 而 `out="$(verify…)"` 这种命令替换一非零就当场终止整步——于是下面那套
+          # 「FAIL 判红 / UNVERIFIED 只 warning 放行 / 无结论判红」的三分支**一行都执行不到**，
+          # 日志里连脚本输出都没有（2026-10-07 v0.13.0 的 attempt 1/2 就是这个形状：
+          # 只有 run 块回显 + `Process completed with exit code 1`）。
+          # 一条负责区分"未知"与"缺陷"的门禁，首先得真的跑到那句区分。
+          set +e
           VER="${GITHUB_REF_NAME#v}"
           # 为什么要等：`opsmesh-binary` / `opsmesh-agent` 两个核心镜像与 GitHub Release 的 assets
           # 都由 **ci.yml 的 tag 事件**产出，与本 workflow 并行；GitHub Actions 的 `needs` 不能跨 workflow
