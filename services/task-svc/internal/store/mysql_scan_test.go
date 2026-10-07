@@ -38,8 +38,8 @@ const judgedSitesFloor = 1
 // scanSiteExemptions 登记「参数≥3 但不参与判定」的站点及理由。
 // 键是 "文件名:行号"。没有条目可留空——空表本身也是合法状态。
 var scanSiteExemptions = map[string]string{
-	"mysql.go:829": "batches 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT 或主键）",
-	"mysql.go:865": "batches 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT 或主键）",
+	"mysql.go:830": "batches 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT 或主键）",
+	"mysql.go:866": "batches 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT 或主键）",
 }
 
 // riskyNullableColumns 解析建表来源，得到 table → {可空且无 DEFAULT 的列}。

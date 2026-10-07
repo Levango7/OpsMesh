@@ -27,6 +27,7 @@
 #  18. 入站边界（出厂 compose 发布的宿主端口除白名单外必须只绑环回；含条目数与独立正则对账，防判定面静默缩小）
  #  19. CI 重试判据的接线与自测（TD-80：判据必须是可执行脚本且真的被调用，并现场跑一次自测）
  #  20. 样例与 GitOps 段文件的版本字面量（K8s 样例 / gitops segment / values-production 自述）必须 = Chart.yaml version
+ #  21. 微服务建表列集合 ⊇ SQL 引用列（DDL=schema.sql+内联 CREATE；兜底=ALTER ADD COLUMN；常量拼接列清单的服务由其 Go 守卫管）
  #  22. 部署前显式迁移（TD-83：deploy.sh migrate 子命令 / 二进制 migrate 子命令 /
  #      预算旋钮 MIGRATION_WAIT_BUDGET+OPSMESH_MIGRATION_BUDGET_SEC / 升级指南维护窗口判据）
 #
@@ -1925,6 +1926,163 @@ else
     else
         bad "values-production.yaml 自述版本与 Chart.yaml 不一致：${VP_SYNC_BAD}（期望 ${CHART_VERSION}）"
     fi
+fi
+
+# ---------------------------------------------------------------
+sec "21. 微服务建表列集合 ⊇ SQL 引用列（跨服务统一静态守卫）"
+# ---------------------------------------------------------------
+# 为什么单开一节（2026-10-07 实测）：「DDL 与 SQL 语句的列清单漂移」此前只有 incident-svc
+# 有服务内守卫，其他服务裸奔。task-svc 的 tasks.last_fired_at 就是活体：AllTasks() 与
+# fire 闭包读它，但 schema.sql 没有且没有补列路径 ⇒ 服务自建表路径（opsmesh_task 只建库
+# 不建表，表由 migrateTasks 建）每条语句 Unknown column，而 AllTasks 静默 return nil。
+# 判据（纯静态，不启动任何数据库）：
+#   DDL   = schema.sql（embed 或产物）+ Go 内联 CREATE TABLE
+#   引用  = INSERT INTO t (...) / SELECT <列> FROM t / UPDATE t SET ...
+#   兜底  = information_schema 预检 + ALTER TABLE <t> ADD COLUMN <col> ⇒ 该列视为已有
+#   豁免  = 「列清单来自 Go 常量拼接」的服务：静态提取不到，由服务自己的 Go 守卫管
+#           （runbook-svc 的 TestRunbookColsCoverDDL ——第 2 节的矩阵已保证该测试存在于 CI）
+# 无 PY ⇒ 判红；判据自身提取失败（比如建表语法整批变样）⇒ 判红而不是绿；
+# 提取面塌缩同样判红，两层：全局 cols_checked < 250 下限；按服务——除 aio-svc（无本地表）
+# 与 runbook-svc（Go 常量列清单）外，任何服务判定数为 0 都说明该服务扫描面塌了
+# （2026-10-08 变异检验补上的假绿洞：单服务 schema.sql 被移走时全局计数只小幅下降）。
+G21_PY=""
+for _c in python3 python; do
+    if command -v "$_c" >/dev/null 2>&1; then G21_PY="$_c"; break; fi
+done
+if [[ -z "$G21_PY" ]]; then
+    bad "无可用 python 解释器，第 21 节无法执行（判红而不是跳过）"
+else
+G21_OUT="$("$G21_PY" - <<'PY2'
+
+import io, os, re, glob, sys
+SVC = sorted([d for d in os.listdir("services") if d.endswith("-svc")])
+SKIP_CONST_COLS = {"runbook-svc"}   # 列清单是 Go 常量拼接；服务内 Go 守卫负责
+SKIP_ZERO_JUDGED = {"aio-svc"}      # 无本地表（不落库），扫描面上 0 列引用是常态
+MIN_COLS = 250   # 下限（2026-10-08 实测全仓 352）：跌破=扫描面塌缩（schema.sql 被移走 / 建表语法整批变样致正则失配），判红而不是假绿
+bad, checked, per_svc = [], 0, {}
+SKIP_LINE = re.compile(r'(?i)^\s*(INDEX|KEY|UNIQUE|PRIMARY|CONSTRAINT|FULLTEXT|SPATIAL)\b')
+CREATE_RE = re.compile(r'(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?\x60?(\w+)\x60?\s*\(')
+INSERT_RE = re.compile(r'(?i)INSERT\s+INTO\s+\x60?(\w+)\x60?\s*\(([^)]*)\)')
+SELECT_RE = re.compile(r'(?i)SELECT\s+(?!DISTINCT|\*)\s*([^;()]*?)\s+FROM\s+\x60?(\w+)\x60?')
+UPDATE_RE = re.compile(r'(?i)UPDATE\s+\x60?(\w+)\x60?\s+SET\s(.*?)(?:\n\s*\n|WHERE|;|$)', re.S)
+ALTER_RE  = re.compile(r'(?i)ALTER\s+TABLE\s+\x60?(\w+)\x60?\s+ADD\s+COLUMN\s+\x60?(\w+)\x60?')
+
+def parse_ddl(text):
+    tables = {}
+    for m in CREATE_RE.finditer(text):
+        name, depth, body, i = m.group(1).lower(), 0, "", 0
+        start = text.index('(', m.start())
+        while start + i < len(text):
+            c = text[start + i]
+            if c == '(':
+                depth += 1
+            elif c == ')':
+                depth -= 1
+                if depth == 0:
+                    break
+            if depth > 0 and start + i != start:
+                body += c
+            i += 1
+        cols = set()
+        for line in body.split('\n'):
+            line = line.strip().rstrip(',').strip()
+            if not line or SKIP_LINE.match(line):
+                continue
+            cm = re.match(r'\x60?(\w+)\x60?\s', line + ' ')
+            if cm:
+                cols.add(cm.group(1).lower())
+        tables.setdefault(name, set()).update(cols)
+    return tables
+
+for svc in SVC:
+    base = os.path.join("services", svc)
+    # 1) 收集 DDL（schema.sql + Go 内联）
+    ddl = {}
+    for pat in ("internal/store/schema.sql", "schema.sql", "pkg/logstore/schema.sql"):
+        for p in glob.glob(os.path.join(base, "**", os.path.basename(pat)), recursive=True):
+            try:
+                t = io.open(p, encoding='utf-8', errors='replace').read().replace('\r', '')
+            except OSError:
+                continue
+            for k, v in parse_ddl(t).items():
+                ddl.setdefault(k, set()).update(v)
+    # 兜底列：任何 *.go 里的 ALTER TABLE ... ADD COLUMN <col>，给该服务对应的 DDL 视为已有
+    gofiles = [f for f in glob.glob(os.path.join(base, "**", "*.go"), recursive=True) if not f.endswith("_test.go")]
+    for f in gofiles:
+        try:
+            t = io.open(f, encoding='utf-8', errors='replace').read().replace('\r', '')
+        except OSError:
+            continue
+        for m in re.finditer(r'(?i)ALTER\s+TABLE\s+\x60?(\w+)\x60?\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?\x60?(\w+)\x60?', t):
+            ddl.setdefault(m.group(1).lower(), set()).add(m.group(2).lower())
+        for k, v in parse_ddl(t).items():
+            ddl.setdefault(k, set()).update(v)
+        if svc in SKIP_CONST_COLS:
+            continue
+        # 2) 该服务 *.go 里的列引用
+        refs = {}
+        for m in INSERT_RE.finditer(t):
+            if '+' in m.group(2):
+                continue
+            for c in m.group(2).split(','):
+                c = c.strip().strip('\x60').lower()
+                if c:
+                    refs.setdefault(m.group(1).lower(), set()).add(c)
+        for m in SELECT_RE.finditer(t):
+            for c in m.group(1).split(','):
+                c = c.strip().strip('\x60')
+                if not c or c == '*':
+                    continue
+                cm = re.match(r'(\w+)\.(\w+)$', c)
+                if cm:
+                    c = cm.group(2)
+                c = c.split()[0].lower()
+                if re.match(r'^\w+$', c):
+                    refs.setdefault(m.group(2).lower(), set()).add(c)
+        for m in UPDATE_RE.finditer(t):
+            for a in m.group(2).split(','):
+                cm = re.match(r'\s*\x60?(\w+)\x60?\s*=', a)
+                if cm:
+                    refs.setdefault(m.group(1).lower(), set()).add(cm.group(1).lower())
+        # 3) 判定：引用 ⊆ DDL（或兜底）
+        for tab in sorted(refs):
+            if tab not in ddl:
+                continue   # 该表不归本服务建（控制面共库/跨服务引用），别误报
+            for col in sorted(refs[tab]):
+                checked += 1; per_svc[svc] = per_svc.get(svc, 0) + 1
+                if col not in ddl[tab]:
+                    bad.append(f"{svc}: {tab}.{col}")
+zero = sorted(s for s in SVC if s not in SKIP_CONST_COLS and s not in SKIP_ZERO_JUDGED and per_svc.get(s, 0) == 0)
+if checked < MIN_COLS:
+    print(f"G21_LOW cols_checked={checked} min={MIN_COLS}")
+elif bad:
+    print("G21_BAD")
+    for b in bad:
+        print(f"BAD {b}")
+elif zero:
+    print("G21_ZERO")
+    for s in zero:
+        print(f"ZERO {s}")
+else:
+    print(f"G21_OK cols_checked={checked}")
+PY2
+)" || G21_RC=$?
+if [[ "${G21_RC:-0}" -ne 0 ]]; then
+    bad "第 21 节提取/执行失败（解释器或语法问题）："
+    printf '%s\n' "$G21_OUT" | head -8 | sed 's/^/         /'
+elif grep -q '^G21_LOW' <<<"$G21_OUT"; then
+    bad "第 21 节扫描面塌缩：列引用计数跌破下限（$(grep -o 'cols_checked=[0-9]*' <<<"$G21_OUT" | cut -d= -f2) < $(grep -o 'min=[0-9]*' <<<"$G21_OUT" | cut -d= -f2)）——DDL 提取面整体失配或被移走，判红而不是假绿"
+elif grep -q '^G21_BAD' <<<"$G21_OUT"; then
+    bad "以下服务的表列被 SQL 引用但既不在建表 DDL、也不在 ALTER 兜底里（服务自建表路径必然 Unknown column）："
+    grep '^BAD ' <<<"$G21_OUT" | head -10 | sed 's/^/         /'
+elif grep -q '^G21_ZERO' <<<"$G21_OUT"; then
+    bad "第 21 节按服务塌缩：以下服务扫描面 0 列引用（schema.sql 被移走 / 建表语法漂移 / 目录消失）——判红而不是假绿："
+    grep '^ZERO ' <<<"$G21_OUT" | head -10 | sed 's/^/         /'
+elif grep -q '^G21_OK ' <<<"$G21_OUT"; then
+    ok "微服务建表列集合 ⊇ SQL 引用列（$(grep -o 'cols_checked=[0-9]*' <<<"$G21_OUT" | cut -d= -f2) 列引用全命中）"
+else
+    bad "第 21 节解析不出结果（判据在空转，判红而不是跳过）"
+fi
 fi
 
 # ---------------------------------------------------------------

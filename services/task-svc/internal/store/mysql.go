@@ -91,11 +91,12 @@ func (s *MySQLStore) CreateTask(t *models.Task) (*models.Task, error) {
 	}
 
 	_, err := s.db.Exec(
-		"INSERT INTO tasks (task_id, agent_id, tenant_id, type, command, content, path, status, claimed_by, claimed_at, claim_epoch, created_at, retry_count, max_retries, dead_letter, timeout, retry_delay, schedule, parent_id, depends_on, approval_required, approved_by, approved_at, batch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO tasks (task_id, agent_id, tenant_id, type, command, content, path, status, claimed_by, claimed_at, claim_epoch, created_at, retry_count, max_retries, dead_letter, timeout, retry_delay, schedule, parent_id, depends_on, approval_required, approved_by, approved_at, batch_id, last_fired_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		t.TaskID, t.AgentID, t.TenantID, t.Type, t.Command, t.Content, t.Path, t.Status,
 		t.ClaimedBy, nullTime(t.ClaimedAt), t.ClaimEpoch, t.CreatedAt, t.RetryCount, t.MaxRetries,
 		t.DeadLetter, t.Timeout, t.RetryDelay, t.Schedule, t.ParentID,
 		jsonStringSlice(t.DependsOn), t.ApprovalRequired, t.ApprovedBy, nullTime(t.ApprovedAt), t.BatchID,
+		nullTime(t.LastFiredAt),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert task: %w", err)
@@ -448,11 +449,11 @@ func (s *MySQLStore) GetTaskStatus(taskID string) *models.Task {
 //
 // 列清单含 last_fired_at（其余 SELECT 不含，故本方法走独立 scanAllTasks 而非
 // 共用的 scanTasks）：供 scheduler fire 闭包与 ShadowLoop 只读评估——
-// shadow.go 的本分钟去重依赖 LastFiredAt（原 A-1 限制恒零值，双轨观察实测
-// 导致影子每 tick 恒报 fire_would_fire=2——controlplane 回写的 last_fired_at
-// 影子侧读不到）。controlplane tasks 表含该列（migrations/001_initial.sql:61），
-// task-svc schema.sql 也已声明，SELECT 对齐。NULL 兼容：DATETIME NULL 用
-// NullTime 承接。
+// fire 的同分钟去重依赖 LastFiredAt（原 A-1 的 MySQLStore 里 tasks 表缺该列、
+// 双轨观察实测影子每 tick 恒报 fire_would_fire=2——controlplane 回写的
+// last_fired_at 影子侧读不到；2026-10-07 已把该列补进 task-svc 的 tasks 表，
+// 既有库走 migration.go 的 ensureColumns 补列）。NULL 兼容：DATETIME NULL
+// 用 sql.NullTime 承接。
 func (s *MySQLStore) AllTasks() []*models.Task {
 	rows, err := s.db.Query(
 		"SELECT task_id, agent_id, tenant_id, type, command, content, path, status, claimed_by, claimed_at, claim_epoch, created_at, retry_count, max_retries, dead_letter, timeout, retry_delay, schedule, parent_id, depends_on, approval_required, approved_by, approved_at, batch_id, last_fired_at FROM tasks",
@@ -520,9 +521,9 @@ func (s *MySQLStore) scanAllTasks(rows *sql.Rows) []*models.Task {
 
 // UpdateTask 全字段回写（用于 scheduler fire/reclaim 等内部循环）。
 //
-// A-1 阶段限制：MySQLStore 任务的 schema 当前不含 last_fired_at 字段（仅内存态
-// 走 scheduler fire），本实现只更新 tasks 表已存在的列。若 A-2 切流到 MySQL 模式并
-// 启用 SQL 调度器，需先 schema 迁移加 last_fired_at 列，本接口实现保持兼容。
+// 列清单含 last_fired_at：fire 闭包读 AllTasks() 时按该列做同分钟去重、内存里改
+// t.LastFiredAt 后经本函数回写——清单不含它则去重永远不生效（同一 cron 分钟内每个
+// tick 反复触发）。AllTasks() 读侧也含同名尾列，两侧一致性由 schema_drift_test 守住。
 func (s *MySQLStore) UpdateTask(t *models.Task) bool {
 	if t == nil || t.TaskID == "" {
 		return false
@@ -540,9 +541,9 @@ func (s *MySQLStore) UpdateTask(t *models.Task) bool {
 		approvalRequired = 1
 	}
 	res, err := s.db.Exec(
-		`UPDATE tasks SET agent_id=?, type=?, command=?, content=?, path=?, status=?, claimed_by=?, claimed_at=?, claim_epoch=?, retry_count=?, max_retries=?, dead_letter=?, timeout=?, retry_delay=?, schedule=?, parent_id=?, depends_on=?, approval_required=?, approved_by=?, approved_at=?, batch_id=? WHERE task_id=?`,
+		`UPDATE tasks SET agent_id=?, type=?, command=?, content=?, path=?, status=?, claimed_by=?, claimed_at=?, claim_epoch=?, retry_count=?, max_retries=?, dead_letter=?, timeout=?, retry_delay=?, schedule=?, parent_id=?, depends_on=?, approval_required=?, approved_by=?, approved_at=?, batch_id=?, last_fired_at=? WHERE task_id=?`,
 		t.AgentID, t.Type, t.Command, t.Content, t.Path, t.Status, t.ClaimedBy, nullTime(t.ClaimedAt), t.ClaimEpoch, t.RetryCount, t.MaxRetries,
-		deadLetter, t.Timeout, t.RetryDelay, t.Schedule, t.ParentID, dependsOn, approvalRequired, t.ApprovedBy, nullTime(t.ApprovedAt), t.BatchID, t.TaskID,
+		deadLetter, t.Timeout, t.RetryDelay, t.Schedule, t.ParentID, dependsOn, approvalRequired, t.ApprovedBy, nullTime(t.ApprovedAt), t.BatchID, nullTime(t.LastFiredAt), t.TaskID,
 	)
 	if err != nil {
 		log.Printf("[store] UpdateTask 失败: %v", err)

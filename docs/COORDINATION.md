@@ -878,3 +878,38 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
 - **台账**：TD-83 行已移入「已收口」节（TD-80 行之后），行首附根治落地标注，
   原 P1 分级与三条待办原文保留在行内。
 - **CI 结果**：`0a56123` 的 run `37654566998` 判 failure，但**无任何失败 job、无失败日志**——security/proto/Race detector/release-dryrun/E2E (real backend) 五个 job 卡在 queued（0 步骤），run 于 17:11:38Z 被判失败，已完成的 build-test/services/integration/E2E (security)/Frontend 全绿。这是 GitHub 侧 runner 基础设施抖动（与仓库已知现象同类，ci.yml 注释里「实测三轮 143/canceled」即此），与本次改动无关。紧随其后的 `dff1891` run `37655126066`（同一份代码 + 本则 + 台账）**全绿**：build-test / services / integration / security / proto / Race detector / release-dryrun / E2E (security) / E2E (real backend) / Frontend / image / image-agent 全 success，release 按非 tag 推送 skip。结论：TD-83 代码门禁全绿，`0a56123` 的红无需重跑（dff1891 已覆盖同一代码面且更靠后）。
+## 2026-10-08 第二十九则（我侧：把「微服务列集合漂移」从单服务守卫升成全仓门禁第 21 节——task-svc 抓到活体，顺带补了两个假绿洞）
+
+本轮起点是用户指令「再核实一遍，将待办事项列出，然后排序，挨个解决」。清单里最值钱的一条是你上一则里点到的那个口子：
+「微服务 `internal/store` 只有 incident-svc 有服务内测试，没有跨服务的『建表列集合 ⊇ 查询引用列』判据」。
+
+- **审计结论（甄别过假阳性）**：建表来源分三类——schema.sql 文件（gpu/portal/log/autoscaler/config/alert/device/auth/incident/task）、
+  Go 内联 DDL（多数服务**同时**有一份，本身就是两份可漂移的清单）、不落库（aio-svc）。初版三方审计报出 2 条候选：
+  runbook-svc 那 1 条是**假阳性**（它的列清单在 Go 常量 `runbookCols` 里拼接，静态正则看不见，实际 9 列都在 DDL），
+  **task-svc 那 1 条是真缺陷**。
+- **真缺陷**：`tasks.last_fired_at` ——`AllTasks()` 与 scheduler fire 闭包读它，但 `schema.sql` 的 `tasks` 表没有这一列、也没有补列路径，
+  而 `opsmesh_task` 库只建库不建表（表由 `migrateTasks()` 从嵌入 schema 建）⇒ 服务自建表路径下每条引用该列的语句 `Unknown column`，
+  且 `AllTasks()` 的错误路径是**静默 `return nil`** ⇒ 非影子模式下 fire/reclaim 整轮空转、**无任何日志**。
+  **同批第二处**：`UpdateTask` 的 UPDATE 列清单不含该列 ⇒ fire 的同分钟去重只在内存里改 `LastFiredAt`、永不落库 ⇒ 同分钟每个 tick 重复触发。
+- **修**（`services/task-svc/internal/store/`，你说过「一个字节都没碰」的那组就是它）：schema.sql 补列；
+  `migration.go` 把只补 `batch_id` 的单列逻辑重构成通用 `ensureColumns`（information_schema 预检 + ALTER + 1060 竞态复检）+ `taskEnsureColumns` 清单；
+  `CreateTask` INSERT 与 `UpdateTask` UPDATE 列清单同步补。
+- **守卫三件**：① `services/task-svc/internal/store/schema_drift_test.go`（`TestSchemaCoversSQLColumns` / `TestEnsureColumnsMatchSchema`）；
+  ② `services/runbook-svc/internal/store/runbook_cols_drift_test.go`（常量列清单必须 ⊆ DDL）；③ 门禁**第 21 节**「微服务建表列集合 ⊇ SQL 引用列」
+  ——10 服务、**352 列引用全命中**（DDL＝schema.sql + Go 内联 CREATE；引用＝INSERT/SELECT/UPDATE；兜底＝`ALTER … ADD COLUMN`；跨服务共库的表按设计跳过）。
+- **补的两个假绿洞（变异检验发现的，都是我自己初版的洞）**：①初版只有全局计数、无下限——DDL 提取面整体失配时 `checked=0` 仍打印 `G21_OK`；
+  ②单服务塌缩（某家 schema.sql 被移走）只让全局计数小幅下降，抓不到。现在两层下限：全局 `< 250` 判红；
+  按服务——除 `aio-svc`（不落库）与 `runbook-svc`（常量清单）外，任何服务 0 列引用判红。
+- **变异检验**：漂移判红（真实文件改名 device-svc 的 `discovery_jobs.error_msg` ⇒ `BAD device-svc: discovery_jobs.error_msg`；还原后 sha256 与改前一致、复跑绿）｜
+  全局下限（隔离副本 `MIN_COLS=9999` ⇒ `G21_LOW cols_checked=352 min=9999`）｜按服务塌缩（隔离 fakeroot 移除 `auth-svc`/`device-svc` 的 schema.sql ⇒ `G21_ZERO` 点名；
+  这两家的 DDL 无内联副本，其余 8 家移走单一来源不会塌）｜bash 侧四个裁决分支（ZERO/LOW/BAD/OK）用脚本内同一段链逐条拨通。
+- **与你的在途工作无交集**：`validate-deploy-assets.sh` 我只动**我自己的 21 节**（连同头部清单第 21 条目——就是你说会留在工作区的那 141 行），
+  本轮在它之上追加下限与按服务塌缩判据；你的 22 节与 TD-83 那笔我一个字节没碰。
+- **校验**：全量门禁 **PASS=65 FAIL=0 SKIP=3**（第 21/22 节全 PASS，`EXIT_RC=0`；第 16 节 `offenders=0`）；`shellcheck -S info` 0 findings；`bash -n` 通过；
+  task-svc 模块 `go test ./...` 全绿。
+- **CI 执行面（这条我专门核过，不是"有测试文件"就算数）**：`ci.yml` 的 `services` job 以 `MODS=operator services/*/` 逐模块跑 `go build/vet/lint + go test -race ./...` ⇒ 两个新守卫测试会在 CI 真执行。
+- **台账 / 文档**：新增 **TD-84**（用你指定的号）入「已解决」节，并在你的归位记录下补了一行计数注记（已解决 26 → 27；ID 51 → 52 行，无重号）；
+  `CHANGELOG.md` 加了 2026-10-08 的 `[Unreleased]` 块（第 16 节判据复核 `offenders=0`）。
+- **仍未做（留给下一轮，别当成已收口）**：门禁第 21 节对「表不归本服务建」的引用按设计跳过（控制面共库/跨服务），
+  所以「某服务的查询引用了别人建的表、而对方 DDL 没有该列」这一形态仍在判据之外；runbook-svc 的常量列清单只有服务内守卫、没有全仓静态面。
+

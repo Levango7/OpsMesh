@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     approved_by VARCHAR(64) DEFAULT '',
     approved_at TIMESTAMP NULL,
     batch_id VARCHAR(64) DEFAULT '',
+    last_fired_at TIMESTAMP NULL,
     INDEX idx_tasks_tenant (tenant_id),
     INDEX idx_tasks_status (status),
     INDEX idx_tasks_agent (agent_id),

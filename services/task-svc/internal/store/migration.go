@@ -15,7 +15,44 @@ import (
 var taskSchema string
 
 const batchColumnQuery = `SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=?`
-const addBatchColumn = `ALTER TABLE tasks ADD COLUMN batch_id VARCHAR(64) DEFAULT ''`
+
+// ensureColumns 既有库补列：MySQL 8 没有 ADD COLUMN IF NOT EXISTS，
+// information_schema 预检 + ALTER + 1060 竞态处理（另一个副本可能已并发补上）。
+// 列清单一处声明，migrateTasks 对 tasks 逐列执行——防止「DDL 与查询列清单漂移」
+// 时既有库永远拿不到新列（occurred_at / batch_id 同族缺陷的根治面）。
+var taskEnsureColumns = []struct{ name, ddl string }{
+	{"batch_id", "ALTER TABLE tasks ADD COLUMN batch_id VARCHAR(64) DEFAULT ''"},
+	// AllTasks() 与 fire/reclaim 闭包读写该列（fire 的同分钟去重依赖它回写）；
+	// 旧库若拿不到这一列，AllTasks 静默失败 → 调度整轮空转（AllTasks 不打日志）。
+	{"last_fired_at", "ALTER TABLE tasks ADD COLUMN last_fired_at TIMESTAMP NULL"},
+}
+
+func (s *MySQLStore) ensureColumns(table string, cols []struct{ name, ddl string }) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, col := range cols {
+		var count int
+		if err := s.db.QueryRowContext(ctx, batchColumnQuery, table, col.name).Scan(&count); err != nil {
+			return fmt.Errorf("check %s.%s: %w", table, col.name, err)
+		}
+		if count > 0 {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, col.ddl); err != nil {
+			var mysqlErr *mysql.MySQLError
+			if errors.As(err, &mysqlErr) && mysqlErr.Number == 1060 {
+				if checkErr := s.db.QueryRowContext(ctx, batchColumnQuery, table, col.name).Scan(&count); checkErr != nil {
+					return fmt.Errorf("recheck %s.%s after concurrent migration: %w", table, col.name, checkErr)
+				}
+				if count > 0 {
+					continue
+				}
+			}
+			return fmt.Errorf("add %s.%s: %w", table, col.name, err)
+		}
+	}
+	return nil
+}
 
 // migrateTasks 只初始化 tasks 表并补 batch_id，不修改共享库的其他表。
 // CREATE 使用嵌入的 schema.sql，避免维护第二份易产生差异的建表定义。
@@ -36,28 +73,7 @@ func (s *MySQLStore) migrateTasks() error {
 		return fmt.Errorf("create tasks table: %w", err)
 	}
 
-	var count int
-	if err := s.db.QueryRowContext(ctx, batchColumnQuery, "tasks", "batch_id").Scan(&count); err != nil {
-		return fmt.Errorf("check tasks.batch_id: %w", err)
-	}
-	if count > 0 {
-		return nil
-	}
-	if _, err := s.db.ExecContext(ctx, addBatchColumn); err != nil {
-		// 检查和 DDL 之间可能被另一个启动中的副本补列。
-		// 仅将已确认存在的重复列视为成功，不吞权限或其他迁移错误。
-		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1060 {
-			if checkErr := s.db.QueryRowContext(ctx, batchColumnQuery, "tasks", "batch_id").Scan(&count); checkErr != nil {
-				return fmt.Errorf("recheck tasks.batch_id after concurrent migration: %w", checkErr)
-			}
-			if count > 0 {
-				return nil
-			}
-		}
-		return fmt.Errorf("add tasks.batch_id: %w", err)
-	}
-	return nil
+	return s.ensureColumns("tasks", taskEnsureColumns)
 }
 
 // migrateSchedules 初始化 schedules 表。
