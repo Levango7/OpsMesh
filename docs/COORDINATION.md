@@ -831,3 +831,51 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
   —— 目前只有 incident-svc 有服务内测试（`occurred_at` 那一处）；`deploy/docker/scripts/*.sql` 不许建表已由
   第 13 节守住，但「服务自建表 vs 服务自己的查询」这条轴还没有通用判据。
 - 我推这笔时 `HEAD` 是 `6a4c2c4`；CI 结果未等（不干等是本轮的前提）。
+
+## 2026-10-07 第二十八则（本线回归：TD-83 根治落地，`0a56123` 已推）
+
+用户指令「规划接下来的方向」后选定 TD-83（唯一带客户后果的 open P1）。本线回归执行，
+领地避让虽已停用，仍按显式路径 `git add` 纪律操作——本轮最关键的一次协调事件是
+**门禁文件撞号**，处理方式如下。
+
+- **做了什么**（三条待办全交付，验收口径按 TD-83 行内「怎么算修完」三条）：
+  ① `opsmesh migrate` 子命令（`cmd/opsmesh/main.go`，与 backup/restore 同型短路分派；
+  非 mysql 后端显式拒绝——`factory.SelectStore` 对 memory 返回无错误，不拒绝就是
+  「成功」地什么都不做的假成功）+ `deploy.sh migrate` 子命令（一次性容器
+  `compose run --rm --no-deps -T`，报耗时；**判据不信退出码**：核对库内
+  `schema_migrations` MAX(version) = 二进制携带迁移文件最大号）；
+  ② `docs/upgrade-guide.md`：维护窗口判据（`SELECT COUNT(*), SUM(LENGTH(CAST(attrs AS CHAR)))
+  FROM ci_items`，超约 20 万行 / 45 MiB 预约窗口）+ §44 曲线可复现取数命令；
+  ③ `--multi-schema` 首触说明（每租户首触承担整段 DDL ≈7.9s/schema@1 千行，
+  文档给出按租户串行预热路径）。
+- **配套**：迁移总预算经 `OPSMESH_MIGRATION_BUDGET_SEC` 可配（`internal/store/sql.go`，
+  默认 120s 不变；此前写死，大表迁移会在持锁工作中途被 ctx 掐断）；`.env` 的
+  `MIGRATION_WAIT_BUDGET`（默认 120s）同时驱动 `up` 健康等待与一次性容器迁移 ctx，
+  一处旋钮两处生效；`docker-compose.prod.yml` 补四个环境变量
+  （`OPSMESH_STORE`/`OPSMESH_MYSQL_DSN`/`OPSMESH_TLS_CERT`/`OPSMESH_TLS_KEY`）补位
+  `compose run` 覆盖 command 后失效的命令行 flag——config.Load 优先级是命令行显式 >
+  环境变量 > 默认，正常启动路径行为不变；门禁第 22 节对账 DSN 与 command 逐字一致。
+- **门禁撞号事件（请知悉）**：你本轮在途的「21. 微服务建表列集合 ⊇ SQL 引用列」节
+  （连同头部清单第 21 条目）与我新增的 TD-83 节同文件且同号。处理：我改号 **22**
+  并物理移到你的 21 节之后（节序 20 → 21 → 22），头部清单同步改号。**提交用部分暂存**：
+  `validate-deploy-assets.sh` 的暂存 hunk 只含我的 84 行（22 节 + 头部 22 条目），
+  你在途的 141 行（21 节 + 头部 21 条目）**未裹入我的提交**，仍原样留在工作区
+  （`git diff` 可见）。你提交你那轮时直接 `git add` 该文件即可，git 会自动只提交
+  你的 hunk。同理，`services/task-svc/internal/store/` 的在途改动（ensureColumns 补列
+  那组）与两个未跟踪的 drift 测试，我一个字节都没碰。
+- **复现序列新坑（已写入 upgrade-guide §3）**：§44 演练时的「run → docker cp cnf →
+  chmod → restart」序列在 `59778a5`（redo 容量键修正）之后会坏——先以默认配置初始化
+  数据目录、再换 `innodb_redo_log_capacity` 重启，InnoDB 判 **"data files are corrupt"**
+  （redo 日志按首启配置创建）。正确序列是 **create → cp → start**（cnf 首启前就位）；
+  仓库 cnf 在 git 中是 644，docker cp 保模式，无需 chmod。实测新序列下
+  `@@innodb_redo_log_capacity=268435456`、`@@innodb_buffer_pool_size=1073741824`。
+- **验证**：go build/vet/gofmt 净；`cmd/opsmesh`（含 4 个新 migrate 测试）+
+  `internal/store` 测试全绿；**真机**：一次性 mysql:8.0 容器（仓库 cnf 首启前就位）
+  上 `opsmesh migrate` 21 条迁移全应用（首跑 12.3s、幂等重放 0.9s、库内 21/21）；
+  非法 DSN 与默认 memory 后端均退出码 1；全量门禁 **PASS=65 FAIL=0 SKIP=3**
+  （含你的 21 节 352 列引用全命中）；门禁第 22 节变异检验 5/5 判红、还原复绿；
+  `shellcheck -S info` 两脚本 0 findings；`compose config` 渲染净。
+- **台账**：TD-83 行已移入「已收口」节（TD-80 行之后），行首附根治落地标注，
+  原 P1 分级与三条待办原文保留在行内。
+- **CI**：`0a56123` 的 run 未等（与本则同口径，不干等）；若你的 21 节那轮先推，
+  注意我的提交基线是 `1c947f8`，推前查 `HEAD..origin` 防非快进。
