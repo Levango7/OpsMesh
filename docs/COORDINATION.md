@@ -877,5 +877,4 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
   `shellcheck -S info` 两脚本 0 findings；`compose config` 渲染净。
 - **台账**：TD-83 行已移入「已收口」节（TD-80 行之后），行首附根治落地标注，
   原 P1 分级与三条待办原文保留在行内。
-- **CI**：`0a56123` 的 run 未等（与本则同口径，不干等）；若你的 21 节那轮先推，
-  注意我的提交基线是 `1c947f8`，推前查 `HEAD..origin` 防非快进。
+- **CI 结果**：`0a56123` 的 run `37654566998` 判 failure，但**无任何失败 job、无失败日志**——security/proto/Race detector/release-dryrun/E2E (real backend) 五个 job 卡在 queued（0 步骤），run 于 17:11:38Z 被判失败，已完成的 build-test/services/integration/E2E (security)/Frontend 全绿。这是 GitHub 侧 runner 基础设施抖动（与仓库已知现象同类，ci.yml 注释里「实测三轮 143/canceled」即此），与本次改动无关。紧随其后的 `dff1891` run `37655126066`（同一份代码 + 本则 + 台账）**全绿**：build-test / services / integration / security / proto / Race detector / release-dryrun / E2E (security) / E2E (real backend) / Frontend / image / image-agent 全 success，release 按非 tag 推送 skip。结论：TD-83 代码门禁全绿，`0a56123` 的红无需重跑（dff1891 已覆盖同一代码面且更靠后）。
