@@ -31,6 +31,7 @@
  #  22. 部署前显式迁移（TD-83：deploy.sh migrate 子命令 / 二进制 migrate 子命令 /
 #  23. golangci-lint 两条腿版本对账（action 钉版 == services 的 gll_ver；gll_sha 格式与成对；归档名与版本断言不得写死字面量）
  #      预算旋钮 MIGRATION_WAIT_BUDGET+OPSMESH_MIGRATION_BUDGET_SEC / 升级指南维护窗口判据）
+#  24. 台账计数可复算（tech-debt 的 td-ledger-check 标记行 + 正文计数断言必须等于实测；带日期的历史快照豁免并计数）
 #
 # 用法：bash deploy/scripts/validate-deploy-assets.sh
 set -uo pipefail
@@ -2234,6 +2235,131 @@ else
         else
             ok "版本断言引用 \$gll_ver（随钉版联动，不是第二份字面量）"
         fi
+    fi
+fi
+
+# ---------------------------------------------------------------
+sec "24. 台账计数可复算（tech-debt 标记行与正文断言必须等于实测）"
+# ---------------------------------------------------------------
+# 为什么必须钉这一条（2026-10-08 亲测翻车）：TD-84 落地时我在归位记录下补的注记直接套用了
+# 上方 2026-10-07 那条「已解决 26 + 已收口 8 = 34、ID 仍是 51 行」的旧基线往下接，写成
+# 「51 → 52 行 / 合计 34 → 35」——而 10-07 之后他人又登记过行，那笔落盘时实测是
+# 「本节 26 → 27 / 已清偿 35 → 36 / 全册 53 行」。手写计数无人复核，错数进台账后会一直在，
+# 而读台账的人正是拿这些数回答「还有多少债没还」。
+#
+# 判据三层（纯文本、只读 docs/tech-debt.md，不跑任何构建）：
+#   ① 标记行可复算：文件顶部必须有 `<!-- td-ledger-check: rows=... unique=... resolved=...
+#      closed=... inprogress=... pending=... wontfix=... -->`，每个字段必须等于实测——
+#      缺失或不符判红，并把正确的整行打出来（让下一个人直接粘贴，而不是让他自己数）。
+#   ② 结构事实：rows 必须 == unique（重号判红并点名）；rows < 40 判红——扫描面塌缩下限
+#      （正则失配 / 文件被换走时不能安静地少看几行再变绿，与第 21 节 cols_checked<250
+#      同一哲学；40 远低于实测 54，留了余量，不锁死正常增行）。
+#   ③ 正文断言：形如「已解决 N 行 / 全册 M 行 / N 行 / M 个唯一 ID」的断言，若位于**带日期
+#      的引用块或带日期的 ## 节**内，视为历史快照豁免（历史记录不该被今天的数改写），
+#      否则断言值必须 ∈ 实测集合，否则判红；豁免条数在 PASS 行报出，防止豁免成后门。
+if [[ -z "$PY" ]]; then
+    bad "无可用 python 解释器，第 24 节无法执行（判红而不是跳过）"
+else
+    TL_OUT="$("$PY" - <<'PY4'
+import io, os, re, collections
+
+P = "docs/tech-debt.md"
+if not os.path.exists(P):
+    print("TL_BAD")
+    print("BAD MISSING docs/tech-debt.md 不存在")
+    raise SystemExit(0)
+text = io.open(P, encoding="utf-8", newline="").read()
+lines = text.splitlines()
+
+ids = [m.group(1) for l in lines for m in [re.match(r"^\| (TD-\d+) \|", l)] if m]
+uniq = collections.Counter(ids)
+KEYS = (("已解决", "resolved"), ("已收口", "closed"), ("进行中", "inprogress"),
+        ("待启动", "pending"), ("已明确不做", "wontfix"))
+sec = {z: 0 for _, z in KEYS}
+cur = None
+for l in lines:
+    if l.startswith("## "):
+        cur = next((z for k, z in KEYS if k in l[:40]), None)
+    m = re.match(r"^\| (TD-\d+) \|", l)
+    if m and cur:
+        sec[cur] += 1
+want = {"rows": len(ids), "unique": len(uniq)}
+want.update(sec)
+
+problems = []
+mk = re.search(r"<!--\s*td-ledger-check:\s*([^>]*?)-->", text)
+if not mk:
+    problems.append("NO_MARKER 文件顶部缺 td-ledger-check 标记行（手写计数无人复核）")
+else:
+    got = dict(re.findall(r"(\w+)=(\d+)", mk.group(1)))
+    for k, v in want.items():
+        if got.get(k) != str(v):
+            problems.append(f"MISMATCH {k}: 标记={got.get(k, '缺')} 实测={v}")
+if len(ids) != len(uniq):
+    dup = [f"{k}x{v}" for k, v in sorted(uniq.items()) if v > 1]
+    problems.append("DUP 重号：" + ",".join(dup))
+if len(ids) < 40:
+    problems.append(f"LOW 扫描面塌缩：rows={len(ids)} < 下限 40（TD 行被移走 / 解析正则失配）")
+
+PAT = re.compile(r"(已解决|已收口|已清偿|待启动|已明确不做|进行中|全册|ID)[ *(]*(?:仍是|是|的行数)?[ *(]*([0-9]+)[ *(]*行"
+                 r"|([0-9]+)[ *(]*行[ *(]*/[ *(]*([0-9]+)[ *(]*个唯一")
+allowed = {str(v) for v in want.values()}
+exempt = 0
+i = 0
+in_dated = False
+while i < len(lines):
+    l = lines[i]
+    if l.startswith("## "):
+        in_dated = bool(re.search(r"\d{4}-\d{2}-\d{2}", l))
+        i += 1
+        continue
+    if re.match(r"^>\s", l):
+        run = [l]
+        i += 1
+        while i < len(lines) and re.match(r"^>\s", lines[i]):
+            run.append(lines[i])
+            i += 1
+        dated = bool(re.search(r"\d{4}-\d{2}-\d{2}", run[0]))
+        for rl in run:
+            for m in PAT.finditer(rl):
+                if dated:
+                    exempt += 1
+                else:
+                    problems.append("CLAIM 非快照断言不在实测集合：" + rl.strip()[:90])
+        continue
+    for m in PAT.finditer(l):
+        nums = [g for g in (m.group(2), m.group(3), m.group(4)) if g]
+        if in_dated:
+            exempt += 1
+        else:
+            for n in nums:
+                if n not in allowed:
+                    problems.append(f"CLAIM 断言 {n} 不在实测集合 {sorted(allowed, key=int)}：" + l.strip()[:90])
+    i += 1
+
+if problems:
+    print("TL_BAD")
+    for p in problems[:12]:
+        print("BAD " + p)
+    if any(p.startswith(("NO_MARKER", "MISMATCH")) for p in problems):
+        order = ("rows", "unique", "resolved", "closed", "inprogress", "pending", "wontfix")
+        print("BAD SUGGEST <!-- td-ledger-check: " + " ".join(f"{k}={want[k]}" for k in order) + " -->")
+else:
+    order = ("rows", "unique", "resolved", "closed", "inprogress", "pending", "wontfix")
+    print("TL_OK " + " ".join(f"{k}={want[k]}" for k in order) + f" exempt_claims={exempt}")
+PY4
+)" || TL_RC=$?
+    if [[ "${TL_RC:-0}" -ne 0 ]]; then
+        bad "第 24 节提取/执行失败（解释器或语法问题）："
+        printf '%s' "$TL_OUT" | head -8 | sed 's/^/         /'
+        echo ""
+    elif grep -q '^TL_BAD' <<<"$TL_OUT"; then
+        bad "docs/tech-debt.md 的计数与实测不符（手写数字无人复核这一类）："
+        grep '^BAD ' <<<"$TL_OUT" | head -14 | sed 's/^/         /'
+    elif grep -q '^TL_OK ' <<<"$TL_OUT"; then
+        ok "台账计数可复算（$(grep -o 'rows=[0-9]* unique=[0-9]*' <<<"$TL_OUT" | head -1)；带日期历史快照断言豁免 $(grep -o 'exempt_claims=[0-9]*' <<<"$TL_OUT" | cut -d= -f2) 条）"
+    else
+        bad "第 24 节解析不出结果（判据在空转，判红而不是跳过）"
     fi
 fi
 
