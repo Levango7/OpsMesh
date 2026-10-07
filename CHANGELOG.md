@@ -1184,6 +1184,15 @@ upgrade guide，021 注释引用的"既有惯例『先迁移后放量』"并不�
   一次 `timeout 120`/`timeout 400` 都不返回。它与 shellcheck 不同，会去查 GitHub 表达式元数据，本机此刻
   `api.github.com` 也在间歇性 `connectex` 失败 ⇒ 归因在工具的网络面，不在 workflow 内容；终判仍在 CI 的
   `build-test` 那一步（它是 CI 里真跑的那一遍）。
+- **上面那笔"未验的明账"已经闭上（推送后的首跑实测，1c947f8f / run 37652077944）**：`services` job 的
+  `completed/success` 日志里，安装步先打了实测值再校验——
+  `实测 sha256=2277d43b98ec0054280f2ac26b53268bae97682444678a59a657dd565da021d6  size=15451894`，
+  紧接一行 `/tmp/golangci-lint-2.13.2-linux-amd64.tar.gz: OK`。
+  实测摘要与钉死值**逐字符相同**、字节数与 API 报的 `asset.size` 一致 ⇒ 摘要不再只是"上游声明"，
+  而是被 runner 从公网取回完整产物后独立复算过一遍；原判断**保留原文**（写它的时候确实没验），
+  这条是它的后续，不是把它抹平。取日志用的是 job 级 `actions/jobs/<id>/logs`——注意该 job 已 completed
+  而整 run 还在跑时，run 级日志仍取不到（与此前那条"run 未结束连 job 级日志也空"只有半步之差：
+  **job 收尾后 job 级日志就有了，run 级的还没有**）。
 
 ## [Unreleased] — 2026-10-07 发布物回核自己抓到的四条缺陷：⑤ 把 12 说成 14、零比对仍打 PASS、跨 workflow 竞态，以及那段判读从未被执行过
 
