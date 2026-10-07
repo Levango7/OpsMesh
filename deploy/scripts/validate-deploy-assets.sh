@@ -26,6 +26,7 @@
 #  17. 发布链顺序（构建腿只推不可变 :<sha>；promote 必须是提权唯一入口且在 Release 之前）
 #  18. 入站边界（出厂 compose 发布的宿主端口除白名单外必须只绑环回；含条目数与独立正则对账，防判定面静默缩小）
 #  19. CI 重试判据的接线与自测（TD-80：判据必须是可执行脚本且真的被调用，并现场跑一次自测）
+#  20. 样例与 GitOps 段文件的版本字面量（K8s 样例 / gitops segment / values-production 自述）必须 = Chart.yaml version
 #
 # 用法：bash deploy/scripts/validate-deploy-assets.sh
 set -uo pipefail
@@ -1827,6 +1828,100 @@ else
     else
         bad "判据自测判红（重试判据不可信，build-test 不得依赖它）："
         printf '%s\n' "$DEATH_SELFTEST_OUT" | sed 's/^/         /'
+    fi
+fi
+
+# ---------------------------------------------------------------
+sec "20. 样例与 GitOps 段文件里的版本字面量必须 = 当前发布版（第 1 节只守固定清单）"
+# ---------------------------------------------------------------
+# 为什么单开一节：第 1 节守的是**固定清单**（Chart.yaml / values-production 的 tag 行 /
+# gitops segment 的 tag 行 / internal/version / compose 的 OPSMESH_VERSION 契约）。
+# 但「客户直接拿去跑」的那几份文件里还散着**手写**的版本字面量，每发一版都得人肉同步，
+# 而漂移了没有任何东西会红。实测 2026-10-07 抓到：
+#   deploy/gitops/segments/production-segment.yaml:40 的注释写「一致钉当前发布 0.12.0」，
+#   同一文件 :45 的 tag 已是 "0.13.0"。同一份生产段自相矛盾，读注释的人会以为它钉的是
+#   上一版——而那一版按发布记录**从未存在于 GHCR**（§32.9 的 ErrImagePull 成因）。
+# 判据：本节范围内出现的**每一个** X.Y.Z 字面量都必须等于 Chart.yaml 的 version。
+#   · 判「字面量全等」而不是「只查 image:/tag: 行」：上面那条缺陷正藏在注释里，行式匹配看不见；
+#   · 4 段形态（127.0.0.1、网段 10.10.0.0/16、kind 的 10.96.0.0/12）不是版本字面量，用前后边界排除；
+#   · 下限计数（VERSION_LITERALS_FLOOR）：扫描面塌缩——文件被移走、glob 失配、或版本号跨过 1.0
+#     导致正则不再匹配——必须判红而不是变绿。「绿着，但没在看」是本仓出过多次的形态。
+# 刻意**不**纳入本节的文件：deploy/k8s/create-cluster.sh（其中 1.14.4 / 0.71.0 是 cert-manager 与
+# prometheus-operator 的**第三方**版本，不随本仓发布走）。拉进来会造一个每天都可能误红的门禁。
+# 用数组而不是"一个字符串再裸展开"：后者在 shellcheck -S info 下是 SC2086（CI 的 security job
+# 正是按 info 档卡的，见 ci.yml「shellcheck 交付脚本」）。数组既保住 glob 展开，又不引豁免注释。
+VERSION_FILES=(deploy/k8s/deployments/*.yaml deploy/k8s/README.md deploy/k8s/deploy-opsmesh.sh deploy/gitops/segments/*.yaml)
+# 下限只许上调。当前 10 = 5 份 K8s 样例的 image tag + deploy-opsmesh.sh（注释 + IMAGE_TAG 默认值）
+# + README 的 --build-arg VERSION 示例 + production-segment.yaml（注释 + tag）。
+VERSION_LITERALS_FLOOR=10
+VL_RC=0
+VL_OUT=""
+if [[ -z "$PY" ]]; then
+    bad "无可用 python 解释器，版本字面量扫描无法执行（判红而不是跳过）"
+else
+    VL_OUT="$("$PY" - "$CHART_VERSION" "${VERSION_FILES[@]}" <<'PY'
+import io, re, sys
+want, paths = sys.argv[1], sys.argv[2:]
+# 允许 "v0.13.0" 形态；前后边界把 4 段网段/IP 与更长数字串排掉。
+tok = re.compile(r'(?<![\w.])(v?\d+\.\d+\.\d+)(?![\w.])')
+total, bads, dist = 0, [], set()
+for p in paths:
+    try:
+        txt = io.open(p, encoding='utf-8', errors='replace').read()
+    except OSError as exc:
+        print(f'ERROR 读不到 {p}: {exc}')
+        sys.exit(2)
+    for m in tok.finditer(txt):
+        v = m.group(1).lstrip('v')
+        dist.add(v)
+        total += 1
+        if v != want:
+            line = txt.count('\n', 0, m.start()) + 1
+            bads.append(f'{p}:{line}={v}')
+print(f'LITERALS {total} WANT {want}')
+print(f'DISTINCT {" ".join(sorted(dist))}')
+for b in bads:
+    print(f'BAD {b}')
+PY
+)" || VL_RC=$?
+    if [[ "$VL_RC" -ne 0 ]]; then
+        bad "版本字面量扫描失败（读不到目标文件或解释器报错），本节无从判定："
+        printf '%s\n' "$VL_OUT" | sed 's/^/         /'
+        VL_OUT=""
+    fi
+fi
+if [[ -n "$VL_OUT" ]]; then
+    VL_N="$(sed -n 's/^LITERALS \([0-9]*\) WANT .*/\1/p' <<<"$VL_OUT")"
+    VL_BAD="$(sed -n 's/^BAD //p' <<<"$VL_OUT")"
+    if [[ -z "$VL_N" ]]; then
+        bad "第 20 节解析不出扫描结果（判据在空转，判红）"
+    elif [[ "$VL_N" -lt "$VERSION_LITERALS_FLOOR" ]]; then
+        bad "版本字面量只扫到 ${VL_N} 处 < 下限 ${VERSION_LITERALS_FLOOR}（扫描面塌缩，判红）"
+    elif [[ -n "$VL_BAD" ]]; then
+        bad "版本字面量 ≠ ${CHART_VERSION}（发版 bump 必须一起改，注释里的也算）："
+        printf '%s\n' "$VL_BAD" | sed 's/^/         /'
+    else
+        ok "样例/段文件 ${VL_N} 处版本字面量全部 = ${CHART_VERSION}（$(sed -n 's/^DISTINCT //p' <<<"$VL_OUT")）"
+    fi
+fi
+
+# 第 1 节的 check_kv 只看 tag 的**值**，看不见「本 overlay 已同步到 X.Y.Z」这类**自述**。
+# 自述漂移同样把人带偏（§32.9 的「声明领先于产物」正是这么来的），故对这句明文单列一条。
+VP_SYNC_HITS="$(grep -oE '已同步到 [0-9]+\.[0-9]+\.[0-9]+' deploy/helm/opsmesh/values-production.yaml 2>/dev/null)"
+if [[ -z "$VP_SYNC_HITS" ]]; then
+    bad "values-production.yaml 找不到「已同步到 <版本>」自述（措辞被改写而本节没同步 ⇒ 判红，别让它空转）"
+else
+    VP_SYNC_BAD=""; VP_SYNC_N=0
+    while IFS= read -r _line; do
+        [[ -z "$_line" ]] && continue
+        VP_SYNC_N=$((VP_SYNC_N + 1))
+        _v="${_line#已同步到 }"
+        [[ "$_v" == "$CHART_VERSION" ]] || VP_SYNC_BAD="${VP_SYNC_BAD} ${_v}"
+    done <<< "$VP_SYNC_HITS"
+    if [[ -z "$VP_SYNC_BAD" ]]; then
+        ok "values-production.yaml 自述版本 = ${CHART_VERSION}（${VP_SYNC_N} 处）"
+    else
+        bad "values-production.yaml 自述版本与 Chart.yaml 不一致：${VP_SYNC_BAD}（期望 ${CHART_VERSION}）"
     fi
 fi
 

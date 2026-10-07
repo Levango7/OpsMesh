@@ -1194,6 +1194,40 @@ v0.13.0 发版那一刻，`release.yml` 的 `verify-artifacts` job **红了**—
   这句话此前只是**没被否证**，现在有了一次由正确计数层打印的第二次独立确认（两次由不同脚本版本给出同一结论）。
   `docs/COORDINATION.md` 第二十六则同时记下"那条 release run 的红不要去重跑取绿"的理由，避免下一个接手的人抹平它。
 
+## [Unreleased] — 2026-10-07 生产段/样例里手写的版本字面量没人守：两处已漂的注释 + 门禁第 20 节
+
+第 1 节守的是**固定清单**（Chart.yaml / values-production 与 gitops segment 的 tag 行 / `internal/version` /
+compose 的 `OPSMESH_VERSION` 契约），但「客户直接拿去跑」的样例与 GitOps 段文件里还散着**手写**的版本字面量：
+每发一版靠人肉同步，漂移了没有任何东西会红。本轮实测抓到两处**已经漂了**：
+
+- `deploy/gitops/segments/production-segment.yaml:40` 的注释写「与 values-production.yaml / Chart.yaml
+  一致钉当前发布 **0.12.0**」，而同一文件 `:45` 的 tag 已是 `"0.13.0"` —— 同一份生产段自相矛盾。
+  读注释的人会以为这份生产 GitOps 段钉的是上一版（而 0.12.0 一度按 §32.9 那样没有对应镜像）。
+- `deploy/helm/opsmesh/values-production.yaml:209` 的标签格式示例写作「`v0.13.0 → 0.12.0`」，
+  与 `${GITHUB_REF_NAME#v}`（剥**前导** v）的语义不符，应为 `v0.13.0 → 0.13.0`。
+
+修法：两处注释改对，并把这些文件纳入门禁 —— **第 20 节：本节范围内出现的每一个 `X.Y.Z` 字面量都必须等于
+Chart.yaml 的 version**。
+
+- 判「字面量全等」而不是「只查 `image:` / `tag:` 行」：上面那条缺陷正藏在**注释**里，行式匹配看不见它。
+- 4 段形态（`127.0.0.1`、网段 `10.10.0.0/16`）不是版本字面量，按前后边界排除。`deploy/k8s/create-cluster.sh`
+  里的 `1.14.4` / `0.71.0` 是 cert-manager 与 prometheus-operator 的**第三方**版本，刻意不纳入本节——
+  纳入即造一个每天都可能误红的门禁。
+- **下限 10 处**（`VERSION_LITERALS_FLOOR`，只许上调）：文件被移走 / glob 失配 / 版本号将来跨过 1.0
+  都会让扫描面塌缩，那种情况必须判红，而不是安静地少看几个文件后变绿。
+- 另单列一条：`values-production.yaml` 的**自述**「已同步到 X.Y.Z」必须等于当前版本 —— 第 1 节只看 tag 的
+  **值**，看不见自述；而 §32.9 的「声明领先于产物」正是这么来的。
+
+变异检验（六种，逐条判红；夹具把真门禁的第 20 节**原样摘出**单独运行——抽取件留在未跟踪的
+`.git/gate-harness/gate20-harness.sh`，变异脚本同目录，下次不必重抄）：gitops 注释回退 0.12.0 →
+`production-segment.yaml:40=0.12.0`；K8s 样例（task-svc）image tag 落后一版 → `:36=0.12.0`；自述落后一版；
+整个样例文件被移走 → 「只扫到 9 处 < 下限 10」；**Chart.yaml bump 到 0.14.0 而样例没跟 → 9 条字面量 + 1 条自述全红**；
+自述措辞被改写 → 「找不到『已同步到 <版本>』」（判据不许空转）。还原后基线复绿。
+
+复跑：`bash deploy/scripts/validate-deploy-assets.sh` ⇒ **PASS=59 FAIL=0 SKIP=3**（SKIP 为 docker compose 未装 /
+kubeconform 拉不到 JSON schema / alertmanager 镜像离线）；`shellcheck -S info`（CI 钉同版 v0.10.0）对本门禁脚本
+**0 findings** —— 初版用裸展开 `$VERSION_FILES` 会引 SC2086，而 CI 的 `security` job 正按 info 档卡，已改数组。
+
 ## [0.11.0] — 2026-10-01 引导脚本不再携带建表语句（删 43 张表 DDL + 门禁第 13 节）（已归入 0.11.0）
 
 > 证据：三方一致性审计（`CREATE TABLE IF NOT EXISTS <t> (…)` 从 Go 原始字符串与 `.sql` 提取，剥 `INDEX`/`PRIMARY KEY` 行取首字段做列集合，对同名表求差集）；`deploy/scripts/validate-deploy-assets.sh` 当前 **PASS=33 / FAIL=0 / SKIP=2**，新第 13 节经**两次变异检验**（塞回 `CREATE TABLE` → 判红；把某 DSN 的库从两个脚本都删掉 → 判红并指向「连库即 Access denied」）。详见 `docs/td60-decision-2026-09-26.md` §5.11 ①c。

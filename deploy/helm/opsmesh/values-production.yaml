@@ -206,7 +206,7 @@ redis:
 #     image:
 #       repository: ghcr.io/levango7/task-svc
 #       # 生产禁止 latest：钉 semver 或由 CI GitOps 写回 digest（非空优先于 tag）。
-#       # 标签格式为 release.yml 的 ${GITHUB_REF_NAME#v}（v0.13.0 → 0.12.0），无 v 前缀。
+#       # 标签格式为 release.yml 的 ${GITHUB_REF_NAME#v}（v0.13.0 → 0.13.0），无 v 前缀。
 #       tag: "0.13.0"
 #       digest: ""
 #     replicas: 2

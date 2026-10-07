@@ -803,3 +803,31 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
 - **一处对外措辞的滞后已修**：`docs/release-notes.md` v0.13.0 小节原写"真实提权执行次数为 0"却不给结果——
   发布后这句话落后于现实，已补上回核结论与自己可跑的自查命令。
 - TD-83 仍 open（P1，本版未修）；本版对客户给的口径是"超约 20 万行 / 45 MiB 请预约维护窗口"。
+
+## 2026-10-07 第二十七则（我侧：不干等 CI，转去收「手写版本字面量没人守」这一类）
+
+- 用户的指令是「现在做点别的，而不是干等 CI」。本轮从 CI 队列上挪开，做静态面。
+- **先说的边界**：开工时工作树里有**另一条会话未提交**的 `CHANGELOG.md` / `docs/COORDINATION.md` /
+  `docs/release-notes.md` 改动。我一个字节都没 stage；等它们随 `6a4c2c4` 落地后才写本则与 CHANGELOG，
+  免得把别人的半成品裹进我的提交（也就不会出现「两边都以为自己提交了」那种局面）。
+- **做了什么**：第 1 节守的是**固定清单**（Chart.yaml / values-production 与 gitops segment 的 tag 行 /
+  `internal/version` / compose 的 `OPSMESH_VERSION` 契约），但「客户直接拿去跑」的样例与 GitOps 段文件里
+  还散着**手写**的版本字面量，漂移了没有任何东西会红。实测抓到两处**已经漂了**：
+  `deploy/gitops/segments/production-segment.yaml:40` 的注释写「一致钉当前发布 0.12.0」而同一文件 `:45`
+  的 tag 已是 `"0.13.0"`（同一份生产段自相矛盾）；`deploy/helm/opsmesh/values-production.yaml:209` 的标签
+  格式示例写成「v0.13.0 → 0.12.0」，与 `${GITHUB_REF_NAME#v}` 只剥**前导** v 的语义不符。
+- **门禁第 20 节**：这些文件里出现的**每一个** `X.Y.Z` 字面量必须 = Chart.yaml 的 version。判「字面量全等」
+  而不是「只查 image:/tag: 行」——上面那条缺陷正藏在注释里，行式匹配看不见；4 段 IP / 网段按前后边界排除；
+  **下限 10 处**防扫描面塌缩；另单列「values-production 自述『已同步到 X.Y.Z』」一条（第 1 节只看 tag 的**值**）。
+  刻意排除 `deploy/k8s/create-cluster.sh` 的 cert-manager `1.14.4` / prometheus-operator `0.71.0`（第三方版本）。
+- **变异检验六种**（夹具把真门禁第 20 节原样摘出单独跑：`.git/gate-harness/gate20-harness.sh` 与同目录的
+  `gate20-mutants.py`，未跟踪、不进提交；下次不必重抄）：注释回退 / image tag 落后 /
+  自述落后 / 样例文件被移走（判「只扫到 9 处 < 下限 10」）/ **Chart.yaml bump 到 0.14.0 而样例没跟 →
+  9 条字面量 + 1 条自述全红** / 自述措辞被改写（判据空转）。还原后基线复绿。
+- **验证**：全量门禁复跑 **PASS=59 FAIL=0 SKIP=3**（SKIP：docker compose 未装、kubeconform 拉不到 JSON schema、
+  alertmanager 镜像离线）；`shellcheck -S info`（CI 钉同版 v0.10.0）对门禁脚本 **0 findings** —— 初版裸展开
+  `$VERSION_FILES` 引 SC2086，CI 的 `security` job 正按 info 档卡，已改数组而不是加豁免注释。
+- **仍留的同一族缺口（下一轮候选）**：微服务 `internal/store` 没有跨服务的「DDL 列集合 ⊇ 查询引用列」守卫
+  —— 目前只有 incident-svc 有服务内测试（`occurred_at` 那一处）；`deploy/docker/scripts/*.sql` 不许建表已由
+  第 13 节守住，但「服务自建表 vs 服务自己的查询」这条轴还没有通用判据。
+- 我推这笔时 `HEAD` 是 `6a4c2c4`；CI 结果未等（不干等是本轮的前提）。
