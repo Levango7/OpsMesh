@@ -779,3 +779,27 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
   一起写更自洽（我会把"维护窗口判据"写进对外小节）。
 - CI 现状：`59778a5` 的 run `37597036957` 自 16:53 起一直 `queued`（runner 饥饿，`runner_name` 空、`steps=0`），
   与代码无关；上一笔 `2d8e4e8` 已 completed success。
+
+## 2026-10-07 第二十六则（我侧：v0.13.0 已发布——promote 真实首跑通过，但那条 release run 是红的，红在门禁自己身上）
+
+- **发布事实**：annotated tag `v0.13.0` → 提交 `c4d69b6769ca9eb657a0e0e99fd1ec949da0dbce`；GitHub Release 已建、
+  assets=5（正文含能力降级清单）。顺序按用户批准的「推 main → CI 绿 → 打 tag」执行，tag 前 tip run
+  `37617945023` 是 success。**这一版是 gate-before-promote 改造后 promote 的第一次真实执行**（此前执行次数 0）。
+- **产物回核（外部事实，不是设计意图）**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒
+  `PASS=8 FAIL=0 UNVERIFIED=0`，第 ⑤ 项 14/14 个镜像的 `:0.13.0` 与 `:c4d69b6…` 同一 manifest digest
+  ⇒ 提权确实只是改标，客户拉到的版本 tag 就是被 Trivy/SBOM/cosign 看过的那一份。
+- **请知道并且不要去"抹平"的那条红**：release run `37622580789` 保持红色。四条根因全部在**验收 job 自身**，
+  与产物无关：① 跨 workflow 竞态（binary/agent 与 Release assets 来自 `ci.yml` 的 tag run，verify 可能先跑）；
+  ② ⑤ 的 PASS 行用仓库总数而非实际比对数；③ 一次都没比对上仍打 PASS；④ `run:` 块被 runner 的 `bash -e` 在
+  `out="$(…)"; rc=$?` 处掐死，三分支判读此前是**死代码**（attempt 2 除回显外零输出）。
+  修复在 `e3cfc5de`（①②③）与 `a51e71a6`（④）。
+- **为什么不要重跑那条 run 来"取绿"**：证据是 tag 那颗提交自己的树里仍是坏的判读块——
+  `git show c4d69b67:.github/workflows/release.yml` 有 `out="$(bash deploy/scripts/verify…)"`（:451）而**没有** `set +e`。
+  所以拿这条 run 重跑，验到的还是修好前的判读逻辑（attempt 2 实测：除回显外零输出）。④ 的修复要到
+  `a51e71a6`，它**只可能在下一次 tag 的那条 run 上第一次真正生效**。
+  `gh run rerun --failed` 不会重建镜像也不会挪版本 tag（实测 attempt 2 其余 26 个 job 仍 success），但也**不产生新证据**。
+  在此之前它的验收证据是"把那段 run 块原样抽出、按 runner 同款 `bash -e` 跑五种结论 + 删掉 `set +e` 复现旧缺陷"
+  （抽取件在 `.git/gate-harness/`，未跟踪，下次不必重抄）。
+- **一处对外措辞的滞后已修**：`docs/release-notes.md` v0.13.0 小节原写"真实提权执行次数为 0"却不给结果——
+  发布后这句话落后于现实，已补上回核结论与自己可跑的自查命令。
+- TD-83 仍 open（P1，本版未修）；本版对客户给的口径是"超约 20 万行 / 45 MiB 请预约维护窗口"。

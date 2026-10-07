@@ -15,10 +15,15 @@
 ### 先说发布本身（客户会直接撞到）
 
 **本版是发布链改造后的第一次真实执行**。`promote`（registry 侧改标、不重建）、`:latest`/版本 tag 的提权时序、
-验收脚本第 ⑤ 项 digest 等式，此前只被本地跑与静态断言验过形状，**真实提权执行次数为 0**（§39 实测）。
-tag 推上去后请用 `deploy/scripts/verify-release-artifacts.sh 0.13.0` 自查五项判据（镜像 tag 存在 / `.sig`+`.att`
-挂在本版本 digest 上 / Release 存在且正文含能力降级清单 / chart 渲染出的引用真实存在 /
-`:0.13.0` 与 `:<发布提交>` 同一个 manifest digest）。任一项不符请以门禁结果为准，**不要手工补 tag**。
+验收脚本第 ⑤ 项 digest 等式，在发版前只被本地跑与静态断言验过形状，**真实提权执行次数为 0**（§39 实测）。
+2026-10-07 打完 tag 后这条路径第一次真的跑过，结果已独立回核：
+`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ **PASS=8 / FAIL=0 / UNVERIFIED=0**，其中第 ⑤ 项
+**14/14** 个镜像的 `:0.13.0` 与 `:c4d69b6…`（发布提交）指向**同一个 manifest digest** ⇒ 提权确实只是改标，
+客户拉到的版本 tag 就是被 Trivy/SBOM/cosign 看过的那一份。
+
+自查命令（客户侧同样可用）：`deploy/scripts/verify-release-artifacts.sh 0.13.0`，五项判据为镜像 tag 存在 /
+`.sig`+`.att` 挂在本版本 digest 上 / Release 存在且正文含能力降级清单 / chart 渲染出的引用真实存在 /
+`:0.13.0` 与 `:<发布提交>` 同一个 manifest digest。任一项不符请以门禁结果为准，**不要手工补 tag**。
 
 ### 破坏性 / 行为变更（升级前必读）
 
