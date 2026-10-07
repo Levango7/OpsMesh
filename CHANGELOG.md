@@ -1080,6 +1080,24 @@ gr_needs=['promote', 'changelog']`），便于核对判据是真读到了东西�
   按行数/文本量的维护窗口判据（>约 20 万行 / 45 MiB 预约窗口）、`--multi-schema` 发布说明写明首访会变慢。
   **台账债项编号我不占**，避免与并行线撞号（本仓刚修过 TD-62 双号）。
 
+## [Unreleased] — 2026-10-07 开债项 TD-83：存量升级窗口没有覆盖"重建表 + 禁写"型迁移（阈值实测 30 万行）
+
+用户指令"开一条新 TD"。取号前现查台账（最大 `TD-82`、`uniq -d` 无重号、51 行），占 **TD-83**，
+只在「待启动」表尾追加一行，**未移动也未改写并行线的任何行**；台账 51 → 52 行 / 52 唯一 ID。
+优先级定 **P1** 而非 P0，判据随行走：按 `docs/deployment-scenarios.md:66-70,138` 宣称的 ≤10000 设备规模不触发，
+但触发时症状是"部署失败"的假症状 + 升级窗口内 CMDB 写入不可用。
+
+行内把 §44 演练的三条待办债务化并写了**验收口径**：① 迁移从启动内联改成部署前显式步骤
+（`deploy.sh` 增 `migrate`；`main.go:93` 的 `NewServer` 内同步迁移早于 `:98 srv.Start()`，导致迁移期间 `/health`
+根本不存在）＋等待预算可配（现状是两道 120s：`deploy.sh:1014` 与 `sql.go:242-244` 的"60s 锁 + 60s 工作"）；
+② 交付文档给出数字判据（>约 20 万行 / 45 MiB 预约维护窗口）——`deploy.sh` 里 `迁移|migrat` 零命中、无
+upgrade guide，021 注释引用的"既有惯例『先迁移后放量』"并不存在；③ `--multi-schema` 启用时
+`multi_schema.go:241-267` 在 `m.mu` 写锁内懒建 store + 跑迁移，每 schema 固定成本 ≈7.9s ⇒ 逐租户首访承担整段 DDL。
+
+数据出处与复现要点都写进行内（阈值 30 万行＝120s 的 97%；mysqld 自报 1845/1846 两条裁决；活体最大写入间隔
+19.8s；以及"Windows bind-mount 会让 mysqld 静默忽略 cnf，必须 `docker cp` + `chmod 644` 并用 `SELECT @@...` 复核"）。
+本轮**未改任何产品行为**，也仍未动 `deploy/monitoring/mysql.cnf` 的两条卫生项（归属未定，见协调第二十三/廿四则）。
+
 ## [0.11.0] — 2026-10-01 引导脚本不再携带建表语句（删 43 张表 DDL + 门禁第 13 节）（已归入 0.11.0）
 
 > 证据：三方一致性审计（`CREATE TABLE IF NOT EXISTS <t> (…)` 从 Go 原始字符串与 `.sql` 提取，剥 `INDEX`/`PRIMARY KEY` 行取首字段做列集合，对同名表求差集）；`deploy/scripts/validate-deploy-assets.sh` 当前 **PASS=33 / FAIL=0 / SKIP=2**，新第 13 节经**两次变异检验**（塞回 `CREATE TABLE` → 判红；把某 DSN 的库从两个脚本都删掉 → 判红并指向「连库即 Access denied」）。详见 `docs/td60-decision-2026-09-26.md` §5.11 ①c。
