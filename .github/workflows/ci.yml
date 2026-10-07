@@ -290,7 +290,7 @@ jobs:
         with:
           go-version: "1.26.6"
       - name: 逐模块 Build + Vet + golangci-lint + Test（-race）
-        # golangci-lint 用 go install 钉版（与 build-test 的 action 同版 v2.13.2）：
+        # golangci-lint 与 build-test 的 action 同版（v2.13.2）：
         # golangci-lint-action 不支持在循环里逐模块执行；binary 从子目录运行会
         # 向上找到根 .golangci.yml —— services 与根模块共用同一套规则与豁免。
         # 此前本 job 只有 build + 无 race 的 test：vet/lint/race 三个门禁对
@@ -299,10 +299,37 @@ jobs:
         # 2026-09-29 因单体 orchestration 覆盖而删除，门禁对存量服务的价值不变）。
         run: |
           set -euo pipefail
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+          # 为什么不再用 `go install github.com/golangci/...@v2.13.2`：那一步要在 runner 上
+          # **现编译整个 linter**，顺带把它自己的整张依赖图过一遍公网（连 charmbracelet/ultraviolet
+          # → x/windows 这种在 linux 上根本用不到的包也要拉）。2026-10-07 run 37638185377 里
+          # proxy.golang.org 读 zip 断流（stream error: INTERNAL_ERROR，卡了 2 分钟）就把这条
+          # 「12 个模块 build/vet/lint/race」的腿整体判红，而那次提交的 Go 码一行都没改——
+          # 同一颗提交重跑（attempt 2）即绿。门禁工具的取数方式不该是单点故障。
+          # 现在改成与本文件上面 actionlint 那步同构：钉版本 + 钉 sha256 + 取预编译产物，
+          # 有界重试只作用于这一颗产物，不再作用于整张依赖图。
+          # sha256 出处：release 自带的 golangci-lint-2.13.2-checksums.txt 里
+          # golangci-lint-2.13.2-linux-amd64.tar.gz 那一行（经 api.github.com 的 asset 接口取回并
+          # 按 `awk '$2==名称'` 精确取列，不是手抄）。产物与摘要同信道 ⇒ 摘要挡的是"下载被截断/被换"；
+          # 若上游重新打包，本步直接红（可发现），不会静默放行，另有一道版本断言作异源判据。
+          # 架构前提：ubuntu-latest 是 linux/amd64；换架构要同时换 tarball 名与 gll_sha。
+          gll_ver=2.13.2
+          gll_sha=2277d43b98ec0054280f2ac26b53268bae97682444678a59a657dd565da021d6
+          gll_tar="golangci-lint-${gll_ver}-linux-amd64.tar.gz"
+          curl -sSfL --retry 3 --retry-delay 5 -o "/tmp/${gll_tar}" \
+            "https://github.com/golangci/golangci-lint/releases/download/v${gll_ver}/${gll_tar}" \
+            || { echo "::error::下载 ${gll_tar} 失败（已重试 3 次）——这是取数失败，不是代码问题"; exit 1; }
+          printf '%s  %s\n' "$gll_sha" "/tmp/${gll_tar}" | sha256sum -c - \
+            || { echo "::error::${gll_tar} 的 sha256 与钉死值不符：别改这个值去迁就下载，先确认上游是否重新打过包"; exit 1; }
+          mkdir -p /tmp/gll-extract
+          tar -xzf "/tmp/${gll_tar}" -C /tmp/gll-extract
+          gll_bin="$(find /tmp/gll-extract -type f -name golangci-lint -print -quit)"
+          [ -n "$gll_bin" ] || { echo "::error::tar 包里没有 golangci-lint 可执行文件，解压布局与预期不符"; exit 1; }
           GOBIN="$(go env GOPATH)/bin"
+          mkdir -p "$GOBIN"
+          cp -f "$gll_bin" "${GOBIN}/golangci-lint"
+          chmod 0755 "${GOBIN}/golangci-lint"
           export PATH="${GOBIN}:$PATH"
-          glv="$(golangci-lint version 2>&1)"; grep -q "2.13.2" <<<"$glv" || { echo "::error::golangci-lint 版本不是钉死的 2.13.2"; exit 1; }
+          glv="$(golangci-lint version 2>&1)"; grep -q "$gll_ver" <<<"$glv" || { echo "::error::golangci-lint 版本不是钉死的 ${gll_ver}"; exit 1; }
           # 服务子模块用独立配置（根 .golangci.yml 的 path 豁免按根模块相对路径编写，
           # 会与 services/<svc> 自己的 internal/... 误配对；理由与规则集见该文件头注释）。
           CONFIG="$(git rev-parse --show-toplevel)/.golangci.services.yml"

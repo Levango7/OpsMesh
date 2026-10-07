@@ -1136,6 +1136,41 @@ upgrade guide，021 注释引用的"既有惯例『先迁移后放量』"并不�
 - **未做**：§44.6 第 1/2/3 条（迁移前置 + 预算可配 / 维护窗口数字判据 / 多租户首触说明）是行为与文档面改动，
   已记为 **TD-83**，不在这一笔里顺手改。
 
+## [Unreleased] — 2026-10-08 `services` 腿被一次公网断流整体判红：门禁工具的取数方式从「runner 现编译」改成钉版产物 + 钉摘要
+
+- **现象与定性（三条一起才算"间歇"而不是"回归"）**：run `37638185377`（`fd244b0`，main 的头）判红，job 级
+  只有 `services` 一条失败、其余 11 绿 + release skipped。日志里失败点是安装步本身：
+  `proxy.golang.org` 读 `github.com/charmbracelet/x/windows@v0.2.2` 的 zip 时 `stream error: INTERNAL_ERROR`
+  （14:55:32 起卡了两分钟后才报错），而这颗包**本仓任何 go.mod 都不引用**——它是 `go install golangci-lint`
+  在 runner 上现编译 linter 时连带拉起的依赖图成员（linux 腿根本用不到它）。
+  ① 那次提交的 diff 只有 5 个文件、全在 `deploy/` + `docs/`，Go 码零改动；② 它前一笔 `6a4c2c4` 同腿 success；
+  ③ **同一颗提交 `gh run rerun --failed` 后 attempt 2 = 12 success / 1 skipped / 0 红**。⇒ 基础设施抖动。
+- **但抖动暴露的是结构问题**：`services` job 的安装步在 `set -euo pipefail` 下 `go install …golangci-lint@v2.13.2`，
+  没有重试，一次下载失败就把这条「operator + 12 个服务模块的 build/vet/lint/race」合集腿整体判红。
+  随机红一次就吞掉一整条验证面，而"重跑绿"会把它消化成无人追问的噪音——这正是 TD-80 那一族问题的另一副面孔。
+- **改法（与同文件 actionlint 那步同构）**：改为下载 **钉版本的预编译产物** `golangci-lint-2.13.2-linux-amd64.tar.gz`，
+  `sha256sum -c` 对**硬编码摘要**核验，解压后按文件名找可执行文件，再保留原有"版本必须等于 2.13.2"的断言；
+  有界重试（`--retry 3`）现在只作用在这一颗产物上，不再作用在整张依赖图上。取数面从"N 颗包"缩到"1 颗已钉摘要的包"。
+  传播面清点过：全仓只有这一处 `go install golangci-lint`；`build-test`（`ci.yml:61`）走 `golangci-lint-action`
+  且已 `version: v2.13.2` 钉住，属另一种（本来就安全的）形状，未改。
+- **摘要出处，以及它没能被本机独立复算这件事**：钉的 `2277d43b…da021d6` 取自 release 自带的
+  `golangci-lint-2.13.2-checksums.txt`（经 `api.github.com` 的 asset 接口取回 8413 字节全文，按
+  `awk '$2=="golangci-lint-2.13.2-linux-amd64.tar.gz"'` 精确取列，64 位十六进制校验通过、恰好一行命中）。
+  本机想拿完整产物自己复算哈希没做成：`github.com` 的 release 直链被连接重置，改走 asset 接口取 15,451,894 字节
+  也在中途截断（拿到 7.9MB / 5.0MB 两轮）。⇒ **如实记：摘要目前是"上游自己声明的值"，第一次独立复算就是 CI 首跑**；
+  若不符，这一步直接红（可发现），不会静默放行。产物与摘要同信道这一层，由版本断言作异源补强。
+- **反向自测（抽出件驱动，五种结论全部命中预期）**：把改后的 run 块**原样抽出**（32 行，两处替换各断言
+  命中数==1：`GOBIN` 指向临时目录、`gll_sha` 换成夹具摘要；锚点命中不符就整体失败），用 `curl()` 桩
+  在 `bash -euo pipefail` 下跑：正对照 ⇒ exit 0；404/取不到 ⇒ exit 1 且打「下载 …失败（已重试 3 次）」；
+  摘要不符 ⇒ 打「sha256 与钉死值不符」；包里没有可执行文件 ⇒ 打「tar 包里没有 golangci-lint 可执行文件」；
+  二进制版本不符 ⇒ 打「版本不是钉死的 2.13.2」。结果 **5 通过 / 0 失败**；每条断言都核**具体错误文本**，
+  不是只看退出码。抽取件与夹具在 `.git/gl-install-harness/`（未跟踪）。
+  另外对抽出的块单独跑 `shellcheck -S info` = 0 findings（本机 shellcheck 与 CI 同版 0.10.0）。
+- **本机一处工具观察（不构成本仓缺陷）**：`actionlint` 在这台机器上时快时慢——同一棵树一次 90s 内返回 rc=0，
+  一次 `timeout 120`/`timeout 400` 都不返回。它与 shellcheck 不同，会去查 GitHub 表达式元数据，本机此刻
+  `api.github.com` 也在间歇性 `connectex` 失败 ⇒ 归因在工具的网络面，不在 workflow 内容；终判仍在 CI 的
+  `build-test` 那一步（它是 CI 里真跑的那一遍）。
+
 ## [Unreleased] — 2026-10-07 发布物回核自己抓到的四条缺陷：⑤ 把 12 说成 14、零比对仍打 PASS、跨 workflow 竞态，以及那段判读从未被执行过
 
 v0.13.0 发版那一刻，`release.yml` 的 `verify-artifacts` job **红了**——但红得有价值：它把只属于"发布链自己"
