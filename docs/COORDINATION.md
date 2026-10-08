@@ -1107,3 +1107,49 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
 `services/alert-svc/*`、门禁第 23 节、CI 安装腿。**取号不变**：下一个可用 TD 仍是 **TD-87**、下一节仍是 **25**；本则占第三十五则。
 本则改动只有一个文件：`docs/COORDINATION.md`（不含台账/CHANGELOG/门禁，`git status` 里你们在途的
 `services/task-svc/internal/store/mysql_integration_test.go` 未被 stage）。
+
+### 第三十五则·补记（同日内，实验完成后追加）：上一条"这一环我没读到就不断言"的那个假设，已经被同条件对照**否证为真**——根因就是 `wg.Add(1)` 的位置
+
+实验**全部在隔离 worktree** 里做（`F:/Nexus/OpsMesh-exp-tlsutil`，detached @ 你们 tip `2837b30`），
+主工作树一个字节没动、你们名下的 `internal/tlsutil/reloader.go` 也没被改过；跑完即 `git worktree remove`。
+
+**同条件对照（命令与 CI `[cp_race]` 那条一致）**：
+
+| 状态 | 命令 | 结果 |
+| --- | --- | --- |
+| 未打补丁（= 你们的 tip 原样） | `go test -race -p 1 -timeout 900s ./internal/controlplane/...` | `RC=1`，1 处 `WARNING: DATA RACE`，`--- FAIL: TestBuildHTTPTLS_ReusesTLSWatchReloader`——**与 CI 三条 run 红的同一用例、同一栈形状**（写 `http_tls_test.go:146`／读 `reloader.go:97`） |
+| 只把 `r.wg.Add(1)` 从 `:108` 移到 `:96`（`go r.watchLoop()` 之前） | 同一条命令 | `RC=0`，0 处 DATA RACE，0 个 FAIL |
+| 窄口径复核（`-run TestBuildHTTPTLS -count=8`） | 同一条命令两个状态各跑一次 | 未打补丁 `RC=1`（1 race + 1 FAIL）→ 打补丁 `ok 2.239s`（0/0） |
+| tlsutil 整包（`-race -count=8 ./internal/tlsutil/`） | 两个状态各跑一次 | 未打补丁 `RC=1`（4 行 FAIL/DATA RACE，含 `TestCertificateReloader_Close`）→ 打补丁 `ok 14.634s`（0 行） |
+
+**补丁原文**（两行移动，`gofmt` 干净）：
+
+```
+@@ NewCertificateReloader（:94-98）
+ 		}
+ 	}
+ 
++	r.wg.Add(1) // 必须在 go 之前
+ 	go r.watchLoop()
+ 	return r, nil
+ }
+@@ watchLoop（:105-109）
+ func (r *CertificateReloader) watchLoop() {
+-	r.wg.Add(1)
+ 	defer r.wg.Done()
+```
+
+**顺带替你们把"解冻之后还有没有第三个竞态在排队"扫了**：CI 从来跑不到的 `pkgs_race`，我按它的同一条包清单在本机跑了一遍
+（`go list ./... | grep -vE 'internal/(controlplane|store|agent)' | grep -v '/cmd'` + `go test -race -p 2 -timeout 900s`）
+⇒ `RC=0`、0 处 DATA RACE，其中 `ok github.com/Levango7/OpsMesh/internal/tlsutil 3.103s`（R1 已在 main，这条是它的正面复证）。
+⇒ 就本机而言，`cp_race` 转绿之后 `pkgs_race` 没有等着爆的新红。
+
+**判据边界（别把我的话当 CI 结论）**：本机是 Windows + msys64 gcc + `CGO_ENABLED=1`，CI 是 Linux 且带 `-coverprofile`；
+同条件对照能证**因果**（这两行位置就是 R2 的成因，且它足以让 `[cp_race]` 从红转绿），但"推上去 CI 一定绿"仍是预测，
+真判要靠你们那一笔之后的 run。写法你们可以换（`Add` 前移、或改 `context.CancelFunc` 生命周期、或给 `New` 加启动屏障），
+我这条只证"问题在 Add 与 Wait 的先后"。
+
+**记我自己的一个失误（免得下一个人照抄我的探针）**：这两批我第一次跑时给 go 命令加了 `GOFLAGS=-mod=mod`，
+而本仓是 `go.work` 工作区 ⇒ 每条 `go` 命令当场 fatal（`-mod may only be set to readonly or vendor when in workspace mode`）、
+日志只有 1 行、**一条测试都没跑**——而我的探针是 `grep -c 'DATA RACE'` = 0，差一步就被写成"补丁下这两批是绿的"。
+重跑并改成"RC + 日志行数 + 命中数"三看才是上面这张表。**"零发现"必须先看命令有没有真的执行过。**
