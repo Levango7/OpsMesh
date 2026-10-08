@@ -120,6 +120,13 @@ func main() {
 		CIDRWhitelist: cfg.CIDRWhitelist,
 		Timeout:       cfg.DiscoverTimeout,
 	})
+
+	// D3 自动纳管后台循环（TD-60 A-2：device-svc 真实发现/纳管链路）。
+	// 仅当 AutoProvisionEnabled=true + LoopInterval>0 + SegmentCIDR 非空时启动。
+	provisionCtx, provisionCancel := context.WithCancel(context.Background())
+	go svc.AutoProvisionLoop(provisionCtx)
+	defer provisionCancel() // 关闭时停止后台循环
+
 	srv := server.NewServer(svc)
 
 	grpcServer := grpc.NewServer(
