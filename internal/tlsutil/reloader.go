@@ -47,6 +47,7 @@ type CertificateReloader struct {
 	watcher        *fsnotify.Watcher
 	closed         chan struct{}
 	reloadAttempts atomic.Int64
+	wg             sync.WaitGroup
 }
 
 // NewCertificateReloader 构造 CertificateReloader：初始加载证书 + 启动 watcher 监听变更。
@@ -104,6 +105,8 @@ func NewCertificateReloader(certFile, keyFile string) (*CertificateReloader, err
 //
 // 退出条件：closed channel 关闭（Close 调用）或 watcher.Events/Errors 关闭。
 func (r *CertificateReloader) watchLoop() {
+	r.wg.Add(1)
+	defer r.wg.Done()
 	var debounce *time.Timer
 	for {
 		// debounce 为 nil 时 timerC 为 nil channel（永久阻塞），避免误触发 reload。
@@ -195,6 +198,8 @@ func (r *CertificateReloader) ReloadAttempts() int64 {
 //
 // 多次调用安全：用 closed channel 的非阻塞 close 模式避免重复 close panic。
 // watchLoop 通过 closed channel 退出，goroutine 不泄漏。
+// 先关闭 closed channel 通知 watchLoop 退出，再等待其完成（wg.Wait），
+// 最后关闭 watcher——避免 watcher 被关闭时 watchLoop 仍在访问（消除 -race 检测到的数据竞态）。
 func (r *CertificateReloader) Close() error {
 	select {
 	case <-r.closed:
@@ -202,5 +207,6 @@ func (r *CertificateReloader) Close() error {
 	default:
 		close(r.closed)
 	}
+	r.wg.Wait()
 	return r.watcher.Close()
 }
