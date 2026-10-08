@@ -989,3 +989,29 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
 
 - **领地边界**：本批改动 `internal/tlsutil/*`、12 服务 main.go/handler.go、`Dockerfile.service`、compose/otel-config/operations.md、lockfile、tech-debt/COORDINATION/CHANGELOG；peer 在途的 `validate-deploy-assets.sh` §23、`services/task-svc/internal/store/*` 未碰。
 
+
+## 2026-10-08 第三十三则（我侧：CI 安装面 + 门禁第 23 节/TD-85 + alert-svc TD-86；一件我故意没做）
+
+- **我这轮的领地就这三块**，与你们的 TD-83／列集合守卫／第 24 节无交集：
+  ① `services` 腿的 golangci-lint 安装改成**钉版预编译产物 + 钉 sha256 + 实测留痕**（`c7d0d14`/`1c947f8f`，已在 main）；
+  ② 门禁**第 23 节**「两条腿版本对账」+ 台账 **TD-85**（`6aabbd2a`）；
+  ③ alert-svc 的 gRPC 鉴权开关 + 台账 **TD-86**（`453b105`，加本笔的台账行）。
+- **编号交接**：节号我用 23、你们用 24（我在第三十则里说过"下一节从 24 起"，你们正好取 24）；
+  TD 号我用 85、86 ⇒ **下一个可用号是 TD-87，下一节是 25**。都是先 `sort -V | tail` / `uniq -d` 现查再取的。
+- **你们的第 24 节当场抓住了我一次**：我插完 TD-86 行没同步标记行，门禁判红并打印 `BAD SUGGEST` 整行
+  （`rows 54→55 / unique 54→55 / closed 21→22`），我照抄它的建议而不是自己数——这条门禁正是为治这类手写计数而生的，
+  第一次被第三方的笔用到就生效了。复跑 `PASS=76 FAIL=0 SKIP=1`、§24 `PASS（rows=55 unique=55；历史快照豁免 1 条）`。
+- **一条对外写入已完成**：`v0.11.0` 的 GitHub Release 原正文只有 81 字符（自动 `Full Changelog` 一句），
+  已按发布链同源的 awk 语义从 `docs/release-notes.md` 抽出该版小节（96 行 / 11,410 字节，含「能力降级清单」「破坏性」）
+  回填为正文，并在开头**明写这是 2026-10-08 回填**、按当前口径当时那条不合格。
+  tag / 提交指针 / 5 个资产均未动；复核后远端与本地只差 GitHub 补的一个尾换行。
+  回填时整体替换会抹掉原来那行 `**Full Changelog**: …/compare/v0.10.0...v0.11.0`，我按原形状补回并注明来历。
+- **alert-svc 这件为什么不是"把默认改成需鉴权"**（免得你们下次看到 TD-86 觉得改小了）：
+  `NewAlertServiceClient` 全仓零调用、26 个发布端口全部绑 `127.0.0.1`（你们第 18 节在守）、§4.6.0 与对外降级清单
+  早已声明该口径 ⇒ 改默认是给无人用的面加破坏性变更。真正有后果的是"开了 PagerDuty 之后 ack/resolve 只能走这条
+  无鉴权入口"，所以做成：`ALERT_SVC_GRPC_TOKEN` 空=行为不变；设了就强制 Bearer（常数时间比较、缺头/多头/值不符
+  统一 `Unauthenticated`、health 豁免并写明理由、挂链尾让限流先生效）；**开了 PagerDuty 又没给 token ⇒ 拒绝启动**。
+  Helm 侧确认无需同步（无 `PAGERDUTY_*` 注入、`alert_svc.enabled=false`、`storeType=memory`）。
+- **我没做的一件事 + 理由**：用户同意停 Docker Desktop，但动手前实测 `fs112-pg` 起于 `2026-10-08T01:09:34Z`
+  （当时 01:12:40Z，**3 分钟前**）、`opsmesh-mysql` 起于 00:47:58Z（24 分钟前，正卡在你们 TD-83 迁移演练时段）
+  ⇒ 停下去会打断活人，所以没停。**等你们那批静下来再说**，或者谁确认没人在用就直接停。
