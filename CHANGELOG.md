@@ -4,6 +4,20 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-08（TD-82/76/75/81：tlsutil 测试轮询替代 sleep、12 微服务 /version 版本面、链路追踪查询侧 Jaeger 入栈、前端 lockfile 源统一官方 + 台账 11 行归位）
+
+- **改进｜internal/tlsutil 证书重载测试**（TD-82）：`CertificateReloader` 新增 `reloadAttempts` 原子计数与 `ReloadAttempts()` 读取口（含失败计数），两处正向断言由固定 `time.Sleep` 改为轮询+10s 截止（事件过防抖后计数必增，是「事件已被处理」的确定性信号，替代慢机器/Windows 下固定 sleep 的误判）；负向断言（Close 后不再 reload）保留有界 sleep。`go test -count=3` 全绿（CI Linux 与本机 Windows 均绿）。
+
+- **新增｜12 个微服务 GET /version 版本面**（TD-76）：与控制面 `GET /version` 对齐（service/version/commit/date/goVersion/goos/goarch）。此前 `-ldflags -X internal/version.Version` 因服务不引用 `internal/version` 而静默失效；本轮 11 个路径在 `github.com/Levango7/OpsMesh` 树下的服务直接引用根模块 `internal/version`（内部可见性允许同前缀跨模块引用），Dockerfile 单一 `-X` 随之生效；log-svc（模块路径 `opsmesh.io/log-svc` 不在树下）自带 main 包版本变量，Dockerfile 按服务分派 `-X` 路径。`build_info` 指标（2026-10-05）与本端点并存。
+
+- **新增｜链路追踪查询侧入栈**（TD-75）：otel-config 启用 jaeger exporter 并挂入 traces pipeline + compose 加 jaeger all-in-one:1.61（宿主仅发布 UI 口 127.0.0.1:16686，collector 走 monitoring_net 内 14250 推数）+ 默认采样 10%→100%（错误/慢请求本就 100%，10% 是无查询后端时代的节流参数）+ `docs/operations.md` §4.7 改写为 Jaeger 检索口径与验证方法（服务列表应出现各 `service.name`，Search 可展开完整 span 树）。
+
+- **改进｜企业前端 lockfile 源统一**（TD-81）：133 条 `resolved` 从 `registry.npmmirror.com` 改写为 `registry.npmjs.org`（tarball 与 integrity 字段不变，npm ci 照常校验），消除第三方镜像源的漂移/投毒面。
+
+- **台账｜11 行归位「已收口」**：TD-68/69/70/71/72（行内早已自述闭合）+ TD-75/76/81/82（本轮闭合）+ TD-77/79（行内「仍未做」残余经处置说明后不构成本债务未完成面）移入「已收口」；门禁第 24 节「台账计数可复算」`rows=54 unique=54 resolved=27 closed=21 inprogress=0 pending=4 wontfix=2` 复算 PASS。
+
+- **验证**：全模块 gofmt/build/vet/test 绿；门禁 PASS=70 FAIL=0 SKIP=3；shellcheck -S info 0 findings。
+
 ## [Unreleased] — 2026-10-08（跨服务列集合守卫：task-svc `tasks.last_fired_at` 真缺陷修复 + 门禁第 21 节）
 
 - **修复｜task-svc 的 `tasks.last_fired_at`：SQL 语句引用了建表 DDL 里没有的列**（与 `occurred_at` / `batch_id` 同族；2026-10-08 跨服务审计抓到的活体）。`AllTasks()` 与 scheduler fire 闭包读写该列，但 `schema.sql` 的 `tasks` 表没有它、也没有补列路径——task-svc 的表由自己 `migrateTasks()` 从嵌入 schema 建（`opsmesh_task` 库只建库不建表），于是服务自建表路径下每条引用该列的语句都是 `Unknown column`，而 `AllTasks()` 的错误路径是**静默 `return nil`** ⇒ 非影子模式下 fire/reclaim 整轮空转且**没有任何日志**（调度停了但不报错）。三处修：① `schema.sql` 补 `last_fired_at TIMESTAMP NULL`（新装即带）；② `migration.go` 把原来只补 `batch_id` 的单列逻辑重构成通用 `ensureColumns`（information_schema 预检 + ALTER + 1060 竞态复检）+ 列清单 `taskEnsureColumns`（存量库拿到该列）；③ `CreateTask` 的 INSERT 与 `UpdateTask` 的 UPDATE 列清单同步补该列——此前 fire 闭包只在内存里改 `LastFiredAt`、**永不落库**，同分钟去重跨 tick 失效（同一 cron 分钟内每个 tick 反复触发）。

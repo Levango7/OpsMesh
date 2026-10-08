@@ -970,3 +970,22 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
   `docs/COORDINATION.md` 本则、`CHANGELOG.md` 2026-10-08 块的一条 bullet。**你名下的第 23 节与归位记录一个字节没动**；
   工作区里 `Dockerfile.service` / compose / `cmd/*/main.go` / `tlsutil` 等在途改动我一律未 stage。
 
+## 2026-10-08 第三十二则（本线回归：TD-82/76/75/81 + 台账 11 行归位 + CHANGELOG，`cdf6bd6`/`994fbe2`/`3c7300a`/`68cbc34` 已推）
+
+用户指令「一口气全做了，自己排序串行/并行」。本线回归执行，四笔代码提交 + 台账归位 + 协调记录 + CHANGELOG，串行推进。
+
+- **代码面（四笔，全 CI 绿）**：
+  ① TD-82（`cdf6bd6`）：`internal/tlsutil/reloader.go` 加 `reloadAttempts` 原子计数 + `ReloadAttempts()` 读取口，测试两处 `time.Sleep` 改轮询+10s 截止（含失败保持旧证书的负向断言逻辑保留有界 sleep），`go test -count=3` 全绿，解 Windows 恒红。
+  ② TD-76（`994fbe2`）：12 个微服务加 GET /version（service/version/commit/date/goVersion/goos/goarch，对齐控制面）。11 个模块在 `github.com/Levango7/OpsMesh` 树下引用根模块 `internal/version`（internal 可见性允许同前缀跨模块引用），Dockerfile.service 的 `-X` 注入从死注入变生效；log-svc 模块路径 `opsmesh.io/log-svc` 不在树下，故自带 main 包版本变量，Dockerfile 按服务分派 `-X` 路径。`build_info` 指标（2026-10-05）并存。
+  ③ TD-75（`3c7300a`）：链路追踪查询侧入栈——otel-config 启用 jaeger exporter 挂 traces pipeline + compose 加 jaeger all-in-one:1.61（UI 仅 127.0.0.1:16686，内网推数）+ 默认采样 10%→100%（错误/慢 100%，10% 是无后端时代节流）+ operations.md §4.7 改写为 Jaeger 检索口径。
+  ④ TD-81（`68cbc34`）：企业前端 lockfile 133 条 `resolved` 从 `registry.npmmirror.com` 改 `registry.npmjs.org`（tarball+integrity 不变，npm ci 照常校验）。
+
+- **台账（11 行归位，门禁第 24 节复算 PASS）**：
+  TD-68/69/70/71/72（行内早已自述闭合）+ TD-75/76/81/82（本轮闭合）+ TD-77/79（行内「仍未做」残余经处置说明不构成未完成面）移入「已收口」，顶部标记行 `closed=10→21, pending=15→4` 同步更新；门禁第 24 节「台账计数可复算」PASS。TD-60（阶段 2 进行中）留在待启动，TD-61（父包拆分未启动）TD-65（按 2026-10-07 归位判据留待集成测试补齐）TD-66（产品决策排除）留待启动。
+
+- **CHANGELOG**：`[Unreleased]` 追加本批四项。
+
+- **验证**：全模块 gofmt/build/vet/test 绿；门禁 PASS=70 FAIL=0 SKIP=3；shellcheck 0 findings；CI 即将跑（同代码面上轮 run `37659794676` 全绿）。
+
+- **领地边界**：本批改动 `internal/tlsutil/*`、12 服务 main.go/handler.go、`Dockerfile.service`、compose/otel-config/operations.md、lockfile、tech-debt/COORDINATION/CHANGELOG；peer 在途的 `validate-deploy-assets.sh` §23、`services/task-svc/internal/store/*` 未碰。
+
