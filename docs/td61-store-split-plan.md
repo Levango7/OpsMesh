@@ -242,10 +242,44 @@ sql 批（32 文件 + sql.go）后做 → multi_schema 包装层最后。
 `-race` 复跑见 CI（build-test 作业）。**129 个 import 方零改动**（父包 store.X 公共面签名全部保留，
 含 store.RolePermissions / store.SupportedSLIMetrics / store.IsValidSLIMetric 三个公共 API）。
 
-### 8.5 下一步（批次 3-sql 的已知清单）
+### 8.5 下一步（批次 3-sql 的精确清单，2026-10-09 侦察已核）
 
-32 个 sql_*.go + sql.go（迁移框架）→ `internal/store/sqlstore/`；同批：
-删 `kernel_shim.go`（sqlstore 直接 import storekit/model）、删 `failures_shim.go` 并把
-`internal/controlplane/{support_endpoints.go,metrics_endpoint.go,metrics_store_failures_test.go}`
-三个消费方改为直接 import storefail（按与授权侧的约定，动手前先通知）；
-multi_schema 包装层留最后（它同时持有 memory/sql 两后端句柄，等两者定型再搬）。
+**规模**：43 个 `sql*.go`（32 生产 + 11 测试）+ `sql.go` + **`migrations/` 目录**。
+
+**本轮侦察新发现的硬约束（动手前必读）**：
+
+1. **`migrations/` 必须随 `sql.go` 一起搬**——`sql.go:29` 是 `//go:embed migrations/*.sql`，
+   embed 模式不能跨目录（`..` 非法）。随之要改的功能型引用（非注释）：
+   - `deploy/docker/scripts/deploy.sh:1507`（`for f in internal/store/migrations/[0-9]*.sql` 循环）
+   - `deploy/scripts/verify-runtime.sh:968`（`count_sql "${ROOT}/internal/store/migrations" no`）
+   - `internal/cmdb` 的可空列门禁（TD-74 记录「cmdb 门禁改读 `../store/migrations/*.sql`」——
+     **跨线文件**，需按协调板先通知）
+   - 文档/CHANGELOG 内的历史叙述可保留（非功能引用），新 runbook 引用需同步。
+2. **`TestMain` 与共享临时库**：`audit_chain_shared_test.go`（package store 的 `TestMain` + 共享
+   `*SQLStore` + DROP 清理）供审计链集成用例复用；拆包时 TestMain 与共享库助手要跟 SQL 用例走
+   （Go 每包只能一个 TestMain，且跨包不可见）。
+3. **静态门禁测试随源文件走**：`nullable_scan_guard_test.go` 同时 `Glob("migrations/*.sql")` 与
+   `Glob("*.go")` 逐 `.Scan(` 站点判定——它必须与 sql 源文件同目录，否则判定面退化为「只剩父包残留
+   .go」的假绿。
+4. **父包残留消费方**（搬完 sql 后仍需处理）：
+   - `multi_schema.go`（8 个包装文件，按方案留最后）：`NewSQLStore` 薄包装 + `SQLStore` 别名即可，
+     `dsnForSchema`/`ensureSchemaExists`/`validateIdent` 本就定义在 multi_schema.go，不受影响；
+   - `internal/controlplane/factory/server_factory.go:140` 调 `store.NewSQLStore(...)` ——
+     公共面保持不变（薄包装），**客户端零改动**；
+   - `failures_test.go`（3 个用例，全部 `&SQLStore{db: ...}` 构造）→ 随 SQL 包迁移；
+   - `store_extra*_test.go` 是混装件：SQL 侧用例（extra2/extra3/extra5/constructor/rbac_*）迁移，
+     memory 侧的已在批次 3-memory 迁走，剩下的父包级别用例保留。
+5. **连带删除**：`kernel_shim.go`（sqlstore 直接 import storekit；multi_schema 的少量调用点
+   就地改 `storekit.` 限定）、`failures_shim.go`（同时把 3 个 controlplane 消费方改为直接
+   import storefail——按协调板约定，动手前已发通知）。
+
+**执行配方**（与 3-memory 同款，已被验证）：
+`git mv`（含 migrations）→ 包声明改 `package sqlstore` → 机械替换（`recordStoreFailure(`→
+`storefail.Record(`、内核短名→`storekit.` 限定、`errRefreshTokenHashRequired` 已在 model）→
+`sqlstore/aliases.go`（50 个模型类型别名 + 常量 + `type Store = model.Store` + `rbacPermSpecs`/
+`RolePermissions` 回导）→ 父包 `sql_shim.go`（`type SQLStore = sqlstore.SQLStore` +
+`func NewSQLStore(...)` 薄包装）→ 编译循环（编译器枚举残留）→ `go test`/lint/`-race`。
+
+**顺序要求**：本批会让**根模块暂时不可编译**（`git mv` 到编译修复完成之间），而
+`services/*/go.mod` 通过 `replace` 指向根模块——**尽量一轮做完再停**，
+不要在中间态隔夜（同树还有并行会话）。
