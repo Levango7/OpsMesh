@@ -156,12 +156,19 @@ func (r *CertificateReloader) watchLoop() {
 
 // GetCertificate 实现 tls.Config.GetCertificate 接口，返回当前证书。
 //
-// gRPC/HTTP TLS 握手时由 tls 包回调，持读锁返回 cert 字段。
+// gRPC/HTTP TLS 握手时由 tls 包回调，持读锁取 cert。
 // 与 tls.Config.Certificates 互斥使用：设置了 GetCertificate 后 Certificates 字段被忽略。
+//
+// 必须返回**副本的地址**，不能 `return &r.cert`：`defer RUnlock()` 在本次返回后就解锁，
+// 而调用方（crypto/tls 与测试）拿到的若是指向结构体字段的别名，它之后的每次解引用都发生在
+// 锁外 —— 与 reload() 在写锁里做的 `r.cert = cert` 整体覆盖构成数据竞态
+// （2026-10-08 CI 与本机 -race 均实测复现：race detected，写点 reloader.go:182、读点经由本函数）。
+// 副本共享底层 [][]byte / PrivateKey，但 reload 从不原地改这些切片，只换整个结构体，故复制即安全。
 func (r *CertificateReloader) GetCertificate(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return &r.cert, nil
+	cert := r.cert
+	return &cert, nil
 }
 
 // reload 重新加载证书文件，更新内部 cert。
