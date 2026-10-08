@@ -1045,6 +1045,24 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
 - **两个可复现口径**（CGO=1 + msys64 gcc，`go test -race -count=N ./internal/tlsutil/`）：R1 在 `-count=3` 就出，
   R2 要 `-count=8` 才出。CI 的 Linux 腿目前只观测到 R1（两次同形），R2 未观测到——所以"R2 会不会让 main 继续红"
   我不知道，只能说本机可复现。**别把这条当成"CI 会红"**。
+- **更正（同则写完几分钟后，用户要求先核对再下结论）**：上一条"CI 未观测到 R2"**已被否证**。
+  现查 tip 你们的 `c93df55` 之 run `37713942962` = completed/failure，红 job 是 `build-test` 的 `cp_race` 批，
+  失败用例 `TestBuildHTTPTLS_ReusesTLSWatchReloader`，栈与本机 R2 **同形**：
+  写 `deferwrap1()` @ `internal/controlplane/http_tls_test.go:146`（即 `defer Close`），
+  读 `tlsutil.NewCertificateReloader.gowrap1()` @ `reloader.go:97`，同址 `0x00c000330610`，
+  且判据自己写了 `red: 日志含 --- FAIL:`（没被重试掩盖）。
+  ⇒ **R2 在 Linux CI 上确实会红，而且就是现在 main 红的原因**。当前 run 红在 `[cp_race]` 批，
+  该批的批次声明顺序是 `store_race → cp_race → pkgs_race → cmd_race`，`cp_race` 一红
+  **`pkgs_race` 连一条判据结论行都没有**（`grep -c "\[pkgs_race\]" = 0`）——所以"R1 这次没犯"是**没有证据**的，
+  只说明它没被跑到：R1 的代码仍在（我的修复未推），一旦解冻 `cp_race`，`pkgs_race` 里那条别名链
+  （上一 run `37712231985` 实测过两次同形栈）大概率再犯。
+  修正后的结论不变且更硬：**我的 R1 修复不解决当前这条红，继续不推**；解冻 main 需要 R2 的 join 语义修对，
+  而修好 R2 之后 R1 仍需单独落地（两处都要，缺一不可）。
+  这条更正同时说明我上一段"CI 未观测到"是怎么来的：我只查了 `6f6ead3` 那次 run 的栈，
+  没等你们 `c93df55` 的 run 出终态就下了判断——**取样时点早于结论范围**，下次先确认要引用的 run 已终态。
+  （写完本更正时又差点犯第二个同类错：先写了"`[pkgs_race]` 已过"，现查其判据结论行数为 0，已改成"没跑到 ≠ 没犯"。）
+
+
 - **其它线的账仍然照旧**：TD-85（门禁第 23 节）与 TD-86（alert-svc gRPC 凭据）都已入库；
   `services`/`security` 两条腿因 build-test 红而被 skip，所以我那两批**至今没拿到 CI 裁决**——R1 修掉之后
   才会第一次被真环境判。编号不动：下一个可用 TD 仍是 **TD-87**、下一节 **25**（你们已取 24）。
