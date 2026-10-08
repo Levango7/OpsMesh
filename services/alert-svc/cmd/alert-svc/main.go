@@ -29,6 +29,7 @@ import (
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/engine"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/escalation"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/notify"
+	"github.com/Levango7/OpsMesh/services/alert-svc/internal/rpcauth"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/server"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/store"
@@ -40,6 +41,11 @@ func main() {
 	// 必须最先调用——早于任何日志输出。
 	lgr := applog.Init("alert-svc")
 	cfg := config.Load()
+	// 开了 PagerDuty 却没给 gRPC 凭据 ⇒ 启动即拒（判据在 config.Validate 里，可单测）。
+	// 放在最前面：这时还没有创建任何 store/engine，失败不会留下半启动的资源。
+	if err := cfg.Validate(); err != nil {
+		lgr.Fatalf("alert-svc 启动被拒绝: %v", err)
+	}
 
 	metrics.Init("alert-svc")
 
@@ -100,8 +106,17 @@ func main() {
 		grpc.ChainUnaryInterceptor(
 			trace.GRPCServerInterceptor(),
 			ratelimit.GRPCInterceptor(),
+			// 鉴权放最后：trace/ratelimit 的观测与限流对未认证请求也应当生效
+			// （否则枚举 token 的尝试会绕开速率限制直打鉴权比较）。
+			rpcauth.New(cfg.GRPCAuthToken),
 		),
 	)
+	if cfg.GRPCAuthToken == "" {
+		log.Printf("gRPC auth: 未配置 ALERT_SVC_GRPC_TOKEN ⇒ 该面无鉴权（出厂只绑 127.0.0.1；" +
+			"PAGERDUTY_ENABLED=true 时启动会被拒绝，见 config.Validate）")
+	} else {
+		log.Printf("gRPC auth: 已启用共享密钥鉴权（authorization: Bearer <ALERT_SVC_GRPC_TOKEN>）")
+	}
 	alertv1.RegisterAlertServiceServer(grpcServer, srv)
 
 	healthServer := health.NewServer()

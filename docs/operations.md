@@ -1200,6 +1200,11 @@ Kubernetes 路径不重复造轮子：生产集群一般已有 kube-prometheus-s
   dial 它 ⇒ 对 Docker 部署形态而言是个"配了也没人调用得到"的死开关）。
   安全口径要读清楚：这条 gRPC 面只有 trace + ratelimit 拦截器，**没有租户校验也没有鉴权**，
   所以刻意只绑 loopback；要从别的机器调用请在前面自行加认证或在反代侧限制。
+  **2026-10-08 起多了一个服务端自己的选项**：设 `ALERT_SVC_GRPC_TOKEN` 后，该面要求
+  `authorization: Bearer <token>`（常数时间比较；缺头/多头/值不符统一 `Unauthenticated`，gRPC health 豁免）。
+  默认空值 = 行为与旧版逐字相同。但 **`PAGERDUTY_ENABLED=true` 而 token 为空会直接拒绝启动**——
+  那条腿的 ack/resolve 只有这个入口，不能匿名改告警状态再外发值班。鉴权挂在拦截器链尾，
+  所以限流对未认证尝试依然生效。
   另外这条链只在 `ALERT_STORE_TYPE=sql`（出厂默认）时对**已存在的告警 ID** 生效——
   `ResolveAlert` 找不到 ID 会直接返回 not-found，外发不会触发。
 - 第 2 条有个容易踩的坑，本轮已修：`notifyLoop` 过去调用的是**不读开关**的旧 SSRF 校验，

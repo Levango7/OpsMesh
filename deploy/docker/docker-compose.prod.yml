@@ -719,12 +719,17 @@ services:
       # （2026-10-03 实测：全仓无任何组件 dial 它）。发布后运维可从本机 loopback 调用。
       # 注意：容器内监听端口取自下面 environment 的字面量 50053，**不**读 .env；
       # 因此这里映射的目标端口必须保持 50053，只让宿主侧端口可配（与上面 HTTP 那行同形）。
-      # 安全口径：该 gRPC 面只有 trace + ratelimit 拦截器，**没有身份鉴权**——
-      # 绑定 127.0.0.1 是刻意的（跨机暴露需自行前置认证或在反代侧限制），详见 docs/operations.md §4.6.0。
+      # 安全口径：该 gRPC 面默认只有 trace + ratelimit 拦截器。2026-10-08 起可选共享密钥鉴权：
+      # 设了 ALERT_SVC_GRPC_TOKEN 就强制 `authorization: Bearer <token>`（常数时间比较；gRPC health 豁免），
+      # 不设则维持原行为（无鉴权）——绑定 127.0.0.1 是刻意的，跨机暴露请配 token 或在反代侧限制，
+      # 详见 docs/operations.md §4.6.0。**若 PAGERDUTY_ENABLED=true 而 token 为空，服务会拒绝启动**
+      # （那条腿的 ack/resolve 只有这个入口，不能匿名改告警状态并外发值班）。
       - "127.0.0.1:${ALERT_SVC_GRPC_PORT:-50053}:50053"
     environment:
       ALERT_SVC_GRPC_PORT: 50053
       ALERT_SVC_HTTP_PORT: 8103
+      # 默认空 = 不启用 gRPC 鉴权（保持既有部署行为不变）；启用值班外发时必须给值。
+      ALERT_SVC_GRPC_TOKEN: ${ALERT_SVC_GRPC_TOKEN:-}
       ALERT_SVC_STORE_TYPE: ${ALERT_STORE_TYPE:-sql}
       ALERT_SVC_DSN: "${MYSQL_USER:-opsmesh}:${MYSQL_PASSWORD:?请在 .env 设置 MYSQL_PASSWORD}@tcp(mysql:3306)/opsmesh_alert?parseTime=true"
       PAGERDUTY_ENABLED: ${PAGERDUTY_ENABLED:-false}

@@ -34,6 +34,37 @@
 - 门禁新增第 22 节（五条判据：deploy.sh migrate 接线 / 二进制 migrate 子命令含非 mysql 显式拒绝 / 迁移总预算可配 / compose 预迁移环境变量与 command 的 DSN 不漂移 / 升级指南判据齐备），变异检验 5/5 判红、还原后基线复绿；`shellcheck -S info` 0 findings。
 - 真机验证：一次性 mysql:8.0 容器（仓库 `deploy/monitoring/mysql.cnf` 经 docker cp 在首启前就位）上 `opsmesh migrate` 21 条迁移全应用（首跑 12.3s、幂等重放 0.9s），库内 `schema_migrations` 21/21 与二进制携带迁移文件数一致；非法 DSN 与默认 memory 后端均显式退出码 1（防"成功"地什么都不做）。
 
+## [Unreleased] — 2026-10-08 alert-svc 的 ack/resolve 入口：从"匿名可改告警状态"变成"开外发就必须给凭据"（默认零行为变化）
+
+这是那条一直挂在"待产品定"的开放项（alert-svc gRPC 无鉴权）的落地。**先摆取证，因为它决定了改法**：
+`NewAlertServiceClient` 在全仓**零调用点**（除生成的桩）；出厂 compose 的 26 个宿主端口发布**全部绑
+`127.0.0.1`**、无一裸发布（门禁第 18 节断言的就是这件事）；`docs/operations.md §4.6.0` 早已写明"这条腿
+只有 gRPC 入口、无鉴权、刻意只绑环回、跨机请自行前置认证"；对外降级清单也已列过两处。
+⇒ 所以"把默认改成必须鉴权"是**给一个没人用的面加破坏性默认**：真在用它的客户集成方一升级就被拒。
+合理的位置是另一个——**只在开了那条有后果的腿时强制凭据**。
+
+- **改法**：新增 `ALERT_SVC_GRPC_TOKEN`（默认为空 = 不启用 = 既有部署行为逐字不变）。设了值就要求
+  `authorization: Bearer <token>`，由 `internal/rpcauth` 的一元拦截器做**常数时间比较**；缺头 / 多头 /
+  值不符一律同一个 `Unauthenticated`（细分原因只进服务端日志，不给枚举者反馈）。拦截器挂在链尾，
+  让 trace 与 ratelimit 对未认证请求**先生效**——否则暴力试 token 会绕开限流直打比较逻辑。
+  gRPC health 明确豁免（并在注释里写清理由：探针带不了业务凭据，把豁免做成必需会换来"节点全红"，
+  而健康响应里没有任何告警数据；本仓出厂探针其实走 HTTP `/health`）。
+- **fail-closed 的那一半**：`PAGERDUTY_ENABLED=true` 且 token 为空 ⇒ `config.Validate()` 直接拒绝启动，
+  判据放在 config 包里而不是 main 里，这样它能被单测覆盖（main 里的那条腿测不到）。错误文案是导出的
+  `ErrNoAuthTokenWithPagerDuty`，测试用 `errors.Is` 断言而不是匹配日志字符串。
+- **Helm 侧不需要动，并且这是查过的**：helm 全量没有 `PAGERDUTY_*` 注入（grep 0 命中）、
+  `alert_svc.enabled: false` 且 `storeType: memory` ⇒ 那条腿在 K8s 形态下根本不可达，
+  不存在"升级后被 fail-closed 拒启动"的回归面。
+- **验证**：`internal/rpcauth` 7 例 + `pkg/config` 5 例全过（`go test -v` 逐条可见，不是只看 `ok`）；
+  **变异三发**各自把该红的用例打红——去掉"重复 authorization"判定 ⇒ `TestMultipleAuthorizationHeadersRejected` 红；
+  去掉 health 豁免 ⇒ `TestHealthMethodExempt` 红；把"空 token 放行"改成拒绝一切 ⇒
+  `TestEmptyTokenPassesThrough` 红；还原后与快照 **sha256 双向一致**、复跑全绿。
+  `golangci-lint run -c .golangci.services.yml ./...`（CI 的 services 腿配置，errcheck `check-blank` 开着）= **0 issues**；
+  `gofmt -l` 干净；`docker compose config` 两种取值都验（默认渲染 `ALERT_SVC_GRPC_TOKEN: ""`、设值原样透传）。
+- **两件刻意没做**：① 没把默认改成"必须鉴权"（理由见上）；② 台账 TD 行与 COORDINATION 条目**这一笔不放**——
+  `docs/tech-debt.md` 与 `docs/COORDINATION.md` 此刻是并行线的在途未提交文件，往里插东西会把他们的改动
+  捆进我的提交，等它们落地我再补登记。
+
 ## [Unreleased] — 2026-10-08 开 TD-85 并当日闭合：golangci-lint 两条腿各钉各的版本，漂移会演成「两套规则各扫一遍还全绿」（门禁第 23 节）
 
 上一笔把 `services` 腿的安装从 `go install …golangci-lint@v2.13.2` 换成「钉版产物 + 钉摘要」之后，
