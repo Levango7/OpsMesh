@@ -426,7 +426,30 @@ func validateServiceProxyTargets(httpPort, grpcPort, metricsPort int) []string {
 				if r.envKey != "" {
 					if v := os.Getenv(r.envKey); v != "" {
 						src = r.envKey + "=" + v
-					}
+	{
+		// auth-svc（TD-60 A-2：auth-svc 双轨对比/切流）。controlplane 本地已有
+		// /api/v1/auth/* 实现（login/register/me/logout/refresh/change-password），
+		// auth-svc 网关同路径提供 /api/v1/auth/*（login/register/me/logout/
+		// refresh/change-password + users/roles/permissions 管理）。
+		// 双轨期用 /api/v1/auth-svc/* 前缀转发到 auth-svc 的 /api/v1/auth/*，
+		// 与 controlplane 本地 /api/v1/auth/* 并存；切流阶段再评估替换。
+		domain:         "auth",
+		publicPrefix:   "/api/v1/auth-svc",
+		upstreamPrefix: "/api/v1/auth",
+		domainPrefix:   "/api/v1/auth-svc",
+		envKey:         "AUTH_SVC_URL",
+		defaultURL:     "http://127.0.0.1:8081",
+		perm:           "auth:write", // 兜底：登录/注册/改密等写操作
+		permRules: []proxyPermRule{
+			{method: http.MethodGet, pathPrefix: "/api/v1/auth/me", perm: "auth:read"},
+			{method: http.MethodPost, pathPrefix: "/api/v1/auth/login", perm: "auth:write"},
+			{method: http.MethodPost, pathPrefix: "/api/v1/auth/register", perm: "auth:write"},
+			{method: http.MethodPost, pathPrefix: "/api/v1/auth/logout", perm: "auth:write"},
+			{method: http.MethodPost, pathPrefix: "/api/v1/auth/refresh", perm: "auth:write"},
+			{method: http.MethodPost, pathPrefix: "/api/v1/auth/change-password", perm: "auth:write"},
+		},
+	},
+}
 				}
 				problems = append(problems, fmt.Sprintf(
 					"域 %q 的转发后端 %s 指向控制面自身的监听端口（HTTP=%d gRPC=%d metrics=%d）："+
