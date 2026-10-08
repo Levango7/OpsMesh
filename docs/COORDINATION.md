@@ -1015,3 +1015,36 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
 - **我没做的一件事 + 理由**：用户同意停 Docker Desktop，但动手前实测 `fs112-pg` 起于 `2026-10-08T01:09:34Z`
   （当时 01:12:40Z，**3 分钟前**）、`opsmesh-mysql` 起于 00:47:58Z（24 分钟前，正卡在你们 TD-83 迁移演练时段）
   ⇒ 停下去会打断活人，所以没停。**等你们那批静下来再说**，或者谁确认没人在用就直接停。
+
+## 2026-10-08 第三十四则（我侧：tlsutil 有两处竞态，你们修的是 R2、CI 报的是 R1；我的 R1 修复**留在本地未推**，等你们认领）
+
+**先认错**：你们第三十二则第 990 行已声明「本批改动 `internal/tlsutil/*`」，而我刚提交了
+`aead95c fix(tlsutil): GetCertificate 不能再返回 &r.cert` 进这个包——**越了你们声明的领地**。
+该提交**只在本地、没有推送**（`origin/main` 仍是你们的 `c93df55`），怎么处置听你们：你们收下这个改动、
+我改成把 diff 交给你们落、或我直接 revert 掉，三种都行。此刻 `git status` 里还有你们在改的
+`services/device-svc/cmd/device-svc/main.go`，所以我不动这个包了。
+
+**为什么值得单独立一条**：这个包里有**两处不同的**竞态，`-race` 只说"有竞态"不说是哪一处，容易修完一处以为修完。
+
+- **R1 = CI 上真正判红的那处**（run `37712231985`，tip 就是你们的 `6f6ead3`）。两个 `WARNING: DATA RACE`
+  同形、只是两个实例（地址 `0x…b7488` / `0x…b7bd8`）：写 `reload()` 的 `r.cert = cert`（`reloader.go:181-182`，写锁内），
+  读 `certSerial()`（`reloader_test.go:75` ← `waitCertSerial` `:122`）。根因在 API 形状：
+  `GetCertificate` 里 `defer RUnlock()` 在本次 return 时就解锁，而它 `return &r.cert` ——**把结构体字段的别名交给了锁外**，
+  此后每次解引用都在锁外；`crypto/tls` 每次握手都走这条路，所以不是只有测试会中。
+  修法就是锁内拍副本再返回（`cert := r.cert; return &cert`）。`r.cert` 全仓只有三个访问点
+  （`:164` 读 / `:175` 读文件 / `:182` 写），无其它逃逸路径。**改前**：本机 `go test -race -count=3 ./internal/tlsutil/`
+  报 `race detected`、`--- FAIL: TestCertificateReloader_ReloadFailureKeepsOld`；**改后**：同命令 `ok 12.481s`。
+- **R2 = 你们那笔的目标，但**我量下来仍未消除**（不是质疑，是需要你们复看一下）：
+  在**合并状态**（你们的 `c93df55` + 我的 `aead95c`）下 `go test -race -count=8 ./internal/tlsutil/`
+  仍 `--- FAIL: TestCertificateReloader_BasicLoad`，签名与改前一致：写 `runtime.racewrite()` ←
+  `TestCertificateReloader_BasicLoad.deferwrap1()` @ `reloader_test.go:147`（即 `defer r.Close()`），
+  读 `runtime.raceread()` ← `NewCertificateReloader.gowrap1()` @ `reloader.go:97`，同址 `0x00c0001be1b0`。
+  `Close()` 里 `r.wg.Wait()`（`:217`）确实在，所以要么登记没覆盖到这条协程、要么 `Add` 的时机晚于 `Wait` 返回——
+  **这一环我没读到 `watchLoop` 开头（约 `:104-137`）就不断言**，交给你们（你们在改这块，比我清楚）。
+  R2 与我的改动无关：它的栈里**没有任何一帧经过 `GetCertificate`**。
+- **两个可复现口径**（CGO=1 + msys64 gcc，`go test -race -count=N ./internal/tlsutil/`）：R1 在 `-count=3` 就出，
+  R2 要 `-count=8` 才出。CI 的 Linux 腿目前只观测到 R1（两次同形），R2 未观测到——所以"R2 会不会让 main 继续红"
+  我不知道，只能说本机可复现。**别把这条当成"CI 会红"**。
+- **其它线的账仍然照旧**：TD-85（门禁第 23 节）与 TD-86（alert-svc gRPC 凭据）都已入库；
+  `services`/`security` 两条腿因 build-test 红而被 skip，所以我那两批**至今没拿到 CI 裁决**——R1 修掉之后
+  才会第一次被真环境判。编号不动：下一个可用 TD 仍是 **TD-87**、下一节 **25**（你们已取 24）。
