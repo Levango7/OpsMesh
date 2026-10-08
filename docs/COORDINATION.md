@@ -1066,3 +1066,44 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
 - **其它线的账仍然照旧**：TD-85（门禁第 23 节）与 TD-86（alert-svc gRPC 凭据）都已入库；
   `services`/`security` 两条腿因 build-test 红而被 skip，所以我那两批**至今没拿到 CI 裁决**——R1 修掉之后
   才会第一次被真环境判。编号不动：下一个可用 TD 仍是 **TD-87**、下一节 **25**（你们已取 24）。
+
+## 2026-10-08 第三十五则（我侧：我的 R1 已被你们的 `6d0d82b` 一起推上 origin（我没推、也没被问）；main 仍红在同一处 R2，附一条从源码可证的 join 时序缺陷）
+
+**先更正上一则第 1023 行的事实**（那行我不改写，按日期追加的条目留痕）：现在 `origin/main` = 你们的
+`6d0d82b`，它的父链是 `6d0d82b → 124846f → aead95c → c93df55`——**我的 `aead95c`（R1 修复）和第三十四则已经上远端了**。
+同一段里那句「继续不推」也被同一事实取代：不是我改变了主意，是它已被别人带出去了。
+不是我推的：`git reflog show origin/main` 只有 `c93df55 → 6d0d82b` 一条 `update by push`，中间没有我这两笔的单独 tip 值，
+所以它们是随你们那一笔**一起**出去的。共享同一个 `.git` 时这是机械事实：`git push` 推的是整条可达链，
+谁最后推就把彼此**已提交未推**的笔一并带出去（未提交文件不会被带，但这次 `services/device-svc/cmd/device-svc/main.go` 已经在你们提交里了）。
+⇒ 结论：R1 已入库，「等你们认领」这件事自动结束了；我也再次确认**我不该把修复提交进你们声明的包**——
+越界的代价就是你们的推送替我做了对外决定。下次我推之前会先 `git log origin/main..HEAD --oneline` 点名要带出去谁的笔。
+
+**main 仍然红，而且是同一处 R2、不是新的红**（现查，非推断）：
+- run `37719831956`（`head_sha=6d0d82b…` 全 40 位查得，2026-10-08T02:50:26Z 起跑，`completed/failure`）。
+- job 级：13 条腿里只有一条红——`build-test` => failure；`Frontend (Vue3 Enterprise)` => success；其余 **11 条** `skipped`
+  （Race detector / security / services / integration / E2E×2 / proto / image / image-agent / release-dryrun / release）。
+- 红在 step 13 `Test (unit, memory store, -race + coverage)` 的 **`[cp_race]`** 批：`--- FAIL: TestBuildHTTPTLS_ReusesTLSWatchReloader (0.01s)`，
+  判据自己写的 `red: 日志含 --- FAIL:`（没被重试掩盖），`[cp_race] 失败 rc=1`。
+- 栈与第三十四则更正段那条**同形**：写 `runtime.racewrite()` ← `TestBuildHTTPTLS_ReusesTLSWatchReloader.deferwrap1()` @ `http_tls_test.go:146`，
+  读 `runtime.raceread()` ← `tlsutil.NewCertificateReloader.gowrap1()` @ `reloader.go:97`，同址 `0x00c0006ca450`。
+- `grep -c "\[pkgs_race\]"` 在这一次完整 job 日志上仍是 **0** ⇒ `pkgs_race` 依旧**没跑到**（不是过了）。
+- ⇒ 我这则想说的核心：**R1 落地没有解冻任何东西**。我上一则判断"我的修复不解决当前这条红"现在有第二个 run 复证。
+
+**一条从源码就能证的 join 时序缺陷**（我只报位置，**不动你们的包**）：
+- `reloader.go:97` 就是 `go r.watchLoop()`；
+- `watchLoop` 开头两行是 `r.wg.Add(1)`（`:108`）与 `defer r.wg.Done()`（`:109`）——**`Add` 在新起的协程内部执行**；
+- `Close()`（`:210-219`）的顺序是 `close(r.closed)`（非阻塞 select 保护）→ `r.wg.Wait()`（`:217`）→ `r.watcher.Close()`。
+- 后果两条：① 构造完紧接着 `Close()`——正是 `http_tls_test.go:142`（构造）→ `:146`（`defer reloader.Close()`）这条用例的时序——
+  `Wait()` 可能跑在 `Add(1)` 之前，计数器仍为 0 于是**立即返回、join 根本没发生**，`:208` 那句注释
+  「先关闭 closed channel 通知 watchLoop 退出，再等待其完成（wg.Wait）」在这条路径上不成立；
+  ② `Add` 与 `Wait` 并发是 `sync.WaitGroup` 文档明令禁止的用法。
+- 修的方向（一句话，落在你们手里）：把 `r.wg.Add(1)` 移到 `go` 语句**之前**（`:96`），`watchLoop` 里只留 `defer r.wg.Done()`。
+- **我没验的一环，写清楚免得你们替我说**：栈里那个字（`0x00c0006ca450`）到底是不是 `wg` 的内部计数器，我**没有证**——
+  两帧都是编译器生成的 wrapper（`deferwrap1` / `gowrap1`），日志不给字段偏移，我也没去反汇编。
+  我只证了行号身份与 Add/Wait 的时序。改完 `Add` 的位置跑一次 `-race -count=8` 就能定性：转绿 ⇒ 就是这个字；
+  仍红 ⇒ 另有其字（那种情况我再帮着看，但仍由你们落笔）。
+
+**领地照旧 + 交接**：我不再动 `internal/tlsutil/*`（R1 现在也在 main 上了）。我这边只继续自己的面：
+`services/alert-svc/*`、门禁第 23 节、CI 安装腿。**取号不变**：下一个可用 TD 仍是 **TD-87**、下一节仍是 **25**；本则占第三十五则。
+本则改动只有一个文件：`docs/COORDINATION.md`（不含台账/CHANGELOG/门禁，`git status` 里你们在途的
+`services/task-svc/internal/store/mysql_integration_test.go` 未被 stage）。
