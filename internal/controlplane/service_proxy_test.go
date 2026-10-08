@@ -39,7 +39,8 @@ func newServiceProxyTestServer() *Server {
 }
 
 // TestRewriteProxyPath 验证路径改写规则：
-// gpu/runbook/incident 前缀保持不变；autoscaler/portal 剥域前缀（服务真实路径无域前缀）。
+// gpu/runbook/incident 前缀保持不变；autoscaler/portal 剥域前缀（服务真实路径无域前缀）；
+// auth-svc 剥域前缀后拼回 auth-svc 的 /api/v1/auth/*（TD-60 A-2 双轨）。
 func TestRewriteProxyPath(t *testing.T) {
 	cases := []struct {
 		publicPath  string
@@ -55,6 +56,8 @@ func TestRewriteProxyPath(t *testing.T) {
 		{"/api/v1/autoscaler", "/api/v1/autoscaler/evaluate", "/api/v1/evaluate"},
 		{"/api/v1/portal", "/api/v1/portal/requests", "/api/v1/requests"},
 		{"/api/v1/portal", "/api/v1/portal/approvals/ap-1/approve", "/api/v1/approvals/ap-1/approve"},
+		{"/api/v1/auth-svc", "/api/v1/auth-svc/login", "/api/v1/auth/login"},
+		{"/api/v1/auth-svc", "/api/v1/auth-svc/me", "/api/v1/auth/me"},
 	}
 	for i := range serviceProxyRules {
 		r := &serviceProxyRules[i]

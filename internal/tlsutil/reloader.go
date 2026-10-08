@@ -94,6 +94,11 @@ func NewCertificateReloader(certFile, keyFile string) (*CertificateReloader, err
 		}
 	}
 
+	// wg.Add(1) 必须在 go r.watchLoop() 之前：Add 与 Wait 的先后因此由构造期确定。
+	// 若把 Add 留在 watchLoop 内部，构造后立即 Close（如 http_tls_test.go 的
+	// defer Close）会让 Close 的 wg.Wait() 与 goroutine 内尚未执行的 Add 竞争——
+	// -race 实测 R2（run 37713942962 的 [cp_race] 栈），也对「Wait 是否真的等到人」语义失真。
+	r.wg.Add(1)
 	go r.watchLoop()
 	return r, nil
 }
@@ -104,8 +109,8 @@ func NewCertificateReloader(certFile, keyFile string) (*CertificateReloader, err
 // 计时器到期后执行一次 reload。这样把短时间内多次事件合并为一次 reload。
 //
 // 退出条件：closed channel 关闭（Close 调用）或 watcher.Events/Errors 关闭。
+// wg.Add 由 NewCertificateReloader 在启动本 goroutine 之前完成，这里只负责 Done 配对。
 func (r *CertificateReloader) watchLoop() {
-	r.wg.Add(1)
 	defer r.wg.Done()
 	var debounce *time.Timer
 	for {
