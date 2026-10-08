@@ -40,12 +40,12 @@ const reloadDebounce = 100 * time.Millisecond
 //     观测热重载活动——事件到达并过防抖后计数必然增加，据此可轮询等待
 //     「事件已被处理」，替代在不同文件系统上延迟差异极大的固定 sleep。
 type CertificateReloader struct {
-	certFile      string
-	keyFile       string
-	mu            sync.RWMutex
-	cert          tls.Certificate
-	watcher       *fsnotify.Watcher
-	closed        chan struct{}
+	certFile       string
+	keyFile        string
+	mu             sync.RWMutex
+	cert           tls.Certificate
+	watcher        *fsnotify.Watcher
+	closed         chan struct{}
 	reloadAttempts atomic.Int64
 }
 
