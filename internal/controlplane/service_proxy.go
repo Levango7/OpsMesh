@@ -421,7 +421,7 @@ func validateServiceProxyTargets(httpPort, grpcPort, metricsPort int) []string {
 			if r.publicPrefix == "" {
 				continue
 			}
-if _, self := proxySelfLoopTarget(r.upstreamBase(), httpPort, grpcPort, metricsPort); self {
+			if _, self := proxySelfLoopTarget(r.upstreamBase(), httpPort, grpcPort, metricsPort); self {
 				src := r.defaultURL
 				if r.envKey != "" {
 					if v := os.Getenv(r.envKey); v != "" {
