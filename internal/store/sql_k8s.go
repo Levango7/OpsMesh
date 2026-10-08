@@ -15,6 +15,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // scanK8sCluster 从一行扫描出 *K8sCluster。
@@ -94,7 +96,7 @@ func (s *SQLStore) SaveK8sCluster(c *K8sCluster) error {
 	}
 	now := time.Now().UTC()
 	if c.ID == "" {
-		c.ID = randK8sClusterID()
+		c.ID = model.RandK8sClusterID()
 	}
 	if c.CreatedAt.IsZero() {
 		c.CreatedAt = now

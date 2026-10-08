@@ -21,6 +21,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // scanTenant 从一行扫描出 *Tenant（quota / usage_data 为 JSON 文本列）。
@@ -94,7 +96,7 @@ func (s *SQLStore) CreateTenant(tenant *Tenant) *Tenant {
 		return nil
 	}
 	if tenant.ID == "" {
-		tenant.ID = randTenantID()
+		tenant.ID = model.RandTenantID()
 	}
 	if tenant.Status == "" {
 		tenant.Status = TenantStatusActive
@@ -116,7 +118,7 @@ func (s *SQLStore) CreateTenant(tenant *Tenant) *Tenant {
 		recordStoreFailure("[store] CreateTenant 插入失败 (tenant=%s): %v", tenant.ID, err)
 		return nil
 	}
-	return cloneTenant(tenant)
+	return model.CloneTenant(tenant)
 }
 
 // GetTenant 按 ID 返回单个租户（深拷贝；不存在返回 (nil, false)）。
@@ -162,7 +164,7 @@ func (s *SQLStore) UpdateTenant(tenant *Tenant) (*Tenant, bool) {
 		recordStoreFailure("[store] UpdateTenant 更新失败 (tenant=%s): %v", tenant.ID, err)
 		return nil, false
 	}
-	return cloneTenant(tenant), true
+	return model.CloneTenant(tenant), true
 }
 
 // ListTenants 返回全部租户（按创建时间升序；深拷贝）。

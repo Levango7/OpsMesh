@@ -26,6 +26,8 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // scanNetworkDevice 从一行扫描出 *NetworkDevice。
@@ -64,7 +66,7 @@ func (s *SQLStore) CreateNetworkDevice(tenantID string, d *NetworkDevice) *Netwo
 	}
 	d.TenantID = tenantID
 	if d.ID == "" {
-		d.ID = randNetworkDeviceID()
+		d.ID = model.RandNetworkDeviceID()
 	}
 	if d.Status == "" {
 		d.Status = "unknown"

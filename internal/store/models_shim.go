@@ -59,6 +59,16 @@ type Subscription = model.Subscription
 type InvoiceItem = model.InvoiceItem
 type Invoice = model.Invoice
 
+// 随契约下沉一并上提的三个类型（TD-61 批次 3）：
+// QuotaConfig/Usage 原在 store.go（接口与之同文件），AuditChainVerifyResult 原在
+// sql_audit_chain.go（SQL 侧定义）——都被 memory/sql 两后端与契约共同引用，
+// 故与领域数据结构同处中性层。
+type (
+	QuotaConfig            = model.QuotaConfig
+	Usage                  = model.Usage
+	AuditChainVerifyResult = model.AuditChainVerifyResult
+)
+
 // DefaultTenantID：常量别名（原 models.go:35）。
 const DefaultTenantID = model.DefaultTenantID
 
@@ -73,3 +83,25 @@ const (
 func normalizeTenantID(tenantID string) string {
 	return model.NormalizeTenantID(tenantID)
 }
+
+// RBAC 权限目录：目录本体（PermSpec / PermSpecs / RolePermissions）随 TD-61 上提 model。
+// 原因：memory 与 sql 两后端的 seedRBAC 共用同一份定义，控制面 RBAC 闸经
+// store.RolePermissions() 消费——目录若留在任一后端包内，另一后端就需反向依赖它。
+// 下面的变量别名与薄包装让父包内 sql_rbac.go 与各测试零改动。
+
+// rbacPermSpecs 父包短名（= model.PermSpecs 同一切片）。
+var rbacPermSpecs = model.PermSpecs
+
+// RolePermissions 返回预置角色名→权限集合映射（公共 API，签名不变）。
+func RolePermissions() map[string][]string { return model.RolePermissions() }
+
+// SLI 求值（指标支持集/映射表/判定）随 TD-61 上提 model（model/slo_eval.go）：
+// memory 与 sql 两后端的 SLIStatus 共用同一套判定与指标集。
+// 下面两个是控制面消费的公共 API（store.SupportedSLIMetrics / store.IsValidSLIMetric），
+// 薄包装保持签名与调用点不变。
+
+// SupportedSLIMetrics 返回可创建的 SLI 指标名（供 API 校验与文档对齐）。
+func SupportedSLIMetrics() []string { return model.SupportedSLIMetrics() }
+
+// IsValidSLIMetric 判断 SLI 是否引用了有真实数据来源的指标。
+func IsValidSLIMetric(metric string) bool { return model.IsValidSLIMetric(metric) }

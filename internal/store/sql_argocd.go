@@ -13,13 +13,15 @@ package store
 //   - ListApps 按 created_at DESC 返回；
 //   - SyncApp 置 status='synced' + health_status='healthy' + updated_at=now，
 //     先 SELECT 校验存在 + 租户归属，不存在返回 (nil, false)；
-//   - ID 生成复用 memory_argocd.go 的 randArgoCDID()（前缀 argocd-）；
+//   - ID 生成复用 memory_argocd.go 的 model.RandArgoCDID()（前缀 argocd-）；
 //   - DB 不可用时返回零值（nil/false/空 slice），不 panic，与 SQLStore 其他方法一致。
 
 import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // scanArgoCDApp 从一行扫描出 *ArgoCDApp。
@@ -54,7 +56,7 @@ const argocdAppColumns = `id, tenant_id, name, namespace, repo_url, path, target
 //
 // 行为与 MemoryStore.CreateApp 一致：
 //   - 空租户归一为 default；
-//   - ID 为空时由 randArgoCDID() 分配；
+//   - ID 为空时由 model.RandArgoCDID() 分配；
 //   - SyncPolicy 空 → manual；Status 空 → unknown；HealthStatus 空 → unknown；
 //   - CreatedAt 零值填 now；UpdatedAt 始终刷新为 now；
 //   - INSERT ... ON DUPLICATE KEY UPDATE 实现幂等 upsert（按 id 唯一）。
@@ -68,7 +70,7 @@ func (s *SQLStore) CreateApp(tenantID string, a *ArgoCDApp) *ArgoCDApp {
 	a.TenantID = tenantID
 	now := time.Now().UTC()
 	if a.ID == "" {
-		a.ID = randArgoCDID()
+		a.ID = model.RandArgoCDID()
 	}
 	if a.SyncPolicy == "" {
 		a.SyncPolicy = "manual"

@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // scanRefreshToken 从一行扫描出 *RefreshToken。无行或扫描失败返回 nil。
@@ -52,7 +54,7 @@ func (s *SQLStore) SaveRefreshToken(rt *RefreshToken) error {
 		return nil
 	}
 	if rt.TokenHash == "" {
-		return errRefreshTokenHashRequired
+		return model.ErrRefreshTokenHashRequired
 	}
 	// 租户隔离：空租户归一为 default（与 K8sCluster/Template 一致）。
 	if rt.TenantID == "" {

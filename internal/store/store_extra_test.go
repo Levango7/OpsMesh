@@ -16,15 +16,15 @@
 package store
 
 import (
-	"context"
 	"errors"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/events"
 	"github.com/Levango7/OpsMesh/internal/proto"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // ============================================================================
@@ -600,114 +600,6 @@ func TestMemoryStore_SilenceAlert_Default24h_Boundary(t *testing.T) {
 	}
 }
 
-// ============================================================================
-// metricsRing 环形缓冲边界
-// ============================================================================
-
-// TestMetricsRing_NilReceiver 验证 metricsRing nil 接收者不 panic。
-func TestMetricsRing_NilReceiver(t *testing.T) {
-	var r *metricsRing
-	r.add(&proto.DeviceMetrics{DeviceID: "d1"}) // 不应 panic
-	if r.latest() != nil {
-		t.Fatal("nil.latest() 应返回 nil")
-	}
-	if r.since(time.Time{}) != nil {
-		t.Fatal("nil.since() 应返回 nil")
-	}
-}
-
-// TestMetricsRing_NilMetric 验证 add nil metric 不 panic。
-func TestMetricsRing_NilMetric(t *testing.T) {
-	r := newMetricsRing(3)
-	r.add(nil) // 不应 panic
-	if r.latest() != nil {
-		t.Fatal("add nil 后 latest 应返回 nil")
-	}
-}
-
-// TestMetricsRing_ZeroCapacity 验证 capacity<=0 时使用默认容量。
-func TestMetricsRing_ZeroCapacity(t *testing.T) {
-	r := newMetricsRing(0)
-	if r.capacity != metricsRingDefaultCap {
-		t.Fatalf("capacity = %d, want %d", r.capacity, metricsRingDefaultCap)
-	}
-	r = newMetricsRing(-1)
-	if r.capacity != metricsRingDefaultCap {
-		t.Fatalf("capacity = %d, want %d", r.capacity, metricsRingDefaultCap)
-	}
-}
-
-// TestMetricsRing_Latest_AfterOne 验证 add 一条后 latest 返回该条。
-func TestMetricsRing_Latest_AfterOne(t *testing.T) {
-	r := newMetricsRing(3)
-	r.add(&proto.DeviceMetrics{DeviceID: "d1", CPU: proto.CPUMetrics{Cores: 4}})
-	got := r.latest()
-	if got == nil || got.CPU.Cores != 4 {
-		t.Fatalf("latest = %+v, want Cores=4", got)
-	}
-}
-
-// TestMetricsRing_Latest_Empty 验证空缓冲 latest 返回 nil。
-func TestMetricsRing_Latest_Empty(t *testing.T) {
-	r := newMetricsRing(3)
-	if r.latest() != nil {
-		t.Fatal("空缓冲 latest 应返回 nil")
-	}
-}
-
-// TestMetricsRing_Since_Empty 验证空缓冲 since 返回 nil。
-func TestMetricsRing_Since_Empty(t *testing.T) {
-	r := newMetricsRing(3)
-	if r.since(time.Time{}) != nil {
-		t.Fatal("空缓冲 since 应返回 nil")
-	}
-}
-
-// TestMetricsRing_Since_Filter 验证 since 时间过滤。
-func TestMetricsRing_Since_Filter(t *testing.T) {
-	r := newMetricsRing(10)
-	base := time.Now()
-	for i := 0; i < 5; i++ {
-		r.add(&proto.DeviceMetrics{
-			DeviceID:    "d1",
-			CPU:         proto.CPUMetrics{Cores: i + 1},
-			CollectedAt: base.Add(time.Duration(i) * time.Minute),
-		})
-	}
-	// since = base + 2min，应返回 Cores=3,4,5
-	got := r.since(base.Add(2 * time.Minute))
-	if len(got) != 3 {
-		t.Fatalf("since filter len = %d, want 3", len(got))
-	}
-	for i, s := range got {
-		if s.CPU.Cores != i+3 {
-			t.Fatalf("got[%d].Cores = %d, want %d", i, s.CPU.Cores, i+3)
-		}
-	}
-}
-
-// TestMetricsRing_Since_AllWhenZero 验证 since 零值返回全部。
-func TestMetricsRing_Since_AllWhenZero(t *testing.T) {
-	r := newMetricsRing(5)
-	for i := 0; i < 3; i++ {
-		r.add(&proto.DeviceMetrics{DeviceID: "d1", CollectedAt: time.Now()})
-	}
-	got := r.since(time.Time{})
-	if len(got) != 3 {
-		t.Fatalf("since zero len = %d, want 3", len(got))
-	}
-}
-
-// TestMetricsRing_Since_NoneMatch 验证 since 全部不匹配返回 nil。
-func TestMetricsRing_Since_NoneMatch(t *testing.T) {
-	r := newMetricsRing(5)
-	r.add(&proto.DeviceMetrics{DeviceID: "d1", CollectedAt: time.Now()})
-	future := time.Now().Add(time.Hour)
-	if got := r.since(future); got != nil {
-		t.Fatalf("since future = %+v, want nil", got)
-	}
-}
-
 // TestMemoryStore_DeviceMetrics_Nil 验证 StoreDeviceMetrics 边界。
 func TestMemoryStore_DeviceMetrics_Nil(t *testing.T) {
 	m := NewMemoryStore()
@@ -799,80 +691,9 @@ func TestMemoryStore_Audit_ZeroCreatedAt(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_AuditsCap_Truncate 验证审计环形上限截断。
-func TestMemoryStore_AuditsCap_Truncate(t *testing.T) {
-	m := NewMemoryStore()
-	// 写入超过 auditCap 条，验证截断
-	for i := 0; i < auditCap+10; i++ {
-		m.Audit(&proto.AuditEvent{TenantID: "t1", Action: "test", Target: string(rune(i))})
-	}
-	if got := m.Audits(); len(got) != auditCap {
-		t.Fatalf("Audits after truncate = %d, want %d", len(got), auditCap)
-	}
-}
-
 // ============================================================================
 // publish 事件发布
 // ============================================================================
-
-// errPublishFail 用于测试 publish 失败路径的自定义错误。
-type errPublishFail struct{}
-
-func (errPublishFail) Error() string { return "publish failed" }
-
-// failingBus 测试用 Bus，返回错误以触发 publish 失败分支。
-type failingBus struct{ called bool }
-
-func (b *failingBus) Publish(ctx context.Context, e events.Event) error {
-	b.called = true
-	return errPublishFail{}
-}
-
-// TestMemoryStore_Publish_NilBus 验证 nil bus 时 publish 不 panic。
-func TestMemoryStore_Publish_NilBus(t *testing.T) {
-	m := NewMemoryStore()
-	// bus 为 nil，publish 不应 panic
-	m.publish(events.Event{Action: "test"})
-}
-
-// TestMemoryStore_Publish_BusError 验证 bus 返回错误时 publish 不 panic（仅日志）。
-func TestMemoryStore_Publish_BusError(t *testing.T) {
-	m := NewMemoryStore()
-	bus := &failingBus{}
-	m.WithBus(bus)
-	// 触发一次 publish（Register 内部会 publish）
-	m.Register(&proto.AgentInfo{Segment: "s1", TenantID: "t1"})
-	if !bus.called {
-		t.Fatal("failingBus.Publish 应被调用")
-	}
-}
-
-// TestMemoryStore_Publish_Success 验证 bus 正常发布。
-func TestMemoryStore_Publish_Success(t *testing.T) {
-	m := NewMemoryStore()
-	var mu sync.Mutex
-	got := []events.Event{}
-	m.WithBus(busFunc(func(ctx context.Context, e events.Event) error {
-		mu.Lock()
-		got = append(got, e)
-		mu.Unlock()
-		return nil
-	}))
-	m.Register(&proto.AgentInfo{Segment: "s1", TenantID: "t1"})
-	mu.Lock()
-	defer mu.Unlock()
-	if len(got) == 0 {
-		t.Fatal("应至少发布一个事件")
-	}
-	if got[0].Action != "register" {
-		t.Fatalf("首个事件 action = %q, want register", got[0].Action)
-	}
-}
-
-// busFunc 把函数转为 Bus 接口（测试用）。
-type busFunc func(ctx context.Context, e events.Event) error
-
-func (f busFunc) Publish(ctx context.Context, e events.Event) error { return f(ctx, e) }
 
 // ============================================================================
 // bcryptHash / randHex / mustRandHex / randAlertRuleID 等辅助函数
@@ -932,7 +753,7 @@ func TestRandAlertRuleID_Default(t *testing.T) {
 
 // TestRandUserID_Default 验证 randUserID 返回带前缀的 ID。
 func TestRandUserID_Default(t *testing.T) {
-	id := randUserID()
+	id := model.RandUserID()
 	if !strings.HasPrefix(id, "user-") {
 		t.Fatalf("randUserID = %q, want prefix user-", id)
 	}
@@ -940,7 +761,7 @@ func TestRandUserID_Default(t *testing.T) {
 
 // TestRandRoleID_Default 验证 randRoleID 返回带前缀的 ID。
 func TestRandRoleID_Default(t *testing.T) {
-	id := randRoleID()
+	id := model.RandRoleID()
 	if !strings.HasPrefix(id, "role-") {
 		t.Fatalf("randRoleID = %q, want prefix role-", id)
 	}
@@ -948,7 +769,7 @@ func TestRandRoleID_Default(t *testing.T) {
 
 // TestRandK8sClusterID_Default 验证 randK8sClusterID 返回带前缀的 ID。
 func TestRandK8sClusterID_Default(t *testing.T) {
-	id := randK8sClusterID()
+	id := model.RandK8sClusterID()
 	if !strings.HasPrefix(id, "k8s-cluster-") {
 		t.Fatalf("randK8sClusterID = %q, want prefix k8s-cluster-", id)
 	}
@@ -956,7 +777,7 @@ func TestRandK8sClusterID_Default(t *testing.T) {
 
 // TestRandSilenceID_Default 验证 randSilenceID 返回带前缀的 ID。
 func TestRandSilenceID_Default(t *testing.T) {
-	id := randSilenceID()
+	id := model.RandSilenceID()
 	if !strings.HasPrefix(id, "silence-") {
 		t.Fatalf("randSilenceID = %q, want prefix silence-", id)
 	}
@@ -964,7 +785,7 @@ func TestRandSilenceID_Default(t *testing.T) {
 
 // TestRandNotifyChannelID_Default 验证 randNotifyChannelID 返回带前缀的 ID。
 func TestRandNotifyChannelID_Default(t *testing.T) {
-	id := randNotifyChannelID()
+	id := model.RandNotifyChannelID()
 	if !strings.HasPrefix(id, "ch-") {
 		t.Fatalf("randNotifyChannelID = %q, want prefix ch-", id)
 	}
@@ -972,7 +793,7 @@ func TestRandNotifyChannelID_Default(t *testing.T) {
 
 // TestRandNotifyTemplateID_Default 验证 randNotifyTemplateID 返回带前缀的 ID。
 func TestRandNotifyTemplateID_Default(t *testing.T) {
-	id := randNotifyTemplateID()
+	id := model.RandNotifyTemplateID()
 	if !strings.HasPrefix(id, "tpl-") {
 		t.Fatalf("randNotifyTemplateID = %q, want prefix tpl-", id)
 	}
@@ -980,7 +801,7 @@ func TestRandNotifyTemplateID_Default(t *testing.T) {
 
 // TestRandOSTemplateID_Default 验证 randOSTemplateID 返回带前缀的 ID。
 func TestRandOSTemplateID_Default(t *testing.T) {
-	id := randOSTemplateID()
+	id := model.RandOSTemplateID()
 	if !strings.HasPrefix(id, "os-tmpl-") {
 		t.Fatalf("randOSTemplateID = %q, want prefix os-tmpl-", id)
 	}
@@ -988,7 +809,7 @@ func TestRandOSTemplateID_Default(t *testing.T) {
 
 // TestRandMiddlewareTemplateID_Default 验证 randMiddlewareTemplateID 返回带前缀的 ID。
 func TestRandMiddlewareTemplateID_Default(t *testing.T) {
-	id := randMiddlewareTemplateID()
+	id := model.RandMiddlewareTemplateID()
 	if !strings.HasPrefix(id, "mw-tmpl-") {
 		t.Fatalf("randMiddlewareTemplateID = %q, want prefix mw-tmpl-", id)
 	}
@@ -1403,10 +1224,10 @@ func TestErrChangePasswordTokenRequired(t *testing.T) {
 	}
 }
 
-// TestErrRefreshTokenHashRequired 验证 errRefreshTokenHashRequired 错误信息。
+// TestErrRefreshTokenHashRequired 验证 model.ErrRefreshTokenHashRequired 错误信息。
 func TestErrRefreshTokenHashRequired(t *testing.T) {
-	if errRefreshTokenHashRequired.Error() == "" {
-		t.Fatal("errRefreshTokenHashRequired 应有非空错误信息")
+	if model.ErrRefreshTokenHashRequired.Error() == "" {
+		t.Fatal("model.ErrRefreshTokenHashRequired 应有非空错误信息")
 	}
 }
 

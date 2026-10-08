@@ -257,7 +257,7 @@ func (s *InProcessSessionStore) Close() error {
 // errChangePasswordTokenRequired 入参校验错误：token 为空时拒绝（主键不可空）。
 var errChangePasswordTokenRequired = errString("change password token: token required")
 
-// errString 自定义错误类型（避免与 memory_refresh.go 的 errRefreshTokenHashRequired 重复定义 errors.New）。
+// errString 自定义错误类型（本包独立的错误值，不复用 model 包已定义的 errors.New 哨兵）。
 type errString string
 
 func (e errString) Error() string { return string(e) }

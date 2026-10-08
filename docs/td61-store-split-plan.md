@@ -174,3 +174,78 @@ sql 批（32 文件 + sql.go）后做 → multi_schema 包装层最后。
 
 **开工条件**：另一会话的 36 文件现场（含 10 个 internal/controlplane 文件）已提交——
 58 文件搬迁不与活跃现场同树混做。
+
+---
+
+## 8. 批次 3-memory 执行记录（2026-10-09，已落地）
+
+### 8.1 先修正 §6 的一个错误结论
+
+§6 写的「**跨后端类型耦合 = 0**」**是错的**（当时的判据只看了「文件名共现」，没做符号级
+反向引用检查）。符号级实测的真实共享面（memory 定义、sql/multi_schema 消费）：
+
+| 共享面 | 定义处（原） | 消费方 |
+|---|---|---|
+| token 签名/随机串/bcrypt（BcryptHash/RandHex/MustRandHex/HashToken/VerifyTokenMAC/RandAlertRuleID） | memory.go | sql.go / sql_tokens.go / sql_rbac.go / sql_alerts.go / sql_devices.go / multi_schema.go + 测试 |
+| 设备指标环形缓冲与内存上限（MetricsRing/NewMetricsRing/Evict…/MaxTracked…/AppendAgentLogBounded/MaxAgentLog…） | memory.go / memory_middleware_template.go / memory_bounds.go | sql.go / sql_devices.go / sql_agent_logs.go + 测试 |
+| RBAC 权限目录（PermSpecs/RolePermissions） | **sql_rbac.go**（反向：memory 在消费 sql 的定义） | memory_rbac.go + 控制面（store.RolePermissions） |
+| SLI 求值（MetricFieldFor/EvaluateSLI/metricColumn） | slo_eval.go / **sql_slo.go** | memory_slo.go |
+| 领域 helper（13 个 CloneXxx + 27 个 RandXxxID + SortServiceInstances） | memory_*.go | sql_*.go（深拷贝返回语义、ID 分配）、multi_schema_p6.go |
+| 哨兵错误（ErrRefreshTokenHashRequired） | memory_refresh.go | sql_refresh.go |
+| 契约（36 个接口 + Store） | store.go（**WithDemo 签名 `WithDemo(bool) Store` 引用接口自身**） | memory/sql/multi_schema 三实现 |
+| 随契约的数据类型（QuotaConfig/Usage/AuditChainVerifyResult） | store.go / **sql_audit_chain.go** | 契约 + memory + sql |
+
+结论：**子包化之前必须先做三段下沉**，否则 memory 子包要么 import 父包（成环）、
+要么引用 sql 侧定义（跨后端反向依赖）。
+
+### 8.2 实际执行顺序（与 §7 的差异）
+
+§7 列的三个障碍里，①（recordStoreFailure 302 处）与 ②（`var _ Store` 断言）
+在实测中都不构成障碍：memory 侧 recordStoreFailure 仅 **1 处**（302 处全在 sql_*），
+而断言块本来就在父包（store.go 尾部）。
+
+真正的工作量按依赖顺序展开，每步都是「机械搬迁 + 编译器枚举」：
+
+1. **`internal/store/storekit`（共享内核）**：crypto.go（6 个导出函数）+ metricsring.go
+   （MetricsRing/NewMetricsRing/MetricsRingDefaultCap/MaxTrackedDeviceMetrics/EvictDeviceMetricsIfNeeded，
+   方法导出为 Add/Latest/Since）+ bounds.go（MaxAgentLogReports/MaxAgentLogLines/AppendAgentLogBounded）。
+2. **契约下沉 `internal/store/model`**：`contract.go`（36 接口，**裸类型名零限定**——契约与领域类型
+   同包是选 model 而非新 contract 包的原因）+ `quota.go`/`audit.go`（3 个数据类型）。
+   父包 store.go 变薄为「36 个类型别名 + 原断言块」；`WithDemo(bool) Store` 签名因别名而逐字不变，
+   memory 子包以 `type Store = model.Store` 引用同一具名类型——**这是本批最关键的一步**。
+3. **领域 helper 上提 model**：克隆（clone.go）/ID 生成（idgen.go）/权限目录（perm.go）/
+   SLI 求值（slo_eval.go）/哨兵错误（errors.go）。两端引用加 `model.` 前缀（memory 87 处、
+   父包 75 处），脚本 + 编译器双重校验；父包侧不设包装（直接限定，sql 批搬走时无需再改）。
+4. **memory 拆包**：26 个生产文件 + 7 个测试文件 `git mv` 为 `internal/store/memory/`；
+   包声明改 `package memory`；`recordStoreFailure(`→`storefail.Record(`；内核符号限定 `storekit.`；
+   `internal/store/memory/aliases.go` 提供 50 个模型类型别名 + 常量 + 归一化包装 + `Store` 别名
+   （**别名而非加前缀**：零标识符改写、零字符串误伤，方法签名与契约逐字一致）。
+5. **父包回导**：`memory_shim.go`（MemoryStore 别名 + NewMemoryStore 薄包装）、
+   `kernel_shim.go`（过渡件：sql/multi_schema/测试仍用旧短名，随 sql 批删除）、
+   models_shim.go 扩为 model 中性层的统一回导层（数据别名 + RolePermissions/SupportedSLIMetrics 公共 API 包装）。
+
+### 8.3 测试侧的两条实测规律
+
+- **测试随被测私有面走**：断言私有字段/私有方法的用例（metricsRing 的 capacity、MemoryStore 的
+  publish/auditCap、环内部 writeSeq）在拆包后父包不可见 ⇒ 迁入对应子包
+  （`storekit/metricsring_test.go`、`memory/publish_internal_test.go`、`memory/audits_cap_test.go`）；
+  断言可用公共 API 表达的则**改写为公共面表达**（如用写入顺序替代 writeSeq=0 的人为造旧，
+  用例反而更确定）。
+- **测试替身按包各自持有**：Go 跨包测试不能 import 别的包的 `_test.go`，
+  被父包测试共用的替身（recordingBus/countDevices）在父包补一份（`parent_test_helpers_test.go`），
+  与子包内的同名定义刻意重复、互不牵制。
+
+### 8.4 验证口径与结果
+
+`go build ./...` / `go vet ./...` 全绿；`go test -count=1 ./internal/... ./cmd/... ./pkg/...` 全绿；
+`golangci-lint run ./internal/store/... ./internal/controlplane/...` 0 issues；
+`-race` 复跑见 CI（build-test 作业）。**129 个 import 方零改动**（父包 store.X 公共面签名全部保留，
+含 store.RolePermissions / store.SupportedSLIMetrics / store.IsValidSLIMetric 三个公共 API）。
+
+### 8.5 下一步（批次 3-sql 的已知清单）
+
+32 个 sql_*.go + sql.go（迁移框架）→ `internal/store/sqlstore/`；同批：
+删 `kernel_shim.go`（sqlstore 直接 import storekit/model）、删 `failures_shim.go` 并把
+`internal/controlplane/{support_endpoints.go,metrics_endpoint.go,metrics_store_failures_test.go}`
+三个消费方改为直接 import storefail（按与授权侧的约定，动手前先通知）；
+multi_schema 包装层留最后（它同时持有 memory/sql 两后端句柄，等两者定型再搬）。

@@ -15,7 +15,7 @@
 //   - ListWebhooks 按创建时间降序（最新优先，与 memory 一致）；
 //   - UpdateWebhook 先 SELECT 校验存在 + 租户归属，再 UPDATE，保留原 CreatedAt/TenantID；
 //   - ListWebhookDeliveries 按投递时间降序；
-//   - RecordWebhookDelivery：ID 由 store 分配（randWebhookDeliveryID()，前缀 wh-delivery-），
+//   - RecordWebhookDelivery：ID 由 store 分配（model.RandWebhookDeliveryID()，前缀 wh-delivery-），
 //     DeliveredAt 填 now；
 //   - DB 不可用时返回零值（nil/false/空 slice），不 panic；
 //   - ID 生成复用 memory_webhook.go 的 randWebhookID（"webhook-" + 16 字节 hex）+
@@ -27,6 +27,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // scanWebhook 从一行扫描出 *Webhook（events / headers 为 JSON 文本列）。
@@ -115,7 +117,7 @@ func (s *SQLStore) CreateWebhook(tenantID string, wh *Webhook) *Webhook {
 	wh.TenantID = tenantID
 	now := time.Now().UTC()
 	if wh.ID == "" {
-		wh.ID = randWebhookID()
+		wh.ID = model.RandWebhookID()
 	}
 	if wh.CreatedAt.IsZero() {
 		wh.CreatedAt = now
@@ -134,7 +136,7 @@ func (s *SQLStore) CreateWebhook(tenantID string, wh *Webhook) *Webhook {
 		recordStoreFailure("[store] CreateWebhook 插入失败 (tenant=%s webhook=%s): %v", tenantID, wh.ID, err)
 		return nil
 	}
-	return cloneWebhook(wh)
+	return model.CloneWebhook(wh)
 }
 
 // GetWebhook 按 (tenantID, id) 返回单个 Webhook（深拷贝；不存在或租户不匹配返回 (nil, false)）。
@@ -182,7 +184,7 @@ func (s *SQLStore) UpdateWebhook(tenantID string, wh *Webhook) (*Webhook, bool) 
 		recordStoreFailure("[store] UpdateWebhook 更新失败 (tenant=%s webhook=%s): %v", tenantID, wh.ID, err)
 		return nil, false
 	}
-	return cloneWebhook(wh), true
+	return model.CloneWebhook(wh), true
 }
 
 // ListWebhooks 返回指定租户的全部 Webhook（按创建时间降序；深拷贝）。
@@ -271,7 +273,7 @@ func (s *SQLStore) ListWebhookDeliveries(tenantID, webhookID string) []*WebhookD
 //
 // 行为：
 //   - TenantID 为空时归一为 default；
-//   - ID 由 store 分配（randWebhookDeliveryID()，前缀 wh-delivery-）；
+//   - ID 由 store 分配（model.RandWebhookDeliveryID()，前缀 wh-delivery-）；
 //   - DeliveredAt 填当前时间；
 //   - DB 失败时 log.Printf + 返回 nil。
 func (s *SQLStore) RecordWebhookDelivery(tenantID, webhookID, event, payload string, statusCode int, response, errStr string) *WebhookDelivery {
@@ -280,7 +282,7 @@ func (s *SQLStore) RecordWebhookDelivery(tenantID, webhookID, event, payload str
 	}
 	now := time.Now().UTC()
 	d := &WebhookDelivery{
-		ID:          randWebhookDeliveryID(),
+		ID:          model.RandWebhookDeliveryID(),
 		TenantID:    tenantID,
 		WebhookID:   webhookID,
 		Event:       event,
@@ -297,5 +299,5 @@ func (s *SQLStore) RecordWebhookDelivery(tenantID, webhookID, event, payload str
 		recordStoreFailure("[store] RecordWebhookDelivery 插入失败 (tenant=%s webhook=%s delivery=%s): %v", tenantID, webhookID, d.ID, err)
 		return nil
 	}
-	return cloneWebhookDelivery(d)
+	return model.CloneWebhookDelivery(d)
 }

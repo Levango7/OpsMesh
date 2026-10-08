@@ -476,7 +476,7 @@ func (s *SQLStore) StoreDeviceMetrics(deviceID string, metrics *proto.DeviceMetr
 		r = newMetricsRing(metricsRingDefaultCap)
 		s.deviceMetrics[deviceID] = r
 	}
-	r.add(metrics)
+	r.Add(metrics)
 	evictDeviceMetricsIfNeeded(s.deviceMetrics)
 }
 
@@ -489,7 +489,7 @@ func (s *SQLStore) DeviceMetrics(deviceID string) *proto.DeviceMetrics {
 	if !ok || r == nil {
 		return nil
 	}
-	return r.latest()
+	return r.Latest()
 }
 
 // DeviceMetricsHistory 返回设备监控指标历史时序（环形缓冲查询）。
@@ -503,7 +503,7 @@ func (s *SQLStore) DeviceMetricsHistory(deviceID string, since time.Time) []prot
 	if !ok || r == nil {
 		return nil
 	}
-	return r.since(since)
+	return r.Since(since)
 }
 
 func (s *SQLStore) cacheAgent(a *proto.AgentInfo) {

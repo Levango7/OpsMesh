@@ -22,6 +22,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // scanSLO 从一行扫描出 *SLO（slis 为 JSON 文本列）。
@@ -71,7 +73,7 @@ func (s *SQLStore) CreateSLO(tenantID string, slo *SLO) *SLO {
 	slo.TenantID = tenantID
 	now := time.Now().UTC()
 	if slo.ID == "" {
-		slo.ID = randSLOID()
+		slo.ID = model.RandSLOID()
 	}
 	if slo.CreatedAt.IsZero() {
 		slo.CreatedAt = now
@@ -98,7 +100,7 @@ func (s *SQLStore) CreateSLO(tenantID string, slo *SLO) *SLO {
 		recordStoreFailure("[store] CreateSLO 插入失败 (tenant=%s slo=%s): %v", tenantID, slo.ID, err)
 		return nil
 	}
-	return cloneSLO(slo)
+	return model.CloneSLO(slo)
 }
 
 // GetSLO 按 (tenantID, id) 返回单个 SLO（深拷贝；不存在或租户不匹配返回 (nil, false)）。
@@ -153,7 +155,7 @@ func (s *SQLStore) UpdateSLO(tenantID string, slo *SLO) (*SLO, bool) {
 		recordStoreFailure("[store] UpdateSLO 更新失败 (tenant=%s slo=%s): %v", tenantID, slo.ID, err)
 		return nil, false
 	}
-	return cloneSLO(slo), true
+	return model.CloneSLO(slo), true
 }
 
 // ListSLOs 返回指定租户的全部 SLO（按创建时间升序；深拷贝）。
@@ -208,7 +210,7 @@ func (s *SQLStore) SLIStatus(tenantID, id string) []*SLIStatus {
 	out := make([]*SLIStatus, 0, len(slo.SLIs))
 	for _, sli := range slo.SLIs {
 		currentValue := s.querySLIMetric(sli.Metric, slo.ServiceName, tenantID)
-		status := evaluateSLI(currentValue, sli.Target, sli.Operator)
+		status := model.EvaluateSLI(currentValue, sli.Target, sli.Operator)
 		out = append(out, &SLIStatus{
 			SLIName:       sli.Name,
 			CurrentValue:  currentValue,
@@ -242,45 +244,10 @@ func (s *SQLStore) querySLIMetric(metricName, serviceName, tenantID string) floa
 	return avgValue
 }
 
-// evaluateSLI 比较当前值与目标值，返回 met/breached/nodata。
-func evaluateSLI(current, target float64, operator string) string {
-	if current < 0 {
-		return "nodata"
-	}
-	switch operator {
-	case ">=":
-		if current >= target {
-			return "met"
-		}
-	case ">":
-		if current > target {
-			return "met"
-		}
-	case "<=":
-		if current <= target {
-			return "met"
-		}
-	case "<":
-		if current < target {
-			return "met"
-		}
-	case "==":
-		if current == target {
-			return "met"
-		}
-	default:
-		// 默认 >=
-		if current >= target {
-			return "met"
-		}
-	}
-	return "breached"
-}
-
 // metricColumn 将 SLI metric 名映射到 network_metrics 表列名。
 //
-// 映射表在 slo_eval.go 的 sliMetricFields（单一事实源）——此前这里与内存后端各写一份，
+// 映射表在 model/slo_eval.go 的 sliMetricFields（单一事实源）——此前这里与内存后端各写一份，
 // 于是"支持哪些指标"没有唯一答案，文档里的 metric:"up" 才能一路静默走到 nodata。
 func metricColumn(metricName string) string {
-	return metricFieldFor(metricName)
+	return model.MetricFieldFor(metricName)
 }

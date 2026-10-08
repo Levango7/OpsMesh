@@ -11,7 +11,7 @@ package store
 //   - SaveReport 用 INSERT ... ON DUPLICATE KEY UPDATE 实现幂等 upsert（按 id 唯一）；
 //   - Get/Delete 均 WHERE id=? AND tenant_id=? 实现租户隔离；
 //   - ListReports 按 created_at DESC 返回；
-//   - ID 生成复用 memory_compliance.go 的 randComplianceID()（前缀 compliance-）；
+//   - ID 生成复用 memory_compliance.go 的 model.RandComplianceID()（前缀 compliance-）；
 //   - DB 不可用时返回零值（nil/false/空 slice），不 panic，与 SQLStore 其他方法一致。
 
 import (
@@ -19,6 +19,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // complianceReportColumns 是 compliance_reports 表的查询列清单（与 scanComplianceReport 顺序一致）。
@@ -68,7 +70,7 @@ func marshalComplianceResults(results []ComplianceResult) []byte {
 // 行为与 MemoryStore.SaveReport 一致：
 //   - r==nil 返回 nil；
 //   - 空租户归一为 default；
-//   - ID 为空时由 randComplianceID() 分配；
+//   - ID 为空时由 model.RandComplianceID() 分配；
 //   - CreatedAt 零值填 now；
 //   - INSERT ... ON DUPLICATE KEY UPDATE 实现幂等 upsert（按 id 唯一）；
 //   - 无 updated_at（报告不可改，重新扫描生成新 ID）。
@@ -82,7 +84,7 @@ func (s *SQLStore) SaveReport(tenantID string, r *ComplianceReport) *ComplianceR
 	r.TenantID = tenantID
 	now := time.Now().UTC()
 	if r.ID == "" {
-		r.ID = randComplianceID()
+		r.ID = model.RandComplianceID()
 	}
 	if r.CreatedAt.IsZero() {
 		r.CreatedAt = now

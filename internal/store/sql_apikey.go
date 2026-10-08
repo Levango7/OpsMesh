@@ -26,6 +26,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // scanAPIKey 从一行扫描出 *APIKey（scopes 为 JSON 文本列；expires_at/last_used_at 可空）。
@@ -107,7 +109,7 @@ func (s *SQLStore) CreateAPIKey(tenantID string, key *APIKey) *APIKey {
 	}
 	key.TenantID = tenantID
 	if key.ID == "" {
-		key.ID = randAPIKeyID()
+		key.ID = model.RandAPIKeyID()
 	}
 	now := time.Now().UTC()
 	if key.CreatedAt.IsZero() {
@@ -126,7 +128,7 @@ func (s *SQLStore) CreateAPIKey(tenantID string, key *APIKey) *APIKey {
 		recordStoreFailure("[store] CreateAPIKey 插入失败 (tenant=%s apikey=%s): %v", tenantID, key.ID, err)
 		return nil
 	}
-	return cloneAPIKey(key)
+	return model.CloneAPIKey(key)
 }
 
 // GetAPIKey 按 (tenantID, id) 返回单个 API Key（深拷贝；不存在或租户不匹配返回 (nil, false)）。
@@ -181,7 +183,7 @@ func (s *SQLStore) UpdateAPIKey(tenantID string, key *APIKey) (*APIKey, bool) {
 		recordStoreFailure("[store] UpdateAPIKey 更新失败 (tenant=%s apikey=%s): %v", tenantID, key.ID, err)
 		return nil, false
 	}
-	return cloneAPIKey(key), true
+	return model.CloneAPIKey(key), true
 }
 
 // ListAPIKeys 返回指定租户的全部 API Key（按创建时间降序；深拷贝）。

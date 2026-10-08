@@ -33,6 +33,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // ============================================================================
@@ -106,7 +108,7 @@ func (s *SQLStore) CreateBillingPlan(plan *SubscriptionPlan) *SubscriptionPlan {
 		return nil
 	}
 	if plan.ID == "" {
-		plan.ID = randBillingID("plan")
+		plan.ID = model.RandBillingID("plan")
 	}
 	if plan.CreatedAt.IsZero() {
 		plan.CreatedAt = time.Now().UTC()
@@ -123,7 +125,7 @@ func (s *SQLStore) CreateBillingPlan(plan *SubscriptionPlan) *SubscriptionPlan {
 		recordStoreFailure("[store] CreateBillingPlan 插入失败 (plan=%s): %v", plan.ID, err)
 		return nil
 	}
-	return cloneBillingPlan(plan)
+	return model.CloneBillingPlan(plan)
 }
 
 // GetBillingPlan 按 ID 返回单个订阅计划（深拷贝；不存在返回 (nil, false)）。
@@ -188,7 +190,7 @@ func (s *SQLStore) UpdateBillingPlan(plan *SubscriptionPlan) (*SubscriptionPlan,
 		recordStoreFailure("[store] UpdateBillingPlan 更新失败 (plan=%s): %v", plan.ID, err)
 		return nil, false
 	}
-	return cloneBillingPlan(plan), true
+	return model.CloneBillingPlan(plan), true
 }
 
 // DeleteBillingPlan 按 ID 删除订阅计划。不存在返回 false。
@@ -247,7 +249,7 @@ func (s *SQLStore) CreateSubscription(sub *Subscription) *Subscription {
 		sub.TenantID = "default"
 	}
 	if sub.ID == "" {
-		sub.ID = randBillingID("sub")
+		sub.ID = model.RandBillingID("sub")
 	}
 	if sub.Status == "" {
 		sub.Status = "active"
@@ -265,7 +267,7 @@ func (s *SQLStore) CreateSubscription(sub *Subscription) *Subscription {
 		recordStoreFailure("[store] CreateSubscription 插入失败 (sub=%s): %v", sub.ID, err)
 		return nil
 	}
-	return cloneSubscription(sub)
+	return model.CloneSubscription(sub)
 }
 
 // GetSubscription 按 ID 返回单个订阅（深拷贝；不存在返回 (nil, false)）。
@@ -344,7 +346,7 @@ func (s *SQLStore) UpdateSubscription(sub *Subscription) (*Subscription, bool) {
 		recordStoreFailure("[store] UpdateSubscription 更新失败 (sub=%s): %v", sub.ID, err)
 		return nil, false
 	}
-	return cloneSubscription(sub), true
+	return model.CloneSubscription(sub), true
 }
 
 // DeleteSubscription 按 ID 删除订阅。不存在返回 false。
@@ -424,7 +426,7 @@ func (s *SQLStore) CreateInvoice(inv *Invoice) *Invoice {
 		inv.TenantID = "default"
 	}
 	if inv.ID == "" {
-		inv.ID = randBillingID("inv")
+		inv.ID = model.RandBillingID("inv")
 	}
 	if inv.Status == "" {
 		inv.Status = "pending"
@@ -444,7 +446,7 @@ func (s *SQLStore) CreateInvoice(inv *Invoice) *Invoice {
 		recordStoreFailure("[store] CreateInvoice 插入失败 (invoice=%s): %v", inv.ID, err)
 		return nil
 	}
-	return cloneInvoice(inv)
+	return model.CloneInvoice(inv)
 }
 
 // GetInvoice 按 ID 返回单个账单（深拷贝；不存在返回 (nil, false)）。

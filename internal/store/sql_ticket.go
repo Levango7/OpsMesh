@@ -22,6 +22,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // scanTicket 从一行扫描出 *Ticket（tags 为 JSON 文本列，resolved_at 可空）。
@@ -103,7 +105,7 @@ func (s *SQLStore) CreateTicket(tenantID string, t *Ticket) *Ticket {
 	t.TenantID = tenantID
 	now := time.Now().UTC()
 	if t.ID == "" {
-		t.ID = randTicketID()
+		t.ID = model.RandTicketID()
 	}
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = now
@@ -134,7 +136,7 @@ func (s *SQLStore) CreateTicket(tenantID string, t *Ticket) *Ticket {
 		recordStoreFailure("[store] CreateTicket 插入失败 (tenant=%s ticket=%s): %v", tenantID, t.ID, err)
 		return nil
 	}
-	return cloneTicket(t)
+	return model.CloneTicket(t)
 }
 
 // GetTicket 按 (tenantID, id) 返回单个工单（深拷贝；不存在或租户不匹配返回 (nil, false)）。
@@ -183,7 +185,7 @@ func (s *SQLStore) UpdateTicket(tenantID string, t *Ticket) (*Ticket, bool) {
 		recordStoreFailure("[store] UpdateTicket 更新失败 (tenant=%s ticket=%s): %v", tenantID, t.ID, err)
 		return nil, false
 	}
-	return cloneTicket(t), true
+	return model.CloneTicket(t), true
 }
 
 // ListTickets 返回指定租户的工单列表（按 filter 过滤 + 按创建时间降序）。
@@ -249,5 +251,5 @@ func (s *SQLStore) CloseTicket(tenantID, id string) (*Ticket, bool) {
 	existing.Status = "closed"
 	existing.ResolvedAt = &now
 	existing.UpdatedAt = now
-	return cloneTicket(existing), true
+	return model.CloneTicket(existing), true
 }

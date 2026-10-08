@@ -25,6 +25,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // scanAutomationRule 从一行扫描出 *AutomationRule。
@@ -100,7 +102,7 @@ func (s *SQLStore) CreateAutomationRule(tenantID string, r *AutomationRule) *Aut
 	}
 	r.TenantID = tenantID
 	if r.ID == "" {
-		r.ID = randAutomationRuleID()
+		r.ID = model.RandAutomationRuleID()
 	}
 	now := time.Now().UTC()
 	if r.CreatedAt.IsZero() {
@@ -276,7 +278,7 @@ func (s *SQLStore) CreateAutomationExecution(tenantID string, e *AutomationExecu
 	}
 	e.TenantID = tenantID
 	if e.ID == "" {
-		e.ID = randAutomationExecID()
+		e.ID = model.RandAutomationExecID()
 	}
 	if e.Status == "" {
 		e.Status = "pending"

@@ -20,6 +20,8 @@ import (
 	"database/sql"
 
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // scanPlugin 从一行扫描出 *Plugin。
@@ -68,7 +70,7 @@ func (s *SQLStore) CreatePlugin(plugin *Plugin) *Plugin {
 		return nil
 	}
 	if plugin.ID == "" {
-		plugin.ID = randPluginID()
+		plugin.ID = model.RandPluginID()
 	}
 	if plugin.Type == "" {
 		plugin.Type = "agent"
@@ -88,7 +90,7 @@ func (s *SQLStore) CreatePlugin(plugin *Plugin) *Plugin {
 		recordStoreFailure("[store] CreatePlugin 插入失败 (plugin=%s): %v", plugin.ID, err)
 		return nil
 	}
-	return clonePlugin(plugin)
+	return model.ClonePlugin(plugin)
 }
 
 // GetPlugin 按 ID 返回单个插件（深拷贝；不存在返回 (nil, false)）。
@@ -131,7 +133,7 @@ func (s *SQLStore) UpdatePlugin(plugin *Plugin) (*Plugin, bool) {
 		recordStoreFailure("[store] UpdatePlugin 更新失败 (plugin=%s): %v", plugin.ID, err)
 		return nil, false
 	}
-	return clonePlugin(plugin), true
+	return model.ClonePlugin(plugin), true
 }
 
 // ListPlugins 返回全部插件（按创建时间升序；深拷贝）。

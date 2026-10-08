@@ -18,6 +18,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // ============================================================================
@@ -56,7 +58,7 @@ func (s *SQLStore) SaveOSTemplate(t *OSTemplate) error {
 	}
 	now := time.Now().UTC()
 	if t.ID == "" {
-		t.ID = randOSTemplateID()
+		t.ID = model.RandOSTemplateID()
 	}
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = now
@@ -163,7 +165,7 @@ func (s *SQLStore) SaveMiddlewareTemplate(t *MiddlewareTemplate) error {
 	}
 	now := time.Now().UTC()
 	if t.ID == "" {
-		t.ID = randMiddlewareTemplateID()
+		t.ID = model.RandMiddlewareTemplateID()
 	}
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = now

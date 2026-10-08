@@ -10,13 +10,15 @@ package store
 //   - CreateBackup 用 INSERT ... ON DUPLICATE KEY UPDATE 实现幂等 upsert（按 id 唯一）；
 //   - Get/Delete 均 WHERE id=? AND tenant_id=? 实现租户隔离；
 //   - ListBackups 按 created_at DESC 返回；
-//   - ID 生成复用 memory_backup.go 的 randBackupID()（前缀 backup-）；
+//   - ID 生成复用 memory_backup.go 的 model.RandBackupID()（前缀 backup-）；
 //   - DB 不可用时返回零值（nil/false/空 slice），不 panic，与 SQLStore 其他方法一致。
 
 import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // backupRecordColumns 是 backup_records 表的查询列清单（与 scanBackupRecord 顺序一致）。
@@ -45,7 +47,7 @@ func scanBackupRecord(row rowScanner) *BackupRecord {
 // 行为与 MemoryStore.CreateBackup 一致：
 //   - b==nil 返回 nil；
 //   - 空租户归一为 default；
-//   - ID 为空时由 randBackupID() 分配；
+//   - ID 为空时由 model.RandBackupID() 分配；
 //   - Type 空 → full；Status 空 → creating；
 //   - CreatedAt 零值填 now；
 //   - INSERT ... ON DUPLICATE KEY UPDATE 实现幂等 upsert（按 id 唯一）。
@@ -59,7 +61,7 @@ func (s *SQLStore) CreateBackup(tenantID string, b *BackupRecord) *BackupRecord 
 	b.TenantID = tenantID
 	now := time.Now().UTC()
 	if b.ID == "" {
-		b.ID = randBackupID()
+		b.ID = model.RandBackupID()
 	}
 	if b.Type == "" {
 		b.Type = "full"

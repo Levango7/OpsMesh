@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // sql_discovery.go 实现 SQLStore 的 ServiceDiscoveryStore 子接口（P0.3 服务发现，MySQL 持久化）。
@@ -83,7 +85,7 @@ func (s *SQLStore) RegisterService(inst *ServiceInstance) *ServiceInstance {
 		recordStoreFailure("[store] RegisterService 失败 service_id=%s: %v", inst.ServiceID, err)
 		return nil
 	}
-	return cloneServiceInstance(inst)
+	return model.CloneServiceInstance(inst)
 }
 
 // DeregisterService 反注册服务实例。返回是否删除成功（不存在返回 false）。
@@ -142,7 +144,7 @@ SELECT service_id, tenant_id, service_name, address, port, metadata, status, las
 	if err := rows.Err(); err != nil {
 		recordStoreFailure("[store] ServiceInstances 遍历失败 service_name=%s: %v", serviceName, err)
 	}
-	sortServiceInstances(out)
+	model.SortServiceInstances(out)
 	return out
 }
 
@@ -180,7 +182,7 @@ SELECT service_id, tenant_id, service_name, address, port, metadata, status, las
 	if err := rows.Err(); err != nil {
 		recordStoreFailure("[store] AllServices 遍历失败 tenant_id=%s: %v", tenantID, err)
 	}
-	sortServiceInstances(out)
+	model.SortServiceInstances(out)
 	return out
 }
 
@@ -254,6 +256,6 @@ SELECT service_id, tenant_id, service_name, address, port, metadata, status, las
 	if err := rows.Err(); err != nil {
 		recordStoreFailure("[store] StaleServices 遍历失败 tenant_id=%s: %v", tenantID, err)
 	}
-	sortServiceInstances(out)
+	model.SortServiceInstances(out)
 	return out
 }

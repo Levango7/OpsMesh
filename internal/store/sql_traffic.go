@@ -14,7 +14,7 @@ package store
 //   - ListPolicies 按 created_at DESC；
 //   - EnablePolicy/DisablePolicy 置 status='active'/'inactive' + updated_at=now，
 //     先 SELECT 校验存在 + 租户归属，不存在返回 (nil, false)，返回更新后的 Policy；
-//   - ID 生成复用 memory_traffic.go 的 randTrafficID()（前缀 traffic-）；
+//   - ID 生成复用 memory_traffic.go 的 model.RandTrafficID()（前缀 traffic-）；
 //   - DB 不可用时返回零值（nil/false/空 slice），不 panic。
 
 import (
@@ -22,6 +22,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // scanTrafficPolicy 从一行扫描出 *TrafficPolicy。
@@ -76,7 +78,7 @@ func marshalCanaryWeights(w map[string]int) []byte {
 //
 // 行为与 MemoryStore.CreatePolicy 一致：
 //   - 空租户归一为 default；
-//   - ID 为空时由 randTrafficID() 分配；
+//   - ID 为空时由 model.RandTrafficID() 分配；
 //   - Status 空 → inactive（与 memory 一致）；
 //   - CreatedAt 零值填 now；UpdatedAt 始终刷新为 now；
 //   - INSERT ... ON DUPLICATE KEY UPDATE 实现幂等 upsert（按 id 唯一）。
@@ -90,7 +92,7 @@ func (s *SQLStore) CreatePolicy(tenantID string, p *TrafficPolicy) *TrafficPolic
 	p.TenantID = tenantID
 	now := time.Now().UTC()
 	if p.ID == "" {
-		p.ID = randTrafficID()
+		p.ID = model.RandTrafficID()
 	}
 	if p.Status == "" {
 		p.Status = "inactive"

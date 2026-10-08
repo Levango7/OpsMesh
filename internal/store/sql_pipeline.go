@@ -19,7 +19,7 @@ package store
 //   - Get/Delete 均 WHERE id=? AND tenant_id=? 实现租户隔离；
 //   - ListTemplates 按 created_at DESC；ListRuns 按 tenant_id + 可选 template_id 过滤后 created_at DESC；
 //   - UpdateRun 先 SELECT 校验存在 + 租户归属，不存在返回 (nil, false)；
-//   - ID 生成复用 memory_pipeline.go 的 randPipelineID()（前缀 pipeline-）+ randRunID()（前缀 run-）；
+//   - ID 生成复用 memory_pipeline.go 的 model.RandPipelineID()（前缀 pipeline-）+ model.RandRunID()（前缀 run-）；
 //   - DB 不可用时返回零值（nil/false/空 slice），不 panic。
 
 import (
@@ -27,6 +27,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // scanPipelineTemplate 从一行扫描出 *PipelineTemplate。
@@ -131,7 +133,7 @@ func marshalRunParams(params map[string]string) []byte {
 //
 // 行为与 MemoryStore.CreateTemplate 一致：
 //   - 空租户归一为 default；
-//   - ID 为空时由 randPipelineID() 分配；
+//   - ID 为空时由 model.RandPipelineID() 分配；
 //   - CreatedAt 零值填 now；UpdatedAt 始终刷新为 now；
 //   - INSERT ... ON DUPLICATE KEY UPDATE 实现幂等 upsert（按 id 唯一）。
 func (s *SQLStore) CreateTemplate(tenantID string, t *PipelineTemplate) *PipelineTemplate {
@@ -144,7 +146,7 @@ func (s *SQLStore) CreateTemplate(tenantID string, t *PipelineTemplate) *Pipelin
 	t.TenantID = tenantID
 	now := time.Now().UTC()
 	if t.ID == "" {
-		t.ID = randPipelineID()
+		t.ID = model.RandPipelineID()
 	}
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = now
@@ -215,7 +217,7 @@ func (s *SQLStore) DeleteTemplate(tenantID, id string) bool {
 //
 // 行为与 MemoryStore.CreateRun 一致：
 //   - 空租户归一为 default；
-//   - ID 为空时由 randRunID() 分配；
+//   - ID 为空时由 model.RandRunID() 分配；
 //   - Status 空 → pending；CreatedAt 零值填 now；
 //   - INSERT ... ON DUPLICATE KEY UPDATE 实现幂等 upsert（按 id 唯一）。
 func (s *SQLStore) CreateRun(tenantID string, r *PipelineRun) *PipelineRun {
@@ -228,7 +230,7 @@ func (s *SQLStore) CreateRun(tenantID string, r *PipelineRun) *PipelineRun {
 	r.TenantID = tenantID
 	now := time.Now().UTC()
 	if r.ID == "" {
-		r.ID = randRunID()
+		r.ID = model.RandRunID()
 	}
 	if r.Status == "" {
 		r.Status = "pending"

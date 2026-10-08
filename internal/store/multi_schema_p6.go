@@ -7,7 +7,11 @@
 //   - 路由失败返回零值（nil/false），与现有方法风格一致。
 package store
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
+)
 
 // ============================================================================
 // TenantStore 实现（5 方法）
@@ -25,7 +29,7 @@ func (m *MultiSchemaStore) CreateTenant(tenant *Tenant) *Tenant {
 		return nil
 	}
 	if tenant.ID == "" {
-		tenant.ID = strings.ReplaceAll(randTenantID(), "-", "_")
+		tenant.ID = strings.ReplaceAll(model.RandTenantID(), "-", "_")
 	}
 	s, err := m.storeFor(tenant.ID)
 	if err != nil {

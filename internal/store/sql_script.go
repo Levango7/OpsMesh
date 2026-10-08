@@ -15,7 +15,7 @@
 //   - ListScripts 按创建时间降序（最新优先，与 memory 一致）；
 //   - UpdateScript 先 SELECT 校验存在 + 租户归属，再 UPDATE，保留原 CreatedAt/TenantID；
 //   - ListScriptExecutions 先校验 scriptID 归属（GetScript），不匹配返回空 slice；
-//   - RecordScriptExecution：ID 由 store 分配（randScriptExecutionID()，前缀 script-exec-），
+//   - RecordScriptExecution：ID 由 store 分配（model.RandScriptExecutionID()，前缀 script-exec-），
 //     StartedAt 零值填 now；
 //   - DB 不可用时返回零值（nil/false/空 slice），不 panic；
 //   - ID 生成复用 memory_script.go 的 randScriptID（"script-" + 16 字节 hex）+
@@ -26,6 +26,8 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // scanScript 从一行扫描出 *Script。
@@ -81,7 +83,7 @@ func (s *SQLStore) CreateScript(tenantID string, sc *Script) *Script {
 	sc.TenantID = tenantID
 	now := time.Now().UTC()
 	if sc.ID == "" {
-		sc.ID = randScriptID()
+		sc.ID = model.RandScriptID()
 	}
 	if sc.CreatedAt.IsZero() {
 		sc.CreatedAt = now
@@ -106,7 +108,7 @@ func (s *SQLStore) CreateScript(tenantID string, sc *Script) *Script {
 		recordStoreFailure("[store] CreateScript 插入失败 (tenant=%s script=%s): %v", tenantID, sc.ID, err)
 		return nil
 	}
-	return cloneScript(sc)
+	return model.CloneScript(sc)
 }
 
 // GetScript 按 (tenantID, id) 返回单个脚本（深拷贝；不存在或租户不匹配返回 (nil, false)）。
@@ -151,7 +153,7 @@ func (s *SQLStore) UpdateScript(tenantID string, sc *Script) (*Script, bool) {
 		recordStoreFailure("[store] UpdateScript 更新失败 (tenant=%s script=%s): %v", tenantID, sc.ID, err)
 		return nil, false
 	}
-	return cloneScript(sc), true
+	return model.CloneScript(sc), true
 }
 
 // ListScripts 返回指定租户的全部脚本（按创建时间降序；深拷贝）。
@@ -256,7 +258,7 @@ func (s *SQLStore) ListScriptExecutions(tenantID, scriptID string) []*ScriptExec
 //
 // 行为：
 //   - TenantID 为空时归一为 default；
-//   - ID 由 store 分配（randScriptExecutionID()，前缀 script-exec-）；
+//   - ID 由 store 分配（model.RandScriptExecutionID()，前缀 script-exec-）；
 //   - StartedAt 零值时填当前时间；
 //   - FinishedAt 为 nil 时落 NULL（未结束）；
 //   - DB 失败时 log.Printf + 返回 nil。
@@ -269,7 +271,7 @@ func (s *SQLStore) RecordScriptExecution(tenantID, scriptID, deviceID, status, s
 		startedAt = now
 	}
 	e := &ScriptExecution{
-		ID:         randScriptExecutionID(),
+		ID:         model.RandScriptExecutionID(),
 		TenantID:   tenantID,
 		ScriptID:   scriptID,
 		DeviceID:   deviceID,
@@ -287,5 +289,5 @@ func (s *SQLStore) RecordScriptExecution(tenantID, scriptID, deviceID, status, s
 		recordStoreFailure("[store] RecordScriptExecution 插入失败 (tenant=%s script=%s exec=%s): %v", tenantID, scriptID, e.ID, err)
 		return nil
 	}
-	return cloneScriptExecution(e)
+	return model.CloneScriptExecution(e)
 }
