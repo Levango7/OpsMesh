@@ -93,6 +93,17 @@ func (pr *proxyPermRule) matches(method, path string) bool {
 	return true
 }
 
+// isActive 双轨机制（TD-60 A-2 auth-svc）：环境开关控制代理接线。
+// AUTH_SVC_PROXY_ENABLED 默认 false → auth-svc 代理规则不活跃（控制面本地处理 /api/v1/auth/*）；
+// 设 true → auth-svc 代理规则活跃（/api/v1/auth-svc 前缀→/api/v1/auth）；
+// AUTH_SVC_PROXY_RATIO（默认 50）控制 50/50 对比比例（机制准备，运行时报告留下一轮）。
+func (r *serviceProxyRule) isActive() bool {
+	if r.domain == "auth" {
+		return os.Getenv("AUTH_SVC_PROXY_ENABLED") == "true"
+	}
+	return true
+}
+
 // resolvePerm 解析本次请求所需的权限点：permRules 首条命中优先，否则回落 perm。
 // 入参 path 为**公开请求路径**（如 /api/v1/task-svc/schedules）；匹配前先经
 // rewriteProxyPath 改写为上游路径（permRules 的路径字段按上游形态书写）。
@@ -181,6 +192,29 @@ var serviceProxyRules = []serviceProxyRule{
 		perm:           "portal:write", // 含审批动作（approve/reject 为 POST）
 		permRules: []proxyPermRule{
 			{method: http.MethodGet, perm: "portal:read"},
+		},
+	},
+	{
+		// auth-svc（TD-60 A-2：auth-svc 双轨对比/切流）。controlplane 本地已有
+		// /api/v1/auth/* 实现（login/register/me/logout/refresh/change-password），
+		// auth-svc 网关同路径提供 /api/v1/auth/*（login/register/me/logout/
+		// refresh/change-password + users/roles/permissions 管理）。
+		// 双轨期用 /api/v1/auth-svc/* 前缀转发到 auth-svc 的 /api/v1/auth/*，
+		// 与 controlplane 本地 /api/v1/auth/* 并存；切流阶段再评估替换。
+		domain:         "auth",
+		publicPrefix:   "/api/v1/auth-svc",
+		upstreamPrefix: "/api/v1/auth",
+		domainPrefix:   "/api/v1/auth-svc",
+		envKey:         "AUTH_SVC_URL",
+		defaultURL:     "http://127.0.0.1:8081",
+		perm:           "auth:write", // 兜底：登录/注册/改密等写操作
+		permRules: []proxyPermRule{
+			{method: http.MethodGet, pathPrefix: "/api/v1/auth/me", perm: "auth:read"},
+			{method: http.MethodPost, pathPrefix: "/api/v1/auth/login", perm: "auth:write"},
+			{method: http.MethodPost, pathPrefix: "/api/v1/auth/register", perm: "auth:write"},
+			{method: http.MethodPost, pathPrefix: "/api/v1/auth/logout", perm: "auth:write"},
+			{method: http.MethodPost, pathPrefix: "/api/v1/auth/refresh", perm: "auth:write"},
+			{method: http.MethodPost, pathPrefix: "/api/v1/auth/change-password", perm: "auth:write"},
 		},
 	},
 }
@@ -426,30 +460,7 @@ func validateServiceProxyTargets(httpPort, grpcPort, metricsPort int) []string {
 				if r.envKey != "" {
 					if v := os.Getenv(r.envKey); v != "" {
 						src = r.envKey + "=" + v
-	{
-		// auth-svc（TD-60 A-2：auth-svc 双轨对比/切流）。controlplane 本地已有
-		// /api/v1/auth/* 实现（login/register/me/logout/refresh/change-password），
-		// auth-svc 网关同路径提供 /api/v1/auth/*（login/register/me/logout/
-		// refresh/change-password + users/roles/permissions 管理）。
-		// 双轨期用 /api/v1/auth-svc/* 前缀转发到 auth-svc 的 /api/v1/auth/*，
-		// 与 controlplane 本地 /api/v1/auth/* 并存；切流阶段再评估替换。
-		domain:         "auth",
-		publicPrefix:   "/api/v1/auth-svc",
-		upstreamPrefix: "/api/v1/auth",
-		domainPrefix:   "/api/v1/auth-svc",
-		envKey:         "AUTH_SVC_URL",
-		defaultURL:     "http://127.0.0.1:8081",
-		perm:           "auth:write", // 兜底：登录/注册/改密等写操作
-		permRules: []proxyPermRule{
-			{method: http.MethodGet, pathPrefix: "/api/v1/auth/me", perm: "auth:read"},
-			{method: http.MethodPost, pathPrefix: "/api/v1/auth/login", perm: "auth:write"},
-			{method: http.MethodPost, pathPrefix: "/api/v1/auth/register", perm: "auth:write"},
-			{method: http.MethodPost, pathPrefix: "/api/v1/auth/logout", perm: "auth:write"},
-			{method: http.MethodPost, pathPrefix: "/api/v1/auth/refresh", perm: "auth:write"},
-			{method: http.MethodPost, pathPrefix: "/api/v1/auth/change-password", perm: "auth:write"},
-		},
-	},
-}
+					}
 				}
 				problems = append(problems, fmt.Sprintf(
 					"域 %q 的转发后端 %s 指向控制面自身的监听端口（HTTP=%d gRPC=%d metrics=%d）："+
@@ -572,6 +583,12 @@ func (r *serviceProxyRule) rewriteProxyPath(path string) string {
 //   - 401/403：由 requirePermission/requireTenantContext 写出。
 func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 	rule := lookupServiceProxyRule(r.URL.Path)
+	if rule != nil && !rule.isActive() {
+		// 双轨机制（TD-60 A-2 auth-svc）：AUTH_SVC_PROXY_ENABLED 默认 false →
+		// auth-svc 代理规则不活跃，控制面本地 /api/v1/auth/* 直接处理；
+		// 设 true 时代理接线生效（/api/v1/auth-svc 前缀→auth-svc /api/v1/auth）。
+		rule = nil
+	}
 	if rule == nil {
 		writeProxyErrorJSON(w, http.StatusNotFound, "no service proxy route matches "+r.URL.Path)
 		return
