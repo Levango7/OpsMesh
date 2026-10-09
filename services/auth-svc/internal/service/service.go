@@ -255,6 +255,7 @@ func (s *Service) RegisterUser(ctx context.Context, req *authv1.CreateUserReques
 	_, err = s.store.CreateUser(&store.User{
 		Username: req.Username,
 		Email:    req.Email,
+		RoleIDs:  req.RoleIds, // 自注册默认角色（role-viewer，只读）由网关显式传入
 		Status:   "pending",
 	})
 	if err != nil {

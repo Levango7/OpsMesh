@@ -132,6 +132,44 @@ func (s *MySQLStore) seedDefaults() error {
 		}
 	}
 
+	// viewer 角色（TD-60 A-2：自注册用户默认绑定）。派生规则与内存后端
+	// seedViewerRole、controlplane RolePermissions() 三处一致：全部 `*:read`。
+	// 权限点由 SQL 现算（LIKE '%:read'）而非硬编码，目录新增只读点时自动生效。
+	err = s.db.QueryRow("SELECT COUNT(*) FROM roles WHERE name = ?", "viewer").Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check viewer role: %w", err)
+	}
+	if count == 0 {
+		if _, err = s.db.Exec(
+			"INSERT INTO roles (id, name, description, created_at) VALUES (?, ?, ?, ?)",
+			"role-viewer", "viewer", "Read-only user, view only (default for self-registered users)", time.Now(),
+		); err != nil {
+			return fmt.Errorf("seed viewer role: %w", err)
+		}
+		rows, err := s.db.Query("SELECT name FROM permissions WHERE name LIKE '%:read'")
+		if err != nil {
+			return fmt.Errorf("query read-only permissions for viewer: %w", err)
+		}
+		func() {
+			defer rows.Close()
+			for rows.Next() {
+				var name string
+				if err := rows.Scan(&name); err != nil {
+					return
+				}
+				if _, err := s.db.Exec(
+					"INSERT INTO role_permissions (role_id, permission_name) VALUES (?, ?)",
+					"role-viewer", name,
+				); err != nil {
+					return
+				}
+			}
+		}()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate read-only permissions for viewer: %w", err)
+		}
+	}
+
 	err = s.db.QueryRow("SELECT COUNT(*) FROM users WHERE username = ?", "admin").Scan(&count)
 	if err != nil {
 		return fmt.Errorf("check admin user: %w", err)

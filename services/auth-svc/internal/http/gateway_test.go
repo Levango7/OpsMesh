@@ -478,7 +478,99 @@ func TestRegister_PublicRegisterDisabled(t *testing.T) {
 	_ = svc
 }
 
-// TestRegister_DefaultOpenThenPending 守护默认开放 + pending 原子化：
+// TestRegister_BindsReadOnlyViewerRole 守护自注册默认角色（TD-60 A-2 §2.1 缺口）：
+// 注册用户必须绑 role-viewer，且该角色**只含 `*:read`**——
+// 这是「低权限、安全」的硬约束：新用户不能审批自己的注册、不能建号、
+// 不能改角色（自我提权路径全部封死）。
+func TestRegister_BindsReadOnlyViewerRole(t *testing.T) {
+	_, mux, svc := newTestGatewayWith(true)
+
+	// 1) viewer 角色必须存在，且内容恰为全部 :read（不多不少）。
+	vr := svc.Store().GetRole("role-viewer")
+	if vr == nil {
+		t.Fatal("role-viewer 未 seed——自注册默认角色缺失")
+	}
+	want := map[string]bool{}
+	for _, p := range svc.Store().ListPermissions() {
+		if strings.HasSuffix(p.Name, ":read") {
+			want[p.Name] = true
+		}
+	}
+	got := map[string]bool{}
+	for _, p := range vr.Permissions {
+		got[p] = true
+	}
+	if len(want) == 0 {
+		t.Fatal("权限目录无只读点，测试无意义")
+	}
+	for p := range want {
+		if !got[p] {
+			t.Errorf("viewer 缺只读权限 %q", p)
+		}
+	}
+	for p := range got {
+		if !want[p] {
+			t.Errorf("viewer 含非只读权限 %q（违反最小权限）", p)
+		}
+	}
+	// 2) 安全硬约束：任何写/删/审批/授权类权限点都不得出现在 viewer。
+	for _, forbidden := range []string{"user:write", "user:delete", "user:approve", "role:write", "role:delete", "role:assign"} {
+		if got[forbidden] {
+			t.Errorf("viewer 不得持有 %q（否则自注册用户可自我提权/自审批）", forbidden)
+		}
+	}
+
+	// 3) 注册用户确实被绑到 role-viewer。
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/auth/register",
+		`{"username":"v-u","password":"SomePass123!x","email":"v@x.io"}`, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("注册应 201，实际 %d body=%s", rec.Code, rec.Body.String())
+	}
+	u := svc.Store().GetUserByUsername("v-u")
+	if u == nil {
+		t.Fatal("注册后应存在用户")
+	}
+	if len(u.RoleIDs) != 1 || u.RoleIDs[0] != "role-viewer" {
+		t.Fatalf("注册用户应绑定 role-viewer，实际 %v", u.RoleIDs)
+	}
+	// /auth/me 的 permissions 应恰好是 viewer 的只读集（契约已对齐的字段）。
+	u.Status = "active"
+	_ = svc.Store().UpdateUser(u)
+	hash, _ := auth.HashPassword("SomePass123!x")
+	_ = svc.Store().ChangePassword(u.ID, hash)
+	recLogin := doReq(t, mux, http.MethodPost, "/api/v1/auth/login",
+		`{"username":"v-u","password":"SomePass123!x"}`, nil)
+	if recLogin.Code != http.StatusOK {
+		t.Fatalf("审批后(模拟 active)应可登录，实际 %d body=%s", recLogin.Code, recLogin.Body.String())
+	}
+	cookies := map[string]string{"Cookie": "opsmesh_at=" + findCookie(t, recLogin, "opsmesh_at").Value +
+		"; opsmesh_rt=" + findCookie(t, recLogin, "opsmesh_rt").Value}
+	recMe := doReq(t, mux, http.MethodGet, "/api/v1/auth/me", "", cookies)
+	var me map[string]any
+	_ = json.Unmarshal(recMe.Body.Bytes(), &me)
+	arr, _ := me["permissions"].([]any)
+	if len(arr) != len(want) {
+		t.Errorf("me.permissions 应等于 viewer 只读集(%d)，实际 %d", len(want), len(arr))
+	}
+}
+
+// TestRegister_MissingDefaultRoleRefused 守护默认角色缺失时**拒绝注册并留痕**，
+// 而不是静默建出无任何权限的孤儿账号（对齐 controlplane auth_login.go:80 的前置校验）。
+func TestRegister_MissingDefaultRoleRefused(t *testing.T) {
+	_, mux, svc := newTestGatewayWith(true)
+	// 删掉 role-viewer 模拟「seed 未生效/被误删」。
+	svc.Store().DeleteRole("role-viewer")
+
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/auth/register",
+		`{"username":"orphan","password":"SomePass123!x","email":"o@x.io"}`, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("默认角色缺失时应 500 拒绝，实际 %d body=%s", rec.Code, rec.Body.String())
+	}
+	if u := svc.Store().GetUserByUsername("orphan"); u != nil {
+		t.Error("默认角色缺失时不得建号（否则产出无权限孤儿账号）")
+	}
+}
+
 // 默认（PublicRegister=true）注册返回 201，且落库状态**直接就是 pending**
 // （旧实现是先 active 再回写，窗口期内可被登录）。
 func TestRegister_DefaultOpenThenPending(t *testing.T) {

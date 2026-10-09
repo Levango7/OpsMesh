@@ -3,6 +3,8 @@ package store
 import (
 	"fmt"
 	"log"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,6 +82,7 @@ func NewMemoryStore() *MemoryStore {
 	}
 	s.seedPermissions()
 	s.seedAdminRole()
+	s.seedViewerRole()
 	s.seedAdminUser()
 	return s
 }
@@ -112,6 +115,33 @@ func (s *MemoryStore) seedAdminRole() {
 		ID:          "role-admin",
 		Name:        "admin",
 		Description: "Administrator with full access",
+		Permissions: perms,
+		CreatedAt:   time.Now(),
+	}
+	s.roles[role.ID] = role
+	s.rolesByName[role.Name] = role.ID
+}
+
+// seedViewerRole seeds the read-only viewer role (默认绑定给自注册用户)。
+//
+// 派生规则与 controlplane internal/store/model/perm.go 的 RolePermissions() 完全一致：
+// **全部 `*:read` 权限点**。刻意从权限目录现算而非硬编码清单——目录将来新增只读点时
+// viewer 自动获得，且不会因为手抄清单漏项而与 admin 的派生逻辑漂移。
+// 安全性：viewer 只含 read，不含 write/delete/approve/assign ⇒ 新注册用户
+// 既不能审批自己的注册（user:approve），也不能建号或改角色（user:write/role:*），
+// 无自我提权路径。
+func (s *MemoryStore) seedViewerRole() {
+	perms := make([]string, 0, len(s.permissions))
+	for _, p := range s.permissions {
+		if strings.HasSuffix(p.Name, ":read") {
+			perms = append(perms, p.Name)
+		}
+	}
+	sort.Strings(perms)
+	role := &Role{
+		ID:          "role-viewer",
+		Name:        "viewer",
+		Description: "Read-only user, view only (default for self-registered users)",
 		Permissions: perms,
 		CreatedAt:   time.Now(),
 	}

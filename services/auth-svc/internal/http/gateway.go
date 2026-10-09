@@ -22,6 +22,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -330,10 +331,19 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 原子创建为 pending：单次落库即终态，无「先 active 再回写」的窗口期。
+	// 默认角色 role-viewer（只读）：与 controlplane auth_login.go:103 的注册默认
+	// viewer 同语义。先校验角色存在——缺失时拒绝注册并留痕，而不是静默建出
+	// 一个无任何权限的孤儿账号（对齐 controlplane auth_login.go:80 的前置校验）。
+	if g.svc.Store().GetRole("role-viewer") == nil {
+		log.Printf("[auth-svc] handleRegister 默认角色 role-viewer 不存在，注册中止（seed 未生效）")
+		writeError(w, http.StatusInternalServerError, "default role missing, registration refused")
+		return
+	}
 	if _, err := g.svc.RegisterUser(r.Context(), &authv1.CreateUserRequest{
 		Username: body.Username,
 		Password: body.Password,
 		Email:    body.Email,
+		RoleIds:  []string{"role-viewer"},
 	}); err != nil {
 		if err == service.ErrUserExists {
 			writeError(w, http.StatusConflict, "username already exists")

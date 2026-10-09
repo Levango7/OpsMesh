@@ -392,8 +392,10 @@ func TestAssignRole(t *testing.T) {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
 
+	// 刻意不用 "viewer"：该名称已被 seed 的只读默认角色 role-viewer 占用
+	// （TD-60 A-2 起自注册用户默认绑定它），此处用自定义角色名验证 AssignRole。
 	role, err := svc.CreateRole(ctx, &authv1.CreateRoleRequest{
-		Name:        "viewer",
+		Name:        "viewer-custom",
 		Description: "Viewer role",
 		Permissions: []string{"user:read"},
 	})

@@ -43,12 +43,12 @@ const judgedSitesFloor = 0
 // scanSiteExemptions 登记「参数≥3 但不参与判定」的站点及理由。
 // 键是 "文件名:行号"。没有条目可留空——空表本身也是合法状态。
 var scanSiteExemptions = map[string]string{
-	"mysql.go:194": "users 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT）",
-	"mysql.go:230": "users 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT）",
-	"mysql.go:404": "roles 表无可空且无 DEFAULT 的列（description 带 DEFAULT ''）",
-	"mysql.go:438": "roles 表无可空且无 DEFAULT 的列（description 带 DEFAULT ''）",
-	"mysql.go:556": "permissions 表无可空且无 DEFAULT 的列（description/perm_group 带 DEFAULT ''）",
-	"mysql.go:583": "refresh_tokens 表无可空且无 DEFAULT 的列（tenant_id/device_fp 带 DEFAULT ''）",
+	"mysql.go:232": "users 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT）",
+	"mysql.go:268": "users 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT）",
+	"mysql.go:442": "roles 表无可空且无 DEFAULT 的列（description 带 DEFAULT ''）",
+	"mysql.go:476": "roles 表无可空且无 DEFAULT 的列（description 带 DEFAULT ''）",
+	"mysql.go:594": "permissions 表无可空且无 DEFAULT 的列（description/perm_group 带 DEFAULT ''）",
+	"mysql.go:621": "refresh_tokens 表无可空且无 DEFAULT 的列（tenant_id/device_fp 带 DEFAULT ''）",
 }
 
 // riskyNullableColumns 解析建表来源，得到 table → {可空且无 DEFAULT 的列}。
