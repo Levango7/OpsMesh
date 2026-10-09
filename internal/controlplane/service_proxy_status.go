@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/svcproxy"
 	"github.com/Levango7/OpsMesh/internal/metrics"
 )
 
@@ -44,7 +45,7 @@ func (s *Server) handleServiceRouting(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireProd(w, r, levelPermission); !ok {
 		return
 	}
-	disabled, switchErr := disabledProxyDomains()
+	disabled, switchErr := svcproxy.DisabledDomains()
 	if switchErr != nil {
 		// 与启动期一致：开关非法时按「全部启用」呈现，并把错误一并暴露。
 		disabled = map[string]bool{}
@@ -55,26 +56,26 @@ func (s *Server) handleServiceRouting(w http.ResponseWriter, r *http.Request) {
 	views := make([]proxyDomainView, 0, len(groups))
 	for _, g := range groups {
 		order = append(order, g.domain)
-		backend, from := g.first.defaultURL, "default"
-		if g.first.envKey != "" {
-			if v := os.Getenv(g.first.envKey); v != "" {
+		backend, from := g.first.DefaultURL, "default"
+		if g.first.EnvKey != "" {
+			if v := os.Getenv(g.first.EnvKey); v != "" {
 				backend, from = v, "env"
 			}
 		}
 		v := proxyDomainView{
 			Domain:       g.domain,
 			PublicPrefix: g.prefixes,
-			EnvKey:       g.first.envKey,
+			EnvKey:       g.first.EnvKey,
 			Backend:      backend,
 			BackendFrom:  from,
 		}
 		switch {
 		case disabled[g.domain]:
 			v.Status = "disabled"
-			v.Note = "已按 " + serviceProxyEnvKey + " 停用转发，请求回落到单体本地实现"
+			v.Note = "已按 " + svcproxy.EnvKey + " 停用转发，请求回落到单体本地实现"
 		default:
 			// 自环判定与 handleServiceProxy 用的是同一个函数，结论必然一致。
-			if _, self := proxySelfLoopTarget(parseBackendURL(backend), s.httpPort, s.grpcPort, s.metricsPort); self {
+			if _, self := svcproxy.SelfLoopTarget(parseBackendURL(backend), s.httpPort, s.grpcPort, s.metricsPort); self {
 				v.Status = "self-loop"
 				v.Note = "后端指向控制面自身，该域已被 503 隔离（不转发、不返回单体数据）"
 			} else if probeBackend(backend) {
@@ -83,7 +84,7 @@ func (s *Server) handleServiceRouting(w http.ResponseWriter, r *http.Request) {
 			} else {
 				healthy := false
 				v.Healthy, v.Status = &healthy, "unreachable"
-				v.Note = "后端不可达，请求会得到 503；确认服务已启动且 " + g.first.envKey + " 指向正确地址"
+				v.Note = "后端不可达，请求会得到 503；确认服务已启动且 " + g.first.EnvKey + " 指向正确地址"
 			}
 			// Forwarded 的含义是「请求会被真正发往微服务」：自环被就地拦下、
 			// 停用域不注册路由，两者都不算转发；unreachable 仍算（会尝试并 503）。
@@ -94,8 +95,8 @@ func (s *Server) handleServiceRouting(w http.ResponseWriter, r *http.Request) {
 
 	paginate.WriteJSON(w, http.StatusOK, map[string]any{
 		"switch": map[string]any{
-			"env":   serviceProxyEnvKey,
-			"value": os.Getenv(serviceProxyEnvKey),
+			"env":   svcproxy.EnvKey,
+			"value": os.Getenv(svcproxy.EnvKey),
 			"semantics": "未设置/on=all=全转发；off=none=全停用；或逗号分隔的域列表（可用域：" +
 				joinDomains(order) + "）",
 			"disabled": disabled,
@@ -111,23 +112,23 @@ func (s *Server) handleServiceRouting(w http.ResponseWriter, r *http.Request) {
 type proxyDomainGroup struct {
 	domain   string
 	prefixes []string
-	first    serviceProxyRule
+	first    svcproxy.Rule
 }
 
-// groupProxyDomains 按域聚合 allProxyRules()，保持域首次出现的顺序。
+// groupProxyDomains 按域聚合 svcproxy.AllRules()，保持域首次出现的顺序。
 // service-routing 与 service-traffic 两个只读端点共用：「域→对外前缀」的派生
 // 逻辑只此一份，新增域不会在某个端点里静默缺席。
 func groupProxyDomains() []proxyDomainGroup {
 	order := []string{}
 	byDomain := map[string]*proxyDomainGroup{}
-	for _, r := range allProxyRules() {
-		g := byDomain[r.domain]
+	for _, r := range svcproxy.AllRules() {
+		g := byDomain[r.Domain]
 		if g == nil {
-			g = &proxyDomainGroup{domain: r.domain, first: r}
-			byDomain[r.domain] = g
-			order = append(order, r.domain)
+			g = &proxyDomainGroup{domain: r.Domain, first: r}
+			byDomain[r.Domain] = g
+			order = append(order, r.Domain)
 		}
-		g.prefixes = append(g.prefixes, r.publicPrefix)
+		g.prefixes = append(g.prefixes, r.PublicPrefix)
 	}
 	out := make([]proxyDomainGroup, 0, len(order))
 	for _, d := range order {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/svcproxy"
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/otelx"
 )
@@ -91,54 +92,54 @@ func (s *Server) Start() error {
 	//     为一个域的地址配置错误拖停全站，可用性代价远大于收益。
 	//  2. 路由开关 OPSMESH_SERVICE_PROXY：被停用的域**不注册**代理路由，
 	//     请求自然回落到单体同名 handler——这才是可逆的切流。
-	disabled, switchErr := disabledProxyDomains()
+	disabled, switchErr := svcproxy.DisabledDomains()
 	if switchErr != nil {
 		// 开关写错不等于该切换：按全部启用继续启动，但必须留下醒目痕迹。
 		logx.Warn(context.Background(), "微服务转发开关取值非法，已忽略并按「全部转发」处理",
-			"env", serviceProxyEnvKey, "err", switchErr)
+			"env", svcproxy.EnvKey, "err", switchErr)
 		disabled = map[string]bool{}
 	} else if len(disabled) > 0 {
 		logx.Info(context.Background(), "微服务转发已按开关停用部分域（回落到单体本地实现）",
-			"env", serviceProxyEnvKey, "disabled", fmt.Sprint(disabled))
+			"env", svcproxy.EnvKey, "disabled", fmt.Sprint(disabled))
 	}
-	if problems := validateServiceProxyTargets(s.httpPort, s.grpcPort, s.metricsPort); len(problems) > 0 {
+	if problems := svcproxy.ValidateTargets(s.httpPort, s.grpcPort, s.metricsPort); len(problems) > 0 {
 		for _, p := range problems {
 			logx.Error(context.Background(), "微服务转发配置有误，该域将被 503 隔离", nil, "detail", p)
 		}
 	}
-	for i := range serviceProxyRules {
-		if serviceProxyRules[i].publicPrefix == "" {
+	for i := range svcproxy.Rules {
+		if svcproxy.Rules[i].PublicPrefix == "" {
 			continue
 		}
-		if disabled[serviceProxyRules[i].domain] {
+		if disabled[svcproxy.Rules[i].Domain] {
 			continue
 		}
-		mux.HandleFunc(serviceProxyRules[i].publicPrefix, s.handleServiceProxy)
-		mux.HandleFunc(serviceProxyRules[i].publicPrefix+"/", s.handleServiceProxy)
+		mux.HandleFunc(svcproxy.Rules[i].PublicPrefix, s.handleServiceProxy)
+		mux.HandleFunc(svcproxy.Rules[i].PublicPrefix+"/", s.handleServiceProxy)
 	}
 	// device 域（TD-60 D1/D3 后 device-svc REST 网关接线）：/api/v1/device-svc/{devices,
-	// agents,cmdb,discovery} 转发（规则见 service_proxy.go deviceProxyExtras；代理层
+	// agents,cmdb,discovery} 转发（规则见 service_proxy.go svcproxy.DeviceExtras；代理层
 	// 鉴权后注入 X-Tenant-ID 头——device-svc 网关消费租户上下文，与五域不同）。
 	// 前缀带 device-svc 域名：controlplane 本地已有 /api/v1/devices 等同名 handler
 	//（server_lifecycle.go:25-34），同 mux 重复注册会 panic；双轨期新旧并存。
-	for i := range deviceProxyExtras {
-		if disabled[deviceProxyExtras[i].domain] {
+	for i := range svcproxy.DeviceExtras {
+		if disabled[svcproxy.DeviceExtras[i].Domain] {
 			continue
 		}
-		mux.HandleFunc(deviceProxyExtras[i].publicPrefix, s.handleServiceProxy)
-		mux.HandleFunc(deviceProxyExtras[i].publicPrefix+"/", s.handleServiceProxy)
+		mux.HandleFunc(svcproxy.DeviceExtras[i].PublicPrefix, s.handleServiceProxy)
+		mux.HandleFunc(svcproxy.DeviceExtras[i].PublicPrefix+"/", s.handleServiceProxy)
 	}
 	// task 域（TD-60 阶段 2「三域接通」：task-svc REST 网关接线）：/api/v1/task-svc/*
-	// 转发（规则见 service_proxy.go taskProxyExtras；权限按方法+路径分级对齐单体
+	// 转发（规则见 service_proxy.go svcproxy.TaskExtras；权限按方法+路径分级对齐单体
 	// 本地要求，代理层鉴权后注入 X-Tenant-ID 头——task-svc 网关消费租户上下文）。
 	// 前缀带 task-svc 域名：controlplane 本地已有 /api/v1/tasks、/api/v1/schedules、
 	// /api/v1/approval/* 等同名 handler，同 mux 重复注册会 panic；双轨期新旧并存。
-	for i := range taskProxyExtras {
-		if disabled[taskProxyExtras[i].domain] {
+	for i := range svcproxy.TaskExtras {
+		if disabled[svcproxy.TaskExtras[i].Domain] {
 			continue
 		}
-		mux.HandleFunc(taskProxyExtras[i].publicPrefix, s.handleServiceProxy)
-		mux.HandleFunc(taskProxyExtras[i].publicPrefix+"/", s.handleServiceProxy)
+		mux.HandleFunc(svcproxy.TaskExtras[i].PublicPrefix, s.handleServiceProxy)
+		mux.HandleFunc(svcproxy.TaskExtras[i].PublicPrefix+"/", s.handleServiceProxy)
 	}
 	// ChatOps Web 命令台（bot_bridge.go）：/opsmesh status|devices|alerts|ack|metrics|help，
 	// 历史进程级内存。bot-svc（IM webhook 入口）已于 2026-09-29 删除，本命令台为 bot 域唯一实现。
@@ -439,7 +440,7 @@ func (s *Server) Start() error {
 	}
 	// 优雅退出清理：无论正常收信号还是 server 异常返回，都停止 loginGuard 的 sweep goroutine，
 	// 避免 goroutine 泄漏。startRefreshSweep 的 goroutine 由 ctx 取消自动退出（defer stop() 取消 ctx）。
-	defer s.loginGuard.stopSweep()
+	defer s.loginGuard.StopSweep()
 	// OTel 优雅关闭：flush 残留 span 到导出器（OTLP gRPC batch / stdout）。
 	// 用独立超时（5s）避免退出窗口耗尽在 OTel flush 上；未启用时为 no-op。
 	defer s.shutdownOTel()

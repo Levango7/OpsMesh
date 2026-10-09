@@ -151,3 +151,42 @@ controlplane 的结构不同，且有两条硬约束：
 3. **测试的硬边界是「是否引用父包全局/未导出」**：引用即留父包（`TestInitPluginHostDisabledIsNoOp` 因 `PluginManager()` 回迁），
    这是 §3 结论「测试与实现同包」的具体化。
 
+---
+
+## 8. 批 2 首批执行记录（2026-10-09，已落地：三个切片 —— loginguard / pluginhost 宿主归位 / svcproxy 规则引擎）
+
+### 8.1 三个切片的实际面
+
+| 切片 | 迁出内容 | 新包 | 父包保留 | 零改动手法 |
+|---|---|---|---|---|
+| A `loginguard` | `loginGuard` 类型 + 5 个限流/锁定常量 + `rateRec` + 7 个方法 + 2 个 key 助手（原 `auth_guard.go` + `auth.go` 的常量段） | `loginguard`（245 行含测试） | `clientIP`/`deviceFingerprint`（通用 HTTP 身份提取，23/7 处复用）+ **类型别名 `loginGuard` + `newLoginGuard` 薄包装** | **43 处** `loginGuard: newLoginGuard(ss)` 构造点零改动 |
+| B `pluginhost` 宿主归位 | 全局 `pluginMgr` + `SetPluginManager`/`PluginManager`（原 `plugin_host.go`） | `pluginhost/host.go` | `firePluginHook`（Server 方法）+ 两个薄包装 | **46 处**调用点零改动；**此前因引用父包全局而回迁的 `TestInitPluginHostDisabledIsNoOp` 本次迁入本包**（边界由「全局归位」解除——这是批 1 §7.5 第 3 条的正向验证） |
+| C `svcproxy` | `Rule`/`PermRule` 类型 + 三张规则表（`Rules`/`DeviceExtras`/`TaskExtras`）+ 匹配/权限解析/路径改写/自环检测/启动校验 15 个函数（原 `service_proxy.go` 引擎段 ~570 行） | `svcproxy`（559 行） | `handleServiceProxy`（Server handler）+ `writeProxyErrorJSON`/`jsonString` | 规则**字段导出**（Domain/PublicPrefix/EnvKey/Method/PermRules…）——表本身是被断言的接口；65 处调用点限定化 + 11 处字段访问改名 |
+
+### 8.2 数据（可复核）
+
+- 父包顶层 `.go` 仍 **175**（prod 83 / test 92）——三个切片都选择保留门面文件（别名/包装/handler），故**文件数不变**；
+  但父包 **prod 行 25,221 → 24,519（-702）**；`auth_guard.go` 169→55、`service_proxy.go` 702→141、`plugin_host.go` 83→79、`auth.go` 195→198（清常量段）。
+- 新增 `loginguard`（2 文件 245 行）与 `svcproxy`（1 文件 559 行）；`pluginhost` 增 `host.go`。
+- **划出清单**：`auth_perms.go`（原 §3.2 列项）实测只有 1 个 handler、无纯逻辑可搬，**不搬**（搬了只剩空壳）；
+  `service_proxy_test.go` / `service_proxy_routing_test.go` / `service_proxy_traffic_test.go` 均为 **Server 级套件**（49/6/7 处 newTestServer+httptest），留在父包并限定引用 `svcproxy.X`——由此 `TestIsLoopbackHost`/`TestProxySelfLoopTarget`/`TestRewriteProxyPath` 三个纯单元断言也留在父包（拆分会把同一文件切碎，收益有限；如需与包同住可后续再迁）。
+
+### 8.3 验证口径与结果（全绿）
+
+- 全仓 `go build ./...` 绿；`go vet ./internal/controlplane/...` 零告警；
+- `go test ./internal/controlplane/...`：**10 个包全 ok / 0 FAIL**（父包 62.5s + loginguard 0.8s + svcproxy 由父包套件覆盖 + …）；
+- `golangci-lint run ./internal/controlplane/...` **0 issues**、`gofmt -l` 净；
+- `-race ./internal/controlplane/...`：**零 DATA RACE**；
+- 部署资产门禁：PASS=76 FAIL=0 SKIP=1（未改部署面）。
+
+### 8.4 本批教训（含一次自动化失误的诚实记录）
+
+1. **「字段访问」与「方法调用」在编译器报错里是两种形态**：`has no field or method X, but does have field Y` 与 `... but does have method Y`。
+   本轮用一个自动循环批量修字段访问时，只按 `field` 解析后半句，**把方法报错也当成字段**，产生了 `.method RewriteProxyPath(...)` 这类垃圾串（污染 1 个测试文件、9 行）。
+   已即时发现并清理（正则 `\.(?:method|field) ([A-Za-z]+)` → `.`），修正后的解析改为「取 `)` 前最后一个词」——两种形态通吃。**教训：批量改名的解析器必须对报错形态做穷举，且每轮后要 grep 校验产物形态（本轮正是靠 `expected ';', found RewriteProxyPath` 立刻暴露）**。
+2. **门面文件 = 文件数不变、行数下降**：批 1 是整件平移（文件数 182→175）；批 2 三个切片都留了门面（handler / 别名 / 包装），
+   可复算的收益体现在**行数**（-702）与**耦合面**（规则引擎与 handler 分离、防爆破器与 HTTP 助手分离），不是文件数。
+   后续批次若以「文件数」为 KPI 会误导——判据应按「父包行数 + 跨域耦合」两条看。
+3. **全局持有器归位能解除测试放置的硬边界**：批 1 因 `PluginManager()` 在父包而被迫回迁的用例，本批随全局迁入 pluginhost 后自然归位——
+   「测试不跨包 import 父包」的约束可以通过「把被引用的全局一起搬」化解，而不是永远留在父包。
+

@@ -4,6 +4,17 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-09（TD-87 批 2 首批：loginguard / pluginhost 宿主归位 / svcproxy 规则引擎三切片）
+
+- **重构｜父包三个切片迁出**（父包 prod 行 25,221 → 24,519）：
+  ① **`loginguard`**（新包，245 行含测试）：防爆破/限流器整体迁出（`Guard` 类型 + 5 个限流常量 + `rateRec` + 7 个方法 + 2 个 key 助手），父包留 `clientIP`/`deviceFingerprint`（通用 HTTP 身份提取，23/7 处复用）+ 类型别名与 `newLoginGuard` 薄包装 ⇒ **43 处 `loginGuard: newLoginGuard(ss)` 构造点零改动**；触及内部态（ips/mu/rateRec）的 4 个用例随类型迁入。
+  ② **`pluginhost` 宿主归位**：全局 `pluginMgr` 与 `SetPluginManager`/`PluginManager` 迁入 `pluginhost/host.go`，父包留 `firePluginHook`（Server 方法）+ 两个薄包装 ⇒ **46 处调用点零改动**；**批 1 因引用父包全局而被迫回迁的 `TestInitPluginHostDisabledIsNoOp` 本次归位**（边界由「全局一起搬」解除）。
+  ③ **`svcproxy`**（新包，559 行）：微服务聚合代理的规则引擎整体迁出——`Rule`/`PermRule` 类型、三张规则表（Rules/DeviceExtras/TaskExtras）、匹配/权限解析/路径改写/自环检测/启动校验共 15 个函数；父包 `service_proxy.go` 702 → 141 行只留 handler 与响应助手。规则**字段导出**（Domain/PublicPrefix/EnvKey/Method/PermRules…）——路由表本身就是被断言的接口；65 处调用点限定化 + 11 处字段访问改名。
+- **划出与保留的判据**：`auth_perms.go`（原批 2 清单项）实测只有 1 个 handler、无纯逻辑可搬 ⇒ **不搬**（搬了只剩空壳）。三个 `service_proxy*_test.go` 是 **Server 级套件**（49/6/7 处 newTestServer+httptest）⇒ 留下并限定引用；由此三个纯单元断言（`TestIsLoopbackHost`/`TestProxySelfLoopTarget`/`TestRewriteProxyPath`）也留父包，理由（拆分会切碎同文件、收益有限）写进计划 §8.2。
+- **诚实记录一次自动化失误**：用自动循环批量修「字段访问」时，只解析了 `but does have field X` 形态，把 `but does have method Y` 的报错也当字段，生成了 `.method RewriteProxyPath(...)` 这类垃圾串（污染 1 个测试文件 9 行）。由编译器立刻暴露（`expected ';', found RewriteProxyPath`），已用 `\.(?:method|field) X` → `.X` 清理，并把解析改为「取 `)` 前最后一个词」两种形态通吃。教训写进计划 §8.4 第 1 条：**批量改名的解析器必须穷举报错形态，每轮后要 grep 校验产物形态**。
+- **判据修正（§8.4 第 2 条）**：批 1 是整件平移（文件数 182→175）；批 2 三切片都留门面 ⇒ **文件数不变、行数下降**。后续批次若以「文件数」当 KPI 会误导，判据应按「父包行数 + 跨域耦合」两条看。
+- **验证**：全仓 `go build ./...` 绿；`go vet ./internal/controlplane/...` 零告警；`go test ./internal/controlplane/...` **10 个包 0 FAIL**；`golangci-lint` **0 issues**、`gofmt -l` 净；`-race` **零 DATA RACE**；部署门禁 PASS=76 FAIL=0 SKIP=1。
+
 ## [Unreleased] — 2026-10-09（TD-87 批 1：controlplane 四个新子包 — presets / pluginhost / credentials / metricscache）
 
 - **重构｜controlplane 低耦合件平迁（TD-87 批 1）**：7 件与 `Server` 方法集无关的文件迁入四个新子包——`presets`（模板格式类型 + 三张预置表 + 参数校验/脚本渲染，1307 行）、`pluginhost`（插件宿主装配与清单解析，403）、`credentials`（口令哈希 + 首启凭据加固，406）、`metricscache`（/metrics 应用级计数短 TTL 缓存，184）。父包顶层 `.go` **182 → 175**（prod 89 → 83、test 93 → 92），父包 prod 行 **27,056 → 25,221**。

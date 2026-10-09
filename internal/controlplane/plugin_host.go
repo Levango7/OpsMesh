@@ -28,30 +28,26 @@
 //
 // 本文件另一处未决也已闭合：SetPluginManager 此前只有测试调用（即"能力在源码里成立、
 // 在交付物里不存在"），现由 NewServer 在启动路径上调用（server.go 的插件宿主接线段）。
+//
+// TD-87 批 2：全局持有器与访问器实现已迁入 internal/controlplane/pluginhost（host.go），
+// 本文件保留 Server 方法 firePluginHook 与两个薄包装。
 package controlplane
 
 import (
 	"context"
 	"log"
 
+	"github.com/Levango7/OpsMesh/internal/controlplane/pluginhost"
 	"github.com/Levango7/OpsMesh/internal/plugin"
 )
 
-// pluginMgr 是控制面的插件管理器（进程级唯一）。
-//
-// nil 是合法状态：表示本次进程没有插件宿主（例如测试里未注入）。
-// firePluginHook 对 nil 管理器返回 nil，保证接线点无需到处做 nil 检查。
-var pluginMgr *plugin.Manager
-
-// SetPluginManager 注入插件管理器（启动期调用一次，之后只读）。
-//
-// 传 nil 表示不启用插件宿主。测试可用它注入自带钩子的管理器，
-// 从而在不改业务代码的前提下验证扩展点确实被触发。
-func SetPluginManager(m *plugin.Manager) { pluginMgr = m }
+// SetPluginManager / PluginManager 是 pluginhost 包同名访问器的薄包装（TD-87 批 2）：
+// 全局持有器已迁至 internal/controlplane/pluginhost/host.go，父包保留这对门面，
+// 46 处调用点（server.go、plugin_hook_gate_test.go、plugin_remote_test.go 等）零改动。
+func SetPluginManager(m *plugin.Manager) { pluginhost.SetPluginManager(m) }
 
 // PluginManager 返回当前插件管理器（nil 表示未启用）。
-// 对外暴露是为了让 grpc 子包等其它接线点复用同一个管理器。
-func PluginManager() *plugin.Manager { return pluginMgr }
+func PluginManager() *plugin.Manager { return pluginhost.PluginManager() }
 
 // firePluginHook 触发一个扩展点钩子。
 //
@@ -64,7 +60,7 @@ func PluginManager() *plugin.Manager { return pluginMgr }
 // 刻意不吞掉 error：静默吞掉会让"插件说不行"变成"系统说行"，
 // 这正是准入类扩展失效后最难排查的形态。
 func (s *Server) firePluginHook(ctx context.Context, h plugin.Hook, ev plugin.Event) error {
-	m := pluginMgr
+	m := PluginManager()
 	if m == nil {
 		return nil
 	}

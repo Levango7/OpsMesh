@@ -35,7 +35,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -62,30 +61,6 @@ const changePasswordTokenExpiry = 5 * time.Minute
 // apikeyPrefix API Key 明文前缀：platform.GenerateAPIKey 生成的 "om_" + 32 位随机 hex
 // （共 35 字符）。前缀用于 requireProd 分发识别，避免 API Key 被误送 JWT 验签。
 const apikeyPrefix = "om_"
-
-// ============================================================================
-// loginGuard 登录/注册防爆破 + 限流。
-// ============================================================================
-
-const (
-	loginRateBurst  = 5                // 令牌桶容量（瞬时允许的最大尝试数）；收紧自 10，强化撞库防护
-	loginRateRefill = 1.0 / 6.0        // 令牌补充速率（每秒），约每 6s 1 个，≈10/min；收紧自 1/3（≈20/min）
-	loginMaxFails   = 5                // 单账号允许的连续失败次数
-	loginFailWindow = 15 * time.Minute // 失败计数滑动窗口
-	loginLockDur    = 15 * time.Minute // 账号锁定时长
-)
-
-type loginGuard struct {
-	mu    sync.Mutex
-	ips   map[string]*rateRec // 客户端 IP -> 限流令牌桶（进程内，多副本各自限流）
-	done  chan struct{}       // stopSweep 关闭此 chan 通知 sweep goroutine 退出
-	store store.SessionStore  // 失败计数 + 账号锁定经 SessionStore 共享
-}
-
-type rateRec struct {
-	tokens float64
-	last   time.Time
-}
 
 // authResponse 登录/注册成功响应体。
 // MustChangePassword（安全债）：当用户首登须改密时为 true，前端据此弹出改密对话框。

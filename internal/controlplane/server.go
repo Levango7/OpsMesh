@@ -495,7 +495,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// 失败计数 + 账号锁定经 SessionStore 共享；IP 令牌桶限流保留进程内。
 	s.loginGuard = newLoginGuard(ss)
 	// 启动守卫回收，防止 ips map 在长运行中无界增长（内存泄漏）。
-	s.loginGuard.startSweep(10 * time.Minute)
+	s.loginGuard.StartSweep(10 * time.Minute)
 	// startRefreshSweep 移至 Start() 中调用（需要 ctx 以支持优雅退出，避免 goroutine 泄漏）。
 	// Phase 3 K8s 多集群连接管理器：构造空管理器，用户创建集群时 AddCluster。
 	s.clusterMgr = k8s.NewClusterManager()

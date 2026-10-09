@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Levango7/OpsMesh/internal/controlplane/svcproxy"
 	"github.com/Levango7/OpsMesh/internal/metrics"
 )
 
@@ -60,7 +61,7 @@ func TestAdminServiceTrafficReportsPerDomain(t *testing.T) {
 		t.Errorf("device requests = %d, want 1", got)
 	}
 	// 域集合 = 路由表全部域（当前 7 个：gpu/runbook/incident/autoscaler/portal/device/task）。
-	for _, d := range proxyDomainNames() {
+	for _, d := range svcproxy.DomainNames() {
 		b, ok := byDomain[d]
 		if !ok {
 			t.Fatalf("结果缺域 %q（域必须取自转发路由表）: %+v", d, out.Domains)
@@ -118,20 +119,20 @@ func TestGroupProxyDomainsCoversRoutingTable(t *testing.T) {
 	for _, g := range groups {
 		seen[g.domain] = g.prefixes
 	}
-	rules := allProxyRules()
+	rules := svcproxy.AllRules()
 	if len(seen) == 0 || len(rules) < len(seen) {
 		t.Fatalf("聚合结果异常: groups=%d rules=%d", len(seen), len(rules))
 	}
 	for _, r := range rules {
 		found := false
-		for _, p := range seen[r.domain] {
-			if p == r.publicPrefix {
+		for _, p := range seen[r.Domain] {
+			if p == r.PublicPrefix {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Errorf("域 %q 缺少前缀 %s（聚合漏规则）: %v", r.domain, r.publicPrefix, seen[r.domain])
+			t.Errorf("域 %q 缺少前缀 %s（聚合漏规则）: %v", r.Domain, r.PublicPrefix, seen[r.Domain])
 		}
 	}
 }

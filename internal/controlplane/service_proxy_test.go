@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/controlplane/svcproxy"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
 
@@ -59,19 +60,19 @@ func TestRewriteProxyPath(t *testing.T) {
 		{"/api/v1/auth-svc", "/api/v1/auth-svc/login", "/api/v1/auth/login"},
 		{"/api/v1/auth-svc", "/api/v1/auth-svc/me", "/api/v1/auth/me"},
 	}
-	for i := range serviceProxyRules {
-		r := &serviceProxyRules[i]
+	for i := range svcproxy.Rules {
+		r := &svcproxy.Rules[i]
 		found := false
 		for _, c := range cases {
-			if c.publicPath == r.publicPrefix {
+			if c.publicPath == r.PublicPrefix {
 				found = true
-				if got := r.rewriteProxyPath(c.requestPath); got != c.wantPath {
-					t.Errorf("rule %s: rewrite(%s) = %s, want %s", r.publicPrefix, c.requestPath, got, c.wantPath)
+				if got := r.RewriteProxyPath(c.requestPath); got != c.wantPath {
+					t.Errorf("rule %s: rewrite(%s) = %s, want %s", r.PublicPrefix, c.requestPath, got, c.wantPath)
 				}
 			}
 		}
 		if !found {
-			t.Errorf("规则 %s 未被用例覆盖（请补改写用例）", r.publicPrefix)
+			t.Errorf("规则 %s 未被用例覆盖（请补改写用例）", r.PublicPrefix)
 		}
 	}
 }
@@ -309,21 +310,21 @@ func TestServiceProxyPermSeeded(t *testing.T) {
 // TestServiceProxyRulesEnvOverrides envKey 覆盖默认地址的解析正确性。
 func TestServiceProxyRulesEnvOverrides(t *testing.T) {
 	t.Setenv("RUNBOOK_SVC_URL", "http://10.0.0.5:9000")
-	r := lookupServiceProxyRule("/api/v1/runbooks/rb-1")
+	r := svcproxy.Lookup("/api/v1/runbooks/rb-1")
 	if r == nil {
 		t.Fatal("runbooks 规则应命中")
 	}
-	u := r.upstreamBase()
+	u := r.UpstreamBase()
 	if u == nil || u.Host != "10.0.0.5:9000" {
 		t.Fatalf("env 覆盖未生效: %v", u)
 	}
 	// 未覆盖的走默认。
 	_ = os.Unsetenv("INCIDENT_SVC_URL")
-	r2 := lookupServiceProxyRule("/api/v1/incidents/inc-1")
+	r2 := svcproxy.Lookup("/api/v1/incidents/inc-1")
 	if r2 == nil {
 		t.Fatal("incidents 规则应命中")
 	}
-	u2 := r2.upstreamBase()
+	u2 := r2.UpstreamBase()
 	if u2 == nil || u2.Port() != "8082" {
 		t.Fatalf("默认地址应 8082: %v", u2)
 	}
@@ -352,19 +353,19 @@ func TestDeviceProxyRuleRewrite(t *testing.T) {
 		{"/api/v1/device-svc/discovery", "/api/v1/device-svc/discovery/jobs", "/api/v1/discovery/jobs"},
 		{"/api/v1/device-svc/discovery", "/api/v1/device-svc/discovery/devices", "/api/v1/discovery/devices"},
 	}
-	for i := range deviceProxyExtras {
-		r := &deviceProxyExtras[i]
+	for i := range svcproxy.DeviceExtras {
+		r := &svcproxy.DeviceExtras[i]
 		found := false
 		for _, c := range cases {
-			if c.publicPath == r.publicPrefix {
+			if c.publicPath == r.PublicPrefix {
 				found = true
-				if got := r.rewriteProxyPath(c.requestPath); got != c.wantPath {
-					t.Errorf("rule %s: rewrite(%s) = %s, want %s", r.publicPrefix, c.requestPath, got, c.wantPath)
+				if got := r.RewriteProxyPath(c.requestPath); got != c.wantPath {
+					t.Errorf("rule %s: rewrite(%s) = %s, want %s", r.PublicPrefix, c.requestPath, got, c.wantPath)
 				}
 			}
 		}
 		if !found {
-			t.Errorf("device 规则 %s 未被用例覆盖", r.publicPrefix)
+			t.Errorf("device 规则 %s 未被用例覆盖", r.PublicPrefix)
 		}
 	}
 }
@@ -379,24 +380,24 @@ func TestDeviceProxyLookup(t *testing.T) {
 		"/api/v1/device-svc/cmdb/cis",
 		"/api/v1/device-svc/discovery/jobs",
 	} {
-		r := lookupServiceProxyRule(p)
+		r := svcproxy.Lookup(p)
 		if r == nil {
 			t.Fatalf("device 路径 %s 应命中规则", p)
 		}
-		if r.envKey != "DEVICE_SVC_URL" {
-			t.Errorf("device 路径 %s 命中的 envKey=%s, want DEVICE_SVC_URL", p, r.envKey)
+		if r.EnvKey != "DEVICE_SVC_URL" {
+			t.Errorf("device 路径 %s 命中的 envKey=%s, want DEVICE_SVC_URL", p, r.EnvKey)
 		}
 	}
 	// 五域不受影响（回归）。
-	if r := lookupServiceProxyRule("/api/v1/gpu/nodes"); r == nil || r.publicPrefix != "/api/v1/gpu" {
+	if r := svcproxy.Lookup("/api/v1/gpu/nodes"); r == nil || r.PublicPrefix != "/api/v1/gpu" {
 		t.Fatalf("gpu 规则回归失败: %v", r)
 	}
 	// 未知路径不命中。
-	if lookupServiceProxyRule("/api/v1/no-such-domain") != nil {
+	if svcproxy.Lookup("/api/v1/no-such-domain") != nil {
 		t.Fatal("未知路径不应命中")
 	}
 	// 旧 device 路径（controlplane 本地 handler 域）不命中代理——双轨并存边界。
-	if lookupServiceProxyRule("/api/v1/devices") != nil {
+	if svcproxy.Lookup("/api/v1/devices") != nil {
 		t.Fatal("/api/v1/devices 是 controlplane 本地 handler 域，不应命中代理（会 panic 重复注册）")
 	}
 }
@@ -480,11 +481,11 @@ func TestTaskProxyRuleRewrite(t *testing.T) {
 		{"/api/v1/task-svc/approval/flows", "/api/v1/approval/flows"},
 		{"/api/v1/task-svc/approval/requests/r-1/approve", "/api/v1/approval/requests/r-1/approve"},
 	}
-	for i := range taskProxyExtras {
-		r := &taskProxyExtras[i]
+	for i := range svcproxy.TaskExtras {
+		r := &svcproxy.TaskExtras[i]
 		for _, c := range cases {
-			if got := r.rewriteProxyPath(c.requestPath); got != c.wantPath {
-				t.Errorf("rule %s: rewrite(%s) = %s, want %s", r.publicPrefix, c.requestPath, got, c.wantPath)
+			if got := r.RewriteProxyPath(c.requestPath); got != c.wantPath {
+				t.Errorf("rule %s: rewrite(%s) = %s, want %s", r.PublicPrefix, c.requestPath, got, c.wantPath)
 			}
 		}
 	}
@@ -498,25 +499,25 @@ func TestTaskProxyLookup(t *testing.T) {
 		"/api/v1/task-svc/schedules",
 		"/api/v1/task-svc/approval/requests",
 	} {
-		r := lookupServiceProxyRule(p)
+		r := svcproxy.Lookup(p)
 		if r == nil {
 			t.Fatalf("task 路径 %s 应命中规则", p)
 		}
-		if r.envKey != "TASK_SVC_URL" {
-			t.Errorf("task 路径 %s 命中的 envKey=%s, want TASK_SVC_URL", p, r.envKey)
+		if r.EnvKey != "TASK_SVC_URL" {
+			t.Errorf("task 路径 %s 命中的 envKey=%s, want TASK_SVC_URL", p, r.EnvKey)
 		}
 	}
 	// 单体本地路径（tasks/schedules/approval）不命中代理——同 mux 重复注册会 panic。
 	for _, p := range []string{"/api/v1/tasks", "/api/v1/tasks/t-1", "/api/v1/schedules", "/api/v1/approval/flows"} {
-		if lookupServiceProxyRule(p) != nil {
+		if svcproxy.Lookup(p) != nil {
 			t.Fatalf("%s 是 controlplane 本地 handler 域，不应命中代理", p)
 		}
 	}
 	// device 与五域不受影响（回归）。
-	if r := lookupServiceProxyRule("/api/v1/device-svc/devices"); r == nil || r.envKey != "DEVICE_SVC_URL" {
+	if r := svcproxy.Lookup("/api/v1/device-svc/devices"); r == nil || r.EnvKey != "DEVICE_SVC_URL" {
 		t.Fatalf("device 规则回归失败: %v", r)
 	}
-	if r := lookupServiceProxyRule("/api/v1/gpu/nodes"); r == nil || r.publicPrefix != "/api/v1/gpu" {
+	if r := svcproxy.Lookup("/api/v1/gpu/nodes"); r == nil || r.PublicPrefix != "/api/v1/gpu" {
 		t.Fatalf("gpu 规则回归失败: %v", r)
 	}
 }
@@ -586,12 +587,12 @@ func TestProxyPermResolution(t *testing.T) {
 		{http.MethodPost, "/api/v1/portal/approvals/ap-1/approve", "portal:write"},
 	}
 	for _, c := range cases {
-		r := lookupServiceProxyRule(c.path)
+		r := svcproxy.Lookup(c.path)
 		if r == nil {
 			t.Errorf("%s %s 未命中规则", c.method, c.path)
 			continue
 		}
-		if got := r.resolvePerm(c.method, c.path); got != c.wantPerm {
+		if got := r.ResolvePerm(c.method, c.path); got != c.wantPerm {
 			t.Errorf("%s %s resolvePerm = %s, want %s", c.method, c.path, got, c.wantPerm)
 		}
 	}

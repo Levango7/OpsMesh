@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Levango7/OpsMesh/internal/controlplane/svcproxy"
 )
 
 // mustAtoi 解析端口字符串，失败即测试失败。
@@ -31,8 +33,8 @@ func mustAtoi(t *testing.T, s string) int {
 // disabledProxyDomainsFrom 在给定开关取值下解析停用域集合。
 func disabledProxyDomainsFrom(t *testing.T, raw string) (map[string]bool, error) {
 	t.Helper()
-	t.Setenv(serviceProxyEnvKey, raw)
-	return disabledProxyDomains()
+	t.Setenv(svcproxy.EnvKey, raw)
+	return svcproxy.DisabledDomains()
 }
 
 // adminReq 构造一个带 admin 鉴权头的请求。
@@ -76,8 +78,8 @@ func TestIsLoopbackHost(t *testing.T) {
 		{"", false},
 	}
 	for _, tc := range cases {
-		if got := isLoopbackHost(tc.host); got != tc.want {
-			t.Errorf("isLoopbackHost(%q) = %v，期望 %v", tc.host, got, tc.want)
+		if got := svcproxy.IsLoopbackHost(tc.host); got != tc.want {
+			t.Errorf("svcproxy.IsLoopbackHost(%q) = %v，期望 %v", tc.host, got, tc.want)
 		}
 	}
 }
@@ -107,21 +109,21 @@ func TestProxySelfLoopTarget(t *testing.T) {
 			if err != nil {
 				t.Fatalf("url.Parse(%q) 失败: %v", tc.raw, err)
 			}
-			_, self := proxySelfLoopTarget(u, tc.httpPort, tc.grpcPort, tc.metrics)
+			_, self := svcproxy.SelfLoopTarget(u, tc.httpPort, tc.grpcPort, tc.metrics)
 			if self != tc.wantSelf {
-				t.Errorf("proxySelfLoopTarget(%q) 自环=%v，期望 %v", tc.raw, self, tc.wantSelf)
+				t.Errorf("svcproxy.SelfLoopTarget(%q) 自环=%v，期望 %v", tc.raw, self, tc.wantSelf)
 			}
 		})
 	}
 }
 
 // TestProxySelfLoopTargetMalformedPort 覆盖 url.Parse 拦不住的畸形端口：
-// upstreamBase 走的是 url.Parse，非数字端口在那里就被拒了，但 proxySelfLoopTarget
+// upstreamBase 走的是 url.Parse，非数字端口在那里就被拒了，但 svcproxy.SelfLoopTarget
 // 仍必须自己站得住（防御式解析不得依赖调用方已过滤）。
 func TestProxySelfLoopTargetMalformedPort(t *testing.T) {
 	for _, host := range []string{"127.0.0.1:abc", "127.0.0.1:", "127.0.0.1:8080x", "127.0.0.1:-1"} {
 		u := &url.URL{Scheme: "http", Host: host}
-		if p, self := proxySelfLoopTarget(u, 8080, 9090, 9091); self {
+		if p, self := svcproxy.SelfLoopTarget(u, 8080, 9090, 9091); self {
 			t.Errorf("host=%q 被误判为自环（端口 %d）", host, p)
 		}
 	}
@@ -163,7 +165,7 @@ func TestServiceProxySelfLoopRejected(t *testing.T) {
 func TestValidateServiceProxyTargetsDetectsShippedDefaults(t *testing.T) {
 	clearBackendEnv(t)
 
-	joined := strings.Join(validateServiceProxyTargets(8080, 9090, 9091), "\n")
+	joined := strings.Join(svcproxy.ValidateTargets(8080, 9090, 9091), "\n")
 	for _, want := range []string{`"portal"`, `"autoscaler"`} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("自检未点名域 %s；实际报出：\n%s", want, joined)
@@ -173,7 +175,7 @@ func TestValidateServiceProxyTargetsDetectsShippedDefaults(t *testing.T) {
 	// 设了正确地址后不应再报——这是「修好之后」的验收条件。
 	t.Setenv("PORTAL_SVC_URL", "http://portal-svc:8109")
 	t.Setenv("AUTOSCALER_SVC_URL", "http://autoscaler-svc:8080")
-	after := strings.Join(validateServiceProxyTargets(8080, 9090, 9091), "\n")
+	after := strings.Join(svcproxy.ValidateTargets(8080, 9090, 9091), "\n")
 	if strings.Contains(after, `"portal"`) {
 		t.Errorf("已设置正确后端后仍报 portal 自环：%s", after)
 	}
@@ -183,9 +185,9 @@ func TestValidateServiceProxyTargetsDetectsShippedDefaults(t *testing.T) {
 
 // TestParseDisabledProxyDomains 开关的全部取值形态。
 func TestParseDisabledProxyDomains(t *testing.T) {
-	all := len(proxyDomainNames())
+	all := len(svcproxy.DomainNames())
 	if all == 0 {
-		t.Fatal("proxyDomainNames 为空，规则表疑似丢失")
+		t.Fatal("svcproxy.DomainNames 为空，规则表疑似丢失")
 	}
 	cases := []struct {
 		raw         string
@@ -207,7 +209,7 @@ func TestParseDisabledProxyDomains(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run("raw="+tc.raw, func(t *testing.T) {
-			got, err := parseDisabledProxyDomains(tc.raw)
+			got, err := svcproxy.ParseDisabledProxyDomains(tc.raw)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("期望报错，实际 nil，得到 %v", got)
@@ -232,7 +234,7 @@ func TestParseDisabledProxyDomains(t *testing.T) {
 // TestProxySwitchInvalidValueDoesNotCutover 开关写错时**不得**部分切流。
 // 误切生产流量的代价远大于「没切」，因此非法取值必须整体拒绝。
 func TestProxySwitchInvalidValueDoesNotCutover(t *testing.T) {
-	if _, err := parseDisabledProxyDomains("gpu,typo域"); err == nil {
+	if _, err := svcproxy.ParseDisabledProxyDomains("gpu,typo域"); err == nil {
 		t.Fatal("部分非法取值被接受，会造成部分域被静默切走")
 	}
 }
@@ -250,11 +252,11 @@ func TestDisabledProxyDomainIsNotRegistered(t *testing.T) {
 
 	// 复刻 server_lifecycle.go 的注册条件。
 	registered := false
-	for i := range serviceProxyRules {
-		if serviceProxyRules[i].publicPrefix == "" || disabled[serviceProxyRules[i].domain] {
+	for i := range svcproxy.Rules {
+		if svcproxy.Rules[i].PublicPrefix == "" || disabled[svcproxy.Rules[i].Domain] {
 			continue
 		}
-		if serviceProxyRules[i].domain == "gpu" {
+		if svcproxy.Rules[i].Domain == "gpu" {
 			registered = true
 		}
 	}
@@ -270,7 +272,7 @@ func TestServiceRoutingEndpoint(t *testing.T) {
 	s := newServiceProxyTestServer()
 	s.httpPort, s.grpcPort, s.metricsPort = 8080, 9090, 9091
 	clearBackendEnv(t)
-	t.Setenv(serviceProxyEnvKey, "runbook")
+	t.Setenv(svcproxy.EnvKey, "runbook")
 
 	rec := httptest.NewRecorder()
 	s.handleServiceRouting(rec, adminReq(t, s, http.MethodGet, "/api/v1/admin/service-routing"))

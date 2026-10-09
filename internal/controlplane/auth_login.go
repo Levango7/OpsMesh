@@ -46,7 +46,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 限流：按客户端 IP 令牌桶约束注册频率，防滥用/枚举。
-	if !s.loginGuard.allow(clientIP(r, s.cfg.TrustProxy)) {
+	if !s.loginGuard.Allow(clientIP(r, s.cfg.TrustProxy)) {
 		paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
 	}
@@ -146,7 +146,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 限流：按客户端 IP 令牌桶约束登录频率，防撞库与 DoS。
-	if !s.loginGuard.allow(clientIP(r, s.cfg.TrustProxy)) {
+	if !s.loginGuard.Allow(clientIP(r, s.cfg.TrustProxy)) {
 		paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
 	}
@@ -164,19 +164,19 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 防爆破：账号处于锁定态时直接拒绝，避免继续尝试。
-	if s.loginGuard.locked(body.Username) {
+	if s.loginGuard.Locked(body.Username) {
 		paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "account temporarily locked due to too many failed attempts, try later"})
 		return
 	}
 	u := s.store.GetUserByUsername(body.Username)
 	if u == nil {
 		// 用户名不存在也计入限流计数窗口（不暴露账号是否存在，同样走锁定逻辑防枚举）。
-		s.loginGuard.recordFail(body.Username)
+		s.loginGuard.RecordFail(body.Username)
 		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 		return
 	}
 	if !credentials.VerifyPassword(u.PasswordHash, body.Password) {
-		s.loginGuard.recordFail(body.Username)
+		s.loginGuard.RecordFail(body.Username)
 		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 		return
 	}
@@ -196,7 +196,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 登录成功：清除失败计数（解锁）。
-	s.loginGuard.resetFail(body.Username)
+	s.loginGuard.ResetFail(body.Username)
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: tenantOrDefault(u.TenantID), UserID: u.ID, Action: "user_login", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),
@@ -363,7 +363,7 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 	}
 	// 限流：按客户端 IP 令牌桶约束改密频率，防暴力破解旧密码。
 	// 复用 loginGuard 的 IP 令牌桶（与登录/注册同维度），避免单独维护限流器。
-	if !s.loginGuard.allow(clientIP(r, s.cfg.TrustProxy)) {
+	if !s.loginGuard.Allow(clientIP(r, s.cfg.TrustProxy)) {
 		paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
 	}

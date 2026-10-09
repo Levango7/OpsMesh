@@ -262,18 +262,3 @@ func assertPluginMetric(t *testing.T, m *metrics.M, hook, outcome string, want u
 	}
 	t.Fatalf("渲染里没有 %s 这条序列", line)
 }
-
-func TestInitPluginHostDisabledIsNoOp(t *testing.T) {
-	prev := PluginManager()
-	m := metrics.New()
-	mgr, n, err := pluginhost.InitPluginHost(&config.Config{}, m)
-	if err != nil {
-		t.Fatalf("未配置清单时不应报错：%v", err)
-	}
-	if mgr != nil || n != 0 {
-		t.Errorf("未配置清单时必须返回空宿主（mgr=%v n=%d）", mgr, n)
-	}
-	if PluginManager() != prev {
-		t.Error("未配置清单时不得改动全局插件管理器（否则会把测试注入的管理器覆盖掉）")
-	}
-}
