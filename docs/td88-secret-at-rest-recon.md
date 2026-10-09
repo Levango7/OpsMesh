@@ -111,3 +111,49 @@
 - 本文为只读侦察，未运行任何代码、未启动双栈。
 - 「零消费方」结论基于对 `internal/`、`services/`、`cmd/` 下非测试 Go 源码的 grep；若存在经反射/接口断言的动态调用或外部 SQL 直写 `secrets` 表（如运维脚本），不在此结论内。
 - 基准 `ee0f378`；并行会话正在 TD-87 拆包 `internal/controlplane`，`server_secrets.go` 等路径可能迁移，引用以基准提交为准。
+
+---
+
+## 7. §4 三个待核项的核验结果（2026-10-10 补）
+
+### (a) `K8sCluster.Kubeconfig` —— **已双重处置，不是暴露面**
+
+| 层 | 实测 | 证据 |
+|---|---|---|
+| 落库 | AES-256-GCM 加密（nonce 前置 + base64），**不是明文** | `internal/controlplane/k8s_cluster.go:43-65`（`encryptKubeconfig`）、`:67-103`（`decryptKubeconfig`） |
+| 读出 | GET 列表/详情脱敏为 `***` | `k8s_cluster.go:105-107`（`k8sClusterKubeconfigMasked`）、`:109-111`（`maskK8sCluster`） |
+| 密钥 | `cfg.EncryptionKey` base64 解码后须为 **32 字节**，否则启动失败 | `internal/controlplane/server.go:466-476` |
+| 生产强制 | compose `${ENCRYPTION_KEY:?...}` **不设即拒启** | `deploy/docker/docker-compose.prod.yml:461` |
+| 降级路径 | 未配密钥时明文透传，但**非生产才允许**且有告警 | `server.go:477-479`（`logx.Warn` … 仅开发/demo 适用） |
+
+⇒ 从 §4 的「待核」列表移除。遗留弱点与 config-svc 同源：密钥与库同在 `.env`（§3 A1 的判据），**不是**未加密。
+
+### (b) config-svc 非 secret 字段 —— 已随 secret CRUD 一并覆盖，无需单独立项
+
+`ConfigEntry` 的密钥类值走 `enc:v1:`（§2.3），其余字段（key/description/version/时间戳）按设计非敏感。**未发现**需要单独处置的明文面。此项关闭。
+
+### (c) 通知渠道密码 —— **存储形态由运维决定，且缺少明文警示**
+
+| 环节 | 实测 | 证据 |
+|---|---|---|
+| 存储 | `NotifyChannel.Config` 是 JSON 字符串，**原样存调用方给的值**（明文或 `${...}` 引用均收） | `internal/store/model/model.go:235-244`（`:240` 注释「敏感，API 层负责脱敏」） |
+| 读出脱敏 | 有：list/create 返回时 `maskSensitiveConfig` 把敏感字段换成 `***` | `internal/controlplane/notify_channels.go:33-45`、`:77-78` |
+| 使用 | `ResolveSecret` 两种形态都认；provider 为 nil 时退化为明文直用 | `notify_channels.go:239`、`internal/notify/channels.go:490-491/506/517/532`、`notify.go:363` |
+| **缺口** | **无任何「存了明文」的警示或校验**——代码静默接受明文，引用制仅靠约定；`SecretProvider` 未配置时引用也不会被解析 | `channels.go:491`（provider nil ⇒ 明文直用）、`notify.go:363` |
+
+⇒ 这是 §4 三项里**唯一真实的残留面**：运维若在渠道配置里填明文密码，即明文落库，且系统不提示。属「运维契约 + 缺失警示」问题，不是加密缺失。
+
+---
+
+## 8. 对 §3/§5 结论的一处实质性修正
+
+**先前「方向 A 需先回答密钥从哪来」的代价被高估了。** 侦察 (a) 后发现：控制面**已经有**一把生产强制的 32 字节 AES-256 密钥（`ENCRYPTION_KEY`，compose `:?` 拒启，`server.go:466-479`），且已用于 kubeconfig 加密。
+
+因此：
+
+- **A1（照搬 config-svc 原语加密 `secrets` 表）的密钥侧成本≈0** —— 复用 `s.encryptionKey` 即可，不需要新引入 `.env` 变量，也不改变现有密钥管理拓扑。
+- 但这**不削弱**「密钥与库同机」这一固有弱点（`ENCRYPTION_KEY` 与库同在 `.env`）；A2（KMS）若要抗失主机，仍需独立决策。
+- 由此，§5 的决策请求可重排为：
+  1. `secrets` 表去向（废弃／引用索引／接线）——**仍是第一决策**，因为它决定 A 有没有对象可做；
+  2. 若选自持密文：**直接复用 `s.encryptionKey` + `enc:v1:` 格式**（低成本路径），无需新密钥决策；是否升级到 KMS 单独立项；
+  3. 顺手补 (c) 的明文警示：渠道配置写入时若值既非 `${...}` 引用、又命中敏感字段，记一条 `logx.Warn` 提示改用 `${provider:key}`。
