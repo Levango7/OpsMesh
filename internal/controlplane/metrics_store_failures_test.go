@@ -15,7 +15,7 @@ import (
 	"testing"
 
 	"github.com/Levango7/OpsMesh/internal/metrics"
-	"github.com/Levango7/OpsMesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/store/storefail"
 )
 
 // renderedStoreFailures 从指标文本里取出 opsmesh_store_write_failures_total 的数值。
@@ -43,9 +43,9 @@ func TestMetricsBodyPushesStoreFailures(t *testing.T) {
 	s.metrics = metrics.New()
 	s.metrics.SetStoreFailures(stale)
 
-	before, _ := store.StoreFailureStats()
+	before, _ := storefail.StoreFailureStats()
 	body := s.metricsBody()
-	after, _ := store.StoreFailureStats()
+	after, _ := storefail.StoreFailureStats()
 
 	got := renderedStoreFailures(t, body)
 	if got == stale {

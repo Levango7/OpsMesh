@@ -6,8 +6,8 @@
 //   - metricsRing 环形缓冲边界（nil、空、capacity<=0、latest/since 边界）
 //   - appendAudit / QueryAudits 各种过滤组合
 //   - publish 事件发布失败路径
-//   - bcryptHash / randHex / mustRandHex / randAlertRuleID 等辅助函数
-//   - verifyTokenMAC / hashToken / issueTokenLocked 边界
+//   - 内核函数（bcryptHash/randHex/hashToken/verifyTokenMAC 等）测试见 internal/store/storekit/kernel_test.go
+//   - 领域 ID 生成 helper（model.Rand*）前缀断言
 //   - RedisSessionStore 构造与 key 拼接（不依赖真实 Redis）
 //   - MultiSchemaStore 的 defaultStoreFactory / globalStore / 反查索引
 //   - InProcessSessionStore 边界
@@ -691,66 +691,6 @@ func TestMemoryStore_Audit_ZeroCreatedAt(t *testing.T) {
 	}
 }
 
-// ============================================================================
-// publish 事件发布
-// ============================================================================
-
-// ============================================================================
-// bcryptHash / randHex / mustRandHex / randAlertRuleID 等辅助函数
-// ============================================================================
-
-// TestBcryptHash_Default 验证 bcryptHash 默认能正常哈希。
-func TestBcryptHash_Default(t *testing.T) {
-	hash, err := bcryptHash("password")
-	if err != nil {
-		t.Fatalf("bcryptHash 失败: %v", err)
-	}
-	if hash == "" || hash == "password" {
-		t.Fatal("bcryptHash 应返回非空哈希")
-	}
-	// 相同密码哈希不同（bcrypt 含盐）
-	hash2, _ := bcryptHash("password")
-	if hash == hash2 {
-		t.Fatal("bcrypt 哈希应含盐，两次结果不应相同")
-	}
-}
-
-// TestRandHex_Default 验证 randHex 返回非空十六进制串。
-func TestRandHex_Default(t *testing.T) {
-	s := randHex(16)
-	if s == "" {
-		t.Fatal("randHex 应返回非空串")
-	}
-	// 长度 = 2*n（每字节 2 个 hex 字符）
-	if len(s) != 32 {
-		t.Fatalf("randHex(16) len = %d, want 32", len(s))
-	}
-	// 不同调用结果不同（极大概率）
-	a, b := randHex(16), randHex(16)
-	if a == b {
-		t.Fatal("两次 randHex 不应相同")
-	}
-}
-
-// TestMustRandHex_Default 验证 mustRandHex 返回非空十六进制串。
-func TestMustRandHex_Default(t *testing.T) {
-	s := mustRandHex(32)
-	if s == "" {
-		t.Fatal("mustRandHex 应返回非空串")
-	}
-	if len(s) != 64 {
-		t.Fatalf("mustRandHex(32) len = %d, want 64", len(s))
-	}
-}
-
-// TestRandAlertRuleID_Default 验证 randAlertRuleID 返回带前缀的 ID。
-func TestRandAlertRuleID_Default(t *testing.T) {
-	id := randAlertRuleID()
-	if !strings.HasPrefix(id, "alert-rule-") {
-		t.Fatalf("randAlertRuleID = %q, want prefix alert-rule-", id)
-	}
-}
-
 // TestRandUserID_Default 验证 randUserID 返回带前缀的 ID。
 func TestRandUserID_Default(t *testing.T) {
 	id := model.RandUserID()
@@ -812,41 +752,6 @@ func TestRandMiddlewareTemplateID_Default(t *testing.T) {
 	id := model.RandMiddlewareTemplateID()
 	if !strings.HasPrefix(id, "mw-tmpl-") {
 		t.Fatalf("randMiddlewareTemplateID = %q, want prefix mw-tmpl-", id)
-	}
-}
-
-// ============================================================================
-// verifyTokenMAC / hashToken / issueTokenLocked 边界
-// ============================================================================
-
-// TestHashToken_Deterministic_Extra 验证 hashToken 确定性。
-func TestHashToken_Deterministic_Extra(t *testing.T) {
-	a := hashToken("token-x")
-	b := hashToken("token-x")
-	if a != b {
-		t.Fatal("hashToken 应确定性")
-	}
-	if hashToken("a") == hashToken("b") {
-		t.Fatal("hashToken 不同输入应不同输出")
-	}
-}
-
-// TestVerifyTokenMAC_EdgeCases 验证 verifyTokenMAC 边界。
-func TestVerifyTokenMAC_EdgeCases(t *testing.T) {
-	if verifyTokenMAC("", "x") {
-		t.Fatal("空 secret 应返回 false")
-	}
-	if verifyTokenMAC("s", "") {
-		t.Fatal("空 token 应返回 false")
-	}
-	if verifyTokenMAC("s", "no-dot") {
-		t.Fatal("无分隔符应返回 false")
-	}
-	if verifyTokenMAC("s", ".payload") {
-		t.Fatal("空签名应返回 false")
-	}
-	if verifyTokenMAC("s", "sig.") {
-		t.Fatal("空 payload 应返回 false")
 	}
 }
 

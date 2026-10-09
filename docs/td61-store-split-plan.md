@@ -283,3 +283,65 @@ sql 批（32 文件 + sql.go）后做 → multi_schema 包装层最后。
 **顺序要求**：本批会让**根模块暂时不可编译**（`git mv` 到编译修复完成之间），而
 `services/*/go.mod` 通过 `replace` 指向根模块——**尽量一轮做完再停**，
 不要在中间态隔夜（同树还有并行会话）。
+
+---
+
+## 9. 批次 3-sql 执行记录（2026-10-09，已落地）
+
+### 9.1 实际搬迁面（比 §8.5 预估多两类）
+
+| 分类 | 数量 | 去向 |
+|---|---|---|
+| `sql*.go` 生产文件（含 `sql.go` 迁移框架） | 33 | `internal/store/sqlstore/` |
+| **`migrations/` 目录** | 21 对 .sql/.down.sql | `internal/store/sqlstore/migrations/`（`//go:embed` 不能跨目录） |
+| SQL 侧测试（整搬，含 `TestMain` 共享临时库） | 14 | sqlstore |
+| 混合测试拆分（SQL 段下沉 / 内存·多schema 段留父包） | 4 | `audit_chain_test.go`、`cleanup_refresh_tokens_test.go`、`register_tenant_guard_test.go`、`refresh_concurrency_test.go` |
+| 内核函数测试外迁 | 6 | `storekit/kernel_test.go`（`model.Rand*` 前缀断言留父包） |
+| 新文件（父包） | 3 | `sql_shim.go`（SQLStore 别名 + NewSQLStore 薄包装）、`stub_guard_test.go`（StubDomains 守卫自 sql_test 迁出）、`parent_dsn_test.go`（DSN 工具副本） |
+| 新文件（子包） | 3 | `sqlstore/aliases.go`、`sqlstore/test_helpers_test.go`（recordingBus/countDevices 副本）、`storefail/recorder_test.go` |
+
+### 9.2 消除的 shim 与跨线同步
+
+- **`failures_shim.go` 删除**：3 个 controlplane 消费方改为直接 import storefail
+  （`support_endpoints.go:492/493/501`、`metrics_endpoint.go:90`、`metrics_store_failures_test.go:46/48`）；
+  父包 `multi_schema.go`/`redis_session.go` 的 15 处 `recordStoreFailure` 改 `storefail.Record`。
+- **`kernel_shim.go` 删除**：父包短名清零（`mustRandHex`→`storekit.MustRandHex` 等）。
+- **migrations 路径同步**（搬迁的必然连带，跨线三处已按协调板预告执行）：
+  `deploy/docker/scripts/deploy.sh:1507`、`deploy/scripts/verify-runtime.sh:968/1008/1009`、
+  `internal/cmdb/{mysql_scan_test.go,search_fulltext_test.go}`；另同步 `.golangci.yml` 路径豁免两条
+  （G104→`sqlstore/sql.go`、G201→`sqlstore/sql_slo.go`）、CI 注释路标、DELIVERY/product-design 文档证据路径
+  （后者由 `internal/gates` 的证据路径门禁**当场抓出** —— 门禁按设计工作）。
+- **`store_extra_test.go` 里 2 处 `errString`**：sqlstore 侧改 `errors.New`（`errString` 是父包私有类型）。
+
+### 9.3 验证口径与结果（全绿）
+
+- `go build ./...` / `go vet ./...` / `go test -count=1 ./internal/... ./cmd/... ./pkg/...` 全绿；
+  `golangci-lint`（store+controlplane）0 issues；`gofmt`/`goimports` 干净。
+- `-race`：`./internal/store/...`（store 350s / memory 269s / sqlstore 5.3s）+ `./internal/controlplane`（329s）
+  全绿，**0 处 DATA RACE**。
+- **真库集成实测**（本机 `opsmesh-mysql-evidence-v2`）：`TestRunMigrations*` 8 用例（全新库/幂等/版本门禁/
+  checksum 致命/半应用重放/并发构造/CRLF 再基线）+ `TestAuditChainIntegration*` 8 用例 + 跨租户重绑定 +
+  刷新令牌清理 + SQL 并发消费 —— 全部 PASS（迁移框架与审计链在搬迁后功能不变）。
+- 部署资产门禁 `validate-deploy-assets.sh`：**PASS=76 FAIL=0 SKIP=1**。
+
+### 9.4 本批教训（供末批参考）
+
+1. **折叠在「搬迁脚本」里的三段拼装（头 + 旧头 + 体）必须显式断言**：本轮 3 个拆分文件出现
+   「新头 + 原文件旧头/package」重复、1 个文件尾部多出 `}`（删除区间的反向切片把末行复活）——
+   都是**拆分脚本自身的 bug**，靠 `goimports`/编译器报错才暴露。教训：拆分产物写完先跑
+   `gofmt -e`（语法）再跑 `go build`，两步分开看。
+2. **`errString` 这类「父包私有小类型」会被测试跨界引用**——测试搬迁时同款私有符号（`closedDB`、
+   `stripDBName`、`recordingBus`、`countDevices`）要么随迁、要么按包各持一份；本轮全部显式处置。
+3. **`internal/gates` 的证据路径门禁是搬迁的安全网**：文档里过期的 `内部/store/sql.go` 会被判红，
+   这正是「数字对得上但路径是假的」那类漂移的拦截面。
+4. **真库验证要主动跑**：CI 的 integration job 有 DSN 才跑，本机有容器时应手动补跑迁移框架 +
+   审计链集成（约 2.5 分钟），比只依赖单测的「全绿」可信得多。
+
+### 9.5 剩余（末批：multi_schema 包装层 + 父包收口）
+
+- 8 个 `multi_schema*.go` + 其测试（`multi_schema_test/proxy/smoke/delegation/extra4`）下沉
+  `internal/store/multischema/`（或按最终形态命名）；它同时持 `memory`/`sqlstore` 两后端句柄，
+  是本链最后一块。
+- 之后父包 `internal/store` 只剩：`store.go`（契约别名 + 断言）、`models_shim.go`、`memory_shim.go`、
+  `sql_shim.go`、`session.go`、`redis_session.go`、`stub_guard.go` —— 届时评估**删 shim 层**
+  还是**保留作稳定门面**（外部 129 个 import 方按 `store.X` 编程，门面本身有产品价值）。

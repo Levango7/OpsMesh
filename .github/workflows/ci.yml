@@ -71,7 +71,7 @@ jobs:
         # -race 启用竞态检测；-coverprofile 产出覆盖率。
         # OPSMESH_TEST_BCRYPT_COST=4：400+ 测试每个都 NewMemoryStore→seedRBAC
         # 3 次 bcrypt cost=10，-race 下纯哈希 120s+ 曾致超时；测试进程降 cost 提速
-        # （生产不设置此变量，仍用默认 cost 10，见 internal/store/memory.go）。
+        # （生产不设置此变量，仍用默认 cost 10，见 internal/store/memory/memory.go）。
         #
         # 磁盘/内存三段演进（实测三轮 143/canceled 后收敛）：
         # GitHub runner 仅 7GB 内存 + 14GB 磁盘。全仓 race+coverage 一次性跑
@@ -391,7 +391,7 @@ jobs:
       # MYSQL_USER=opsmesh 仅有 opsmesh 库权限，建临时库会报 Access denied 1044。
       OPSMESH_TEST_MYSQL_DSN: "root:rootpass@tcp(127.0.0.1:3306)/opsmesh?parseTime=true"
       OPSMESH_TEST_REDIS_ADDR: "127.0.0.1:6379"
-      # 测试 seed bcrypt 降 cost（与 build-test 一致，见 internal/store/memory.go）。
+      # 测试 seed bcrypt 降 cost（与 build-test 一致，见 internal/store/memory/memory.go）。
       OPSMESH_TEST_BCRYPT_COST: "4"
     steps:
       - uses: actions/checkout@v5

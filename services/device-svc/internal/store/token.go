@@ -34,7 +34,7 @@ type ProvisionStore interface {
 	ConsumeToken(token string) (deviceID, tenantID string, ok bool)
 }
 
-// === token 内部实现（与 controlplane internal/store/memory.go 1:1 等价） ===
+// === token 内部实现（与 controlplane internal/store/memory/memory.go 1:1 等价） ===
 
 // hashToken 对完整 token 取 SHA-256 摘要（hex）。
 // 安全：库存/内存只存摘要，不存明文 token——DB 只读账号/备份泄露不等于活体 token 泄露。

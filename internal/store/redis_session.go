@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/Levango7/OpsMesh/internal/store/storefail"
 )
 
 // RedisSessionStore Redis 后端 SessionStore 实现。
@@ -67,7 +69,7 @@ func NewRedisSessionStore(addr, password, prefix string, dialTimeout time.Durati
 	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
-		recordStoreFailure("[store] Redis 连通性检查失败（容错降级，IsBlacklisted 将 fail-open）: %v", err)
+		storefail.Record("[store] Redis 连通性检查失败（容错降级，IsBlacklisted 将 fail-open）: %v", err)
 	}
 	return &RedisSessionStore{client: client, prefix: prefix}, nil
 }
@@ -113,7 +115,7 @@ func (s *RedisSessionStore) IsBlacklisted(jti string) bool {
 	n, err := s.client.Exists(ctx, s.blacklistKey(jti)).Result()
 	if err != nil {
 		// fail-open：Redis 故障时不阻断已登录用户（登出仅在 Redis 恢复后生效）。
-		recordStoreFailure("[store] Redis IsBlacklisted 失败（fail-open）: %v", err)
+		storefail.Record("[store] Redis IsBlacklisted 失败（fail-open）: %v", err)
 		return false
 	}
 	return n > 0
@@ -133,7 +135,7 @@ func (s *RedisSessionStore) Blacklist(jti string, ttl time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), redisOpTimeout)
 	defer cancel()
 	if err := s.client.Set(ctx, s.blacklistKey(jti), "1", ttl).Err(); err != nil {
-		recordStoreFailure("[store] Redis Blacklist 失败（登出未生效，token 将在 %v 后自然过期）: %v", ttl, err)
+		storefail.Record("[store] Redis Blacklist 失败（登出未生效，token 将在 %v 后自然过期）: %v", ttl, err)
 	}
 }
 
@@ -172,13 +174,13 @@ func (s *RedisSessionStore) IncrRateLimit(key string, window time.Duration) int 
 	n, err := s.client.Incr(ctx, rk).Result()
 	if err != nil {
 		// fail-open：Redis 故障时不限流（避免所有登录被拒绝）。
-		recordStoreFailure("[store] Redis IncrRateLimit 失败（fail-open，不限流）: %v", err)
+		storefail.Record("[store] Redis IncrRateLimit 失败（fail-open，不限流）: %v", err)
 		return 0
 	}
 	// 首次计数（n=1）时设置窗口 TTL；后续计数不重设（保持固定窗口语义）。
 	if n == 1 {
 		if err := s.client.Expire(ctx, rk, window).Err(); err != nil {
-			recordStoreFailure("[store] Redis IncrRateLimit 设置 TTL 失败（计数仍生效，但窗口可能不精确）: %v", err)
+			storefail.Record("[store] Redis IncrRateLimit 设置 TTL 失败（计数仍生效，但窗口可能不精确）: %v", err)
 		}
 	}
 	return int(n)
@@ -194,7 +196,7 @@ func (s *RedisSessionStore) ResetRateLimit(key string) {
 	ctx, cancel := context.WithTimeout(context.Background(), redisOpTimeout)
 	defer cancel()
 	if err := s.client.Del(ctx, s.rateLimitKey(key)).Err(); err != nil {
-		recordStoreFailure("[store] Redis ResetRateLimit 失败（不影响主流程）: %v", err)
+		storefail.Record("[store] Redis ResetRateLimit 失败（不影响主流程）: %v", err)
 	}
 }
 
@@ -215,7 +217,7 @@ func (s *RedisSessionStore) CreateChangePasswordToken(token, userID string, ttl 
 	ctx, cancel := context.WithTimeout(context.Background(), redisOpTimeout)
 	defer cancel()
 	if err := s.client.Set(ctx, s.cpTokenKey(token), userID, ttl).Err(); err != nil {
-		recordStoreFailure("[store] Redis CreateChangePasswordToken 失败: %v", err)
+		storefail.Record("[store] Redis CreateChangePasswordToken 失败: %v", err)
 		return err
 	}
 	return nil
@@ -246,7 +248,7 @@ func (s *RedisSessionStore) ConsumeChangePasswordToken(token string) (string, bo
 			return "", false
 		}
 		// Redis 故障：fail-closed（拒绝改密，安全优先）。
-		recordStoreFailure("[store] Redis ConsumeChangePasswordToken 失败（fail-closed）: %v", err)
+		storefail.Record("[store] Redis ConsumeChangePasswordToken 失败（fail-closed）: %v", err)
 		return "", false
 	}
 	return userID, true

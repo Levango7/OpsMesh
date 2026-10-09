@@ -1,0 +1,149 @@
+// sql_tokens.go - SQLStore TokenStore methods (install token lifecycle).
+package sqlstore
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"fmt"
+	"log"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/storefail"
+	"github.com/Levango7/OpsMesh/internal/store/storekit"
+)
+
+func (s *SQLStore) Provision(deviceID, host, tenantID string) (token, bootstrap string, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// 安全（F15）：payload 用 | 分隔，deviceID/tenantID 含 | 导致解析歧义，直接拒绝。
+	if strings.Contains(deviceID, "|") || strings.Contains(tenantID, "|") {
+		return "", "", fmt.Errorf("deviceID 或 tenantID 含非法字符 |")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE devices SET state='provisioning', ip=? WHERE device_id=? AND (tenant_id=? OR ?='')`,
+		host, deviceID, tenantID, tenantID)
+	if err != nil {
+		return "", "", fmt.Errorf("Provision 失败 %s: %w", deviceID, err)
+	}
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return "", "", fmt.Errorf("Provision rows affected: %w", rowsErr)
+	}
+	if n == 0 {
+		return "", "", fmt.Errorf("device %s not found or tenant mismatch", deviceID)
+	}
+	tok, e := s.issueToken(ctx, deviceID, tenantID, 15*time.Minute)
+	if e != nil {
+		return "", "", e
+	}
+	// bootstrap 为占位模板，真实控制面地址由 HTTP handler 按请求 host 重写。
+	boot := fmt.Sprintf("curl -sSL http://<control-plane>:8080/install.sh | sh -s -- --token=%s", tok)
+	return tok, boot, nil
+}
+
+// issueToken 在已持 ctx 下签发一个一次性 install token（HMAC(deviceID|tenantID|expiry|nonce)），
+// 落 install_tokens 表（ON DUPLICATE 重置消费态，幂等重推）。
+// 安全：token 列只存 SHA-256 摘要，不存明文 token——DB 只读账号/备份泄露不等于活体 token 泄露。
+
+func (s *SQLStore) issueToken(ctx context.Context, deviceID, tenantID string, ttl time.Duration) (string, error) {
+	if s.secret == "" {
+		s.secret = storekit.MustRandHex(32) // 兜底，正常构造时已置随机密钥
+	}
+	nonce := storekit.RandHex(16)
+	expiresAt := time.Now().UTC().Add(ttl)
+	payload := strings.Join([]string{tenantID, deviceID, strconv.FormatInt(expiresAt.Unix(), 10), nonce}, "|")
+	mac := hmac.New(sha256.New, []byte(s.secret))
+	mac.Write([]byte(payload))
+	tok := hex.EncodeToString(mac.Sum(nil)) + "." + payload
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO install_tokens (token, device_id, tenant_id, expires_at, consumed)
+		 VALUES (?, ?, ?, ?, 0)
+		 ON DUPLICATE KEY UPDATE device_id=VALUES(device_id), tenant_id=VALUES(tenant_id), expires_at=VALUES(expires_at), consumed=0`,
+		storekit.HashToken(tok), deviceID, tenantID, expiresAt); err != nil {
+		return "", fmt.Errorf("issueToken 失败: %w", err)
+	}
+	return tok, nil
+}
+
+// IssueToken 生成并登记一个一次性 install token。
+
+func (s *SQLStore) IssueToken(deviceID, tenantID string, ttl time.Duration) (token string, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if deviceID == "" {
+		return "", fmt.Errorf("deviceID required")
+	}
+	return s.issueToken(ctx, deviceID, tenantID, ttl)
+}
+
+// ConsumeToken 校验并消费 token：限时、未用过才返回设备与租户并置 consumed；否则返回 ok=false。
+// 安全：原子条件 UPDATE（consumed=0 AND 未过期）+ RowsAffected==1 判定，
+// 消除 check-then-act TOCTOU 竞态，多副本并发下同一 token 只会被消费一次。
+
+func (s *SQLStore) ConsumeToken(token string) (deviceID, tenantID string, ok bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// 安全（F8）：先验 HMAC 签名（防 DB 写权限伪造），签名不对直接拒绝。
+	if !storekit.VerifyTokenMAC(s.secret, token) {
+		return "", "", false
+	}
+	hash := storekit.HashToken(token) // 库存摘要，按摘要匹配
+	// 原子抢占：仅当未被消费且未过期时翻转 consumed=0→1，RowsAffected==1 即消费成功。
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE install_tokens SET consumed=1 WHERE token=? AND consumed=0 AND expires_at > ?`,
+		hash, time.Now().UTC())
+	if err != nil {
+		storefail.Record("[store] ConsumeToken 抢占失败: %v", err)
+		return "", "", false
+	}
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil || n == 0 {
+		return "", "", false // 已被消费 / 已过期 / 不存在
+	}
+	// 消费成功后读回设备与租户（token 行此时已唯一锁定为本实例）。
+	// install_tokens 的 device_id/tenant_id 未声明 NOT NULL：裸目标扫描遇 NULL 会让
+	// 整个读回失败，而 consumed 已被置 1 —— 调用方拿到 ok=false，token 却已作废
+	//（自动纳管永久失败且无法重试）。故此处必须容忍 NULL。
+	var devNull, tenantNull sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT device_id, tenant_id FROM install_tokens WHERE token=?`, hash,
+	).Scan(&devNull, &tenantNull); err != nil {
+		storefail.Record("[store] ConsumeToken 读回失败: %v", err)
+		return "", "", false
+	}
+	deviceID, tenantID = devNull.String, tenantNull.String
+	return deviceID, tenantID, true
+}
+
+// Alerts 返回活跃告警（M7）；tenantID 非空时按租户过滤。
+
+func (s *SQLStore) CleanupTokens(batch int) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	q := `DELETE FROM install_tokens WHERE expires_at < ?`
+	var args []interface{}
+	args = append(args, time.Now().UTC())
+	if batch > 0 {
+		q += ` LIMIT ?`
+		args = append(args, batch)
+	}
+	res, err := s.db.ExecContext(ctx, q, args...)
+	if err != nil {
+		storefail.Record("[store] CleanupTokens 失败: %v", err)
+		return 0
+	}
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		log.Printf("[store] CleanupTokens RowsAffected: %v", rowsErr)
+		return 0
+	}
+	return int(n)
+}
+
+// RetireStaleDevices F5 离线超龄自动归档：最后心跳早于 maxAge 的 agent 所对应设备
+// （或已无 agent 的孤儿设备）批量标记 retired。返回归档数。

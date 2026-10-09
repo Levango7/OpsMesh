@@ -27,6 +27,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/metrics"
 	"github.com/Levango7/OpsMesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/store/storefail"
 )
 
 // appMetricsCounts 返回 /metrics 用到的应用级计数（TTL 内复用，见 appCountsCache）。
@@ -87,7 +88,7 @@ func (s *Server) metricsBody() string {
 	}
 	reg.SetAgents(cnt.agents)
 	reg.SetAppGauges(cnt.devices, cnt.devicesOnline, cnt.devicesOffline, cnt.alerts, cnt.ticketsOpen)
-	total, _ := store.StoreFailureStats()
+	total, _ := storefail.StoreFailureStats()
 	reg.SetStoreFailures(total)
 	return reg.Render()
 }

@@ -1504,7 +1504,7 @@ do_migrate() {
     # 退出码 0 只代表进程正常跑完；版本号对不上（如迁移文件没进镜像）
     # 才是"没迁上"的真证据。
     expected=0
-    for f in internal/store/migrations/[0-9]*.sql; do
+    for f in internal/store/sqlstore/migrations/[0-9]*.sql; do
         [ -f "$f" ] || continue
         base="${f##*/}"
         v="$((10#${base%%_*}))" || continue

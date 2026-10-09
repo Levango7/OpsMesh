@@ -569,14 +569,14 @@ var (
 	matchColsRe        = regexp.MustCompile(`(?i)MATCH\s*\(([^)]*)\)`)
 )
 
-// latestFulltextIndexColumns 返回 internal/store/migrations 里**最后一次**为 ci_items
+// latestFulltextIndexColumns 返回 internal/store/sqlstore/migrations 里**最后一次**为 ci_items
 // 定义全文索引的迁移的索引名与列清单（按定义顺序）。
 //
 // 只看非 .down.sql、且必须同文件提到 ci_items；取版本前缀最大的那份，因为索引可能被
 // 后续迁移重建（020 建 3 列、021 补齐到 7 列），代码必须对齐**终态**而不是首个定义。
 func latestFulltextIndexColumns(t *testing.T) (string, []string) {
 	t.Helper()
-	dir := filepath.Join("..", "store", "migrations")
+	dir := filepath.Join("..", "store", "sqlstore", "migrations")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("读迁移目录失败（用例假定的相对路径是否变了？）: %v", err)
@@ -612,7 +612,7 @@ func latestFulltextIndexColumns(t *testing.T) (string, []string) {
 		}
 	}
 	if bestFile == "" {
-		t.Fatal("在 internal/store/migrations 里找不到定义 ci_items 全文索引的迁移")
+		t.Fatal("在 internal/store/sqlstore/migrations 里找不到定义 ci_items 全文索引的迁移")
 	}
 	return bestName, splitColumnList(bestCols)
 }

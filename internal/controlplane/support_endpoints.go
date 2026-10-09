@@ -32,7 +32,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/config"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/internal/logx"
-	"github.com/Levango7/OpsMesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/store/storefail"
 	"github.com/Levango7/OpsMesh/internal/version"
 )
 
@@ -489,8 +489,8 @@ func (s *Server) handleAdminStoreFailures(w http.ResponseWriter, r *http.Request
 	if _, ok := s.requireProd(w, r, levelPermission); !ok {
 		return
 	}
-	total, byOp := store.StoreFailureStats()
-	recent := store.RecentStoreFailures()
+	total, byOp := storefail.StoreFailureStats()
+	recent := storefail.RecentStoreFailures()
 	limit := 20
 	if raw := r.URL.Query().Get("top"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 200 {
@@ -498,7 +498,7 @@ func (s *Server) handleAdminStoreFailures(w http.ResponseWriter, r *http.Request
 		}
 	}
 	// byOp 已由 store 返回副本，这里只取 Top N，避免把全部操作名塞进响应。
-	ops := store.TopStoreFailureOps(limit)
+	ops := storefail.TopStoreFailureOps(limit)
 	paginate.WriteJSON(w, http.StatusOK, map[string]any{
 		"total":            total,
 		"byOp":             byOp,

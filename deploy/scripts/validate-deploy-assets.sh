@@ -2128,12 +2128,12 @@ fi
 
 # 22.3 迁移总预算可配：内部 ctx 预算经 OPSMESH_MIGRATION_BUDGET_SEC 放宽
 # （默认 120s = 锁等待 60 + 工作 60；大表迁移远超时会掐断持锁工作）
-SQL_GO=internal/store/sql.go
+SQL_GO=internal/store/sqlstore/sql.go
 if grep -qF 'OPSMESH_MIGRATION_BUDGET_SEC' "$SQL_GO" \
    && grep -qF 'migrationBudgetSec()' "$SQL_GO"; then
     ok "迁移总预算可配（OPSMESH_MIGRATION_BUDGET_SEC，默认 120s）"
 else
-    bad "迁移总预算不可配（internal/store/sql.go 缺 OPSMESH_MIGRATION_BUDGET_SEC / migrationBudgetSec）"
+    bad "迁移总预算不可配（internal/store/sqlstore/sql.go 缺 OPSMESH_MIGRATION_BUDGET_SEC / migrationBudgetSec）"
 fi
 
 # 22.4 compose：一次性容器经环境变量补齐 command 被覆盖后失效的参数，

@@ -6,7 +6,7 @@
 // 且只在真库 + 特定数据形态下才暴露。
 //
 // 判定口径（刻意收窄，避免误报把门禁自己变成噪音）：
-//   - 可空性来自 internal/store/migrations 的正向迁移（cmdb 的表由
+//   - 可空性来自 internal/store/sqlstore/migrations 的正向迁移（cmdb 的表由
 //     迁移建表：本包没有 schema.sql，建表 DDL 也不在包内）；
 //     **可空且无 DEFAULT** 才算真风险——有 DEFAULT 时省略该列的 INSERT
 //     会填默认值，读侧遇不到 NULL；
@@ -53,7 +53,7 @@ func buildRiskyNullableColumns() map[string]map[string]bool {
 	// 且先剥 `--` 注释行：迁移头注释里有 9 处散文提到 CREATE TABLE，
 	// 不剥会被当成建表语句（门禁被自己的说明文字骗过，与
 	// search_fulltext_test.go 的 stripSQLLineComments 同一条教训）。
-	files, _ := filepath.Glob("../store/migrations/*.sql")
+	files, _ := filepath.Glob("../store/sqlstore/migrations/*.sql")
 	for _, f := range files {
 		if strings.HasSuffix(f, ".down.sql") {
 			continue

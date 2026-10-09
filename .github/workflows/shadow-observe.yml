@@ -151,7 +151,7 @@ jobs:
             sleep 2
           done
           # 灌 SEED 条每分钟模板（tenant default，shell 类型，task_id 主键防重）。
-          # 列名对齐 internal/store/migrations/001_initial.sql 的 tasks 表
+          # 列名对齐 internal/store/sqlstore/migrations/001_initial.sql 的 tasks 表
           #（task_id/schedule/parent_id/last_fired_at）；失败不阻断观察——
           # 降级为空栈基线噪音对照，两引擎对零数据的评估一致性同样有效。
           for j in $(seq 1 "$SEED"); do

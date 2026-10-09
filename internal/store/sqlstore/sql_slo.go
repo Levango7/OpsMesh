@@ -1,0 +1,254 @@
+// sql_slo.go 实现 SQLStore 的 SLOStore 子接口（Phase 1 SLO 管理，生产就绪）。
+//
+// 表结构：slos（id PK + tenant_id + name + description + service_name + target +
+// window_spec + slis JSON + created_at + updated_at；列名 window_spec 规避
+// MySQL 8.0 保留字 WINDOW）。迁移文件
+// migrations/010_p1_slo_ticket.sql 幂等建表。
+//
+// 设计要点（与 sql_k8s.go / sql_secret.go 风格一致）：
+//   - SLIs 以 JSON 数组存储在 slis TEXT 列；空切片存空串，读取时空串跳过 Unmarshal；
+//   - CreateSLO 按 ID 幂等（INSERT ... ON DUPLICATE KEY UPDATE），tenant_id 仅插入
+//     不更新（防 upsert 改写归属）；
+//   - ListSLOs 按创建时间升序返回（与 ListK8sClusters 一致）；
+//   - UpdateSLO 先 SELECT 校验存在 + 租户归属，再 UPDATE，保留原 CreatedAt/TenantID；
+//   - SLIStatus 复用 GetSLO 取 SLO，对每个 SLI 返回模拟状态（MVP，未接入 Prometheus）；
+//   - DB 不可用时返回零值（nil/false/空 slice），不 panic；
+//   - ID 生成复用 memory_slo.go 的 randSLOID（"slo-" + 16 字节 hex）。
+package sqlstore
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
+	"github.com/Levango7/OpsMesh/internal/store/storefail"
+)
+
+// scanSLO 从一行扫描出 *SLO（slis 为 JSON 文本列）。
+// 列顺序：id, tenant_id, name, description, service_name, target, window_spec, slis,
+// created_at, updated_at。无行或扫描失败返回 nil。
+func scanSLO(row rowScanner) *SLO {
+	var s SLO
+	// slos 的 description/service_name/window_spec/slis 均可空（migrations/010）；
+	// 未绑定服务或未配 SLI 的 SLO 是合法状态。裸目标扫描遇 NULL 会让整行读不出来。
+	var description, serviceName sql.NullString
+	var slisJSON sql.NullString
+	var createdAt, updatedAt time.Time
+	if err := row.Scan(&s.ID, &s.TenantID, &s.Name, &description, &serviceName,
+		&s.Target, &s.Window, &slisJSON, &createdAt, &updatedAt); err != nil {
+		return nil
+	}
+	s.Description, s.ServiceName = description.String, serviceName.String
+	s.CreatedAt = createdAt
+	s.UpdatedAt = updatedAt
+	if slisJSON.String != "" {
+		if err := json.Unmarshal([]byte(slisJSON.String), &s.SLIs); err != nil {
+			storefail.Record("[store] scanSLO 解析 slis JSON 失败 (slo=%s): %v", s.ID, err)
+		}
+	}
+	return &s
+}
+
+// CreateSLO 创建 SLO（按 ID 幂等；ID 为空时分配随机 ID）。
+//
+// 行为：
+//   - slo == nil 返回 nil；
+//   - TenantID 为空时归一为 default（与 K8s 集群一致）；
+//   - ID 为空时分配随机 ID（新建场景）；
+//   - CreatedAt 为零值时填当前时间（新建场景）；
+//   - UpdatedAt 始终刷新为当前时间；
+//   - INSERT ... ON DUPLICATE KEY UPDATE 实现 upsert（按 id 幂等），
+//     tenant_id 仅插入不更新，防 upsert 改写归属；
+//   - DB 失败时 log.Printf + 返回 nil。
+func (s *SQLStore) CreateSLO(tenantID string, slo *SLO) *SLO {
+	if slo == nil {
+		return nil
+	}
+	// 租户隔离：空租户归一为 default。
+	if tenantID == "" {
+		tenantID = "default"
+	}
+	slo.TenantID = tenantID
+	now := time.Now().UTC()
+	if slo.ID == "" {
+		slo.ID = model.RandSLOID()
+	}
+	if slo.CreatedAt.IsZero() {
+		slo.CreatedAt = now
+	}
+	slo.UpdatedAt = now
+	// SLIs 序列化为 JSON 文本（空切片存空串）。
+	var slisJSON string
+	if slo.SLIs != nil {
+		b, err := json.Marshal(slo.SLIs)
+		if err != nil {
+			storefail.Record("[store] CreateSLO 序列化 slis 失败 (slo=%s): %v", slo.ID, err)
+			return nil
+		}
+		slisJSON = string(b)
+	}
+	if _, err := s.db.ExecContext(context.Background(),
+		`INSERT INTO slos (id, tenant_id, name, description, service_name, target, window_spec, slis, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description),
+		 service_name=VALUES(service_name), target=VALUES(target), window_spec=VALUES(window_spec),
+		 slis=VALUES(slis), updated_at=VALUES(updated_at)`,
+		slo.ID, slo.TenantID, slo.Name, slo.Description, slo.ServiceName,
+		slo.Target, slo.Window, slisJSON, slo.CreatedAt, slo.UpdatedAt); err != nil {
+		storefail.Record("[store] CreateSLO 插入失败 (tenant=%s slo=%s): %v", tenantID, slo.ID, err)
+		return nil
+	}
+	return model.CloneSLO(slo)
+}
+
+// GetSLO 按 (tenantID, id) 返回单个 SLO（深拷贝；不存在或租户不匹配返回 (nil, false)）。
+func (s *SQLStore) GetSLO(tenantID, id string) (*SLO, bool) {
+	row := s.db.QueryRowContext(context.Background(),
+		`SELECT id, tenant_id, name, description, service_name, target, window_spec, slis, created_at, updated_at
+		  FROM slos WHERE id=? AND tenant_id=?`, id, tenantID)
+	slo := scanSLO(row)
+	if slo == nil {
+		return nil, false
+	}
+	return slo, true
+}
+
+// UpdateSLO 更新 SLO（按 slo.ID 定位，校验 tenantID 归属）。
+//
+// 行为：
+//   - slo == nil 或 ID 为空返回 (nil, false)；
+//   - 先 GetSLO 校验存在 + 租户归属，不存在返回 (nil, false)；
+//   - CreatedAt / TenantID 不可改（保留原值，防越权改归属）；
+//   - UpdatedAt 始终刷新为当前时间；
+//   - 返回更新后的 SLO（深拷贝）。
+func (s *SQLStore) UpdateSLO(tenantID string, slo *SLO) (*SLO, bool) {
+	if slo == nil || slo.ID == "" {
+		return nil, false
+	}
+	// 先 SELECT 校验存在 + 租户归属。
+	existing, ok := s.GetSLO(tenantID, slo.ID)
+	if !ok {
+		return nil, false
+	}
+	// 保留不可改字段。
+	slo.ID = existing.ID
+	slo.TenantID = existing.TenantID
+	slo.CreatedAt = existing.CreatedAt
+	slo.UpdatedAt = time.Now().UTC()
+	// SLIs 序列化为 JSON 文本。
+	var slisJSON string
+	if slo.SLIs != nil {
+		b, err := json.Marshal(slo.SLIs)
+		if err != nil {
+			storefail.Record("[store] UpdateSLO 序列化 slis 失败 (slo=%s): %v", slo.ID, err)
+			return nil, false
+		}
+		slisJSON = string(b)
+	}
+	if _, err := s.db.ExecContext(context.Background(),
+		`UPDATE slos SET name=?, description=?, service_name=?, target=?, window_spec=?, slis=?, updated_at=?
+		 WHERE id=? AND tenant_id=?`,
+		slo.Name, slo.Description, slo.ServiceName, slo.Target, slo.Window, slisJSON,
+		slo.UpdatedAt, slo.ID, slo.TenantID); err != nil {
+		storefail.Record("[store] UpdateSLO 更新失败 (tenant=%s slo=%s): %v", tenantID, slo.ID, err)
+		return nil, false
+	}
+	return model.CloneSLO(slo), true
+}
+
+// ListSLOs 返回指定租户的全部 SLO（按创建时间升序；深拷贝）。
+// tenantID 为空时返回空切片（与 memory 实现一致：tenantID 非空时仅返回同租户 SLO）。
+func (s *SQLStore) ListSLOs(tenantID string) []*SLO {
+	rows, err := s.db.QueryContext(context.Background(),
+		`SELECT id, tenant_id, name, description, service_name, target, window_spec, slis, created_at, updated_at
+		  FROM slos WHERE tenant_id=? ORDER BY created_at ASC`, tenantID)
+	if err != nil {
+		storefail.Record("[store] ListSLOs 查询失败 (tenant=%s): %v", tenantID, err)
+		return []*SLO{}
+	}
+	defer rows.Close()
+	out := make([]*SLO, 0)
+	for rows.Next() {
+		if slo := scanSLO(rows); slo != nil {
+			out = append(out, slo)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		storefail.Record("[store] ListSLOs 遍历失败: %v", err)
+	}
+	return out
+}
+
+// DeleteSLO 删除 SLO，返回是否删除成功（不存在或租户不匹配返回 false）。
+func (s *SQLStore) DeleteSLO(tenantID, id string) bool {
+	res, err := s.db.ExecContext(context.Background(),
+		`DELETE FROM slos WHERE id=? AND tenant_id=?`, id, tenantID)
+	if err != nil {
+		storefail.Record("[store] DeleteSLO 失败 (tenant=%s slo=%s): %v", tenantID, id, err)
+		return false
+	}
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		storefail.Record("[store] DeleteSLO RowsAffected 失败 (tenant=%s slo=%s): %v", tenantID, id, rowsErr)
+		return false
+	}
+	return n > 0
+}
+
+// SLIStatus 返回指定 SLO 下各 SLI 的当前状态（MVP 返回模拟状态）。
+//
+// SLIStatus 计算 SLI 当前状态（真实计算：从 network_metrics 表查询最近 5 分钟指标）。
+// 对每个 SLI：查询最近 5 分钟指标均值，与 target 比较，返回 met/breached/nodata。
+func (s *SQLStore) SLIStatus(tenantID, id string) []*SLIStatus {
+	slo, ok := s.GetSLO(tenantID, id)
+	if !ok {
+		return nil
+	}
+	now := time.Now().UTC()
+	out := make([]*SLIStatus, 0, len(slo.SLIs))
+	for _, sli := range slo.SLIs {
+		currentValue := s.querySLIMetric(sli.Metric, slo.ServiceName, tenantID)
+		status := model.EvaluateSLI(currentValue, sli.Target, sli.Operator)
+		out = append(out, &SLIStatus{
+			SLIName:       sli.Name,
+			CurrentValue:  currentValue,
+			TargetValue:   sli.Target,
+			Status:        status,
+			LastEvaluated: now,
+		})
+	}
+	return out
+}
+
+// querySLIMetric 查询指定指标最近 5 分钟的均值。
+// 如果无数据返回 -1（表示 nodata）。
+func (s *SQLStore) querySLIMetric(metricName, serviceName, tenantID string) float64 {
+	if s.db == nil {
+		return -1
+	}
+	// 列名映射：将 SLI metric 名映射到 network_metrics 列名。
+	column := metricColumn(metricName)
+	if column == "" {
+		return -1
+	}
+	since := time.Now().UTC().Add(-5 * time.Minute)
+	var avgValue float64
+	query := fmt.Sprintf(`SELECT AVG(%s) FROM network_metrics WHERE tenant_id=? AND timestamp >= ?`, column)
+	err := s.db.QueryRowContext(context.Background(), query, tenantID, since).Scan(&avgValue)
+	if err != nil {
+		storefail.Record("[store] querySLIMetric %q 查询失败: %v", metricName, err)
+		return -1
+	}
+	return avgValue
+}
+
+// metricColumn 将 SLI metric 名映射到 network_metrics 表列名。
+//
+// 映射表在 model/slo_eval.go 的 sliMetricFields（单一事实源）——此前这里与内存后端各写一份，
+// 于是"支持哪些指标"没有唯一答案，文档里的 metric:"up" 才能一路静默走到 nodata。
+func metricColumn(metricName string) string {
+	return model.MetricFieldFor(metricName)
+}

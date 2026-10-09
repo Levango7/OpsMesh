@@ -31,6 +31,8 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/events"
 	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store/storefail"
+	"github.com/Levango7/OpsMesh/internal/store/storekit"
 )
 
 // SchemaNamer 把租户名映射为 MySQL schema（database）名。
@@ -139,7 +141,7 @@ func NewMultiSchemaStore(baseDSN, redisAddr, redisPassword string, namer SchemaN
 		agentTenant:   make(map[string]string),
 		deviceTenant:  make(map[string]string),
 		taskTenant:    make(map[string]string),
-		secret:        mustRandHex(32),
+		secret:        storekit.MustRandHex(32),
 	}
 	m.storeFactory = m.defaultStoreFactory
 	return m, nil
@@ -155,7 +157,7 @@ func newMultiSchemaWithFactory(namer SchemaNamer, factory func(schema string) (S
 		agentTenant:  make(map[string]string),
 		deviceTenant: make(map[string]string),
 		taskTenant:   make(map[string]string),
-		secret:       mustRandHex(32),
+		secret:       storekit.MustRandHex(32),
 	}
 }
 
@@ -324,7 +326,7 @@ func (m *MultiSchemaStore) setTaskTenant(taskID, tenantID string) {
 func (m *MultiSchemaStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 	s, err := m.storeFor(a.TenantID)
 	if err != nil {
-		recordStoreFailure("[multi-schema] Register 路由失败 tenant=%q: %v", a.TenantID, err)
+		storefail.Record("[multi-schema] Register 路由失败 tenant=%q: %v", a.TenantID, err)
 		return a
 	}
 	// 先注册成功再写反查索引：子 store 拒绝（跨租户重绑定防护，P1-2）时不得把索引
@@ -383,7 +385,7 @@ func (m *MultiSchemaStore) UpsertDevice(d *proto.DeviceInfo) {
 	}
 	s, err := m.storeFor(d.TenantID)
 	if err != nil {
-		recordStoreFailure("[multi-schema] UpsertDevice 路由失败 tenant=%q: %v", d.TenantID, err)
+		storefail.Record("[multi-schema] UpsertDevice 路由失败 tenant=%q: %v", d.TenantID, err)
 		return
 	}
 	m.setDeviceTenant(d.DeviceID, d.TenantID)
@@ -550,7 +552,7 @@ func (m *MultiSchemaStore) ClaimTask(agentID string) *proto.Task {
 func (m *MultiSchemaStore) CreateTask(t *proto.Task) *proto.Task {
 	s, err := m.storeFor(t.TenantID)
 	if err != nil {
-		recordStoreFailure("[multi-schema] CreateTask 路由失败 tenant=%q: %v", t.TenantID, err)
+		storefail.Record("[multi-schema] CreateTask 路由失败 tenant=%q: %v", t.TenantID, err)
 		return t
 	}
 	ret := s.CreateTask(t)
@@ -681,7 +683,7 @@ func (m *MultiSchemaStore) AddAlert(a *proto.Alert) {
 	}
 	s, err := m.storeFor(a.TenantID)
 	if err != nil {
-		recordStoreFailure("[multi-schema] AddAlert 路由失败 tenant=%q: %v", a.TenantID, err)
+		storefail.Record("[multi-schema] AddAlert 路由失败 tenant=%q: %v", a.TenantID, err)
 		return
 	}
 	s.AddAlert(a)
@@ -749,7 +751,7 @@ func (m *MultiSchemaStore) Audit(e *proto.AuditEvent) {
 	s, err := m.storeFor(e.TenantID)
 	if err != nil {
 		// 审计留痕不应因路由失败而丢弃，降级到所有 schema 各记一份（确保留痕）。
-		recordStoreFailure("[multi-schema] Audit 路由失败 tenant=%q，降级广播: %v", e.TenantID, err)
+		storefail.Record("[multi-schema] Audit 路由失败 tenant=%q，降级广播: %v", e.TenantID, err)
 		for _, s := range m.allStores() {
 			s.Audit(e)
 		}
@@ -875,7 +877,7 @@ func (m *MultiSchemaStore) ArchiveAuditLog(retainDays, batch int) (int, error) {
 	for _, ns := range m.namedStores() {
 		n, err := ns.store.ArchiveAuditLog(retainDays, batch)
 		if err != nil {
-			recordStoreFailure("[multi-schema] schema %s 审计归档失败: %v", ns.name, err)
+			storefail.Record("[multi-schema] schema %s 审计归档失败: %v", ns.name, err)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("schema %s: %w", ns.name, err)
 			}
@@ -1219,7 +1221,7 @@ func (m *MultiSchemaStore) CreateAlertRule(r *AlertRule) *AlertRule {
 	}
 	s, err := m.storeFor(r.TenantID)
 	if err != nil {
-		recordStoreFailure("[multi-schema] CreateAlertRule 路由失败 tenant=%q: %v", r.TenantID, err)
+		storefail.Record("[multi-schema] CreateAlertRule 路由失败 tenant=%q: %v", r.TenantID, err)
 		return nil
 	}
 	return s.CreateAlertRule(r)

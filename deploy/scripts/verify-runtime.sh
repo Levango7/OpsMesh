@@ -965,7 +965,7 @@ count_sql() { # $1=目录 $2=是否只数回滚脚本（yes|no）
 if [ -n "${MYSQL_C:-}" ] && [ -n "${U:-}" ]; then
   mx="$(docker exec "$MYSQL_C" sh -c "mysql -u'$U' -p'$PWDB' -D opsmesh -N -e 'SELECT MAX(version) FROM schema_migrations;'" 2>/dev/null | tr -d ' \r')"
   # 磁盘上未执行的迁移数（排除 .down.sql 回滚脚本），与库内版本号比对即为「版本门禁」不变量。
-  disk="$(count_sql "${ROOT}/internal/store/migrations" no)"
+  disk="$(count_sql "${ROOT}/internal/store/sqlstore/migrations" no)"
   if [ -n "$mx" ] && [ "$mx" != "NULL" ]; then
     ok "schema_migrations 最大版本=${mx}（磁盘迁移文件 ${disk} 个）"
     if [ "$mx" = "$disk" ]; then
@@ -1005,8 +1005,8 @@ if [ -n "${MYSQL_C:-}" ] && [ -n "${U:-}" ]; then
     bad "无法读取 opsmesh.schema_migrations（迁移体系未生效？）"
   fi
   # 回滚脚本齐备性：每个迁移都应随附 .down.sql（P0-5 可回滚交付物）。
-  upf="$(count_sql "${ROOT}/internal/store/migrations" no)"
-  dnf="$(count_sql "${ROOT}/internal/store/migrations" yes)"
+  upf="$(count_sql "${ROOT}/internal/store/sqlstore/migrations" no)"
+  dnf="$(count_sql "${ROOT}/internal/store/sqlstore/migrations" yes)"
   if [ "$upf" = "$dnf" ]; then
       ok "回滚脚本齐备（up=${upf} down=${dnf}）"
   else

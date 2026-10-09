@@ -74,7 +74,7 @@ operator 子模块额外引入 `sigs.k8s.io/controller-runtime`（K8s CRD 控制
 | ⑨ | K8s 集群与资源管理 | 9 | `internal/controlplane/k8s_cluster.go`、`k8s_manage.go`、`internal/k8s/` | 集群增删查 + 测试连接；资源只读/写（namespace/pod/deployment/service/configmap/secret/node）+ scale/restart/rollback；基于 client-go，无 kubectl 依赖；租户隔离 |
 | ⑩ | 灰度发布 | 6 | `internal/deploy/`（model/handler/sql/store） | 三策略：rolling / canary（按权重分流）/ bluegreen（蓝绿切流）；发布门禁 Gate（失败率/延迟阈值）+ 自动回滚 + Promote 拥级 |
 | ⑪ | 告警规则 | 3 | `internal/store/`（AlertRule CRUD）、`internal/controlplane/` | 基于指标阈值的告警触发规则（metric/op/threshold/for/severity/message）+ CRUD + 按租户隔离 |
-| ⑫ | 作业审批 | 2、14 | `internal/controlplane/server.go`（handleApproveTask/handleRejectTask）、`internal/store/sql.go` | 高风险任务 `pending_approval` 状态 + approve/reject 端点 + 审批人记录 + 越权防护 |
+| ⑫ | 作业审批 | 2、14 | `internal/controlplane/server.go`（handleApproveTask/handleRejectTask）、`internal/store/sqlstore/sql.go` | 高风险任务 `pending_approval` 状态 + approve/reject 端点 + 审批人记录 + 越权防护 |
 | ⑬ | 用户注册审批 | 10 | `internal/controlplane/auth.go`、`internal/config/config.go` | 注册安全：公开注册开关 + pending 审批流程 + approve/reject + 失败锁账号 |
 
 ### 4.3 K8s Operator（独立子模块）
@@ -184,7 +184,7 @@ go build ./... && go vet ./... && go test ./...
 
 | 编号 | 加固项 | 落地文件 / 入口 |
 |---|---|---|
-| | RBAC 持久化三表 + 种子（修复 mysql 后端启动即 panic、HA 多副本身份一致） | `internal/store/sql.go`（`initSchema` 建表 + `seedRBAC`）、`internal/store/sql_rbac.go` |
+| | RBAC 持久化三表 + 种子（修复 mysql 后端启动即 panic、HA 多副本身份一致） | `internal/store/sqlstore/sql.go`（`initSchema` 建表 + `seedRBAC`）、`internal/store/sqlstore/sql_rbac.go` |
 | | HTTP / gRPC 兜底恢复（handler panic 不再拖垮控制面） | `internal/controlplane/server.go`（`recoveryMiddleware` + `grpcRecoveryInterceptor`） |
 | | 请求体限流（1 MiB，统一 `decodeJSONBody`） | `internal/controlplane/server.go`（`MaxBytesReader`）、`auth.go` 全部解码调用 |
 | | 登录防爆破 + 失败锁账号（令牌桶 + 5 次锁 15min） | `internal/controlplane/auth.go`（`loginGuard`） |

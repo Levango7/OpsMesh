@@ -79,18 +79,10 @@ const (
 	TenantStatusDisabled  = model.TenantStatusDisabled
 )
 
-// normalizeTenantID：薄包装（store 内 5 个调用点零改动）。
-func normalizeTenantID(tenantID string) string {
-	return model.NormalizeTenantID(tenantID)
-}
-
 // RBAC 权限目录：目录本体（PermSpec / PermSpecs / RolePermissions）随 TD-61 上提 model。
 // 原因：memory 与 sql 两后端的 seedRBAC 共用同一份定义，控制面 RBAC 闸经
 // store.RolePermissions() 消费——目录若留在任一后端包内，另一后端就需反向依赖它。
-// 下面的变量别名与薄包装让父包内 sql_rbac.go 与各测试零改动。
-
-// rbacPermSpecs 父包短名（= model.PermSpecs 同一切片）。
-var rbacPermSpecs = model.PermSpecs
+// 薄包装让外部消费方（store.RolePermissions）与各测试零改动。
 
 // RolePermissions 返回预置角色名→权限集合映射（公共 API，签名不变）。
 func RolePermissions() map[string][]string { return model.RolePermissions() }

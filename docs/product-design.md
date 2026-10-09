@@ -119,12 +119,12 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 
 | 功能模块 | 能力描述 | 成熟度 | 落地文件 / 入口 |
 |---|---|---|---|
-| 多租户 | 行级隔离（tenant_id）+ schema 级隔离（`--multi-schema`）+ 租户级资源配额与计费 | ✅ | `internal/controlplane/quota.go`、`internal/store/sql.go` |
-| RBAC | 持久化三表（users/roles/permissions）+ 种子幂等 + JWT 双 Token + 网关注入身份头双路径 | ✅ | `internal/store/sql_rbac.go`、`internal/controlplane/auth.go` |
+| 多租户 | 行级隔离（tenant_id）+ schema 级隔离（`--multi-schema`）+ 租户级资源配额与计费 | ✅ | `internal/controlplane/quota.go`、`internal/store/sqlstore/sql.go` |
+| RBAC | 持久化三表（users/roles/permissions）+ 种子幂等 + JWT 双 Token + 网关注入身份头双路径 | ✅ | `internal/store/sqlstore/sql_rbac.go`、`internal/controlplane/auth.go` |
 | 联邦 | 控制面联邦 mTLS + HMAC 签名验签 + 跨网段任务转发 + 联邦级设备/任务视图 + 多集群联邦发布协调 | ✅ | `internal/controlplane/federation.go`、`internal/deploy/federation.go` |
 | 密钥管理 | Env/File/Vault/Chain provider + `--secret-provider` 配置 + `${vault:key}` 引用解析 + 告警通道密钥外置 + 前端 SecretsView UI + kubeconfig AES-256-GCM 加密 | ✅ | `internal/secrets/`、`web/enterprise/src/views/secrets/SecretsView.vue` |
 | 日志检索 | 双后端（Memory/SQL）+ offset 分页 + 全文本检索（倒排索引 + 中英文分词 + TF-IDF + 短语/布尔/通配符）+ Loki/ES 适配 | ✅ | `internal/logstore/` |
-| 审计 | 100% 留痕（AuditEvent → audit_log / memory ring）+ 可查（租户/动作/时间窗过滤）+ 6 月留存规划 | ✅ | `internal/controlplane/server.go`、`internal/store/sql.go` |
+| 审计 | 100% 留痕（AuditEvent → audit_log / memory ring）+ 可查（租户/动作/时间窗过滤）+ 6 月留存规划 | ✅ | `internal/controlplane/server.go`、`internal/store/sqlstore/sql.go` |
 | HA | 多副本 leader 选举（leader_lease 表）+ 超期任务自动回收 + agent 多控制面 failover + PodDisruptionBudget | ✅ | `internal/controlplane/server.go`（leaderLoop） |
 
 ### 3.4 成熟度汇总
