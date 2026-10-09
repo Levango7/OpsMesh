@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.9"
       - name: Download modules
         run: go mod download
       - name: Verify modules
@@ -288,7 +288,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.9"
       - name: 逐模块 Build + Vet + golangci-lint + Test（-race）
         # golangci-lint 与 build-test 的 action 同版（v2.13.2）：
         # golangci-lint-action 不支持在循环里逐模块执行；binary 从子目录运行会
@@ -397,7 +397,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.9"
       - name: Wait for MySQL
         run: until (echo > /dev/tcp/127.0.0.1/3306) 2>/dev/null; do sleep 2; done
       - name: Wait for Redis
@@ -434,7 +434,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.9"
       - name: gosec (SAST 静态安全扫描)
         # 用 go install 而非 securego/gosec 容器 action：容器镜像内置 Go 1.24，
         # 无法解析 go.mod 的 1.26（报 "go.mod requires go >= 1.26.0"）。
@@ -1410,7 +1410,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.9"
       - name: 安装 syft（SBOM 生成依赖）
         # .goreleaser.yml 声明 sboms.artifacts: archive，goreleaser 调用 syft 生成 SBOM。
         # 钉死 syft v1.51.1（2026 最新稳定版），防 latest 供应链漂移。
@@ -1498,7 +1498,7 @@ jobs:
         run: bash deploy/docker/scripts/build-enterprise-web.sh --no-build
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.9"
       # 真实产物态下跑控制面企业版交付路径用例（占位态由 build-test job 的常规 go test 覆盖）。
       - name: 控制面企业版交付路径测试（真实产物态）
         run: go test ./internal/controlplane/ -run 'TestEnterprise' -count=1 -v
@@ -1800,7 +1800,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.9"
       - name: Download modules
         run: go mod download
       - name: Race detector (go test -race -count=3)

@@ -1,7 +1,7 @@
 # 第三方依赖许可证清单（自动生成，勿手改）
 
 > 生成命令：`bash deploy/scripts/gen-third-party-licenses.sh`（CI 用 `--check` 阻止文档与 go.sum 漂移）  
-> 生成时间：2026-09-29T10:08:03Z  
+> 生成时间：2026-10-09T07:04:51Z  
 > 依赖来源：根模块 + `services/*/go.mod` + `operator/go.mod` 的全部 `go.sum`（162 个 module@version）  
 > 许可证识别：读本地 Go 模块缓存里各模块自带的 LICENSE 文件，按签名表分类为常见 SPDX 名。
 
@@ -76,7 +76,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 
 | 模块 | go.sum 内全部版本 | 本清单判定用 |
 |---|---|---|
-| `golang.org/x/net` | v0.58.0, v0.59.0 | `v0.59.0` |
+| `golang.org/x/net` | v0.58.0, v0.59.0, v0.60.0 | `v0.60.0` |
 | `golang.org/x/sync` | v0.22.0, v0.23.0 | `v0.23.0` |
 | `golang.org/x/sys` | v0.47.0, v0.48.0 | `v0.48.0` |
 | `golang.org/x/term` | v0.45.0, v0.46.0 | `v0.46.0` |
@@ -177,7 +177,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `github.com/tklauser/go-sysconf` | v0.3.12 | 间接 |
 | `golang.org/x/crypto` | v0.57.0 | 直接 |
 | `golang.org/x/mod` | v0.41.0 | 间接 |
-| `golang.org/x/net` | v0.59.0 | 间接 |
+| `golang.org/x/net` | v0.60.0 | 间接 |
 | `golang.org/x/oauth2` | v0.36.0 | 间接 |
 | `golang.org/x/sync` | v0.23.0 | 间接 |
 | `golang.org/x/sys` | v0.48.0 | 直接 |

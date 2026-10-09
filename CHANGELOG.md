@@ -4,6 +4,15 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-09（Go 漏洞库当日批量披露：x/net v0.60.0 + CI 工具链 1.26.9 双升级，11 条 govulncheck 报告清零）
+
+- **修复｜govulncheck 11 条新披露（GO-2026-6599～6617）**：批次 3-sql 推送（`094a3db`）后 CI `security` job 转红（run 37888713106）——该提交本身无依赖改动，属漏洞库当日入库导致的「无码转红」（同 run 其余 12 个 job 全绿）。两条腿修：
+  - **模块侧 5 条**（GO-2026-6603/6610/6611/6612/6617，均落在 `golang.org/x/net`，修复版 v0.60.0）：按本仓 CVE 升级惯例全量覆盖 10 个模块（根 + operator + alert/auth/config/device/gpu/log/task/tf-provider），`golang.org/x/net` v0.59.0 → **v0.60.0**；MVS 连带上提 x/sync v0.23.0、x/sys v0.48.0、x/term v0.46.0、x/text v0.42.0。
+  - **标准库 6 条**（GO-2026-6599/6600 html/template、6605/6613/6617 net/http、6607 crypto/tls、6608 net/textproto，修复版 go1.26.9）：CI 与 release 工作流的 `actions/setup-go` pin `1.26.6` → **`1.26.9`**（8 处）。
+- **为什么不动 15 个 go.mod 的 `toolchain` 行**：本机 `GOSUMDB=off`（用户级 go env）下工具链切换被拒——实测 zip 已在模块缓存内仍报 `verifying module: checksum database disabled by GOSUMDB=off`，一旦把 `toolchain go1.26.6` 改成 `go1.26.9`，本机所有 go 命令（含并行会话）立即全线报错。CI 侧由 setup-go 直装 1.26.9，≥ go.mod 声明下限、不触发切换 ⇒ 门禁达成且本机零破坏。工具链行待本机 sumdb 可用后再随版本推进。
+- **许可证清单随版本重算**：`docs/third-party-licenses.md` 重新生成（集合仍 162 个 module@version，仅 x/net 行版本更新）——security job 的许可证门禁比对的就是 go.sum 派生的集合，版本变而不重算必红。
+- **验证**：15 个模块 build+vet 绿（task-svc 的 vet 红来自并行会话在制品 `mysql_integration_test.go` 语法未完成，与本轮无关，未纳入提交）；根模块 `go test ./...` 59 包 ok / 0 fail；`gen-third-party-licenses.sh --check` PASS（162 模块、源码覆盖率 100%）；部署资产门禁 PASS=76 FAIL=0 SKIP=1；**本地 Trivy 判定口径实验**（夹具 A：go.mod 选中 x/net v0.30.0 ⇒ 报出多条 x/net CVE；B：选中 v0.60.0 且 go.sum 留 v0.30.0 全量残留 ⇒ 0；C：仅 `/go.mod` 残留 ⇒ 0；D：真实根模块 go.mod/go.sum 镜像 ⇒ 0）证明 Trivy 按 go.mod 选中版本判定、go.sum 残留不判红 ⇒ 残留的 x/net v0.59.0/v0.58.0（图解析所需，连 `go mod tidy` 也删不掉）不构成新红点。
+
 ## [Unreleased] — 2026-10-08（TD-82/76/75/81：tlsutil 测试轮询替代 sleep、12 微服务 /version 版本面、链路追踪查询侧 Jaeger 入栈、前端 lockfile 源统一官方 + 台账 11 行归位）
 
 - **改进｜internal/tlsutil 证书重载测试**（TD-82）：`CertificateReloader` 新增 `reloadAttempts` 原子计数与 `ReloadAttempts()` 读取口（含失败计数），两处正向断言由固定 `time.Sleep` 改为轮询+10s 截止（事件过防抖后计数必增，是「事件已被处理」的确定性信号，替代慢机器/Windows 下固定 sleep 的误判）；负向断言（Close 后不再 reload）保留有界 sleep。`go test -count=3` 全绿（CI Linux 与本机 Windows 均绿）。
