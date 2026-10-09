@@ -139,3 +139,34 @@ auth 域不成立，因为两套用户体系彼此独立：
 - §2 的 DDL 引用以控制面 `001_initial.sql` + 迁移 018 与 auth-svc 内嵌 `schema.sql` 为准；若并行会话正在调整任一 schema，需按新布局复核。
 - 未评估：auth-svc 的 gRPC 面消费者（若有外部客户端直连 auth-svc gRPC，切流影响面不同）；Redis 不可用时 auth-svc 的降级路径对切流的影响。
 - 与并行会话关系：全程只读，`internal/controlplane`、`internal/store`、`services/auth-svc` 均未改动。
+
+---
+
+## 7. 附：端到端双轨开关冒烟结果（2026-10-10，实测，非推断）
+
+**方法**：Linux 二进制（`GOOS=linux` 交叉编译）同时起 auth-svc（memory + HTTP enabled）与 controlplane（memory，`AUTH_SVC_PROXY_ENABLED=true`，`AUTH_SVC_URL` 指向 auth-svc，同一 HMAC 密钥），走真实 HTTP 请求。覆盖：代理路径、两侧登录、首登改密、代理 `/me`、开关反向验证。
+
+| 用例 | 结果 | 结论 |
+|---|---|---|
+| 开关关闭时 `/api/v1/auth-svc/login` | **404** | ✅ 二元开关生效（`svcproxy.Rule.IsActive()` 实测双向有效） |
+| 开关关闭时本地 `/api/v1/auth/login` | 401（端点在、需凭证） | ✅ 控制面本地路径不受开关影响 |
+| 无凭证打代理前缀 | **400 `missing X-Tenant-ID`** | ⚠️ 聚合层 `requireTenantContext` 先于转发 ⇒ **代理前缀不可能作为登录入口**（登录只能走控制面本地或直连 auth-svc）。这与本地 `/api/v1/auth/login` 无需凭证的语义**不等价**，是切流后必须正视的差异 |
+| 控制面本地登录 + 首登改密 | 200 → 200，下发 at/rt | ✅ 本地路径完好 |
+| 直连 auth-svc 登录 + 首登改密 | 200（带 `changePasswordToken`）→ 200 | ⚠️ **改密后 cookie 被清空且不重签** ⇒ 首登改密客户端**丢失全部会话**必须重新登录（controlplane 同场景会发新 at/rt）。实证了契约报告 §2.6 该处差异 |
+| **auth-svc 签发的 cookie → 控制面 `/api/v1/auth-svc/me`** | **403 `permission denied: auth:read`** | ❌ **阻断级缺陷，见下** |
+
+### 7.1 阻断级缺陷：代理权限闸引用了控制面目录里不存在的权限点
+
+- **实测**：持合法 cookie 请求 `/api/v1/auth-svc/me` ⇒ 403 `permission denied: auth:read`。
+- **根因**：`internal/controlplane/svcproxy/proxy.go:194-201` 的 auth 规则要求 `auth:read`/`auth:write`，而控制面权限目录 `internal/store/model/perm.go` 的 `rbacPermSpecs` **没有 `auth:` 组**（有 `user:`/`role:`/`permission:`）。`requirePermission` 是「用户权限集 ∋ required」的等价判断，无空串豁免 ⇒ **任何控制面身份（含 admin）都不可能通过** ⇒ 代理认证面在生产上**恒 403**，双轨开关打开即不可用。
+- **为什么门禁没抓住**：目录守护 `internal/store/sql_rbac_catalog_test.go` 断言的是**手工维护的** `handlerRequiredPerms` 清单（handler 里的字符串字面量）；而代理的权限点来自**规则数据**（`rule.ResolvePerm(method, path)` 运行时解析），不在该清单里 ⇒ 静态对账存在盲区。
+- **与历史缺陷同类**：2026-09-29 那次「15 个权限点被 handler 引用却从未进入目录 ⇒ 全部角色恒 403」是同一形态；那次靠 sim 取证发现，这次靠端到端冒烟发现。
+- **修复选项（均在并行线文件面，本线未动）**：
+  1. **补目录**：把 `auth:read`/`auth:write` 加入 `rbacPermSpecs`。代价最小，但 admin 独有 ⇒ 普通用户的自服务端点（me/refresh/logout）仍不可达，**与本地语义不等价**。
+  2. **对齐本地语义（推荐）**：auth 域自服务端点（me/login/logout/refresh/change-password）本地本就只要求「合法 token、无权限点」；应让 svcproxy 支持「仅认证、不查权限」的规则形态（如 `Perm: ""` 语义化为豁免 + `handleServiceProxy` 跳过权限循环），auth 规则的 permRules 相应改为该形态。
+  3. **映射到现有目录点**（如 me→`user:read`）：可授权但仍与本地语义不等价。
+- **顺带必须做**：扩展 `sql_rbac_catalog_test.go`，把 svcproxy 三张规则表的 `Perm`/`PermRules` 也纳入「引用点 ⊂ 目录」断言，否则下一处同类漂移仍不会被静态抓住。
+
+### 7.2 对切流方案的影响
+
+在原四方案之上追加一条**前置条件**：无论选 A/B/C/D，**auth 代理规则与权限目录/本地语义的对齐是切流的硬前置**；在此修复前，`AUTH_SVC_PROXY_ENABLED=true` 打开只会得到恒 403 的认证面。本项工作量小（一处目录或一处规则语义 + 一段门禁断言），但**必须由 `internal/controlplane` 与 `internal/store` 的负责方（并行线）实施**——本线按要求不碰其文件面。
