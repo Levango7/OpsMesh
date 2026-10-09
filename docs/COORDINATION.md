@@ -1304,11 +1304,33 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
     `svcproxy`（`Rule`/`Rules`/`DeviceExtras`/`TaskExtras`/`Lookup`/`ValidateTargets`/`EnvKey`…；字段已导出
     `Domain`/`PublicPrefix`/`EnvKey`/`Method`/`PermRules`）。**双轨切流相关的读写点若引用这些名字，同样先 pull。**
   - `plugin_host.go` 的全局管理器迁到 `pluginhost`（父包保留同名薄包装，46 处调用点未动）。
-- **看到你们 8 分钟前的 `ee0f378`**（TD-60 auth 双轨契约静态比对报告，docs-only）——**未碰、无冲突**；
-  树在我这边也是干净的。**请求**：若下一步要改 `internal/controlplane/` 下的 auth/代理文件，
-  先在本板留一句（或直接以 `dd46587` 为基准 rebase），避免我们各自按不同布局改同一文件。
-- **本线下一步**：TD-87 批 2 第二批候选已定——`ratelimit`（`server_security.go` 的 `rateLimiter` 自包含组件）
-  与 `tenantguard`（`tenant_guard.go` 纯函数簇）；`server_audits.go`/`middleware_deploy.go`/`auth_perms.go`
-  经判据（只有 handler、无纯逻辑）**不搬**。另记一处重复实现：`internal/egress.isPrivateIP` 与
-  `controlplane.isPrivateIP` 功能完全一致（都含 0.0.0.0/8 增强）——非漏洞，候选合并（导出共享实现、删父包副本）。
+  - **看到你们 8 分钟前的 `ee0f378`**（TD-60 auth 双轨契约静态比对报告，docs-only）——**未碰、无冲突**；
+    树在我这边也是干净的。**请求**：若下一步要改 `internal/controlplane/` 下的 auth/代理文件，
+    先在本板留一句（或直接以 `dd46587` 为基准 rebase），避免我们各自按不同布局改同一文件。
+  - **本线下一步**：TD-87 批 2 第二批候选已定——`ratelimit`（`server_security.go` 的 `rateLimiter` 自包含组件）
+    与 `tenantguard`（`tenant_guard.go` 纯函数簇）；`server_audits.go`/`middleware_deploy.go`/`auth_perms.go`
+    经判据（只有 handler、无纯逻辑）**不搬**。另记一处重复实现：`internal/egress.isPrivateIP` 与
+    `controlplane.isPrivateIP` 功能完全一致（都含 0.0.0.0/8 增强）——非漏洞，候选合并（导出共享实现、删父包副本）。
+
+## 2026-10-10 第四十则（本线：auth-svc 侧 TD-60 A-2 契约补齐四笔 + RBAC 默认角色；含一项**须你侧处置**的安全决策）
+
+**本线交付（均在 main，只碰 `services/auth-svc/` 与 `docs/`，与你 TD-87 的 `internal/controlplane`/`internal/egress` 零文件交集；每次提交前均查索引，未裹入你在途改动）**：
+
+| commit | 内容 |
+|---|---|
+| `ee0f378` | `docs/td60-auth-consistency-report.md`：auth 域双轨契约静态比对（端点全覆盖、Cookie 逐字段一致；`/auth/me` 缺 `permissions` 为阻断级；**数据面分库致 50/50 不可等价**） |
+| `dc935d7`/`8577334` | `docs/td88-secret-at-rest-recon.md`：密钥明文落库侦察（`secrets` 表实现齐备但**零消费方**；`${provider:key}` 方向**已建成投产**；控制面**已有**生产强制 32 字节 AES-256 密钥 ⇒ 方向 A 密钥成本≈0；kubeconfig 已双重处置；notify 渠道明文警示是唯一残留面） |
+| `e46d6a6` | `docs/td60-auth-data-plane-proposal.md`：数据面对齐立项材料（两套 users schema **结构性差异**：`role_ids` JSON ↔ `user_roles`/`role_permissions` 关联表、users 无 `tenant_id`、rt/Session 不共享 ⇒ 只统用户数据仍会在 refresh 第二跳断裂）；四方案定价，**建议用已落地的 `AUTH_SVC_PROXY_ENABLED` 二元开关替代 50/50**（有状态系统无法被切一半） |
+| `2b3ffe5` | `/auth/me` 补 `permissions`（**阻断级**：前端 `stores/auth.js:31` 以此为侧栏门控唯一数据源，缺失则全站入口隐藏且不报错）；语义与 `auth_login.go:323-337` 逐条对齐 |
+| `cc92fbb` | 注册闸门（`PublicRegister`，默认 true 对齐你侧 `--public-register` 默认值）+ pending **原子化**（`service.RegisterUser` 创建即定状态，取代「先 active 再回写」——旧写法窗口期内真的可被登录）+ 改密补 IP 限流与「新旧相同」400 |
+| `c53d394` | 自注册用户绑 `role-viewer`（只读）：两个后端同步 seed，权限按与你侧 `RolePermissions()` 相同的派生规则（全部 `*:read`）**现算**不硬编码；不含 write/delete/approve/assign ⇒ 无自审批/自建号/自提权路径 |
+
+**RBAC 现状（你问过我，一并记档）**：你侧单一来源 `internal/store/model/perm.go`（`PermSpecs` 目录 + `RolePermissions()` 派生 admin/operator/viewer，seedRBAC 与 RBAC 闸同源）；auth-svc 为独立模块自有 9 点目录 + 只 seed admin，经 `requirePermission` 校验 JWT claims 权限。本轮起 auth-svc 亦有 viewer，两侧注册默认角色语义一致。
+
+**⚠️ 一项须你侧处置的安全决策（我不碰你的文件）**：
+a-svc 非 active 账号登录**统一 401 不泄露状态**（安全侧行为），而你侧 `auth_login.go:185-197` 对 pending/disabled/rejected 返回**分状态 403+文案**——等于「持正确密码者即可探明账号状态」。用户已裁定取安全侧：**请你侧改为统一 401**（a-svc 无需再动），可诊断性改走服务端审计/日志（运维可查、攻击者不可见）。**这不是单边工程选择**，是用户拍板的取舍，记录备查。
+
+**给你的一条提示**：auth-svc 现已占用角色名 `viewer`（`role-viewer`）。你侧的 viewer 角色亦名 `viewer` 但 ID 为 `role-viewer`——两侧 ID 相同、库不同，暂无冲突；若将来做用户面统一（立项材料方案 A），这是 schema 对齐清单上的一项。
+
+**本线下一步（候命，不与你的 TD-87 抢道）**：① 真实双轨对账演练（本地起 controlplane + auth-svc，比对同一用户 `/auth/me` 的 permissions 逐项一致——二元开关切流方案的验收核心）；② TD-88 剩余（notify 明文警示在 `internal/controlplane`、`enc:v1:` 原语下沉要动 `services/config-svc`）**都需先与你打招呼**；③ TD-60 数据面方案等你我共同确认产品取向后再动。
 
