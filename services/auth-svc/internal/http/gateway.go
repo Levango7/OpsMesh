@@ -425,7 +425,52 @@ func (g *Gateway) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	g.clearCookies(w) // 改密后会话终局，前端引导重新登录（controlplane 同语义）。
+	// 会话语义对齐 controlplane auth_login.go 改密 handler 的两条分支：
+	//   - 首登改密（带 changePasswordToken）：成功后**签发正式 at+rt**，
+	//     前端据此直接进入正常会话，无须再登一次；
+	//   - 常规改密（已持有 at）：**保留现有会话**，旧 at 继续有效。
+	// 修复前此处两条分支一律 clearCookies ⇒ 客户端丢失全部会话、必须重新
+	// 登录（端到端冒烟实测到该差异：改密后 me 401、无任何 Cookie）。
+	if body.ChangePasswordToken != "" {
+		// 用新口令复用登录签发路径，保证与 login 的会话创建完全一致
+		//（at+rt Cookie + Redis Session + 设备指纹登记）。
+		u := g.svc.Store().GetUser(userID)
+		if u == nil {
+			writeError(w, http.StatusUnauthorized, "user not found")
+			return
+		}
+		fp := collectDeviceFP(r)
+		resp, loginErr := g.svc.LoginWithFP(r.Context(), &authv1.LoginRequest{
+			Username: u.Username,
+			Password: body.NewPassword,
+		}, fp)
+		if loginErr != nil {
+			// 口令已改成功但会话签发失败：不得留半成品状态，清 Cookie 让客户端重新登录。
+			log.Printf("[auth-svc] handleChangePassword 首登改密后签发会话失败 (user=%s): %v", u.Username, loginErr)
+			g.clearCookies(w)
+			writeError(w, http.StatusInternalServerError, "password changed, but session issue failed; please log in again")
+			return
+		}
+		g.setCookie(w, accessTokenCookieName, resp.AccessToken, int(resp.ExpiresIn))
+		if resp.RefreshToken != "" {
+			g.setCookie(w, refreshTokenCookieName, resp.RefreshToken, 7*24*3600)
+		}
+		if g.sessions != nil && g.sessions.Enabled() && resp.AccessToken != "" {
+			sid := sessionIDFromToken(resp.AccessToken)
+			_ = g.sessions.Create(&cache.Session{
+				SessionID: sid,
+				UserID:    resp.User.Id,
+				TenantID:  "default",
+				DeviceFP:  fp,
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "password changed",
+			"user":   toPublicUser(resp.User),
+		})
+		return
+	}
+	// 常规改密：保留现有会话（不清 Cookie、不重签），旧 at 继续有效。
 	writeJSON(w, http.StatusOK, map[string]string{"status": "password changed"})
 }
 

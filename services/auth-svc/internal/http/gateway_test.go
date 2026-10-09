@@ -264,6 +264,31 @@ func TestChangePassword_FirstLoginFlow(t *testing.T) {
 		t.Fatalf("首登改密: got %d, body=%s", rec2.Code, rec2.Body.String())
 	}
 
+	// ★TD-60 A-2：首登改密成功后必须**直接签发可用会话**（at+rt Cookie），
+	// 客户端据此进入正常会话，无须再登一次。修复前此处一律 clearCookies，
+	// 结果是「改密成功但没有任何会话」——端到端冒烟实测到该差异。
+	at2 := findCookie(t, rec2, "opsmesh_at")
+	rt2 := findCookie(t, rec2, "opsmesh_rt")
+	if at2 == nil || at2.Value == "" {
+		t.Error("首登改密后应签发 opsmesh_at（否则客户端丢失会话、必须重新登录）")
+	}
+	if rt2 == nil || rt2.Value == "" {
+		t.Error("首登改密后应签发 opsmesh_rt（与 controlplane 首登改密分支同语义）")
+	}
+	// 签发出来的 at 必须真的能用（不是摆着看的空壳会话）。
+	if at2 != nil && at2.Value != "" {
+		recMe := doReq(t, mux, http.MethodGet, "/api/v1/auth/me", "",
+			map[string]string{"Cookie": "opsmesh_at=" + at2.Value + "; opsmesh_rt=" + func() string {
+				if rt2 != nil {
+					return rt2.Value
+				}
+				return ""
+			}()})
+		if recMe.Code != http.StatusOK {
+			t.Fatalf("首登改密后签发的 at 应可直接访问 /auth/me，实际 %d body=%s", recMe.Code, recMe.Body.String())
+		}
+	}
+
 	// 新密码可登录（改密生效）。
 	rec3 := doReq(t, mux, http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"NewPass123x!y"}`, nil)
 	if rec3.Code != http.StatusOK {
@@ -547,6 +572,47 @@ func TestAdminCreateUser(t *testing.T) {
 		`{"username":"newbie","password":"SomePass123!x"}`, cookies)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("重名应 409，实际 %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestChangePassword_SessionSemantics 守护改密后的会话语义（TD-60 A-2 §2.6）。
+//
+// 修复前两条分支一律 clearCookies ⇒ 客户端丢失全部会话、必须重新登录。
+// 端到端冒烟实测到该差异（改密后 me 401、无任何 Cookie）。对齐 controlplane
+// auth_login.go 改密 handler：
+//   - 首登改密（带 changePasswordToken）：签发正式 at+rt，直接进入正常会话；
+//   - 常规改密（已持有 at）：保留现有会话，旧 at 继续有效。
+func TestChangePassword_SessionSemantics(t *testing.T) {
+	_, mux, svc := newTestGateway()
+	cookies := loginAsAdmin(t, mux, svc)
+	at := strings.TrimPrefix(cookies["Cookie"], "opsmesh_at=")
+	at = strings.SplitN(at, ";", 2)[0]
+
+	// —— 首登流：模拟 seed 的 MustChangePassword 用户 ——
+	u := svc.Store().GetUserByUsername("admin")
+	u.MustChangePassword = true
+	_ = svc.Store().UpdateUser(u)
+	// （上面 UpdateUser 会把口令一起写回，故重新登录取首登 token 会失败；
+	//  直接构造 changePasswordToken 不走登录：用 service 的 issue 路径不可达，
+	//  故改为「常规 at + MustChangePassword=true」验证常规分支，首登分支用
+	//  change-password-token 头走 requireAuth 的单独用例覆盖。）
+	u.MustChangePassword = false
+	_ = svc.Store().UpdateUser(u)
+
+	// —— 常规改密：旧会话必须仍然有效 ——
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/auth/change-password",
+		`{"oldPassword":"admin123","newPassword":"BrandNewPass456!"}`, cookies)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("常规改密应 200，实际 %d body=%s", rec.Code, rec.Body.String())
+	}
+	// 不得清空 at/rt（否则客户端被踢下线）。
+	if findCookie(t, rec, "opsmesh_at") != nil && findCookie(t, rec, "opsmesh_at").Value == "" {
+		t.Error("常规改密不应把 at 清成空值（会踢掉现有会话）")
+	}
+	// 旧 at 仍能访问 /auth/me ⇒ 会话确系保留。
+	recMe := doReq(t, mux, http.MethodGet, "/api/v1/auth/me", "", map[string]string{"Cookie": "opsmesh_at=" + at})
+	if recMe.Code != http.StatusOK {
+		t.Fatalf("常规改密后旧 at 应仍有效（会话保留），实际 %d body=%s", recMe.Code, recMe.Body.String())
 	}
 }
 
