@@ -1,4 +1,4 @@
-package controlplane
+package presets
 
 import (
 	"strings"
@@ -22,7 +22,7 @@ func TestValidateShellSafeValues_RejectsInjection(t *testing.T) {
 		{"backslash", `a\b`},
 	}
 	for _, c := range cases {
-		err := validateShellSafeValues(map[string]string{c.name: c.value})
+		err := ValidateShellSafeValues(map[string]string{c.name: c.value})
 		if err == nil {
 			t.Errorf("值 %q（参数 %s）应被拒绝，但通过了", c.value, c.name)
 		} else if !strings.Contains(err.Error(), c.name) {
@@ -42,17 +42,17 @@ func TestValidateShellSafeValues_AllowsSafe(t *testing.T) {
 		"password": "StrongPass123",
 		"empty":    "",
 	}
-	if err := validateShellSafeValues(values); err != nil {
+	if err := ValidateShellSafeValues(values); err != nil {
 		t.Fatalf("合法参数值不应被拒绝: %v", err)
 	}
 }
 
 // TestValidateShellSafeValues_EmptyMap 验证空参数集放行。
 func TestValidateShellSafeValues_EmptyMap(t *testing.T) {
-	if err := validateShellSafeValues(map[string]string{}); err != nil {
+	if err := ValidateShellSafeValues(map[string]string{}); err != nil {
 		t.Fatalf("空参数集不应被拒绝: %v", err)
 	}
-	if err := validateShellSafeValues(nil); err != nil {
+	if err := ValidateShellSafeValues(nil); err != nil {
 		t.Fatalf("nil 参数集不应被拒绝: %v", err)
 	}
 }

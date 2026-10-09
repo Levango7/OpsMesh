@@ -1,11 +1,11 @@
-// Package controlplane: os_template_presets_ext.go 定义 OS 优化预置模板（扩展子领域）。
+// Package presets: os_template_presets_ext.go 定义 OS 优化预置模板（扩展子领域）。
 //
-// 从 os_optimize.go 拆分而来。osTemplatesExt 包含磁盘/系统/用户类模板及 Phase1/2 扩展模板，
-// 与 os_template_presets.go 中 osTemplatesCore 共同组成 osTemplates（见 os_optimize.go）。
-package controlplane
+// 从 os_optimize.go 拆分而来。OSTemplatesExt 包含磁盘/系统/用户类模板及 Phase1/2 扩展模板，
+// 与 os_template_presets.go 中 OSTemplatesCore 共同组成 osTemplates（见 os_optimize.go）。
+package presets
 
-// osTemplatesExt 预置 OS 优化模板（扩展：磁盘/系统/用户 + Phase1/2）。
-var osTemplatesExt = []OSTemplate{
+// OSTemplatesExt 预置 OS 优化模板（扩展：磁盘/系统/用户 + Phase1/2）。
+var OSTemplatesExt = []OSTemplate{
 	{
 		ID:          "disk-info",
 		Name:        "磁盘信息收集",

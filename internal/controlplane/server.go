@@ -21,7 +21,10 @@ import (
 	"github.com/Levango7/OpsMesh/internal/approval"
 	"github.com/Levango7/OpsMesh/internal/cmdb"
 	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/controlplane/credentials"
 	"github.com/Levango7/OpsMesh/internal/controlplane/factory"
+	"github.com/Levango7/OpsMesh/internal/controlplane/metricscache"
+	"github.com/Levango7/OpsMesh/internal/controlplane/pluginhost"
 	"github.com/Levango7/OpsMesh/internal/cron"
 	"github.com/Levango7/OpsMesh/internal/deploy"
 	"github.com/Levango7/OpsMesh/internal/egress"
@@ -49,7 +52,7 @@ type Server struct {
 	metricsPort int
 	// metricsCounts 缓存 /metrics 的应用级计数（P1-6：每次抓取 5 次全量扫描 → TTL 内合并）。
 	// 零值 = 不缓存，故测试里直接 &Server{...} 构造的老路径行为不变。
-	metricsCounts appCountsCache
+	metricsCounts metricscache.AppCountsCache
 	requireAuth   bool
 	tlsCert       string
 	tlsKey        string
@@ -316,7 +319,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		httpPort:      cfg.HTTPPort,
 		grpcPort:      cfg.GRPCPort,
 		metricsPort:   cfg.MetricsPort,
-		metricsCounts: appCountsCache{ttl: cfg.MetricsCacheTTL},
+		metricsCounts: metricscache.AppCountsCache{TTL: cfg.MetricsCacheTTL},
 		requireAuth:   cfg.RequireAuth,
 		tlsCert:       cfg.TLSCert,
 		tlsKey:        cfg.TLSKey,
@@ -380,7 +383,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	//
 	// --plugin-manifest 为空 ⇒ 返回 (nil,0,nil)，**不调用 SetPluginManager**：
 	// 保持默认部署零行为变化，也让测试里自行注入的管理器不被覆盖。
-	hostMgr, pluginN, pluginErr := initPluginHost(cfg, s.metrics)
+	hostMgr, pluginN, pluginErr := pluginhost.InitPluginHost(cfg, s.metrics)
 	if pluginErr != nil {
 		if cfg.Production {
 			return nil, fmt.Errorf("插件宿主初始化失败（生产模式 fail-fast）: %w", pluginErr)
@@ -519,7 +522,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// demo 模式保留 admin123 以维持本地一键体验（上方已打印强告警）。
 	// 生产模式缺少口令交付通道时在此 fail-fast：管理员被静默锁死比启动失败更糟。
 	if !cfg.Demo {
-		if err := enforceInitialCredentials(cfg, st); err != nil {
+		if err := credentials.EnforceInitialCredentials(cfg, st); err != nil {
 			return nil, err
 		}
 	}

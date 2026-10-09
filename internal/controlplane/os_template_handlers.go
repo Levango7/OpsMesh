@@ -9,6 +9,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
+	"github.com/Levango7/OpsMesh/internal/controlplane/presets"
 	"github.com/Levango7/OpsMesh/internal/events"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
@@ -88,7 +89,7 @@ func (s *Server) handleCreateOSTemplate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// 基本字段校验：risk 必须为 low/medium/high（空则归一为 low）。
-	tpl.Risk = normalizeRisk(tpl.Risk)
+	tpl.Risk = presets.NormalizeRisk(tpl.Risk)
 	st := osTemplateToStore(&tpl, actx.TenantID)
 	if err := s.store.SaveOSTemplate(st); err != nil {
 		writeInternalError(r.Context(), w, "osOptimize.saveTemplate", err)
@@ -153,7 +154,7 @@ func (s *Server) handleUpdateOSTemplate(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	tpl.ID = id
-	tpl.Risk = normalizeRisk(tpl.Risk)
+	tpl.Risk = presets.NormalizeRisk(tpl.Risk)
 	st := osTemplateToStore(&tpl, actx.TenantID)
 	if err := s.store.SaveOSTemplate(st); err != nil {
 		writeInternalError(r.Context(), w, "osOptimize.saveTemplate", err)
@@ -306,18 +307,18 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 			_ = val
 		}
 		// 类型与语义验证。
-		if err := validateOSParams(tpl.Params, paramsMap); err != nil {
+		if err := presets.ValidateOSParams(tpl.Params, paramsMap); err != nil {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 		// shell 元字符校验：占位符替换前拒绝含元字符的值，防命令注入。
-		if err := validateShellSafeValues(paramsMap); err != nil {
+		if err := presets.ValidateShellSafeValues(paramsMap); err != nil {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		command = renderOSScript(tpl.Commands, paramsMap)
+		command = presets.RenderOSScript(tpl.Commands, paramsMap)
 	} else {
-		command = buildOSExecuteCommand(tpl.Commands, body.Params)
+		command = presets.BuildOSExecuteCommand(tpl.Commands, body.Params)
 	}
 	// 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
 	targetTenant := actx.TenantID

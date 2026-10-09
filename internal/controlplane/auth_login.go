@@ -1,11 +1,11 @@
 // auth_login.go 实现认证 handler：注册/登录/登出/刷新/当前用户/改密。
 //
 // 从 auth.go 拆分而来（纯代码移动，未修改任何逻辑）。依赖 auth.go 中的核心 helper：
-//   - loginGuard（防爆破/限流）、hashPassword/verifyPassword（bcrypt）；
+//   - loginGuard（防爆破/限流）、credentials.HashPassword/credentials.VerifyPassword（bcrypt）；
 //   - issueUserToken（JWT 签发）、createRefreshToken/consumeRefreshToken/revokeRefreshToken（rt 旋转）；
 //   - createChangePasswordToken/consumeChangePasswordToken（首登强制改密令牌）；
 //   - setAuthCookies/clearAuthCookies（双 HttpOnly Cookie）、deviceFingerprint（设备绑定）；
-//   - userFromToken（Bearer/Cookie 鉴权）、validateStrongPassword（强口令校验）；
+//   - userFromToken（Bearer/Cookie 鉴权）、credentials.ValidateStrongPassword（强口令校验）；
 //   - randHexID（ID 分配）、authResponse（响应体）。
 package controlplane
 
@@ -16,6 +16,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
+	"github.com/Levango7/OpsMesh/internal/controlplane/credentials"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -63,7 +64,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
 		return
 	}
-	if msg := validateStrongPassword(body.Password); msg != "" {
+	if msg := credentials.ValidateStrongPassword(body.Password); msg != "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
@@ -81,7 +82,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "default role not found"})
 		return
 	}
-	hash, err := hashPassword(body.Password)
+	hash, err := credentials.HashPassword(body.Password)
 	if err != nil {
 		log.Printf("controlplane: handleAuthRegister 哈希密码失败: %v", err)
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
@@ -174,7 +175,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 		return
 	}
-	if !verifyPassword(u.PasswordHash, body.Password) {
+	if !credentials.VerifyPassword(u.PasswordHash, body.Password) {
 		s.loginGuard.recordFail(body.Username)
 		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 		return
@@ -405,7 +406,7 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 		u = user
 	}
 	// 旧密码校验：与当前 PasswordHash 比对，失败返回 401（防越权改密）。
-	if !verifyPassword(u.PasswordHash, body.OldPassword) {
+	if !credentials.VerifyPassword(u.PasswordHash, body.OldPassword) {
 		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "old password incorrect"})
 		return
 	}
@@ -415,12 +416,12 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 		return
 	}
 	// 新密码强度校验。
-	if msg := validateStrongPassword(body.NewPassword); msg != "" {
+	if msg := credentials.ValidateStrongPassword(body.NewPassword); msg != "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
 	// bcrypt 哈希新密码。
-	newHash, err := hashPassword(body.NewPassword)
+	newHash, err := credentials.HashPassword(body.NewPassword)
 	if err != nil {
 		log.Printf("controlplane: handleAuthChangePassword 哈希密码失败: %v", err)
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})

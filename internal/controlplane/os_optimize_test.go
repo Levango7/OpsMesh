@@ -8,8 +8,8 @@
 //   - handleDeleteOSTemplate：删除存在/不存在/预置未 seed
 //   - handleExecuteOSTemplate：执行模板（含参数验证、shell 元字符拒绝、agent 不存在）
 //   - handleOSTemplateRouting：路由分派（list 兜底、空 id、未知子路径）
-//   - 纯函数：osTemplateByID / buildOSExecuteCommand / renderOSScript / validateOSParams /
-//     validatePort / validateNonEmpty / validatePath / validateShellSafeValues / normalizeRisk /
+//   - 纯函数：osTemplateByID / presets.BuildOSExecuteCommand / presets.RenderOSScript / presets.ValidateOSParams /
+//     presets.ValidatePort / presets.ValidateNonEmpty / presets.ValidatePath / presets.ValidateShellSafeValues / presets.NormalizeRisk /
 //     osTemplateToStore / osTemplateFromStore / seedPresetOSTemplates / listOSTemplatesFromStore /
 //     getOSTemplateByID
 //
@@ -28,6 +28,7 @@ import (
 	"testing"
 
 	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/controlplane/presets"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -555,15 +556,15 @@ func TestOSTemplateByID_NotFound(t *testing.T) {
 	}
 }
 
-// TestBuildOSExecuteCommand 验证 buildOSExecuteCommand 拼接位置参数。
+// TestBuildOSExecuteCommand 验证 presets.BuildOSExecuteCommand 拼接位置参数。
 func TestBuildOSExecuteCommand(t *testing.T) {
 	// 无参数：直接返回原脚本。
-	got := buildOSExecuteCommand("echo hi", nil)
+	got := presets.BuildOSExecuteCommand("echo hi", nil)
 	if got != "echo hi" {
 		t.Fatalf("got=%q, want 'echo hi'", got)
 	}
 	// 有参数：注入 set --。
-	got = buildOSExecuteCommand("echo hi", []string{"a", "b"})
+	got = presets.BuildOSExecuteCommand("echo hi", []string{"a", "b"})
 	if !strings.HasPrefix(got, "set -- 'a' 'b'\n") {
 		t.Fatalf("got=%q, want prefix \"set -- 'a' 'b'\\n\"", got)
 	}
@@ -571,50 +572,50 @@ func TestBuildOSExecuteCommand(t *testing.T) {
 		t.Fatalf("got=%q, want suffix 'echo hi'", got)
 	}
 	// 单引号转义。
-	got = buildOSExecuteCommand("echo", []string{"it's"})
+	got = presets.BuildOSExecuteCommand("echo", []string{"it's"})
 	if !strings.Contains(got, `'it'\''s'`) {
 		t.Fatalf("got=%q, want escaped single quote", got)
 	}
 }
 
-// TestRenderOSScript 验证 renderOSScript 占位符替换。
+// TestRenderOSScript 验证 presets.RenderOSScript 占位符替换。
 func TestRenderOSScript(t *testing.T) {
-	got := renderOSScript("hello {name} {port}", map[string]string{"name": "x", "port": "8080"})
+	got := presets.RenderOSScript("hello {name} {port}", map[string]string{"name": "x", "port": "8080"})
 	if got != "hello x 8080" {
 		t.Fatalf("got=%q, want 'hello x 8080'", got)
 	}
 	// 未提供 key 保留原占位符。
-	got = renderOSScript("hello {name}", map[string]string{})
+	got = presets.RenderOSScript("hello {name}", map[string]string{})
 	if got != "hello {name}" {
 		t.Fatalf("got=%q, want 'hello {name}'", got)
 	}
 }
 
-// TestValidateOSParams 验证 validateOSParams 类型与语义校验。
+// TestValidateOSParams 验证 presets.ValidateOSParams 类型与语义校验。
 func TestValidateOSParams(t *testing.T) {
 	// int 类型合法。
-	if err := validateOSParams([]OSParam{{Name: "port", Type: "int"}}, map[string]string{"port": "8080"}); err != nil {
+	if err := presets.ValidateOSParams([]OSParam{{Name: "port", Type: "int"}}, map[string]string{"port": "8080"}); err != nil {
 		t.Fatalf("port=8080 should pass: %v", err)
 	}
 	// int 类型非法。
-	if err := validateOSParams([]OSParam{{Name: "port", Type: "int"}}, map[string]string{"port": "abc"}); err == nil {
+	if err := presets.ValidateOSParams([]OSParam{{Name: "port", Type: "int"}}, map[string]string{"port": "abc"}); err == nil {
 		t.Fatal("port=abc should fail")
 	}
 	// port 越界。
-	if err := validateOSParams([]OSParam{{Name: "port", Type: "int"}}, map[string]string{"port": "70000"}); err == nil {
+	if err := presets.ValidateOSParams([]OSParam{{Name: "port", Type: "int"}}, map[string]string{"port": "70000"}); err == nil {
 		t.Fatal("port=70000 should fail")
 	}
 	// string 类型非空校验。
-	if err := validateOSParams([]OSParam{{Name: "name", Type: "string"}}, map[string]string{"name": "   "}); err == nil {
+	if err := presets.ValidateOSParams([]OSParam{{Name: "name", Type: "string"}}, map[string]string{"name": "   "}); err == nil {
 		t.Fatal("name='   ' should fail (empty after trim)")
 	}
 	// 缺失值跳过。
-	if err := validateOSParams([]OSParam{{Name: "port", Type: "int"}}, map[string]string{}); err != nil {
+	if err := presets.ValidateOSParams([]OSParam{{Name: "port", Type: "int"}}, map[string]string{}); err != nil {
 		t.Fatalf("missing value should skip: %v", err)
 	}
 }
 
-// TestValidatePort 验证 validatePort 端口范围。
+// TestValidatePort 验证 presets.ValidatePort 端口范围。
 func TestValidatePort(t *testing.T) {
 	cases := []struct {
 		port int
@@ -624,57 +625,57 @@ func TestValidatePort(t *testing.T) {
 		{0, false}, {-1, false}, {65536, false},
 	}
 	for _, c := range cases {
-		err := validatePort(c.port)
+		err := presets.ValidatePort(c.port)
 		if (err == nil) != c.ok {
 			t.Fatalf("port=%d ok=%v, err=%v", c.port, c.ok, err)
 		}
 	}
 }
 
-// TestValidateNonEmpty 验证 validateNonEmpty。
+// TestValidateNonEmpty 验证 presets.ValidateNonEmpty。
 func TestValidateNonEmpty(t *testing.T) {
-	if err := validateNonEmpty("name", "x"); err != nil {
+	if err := presets.ValidateNonEmpty("name", "x"); err != nil {
 		t.Fatalf("non-empty should pass: %v", err)
 	}
-	if err := validateNonEmpty("name", "  "); err == nil {
+	if err := presets.ValidateNonEmpty("name", "  "); err == nil {
 		t.Fatal("whitespace-only should fail")
 	}
-	if err := validateNonEmpty("name", ""); err == nil {
+	if err := presets.ValidateNonEmpty("name", ""); err == nil {
 		t.Fatal("empty should fail")
 	}
 }
 
-// TestValidatePath 验证 validatePath。
+// TestValidatePath 验证 presets.ValidatePath。
 func TestValidatePath(t *testing.T) {
-	if err := validatePath("/etc/foo"); err != nil {
+	if err := presets.ValidatePath("/etc/foo"); err != nil {
 		t.Fatalf("absolute path should pass: %v", err)
 	}
-	if err := validatePath("relative"); err == nil {
+	if err := presets.ValidatePath("relative"); err == nil {
 		t.Fatal("relative path should fail")
 	}
 }
 
-// TestValidateShellSafeValues 验证 validateShellSafeValues。
+// TestValidateShellSafeValues 验证 presets.ValidateShellSafeValues。
 func TestValidateShellSafeValues(t *testing.T) {
 	// 安全值。
-	if err := validateShellSafeValues(map[string]string{"a": "value", "b": "123"}); err != nil {
+	if err := presets.ValidateShellSafeValues(map[string]string{"a": "value", "b": "123"}); err != nil {
 		t.Fatalf("safe values should pass: %v", err)
 	}
 	// 含分号。
-	if err := validateShellSafeValues(map[string]string{"a": "v;reboot"}); err == nil {
+	if err := presets.ValidateShellSafeValues(map[string]string{"a": "v;reboot"}); err == nil {
 		t.Fatal("semicolon should be rejected")
 	}
 	// 含空格。
-	if err := validateShellSafeValues(map[string]string{"a": "v w"}); err == nil {
+	if err := presets.ValidateShellSafeValues(map[string]string{"a": "v w"}); err == nil {
 		t.Fatal("space should be rejected")
 	}
 	// 含反引号。
-	if err := validateShellSafeValues(map[string]string{"a": "v`x`"}); err == nil {
+	if err := presets.ValidateShellSafeValues(map[string]string{"a": "v`x`"}); err == nil {
 		t.Fatal("backtick should be rejected")
 	}
 }
 
-// TestNormalizeRisk 验证 normalizeRisk。
+// TestNormalizeRisk 验证 presets.NormalizeRisk。
 func TestNormalizeRisk(t *testing.T) {
 	cases := []struct {
 		in, want string
@@ -683,8 +684,8 @@ func TestNormalizeRisk(t *testing.T) {
 		{"", "low"}, {"bogus", "low"}, {"critical", "low"},
 	}
 	for _, c := range cases {
-		if got := normalizeRisk(c.in); got != c.want {
-			t.Fatalf("normalizeRisk(%q)=%q, want %q", c.in, got, c.want)
+		if got := presets.NormalizeRisk(c.in); got != c.want {
+			t.Fatalf("presets.NormalizeRisk(%q)=%q, want %q", c.in, got, c.want)
 		}
 	}
 }

@@ -4,6 +4,16 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-09（TD-87 批 1：controlplane 四个新子包 — presets / pluginhost / credentials / metricscache）
+
+- **重构｜controlplane 低耦合件平迁（TD-87 批 1）**：7 件与 `Server` 方法集无关的文件迁入四个新子包——`presets`（模板格式类型 + 三张预置表 + 参数校验/脚本渲染，1307 行）、`pluginhost`（插件宿主装配与清单解析，403）、`credentials`（口令哈希 + 首启凭据加固，406）、`metricscache`（/metrics 应用级计数短 TTL 缓存，184）。父包顶层 `.go` **182 → 175**（prod 89 → 83、test 93 → 92），父包 prod 行 **27,056 → 25,221**。
+- **零改动手法（store 三批配方的再次验证）**：模板格式类型（`OSTemplate`/`OSParam`/`Middleware*`）随数据一起迁入 `presets`，父包新增 `template_shim.go` 以**类型别名**回导五个名字 ⇒ 父包内数十处结构体字面量、字段访问与「控制面运行时类型 ↔ store 持久化模型」的显式转换全部照旧；`InitPluginHost`/`LoadPluginManifest`/9 个凭据函数/`AppCounts(Cache)` 等改为子包限定引用。
+- **测试三分（判据写明）**：①**随包迁**（专测该件的用例：`shell_safe_test.go`、5 个缓存用例、4 个 manifest/宿主用例、9 个 `TestEnforceInitialCredentials_*` + 断言助手）；②**留父包 + 限定引用**（混合文件如 `os_optimize_test.go` 的 60 个 Server handler 用例，以及 `TestInitPluginHostDisabledIsNoOp`——它用父包全局 `PluginManager()`，而**测试不跨包 import 父包**是硬边界）；③**按包各持一份**测试助手（`assertPluginMetric`，同既有 `recordingBus`/`countDevices` 惯例）。
+- **两条判据修正（写进计划 §7.5）**：① 模板类型是「格式/契约」而非「中心类型的宿主」⇒ 必须随迁 + 别名回导（不能只搬数据）；② **「零耦合」判定不能只 grep `*Server`/`s.`**——本批实测一例假阳性（`metrics_cache.go` 只在注释里提到 Server，且以自有类型 + 方法承载），还要看「是否以参数接收 `*Server`」。
+- **顺手清理**：父包 `changePasswordMinLen` 随校验函数迁走后成为 unused 常量，已删（lint 判据抓出）。
+- **验证**：全仓 `go build ./...` 绿；`go vet ./internal/controlplane/...` 零告警；`go test ./internal/controlplane/...` 父包 44.9s + 8 子包 **0 FAIL**；`golangci-lint` **0 issues**；`gofmt -l` 净；`-race` **零 DATA RACE**（父包 290.6s / credentials 148.4s）；部署门禁 PASS=76 FAIL=0 SKIP=1。
+- **剩余（TD-87 批 2）**：§3.2 的 13 件低耦合文件（其中 `plugin_host.go`/`auth_guard.go`/`auth_perms.go` 可与本批的 `pluginhost`/`credentials` 合流）；破 498 个 `*Server` 方法的组合式重构仍按计划列为「需明确诉求才启动」。
+
 ## [Unreleased] — 2026-10-09（TD-65 收口：三家服务真库往返集成测试补齐；顺带揪出两个真缺陷——task-svc 空 `depends_on` 触发 MySQL 3140、config-svc 机密明文落库）
 
 - **新增｜config-svc / incident-svc / portal-svc 的真库往返集成测试**（TD-65 原决议「留此行供集成测试补齐后删除」的最后一项）：三家各新增 DSN 门控用例（`OPSMESH_TEST_MYSQL_DSN` 缺失即 skip，CI 的 services job 已注入该变量⇒在 CI 真跑）。**判据统一为「A 实例写入 → 全新 B 实例读回」**——把「接线成功但数据只在实例内存/根本没落库」这个 TD-65 关心了三个月的形态变成可复跑的断言。覆盖：config-svc（配置 upsert+版本递增+history 表落账+机密密文落库+旧明文兼容+错密钥硬失败）、incident-svc（occurred_at / JSON 列 / 时间线 / 状态回写 / 级联删除）、portal-svc（int 与 float 数值列 / 配额 upsert 两分支 / 活动流水）。至此 alert/auth/device/task/runbook/config/incident/portal 八家 MySQL 接线服务均有 DSN 门控集成用例。

@@ -1,13 +1,13 @@
-// Package controlplane: middleware_template_presets.go 定义中间件部署预置模板数据。
+// Package presets: middleware_template_presets.go 定义中间件部署预置模板数据。
 //
-// 从 middleware_deploy.go 拆分而来。middlewareTemplates 包含 10+ 个常见中间件
+// 从 middleware_deploy.go 拆分而来。MiddlewareTemplates 包含 10+ 个常见中间件
 // （MySQL/Redis/Kafka/Nginx/Tomcat/Zookeeper/PostgreSQL/MongoDB/RabbitMQ/Elasticsearch）
 // 的部署模板，每个模板支持 docker 容器化与 systemd 裸机两种部署方式。
-package controlplane
+package presets
 
-// middlewareTemplates 预置中间件部署模板集合。
+// MiddlewareTemplates 预置中间件部署模板集合。
 // 每个模板对应一个常见中间件，docker 与 systemd 双部署方式并存。
-var middlewareTemplates = []MiddlewareTemplate{
+var MiddlewareTemplates = []MiddlewareTemplate{
 	// ---------------- database ----------------
 	{
 		ID:          "mysql",

@@ -1,12 +1,12 @@
-// Package controlplane: os_template_presets.go 定义 OS 优化预置模板（核心子领域）。
+// Package presets: os_template_presets.go 定义 OS 优化预置模板（核心子领域）。
 //
-// 从 os_optimize.go 拆分而来。osTemplatesCore 包含内核/网络/安全/时间/SSH 类模板，
-// 与 os_template_presets_ext.go 中 osTemplatesExt 共同组成 osTemplates（见 os_optimize.go）。
+// 从 os_optimize.go 拆分而来。OSTemplatesCore 包含内核/网络/安全/时间/SSH 类模板，
+// 与 os_template_presets_ext.go 中 OSTemplatesExt 共同组成 osTemplates（见 os_optimize.go）。
 // 每个模板对应一类常见运维场景，脚本遵循"幂等 + 失败即退出"原则。
-package controlplane
+package presets
 
-// osTemplatesCore 预置 OS 优化模板（核心：内核/网络/安全/时间/SSH）。
-var osTemplatesCore = []OSTemplate{
+// OSTemplatesCore 预置 OS 优化模板（核心：内核/网络/安全/时间/SSH）。
+var OSTemplatesCore = []OSTemplate{
 	{
 		ID:          "kernel-tune",
 		Name:        "内核参数调优",

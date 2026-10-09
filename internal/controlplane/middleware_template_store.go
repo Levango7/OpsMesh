@@ -12,13 +12,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Levango7/OpsMesh/internal/controlplane/presets"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 func middlewareTemplateByID(id string) *MiddlewareTemplate {
-	for i := range middlewareTemplates {
-		if middlewareTemplates[i].ID == id {
-			return &middlewareTemplates[i]
+	for i := range presets.MiddlewareTemplates {
+		if presets.MiddlewareTemplates[i].ID == id {
+			return &presets.MiddlewareTemplates[i]
 		}
 	}
 	return nil
@@ -38,7 +39,7 @@ func renderMiddlewareScript(script string, params map[string]string) string {
 //   - int 类型：必须为整数；若参数名为 port 或以 port 结尾则校验端口范围 1-65535。
 //   - string 类型：若参数名为路径类（datadir/configdir/confpath/javahome 或以 dir/path 结尾）则校验以 / 开头。
 //
-// validatePort/validateNonEmpty/validatePath 定义在 os_optimize.go（同包共享）。
+// presets.ValidatePort/presets.ValidateNonEmpty/presets.ValidatePath 定义在 os_optimize.go（同包共享）。
 func validateMiddlewareParams(params []MiddlewareParam, values map[string]string) error {
 	for _, p := range params {
 		val, ok := values[p.Name]
@@ -52,14 +53,14 @@ func validateMiddlewareParams(params []MiddlewareParam, values map[string]string
 				return fmt.Errorf("param %s must be integer, got %s", p.Name, val)
 			}
 			if p.Name == "port" || strings.HasSuffix(p.Name, "port") {
-				if err := validatePort(n); err != nil {
+				if err := presets.ValidatePort(n); err != nil {
 					return err
 				}
 			}
 		case "string":
 			if p.Name == "datadir" || p.Name == "configdir" || p.Name == "confpath" || p.Name == "javahome" ||
 				strings.HasSuffix(p.Name, "dir") || strings.HasSuffix(p.Name, "path") {
-				if err := validatePath(val); err != nil {
+				if err := presets.ValidatePath(val); err != nil {
 					return err
 				}
 			}
@@ -114,11 +115,11 @@ func middlewareTemplateFromStore(st *store.MiddlewareTemplate) *MiddlewareTempla
 }
 
 // seedPresetMiddlewareTemplates 启动时将预置中间件模板幂等写入 store（按 ID 去重，已存在不覆盖）。
-// 保持向后兼容：store 为空时 API 回退到内存常量 middlewareTemplates。
+// 保持向后兼容：store 为空时 API 回退到内存常量 presets.MiddlewareTemplates。
 // 预置模板归入 "default" 租户，对所有租户可见。
 func (s *Server) seedPresetMiddlewareTemplates() {
-	for i := range middlewareTemplates {
-		tpl := &middlewareTemplates[i]
+	for i := range presets.MiddlewareTemplates {
+		tpl := &presets.MiddlewareTemplates[i]
 		if existing := s.store.GetMiddlewareTemplate(tpl.ID); existing != nil {
 			continue // 已存在（用户可能已在线修改），不覆盖
 		}
@@ -131,7 +132,7 @@ func (s *Server) seedPresetMiddlewareTemplates() {
 
 // listMiddlewareTemplatesFromStore 从 store 读取中间件模板列表（含回退）。
 // 合并当前租户的模板与 default 租户的预置模板（按 ID 去重）；
-// store 完全为空时回退到内存常量 middlewareTemplates（向后兼容）。
+// store 完全为空时回退到内存常量 presets.MiddlewareTemplates（向后兼容）。
 func (s *Server) listMiddlewareTemplatesFromStore(tenantID string) []MiddlewareTemplate {
 	stored := s.store.ListMiddlewareTemplates(tenantID)
 	if tenantID != "" && tenantID != "default" {
@@ -139,8 +140,8 @@ func (s *Server) listMiddlewareTemplatesFromStore(tenantID string) []MiddlewareT
 	}
 	if len(stored) == 0 {
 		// 回退到内存常量（store 未初始化或为空）。
-		out := make([]MiddlewareTemplate, len(middlewareTemplates))
-		copy(out, middlewareTemplates)
+		out := make([]MiddlewareTemplate, len(presets.MiddlewareTemplates))
+		copy(out, presets.MiddlewareTemplates)
 		return out
 	}
 	seen := make(map[string]bool, len(stored))

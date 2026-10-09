@@ -59,12 +59,6 @@ const (
 // changePasswordTokenExpiry 改密令牌有效期（5 分钟）。
 const changePasswordTokenExpiry = 5 * time.Minute
 
-// bcryptCost bcrypt 哈希 cost（生产推荐基线 12，DefaultCost=10 偏低）。
-const bcryptCost = 12
-
-// changePasswordMinLen 改密新密码最短长度（强口令基线：8 字符）。
-const changePasswordMinLen = 8
-
 // apikeyPrefix API Key 明文前缀：platform.GenerateAPIKey 生成的 "om_" + 32 位随机 hex
 // （共 35 字符）。前缀用于 requireProd 分发识别，避免 API Key 被误送 JWT 验签。
 const apikeyPrefix = "om_"

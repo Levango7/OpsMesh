@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Levango7/OpsMesh/internal/controlplane/credentials"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
 
@@ -42,9 +43,9 @@ func loginAsUser(t *testing.T, s *Server, username, password string) string {
 // createTenantAdmin 直接在 store 建一个指定租户的 admin 角色用户并返回其登录凭证。
 func createTenantAdmin(t *testing.T, s *Server, tenantID string) string {
 	t.Helper()
-	hash, err := hashPassword("Tenant123")
+	hash, err := credentials.HashPassword("Tenant123")
 	if err != nil {
-		t.Fatalf("hashPassword: %v", err)
+		t.Fatalf("credentials.HashPassword: %v", err)
 	}
 	u := &store.User{
 		ID:           "user-tenant-admin-" + tenantID,

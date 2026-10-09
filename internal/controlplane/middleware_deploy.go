@@ -12,7 +12,7 @@
 //   - GET    /api/v1/middleware-instances          查询已部署实例（从任务历史推导）
 //
 // 设计要点（模板从内存常量改为 store 持久化，支持在线 CRUD）：
-//   - 预置模板仍以内存常量 middlewareTemplates 维护（版本随代码升级），启动时
+//   - 预置模板仍以内存常量 presets.MiddlewareTemplates 维护（版本随代码升级），启动时
 //     seedPresetMiddlewareTemplates 将其幂等写入 store（按 ID 去重，已存在不覆盖）。
 //   - API 从 store 读取模板列表/详情；store 为空时回退到内存常量（向后兼容）。
 //   - deploy 将 params 替换脚本占位符（{name}/{port}/...）后作为 shell task 下发，
@@ -30,38 +30,6 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
-
-// MiddlewareTemplate 预置中间件部署模板。
-// Scripts 按 deployType（"docker"/"systemd"）索引对应部署/验证/卸载脚本。
-type MiddlewareTemplate struct {
-	ID          string                      `json:"id"`
-	Name        string                      `json:"name"`
-	Category    string                      `json:"category"` // database/cache/message/web/search
-	Version     string                      `json:"version"`
-	Description string                      `json:"description"`
-	DeployTypes []string                    `json:"deployTypes"` // ["docker","systemd"]
-	Params      []MiddlewareParam           `json:"params"`
-	Scripts     map[string]MiddlewareScript `json:"scripts"` // key: "docker"/"systemd"
-	Risk        string                      `json:"risk"`    // low/medium/high
-	Tags        []string                    `json:"tags"`
-}
-
-// MiddlewareParam 中间件部署参数定义。
-type MiddlewareParam struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Default     string `json:"default"`
-	Required    bool   `json:"required"`
-	Type        string `json:"type"` // string/int/bool
-}
-
-// MiddlewareScript 部署脚本三元组：部署/验证/卸载。
-// 脚本内可使用 {name}/{port}/{password}/... 等占位符，deploy 时由 params 替换。
-type MiddlewareScript struct {
-	Deploy    string `json:"deploy"`    // 部署命令
-	Verify    string `json:"verify"`    // 验证/健康检查命令
-	Uninstall string `json:"uninstall"` // 卸载命令
-}
 
 // handleMiddlewareInstanceRouting 统一分派 /api/v1/middleware-instances/{id}... 子路径：
 //   - POST /api/v1/middleware-instances/{id}/uninstall：卸载实例

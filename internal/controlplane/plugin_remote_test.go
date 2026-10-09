@@ -18,13 +18,14 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/controlplane/pluginhost"
 	"github.com/Levango7/OpsMesh/internal/metrics"
 	"github.com/Levango7/OpsMesh/internal/plugin"
 )
 
+// writeManifest 写一个临时清单文件并返回路径。
 // writeManifest 写一个临时清单文件并返回路径。
 func writeManifest(t *testing.T, body string) string {
 	t.Helper()
@@ -47,128 +48,6 @@ func manifestFor(url string, hooks ...string) string {
 		`"],"tokenEnv":"` + testTokenEnv + `","timeoutMs":2000}]}`
 }
 
-func TestLoadPluginManifestHappyPath(t *testing.T) {
-	t.Setenv(testTokenEnv, "tok")
-	specs, err := loadPluginManifest(writeManifest(t, manifestFor("http://127.0.0.1:18123/hook")), true)
-	if err != nil {
-		t.Fatalf("合法清单被拒：%v", err)
-	}
-	if len(specs) != 1 {
-		t.Fatalf("应解析出 1 个插件，实际 %d", len(specs))
-	}
-	s := specs[0]
-	if s.Name != "guard" || s.Token != "tok" || s.Timeout != 2*time.Second {
-		t.Errorf("字段不符：%+v", s)
-	}
-	if len(s.Hooks) != 1 || s.Hooks[0] != plugin.HookConfigPreSet {
-		t.Errorf("扩展点映射不符：%v", s.Hooks)
-	}
-}
-
-func TestLoadPluginManifestRejects(t *testing.T) {
-	good := manifestFor("http://127.0.0.1:18123/hook")
-	cases := []struct {
-		name    string
-		body    string
-		token   string
-		allowP  bool
-		wantSub string
-	}{
-		{"文件不存在", "__NOFILE__", "tok", true, "读取失败"},
-		{"坏 JSON", `{"plugins":[`, "tok", true, "解析失败"},
-		{"空 plugins", `{"plugins":[]}`, "tok", true, "plugins 为空"},
-		{"未知字段（token 明文）", `{"plugins":[{"name":"a","url":"http://127.0.0.1:1/","hooks":["config.preSet"],"token":"x"}]}`, "tok", true, "解析失败"},
-		{"未知字段名拼错", strings.Replace(good, `"timeoutMs"`, `"timeout_ms"`, 1), "tok", true, "解析失败"},
-		{"空插件名", strings.Replace(good, `"name":"guard"`, `"name":"  "`, 1), "tok", true, "name 为空"},
-		{"插件名重复", `{"plugins":[` + entry("guard", "http://127.0.0.1:1/hook") + `,` +
-			entry("guard", "http://127.0.0.1:2/hook") + `]}`, "tok", true, "重复"},
-		{"hooks 为空", strings.Replace(good, `"hooks":["config.preSet"]`, `"hooks":[]`, 1), "tok", true, "hooks 为空"},
-		{"未冻结的扩展点", strings.Replace(good, "config.preSet", "config.makeUp", 1), "tok", true, "未知扩展点"},
-		{"缺 tokenEnv", strings.Replace(good, `"tokenEnv":"`+testTokenEnv+`",`, ``, 1), "tok", true, "tokenEnv"},
-		{"tokenEnv 指向未设置变量", good, "", true, "为空或未设置"},
-		{"超时越界", strings.Replace(good, `"timeoutMs":2000`, `"timeoutMs":999999`, 1), "tok", true, "越界"},
-		{"超时为负", strings.Replace(good, `"timeoutMs":2000`, `"timeoutMs":-1`, 1), "tok", true, "越界"},
-		{"环回 URL 未开 allow-private", good, "tok", false, "SSRF"},
-		{"非 http 协议", strings.Replace(good, "http://127.0.0.1:18123", "file:///tmp", 1), "tok", true, "SSRF"},
-		{"元数据地址即使开开关也拒", strings.Replace(good, "http://127.0.0.1:18123", "http://169.254.169.254", 1), "tok", true, "SSRF"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if c.token == "" {
-				t.Setenv(testTokenEnv, "")
-				_ = os.Unsetenv(testTokenEnv)
-			} else {
-				t.Setenv(testTokenEnv, c.token)
-			}
-			path := writeManifest(t, c.body)
-			if c.body == "__NOFILE__" {
-				path = filepath.Join(t.TempDir(), "not-there.json")
-			}
-			if _, err := loadPluginManifest(path, c.allowP); err == nil {
-				t.Fatalf("应判错：%s", c.name)
-			} else if !strings.Contains(err.Error(), c.wantSub) {
-				t.Errorf("错误信息应含 %q，实际：%v", c.wantSub, err)
-			}
-		})
-	}
-}
-
-func TestInitPluginHostDisabledIsNoOp(t *testing.T) {
-	prev := PluginManager()
-	m := metrics.New()
-	mgr, n, err := initPluginHost(&config.Config{}, m)
-	if err != nil {
-		t.Fatalf("未配置清单时不应报错：%v", err)
-	}
-	if mgr != nil || n != 0 {
-		t.Errorf("未配置清单时必须返回空宿主（mgr=%v n=%d）", mgr, n)
-	}
-	if PluginManager() != prev {
-		t.Error("未配置清单时不得改动全局插件管理器（否则会把测试注入的管理器覆盖掉）")
-	}
-}
-
-// entry 生成一个插件对象字面量（重复名用例需要手写两个条目，字符串拼接读不懂）。
-func entry(name, url string) string {
-	return `{"name":"` + name + `","url":"` + url +
-		`","hooks":["config.preSet"],"tokenEnv":"` + testTokenEnv + `"}`
-}
-
-func TestInitPluginHostBuildsManager(t *testing.T) {
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls.Add(1)
-		_, _ = io.WriteString(w, `{"decision":"allow"}`)
-	}))
-	defer srv.Close()
-
-	t.Setenv(testTokenEnv, "tok")
-	m := metrics.New()
-	mgr, n, err := initPluginHost(&config.Config{PluginManifest: writeManifest(t, manifestFor(srv.URL, "config.preSet", "config.postSet")), PluginAllowPrivate: true}, m)
-	if err != nil {
-		t.Fatalf("初始化失败：%v", err)
-	}
-	if n != 1 || mgr == nil {
-		t.Fatalf("应注册 1 个插件，实际 n=%d mgr=%v", n, mgr)
-	}
-	if got := len(mgr.AllPlugins()); got != 1 {
-		t.Errorf("AllPlugins 应为 1，实际 %d", got)
-	}
-	if err := mgr.FireHook(nil, plugin.HookConfigPreSet, plugin.Event{Name: "x"}); err != nil {
-		t.Errorf("放行场景不应报错：%v", err)
-	}
-	if got := calls.Load(); got != 1 {
-		t.Errorf("插件端点应被调用 1 次，实际 %d", got)
-	}
-	// 计数：ok 一次。
-	assertPluginMetric(t, m, "config.preSet", "ok", 1)
-}
-
-// TestNewServerActuallyWiresPluginManager 是本轮的**核心断言**：
-// 生产启动路径（NewServer）必须真的构造过插件宿主。
-//
-// TD-62 之所以能潜伏那么久，就是因为 SetPluginManager 只有测试调用——
-// 只测 initPluginHost 会留下同一个盲区（"函数正确但从没被调用"）。
 func TestNewServerActuallyWiresPluginManager(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -214,9 +93,9 @@ func TestNewServerActuallyWiresPluginManager(t *testing.T) {
 func TestNewServerProductionFailsFastOnBadManifest(t *testing.T) {
 	t.Setenv(testTokenEnv, "tok")
 	path := writeManifest(t, `{"plugins":[{"name":"guard","url":"http://127.0.0.1:1/hook","hooks":["config.makeUp"],"tokenEnv":"`+testTokenEnv+`"}]}`)
-	// Production=true 时存储后端也会失败，所以这里直接断言 initPluginHost 的判定本身，
+	// Production=true 时存储后端也会失败，所以这里直接断言 pluginhost.InitPluginHost 的判定本身，
 	// 并单独验证 NewServer 里那条分支用的是同一个判据（见下）。
-	if _, _, err := initPluginHost(&config.Config{Production: true, PluginManifest: path, PluginAllowPrivate: true}, metrics.New()); err == nil {
+	if _, _, err := pluginhost.InitPluginHost(&config.Config{Production: true, PluginManifest: path, PluginAllowPrivate: true}, metrics.New()); err == nil {
 		t.Fatal("坏清单必须返回 error")
 	}
 	_, err := NewServer(&config.Config{
@@ -323,18 +202,18 @@ func TestRemotePluginUnreachableFailsClosedAndPostNeverBlocks(t *testing.T) {
 // --- 辅助 ---
 
 // newPluginWiredTestServer 造一个"插件宿主已经接好"的测试服务：
-// 与生产同构（走 initPluginHost + SetPluginManager），而不是手工塞一个 handler。
+// 与生产同构（走 pluginhost.InitPluginHost + SetPluginManager），而不是手工塞一个 handler。
 func newPluginWiredTestServer(t *testing.T, url string, hooks ...string) *Server {
 	t.Helper()
 	t.Setenv(testTokenEnv, "tok")
 	s := newAPIKeyTestServer()
 	s.metrics = metrics.New()
-	mgr, n, err := initPluginHost(&config.Config{
+	mgr, n, err := pluginhost.InitPluginHost(&config.Config{
 		PluginManifest:     writeManifest(t, manifestFor(url, hooks...)),
 		PluginAllowPrivate: true,
 	}, s.metrics)
 	if err != nil {
-		t.Fatalf("initPluginHost 失败：%v", err)
+		t.Fatalf("pluginhost.InitPluginHost 失败：%v", err)
 	}
 	if n == 0 {
 		t.Fatal("应注册到 1 个插件")
@@ -382,4 +261,19 @@ func assertPluginMetric(t *testing.T, m *metrics.M, hook, outcome string, want u
 		}
 	}
 	t.Fatalf("渲染里没有 %s 这条序列", line)
+}
+
+func TestInitPluginHostDisabledIsNoOp(t *testing.T) {
+	prev := PluginManager()
+	m := metrics.New()
+	mgr, n, err := pluginhost.InitPluginHost(&config.Config{}, m)
+	if err != nil {
+		t.Fatalf("未配置清单时不应报错：%v", err)
+	}
+	if mgr != nil || n != 0 {
+		t.Errorf("未配置清单时必须返回空宿主（mgr=%v n=%d）", mgr, n)
+	}
+	if PluginManager() != prev {
+		t.Error("未配置清单时不得改动全局插件管理器（否则会把测试注入的管理器覆盖掉）")
+	}
 }

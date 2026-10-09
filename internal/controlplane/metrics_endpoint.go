@@ -24,6 +24,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
+	"github.com/Levango7/OpsMesh/internal/controlplane/metricscache"
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/metrics"
 	"github.com/Levango7/OpsMesh/internal/store"
@@ -34,26 +35,26 @@ import (
 //
 // 这 5 个计数原先每次抓取各扫一遍 store（Snapshot/AllTasks/Alerts/ListTickets/Agents）。
 // 8080 与 9091 两个端口都渲染指标，等于同一份数据被全量扫两遍；缓存把它们收敛成一次。
-func (s *Server) appMetricsCounts() appCounts {
-	return s.metricsCounts.resolve(func() appCounts {
-		var c appCounts
+func (s *Server) appMetricsCounts() metricscache.AppCounts {
+	return s.metricsCounts.Resolve(func() metricscache.AppCounts {
+		var c metricscache.AppCounts
 		for _, devs := range s.store.Snapshot("") {
 			for _, d := range devs {
-				c.devices++
+				c.Devices++
 				// 只按显式状态计数：discovered（网段发现的候选）与 provisioning（推送中）
 				// 既不算在线也不算离线——把它们算成离线会让 DeviceOffline 告警在纳管过程中误报。
 				switch d.State {
 				case "online":
-					c.devicesOnline++
+					c.DevicesOnline++
 				case "offline":
-					c.devicesOffline++
+					c.DevicesOffline++
 				}
 			}
 		}
-		c.tasks = len(s.store.AllTasks(""))
-		c.alerts = len(s.store.Alerts(""))
-		c.ticketsOpen = len(s.store.ListTickets("", store.TicketFilter{Status: "open"}))
-		c.agents = len(s.store.Agents(""))
+		c.Tasks = len(s.store.AllTasks(""))
+		c.Alerts = len(s.store.Alerts(""))
+		c.TicketsOpen = len(s.store.ListTickets("", store.TicketFilter{Status: "open"}))
+		c.Agents = len(s.store.Agents(""))
 		return c
 	})
 }
@@ -86,8 +87,8 @@ func (s *Server) metricsBody() string {
 		// 而"为了测试能跑而在被测代码里埋一个 race"是更坏的取舍。
 		reg = metrics.New()
 	}
-	reg.SetAgents(cnt.agents)
-	reg.SetAppGauges(cnt.devices, cnt.devicesOnline, cnt.devicesOffline, cnt.alerts, cnt.ticketsOpen)
+	reg.SetAgents(cnt.Agents)
+	reg.SetAppGauges(cnt.Devices, cnt.DevicesOnline, cnt.DevicesOffline, cnt.Alerts, cnt.TicketsOpen)
 	total, _ := storefail.StoreFailureStats()
 	reg.SetStoreFailures(total)
 	return reg.Render()

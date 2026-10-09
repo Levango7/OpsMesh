@@ -91,3 +91,63 @@ controlplane 的结构不同，且有两条硬约束：
 2. 与「引擎/模板预置表」相关的**契约测试**（模板渲染、validator）在拆包后是否仍覆盖同一路径；
 3. 93 个 test 文件的 `newTestServer` 系列 helper 归属（测试 helper 按包各自持有的既有惯例，见
    `internal/store/multischema/test_helpers_test.go` 的先例）。
+
+---
+
+## 7. 批 1 执行记录（2026-10-09，已落地：7 件 / 4 个新包）
+
+### 7.1 实际搬迁面（与 §4 批 1 预估的差异）
+
+| 新包 | 迁入文件 | 行数（含测试） | 导出面 |
+|---|---|---|---|
+| `presets` | `middleware_template_presets.go`、`os_template_presets.go`、`os_template_presets_ext.go`、`os_template_validate.go`、`types.go`（新，装模板格式类型）、`shell_safe_test.go` | 1,307 | `MiddlewareTemplates` / `OSTemplatesCore` / `OSTemplatesExt` + 8 个校验/渲染函数 |
+| `pluginhost` | `remote.go`（原 `plugin_remote.go`）、`remote_test.go` | 403 | `InitPluginHost` / `LoadPluginManifest` |
+| `credentials` | `password.go`（原 `auth_password.go`）、`password_test.go` | 406 | 9 个口令/凭据函数 |
+| `metricscache` | `cache.go`（原 `metrics_cache.go`）、`cache_test.go` | 184 | `AppCounts` / `AppCountsCache`（`Resolve`/`Invalidate`） |
+
+**§4 预估被实测修正两处**：
+
+1. **模板类型必须随迁**：`OSTemplate`/`OSParam`（原在 `os_optimize.go`）、`Middleware*` 三个（原在 `middleware_deploy.go`）
+   是**控制面自己的运行时模板格式**（不是 store 持久化模型），平移数据/校验就必须连类型一起走。
+   父包新增 `template_shim.go` 以**类型别名**回导这 5 个名字 ⇒ 父包内数十处结构体字面量/字段访问/
+   与 store 模型的显式转换**零改动**（与 store 三批同款配方）。
+2. **`metrics_cache.go` 是「零 Server 耦合」判定的假阳性**：它只在注释里提到 Server，真正结构是
+   `appCounts` 值类型 + `appCountsCache`（自带方法）。判据修正：**判「零耦合」不能只 grep `*Server`/`s.`，
+   还要看是否以参数形式接收 `*Server`、是否引用 `Server` 的任何非方法形态**。
+
+### 7.2 测试侧的处置（三分法，判据同 store 批）
+
+- **随包迁**：`shell_safe_test.go`（专测 `ValidateShellSafeValues`）、`metrics_cache_test.go` 的 5 个缓存用例、
+  `pluginhost` 的 4 个 manifest/宿主用例、`auth_extra_test.go` 的 9 个 `TestEnforceInitialCredentials_*` + 助手。
+- **留父包 + 限定引用**：`os_optimize_test.go`（60 个用例里多数是 Server handler）、`plugin_remote_test.go` 的
+  Server 级用例与 `TestInitPluginHostDisabledIsNoOp`（用父包全局 `PluginManager()`——**测试不跨包 import 父包**，
+  这是硬边界）、`auth_extra_test.go` 其余混合用例、`tenant_users_test.go`。
+- **按包各持一份**：`assertPluginMetric`（父包与新包各一份，同 `recordingBus`/`countDevices` 的既有惯例）。
+
+### 7.3 验证口径与结果（全绿）
+
+- 全仓 `go build ./...` 绿；`go vet ./internal/controlplane/...` 零告警；
+- `go test -count=1 ./internal/controlplane/...`：父包 44.9s + 8 个子包**全 ok / 0 FAIL**；
+- `golangci-lint run ./internal/controlplane/...`：**0 issues**（顺带清掉父包 `changePasswordMinLen`
+  随函数迁走后变成的 unused 常量）；`gofmt -l` 净；
+- `-race -count=1 ./internal/controlplane/...`：**零 DATA RACE**（父包 290.6s / credentials 148.4s / grpc 80.2s / backup 58.1s，全部 ok）；
+- 部署资产门禁：PASS=76 FAIL=0 SKIP=1（初跑即过，未改部署面）。
+
+### 7.4 收口数据（可复核）
+
+- 父包顶层 `.go`：**182 → 175**（prod 89 → 83，test 93 → 92）；父包 prod 行 **27,056 → 25,221**。
+- 四个新包合计 2,300 行（含其测试）。
+- 剩余（§4 批 2）：§3.2 的 13 件低耦合文件（`service_proxy.go` / `cmdb_collector.go` / `enterprise_ui.go` /
+  `server_security.go` / `auth_guard.go` / `dashboard.go` / `device_metrics.go` / `os_template_store.go` /
+  `tenant_guard.go` / `middleware_deploy.go` / `plugin_host.go` / `server_audits.go` / `auth_perms.go`），
+  其中 `plugin_host.go`/`auth_guard.go`/`auth_perms.go` 可与批 1 的 `pluginhost`/`credentials` 合流。
+
+### 7.5 本批教训（供批 2 用）
+
+1. **「零耦合」的判据要写全**：`*Server`/`s.` 两种形态之外，还有「以参数接收 `*Server`」与「只在注释里提 Server」两类，
+   前者不可平迁、后者是假阳性（本批一例）。
+2. **类型随迁 + 父包别名回导 = 零改动**：这是 store 批的配方在 controlplane 侧的再次验证——
+   但前提是「类型是格式/契约」而不是「类型是中心类型的宿主」。
+3. **测试的硬边界是「是否引用父包全局/未导出」**：引用即留父包（`TestInitPluginHostDisabledIsNoOp` 因 `PluginManager()` 回迁），
+   这是 §3 结论「测试与实现同包」的具体化。
+

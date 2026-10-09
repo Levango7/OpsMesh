@@ -24,35 +24,11 @@ import (
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/presets"
 )
 
-// OSTemplate 预置 OS 优化任务模板。
-// Commands 为一段 shell 脚本（在目标 Linux 主机以 `sh -c` 执行）；
-// 需要参数的模板在脚本内通过 $1/$2/... 引用（旧模式）或 {name}/{port}/... 占位符引用（新模式），
-// execute 时由控制面注入位置参数或做占位符替换。
-type OSTemplate struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Category    string    `json:"category"` // kernel/network/security/time/ssh/disk/system/user
-	Description string    `json:"description"`
-	Commands    string    `json:"commands"`         // shell 脚本（可用 #!/bin/bash 开头）
-	Risk        string    `json:"risk"`             // low/medium/high
-	Tags        []string  `json:"tags"`             // 标签
-	OS          string    `json:"os"`               // 适用操作系统：centos/ubuntu/all
-	Params      []OSParam `json:"params,omitempty"` // 参数定义（新模式占位符替换 + 验证）
-}
-
-// OSParam OS 优化模板参数定义。
-type OSParam struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Default     string `json:"default"`
-	Required    bool   `json:"required"`
-	Type        string `json:"type"` // string/int
-}
-
-// osTemplates 预置 OS 优化模板集合（由 osTemplatesCore + osTemplatesExt 组合，数据定义见 os_template_presets.go）。
-var osTemplates = append(osTemplatesCore, osTemplatesExt...)
+// osTemplates 预置 OS 优化模板集合（由 presets.OSTemplatesCore + presets.OSTemplatesExt 组合，数据定义见 os_template_presets.go）。
+var osTemplates = append(presets.OSTemplatesCore, presets.OSTemplatesExt...)
 
 // seedPresetOSTemplates 启动时将预置 OS 模板幂等写入 store（按 ID 去重，已存在不覆盖）。
 // 保持向后兼容：store 为空时 API 回退到内存常量 osTemplates。

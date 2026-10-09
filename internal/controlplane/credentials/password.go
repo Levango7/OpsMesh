@@ -1,5 +1,5 @@
-// auth_password.go 密码哈希 + 首启凭据加固（预置弱口令处置）+ 强口令校验。
-package controlplane
+// password.go 密码哈希 + 首启凭据加固（预置弱口令处置）+ 强口令校验。
+package credentials
 
 import (
 	"crypto/rand"
@@ -16,11 +16,18 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// hashPassword 用 bcrypt 哈希密码。
+// bcryptCost bcrypt 哈希 cost（生产推荐基线 12，DefaultCost=10 偏低）。
+// TD-87 批 1：随口令哈希从父包 auth.go 迁入（原先全仓只此一处使用）。
+const bcryptCost = 12
+
+// changePasswordMinLen 强口令最短长度（本包校验基线）。
+const changePasswordMinLen = 8
+
+// HashPassword 用 bcrypt 哈希密码。
 // 使用 cost=12（生产推荐基线，DefaultCost=10 偏低）。
 // 注意：现有用户密码哈希可能用 cost=10 生成，bcrypt.CompareHashAndPassword
 // 会自动适配不同 cost，因此无需迁移旧哈希；新哈希与改密后哈希均使用 cost=12。
-func hashPassword(password string) (string, error) {
+func HashPassword(password string) (string, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	if err != nil {
 		return "", err
@@ -28,23 +35,23 @@ func hashPassword(password string) (string, error) {
 	return string(hash), nil
 }
 
-// verifyPassword 校验 bcrypt 哈希与明文密码是否匹配。
-func verifyPassword(hash, password string) bool {
+// VerifyPassword 校验 bcrypt 哈希与明文密码是否匹配。
+func VerifyPassword(hash, password string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
-// seedUserPasswords 随源码公开的预置口令（账号 ID → 口令）。
+// SeedUserPasswords 随源码公开的预置口令（账号 ID → 口令）。
 // 这些字面量在仓库、文档、镜像里都可见，因此**任何**可登录的部署里它们都等同于公开后门；
 // MustChangePassword 也拦不住——持有口令者可以自己走完改密流程拿到正式 token。
-// 非 demo 模式下 enforceInitialCredentials 必须把它们全部清除。
-var seedUserPasswords = map[string]string{
+// 非 demo 模式下 EnforceInitialCredentials 必须把它们全部清除。
+var SeedUserPasswords = map[string]string{
 	"user-admin":    "admin123",
 	"user-operator": "operator123",
 	"user-viewer":   "viewer123",
 }
 
-// randomPassword 生成 16 字节 hex（32 字符）随机口令，crypto/rand 密码学安全。
-func randomPassword() (string, error) {
+// RandomPassword 生成 16 字节 hex（32 字符）随机口令，crypto/rand 密码学安全。
+func RandomPassword() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -52,7 +59,7 @@ func randomPassword() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// enforceInitialCredentials 在非 demo 模式下加固首启凭据，返回致命错误时调用方应中止启动。
+// EnforceInitialCredentials 在非 demo 模式下加固首启凭据，返回致命错误时调用方应中止启动。
 //
 // 解决两个叠加的生产事故：
 //  1. 内置 admin 的公开弱口令必须被替换，但替换后的口令必须交得到运维手里——此前实现
@@ -64,22 +71,22 @@ func randomPassword() (string, error) {
 // 幂等性：口令替换只在账号当前口令仍等于公开弱口令时发生（bcrypt 比对命中），
 // 因此 SQLStore 重启后不会覆盖管理员已修改的口令；MemoryStore 每次启动都是新实例，每次都重置。
 // AdminPasswordForceReset=true 时 admin 口令按 cfg.AdminPassword 强制覆盖（口令遗失后的恢复手段）。
-func enforceInitialCredentials(cfg *config.Config, st store.Store) error {
-	if err := deliverAdminCredential(cfg, st); err != nil {
+func EnforceInitialCredentials(cfg *config.Config, st store.Store) error {
+	if err := DeliverAdminCredential(cfg, st); err != nil {
 		return err
 	}
-	revokeSeedCredentials(st)
+	RevokeSeedCredentials(st)
 	return nil
 }
 
-// deliverAdminCredential 处置内置 admin 的公开弱口令，并保证新口令有交付通道。
-func deliverAdminCredential(cfg *config.Config, st store.Store) error {
+// DeliverAdminCredential 处置内置 admin 的公开弱口令，并保证新口令有交付通道。
+func DeliverAdminCredential(cfg *config.Config, st store.Store) error {
 	u := st.GetUserByUsername("admin")
 	if u == nil {
 		return nil
 	}
-	seedPw := seedUserPasswords["user-admin"]
-	isSeed := verifyPassword(u.PasswordHash, seedPw)
+	seedPw := SeedUserPasswords["user-admin"]
+	isSeed := VerifyPassword(u.PasswordHash, seedPw)
 	// 非首启（口令已非公开弱口令）：默认尊重现状。仅显式开启恢复开关时用 cfg.AdminPassword 覆盖，
 	// 避免运维残留的配置在每次重启时静默回滚管理员在界面上做过的改密。
 	if !isSeed && (!cfg.AdminPasswordForceReset || cfg.AdminPassword == "") {
@@ -88,14 +95,14 @@ func deliverAdminCredential(cfg *config.Config, st store.Store) error {
 	password := cfg.AdminPassword
 	generated := false
 	if password != "" {
-		if msg := validateStrongPassword(password); msg != "" {
+		if msg := ValidateStrongPassword(password); msg != "" {
 			return fmt.Errorf("--admin-password（或 OPSMESH_ADMIN_PASSWORD）不满足强口令要求: %s", msg)
 		}
 		if password == seedPw {
 			return fmt.Errorf("--admin-password（或 OPSMESH_ADMIN_PASSWORD）不能等于公开的预置弱口令 %q", seedPw)
 		}
 	} else {
-		p, err := randomPassword()
+		p, err := RandomPassword()
 		if err != nil {
 			return fmt.Errorf("生成随机 admin 口令失败: %w", err)
 		}
@@ -104,7 +111,7 @@ func deliverAdminCredential(cfg *config.Config, st store.Store) error {
 		// 交付通道：文件优先；生产无任何通道时拒绝启动（静默锁死是最坏结果，宁可启动失败）。
 		switch {
 		case cfg.AdminPasswordFile != "":
-			if err := writeAdminPasswordFile(cfg.AdminPasswordFile, password); err != nil {
+			if err := WriteAdminPasswordFile(cfg.AdminPasswordFile, password); err != nil {
 				return err
 			}
 			log.Printf("[controlplane] 初始 admin 口令已写入 %s（权限 0600，内含明文，请读取后妥善保管并删除该文件）", cfg.AdminPasswordFile)
@@ -119,7 +126,7 @@ func deliverAdminCredential(cfg *config.Config, st store.Store) error {
 			fmt.Fprintf(os.Stderr, "[controlplane] 初始 admin 口令（仅本地开发/调试可见）: %s\n", password)
 		}
 	}
-	hash, err := hashPassword(password)
+	hash, err := HashPassword(password)
 	if err != nil {
 		return fmt.Errorf("哈希 admin 口令失败: %w", err)
 	}
@@ -139,23 +146,23 @@ func deliverAdminCredential(cfg *config.Config, st store.Store) error {
 	return nil
 }
 
-// revokeSeedCredentials 把仍是公开弱口令的预置账号替换为随机不可知口令。
+// RevokeSeedCredentials 把仍是公开弱口令的预置账号替换为随机不可知口令。
 // 账号本身保留（角色/引用不失效），但已无法登录；管理员可用 admin 身份在用户管理里删除或重建它们。
-func revokeSeedCredentials(st store.Store) {
-	for id, seedPw := range seedUserPasswords {
+func RevokeSeedCredentials(st store.Store) {
+	for id, seedPw := range SeedUserPasswords {
 		if id == "user-admin" {
-			continue // admin 由 deliverAdminCredential 处理（需交付通道）
+			continue // admin 由 DeliverAdminCredential 处理（需交付通道）
 		}
 		u := st.GetUser(id)
-		if u == nil || !verifyPassword(u.PasswordHash, seedPw) {
+		if u == nil || !VerifyPassword(u.PasswordHash, seedPw) {
 			continue
 		}
-		pw, err := randomPassword()
+		pw, err := RandomPassword()
 		if err != nil {
 			log.Printf("[controlplane] 生成随机口令失败，预置账号 %s 仍为公开弱口令: %v", u.Username, err)
 			continue
 		}
-		hash, err := hashPassword(pw)
+		hash, err := HashPassword(pw)
 		if err != nil {
 			log.Printf("[controlplane] 哈希随机口令失败，预置账号 %s 仍为公开弱口令: %v", u.Username, err)
 			continue
@@ -172,9 +179,9 @@ func revokeSeedCredentials(st store.Store) {
 	}
 }
 
-// writeAdminPasswordFile 把口令写入 path（权限 0600，先截断再写）。
+// WriteAdminPasswordFile 把口令写入 path（权限 0600，先截断再写）。
 // 目录不存在时报错而非静默创建——配置写错的路径应该被发现，而不是把口令写到意料之外的位置。
-func writeAdminPasswordFile(path, password string) error {
+func WriteAdminPasswordFile(path, password string) error {
 	dir := filepath.Dir(path)
 	if _, err := os.Stat(dir); err != nil {
 		return fmt.Errorf("--admin-password-file 目录不可用 %s: %w", dir, err)
@@ -195,9 +202,9 @@ func writeAdminPasswordFile(path, password string) error {
 // 强口令校验（安全债）：跨域 helper，供 auth_login.go 与 auth_users.go 共用。
 // ============================================================================
 
-// validateStrongPassword 强口令校验（安全债）：至少 8 字符，包含大小写字母与数字。
+// ValidateStrongPassword 强口令校验（安全债）：至少 8 字符，包含大小写字母与数字。
 // 返回不满足时的可读提示（满足返回空串）。
-func validateStrongPassword(pw string) string {
+func ValidateStrongPassword(pw string) string {
 	if len(pw) < changePasswordMinLen {
 		return "password too short (min 8 chars)"
 	}

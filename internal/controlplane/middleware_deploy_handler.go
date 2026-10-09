@@ -9,6 +9,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
+	"github.com/Levango7/OpsMesh/internal/controlplane/presets"
 	"github.com/Levango7/OpsMesh/internal/events"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
@@ -101,7 +102,7 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		return
 	}
 	// shell 元字符校验：占位符替换前拒绝含元字符的值，防命令注入。
-	if err := validateShellSafeValues(body.Params); err != nil {
+	if err := presets.ValidateShellSafeValues(body.Params); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -250,7 +251,7 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := validateShellSafeValues(body.Params); err != nil {
+	if err := presets.ValidateShellSafeValues(body.Params); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}

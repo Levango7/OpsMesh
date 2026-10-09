@@ -1,7 +1,7 @@
 // auth_users.go 实现用户管理 handler：/api/v1/users CRUD + 审批/拒绝。
 //
 // 从 auth.go 拆分而来（纯代码移动，未修改任何逻辑）。依赖 auth.go 中的
-// requirePermission 鉴权中间件、hashPassword、randHexID、validateStrongPassword helper，
+// requirePermission 鉴权中间件、credentials.HashPassword、randHexID、credentials.ValidateStrongPassword helper，
 // 以及 server.go 中的 writeJSON/decodeJSONBody 响应 helper。
 package controlplane
 
@@ -13,6 +13,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
+	"github.com/Levango7/OpsMesh/internal/controlplane/credentials"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -108,7 +109,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
 		return
 	}
-	if msg := validateStrongPassword(body.Password); msg != "" {
+	if msg := credentials.ValidateStrongPassword(body.Password); msg != "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
@@ -127,7 +128,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
 		return
 	}
-	hash, err := hashPassword(body.Password)
+	hash, err := credentials.HashPassword(body.Password)
 	if err != nil {
 		log.Printf("controlplane: handleCreateUser 哈希密码失败: %v", err)
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})

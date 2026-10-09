@@ -10,6 +10,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
+	"github.com/Levango7/OpsMesh/internal/controlplane/presets"
 	"github.com/Levango7/OpsMesh/internal/events"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
@@ -86,7 +87,7 @@ func (s *Server) handleCreateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "scripts is required"})
 		return
 	}
-	tpl.Risk = normalizeRisk(tpl.Risk)
+	tpl.Risk = presets.NormalizeRisk(tpl.Risk)
 	st := middlewareTemplateToStore(&tpl, actx.TenantID)
 	if err := s.store.SaveMiddlewareTemplate(st); err != nil {
 		writeInternalError(r.Context(), w, "middleware.saveTemplate", err)
@@ -148,7 +149,7 @@ func (s *Server) handleUpdateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		}
 	}
 	tpl.ID = id
-	tpl.Risk = normalizeRisk(tpl.Risk)
+	tpl.Risk = presets.NormalizeRisk(tpl.Risk)
 	st := middlewareTemplateToStore(&tpl, actx.TenantID)
 	if err := s.store.SaveMiddlewareTemplate(st); err != nil {
 		writeInternalError(r.Context(), w, "middleware.saveTemplate", err)

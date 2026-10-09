@@ -31,7 +31,7 @@
 //
 // 令牌只能经 env 引用（`tokenEnv`），清单文件里写明文令牌会被解析直接判错：
 // 清单是要进版本库/配置中心的，令牌不该跟着走。
-package controlplane
+package pluginhost
 
 import (
 	"encoding/json"
@@ -93,11 +93,11 @@ func knownHookNames() []string {
 	return out
 }
 
-// loadPluginManifest 读取并校验清单文件，返回可直接注册的插件列表。
+// LoadPluginManifest 读取并校验清单文件，返回可直接注册的插件列表。
 //
 // 全部校验都在注册之前完成（all-or-nothing）：半注册状态意味着"某几个扩展点被插件接管、
 // 另一些没有"，而这种状态在日志里和完全没配插件一样安静。
-func loadPluginManifest(path string, allowPrivate bool) ([]plugin.RemoteConfig, error) {
+func LoadPluginManifest(path string, allowPrivate bool) ([]plugin.RemoteConfig, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("插件清单读取失败：%w", err)
@@ -175,15 +175,15 @@ func loadPluginManifest(path string, allowPrivate bool) ([]plugin.RemoteConfig, 
 	return out, nil
 }
 
-// initPluginHost 构造插件宿主：注册每个远程插件，并把它的扩展点 handler 接上指标计数。
+// InitPluginHost 构造插件宿主：注册每个远程插件，并把它的扩展点 handler 接上指标计数。
 //
 // 返回 (nil, 0, nil) 表示本次进程不启用插件宿主（--plugin-manifest 为空）——
 // 这是默认形态，此时三个扩展点无 handler，FireHook 直接放行，行为与启用前完全一致。
-func initPluginHost(cfg *config.Config, m *metrics.M) (*plugin.Manager, int, error) {
+func InitPluginHost(cfg *config.Config, m *metrics.M) (*plugin.Manager, int, error) {
 	if cfg == nil || strings.TrimSpace(cfg.PluginManifest) == "" {
 		return nil, 0, nil
 	}
-	specs, err := loadPluginManifest(cfg.PluginManifest, cfg.PluginAllowPrivate)
+	specs, err := LoadPluginManifest(cfg.PluginManifest, cfg.PluginAllowPrivate)
 	if err != nil {
 		return nil, 0, err
 	}
