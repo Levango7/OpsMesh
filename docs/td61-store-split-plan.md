@@ -400,6 +400,8 @@ test = 会话组（session_test / session_extra_test / stub_guard_test）+ 横�
 均以 memory 后端驱动——**判据：测的是「门面级语义」而非某后端实现**，故按此判据留父包；
 `sql_rbac_catalog_test.go` 测 `models_shim` 回导的权限目录，留父包）。
 子包：memory 37 / sqlstore 54 / multischema 19（另 +model/storekit/storefail）。
+
+**范围说明**：本链（TD-61）只处置 **store 侧**。`internal/controlplane/` 顶层 182 文件的情况**不在本链内**——其单文件规模已按 TD-20 的「≤500 行」判据收口，但单包按域拆包需独立立项，已拆分为 **TD-87**（台账「待启动」）单独登记；动工前需与并行会话对齐（controlplane 是在制活跃区，2026-10-09 期间 180→182 仍在增）。
 **拆前 `internal/store/` 顶层 113 文件 → 20**。
 
 ### 10.4 验证口径与结果（全绿）
