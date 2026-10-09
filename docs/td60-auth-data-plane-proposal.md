@@ -170,3 +170,22 @@ auth 域不成立，因为两套用户体系彼此独立：
 ### 7.2 对切流方案的影响
 
 在原四方案之上追加一条**前置条件**：无论选 A/B/C/D，**auth 代理规则与权限目录/本地语义的对齐是切流的硬前置**；在此修复前，`AUTH_SVC_PROXY_ENABLED=true` 打开只会得到恒 403 的认证面。本项工作量小（一处目录或一处规则语义 + 一段门禁断言），但**必须由 `internal/controlplane` 与 `internal/store` 的负责方（并行线）实施**——本线按要求不碰其文件面。
+
+### 7.3 修复落地（zcode 侧，2026-10-10）
+
+§7.1 的阻断级缺陷已按**选项 2（对齐本地语义）**修复并入库：
+
+- **哨兵语义**：新增 `svcproxy.PermAuthenticated`（`"@authenticated"`）——「仅要求已认证，不查权限点」；
+  `handleServiceProxy` 解析出哨兵即跳过 `requirePermission`（`requireTenantContext` 保留）。
+  auth 规则 6 处权限点全部改为哨兵（端点清单保留为覆盖文档）。**未采纳选项 1（补目录）**：
+  本地 `handleAuthMe`/`handleAuthRefresh` 本就只做 token 校验，补 `auth:read` 会让自服务端点变 admin 独有。
+- **守护补盲**：新增 `svcproxy/perm_catalog_test.go`——三张规则表的 `Perm`/`PermRules[].Perm`
+  全部纳入「⊂ 目录 ∪ 哨兵」断言（带下限与撞名检查；「非 auth 域不得用哨兵」防静默提权面）。
+  **放在 svcproxy 而非 store 的目录守护里**：依赖方向 svcproxy → store/model 是正常方向，
+  反向 import 会把分层倒置；`sql_rbac_catalog_test.go` 已加交叉引用注释指明「规则数据由本守护覆盖」。
+- **行为级回归**：`service_proxy_auth_test.go` 两条——已认证经代理前缀 ⇒ 200 且后端收到
+  `/api/v1/auth/me`；无凭证（生产语义）⇒ 拦住且**不转发**。变异检验 2/2 判红。
+- **§7.2 的前置条件未变**：代理前缀作为登录入口（无租户头即 400）的语义差异**未在本轮处置**，
+  仍属切流方案的硬前置——即你们那边选 A/B/C/D 时都要先定这一条。
+- 交付提交与详细验证见 CHANGELOG 的「阻断级缺陷修复」条（同一提交改 `svcproxy/proxy.go`、
+  `service_proxy.go` 与两个新测试文件）。

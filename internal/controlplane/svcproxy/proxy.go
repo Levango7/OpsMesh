@@ -101,6 +101,20 @@ func (r *Rule) ResolvePerm(method, path string) string {
 	return r.Perm
 }
 
+// PermAuthenticated 规则权限哨兵：**仅要求已认证，不校验权限点**。
+//
+// 用于控制面本地本就不查权限的自服务端点（auth 域 me/refresh/logout/change-password ——
+// 本地 handler 只做 token 校验，见 auth_login.go 的 handleAuthMe/handleAuthRefresh）。
+//
+// 为什么必须有这个形态（2026-10-10 端到端冒烟实测的阻断级缺陷）：代理层给这些端点写的
+// 权限点若在控制面权限目录（internal/store/model/perm.go 的 rbacPermSpecs）里不存在，
+// requirePermission 的判据「用户权限集 ∋ required」恒为假 ⇒ **含 admin 在内的任何身份都过不了**，
+// 双轨开关打开即认证面恒 403。此前的 auth:read/auth:write 正是这种「目录外权限点」。
+//
+// 以 @ 开头：与真实权限点（`domain:action`）不可能撞名，便于门禁静态识别
+// （见 perm_catalog_test.go：三张规则表的每个 Perm 必须 ∈ 目录 ∪ 本哨兵）。
+const PermAuthenticated = "@authenticated"
+
 // Rules 五域转发映射表。端口依据各服务 pkg/config 默认值：
 //
 //	gpu:8090 / runbook:8082 / incident:8082 / autoscaler:8080 / portal:8080
@@ -191,14 +205,14 @@ var Rules = []Rule{
 		DomainPrefix:   "/api/v1/auth-svc",
 		EnvKey:         "AUTH_SVC_URL",
 		DefaultURL:     "http://127.0.0.1:8081",
-		Perm:           "auth:write", // 兜底：登录/注册/改密等写操作
+		Perm:           PermAuthenticated, // 兜底：auth 域自服务端点只认证不查权限（与本地 handler 语义对齐）
 		PermRules: []PermRule{
-			{Method: http.MethodGet, PathPrefix: "/api/v1/auth/me", Perm: "auth:read"},
-			{Method: http.MethodPost, PathPrefix: "/api/v1/auth/login", Perm: "auth:write"},
-			{Method: http.MethodPost, PathPrefix: "/api/v1/auth/register", Perm: "auth:write"},
-			{Method: http.MethodPost, PathPrefix: "/api/v1/auth/logout", Perm: "auth:write"},
-			{Method: http.MethodPost, PathPrefix: "/api/v1/auth/refresh", Perm: "auth:write"},
-			{Method: http.MethodPost, PathPrefix: "/api/v1/auth/change-password", Perm: "auth:write"},
+			{Method: http.MethodGet, PathPrefix: "/api/v1/auth/me", Perm: PermAuthenticated},
+			{Method: http.MethodPost, PathPrefix: "/api/v1/auth/login", Perm: PermAuthenticated},
+			{Method: http.MethodPost, PathPrefix: "/api/v1/auth/register", Perm: PermAuthenticated},
+			{Method: http.MethodPost, PathPrefix: "/api/v1/auth/logout", Perm: PermAuthenticated},
+			{Method: http.MethodPost, PathPrefix: "/api/v1/auth/refresh", Perm: PermAuthenticated},
+			{Method: http.MethodPost, PathPrefix: "/api/v1/auth/change-password", Perm: PermAuthenticated},
 		},
 	},
 }

@@ -9,6 +9,13 @@
 // 测试策略：纯函数测试（无需 MySQL）——RolePermissions() 是 seedRBAC 与 RBAC 闸
 // 的共同单一来源，直接断言目录覆盖与派生集合。新增 requireProd 引用新权限点时，
 // 请同步在 rbacPermSpecs 补齐并追加到 handlerRequiredPerms。
+//
+// 覆盖面说明（2026-10-10）：本守护只覆盖**手工维护的 handler 权限点清单**。
+// 由**规则数据**在运行期解析出的权限点（微服务聚合代理）不在本清单内，
+// 那条链路由 internal/controlplane/svcproxy/perm_catalog_test.go 守护
+// （三张规则表的 Perm/PermRules[].Perm 必须 ⊆ 目录 ∪ PermAuthenticated 哨兵）——
+// 起因：auth 代理规则曾引用目录外的 auth:read/auth:write，导致双轨开关打开即恒 403，
+// 而本文件的手工清单对此是盲的。
 package store
 
 import (

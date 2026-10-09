@@ -41,8 +41,16 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, ok := s.requirePermission(w, r, rule.ResolvePerm(r.Method, r.URL.Path)); !ok {
-		return
+	// 权限闸：规则权限点为 PermAuthenticated 时**跳过权限校验**（仅保留上面的
+	// requireTenantContext = 已认证 + 租户上下文），语义与控制面本地 handler 对齐——
+	// auth 域自服务端点（me/refresh/logout/change-password）本地就只做 token 校验，
+	// 不查权限点（auth_login.go 的 handleAuthMe/handleAuthRefresh）。
+	// 背景：2026-10-10 端到端冒烟实测的阻断级缺陷——此前这里对 auth 规则要求 auth:read/
+	// auth:write，而权限目录里没有 auth: 组 ⇒ 含 admin 在内任何身份恒 403，双轨开关打开即不可用。
+	if perm := rule.ResolvePerm(r.Method, r.URL.Path); perm != svcproxy.PermAuthenticated {
+		if _, ok := s.requirePermission(w, r, perm); !ok {
+			return
+		}
 	}
 	target := rule.UpstreamBase()
 	if target == nil {

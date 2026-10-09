@@ -4,6 +4,19 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-10（阻断级缺陷修复：auth 代理规则引用目录外权限点致双轨开关打开即恒 403）
+
+- **修复｜`/api/v1/auth-svc/*` 代理面在生产上恒 403**（2026-10-10 端到端双轨冒烟实测，非推断）：auth 代理规则要求 `auth:read`/`auth:write`，而控制面权限目录（`internal/store/model.PermSpecs`）**没有 `auth:` 组**；`requirePermission` 的判据是「用户权限集 ∋ required」且无空串豁免 ⇒ **含 admin 在内的任何身份都不可能通过**，`AUTH_SVC_PROXY_ENABLED=true` 打开即认证面不可用。
+- **修法（对齐本地语义）**：新增规则权限哨兵 **`svcproxy.PermAuthenticated`（`"@authenticated"`，以 `@` 开头与真实权限点不可能撞名）**——语义为「仅要求已认证，不查权限点」；`handleServiceProxy` 解析出哨兵时跳过 `requirePermission`（`requireTenantContext` 仍在，故仍要求可验证凭证 + 租户上下文）。auth 规则的 6 处权限点（1 兜底 + 5 条 permRules）全部改为哨兵，端点清单保留为覆盖文档。**为什么不是「补目录」**：本地同端点（`handleAuthMe`/`handleAuthRefresh` 等）本就只做 token 校验、不查权限点；补 `auth:read` 会让自服务端点变成 admin 独有，与本地语义不等价。
+- **新增两道静态/行为守护（防复发）**：
+  1. `svcproxy/perm_catalog_test.go`——**把规则数据纳入「引用点 ⊂ 目录」断言**（三张规则表的 `Perm`/`PermRules[].Perm` 每处必须 ∈ 目录 ∪ 哨兵）。此前目录守护只对账**手工维护的 handler 权限点清单**，而代理权限点来自规则数据运行时解析 ⇒ 守护绿、线上恒 403（盲区实测在案）。新守护带两道下限（目录规模 ≥40、规则表真实权限点去重 ≥15）+ 哨兵撞名检查 + 「非 auth 域不得使用哨兵」（静默提权面）断言。放本包而非 store 的理由（依赖方向：svcproxy → store/model 正常，反向 import 会污染分层）写在文件头；并在 `internal/store/sql_rbac_catalog_test.go` 加交叉引用注释。
+  2. `service_proxy_auth_test.go`——行为级：① 已认证身份经代理前缀访问 `/api/v1/auth-svc/me` ⇒ **200 且后端收到改写后的 `/api/v1/auth/me`**（缺陷形态是 403）；② 无凭证请求在生产语义（`RequireAuth`）下仍被聚合层拦住、**不转发到后端**（「仅认证」不等于「匿名可达」）。
+- **变异检验 2/2 判红**：① 任一规则改引用目录外权限点 ⇒ 守护点名报错；② auth 规则退回 `auth:read` ⇒ 两条断言同时判红（报错文案即缺陷复发形态）。
+- **踩坑记录（写给下一个写测试的人）**：`requireTenantContext` 读的是 **`Server.requireAuth` 字段**（`NewServer` 从 `cfg.RequireAuth` 装载），只设 `cfg.RequireAuth=true` **不生效**——本用例初版因此误判「无凭证请求被放行」；两处都置位才对。
+- **仍未闭合（留给切流方案，非缺陷）**：代理前缀**不可能作为登录入口**（`requireTenantContext` 先于转发，无租户头即 400）——与本地 `/api/v1/auth/login` 无需凭证的语义不等价，双轨切流时必须正视（见 `docs/td60-auth-data-plane-proposal.md` §7.2）。
+- **验证**：`go test ./internal/controlplane/...` 全绿（新增 4 个用例）+ `-race` 零竞态；`golangci-lint` 0 issues；`gofmt` 净；门禁 PASS=76。
+- **基建备注**：同批 CI 的 `image`/`image-agent` 两 job 判红是 **Docker Hub 429 限流**（`failed to resolve source metadata for docker.io/library/golang:1.26-bookworm`）——失败发生在拉取镜像元数据阶段、未编译任何代码，已 `gh run rerun --failed` 重跑（attempt 2）。
+
 ## [Unreleased] — 2026-10-10（TD-87 批 2 第二批：ratelimit / tenantguard 迁出 + SSRF 私网判定两份手抄实现合并）
 
 - **重构｜限流器迁出**：按 IP 令牌桶限流器整体（`Limiter`/`tokenBucket`/`maxRateLimitBuckets` 与构造/放行/清理方法）迁入 `internal/controlplane/ratelimit`，父包 `server_security.go` **234 → 100 行**；保留类型别名 `rateLimiter` + `newRateLimiter` 薄包装 ⇒ 9 处构造点与 `rateLimitMiddleware` 零改动。触及内部态（buckets/tokenBucket/maxBuckets）的 3 个用例随类型迁入，中间件用例改用公共构造包装。
