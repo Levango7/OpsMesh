@@ -2186,6 +2186,13 @@ else
     # 注释行一律先剥掉：ci.yml 的说明文字里合法地出现过 golangci-lint-2.13.2-checksums.txt
     # 与归档全名，不剥就是拿散文当代码判，必然假阳性。
     GL_CODE="$(grep -vE '^[[:space:]]*#' "$GL_CI")"
+    # GL_CODE 走**临时文件**而不是 `<<<"$GL_CODE"` here-string（2026-10-10 实测）：
+    # 本机 Git Bash（MSYS）的 here-string 在内容里含 `${{ ... }}` 且体积 ~60K 时会挂死
+    # （同一份内容走文件或管道正常；Linux bash 下 here-string 也正常）——
+    # 表现为门禁在本机永久卡在第 23 节、CI 无此问题。改文件后两侧行为一致，逻辑不变。
+    GL_CODE_FILE="$(mktemp)"
+    printf '%s
+' "$GL_CODE" > "$GL_CODE_FILE"
 
     # ① action 的钉版：只在「uses: golangci/golangci-lint-action@」之后、下一个步骤开始之前取 version
     GL_ACTION_VER="$(awk '
@@ -2193,11 +2200,11 @@ else
         f && /^[[:space:]]+version:[[:space:]]+v[0-9][0-9.]*[[:space:]]*$/ {
             sub(/^[[:space:]]+version:[[:space:]]+v/, ""); gsub(/[[:space:]]+$/, ""); print; exit }
         f && /^[[:space:]]*- / { f = 0 }
-    ' <<<"$GL_CODE")"
+    ' "$GL_CODE_FILE")"
     # ② services 的钉版与钉摘要
-    GL_VER="$(sed -n 's/^[[:space:]]*gll_ver=\([0-9][0-9.]*\)[[:space:]]*$/\1/p' <<<"$GL_CODE" | head -1)"
-    GL_SHA="$(sed -n 's/^[[:space:]]*gll_sha=\([0-9a-f]\{64\}\)[[:space:]]*$/\1/p' <<<"$GL_CODE" | head -1)"
-    GL_SHA_LINES="$(grep -cE '^[[:space:]]*gll_sha=' <<<"$GL_CODE")"
+    GL_VER="$(sed -n 's/^[[:space:]]*gll_ver=\([0-9][0-9.]*\)[[:space:]]*$/\1/p' "$GL_CODE_FILE" | head -1)"
+    GL_SHA="$(sed -n 's/^[[:space:]]*gll_sha=\([0-9a-f]\{64\}\)[[:space:]]*$/\1/p' "$GL_CODE_FILE" | head -1)"
+    GL_SHA_LINES="$(grep -cE '^[[:space:]]*gll_sha=' "$GL_CODE_FILE")"
 
     if [[ -z "$GL_ACTION_VER" ]]; then
         bad "取不到 golangci-lint-action 的钉版（action 步形状变了，本节失去基准）"
@@ -2220,7 +2227,7 @@ else
 
         # ③ 归档名必须由 ${gll_ver} 拼出：出现写死的 golangci-lint-<字面版本>-linux… 就说明
         #    版本号被复制进了文件名，将来改 gll_ver 时这里会静默留在旧版。
-        GL_HARDCODED="$(grep -nE 'golangci-lint-[0-9]+\.[0-9]+\.[0-9]+-linux' <<<"$GL_CODE" || true)"
+        GL_HARDCODED="$(grep -nE 'golangci-lint-[0-9]+\.[0-9]+\.[0-9]+-linux' "$GL_CODE_FILE" || true)"
         if [[ -n "$GL_HARDCODED" ]]; then
             bad "ci.yml 的非注释行里出现写死的归档文件名（应一律由 \${gll_ver} 拼出）：$(head -1 <<<"$GL_HARDCODED" | cut -c1-90)"
         else
@@ -2229,13 +2236,14 @@ else
 
         # ④ 版本断言必须跟着变量走：`grep -q "<字面版本>"` 会在改版本后变成永不触发的死断言
         #    （本机与 CI 用不同版本也照样绿）——TD-71 那轮就栽过"判据与被判对象各写一份"。
-        GL_ASSERT_LITERAL="$(grep -E 'glv="\$\(golangci-lint version' <<<"$GL_CODE" | grep -E 'grep -q[[:space:]]+"[0-9]+\.[0-9]+' || true)"
+        GL_ASSERT_LITERAL="$(grep -E 'glv="\$\(golangci-lint version' "$GL_CODE_FILE" | grep -E 'grep -q[[:space:]]+"[0-9]+\.[0-9]+' || true)"
         if [[ -n "$GL_ASSERT_LITERAL" ]]; then
             bad "版本断言里写的是字面版本号而不是 \"\$gll_ver\"（改版本后这条断言永不触发）：$(cut -c1-90 <<<"$GL_ASSERT_LITERAL")"
         else
             ok "版本断言引用 \$gll_ver（随钉版联动，不是第二份字面量）"
         fi
     fi
+    rm -f "$GL_CODE_FILE"
 fi
 
 # ---------------------------------------------------------------

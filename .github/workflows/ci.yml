@@ -7,6 +7,15 @@ on:
     tags: ["v*"]
   pull_request:
 
+# Docker Hub 凭据（可选）：匿名拉取按 IP 限流，配置后配额显著提升（TD-89）。
+# 为什么放在工作流级 env 而不是每题 secrets.*：GitHub 的动作上下文规则里，
+# **步骤级 if: 不允许引用 secrets 上下文**（本仓 actionlint v1.7.7 门禁实测报错），
+# 而 env 上下文在步骤 if: 与 with: 都合法 ⇒ 用 env 作「是否已配置」的判据。
+# 凭据本身是只读用途（拉公共镜像），作用域限于本工作流的步骤环境。
+env:
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+  DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
 jobs:
   build-test:
     runs-on: ubuntu-latest
@@ -432,6 +441,17 @@ jobs:
     needs: build-test
     steps:
       - uses: actions/checkout@v5
+      - name: 登录 Docker Hub（提升匿名拉取配额；未配置 secrets 时自动跳过）
+        # 为什么要这一步：Docker Hub 对**匿名**拉取按 IP 限流，两条线并行高频推送时
+        # 会以 429/5xx 打穿整条流水线（2026-10-10 实测：一次 run 内 6 个 job 因拉镜像
+        # 元数据失败判红，见 TD-89）。登录后配额显著提升；secrets 未配置时本步跳过，
+        # 流水线行为与之前一致。注意：**service containers（integration/services 的
+        # mysql 服务容器）由 runner 在 steps 之前拉取，本步对它无效**，那两处仍受匿名限流约束。
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
       - uses: actions/setup-go@v6
         with:
           go-version: "1.26.9"
@@ -664,6 +684,17 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v5
+      - name: 登录 Docker Hub（提升匿名拉取配额；未配置 secrets 时自动跳过）
+        # 为什么要这一步：Docker Hub 对**匿名**拉取按 IP 限流，两条线并行高频推送时
+        # 会以 429/5xx 打穿整条流水线（2026-10-10 实测：一次 run 内 6 个 job 因拉镜像
+        # 元数据失败判红，见 TD-89）。登录后配额显著提升；secrets 未配置时本步跳过，
+        # 流水线行为与之前一致。注意：**service containers（integration/services 的
+        # mysql 服务容器）由 runner 在 steps 之前拉取，本步对它无效**，那两处仍受匿名限流约束。
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
       - uses: docker/setup-buildx-action@v4
       - name: 用发布模板构建 auth-svc（--load，不推送）
         # 上下文必须是仓库根（与 release.yml 一致）：服务模块 replace opsmesh => ../../，
@@ -732,6 +763,17 @@ jobs:
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v5
+      - name: 登录 Docker Hub（提升匿名拉取配额；未配置 secrets 时自动跳过）
+        # 为什么要这一步：Docker Hub 对**匿名**拉取按 IP 限流，两条线并行高频推送时
+        # 会以 429/5xx 打穿整条流水线（2026-10-10 实测：一次 run 内 6 个 job 因拉镜像
+        # 元数据失败判红，见 TD-89）。登录后配额显著提升；secrets 未配置时本步跳过，
+        # 流水线行为与之前一致。注意：**service containers（integration/services 的
+        # mysql 服务容器）由 runner 在 steps 之前拉取，本步对它无效**，那两处仍受匿名限流约束。
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
       - name: 解析镜像仓库（私有凭证齐备 → 私有；否则 GHCR + GITHUB_TOKEN）
         id: check
         env:
@@ -1100,6 +1142,17 @@ jobs:
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v5
+      - name: 登录 Docker Hub（提升匿名拉取配额；未配置 secrets 时自动跳过）
+        # 为什么要这一步：Docker Hub 对**匿名**拉取按 IP 限流，两条线并行高频推送时
+        # 会以 429/5xx 打穿整条流水线（2026-10-10 实测：一次 run 内 6 个 job 因拉镜像
+        # 元数据失败判红，见 TD-89）。登录后配额显著提升；secrets 未配置时本步跳过，
+        # 流水线行为与之前一致。注意：**service containers（integration/services 的
+        # mysql 服务容器）由 runner 在 steps 之前拉取，本步对它无效**，那两处仍受匿名限流约束。
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
       - name: 解析镜像仓库（私有凭证齐备 → 私有；否则 GHCR + GITHUB_TOKEN）
         id: check
         env:
@@ -1611,6 +1664,17 @@ jobs:
     needs: [build-test, frontend]
     steps:
       - uses: actions/checkout@v5
+      - name: 登录 Docker Hub（提升匿名拉取配额；未配置 secrets 时自动跳过）
+        # 为什么要这一步：Docker Hub 对**匿名**拉取按 IP 限流，两条线并行高频推送时
+        # 会以 429/5xx 打穿整条流水线（2026-10-10 实测：一次 run 内 6 个 job 因拉镜像
+        # 元数据失败判红，见 TD-89）。登录后配额显著提升；secrets 未配置时本步跳过，
+        # 流水线行为与之前一致。注意：**service containers（integration/services 的
+        # mysql 服务容器）由 runner 在 steps 之前拉取，本步对它无效**，那两处仍受匿名限流约束。
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
       - uses: actions/setup-node@v5
         with:
           node-version: 20
@@ -1688,6 +1752,17 @@ jobs:
     needs: [build-test, frontend]
     steps:
       - uses: actions/checkout@v5
+      - name: 登录 Docker Hub（提升匿名拉取配额；未配置 secrets 时自动跳过）
+        # 为什么要这一步：Docker Hub 对**匿名**拉取按 IP 限流，两条线并行高频推送时
+        # 会以 429/5xx 打穿整条流水线（2026-10-10 实测：一次 run 内 6 个 job 因拉镜像
+        # 元数据失败判红，见 TD-89）。登录后配额显著提升；secrets 未配置时本步跳过，
+        # 流水线行为与之前一致。注意：**service containers（integration/services 的
+        # mysql 服务容器）由 runner 在 steps 之前拉取，本步对它无效**，那两处仍受匿名限流约束。
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
       - uses: actions/setup-node@v5
         with:
           node-version: 20

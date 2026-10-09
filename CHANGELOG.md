@@ -4,6 +4,15 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-10（CI：Docker Hub 登录接线落地——镜像/容器类 job 的 429 限流缓解）
+
+- **CI｜Docker Hub 登录步接入（TD-89 选项 ①）**：`ci.yml` 的 6 个需要拉镜像的 job（`security` 的 helm 容器、`release-dryrun`、`image`、`image-agent`、`e2e-real`、`e2e-sec`）与 `release.yml` 的 2 个构建 job 均加 `docker/login-action@v3`；凭据经**工作流级 `env`**（`DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN`）承载，**未配置时该步自动跳过**——流水线行为与之前逐字一致，配置后匿名限流配额显著提升。
+- **为什么用 env 而不是直接 `secrets.*`**：本仓 actionlint v1.7.7 门禁**实测报错**——「步骤级 `if:` 不允许引用 `secrets` 上下文」（可用上下文仅 env/github/inputs/job/matrix/needs/runner/steps/strategy/vars）；改经工作流级 env 承载后 `if:` 与 `with:` 都合法，且 actionlint 复跑零问题。这条坑写进 TD-89 供下一个人省一轮。
+- **用户侧待办（两步）**：① Docker Hub → Account Settings → Personal access tokens → **New Access Token（Read-only 足够）**；② GitHub 仓库 → Settings → Secrets and variables → Actions → 新建 `DOCKERHUB_USERNAME`（Docker ID）与 `DOCKERHUB_TOKEN`（上面的 PAT）。
+- **已知残余**：`integration`/`services` 的 **service containers（mysql）由 runner 在 steps 之前拉取**，登录步覆盖不到，仍受匿名限流约束；彻底解决需把基础/服务镜像改走 GHCR 镜像源（TD-89 选项 ②，未动）。
+- **顺带修一处门禁在本机跑不动的问题**：`validate-deploy-assets.sh` 第 23 节用 `<<<"$GL_CODE"`（here-string）喂 ~60KB 的 ci.yml 内容，**本机 Git Bash（MSYS）在内容含 `${{ ... }}` 时会永久挂死**（同一内容走文件或管道正常；容器里的 Linux bash 也正常）——现象是门禁本机卡在第 23 节、而 CI 无此问题（今天为排查我的 workflow 改动是否改坏了门禁，连跑四次皆挂、`bash -x` 定位到挂点在 `GL_CODE` 赋值之后）。改法：该节统一走**临时文件**读取（`mktemp` + `printf`，逻辑逐字等价），本机与 CI 行为一致；`bash -n` 与 `shellcheck -S info` 均零问题。
+- **背景证据**：同一时段 run 37979767826 的 attempt 1/2 镜像 job 两度 429/500；run 37993155684 一次 6 个 job 的失败步骤**全部**是 docker 拉取/解析（`build-test`/`proto`/`Race detector`/`Frontend` 这些不拉镜像的门禁全绿）——与提交内容无关。
+
 ## [Unreleased] — 2026-10-10（阻断级缺陷修复：auth 代理规则引用目录外权限点致双轨开关打开即恒 403）
 
 - **修复｜`/api/v1/auth-svc/*` 代理面在生产上恒 403**（2026-10-10 端到端双轨冒烟实测，非推断）：auth 代理规则要求 `auth:read`/`auth:write`，而控制面权限目录（`internal/store/model.PermSpecs`）**没有 `auth:` 组**；`requirePermission` 的判据是「用户权限集 ∋ required」且无空串豁免 ⇒ **含 admin 在内的任何身份都不可能通过**，`AUTH_SVC_PROXY_ENABLED=true` 打开即认证面不可用。
