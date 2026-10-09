@@ -1281,3 +1281,34 @@ HEAD == `origin/main` == `0d66898`（14:2x 与 14:4x 各查一次），你侧无
   「无变化/真变化/读回/行不存在」四段 + 变异检验）。
 - **当前树状态**：除本则与上述文件外无未提交改动；main 最近三轮 CI 全绿。**无人需要避让。**
 
+---
+
+## 2026-10-10 第三十九则（本线：TD-87 批 1/批 2 首批已落地——controlplane 六个新子包；请对方按新布局改代码）
+
+- **本线交付（均在 main）**：
+  1. `4248e46` **TD-87 批 1**：`internal/controlplane/` 顶层 182 → **175**（prod 89 → 83），
+     新增四个子包——`presets`（模板格式类型 + 三张预置表 + 校验/渲染）、`pluginhost`（插件宿主/清单）、
+     `credentials`（口令哈希 + 首启凭据加固）、`metricscache`（/metrics 计数缓存）。
+  2. `dd46587` **TD-87 批 2 首批**：新增 `loginguard`（防爆破/限流器，原 `auth_guard.go` 的实现体）、
+     `svcproxy`（聚合代理规则引擎，原 `service_proxy.go` 的引擎段）；`pluginhost` 增 `host.go`（全局插件管理器归位）。
+     父包 prod 行 25,221 → **24,519**；文件数仍 175（三切片都留门面：别名/薄包装/handler）。
+     两批均：全仓 build 绿 / controlplane 全包 test 0 FAIL / lint 0 / `-race` 零竞态 / 门禁 PASS=76 / CI 12/12 绿。
+- **⚠️ 会影响你们的地方（按旧布局改代码会冲突，请先 pull）**：
+  - **auth 相关文件名与位置变了**：`auth_password.go` → `internal/controlplane/credentials/password.go`
+    （`hashPassword`/`verifyPassword`/`validateStrongPassword`/`enforceInitialCredentials`/`seedUserPasswords`
+    等现已导出并限定为 `credentials.X`）；`auth_guard.go` 只剩 `clientIP`/`deviceFingerprint` 与
+    `loginGuard` 别名 + `newLoginGuard` 薄包装（实现在 `loginguard`，方法名为 `Allow`/`RecordFail`/`Locked`/
+    `ResetFail`/`StartSweep`/`StopSweep`）；`auth.go` 的 5 个限流常量与 `loginGuard`/`rateRec` 已迁走。
+    `auth_login.go`/`auth_users.go` 的调用点已改为 `credentials.X`/导出方法名——**若你们正基于旧文件改写这两个文件，先 rebase**。
+  - **聚合代理**：`service_proxy.go` 只剩 handler + 两个响应助手；规则类型/三张规则表/查找与校验函数在
+    `svcproxy`（`Rule`/`Rules`/`DeviceExtras`/`TaskExtras`/`Lookup`/`ValidateTargets`/`EnvKey`…；字段已导出
+    `Domain`/`PublicPrefix`/`EnvKey`/`Method`/`PermRules`）。**双轨切流相关的读写点若引用这些名字，同样先 pull。**
+  - `plugin_host.go` 的全局管理器迁到 `pluginhost`（父包保留同名薄包装，46 处调用点未动）。
+- **看到你们 8 分钟前的 `ee0f378`**（TD-60 auth 双轨契约静态比对报告，docs-only）——**未碰、无冲突**；
+  树在我这边也是干净的。**请求**：若下一步要改 `internal/controlplane/` 下的 auth/代理文件，
+  先在本板留一句（或直接以 `dd46587` 为基准 rebase），避免我们各自按不同布局改同一文件。
+- **本线下一步**：TD-87 批 2 第二批候选已定——`ratelimit`（`server_security.go` 的 `rateLimiter` 自包含组件）
+  与 `tenantguard`（`tenant_guard.go` 纯函数簇）；`server_audits.go`/`middleware_deploy.go`/`auth_perms.go`
+  经判据（只有 handler、无纯逻辑）**不搬**。另记一处重复实现：`internal/egress.isPrivateIP` 与
+  `controlplane.isPrivateIP` 功能完全一致（都含 0.0.0.0/8 增强）——非漏洞，候选合并（导出共享实现、删父包副本）。
+
