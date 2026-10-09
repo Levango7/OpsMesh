@@ -712,6 +712,19 @@ LOG_BACKEND=loki
 AUTH_ACCESS_TTL=900s
 AUTH_REFRESH_TTL=168h
 
+# === auth-svc TD-60 A-2 安全旋钮（默认值与代码一致；仅 AUTH_SVC_HTTP_ENABLED=true 时生效）===
+# AUTH_SVC_HTTP_ENABLED=false ⇒ auth-svc 只出 gRPC、HTTP 网关关闭（R1 双轨 Cookie 风险控制）；
+# 双轨切流验证通过后再显式置 true，届时下面四个开关才开始起作用。
+AUTH_SVC_HTTP_ENABLED=false
+# 公开注册闸门：true=开放 /api/v1/auth/register 但新用户一律 pending 须审批；
+# false=关闭公开注册（仅管理员可经 POST /api/v1/users 建号，返回 403）。
+AUTH_SVC_PUBLIC_REGISTER=true
+# 设备指纹校验（未知设备触发二次验证）与 Redis Session 存储（有状态会话管理）。
+AUTH_SVC_DEVICE_FP_ENABLED=true
+AUTH_SVC_SESSION_STORE_ENABLED=true
+# Cookie Secure：HTTPS 反代终止 TLS 场景须显式 true。
+AUTH_SVC_HTTP_COOKIE_SECURE=false
+
 # === 告警通道（PagerDuty；启用时须填 ROUTING_KEY）===
 PAGERDUTY_ENABLED=false
 PAGERDUTY_ROUTING_KEY=

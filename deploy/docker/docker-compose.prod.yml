@@ -584,6 +584,20 @@ services:
       AUTH_SVC_ACCESS_TOKEN_TTL: ${AUTH_ACCESS_TTL:-900s}
       AUTH_SVC_REFRESH_TOKEN_TTL: ${AUTH_REFRESH_TTL:-168h}
       AUTH_SVC_REDIS_ADDR: "redis:6379"
+      # TD-60 A-2 安全能力旋钮面（默认值 = 代码默认，行为中性；此处显式化以便运维发现与调参）。
+      # AUTH_SVC_HTTP_ENABLED 默认 false：auth-svc 只出 gRPC，HTTP 网关关闭——
+      # 这是 R1 风险控制（避免与 controlplane 并存期双轨 Cookie 互写），
+      # 双轨切流验证通过后再显式置 true。下列开关只在 HTTP 网关开启后生效。
+      AUTH_SVC_HTTP_ENABLED: ${AUTH_SVC_HTTP_ENABLED:-false}
+      # 公开注册闸门：true=开放 /api/v1/auth/register 但新用户一律 pending 须审批；
+      # false=关闭公开注册（仅管理员可经 POST /api/v1/users 建号，返回 403）。
+      # 与 controlplane --public-register 同语义、同默认值（开放但须审批）。
+      AUTH_SVC_PUBLIC_REGISTER: ${AUTH_SVC_PUBLIC_REGISTER:-true}
+      # 设备指纹校验（未知设备触发二次验证）与 Redis Session 存储（有状态会话管理）。
+      AUTH_SVC_DEVICE_FP_ENABLED: ${AUTH_SVC_DEVICE_FP_ENABLED:-true}
+      AUTH_SVC_SESSION_STORE_ENABLED: ${AUTH_SVC_SESSION_STORE_ENABLED:-true}
+      # Cookie Secure：HTTPS 反代终止 TLS 场景须显式 true（否则反代后 SameSite/Lax 仍可用但无 Secure）。
+      AUTH_SVC_HTTP_COOKIE_SECURE: ${AUTH_SVC_HTTP_COOKIE_SECURE:-false}
       # 口令经 REDIS_PASSWORD 读取（cache.NewWithAddr / NewSessionStore 均取该变量）。
       # 缺失时 Redis AUTH 失败会静默降级为进程内缓存（登录态不跨副本共享），故此处必填。
       REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 设置 REDIS_PASSWORD}
