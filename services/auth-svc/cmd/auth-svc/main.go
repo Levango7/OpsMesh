@@ -169,10 +169,11 @@ func main() {
 			Cache:           redisCache,
 			DeviceFPEnabled: cfg.DeviceFPEnabled,
 			Sessions:        sessionStore,
+			PublicRegister:  cfg.PublicRegister,
 		})
 		gw.RegisterRoutes(mux)
-		log.Printf("HTTP gateway enabled (AUTH_SVC_HTTP_ENABLED=true) — cookie_secure=%v deviceFP=%v",
-			cfg.CookieSecure, cfg.DeviceFPEnabled)
+		log.Printf("HTTP gateway enabled (AUTH_SVC_HTTP_ENABLED=true) — cookie_secure=%v deviceFP=%v public_register=%v",
+			cfg.CookieSecure, cfg.DeviceFPEnabled, cfg.PublicRegister)
 	} else {
 		log.Printf("HTTP gateway disabled (default) — auth-svc serves gRPC only; controlplane remains the sole login entry")
 	}

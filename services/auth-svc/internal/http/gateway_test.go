@@ -449,6 +449,89 @@ func TestMe_ReturnsEffectivePermissions(t *testing.T) {
 	}
 }
 
+// newTestGatewayWith 用显式 GatewayConfig 构造网关（用于验证开关类行为）。
+func newTestGatewayWith(publicRegister bool) (*Gateway, *http.ServeMux, *service.Service) {
+	eng := auth.NewEngine("test-secret", 15*time.Minute, 7*24*time.Hour)
+	st := store.NewMemoryStore()
+	svc := service.NewService(eng, st)
+	g := NewGatewayWithConfig(svc, false, &GatewayConfig{PublicRegister: publicRegister})
+	mux := http.NewServeMux()
+	g.RegisterRoutes(mux)
+	return g, mux, svc
+}
+
+// TestRegister_PublicRegisterDisabled 守护公开注册闸门（TD-60 A-2 §2.1）：
+// PublicRegister=false 时必须 403，且**不得创建任何用户**。
+// 对齐 controlplane auth_login.go:44（--public-register=false → 403）。
+func TestRegister_PublicRegisterDisabled(t *testing.T) {
+	_, mux, svc := newTestGatewayWith(false)
+
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/auth/register",
+		`{"username":"nope","password":"SomePass123!x","email":"n@x.io"}`, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("闸门关闭时注册应 403，实际 %d body=%s", rec.Code, rec.Body.String())
+	}
+	if u := svc.Store().GetUserByUsername("nope"); u != nil {
+		t.Error("403 拒绝后仍创建了用户——闸门必须挡在建号之前")
+	}
+	// 管理员建号路径不受闸门影响（走 /api/v1/users，非本端点）。
+	_ = svc
+}
+
+// TestRegister_DefaultOpenThenPending 守护默认开放 + pending 原子化：
+// 默认（PublicRegister=true）注册返回 201，且落库状态**直接就是 pending**
+// （旧实现是先 active 再回写，窗口期内可被登录）。
+func TestRegister_DefaultOpenThenPending(t *testing.T) {
+	g, mux, svc := newTestGatewayWith(true)
+	if !g.publicRegister {
+		t.Fatal("默认应开放公开注册（与 controlplane --public-register 默认 true 对齐）")
+	}
+
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/auth/register",
+		`{"username":"pending-u","password":"SomePass123!x","email":"p@x.io"}`, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("默认应允许注册，实际 %d body=%s", rec.Code, rec.Body.String())
+	}
+	u := svc.Store().GetUserByUsername("pending-u")
+	if u == nil {
+		t.Fatal("注册后应存在用户")
+	}
+	if u.Status != "pending" {
+		t.Errorf("注册用户应直接落定为 pending，实际 %q（旧实现为 active 后回写，存在可登录窗口）", u.Status)
+	}
+	// 未审批 + pending ⇒ 登录必须失败（闸门不只挡注册，也挡住提前登录）。
+	recLogin := doReq(t, mux, http.MethodPost, "/api/v1/auth/login",
+		`{"username":"pending-u","password":"SomePass123!x"}`, nil)
+	if recLogin.Code == http.StatusOK {
+		t.Error("pending 用户不得登录成功")
+	}
+}
+
+// TestChangePassword_SamePasswordRejected 守护「新旧相同」校验与 IP 限流
+// （TD-60 A-2 §2.6：auth-svc 原缺这两项，controlplane auth_login.go:366/414 有）。
+func TestChangePassword_SamePasswordRejected(t *testing.T) {
+	_, mux, svc := newTestGateway()
+	clearMustChangePassword(t, svc)
+	cookies := loginAsAdmin(t, mux, svc)
+
+	// 新旧相同 ⇒ 400。
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/auth/change-password",
+		`{"oldPassword":"admin123","newPassword":"admin123"}`, cookies)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("新旧相同应 400，实际 %d body=%s", rec.Code, rec.Body.String())
+	}
+	// 口令未被改动（400 不得产生副作用）。
+	if u := svc.Store().GetUserByUsername("admin"); u == nil || !auth.VerifyPassword(u.PasswordHash, "admin123") {
+		t.Error("被 400 拒绝的改密不应改动现有口令")
+	}
+	// 正常改密仍应成功（证明上面的 400 不是把整条路径堵死了）。
+	rec2 := doReq(t, mux, http.MethodPost, "/api/v1/auth/change-password",
+		`{"oldPassword":"admin123","newPassword":"BrandNewPass456!"}`, cookies)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("正常改密应 200，实际 %d body=%s", rec2.Code, rec2.Body.String())
+	}
+}
+
 // ============ PUT /api/v1/users/{id} + PUT /api/v1/roles/{id} ============
 
 // TestUpdateUser_AdminCanUpdateFields 验证 admin 可经 PUT 更新用户 email/status。

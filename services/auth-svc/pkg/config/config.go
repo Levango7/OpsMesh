@@ -34,6 +34,11 @@ type Config struct {
 	// CookieSecure 与 controlplane cookieSecure 同语义：显式 true 或 TLS 部署时
 	// Cookie 加 Secure 属性（HTTP 反代终止 TLS 场景须显式配置）。
 	CookieSecure bool `json:"cookieSecure"`
+	// PublicRegister 公开注册闸门（对齐 controlplane --public-register，默认 true）：
+	// true=开放 POST /api/v1/auth/register，但新用户一律 pending 须管理员审批；
+	// false=关闭公开注册（仅管理员可经 POST /api/v1/users 创建，返回 403）。
+	// 注意与「免审批」是两件事：本服务不提供免审批模式（R6 设计声明）。
+	PublicRegister bool `json:"publicRegister"`
 
 	// TD-60 安全能力配置（默认启用，测试环境可关闭）。
 
@@ -82,6 +87,7 @@ func Load() *Config {
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 		HTTPEnabled:     getEnv("AUTH_SVC_HTTP_ENABLED", "false") == "true",
 		CookieSecure:    getEnv("AUTH_SVC_HTTP_COOKIE_SECURE", "false") == "true",
+		PublicRegister:  getEnv("AUTH_SVC_PUBLIC_REGISTER", "true") != "false",
 
 		AdminPassword:     getEnv("AUTH_SVC_ADMIN_PASSWORD", ""),
 		AdminPasswordFile: getEnv("AUTH_SVC_ADMIN_PASSWORD_FILE", ""),

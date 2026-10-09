@@ -237,6 +237,41 @@ func (s *Service) CreateUser(ctx context.Context, req *authv1.CreateUserRequest)
 	return toProtoUser(u), nil
 }
 
+// RegisterUser 自注册路径：创建用户并**直接落定为 pending**（须管理员审批）。
+//
+// 与 CreateUser 的差别只在 Status：CreateUser 供管理员建号（默认 active），
+// 本方法供公开注册（pending）。之所以单开一个方法而不是让网关建完再回写：
+// 旧写法是「CreateUser(active) → UpdateUser(pending)」两步，窗口期内账号为
+// active 且口令已落库，可被登录；本方法一次落库即终态。
+// store.CreateUser 尊重非空 Status（仅空值才默认 active），故此处直接传 pending 即可。
+func (s *Service) RegisterUser(ctx context.Context, req *authv1.CreateUserRequest) (*authv1.User, error) {
+	if req.Username == "" || req.Password == "" {
+		return nil, errors.New("username and password are required")
+	}
+	hash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+	_, err = s.store.CreateUser(&store.User{
+		Username: req.Username,
+		Email:    req.Email,
+		Status:   "pending",
+	})
+	if err != nil {
+		if err.Error() == "username already exists" {
+			return nil, ErrUserExists
+		}
+		return nil, err
+	}
+	u := s.store.GetUserByUsername(req.Username)
+	// 口令在 pending 之后写入：即使审批极快，登录也还要过 active 校验；
+	// 而审批前口令缺失/状态 pending 双重挡住，杜绝「注册即被登录」的窗口。
+	if err := s.store.ChangePassword(u.ID, hash); err != nil {
+		return nil, fmt.Errorf("set initial password: %w", err)
+	}
+	return toProtoUser(u), nil
+}
+
 // GetUser retrieves a user by ID.
 func (s *Service) GetUser(ctx context.Context, req *authv1.GetUserRequest) (*authv1.User, error) {
 	u := s.store.GetUser(req.Id)

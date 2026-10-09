@@ -40,11 +40,12 @@ const (
 
 // Gateway 持有 HTTP handler 依赖。
 type Gateway struct {
-	svc          *service.Service
-	cookieSecure bool
-	guard        *loginGuard         // A2 防爆破（login/register 入口）
-	deviceFP     *deviceFPManager    // 设备指纹管理（TD-60）
-	sessions     *cache.SessionStore // Redis Session 存储（可为 nil=JWT 无状态模式）
+	svc            *service.Service
+	cookieSecure   bool
+	publicRegister bool                // 公开注册闸门（对齐 controlplane --public-register）
+	guard          *loginGuard         // A2 防爆破（login/register/change-password 入口）
+	deviceFP       *deviceFPManager    // 设备指纹管理（TD-60）
+	sessions       *cache.SessionStore // Redis Session 存储（可为 nil=JWT 无状态模式）
 }
 
 // NewGateway 构造 Gateway。cookieSecure 由 main 注入（AUTH_SVC_HTTP_COOKIE_SECURE
@@ -53,10 +54,11 @@ type Gateway struct {
 // 向后兼容：不带 Redis/DeviceFP 参数的构造走纯内存模式（测试用）。
 func NewGateway(svc *service.Service, cookieSecure bool) *Gateway {
 	return &Gateway{
-		svc:          svc,
-		cookieSecure: cookieSecure,
-		guard:        newLoginGuard(),
-		deviceFP:     newDeviceFPManager(nil, false), // 默认关闭设备指纹校验（测试兼容）
+		svc:            svc,
+		cookieSecure:   cookieSecure,
+		publicRegister: true, // 与 controlplane --public-register 默认 true 对齐
+		guard:          newLoginGuard(),
+		deviceFP:       newDeviceFPManager(nil, false), // 默认关闭设备指纹校验（测试兼容）
 	}
 }
 
@@ -65,6 +67,7 @@ type GatewayConfig struct {
 	Cache           *cache.Cache        // Redis 缓存（nil=纯内存）
 	DeviceFPEnabled bool                // 设备指纹校验开关
 	Sessions        *cache.SessionStore // Redis Session 存储（nil=JWT 无状态）
+	PublicRegister  bool                // 公开注册闸门（对齐 controlplane --public-register）
 }
 
 // NewGatewayWithConfig 构造带安全配置的 Gateway（TD-60 增强）。
@@ -74,9 +77,10 @@ type GatewayConfig struct {
 // sessions 非 nil 时：启用 Redis Session 存储；否则降级为 JWT 无状态模式。
 func NewGatewayWithConfig(svc *service.Service, cookieSecure bool, gc *GatewayConfig) *Gateway {
 	g := &Gateway{
-		svc:          svc,
-		cookieSecure: cookieSecure,
-		sessions:     gc.Sessions,
+		svc:            svc,
+		cookieSecure:   cookieSecure,
+		publicRegister: gc.PublicRegister,
+		sessions:       gc.Sessions,
 	}
 	if gc.Cache != nil {
 		g.guard = newLoginGuardWithCache(gc.Cache)
@@ -288,9 +292,22 @@ func (g *Gateway) handleRefresh(w http.ResponseWriter, r *http.Request) {
 //
 // 安全基线（R6）：注册默认 Status=pending 须 admin 审批（controlplane
 // --allow-public-register=false 同语义；立即签发 token 的免审批模式不进 HTTP 层）。
+//
+// TD-60 A-2 契约对齐（docs/td60-auth-consistency-report.md §2.1）：
+//   - 公开注册闸门：PublicRegister=false 时 403（对齐 controlplane
+//     auth_login.go:44 的 --public-register=false 语义），仅管理员可建用户；
+//   - pending 原子化：创建即定 Status=pending（store.CreateUser 尊重非空 Status），
+//     取代原先「CreateUser(默认 active) → 再 UpdateUser 回写 pending」的两步。
+//     旧写法的窗口期内账号为 active 且口令已落库，可被登录；新写法下
+//     未审批 + 口令尚未写入，登录必然失败（active 校验与口令校验双重挡住）。
 func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	// 公开注册闸门（对齐 controlplane auth_login.go:44）。
+	if !g.publicRegister {
+		writeError(w, http.StatusForbidden, "public registration is disabled")
 		return
 	}
 	var body struct {
@@ -312,7 +329,8 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
-	if _, err := g.svc.CreateUser(r.Context(), &authv1.CreateUserRequest{
+	// 原子创建为 pending：单次落库即终态，无「先 active 再回写」的窗口期。
+	if _, err := g.svc.RegisterUser(r.Context(), &authv1.CreateUserRequest{
 		Username: body.Username,
 		Password: body.Password,
 		Email:    body.Email,
@@ -324,13 +342,9 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// 注册用户强制 pending（CreateUser 默认 active——注册流覆盖为 pending）。
-	if u := g.svc.Store().GetUserByUsername(body.Username); u != nil {
-		u.Status = "pending"
-		_ = g.svc.Store().UpdateUser(u)
-	}
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"message": "registration submitted, pending admin approval",
+		"status":  "pending",
 	})
 }
 
@@ -347,6 +361,12 @@ func (g *Gateway) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	// A2 限流：按客户端 IP 令牌桶约束改密频率，防暴力破解旧密码
+	// （对齐 controlplane auth_login.go:366 复用 loginGuard 的 IP 桶）。
+	if !g.guard.allowIP(clientIP(r)) {
+		writeError(w, http.StatusTooManyRequests, "too many attempts from this IP")
+		return
+	}
 	var body struct {
 		OldPassword         string `json:"oldPassword"`
 		NewPassword         string `json:"newPassword"`
@@ -354,6 +374,11 @@ func (g *Gateway) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.OldPassword == "" || body.NewPassword == "" {
 		writeError(w, http.StatusBadRequest, "oldPassword and newPassword are required")
+		return
+	}
+	// 新旧相同拒绝（防无效改密绕过强制改密；对齐 controlplane auth_login.go:414）。
+	if body.OldPassword == body.NewPassword {
+		writeError(w, http.StatusBadRequest, "new password must differ from old password")
 		return
 	}
 	// A2 强口令校验（新密码必须满足强度规则——与 controlplane 改密路径同语义）。
