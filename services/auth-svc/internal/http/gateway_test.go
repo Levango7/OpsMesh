@@ -478,6 +478,78 @@ func TestRegister_PublicRegisterDisabled(t *testing.T) {
 	_ = svc
 }
 
+// TestAdminCreateUser 守护管理员建号端点（POST /api/v1/users）。
+//
+// 背景：修复前该 handler 不接收 password 也不接 roleIDs，而 service.CreateUser
+// 要求密码非空 ⇒ 管理员建号 **100% 返回 500**，且管理员没有任何指派角色的入口
+// （只能建出无角色账号）。现有测试从未覆盖此路径，故缺陷长期不可见。
+//
+// 契约对齐 controlplane auth_users.go handleCreateUser：
+// {username,password,email,roleIDs}；缺口令 400；弱口令 400；
+// 未知角色 400；成功 201 且带口令可登录、角色已生效于 /auth/me 的 permissions。
+func TestAdminCreateUser(t *testing.T) {
+	_, mux, svc := newTestGateway()
+	clearMustChangePassword(t, svc)
+	cookies := loginAsAdmin(t, mux, svc)
+
+	// 1) 缺 password ⇒ 400（对齐 service 的必填语义与 controlplane）。
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/users",
+		`{"username":"nou-pass"}`, cookies)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("缺 password 应 400，实际 %d body=%s", rec.Code, rec.Body.String())
+	}
+	// 2) 弱口令 ⇒ 400。
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/users",
+		`{"username":"weakpw","password":"123"}`, cookies)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("弱口令应 400，实际 %d body=%s", rec.Code, rec.Body.String())
+	}
+	// 3) 未知角色 ⇒ 400。
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/users",
+		`{"username":"badrole","password":"SomePass123!x","roleIDs":["role-nope"]}`, cookies)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("未知角色应 400，实际 %d body=%s", rec.Code, rec.Body.String())
+	}
+	if svc.Store().GetUserByUsername("badrole") != nil {
+		t.Error("未知角色被拒后不得建号")
+	}
+	// 4) 正常建号（带只读角色）⇒ 201，且口令可登录、角色进入 permissions。
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/users",
+		`{"username":"newbie","password":"SomePass123!x","email":"n@x.io","roleIDs":["role-viewer"]}`, cookies)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("正常建号应 201，实际 %d body=%s", rec.Code, rec.Body.String())
+	}
+	u := svc.Store().GetUserByUsername("newbie")
+	if u == nil {
+		t.Fatal("建号后用户应存在")
+	}
+	if len(u.RoleIDs) != 1 || u.RoleIDs[0] != "role-viewer" {
+		t.Fatalf("角色应被指派，实际 %v", u.RoleIDs)
+	}
+	// 新建账号立即 active（管理端创建无须审批）⇒ 可直接登录。
+	recLogin := doReq(t, mux, http.MethodPost, "/api/v1/auth/login",
+		`{"username":"newbie","password":"SomePass123!x"}`, nil)
+	if recLogin.Code != http.StatusOK {
+		t.Fatalf("新建账号(active)应可登录，实际 %d body=%s", recLogin.Code, recLogin.Body.String())
+	}
+	at := findCookie(t, recLogin, "opsmesh_at")
+	if at == nil {
+		t.Fatal("登录应下发 opsmesh_at")
+	}
+	recMe := doReq(t, mux, http.MethodGet, "/api/v1/auth/me", "", map[string]string{"Cookie": "opsmesh_at=" + at.Value})
+	var me map[string]any
+	_ = json.Unmarshal(recMe.Body.Bytes(), &me)
+	if arr, _ := me["permissions"].([]any); len(arr) == 0 {
+		t.Error("新建账号的 /auth/me 应有 permissions（viewer 只读集）——角色指派未生效")
+	}
+	// 5) 重名 ⇒ 409。
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/users",
+		`{"username":"newbie","password":"SomePass123!x"}`, cookies)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("重名应 409，实际 %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestRegister_BindsReadOnlyViewerRole 守护自注册默认角色（TD-60 A-2 §2.1 缺口）：
 // 注册用户必须绑 role-viewer，且该角色**只含 `*:read`**——
 // 这是「低权限、安全」的硬约束：新用户不能审批自己的注册、不能建号、

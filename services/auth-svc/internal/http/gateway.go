@@ -516,18 +516,41 @@ func (g *Gateway) handleUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"users": resp.Users})
 	case http.MethodPost:
-		// 管理员创建用户（区别于注册端点：管理端创建默认 active）。
+		// 管理员创建用户（区别于注册端点：管理端创建默认 active，无须审批）。
+		// 契约对齐 controlplane auth_users.go handleCreateUser：
+		//   请求体 {username, password, email, roleIDs}；
+		//   username+password 必填（400）、强口令校验（400）、
+		//   roleIDs 须全部指向真实角色（400 unknown role id）。
+		// 修复前此处**不接收 password** 也不接 roleIDs：service.CreateUser 要求
+		// 密码非空 ⇒ 管理员建号 100% 返回 500；且管理员没有任何指派角色的入口
+		// （只能建出无角色账号，再靠 PUT /roles/{id} 二次补）。
 		var body struct {
-			Username string `json:"username"`
-			Email    string `json:"email"`
+			Username string   `json:"username"`
+			Password string   `json:"password"`
+			Email    string   `json:"email"`
+			RoleIDs  []string `json:"roleIDs"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" {
-			writeError(w, http.StatusBadRequest, "username is required")
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" || body.Password == "" {
+			writeError(w, http.StatusBadRequest, "username and password are required")
 			return
+		}
+		// 强口令校验（与注册/改密同规则集；controlplane 建号同样校验）。
+		if msg := validateStrongPassword(body.Password); msg != "" {
+			writeError(w, http.StatusBadRequest, msg)
+			return
+		}
+		// 角色引用校验：避免把不存在的角色 ID 写进用户（对齐 controlplane P3 校验）。
+		for _, rid := range body.RoleIDs {
+			if rid != "" && g.svc.Store().GetRole(rid) == nil {
+				writeError(w, http.StatusBadRequest, "unknown role id: "+rid)
+				return
+			}
 		}
 		if _, err := g.svc.CreateUser(r.Context(), &authv1.CreateUserRequest{
 			Username: body.Username,
+			Password: body.Password,
 			Email:    body.Email,
+			RoleIds:  body.RoleIDs,
 		}); err != nil {
 			if err == service.ErrUserExists {
 				writeError(w, http.StatusConflict, "username already exists")
