@@ -415,18 +415,57 @@ func (g *Gateway) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "user not found")
 		return
 	}
+	// TD-60 A-2 契约对齐（docs/td60-auth-consistency-report.md §2.5）：
+	// controlplane /auth/me 返回 permissions（角色展开后的有效权限集合），
+	// 而前端 stores/auth.js:31 以 user.permissions 作为侧栏/操作门控的唯一
+	// 数据源——缺失时 hasPerm() 对一切返回 false，侧栏全线隐藏。此处按与
+	// internal/controlplane/auth_login.go:323-337 相同的语义补齐。
+	// 其余字段为双轨期与 controlplane 的字段名对齐（两种拼写并存，消费者按需取一）。
 	writeJSON(w, http.StatusOK, map[string]any{
-		// 对齐 controlplane GET /api/v1/me 响应格式：
-		// {tenantID, userID, roles, mode}
-		"tenantID": resp.TenantId,
-		"userID":   u.ID,
-		"roles":    u.RoleIDs,
-		"mode":     "self-validated", // auth-svc 自验 JWT（vs controlplane "gateway-injected"）
-		// 保留额外字段供前端富信息使用（controlplane 不返回这些，前端可忽略）
-		"id":       u.ID,
-		"username": u.Username,
-		"email":    u.Email,
+		"tenantID":           resp.TenantId,
+		"userID":             u.ID,
+		"roles":              u.RoleIDs,
+		"mode":               "self-validated", // auth-svc 自验 JWT（vs controlplane "gateway-injected"）
+		"tenantId":           resp.TenantId,
+		"roleIDs":            u.RoleIDs,
+		"status":             u.Status,
+		"mustChangePassword": u.MustChangePassword,
+		"permissions":        g.effectivePermissions(u.RoleIDs),
+		"id":                 u.ID,
+		"username":           u.Username,
+		"email":              u.Email,
 	})
+}
+
+// effectivePermissions 按角色 ID 集合展开有效权限并集（去重）。
+//
+// 语义对齐 controlplane auth_login.go:323-337：取 RoleIDs 命中角色的
+// Permissions 并集，角色不存在或无权限时跳过该角色，不因此失败——
+// 与「userPermissions 跳过 nil 角色」同源，保证同一用户在两套认证面下
+// 得到同一权限集合（双轨对比的前置条件）。
+// 顺序按角色出现顺序、权限首次出现顺序，便于对账时逐项比对。
+func (g *Gateway) effectivePermissions(roleIDs []string) []string {
+	if len(roleIDs) == 0 {
+		return nil
+	}
+	want := make(map[string]bool, len(roleIDs))
+	for _, id := range roleIDs {
+		want[id] = true
+	}
+	seen := make(map[string]bool, 16)
+	out := make([]string, 0, 16)
+	for _, r := range g.svc.Store().ListRoles() {
+		if !want[r.ID] {
+			continue
+		}
+		for _, p := range r.Permissions {
+			if !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+	}
+	return out
 }
 
 // ============ 用户/角色/权限管理 ============

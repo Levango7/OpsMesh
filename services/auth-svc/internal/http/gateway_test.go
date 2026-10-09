@@ -373,6 +373,82 @@ func TestMe_And_Logout(t *testing.T) {
 	}
 }
 
+// TestMe_ReturnsEffectivePermissions 守护 TD-60 A-2 契约对齐（阻断级）：
+// /auth/me 必须返回 permissions（角色展开后的有效权限集合）。
+//
+// 为什么是阻断级：前端 stores/auth.js:31 以 user.permissions 作为侧栏/操作
+// 门控的唯一数据源，且 hasPerm() 在权限集合为空时对一切返回 false——
+// 缺这个字段的后果是「登录成功但侧栏全线隐藏」，且不报任何错。
+// 该字段在 2026-10-09 的契约比对中被发现缺失，本测试防回归。
+func TestMe_ReturnsEffectivePermissions(t *testing.T) {
+	g, mux, svc := newTestGateway()
+	cookies := loginAsAdmin(t, mux, svc)
+
+	// 取 admin 的期望权限：按 RoleIDs 展开 ListRoles 的 Permissions 并集。
+	u := g.svc.Store().GetUserByUsername("admin")
+	if u == nil || len(u.RoleIDs) == 0 {
+		t.Fatalf("前置失败：admin 或 admin 角色缺失（RoleIDs=%v）", u.RoleIDs)
+	}
+	want := map[string]bool{}
+	for _, r := range g.svc.Store().ListRoles() {
+		for _, id := range u.RoleIDs {
+			if r.ID == id {
+				for _, p := range r.Permissions {
+					want[p] = true
+				}
+			}
+		}
+	}
+	if len(want) == 0 {
+		t.Fatalf("前置失败：admin 角色未绑定任何权限，测试无意义")
+	}
+
+	rec := doReq(t, mux, http.MethodGet, "/api/v1/auth/me", "", cookies)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("me: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var me map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &me); err != nil {
+		t.Fatalf("me 响应不是合法 JSON: %v", err)
+	}
+
+	// 1) permissions 必须存在且非空（阻断级判据）。
+	raw, ok := me["permissions"]
+	if !ok {
+		t.Fatalf("me 响应缺 permissions 字段（TD-60 A-2 阻断级回归）：body=%s", rec.Body.String())
+	}
+	arr, ok := raw.([]any)
+	if !ok || len(arr) == 0 {
+		t.Fatalf("permissions 应为非空数组，实际 %v", raw)
+	}
+	got := map[string]bool{}
+	for _, v := range arr {
+		got[v.(string)] = true
+	}
+	// 2) 内容须与「按角色展开」一致（不多不少）。
+	for p := range want {
+		if !got[p] {
+			t.Errorf("permissions 缺期望权限 %q", p)
+		}
+	}
+	for p := range got {
+		if !want[p] {
+			t.Errorf("permissions 含未期望权限 %q（应严格等于角色并集）", p)
+		}
+	}
+	// 3) 不得重复（并集去重）。
+	if len(got) != len(arr) {
+		t.Errorf("permissions 含重复项：去重后 %d，实际 %d", len(got), len(arr))
+	}
+
+	// 4) 与 controlplane 对齐的字段名须并存（双轨期两种拼写都可用）。
+	for _, k := range []string{"roleIDs", "tenantId", "status", "mustChangePassword"} {
+		if _, ok := me[k]; !ok {
+			t.Errorf("me 响应缺对齐字段 %q（controlplane 侧同名）", k)
+		}
+	}
+}
+
 // ============ PUT /api/v1/users/{id} + PUT /api/v1/roles/{id} ============
 
 // TestUpdateUser_AdminCanUpdateFields 验证 admin 可经 PUT 更新用户 email/status。
