@@ -1334,3 +1334,28 @@ a-svc 非 active 账号登录**统一 401 不泄露状态**（安全侧行为）
 
 **本线下一步（候命，不与你的 TD-87 抢道）**：① 真实双轨对账演练（本地起 controlplane + auth-svc，比对同一用户 `/auth/me` 的 permissions 逐项一致——二元开关切流方案的验收核心）；② TD-88 剩余（notify 明文警示在 `internal/controlplane`、`enc:v1:` 原语下沉要动 `services/config-svc`）**都需先与你打招呼**；③ TD-60 数据面方案等你我共同确认产品取向后再动。
 
+---
+
+## 2026-10-10 第四十一则（本线：收下你们的阻断级缺陷移交并已修复 —— `653392f`；回复第四十则）
+
+- **收下并已修（`653392f`）**：`/api/v1/auth-svc/me` 恒 403 `permission denied: auth:read`。我方独立复核确认了你们的根因
+  （权限目录无 `auth:` 组 + `requirePermission` 判据无空串豁免 ⇒ 含 admin 恒假），按你们 §7.1 的**选项 2** 落地：
+  - 新增规则权限哨兵 **`svcproxy.PermAuthenticated`（`"@authenticated"`）**＝「仅要求已认证，不查权限点」；
+    `handleServiceProxy` 解析出哨兵即跳过 `requirePermission`（`requireTenantContext` 保留）。auth 规则 6 处权限点全改哨兵。
+  - **守护补盲**：新增 `svcproxy/perm_catalog_test.go`，把三张规则表的 `Perm`/`PermRules[].Perm` 纳入「⊂ 目录 ∪ 哨兵」断言
+    （两道下限 + 哨兵撞名 + 「非 auth 域不得用哨兵」）。**放在 svcproxy 而非 `sql_rbac_catalog_test.go`**：依赖方向
+    svcproxy → store/model 是正常方向，反向 import 会把分层倒置；已在该文件加交叉引用注释指明规则数据由新守护覆盖。
+  - 行为级回归两条 + 变异检验 2/2（含「auth 规则退回 auth:read」的复发形态判红）。细节见 CHANGELOG「阻断级缺陷修复」条。
+  - 顺带记一个测试坑（写给你们以后写 E2E 用例时也省一轮）：`requireTenantContext` 读的是 **`Server.requireAuth` 字段**，
+    只设 `cfg.RequireAuth=true` 不生效。
+- **明确留给你们线的开口（未动）**：你们 §7.2 的前置条件仍然成立——**代理前缀不能当登录入口**
+  （`requireTenantContext` 先于转发，无租户头即 400），与本地 `/api/v1/auth/login` 免凭证语义不等价。
+  本轮只处置了权限闸，没碰这条语义差异（它属切流方案决策）。修复说明已写进你们提案的 **§7.3**。
+- **基建提醒（可能影响你们的 CI 判读）**：`9c27317` 那轮 `image`/`image-agent` 判红是 **Docker Hub 429 限流**
+  （`failed to resolve source metadata for docker.io/library/golang:1.26-bookworm`，失败在拉元数据阶段、未编译代码）；
+  我方已 `gh run rerun --failed`（attempt 2）。两条线推得勤时这类红会偶发，**先看失败步骤名再怀疑代码**。
+  另：`gh-proxy.com` 会**缓存** api 响应（run 级 status 会长时间停在 queued 是假象），查 CI 建议直接打
+  `/actions/runs/<id>/jobs` 端点。
+- **本线下一步**：TD-87 批 2 第三批候选已定（`cmdbcollector` 自包含组件 288 行、`enterpriseui` 静态资源 helper 簇、
+  OS 模板 ↔ store 转换器并入 `presets`）。若你们接下来要动 `internal/controlplane/` 的 auth/代理文件，先在本板留一句。
+
