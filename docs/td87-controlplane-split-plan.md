@@ -190,3 +190,38 @@ controlplane 的结构不同，且有两条硬约束：
 3. **全局持有器归位能解除测试放置的硬边界**：批 1 因 `PluginManager()` 在父包而被迫回迁的用例，本批随全局迁入 pluginhost 后自然归位——
    「测试不跨包 import 父包」的约束可以通过「把被引用的全局一起搬」化解，而不是永远留在父包。
 
+---
+
+## 9. 批 2 第二批执行记录（2026-10-10，已落地：ratelimit / tenantguard / SSRF 判定合并）
+
+### 9.1 三个改动的实际面
+
+| 项 | 迁出/合并内容 | 新包 | 父包保留 | 零改动/低改动手法 |
+|---|---|---|---|---|
+| `ratelimit` | 按 IP 令牌桶限流器整体（`Limiter` + `tokenBucket` + `maxRateLimitBuckets` + `New`/`Allow`/`SweepLoop`/`evictIdleLocked`，原 `server_security.go` 的实现段） | `ratelimit`（201 行含测试） | `rateLimitMiddleware`（Server 方法）+ **类型别名 `rateLimiter` + `newRateLimiter` 薄包装**；`server_security.go` 234 → 100 行 | 9 处构造点与 `rateLimitMiddleware` 零改动；`.allow(` → `.Allow(` 共计 ~20 处；3 个触及内部态（buckets/tokenBucket/maxBuckets）的用例迁入 `limiter_test.go`，中间件用例改用公共构造 |
+| `tenantguard` | 租户纯校验三件：`TenantOrDefault` / `ValidateTenantID`（含 `tenantIDPattern`）/ `TenantAgentIn` | `tenantguard`（64 行） | 两个 Server 方法 + **三个同名薄包装**；`tenant_guard.go` 94 → 64 行 | **30 处调用点零改动**（auth_users/auth_login/auth_tokens/automation/pipeline/script/测试） |
+| **SSRF 判定合并** | 两份**逐行等价**的私网判定实现（`internal/egress.isPrivateIP` 与 `controlplane.isPrivateIP`）合并为一处 | — | `egress.IsPrivateIP` 导出为唯一实现；`controlplane.isPrivateIP` 改 1 行委托 | 父包 9 处引用与 6 处测试引用**零改动**（wrapper 保留原函数名）；判定清单从 2 份手抄变 1 份 |
+
+### 9.2 数据
+
+- 父包 prod 行 24,519 → **24,355**；顶层 `.go` 仍 175（三件都留门面，见 §8.4 第 2 条的判据）。
+- 新增 `ratelimit`（201 行含测试）、`tenantguard`（64 行）。
+- 合并收益不在行数（父包只减 ~55 行），而在**真相单一**：私网段清单（含 0.0.0.0/8 增强、IPv6 ULA）此前两处手抄，任一处漏改即出现 SSRF 绕过面。
+
+### 9.3 验证口径与结果（全绿）
+
+- 全仓 `go build ./internal/...` 绿；`go vet ./internal/controlplane/...` 零告警；
+- `go test ./internal/controlplane/...`：**11 个包全 ok / 0 FAIL**（父包 88s + ratelimit/tenantguard 等）；
+- `golangci-lint run ./internal/controlplane/... ./internal/egress/`：**0 issues**；`gofmt -l` 净；
+- `-race ./internal/controlplane/... ./internal/egress/`：**零 DATA RACE**；
+- 部署资产门禁 PASS=76 FAIL=0 SKIP=1。
+
+### 9.4 判据补充
+
+1. **「有没有可搬的纯逻辑 / 自包含组件」是唯一有效的筛选器**：本批三件的共同点——
+   `rateLimiter`（自有类型 + 方法）、`tenantguard`（纯函数 + 唯一正则）、`isPrivateIP`（纯函数且有两份副本）。
+   反例（不搬）：`server_audits.go` / `middleware_deploy.go` / `auth_perms.go` 只有 handler，搬了只剩空壳。
+2. **「两份手抄实现」本身就是一条独立线索**：它比「文件太长」更值得优先处置——行数只影响导航，
+   重复的**安全判定清单**会影响正确性（漏改一处 = 绕过）。全仓扫描法：按特征常量/函数名 grep
+   （本轮用 `IsLinkLocalUnicast` 一次定位到全部 2 份副本）。
+

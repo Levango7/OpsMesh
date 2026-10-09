@@ -4,6 +4,16 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-10（TD-87 批 2 第二批：ratelimit / tenantguard 迁出 + SSRF 私网判定两份手抄实现合并）
+
+- **重构｜限流器迁出**：按 IP 令牌桶限流器整体（`Limiter`/`tokenBucket`/`maxRateLimitBuckets` 与构造/放行/清理方法）迁入 `internal/controlplane/ratelimit`，父包 `server_security.go` **234 → 100 行**；保留类型别名 `rateLimiter` + `newRateLimiter` 薄包装 ⇒ 9 处构造点与 `rateLimitMiddleware` 零改动。触及内部态（buckets/tokenBucket/maxBuckets）的 3 个用例随类型迁入，中间件用例改用公共构造包装。
+- **重构｜租户校验迁出**：`TenantOrDefault`/`ValidateTenantID`（含租户 ID 白名单正则）/`TenantAgentIn` 迁入 `internal/controlplane/tenantguard`，父包留三个同名薄包装 ⇒ **30 处调用点零改动**（auth_users/auth_login/auth_tokens/automation/pipeline/script/测试）。
+- **修复隐患｜SSRF 私网判定两份手抄实现合并**：`internal/egress.isPrivateIP` 与 `controlplane.isPrivateIP` 经逐行比对**完全等价**（都含 0.0.0.0/8 增强与 IPv6 ULA 处理）——不是漏洞，但**判定清单两处手抄**，任一处漏改即出现 SSRF 绕过面。现导出 `egress.IsPrivateIP` 为唯一实现，父包 `isPrivateIP` 改 1 行委托，9 处生产引用与 6 处测试引用零改动。
+- **父包数据**：prod 行 24,519 → **24,355**；顶层 `.go` 仍 175（三件均保留门面，判据见计划 §8.4 第 2 条：拆分收益看「行数 + 跨域耦合」而非文件数）。
+- **判据补充（计划 §9.4）**：①「有没有可搬的纯逻辑/自包含组件」是唯一有效筛选器——本轮三件的共同点是「自有类型 + 方法」「纯函数 + 唯一正则」「纯函数且有两份副本」；只有 handler 的文件（`server_audits.go`/`middleware_deploy.go`/`auth_perms.go`）搬了只剩空壳，**不搬**。②「两份手抄实现」比「文件太长」更值得优先处置：行数只影响导航，重复的安全判定清单会影响正确性。全仓扫描法：按特征常量/函数名 grep（本轮用 `IsLinkLocalUnicast` 一次定位全部副本）。
+- **顺带修复一个时序脆弱的既有用例**：随限流器迁入的 `TestRateLimiter_BucketCapBounded` 用「ratePerSec=1 + 立即重发」断言拒绝，但若循环本身耗时 ≥1s（**全量测试并跑时实测发生**：根模块跑该包时判红、单包跑恒绿），桶会恰好补回一个令牌、断言随机翻。改为**与经过时间无关**的判据：显式置桶为「零令牌 + 刚刚补充过」（等价「同一秒内连发两次」的确定性形态）。`-count=5` 连过。判据同 TD-82（测试不得依赖墙钟时间）。
+- **验证**：全仓 `go build ./internal/...` 绿；`go vet ./internal/controlplane/...` 零告警；`go test ./internal/controlplane/...` **11 个包 0 FAIL**；`golangci-lint`（controlplane + egress）**0 issues**；`gofmt -l` 净；`-race` **零 DATA RACE**；部署门禁 PASS=76 FAIL=0 SKIP=1。
+
 ## [Unreleased] — 2026-10-09（TD-87 批 2 首批：loginguard / pluginhost 宿主归位 / svcproxy 规则引擎三切片）
 
 - **重构｜父包三个切片迁出**（父包 prod 行 25,221 → 24,519）：

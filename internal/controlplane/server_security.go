@@ -2,18 +2,24 @@
 package controlplane
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
-	"github.com/Levango7/OpsMesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/controlplane/ratelimit"
+	"github.com/Levango7/OpsMesh/internal/egress"
 )
+
+// rateLimiter 限流器别名 + 构造薄包装（TD-87 批 2 第二批：实现已迁 internal/controlplane/ratelimit）。
+type rateLimiter = ratelimit.Limiter
+
+func newRateLimiter(ratePerSec int, sweepInterval time.Duration) *rateLimiter {
+	return ratelimit.New(ratePerSec, sweepInterval)
+}
 
 func validateURLSSRF(rawURL string) error {
 	u, err := url.Parse(rawURL)
@@ -48,154 +54,14 @@ func validateURLSSRF(rawURL string) error {
 }
 
 // isPrivateIP 判断 IP 是否为私网/环回/链路本地/元数据地址。
-func isPrivateIP(ip net.IP) bool {
-	// IPv4 私网/环回/链路本地。
-	if ip4 := ip.To4(); ip4 != nil {
-		// 127.x.x.x（环回）
-		if ip4[0] == 127 {
-			return true
-		}
-		// 10.x.x.x（A 类私网）
-		if ip4[0] == 10 {
-			return true
-		}
-		// 172.16-31.x.x（B 类私网）
-		if ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31 {
-			return true
-		}
-		// 192.168.x.x（C 类私网）
-		if ip4[0] == 192 && ip4[1] == 168 {
-			return true
-		}
-		// 169.254.x.x（链路本地 + 云元数据 169.254.169.254）
-		if ip4[0] == 169 && ip4[1] == 254 {
-			return true
-		}
-		// 0.0.0.0/8（本网/未指定，SSRF 防护：原仅拒 0.0.0.0 单地址，
-		// 增强为拒整个 0.0.0.0/8 网段，防 0.x.x.x 绕过 SSRF 校验访问本机网络栈）
-		if ip4[0] == 0 {
-			return true
-		}
-		return false
-	}
-	// IPv6：拒绝 loopback (::1) 和 link-local (fe80::/10)。
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-		return true
-	}
-	// IPv6 ULA (fc00::/7) 私网地址。
-	if len(ip) == 16 {
-		if (ip[0] & 0xfe) == 0xfc {
-			return true
-		}
-	}
-	return false
-}
+// isPrivateIP 私网/环回/链路本地/未指定网段判定（SSRF 防线）。
+// TD-87 批 2 第二批：与 internal/egress 的实现**逐行等价**（都含 0.0.0.0/8 增强与 IPv6 ULA），
+// 原先两份副本各自演进的风险就此消除——本函数改为薄委托，判定清单只有 egress 一处。
+func isPrivateIP(ip net.IP) bool { return egress.IsPrivateIP(ip) }
 
 // ============================================================================
 // API 限流（控制面熔断）
 // ============================================================================
-
-// maxRateLimitBuckets 限流器跟踪的 IP 桶上限（P1-5 内存熔断）。
-// 每个桶几十字节量级，5 万桶约数 MB；达到上限时先清理空闲桶，仍满则放行但不建桶（见 allow）。
-const maxRateLimitBuckets = 50000
-
-// rateLimiter 按 IP 令牌桶限流器。
-// 每个 IP 维护一个独立的令牌桶，按 ratePerSec 速率补充令牌，桶容量=ratePerSec（允许 1s 突发）。
-// 超过桶容量时拒绝请求（返回 429）。sweepInterval 周期清理空闲 IP 条目防内存泄漏。
-type rateLimiter struct {
-	mu            sync.Mutex
-	buckets       map[string]*tokenBucket
-	ratePerSec    int
-	sweepInterval time.Duration
-	// maxBuckets 跟踪的 IP 桶数上限（<=0 时取 maxRateLimitBuckets）；untracked 为达上限后
-	// 未跟踪（直接放行且不建桶）的请求数，lastUntrackedLog 为上次告警时刻（限噪用）。
-	maxBuckets       int
-	untracked        uint64
-	lastUntrackedLog time.Time
-}
-
-// tokenBucket 令牌桶。lastRefill 为上次补充时刻，tokens 为当前令牌数（浮点支持分数补充）。
-type tokenBucket struct {
-	tokens     float64
-	lastRefill time.Time
-}
-
-// newRateLimiter 构造限流器。ratePerSec 为每秒允许的请求数；sweepInterval 为清理周期。
-func newRateLimiter(ratePerSec int, sweepInterval time.Duration) *rateLimiter {
-	rl := &rateLimiter{
-		buckets:       make(map[string]*tokenBucket),
-		ratePerSec:    ratePerSec,
-		sweepInterval: sweepInterval,
-		maxBuckets:    maxRateLimitBuckets,
-	}
-	go rl.sweepLoop()
-	return rl
-}
-
-// allow 检查 IP 是否允许放行。true=放行并消耗一个令牌；false=拒绝（429）。
-//
-// 内存有界（P1-5）：IP 由请求方自选（IPv6 地址空间近乎无限），无上限的 buckets
-// 本身即内存耗尽面。达到上限后先清理空闲桶；若仍满，则放行但不建桶——正在刷流量的
-// 攻击方早已持有桶并处于限流之下，放行新 IP 不会削弱对在途攻击的抑制，同时内存不再增长。
-func (rl *rateLimiter) allow(ip string) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	now := time.Now()
-	b, ok := rl.buckets[ip]
-	if !ok {
-		limit := rl.maxBuckets
-		if limit <= 0 {
-			limit = maxRateLimitBuckets
-		}
-		if len(rl.buckets) >= limit {
-			rl.evictIdleLocked(now)
-			if len(rl.buckets) >= limit {
-				rl.untracked++
-				if rl.lastUntrackedLog.IsZero() || now.Sub(rl.lastUntrackedLog) > 30*time.Second {
-					rl.lastUntrackedLog = now
-					logx.Warn(context.Background(), "限流器 IP 桶已达上限：本请求仅放行不跟踪（不再新建桶）",
-						"tracked", len(rl.buckets), "limit", limit, "untracked_total", rl.untracked)
-				}
-				return true
-			}
-		}
-		// 首次访问：满桶（容量=ratePerSec），允许 1s 突发。
-		b = &tokenBucket{tokens: float64(rl.ratePerSec), lastRefill: now}
-		rl.buckets[ip] = b
-	}
-	// 按经过时间补充令牌。
-	elapsed := now.Sub(b.lastRefill).Seconds()
-	b.tokens += elapsed * float64(rl.ratePerSec)
-	if b.tokens > float64(rl.ratePerSec) {
-		b.tokens = float64(rl.ratePerSec) // 上限=桶容量
-	}
-	b.lastRefill = now
-	if b.tokens >= 1 {
-		b.tokens -= 1
-		return true
-	}
-	return false
-}
-
-// evictIdleLocked 清理超过 sweepInterval 未访问的桶（调用方须持锁）。
-func (rl *rateLimiter) evictIdleLocked(now time.Time) {
-	for ip, b := range rl.buckets {
-		if now.Sub(b.lastRefill) > rl.sweepInterval {
-			delete(rl.buckets, ip)
-		}
-	}
-}
-
-// sweepLoop 周期清理超过 sweepInterval 未访问的 IP 条目，防内存泄漏。
-func (rl *rateLimiter) sweepLoop() {
-	ticker := time.NewTicker(rl.sweepInterval)
-	defer ticker.Stop()
-	for range ticker.C {
-		rl.mu.Lock()
-		rl.evictIdleLocked(time.Now())
-		rl.mu.Unlock()
-	}
-}
 
 // rateLimitMiddleware API 限流中间件。按客户端 IP 令牌桶限流，超阈值返回 429。
 // rateLimiter=nil 时透传（禁用限流，向后兼容）。
@@ -211,7 +77,7 @@ func (s *Server) rateLimitMiddleware(h http.Handler) http.Handler {
 			return
 		}
 		ip := clientIP(r, s.cfg.TrustProxy)
-		if !s.rateLimiter.allow(ip) {
+		if !s.rateLimiter.Allow(ip) {
 			w.Header().Set("Retry-After", "1")
 			paginate.JSONError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return

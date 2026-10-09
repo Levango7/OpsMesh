@@ -1767,27 +1767,6 @@ func TestNotifyLoop_InvalidWebhookURL(t *testing.T) {
 // rateLimiter sweepLoop 补充测试
 // =============================================================================
 
-func TestRateLimiterSweepLoop(t *testing.T) {
-	rl := &rateLimiter{
-		buckets:       make(map[string]*tokenBucket),
-		sweepInterval: 50 * time.Millisecond,
-	}
-	rl.buckets["1.2.3.4"] = &tokenBucket{tokens: 5, lastRefill: time.Now().Add(-1 * time.Hour)}
-	done := make(chan struct{})
-	go func() {
-		rl.sweepLoop()
-		close(done)
-	}()
-	// 等待 sweepInterval 过后 sweep 清理过期 bucket
-	time.Sleep(150 * time.Millisecond)
-	rl.mu.Lock()
-	_, stillExists := rl.buckets["1.2.3.4"]
-	rl.mu.Unlock()
-	if stillExists {
-		t.Fatal("sweepLoop did not clean up expired bucket")
-	}
-}
-
 // =============================================================================
 // reclaimLoop 补充测试
 // =============================================================================
@@ -1830,11 +1809,9 @@ func TestRateLimitMiddleware_NilLimiter(t *testing.T) {
 
 func TestRateLimitMiddleware_HealthEndpointBypass(t *testing.T) {
 	s := newTestServer()
-	s.rateLimiter = &rateLimiter{
-		buckets:       make(map[string]*tokenBucket),
-		sweepInterval: time.Hour,
-		ratePerSec:    1,
-	}
+	// TD-87 批 2 第二批：限流器内部态已迁 internal/controlplane/ratelimit，
+	// 此处改用构造薄包装（语义等价：空 buckets + 同速率/清理周期）。
+	s.rateLimiter = newRateLimiter(1, time.Hour)
 	called := false
 	h := s.rateLimitMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true

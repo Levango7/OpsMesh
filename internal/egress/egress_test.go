@@ -61,8 +61,8 @@ func TestPrivateIPTable(t *testing.T) {
 		if ip == nil {
 			t.Fatalf("测试用例 IP 非法：%s", c.ip)
 		}
-		if got := isPrivateIP(ip); got != c.want {
-			t.Errorf("isPrivateIP(%s) = %v，期望 %v（%s）", c.ip, got, c.want, c.why)
+		if got := IsPrivateIP(ip); got != c.want {
+			t.Errorf("IsPrivateIP(%s) = %v，期望 %v（%s）", c.ip, got, c.want, c.why)
 		}
 	}
 }

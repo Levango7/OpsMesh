@@ -72,7 +72,11 @@ const maxRedirects = 5
 //   - ::1（IPv6 loopback）
 //   - fe80::/10（IPv6 link-local）
 //   - fc00::/7（IPv6 ULA 私网）
-func isPrivateIP(ip net.IP) bool {
+//
+// IsPrivateIP 判定私网/环回/链路本地/未指定网段（含 0.0.0.0/8 增强与 IPv6 ULA）。
+// TD-87 批 2 第二批起对外导出：控制面 SSRF 防线（controlplane.isPrivateIP）已改为委托本函数，
+// 全仓判定清单只此一处，避免两份逐行等价的手抄副本各自演进。
+func IsPrivateIP(ip net.IP) bool {
 	// IPv4 私网/环回/链路本地。
 	if ip4 := ip.To4(); ip4 != nil {
 		if ip4[0] == 127 { // 环回
@@ -139,7 +143,7 @@ func IPRejection(ip net.IP, allowPrivate bool) string {
 	if IsRestrictedEvenWhenAllowed(ip) {
 		return "link-local/unspecified address (cloud metadata endpoint)"
 	}
-	if isPrivateIP(ip) {
+	if IsPrivateIP(ip) {
 		if allowPrivate {
 			return ""
 		}
@@ -206,7 +210,7 @@ func ValidateURL(rawURL string, allowPrivate bool) error {
 			}
 			return nil
 		}
-		if isPrivateIP(ip) {
+		if IsPrivateIP(ip) {
 			return fmt.Errorf("host %q is private/loopback/metadata address %s", host, ip)
 		}
 		return nil
@@ -235,7 +239,7 @@ func ValidateURL(rawURL string, allowPrivate bool) error {
 		return fmt.Errorf("host %q resolved to no IP addresses", host)
 	}
 	for _, ip := range ips {
-		if isPrivateIP(ip) {
+		if IsPrivateIP(ip) {
 			return fmt.Errorf("host %q resolves to private/loopback/metadata address %s", host, ip)
 		}
 	}

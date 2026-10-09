@@ -23,58 +23,28 @@ package controlplane
 // 保持内网/开发部署的既有行为不变。
 
 import (
-	"errors"
-	"fmt"
 	"net/http"
-	"regexp"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/controlplane/tenantguard"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
 
-// tenantOrDefault 将空租户归一为平台默认租户 "default"。
-// 与 store 层 normalizeTenantID 同语义；控制面侧独立实现以免向 store 暴露内部细节。
-func tenantOrDefault(tenantID string) string {
-	if tenantID == "" {
-		return "default"
-	}
-	return tenantID
-}
+// ----- TD-87 批 2 第二批：纯校验逻辑已迁 internal/controlplane/tenantguard，以下为薄包装 -----
+//
+// 保留同名包装的理由：tenantOrDefault 等有 30 处调用点（auth_users/auth_login/auth_tokens/
+// automation/pipeline/script/测试），包装让它们零改动；规则本体在 tenantguard 包，测试可直接打。
 
-// tenantIDPattern 租户 ID 允许的字符集。
-// 租户 ID 会流入多租户 schema 名（MultiSchemaStore 的 SchemaNamer）与各类按租户
-// 过滤的 SQL 参数，故在唯一的写入入口（创建/更新用户）做保守校验：字母/数字/下划线/
-// 点/连字符，1–64 字符（与 users.tenant_id VARCHAR(64) 对齐）。
-var tenantIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
+// tenantOrDefault 将空租户归一为平台默认租户 "default"（tenantguard.TenantOrDefault 包装）。
+func tenantOrDefault(tenantID string) string { return tenantguard.TenantOrDefault(tenantID) }
 
-// validateTenantID 校验租户 ID 字面量是否合法（空值不合法，调用方应先归一）。
-func validateTenantID(tenantID string) error {
-	if tenantID == "" {
-		return errors.New("tenantId is empty")
-	}
-	if !tenantIDPattern.MatchString(tenantID) {
-		return fmt.Errorf("tenantId 含非法字符（仅允许字母/数字/下划线/点/连字符，最长 64）: %q", tenantID)
-	}
-	return nil
-}
+// validateTenantID 校验租户 ID 字面量是否合法（tenantguard.ValidateTenantID 包装）。
+func validateTenantID(tenantID string) error { return tenantguard.ValidateTenantID(tenantID) }
 
-// tenantAgentIn 解析目标 agent 并校验其归属租户（包级实现，供非 *Server 持有者复用，
-// 如 automationExecutor 这类无 *Server 引用的执行器）。
-// tenantID 为空表示调用方无租户上下文（开放模式），此时仅校验 agent 存在。
+// tenantAgentIn 解析目标 agent 并校验其归属租户（tenantguard.TenantAgentIn 包装）。
 func tenantAgentIn(st store.Store, agentID, tenantID string) (*proto.AgentInfo, error) {
-	if agentID == "" {
-		return nil, errors.New("agentID is required")
-	}
-	agent := st.Agent(agentID)
-	if agent == nil {
-		return nil, fmt.Errorf("agent not found: %s", agentID)
-	}
-	if tenantID != "" && agent.TenantID != tenantID {
-		// 不回显目标 agent 的真实租户，避免跨租户探测（agent 是否存在/归属哪租户）。
-		return nil, fmt.Errorf("agent not found or tenant mismatch: %s", agentID)
-	}
-	return agent, nil
+	return tenantguard.TenantAgentIn(st, agentID, tenantID)
 }
 
 // tenantAgent 解析目标 agent 并校验其归属租户（非 HTTP 路径）。
