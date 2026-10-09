@@ -163,3 +163,24 @@ auth-svc 网关包注释自述设计边界：「在 auth-svc 注册的用户只�
 - 本报告为**静态比对**，未运行双栈；所有「可容忍」级判定均基于前端当前消费面的读码，若前端后续开始消费 `token`/`roles`/`user` 体，需重判。
 - 审计基准 `dd46587`。**并行会话正在执行 TD-87（`internal/controlplane` 按域拆包）**，handler 物理位置可能迁移（如 `auth_login.go` → 子包）；结论按「语义」记录，物理路径以基准提交为准，迁移后需按新路径复核引用。
 - 未覆盖：auth-svc 的 gRPC 面（`api/proto/v1`）与控制面内部 JWT 验签的耦合细节（TD-60 阶段 2 A-1 遗留项）、TD-86（alert-svc gRPC 鉴权）之外的 gRPC 鉴权面。
+
+---
+
+## 6. 追加（2026-10-10）：并行线 TD-87 拆包后的路径/命名核对
+
+并行会话（zcode）落地 TD-87 批 1/批 2 后，本报告引用的路径逐条复核结果：
+
+- **本报告全部 `file:line` 引用仍然有效**：`auth_login.go`、`auth_cookies.go`、`internal/store/model/model.go`、`services/auth-svc/internal/http/gateway.go` 均未迁移（`auth_login.go` 仅内部调用点改名）。
+- **本报告提到的双轨机制已被并行线保留并妥善适配**（这点比报告原文更进一层）：
+  `AUTH_SVC_PROXY_ENABLED` 开关的实现随引擎切片迁入 `internal/controlplane/svcproxy/proxy.go:84` 的
+  `func (r *Rule) IsActive()`（私有 `isActive` → 导出 `IsActive`），调用点为 `internal/controlplane/service_proxy.go:25`
+  的 `if rule != nil && !rule.IsActive()`；auth 域规则本体在 `svcproxy/proxy.go:186-192`
+  （`PublicPrefix: /api/v1/auth-svc`、`EnvKey: AUTH_SVC_URL`）。
+  **并且并行线补了路径改写测试**：`internal/controlplane/service_proxy_test.go:60-61`
+  断言 `/api/v1/auth-svc/login → /api/v1/auth/login`、`/api/v1/auth-svc/me → /api/v1/auth/me`。
+  ⇒ 本报告 §1/§4 中「机制已备、缺运行时数据」的结论不变，且该机制现有测试覆盖。
+- **若后续要改控制面 auth/代理文件，需按新布局**（并行线 COORDINATION 第三十九则）：
+  `auth_password.go` → `internal/controlplane/credentials/password.go`（`credentials.X`）；
+  loginGuard 实现在 `loginguard`（方法 `Allow`/`RecordFail`/`Locked`/`ResetFail`/`StartSweep`/`StopSweep`）；
+  代理规则类型在 `svcproxy`（`Rule`/`Rules`/`DeviceExtras`/`TaskExtras`/`Lookup`/`ValidateTargets`/`EnvKey`）。
+- **本报告结论不受拆包影响**：所有结论均为跨进程的 HTTP 契约语义比对，与文件物理位置无关。
