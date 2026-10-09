@@ -1,4 +1,4 @@
-package store
+package multischema
 
 // multi_schema_p3.go MultiSchemaStore 对 Phase 3 两个新接口（ComplianceStore / BackupStore）的委托实现。
 //

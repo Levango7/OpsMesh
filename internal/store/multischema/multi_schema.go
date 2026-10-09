@@ -16,7 +16,7 @@
 //
 // 安全（SQL 注入防护）：schema 名经 SchemaNamer 白名单校验（只允许 [a-zA-Z0-9_]），
 // 非法字符直接返回 error，不会拼进 DSN/SQL。
-package store
+package multischema
 
 import (
 	"context"
@@ -31,6 +31,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/events"
 	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store/sqlstore"
 	"github.com/Levango7/OpsMesh/internal/store/storefail"
 	"github.com/Levango7/OpsMesh/internal/store/storekit"
 )
@@ -174,7 +175,7 @@ func (m *MultiSchemaStore) defaultStoreFactory(schema string) (Store, error) {
 		return nil, fmt.Errorf("multi-schema: 确保 schema %q 存在失败: %w", schema, err)
 	}
 	dsn := dsnForSchema(m.baseDSN, schema)
-	ss, err := NewSQLStore(dsn, m.redisAddr, m.redisPassword)
+	ss, err := sqlstore.NewSQLStore(dsn, m.redisAddr, m.redisPassword)
 	if err != nil {
 		return nil, fmt.Errorf("multi-schema: 创建 schema %q 的 SQLStore 失败: %w", schema, err)
 	}

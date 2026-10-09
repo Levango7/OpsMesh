@@ -1,34 +1,13 @@
 // multi_schema_delegation_test.go MultiSchemaStore 委托层 smoke（自 memory_crud_extra_test.go 尾段迁出，TD-61）。
 //
-// 为什么留在父包：被测对象 MultiSchemaStore 与构造器 newMultiSchemaWithFactory / DefaultSchemaNamer
-// 都在父包（multi_schema*.go，按方案最后一批才下沉），且 memory 子包不能反向 import 父包。
-package store
+// TD-61 末批后本文件已随 multi_schema*.go 下沉 multischema 包（原「留在父包」的说明作废）；
+// StubDomains 展示辅助用例（TestStubGuard_JoinAndWarnDomains）留在父包 stub_guard_test.go。
+package multischema
 
 import (
 	"testing"
 	"time"
 )
-
-// TestStubGuard_JoinAndWarnDomains 覆盖 stub_guard.go 的展示辅助：
-// joinStubDomains 输出格式、WarnStubStoreDomains 不 panic、StubDomains 完整性。
-// 现状：P1-P6 全部 15 个领域已实现 MySQL 持久化，StubDomains 收敛为空，
-// joinStubDomains 返回空串、WarnStubStoreDomains 静默返回（不再告警）。
-func TestStubGuard_JoinAndWarnDomains(t *testing.T) {
-	got := joinStubDomains()
-	want := ""
-	if got != want {
-		t.Fatalf("joinStubDomains() = %q, want %q", got, want)
-	}
-	if len(StubDomains) != 0 {
-		t.Fatalf("StubDomains count = %d, want 0 (P1-P6 全部已持久化)", len(StubDomains))
-	}
-	// 构造函数接线告警：StubDomains 为空时静默返回，不应 panic 也不应告警。
-	WarnStubStoreDomains("multi-schema-test")
-	// StubNotImplemented 限频：同 key 连续两次调用不 panic，且第二次走窗口内静默分支。
-	// 保留调用以覆盖限频逻辑（StubNotImplemented 本身与 StubDomains 解耦，仍可用）。
-	StubNotImplemented("test-domain", "TestMethod")
-	StubNotImplemented("test-domain", "TestMethod")
-}
 
 // ============================================================================
 // MultiSchemaStore 委托层 smoke（multi_schema_p03/p1~p6.go）
@@ -37,7 +16,7 @@ func TestStubGuard_JoinAndWarnDomains(t *testing.T) {
 // memoryStoreFactory 每租户 schema 返回独立 MemoryStore 的工厂。
 // 用于以内存后端驱动 MultiSchemaStore 的委托路由层。
 func memoryStoreFactory(schema string) (Store, error) {
-	return NewMemoryStore(), nil
+	return newMemoryStore(), nil
 }
 
 // newMultiSchemaWithMemory 以内存工厂构造 MultiSchemaStore（租户名须过 namer 校验：

@@ -345,3 +345,79 @@ sql 批（32 文件 + sql.go）后做 → multi_schema 包装层最后。
 - 之后父包 `internal/store` 只剩：`store.go`（契约别名 + 断言）、`models_shim.go`、`memory_shim.go`、
   `sql_shim.go`、`session.go`、`redis_session.go`、`stub_guard.go` —— 届时评估**删 shim 层**
   还是**保留作稳定门面**（外部 129 个 import 方按 `store.X` 编程，门面本身有产品价值）。
+
+
+---
+
+## 10. 末批执行记录（2026-10-09，已落地：multi_schema 包装层下沉 + 父包收口）
+
+### 10.1 搬迁面（比 §9.5 预估多两类：混装测试三分 + memory 用例回流）
+
+**prod（9 文件，`git mv` + 包声明改 `package multischema`）** →
+`internal/store/multischema/`：`multi_schema.go`（1532 行）与 `_agent_logs/_p03/_p1/_p2/_p3/_p4/_p5/_p6.go`。
+配套新增两件：
+
+- `multischema/aliases.go`——同款短名回导层（47 领域结构 + 3 契约类型 + 租户常量 + 36 领域小接口 + `Store`；
+  比 sqlstore 版少 `rbacPermSpecs`/`RolePermissions`/`normalizeTenantID`——多 schema 包装层只做路由与委托，实测 0 引用）；
+  另补一处 `NewSQLStore` → `sqlstore.NewSQLStore`（子包不能引用父包 shim）。
+- 父包 `multi_shim.go`——`SchemaNamer`/`MultiSchemaStore` 别名 + `NewMultiSchemaStore`/`DefaultSchemaNamer` 薄包装。
+  外部消费方零改动：`factory/server_factory.go:133` 的构造、`server_netsec.go:402` 的 `case *store.MultiSchemaStore`
+  类型分发（**别名与原名同一类型，类型分发逐字不变**）、`config.go`/`tenant_guard.go` 的注释引用。
+
+**测试（14 文件）**：
+
+- 整文件迁移 5：`multi_schema_test / _proxy_test / _smoke_test / _delegation_test` + `store_extra4_test.go`
+  （46 个用例全多 schema）→ `multischema_extra4_test.go`；
+- **混装件三分**（`store_extra_test.go` 1686 行）：前段 96 个 `TestMemoryStore_*` 边界用例 →
+  `internal/store/memory/memory_extra_notfound_test.go`（回流内存子包，与既有 111 个同族用例合流）；
+  中段会话组（InProcessSessionStore/RedisSessionStore/err*）留父包，文件改名 `session_extra_test.go`；
+  尾段 32 个多 schema 用例 → `multischema/multischema_extra_test.go`；
+- 拆分 2：`audit_chain_test.go`（2 个 MS 用例下沉 multischema，内存段留父包）、
+  `cleanup_refresh_tokens_test.go`（1 个 MS 用例下沉）；
+- **父包专属用例剥回 2**：`TestStubGuard_JoinAndWarnDomains`（被测 `joinStubDomains`/`StubDomains` 属 stub_guard.go）
+  回 `stub_guard_test.go`；`TestErrString_Error`（`errString` 属 session.go）回 `session_test.go`；
+- 测试 helper：multischema 新增 `test_helpers_test.go`（`recordingBus`/`countDevices`/`stripDBName`/`dropTestDB`
+  自父包同名件迁入 + `newMemoryStore()` 测试内别名——`memory.NewMemoryStore` 的子包限定）；
+  父包 `parent_test_helpers_test.go`、`parent_dsn_test.go` 因无剩余使用者**删除**（grep 三人成影后删）。
+
+### 10.2 shim 层存废裁定：**保留作稳定门面**（不删）
+
+§9.5 的遗留评估项，裁定与理由：
+
+- 外部 import 方按 `store.X` 编程（129 处）；`models_shim.go` 的 47 类型别名本就是**公共契约面**
+  （`store.User`/`store.Ticket`），删掉等于把 129 处改成 `model.X`——纯改名、零功能收益，还破坏
+  「契约在 model、门面在 store」的分层叙事；
+- 三个后端 shim 各只有 1~2 个别名 + 1~2 个薄包装（合计 ~60 行），维护成本低于一次全仓改名；
+- 「同一类型」有编译期保证：`store.go` 的 37 条断言 + 别名让类型切换/方法集缺失当场判红；
+- 结论：父包定位为**稳定门面 + 会话层 + 桩守卫**；「删 shim」不再作为债务项，末批以本裁定收口。
+
+### 10.3 父包收口后的形态（实测）
+
+`internal/store/` 顶层 **20** 个 `.go`（prod 8 + test 12）：prod = `store.go` / `models_shim.go` /
+`memory_shim.go` / `sql_shim.go` / `multi_shim.go` / `session.go` / `redis_session.go` / `stub_guard.go`；
+test = 会话组（session_test / session_extra_test / stub_guard_test）+ 横切语义组
+（claim_tenant / schedule / timeout_retry / refresh_concurrency / register_tenant_guard / bench_m4，
+均以 memory 后端驱动——**判据：测的是「门面级语义」而非某后端实现**，故按此判据留父包；
+`sql_rbac_catalog_test.go` 测 `models_shim` 回导的权限目录，留父包）。
+子包：memory 37 / sqlstore 54 / multischema 19（另 +model/storekit/storefail）。
+**拆前 `internal/store/` 顶层 113 文件 → 20**。
+
+### 10.4 验证口径与结果（全绿）
+
+- 全仓 `go build ./...` 绿；`go vet ./internal/store/...` 零告警；
+- 根模块 `go test -count=1 ./...`：**60 包 ok / 0 fail**；
+- `golangci-lint run ./internal/store/... ./internal/controlplane/...`：**0 issues**；`gofmt -l` 净；
+- `-race -p 1 ./internal/store/...`：**零 DATA RACE**（日志命中数 0）；
+- 部署资产门禁：`PASS=76 FAIL=0 SKIP=1`（第 24 节台账计数复算 PASS）。
+
+### 10.5 三批合计的三条可复用判断（TD-61 全链）
+
+1. **别名回导层是拆包通用解**：三批（memory/sql/multischema）同一配方——`git mv` + 包声明 +
+   `aliases.go`（类型别名把中性层名字按原名引入）+ 父包 shim（别名 + 薄包装）。
+   搬迁面因此是「换包声明」而不是「给几百标识符加前缀」；SQL 字符串/注释里的同名标识零误伤。
+2. **拆分点的判据是「测的是实现还是语义」**：memory 边界用例回流 memory 包（实现），
+   跨后端语义用例（审计链、清理、租户闸、调度、超时重试、并发刷新）留父包（门面语义）。
+   这条判据让「哪些测试放哪」不再靠感觉。
+3. **父包专属符号是拆分边界的硬约束**：`errString`（session.go）、`joinStubDomains`/`StubDomains`
+   （stub_guard.go）逼出两个「用例剥回父包」；`//go:embed migrations/` 逼出目录随迁（§9）。
+   拆包前先问「这段测试/代码碰了哪些父包专属符号」，比事后编译循环省一轮返工。

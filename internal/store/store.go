@@ -6,7 +6,8 @@
 //
 // TD-61（后端拆包）后本包的分层：
 //   - 契约与领域类型在中性层 internal/store/model（本文件仅以类型别名回导）；
-//   - 内存后端在 internal/store/memory，SQL 后端随批次下沉 internal/store/sqlstore；
+//   - 内存后端在 internal/store/memory，SQL 后端在 internal/store/sqlstore，
+//     多租户 schema 隔离包装层在 internal/store/multischema（末批下沉）；
 //   - 共享内核（token 签名/随机串/bcrypt/指标环形缓冲与内存上限）在 internal/store/storekit；
 //   - 失败可观测性在 internal/store/storefail。
 //

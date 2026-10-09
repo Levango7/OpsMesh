@@ -5,7 +5,7 @@
 //   - storeFor() 失败时各租户隔离方法的错误返回
 //
 // 测试风格：白盒（package store），使用 newMultiSchemaWithFactory 注入失败工厂。
-package store
+package multischema
 
 import (
 	"errors"

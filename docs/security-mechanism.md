@@ -444,7 +444,7 @@ connect-src 'self'
 qerr := s.db.QueryRowContext(ctx, `SELECT secret FROM agents WHERE agent_id=?`, a.AgentID).Scan(&existingSecret)
 ```
 
-**Schema 名白名单**：`DefaultSchemaNamer`（`multi_schema.go:45`）对 tenant 做白名单校验，只允许 `[a-zA-Z0-9_]`，含任何其他字符（如 `' ; -- 空格`）直接返回 error，避免拼进 DSN/SQL 造成注入。`validateIdent`（`multi_schema.go:62`）逐字符校验。
+**Schema 名白名单**：`DefaultSchemaNamer`（`multischema/multi_schema.go:51`）对 tenant 做白名单校验，只允许 `[a-zA-Z0-9_]`，含任何其他字符（如 `' ; -- 空格`）直接返回 error，避免拼进 DSN/SQL 造成注入。`validateIdent`（`multischema/multi_schema.go:68`）逐字符校验。
 
 **DDL 语句白名单**：`sql.go:489` 索引/列添加等 DDL 语句经 `indexExists`/`columnExists` 检查后执行，表名/列名来自代码常量而非用户输入。
 
@@ -844,7 +844,7 @@ entry_hash = sha256( prev_hash ‖ H(tenant) ‖ H(user) ‖ H(action) ‖ H(tar
 
 ### 8.2 Schema 隔离（multi-schema）
 
-`MultiSchemaStore`（`internal/store/multi_schema.go:92`）多租户 schema 隔离存储：
+`MultiSchemaStore`（`internal/store/multischema/multi_schema.go:108`）多租户 schema 隔离存储：
 
 - 每个租户路由到独立的 `*SQLStore`（独立 schema/database），实现物理级数据隔离。
 - **路由策略**：
@@ -862,11 +862,11 @@ entry_hash = sha256( prev_hash ‖ H(tenant) ‖ H(user) ‖ H(action) ‖ H(tar
 
 ### 8.3 Schema 名 SQL 注入防护
 
-`DefaultSchemaNamer`（`multi_schema.go:45`）对 tenant 做白名单校验：
+`DefaultSchemaNamer`（`multischema/multi_schema.go:51`）对 tenant 做白名单校验：
 
 - 只允许 `[a-zA-Z0-9_]`，含任何其他字符（如 `' ; -- 空格`）直接返回 error。
 - prefix 本身也做同样校验，防止运维配置的 prefix 含非法字符。
-- `validateIdent`（`multi_schema.go:62`）逐字符校验，非法字符不会拼进 DSN/SQL。
+- `validateIdent`（`multischema/multi_schema.go:68`）逐字符校验，非法字符不会拼进 DSN/SQL。
 
 ### 8.4 配额限制
 
@@ -1270,8 +1270,8 @@ dom.TenantID = tokTenant // token 权威：纳管设备归属以 token 内租户
 | 审计链校验端点 | `internal/controlplane/audit_query.go:174` |
 | 审计归档+自检 leader 循环 | `internal/controlplane/server_tasks.go:310`/`332` |
 | 审计链自检指标 | `internal/metrics/metrics.go:129`/`275` |
-| MultiSchemaStore | `internal/store/multi_schema.go:92` |
-| Schema 名 SQL 注入防护 | `internal/store/multi_schema.go:45`/`62` |
+| MultiSchemaStore | `internal/store/multischema/multi_schema.go:108` |
+| Schema 名 SQL 注入防护 | `internal/store/multischema/multi_schema.go:51`/`68` |
 | QuotaManager | `internal/controlplane/quota.go` |
 | Production 模式校验 | `internal/config/config.go:848` |
 | bootstrap token 校验 | `internal/controlplane/server_bootstrap.go:22` |

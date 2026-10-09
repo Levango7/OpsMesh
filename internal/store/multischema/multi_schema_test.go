@@ -8,7 +8,7 @@
 // 用 MemoryStore 而非真实 MySQL 的原因：MultiSchemaStore 的路由逻辑与具体后端无关，
 // MemoryStore 已实现完整 Store 接口，足以验证路由/隔离/聚合语义；
 // 真实 MySQL 隔离由 sql_test.go 的集成测试覆盖（需 OPSMESH_TEST_MYSQL_DSN）。
-package store
+package multischema
 
 import (
 	"strings"
@@ -23,7 +23,7 @@ import (
 func mockStoreFactory(created *[]string) func(schema string) (Store, error) {
 	return func(schema string) (Store, error) {
 		*created = append(*created, schema)
-		return NewMemoryStore(), nil
+		return newMemoryStore(), nil
 	}
 }
 

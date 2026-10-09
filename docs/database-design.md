@@ -1032,7 +1032,7 @@ erDiagram
 
 ### 5.1 多租户 Schema 隔离
 
-实现位置：`internal/store/multi_schema.go` `MultiSchemaStore`。
+实现位置：`internal/store/multischema/multi_schema.go` `MultiSchemaStore`（TD-61 末批下沉；公共面经父包 `store.MultiSchemaStore` 别名回导）。
 
 #### 5.1.1 路由策略
 

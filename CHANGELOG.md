@@ -4,6 +4,15 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-09（TD-61 末批收口：multi_schema 包装层下沉 `multischema` + 父包 113→20 文件门面化）
+
+- **重构｜`internal/store` 最后一块落地（TD-61 三批收官）**：9 个 `multi_schema*.go`（含 P0.3-P6 逐域委托实现，约 3200 行）迁入 **`internal/store/multischema/`**；新增该包短名回导层 `aliases.go`（47 领域结构 + 3 契约类型 + 36 领域小接口 + `Store`）与父包 `multi_shim.go`（`SchemaNamer`/`MultiSchemaStore` 别名 + `NewMultiSchemaStore`/`DefaultSchemaNamer` 薄包装）。公共面零变化：`factory/server_factory.go:133` 的构造路径与 `server_netsec.go:402` 的 `case *store.MultiSchemaStore` 类型分发（别名即同一类型）逐字不变。
+- **测试搬迁 14 件**：`multi_schema_test/_proxy_test/_smoke_test/_delegation_test` + `store_extra4_test.go`（46 用例全多 schema）整迁；混装件 `store_extra_test.go`（1686 行）**三分**——96 个 `TestMemoryStore_*` 边界用例回流 `internal/store/memory/`（与既有 111 个同族用例合流）、会话组留父包改名 `session_extra_test.go`、32 个多 schema 用例下沉；`audit_chain_test.go`/`cleanup_refresh_tokens_test.go` 各剥出 MS 段落；父包专属用例剥回两处（`TestStubGuard_JoinAndWarnDomains` → `stub_guard_test.go`、`TestErrString_Error` → `session_test.go`）；测试 helper 迁入 `multischema/test_helpers_test.go`，父包 `parent_test_helpers_test.go`/`parent_dsn_test.go` 因无剩余使用者删除。
+- **父包收口实测**：`internal/store/` 顶层 **113 → 20 个 .go**（prod 8 = `store.go`/`models_shim.go`/`memory_shim.go`/`sql_shim.go`/`multi_shim.go`/`session.go`/`redis_session.go`/`stub_guard.go`；test 12）；子包 memory 37 / sqlstore 54 / multischema 19。
+- **裁定｜四个 shim 保留作稳定门面（不删）**：§9.5 遗留的「删 shim vs 留门面」评估给出结论——**留**。129 个 import 方按 `store.X` 编程、47 个类型别名本就是公共契约面，删除等于全仓改名（零功能收益）；「同一类型」由 `store.go` 的 37 条编译期断言兜底。父包定位=稳定门面 + 会话层 + 桩守卫，细则见 `docs/td61-store-split-plan.md` §10.2。
+- **文档回填**：活文档的实现位置路径更新（`docs/security-mechanism.md` 6 处含行号、`docs/database-design.md` §5.1、`docs/upgrade-guide.md` §4）；带日期的审查快照（2026-08-26 设计评审、2026-09-25 商用就绪评审）按历史记录保留；台账 TD-61 移入「已收口」并复算标记行。
+- **验证**：全仓 `go build ./...` 绿；根模块 `go test ./...` **60 包 0 fail**；`golangci-lint run ./internal/store/... ./internal/controlplane/...` **0 issues**、`gofmt -l` 净；`-race -p 1 ./internal/store/...` **零 DATA RACE**（memory 276s / multischema 116s / store 36s）；部署资产门禁 **PASS=76 FAIL=0 SKIP=1**（第 24 节台账复算 closed=23 / pending=3）。
+
 ## [Unreleased] — 2026-10-09（Go 漏洞库当日批量披露：x/net v0.60.0 + CI 工具链 1.26.9 双升级，11 条 govulncheck 报告清零）
 
 - **修复｜govulncheck 11 条新披露（GO-2026-6599～6617）**：批次 3-sql 推送（`094a3db`）后 CI `security` job 转红（run 37888713106）——该提交本身无依赖改动，属漏洞库当日入库导致的「无码转红」（同 run 其余 12 个 job 全绿）。两条腿修：

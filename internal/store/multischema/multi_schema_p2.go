@@ -1,4 +1,4 @@
-package store
+package multischema
 
 // multi_schema_p2.go MultiSchemaStore 对 Phase 2 三个新接口（TrafficStore / PipelineStore / ArgoCDStore）的委托实现。
 //

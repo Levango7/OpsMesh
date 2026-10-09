@@ -1,4 +1,4 @@
-package store
+package multischema
 
 import "github.com/Levango7/OpsMesh/internal/proto"
 

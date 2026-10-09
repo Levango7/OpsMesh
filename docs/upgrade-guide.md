@@ -95,7 +95,7 @@ latin1_swedish_ci，写入即损坏），校验落库字节用 `HEX()`。
 
 `--multi-schema`（默认 `false`，`internal/config/config.go`）启用时，
 per-tenant store 是**懒创建**的：首个请求在 `m.mu` 写锁内建 schema 并跑
-全部迁移（`internal/store/multi_schema.go` 的 `storeFor`）。
+全部迁移（`internal/store/multischema/multi_schema.go` 的 `storeFor`）。
 实测每 schema 固定成本 ≈7.9s（1 千行规模）——升级后每个租户的
 **首个请求承担整段 DDL**，同租户并发首访与其他冷租户会被写锁挡在身后
 （症状："健康检查早过了，但首访超时"）。

@@ -234,3 +234,19 @@ func TestInProcessSessionStore_PurgeChangePasswordTokens(t *testing.T) {
 		t.Fatal("token-2 已过期，应被清理")
 	}
 }
+
+// TestErrString_Error 验证 errString.Error() 方法（session.go 中的自定义错误类型）。
+func TestErrString_Error(t *testing.T) {
+	// 通过 InProcessSessionStore 触发 errString 错误
+	s := NewInProcessSessionStore()
+	// CreateChangePasswordToken 空 token 应返回 errChangePasswordTokenRequired (errString 类型)
+	err := s.CreateChangePasswordToken("", "u1", 5*time.Minute)
+	if err == nil {
+		t.Fatal("CreateChangePasswordToken 空 token 应报错")
+	}
+	// 调用 Error() 方法覆盖 errString.Error()
+	msg := err.Error()
+	if msg == "" {
+		t.Fatal("errString.Error() 返回空串")
+	}
+}

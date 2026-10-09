@@ -1,4 +1,4 @@
-package store
+package multischema
 
 import "time"
 

@@ -5,7 +5,7 @@
 //   - 带 tenantID 参数的方法用 storeFor(tenantID) 路由；
 //   - 不带 tenantID 参数的方法（如 ListTenants/ListPlugins/ListBillingPlans）遍历全部租户 store 聚合；
 //   - 路由失败返回零值（nil/false），与现有方法风格一致。
-package store
+package multischema
 
 import (
 	"strings"

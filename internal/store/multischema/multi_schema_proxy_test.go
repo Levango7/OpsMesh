@@ -5,7 +5,7 @@
 //   - 租户路由（storeFor）：告警规则 / 配额 / 任务审批 / 设备指标 / 任务查询
 //
 // 测试策略与 multi_schema_test.go 一致：注入 mockStoreFactory（MemoryStore mock）。
-package store
+package multischema
 
 import (
 	"testing"
@@ -481,20 +481,4 @@ func TestMultiSchemaStore_NewWithBusSecret(t *testing.T) {
 	m.WithSecret("") // 空密钥不覆盖
 	// WithDemo
 	m.WithDemo(true)
-}
-
-// TestErrString_Error 验证 errString.Error() 方法（session.go 中的自定义错误类型）。
-func TestErrString_Error(t *testing.T) {
-	// 通过 InProcessSessionStore 触发 errString 错误
-	s := NewInProcessSessionStore()
-	// CreateChangePasswordToken 空 token 应返回 errChangePasswordTokenRequired (errString 类型)
-	err := s.CreateChangePasswordToken("", "u1", 5*time.Minute)
-	if err == nil {
-		t.Fatal("CreateChangePasswordToken 空 token 应报错")
-	}
-	// 调用 Error() 方法覆盖 errString.Error()
-	msg := err.Error()
-	if msg == "" {
-		t.Fatal("errString.Error() 返回空串")
-	}
 }

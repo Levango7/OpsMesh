@@ -9,7 +9,7 @@
 // 测试策略与 multi_schema_test.go 一致：注入 mockStoreFactory（MemoryStore mock），
 // 避免依赖真实 MySQL；MultiSchemaStore 的路由逻辑与具体后端无关，
 // MemoryStore 已实现完整 Store 接口，足以验证路由/隔离/聚合语义。
-package store
+package multischema
 
 import (
 	"os"

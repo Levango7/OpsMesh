@@ -9,7 +9,7 @@
 //   - CreateTicket(tenantID, t) 用参数 tenantID 路由（空串归一为 default）。
 //   - CreateSLO(tenantID, slo) 用参数 tenantID 路由（空串归一为 default）。
 //   - 路由失败返回零值（nil/false），与现有方法风格一致。
-package store
+package multischema
 
 // ============================================================================
 // TicketStore 实现（5 方法）
