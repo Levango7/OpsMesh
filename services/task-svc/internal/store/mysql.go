@@ -521,6 +521,9 @@ func (s *MySQLStore) scanAllTasks(rows *sql.Rows) []*models.Task {
 
 // UpdateTask 全字段回写（用于 scheduler fire/reclaim 等内部循环）。
 //
+// 返回值语义：true = 状态已落库（含「值无变化」的无操作更新）；false = 目标行不存在
+// 或写失败。不用裸 RowsAffected>0 作判据的原因见函数末注释。
+//
 // 列清单含 last_fired_at：fire 闭包读 AllTasks() 时按该列做同分钟去重、内存里改
 // t.LastFiredAt 后经本函数回写——清单不含它则去重永远不生效（同一 cron 分钟内每个
 // tick 反复触发）。AllTasks() 读侧也含同名尾列，两侧一致性由 schema_drift_test 守住。
@@ -528,11 +531,10 @@ func (s *MySQLStore) UpdateTask(t *models.Task) bool {
 	if t == nil || t.TaskID == "" {
 		return false
 	}
-	dependsOn := ""
-	if len(t.DependsOn) > 0 {
-		b, _ := json.Marshal(t.DependsOn)
-		dependsOn = string(b)
-	}
+	// depends_on 是 JSON 列：空值必须写 "[]" 而不是 ""（后者 MySQL 报 3140 无效 JSON
+	// 文本、整条 UPDATE 失败——fire/reclaim 回写因此静默不落库）。与 CreateTask 共用
+	// jsonStringSlice，避免两处手搓 marshal 再次跑偏。
+	dependsOn := jsonStringSlice(t.DependsOn)
 	deadLetter, approvalRequired := 0, 0
 	if t.DeadLetter {
 		deadLetter = 1
@@ -553,7 +555,18 @@ func (s *MySQLStore) UpdateTask(t *models.Task) bool {
 	if err != nil {
 		log.Printf("[store] RowsAffected: %v", err)
 	}
-	return n > 0
+	if n > 0 {
+		return true
+	}
+	// MySQL 对「值无变化的 UPDATE」返回 RowsAffected=0，与「目标行不存在」不可区分。
+	// 调用方（main.go 的 fire/reclaim 循环）把 false 计为失败并出
+	// task_scheduled_fire_failures 指标——把「无变化」误算成失败会让指标说谎。
+	// 故 0 行时补一次存在性判定：false 只表示「行不存在或写失败」。
+	var existsID string
+	if err := s.db.QueryRow(`SELECT task_id FROM tasks WHERE task_id=?`, t.TaskID).Scan(&existsID); err != nil {
+		return false
+	}
+	return true
 }
 
 // nullTime 把零值 time 序列化为 NULL（MySQL UPDATE 不接受 zero time；Status/Status 字段回写

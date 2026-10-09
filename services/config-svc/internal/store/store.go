@@ -8,7 +8,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,8 +83,20 @@ func deriveKey(passphrase string) []byte {
 	return h[:]
 }
 
-func (s *MemoryStore) encrypt(plaintext string) (string, error) {
-	block, err := aes.NewCipher(s.encryptionKey)
+// secretCipherPrefix 标记「本包加密原语产出的密文」并带格式版本号（便于日后换算法时区分）。
+//
+// 为什么用前缀而不是「试解密失败就当作明文」：后者把两类完全不同的情况混为一谈——
+// 升级前的历史明文存量（应当放行并提示轮换）与密钥不匹配/数据损坏（应当硬失败）。
+// 靠猜的判据在真实事故里的表现是「密文被原样当成明文返回给调用方」。
+const secretCipherPrefix = "enc:v1:"
+
+// encryptSecret 加密机密：AES-256-GCM，随机 nonce 前置，base64，带版本前缀。
+//
+// 两后端**共用**这一对原语（TD-61 的教训：同一职责各写一份必然漂移）——
+// config-svc 的 MySQL 后端曾把值原样落库（构造时接了 encryptionKey 却从不使用），
+// 而内存后端是加密的：同一份配置、两个后端、两种安全语义。
+func encryptSecret(key []byte, plaintext string) (string, error) {
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}
@@ -94,33 +108,44 @@ func (s *MemoryStore) encrypt(plaintext string) (string, error) {
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", err
 	}
-	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
+	return secretCipherPrefix + base64.StdEncoding.EncodeToString(gcm.Seal(nonce, nonce, []byte(plaintext), nil)), nil
 }
 
-func (s *MemoryStore) decrypt(ciphertext string) (string, error) {
-	data, err := base64.StdEncoding.DecodeString(ciphertext)
-	if err != nil {
-		return "", err
+// decryptSecret 解出机密明文。
+//
+// 返回 (plaintext, legacy, err)：legacy=true 表示读到的是**升级前的未加密存量**（原样返回，
+// 调用方应记录告警并提示轮换）；err 非 nil 表示「带版本前缀但解不开」——密钥不匹配或数据
+// 损坏，调用方必须硬失败，不得把密文当明文用。
+func decryptSecret(key []byte, stored string) (string, bool, error) {
+	raw, ok := strings.CutPrefix(stored, secretCipherPrefix)
+	if !ok {
+		return stored, true, nil
 	}
-	block, err := aes.NewCipher(s.encryptionKey)
+	data, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil {
-		return "", err
+		return "", false, err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", false, err
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	nonceSize := gcm.NonceSize()
-	if len(data) < nonceSize {
-		return "", fmt.Errorf("ciphertext too short")
+	if len(data) < gcm.NonceSize() {
+		return "", false, fmt.Errorf("ciphertext too short")
 	}
-	nonce, ct := data[:nonceSize], data[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ct, nil)
+	nonce, ct := data[:gcm.NonceSize()], data[gcm.NonceSize():]
+	out, err := gcm.Open(nil, nonce, ct, nil)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	return string(plaintext), nil
+	return string(out), false, nil
+}
+
+func (s *MemoryStore) encrypt(plaintext string) (string, error) {
+	return encryptSecret(s.encryptionKey, plaintext)
 }
 
 func configKey(tenantID, key string) string {
@@ -278,7 +303,9 @@ func (s *MemoryStore) CreateSecret(item *models.SecretEntry) *models.SecretEntry
 
 	encrypted, err := s.encrypt(item.Value)
 	if err != nil {
-		encrypted = item.Value
+		// 不静默降级存明文：加密失败宁可写入失败（密钥/随机源异常是可观测的故障）。
+		log.Printf("[store] CreateSecret 加密失败: %v", err)
+		return nil
 	}
 
 	cp := *item
@@ -295,9 +322,13 @@ func (s *MemoryStore) GetSecret(tenantID, key string) (*models.SecretEntry, bool
 		return nil, false
 	}
 
-	decrypted, err := s.decrypt(entry.Value)
+	decrypted, legacy, err := decryptSecret(s.encryptionKey, entry.Value)
 	if err != nil {
-		decrypted = entry.Value
+		log.Printf("[store] GetSecret 解密失败（密钥不匹配或数据损坏）: tenant=%s key=%s: %v", tenantID, key, err)
+		return nil, false
+	}
+	if legacy {
+		log.Printf("[store] GetSecret 读到未加密的历史存量: tenant=%s key=%s——建议轮换（RotateSecret）以加密落库", tenantID, key)
 	}
 
 	cp := *entry
@@ -320,7 +351,9 @@ func (s *MemoryStore) UpdateSecret(item *models.SecretEntry) *models.SecretEntry
 
 	encrypted, err := s.encrypt(item.Value)
 	if err != nil {
-		encrypted = item.Value
+		// 不静默降级存明文：加密失败宁可写入失败（密钥/随机源异常是可观测的故障）。
+		log.Printf("[store] UpdateSecret 加密失败: %v", err)
+		return nil
 	}
 
 	item.Version = existing.Version + 1
@@ -380,7 +413,8 @@ func (s *MemoryStore) RotateSecret(tenantID, key, newValue string) *models.Secre
 
 	encrypted, err := s.encrypt(newValue)
 	if err != nil {
-		encrypted = newValue
+		log.Printf("[store] RotateSecret 加密失败: %v", err)
+		return nil
 	}
 
 	existing.Value = encrypted

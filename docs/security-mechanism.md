@@ -700,6 +700,25 @@ chmod 600 "$DATA_DIR/install.token"
 
 ---
 
+### 6.8 config-svc 机密（`config_secrets`）加密落库
+
+**格式**：AES-256-GCM，随机 nonce 前置，base64，带版本前缀 `enc:v1:`——实现在
+`services/config-svc/internal/store/store.go` 的 `encryptSecret`/`decryptSecret`，**两个后端（memory/MySQL）共用同一对原语**。
+密钥来自 `CONFIG_SVC_ENCRYPTION_KEY`（生产 compose 以 `:?` 强制非空，见 `deploy/docker/docker-compose.prod.yml:780`；
+留空=进程内随机临时密钥，重启后已存机密不可解，属**演示态**并在构造函数打印告警）。
+
+**修复记录（2026-10-09）**：MySQL 后端构造时 `deriveKey` 了该密钥却**从未使用** ⇒ `config_secrets.value` **明文落库**，
+而内存后端是加密的——同一份配置、两个后端、两种安全语义。修复后三条写路径（`CreateSecret`/`UpdateSecret`/`RotateSecret`）
+落库前加密，读路径（`GetSecret`）解密；`ListSecrets` 只回元数据（`SecretMeta` 无值字段），无需解密。
+
+**判据（可复跑，见 `config-svc/internal/store/mysql_integration_test.go` 与 `secret_crypto_test.go`）**：
+
+- 密文必带 `enc:v1:` 前缀（集成测试直接读 `config_secrets.value` 断言，不是只看 API 返回值）；
+- **历史明文存量**（无前缀）原样放行并打告警（提示用 `RotateSecret` 轮换），轮换后即变密文——升级不打断老数据；
+- 带前缀但解不开（密钥不匹配/数据被篡改）⇒ **硬失败**：`GetSecret` 返回 not-found 并记日志，绝不把密文当明文交给调用方
+  （错密钥实例读不出机密的断言在集成测试里）；
+- 加密失败（密钥或随机源异常）⇒ 写入失败，**不静默存明文**（原实现「加密失败就存明文、解密失败就原样返回」的兜底已删除）。
+
 ## 第7章 审计日志
 
 ### 7.1 audit_log 表

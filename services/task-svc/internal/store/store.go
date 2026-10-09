@@ -21,6 +21,12 @@ type TaskStore interface {
 	AllTasks() []*models.Task
 	// UpdateTask 更新任务全字段（用于 scheduler fire/reclaim 等内部循环回写 LastFiredAt/状态）。
 	// 按 TaskID 匹配；不存在返回 false。A-1 阶段仅 task-svc scheduler 闭包使用。
+	//
+	// 返回值契约（两后端必须一致，2026-10-09 对齐）：true = 行存在且状态已落库，
+	// **含「值无变化」的无操作更新**；false 只表示「行不存在或写失败」。
+	// 不要用 SQL 的 RowsAffected>0 直接当判据——MySQL 对无变化 UPDATE 返回 0，
+	// 会让调用方把无操作误计为失败（main.go 的 fire/reclaim 失败计数与
+	// task_scheduled_fire_failures 指标直接吃这个布尔）。
 	UpdateTask(t *models.Task) bool
 }
 

@@ -23,7 +23,10 @@ type MySQLStore struct {
 }
 
 // NewMySQLStore creates a MySQLStore with connection pool.
-// encryptionKey 为 secret 加密口令（与 NewMemoryStore 同一来源 cfg.EncryptionKey），
+// encryptionKey 为 secret 加密口令（与 NewMemoryStore 同一来源 cfg.EncryptionKey）。
+// 注意：该字段 2026-10-09 之前只被 derive 而从未使用 ⇒ MySQL 侧机密明文落库（内存后端是加密的）。
+// 现在三条写路径（Create/Update/Rotate）与读路径（GetSecret）共用 store.go 的
+// encryptSecret/decryptSecret 原语；历史明文存量按「无版本前缀」识别并原样放行（带告警）。
 // maxHistory 为版本历史保留上限（<=0 时取 50）。空 key 时打告警并派生随机 key——
 // 该模式下重启后已加密数据将无法解密，仅适合演示；生产必须显式配置。
 func NewMySQLStore(dsn string, encryptionKey string, maxHistory int) (*MySQLStore, error) {
@@ -345,11 +348,16 @@ func (s *MySQLStore) CreateSecret(item *models.SecretEntry) *models.SecretEntry 
 	item.Version = 1
 	item.CreatedAt = now
 	item.UpdatedAt = now
-	_, err := s.db.ExecContext(ctx,
+	enc, err := encryptSecret(s.encryptionKey, item.Value)
+	if err != nil {
+		log.Printf("[store] CreateSecret 加密失败: %v", err)
+		return nil
+	}
+	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO config_secrets (tenant_id, key_name, value, key_type, version, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE value=VALUES(value), key_type=VALUES(key_type), version=VALUES(version)+1, updated_at=VALUES(updated_at)`,
-		item.TenantID, item.Key, item.Value, item.KeyType, item.Version, nullTime(item.CreatedAt), nullTime(item.UpdatedAt))
+		item.TenantID, item.Key, enc, item.KeyType, item.Version, nullTime(item.CreatedAt), nullTime(item.UpdatedAt))
 	if err != nil {
 		log.Printf("[store] CreateSecret 失败: %v", err)
 	}
@@ -368,6 +376,15 @@ func (s *MySQLStore) GetSecret(tenantID, key string) (*models.SecretEntry, bool)
 		}
 		return nil, false
 	}
+	plain, legacy, decErr := decryptSecret(s.encryptionKey, e.Value)
+	if decErr != nil {
+		log.Printf("[store] GetSecret 解密失败（密钥不匹配或数据损坏）: tenant=%s key=%s: %v", tenantID, key, decErr)
+		return nil, false
+	}
+	if legacy {
+		log.Printf("[store] GetSecret 读到未加密的历史存量: tenant=%s key=%s——建议轮换（RotateSecret）以加密落库", tenantID, key)
+	}
+	e.Value = plain
 	return e, true
 }
 
@@ -404,9 +421,14 @@ func (s *MySQLStore) UpdateSecret(item *models.SecretEntry) *models.SecretEntry 
 	item.Version = existing.Version + 1
 	item.CreatedAt = existing.CreatedAt
 	item.UpdatedAt = time.Now().UTC()
+	enc, encErr := encryptSecret(s.encryptionKey, item.Value)
+	if encErr != nil {
+		log.Printf("[store] UpdateSecret 加密失败: %v", encErr)
+		return nil
+	}
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE config_secrets SET value=?, key_type=?, version=?, updated_at=? WHERE tenant_id=? AND key_name=?`,
-		item.Value, item.KeyType, item.Version, nullTime(item.UpdatedAt), item.TenantID, item.Key); err != nil {
+		enc, item.KeyType, item.Version, nullTime(item.UpdatedAt), item.TenantID, item.Key); err != nil {
 		log.Printf("[store] UpdateSecret 失败: %v", err)
 	}
 	return item
@@ -476,9 +498,14 @@ func (s *MySQLStore) RotateSecret(tenantID, key, newValue string) *models.Secret
 	}
 	newVersion := existing.Version + 1
 	now := time.Now().UTC()
+	enc, encErr := encryptSecret(s.encryptionKey, newValue)
+	if encErr != nil {
+		log.Printf("[store] RotateSecret 加密失败: %v", encErr)
+		return nil
+	}
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE config_secrets SET value=?, version=?, updated_at=? WHERE tenant_id=? AND key_name=?`,
-		newValue, newVersion, now, tenantID, key); err != nil {
+		enc, newVersion, now, tenantID, key); err != nil {
 		log.Printf("[store] RotateSecret 失败: %v", err)
 		return nil
 	}
