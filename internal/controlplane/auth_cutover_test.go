@@ -269,3 +269,103 @@ func TestCutoverChangePasswordTokenAndRegister(t *testing.T) {
 		t.Fatal("增量开关打开后注册应转发")
 	}
 }
+
+func TestCutoverLoginFailureCountParity(t *testing.T) {
+	// 失败计数对齐：名册用户的凭证错在 auth-svc 侧发生，本地要按**转发结果**补记，
+	// 否则「账号锁定」对名册用户不生效（设计 §10.2 的那条不对齐）。
+	// 本用例走**真实登录路径**（而非直接调观测函数）——变异检验要求「去掉补记即判红」。
+	var status atomic.Int32
+	status.Store(http.StatusUnauthorized)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		code := int(status.Load())
+		w.WriteHeader(code)
+		_, _ = w.Write([]byte(`{"error":"stub"}`))
+	}))
+	defer backend.Close()
+	t.Setenv("AUTH_SVC_PROXY_ENABLED", "true")
+	t.Setenv("AUTH_SVC_URL", backend.URL)
+	t.Setenv("AUTH_CUTOVER_ROSTER", "alice,dave")
+	s := newServiceProxyTestServer()
+	rt, err := initCutoverRouter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.cutoverRouter = rt
+	rosterUser(t, s, "alice")
+	rosterUser(t, s, "dave")
+
+	// failsToLock 返回该账号再犯多少次失败才触发锁定（自校准，不依赖阈值常量）。
+	failsToLock := func(name string) int {
+		for i := 1; i <= 50; i++ {
+			if s.loginGuard.RecordFail(name) {
+				return i
+			}
+		}
+		return 51
+	}
+	baseline := failsToLock("bob") // 干净账号基线（同时锁上 bob，不影响他人）
+	if baseline > 49 {
+		t.Fatalf("前置失败：50 次失败都未锁定（阈值异常）")
+	}
+
+	// ① 一次真实的"转发 401" ⇒ 本地计数应 +1（基线减一）。
+	if w := loginPost(t, s, "alice", "wrong-password"); w.Code != http.StatusUnauthorized {
+		t.Fatalf("对侧 401 应透传；got=%d body=%s", w.Code, w.Body.String())
+	}
+	if got := failsToLock("alice"); got != baseline-1 {
+		t.Fatalf("转发 401 未在本地补记失败：alice 还需 %d 次才锁，期望 %d（基线 %d）", got, baseline-1, baseline)
+	}
+
+	// 注：failsToLock 是**破坏性测量**（把该账号的失败预算用光并锁上），
+	// 故每个被测账号只测一次、且测量即最后一个动作（上面 alice 的测量已完成锁定）。
+	if !s.loginGuard.Locked("alice") {
+		t.Fatal("测量后 alice 应处于锁定态")
+	}
+	w := loginPost(t, s, "alice", "wrong-password")
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("锁定的名册用户应 429（本地闸先于路由）；got=%d", w.Code)
+	}
+
+	// ③ 成功清计数：另起一个名册用户 dave——先欠一次失败，再让对侧回 200，
+	// 其失败预算应回到完整 baseline（若没清，测量值会明显小于 baseline）。
+	if w := loginPost(t, s, "dave", "wrong-password"); w.Code != http.StatusUnauthorized {
+		t.Fatalf("dave 前置 401；got=%d", w.Code)
+	}
+	status.Store(http.StatusOK)
+	if w := loginPost(t, s, "dave", "Passw0rd!cutover"); w.Code != http.StatusOK {
+		t.Fatalf("对侧 200 应透传；got=%d body=%s", w.Code, w.Body.String())
+	}
+	if got := failsToLock("dave"); got < baseline {
+		t.Fatalf("成功登录应清除失败计数：清后仅需 %d 次即再锁（基线 %d）", got, baseline)
+	}
+}
+
+func TestCutoverOwnsNewAccountsBlocksLocalUserCreation(t *testing.T) {
+	s, _, _ := cutoverTestServer(t, "alice")
+	s.cfg.PublicRegister = true
+	// 权限：走 admin 身份（本测试服务器 seed 了 admin）。
+	auth := loginAsAdmin(t, s)
+
+	doCreate := func(name string) *httptest.ResponseRecorder {
+		body := strings.NewReader(`{"username":"` + name + `","password":"Passw0rd!x","email":"` + name + `@x.io"}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/users", body)
+		req.Header.Set("Authorization", auth)
+		req.Header.Set("X-Tenant-ID", "default")
+		w := httptest.NewRecorder()
+		s.handleCreateUser(w, req)
+		return w
+	}
+	// 开关关闭（默认）：本地建号照常。
+	if w := doCreate("stringer"); w.Code != http.StatusCreated && w.Code != http.StatusOK {
+		t.Fatalf("开关关闭时本地建号应成功；got=%d body=%s", w.Code, w.Body.String())
+	}
+	// 开关打开（增量归 auth-svc）⇒ 本地建号明确拒绝并指向对侧（不得静默建在本地）。
+	t.Setenv("AUTH_SVC_OWNS_NEW_ACCOUNTS", "true")
+	w := doCreate("stringer2") // 换名：确保 409 只可能来自开关守卫，而不是"用户名已存在"
+	if w.Code != http.StatusConflict {
+		t.Fatalf("开关打开时本地建号应 409；got=%d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "auth-svc") {
+		t.Errorf("拒绝信息应指明去向 auth-svc：%s", w.Body.String())
+	}
+}

@@ -124,12 +124,36 @@ func (s *Server) cutoverForwardLogin(w http.ResponseWriter, r *http.Request, use
 		return false
 	}
 	restoreRequestBody(r, rawBody) // 本地解析已消费 body：转发前还原（否则 502）
-	if !s.forwardAuthToSvc(w, r) {
+	// 失败计数对齐：名册用户的凭证校验发生在对侧，本地 loginguard 看不到其失败
+	// ⇒ 账号锁定原本对名册用户不生效。这里按**转发后的状态码**在本地补记
+	// （401=凭证错 ⇒ 记失败；2xx ⇒ 清计数；403/409 等账号状态类拒绝与本地语义一致地不记）。
+	rec := &statusRecorder{ResponseWriter: w}
+	if !s.forwardAuthToSvc(rec, r) {
 		return false // 规则不活跃/未配置 ⇒ 回落本地（行为与切流前一致）
 	}
-	logx.Info(r.Context(), "切流路由：转 auth-svc", "endpoint", "login", "user", username)
+	s.observeForwardedLogin(username, rec.status)
+	logx.Info(r.Context(), "切流路由：转 auth-svc", "endpoint", "login", "user", username, "status", rec.status)
 	return true
 }
+
+// observeForwardedLogin 把对侧的登录结果折算成本地失败计数（见 cutoverForwardLogin 注释）。
+// 残余不对齐（写明）：绕过本地面、直接打 auth-svc 的失败仍不可见——那部分只有对侧口径能覆盖。
+func (s *Server) observeForwardedLogin(username string, status int) {
+	if s.loginGuard == nil || username == "" {
+		return
+	}
+	if status == 0 {
+		status = http.StatusOK // statusRecorder 只在 WriteHeader 时记录；隐式 200 也按成功清计数
+	}
+	switch {
+	case status == http.StatusUnauthorized:
+		s.loginGuard.RecordFail(username)
+	case status >= 200 && status < 300:
+		s.loginGuard.ResetFail(username)
+	}
+}
+
+// 状态码观测复用 server_middleware.go 的 statusRecorder（HTTP 指标中间件同款，透传 Flush）。
 
 // cutoverForwardByToken me/logout/主动改密口：按 JWT 的 username 裁决（认证前可读，不查库）。
 func (s *Server) cutoverForwardByToken(w http.ResponseWriter, r *http.Request, endpoint string) bool {

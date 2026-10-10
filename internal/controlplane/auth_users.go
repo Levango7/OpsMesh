@@ -93,6 +93,16 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// 切流（TD-60 方案 C）：AUTH_SVC_OWNS_NEW_ACCOUNTS=true（且总闸开启）表示「新账号归 auth-svc 持有」，
+	// 此时本地建号会与该声明矛盾——账号建在被切走的一侧，用户登录时对侧查无此人。
+	// 故明确拒绝并指向该侧，而不是静默建在本地（设计 §4 的「/api/v1/users 建号走哪一侧」由此开关表达；
+	// auth-svc 侧无等价的运维建号 API，所以这里是"拒绝+指引"而非转发）。判据与 RouteRegister 同源。
+	if s.cutoverRouter != nil && s.cutoverRouter.Enabled() && s.cutoverRouter.OwnsNewAccounts() {
+		paginate.WriteJSON(w, http.StatusConflict, map[string]string{
+			"error": "new accounts are owned by auth-svc (AUTH_SVC_OWNS_NEW_ACCOUNTS=true); create it on the auth-svc side",
+		})
+		return
+	}
 	var body struct {
 		Username string   `json:"username"`
 		Password string   `json:"password"`
