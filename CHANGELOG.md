@@ -15,6 +15,8 @@
 - **写明不对齐的一条**：名册用户的失败计数产生在 auth-svc 侧，本地看不到 ⇒ **账号锁定对名册用户不生效**（IP 限流与锁定检查仍在本地执行）；需 auth-svc 侧口径配合，登记在设计文档 §10.2。
 - **部署面**：`docker-compose.prod.yml` 补三个旋钮（默认全空/false ⇒ 行为与切流前逐字一致；注释写明打开前置是 AUTH_SVC_URL + AUTH_SVC_PROXY_ENABLED）。
 - **验证**：cutover 包 13 用例 + 接线 6 用例全绿；`internal/controlplane` 全集 61.7s 绿；`gofmt -l` 净；`golangci-lint` **0 issues**；变异检验（去掉转发前的 body 还原）⇒ 登录用例判红（502）后还原复绿。
+- **真进程冒烟（第三笔）**：新增 `deploy/scripts/smoke-cutover.sh` —— 起控制面与 auth-svc 两个真实二进制做双轨冒烟（同一 HMAC 密钥、memory 后端），**31/31 全过**：非名册走本地不触发路由、名册被转发（本地正确口令不被接受）、本地 IP 闸先于路由（限流请求不转发）、模拟迁移后名册用户登录 200（会话由对侧签发）、refresh 按归属侧转发（local_owns=false）、本地用户 refresh 仍本地、名册 /me 按 sub 转发、启动自检兜底。判别信号只用路由日志与两侧差异化文案，不依赖 mock。脚本过 `shellcheck -S warning` 零 findings，部署门禁 PASS=76 不变；**未接 CI**（需两个空闲端口 + 一次令牌回填等待），切流批次执行前手动复跑即可。
+- **顺带记录 auth-svc HTTP 面两处不对称**（冒烟中实测，已同步协调板）：① 其 login / change-password 成功**只经 `Set-Cookie` 下发会话**（响应体无 `token` 字段）；② 其 register 响应体**不含 `userId`**（需查 `/api/v1/users` 列表）。
 - **补强（同批第二笔）**：① **登录失败计数对齐**——名册用户的 401 由对侧产生，现按转发状态码在本地补记（401 记失败 / 2xx 清计数 / 账号状态类拒绝不记），账号锁定对名册用户生效；用例走**真实登录路径**并自校准阈值，变异检验「去掉补记」判红（残余：绕过本地面直连 auth-svc 的失败不可见，属对侧口径）。② **`/api/v1/users` 建号口径**——`AUTH_SVC_OWNS_NEW_ACCOUNTS=true` 时拒绝本地建号（409+指引），与注册的转发口径同源；否则"声明归对侧、账号建在本地"自相矛盾（变异检验：去掉守卫 ⇒ 用例报 201 判红）。
 
 ## [Unreleased] — 2026-10-10（TD-90 加铺：机制下沉 `pkg/sqlguard` 单份实现，11 个 store 包接入；泛化中修掉门禁自身 5 处误判/失明）
