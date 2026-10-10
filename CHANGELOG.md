@@ -4,6 +4,21 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-10（TD-90 加铺：机制下沉 `pkg/sqlguard` 单份实现，11 个 store 包接入；泛化中修掉门禁自身 5 处误判/失明）
+
+- **下沉｜`pkg/sqlguard`（新包，仅标准库）**：把 TD-90 的对账机制从「sqlstore 的测试文件」提取成**包级共享实现**——各服务模块唯一合法的共享层是 `pkg/`（pkg/log、pkg/secretcrypto 先例），跨包测试又无法 import 彼此的 `_test.go`，若按包复制这份 600 行解析器必然发散。机制只有一份：`sqlguard.Analyze(dir)` 返回判定数/不一致明细/不可判宽站点（键 `file#fn#var`）/消费形态分布；**各包只留政策**（覆盖率棘轮下限、豁免账、判红文案）。sqlstore 原文件改为薄接入（判据计数逐字不变：128/0/0）。
+- **本包自带合成用例 14 条**（不依赖真实 store）：direct/链式/helper/scanfunc 四种形态、跨文件常量与 helper、跨行拼接、同名多值弃判、`SELECT *` 弃判但 `COUNT(*)` 照判、宽站点键位、`from_replicas` 词边界、驼峰列名、`x.dest()...` 按局部类型解析（含同名方法跨类型）。
+- **接入 10 个包、201 处站点参与比对、0 不一致**（逐包实测）：`internal/store/sqlstore`(128)、`internal/cmdb`(6，1 处运行时拼接 SQL 登记豁免)、task-svc(17)、device-svc(13)、config-svc(12)、portal-svc(8)、gpu-svc(6)、incident-svc(5)、autoscaler-svc(3)、runbook-svc(3)。**服务侧未发现新缺陷**——两处"疑似不一致"经查全是门禁自身误判（见下）。**auth-svc 未接入**（属并行线地盘；其 5 处站点已实测一致，机制也已支持其 `nullAlert.dest()` 形态，已在协调板告知由对方决定何时接）。
+- **泛化中修掉门禁自身 5 处误判/失明**（每一处都会在服务侧造噪音或失明，噪音会杀死门禁）：
+  ① **FROM 词边界**：`from_replicas` 里的 "from" 被当作子句边界 ⇒ 10 列数成 5 列并**误报不一致**（autoscaler 实测）；
+  ② **驼峰列名被拒判**：按"像未解析标识符"拒判，`lastHeartbeat` 这类真实列名让整类站点"数不出列数"（device-svc 实测 6 处失明）；
+  ③ **`rows.Scan(x.dest()...)` 展开形态**：数成 1 个目标 ⇒ 4 处误报不一致（alert-svc 实测）；现按**局部变量类型**解析 `Type.dest()` 的 `[]any{...}` 元素数（同名方法跨类型靠类型限定名消歧）；
+  ④ **`scanX(rows.Scan)` 方法值形态**：目标数取自 helper 内对 scan 参数的那次调用实参数（runbook-svc 实测 2 处"找不到消费侧"）；
+  ⑤ **跨文件**：包级常量与 helper 只在同文件解析 ⇒ 定义在别的文件即失明（根 store 实测 1 处宽站点、另有多处不可判）。
+- **根 store 收益**：加上跨文件解析后判定数 127→**128**，不可解析 6→5，宽站点未判定归零；棘轮下限随之上调（127→128，只许上调）。
+- **变异检验**：根 store 两处历史缺陷形态（去 `tenant_id`）分别点名 `sql_k8s.go:78`、`sql_tasks.go:131`；服务侧抽 device-svc 去 `retired` ⇒ 点名 `mysql.go:150 fn=Device`（15 vs 16）；均还原复绿。
+- **验证**：`pkg/sqlguard` 14 用例全绿；11 包测试全绿；`gofmt -l` 净；`go vet` 净；`golangci-lint` **0 issues**；**依赖零变动**（纯标准库，go.mod/go.sum 未动，许可清单无需重算）。
+
 ## [Unreleased] — 2026-10-10（TD-90 收口：SELECT 列数 ↔ Scan 目标数 对账门禁落地；上线即抓出第二个真缺陷 `GetTasks`）
 
 - **新增｜根 store 的「列数对账」静态守卫**（`internal/store/sqlstore/scan_arity_guard_test.go`）：遍历全包 136 个查询调用，把 SELECT 列表的顶层项数与消费侧 Scan 的目标数逐一比对——**127 处参与比对、0 不一致**。判定链只认能静态证实的：① 取查询实参与其赋值目标；② SQL 字面量展开（包级/函数级常量、跨行 `+` 拼接、常量引用，同名多值即弃判）；③ SELECT 列表按顶层逗号计数（括号内不算 ⇒ `COALESCE(a,b)` 记 1 列；含 `*`/`?` 即弃判）；④ 三种消费形态——`rows.Scan(...)`、链式 `...QueryRow(...).Scan(...)`、`scanX(row)` helper（目标数取自 helper 函数体）。
