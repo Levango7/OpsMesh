@@ -4,6 +4,13 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-10（TD-87 批 2 第三批·切片 3：模板转换器并入 presets —— 本批 3/3 收官）
+
+- **重构｜OS 模板转换器并入 `presets`**：`ByID`（按 ID 查预置模板）、`ToStore`（控制面模板 → `store.OSTemplate`，整对象 JSON 进 Config 列）、`FromStore`（反序列化 + 以 store 行 ID/Name/OS 为准）迁入 `presets/store_adapter.go`（63 行）；父包留三个同名薄包装（`os_optimize.go` 与测试调用点零改动）。**判据：转换器要跟着类型走**——类型（`OSTemplate`/`OSParam`）本就在 `presets`（批 1 迁入），「类型 + 转换」同住一个包边界最清楚，不值得为它新开一包。
+- **本批小结（3/3）**：`cmdbcollector`（659 行）+ `auditsafe`（22 行）+ `enterpriseui`（233 行）+ 转换器并入 `presets`（+63 行）；**父包 prod 行 24,355 → 23,864（-491）**，prod 文件仍 83（各切片均留 handler/门面）。
+- **三条收敛后的判据（计划 §10.2/§11.2/§12.2）**：① 切分混装测试按**顶层 `func`** 分类，不按行号猜边界（首版按行切把交错的用例切错）；② 切分**生产代码**同样先列 `^(func|type|const|var)` 清单、按「是否 `*Server` 方法」二分（首版用「第一个列 0 的 `}`」把夹在 handler 之间的函数切错）；③ 抽取片段前先判断**片段是否含文件头**（重复 `package` 头报错）。**共同教训：边界按符号/职责判，别用行号或花括号这类启发式。**
+- **验证**：`go vet` 零告警；父包 48.2s + presets 0.4s 测试全 ok；`golangci-lint` **0 issues**；`gofmt -l` 净；`-race` **零 DATA RACE**；部署门禁 PASS=76 FAIL=0 SKIP=1。
+
 ## [Unreleased] — 2026-10-10（TD-87 批 2 第三批·切片 2：enterpriseui 下沉）
 
 - **重构｜企业版前端接线 helper 下沉 `internal/controlplane/enterpriseui`**（233 行：`ui.go` + `cta.go`）：bundle 判定（`BundleAvailable`，含 `sync.Once` 缓存）、`ReadFile`、`ServeStatic`、`NegotiatedEncoding`、`WriteBody`、`LooksLikeFile`、`ContentType` 与相关常量；并把 `stripEnterpriseCTA` 从 `dashboard.go` 一并迁入（`StripCTA`——与企业版前端接线同属一件事）。父包 `enterprise_ui.go` 只剩两个 handler + `bundleAvailable` 薄包装（`license_gate_test.go` 8 处引用零改动），`dashboard.go` 只剩两个 handler。父包 prod 行 24,118 → **23,905**。

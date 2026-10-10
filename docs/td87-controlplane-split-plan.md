@@ -282,3 +282,40 @@ controlplane 的结构不同，且有两条硬约束：
 - `-race ./internal/controlplane/...` **零 DATA RACE**；
 - 部署资产门禁 PASS=76 FAIL=0 SKIP=1。
 
+---
+
+## 12. 批 2 第三批 · 切片 3 执行记录（2026-10-10，已落地：模板转换器并入 presets；本批 3/3 收官）
+
+### 12.1 搬迁面
+
+| 项 | 内容 | 落点 | 父包保留 |
+|---|---|---|---|
+| `presets` 增补 | `ByID`（按 ID 查预置模板，改为遍历 `OSTemplatesCore`+`OSTemplatesExt` 两表）、`ToStore`（控制面模板 → `store.OSTemplate`，整对象 JSON 进 Config 列）、`FromStore`（反序列化 + 以 store 行 ID/Name/OS 为准） | `presets/store_adapter.go`（63 行，presets 7 文件 1370 行） | 两个 Server 方法（`listOSTemplatesFromStore`/`getOSTemplateByID`）+ 三个同名薄包装（`os_optimize.go` 与测试调用点零改动） |
+
+### 12.2 判据与数据
+
+- 父包 prod 行 23,905 → **23,864**（-41；小切片）。
+- **为什么并入 `presets` 而不是新包**：被转换的 `OSTemplate`/`OSParam` 类型就在 `presets`（批 1 迁入），
+  「类型 + 转换」同住一个包是最清楚的边界；新包只会多一层 import 与一次跨包跳转。
+  这条与 §9.4 第 1 条（「有没有可搬的纯逻辑/自包含组件」）互补：**转换器要跟着类型走**。
+- 又一处「重复头」小坑（同族第 3 次）：抽出函数段后父包残留文件被拼上了原文件的 package/import 头 ⇒ 双 `package` 报错；
+  解法是剥离重复头。**判据收敛：抽取片段前先确定「片段是否包含文件头」，包含就地剥离，别靠事后编译器猜。**
+
+### 12.3 验证口径与结果（全绿）
+
+- `go build ./internal/controlplane/...` 绿；`go vet` 零告警；
+- `go test ./internal/controlplane/...`：父包 48.2s + presets 0.4s 全 ok；
+- `golangci-lint` **0 issues**；`gofmt -l` 净；`-race` **零 DATA RACE**；部署门禁 PASS=76 FAIL=0 SKIP=1。
+
+### 12.4 批 2 第三批小结（3/3 收官）
+
+| 切片 | 新包 | 父包 prod 行 |
+|---|---|---|
+| 1（`cmdbcollector` + `auditsafe`） | 659 + 22 行 | 24,355 → 24,118 |
+| 2（`enterpriseui`） | 233 行 | 24,118 → 23,905 |
+| 3（转换器并入 `presets`） | +63 行（并入既有包） | 23,905 → 23,864 |
+
+本批三条判据（都已写进对应各节）：① 切分测试按**函数**分类，不按行号；② 切分生产代码同样先列符号清单、
+按「是否 `*Server` 方法」二分；③ 抽取片段时先判断片段是否含文件头。**三者的共同教训：边界要按「符号/职责」判，
+不要用行号或花括号这类启发式。**
+
