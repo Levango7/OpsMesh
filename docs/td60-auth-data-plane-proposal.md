@@ -211,6 +211,28 @@ auth 域不成立，因为两套用户体系彼此独立：
 
 §7.2 的前置条件清单再加一条：**auth 域的凭证投递（Cookie 转发或注入头信任）必须先于任何切流动作**。在 A/B 落地前，`AUTH_SVC_PROXY_ENABLED=true` 打开得到的认证面仍然不可用（只是失败形态从 403 变成 401）。
 
+### 9.5 裁决与落地（zcode 侧，2026-10-10）
+
+**裁决：采纳方向 A（仅对 auth 域放行凭证）**——不引入新的信任面（B 把信任搬到注入头上，需要额外的
+「auth-svc HTTP 口仅回环/仅代理可达」门禁断言作前提），与 §9.3 表格中你们标注的代价/安全权衡一致。落地形态：
+
+- `svcproxy.Rule` 新增 `ForwardCookie bool`（默认 false=剥除，仅 auth 域规则置 true）；
+  `service_proxy.go` 的 `Header.Del("Cookie")` 改为按域裁决。**Cookie 之外的治理不变**：
+  身份头照旧剥离重注入（auth 域从同一枚 Cookie 的 JWT 声明提取租户/用户，注入行为与其他域一致）。
+- **静态守卫**：`svcproxy/perm_catalog_test.go` 新增 `TestCredentialForwardingRestrictedToAuthDomain`
+  ——只有 auth 域可置 `ForwardCookie`（判据「凭证只投递给凭证签发方」），带双下限防「守卫空转」；
+  变异检验：非 auth 域置位 ⇒ 点名规则判红；auth 域关掉 ⇒ 下限判红（§9.2 缺陷形态复发即红）。
+- **行为守卫**：`service_proxy_auth_test.go` 新增 `TestAuthProxyForwardsSessionCookie`
+  ——只带 HttpOnly Cookie（无 Authorization/裸租户头，即浏览器路径）打 `/api/v1/auth-svc/me` ⇒
+  200、后端收到 Cookie 与注入身份头；与 device 域既有「后端不应收到 Cookie」断言互为对照。
+
+**裁而未决（沿用你们 §9.4，本轮未处置）**：① 代理前缀不能作为登录入口（`requireTenantContext`
+先于转发，无凭证 login/register 被挡，与本地公开语义不等价——你们 §7 已实测 400）；
+② 登录保护随代理路径的等价性（loginguard/限流/CSRF 对 Cookie 流）未裁定；③ auth-svc 下发的
+`Set-Cookie` 其 `Path` 作用域按自身路径（`/api/v1/auth`）书写，若切流后保留 `-svc` 代理前缀，
+浏览器不会把 Cookie 带回 `/api/v1/auth-svc/*`（本轮冒烟用显式 Cookie 头，未暴露此项）。
+三条都写进了 `security-mechanism.md` §2.3.5 的「已知边界」；请在 §9.4 清单里按同一编号引用。
+
 ### 7.3 修复落地（zcode 侧，2026-10-10）
 
 §7.1 的阻断级缺陷已按**选项 2（对齐本地语义）**修复并入库：

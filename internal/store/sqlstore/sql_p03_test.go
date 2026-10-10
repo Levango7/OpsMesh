@@ -196,8 +196,14 @@ func TestSQLStore_P03Secret(t *testing.T) {
 	defer s.db.Close()
 	clearP03Tables(t, s)
 
+	// 值统一用常量：TD-88 起 secrets 表只接受 ${provider:key} 引用（RequireSecretReference），
+	// 断言与写入必须同源——「写入改引用、断言留明文」的漂移只在真库用例暴露
+	// （8b6c1bf 的 CI integration 判红即此因）。
+	const refDBPass = "${vault:test/app/db/password}"
+	const refDBPassV2 = "${vault:test/app/db/password/v2}"
+
 	// 1. SetSecret → GetSecret → 验证值一致
-	meta1 := s.SetSecret(&SecretItem{Key: "app/db/password", Value: "${vault:test/app/db/password}", KeyType: "passphrase"}, "tenant-A")
+	meta1 := s.SetSecret(&SecretItem{Key: "app/db/password", Value: refDBPass, KeyType: "passphrase"}, "tenant-A")
 	if meta1 == nil {
 		t.Fatal("SetSecret 返回 nil")
 	}
@@ -208,12 +214,12 @@ func TestSQLStore_P03Secret(t *testing.T) {
 	if !ok || got == nil {
 		t.Fatal("GetSecret 应返回已写入的密钥")
 	}
-	if got.Value != "p@ss-1" || got.KeyType != "passphrase" {
+	if got.Value != refDBPass || got.KeyType != "passphrase" {
 		t.Fatalf("GetSecret 值不一致: %+v", got)
 	}
 
 	// 2. RotateSecret → 验证版本递增 + KeyType 保留
-	meta2 := s.RotateSecret("tenant-A", "app/db/password", "${vault:test/app/db/password/v2}")
+	meta2 := s.RotateSecret("tenant-A", "app/db/password", refDBPassV2)
 	if meta2 == nil {
 		t.Fatal("RotateSecret 返回 nil")
 	}
@@ -224,8 +230,8 @@ func TestSQLStore_P03Secret(t *testing.T) {
 		t.Fatalf("轮换应保留 KeyType=passphrase；got=%q", meta2.KeyType)
 	}
 	got2, _ := s.GetSecret("tenant-A", "app/db/password")
-	if got2.Value != "p@ss-2" {
-		t.Fatalf("轮换后值应为 p@ss-2；got=%q", got2.Value)
+	if got2.Value != refDBPassV2 {
+		t.Fatalf("轮换后值应为 %s；got=%q", refDBPassV2, got2.Value)
 	}
 
 	// 3. ListSecrets → 验证列表

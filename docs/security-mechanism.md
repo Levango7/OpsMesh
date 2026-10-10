@@ -345,6 +345,26 @@ func (s *Server) isAdmin(actx authctx.Context) bool {
 
 用于配额管理 API 跨租户访问（admin 可查看/修改任意租户配额，非 admin 仅可查看本租户）。
 
+#### 2.3.5 聚合代理的凭证与身份头投递（TD-60 §9.3 方向 A）
+
+微服务聚合代理（`handleServiceProxy` → `Rule` 规则数据）对每个下游域的请求头做统一治理：
+
+| 头 | 常规域（device/task/gpu/portal/…） | auth 域（auth-svc） |
+|----|-----------------------------------|--------------------|
+| 客户端自带的 `X-Tenant-ID` / `X-User-Id` / `X-User-Roles` | 一律剥离，再以聚合层已校验的 actx 重注入 | 同左 |
+| 会话 Cookie（`opsmesh_at`/`opsmesh_rt`） | **剥除**（下游走注入头，防凭证落内部服务访问日志） | **透传**（`Rule.ForwardCookie`） |
+
+auth 域例外的原因：auth-svc 网关是**自验 token 模型**（`bearerOrCookie` → `ValidateToken`），不读注入身份头；
+剥 Cookie 会让到达它的每个请求无凭无据恒 401（2026-10-10 双轨端到端冒烟实测，
+见 `td60-auth-data-plane-proposal.md` §9.2）。判据是**凭证只投递给凭证签发方**：
+`ForwardCookie` 仅允许 auth 域置位，由 `svcproxy/perm_catalog_test.go` 的
+`TestCredentialForwardingRestrictedToAuthDomain` 静态拦截其他域（带双下限防守卫空转）。
+
+**已知边界（切流前须处置）**：代理前缀现不能作为登录入口——`requireTenantContext` 先于转发执行，
+无凭证的 `POST /api/v1/auth-svc/login`（及 register）会被 401/400 挡下，与本地
+`/api/v1/auth/login` 公开语义不等价；且登录保护（loginguard/限流）是否随代理路径同样生效
+未裁定。详见提案 §7.2/§9.4 的前置条件清单。
+
 ---
 
 ## 第3章 传输安全

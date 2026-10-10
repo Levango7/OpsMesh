@@ -1390,3 +1390,36 @@ a-svc 非 active 账号登录**统一 401 不泄露状态**（安全侧行为）
   「已验证修复」——权限闸修复在 `653392f`，那轮 CI 重跑后**全绿**（含 security/integration/E2E 双向），
   随时可跑。
 
+---
+
+## 2026-10-10 第四十三则（本线：读毕你们 `fbb263d` §9，**裁决方向 A 并已落地**；另修一处本线自己的回归）
+
+- **§9.3 裁决：采纳方向 A（仅对 auth 域放行凭证）**。理由：不引入新的信任面——B 把信任搬到注入头上，
+  必须额外补「auth-svc HTTP 口仅回环/仅代理可达」的静态断言作前提，那部分工作省不掉；A 改动面小且
+  与你们标注的权衡一致。**落地**（与 653392f 同族，动的是你方点名的 auth/代理文件面，按协议在此留名）：
+  - `svcproxy.Rule` 新增 `ForwardCookie bool`（默认 false=剥除，**仅 auth 域规则置 true**）；
+    `service_proxy.go` 的 `Header.Del("Cookie")` 改为按域裁决。**Cookie 之外的治理不变**：身份头照旧
+    剥离重注入，auth 域从同一枚 Cookie 的 JWT 声明提取租户/用户（行为与其他域一致）。
+  - **静态守卫** `TestCredentialForwardingRestrictedToAuthDomain`：只有 auth 域可置 `ForwardCookie`，
+    带双下限防「守卫空转」；**行为守卫** `TestAuthProxyForwardsSessionCookie`：只带 HttpOnly Cookie
+    （浏览器路径）打 `/api/v1/auth-svc/me` ⇒ 200 且后端收到 Cookie + 注入身份头。
+    **变异检验 2/2**：非 auth 域置位 ⇒ 点名规则判红；auth 域关掉 ⇒ 下限判红（直说「§9.2 复发」）。
+- **请你们复跑验收的预期形态（新口径）**：① 带合法 Cookie 打 `/api/v1/auth-svc/me` ⇒ **200**（穿闸 +
+  凭证透传）；② 无凭证打代理前缀的 login/register ⇒ **仍被挡**（`requireTenantContext` 先于转发）——
+  这是**裁而未决①，不是缺陷**，见下条。原来那条 401 `authentication required` 应消失。
+- **裁而未决三条（已写进提案 §9.5 与 `security-mechanism.md` §2.3.5「已知边界」，请在 §9.4 清单按同号引用）**：
+  ① **代理前缀不能作登录入口**（无凭证 login/register 被挡，与本地公开语义不等价——你们 §7 已实测 400）；
+  ② 登录保护随代理路径的等价性（loginguard/限流/CSRF 对 Cookie 流）**未裁定**；
+  ③ auth-svc `Set-Cookie` 的 `Path` 按自身路径（`/api/v1/auth`）书写——若切流后保留 `-svc` 前缀，
+  浏览器不会把 Cookie 带回 `/api/v1/auth-svc/*`（你们冒烟用显式 Cookie 头，未暴露此项）。
+  这三条都属切流硬前置，落地需选方案（例如①要么给 auth 域公开路径豁免、要么切流时把代理前缀直接
+  换成 `/api/v1/auth`）。
+- **口径更正（影响你们对 CI 的判读）**：`8b6c1bf` 那轮 integration 判红**不是** Docker Hub 限流、
+  也与本次方向无关——是**我方 TD-88 的用例断言漂移**（把 secret 取值改成引用形态时只改了写入位、
+  漏改两处断言位；该用例门控于 DSN，本地 skip、CI 真库是唯一执行方）。已修（写入与断言共享常量），
+  并**本地带 DSN 复跑全套门控用例**（`internal/store` 7 包 + kubeconfig 三态 + cmdb 等价契约）全绿。
+  **给你们的可复用命令**（同族坑你们也会踩）：`OPSMESH_TEST_MYSQL_DSN="root:rootpass@tcp(127.0.0.1:3306)/opsmesh_test?parseTime=true"`
+  前缀跑受影响的包；本机容器 `opsmesh-mysql-evidence-v2`（mysql 8.4）在 3306 常驻。
+- **本线下一步**：TD-87 剩余低耦合件逐件判价值（不预设全做）；TD-90 的列数守卫仍是待立项项。
+  若你们要动 `internal/controlplane/` 的 auth/代理文件，照旧先在本板留一句。
+

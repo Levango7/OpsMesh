@@ -83,9 +83,16 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 		director(req)
 		req.URL.Path = rule.RewriteProxyPath(r.URL.Path)
 		req.URL.RawPath = ""
-		// 下游微服务不消费会话 Cookie；鉴权已在聚合层完成，剥除防止
-		// 会话凭证意外落地到内部服务的访问日志。
-		req.Header.Del("Cookie")
+		// 会话 Cookie 投递按域裁决（TD-60 §9.3 方向 A，2026-10-10）：
+		// 常规域剥除——下游不消费会话 Cookie（身份走注入头），剥除防凭证意外
+		// 落地到内部服务的访问日志；auth 域透传——auth-svc 网关是自验 token
+		// 模型（bearerOrCookie → ValidateToken），剥除即等于每个请求无凭无据
+		// 恒 401（§9.2 实测，错误信息出自 auth-svc 即穿闸证据）。是否放行由
+		// 规则数据决定（Rule.ForwardCookie，仅 auth 域可置位，svcproxy 的
+		// TestCredentialForwardingRestrictedToAuthDomain 静态守卫拦其他域）。
+		if !rule.ForwardCookie {
+			req.Header.Del("Cookie")
+		}
 		// 身份头统一治理：客户端自带的租户/用户/角色头一律剥离，再以聚合层
 		// 已校验的 actx 重注入（requireTenantContext 已完成令牌交叉校验；
 		// 头注入模式下即为网关已认证值）。下游消费面：device/task 域网关读

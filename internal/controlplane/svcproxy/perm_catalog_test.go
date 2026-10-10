@@ -98,6 +98,47 @@ func TestRulePermsExistInCatalog(t *testing.T) {
 	t.Logf("规则权限点对账通过：%d 处引用（真实权限点 %d 个，哨兵放行），全部 ⊆ 目录", checked, len(real))
 }
 
+// TestCredentialForwardingRestrictedToAuthDomain 会话 Cookie 投递的静态守卫（TD-60 §9.3 方向 A）。
+//
+// 语义：聚合代理默认剥除客户端会话 Cookie（防凭证落地到内部服务日志），**只有 auth 域**
+// （凭证签发方，且 auth-svc 是自验 token 模型、不读注入身份头）可置 ForwardCookie=true。
+// 若把别的域置 true：该域上游会收到用户会话凭证——既有日志落地风险，也在被入侵时
+// 多一处可重放的凭证面。这是「凭证只投递给签发方」的最小信任原则，用静态断言钉住。
+func TestCredentialForwardingRestrictedToAuthDomain(t *testing.T) {
+	tables := map[string][]Rule{
+		"Rules":        Rules,
+		"DeviceExtras": DeviceExtras,
+		"TaskExtras":   TaskExtras,
+	}
+	forwarded, authRules := 0, 0
+	for table, rules := range tables {
+		for i := range rules {
+			if rules[i].Domain == "auth" {
+				authRules++
+			}
+			if !rules[i].ForwardCookie {
+				continue
+			}
+			forwarded++
+			if rules[i].Domain != "auth" {
+				t.Errorf("%s 的规则 %q（Domain=%s）设了 ForwardCookie——"+
+					"会话凭证只允许投递给凭证签发方（auth 域）：其余域身份走注入头、剥 Cookie 是既有安全语义"+
+					"（TD-60 §9.3 方向 A，2026-10-10 裁决）",
+					table, rules[i].PublicPrefix, rules[i].Domain)
+			}
+		}
+	}
+	// 双下限防塌缩：auth 域规则存在、且确有规则放行凭证。
+	// 若无规则置位 ⇒ 双轨开关打开后 auth-svc 恒 401（§9.2 缺陷复发）；若 auth 域消失 ⇒ 守卫失去锚点。
+	if authRules == 0 {
+		t.Fatal("规则表里找不到 auth 域——双轨机制载体消失，守卫失去锚点")
+	}
+	if forwarded == 0 {
+		t.Fatal("没有任何规则设置 ForwardCookie——auth 域 Cookie 透传被关掉，" +
+			"双轨开关打开后 auth-svc 将对每个请求返 401（td60 提案 §9.2 缺陷形态复发）")
+	}
+}
+
 // TestAuthRuleIsAuthenticatedOnly 钉住阻断级缺陷的修复形态：
 // auth 域自服务端点在代理层只认证、不查权限（与控制面本地 handler 语义一致）。
 // 若有人把它们改回某个具体权限点，本用例会失败——那正是缺陷复发形态。

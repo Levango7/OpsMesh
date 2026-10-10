@@ -42,6 +42,16 @@ type Rule struct {
 	// 用于同一转发前缀下不同操作对应不同权限点的场景（如 tasks 的
 	// GET/POST/cancel/approve 分别是 task:read/task:write/task:cancel/task:approve）。
 	PermRules []PermRule
+	// forwardCookie 是否把客户端会话 Cookie 透传给上游（默认 false=剥除）。
+	// **只有 auth 域（凭证签发方）可为 true**，静态守卫
+	// TestCredentialForwardingRestrictedToAuthDomain 会拦其他域：
+	//   - 常规域：下游微服务不消费会话 Cookie，身份走聚合层注入头（X-Tenant-ID /
+	//     X-User-Id），剥除防凭证意外落地到内部服务的访问日志；
+	//   - auth 域：auth-svc 网关是**自验 token 模型**（bearerOrCookie → ValidateToken），
+	//     不读注入身份头；剥 Cookie ⇒ 每个到达它的请求都无凭无据恒 401
+	//     （2026-10-10 双轨冒烟实测，td60-auth-data-plane-proposal.md §9.2）。
+	// 方向裁决见该提案 §9.3 方向 A（仅对 auth 域放行凭证，不引入新的信任面）。
+	ForwardCookie bool
 }
 
 // PermRule 域内权限分级规则：按「方法 + 子路径前缀/后缀」把请求映射到权限点。
@@ -206,6 +216,7 @@ var Rules = []Rule{
 		EnvKey:         "AUTH_SVC_URL",
 		DefaultURL:     "http://127.0.0.1:8081",
 		Perm:           PermAuthenticated, // 兜底：auth 域自服务端点只认证不查权限（与本地 handler 语义对齐）
+		ForwardCookie:  true,              // 唯一允许值：auth-svc 自验 token（bearerOrCookie），剥 Cookie 即恒 401（§9.2/§9.3 方向 A）
 		PermRules: []PermRule{
 			{Method: http.MethodGet, PathPrefix: "/api/v1/auth/me", Perm: PermAuthenticated},
 			{Method: http.MethodPost, PathPrefix: "/api/v1/auth/login", Perm: PermAuthenticated},

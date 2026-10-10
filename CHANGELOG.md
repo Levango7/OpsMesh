@@ -4,6 +4,24 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-10（TD-60 §9.3 方向 A：auth 域会话凭证透传 + 「凭证只投递给签发方」静态守卫）
+
+- **裁决｜采纳方向 A（仅对 auth 域放行凭证）**：双轨冒烟复跑（对方 `fbb263d`，实测非推断）暴露第二层阻断——聚合代理剥除会话 Cookie，而 auth-svc 网关是**自验 token 模型**（`bearerOrCookie` → `ValidateToken`），同一枚 token 直连 auth-svc 返 200、经代理前缀返 401。裁决 A 而非 B（auth-svc 改吃注入身份头）：A 不引入新的信任面，B 需额外补「auth-svc HTTP 口仅回环/仅代理可达」门禁断言作前提（B 的前提也不能就此省掉）。记录于提案 §9.5。
+- **改动｜凭证投递按域裁决（数据驱动）**：`svcproxy.Rule` 新增 `ForwardCookie bool`（默认 false=剥除；**仅 auth 域规则置 true**）；`service_proxy.go` 的 `Header.Del("Cookie")` 改为按规则裁决。Cookie 之外的治理**不变**：客户端自带的 `X-Tenant-ID`/`X-User-Id`/`X-User-Roles` 照旧一律剥离重注入（auth 域从同一枚 Cookie 的 JWT 声明提取租户/用户，行为与其他域一致）。
+- **静态守卫｜`TestCredentialForwardingRestrictedToAuthDomain`**：三张规则表中只有 auth 域可置 `ForwardCookie`（判据「凭证只投递给凭证签发方」），带双下限（auth 域存在 + 至少一条规则放行）防「守卫空转」；**变异检验**：给 gpu 域置位 ⇒ 点名规则判红；把 auth 域关掉 ⇒ 下限判红并直说「§9.2 缺陷复发」。
+- **行为守卫｜`TestAuthProxyForwardsSessionCookie`**：模拟浏览器路径（只带 HttpOnly Cookie，无 Authorization/裸租户头）打 `/api/v1/auth-svc/me` ⇒ 200、后端收到 Cookie 与注入身份头；与 device 域既有「后端不应收到 Cookie」断言互为对照。失败信息只报字节数、不回显凭证（CI 日志不落 token）。
+- **裁而未决（写明不藏，均属切流硬前置）**：① 代理前缀不能作登录入口（`requireTenantContext` 先于转发，无凭证 login/register 被挡，与本地公开语义不等价）；② 登录保护随代理路径的等价性（loginguard/限流/CSRF 对 Cookie 流）未裁定；③ auth-svc `Set-Cookie` 的 `Path` 作用域按自身路径书写，若切流保留 `-svc` 前缀则浏览器不回传 Cookie（本轮冒烟用显式 Cookie 头，未暴露）。三条落进 `security-mechanism.md` §2.3.5「已知边界」与提案 §9.5。
+- **文档**：`docs/security-mechanism.md` 新增 §2.3.5（代理凭证/身份头投递矩阵）；`docs/td60-auth-data-plane-proposal.md` 新增 §9.5（裁决与落地）。
+- **验证**：`go build ./...` 净；svcproxy 三道守卫 + controlplane 代理行为用例（含 device 域对照）全绿；变异检验 2/2 判红后还原复绿；`gofmt -l` 净。
+
+## [Unreleased] — 2026-10-10（回归修复：8b6c1bf 的 secrets 用例「写入改引用、断言留明文」，CI integration 判红）
+
+- **现象**：`8b6c1bf`（TD-88 收口）推送后 CI `integration` job 第 7 步判红，唯一失败用例 `TestSQLStore_P03Secret`：`GetSecret 值不一致: &{Key:app/db/password Value:${vault:test/app/db/password}}`——读回值就是写入值，**断言却仍比对旧明文 `p@ss-1`**。
+- **根因（本线自己的回归）**：该轮把 8 处 secret 取值机械替换为引用形态时，只覆盖了 `Value:` 写入位置，漏了两处**断言位**（`got.Value != "p@ss-1"` / `"p@ss-2"`）。**为什么本地没抓到**：该用例门控于 `OPSMESH_TEST_MYSQL_DSN`，本地未设 DSN 即 skip——「改了 store 契约、本地只跑了免 DSN 的那一半」正是盲区所在；CI 真库是唯一执行方。
+- **修法｜写入与断言共享常量**（`refDBPass` / `refDBPassV2`）：同类漂移从此在「改一处忘一处」的语义上不可能发生（不是靠记得同步，而是两处本来就是一个符号）。
+- **纪律｜改 store 契约必须本地带 DSN 复跑全套门控用例**：本轮已按此用本机 MySQL 容器复跑——`internal/store` 全 7 包 + `internal/controlplane`（kubeconfig 三态迁移）+ `internal/cmdb`（检索等价契约）**全绿**（sqlstore 192.6s/167.7s 两轮）。**审计面**：全仓 `SetSecret`/`RotateSecret` 测试调用与相邻断言逐处核对，配对漂移仅此一处（其余门控用例此前已按引用形态对齐）。
+- **教训归档**：技术债 TD-90 行补记第二个实例——「只有真库执行方能暴露的静默不一致」已被抓两次（SELECT/Scan 列数错位、写读断言漂移），两者的共同判据是**同一事实的两个副本必须由同一符号派生**。
+
 ## [Unreleased] — 2026-10-10（TD-88 收口：secrets 表「只存引用」落到 store 契约层 + 启动扫描明文存量）
 
 - **新增｜store 契约层拒绝明文（`model.RequireSecretReference`）**：`secrets` 表只接受 `${provider:key}` 引用，明文一律拒绝（`SetSecret`/`RotateSecret` 返回 nil 并记录失败）。判据复用 `secrets.IsReference`（与 `ResolveSecret` 同源，形状判断只有一份实现）。落点选**中性层一处**而非各消费方：该表经两次自查在生产代码里**消费方为零**，钉在契约上则任何未来消费方自动受保护，也避免三个后端各写一份形状判断而漂移；memory/sql 各接一行（`RotateSecret` 委托 `SetSecret` ⇒ 自动覆盖），multischema 委托内层后端。
