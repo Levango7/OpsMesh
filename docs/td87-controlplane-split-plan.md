@@ -225,3 +225,36 @@ controlplane 的结构不同，且有两条硬约束：
    重复的**安全判定清单**会影响正确性（漏改一处 = 绕过）。全仓扫描法：按特征常量/函数名 grep
    （本轮用 `IsLinkLocalUnicast` 一次定位到全部 2 份副本）。
 
+---
+
+## 10. 批 2 第三批 · 切片 1 执行记录（2026-10-10，已落地：cmdbcollector + auditsafe）
+
+### 10.1 两个产出
+
+| 项 | 内容 | 新包 | 父包保留 |
+|---|---|---|---|
+| `cmdbcollector` | CMDB 采集器整体（`Collector` 类型 + `New` + `Collect`/`upsertCI`/`CollectAll`/`Run`/`collectOnceIfLeader` + 采样间隔常量） | 659 行（含测试） | `handleCMDBCollect`（Server 方法）+ **类型别名 `CMDBCollector` + `NewCMDBCollector` 薄包装** ⇒ server.go 的字段声明与构造调用**零改动** |
+| `auditsafe` | 审计 Detail 脱敏（`Detail`）——**意外收获**：它此前定义在 `server_tasks.go`（任务域文件）里、被 6+ 个 handler 文件共 **30 处**调用；采集器下沉后需要它时，暴露为「共享内核藏在业务文件里」 | 22 行 | `sanitizeAuditDetail` 薄包装 ⇒ **30 处调用点零改动** |
+
+### 10.2 数据
+
+- 父包 prod 行 24,355 → **24,118**（-237）；顶层 prod 文件仍 83（`cmdb_collector.go` 留作 handler+门面）。
+- 实测教训：**按行切分测试是错的姿势**。首版把 `cmdb_collector_test.go` 按「第 337 行以前/以后」切成两份，结果把交错的采集器用例切进了父包（父包随即报 `c1.interval undefined`——未导出字段不可跨包）。
+  改法：**按顶层 `func` 分类**（`TestHandleCMDBCollect*` 留父包、其余随类型迁入），12 迁 / 3 留；随后用「编译驱动循环」收敛两边的 import 超集（每轮删一处 `imported and not used` 直到干净）。
+  **判据：切分测试前先列出函数清单并按「是否触碰内部态/是否构造 Server」分类，不要按行号猜边界。**
+
+### 10.3 验证口径与结果（全绿）
+
+- `go build ./internal/controlplane/...` 绿；`go vet` 零告警；
+- `go test ./internal/controlplane/...`：父包 44.5s + cmdbcollector 2.1s 全 ok；
+- `golangci-lint run ./internal/controlplane/...` **0 issues**；`gofmt -l` 净；
+- `-race ./internal/controlplane/...` **零 DATA RACE**；
+- 部署资产门禁 PASS=76 FAIL=0 SKIP=1。
+
+### 10.4 与 §9.4 判据的关系（补一条）
+
+§9.4 第 2 条说「『两份手抄实现』比『文件太长』更值得优先处置」。本切片补上**同族的第三类**：
+**「共享内核藏在业务文件里」**——单份实现，但定义位置与使用面不匹配（`sanitizeAuditDetail` 定义在任务域文件、
+30 处跨域调用）。它的危害不是漂移而是**阻碍下沉**（任何新包想用它都被父包边界挡住）。
+识别法：下沉某文件前，先 grep 它对父包符号的依赖，若依赖项是「到处都是」的通用 helper，先把它抽包（本切片即此路径）。
+

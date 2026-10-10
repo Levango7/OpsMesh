@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/controlplane/auditsafe"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
 	"github.com/Levango7/OpsMesh/internal/domain"
@@ -23,19 +24,10 @@ import (
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
-// sanitizeAuditDetail 对写入审计/事件 Detail 的用户输入做脱敏与规范化：
-//   - 移除换行符（\n→空格、\r→删除），防日志注入/解析错位；
-//   - 截断超过 200 字符的内容，避免长命令撑爆日志、可能携带的敏感尾部外泄。
-//
-// 仅用于含用户原始输入（body.Command / body.Reason）的 Detail；固定字符串无需调用。
-func sanitizeAuditDetail(s string) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\r", "")
-	if len(s) > 200 {
-		s = s[:200] + "..."
-	}
-	return s
-}
+// sanitizeAuditDetail 是 auditsafe.Detail 的薄包装（TD-87 批 2 第三批：实现已抽到
+// internal/controlplane/auditsafe——它此前藏在本文件里却被 6+ 个 handler 文件共 30 处调用，
+// 属「共享内核藏在业务文件里」；父包 30 处调用点零改动）。
+func sanitizeAuditDetail(s string) string { return auditsafe.Detail(s) }
 
 // maxCommandLen 控制面侧命令长度上限（安全加固纵深防御）。
 // 超过此长度的命令几乎不可能是合法运维操作，更可能是注入载荷或二进制 blob。

@@ -4,6 +4,14 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-10（TD-87 批 2 第三批·切片 1：cmdbcollector 下沉 + auditsafe 抽出共享内核）
+
+- **重构｜CMDB 采集器下沉 `internal/controlplane/cmdbcollector`**：`Collector` 类型 + `New` + `Collect`/`upsertCI`/`CollectAll`/`Run`/`collectOnceIfLeader` + 采样间隔常量整体迁出（659 行含测试）；父包 `cmdb_collector.go` 保留 `handleCMDBCollect`（Server 方法）+ **类型别名 `CMDBCollector` 与 `NewCMDBCollector` 薄包装** ⇒ `server.go` 的字段声明与构造调用**零改动**。父包 prod 行 24,355 → 24,118。
+- **重构｜`auditsafe` 抽出「隐藏在业务文件里的共享内核」**：`sanitizeAuditDetail` 此前定义在 `server_tasks.go`（任务域文件）却被 **6+ 个 handler 文件共 30 处**调用；采集器下沉后需要它时暴露为跨包障碍。抽出 `internal/controlplane/auditsafe`（`Detail`）后父包留同名薄包装，**30 处调用点零改动**。归类：这是「共享内核位置与使用面不匹配」的形态——危害不是逻辑漂移而是**阻碍任何后续下沉**（计划 §10.4 已补为第三类判据）。
+- **测试切分的教训（写进计划 §10.2）**：首版按「行号边界」把 `cmdb_collector_test.go` 切成两半，结果把交错的采集器用例切进了父包（父包随即报 `c1.interval undefined`——未导出字段不可跨包）。改为**按顶层 `func` 分类**（`TestHandleCMDBCollect*` 留父包、其余 12 个随类型迁入），再用「编译驱动循环」收敛两侧 import 超集；`makeTestMetrics` 助手按既有惯例两侧各持一份（新增字段需同步，注释已写明）。
+- **验证**：`go vet` 零告警；父包 44.5s + cmdbcollector 2.1s 测试全 ok；`golangci-lint` **0 issues**；`gofmt -l` 净；`-race` **零 DATA RACE**；部署门禁 PASS=76 FAIL=0 SKIP=1。
+- **本批剩余（后续切片）**：`enterpriseui`（静态资源 helper 簇 + `dashboard.go` 的 `stripEnterpriseCTA` 并入）与「OS 模板 ↔ store 转换器并入 `presets`」。
+
 ## [Unreleased] — 2026-10-10（TD-88 前置：机密静态加密原语下沉 `pkg/secretcrypto`——三处同形态实现合一 + 防漂移守卫）
 
 - **重构｜加密原语下沉（按 kilo agent 的 `docs/td88-secretcrypto-sink-spec.md` 执行）**：新建 **`pkg/secretcrypto`** 作为机密静态加密的**单一实现**——AES-256-GCM、随机 nonce 前置、base64、`enc:v1:` 版本前缀；API：`Encrypt` / `Decrypt`（三值语义：无前缀⇒legacy 明文放行；有前缀解不开⇒**硬失败**）/ `DecryptLegacyUnprefixed`（无前缀旧密文专用）/ `HasPrefix` / `Prefix`。**密钥派生刻意不下沉**（config-svc 是 passphrase→SHA-256、controlplane 是 base64→32 原始字节，密钥形状属各方部署语义）。
