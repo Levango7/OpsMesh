@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Levango7/OpsMesh/internal/controlplane/enterpriseui"
 )
 
 // 本文件测试企业版前端交付路径（P0-3）。
@@ -165,19 +167,19 @@ func TestEnterpriseAsset_ContentTypesAndCache(t *testing.T) {
 		{"enterprise/assets/data.json", "application/json"},
 	}
 	for _, c := range cases {
-		if ct := enterpriseContentType(c.path); !strings.Contains(ct, c.wantType) {
+		if ct := enterpriseui.ContentType(c.path); !strings.Contains(ct, c.wantType) {
 			t.Fatalf("%s 内容类型应为 %q；got=%q", c.path, c.wantType, ct)
 		}
 	}
 	// 带哈希的 assets 可长缓存；入口文件必须每次校验。
 	rec := httptest.NewRecorder()
-	serveEnterpriseStatic(rec, httptest.NewRequest(http.MethodGet, "/enterprise/assets/js/app-abc123.js", nil),
+	enterpriseui.ServeStatic(rec, httptest.NewRequest(http.MethodGet, "/enterprise/assets/js/app-abc123.js", nil),
 		"enterprise/assets/js/app-abc123.js", []byte("x"))
 	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
 		t.Fatalf("带哈希的资源应 immutable 长缓存；got=%q", cc)
 	}
 	rec = httptest.NewRecorder()
-	serveEnterpriseStatic(rec, httptest.NewRequest(http.MethodGet, "/enterprise/sw.js", nil),
+	enterpriseui.ServeStatic(rec, httptest.NewRequest(http.MethodGet, "/enterprise/sw.js", nil),
 		"enterprise/sw.js", []byte("x"))
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache, no-store, must-revalidate" {
 		t.Fatalf("sw.js 不得被缓存（否则升级后仍走旧缓存策略）；got=%q", cc)
@@ -192,12 +194,12 @@ func TestEnterpriseAsset_PrecompressedNegotiation(t *testing.T) {
 
 	// 用确定存在的文件（sw.js 在两种状态下都可能不存在）——直接对 dist 里的代表文件做单元校验：
 	// 只要 embed 中存在 sw.js 即验证协商路径，否则跳过（占位态）。
-	if _, err := readEnterpriseFile("enterprise/sw.js"); err != nil {
+	if _, err := enterpriseui.ReadFile("enterprise/sw.js"); err != nil {
 		t.Skip("embed 中无 sw.js（占位态）：预压缩协商需真实产物")
 	}
 	rec := httptest.NewRecorder()
-	data, _ := readEnterpriseFile("enterprise/sw.js")
-	serveEnterpriseStatic(rec, req, "enterprise/sw.js", data)
+	data, _ := enterpriseui.ReadFile("enterprise/sw.js")
+	enterpriseui.ServeStatic(rec, req, "enterprise/sw.js", data)
 	if got := rec.Header().Get("Content-Encoding"); got != "" {
 		// 有 .br 旁路时应为 br；无旁路文件则为空（两者都合法），但不能是 gzip（br 优先）。
 		if got != "br" {
@@ -210,7 +212,7 @@ func TestEnterpriseAsset_PrecompressedNegotiation(t *testing.T) {
 	// 未声明压缩支持时不得返回压缩体（否则客户端无法解码）。
 	plain := httptest.NewRequest(http.MethodGet, "/enterprise/sw.js", nil)
 	rec = httptest.NewRecorder()
-	serveEnterpriseStatic(rec, plain, "enterprise/sw.js", data)
+	enterpriseui.ServeStatic(rec, plain, "enterprise/sw.js", data)
 	if enc := rec.Header().Get("Content-Encoding"); enc != "" {
 		t.Fatalf("未声明 Accept-Encoding 时不得压缩；got Content-Encoding=%q", enc)
 	}
@@ -226,14 +228,14 @@ func TestEnterpriseAsset_PrecompressedNegotiation(t *testing.T) {
 		{"gzip", "gzip", "gz"},
 		{"br", "br", "br"},
 	} {
-		enc, sufx, ok := negotiatedEncoding(httptest.NewRequest(http.MethodGet, "/x.js", nil), "enterprise/assets/js/x.js")
+		enc, sufx, ok := enterpriseui.NegotiatedEncoding(httptest.NewRequest(http.MethodGet, "/x.js", nil), "enterprise/assets/js/x.js")
 		// 无 Accept-Encoding 头：不协商。
 		if ok || enc != "" || sufx != "" {
 			t.Fatalf("无 Accept-Encoding 头不应协商；got enc=%q sufx=%q ok=%v", enc, sufx, ok)
 		}
 		req := httptest.NewRequest(http.MethodGet, "/x.js", nil)
 		req.Header.Set("Accept-Encoding", c.accept)
-		enc, sufx, ok = negotiatedEncoding(req, "enterprise/assets/js/x.js")
+		enc, sufx, ok = enterpriseui.NegotiatedEncoding(req, "enterprise/assets/js/x.js")
 		if !ok || enc != c.wantEnc || sufx != c.wantSufx {
 			t.Fatalf("Accept-Encoding=%q → (enc=%q sufx=%q ok=%v)，期望 (%q %q true)",
 				c.accept, enc, sufx, ok, c.wantEnc, c.wantSufx)
@@ -243,17 +245,17 @@ func TestEnterpriseAsset_PrecompressedNegotiation(t *testing.T) {
 	for _, p := range []string{"enterprise/assets/js/x.js.br", "enterprise/assets/js/x.js.gz"} {
 		req := httptest.NewRequest(http.MethodGet, "/x", nil)
 		req.Header.Set("Accept-Encoding", "br, gzip")
-		if _, _, ok := negotiatedEncoding(req, p); ok {
+		if _, _, ok := enterpriseui.NegotiatedEncoding(req, p); ok {
 			t.Fatalf("%s 不应再协商压缩", p)
 		}
 	}
 
 	// 端到端：真实存在 .gz 旁路时，Accept-Encoding: gzip 必须拿到 gz 体（体积小于原文）。
-	if gz, err := readEnterpriseFile("enterprise/sw.js.gz"); err == nil {
+	if gz, err := enterpriseui.ReadFile("enterprise/sw.js.gz"); err == nil {
 		req := httptest.NewRequest(http.MethodGet, "/enterprise/sw.js", nil)
 		req.Header.Set("Accept-Encoding", "gzip")
 		rec := httptest.NewRecorder()
-		serveEnterpriseStatic(rec, req, "enterprise/sw.js", data)
+		enterpriseui.ServeStatic(rec, req, "enterprise/sw.js", data)
 		if enc := rec.Header().Get("Content-Encoding"); enc != "gzip" {
 			t.Fatalf("存在 .gz 旁路时 gzip 客户端应得 Content-Encoding: gzip；got=%q", enc)
 		}
@@ -268,9 +270,9 @@ func TestEnterpriseAsset_PrecompressedNegotiation(t *testing.T) {
 
 // TestEnterpriseCTA_Gating 个人版首页的企业版入口按「是否内置」显示/隐藏。
 func TestEnterpriseCTA_Gating(t *testing.T) {
-	html := []byte(`<div>` + enterpriseCTAStart + `<a class="btn-enterprise" href="/enterprise/">进入企业版前端 →</a>` + enterpriseCTAEnd + `</div>`)
+	html := []byte(`<div>` + enterpriseui.CTAStart + `<a class="btn-enterprise" href="/enterprise/">进入企业版前端 →</a>` + enterpriseui.CTAEnd + `</div>`)
 
-	out := stripEnterpriseCTA(html)
+	out := enterpriseui.StripCTA(html)
 	if bundleAvailable() {
 		if !strings.Contains(string(out), "/enterprise/") {
 			t.Fatalf("已内置企业版时入口必须保留；got=%q", out)
@@ -285,7 +287,7 @@ func TestEnterpriseCTA_Gating(t *testing.T) {
 	}
 	// 标记缺失时原样返回（不破坏老 HTML/自定义页面）。
 	noMarker := []byte(`<div><a href="/enterprise/">x</a></div>`)
-	if got := string(stripEnterpriseCTA(noMarker)); got != string(noMarker) {
+	if got := string(enterpriseui.StripCTA(noMarker)); got != string(noMarker) {
 		t.Fatalf("无标记时应原样返回；got=%q", got)
 	}
 }

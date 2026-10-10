@@ -258,3 +258,27 @@ controlplane 的结构不同，且有两条硬约束：
 30 处跨域调用）。它的危害不是漂移而是**阻碍下沉**（任何新包想用它都被父包边界挡住）。
 识别法：下沉某文件前，先 grep 它对父包符号的依赖，若依赖项是「到处都是」的通用 helper，先把它抽包（本切片即此路径）。
 
+---
+
+## 11. 批 2 第三批 · 切片 2 执行记录（2026-10-10，已落地：enterpriseui）
+
+### 11.1 搬迁面
+
+| 项 | 内容 | 新包 | 父包保留 |
+|---|---|---|---|
+| `enterpriseui` | bundle 判定（`BundleAvailable`，含 `sync.Once` 缓存）、`ReadFile`、`ServeStatic`、`NegotiatedEncoding`、`WriteBody`、`LooksLikeFile`、`ContentType`、常量（`IndexPath`/`AssetsPrefix`/`Placeholder`/缓存策略）+ **`StripCTA`**（自 `dashboard.go` 迁入——它与企业版前端接线同属一件事） | 233 行（ui.go + cta.go） | `handleEnterpriseUI`/`handleEnterpriseAsset`（Server 方法）+ **`bundleAvailable` 薄包装**（`license_gate_test.go` 8 处引用零改动）；`dashboard.go` 只剩两个 handler |
+
+### 11.2 数据与判据
+
+- 父包 prod 行 24,118 → **23,905**（-213）；prod 文件仍 83。
+- `enterprise_ui_test.go` 的 10 个用例**全是 handler 级**（`newTestServer()` + `s.handleEnterpriseUI/handleEnterpriseAsset`）⇒ 整文件留父包、仅调用点限定化（14 处）+ 常量改为 `enterpriseui.X`；**新包没有 in-package 测试**是本次的自觉选择（它的覆盖全部经由 handler 用例穿过——不为「每包必须有测试」造空壳）。
+- **本切片又踩了同一类边界错**（与 §10.2 同族，但这次在**生产代码**上）：我用「第一个列 0 的 `}`」当区块结束，把夹在两个 handler 之间的 `serveEnterpriseStatic` **定义**一并切进了父包（父包随即出现 `func enterpriseui.ServeStatic(...)` 这种畸形签名）。修法：把该函数整体移回新包并恢复签名。**判据升级（替代 §10.2 的逐函数人工分类）：切分生产代码前先列 `^(func|type|const|var)` 清单，按「是不是 `*Server` 方法」二分，不要用花括号启发式找边界。**
+
+### 11.3 验证口径与结果（全绿）
+
+- `go build ./internal/controlplane/...` 绿；`go vet` 零告警；
+- `go test ./internal/controlplane/...`：父包 54.1s 全 ok；
+- `golangci-lint run ./internal/controlplane/...` **0 issues**；`gofmt -l` 净；
+- `-race ./internal/controlplane/...` **零 DATA RACE**；
+- 部署资产门禁 PASS=76 FAIL=0 SKIP=1。
+

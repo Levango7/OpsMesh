@@ -1,13 +1,13 @@
 package controlplane
 
 import (
-	"bytes"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/controlplane/embed"
+	"github.com/Levango7/OpsMesh/internal/controlplane/enterpriseui"
 )
 
 // handleDashboard 结构化 HTML 仪表盘（GET /）。
@@ -49,48 +49,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// 注意：未授权时**保留**入口（只由 bundleAvailable 门控）。授权闸门的分流是
 	// /enterprise/ 返回「未授权」说明页而非 4xx——那正是转化路径；把按钮藏起来
 	// 等于让潜在客户连"有没有企业版"都不知道。
-	data = stripEnterpriseCTA(data)
+	data = enterpriseui.StripCTA(data)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	_, _ = w.Write(data)
 }
 
-// enterpriseCTAStart / enterpriseCTAEnd 是 web/index.html 中企业版入口的包裹标记。
-// 用标记而非「正则匹配 <a class="btn-enterprise">」是为了让 HTML 作者可自由改样式/文案。
-const (
-	enterpriseCTAStart = "<!--OPSMESH_ENTERPRISE_CTA_START-->"
-	enterpriseCTAEnd   = "<!--OPSMESH_ENTERPRISE_CTA_END-->"
-)
-
-// stripEnterpriseCTA 在内置企业版前端可用时原样返回（仅去掉包裹标记），
-// 否则删除标记之间的整段入口。标记缺失时原样返回（保持向后兼容，不退化为破坏性替换）。
-func stripEnterpriseCTA(html []byte) []byte {
-	start := bytes.Index(html, []byte(enterpriseCTAStart))
-	if start < 0 {
-		return html
-	}
-	rest := html[start:]
-	endRel := bytes.Index(rest, []byte(enterpriseCTAEnd))
-	if endRel < 0 {
-		return html
-	}
-	end := start + endRel + len(enterpriseCTAEnd)
-	if bundleAvailable() {
-		// 去标记、留内容：HTML 里不再残留内部注释。
-		out := make([]byte, 0, len(html))
-		out = append(out, html[:start]...)
-		out = append(out, html[start+len(enterpriseCTAStart):end-len(enterpriseCTAEnd)]...)
-		out = append(out, html[end:]...)
-		return out
-	}
-	out := make([]byte, 0, len(html))
-	out = append(out, html[:start]...)
-	out = append(out, html[end:]...)
-	return out
-}
-
-// handleAsset 服务前端静态资源（前端独立化：web/assets/* 经 embed.FS 打包）。
-// 仅从嵌入的 webFS 读取 web/assets/ 下文件，不回退到宿主文件系统，杜绝路径穿越（../）。
 func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 	// r.URL.Path 形如 /assets/app.css /assets/app.js；embed.FS 以 web/ 为根，补前缀。
 	rel := "web/" + strings.TrimPrefix(r.URL.Path, "/")

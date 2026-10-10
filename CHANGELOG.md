@@ -4,6 +4,14 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-10（TD-87 批 2 第三批·切片 2：enterpriseui 下沉）
+
+- **重构｜企业版前端接线 helper 下沉 `internal/controlplane/enterpriseui`**（233 行：`ui.go` + `cta.go`）：bundle 判定（`BundleAvailable`，含 `sync.Once` 缓存）、`ReadFile`、`ServeStatic`、`NegotiatedEncoding`、`WriteBody`、`LooksLikeFile`、`ContentType` 与相关常量；并把 `stripEnterpriseCTA` 从 `dashboard.go` 一并迁入（`StripCTA`——与企业版前端接线同属一件事）。父包 `enterprise_ui.go` 只剩两个 handler + `bundleAvailable` 薄包装（`license_gate_test.go` 8 处引用零改动），`dashboard.go` 只剩两个 handler。父包 prod 行 24,118 → **23,905**。
+- **测试口径**：`enterprise_ui_test.go` 的 10 个用例全是 handler 级（`newTestServer()` 直调 `s.handleEnterpriseUI/handleEnterpriseAsset`）⇒ 整文件留父包、仅把 14 处调用点与常量限定化；**新包刻意不造空壳测试**（覆盖全部经由 handler 用例穿过）。
+- **判据升级（计划 §11.2）**：上一片是「按行号切测试切错」，这一片是**同一个坑的生产代码版**——我用「第一个列 0 的 `}`」当区块结束，把夹在两个 handler 之间的 `serveEnterpriseStatic` **定义**切进了父包（父包出现 `func enterpriseui.ServeStatic(...)` 畸形签名，编译器当场拦下）。新判据：**切分前先列 `^(func|type|const|var)` 清单，按「是不是 `*Server` 方法」二分，不用花括号启发式找边界。**
+- **验证**：`go vet` 零告警；父包 54.1s 测试全 ok；`golangci-lint` **0 issues**；`gofmt -l` 净；`-race` **零 DATA RACE**；部署门禁 PASS=76 FAIL=0 SKIP=1。
+- **本批剩余**：切片 3（OS 模板 ↔ store 转换器并入 `presets`）。
+
 ## [Unreleased] — 2026-10-10（TD-87 批 2 第三批·切片 1：cmdbcollector 下沉 + auditsafe 抽出共享内核）
 
 - **重构｜CMDB 采集器下沉 `internal/controlplane/cmdbcollector`**：`Collector` 类型 + `New` + `Collect`/`upsertCI`/`CollectAll`/`Run`/`collectOnceIfLeader` + 采样间隔常量整体迁出（659 行含测试）；父包 `cmdb_collector.go` 保留 `handleCMDBCollect`（Server 方法）+ **类型别名 `CMDBCollector` 与 `NewCMDBCollector` 薄包装** ⇒ `server.go` 的字段声明与构造调用**零改动**。父包 prod 行 24,355 → 24,118。
