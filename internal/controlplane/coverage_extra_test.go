@@ -28,6 +28,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/metrics"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
+	"github.com/Levango7/OpsMesh/pkg/secretcrypto"
 
 	grpcserver "github.com/Levango7/OpsMesh/internal/controlplane/grpc"
 
@@ -267,11 +268,25 @@ func TestEncryptDecryptKubeconfig_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestDecryptKubeconfig_BadBase64 验证非法 base64 返回错误。
-func TestDecryptKubeconfig_BadBase64(t *testing.T) {
+// TestDecryptKubeconfig_UnprefixedNonBase64IsPlaintext 无前缀的非 base64 值按**明文存量**放行。
+//
+// TD-88 前置（原语下沉）后的语义变更：无前缀不再等于「坏密文」——它可能是无密钥期写入的
+// 明文，也可能是切换前的旧密文（base64 无前缀）。旧实现对此直接报错，新读路径三段分流后
+// 归入 legacy 明文（不报错、原样返回），故本用例断言随之更新；坏密文的硬失败由
+// 「带前缀」的用例守（见 TestDecryptKubeconfig_PrefixedBadBase64 / _TamperedCiphertext）。
+func TestDecryptKubeconfig_UnprefixedNonBase64IsPlaintext(t *testing.T) {
 	s := &Server{cfg: &config.Config{}, encryptionKey: newEncryptionKey()}
-	if _, err := s.decryptKubeconfig("!!!not-base64!!!"); err == nil {
-		t.Fatal("bad base64: want error, got nil")
+	got, err := s.decryptKubeconfig("!!!not-base64!!!")
+	if err != nil || got != "!!!not-base64!!!" {
+		t.Fatalf("无前缀值应按明文放行, got (%q, err=%v)", got, err)
+	}
+}
+
+// TestDecryptKubeconfig_PrefixedBadBase64 带前缀但 base64 非法 ⇒ 必须硬失败。
+func TestDecryptKubeconfig_PrefixedBadBase64(t *testing.T) {
+	s := &Server{cfg: &config.Config{}, encryptionKey: newEncryptionKey()}
+	if _, err := s.decryptKubeconfig(secretcrypto.Prefix + "!!!not-base64!!!"); err == nil {
+		t.Fatal("带前缀的非法 base64: want error, got nil")
 	}
 }
 
@@ -294,13 +309,34 @@ func TestDecryptKubeconfig_TamperedCiphertext(t *testing.T) {
 	}
 }
 
-// TestDecryptKubeconfig_ShortCiphertext 验证密文长度 < nonce 长度时返回错误。
-func TestDecryptKubeconfig_ShortCiphertext(t *testing.T) {
+// TestDecryptKubeconfig_PrefixedShortCiphertext 带前缀且长度 < nonce 长度 ⇒ 必须硬失败。
+// （无前缀的短 base64 属「明文存量」分支，由 TestDecryptKubeconfig_UnprefixedNonBase64IsPlaintext 覆盖。）
+func TestDecryptKubeconfig_PrefixedShortCiphertext(t *testing.T) {
 	s := &Server{cfg: &config.Config{}, encryptionKey: newEncryptionKey()}
-	// base64 编码 1 字节（< nonceSize=12）。
-	short := "AA==" // 1 字节
-	if _, err := s.decryptKubeconfig(short); err == nil {
-		t.Fatal("short ciphertext: want error, got nil")
+	if _, err := s.decryptKubeconfig(secretcrypto.Prefix + "AA=="); err == nil {
+		t.Fatal("带前缀的短密文: want error, got nil")
+	}
+}
+
+// TestDecryptKubeconfig_LegacyUnprefixedCiphertext 切换前的旧密文（无前缀的 base64(nonce||ct)）
+// 必须能被解出、并被标记为「需要机会式迁移」——这是旧实现读不出来的第三类存量。
+func TestDecryptKubeconfig_LegacyUnprefixedCiphertext(t *testing.T) {
+	key := newEncryptionKey()
+	s := &Server{cfg: &config.Config{}, encryptionKey: key}
+	// 造旧形态密文：先按新格式加密再剥掉前缀（字节层等价）。
+	enc, err := s.encryptKubeconfig("legacy-kubeconfig")
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	legacyForm := enc[len(secretcrypto.Prefix):]
+
+	plain, migrate, err := s.decryptKubeconfigForLoad(legacyForm)
+	if err != nil || plain != "legacy-kubeconfig" || !migrate {
+		t.Fatalf("旧密文 = (%q migrate=%v err=%v), want (legacy-kubeconfig true nil)", plain, migrate, err)
+	}
+	// 带前缀的正规密文不应触发迁移。
+	if _, migrate2, err := s.decryptKubeconfigForLoad(enc); err != nil || migrate2 {
+		t.Fatalf("正规密文不应需迁移, got (migrate=%v err=%v)", migrate2, err)
 	}
 }
 

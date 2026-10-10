@@ -1,19 +1,13 @@
 package store
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
-	"fmt"
-	"io"
 	"log"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/Levango7/OpsMesh/pkg/secretcrypto"
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/models"
 )
 
@@ -83,69 +77,10 @@ func deriveKey(passphrase string) []byte {
 	return h[:]
 }
 
-// secretCipherPrefix 标记「本包加密原语产出的密文」并带格式版本号（便于日后换算法时区分）。
-//
-// 为什么用前缀而不是「试解密失败就当作明文」：后者把两类完全不同的情况混为一谈——
-// 升级前的历史明文存量（应当放行并提示轮换）与密钥不匹配/数据损坏（应当硬失败）。
-// 靠猜的判据在真实事故里的表现是「密文被原样当成明文返回给调用方」。
-const secretCipherPrefix = "enc:v1:"
-
-// encryptSecret 加密机密：AES-256-GCM，随机 nonce 前置，base64，带版本前缀。
-//
-// 两后端**共用**这一对原语（TD-61 的教训：同一职责各写一份必然漂移）——
-// config-svc 的 MySQL 后端曾把值原样落库（构造时接了 encryptionKey 却从不使用），
-// 而内存后端是加密的：同一份配置、两个后端、两种安全语义。
-func encryptSecret(key []byte, plaintext string) (string, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", err
-	}
-	return secretCipherPrefix + base64.StdEncoding.EncodeToString(gcm.Seal(nonce, nonce, []byte(plaintext), nil)), nil
-}
-
-// decryptSecret 解出机密明文。
-//
-// 返回 (plaintext, legacy, err)：legacy=true 表示读到的是**升级前的未加密存量**（原样返回，
-// 调用方应记录告警并提示轮换）；err 非 nil 表示「带版本前缀但解不开」——密钥不匹配或数据
-// 损坏，调用方必须硬失败，不得把密文当明文用。
-func decryptSecret(key []byte, stored string) (string, bool, error) {
-	raw, ok := strings.CutPrefix(stored, secretCipherPrefix)
-	if !ok {
-		return stored, true, nil
-	}
-	data, err := base64.StdEncoding.DecodeString(raw)
-	if err != nil {
-		return "", false, err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", false, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", false, err
-	}
-	if len(data) < gcm.NonceSize() {
-		return "", false, fmt.Errorf("ciphertext too short")
-	}
-	nonce, ct := data[:gcm.NonceSize()], data[gcm.NonceSize():]
-	out, err := gcm.Open(nil, nonce, ct, nil)
-	if err != nil {
-		return "", false, err
-	}
-	return string(out), false, nil
-}
-
+// encrypt/decrypt 是内存后端对共享原语的薄包装（TD-88 前置：原语已下沉 pkg/secretcrypto）。
+// 密钥派生（deriveKey，passphrase→SHA-256）刻意留在本包：密钥形状是部署策略，不下沉。
 func (s *MemoryStore) encrypt(plaintext string) (string, error) {
-	return encryptSecret(s.encryptionKey, plaintext)
+	return secretcrypto.Encrypt(s.encryptionKey, plaintext)
 }
 
 func configKey(tenantID, key string) string {
@@ -322,7 +257,7 @@ func (s *MemoryStore) GetSecret(tenantID, key string) (*models.SecretEntry, bool
 		return nil, false
 	}
 
-	decrypted, legacy, err := decryptSecret(s.encryptionKey, entry.Value)
+	decrypted, legacy, err := secretcrypto.Decrypt(s.encryptionKey, entry.Value)
 	if err != nil {
 		log.Printf("[store] GetSecret 解密失败（密钥不匹配或数据损坏）: tenant=%s key=%s: %v", tenantID, key, err)
 		return nil, false

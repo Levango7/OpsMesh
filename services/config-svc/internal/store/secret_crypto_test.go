@@ -1,92 +1,159 @@
+// secret_crypto_test.go 机密加密的**格式兼容 + 语义**回归（TD-88 前置：原语下沉 pkg/secretcrypto）。
+//
+// 本文件保留一份**旧实现的逐字副本**（legacyEncrypt/legacyDecrypt，仅测试用），用于把
+// 「下沉后格式与旧实现逐字节一致」变成常驻断言——这是规格 §8 列为「不可跳过」的回滚保险：
+// 格式一旦漂移，config-svc 已落库的密文就读不出来了，而那种事故只在**升级后的真库**上暴露。
+// 副本刻意留在 *_test.go 里（实现守卫 no_dup_impl_test.go 只扫非测试文件），
+// 既保住证据、又不构成「第二份实现」。
 package store
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
 
+	"github.com/Levango7/OpsMesh/pkg/secretcrypto"
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/models"
 )
 
-// TestSecretCryptoRoundTrip 覆盖两后端共用的机密加解密原语（TD-65 补测发现的缺陷回归）。
-//
-// 背景：config-svc 的 MySQL 后端此前把 secret 原样落库（构造函数接了 encryptionKey 但从未使用），
-// 而内存后端是加密的——同一份配置、两个后端、两种安全语义。本测试锁住原语本身的契约，
-// 集成测试（mysql_integration_test.go）锁住「真的加密落库」。
-func TestSecretCryptoRoundTrip(t *testing.T) {
+// ---- 旧实现副本（下沉前 store.go 的 encryptSecret/decryptSecret，逐字保留） ----
+
+const legacyPrefix = "enc:v1:"
+
+func legacyEncrypt(key []byte, plaintext string) (string, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+	return legacyPrefix + base64.StdEncoding.EncodeToString(gcm.Seal(nonce, nonce, []byte(plaintext), nil)), nil
+}
+
+func legacyDecrypt(key []byte, stored string) (string, bool, error) {
+	raw, ok := strings.CutPrefix(stored, legacyPrefix)
+	if !ok {
+		return stored, true, nil
+	}
+	data, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return "", false, err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", false, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", false, err
+	}
+	if len(data) < gcm.NonceSize() {
+		return "", false, fmt.Errorf("ciphertext too short")
+	}
+	nonce, ct := data[:gcm.NonceSize()], data[gcm.NonceSize():]
+	out, err := gcm.Open(nil, nonce, ct, nil)
+	if err != nil {
+		return "", false, err
+	}
+	return string(out), false, nil
+}
+
+// TestCrossCompatWithLegacyImplementation 规格 §8 的「不可跳过」保险：
+// 旧实现产出的密文必须能被新包解开，新包产出的密文必须能被旧实现解开（双向逐字节兼容）。
+func TestCrossCompatWithLegacyImplementation(t *testing.T) {
+	key := deriveKey("cross-compat-key")
+	const plain = "s3cr3t-跨实现验证"
+
+	// 方向 A：旧加密 → 新解密
+	oldEnc, err := legacyEncrypt(key, plain)
+	if err != nil {
+		t.Fatalf("legacyEncrypt: %v", err)
+	}
+	if !secretcrypto.HasPrefix(oldEnc) {
+		t.Fatalf("旧实现产出的密文前缀与新包不一致: %q", oldEnc)
+	}
+	got, legacy, err := secretcrypto.Decrypt(key, oldEnc)
+	if err != nil || legacy || got != plain {
+		t.Fatalf("新包解旧密文 = (%q legacy=%v err=%v), want (%q false nil)", got, legacy, err, plain)
+	}
+
+	// 方向 B：新加密 → 旧解密
+	newEnc, err := secretcrypto.Encrypt(key, plain)
+	if err != nil {
+		t.Fatalf("secretcrypto.Encrypt: %v", err)
+	}
+	got2, legacy2, err := legacyDecrypt(key, newEnc)
+	if err != nil || legacy2 || got2 != plain {
+		t.Fatalf("旧实现解新密文 = (%q legacy=%v err=%v), want (%q false nil)", got2, legacy2, err, plain)
+	}
+}
+
+// TestSecretCryptoRoundTripAndPrefix 往返 + 前缀 + 随机 nonce（共享原语语义）。
+func TestSecretCryptoRoundTripAndPrefix(t *testing.T) {
 	key := deriveKey("unit-test-key")
 
-	enc, err := encryptSecret(key, "s3cr3t-值")
+	enc, err := secretcrypto.Encrypt(key, "s3cr3t-值")
 	if err != nil {
-		t.Fatalf("encryptSecret: %v", err)
+		t.Fatalf("Encrypt: %v", err)
 	}
-	if !strings.HasPrefix(enc, secretCipherPrefix) {
-		t.Fatalf("密文缺少版本前缀 %q: %q", secretCipherPrefix, enc)
+	if !secretcrypto.HasPrefix(enc) {
+		t.Fatalf("密文缺少版本前缀 %q: %q", secretcrypto.Prefix, enc)
 	}
 	if strings.Contains(enc, "s3cr3t") {
 		t.Fatal("密文里出现了明文片段")
 	}
-
-	plain, legacy, err := decryptSecret(key, enc)
+	plain, legacy, err := secretcrypto.Decrypt(key, enc)
+	if err != nil || legacy || plain != "s3cr3t-值" {
+		t.Fatalf("解密 = (%q legacy=%v err=%v)", plain, legacy, err)
+	}
+	enc2, err := secretcrypto.Encrypt(key, "s3cr3t-值")
 	if err != nil {
-		t.Fatalf("decryptSecret: %v", err)
-	}
-	if legacy {
-		t.Fatal("本进程刚加密的值不应被判为历史明文存量")
-	}
-	if plain != "s3cr3t-值" {
-		t.Fatalf("解密 = %q, want 原文（含非 ASCII 字符）", plain)
-	}
-
-	// 随机 nonce：同一明文两次加密结果必须不同（否则等于确定性加密，泄漏「值是否相同」）。
-	enc2, err := encryptSecret(key, "s3cr3t-值")
-	if err != nil {
-		t.Fatalf("encryptSecret(2): %v", err)
+		t.Fatalf("Encrypt(2): %v", err)
 	}
 	if enc == enc2 {
 		t.Fatal("同一明文两次加密结果相同——nonce 不是随机的")
 	}
 }
 
-// TestSecretCryptoLegacyAndFailurePaths 锁住两条判据的边界：
-//  1. 无前缀的值 = 升级前的历史明文存量 ⇒ 原样返回并标记 legacy（升级不能打断老数据）；
-//  2. 有前缀但解不开（密钥不匹配/被篡改）⇒ 必须报错，调用方据此硬失败，
-//     绝不能把密文当明文交给调用方。
+// TestSecretCryptoLegacyAndFailurePaths 两条判据的边界：历史明文放行 / 解不开硬失败。
 func TestSecretCryptoLegacyAndFailurePaths(t *testing.T) {
 	key := deriveKey("unit-test-key")
 
-	plain, legacy, err := decryptSecret(key, "legacy-plaintext")
+	plain, legacy, err := secretcrypto.Decrypt(key, "legacy-plaintext")
+	if err != nil || !legacy || plain != "legacy-plaintext" {
+		t.Fatalf("无前缀值返回 = (%q, legacy=%v, err=%v), want 原样放行且 legacy", plain, legacy, err)
+	}
+	enc, err := secretcrypto.Encrypt(key, "value")
 	if err != nil {
-		t.Fatalf("无前缀的值应原样放行，却报错: %v", err)
+		t.Fatalf("Encrypt: %v", err)
 	}
-	if !legacy || plain != "legacy-plaintext" {
-		t.Fatalf("无前缀值返回 = (%q, legacy=%v), want (legacy-plaintext, legacy=true)", plain, legacy)
-	}
-
-	enc, err := encryptSecret(key, "value")
-	if err != nil {
-		t.Fatalf("encryptSecret: %v", err)
-	}
-	// 错密钥
-	if _, _, err := decryptSecret(deriveKey("another-key"), enc); err == nil {
+	if _, _, err := secretcrypto.Decrypt(deriveKey("another-key"), enc); err == nil {
 		t.Fatal("错密钥解密应报错，却成功了")
 	}
-	// 篡改密文体（翻掉 base64 尾字符）
 	tampered := enc[:len(enc)-2] + "AB"
-	if _, _, err := decryptSecret(key, tampered); err == nil {
+	if _, _, err := secretcrypto.Decrypt(key, tampered); err == nil {
 		t.Fatal("被篡改的密文解密应报错（GCM 认证失败），却成功了")
 	}
-	// 前缀在但内容不是合法 base64
-	if _, _, err := decryptSecret(key, secretCipherPrefix+"not-base64!!"); err == nil {
+	if _, _, err := secretcrypto.Decrypt(key, secretcrypto.Prefix+"not-base64!!"); err == nil {
 		t.Fatal("非法 base64 应报错")
 	}
-	// 前缀在但长度不足以容纳 nonce
-	if _, _, err := decryptSecret(key, secretCipherPrefix+"AA=="); err == nil {
+	if _, _, err := secretcrypto.Decrypt(key, secretcrypto.Prefix+"AA=="); err == nil {
 		t.Fatal("长度不足的密文应报错")
 	}
 }
 
-// TestMemoryStoreSecretEncryptedAtRest 验证内存后端也走同一对原语：
-// 写入后内部存储的值必须是带前缀的密文，而对外读取仍返回明文。
+// TestMemoryStoreSecretEncryptedAtRest 内存后端也走共享原语：存储值是带前缀密文，对外读回明文。
 func TestMemoryStoreSecretEncryptedAtRest(t *testing.T) {
 	s := NewMemoryStore("unit-test-key", 10)
 	created := s.CreateSecret(&models.SecretEntry{TenantID: "t1", Key: "k1", Value: "plain", KeyType: "aes"})
@@ -97,8 +164,8 @@ func TestMemoryStoreSecretEncryptedAtRest(t *testing.T) {
 	if stored == nil {
 		t.Fatal("内部存储里没有该机密")
 	}
-	if !strings.HasPrefix(stored.Value, secretCipherPrefix) {
-		t.Fatalf("内存后端存储值未加密（或格式与 MySQL 后端不一致）: %q", stored.Value)
+	if !secretcrypto.HasPrefix(stored.Value) {
+		t.Fatalf("内存后端存储值未加密（或格式与共享原语不一致）: %q", stored.Value)
 	}
 	got, ok := s.GetSecret("t1", "k1")
 	if !ok || got.Value != "plain" {

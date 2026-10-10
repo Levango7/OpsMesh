@@ -12,6 +12,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"github.com/Levango7/OpsMesh/pkg/secretcrypto"
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/models"
 )
 
@@ -26,7 +27,7 @@ type MySQLStore struct {
 // encryptionKey 为 secret 加密口令（与 NewMemoryStore 同一来源 cfg.EncryptionKey）。
 // 注意：该字段 2026-10-09 之前只被 derive 而从未使用 ⇒ MySQL 侧机密明文落库（内存后端是加密的）。
 // 现在三条写路径（Create/Update/Rotate）与读路径（GetSecret）共用 store.go 的
-// encryptSecret/decryptSecret 原语；历史明文存量按「无版本前缀」识别并原样放行（带告警）。
+// pkg/secretcrypto 原语；历史明文存量按「无版本前缀」识别并原样放行（带告警）。
 // maxHistory 为版本历史保留上限（<=0 时取 50）。空 key 时打告警并派生随机 key——
 // 该模式下重启后已加密数据将无法解密，仅适合演示；生产必须显式配置。
 func NewMySQLStore(dsn string, encryptionKey string, maxHistory int) (*MySQLStore, error) {
@@ -348,7 +349,7 @@ func (s *MySQLStore) CreateSecret(item *models.SecretEntry) *models.SecretEntry 
 	item.Version = 1
 	item.CreatedAt = now
 	item.UpdatedAt = now
-	enc, err := encryptSecret(s.encryptionKey, item.Value)
+	enc, err := secretcrypto.Encrypt(s.encryptionKey, item.Value)
 	if err != nil {
 		log.Printf("[store] CreateSecret 加密失败: %v", err)
 		return nil
@@ -376,7 +377,7 @@ func (s *MySQLStore) GetSecret(tenantID, key string) (*models.SecretEntry, bool)
 		}
 		return nil, false
 	}
-	plain, legacy, decErr := decryptSecret(s.encryptionKey, e.Value)
+	plain, legacy, decErr := secretcrypto.Decrypt(s.encryptionKey, e.Value)
 	if decErr != nil {
 		log.Printf("[store] GetSecret 解密失败（密钥不匹配或数据损坏）: tenant=%s key=%s: %v", tenantID, key, decErr)
 		return nil, false
@@ -421,7 +422,7 @@ func (s *MySQLStore) UpdateSecret(item *models.SecretEntry) *models.SecretEntry 
 	item.Version = existing.Version + 1
 	item.CreatedAt = existing.CreatedAt
 	item.UpdatedAt = time.Now().UTC()
-	enc, encErr := encryptSecret(s.encryptionKey, item.Value)
+	enc, encErr := secretcrypto.Encrypt(s.encryptionKey, item.Value)
 	if encErr != nil {
 		log.Printf("[store] UpdateSecret 加密失败: %v", encErr)
 		return nil
@@ -498,7 +499,7 @@ func (s *MySQLStore) RotateSecret(tenantID, key, newValue string) *models.Secret
 	}
 	newVersion := existing.Version + 1
 	now := time.Now().UTC()
-	enc, encErr := encryptSecret(s.encryptionKey, newValue)
+	enc, encErr := secretcrypto.Encrypt(s.encryptionKey, newValue)
 	if encErr != nil {
 		log.Printf("[store] RotateSecret 加密失败: %v", encErr)
 		return nil

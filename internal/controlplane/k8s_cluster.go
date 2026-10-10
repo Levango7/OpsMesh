@@ -18,10 +18,6 @@
 package controlplane
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	cryptoRand "crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"net/http"
 	"strings"
@@ -31,15 +27,17 @@ import (
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
+	"github.com/Levango7/OpsMesh/pkg/secretcrypto"
 )
 
-// encryptKubeconfig 用 AES-256-GCM 加密 kubeconfig 明文，返回 base64(nonce+ciphertext)。
-// 安全语义：DB 泄露时加密后的 kubeconfig 不可直接还原，需同时拿到加密密钥才能解密。
+// encryptKubeconfig 用共享原语加密 kubeconfig（AES-256-GCM + enc:v1: 版本前缀）。
 //
-// 行为：
+// 行为（与下沉前逐字保持）：
 //   - 空串透传（空 kubeconfig 不加密）；
 //   - encryptionKey 未配置（非生产模式）：明文透传（保持 demo 兼容，NewServer 已告警）；
-//   - encryptionKey 已配置：AES-GCM 加密，base64 编码返回。
+//   - encryptionKey 已配置：secretcrypto.Encrypt ⇒ "enc:v1:" + base64(nonce||GCM 密文+tag)。
+//
+// TD-88 前置：原语已下沉 pkg/secretcrypto（此前本文件是第二份手抄实现，无版本前缀）。
 func (s *Server) encryptKubeconfig(plaintext string) (string, error) {
 	if plaintext == "" {
 		return "", nil
@@ -47,59 +45,49 @@ func (s *Server) encryptKubeconfig(plaintext string) (string, error) {
 	if len(s.encryptionKey) == 0 {
 		return plaintext, nil // 未配置加密密钥：明文透传（非生产/demo 兼容）
 	}
-	block, err := aes.NewCipher(s.encryptionKey)
+	enc, err := secretcrypto.Encrypt(s.encryptionKey, plaintext)
 	if err != nil {
-		return "", fmt.Errorf("kubeconfig 加密失败（AES 初始化）: %w", err)
+		return "", fmt.Errorf("kubeconfig 加密失败: %w", err)
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("kubeconfig 加密失败（GCM 初始化）: %w", err)
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := cryptoRand.Read(nonce); err != nil {
-		return "", fmt.Errorf("kubeconfig 加密失败（nonce 生成）: %w", err)
-	}
-	// Seal 把 nonce 作为 dst 前缀追加，结果 = nonce + ciphertext + gcmTag。
-	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
+	return enc, nil
 }
 
-// decryptKubeconfig 用 AES-256-GCM 解密 base64(nonce+ciphertext)，返回 kubeconfig 明文。
-// 用于从 store 读取加密 kubeconfig 后还原为明文（传给 ClusterManager.AddCluster/TestCluster）。
+// decryptKubeconfig 解密 kubeconfig（两值 API；既有调用方与测试使用）。
+// 需要「是否需机会式迁移」判据的调用方用 decryptKubeconfigForLoad。
+func (s *Server) decryptKubeconfig(stored string) (string, error) {
+	plain, _, err := s.decryptKubeconfigForLoad(stored)
+	return plain, err
+}
+
+// decryptKubeconfigForLoad 读路径三段分流 + 机会式迁移判据（TD-88 前置，规格 §4.2）。
 //
-// 行为：
-//   - 空串透传（空 kubeconfig 不解密）；
-//   - encryptionKey 未配置（非生产模式）：明文透传（store 中即为明文）；
-//   - encryptionKey 已配置：base64 解码 → AES-GCM 解密 → 返回明文。
-func (s *Server) decryptKubeconfig(encrypted string) (string, error) {
-	if encrypted == "" {
-		return "", nil
+// 三段：
+//  1. 空串 / 未配置密钥 ⇒ 原样透传（demo 兼容）；
+//  2. **无前缀** ⇒ 可能是「切换共享原语前的旧密文」（base64(nonce||ct)，无版本前缀），
+//     也可能本就是明文。先用 DecryptLegacyUnprefixed 试解：
+//     解得开 ⇒ (明文, migrate=true)，调用方应**立即用 Encrypt 重写回库**（机会式迁移）；
+//     解不开 ⇒ 按明文放行（无密钥期写入的存量 / 运维手工写入），migrate=false。
+//  3. **有前缀** ⇒ 交给共享原语的严格语义：解不开**必须硬失败**（密钥不匹配/数据被篡改），
+//     绝不回退成明文——这是下沉后 controlplane 才具备的能力（旧实现二元返回无法区分
+//     「密文解不开」与「明文」，会把一段 base64 乱码当 kubeconfig 交给 client-go）。
+func (s *Server) decryptKubeconfigForLoad(stored string) (plain string, migrate bool, err error) {
+	if stored == "" {
+		return "", false, nil
 	}
 	if len(s.encryptionKey) == 0 {
-		return encrypted, nil // 未配置加密密钥：明文透传
+		return stored, false, nil // 未配置加密密钥：明文透传
 	}
-	data, err := base64.StdEncoding.DecodeString(encrypted)
-	if err != nil {
-		return "", fmt.Errorf("kubeconfig 解密失败（base64 解码）: %w", err)
+	if !secretcrypto.HasPrefix(stored) {
+		if pt, ok := secretcrypto.DecryptLegacyUnprefixed(s.encryptionKey, stored); ok {
+			return pt, true, nil
+		}
+		return stored, false, nil // 确系明文存量
 	}
-	block, err := aes.NewCipher(s.encryptionKey)
-	if err != nil {
-		return "", fmt.Errorf("kubeconfig 解密失败（AES 初始化）: %w", err)
+	pt, _, decErr := secretcrypto.Decrypt(s.encryptionKey, stored)
+	if decErr != nil {
+		return "", false, fmt.Errorf("kubeconfig 解密失败: %w", decErr)
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("kubeconfig 解密失败（GCM 初始化）: %w", err)
-	}
-	nonceSize := gcm.NonceSize()
-	if len(data) < nonceSize {
-		return "", fmt.Errorf("kubeconfig 解密失败：密文长度 %d < nonce 长度 %d", len(data), nonceSize)
-	}
-	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return "", fmt.Errorf("kubeconfig 解密失败（GCM 验签）: %w", err)
-	}
-	return string(plaintext), nil
+	return pt, false, nil
 }
 
 // k8sClusterKubeconfigMasked 是 kubeconfig 脱敏后的占位符。

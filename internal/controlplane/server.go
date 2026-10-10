@@ -504,10 +504,23 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// 连通性由用户「测试连接」或资源 API 按需刷新，恢复失败仅告警不阻断启动。
 	// ：store 中 kubeconfig 为加密存储，恢复连接前需解密为明文传给 AddCluster。
 	for _, kc := range st.ListK8sClusters("") {
-		plain, decErr := s.decryptKubeconfig(kc.Kubeconfig)
+		plain, migrate, decErr := s.decryptKubeconfigForLoad(kc.Kubeconfig)
 		if decErr != nil {
 			logx.Warn(context.Background(), "K8s 集群重启恢复连接解密 kubeconfig 失败", decErr, "clusterID", kc.ID)
 			continue
+		}
+		if migrate {
+			// 机会式迁移（TD-88 前置，规格 §4.2）：无前缀的**旧密文**解出来后立即用新格式
+			// （enc:v1:）重写回库，存量随进程启动逐条收敛。SaveK8sCluster 是按 ID 幂等 upsert，
+			// 失败只告警、不影响本次恢复（下次启动重试）。
+			if enc, encErr := s.encryptKubeconfig(plain); encErr == nil && enc != kc.Kubeconfig {
+				kc.Kubeconfig = enc
+				if saveErr := st.SaveK8sCluster(kc); saveErr != nil {
+					logx.Warn(context.Background(), "K8s kubeconfig 机会式迁移回写失败（下次启动重试）", saveErr, "clusterID", kc.ID)
+				} else {
+					logx.Info(context.Background(), "K8s kubeconfig 已迁移为带前缀格式", "clusterID", kc.ID)
+				}
+			}
 		}
 		if err := s.clusterMgr.AddCluster(kc.ID, plain); err != nil {
 			logx.Warn(context.Background(), "K8s 集群重启恢复连接失败", err, "clusterID", kc.ID)

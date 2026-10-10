@@ -4,6 +4,18 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-10（TD-88 前置：机密静态加密原语下沉 `pkg/secretcrypto`——三处同形态实现合一 + 防漂移守卫）
+
+- **重构｜加密原语下沉（按 kilo agent 的 `docs/td88-secretcrypto-sink-spec.md` 执行）**：新建 **`pkg/secretcrypto`** 作为机密静态加密的**单一实现**——AES-256-GCM、随机 nonce 前置、base64、`enc:v1:` 版本前缀；API：`Encrypt` / `Decrypt`（三值语义：无前缀⇒legacy 明文放行；有前缀解不开⇒**硬失败**）/ `DecryptLegacyUnprefixed`（无前缀旧密文专用）/ `HasPrefix` / `Prefix`。**密钥派生刻意不下沉**（config-svc 是 passphrase→SHA-256、controlplane 是 base64→32 原始字节，密钥形状属各方部署语义）。
+- **消费方迁移**：
+  ① `services/config-svc`：删掉本包 `encryptSecret`/`decryptSecret`/`secretCipherPrefix` 实现，改为转发共享原语（`deriveKey` 保留）；格式与旧实现**逐字节一致** ⇒ 已落库密文无需迁移。
+  ② `internal/controlplane` kubeconfig：`encryptKubeconfig`/`decryptKubeconfig` 改为转发 + **读路径三段分流**（无前缀先试旧密文、解不开按明文；有前缀解不开硬失败）；**机会式迁移已接线**——启动恢复环里对「无前缀旧密文」解出后立即用 `enc:v1:` 重写回库（`SaveK8sCluster` 是幂等 upsert，回写失败只告警、下次启动重试）。**顺带补齐 controlplane 此前缺失的能力**：旧实现二元返回无法区分「密文解不开」与「明文」，会把一段 base64 乱码当 kubeconfig 交给 client-go。
+- **防漂移守卫（规格 §5-2，最有长期价值的一条）**：`pkg/secretcrypto/no_dup_impl_test.go` **全仓静态扫描** `aes.NewCipher(` / `cipher.NewGCM(`（排除 `_test.go` 与本包），**多一处即判红并点名文件:行号**；带两道下限（扫描文件数 ≥200、本包自身实现数 ≥2）防「扫描面塌缩成假绿」；跳过注释行（文档里提到 API 不算实现）。**变异检验**：在 controlplane 里塞回一份实现 ⇒ 判红并点名 `k8s_cluster.go:43`，还原后复绿。实测扫描面：**524 个非测试 .go，实现仅存在于 pkg/secretcrypto**。
+- **测试口径的两处有意变更（写清楚免得被当成回归）**：kubeconfig 的 `TestDecryptKubeconfig_BadBase64` / `_ShortCiphertext` 原先断言「无前缀的坏值报错」——新语义下**无前缀 = 明文存量放行**（不报错），故改为断言放行，并**新增带前缀的坏 base64 / 短密文两条硬失败用例**（把原来覆盖的解码错误分支保住）+ 新增「无前缀旧密文可解出且标记需迁移」用例。
+- **交叉验证保险（规格 §8「不可跳过」的落地形态）**：`config-svc` 的 `secret_crypto_test.go` 内嵌一份**旧实现逐字副本**（仅测试用；实现守卫只扫非测试文件，故不构成第二份实现），把「旧加密→新解密」「新加密→旧解密」双向兼容变成**常驻断言**——把格式漂移这类「只在升级后的真库上暴露」的事故变成单元测试就能挡住。
+- **规格 §6 三个待确认点的处置**：①**机会式迁移有入口**（`SaveK8sCluster` 幂等 upsert）⇒ 已实现；②config-svc 空密钥降级策略（`ephemeral-<nano>-<dsn>`）**保持不动**（收紧属部署行为变更，建议单独一轮）；③包放置按规格推荐 `pkg/secretcrypto`（`pkg/` 是各服务模块唯一合法的共享层，controlplane 亦可达）。
+- **验证**：`pkg/secretcrypto` + `internal/controlplane` + `services/config-svc` 三处全绿；`-race` 零竞态；lint 0 issues（root 与服务侧配置各一次）；`gofmt` 净；门禁 PASS=76。
+
 ## [Unreleased] — 2026-10-10（CI：Docker Hub 登录接线落地——镜像/容器类 job 的 429 限流缓解）
 
 - **CI｜Docker Hub 登录步接入（TD-89 选项 ①）**：`ci.yml` 的 6 个需要拉镜像的 job（`security` 的 helm 容器、`release-dryrun`、`image`、`image-agent`、`e2e-real`、`e2e-sec`）与 `release.yml` 的 2 个构建 job 均加 `docker/login-action@v3`；凭据经**工作流级 `env`**（`DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN`）承载，**未配置时该步自动跳过**——流水线行为与之前逐字一致，配置后匿名限流配额显著提升。
