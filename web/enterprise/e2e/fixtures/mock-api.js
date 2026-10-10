@@ -7,6 +7,7 @@ import {
   mockTasks, mockAlerts, mockClusters, mockNamespaces,
   mockPods, mockDeployments, mockNodes, mockPodLogs
 } from './mock-data.js'
+import { assertOwnServer } from './selfcheck.js'
 
 const API = '/api/v1'
 
@@ -15,7 +16,7 @@ const API = '/api/v1'
 function defaultEndpoints({ authed = true } = {}) {
   return {
     // —— 认证 ——
-    'POST /auth/login': (req) => {
+    'POST /auth/login': () => {
       // 简单校验：username/password 非空即放行
       return { status: 200, body: { user: mockUser } }
     },
@@ -76,7 +77,7 @@ function defaultEndpoints({ authed = true } = {}) {
     'GET /k8s/clusters/c-prod/deployments': () => ({ status: 200, body: mockDeployments }),
     'GET /k8s/clusters/c-prod/nodes': () => ({ status: 200, body: mockNodes }),
     'GET /k8s/clusters/c-prod/pods/default/nginx-7b8f-x4k2z/logs': () => ({ status: 200, body: mockPodLogs }),
-    'POST /k8s/clusters/c-prod/deployments/default/nginx-deploy/scale': (req) => ({
+    'POST /k8s/clusters/c-prod/deployments/default/nginx-deploy/scale': () => ({
       status: 200, body: { name: 'nginx-deploy', replicas: 5 }
     }),
     'POST /k8s/clusters/c-prod/deployments/default/nginx-deploy/restart': () => ({
@@ -99,6 +100,9 @@ function parseReq(route) {
 //   overrides: { 'GET /devices': customData | function }  — 覆盖特定端点
 //   blockUnhandled: true  — 未匹配的 /api/v1/* 请求返回 404（默认 true）
 export async function mockApi(page, options = {}) {
+  // 端口串台自检：确认 baseURL 对面真是本应用，而非 4173 上别的项目
+  // （见 selfcheck.js 的背景说明；Playwright 会静默复用已占用的端口）。
+  await assertOwnServer(page.request)
   const { authed = true, overrides = {}, blockUnhandled = true } = options
   const endpoints = { ...defaultEndpoints({ authed }), ...overrides }
 
