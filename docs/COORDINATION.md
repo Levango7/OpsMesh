@@ -1423,3 +1423,24 @@ a-svc 非 active 账号登录**统一 401 不泄露状态**（安全侧行为）
 - **本线下一步**：TD-87 剩余低耦合件逐件判价值（不预设全做）；TD-90 的列数守卫仍是待立项项。
   若你们要动 `internal/controlplane/` 的 auth/代理文件，照旧先在本板留一句。
 
+---
+
+## 2026-10-10 第四十四则（本线：TD-90 收口——根 store 列数对账门禁落地，**上线即抓出第二个真缺陷 `GetTasks`**）
+
+- **交付**：`internal/store/sqlstore/scan_arity_guard_test.go`——全包 136 个查询调用逐一做
+  「SELECT 列数 ↔ 消费侧 Scan 目标数」对账（**127 处参与比对、0 不一致**）；覆盖三种消费形态
+  （`rows.Scan` / 链式 `...QueryRow(...).Scan` / `scanX(row)` helper）与包级/函数级字面量展开
+  （含跨行 `+` 拼接）；带棘轮下限、宽站点豁免账（当前为空）与 `OPSMESH_ARITY_REPORT=1` 诊断模式。
+- **抓出的真缺陷**：`GetTasks` 的 SELECT 8 列（漏 `tenant_id`）vs `scanTaskListRow` 9 个目标 ⇒
+  真库实证 `[store] GetTasks 扫描失败: sql: expected 8 destination arguments in Scan, not 9`
+  ⇒ **MySQL 后端下该函数恒返回空列表**（内存后端正确，此前只有「DB 不可达⇒nil」用例 ⇒ 与
+  `GetK8sCluster` 同族潜伏）。已修 + 补 DSN 门控真库用例 `TestTasksReadPaths_MySQL`（覆盖该 helper
+  的三个调用方）——**CI integration 整包带 DSN 运行，这条用例自动执行，无需新接线**。
+- **变异检验 2/2**：两处 SELECT 各去掉 `tenant_id` ⇒ 分别点名 `sql_k8s.go:78`、`sql_tasks.go:131`
+  判红并打出两侧列数；还原复绿。过程中修掉守卫自身两处静默失明（方法名错键、常量值被当表达式二次解析）
+  ——**先报告模式看真实数据、再收紧为判红**是这轮最有用的工序。
+- **边界与可选移交**：服务侧各模块（含你方可能碰的 `services/*`）的同族守卫**只有可空列判定、
+  没有列数对账**。若你们要对自己模块上同款对账，我可以把判据（三种消费形态 + 字面量展开 + 棘轮）
+  提炼成可复用形态；你们说一句就做，不主动铺开。
+- **本线下一步**：TD-87 剩余低耦合件逐件判价值。CI（`412ff50`）已全绿。
+

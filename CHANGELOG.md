@@ -4,6 +4,16 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-10（TD-90 收口：SELECT 列数 ↔ Scan 目标数 对账门禁落地；上线即抓出第二个真缺陷 `GetTasks`）
+
+- **新增｜根 store 的「列数对账」静态守卫**（`internal/store/sqlstore/scan_arity_guard_test.go`）：遍历全包 136 个查询调用，把 SELECT 列表的顶层项数与消费侧 Scan 的目标数逐一比对——**127 处参与比对、0 不一致**。判定链只认能静态证实的：① 取查询实参与其赋值目标；② SQL 字面量展开（包级/函数级常量、跨行 `+` 拼接、常量引用，同名多值即弃判）；③ SELECT 列表按顶层逗号计数（括号内不算 ⇒ `COALESCE(a,b)` 记 1 列；含 `*`/`?` 即弃判）；④ 三种消费形态——`rows.Scan(...)`、链式 `...QueryRow(...).Scan(...)`、`scanX(row)` helper（目标数取自 helper 函数体）。
+- **为什么值得单列门禁**：`database/sql` 在列数不等时报 `expected N destination arguments in Scan, not M`，而调用方普遍只 `storefail.Record` 后返回 nil/continue ⇒ **该读路径静默返回空**；内存后端正确，故单测全绿、只在真库/生产暴露。此前该形态已发生两次（`GetK8sCluster`、本轮 `GetTasks`），且根 store 的可空列守卫注释里明确把「列数对账」留给了后续——本文件即那笔账。
+- **上线即抓出真缺陷｜`GetTasks` 在 MySQL 后端恒返回空列表**：SELECT 8 列（漏 `tenant_id`）vs `scanTaskListRow` 的 9 个 Scan 目标。**真库实证**（修复前必红，日志原话）：`[store] GetTasks 扫描失败: sql: expected 8 destination arguments in Scan, not 9`。此前该函数只有「DB 不可达 ⇒ nil」一条用例，正常路径无真库执行方 ⇒ 与 `GetK8sCluster` 同族潜伏。修复=补 `tenant_id`；新增 DSN 门控真库用例 `sql_tasks_mysql_test.go`，覆盖 `scanTaskListRow` 的三个调用方（GetTasks/AllTasks/TaskByID），断言含 tenant_id 字段能读回（CI integration 整包带 DSN 运行，无需新接线）。
+- **守卫自身的两处静默失明（过程中修掉，值得记）**：① `functionBodies` 求函数名传了错偏移，方法形态会**退到上一个函数的签名行** ⇒ 函数级常量全部查不到（16 处宽站点失明）；② 查表命中的常量值是**裸 SQL 文本**，却被当 Go 表达式二次解析 ⇒ 值里的逗号/问号让解析全败（14 处站点被迫进不可判桶，且更早的"能判"版本是**假阳性判出 1 列**）。**教训：先做报告模式看真实数据再收紧为判红**——两次失明与一批假阳性都是在这一步暴露的，直接判红会被噪音淹没。
+- **防塌缩**：棘轮下限（参与比对数 ≥127，且不一致站点仍计入——早期版本"只在一致时计数"会让一处真缺陷先撞下限、把「哪一行列数不等」埋掉，变异检验踩过）；宽站点（消费侧 ≥3）必须参与比对或进豁免账（键 `file#fn#var`，带过期检查，当前为空）；`OPSMESH_ARITY_REPORT=1` 诊断模式打印全量明细。
+- **变异检验 2/2**：去掉 `GetK8sCluster` 的 `tenant_id` ⇒ 点名 `sql_k8s.go:78`（SELECT 7 vs 8）；去掉 `GetTasks` 的 ⇒ 点名 `sql_tasks.go:131`（SELECT 8 vs 9）；还原复绿。
+- **边界（写明）**：服务侧各模块（cmdb 等）的同族守卫仍只有可空列判定、**无列数对账**，如需覆盖另行立项。台账 TD-90 行已收口（标记行 pending 7→6、closed 24→25，门禁实测复算通过）。
+
 ## [Unreleased] — 2026-10-10（TD-60 §9.3 方向 A：auth 域会话凭证透传 + 「凭证只投递给签发方」静态守卫）
 
 - **裁决｜采纳方向 A（仅对 auth 域放行凭证）**：双轨冒烟复跑（对方 `fbb263d`，实测非推断）暴露第二层阻断——聚合代理剥除会话 Cookie，而 auth-svc 网关是**自验 token 模型**（`bearerOrCookie` → `ValidateToken`），同一枚 token 直连 auth-svc 返 200、经代理前缀返 401。裁决 A 而非 B（auth-svc 改吃注入身份头）：A 不引入新的信任面，B 需额外补「auth-svc HTTP 口仅回环/仅代理可达」门禁断言作前提（B 的前提也不能就此省掉）。记录于提案 §9.5。

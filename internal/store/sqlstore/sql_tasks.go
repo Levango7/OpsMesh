@@ -125,8 +125,11 @@ func (s *SQLStore) GetTasks(agentID string) []*proto.Task {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// 列清单必须与 scanTaskListRow 的 9 个 Scan 目标逐一对应（缺 tenant_id 会让
+	// rows.Scan 直接报 "expected 8 destination arguments in Scan, not 9"，函数静默返回空——
+	// 由 scan_arity_guard_test.go 的列数对账门禁与被它抓出的真库用例共同守住）。
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT task_id, agent_id, type, command, content, path, status, created_at FROM tasks WHERE agent_id=? AND (status IS NULL OR status='pending')`, agentID)
+		`SELECT task_id, agent_id, tenant_id, type, command, content, path, status, created_at FROM tasks WHERE agent_id=? AND (status IS NULL OR status='pending')`, agentID)
 	if err != nil {
 		storefail.Record("[store] GetTasks 查询失败 %s: %v", agentID, err)
 		return nil
