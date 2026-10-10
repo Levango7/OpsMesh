@@ -171,6 +171,46 @@ auth 域不成立，因为两套用户体系彼此独立：
 
 在原四方案之上追加一条**前置条件**：无论选 A/B/C/D，**auth 代理规则与权限目录/本地语义的对齐是切流的硬前置**；在此修复前，`AUTH_SVC_PROXY_ENABLED=true` 打开只会得到恒 403 的认证面。本项工作量小（一处目录或一处规则语义 + 一段门禁断言），但**必须由 `internal/controlplane` 与 `internal/store` 的负责方（并行线）实施**——本线按要求不碰其文件面。
 
+---
+
+## 9. 收口复跑（2026-10-10）：权限闸已修复，但暴露出第二层阻断
+
+在并行线落地权限闸修复后，按 §7 同法端到端复跑（Linux 二进制双进程 + 真实 HTTP，端口 19380/19381，`AUTH_SVC_PROXY_ENABLED=true`）。**逐项结果**：
+
+| 用例 | 结果 | 判定 |
+|---|---|---|
+| 开关关闭 → 代理前缀 404 / 本地路径可用 | 同 §7 | ✅ 二元开关仍双向有效 |
+| 控制面本地登录 + 首登改密 | 200 → 200，**at/rt 均下发** | ✅ 本线修复生效（§9.1） |
+| 直连 auth-svc 登录 + 首登改密 | 200 → 200，**at/rt 均下发** | ✅ 同上 |
+| 直连 auth-svc `/auth/me` | 200，`permissions` 含全部 9 点 | ✅ 角色展开与字段对齐生效 |
+| **auth-svc 签发的 at → 控制面 `/api/v1/auth-svc/me`** | **401 `authentication required`** | ❌ **第二层阻断**（§9.2） |
+| 控制面签发的 at → 同上 | 401 `authentication required` | ❌ 同因 |
+
+### 9.1 已验证修复（两条）
+
+1. **权限闸**：并行线把 auth 域规则的 permRules 改为「仅认证、不查权限」（`PermAuthenticated`），语义与本地 handler 对齐。实测：请求**已能穿过聚合层闸门到达 auth-svc**（401 信息由 auth-svc 自己发出即证据）——§7.1 的恒 403 已消除。
+2. **首登改密签发会话**（本线 `4245eb3`）：改密后 at/rt 均下发且**签发出的 at 真能访问 `/auth/me`**，两侧一致。
+
+### 9.2 第二层阻断：聚合代理剥除 Cookie，而 auth-svc 只认自验 token
+
+- **实测**：同一枚 auth-svc 签发的 `opsmesh_at`，**直连 auth-svc `/auth/me` 返回 200**（含完整 permissions），但经控制面 `/api/v1/auth-svc/me` 返回 **401 `authentication required`**。
+- **根因**：`internal/controlplane/service_proxy.go:86-88` 在转发前**故意 `req.Header.Del("Cookie")`**，注释理由是「下游微服务不消费会话 Cookie；鉴权已在聚合层完成，剥除防止会话凭证意外落地到内部服务的访问日志」；同时按约定注入 `X-Tenant-ID` / `X-User-Id`（`:96-104`）。
+- **为什么对 auth 域不成立**：device/task/gpu/portal 等域的网关**消费注入的身份头**（portal-svc「authctx 约定头 X-User-Id」、gpu-svc 读 `X-Tenant-ID`，均为既有模式），剥 Cookie 无损；而 **auth-svc 的 HTTP 网关是自验 token 模型**（`bearerOrCookie(r)` → `ValidateToken`），它不读 `X-User-Id`。凭证被剥 ⇒ 每个到达 auth-svc 的请求都无凭无据 ⇒ 401。**错误信息只可能出自 auth-svc（`gateway.go:406/485/847`）**，这一点印证了请求确实穿过了聚合层。
+- **结论**：auth 域**当前无法通过聚合代理工作**；这与权限闸无关，是凭证投递层的设计缺口。
+
+### 9.3 两个修复方向（需并行线裁决，均不属本线文件面）
+
+| 方向 | 做法 | 代价 | 安全影响 |
+|---|---|---|---|
+| **A. 仅对 auth 域放行凭证** | 转发时对 auth 域**不剥 Cookie**（其余域维持剥除） | 极小（一处条件） | 保留 auth-svc 的自验模型，不引入新的信任面；注释里「防凭证落内部服务日志」的顾虑对 auth-svc 很弱（它本就是凭证签发方，登录路径本就收 token） |
+| **B. auth-svc 改吃注入身份头** | 无自验 token 时回退读 `X-User-Id`（其 `/auth/me` 响应里本就有 `"mode": "gateway-injected"` 一词，说明该模式曾被预设） | 中（auth-svc 网关 + 测试） | 与全仓「authctx 约定头」模式统一；但把信任搬到头上 ⇒ **必须确保 auth-svc 的 HTTP 口不可被不可信客户端直连**（prod compose 现绑 `127.0.0.1:8100`，仅宿主回环；容器间走网络别名 `auth-svc:8100`）——该前提要写成断言，否则同机进程可伪造身份 |
+
+**本线建议 A**：改动面最小、不新增信任模型、且不影响其他域既有行为；若选 B，需同时补「HTTP 口仅回环/仅代理可达」的门禁断言。
+
+### 9.4 对切流方案的影响
+
+§7.2 的前置条件清单再加一条：**auth 域的凭证投递（Cookie 转发或注入头信任）必须先于任何切流动作**。在 A/B 落地前，`AUTH_SVC_PROXY_ENABLED=true` 打开得到的认证面仍然不可用（只是失败形态从 403 变成 401）。
+
 ### 7.3 修复落地（zcode 侧，2026-10-10）
 
 §7.1 的阻断级缺陷已按**选项 2（对齐本地语义）**修复并入库：
