@@ -2,16 +2,19 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/notify"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/secrets"
@@ -215,6 +218,18 @@ func buildChannel(c *store.NotifyChannel, provider secrets.SecretProvider) (noti
 			return nil, fmt.Errorf("parse channel config: %w", err)
 		}
 	}
+	// TD-88（方向：引用格式优先）：敏感字段若为**明文**则告警（不阻断，保持向后兼容）。
+	// 为什么连 webhookURL 也算敏感：多数 webhook 的 URL 里直接内嵌 token（钉钉/企微/飞书/Slack 皆然），
+	// 拿到 URL 即等于拿到凭据；email 的 pass 亦同。
+	if fields := PlaintextSensitiveFields(c.Type, cfg); len(fields) > 0 {
+		providerState := "已配置 --secret-provider"
+		if provider == nil {
+			providerState = "未配置 --secret-provider（明文只能从配置里读）"
+		}
+		logx.Warn(context.Background(),
+			"通知渠道存在明文凭据（建议改为 ${provider:key} 引用，使密钥不随库/配置同机落盘）",
+			"channelID", c.ID, "type", c.Type, "fields", strings.Join(fields, ","), "provider", providerState)
+	}
 	switch c.Type {
 	case "dingtalk":
 		return notify.NewDingTalkChannelWithSecret(cfg["webhookURL"], cfg["secret"], provider)
@@ -284,4 +299,36 @@ func validateNotifyChannelWebhook(c *store.NotifyChannel, allowPrivate bool) err
 		// 未知类型由 buildChannel 上游校验，此处放行（不阻塞未知类型校验流程）。
 		return nil
 	}
+}
+
+// PlaintextSensitiveFields 返回该渠道配置中**以明文出现的敏感字段名**（升序），供告警使用。
+//
+// 敏感面（TD-88 侦察结论）：webhook 系渠道的 webhookURL（URL 内嵌 token）+ 钉钉/飞书的 secret
+// + email 的 pass；Slack 的 channel 是频道名而非凭据，不计入。空值与 ${...} 引用都不算明文。
+//
+// 抽成纯函数是为了可测：告警文案与「哪些字段算敏感」容易随渠道演进漂移，用表驱动用例钉住。
+func PlaintextSensitiveFields(channelType string, cfg map[string]string) []string {
+	var sensitive []string
+	switch channelType {
+	case "dingtalk", "feishu", "lark", "wecom", "wechat", "webhook", "generic":
+		sensitive = append(sensitive, "webhookURL")
+	case "email":
+		sensitive = append(sensitive, "pass")
+	case "slack":
+		sensitive = append(sensitive, "webhookURL")
+	}
+	switch channelType {
+	case "dingtalk", "feishu", "lark":
+		sensitive = append(sensitive, "secret")
+	}
+	var out []string
+	for _, f := range sensitive {
+		v := cfg[f]
+		if v == "" || secrets.IsReference(v) {
+			continue
+		}
+		out = append(out, f)
+	}
+	sort.Strings(out)
+	return out
 }

@@ -4,6 +4,14 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-10（TD-88 方向落地首件：通知渠道明文凭据告警 + 引用判据唯一化；方向=引用格式优先）
+
+- **TD-88 方向裁定（用户：「用更安全的那个」）＝ 引用格式 `${provider:key}` 优先**：密钥本体由外部 provider 持有、**不随库同机**（库级静态加密的密钥与库同机，是该侧较弱处），且引用机制（`internal/secrets` 的 SecretProvider 链 + `ResolveSecret`）已建成投产、通知渠道解析路径已接线。裁定与剩余项落进台账 TD-88 行与 `docs/security-mechanism.md` §6.9。
+- **新增｜`secrets.IsReference`（引用/明文的唯一判据）**：与 `ResolveSecret` 的非引用分支同源，避免两处判断漂移；表驱动用例锁住边界（`${a}` ✓ / `${}` ✗ / 部分包裹 ✗ / 明文 URL ✗）。
+- **新增｜通知渠道构造期明文凭据告警（不阻断，兼容优先）**：`PlaintextSensitiveFields` 纯谓词识别敏感字段——webhook 系渠道的 `webhookURL`（URL 内嵌 token）、钉钉/飞书的 `secret`、email 的 `pass`；**Slack 的 `channel` 是频道名不计入**（防假告警，用例里专门钉住这条边界）；告警含 channelID/type/字段名、**不回显值**，未配置 `--secret-provider` 时额外提示该开关。抽成纯函数是为了让「哪些字段算敏感」这件事可测——渠道演进时忘登记敏感字段会让明文静默通过。
+- **文档**：`docs/security-mechanism.md` 新增 §6.9（引用优先的裁定 + 运行时判据 + 与 §12.1.4 上线前自检项的两道关系 + 剩余项）。
+- **验证**：`go test ./internal/controlplane/ ./internal/secrets/` 全绿（67.6s + 4.8s）；`golangci-lint` **0 issues**；`gofmt -l` 净。
+
 ## [Unreleased] — 2026-10-10（真缺陷修复：SQL 后端 `GetK8sCluster` 恒返 nil（SELECT 7 列 / Scan 8 目标）；由加密下沉规格的「真库验证」项抓出）
 
 - **修复｜`internal/store/sqlstore` 的 `GetK8sCluster(id)` 在 MySQL 后端下恒返 nil**：`SELECT id, name, server, kubeconfig, status, created_at, updated_at`（7 列）与该函数的 `Scan`（8 个目标，第二项是 `tenantID`）**列数不匹配** ⇒ `row.Scan` 必然报错、函数只见 nil。**生产影响**：`--store=mysql` 下「按 ID 查/改/删单个集群」与 `k8s_manage.go:76` 的租户归属校验全部恒失败（把合法访问判成「查不到」）。同步 `ListK8sClusters`（8 列 ✓）正常，故**启动恢复与模板 seed 不受影响**——这也解释了它为何长期未被发现：内存后端正确、DSN 门控的真库用例此前只覆盖了列表路径。

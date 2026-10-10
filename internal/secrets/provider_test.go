@@ -465,3 +465,28 @@ func writeTempJSON(t *testing.T, data interface{}) string {
 	t.Cleanup(func() { os.Remove(f.Name()) })
 	return f.Name()
 }
+
+// TestIsReference 钉住「引用 vs 明文」的判据（TD-88 方向裁定：引用格式优先；
+// 调用方据此在明文凭据时告警，故判据本身要被用例锁住）。
+func TestIsReference(t *testing.T) {
+	cases := []struct {
+		value string
+		want  bool
+	}{
+		{"${vault:notify/dingtalk#secret}", true},
+		{"${notify/webhook_url}", true},
+		{"${a}", true},
+		{"", false},
+		{"plain-secret-value", false},
+		{"${", false},
+		{"}", false},
+		{"${}", false},          // 空引用不算合法引用（长度为 3）
+		{"prefix${key}", false}, // 必须整串包裹
+		{"https://oapi.dingtalk.com/robot/send?access_token=abc", false},
+	}
+	for _, c := range cases {
+		if got := IsReference(c.value); got != c.want {
+			t.Errorf("IsReference(%q) = %v, want %v", c.value, got, c.want)
+		}
+	}
+}

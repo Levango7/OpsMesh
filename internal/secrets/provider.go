@@ -196,6 +196,15 @@ func (c *ChainProvider) Name() string {
 // ResolveSecret — 解析密钥引用（向后兼容明文配置）
 // ============================================================================
 
+// IsReference 判断 value 是否为 ${...} 引用形态（而非明文密钥）。
+//
+// 为什么要单独暴露这条判据（TD-88 方向裁定：引用格式优先）：调用方需要在**不解析**的前提下
+// 判断「这个值是不是明文凭据」，以便在明文时告警（如通知渠道的 webhookURL/secret/pass）。
+// 与 ResolveSecret 的非引用分支同源——两处判断必须一致，故只留这一处实现。
+func IsReference(value string) bool {
+	return strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") && len(value) > 3
+}
+
 // ResolveSecret 解析密钥引用。如果 value 以 "${" 开头且以 "}" 结尾，从 provider 解析；
 // 否则 value 本身就是明文密钥，直接返回（向后兼容）。
 //
