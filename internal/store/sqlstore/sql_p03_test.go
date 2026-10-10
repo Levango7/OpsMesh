@@ -197,7 +197,7 @@ func TestSQLStore_P03Secret(t *testing.T) {
 	clearP03Tables(t, s)
 
 	// 1. SetSecret → GetSecret → 验证值一致
-	meta1 := s.SetSecret(&SecretItem{Key: "app/db/password", Value: "p@ss-1", KeyType: "passphrase"}, "tenant-A")
+	meta1 := s.SetSecret(&SecretItem{Key: "app/db/password", Value: "${vault:test/app/db/password}", KeyType: "passphrase"}, "tenant-A")
 	if meta1 == nil {
 		t.Fatal("SetSecret 返回 nil")
 	}
@@ -213,7 +213,7 @@ func TestSQLStore_P03Secret(t *testing.T) {
 	}
 
 	// 2. RotateSecret → 验证版本递增 + KeyType 保留
-	meta2 := s.RotateSecret("tenant-A", "app/db/password", "p@ss-2")
+	meta2 := s.RotateSecret("tenant-A", "app/db/password", "${vault:test/app/db/password/v2}")
 	if meta2 == nil {
 		t.Fatal("RotateSecret 返回 nil")
 	}
@@ -229,7 +229,7 @@ func TestSQLStore_P03Secret(t *testing.T) {
 	}
 
 	// 3. ListSecrets → 验证列表
-	s.SetSecret(&SecretItem{Key: "app/api/token", Value: "tok-1", KeyType: "hmac"}, "tenant-A")
+	s.SetSecret(&SecretItem{Key: "app/api/token", Value: "${vault:test/app/api/token}", KeyType: "hmac"}, "tenant-A")
 	list := s.ListSecrets("tenant-A")
 	if len(list) != 2 {
 		t.Fatalf("ListSecrets 应返回 2 个密钥；got=%d", len(list))
@@ -253,7 +253,7 @@ func TestSQLStore_P03Secret(t *testing.T) {
 	}
 
 	// 6. 租户隔离：tenant-A 的 secret 对 tenant-B 不可见
-	s.SetSecret(&SecretItem{Key: "isolated/key", Value: "secret-A", KeyType: "passphrase"}, "tenant-A")
+	s.SetSecret(&SecretItem{Key: "isolated/key", Value: "${vault:test/isolated/key}", KeyType: "passphrase"}, "tenant-A")
 	if _, ok := s.GetSecret("tenant-B", "isolated/key"); ok {
 		t.Fatal("tenant-A 的密钥不应对 tenant-B 可见")
 	}

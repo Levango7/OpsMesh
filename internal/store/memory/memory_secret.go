@@ -1,8 +1,11 @@
 package memory
 
 import (
+	"log"
 	"sort"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // memory_secret.go MemoryStore 对 SecretStore 接口的实现。
@@ -64,6 +67,11 @@ func (m *MemoryStore) SetSecret(item *SecretItem, tenantID string) *SecretMeta {
 	}
 	if item.KeyType == "" {
 		item.KeyType = "passphrase"
+	}
+	// TD-88：secrets 表只存 ${provider:key} 引用（明文拒绝；契约见 model.RequireSecretReference）。
+	if err := model.RequireSecretReference(item.Value); err != nil {
+		log.Printf("[store] SetSecret 拒绝非引用值 (tenant=%s key=%s): %v", tenantID, item.Key, err)
+		return nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

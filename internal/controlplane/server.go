@@ -526,6 +526,8 @@ func NewServer(cfg *config.Config) (*Server, error) {
 			logx.Warn(context.Background(), "K8s 集群重启恢复连接失败", err, "clusterID", kc.ID)
 		}
 	}
+	// TD-88：启动扫描 secrets 表的明文存量并告警（方向=只存引用；新写入已在 store 契约层拒绝明文）。
+	warnPlaintextSecrets(st)
 	// 启动时将预置 OS/中间件模板幂等写入 store（按 ID 去重，已存在不覆盖）。
 	// 使模板支持在线 CRUD；store 为空时 API 回退到内存常量（向后兼容）。
 	s.seedPresetOSTemplates()

@@ -736,8 +736,11 @@ chmod 600 "$DATA_DIR/install.token"
 - **不阻断**：明文照常可用（向后兼容），告警只为把「该换引用」这件事变成可观测事件
   （与 §12.1.4 的部署自检项「通知渠道密钥使用 `${provider:key}` 引用格式（非明文）」互为运行时/上线前两道）。
 
-**剩余**：`secrets` 表（`SecretItem.Value`）的写路径改为「只存引用」＋启动扫描存量明文（其消费方经自查为零，
-改动不破坏真实客户端）；见台账 TD-88 行。
+**写路径契约（已落地，2026-10-10）**：`secrets` 表（`SecretItem.Value`）**只接受 `${provider:key}` 引用**——
+由 `model.RequireSecretReference`（判据复用 `secrets.IsReference`，形状判断只有一份实现）钉在 store 契约层拒绝明文，
+memory/sql 两个后端各接一行（`RotateSecret` 委托 `SetSecret` ⇒ 自动覆盖）；`NewServer` 启动时**扫描存量明文并告警**
+（`warnPlaintextSecrets`，只告警不阻断：存量属历史数据，阻断会让升级直接失败，而该表消费方为零）。
+该表经两次自查在生产代码里消费方为零 ⇒ 收紧不破坏真实客户端；见台账 TD-88 行。
 
 ## 第7章 审计日志
 

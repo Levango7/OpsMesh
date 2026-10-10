@@ -88,7 +88,7 @@ func TestMemorySecretCloneOnRead(t *testing.T) {
 	m := NewMemoryStore()
 	tenant := "t1"
 
-	m.SetSecret(&SecretItem{Key: "app/db/pass", Value: "secret-v1", KeyType: "passphrase"}, tenant)
+	m.SetSecret(&SecretItem{Key: "app/db/pass", Value: "${vault:test/app/db/pass}", KeyType: "passphrase"}, tenant)
 
 	// GetSecret 返回副本。
 	got1, ok := m.GetSecret(tenant, "app/db/pass")
@@ -207,7 +207,7 @@ func TestMemoryConfigSecretConcurrentReadWrite(t *testing.T) {
 
 	// 预置初始数据。
 	m.SetConfig(&ConfigItem{Key: "k", Value: "v0", TenantID: tenant})
-	m.SetSecret(&SecretItem{Key: "s", Value: "v0", KeyType: "passphrase"}, tenant)
+	m.SetSecret(&SecretItem{Key: "s", Value: "${vault:test/s0}", KeyType: "passphrase"}, tenant)
 
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
@@ -223,7 +223,7 @@ func TestMemoryConfigSecretConcurrentReadWrite(t *testing.T) {
 			default:
 			}
 			m.SetConfig(&ConfigItem{Key: "k", Value: "v", TenantID: tenant})
-			m.SetSecret(&SecretItem{Key: "s", Value: "v", KeyType: "passphrase"}, tenant)
+			m.SetSecret(&SecretItem{Key: "s", Value: "${vault:test/s1}", KeyType: "passphrase"}, tenant)
 		}
 	}()
 

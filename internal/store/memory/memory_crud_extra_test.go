@@ -1356,23 +1356,23 @@ func TestMemoryStore_Secret_RotateDeleteVersions(t *testing.T) {
 		t.Fatal("unknown secret get should fail")
 	}
 
-	meta1 := m.SetSecret(&SecretItem{Key: "app/token", Value: "v1"}, "t1")
+	meta1 := m.SetSecret(&SecretItem{Key: "app/token", Value: "${vault:test/app/token}"}, "t1")
 	if meta1.Version != 1 || meta1.KeyType != "passphrase" {
 		t.Fatalf("meta1 = %+v, want version=1 passphrase", meta1)
 	}
 
 	// Rotate：沿用已有 KeyType 并产生新版本。
-	meta2 := m.RotateSecret("t1", "app/token", "v2")
+	meta2 := m.RotateSecret("t1", "app/token", "${vault:test/app/token/v2}")
 	if meta2.Version != 2 || meta2.KeyType != "passphrase" {
 		t.Fatalf("rotated meta = %+v, want version=2 passphrase", meta2)
 	}
 	got, ok := m.GetSecret("t1", "app/token")
-	if !ok || got.Value != "v2" || got.KeyType != "passphrase" {
+	if !ok || got.Value != "${vault:test/app/token/v2}" || got.KeyType != "passphrase" {
 		t.Fatalf("get after rotate = (%+v,%v)", got, ok)
 	}
 
 	// Rotate 不存在的密钥 → 等价 SetSecret（KeyType 默认 passphrase）。
-	fresh := m.RotateSecret("t1", "app/new", "x")
+	fresh := m.RotateSecret("t1", "app/new", "${vault:test/app/new}")
 	if fresh.Version != 1 || fresh.KeyType != "passphrase" {
 		t.Fatalf("fresh rotate = %+v", fresh)
 	}

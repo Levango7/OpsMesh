@@ -4,6 +4,14 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-10（TD-88 收口：secrets 表「只存引用」落到 store 契约层 + 启动扫描明文存量）
+
+- **新增｜store 契约层拒绝明文（`model.RequireSecretReference`）**：`secrets` 表只接受 `${provider:key}` 引用，明文一律拒绝（`SetSecret`/`RotateSecret` 返回 nil 并记录失败）。判据复用 `secrets.IsReference`（与 `ResolveSecret` 同源，形状判断只有一份实现）。落点选**中性层一处**而非各消费方：该表经两次自查在生产代码里**消费方为零**，钉在契约上则任何未来消费方自动受保护，也避免三个后端各写一份形状判断而漂移；memory/sql 各接一行（`RotateSecret` 委托 `SetSecret` ⇒ 自动覆盖），multischema 委托内层后端。
+- **新增｜启动扫描明文存量告警（`warnPlaintextSecrets` + 可测谓词 `plaintextSecretKeys`）**：`NewServer` 启动时列出 `secrets` 表、点名非引用的 `tenant/key`（最多展示 5 条 + 总数，不回显值）并告警；**只告警不阻断**——存量是历史数据，阻断会让升级直接失败，而该表消费方为零 ⇒ 风险面有限，把「该迁移」变成可观测事件即可（新写入已被契约拒绝，故告警随人工轮换自然归零）。谓词抽成纯函数以可测（同 notify 的 `PlaintextSensitiveFields` 先例）。
+- **兼容性与测试**：8 处既有测试取值改为引用形态（含 2 处轮换断言随之更新）；新增三组用例——契约边界（`${a}` ✓ / `${` ✗ / `a${b}c` ✗ / 明文 webhook URL ✗）、memory 后端拒收且**被拒的轮换不改动原值**、启动扫描判定（空表/全引用不报；明文点名且按 tenant/key 升序）。
+- **验证**：`internal/store` 五包 + `internal/controlplane` 全绿（memory 24.9s / multischema 11.5s / controlplane 42.8s）；`-race` **零竞态**；`golangci-lint` **0 issues**；`gofmt -l` 净；部署门禁 PASS=76。
+- **TD-88 收口**：「引用格式」方向在其唯一写入路径上钉死；台账该行已记「剩余两项已落地（本债收口）」。
+
 ## [Unreleased] — 2026-10-10（真缺陷修复：CMDB 检索在索引就绪的库上漏召回——2 字符查询返空；TD-91 定性并修复）
 
 - **定性（TD-91：真缺陷，非环境差异）**：实测矩阵（MySQL 8.4 + ngram_token_size=2，7 列同序索引，逐查询对照）：

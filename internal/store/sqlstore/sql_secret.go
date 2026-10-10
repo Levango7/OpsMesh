@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/store/model"
 	"github.com/Levango7/OpsMesh/internal/store/storefail"
 )
 
@@ -62,6 +63,11 @@ func (s *SQLStore) SetSecret(item *SecretItem, tenantID string) *SecretMeta {
 	}
 	if item.KeyType == "" {
 		item.KeyType = "passphrase"
+	}
+	// TD-88：secrets 表只存 ${provider:key} 引用（明文拒绝；契约见 model.RequireSecretReference）。
+	if err := model.RequireSecretReference(item.Value); err != nil {
+		storefail.Record("[store] SetSecret 拒绝非引用值 (tenant=%s key=%s): %v", tenantID, item.Key, err)
+		return nil
 	}
 	// 查当前最大版本号（无历史则 0，新版本 = max+1）。
 	// MAX(version) 在无任何行时返回一行 NULL（而非 ErrNoRows），须用 NullInt64 承接；

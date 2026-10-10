@@ -16,15 +16,18 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
-
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/secrets"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // secretsStatusResponse /api/v1/secrets/status 响应。
@@ -306,4 +309,49 @@ func dedupSecretKeys(entries []secretsKeyEntry) []secretsKeyEntry {
 		out = append(out, e)
 	}
 	return out
+}
+
+// secretLister 是启动扫描所需的最小接口面（便于用替身单测，不造整个 store.Store）。
+type secretLister interface {
+	ListSecrets(tenantID string) []*store.SecretMeta
+	GetSecret(tenantID, key string) (*store.SecretItem, bool)
+}
+
+// plaintextSecretKeys 返回 secrets 表里**明文存量**的 "tenant/key" 列表（升序），供启动告警使用。
+//
+// 抽成纯函数是为了可测：告警文案与「什么叫明文」的判据容易随演进漂移（与 notify 的
+// PlaintextSensitiveFields 同一先例）——用替身 store 的表驱动用例把两侧边界钉住。
+func plaintextSecretKeys(st secretLister) []string {
+	var plain []string
+	for _, meta := range st.ListSecrets("") {
+		if meta == nil {
+			continue
+		}
+		item, ok := st.GetSecret(meta.TenantID, meta.Key)
+		if !ok || item == nil || secrets.IsReference(item.Value) {
+			continue
+		}
+		plain = append(plain, meta.TenantID+"/"+meta.Key)
+	}
+	sort.Strings(plain)
+	return plain
+}
+
+// warnPlaintextSecrets 启动扫描：secrets 表存在明文存量时告警（TD-88：方向=只存引用）。
+//
+// 为什么不阻断启动：存量明文是历史数据，阻断会让升级直接失败；而该表生产消费方为零，
+// 风险面有限——告警把「该迁移」变成可观测事件即可。新写入侧已在 store 契约上拒绝明文
+// （model.RequireSecretReference），故本扫描只会随时间收敛（人工轮换为引用后归零）。
+func warnPlaintextSecrets(st secretLister) {
+	plain := plaintextSecretKeys(st)
+	if len(plain) == 0 {
+		return
+	}
+	const maxShown = 5
+	shown := plain
+	if len(shown) > maxShown {
+		shown = shown[:maxShown]
+	}
+	logx.Warn(context.Background(), "secrets 表存在明文存量（建议改为 ${provider:key} 引用并轮换）",
+		"count", len(plain), "sample", strings.Join(shown, ","))
 }

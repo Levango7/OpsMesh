@@ -84,15 +84,15 @@ func TestMultiSchemaStore_DelegationP03ToP6(t *testing.T) {
 	}
 
 	// ---- P0.3 密钥管理 ----
-	meta1 := m.SetSecret(&SecretItem{Key: "k1", Value: "v1"}, ten)
+	meta1 := m.SetSecret(&SecretItem{Key: "k1", Value: "${vault:test/k1}"}, ten)
 	if meta1 == nil || meta1.Version != 1 {
 		t.Fatalf("SetSecret delegate = %+v", meta1)
 	}
-	meta2 := m.RotateSecret(ten, "k1", "v2")
+	meta2 := m.RotateSecret(ten, "k1", "${vault:test/k1/v2}")
 	if meta2 == nil || meta2.Version != 2 {
 		t.Fatalf("RotateSecret delegate = %+v", meta2)
 	}
-	if item, ok := m.GetSecret(ten, "k1"); !ok || item.Value != "v2" {
+	if item, ok := m.GetSecret(ten, "k1"); !ok || item.Value != "${vault:test/k1/v2}" {
 		t.Fatalf("GetSecret delegate = (%+v,%v)", item, ok)
 	}
 	if lst := m.ListSecrets(ten); len(lst) != 1 {
