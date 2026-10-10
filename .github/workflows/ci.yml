@@ -436,6 +436,14 @@ jobs:
         # 把 logstore 混进同一次 go test 会悄悄改掉那个门禁的分母。
         run: go test -race -count=1 -timeout 300s -v ./internal/logstore/...
 
+      - name: kubeconfig 三类存量 + 机会式迁移的真库往返（TD-88 前置：加密下沉规格 §7 第 4 项）
+        # 同 logstore 步的理由：这些用例门控于 OPSMESH_TEST_MYSQL_DSN，不单列执行方就**永远 skip**
+        # （"从不执行的真库测试比没有测试更糟"）。只按 -run 模式定点跑，不整包跑 controlplane：
+        # 整包会带 DSN 跑全部用例，可能悄悄改掉别的门禁的分母，也会无谓拖长本 job。
+        # 判据：本步在修复 sqlstore.GetK8sCluster 列数错位**之前**必红（就是它抓到的，
+        # 详见 CHANGELOG「真缺陷修复：SQL 后端 GetK8sCluster 恒返 nil」条）。
+        run: go test -race -count=1 -timeout 300s -v -run 'TestKubeconfigLegacyMigration_MySQL' ./internal/controlplane/
+
   security:
     runs-on: ubuntu-latest
     needs: build-test

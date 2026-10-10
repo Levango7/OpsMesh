@@ -76,7 +76,7 @@ SELECT id, tenant_id, name, server, kubeconfig, status, created_at, updated_at F
 // GetK8sCluster 按 ID 返回单个集群配置（不存在返回 nil）。
 func (s *SQLStore) GetK8sCluster(id string) *K8sCluster {
 	row := s.db.QueryRowContext(context.Background(),
-		`SELECT id, name, server, kubeconfig, status, created_at, updated_at FROM k8s_clusters WHERE id=?`, id)
+		`SELECT id, tenant_id, name, server, kubeconfig, status, created_at, updated_at FROM k8s_clusters WHERE id=?`, id)
 	return scanK8sCluster(row)
 }
 

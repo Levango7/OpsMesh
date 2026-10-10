@@ -4,6 +4,15 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-10（真缺陷修复：SQL 后端 `GetK8sCluster` 恒返 nil（SELECT 7 列 / Scan 8 目标）；由加密下沉规格的「真库验证」项抓出）
+
+- **修复｜`internal/store/sqlstore` 的 `GetK8sCluster(id)` 在 MySQL 后端下恒返 nil**：`SELECT id, name, server, kubeconfig, status, created_at, updated_at`（7 列）与该函数的 `Scan`（8 个目标，第二项是 `tenantID`）**列数不匹配** ⇒ `row.Scan` 必然报错、函数只见 nil。**生产影响**：`--store=mysql` 下「按 ID 查/改/删单个集群」与 `k8s_manage.go:76` 的租户归属校验全部恒失败（把合法访问判成「查不到」）。同步 `ListK8sClusters`（8 列 ✓）正常，故**启动恢复与模板 seed 不受影响**——这也解释了它为何长期未被发现：内存后端正确、DSN 门控的真库用例此前只覆盖了列表路径。
+- **如何抓到的（值得记的取证链）**：按加密下沉规格 §7 第 4 项做真库验证时，我用例里「写三类存量 → `GetK8sCluster` 读回」直接报「写入没落库」；随即用**直连 SQL 探针**对照——raw 查询能查到完整行、`store.GetK8sCluster` 却返回 nil，**同一份数据两个读取路径结论相反 ⇒ 锁定在读路径而非写入**（探针脚本用完即删，结论留档）。这正是本仓反复强调的判据：**「写成功」与「读得到」要分别取证**。
+- **同类系统排查**：对 `internal/store/sqlstore` 全量做「SELECT 列数 vs Scan 目标数」扫描，6 处命中经逐条人工核实**全部是粗正则误配**（子查询/`COALESCE(a,b)` 里的逗号），真实不匹配只有本处 ⇒ 已修一处、无第二处。
+- **新增回归守卫**：`internal/controlplane/kubeconfig_legacy_mysql_test.go`（DSN 门控）——三类存量（无前缀旧密文 / 无前缀明文 / 带前缀新格式）真库往返 + 读路径三段分流 + **机会式迁移落库**断言（迁移后重读确认已带前缀且仍可解出；明文行不得被改写）。它在修复前必红（就是它抓到的），修复后绿，成为该缺陷的常驻守卫；同时补齐加密下沉规格 §7 第 4 项并顺带覆盖了 `GetK8sCluster` 的真实往返。
+- **CI 接线**：integration job 补一个**定点**真库步（`-run TestKubeconfigLegacyMigration_MySQL ./internal/controlplane/`）——同 logstore 步的理由：门控于 DSN 的用例不单列执行方就永远 skip；只按模式定点跑、不整包跑 controlplane（免得带 DSN 跑全部用例、改掉别的门禁的分母）。actionlint 复跑零问题。
+- **验证**：全仓 `go test ./...`（带真库 DSN）0 FAIL；`golangci-lint`（store + controlplane）**0 issues**；`gofmt -l` 净；部署门禁 PASS=76 FAIL=0 SKIP=1。
+
 ## [Unreleased] — 2026-10-10（TD-87 批 2 第三批·切片 3：模板转换器并入 presets —— 本批 3/3 收官）
 
 - **重构｜OS 模板转换器并入 `presets`**：`ByID`（按 ID 查预置模板）、`ToStore`（控制面模板 → `store.OSTemplate`，整对象 JSON 进 Config 列）、`FromStore`（反序列化 + 以 store 行 ID/Name/OS 为准）迁入 `presets/store_adapter.go`（63 行）；父包留三个同名薄包装（`os_optimize.go` 与测试调用点零改动）。**判据：转换器要跟着类型走**——类型（`OSTemplate`/`OSParam`）本就在 `presets`（批 1 迁入），「类型 + 转换」同住一个包边界最清楚，不值得为它新开一包。
