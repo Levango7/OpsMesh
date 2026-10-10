@@ -22,6 +22,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/cmdb"
 	"github.com/Levango7/OpsMesh/internal/config"
 	"github.com/Levango7/OpsMesh/internal/controlplane/credentials"
+	"github.com/Levango7/OpsMesh/internal/controlplane/cutover"
 	"github.com/Levango7/OpsMesh/internal/controlplane/factory"
 	"github.com/Levango7/OpsMesh/internal/controlplane/metricscache"
 	"github.com/Levango7/OpsMesh/internal/controlplane/pluginhost"
@@ -123,6 +124,11 @@ type Server struct {
 	// 默认 InProcessSessionStore（单副本/demo）；多副本 HA 配置 --session-store=redis:// 时用 RedisSessionStore。
 	// 登出时 jti 加入黑名单，userFromToken 校验时检查；多副本经 Redis 共享使登出全局生效。
 	sessionStore store.SessionStore
+
+	// cutoverRouter TD-60 方案 C（按用户群分批切换）的裁决器：名册 + 增量开关 + D 执行开关。
+	// 为 nil 或总闸关闭时全部请求按本地处理（与切流前逐字一致）。
+	// 见 internal/controlplane/cutover 与 docs/td60-cutover-signal-design.md。
+	cutoverRouter *cutover.Router
 
 	// DeviceFP deadline：超过此时刻签发的 refresh token 必须绑定 DeviceFP（非空）。
 	// 零值=不强制（向后兼容）；非零=渐进式强制设备绑定。
@@ -496,6 +502,14 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	s.loginGuard = newLoginGuard(ss)
 	// 启动守卫回收，防止 ips map 在长运行中无界增长（内存泄漏）。
 	s.loginGuard.StartSweep(10 * time.Minute)
+	// 切流（TD-60 方案 C）：装载名册。配置非法（来源歧义/文件不可读/含保留账号）即 fail-fast——
+	// 静默当空名册会让已迁移用户回落到本地而登录失败，是用户可见事故。
+	cutoverRouter, cutErr := initCutoverRouter()
+	if cutErr != nil {
+		return nil, fmt.Errorf("切流名册装载失败: %w", cutErr)
+	}
+	s.cutoverRouter = cutoverRouter
+	s.selfCheckCutoverRoster()
 	// startRefreshSweep 移至 Start() 中调用（需要 ctx 以支持优雅退出，避免 goroutine 泄漏）。
 	// Phase 3 K8s 多集群连接管理器：构造空管理器，用户创建集群时 AddCluster。
 	s.clusterMgr = k8s.NewClusterManager()

@@ -515,6 +515,16 @@ services:
       #   OPSMESH_SERVICE_PROXY=gpu,portal
       # 全部停用用 off。取值非法会被忽略并按「全转发」继续——宁可不动，也不误切。
       OPSMESH_SERVICE_PROXY: ${OPSMESH_SERVICE_PROXY:-}
+      # 切流（TD-60 方案 C，按用户群分批）：名册 + 增量开关。默认全空/false ⇒ 行为与切流前逐字一致。
+      # 打开前置：本域还需 AUTH_SVC_URL 与 AUTH_SVC_PROXY_ENABLED=true（auth 域代理面必须先通；
+      # 名册经 svcproxy 的 auth 规则转发，总闸关闭时名册完全不生效）。
+      # 名册条目=已迁移到 auth-svc 的用户名（逗号/换行分隔，`#` 注释；保留账号 admin 永不写入，
+      # 装载期即拒绝）。摘除条目=单用户回退、清空=回纯本地，无需重启（文件来源 30s 轮询热更）。
+      # 切换伴一次强制重登（该用户的旧会话不被 auth-svc 承认），见
+      # docs/td60-cutover-signal-design.md §10 与提案 §11.3。
+      AUTH_CUTOVER_ROSTER: ${AUTH_CUTOVER_ROSTER:-}
+      AUTH_CUTOVER_ROSTER_FILE: ${AUTH_CUTOVER_ROSTER_FILE:-}
+      AUTH_SVC_OWNS_NEW_ACCOUNTS: ${AUTH_SVC_OWNS_NEW_ACCOUNTS:-false}
       # 可支撑性（P1-6）：日志级别与 pprof 开关（pprof 开启后仍受 METRICS_ALLOW_CIDR 准入）。
       # 默认 info/false；debug 仅排障期间使用（日志量级显著上升）。
       OPSMESH_LOG_LEVEL: ${LOG_LEVEL:-info}

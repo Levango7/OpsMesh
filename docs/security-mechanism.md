@@ -360,6 +360,21 @@ auth 域例外的原因：auth-svc 网关是**自验 token 模型**（`bearerOrC
 `ForwardCookie` 仅允许 auth 域置位，由 `svcproxy/perm_catalog_test.go` 的
 `TestCredentialForwardingRestrictedToAuthDomain` 静态拦截其他域（带双下限防守卫空转）。
 
+#### 2.3.6 切流路由（TD-60 方案 C）的安全语义
+
+按用户群分批切换（名册 + 全局增量开关）在认证面上引入一条**裁决**：命中名册的用户由 auth-svc 处理。
+安全要点：
+
+- **名册是可审计的有限集合**，不是"先问本侧再问对侧"的双读兜底——后者会让两侧同名账号互相校验
+  （跨库凭证混淆）；**保留账号 `admin` 永不进名册**，装载期即拒绝。
+- **凭证只投递给签发/持有侧**：登录/me/refresh 的 Cookie 原样带给 auth-svc（自验模型）；
+  客户端自带的 `X-Tenant-ID`/`X-User-Id`/`X-User-Roles` **一律剥离**后才转发（未经验证的头不跨进程传递）。
+- **本地闸先于路由**：公开注册开关、IP 限流、账号锁定检查在转发判定之前执行。
+  已知不对齐：名册用户的失败计数在 auth-svc 侧产生，本地 `loginguard` 看不到 ⇒ 账号锁定对名册用户不生效。
+- **默认全关**：空名册 + `AUTH_SVC_PROXY_ENABLED=false` ⇒ 与切流前逐字一致；配置非法（来源歧义/含保留账号/
+  文件不可读）**拒绝启动**，运行期重载失败保留上一份可用名册。
+- 细节与裁定见 `docs/td60-cutover-signal-design.md` §10。
+
 **已知边界（切流前须处置）**：代理前缀现不能作为登录入口——`requireTenantContext` 先于转发执行，
 无凭证的 `POST /api/v1/auth-svc/login`（及 register）会被 401/400 挡下，与本地
 `/api/v1/auth/login` 公开语义不等价；且登录保护（loginguard/限流）是否随代理路径同样生效

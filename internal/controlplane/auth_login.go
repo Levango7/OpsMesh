@@ -50,6 +50,13 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
 	}
+	// 切流（TD-60 方案 C）：注册**不做请求级路由**——新账号尚无归属，归属是全局决策
+	// （AUTH_SVC_OWNS_NEW_ACCOUNTS；名册管存量、该开关管增量，同时打开才意味着这批切完）。
+	// 本地闸（公开注册开关 + IP 限流）先于路由：部署方关掉公开注册就是全 403，不会绕道 auth-svc。
+	rawBody := bufferRequestBody(w, r) // 转发前还原用（见 bufferRequestBody 的说明）
+	if s.cutoverForwardRegister(w, r, rawBody) {
+		return
+	}
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -150,6 +157,8 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
 	}
+	// 切流可能整请求转发（名册命中时）⇒ 先取出 body 快照（转发前还原），见 bufferRequestBody。
+	rawBody := bufferRequestBody(w, r)
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -166,6 +175,12 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	// 防爆破：账号处于锁定态时直接拒绝，避免继续尝试。
 	if s.loginGuard.Locked(body.Username) {
 		paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "account temporarily locked due to too many failed attempts, try later"})
+		return
+	}
+	// 切流（TD-60 方案 C）：名册命中的用户由 auth-svc 处理。位置刻意选在 IP 限流与账号锁定
+	// 检查**之后**——本地防护口径对名册用户同样生效；但失败计数在 auth-svc 侧产生，
+	// 本地看不到 ⇒ 名册用户的"账号锁定"不对齐（见 auth_cutover.go 顶部，不假装已对齐）。
+	if s.cutoverForwardLogin(w, r, body.Username, rawBody) {
 		return
 	}
 	u := s.store.GetUserByUsername(body.Username)
@@ -243,6 +258,11 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	// 切流（TD-60 方案 C）：登出必须在**签发侧**吊销（jti 黑名单与 rt 删除都是本进程内状态），
+	// 按 JWT 的 username 裁决（认证前可读，不查库）。
+	if s.cutoverForwardByToken(w, r, "logout") {
+		return
+	}
 	if u, err := s.userFromToken(r); err == nil {
 		// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 		s.audit(r.Context(), &proto.AuditEvent{
@@ -273,6 +293,11 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	ck, err := r.Cookie(refreshTokenCookieName)
 	if err != nil || strings.TrimSpace(ck.Value) == "" {
 		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing refresh token"})
+		return
+	}
+	// 切流（TD-60 方案 C）：按 rt 归属侧 + 名册裁决。**非破坏性窥视**——不能先 consume，
+	// 那会旋转掉本地会话，随后才发现该转发就晚了（见 cutoverRouteRefresh）。
+	if s.cutoverRouteRefresh(w, r, ck.Value) {
 		return
 	}
 	// 设备绑定：consumeRefreshToken 校验请求的 DeviceFP 与存储一致。
@@ -311,6 +336,10 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	// 切流（TD-60 方案 C）：名册用户的 /me 由 auth-svc 回答（否则两侧各答一半）。
+	if s.cutoverForwardByToken(w, r, "me") {
 		return
 	}
 	u, err := s.userFromToken(r)
@@ -367,6 +396,8 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 		paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
 	}
+	// 切流可能整请求转发（改密令牌不属本地时）⇒ 先取出 body 快照（转发前还原），见 bufferRequestBody。
+	rawBody := bufferRequestBody(w, r)
 	var body struct {
 		OldPassword         string `json:"oldPassword"`
 		NewPassword         string `json:"newPassword"`
@@ -387,6 +418,12 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 	if body.ChangePasswordToken != "" {
 		userID, ok := s.consumeChangePasswordToken(body.ChangePasswordToken)
 		if !ok {
+			// 切流（TD-60 方案 C）：改密令牌是不透明串、只存在于**签发侧**的会话存储；
+			// 本地消费不到 ⇒ 不属本地 ⇒ 转 auth-svc。这是首登改密的必经一步
+			// （登录被路由后令牌也由 auth-svc 签发）——设计 §2 的端点表未列，此处补齐。
+			if s.cutoverRouteChangePasswordToken(w, r, rawBody) {
+				return
+			}
 			paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired change password token"})
 			return
 		}
@@ -398,6 +435,10 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 		u = user
 		firstLoginChange = true
 	} else {
+		// 切流（TD-60 方案 C）：已登录主动改密按 JWT 用户名裁决（名册用户的密码本体在对侧）。
+		if s.cutoverForwardByToken(w, r, "change-password") {
+			return
+		}
 		user, err := s.userFromToken(r)
 		if err != nil {
 			paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})

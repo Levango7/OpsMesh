@@ -2,8 +2,10 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
@@ -51,6 +53,39 @@ func writeSanitizedError(ctx context.Context, w http.ResponseWriter, status int,
 func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	return json.NewDecoder(r.Body).Decode(v)
+}
+
+// bufferRequestBody 读出请求体快照（上限同 decodeJSONBody）并还原 r.Body，返回快照。
+// 供「本地解析后仍要整请求转发」的切流路径使用（设计 §4：转出必须整请求转发，
+// 不能"本地验完再转"）。
+//
+// 为什么必须在**转发前**再还原一次（restoreRequestBody）：本地 handler 解析用的是
+// decodeJSONBody——它把 r.Body 换成自己的 MaxBytesReader；解析完该 reader 已在 EOF，
+// 直接转发会发出「Content-Length=N 但 body 为空」的请求 ⇒ 传输层报错、用户拿到 502
+// （实测踩到两次：先以为是"没缓冲"，其实缓冲也被这次替换冲掉了）。
+// 快照来自受限 reader ⇒ 转发发送的字节仍在同一上限之内。
+func bufferRequestBody(w http.ResponseWriter, r *http.Request) []byte {
+	if r.Body == nil {
+		return nil
+	}
+	limited := http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	b, err := io.ReadAll(limited)
+	_ = limited.Close()
+	if err != nil && len(b) == 0 {
+		b = nil
+	}
+	r.Body = io.NopCloser(bytes.NewReader(b))
+	r.ContentLength = int64(len(b))
+	return b
+}
+
+// restoreRequestBody 把请求体还原为 bufferRequestBody 的快照（转发前调用）。
+func restoreRequestBody(r *http.Request, snapshot []byte) {
+	if snapshot == nil {
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(snapshot))
+	r.ContentLength = int64(len(snapshot))
 }
 
 // requireTenantContext 提取并校验网关注入的租户身份上下文（认证防御）。
