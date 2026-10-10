@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -16,9 +15,6 @@ type SQLCiStore struct {
 	db *sql.DB
 
 	// fulltextMu 保护下面两个字段：召回路径要读 ready，多个请求可能同时首次探测。
-	fulltextMu     sync.Mutex
-	fulltextReady  bool
-	fulltextProbed bool
 }
 
 // NewSQLCiStore 构造 MySQL CMDB 存储，同时种子内置 CI 类型。
@@ -277,183 +273,33 @@ func buildCISearchTokenCond() string {
 	return " AND (" + strings.Join(parts, " OR ") + ")"
 }
 
-// ciSearchFulltextCond 是走全文索引时的召回片段，恰好 1 个占位符。
+// 召回一律走 LIKE（2026-10-10 证据修正：MATCH 路径已删除）。
 //
-// 覆盖列必须与索引 ft_ci_items_search 的列清单**逐列一致**（020 建 3 列，021 补齐到 7 列），
-// 否则 MySQL 报 ER_FT_MATCHING_KEY_NOT_FOUND（1191）。这条不变量由
-// TestCISearchFulltextIndexCoversRecallColumns 静态对账迁移文件守住，不需要数据库。
+// # 为什么删掉全文索引召回（原 ciSearchFulltextCond / 就绪探测 / ngram 门禁 / 逐词分流）
 //
-// 为什么必须与 ciSearchColumns 同集合（而不是只索引 name/ci_type/attrs）：分流是**独占**的
-// ——token 一旦判给 MATCH，就不再对这 7 列做 LIKE。索引若只覆盖 3 列，只命中
-// agent_id / device_id / source / id 的行会在召回阶段整行丢失，而 matchCI 只能判定**已召回**
-// 的行，救不回来。020 头注释里「标识符由 matchCI 前缀匹配覆盖」混淆了判定层与召回层，
-// 推理见 021 迁移注释。ci_attrs_text 是 020 的 STORED 生成列，对应 LIKE 侧的 CAST(attrs AS CHAR)。
-const ciSearchFulltextCond = " AND MATCH(name, ci_type, ci_attrs_text, agent_id, device_id, source, id) AGAINST(? IN BOOLEAN MODE)"
+// 原设计假设「MATCH 与 LIKE 召回等价，故可用索引加速」——**该假设经实测证伪**。
+// 证据（MySQL 8.4 + ngram_token_size=2，7 列同序索引，单列 txt 上逐查询对照）：
+//
+//	查询       MATCH        MATCH*       LIKE
+//	ci         ∅            d1,d2,d6     d1,d2,d3,d4,d6
+//	ci1        d1           d1,d2,d6     d1,d2,d3,d4,d6
+//	abcd       d8           d8           d8,d9
+//	1c         ∅            ∅            d7
+//
+// 即：**任何形态的 MATCH 都不等于 LIKE**——LIKE 是子串语义（%tok%），MATCH 是词元/短语语义，
+// 词元边界对不齐就丢行；最严重的是 2 字符查询（等于 ngram_token_size）MATCH **一律召回为空**
+// ⇒ 在生产库（020/021 已执行、索引就绪）上「2 字符搜索什么都搜不到、子串搜索丢行」，
+// 而这两种库状态本该给出**完全一致**的用户可见结果（见 search_fulltext_integration_test.go 的契约）。
+//
+// 为什么不做「MATCH ∪ LIKE」的并集兜底：`OR` 之下 MySQL 无法使用 FULLTEXT 索引，LIKE 的
+// 全表扫描照样跑 ⇒ 并集**同时**失去正确性与加速收益，只是多了一次无用的 MATCH 求值。
+//
+// 结论与后续（台账 TD-91）：召回回到 LIKE（慢，但**不漏**——与本模块既有的「只放行实测过的、
+// 其余退回 LIKE」同一原则）；020/021 建的索引与迁移保留为历史（不再参与召回，也不改迁移文件：
+// 迁移校验和按文件内容计算，改动即破坏已应用库的重放）；**若要恢复加速**，必须先在 TD-91 里
+// 定义**明确的产品检索语义**（例如「词/前缀匹配」而非子串匹配），并配 CI 真库判据后才能重新接线——
+// 不得再以「等价」为由静默引入（本段证据即为该判据的底稿）。
 
-// ciSearchNgramTokenSize 是本分流判据**唯一实测过**的 ngram 词元长度。
-//
-// 分流规则（长度=1 走 LIKE、长度>=2 走 MATCH）是在 ngram_token_size=2 的库上逐 token
-// 实测出来的（见 020 迁移注释与 TD-79）。但词元长度是全局可配的：若某部署设成 3，
-// 长度=2 的检索词就短于词元，MATCH 一律召回为空——正是本模块实测证明「漏召回无补救」
-// 的那一类，而「索引在不在」的探测完全看不出异常（索引存在且类型正确）。
-// 故探测必须同时核对 @@ngram_token_size，只放行实测过的 2，其余一律退回 LIKE：慢，但不漏。
-const ciSearchNgramTokenSize = 2
-
-// ciSearchFulltextProbeSQL 探测全文索引是否**可用**，三个条件缺一不可：
-// 索引在位（类型确为 FULLTEXT）、列集合与代码里 MATCH 的集合**逐列同序一致**、
-// 词元长度是被实测过的 2。
-//
-// 为什么必须比到列集合而不止看索引名：021 把索引从 3 列扩到 7 列，于是「代码要的列集合」
-// 与「库里实际的索引」之间新增了一种中间态——020 已应用、021 还没应用（滚动发布时新二进制
-// 配旧库）。这时 MATCH 的列数与索引不符，MySQL 报 1191（ER_FT_MATCHING_KEY_NOT_FOUND），
-// **整条检索直接失败**。只查索引名会把这种状态判成「就绪」，正好推翻本模块承诺的
-// 「迁移与代码发布顺序不敏感」。列集合不符 → 退回 LIKE，才是那个承诺的样子。
-//
-// 查 information_schema 而不是试一条 MATCH 查询：后者在索引缺失时会在**执行计划阶段**
-// 报错并让整条查询失败，而 information_schema 查询只读元数据、恒成功。
-// 索引进不存在时子查询返回 NULL（不是空串），用 sql.NullString 接。
-// GROUP_CONCAT 的默认上限是 1024 字节，本清单远小于它；真被截断也只会误判为「不一致」，
-// 方向仍是退回 LIKE。MariaDB 无 ngram 插件也无 @@ngram_token_size，本查询会报 1193
-// Unknown system variable → 落进「探测失败退 LIKE」分支，方向安全。
-const ciSearchFulltextProbeSQL = `SELECT
-		(SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) FROM information_schema.statistics
-		 WHERE table_schema = DATABASE() AND table_name = 'ci_items'
-		   AND index_name = 'ft_ci_items_search' AND index_type = 'FULLTEXT'),
-		@@ngram_token_size`
-
-// ciSearchFulltextColumnList 是探测用来比对的期望列清单（逗号分隔、无空格）。
-//
-// 从 ciSearchFulltextCond 里解析，而不是再抄一份数组：MATCH 的列集合只有一个定义源，
-// 探测口径自动跟着它走。解析只做一次（包级变量），失败则留空串——空串与任何真实索引
-// 都不相等，后果是恒判未就绪、退回 LIKE，是可看见且安全的失败方向。
-var ciSearchFulltextColumnList = extractMatchColumnList(ciSearchFulltextCond)
-
-// extractMatchColumnList 取出 `MATCH(a, b, c) AGAINST(...)` 里的列清单并规范化。
-func extractMatchColumnList(cond string) string {
-	start := strings.Index(cond, "MATCH(")
-	if start < 0 {
-		return ""
-	}
-	rest := cond[start+len("MATCH("):]
-	end := strings.Index(rest, ")")
-	if end < 0 {
-		return ""
-	}
-	cols := strings.Split(rest[:end], ",")
-	for i := range cols {
-		cols[i] = strings.TrimSpace(cols[i])
-	}
-	return strings.Join(cols, ",")
-}
-
-// isCISearchFulltextReady 探测 020/021 迁移建的全文索引是否可用，结果缓存。
-//
-// 「可用」有三个条件：索引在位、列集合与代码里的 MATCH 清单逐列一致、
-// 词元长度是本模块实测过的 2（见 ciSearchNgramTokenSize 与 ciSearchFulltextProbeSQL）。
-// 后两个条件各挡一种静默故障：词元长度不对 ⇒ MATCH 对短词返回空（漏召回，无错误信号）；
-// 列集合不一致 ⇒ MATCH 直接报 1191（检索整体失败）。两种都退回 LIKE，方向是「慢但不漏、不炸」。
-//
-// 为什么需要运行时探测而不是直接依赖索引：020 迁移与本代码的发布顺序不敏感。
-// 先跑迁移 → 索引在 → 走 MATCH；先发代码后跑迁移（或回滚了 020）→ 探不到 → 退回 LIKE。
-// 两种顺序都能正常工作，检索功能不会因为迁移未执行而报错或静默返回空。
-//
-// 为什么必须缓存：探测是一次元数据查询，不能每次检索都打一次。用 once 语义
-// （fulltextProbed）保证一个进程生命周期内只探一次——索引存在与否在进程运行期间
-// 不会变化，真要变化也需要重启才能让新 DDL 生效，重复探测没有收益。
-//
-// 探测失败（DB 不可用等）按"未就绪"处理：退回 LIKE 是安全方向，宁可慢不可漏。
-func (s *SQLCiStore) isCISearchFulltextReady(ctx context.Context) bool {
-	s.fulltextMu.Lock()
-	defer s.fulltextMu.Unlock()
-	if s.fulltextProbed {
-		return s.fulltextReady
-	}
-	s.fulltextProbed = true // 先置位：即使这次探测失败也不在每个请求上重试
-
-	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	var cols sql.NullString
-	var ngramSize int
-	if err := s.db.QueryRowContext(probeCtx, ciSearchFulltextProbeSQL).Scan(&cols, &ngramSize); err != nil {
-		log.Printf("[cmdb] 全文索引探测失败，本次退回 LIKE 召回: %v", err)
-		return false
-	}
-	colsOK := cols.Valid && cols.String == ciSearchFulltextColumnList
-	s.fulltextReady = colsOK && ngramSize == ciSearchNgramTokenSize
-	switch {
-	case s.fulltextReady:
-		log.Printf("[cmdb] ci_items 全文索引可用（列集合 %s，ngram_token_size=%d），长度>=2 的检索词走 MATCH 召回",
-			ciSearchFulltextColumnList, ngramSize)
-	case !cols.Valid:
-		log.Printf("[cmdb] 未检测到 ci_items 全文索引（020/021 迁移未执行？），全部走 LIKE 召回")
-	case !colsOK:
-		// 020 已应用、021 还没应用时就是这个形态：索引在，但列集合比代码少。
-		// 这里若判成就绪，MATCH 的列数与索引不符会当场报 1191、整条检索失败——
-		// 那是把一次索引升级变成检索不可用。
-		log.Printf("[cmdb] ci_items 全文索引列集合与代码不一致（库里是 %q，代码要 %q；021 迁移未执行？），全部走 LIKE 召回",
-			cols.String, ciSearchFulltextColumnList)
-	default:
-		// 索引在位但词元长度不是实测过的值：此时 MATCH 的召回行为未经验证，
-		// 而「未验证」在本模块里等于「可能静默漏召回」，故不冒险，整体退回 LIKE。
-		log.Printf("[cmdb] ci_items 全文索引在位但 ngram_token_size=%d（分流判据仅在 %d 上实测过），全部走 LIKE 召回",
-			ngramSize, ciSearchNgramTokenSize)
-	}
-	return s.fulltextReady
-}
-
-// ciSearchTokenUseFulltext 判断某个检索词能否安全走全文索引。
-//
-// 判据来自 020 迁移注释里记录的本机实测（MySQL 8.0.46，10 行中英混合语料，逐 token
-// 对比 LIKE 与 MATCH 的命中集合，49 个 token）：
-//
-//   - 长度 = 1 → 一律走 LIKE。全text.Tokenize 把中文按**单字**切，而 ngram 索引按
-//     **双字**切（ngram_token_size=2），单字永远匹配不上双字词元，实测 35/35 全部召回为空。
-//     走 MATCH 会让中文检索彻底返回空结果——这是把召回变窄的正确性回归。
-//   - 含下划线 → 一律走 LIKE。ngram 把下划线当字面量，而 LIKE 里下划线是单字符通配符
-//     （实测 LIKE '%server_prod%' 能命中 'webserver-prod'，MATCH 则不能），两者语义不同，
-//     换过去等于漏召回。
-//   - 其余（长度 >= 2 且无下划线）→ 走 MATCH。实测 13 个此类 token 的 MATCH 命中集合均为
-//     LIKE 的超集或相等。
-//
-// 为什么允许 MATCH 略微放宽（多召回）而不能放宽到漏召回：精确判定与排序由
-// internal/cmdb/search.go 的 matchCI 负责，它按前缀匹配逐 token 复核，
-// MATCH 的伪命中（如 ngram 跨字把 "订单1" 匹到 "订单服务"）会在那一层被过滤。
-// 反向的漏召回则没有任何补救手段。
-func ciSearchTokenUseFulltext(tok string) bool {
-	if len([]rune(tok)) < 2 {
-		return false
-	}
-	return !strings.Contains(tok, "_")
-}
-
-// SearchCIs 按检索词做全文本检索（见 internal/cmdb/search.go 的设计说明）。
-//
-// 召回策略分两种，按 token 分流（判据见 ciSearchTokenUseFulltext）：
-//   - token 长度 >= 2 且不含下划线 → MATCH … AGAINST，走 020 迁移建的 ngram 全文索引；
-//   - 其余（单字 token、含下划线 token）→ 7 列 LIKE 子串匹配。
-//
-// 分流不是可选优化而是正确性要求：ngram 按双字切索引而分词器按单字切中文，
-// 单字 token 走 MATCH 会召回为空（详见 ciSearchTokenUseFulltext 与 020 迁移注释）。
-//
-// 全文索引不可用（020 未执行、已回滚，或 ngram_token_size 不是实测过的 2）时整体退回 LIKE，
-// 检索仍可用——只是退回「候选窗口」取舍：ciSearchSQLRecallCap 之外最相关的 CI 可能取不到。
-//
-// 收益边界（别把本次改动读成「中文检索已走索引」）：查询侧 token 全部来自
-// fulltext.Tokenize（search.go 的 normalizeCiSearch），而它把中文**按单字**切，
-// 于是中文查询产出的 token 长度恒为 1，按上面的判据**恒走 LIKE**；MATCH 路径实际只服务
-// ASCII/数字词（webserver、db01 这类）。要让中文真正走 ngram，得改**查询侧分词**
-// （中文切双字组），而那会把匹配语义从「每个字都出现」变成「这些字连续出现」——
-// 属检索行为变更，需单独裁决，不在本改动里顺手做。
-//
-// 两个刻意的取舍：
-//   - 不加 ESCAPE 转义 '%' 与 '_'：未转义只会放宽匹配（'_' 成为通配符），
-//     而召回只需是命中集合的超集；省掉转义同时规避了不同驱动对 ESCAPE 子句的语法差异。
-//     含下划线的 token 因此一律不走 MATCH——ngram 按字面量处理下划线，与 LIKE 的
-//     通配符语义不同，硬换会造成漏召回。
-//   - 召回窗口 ciSearchSQLRecallCap **对两条路径都生效**（LIMIT 在 token 循环之外无条件拼接）。
-//     本注释此前写作「仅在 LIKE 路径上生效」，与代码不符，已更正。MATCH 是 LIKE 的超集、
-//     召回更宽，触发截断的概率不降反升——故 TD-79 的「最相关 CI 落在窗口外」只是被缓解，
-//     没有被消除。
 func (s *SQLCiStore) SearchCIs(ctx context.Context, tenantID string, q CiSearchQuery) ([]CiSearchHit, error) {
 	tokens, mode, limit, status := normalizeCiSearch(q)
 	if len(tokens) == 0 {
@@ -489,20 +335,9 @@ func (s *SQLCiStore) SearchCIs(ctx context.Context, tenantID string, q CiSearchQ
 		conds = append(conds, " AND ci_type=?")
 		args = append(args, q.CiType)
 	}
-	// 每个检索词都必须至少命中一个列（AND across tokens）。
-	// 走哪条召回路径由 ciSearchTokenUseFulltext 逐词决定；fulltextReady 为 false
-	// （020 未执行）时全部走 LIKE。
-	useFulltext := s.isCISearchFulltextReady(ctx)
+	// 每个检索词都必须至少命中一个列（AND across tokens）；召回路径一律 LIKE
+	// （全文索引召回已删除，理由见上方「召回一律走 LIKE」段）。
 	for _, tok := range tokens {
-		if useFulltext && ciSearchTokenUseFulltext(tok) {
-			conds = append(conds, ciSearchFulltextCond)
-			// BOOLEAN 模式下加 "+" 前缀关闭 50% 阈值判定：MATCH 默认会丢弃出现在
-			// 超过一半文档里的词，若不关闭，高频词（如某个通用 env 值）在长表里
-			// 会突然搜不到——这是随数据增长而漂移的行为，难以复现和诊断。
-			// 检索词仍只作为 ? 占位符参数传入，不进 SQL 文本。
-			args = append(args, "+"+tok)
-			continue
-		}
 		conds = append(conds, ciSearchTokenCond)
 		for range ciSearchColumns {
 			args = append(args, "%"+tok+"%")

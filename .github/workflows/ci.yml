@@ -444,6 +444,13 @@ jobs:
         # 详见 CHANGELOG「真缺陷修复：SQL 后端 GetK8sCluster 恒返 nil」条）。
         run: go test -race -count=1 -timeout 300s -v -run 'TestKubeconfigLegacyMigration_MySQL' ./internal/controlplane/
 
+      - name: CMDB 检索的真库等价性（TD-91：这组用例此前在 CI 无执行方，以 skip 通过）
+        # 同 logstore/kubeconfig 两步的理由：门控于 OPSMESH_TEST_MYSQL_DSN 的用例不单列执行方就永远 skip。
+        # 本步钉住的是**用户可见契约**：无论库里有没有 020/021 建的全文索引，同一组查询必须给出相同命中集
+        # （发布顺序不敏感）。它在本轮修复前必红——实测 MATCH 与 LIKE 不等价（2 字符查询 MATCH 返空、
+        # 子串查询丢行），详见 internal/cmdb/sql.go 顶部的证据表与 CHANGELOG 同日条。
+        run: go test -race -count=1 -timeout 300s -v -run 'TestSearchCIsFulltextIntegration' ./internal/cmdb/
+
   security:
     runs-on: ubuntu-latest
     needs: build-test

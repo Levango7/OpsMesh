@@ -39,7 +39,7 @@ const judgedSitesFloor = 1
 // scanSiteExemptions 登记「参数≥3 但不参与判定」的站点及理由。
 // 键是 "文件名:行号"。没有条目可留空——空表本身也是合法状态。
 var scanSiteExemptions = map[string]string{
-	"sql.go:785": "scanRelation 的唯一调用方 GetCIRelations 的 SELECT 是 7 列（id, source_ci_id, target_ci_id, relation_type, tenant_id, attributes, created_at），与 7 个 Scan 目标一一对应；就近归属抓到的是其后的 GetAttrTemplates 9 列清单（列数不等不猜）；ci_relations 可空列 tenant_id/attributes/created_at 分别经 tenantID/attrsJSON/createdAt（sql.Null*）中转",
+	"sql.go:620": "scanRelation 的唯一调用方 GetCIRelations 的 SELECT 是 7 列（id, source_ci_id, target_ci_id, relation_type, tenant_id, attributes, created_at），与 7 个 Scan 目标一一对应；就近归属抓到的是其后的 GetAttrTemplates 9 列清单（列数不等不猜）；ci_relations 可空列 tenant_id/attributes/created_at 分别经 tenantID/attrsJSON/createdAt（sql.Null*）中转",
 }
 
 // riskyNullableColumns 解析建表来源，得到 table → {可空且无 DEFAULT 的列}。

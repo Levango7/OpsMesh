@@ -4,6 +4,24 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-10（真缺陷修复：CMDB 检索在索引就绪的库上漏召回——2 字符查询返空；TD-91 定性并修复）
+
+- **定性（TD-91：真缺陷，非环境差异）**：实测矩阵（MySQL 8.4 + ngram_token_size=2，7 列同序索引，逐查询对照）：
+
+  | 查询 | MATCH | MATCH* | LIKE |
+  |---|---|---|---|
+  | `ci` | **∅** | d1,d2,d6 | d1,d2,d3,d4,d6 |
+  | `ci1` | d1 | d1,d2,d6 | d1,d2,d3,d4,d6 |
+  | `abcd` | d8 | d8 | d8,d9 |
+  | `1c` | ∅ | ∅ | d7 |
+
+  即**任何形态的 MATCH 都不等于 LIKE**（LIKE 是子串语义，MATCH 是词元/短语语义，边界对不齐就丢行）；最严重的是 **2 字符查询（等于 ngram_token_size）MATCH 一律召回为空**。生产库（020/021 已执行、索引就绪）因此「搜两个字符什么都搜不到、子串搜索丢行」，而两种库状态本该给出**完全一致**的用户可见结果——这正是原用例 `...MatchesLikeWithoutIndex` 的判据（它此前因**没有 CI 执行方**而以 skip 通过）。
+- **修复｜召回回到 LIKE（等价、不漏）**：删除全文索引召回路径（`ciSearchFulltextCond` + 就绪探测/缓存 + ngram 门禁 + 逐词分流，共约 130 行）与其机制用例；`sql.go` 顶部写入**上述证据表**作为「不得以等价为由重新引入 MATCH」的底稿。**为什么不做 MATCH ∪ LIKE 兜底**：`OR` 之下 MySQL 用不上 FULLTEXT 索引、LIKE 全表扫描照样跑 ⇒ 同时失去正确性与加速，只是多一次无用的 MATCH 求值。
+- **保留与取舍（兼容性）**：020/021 迁移与其索引**原样保留**（不再参与召回；**不改迁移文件**——迁移校验和按文件内容计算，改动即破坏已应用库的重放）；`search_fulltext_integration_test.go` 的头注释改写为「用户可见等价契约」并**接入 CI**（integration job 定点步，同 logstore/kubeconfig 的样式——此前它无执行方、永远 skip）。
+- **测试整理**：机制用例删除；**保留并强化**与召回路径无关的两条（`conds`/`args` 严格对齐、过滤条件保序）→ 挪入 `search_conds_args_test.go`（该形态与 root store 那次 SELECT/Scan 列数错位同族，静默失败最难查）；`search_test.go` 里三处 `pinFulltextProbe` 直接改为普通构造（探测已不存在，语义等价）。
+- **顺带记录一处判据脆弱性**：cmdb 的 `scanSiteExemptions` 以「文件:行号」为键，本次删改让**同一个键漂了三次**（每轮都要按守卫自报的新行号重登记）。已在本次按守卫输出更新；「改键为 file:函数名」列为可选改进（未做）。
+- **验证**：`go test ./internal/cmdb/` 全绿；真库集成 4/4 绿（含等价性契约与「召回不得变窄」的独立 LIKE 基准对拍）；`golangci-lint` **0 issues**；`gofmt -l` 净；部署门禁 PASS=76。
+
 ## [Unreleased] — 2026-10-10（TD-88 方向落地首件：通知渠道明文凭据告警 + 引用判据唯一化；方向=引用格式优先）
 
 - **TD-88 方向裁定（用户：「用更安全的那个」）＝ 引用格式 `${provider:key}` 优先**：密钥本体由外部 provider 持有、**不随库同机**（库级静态加密的密钥与库同机，是该侧较弱处），且引用机制（`internal/secrets` 的 SecretProvider 链 + `ResolveSecret`）已建成投产、通知渠道解析路径已接线。裁定与剩余项落进台账 TD-88 行与 `docs/security-mechanism.md` §6.9。

@@ -440,7 +440,7 @@ func TestSQLSearchCIsQueryShape(t *testing.T) {
 	}
 	defer db.Close()
 	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows(searchRowsCols()))
-	s := pinFulltextProbe(&SQLCiStore{db: db}, false)
+	s := &SQLCiStore{db: db}
 
 	_, _ = s.SearchCIs(context.Background(), "t1", CiSearchQuery{
 		Query: "web 生产", CiType: "machine", Status: "active", Limit: 5,
@@ -476,7 +476,7 @@ func TestSQLSearchCIsScoring(t *testing.T) {
 		t.Fatalf("sqlmock.New: %v", err)
 	}
 	defer db.Close()
-	s := pinFulltextProbe(&SQLCiStore{db: db}, false)
+	s := &SQLCiStore{db: db}
 	now := time.Now()
 
 	rows := sqlmock.NewRows(searchRowsCols())
@@ -535,7 +535,7 @@ func TestSQLAndMemoryBackendsAgree(t *testing.T) {
 				t.Fatalf("sqlmock.New: %v", err)
 			}
 			mock.ExpectQuery("SELECT id, ci_type").WillReturnRows(rows)
-			sqlStore := pinFulltextProbe(&SQLCiStore{db: db}, false)
+			sqlStore := &SQLCiStore{db: db}
 
 			memHits, mErr := memStore.SearchCIs(context.Background(), tenant, CiSearchQuery{Query: q, Limit: ciSearchMaxLimit})
 			if mErr != nil {

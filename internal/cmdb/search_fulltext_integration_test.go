@@ -1,4 +1,8 @@
-// search_fulltext_integration_test.go — 检索召回分流在真实 MySQL 上的端到端验证。
+// search_fulltext_integration_test.go — 检索召回的**用户可见等价性**在真实 MySQL 上的端到端验证。
+//
+// TD-91（2026-10-10）：全文索引召回路径已删除（实测证明 MATCH 与 LIKE 不等价，见 sql.go 顶部证据表）。
+// 本文件的价值因此从「验证分流判据」变为**钉住等价契约本身**：无论库里有没有 020/021 建的索引，
+// 同一组查询必须给出完全相同的命中集（发布顺序不敏感）；若有人日后重新引入索引召回，必须先过这条。
 //
 // 为什么单元测试不够：本次改动的全部风险都落在"数据库真实行为"上——
 // ngram 分词粒度、单字 token 能否命中、BOOLEAN 模式的 50% 阈值、生成列能否建索引。
@@ -19,7 +23,10 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -189,8 +196,8 @@ func TestSearchCIsFulltextIntegrationWithIndex(t *testing.T) {
 	store, cleanup := newFulltextTestDB(t, true)
 	defer cleanup()
 
-	if !store.isCISearchFulltextReady(t.Context()) {
-		t.Fatal("索引已建，探测却报未就绪")
+	if !ftIndexExists(t, store) {
+		t.Fatal("索引已建，直查 information_schema 却查不到")
 	}
 
 	cases := []struct {
@@ -198,7 +205,7 @@ func TestSearchCIsFulltextIntegrationWithIndex(t *testing.T) {
 		query string
 		want  []string
 	}{
-		{"ASCII 走 MATCH", "web", []string{"ci1", "ci3"}},
+		{"ASCII token", "web", []string{"ci1", "ci3"}},
 		{"中文单字 token 走 LIKE", "生产", []string{"ci1", "ci3", "ci4", "ci6", "ci8", "ci9"}},
 		{"中文属性值检索", "机房", []string{"ci1", "ci4", "ci5", "ci6", "ci9"}},
 		{"中文名称检索", "订单服务", []string{"ci4"}},
@@ -223,12 +230,12 @@ func TestSearchCIsFulltextIntegrationWithIndex(t *testing.T) {
 
 // TestSearchCIsFulltextIntegrationTenantIsolation 两种召回路径都必须维持租户隔离。
 //
-// 这是安全断言：若 MATCH 路径漏掉 tenant_id 过滤，t1 的查询会看到 t2 的 ci11。
+// 这是安全断言：若召回路径漏掉 tenant_id 过滤，t1 的查询会看到 t2 的 ci11。
 func TestSearchCIsFulltextIntegrationTenantIsolation(t *testing.T) {
 	store, cleanup := newFulltextTestDB(t, true)
 	defer cleanup()
 
-	// "web" 会走 MATCH，"生产" 的每个单字 token 走 LIKE——两条路径都要验。
+	// "web"（ASCII）与 "生产"（中文多字）都是同一召回路径，但覆盖不同列/不同 collation 行为，都要验。
 	for _, qy := range []string{"web", "生产", "机房", "web 生产"} {
 		hits, err := store.SearchCIs(t.Context(), "t1", CiSearchQuery{Query: qy, Limit: 50})
 		if err != nil {
@@ -254,11 +261,11 @@ func TestSearchCIsFulltextIntegrationMatchesLikeWithoutIndex(t *testing.T) {
 	withoutIdx, cleanupNoIdx := newFulltextTestDB(t, false)
 	defer cleanupNoIdx()
 
-	if !withIdx.isCISearchFulltextReady(t.Context()) {
-		t.Fatal("带索引的库探测未就绪")
+	if !ftIndexExists(t, withIdx) {
+		t.Fatal("带索引的库没建出全文索引")
 	}
-	if withoutIdx.isCISearchFulltextReady(t.Context()) {
-		t.Fatal("不带索引的库却报就绪——探测逻辑有误")
+	if ftIndexExists(t, withoutIdx) {
+		t.Fatal("不带索引的库却存在全文索引——用例前提不成立")
 	}
 
 	queries := []string{
@@ -291,7 +298,7 @@ func TestSearchCIsFulltextIntegrationMatchesLikeWithoutIndex(t *testing.T) {
 //
 // 与上面「两库对比」的分工：那条比的是**带索引库 vs 不带索引库**（同一个被测代码，
 // 只有 DDL 不同）；这条比的是**被测代码 vs 一份独立的纯 LIKE 实现**，能在
-// MATCH 分流有偏差时给出不同的诊断信息。
+// 被测实现的 SQL 拼装/判定有偏差时给出不同的诊断信息。
 //
 // 基准必须同样经过 matchCI 精确判定，这一点是本用例的要点：
 // 召回阶段是「宽松的超集」（LIKE 子串能命中 JSON 键名里的字母，如查 "w" 会因为
@@ -322,7 +329,7 @@ func TestSearchCIsFulltextIntegrationRecallNotNarrowed(t *testing.T) {
 		}
 		for _, id := range pureLikeBaseline(t, store, qy) {
 			if !found[id] {
-				t.Errorf("查询 %q：纯 LIKE 实现命中 %s，但 MATCH 分流路径漏掉了它"+
+				t.Errorf("查询 %q：纯 LIKE 实现命中 %s，但被测实现的召回路径漏掉了它"+
 					"（漏召回是正确性回归——精确判定与排序仍在 matchCI，召回不该更窄）", qy, id)
 			}
 		}
@@ -331,7 +338,7 @@ func TestSearchCIsFulltextIntegrationRecallNotNarrowed(t *testing.T) {
 
 // pureLikeBaseline 是一份独立的「全 LIKE」检索实现，用作漏召回的判定基准。
 //
-// 刻意不复用 SearchCIs 的 SQL 拼装与 MATCH 分流：若两者共用同一段代码，共错时
+// 刻意不复用 SearchCIs 的 SQL 拼装与召回条件：若两者共用同一段代码，共错时
 // 无法互相发现。这里只复用两样**本来就该共享**的东西——ciSearchColumns（列集合，
 // 口径必须一致）与 matchCI（精确判定与排序，两个后端必须同口径）；
 // 召回条件则完全独立地写成 7 列 LIKE。
@@ -383,4 +390,89 @@ func pureLikeBaseline(t *testing.T, s *SQLCiStore, query string) []string {
 		out = append(out, item.ID)
 	}
 	return out
+}
+
+// ftIndexExists 直查 information_schema 判断 ci_items 上是否存在全文索引（用例前提断言用；
+// 不经任何生产代码路径，避免「用被测逻辑验证用例前提」的循环）。
+func ftIndexExists(t *testing.T, s *SQLCiStore) bool {
+	t.Helper()
+	var cnt int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='ci_items' AND index_type='FULLTEXT'`,
+	).Scan(&cnt); err != nil {
+		t.Fatalf("查 information_schema.statistics 失败: %v", err)
+	}
+	return cnt > 0
+}
+
+// 迁移文件里「最大版本号」的全文索引定义（用例建索引时的单一来源。
+// TD-91 后生产召回不再使用 MATCH，但用例仍按迁移建索引，以验证「索引有无不改变用户可见结果」这一契约）。
+var (
+	ftIndexAddRe       = regexp.MustCompile(`(?is)ADD\s+FULLTEXT\s+INDEX\s+(\w+)\s*\(([^)]*)\)`)
+	migrationVersionRe = regexp.MustCompile(`^(\d+)`)
+)
+
+func latestFulltextIndexColumns(t *testing.T) (string, []string) {
+	t.Helper()
+	dir := filepath.Join("..", "store", "sqlstore", "migrations")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("读迁移目录失败（用例假定的相对路径是否变了？）: %v", err)
+	}
+	bestVer, bestName, bestCols, bestFile := -1, "", "", ""
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".sql") || strings.HasSuffix(name, ".down.sql") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("读 %s: %v", name, err)
+		}
+		content := stripSQLLineComments(string(data))
+		if !strings.Contains(content, "ci_items") {
+			continue
+		}
+		m := ftIndexAddRe.FindStringSubmatch(content)
+		if m == nil {
+			continue
+		}
+		vm := migrationVersionRe.FindStringSubmatch(name)
+		if vm == nil {
+			continue
+		}
+		ver, err := strconv.Atoi(vm[1])
+		if err != nil {
+			continue
+		}
+		if ver > bestVer {
+			bestVer, bestName, bestCols, bestFile = ver, m[1], m[2], name
+		}
+	}
+	if bestFile == "" {
+		t.Fatal("在 internal/store/sqlstore/migrations 里找不到定义 ci_items 全文索引的迁移")
+	}
+	return bestName, splitColumnList(bestCols)
+}
+
+func splitColumnList(s string) []string {
+	var cols []string
+	for _, c := range strings.Split(s, ",") {
+		if c = strings.TrimSpace(c); c != "" {
+			cols = append(cols, c)
+		}
+	}
+	return cols
+}
+
+func stripSQLLineComments(s string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--") {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
