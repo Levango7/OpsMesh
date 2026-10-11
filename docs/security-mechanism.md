@@ -1277,6 +1277,9 @@ dom.TenantID = tokTenant // token 权威：纳管设备归属以 token 内租户
 - [ ] Agent 启用 shell 白名单 + 元字符拦截 + 文件根目录白名单。
 - [ ] SSH 推送启用 known_hosts 校验。
 - [ ] install token 文件权限 0600。
+- [ ] （auth 域分批切流）按 `docs/td60-auth-cutover-runbook.md` 执行：名册只经文件受控变更、
+      保留账号（`admin`）不入册、每批前对侧全量影子登录通过、观察窗内回退判据有人盯、
+      一次性口令经安全渠道交接且不留存。
 
 ### 12.4 网络层检查
 
