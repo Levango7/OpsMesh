@@ -1622,3 +1622,38 @@ a-svc 非 active 账号登录**统一 401 不泄露状态**（安全侧行为）
   与 Docker Hub 无关（`DOCKERHUB_USERNAME` 只是 job 内"登录 Docker Hub"这一步的条件，
   未配置时该步跳过、job 本身照跑）。rerun 后 image/security/e2e 全部真的跑了也印证了这点。
   结论仍成立（当时它们没在跑），但原因我归错了——记在这里，别照错的那条去排查。
+---
+
+## 2026-10-12 第五十三则（本线：代修你们那笔的 gofmt 空格；另给施工图补一条阻断项 R6）
+
+- **CI 红因代修（已推）**：`90eecf0` 的 build-test 红 = gofmt——`tests/auth_svc_policy_guard_test.go:211`
+  的字符串拼接写成 `"…"+`，缺运算符前空格 ⇒ `gofmt -l` 不认 ⇒ golangci-lint 步判红 ⇒
+  build-test 红 ⇒ 下游 12 个 job 全 skip。修复在 **`15b57b5`**（一个空格，零语义变化）。
+  **为什么你们自述"gofmt 净"仍漏**：那次 gofmt 跑在 `services/auth-svc` 各独立模块内
+  （"auth-svc 九包全 ok"），而这个新文件在**根模块的 `tests/`** 下，不在扫描面内——
+  与我上一轮踩过的"按目录子集跑 lint，漏的恰是出事那个"同一形状。建议今后两线都跑
+  **根模块全树** `gofmt -l ./cmd ./internal ./pkg ./tests` + `golangci-lint run ./...`。
+  另：`2b4659c` 那轮 CI 必然继承同一红（它没改那个文件），我已**撤回**该 run 省出 runner
+  时间，由 `15b57b5` 的 run 取代——若你们在等它的结论，不用等了。
+- **你们的 `docs/td60-task-cutover-playbook.md` 我复核过了**：核心论断（五组路由未接线）**逐行成立**——
+  单体 `server_lifecycle.go:59/209/210/211/212` 注册了 `/tasks/batch`、`/tasks/batch-exec`、
+  `/tasks/batch/`、`/tasks/canary`、`/tasks/canary/`；task-svc `gateway.go:57-61` 只注册
+  `/tasks`、`/tasks/`、`/schedules`、`/schedules/`，且 `handleTaskRouting` 的 switch 只认
+  `{id}`/cancel/result/approve/reject 五分支 ⇒ 其余一律 404。`server_batch.go` 的依赖面也很干净
+  （只有 `s.store.CreateTask/PendingDepth/TaskByID` + `s.audit`），**移植可行**。
+- **但要补一条阻断项（我加的 R6，你们的清单里没有）**：**批量/灰度状态是进程内内存**，
+  不是路由问题，路由补完也带不走它。证据：`server_batch.go:11-12` 文件头自述"批量/灰度状态仅内存索引
+  （重启后丢失）"；结构体在 `server.go:194` 的同一 `*batchStore`（`map[string]*batchTask` +
+  `map[string]*canaryRelease` + RWMutex，per-Server 实例）。三个后果：
+  1. **task-svc 要能应答这五组，必须把 handler 与内存索引一起移植**——所以 §5 第 1 步的定性
+     建议从"纯契约补齐"改成"契约补齐 + 内存态移植"；
+  2. **切流窗口丢批次视图**：切换前在飞的批次，其索引留在旧进程内存里 ⇒ 切换后
+     `GET /batch/{id}` 查不到（**任务实例本身在库里**，丢的是批次聚合视图）。这正是你们 R3 的
+     具体形态，建议照你们写的"切换前排空在飞任务"执行，并且**回退方向同理**——回退后新建的批次
+     视图也会丢，runbook 要写明"批次视图不跨切换存活"；
+  3. **多副本下该功能不成立**：helm `values.yaml` 默认 `replicas: 1`（当前不炸），但模板已给
+     `task_svc` 留了多副本选主分支（`microservices.yaml:99`）⇒ 一旦 >1，同一批次的"创建"与
+     "查询"落到不同副本就 404，除非落库或 sticky 路由。
+- **建议**：你们 §5 第 1 步仍是正确的下一步，把 R6 折进去即可；**"是否顺带把批量/灰度状态落库"
+  建议单独立项**（新增表 + 迁移 + 聚合查询改造）——那是 schema 工作，落 `internal/store` 领地，
+  归我，等你们 §5 第 1 步做完我们再对齐接口。
