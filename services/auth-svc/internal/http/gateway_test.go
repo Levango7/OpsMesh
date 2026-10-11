@@ -616,6 +616,90 @@ func TestChangePassword_SessionSemantics(t *testing.T) {
 	}
 }
 
+// TestAdminCreateUser_MustChangePasswordOnFirstLogin 守护 TD-60 切流搬迁链路的
+// 关键一环：管理端建号可传 mustChangePassword，且置位后该用户首次登录只拿到
+// 改密专用令牌（拿不到常规会话），必须改密后才能正常登录。
+//
+// 为什么关键：搬号 job（opsmesh cutover-migrate）以一次性随机口令建号。若建号
+// 无法置该标记，用户拿到的就是**长期口令**——一次性口令失去意義。该能力此前在
+// proto 与 HTTP 两层均无入口（并行线 COORDINATION 第五十则点名的缺口）。
+func TestAdminCreateUser_MustChangePasswordOnFirstLogin(t *testing.T) {
+	_, mux, svc := newTestGateway()
+	clearMustChangePassword(t, svc)
+	cookies := loginAsAdmin(t, mux, svc)
+
+	// 1) 管理端建号并置 mustChangePassword
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/users",
+		`{"username":"mig-u","password":"SomePass123!x","email":"m@x.io","mustChangePassword":true}`, cookies)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("建号应 201，实际 %d body=%s", rec.Code, rec.Body.String())
+	}
+	u := svc.Store().GetUserByUsername("mig-u")
+	if u == nil || !u.MustChangePassword {
+		t.Fatal("建号请求的 mustChangePassword 未落库（透传断裂）")
+	}
+
+	// 2) 首次登录：必须只回 changePasswordToken，且不下发常规会话
+	recLogin := doReq(t, mux, http.MethodPost, "/api/v1/auth/login",
+		`{"username":"mig-u","password":"SomePass123!x"}`, nil)
+	if recLogin.Code != http.StatusOK {
+		t.Fatalf("首登应 200，实际 %d body=%s", recLogin.Code, recLogin.Body.String())
+	}
+	var lr struct {
+		MustChangePassword  bool   `json:"mustChangePassword"`
+		ChangePasswordToken string `json:"changePasswordToken"`
+	}
+	if err := json.Unmarshal(recLogin.Body.Bytes(), &lr); err != nil {
+		t.Fatalf("login 响应解析失败: %v", err)
+	}
+	if !lr.MustChangePassword || lr.ChangePasswordToken == "" {
+		t.Fatalf("首登必须要求改密并给改密令牌，实际 %+v", lr)
+	}
+	// 首登禁 rt（改密专用会话不可刷新）——与既有 TestChangePassword_FirstLoginFlow
+	// 同语义；at 会随登录下发，但拿它访问受保护面会被拒（见下一步断言）。
+	if findCookie(t, recLogin, "opsmesh_rt") != nil {
+		t.Error("首登改密流不应写 rt Cookie")
+	}
+	// 即便拿到 at，也不能访问受保护端点：MustChangePassword 用户的 at 必须被门禁挡住，
+	// 否则「必须先改密」可被绕过。
+	if at := findCookie(t, recLogin, "opsmesh_at"); at != nil {
+		recMe := doReq(t, mux, http.MethodGet, "/api/v1/auth/me", "",
+			map[string]string{"Cookie": "opsmesh_at=" + at.Value})
+		if recMe.Code != http.StatusForbidden {
+			t.Errorf("MustChangePassword 用户的 at 不得访问受保护端点，实际 %d body=%s",
+				recMe.Code, recMe.Body.String())
+		}
+	}
+
+	// 3) 用改密令牌改密后，标记应被清除且能取得常规会话
+	recCp := doReq(t, mux, http.MethodPost, "/api/v1/auth/change-password",
+		`{"oldPassword":"SomePass123!x","newPassword":"BrandNewPass456!","changePasswordToken":"`+lr.ChangePasswordToken+`"}`, nil)
+	if recCp.Code != http.StatusOK {
+		t.Fatalf("改密应 200，实际 %d body=%s", recCp.Code, recCp.Body.String())
+	}
+	if u2 := svc.Store().GetUserByUsername("mig-u"); u2 == nil || u2.MustChangePassword {
+		t.Error("改密成功后 MustChangePassword 应已清除")
+	}
+	recLogin2 := doReq(t, mux, http.MethodPost, "/api/v1/auth/login",
+		`{"username":"mig-u","password":"BrandNewPass456!"}`, nil)
+	if recLogin2.Code != http.StatusOK {
+		t.Fatalf("改密后应可正常登录，实际 %d", recLogin2.Code)
+	}
+	if findCookie(t, recLogin2, "opsmesh_at") == nil {
+		t.Error("改密后登录应下发常规 at")
+	}
+
+	// 4) 默认不置 ⇒ 行为不变（不破坏既有建号调用方）
+	rec2 := doReq(t, mux, http.MethodPost, "/api/v1/users",
+		`{"username":"mig-u2","password":"SomePass123!x"}`, cookies)
+	if rec2.Code != http.StatusCreated {
+		t.Fatalf("默认建号应 201，实际 %d", rec2.Code)
+	}
+	if u3 := svc.Store().GetUserByUsername("mig-u2"); u3 == nil || u3.MustChangePassword {
+		t.Error("未显式传 mustChangePassword 时应保持 false（既有行为不变）")
+	}
+}
+
 // TestRegister_ResponseCarriesUserId 守护 register 响应体携带 userId
 // （TD-60 契约对齐 §11.1-③）：控制面默认分支回 {message, userId, status}，
 // auth-svc 此前只回 {message}，导致审批流要拿新用户 id 必须再查

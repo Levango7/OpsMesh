@@ -740,13 +740,17 @@ func (x *CheckPermissionResponse) GetAllowed() bool {
 
 // CreateUserRequest is the request to create a user.
 type CreateUserRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
-	Email         string                 `protobuf:"bytes,2,opt,name=email,proto3" json:"email,omitempty"`
-	Password      string                 `protobuf:"bytes,3,opt,name=password,proto3" json:"password,omitempty"`
-	RoleIds       []string               `protobuf:"bytes,4,rep,name=role_ids,json=roleIds,proto3" json:"role_ids,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Username string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	Email    string                 `protobuf:"bytes,2,opt,name=email,proto3" json:"email,omitempty"`
+	Password string                 `protobuf:"bytes,3,opt,name=password,proto3" json:"password,omitempty"`
+	RoleIds  []string               `protobuf:"bytes,4,rep,name=role_ids,json=roleIds,proto3" json:"role_ids,omitempty"`
+	// 首登强制改密（TD-60 切流搬迁用）：true 时建号即置 MustChangePassword，
+	// 该用户首次登录只签 5min 改密专用令牌，必须改密后才能取得常规会话。
+	// 迁移 job 以一次性随机口令建号时必须置 true，否则用户拿到的是长期口令。
+	MustChangePassword bool `protobuf:"varint,5,opt,name=must_change_password,json=mustChangePassword,proto3" json:"must_change_password,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *CreateUserRequest) Reset() {
@@ -807,6 +811,13 @@ func (x *CreateUserRequest) GetRoleIds() []string {
 	return nil
 }
 
+func (x *CreateUserRequest) GetMustChangePassword() bool {
+	if x != nil {
+		return x.MustChangePassword
+	}
+	return false
+}
+
 // GetUserRequest is the request to get a user.
 type GetUserRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -854,13 +865,16 @@ func (x *GetUserRequest) GetId() string {
 
 // UpdateUserRequest is the request to update a user.
 type UpdateUserRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Email         string                 `protobuf:"bytes,2,opt,name=email,proto3" json:"email,omitempty"`
-	Status        string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
-	RoleIds       []string               `protobuf:"bytes,4,rep,name=role_ids,json=roleIds,proto3" json:"role_ids,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Id      string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Email   string                 `protobuf:"bytes,2,opt,name=email,proto3" json:"email,omitempty"`
+	Status  string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	RoleIds []string               `protobuf:"bytes,4,rep,name=role_ids,json=roleIds,proto3" json:"role_ids,omitempty"`
+	// 首登强制改密开关（TD-60）：管理员可对既有用户置位/清除；
+	// 置位后该用户下次登录必须改密（用于口令重置后的强制轮换场景）。
+	MustChangePassword *bool `protobuf:"varint,5,opt,name=must_change_password,json=mustChangePassword,proto3,oneof" json:"must_change_password,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *UpdateUserRequest) Reset() {
@@ -919,6 +933,13 @@ func (x *UpdateUserRequest) GetRoleIds() []string {
 		return x.RoleIds
 	}
 	return nil
+}
+
+func (x *UpdateUserRequest) GetMustChangePassword() bool {
+	if x != nil && x.MustChangePassword != nil {
+		return *x.MustChangePassword
+	}
+	return false
 }
 
 // DeleteUserRequest is the request to delete a user.
@@ -1488,19 +1509,22 @@ const file_auth_proto_rawDesc = "" +
 	"permission\x18\x02 \x01(\tR\n" +
 	"permission\"3\n" +
 	"\x17CheckPermissionResponse\x12\x18\n" +
-	"\aallowed\x18\x01 \x01(\bR\aallowed\"|\n" +
+	"\aallowed\x18\x01 \x01(\bR\aallowed\"\xae\x01\n" +
 	"\x11CreateUserRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12\x14\n" +
 	"\x05email\x18\x02 \x01(\tR\x05email\x12\x1a\n" +
 	"\bpassword\x18\x03 \x01(\tR\bpassword\x12\x19\n" +
-	"\brole_ids\x18\x04 \x03(\tR\aroleIds\" \n" +
+	"\brole_ids\x18\x04 \x03(\tR\aroleIds\x120\n" +
+	"\x14must_change_password\x18\x05 \x01(\bR\x12mustChangePassword\" \n" +
 	"\x0eGetUserRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\"l\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"\xbc\x01\n" +
 	"\x11UpdateUserRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05email\x18\x02 \x01(\tR\x05email\x12\x16\n" +
 	"\x06status\x18\x03 \x01(\tR\x06status\x12\x19\n" +
-	"\brole_ids\x18\x04 \x03(\tR\aroleIds\"#\n" +
+	"\brole_ids\x18\x04 \x03(\tR\aroleIds\x125\n" +
+	"\x14must_change_password\x18\x05 \x01(\bH\x00R\x12mustChangePassword\x88\x01\x01B\x17\n" +
+	"\x15_must_change_password\"#\n" +
 	"\x11DeleteUserRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"@\n" +
 	"\x11ListUsersResponse\x12+\n" +
@@ -1657,6 +1681,7 @@ func file_auth_proto_init() {
 	if File_auth_proto != nil {
 		return
 	}
+	file_auth_proto_msgTypes[13].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

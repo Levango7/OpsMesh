@@ -502,6 +502,14 @@ func (g *Gateway) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "user not found")
 		return
 	}
+	// 强制改密门禁（对齐 controlplane `requirePermission` 的同名语义）：标记未清的
+	// 用户只允许访问 /auth/change-password，其余受保护端点一律 403——否则「必须先
+	// 改密」可被绕过：首登流虽不下发 rt，但 at 仍会在窗口期内有效，而本端点若放行，
+	// 用户即可持 at 持续使用（并可反复登录续期），强制改密形同虚设。
+	if u.MustChangePassword {
+		writeError(w, http.StatusForbidden, "password change required (MUST_CHANGE_PASSWORD)")
+		return
+	}
 	// TD-60 A-2 契约对齐（docs/td60-auth-consistency-report.md §2.5）：
 	// controlplane /auth/me 返回 permissions（角色展开后的有效权限集合），
 	// 而前端 stores/auth.js:31 以 user.permissions 作为侧栏/操作门控的唯一
@@ -577,10 +585,11 @@ func (g *Gateway) handleUsers(w http.ResponseWriter, r *http.Request) {
 		// 密码非空 ⇒ 管理员建号 100% 返回 500；且管理员没有任何指派角色的入口
 		// （只能建出无角色账号，再靠 PUT /roles/{id} 二次补）。
 		var body struct {
-			Username string   `json:"username"`
-			Password string   `json:"password"`
-			Email    string   `json:"email"`
-			RoleIDs  []string `json:"roleIDs"`
+			Username           string   `json:"username"`
+			Password           string   `json:"password"`
+			Email              string   `json:"email"`
+			RoleIDs            []string `json:"roleIDs"`
+			MustChangePassword bool     `json:"mustChangePassword"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" || body.Password == "" {
 			writeError(w, http.StatusBadRequest, "username and password are required")
@@ -599,10 +608,11 @@ func (g *Gateway) handleUsers(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if _, err := g.svc.CreateUser(r.Context(), &authv1.CreateUserRequest{
-			Username: body.Username,
-			Password: body.Password,
-			Email:    body.Email,
-			RoleIds:  body.RoleIDs,
+			Username:           body.Username,
+			Password:           body.Password,
+			Email:              body.Email,
+			RoleIds:            body.RoleIDs,
+			MustChangePassword: body.MustChangePassword,
 		}); err != nil {
 			if err == service.ErrUserExists {
 				writeError(w, http.StatusConflict, "username already exists")

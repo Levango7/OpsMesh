@@ -221,6 +221,9 @@ func (s *Service) CreateUser(ctx context.Context, req *authv1.CreateUserRequest)
 		Username: req.Username,
 		Email:    req.Email,
 		RoleIDs:  req.RoleIds,
+		// 首登强制改密（TD-60 搬迁）：透传建号请求里的开关，使一次性口令建号的
+		// 用户必须改密后才能取得常规会话；缺省 false 保持既有行为。
+		MustChangePassword: req.MustChangePassword,
 	})
 	if err != nil {
 		if err.Error() == "username already exists" {
@@ -233,6 +236,16 @@ func (s *Service) CreateUser(ctx context.Context, req *authv1.CreateUserRequest)
 	// ChangePassword 二次写入——hash 已在上方算好，此处直接复用。
 	if err := s.store.ChangePassword(u.ID, hash); err != nil {
 		return nil, fmt.Errorf("set initial password: %w", err)
+	}
+	// ChangePassword 会顺带把 MustChangePassword 清成 false（语义：改密即完成强制轮换），
+	// 而本路径的 ChangePassword 只是**写初始口令**、并非用户主动改密。若建号请求带了
+	// mustChangePassword，须在此置回，否则该标记被无声吞掉——表现为「要求首登改密
+	// 却没生效，用户拿到的就是长期口令」。与 A2 admin 轮换的补救方式一致
+	// （cmd/auth-svc/main.go 的 rotateDefaultAdminPassword 同样建号后置回）。
+	if req.MustChangePassword {
+		if err := s.store.SetMustChangePassword(u.ID, true); err != nil {
+			return nil, fmt.Errorf("set must-change-password: %w", err)
+		}
 	}
 	return toProtoUser(u), nil
 }
@@ -257,6 +270,9 @@ func (s *Service) RegisterUser(ctx context.Context, req *authv1.CreateUserReques
 		Email:    req.Email,
 		RoleIDs:  req.RoleIds, // 自注册默认角色（role-viewer，只读）由网关显式传入
 		Status:   "pending",
+		// 自注册路径暂不置 MustChangePassword：注册口令由用户自选、且需管理员
+		// 审批，行为与既往一致；是否改为「首登强制改密」属产品决策，不在本提交。
+		MustChangePassword: false,
 	})
 	if err != nil {
 		if err.Error() == "username already exists" {

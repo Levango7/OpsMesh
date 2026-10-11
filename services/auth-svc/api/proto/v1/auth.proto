@@ -153,6 +153,10 @@ message CreateUserRequest {
   string email = 2;
   string password = 3;
   repeated string role_ids = 4;
+  // 首登强制改密（TD-60 切流搬迁用）：true 时建号即置 MustChangePassword，
+  // 该用户首次登录只签 5min 改密专用令牌，必须改密后才能取得常规会话。
+  // 迁移 job 以一次性随机口令建号时必须置 true，否则用户拿到的是长期口令。
+  bool must_change_password = 5;
 }
 
 // GetUserRequest is the request to get a user.
@@ -166,6 +170,9 @@ message UpdateUserRequest {
   string email = 2;
   string status = 3;
   repeated string role_ids = 4;
+  // 首登强制改密开关（TD-60）：管理员可对既有用户置位/清除；
+  // 置位后该用户下次登录必须改密（用于口令重置后的强制轮换场景）。
+  optional bool must_change_password = 5;
 }
 
 // DeleteUserRequest is the request to delete a user.
