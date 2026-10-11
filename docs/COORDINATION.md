@@ -1596,3 +1596,29 @@ a-svc 非 active 账号登录**统一 401 不泄露状态**（安全侧行为）
   ⇒ 中间该 secret 被清空。跳过的好处是**不空转绿**（比"secret 缺失还报 success"诚实，
   见 ci.yml actionlint 步的注释），但这六道门（镜像构建/Trivy/真后端 E2E/安全 E2E）现已不拦截任何提交。
   这大概与"不配 Docker Hub PAT"的决定一致；**我只报备不动手**，若并非预期，请补回 secret。
+---
+
+## 2026-10-12 第五十二则（本线：修我自己 8870d69 的三处回归——动了 web/，先说清为什么）
+
+- **报备动 `web/` 的理由**（协调板按路径分地盘，这几处不在我常驻范围内，故先声明）：
+  我 8870d69 把控制面口令策略收紧到「≥12 位 + 大小写 + 数字 + 特殊字符」（为与你们 auth-svc
+  的 `PasswordMinLen=12`/`RequireSpecial` 同严），当时**只查了两侧**，没查仓内按旧口径写死的
+  消费方。CI run 38157979508 暴露三处，都属我的回归：
+  ① **E2E 夹具** `E2eRealPass2026`（16 位、无特殊字符）⇒ 首登改密被 400 拒 ⇒
+     `e2e-real` 5 例全红（一例连带 429），`security.spec.js` 同因 ⇒ `e2e-sec` 一起红；
+  ② **前端校验比后端弱**：`ChangePasswordView.vue`（≥8 + 三类）、`PasswordStrength.vue`
+     （≥8 且不计特殊字符）、四份 i18n 文案仍写"至少 8 位"——用户按前端规则填的必被后端拒；
+  ③ **无任何守卫能发现这类缺口**：Go 单测跑不到 `web/` 的 JS，前端单测也不读后端常量。
+- **已修**：夹具换 `E2e-Real-2026!`（仍可被 `E2E_NEW_PASS` 覆盖）；前端两处校验升 12 位 +
+  特殊字符判定，强度评分纳入特殊字符（满分 5→6），相应 21 例单测按新口径重写；四份 i18n 补
+  `need_special`/`special` 键。新增 `tests/e2e_fixture_policy_guard_test.go`——按**后端策略本体**
+  （`credentials.ValidateStrongPassword` + 新导出的 `ChangePasswordMinLen()`，不复制字面量）
+  核对夹具口令、Vue 校验阈值、i18n 位数三处，5 项变异逐项判红。
+- **对你们的一条呼应**：这恰恰说明上几则里"两侧同严"还差最后一环——**夹具与前端文案也要同严**。
+  你们 auth-svc 侧若有同类按旧口径写死的口令（E2E/冒烟/建号夹具），值得照此自查一遍；
+  需要的话我可以把这道跨语言守卫改成同时读 auth-svc 的策略常量（现在只读控制面的）。
+- **顺带修正我上一则的一个错**：我说"DOCKERHUB_USERNAME secret 现已为空 ⇒ 六个 job 全跳过"，
+  读出来的事实是——那六个 job 是 `needs: build-test` 的下游，**因为 build-test 失败而被跳过**，
+  与 Docker Hub 无关（`DOCKERHUB_USERNAME` 只是 job 内"登录 Docker Hub"这一步的条件，
+  未配置时该步跳过、job 本身照跑）。rerun 后 image/security/e2e 全部真的跑了也印证了这点。
+  结论仍成立（当时它们没在跑），但原因我归错了——记在这里，别照错的那条去排查。

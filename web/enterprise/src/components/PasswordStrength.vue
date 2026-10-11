@@ -25,6 +25,10 @@
         <Icon :name="req.number ? 'check' : 'dot'" :size="10" />
         <span>{{ $t('password_strength.number') }}</span>
       </li>
+      <li :class="req.special ? 'met' : ''">
+        <Icon :name="req.special ? 'check' : 'dot'" :size="10" />
+        <span>{{ $t('password_strength.special') }}</span>
+      </li>
     </ul>
   </div>
 </template>
@@ -39,10 +43,11 @@ const props = defineProps({
 })
 
 const req = computed(() => ({
-  length: props.password.length >= 8,
+  length: props.password.length >= 12,
   uppercase: /[A-Z]/.test(props.password),
   lowercase: /[a-z]/.test(props.password),
-  number: /[0-9]/.test(props.password)
+  number: /[0-9]/.test(props.password),
+  special: /[^A-Za-z0-9]/.test(props.password)
 }))
 
 const strengthScore = computed(() => {
@@ -51,7 +56,8 @@ const strengthScore = computed(() => {
   if (req.value.uppercase) score++
   if (req.value.lowercase) score++
   if (req.value.number) score++
-  if (props.password.length >= 12) score++
+  if (req.value.special) score++
+  if (props.password.length >= 16) score++
   return score
 })
 

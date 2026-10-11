@@ -63,12 +63,15 @@ describe('PasswordStrength 组件', () => {
       expect(wrapper.find('.strength-fill').exists()).toBe(true)
     })
 
-    it('包含 4 个需求项', () => {
+    it('包含 5 个需求项（含特殊字符）', () => {
       const wrapper = mount(PasswordStrength, {
         props: { password: 'abc' },
         global: { mocks: { $t: mockT } },
       })
-      expect(wrapper.findAll('.requirements li')).toHaveLength(4)
+      expect(wrapper.findAll('.requirements li')).toHaveLength(5)
+      // 后端口令策略要求特殊字符（credentials.ValidateStrongPassword），
+      // 强度条的需求列表必须把它列出来，否则用户看不到这一条就填不出合规口令。
+      expect(wrapper.findAll('.requirements li')[4].text()).toBe('password_strength.special')
     })
   })
 
@@ -104,48 +107,49 @@ describe('PasswordStrength 组件', () => {
   })
 
   describe('强度评分 — 中（medium）', () => {
-    it('大小写+数字长度8 → medium', () => {
+    it('大小写+数字长度12 但无特殊字符 → medium', () => {
       const wrapper = mount(PasswordStrength, {
-        props: { password: 'Abc12345' },
+        props: { password: 'Abcdefgh1234' },
         global: { mocks: { $t: mockT } },
       })
-      // length>=8, uppercase, lowercase, number → score=4 → medium
+      // length>=12 + upper + lower + number = 4 → medium（缺特殊字符，上不到 strong）
       expect(wrapper.find('.strength-fill').classes()).toContain('medium')
       expect(wrapper.find('.strength-label').classes()).toContain('medium')
     })
 
     it('中密码进度条宽度为 80%（score=4）', () => {
       const wrapper = mount(PasswordStrength, {
-        props: { password: 'Abc12345' },
+        props: { password: 'Abcdefgh1234' },
         global: { mocks: { $t: mockT } },
       })
       const style = wrapper.find('.strength-fill').attributes('style') || ''
       expect(style).toContain('width: 80%')
     })
 
-    it('大小写+数字长度10 → medium（score=4，长度<12 不加分）', () => {
+    it('大小写+数字长度12 且含特殊字符 → strong（不是 medium）', () => {
       const wrapper = mount(PasswordStrength, {
-        props: { password: 'Abcdef1234' },
+        props: { password: 'Abcdefg1234!' },
         global: { mocks: { $t: mockT } },
       })
-      expect(wrapper.find('.strength-fill').classes()).toContain('medium')
+      // 12 位四类字符齐 = 5 分 → strong：这才是后端认的口令形态
+      expect(wrapper.find('.strength-fill').classes()).toContain('strong')
     })
   })
 
   describe('强度评分 — 强（strong）', () => {
-    it('大小写+数字长度>=12 → strong', () => {
+    it('大小写+数字+特殊字符 长度>=12 → strong', () => {
       const wrapper = mount(PasswordStrength, {
-        props: { password: 'Abcdefgh1234' },
+        props: { password: 'Abcdefgh1234!' },
         global: { mocks: { $t: mockT } },
       })
-      // length>=8, uppercase, lowercase, number, length>=12 → score=5 → strong
+      // length>=12 + upper + lower + number + special = 5 → strong
       expect(wrapper.find('.strength-fill').classes()).toContain('strong')
       expect(wrapper.find('.strength-label').classes()).toContain('strong')
     })
 
     it('强密码进度条宽度为 100%（score=5 → min(100, 100)）', () => {
       const wrapper = mount(PasswordStrength, {
-        props: { password: 'Abcdefgh1234' },
+        props: { password: 'Abcdefgh1234!' },
         global: { mocks: { $t: mockT } },
       })
       const style = wrapper.find('.strength-fill').attributes('style') || ''
@@ -154,16 +158,25 @@ describe('PasswordStrength 组件', () => {
   })
 
   describe('需求项 met 状态', () => {
-    it('长度>=8 时第一项 met', () => {
+    it('长度>=12 时第一项 met', () => {
       const wrapper = mount(PasswordStrength, {
-        props: { password: 'longenough' },
+        props: { password: 'longenough12' },
         global: { mocks: { $t: mockT } },
       })
       const items = wrapper.findAll('.requirements li')
       expect(items[0].classes()).toContain('met')
     })
 
-    it('长度<8 时第一项未 met', () => {
+    it('长度 11（差一位）时第一项未 met', () => {
+      const wrapper = mount(PasswordStrength, {
+        props: { password: 'longenough1' },
+        global: { mocks: { $t: mockT } },
+      })
+      const items = wrapper.findAll('.requirements li')
+      expect(items[0].classes()).not.toContain('met')
+    })
+
+    it('长度远短时第一项未 met', () => {
       const wrapper = mount(PasswordStrength, {
         props: { password: 'short' },
         global: { mocks: { $t: mockT } },
@@ -208,6 +221,7 @@ describe('PasswordStrength 组件', () => {
       expect(items[1].classes()).not.toContain('met') // uppercase
       expect(items[2].classes()).not.toContain('met') // lowercase
       expect(items[3].classes()).toContain('met') // number
+      expect(items[4].classes()).not.toContain('met') // special
     })
   })
 
@@ -222,7 +236,7 @@ describe('PasswordStrength 组件', () => {
 
     it('强密码标签为 password_strength.strong', () => {
       const wrapper = mount(PasswordStrength, {
-        props: { password: 'Abcdefgh1234' },
+        props: { password: 'Abcdefgh1234!' },
         global: { mocks: { $t: mockT } },
       })
       expect(wrapper.find('.strength-label').text()).toBe('password_strength.strong')

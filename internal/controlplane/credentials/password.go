@@ -25,6 +25,12 @@ const bcryptCost = 12
 // 口令在 auth-svc 启动即失败"（8226d23 的 compose 注释已把该差异写成部署约束）。
 const changePasswordMinLen = 12
 
+// ChangePasswordMinLen 强口令最短长度的只读口径。
+// 有真实消费方：tests/ 下的跨语言守卫按**后端策略本体**核对 E2E 夹具口令与前端
+// 校验规则（两侧此前都曾比后端弱而无人发现）。若让调用方自带字面量 12，
+// 就会出现"后端改了阈值、守卫还在按旧值放行"——那比没有守卫更坏。
+func ChangePasswordMinLen() int { return changePasswordMinLen }
+
 // HashPassword 用 bcrypt 哈希密码。
 // 使用 cost=12（生产推荐基线，DefaultCost=10 偏低）。
 // 注意：现有用户密码哈希可能用 cost=10 生成，bcrypt.CompareHashAndPassword

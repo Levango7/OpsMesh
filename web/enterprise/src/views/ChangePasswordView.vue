@@ -105,10 +105,11 @@ const success = ref(false)
 const validationError = computed(() => {
   if (!oldPassword.value) return t('change_password.need_old_password')
   if (!newPassword.value) return t('change_password.need_new_password')
-  if (newPassword.value.length < 8) return t('change_password.min_length')
+  if (newPassword.value.length < 12) return t('change_password.min_length')
   if (!/[a-z]/.test(newPassword.value)) return t('change_password.need_lowercase')
   if (!/[A-Z]/.test(newPassword.value)) return t('change_password.need_uppercase')
   if (!/[0-9]/.test(newPassword.value)) return t('change_password.need_number')
+  if (!/[^A-Za-z0-9]/.test(newPassword.value)) return t('change_password.need_special')
   if (newPassword.value !== confirmPassword.value) return t('change_password.mismatch')
   return ''
 })

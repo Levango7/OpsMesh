@@ -102,18 +102,20 @@
     "success": "密码修改成功，正在跳转登录…",
     "need_old_password": "请输入当前密码",
     "need_new_password": "请输入新密码",
-    "min_length": "密码长度至少 8 位",
+    "min_length": "密码长度至少 12 位，且包含大小写字母、数字与特殊字符",
     "need_lowercase": "密码需包含小写字母",
     "need_uppercase": "密码需包含大写字母",
     "need_number": "密码需包含数字",
+    "need_special": "密码需包含特殊字符",
     "mismatch": "两次输入的密码不一致",
     "failed": "密码修改失败"
   },
   "password_strength": {
-    "min_length": "至少 8 个字符",
+    "min_length": "至少 12 个字符",
     "uppercase": "大写字母",
     "lowercase": "小写字母",
     "number": "数字",
+    "special": "特殊字符",
     "weak": "弱",
     "medium": "中",
     "strong": "强"

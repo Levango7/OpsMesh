@@ -10,7 +10,7 @@ import { test, expect } from '@playwright/test'
 
 const ADMIN_USER = process.env.E2E_ADMIN_USER || 'admin'
 const ADMIN_PASS = process.env.E2E_ADMIN_PASS || 'admin123'
-const E2E_NEW_PASS = process.env.E2E_NEW_PASS || 'E2eRealPass2026'
+const E2E_NEW_PASS = process.env.E2E_NEW_PASS || 'E2e-Real-2026!'
 const BASE = process.env.E2E_BASE_URL || 'http://127.0.0.1:8080'
 
 // 文件级 token 缓存：每个 spec 只真实登录一次（多用例共享），

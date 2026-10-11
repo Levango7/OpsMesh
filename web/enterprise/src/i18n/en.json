@@ -102,18 +102,20 @@
     "success": "Password changed, redirecting to login…",
     "need_old_password": "Please enter current password",
     "need_new_password": "Please enter new password",
-    "min_length": "Password must be at least 8 characters",
+    "min_length": "Password must be at least 12 characters with upper/lowercase, a digit and a special character",
     "need_lowercase": "Password must contain a lowercase letter",
     "need_uppercase": "Password must contain an uppercase letter",
     "need_number": "Password must contain a number",
+    "need_special": "Password must contain a special character",
     "mismatch": "Passwords do not match",
     "failed": "Failed to change password"
   },
   "password_strength": {
-    "min_length": "At least 8 characters",
+    "min_length": "At least 12 characters",
     "uppercase": "Uppercase letter",
     "lowercase": "Lowercase letter",
     "number": "Number",
+    "special": "Special character",
     "weak": "Weak",
     "medium": "Medium",
     "strong": "Strong"

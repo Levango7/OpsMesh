@@ -48,7 +48,7 @@ async function login() {
     }
     return resp
   }
-  let resp = await tryLogin(process.env.E2E_NEW_PASS || 'E2eRealPass2026')
+  let resp = await tryLogin(process.env.E2E_NEW_PASS || 'E2e-Real-2026!')
   let body = resp.json
   if (resp.status === 401) {
     resp = await tryLogin(ADMIN_PASS)
@@ -56,10 +56,10 @@ async function login() {
     body = resp.json
     if (body.mustChangePassword || body.changePasswordToken) {
       const change = await req('POST', '/api/v1/auth/change-password', {
-        body: { oldPassword: ADMIN_PASS, newPassword: process.env.E2E_NEW_PASS || 'E2eRealPass2026', changePasswordToken: body.changePasswordToken }
+        body: { oldPassword: ADMIN_PASS, newPassword: process.env.E2E_NEW_PASS || 'E2e-Real-2026!', changePasswordToken: body.changePasswordToken }
       })
       expect([200, 201]).toContain(change.status)
-      resp = await tryLogin(process.env.E2E_NEW_PASS || 'E2eRealPass2026')
+      resp = await tryLogin(process.env.E2E_NEW_PASS || 'E2e-Real-2026!')
       expect([200, 201]).toContain(resp.status)
       body = resp.json
     }
