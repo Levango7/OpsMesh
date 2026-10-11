@@ -75,28 +75,28 @@ routes(){ grep -c 'msg":"切流路由' "$OUT/cp.log" 2>/dev/null || true; }
 
 echo "== 0. 双进程在听 + 启动自检 =="
 c=$(curl -s -o /dev/null -w '%{http_code}' "$AS/api/v1/auth/me")
-[ "$c" = "401" ] && ok "auth-svc 网关在听（401）" || { no "auth-svc 网关异常（$c）"; tail -5 "$OUT/authsvc.log"; exit 2; }
+if [ "$c" = "401" ]; then ok "auth-svc 网关在听（401）"; else no "auth-svc 网关异常（$c）"; tail -5 "$OUT/authsvc.log"; exit 2; fi
 c=$(curl -s -o /dev/null -w '%{http_code}' "$CP/api/v1/auth/me")
-[ "$c" = "401" ] && ok "控制面在听（401）" || { no "控制面异常（$c）"; tail -8 "$OUT/cp.log"; exit 2; }
-grep -q "切流名册已装载" "$OUT/cp.log" && ok "启动自检打印名册装载日志" || no "名册装载日志缺失"
-grep -q "名册条目在本侧不存在" "$OUT/cp.log" && ok "自检提示名册条目本侧不存在（拼写兜底生效）" || no "自检未提示"
+if [ "$c" = "401" ]; then ok "控制面在听（401）"; else no "控制面异常（$c）"; tail -8 "$OUT/cp.log"; exit 2; fi
+if grep -q "切流名册已装载" "$OUT/cp.log"; then ok "启动自检打印名册装载日志"; else no "名册装载日志缺失"; fi
+if grep -q "名册条目在本侧不存在" "$OUT/cp.log"; then ok "自检提示名册条目本侧不存在（拼写兜底生效）"; else no "自检未提示"; fi
 
 echo "== 1. 控制面 admin 首登改密（拿管理 token）=="
 J=$(curl -s -c "$OUT/admin.jar" -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
   -d "{\"username\":\"admin\",\"password\":\"$ADMINPASS\"}")
 CPT=$(printf '%s' "$J" | jget changePasswordToken)
-[ -n "$CPT" ] && ok "首登返回一次性改密令牌" || no "首登未返回改密令牌：$J"
+if [ -n "$CPT" ]; then ok "首登返回一次性改密令牌"; else no "首登未返回改密令牌：$J"; fi
 J=$(curl -s -b "$OUT/admin.jar" -c "$OUT/admin.jar" -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/change-password" \
   -d "{\"oldPassword\":\"$ADMINPASS\",\"newPassword\":\"$ADMINPASS2\",\"changePasswordToken\":\"$CPT\"}")
 AT=$(printf '%s' "$J" | jget token)
-[ -n "$AT" ] && ok "改密后签发 at" || no "改密未签发 at：$J"
+if [ -n "$AT" ]; then ok "改密后签发 at"; else no "改密未签发 at：$J"; fi
 
 mkuser(){
   local name=$1 code
   code=$(curl -s -o "$OUT/mk-$name.json" -w '%{http_code}' -H "Authorization: Bearer $AT" -H 'Content-Type: application/json' \
     -H 'X-Tenant-ID: default' -X POST "$CP/api/v1/users" \
     -d "{\"username\":\"$name\",\"password\":\"$USERPASS\",\"email\":\"$name@smoke.io\"}")
-  [ "$code" = "201" ] && ok "本地建号 $name（201）" || no "本地建号 $name 失败（$code）：$(cat "$OUT/mk-$name.json")"
+if   [ "$code" = "201" ]; then ok "本地建号 $name（201）"; else no "本地建号 $name 失败（$code）：$(cat "$OUT/mk-$name.json")"; fi
 }
 echo "== 2. 建两个本地用户（一个进名册、一个不进）=="
 mkuser smoke-roster
@@ -107,17 +107,17 @@ BEFORE=$(routes)
 J=$(curl -s -b "$OUT/local.jar" -c "$OUT/local.jar" -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
   -d "{\"username\":\"smoke-local\",\"password\":\"$USERPASS\"}")
 T=$(printf '%s' "$J" | jget token)
-[ -n "$T" ] && ok "smoke-local 本地登录成功" || no "smoke-local 登录失败：$J"
-AFTER=$(routes); [ "$BEFORE" = "$AFTER" ] && ok "非名册用户未触发路由" || no "非名册用户被误路由（$BEFORE→$AFTER）"
+if [ -n "$T" ]; then ok "smoke-local 本地登录成功"; else no "smoke-local 登录失败：$J"; fi
+if AFTER=$(routes); [ "$BEFORE" = "$AFTER" ]; then ok "非名册用户未触发路由"; else no "非名册用户被误路由（$BEFORE→$AFTER）"; fi
 
 echo "== 4. 名册用户（对侧尚无此账号）：必须被转发 ⇒ 错误文案出自 auth-svc =="
 BEFORE=$AFTER
 J=$(curl -s -b "$OUT/roster.jar" -c "$OUT/roster.jar" -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
   -d "{\"username\":\"smoke-roster\",\"password\":\"$USERPASS\"}")
-grep -q "invalid credentials" <<<"$J" && ok "错误文案出自 auth-svc（转发已发生）" || no "文案非 auth-svc 形态：$J"
-grep -q "invalid username or password" <<<"$J" && no "被本地处理了（文案是本地的）" || ok "未被本地处理（本地正确口令未被接受）"
-AFTER=$(routes); [ "$AFTER" -gt "$BEFORE" ] && ok "路由日志已记录（login）" || no "路由日志缺失（$BEFORE→$AFTER）"
-grep -qE '"endpoint":"login".*"user":"smoke-roster"' "$OUT/cp.log" && ok "路由日志点名 smoke-roster" || no "路由日志未点名用户"
+if grep -q "invalid credentials" <<<"$J"; then ok "错误文案出自 auth-svc（转发已发生）"; else no "文案非 auth-svc 形态：$J"; fi
+if grep -q "invalid username or password" <<<"$J"; then no "被本地处理了（文案是本地的）"; else ok "未被本地处理（本地正确口令未被接受）"; fi
+if AFTER=$(routes); [ "$AFTER" -gt "$BEFORE" ]; then ok "路由日志已记录（login）"; else no "路由日志缺失（$BEFORE→$AFTER）"; fi
+if grep -qE '"endpoint":"login".*"user":"smoke-roster"' "$OUT/cp.log"; then ok "路由日志点名 smoke-roster"; else no "路由日志未点名用户"; fi
 
 # 4b. 本地闸先于路由（确定性演示）：IP 令牌桶容量 5、每 6s 补 1 ⇒ 连打 5 发，
 #     期间至少 1 发为本地 429 且**不转发**（限流发生在路由判定之前）。
@@ -129,22 +129,22 @@ for _ in 1 2 3 4 5; do
   grep -q "too many requests" <<<"$J" && THROTTLED=$((THROTTLED+1))
 done
 ROUTED_AFTER=$(routes)
-[ "$THROTTLED" -ge 1 ] && ok "连打阶段出现本地 429（令牌桶生效）" || no "连打 5 发未触发限流（桶参数变化？）"
-[ "$((ROUTED_AFTER-ROUTED_BEFORE))" -le 4 ] && ok "被限流的请求未被转发（本地闸先于路由）" || no "限流请求被转发（本段路由增量应 ≤4，实为 $((ROUTED_AFTER-ROUTED_BEFORE))）"
+if [ "$THROTTLED" -ge 1 ]; then ok "连打阶段出现本地 429（令牌桶生效）"; else no "连打 5 发未触发限流（桶参数变化？）"; fi
+if [ "$((ROUTED_AFTER-ROUTED_BEFORE))" -le 4 ]; then ok "被限流的请求未被转发（本地闸先于路由）"; else no "限流请求被转发（本段路由增量应 ≤4，实为 $((ROUTED_AFTER-ROUTED_BEFORE))）"; fi
 echo "  [info] 等待令牌回填（每 6s 1 枚）后再继续"
 sleep 14
 
 echo "== 5. 在 auth-svc 侧建号并审批（模拟迁移：注册→管理员审批）=="
 J=$(curl -s -H 'Content-Type: application/json' -X POST "$AS/api/v1/auth/register" \
   -d "{\"username\":\"smoke-roster\",\"password\":\"$USERPASS\",\"email\":\"smoke-roster@smoke.io\"}")
-grep -q "pending" <<<"$J" && ok "auth-svc 侧注册已受理（pending；其响应体不含 userId）" || no "auth-svc 注册失败：$J"
+if grep -q "pending" <<<"$J"; then ok "auth-svc 侧注册已受理（pending；其响应体不含 userId）"; else no "auth-svc 注册失败：$J"; fi
 J=$(curl -s -c "$OUT/asadmin.jar" -H 'Content-Type: application/json' -X POST "$AS/api/v1/auth/login" \
   -d "{\"username\":\"admin\",\"password\":\"$ADMINPASS\"}")
 ACPT=$(printf '%s' "$J" | jget changePasswordToken)
 J=$(curl -s -b "$OUT/asadmin.jar" -c "$OUT/asadmin.jar" -H 'Content-Type: application/json' -X POST "$AS/api/v1/auth/change-password" \
   -d "{\"oldPassword\":\"$ADMINPASS\",\"newPassword\":\"$ADMINPASS2\",\"changePasswordToken\":\"$ACPT\"}")
-grep -q "password changed" <<<"$J" && ok "auth-svc 侧首登改密完成" || no "auth-svc 改密失败：$J"
-grep -q "opsmesh_at" "$OUT/asadmin.jar" && ok "auth-svc 会话 Cookie 入罐（其改密只经 Set-Cookie 下发）" || no "auth-svc 未下发会话 Cookie"
+if grep -q "password changed" <<<"$J"; then ok "auth-svc 侧首登改密完成"; else no "auth-svc 改密失败：$J"; fi
+if grep -q "opsmesh_at" "$OUT/asadmin.jar"; then ok "auth-svc 会话 Cookie 入罐（其改密只经 Set-Cookie 下发）"; else no "auth-svc 未下发会话 Cookie"; fi
 ASUID=$(curl -s -b "$OUT/asadmin.jar" "$AS/api/v1/users" | python -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -152,38 +152,38 @@ us=d.get('users') or d.get('items') or []
 hit=[u for u in us if (u.get('username') or u.get('Username'))=='smoke-roster']
 print((hit[0].get('id') or hit[0].get('ID')) if hit else '')
 " 2>/dev/null)
-[ -n "$ASUID" ] && ok "从对侧用户列表取到 id（$ASUID）" || no "未能取到对侧用户 id"
+if [ -n "$ASUID" ]; then ok "从对侧用户列表取到 id（$ASUID）"; else no "未能取到对侧用户 id"; fi
 code=$(curl -s -o "$OUT/approve.json" -w '%{http_code}' -b "$OUT/asadmin.jar" -X POST "$AS/api/v1/users/$ASUID/approve")
-[ "$code" = "200" ] && ok "审批通过（200）" || no "审批失败（$code）：$(cat "$OUT/approve.json")"
+if [ "$code" = "200" ]; then ok "审批通过（200）"; else no "审批失败（$code）：$(cat "$OUT/approve.json")"; fi
 
 echo "== 6. 名册用户（对侧已有账号）：经控制面登录应 200（由 auth-svc 应答）=="
 BEFORE=$(routes)
 code=$(curl -s -o "$OUT/rosterlogin.json" -w '%{http_code}' -b "$OUT/roster.jar" -c "$OUT/roster.jar" \
   -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
   -d "{\"username\":\"smoke-roster\",\"password\":\"$USERPASS\"}")
-[ "$code" = "200" ] && ok "名册用户登录 200（跨进程转发成功）" || no "名册用户登录失败（$code）：$(cat "$OUT/rosterlogin.json")"
+if [ "$code" = "200" ]; then ok "名册用户登录 200（跨进程转发成功）"; else no "名册用户登录失败（$code）：$(cat "$OUT/rosterlogin.json")"; fi
 # auth-svc 的登录成功只经 Set-Cookie 下发会话（响应体无 token 字段，与本地形态不同）。
-grep -q "opsmesh_at" "$OUT/roster.jar" && ok "auth-svc 签发的会话 Cookie 入罐" || no "未见 auth-svc 会话 Cookie"
-AFTER=$(routes); [ "$AFTER" -gt "$BEFORE" ] && ok "路由日志已记录（login 第二次）" || no "路由日志缺失"
+if grep -q "opsmesh_at" "$OUT/roster.jar"; then ok "auth-svc 签发的会话 Cookie 入罐"; else no "未见 auth-svc 会话 Cookie"; fi
+if AFTER=$(routes); [ "$AFTER" -gt "$BEFORE" ]; then ok "路由日志已记录（login 第二次）"; else no "路由日志缺失"; fi
 
 echo "== 7. 会话归属证明：上一步的 rt 由 auth-svc 签发 ⇒ 刷新按归属侧转发 =="
 BEFORE=$AFTER
 code=$(curl -s -o "$OUT/refresh.json" -w '%{http_code}' -b "$OUT/roster.jar" -c "$OUT/roster.jar" -X POST "$CP/api/v1/auth/refresh")
-[ "$code" = "200" ] && ok "刷新成功（由 auth-svc 旋转）" || no "刷新失败（$code）：$(cat "$OUT/refresh.json" 2>/dev/null)"
-AFTER=$(routes); [ "$AFTER" -gt "$BEFORE" ] && ok "路由日志已记录（refresh）" || no "刷新未记录路由"
-grep -qE '"endpoint":"refresh".*"local_owns":false' "$OUT/cp.log" && ok "归属判定为对侧（local_owns=false）" || no "归属判定异常"
+if [ "$code" = "200" ]; then ok "刷新成功（由 auth-svc 旋转）"; else no "刷新失败（$code）：$(cat "$OUT/refresh.json" 2>/dev/null)"; fi
+if AFTER=$(routes); [ "$AFTER" -gt "$BEFORE" ]; then ok "路由日志已记录（refresh）"; else no "刷新未记录路由"; fi
+if grep -qE '"endpoint":"refresh".*"local_owns":false' "$OUT/cp.log"; then ok "归属判定为对侧（local_owns=false）"; else no "归属判定异常"; fi
 
 echo "== 8. 对照：本地用户刷新仍在本地（无路由日志）=="
 BEFORE=$AFTER
 code=$(curl -s -o "$OUT/refresh2.json" -w '%{http_code}' -b "$OUT/local.jar" -c "$OUT/local.jar" -X POST "$CP/api/v1/auth/refresh")
-[ "$code" = "200" ] && ok "本地用户刷新成功" || no "本地刷新失败（$code）"
-AFTER=$(routes); [ "$BEFORE" = "$AFTER" ] && ok "本地用户刷新未触发路由" || no "本地用户刷新被误路由"
+if [ "$code" = "200" ]; then ok "本地用户刷新成功"; else no "本地刷新失败（$code）"; fi
+if AFTER=$(routes); [ "$BEFORE" = "$AFTER" ]; then ok "本地用户刷新未触发路由"; else no "本地用户刷新被误路由"; fi
 
 echo "== 9. 名册用户 /me 也应按 JWT（sub）转发 =="
 BEFORE=$AFTER
 code=$(curl -s -o "$OUT/me.json" -w '%{http_code}' -b "$OUT/roster.jar" "$CP/api/v1/auth/me")
-[ "$code" = "200" ] && ok "名册用户 /me 200" || no "名册用户 /me 失败（$code）：$(cat "$OUT/me.json" 2>/dev/null)"
-AFTER=$(routes); [ "$AFTER" -gt "$BEFORE" ] && ok "路由日志已记录（me）" || no "/me 未记录路由"
+if [ "$code" = "200" ]; then ok "名册用户 /me 200"; else no "名册用户 /me 失败（$code）：$(cat "$OUT/me.json" 2>/dev/null)"; fi
+if AFTER=$(routes); [ "$AFTER" -gt "$BEFORE" ]; then ok "路由日志已记录（me）"; else no "/me 未记录路由"; fi
 
 echo
 echo "===== 冒烟结果：PASS=$PASS FAIL=$FAIL ====="
