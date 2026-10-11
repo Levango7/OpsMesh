@@ -2,19 +2,21 @@
 
 > **定位**：本文是 task 域从控制面单体切向 task-svc 的**只读施工图**——通路勘察 + 缺口清单 + 与 auth 域的同构对照。
 > **不写代码、不改配置**；执行需单独立项。
-> **基准**：`90eecf0`（2026-10-11）。所有结论以 `file:line` 标注，可逐条复核。
+> **基准**：`fc68154`（2026-10-11）。所有结论以 `file:line` 标注，可逐条复核。
 >
-> **为什么现在做**：auth 域切流的机制面（名册/转发/回退/搬号 job/真进程冒烟）已由 peer 全部落地并验证，
-> task 域是 TD-60 阶段 2 核心三域（task/device/auth）中**尚未做契约对账**的下一站。等真实用户名单期间，
-> 这份图能让"开切"从估算变成照单施工。
+> **修订记录（2026-10-12）**：本文初版（`2b4659c`）的 §2.2 曾断言「五组路由未接线」，
+> 经 peer 逐行复核**证伪**：其中四组早已在 `gateway_batch.go`/`gateway_canary.go` 实现并注册，
+> 真正未接线的只有 `POST /api/v1/tasks/batch` 一组，且该组在前端是**死代码**。
+> 错误结论已就地更正（保留修订痕迹），另补入 peer 发现的阻断项 R6（批量/灰度状态是进程内内存）。
+> 「把错误结论留在仓库比没有结论更糟」——故本文不静默改写，而是标注修正。
 
 ---
 
 ## 1. 一句话结论
 
-**task 域的"双轨机制面"已经齐了（代理规则 + compose URL + 权限分级），但"契约面"有五组路由未接线、
-数据面分库未对齐。现阶段打开 `OPSMESH_SERVICE_PROXY=task` 会让前端批量/灰度功能直接 404，
-不能切。缺口清单见 §3，施工顺序见 §5。**
+**task 域的"双轨机制面"已齐（代理规则 + compose URL + 权限分级），契约面仅缺 1 组路由，
+且那组在前端是死代码。真正的阻断项不是路由而是数据面：批量/灰度状态是进程内内存，
+切流与回退都会丢批次聚合视图（R6）。建议先做契约对账与死代码处置，再谈切流。**
 
 ---
 
@@ -24,93 +26,120 @@
 
 | 件 | 状态 | 证据 |
 |---|---|---|
-| 代理规则 | ✅ 已有 task 域完整规则 | `internal/controlplane/svcproxy/proxy.go:327-357`：`PublicPrefix: /api/v1/task-svc`、`UpstreamPrefix: /api/v1`、`EnvKey: TASK_SVC_URL`、兜底 `task:write` |
-| 权限分级 | ✅ 三子域分级比单体更细 | 同文件 `PermRules`：schedules（`schedule:read`/`schedule:write`）、approval（`approval:read`/`approval:approve`/`approval:write`，approve/reject 走专属权限且在通用 write 之前命中）、tasks（`task:cancel`/`task:approve`/`task:read`） |
+| 代理规则 | ✅ task 域完整规则 | `internal/controlplane/svcproxy/proxy.go:327-357`：`PublicPrefix: /api/v1/task-svc`、`UpstreamPrefix: /api/v1`、`EnvKey: TASK_SVC_URL`、兜底 `task:write` |
+| 权限分级 | ✅ 三子域分级 | 同文件 `PermRules`：schedules（`schedule:read`/`schedule:write`）、approval（`approval:read`/`approval:approve`/`approval:write`）、tasks（`task:cancel`/`task:approve`/`task:read`） |
 | 部署配置 | ✅ compose 已配 URL | `deploy/docker/docker-compose.prod.yml:513` `TASK_SVC_URL: http://task-svc:8102` |
 
-> 权限分级注释明示「永远如实镜像单体本地要求，不做代理更宽松或更严格的偏离」——这与 auth 域
-> 「契约不因切流而改变」是同一条原则。
+> 权限分级注释明示「永远如实镜像单体本地要求，不做代理更宽松或更严格的偏离」——与 auth 域
+> 「契约不因切流而改变」同原则。
 
-### 2.2 契约面：缺口五组路由（本文最重要的发现）
+### 2.2 契约面：九组路由的实测覆盖（初版误判，2026-10-12 更正）
 
-单体 `server_lifecycle.go` 注册的 task 家族共 **9 组**路由，task-svc 网关（`services/task-svc/internal/http/gateway.go`）只暴露 **2 组**入口：
+> **初版错误**：曾据「`gateway.go` 只注册 4 组」断言五组未接线。实际是把 `gateway.go`
+> 当成了全部注册点——`RegisterRoutes` 还会调 `RegisterBatchRoutes`/`RegisterCanaryRoutes`
+> （`gateway.go:64-65`），实现在 `gateway_batch.go` 与 `gateway_canary.go`。教训：
+> **看注册面必须追到 Register* 函数，不能只数一个文件的 HandleFunc**。
 
-| 单体路由 | task-svc 是否接线 | 影响 |
+逐组实测（单体 9 组 vs task-svc）：
+
+| 单体路由 | task-svc 落点 | 状态 |
 |---|---|---|
-| `/api/v1/tasks`（列表/创建） | ✅ `gateway.go:57` | 无 |
-| `/api/v1/tasks/{id}` 及 cancel/result/approve/reject | ✅ `gateway.go:58` + `handleTaskRouting:260-276` | 无 |
-| `/api/v1/schedules` 及 `{id}`、pause/resume | ✅ `gateway.go:60-61` + `handleScheduleRouting:440-495` | 无 |
-| **`/api/v1/tasks/batch`**（POST 批量下发） | ❌ **无** | 前端批量下发 **404** |
-| **`/api/v1/tasks/batch-exec`**（POST 批量执行，M5） | ❌ **无** | M5 批量执行 **404** |
-| **`/api/v1/tasks/batch/{id}`**（GET 批量状态） | ❌ **无** | 批量状态查询 **404** |
-| **`/api/v1/tasks/canary`**（POST 灰度发布） | ❌ **无** | 灰度发布 **404** |
-| **`/api/v1/tasks/canary/{id}`** 及 advance | ❌ **无** | 灰度状态/推进 **404** |
+| `/api/v1/tasks`（列表/创建） | `gateway.go:57` + `handleTasks` | ✅ 已接线 |
+| `/api/v1/tasks/{id}` 及 cancel/result/approve/reject | `gateway.go:58` + `handleTaskRouting:267-280` | ✅ 已接线 |
+| `/api/v1/schedules` 及 `{id}` | `gateway.go:60-61` + `handleScheduleRouting` | ✅ 已接线 |
+| `/api/v1/tasks/batch-exec`（M5 批量执行） | `gateway_batch.go:249` `RegisterBatchRoutes` | ✅ 已接线 |
+| `/api/v1/tasks/batch/{id}`（批量状态） | 同上 | ✅ 已接线 |
+| `/api/v1/tasks/canary`（灰度创建） | `gateway_canary.go:24` `RegisterCanaryRoutes` | ✅ 已接线 |
+| `/api/v1/tasks/canary/{id}` 及 advance | 同上 | ✅ 已接线 |
+| **`/api/v1/tasks/batch`（POST 批量下发）** | **无** | ❌ **唯一缺口** |
 
-**判据**：这五组在 `gateway.go` 无任何 `HandleFunc` 注册，`handleTaskRouting` 的 `switch` 也只认
-`{id}`/`cancel`/`result`/`approve`/`reject` 五个分支（`:268-276`）。即**即使代理规则命中，
-转发到 task-svc 后仍由其 404 收尾**——这与 auth 域「权限点不存在导致恒 403」是同一类
-「机制通、契约断」缺陷，只是错位在服务侧而非代理侧。
+**唯一缺口的性质（决定要不要补）**：
+- 单体实现在 `server_tasks.go:414`，请求体用 `targets` 字段（非 `deviceIDs`），
+  逐台建任务、返回 `created`/`fails`，**不产 batchID**。
+- 而前端 `batch.js:17` 的 `batchDispatch` 调它，`stores/batch.js:39` 的 `dispatch()`
+  读 `batchID` —— **契约本身就裂着**（前端读的字段后端不返回）。
+- 且 `dispatch()` 的全仓调用方只有 `stores/batch.test.js`（mock），
+  e2e-real 不打、无 view 调用 ⇒ **前端这条路是死代码**。
+
+⇒ **结论：不该为死代码移植 handler**。正确处置是二选一：
+① 前端删掉 `batchDispatch`/`dispatch()` 死路（连带其单测），后端这组路由随单体侧一并退役；
+② 若产品要保留批量下发，先修契约裂缝（统一 `targets`/`deviceIDs` 与 `batchID`），
+   再在 task-svc 接线。**无论哪条都不阻塞切流**——打开 `OPSMESH_SERVICE_PROXY=task`
+   不会因缺这组而 404（没有真实调用方）。
 
 ### 2.3 数据面：分库（与 auth 域同构）
 
 | 侧 | 库 | 证据 |
 |---|---|---|
-| 控制面单体 | `opsmesh` 主库 | `deploy/docker/scripts/init-databases.sql:16-18`（主库由 MYSQL_DATABASE/MYSQL_USER 供给，承载 users/roles/devices/agents/ci_items） |
+| 控制面单体 | `opsmesh` 主库 | `deploy/docker/scripts/init-databases.sql:16-18` |
 | task-svc | `opsmesh_task` 独立库 | 同文件 `:21` 建库、`:29` 授权 |
 
-⇒ 与 auth 域**完全同构**：切流前必须先定「数据面归属」。auth 域的结论（`docs/td60-cutover-decisions.md`）
-是「近期 D+C：整域开关 + 按用户群分批，A 不立即立项」——task 域可直接沿用该决策，不必重开一轮。
+⇒ 与 auth 域同构，可直接沿用 D+C 决策，不必重开一轮。
 
 ---
 
-## 3. 与 auth 域施工顺序的同构对照
+## 3. 阻断项 R6：批量/灰度状态是进程内内存（peer 发现，本文补入）
 
-auth 域从「发现缺口」到「机制就绪」的六步，task 域可逐句照搬：
+**这不是路由问题，是切流方案的决定性约束**：
+
+- 单体 `server_batch.go` 文件头自述「批量状态仅内存索引（重启后丢失），任务实例本身持久化在 store 中」；
+  索引是 per-Server `*batchStore`（两个 map + RWMutex，`server.go:194`）。
+- task-svc 侧同构：`service.go:40` 的 `canaryStore` 是「灰度发布内存索引（可选注入，
+  nil 时 canary API 返回 503）」。
+
+三个后果：
+
+1. **task-svc 若要承接这五组，必须连 handler 带内存索引一起移植**——所以"纯契约补齐"
+   的定性不成立，应是「契约补齐 + 内存态移植」。
+2. **切流与回退都会丢批次聚合视图**（任务实例在库里，丢的是批次视图）—— runbook 必须
+   写明「批次视图不跨切换存活」，切换前排空在飞批次。
+3. **多副本下该功能不成立**（helm 默认 `replicas: 1`，当前不炸；模板已给 task-svc 留多副本
+   分支），除非落库或 sticky 路由。
+
+**建议**："是否把批量/灰度状态落库"单独立项（schema 工作），不混进切流。
+
+---
+
+## 4. 与 auth 域施工顺序的同构对照
 
 | auth 域（已完成） | task 域（本文对应状态） |
 |---|---|
-| ① 契约比对报告列出响应体/策略/权限差异 | **缺口已找到**（§2.2 五组路由），但尚缺逐端点响应体对账 |
-| ② 补 `/auth/me` 阻断级缺口（permissions） | **待做**：补 batch/batch-exec/canary 五组路由（属 services/ 侧，本线可做） |
-| ③ 语义对齐（改密会话/建号透传/登录防护等价） | **待核**：批量/灰度的审批与租户语义两侧是否一致 |
-| ④ 数据面方案立项（D+C） | **可直接沿用 auth 的 D+C 决策**，无需重开 |
-| ⑤ 切流信号化设计（用户名作信号） | **可直接沿用**：task 域后端任务由 `X-User-Id`/`X-Tenant-ID` 注入头定位身份，与 auth 同 |
-| ⑥ 搬号 job + 真进程冒烟 + runbook | **待做**：task 的 job 形态不同（不是"搬用户"而是"确认任务数据在哪侧"），见 §5 |
+| ① 契约比对报告列差异 | **部分完成**：机制面对齐已核；缺逐端点响应体对账（尤其 batch-exec 的 body 字段名） |
+| ② 补阻断级缺口 | **无阻断级缺口**（唯一缺的一组是死代码，见 §2.2） |
+| ③ 语义对齐（会话/建号/登录防护） | **待核**：批量与灰度的审批、租户语义两侧是否一致 |
+| ④ 数据面方案立项（D+C） | **可直接沿用 auth 的 D+C 决策** |
+| ⑤ 切流信号化设计 | **可直接沿用**（task 域后端任务由 `X-User-Id`/`X-Tenant-ID` 注入头定位身份） |
+| ⑥ 搬号 job + 真进程冒烟 + runbook | **待做**；task 的 job 形态是"切新任务"而非"搬用户" |
 
 ---
 
-## 4. 风险清单（切流前必须清）
+## 5. 风险清单
 
 | # | 风险 | 性质 | 依据 |
 |---|---|---|---|
-| R1 | 五组路由未接线 ⇒ 前端功能 404 | **阻断** | §2.2 |
-| R2 | 任务数据分库：切流后「新建任务落哪侧」需明确 | **阻断** | §2.3；auth 域用 `AUTH_SVC_OWNS_NEW_ACCOUNTS` 表达，task 需等价开关 |
-| R3 | 进行中任务的状态连续性：切换瞬间在飞任务/审批不应半途丢失 | 高 | 任务是有状态长流程，比 auth 的"重登一次"重得多 |
-| R4 | 批量与灰度在单体侧有独立权限点（`task:cancel`/`task:approve`/approval 三分支），服务侧补路由时须同权限 | 高 | `proxy.go:340-355` 的 PermRules 已声明镜像单体 |
-| R5 | schedules 的 pause/resume 语义两侧是否一致 | 中 | `gateway.go:489-495` 已实现，待对账 |
+| R1 | ~~五组路由未接线 ⇒ 前端 404~~ | **已证伪** | §2.2：实为 1 组且是死代码 |
+| R2 | 任务数据分库：新建任务落哪侧需明确 | **阻断** | §2.3；需 `TASK_SVC_OWNS_NEW_TASKS` 等价开关 |
+| R3 | 在飞任务/批次的状态连续性 | 高 | R6 的具体形态：切换丢批次视图 |
+| R4 | 批量与灰度的权限点两侧一致 | 高 | `svcproxy/proxy.go:340-355` 已声明镜像单体，待对账 |
+| R5 | schedules 的 pause/resume 语义 | 中 | `gateway.go:489-495` 已实现，待对账 |
+| R6 | 批量/灰度状态进程内内存 | **阻断** | §3 |
 
 ---
 
-## 5. 建议施工顺序
+## 6. 建议施工顺序
 
-1. **补五组路由**（`services/task-svc/internal/http/gateway.go`）：batch/batch-exec/batch/{id}/
-   canary/canary/{id}。这是纯契约补齐，属本线可做范围；做完即可让
-   `OPSMESH_SERVICE_PROXY=task` 打开而不 404。**注意**：单体这五组走 `handleBatchCreateTasks`/
-   `handleBatchExec`/`handleBatchRouting`/`handleCanaryCreate`/`handleCanaryRouting`，
-   语义须逐组对齐（尤其 canary 的 advance 是 POST）。
-2. **补契约对账报告**：照 `docs/td60-auth-consistency-report.md` 体例，逐端点比对响应体。
-3. **定数据面开关**：新增 `TASK_SVC_OWNS_NEW_TASKS`（语义同 auth 的 `OWNS_NEW_ACCOUNTS`：
-   开 ⇒ 本地拒绝新建并指引去服务侧；关 ⇒ 本地照建）。
-4. **定在飞任务处置**：R3 是 task 域独有风险，建议「切换窗口内不允许进行中的批量/灰度任务跨切换」，
-   即切流前排空在飞任务——这需要 runbook 明确写。
-5. **搬号 job 的 task 变体**：auth 的 job 是「搬用户账号」；task 是「搬/对齐任务数据」，
-   因两侧分库，最轻形态是**声明只切新任务**（`OWNS_NEW_TASKS` + 存量任务留在原侧只读），
-   而不是搬历史任务——这与 auth「按用户群分批」是同一种"增量切换"哲学。
+1. **处置死代码**（前端侧）：删 `batchDispatch`/`dispatch()` 及其单测，或修契约裂缝后启用。
+   这是 §2.2 唯一缺口的正解，工作量最小。
+2. **补契约对账报告**：照 auth 体例逐端点比对响应体，重点 batch-exec 的
+   `targets` vs `deviceIDs` 字段名差异。
+3. **定数据面开关**：`TASK_SVC_OWNS_NEW_TASKS`（语义同 auth 的 `OWNS_NEW_ACCOUNTS`）。
+4. **R6 单独立项**：批量/灰度状态落库（schema 工作），不混进切流。
+5. **切流执行**：沿用 auth 的 D+C + 信号化设计；runbook 补「切换前排空在飞批次」。
 
 ---
 
-## 6. 本文不做的（留待立项）
+## 7. 本文不做的
 
 - 不写任何代码、不改任何配置（本文是只读施工图）。
-- 不替代 §5 的执行；第 1 步虽属本线可做范围，但一次性涉及 5 组路由 + 语义对齐，
-  建议作为独立任务单独验收，不与其他改动混批。
 - 不动 `internal/controlplane`、`internal/store`（并行线领地）。
+- R6 的落库方案需独立立项，不在本文展开。
