@@ -19,7 +19,7 @@ winget install GrafanaLabs.Grafana
 ```powershell
 # 默认端口 3000
 & "C:\Program Files\GrafanaLabs\grafana\bin\grafana-server.exe"
-# 访问 http://localhost:3000 (默认 admin/admin)
+# 访问 http://localhost:3200 (默认 admin/admin)
 ```
 
 ### 3. 配置数据源
@@ -89,7 +89,7 @@ Invoke-WebRequest -Uri "http://localhost:8080/healthz" | Select-Object -ExpandPr
 ```
 ┌──────────────────────────────────────────────────┐
 │                  Grafana UI                       │
-│              (http://localhost:3000)              │
+│              (http://localhost:3200)              │
 └──────────┬───────────────────────────┬───────────┘
            │                           │
 ┌──────────▼──────────┐    ┌───────────▼──────────┐
