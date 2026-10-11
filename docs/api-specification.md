@@ -464,7 +464,7 @@ paths:
       summary: 登录签发 JWT
       description: |
         签发 JWT（HS256），同时设置 HttpOnly Cookie at（access token）与 rt（refresh token）。
-        受登录限流保护：每 IP 10 突发 / 每 3s 补 1，连续失败 5 次锁 15min。
+        受登录限流保护：每 IP 5 突发 / 每 6s 补 1，连续失败 5 次锁 15min。
       operationId: login
       security: []   # 登录端点不需要认证
       requestBody:
@@ -1232,7 +1232,7 @@ OpsMesh 控制面有三层限流，互不重叠：
 
 ### 9.3 登录防爆破
 
-- **IP 令牌桶**：每 IP 10 突发 / 每 3s 补 1。
+- **IP 令牌桶**：每 IP 5 突发 / 每 6s 补 1。
 - **账号锁定**：连续失败 5 次锁 15min。
 - **多副本共享**：失败计数 + 账号锁定经 SessionStore 共享（`--session-store=redis://`），任一副本触发锁定后其他副本也拒绝。
 - **IP 桶不共享**：保留进程内（多副本各自限流，副本数 N 时实际阈值 N × 10，可接受）。

@@ -1056,7 +1056,7 @@ server {
 | | RBAC 持久化建表 + 种子 | `SQLStore.initSchema` 新增 `users` / `roles` / `permissions` 三表；`seedRBAC` 幂等写入 24 条默认权限 + `admin` 角色 + 默认 `admin` 用户。多副本共享同一 MySQL，HA 部署身份一致（修复 mysql 后端启动即 panic） |
 | | HTTP / gRPC 兜底恢复 | `recoveryMiddleware`（HTTP 兜底盘：返回 500 + JSON + traceId）+ `grpcRecoveryInterceptor`（unary 拦截器：recover 后返回 `codes.Internal`）。单处 handler panic 不再拖垮整个控制面 |
 | | 请求体限流 | 统一 `decodeJSONBody` 经 `http.MaxBytesReader` 限 1 MiB，防止超大 body 占满内存 |
-| | 登录防爆破 / 失败锁账号 | `loginGuard`：令牌桶限流（每 IP 10 突发 / 每 3s 补 1）+ 连续失败 5 次锁 15min；用户名不存在场景同样计入限流，避免账号枚举 |
+| | 登录防爆破 / 失败锁账号 | `loginGuard`：令牌桶限流（每 IP 5 突发 / 每 6s 补 1）+ 连续失败 5 次锁 15min；用户名不存在场景同样计入限流，避免账号枚举 |
 | | metrics 访问控制 + bootstrap 审计 | `--metrics-allow-cidr` CIDR 白名单拒绝非监控网段拉 `/metrics`（403 + 审计）；`/install.sh`、`/bin/opsmesh-agent` 保留开放但记录来源 IP 审计 |
 | | 联邦 mTLS + 转发签名验签 | 见下「联邦（跨网段任务转发）」 |
 

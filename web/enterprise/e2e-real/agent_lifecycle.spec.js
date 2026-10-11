@@ -14,7 +14,7 @@ const E2E_NEW_PASS = process.env.E2E_NEW_PASS || 'E2e-Real-2026!'
 const BASE = process.env.E2E_BASE_URL || 'http://127.0.0.1:8080'
 
 // 文件级 token 缓存：每个 spec 只真实登录一次（多用例共享），
-// 避免连续登录打满 loginGuard 令牌桶（每 IP 10 突发 + 3s 补 1）触发 429。
+// 避免连续登录打满 loginGuard 令牌桶（每 IP 5 突发 + 每 6s 补 1）触发 429。
 let cachedToken = null
 
 // 真实栈下 agent 拉任务间隔约 2s + 执行 + 上报，单任务 5s 内通常完成。
@@ -26,15 +26,15 @@ const POLL_INTERVAL = 1_000
 // 用例间密码状态：第一个改密用例会把 admin 密码永久改为 E2E_NEW_PASS，
 // 后续用例用 admin123 登录会 401。helper 先试 E2E_NEW_PASS（已改密场景），
 // 401 再回退 admin123 + 首登改密流程（新库场景）。
-// 429 = loginGuard 限流（每 IP 10 突发 + 3s 补 1），等令牌桶补充后重试。
+// 429 = loginGuard 限流（每 IP 5 突发 + 每 6s 补 1），等令牌桶补充后重试。
 async function login(request) {
   if (cachedToken) return cachedToken
   async function tryLogin(pw) {
     let resp = await request.post(`${BASE}/api/v1/auth/login`, {
       data: { username: ADMIN_USER, password: pw }
     })
-    // 429 = loginGuard 限流（每 IP 10 突发 + 3s 补 1）。多用例连续登录会打满
-    // 令牌桶，最多重试 3 次、每次等 5s（桶补充约需 3s/令牌）。
+    // 429 = loginGuard 限流（每 IP 5 突发 + 每 6s 补 1）。多用例连续登录会打满
+    // 令牌桶，最多重试 3 次、每次等 5s（桶补充约需 6s/令牌）。
     for (let attempt = 0; attempt < 3 && resp.status() === 429; attempt++) {
       await new Promise(r => setTimeout(r, 5000))
       resp = await request.post(`${BASE}/api/v1/auth/login`, {

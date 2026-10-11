@@ -1715,7 +1715,7 @@ POST /api/v1/auth/register
 ```text
 POST /auth/login
         │
-        ├── loginGuard 限流（10 突发 / 3s 补 1）
+        ├── loginGuard 限流（5 突发 / 6s 补 1）
         │
         ├── 失败 5 次 → 锁 15min
         │
@@ -1741,7 +1741,7 @@ AT 过期 → POST /auth/refresh (凭 RT) → 旋转 AT + RT
 - **BR-**：用户/角色/权限三表，预置 24 条默认权限 + admin 角色 + 默认 admin 用户。
 - **BR-**：JWT 签发密钥为 `--jwt-secret`（HS256），多副本须一致，生产强制 ≥32 字节。
 - **BR-**：AT 短期（1h），RT 长期（7d），均经 HttpOnly Cookie 下发。
-- **BR-**：登录防爆破：令牌桶限流（每 IP 10 突发 / 每 3s 补 1）+ 连续失败 5 次锁 15min。
+- **BR-**：登录防爆破：令牌桶限流（每 IP 5 突发 / 每 6s 补 1）+ 连续失败 5 次锁 15min。
 - **BR-**：用户名不存在场景同样计入限流，避免账号枚举。
 - **BR-**：注册受 `--public-register` 控制（false 时关闭公开注册，仅管理员可创建）。
 - **BR-**：`--allow-public-register=true` 时注册即激活并签发 token（仅演示/内网受信）。

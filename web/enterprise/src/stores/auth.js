@@ -128,12 +128,18 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
   }
 
-  // 注册未授权回调：刷新失败 → 清会话并跳登录（带 reason，登录页给出原因）。
+  // 注册未授权回调：刷新失败 → 清会话并跳登录。
   // 跳转逻辑复用 request.js 的 redirectToLogin：这里此前手抄了第二份"防死循环"正则，
   // 两份一旦漂移就会出现"在登录页还往登录页跳"的死循环——复用即可根除。
+  //
+  // **只有确实持有过会话才带 reason**（登录态失效），否则裸跳 /login：
+  //   · 匿名访客访问受保护路由（从没登录过）——说"登录状态已失效"是假话；
+  //   · 用户刚主动登出后再访问——他刚登出，再提示"失效"同样莫名其妙。
+  // 两个场景都由 mock E2E 钉住（e2e/auth.spec.js 断言 URL 收尾为 /login）。
   function onUnauthorized() {
+    const hadSession = user.value !== null
     user.value = null
-    redirectToLogin(LOGIN_REASON_SESSION_EXPIRED)
+    redirectToLogin(hadSession ? LOGIN_REASON_SESSION_EXPIRED : undefined)
   }
   setUnauthorizedHandler(onUnauthorized)
 
