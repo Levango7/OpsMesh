@@ -135,6 +135,7 @@ func addGatewayRouteForTest(s *Server, rule *extension.RouteRule) {
 	gw.routes[rule.TenantID][rule.ID] = &gatewayRouteEntry{
 		rule:    rule,
 		limiter: extension.NewRateLimiter(rule.RateLimitPerSec),
+		breaker: extension.NewCircuitBreaker(), // TD-66 P2：与生产构造路径一致
 	}
 }
 

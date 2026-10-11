@@ -68,6 +68,11 @@ type M struct {
 	devicesOffline int64
 	alertsActive   int64
 	ticketsOpen    int64
+	// TD-66 P3：API 网关路由级时序（每实例一份——包级 map 会让不同 M 实例/测试
+	// 互相污染，间隔期断言读到别人的计数）。
+	gatewayReqs map[string]int64   // "route|tenant|status" -> count
+	gatewayLat  map[string]float64 // "route|tenant" -> 最近一次延迟毫秒
+
 	// storeFailures 自进程启动以来被存储层吞掉的错误累计数（见 internal/store/failures.go）。
 	// 它是"静默数据丢失"从不可见变为可告警的关键序列：counter 单调递增，
 	// 配 rate() > 0 即可在数据库开始拒绝写入时立刻报警，而不必等业务方反馈数据丢了。
@@ -122,6 +127,8 @@ func New() *M {
 		sigVerifs:   make(map[string]uint64),
 		sigKeySrc:   make(map[string]uint64),
 		pluginHooks: make(map[string]uint64),
+		gatewayReqs: make(map[string]int64),
+		gatewayLat:  make(map[string]float64),
 	}
 }
 
@@ -359,6 +366,7 @@ func (m *M) Render() string {
 	b = m.appendAuditChainMetrics(b)
 	b = m.appendAgentSignatureMetrics(b)
 	b = m.appendPluginMetrics(b)
+	b = m.appendGatewayMetrics(b)
 	b = m.appendAppGaugeMetrics(b)
 	b = m.appendRuntimeMetrics(b)
 	return string(b)

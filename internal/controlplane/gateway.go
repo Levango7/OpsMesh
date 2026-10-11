@@ -23,6 +23,8 @@ package controlplane
 // 统计为内存计数器，进程级聚合（多副本各自统计，未做跨副本聚合）。
 
 import (
+	"context"
+	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -75,6 +77,7 @@ func validateGatewayTargetBackend(target string) (ok bool, errmsg string) {
 type gatewayRouteEntry struct {
 	rule    *extension.RouteRule
 	limiter *extension.RateLimiter
+	breaker *extension.CircuitBreaker // TD-66 P2：熔断器（每路由一个）
 }
 
 // gatewayState API 网关运行期状态（Server 持有，进程级）。
@@ -151,6 +154,7 @@ func (s *Server) handleListGatewayRoutes(w http.ResponseWriter, r *http.Request)
 			gw.routes[actx.TenantID][rule.ID] = &gatewayRouteEntry{
 				rule:    rule,
 				limiter: extension.NewRateLimiter(rule.RateLimitPerSec),
+				breaker: extension.NewCircuitBreaker(),
 			}
 		}
 		gw.loaded[actx.TenantID] = true
@@ -204,6 +208,7 @@ func (s *Server) handleCreateGatewayRoute(w http.ResponseWriter, r *http.Request
 	entry := &gatewayRouteEntry{
 		rule:    &body,
 		limiter: extension.NewRateLimiter(body.RateLimitPerSec),
+		breaker: extension.NewCircuitBreaker(),
 	}
 	// TD-66 P1：先落 store（事实源），失败即 5xx——不写"假成功"（重启后路由丢失
 	// 会让用户误以为配好了）。store 成功后再更新进程内缓存。
@@ -336,6 +341,7 @@ func (s *Server) handleUpdateGatewayRoute(w http.ResponseWriter, r *http.Request
 	newEntry := &gatewayRouteEntry{
 		rule:    &body,
 		limiter: extension.NewRateLimiter(body.RateLimitPerSec),
+		breaker: extension.NewCircuitBreaker(),
 	}
 	tenantRoutes[id] = newEntry
 	// 审计：记录更新人（H9 写路径审计补齐，与 automation/webhook/slo 风格一致）。
@@ -465,6 +471,21 @@ func randGatewayRouteID() string {
 	return randHexID("gw-route")
 }
 
+// isTimeoutErr 判定传输错误是否超时（net.Error 的 Timeout()，覆盖 context.DeadlineExceeded）。
+func isTimeoutErr(err error) bool {
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return ne.Timeout()
+	}
+	return errors.Is(err, context.DeadlineExceeded)
+}
+
+// 路由转发超时（TD-66 P4）的默认值与下限。
+const (
+	defaultGatewayTimeoutMs = 30000
+	minGatewayTimeoutMs     = 100
+)
+
 // gwStatResponseWriter 捕获响应状态码，供 handleGatewayProxy 统计错误数。
 // 默认 status=200（http.ResponseWriter 未显式 WriteHeader 时隐式 200）。
 type gwStatResponseWriter struct {
@@ -548,7 +569,7 @@ func (s *Server) handleGatewayProxy(w http.ResponseWriter, r *http.Request) {
 	gw.mu.Unlock()
 
 	rw := &gwStatResponseWriter{ResponseWriter: w, status: http.StatusOK}
-	// 请求结束后统计：错误计数 + 平均延迟增量更新。
+	// 请求结束后统计：错误计数 + 平均延迟增量更新 + Prometheus 埋点（TD-66 P3）。
 	defer func() {
 		latencyMs := time.Since(started).Seconds() * 1000
 		gw.mu.Lock()
@@ -561,6 +582,17 @@ func (s *Server) handleGatewayProxy(w http.ResponseWriter, r *http.Request) {
 			gw.stats.AvgLatencyMs = latencyMs
 		}
 		gw.mu.Unlock()
+		// Prometheus（TD-66 P3）：每路由一个时序（route/tenant/status 标签）。
+		// 未命中路由用 route=":noroute"——同样要看见"配错前缀被打了多少次"。
+		// 走 s.metrics 的专用方法而非通用 RecordHTTP：路径归一化会把不同路由折叠成
+		// 同一个键，网关级别的路由区分度就没了。
+		routeLabel := ":noroute"
+		if rule != nil {
+			routeLabel = rule.ID
+		}
+		if s.metrics != nil { // 测试构造的 Server 可能无注册表（白盒直构）
+			s.metrics.RecordGatewayRequest(routeLabel, actx.TenantID, rw.status, latencyMs)
+		}
 	}()
 
 	// 无命中路由 → 404。
@@ -575,6 +607,14 @@ func (s *Server) handleGatewayProxy(w http.ResponseWriter, r *http.Request) {
 	gw.mu.RUnlock()
 	if entry != nil && !entry.limiter.Allow() {
 		paginate.WriteJSON(rw, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded for route " + rule.ID})
+		return
+	}
+
+	// 熔断判定（TD-66 P2）：后端连续 5 次 5xx/传输错误 ⇒ 该路由熔断 30s，
+	// 期间请求 fast-fail 503 不再打到后端；冷却过半开放行**一个**试探，成功则恢复。
+	if entry != nil && entry.breaker != nil && !entry.breaker.Allow() {
+		paginate.WriteJSON(rw, http.StatusServiceUnavailable,
+			map[string]string{"error": "gateway route circuit open (backend failing): " + rule.ID})
 		return
 	}
 
@@ -595,13 +635,57 @@ func (s *Server) handleGatewayProxy(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(rw, http.StatusBadGateway, map[string]string{"error": "gateway target rejected by egress policy"})
 		return
 	}
-	proxy := httputil.NewSingleHostReverseProxy(target)
+	// TD-66 P4：单路由超时。RouteRule.TimeoutMs 为 0 时用默认 30s；
+	// 用自定义 Transport 的 ResponseHeaderTimeout——只约束"等响应头"，
+	// 不切断已建立的长响应（流式后端不会被误杀），且不小于已配置的限流周期语义。
+	timeoutMs := defaultGatewayTimeoutMs
+	if rule.TimeoutMs > 0 {
+		timeoutMs = rule.TimeoutMs
+	}
+	if timeoutMs < minGatewayTimeoutMs {
+		timeoutMs = minGatewayTimeoutMs // 防误配 0/极短值把本栈后端全部超时
+	}
+	proxy := httputil.NewSingleHostReverseProxy(&url.URL{
+		Scheme: target.Scheme, Host: target.Host,
+	})
+	proxy.Transport = &http.Transport{ResponseHeaderTimeout: time.Duration(timeoutMs) * time.Millisecond}
 	director := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		director(req)
 		// 转发时去掉 /gw 前缀，后端按 PathPrefix 语义接收原始路径。
 		req.URL.Path = path
 		req.URL.RawPath = ""
+	}
+	// 传输层错误（连不上/超时）也计失败——半开试探与 closed 下的偶发都靠它驱动熔断。
+	baseErrHandler := proxy.ErrorHandler
+	proxy.ErrorHandler = func(rw2 http.ResponseWriter, req *http.Request, err error) {
+		if entry != nil && entry.breaker != nil {
+			entry.breaker.RecordFailure()
+		}
+		// 超时给 504 而不是 502：两者对运维的含义完全不同（"后端慢/挂住"vs"后端连不上"），
+		// 混成一个码会让"路由 timeoutMs 配短了"与"后端崩了"在告警上无法区分。
+		if isTimeoutErr(err) {
+			paginate.WriteJSON(rw2, http.StatusGatewayTimeout, map[string]string{"error": "gateway route timeout"})
+			return
+		}
+		if baseErrHandler != nil {
+			baseErrHandler(rw2, req, err)
+			return
+		}
+		paginate.WriteJSON(rw2, http.StatusBadGateway, map[string]string{"error": "gateway backend unavailable"})
+	}
+	// 按后端响应状态喂熔断器：5xx 记失败、其余记成功。
+	// 4xx 是**业务应答**不是后端故障——把"后端好好的但请求有问题"算失败会造成误熔断。
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		if entry == nil || entry.breaker == nil {
+			return nil
+		}
+		if resp.StatusCode >= http.StatusInternalServerError {
+			entry.breaker.RecordFailure()
+			return nil
+		}
+		entry.breaker.RecordSuccess()
+		return nil
 	}
 	proxy.ServeHTTP(rw, r)
 }
