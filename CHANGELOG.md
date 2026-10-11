@@ -4,6 +4,16 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-11（TD-60 搬号 job：`opsmesh cutover-migrate`——决策单 Q2-A 落地，真进程三方端到端 16/16）
+
+- **新增｜`opsmesh cutover-migrate` 子命令**（TD-60 方案 C 的账号迁移 job，决策单 `docs/td60-cutover-decisions.md` Q2-A「一次性 job、名单由系统维护」）：按用户清单批次把控制面用户迁到 auth-svc，验证通过后写名册。**每用户原子序「搬完才写名册」**：对侧管理端建号（默认 active、无须审批）+ 一次性随机口令（24 位四类字符）+ **登录即验证**（用该口令真登一次对侧，通不过不写名册）⇒ 失败者留在本地登录面，永不产生「名册有、对侧无」的锁死态（Q2-A 的核心诉求）。
+- **幂等**：对侧已 active ⇒ 收编（不建号、只补名册）；名册已有 ⇒ 跳过；对侧 pending ⇒ **不自动激活**（人工决策）报失败。名册写入 temp+rename 原子替换、保留既有内容、每批附来源注释（可 diff 可审计，Q1 诉求）。
+- **真进程三方端到端（16/16）**：控制面（MySQL 真库）+ 真 auth-svc + 真 job——迁移前 job-smoke 走本地登录；job 后等名册热加载（30s 轮询），该用户用一次性口令**经控制面登录 200（auth-svc 应答）**、旧本地口令被对侧拒绝（invalid credentials ⇒ 路由生效）；幂等复跑零新建、名册无重复。单测另有 6 条用例（含登录验证失败不写名册、保留账号拒迁、dry-run 零副作用、管理员首登改密态 fail-fast）。
+- **修复｜名册文件「尚不存在」语义**（真进程验证抓到）：控制面此前对缺失名册文件拒启 ⇒ 配了 `AUTH_CUTOVER_ROSTER_FILE` 的新部署在首批迁移前**起不来**。改为：不存在 ⇒ 空名册 + 来源标注「尚未创建」（安全方向：没人被路由、全走本地，永不锁死）；存在但读不了/非法 ⇒ 仍拒启。**技术要点**：`os.IsNotExist` **不解包**错误链（对 *PathError 做类型断言），Reload 的错误经 `%w` 包过 ⇒ 必须用 `errors.Is(err, os.ErrNotExist)`（首版即此错）。
+- **修复｜子命令 FlagSet 与全局 flag 冲突（既有缺陷，实测）**：`opsmesh backup --output x --store mysql` 报 `flag provided but not defined: -store`——backup 的文档注释承诺 `[--store memory|mysql]`，实际 MySQL 部署下备份/恢复按文档用法根本跑不了（memory 默认值掩盖）。根因：三个子命令都把**未过滤的全量参数**交给自己的 FlagSet。修法：新增 `pickSubcmdArgs`（镜像 filterSubcmdArgs 的 token 逻辑，只挑子命令自己的 flag），backup/restore/cutover-migrate 三个子命令统一改用；未知 flag 仍由 config.Load 的全局 flag.Parse 报错兜底，不静默吞。
+- **对侧缺口（移交，见协调板）**：auth-svc 的 register/管理建号/更新用户均不收 `mustChangePassword`（proto 与 HTTP 均无此字段）⇒「首登强制改密」无 API 入口；现采用一次性口令交接（stderr 或 --credentials-out 0600），对侧补上后 job 可直接透传。
+- **验证**：cutover 包 12 用例全绿；`internal/controlplane` 全集 178s 绿；golangci-lint 0 issues；gofmt 净；真进程三方端到端 16/16。
+
 ## [Unreleased] — 2026-10-11（TD-60 方案 C 落地：切流信号化的服务端机制——名册 + 分端点裁决 + 一键回退）
 
 - **背景**：并行线 `docs/td60-cutover-signal-design.md` 回答了「分批切换的批次选择如何信号化」，并修正了本方此前「按租户路由」的前提——两侧都按**用户名**定位用户、租户在 auth-svc 侧无落地面 ⇒ 键是用户名（存量）+ 全局开关（增量）。本提交实现该设计的服务端部分。

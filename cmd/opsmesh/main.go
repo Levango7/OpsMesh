@@ -17,6 +17,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/config"
 	"github.com/Levango7/OpsMesh/internal/controlplane"
 	"github.com/Levango7/OpsMesh/internal/controlplane/backup"
+	"github.com/Levango7/OpsMesh/internal/controlplane/cutover"
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/version"
 )
@@ -74,6 +75,8 @@ func runMain() int {
 			return runRestore()
 		case "migrate":
 			return runMigrate()
+		case "cutover-migrate":
+			return runCutoverMigrate()
 		}
 	}
 
@@ -204,6 +207,18 @@ var restoreFlagSpecs = map[string]bool{
 // config.Load 的全局 flag 表解析。
 var migrateFlagSpecs = map[string]bool{}
 
+// cutoverMigrateFlagSpecs 定义 cutover-migrate 子命令特有 flag（TD-60 方案 C 搬号 job）。
+// 其余参数（--store/--mysql-dsn 等）复用 config.Load 全局表：job 必须与控制面读**同一份 store**。
+var cutoverMigrateFlagSpecs = map[string]bool{
+	"users":                   true,
+	"roster-file":             true,
+	"auth-svc-url":            true,
+	"auth-svc-admin-user":     true,
+	"auth-svc-admin-password": true,
+	"dry-run":                 false,
+	"credentials-out":         true,
+}
+
 // filterSubcmdArgs 从 args 中移除子命令名及其特有 flag，返回剩余参数（供 config.Load 解析）。
 //
 // 处理两种 flag 形式：
@@ -241,6 +256,163 @@ func filterSubcmdArgs(args []string, subcmd string, specs map[string]bool) []str
 	return out
 }
 
+// pickSubcmdArgs 从 args 中**只挑出**子命令特有 flag 的 token（含其值），供子命令自己的 FlagSet 解析。
+//
+// 为什么需要它（既有缺陷，2026-10-11 实测）：此前三个子命令都把「过滤后的剩余参数」交给
+// config.Load，却把**未过滤的全量参数**交给自己的 FlagSet —— 于是全局 flag（--store/--mysql-dsn）
+// 会在子命令 FlagSet 上报 "flag provided but not defined"。backup 的文档注释明明承诺
+// `[--store memory|mysql]`，实际 `opsmesh backup --output x --store mysql` 直接退出 2
+// ⇒ MySQL 部署下备份/恢复按文档用法根本跑不了（memory 默认值下碰巧没人发现）。
+// 修法：子命令 FlagSet 只解析 specs 里自己的 flag（本函数），其余 token 照旧由
+// filterSubcmdArgs 交给 config.Load —— 未知 flag 在全局 flag.Parse 上仍有报错兜底，不会静默吞。
+func pickSubcmdArgs(args []string, specs map[string]bool) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if !strings.HasPrefix(a, "--") && !strings.HasPrefix(a, "-") {
+			continue
+		}
+		name := strings.TrimLeft(a, "-")
+		hasEq := false
+		if idx := strings.Index(name, "="); idx >= 0 {
+			name = name[:idx]
+			hasEq = true
+		}
+		takesValue, ok := specs[name]
+		if !ok {
+			continue
+		}
+		out = append(out, a)
+		if takesValue && !hasEq && i+1 < len(args) {
+			i++
+			out = append(out, args[i])
+		}
+	}
+	return out
+}
+
+// runCutoverMigrate 实现 cutover-migrate 子命令：TD-60 方案 C 的搬号 job
+// （把本批用户迁到 auth-svc，验证通过后写名册；决策单 docs/td60-cutover-decisions.md Q2-A）。
+//
+// 用法：
+//
+//	opsmesh cutover-migrate --users alice,bob
+//	                       [--roster-file <path>] [--auth-svc-url <url>]
+//	                       [--auth-svc-admin-user admin] [--auth-svc-admin-password <pwd>]
+//	                       [--dry-run] [--credentials-out <path>]
+//	                       [--store memory|mysql] [--mysql-dsn ...] ...
+//
+// env 兜底：AUTH_SVC_URL / AUTH_CUTOVER_ROSTER_FILE / AUTH_SVC_MIGRATE_ADMIN_USER / AUTH_SVC_MIGRATE_ADMIN_PASSWORD。
+// 退出码：0=本批全部成功，1=有失败（名册已写成功者），2=参数/整体不可运行。
+func runCutoverMigrate() int {
+	fs := flag.NewFlagSet("cutover-migrate", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	users := fs.String("users", "", "本批要迁的用户名（逗号分隔；清单即批次，不做全量）")
+	rosterFile := fs.String("roster-file", "", "名册文件路径（默认 env AUTH_CUTOVER_ROSTER_FILE）")
+	authSvcURL := fs.String("auth-svc-url", "", "auth-svc HTTP 网关地址（默认 env AUTH_SVC_URL）")
+	adminUser := fs.String("auth-svc-admin-user", "", "对侧管理员账号（默认 admin）")
+	adminPassword := fs.String("auth-svc-admin-password", "", "对侧管理员口令（默认 env AUTH_SVC_MIGRATE_ADMIN_PASSWORD）")
+	dryRun := fs.Bool("dry-run", false, "只做只读核验（本地存在性 + 对侧现状 + 名册现状），不建号、不写名册")
+	credentialsOut := fs.String("credentials-out", "", "一次性口令写入该文件（0600）而不是打印到终端")
+
+	if err := fs.Parse(pickSubcmdArgs(os.Args[1:], cutoverMigrateFlagSpecs)); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*users) == "" {
+		fmt.Fprintln(os.Stderr, "[cutover-migrate] --users 必填（清单即批次；不做全量迁移）")
+		return 2
+	}
+
+	// 过滤特有 flag 后复用 config.Load 解析 store 参数（与 backup 同法）。
+	cfgArgs := filterSubcmdArgs(os.Args[1:], "cutover-migrate", cutoverMigrateFlagSpecs)
+	oldArgs := os.Args
+	os.Args = append([]string{"opsmesh"}, cfgArgs...)
+	cfg := config.Load()
+	os.Args = oldArgs
+	if code := applyLogLevel(cfg); code != 0 {
+		return code
+	}
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "[cutover-migrate] 配置校验失败: %v\n", err)
+		return 1
+	}
+	st, err := backup.NewStoreForCLI(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[cutover-migrate] Store 初始化失败: %v\n", err)
+		return 1
+	}
+
+	envOr := func(flagVal, envKey string) string {
+		if strings.TrimSpace(flagVal) != "" {
+			return flagVal
+		}
+		return os.Getenv(envKey)
+	}
+	opts := cutover.MigrateOptions{
+		Users:         strings.Split(*users, ","),
+		RosterFile:    envOr(*rosterFile, "AUTH_CUTOVER_ROSTER_FILE"),
+		AuthSvcURL:    envOr(*authSvcURL, "AUTH_SVC_URL"),
+		AdminUser:     envOr(*adminUser, "AUTH_SVC_MIGRATE_ADMIN_USER"),
+		AdminPassword: envOr(*adminPassword, "AUTH_SVC_MIGRATE_ADMIN_PASSWORD"),
+		DryRun:        *dryRun,
+	}
+	// 本地事实适配：store -> LocalLookup（job 只需要 email + 角色 ID）。
+	lookup := func(username string) (cutover.LocalUser, bool) {
+		u := st.GetUserByUsername(username)
+		if u == nil {
+			return cutover.LocalUser{}, false
+		}
+		return cutover.LocalUser{Email: u.Email, RoleIDs: u.RoleIDs}, true
+	}
+
+	res, err := cutover.RunMigration(opts, lookup)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[cutover-migrate] %v\n", err)
+		return 1
+	}
+
+	// 报告（stderr；一次性口令单独一段并带警告——它是凭据，进终端历史/日志都要当心）。
+	fmt.Fprintf(os.Stderr, "[cutover-migrate] 本批结果：新建 %d · 收编 %d · 名册已有 %d · 失败 %d · 名册新增 %d\n",
+		len(res.Created), len(res.Adopted), len(res.Skipped), len(res.Failed), res.Added)
+	for _, u := range res.Adopted {
+		fmt.Fprintf(os.Stderr, "  [收编] %s（对侧已 active，仅补名册）\n", u.Username)
+	}
+	for _, u := range res.Skipped {
+		fmt.Fprintf(os.Stderr, "  [已有] %s（名册中已存在，未动）\n", u)
+	}
+	for _, f := range res.Failed {
+		fmt.Fprintf(os.Stderr, "  [失败] %s：%s（未写名册，留在本地登录面）\n", f.Username, f.Reason)
+	}
+	creds := res.Created
+	if *dryRun {
+		creds = nil
+	}
+	if len(creds) > 0 {
+		var buf strings.Builder
+		buf.WriteString("# 一次性口令清单（cutover-migrate）——凭据，勿入库、勿进工单系统；经安全渠道交给用户本人。\n")
+		buf.WriteString("# 注意：对侧暂无「首登强制改密」API 入口（已登记缺口），请提示用户收到后自行改密。\n")
+		for _, u := range creds {
+			fmt.Fprintf(&buf, "%s\t%s\n", u.Username, u.OneTimePassword)
+		}
+		if strings.TrimSpace(*credentialsOut) != "" {
+			if err := os.WriteFile(*credentialsOut, []byte(buf.String()), 0o600); err != nil {
+				fmt.Fprintf(os.Stderr, "[cutover-migrate] 一次性口令写文件失败: %v（改回打印到终端）\n", err)
+				fmt.Fprintln(os.Stderr, "\n"+strings.TrimRight(buf.String(), "\n"))
+			} else {
+				fmt.Fprintf(os.Stderr, "[cutover-migrate] 一次性口令已写入 %s（权限 0600），请经安全渠道交给用户\n", *credentialsOut)
+			}
+		} else {
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, strings.TrimRight(buf.String(), "\n"))
+		}
+	}
+	if len(res.Failed) > 0 {
+		fmt.Fprintln(os.Stderr, "[cutover-migrate] 有失败用户：修复后仅重跑失败者即可（幂等，成功者不会重复建号）")
+		return 1
+	}
+	return 0
+}
+
 // runBackup 实现 backup 子命令：导出控制面数据到文件。
 //
 // 用法：
@@ -266,14 +438,7 @@ func runBackup() int {
 	auditWindowDays := fs.Int("audit-window-days", 30, "审计导出时间窗（天，默认 30）")
 
 	// 过滤掉 backup 子命令名及其特有 flag，剩余参数交给 FlagSet 解析。
-	var parseArgs []string
-	for _, a := range os.Args[1:] {
-		if a == "backup" {
-			continue
-		}
-		parseArgs = append(parseArgs, a)
-	}
-	if err := fs.Parse(parseArgs); err != nil {
+	if err := fs.Parse(pickSubcmdArgs(os.Args[1:], backupFlagSpecs)); err != nil {
 		return 2
 	}
 	if *output == "" {
@@ -345,14 +510,7 @@ func runRestore() int {
 	dryRun := fs.Bool("dry-run", false, "只校验不实际写入")
 	overwrite := fs.Bool("overwrite", false, "覆盖已存在的数据（否则跳过）")
 
-	var parseArgs []string
-	for _, a := range os.Args[1:] {
-		if a == "restore" {
-			continue
-		}
-		parseArgs = append(parseArgs, a)
-	}
-	if err := fs.Parse(parseArgs); err != nil {
+	if err := fs.Parse(pickSubcmdArgs(os.Args[1:], restoreFlagSpecs)); err != nil {
 		return 2
 	}
 	if *input == "" {

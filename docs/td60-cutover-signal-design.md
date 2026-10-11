@@ -201,3 +201,26 @@
 ① 它的 **login 与 change-password 成功只经 `Set-Cookie` 下发会话**（响应体无 `token` 字段），
 与本地面（响应体带 token）不同 —— 冒烟脚本两次踩到；② 它的 **register 响应体不含 `userId`**
 （只有 message+status），要拿 id 得查 `/api/v1/users` 列表。
+
+### 10.4 搬号 job 落地（2026-10-11，`opsmesh cutover-migrate`）
+
+决策单 Q2-A（一次性 job、名单由系统维护）已实现，含**真进程三方端到端**（控制面 + auth-svc + job，
+16/16）：job 前 job-smoke 走本地登录；job 后名册热加载（30s 轮询），该用户用 job 下发的一次性口令
+经控制面登录 **200（由 auth-svc 应答）**，旧本地口令被对侧拒绝（invalid credentials ⇒ 路由生效）；幂等复跑零新建。
+
+- **用法**：`opsmesh cutover-migrate --users alice,bob [--dry-run] [--credentials-out file]`
+  + 全局 store 参数（与控制面同一份库）+ env 兜底（AUTH_SVC_URL / AUTH_CUTOVER_ROSTER_FILE /
+  AUTH_SVC_MIGRATE_ADMIN_PASSWORD）。退出码 0=全成功 / 1=有失败（成功者已写名册）/ 2=参数错。
+- **建号走对侧管理端**（`POST /api/v1/users`：默认 active、无须审批、绕开公开注册闸门）——比对侧
+  「注册→审批」少一步；**一次性随机口令**（24 位、四类字符）+ **登录即验证**（用它真登一次对侧，
+  通不过不写名册）⇒ 每用户原子序「搬完才写名册」，失败者留在本地登录面（永不锁死）。
+- **幂等**：对侧已 active ⇒ 收编（不建号、无新口令，只补名册）；名册已有 ⇒ Skipped；
+  对侧存在但 pending ⇒ **不自动激活**（人工决策），报失败。
+- **名册写入**：temp+rename 原子替换、保留既有内容、每批附来源注释（`# cutover-migrate <ts> added=N`）——
+  可 diff、可审计（决策单 Q1 的诉求）。名册文件**尚不存在 = 空名册**（首部署不拒启；安全方向：
+  没人被路由、全走本地）；存在但非法 ⇒ 拒启。
+- **角色映射**：本地角色只透传对侧存在的（缺的记 DroppedRoles 报告）——控制面权限仍按本地用户判，
+  影响的只是对侧 /me 展示面（数据面分裂是既有事实，见 §10.1 之三）。
+- **口令交接**：一次性口令打印到 stderr（或 --credentials-out 文件，0600），运维经安全渠道交用户。
+  **对侧缺口（需你们补）**：auth-svc 的 register/管理建号/更新用户都**不收 mustChangePassword**
+  （proto 与 HTTP 均无）⇒「首登强制改密」无入口。补上后 job 直接透传该标志即可（结构已留）。

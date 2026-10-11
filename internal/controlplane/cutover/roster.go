@@ -14,6 +14,7 @@
 package cutover
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -36,6 +37,10 @@ type Roster struct {
 
 // LoadRoster 装载名册：file 优先；file 与 inline 同时给出视为**非法配置**（歧义即 fail-fast，
 // 与 OPSMESH_SERVICE_PROXY「取值非法时整体拒绝」的既有哲学一致）。两者都空 ⇒ 空名册（合法）。
+//
+// 文件**尚不存在** = 空名册（告警可见，不出错）：首批迁移前文件本来就不存在，拒启会让
+// 「配了 AUTH_CUTOVER_ROSTER_FILE 的新部署」起不来。空名册的安全方向是"没人被路由、
+// 全部走本地"——名册机制天然 no-op，永不锁死。**存在但读不了/内容非法**才拒绝启动。
 func LoadRoster(inline, file string) (*Roster, error) {
 	if strings.TrimSpace(inline) != "" && strings.TrimSpace(file) != "" {
 		return nil, fmt.Errorf("名册来源歧义：AUTH_CUTOVER_ROSTER 与 AUTH_CUTOVER_ROSTER_FILE 不能同时设置")
@@ -48,8 +53,18 @@ func LoadRoster(inline, file string) (*Roster, error) {
 	} else {
 		r.source = "empty"
 	}
-	if _, err := r.Reload(); err != nil {
-		return nil, err
+	_, err := r.Reload()
+	if err != nil {
+		// 文件不存在：按空名册装载（见函数头注释）。Reload 的错误链经 %w 包装，
+		// os.IsNotExist 可直接判定；其余（读失败/内容非法）仍 fail-fast。
+		// 注意：os.IsNotExist **不解包**错误链（它对 *PathError 做类型断言），
+		// Reload 的错误经 fmt.Errorf %w 包过一层 ⇒ 必须用 errors.Is 才判得到
+		// （首版即此错：配了 ROSTER_FILE 的新部署因文件尚未创建而起不来）。
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		r.snap.Store(map[string]struct{}{})
+		r.source = "file:" + r.file + "（尚未创建，空名册）"
 	}
 	return r, nil
 }

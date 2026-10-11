@@ -3,6 +3,7 @@ package cutover
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -75,9 +76,14 @@ func TestLoadRosterFailFast(t *testing.T) {
 	if _, err := LoadRoster("alice", "x.txt"); err == nil {
 		t.Error("file 与 inline 同时设置应被拒（歧义配置）")
 	}
-	// 文件不可读 ⇒ 拒绝启动（静默当空名册会让已迁移用户登录失败）。
-	if _, err := LoadRoster("", filepath.Join(t.TempDir(), "nope.txt")); err == nil {
-		t.Error("名册文件不可读应 fail-fast")
+	// 文件**尚不存在** = 空名册（首批迁移前的正常状态；安全方向：没人被路由、全走本地，永不锁死）。
+	// 来源标注带「尚未创建」告警，让误配路径在日志里可见。
+	missing, err := LoadRoster("", filepath.Join(t.TempDir(), "nope.txt"))
+	if err != nil {
+		t.Fatalf("名册文件尚不存在不应拒启（否则配了 ROSTER_FILE 的新部署起不来）: %v", err)
+	}
+	if missing.Size() != 0 || !strings.Contains(missing.Source(), "尚未创建") {
+		t.Errorf("缺失文件应装载为空名册并标注来源: size=%d source=%q", missing.Size(), missing.Source())
 	}
 	// 文件内容非法 ⇒ 拒绝启动。
 	dir := t.TempDir()
