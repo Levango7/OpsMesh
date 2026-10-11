@@ -210,7 +210,7 @@ func TestAuthSvcFixturePasswordsSatisfyPolicy(t *testing.T) {
 		}
 	}
 	if checked == 0 {
-		t.Errorf("auth-svc 侧一个口令字面量都没扫到——扫描面塌缩，本守卫在空转；"+
+		t.Errorf("auth-svc 侧一个口令字面量都没扫到——扫描面塌缩，本守卫在空转；" +
 			"若 fixtures 结构有变请更新 authSvcFixturePasswordRE")
 	}
 }
