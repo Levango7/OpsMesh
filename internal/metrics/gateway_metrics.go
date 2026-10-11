@@ -32,6 +32,32 @@ func (m *M) RecordGatewayRequest(route, tenant string, status int, latencyMs flo
 	m.gatewayLat[route+"|"+tenant] = latencyMs
 }
 
+// gwLabel 收紧网关标签值：非白名单字符或超长一律换成 :other。
+//
+// 为什么必须做：Prometheus 文本格式没有转义，标签值里的 `"` 会**闭合自己的标签**、
+// 把后面的内容顶成一对新标签（peer 独立验收时提出该疑点，我一度以为
+// 「ID 是服务端生成」就够了——但兜底必须在渲染处，不能依赖调用方传得对）。
+// 本包是自渲染（不经 pkg/metrics 的 sanitizeLabelValue），故自带同口径白名单：
+// 与 internal/metrics 的其他标签取值（见 metrics.go 的 pathSegmentSafe 家族）一致。
+func gwLabel(v string) string {
+	if v == "" {
+		return v
+	}
+	if len(v) > 64 {
+		return ":other"
+	}
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '.' || c == '_' || c == '~' || c == '-':
+		default:
+			return ":other"
+		}
+	}
+	return v
+}
+
 // appendGatewayMetrics 渲染网关时序（由 Render 调用；key 排序保证输出稳定）。
 // appendGatewayMetrics 渲染网关时序。**调用方须已持锁**（与包内其余 append 系列
 // 同一约定：Render 全程持锁，append 内再 Lock 即自锁死）。
@@ -43,8 +69,8 @@ func (m *M) appendGatewayMetrics(b []byte) []byte {
 	sort.Strings(keys)
 	for _, k := range keys {
 		route, tenant, status := splitGatewayReqKey(k)
-		line := `opsmesh_gateway_requests_total{route="` + route +
-			`",tenant="` + tenant + `",status="` + status + `"} ` + itoa(m.gatewayReqs[k]) + "\n"
+		line := `opsmesh_gateway_requests_total{route="` + gwLabel(route) +
+			`",tenant="` + gwLabel(tenant) + `",status="` + gwLabel(status) + `"} ` + itoa(m.gatewayReqs[k]) + "\n"
 		b = append(b, line...)
 	}
 	latKeys := make([]string, 0, len(m.gatewayLat))
@@ -54,8 +80,8 @@ func (m *M) appendGatewayMetrics(b []byte) []byte {
 	sort.Strings(latKeys)
 	for _, k := range latKeys {
 		route, tenant := splitGatewayLatKey(k)
-		line := `opsmesh_gateway_latency_ms{route="` + route +
-			`",tenant="` + tenant + `"} ` + fmtFloat(m.gatewayLat[k]) + "\n"
+		line := `opsmesh_gateway_latency_ms{route="` + gwLabel(route) +
+			`",tenant="` + gwLabel(tenant) + `"} ` + fmtFloat(m.gatewayLat[k]) + "\n"
 		b = append(b, line...)
 	}
 	return b

@@ -11,11 +11,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/extension"
+	"github.com/Levango7/OpsMesh/internal/metrics"
 )
 
 // failBackend 构造一个"始终 500"的后端，并返回一个计数器（验证熔断后不再被打）。
@@ -250,5 +252,46 @@ func TestGatewayRouteDefaultTimeout(t *testing.T) {
 	s.handleGatewayProxy(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("默认超时不应影响正常快响应: status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestGatewayMetricLabelsNotUserControllable 钉住指标标签的**来源边界**（peer 独立验收时
+// 主动提出并自我推翻的疑点，值得变成常驻断言）：
+//
+// 疑点：metrics 渲染对标签值不做转义，若标签值含 `"` 能否伪造额外标签？
+// 复核结论：不能——两道防线：
+//
+//	① 标签来源本身不含用户可控值：route 标签来自 rule.ID（建/改两条路径上都是
+//	   服务端 randHexID 生成的十六进制，body.ID 被覆盖），tenant 标签来自已校验的
+//	   actx.TenantID，用户可控的 Name 不进标签；
+//	② 渲染侧 sanitizeLabelValue 白名单只允许 [a-zA-Z0-9._~-]，其他字符（含 `"`）一律折叠成
+//	   :other——即便将来有人失手把用户可控值接进标签，也退化成一个无害标签而不是伪造。
+//
+// 本用例断的是第 ② 条的兜底（第 ① 条由 create/update 的 ID 覆盖逻辑守着），
+// 让"白名单还在"这件事不依赖读者读过渲染代码。
+func TestGatewayMetricLabelsNotUserControllable(t *testing.T) {
+	// 构造一个"最坏的注入尝试"标签值，交给真实渲染路径。
+	m := metrics.New()
+	m.RecordGatewayRequest(`x",tenant="evil`, "default", 200, 1)
+	out := m.Render()
+
+	// 注入串不得原样出现（否则它可能闭合标签、插入新标签对）。
+	// 只看时序行（metric{labels} value），不看 HELP/TYPE 注释行——后者含中文注释文本，
+	// 用 Contains 会把 `# HELP ...` 行误判成"注入串出现"（首版即此错）。
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "#") || !strings.Contains(line, "opsmesh_gateway") {
+			continue
+		}
+		if strings.Contains(line, `x",tenant="evil`) {
+			t.Fatalf("注入串原样出现在时序行里：%q", line)
+		}
+	}
+	// 白名单外字符只能折叠成 :other。
+	if !strings.Contains(out, ":other") {
+		t.Errorf("白名单外字符应折叠为 :other：%s", out)
+	}
+	// 折叠后不得凭空多出标签对（tenant 应仍只有 default 一个值）。
+	if strings.Count(out, "opsmesh_gateway_requests_total{") != 1 {
+		t.Errorf("注入串不得制造额外时序：%s", out)
 	}
 }

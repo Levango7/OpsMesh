@@ -10,6 +10,27 @@
 - **TD-66 只读勘测（`docs/td66-gateway-survey-2026-10-11.md`，未改代码）**：`/gw/` 数据面 7 步管线逐项核实——鉴权（subsystemAuthorize 双闸 + 按方法分级权限）、租户隔离（只取本租户路由池）、匹配（PathPrefix+Methods）、路由级限流、SSRF 双检（创建 + **投递期复检**防 DNS rebinding，拒绝原因不回吐）、统计。缺口 **14 项成清单**（熔断/健康检查/重试/超时治理/多后端/gRPC 模型不一致/路由持久化/metrics 埋点等），升级定价三档（最小可用 1.5~2 天 = 路由持久化 + 熔断 + 埋点；匹配引擎与鉴权**无需动**）。**维持 2026-09-05 决策**（预览形态、生产走 APISIX/Envoy）；低垂果实一处待修：创建路由允许 `grpc://` 但数据面 502（模型与实现不一致，建议创建时即拒）。
 - 台账：TD-87 移入已收口、TD-66 行内追加勘测记录与维持决策、TD-88/TD-91 上一笔已移入已收口；标记行 pending 4→3、closed 28（部署门禁实测复算 PASS=76）。
 
+## [Unreleased] — 2026-10-12（修一个 peer 独立验收时抓出的渲染层注入面 + 补常驻断言）
+
+- **修｜metrics 网关标签的渲染兜底缺失（我的 P3 埋点自带）**：peer 独立验收 TD-66 时主动提出疑点——
+  "metrics 渲染对标签值不做转义，若标签值含 `"` 能否伪造额外标签？"。我一度以为"标签来源不含
+  用户可控值"就够，复核时也确实成立（route 来自服务端 `randHexID` 生成的十六进制 ID、
+  tenant 来自已校验的令牌声明、用户可控的 name 不进标签）。但对方把疑点推进了一层：
+  **兜底必须在渲染处，不能依赖调用方传得对**——而我自写的 `appendGatewayMetrics` 渲染时
+  **没有做任何白名单收紧**（`sanitizeLabelValue` 在 `pkg/metrics`，`internal/metrics` 是另一套）。
+  实测：注入串 `x",tenant="evil` 会闭合 route 标签、把 `tenant="evil"` 顶成真实标签对。
+- **修法**：`internal/metrics/gateway_metrics.go` 加 `gwLabel`（与 pkg/metrics 的
+  sanitizeLabelValue 同口径白名单：`[a-zA-Z0-9._~-]`，其余折叠 `:other`），渲染三个标签值
+  全部收紧。当前调用点**不含**用户可控值，故此修复不改任何现有时序，只把"将来失手"的
+  最坏结果从"伪造标签"降级为"一个无害的 `:other` 标签"。
+- **常驻断言**：`TestGatewayMetricLabelsNotUserControllable`——用最坏注入串走真实渲染路径，
+  断言注入串不出现在时序行、白名单外字符折叠为 `:other`、不得凭空多出时序。
+  只看时序行（跳过 HELP/TYPE 注释行），避免被中文注释误判。变异检验 2/2 判红。
+- **验证**：全仓 `go test ./internal/... ./pkg/... ./cmd/...` **零 FAIL**；golangci-lint 0 issues；
+  部署门禁 PASS=76。
+- **runbook 同步**：`--force-change` 写进执行命令（§2.3）与口令交接口径（§4）——对方移交的
+  「mustChangePassword 入口早已就绪」这句现已过时。
+
 ## [Unreleased] — 2026-10-11（TD-60 口令策略对齐 + 搬号 job 透传首登改密 + 登录防护等价性契约）
 
 - **口令策略收紧到与 auth-svc 同严（lane 1）**：`credentials.ValidateStrongPassword` 由 8 位+大小写+数字

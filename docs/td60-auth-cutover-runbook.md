@@ -43,9 +43,10 @@ cat "$AUTH_CUTOVER_ROSTER_FILE"
 在 auth-svc 侧为**本批全部用户**建号并审批。**门槛**：该批全部用户都能在 auth-svc 侧完成一次登录
 （影子路径自测，不经控制面）——未达成不进下一步。
 
-> 注：对侧已支持建号置 `mustChangePassword`（`3261169`），故新账号可要求首登改密；
-> 但 `cutover-migrate` 的当前契约是**一次性随机口令交接**（stderr 或 `--credentials-out` 0600 文件），
-> 对面补齐 mustChangePassword 入口后 job 可直接透传。口令交接见 §4。
+> **2026-10-12 更新（已透传）**：`opsmesh cutover-migrate --force-change` 建号时即置
+> `mustChangePassword`（对侧入口 `3261169` + 本侧透传 `8870d69`）⇒ 一次性口令真正**只用一次**，
+> 用户首次登录即被要求改密。**执行第 2.3 步时请带上 `--force-change`**——不带则该口令就是
+> 长期口令（旧行为，仅当批次用户明确接受长期口令时才这样跑）。口令交接口径见 §4。
 
 ### 2.2 用户通知（切换前 1 个工作日）
 
@@ -61,9 +62,11 @@ opsmesh cutover-migrate --users alice,bob --dry-run \
   --store mysql --mysql-dsn '...'
 
 # 确认无误后执行（幂等：已在对侧 active 的用户只收编、不建号）
+# —— 建议带 --force-change：一次性口令只使用一次，用户首登即须改密（见 §2.1 注）
 opsmesh cutover-migrate --users alice,bob \
   --auth-svc-url http://127.0.0.1:8100 --auth-svc-admin-password '***' \
-  --store mysql --mysql-dsn '...' --credentials-out /secure/creds-batchNN.txt
+  --store mysql --mysql-dsn '...' --force-change \
+  --credentials-out /secure/creds-batchNN.txt
 ```
 
 判据：退出码 0（全成功）；有失败 ⇒ 只重跑失败者（幂等）。
@@ -110,6 +113,13 @@ sed -i '/^alice$/d' "$AUTH_CUTOVER_ROSTER_FILE"
 - 默认打到 stderr（运维终端）——**注意终端历史与会话录屏**；
 - 生产必须用 `--credentials-out <path>`（落盘 0600，建议放保密目录）。
 - 交接后**立即删除该文件**；口令只经安全渠道给用户本人（禁止进工单/IM）。
+- **带 `--force-change` 时**：清单头部会写「口令只使用一次，首登即要求改密」——
+  交接时顺带告知用户"首次登录会跳改密页"，免得上线后误以为故障；交接口径与不带时相同。
+
+**一个已复核的边界（peer 独立验收时提出）**：口令/路由 ID 不进指标标签
+（`route` 标签来自服务端生成的十六进制 ID、`tenant` 来自已校验的令牌声明），
+且渲染侧对标签值有白名单收紧（非白名单字符折叠为 `:other`，无法伪造额外标签）。
+这两点由 `TestGatewayMetricLabelsNotUserControllable` 常驻守着。
 
 ---
 
