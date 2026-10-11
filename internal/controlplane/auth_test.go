@@ -172,7 +172,7 @@ func TestPredefinedData(t *testing.T) {
 // TestAuthRegister 注册新用户 → 201 + token。
 func TestAuthRegister(t *testing.T) {
 	s := newAuthTestServer(t)
-	body, _ := json.Marshal(map[string]string{"username": "newuser", "password": "Pass1234", "email": "new@test.com"})
+	body, _ := json.Marshal(map[string]string{"username": "newuser", "password": "Pass1234!Aa9", "email": "new@test.com"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleAuthRegister(rec, req)
@@ -199,7 +199,7 @@ func TestAuthRegister(t *testing.T) {
 // TestAuthRegisterDuplicate 重复用户名 → 409。
 func TestAuthRegisterDuplicate(t *testing.T) {
 	s := newAuthTestServer(t)
-	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "Pass1234"})
+	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "Pass1234!Aa9"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleAuthRegister(rec, req)
@@ -371,7 +371,7 @@ func TestCreateUser(t *testing.T) {
 	auth := loginAsAdmin(t, s)
 	req := doWithAuth(http.MethodPost, "/api/v1/users", auth, map[string]interface{}{
 		"username": "createduser",
-		"password": "Pass1234",
+		"password": "Pass1234!Aa9",
 		"email":    "created@test.com",
 		"role_ids": []string{"role-viewer"},
 	})
@@ -396,7 +396,7 @@ func TestUpdateUser(t *testing.T) {
 	// 先创建一个用户。
 	createReq := doWithAuth(http.MethodPost, "/api/v1/users", auth, map[string]interface{}{
 		"username": "toupdate",
-		"password": "Pass1234",
+		"password": "Pass1234!Aa9",
 		"role_ids": []string{"role-viewer"},
 	})
 	createRec := httptest.NewRecorder()
@@ -437,7 +437,7 @@ func TestDeleteUser(t *testing.T) {
 	// 先创建一个用户。
 	createReq := doWithAuth(http.MethodPost, "/api/v1/users", auth, map[string]interface{}{
 		"username": "todelete",
-		"password": "Pass1234",
+		"password": "Pass1234!Aa9",
 	})
 	createRec := httptest.NewRecorder()
 	s.handleUsers(createRec, createReq)
@@ -620,7 +620,7 @@ func newAuthTestServerNonDemo(t *testing.T) *Server {
 // TestAuthRegisterPending 非 demo 模式注册 → 201 + 待审批提示（无 token）。
 func TestAuthRegisterPending(t *testing.T) {
 	s := newAuthTestServerNonDemo(t)
-	body, _ := json.Marshal(map[string]string{"username": "pendinguser", "password": "Pass1234", "email": "p@test.com"})
+	body, _ := json.Marshal(map[string]string{"username": "pendinguser", "password": "Pass1234!Aa9", "email": "p@test.com"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleAuthRegister(rec, req)
@@ -660,7 +660,7 @@ func TestAuthRegisterDemoPending(t *testing.T) {
 		sessionStore: ss,
 		loginGuard:   newLoginGuard(ss),
 	}
-	body, _ := json.Marshal(map[string]string{"username": "demopending", "password": "Pass1234", "email": "dp@test.com"})
+	body, _ := json.Marshal(map[string]string{"username": "demopending", "password": "Pass1234!Aa9", "email": "dp@test.com"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleAuthRegister(rec, req)
@@ -700,7 +700,7 @@ func TestAuthRegisterNonDemoAllowPublicRegister(t *testing.T) {
 		sessionStore: ss,
 		loginGuard:   newLoginGuard(ss),
 	}
-	body, _ := json.Marshal(map[string]string{"username": "allowreg", "password": "Pass1234", "email": "ar@test.com"})
+	body, _ := json.Marshal(map[string]string{"username": "allowreg", "password": "Pass1234!Aa9", "email": "ar@test.com"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleAuthRegister(rec, req)
@@ -733,7 +733,7 @@ func TestAuthRegisterPublicDisabled(t *testing.T) {
 		sessionStore: ss,
 		loginGuard:   newLoginGuard(ss),
 	}
-	body, _ := json.Marshal(map[string]string{"username": "newuser", "password": "Pass1234"})
+	body, _ := json.Marshal(map[string]string{"username": "newuser", "password": "Pass1234!Aa9"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleAuthRegister(rec, req)
@@ -746,7 +746,7 @@ func TestAuthRegisterPublicDisabled(t *testing.T) {
 func TestAuthLoginPending(t *testing.T) {
 	s := newAuthTestServerNonDemo(t)
 	// 注册一个 pending 用户。
-	regBody, _ := json.Marshal(map[string]string{"username": "pendinglogin", "password": "Pass1234"})
+	regBody, _ := json.Marshal(map[string]string{"username": "pendinglogin", "password": "Pass1234!Aa9"})
 	regReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(regBody))
 	regRec := httptest.NewRecorder()
 	s.handleAuthRegister(regRec, regReq)
@@ -754,7 +754,7 @@ func TestAuthLoginPending(t *testing.T) {
 		t.Fatalf("setup register failed: %d %s", regRec.Code, regRec.Body.String())
 	}
 	// pending 用户尝试登录 → 403。
-	loginBody, _ := json.Marshal(map[string]string{"username": "pendinglogin", "password": "Pass1234"})
+	loginBody, _ := json.Marshal(map[string]string{"username": "pendinglogin", "password": "Pass1234!Aa9"})
 	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
 	loginRec := httptest.NewRecorder()
 	s.handleAuthLogin(loginRec, loginReq)
@@ -768,7 +768,7 @@ func TestApproveUser(t *testing.T) {
 	s := newAuthTestServerNonDemo(t)
 	auth := loginAsAdmin(t, s)
 	// 注册一个 pending 用户。
-	regBody, _ := json.Marshal(map[string]string{"username": "toapprove", "password": "Pass1234"})
+	regBody, _ := json.Marshal(map[string]string{"username": "toapprove", "password": "Pass1234!Aa9"})
 	regReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(regBody))
 	regRec := httptest.NewRecorder()
 	s.handleAuthRegister(regRec, regReq)
@@ -794,7 +794,7 @@ func TestApproveUser(t *testing.T) {
 		t.Fatalf("status = %q, want active", u.Status)
 	}
 	// 审批后应能登录。
-	loginBody, _ := json.Marshal(map[string]string{"username": "toapprove", "password": "Pass1234"})
+	loginBody, _ := json.Marshal(map[string]string{"username": "toapprove", "password": "Pass1234!Aa9"})
 	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
 	loginRec := httptest.NewRecorder()
 	s.handleAuthLogin(loginRec, loginReq)
@@ -808,7 +808,7 @@ func TestRejectUser(t *testing.T) {
 	s := newAuthTestServerNonDemo(t)
 	auth := loginAsAdmin(t, s)
 	// 注册一个 pending 用户。
-	regBody, _ := json.Marshal(map[string]string{"username": "toreject", "password": "Pass1234"})
+	regBody, _ := json.Marshal(map[string]string{"username": "toreject", "password": "Pass1234!Aa9"})
 	regReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(regBody))
 	regRec := httptest.NewRecorder()
 	s.handleAuthRegister(regRec, regReq)
@@ -834,7 +834,7 @@ func TestRejectUser(t *testing.T) {
 		t.Fatalf("status = %q, want rejected", u.Status)
 	}
 	// 拒绝后登录 → 403。
-	loginBody, _ := json.Marshal(map[string]string{"username": "toreject", "password": "Pass1234"})
+	loginBody, _ := json.Marshal(map[string]string{"username": "toreject", "password": "Pass1234!Aa9"})
 	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
 	loginRec := httptest.NewRecorder()
 	s.handleAuthLogin(loginRec, loginReq)
@@ -905,8 +905,8 @@ func TestLoginReturnsMustChangePassword(t *testing.T) {
 func TestChangePasswordSuccess(t *testing.T) {
 	s := newAuthTestServer(t)
 	auth := loginAsAdmin(t, s)
-	// 改密：admin123 → Admin@2025（满足强度：8 字符 + 大小写 + 数字）。
-	req := doWithAuth(http.MethodPost, "/api/v1/auth/change-password", auth, map[string]string{"oldPassword": "admin123", "newPassword": "Admin@2025"})
+	// 改密：admin123 → Admin@2025x（满足强度：12 字符 + 大小写 + 数字 + 特殊字符）。
+	req := doWithAuth(http.MethodPost, "/api/v1/auth/change-password", auth, map[string]string{"oldPassword": "admin123", "newPassword": "Admin@2025xy"})
 	rec := httptest.NewRecorder()
 	s.handleAuthChangePassword(rec, req)
 	if rec.Code != http.StatusOK {
@@ -918,7 +918,7 @@ func TestChangePasswordSuccess(t *testing.T) {
 		t.Fatal("after change password, mustChangePassword still true, want false")
 	}
 	// 验证新密码可登录且响应中 mustChangePassword=false。
-	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "Admin@2025"})
+	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "Admin@2025xy"})
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
 	rec = httptest.NewRecorder()
 	s.handleAuthLogin(rec, req)
@@ -936,7 +936,7 @@ func TestChangePasswordSuccess(t *testing.T) {
 func TestChangePasswordWrongOld(t *testing.T) {
 	s := newAuthTestServer(t)
 	auth := loginAsAdmin(t, s)
-	req := doWithAuth(http.MethodPost, "/api/v1/auth/change-password", auth, map[string]string{"oldPassword": "wrong-old-pwd", "newPassword": "Admin@2025"})
+	req := doWithAuth(http.MethodPost, "/api/v1/auth/change-password", auth, map[string]string{"oldPassword": "wrong-old-pwd", "newPassword": "Admin@2025xy"})
 	rec := httptest.NewRecorder()
 	s.handleAuthChangePassword(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -971,7 +971,7 @@ func TestChangePasswordWeakNew(t *testing.T) {
 // TestChangePasswordNoToken 验证无 token → 401。
 func TestChangePasswordNoToken(t *testing.T) {
 	s := newAuthTestServer(t)
-	body, _ := json.Marshal(map[string]string{"oldPassword": "admin123", "newPassword": "Admin@2025"})
+	body, _ := json.Marshal(map[string]string{"oldPassword": "admin123", "newPassword": "Admin@2025xy"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/change-password", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleAuthChangePassword(rec, req)
@@ -1028,7 +1028,7 @@ func TestMustChangePasswordCanChangeThenAccess(t *testing.T) {
 	// 改密（用 changePasswordToken 鉴权，old=admin123, new=Admin@2025 满足强口令）。
 	cpReq := doWithAuth(http.MethodPost, "/api/v1/auth/change-password", "", map[string]string{
 		"oldPassword":         "admin123",
-		"newPassword":         "Admin@2025",
+		"newPassword":         "Admin@2025xy",
 		"changePasswordToken": resp.ChangePasswordToken,
 	})
 	cpRec := httptest.NewRecorder()

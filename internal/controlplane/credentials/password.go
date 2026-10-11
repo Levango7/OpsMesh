@@ -21,7 +21,9 @@ import (
 const bcryptCost = 12
 
 // changePasswordMinLen 强口令最短长度（本包校验基线）。
-const changePasswordMinLen = 8
+// 与 auth-svc 侧同严（其 PasswordMinLen 默认 12）：两侧策略不一致会让"满足控制面规则的
+// 口令在 auth-svc 启动即失败"（8226d23 的 compose 注释已把该差异写成部署约束）。
+const changePasswordMinLen = 12
 
 // HashPassword 用 bcrypt 哈希密码。
 // 使用 cost=12（生产推荐基线，DefaultCost=10 偏低）。
@@ -202,13 +204,15 @@ func WriteAdminPasswordFile(path, password string) error {
 // 强口令校验（安全债）：跨域 helper，供 auth_login.go 与 auth_users.go 共用。
 // ============================================================================
 
-// ValidateStrongPassword 强口令校验（安全债）：至少 8 字符，包含大小写字母与数字。
+// ValidateStrongPassword 强口令校验（安全债）：至少 12 字符，包含大小写字母、数字与特殊字符。
+// 与 auth-svc 侧策略同严（PasswordMinLen=12 + PasswordRequireSpecial=true）：
+// 域收敛后同一套口令要在两侧都站得住，策略弱的那侧会让用户在对面登不进来。
 // 返回不满足时的可读提示（满足返回空串）。
 func ValidateStrongPassword(pw string) string {
 	if len(pw) < changePasswordMinLen {
-		return "password too short (min 8 chars)"
+		return "password too short (min 12 chars)"
 	}
-	var hasUpper, hasLower, hasDigit bool
+	var hasUpper, hasLower, hasDigit, hasSpecial bool
 	for _, c := range pw {
 		switch {
 		case c >= 'A' && c <= 'Z':
@@ -217,6 +221,8 @@ func ValidateStrongPassword(pw string) string {
 			hasLower = true
 		case c >= '0' && c <= '9':
 			hasDigit = true
+		default:
+			hasSpecial = true
 		}
 	}
 	if !hasUpper {
@@ -227,6 +233,9 @@ func ValidateStrongPassword(pw string) string {
 	}
 	if !hasDigit {
 		return "password must contain at least one digit"
+	}
+	if !hasSpecial {
+		return "password must contain at least one special character"
 	}
 	return ""
 }

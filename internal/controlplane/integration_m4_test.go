@@ -154,7 +154,7 @@ func TestIntegrationM4_AuthFullChain(t *testing.T) {
 	s := newIntegrationServer(true)
 
 	// 1. 注册新用户（AllowPublicRegister=true → 立即激活 + 签发 token）。
-	regAuth := registerUser(t, s, "integuser", "Pass1234", "integ@test.com")
+	regAuth := registerUser(t, s, "integuser", "Pass1234!Aa9", "integ@test.com")
 	if regAuth == "" {
 		t.Fatal("注册未返回 token")
 	}
@@ -169,7 +169,7 @@ func TestIntegrationM4_AuthFullChain(t *testing.T) {
 	}
 
 	// 3. 登录获取正式 token（clearMustChangeFlag 不适用新用户，新用户无 MustChangePassword）。
-	loginAuth := login(t, s, "integuser", "Pass1234")
+	loginAuth := login(t, s, "integuser", "Pass1234!Aa9")
 
 	// 4. 携带登录 token 访问 /auth/me → 200 + username=integuser。
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)

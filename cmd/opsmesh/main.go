@@ -217,6 +217,7 @@ var cutoverMigrateFlagSpecs = map[string]bool{
 	"auth-svc-admin-password": true,
 	"dry-run":                 false,
 	"credentials-out":         true,
+	"force-change":            false,
 }
 
 // filterSubcmdArgs 从 args 中移除子命令名及其特有 flag，返回剩余参数（供 config.Load 解析）。
@@ -299,7 +300,7 @@ func pickSubcmdArgs(args []string, specs map[string]bool) []string {
 //	opsmesh cutover-migrate --users alice,bob
 //	                       [--roster-file <path>] [--auth-svc-url <url>]
 //	                       [--auth-svc-admin-user admin] [--auth-svc-admin-password <pwd>]
-//	                       [--dry-run] [--credentials-out <path>]
+//	                       [--dry-run] [--credentials-out <path>] [--force-change]
 //	                       [--store memory|mysql] [--mysql-dsn ...] ...
 //
 // env 兜底：AUTH_SVC_URL / AUTH_CUTOVER_ROSTER_FILE / AUTH_SVC_MIGRATE_ADMIN_USER / AUTH_SVC_MIGRATE_ADMIN_PASSWORD。
@@ -314,6 +315,7 @@ func runCutoverMigrate() int {
 	adminPassword := fs.String("auth-svc-admin-password", "", "对侧管理员口令（默认 env AUTH_SVC_MIGRATE_ADMIN_PASSWORD）")
 	dryRun := fs.Bool("dry-run", false, "只做只读核验（本地存在性 + 对侧现状 + 名册现状），不建号、不写名册")
 	credentialsOut := fs.String("credentials-out", "", "一次性口令写入该文件（0600）而不是打印到终端")
+	forceChange := fs.Bool("force-change", false, "建号时要求首登强制改密（auth-svc 3261169 起支持；一次性口令随之变为一次性）")
 
 	if err := fs.Parse(pickSubcmdArgs(os.Args[1:], cutoverMigrateFlagSpecs)); err != nil {
 		return 2
@@ -355,6 +357,7 @@ func runCutoverMigrate() int {
 		AdminUser:     envOr(*adminUser, "AUTH_SVC_MIGRATE_ADMIN_USER"),
 		AdminPassword: envOr(*adminPassword, "AUTH_SVC_MIGRATE_ADMIN_PASSWORD"),
 		DryRun:        *dryRun,
+		ForceChange:   *forceChange,
 	}
 	// 本地事实适配：store -> LocalLookup（job 只需要 email + 角色 ID）。
 	lookup := func(username string) (cutover.LocalUser, bool) {
@@ -390,7 +393,11 @@ func runCutoverMigrate() int {
 	if len(creds) > 0 {
 		var buf strings.Builder
 		buf.WriteString("# 一次性口令清单（cutover-migrate）——凭据，勿入库、勿进工单系统；经安全渠道交给用户本人。\n")
-		buf.WriteString("# 注意：对侧暂无「首登强制改密」API 入口（已登记缺口），请提示用户收到后自行改密。\n")
+		if *forceChange {
+			buf.WriteString("# 本次建号已要求首登强制改密：用户首次登录即被要求改密，口令只使用一次。\n")
+		} else {
+			buf.WriteString("# 本次未要求首登改密：该口令即长期口令，请提示用户登录后自行修改。\n")
+		}
 		for _, u := range creds {
 			fmt.Fprintf(&buf, "%s\t%s\n", u.Username, u.OneTimePassword)
 		}

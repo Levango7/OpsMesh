@@ -10,6 +10,28 @@
 - **TD-66 只读勘测（`docs/td66-gateway-survey-2026-10-11.md`，未改代码）**：`/gw/` 数据面 7 步管线逐项核实——鉴权（subsystemAuthorize 双闸 + 按方法分级权限）、租户隔离（只取本租户路由池）、匹配（PathPrefix+Methods）、路由级限流、SSRF 双检（创建 + **投递期复检**防 DNS rebinding，拒绝原因不回吐）、统计。缺口 **14 项成清单**（熔断/健康检查/重试/超时治理/多后端/gRPC 模型不一致/路由持久化/metrics 埋点等），升级定价三档（最小可用 1.5~2 天 = 路由持久化 + 熔断 + 埋点；匹配引擎与鉴权**无需动**）。**维持 2026-09-05 决策**（预览形态、生产走 APISIX/Envoy）；低垂果实一处待修：创建路由允许 `grpc://` 但数据面 502（模型与实现不一致，建议创建时即拒）。
 - 台账：TD-87 移入已收口、TD-66 行内追加勘测记录与维持决策、TD-88/TD-91 上一笔已移入已收口；标记行 pending 4→3、closed 28（部署门禁实测复算 PASS=76）。
 
+## [Unreleased] — 2026-10-11（TD-60 口令策略对齐 + 搬号 job 透传首登改密 + 登录防护等价性契约）
+
+- **口令策略收紧到与 auth-svc 同严（lane 1）**：`credentials.ValidateStrongPassword` 由 8 位+大小写+数字
+  → **12 位 + 大小写 + 数字 + 特殊字符**（与 auth-svc `PasswordMinLen=12` + `PasswordRequireSpecial`
+  完全对齐）。两侧策略不一致会让"满足控制面规则的口令在 auth-svc 启动即失败"（该差异此前只写在
+  compose 注释里，属部署侧口头约束）；收紧后它变成**代码契约**。连带把 8 个测试文件的口令样本
+  提升到新基线——**没有任何断言翻红**（证明没有测试在守护"8 位就行"这个旧基线）。
+- **搬号 job 透传首登强制改密（lane 2，依赖对方 `3261169`）**：新增 `--force-change`，建号时给
+  `mustChangePassword=true` ⇒ 一次性口令变**一次性**（用户首登即须改密）。关键语义：带 flag 的账号
+  登录只会拿到 `changePasswordToken`（拿不到 at）——`loginVerify` 把这种 200 判为**账号可用**而非失败；
+  若误判，该用户会进不了名册、被永久留在本地登录面，而那恰是正要搬走的账号。
+  （此前对侧无此入口 ⇒ 一次性口令即长期口令，第五十则已点名的缺口，现已闭环。）
+- **登录防护等价性契约（lane 3）**：新增 `cutover/guard_parity_test.go`——两侧 IP 令牌桶参数
+  **按数值对拍**（常量名两侧刻意不同：`loginRateBurst` vs `guardRateBurst`，故名不同不影响对拍）、
+  路由顺序断言（本地闸必须在切流路由**之前**，否则锁定态用户被送去对侧重试）、口令策略对拍。
+  变异检验：把路由挪到闸前 ⇒ 点名判红；去掉特殊字符要求 ⇒ **编译期即挡**（比判红更早）。
+- **未对齐处钉成显式边界（不假装已对齐）**：失败计数/账号锁定在 auth-svc 侧产生；auth-svc 的
+  `GetLoginGuardStatus` 是 gRPC-only 而 controlplane 不直连其 gRPC ⇒ 本侧登录前读不到对侧锁定态。
+  本侧补记只覆盖"经本面失败"的请求（RFC 第 48 则已实现）。
+- **验证**：全仓 `go test ./internal/... ./pkg/... ./cmd/...` **零 FAIL**；controlplane 51.4s、
+  cutover 17 条、credentials 9 条、presets 全绿；gofmt -l 净；go vet 净；golangci-lint 0 issues。
+
 ## [Unreleased] — 2026-10-11（TD-66 MVP 四件全部落地 + 真进程验证：验收标准全勾）
 
 - **P1 路由持久化（`27ea687`）**：新增 `gateway_routes` 表（022 迁移，联合主键 (tenant_id,id)）+ `GatewayRouteStore` 四方法挂进聚合 Store（memory/sqlstore/multischema 三后端齐实现）+ 控制面改为 **store 事实源、进程内缓存**：写路径先落 store（失败 5xx 不留假成功）、读路径（list 与 /gw/ 数据面）按租需加载 ⇒ 重启后路由不丢。验收标准 1 由 `TestGatewayRoutesSurviveStateReset`（新 Server + 同 store）与真进程重启复跑钉住。

@@ -19,6 +19,7 @@ type farSide struct {
 	users       map[string]farUser // username -> user（含 status）
 	password    map[string]string  // username -> 口令（模拟库中哈希）
 	loginReject map[string]bool    // 登录必拒的用户名（模拟"建号成功但凭证不可用"）
+	mustChg     map[string]bool    // 建号时置了 mustChangePassword 的用户名
 	roles       map[string]bool
 	created     int  // 建号调用计数（dry-run 断言用）
 	adminMust   bool // 管理员是否处于首登强制改密态
@@ -31,6 +32,7 @@ func newFarSide(t *testing.T) *farSide {
 		users:       map[string]farUser{"admin": {ID: "user-admin", Username: "admin", Status: "active"}},
 		password:    map[string]string{"admin": "Far-Admin-2026x!"},
 		loginReject: map[string]bool{},
+		mustChg:     map[string]bool{},
 		roles:       map[string]bool{"role-admin": true, "role-viewer": true},
 	}
 	mux := http.NewServeMux()
@@ -49,14 +51,17 @@ func newFarSide(t *testing.T) *farSide {
 		u, ok := f.users[body.Username]
 		pass := f.password[body.Username]
 		reject := f.loginReject[body.Username]
-		adminMust := f.adminMust && body.Username == "admin"
+		// 只有一种账号会拿到「改密令牌而非 at」：建号时被 job 置了 mustChangePassword
+		// 的账号（auth-svc 3261169 起支持），以及仍处首登改密态的管理员。
+		// 一把锁内取完——别在持锁区间里再 Lock（自锁会让整个测试挂到超时）。
+		mustChg := f.mustChg[body.Username] || (f.adminMust && body.Username == "admin")
 		f.mu.Unlock()
 		if reject || !ok || pass != body.Password || u.Status != "active" {
 			writeErr(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if adminMust {
+		if mustChg {
 			_, _ = w.Write([]byte(`{"mustChangePassword":true,"changePasswordToken":"cpt-x"}`))
 			return
 		}
@@ -79,10 +84,11 @@ func newFarSide(t *testing.T) *farSide {
 			_, _ = w.Write([]byte(`{"users":` + string(mustJSON(out)) + `}`))
 		case http.MethodPost:
 			var body struct {
-				Username string   `json:"username"`
-				Password string   `json:"password"`
-				Email    string   `json:"email"`
-				RoleIDs  []string `json:"roleIDs"`
+				Username           string   `json:"username"`
+				Password           string   `json:"password"`
+				Email              string   `json:"email"`
+				RoleIDs            []string `json:"roleIDs"`
+				MustChangePassword bool     `json:"mustChangePassword"` // auth-svc 3261169 起透传
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if len(body.Password) < 12 || !strings.ContainsAny(body.Password, "!@#$%^&*-_=+") {
@@ -102,6 +108,7 @@ func newFarSide(t *testing.T) *farSide {
 				}
 			}
 			f.created++
+			f.mustChg[body.Username] = body.MustChangePassword
 			f.users[body.Username] = farUser{ID: "far-" + body.Username, Username: body.Username, Status: "active"}
 			f.password[body.Username] = body.Password
 			w.Header().Set("Content-Type", "application/json")
@@ -399,6 +406,12 @@ func TestGenerateOneTimePassword(t *testing.T) {
 
 func (f *farSide) svr() string { return f.srv.URL }
 
+func (f *farSide) isMustChange(username string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.mustChg[username]
+}
+
 func (f *farSide) createdCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -415,4 +428,59 @@ func readFile(t *testing.T, p string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// TestRunMigrationForceChange（lane 2：auth-svc 3261169 起支持 mustChangePassword 透传）
+//
+// 语义：--force-change 建号时要求首登强制改密。该账号登录只会拿到 changePasswordToken
+// （拿不到 at）——**这不是登录失败**，是"首登必须先改密"的正确形态。
+// 把它当失败会让该用户进不了名册、被永久留在本地登录面——而那恰是正要搬走的账号。
+func TestRunMigrationForceChange(t *testing.T) {
+	f := newFarSide(t)
+	lookup := fakeLookup(map[string]LocalUser{"alice": {Email: "a@x.io"}})
+
+	roster := filepath.Join(t.TempDir(), "roster.txt")
+	res, err := RunMigration(MigrateOptions{
+		Users: []string{"alice"}, AuthSvcURL: f.svr(), RosterFile: roster,
+		AdminUser: adminCreds0(), AdminPassword: adminCreds1(), ForceChange: true,
+	}, lookup)
+	if err != nil {
+		t.Fatalf("RunMigration: %v", err)
+	}
+	if len(res.Created) != 1 || res.Created[0].MustChangePassword != true {
+		t.Fatalf("建号应带 mustChangePassword 并记入结果：%+v", res.Created)
+	}
+	// 登录验证通不过就不会写名册；这里能写 ⇒ 说明"只回改密令牌"被判为账号可用。
+	if !strings.Contains(readFile(t, roster), "alice") {
+		t.Error("must-change 账号应成功进名册（登录验证不应把改密令牌当失败）")
+	}
+	// 建号请求体确实带上了这个字段（对侧假后端据它决定登录响应形态）。
+	if !f.isMustChange("alice") {
+		t.Error("建号请求体未透传 mustChangePassword=true")
+	}
+}
+
+// TestRunMigrationWithoutForceChangeStaysPlain —— 不带 flag 时维持既有形态：
+// 建号无 must-change、登录拿到 at（并照旧登出清理）。
+func TestRunMigrationWithoutForceChangeStaysPlain(t *testing.T) {
+	f := newFarSide(t)
+	lookup := fakeLookup(map[string]LocalUser{"alice": {Email: "a@x.io"}})
+
+	roster := filepath.Join(t.TempDir(), "roster.txt")
+	res, err := RunMigration(MigrateOptions{
+		Users: []string{"alice"}, AuthSvcURL: f.svr(), RosterFile: roster,
+		AdminUser: adminCreds0(), AdminPassword: adminCreds1(),
+	}, lookup)
+	if err != nil {
+		t.Fatalf("RunMigration: %v", err)
+	}
+	if len(res.Created) != 1 || res.Created[0].MustChangePassword {
+		t.Fatalf("未指定 force-change 时不应置 mustChangePassword：%+v", res.Created)
+	}
+	if f.isMustChange("alice") {
+		t.Error("未指定 force-change 时建号不应带 mustChangePassword")
+	}
+	if !strings.Contains(readFile(t, roster), "alice") {
+		t.Error("普通账号也应进名册")
+	}
 }

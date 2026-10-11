@@ -168,12 +168,12 @@ func TestEnforceInitialCredentials_NonProductionRotatesAllSeeds(t *testing.T) {
 
 func TestEnforceInitialCredentials_ExplicitAdminPassword(t *testing.T) {
 	st := store.NewMemoryStore()
-	cfg := &config.Config{AdminPassword: "Str0ngPass1"}
+	cfg := &config.Config{AdminPassword: "Str0ngPass1!Aa"}
 	if err := credentials.EnforceInitialCredentials(cfg, st); err != nil {
 		t.Fatalf("credentials.EnforceInitialCredentials: %v", err)
 	}
 	admin := st.GetUserByUsername("admin")
-	if !credentials.VerifyPassword(admin.PasswordHash, "Str0ngPass1") {
+	if !credentials.VerifyPassword(admin.PasswordHash, "Str0ngPass1!Aa") {
 		t.Fatal("--admin-password 指定的口令应生效")
 	}
 }
@@ -240,7 +240,7 @@ func TestEnforceInitialCredentials_MissingDirFails(t *testing.T) {
 
 func TestEnforceInitialCredentials_Idempotent(t *testing.T) {
 	st := store.NewMemoryStore()
-	cfg := &config.Config{AdminPassword: "Str0ngPass1"}
+	cfg := &config.Config{AdminPassword: "Str0ngPass1!Aa"}
 	if err := credentials.EnforceInitialCredentials(cfg, st); err != nil {
 		t.Fatalf("first: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestEnforceInitialCredentials_Idempotent(t *testing.T) {
 
 func TestEnforceInitialCredentials_ForceResetRecovers(t *testing.T) {
 	st := store.NewMemoryStore()
-	cfg := &config.Config{AdminPassword: "Recovered9Pass", AdminPasswordForceReset: true}
+	cfg := &config.Config{AdminPassword: "Recovered9Pass!Aa", AdminPasswordForceReset: true}
 	if err := credentials.EnforceInitialCredentials(cfg, st); err != nil {
 		t.Fatalf("first: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestEnforceInitialCredentials_ForceResetRecovers(t *testing.T) {
 	if err := credentials.EnforceInitialCredentials(cfg, st); err != nil {
 		t.Fatalf("second: %v", err)
 	}
-	if !credentials.VerifyPassword(st.GetUser("user-admin").PasswordHash, "Recovered9Pass") {
+	if !credentials.VerifyPassword(st.GetUser("user-admin").PasswordHash, "Recovered9Pass!Aa") {
 		t.Fatal("--admin-password-force-reset 应覆盖已有 admin 口令")
 	}
 }

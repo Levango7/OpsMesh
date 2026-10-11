@@ -1618,7 +1618,7 @@ func TestHandleCreateUser_WeakPassword(t *testing.T) {
 func TestHandleCreateUser_DuplicateUsername(t *testing.T) {
 	s := newCreateUserTestServer()
 	auth := loginAsAdmin(t, s)
-	body := `{"username":"admin","password":"StrongPass123!","email":"a@e.com"}`
+	body := `{"username":"admin","password":"StrongPass123!A","email":"a@e.com"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader(body))
 	req.Header.Set("Authorization", auth)
 	w := httptest.NewRecorder()
@@ -1631,7 +1631,7 @@ func TestHandleCreateUser_DuplicateUsername(t *testing.T) {
 func TestHandleCreateUser_Happy(t *testing.T) {
 	s := newCreateUserTestServer()
 	auth := loginAsAdmin(t, s)
-	body := `{"username":"newuser1","password":"StrongPass123!","email":"u1@e.com"}`
+	body := `{"username":"newuser1","password":"StrongPass123!A","email":"u1@e.com"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader(body))
 	req.Header.Set("Authorization", auth)
 	w := httptest.NewRecorder()
@@ -1657,7 +1657,7 @@ func TestHandleCreateUser_MissingFields(t *testing.T) {
 func TestHandleCreateUser_UnknownRole(t *testing.T) {
 	s := newCreateUserTestServer()
 	auth := loginAsAdmin(t, s)
-	body := `{"username":"newuser2","password":"StrongPass123!","role_ids":["nonexistent-role"]}`
+	body := `{"username":"newuser2","password":"StrongPass123!A","role_ids":["nonexistent-role"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader(body))
 	req.Header.Set("Authorization", auth)
 	w := httptest.NewRecorder()

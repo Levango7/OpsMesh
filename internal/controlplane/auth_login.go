@@ -384,7 +384,7 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 //
 //	→（首登场景）签发正式 at+rt。
 //
-// 新密码强度：≥8 字符且含大小写字母与数字。新旧相同拒绝（防无效改密）。
+// 新密码强度：≥12 字符且含大小写字母、数字与特殊字符（与 auth-svc 侧同严）。新旧相同拒绝（防无效改密）。
 func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})

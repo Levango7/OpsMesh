@@ -106,7 +106,7 @@ func TestCreateUser_PlatformAdminAssignsTenant(t *testing.T) {
 	s := newAuthTestServer(t)
 	auth := loginAsAdmin(t, s)
 	req := doWithAuth(http.MethodPost, "/api/v1/users", auth, map[string]interface{}{
-		"username": "acme-ops", "password": "Pass1234", "role_ids": []string{"role-viewer"},
+		"username": "acme-ops", "password": "Pass1234!Aa9", "role_ids": []string{"role-viewer"},
 		"tenantId": "acme",
 	})
 	rec := httptest.NewRecorder()
@@ -124,7 +124,7 @@ func TestCreateUser_InvalidTenantID(t *testing.T) {
 	s := newAuthTestServer(t)
 	auth := loginAsAdmin(t, s)
 	req := doWithAuth(http.MethodPost, "/api/v1/users", auth, map[string]interface{}{
-		"username": "bad-tenant-user", "password": "Pass1234", "tenantId": "bad/tenant",
+		"username": "bad-tenant-user", "password": "Pass1234!Aa9", "tenantId": "bad/tenant",
 	})
 	rec := httptest.NewRecorder()
 	s.handleUsers(rec, req)
@@ -138,7 +138,7 @@ func TestCreateUser_TenantAdminCannotCrossAssign(t *testing.T) {
 	auth := createTenantAdmin(t, s, "acme")
 
 	req := doWithAuth(http.MethodPost, "/api/v1/users", auth, map[string]interface{}{
-		"username": "victim-user", "password": "Pass1234", "tenantId": "victim",
+		"username": "victim-user", "password": "Pass1234!Aa9", "tenantId": "victim",
 	})
 	rec := httptest.NewRecorder()
 	s.handleUsers(rec, req)

@@ -50,14 +50,16 @@ type MigrateOptions struct {
 	AdminPassword string   // 对侧管理员口令
 	RosterFile    string   // 名册文件路径（job 的唯一产物之一；控制面 30s 热加载）
 	DryRun        bool     // 只做只读核验（本地存在性 + 对侧现状 + 名册现状），不建号不写名册
+	ForceChange   bool     // 建号时要求首登强制改密（auth-svc 3261169 起的 mustChangePassword）
 }
 
 // MigratedUser 迁移成功的用户（含一次性口令，供运维交接）。
 type MigratedUser struct {
-	Username        string
-	OneTimePassword string // 仅新建用户有；对侧已存在的（Skipped）为空
-	FarSideID       string
-	DroppedRoles    []string // 本地有、对侧没有的角色 ID（权限仍按本地判，仅 /me 展示受影响）
+	Username           string
+	OneTimePassword    string // 仅新建用户有；对侧已存在的（Skipped）为空
+	FarSideID          string
+	DroppedRoles       []string // 本地有、对侧没有的角色 ID（权限仍按本地判，仅 /me 展示受影响）
+	MustChangePassword bool     // 建号时是否要求首登强制改密（凭据清单据此给不同交接口径）
 }
 
 // MigrationFailure 迁移失败的用户与原因（不写名册 ⇒ 该用户留在本地登录面）。
@@ -176,7 +178,7 @@ func RunMigration(opts MigrateOptions, lookup LocalLookup) (*MigrateResult, erro
 		}
 		if opts.DryRun {
 			// 干跑：到此为止（上面的只读核验已足够给出计划），不建号、不验证、不写名册。
-			res.Created = append(res.Created, MigratedUser{Username: name, DroppedRoles: dropped})
+			res.Created = append(res.Created, MigratedUser{Username: name, DroppedRoles: dropped, MustChangePassword: opts.ForceChange})
 			continue
 		}
 		oneTime, err := generateOneTimePassword()
@@ -184,7 +186,7 @@ func RunMigration(opts MigrateOptions, lookup LocalLookup) (*MigrateResult, erro
 			res.Failed = append(res.Failed, MigrationFailure{Username: name, Reason: "生成一次性口令失败: " + err.Error()})
 			continue
 		}
-		if err := cli.createUser(name, oneTime, local.Email, keep); err != nil {
+		if err := cli.createUser(name, oneTime, local.Email, keep, opts.ForceChange); err != nil {
 			res.Failed = append(res.Failed, MigrationFailure{Username: name, Reason: "对侧建号失败: " + err.Error()})
 			continue
 		}
@@ -199,7 +201,7 @@ func RunMigration(opts MigrateOptions, lookup LocalLookup) (*MigrateResult, erro
 				far.ID = u.ID
 			}
 		}
-		res.Created = append(res.Created, MigratedUser{Username: name, OneTimePassword: oneTime, FarSideID: far.ID, DroppedRoles: dropped})
+		res.Created = append(res.Created, MigratedUser{Username: name, OneTimePassword: oneTime, FarSideID: far.ID, DroppedRoles: dropped, MustChangePassword: opts.ForceChange})
 	}
 
 	if opts.DryRun {
@@ -404,7 +406,13 @@ func (c *authSvcClient) listRoles() (map[string]bool, error) {
 }
 
 // createUser 对侧管理端建号（默认 active、无须审批——比"注册→审批"少一步，且绕开公开注册闸门）。
-func (c *authSvcClient) createUser(username, password, email string, roleIDs []string) error {
+//
+// mustChangePassword：对方侧 2026-10-11 补齐入口后（auth-svc 3261169），建号即可要求首登强制
+// 改密——一次性口令因此不再是长期口令。**传 true 时 loginVerify 必须预期「改密令牌而非 at」**：
+// 带 flag 的账号登录只会拿到 changePasswordToken（200 + mustChangePassword:true），
+// 拿不到 at 也不能再访问其他端点——这正是「首登必须先改密」的正确语义，
+// 把它当登录失败会误判成"账号不可用"而不写名册（把用户永久留在本地登录面）。
+func (c *authSvcClient) createUser(username, password, email string, roleIDs []string, mustChangePassword bool) error {
 	if roleIDs == nil {
 		roleIDs = []string{}
 	}
@@ -412,7 +420,8 @@ func (c *authSvcClient) createUser(username, password, email string, roleIDs []s
 		Error string `json:"error"`
 	}
 	code, _, err := c.doJSON(http.MethodPost, "/api/v1/users",
-		map[string]any{"username": username, "password": password, "email": email, "roleIDs": roleIDs}, &resp)
+		map[string]any{"username": username, "password": password, "email": email,
+			"roleIDs": roleIDs, "mustChangePassword": mustChangePassword}, &resp)
 	if err != nil {
 		return err
 	}
@@ -431,15 +440,26 @@ func (c *authSvcClient) loginVerify(username, password string) error {
 	}
 	vc := &authSvcClient{base: c.base, hc: &http.Client{Timeout: 15 * time.Second, Jar: jar}}
 	var resp struct {
-		Error string `json:"error"`
+		Error              string `json:"error"`
+		MustChangePassword bool   `json:"mustChangePassword"`
 	}
 	code, _, err := vc.doJSON(http.MethodPost, "/api/v1/auth/login",
 		map[string]string{"username": username, "password": password}, &resp)
 	if err != nil {
 		return err
 	}
+	// 两种 200 都算"账号可用"：
+	//   - 普通账号：拿到 at + rt；
+	//   - 建号时置了 mustChangePassword 的账号：只拿到 changePasswordToken（at 不下发）。
+	// 后者不是失败——它是"首登必须先改密"的正确语义。把 must 当失败会把该用户
+	// 永久留在本地登录面（名册不写），而那恰是我们正要搬走的账号。
 	if code != http.StatusOK {
 		return fmt.Errorf("登录 => %d: %s", code, orDefault(resp.Error, "unexpected status"))
+	}
+	if resp.MustChangePassword {
+		// 不需要（也不能）用一次性口令访问其他端点——它只够改密。
+		// 保守起见不做登出：此时会话里只有改密令牌，登出端点要 at，会白跑一次 401。
+		return nil
 	}
 	// 清理验证会话（at 15min 自然过期，但登出更干净——不留挂着的 rt）。
 	// 登出是清理性动作：失败只意味着对侧多一个短时会话，不构成迁移失败，忽略。

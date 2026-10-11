@@ -39,7 +39,7 @@ func TestValidateShellSafeValues_AllowsSafe(t *testing.T) {
 		"port":     "3306",
 		"user":     "app_user",
 		"datadir":  "/var/lib/mysql",
-		"password": "StrongPass123",
+		"password": "StrongPass1234Aa",
 		"empty":    "",
 	}
 	if err := ValidateShellSafeValues(values); err != nil {

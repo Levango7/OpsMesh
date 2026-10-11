@@ -255,14 +255,14 @@ func TestCutoverChangePasswordTokenAndRegister(t *testing.T) {
 	// 故此处先打开本地闸，再验证增量开关对路由的作用。
 	s.cfg.PublicRegister = true
 	before := hits.Load()
-	reqR := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(`{"username":"newbie","password":"Passw0rd!x","email":"n@x.io"}`))
+	reqR := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(`{"username":"newbie","password":"Passw0rd!xA1","email":"n@x.io"}`))
 	wR := httptest.NewRecorder()
 	s.handleAuthRegister(wR, reqR)
 	if hits.Load() != before {
 		t.Fatal("增量开关未开时注册应留在本地")
 	}
 	t.Setenv("AUTH_SVC_OWNS_NEW_ACCOUNTS", "true")
-	reqR2 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(`{"username":"newbie2","password":"Passw0rd!x","email":"n2@x.io"}`))
+	reqR2 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(`{"username":"newbie2","password":"Passw0rd!xA1","email":"n2@x.io"}`))
 	wR2 := httptest.NewRecorder()
 	s.handleAuthRegister(wR2, reqR2)
 	if hits.Load() != before+1 {
@@ -347,7 +347,7 @@ func TestCutoverOwnsNewAccountsBlocksLocalUserCreation(t *testing.T) {
 	auth := loginAsAdmin(t, s)
 
 	doCreate := func(name string) *httptest.ResponseRecorder {
-		body := strings.NewReader(`{"username":"` + name + `","password":"Passw0rd!x","email":"` + name + `@x.io"}`)
+		body := strings.NewReader(`{"username":"` + name + `","password":"Passw0rd!xA1","email":"` + name + `@x.io"}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/users", body)
 		req.Header.Set("Authorization", auth)
 		req.Header.Set("X-Tenant-ID", "default")
