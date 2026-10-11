@@ -192,9 +192,15 @@ async function onSubmit() {
   submitting.value = true
   msg.value = ''
   try {
+    // 字段名与后端 batch-exec 契约对齐（docs/td60-task-contract-audit.md §2）：
+    //   设备集合 deviceIDs（此前发 agentIDs ⇒ 后端 required 校验恒 400，
+    //              批量执行从未能成功提交）；
+    //   任务类型 taskType（此前发 type ⇒ 后端取不到，静默落到默认 shell）。
+    // 单体 server_batch.go:126 与 task-svc gateway_batch.go:103 逐字一致，
+    // 故此处只可能有这一套写法，不再引入兼容层。
     const body = {
-      agentIDs: agentIDs.value,
-      type: form.value.type,
+      deviceIDs: agentIDs.value,
+      taskType: form.value.type,
       command: form.value.command,
       path: form.value.path,
       content: form.value.content

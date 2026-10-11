@@ -54,7 +54,7 @@ describe('useBatchStore', () => {
 
   describe('exec 动作', () => {
     it('成功时设置 lastBatch 并写入 history', async () => {
-      const body = { agentIDs: ['a1'], type: 'shell', command: 'ls' }
+      const body = { deviceIDs: ['a1'], taskType: 'shell', command: 'ls' }
       const batch = { batchID: 'b1', status: 'running', total: 1 }
       batchExec.mockResolvedValueOnce({ s: 200, j: batch })
 
