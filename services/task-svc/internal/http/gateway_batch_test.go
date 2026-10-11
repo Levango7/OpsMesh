@@ -188,3 +188,60 @@ func TestBatchStatus_Query(t *testing.T) {
 		t.Fatalf("POST batch status: got %d, want 405", rec.Code)
 	}
 }
+
+// TestBatchStatus_StatsFields 验证批量状态响应带批次级统计字段。
+//
+// 背景（docs/td60-task-contract-audit.md §3）：前端 BatchView.vue:78-90 读
+// total/succeeded/failed/status，而此前两侧 handleBatchStatus 都不返回，
+// UI 四个统计位恒 0、status 恒「—」。task-svc 侧本次补齐
+// total/succeeded/failed/pending/status 五个字段。
+func TestBatchStatus_StatsFields(t *testing.T) {
+	mux := newTestGateway(t)
+
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/tasks/batch-exec",
+		`{"deviceIDs":["dev-1","dev-2","dev-3"],"command":"echo hello"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("batch exec create: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var createResp struct {
+		BatchID string `json:"batchID"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("batch exec 解析失败: %v", err)
+	}
+	if createResp.BatchID == "" {
+		t.Fatal("batchID 不应为空")
+	}
+
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/tasks/batch/"+createResp.BatchID, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("batch status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var statusResp struct {
+		BatchID   string `json:"batchID"`
+		Total     int    `json:"total"`
+		Succeeded int    `json:"succeeded"`
+		Failed    int    `json:"failed"`
+		Pending   int    `json:"pending"`
+		Status    string `json:"status"`
+		Tasks     []struct {
+			Status string `json:"status"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &statusResp); err != nil {
+		t.Fatalf("batch status 解析失败: %v", err)
+	}
+	// total 必须等于任务项数；计数自洽（succeeded+failed+pending == total）。
+	if statusResp.Total != len(statusResp.Tasks) || statusResp.Total != 3 {
+		t.Fatalf("total 应等于任务项数 3，实际 total=%d tasks=%d",
+			statusResp.Total, len(statusResp.Tasks))
+	}
+	if got := statusResp.Succeeded + statusResp.Failed + statusResp.Pending; got != statusResp.Total {
+		t.Errorf("计数不自洽：succeeded(%d)+failed(%d)+pending(%d)=%d，期望 %d",
+			statusResp.Succeeded, statusResp.Failed, statusResp.Pending, got, statusResp.Total)
+	}
+	// status 必须非空（前端 status 位此前恒「—」）。
+	if statusResp.Status == "" {
+		t.Error("批次级 status 不应为空")
+	}
+}

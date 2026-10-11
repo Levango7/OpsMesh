@@ -29,6 +29,7 @@ import (
 	"time"
 
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
+	"github.com/Levango7/OpsMesh/services/task-svc/internal/models"
 )
 
 // ============================================================================
@@ -201,15 +202,23 @@ func (g *Gateway) handleBatchStatus(w http.ResponseWriter, r *http.Request, id s
 	}
 	// 实时刷新每个任务的状态。
 	items := make([]batchTaskItem, len(bt.Tasks))
+	succeeded, failed := 0, 0
 	for i, it := range bt.Tasks {
 		items[i] = it
 		if it.TaskID == "" {
 			// 创建阶段即失败的设备（无 TaskID），保留原状态不刷新。
+			failed++
 			continue
 		}
 		t, getErr := g.svc.GetTask(r.Context(), &taskv1.GetTaskRequest{TaskId: it.TaskID})
 		if getErr == nil && t != nil {
 			items[i].Status = t.Status
+		}
+		switch items[i].Status {
+		case models.TaskStatusFailed, models.TaskStatusCancelled, models.TaskStatusRejected:
+			failed++
+		case models.TaskStatusDone:
+			succeeded++
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -218,8 +227,34 @@ func (g *Gateway) handleBatchStatus(w http.ResponseWriter, r *http.Request, id s
 		"command":   bt.Command,
 		"createdAt": bt.CreatedAt,
 		"createdBy": bt.CreatedBy,
+		// 批次级统计（docs/td60-task-contract-audit.md §3 待办 2）：
+		// 前端 BatchView.vue:78-90 读 total/succeeded/failed/status，
+		// 而此前两侧都不返回，UI 四个统计位恒 0、status 恒「—」。
+		// 从刷新后的 items 聚合（而非 store 计数）：本索引是纯内存态（R6），
+		// 与 store 的 BatchTask 计数不保证同步，按实际任务项聚合才不会说谎。
+		"total":     len(items),
+		"succeeded": succeeded,
+		"failed":    failed,
+		"pending":   len(items) - succeeded - failed,
+		"status":    batchOverallStatus(len(items), succeeded, failed),
 		"tasks":     items,
 	})
+}
+
+// batchOverallStatus 由计数推导批次级状态（供 UI 的 status 位）。
+// 全部完成 ⇒ succeeded/failed；有在进行中 ⇒ running；全未完成 ⇒ pending。
+func batchOverallStatus(total, succeeded, failed int) string {
+	done := succeeded + failed
+	if done == 0 {
+		return "pending"
+	}
+	if done >= total {
+		if failed > 0 {
+			return "failed"
+		}
+		return "succeeded"
+	}
+	return "running"
 }
 
 // handleBatchRouting 路由分派 /api/v1/tasks/batch/{id}。
