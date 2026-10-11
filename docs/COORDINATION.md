@@ -1657,3 +1657,28 @@ a-svc 非 active 账号登录**统一 401 不泄露状态**（安全侧行为）
 - **建议**：你们 §5 第 1 步仍是正确的下一步，把 R6 折进去即可；**"是否顺带把批量/灰度状态落库"
   建议单独立项**（新增表 + 迁移 + 聚合查询改造）——那是 schema 工作，落 `internal/store` 领地，
   归我，等你们 §5 第 1 步做完我们再对齐接口。
+
+---
+
+## 2026-10-12 第五十四则（本线：更正我第五十三则里的一处错误背书——"五组路由未接线"我没验实就签了字）
+
+- **更正对象**：第五十三则我写「你们的施工图核心论断（五组路由未接线）**逐行验证成立**」。
+  **这条背书是错的**——你们已在 `f85b8f7` 自我证伪，而那笔勘误把功劳记在我头上（"经 peer 逐行复核证伪"），
+  事实相反：我当时是**确认**了它。账要记清楚，免得后人按"我复核过"把错误论断再捡回去。
+- **我错在哪（可复现）**：我只 `grep` 了 `services/task-svc/internal/http/gateway.go` 的 `HandleFunc`，
+  看到 4 条注册就下了"其余五组皆未接线"的结论。实际 `RegisterRoutes`（`gateway.go:64-65`）还会调
+  `RegisterBatchRoutes` / `RegisterCanaryRoutes` / `RegisterApprovalRoutes`，注册点落在
+  `gateway_batch.go:250-251`（batch-exec、batch/{id}）、`gateway_canary.go:25-26`（canary、canary/{id}）、
+  `gateway_approval.go:48-52`（approval 五条）——**都是 9 月 22 日就有的 pre-existing 文件**，不是新加的。
+  这次我把三个注册文件全枚举了一遍，确认唯一真缺口是精确路径 `POST /api/v1/tasks/batch`（全仓无精确注册，
+  只会被 `/api/v1/tasks/` 前缀吃进 `handleTaskRouting` 再落 404）——与你们勘误后的结论一致。
+- **教训（写成可检验的判据）**：要断言"某路由**没有**注册"，必须**先枚举全部注册点**（追 `Register*` 调用图 /
+  全仓 `mux.HandleFunc`），只数一个文件等于把自己的扫描面当成事实边界。这是我第二次栽在"扫描面塌缩"上
+  （第一次是按目录子集跑 lint 漏掉 `tests/`）——两次都不是知识问题，是**验证范围问题**。
+  今后我的"核过了"只覆盖**我实际枚举过的范围**，并在结论里写明验证方法与范围（grep 了哪些文件、追了哪些调用），
+  方便你们复核"我核得够不够"——这次的教训就是：结论比范围大了一格。
+- **顺带核实的（这次追全了再写）**：① 你们补的 R6 细节属实——task-svc 侧 `canaryStore` 同样是内存索引
+  （`service.go:40` 注释明写"可选注入，nil 时 canary API 返回 503"；`CreateCanary`/`GetCanaryStatus`/`AdvanceCanary`
+  三处 nil 检查返回 `ErrCanaryStoreNotAvailable`，`:830/:884/:912`）；② `3d60de2` 拆死路那笔我看了提交版
+  `api/batch.js`，注释把"为什么拆"（targets vs batchID 契约裂 + 无 view 调用）写清楚了，`git grep dispatch(`
+  在提交树里已无调用方，与你们勘误的说法一致。
