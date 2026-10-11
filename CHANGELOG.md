@@ -10,6 +10,16 @@
 - **TD-66 只读勘测（`docs/td66-gateway-survey-2026-10-11.md`，未改代码）**：`/gw/` 数据面 7 步管线逐项核实——鉴权（subsystemAuthorize 双闸 + 按方法分级权限）、租户隔离（只取本租户路由池）、匹配（PathPrefix+Methods）、路由级限流、SSRF 双检（创建 + **投递期复检**防 DNS rebinding，拒绝原因不回吐）、统计。缺口 **14 项成清单**（熔断/健康检查/重试/超时治理/多后端/gRPC 模型不一致/路由持久化/metrics 埋点等），升级定价三档（最小可用 1.5~2 天 = 路由持久化 + 熔断 + 埋点；匹配引擎与鉴权**无需动**）。**维持 2026-09-05 决策**（预览形态、生产走 APISIX/Envoy）；低垂果实一处待修：创建路由允许 `grpc://` 但数据面 502（模型与实现不一致，建议创建时即拒）。
 - 台账：TD-87 移入已收口、TD-66 行内追加勘测记录与维持决策、TD-88/TD-91 上一笔已移入已收口；标记行 pending 4→3、closed 28（部署门禁实测复算 PASS=76）。
 
+## [Unreleased] — 2026-10-11（TD-66 MVP 四件全部落地 + 真进程验证：验收标准全勾）
+
+- **P1 路由持久化（`27ea687`）**：新增 `gateway_routes` 表（022 迁移，联合主键 (tenant_id,id)）+ `GatewayRouteStore` 四方法挂进聚合 Store（memory/sqlstore/multischema 三后端齐实现）+ 控制面改为 **store 事实源、进程内缓存**：写路径先落 store（失败 5xx 不留假成功）、读路径（list 与 /gw/ 数据面）按租需加载 ⇒ 重启后路由不丢。验收标准 1 由 `TestGatewayRoutesSurviveStateReset`（新 Server + 同 store）与真进程重启复跑钉住。
+- **P2 熔断（`0f57052` 内）**：`extension/circuit.go` 进程内断路器（连续 5 次 5xx/传输错误 ⇒ open 30s fast-fail 503；冷却半开放行**一个**试探，成功恢复、失败重开）。状态喂入两条：ModifyResponse 按响应码（**4xx 是业务应答不计失败**）+ ErrorHandler 记传输错误。6 条单测 + 3 条数据面用例；变异检验（去掉失败记录 ⇒ 第 6 次仍打后端）判红。
+- **P3 Prometheus 埋点**：`opsmesh_gateway_requests_total{route,tenant,status}` counter + `opsmesh_gateway_latency_ms{route,tenant}` gauge（按**路由 ID** 打标签而非归一化路径——后者会把不同路由折叠成同一键）。时序状态放 M 实例字段（包级 map 会让实例/测试互相污染，首版即此错）；4 条用例含 5s 超时探针值守「append 内再 Lock」的自锁。
+- **P4 超时治理**：`RouteRule.TimeoutMs`（随 P1 落库，重启不丢）+ 自定义 Transport `ResponseHeaderTimeout`；0=默认 30s、下限 100ms 防误配。超时返 **504 而非 502**（运维语义不同："后端慢/挂住" vs "连不上"）。
+- **真进程验证**（控制面 + MySQL + 两个自制后端）：熔断 5 连打第 6 次 503 且后端零再打；慢路由 timeoutMs=300 ⇒ 504；`/metrics` 实出 `route=gw-route-… status="500"`；**重启后路由与超时配置均保留**（504 复现）。
+- **自伤三坑已修并各有用例值守**：Render 持锁内 append 再加锁（1m40s 死锁）、包级 map 测试污染、测试 helper 未构造 breaker 导致熔断静默失效（"看起来绿"）。
+- 立项文档 §4 验收表已全勾；台账 TD-66 行同步。
+
 ## [Unreleased] — 2026-10-11（TD-60 域收敛分析 + TD-66 网关升级立项：两份决策文档）
 
 - **TD-60 实测收敛分析（docs/td60-domain-convergence-analysis-2026-10-11.md）**：把 2026-09-05 的「约 27,000 行重复」更新到今天的现实——轻四域**零文件**（已收敛），核心三域 controlplane 侧实测 **5,980 行**（缩减 78%）。逐域判定：**auth** 收敛机制已建成并真进程验证（零新开发、只差运维执行）；**task** 堵点=agent gRPC 适配层（约 300 行新开发）+ leader 身份切换（task-svc 已有全部循环+选主，加一个环境变量即可）；**device** netsec/federation 是独有能力非重复（需先下沉 pkg 再切）。**稳妥序**：auth 先走通 → task leader 切换 → HTTP 切 → agent 适配 → device 下沉+切。每一步可回退，共享 MySQL ⇒ 不存在数据搬家。收尾后可删约 5,000 行、新开发约 500 行。

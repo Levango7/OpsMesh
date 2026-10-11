@@ -110,7 +110,26 @@ ReverseProxy 的 `Transport` 设 `http.Transport{ResponseHeaderTimeout: timeout}
 
 ---
 
-## 4. 验收标准
+## 4. 验收标准（已于 2026-10-11 全部打勾）
+
+| # | 原标准 | 状态 | 证据 |
+|---|---|---|---|
+| 1 | 重启后 `GET /api/v1/gateway/routes` 返回重启前的规则（MySQL 后端） | ✅ | `TestGatewayRoutesSurviveStateReset`（新 Server + 同 store）；真进程复跑重启后路由与 `timeoutMs` 均保留 |
+| 2 | 后端连续 500 × 5 ⇒ 第 6 次直接 503（不再打到后端）；冷却 30s 后半开，后端恢复则关闭 | ✅ | `TestGatewayCircuitOpensAfterFiveFailures` / `TestGatewayCircuitHalfOpenProbeRecovers`；真进程 6 连打第 6 次 503 |
+| 3 | `GET /metrics` 含 `opsmesh_gateway_requests_total{route,tenant,status}` | ✅ | `TestGatewayMetricsRendered` 等 4 条；真进程 `/metrics` 实出 `route=gw-route-… status="500"` |
+| 4 | 配 `timeoutMs=1000` 的路由，后端 sleep 2s ⇒ 504（1s 即断） | ✅ | `TestGatewayRouteTimeoutIsApplied`（300ms/2s ⇒ 504）；真进程 504（非 502） |
+| 5 | 现有 11 条单测全过；鉴权/租户隔离/SSRF 行为不变 | ✅ | `internal/controlplane` 全套 49.9s 绿，含 10 条 /gw/ 用例与鉴权/隔离/SSRF/元数据拒绝四条 |
+
+**实跑记录**：`27ea687`（P1）→ `0f57052`（P2/P3/P4），本地 controlplane/extension/metrics 三包全绿、
+golangci-lint 0 issues、gofmt 净；真进程（控制面 + MySQL + 两个自制后端）16 项断点逐条过
+（熔断 fast-fail、后端零再打、504 而非 502、metrics 出时序、重启后路由与超时配置保留）。
+
+**过程中修掉的三处自伤坑**（均已回归用例钉住）：① `appendGatewayMetrics` 在 Render 持锁内再加锁 ⇒ 测试
+1m40s 超时死锁（用例以 5s 超时探针值守）；② 网关时序初版用**包级 map** ⇒ 不同实例/测试互相污染
+（单跑绿、全量红），已改为 M 实例字段；③ 白盒测试 Server 的 `addGatewayRouteForTest` 未构造 breaker
+⇒ 熔断链路静默失效（"看起来绿"），helper 已补。
+
+**
 
 1. **P1**：重启控制面后 `GET /api/v1/gateway/routes` 返回重启前的规则（MySQL 后端）；
    memory 后端行为不变（重启丢失——测试环境可接受）。
