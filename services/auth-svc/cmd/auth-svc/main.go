@@ -201,10 +201,18 @@ func main() {
 	handler = trace.HTTPMiddleware("github.com/Levango7/OpsMesh/auth-svc")(handler)
 
 	httpServer := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:      handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
+		Handler: handler,
+		// G112 Slowloris 防护：ReadHeaderTimeout 必须单独设。ReadTimeout 覆盖
+		// 「读整个请求（含体）」，但慢速攻击方可以把头部以任意低速率拖满 30s 仍
+		// 占用连接——只有 ReadHeaderTimeout 能约束「等头部读完」这一段。与
+		// device-svc/task-svc 的 15s 取值对齐（同栈惯例）。
+		ReadHeaderTimeout: 15 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		// IdleTimeout：keep-alive 空闲连接的保留上限。不设时默认 ReadTimeout，
+		// 但显式声明使「连接被复用 reuse 的一生」有明确上界，避免长尾堆积。
+		IdleTimeout: 60 * time.Second,
 	}
 
 	go func() {

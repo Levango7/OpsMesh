@@ -502,10 +502,15 @@ func main() {
 	})
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", port),
-		Handler:      metrics.HTTPMiddleware(mux),
-		ReadTimeout:  readTimeout,
-		WriteTimeout: writeTimeout,
+		Addr:    fmt.Sprintf(":%d", port),
+		Handler: metrics.HTTPMiddleware(mux),
+		// G112 Slowloris 防护：ReadHeaderTimeout 必须单独设——ReadTimeout 覆盖
+		// 「读整个请求（含体）」，慢速攻击方可把头部以任意低速率拖满 30s 仍占用
+		// 连接；只有 ReadHeaderTimeout 约束「等头部读完」这一段。与 device-svc/
+		// task-svc 的 15s 取值对齐。取 min(readTimeout, 15s) 防止误配把本服务打死。
+		ReadHeaderTimeout: min(readTimeout, 15*time.Second),
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
 	}
 
 	go func() {

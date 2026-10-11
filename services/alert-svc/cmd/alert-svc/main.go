@@ -176,10 +176,16 @@ func main() {
 	handler = trace.HTTPMiddleware("github.com/Levango7/OpsMesh/alert-svc")(handler)
 
 	httpServer := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:      handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
+		Handler: handler,
+		// G112 Slowloris 防护：ReadHeaderTimeout 必须单独设——ReadTimeout 覆盖
+		// 「读整个请求（含体）」，慢速攻击方可把头部以任意低速率拖满 30s 仍占用
+		// 连接；只有 ReadHeaderTimeout 约束「等头部读完」这一段。与 device-svc/
+		// task-svc 的 15s 取值对齐。
+		ReadHeaderTimeout: 15 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	go func() {
