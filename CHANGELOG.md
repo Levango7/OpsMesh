@@ -10,6 +10,12 @@
 - **TD-66 只读勘测（`docs/td66-gateway-survey-2026-10-11.md`，未改代码）**：`/gw/` 数据面 7 步管线逐项核实——鉴权（subsystemAuthorize 双闸 + 按方法分级权限）、租户隔离（只取本租户路由池）、匹配（PathPrefix+Methods）、路由级限流、SSRF 双检（创建 + **投递期复检**防 DNS rebinding，拒绝原因不回吐）、统计。缺口 **14 项成清单**（熔断/健康检查/重试/超时治理/多后端/gRPC 模型不一致/路由持久化/metrics 埋点等），升级定价三档（最小可用 1.5~2 天 = 路由持久化 + 熔断 + 埋点；匹配引擎与鉴权**无需动**）。**维持 2026-09-05 决策**（预览形态、生产走 APISIX/Envoy）；低垂果实一处待修：创建路由允许 `grpc://` 但数据面 502（模型与实现不一致，建议创建时即拒）。
 - 台账：TD-87 移入已收口、TD-66 行内追加勘测记录与维持决策、TD-88/TD-91 上一笔已移入已收口；标记行 pending 4→3、closed 28（部署门禁实测复算 PASS=76）。
 
+## [Unreleased] — 2026-10-11（TD-60 域收敛分析 + TD-66 网关升级立项：两份决策文档）
+
+- **TD-60 实测收敛分析（docs/td60-domain-convergence-analysis-2026-10-11.md）**：把 2026-09-05 的「约 27,000 行重复」更新到今天的现实——轻四域**零文件**（已收敛），核心三域 controlplane 侧实测 **5,980 行**（缩减 78%）。逐域判定：**auth** 收敛机制已建成并真进程验证（零新开发、只差运维执行）；**task** 堵点=agent gRPC 适配层（约 300 行新开发）+ leader 身份切换（task-svc 已有全部循环+选主，加一个环境变量即可）；**device** netsec/federation 是独有能力非重复（需先下沉 pkg 再切）。**稳妥序**：auth 先走通 → task leader 切换 → HTTP 切 → agent 适配 → device 下沉+切。每一步可回退，共享 MySQL ⇒ 不存在数据搬家。收尾后可删约 5,000 行、新开发约 500 行。
+- **TD-66 立项（docs/td66-gateway-upgrade-scope-2026-10-11.md）**：MVP 四件——P1 路由持久化（store 加 `gateway_routes` 表 + 启动加载 + CRUD 同步）、P2 熔断/离群摘除（进程内断路器，连续 5 次 5xx ⇒ 503 fast-fail，30s 冷却后半开试探）、P3 Prometheus 埋点（每路由 requests_total + latency histogram，接 `s.metrics`）、P4 超时治理（RouteRule 加 `timeoutMs`，ReverseProxy Transport 设超时）。**鉴权/租户隔离/SSRF 勘测确认质量好、不动**。明确不做：多后端/gRPC 数据面/OPA/WebSocket/主动健康检查。约 **2.5 天**（含测试+真进程验证）。
+- 台账：TD-60 行追加分析记录、TD-66 行追加立项记录（均仍在「待启动」节——分析/立项不等于执行完）；TD-66 低垂果实 `a628978` 已修（grpc:// 创建时即拒）。
+
 ## [Unreleased] — 2026-10-11（TD-60 搬号 job：`opsmesh cutover-migrate`——决策单 Q2-A 落地，真进程三方端到端 16/16）
 
 - **新增｜`opsmesh cutover-migrate` 子命令**（TD-60 方案 C 的账号迁移 job，决策单 `docs/td60-cutover-decisions.md` Q2-A「一次性 job、名单由系统维护」）：按用户清单批次把控制面用户迁到 auth-svc，验证通过后写名册。**每用户原子序「搬完才写名册」**：对侧管理端建号（默认 active、无须审批）+ 一次性随机口令（24 位四类字符）+ **登录即验证**（用该口令真登一次对侧，通不过不写名册）⇒ 失败者留在本地登录面，永不产生「名册有、对侧无」的锁死态（Q2-A 的核心诉求）。
