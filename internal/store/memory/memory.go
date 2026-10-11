@@ -96,12 +96,14 @@ type MemoryStore struct {
 	agentLogLines int
 	// P0.3 服务发现 / 配置中心 / 密钥管理 内存表（按 tenantID 隔离）。
 	// 由 m.mu 保护并发安全；key 形如 "tenantID|key" 或 serviceID。
-	services       map[string]*ServiceInstance // serviceID -> 实例
-	configs        map[string]*ConfigItem      // tenantID|key -> 配置项（当前版本）
-	configHistory  map[string][]*ConfigItem    // tenantID|key -> 版本历史（升序，最近 N 条）
-	secrets        map[string]*SecretItem      // tenantID|key -> 当前版本密钥明文
-	secretMetas    map[string]*SecretMeta      // tenantID|key -> 当前版本元信息（脱敏）
-	secretVersions map[string][]*SecretMeta    // tenantID|key -> 全部版本元信息（升序）
+	services map[string]*ServiceInstance // serviceID -> 实例
+	// TD-66 P1：API 网关路由规则（按 tenantID -> ruleID）。
+	gatewayRoutes  map[string]map[string]*GatewayRoute
+	configs        map[string]*ConfigItem   // tenantID|key -> 配置项（当前版本）
+	configHistory  map[string][]*ConfigItem // tenantID|key -> 版本历史（升序，最近 N 条）
+	secrets        map[string]*SecretItem   // tenantID|key -> 当前版本密钥明文
+	secretMetas    map[string]*SecretMeta   // tenantID|key -> 当前版本元信息（脱敏）
+	secretVersions map[string][]*SecretMeta // tenantID|key -> 全部版本元信息（升序）
 	// Phase 1 工单管理：ticketID -> 工单。
 	// 由 m.mu 保护并发安全；按 tenantID 隔离。
 	tickets map[string]*Ticket

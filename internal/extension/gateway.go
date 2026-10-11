@@ -19,7 +19,8 @@ import (
 //
 // 按 (TenantID, ID) 唯一标识；PathPrefix 为路径前缀匹配（如 /api/v1/）；
 // TargetBackend 为后端服务地址（如 http://backend:8080）；Methods 为允许的 HTTP 方法列表
-// （空表示全部允许）；RateLimitPerSec 为每秒限流（0 表示不限流）；Enabled 控制规则是否生效。
+// （空表示全部允许）；RateLimitPerSec 为每秒限流（0 表示不限流）；Enabled 控制规则是否生效；
+// TimeoutMs 为单路由转发超时（TD-66 P4，0=用默认 30s，由 handleGatewayProxy 归一）。
 type RouteRule struct {
 	ID              string    `json:"id"`
 	TenantID        string    `json:"tenantID"`
@@ -28,6 +29,7 @@ type RouteRule struct {
 	TargetBackend   string    `json:"targetBackend"`
 	Methods         []string  `json:"methods"`
 	RateLimitPerSec int       `json:"rateLimitPerSec"`
+	TimeoutMs       int       `json:"timeoutMs"` // TD-66 P4：0=默认 30s
 	Enabled         bool      `json:"enabled"`
 	CreatedAt       time.Time `json:"createdAt"`
 	UpdatedAt       time.Time `json:"updatedAt"`

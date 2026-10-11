@@ -80,12 +80,14 @@ type gatewayRouteEntry struct {
 // gatewayState API 网关运行期状态（Server 持有，进程级）。
 //
 // 设计要点：
-//   - routes 按 tenantID -> ruleID -> entry 组织，按租户隔离；
+//   - routes 按 tenantID -> ruleID -> entry 组织，按租户隔离；loaded 记录该租户是否
+//     已从 store 加载到缓存（store 是事实源，缓存是读加速——TD-66 P1）；
 //   - stats 为进程级统计计数器（多副本各自统计，未跨副本聚合）；
-//   - mu 保护 routes + stats 并发安全。
+//   - mu 保护 routes + stats + loaded 并发安全。
 type gatewayState struct {
 	mu     sync.RWMutex
 	routes map[string]map[string]*gatewayRouteEntry // tenantID -> ruleID -> entry
+	loaded map[string]bool                          // tenantID -> 是否已从 store 加载（TD-66 P1）
 	stats  extension.GatewayStats
 }
 
@@ -93,6 +95,7 @@ type gatewayState struct {
 func newGatewayState() *gatewayState {
 	return &gatewayState{
 		routes: make(map[string]map[string]*gatewayRouteEntry),
+		loaded: make(map[string]bool),
 	}
 }
 
@@ -125,6 +128,7 @@ func (s *Server) handleGatewayRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleListGatewayRoutes 处理 GET /api/v1/gateway/routes：列出路由规则。
+// TD-66 P1：从 store 加载该租户路由（事实源），进程内缓存仅作读加速。
 func (s *Server) handleListGatewayRoutes(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "gateway:read"); !ok {
 		return
@@ -134,11 +138,25 @@ func (s *Server) handleListGatewayRoutes(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	gw := s.ensureGateway()
-	gw.mu.RLock()
-	defer gw.mu.RUnlock()
-	tenantRoutes := gw.routes[actx.TenantID]
-	rules := make([]*extension.RouteRule, 0, len(tenantRoutes))
-	for _, e := range tenantRoutes {
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+	// 未加载过该租户 ⇒ 先从 store 读（重启后首次 list 即恢复全部路由）。
+	if !gw.loaded[actx.TenantID] {
+		rules := s.store.ListGatewayRoutes(actx.TenantID)
+		if gw.routes[actx.TenantID] == nil {
+			gw.routes[actx.TenantID] = make(map[string]*gatewayRouteEntry, len(rules))
+		}
+		for _, g := range rules {
+			rule := gatewayToRouteRule(g)
+			gw.routes[actx.TenantID][rule.ID] = &gatewayRouteEntry{
+				rule:    rule,
+				limiter: extension.NewRateLimiter(rule.RateLimitPerSec),
+			}
+		}
+		gw.loaded[actx.TenantID] = true
+	}
+	rules := make([]*extension.RouteRule, 0, len(gw.routes[actx.TenantID]))
+	for _, e := range gw.routes[actx.TenantID] {
 		rules = append(rules, e.rule)
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"routes": rules})
@@ -187,6 +205,13 @@ func (s *Server) handleCreateGatewayRoute(w http.ResponseWriter, r *http.Request
 		rule:    &body,
 		limiter: extension.NewRateLimiter(body.RateLimitPerSec),
 	}
+	// TD-66 P1：先落 store（事实源），失败即 5xx——不写"假成功"（重启后路由丢失
+	// 会让用户误以为配好了）。store 成功后再更新进程内缓存。
+	if err := s.store.SaveGatewayRoute(routeRuleToGateway(&body)); err != nil {
+		paginate.WriteJSON(w, http.StatusInternalServerError,
+			map[string]string{"error": "persist gateway route failed: " + err.Error()})
+		return
+	}
 	gw := s.ensureGateway()
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
@@ -194,6 +219,7 @@ func (s *Server) handleCreateGatewayRoute(w http.ResponseWriter, r *http.Request
 		gw.routes[actx.TenantID] = make(map[string]*gatewayRouteEntry)
 	}
 	gw.routes[actx.TenantID][body.ID] = entry
+	gw.loaded[actx.TenantID] = true
 	// 审计：记录创建人（H9 写路径审计补齐，与 automation/webhook/slo 风格一致）。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "gateway_route_create", Target: body.ID, Detail: sanitizeAuditDetail("name=" + body.Name),
@@ -282,6 +308,14 @@ func (s *Server) handleUpdateGatewayRoute(w http.ResponseWriter, r *http.Request
 	gw := s.ensureGateway()
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
+	// 未加载过该租户 ⇒ 先从 store 读（TD-66 P1：读路径不假设缓存热）。
+	if !gw.loaded[actx.TenantID] {
+		if err := s.loadTenantRoutesLocked(gw, actx.TenantID); err != nil {
+			paginate.WriteJSON(w, http.StatusInternalServerError,
+				map[string]string{"error": "load gateway routes failed: " + err.Error()})
+			return
+		}
+	}
 	tenantRoutes := gw.routes[actx.TenantID]
 	entry, exists := tenantRoutes[id]
 	if !exists || entry == nil {
@@ -293,6 +327,12 @@ func (s *Server) handleUpdateGatewayRoute(w http.ResponseWriter, r *http.Request
 	body.TenantID = entry.rule.TenantID
 	body.CreatedAt = entry.rule.CreatedAt
 	body.UpdatedAt = time.Now()
+	// TD-66 P1：先落 store 再更新缓存（与 create 同序——store 失败即 5xx，不留假成功）。
+	if err := s.store.SaveGatewayRoute(routeRuleToGateway(&body)); err != nil {
+		paginate.WriteJSON(w, http.StatusInternalServerError,
+			map[string]string{"error": "persist gateway route failed: " + err.Error()})
+		return
+	}
 	newEntry := &gatewayRouteEntry{
 		rule:    &body,
 		limiter: extension.NewRateLimiter(body.RateLimitPerSec),
@@ -318,9 +358,23 @@ func (s *Server) handleDeleteGatewayRoute(w http.ResponseWriter, r *http.Request
 	gw := s.ensureGateway()
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
+	// 未加载过该租户 ⇒ 先从 store 读（TD-66 P1：删除也可能命中重启前配的路由）。
+	if !gw.loaded[actx.TenantID] {
+		if err := s.loadTenantRoutesLocked(gw, actx.TenantID); err != nil {
+			paginate.WriteJSON(w, http.StatusInternalServerError,
+				map[string]string{"error": "load gateway routes failed: " + err.Error()})
+			return
+		}
+	}
 	tenantRoutes := gw.routes[actx.TenantID]
 	if _, exists := tenantRoutes[id]; !exists {
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})
+		return
+	}
+	// TD-66 P1：先删 store 再删缓存（与 create/update 同序，store 失败即 5xx）。
+	if !s.store.DeleteGatewayRoute(actx.TenantID, id) {
+		paginate.WriteJSON(w, http.StatusInternalServerError,
+			map[string]string{"error": "delete gateway route failed (store)"})
 		return
 	}
 	delete(tenantRoutes, id)
@@ -344,6 +398,14 @@ func (s *Server) handleGatewayRouteToggle(w http.ResponseWriter, r *http.Request
 	gw := s.ensureGateway()
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
+	// 未加载过该租户 ⇒ 先从 store 读（TD-66 P1）。
+	if !gw.loaded[actx.TenantID] {
+		if err := s.loadTenantRoutesLocked(gw, actx.TenantID); err != nil {
+			paginate.WriteJSON(w, http.StatusInternalServerError,
+				map[string]string{"error": "load gateway routes failed: " + err.Error()})
+			return
+		}
+	}
 	tenantRoutes := gw.routes[actx.TenantID]
 	entry, exists := tenantRoutes[id]
 	if !exists || entry == nil {
@@ -352,6 +414,12 @@ func (s *Server) handleGatewayRouteToggle(w http.ResponseWriter, r *http.Request
 	}
 	entry.rule.Enabled = enable
 	entry.rule.UpdatedAt = time.Now()
+	// TD-66 P1：启停也要落 store（否则重启后 gain 回到旧状态）。
+	if err := s.store.SaveGatewayRoute(routeRuleToGateway(entry.rule)); err != nil {
+		paginate.WriteJSON(w, http.StatusInternalServerError,
+			map[string]string{"error": "persist gateway route failed: " + err.Error()})
+		return
+	}
 	// 审计：记录启停人（H9 写路径审计补齐，与 automation/webhook/slo 风格一致）。
 	auditAction := "gateway_route_enable"
 	if !enable {
@@ -452,14 +520,25 @@ func (s *Server) handleGatewayProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 只汇总**本租户**的路由（原实现遍历 gw.routes 全量，任意租户凭证可命中他租户路由）。
-	gw.mu.RLock()
-	routes := make([]*extension.RouteRule, 0, 8)
+	// TD-66 P1：重启后该租户的缓存可能尚未建立——数据面首次请求即按需从 store 加载，
+	// 否则重启后第一批 /gw/ 请求会因缓存为空而 404（以为路由丢了）。
+	gw.mu.Lock()
+	if !gw.loaded[actx.TenantID] {
+		if err := s.loadTenantRoutesLocked(gw, actx.TenantID); err != nil {
+			gw.mu.Unlock()
+			log.Printf("controlplane: /gw/ 加载租户路由失败: %v", err)
+			paginate.WriteJSON(w, http.StatusServiceUnavailable,
+				map[string]string{"error": "load gateway routes failed"})
+			return
+		}
+	}
+	routes := make([]*extension.RouteRule, 0, len(gw.routes[actx.TenantID]))
 	for _, e := range gw.routes[actx.TenantID] {
 		if e != nil && e.rule != nil {
 			routes = append(routes, e.rule)
 		}
 	}
-	gw.mu.RUnlock()
+	gw.mu.Unlock()
 	rule := extension.MatchRoute(routes, path, r.Method)
 
 	// 每次请求递增 TotalRequests（先于后续错误分支，保证统计覆盖所有请求）。

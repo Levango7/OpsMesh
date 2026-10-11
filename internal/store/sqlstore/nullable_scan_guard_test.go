@@ -402,6 +402,7 @@ var helperScanTables = map[string]string{
 	"scanScriptExecution":    "script_executions",
 	"scanSecretMeta":         "secrets",
 	"scanServiceInstance":    "services",
+	"scanGatewayRoute":       "gateway_routes",
 	"scanSilence":            "alert_silences",
 	"scanSubscription":       "subscriptions",
 	"scanTenant":             "tenants",

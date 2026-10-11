@@ -411,6 +411,20 @@ type ServiceDiscoveryStore interface {
 	StaleServices(tenantID string, maxAge time.Duration) []*ServiceInstance
 }
 
+// GatewayRouteStore API 网关路由规则持久化（TD-66 P1：重启不丢）。
+// 按 (TenantID, ID) 唯一标识；规则是租户级资源，查询一律按 tenantID 隔离。
+// 与 gatewayState 的关系：store 是**事实源**，进程内 gatewayState 是按租户的缓存。
+type GatewayRouteStore interface {
+	// ListGatewayRoutes 返回指定租户的全部路由规则（按 ID 升序，稳定输出）。
+	ListGatewayRoutes(tenantID string) []*GatewayRoute
+	// GetGatewayRoute 按租户 + ID 取单条（不存在返回 nil）。
+	GetGatewayRoute(tenantID, id string) *GatewayRoute
+	// SaveGatewayRoute 幂等 upsert 路由规则。返回持久化错误（调用方据此返 5xx 而不是假成功）。
+	SaveGatewayRoute(rule *GatewayRoute) error
+	// DeleteGatewayRoute 按租户 + ID 删除。返回是否删除成功。
+	DeleteGatewayRoute(tenantID, id string) bool
+}
+
 // ConfigStore 配置中心领域：Get/Set/Delete/List + 版本历史 + 发布。
 // 按 (TenantID, Key) 唯一；每次 SetConfig 产生新版本并写入历史（ConfigHistory 查询）。
 // PublishConfig 用于配置变更的灰度/广播触发（MVP 仅标记版本，后续可联动事件总线）。
@@ -760,6 +774,7 @@ type Store interface {
 	AgentLogStore         // agent 日志上报：落库 + 检索
 	QuotaStore            // 租户配额：Get/Set（多租户资源配额）
 	ServiceDiscoveryStore // P0.3 服务发现：注册/心跳/实例查询
+	GatewayRouteStore     // TD-66 P1：API 网关路由规则持久化（重启不丢）
 	ConfigStore           // P0.3 配置中心：Get/Set/版本历史/发布
 	SecretStore           // P0.3 密钥管理：Get/Set/轮换/版本历史
 	TicketStore           // P1 工单管理：创建/查询/更新/关闭

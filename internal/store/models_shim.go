@@ -23,6 +23,7 @@ type SilenceRule = model.SilenceRule
 type NotifyChannel = model.NotifyChannel
 type NotifyTemplate = model.NotifyTemplate
 type ServiceInstance = model.ServiceInstance
+type GatewayRoute = model.GatewayRoute // TD-66 P1：API 网关路由规则
 type ConfigItem = model.ConfigItem
 type SecretItem = model.SecretItem
 type SecretMeta = model.SecretMeta

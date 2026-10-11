@@ -36,6 +36,7 @@ type SilenceRule = model.SilenceRule
 type NotifyChannel = model.NotifyChannel
 type NotifyTemplate = model.NotifyTemplate
 type ServiceInstance = model.ServiceInstance
+type GatewayRoute = model.GatewayRoute
 type ConfigItem = model.ConfigItem
 type SecretItem = model.SecretItem
 type SecretMeta = model.SecretMeta
