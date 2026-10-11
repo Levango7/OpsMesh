@@ -1,20 +1,21 @@
 // batch store 单元测试
-// 覆盖：初始状态、exec/dispatch/fetchStatus/clearCurrent 动作、loading/error 状态、
+// 覆盖：初始状态、exec/fetchStatus/clearCurrent 动作、loading/error 状态、
 //      history 累积与上限裁剪、lastBatch/current 状态变化。
-// 说明：源码中方法名为 exec/dispatch/fetchStatus（任务描述中的
+// 说明：源码中方法名为 exec/fetchStatus（任务描述中的
 //      createBatchTask/getBatchStatus 为别名语义），本测试按实际导出方法验证。
+// 2026-10-11：随 `POST /tasks/batch`（批量下发）死路移除，删去 dispatch 动作
+// 及其用例（TD-60 task 域施工图 §2.2：该端点契约自相矛盾且全仓无真实调用方）。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
 // mock @/api/batch：避免真实网络请求，用 vi.fn 控制返回值
 vi.mock('@/api/batch', () => ({
   batchExec: vi.fn(),
-  getBatchStatus: vi.fn(),
-  batchDispatch: vi.fn()
+  getBatchStatus: vi.fn()
 }))
 
 import { useBatchStore } from '@/stores/batch'
-import { batchExec, getBatchStatus, batchDispatch } from '@/api/batch'
+import { batchExec, getBatchStatus } from '@/api/batch'
 
 describe('useBatchStore', () => {
   beforeEach(() => {
@@ -104,55 +105,6 @@ describe('useBatchStore', () => {
 
       const store = useBatchStore()
       await expect(store.exec({})).rejects.toEqual({})
-
-      // i18n 默认回退到 zh：error.batchExecFailed → "批量执行失败"
-      expect(store.error).toBe('批量执行失败')
-    })
-  })
-
-  describe('dispatch 动作', () => {
-    it('成功时设置 lastBatch 并写入 history', async () => {
-      const body = { agentIDs: ['a1', 'a2'], type: 'service', command: 'restart' }
-      const batch = { batchID: 'b2', status: 'running', total: 2 }
-      batchDispatch.mockResolvedValueOnce({ s: 200, j: batch })
-
-      const store = useBatchStore()
-      const r = await store.dispatch(body)
-
-      expect(batchDispatch).toHaveBeenCalledWith(body)
-      expect(store.lastBatch).toEqual(batch)
-      expect(store.history).toHaveLength(1)
-      expect(store.history[0]).toEqual(batch)
-      expect(store.loading).toBe(false)
-      expect(store.error).toBe('')
-      expect(r).toEqual({ s: 200, j: batch })
-    })
-
-    it('响应无 batchID 时不写入 history', async () => {
-      batchDispatch.mockResolvedValueOnce({ s: 200, j: { status: 'unknown' } })
-
-      const store = useBatchStore()
-      await store.dispatch({})
-
-      expect(store.lastBatch).toEqual({ status: 'unknown' })
-      expect(store.history).toEqual([])
-    })
-
-    it('失败时设置 error、结束 loading 并向上抛出异常', async () => {
-      batchDispatch.mockRejectedValueOnce({ j: { error: '下发失败' } })
-
-      const store = useBatchStore()
-      await expect(store.dispatch({})).rejects.toEqual({ j: { error: '下发失败' } })
-
-      expect(store.error).toBe('下发失败')
-      expect(store.loading).toBe(false)
-    })
-
-    it('失败且无 error 字段时使用 i18n 默认错误码', async () => {
-      batchDispatch.mockRejectedValueOnce({})
-
-      const store = useBatchStore()
-      await expect(store.dispatch({})).rejects.toEqual({})
 
       // i18n 默认回退到 zh：error.batchExecFailed → "批量执行失败"
       expect(store.error).toBe('批量执行失败')

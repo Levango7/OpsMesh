@@ -1,6 +1,6 @@
-// 批量运维 store — 批量下发 + 状态查询
+// 批量运维 store — 批量执行 + 状态查询
 import { defineStore } from 'pinia'
-import { batchExec, getBatchStatus, batchDispatch } from '@/api/batch'
+import { batchExec, getBatchStatus } from '@/api/batch'
 import { t } from '@/i18n'
 
 export const useBatchStore = defineStore('batch', {
@@ -19,24 +19,6 @@ export const useBatchStore = defineStore('batch', {
       this.loading = true; this.error = ''
       try {
         const r = await batchExec(body)
-        const batch = r.j || {}
-        this.lastBatch = batch
-        if (batch.batchID) {
-          this.history.unshift(batch)
-          if (this.history.length > 50) this.history.pop()
-        }
-        return r
-      } catch (e) {
-        this.error = e.j?.error || t('error.batchExecFailed')
-        throw e
-      } finally {
-        this.loading = false
-      }
-    },
-    async dispatch(body) {
-      this.loading = true; this.error = ''
-      try {
-        const r = await batchDispatch(body)
         const batch = r.j || {}
         this.lastBatch = batch
         if (batch.batchID) {
