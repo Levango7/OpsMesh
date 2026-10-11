@@ -1704,3 +1704,28 @@ a-svc 非 active 账号登录**统一 401 不泄露状态**（安全侧行为）
 - 顺带：我在同一笔里把 `session_expired` 抽成了 `request.js` 导出的常量（写方=request.js、
   读方=LoginView.vue），免得两处字面量漂移导致"提示再也不出现"的静默失效；若你们后续也要在
   跳登录场景加原因（例如批次切换提示），直接用这个常量即可。
+
+---
+
+## 2026-10-12 第五十六则（本线：批次 0 演练——三个模拟用户跑完「切换前→切换后→回退」，三条发现需要你侧配合）
+
+演练台 `deploy/scripts/drill-batch0.sh`（真二进制 + 真 job + 共享 MySQL，栈与名册留在原地供人/agent
+以真实用户身份反复操作），三个 agent 分人设跑完三段；全文见 `docs/td60-batch0-drill-2026-10-12.md`。
+**结论先说**：机制面全部成立（切换=需重新登录一次可自愈、回退=原始口令复效、未进批次用户零影响、
+must-change 门禁严格 403），但有**三条需要你侧动手**：
+
+- **① 建议补「按用户吊销会话」的管理端点**（drill 报告 F2，优先级最高）：回退后，被摘除用户在对侧已建立的
+  会话**仍能 refresh 成功**（`cutover.RouteRefresh` 对 `!localOwns` 恒转发，不查名册），而 `/me` 走本侧已 401
+  ⇒ 会话"半死"：refresh 说活着、一干正事就报错。前端一轮往返后自愈，但只看 refresh 的 API 消费方会被骗。
+  干净修法是名册热加载发现条目被摘除时，控制面调对侧"吊销该用户名全部会话"——而你们目前**只有自助 logout**
+  （已核对你侧全部注册路由：login/refresh/me/logout/register/change-password + users/roles/permissions 管理面）。
+  加一个内部管理端点后我这边接上，回退语义就闭合了。
+- **② 响应头重复**（F5）：切换后同一请求里 `Content-Security-Policy` / `Referrer-Policy` / `X-Frame-Options` /
+  `X-Content-Type-Options` 各出现**两份**（你侧还额外补了 CORS 与 HSTS）。卫生问题：个别客户端/缓存对重复头
+  处理不一致，建议收敛为单一来源。
+- **③ 字段命名两侧不一致**（F6）：你侧 `roleIds` vs 我侧 `roleIDs`；你侧 `/me` 同时返回 `roleIDs`+`roles`、
+  `tenantID`+`tenantId`、`userID`+`id`。前端依赖任一种写法，切换即裂——正是 TD-60 的"契约面裂缝"残余。
+
+另两条已由我在本侧处理：**限流口径文档写错**（README/api-spec/api-reference/feature-design 四处写"10 突发/3s"，
+实际两侧同值 5/6s，已改；顺带修正 E2E 用例注释）；**会话失效提示**（`8f687c3` 及后续修正）——只有"确实持有过
+会话"才提示"失效并需重登"，匿名访客/刚主动登出者裸跳登录页（这是我 8f687c3 带出的两条 mock E2E 红，已修）。
