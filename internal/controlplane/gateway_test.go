@@ -100,8 +100,10 @@ func TestHandleCreateGatewayRoute_BadBackendHostPort(t *testing.T) {
 	}
 }
 
-// TestHandleCreateGatewayRoute_ValidGrpcBackend 验证 grpc scheme 通过（L1 targetBackend 校验）。
-func TestHandleCreateGatewayRoute_ValidGrpcBackend(t *testing.T) {
+// TestHandleCreateGatewayRoute_RejectGrpcBackend 验证 grpc scheme **创建时即拒**（TD-66 勘测 2026-10-11）。
+// 原实现创建时允许 grpc:// 但数据面只支持 http/https（502）——「配了才发现不可用」的模型与实现不一致。
+// 收紧后：400 + 指明只收 http|https；数据面支持 gRPC 转发时再连同放开（见 gateway.go 白名单注释）。
+func TestHandleCreateGatewayRoute_RejectGrpcBackend(t *testing.T) {
 	s := newGatewayRouteTestServer()
 	auth := loginAsAdmin(t, s)
 	body := `{"name":"r1","pathPrefix":"/api/","targetBackend":"grpc://backend:9090"}`
@@ -110,8 +112,11 @@ func TestHandleCreateGatewayRoute_ValidGrpcBackend(t *testing.T) {
 	req.Header.Set("X-Tenant-ID", "default")
 	w := httptest.NewRecorder()
 	s.handleGatewayRoutes(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("status=%d, want 201; body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400（grpc 数据面不可用，创建时即拒）; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "http|https") {
+		t.Errorf("错误信息应指明只收 http|https: %s", w.Body.String())
 	}
 }
 

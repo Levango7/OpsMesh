@@ -39,15 +39,18 @@ import (
 )
 
 // allowedGatewayBackendSchemes 网关后端 scheme 白名单（L1 输入校验）。
-// 仅允许 http/https/grpc，拒绝 file:// / ftp:// / ws:// 等不安全或不支持协议。
+// 仅允许 http/https，拒绝 file:// / ftp:// / ws:// 等不安全或不支持协议。
+//
+// grpc 的取舍（TD-66 勘测 2026-10-11）：数据面 handleGatewayProxy 只支持 http/https
+// （grpc:// 建了也 502）。原先创建时允许 grpc:// ⇒ 「配了才发现不可用」——模型与实现不一致。
+// 收紧为创建时即拒；将来数据面支持 gRPC 转发时再把白名单放开（连同数据面一起改）。
 var allowedGatewayBackendSchemes = map[string]bool{
 	"http":  true,
 	"https": true,
-	"grpc":  true,
 }
 
 // validateGatewayTargetBackend 校验 targetBackend 格式（L1 输入校验）。
-// 格式要求：scheme://host:port，scheme ∈ {http,https,grpc}，host:port 可被 net.SplitHostPort 解析。
+// 格式要求：scheme://host:port，scheme ∈ {http,https}，host:port 可被 net.SplitHostPort 解析。
 // 返回 ok=false 时 errmsg 为人类可读错误原因。
 func validateGatewayTargetBackend(target string) (ok bool, errmsg string) {
 	u, err := url.Parse(target)
@@ -55,7 +58,7 @@ func validateGatewayTargetBackend(target string) (ok bool, errmsg string) {
 		return false, "invalid targetBackend: parse failed"
 	}
 	if !allowedGatewayBackendSchemes[u.Scheme] {
-		return false, "invalid targetBackend scheme: " + u.Scheme + " (want http|https|grpc)"
+		return false, "invalid targetBackend scheme: " + u.Scheme + " (want http|https)"
 	}
 	// u.Host 应为 host:port 形式；net.SplitHostPort 强制校验端口存在且格式合法。
 	if u.Host == "" {
