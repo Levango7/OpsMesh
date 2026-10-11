@@ -17,11 +17,23 @@ export function setUnauthorizedHandler(fn) {
   unauthorizedHandler = fn
 }
 
-// 跳登录（避免在登录/注册页本身跳转造成死循环）
-function redirectToLogin() {
+// 登录态失效的原因取值（写入 ?reason=）。这是跨文件共用的**外部契约**：
+// request.js 写、LoginView.vue 读——两边各写字面量会静默漂移（改一处提示就再也不出现），
+// 故只此一处定义。分批切流会让名册用户的旧会话走到这里（签发方易主、对侧不认本侧 rt）。
+export const LOGIN_REASON_SESSION_EXPIRED = 'session_expired'
+
+// 登录页 URL（可带"为什么要重登"的原因）。
+// 抽成纯函数的原因：jsdom 不实现真实导航，直接断言 window.location.href 只能证明"赋了值"，
+// 证不了"赋对了什么"；URL 构造交给单测直接断言。
+export function loginURL(reason) {
   const base = import.meta.env.BASE_URL || '/'
+  return base + 'login' + (reason ? '?reason=' + encodeURIComponent(reason) : '')
+}
+
+// 跳登录（避免在登录/注册页本身跳转造成死循环）
+export function redirectToLogin(reason) {
   if (!/\/(login|register)(\/|$|\?)/.test(window.location.pathname)) {
-    window.location.href = base + 'login'
+    window.location.href = loginURL(reason)
   }
 }
 
@@ -62,13 +74,13 @@ http.interceptors.response.use(
       } catch {
         refreshing = null
         if (unauthorizedHandler) unauthorizedHandler()
-        else redirectToLogin()
+        else redirectToLogin(LOGIN_REASON_SESSION_EXPIRED)
         return Promise.reject({ s: 401, j })
       }
     }
     if (s === 401) {
       if (unauthorizedHandler) unauthorizedHandler()
-      else redirectToLogin()
+      else redirectToLogin(LOGIN_REASON_SESSION_EXPIRED)
     }
     // 全局错误 toast：非 401（401 走登录流程不提示）、非 silent、非 refresh 静默请求
     if (s !== 401 && !original?.silent && !/\/auth\/refresh$/.test(original?.url || '')) {

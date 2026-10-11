@@ -42,6 +42,12 @@
           />
         </div>
 
+        <!-- 登录态失效（含分批切流导致的会话易主）跳回来时的原因提示：非错误、不阻断填写 -->
+        <div v-if="notice" class="notice-msg" data-testid="login-notice">
+          <Icon name="clock" :size="14" />
+          <span>{{ notice }}</span>
+        </div>
+
         <div v-if="error" class="err-msg" data-testid="login-error">
           <Icon name="warning" :size="14" />
           <span>{{ error }}</span>
@@ -70,14 +76,16 @@
 
 <script setup>
 // 登录页 — 全屏居中卡片，调用后端 /auth/login
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { currentLang, setLang, t } from '@/i18n'
 import Icon from '@/components/Icon.vue'
+import { LOGIN_REASON_SESSION_EXPIRED } from '@/api/request'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const themeStore = useThemeStore()
 
@@ -85,6 +93,10 @@ const username = ref('')
 const password = ref('')
 const error = ref('')
 const loading = ref(false)
+
+// ?reason=session_expired ⇒ 说明"为什么让你重登"。路由对象在单测里被 mock 成 {} 或最小对象，
+// 故整链可选访问，缺失时静默不显示。
+const notice = computed(() => (route?.query?.reason === LOGIN_REASON_SESSION_EXPIRED ? t('login.session_expired') : ''))
 
 async function onSubmit() {
   error.value = ''
@@ -167,6 +179,14 @@ function toggleLang() {
   display: flex; align-items: center; gap: 6px;
   font-size: 12.5px; color: var(--fail);
   background: var(--fail-soft); border: 1px solid var(--fail-bg);
+  padding: 7px 10px; border-radius: var(--radius-sm);
+}
+
+/* 原因提示：中性色，与错误提示（红）区分——会话失效不是用户操作错误 */
+.notice-msg {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: var(--text-2);
+  background: var(--bg-2); border: 1px solid var(--border);
   padding: 7px 10px; border-radius: var(--radius-sm);
 }
 

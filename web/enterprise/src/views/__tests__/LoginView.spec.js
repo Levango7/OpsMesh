@@ -44,9 +44,10 @@ vi.mock('@/stores/theme', () => ({
   }),
 }))
 
+let mockQuery = {}
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: mockPush }),
-  useRoute: () => ({}),
+  useRoute: () => ({ query: mockQuery }),
 }))
 
 vi.mock('@/components/Icon.vue', () => ({
@@ -68,6 +69,7 @@ function mountLogin() {
 describe('LoginView 视图', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockQuery = {}
     mockPush.mockReset()
     mockLogin.mockReset()
   })
@@ -218,6 +220,28 @@ describe('LoginView 视图', () => {
       await nextTick()
       await nextTick()
       expect(wrapper.find('[data-testid="login-submit"]').attributes('disabled')).toBeFalsy()
+    })
+  })
+
+  describe('会话失效原因提示', () => {
+    it('无 reason 参数时不显示提示（普通进入登录页）', () => {
+      const wrapper = mountLogin()
+      expect(wrapper.find('[data-testid="login-notice"]').exists()).toBe(false)
+    })
+
+    it('reason=session_expired 时显示原因提示，且不占用错误提示位', () => {
+      mockQuery = { reason: 'session_expired' }
+      const wrapper = mountLogin()
+      const notice = wrapper.find('[data-testid="login-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toBe('login.session_expired')
+      expect(wrapper.find('[data-testid="login-error"]').exists()).toBe(false)
+    })
+
+    it('未知 reason 不显示提示（只认约定值，不把 query 当展示面）', () => {
+      mockQuery = { reason: 'whatever' }
+      const wrapper = mountLogin()
+      expect(wrapper.find('[data-testid="login-notice"]').exists()).toBe(false)
     })
   })
 

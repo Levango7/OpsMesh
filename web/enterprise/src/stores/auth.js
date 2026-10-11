@@ -4,7 +4,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authApi } from '@/api/auth'
-import { setUnauthorizedHandler } from '@/api/request'
+import { LOGIN_REASON_SESSION_EXPIRED, redirectToLogin, setUnauthorizedHandler } from '@/api/request'
 import { t } from '@/i18n'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -128,13 +128,12 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
   }
 
-  // 注册未授权回调：刷新失败 → 清会话并跳登录
+  // 注册未授权回调：刷新失败 → 清会话并跳登录（带 reason，登录页给出原因）。
+  // 跳转逻辑复用 request.js 的 redirectToLogin：这里此前手抄了第二份"防死循环"正则，
+  // 两份一旦漂移就会出现"在登录页还往登录页跳"的死循环——复用即可根除。
   function onUnauthorized() {
     user.value = null
-    const base = import.meta.env.BASE_URL || '/'
-    if (!/\/(login|register)(\/|$|\?)/.test(window.location.pathname)) {
-      window.location.href = base + 'login'
-    }
+    redirectToLogin(LOGIN_REASON_SESSION_EXPIRED)
   }
   setUnauthorizedHandler(onUnauthorized)
 

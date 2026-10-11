@@ -95,7 +95,8 @@
                   "loading":  "Signing in…",
                   "invalid_credentials":  "Invalid username or password",
                   "need_username":  "Please enter username",
-                  "need_password":  "Please enter password"
+                  "need_password":  "Please enter password",
+                  "session_expired":  "Your session has expired. Please sign in again."
               },
     "register":  {
                      "title":  "Sign Up",

@@ -95,7 +95,8 @@
                   "loading":  "登录中…",
                   "invalid_credentials":  "用户名或密码错误",
                   "need_username":  "请输入用户名",
-                  "need_password":  "请输入密码"
+                  "need_password":  "请输入密码",
+                  "session_expired":  "登录状态已失效，请重新登录"
               },
     "register":  {
                      "title":  "注册",
