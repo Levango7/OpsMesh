@@ -23,9 +23,6 @@ import (
 	"github.com/Levango7/OpsMesh/internal/controlplane/credentials"
 )
 
-// authSvcGatewayPath auth-svc HTTP 网关源码（只读核对参数口径）。
-var authSvcGatewayPath = "../../../services/auth-svc/internal/http/gateway.go"
-
 // TestLoginGuardIPBucketParamsMatchBothSides 两侧 IP 令牌桶参数一致（切流不削弱防爆破）。
 //
 // 常量名两侧刻意不同（controlplane `loginRateBurst` / auth-svc `guardRateBurst`），
