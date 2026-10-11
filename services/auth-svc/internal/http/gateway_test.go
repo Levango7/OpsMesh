@@ -616,6 +616,36 @@ func TestChangePassword_SessionSemantics(t *testing.T) {
 	}
 }
 
+// TestRegister_ResponseCarriesUserId 守护 register 响应体携带 userId
+// （TD-60 契约对齐 §11.1-③）：控制面默认分支回 {message, userId, status}，
+// auth-svc 此前只回 {message}，导致审批流要拿新用户 id 必须再查
+// GET /api/v1/users 按用户名匹配。补字段为纯增、无兼容风险。
+func TestRegister_ResponseCarriesUserId(t *testing.T) {
+	_, mux, svc := newTestGatewayWith(true)
+
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/auth/register",
+		`{"username":"reg-id","password":"SomePass123!x","email":"r@x.io"}`, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("注册应 201，实际 %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("响应体不是合法 JSON: %v", err)
+	}
+	uid, _ := body["userId"].(string)
+	if uid == "" {
+		t.Fatalf("register 201 响应应含非空 userId（否则调用方只能再查 users 列表），body=%s", rec.Body.String())
+	}
+	// userId 必须与落库用户一致（不是随手编的占位）。
+	if u := svc.Store().GetUserByUsername("reg-id"); u == nil || u.ID != uid {
+		t.Errorf("userId 应与落库用户 ID 一致：响应 %q，库内 %v", uid, u)
+	}
+	// 原有字段不得被挤掉（message/status 仍是 pending 语义）。
+	if body["status"] != "pending" || body["message"] == nil {
+		t.Errorf("message/status 语义应保持，实际 %v", body)
+	}
+}
+
 // TestRegister_BindsReadOnlyViewerRole 守护自注册默认角色（TD-60 A-2 §2.1 缺口）：
 // 注册用户必须绑 role-viewer，且该角色**只含 `*:read`**——
 // 这是「低权限、安全」的硬约束：新用户不能审批自己的注册、不能建号、

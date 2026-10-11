@@ -339,12 +339,13 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "default role missing, registration refused")
 		return
 	}
-	if _, err := g.svc.RegisterUser(r.Context(), &authv1.CreateUserRequest{
+	created, err := g.svc.RegisterUser(r.Context(), &authv1.CreateUserRequest{
 		Username: body.Username,
 		Password: body.Password,
 		Email:    body.Email,
 		RoleIds:  []string{"role-viewer"},
-	}); err != nil {
+	})
+	if err != nil {
 		if err == service.ErrUserExists {
 			writeError(w, http.StatusConflict, "username already exists")
 			return
@@ -352,9 +353,15 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// userId 一并回给调用方（TD-60 契约对齐 §11.1-③）：控制面默认分支回的是
+	// {message, userId, status}，本服务此前只回 {message} ⇒ 审批流要拿新用户 id
+	// 只能再查 GET /api/v1/users 按用户名匹配。补字段无兼容风险（纯增）。
+	// id 取自 RegisterUser 的返回值而非再查一次库：避免刚建即被删的并发窗口
+	// 里对 nil 解引用；万一返回体缺 id，调用方退回查列表即可，不影响 201 语义。
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"message": "registration submitted, pending admin approval",
 		"status":  "pending",
+		"userId":  created.GetId(),
 	})
 }
 
