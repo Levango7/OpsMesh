@@ -227,7 +227,10 @@ func TestAdminRotation_Semantics(t *testing.T) {
 		t.Fatal("seed 口令应为 admin123（轮换触发条件）")
 	}
 	// 轮换序列：ChangePassword（清标记）→ SetMustChangePassword 置回 true。
-	hash, _ := auth.HashPassword("RandomNewPass1")
+	// 口令取满足生产策略的形态（≥12 位 + 大写/小写/数字/特殊字符）：本测试虽不经
+	// HTTP 口令校验，但 tests/auth_svc_policy_guard_test.go 会扫全服务口令字面量，
+	// 用弱形态会被那道跨语言守卫判红（"免得日被搬进 HTTP 用例时才炸"）。
+	hash, _ := auth.HashPassword("R4ndom-New-Pass1!")
 	if err := st.ChangePassword(u.ID, hash); err != nil {
 		t.Fatalf("改密: %v", err)
 	}
@@ -248,7 +251,7 @@ func TestAdminRotation_Semantics(t *testing.T) {
 	if !u3.MustChangePassword {
 		t.Fatal("SetMustChangePassword(true) 后标记应为 true")
 	}
-	if !auth.VerifyPassword(u3.PasswordHash, "RandomNewPass1") {
+	if !auth.VerifyPassword(u3.PasswordHash, "R4ndom-New-Pass1!") {
 		t.Fatal("置回标记不应影响口令哈希")
 	}
 }
