@@ -60,6 +60,54 @@ func TestGuard_IPRateLimit(t *testing.T) {
 	}
 }
 
+// ============ Status 只读查询（TD-60 跨侧统一锁定） ============
+
+func TestGuard_StatusReadOnly(t *testing.T) {
+	g := newLoginGuard()
+
+	// 无记录：未锁定、零计数。
+	st := g.Status("fresh")
+	if st.Locked || st.FailCount != 0 {
+		t.Errorf("无记录应为未锁定零计数，实际 %+v", st)
+	}
+	if st.WindowSecs != int64(guardFailWindow/time.Second) {
+		t.Errorf("WindowSecs 应等于失败窗口，实际 %d", st.WindowSecs)
+	}
+
+	// 3 次失败：未达阈值 ⇒ 未锁定但计数可见。
+	for i := 0; i < 3; i++ {
+		g.recordFail("alice")
+	}
+	st = g.Status("alice")
+	if st.Locked {
+		t.Error("3 次失败不应锁定")
+	}
+	if st.FailCount != 3 {
+		t.Errorf("失败计数应为 3，实际 %d", st.FailCount)
+	}
+
+	// 达阈值：锁定且剩余秒为正。
+	for i := 0; i < 2; i++ {
+		g.recordFail("alice")
+	}
+	st = g.Status("alice")
+	if !st.Locked {
+		t.Error("5 次失败后应锁定")
+	}
+	if st.RetryAfterSecs <= 0 || st.RetryAfterSecs > int64(guardLockDur/time.Second)+1 {
+		t.Errorf("RetryAfterSecs 应在零与锁定时长之间，实际 %d", st.RetryAfterSecs)
+	}
+
+	// 只读：查询不得改变计数或锁定状态。
+	st2 := g.Status("alice")
+	if st2.FailCount != st.FailCount || st2.Locked != st.Locked {
+		t.Error("Status 必须是只读：查询不得改变内部状态")
+	}
+	if !g.accountLocked("alice") {
+		t.Error("Status 查询不应解除锁定")
+	}
+}
+
 // ============ loginGuard 账号锁定 ============
 
 func TestGuard_AccountLockAfterFiveFails(t *testing.T) {

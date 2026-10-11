@@ -172,6 +172,11 @@ func main() {
 			PublicRegister:  cfg.PublicRegister,
 		})
 		gw.RegisterRoutes(mux)
+		// TD-60：把登录防护计数器共享给 gRPC 的 GetLoginGuardStatus，使切流后控制面
+		// 能判断账号是否被本侧锁。注意口径：计数器由 HTTP 网关持有，故**仅 HTTP 网关
+		// 开启时注入**；关闭时（gRPC-only，控制面仍是唯一登录入口）查询返回保守的
+		// 「未锁定」，锁定制由控制面侧继续负责——不会误拒合法登录。
+		svc.SetLoginGuardStatus(gw.ServiceGuardStatusProvider())
 		log.Printf("HTTP gateway enabled (AUTH_SVC_HTTP_ENABLED=true) — cookie_secure=%v deviceFP=%v public_register=%v",
 			cfg.CookieSecure, cfg.DeviceFPEnabled, cfg.PublicRegister)
 	} else {

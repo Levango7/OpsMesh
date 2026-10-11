@@ -19,6 +19,11 @@ service AuthService {
   rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
   // CheckPermission checks if the authenticated user has a permission.
   rpc CheckPermission(CheckPermissionRequest) returns (CheckPermissionResponse);
+  // GetLoginGuardStatus queries login guard status for a username (internal RPC,
+  // not exposed on the public HTTP gateway): after cutover the control plane uses it
+  // to decide whether an account is locked on this side, so the two loginGuards do
+  // not each enforce their own counters. Read-only; changes nothing.
+  rpc GetLoginGuardStatus(GetLoginGuardStatusRequest) returns (GetLoginGuardStatusResponse);
 }
 
 // UserService provides user management.
@@ -60,7 +65,6 @@ service PermissionService {
   // CheckPermission checks if a user has a specific permission.
   rpc CheckPermission(CheckPermissionRequest) returns (CheckPermissionResponse);
 }
-
 // User represents a user entity.
 message User {
   string id = 1;
@@ -157,6 +161,19 @@ message CreateUserRequest {
   // 该用户首次登录只签 5min 改密专用令牌，必须改密后才能取得常规会话。
   // 迁移 job 以一次性随机口令建号时必须置 true，否则用户拿到的是长期口令。
   bool must_change_password = 5;
+}
+
+// GetLoginGuardStatusRequest is the request to query login guard status.
+message GetLoginGuardStatusRequest {
+  string username = 1;
+}
+
+// GetLoginGuardStatusResponse is the login guard status snapshot for a user.
+message GetLoginGuardStatusResponse {
+  bool   locked          = 1; // 账号当前是否被登录防护锁定
+  int64  retry_after_secs = 2; // 锁定剩余秒（未锁定为 0；近似值，见实现注释）
+  int32  fail_count      = 3; // 当前失败窗口内计数（近似值；多副本以 Redis 为准）
+  int64  window_secs     = 4; // 失败计数滑动窗口长度
 }
 
 // GetUserRequest is the request to get a user.

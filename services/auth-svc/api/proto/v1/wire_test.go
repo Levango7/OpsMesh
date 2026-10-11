@@ -19,8 +19,10 @@ import (
 )
 
 func TestAllMethodsCrossCodec(t *testing.T) {
-	if got := grpcwire.AssertUnaryMethodsCrossCodec(t, "opsmesh.auth.v1"); got != 19 {
-		t.Fatalf("本包应覆盖 19 条 unary 方法，实际检查到 %d 条——覆盖数与 .proto 不符，说明有方法没真过 codec（或包名/生成物漂移）", got)
+	// 20 = 2026-10-11 新增 GetLoginGuardStatus（TD-60 切流后控制面查询本侧锁定状态）。
+	// 该断言钉死覆盖数：新增 RPC 若忘了过 codec，本测试会因数量不符判红。
+	if got := grpcwire.AssertUnaryMethodsCrossCodec(t, "opsmesh.auth.v1"); got != 20 {
+		t.Fatalf("本包应覆盖 20 条 unary 方法，实际检查到 %d 条——覆盖数与 .proto 不符，说明有方法没真过 codec（或包名/生成物漂移）", got)
 	}
 }
 

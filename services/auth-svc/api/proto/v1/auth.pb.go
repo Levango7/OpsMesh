@@ -818,6 +818,120 @@ func (x *CreateUserRequest) GetMustChangePassword() bool {
 	return false
 }
 
+// GetLoginGuardStatusRequest is the request to query login guard status.
+type GetLoginGuardStatusRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetLoginGuardStatusRequest) Reset() {
+	*x = GetLoginGuardStatusRequest{}
+	mi := &file_auth_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetLoginGuardStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetLoginGuardStatusRequest) ProtoMessage() {}
+
+func (x *GetLoginGuardStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_auth_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetLoginGuardStatusRequest.ProtoReflect.Descriptor instead.
+func (*GetLoginGuardStatusRequest) Descriptor() ([]byte, []int) {
+	return file_auth_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *GetLoginGuardStatusRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+// GetLoginGuardStatusResponse is the login guard status snapshot for a user.
+type GetLoginGuardStatusResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Locked         bool                   `protobuf:"varint,1,opt,name=locked,proto3" json:"locked,omitempty"`                                         // 账号当前是否被登录防护锁定
+	RetryAfterSecs int64                  `protobuf:"varint,2,opt,name=retry_after_secs,json=retryAfterSecs,proto3" json:"retry_after_secs,omitempty"` // 锁定剩余秒（未锁定为 0；近似值，见实现注释）
+	FailCount      int32                  `protobuf:"varint,3,opt,name=fail_count,json=failCount,proto3" json:"fail_count,omitempty"`                  // 当前失败窗口内计数（近似值；多副本以 Redis 为准）
+	WindowSecs     int64                  `protobuf:"varint,4,opt,name=window_secs,json=windowSecs,proto3" json:"window_secs,omitempty"`               // 失败计数滑动窗口长度
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *GetLoginGuardStatusResponse) Reset() {
+	*x = GetLoginGuardStatusResponse{}
+	mi := &file_auth_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetLoginGuardStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetLoginGuardStatusResponse) ProtoMessage() {}
+
+func (x *GetLoginGuardStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_auth_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetLoginGuardStatusResponse.ProtoReflect.Descriptor instead.
+func (*GetLoginGuardStatusResponse) Descriptor() ([]byte, []int) {
+	return file_auth_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *GetLoginGuardStatusResponse) GetLocked() bool {
+	if x != nil {
+		return x.Locked
+	}
+	return false
+}
+
+func (x *GetLoginGuardStatusResponse) GetRetryAfterSecs() int64 {
+	if x != nil {
+		return x.RetryAfterSecs
+	}
+	return 0
+}
+
+func (x *GetLoginGuardStatusResponse) GetFailCount() int32 {
+	if x != nil {
+		return x.FailCount
+	}
+	return 0
+}
+
+func (x *GetLoginGuardStatusResponse) GetWindowSecs() int64 {
+	if x != nil {
+		return x.WindowSecs
+	}
+	return 0
+}
+
 // GetUserRequest is the request to get a user.
 type GetUserRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -828,7 +942,7 @@ type GetUserRequest struct {
 
 func (x *GetUserRequest) Reset() {
 	*x = GetUserRequest{}
-	mi := &file_auth_proto_msgTypes[12]
+	mi := &file_auth_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -840,7 +954,7 @@ func (x *GetUserRequest) String() string {
 func (*GetUserRequest) ProtoMessage() {}
 
 func (x *GetUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_auth_proto_msgTypes[12]
+	mi := &file_auth_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -853,7 +967,7 @@ func (x *GetUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUserRequest.ProtoReflect.Descriptor instead.
 func (*GetUserRequest) Descriptor() ([]byte, []int) {
-	return file_auth_proto_rawDescGZIP(), []int{12}
+	return file_auth_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *GetUserRequest) GetId() string {
@@ -879,7 +993,7 @@ type UpdateUserRequest struct {
 
 func (x *UpdateUserRequest) Reset() {
 	*x = UpdateUserRequest{}
-	mi := &file_auth_proto_msgTypes[13]
+	mi := &file_auth_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -891,7 +1005,7 @@ func (x *UpdateUserRequest) String() string {
 func (*UpdateUserRequest) ProtoMessage() {}
 
 func (x *UpdateUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_auth_proto_msgTypes[13]
+	mi := &file_auth_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -904,7 +1018,7 @@ func (x *UpdateUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateUserRequest.ProtoReflect.Descriptor instead.
 func (*UpdateUserRequest) Descriptor() ([]byte, []int) {
-	return file_auth_proto_rawDescGZIP(), []int{13}
+	return file_auth_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *UpdateUserRequest) GetId() string {
@@ -952,7 +1066,7 @@ type DeleteUserRequest struct {
 
 func (x *DeleteUserRequest) Reset() {
 	*x = DeleteUserRequest{}
-	mi := &file_auth_proto_msgTypes[14]
+	mi := &file_auth_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -964,7 +1078,7 @@ func (x *DeleteUserRequest) String() string {
 func (*DeleteUserRequest) ProtoMessage() {}
 
 func (x *DeleteUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_auth_proto_msgTypes[14]
+	mi := &file_auth_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -977,7 +1091,7 @@ func (x *DeleteUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteUserRequest.ProtoReflect.Descriptor instead.
 func (*DeleteUserRequest) Descriptor() ([]byte, []int) {
-	return file_auth_proto_rawDescGZIP(), []int{14}
+	return file_auth_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *DeleteUserRequest) GetId() string {
@@ -997,7 +1111,7 @@ type ListUsersResponse struct {
 
 func (x *ListUsersResponse) Reset() {
 	*x = ListUsersResponse{}
-	mi := &file_auth_proto_msgTypes[15]
+	mi := &file_auth_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1009,7 +1123,7 @@ func (x *ListUsersResponse) String() string {
 func (*ListUsersResponse) ProtoMessage() {}
 
 func (x *ListUsersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_auth_proto_msgTypes[15]
+	mi := &file_auth_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1022,7 +1136,7 @@ func (x *ListUsersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListUsersResponse.ProtoReflect.Descriptor instead.
 func (*ListUsersResponse) Descriptor() ([]byte, []int) {
-	return file_auth_proto_rawDescGZIP(), []int{15}
+	return file_auth_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ListUsersResponse) GetUsers() []*User {
@@ -1044,7 +1158,7 @@ type ChangePasswordRequest struct {
 
 func (x *ChangePasswordRequest) Reset() {
 	*x = ChangePasswordRequest{}
-	mi := &file_auth_proto_msgTypes[16]
+	mi := &file_auth_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1056,7 +1170,7 @@ func (x *ChangePasswordRequest) String() string {
 func (*ChangePasswordRequest) ProtoMessage() {}
 
 func (x *ChangePasswordRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_auth_proto_msgTypes[16]
+	mi := &file_auth_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1069,7 +1183,7 @@ func (x *ChangePasswordRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangePasswordRequest.ProtoReflect.Descriptor instead.
 func (*ChangePasswordRequest) Descriptor() ([]byte, []int) {
-	return file_auth_proto_rawDescGZIP(), []int{16}
+	return file_auth_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ChangePasswordRequest) GetUserId() string {
@@ -1105,7 +1219,7 @@ type CreateRoleRequest struct {
 
 func (x *CreateRoleRequest) Reset() {
 	*x = CreateRoleRequest{}
-	mi := &file_auth_proto_msgTypes[17]
+	mi := &file_auth_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1117,7 +1231,7 @@ func (x *CreateRoleRequest) String() string {
 func (*CreateRoleRequest) ProtoMessage() {}
 
 func (x *CreateRoleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_auth_proto_msgTypes[17]
+	mi := &file_auth_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1130,7 +1244,7 @@ func (x *CreateRoleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateRoleRequest.ProtoReflect.Descriptor instead.
 func (*CreateRoleRequest) Descriptor() ([]byte, []int) {
-	return file_auth_proto_rawDescGZIP(), []int{17}
+	return file_auth_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *CreateRoleRequest) GetName() string {
@@ -1164,7 +1278,7 @@ type GetRoleRequest struct {
 
 func (x *GetRoleRequest) Reset() {
 	*x = GetRoleRequest{}
-	mi := &file_auth_proto_msgTypes[18]
+	mi := &file_auth_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1176,7 +1290,7 @@ func (x *GetRoleRequest) String() string {
 func (*GetRoleRequest) ProtoMessage() {}
 
 func (x *GetRoleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_auth_proto_msgTypes[18]
+	mi := &file_auth_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1189,7 +1303,7 @@ func (x *GetRoleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRoleRequest.ProtoReflect.Descriptor instead.
 func (*GetRoleRequest) Descriptor() ([]byte, []int) {
-	return file_auth_proto_rawDescGZIP(), []int{18}
+	return file_auth_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *GetRoleRequest) GetId() string {
@@ -1211,7 +1325,7 @@ type UpdateRoleRequest struct {
 
 func (x *UpdateRoleRequest) Reset() {
 	*x = UpdateRoleRequest{}
-	mi := &file_auth_proto_msgTypes[19]
+	mi := &file_auth_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1223,7 +1337,7 @@ func (x *UpdateRoleRequest) String() string {
 func (*UpdateRoleRequest) ProtoMessage() {}
 
 func (x *UpdateRoleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_auth_proto_msgTypes[19]
+	mi := &file_auth_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1236,7 +1350,7 @@ func (x *UpdateRoleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateRoleRequest.ProtoReflect.Descriptor instead.
 func (*UpdateRoleRequest) Descriptor() ([]byte, []int) {
-	return file_auth_proto_rawDescGZIP(), []int{19}
+	return file_auth_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *UpdateRoleRequest) GetId() string {
@@ -1270,7 +1384,7 @@ type DeleteRoleRequest struct {
 
 func (x *DeleteRoleRequest) Reset() {
 	*x = DeleteRoleRequest{}
-	mi := &file_auth_proto_msgTypes[20]
+	mi := &file_auth_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1282,7 +1396,7 @@ func (x *DeleteRoleRequest) String() string {
 func (*DeleteRoleRequest) ProtoMessage() {}
 
 func (x *DeleteRoleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_auth_proto_msgTypes[20]
+	mi := &file_auth_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1295,7 +1409,7 @@ func (x *DeleteRoleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteRoleRequest.ProtoReflect.Descriptor instead.
 func (*DeleteRoleRequest) Descriptor() ([]byte, []int) {
-	return file_auth_proto_rawDescGZIP(), []int{20}
+	return file_auth_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *DeleteRoleRequest) GetId() string {
@@ -1315,7 +1429,7 @@ type ListRolesResponse struct {
 
 func (x *ListRolesResponse) Reset() {
 	*x = ListRolesResponse{}
-	mi := &file_auth_proto_msgTypes[21]
+	mi := &file_auth_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1327,7 +1441,7 @@ func (x *ListRolesResponse) String() string {
 func (*ListRolesResponse) ProtoMessage() {}
 
 func (x *ListRolesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_auth_proto_msgTypes[21]
+	mi := &file_auth_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1340,7 +1454,7 @@ func (x *ListRolesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRolesResponse.ProtoReflect.Descriptor instead.
 func (*ListRolesResponse) Descriptor() ([]byte, []int) {
-	return file_auth_proto_rawDescGZIP(), []int{21}
+	return file_auth_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ListRolesResponse) GetRoles() []*Role {
@@ -1361,7 +1475,7 @@ type AssignRoleRequest struct {
 
 func (x *AssignRoleRequest) Reset() {
 	*x = AssignRoleRequest{}
-	mi := &file_auth_proto_msgTypes[22]
+	mi := &file_auth_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1373,7 +1487,7 @@ func (x *AssignRoleRequest) String() string {
 func (*AssignRoleRequest) ProtoMessage() {}
 
 func (x *AssignRoleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_auth_proto_msgTypes[22]
+	mi := &file_auth_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1386,7 +1500,7 @@ func (x *AssignRoleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignRoleRequest.ProtoReflect.Descriptor instead.
 func (*AssignRoleRequest) Descriptor() ([]byte, []int) {
-	return file_auth_proto_rawDescGZIP(), []int{22}
+	return file_auth_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *AssignRoleRequest) GetUserId() string {
@@ -1413,7 +1527,7 @@ type ListPermissionsResponse struct {
 
 func (x *ListPermissionsResponse) Reset() {
 	*x = ListPermissionsResponse{}
-	mi := &file_auth_proto_msgTypes[23]
+	mi := &file_auth_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1425,7 +1539,7 @@ func (x *ListPermissionsResponse) String() string {
 func (*ListPermissionsResponse) ProtoMessage() {}
 
 func (x *ListPermissionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_auth_proto_msgTypes[23]
+	mi := &file_auth_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1438,7 +1552,7 @@ func (x *ListPermissionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPermissionsResponse.ProtoReflect.Descriptor instead.
 func (*ListPermissionsResponse) Descriptor() ([]byte, []int) {
-	return file_auth_proto_rawDescGZIP(), []int{23}
+	return file_auth_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ListPermissionsResponse) GetPermissions() []*Permission {
@@ -1515,7 +1629,16 @@ const file_auth_proto_rawDesc = "" +
 	"\x05email\x18\x02 \x01(\tR\x05email\x12\x1a\n" +
 	"\bpassword\x18\x03 \x01(\tR\bpassword\x12\x19\n" +
 	"\brole_ids\x18\x04 \x03(\tR\aroleIds\x120\n" +
-	"\x14must_change_password\x18\x05 \x01(\bR\x12mustChangePassword\" \n" +
+	"\x14must_change_password\x18\x05 \x01(\bR\x12mustChangePassword\"8\n" +
+	"\x1aGetLoginGuardStatusRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\"\x9f\x01\n" +
+	"\x1bGetLoginGuardStatusResponse\x12\x16\n" +
+	"\x06locked\x18\x01 \x01(\bR\x06locked\x12(\n" +
+	"\x10retry_after_secs\x18\x02 \x01(\x03R\x0eretryAfterSecs\x12\x1d\n" +
+	"\n" +
+	"fail_count\x18\x03 \x01(\x05R\tfailCount\x12\x1f\n" +
+	"\vwindow_secs\x18\x04 \x01(\x03R\n" +
+	"windowSecs\" \n" +
 	"\x0eGetUserRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"\xbc\x01\n" +
 	"\x11UpdateUserRequest\x12\x0e\n" +
@@ -1551,13 +1674,14 @@ const file_auth_proto_rawDesc = "" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x17\n" +
 	"\arole_id\x18\x02 \x01(\tR\x06roleId\"X\n" +
 	"\x17ListPermissionsResponse\x12=\n" +
-	"\vpermissions\x18\x01 \x03(\v2\x1b.opsmesh.auth.v1.PermissionR\vpermissions2\xb3\x03\n" +
+	"\vpermissions\x18\x01 \x03(\v2\x1b.opsmesh.auth.v1.PermissionR\vpermissions2\xa5\x04\n" +
 	"\vAuthService\x12F\n" +
 	"\x05Login\x12\x1d.opsmesh.auth.v1.LoginRequest\x1a\x1e.opsmesh.auth.v1.TokenResponse\x12@\n" +
 	"\x06Logout\x12\x1e.opsmesh.auth.v1.LogoutRequest\x1a\x16.google.protobuf.Empty\x12T\n" +
 	"\fRefreshToken\x12$.opsmesh.auth.v1.RefreshTokenRequest\x1a\x1e.opsmesh.auth.v1.TokenResponse\x12^\n" +
 	"\rValidateToken\x12%.opsmesh.auth.v1.ValidateTokenRequest\x1a&.opsmesh.auth.v1.ValidateTokenResponse\x12d\n" +
-	"\x0fCheckPermission\x12'.opsmesh.auth.v1.CheckPermissionRequest\x1a(.opsmesh.auth.v1.CheckPermissionResponse2\xc7\x03\n" +
+	"\x0fCheckPermission\x12'.opsmesh.auth.v1.CheckPermissionRequest\x1a(.opsmesh.auth.v1.CheckPermissionResponse\x12p\n" +
+	"\x13GetLoginGuardStatus\x12+.opsmesh.auth.v1.GetLoginGuardStatusRequest\x1a,.opsmesh.auth.v1.GetLoginGuardStatusResponse2\xc7\x03\n" +
 	"\vUserService\x12G\n" +
 	"\n" +
 	"CreateUser\x12\".opsmesh.auth.v1.CreateUserRequest\x1a\x15.opsmesh.auth.v1.User\x12A\n" +
@@ -1595,38 +1719,40 @@ func file_auth_proto_rawDescGZIP() []byte {
 	return file_auth_proto_rawDescData
 }
 
-var file_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_auth_proto_goTypes = []any{
-	(*User)(nil),                    // 0: opsmesh.auth.v1.User
-	(*Role)(nil),                    // 1: opsmesh.auth.v1.Role
-	(*Permission)(nil),              // 2: opsmesh.auth.v1.Permission
-	(*LoginRequest)(nil),            // 3: opsmesh.auth.v1.LoginRequest
-	(*TokenResponse)(nil),           // 4: opsmesh.auth.v1.TokenResponse
-	(*LogoutRequest)(nil),           // 5: opsmesh.auth.v1.LogoutRequest
-	(*RefreshTokenRequest)(nil),     // 6: opsmesh.auth.v1.RefreshTokenRequest
-	(*ValidateTokenRequest)(nil),    // 7: opsmesh.auth.v1.ValidateTokenRequest
-	(*ValidateTokenResponse)(nil),   // 8: opsmesh.auth.v1.ValidateTokenResponse
-	(*CheckPermissionRequest)(nil),  // 9: opsmesh.auth.v1.CheckPermissionRequest
-	(*CheckPermissionResponse)(nil), // 10: opsmesh.auth.v1.CheckPermissionResponse
-	(*CreateUserRequest)(nil),       // 11: opsmesh.auth.v1.CreateUserRequest
-	(*GetUserRequest)(nil),          // 12: opsmesh.auth.v1.GetUserRequest
-	(*UpdateUserRequest)(nil),       // 13: opsmesh.auth.v1.UpdateUserRequest
-	(*DeleteUserRequest)(nil),       // 14: opsmesh.auth.v1.DeleteUserRequest
-	(*ListUsersResponse)(nil),       // 15: opsmesh.auth.v1.ListUsersResponse
-	(*ChangePasswordRequest)(nil),   // 16: opsmesh.auth.v1.ChangePasswordRequest
-	(*CreateRoleRequest)(nil),       // 17: opsmesh.auth.v1.CreateRoleRequest
-	(*GetRoleRequest)(nil),          // 18: opsmesh.auth.v1.GetRoleRequest
-	(*UpdateRoleRequest)(nil),       // 19: opsmesh.auth.v1.UpdateRoleRequest
-	(*DeleteRoleRequest)(nil),       // 20: opsmesh.auth.v1.DeleteRoleRequest
-	(*ListRolesResponse)(nil),       // 21: opsmesh.auth.v1.ListRolesResponse
-	(*AssignRoleRequest)(nil),       // 22: opsmesh.auth.v1.AssignRoleRequest
-	(*ListPermissionsResponse)(nil), // 23: opsmesh.auth.v1.ListPermissionsResponse
-	(*timestamppb.Timestamp)(nil),   // 24: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),           // 25: google.protobuf.Empty
+	(*User)(nil),                        // 0: opsmesh.auth.v1.User
+	(*Role)(nil),                        // 1: opsmesh.auth.v1.Role
+	(*Permission)(nil),                  // 2: opsmesh.auth.v1.Permission
+	(*LoginRequest)(nil),                // 3: opsmesh.auth.v1.LoginRequest
+	(*TokenResponse)(nil),               // 4: opsmesh.auth.v1.TokenResponse
+	(*LogoutRequest)(nil),               // 5: opsmesh.auth.v1.LogoutRequest
+	(*RefreshTokenRequest)(nil),         // 6: opsmesh.auth.v1.RefreshTokenRequest
+	(*ValidateTokenRequest)(nil),        // 7: opsmesh.auth.v1.ValidateTokenRequest
+	(*ValidateTokenResponse)(nil),       // 8: opsmesh.auth.v1.ValidateTokenResponse
+	(*CheckPermissionRequest)(nil),      // 9: opsmesh.auth.v1.CheckPermissionRequest
+	(*CheckPermissionResponse)(nil),     // 10: opsmesh.auth.v1.CheckPermissionResponse
+	(*CreateUserRequest)(nil),           // 11: opsmesh.auth.v1.CreateUserRequest
+	(*GetLoginGuardStatusRequest)(nil),  // 12: opsmesh.auth.v1.GetLoginGuardStatusRequest
+	(*GetLoginGuardStatusResponse)(nil), // 13: opsmesh.auth.v1.GetLoginGuardStatusResponse
+	(*GetUserRequest)(nil),              // 14: opsmesh.auth.v1.GetUserRequest
+	(*UpdateUserRequest)(nil),           // 15: opsmesh.auth.v1.UpdateUserRequest
+	(*DeleteUserRequest)(nil),           // 16: opsmesh.auth.v1.DeleteUserRequest
+	(*ListUsersResponse)(nil),           // 17: opsmesh.auth.v1.ListUsersResponse
+	(*ChangePasswordRequest)(nil),       // 18: opsmesh.auth.v1.ChangePasswordRequest
+	(*CreateRoleRequest)(nil),           // 19: opsmesh.auth.v1.CreateRoleRequest
+	(*GetRoleRequest)(nil),              // 20: opsmesh.auth.v1.GetRoleRequest
+	(*UpdateRoleRequest)(nil),           // 21: opsmesh.auth.v1.UpdateRoleRequest
+	(*DeleteRoleRequest)(nil),           // 22: opsmesh.auth.v1.DeleteRoleRequest
+	(*ListRolesResponse)(nil),           // 23: opsmesh.auth.v1.ListRolesResponse
+	(*AssignRoleRequest)(nil),           // 24: opsmesh.auth.v1.AssignRoleRequest
+	(*ListPermissionsResponse)(nil),     // 25: opsmesh.auth.v1.ListPermissionsResponse
+	(*timestamppb.Timestamp)(nil),       // 26: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),               // 27: google.protobuf.Empty
 }
 var file_auth_proto_depIdxs = []int32{
-	24, // 0: opsmesh.auth.v1.User.created_at:type_name -> google.protobuf.Timestamp
-	24, // 1: opsmesh.auth.v1.Role.created_at:type_name -> google.protobuf.Timestamp
+	26, // 0: opsmesh.auth.v1.User.created_at:type_name -> google.protobuf.Timestamp
+	26, // 1: opsmesh.auth.v1.Role.created_at:type_name -> google.protobuf.Timestamp
 	0,  // 2: opsmesh.auth.v1.TokenResponse.user:type_name -> opsmesh.auth.v1.User
 	0,  // 3: opsmesh.auth.v1.ListUsersResponse.users:type_name -> opsmesh.auth.v1.User
 	1,  // 4: opsmesh.auth.v1.ListRolesResponse.roles:type_name -> opsmesh.auth.v1.Role
@@ -1636,41 +1762,43 @@ var file_auth_proto_depIdxs = []int32{
 	6,  // 8: opsmesh.auth.v1.AuthService.RefreshToken:input_type -> opsmesh.auth.v1.RefreshTokenRequest
 	7,  // 9: opsmesh.auth.v1.AuthService.ValidateToken:input_type -> opsmesh.auth.v1.ValidateTokenRequest
 	9,  // 10: opsmesh.auth.v1.AuthService.CheckPermission:input_type -> opsmesh.auth.v1.CheckPermissionRequest
-	11, // 11: opsmesh.auth.v1.UserService.CreateUser:input_type -> opsmesh.auth.v1.CreateUserRequest
-	12, // 12: opsmesh.auth.v1.UserService.GetUser:input_type -> opsmesh.auth.v1.GetUserRequest
-	13, // 13: opsmesh.auth.v1.UserService.UpdateUser:input_type -> opsmesh.auth.v1.UpdateUserRequest
-	14, // 14: opsmesh.auth.v1.UserService.DeleteUser:input_type -> opsmesh.auth.v1.DeleteUserRequest
-	25, // 15: opsmesh.auth.v1.UserService.ListUsers:input_type -> google.protobuf.Empty
-	16, // 16: opsmesh.auth.v1.UserService.ChangePassword:input_type -> opsmesh.auth.v1.ChangePasswordRequest
-	17, // 17: opsmesh.auth.v1.RoleService.CreateRole:input_type -> opsmesh.auth.v1.CreateRoleRequest
-	18, // 18: opsmesh.auth.v1.RoleService.GetRole:input_type -> opsmesh.auth.v1.GetRoleRequest
-	19, // 19: opsmesh.auth.v1.RoleService.UpdateRole:input_type -> opsmesh.auth.v1.UpdateRoleRequest
-	20, // 20: opsmesh.auth.v1.RoleService.DeleteRole:input_type -> opsmesh.auth.v1.DeleteRoleRequest
-	25, // 21: opsmesh.auth.v1.RoleService.ListRoles:input_type -> google.protobuf.Empty
-	22, // 22: opsmesh.auth.v1.RoleService.AssignRole:input_type -> opsmesh.auth.v1.AssignRoleRequest
-	25, // 23: opsmesh.auth.v1.PermissionService.ListPermissions:input_type -> google.protobuf.Empty
-	9,  // 24: opsmesh.auth.v1.PermissionService.CheckPermission:input_type -> opsmesh.auth.v1.CheckPermissionRequest
-	4,  // 25: opsmesh.auth.v1.AuthService.Login:output_type -> opsmesh.auth.v1.TokenResponse
-	25, // 26: opsmesh.auth.v1.AuthService.Logout:output_type -> google.protobuf.Empty
-	4,  // 27: opsmesh.auth.v1.AuthService.RefreshToken:output_type -> opsmesh.auth.v1.TokenResponse
-	8,  // 28: opsmesh.auth.v1.AuthService.ValidateToken:output_type -> opsmesh.auth.v1.ValidateTokenResponse
-	10, // 29: opsmesh.auth.v1.AuthService.CheckPermission:output_type -> opsmesh.auth.v1.CheckPermissionResponse
-	0,  // 30: opsmesh.auth.v1.UserService.CreateUser:output_type -> opsmesh.auth.v1.User
-	0,  // 31: opsmesh.auth.v1.UserService.GetUser:output_type -> opsmesh.auth.v1.User
-	0,  // 32: opsmesh.auth.v1.UserService.UpdateUser:output_type -> opsmesh.auth.v1.User
-	25, // 33: opsmesh.auth.v1.UserService.DeleteUser:output_type -> google.protobuf.Empty
-	15, // 34: opsmesh.auth.v1.UserService.ListUsers:output_type -> opsmesh.auth.v1.ListUsersResponse
-	25, // 35: opsmesh.auth.v1.UserService.ChangePassword:output_type -> google.protobuf.Empty
-	1,  // 36: opsmesh.auth.v1.RoleService.CreateRole:output_type -> opsmesh.auth.v1.Role
-	1,  // 37: opsmesh.auth.v1.RoleService.GetRole:output_type -> opsmesh.auth.v1.Role
-	1,  // 38: opsmesh.auth.v1.RoleService.UpdateRole:output_type -> opsmesh.auth.v1.Role
-	25, // 39: opsmesh.auth.v1.RoleService.DeleteRole:output_type -> google.protobuf.Empty
-	21, // 40: opsmesh.auth.v1.RoleService.ListRoles:output_type -> opsmesh.auth.v1.ListRolesResponse
-	25, // 41: opsmesh.auth.v1.RoleService.AssignRole:output_type -> google.protobuf.Empty
-	23, // 42: opsmesh.auth.v1.PermissionService.ListPermissions:output_type -> opsmesh.auth.v1.ListPermissionsResponse
-	10, // 43: opsmesh.auth.v1.PermissionService.CheckPermission:output_type -> opsmesh.auth.v1.CheckPermissionResponse
-	25, // [25:44] is the sub-list for method output_type
-	6,  // [6:25] is the sub-list for method input_type
+	12, // 11: opsmesh.auth.v1.AuthService.GetLoginGuardStatus:input_type -> opsmesh.auth.v1.GetLoginGuardStatusRequest
+	11, // 12: opsmesh.auth.v1.UserService.CreateUser:input_type -> opsmesh.auth.v1.CreateUserRequest
+	14, // 13: opsmesh.auth.v1.UserService.GetUser:input_type -> opsmesh.auth.v1.GetUserRequest
+	15, // 14: opsmesh.auth.v1.UserService.UpdateUser:input_type -> opsmesh.auth.v1.UpdateUserRequest
+	16, // 15: opsmesh.auth.v1.UserService.DeleteUser:input_type -> opsmesh.auth.v1.DeleteUserRequest
+	27, // 16: opsmesh.auth.v1.UserService.ListUsers:input_type -> google.protobuf.Empty
+	18, // 17: opsmesh.auth.v1.UserService.ChangePassword:input_type -> opsmesh.auth.v1.ChangePasswordRequest
+	19, // 18: opsmesh.auth.v1.RoleService.CreateRole:input_type -> opsmesh.auth.v1.CreateRoleRequest
+	20, // 19: opsmesh.auth.v1.RoleService.GetRole:input_type -> opsmesh.auth.v1.GetRoleRequest
+	21, // 20: opsmesh.auth.v1.RoleService.UpdateRole:input_type -> opsmesh.auth.v1.UpdateRoleRequest
+	22, // 21: opsmesh.auth.v1.RoleService.DeleteRole:input_type -> opsmesh.auth.v1.DeleteRoleRequest
+	27, // 22: opsmesh.auth.v1.RoleService.ListRoles:input_type -> google.protobuf.Empty
+	24, // 23: opsmesh.auth.v1.RoleService.AssignRole:input_type -> opsmesh.auth.v1.AssignRoleRequest
+	27, // 24: opsmesh.auth.v1.PermissionService.ListPermissions:input_type -> google.protobuf.Empty
+	9,  // 25: opsmesh.auth.v1.PermissionService.CheckPermission:input_type -> opsmesh.auth.v1.CheckPermissionRequest
+	4,  // 26: opsmesh.auth.v1.AuthService.Login:output_type -> opsmesh.auth.v1.TokenResponse
+	27, // 27: opsmesh.auth.v1.AuthService.Logout:output_type -> google.protobuf.Empty
+	4,  // 28: opsmesh.auth.v1.AuthService.RefreshToken:output_type -> opsmesh.auth.v1.TokenResponse
+	8,  // 29: opsmesh.auth.v1.AuthService.ValidateToken:output_type -> opsmesh.auth.v1.ValidateTokenResponse
+	10, // 30: opsmesh.auth.v1.AuthService.CheckPermission:output_type -> opsmesh.auth.v1.CheckPermissionResponse
+	13, // 31: opsmesh.auth.v1.AuthService.GetLoginGuardStatus:output_type -> opsmesh.auth.v1.GetLoginGuardStatusResponse
+	0,  // 32: opsmesh.auth.v1.UserService.CreateUser:output_type -> opsmesh.auth.v1.User
+	0,  // 33: opsmesh.auth.v1.UserService.GetUser:output_type -> opsmesh.auth.v1.User
+	0,  // 34: opsmesh.auth.v1.UserService.UpdateUser:output_type -> opsmesh.auth.v1.User
+	27, // 35: opsmesh.auth.v1.UserService.DeleteUser:output_type -> google.protobuf.Empty
+	17, // 36: opsmesh.auth.v1.UserService.ListUsers:output_type -> opsmesh.auth.v1.ListUsersResponse
+	27, // 37: opsmesh.auth.v1.UserService.ChangePassword:output_type -> google.protobuf.Empty
+	1,  // 38: opsmesh.auth.v1.RoleService.CreateRole:output_type -> opsmesh.auth.v1.Role
+	1,  // 39: opsmesh.auth.v1.RoleService.GetRole:output_type -> opsmesh.auth.v1.Role
+	1,  // 40: opsmesh.auth.v1.RoleService.UpdateRole:output_type -> opsmesh.auth.v1.Role
+	27, // 41: opsmesh.auth.v1.RoleService.DeleteRole:output_type -> google.protobuf.Empty
+	23, // 42: opsmesh.auth.v1.RoleService.ListRoles:output_type -> opsmesh.auth.v1.ListRolesResponse
+	27, // 43: opsmesh.auth.v1.RoleService.AssignRole:output_type -> google.protobuf.Empty
+	25, // 44: opsmesh.auth.v1.PermissionService.ListPermissions:output_type -> opsmesh.auth.v1.ListPermissionsResponse
+	10, // 45: opsmesh.auth.v1.PermissionService.CheckPermission:output_type -> opsmesh.auth.v1.CheckPermissionResponse
+	26, // [26:46] is the sub-list for method output_type
+	6,  // [6:26] is the sub-list for method input_type
 	6,  // [6:6] is the sub-list for extension type_name
 	6,  // [6:6] is the sub-list for extension extendee
 	0,  // [0:6] is the sub-list for field type_name
@@ -1681,14 +1809,14 @@ func file_auth_proto_init() {
 	if File_auth_proto != nil {
 		return
 	}
-	file_auth_proto_msgTypes[13].OneofWrappers = []any{}
+	file_auth_proto_msgTypes[15].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_auth_proto_rawDesc), len(file_auth_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   24,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   4,
 		},

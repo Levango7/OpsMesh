@@ -481,6 +481,29 @@ func (g *Gateway) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "password changed"})
 }
 
+// guardStatusAdapter 把本包 loginGuard 的只读状态适配给 service 层，
+// 实现 service.LoginGuardStatusReader（避免 service 倒置依赖 internal/http）。
+type guardStatusAdapter struct {
+	guard *loginGuard
+}
+
+func (a guardStatusAdapter) Status(username string) service.GuardStatusSnapshot {
+	st := a.guard.Status(username)
+	return service.GuardStatusSnapshot{
+		Username:       st.Username,
+		Locked:         st.Locked,
+		RetryAfterSecs: st.RetryAfterSecs,
+		FailCount:      st.FailCount,
+		WindowSecs:     st.WindowSecs,
+	}
+}
+
+// ServiceGuardStatusProvider 供 cmd 在装配期把本网关的 guard 注入 service，
+// 使 gRPC 的 GetLoginGuardStatus 能读到与 HTTP 登录路径同一份计数器。
+func (g *Gateway) ServiceGuardStatusProvider() service.LoginGuardStatusReader {
+	return guardStatusAdapter{guard: g.guard}
+}
+
 // handleMe GET /api/v1/auth/me → 当前用户（at Cookie → ValidateToken）。
 func (g *Gateway) handleMe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

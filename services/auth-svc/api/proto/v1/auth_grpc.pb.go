@@ -20,11 +20,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AuthService_Login_FullMethodName           = "/opsmesh.auth.v1.AuthService/Login"
-	AuthService_Logout_FullMethodName          = "/opsmesh.auth.v1.AuthService/Logout"
-	AuthService_RefreshToken_FullMethodName    = "/opsmesh.auth.v1.AuthService/RefreshToken"
-	AuthService_ValidateToken_FullMethodName   = "/opsmesh.auth.v1.AuthService/ValidateToken"
-	AuthService_CheckPermission_FullMethodName = "/opsmesh.auth.v1.AuthService/CheckPermission"
+	AuthService_Login_FullMethodName               = "/opsmesh.auth.v1.AuthService/Login"
+	AuthService_Logout_FullMethodName              = "/opsmesh.auth.v1.AuthService/Logout"
+	AuthService_RefreshToken_FullMethodName        = "/opsmesh.auth.v1.AuthService/RefreshToken"
+	AuthService_ValidateToken_FullMethodName       = "/opsmesh.auth.v1.AuthService/ValidateToken"
+	AuthService_CheckPermission_FullMethodName     = "/opsmesh.auth.v1.AuthService/CheckPermission"
+	AuthService_GetLoginGuardStatus_FullMethodName = "/opsmesh.auth.v1.AuthService/GetLoginGuardStatus"
 )
 
 // AuthServiceClient is the client API for AuthService service.
@@ -43,6 +44,11 @@ type AuthServiceClient interface {
 	ValidateToken(ctx context.Context, in *ValidateTokenRequest, opts ...grpc.CallOption) (*ValidateTokenResponse, error)
 	// CheckPermission checks if the authenticated user has a permission.
 	CheckPermission(ctx context.Context, in *CheckPermissionRequest, opts ...grpc.CallOption) (*CheckPermissionResponse, error)
+	// GetLoginGuardStatus queries login guard status for a username (internal RPC,
+	// not exposed on the public HTTP gateway): after cutover the control plane uses it
+	// to decide whether an account is locked on this side, so the two loginGuards do
+	// not each enforce their own counters. Read-only; changes nothing.
+	GetLoginGuardStatus(ctx context.Context, in *GetLoginGuardStatusRequest, opts ...grpc.CallOption) (*GetLoginGuardStatusResponse, error)
 }
 
 type authServiceClient struct {
@@ -103,6 +109,16 @@ func (c *authServiceClient) CheckPermission(ctx context.Context, in *CheckPermis
 	return out, nil
 }
 
+func (c *authServiceClient) GetLoginGuardStatus(ctx context.Context, in *GetLoginGuardStatusRequest, opts ...grpc.CallOption) (*GetLoginGuardStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetLoginGuardStatusResponse)
+	err := c.cc.Invoke(ctx, AuthService_GetLoginGuardStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AuthServiceServer is the server API for AuthService service.
 // All implementations must embed UnimplementedAuthServiceServer
 // for forward compatibility.
@@ -119,6 +135,11 @@ type AuthServiceServer interface {
 	ValidateToken(context.Context, *ValidateTokenRequest) (*ValidateTokenResponse, error)
 	// CheckPermission checks if the authenticated user has a permission.
 	CheckPermission(context.Context, *CheckPermissionRequest) (*CheckPermissionResponse, error)
+	// GetLoginGuardStatus queries login guard status for a username (internal RPC,
+	// not exposed on the public HTTP gateway): after cutover the control plane uses it
+	// to decide whether an account is locked on this side, so the two loginGuards do
+	// not each enforce their own counters. Read-only; changes nothing.
+	GetLoginGuardStatus(context.Context, *GetLoginGuardStatusRequest) (*GetLoginGuardStatusResponse, error)
 	mustEmbedUnimplementedAuthServiceServer()
 }
 
@@ -143,6 +164,9 @@ func (UnimplementedAuthServiceServer) ValidateToken(context.Context, *ValidateTo
 }
 func (UnimplementedAuthServiceServer) CheckPermission(context.Context, *CheckPermissionRequest) (*CheckPermissionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckPermission not implemented")
+}
+func (UnimplementedAuthServiceServer) GetLoginGuardStatus(context.Context, *GetLoginGuardStatusRequest) (*GetLoginGuardStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetLoginGuardStatus not implemented")
 }
 func (UnimplementedAuthServiceServer) mustEmbedUnimplementedAuthServiceServer() {}
 func (UnimplementedAuthServiceServer) testEmbeddedByValue()                     {}
@@ -255,6 +279,24 @@ func _AuthService_CheckPermission_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AuthService_GetLoginGuardStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetLoginGuardStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServiceServer).GetLoginGuardStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AuthService_GetLoginGuardStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServiceServer).GetLoginGuardStatus(ctx, req.(*GetLoginGuardStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AuthService_ServiceDesc is the grpc.ServiceDesc for AuthService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -281,6 +323,10 @@ var AuthService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CheckPermission",
 			Handler:    _AuthService_CheckPermission_Handler,
+		},
+		{
+			MethodName: "GetLoginGuardStatus",
+			Handler:    _AuthService_GetLoginGuardStatus_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

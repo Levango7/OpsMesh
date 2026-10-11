@@ -30,6 +30,30 @@ var (
 type Service struct {
 	jwtEngine *auth.Engine
 	store     store.Store
+	// guardStatus 登录防护状态查询（TD-60 切流后控制面需要判断账号是否被本侧锁）。
+	// 由 cmd 在建好 HTTP 网关后注入；为 nil 时查询回退为「未锁定」的保守答案
+	// （宁可少拦，不可把「查不到」说成「被锁」而误拒合法登录）。
+	guardStatus LoginGuardStatusReader
+}
+
+// LoginGuardStatusReader 登录防护状态读取口（由 HTTP 网关的 loginGuard 实现）。
+// 定义在 service 包内是刻意为之：避免 service → internal/http 的倒置依赖。
+type LoginGuardStatusReader interface {
+	Status(username string) GuardStatusSnapshot
+}
+
+// GuardStatusSnapshot 与 http 包的 GuardStatus 同构，由适配层转换。
+type GuardStatusSnapshot struct {
+	Username       string
+	Locked         bool
+	RetryAfterSecs int64
+	FailCount      int
+	WindowSecs     int64
+}
+
+// SetLoginGuardStatus 注入登录防护状态读取口（nil 表示不注入）。
+func (s *Service) SetLoginGuardStatus(r LoginGuardStatusReader) {
+	s.guardStatus = r
 }
 
 // NewService creates a new Service.
@@ -206,6 +230,20 @@ func (s *Service) CheckPermission(ctx context.Context, req *authv1.CheckPermissi
 		}
 	}
 	return &authv1.CheckPermissionResponse{Allowed: false}, nil
+}
+
+// GetLoginGuardStatus 查询指定账号的登录防护状态（只读）。
+//
+// 未注入 guard 时返回「未锁定 + 零计数」的保守答案：调用方（控制面）据此放行，
+// 由本服务登录路径原有的 accountLocked 继续兜底。宁可少拦、不可误拒。
+func (s *Service) GetLoginGuardStatus(ctx context.Context, username string) (GuardStatusSnapshot, error) {
+	if username == "" {
+		return GuardStatusSnapshot{}, errors.New("username is required")
+	}
+	if s.guardStatus == nil {
+		return GuardStatusSnapshot{Username: username}, nil
+	}
+	return s.guardStatus.Status(username), nil
 }
 
 // CreateUser creates a new user.

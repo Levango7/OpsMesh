@@ -113,6 +113,45 @@ func (g *loginGuard) accountLocked(username string) bool {
 	return true
 }
 
+// GuardStatus 是登录防护状态的只读快照（供跨侧统一锁定的查询面使用）。
+//
+// 只暴露「是否锁定 + 锁定剩余秒 + 窗口内失败次数」三件事，不含 IP 等敏感信息。
+type GuardStatus struct {
+	Username       string
+	Locked         bool
+	RetryAfterSecs int64
+	FailCount      int
+	WindowSecs     int64
+}
+
+// Status 查询指定账号的登录防护状态（只读，不改变任何计数或锁定）。
+//
+// 存在的意义：切流后控制面需要判断「这个账号是否被 auth-svc 侧锁了」，否则本地
+// loginGuard 看不到对侧失败计数，用户在一侧被锁、另一侧仍可试密。
+//
+// 后端语义说明：Redis 可用时锁定状态以 Redis 为准（多副本共享），但**剩余秒数与
+// 失败次数为近似值**——cache 包未暴露 TTL/字符串读接口，为避免为此扩 API 面，
+// Redis 分支的 RetryAfterSecs 返回锁定时长上限、FailCount 回退到本进程内存视图
+// （通常为 0）。调用方只应把本结构用于「是否锁定」的布尔判断与提示，不要当作
+// 精确配额；精确值是后续可增量（给 cache 加 TTL/Get 后再收紧）。
+func (g *loginGuard) Status(username string) GuardStatus {
+	st := GuardStatus{Username: username, WindowSecs: int64(guardFailWindow / time.Second)}
+	locked := g.accountLocked(username)
+	st.Locked = locked
+	if locked {
+		st.RetryAfterSecs = int64(guardLockDur / time.Second)
+	}
+	g.mu.Lock()
+	rec, ok := g.fails[username]
+	if ok {
+		if time.Since(rec.windowAt) <= guardFailWindow {
+			st.FailCount = rec.fails
+		}
+	}
+	g.mu.Unlock()
+	return st
+}
+
 // recordFail 记录一次登录失败；达阈值锁定账号。
 //
 // Redis 可用时：INCR 失败计数（TTL=guardFailWindow），达阈值时 Set lock key（TTL=guardLockDur）。

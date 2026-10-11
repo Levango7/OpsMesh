@@ -73,6 +73,20 @@ func (s *Server) CheckPermission(ctx context.Context, req *authv1.CheckPermissio
 	return s.svc.CheckPermission(ctx, req)
 }
 
+// GetLoginGuardStatus queries login guard status for a username (read-only).
+func (s *Server) GetLoginGuardStatus(ctx context.Context, req *authv1.GetLoginGuardStatusRequest) (*authv1.GetLoginGuardStatusResponse, error) {
+	st, err := s.svc.GetLoginGuardStatus(ctx, req.GetUsername())
+	if err != nil {
+		return nil, err
+	}
+	return &authv1.GetLoginGuardStatusResponse{
+		Locked:         st.Locked,
+		RetryAfterSecs: st.RetryAfterSecs,
+		FailCount:      int32(st.FailCount),
+		WindowSecs:     st.WindowSecs,
+	}, nil
+}
+
 // --- UserService ---
 
 // CreateUser creates a user.
