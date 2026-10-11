@@ -7,13 +7,16 @@
 #   ② 两侧登录失败文案不同：本地 "invalid username or password" / auth-svc "invalid credentials"
 #      —— 文案出自哪侧即证明请求落在哪侧。
 #
-# 覆盖的判据（31 项，见输出逐条 PASS/FAIL）：
+# 覆盖的判据（45 项，见输出逐条 PASS/FAIL）：
 #   非名册用户走本地且不触发路由 · 名册用户被转发（本地正确口令不被接受）· 本地闸（IP 令牌桶）
 #   先于路由（限流请求不转发）· 模拟迁移（对侧注册+审批）后名册用户登录 200 且会话由对侧签发 ·
 #   refresh 按归属侧转发（local_owns=false）· 本地用户 refresh 仍本地 · 名册用户 /me 按 JWT 转发 ·
 #   启动自检（名册装载 + 本侧存在性兜底）·
+#   **回退路径三件（第 10 节）**：清空名册热重载（≤30s，不重启）后回落本侧 · 回退不搁浅已签发会话
+#   （对侧 rt 仍按归属侧转发并可刷新）· 硬回退（空名册重启，runbook §5 的文档路径）后全本地。
 #
-# 用法：bash deploy/scripts/smoke-cutover.sh     （约 1 分钟；需 go 工具链与 curl）
+# 用法：bash deploy/scripts/smoke-cutover.sh     （约 2 分钟；需 go 工具链与 curl）
+#       耗时含一次 ≤35s 的名册热重载等待（第 10 节 10a；重载周期硬编码 30s，见 cutoverRosterLoop）。
 # 端口：控制面 19580/19581/19582，auth-svc 19590/19591（刻意避开本机 dev 栈的 8080/9090/9091/50052）。
 # 说明：**未接入 CI**（需两个空闲端口、起两个进程，且含一次 ~14s 的令牌回填等待）；
 #       切流批次执行前建议本地复跑一次作为机制面证据。
@@ -41,12 +44,50 @@ kill_pid(){
     kill "$1" >/dev/null 2>&1 || true
   fi
 }
-cleanup(){
+# purge_cp 杀控制面：按 PID + **按镜像名**双保险。
+# 为什么要双保险（2026-10-12 实测）：MSYS 下 $! 的 PID 与 Windows PID 不总是同一个，
+# 只按 PID taskkill 会静默不生效——旧进程继续占着 19581，新进程 bind 失败，
+# 而"最后一条装载日志"之类的判据照样绿（假绿）。第 10c 节即栽在这上面。
+purge_cp(){
   [ -n "${CP_PID:-}" ] && kill_pid "$CP_PID"
-  [ -n "${AS_PID:-}" ] && kill_pid "$AS_PID"
   if command -v taskkill >/dev/null 2>&1; then
     MSYS_NO_PATHCONV=1 taskkill /IM "cutover-smoke-cp$EXE" /F >/dev/null 2>&1 || true
+  else
+    pkill -f "cutover-smoke-cp$EXE" >/dev/null 2>&1 || true
+  fi
+}
+
+# wait_port_free 等控制面端口真的不再应答（$1 秒上限）。
+# 判据是"连不上"，不是"进程列表里没有"——只有前者能证明后续应答来自新进程。
+wait_port_free(){
+  local n=0
+  while [ "$n" -lt "${1:-20}" ]; do
+    if ! curl -s -o /dev/null --max-time 2 "$CP/api/v1/auth/me" >/dev/null 2>&1; then return 0; fi
+    sleep 1
+    n=$((n + 1))
+  done
+  return 1
+}
+
+# wait_cp_up 等控制面重新应答（401 = 网关在听）。
+wait_cp_up(){
+  local n=0 code
+  while [ "$n" -lt "${1:-20}" ]; do
+    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 "$CP/api/v1/auth/me" 2>/dev/null || true)
+    if [ "$code" = "401" ]; then return 0; fi
+    sleep 1
+    n=$((n + 1))
+  done
+  return 1
+}
+
+cleanup(){
+  purge_cp
+  [ -n "${AS_PID:-}" ] && kill_pid "$AS_PID"
+  if command -v taskkill >/dev/null 2>&1; then
     MSYS_NO_PATHCONV=1 taskkill /IM "cutover-smoke-as$EXE" /F >/dev/null 2>&1 || true
+  else
+    pkill -f "cutover-smoke-as$EXE" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -54,6 +95,18 @@ trap cleanup EXIT
 echo "== 构建（控制面 + auth-svc）=="
 (cd "$ROOT" && go build -o "$CPBIN" ./cmd/opsmesh) || { echo "build cp failed"; exit 1; }
 (cd "$ROOT/services/auth-svc" && go build -o "$ASBIN" ./cmd/auth-svc) || { echo "build auth-svc failed"; exit 1; }
+
+# 首启前先清残并断言端口空闲：若上一轮有残留进程占着端口，本次的"首启"会失败，
+# 而第 0 节的健康检查照样绿（旧进程应答）——这是另一处假绿入口，一并堵掉。
+echo "== 0.0 清理残留进程并确认端口空闲 =="
+purge_cp
+if command -v taskkill >/dev/null 2>&1; then
+  MSYS_NO_PATHCONV=1 taskkill /IM "cutover-smoke-as$EXE" /F >/dev/null 2>&1 || true
+else
+  pkill -f "cutover-smoke-as$EXE" >/dev/null 2>&1 || true
+fi
+sleep 1
+if wait_port_free 15; then ok "控制面端口空闲（无残留进程应答）"; else no "端口仍被占用——本轮判据会假绿，先手工清理再跑"; exit 2; fi
 
 echo "== 起 auth-svc（$AS）=="
 AUTH_SVC_HTTP_ENABLED=true AUTH_SVC_HTTP_PORT=19590 AUTH_SVC_GRPC_PORT=19591 AUTH_SVC_JWT_SECRET="$SECRET" \
@@ -63,12 +116,21 @@ AS_PID=$!
 sleep 2
 
 echo "== 起控制面（$CP）=="
-OPSMESH_JWT_SECRET="$SECRET" OPSMESH_ADMIN_PASSWORD="$ADMINPASS" OPSMESH_HTTP_TLS=off \
-AUTH_SVC_URL="$AS" AUTH_SVC_PROXY_ENABLED=true AUTH_CUTOVER_ROSTER=smoke-roster \
-"$CPBIN" --http-port 19580 --grpc-port 19581 --metrics-port 19582 \
-  --store memory --public-register=false > "$OUT/cp.log" 2>&1 &
-CP_PID=$!
-sleep 4
+# 名册用**文件**来源（AUTH_CUTOVER_ROSTER_FILE）：与 runbook 的生产旋钮同形，
+# 且只有文件来源支持热重载——第 10 节的两条回退路径都依赖它。
+# 日志一律**追加**（不是覆盖）：名册热重载与硬回退重启都要在既有日志里留下可查记录。
+ROSTER_FILE="$OUT/roster.txt"
+printf 'smoke-roster\n' > "$ROSTER_FILE"
+start_cp(){
+  OPSMESH_JWT_SECRET="$SECRET" OPSMESH_ADMIN_PASSWORD="$ADMINPASS" OPSMESH_HTTP_TLS=off \
+  AUTH_SVC_URL="$AS" AUTH_SVC_PROXY_ENABLED=true AUTH_CUTOVER_ROSTER_FILE="$ROSTER_FILE" \
+  "$CPBIN" --http-port 19580 --grpc-port 19581 --metrics-port 19582 \
+    --store memory --public-register=false >> "$OUT/cp.log" 2>&1 &
+  CP_PID=$!
+}
+start_cp
+# 等它就绪再进断言（不写死 sleep：2026-10-12 实测启动到就绪 4.6s，写死 4s 会偶发误判成 000）。
+wait_cp_up 20 || true
 
 jget(){ python -c "import json,sys; d=json.load(sys.stdin); print(d.get('$1',''))" 2>/dev/null; }
 routes(){ grep -c 'msg":"切流路由' "$OUT/cp.log" 2>/dev/null || true; }
@@ -185,6 +247,83 @@ code=$(curl -s -o "$OUT/me.json" -w '%{http_code}' -b "$OUT/roster.jar" "$CP/api
 if [ "$code" = "200" ]; then ok "名册用户 /me 200"; else no "名册用户 /me 失败（$code）：$(cat "$OUT/me.json" 2>/dev/null)"; fi
 if AFTER=$(routes); [ "$AFTER" -gt "$BEFORE" ]; then ok "路由日志已记录（me）"; else no "/me 未记录路由"; fi
 
+echo "== 10. 回退路径（runbook §5：名册摘除=单用户回退，清空=全量回退）=="
+# 为什么补这段：此前 31 项判据**全在验证"切过去"**，而批次一旦出事，运维唯一依赖的是回退路径
+# ——它此前只在单测里覆盖，没在真进程上压过。本段补三件：
+#   10a 软回退：清空名册 → 热重载（≤30s，不重启进程）→ 名册用户回落本侧
+#   10b 已签发会话不搁浅：回退后，切流期间由 auth-svc 签发的 rt 仍按归属侧转发并可刷新
+#   10c 硬回退：runbook 的文档路径——空名册重启控制面（判据=端口先释放再重新应答，
+: > "$ROSTER_FILE"
+RELOADED=0
+WAITED=0
+while [ "$WAITED" -lt 40 ]; do
+  if grep -q '"msg":"切流名册已变更".*"after":0' "$OUT/cp.log"; then RELOADED=1; break; fi
+  sleep 1
+  WAITED=$((WAITED + 1))
+done
+# 把实测等待秒数打进结论：它是运维真正关心的数字（回退要等多久生效，周期硬编码 30s）。
+if [ "$RELOADED" = "1" ]; then ok "名册清空后热重载生效（实测等待 ${WAITED}s，进程未重启）"; else no "${WAITED}s 内未见置空热重载（cp.log 无 after:0）"; fi
+
+# 10a. 回落本侧：名册用户用**本侧原口令**应被本侧受理，且不再产生路由日志。
+# 判别信号用响应体形态：本侧登录在 body 里签发 token，auth-svc 只走 Set-Cookie（body 无 token）。
+BEFORE=$(routes)
+code=$(curl -s -o "$OUT/rollback-login.json" -w '%{http_code}' -H 'Content-Type: application/json' \
+  -X POST "$CP/api/v1/auth/login" -d "{\"username\":\"smoke-roster\",\"password\":\"$USERPASS\"}")
+if [ "$code" = "200" ]; then ok "回退后名册用户由本侧受理（200）"; else no "回退后本地登录失败（$code）：$(cat "$OUT/rollback-login.json")"; fi
+if grep -q '"token"' "$OUT/rollback-login.json"; then ok "响应体含 token ⇒ 本侧签发（对侧只走 Set-Cookie）"; else no "响应体无 token——可能仍被判到对侧"; fi
+if AFTER=$(routes); [ "$BEFORE" = "$AFTER" ]; then ok "回退后不再路由（本地接管）"; else no "回退后仍被路由（$BEFORE→$AFTER）"; fi
+
+# 10b. 会话不搁浅：roster.jar 里是切流期间 auth-svc 旋转出的 rt。
+BEFORE=$(routes)
+code=$(curl -s -o "$OUT/rollback-refresh.json" -w '%{http_code}' -b "$OUT/roster.jar" -c "$OUT/roster.jar" -X POST "$CP/api/v1/auth/refresh")
+if [ "$code" = "200" ]; then ok "回退后对侧会话仍可刷新（200）"; else no "回退后对侧会话刷新失败（$code）：$(cat "$OUT/rollback-refresh.json" 2>/dev/null)"; fi
+if AFTER=$(routes); [ "$AFTER" -gt "$BEFORE" ]; then ok "刷新仍按归属侧转发（回退不搁浅已签发会话）"; else no "回退后刷新未转发——已签发会话被搁浅"; fi
+
+# 10c. 硬回退（runbook §5 的文档路径）：空名册 + 重启控制面。
+# 判据刻意不解析日志："最后一条装载日志"曾被证明可以假绿——旧进程没被杀掉时，新进程 bind 失败，
+# 而它失败前已经打印过 count:0 的装载行（2026-10-12 实测）。只看两件硬证据：
+#   ① 旧进程真的退出（端口不再应答）② 新进程真的起来（端口重新应答 401）。
+# ①不成立时后续判据全是假绿，故 ① 失败即整段放弃（不再往下断言）。
+purge_cp
+if wait_port_free 20; then
+  ok "硬回退：旧进程已退出、端口已释放"
+  start_cp
+  if wait_cp_up 20; then
+    ok "硬回退：新进程已起来（/auth/me 应答 401）"
+    # 本冒烟用 --store memory：重启会**清空账号数据**，所以直接拿旧账号登录必然 401
+    # （2026-10-12 实测：第一版 10c 就是拿这条当"通过"——实际是旧进程还没死，假绿）。
+    # 要验证"回退后本地登录面完全可用"，就得在新进程上重建本地账号再登：
+    # 顺带把 admin 首启引导路径也再压一遍。生产（SQL 后端）重启不清号，runbook §5
+    # 的场景比这里更宽——这里验的是"名册空 + 本地登录链路通"。
+    J=$(curl -s -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
+      -d "{\"username\":\"admin\",\"password\":\"$ADMINPASS\"}")
+    CPT=$(printf '%s' "$J" | jget changePasswordToken)
+    if [ -n "$CPT" ]; then
+      code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/change-password" \
+        -d "{\"oldPassword\":\"$ADMINPASS\",\"newPassword\":\"$ADMINPASS2\",\"changePasswordToken\":\"$CPT\"}")
+      if [ "$code" = "200" ]; then ok "硬回退后 admin 首启引导可走通（重建账号的前置）"; else no "硬回退后 admin 改密失败（$code）"; fi
+      J=$(curl -s -c "$OUT/at2.jar" -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
+        -d "{\"username\":\"admin\",\"password\":\"$ADMINPASS2\"}")
+      AT=$(printf '%s' "$J" | jget token)
+      code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $AT" -H 'Content-Type: application/json' \
+        -H 'X-Tenant-ID: default' -X POST "$CP/api/v1/users" \
+        -d "{\"username\":\"smoke-roster\",\"password\":\"$USERPASS\",\"email\":\"smoke-roster@smoke.io\"}")
+      if [ "$code" = "201" ]; then ok "硬回退后本侧重建名册用户（201）"; else no "硬回退后重建用户失败（$code）"; fi
+    else
+      no "硬回退后 admin 首登未返回改密令牌（新进程未按空库首启？）：$J"
+    fi
+    BEFORE=$(routes)
+    code=$(curl -s -o "$OUT/hard-rollback-login.json" -w '%{http_code}' -H 'Content-Type: application/json' \
+      -X POST "$CP/api/v1/auth/login" -d "{\"username\":\"smoke-roster\",\"password\":\"$USERPASS\"}")
+    if [ "$code" = "200" ]; then ok "硬回退后本地登录可用（200）"; else no "硬回退后本地登录失败（$code）：$(cat "$OUT/hard-rollback-login.json" 2>/dev/null)"; fi
+    if grep -q '"token"' "$OUT/hard-rollback-login.json"; then ok "硬回退后响应体含 token ⇒ 本侧签发"; else no "硬回退后响应体无 token"; fi
+    if AFTER=$(routes); [ "$BEFORE" = "$AFTER" ]; then ok "硬回退后无路由（名册空即全本地）"; else no "硬回退后仍被路由（$BEFORE→$AFTER）"; fi
+  else
+    no "硬回退：新进程 20s 内未应答——本轮判据不可信"
+  fi
+else
+  no "硬回退：旧进程 20s 内未退出（端口仍应答）——后续判据不可信，跳过"
+fi
 echo
 echo "===== 冒烟结果：PASS=$PASS FAIL=$FAIL ====="
 if [ "$FAIL" != "0" ]; then echo "--- cp.log 路由日志 ---"; grep '切流路由' "$OUT/cp.log" | tail -8; echo "--- cp.log 尾部 ---"; tail -10 "$OUT/cp.log"; fi
