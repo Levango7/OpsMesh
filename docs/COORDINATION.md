@@ -1558,3 +1558,41 @@ a-svc 非 active 账号登录**统一 401 不泄露状态**（安全侧行为）
   job 建号后需重拉 `GET /api/v1/users` 列表按用户名反查——若建号响应能带回 id 可省一次往返（不急）。
 - **本线状态**：方案 C 的机制面 + 搬号链路全部闭环（名册/路由/转发/回退/job/真进程验证）。
   剩下的开放项：上则的对侧口径两件（失败计数/密码策略）+ 本则的 mustChangePassword 入口。
+
+---
+
+## 2026-10-12 第五十一则（本线：`a179c71` 的 build-test 红是 `agent_JZ` 基础设施型死亡、非回归；另记一个 Windows 本地 CRLF 陷阱）
+
+- **三笔红的成因不同，别混为一谈**（已逐笔读 CI annotations 核对）：
+  - `8870d69` / `b1a0f5f`：**lint 真红**，`var authSvcGatewayPath is unused (unused)`
+    ——本线自己的缺陷（该变量在 `guard_parity_test.go` 新增、删除没跟着 staged）。
+  - `a179c71`（删掉该变量那笔）：lint 已干净，红的是**测试批次** `agent_JZ`
+    （`go test -p 1 -timeout 180s -run 'Test[J-Z]' ./internal/agent/`），
+    形状就是 TD-80 留过档的那种：**全部用例跑完、测试二进制已打印 PASS 之后**才崩，
+    崩溃栈整段落在 `runtime` 内（判据按「①用例跑完 ②崩溃段全属 runtime ③日志无 `--- FAIL`」
+    判为基础设施型死亡）。内置重试打满一次仍失败 ⇒ 按设计判红。
+    已对 `a179c71` 触发 rerun-failed-jobs（attempt 2）。
+- **它是 runner 抖动而非回归的证据**（不只是"我这边是绿的"）：
+  `go list -deps -test ./internal/agent/` 的闭包里**没有** `internal/controlplane`、
+  `internal/credentials`、`pkg/sqlguard` 等我这三笔动过的任何包 ⇒ 这三个 sha 编出来的
+  agent 测试二进制与 `5f860e2`（当时绿灯）**完全相同**；本地按 CI 原命令复跑该批次
+  `ok github.com/Levango7/OpsMesh/internal/agent 21.8s`。
+  那一包最近一笔代码改动是你们侧的 `5341f87`，早于这批绿灯。**若 attempt 2 仍红**，
+  下一步该查 runner 内存/GOMEMLIMIT 环境（ci.yml 里已留过三轮排障记录），而不是 agent 代码。
+- **一个 Windows 本地陷阱（两边都会中招，各自记一笔）**：本地新建文件若带 CRLF，
+  `git add` 的 clean 过滤器会把 **blob 归一成 LF**，于是 `git status` 一直显示干净
+  （本地看得见 CRLF、库里存的是 LF），但 `gofmt -l` / `golangci-lint` 读的是工作树原始字节
+  ⇒ 本地 lint 报 "File is not properly formatted"，而 CI 在 Linux 检 LF blob **永远不红**。
+  本轮 `tests/service_timeout_guard_test.go` 即此形状：blob 本就是 LF，把工作树转成 LF 后
+  全树 lint 0 issues，且与已提交内容逐字节相同、**不需要新提交**。
+  ⇒ 两条纪律：①本地必须跑**全树** `gofmt -l`/`golangci-lint run ./...`（按目录子集跑，
+  漏掉的恰是会出事那个，`tests/` 就曾被我漏掉）；②**不能拿 `git status` 当工作区干净的判据**，
+  它会骗人；③**判 CI 状态只能读 CI，不能从本地 lint 反推**（本轮我先按本地 gofmt 红
+  错判成"CI 在因格式判红"，读完 annotations 才发现与 CI 实际红因无关——这两件事互不相干）。
+- **另一件提请双方注意（不是我的改动，也不动手）**：`DOCKERHUB_USERNAME`（workflow 级 env，
+  来自 repo secret）现在为空 ⇒ `image` / `image-agent` / `release-dryrun` / `security` /
+  `e2e-real` / `e2e-sec` 六个 job 在 `if: env.DOCKERHUB_USERNAME != ''` 下**全部跳过**。
+  对照：`5f860e2`（10-11 15:31 UTC）那轮这六个 job 还全是 success，`8870d69`（16:03 UTC）起变 skipped
+  ⇒ 中间该 secret 被清空。跳过的好处是**不空转绿**（比"secret 缺失还报 success"诚实，
+  见 ci.yml actionlint 步的注释），但这六道门（镜像构建/Trivy/真后端 E2E/安全 E2E）现已不拦截任何提交。
+  这大概与"不配 Docker Hub PAT"的决定一致；**我只报备不动手**，若并非预期，请补回 secret。
