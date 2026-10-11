@@ -184,3 +184,35 @@ auth-svc 网关包注释自述设计边界：「在 auth-svc 注册的用户只�
   loginGuard 实现在 `loginguard`（方法 `Allow`/`RecordFail`/`Locked`/`ResetFail`/`StartSweep`/`StopSweep`）；
   代理规则类型在 `svcproxy`（`Rule`/`Rules`/`DeviceExtras`/`TaskExtras`/`Lookup`/`ValidateTargets`/`EnvKey`）。
 - **本报告结论不受拆包影响**：所有结论均为跨进程的 HTTP 契约语义比对，与文件物理位置无关。
+
+---
+
+## 11. HTTP 面不对称清单（切流接线前必读；含并行线点名要的两条）
+
+并行线 TD-49 真进程冒烟（31/31）后要求把两侧 HTTP 面差异写进本报告，「避免前端/运维照本地面的形态写」。以下按**响应体形态 / 口令与防护策略**分列。
+
+### 11.1 响应体形态差异（前端接线直接相关）
+
+| # | 端点 | 控制面（本地） | auth-svc | 影响 |
+|---|---|---|---|---|
+| ① | `POST /auth/login` 成功 | 响应体**带 `token`** | 响应体**无 token**，会话只经 `Set-Cookie` 下发 | 前端若按「读 `body.token`」适配会拿到空。**现状安全**：`src/stores/auth.js` 明确「前端不持有令牌」，只消费 `user`/`mustChangePassword`/`changePasswordToken`，不受影响；但**新增前端代码时不得按本地形态假设** |
+| ② | `POST /auth/change-password` 成功 | 首登分支回 `authResponse{token,user}` | 只回 `{status:"password changed", user}`（本线 `4245eb3` 起首登分支补发 at/rt Cookie） | 同上，靠 Cookie 不靠 body |
+| ③ | `POST /auth/register` 成功 | 回 `{message, userId, status}`（默认分支） | 只回 `{message, status:"pending"}`，**无 `userId`** | 要拿新用户 id 需再查 `GET /api/v1/users` 按用户名匹配。审批流若依赖 id 直达，需补字段或改走查询 |
+
+> ①②是**有意设计**（auth-svc 走 Cookie-only，R2 决策），不是缺陷；③是缺口最小的一处，建议后续补 `userId`（auth-svc 响应加一个字段即可，无兼容风险）。
+
+### 11.2 口令与防护策略差异（切流后用户体感相关）
+
+| 维度 | 控制面 | auth-svc |
+|---|---|---|
+| 强口令最小长度 | **8**（`internal/controlplane/credentials/password.go:24` `changePasswordMinLen`） | **12**（`PasswordMinLen` 默认值） |
+| 特殊字符 | **不要求** | **要求**（`RequireSpecial` 默认 true） |
+| 大小写 + 数字 | 要求 | 要求 |
+| 登录防护参数 | burst 5 / refill 1/6 每秒 / 失败窗口 15min / 锁定时长 15min | **完全相同**（`services/auth-svc/internal/http/guard.go:22-26` 与 `internal/controlplane/loginguard/guard.go:25-29` 逐项一致） |
+| 登录是否校验强度 | 否（只验哈希） | 否 |
+
+**需要说清的两件事**：
+- **登录路径不受策略差异影响**：两侧登录都只验口令哈希、不校验强度（§2.2 已证）。故**已迁移用户带旧口令可正常登录**，不会因「控制面允许 8 位、auth-svc 要 12 位」被锁。
+- **改密/注册路径受差异影响**：迁移账号被强制首登改密时，必须按 auth-svc 的更严规则设新口令（≥12 位 + 特殊字符）——原控制面合规的口令也可能不被接受。这是**收紧**而非放宽，方向正确，但需在切流公告里写明，否则用户会当成 bug。
+
+**一个连带指引坑（2026-10-11 修）**：出厂 compose 让两侧共用同一个 `ADMIN_PASSWORD`，而控制面 `--admin-password` 的 flag 帮助写的是「≥8 位且含大小写字母与数字」。运维照此手改 `.env` 时，控制面能起、auth-svc 启动即失败。**实测本仓当前未踩坑**：`deploy.sh:583` 生成的口令自带 `!`、现网 `.env` 值亦含非字母数字字符，两侧规则都满足；该坑仅在**人工手改**时出现。已修两处：auth-svc 启动报错点名差异与出处（`cmd/auth-svc/main.go` 的 `rotateDefaultAdminPassword`），compose 该行注释补「按更严的一侧设」。

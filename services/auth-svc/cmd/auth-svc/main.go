@@ -258,7 +258,16 @@ func rotateDefaultAdminPassword(st store.Store, cfg *config.Config) error {
 	newPass := cfg.AdminPassword
 	if newPass != "" {
 		if msg := httpgw.ValidateStrongPassword(newPass); msg != "" {
-			return fmt.Errorf("AUTH_SVC_ADMIN_PASSWORD 不满足强口令要求: %s", msg)
+			// 报错必须可操作：本服务校验强于控制面（最小 12 位且要求特殊字符；
+			// 控制面为最小 8 位、不要求特殊字符），而出厂 compose 让两者共用同一个
+			// ADMIN_PASSWORD（docker-compose.prod.yml 的注释即此意图）。运维按控制面
+			// flag 帮助的规则设口令时，控制面能起而本服务启动失败——不含具体要求的
+			// 报错会把排查引向"密钥/存储"等错误方向，故此处点名差异与出处。
+			return fmt.Errorf("AUTH_SVC_ADMIN_PASSWORD 不满足本服务强口令要求: %s；"+
+				"注意本服务比 controlplane 更严（最小 12 位 + 大小写 + 数字 + 特殊字符，"+
+				"controlplane 为最小 8 位、不要求特殊字符），而两者共用同一个 ADMIN_PASSWORD——"+
+				"请按更严的一侧设（或改 AUTH_SVC_HTTP_ENABLED=false 仅走 gRPC，此校验仍生效）",
+				msg)
 		}
 	} else {
 		b := make([]byte, 16)

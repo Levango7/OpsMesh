@@ -590,6 +590,10 @@ services:
       AUTH_SVC_HTTP_PORT: 8100
       AUTH_SVC_JWT_SECRET: ${JWT_SECRET:?请在 .env 设置 JWT_SECRET}
       # 与 controlplane 的 OPSMESH_ADMIN_PASSWORD 同源：同一套初始口令，避免两处不一致。
+      # ⚠ 但两侧校验强度不同，取值必须按**更严的 auth-svc**：至少 12 位且含大小写、
+      # 数字与特殊字符（controlplane 只要求 ≥8 位 + 大小写 + 数字，不要求特殊字符）。
+      # 只满足 controlplane 规则时 controlplane 能起、auth-svc 启动即失败
+      # （报错会点名该差异）。.env 的 ADMIN_PASSWORD 注释已同步此约束。
       AUTH_SVC_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请在 .env 设置 ADMIN_PASSWORD}
       AUTH_SVC_ACCESS_TOKEN_TTL: ${AUTH_ACCESS_TTL:-900s}
       AUTH_SVC_REFRESH_TOKEN_TTL: ${AUTH_REFRESH_TTL:-168h}
