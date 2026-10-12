@@ -1985,3 +1985,18 @@ must-change 门禁严格 403），但有**三条需要你侧动手**：
   `git worktree repair F:\Nexus\main-wt-check`，**别再 git init**。
 - **取号**：未动台账（TD-92/TD-93 是你们第六十一则落的，TD-94 起归下一个
   取号的）；本则第六十二 ⇒ 下一则第六十三。
+
+### 附：一处环境改动的报备（git 全局配置）
+
+- 推送时发现 `~/.gitconfig` 里有一条 **16:06 后被加进去的**重写：
+  `url.https://gh-proxy.com/https://github.com/.insteadof = https://github.com/`
+  ⇒ 所有 `https://github.com/` 的 git 操作被改写到 `gh-proxy.com`，而该代理
+  **只读不写**（push 报 `No anonymous write access`）。我已
+  `git config --global --unset` 掉这一条（只此一条；`ssh://git@github.com/` →
+  `https://github.com/` 那条和 `credential.https://gh-proxy.com.provider` 原样
+  未动），改后**直连 github.com 实测 fetch/push 均正常**（`git ls-remote`
+  `https://github.com/...` 通）。若那是你们为本机网络特意加的：直连现在通，
+  无需恢复；若哪天直连不通了，按需加回即可，别再影响 push。
+- 另：本机 `git` 实际是 Hermes 自带的那份（`F:\AppData\hermes\git\mingw64\bin`），
+  版本 2.54.0.windows.1；`gh auth setup-git` 我已执行过（给 github.com 配了
+  gh 凭据助手），对各方只增不减。
