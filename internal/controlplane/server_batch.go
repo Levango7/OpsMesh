@@ -175,7 +175,7 @@ func (s *Server) handleBatchExec(w http.ResponseWriter, r *http.Request) {
 			})
 			continue
 		}
-		task := s.store.CreateTask(&proto.Task{
+		task, err := s.store.CreateTask(&proto.Task{
 			AgentID:    devID,
 			TenantID:   tenant,
 			Type:       body.TaskType,
@@ -184,6 +184,16 @@ func (s *Server) handleBatchExec(w http.ResponseWriter, r *http.Request) {
 			Path:       body.Path,
 			MaxRetries: s.cfg.TaskMaxRetries,
 		})
+		if err != nil {
+			// 缺口 3：批量执行按设备逐项报状态——这台没落库就在这台记 failed，
+			// 而不是给它一个"其实不存在"的 taskID 冒充成功。
+			items = append(items, batchTaskItem{
+				DeviceID: devID,
+				Status:   "failed",
+				Error:    "create task failed: " + err.Error(),
+			})
+			continue
+		}
 		items = append(items, batchTaskItem{
 			DeviceID: devID,
 			TaskID:   task.TaskID,
@@ -457,7 +467,7 @@ func (s *Server) execCanaryPhase(canary *canaryRelease, phase *canaryPhase, task
 			})
 			continue
 		}
-		task := s.store.CreateTask(&proto.Task{
+		task, err := s.store.CreateTask(&proto.Task{
 			AgentID:    devID,
 			TenantID:   tenant,
 			Type:       taskType,
@@ -466,6 +476,13 @@ func (s *Server) execCanaryPhase(canary *canaryRelease, phase *canaryPhase, task
 			Path:       path,
 			MaxRetries: s.cfg.TaskMaxRetries,
 		})
+		if err != nil {
+			// 缺口 3：同批量执行——这台没落库就记 failed，不冒充成功。
+			phase.Tasks = append(phase.Tasks, batchTaskItem{
+				DeviceID: devID, Status: "failed", Error: "create task failed: " + err.Error(),
+			})
+			continue
+		}
 		phase.Tasks = append(phase.Tasks, batchTaskItem{
 			DeviceID: devID, TaskID: task.TaskID, Status: task.Status,
 		})

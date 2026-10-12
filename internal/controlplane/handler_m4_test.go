@@ -321,7 +321,10 @@ func TestHandlerM4Agents_RequireAuth(t *testing.T) {
 func TestHandlerM4TaskResult_Happy(t *testing.T) {
 	s := newM4TestServer()
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "m4-task"})
-	tk := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "m4-task", Type: "shell", Command: "echo hi"})
+	tk, err := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "m4-task", Type: "shell", Command: "echo hi"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	s.store.ClaimTask(a.AgentID)
 	s.store.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 0, Stdout: "hi"})
 
@@ -350,7 +353,10 @@ func TestHandlerM4TaskResult_NotFound(t *testing.T) {
 func TestHandlerM4TaskResult_TenantMismatch(t *testing.T) {
 	s := newM4TestServer()
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t-owner"})
-	tk := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t-owner", Type: "shell", Command: "echo hi"})
+	tk, err := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t-owner", Type: "shell", Command: "echo hi"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	s.store.ClaimTask(a.AgentID)
 	s.store.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 0})
 

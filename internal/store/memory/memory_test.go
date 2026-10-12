@@ -42,8 +42,11 @@ func TestMemoryStore_LeaderAlwaysTrue(t *testing.T) {
 func TestMemoryStore_CancelledTaskIDs(t *testing.T) {
 	m := NewMemoryStore()
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	t1 := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo 1"})
-	_ = m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo 2"})
+	t1, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo 1"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	_, _ = m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo 2"})
 
 	if got := m.CancelledTaskIDs(a.AgentID); len(got) != 0 {
 		t.Fatalf("before cancel: %v, want empty", got)
@@ -159,13 +162,19 @@ func TestMemoryStore_DAGReleaseBlockedToPending(t *testing.T) {
 	m := NewMemoryStore()
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
 
-	ta := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "step1"})
+	ta, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "step1"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if ta.Status != "pending" {
 		t.Fatalf("task A status = %q, want pending", ta.Status)
 	}
 
-	tb := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell",
+	tb, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell",
 		Command: "step2", DependsOn: []string{ta.TaskID}})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if tb.Status != "blocked" {
 		t.Fatalf("task B (has deps) status = %q, want blocked", tb.Status)
 	}
@@ -220,7 +229,10 @@ func TestMemoryStore_TaskLifecycle(t *testing.T) {
 func TestMemoryStore_CreateTask(t *testing.T) {
 	m := NewMemoryStore().WithDemo(true)
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	created := m.CreateTask(&proto.Task{AgentID: a.AgentID, Type: "shell", Command: "echo hi", TenantID: "t1"})
+	created, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, Type: "shell", Command: "echo hi", TenantID: "t1"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if created.TaskID == "" {
 		t.Fatal("expected server-assigned taskID")
 	}
@@ -314,7 +326,10 @@ func TestMemoryStore_QueryMethods(t *testing.T) {
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
 
 	// 下发一条任务并上报结果，构造可查询的数据。
-	created := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	created, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	// 状态守卫：上报前须先领取；ClaimTask 按创建顺序返回，先领走 demo 任务、再领到本条下发任务。
 	m.ClaimTask(a.AgentID)
 	m.ClaimTask(a.AgentID)
@@ -373,7 +388,10 @@ func TestMemoryStore_EventPublish(t *testing.T) {
 	bus := &recordingBus{}
 	m := NewMemoryStore().WithBus(bus)
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	created := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	created, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	m.ClaimTask(a.AgentID) // 状态守卫：上报前须先领取
 	m.SubmitResult(&proto.TaskResult{TaskID: created.TaskID, AgentID: a.AgentID, ExitCode: 0})
 
@@ -759,7 +777,10 @@ func TestMemoryStore_AgentSecret(t *testing.T) {
 func TestMemoryStore_SubmitResult_StateGuard(t *testing.T) {
 	m := NewMemoryStore()
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	tk := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi", MaxRetries: 3})
+	tk, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi", MaxRetries: 3})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	// 1) 未领取的 pending 任务收到迟到上报：忽略，不累计重试。
 	m.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 1})

@@ -465,11 +465,17 @@ func (s *SQLStore) Results(agentID string) []*proto.TaskResult {
 
 // Agents 返回已注册 agent（tenantID 非空时按租户过滤）。
 
-func (s *SQLStore) CreateTask(t *proto.Task) *proto.Task {
+// CreateTask 落库一个任务。
+//
+// 2026-10-12 缺口 3：INSERT 失败从"记 storefail 后返回入参装作成功"改为**返回 error**。
+// 旧行为的后果：handler 给客户端 201，库里没有这条任务，agent 永远领不到——客户端
+// 拿着一个不存在的 taskID 轮询结果，只会得到永远的 404，而服务端日志里那行
+// storefail 没人看。失败必须响亮地传到调用方。
+func (s *SQLStore) CreateTask(t *proto.Task) (*proto.Task, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if t.AgentID == "" {
-		return t // 调用方需保证 agentID 非空
+		return t, nil // 调用方需保证 agentID 非空（既有契约，不在此收紧）
 	}
 	if t.TaskID == "" {
 		t.TaskID = "task-" + strconv.FormatInt(time.Now().UnixNano(), 10)
@@ -494,9 +500,10 @@ func (s *SQLStore) CreateTask(t *proto.Task) *proto.Task {
 		t.RetryCount, t.MaxRetries, t.DeadLetter, t.Schedule, t.ParentID, t.CreatedAt,
 		t.Timeout, t.RetryDelay); err != nil {
 		storefail.Record("[store] CreateTask 失败 %s: %v", t.TaskID, err)
+		return nil, fmt.Errorf("[store] CreateTask 落库失败 task=%s: %w", t.TaskID, err)
 	}
 	s.publish(events.Event{Action: "create_task", Target: t.TaskID, TenantID: t.TenantID, Detail: t.Command, Level: events.LevelInfo})
-	return t
+	return t, nil
 }
 
 // ClaimTask 原子领取该 agent 的下一条 pending 任务（FOR UPDATE 行锁保证多副本不双领）。

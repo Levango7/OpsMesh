@@ -55,7 +55,10 @@ func newExtraTestServer() *Server {
 func TestHandleCancelTask_Happy(t *testing.T) {
 	s := newExtraTestServer()
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	tk := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	tk, err := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+tk.TaskID+"/cancel", nil)
 	req.Header.Set("X-Tenant-ID", "t1")
@@ -94,7 +97,10 @@ func TestHandleCancelTask_NotFound(t *testing.T) {
 func TestHandleCancelTask_NotCancellable(t *testing.T) {
 	s := newExtraTestServer()
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	tk := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	tk, err := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	// 领取后上报成功结果，任务变 done（状态守卫：仅 running 接受上报）
 	s.store.ClaimTask(a.AgentID)
 	s.store.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 0})
@@ -123,7 +129,10 @@ func TestHandleCancelTask_RequireAuth(t *testing.T) {
 func TestHandleTaskRouting_CancelDispatch(t *testing.T) {
 	s := newExtraTestServer()
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	tk := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	tk, err := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+tk.TaskID+"/cancel", nil)
 	req.Header.Set("X-Tenant-ID", "t1")
@@ -891,10 +900,13 @@ func TestHandleAudits_MethodNotAllowed(t *testing.T) {
 func TestHandleApproveTask_Happy(t *testing.T) {
 	s := newExtraTestServer()
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	tk := s.store.CreateTask(&proto.Task{
+	tk, err := s.store.CreateTask(&proto.Task{
 		AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "rm -rf /tmp/x",
 		ApprovalRequired: true,
 	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if tk.Status != "pending_approval" {
 		t.Fatalf("precondition: status=%q, want pending_approval", tk.Status)
 	}
@@ -938,7 +950,10 @@ func TestHandleApproveTask_NotApprovable(t *testing.T) {
 	s := newExtraTestServer()
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
 	// 普通任务初始为 pending（非 pending_approval），不可审批
-	tk := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	tk, err := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+tk.TaskID+"/approve", nil)
 	req.Header.Set("X-Tenant-ID", "t1")
@@ -953,10 +968,13 @@ func TestHandleApproveTask_NotApprovable(t *testing.T) {
 func TestHandleApproveTask_TenantMismatch(t *testing.T) {
 	s := newExtraTestServer()
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	tk := s.store.CreateTask(&proto.Task{
+	tk, err := s.store.CreateTask(&proto.Task{
 		AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "rm -rf /tmp/x",
 		ApprovalRequired: true,
 	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+tk.TaskID+"/approve", nil)
 	req.Header.Set("X-Tenant-ID", "t2") // 越权
@@ -987,10 +1005,13 @@ func TestHandleApproveTask_RequireAuth(t *testing.T) {
 func TestHandleRejectTask_Happy(t *testing.T) {
 	s := newExtraTestServer()
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	tk := s.store.CreateTask(&proto.Task{
+	tk, err := s.store.CreateTask(&proto.Task{
 		AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "rm -rf /tmp/x",
 		ApprovalRequired: true,
 	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	body := strings.NewReader(`{"reason":"too dangerous"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+tk.TaskID+"/reject", body)
@@ -1031,7 +1052,10 @@ func TestHandleRejectTask_NotFound(t *testing.T) {
 func TestHandleRejectTask_NotApprovable(t *testing.T) {
 	s := newExtraTestServer()
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	tk := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	tk, err := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+tk.TaskID+"/reject", nil)
 	req.Header.Set("X-Tenant-ID", "t1")
@@ -1046,10 +1070,13 @@ func TestHandleRejectTask_NotApprovable(t *testing.T) {
 func TestHandleRejectTask_TenantMismatch(t *testing.T) {
 	s := newExtraTestServer()
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	tk := s.store.CreateTask(&proto.Task{
+	tk, err := s.store.CreateTask(&proto.Task{
 		AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "rm -rf /tmp/x",
 		ApprovalRequired: true,
 	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+tk.TaskID+"/reject", nil)
 	req.Header.Set("X-Tenant-ID", "t2") // 越权

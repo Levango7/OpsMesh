@@ -173,7 +173,10 @@ func TestSQLStore_CreateAlertRule_Nil(t *testing.T) {
 func TestSQLStore_CreateTask_EmptyAgentID(t *testing.T) {
 	s := newSQLStoreForTest()
 	tIn := &proto.Task{TaskID: "t1", AgentID: ""}
-	tOut := s.CreateTask(tIn)
+	tOut, err := s.CreateTask(tIn)
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if tOut != tIn {
 		t.Fatal("CreateTask 空 AgentID 应返回原 task")
 	}

@@ -152,7 +152,10 @@ func TestStoreDispatcher_CreateTask(t *testing.T) {
 	d := &StoreDispatcher{Store: st}
 
 	task := &proto.Task{TaskID: "task-disp-1", TenantID: "default", Status: "running"}
-	created := d.CreateTask(task)
+	created, err := d.CreateTask(task)
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if created == nil {
 		t.Fatal("CreateTask returned nil")
 	}

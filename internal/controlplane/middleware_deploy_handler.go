@@ -115,13 +115,18 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	}
 	// 拼接最终 command：将脚本中 {name}/{port}/... 占位符替换为 params 实际值。
 	command := renderMiddlewareScript(script.Deploy, body.Params)
-	task := s.store.CreateTask(&proto.Task{
+	task, err := s.store.CreateTask(&proto.Task{
 		AgentID:    body.AgentID,
 		TenantID:   targetTenant,
 		Type:       proto.TaskTypeShell,
 		Command:    command,
 		MaxRetries: s.cfg.TaskMaxRetries,
 	})
+	if err != nil {
+		// 缺口 3：中间件部署任务没落库 = 什么都没装，不能返回 201 让前端以为装上了。
+		writeInternalError(r.Context(), w, "middleware_deploy.create_task", err)
+		return
+	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: targetTenant,
@@ -264,13 +269,18 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 	}
 	// 拼接最终 command：将 Uninstall 脚本中占位符替换为 params 实际值。
 	command := renderMiddlewareScript(script.Uninstall, body.Params)
-	task := s.store.CreateTask(&proto.Task{
+	task, err := s.store.CreateTask(&proto.Task{
 		AgentID:    body.AgentID,
 		TenantID:   targetTenant,
 		Type:       proto.TaskTypeShell,
 		Command:    command,
 		MaxRetries: s.cfg.TaskMaxRetries,
 	})
+	if err != nil {
+		// 缺口 3：卸载任务没落库 = 中间件还装着，不能返回 201。
+		writeInternalError(r.Context(), w, "middleware_uninstall.create_task", err)
+		return
+	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: targetTenant,

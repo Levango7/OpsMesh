@@ -329,13 +329,18 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 	}
 	// 拼接最终 command：通过 `set --` 注入位置参数，使脚本内 $1/$2/... 可用。
 
-	task := s.store.CreateTask(&proto.Task{
+	task, err := s.store.CreateTask(&proto.Task{
 		AgentID:    body.AgentID,
 		TenantID:   targetTenant,
 		Type:       proto.TaskTypeShell,
 		Command:    command,
 		MaxRetries: s.cfg.TaskMaxRetries,
 	})
+	if err != nil {
+		// 缺口 3：模板任务没落库 = 脚本不会被执行，不能返回 201。
+		writeInternalError(r.Context(), w, "os_template_execute.create_task", err)
+		return
+	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: targetTenant,

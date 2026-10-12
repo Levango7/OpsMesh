@@ -171,7 +171,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 			maxRetries = 0
 		}
 	}
-	task := s.store.CreateTask(&proto.Task{
+	task, err := s.store.CreateTask(&proto.Task{
 		AgentID:          body.AgentID,
 		TenantID:         targetTenant,
 		Type:             body.Type,
@@ -180,6 +180,12 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		MaxRetries:       maxRetries,
 		ApprovalRequired: body.ApprovalRequired, // 修复 10：高风险任务需审批
 	})
+	if err != nil {
+		// 缺口 3：任务没落库 = 不会被执行，不能返回 201 让调用方拿着不存在的
+		// taskID 轮询结果（此前的假成功会让失败只在 storefail 日志里露一面）。
+		writeInternalError(r.Context(), w, "create_task", err)
+		return
+	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: targetTenant,
@@ -490,7 +496,7 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 			fails = append(fails, fail{Target: tid, Error: "agent not found or tenant mismatch"})
 			continue
 		}
-		task := s.store.CreateTask(&proto.Task{
+		task, err := s.store.CreateTask(&proto.Task{
 			AgentID:          tid,
 			TenantID:         targetTenant,
 			Type:             body.Type,
@@ -501,6 +507,12 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 			MaxRetries:       s.cfg.TaskMaxRetries,  // F2 批量下发同样带重试上限
 			ApprovalRequired: body.ApprovalRequired, // 修复 10：批量下发也支持审批
 		})
+		if err != nil {
+			// 缺口 3：批量下发按目标逐项报 created/fails——这台没落库就进 fails，
+			// 不进 created（不能把不存在的 taskID 报成已创建）。
+			fails = append(fails, fail{Target: tid, Error: "create task failed: " + err.Error()})
+			continue
+		}
 		// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 		s.audit(r.Context(), &proto.AuditEvent{
 			TenantID: targetTenant,

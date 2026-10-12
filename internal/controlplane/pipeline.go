@@ -374,7 +374,18 @@ func (s *Server) processPendingPipelineRuns() {
 			Status:   "pending",
 			ParentID: run.ID,
 		}
-		created := s.store.CreateTask(task)
+		created, err := s.store.CreateTask(task)
+		if err != nil {
+			// 缺口 3：执行任务没落库 = 这次 pipeline 运行实际不存在，标 failed 并把
+			// store 的错误写进 logs（此前 created==nil 分支够不着真实失败：失败时
+			// store 返回的是入参而非 nil，会被当成成功）。
+			run.Status = "failed"
+			finished := time.Now()
+			run.FinishedAt = &finished
+			run.Logs = "failed to create execution task: " + err.Error()
+			s.store.UpdateRun(tenantID, run)
+			continue
+		}
 		if created == nil || created.TaskID == "" {
 			run.Status = "failed"
 			finished := time.Now()

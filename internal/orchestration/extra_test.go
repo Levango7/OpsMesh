@@ -80,11 +80,14 @@ func TestExtra_MultiAgentDispatch(t *testing.T) {
 func TestExtra_TaskRetryAndDeadLetter(t *testing.T) {
 	st := store.NewMemoryStore()
 	a := st.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	task := st.CreateTask(&proto.Task{
+	task, err := st.CreateTask(&proto.Task{
 		AgentID: a.AgentID, TenantID: "t1",
 		Type: "shell", Command: "false",
 		MaxRetries: 2,
 	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	// 第 1 次失败 → retry 1，重回 pending
 	st.ClaimTask(a.AgentID)
@@ -251,7 +254,10 @@ func TestExtra_TaskCancellation(t *testing.T) {
 	a := st.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
 
 	// 取消 pending
-	t1 := st.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "sleep"})
+	t1, err := st.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "sleep"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if !st.CancelTask(t1.TaskID, "t1") {
 		t.Fatal("cancel pending failed")
 	}
@@ -264,14 +270,20 @@ func TestExtra_TaskCancellation(t *testing.T) {
 	}
 
 	// 取消 running
-	t2 := st.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "sleep"})
+	t2, err := st.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "sleep"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	st.ClaimTask(a.AgentID)
 	if !st.CancelTask(t2.TaskID, "t1") {
 		t.Fatal("cancel running failed")
 	}
 
 	// done 不可取消
-	t3 := st.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "true"})
+	t3, err := st.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "true"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	st.ClaimTask(a.AgentID)
 	st.SubmitResult(&proto.TaskResult{TaskID: t3.TaskID, AgentID: a.AgentID, ExitCode: 0})
 	if st.CancelTask(t3.TaskID, "t1") {
@@ -279,7 +291,10 @@ func TestExtra_TaskCancellation(t *testing.T) {
 	}
 
 	// 跨租户拒绝
-	t4 := st.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "x"})
+	t4, err := st.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "x"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if st.CancelTask(t4.TaskID, "other") {
 		t.Fatal("cross-tenant cancel should fail")
 	}
@@ -301,7 +316,10 @@ func TestExtra_TaskCancellationWithContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	task := st.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "sleep 100"})
+	task, err := st.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "sleep 100"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	st.ClaimTask(a.AgentID)
 
 	// 模拟客户端取消：cancel context 后调用 CancelTask

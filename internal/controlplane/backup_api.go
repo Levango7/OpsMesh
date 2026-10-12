@@ -332,7 +332,11 @@ func (s *Server) restoreSnapshot(snap *backupSnapshot) map[string]int {
 			continue
 		}
 		tc := *t
-		s.store.CreateTask(&tc)
+		if _, err := s.store.CreateTask(&tc); err != nil {
+			// 缺口 3：与 agents_tenant_conflict 同款处理——失败单独计数，不静默计为成功。
+			counts["tasks_failed"]++
+			continue
+		}
 		counts["tasks"]++
 	}
 	// alertRules：CreateAlertRule 幂等（保留原 ID）。

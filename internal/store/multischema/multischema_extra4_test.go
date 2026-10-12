@@ -377,13 +377,20 @@ func TestMultiSchema_ListNotifyTemplates_FailFactory(t *testing.T) {
 // storeFor() 失败时的错误路径（租户隔离方法）
 // ============================================================================
 
-// TestMultiSchema_CreateTask_FailFactory 验证 CreateTask 在工厂失败时返回 t。
+// TestMultiSchema_CreateTask_FailFactory 验证 CreateTask 在工厂失败时**返回错误**。
+//
+// 2026-10-12 缺口 3 反转：本测试原为"工厂失败应返回原 task"——即租户库路由失败时
+// 把入参当成已创建返回，调用方据此认为任务已下发（静默假成功）。现在契约为
+// (task, error)：失败必须返回 nil task + error，调用方才可能拒绝/重试。
 func TestMultiSchema_CreateTask_FailFactory(t *testing.T) {
 	m := newMultiSchemaWithFailFactory()
 	tIn := &proto.Task{TaskID: "t1", AgentID: "a1", TenantID: "t1"}
-	tOut := m.CreateTask(tIn)
-	if tOut != tIn {
-		t.Fatal("CreateTask 工厂失败应返回原 task")
+	tOut, err := m.CreateTask(tIn)
+	if err == nil {
+		t.Fatal("CreateTask 工厂失败应返回错误（缺口 3：不得返回入参装作成功）")
+	}
+	if tOut != nil {
+		t.Fatalf("CreateTask 工厂失败应返回 nil task，实得 %+v", tOut)
 	}
 }
 

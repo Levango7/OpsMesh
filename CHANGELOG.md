@@ -4,6 +4,34 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-12（缺口 3 收口：CreateTask 契约补 error 通道，17 处调用点各自不再假成功）
+
+- **store 契约**：`model.TaskStore.CreateTask`（及 `deploy.Dispatcher`、`orchestration.TaskEngine`、
+  `cron.TaskStore` 四个消费侧接口）从 `*proto.Task` 改为 `(*proto.Task, error)`。此前
+  `SQLStore` INSERT 失败与 `MultiSchemaStore` 租户库路由失败都是 `storefail.Record` 后
+  **返回入参 t 装作成功** ⇒ 调用方拿 201/`created` 数组、深以为任务已下发，实际库里没有
+  这条任务、agent 永远领不到，客户端拿着不存在的 taskID 只等到永久 404。内存后端无 I/O
+  恒返回 nil error（前置条件违反的既有语义不变）。
+- **17 处生产调用点按各自语义接住失败**（不再有一刀切的"假成功"）：
+  HTTP handler 类返回 500（单建/批量执行/批量下发/灰度执行/中间件部署与卸载/OS 模板/
+  脚本/配置热推与灰度/网络诊断/备份还原入口）；批量类按目标逐项报 failed
+  （batch/canary/batch-dispatch，不把不存在的 taskID 报成已创建）；还原统计类单独计数
+  （`ImportResult.TasksFailed`、`restoreSnapshot` 的 `tasks_failed`）；探测边类跳过该边
+  （与既有 buildPingCommand 校验失败同款）；cron 派生实例失败时**不翻** LastFiredAt
+  （翻了这一次运行就被防重入窗口永久跳过）、只记账不中断；orchestration 节点任务失败即
+  展开失败（半展开的工作流会缺节点运行）；deploy Execute/Promote/Advance 派发失败即
+  整体失败（底座任务没建，reconcile 永远等不到终态）；automation 四路径把 store 错误
+  包进既有 error 链。
+- **守卫**：既有两条"钉住假成功"的测试**反转**为钉住响亮失败
+  （`TestMultiSchema_CreateTask_FailFactory` / `TestSQLStore_CreateTask_BadDB` /
+  `TestMultiSchemaStore_CreateTask_EmptyTenant`）；新增失败路径守卫三条
+  （cron 不翻 LastFiredAt、orchestration 点名失败节点、deploy 停留 created 不上
+  running）；62 处测试调用点随契约改为显式 `t.Fatalf` 错误检查。变异检验 2/2：
+  两个实现各自恢复旧撒谎形态 ⇒ 对应守卫逐条判红。
+- 62 处测试调用点 + 17 处生产调用点全量验证：`go test ./internal/... ./pkg/... ./cmd/...`
+  全绿、`go vet` 0、`golangci-lint` 0 issues、`gofmt` 净。F2/F6 与缺口 2 联锁见同日
+  其他 Unreleased 节。
+
 ## [Unreleased] — 2026-10-12（代理响应头收敛为单一来源：演练报告 F5 闭合）
 
 - **F5 修复（`proxy_header_convergence.go` 新增 + 两条转发路径挂载）**：切流后同一请求里

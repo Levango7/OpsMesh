@@ -361,12 +361,20 @@ func TestSQLStore_SetQuota_BadDB(t *testing.T) {
 	}
 }
 
+// TestSQLStore_CreateTask_BadDB 验证 CreateTask 在 DB 不可达时**返回错误**。
+//
+// 2026-10-12 缺口 3 反转：原判据是"DB 不可达仍应返回 task"——INSERT 失败时把入参
+// 当成已落库返回，handler 据此给客户端 201，而库里没有这条任务、agent 永远领不到。
+// 现在契约为 (task, error)：INSERT 失败必须返回 nil task + error。
 func TestSQLStore_CreateTask_BadDB(t *testing.T) {
 	s := newSQLStoreWithBadDB()
 	tIn := &proto.Task{TaskID: "t1", AgentID: "a1", TenantID: "t1"}
-	tOut := s.CreateTask(tIn)
-	if tOut == nil {
-		t.Fatal("CreateTask DB 不可达仍应返回 task")
+	tOut, err := s.CreateTask(tIn)
+	if err == nil {
+		t.Fatal("CreateTask DB 不可达应返回错误（缺口 3：不得返回入参装作已落库）")
+	}
+	if tOut != nil {
+		t.Fatalf("CreateTask DB 不可达应返回 nil task，实得 %+v", tOut)
 	}
 }
 

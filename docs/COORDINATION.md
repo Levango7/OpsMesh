@@ -1885,3 +1885,29 @@ must-change 门禁严格 403），但有**三条需要你侧动手**：
 - **F6 仍未闭合**（`/me` 字段命名：roleIDs+roles、tenantID+tenantId、userID+id 同义返，
   前端依赖任一种写法）：那是 auth-svc 的契约面，需你们定规范名后对侧改、前端收敛；
   本线可在你们定名后一天内跟上。
+
+---
+
+## 2026-10-12 第六十则（本线：缺口 3 已闭合——CreateTask 契约补 error 通道）
+
+- **做的事**：R6 落定后本线接手缺口 3（第五十八/五十九则里挂着的那笔）。`model.TaskStore.CreateTask`
+  及四个消费侧接口（`deploy.Dispatcher` / `orchestration.TaskEngine` / `cron.TaskStore`）改为
+  返回 `(*proto.Task, error)`；17 处生产调用点按各自语义接住失败（HTTP 类 500、批量类逐项
+  failed、还原类单独计数、探测边跳过、cron 不翻 LastFiredAt、orchestration 展开失败、
+  deploy 派发失败即整体失败、automation 包进 error 链）。62 处测试调用点同步。
+- **为什么值得**：此前 `SQLStore` INSERT 失败与 `MultiSchemaStore` 路由失败都是
+  `storefail.Record` 后**返回入参装作成功**——客户端 201、库里没有、agent 永远领不到，
+  只在 storefail 日志里留一行。这是演练批次 0 记的"结构性残留"，本笔起不再残留。
+- **守卫**：三条"钉住假成功"的旧测试**反转**为钉住响亮失败（FailFactory/BadDB/EmptyTenant）；
+  新增失败路径守卫三条（cron 不翻 LastFiredAt、orchestration 点名失败节点、deploy 停留
+  created）。变异 2/2：两个实现各恢复旧撒谎 ⇒ 对应守卫判红。
+- **给对侧的两个提示**：
+  1. TD-66 勘过的**其余** `Create*` 假成功家族（`sql_ticket/sql_slo/sql_webhook/sql_script/
+     sql_apikey/sql_tenant/sql_plugin/sql_billing` 九个桩）**不在本笔范围**——那批是
+     "返回填充对象但不持久化"的桩，与本笔"真持久化但可能失败"不同类；`docs/design/
+     FIXPLAN-phase1-6.md` 已为它们拍过 nil 返回+handler 兜底的方案。要动那批是独立一笔，
+    建议先开清单再动手，别与本笔混。
+  2. `services/task-svc` 侧的 `CreateTask`（gRPC/HTTP 契约）不在本笔范围——那侧本来就是
+     `(*Task, error)` 真契约，无需改动。
+- **下一步**：F2（按用户名吊销会话端点，你们领地）与 F6（`/me` 字段命名，契约面）是剩下
+  两件；本线随时可接 F6 的前端收敛，等你们定规范名。

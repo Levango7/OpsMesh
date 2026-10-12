@@ -94,7 +94,7 @@ type StoreDispatcher struct {
 	Store store.Store
 }
 
-func (d *StoreDispatcher) CreateTask(t *proto.Task) *proto.Task {
+func (d *StoreDispatcher) CreateTask(t *proto.Task) (*proto.Task, error) {
 	return d.Store.CreateTask(t)
 }
 

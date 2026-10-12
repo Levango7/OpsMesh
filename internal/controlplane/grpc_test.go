@@ -158,9 +158,12 @@ func TestGRPCCancelReachesWorker(t *testing.T) {
 	agentID := regResp.AgentID
 
 	// 注入一个长任务（sleep 5s）：取消信号若真正到达，应在远小于 5s 内中止
-	longTask := st.CreateTask(&proto.Task{
+	longTask, err := st.CreateTask(&proto.Task{
 		AgentID: agentID, TenantID: "t1", Type: "shell", Command: "sleep 5",
 	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	// 模拟 agent worker：领取 -> 以可被取消的 ctx 执行长命令 -> 轮询 PollCancels
 	type result struct {

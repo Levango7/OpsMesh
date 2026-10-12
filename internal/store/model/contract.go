@@ -72,7 +72,15 @@ type TaskStore interface {
 	// 多副本控制面并发调用时，同一任务只会被一个副本领取（HA 协调）。
 	ClaimTask(agentID string) *proto.Task
 	// CreateTask 下发一个任务给指定 agent（agentID 必填，TaskID 为空时由 store 分配）。
-	CreateTask(*proto.Task) *proto.Task
+	//
+	// 2026-10-12 缺口 3 收口：改为返回 error。此前三个实现的失败路径都是
+	// `storefail.Record(...)` 后**返回入参 t 装作成功**（SQLStore INSERT 失败、
+	// MultiSchemaStore 租户库路由失败）⇒ 调用方拿 201/深以为任务已下发，实际库里
+	// 没有这条任务，agent 永远领不到——静默假成功比响亮失败更坏。现在失败必须
+	// 显式传到调用方，由调用方决定 500/跳过/记账。
+	//
+	// 内存后端（MemoryStore）无 I/O，恒返回 nil error；持久后端把真实失败传出来。
+	CreateTask(*proto.Task) (*proto.Task, error)
 	// SubmitResult 接收 agent 上报的执行结果，并把对应 task 标记为 done。
 	SubmitResult(*proto.TaskResult)
 	// AllTasks 返回全部任务（tenantID 非空时按租户过滤；供任务列表端点，功能补全）。

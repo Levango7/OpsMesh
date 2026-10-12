@@ -55,7 +55,10 @@ func TestShutdownTLSReloader_Nil(t *testing.T) {
 func TestStoreDispatcher_CreateTask(t *testing.T) {
 	st := store.NewMemoryStore()
 	d := &factory.StoreDispatcher{Store: st}
-	tk := d.CreateTask(&proto.Task{AgentID: "a1", TenantID: "t1", Type: "shell", Command: "echo"})
+	tk, err := d.CreateTask(&proto.Task{AgentID: "a1", TenantID: "t1", Type: "shell", Command: "echo"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if tk.TaskID == "" {
 		t.Error("CreateTask should return task with ID")
 	}
@@ -90,7 +93,10 @@ func TestStoreDispatcher_TaskStates_Empty(t *testing.T) {
 func TestStoreDispatcher_TaskStates_Happy(t *testing.T) {
 	st := store.NewMemoryStore()
 	a := st.Register(&proto.AgentInfo{Segment: "seg", TenantID: "t1"})
-	tk := st.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo"})
+	tk, err := st.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	d := &factory.StoreDispatcher{Store: st}
 	m := d.TaskStates([]string{tk.TaskID, "nope"}, "t1")
 	if m[tk.TaskID] != "pending" {

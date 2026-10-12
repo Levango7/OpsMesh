@@ -18,10 +18,13 @@ func TestMemoryStore_TaskTimeoutRetryPassthrough(t *testing.T) {
 	st := NewMemoryStore().WithDemo(false)
 	st.Register(&proto.AgentInfo{AgentID: "a1", TenantID: "t1", Status: "online"})
 
-	tk := st.CreateTask(&proto.Task{
+	tk, err := st.CreateTask(&proto.Task{
 		AgentID: "a1", TenantID: "t1", Type: "shell", Command: "echo hi",
 		Timeout: 30, MaxRetries: 2, RetryDelay: 5,
 	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if tk.Timeout != 30 || tk.MaxRetries != 2 || tk.RetryDelay != 5 {
 		t.Fatalf("CreateTask 返回字段异常: timeout=%d maxRetries=%d retryDelay=%d",
 			tk.Timeout, tk.MaxRetries, tk.RetryDelay)
@@ -67,13 +70,16 @@ func TestMemoryStore_TaskTimeoutZeroBackcompat(t *testing.T) {
 // 继承模板任务的 Timeout/RetryDelay/MaxRetries（节点级超时与重试）。
 func TestMemoryStore_FireDueSchedulesInheritsTimeoutRetry(t *testing.T) {
 	st := NewMemoryStore().WithDemo(false)
-	tpl := st.CreateTask(&proto.Task{
+	tpl, err := st.CreateTask(&proto.Task{
 		AgentID: "a1", TenantID: "t1", Type: "shell", Command: "echo hi",
 		Schedule:   "* * * * *", // 每分钟
 		Timeout:    42,
 		MaxRetries: 3,
 		RetryDelay: 7,
 	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if tpl.Timeout != 42 || tpl.MaxRetries != 3 || tpl.RetryDelay != 7 {
 		t.Fatalf("模板字段异常: timeout=%d maxRetries=%d retryDelay=%d",
 			tpl.Timeout, tpl.MaxRetries, tpl.RetryDelay)

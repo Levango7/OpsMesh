@@ -550,17 +550,23 @@ func (m *MultiSchemaStore) ClaimTask(agentID string) *proto.Task {
 
 // CreateTask 下发任务：从 t.TenantID 路由，并填充 task 反查索引。
 // 注意：setTaskTenant 必须在 s.CreateTask 之后调用，因为 store 会分配 TaskID（t.TaskID 入参可能为空）。
-func (m *MultiSchemaStore) CreateTask(t *proto.Task) *proto.Task {
+//
+// 2026-10-12 缺口 3：租户库路由失败从"记 storefail 后返回入参装作成功"改为**返回 error**。
+// 旧行为的后果：控制面给客户端 201，任务却从未进入任何库，agent 永远领不到。
+func (m *MultiSchemaStore) CreateTask(t *proto.Task) (*proto.Task, error) {
 	s, err := m.storeFor(t.TenantID)
 	if err != nil {
 		storefail.Record("[multi-schema] CreateTask 路由失败 tenant=%q: %v", t.TenantID, err)
-		return t
+		return nil, fmt.Errorf("[multi-schema] CreateTask 路由失败 tenant=%q: %w", t.TenantID, err)
 	}
-	ret := s.CreateTask(t)
+	ret, err := s.CreateTask(t)
+	if err != nil {
+		return nil, err
+	}
 	if ret != nil && ret.TaskID != "" {
 		m.setTaskTenant(ret.TaskID, t.TenantID)
 	}
-	return ret
+	return ret, nil
 }
 
 // SubmitResult 接收 agent 上报结果：经 taskTenant 反查租户路由（兜底用 agentTenant）。

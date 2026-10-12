@@ -11,10 +11,13 @@ import (
 // 到点派生 pending 实例（ParentID=模板、Schedule 清空），同分钟不重复派生，且模板不可被直接领取。
 func TestMemory_FireDueSchedules(t *testing.T) {
 	st := NewMemoryStore().WithDemo(false)
-	tpl := st.CreateTask(&proto.Task{
+	tpl, err := st.CreateTask(&proto.Task{
 		AgentID: "a1", TenantID: "t1", Type: "shell", Command: "echo hi",
 		Schedule: "* * * * *", // 每分钟
 	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if tpl.ParentID != "" || tpl.Schedule == "" {
 		t.Fatal("模板任务未正确构造（ParentID 应空、Schedule 应非空）")
 	}

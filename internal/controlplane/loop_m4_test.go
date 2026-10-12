@@ -501,12 +501,15 @@ func TestLoopM4_ReclaimLoop_ReclaimsStaleTask(t *testing.T) {
 	agent := s.store.Register(&proto.AgentInfo{Hostname: "claim-host", Segment: "seg-1", TenantID: "t1"})
 
 	// 下发一个任务并领取（ClaimTask 翻转 pending→running，设置 ClaimedBy/ClaimedAt）。
-	task := s.store.CreateTask(&proto.Task{
+	task, err := s.store.CreateTask(&proto.Task{
 		AgentID:  agent.AgentID,
 		TenantID: "t1",
 		Type:     proto.TaskTypeShell,
 		Command:  "sleep 600",
 	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	claimed := s.store.ClaimTask(agent.AgentID)
 	if claimed == nil {
 		t.Fatal("ClaimTask 返回 nil，期望领取成功")

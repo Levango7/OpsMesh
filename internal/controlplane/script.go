@@ -309,7 +309,12 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 		TenantID: actx.TenantID,
 		Status:   "pending",
 	}
-	created := s.store.CreateTask(task)
+	created, err := s.store.CreateTask(task)
+	if err != nil {
+		// 缺口 3：执行任务没落库 = 脚本不会被执行，不能记一条"已执行"的执行记录。
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create execution task"})
+		return
+	}
 	if created == nil {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create execution task"})
 		return

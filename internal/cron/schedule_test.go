@@ -1,6 +1,7 @@
 package cron
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +15,8 @@ type fakeStore struct {
 	all     []*proto.Task
 	created []*proto.Task
 	updated []*proto.Task
+	// failCreate：CreateTask 恒失败（缺口 3 失败路径注入）。
+	failCreate bool
 }
 
 func (f *fakeStore) AllTasks(_ string) []*proto.Task {
@@ -24,12 +27,17 @@ func (f *fakeStore) AllTasks(_ string) []*proto.Task {
 	return out
 }
 
-func (f *fakeStore) CreateTask(t *proto.Task) *proto.Task {
+// CreateTask 契约随 store 层一起改（2026-10-12 缺口 3）：返回 error。
+// failCreate=true 时返回失败，供"派生落库失败"路径注入。
+func (f *fakeStore) CreateTask(t *proto.Task) (*proto.Task, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failCreate {
+		return nil, fmt.Errorf("fake store: 落库失败")
+	}
 	f.created = append(f.created, t)
 	f.all = append(f.all, t)
-	return t
+	return t, nil
 }
 
 func (f *fakeStore) UpdateTask(t *proto.Task) {
@@ -103,5 +111,26 @@ func TestSchedulerDerivesAfterInterval(t *testing.T) {
 	s.tick() // 距上次 2min > 60s，应派生
 	if len(store.created) != 1 {
 		t.Fatalf("expect derive after interval, got %d", len(store.created))
+	}
+}
+
+// TestSchedulerDeriveFailureKeepsTemplateRetryable 缺口 3 守卫：派生任务落库失败时
+// ① 不产生派生实例；② **不翻**模板的 LastFiredAt——翻了这一次运行就被防重入窗口
+// 永久跳过，而下一次到点前无迹可查；③ 调度器自身不中断（tick 正常返回）。
+func TestSchedulerDeriveFailureKeepsTemplateRetryable(t *testing.T) {
+	store := &fakeStore{
+		all: []*proto.Task{
+			{TaskID: "tpl-5", Type: proto.TaskTypeShell, Command: "w", Schedule: "* * * * *", LastFiredAt: time.Time{}},
+		},
+		failCreate: true,
+	}
+	s := NewScheduler(store)
+	s.interval = time.Minute
+	s.tick()
+	if len(store.created) != 0 {
+		t.Errorf("落库失败不应留下派生实例，实得 %d", len(store.created))
+	}
+	if len(store.updated) != 0 {
+		t.Errorf("落库失败不得翻 LastFiredAt（翻了这一次运行就被永久跳过），实得 updated=%d", len(store.updated))
 	}
 }

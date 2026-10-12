@@ -12,17 +12,23 @@ import (
 type fakeDisp struct {
 	tasks   map[string]*proto.Task
 	devices map[string]*proto.DeviceInfo
+	// failCreate：CreateTask 恒失败（缺口 3 失败路径注入）。
+	failCreate bool
 }
 
 func newFakeDisp() *fakeDisp {
 	return &fakeDisp{tasks: make(map[string]*proto.Task), devices: make(map[string]*proto.DeviceInfo)}
 }
 
-func (f *fakeDisp) CreateTask(t *proto.Task) *proto.Task {
+// CreateTask 契约随 Dispatcher 一起改（2026-10-12 缺口 3）：返回 error。
+func (f *fakeDisp) CreateTask(t *proto.Task) (*proto.Task, error) {
+	if f.failCreate {
+		return nil, fmt.Errorf("fakeDisp: 派发失败")
+	}
 	cp := *t
 	cp.TaskID = fmt.Sprintf("task-%d", len(f.tasks)+1)
 	f.tasks[cp.TaskID] = &cp
-	return &cp
+	return &cp, nil
 }
 
 func (f *fakeDisp) Device(id string) *proto.DeviceInfo { return f.devices[id] }
@@ -150,6 +156,31 @@ func TestReconcileDetectsFailed(t *testing.T) {
 	got, _ := st.Get(ctx, dt.ID, "t1")
 	if got.Status != StatusFailed {
 		t.Fatalf("want failed after reconcile, got %s", got.Status)
+	}
+}
+
+// TestExecuteFailsLoudlyWhenDispatchFails 缺口 3 守卫：派发（CreateTask）失败时
+// Execute 必须返回错误，而不是把这次部署记成 running——底座任务根本没建，reconcile
+// 会永远等不到终态。此前 Dispatcher 无错误通道，失败只能被当成空 taskID 吞掉。
+func TestExecuteFailsLoudlyWhenDispatchFails(t *testing.T) {
+	ctx := context.Background()
+	disp := newFakeDisp()
+	disp.devices["dev-1"] = &proto.DeviceInfo{DeviceID: "dev-1", AgentID: "agentA"}
+	disp.failCreate = true
+	st := NewMemory()
+	h := NewHandler(st, disp)
+
+	dt, err := st.Create(ctx, newDeploy("svc", TypeScript, "dev-1", "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Execute(ctx, dt.ID, "t1"); err == nil {
+		t.Fatal("派发失败应让 Execute 返回错误（缺口 3）")
+	}
+	// 部署仍停留在 created（没有被错误地推成 running）。
+	got, _ := st.Get(ctx, dt.ID, "t1")
+	if got.Status != StatusCreated {
+		t.Fatalf("派发失败后部署应停留在 %s，实得 %s", StatusCreated, got.Status)
 	}
 }
 

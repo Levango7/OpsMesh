@@ -17,7 +17,10 @@ type Scheduler struct {
 // TaskStore 是调度器需要的 store 子集。
 type TaskStore interface {
 	AllTasks(tenantID string) []*proto.Task
-	CreateTask(*proto.Task) *proto.Task
+	// CreateTask 2026-10-12 缺口 3：返回 error——派生实例落库失败必须让调度器
+	// 看见：签名没改前失败只会静默丢一个周期（模板的 LastFiredAt 照翻，下一次
+	// 到点才会再试，这一次的运行就此消失且无迹可查）。
+	CreateTask(*proto.Task) (*proto.Task, error)
 	UpdateTask(*proto.Task)
 }
 
@@ -85,7 +88,13 @@ func (s *Scheduler) tick() {
 			DependsOn: t.DependsOn,
 			ParentID:  t.TaskID,
 		}
-		s.store.CreateTask(derived)
+		if _, err := s.store.CreateTask(derived); err != nil {
+			// 缺口 3：派生实例没落库 = 这一轮什么都没跑。记日志并**不动**
+			// LastFiredAt——翻了就把这一次运行永久跳过（防重入窗口内不会再试），
+			// 留着让它下一轮重试。调度器自身不能因此中断。
+			log.Printf("[scheduler] 模板 %s 派生任务落库失败: %v", t.TaskID, err)
+			continue
+		}
 		// 更新模板任务的 LastFiredAt
 		t.LastFiredAt = now
 		s.store.UpdateTask(t)

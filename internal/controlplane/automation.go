@@ -70,7 +70,10 @@ func (a *automationExecutor) ExecuteTask(tenantID, deviceID, command string, par
 		TenantID: tenantID,
 		Status:   "pending",
 	}
-	created := a.store.CreateTask(task)
+	created, err := a.store.CreateTask(task)
+	if err != nil {
+		return "", fmt.Errorf("create task for device %s: %w", deviceID, err)
+	}
 	if created == nil {
 		return "", fmt.Errorf("failed to create task for device %s", deviceID)
 	}
@@ -109,7 +112,10 @@ func (a *automationExecutor) Scale(tenantID, service string, replicas int, param
 		TenantID: tenantID,
 		Status:   "pending",
 	}
-	created := a.store.CreateTask(task)
+	created, err := a.store.CreateTask(task)
+	if err != nil {
+		return "", fmt.Errorf("create scale task for service %s: %w", service, err)
+	}
 	if created == nil {
 		return "", fmt.Errorf("failed to create scale task for service %s", service)
 	}
@@ -128,7 +134,10 @@ func (a *automationExecutor) Restart(tenantID, target string, params map[string]
 		TenantID: tenantID,
 		Status:   "pending",
 	}
-	created := a.store.CreateTask(task)
+	created, err := a.store.CreateTask(task)
+	if err != nil {
+		return "", fmt.Errorf("create restart task for target %s: %w", target, err)
+	}
 	if created == nil {
 		return "", fmt.Errorf("failed to create restart task for target %s", target)
 	}
@@ -147,7 +156,10 @@ func (a *automationExecutor) Isolate(tenantID, deviceID string, params map[strin
 		TenantID: tenantID,
 		Status:   "pending",
 	}
-	created := a.store.CreateTask(task)
+	created, err := a.store.CreateTask(task)
+	if err != nil {
+		return "", fmt.Errorf("create isolate task for device %s: %w", deviceID, err)
+	}
 	if created == nil {
 		return "", fmt.Errorf("failed to create isolate task for device %s", deviceID)
 	}

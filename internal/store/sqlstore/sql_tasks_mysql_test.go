@@ -38,10 +38,13 @@ func TestTasksReadPaths_MySQL(t *testing.T) {
 	defer cleanup()
 
 	// 写入两类任务：pending（GetTasks 应返回）与 done（GetTasks 不应返回）。
-	created := s.CreateTask(&proto.Task{
+	created, err := s.CreateTask(&proto.Task{
 		TaskID: "task-arity-1", AgentID: agentID, TenantID: tenantID,
 		Type: "shell", Command: "echo hi", Path: "/tmp", Status: "pending",
 	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if created == nil || created.TaskID != "task-arity-1" {
 		t.Fatalf("CreateTask 应返回已写任务；got=%+v", created)
 	}

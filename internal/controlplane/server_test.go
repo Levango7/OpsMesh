@@ -135,10 +135,13 @@ func TestHandleAlerts_DeadLetter(t *testing.T) {
 
 	// 注册 agent + 创建一条 MaxRetries=0 的任务（一次失败即死信）
 	a := st.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	tk := st.CreateTask(&proto.Task{
+	tk, err := st.CreateTask(&proto.Task{
 		AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "false",
 		MaxRetries: 0, Status: "running",
 	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	// 上报失败结果（exitCode=1，已达上限 -> 死信 + critical 告警）
 	st.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 1})

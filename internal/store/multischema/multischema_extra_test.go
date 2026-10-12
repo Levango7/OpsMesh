@@ -472,7 +472,11 @@ func TestMultiSchemaStore_SubmitResult_UnknownTask(t *testing.T) {
 	m.SubmitResult(&proto.TaskResult{TaskID: "no-exist", AgentID: "no-exist"}) // 不应 panic
 }
 
-// TestMultiSchemaStore_CreateTask_EmptyTenant 验证 CreateTask 空租户不 panic。
+// TestMultiSchemaStore_CreateTask_EmptyTenant 验证 CreateTask 空租户**返回错误**。
+//
+// 2026-10-12 缺口 3 反转：原判据是"空租户不 panic 且返回非 nil"——租户路由失败时
+// 把入参当成已创建返回，调用方据此认为任务已下发。现在契约为 (task, error)：
+// 空租户路由失败必须返回 error，调用方才可能拒绝。
 func TestMultiSchemaStore_CreateTask_EmptyTenant(t *testing.T) {
 	namer := DefaultSchemaNamer("opsmesh_")
 	factory := func(schema string) (Store, error) {
@@ -480,9 +484,12 @@ func TestMultiSchemaStore_CreateTask_EmptyTenant(t *testing.T) {
 	}
 	m := newMultiSchemaWithFactory(namer, factory)
 	tk := &proto.Task{AgentID: "a1", TenantID: "", Command: "c1"}
-	ret := m.CreateTask(tk)
-	if ret == nil {
-		t.Fatal("CreateTask 应返回非 nil")
+	ret, err := m.CreateTask(tk)
+	if err == nil {
+		t.Fatal("CreateTask 空租户应返回错误（缺口 3：不得返回入参装作成功）")
+	}
+	if ret != nil {
+		t.Fatalf("CreateTask 空租户应返回 nil task，实得 %+v", ret)
 	}
 }
 

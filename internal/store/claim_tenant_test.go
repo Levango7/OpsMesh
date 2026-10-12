@@ -37,7 +37,10 @@ func TestClaimTask_TenantMismatchSkipped(t *testing.T) {
 func TestClaimTask_SameTenantClaimed(t *testing.T) {
 	m := NewMemoryStore()
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "tenant-a"})
-	tk := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "tenant-a", Type: "shell", Command: "echo ok"})
+	tk, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "tenant-a", Type: "shell", Command: "echo ok"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	got := m.ClaimTask(a.AgentID)
 	if got == nil || got.TaskID != tk.TaskID {
@@ -49,7 +52,10 @@ func TestClaimTask_SameTenantClaimed(t *testing.T) {
 func TestClaimTask_LegacyEmptyTenantClaimed(t *testing.T) {
 	m := NewMemoryStore()
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "tenant-a"})
-	tk := m.CreateTask(&proto.Task{AgentID: a.AgentID, Type: "shell", Command: "echo legacy"})
+	tk, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, Type: "shell", Command: "echo legacy"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	if got := m.ClaimTask(a.AgentID); got == nil || got.TaskID != tk.TaskID {
 		t.Fatalf("空租户遗留任务应兼容领取；got=%+v", got)
@@ -63,7 +69,10 @@ func TestClaimTask_TenantMismatchSkipsToClaimable(t *testing.T) {
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "tenant-a"})
 
 	m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "tenant-b", Type: "shell", Command: "echo cross"})
-	want := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "tenant-a", Type: "shell", Command: "echo own"})
+	want, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "tenant-a", Type: "shell", Command: "echo own"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	got := m.ClaimTask(a.AgentID)
 	if got == nil || got.TaskID != want.TaskID {

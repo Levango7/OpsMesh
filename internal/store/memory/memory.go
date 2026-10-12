@@ -778,11 +778,13 @@ func (m *MemoryStore) FireDueSchedules(now time.Time) int {
 	return fired
 }
 
-func (m *MemoryStore) CreateTask(t *proto.Task) *proto.Task {
+// CreateTask 下发任务。内存后端无 I/O，除调用方违反前置条件（agentID 为空）外
+// 不会失败；error 返回值是 2026-10-12 缺口 3 契约为了一致性保留的（见 model.TaskStore）。
+func (m *MemoryStore) CreateTask(t *proto.Task) (*proto.Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if t.AgentID == "" {
-		return t // 调用方需保证 agentID 非空
+		return t, nil // 调用方需保证 agentID 非空（既有契约，不在此收紧）
 	}
 	if t.TaskID == "" {
 		m.seq++
@@ -806,7 +808,7 @@ func (m *MemoryStore) CreateTask(t *proto.Task) *proto.Task {
 	m.addTaskLocked(t)
 	// 事件驱动：下发任务事件经总线发布。
 	m.publish(events.Event{Action: "create_task", Target: t.TaskID, TenantID: t.TenantID, Detail: t.Command, Level: events.LevelInfo})
-	return t
+	return t, nil
 }
 
 // addTaskLocked 在持锁下将任务追加到 m.tasks 并同步更新 tasksByID 索引。

@@ -145,7 +145,10 @@ func TestMemoryStore_TasksByParent(t *testing.T) {
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
 
 	// 模板任务（ParentID 空）
-	parent := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "cron-job", Schedule: "* * * * *"})
+	parent, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "cron-job", Schedule: "* * * * *"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	// 派生实例（ParentID 指向模板）
 	m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "cron-job", ParentID: parent.TaskID})
 
@@ -163,7 +166,10 @@ func TestMemoryStore_TasksByParent(t *testing.T) {
 func TestMemoryStore_TaskResult_Query(t *testing.T) {
 	m := NewMemoryStore()
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	tk := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	tk, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	m.ClaimTask(a.AgentID)
 	m.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 0, Stdout: "hi"})
 
@@ -181,7 +187,10 @@ func TestMemoryStore_TaskResult_Query(t *testing.T) {
 func TestMemoryStore_TaskByID_NotFound(t *testing.T) {
 	m := NewMemoryStore()
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	tk := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo"})
+	tk, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	got := m.TaskByID(tk.TaskID)
 	if got == nil || got.TaskID != tk.TaskID {
@@ -202,7 +211,10 @@ func TestMemoryStore_TaskByID_NotFound(t *testing.T) {
 func TestMemoryStore_ApproveTask_Flow(t *testing.T) {
 	m := NewMemoryStore()
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	tk := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "danger", ApprovalRequired: true})
+	tk, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "danger", ApprovalRequired: true})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	if tk.Status != "pending_approval" {
 		t.Fatalf("审批任务初始状态 = %q, want pending_approval", tk.Status)
@@ -241,7 +253,10 @@ func TestMemoryStore_ApproveTask_Flow(t *testing.T) {
 func TestMemoryStore_RejectTask_Flow(t *testing.T) {
 	m := NewMemoryStore()
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	tk := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "danger", ApprovalRequired: true})
+	tk, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "danger", ApprovalRequired: true})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	// 越权驳回
 	if m.RejectTask(tk.TaskID, "t2", "u2") {
@@ -273,7 +288,10 @@ func TestMemoryStore_RejectTask_Flow(t *testing.T) {
 func TestMemoryStore_CancelTask_AlreadyDone(t *testing.T) {
 	m := NewMemoryStore()
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	tk := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo"})
+	tk, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	m.ClaimTask(a.AgentID)
 	m.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 0})
 
@@ -286,7 +304,10 @@ func TestMemoryStore_CancelTask_AlreadyDone(t *testing.T) {
 		t.Fatal("CancelTask 不存在应返回 false")
 	}
 	// 越租户
-	tk2 := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo2"})
+	tk2, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo2"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if m.CancelTask(tk2.TaskID, "t2") {
 		t.Fatal("CancelTask 跨租户应返回 false")
 	}

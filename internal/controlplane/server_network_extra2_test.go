@@ -84,7 +84,10 @@ func TestNetworkDiagnoseResult_TaskNotFound_Extra(t *testing.T) {
 func TestNetworkDiagnoseResult_Pending_Extra(t *testing.T) {
 	s := &Server{store: store.NewMemoryStore(), cfg: &config.Config{Demo: true}}
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg", TenantID: "default"})
-	tk := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "default", Type: "shell", Command: "ping x"})
+	tk, err := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "default", Type: "shell", Command: "ping x"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/network/diagnose/"+tk.TaskID, nil)
 	req.Header.Set("X-Tenant-ID", "default")
 	rec := httptest.NewRecorder()
@@ -97,7 +100,10 @@ func TestNetworkDiagnoseResult_Pending_Extra(t *testing.T) {
 func TestNetworkDiagnoseResult_WithResult_Extra(t *testing.T) {
 	s := &Server{store: store.NewMemoryStore(), cfg: &config.Config{Demo: true}}
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg", TenantID: "default"})
-	tk := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "default", Type: "shell", Command: "ping x"})
+	tk, err := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "default", Type: "shell", Command: "ping x"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	s.store.ClaimTask(a.AgentID)
 	s.store.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 0, Stdout: "ok"})
 
@@ -113,7 +119,10 @@ func TestNetworkDiagnoseResult_WithResult_Extra(t *testing.T) {
 func TestNetworkDiagnoseResult_TenantMismatch_Extra(t *testing.T) {
 	s := &Server{store: store.NewMemoryStore(), cfg: &config.Config{Demo: true}}
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg", TenantID: "default"})
-	tk := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "default", Type: "shell", Command: "ping x"})
+	tk, err := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "default", Type: "shell", Command: "ping x"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/network/diagnose/"+tk.TaskID, nil)
 	req.Header.Set("X-Tenant-ID", "other")
 	rec := httptest.NewRecorder()

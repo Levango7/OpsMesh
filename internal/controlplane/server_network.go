@@ -277,13 +277,18 @@ func (s *Server) probeEdges(tenant string, devs []proto.DeviceInfo) []NetworkEdg
 			if err != nil {
 				continue
 			}
-			task := s.store.CreateTask(&proto.Task{
+			task, err := s.store.CreateTask(&proto.Task{
 				AgentID:    source.AgentID,
 				TenantID:   tenant,
 				Type:       proto.TaskTypeShell,
 				Command:    cmd,
 				MaxRetries: 0,
 			})
+			if err != nil {
+				// 缺口 3：与 buildPingCommand 校验失败同款处理——跳过这条探测边，
+				// 不让一个不存在的 taskID 进 jobs（那边会拿着它永远等不到结果）。
+				continue
+			}
 			jobs = append(jobs, probeJob{sourceIdx: i, targetIdx: j, taskID: task.TaskID})
 		}
 	}
@@ -542,13 +547,19 @@ func (s *Server) handleNetworkDiagnose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 下发 shell task。
-	task := s.store.CreateTask(&proto.Task{
+	task, err := s.store.CreateTask(&proto.Task{
 		AgentID:    req.AgentID,
 		TenantID:   tenant,
 		Type:       proto.TaskTypeShell,
 		Command:    cmd,
 		MaxRetries: s.cfg.TaskMaxRetries,
 	})
+	if err != nil {
+		// 缺口 3：诊断任务没落库 = 诊断不会执行，不能返回 201 让调用方凭 taskID
+		// 去轮询一个永远 pending 的结果。
+		writeInternalError(r.Context(), w, "network_diagnose.create_task", err)
+		return
+	}
 	// 审计 + 事件。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: tenant, UserID: actx.UserID, Action: "network_diagnose", Target: task.TaskID,
@@ -865,13 +876,17 @@ func (s *Server) handleNetworkConnectivity(w http.ResponseWriter, r *http.Reques
 		if err := validateCommand(cmd); err != nil {
 			continue
 		}
-		task := s.store.CreateTask(&proto.Task{
+		task, err := s.store.CreateTask(&proto.Task{
 			AgentID:    req.SourceAgentID,
 			TenantID:   tenant,
 			Type:       proto.TaskTypeShell,
 			Command:    cmd,
 			MaxRetries: 0,
 		})
+		if err != nil {
+			// 缺口 3：同探测边——跳过这条，不把不存在的 taskID 排进 jobs。
+			continue
+		}
 		jobs = append(jobs, connJob{targetIdx: i, taskID: task.TaskID, isPing: isPing})
 	}
 

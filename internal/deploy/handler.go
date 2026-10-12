@@ -17,7 +17,9 @@ import (
 // 由 controlplane 用 Registry 适配实现，避免 deploy 包反向依赖 controlplane（贯穿边界）。
 type Dispatcher interface {
 	// CreateTask 派发一个底层自动化任务（复用 M4 任务引擎）。
-	CreateTask(t *proto.Task) *proto.Task
+	// 2026-10-12 缺口 3：返回 error——派发失败（租户库路由失败/INSERT 失败）必须
+	// 让部署执行方看到，而不是收下一个"其实没派"的 taskID。
+	CreateTask(t *proto.Task) (*proto.Task, error)
 	// Device 查询目标设备（取 AgentID 以定位执行 agent）。
 	Device(id string) *proto.DeviceInfo
 	// TaskStates 批量查询底层任务状态（taskID -> status），供 reconcile 判定部署终态。
@@ -303,7 +305,10 @@ func (h *Handler) Execute(ctx context.Context, id int64, tenantID string) error 
 			Path:     dt.Path,
 			Status:   "pending",
 		}
-		created := h.disp.CreateTask(t)
+		created, err := h.disp.CreateTask(t)
+		if err != nil {
+			return fmt.Errorf("deploy %d 派发任务到目标 %s 失败: %w", id, tid, err)
+		}
 		if created != nil && created.TaskID != "" {
 			taskIDs = append(taskIDs, created.TaskID)
 		}
@@ -394,7 +399,10 @@ func (h *Handler) Promote(ctx context.Context, id int64, tenantID string) error 
 			Path:     dt.Path,
 			Status:   "pending",
 		}
-		created := h.disp.CreateTask(t)
+		created, err := h.disp.CreateTask(t)
+		if err != nil {
+			return fmt.Errorf("deploy %d promote 派发任务到目标 %s 失败: %w", id, tid, err)
+		}
 		if created != nil && created.TaskID != "" {
 			taskIDs = append(taskIDs, created.TaskID)
 		}
@@ -606,7 +614,10 @@ func (h *Handler) AdvanceCanary(ctx context.Context, deployID int64, tenantID st
 			Path:     dt.Path,
 			Status:   "pending",
 		}
-		created := h.disp.CreateTask(t)
+		created, err := h.disp.CreateTask(t)
+		if err != nil {
+			return fmt.Errorf("deploy %d advance 派发任务到目标 %s 失败: %w", deployID, tid, err)
+		}
 		if created != nil && created.TaskID != "" {
 			taskIDs = append(taskIDs, created.TaskID)
 		}

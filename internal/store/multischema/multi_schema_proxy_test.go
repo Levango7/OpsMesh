@@ -314,7 +314,10 @@ func TestMultiSchemaStore_TenantProxy_ApproveReject(t *testing.T) {
 
 	// 先注册 agent + 创建审批任务
 	a := m.Register(&proto.AgentInfo{AgentID: "agent-1", Segment: "seg-a", TenantID: "t1"})
-	tk := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "danger", ApprovalRequired: true})
+	tk, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "danger", ApprovalRequired: true})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if tk.Status != "pending_approval" {
 		t.Fatalf("审批任务状态 = %q, want pending_approval", tk.Status)
 	}
@@ -326,7 +329,10 @@ func TestMultiSchemaStore_TenantProxy_ApproveReject(t *testing.T) {
 		t.Fatalf("审批后状态 = %q, want pending", got.Status)
 	}
 	// RejectTask（创建另一个审批任务）
-	tk2 := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "danger2", ApprovalRequired: true})
+	tk2, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "danger2", ApprovalRequired: true})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if !m.RejectTask(tk2.TaskID, "t1", "u1") {
 		t.Fatal("RejectTask 代理失败")
 	}
@@ -386,7 +392,10 @@ func TestMultiSchemaStore_TenantProxy_TaskQueries(t *testing.T) {
 
 	// 注册 agent + 创建任务（建立 taskTenant 反查索引）
 	a := m.Register(&proto.AgentInfo{AgentID: "agent-1", Segment: "seg-a", TenantID: "t1"})
-	tk := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo"})
+	tk, err := m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	// TaskByID
 	if got := m.TaskByID(tk.TaskID); got == nil || got.TaskID != tk.TaskID {

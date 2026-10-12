@@ -1478,7 +1478,10 @@ func TestHandleNetworkDiagnose_TcpingWithPort(t *testing.T) {
 func TestHandleNetworkDiagnoseResult_Happy(t *testing.T) {
 	s := newTestServer()
 	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "default"})
-	task := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "default", Type: proto.TaskTypeShell, Command: "ping -c 1 127.0.0.1"})
+	task, err := s.store.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "default", Type: proto.TaskTypeShell, Command: "ping -c 1 127.0.0.1"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	s.store.ClaimTask(a.AgentID)
 	s.store.SubmitResult(&proto.TaskResult{TaskID: task.TaskID, AgentID: a.AgentID, ExitCode: 0, Stdout: "1 packets"})
 
@@ -1867,7 +1870,10 @@ func TestRateLimitMiddleware_HealthEndpointBypass(t *testing.T) {
 func TestStoreDispatcher_CreateTaskCov(t *testing.T) {
 	st := store.NewMemoryStore()
 	d := &factory.StoreDispatcher{Store: st}
-	task := d.CreateTask(&proto.Task{AgentID: "a1", Type: proto.TaskTypeShell, Command: "echo hi"})
+	task, err := d.CreateTask(&proto.Task{AgentID: "a1", Type: proto.TaskTypeShell, Command: "echo hi"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	if task == nil || task.TaskID == "" {
 		t.Fatal("CreateTask returned nil or empty")
 	}
@@ -1886,7 +1892,10 @@ func TestStoreDispatcher_DeviceCov(t *testing.T) {
 func TestStoreDispatcher_TaskStates(t *testing.T) {
 	st := store.NewMemoryStore()
 	a := st.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	task := st.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: proto.TaskTypeShell, Command: "echo hi"})
+	task, err := st.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: proto.TaskTypeShell, Command: "echo hi"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	d := &factory.StoreDispatcher{Store: st}
 	states := d.TaskStates([]string{task.TaskID}, "t1")
 	if states[task.TaskID] == "" {

@@ -142,14 +142,15 @@ type ImportOptions struct {
 
 // ImportResult 导入结果统计（restore 后返回，供 CLI 输出汇总）。
 type ImportResult struct {
-	Devices    int `json:"devices"`
-	Agents     int `json:"agents"`
-	Tasks      int `json:"tasks"`
-	Alerts     int `json:"alerts"`
-	AlertRules int `json:"alertRules"`
-	Users      int `json:"users"`
-	Roles      int `json:"roles"`
-	Skipped    int `json:"skipped"` // 因已存在且 Overwrite=false 跳过的条数
+	Devices     int `json:"devices"`
+	Agents      int `json:"agents"`
+	Tasks       int `json:"tasks"`
+	Alerts      int `json:"alerts"`
+	AlertRules  int `json:"alertRules"`
+	Users       int `json:"users"`
+	Roles       int `json:"roles"`
+	Skipped     int `json:"skipped"`     // 因已存在且 Overwrite=false 跳过的条数
+	TasksFailed int `json:"tasksFailed"` // 缺口 3：CreateTask 落库失败的条数（此前静默计为成功）
 }
 
 // ExportBackup 从 Store 读取数据并写入 w（按 opts.Format 选择 JSON 或 SQL dump）。
@@ -375,7 +376,11 @@ func ImportBackup(ctx context.Context, st store.Store, opts ImportOptions, r io.
 			}
 		}
 		tc := *t
-		st.CreateTask(&tc)
+		if _, err := st.CreateTask(&tc); err != nil {
+			// 缺口 3：落库失败单独计数，不再静默计为成功（导入汇总里看得见）。
+			res.TasksFailed++
+			continue
+		}
 		res.Tasks++
 	}
 

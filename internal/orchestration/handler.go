@@ -20,7 +20,10 @@ import (
 // （store.CreateTask + store.TasksByParent），避免 orchestration 反向依赖 controlplane/Registry。
 // store.Store 已同时具备这两个方法，controlplane 直接以 store 适配。
 type TaskEngine interface {
-	CreateTask(t *proto.Task) *proto.Task
+	// CreateTask 展开节点时下发底层任务。
+	// 2026-10-12 缺口 3：返回 error——节点任务没落库必须让工作流展开失败，
+	// 而不是半展开后运行一个缺节点的工作流。
+	CreateTask(t *proto.Task) (*proto.Task, error)
 	TasksByParent(parentID string) []*proto.Task
 }
 
@@ -350,7 +353,7 @@ func (h *Handler) expandNodes(ctx context.Context, wf *WorkflowDef, nodes []Work
 			if len(deps) == 0 && len(inheritedDeps) > 0 {
 				deps = inheritedDeps
 			}
-			h.eng.CreateTask(&proto.Task{
+			if _, err := h.eng.CreateTask(&proto.Task{
 				TaskID:     prefix + n.ID,
 				AgentID:    wf.AgentID,
 				TenantID:   wf.TenantID,
@@ -362,7 +365,11 @@ func (h *Handler) expandNodes(ctx context.Context, wf *WorkflowDef, nodes []Work
 				Timeout:    n.Timeout,    // 节点级超时（秒，0=不超时，agent 端覆盖全局 taskTimeout）
 				MaxRetries: n.RetryCount, // 节点级重试上限（失败后由 store SubmitResult 重试）
 				RetryDelay: n.RetryDelay, // 重试间隔（秒，0=立即重试）
-			})
+			}); err != nil {
+				// 缺口 3：节点任务落库失败即展开失败——半展开的工作流会缺节点运行，
+				// 比响亮失败更坏。
+				return fmt.Errorf("workflow node %s: 下发节点任务失败: %w", n.ID, err)
+			}
 		case NodeWorkflow:
 			if condSkip[n.ID] {
 				continue

@@ -93,7 +93,13 @@ func (s *Server) handleConfigHotpush(w http.ResponseWriter, r *http.Request) {
 		Content:  body.Value,
 		Path:     body.Path,
 	}
-	created := s.store.CreateTask(task)
+	created, err := s.store.CreateTask(task)
+	if err != nil {
+		// 缺口 3：任务落库失败不再装作已推送——配置版本虽已保存，但文件没下发到
+		// 目标 agent，客户端必须看到失败而不是一个永远不会被执行的 taskID。
+		writeInternalError(r.Context(), w, "config_hotpush.create_task", err)
+		return
+	}
 
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: caller.ID, Action: "config_hotpush", Target: body.Key, Detail: sanitizeAuditDetail("agent=" + body.AgentID + " path=" + body.Path),
@@ -186,7 +192,13 @@ func (s *Server) handleConfigCanary(w http.ResponseWriter, r *http.Request) {
 			Content:  body.Value,
 			Path:     body.Path,
 		}
-		created := s.store.CreateTask(task)
+		created, err := s.store.CreateTask(task)
+		if err != nil {
+			// 缺口 3：同 handleConfigHotpush——灰度推送中的一个目标落库失败即整体
+			// 报错，不让客户端拿到"已推送"的假象（前面的已保存版本不回滚，可重试）。
+			writeInternalError(r.Context(), w, "config_canary.create_task", err)
+			return
+		}
 		tasks = append(tasks, map[string]string{
 			"agentID": agentID,
 			"taskID":  created.TaskID,

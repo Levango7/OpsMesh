@@ -275,9 +275,15 @@ func TestMultiSchemaStore_TaskRoutingAndIsolation(t *testing.T) {
 	m.Register(&proto.AgentInfo{AgentID: "agent-b", Segment: "seg-1", TenantID: "tB"})
 
 	// tenant A 给 agent-a 下发任务（显式 TaskID 避免 store 分配的时间戳冲突）。
-	t1 := m.CreateTask(&proto.Task{TaskID: "task-tA-1", AgentID: "agent-a", TenantID: "tA", Type: "shell", Command: "ls"})
+	t1, err := m.CreateTask(&proto.Task{TaskID: "task-tA-1", AgentID: "agent-a", TenantID: "tA", Type: "shell", Command: "ls"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 	// tenant B 给 agent-b 下发任务。
-	t2 := m.CreateTask(&proto.Task{TaskID: "task-tB-1", AgentID: "agent-b", TenantID: "tB", Type: "shell", Command: "pwd"})
+	t2, err := m.CreateTask(&proto.Task{TaskID: "task-tB-1", AgentID: "agent-b", TenantID: "tB", Type: "shell", Command: "pwd"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	// AllTasks 按租户隔离。
 	tasksA := m.AllTasks("tA")
@@ -574,7 +580,10 @@ func TestMultiSchemaStore_SubmitResultRouting(t *testing.T) {
 	m := newMultiSchemaWithFactory(namer, mockStoreFactory(&created))
 
 	m.Register(&proto.AgentInfo{AgentID: "agent-a", Segment: "seg-1", TenantID: "tA"})
-	task := m.CreateTask(&proto.Task{AgentID: "agent-a", TenantID: "tA", Type: "shell", Command: "echo hi"})
+	task, err := m.CreateTask(&proto.Task{AgentID: "agent-a", TenantID: "tA", Type: "shell", Command: "echo hi"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	// 状态守卫：上报前须先领取（经 agentTenant 反查路由）。
 	m.ClaimTask("agent-a")
@@ -604,7 +613,10 @@ func TestMultiSchemaStore_ClaimTaskRouting(t *testing.T) {
 	m := newMultiSchemaWithFactory(namer, mockStoreFactory(&created))
 
 	m.Register(&proto.AgentInfo{AgentID: "agent-a", Segment: "seg-1", TenantID: "tA"})
-	task := m.CreateTask(&proto.Task{AgentID: "agent-a", TenantID: "tA", Type: "shell", Command: "echo hi"})
+	task, err := m.CreateTask(&proto.Task{AgentID: "agent-a", TenantID: "tA", Type: "shell", Command: "echo hi"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	// ClaimTask 经 agentTenant 反查路由到 tenant A 的 schema。
 	claimed := m.ClaimTask("agent-a")
@@ -625,7 +637,10 @@ func TestMultiSchemaStore_CancelledTaskIDs(t *testing.T) {
 	m := newMultiSchemaWithFactory(namer, mockStoreFactory(&created))
 
 	m.Register(&proto.AgentInfo{AgentID: "agent-a", Segment: "seg-1", TenantID: "tA"})
-	task := m.CreateTask(&proto.Task{AgentID: "agent-a", TenantID: "tA", Type: "shell", Command: "echo hi"})
+	task, err := m.CreateTask(&proto.Task{AgentID: "agent-a", TenantID: "tA", Type: "shell", Command: "echo hi"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	// 取消任务。
 	if !m.CancelTask(task.TaskID, "tA") {
@@ -816,7 +831,10 @@ func TestMultiSchemaStore_TasksByParentRouting(t *testing.T) {
 	m.Register(&proto.AgentInfo{AgentID: "agent-a", Segment: "seg-1", TenantID: "tA"})
 
 	// 创建一个模板任务（parent）。
-	parent := m.CreateTask(&proto.Task{AgentID: "agent-a", TenantID: "tA", Type: "shell", Command: "template", Schedule: "* * * * *"})
+	parent, err := m.CreateTask(&proto.Task{AgentID: "agent-a", TenantID: "tA", Type: "shell", Command: "template", Schedule: "* * * * *"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	// TasksByParent 经 taskTenant 反查路由。
 	tasks := m.TasksByParent(parent.TaskID)

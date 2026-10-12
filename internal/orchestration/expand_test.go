@@ -14,22 +14,29 @@ import (
 // mockTaskEngine 是测试用的 TaskEngine mock，记录所有创建的任务（不处理依赖 blocked 状态）。
 // 用于隔离测试 expandNodes 的展开逻辑，不引入 store.MemoryStore 的依赖引擎副作用。
 type mockTaskEngine struct {
-	mu    sync.Mutex
-	tasks map[string]*proto.Task
+	mu sync.Mutex
+	// failIDs：命中即 CreateTask 返回 error（缺口 3 失败路径注入）。
+	failIDs map[string]bool
+	tasks   map[string]*proto.Task
 }
 
 func newMockTaskEngine() *mockTaskEngine {
-	return &mockTaskEngine{tasks: make(map[string]*proto.Task)}
+	return &mockTaskEngine{tasks: make(map[string]*proto.Task), failIDs: make(map[string]bool)}
 }
 
-func (m *mockTaskEngine) CreateTask(t *proto.Task) *proto.Task {
+// CreateTask 契约随 store 层一起改（2026-10-12 缺口 3）：返回 error。
+// failIDs 非空时对指定 TaskID 返回失败，供失败路径测试注入。
+func (m *mockTaskEngine) CreateTask(t *proto.Task) (*proto.Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.failIDs[t.TaskID] {
+		return nil, fmt.Errorf("mock: 节点任务 %s 落库失败", t.TaskID)
+	}
 	if t.Status == "" {
 		t.Status = "pending"
 	}
 	m.tasks[t.TaskID] = t
-	return t
+	return t, nil
 }
 
 func (m *mockTaskEngine) TasksByParent(parentID string) []*proto.Task {
@@ -126,6 +133,34 @@ func TestExpand_SubWorkflow(t *testing.T) {
 	}
 	if len(s2.DependsOn) != 1 || s2.DependsOn[0] != prefix+"n2-sub-s1" {
 		t.Errorf("s2 deps=%v, want [%s]", s2.DependsOn, prefix+"n2-sub-s1")
+	}
+}
+
+// TestExpand_NodeTaskCreateFailure 缺口 3 守卫：节点任务落库失败必须让 Trigger
+// 返回错误，而不是半展开后返回"已触发"——半展开的工作流会缺节点运行，比响亮失败
+// 更坏（错误里要点名是哪个节点）。
+func TestExpand_NodeTaskCreateFailure(t *testing.T) {
+	wfs := NewMemory()
+	eng := newMockTaskEngine()
+	h := NewHandler(wfs, eng)
+	ctx := context.Background()
+
+	wf := &WorkflowDef{
+		Name: "create-fail", AgentID: "a1", TenantID: "t1",
+		DAG: `[{"id":"n1","type":"shell","command":"echo hi"}]`,
+	}
+	if err := wfs.Create(ctx, wf); err != nil {
+		t.Fatal(err)
+	}
+	// 注入：n1 的确定性 TaskID（prefix+n1）落库失败。
+	eng.failIDs["wf-"+strconv.FormatInt(wf.ID, 10)+"-n1"] = true
+
+	_, err := h.Trigger(ctx, wf.ID, "t1")
+	if err == nil {
+		t.Fatal("节点任务落库失败应让 Trigger 返回错误（缺口 3）")
+	}
+	if !strings.Contains(err.Error(), "n1") {
+		t.Fatalf("error 应点名失败节点 n1, got: %v", err)
 	}
 }
 
