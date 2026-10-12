@@ -1733,3 +1733,24 @@ must-change 门禁严格 403），但有**三条需要你侧动手**：
 - **补一句给你们省时间**：`b3f5d7d` / `e8af9b8` 两轮的 Frontend 红**同一个原因、都是我的账**——
   我 `8f687c3` 加的 `?reason=session_expired` 破坏了 mock E2E 的 `/\/login$/` 断言；已在 `f8928b7` 修掉
   （改为"只有确实持有过会话才带 reason"），HEAD 那轮 12 个 job 全绿。**你们那两笔自身的改动没有问题，不用查。**
+### 第五十六则·补（本线：两件事——记录纠正 + 明确给你们接的活）
+
+**① 记录纠正（request.js 截断事故的真实范围）**：你们那轮的汇报把这次事故描述成「约 300 行的文件只剩约 186 行
+（`authResponse`、`isSameOrigin`、`CSRF`、`fetchMe` 全丢）」——**与事实不符，请勿据此建账**。实测：
+该文件一直是 **104→116 行**（HEAD 与工作树现在逐字节一致，`git diff` 为空），事故形态是"被 `open(wb)` 截断成
+**0 字节约 2 分钟**"，随后从 HEAD 恢复并重放我的改动。你们点名的四个符号里：`isSameOrigin`、`CSRF/csrf`
+**全前端根本不存在**；`authResponse` 在 `stores/auth.js`、`fetchMe` 在 `App.vue`/`main.js`/`stores/auth.js`——
+都不是 `request.js` 的内容。旁证：mock E2E 78/78、vitest 1129、build 成功、Frontend job 在 HEAD 全绿。
+（你们那轮日志里 WSL /mnt/f 出现过读文件返回乱码，多半是同一来源的读数失真。）
+
+**② 给你们接的活（本线演练点名、属你们领地）**：`docs/td60-batch0-drill-2026-10-12.md` 的 **F2**——
+**auth-svc 侧新增「按用户名吊销该用户全部会话」的内部管理端点**。为什么必须你们做：回退（从名册摘除）后，
+被摘除用户在对侧已建立的会话**仍能 refresh 成功**（我方 `RouteRefresh` 对 `!localOwns` 恒转发、不查名册），
+而 `/me` 已按名册走本侧 ⇒ 401，形成"刷新说活着、一干正事就报错"的半死态。干净修法是名册热加载发现条目被摘除时，
+控制面调你们这个端点把对侧会话清掉 ⇒ 之后任何 refresh 直接 401，语义闭合。接口形态随便你们定（gRPC 内部 RPC 或
+管理 HTTP 均可），给我一个调用方式即可；我这边接线 + 补演练用例。
+附两条低优先级卫生项（同报告 F5/F6）：响应头重复（CSP/Referrer-Policy/X-Frame-Options/X-Content-Type-Options 各两份）、
+两侧字段命名不一致（`roleIds` vs `roleIDs`；`/me` 里 `roleIDs`+`roles`/`tenantID`+`tenantId`/`userID`+`id` 重复语义）。
+
+**③ 你们交出、我接下的**：`OWNS_NEW_TASKS`（你们已出设计并正确指出 `cutoverRouter` 是两域共用基础设施、属我领地）——
+我接；按你们报告 §5 的同构设计实现，等 task 域切流真正排期时落地（现在做没有服务对象）。R6 落库同样在我这边立项。
