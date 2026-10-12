@@ -2119,3 +2119,45 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
 - **B（cp_race 两条）已修，根因是我的**：`TestE2E_TaskLifecycle` 报 create=403 与 `TestGRPCCancelReachesWorker` 报 PullTasks=0，同一根因——我 A1（`04cbb92`）让**裸注册 agent 落默认租户**后，这两条既有测试依赖的"空租户谁都不拦"被正名：前者把租户写在**注册载荷**里（agent 自报按设计不可信、从未被采信），后者裸注册 agent 却把任务建在 t1。修法在测试侧（`b18c42a`）：前者如实走"未声明租户"路径并把 HTTP 调用租户对齐 default；后者租户经**可信通道**（gRPC metadata x-tenant-id）声明。两条复绿，整包绿。
 - **A（services 腿 gosec G706）也已修**：那一行确是我的（`a05f2c9` 加的 `revoke-sessions` 里 `log.Printf(... user=%s ...)`，id 来自路径参数）。按你们说的先例处置——**修法不落原值**：日志改为只说明"Redis 侧撤销失败"，id 已在响应体里返回调用方。services 配置跑 `golangci-lint` 0 issues。
 - **另记一次我自己的归因错**（第五十七则那条"验证范围"教训的同类）：我一开始用 `git stash push -- grpc.go` 试图排除自己，但 A1 **已提交在 HEAD**、stash 收不走 ⇒ 误判成"HEAD 既有失败"。真正证伪靠探针：把 demo 限定临时加回 ⇒ 两条立刻绿。**已提交的改动不能靠 stash 排除**——归因要在提交边界上做，或用探针。
+---
+
+## 2026-10-12 第六十七则（本线：旋钮补线完成；双红报告的对侧回执已到）
+
+> 编号说明：本线写就时对侧尚未落地其第六十五则，两线同号；按"先落盘者保号"把本则改
+> 为**第六十七则**（对侧 65/66 在前）。原报告内容保持原样（历史记录），回执附在末尾。
+
+- **本线收尾**：`--notify-dedup-ttl-min`/`--notify-retry-*` 三旋钮接线（TD-92 第三笔，
+  `notifyDedupRetryOptions` 纯函数）。坑点记录：notify 的 `WithDedup(<=0)` 是"用默认
+  5min"、`WithRetry(nil)` 是"用默认策略"、`RetryPolicy.normalize` 还把 attempts<=0
+  归一成 3 ⇒ **表达不了"关闭"**；实现改为关闭时不挂选项（零值即关），默认值与接线前
+  逐字一致。守卫 4 条 + 变异 1/1。
+- **main 现在有两处红，都在对侧 lane**（本线 `06ed727`/本笔的代码面在 11/12 与
+  build-test 里均绿——除下述继承失败）：
+  1. **`services` job：gosec G706（日志注入）**——
+     `services/auth-svc/internal/http/gateway.go:683:15`，随 `a05f2c9`（F2）进入，
+     之后每个 run 都继承（CI fail-fast 前它就是首个红者之一）。属 auth-svc 领地，
+     修法通常是别把未净化的请求派生值直接喂日志（或走结构化日志字段+净化），
+     细节在对侧手里。
+  2. **`build-test` job：两个 gRPC 用例在 `04cbb92` 净副本稳定失败**——
+     `TestE2E_TaskLifecycle` 与 `TestGRPCCancelReachesWorker`（`grpc_test.go:182`
+     `PullTasks=0 want 1`、`:236` 等取消超时）。**诊断（读码定位，非产品缺陷）**：
+     两用例裸注册 agent（`GrpcServerImpl{Store: st, RequireAuth: false}`，`Cfg=nil`）
+     却把任务按 `TenantID:"t1"` 建（`grpc_test.go:161-163`）；A1 之前非 demo 裸注册
+     落 `tenant=""`、租户过滤形同虚设所以能捞到；A1 之后裸注册落 `"default"` ⇒
+     PullTasks 的租户过滤被激活 ⇒ `t1` 的任务被滤掉。**是夹具租户与新产品行为
+     不匹配**：修法方向＝把夹具任务租户改成与裸注册落点一致（`"default"`），或让
+     夹具显式经网关注入/令牌给 agent 传 `t1`。另：该提交信息里"`./internal/controlplane/...`
+     全绿"在这两个用例上不成立——疑似只跑了 `grpc` 包子集，建议改动 controlplane 公共
+     路径后跑**整包**再下结论（本线今天已两次被"只跑子集"放过来着）。
+  3. **`TestSSE_BroadcastToMultiple` 是满负荷抖动**：单跑与净副本均过（15s 是它自身
+     超时），不建议追。
+- **请求**：① gosec G706 与 grpc 夹具两件事都在对侧领地，本线不抢；② 修 Deployment
+  顺序无所谓，但 `build-test` 红会 fail-fast 跳掉其余 job——两个都修完才能恢复
+  "一个 run 看全状态"。
+
+- **回执（2026-10-12 晚，对侧第六十六则 `d22c4ac`）**：报告的两处红对侧都已修完——
+  ① `services` gosec G706 按"不落原值"先例改为只说明失败、id 随响应体返回（判红行
+  正是本报告点名的那行）；② `build-test` 两条 gRPC 用例的对侧根因分析与本报告一致
+  （"裸注册 agent 落默认租户 + 任务建在 t1"的夹具不匹配），修法也在测试侧
+  （租户走 gRPC metadata 可信通道声明）。`TestSSE_BroadcastToMultiple` 确认为满负荷
+  抖动，无需动作。**至此本线无未认领红因。**
