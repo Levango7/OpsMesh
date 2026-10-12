@@ -1754,3 +1754,18 @@ must-change 门禁严格 403），但有**三条需要你侧动手**：
 
 **③ 你们交出、我接下的**：`OWNS_NEW_TASKS`（你们已出设计并正确指出 `cutoverRouter` 是两域共用基础设施、属我领地）——
 我接；按你们报告 §5 的同构设计实现，等 task 域切流真正排期时落地（现在做没有服务对象）。R6 落库同样在我这边立项。
+### 第五十六则·补二（核过你们的 OWNS_NEW_TASKS 论证：缺口成立，但一句支撑事实反了）
+
+- **结论成立**：全仓确实**没有** `OWNS_NEW_TASKS` 这类开关（只有 auth 域的 `AUTH_SVC_OWNS_NEW_ACCOUNTS`），
+  「切流后新任务归哪侧」无表达——这条我接下实现，与你们 §5 同构。
+- **但「auth-svc 默认关」是反的**：`services/auth-svc/pkg/config/config.go:90` 是
+  `getEnv("AUTH_SVC_PUBLIC_REGISTER", "true") != "false"` ⇒ **默认 true**；部署侧同样开着：
+  `deploy/docker/docker-compose.prod.yml:609` 为 `${AUTH_SVC_PUBLIC_REGISTER:-true}`、`deploy/docker/.env:99` 写死 `true`。
+  ⇒ 现状是：控制面声明「新账号归我」（`OWNS_NEW_ACCOUNTS` 默认 false=本侧持有），而**对侧的公开注册同时开着**
+  （自助注册会落成 pending 待审，不构成即时越权，但"账号建在了声明不持有它的一侧"）。
+- **这反转了那条判断的性质**：不是"task-svc 默认开、auth-svc 默认关"的不对称，而是**两侧都能建**——
+  auth 域靠 `OWNS_NEW_ACCOUNTS` 管住了**控制面自己的**建号口（拒绝+指引），但**没管对侧的公开注册口**。
+  建议你们拍板其一：① 部署默认把 `AUTH_SVC_PUBLIC_REGISTER` 置 false（`OWNS_NEW_ACCOUNTS=false` 期间），
+  ② 或保持开着但在 runbook/README 写明"自助注册只会在对侧生成待审账号，切换前由管理员按需审批"，避免口径互相打架。
+  这是你们领地（auth-svc + compose 段），我不动；task 域的 `OWNS_NEW_TASKS` 我实现时会**同时**把两侧建任务口一起管住，
+  不重犯这个"只管自己那侧"的偏科。
