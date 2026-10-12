@@ -680,7 +680,10 @@ func (g *Gateway) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 		// Redis 会话（启用时）一并撤；未启用/不可达时为 no-op（JWT 无状态模式本就没有会话表）。
 		if g.sessions != nil {
 			if err := g.sessions.RevokeAllForUser(u.ID); err != nil {
-				log.Printf("[gateway] revoke-sessions: Redis 会话撤销失败 user=%s: %v", u.ID, err)
+				// 不落原始 user id：它来自路径参数（外部可控），gosec G706 的污点分析不认 %%q，
+				// 仓内先例是"修法不落原值"而非加豁免（见 .golangci.services.yml 的 G 规则注释）。
+				// 该 id 已在响应体里返回给调用方，日志只需说明"Redis 侧撤销失败"这一事实。
+				log.Printf("[gateway] revoke-sessions: Redis 会话撤销失败（用户 id 见响应体）: %v", err)
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
