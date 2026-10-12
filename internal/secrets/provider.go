@@ -200,13 +200,16 @@ func (c *ChainProvider) Name() string {
 //
 // 为什么要单独暴露这条判据（TD-88 方向裁定：引用格式优先）：调用方需要在**不解析**的前提下
 // 判断「这个值是不是明文凭据」，以便在明文时告警（如通知渠道的 webhookURL/secret/pass）。
-// 与 ResolveSecret 的非引用分支同源——两处判断必须一致，故只留这一处实现。
+// 这是「引用 vs 明文」形状判断的**唯一实现**：ResolveSecret 与
+// model.RequireSecretReference 都复用本函数（TD-93 收口，2026-10-12——此前
+// ResolveSecret 自己内联了一份缺 len>3 下界的 HasPrefix/HasSuffix 判断，
+// 导致 "${}" 在两侧结论相反：本函数判明文、ResolveSecret 当引用走 provider.Get("")）。
 func IsReference(value string) bool {
 	return strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") && len(value) > 3
 }
 
-// ResolveSecret 解析密钥引用。如果 value 以 "${" 开头且以 "}" 结尾，从 provider 解析；
-// 否则 value 本身就是明文密钥，直接返回（向后兼容）。
+// ResolveSecret 解析密钥引用。引用格式（判定见 IsReference：整串 ${...} 包裹且
+// 长度 >3）时从 provider 解析；否则 value 本身就是明文密钥，直接返回（向后兼容）。
 //
 // 引用格式：
 //   - ${provider:key}（如 ${vault:notify/dingtalk#secret}）：指定 provider 名称解析。
@@ -215,9 +218,14 @@ func IsReference(value string) bool {
 //   - ${key}（如 ${notify/dingtalk/webhook_url}）：用传入的 provider 解析（默认 provider）。
 //
 // provider 为 nil 或 value 不是引用格式时，直接返回明文 value。
+//
+// TD-93 收口（2026-10-12）：非引用分支的判定从「内联 HasPrefix/HasSuffix」改为
+// **调用 IsReference**——形状判断自此只有一份实现。被显式裁定的边界行为：
+// `"${}"`（空引用）按**明文直传**（与 IsReference 及 PlaintextSensitiveFields/
+// RequireSecretReference 的结论一致，告警口径会点名它），不再走 provider.Get("")。
 func ResolveSecret(value string, provider SecretProvider) (string, error) {
-	// 非引用格式：明文直接返回。
-	if !strings.HasPrefix(value, "${") || !strings.HasSuffix(value, "}") {
+	// 非引用格式：明文直接返回（判据与 IsReference 同一处，TD-93）。
+	if !IsReference(value) {
 		return value, nil
 	}
 	// provider 为 nil 时无法解析引用，保守返回原文（避免误把引用当密钥）。

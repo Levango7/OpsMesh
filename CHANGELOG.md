@@ -4,6 +4,53 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-12（TD-92 收口：告警外发渠道单一口径——文件多渠道真送达、两条死路闭合）
+
+- **现象**：`notify.Notifier` 的两处生产构造（`server.go:361`/`:424`）从不传
+  `WithChannels` ⇒ `channels` 恒空 ⇒ `sendToAll` 静默 `return nil`。两个真实消费方
+  全部"调用成功、一条不发"：M2 聚合组通知（`notifyAlertGroup`）与自动化「发送通知」
+  动作（`automationExecutor.SendNotify`）。`--notify-channels-config` 多渠道文件同批
+  躺枪——只被 `redactNotifyChannels` 诊断输出消费，配了没有任何发送路径用它。
+- **口径裁定**：自动告警外发的渠道**只来自启动期配置**，`notifyLoop`（M7）是唯一
+  发送点——① CLI 单通道旗帜（`--alert-webhook-url/--alert-notifier-type/--alert-email-*`，
+  alert 形状，真机实测口径一字未动）；② `--notify-channels-config` 文件
+  （message 形状，经 `newAlertNotifier` 注入）。`deliverAlert` 合并两路为统一入口。
+  现网用启动参数的用户行为不变；文件渠道从"死配置"变为真送达。
+- **两条死路闭合**：① M2 聚合组**不再直调 Notify**（同批事件本就经
+  `store.AddAlert` 落库、由 notifyLoop 外发，两边同时发＝重复投递）；组消息代码随之
+  删除。② 自动化 SendNotify **无渠道时明确报错**（指引 `--notify-channels-config`），
+  不再静默成功。另修 SecretProvider 重建丢渠道（两处构造走同一 helper）。
+- **守卫 9 条 + 变异 3/3**（`td92_alert_channels_test.go`）：文件渠道注入、重建保留、
+  SSRF 不达标跳过该条、`deliverAlert` 送达/无渠道/聚合报错三态、`notifyAlertGroup`
+  不直调、SendNotify 无渠道报错 + 正路径送达。变异：撤 `WithChannels` ⇒ 4 条红；
+  撤无渠道判据 ⇒ 红；恢复 M2 直调 ⇒ 红。
+- **如实记录的未接线项**（docs/operations.md §4.6.0.1 新表）：UI「通知渠道」页仍只
+  服务测试按钮；`AlertRule.NotifyChannels` 仍零读取点（api-reference/architecture 的
+  "通知渠道选择"宣称已改为"未接线"）；TD-88 的构造期明文告警仍只覆盖测试按钮路径；
+  `--notify-dedup-ttl-min`/`--notify-retry-*` 三旋钮仍未接线（0=关闭 vs
+  WithDedup(0)=用默认，语义相反，另立项）。
+
+## [Unreleased] — 2026-10-12（TD-93 收口：`ResolveSecret` 判据改调 `IsReference`，形状判断全仓只剩一份）
+
+- **问题**：「引用 vs 明文」的形状判断实际存在**两份**——`secrets.IsReference`（带
+  `len(value) > 3` 下界）与 `ResolveSecret` 自己内联的 `HasPrefix/HasSuffix`（无下界），
+  在 `"${}"` 上结论相反：前者判明文（`PlaintextSensitiveFields` 于是报「明文凭据」），
+  后者当引用继续走 `provider.Get("")`；而 `model.RequireSecretReference` 早已复用
+  `IsReference` 会拒绝 `"${}"` ⇒ 告警口径、解析路径、写契约三处对同一取值三个说法。
+  另有两处文档把「只有一份判据」写成了既成事实（`security-mechanism.md` §6.9、
+  TD-88 收口条）——措辞领先于代码。
+- **修复（一行级）+ 显式裁定**：`ResolveSecret` 非引用分支改为
+  `if !IsReference(value) { return value, nil }`，门禁判据
+  `grep -c '!strings.HasPrefix(value, "${")' internal/secrets/provider.go` = 0；
+  **`"${}"`（空引用）裁定按明文直传**——与三处既有结论一致，全仓裸串 `${}` 5 处命中
+  无一在配置/迁移/示例里当值使用（实测分级：漂移面，非客户故障）。
+- **守卫**：`TestResolveSecret_EmptyReferenceIsPlaintext`——nil/真 provider 两条路径
+  都断言直传不出错，并带前提反转护栏（`IsReference("${}")` 若哪天改为 true 本用例
+  直接红，迫使重新评审裁定）。
+- **文案同步**（改成与代码一致）：`provider.go` 判据注释、`secretref.go:24`、
+  `security-mechanism.md` §6.9 两处、两条 Unreleased CHANGELOG 条目；台账 TD-93 行
+  标记收口、TD-88 行补注"同源"宣称自此才真成立。
+
 ## [Unreleased] — 2026-10-12（Create* 落库失败调用面守卫：31 处审计闭合两洞一扫尾）
 
 - **审计**：对 sqlstore 全部 20 个 `Create*`（FIXPLAN H2 起即为真 INSERT +
@@ -345,7 +392,7 @@
 
 ## [Unreleased] — 2026-10-10（TD-88 收口：secrets 表「只存引用」落到 store 契约层 + 启动扫描明文存量）
 
-- **新增｜store 契约层拒绝明文（`model.RequireSecretReference`）**：`secrets` 表只接受 `${provider:key}` 引用，明文一律拒绝（`SetSecret`/`RotateSecret` 返回 nil 并记录失败）。判据复用 `secrets.IsReference`（与 `ResolveSecret` 同源，形状判断只有一份实现）。落点选**中性层一处**而非各消费方：该表经两次自查在生产代码里**消费方为零**，钉在契约上则任何未来消费方自动受保护，也避免三个后端各写一份形状判断而漂移；memory/sql 各接一行（`RotateSecret` 委托 `SetSecret` ⇒ 自动覆盖），multischema 委托内层后端。
+- **新增｜store 契约层拒绝明文（`model.RequireSecretReference`）**：`secrets` 表只接受 `${provider:key}` 引用，明文一律拒绝（`SetSecret`/`RotateSecret` 返回 nil 并记录失败）。判据复用 `secrets.IsReference`（TD-93 收口后与 `ResolveSecret` 共用同一份形状判断）。落点选**中性层一处**而非各消费方：该表经两次自查在生产代码里**消费方为零**，钉在契约上则任何未来消费方自动受保护，也避免三个后端各写一份形状判断而漂移；memory/sql 各接一行（`RotateSecret` 委托 `SetSecret` ⇒ 自动覆盖），multischema 委托内层后端。
 - **新增｜启动扫描明文存量告警（`warnPlaintextSecrets` + 可测谓词 `plaintextSecretKeys`）**：`NewServer` 启动时列出 `secrets` 表、点名非引用的 `tenant/key`（最多展示 5 条 + 总数，不回显值）并告警；**只告警不阻断**——存量是历史数据，阻断会让升级直接失败，而该表消费方为零 ⇒ 风险面有限，把「该迁移」变成可观测事件即可（新写入已被契约拒绝，故告警随人工轮换自然归零）。谓词抽成纯函数以可测（同 notify 的 `PlaintextSensitiveFields` 先例）。
 - **兼容性与测试**：8 处既有测试取值改为引用形态（含 2 处轮换断言随之更新）；新增三组用例——契约边界（`${a}` ✓ / `${` ✗ / `a${b}c` ✗ / 明文 webhook URL ✗）、memory 后端拒收且**被拒的轮换不改动原值**、启动扫描判定（空表/全引用不报；明文点名且按 tenant/key 升序）。
 - **验证**：`internal/store` 五包 + `internal/controlplane` 全绿（memory 24.9s / multischema 11.5s / controlplane 42.8s）；`-race` **零竞态**；`golangci-lint` **0 issues**；`gofmt -l` 净；部署门禁 PASS=76。
@@ -372,7 +419,7 @@
 ## [Unreleased] — 2026-10-10（TD-88 方向落地首件：通知渠道明文凭据告警 + 引用判据唯一化；方向=引用格式优先）
 
 - **TD-88 方向裁定（用户：「用更安全的那个」）＝ 引用格式 `${provider:key}` 优先**：密钥本体由外部 provider 持有、**不随库同机**（库级静态加密的密钥与库同机，是该侧较弱处），且引用机制（`internal/secrets` 的 SecretProvider 链 + `ResolveSecret`）已建成投产、通知渠道解析路径已接线。裁定与剩余项落进台账 TD-88 行与 `docs/security-mechanism.md` §6.9。
-- **新增｜`secrets.IsReference`（引用/明文的唯一判据）**：与 `ResolveSecret` 的非引用分支同源，避免两处判断漂移；表驱动用例锁住边界（`${a}` ✓ / `${}` ✗ / 部分包裹 ✗ / 明文 URL ✗）。
+- **新增｜`secrets.IsReference`（引用/明文的唯一判据）**：`ResolveSecret` 的非引用分支与 `model.RequireSecretReference` 均调用它（TD-93 收口后全仓只有这一份形状判断），避免两处判断漂移；表驱动用例锁住边界（`${a}` ✓ / `${}` ✗ / 部分包裹 ✗ / 明文 URL ✗）。
 - **新增｜通知渠道构造期明文凭据告警（不阻断，兼容优先）**：`PlaintextSensitiveFields` 纯谓词识别敏感字段——webhook 系渠道的 `webhookURL`（URL 内嵌 token）、钉钉/飞书的 `secret`、email 的 `pass`；**Slack 的 `channel` 是频道名不计入**（防假告警，用例里专门钉住这条边界）；告警含 channelID/type/字段名、**不回显值**，未配置 `--secret-provider` 时额外提示该开关。抽成纯函数是为了让「哪些字段算敏感」这件事可测——渠道演进时忘登记敏感字段会让明文静默通过。
 - **文档**：`docs/security-mechanism.md` 新增 §6.9（引用优先的裁定 + 运行时判据 + 与 §12.1.4 上线前自检项的两道关系 + 剩余项）。
 - **验证**：`go test ./internal/controlplane/ ./internal/secrets/` 全绿（67.6s + 4.8s）；`golangci-lint` **0 issues**；`gofmt -l` 净。

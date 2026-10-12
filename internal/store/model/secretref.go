@@ -21,7 +21,8 @@ import (
 // 把契约钉在**中性层的一处**，任何未来消费方都自动受保护，且三个后端（memory/sql/multischema）
 // 只需各调一行，不会出现「三处形状判断各自漂移」。
 //
-// 判据复用 internal/secrets.IsReference（与 ResolveSecret 的非引用分支同源，形状判断只有一份实现）。
+// 判据复用 internal/secrets.IsReference（「引用 vs 明文」形状判断的唯一实现：
+// ResolveSecret 的非引用分支同样调用它，TD-93 收口后全仓只有这一份）。
 func RequireSecretReference(value string) error {
 	if secrets.IsReference(value) {
 		return nil

@@ -981,7 +981,7 @@ M5 定时任务管理：基于 `internal/cron.Manager`，对已有任务附加 c
 
 ## 告警规则引擎 API
 
-M2 多条件告警规则引擎：基于 `alertengine.Engine`，支持多条件 + 逻辑组合（AND/OR/NOT）+ 持续时长 + 通知渠道选择 + 静默关联。走独立路由 `/api/v1/alert-rules-engine` 以与旧版单条件 `/api/v1/alert-rules` 向后兼容。
+M2 多条件告警规则引擎：基于 `alertengine.Engine`，支持多条件 + 逻辑组合（AND/OR/NOT）+ 持续时长 + 静默关联。走独立路由 `/api/v1/alert-rules-engine` 以与旧版单条件 `/api/v1/alert-rules` 向后兼容。规则体的 `notifyChannels` 字段（渠道 ID 列表）**当前不参与投递路由**——TD-92 裁定自动告警外发的渠道只来自启动期配置（`--alert-*` 旗帜 + `--notify-channels-config` 文件），按规则选渠道另立项（见 docs/operations.md §4.6 通道口径表）。
 
 ### GET /api/v1/alert-rules-engine
 

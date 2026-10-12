@@ -91,8 +91,10 @@ func (s *Server) notifyLoop(ctx context.Context) {
 				if !s.alertAggr.Allow(a, now) {
 					continue
 				}
-				// 多通道推送（Webhook + Email；Slack/企业微信由 URL 域名自动识别）。
-				if err := s.alertChannels.Push(a); err != nil {
+				// 外发统一入口（TD-92）：CLI 单通道（alert 形状）+
+				// 文件多渠道（message 形状）；任一路失败即整体失败并撤销指纹，
+				// 下轮扫描重试（不保留"已推送"标记 ⇒ 偶发失败不会永久丢通知）。
+				if err := s.deliverAlert(a); err != nil {
 					logx.Error(ctx, "告警推送失败", err, "alertID", a.AlertID)
 					// 推送失败不保留指纹标记，下轮扫描重试。
 					s.unmarkAlertSent(a.AlertID)

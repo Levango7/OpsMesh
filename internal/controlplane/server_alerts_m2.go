@@ -23,7 +23,9 @@
 //   - 周期遍历所有设备，调用 alertEngine.Evaluate 触发告警事件；
 //   - 经 alertSilencer.IsSilenced 过滤被抑制的事件；
 //   - 经 alertAggregator.Aggregate 聚合；
-//   - 通过 alertNotifier.Notify 推送到所有已配置渠道。
+//   - 聚合组经 notifyAlertGroup 写入 store.AddAlert；**外发由 M7 notifyLoop 统一完成**
+//     （CLI 单通道 + --notify-channels-config 文件多渠道，见 deliverAlert）——
+//     评估循环本身不再直接发送（TD-92 收口前此处直调 Notifier，渠道恒空、静默丢弃）。
 package controlplane
 
 import (
@@ -49,7 +51,7 @@ import (
 //  2. 对每台设备调用 alertEngine.Evaluate 触发告警事件；
 //  3. 经 alertSilencer.IsSilenced 过滤被抑制的事件；
 //  4. 经 alertAggregator.Aggregate 聚合（按 deviceID + severity 分组）；
-//  5. 对每个聚合组构造 notify.Message 并通过 alertNotifier.Notify 推送；
+//  5. 对每个聚合组调用 notifyAlertGroup 写入 store（外发由 notifyLoop/deliverAlert 统一负责）；
 //  6. 同时写入 store.AddAlert 使其在 /api/v1/alerts 列表可见。
 //
 // 启动条件：alertEngine 非 nil（NewServer 总是构造）；无规则时 Evaluate 返回空切片，零开销。

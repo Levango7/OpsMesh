@@ -271,6 +271,29 @@ func TestResolveSecret_NilProvider(t *testing.T) {
 	}
 }
 
+// TestResolveSecret_EmptyReferenceIsPlaintext TD-93 守卫：空引用 "${}" 的结论
+// 必须与 IsReference 一致——按明文直传、不调 provider。此前 ResolveSecret 内联
+// 的那份判据缺 len>3 下界，会把它当引用走 provider.Get("")，与告警口径
+// （PlaintextSensitiveFields 报明文）和契约（RequireSecretReference 拒绝）相反。
+func TestResolveSecret_EmptyReferenceIsPlaintext(t *testing.T) {
+	if IsReference("${}") {
+		t.Fatal("前提已变：IsReference(\"${}\") 现在判为引用了——本用例的裁定需重新评审")
+	}
+	p := NewEnvProvider("OPSMESH_")
+	got, err := ResolveSecret("${}", p)
+	if err != nil {
+		t.Fatalf("ResolveSecret(\"${}\") 应按明文直传且不出错，实得 err=%v", err)
+	}
+	if got != "${}" {
+		t.Errorf("ResolveSecret(\"${}\") 应按明文直传，实得 %q", got)
+	}
+	// nil provider 同理（两条路径都不得把空引用当引用）。
+	got, err = ResolveSecret("${}", nil)
+	if err != nil || got != "${}" {
+		t.Errorf("nil provider 空引用应直传原文，实得 %q, err=%v", got, err)
+	}
+}
+
 func TestResolveSecret_NotFound(t *testing.T) {
 	os.Unsetenv("OPSMESH_NOT_EXIST_REF_265")
 	p := NewEnvProvider("OPSMESH_")

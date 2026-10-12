@@ -81,9 +81,17 @@ func (a *automationExecutor) ExecuteTask(tenantID, deviceID, command string, par
 }
 
 // SendNotify 发送通知到指定通道。
+//
+// TD-92 收口：无渠道时**明确报错**而不是静默返回 nil——此前 notifier 生产构造从不
+// 注入渠道（channels 恒空，sendToAll 静默 return nil），调用方收到"成功"，
+// 实际一条都没发出去。渠道来源：--notify-channels-config 文件（message 形状）。
 func (a *automationExecutor) SendNotify(tenantID, channel, message string, params map[string]string) error {
 	if a.notifier == nil {
 		return fmt.Errorf("notifier not configured")
+	}
+	if len(a.notifier.Channels()) == 0 {
+		return fmt.Errorf("未配置通知渠道：请通过 --notify-channels-config（或 OPSMESH_NOTIFY_CHANNELS_CONFIG）" +
+			"提供多渠道配置；配置前自动化通知不会发送（TD-92 起不再静默丢弃）")
 	}
 	msg := &notify.Message{
 		Title:     "自动化规则通知",

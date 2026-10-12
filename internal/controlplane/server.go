@@ -152,7 +152,8 @@ type Server struct {
 	// alertEngine 持有 alertengine.AlertRule 集合，周期评估设备指标触发告警事件；
 	// alertSilencer 按标签匹配 + 时间窗口抑制告警事件；
 	// alertAggregator 按 groupBy 字段聚合告警事件（避免告警风暴）；
-	// alertNotifier 多渠道推送（钉钉/企业微信/飞书/Slack/邮件/Webhook）+ 模板渲染 + 重试 + 去重。
+	// alertNotifier 多渠道推送（渠道来自 --notify-channels-config 文件；TD-92 收口前
+	// 生产构造从不注入渠道，Notify 恒静默丢弃）+ 模板渲染 + 重试 + 去重。
 	// 全部在 NewServer 构造；nil=未启用 M2 告警引擎（向后兼容，仅依赖 notifyLoop 推送）。
 	alertEngine     *alertengine.Engine
 	alertSilencer   *alertengine.Silencer
@@ -358,7 +359,10 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		alertEngine:     alertengine.NewEngine(nil, nil, nil),
 		alertSilencer:   alertengine.NewSilencer(nil),
 		alertAggregator: alertengine.NewAggregator([]string{"deviceID", "severity"}, 100),
-		alertNotifier:   notify.NewNotifier(notify.WithDedup(5*time.Minute), notify.WithRetry(nil)),
+		// TD-92：Notifier 的唯一装配入口（去重+重试+--notify-channels-config 文件渠道）。
+		// 此前两处生产构造都不传 WithChannels ⇒ channels 恒空 ⇒ M2/自动化的通知全部
+		// 静默丢弃；SecretProvider 重建（下方）也走同一 helper，渠道不再丢失。
+		alertNotifier: newAlertNotifier(cfg, nil),
 		// H5 认证接入：API Key 管理引擎（复用 store，ValidateKey/HasScope 均为只读操作）。
 		apiKeyMgr: platform.NewAPIKeyManager(st),
 		// LastUsedAt 内存聚合计数（MVP：仅累计不落库，见 Server.apiKeyUsage 注释）。
@@ -420,12 +424,9 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	}
 	if secretProvider != nil {
 		s.secretProvider = secretProvider
-		// 重新构造 alertNotifier 并注入 SecretProvider（保留原有 Dedup+Retry 选项）。
-		s.alertNotifier = notify.NewNotifier(
-			notify.WithDedup(5*time.Minute),
-			notify.WithRetry(nil),
-			notify.WithSecretProvider(secretProvider),
-		)
+		// 重建 alertNotifier 注入 SecretProvider（走 newAlertNotifier 同一入口，
+		// 文件渠道随之保留——此前这里是裸 NewNotifier，重建即丢渠道）。
+		s.alertNotifier = newAlertNotifier(cfg, secretProvider)
 		logx.Info(context.Background(), "告警通道密钥外置已启用", "provider", secretProvider.Name())
 	}
 	if cfg.Demo {

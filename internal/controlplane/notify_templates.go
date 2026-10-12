@@ -12,8 +12,6 @@ import (
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
 	"github.com/Levango7/OpsMesh/internal/alertengine"
-	"github.com/Levango7/OpsMesh/internal/logx"
-	"github.com/Levango7/OpsMesh/internal/notify"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -191,45 +189,18 @@ func (s *Server) evaluateAnomalyForDevice(deviceID string) []*alertengine.AlertE
 	return events
 }
 
-// notifyAlertGroup 推送一个聚合告警组：构造 Message → Notifier.Notify + 写入 store.AddAlert。
+// notifyAlertGroup 落一个聚合告警组：逐事件写入 store.AddAlert（+ 抑制跟踪 + SSE）。
+//
+// TD-92 收口：**不再直接调 alertNotifier.Notify**。此前这段"构造 Message → Notify"
+// 在 Notifier 无渠道时静默丢弃（TD-92 根因），且与真实外发路径重复——同一批事件经
+// store.AddAlert 落库后，由 M7 notifyLoop 统一外发（CLI 单通道 + 文件多渠道，
+// 见 deliverAlert）。两条路径同时发会造成重复投递，故自动告警外发只保留
+// notifyLoop 这一个发送点；聚合组消息随之删除（它只为那条死调用服务）。
 func (s *Server) notifyAlertGroup(ctx context.Context, g *alertengine.AlertGroup) {
 	if g == nil || len(g.Events) == 0 {
 		return
 	}
-	// 构造消息正文（聚合组内事件摘要）
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "告警组 %s（共 %d 条）：\n", g.Key, len(g.Events))
-	for i, ev := range g.Events {
-		if i >= 10 {
-			fmt.Fprintf(&sb, "\n... 还有 %d 条", len(g.Events)-10)
-			break
-		}
-		fmt.Fprintf(&sb, "\n- [%s] %s（设备 %s，规则 %s）", ev.Severity, ev.Message, ev.DeviceID, ev.RuleID)
-	}
-	// 取组内最高严重度作为消息 Severity
-	severity := "info"
-	for _, ev := range g.Events {
-		if ev.Severity == "critical" {
-			severity = "critical"
-			break
-		}
-		if ev.Severity == "warning" && severity != "critical" {
-			severity = "warning"
-		}
-	}
-	msg := &notify.Message{
-		Title:     fmt.Sprintf("[OpsMesh][%s] 告警聚合 %s", severity, g.Key),
-		Body:      sb.String(),
-		Format:    "markdown",
-		Severity:  severity,
-		Source:    "alert-engine",
-		Timestamp: time.Now(),
-	}
-	// 通过 Notifier 推送（多渠道 + 去重 + 重试）
-	if err := s.alertNotifier.Notify(msg); err != nil {
-		logx.Warn(ctx, "告警聚合组推送失败", err, "groupKey", g.Key)
-	}
-	// 写入 store 使其在 /api/v1/alerts 列表可见
+	// 写入 store 使其在 /api/v1/alerts 列表可见，并经 notifyLoop 外发（deliverAlert）
 	for _, ev := range g.Events {
 		alert := alertEventToAlert(ev)
 		s.store.AddAlert(alert)

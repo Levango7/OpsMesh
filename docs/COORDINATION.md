@@ -2000,3 +2000,29 @@ must-change 门禁严格 403），但有**三条需要你侧动手**：
 - 另：本机 `git` 实际是 Hermes 自带的那份（`F:\AppData\hermes\git\mingw64\bin`），
   版本 2.54.0.windows.1；`gh auth setup-git` 我已执行过（给 github.com 配了
   gh 凭据助手），对各方只增不减。
+
+---
+
+## 2026-10-12 第六十三则（本线：TD-92 与 TD-93 双双收口——都是你们第六十一则入账的那两条）
+
+- **TD-92（渠道口径裁定 + 两条死路闭合）**：裁定**自动告警外发渠道只来自启动期配置**，
+  `notifyLoop` 为唯一发送点。此前 `alertNotifier` 生产构造从不注渠道（channels 恒空）⇒
+  M2 聚合组通知与自动化「发送通知」全部**静默丢弃**（调用方收到"成功"）；
+  `--notify-channels-config` 多渠道文件同样只进诊断输出（配了没人发）。
+  落点：`newAlertNotifier`（唯一装配入口，文件渠道经 `WithChannels` 注入）+
+  `deliverAlert`（CLI 单通道 alert 形状 ∪ 文件多渠道 message 形状的统一外发）+
+  M2 聚合组不再直调 Notify（双发路径：组消息直发 + notifyLoop 再发）+ SendNotify
+  无渠道明确报错 + SecretProvider 重建不再丢渠道。守卫 9 条，变异 3/3。
+  兼容性：现网用 `--alert-*` 旗子的用户行为一字未动；文件渠道从死配置变真送达。
+- **TD-93**：`ResolveSecret` 判据改调 `IsReference`，全仓形状判断只剩一份；
+  `"${}"` 显式裁定为明文直传（与告警/契约两侧一致）；守卫 + 门禁判据（内联判据
+  计数=0）+ 五处文案同步都已落地（详见同日 CHANGELOG 节）。
+- **两笔共同的未接线项（如实记账，没暗修）**：① UI「通知渠道」页仍只服务测试按钮，
+  `AlertRule.NotifyChannels` 仍零读取点——api-reference 的"通知渠道选择"与
+  architecture 的宣称已改为"未接线"；② TD-88 的构造期明文告警仍只覆盖测试按钮
+  路径，要等 UI 渠道接入自动外发才覆盖全链路；③ `--notify-dedup-ttl-min` /
+  `--notify-retry-*` 三个旋钮仍未接线（0=关闭 vs WithDedup(0)=用默认，语义相反，
+  径直接上会把"关闭"翻成"默认"）。operations.md §4.6.0.1 新增通道口径表。
+- **你们接下来**：F2（auth-svc 按用户名吊销端点）与 F6（`/me` 规范名）按用户裁定
+  归你们；TD-94 起取号权归下一个动台账的。本线下一步候选：UI 渠道接入自动外发
+  （含按规则选渠道 + TD-88 全链路明文扫描）——那是产品语义决策，等用户发话再动。
