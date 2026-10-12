@@ -220,6 +220,9 @@ func (s *Server) handleBatchExec(w http.ResponseWriter, r *http.Request) {
 	if s.metrics != nil {
 		s.metrics.SetQueueDepth(s.store.PendingDepth())
 	}
+	// R6：写穿记录（重启后 batchID 仍可查）。失败只留痕不阻断——任务实例已落库，
+	// 此时返 5xx 会让客户端重试并**再建一批任务**（见 batch_records.go 头注释）。
+	s.persistTaskRecord(taskRecordKindBatch, bt.TenantID, batchID, bt)
 	paginate.WriteJSON(w, http.StatusCreated, map[string]interface{}{
 		"batchID": batchID,
 		"tasks":   items,
@@ -239,10 +242,8 @@ func (s *Server) handleBatchStatus(w http.ResponseWriter, r *http.Request, id st
 	if _, ok := s.requireProd(w, r, "task:read"); !ok {
 		return
 	}
-	s.batches.mu.RLock()
-	bt, exists := s.batches.batches[id]
-	s.batches.mu.RUnlock()
-	if !exists {
+	bt := s.batchSnapshot(actx.TenantID, id) // R6：内存未命中自动回落持久化记录
+	if bt == nil {
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "batch not found"})
 		return
 	}
@@ -368,6 +369,8 @@ func (s *Server) handleCanaryCreate(w http.ResponseWriter, r *http.Request) {
 	s.batches.mu.Lock()
 	s.batches.canaries[canaryID] = canary
 	s.batches.mu.Unlock()
+	// R6：写穿记录（同批次语义，失败只留痕不阻断）。
+	s.persistTaskRecord(taskRecordKindCanary, canary.TenantID, canaryID, canary)
 
 	// 返回阶段摘要（不含每任务详情，前端按需查询）。
 	phaseSummary := make([]map[string]interface{}, len(canary.Phases))
@@ -519,16 +522,14 @@ func (s *Server) handleCanaryStatus(w http.ResponseWriter, r *http.Request, id s
 	if _, ok := s.requireProd(w, r, "task:read"); !ok {
 		return
 	}
-	// RLock 下拷贝只读快照（phase 列表、每阶段 taskIDs/status 等），释放锁后再遍历刷新状态。
-	s.batches.mu.RLock()
-	c, exists := s.batches.canaries[id]
-	if !exists {
-		s.batches.mu.RUnlock()
+	// R6：取**私有快照**（内存索引命中则锁内深拷贝；未命中回落持久化记录）。
+	// 拿到的是调用方独占的副本，故后续拷贝/刷新都在锁外进行，不再需要索引锁。
+	c := s.canarySnapshot(actx.TenantID, id)
+	if c == nil {
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "canary not found"})
 		return
 	}
 	if actx.TenantID != "" && c.TenantID != actx.TenantID {
-		s.batches.mu.RUnlock()
 		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 		return
 	}
@@ -559,9 +560,10 @@ func (s *Server) handleCanaryStatus(w http.ResponseWriter, r *http.Request, id s
 			phasesSnapshot[i].TaskIDs[j] = it.TaskID
 		}
 	}
-	s.batches.mu.RUnlock()
+	// 注：此处原本持有索引读锁（快照在锁内拷贝）。R6 改为 canarySnapshot 返回**私有副本**后
+	// 锁已在那个 helper 内部释放，这里不得再 Unlock（重复解锁会 panic）。
 
-	// 释放锁后刷新每阶段任务状态
+	// 刷新每阶段任务状态（对私有副本遍历，无需锁）
 	phases := make([]map[string]interface{}, len(phasesSnapshot))
 	for i, ps := range phasesSnapshot {
 		tasks := make([]batchTaskItem, len(ps.TaskIDs))

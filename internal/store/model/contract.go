@@ -425,6 +425,17 @@ type GatewayRouteStore interface {
 	DeleteGatewayRoute(tenantID, id string) bool
 }
 
+// TaskRecordStore 批量/灰度记录的持久化（TD-60 task 域 R6：重启不丢批次视图）。
+// 与内存索引的关系：store 是事实源，进程内 batchStore 是缓存（同 TD-66 P1 路由持久化）。
+// 只提供"按 ID 取 + 幂等 upsert"：面板按 batchID/canaryID 查；没有按状态筛选的消费方，
+// 故不提供 List（内容整段进 Payload 的设计取舍见 model/task_record.go 头注释）。
+type TaskRecordStore interface {
+	// GetTaskRecord 按租户 + kind + ID 取单条（不存在/载荷解不出均返回 nil）。
+	GetTaskRecord(tenantID, kind, id string) *TaskRecord
+	// SaveTaskRecord 幂等 upsert。返回持久化错误（调用方据此告警，不假成功）。
+	SaveTaskRecord(rec *TaskRecord) error
+}
+
 // ConfigStore 配置中心领域：Get/Set/Delete/List + 版本历史 + 发布。
 // 按 (TenantID, Key) 唯一；每次 SetConfig 产生新版本并写入历史（ConfigHistory 查询）。
 // PublishConfig 用于配置变更的灰度/广播触发（MVP 仅标记版本，后续可联动事件总线）。
@@ -775,6 +786,7 @@ type Store interface {
 	QuotaStore            // 租户配额：Get/Set（多租户资源配额）
 	ServiceDiscoveryStore // P0.3 服务发现：注册/心跳/实例查询
 	GatewayRouteStore     // TD-66 P1：API 网关路由规则持久化（重启不丢）
+	TaskRecordStore       // TD-60 task 域 R6：批量/灰度记录持久化（重启不丢批次视图）
 	ConfigStore           // P0.3 配置中心：Get/Set/版本历史/发布
 	SecretStore           // P0.3 密钥管理：Get/Set/轮换/版本历史
 	TicketStore           // P1 工单管理：创建/查询/更新/关闭

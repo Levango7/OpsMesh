@@ -39,6 +39,9 @@ type NotifyChannel = model.NotifyChannel
 type NotifyTemplate = model.NotifyTemplate
 type ServiceInstance = model.ServiceInstance
 type GatewayRoute = model.GatewayRoute
+
+// TaskRecord TD-60 task 域 R6：批量/灰度记录（信封 + JSON 载荷）。
+type TaskRecord = model.TaskRecord
 type ConfigItem = model.ConfigItem
 type SecretItem = model.SecretItem
 type SecretMeta = model.SecretMeta

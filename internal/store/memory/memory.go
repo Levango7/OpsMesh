@@ -99,11 +99,12 @@ type MemoryStore struct {
 	services map[string]*ServiceInstance // serviceID -> 实例
 	// TD-66 P1：API 网关路由规则（按 tenantID -> ruleID）。
 	gatewayRoutes  map[string]map[string]*GatewayRoute
-	configs        map[string]*ConfigItem   // tenantID|key -> 配置项（当前版本）
-	configHistory  map[string][]*ConfigItem // tenantID|key -> 版本历史（升序，最近 N 条）
-	secrets        map[string]*SecretItem   // tenantID|key -> 当前版本密钥明文
-	secretMetas    map[string]*SecretMeta   // tenantID|key -> 当前版本元信息（脱敏）
-	secretVersions map[string][]*SecretMeta // tenantID|key -> 全部版本元信息（升序）
+	taskRecords    map[string]map[string]*TaskRecord // TD-60 R6：批量/灰度记录（tenant → kind|id → rec）
+	configs        map[string]*ConfigItem            // tenantID|key -> 配置项（当前版本）
+	configHistory  map[string][]*ConfigItem          // tenantID|key -> 版本历史（升序，最近 N 条）
+	secrets        map[string]*SecretItem            // tenantID|key -> 当前版本密钥明文
+	secretMetas    map[string]*SecretMeta            // tenantID|key -> 当前版本元信息（脱敏）
+	secretVersions map[string][]*SecretMeta          // tenantID|key -> 全部版本元信息（升序）
 	// Phase 1 工单管理：ticketID -> 工单。
 	// 由 m.mu 保护并发安全；按 tenantID 隔离。
 	tickets map[string]*Ticket
