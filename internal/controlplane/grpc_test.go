@@ -149,9 +149,13 @@ func TestGRPCCancelReachesWorker(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// 注册 agent（拿到 agentID）
+	// 注册 agent（拿到 agentID）。
+	// 租户必须经**可信通道**声明（gRPC metadata x-tenant-id）：载荷里的 TenantID 属 agent 自报，
+	// 按设计不可信（无 token/无网关注入时会被忽略）。本测试随后的任务建在 t1，若 agent 落默认租户，
+	// 跨租户守卫会正确拒绝它领取 —— 2026-10-12 A1 修复（裸注册落默认租户）后暴露的第一例。
+	regCtx := metadata.AppendToOutgoingContext(ctx, "x-tenant-id", "t1")
 	regResp := &grpcx.RegisterResp{}
-	if err := conn.Invoke(ctx, "/opsmesh.v1.Registration/Register",
+	if err := conn.Invoke(regCtx, "/opsmesh.v1.Registration/Register",
 		&proto.AgentInfo{Segment: "seg-a"}, regResp, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
 		t.Fatalf("Register: %v", err)
 	}

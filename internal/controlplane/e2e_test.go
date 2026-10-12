@@ -91,7 +91,11 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewGRPCClient: %v", err)
 	}
-	regResp, err := cli.Register(ctx, &proto.AgentInfo{Segment: "seg-e2e", TenantID: "t1"})
+	// 租户不在注册载荷里声明：agent 自报租户按设计不可信（服务端只在安装令牌/网关注入时才采信）；
+	// 真实客户端 NewGRPCClient 也没有租户参数。故本测试走"未声明租户"路径 ⇒ 服务端落默认租户
+	//（2026-10-12 A1 起不再依赖 demo 开关），下面的 HTTP 调用因此用 default 租户——
+	// 此前写 t1 是靠"空租户宽松"侥幸通过，A1 后跨租户守卫会正确拒绝（本测试的意图是链路，不是租户隔离）。
+	regResp, err := cli.Register(ctx, &proto.AgentInfo{Segment: "seg-e2e"})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -109,7 +113,7 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 		fmt.Sprintf("http://127.0.0.1:%d/api/v1/tasks", httpPort),
 		strings.NewReader(createBody))
 	creq.Header.Set("Content-Type", "application/json")
-	creq.Header.Set("X-Tenant-ID", "t1")
+	creq.Header.Set("X-Tenant-ID", "default")
 	creq.Header.Set("X-User-Roles", "admin") // ：requireProd 网关注入路径放行（cache key 为短名）
 	cresp, err := http.DefaultClient.Do(creq)
 	if err != nil {
@@ -163,7 +167,7 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 	// 6) 经 HTTP API 读回，断言终态 done + stdout 含执行结果
 	greq, _ := http.NewRequest(http.MethodGet,
 		fmt.Sprintf("http://127.0.0.1:%d/api/v1/tasks", httpPort), nil)
-	greq.Header.Set("X-Tenant-ID", "t1")
+	greq.Header.Set("X-Tenant-ID", "default")
 	greq.Header.Set("X-User-Roles", "admin") // ：requireProd 网关注入路径放行
 	gresp, err := http.DefaultClient.Do(greq)
 	if err != nil {
