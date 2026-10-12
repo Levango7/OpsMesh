@@ -4,6 +4,32 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-12（归属闸门与路由开关联锁：缺口 2 闭合，方案①）
+
+- **`TASK_SVC_OWNS_NEW_TASKS` 闸门与 `OPSMESH_SERVICE_PROXY` 联锁**（协调板第五十七则缺口 2，
+  取方案①复用既有域开关、零新概念）：`TASK_SVC_PROXY_ENABLED` 是新总闸，但它**不控制 task 域的
+  路由注册**——路由仍由 `OPSMESH_SERVICE_PROXY` 决定（`svcproxy.Rule.IsActive()` 只对 auth 域
+  特判，task 域恒 true）。此前若把 task 域停用（单体回落到本地实现）却开着增量开关，后果是
+  单体**读得到任务、却拒绝建任务**，而聚合层 `/api/v1/task-svc/*` 前缀同时不可达 ⇒ 前端没有
+  任何一条路能建任务，自伤式停摆。现 `cutover.Router.RouteTaskCreate` 增加 `taskDomainProxied`
+  判据：域确由对侧服务时才允许 409。解析失败按启动期同款口径退化（全部启用、不拦截）——
+  开关写错最坏只是少拦一次，不会把"该本地建的"误拒。
+- **守卫（两条判据，router 层 + 四入口层各一层）**：router 层——域停用不裁、停用**其他**域
+  不影响 task 裁决、非法取值退化不误停、空值恢复生效；gate 层（`task_ownership_gate_test.go`
+  新增联锁用例）——两个开关都打开 + 域停用时四个建任务入口**一律不得 409**。既有三条守卫
+  （四入口全 409 / 开关关着绝不 409 / 鉴权先于归属）同步把联锁前提钉进环境。变异检验 2/2：
+  撤掉联锁 ⇒ 新用例判红并点名四入口；联锁恒真 ⇒ 四入口该 409 不 409 + router 三处判红。
+- **compose 显式化两个 task 切流旋钮**（`TASK_SVC_PROXY_ENABLED` / `TASK_SVC_OWNS_NEW_TASKS`，
+  默认 false）：此前全仓只有代码与测试引用，compose/helm/docs 皆无——没人知道要设它。
+  默认值与代码一致，不改变任何默认行为。方案②（把 `TASK_SVC_PROXY_ENABLED` 真接进
+  `IsActive()` + 部署文档）仍可作为后续选择；两者不冲突——即便②落地，域停用时依旧要让
+  单体本地建任务，本联锁仍然必要。
+- **缺口 3 维持未闭合**（不假装已修）：控制面约 12 处功能内部建任务（automation/config_hotpush/
+  middleware_deploy/pipeline/script/os_template/backup_api）不受四道 HTTP 闸门管，且
+  `CreateTask` 无错误通道（失败返回入参），store 层一刀切会变成"静默假成功"——需改 store 契约，
+  属独立任务。本线原计划本轮启动该契约改造，因**对侧正在同一施工**（TD-60 R6：批量/灰度状态
+  持久化，`internal/store` 有未提交改动）而主动避开，不与在途施工互相踩。
+
 ## [Unreleased] — 2026-10-11（TD-87 收口 + TD-66 只读勘测：台账两笔一起清）
 
 - **TD-87 收口（`internal/controlplane` 父包按域拆包）**：三批共抽 **11 个子包**（presets/pluginhost/credentials/metricscache/loginguard/svcproxy/ratelimit/tenantguard/auditsafe/cmdbcollector/enterpriseui + 转换器并入 presets）。**收口实测**：原低耦合清单剩余 10 件经逐一测量全部只剩 29~156 行薄壳（纯逻辑已抽走、剩 handler 门面），按计划 §9.4 判据「搬了只剩空壳」**不再动**；父包 84 prod 文件（注册时 182）。498 个 `*Server` 方法的组合式重构维持「需明确诉求才启动」。判据沉淀（计划 §9.4）：有效的筛选器是「有没有可搬的纯逻辑/自包含组件」而非文件长度；「两份手抄实现」比「文件太长」优先处置。

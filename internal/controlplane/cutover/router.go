@@ -1,6 +1,10 @@
 package cutover
 
-import "os"
+import (
+	"os"
+
+	"github.com/Levango7/OpsMesh/internal/controlplane/svcproxy"
+)
 
 // Router 切流路由裁决（TD-60 方案 C）。三个输入：
 //   - D 的执行开关（**总闸**：为 false 时本机制完全不生效，行为与切流前逐字一致）；
@@ -91,13 +95,35 @@ func (rt *Router) RouteRegister() bool {
 }
 
 // RouteTaskCreate 建任务**不做请求级路由**：与 RouteRegister 同理——新任务尚无归属，
-// 归属由 `TASK_SVC_OWNS_NEW_TASKS` 全局表达。仅在开关为 true 且总闸开启时
-// 由控制面拒绝本地建号并指引去 task-svc 侧（见 server_tasks.go 的接法）。
+// 归属由 `TASK_SVC_OWNS_NEW_TASKS` 全局表达。仅在开关为 true、总闸开启、
+// 且 task 域代理未停用时由控制面拒绝本地建号并指引去 task-svc 侧
+// （见 server_tasks.go 的接法）。
 //
 // 为什么不像 RouteLogin 那样按用户名裁：建任务时**调用方就是不信任的那一侧**——
 // 请求发自需要被拒绝的那个入口本身，没有"已归属的用户名"可查。
 func (rt *Router) RouteTaskCreate() bool {
-	return rt != nil && rt.TaskEnabled() && rt.TaskOwnsNewTasks()
+	return rt != nil && rt.TaskEnabled() && rt.TaskOwnsNewTasks() && rt.taskDomainProxied()
+}
+
+// taskDomainProxied task 域代理未停用（OPSMESH_SERVICE_PROXY 不含 task）——
+// 归属闸门与**路由开关**的联锁（协调板第五十七则缺口 2，方案①：复用既有域开关，零新概念）。
+//
+// 为什么需要：`TASK_SVC_PROXY_ENABLED` 是新总闸，但它**不控制 task 域的路由注册**——
+// 路由仍由 `OPSMESH_SERVICE_PROXY` 决定（`svcproxy.Rule.IsActive()` 只对 auth 域特判，
+// task 域恒 true）。若运维把域停用（单体回落到本地实现）却开着增量开关，后果是
+// 单体「读得到任务、却拒绝建任务」，同时聚合层 `/api/v1/task-svc/*` 前缀不可达
+// ⇒ 前端没有任何一条路能建任务，自伤式停摆。只有域确由对侧服务时才允许拒绝本地
+// 建任务——彼时 409 文案里的 "create it on the task-svc side" 才真正可达。
+//
+// 解析失败按 svcproxy 既定口径退化（视为全部启用、不拦截），与启动期
+// `server_lifecycle.go` 对同一开关的处理一致：开关写错不静默改变流量方向，
+// 最坏结果只是少拦一次，不会把"该本地建的"误拒。
+func (rt *Router) taskDomainProxied() bool {
+	disabled, err := svcproxy.DisabledDomains()
+	if err != nil {
+		return true
+	}
+	return !disabled["task"]
 }
 
 // RouteRefresh 刷新令牌按**归属侧**裁决（rt 是签发侧的私有状态，只有签发侧能吊销/旋转）。

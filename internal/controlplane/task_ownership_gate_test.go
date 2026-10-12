@@ -10,6 +10,9 @@ package controlplane
 //     再回答"该由谁做"（409）。顺序颠倒会把"无权"伪装成"归属冲突"，把排障指向错误方向。
 //  3. 开关关着时必须**完全不影响**既有行为（默认 false ⇒ 行为与切流前逐字一致），否则
 //     这个开关本身就成了新的事故源。
+//  4. 闸门与**路由开关**联锁（缺口 2）：task 域被 OPSMESH_SERVICE_PROXY 停用时，
+//     即便两个开关都打开也**不得** 409——否则单体"读得到任务、建不了任务"，
+//     前端没有任何一条路可走（自伤式停摆）。
 
 import (
 	"bytes"
@@ -19,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/cutover"
+	"github.com/Levango7/OpsMesh/internal/controlplane/svcproxy"
 )
 
 // ownershipTestServer 造一个带 cutoverRouter 的 Server（demo 模式：requireAuth=false，
@@ -77,6 +81,7 @@ func doTaskCreate(s *Server, ep struct {
 func TestTaskOwnershipGateCoversAllFourEntryPoints(t *testing.T) {
 	t.Setenv("TASK_SVC_OWNS_NEW_TASKS", "true")
 	t.Setenv("TASK_SVC_PROXY_ENABLED", "true") // 总闸（见 cutover.Router.TaskEnabled）
+	t.Setenv(svcproxy.EnvKey, "")              // 联锁前提：task 域由对侧服务（见 taskDomainProxied）
 	s := ownershipTestServer(t, false)
 
 	for _, ep := range taskCreateEntryPoints() {
@@ -111,6 +116,7 @@ func TestTaskOwnershipGateOffChangesNothing(t *testing.T) {
 func TestTaskOwnershipGateRunsAfterAuth(t *testing.T) {
 	t.Setenv("TASK_SVC_OWNS_NEW_TASKS", "true")
 	t.Setenv("TASK_SVC_PROXY_ENABLED", "true")
+	t.Setenv(svcproxy.EnvKey, "") // 联锁前提：task 域由对侧服务
 	s := ownershipTestServer(t, true)
 
 	for _, ep := range taskCreateEntryPoints() {
@@ -121,6 +127,24 @@ func TestTaskOwnershipGateRunsAfterAuth(t *testing.T) {
 		}
 		if rec.Code != http.StatusUnauthorized && rec.Code != http.StatusForbidden {
 			t.Errorf("%s 无凭证应 401/403，实得 %d：%s", ep.name, rec.Code, strings.TrimSpace(rec.Body.String()))
+		}
+	}
+}
+
+// TestTaskOwnershipGateInterlockedWithRouting 联锁判据（缺口 2）：task 域路由被停用
+// （OPSMESH_SERVICE_PROXY 含 task ⇒ 单体回落到本地实现）时，即便两个开关都打开，
+// 四个入口也**不得** 409。否则单体「读得到任务、却拒绝建任务」，而聚合层
+// /api/v1/task-svc/* 前缀同时不可达 ⇒ 前端没有任何一条路能建任务（自伤式停摆）。
+func TestTaskOwnershipGateInterlockedWithRouting(t *testing.T) {
+	t.Setenv("TASK_SVC_OWNS_NEW_TASKS", "true")
+	t.Setenv("TASK_SVC_PROXY_ENABLED", "true")
+	t.Setenv(svcproxy.EnvKey, "task") // 域停用 = 单体在服务任务
+	s := ownershipTestServer(t, false)
+
+	for _, ep := range taskCreateEntryPoints() {
+		if rec := doTaskCreate(s, ep); rec.Code == http.StatusConflict {
+			t.Errorf("%s 域停用时却 409（归属闸门未与路由联锁——自伤式停摆）：%s",
+				ep.name, strings.TrimSpace(rec.Body.String()))
 		}
 	}
 }

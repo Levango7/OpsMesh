@@ -525,6 +525,15 @@ services:
       AUTH_CUTOVER_ROSTER: ${AUTH_CUTOVER_ROSTER:-}
       AUTH_CUTOVER_ROSTER_FILE: ${AUTH_CUTOVER_ROSTER_FILE:-}
       AUTH_SVC_OWNS_NEW_ACCOUNTS: ${AUTH_SVC_OWNS_NEW_ACCOUNTS:-false}
+      # task 域切流（与上方 auth 同构）：总闸 + 增量开关。默认 false ⇒ 行为与切流前逐字一致。
+      #   TASK_SVC_PROXY_ENABLED=true   总闸；不开时增量开关不生效（也不会改任何默认行为）。
+      #   TASK_SVC_OWNS_NEW_TASKS=true  新任务归 task-svc：控制面四个建任务入口
+      #     （单建 / 批量下发 / 批量执行 / 灰度创建）一律 409 并指引去 task-svc 侧创建。
+      #   联锁：OPSMESH_SERVICE_PROXY 含 task（域停用、单体在服务任务）时，即便两个开关
+      #     都打开也不 409——否则单体"读得到任务、建不了任务"而 /api/v1/task-svc/*
+      #     前缀同时不可达，前端没有任何一条路能建任务（自伤式停摆）。
+      TASK_SVC_PROXY_ENABLED: ${TASK_SVC_PROXY_ENABLED:-false}
+      TASK_SVC_OWNS_NEW_TASKS: ${TASK_SVC_OWNS_NEW_TASKS:-false}
       # 可支撑性（P1-6）：日志级别与 pprof 开关（pprof 开启后仍受 METRICS_ALLOW_CIDR 准入）。
       # 默认 info/false；debug 仅排障期间使用（日志量级显著上升）。
       OPSMESH_LOG_LEVEL: ${LOG_LEVEL:-info}

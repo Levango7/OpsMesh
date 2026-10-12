@@ -197,6 +197,7 @@ func TestRouterDecisions(t *testing.T) {
 func TestRouterTaskDecisions(t *testing.T) {
 	os.Unsetenv("TASK_SVC_PROXY_ENABLED")
 	os.Unsetenv("TASK_SVC_OWNS_NEW_TASKS")
+	os.Unsetenv("OPSMESH_SERVICE_PROXY")
 	r, err := LoadRoster("alice", "")
 	if err != nil {
 		t.Fatal(err)
@@ -222,6 +223,28 @@ func TestRouterTaskDecisions(t *testing.T) {
 	t.Setenv("AUTH_SVC_PROXY_ENABLED", "true")
 	if !rt.RouteLogin("alice") {
 		t.Error("task 总闸开启不应影响 auth 登录路由")
+	}
+
+	// 联锁（缺口 2）：task 域路由被停用时，归属闸门不得生效——否则单体「读得到任务、
+	// 却拒绝建任务」而 /api/v1/task-svc/* 又不可达，前端没有任何一条路能建任务。
+	t.Setenv("OPSMESH_SERVICE_PROXY", "task")
+	if rt.RouteTaskCreate() {
+		t.Error("OPSMESH_SERVICE_PROXY 停用 task 域时不得拒绝本地建任务（归属闸门须与路由联锁）")
+	}
+	// 停用**别的**域不影响 task 归属裁决（联锁只认 task 自己）。
+	t.Setenv("OPSMESH_SERVICE_PROXY", "device")
+	if !rt.RouteTaskCreate() {
+		t.Error("停用其他域不应影响 task 建任务裁决")
+	}
+	// 开关写坏按既有口径退化（全部启用、不拦截）——与启动期处理一致，
+	// 最坏只是少拦一次，不会把"该本地建的"误拒。
+	t.Setenv("OPSMESH_SERVICE_PROXY", "not-a-domain")
+	if !rt.RouteTaskCreate() {
+		t.Error("OPSMESH_SERVICE_PROXY 非法取值应退化为「不拦截」，而非误停 task 域")
+	}
+	t.Setenv("OPSMESH_SERVICE_PROXY", "")
+	if !rt.RouteTaskCreate() {
+		t.Error("OPSMESH_SERVICE_PROXY 为空（默认）时应恢复生效")
 	}
 }
 
