@@ -204,7 +204,7 @@ func TestLogin_JWTContainsUserTenant(t *testing.T) {
 		t.Fatalf("me 返回用户租户错误: %+v", me)
 	}
 	// 令牌侧：tenantFromBearer 应从 JWT 解出 acme（下游租户校验依赖此值）。
-	if tenant, _ := s.tenantFromBearer(req); tenant != "acme" {
+	if tenant, _, _ := s.tenantFromBearer(req); tenant != "acme" {
 		t.Fatalf("JWT tenant = %q, want acme", tenant)
 	}
 }

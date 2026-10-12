@@ -118,7 +118,7 @@ func restoreRequestBody(r *http.Request, snapshot []byte) {
 func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (authctx.Context, bool) {
 	actx := authctx.FromHTTPHeader(r.Header)
 	// 修复 1+2：从 Bearer token/Cookie 提取 tenant_id 作为回退/交叉校验。
-	tokenTenant, tokenUser := s.tenantFromBearer(r)
+	tokenTenant, tokenUser, tokenRoles := s.tenantFromBearer(r)
 	trustGateway := s.cfg != nil && s.cfg.TrustGatewayHeaders
 	// 修复 3：X-User-Id 与令牌 user 交叉校验（同租户内审计伪造防护）。
 	// 置于租户分支之前：租户头空、令牌带租户的回退路径同样覆盖。
@@ -141,6 +141,18 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 			paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "identity header without verifiable credential (require-auth; enable --trust-gateway-headers if behind a trusted gateway)"})
 			return actx, false
 		}
+		// A2 修复（2026-10-12 模拟用户演练）：头非空时也要把**令牌里的身份**回填进来。
+		// 此前本分支校验完租户一致就 return，从不回填 ⇒ 按文档带上 X-Tenant-ID 的调用方拿到的
+		// /api/v1/me 是 `userID:"" / roles:null` 的空壳（**不带该头反而正确**）——同一进程两个
+		// me 端点各说各话，用户据此判定"我没登录成功/身份注入没接上"，或误以为 viewer 什么都不能读。
+		// 令牌在上方已通过租户一致性校验，回填只是把它本来就持有的身份补上，不放宽任何权限
+		//（X-User-Id 与令牌的不一致在上面已单独 403）。
+		if actx.UserID == "" && tokenUser != "" {
+			actx.UserID = tokenUser
+		}
+		if len(actx.Roles) == 0 && len(tokenRoles) > 0 {
+			actx.Roles = tokenRoles
+		}
 		return actx, true
 	}
 	// 头空：回退到 token 中的 tenant_id（支持无网关直连场景）。
@@ -148,6 +160,9 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 		actx.TenantID = tokenTenant
 		if actx.UserID == "" && tokenUser != "" {
 			actx.UserID = tokenUser
+		}
+		if len(actx.Roles) == 0 && len(tokenRoles) > 0 {
+			actx.Roles = tokenRoles
 		}
 		return actx, true
 	}
@@ -168,22 +183,23 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 	return actx, false
 }
 
-// tenantFromBearer 从 Authorization: Bearer <token> 或 HttpOnly Cookie 中提取 tenant_id/user_id。
+// tenantFromBearer 从 Authorization: Bearer <token> 或 HttpOnly Cookie 中提取
+// tenant_id / user_id / roles（roles 供身份回填，见 requireTenantContext 的 A2 修复注释）。
 // 用于 requireTenantContext 的 token 回退与交叉校验（修复 1+2）。
 // token 缺失/无效时返回空串（不阻断，由调用方决定后续行为）。
-func (s *Server) tenantFromBearer(r *http.Request) (tenantID, userID string) {
+func (s *Server) tenantFromBearer(r *http.Request) (tenantID, userID string, roles []string) {
 	tokenStr, err := extractBearer(r)
 	if err != nil {
 		// 回退 HttpOnly Cookie（与 userFromToken 一致，双 Cookie 方案）。
 		if ck, ckErr := r.Cookie(accessTokenCookieName); ckErr == nil && strings.TrimSpace(ck.Value) != "" {
 			tokenStr = ck.Value
 		} else {
-			return "", ""
+			return "", "", nil
 		}
 	}
 	claims, err := authctx.ParseHSJWT(tokenStr, s.jwtSecret)
 	if err != nil {
-		return "", ""
+		return "", "", nil
 	}
-	return claims.TenantID, claims.UserID
+	return claims.TenantID, claims.UserID, claims.Roles
 }

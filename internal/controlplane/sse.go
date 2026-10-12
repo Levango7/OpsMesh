@@ -101,7 +101,7 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 	// SSE 鉴权对齐 Cookie JWT：头缺失时回退到 Bearer/Cookie JWT 提取租户
 	// （与 requireTenantContext 一致，支持用户中心登录后浏览器经 Cookie 直连 SSE）。
 	if tenant == "" {
-		tokenTenant, _ := s.tenantFromBearer(r)
+		tokenTenant, _, _ := s.tenantFromBearer(r)
 		tenant = tokenTenant
 	}
 	if s.requireAuth && tenant == "" {
