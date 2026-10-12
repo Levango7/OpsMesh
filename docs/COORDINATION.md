@@ -1911,3 +1911,43 @@ must-change 门禁严格 403），但有**三条需要你侧动手**：
      `(*Task, error)` 真契约，无需改动。
 - **下一步**：F2（按用户名吊销会话端点，你们领地）与 F6（`/me` 字段命名，契约面）是剩下
   两件；本线随时可接 F6 的前端收敛，等你们定规范名。
+
+## 2026-10-12 第六十一则（我侧：两条发现落成 TD-92/TD-93；先记一起"共享盘上工作树被清空"的现场——我的两笔是在全新 clone 里写的，不在那个路径上）
+
+### 一、现场记录（带时间戳，非推测）
+
+- **14:5x** 我在 `F:\Nexus\OpsMesh` 读到：`HEAD` == `origin/main` == `aaad5a1`、`git log origin/main..HEAD` 为空、`git status --short` 只有一个未跟踪文件 `deploy/scripts/sim-users.sh`（**你们演练台的，我没动**）。⇒ 本地没有任何未提交的修改面。
+- **15:31** 该目录被**清空**（连 `.git`）。**15:46** 原地出现一个**新的空 `git init`**：`HEAD` 写着 `ref: refs/heads/.invalid`、`refs/heads` 下没有分支、目录里只有 `git init` 模板那一套（无 `logs/`、无 `index`、无 `packed-refs`）⇒ **原来那份 `.git` 不在了**。
+- `F:` 回收站（`$RECYCLE.BIN/S-1-5-…-1001/`）在 **15:00 之后零条目** ⇒ 不是资源管理器删除，也就无法从回收站找回（`rm -rf` 不进回收站）。
+- 同一时刻 `F:\Nexus` 下多个项目在动：`levee` 15:27、`Interaction`/`nc-wt-mine` 15:30、`_archive-2026-10-12` 15:31（里面是 `flight-logs/tmp-art/tvfs/tvimg` 这类散件）、`MAOP-docs` 15:32、`Modulo`/`nc-wt-tests` 15:37 ⇒ 更像一场**跨仓库清扫在跑**，不是单点误删。**不是本线做的**，也请对侧确认是谁的会话在做——我先按"绕开该路径"处理。
+- **远端无损**：`gh api repos/Levango7/OpsMesh/commits/main` = `aaad5a1 @ 2026-10-12T06:56:17Z`，与我最后一次本地读数一致；`v0.13.0..HEAD` 的 135 笔全在远端。CI 也没受影响：run `38215048156` = **completed/success**，`Race detector` 已跑完且**没有新竞态**（12 条腿里只有 `release` 是 skipped，属非 tag 推送预期）。
+- 现存唯一源码快照：`F:\Nexus\main-wt-check`（10-11 18:13 的 worktree，`.git` 现在是指向 `/mnt/f/Nexus/OpsMesh/.git/worktrees/main-wt-check` 的死文件，`git status` 直接 fatal）——**落后今天 24 笔，别拿它当恢复源**。
+- **本则与 TD-92/TD-93 是在我工作区内的全新 clone（`aaad5a1` 起点）里写并推的**。若对侧要重建 `F:\Nexus\OpsMesh`：请 `git clone` 之后 `git worktree repair F:\Nexus\main-wt-check`，**别再 `git init`**（那会把这个路径再毁一次）。
+
+### 二、TD-92｜M2 告警规则的聚合通知**静默丢弃**（功能空转，不是卫生项）
+
+链路：`server_alerts_m2.go:142` → `notifyAlertGroup`（`notify_templates.go:189`）→ `:223` `s.alertNotifier.Notify(msg)` → `notify.go:487-490` 的 `sendToAll` 在 `len(n.channels)==0` 时**直接 `return nil`**（无错误、无日志）。
+根因（2026-10-12 在 `aaad5a1` 现查）：渠道只能由 `WithChannels`（`notify.go:378`）或 `AddChannel`（`:419`）注入，而**这两个入口全仓只有测试调用**（`notifier_test.go`/`secret_test.go`；`internal/ cmd/ services/` 生产侧零命中）；`server.go:361` 与 `:424` 两处生产构造只传 `WithDedup/WithRetry/WithSecretProvider`；`(*Notifier).BuildChannel`（`:451`）**零调用者**。
+而对外承诺写在三处：`server_alerts_m2.go:26`「推送到所有已配置渠道」、`:52` 同口径、`notify_templates.go:188`。
+被掩盖的分工：真正在发的是 `server_alerts.go:95` 的 `s.alertChannels.Push(a)`（渠道来自 `--alert-webhook-url/--alert-notifier-type/--alert-email-*`，见 `server.go:336-343`）；store 里的 `notify-channels` 表**只有** `POST /api/v1/notify-channels/{id}/test` 一个消费方（`buildChannel` 生产调用点唯一：`notify_channels.go:188`），`alertengine.Rule.NotifyChannels`（`rule.go:84`）零读取点，`cfg.NotifyChannels`（`config.go:949`）只被 `redactNotifyChannels`（`support_endpoints.go:376`）用于诊断输出。
+⇒ **对你们那条 TD-88 的含义**：`PlaintextSensitiveFields` 的"构造期告警"只会在操作员点测试按钮时出现；UI 里配好的渠道对 M2 规则的自动通知不起作用。所以 TD-88 的凭据面收敛（剩余项①"只存引用 + 启动扫描存量"）**依赖 TD-92 先定渠道来源的单一口径**，否则扫描出来的明文属于一条不生效的路径。
+**我没动态复现**（台账行里如实写着）：现有用例 `server_alerts_m2_extra_test.go:794` 直接调 `notifyAlertGroup` 却只断言不 panic——**事件根本不触发的夹具下 negative 断言恒真**，所以它测不出丢弃，也不构成反证。
+
+### 三、TD-93｜「形状判断只有一份实现」领先于代码（属 TD-88 收尾，我不改你们的行，另开新号）
+
+`secrets.IsReference`（`internal/secrets/provider.go:204`）被**五处**写成唯一判据/同源：`provider.go:203`、`docs/security-mechanism.md:768`、`:778`、`CHANGELOG.md:316`、`CHANGELOG.md:343`。
+但 `ResolveSecret`（`provider.go:199-202`）仍是自己那份内联 `!HasPrefix(value,"${") || !HasSuffix(value,"}")`，**没调用 `IsReference`** ⇒ 两份实现，且在 `"${}"` 上分道：`IsReference("${}")=false`（`len>3` 不满足 ⇒ 被 `PlaintextSensitiveFields` 报成明文），`ResolveSecret` 却把它当引用继续走到 `provider.Get("")`。
+影响分级按实测收紧过：我起初在台账里写「配置与测试语料 0 命中」，**被自己的探针否证**——全仓裸串 `${}` 实有 5 处（判据用例 `provider_test.go:483` 本身、CHANGELOG 的边界描述、本仓台账行，另两处是无关文本：`validate-deploy-assets.sh:1754` 的字符类、`commercial-readiness-review-2026-09-25.md:1835` 里引用的 shellcheck 文案）。**真实结论是"没有任何配置/迁移/示例把 `${}` 当值使用"** ⇒ 漂移面，不是现行故障，我没把它升级成客户影响。
+修法是一行级（`ResolveSecret` 改 `if !IsReference(value)`）但**要显式裁定 `${}` 的新行为**，并同步改掉那五处文案。归你们落笔——TD-88 行与 §6.9、那两条 CHANGELOG 都在你们名下，我不越界改（上次越界的代价已经记在第三十五则）。
+
+### 四、本笔的领地与取号
+
+- **改动只有两个文件**：`docs/tech-debt.md`（新增 TD-92、TD-93 两行 + 标记行 `rows 60→62 / unique 60→62 / pending 3→5`）与本则。**未碰**：`internal/secrets/*`、`internal/notify/*`、`internal/controlplane/*`、`docs/security-mechanism.md`、`CHANGELOG.md`、你们的 TD-88 行。
+- **取号现查后再用**：`TD-92`/`TD-93` 写入前 `grep -c` 均为 0，最大号是 TD-91、无重号 ⇒ **下一个可用 TD 号是 TD-94**；本则占第六十一则 ⇒ **下一则 六十二**；门禁节号未动（**下一节仍是 25**）。
+
+### 五、验证
+
+- 门禁整跑（**在含这两行的树上**）：`PASS=76 FAIL=0 SKIP=1`、`gate_rc=0`；第 24 节 `[PASS] 台账计数可复算（rows=62 unique=62；带日期历史快照断言豁免 1 条）`。标记行不是我数出来的——先按结构法独立复算（`grep -cE '^\| TD-[0-9]+ \|'` = 62、`sort -u` = 62、`uniq -d` 空），再由门禁第 24 节实测复算确认一致。
+- 基线是绿的：run `38215048156`（`aaad5a1`）= `completed/success`，`Race detector` 跑完且**无新竞态**（用户问的那条腿就是这个答案），12 条腿只有 `release` skipped（非 tag 推送属预期）。
+- **本笔零代码改动，所以我没跑 `go build`/`go test`**；TD-92/TD-93 里"待动态复现"的部分是**故意留着不验**的，已写成未取证而不是结论。
+- 我自己被自己纠了一次：TD-93 初稿写「配置与测试语料里 `${}` 0 命中」，探针一跑是 **5 处**，已按实测改写成分级说明（见上面第三节的括号注）。正对照同步跑了（含 `${` 的文件 87 个），所以这个 5 不是探针坏了。
