@@ -1255,9 +1255,10 @@ Kubernetes 路径不重复造轮子：生产集群一般已有 kube-prometheus-s
   本轮跳过并记 error，不影响其余渠道。
 - **明文凭据告警现在有两次**（TD-88 全链路）：写入期（建/改渠道时点名 channelID+字段）与
   启动期（扫 `notify-channels` 表存量，count+sample）；发送路径不再重复刷屏。
-- `--notify-dedup-ttl-min` / `--notify-retry-*` 三个旋钮**当前未接线**（仍按硬编码
-  5min / 默认重试策略），彼等语义与配置注释有出入（0=关闭 vs WithDedup(0)=用默认），
-  径直接上会把"关闭"翻成"默认"，另立项。
+- **去重/重试三旋钮已接线**（2026-10-12）：`--notify-dedup-ttl-min`（默认 5）控制
+  Notifier 去重 TTL、`--notify-retry-max-attempts`（默认 3，含首次）/
+  `--notify-retry-interval`（默认 5s）/`--notify-retry-backoff`（默认 2.0）控制重试；
+  **0=关闭**（去重关/单次发送）。默认值与接线前硬编码行为逐字一致。
 
 #### 4.6.1 单渠道（环境变量）
 

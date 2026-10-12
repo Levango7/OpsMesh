@@ -78,20 +78,46 @@ func buildNotifierChannels(cfg *config.Config) []notify.Channel {
 	return chs
 }
 
+// notifyDedupRetryOptions 按 cfg 产出去重/重试两个选项（纯函数，便于行为测试组装）。
+// 语义见 newAlertNotifier 注释：0=关闭（不挂选项），非 0 按 cfg 值交给选项自身归一化。
+func notifyDedupRetryOptions(cfg *config.Config) []notify.NotifierOption {
+	var opts []notify.NotifierOption
+	if cfg.NotifyDedupTTLMin == 0 {
+		logx.Info(context.Background(), "通知去重已关闭（--notify-dedup-ttl-min=0）", "scope", "alertNotifier")
+	} else {
+		opts = append(opts, notify.WithDedup(time.Duration(cfg.NotifyDedupTTLMin)*time.Minute))
+	}
+	if cfg.NotifyRetryMaxAttempts == 0 {
+		logx.Info(context.Background(), "通知重试已关闭（--notify-retry-max-attempts=0，单次发送）", "scope", "alertNotifier")
+	} else {
+		opts = append(opts, notify.WithRetry(&notify.RetryPolicy{
+			MaxAttempts: cfg.NotifyRetryMaxAttempts,
+			Interval:    cfg.NotifyRetryInterval,
+			Backoff:     cfg.NotifyRetryBackoff,
+		}))
+	}
+	return opts
+}
+
 // newAlertNotifier 装配告警 Notifier：去重 + 重试 + 文件渠道 +（可选）密钥提供者。
 //
 // TD-92 起这是**唯一**的装配入口（server.go 两处构造与 SecretProvider 重建都走它），
 // 渠道在此一次性注入、构造后只读（内部并发安全见 notify.Notifier 文档）。
-// 已知未接线（记账不暗修）：cfg.NotifyDedupTTLMin / NotifyRetry* 三个旋钮仍按
-// 既有硬编码值（5min / DefaultRetryPolicy）——WithDedup(0) 的语义是"用默认 5 分钟"
-// 而非配置注释所说的"关闭"，径直接上会把 0 从"关闭"变成"默认"，属语义翻转，另立项。
+//
+// 去重/重试旋钮（--notify-dedup-ttl-min / --notify-retry-*，2026-10-12 接线）：
+// 配置语义是「0=关闭」，而 notify 的两个选项表达不了"关闭"——WithDedup(<=0) 是
+// "用默认 5min"、WithRetry(nil) 是"用默认策略"（RetryPolicy.normalize 还把
+// MaxAttempts<=0 归一成 3）。因此关闭时**索性不挂对应选项**（Notifier 零值
+// dedup=nil 即不去重、retry=nil 即单次发送），非 0 时按 cfg 值构造；
+// 负值等非法输入落进选项自身的归一化（回退默认），不静默变成"关闭"。
+// 默认值（5min/3 次/5s/2.0）与接线前的硬编码行为逐字一致。
 func newAlertNotifier(cfg *config.Config, provider secrets.SecretProvider) *notify.Notifier {
-	return notify.NewNotifier(
-		notify.WithDedup(5*time.Minute),
-		notify.WithRetry(nil),
+	opts := notifyDedupRetryOptions(cfg)
+	opts = append(opts,
 		notify.WithChannels(buildNotifierChannels(cfg)...),
 		notify.WithSecretProvider(provider),
 	)
+	return notify.NewNotifier(opts...)
 }
 
 // alertToNotifyMessage 把 firing 告警转成 notify.Message（文件多渠道的载荷形状：

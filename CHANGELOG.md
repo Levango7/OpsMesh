@@ -62,6 +62,12 @@
   时间戳语义 / 明文谓词边界 / buildChannel 纯构造 / 写入期告警不 panic。变异：撤
   enabled 过滤、撤按规则过滤、撤租户隔离分别判红。过程中另捕获一起**变异还原期
   自设缺陷**（还原串误伤明文谓词、多加 enabled 过滤），被全量包测试抓住——记录在案。
+- **同日补线：去重/重试三旋钮**（`--notify-dedup-ttl-min` / `--notify-retry-*`，此前
+  硬编码 5min/默认策略）：配置语义「0=关闭」无法用 `WithDedup(<=0)`/`WithRetry(nil)`
+  表达（二者都是"用默认"，`RetryPolicy.normalize` 还把 attempts<=0 归一成 3）——
+  实现改为**关闭时不挂对应选项**（Notifier 零值即不去重/单次发送），默认值与接线前
+  逐字一致。守卫 `notify_knobs_test.go` 4 条（去重 0/默认/自定义、重试次数与 Interval
+  真的生效）+ 变异 1/1（把 0 当默认传入 ⇒ "0=关闭"用例判红）。
 - **文档口径同步**：operations.md §4.6.0.1 通道表（三类渠道 + 载荷形状 + 五条边界）、
   api-reference（notifyChannels 与渠道 API 两处宣称）、architecture 行内宣称全部改为
   新语义。
