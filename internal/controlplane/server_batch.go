@@ -614,8 +614,15 @@ func (s *Server) handleCanaryAdvance(w http.ResponseWriter, r *http.Request, id 
 	defer s.batches.mu.Unlock()
 	c, exists := s.batches.canaries[id]
 	if !exists {
-		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "canary not found"})
-		return
+		// R6：重启后索引为空 ⇒ 从持久化记录补入索引。查询路径刻意**不**写回索引（读不该改状态），
+		// 但推进是**写路径**——下面要原地改这条记录，必须让它进索引（也让后续操作能接着用）。
+		loaded := &canaryRelease{}
+		if !s.loadTaskRecord(taskRecordKindCanary, actx.TenantID, id, loaded) {
+			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "canary not found"})
+			return
+		}
+		s.batches.canaries[id] = loaded
+		c = loaded
 	}
 	if actx.TenantID != "" && c.TenantID != actx.TenantID {
 		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
@@ -625,6 +632,10 @@ func (s *Server) handleCanaryAdvance(w http.ResponseWriter, r *http.Request, id 
 	for i := range c.Phases {
 		if c.Phases[i].Status == "pending" {
 			s.execCanaryPhase(c, &c.Phases[i], c.TaskType, c.Command, "", "", c.TenantID, actx.UserID, r)
+			// R6：推进改了记录状态 ⇒ 必须写穿，否则重启后倒回推进前（用户刚推进过的阶段"又变回 pending"）。
+			// 注：此处持索引锁做一次 store 写（临界区变长）；换成"先解锁再写"会引入读改写的竞态，
+			// 一次短写更安全——如将来 store 写变慢，应改为记录级锁而不是放弃写穿。
+			s.persistTaskRecord(taskRecordKindCanary, c.TenantID, id, c)
 			paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 				"canaryID": c.CanaryID,
 				"phase":    c.Phases[i].Phase,

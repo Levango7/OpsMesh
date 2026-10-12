@@ -212,6 +212,64 @@ func TestCorruptRecordPayloadIsTreatedAsMissing(t *testing.T) {
 	}
 }
 
+// TestCanaryAdvanceSurvivesRestart 推进路径的两件事一起验：
+//
+//	① **重启后仍能推进**（记录不在索引里 ⇒ 必须从持久化记录补入；不补就 404）；
+//	② **推进结果写穿**（否则重启后倒回推进前——用户刚推进过的阶段"又变回 pending"）。
+//
+// 判据用"推进后 + 再重启"两次读取的**逐字相同**，与查看路径同口径。
+func TestCanaryAdvanceSurvivesRestart(t *testing.T) {
+	st := memory.NewMemoryStore()
+	seedDevices(st, 4)
+	seedAgents(st, "t1", 4)
+	s1 := r6Server(t, st)
+
+	// 4 台设备 + 50% 比例 ⇒ 至少 2 个阶段（首阶段执行、其余 pending）
+	rec := r6Post(t, s1, "/api/v1/tasks/canary",
+		`{"deviceIDs":["dev-bench-0","dev-bench-1","dev-bench-2","dev-bench-3"],"taskType":"shell","command":"echo r6","strategy":"percentage","percentage":50}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("建灰度应 201，实得 %d：%s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		CanaryID string `json:"canaryID"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil || created.CanaryID == "" {
+		t.Fatalf("取 canaryID 失败: %v / body=%s", err, rec.Body.String())
+	}
+
+	// 重启后推进（若补入索引缺失，这里会 404）
+	s2 := r6Server(t, st)
+	adv := r6PostCanaryAdvance(t, s2, created.CanaryID)
+	if adv.Code != http.StatusOK {
+		t.Fatalf("重启后推进应 200（记录须从持久化补入索引），实得 %d：%s", adv.Code, adv.Body.String())
+	}
+	afterAdvance := r6GetCanaryStatus(t, s2, created.CanaryID)
+	if afterAdvance.Code != http.StatusOK {
+		t.Fatalf("推进后查询应 200，实得 %d", afterAdvance.Code)
+	}
+
+	// 再重启：推进结果必须仍在（写穿生效）
+	s3 := r6Server(t, st)
+	afterRestart := r6GetCanaryStatus(t, s3, created.CanaryID)
+	if afterRestart.Code != http.StatusOK {
+		t.Fatalf("二次重启后查询应 200，实得 %d", afterRestart.Code)
+	}
+	if afterRestart.Body.String() != afterAdvance.Body.String() {
+		t.Errorf("推进结果未写穿：二次重启后状态与推进后不一致（用户刚推进的阶段会倒回 pending）")
+	}
+}
+
+// r6PostCanaryAdvance 调推进接口。
+func r6PostCanaryAdvance(t *testing.T, s *Server, id string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/canary/"+id+"/advance", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
+	req.Header.Set("X-User-Id", "u-admin")
+	rec := httptest.NewRecorder()
+	s.handleCanaryAdvance(rec, req, id)
+	return rec
+}
+
 // TestUnknownRecordStillNotFound 没建过的 ID 必须 404——回落路径不得把"查不到"变成"给个空壳"
 // （空壳返回 200 是假成功：前端会把它当成"批次存在但没任务"，与真实情况相反）。
 func TestUnknownRecordStillNotFound(t *testing.T) {
