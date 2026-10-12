@@ -100,14 +100,28 @@ opsmesh cutover-migrate --users alice,bob \
 
 ## 3. 回退
 
-**单用户回退**（首选，粒度=名册条目）：
+**单用户/整批回退：用 `cutover-unroute`（首选；粒度=名单）**
 
 ```bash
-# 从名册文件摘除该用户（控制面 30s 热加载，无需重启）
-sed -i '/^alice$/d' "$AUTH_CUTOVER_ROSTER_FILE"
+# 先 dry-run 看计划（只读：不摘名册、不吊会话、不登录对侧）
+opsmesh cutover-unroute --users alice --dry-run   --roster-file "$AUTH_CUTOVER_ROSTER_FILE" --auth-svc-url http://auth-svc:8100   --auth-svc-admin-password '***'
+
+# 执行：一次调用完成「摘名册 + 吊销对侧会话」
+opsmesh cutover-unroute --users alice,bob   --roster-file "$AUTH_CUTOVER_ROSTER_FILE" --auth-svc-url http://auth-svc:8100   --auth-svc-admin-password '***'
 ```
 
-**整批回退**：摘除本批全部条目。回退后旧本地口令重新生效（路由回本地）。
+**为什么不是手改名册**（2026-10-12 演练 F2 的结论，已在 job 里收口）：名册只决定**路由**。
+只摘名册能回退**登录**，但对侧已建立的会话仍被对侧认（refresh 返回 200），而 `/me` 已按名册
+回本侧（401）⇒ 用户看到"刷新说还活着、一干正事就报错"的**半死态**。`cutover-unroute`
+摘完名册会顺手调对侧的吊销端点（auth-svc `POST /api/v1/users/{id}/revoke-sessions`）清掉它。
+**手改文件不会吊销**——所以回退请走本命令。
+
+命令行为要点：
+- **先摘名册、后吊销**：对侧不可达时名册照摘（回退已生效），失败逐条打印并可用**重跑补吊销**（幂等）；
+- 会预检「该用户在本侧是否还有账号」，缺失则**告警不阻断**（摘除后他两侧都登不进，需人工处置）；
+- 摘除后在名册末尾追加 `# cutover-unroute <时间> removed=N`，与迁移的来源注释一样可 diff、可审计。
+
+**整批回退**：`--users` 给本批全部用户名。回退后旧本地口令重新生效（路由回本地）。
 
 **硬回退**（面级）：把 compose 的 `AUTH_CUTOVER_ROSTER_FILE` 置空并重启控制面 ⇒
 名册为空、全部回本地登录面。

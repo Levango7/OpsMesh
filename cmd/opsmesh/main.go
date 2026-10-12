@@ -77,6 +77,8 @@ func runMain() int {
 			return runMigrate()
 		case "cutover-migrate":
 			return runCutoverMigrate()
+		case "cutover-unroute":
+			return runCutoverUnroute()
 		}
 	}
 
@@ -218,6 +220,17 @@ var cutoverMigrateFlagSpecs = map[string]bool{
 	"dry-run":                 false,
 	"credentials-out":         true,
 	"force-change":            false,
+}
+
+// cutoverUnrouteFlagSpecs 定义 cutover-unroute 子命令特有 flag（TD-60 方案 C 回退 job）。
+// 与 cutover-migrate 对称；store 参数同样复用 config.Load 全局表（预检本侧账号要用同一份 store）。
+var cutoverUnrouteFlagSpecs = map[string]bool{
+	"users":                   true,
+	"roster-file":             true,
+	"auth-svc-url":            true,
+	"auth-svc-admin-user":     true,
+	"auth-svc-admin-password": true,
+	"dry-run":                 false,
 }
 
 // filterSubcmdArgs 从 args 中移除子命令名及其特有 flag，返回剩余参数（供 config.Load 解析）。
@@ -416,6 +429,99 @@ func runCutoverMigrate() int {
 	if len(res.Failed) > 0 {
 		fmt.Fprintln(os.Stderr, "[cutover-migrate] 有失败用户：修复后仅重跑失败者即可（幂等，成功者不会重复建号）")
 		return 1
+	}
+	return 0
+}
+
+// runCutoverUnroute 实现 cutover-unroute 子命令：TD-60 方案 C 的**回退** job
+// （与 cutover-migrate 对称：摘名册 + 吊销对侧会话，消除"半死会话"，见演练报告 F2）。
+//
+// 用法：
+//
+//	opsmesh cutover-unroute --users alice,bob [--dry-run] \
+//	                       [--store memory|mysql] [--mysql-dsn ...] ...
+//
+// env 兜底：AUTH_SVC_URL / AUTH_CUTOVER_ROSTER_FILE / AUTH_SVC_MIGRATE_ADMIN_USER / AUTH_SVC_MIGRATE_ADMIN_PASSWORD。
+// 退出码：0=回退已生效（会话吊销失败也返回 0：名册已摘即回退生效，失败已在结果里逐条列明），1=整体不可运行，2=参数错。
+func runCutoverUnroute() int {
+	fs := flag.NewFlagSet("cutover-unroute", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	users := fs.String("users", "", "要回退的用户名（逗号分隔；清单即范围，不做全量）")
+	rosterFile := fs.String("roster-file", "", "名册文件路径（默认 env AUTH_CUTOVER_ROSTER_FILE）")
+	authSvcURL := fs.String("auth-svc-url", "", "auth-svc HTTP 网关地址（默认 env AUTH_SVC_URL）")
+	adminUser := fs.String("auth-svc-admin-user", "", "对侧管理员账号（默认 admin）")
+	adminPassword := fs.String("auth-svc-admin-password", "", "对侧管理员口令（默认 env AUTH_SVC_MIGRATE_ADMIN_PASSWORD）")
+	dryRun := fs.Bool("dry-run", false, "只做只读核验（名册现状 + 本侧账号存在性），不摘名册、不吊销")
+
+	if err := fs.Parse(pickSubcmdArgs(os.Args[1:], cutoverUnrouteFlagSpecs)); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*users) == "" {
+		fmt.Fprintln(os.Stderr, "[cutover-unroute] --users 必填（回退清单即范围；不做全量）")
+		return 2
+	}
+	cfgArgs := filterSubcmdArgs(os.Args[1:], "cutover-unroute", cutoverUnrouteFlagSpecs)
+	oldArgs := os.Args
+	os.Args = append([]string{"opsmesh"}, cfgArgs...)
+	cfg := config.Load()
+	os.Args = oldArgs
+	if code := applyLogLevel(cfg); code != 0 {
+		return code
+	}
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "[cutover-unroute] 配置校验失败: %v\n", err)
+		return 1
+	}
+	st, err := backup.NewStoreForCLI(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[cutover-unroute] Store 初始化失败: %v\n", err)
+		return 1
+	}
+	envOr := func(flagVal, envKey string) string {
+		if strings.TrimSpace(flagVal) != "" {
+			return flagVal
+		}
+		return os.Getenv(envKey)
+	}
+	opts := cutover.UnrouteOptions{
+		Users:         strings.Split(*users, ","),
+		RosterFile:    envOr(*rosterFile, "AUTH_CUTOVER_ROSTER_FILE"),
+		AuthSvcURL:    envOr(*authSvcURL, "AUTH_SVC_URL"),
+		AdminUser:     envOr(*adminUser, "AUTH_SVC_MIGRATE_ADMIN_USER"),
+		AdminPassword: envOr(*adminPassword, "AUTH_SVC_MIGRATE_ADMIN_PASSWORD"),
+		DryRun:        *dryRun,
+	}
+	lookup := func(username string) (cutover.LocalUser, bool) {
+		u := st.GetUserByUsername(username)
+		if u == nil {
+			return cutover.LocalUser{}, false
+		}
+		return cutover.LocalUser{Email: u.Email, RoleIDs: u.RoleIDs}, true
+	}
+	res, err := cutover.RunUnroute(opts, time.Now(), lookup)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[cutover-unroute] %v\n", err)
+		return 1
+	}
+	prefix := "[cutover-unroute]"
+	if res.DryRun {
+		prefix = "[cutover-unroute][dry-run]"
+	}
+	fmt.Fprintf(os.Stderr, "%s 本批结果：名册摘除 %d · 名册本无 %d · 对侧会话已吊销 %d · 吊销失败 %d\n",
+		prefix, len(res.Removed), len(res.NotInRoster), len(res.Revoked), len(res.RevokeFailed))
+	for _, u := range res.NotInRoster {
+		fmt.Fprintf(os.Stderr, "  [本无] %s（名册里没有，回退无需动作）\n", u)
+	}
+	for _, u := range res.MissingLocal {
+		// 最要紧的一条告警：摘除后他在本侧也登不进去（两侧都没账号）——必须人工处置。
+		fmt.Fprintf(os.Stderr, "  [警告] %s 在本侧已无账号：回退后他两侧都登不进，请先在本侧建号或人工确认\n", u)
+	}
+	for _, f := range res.RevokeFailed {
+		fmt.Fprintf(os.Stderr, "  [吊销失败] %s：%s（名册已摘、回退已生效；可重跑本命令补吊销）\n", f.Username, f.Reason)
+	}
+	if !res.DryRun && len(res.Removed) > 0 {
+		fmt.Fprintf(os.Stderr, "%s 名册已摘除（控制面 ≤30s 热加载后该用户回本侧登录面）。\n", prefix)
+		fmt.Fprintf(os.Stderr, "%s 回退必做：通知用户「需重新登录一次」（本侧原口令仍有效）。\n", prefix)
 	}
 	return 0
 }

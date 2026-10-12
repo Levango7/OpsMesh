@@ -30,6 +30,22 @@
 - **文档口径同步**：operations.md §4.6.0.1 通道表（三类渠道 + 载荷形状 + 五条边界）、
   api-reference（notifyChannels 与渠道 API 两处宣称）、architecture 行内宣称全部改为
   新语义。
+## [Unreleased] — 2026-10-12（F2 收口：回退会话语义闭合——`cutover-unroute` + auth-svc 按用户吊销端点）
+
+- **问题（演练 F2，docs/td60-batch0-drill-2026-10-12.md）**：名册只决定路由。回退（从名册摘除）后
+  对侧已建立的会话仍被对侧认（refresh 200），而 `/me` 已按名册回本侧（401）⇒ 用户看到
+  "刷新说还活着、一干正事就报错"的**半死态**。
+- **auth-svc 侧**：`store.DeleteRefreshTokensByUser`（Memory 线性扫 / MySQL 一条 DELETE）+
+  `POST /api/v1/users/{id}/revoke-sessions`（一次清 rt + Redis 会话；鉴权复用 `user:write`）。
+- **控制面侧**：新增对称 job **`opsmesh cutover-unroute --users a,b [--dry-run]`**——一次调用完成
+  「摘名册 + 吊销对侧会话」。**先摘名册、后吊销**（对侧不可达时名册照摘：回退已生效；吊销失败逐条
+  记账、可重跑补）；预检「本侧是否还有该账号」，缺失则告警不阻断；名册追加
+  `# cutover-unroute <ts> removed=N` 来源注释（可 diff/可审计）。runbook §3 的回退口径同步改为本命令。
+- **为什么不做成控制面自动吊销**（更自动、曾被考虑）：那需要控制面**常驻持有对侧管理员口令**
+  （吊销端点在管理面上）；为低频运维动作给常驻服务加这一档长期凭据不划算。代价写明：
+  **手改名册不吊销会话**，回退须走本命令。
+- **验证**：auth-svc 全包绿；cutover 包 5 条新守卫（名册语义/顺序/dry-run 零副作用/缺失告警/按 id 吊销）
+  全绿，变异两处（撤销摘名册、dry-run 也改名册）逐条判红；`go build ./...` / `go vet` 过。
 
 ## [Unreleased] — 2026-10-12（TD-92 收口：告警外发渠道单一口径——文件多渠道真送达、两条死路闭合）
 
