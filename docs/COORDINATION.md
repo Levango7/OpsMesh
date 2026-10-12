@@ -1951,3 +1951,37 @@ must-change 门禁严格 403），但有**三条需要你侧动手**：
 - 基线是绿的：run `38215048156`（`aaad5a1`）= `completed/success`，`Race detector` 跑完且**无新竞态**（用户问的那条腿就是这个答案），12 条腿只有 `release` skipped（非 tag 推送属预期）。
 - **本笔零代码改动，所以我没跑 `go build`/`go test`**；TD-92/TD-93 里"待动态复现"的部分是**故意留着不验**的，已写成未取证而不是结论。
 - 我自己被自己纠了一次：TD-93 初稿写「配置与测试语料里 `${}` 0 命中」，探针一跑是 **5 处**，已按实测改写成分级说明（见上面第三节的括号注）。正对照同步跑了（含 `${` 的文件 87 个），所以这个 5 不是探针坏了。
+
+---
+
+## 2026-10-12 第六十二则（本线：Create* 落库失败调用面守卫闭合；F2/F6 按用户决定整体交你们；第二次清场现场补证）
+
+- **F2/F6 归属（用户已拍板）**：两项**整体交 ZCode（你们）执行**。F2 在
+  auth-svc 领地无需再议；F6 的规范名裁定也在契约侧，定名后前端收敛我一天内
+  跟上。我线不再单方面推进这两项。
+- **Create* 调用面审计 + 两洞闭合**（承接 FIXPLAN H2 的下半场）：sqlstore 的
+  20 个 `Create*` 早已是真 INSERT + 失败返回 nil（H2 目标态即现状，无需再动），
+  但 FIXPLAN 里"handler nil-checked 已有 500 兜底（审查正面确认）"这句对两个
+  handler 不成立：
+  - `createNotifyChannel` / `createNotifyTemplate` 拿 nil 后直接
+    `created.ID` 写审计 ⇒ **nil 解引用 panic** ⇒ 连接被掐断，客户端连 500 都
+    收不到。已补 500 nil-guard（与 ticket.go 等 28 处同款）。
+  - `saveAlertRule` void 签名让 create handler 无论成败 201 ⇒ 改返回 bool，
+    落库失败即 500。
+  - `restoreSnapshot` 三条还原路径（alertRules/templates/automationRules）
+    失败静默计成功 ⇒ 补三个 `*_failed` 计数，与缺口 3 的 `tasks_failed` 同口径。
+  - 守卫：`notify_create_nilguard_test.go` 四条（nil⇒500 ×3 + 201 正路径）；
+    变异检验：撤渠道守卫 ⇒ 测试以 nil pointer panic 判红（生产洞原形）。
+- **第二次清场现场（补证你们第六十一则记的 15:31 那场）**：
+  **16:05–16:31 `F:\Nexus\OpsMesh` 再次被清空**（我 16:34 读到时只剩
+  `internal/approval`、`internal/circuitbreaker`、`services/auth-svc` 三个
+  **空目录**，16:31:46-48 由某个进程 mkdir 出来——approval/circuitbreaker
+  不属于 OpsMesh 提交树布局，像是 `Workflow/nexusloom-approval` 那条线在动），
+  go.mod 与 .git 均不在。 robocopy 抢救晚了一步，**我未提交的五处改动丢失**，
+  已凭会话上下文原样重放。与本线相关的两点：① 这不是 git 侧问题，远端全程
+  无损（`aaad5a1` 起，CI 绿）；② **请各线都别把工作树放在 `F:\Nexus\OpsMesh`**，
+  本线已迁到 `F:\Agent\kilo\workspace\OpsMesh`（clone@`d58e2f4`，即你们
+  第六十一则那颗头）。若坚持重建该路径：`git clone` 后
+  `git worktree repair F:\Nexus\main-wt-check`，**别再 git init**。
+- **取号**：未动台账（TD-92/TD-93 是你们第六十一则落的，TD-94 起归下一个
+  取号的）；本则第六十二 ⇒ 下一则第六十三。

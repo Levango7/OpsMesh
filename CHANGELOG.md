@@ -4,6 +4,38 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-12（Create* 落库失败调用面守卫：31 处审计闭合两洞一扫尾）
+
+- **审计**：对 sqlstore 全部 20 个 `Create*`（FIXPLAN H2 起即为真 INSERT +
+  失败返回 nil，无需再改）的**全部 31 处生产调用点**逐点过 nil 守卫。
+  结论：28 处已有守卫或为有意的 fire-and-forget（automation/orchestration 的
+  执行历史、restore 统计），**两个真洞 + 三处统计口径**：
+  - `createNotifyChannel` / `createNotifyTemplate`：拿到 nil 后直接用
+    `created.ID` 写审计 ⇒ **nil 解引用 panic** ⇒ net/http 掐断连接，客户端连
+    500 都收不到（且 panic 前审计写不出去）。违反的正是 FIXPLAN H2 的前提——
+    "handler nil-checked 已有 500 兜底（审查正面确认）"：该确认对这两个
+    handler 不成立。
+  - `saveAlertRule` 是 void 签名，`create_alert_rule` handler 无论成败都 201
+    （store 层 nil 到 handler 层被咽住）。
+  - `restoreSnapshot` 的 alertRules/templates/automationRules 三条还原路径
+    把失败静默计成成功（与缺口 3 给 tasks 补的 `tasks_failed` 不同口径）。
+- **修复**：两个 handler 补 nil-guard（500 + 明确错误体，与 ticket.go 等
+  28 处同款）；`saveAlertRule` 改返回 bool，失败即 500；restore 三条路径
+  补 `alertRules_failed` / `templates_failed` / `automationRules_failed` 计数。
+- **守卫**：`notify_create_nilguard_test.go` 四条——nil ⇒ 500 × 3（渠道/模板/
+  告警规则）+ 内存后端 201 正路径对照。变异检验：撤掉渠道 handler 的守卫 ⇒
+  测试以 `invalid memory address or nil pointer dereference` panic 判红
+  （即生产洞的原形），还原复绿。
+- **工作区事故记录**：本批改动初次落于 `F:\Nexus\OpsMesh`，验证期间（16:05–
+  16:31）该目录第二次被外部清场（连 `.git`；15:31 第一次，对侧第六十一则
+  独立记录在案），未提交改动丢失。凭上下文原样重放于新工作区
+  `F:\Agent\kilo\workspace\OpsMesh`（clone@`d58e2f4`）并重新全量验证：
+  受影响包 controlplane/backup/store 全系 go test 全绿、vet 0、gofmt 净。
+  远端 main 全程无损（`aaad5a1` 起）。
+- **F2/F6 交回对侧（ZCode）执行**：F2（按用户名吊销会话端点，auth-svc 领地）
+  与 F6（`/me` 字段规范名，契约面）按用户决定整体交 ZCode；本线不抢，待对侧
+  定名后一天内可上 F6 前端收敛。
+
 ## [Unreleased] — 2026-10-12（缺口 3 收口：CreateTask 契约补 error 通道，17 处调用点各自不再假成功）
 
 - **store 契约**：`model.TaskStore.CreateTask`（及 `deploy.Dispatcher`、`orchestration.TaskEngine`、

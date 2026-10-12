@@ -59,6 +59,12 @@ func (s *Server) createNotifyTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	t.TenantID = actx.TenantID
 	created := s.store.CreateNotifyTemplate(&t)
+	if created == nil {
+		// 同 createNotifyChannel：落库失败返回 nil 时不得裸用 created.ID
+		// （nil 解引用 panic 掐断连接，客户端连 500 都收不到）。
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create notify template failed"})
+		return
+	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "create_notify_template", Target: created.ID,
 		Detail: sanitizeAuditDetail(fmt.Sprintf("name=%s type=%s format=%s", created.Name, created.Type, created.Format)),

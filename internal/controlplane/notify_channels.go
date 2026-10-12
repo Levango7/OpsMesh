@@ -73,6 +73,13 @@ func (s *Server) createNotifyChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	c.TenantID = actx.TenantID
 	created := s.store.CreateNotifyChannel(&c)
+	if created == nil {
+		// 落库失败（SQLStore INSERT 失败返回 nil）必须显式 500：此前这里直接
+		// created.ID，nil 解引用 panic 会掐断连接——客户端连 500 都收不到，
+		// 且 panic 前审计已写不出去。
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create notify channel failed"})
+		return
+	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "create_notify_channel", Target: created.ID,
 		Detail: sanitizeAuditDetail(fmt.Sprintf("name=%s type=%s enabled=%v", created.Name, created.Type, created.Enabled)),

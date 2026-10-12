@@ -345,7 +345,11 @@ func (s *Server) restoreSnapshot(snap *backupSnapshot) map[string]int {
 			continue
 		}
 		rc := *r
-		s.store.CreateAlertRule(&rc)
+		if s.store.CreateAlertRule(&rc) == nil {
+			// 缺口 3 同款：失败单独计数，不静默计为成功。
+			counts["alertRules_failed"]++
+			continue
+		}
 		counts["alertRules"]++
 	}
 	// templates：CreateTemplate。
@@ -354,7 +358,10 @@ func (s *Server) restoreSnapshot(snap *backupSnapshot) map[string]int {
 			continue
 		}
 		tc := *t
-		s.store.CreateTemplate(tc.TenantID, &tc)
+		if s.store.CreateTemplate(tc.TenantID, &tc) == nil {
+			counts["templates_failed"]++
+			continue
+		}
 		counts["templates"]++
 	}
 	// automationRules：CreateAutomationRule。
@@ -363,7 +370,10 @@ func (s *Server) restoreSnapshot(snap *backupSnapshot) map[string]int {
 			continue
 		}
 		rc := *r
-		s.store.CreateAutomationRule(rc.TenantID, &rc)
+		if s.store.CreateAutomationRule(rc.TenantID, &rc) == nil {
+			counts["automationRules_failed"]++
+			continue
+		}
 		counts["automationRules"]++
 	}
 	return counts

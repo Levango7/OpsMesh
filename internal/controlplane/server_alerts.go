@@ -395,7 +395,12 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 	rule.TenantID = actx.TenantID
 	rule.CreatedAt = time.Now()
 	rule.CreatedBy = actx.UserID
-	s.saveAlertRule(&rule)
+	if !s.saveAlertRule(&rule) {
+		// 落库失败不再 201：store.CreateAlertRule 失败返回 nil（SQLStore INSERT
+		// 失败），client 会拿到一个不会被任何评估循环看到的规则。
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create alert rule failed"})
+		return
+	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "create_alert_rule", Target: rule.ID,
@@ -514,10 +519,12 @@ func (s *Server) listAlertRulesForTenant(tenantID string) []*AlertRule {
 	return out
 }
 
-// saveAlertRule 保存告警规则。
+// saveAlertRule 保存告警规则，返回是否落库成功。
 // M2 持久化：通过 store.CreateAlertRule 写入（MemoryStore 内存 / SQLStore MySQL）。
-func (s *Server) saveAlertRule(rule *AlertRule) {
-	s.store.CreateAlertRule(cpAlertRuleToStore(rule))
+// 返回 bool 而非 void：create 处理器要能区分"存下去了"与"Insert 失败"
+// （SQLStore 失败时返回 nil，此前 void 签名让 handler 无论成败都 201）。
+func (s *Server) saveAlertRule(rule *AlertRule) bool {
+	return s.store.CreateAlertRule(cpAlertRuleToStore(rule)) != nil
 }
 
 // removeAlertRule 删除告警规则（校验租户归属）。
