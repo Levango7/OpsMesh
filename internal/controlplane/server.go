@@ -75,6 +75,12 @@ type Server struct {
 	// 足够覆盖任何重试需求）。
 	alertSentMu sync.Mutex
 	alertSent   map[string]time.Time
+	// alertChannelSel：M2 规则"按规则选渠道"的意图登记（AlertID → {ids, at}）。
+	// notifyAlertGroup 落库时写入、deliverAlert 读取（proto.Alert 无 RuleID 字段，
+	// 选择意图只能随告警 ID 走内存）；自带时间戳、与 alertSent 同 cutoff 清理
+	// （pruneAlertChannelSel）。
+	alertChannelSelMu sync.Mutex
+	alertChannelSel   map[string]alertChannelSelEntry
 	// 告警聚合器：同源告警 5 分钟聚合 + 级别抑制（critical 抑制同源 warning）。
 	alertAggr *notify.AlertAggregator
 	// 告警多通道（Webhook + Email）。NewServer 从 cfg 构造；notifyLoop 每次推送复用。
@@ -369,6 +375,8 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		apiKeyUsage: make(map[string]int64),
 		// 告警推送去重集合（按 AlertID 指纹；见 Server.alertSent 注释）。
 		alertSent: make(map[string]time.Time),
+		// 按规则选渠道的意图登记表（与 alertSent 同 cutoff 清理；见 Server.alertChannelSel 注释）。
+		alertChannelSel: make(map[string]alertChannelSelEntry),
 		// Phase 5 API 网关运行期状态（路由规则 + 限流器 + 统计）。
 		gateway: newGatewayState(),
 		// 商业授权状态：启动时定稿一次，之后只读（见 license_gate.go）。
@@ -543,6 +551,9 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	}
 	// TD-88：启动扫描 secrets 表的明文存量并告警（方向=只存引用；新写入已在 store 契约层拒绝明文）。
 	warnPlaintextSecrets(st)
+	// TD-88 全链路 + TD-92 第二批：notify-channels 表自本批起真正参与自动外发，
+	// 启动期扫一遍明文存量（写入期那一环在 createNotifyChannel/updateNotifyChannel）。
+	warnPlaintextNotifyChannels(st)
 	// 启动时将预置 OS/中间件模板幂等写入 store（按 ID 去重，已存在不覆盖）。
 	// 使模板支持在线 CRUD；store 为空时 API 回退到内存常量（向后兼容）。
 	s.seedPresetOSTemplates()

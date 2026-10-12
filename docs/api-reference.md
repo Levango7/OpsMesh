@@ -981,7 +981,7 @@ M5 定时任务管理：基于 `internal/cron.Manager`，对已有任务附加 c
 
 ## 告警规则引擎 API
 
-M2 多条件告警规则引擎：基于 `alertengine.Engine`，支持多条件 + 逻辑组合（AND/OR/NOT）+ 持续时长 + 静默关联。走独立路由 `/api/v1/alert-rules-engine` 以与旧版单条件 `/api/v1/alert-rules` 向后兼容。规则体的 `notifyChannels` 字段（渠道 ID 列表）**当前不参与投递路由**——TD-92 裁定自动告警外发的渠道只来自启动期配置（`--alert-*` 旗帜 + `--notify-channels-config` 文件），按规则选渠道另立项（见 docs/operations.md §4.6 通道口径表）。
+M2 多条件告警规则引擎：基于 `alertengine.Engine`，支持多条件 + 逻辑组合（AND/OR/NOT）+ 持续时长 + 静默关联。走独立路由 `/api/v1/alert-rules-engine` 以与旧版单条件 `/api/v1/alert-rules` 向后兼容。规则体的 `notifyChannels` 字段（渠道 ID 列表）**参与投递路由**（TD-92 第二批）：配了则只送列表内的** UI 通知渠道**（`notify-channels` 表，租户隔离），没配 = 送该租户全部 enabled 渠道；启动期配置的两类通道（`--alert-*`/`--notify-channels-config`）不受该字段影响。口径详见 docs/operations.md §4.6.0.1。
 
 ### GET /api/v1/alert-rules-engine
 
@@ -1090,6 +1090,8 @@ M2 静默规则：基于标签匹配 + 时间窗口抑制。`store.SilenceRule` 
 ## 通知渠道 API
 
 M2 通知渠道：支持 webhook / 钉钉 / 飞书 / 企微 / SMTP / Slack 等。`Config` 字段在列表/创建返回时脱敏（`secret/password/token/pass/apiKey/api_key` 替换为 `***`）。Webhook URL 经 SSRF 校验（`validateNotifyChannelWebhook`，受 `--webhook-allow-private` 控制）。
+
+**这些渠道自 TD-92 第二批起参与自动告警外发**（此前只有「测试发送」一个消费方）：`enabled=true` 且租户与告警相同的渠道，经 `notifyLoop` 统一外发；规则配了 `notifyChannels` 则只送列表内的渠道。创建/更新时若敏感字段是明文会打 Warning（TD-88：建议 `${provider:key}` 引用）。
 
 ### GET /api/v1/notify-channels
 

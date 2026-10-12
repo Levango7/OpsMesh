@@ -545,7 +545,7 @@ func (c *SMSChannel) Send(ctx context.Context, alert *proto.Alert, tmpl *NotifyT
 channels.Register("sms", &SMSChannel{apiURL: cfg.SMSAPIURL})
 ```
 
-配合 `NotifyTemplateStore` 创建模板（Go text/template 变量替换）、`NotifyChannelStore` 持久化渠道配置。`AlertRule.NotifyChannels` 字段已定义但**零读取点**（按规则选渠道未接线，TD-92 收口说明与外发口径见 docs/operations.md §4.6）。
+配合 `NotifyTemplateStore` 创建模板（Go text/template 变量替换）、`NotifyChannelStore` 持久化渠道配置。`AlertRule.NotifyChannels`（渠道 ID 列表）**参与投递路由**（TD-92 第二批）：规则显式选了渠道时，该规则的告警只送列表内的 enabled 同租户渠道；未选 = 全部（语义与租户隔离见 docs/operations.md §4.6.0.1）。
 
 ### 7.4 LogBackend 扩展
 

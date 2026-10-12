@@ -2,7 +2,6 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
-	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/notify"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/secrets"
@@ -80,6 +78,8 @@ func (s *Server) createNotifyChannel(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create notify channel failed"})
 		return
 	}
+	// TD-88 写入期明文告警（与启动期存量扫描各一次，见 buildChannel/warnPlaintextNotifyChannels）。
+	warnPlaintextChannel(created, s.secretProvider)
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "create_notify_channel", Target: created.ID,
 		Detail: sanitizeAuditDetail(fmt.Sprintf("name=%s type=%s enabled=%v", created.Name, created.Type, created.Enabled)),
@@ -138,6 +138,8 @@ func (s *Server) updateNotifyChannel(w http.ResponseWriter, r *http.Request, id 
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "channel not found"})
 		return
 	}
+	// TD-88 写入期明文告警（与 create 同款；更新可能把引用改成明文）。
+	warnPlaintextChannel(&c, s.secretProvider)
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "update_notify_channel", Target: id,
 	})
@@ -214,28 +216,21 @@ func (s *Server) testNotifyChannel(w http.ResponseWriter, r *http.Request, id st
 	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "test notification sent"})
 }
 
-// buildChannel 根据 NotifyChannel 构造 notify.Channel 实例。
+// buildChannel 根据 NotifyChannel 构造 notify.Channel 实例（**纯构造，不打日志**）。
 // Config 为 JSON 字符串，按渠道 Type 解析对应配置。
 // provider 非空时用 WithSecret 版本构造渠道，解析 ${key} 格式密钥引用；
 // 为空时退化为明文构造（向后兼容）。
+//
+// TD-88 全链路（2026-10-12）：明文告警从本函数挪到**写入期**（createNotifyChannel/
+// updateNotifyChannel 调 warnPlaintextChannel）与**启动期**（warnPlaintextNotifyChannels
+// 扫存量）各一次——此前只在 buildChannel 里打，测试按钮点一次打一次；而自动外发路径
+// 每条告警都会构造渠道，会把同一条警告刷满日志（噪音会杀死告警）。
 func buildChannel(c *store.NotifyChannel, provider secrets.SecretProvider) (notify.Channel, error) {
 	var cfg map[string]string
 	if c.Config != "" {
 		if err := json.Unmarshal([]byte(c.Config), &cfg); err != nil {
 			return nil, fmt.Errorf("parse channel config: %w", err)
 		}
-	}
-	// TD-88（方向：引用格式优先）：敏感字段若为**明文**则告警（不阻断，保持向后兼容）。
-	// 为什么连 webhookURL 也算敏感：多数 webhook 的 URL 里直接内嵌 token（钉钉/企微/飞书/Slack 皆然），
-	// 拿到 URL 即等于拿到凭据；email 的 pass 亦同。
-	if fields := PlaintextSensitiveFields(c.Type, cfg); len(fields) > 0 {
-		providerState := "已配置 --secret-provider"
-		if provider == nil {
-			providerState = "未配置 --secret-provider（明文只能从配置里读）"
-		}
-		logx.Warn(context.Background(),
-			"通知渠道存在明文凭据（建议改为 ${provider:key} 引用，使密钥不随库/配置同机落盘）",
-			"channelID", c.ID, "type", c.Type, "fields", strings.Join(fields, ","), "provider", providerState)
 	}
 	switch c.Type {
 	case "dingtalk":

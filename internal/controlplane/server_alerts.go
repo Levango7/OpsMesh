@@ -148,14 +148,17 @@ func (s *Server) unmarkAlertSent(alertID string) {
 }
 
 // cleanupAlertSent 清理早于 cutoff 的已推送指纹条目（notifyLoop 每轮循环末尾调用，有界防泄漏）。
+// 连带清理 alertChannelSel（按规则选渠道的意图登记，自带时间戳同 cutoff 清理）。
 func (s *Server) cleanupAlertSent(cutoff time.Time) {
 	s.alertSentMu.Lock()
-	defer s.alertSentMu.Unlock()
 	for id, ts := range s.alertSent {
 		if ts.Before(cutoff) {
 			delete(s.alertSent, id)
 		}
 	}
+	s.alertSentMu.Unlock()
+
+	s.pruneAlertChannelSel(cutoff)
 }
 
 // handleAlerts 处理 GET /api/v1/alerts：返回活跃告警（M7 监控告警最小数据源）。

@@ -204,6 +204,14 @@ func (s *Server) notifyAlertGroup(ctx context.Context, g *alertengine.AlertGroup
 	for _, ev := range g.Events {
 		alert := alertEventToAlert(ev)
 		s.store.AddAlert(alert)
+		// 按规则选渠道（TD-92 第二批）：规则显式配了 NotifyChannels 时，把选择意图
+		// 按 AlertID 登记（deliverAlert 据此过滤 UI 渠道）。proto.Alert 没有 RuleID
+		// 字段，选择意图只能随告警 ID 走内存；空/未配 = 不过滤（送全部 enabled 渠道）。
+		if s.alertEngine != nil && ev.RuleID != "" {
+			if rule, err := s.alertEngine.GetRule(ev.RuleID); err == nil && rule != nil && len(rule.NotifyChannels) > 0 {
+				s.noteAlertChannelSelection(alert.AlertID, rule.NotifyChannels)
+			}
+		}
 		// 告警抑制：跟踪活跃告警（供后续抑制判定）。
 		// alertInhibitor 为 nil 时跳过（向后兼容）。
 		// 仅对未被抑制的 firing 告警跟踪（被抑制的告警在 evaluateAlertsOnce 中已被过滤，不会到达此处）。

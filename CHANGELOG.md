@@ -4,6 +4,33 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-12（TD-92 第二批：UI 通知渠道接入自动外发 + 按规则选渠道接线）
+
+- **前置（第一批，同日早些）**：`notify.Notifier` 生产构造从不注渠道 ⇒ M2 聚合组通知与
+  自动化「发送通知」全部静默丢弃、`--notify-channels-config` 只进诊断输出。已裁定口径
+  （启动期配置为源、notifyLoop 唯一发送点、deliverAlert 统一入口、SendNotify 无渠道
+  明确报错），守卫 9 条 + 变异 3/3。
+- **本批（第二批）**：UI「通知渠道」页（`notify-channels` 表）**真正参与自动告警外发**
+  ——`deliverAlert` 新增 UI 渠道投递路径：enabled 且**租户与告警相同**才收（A 租户的
+  webhook 收不到 B 租户的告警；空租户归一 default）；UI 改完下一条告警即生效
+  （运行时读库，无需重启）。
+- **按规则选渠道接线**（`AlertRule.NotifyChannels`，原零读取点）：规则显式配了渠道
+  ID 列表时只送列表内渠道，没配 = 该租户全部 enabled 渠道。选择意图由
+  notifyAlertGroup 按 AlertID 登记进内存 `alertChannelSel`（proto.Alert 无 RuleID
+  字段，不扩 store 契约）；自带时间戳、与 alertSent 同 24h cutoff 清理——**不跟随
+  alertSent 在不在**（推送失败重试期间指纹未登记，但意图必须留着，否则重推就不过滤）。
+- **TD-88 全链路补齐**：渠道明文告警从 buildChannel（每次发送都刷屏）挪到**写入期**
+  （建/改渠道时点名 channelID+字段）与**启动期**（`warnPlaintextNotifyChannels` 扫存量，
+  谓词纯函数可测；不按 Enabled 过滤——存量就是存量）各一次。
+- **守卫 9 条 + 变异 3/3**（`ui_channel_delivery_test.go`）：httptest 收件端实证送达 /
+  租户隔离 / disabled 跳过 / 按规则选渠道 / notifyAlertGroup 登记 wiring / 意图清理
+  时间戳语义 / 明文谓词边界 / buildChannel 纯构造 / 写入期告警不 panic。变异：撤
+  enabled 过滤、撤按规则过滤、撤租户隔离分别判红。过程中另捕获一起**变异还原期
+  自设缺陷**（还原串误伤明文谓词、多加 enabled 过滤），被全量包测试抓住——记录在案。
+- **文档口径同步**：operations.md §4.6.0.1 通道表（三类渠道 + 载荷形状 + 五条边界）、
+  api-reference（notifyChannels 与渠道 API 两处宣称）、architecture 行内宣称全部改为
+  新语义。
+
 ## [Unreleased] — 2026-10-12（TD-92 收口：告警外发渠道单一口径——文件多渠道真送达、两条死路闭合）
 
 - **现象**：`notify.Notifier` 的两处生产构造（`server.go:361`/`:424`）从不传

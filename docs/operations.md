@@ -1231,25 +1231,30 @@ Kubernetes 路径不重复造轮子：生产集群一般已有 kube-prometheus-s
 
 #### 4.6.0.1 控制面侧渠道口径（TD-92 收口，2026-10-12）
 
-控制面自己的业务告警外发，**渠道只来自启动期配置**，`notifyLoop`（M7）是唯一发送点：
+控制面自己的业务告警外发，**渠道来自三类启动期/库内配置**，`notifyLoop`（M7）是唯一发送点：
 
 | 配置入口 | 送入哪条路径 | 载荷形状 | 覆盖范围 |
 |---|---|---|---|
-| `--alert-webhook-url` / `--alert-notifier-type` / `--alert-email-*`（单通道） | `notify.Channels.Push` | alert 形状（单对象 camelCase，见上方实测） | 所有 firing 业务告警 |
+| `--alert-webhook-url` / `--alert-notifier-type` / `--alert-email-*`（单通道） | `notify.Channels.Push` | alert 形状（单对象 camelCase，见上方实测） | 所有 firing 业务告警（全租户） |
 | `--notify-channels-config`（多渠道 JSON，§4.6.2） | `notify.Notifier` 的 channels | message 形状（渠道各自既定格式） | 所有 firing 业务告警 + 自动化「发送通知」动作 |
+| **UI「通知渠道」页**（`notify-channels` 表） | `deliverAlert` 内按告警构造渠道 | message 形状（渠道各自既定格式） | 所有 firing 业务告警，**租户隔离 + 按规则选渠道** |
 
 三条要说清的边界（都是 2026-10-12 审计后如实记录，不再是暗功能）：
 
-- **UI「通知渠道」页配的渠道不参与自动外发**：`notify-channels` 表只有一个消费方——
-  页面上的「测试发送」按钮。要在自动告警里收到东西，请用上表两条启动期配置。
-  把 UI 渠道接入自动外发（含按规则选渠道 `AlertRule.NotifyChannels`）另立项。
+- **UI 渠道参与自动外发的语义**（TD-92 第二批）：enabled 且**租户与告警相同**的渠道才收
+  （A 租户的 webhook 收不到 B 租户的告警；空租户归一为 default）；规则显式配了
+  `notifyChannels`（渠道 ID 列表）时只送列表内的渠道，没配 = 送该租户全部 enabled 渠道；
+  渠道在 UI 里改完**下一条告警即生效**（无需重启，与启动期配置的差异所在）。
 - **两种载荷形状刻意不同**：单通道旗帜路径是 alert 形状（真机实测口径，未动），文件多渠道
-  路径是 message 形状（各渠道既定格式）。同一条告警两条路都配了会各收一份——那是配置选择，
-  不是重复投递缺陷。
+  与 UI 渠道是 message 形状（各渠道既定格式）。同一条告警多条路都配了会各收一份——那是
+  配置选择，不是重复投递缺陷。
 - **自动化规则的「发送通知」动作需要 `--notify-channels-config`**：未配置文件渠道时该动作
   **明确失败**（执行记录里可见错误），不再像 TD-92 收口前那样静默"成功"。
-- 文件渠道的 webhook URL 与单通道同款 SSRF 准入（`--webhook-allow-private` 控制私网放行）；
-  单条渠道 URL 不达标只跳过该条并在启动日志点名（序号+类型），不影响其余渠道。
+- UI 渠道的 webhook URL 在**保存时**过 SSRF 校验（`--webhook-allow-private` 控制私网放行），
+  投递时与其它路径共用同一条出网策略；构造失败的渠道（坏 JSON/类型不支持/`${key}` 解析失败）
+  本轮跳过并记 error，不影响其余渠道。
+- **明文凭据告警现在有两次**（TD-88 全链路）：写入期（建/改渠道时点名 channelID+字段）与
+  启动期（扫 `notify-channels` 表存量，count+sample）；发送路径不再重复刷屏。
 - `--notify-dedup-ttl-min` / `--notify-retry-*` 三个旋钮**当前未接线**（仍按硬编码
   5min / 默认重试策略），彼等语义与配置注释有出入（0=关闭 vs WithDedup(0)=用默认），
   径直接上会把"关闭"翻成"默认"，另立项。
