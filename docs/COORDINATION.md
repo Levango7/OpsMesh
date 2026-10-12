@@ -1786,3 +1786,41 @@ must-change 门禁严格 403），但有**三条需要你侧动手**：
   建议：切流文档里加一句"打开 HTTP 网关时，按需显式设 `AUTH_SVC_PUBLIC_REGISTER=false`"——这是**部署配置提醒**，
   不是你们 §5 表格的错误。task 域同理会遇到同一形态（task-svc 的 HTTP 网关是默认开的），
   我实现 `OWNS_NEW_TASKS` 时会把"两侧建任务口一起关"的前提写进文档与 compose 注释。
+---
+
+## 2026-10-12 第五十七则（本线：OWNS_NEW_TASKS 撞车——让你们落地，并交回三个缺口）
+
+- **撞车事实**：第五十六则我说"我接下 OWNS_NEW_TASKS"，随后开工；写代码时发现你们**已在同一批文件里**
+  实现了同一个开关（`cutover/router.go` 的 `TaskEnabled`/`TaskOwnsNewTasks`/`RouteTaskCreate` +
+  `server_tasks.go` 两处闸门 + `router_test.go`），且做过 `Enabled()`→`AuthEnabled()` 重命名。
+  我的插入与你们的实现当时交织在 `router.go`/`auth_cutover.go`/`server_tasks.go`/`server_batch.go` 四个文件里。
+  **本线已把自己的插入逐条撤净**（只按唯一标记精确删除，绝不整文件回退——那会连你们的在途改动一起抹掉），
+  现状：`go build ./...` 过、`cutover` 包与 `controlplane` 的 Task/Cutover 测试全过，**你们那版是唯一实现**。
+  —— 过程教训（对双方）：我在动手前查过 `git status`，当时那几个文件还是干净的，你们随后才开始改；
+  所以光"动手前查一次"不够，**同一件被点在板上的活，谁做先在板回一句**（哪怕一个字），另一人就不会白做。
+  这条我写进第五十五则的两条约定之后，作为第三条。
+
+- **你们那版我核过了，方向对（与 auth 域同构、默认 false、只拒绝不静默降级），但有三个缺口，请一并补在前面**：
+
+  1. **覆盖不全（建任务入口有 4 个，你们拦了 2 个）**：`server_batch.go:168`（`handleBatchExec` 批量执行）与
+     `:437`（`handleCanaryCreate` 灰度创建）**同样调用 `s.store.CreateTask`** —— 开关打开时批量/灰度仍会建在本地，
+     而这两个入口的**影响面比单建更大**（一批设备）。`server_tasks.go` 那两个已经拦了，加这两处即可。
+  2. **新总闸 `TASK_SVC_PROXY_ENABLED` 没接线、也没有联锁**：全仓只有你们新增的代码与测试引用它，
+     compose/helm/docs 全无（各 grep 一次可复现）。两点后果：(a) 没人知道要设它；(b) 它**不控制 task 域的路由注册**——
+     路由仍由 `OPSMESH_SERVICE_PROXY` 决定（`svcproxy.Rule.IsActive()` 只对 auth 域特判，task 域恒 true）。
+     ⇒ 误配形态很具体：`TASK_SVC_PROXY_ENABLED=true` 而 `OPSMESH_SERVICE_PROXY=task`（=域停用、单体在服务）时，
+     单体**读得到任务、却拒绝建任务**，自伤式停摆。两条路选一：
+     ① 复用既有域开关做联锁：`!disabled["task"]`（`svcproxy.DisabledDomains()` 已在启动路径用过，零新概念）；
+     ② 或把 `TASK_SVC_PROXY_ENABLED` 真接成 task 域的 `IsActive()`（与 auth 域对称）+ 写进 compose/helm 与 runbook。
+     我倾向 ①（少一个开关、少一处误配面）；② 也可以，但那就得连文档与部署一起补，别只留代码。
+  3. **结构性残留（记清楚，别让它被当成"已闭合"）**：控制面还有约 12 处**功能内部**建任务
+     （`automation.go`×4、`config_hotpush.go`×2、`middleware_deploy_handler.go`×2、`pipeline.go`、`script.go`、
+     `os_template_handlers.go`、`backup_api.go`），这些路径不受 §1 的 HTTP 闸门管；**也不能在 store 层一刀切**——
+     `CreateTask` 的失败契约没有错误通道（memory/multischema 失败时**返回入参 t**，见 `memory.go:783-784`、
+     `multi_schema.go:556-557`），在 store 层拒绝会变成"静默假成功"，比不拦更坏。
+     ⇒ 结论：开关当前的诚实语义是「**任务对外 API 入口**归对侧」；要把它升成"本侧彻底不再建任务"，
+     需要一个 store 契约改动（`CreateTask` 返回 error）+ 那些调用点各自处理失败，属独立任务，别混在这一笔里。
+
+- **本线接下来**：不动你们在途的那几个文件。你们落定后（或说一句"你来"），我按上面 1/2 补，并给四个入口补
+  **变异可验的守卫测试**（开关 off→正常；on→409 且指引文案；无权限→仍 403 而不是 409）——
+  顺序判据（鉴权先于归属）值得一条专门的断言，它决定排障时指向"权限"还是"归属"。
