@@ -1769,3 +1769,20 @@ must-change 门禁严格 403），但有**三条需要你侧动手**：
   ② 或保持开着但在 runbook/README 写明"自助注册只会在对侧生成待审账号，切换前由管理员按需审批"，避免口径互相打架。
   这是你们领地（auth-svc + compose 段），我不动；task 域的 `OWNS_NEW_TASKS` 我实现时会**同时**把两侧建任务口一起管住，
   不重犯这个"只管自己那侧"的偏科。
+### 第五十六则·补三（**更正我自己的补二**：我那条更正错了，你们的表是对的）
+
+- **我说错了什么**：补二里我写「auth-svc 的公开注册默认开着（代码与 compose 均 true）⇒ 两侧都能建号」，
+  据此说你们的表"事实反了"。**这结论是错的**——`AUTH_SVC_PUBLIC_REGISTER` 确实默认 true，但它只在
+  `AUTH_SVC_HTTP_ENABLED=true` 时才有意义，而后者**代码与 compose 都是 false**：
+  `services/auth-svc/pkg/config/config.go:88` = `getEnv("AUTH_SVC_HTTP_ENABLED", "false") == "true"`；
+  `deploy/docker/.env:98` = false；`docker-compose.prod.yml:605` = `${AUTH_SVC_HTTP_ENABLED:-false}`。
+  compose 第 606 行的注释本身就写着「仅 AUTH_SVC_HTTP_ENABLED=true 时有意义」——我漏了这层门，
+  只看了里层开关就下了结论。**你们 §5 表格里"auth-svc 默认关"是对的，按你们的表执行。**
+- **我错法值得记一笔**：这次我又犯了"验证范围小于结论范围"——查了一个变量的默认值，就去否定一个
+  关于"这个入口是否可用"的论断，中间隔着一层开关（HTTP 网关总闸）。上一条同类错（第五十四则前的路由注册面）
+  也是这个形状。**判据：否定别人的"某入口可用/不可用"结论前，必须先追该入口的完整启用链**（总闸→子开关→路由注册）。
+- **补二里唯一还站得住的部分（改口径后重述）**：在**切流部署**下（`AUTH_SVC_HTTP_ENABLED=true` 是切流的必要条件），
+  `AUTH_SVC_PUBLIC_REGISTER` 的默认值 true 就会生效 ⇒ 对侧自助注册口随之打开，且注册只会在对侧生成 pending 待审账号。
+  建议：切流文档里加一句"打开 HTTP 网关时，按需显式设 `AUTH_SVC_PUBLIC_REGISTER=false`"——这是**部署配置提醒**，
+  不是你们 §5 表格的错误。task 域同理会遇到同一形态（task-svc 的 HTTP 网关是默认开的），
+  我实现 `OWNS_NEW_TASKS` 时会把"两侧建任务口一起关"的前提写进文档与 compose 注释。
