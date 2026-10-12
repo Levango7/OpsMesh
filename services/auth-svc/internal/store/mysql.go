@@ -35,6 +35,11 @@ type Store interface {
 	GetRefreshToken(tokenHash string) *RefreshToken
 	DeleteRefreshToken(tokenHash string) bool
 	ConsumeRefreshToken(tokenHash string) (*RefreshToken, bool)
+	// DeleteRefreshTokensByUser 删除某用户的**全部**刷新令牌，返回删除条数。
+	// 用途（TD-60 回退语义）：控制面把某用户从切流名册摘除（回退）后调用，
+	// 让对侧签发的旧会话彻底失效——否则对侧的 rt 仍可 refresh（返回 200）
+	// 而 /me 已按名册走本侧（401），形成"刷新说还活着、一干正事就报错"的半死态。
+	DeleteRefreshTokensByUser(userID string) int
 	BlacklistJTI(jti string, ttl time.Duration)
 	IsBlacklisted(jti string) bool
 	PurgeBlacklist()
@@ -636,6 +641,21 @@ func (s *MySQLStore) DeleteRefreshToken(tokenHash string) bool {
 		log.Printf("[store] RowsAffected: %v", err)
 	}
 	return n > 0
+}
+
+// DeleteRefreshTokensByUser 删除某用户的全部刷新令牌（SQL 一条语句，返回受影响行数）。
+func (s *MySQLStore) DeleteRefreshTokensByUser(userID string) int {
+	res, err := s.db.Exec("DELETE FROM refresh_tokens WHERE user_id = ?", userID)
+	if err != nil {
+		log.Printf("[store] DeleteRefreshTokensByUser(%s): %v", userID, err)
+		return 0
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("[store] DeleteRefreshTokensByUser RowsAffected: %v", err)
+		return 0
+	}
+	return int(n)
 }
 
 // ConsumeRefreshToken atomically reads and deletes a refresh token.

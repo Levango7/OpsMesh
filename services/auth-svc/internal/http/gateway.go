@@ -657,6 +657,38 @@ func (g *Gateway) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
+	// 吊销子路径：POST {id}/revoke-sessions —— 吊销该用户**全部刷新令牌**（RT）+ Redis 会话。
+	// 为什么需要它（TD-60 回退语义）：控制面把用户从切流名册摘除（回退）后，对侧签发的旧会话
+	// 必须彻底失效——否则对侧 rt 仍能 refresh（返回 200）而 /me 已按名册走本侧（401），
+	// 用户视角是"刷新说还活着、一干正事就报错"的半死态（演练报告 F2）。
+	// 鉴权用 user:write（与建号/改用户同档，都是"改这个账号的状态"），不另造权限点。
+	if strings.HasSuffix(rest, "/revoke-sessions") {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if _, ok := g.requirePermission(w, r, "user:write"); !ok {
+			return
+		}
+		id := strings.TrimSuffix(rest, "/revoke-sessions")
+		u := g.svc.Store().GetUser(id)
+		if u == nil {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		n := g.svc.Store().DeleteRefreshTokensByUser(u.ID)
+		// Redis 会话（启用时）一并撤；未启用/不可达时为 no-op（JWT 无状态模式本就没有会话表）。
+		if g.sessions != nil {
+			if err := g.sessions.RevokeAllForUser(u.ID); err != nil {
+				log.Printf("[gateway] revoke-sessions: Redis 会话撤销失败 user=%s: %v", u.ID, err)
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "revoked", "userID": u.ID, "username": u.Username,
+			"refreshTokensDeleted": n,
+		})
+		return
+	}
 	// 审批子路径：POST {id}/approve|reject。
 	if strings.HasSuffix(rest, "/approve") || strings.HasSuffix(rest, "/reject") {
 		if r.Method != http.MethodPost {

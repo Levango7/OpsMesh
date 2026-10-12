@@ -429,6 +429,21 @@ func (s *MemoryStore) DeleteRefreshToken(tokenHash string) bool {
 	return true
 }
 
+// DeleteRefreshTokensByUser 删除某用户的全部刷新令牌（内存实现：全表扫一遍）。
+// 表的规模是"在线会话数"，且此操作只在回退时按用户触发，线性扫可接受。
+func (s *MemoryStore) DeleteRefreshTokensByUser(userID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for h, rt := range s.refreshTokens {
+		if rt != nil && rt.UserID == userID {
+			delete(s.refreshTokens, h)
+			n++
+		}
+	}
+	return n
+}
+
 // ConsumeRefreshToken atomically reads and deletes a refresh token.
 func (s *MemoryStore) ConsumeRefreshToken(tokenHash string) (*RefreshToken, bool) {
 	s.mu.Lock()
