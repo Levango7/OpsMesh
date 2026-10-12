@@ -4,6 +4,26 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-12（模拟用户演练 A1：非 demo 部署下 agent 设备不再"隐形"）
+
+- **症状（三名"模拟用户"独立复现，值班那位读码定位到行）**：非 demo 且非 require-auth 的部署
+  （`--mode=agent` 直连控制面、不经网关注入租户——自托管/裸金属的最简形态）里，
+  **agent 注册成功、心跳正常，但控制面 API/看板永远看不到它**：
+  `GET /api/v1/devices` 回 `{"seg-1":[],"seg-2":[],"seg-3":[]}`、`GET /api/v1/agents` 回 `[]`，
+  而 CMDB 里明明有这台主机。判别实验：真设备 ID 返回 `403 tenant mismatch`（数据在、租户不对），
+  假 ID 才 404。
+- **根因**：gRPC Register 的租户兜底写成了 `else if g.Cfg.Demo`——只有 demo 模式才把空租户填成
+  `default`，非 demo 就落 `TenantID=""`；而 store 的按租户过滤是
+  `if tenantID != "" && a.TenantID != tenantID { continue }` ⇒ **空租户谁都不匹配**，
+  被每一条租户切片读路径整体滤掉（看板/API/设备快照）。原注释自己就写明了这是
+  "e2e-real firstAgentID 空列表根因"，却只当 demo 兜底处理 ⇒ 把一类部署的可用性挂在 demo 开关上。
+- **修法**：裸注册（无 token、无网关注入租户、库内也无既有归属）**一律落默认租户**（去掉 demo 限定），
+  并留一行 INFO（"agent 未声明租户，落默认租户"+ hint）让多租户部署看得见——默认行为不许静默。
+  require-auth 部署不受影响（fail-fast 分支在其后）。网关注入租户/安装令牌的优先级**未变**。
+- **守卫 2 条**（`agent_tenant_visibility_test.go`，用"控制面看板的眼睛"判）：
+  ① 非 demo 裸注册 ⇒ agent 租户非空且能在 `Agents("default")` 视图里查到；② 有网关注入租户时
+  仍以它为权威（修复不得改优先级）。变异（把 demo 限定加回去）⇒ 判红并点名"租户为空"，还原复绿。
+
 ## [Unreleased] — 2026-10-12（TD-92 第二批：UI 通知渠道接入自动外发 + 按规则选渠道接线）
 
 - **前置（第一批，同日早些）**：`notify.Notifier` 生产构造从不注渠道 ⇒ M2 聚合组通知与

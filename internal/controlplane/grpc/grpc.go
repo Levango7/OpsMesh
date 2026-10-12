@@ -233,11 +233,24 @@ func (g *GrpcServerImpl) Register(ctx context.Context, info *proto.AgentInfo) (*
 			// 只做「填空」不改归属——否则既有租户会被写成空，既造成数据损坏（agent 从原租户
 			// 视图消失），也会被 store 的跨租户保护拒绝导致 agent 重启后 fail-fast 失联。
 			dom.TenantID = existing.TenantID
-		} else if g.Cfg != nil && g.Cfg.Demo {
-			// demo 兜底：与 dashboard/SSE 一致——demo 模式下无网关租户时填 default。
-			// 否则裸注册 agent 落 tenant=""，被 handleAgents("default") 过滤导致
-			// 控制面看板/API 永远看不到该 agent（e2e-real firstAgentID 空列表根因）。
+		} else {
+			// 裸注册（无 token、无网关注入租户、库内也无既有归属）：落**默认租户**。
+			//
+			// 为什么去掉原来的 `g.Cfg.Demo` 限定（2026-10-12 模拟用户演练 A1，读码定位到本行）：
+			// 空租户会被**每一条按租户切片**的读路径整体滤掉——handleAgents("default")、
+			// 设备快照 Snapshot("default")、前端看板——表现为"agent 注册成功、心跳正常，
+			// 但控制面永远看不到它，也建不了任务"（store 的过滤是
+			// `if tenantID != "" && a.TenantID != tenantID { continue }`，空租户谁都不匹配）。
+			// 只靠 demo 兜底 ⇒ 把**非 demo 的自托管/裸金属部署**（用 --mode=agent 直连、
+			// 不经网关注入租户的那种，正是生产最简形态）的可用性挂在 demo 开关上。
+			//
+			// require-auth 部署不受影响：下方 fail-fast 仍会拒绝没有租户上下文注册
+			//（那类部署走网关注入或安装令牌，租户在更早的分支就已确定）。
 			dom.TenantID = sseDefaultTenant // "default"
+			// 默认必须**可见**，不能静默：多租户部署看到这行才知道要给 agent 传租户。
+			logx.Info(ctx, "agent 未声明租户，落默认租户",
+				"agentID", dom.AgentID, "tenant", dom.TenantID,
+				"hint", "多租户部署请经安装令牌（IssueToken）或网关注入租户")
 		}
 	}
 	if g.RequireAuth && dom.TenantID == "" {
