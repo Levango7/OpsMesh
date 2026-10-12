@@ -123,6 +123,16 @@ func (s *Server) handleBatchExec(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
+	// 切流（TD-60 方案 C）：TASK_SVC_OWNS_NEW_TASKS 为 true 且 task 总闸开启时，
+	// 本入口同样拒绝本地建任务并指引去 task-svc 侧（判据与 handleCreateTask 逐字同源，
+	// 见 server_tasks.go；本接续点由 peer 侧核验补上——批量执行/灰度创建**同样调用
+	// s.store.CreateTask**，漏拦等于开关只关了一半）。
+	if s.cutoverRouter != nil && s.cutoverRouter.RouteTaskCreate() {
+		paginate.WriteJSON(w, http.StatusConflict, map[string]string{
+			"error": "new tasks are owned by task-svc (TASK_SVC_OWNS_NEW_TASKS=true); create it on the task-svc side",
+		})
+		return
+	}
 	var body struct {
 		DeviceIDs []string `json:"deviceIDs"`
 		TaskType  string   `json:"taskType"`
@@ -279,6 +289,16 @@ func (s *Server) handleCanaryCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, ok := s.requireProd(w, r, "task:write"); !ok {
+		return
+	}
+	// 切流（TD-60 方案 C）：TASK_SVC_OWNS_NEW_TASKS 为 true 且 task 总闸开启时，
+	// 本入口同样拒绝本地建任务并指引去 task-svc 侧（判据与 handleCreateTask 逐字同源，
+	// 见 server_tasks.go；本接续点由 peer 侧核验补上——批量执行/灰度创建**同样调用
+	// s.store.CreateTask**，漏拦等于开关只关了一半）。
+	if s.cutoverRouter != nil && s.cutoverRouter.RouteTaskCreate() {
+		paginate.WriteJSON(w, http.StatusConflict, map[string]string{
+			"error": "new tasks are owned by task-svc (TASK_SVC_OWNS_NEW_TASKS=true); create it on the task-svc side",
+		})
 		return
 	}
 	var body struct {

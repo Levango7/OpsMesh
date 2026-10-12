@@ -10,6 +10,22 @@
 - **TD-66 只读勘测（`docs/td66-gateway-survey-2026-10-11.md`，未改代码）**：`/gw/` 数据面 7 步管线逐项核实——鉴权（subsystemAuthorize 双闸 + 按方法分级权限）、租户隔离（只取本租户路由池）、匹配（PathPrefix+Methods）、路由级限流、SSRF 双检（创建 + **投递期复检**防 DNS rebinding，拒绝原因不回吐）、统计。缺口 **14 项成清单**（熔断/健康检查/重试/超时治理/多后端/gRPC 模型不一致/路由持久化/metrics 埋点等），升级定价三档（最小可用 1.5~2 天 = 路由持久化 + 熔断 + 埋点；匹配引擎与鉴权**无需动**）。**维持 2026-09-05 决策**（预览形态、生产走 APISIX/Envoy）；低垂果实一处待修：创建路由允许 `grpc://` 但数据面 502（模型与实现不一致，建议创建时即拒）。
 - 台账：TD-87 移入已收口、TD-66 行内追加勘测记录与维持决策、TD-88/TD-91 上一笔已移入已收口；标记行 pending 4→3、closed 28（部署门禁实测复算 PASS=76）。
 
+## [Unreleased] — 2026-10-12（TASK_SVC_OWNS_NEW_TASKS 闸门补齐 + 四入口守卫）
+
+- **补齐归属闸门覆盖**：`4e88294`（对侧实现）把 `TASK_SVC_OWNS_NEW_TASKS` 的闸门落在 2 个入口
+  （`handleCreateTask` / `handleBatchCreateTasks`），但**建任务入口有四个**——`handleBatchExec`（批量执行）
+  与 `handleCanaryCreate`（灰度创建）同样调用 `s.store.CreateTask`（`server_batch.go:168/:437`），
+  漏拦的结果是"开关只关了一半"：面板上单建被拒、批量却照样建在被切走的一侧。已按对侧样式逐字镜像补齐。
+- **新增守卫 `task_ownership_gate_test.go`（三条判据，四入口全遍历）**：① 开关打开 ⇒ 四个入口全部 409 +
+  指引文案含 `task-svc`；② 开关关着（默认）⇒ 四入口**绝不返回 409**（默认配置不得被新开关改坏）；
+  ③ 顺序判据——无凭证时必须是 401/403 而非 409（先答"有没有权限"、再答"该由谁做"；顺序颠倒会把"无权"
+  伪装成"归属冲突"）。三处变异（撤 batch-exec 闸门 / canary 闸门挪到鉴权前 / 开关恒真）逐条判红，还原复绿。
+- **另记一条未闭合的结构性残留**（写进协调板第五十七则，不假装已闭合）：控制面还有约 12 处**功能内部**建任务
+  （automation ×4 / config_hotpush ×2 / middleware_deploy ×2 / pipeline / script / os_template / backup_api），
+  不受这四道 HTTP 闸门管；**且不能在 store 层一刀切**——`CreateTask` 的失败契约没有错误通道
+  （失败时返回入参 `t`，见 `memory.go:783`、`multi_schema.go:556`），store 层拒绝会变成"静默假成功"。
+  当前开关的诚实语义是「**任务对外 API 入口**归对侧」；升为"本侧彻底不再建任务"需改 store 契约（返回 error），属独立任务。
+
 ## [Unreleased] — 2026-10-12（批次 0 演练：三个模拟用户跑完「切换前→切换后→单用户回退」）
 
 - **演练台 `deploy/scripts/drill-batch0.sh`（新）**：真二进制（控制面 + auth-svc）、真 `cutover-migrate` job、
