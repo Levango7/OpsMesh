@@ -10,6 +10,33 @@
 - **TD-66 只读勘测（`docs/td66-gateway-survey-2026-10-11.md`，未改代码）**：`/gw/` 数据面 7 步管线逐项核实——鉴权（subsystemAuthorize 双闸 + 按方法分级权限）、租户隔离（只取本租户路由池）、匹配（PathPrefix+Methods）、路由级限流、SSRF 双检（创建 + **投递期复检**防 DNS rebinding，拒绝原因不回吐）、统计。缺口 **14 项成清单**（熔断/健康检查/重试/超时治理/多后端/gRPC 模型不一致/路由持久化/metrics 埋点等），升级定价三档（最小可用 1.5~2 天 = 路由持久化 + 熔断 + 埋点；匹配引擎与鉴权**无需动**）。**维持 2026-09-05 决策**（预览形态、生产走 APISIX/Envoy）；低垂果实一处待修：创建路由允许 `grpc://` 但数据面 502（模型与实现不一致，建议创建时即拒）。
 - 台账：TD-87 移入已收口、TD-66 行内追加勘测记录与维持决策、TD-88/TD-91 上一笔已移入已收口；标记行 pending 4→3、closed 28（部署门禁实测复算 PASS=76）。
 
+## [Unreleased] — 2026-10-12（批次 0 演练：三个模拟用户跑完「切换前→切换后→单用户回退」）
+
+- **演练台 `deploy/scripts/drill-batch0.sh`（新）**：真二进制（控制面 + auth-svc）、真 `cutover-migrate` job、
+  **共享 MySQL**（job 是独立进程，memory 后端下看不到控制面建的账号——演练第一个卡点即此）、文件名册；
+  子命令 start / migrate / unroute（单用户回退）/ status / coords / stop。start 内置**对侧 admin 首登改密引导**
+  （auth-svc 侧 admin 同样有强制改密，未引导时 job 会 fail-closed 并给出可行动提示——设计正确，非缺陷）。
+- **演练报告 `docs/td60-batch0-drill-2026-10-12.md`（新）**：三个 agent 分人设（细致谨慎 / 急性子值班员 /
+  不懂技术的业务同事）逐条操作并汇报，只观察不"修复"。结论：切换=需重新登录一次（OTP→改密→新口令，可自愈）、
+  回退=原始口令复效且登录响应形态回到本侧（热加载实测 0~20s 生效）、未进批次用户零影响。
+- **四条硬发现**：① 登录限流**实测突发只有 5**（同 IP，429 无 Retry-After）⇒ 同出口 IP 的用户集中登录
+  只有前 ~5 人能进，直接改变批次划分口径；② **回退后对侧会话"半死"**（refresh 200 而 `/me` 401，
+  因 `RouteRefresh` 对 `!localOwns` 恒转发不查名册），干净修法需对侧补"按用户吊销会话"管理端点；
+  ③ 切换对用户**零引导**（`user not found` 等全是给机器看的文案）⇒ **OTP 是唯一自救入口**，必须与通知同时下发；
+  ④ 对侧响应头重复（CSP 等各两份）与两侧字段命名不一致（`roleIds` vs `roleIDs`）——后两条已请对侧收敛。
+- **runbook 同步修订**：新增 §1.1 前置条件与批次约束（对侧 admin 引导 / OTP 与通知同发 / 同出口 IP 错峰）；
+  §3 标注"回退后对侧会话可能 refresh 一次成功"的时效（吊销接口落地前）；§5 观察窗加 429 计数与 `/me` 401 文案分布。
+
+## [Unreleased] — 2026-10-12（修我 8f687c3 带出的两条 mock E2E 红 + 限流口径文档四处纠正）
+
+- **会话失效提示只对"确实持有过会话"生效**：我 8f687c3 给跳登录加了 `?reason=session_expired`，破坏了
+  两条 mock E2E 的 `/\/login$/` 断言（CI run 38178641616 / Frontend job 第 14 步 E2E (mock)）。
+  **修实现而不是改断言**——那两条场景（匿名访客、刚主动登出）本就不该说"失效"。`stores/auth.js` 的
+  `onUnauthorized` 改为先判 `user.value !== null` 才带 reason，否则裸跳 `/login`。本地复验 mock E2E 78/78。
+- **登录限流口径文档纠正**：README / api-specification(×2) / api-reference / feature-design(×2) 原写
+  「10 突发 / 3s 补 1」，实际两侧同值 **burst=5 / refill=1/6s**（已核对 controlplane 与 auth-svc 代码）；
+  e2e-real 两个 spec 的注释同步。该旧值来自收紧前的实现。
+
 ## [Unreleased] — 2026-10-12（修我自己 8870d69 收紧口令策略带出的三处回归：E2E 夹具 / 前端口径 / 跨语言守卫）
 
 - **修的是一次"收紧策略时只想到两侧同严、忘了照顾既有消费方"的回归**。8870d69 把
