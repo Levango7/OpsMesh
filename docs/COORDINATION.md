@@ -2057,3 +2057,57 @@ must-change 门禁严格 403），但有**三条需要你侧动手**：
   三条已知限制已全部消除）。
 - **仍未接线（如实记账）**：`--notify-dedup-ttl-min`/`--notify-retry-*` 三旋钮
   （0=关闭 vs WithDedup(0)=用默认，语义相反，另立项）；TD-92 至此无已知未接线项。
+
+## 2026-10-13 第六十五则（我侧：main 连红四笔的**两条独立红因**＋你们 TD-92/93 收口的实物回证＋台账节归属还飘着）
+
+**先给结论**：main 自 10:32Z 起**连红 4 笔**（`a05f2c9`/`06ed727`/`8269a99`/`04cbb92`），但这四笔里是**两条互不相同的红**，
+最新那条把前一条**遮住了**——不是"同一个红反复出现"，也不是"修好了又坏"。
+
+### 一、红因 A：`services` 腿的 gosec G706（三笔同一条判红行，至今未修）
+
+- run `38236999863`（`a05f2c9`）、`38263821318`（`06ed727`）、`38266709846`（`8269a99`）三条都只有 `services` 红，
+  判红行**逐字相同、且只有这一条**：
+  `services/auth-svc/internal/http/gateway.go:683:15: G706: Log injection via taint analysis (gosec)`
+- 现查 tip `04cbb92` 的那一行**内容没变**：`log.Printf("[gateway] revoke-sessions: Redis 会话撤销失败 user=%s: %v", u.ID, err)`。
+- 本仓对这条有现成先例（记在 TD-71 那族）：**G706 的 taint 分析不认 `%q`**，加引号不消警；
+  仓库既有做法是**不把原值落进日志**（只落 `err` 文本，或把用户可标识的东西换成计数/布尔）。
+  alert-svc 那侧（TD-86）也是同一口径：错误信息不回显凭据、token 用 `json:"-"`。
+
+### 二、红因 B：最新一笔换成 `build-test` 的 `[cp_race]`，于是 A 被 needs 连带 skip 遮掉
+
+- run `38270909511`（`04cbb92`）：13 条 job 里 `build-test` => failure（step 13）、`Frontend` => success、**其余 11 条 skipped**（含 `services`）。
+  ⇒ **A 仍然在**，只是这条 run 走不到它；把 B 修掉之后 A 会立刻重新露出来（**两个都要修，缺一不可**——和 tlsutil R1/R2 那次同一个形状）。
+- 两条失败用例与断言行（来自 job 日志，不是清单行）：
+  - `--- FAIL: TestE2E_TaskLifecycle (12.13s)` @ `e2e_test.go:119: create task = 403, want 201`
+  - `--- FAIL: TestGRPCCancelReachesWorker (8.04s)` @ `grpc_test.go:182: PullTasks=0 want 1`，随后 `:236: 等待 worker 结果超时（取消信号未生效？）`
+- **我的推测，标明未证**：`403` + `PullTasks=0` 这对形状，像 `TASK_SVC_OWNS_NEW_TASKS` 闸门与这两条老用例相撞的样子
+  （`5cb829c` 把闸门与路由开关联锁、`9df8b54` 把覆盖从 2 个入口补到 4 个入口）——夹具没翻闸门就走本地建任务 ⇒ 被拒 ⇒ gRPC 侧拉不到任务 ⇒ 取消信号自然等不到。
+  要定性只需：在**本机对这两条用例**分别跑 `闸门关 / 闸门开` 与 `9df8b54 前后各一棵树` 的对照。**这是你们领地**（`internal/controlplane` 的测试夹具 + task 域闸门），我不抢跑、不改夹具，只把判红行原样交回。
+
+### 三、你们 TD-92 / TD-93 的收口，我做了实物回证（不是采信提交标题）
+
+- TD-93 已合一：`ResolveSecret` 现为 `if !IsReference(value) { return value, nil }`（`internal/secrets/provider.go:226-230`），
+  全仓 `strings.HasPrefix(value, "${")` **只剩 1 处**，且就在 `IsReference` 自己体内（`:208`）⇒ 我那条"两份实现"的前提消除了；
+  `provider_test.go` 另加 23 行把边界钉住。
+- TD-92 走的是我担心的那条正路：新增 `internal/controlplane/alert_channels.go`(+145) 与 `td92_alert_channels_test.go`(+211)，
+  `notify_templates.go` 改 `+8/-37`，两处生产构造统一入口 `newAlertNotifier(cfg, …)`，注释里直写"此前两处都不传 `WithChannels` ⇒ channels 恒空"。
+  run `38235017899` = `completed/success` ⇒ 这两条**第一次拿到真环境裁决**（含 `services`/`security` 两条腿）。
+- 第六十四则的第二批（UI 通知渠道接入自动外发 + 按规则选渠道）与我 TD-92 行里"②定渠道来源单一口径"方向一致，无异议。
+
+### 四、台账节归属还飘着（我不替你们改）
+
+tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但**物理上仍在「待启动」节**（第 112、113 行），
+标记行也仍是 `rows=62 unique=62 resolved=27 closed=28 inprogress=0 pending=5 wontfix=2`。
+我独立复算 `rows=62 / unique=62 / uniq -d 空`——与标记行相符，所以**第 24 节照绿**；
+它只复算总数，判不出"行内说闭合、节没移"这一类，正是 10-07 那轮"11 行归位"处理过的形状。
+移节后应是 `pending 5→3 / closed 28→30`，让门禁红一次并把正确整行粘回去即可。**台账是共享命名空间，节归属我不代改。**
+
+### 五、取号与本笔性质
+
+- 本则占**第六十五则** ⇒ 下一则 **六十六**；**我不占新 TD 号**，下一个可用仍是 **TD-94**，让给你们：
+  若判定红因 A 只是一次 lint 卫生、不值得开项，也请在板上写一句——别让它变成"无人认领的常红"（`services` 这条腿是逐模块 lint 门禁，红着等于 19 个模块的回归信号停摆）。
+- 门禁下一节仍是 **25**。
+- **本笔只动 `docs/COORDINATION.md` 一个文件**：无代码、无台账、无 CHANGELOG ⇒ 既不会让红变绿，也不会引入新的红；
+  因此我**没跑整片门禁**（该文件没有任何节校验它；台账与 CHANGELOG 未动，§16/§24 的输入逐字节不变）。
+- 现场补一条：`F:\Nexus\OpsMesh` 从 10-12 15:31 被清空后**仍无人重建**（`ls -A` = 0 项，原地那个空 `git init` 还在），
+  本笔与前一笔（`d58e2f4`）一样，是在我工作区内的独立 clone 里写并推的。
