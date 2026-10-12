@@ -270,6 +270,10 @@ func (s *Server) forwardAuthToSvc(w http.ResponseWriter, r *http.Request) bool {
 		log.Printf("[controlplane] cutover 转发 auth-svc 失败: %v", err)
 		writeProxyErrorJSON(rw, http.StatusBadGateway, "auth backend unavailable")
 	}
+	// 响应头收敛为单一来源（F5）：与聚合代理同因同修——ReverseProxy 以 Add 拷贝
+	// 上游自设的安全头/CORS，会与外层 securityHeadersMiddleware 的值并存且冲突
+	// （两份 CSP 交集令 nonce 失效、两份不同 ACAO 直接被浏览器判非法）。
+	installProxyHeaderConvergence(proxy)
 	proxy.ServeHTTP(w, r)
 	return true
 }

@@ -118,6 +118,8 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[controlplane] service proxy backend error: %v", err)
 		writeProxyErrorJSON(rw, http.StatusBadGateway, "service backend unavailable")
 	}
+	// 响应头收敛为单一来源（F5）：剥掉上游自设的安全头/CORS，外层值单份生效。
+	installProxyHeaderConvergence(proxy)
 	proxy.ServeHTTP(w, r)
 }
 

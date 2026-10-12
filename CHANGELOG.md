@@ -4,6 +4,31 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-12（代理响应头收敛为单一来源：演练报告 F5 闭合）
+
+- **F5 修复（`proxy_header_convergence.go` 新增 + 两条转发路径挂载）**：切流后同一请求里
+  CSP/Referrer-Policy/X-Frame-Options/X-Content-Type-Options 各出现两份（演练批次 0 实测）。
+  成因是结构性的：外层 `securityHeadersMiddleware`/`corsMiddleware` 已权威设置这些头，
+  上游（auth-svc 经 pkg/security）各自也设一遍，而 `httputil.ReverseProxy` 拷贝上游响应头
+  用 **Add** ⇒ 同名头两份且**取值冲突**。后果超出"卫生"：两份 CSP 按**交集**强制执行
+  ⇒ 外层 nonce 与上游 `default-src 'self'` 互不满足，nonce 型内联 script 在交集下两条
+  规则都放不过；两份不同取值的 `Access-Control-Allow-Origin` 被浏览器直接判为非法 CORS
+  响应（跨源请求失败）；两份 Referrer-Policy 取值冲突（no-referrer vs
+  strict-origin-when-cross-origin）处理不一致。
+- **修法（外层单一来源，不依赖上游配合）**：`installProxyHeaderConvergence` 给
+  ReverseProxy 装 `ModifyResponse` 钩子，转发前剥掉上游自设的 11 个头（安全五件套 +
+  HSTS + CORS 五件套）；只收"外层一定会自己设"的头，上游独有头（如 X-XSS-Protection）
+  与 `Set-Cookie` 原样透传。`handleServiceProxy`（聚合代理）与 `forwardAuthToSvc`
+  （auth 切流转发，演练实测复现处）两条路径共用同一份实现——同因同修，不手抄第二份。
+  `/gw/` 数据面（运维自配后端）不在范围，注释已写明；对侧无需任何改动，其自带安全
+  中间件在这条链路上从此无害。
+- **守卫（三条，两条转发路径各一层 + TLS 变体）**：上游每个"外层权威头"有且仅有一份
+  且值来自外层（CSP 带外层 nonce、Referrer-Policy=no-referrer、X-Frame-Options=DENY）、
+  上游 ACAO 不得穿透、无 TLS 时 HSTS 为空/TLS 时恰一份、上游独有头与 Set-Cookie 透传。
+  变异检验：剥除循环置空 ⇒ 三条全红，且输出的重复形态与演练报告逐条一致
+  （两份 CSP/no-referrer+strict-origin-when-cross-origin/DENY+SAMEORIGIN/重复 ACAO）。
+- F2（按用户名吊销会话端点，对侧）与 F6（`/me` 字段命名，契约面）原状保留，见协调板。
+
 ## [Unreleased] — 2026-10-12（归属闸门与路由开关联锁：缺口 2 闭合，方案①）
 
 - **`TASK_SVC_OWNS_NEW_TASKS` 闸门与 `OPSMESH_SERVICE_PROXY` 联锁**（协调板第五十七则缺口 2，
