@@ -190,10 +190,48 @@ func TestRouterDecisions(t *testing.T) {
 	}
 }
 
+// TestRouterTaskDecisions 验证 task 域建任务的切流裁决（TASK_SVC_OWNS_NEW_TASKS）。
+//
+// 与 auth 域 OwnsNewAccounts 完全同构：名册管存量、增量开关管新任务；
+// 两者同时打开才意味着「这一批彻底切完」。
+func TestRouterTaskDecisions(t *testing.T) {
+	os.Unsetenv("TASK_SVC_PROXY_ENABLED")
+	os.Unsetenv("TASK_SVC_OWNS_NEW_TASKS")
+	r, err := LoadRoster("alice", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := NewRouter(r)
+
+	// task 总闸关闭：建任务一律本地（默认控制面持有），即使增量开关打开。
+	t.Setenv("TASK_SVC_OWNS_NEW_TASKS", "true")
+	if rt.RouteTaskCreate() {
+		t.Fatal("TASK_SVC_PROXY_ENABLED=false 时不得拒绝本地建任务（总闸是前置）")
+	}
+
+	// 总闸开、增量开 ⇒ 拒绝本地建号（指引去 task-svc 侧）。
+	t.Setenv("TASK_SVC_PROXY_ENABLED", "true")
+	if !rt.RouteTaskCreate() {
+		t.Error("TASK_SVC_OWNS_NEW_TASKS=true 且总闸开启时应判定新任务归对侧")
+	}
+
+	// 两域正交：task 开关不得影响 auth 裁决，反之亦然。
+	if rt.RouteRegister() {
+		t.Error("task 增量开关打开不应影响 auth 的注册路由")
+	}
+	t.Setenv("AUTH_SVC_PROXY_ENABLED", "true")
+	if !rt.RouteLogin("alice") {
+		t.Error("task 总闸开启不应影响 auth 登录路由")
+	}
+}
+
 func TestRouterNilSafety(t *testing.T) {
 	var rt *Router
 	if rt.Enabled() || rt.RouteLogin("alice") || rt.RouteRefresh(false, false) || rt.RouteRegister() {
 		t.Error("nil Router 必须安全（全按本地）")
+	}
+	if rt.RouteTaskCreate() {
+		t.Error("nil Router 的建任务裁决必须安全（本地建）")
 	}
 	if rt.Roster() != nil {
 		t.Error("nil Router 的 Roster 应为 nil")

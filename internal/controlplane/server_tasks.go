@@ -114,6 +114,17 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
+	// 切流（TD-60 方案 C）：TASK_SVC_OWNS_NEW_TASKS=true（且 task 总闸开启）表示
+	// 「新任务归 task-svc 持有」。此时本地建任务会与该声明矛盾——任务建在被切走的
+	// 一侧，agent 从对侧拉不到、状态也查不着，且**无任何报错**。
+	// 故明确拒绝并指引去该侧，而不是静默建在本地。判据与 auth 域
+	// auth_users.go 的 OwnsNewAccounts 完全同构（见 cutover.Router.RouteTaskCreate）。
+	if s.cutoverRouter != nil && s.cutoverRouter.RouteTaskCreate() {
+		paginate.WriteJSON(w, http.StatusConflict, map[string]string{
+			"error": "new tasks are owned by task-svc (TASK_SVC_OWNS_NEW_TASKS=true); create it on the task-svc side",
+		})
+		return
+	}
 	var body struct {
 		AgentID          string `json:"agentID"`
 		Type             string `json:"type"`
@@ -421,6 +432,15 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if _, ok := s.requireProd(w, r, "task:write"); !ok {
+		return
+	}
+	// 切流（TD-60 方案 C）：与 handleCreateTask 同判据——TASK_SVC_OWNS_NEW_TASKS
+	// 为 true 且 task 总闸开启时，批量下发同样拒绝本地建号并指引去 task-svc 侧。
+	// 批量下发的**影响面比单建更大**，更不该静默建在被切走的一侧。
+	if s.cutoverRouter != nil && s.cutoverRouter.RouteTaskCreate() {
+		paginate.WriteJSON(w, http.StatusConflict, map[string]string{
+			"error": "new tasks are owned by task-svc (TASK_SVC_OWNS_NEW_TASKS=true); create it on the task-svc side",
+		})
 		return
 	}
 	var body struct {
