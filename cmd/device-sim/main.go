@@ -1,5 +1,13 @@
-// Device Simulator for OpsMesh
+// Device Simulator for OpsMesh（见文件头注释末尾的现状说明）
 // Simulates N devices registering, sending heartbeats, and reporting metrics.
+//
+// ⚠ 现状（2026-10-12 模拟用户演练实测 B1）：本工具走 HTTP 打两个**当前控制面并不存在**的端点
+// （POST /api/v1/devices/register、POST /api/v1/devices/{id}/heartbeat）⇒ 必然 404。此前它把
+// 非 2xx 当成功（注释 Non-2xx but we continue）并打印 N/N devices registered，是**假成功**；
+// 现已改为如实报错（非 2xx 计入失败并打印响应片段）。要造真实 agent/设备，请用同一二进制升
+// agent 模式：opsmesh --mode=agent --control-addr=http://127.0.0.1:8080 --control-addrs=127.0.0.1:9090
+// --data-dir <每实例独立目录>（--data-dir 必须每实例不同：agent.id 落盘于此，多实例共用会让它们
+// 注册成同一个 agentID）。本工具的去向（改接 gRPC / 删除）留待立项，不在本次修改内。
 package main
 
 import (
@@ -8,11 +16,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -336,8 +346,15 @@ func registerDevice(ctx context.Context, cfg Configuration, d *Device) error {
 		return nil
 	}
 
-	// Non-2xx but we continue (controlplane may not have this endpoint yet)
-	return nil
+	// B1（2026-10-12 模拟用户演练）：非 2xx 必须**如实报错**。
+	// 此前这里是 `return nil`（注释写 "Non-2xx but we continue"），后果是 404 被当成功计数——
+	// 日志打出 "20/20 devices registered"，而这 20 台设备**从未存在过**：该 HTTP 端点
+	// （/api/v1/devices/register）在本仓控制面里根本不存在，设备是由 agent 经 gRPC 注册的。
+	// 假成功比失败更坏：它让"模拟数据已就绪"看起来成立，排障会去追一个不存在的设备问题
+	//（演练里模拟团队就差点被它带偏）。
+	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+	return fmt.Errorf("控制面返回 %d %s（该 HTTP 端点不存在时请改用 `opsmesh --mode=agent` 起真实 agent 注册）：%s",
+		resp.StatusCode, http.StatusText(resp.StatusCode), strings.TrimSpace(string(snippet)))
 }
 
 func sendHeartbeat(ctx context.Context, cfg Configuration, d *Device) error {
@@ -396,6 +413,11 @@ func sendHeartbeat(ctx context.Context, cfg Configuration, d *Device) error {
 	}
 	defer resp.Body.Close()
 
+	// B1：此前这里**完全不查状态码** ⇒ errors 恒为 0、日志无观测价值。
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+		return fmt.Errorf("心跳被拒 %d %s：%s", resp.StatusCode, http.StatusText(resp.StatusCode), strings.TrimSpace(string(snippet)))
+	}
 	return nil
 }
 
