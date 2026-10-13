@@ -603,6 +603,38 @@ Operator 会自动 Reconcile 出控制面 Deployment、agent DaemonSet、MySQL/R
 
 ---
 
+## 发布物核验（升级前后自查 / 读懂发布链的红）
+
+**客户侧一条命令**：
+
+```bash
+deploy/scripts/verify-release-artifacts.sh 0.14.0   # 版本不带 v；只读，不改任何东西
+```
+
+五项判据：① 14 个镜像仓库都有 `:<版本>` tag；② 每个都有 cosign `.sig` 与 `.att` 证据链；
+③ GitHub Release 存在且 assets 非空、正文含「能力降级清单」；④ chart（默认 + 生产 values +
+12 服务全启用态）渲染出的镜像引用全部真实存在；⑤ `:<版本>` 与 `:<发布提交>` 指向**同一个
+manifest digest**（"提权是 registry 侧改标、不是重建"）。**三种结论分开读，处置相反**：
+
+| 结论 | 含义 | 处置 |
+|---|---|---|
+| `[PASS]` | 核对到了、符合预期 | 无 |
+| `[FAIL]` | 核对到了、**不符合**预期（真没发布/引用指向不存在的镜像） | 按发布事故查；**别**先重跑碰运气 |
+| `[UNVERIFIED]` | **没能核对上**（GHCR 传输失败等），既不是通过也不是缺陷 | 重跑本脚本；调大 `GHCR_ATTEMPTS` 或换网络 |
+
+> 需要 `gh` 凭证：本机 `gh auth login`；CI 靠 step env 显式注入 `GH_TOKEN`（Actions **不会**
+> 自动把 `GITHUB_TOKEN` 放进环境变量——缺了会如实报"门禁自身的配置缺陷"，不会伪装成"没发布"）。
+
+**读发布链的「发布物回核」job 的红（2026-10-13 起）**：该 job 先按发布提交把 tag 触发的
+`ci` run 等到终态，再跑上面的脚本。看它自己的输出即可分诊：
+
+- 出现 `tag … 的 ci run 终态失败` ⇒ `opsmesh-binary`/`opsmesh-agent` 镜像与 Release assets
+  不会产出：**先修那条 ci run**，别重跑回核（会白等）；
+- 其余红分三类按上表读（`FAIL`=发布事故 / `UNVERIFIED`=重跑本 job / 脚本未产出结论=门禁没跑成，判红）；
+- 历史红报不追改：每个 tag 的发布链取自 **tag 提交**的 workflow，修复只对下一次 tag 生效。
+
+---
+
 ## 多租户部署
 
 多租户 schema 隔离：每租户路由到独立 MySQL schema（database），物理级数据隔离。

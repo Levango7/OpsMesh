@@ -1647,21 +1647,26 @@ PY
             fi
         fi
     fi
-    # 回核 ③ 的分诊要有一份自己的自测，且必须真的接线（"判据存在但没人跑"是 TD-62 的老病，
+    # 发布链两条判据的分诊都要有自测，且必须真的接线（"判据存在但没人跑"是 TD-62 的老病，
     # 第 19 节对 TD-80 判据是同款处置）：静态看在不在 ci.yml，再**真跑一次**——文本对账会
-    # 跟着实现一起说谎，跑过一次才算证据。2026-10-13 v0.14.0 的回核红正是这个自测要挡的形状
-    #（"门禁没凭证"被说成"Release 不存在"）。
-    REL_SELFTEST="deploy/scripts/verify-release-artifacts.selftest.sh"
-    if [ ! -r "$REL_SELFTEST" ]; then
-        bad "回核 ③ 的分诊自测缺失（$REL_SELFTEST）——判据改动无人验证"
-    elif ! grep -qF "bash $REL_SELFTEST" .github/workflows/ci.yml; then
-        bad "ci.yml 未接线「bash $REL_SELFTEST」（自测存在但没人跑）"
-    elif REL_SELFTEST_OUT="$(bash "$REL_SELFTEST" 2>&1)"; then
-        ok "回核 ③ 分诊自测通过：$(grep -F 'PASS: 全部' <<<"$REL_SELFTEST_OUT" | head -1)"
-    else
-        bad "回核 ③ 分诊自测判红（③ 的判词不可信）："
-        printf '%s\n' "$REL_SELFTEST_OUT" | sed 's/^/         /'
-    fi
+    # 跟着实现一起说谎，跑过一次才算证据。2026-10-13：回核 ③ 的红就是这个自测要挡的形状
+    #（"门禁没凭证"被说成"Release 不存在"）；wait-tag-ci（TD-95 方向②）同理。
+    REL_SELFTESTS=(
+        "deploy/scripts/verify-release-artifacts.selftest.sh"
+        "deploy/scripts/wait-tag-ci.selftest.sh"
+    )
+    for REL_SELFTEST in "${REL_SELFTESTS[@]}"; do
+        if [ ! -r "$REL_SELFTEST" ]; then
+            bad "发布链判据的分诊自测缺失（$REL_SELFTEST）——判据改动无人验证"
+        elif ! grep -qF "bash $REL_SELFTEST" .github/workflows/ci.yml; then
+            bad "ci.yml 未接线「bash $REL_SELFTEST」（自测存在但没人跑）"
+        elif REL_SELFTEST_OUT="$(bash "$REL_SELFTEST" 2>&1)"; then
+            ok "${REL_SELFTEST##*/} 通过：$(grep -F 'PASS: 全部' <<<"$REL_SELFTEST_OUT" | head -1)"
+        else
+            bad "${REL_SELFTEST##*/} 判红（判词不可信）："
+            printf '%s\n' "$REL_SELFTEST_OUT" | sed 's/^/         /'
+        fi
+    done
 else
     bad "找不到 .github/workflows/release.yml，第 17 节无从核对（判红）"
 fi

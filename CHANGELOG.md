@@ -4,6 +4,25 @@
 
 > 当前最新已发布版本：`v0.14.0`（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-13（模拟用户环境台重建 + 发布链文档更正 + agent 多实例警示）
+
+- **`deploy/scripts/sim-users.sh` 重建**（原版随工作区被清空丢失，仅教训留在演习记录里）：
+  从 **`git archive <ref>` 导出构建**（绝不就地构建、绝不碰工作树——共享工作区随时有别的线在
+  重构，环境永远是"已提交"的那一份）；每个 agent 实例**独立 `--data-dir`**（共用会共用
+  `agent.id`，身份/设备数据串味）；admin 首登改密自动走完（预置弱口令带 mustChangePassword），
+  种子 operator/viewer 保留原样供"新同事"人设体验首登流；`coords` 落接线单（含演练 B5 的
+  三处端点更正：无 `/api/v1/overview`、网关路由是 `/api/v1/gateway/routes`、operator 无
+  `quota:read`/`platform:read`）。**实机试跑通过**（start --agents 1 → status → stop）。
+- **`--data-dir` flag 帮助补一行**：同一机器跑多个 agent 实例时必须各不相同（共用目录会共用
+  `agent.id`，身份/设备数据串味——模拟用户演练 B2 的可见化，`internal/config/config.go`）。
+- **`docs/release-notes.md` 更正 v0.14.0 回核红的初判**：原文"红因是等待值不够（CORE_WAIT
+  先到点了）"当天已被复查推翻（真实红因=回核 step 未注入 GH_TOKEN + ③ 把无凭证写成"不存在"，
+  且等待循环第一轮就退出）；客户可见文档按实际更正（GitHub Release 页正文是发布时快照，
+  更正落在仓库内文档）。
+- **`docs/deployment-guide.md` 新增「发布物核验」节**：一条命令（`verify-release-artifacts.sh <版本>`）+
+  PASS/FAIL/UNVERIFIED 三态判读表 + 发布链「发布物回核」红的四种分诊（含 wait-tag-ci 指出的
+  "ci run 终态失败"一类：先修那条 run，别重跑回核）。
+
 ## [Unreleased] — 2026-10-13（F6 契约字段名收口：auth-svc 对齐单体契约 + 补对侧缺的 permissions）
 
 - **背景**：batch-0 演练 F6——两侧同义字段拼写不同（对侧 `roleIds` vs 本侧 `roleIDs`），
@@ -65,6 +84,19 @@
   "文案分类先落布尔再判"（脚本内附理由注释）；本地 `go test ./internal/gates/` 各门复跑
   通过（扫描面 25 文件 / 12407 行，违规 0）。教训：改动交付脚本的腿 = shellcheck +
   `internal/gates` 全套 + 相关 selftest，缺一不可。
+- **CI 抓到第三处（同日晚，已修）**：`security` 腿红在**本自测自己被 CI 环境遮蔽**——CI 的
+  「部署资产一致性门禁」step 用 `helm(){ docker run … alpine/helm; }; export -f helm` 提供 helm，
+  而 bash 命令解析**函数先于 PATH**：那个函数被自测的子进程继承、盖过夹具里的假 helm ⇒ ④
+  渲染不出任何 image（本机裸跑无此函数，故本地全绿）。修复=自测开头 `unset -f helm gh curl`
+  并写明复现法（`helm(){ :; }; export -f helm; bash 自测`）。**腿清单再加一条：夹具类自测要
+  摘掉继承进来的同名函数。**
+- **TD-95 方向②落地（同笔）**：新增 `deploy/scripts/wait-tag-ci.sh`——回核前按 `head_sha`
+  轮询 tag 触发的 `ci` run 到**终态**（可判定收敛，取代"固定秒数猜产物该到了"）：
+  `0`=已成功（进产物轮询做 GHCR 传播兜底）/ `1`=终态失败（**立刻判红并把 run 链接指给值班人，
+  别重跑回核白等**）/ `2`=未知（还在跑 / 查不到 / 查询失败 ⇒ 不判红）。配 4 例自测
+  （NONE→running→success / 终态失败 / 查询失败⇒未知 / 超预算⇒未知）+ **实弹两例**（对真实
+  v0.14.0 的 tag run 找到并收敛 `rc=0`；无对应 run 的 sha 如实报未知 `rc=2`）；release.yml
+  接线后 `CORE_WAIT` 轮询降级为兜底（"run 已 success 但 GHCR 还没可见"的分钟级窗口）。
 
 ## [Unreleased] — 2026-10-13（TD-96 收口：门禁第 16 节归版判据的「日期代理」假阳性——抽成可执行脚本 + 归版豁免账）
 

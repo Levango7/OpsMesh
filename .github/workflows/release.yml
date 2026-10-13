@@ -488,12 +488,30 @@ jobs:
           # 一条负责区分"未知"与"缺陷"的门禁，首先得真的跑到那句区分。
           set +e
           VER="${GITHUB_REF_NAME#v}"
+          # TD-95 方向②（2026-10-13，板第八十则）：先把等待从"固定秒数估计"换成**可判定的
+          # 收敛条件**——按 head_sha 轮询 tag 触发的 ci run 到终态（它产出 binary/agent 镜像
+          # 与 5 个 assets）。三态分诊：0=已成功（产物应已产出，进下面的产物轮询做 GHCR 传播
+          # 兜底）；1=那条 run 终态**失败**（产物不会来 ⇒ 立刻判红并把 run 链接指给值班人，
+          # **别重跑本 job 白等**——这正是 TD-95 要治的"红因文案把人引向错误处置"）；2=未知
+          # （run 还没出现 / 超预算 / 查询失败）⇒ 退化到产物轮询，不因"慢"判红。
+          if bash deploy/scripts/wait-tag-ci.sh "${VER}" "${RELEASE_SHA}"; then
+            echo "::notice::tag v${VER} 的 ci run 已成功收敛"
+          else
+            wait_rc=$?
+            if [ "$wait_rc" -eq 1 ]; then
+              echo "::error::tag v${VER} 的 ci run 终态失败 ⇒ opsmesh-binary/opsmesh-agent 镜像与 Release assets 不会产出；先修那条 run，再重跑本 job"
+              exit 1
+            fi
+            echo "::notice::tag 的 ci run 尚未收敛（wait-tag-ci rc=${wait_rc}）——退化到产物轮询（CORE_WAIT）"
+          fi
           # 为什么要等：`opsmesh-binary` / `opsmesh-agent` 两个核心镜像与 GitHub Release 的 assets
           # 都由 **ci.yml 的 tag 事件**产出，与本 workflow 并行；GitHub Actions 的 `needs` 不能跨 workflow
           # 表达依赖。2026-10-07 v0.13.0 首跑实测：12 个服务镜像与 12 次 promote 全绿，本 job 仍红在
           # 「binary/agent 没有 :0.13.0 + assets=0」——那是还没做出来，不是做坏了。
           # 等待范围刻意收窄到「失败集只含这几条竞态行」；出现任何其它缺失立刻判红，
           # 否则这道门禁会退化成"晚点自然会好"的噪音，而 §32.9 的教训恰恰是它必须拦得住。
+          # 方向②落地后这层是**兜底**（正常路径已被 wait-tag-ci 判完）：留它接住
+          # "run 已 success 但 GHCR 传播尚未可见"的分钟级窗口。
           CORE_WAIT="${CORE_WAIT_LIMIT_SEC:-2700}"
           waited=0
           while :; do

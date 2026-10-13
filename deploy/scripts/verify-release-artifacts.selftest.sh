@@ -29,6 +29,14 @@ if [ ! -r "$CLI" ]; then
     exit 1
 fi
 
+# 摘掉继承进来的同名**函数**：bash 的命令解析是「函数先于 PATH」——CI 的 security job
+# 用 `helm(){ docker run … alpine/helm; }; export -f helm` 给 validate-deploy-assets.sh
+# 提供 helm（ci.yml 该 step），而 §17 会在同一进程里调本自测 ⇒ 那个 docker 包装函数会被
+# 子脚本继承、**盖过 $WORK/bin/helm** ⇒ ④ 渲染不出任何 image（2026-10-13 b32dc8b 的
+# security 腿实测，PASS=77 FAIL=1 就红在「chart 里一个 ghcr 都没渲染出来」）。
+# 本机复现法：`helm(){ return 0; }; export -f helm; bash 本文件`。gh/curl 一并防御性摘除。
+unset -f helm gh curl 2>/dev/null || true
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/bin"

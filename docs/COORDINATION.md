@@ -2654,3 +2654,30 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
   `rows=65 unique=65 resolved=28 closed=31 inprogress=0 pending=4 wontfix=2`（门禁第 24 节实测复核）。
 - **取号**：本则第八十 ⇒ 下一则**第八十一**；TD 下一可用**仍 TD-97**；门禁下一节**仍 25**
   （本次改的是 §16 本体，未新增节）。
+---
+
+## 2026-10-13 第八十一则（本线：回核门禁续修（CI 环境遮蔽）+ TD-95 方向②落地 + 环境台重建）
+
+- **b32dc8b 的 security 腿红 = 我的自测被 CI 的 helm 函数遮蔽**：CI 该 step 用
+  `helm(){ docker run … alpine/helm; }; export -f helm` 提供 helm（ci.yml 部署资产门禁那步），
+  而 bash 命令解析**函数先于 PATH**：继承进来的函数盖过夹具里的假 helm ⇒ ④ 渲染不出任何 image
+  （本机裸跑无此函数，故本地全绿；垫背证据=该 run 的日志 `PASS=77 FAIL=1` 红在
+  「chart 里一个 ghcr 都没渲染出来」）。修法=自测开头 `unset -f helm gh curl`；复现法写进文件头。
+  该 run 最终 **11/12 绿、只此一红**（build-test 16m43s 含我修过的 internal/gates ✓、
+  Race detector 33m55s ✓、服务腿/F6 全绿；image 两条被 security 连带 skip）。
+  **腿清单补第 4 条：夹具类自测要摘掉继承进来的同名函数。**
+- **TD-95 方向②落地**：新增 `deploy/scripts/wait-tag-ci.sh`——回核前按 `head_sha` 轮询 tag 触发的
+  ci run 到**终态**（可判定收敛，取代"固定秒数猜产物该到了"）：`0`=已成功 / `1`=终态失败
+  （**立刻判红并把 run 链接指给值班人，别重跑回核白等**）/ `2`=未知（还在跑/查不到/查询失败 ⇒ 不判红）。
+  配 4 例自测 + **实弹两例**（真实 v0.14.0 的 tag run 找到并收敛 `rc=0`；无对应 run 的 sha 如实
+  `rc=2`）+ release.yml 接线；`CORE_WAIT` 轮询降级为兜底（接 "run 已 success 但 GHCR 还没可见"）。
+- **文档更正与补充**：`docs/release-notes.md` 里 v0.14.0 回核红的初判（"等待值不够"）**是错的**——
+  当天已被复查推翻（真因=GH_TOKEN 未注入 + ③ 不分诊），客户可见文档已按实际更正；
+  `docs/deployment-guide.md` 新增「发布物核验」节（一条命令 + 三态判读表 + 回核红的四种分诊）。
+- **环境台重建**：`deploy/scripts/sim-users.sh` 按原稿教训重写并**实机试跑通过**
+  （git archive 导出构建 / 每 agent 独立 data-dir / admin 首登改密自动化 / 接线单含 B5 三处更正）；
+  试跑顺带修掉自身三处小缺陷（state.env 引号、stop 把 curl 的 `000` 当占用、状态登录口令取值）。
+  `--data-dir` flag 帮助补多实例警示（**B2 可见化**）。
+- **gh 无凭证同类病普查**：全 workflow 扫完——只有回核那处（`83bf93d` 已修）；ci.yml 的 Release
+  asset 上传路本来就带 `GITHUB_TOKEN` env ✓。
+- **取号**：本则第八十一 ⇒ 下一则第八十二；不占新 TD 号，下一可用仍是 **TD-97**。

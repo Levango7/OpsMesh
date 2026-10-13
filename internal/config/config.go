@@ -506,7 +506,7 @@ func Load() *Config {
 	eventBus := flag.String("event-bus", "noop", "事件总线类型：noop | log | kafka")
 	kafkaBrokers := flag.String("kafka-brokers", "", "Kafka brokers（或 env OPSMESH_KAFKA_BROKERS）")
 	kafkaTopic := flag.String("kafka-topic", "", "Kafka topic（或 env OPSMESH_KAFKA_TOPIC）")
-	dataDir := flag.String("data-dir", "./data", "agent 身份文件目录；agent.id 落盘于此，重启沿用")
+	dataDir := flag.String("data-dir", "./data", "agent 身份文件目录；agent.id 落盘于此，重启沿用；同一机器跑多个 agent 实例时必须各不相同——共用目录会共用同一个 agent.id（身份/设备数据串味，模拟用户演练 B2）")
 	demo := flag.Bool("demo", false, "演示模式：每个 agent 注册预置 uname -a 示例任务（生产务必关闭）")
 	installToken := flag.String("install-token", "", "自动纳管：agent 经 bootstrap 安装时携带的一次性 install token（空=无令牌闭环）")
 	taskLeaseSec := flag.Int("task-lease-sec", 300, "任务租约租期秒；超期未上报结果则复位重调度")
