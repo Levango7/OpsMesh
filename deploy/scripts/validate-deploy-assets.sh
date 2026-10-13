@@ -22,7 +22,8 @@
 #  13. 引导脚本只建库+授权（建表职责归代码）
 #  14. 出厂 PromQL 结构检查（CI 跑不了 promtool，钉住最常犯的四类写法错）
 #  15. 告警送达链路接通性（规则 → Alertmanager → 外发通道）
-#  16. CHANGELOG 归版账目（[Unreleased] 不得早于已发布版本日期）
+#  16. CHANGELOG 归版账目（[Unreleased] 不得早于已发布版本日期；判据=changelog-fold-gate.py
+#      + 归版豁免账 changelog-fold-exempt.tsv，账本过期即判红）
 #  17. 发布链顺序（构建腿只推不可变 :<sha>；promote 必须是提权唯一入口且在 Release 之前）
 #  18. 入站边界（出厂 compose 发布的宿主端口除白名单外必须只绑环回；含条目数与独立正则对账，防判定面静默缩小）
  #  19. CI 重试判据的接线与自测（TD-80：判据必须是可执行脚本且真的被调用，并现场跑一次自测）
@@ -1477,65 +1478,40 @@ echo "=== 16. CHANGELOG 归版账目（[Unreleased] 不得早于已发布版本�
 # 判据为什么是"日期比较"而不是"查 git tag"：本门禁所在的 CI job 是浅检出（未设 fetch-depth: 0），
 # 拿不到 tag 列表；真要查 tag 会让这道门禁在 CI 里静默空转——那是比没门禁更糟的形态。
 # "早于最新发布版本日期却仍标 Unreleased"只用文件自身就能判红，且能抓住本次这一整类错标。
+#
+# 2026-10-13 改造（TD-96）：判据从内联文本改成**可执行脚本 + 自带自测**（照第 19 节既有做法，
+# 理由同款：文本断言会跟着实现一起说谎，跑过一次才算证据）；判据本体现在还要读一本
+# **归版豁免账**（deploy/scripts/changelog-fold-exempt.tsv）——只收「在最新发布 tag 之后
+# 才落地、但标题按工作发生日写」的块：它们的日期早于发布日，可它们确实没发货，既不能归版
+# （那会把没发的代码写进发布账），也不能改日期（那是把账改到通过门禁，下一次真漏归版就再也
+# 抓不到）。账目不能静默增长：账里每条都必须仍命中一个「当前且早于发布日的 [Unreleased] 块」，
+# 否则判红（stale）——豁免不许变成后门。
+CLJ_CLI="deploy/scripts/changelog-fold-gate.py"
+CLJ_LEDGER="deploy/scripts/changelog-fold-exempt.tsv"
+CLJ_TEST="deploy/scripts/changelog-fold-gate.selftest.sh"
 if [[ -f CHANGELOG.md ]]; then
     if [[ -z "$PY" ]]; then
         bad "本机/CI 没有 python，第 16 节无法执行（判红而不是跳过）"
+    elif [ ! -r "$CLJ_CLI" ] || [ ! -r "$CLJ_LEDGER" ] || [ ! -r "$CLJ_TEST" ]; then
+        bad "第 16 节的判据/豁免账/自测缺失（$CLJ_CLI / $CLJ_LEDGER / $CLJ_TEST）——判据脱线等于没有门禁，先判红"
     else
-        CL_OUT="$("$PY" - CHANGELOG.md <<'PY'
-import re, sys
-lines = open(sys.argv[1], encoding="utf-8").read().split("\n")
-# 标题行的严格定义：`## [x.y.z]` / `## [Unreleased]` 独占一行，或后跟 " — 描述"。
-# 为什么这么严：正文里存在以 `## [Unreleased]` 开头的**散文行**（例如"把 `## [Unreleased]`
-# 一次性改成 `## [0.12.0]`"），变异验证时它被当成了无日期标题 → 假阳性判红。
-# 判据一旦会因散文误报，下一次真错标就会被当成"又是老毛病"而被忽略。
-def is_unreleased(l):
-    return l == "## [Unreleased]" or l.startswith("## [Unreleased] — ")
-
-def is_version(l):
-    return bool(re.match(r"^## \[\d+\.\d+\.\d+\]( — |$)", l))
-
-date = re.compile(r" — (\d{4}-\d{2}-\d{2})")
-rel_dates = [date.search(l).group(1) for l in lines if is_version(l) and date.search(l)]
-if not rel_dates:
-    print("NO_RELEASED_VERSION")
-    sys.exit(0)
-cut = max(rel_dates)
-n_ver = sum(1 for l in lines if is_version(l))
-bad, n_un = [], 0
-for i, l in enumerate(lines, 1):
-    if not is_unreleased(l):
-        continue
-    n_un += 1
-    m = date.search(l)
-    d = m.group(1) if m else None
-    if not d:
-        bad.append(f"L{i}: [Unreleased] 标题没有日期，无法判它是否该归版：{l[:56]}")
-    elif d < cut:
-        bad.append(f"L{i}: 日期 {d} 早于最新发布版本日期 {cut}，却仍标 [Unreleased]：{l[:56]}")
-print(f"SUMMARY released_max={cut} released_blocks={n_ver} unreleased={n_un} offenders={len(bad)}")
-print("\n".join(bad))
-PY
-)"
-        if grep -qF 'NO_RELEASED_VERSION' <<<"$CL_OUT"; then
-            bad "CHANGELOG.md 里一个已发布版本标题（## [x.y.z] — 日期）都没有——本节失去基准，判红而不是放行"
+        if CL_OUT="$("$PY" "$CLJ_CLI" CHANGELOG.md "$CLJ_LEDGER" 2>&1)"; then
+            ok "CHANGELOG 归版账目自洽（$(grep -F 'SUMMARY released_max=' <<<"$CL_OUT" | head -1 | sed 's/^SUMMARY //')）"
         else
-            CL_SUMMARY="$(grep -F 'SUMMARY released_max=' <<<"$CL_OUT" | head -1)"
-            offenders="$(printf '%s' "$CL_SUMMARY" | sed -n 's/.*offenders=\([0-9][0-9]*\).*/\1/p')"
-            offenders="${offenders:-}"
-            if [[ -z "$offenders" ]]; then
-                bad "第 16 节没解析出 SUMMARY（判据在空转，判红）：${CL_SUMMARY:-空}"
-            elif [[ "$offenders" -gt 0 ]]; then
-                bad "CHANGELOG 归版账目错标 ${offenders} 处（已发货却仍标 [Unreleased]）：${CL_SUMMARY#SUMMARY }"
-                grep -vE '^(SUMMARY |NO_RELEASED_VERSION$)' <<<"$CL_OUT" | grep -vE '^[[:space:]]*$' | sed 's/^/         /'
-            else
-                ok "CHANGELOG 归版账目自洽（${CL_SUMMARY#SUMMARY }）"
-            fi
+            bad "CHANGELOG 归版账目错标或豁免账过期（$(grep -F 'SUMMARY released_max=' <<<"$CL_OUT" | head -1 | sed 's/^SUMMARY //')）："
+            grep -vE '^(SUMMARY |NO_RELEASED_VERSION$)' <<<"$CL_OUT" | grep -vE '^[[:space:]]*$' | sed 's/^/         /'
+        fi
+        # 真跑一次自测：这一步同时证明"判据可用"与"上面的放行不是空转"（含两条变异用例）。
+        if CLJ_OUT="$(bash "$CLJ_TEST" 2>&1)"; then
+            ok "第 16 节判据自测通过：$(grep -F 'PASS: 全部' <<<"$CLJ_OUT" | head -1)"
+        else
+            bad "第 16 节判据自测判红（判据本身不可信，本节不得依赖它）："
+            printf '%s\n' "$CLJ_OUT" | sed 's/^/         /'
         fi
     fi
 else
     bad "找不到 CHANGELOG.md，第 16 节无从核对（判红）"
 fi
-
 echo ""
 echo "=== 17. 发布链顺序（gate-before-promote：构建腿只推不可变 :<sha>，浮动 tag 必须在门禁之后）==="
 # 为什么钉这一节：`9b23b90` 把 release.yml 改成"构建只推 :<sha>，:版本 与 :latest 由 promote job

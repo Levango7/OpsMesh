@@ -66,7 +66,24 @@
   通过（扫描面 25 文件 / 12407 行，违规 0）。教训：改动交付脚本的腿 = shellcheck +
   `internal/gates` 全套 + 相关 selftest，缺一不可。
 
-## [0.14.0] — 2026-10-12（模拟用户演练 B1：device-sim 不再假成功）
+## [Unreleased] — 2026-10-13（TD-96 收口：门禁第 16 节归版判据的「日期代理」假阳性——抽成可执行脚本 + 归版豁免账）
+
+- **问题**：部署资产门禁第 16 节用「块日期早于最新发布版本日期 ⇒ 已发货却仍标 [Unreleased]」做判据
+  （CI 是浅检出、取不到 tag 列表，故拿日期做代理）。v0.14.0 的 tag 打在 `f4968bb`，而 A3/B1/B3 三笔
+  （`087a9bd`/`219b5e4`/`56ac092`）在 tag **之后**才进 main（`git merge-base --is-ancestor <sha> v0.14.0^{commit}`
+  逐条 NO），确实没随 0.14.0 发货，却因标题按工作发生日写成 10-12 被判「漏归版」——跨 tag 边界并行时的假阳性。
+- **修法（选项 ①，登记行给的两条出路之一）**：① §16 判据从内联 heredoc 抽成独立可执行脚本
+  `deploy/scripts/changelog-fold-gate.py`（CLI 打 `SUMMARY …`，退出码 = 0 干净 / 1 有 offenders 或过期条目）；
+  ② 新增**归版豁免账** `deploy/scripts/changelog-fold-exempt.tsv`（键 = 块标题整行 + **过期检查**：账里每行
+  必须仍对应一个「当前且早于发布日」的 [Unreleased] 块，否则判红——豁免不许变成后门，照第 24 节历史快照
+  豁免的既有做法）；③ 三块标题**还原**为如实的 [Unreleased]（不归进 0.14.0——那会让文档领先于产物，
+  正是登记行点名的「不要的修法」）；④ §16 接线为「跑脚本 + 跑脚本自测」。
+- **自测**：`deploy/scripts/changelog-fold-gate.selftest.sh` 10 例全绿，含两条**变异**（日期比较换成 `>`、
+  `is_unreleased` 放宽成子串匹配 ⇒ 各自判红）。
+- **验证**：部署资产门禁整跑 `PASS=77 FAIL=0 SKIP=1`，§16 报 `released_max=2026-10-13 released_blocks=149
+  unreleased=7 exempt=3 offenders=0 stale=0`；`shellcheck -S info` 两个脚本 0 命中。
+
+## [Unreleased] — 2026-10-12（模拟用户演练 B1：device-sim 不再假成功）
 
 - **症状**：`cmd/device-sim` 日志打出 "20/20 devices registered"，而那 20 台设备**从未存在过**——
   它打的 `/api/v1/devices/register` 与 `/api/v1/devices/{id}/heartbeat` 两个 HTTP 端点在控制面里
@@ -78,7 +95,7 @@
 - **真机验证**：对桩服务（返回 501）实测，逐台打印 `registration failed: 控制面返回 501 …（该 HTTP
   端点不存在时请改用 opsmesh --mode=agent …）`，汇总为 0/N——不再是静默的 N/N。
 
-## [0.14.0] — 2026-10-12（模拟用户演练 B3：404 面统一为 JSON 信封）
+## [Unreleased] — 2026-10-12（模拟用户演练 B3：404 面统一为 JSON 信封）
 
 - **症状**：客户端看到两种 404 形态——未注册路径回 JSON 信封，而"命中 catch-all 的缺页"
   （SPA/静态处理器注册在 "/" 上，http.NotFound / FileServer 写纯文本）回 `404 page not found`。
@@ -911,7 +928,7 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
 - **守卫 2 条**：① 登录响应必须带非空权限；② 填权限不得写回 store（浅拷贝）。
   变异（登录响应不填权限）⇒ 判红点名"B4 原形状"，还原后整包复绿。
 
-## [0.14.0] — 2026-10-12（模拟用户演练 A3：授权拒绝入审计链）
+## [Unreleased] — 2026-10-12（模拟用户演练 A3：授权拒绝入审计链）
 
 - **症状（两个"模拟用户"独立复现）**：被拒的越权尝试**零留痕**——6 项越权写操作（下发任务/建号/
   改角色/删设备/建网关路由）+ 跨租户读之后，审计链里仍只有 user_login/user_create/user_change_password，
