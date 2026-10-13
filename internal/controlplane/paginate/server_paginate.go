@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // WriteJSON 统一写出 JSON 响应。
@@ -39,7 +40,69 @@ func (m *JSONErrorMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
 		return
 	}
-	h.ServeHTTP(w, r)
+	// B3（2026-10-12 模拟用户演练）：**命中 pattern 不等于这个请求存在**。
+	// 只要有 catch-all（SPA/静态资源处理器注册在 "/" 或 "/api/..." 前缀上），缺页请求就会进那个
+	// handler，由它写出自己的 404——Go 的 http.NotFound / http.FileServer 写的是
+	// "404 page not found" **纯文本**，于是客户端看到两种 404 形态（拼错路径=纯文本、
+	// 未注册路径=JSON），新人据此判断"是不是另一个服务在答"。
+	// 修法按"兜底必须落在渲染处、不能依赖调用方"（与 metrics 标签白名单同一条纪律）：
+	// 在包装器里**拦截 handler 自己写出的纯文本 404**，统一成 JSON 信封；
+	// handler 有意写的 JSON 404（Content-Type 已非 text/plain）原样放行，不改语义。
+	wrapped := &json404Writer{ResponseWriter: w, path: r.URL.Path}
+	h.ServeHTTP(wrapped, r)
+	wrapped.finish()
+}
+
+// json404Writer 把"纯文本 404"改写成 JSON 信封，其余响应零改动。
+//
+// 实现要点：**延迟 WriteHeader**——收到 404 时先不落盘，等第一次 Write 看 Content-Type 决定；
+// 因此不需要缓冲整个响应体（大数据量响应不受影响），只在 404 这一小段上做决策。
+type json404Writer struct {
+	http.ResponseWriter
+	path     string
+	deferred bool // 已收到 404 且尚未真正写出头
+	swallow  bool // 已改写：丢弃原 handler 的后续 body
+}
+
+func (w *json404Writer) WriteHeader(code int) {
+	if code == http.StatusNotFound && !w.deferred && !w.swallow {
+		w.deferred = true // 暂缓，等第一次 Write 看 Content-Type
+		return
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *json404Writer) Write(b []byte) (int, error) {
+	if w.deferred {
+		w.deferred = false
+		if strings.Contains(w.Header().Get("Content-Type"), "text/plain") {
+			// Go 默认 404（http.NotFound / FileServer）：改写成 JSON 信封并丢弃原 body。
+			w.swallow = true
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.Header().Del("X-Content-Type-Options") // 那是 http.Error 配纯文本用的
+			w.ResponseWriter.WriteHeader(http.StatusNotFound)
+			body, _ := json.Marshal(map[string]string{"error": "not found", "path": w.path})
+			_, _ = w.ResponseWriter.Write(body)
+			return len(b), nil
+		}
+		w.ResponseWriter.WriteHeader(http.StatusNotFound) // handler 有意写的 404：原样放行
+	}
+	if w.swallow {
+		return len(b), nil
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+// finish 处理"只写了 404 头、没写 body"的形态：延迟的头必须补落盘。
+func (w *json404Writer) finish() {
+	if !w.deferred {
+		return
+	}
+	w.deferred = false
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.ResponseWriter.WriteHeader(http.StatusNotFound)
+	body, _ := json.Marshal(map[string]string{"error": "not found", "path": w.path})
+	_, _ = w.ResponseWriter.Write(body)
 }
 
 // ============================================================================
