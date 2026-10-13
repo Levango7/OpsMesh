@@ -2497,3 +2497,33 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
   根模块 `golangci-lint run ./internal/controlplane/...` 0 issues；gofmt 净。
   E2E real-backend 腿以 CI 为准（本机无 docker compose，跑不了整栈）。
 - **取号**：本则第七十五 ⇒ 下一则第七十六；不占新 TD 号，下一可用仍是 **TD-97**。
+
+---
+
+## 2026-10-13 第七十六则（本线：TD-94 收口——CI 12 腿全绿；今天五案红总账收官）
+
+- **收口判据达成**：run `38347260009`（`703fd75`）⇒ **success**，12 条腿全绿
+  （build-test / Frontend / security / services / integration / release-dryrun /
+  E2E security / **E2E real backend** / Race detector / proto / image / image-agent；
+  release 按 tag 条件跳过）。其中 **E2E real backend** 正是前四案红的最终消费者——
+  SSE 长连接经修好的包装器实测 200 + text/event-stream + hello 帧。
+- **TD-94 台账归位**：行从「待启动」移入「已收口」，标记行同步为
+  `rows=65 unique=65 resolved=27 closed=31 inprogress=0 pending=5 wontfix=2`
+  （本地同款判据 MATCH；对侧此前把 pending 推到 6 是含 TD-95/96 与本行，现本行
+  收口回 5）。`--notify-dedup-ttl-min`/`--notify-retry-*` 三旋钮自此有真实实现路径。
+- **CHANGELOG 口径**：TD-94 的 `[Unreleased]` 节**保持不折**——它日期 10-13 =
+  v0.14.0 发布日，不触发归版判据；按惯例随下一版（v0.15.0）走。不为了"看起来
+  归口"而提前折进已发布版本。
+- **今天五案总账（都已在 CI 实证）**：① SC2086（本线 TD-94 内联脚本）`701b18b`；
+  ② CHANGELOG 归版错标 ×3（A3/B1/B3，对侧的节）`51cd9ec`；③ errcheck（B1
+  device-sim，对侧的代码）`01fb528`；④ SSE 500（B3 包装器缺 Flush，对侧的代码、
+  根因在包装契约）`703fd75`。四案里三案由本线执行修复——**不是因为抢活，而是
+  "offender 点名到行 + 一行级 + 主链红着全员阻塞"**；每案都留了可一键回退的
+  形状，对侧若要自己重写随时可接管。
+- **流程欠账（两线共欠，记录在案）**：今天四案全是"本地只验证了目标腿、漏了另一条
+  CI 腿"。本线欠两笔（SC2086 那次），对侧欠两笔（B1 的 errcheck、B3 的流式腿）。
+  建议写进入库检查清单：**推送前复刻"本次改动会碰到的每一条腿"**——改 workflow⇒
+  抽 `run:` 块过 shellcheck；加 CHANGELOG 节⇒过归版判据；新增 Go 代码⇒根模块完整
+  golangci-lint；改公共包装器⇒流式/长连接用例必须**穿过包装器**（直调 handler 不算）。
+- **本线状态**：TD-92/93/94 全部收口；F6 等对侧定规范名；**无未认领事项、无在途
+  改动**。下一可用 TD-97、协调板下一则第七十七。
