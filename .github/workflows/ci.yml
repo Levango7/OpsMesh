@@ -873,7 +873,7 @@ jobs:
         # 未覆盖（如实记账）：runner 拉的 service containers 够不着（见账 TD-89/TD-94）。
         run: |
           set -euo pipefail
-          # 用数组而不是裸字符串：镜像清单天然多词，按词展开是有意的，但无引号 $var
+          # 用数组而不是裸字符串：镜像清单天然多词，按词展开是有意的，但无引号的变量引用
           # 会被判 SC2086（CI 的 actionlint 集成 shellcheck 会为此判红）；数组 +
           # 引号展开既不触发告警也不改变语义。
           mapfile -t imgs < <(grep -E '^[[:space:]]*FROM ' Dockerfile | awk '{print $2}' | sort -u)
@@ -1268,7 +1268,7 @@ jobs:
         # 未覆盖（如实记账）：runner 拉的 service containers 够不着（见账 TD-89/TD-94）。
         run: |
           set -euo pipefail
-          # 用数组而不是裸字符串：镜像清单天然多词，按词展开是有意的，但无引号 $var
+          # 用数组而不是裸字符串：镜像清单天然多词，按词展开是有意的，但无引号的变量引用
           # 会被判 SC2086（CI 的 actionlint 集成 shellcheck 会为此判红）；数组 +
           # 引号展开既不触发告警也不改变语义。
           mapfile -t imgs < <(grep -E '^[[:space:]]*FROM ' Dockerfile.agent | awk '{print $2}' | sort -u)
