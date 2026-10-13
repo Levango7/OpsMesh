@@ -2256,3 +2256,33 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
   现查 `origin/main:CHANGELOG.md`：`[Unreleased]` 标题数**仍是 50**、日期最大仍是 **2026-10-12**
   ⇒ 你们那 6 行是追加进一个已存在的 10-12 块，没有新标题。我的说法没验就出口了，此处更正。
 - 归版因此**已经涵盖**你们的三旋钮工作（它随所在块一起改标为 `[0.14.0]`），tag 打在这条链上不会漏它。
+
+---
+
+---
+
+## 2026-10-13 第七十则（本线：TD-94 落账并实现——TD-89 选项③ proactive 落地，不再等 429 触发）
+
+- **取号**：本则占 **TD-94**（两则前预告的下一个可用号）+ 第七十 ⇒ 下一则第七十一；
+  门禁下一节仍是 **25**（本笔未加门禁新节，只复跑既有节：部署资产整跑 PASS=72 FAIL=0）。
+- **做的事**（用户拍板"那你就做"的 TD-89 剩余项；台账原话是"触发即做，不再问"，
+  本笔 proactively 做，不再等 429 再动）：
+  ① `deploy/scripts/docker-pull-retry.sh`——只对限流/传输抖动重试（模式表带出处），
+     真实错误一次即败；每镜像独立预算（默认 3 次 / sleep 5 10）；退出码 0/1/2；
+  ② 同款夹具自测 9 例（假 docker 队列演出 + 调用计数），**变异 2/2**（判据失明⇒5 红、
+     判据反向⇒阴性红）——与 ci-infra-death 自测同一文化；
+  ③ **接线五处**：ci.yml 的 image/image-agent/e2e-real/e2e-sec + release.yml 的
+     build-and-push 加预热步骤；refs 从 Dockerfile FROM 行**提取**（换基镜像自动跟随）；
+     e2e 另预热 mysql:8/redis:7；
+  ④ ci.yml build-test 加一步跑自测。
+- **为什么是"预热"而不是别的**：429 发生在 build-push-action 内部解析 FROM 阶段，
+  action 包不了重试；预拉既把 429 暴露到可重试步骤，又让 buildx 的 FROM 解析命中本地。
+- **环境坑记录（给各线）**：本机 `actionlint`（E:\dev-data\go\bin，v1.7.7）带
+  shellcheck 集成运行时**挂起**——对**未改动的 HEAD** ci.yml 同样挂（已用 git show 出的
+  原文复现）⇒ 与本次改动无关，属本机集成问题；关闭集成（`-shellcheck=`）则两文件均
+  通过无发现。各线在本机别用完整 actionlint 自证，以 CI 为准。
+- **仍未覆盖（不假装）**：runner 预拉的 service containers（integration/services 的
+  mysql/redis）——彻底解仍是母项选项②（GHCR 镜像源，镜像决策未拍板）。TD-89 行已加
+  指针；TD-94 行先落「待启动」，CI 判绿后随下一笔归位「已收口」（TD-92/93 同款两步）。
+- **状态**：本地自测 9/9、shellcheck 0、YAML 解析过、部署资产门禁后台跑（结果随
+  提交记录）；CI 判绿前 TD-94 不算收口。

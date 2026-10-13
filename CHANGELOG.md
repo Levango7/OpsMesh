@@ -4,6 +4,32 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-13（TD-94 承接 TD-89 选项③：Docker Hub 限流的有界重试 + 五处预热接线）
+
+- **问题**（母项 TD-89，2026-10-10 实测两次同形态）：`registry-1.docker.io` 拉基础镜像
+  元数据 429 / `auth.docker.io/token` 500，失败发生在 `docker/build-push-action` **内部**
+  解析 FROM 阶段、未编译任何代码 ⇒ 与提交内容无关的假红；同 run 代码门禁全绿。
+- **落地**：
+  - `deploy/scripts/docker-pull-retry.sh`：只对**限流/传输抖动**重试（模式表逐条带出处），
+    真实错误（manifest unknown 等）一次即败；每镜像独立预算（默认 3 次、sleep "5 10"）；
+    退出码 0/1/2 分明，docker 真实退出码透出；
+  - `deploy/scripts/docker-pull-retry.selftest.sh`：9 例夹具（假 docker 按队列演出 + 调用计数）
+    钉住阳性/阴性/有界/多镜像/用法五类行为；**变异 2/2 判红**（判据失明 ⇒ 5 红；判据
+    反向 ⇒ 阴性红）；
+  - **接线五处**：ci.yml 的 image / image-agent / e2e-real / e2e-sec 与 release.yml 的
+    build-and-push 增加预热步骤，把 Docker Hub 拉取暴露到可重试步骤；refs 从 Dockerfile
+    的 FROM 行提取（换基镜像自动跟随，不手抄）；e2e 额外预热 mysql:8/redis:7；
+  - ci.yml build-test 增一步跑自测（判据失明不等测试跑完才暴露）。
+- **为什么预热有效**：预拉后镜像写入本地 store，buildx docker driver 的 FROM 解析优先命中
+  本地 ⇒ 构建步骤不再碰注册中心元数据。
+- **仍未覆盖（如实记账）**：runner 拉的 service containers（integration/services 两 job 的
+  mysql/redis）够不着——彻底解是母项选项②（GHCR 镜像源，属镜像决策未拍板）。
+- **验证**：自测 9/9；shellcheck 0；两个 workflow YAML 解析通过；actionlint v1.7.7
+  （钉死版）关闭 shellcheck 集成本机通过无发现（本机 actionlint+shellcheck 集成对
+  **未改动 HEAD 同样挂起**，属环境问题，真机判绿以 CI 为准）；部署资产门禁本地
+  PASS/FAIL 见提交记录。
+
+
 ## [0.14.0] — 2026-10-13（v0.13.0 之后全部改动归版；本版有两处**对客户可见的行为变化**：告警自动外发真正生效、`secrets` 表拒绝明文写入）
 
 本版主线三件事：① TD-60 三域双轨从「能接通」走到「能按批切、能回退、出事能定位」——task 域 R6 批量/灰度状态持久化（此前是进程内内存，重启即丢批次视图）、归属闸门 `TASK_SVC_OWNS_NEW_TASKS` 与路由开关联锁、`CreateTask` 契约补 error 通道（17 处调用点不再假成功）、auth 域会话凭证透传 + `cutover-unroute` 回退语义 + 按用户吊销会话（F2）、device 域纳管链路；② TD-61/TD-87 把两个巨型父包按域下沉——`internal/store` 顶层 113 → 20 个 .go（三批收口），`internal/controlplane` 拆出 **20 个子包**、父包剩 199 个顶层 .go（88 个非测试、**25,339 行**——这两个数是我在 `d22c4ac` 上现查量出来的，TD-87 行里那句「23,864」是 10-10 的读数，之后又长回去了），并顺手把两份逐行等价的手抄 SSRF 私网判定合一（`egress.IsPrivateIP` 为唯一实现）；③ TD-88/TD-92/TD-93 把凭据与通知面收成一条口径——引用格式 `${provider:key}` 优先、`secrets` 表只存引用、告警外发渠道单一来源、引用/明文形状判断全仓只剩 `secrets.IsReference` 一份。

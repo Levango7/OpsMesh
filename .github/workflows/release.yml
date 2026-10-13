@@ -117,6 +117,14 @@ jobs:
       # Dockerfile.service 模板，服务名经 --build-arg SERVICE 注入。
       # （此位置曾有一个拆分时遗留的悬空步骤头「Build Docker image」，缺 run/uses
       #   被 actionlint 判红，2026-10-05 删除；上面这段构建上下文理由属于下面的 buildx 步骤。）
+      - name: 预热基础镜像（TD-94：429/5xx 有界重试）
+        # 同 ci.yml image job 的理由（TD-89 实测 429 解析基镜像阶段）。refs 从
+        # Dockerfile.service 的 FROM 行提取，换基镜像自动跟随。
+        run: |
+          set -euo pipefail
+          imgs="$(grep -E '^[[:space:]]*FROM ' Dockerfile.service | awk '{print $2}' | sort -u)"
+          echo "本次预热 refs（Dockerfile.service）："; printf '  - %s\n' $imgs
+          bash deploy/scripts/docker-pull-retry.sh $imgs
       - name: Build Docker image（只推不可变的 :<sha>，版本 tag 与 :latest 交给 promote job）
         # 为什么拆两段（原形态是实测缺陷）：一条 buildx 同时推 :sha、:<版本> 与 :latest，
         # 而 Trivy（下一步，exit-code 1）、SBOM、签名全部排在推送**之后**——扫描判红的镜像
