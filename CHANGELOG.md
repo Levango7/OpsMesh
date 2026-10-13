@@ -4,7 +4,7 @@
 
 > 当前最新已发布版本：`v0.14.0`（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
-## [Unreleased] — 2026-10-12（模拟用户演练 B1：device-sim 不再假成功）
+## [0.14.0] — 2026-10-12（模拟用户演练 B1：device-sim 不再假成功）
 
 - **症状**：`cmd/device-sim` 日志打出 "20/20 devices registered"，而那 20 台设备**从未存在过**——
   它打的 `/api/v1/devices/register` 与 `/api/v1/devices/{id}/heartbeat` 两个 HTTP 端点在控制面里
@@ -16,7 +16,7 @@
 - **真机验证**：对桩服务（返回 501）实测，逐台打印 `registration failed: 控制面返回 501 …（该 HTTP
   端点不存在时请改用 opsmesh --mode=agent …）`，汇总为 0/N——不再是静默的 N/N。
 
-## [Unreleased] — 2026-10-12（模拟用户演练 B3：404 面统一为 JSON 信封）
+## [0.14.0] — 2026-10-12（模拟用户演练 B3：404 面统一为 JSON 信封）
 
 - **症状**：客户端看到两种 404 形态——未注册路径回 JSON 信封，而"命中 catch-all 的缺页"
   （SPA/静态处理器注册在 "/" 上，http.NotFound / FileServer 写纯文本）回 `404 page not found`。
@@ -849,7 +849,7 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
 - **守卫 2 条**：① 登录响应必须带非空权限；② 填权限不得写回 store（浅拷贝）。
   变异（登录响应不填权限）⇒ 判红点名"B4 原形状"，还原后整包复绿。
 
-## [Unreleased] — 2026-10-12（模拟用户演练 A3：授权拒绝入审计链）
+## [0.14.0] — 2026-10-12（模拟用户演练 A3：授权拒绝入审计链）
 
 - **症状（两个"模拟用户"独立复现）**：被拒的越权尝试**零留痕**——6 项越权写操作（下发任务/建号/
   改角色/删设备/建网关路由）+ 跨租户读之后，审计链里仍只有 user_login/user_create/user_change_password，
