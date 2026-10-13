@@ -4,7 +4,20 @@
 
 > 当前最新已发布版本：`v0.13.0`（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
-## [Unreleased] — 2026-10-12（模拟用户演练 A2：/api/v1/me 带租户头不再丢身份）
+## [0.14.0] — 2026-10-13（v0.13.0 之后全部改动归版；本版有两处**对客户可见的行为变化**：告警自动外发真正生效、`secrets` 表拒绝明文写入）
+
+本版主线三件事：① TD-60 三域双轨从「能接通」走到「能按批切、能回退、出事能定位」——task 域 R6 批量/灰度状态持久化（此前是进程内内存，重启即丢批次视图）、归属闸门 `TASK_SVC_OWNS_NEW_TASKS` 与路由开关联锁、`CreateTask` 契约补 error 通道（17 处调用点不再假成功）、auth 域会话凭证透传 + `cutover-unroute` 回退语义 + 按用户吊销会话（F2）、device 域纳管链路；② TD-61/TD-87 把两个巨型父包按域下沉——`internal/store` 顶层 113 → 20 个 .go（三批收口），`internal/controlplane` 拆出 **20 个子包**、父包剩 199 个顶层 .go（88 个非测试、**25,339 行**——这两个数是我在 `d22c4ac` 上现查量出来的，TD-87 行里那句「23,864」是 10-10 的读数，之后又长回去了），并顺手把两份逐行等价的手抄 SSRF 私网判定合一（`egress.IsPrivateIP` 为唯一实现）；③ TD-88/TD-92/TD-93 把凭据与通知面收成一条口径——引用格式 `${provider:key}` 优先、`secrets` 表只存引用、告警外发渠道单一来源、引用/明文形状判断全仓只剩 `secrets.IsReference` 一份。
+
+另收口/推进的债项（可由本节各块标题复算）：TD-60、TD-61、TD-65、TD-66、TD-82、TD-83、TD-85、TD-87、TD-88、TD-90、TD-91、TD-92、TD-93；登记过的新号含 TD-85/TD-86/TD-87/TD-88/TD-89/TD-90/TD-91（TD-92/TD-93 由并行线当日闭合）。
+
+**升级前最该读的两条**（详见 `docs/release-notes.md` 的 v0.14.0 小节，那里是对外口径）：
+① `secrets` 表**明文一律拒绝**（`model.RequireSecretReference`，错误信息只报字节数不回显值）；存量明文只在启动时告警、**不阻断启动**；
+② 通知渠道此前对 M2 告警规则**静默不发送**（Notifier 恒无渠道），本版接上单一口径后，配置文件与 UI 里配好的渠道会**开始真实外发**——构造期仍过 SSRF 校验，但这属于"以前不会发生的事现在会发生"。
+
+> 本节以下 50 个 `[0.14.0] — 2026-10-0x …` 明细块是本次归版的内容（本仓约定：明细原地保留、只改标题，不搬运正文——搬动会与并行线正在写的块产生无意义冲突）。
+> 头部「当前最新已发布版本」指针**本笔刻意不动**（仍是 v0.13.0）：tag 与产物还没生成，指针先于 tag 就是 §32.9 记过的那类失实宣称；等 tag 落地、`verify-release-artifacts.sh 0.14.0` 回核通过后再改它。
+
+## [0.14.0] — 2026-10-12（模拟用户演练 A2：/api/v1/me 带租户头不再丢身份）
 
 - **症状（两个模拟用户独立复现）**：GET /api/v1/me 在**按文档带上 X-Tenant-ID** 时返回空壳
   {mode:gateway-injected, roles:null, userID:""}，而**不带**该头反而正确回填 userID ——
@@ -18,7 +31,7 @@
   ② 头租户与令牌不符仍 403（修复不得放宽安全面）。变异（恢复"头非空不回填"）⇒ 判红点名
   "带租户头时 userID 为空"，还原复绿。
 
-## [Unreleased] — 2026-10-12（模拟用户演练 A1：非 demo 部署下 agent 设备不再"隐形"）
+## [0.14.0] — 2026-10-12（模拟用户演练 A1：非 demo 部署下 agent 设备不再"隐形"）
 
 - **症状（三名"模拟用户"独立复现，值班那位读码定位到行）**：非 demo 且非 require-auth 的部署
   （`--mode=agent` 直连控制面、不经网关注入租户——自托管/裸金属的最简形态）里，
@@ -39,7 +52,7 @@
   ① 非 demo 裸注册 ⇒ agent 租户非空且能在 `Agents("default")` 视图里查到；② 有网关注入租户时
   仍以它为权威（修复不得改优先级）。变异（把 demo 限定加回去）⇒ 判红并点名"租户为空"，还原复绿。
 
-## [Unreleased] — 2026-10-12（TD-92 第二批：UI 通知渠道接入自动外发 + 按规则选渠道接线）
+## [0.14.0] — 2026-10-12（TD-92 第二批：UI 通知渠道接入自动外发 + 按规则选渠道接线）
 
 - **前置（第一批，同日早些）**：`notify.Notifier` 生产构造从不注渠道 ⇒ M2 聚合组通知与
   自动化「发送通知」全部静默丢弃、`--notify-channels-config` 只进诊断输出。已裁定口径
@@ -71,7 +84,7 @@
 - **文档口径同步**：operations.md §4.6.0.1 通道表（三类渠道 + 载荷形状 + 五条边界）、
   api-reference（notifyChannels 与渠道 API 两处宣称）、architecture 行内宣称全部改为
   新语义。
-## [Unreleased] — 2026-10-12（F2 收口：回退会话语义闭合——`cutover-unroute` + auth-svc 按用户吊销端点）
+## [0.14.0] — 2026-10-12（F2 收口：回退会话语义闭合——`cutover-unroute` + auth-svc 按用户吊销端点）
 
 - **问题（演练 F2，docs/td60-batch0-drill-2026-10-12.md）**：名册只决定路由。回退（从名册摘除）后
   对侧已建立的会话仍被对侧认（refresh 200），而 `/me` 已按名册回本侧（401）⇒ 用户看到
@@ -88,7 +101,7 @@
 - **验证**：auth-svc 全包绿；cutover 包 5 条新守卫（名册语义/顺序/dry-run 零副作用/缺失告警/按 id 吊销）
   全绿，变异两处（撤销摘名册、dry-run 也改名册）逐条判红；`go build ./...` / `go vet` 过。
 
-## [Unreleased] — 2026-10-12（TD-92 收口：告警外发渠道单一口径——文件多渠道真送达、两条死路闭合）
+## [0.14.0] — 2026-10-12（TD-92 收口：告警外发渠道单一口径——文件多渠道真送达、两条死路闭合）
 
 - **现象**：`notify.Notifier` 的两处生产构造（`server.go:361`/`:424`）从不传
   `WithChannels` ⇒ `channels` 恒空 ⇒ `sendToAll` 静默 `return nil`。两个真实消费方
@@ -114,7 +127,7 @@
   `--notify-dedup-ttl-min`/`--notify-retry-*` 三旋钮仍未接线（0=关闭 vs
   WithDedup(0)=用默认，语义相反，另立项）。
 
-## [Unreleased] — 2026-10-12（TD-93 收口：`ResolveSecret` 判据改调 `IsReference`，形状判断全仓只剩一份）
+## [0.14.0] — 2026-10-12（TD-93 收口：`ResolveSecret` 判据改调 `IsReference`，形状判断全仓只剩一份）
 
 - **问题**：「引用 vs 明文」的形状判断实际存在**两份**——`secrets.IsReference`（带
   `len(value) > 3` 下界）与 `ResolveSecret` 自己内联的 `HasPrefix/HasSuffix`（无下界），
@@ -135,7 +148,7 @@
   `security-mechanism.md` §6.9 两处、两条 Unreleased CHANGELOG 条目；台账 TD-93 行
   标记收口、TD-88 行补注"同源"宣称自此才真成立。
 
-## [Unreleased] — 2026-10-12（Create* 落库失败调用面守卫：31 处审计闭合两洞一扫尾）
+## [0.14.0] — 2026-10-12（Create* 落库失败调用面守卫：31 处审计闭合两洞一扫尾）
 
 - **审计**：对 sqlstore 全部 20 个 `Create*`（FIXPLAN H2 起即为真 INSERT +
   失败返回 nil，无需再改）的**全部 31 处生产调用点**逐点过 nil 守卫。
@@ -167,7 +180,7 @@
   与 F6（`/me` 字段规范名，契约面）按用户决定整体交 ZCode；本线不抢，待对侧
   定名后一天内可上 F6 前端收敛。
 
-## [Unreleased] — 2026-10-12（缺口 3 收口：CreateTask 契约补 error 通道，17 处调用点各自不再假成功）
+## [0.14.0] — 2026-10-12（缺口 3 收口：CreateTask 契约补 error 通道，17 处调用点各自不再假成功）
 
 - **store 契约**：`model.TaskStore.CreateTask`（及 `deploy.Dispatcher`、`orchestration.TaskEngine`、
   `cron.TaskStore` 四个消费侧接口）从 `*proto.Task` 改为 `(*proto.Task, error)`。此前
@@ -195,7 +208,7 @@
   全绿、`go vet` 0、`golangci-lint` 0 issues、`gofmt` 净。F2/F6 与缺口 2 联锁见同日
   其他 Unreleased 节。
 
-## [Unreleased] — 2026-10-12（代理响应头收敛为单一来源：演练报告 F5 闭合）
+## [0.14.0] — 2026-10-12（代理响应头收敛为单一来源：演练报告 F5 闭合）
 
 - **F5 修复（`proxy_header_convergence.go` 新增 + 两条转发路径挂载）**：切流后同一请求里
   CSP/Referrer-Policy/X-Frame-Options/X-Content-Type-Options 各出现两份（演练批次 0 实测）。
@@ -220,7 +233,7 @@
   （两份 CSP/no-referrer+strict-origin-when-cross-origin/DENY+SAMEORIGIN/重复 ACAO）。
 - F2（按用户名吊销会话端点，对侧）与 F6（`/me` 字段命名，契约面）原状保留，见协调板。
 
-## [Unreleased] — 2026-10-12（归属闸门与路由开关联锁：缺口 2 闭合，方案①）
+## [0.14.0] — 2026-10-12（归属闸门与路由开关联锁：缺口 2 闭合，方案①）
 
 - **`TASK_SVC_OWNS_NEW_TASKS` 闸门与 `OPSMESH_SERVICE_PROXY` 联锁**（协调板第五十七则缺口 2，
   取方案①复用既有域开关、零新概念）：`TASK_SVC_PROXY_ENABLED` 是新总闸，但它**不控制 task 域的
@@ -246,13 +259,13 @@
   属独立任务。本线原计划本轮启动该契约改造，因**对侧正在同一施工**（TD-60 R6：批量/灰度状态
   持久化，`internal/store` 有未提交改动）而主动避开，不与在途施工互相踩。
 
-## [Unreleased] — 2026-10-11（TD-87 收口 + TD-66 只读勘测：台账两笔一起清）
+## [0.14.0] — 2026-10-11（TD-87 收口 + TD-66 只读勘测：台账两笔一起清）
 
 - **TD-87 收口（`internal/controlplane` 父包按域拆包）**：三批共抽 **11 个子包**（presets/pluginhost/credentials/metricscache/loginguard/svcproxy/ratelimit/tenantguard/auditsafe/cmdbcollector/enterpriseui + 转换器并入 presets）。**收口实测**：原低耦合清单剩余 10 件经逐一测量全部只剩 29~156 行薄壳（纯逻辑已抽走、剩 handler 门面），按计划 §9.4 判据「搬了只剩空壳」**不再动**；父包 84 prod 文件（注册时 182）。498 个 `*Server` 方法的组合式重构维持「需明确诉求才启动」。判据沉淀（计划 §9.4）：有效的筛选器是「有没有可搬的纯逻辑/自包含组件」而非文件长度；「两份手抄实现」比「文件太长」优先处置。
 - **TD-66 只读勘测（`docs/td66-gateway-survey-2026-10-11.md`，未改代码）**：`/gw/` 数据面 7 步管线逐项核实——鉴权（subsystemAuthorize 双闸 + 按方法分级权限）、租户隔离（只取本租户路由池）、匹配（PathPrefix+Methods）、路由级限流、SSRF 双检（创建 + **投递期复检**防 DNS rebinding，拒绝原因不回吐）、统计。缺口 **14 项成清单**（熔断/健康检查/重试/超时治理/多后端/gRPC 模型不一致/路由持久化/metrics 埋点等），升级定价三档（最小可用 1.5~2 天 = 路由持久化 + 熔断 + 埋点；匹配引擎与鉴权**无需动**）。**维持 2026-09-05 决策**（预览形态、生产走 APISIX/Envoy）；低垂果实一处待修：创建路由允许 `grpc://` 但数据面 502（模型与实现不一致，建议创建时即拒）。
 - 台账：TD-87 移入已收口、TD-66 行内追加勘测记录与维持决策、TD-88/TD-91 上一笔已移入已收口；标记行 pending 4→3、closed 28（部署门禁实测复算 PASS=76）。
 
-## [Unreleased] — 2026-10-12（TD-60 task 域 R6：批量/灰度记录持久化——重启不再丢批次视图）
+## [0.14.0] — 2026-10-12（TD-60 task 域 R6：批量/灰度记录持久化——重启不再丢批次视图）
 
 - **症状**：批量执行/灰度发布记录此前**只在进程内存**（`server_batch.go` 的 `batchStore`，文件头自述
   "仅内存索引（重启后丢失）"）。任务实例本身在 `tasks` 表里，丢的是**批次聚合视图**——重启后用户手里的
@@ -274,7 +287,7 @@
   挡成 403 "tenant mismatch"，把"数据坏了"说成"权限不符"）。变异验证：砍掉回落 / 载荷坏了也当成功 ⇒ 逐条判红。
 - 顺带满足仓库既有的两道扫描门禁：新 helper `scanTaskRecord` 已绑定 `helperScanTables → task_records`（TD-74 线）。
 
-## [Unreleased] — 2026-10-12（TASK_SVC_OWNS_NEW_TASKS 闸门补齐 + 四入口守卫）
+## [0.14.0] — 2026-10-12（TASK_SVC_OWNS_NEW_TASKS 闸门补齐 + 四入口守卫）
 
 - **补齐归属闸门覆盖**：`4e88294`（对侧实现）把 `TASK_SVC_OWNS_NEW_TASKS` 的闸门落在 2 个入口
   （`handleCreateTask` / `handleBatchCreateTasks`），但**建任务入口有四个**——`handleBatchExec`（批量执行）
@@ -290,7 +303,7 @@
   （失败时返回入参 `t`，见 `memory.go:783`、`multi_schema.go:556`），store 层拒绝会变成"静默假成功"。
   当前开关的诚实语义是「**任务对外 API 入口**归对侧」；升为"本侧彻底不再建任务"需改 store 契约（返回 error），属独立任务。
 
-## [Unreleased] — 2026-10-12（批次 0 演练：三个模拟用户跑完「切换前→切换后→单用户回退」）
+## [0.14.0] — 2026-10-12（批次 0 演练：三个模拟用户跑完「切换前→切换后→单用户回退」）
 
 - **演练台 `deploy/scripts/drill-batch0.sh`（新）**：真二进制（控制面 + auth-svc）、真 `cutover-migrate` job、
   **共享 MySQL**（job 是独立进程，memory 后端下看不到控制面建的账号——演练第一个卡点即此）、文件名册；
@@ -307,7 +320,7 @@
 - **runbook 同步修订**：新增 §1.1 前置条件与批次约束（对侧 admin 引导 / OTP 与通知同发 / 同出口 IP 错峰）；
   §3 标注"回退后对侧会话可能 refresh 一次成功"的时效（吊销接口落地前）；§5 观察窗加 429 计数与 `/me` 401 文案分布。
 
-## [Unreleased] — 2026-10-12（修我 8f687c3 带出的两条 mock E2E 红 + 限流口径文档四处纠正）
+## [0.14.0] — 2026-10-12（修我 8f687c3 带出的两条 mock E2E 红 + 限流口径文档四处纠正）
 
 - **会话失效提示只对"确实持有过会话"生效**：我 8f687c3 给跳登录加了 `?reason=session_expired`，破坏了
   两条 mock E2E 的 `/\/login$/` 断言（CI run 38178641616 / Frontend job 第 14 步 E2E (mock)）。
@@ -317,7 +330,7 @@
   「10 突发 / 3s 补 1」，实际两侧同值 **burst=5 / refill=1/6s**（已核对 controlplane 与 auth-svc 代码）；
   e2e-real 两个 spec 的注释同步。该旧值来自收紧前的实现。
 
-## [Unreleased] — 2026-10-12（修我自己 8870d69 收紧口令策略带出的三处回归：E2E 夹具 / 前端口径 / 跨语言守卫）
+## [0.14.0] — 2026-10-12（修我自己 8870d69 收紧口令策略带出的三处回归：E2E 夹具 / 前端口径 / 跨语言守卫）
 
 - **修的是一次"收紧策略时只想到两侧同严、忘了照顾既有消费方"的回归**。8870d69 把
   `ValidateStrongPassword` 收紧到「≥12 位 + 大小写 + 数字 + 特殊字符」（与 auth-svc 同严），
@@ -347,7 +360,7 @@
 
 ---
 
-## [Unreleased] — 2026-10-12（修一个 peer 独立验收时抓出的渲染层注入面 + 补常驻断言）
+## [0.14.0] — 2026-10-12（修一个 peer 独立验收时抓出的渲染层注入面 + 补常驻断言）
 
 - **修｜metrics 网关标签的渲染兜底缺失（我的 P3 埋点自带）**：peer 独立验收 TD-66 时主动提出疑点——
   "metrics 渲染对标签值不做转义，若标签值含 `"` 能否伪造额外标签？"。我一度以为"标签来源不含
@@ -368,7 +381,7 @@
 - **runbook 同步**：`--force-change` 写进执行命令（§2.3）与口令交接口径（§4）——对方移交的
   「mustChangePassword 入口早已就绪」这句现已过时。
 
-## [Unreleased] — 2026-10-11（TD-60 口令策略对齐 + 搬号 job 透传首登改密 + 登录防护等价性契约）
+## [0.14.0] — 2026-10-11（TD-60 口令策略对齐 + 搬号 job 透传首登改密 + 登录防护等价性契约）
 
 - **口令策略收紧到与 auth-svc 同严（lane 1）**：`credentials.ValidateStrongPassword` 由 8 位+大小写+数字
   → **12 位 + 大小写 + 数字 + 特殊字符**（与 auth-svc `PasswordMinLen=12` + `PasswordRequireSpecial`
@@ -390,7 +403,7 @@
 - **验证**：全仓 `go test ./internal/... ./pkg/... ./cmd/...` **零 FAIL**；controlplane 51.4s、
   cutover 17 条、credentials 9 条、presets 全绿；gofmt -l 净；go vet 净；golangci-lint 0 issues。
 
-## [Unreleased] — 2026-10-11（TD-66 MVP 四件全部落地 + 真进程验证：验收标准全勾）
+## [0.14.0] — 2026-10-11（TD-66 MVP 四件全部落地 + 真进程验证：验收标准全勾）
 
 - **P1 路由持久化（`27ea687`）**：新增 `gateway_routes` 表（022 迁移，联合主键 (tenant_id,id)）+ `GatewayRouteStore` 四方法挂进聚合 Store（memory/sqlstore/multischema 三后端齐实现）+ 控制面改为 **store 事实源、进程内缓存**：写路径先落 store（失败 5xx 不留假成功）、读路径（list 与 /gw/ 数据面）按租需加载 ⇒ 重启后路由不丢。验收标准 1 由 `TestGatewayRoutesSurviveStateReset`（新 Server + 同 store）与真进程重启复跑钉住。
 - **P2 熔断（`0f57052` 内）**：`extension/circuit.go` 进程内断路器（连续 5 次 5xx/传输错误 ⇒ open 30s fast-fail 503；冷却半开放行**一个**试探，成功恢复、失败重开）。状态喂入两条：ModifyResponse 按响应码（**4xx 是业务应答不计失败**）+ ErrorHandler 记传输错误。6 条单测 + 3 条数据面用例；变异检验（去掉失败记录 ⇒ 第 6 次仍打后端）判红。
@@ -400,13 +413,13 @@
 - **自伤三坑已修并各有用例值守**：Render 持锁内 append 再加锁（1m40s 死锁）、包级 map 测试污染、测试 helper 未构造 breaker 导致熔断静默失效（"看起来绿"）。
 - 立项文档 §4 验收表已全勾；台账 TD-66 行同步。
 
-## [Unreleased] — 2026-10-11（TD-60 域收敛分析 + TD-66 网关升级立项：两份决策文档）
+## [0.14.0] — 2026-10-11（TD-60 域收敛分析 + TD-66 网关升级立项：两份决策文档）
 
 - **TD-60 实测收敛分析（docs/td60-domain-convergence-analysis-2026-10-11.md）**：把 2026-09-05 的「约 27,000 行重复」更新到今天的现实——轻四域**零文件**（已收敛），核心三域 controlplane 侧实测 **5,980 行**（缩减 78%）。逐域判定：**auth** 收敛机制已建成并真进程验证（零新开发、只差运维执行）；**task** 堵点=agent gRPC 适配层（约 300 行新开发）+ leader 身份切换（task-svc 已有全部循环+选主，加一个环境变量即可）；**device** netsec/federation 是独有能力非重复（需先下沉 pkg 再切）。**稳妥序**：auth 先走通 → task leader 切换 → HTTP 切 → agent 适配 → device 下沉+切。每一步可回退，共享 MySQL ⇒ 不存在数据搬家。收尾后可删约 5,000 行、新开发约 500 行。
 - **TD-66 立项（docs/td66-gateway-upgrade-scope-2026-10-11.md）**：MVP 四件——P1 路由持久化（store 加 `gateway_routes` 表 + 启动加载 + CRUD 同步）、P2 熔断/离群摘除（进程内断路器，连续 5 次 5xx ⇒ 503 fast-fail，30s 冷却后半开试探）、P3 Prometheus 埋点（每路由 requests_total + latency histogram，接 `s.metrics`）、P4 超时治理（RouteRule 加 `timeoutMs`，ReverseProxy Transport 设超时）。**鉴权/租户隔离/SSRF 勘测确认质量好、不动**。明确不做：多后端/gRPC 数据面/OPA/WebSocket/主动健康检查。约 **2.5 天**（含测试+真进程验证）。
 - 台账：TD-60 行追加分析记录、TD-66 行追加立项记录（均仍在「待启动」节——分析/立项不等于执行完）；TD-66 低垂果实 `a628978` 已修（grpc:// 创建时即拒）。
 
-## [Unreleased] — 2026-10-11（TD-60 搬号 job：`opsmesh cutover-migrate`——决策单 Q2-A 落地，真进程三方端到端 16/16）
+## [0.14.0] — 2026-10-11（TD-60 搬号 job：`opsmesh cutover-migrate`——决策单 Q2-A 落地，真进程三方端到端 16/16）
 
 - **新增｜`opsmesh cutover-migrate` 子命令**（TD-60 方案 C 的账号迁移 job，决策单 `docs/td60-cutover-decisions.md` Q2-A「一次性 job、名单由系统维护」）：按用户清单批次把控制面用户迁到 auth-svc，验证通过后写名册。**每用户原子序「搬完才写名册」**：对侧管理端建号（默认 active、无须审批）+ 一次性随机口令（24 位四类字符）+ **登录即验证**（用该口令真登一次对侧，通不过不写名册）⇒ 失败者留在本地登录面，永不产生「名册有、对侧无」的锁死态（Q2-A 的核心诉求）。
 - **幂等**：对侧已 active ⇒ 收编（不建号、只补名册）；名册已有 ⇒ 跳过；对侧 pending ⇒ **不自动激活**（人工决策）报失败。名册写入 temp+rename 原子替换、保留既有内容、每批附来源注释（可 diff 可审计，Q1 诉求）。
@@ -416,7 +429,7 @@
 - **对侧缺口（移交，见协调板）**：auth-svc 的 register/管理建号/更新用户均不收 `mustChangePassword`（proto 与 HTTP 均无此字段）⇒「首登强制改密」无 API 入口；现采用一次性口令交接（stderr 或 --credentials-out 0600），对侧补上后 job 可直接透传。
 - **验证**：cutover 包 12 用例全绿；`internal/controlplane` 全集 178s 绿；golangci-lint 0 issues；gofmt 净；真进程三方端到端 16/16。
 
-## [Unreleased] — 2026-10-11（TD-60 方案 C 落地：切流信号化的服务端机制——名册 + 分端点裁决 + 一键回退）
+## [0.14.0] — 2026-10-11（TD-60 方案 C 落地：切流信号化的服务端机制——名册 + 分端点裁决 + 一键回退）
 
 - **背景**：并行线 `docs/td60-cutover-signal-design.md` 回答了「分批切换的批次选择如何信号化」，并修正了本方此前「按租户路由」的前提——两侧都按**用户名**定位用户、租户在 auth-svc 侧无落地面 ⇒ 键是用户名（存量）+ 全局开关（增量）。本提交实现该设计的服务端部分。
 - **新增｜`internal/controlplane/cutover`（纯裁决，可单测）**：名册装载（文件/内联二选一，**歧义即 fail-fast**；文件不可读或含保留账号 `admin` 即拒绝启动——admin 两侧 seed 同名，进名册构成跨库凭证混淆面）+ 三个开关（`AUTH_SVC_PROXY_ENABLED` 总闸、`AUTH_CUTOVER_ROSTER[_FILE]` 存量、`AUTH_SVC_OWNS_NEW_ACCOUNTS` 增量）+ 四类裁决（登录按请求体用户名、me/logout 按 JWT sub、refresh 按 rt 归属**且**名册、change-password 按令牌归属、register 按全局开关）。13 条用例含 fail-fast、坏文件保留旧名册、总闸关闭不路由。
@@ -431,7 +444,7 @@
 - **顺带记录 auth-svc HTTP 面两处不对称**（冒烟中实测，已同步协调板）：① 其 login / change-password 成功**只经 `Set-Cookie` 下发会话**（响应体无 `token` 字段）；② 其 register 响应体**不含 `userId`**（需查 `/api/v1/users` 列表）。
 - **补强（同批第二笔）**：① **登录失败计数对齐**——名册用户的 401 由对侧产生，现按转发状态码在本地补记（401 记失败 / 2xx 清计数 / 账号状态类拒绝不记），账号锁定对名册用户生效；用例走**真实登录路径**并自校准阈值，变异检验「去掉补记」判红（残余：绕过本地面直连 auth-svc 的失败不可见，属对侧口径）。② **`/api/v1/users` 建号口径**——`AUTH_SVC_OWNS_NEW_ACCOUNTS=true` 时拒绝本地建号（409+指引），与注册的转发口径同源；否则"声明归对侧、账号建在本地"自相矛盾（变异检验：去掉守卫 ⇒ 用例报 201 判红）。
 
-## [Unreleased] — 2026-10-10（TD-90 加铺：机制下沉 `pkg/sqlguard` 单份实现，11 个 store 包接入；泛化中修掉门禁自身 5 处误判/失明）
+## [0.14.0] — 2026-10-10（TD-90 加铺：机制下沉 `pkg/sqlguard` 单份实现，11 个 store 包接入；泛化中修掉门禁自身 5 处误判/失明）
 
 - **下沉｜`pkg/sqlguard`（新包，仅标准库）**：把 TD-90 的对账机制从「sqlstore 的测试文件」提取成**包级共享实现**——各服务模块唯一合法的共享层是 `pkg/`（pkg/log、pkg/secretcrypto 先例），跨包测试又无法 import 彼此的 `_test.go`，若按包复制这份 600 行解析器必然发散。机制只有一份：`sqlguard.Analyze(dir)` 返回判定数/不一致明细/不可判宽站点（键 `file#fn#var`）/消费形态分布；**各包只留政策**（覆盖率棘轮下限、豁免账、判红文案）。sqlstore 原文件改为薄接入（判据计数逐字不变：128/0/0）。
 - **本包自带合成用例 14 条**（不依赖真实 store）：direct/链式/helper/scanfunc 四种形态、跨文件常量与 helper、跨行拼接、同名多值弃判、`SELECT *` 弃判但 `COUNT(*)` 照判、宽站点键位、`from_replicas` 词边界、驼峰列名、`x.dest()...` 按局部类型解析（含同名方法跨类型）。
@@ -446,7 +459,7 @@
 - **变异检验**：根 store 两处历史缺陷形态（去 `tenant_id`）分别点名 `sql_k8s.go:78`、`sql_tasks.go:131`；服务侧抽 device-svc 去 `retired` ⇒ 点名 `mysql.go:150 fn=Device`（15 vs 16）；均还原复绿。
 - **验证**：`pkg/sqlguard` 14 用例全绿；11 包测试全绿；`gofmt -l` 净；`go vet` 净；`golangci-lint` **0 issues**；**依赖零变动**（纯标准库，go.mod/go.sum 未动，许可清单无需重算）。
 
-## [Unreleased] — 2026-10-10（TD-90 收口：SELECT 列数 ↔ Scan 目标数 对账门禁落地；上线即抓出第二个真缺陷 `GetTasks`）
+## [0.14.0] — 2026-10-10（TD-90 收口：SELECT 列数 ↔ Scan 目标数 对账门禁落地；上线即抓出第二个真缺陷 `GetTasks`）
 
 - **新增｜根 store 的「列数对账」静态守卫**（`internal/store/sqlstore/scan_arity_guard_test.go`）：遍历全包 136 个查询调用，把 SELECT 列表的顶层项数与消费侧 Scan 的目标数逐一比对——**127 处参与比对、0 不一致**。判定链只认能静态证实的：① 取查询实参与其赋值目标；② SQL 字面量展开（包级/函数级常量、跨行 `+` 拼接、常量引用，同名多值即弃判）；③ SELECT 列表按顶层逗号计数（括号内不算 ⇒ `COALESCE(a,b)` 记 1 列；含 `*`/`?` 即弃判）；④ 三种消费形态——`rows.Scan(...)`、链式 `...QueryRow(...).Scan(...)`、`scanX(row)` helper（目标数取自 helper 函数体）。
 - **为什么值得单列门禁**：`database/sql` 在列数不等时报 `expected N destination arguments in Scan, not M`，而调用方普遍只 `storefail.Record` 后返回 nil/continue ⇒ **该读路径静默返回空**；内存后端正确，故单测全绿、只在真库/生产暴露。此前该形态已发生两次（`GetK8sCluster`、本轮 `GetTasks`），且根 store 的可空列守卫注释里明确把「列数对账」留给了后续——本文件即那笔账。
@@ -456,7 +469,7 @@
 - **变异检验 2/2**：去掉 `GetK8sCluster` 的 `tenant_id` ⇒ 点名 `sql_k8s.go:78`（SELECT 7 vs 8）；去掉 `GetTasks` 的 ⇒ 点名 `sql_tasks.go:131`（SELECT 8 vs 9）；还原复绿。
 - **边界（写明）**：服务侧各模块（cmdb 等）的同族守卫仍只有可空列判定、**无列数对账**，如需覆盖另行立项。台账 TD-90 行已收口（标记行 pending 7→6、closed 24→25，门禁实测复算通过）。
 
-## [Unreleased] — 2026-10-10（TD-60 §9.3 方向 A：auth 域会话凭证透传 + 「凭证只投递给签发方」静态守卫）
+## [0.14.0] — 2026-10-10（TD-60 §9.3 方向 A：auth 域会话凭证透传 + 「凭证只投递给签发方」静态守卫）
 
 - **裁决｜采纳方向 A（仅对 auth 域放行凭证）**：双轨冒烟复跑（对方 `fbb263d`，实测非推断）暴露第二层阻断——聚合代理剥除会话 Cookie，而 auth-svc 网关是**自验 token 模型**（`bearerOrCookie` → `ValidateToken`），同一枚 token 直连 auth-svc 返 200、经代理前缀返 401。裁决 A 而非 B（auth-svc 改吃注入身份头）：A 不引入新的信任面，B 需额外补「auth-svc HTTP 口仅回环/仅代理可达」门禁断言作前提（B 的前提也不能就此省掉）。记录于提案 §9.5。
 - **改动｜凭证投递按域裁决（数据驱动）**：`svcproxy.Rule` 新增 `ForwardCookie bool`（默认 false=剥除；**仅 auth 域规则置 true**）；`service_proxy.go` 的 `Header.Del("Cookie")` 改为按规则裁决。Cookie 之外的治理**不变**：客户端自带的 `X-Tenant-ID`/`X-User-Id`/`X-User-Roles` 照旧一律剥离重注入（auth 域从同一枚 Cookie 的 JWT 声明提取租户/用户，行为与其他域一致）。
@@ -466,7 +479,7 @@
 - **文档**：`docs/security-mechanism.md` 新增 §2.3.5（代理凭证/身份头投递矩阵）；`docs/td60-auth-data-plane-proposal.md` 新增 §9.5（裁决与落地）。
 - **验证**：`go build ./...` 净；svcproxy 三道守卫 + controlplane 代理行为用例（含 device 域对照）全绿；变异检验 2/2 判红后还原复绿；`gofmt -l` 净。
 
-## [Unreleased] — 2026-10-10（回归修复：8b6c1bf 的 secrets 用例「写入改引用、断言留明文」，CI integration 判红）
+## [0.14.0] — 2026-10-10（回归修复：8b6c1bf 的 secrets 用例「写入改引用、断言留明文」，CI integration 判红）
 
 - **现象**：`8b6c1bf`（TD-88 收口）推送后 CI `integration` job 第 7 步判红，唯一失败用例 `TestSQLStore_P03Secret`：`GetSecret 值不一致: &{Key:app/db/password Value:${vault:test/app/db/password}}`——读回值就是写入值，**断言却仍比对旧明文 `p@ss-1`**。
 - **根因（本线自己的回归）**：该轮把 8 处 secret 取值机械替换为引用形态时，只覆盖了 `Value:` 写入位置，漏了两处**断言位**（`got.Value != "p@ss-1"` / `"p@ss-2"`）。**为什么本地没抓到**：该用例门控于 `OPSMESH_TEST_MYSQL_DSN`，本地未设 DSN 即 skip——「改了 store 契约、本地只跑了免 DSN 的那一半」正是盲区所在；CI 真库是唯一执行方。
@@ -474,7 +487,7 @@
 - **纪律｜改 store 契约必须本地带 DSN 复跑全套门控用例**：本轮已按此用本机 MySQL 容器复跑——`internal/store` 全 7 包 + `internal/controlplane`（kubeconfig 三态迁移）+ `internal/cmdb`（检索等价契约）**全绿**（sqlstore 192.6s/167.7s 两轮）。**审计面**：全仓 `SetSecret`/`RotateSecret` 测试调用与相邻断言逐处核对，配对漂移仅此一处（其余门控用例此前已按引用形态对齐）。
 - **教训归档**：技术债 TD-90 行补记第二个实例——「只有真库执行方能暴露的静默不一致」已被抓两次（SELECT/Scan 列数错位、写读断言漂移），两者的共同判据是**同一事实的两个副本必须由同一符号派生**。
 
-## [Unreleased] — 2026-10-10（TD-88 收口：secrets 表「只存引用」落到 store 契约层 + 启动扫描明文存量）
+## [0.14.0] — 2026-10-10（TD-88 收口：secrets 表「只存引用」落到 store 契约层 + 启动扫描明文存量）
 
 - **新增｜store 契约层拒绝明文（`model.RequireSecretReference`）**：`secrets` 表只接受 `${provider:key}` 引用，明文一律拒绝（`SetSecret`/`RotateSecret` 返回 nil 并记录失败）。判据复用 `secrets.IsReference`（TD-93 收口后与 `ResolveSecret` 共用同一份形状判断）。落点选**中性层一处**而非各消费方：该表经两次自查在生产代码里**消费方为零**，钉在契约上则任何未来消费方自动受保护，也避免三个后端各写一份形状判断而漂移；memory/sql 各接一行（`RotateSecret` 委托 `SetSecret` ⇒ 自动覆盖），multischema 委托内层后端。
 - **新增｜启动扫描明文存量告警（`warnPlaintextSecrets` + 可测谓词 `plaintextSecretKeys`）**：`NewServer` 启动时列出 `secrets` 表、点名非引用的 `tenant/key`（最多展示 5 条 + 总数，不回显值）并告警；**只告警不阻断**——存量是历史数据，阻断会让升级直接失败，而该表消费方为零 ⇒ 风险面有限，把「该迁移」变成可观测事件即可（新写入已被契约拒绝，故告警随人工轮换自然归零）。谓词抽成纯函数以可测（同 notify 的 `PlaintextSensitiveFields` 先例）。
@@ -482,7 +495,7 @@
 - **验证**：`internal/store` 五包 + `internal/controlplane` 全绿（memory 24.9s / multischema 11.5s / controlplane 42.8s）；`-race` **零竞态**；`golangci-lint` **0 issues**；`gofmt -l` 净；部署门禁 PASS=76。
 - **TD-88 收口**：「引用格式」方向在其唯一写入路径上钉死；台账该行已记「剩余两项已落地（本债收口）」。
 
-## [Unreleased] — 2026-10-10（真缺陷修复：CMDB 检索在索引就绪的库上漏召回——2 字符查询返空；TD-91 定性并修复）
+## [0.14.0] — 2026-10-10（真缺陷修复：CMDB 检索在索引就绪的库上漏召回——2 字符查询返空；TD-91 定性并修复）
 
 - **定性（TD-91：真缺陷，非环境差异）**：实测矩阵（MySQL 8.4 + ngram_token_size=2，7 列同序索引，逐查询对照）：
 
@@ -500,7 +513,7 @@
 - **顺带记录一处判据脆弱性**：cmdb 的 `scanSiteExemptions` 以「文件:行号」为键，本次删改让**同一个键漂了三次**（每轮都要按守卫自报的新行号重登记）。已在本次按守卫输出更新；「改键为 file:函数名」列为可选改进（未做）。
 - **验证**：`go test ./internal/cmdb/` 全绿；真库集成 4/4 绿（含等价性契约与「召回不得变窄」的独立 LIKE 基准对拍）；`golangci-lint` **0 issues**；`gofmt -l` 净；部署门禁 PASS=76。
 
-## [Unreleased] — 2026-10-10（TD-88 方向落地首件：通知渠道明文凭据告警 + 引用判据唯一化；方向=引用格式优先）
+## [0.14.0] — 2026-10-10（TD-88 方向落地首件：通知渠道明文凭据告警 + 引用判据唯一化；方向=引用格式优先）
 
 - **TD-88 方向裁定（用户：「用更安全的那个」）＝ 引用格式 `${provider:key}` 优先**：密钥本体由外部 provider 持有、**不随库同机**（库级静态加密的密钥与库同机，是该侧较弱处），且引用机制（`internal/secrets` 的 SecretProvider 链 + `ResolveSecret`）已建成投产、通知渠道解析路径已接线。裁定与剩余项落进台账 TD-88 行与 `docs/security-mechanism.md` §6.9。
 - **新增｜`secrets.IsReference`（引用/明文的唯一判据）**：`ResolveSecret` 的非引用分支与 `model.RequireSecretReference` 均调用它（TD-93 收口后全仓只有这一份形状判断），避免两处判断漂移；表驱动用例锁住边界（`${a}` ✓ / `${}` ✗ / 部分包裹 ✗ / 明文 URL ✗）。
@@ -508,7 +521,7 @@
 - **文档**：`docs/security-mechanism.md` 新增 §6.9（引用优先的裁定 + 运行时判据 + 与 §12.1.4 上线前自检项的两道关系 + 剩余项）。
 - **验证**：`go test ./internal/controlplane/ ./internal/secrets/` 全绿（67.6s + 4.8s）；`golangci-lint` **0 issues**；`gofmt -l` 净。
 
-## [Unreleased] — 2026-10-10（真缺陷修复：SQL 后端 `GetK8sCluster` 恒返 nil（SELECT 7 列 / Scan 8 目标）；由加密下沉规格的「真库验证」项抓出）
+## [0.14.0] — 2026-10-10（真缺陷修复：SQL 后端 `GetK8sCluster` 恒返 nil（SELECT 7 列 / Scan 8 目标）；由加密下沉规格的「真库验证」项抓出）
 
 - **修复｜`internal/store/sqlstore` 的 `GetK8sCluster(id)` 在 MySQL 后端下恒返 nil**：`SELECT id, name, server, kubeconfig, status, created_at, updated_at`（7 列）与该函数的 `Scan`（8 个目标，第二项是 `tenantID`）**列数不匹配** ⇒ `row.Scan` 必然报错、函数只见 nil。**生产影响**：`--store=mysql` 下「按 ID 查/改/删单个集群」与 `k8s_manage.go:76` 的租户归属校验全部恒失败（把合法访问判成「查不到」）。同步 `ListK8sClusters`（8 列 ✓）正常，故**启动恢复与模板 seed 不受影响**——这也解释了它为何长期未被发现：内存后端正确、DSN 门控的真库用例此前只覆盖了列表路径。
 - **如何抓到的（值得记的取证链）**：按加密下沉规格 §7 第 4 项做真库验证时，我用例里「写三类存量 → `GetK8sCluster` 读回」直接报「写入没落库」；随即用**直连 SQL 探针**对照——raw 查询能查到完整行、`store.GetK8sCluster` 却返回 nil，**同一份数据两个读取路径结论相反 ⇒ 锁定在读路径而非写入**（探针脚本用完即删，结论留档）。这正是本仓反复强调的判据：**「写成功」与「读得到」要分别取证**。
@@ -517,14 +530,14 @@
 - **CI 接线**：integration job 补一个**定点**真库步（`-run TestKubeconfigLegacyMigration_MySQL ./internal/controlplane/`）——同 logstore 步的理由：门控于 DSN 的用例不单列执行方就永远 skip；只按模式定点跑、不整包跑 controlplane（免得带 DSN 跑全部用例、改掉别的门禁的分母）。actionlint 复跑零问题。
 - **验证**：全仓 `go test ./...`（带真库 DSN）0 FAIL；`golangci-lint`（store + controlplane）**0 issues**；`gofmt -l` 净；部署门禁 PASS=76 FAIL=0 SKIP=1。
 
-## [Unreleased] — 2026-10-10（TD-87 批 2 第三批·切片 3：模板转换器并入 presets —— 本批 3/3 收官）
+## [0.14.0] — 2026-10-10（TD-87 批 2 第三批·切片 3：模板转换器并入 presets —— 本批 3/3 收官）
 
 - **重构｜OS 模板转换器并入 `presets`**：`ByID`（按 ID 查预置模板）、`ToStore`（控制面模板 → `store.OSTemplate`，整对象 JSON 进 Config 列）、`FromStore`（反序列化 + 以 store 行 ID/Name/OS 为准）迁入 `presets/store_adapter.go`（63 行）；父包留三个同名薄包装（`os_optimize.go` 与测试调用点零改动）。**判据：转换器要跟着类型走**——类型（`OSTemplate`/`OSParam`）本就在 `presets`（批 1 迁入），「类型 + 转换」同住一个包边界最清楚，不值得为它新开一包。
 - **本批小结（3/3）**：`cmdbcollector`（659 行）+ `auditsafe`（22 行）+ `enterpriseui`（233 行）+ 转换器并入 `presets`（+63 行）；**父包 prod 行 24,355 → 23,864（-491）**，prod 文件仍 83（各切片均留 handler/门面）。
 - **三条收敛后的判据（计划 §10.2/§11.2/§12.2）**：① 切分混装测试按**顶层 `func`** 分类，不按行号猜边界（首版按行切把交错的用例切错）；② 切分**生产代码**同样先列 `^(func|type|const|var)` 清单、按「是否 `*Server` 方法」二分（首版用「第一个列 0 的 `}`」把夹在 handler 之间的函数切错）；③ 抽取片段前先判断**片段是否含文件头**（重复 `package` 头报错）。**共同教训：边界按符号/职责判，别用行号或花括号这类启发式。**
 - **验证**：`go vet` 零告警；父包 48.2s + presets 0.4s 测试全 ok；`golangci-lint` **0 issues**；`gofmt -l` 净；`-race` **零 DATA RACE**；部署门禁 PASS=76 FAIL=0 SKIP=1。
 
-## [Unreleased] — 2026-10-10（TD-87 批 2 第三批·切片 2：enterpriseui 下沉）
+## [0.14.0] — 2026-10-10（TD-87 批 2 第三批·切片 2：enterpriseui 下沉）
 
 - **重构｜企业版前端接线 helper 下沉 `internal/controlplane/enterpriseui`**（233 行：`ui.go` + `cta.go`）：bundle 判定（`BundleAvailable`，含 `sync.Once` 缓存）、`ReadFile`、`ServeStatic`、`NegotiatedEncoding`、`WriteBody`、`LooksLikeFile`、`ContentType` 与相关常量；并把 `stripEnterpriseCTA` 从 `dashboard.go` 一并迁入（`StripCTA`——与企业版前端接线同属一件事）。父包 `enterprise_ui.go` 只剩两个 handler + `bundleAvailable` 薄包装（`license_gate_test.go` 8 处引用零改动），`dashboard.go` 只剩两个 handler。父包 prod 行 24,118 → **23,905**。
 - **测试口径**：`enterprise_ui_test.go` 的 10 个用例全是 handler 级（`newTestServer()` 直调 `s.handleEnterpriseUI/handleEnterpriseAsset`）⇒ 整文件留父包、仅把 14 处调用点与常量限定化；**新包刻意不造空壳测试**（覆盖全部经由 handler 用例穿过）。
@@ -532,7 +545,7 @@
 - **验证**：`go vet` 零告警；父包 54.1s 测试全 ok；`golangci-lint` **0 issues**；`gofmt -l` 净；`-race` **零 DATA RACE**；部署门禁 PASS=76 FAIL=0 SKIP=1。
 - **本批剩余**：切片 3（OS 模板 ↔ store 转换器并入 `presets`）。
 
-## [Unreleased] — 2026-10-10（TD-87 批 2 第三批·切片 1：cmdbcollector 下沉 + auditsafe 抽出共享内核）
+## [0.14.0] — 2026-10-10（TD-87 批 2 第三批·切片 1：cmdbcollector 下沉 + auditsafe 抽出共享内核）
 
 - **重构｜CMDB 采集器下沉 `internal/controlplane/cmdbcollector`**：`Collector` 类型 + `New` + `Collect`/`upsertCI`/`CollectAll`/`Run`/`collectOnceIfLeader` + 采样间隔常量整体迁出（659 行含测试）；父包 `cmdb_collector.go` 保留 `handleCMDBCollect`（Server 方法）+ **类型别名 `CMDBCollector` 与 `NewCMDBCollector` 薄包装** ⇒ `server.go` 的字段声明与构造调用**零改动**。父包 prod 行 24,355 → 24,118。
 - **重构｜`auditsafe` 抽出「隐藏在业务文件里的共享内核」**：`sanitizeAuditDetail` 此前定义在 `server_tasks.go`（任务域文件）却被 **6+ 个 handler 文件共 30 处**调用；采集器下沉后需要它时暴露为跨包障碍。抽出 `internal/controlplane/auditsafe`（`Detail`）后父包留同名薄包装，**30 处调用点零改动**。归类：这是「共享内核位置与使用面不匹配」的形态——危害不是逻辑漂移而是**阻碍任何后续下沉**（计划 §10.4 已补为第三类判据）。
@@ -540,7 +553,7 @@
 - **验证**：`go vet` 零告警；父包 44.5s + cmdbcollector 2.1s 测试全 ok；`golangci-lint` **0 issues**；`gofmt -l` 净；`-race` **零 DATA RACE**；部署门禁 PASS=76 FAIL=0 SKIP=1。
 - **本批剩余（后续切片）**：`enterpriseui`（静态资源 helper 簇 + `dashboard.go` 的 `stripEnterpriseCTA` 并入）与「OS 模板 ↔ store 转换器并入 `presets`」。
 
-## [Unreleased] — 2026-10-10（TD-88 前置：机密静态加密原语下沉 `pkg/secretcrypto`——三处同形态实现合一 + 防漂移守卫）
+## [0.14.0] — 2026-10-10（TD-88 前置：机密静态加密原语下沉 `pkg/secretcrypto`——三处同形态实现合一 + 防漂移守卫）
 
 - **重构｜加密原语下沉（按 kilo agent 的 `docs/td88-secretcrypto-sink-spec.md` 执行）**：新建 **`pkg/secretcrypto`** 作为机密静态加密的**单一实现**——AES-256-GCM、随机 nonce 前置、base64、`enc:v1:` 版本前缀；API：`Encrypt` / `Decrypt`（三值语义：无前缀⇒legacy 明文放行；有前缀解不开⇒**硬失败**）/ `DecryptLegacyUnprefixed`（无前缀旧密文专用）/ `HasPrefix` / `Prefix`。**密钥派生刻意不下沉**（config-svc 是 passphrase→SHA-256、controlplane 是 base64→32 原始字节，密钥形状属各方部署语义）。
 - **消费方迁移**：
@@ -552,7 +565,7 @@
 - **规格 §6 三个待确认点的处置**：①**机会式迁移有入口**（`SaveK8sCluster` 幂等 upsert）⇒ 已实现；②config-svc 空密钥降级策略（`ephemeral-<nano>-<dsn>`）**保持不动**（收紧属部署行为变更，建议单独一轮）；③包放置按规格推荐 `pkg/secretcrypto`（`pkg/` 是各服务模块唯一合法的共享层，controlplane 亦可达）。
 - **验证**：`pkg/secretcrypto` + `internal/controlplane` + `services/config-svc` 三处全绿；`-race` 零竞态；lint 0 issues（root 与服务侧配置各一次）；`gofmt` 净；门禁 PASS=76。
 
-## [Unreleased] — 2026-10-10（CI：Docker Hub 登录接线落地——镜像/容器类 job 的 429 限流缓解）
+## [0.14.0] — 2026-10-10（CI：Docker Hub 登录接线落地——镜像/容器类 job 的 429 限流缓解）
 
 - **CI｜Docker Hub 登录步接入（TD-89 选项 ①）**：`ci.yml` 的 6 个需要拉镜像的 job（`security` 的 helm 容器、`release-dryrun`、`image`、`image-agent`、`e2e-real`、`e2e-sec`）与 `release.yml` 的 2 个构建 job 均加 `docker/login-action@v3`；凭据经**工作流级 `env`**（`DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN`）承载，**未配置时该步自动跳过**——流水线行为与之前逐字一致，配置后匿名限流配额显著提升。
 - **为什么用 env 而不是直接 `secrets.*`**：本仓 actionlint v1.7.7 门禁**实测报错**——「步骤级 `if:` 不允许引用 `secrets` 上下文」（可用上下文仅 env/github/inputs/job/matrix/needs/runner/steps/strategy/vars）；改经工作流级 env 承载后 `if:` 与 `with:` 都合法，且 actionlint 复跑零问题。这条坑写进 TD-89 供下一个人省一轮。
@@ -561,7 +574,7 @@
 - **顺带修一处门禁在本机跑不动的问题**：`validate-deploy-assets.sh` 第 23 节用 `<<<"$GL_CODE"`（here-string）喂 ~60KB 的 ci.yml 内容，**本机 Git Bash（MSYS）在内容含 `${{ ... }}` 时会永久挂死**（同一内容走文件或管道正常；容器里的 Linux bash 也正常）——现象是门禁本机卡在第 23 节、而 CI 无此问题（今天为排查我的 workflow 改动是否改坏了门禁，连跑四次皆挂、`bash -x` 定位到挂点在 `GL_CODE` 赋值之后）。改法：该节统一走**临时文件**读取（`mktemp` + `printf`，逻辑逐字等价），本机与 CI 行为一致；`bash -n` 与 `shellcheck -S info` 均零问题。
 - **背景证据**：同一时段 run 37979767826 的 attempt 1/2 镜像 job 两度 429/500；run 37993155684 一次 6 个 job 的失败步骤**全部**是 docker 拉取/解析（`build-test`/`proto`/`Race detector`/`Frontend` 这些不拉镜像的门禁全绿）——与提交内容无关。
 
-## [Unreleased] — 2026-10-10（阻断级缺陷修复：auth 代理规则引用目录外权限点致双轨开关打开即恒 403）
+## [0.14.0] — 2026-10-10（阻断级缺陷修复：auth 代理规则引用目录外权限点致双轨开关打开即恒 403）
 
 - **修复｜`/api/v1/auth-svc/*` 代理面在生产上恒 403**（2026-10-10 端到端双轨冒烟实测，非推断）：auth 代理规则要求 `auth:read`/`auth:write`，而控制面权限目录（`internal/store/model.PermSpecs`）**没有 `auth:` 组**；`requirePermission` 的判据是「用户权限集 ∋ required」且无空串豁免 ⇒ **含 admin 在内的任何身份都不可能通过**，`AUTH_SVC_PROXY_ENABLED=true` 打开即认证面不可用。
 - **修法（对齐本地语义）**：新增规则权限哨兵 **`svcproxy.PermAuthenticated`（`"@authenticated"`，以 `@` 开头与真实权限点不可能撞名）**——语义为「仅要求已认证，不查权限点」；`handleServiceProxy` 解析出哨兵时跳过 `requirePermission`（`requireTenantContext` 仍在，故仍要求可验证凭证 + 租户上下文）。auth 规则的 6 处权限点（1 兜底 + 5 条 permRules）全部改为哨兵，端点清单保留为覆盖文档。**为什么不是「补目录」**：本地同端点（`handleAuthMe`/`handleAuthRefresh` 等）本就只做 token 校验、不查权限点；补 `auth:read` 会让自服务端点变成 admin 独有，与本地语义不等价。
@@ -574,7 +587,7 @@
 - **验证**：`go test ./internal/controlplane/...` 全绿（新增 4 个用例）+ `-race` 零竞态；`golangci-lint` 0 issues；`gofmt` 净；门禁 PASS=76。
 - **基建备注**：同批 CI 的 `image`/`image-agent` 两 job 判红是 **Docker Hub 429 限流**（`failed to resolve source metadata for docker.io/library/golang:1.26-bookworm`）——失败发生在拉取镜像元数据阶段、未编译任何代码，已 `gh run rerun --failed` 重跑（attempt 2）。
 
-## [Unreleased] — 2026-10-10（TD-87 批 2 第二批：ratelimit / tenantguard 迁出 + SSRF 私网判定两份手抄实现合并）
+## [0.14.0] — 2026-10-10（TD-87 批 2 第二批：ratelimit / tenantguard 迁出 + SSRF 私网判定两份手抄实现合并）
 
 - **重构｜限流器迁出**：按 IP 令牌桶限流器整体（`Limiter`/`tokenBucket`/`maxRateLimitBuckets` 与构造/放行/清理方法）迁入 `internal/controlplane/ratelimit`，父包 `server_security.go` **234 → 100 行**；保留类型别名 `rateLimiter` + `newRateLimiter` 薄包装 ⇒ 9 处构造点与 `rateLimitMiddleware` 零改动。触及内部态（buckets/tokenBucket/maxBuckets）的 3 个用例随类型迁入，中间件用例改用公共构造包装。
 - **重构｜租户校验迁出**：`TenantOrDefault`/`ValidateTenantID`（含租户 ID 白名单正则）/`TenantAgentIn` 迁入 `internal/controlplane/tenantguard`，父包留三个同名薄包装 ⇒ **30 处调用点零改动**（auth_users/auth_login/auth_tokens/automation/pipeline/script/测试）。
@@ -584,7 +597,7 @@
 - **顺带修复一个时序脆弱的既有用例**：随限流器迁入的 `TestRateLimiter_BucketCapBounded` 用「ratePerSec=1 + 立即重发」断言拒绝，但若循环本身耗时 ≥1s（**全量测试并跑时实测发生**：根模块跑该包时判红、单包跑恒绿），桶会恰好补回一个令牌、断言随机翻。改为**与经过时间无关**的判据：显式置桶为「零令牌 + 刚刚补充过」（等价「同一秒内连发两次」的确定性形态）。`-count=5` 连过。判据同 TD-82（测试不得依赖墙钟时间）。
 - **验证**：全仓 `go build ./internal/...` 绿；`go vet ./internal/controlplane/...` 零告警；`go test ./internal/controlplane/...` **11 个包 0 FAIL**；`golangci-lint`（controlplane + egress）**0 issues**；`gofmt -l` 净；`-race` **零 DATA RACE**；部署门禁 PASS=76 FAIL=0 SKIP=1。
 
-## [Unreleased] — 2026-10-09（TD-87 批 2 首批：loginguard / pluginhost 宿主归位 / svcproxy 规则引擎三切片）
+## [0.14.0] — 2026-10-09（TD-87 批 2 首批：loginguard / pluginhost 宿主归位 / svcproxy 规则引擎三切片）
 
 - **重构｜父包三个切片迁出**（父包 prod 行 25,221 → 24,519）：
   ① **`loginguard`**（新包，245 行含测试）：防爆破/限流器整体迁出（`Guard` 类型 + 5 个限流常量 + `rateRec` + 7 个方法 + 2 个 key 助手），父包留 `clientIP`/`deviceFingerprint`（通用 HTTP 身份提取，23/7 处复用）+ 类型别名与 `newLoginGuard` 薄包装 ⇒ **43 处 `loginGuard: newLoginGuard(ss)` 构造点零改动**；触及内部态（ips/mu/rateRec）的 4 个用例随类型迁入。
@@ -595,7 +608,7 @@
 - **判据修正（§8.4 第 2 条）**：批 1 是整件平移（文件数 182→175）；批 2 三切片都留门面 ⇒ **文件数不变、行数下降**。后续批次若以「文件数」当 KPI 会误导，判据应按「父包行数 + 跨域耦合」两条看。
 - **验证**：全仓 `go build ./...` 绿；`go vet ./internal/controlplane/...` 零告警；`go test ./internal/controlplane/...` **10 个包 0 FAIL**；`golangci-lint` **0 issues**、`gofmt -l` 净；`-race` **零 DATA RACE**；部署门禁 PASS=76 FAIL=0 SKIP=1。
 
-## [Unreleased] — 2026-10-09（TD-87 批 1：controlplane 四个新子包 — presets / pluginhost / credentials / metricscache）
+## [0.14.0] — 2026-10-09（TD-87 批 1：controlplane 四个新子包 — presets / pluginhost / credentials / metricscache）
 
 - **重构｜controlplane 低耦合件平迁（TD-87 批 1）**：7 件与 `Server` 方法集无关的文件迁入四个新子包——`presets`（模板格式类型 + 三张预置表 + 参数校验/脚本渲染，1307 行）、`pluginhost`（插件宿主装配与清单解析，403）、`credentials`（口令哈希 + 首启凭据加固，406）、`metricscache`（/metrics 应用级计数短 TTL 缓存，184）。父包顶层 `.go` **182 → 175**（prod 89 → 83、test 93 → 92），父包 prod 行 **27,056 → 25,221**。
 - **零改动手法（store 三批配方的再次验证）**：模板格式类型（`OSTemplate`/`OSParam`/`Middleware*`）随数据一起迁入 `presets`，父包新增 `template_shim.go` 以**类型别名**回导五个名字 ⇒ 父包内数十处结构体字面量、字段访问与「控制面运行时类型 ↔ store 持久化模型」的显式转换全部照旧；`InitPluginHost`/`LoadPluginManifest`/9 个凭据函数/`AppCounts(Cache)` 等改为子包限定引用。
@@ -605,7 +618,7 @@
 - **验证**：全仓 `go build ./...` 绿；`go vet ./internal/controlplane/...` 零告警；`go test ./internal/controlplane/...` 父包 44.9s + 8 子包 **0 FAIL**；`golangci-lint` **0 issues**；`gofmt -l` 净；`-race` **零 DATA RACE**（父包 290.6s / credentials 148.4s）；部署门禁 PASS=76 FAIL=0 SKIP=1。
 - **剩余（TD-87 批 2）**：§3.2 的 13 件低耦合文件（其中 `plugin_host.go`/`auth_guard.go`/`auth_perms.go` 可与本批的 `pluginhost`/`credentials` 合流）；破 498 个 `*Server` 方法的组合式重构仍按计划列为「需明确诉求才启动」。
 
-## [Unreleased] — 2026-10-09（TD-65 收口：三家服务真库往返集成测试补齐；顺带揪出两个真缺陷——task-svc 空 `depends_on` 触发 MySQL 3140、config-svc 机密明文落库）
+## [0.14.0] — 2026-10-09（TD-65 收口：三家服务真库往返集成测试补齐；顺带揪出两个真缺陷——task-svc 空 `depends_on` 触发 MySQL 3140、config-svc 机密明文落库）
 
 - **新增｜config-svc / incident-svc / portal-svc 的真库往返集成测试**（TD-65 原决议「留此行供集成测试补齐后删除」的最后一项）：三家各新增 DSN 门控用例（`OPSMESH_TEST_MYSQL_DSN` 缺失即 skip，CI 的 services job 已注入该变量⇒在 CI 真跑）。**判据统一为「A 实例写入 → 全新 B 实例读回」**——把「接线成功但数据只在实例内存/根本没落库」这个 TD-65 关心了三个月的形态变成可复跑的断言。覆盖：config-svc（配置 upsert+版本递增+history 表落账+机密密文落库+旧明文兼容+错密钥硬失败）、incident-svc（occurred_at / JSON 列 / 时间线 / 状态回写 / 级联删除）、portal-svc（int 与 float 数值列 / 配额 upsert 两分支 / 活动流水）。至此 alert/auth/device/task/runbook/config/incident/portal 八家 MySQL 接线服务均有 DSN 门控集成用例。
 - **修复｜task-svc `UpdateTask` 对空 `depends_on` 写空串 ⇒ MySQL `Error 3140 Invalid JSON text`，整条 UPDATE 失败**（真缺陷，且**让 2026-10-08 的 `last_fired_at` 修复从未真正生效**）：`depends_on` 是 JSON 列，`UpdateTask` 却用内联 `json.Marshal` 且空切片时留 `""`；而 `CreateTask` 走的是 `jsonStringSlice`（空值给 `"[]"`）——两处手搓 marshal 各自演进跑偏。fire/reclaim 循环回写恒失败 ⇒ `LastFiredAt` 落不了库 ⇒ 同分钟去重失效（同一 cron 分钟每个 tick 反复触发）、`task_scheduled_fire_failures` 指标虚高。修法：`UpdateTask` 改用 `jsonStringSlice`，与 `CreateTask` 同源。
@@ -616,7 +629,7 @@
 - **台账**：TD-65 移入「已收口」（附八家服务集成覆盖清单与两个缺陷的出处）；新增 **TD-88**——控制面 store 的 `SecretItem.Value` 明文落库是**设计现状**（注释即写明「仅在内部流转；API 须脱敏」，`security-mechanism.md` §12.1.4 已列为部署自检项），与 config-svc 那条「接了密钥不用」的**实现缺陷**性质不同：方向（`${provider:key}` 引用格式 vs 库级静态加密）属产品/架构决策，需先定方向再立项。
 - **验证**：四家（task/config/incident/portal）模块 `go test -race` 全绿（含真库）；`golangci-lint -c .golangci.services.yml` 0 issues；`gofmt -l` 净；部署资产门禁 PASS=76 FAIL=0 SKIP=1。
 
-## [Unreleased] — 2026-10-09（TD-61 末批收口：multi_schema 包装层下沉 `multischema` + 父包 113→20 文件门面化）
+## [0.14.0] — 2026-10-09（TD-61 末批收口：multi_schema 包装层下沉 `multischema` + 父包 113→20 文件门面化）
 
 - **重构｜`internal/store` 最后一块落地（TD-61 三批收官）**：9 个 `multi_schema*.go`（含 P0.3-P6 逐域委托实现，约 3200 行）迁入 **`internal/store/multischema/`**；新增该包短名回导层 `aliases.go`（47 领域结构 + 3 契约类型 + 36 领域小接口 + `Store`）与父包 `multi_shim.go`（`SchemaNamer`/`MultiSchemaStore` 别名 + `NewMultiSchemaStore`/`DefaultSchemaNamer` 薄包装）。公共面零变化：`factory/server_factory.go:133` 的构造路径与 `server_netsec.go:402` 的 `case *store.MultiSchemaStore` 类型分发（别名即同一类型）逐字不变。
 - **测试搬迁 14 件**：`multi_schema_test/_proxy_test/_smoke_test/_delegation_test` + `store_extra4_test.go`（46 用例全多 schema）整迁；混装件 `store_extra_test.go`（1686 行）**三分**——96 个 `TestMemoryStore_*` 边界用例回流 `internal/store/memory/`（与既有 111 个同族用例合流）、会话组留父包改名 `session_extra_test.go`、32 个多 schema 用例下沉；`audit_chain_test.go`/`cleanup_refresh_tokens_test.go` 各剥出 MS 段落；父包专属用例剥回两处（`TestStubGuard_JoinAndWarnDomains` → `stub_guard_test.go`、`TestErrString_Error` → `session_test.go`）；测试 helper 迁入 `multischema/test_helpers_test.go`，父包 `parent_test_helpers_test.go`/`parent_dsn_test.go` 因无剩余使用者删除。
@@ -626,7 +639,7 @@
 - **范围说明｜残余拆分**：本行登记名含 controlplane（原「controlplane/store 父包拆分」），本链只处置 **store 侧**；`internal/controlplane/` 顶层 182 文件（2026-10-09 实测，并行线仍在增）**未动**——其单文件规模已按 TD-20「≤500 行」收口，但**单包按域拆包**需独立立项，已拆分为 **TD-87** 单独登记（台账「待启动」，行内写明动工前需与并行线对齐）。故本轮闭合的是 TD-61 的 store 侧，不宣称 controlplane 侧已完成。
 - **验证**：全仓 `go build ./...` 绿；根模块 `go test ./...` **60 包 0 fail**；`golangci-lint run ./internal/store/... ./internal/controlplane/...` **0 issues**、`gofmt -l` 净；`-race -p 1 ./internal/store/...` **零 DATA RACE**（memory 276s / multischema 116s / store 36s）；部署资产门禁 **PASS=76 FAIL=0 SKIP=1**（第 24 节台账复算 closed=23 / pending=3）。
 
-## [Unreleased] — 2026-10-09（Go 漏洞库当日批量披露：x/net v0.60.0 + CI 工具链 1.26.9 双升级，11 条 govulncheck 报告清零）
+## [0.14.0] — 2026-10-09（Go 漏洞库当日批量披露：x/net v0.60.0 + CI 工具链 1.26.9 双升级，11 条 govulncheck 报告清零）
 
 - **修复｜govulncheck 11 条新披露（GO-2026-6599～6617）**：批次 3-sql 推送（`094a3db`）后 CI `security` job 转红（run 37888713106）——该提交本身无依赖改动，属漏洞库当日入库导致的「无码转红」（同 run 其余 12 个 job 全绿）。两条腿修：
   - **模块侧 5 条**（GO-2026-6603/6610/6611/6612/6617，均落在 `golang.org/x/net`，修复版 v0.60.0）：按本仓 CVE 升级惯例全量覆盖 10 个模块（根 + operator + alert/auth/config/device/gpu/log/task/tf-provider），`golang.org/x/net` v0.59.0 → **v0.60.0**；MVS 连带上提 x/sync v0.23.0、x/sys v0.48.0、x/term v0.46.0、x/text v0.42.0。
@@ -635,7 +648,7 @@
 - **许可证清单随版本重算**：`docs/third-party-licenses.md` 重新生成（集合仍 162 个 module@version，仅 x/net 行版本更新）——security job 的许可证门禁比对的就是 go.sum 派生的集合，版本变而不重算必红。
 - **验证**：15 个模块 build+vet 绿（task-svc 的 vet 红来自并行会话在制品 `mysql_integration_test.go` 语法未完成，与本轮无关，未纳入提交）；根模块 `go test ./...` 59 包 ok / 0 fail；`gen-third-party-licenses.sh --check` PASS（162 模块、源码覆盖率 100%）；部署资产门禁 PASS=76 FAIL=0 SKIP=1；**本地 Trivy 判定口径实验**（夹具 A：go.mod 选中 x/net v0.30.0 ⇒ 报出多条 x/net CVE；B：选中 v0.60.0 且 go.sum 留 v0.30.0 全量残留 ⇒ 0；C：仅 `/go.mod` 残留 ⇒ 0；D：真实根模块 go.mod/go.sum 镜像 ⇒ 0）证明 Trivy 按 go.mod 选中版本判定、go.sum 残留不判红 ⇒ 残留的 x/net v0.59.0/v0.58.0（图解析所需，连 `go mod tidy` 也删不掉）不构成新红点。
 
-## [Unreleased] — 2026-10-08（TD-82/76/75/81：tlsutil 测试轮询替代 sleep、12 微服务 /version 版本面、链路追踪查询侧 Jaeger 入栈、前端 lockfile 源统一官方 + 台账 11 行归位）
+## [0.14.0] — 2026-10-08（TD-82/76/75/81：tlsutil 测试轮询替代 sleep、12 微服务 /version 版本面、链路追踪查询侧 Jaeger 入栈、前端 lockfile 源统一官方 + 台账 11 行归位）
 
 - **改进｜internal/tlsutil 证书重载测试**（TD-82）：`CertificateReloader` 新增 `reloadAttempts` 原子计数与 `ReloadAttempts()` 读取口（含失败计数），两处正向断言由固定 `time.Sleep` 改为轮询+10s 截止（事件过防抖后计数必增，是「事件已被处理」的确定性信号，替代慢机器/Windows 下固定 sleep 的误判）；负向断言（Close 后不再 reload）保留有界 sleep。`go test -count=3` 全绿（CI Linux 与本机 Windows 均绿）。
 
@@ -649,7 +662,7 @@
 
 - **验证**：全模块 gofmt/build/vet/test 绿；门禁 PASS=70 FAIL=0 SKIP=3；shellcheck -S info 0 findings。
 
-## [Unreleased] — 2026-10-08（跨服务列集合守卫：task-svc `tasks.last_fired_at` 真缺陷修复 + 门禁第 21 节）
+## [0.14.0] — 2026-10-08（跨服务列集合守卫：task-svc `tasks.last_fired_at` 真缺陷修复 + 门禁第 21 节）
 
 - **修复｜task-svc 的 `tasks.last_fired_at`：SQL 语句引用了建表 DDL 里没有的列**（与 `occurred_at` / `batch_id` 同族；2026-10-08 跨服务审计抓到的活体）。`AllTasks()` 与 scheduler fire 闭包读写该列，但 `schema.sql` 的 `tasks` 表没有它、也没有补列路径——task-svc 的表由自己 `migrateTasks()` 从嵌入 schema 建（`opsmesh_task` 库只建库不建表），于是服务自建表路径下每条引用该列的语句都是 `Unknown column`，而 `AllTasks()` 的错误路径是**静默 `return nil`** ⇒ 非影子模式下 fire/reclaim 整轮空转且**没有任何日志**（调度停了但不报错）。三处修：① `schema.sql` 补 `last_fired_at TIMESTAMP NULL`（新装即带）；② `migration.go` 把原来只补 `batch_id` 的单列逻辑重构成通用 `ensureColumns`（information_schema 预检 + ALTER + 1060 竞态复检）+ 列清单 `taskEnsureColumns`（存量库拿到该列）；③ `CreateTask` 的 INSERT 与 `UpdateTask` 的 UPDATE 列清单同步补该列——此前 fire 闭包只在内存里改 `LastFiredAt`、**永不落库**，同分钟去重跨 tick 失效（同一 cron 分钟内每个 tick 反复触发）。
 - **新增守卫｜服务内 drift 测试两份**：`services/task-svc/internal/store/schema_drift_test.go`（`TestSchemaCoversSQLColumns` 覆盖 schema.sql 全部表 + `TestEnsureColumnsMatchSchema` 对账补列清单与 schema）与 `services/runbook-svc/internal/store/runbook_cols_drift_test.go`（`TestRunbookColsCoverDDL`；runbook-svc 的列清单由 Go 常量 `runbookCols` 拼接，静态门禁提取不到，故交服务内守）。CI 侧由 `services` job（`MODS=operator services/*/`，逐模块 `go test -race ./...`）执行。
@@ -657,7 +670,7 @@
 - **变异检验**：漂移判红（真实文件改名 `device-svc` 的 `discovery_jobs.error_msg` ⇒ `BAD device-svc: discovery_jobs.error_msg`；还原后 sha256 与改前一致、复跑绿）｜全局下限判红（隔离副本 `MIN_COLS=9999` ⇒ `G21_LOW`）｜按服务塌缩判红（隔离副本移除 `auth-svc` / `device-svc` 的 schema.sql ⇒ `G21_ZERO` 点名该服务；这两家的 DDL 无内联副本）｜bash 侧四个裁决分支（ZERO/LOW/BAD/OK）用脚本内同一段链逐条拨通。
 - **新增门禁第 24 节「台账计数可复算」**（起因是本次亲测翻车：TD-84 的注记直接套了 2026-10-07 归位记录的旧基线往下接，把「已解决 26 / 已收口 8 / 全册 51 行」当常量写成「51 → 52、合计 34 → 35」，而当时实测是「27 / 35 → 36 / 53 行」——手写计数无人复核，错数进台账后会一直在，读台账的人正是拿它回答「还有多少债没还」）。判据三层、纯文本只读 `docs/tech-debt.md`：① 文件顶部必须有 `<!-- td-ledger-check: rows=… unique=… resolved=… closed=… inprogress=… pending=… wontfix=… -->` 标记行，每个字段必须等于实测，缺失或不符判红**并打印正确的整行**（让下一个人直接粘贴而不是自己数）；② 结构事实：`rows == unique`（重号判红并点名）与 `rows ≥ 40` 下限（扫描面塌缩不能安静地变绿，与第 21 节 `cols_checked<250` 同哲学）；③ 正文里「已解决 N 行 / 全册 M 行 / ID 仍是 N 行 / N 行 / M 个唯一」的断言必须 ∈ 实测集合；位于**带日期的引用块或带日期的 `##` 节**内的断言视为历史快照豁免（历史记录不该被今天的数改写），豁免条数在 PASS 行报出、防止豁免成后门。配套把本轮手写总数改成指向标记行。**变异检验 5/5 判红**：正文写「全册 999 行」⇒ `CLAIM 999 不在实测集合`；标记行改 `rows=53` ⇒ `MISMATCH rows: 标记=53 实测=54` + 打印正确整行；删标记行 ⇒ `NO_MARKER`；复制 TD-84 制造重号 ⇒ `DUP 重号：TD-84x2`（并连带两条 MISMATCH）；隔离目录只留 5 行台账 ⇒ `LOW rows=5 < 下限 40`；三次改真文件的还原后 sha256 与改前逐字节一致、基线复绿。验证：全量门禁 `PASS=70 FAIL=0 SKIP=3`（第 24 节 PASS，`rows=54 unique=54`、历史快照豁免 1 条，`EXIT_RC=0`）；`shellcheck -S info` 0 findings；`bash -n` 通过；第 16 节 CHANGELOG 判据复测 `offenders=0`。
 - 验证：全量门禁 `PASS=65 FAIL=0 SKIP=3`（第 21 / 22 节全 PASS，`EXIT_RC=0`）；`shellcheck -S info` 0 findings；`bash -n` 通过；task-svc 模块 `go test ./...` 全绿。前置审计的甄别记录：初版三方审计报出 2 条候选，runbook-svc 那 1 条是**假阳性**（列清单在 Go 常量里拼接，静态正则看不见）。
-## [Unreleased] — 2026-10-07（TD-83 根治：存量升级的"重建表 + 禁写"型迁移从启动内联改成部署前显式步骤）
+## [0.14.0] — 2026-10-07（TD-83 根治：存量升级的"重建表 + 禁写"型迁移从启动内联改成部署前显式步骤）
 
 - **新增子命令｜`opsmesh migrate` / `deploy.sh migrate`：把 020/021 这类"重建表 + 禁写"型迁移从控制面启动内联执行，提前到放量前单独跑**（一次性容器，与启动内联同一条代码路径 `factory.SelectStore → NewSQLStore → runMigrations`），报出耗时并核对库内版本号（判据不信退出码：进程跑完不代表迁移真的落库）。背景是 §44 实测：`ci_items` 30 万行 ⇒ 020+021 墙钟 117s ＝ 120s 等待预算的 97%、100 万行 ≈ 376s——此前迁移只在启动内联执行，既吃掉 `deploy.sh` 的健康等待预算（超时即判部署失败），又在迁移窗口内阻塞 CMDB 写入（mysqld 自报 STORED 生成列对 INSTANT/INPLACE 均返回 1845、FULLTEXT 建索引对 LOCK=NONE 报 1846，即无法在线无锁完成）。
 - **预算旋钮可配**：`.env` 的 `MIGRATION_WAIT_BUDGET`（默认 120s）同时控制 `up` 时 controlplane 的健康等待上限与 `migrate` 一次性容器内的迁移 ctx（`OPSMESH_MIGRATION_BUDGET_SEC`；`internal/store/sql.go` 的迁移总预算此前写死 120s，大表迁移会在持锁工作中途被 ctx 掐断，表现为"升级失败"的假症状）。
@@ -665,7 +678,7 @@
 - 门禁新增第 22 节（五条判据：deploy.sh migrate 接线 / 二进制 migrate 子命令含非 mysql 显式拒绝 / 迁移总预算可配 / compose 预迁移环境变量与 command 的 DSN 不漂移 / 升级指南判据齐备），变异检验 5/5 判红、还原后基线复绿；`shellcheck -S info` 0 findings。
 - 真机验证：一次性 mysql:8.0 容器（仓库 `deploy/monitoring/mysql.cnf` 经 docker cp 在首启前就位）上 `opsmesh migrate` 21 条迁移全应用（首跑 12.3s、幂等重放 0.9s），库内 `schema_migrations` 21/21 与二进制携带迁移文件数一致；非法 DSN 与默认 memory 后端均显式退出码 1（防"成功"地什么都不做）。
 
-## [Unreleased] — 2026-10-08 alert-svc 的 ack/resolve 入口：从"匿名可改告警状态"变成"开外发就必须给凭据"（默认零行为变化）
+## [0.14.0] — 2026-10-08 alert-svc 的 ack/resolve 入口：从"匿名可改告警状态"变成"开外发就必须给凭据"（默认零行为变化）
 
 这是那条一直挂在"待产品定"的开放项（alert-svc gRPC 无鉴权）的落地。**先摆取证，因为它决定了改法**：
 `NewAlertServiceClient` 在全仓**零调用点**（除生成的桩）；出厂 compose 的 26 个宿主端口发布**全部绑
@@ -696,7 +709,7 @@
   `docs/tech-debt.md` 与 `docs/COORDINATION.md` 此刻是并行线的在途未提交文件，往里插东西会把他们的改动
   捆进我的提交，等它们落地我再补登记。
 
-## [Unreleased] — 2026-10-08 开 TD-85 并当日闭合：golangci-lint 两条腿各钉各的版本，漂移会演成「两套规则各扫一遍还全绿」（门禁第 23 节）
+## [0.14.0] — 2026-10-08 开 TD-85 并当日闭合：golangci-lint 两条腿各钉各的版本，漂移会演成「两套规则各扫一遍还全绿」（门禁第 23 节）
 
 上一笔把 `services` 腿的安装从 `go install …golangci-lint@v2.13.2` 换成「钉版产物 + 钉摘要」之后，
 lint 版本串从 1 处变成 **3 处**：`build-test` 的 `golangci-lint-action version: v2.13.2`、`services` 的
@@ -1863,7 +1876,7 @@ upgrade guide，021 注释引用的"既有惯例『先迁移后放量』"并不�
 - **未做**：§44.6 第 1/2/3 条（迁移前置 + 预算可配 / 维护窗口数字判据 / 多租户首触说明）是行为与文档面改动，
   已记为 **TD-83**，不在这一笔里顺手改。
 
-## [Unreleased] — 2026-10-08 `services` 腿被一次公网断流整体判红：门禁工具的取数方式从「runner 现编译」改成钉版产物 + 钉摘要
+## [0.14.0] — 2026-10-08 `services` 腿被一次公网断流整体判红：门禁工具的取数方式从「runner 现编译」改成钉版产物 + 钉摘要
 
 - **现象与定性（三条一起才算"间歇"而不是"回归"）**：run `37638185377`（`fd244b0`，main 的头）判红，job 级
   只有 `services` 一条失败、其余 11 绿 + release skipped。日志里失败点是安装步本身：
@@ -1913,7 +1926,7 @@ upgrade guide，021 注释引用的"既有惯例『先迁移后放量』"并不�
   而整 run 还在跑时，run 级日志仍取不到（与此前那条"run 未结束连 job 级日志也空"只有半步之差：
   **job 收尾后 job 级日志就有了，run 级的还没有**）。
 
-## [Unreleased] — 2026-10-07 发布物回核自己抓到的四条缺陷：⑤ 把 12 说成 14、零比对仍打 PASS、跨 workflow 竞态，以及那段判读从未被执行过
+## [0.14.0] — 2026-10-07 发布物回核自己抓到的四条缺陷：⑤ 把 12 说成 14、零比对仍打 PASS、跨 workflow 竞态，以及那段判读从未被执行过
 
 v0.13.0 发版那一刻，`release.yml` 的 `verify-artifacts` job **红了**——但红得有价值：它把只属于"发布链自己"
 的缺陷暴露出来，本块最终记到**四条**（初稿只写了当时看见的两条，缺陷二/三/四 由随后的自查与 attempt 2 补上）。
@@ -1971,7 +1984,7 @@ v0.13.0 发版那一刻，`release.yml` 的 `verify-artifacts` job **红了**—
   这句话此前只是**没被否证**，现在有了一次由正确计数层打印的第二次独立确认（两次由不同脚本版本给出同一结论）。
   `docs/COORDINATION.md` 第二十六则同时记下"那条 release run 的红不要去重跑取绿"的理由，避免下一个接手的人抹平它。
 
-## [Unreleased] — 2026-10-07 生产段/样例里手写的版本字面量没人守：两处已漂的注释 + 门禁第 20 节
+## [0.14.0] — 2026-10-07 生产段/样例里手写的版本字面量没人守：两处已漂的注释 + 门禁第 20 节
 
 第 1 节守的是**固定清单**（Chart.yaml / values-production 与 gitops segment 的 tag 行 / `internal/version` /
 compose 的 `OPSMESH_VERSION` 契约），但「客户直接拿去跑」的样例与 GitOps 段文件里还散着**手写**的版本字面量：
