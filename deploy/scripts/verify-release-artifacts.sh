@@ -244,9 +244,17 @@ else
             bad "Release 正文没有「能力降级清单」——客户在 Releases 页看不到当前哪些能力是降级的"
         fi
     else
-        if [ "$rel_rc" -eq 4 ] || grep -qiE 'GH_TOKEN|auth' <<<"$rel_err"; then
+        # 文案分类先落成布尔再判：本仓 internal/gates 的 TestNoPipelineGrepQ 把
+        # 「`|` 分段后某段以 grep -q 开头」一律判红——它的 2026-10-04 立规理由（pipefail 下
+        # 管道 + grep -q 命中也可能判成未命中）不适用于 `||`，但探测器刻意不为写法开后门，
+        # 这里按它的规矩走（也是 CI build-test 的真门禁）。
+        looks_auth=0
+        grep -qiE 'GH_TOKEN|auth' <<<"$rel_err" && looks_auth=1
+        looks_404=0
+        grep -qiE 'not found|HTTP 404' <<<"$rel_err" && looks_404=1
+        if [ "$rel_rc" -eq 4 ] || [ "$looks_auth" -eq 1 ]; then
             bad "GitHub Release v${VER} 没法查询：gh 没有凭证（exit=${rel_rc}）——这是**门禁自身的配置缺陷**（回核 step 未注入 GH_TOKEN），不是发布缺陷；修 release.yml 的 env 后重跑"
-        elif grep -qiE 'not found|HTTP 404' <<<"$rel_err"; then
+        elif [ "$looks_404" -eq 1 ]; then
             bad "GitHub Release v${VER} 不存在（gh 确认 404）"
         else
             unver "GitHub Release v${VER} 查询失败（gh exit=${rel_rc}）：${rel_err%%$'\n'*}——没能核对上，重跑本 job"

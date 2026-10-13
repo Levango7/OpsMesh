@@ -118,6 +118,16 @@ return localUserInRoster        // 本侧令牌：按名册
 `roleIDs`+`roles`、`tenantID`+`tenantId`、`userID`+`id` 等重复语义。前端若依赖某一种写法，切换即裂。
 本仓 TD-60 的老毛病（"契约面裂缝"）在 auth 域已修完探明的部分，这条是本次演练新暴露的残余。
 
+- **状态（2026-10-13 晚，板第七十九则）**：已收口。规范名定死 = controlplane 既有契约（不新造拼写）：
+  请求 `role_ids`（auth_users.go:110/303；前端 UsersView 按此发）、响应 `roleIDs`/`createdAt`/
+  `mustChangePassword`（store.User 的 json tag；前端按此读）——单体与前端本就统一，**偏差全在 auth-svc**，
+  本笔只收 auth-svc 侧：请求收规范名 + 旧拼写作过渡别名；列表逐项经 toPublicUser（此前直出 proto 的
+  `role_ids`/`created_at`(对象)/`must_change_password` ⇒ 前端"角色列空白 + 时间列 Invalid Date"）；
+  登录/注册/改密的 user 补 `permissions`/`roleIDs`/`createdAt`（B4 的对侧半边）。最险的一条：
+  改号 PUT 此前只认 `roleIds` 而前端发 `role_ids` ⇒ 切流后"改角色"**静默忽略**（200、字段没动）——
+  守卫 5 条 + 变异 1/1 钉住（`gateway_field_names_test.go`），规范名表见
+  `docs/td60-auth-consistency-report.md` §7。过渡别名只增不减、零断裂，切流完成后统一删。
+
 ### F7 两条正向验证 ✓
 
 - **must-change 门禁是严的**：处于强制改密态的会话打 `/api/v1/users` 与 `/auth/me` 均 **403 `password change required`**；登录虽下发 `opsmesh_at`，但**不构成越权面**。

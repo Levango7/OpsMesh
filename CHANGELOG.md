@@ -4,6 +4,29 @@
 
 > 当前最新已发布版本：`v0.14.0`（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-13（F6 契约字段名收口：auth-svc 对齐单体契约 + 补对侧缺的 permissions）
+
+- **背景**：batch-0 演练 F6——两侧同义字段拼写不同（对侧 `roleIds` vs 本侧 `roleIDs`），
+  "前端若依赖某一种写法，切换即裂"。盘完三侧：**单体与前端早已统一**（请求 `role_ids`、
+  响应 `roleIDs`/`createdAt`/`mustChangePassword`），偏差全在 auth-svc；规范名据此**不新造**，
+  定死为单体既有契约。
+- **auth-svc 四处收口**（`internal/http/gateway.go`）：① 改号 `PUT /users/{id}` 收规范
+  `role_ids`（旧 `roleIds` 保留为过渡别名）——**修复前只认 `roleIds` 而前端发的是 `role_ids`**，
+  切流后"改角色"会**静默忽略**（200、字段没动），属最难发现的一类裂法；② 建号 `POST /users`
+  收规范 `role_ids`（旧 `roleIDs` 保留为别名）；③ 列表 `GET /users` 逐项经 `toPublicUser`
+  （此前直出 proto 结构：`role_ids`/`created_at`(还是 `{"seconds":…}` 对象)/`must_change_password`）
+  ⇒ 前端"角色列空白 + 时间列 Invalid Date"；④ 登录/注册/改密响应的 `user` 补 `permissions`
+  （**B4 契约的对侧半边**——缺它切流后前端 `hasPerm()` 对一切返回 false、侧栏全线隐藏）
+  与 `roleIDs`/`createdAt`。
+- **零断裂**：旧拼写全部保留为过渡别名（只增不减），切流完成后统一删除——删点与指引写在
+  `docs/td60-auth-consistency-report.md` §12 与守卫文件头。
+- **守卫**：`services/auth-svc/internal/http/gateway_field_names_test.go` 5 条（canonical PUT
+  真改角色（以库内 before/after 为判据）/ 旧拼写别名仍生效 / 建号 `role_ids` 真指派 /
+  列表**键名 + 类型**（`createdAt` 必须是 RFC3339 字符串，专抓 proto 对象回归）/ 登录响应带
+  `roleIDs`+`permissions`）；**变异 1/1**：撤 update 的 `role_ids` ⇒ 守卫以"role_ids 未生效
+  （静默忽略形态）：before=[role-viewer] after=[role-viewer]"判红。验证：`go test ./internal/http/`
+  整包过（26.2s）、`go vet` 与 `gofmt` 净。
+
 ## [Unreleased] — 2026-10-13（发布回核 ③ 的凭证缺陷：gh 无凭证让门禁把「没发布」说成结论）
 
 - **症状**：`release.yml` 的「发布物回核」job 在 v0.14.0 首跑判红（run `38335486330`，
@@ -35,6 +58,13 @@
   版本号**如实报「不存在（gh 确认 404）」。v0.14.0 那次 run 的红报保持历史原样（tag 的
   workflow 取自 tag 提交，修复对下一次 tag 生效）；产物侧本身完好——CHANGELOG 顶部与
   release-notes 的 `PASS=8 FAIL=0` 与本次实弹是同一份事实。
+- **上线后又被自家门禁抓一次（同日晚，已修）**：③ 分诊初稿写成
+  `[ "$rel_rc" -eq 4 ] || grep -qiE …`，CI `build-test` 的 `internal/gates` 门禁
+  （`TestNoPipelineGrepQInDeliveryAssets`）当场判红——探测器把 `||` 分段后右侧以 `grep -q`
+  开头的一律算 `producer | grep -q`（刻意为写法开后门不留缝，见该测试文件头）。已改为
+  "文案分类先落布尔再判"（脚本内附理由注释）；本地 `go test ./internal/gates/` 各门复跑
+  通过（扫描面 25 文件 / 12407 行，违规 0）。教训：改动交付脚本的腿 = shellcheck +
+  `internal/gates` 全套 + 相关 selftest，缺一不可。
 
 ## [0.14.0] — 2026-10-12（模拟用户演练 B1：device-sim 不再假成功）
 

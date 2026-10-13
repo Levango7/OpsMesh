@@ -232,7 +232,7 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user":                toPublicUser(resp.User),
+		"user":                g.toPublicUser(resp.User),
 		"mustChangePassword":  resp.MustChangePassword,
 		"changePasswordToken": resp.ChangePasswordToken,
 		"needMFA":             needMFA,
@@ -473,7 +473,7 @@ func (g *Gateway) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "password changed",
-			"user":   toPublicUser(resp.User),
+			"user":   g.toPublicUser(resp.User),
 		})
 		return
 	}
@@ -597,26 +597,49 @@ func (g *Gateway) handleUsers(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"users": resp.Users})
+		// F6 字段名收口（板第七十九则）：此前这里把 proto 结构直接交给 writeJSON，
+		// 列表项于是是 protobuf 特有拼写——role_ids / created_at（还是 {"seconds":…}
+		// 对象，不是 RFC3339）/ must_change_password——而前端 UsersView 读的是驼峰
+		// roleIDs / createdAt ⇒ 切流到本服务后"角色列空白、时间列 Invalid Date"。
+		// 现逐项经 toPublicUser 收敛到 controlplane 契约（规范名 roleIDs/createdAt/
+		// mustChangePassword），并把本服务列表此前的拼写保留为过渡别名（零断裂）。
+		users := make([]map[string]any, 0, len(resp.Users))
+		for _, u := range resp.Users {
+			item := g.toPublicUser(u)
+			item["role_ids"] = u.GetRoleIds()
+			item["created_at"] = u.GetCreatedAt()
+			item["must_change_password"] = u.GetMustChangePassword()
+			users = append(users, item)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"users": users})
 	case http.MethodPost:
 		// 管理员创建用户（区别于注册端点：管理端创建默认 active，无须审批）。
 		// 契约对齐 controlplane auth_users.go handleCreateUser：
-		//   请求体 {username, password, email, roleIDs}；
+		//   请求体 {username, password, email, role_ids}；
 		//   username+password 必填（400）、强口令校验（400）、
-		//   roleIDs 须全部指向真实角色（400 unknown role id）。
-		// 修复前此处**不接收 password** 也不接 roleIDs：service.CreateUser 要求
+		//   role_ids 须全部指向真实角色（400 unknown role id）。
+		// F6 字段名收口（板第七十九则）：规范名 = controlplane 既有契约——**请求 role_ids**
+		// （auth_users.go:110 的 json tag；前端 UsersView 也按此发），**响应 roleIDs**
+		// （store.User:26 的 json tag）。roleIDs（驼峰）保留为过渡别名：本服务自 TD-60 起
+		// 只收它，直接去掉会砸掉按旧拼写写的调用方；两个都出现时以 role_ids 为准。
+		// 修复前此处**不接收 password** 也不接角色：service.CreateUser 要求
 		// 密码非空 ⇒ 管理员建号 100% 返回 500；且管理员没有任何指派角色的入口
 		// （只能建出无角色账号，再靠 PUT /roles/{id} 二次补）。
 		var body struct {
 			Username           string   `json:"username"`
 			Password           string   `json:"password"`
 			Email              string   `json:"email"`
-			RoleIDs            []string `json:"roleIDs"`
+			RoleIDs            []string `json:"role_ids"`
+			RoleIDsCamel       []string `json:"roleIDs"`
 			MustChangePassword bool     `json:"mustChangePassword"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" || body.Password == "" {
 			writeError(w, http.StatusBadRequest, "username and password are required")
 			return
+		}
+		roles := body.RoleIDs
+		if roles == nil {
+			roles = body.RoleIDsCamel
 		}
 		// 强口令校验（与注册/改密同规则集；controlplane 建号同样校验）。
 		if msg := validateStrongPassword(body.Password); msg != "" {
@@ -624,7 +647,7 @@ func (g *Gateway) handleUsers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 角色引用校验：避免把不存在的角色 ID 写进用户（对齐 controlplane P3 校验）。
-		for _, rid := range body.RoleIDs {
+		for _, rid := range roles {
 			if rid != "" && g.svc.Store().GetRole(rid) == nil {
 				writeError(w, http.StatusBadRequest, "unknown role id: "+rid)
 				return
@@ -634,7 +657,7 @@ func (g *Gateway) handleUsers(w http.ResponseWriter, r *http.Request) {
 			Username:           body.Username,
 			Password:           body.Password,
 			Email:              body.Email,
-			RoleIds:            body.RoleIDs,
+			RoleIds:            roles,
 			MustChangePassword: body.MustChangePassword,
 		}); err != nil {
 			if err == service.ErrUserExists {
@@ -749,23 +772,32 @@ func (g *Gateway) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleUpdateUser 处理 PUT /api/v1/users/{id}：更新用户 email/roleIDs/status。
+// handleUpdateUser 处理 PUT /api/v1/users/{id}：更新用户 email/role_ids/status。
 // 鉴权：需 user:write 权限；status 变更（active/rejected）额外要求 user:approve
 // （对齐 controlplane auth_users.go:253，防低权限绕过审批流）。
-// 请求体：{email?, roleIds?, status?}；仅更新提供的非空字段（与 controlplane
+// 请求体：{email?, role_ids?, status?}；仅更新提供的非空字段（与 controlplane
 // handleUpdateUser 同语义）。
+// F6 字段名收口（板第七十九则）：规范名 role_ids（同 controlplane auth_users.go:303 的
+// json tag 与前端 UsersView 的发送形态）；roleIds（本服务自 TD-60 起的旧拼写）保留为
+// 过渡别名——**修复前只认它**，而前端/控制面发的是 role_ids ⇒ 切流后"改角色"会被
+// 整段静默忽略（200 + 字段没动），属最难发现的一类裂法。两拼写并存时以 role_ids 为准。
 func (g *Gateway) handleUpdateUser(w http.ResponseWriter, r *http.Request, id string) {
 	if _, ok := g.requirePermission(w, r, "user:write"); !ok {
 		return
 	}
 	var body struct {
-		Email   string   `json:"email"`
-		RoleIDs []string `json:"roleIds"`
-		Status  string   `json:"status"`
+		Email        string   `json:"email"`
+		RoleIDs      []string `json:"role_ids"`
+		RoleIDsCamel []string `json:"roleIds"`
+		Status       string   `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+	roles := body.RoleIDs
+	if roles == nil {
+		roles = body.RoleIDsCamel
 	}
 	// 状态变更需更高权限：仅 user:write 不能激活/禁用账号，须 user:approve
 	// （与 controlplane 审批模型一致，防低权限绕过审批流）。
@@ -774,7 +806,7 @@ func (g *Gateway) handleUpdateUser(w http.ResponseWriter, r *http.Request, id st
 			return
 		}
 	}
-	if _, err := g.svc.UpdateUserFields(r.Context(), id, body.Email, body.Status, body.RoleIDs); err != nil {
+	if _, err := g.svc.UpdateUserFields(r.Context(), id, body.Email, body.Status, roles); err != nil {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
 	}
@@ -954,18 +986,32 @@ func (g *Gateway) requirePermission(w http.ResponseWriter, r *http.Request, perm
 }
 
 // toPublicUser proto User → 网关公开字段（不含敏感）。
-func toPublicUser(u *authv1.User) map[string]any {
+// F6 字段名收口（板第七十九则）：规范名 roleIDs（= controlplane store.User:26 的 json tag，
+// 前端 UsersView 读它）；roleIds 是本服务自 TD-60 起的旧拼写，双轨期保留为过渡别名
+// （谁只在 auth-svc 侧写过消费方都不会断），切流完成后可删——删时同步删本注释与该行。
+// permissions 与 controlplane 登录/注册响应同形（B4 契约的对侧半边）：前端 stores/auth.js
+// 以 user.permissions 作侧栏/操作门控的数据源，缺了它切流后侧栏全线隐藏（/auth/me 可自愈，
+// 但首屏会先空一帧，且消费方不得不等第二个请求）。
+func (g *Gateway) toPublicUser(u *authv1.User) map[string]any {
 	if u == nil {
 		return nil
 	}
-	return map[string]any{
+	out := map[string]any{
 		"id":                 u.Id,
 		"username":           u.Username,
 		"email":              u.Email,
 		"status":             u.Status,
+		"roleIDs":            u.RoleIds,
 		"roleIds":            u.RoleIds,
 		"mustChangePassword": u.MustChangePassword,
+		"permissions":        g.effectivePermissions(u.RoleIds),
 	}
+	// createdAt 对齐 controlplane（store.User 的 time.Time → RFC3339 字符串）；
+	// proto 侧是 timestamppb 指针，空值时**不输出**（而非输出 null），与 omitempty 同义。
+	if u.CreatedAt != nil {
+		out["createdAt"] = u.CreatedAt.AsTime()
+	}
+	return out
 }
 
 // toPublicStoreUser store.User → 网关公开字段（显式白名单，绝不透出 PasswordHash）。
@@ -974,6 +1020,7 @@ func toPublicUser(u *authv1.User) map[string]any {
 // 任何持有 user:read 的调用方都能拉取 cost-12 bcrypt 哈希离线爆破。
 // 这里用「显式列出允许字段」而非「序列化整个结构体」：即使将来有人删掉
 // store.User 上的 `json:"-"`，本函数也不会跟着一起泄露。
+// F6 字段名收口：roleIDs 为规范名、roleIds 为过渡别名（同 toPublicUser 注释）。
 func toPublicStoreUser(u *store.User) map[string]any {
 	if u == nil {
 		return nil
@@ -983,6 +1030,7 @@ func toPublicStoreUser(u *store.User) map[string]any {
 		"username":           u.Username,
 		"email":              u.Email,
 		"status":             u.Status,
+		"roleIDs":            u.RoleIDs,
 		"roleIds":            u.RoleIDs,
 		"createdAt":          u.CreatedAt,
 		"mustChangePassword": u.MustChangePassword,

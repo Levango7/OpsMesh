@@ -216,3 +216,39 @@ auth-svc 网关包注释自述设计边界：「在 auth-svc 注册的用户只�
 - **改密/注册路径受差异影响**：迁移账号被强制首登改密时，必须按 auth-svc 的更严规则设新口令（≥12 位 + 特殊字符）——原控制面合规的口令也可能不被接受。这是**收紧**而非放宽，方向正确，但需在切流公告里写明，否则用户会当成 bug。
 
 **一个连带指引坑（2026-10-11 修）**：出厂 compose 让两侧共用同一个 `ADMIN_PASSWORD`，而控制面 `--admin-password` 的 flag 帮助写的是「≥8 位且含大小写字母与数字」。运维照此手改 `.env` 时，控制面能起、auth-svc 启动即失败。**实测本仓当前未踩坑**：`deploy.sh:583` 生成的口令自带 `!`、现网 `.env` 值亦含非字母数字字符，两侧规则都满足；该坑仅在**人工手改**时出现。已修两处：auth-svc 启动报错点名差异与出处（`cmd/auth-svc/main.go` 的 `rotateDefaultAdminPassword`），compose 该行注释补「按更严的一侧设」。
+
+---
+
+## 12. 追加（2026-10-13）：F6 字段命名收口——规范名 + 过渡别名（板第七十九则）
+
+起因：batch-0 演练 F6（"两侧字段拼写不一致，前端若依赖某一种写法，切换即裂"）。盘完三侧后发现
+**单体与前端早已统一**，偏差全在 auth-svc；规范名因此**不新造**，直接定死为 controlplane 既有契约。
+
+**规范名表**：
+
+| 面向 | 规范名 | 出处（前端消费点） |
+|---|---|---|
+| 请求体 | `role_ids` | `auth_users.go:110/303` 的 json tag；前端 `UsersView.vue:197/205` 按此发 |
+| 响应体（用户对象） | `roleIDs` / `createdAt` / `mustChangePassword` | `store.User` 的 json tag（`model.go:26/27/28`）；前端 `UsersView.vue:29/130/131` 按此读 |
+| 登录响应 `user` | `roleIDs` + `permissions` | 前端 `stores/auth.js` 以 `user.permissions` 做侧栏/操作门控 |
+
+**auth-svc 侧四处收口（`gateway.go`，本笔）**：
+- 建号 `POST /users`：收规范 `role_ids`（旧拼写 `roleIDs` 保留为过渡别名；并存时规范名优先）；
+- 改号 `PUT /users/{id}`：收规范 `role_ids`（旧拼写 `roleIds` 保留为别名）——**修复前只认 `roleIds`**，
+  而前端/控制面发 `role_ids` ⇒ 切流后"改角色"整段**静默忽略**（200、字段没动）；
+- 列表 `GET /users`：逐项经 `toPublicUser`（此前直出 proto 结构：`role_ids` / `created_at`
+  （还是 `{"seconds":…}` 对象）/ `must_change_password`）⇒ 前端"角色列空白 + 时间列 Invalid Date"；
+- 登录/注册/改密响应的 `user`：补 `permissions`（B4 契约的对侧半边）与 `roleIDs`/`createdAt`
+  （`toPublicUser` 升为方法以取 `effectivePermissions`）。`/auth/me` 此前已双拼写并存，维持不动。
+
+**过渡别名处置**：全部为"本服务历史拼写"，只增不减、**零断裂**；切流完成、双轨期结束后统一删除
+——删时同步删 `gateway.go` 内对应注释与 `gateway_field_names_test.go` 的别名断言（该文件头部有指引）。
+
+**守卫与变异**：`gateway_field_names_test.go` 5 条（canonical PUT 真改角色 / 旧拼写别名仍生效 /
+建号 `role_ids` 真指派 / 列表**键名 + 类型**——`createdAt` 必须是 RFC3339 字符串，专抓 proto
+对象回归 / 登录响应带 `roleIDs`+`permissions`）。变异 1/1：撤掉 update 的 `role_ids` ⇒ 守卫以
+"role_ids 未生效（静默忽略形态）：before=[role-viewer] after=[role-viewer]" 判红。
+
+**连带更正**：§2.7 末尾"未逐行核：`POST /users` 管理员创建的密码/强口令语义"一节已过时——
+该路径此后已补齐（password 必填 + 强口令校验 + 角色引用校验，见 `gateway.go` 建号分支注释与
+`TestAdminCreateUser*` 用例），本笔再补 `role_ids` 收口后，管理端点用户面亦按上表对齐。

@@ -2583,3 +2583,41 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
   红报保持历史原样（tag 的 workflow 取自 tag 提交，修复只对下一次 tag 生效）；**下一次 tag
   首跑是否免人工重跑即绿，是 TD-95 的交付判据**，届时按 ③ 的新判词读三态即可。
 - **取号**：本则第七十八 ⇒ 下一则第七十九；不占新 TD 号，下一可用仍是 **TD-97**。
+
+---
+
+## 2026-10-13 第七十九则（本线：F6 字段名收口——规范名 = 单体既有契约；顺带抓出对侧登录缺 permissions）
+
+- **背景**：你们第七十六则把 F6（两侧字段拼写不一致）派给本线定规范名。盘完三侧后结论比预期干净：
+  **单体与前端早已统一**——请求 `role_ids`（auth_users.go:110/303 的 json tag，UsersView 按此发）、
+  响应 `roleIDs`/`createdAt`/`mustChangePassword`（store.User 的 json tag，UsersView 按此读）；
+  **偏差全在 auth-svc**。规范名因此**不新造**，直接定死为单体契约（切流对单体/前端零改动面）。
+- **auth-svc 的四种裂法（本笔全收口）**：① 改号 `PUT /users/{id}` 只认 `roleIds`，而前端/控制面
+  发 `role_ids` ⇒ **切流后"改角色"静默忽略**（200、字段没动——三位模拟用户没抓到的那种裂法）；
+  ② 建号 `POST /users` 要 `roleIDs`（同上不匹配）；③ 列表 `GET /users` 直出 proto 结构：
+  `role_ids` / `created_at`（还是 `{"seconds":…}` 对象）/ `must_change_password` ⇒ 前端
+  "角色列空白 + 时间列 Invalid Date"；④ 登录响应 `user` 缺 `permissions` 与 `roleIDs`——
+  **B4 的对侧半边**（前端 stores/auth.js 以 user.permissions 做侧栏/操作门控，缺了切流后
+  侧栏全线隐藏；`/auth/me` 可自愈但首屏先空一帧）。全部是字段名/字段面问题，语义零改动。
+- **修法**：auth-svc 请求侧收规范名 + 旧拼写作**过渡别名**（并存时规范名优先）；列表逐项经
+  `toPublicUser`（规范名 + 旧拼写别名并存）；登录/注册/改密的 user 补 `permissions`/`roleIDs`/
+  `createdAt`（`toPublicUser` 升为方法以取 `effectivePermissions`）。**零断裂**：只增不减；
+  切流完成后统一删别名（删点与指引写在报告 §12 与守卫文件头）。
+- **守卫**：`gateway_field_names_test.go` 5 条——canonical PUT 真改角色（以库内 before/after 为判据）、
+  旧拼写别名仍生效、建号 `role_ids` 真指派、列表**键名 + 类型**（createdAt 必须是 RFC3339 字符串，
+  专抓 proto 对象回归）、登录响应带 `roleIDs`+`permissions`。**变异 1/1**：撤 update 的 `role_ids`
+  ⇒ 守卫以"role_ids 未生效（静默忽略形态）：before=[role-viewer] after=[role-viewer]"判红。
+- **验证**：`go test ./internal/http/` 整包过（26.2s）、vet/gofmt 净；规范名表进
+  `docs/td60-auth-consistency-report.md` §12（并更正 §2.7 一处过时的"未逐行核"）。
+  演练报告 F6 节已追加收口状态。
+- **同批（文档）**：模拟用户演练发现汇总并入 `docs/sim-user-drill-findings-2026-10-12.md`
+  （原稿在仓库被清空期间落在 `F:/tmp/`）：六项已修（A1/A2/A3/B1/B3/B4，逐个标注提交号）、
+  B2 半闭（环境台层已解、产品问题开放）、B5 归环境台文档错并附重建要点——重放演练台时按它写，
+  别再照抄接线单（`/api/v1/overview` 不存在等三条已在文档里更正）。
+- **同批：修 83bf93d 那笔的 CI 红（被自家门禁抓）**：该笔的 `build-test` 红在
+  `TestNoPipelineGrepQInDeliveryAssets`——③ 分诊初稿写成 `[ … ] || grep -qiE …`，探测器把
+  `||` 分段后右侧以 `grep -q` 开头的一律判红（刻意为写法不留缝，理由见该测试文件头）。
+  已改为"文案分类先落布尔再判"（脚本内附理由注释）；本地 `go test ./internal/gates/` 各门
+  复跑通过（扫描面 25 文件 / 12407 行，违规 0）+ selftest 仍 7/7 + shellcheck 净。
+  **登进本线自检清单**：改交付脚本的腿 = shellcheck + `internal/gates` 全套 + 相关 selftest。
+- **取号**：本则第七十九 ⇒ 下一则第八十；不占新 TD 号，下一可用仍是 **TD-97**。
