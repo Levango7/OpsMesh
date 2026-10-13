@@ -2621,3 +2621,36 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
   复跑通过（扫描面 25 文件 / 12407 行，违规 0）+ selftest 仍 7/7 + shellcheck 净。
   **登进本线自检清单**：改交付脚本的腿 = shellcheck + `internal/gates` 全套 + 相关 selftest。
 - **取号**：本则第七十九 ⇒ 下一则第八十；不占新 TD 号，下一可用仍是 **TD-97**。
+---
+
+## 2026-10-13 第八十则（承接 TD-96 选项 ①：归版判据抽成可执行脚本 + 归版豁免账；并回退第七十三则的三行「暂解」）
+
+> 署名说明：§16 的原始作者是第十四则那双（2026-10-06 `bfa9b9d`），那之后它一直由在写它的人维护；
+> 本则不主张独占，只是**承接 TD-96**——登记 TD-96 的人（本线）已把两条出路写清，第七十三则又明写
+> 「若你们选择从门禁规则侧收口…回退这三行即可，与规则侧改动不冲突」。若 §16 实际归你维护、你要改写，
+> 回退本则即可，判据与账目都可整体还原。
+
+- **对账依据（不是单方面取权）**：第七十三则把 A3/B1/B3 三节 header 由 `[Unreleased]` 改名 `[0.14.0]`
+  以摘掉 security 腿的 §16 判红，并明写「若**你们**选择从门禁规则侧收口（TD-96 那条）…**回退这三行即可，
+  与规则侧改动不冲突**」；TD-96 亦把两条出路的**选择权交 §16 归属方**。本侧据此选**选项 ①**并回退那三行。
+- **为什么选 ①、不接受三行改名**：三笔 `087a9bd`/`219b5e4`/`56ac092` 都**不是**发布提交 `f4968bb`
+  的祖先（`git merge-base --is-ancestor <sha> v0.14.0^{commit}` 逐条 NO；反向 `f4968bb` 是它们的祖先），
+  0.14.0 的镜像与 Release 正文里没有它们——把标题写成 `[0.14.0]` 就是**文档领先于产物**，正是 TD-96
+  点名的「不要的修法」。选项 ②（改用 `git tag --contains` 提交可达性）要动 `release.yml` 的 job 面并把
+  build-test 侧降为 warning，改动面更大；① 与第 24 节「历史快照豁免」同形，故取 ①。
+- **落地**：
+  - `deploy/scripts/changelog-fold-gate.py`——§16 判据从内联 heredoc 抽出，独立可执行；stdout 打
+    `SUMMARY released_max=… offenders=… stale=…`，退出码 = 0 干净 / 1 判红。
+  - `deploy/scripts/changelog-fold-exempt.tsv`——**归版豁免账**：键 = 块标题整行，含**过期检查**（账里每行
+    必须仍对应一个「当前且早于发布日」的 `[Unreleased]` 块，归版/改名而不删行即判红；PASS 行报豁免条数，
+    豁免不许变成后门）。
+  - `deploy/scripts/changelog-fold-gate.selftest.sh`——10 例，含**变异 2 例**（`day >= cut`→`day > cut`、
+    `is_unreleased` 放宽成子串匹配 ⇒ 各自判红）。
+  - §16 接线为「跑脚本 + 现场跑自测」；三块 CHANGELOG 标题回退为如实的 `[Unreleased]`。
+- **实测**：部署资产门禁整跑 `PASS=77 FAIL=0 SKIP=1`，§16
+  `released_max=2026-10-13 released_blocks=149 unreleased=7 exempt=3 offenders=0 stale=0`；
+  `shellcheck -S info` 两个脚本 0 命中。
+- **台账归位**：TD-96 行由「待启动」移入「已解决」，标记行
+  `rows=65 unique=65 resolved=28 closed=31 inprogress=0 pending=4 wontfix=2`（门禁第 24 节实测复核）。
+- **取号**：本则第八十 ⇒ 下一则**第八十一**；TD 下一可用**仍 TD-97**；门禁下一节**仍 25**
+  （本次改的是 §16 本体，未新增节）。
