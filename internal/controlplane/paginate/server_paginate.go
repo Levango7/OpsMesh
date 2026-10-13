@@ -57,12 +57,29 @@ func (m *JSONErrorMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 //
 // 实现要点：**延迟 WriteHeader**——收到 404 时先不落盘，等第一次 Write 看 Content-Type 决定；
 // 因此不需要缓冲整个响应体（大数据量响应不受影响），只在 404 这一小段上做决策。
+//
+// 流式响应（2026-10-13 修）：必须**转发 Flush()**。包装器嵌的是 http.ResponseWriter 接口，
+// 不转发则下游 `w.(http.Flusher)` 断言失败——sse.go:124 的 SSE handler 正是这么判的，
+// 于是 text/event-stream 长连接在 wrapper 下返回 500 "streaming unsupported"
+// （B3 上线后 E2E real-backend 腿实测抓到：Expected 500）。同仓先例：
+// controlplane.statusRecorder 亦透传 Flush 支持 SSE（server_middleware.go:192）。
 type json404Writer struct {
 	http.ResponseWriter
 	path     string
 	deferred bool // 已收到 404 且尚未真正写出头
 	swallow  bool // 已改写：丢弃原 handler 的后续 body
 }
+
+// Flush 透传到底层 ResponseWriter（若实现 http.Flusher），保流式响应可用。
+func (w *json404Writer) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap 暴露底层 ResponseWriter（http.ResponseController 约定；
+// 经 net/http 内部包装时 ResponseController 亦靠它拿到 Flusher/Hijacker）。
+func (w *json404Writer) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *json404Writer) WriteHeader(code int) {
 	if code == http.StatusNotFound && !w.deferred && !w.swallow {

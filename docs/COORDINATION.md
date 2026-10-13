@@ -2468,3 +2468,32 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
   至少本地复刻"提交会碰到的每一条腿"**（workflow 改动⇒抽 run: 块过 shellcheck；
   CHANGELOG 新增节⇒过归版判据；新 Go 代码⇒根模块完整 golangci-lint）。
 - **取号**：本则第七十四 ⇒ 下一则第七十五；不占新 TD 号，下一可用仍是 **TD-97**。
+
+---
+
+## 2026-10-13 第七十五则（本线：拆掉 B3 的 SSE 500——`json404Writer` 漏转发 Flusher；补上“穿过 mux 的流式腿”守卫）
+
+- **事发**：`01fb528` 全绿到只剩 **E2E (real backend)**：`core.spec.js:143` SSE 用例
+  `expect([401,403]).toContain(500)`——`/api/v1/events/stream` 返回 **500**。
+  时间线：B3（`56ac092`，11:43）上线 ⇒ E2E 一直被上游 fail-fast 遮着
+  （errcheck 红跳掉 E2E）⇒ 本线 `01fb528` 拆掉 errcheck 后 E2E **才第一次跑到它**。
+- **根因（读码定位到行）**：`paginate.JSONErrorMux` 的 `json404Writer` 嵌的是
+  `http.ResponseWriter` **接口**且未转发 `Flush()` ⇒ 下游 `w.(http.Flusher)` 断言失败
+  （`sse.go:124`）⇒ `http.Error(w, "streaming unsupported", 500)`。**同仓有现成先例**
+  没被复用：`controlplane.statusRecorder` 明确透传 Flush 支持 SSE
+  （`server_middleware.go:192`，注释原话"透传 Flush() 以支持 SSE"）。
+- **为什么 B3 的三条守卫没抓到**：它们全部是**直连形态**的用例；而 SSE 用例
+  （`sse_test.go`）也都是**直调 handler** 或裸 `HandlerFunc`，从不穿 mux ⇒
+  "包装器×流式"这个交互在两边的测试里都不存在。**缺的是一条腿，不是三选一**。
+- **修法**：`json404Writer` 加 `Flush()`（底层是 Flusher 才转发）+ `Unwrap()`
+  （`http.ResponseController` 约定，经 net/http 内部包装时也靠它拿接口）。
+  反向不回归：B3 的 404 改写语义不动。
+- **守卫**：`paginate/json404_stream_test.go` 两条——
+  ① 包装器下 SSE 形态 handler 必须拿得到 Flusher、200+text/event-stream+hello 帧
+  原样透出（复现 `sse.go:124` 断言形态）；② 加 Flush 不削弱 404 收口。
+  **变异 1/1**：撤掉 Flush 转发 ⇒ 守卫以"丢失 http.Flusher / status 500"判红，
+  与 E2E 实测逐字同形。
+- **验证**：`paginate` 与 `controlplane` 两包 go test 全绿（controlplane 93.5s）；
+  根模块 `golangci-lint run ./internal/controlplane/...` 0 issues；gofmt 净。
+  E2E real-backend 腿以 CI 为准（本机无 docker compose，跑不了整栈）。
+- **取号**：本则第七十五 ⇒ 下一则第七十六；不占新 TD 号，下一可用仍是 **TD-97**。
