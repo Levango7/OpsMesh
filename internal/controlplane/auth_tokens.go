@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -254,6 +255,22 @@ func (s *Server) userFromToken(r *http.Request) (*store.User, error) {
 		return nil, errors.New("token has been revoked")
 	}
 	u := s.store.GetUser(claims.UserID)
+	if u == nil && claims.Username != "" {
+		// TD-60 切流回落（2026-10-13 模拟用户团队演练批次 0 第 2 波实证出的**阻断级缺口**）：
+		// 名册用户在对侧（auth-svc）登录后，令牌 sub 是**对侧**的用户 id；而业务面
+		// （devices/tasks/alerts/…）由本侧用本地数据回答 ⇒ 严格按 sub 查本侧库必然 miss，
+		// 用户体感="能登录、能改密、能看 /me，活儿全干不了"（业务面五连全 401 `user not found`，
+		// runbook 的回退判据"任何 user not found ⇒ 停批"会被自己触发）。
+		// 回落＝按令牌里的 username 查本侧用户（与切流设计"两侧都按用户名定位"一致）；
+		// 命中后用**本侧记录**（身份/权限/租户以本侧为准 ⇒ 权限面同时恢复，不依赖对侧 roles）。
+		// 安全性：签名已用共享密钥验过（上方 ParseHSJWT），username claim 不可伪造；命中后仍受
+		// 下方 status 校验与既有租户闸约束；sub 能在本侧解析时本分支不生效、行为完全不变。
+		if u2 := s.store.GetUserByUsername(claims.Username); u2 != nil {
+			// 日志不落令牌里的原值（沿用 F2 的 G706 处置口径"修法不落原值"），只记回落事件本身。
+			log.Printf("controlplane: userFromToken 按用户名回落本侧身份（切流对侧签发令牌）localUser=%s", u2.ID)
+			u = u2
+		}
+	}
 	if u == nil {
 		return nil, errors.New("user not found")
 	}

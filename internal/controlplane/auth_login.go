@@ -259,8 +259,8 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 切流（TD-60 方案 C）：登出必须在**签发侧**吊销（jti 黑名单与 rt 删除都是本进程内状态），
-	// 按 JWT 的 username 裁决（认证前可读，不查库）。
-	if s.cutoverForwardByToken(w, r, "logout") {
+	// 按 JWT 的 username 裁决（认证前可读，不查库）。登出无 body ⇒ 快照传 nil。
+	if s.cutoverForwardByToken(w, r, "logout", nil) {
 		return
 	}
 	if u, err := s.userFromToken(r); err == nil {
@@ -356,8 +356,8 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	// 切流（TD-60 方案 C）：名册用户的 /me 由 auth-svc 回答（否则两侧各答一半）。
-	if s.cutoverForwardByToken(w, r, "me") {
+	// 切流（TD-60 方案 C）：名册用户的 /me 由 auth-svc 回答（否则两侧各答一半）。/me 无 body ⇒ nil。
+	if s.cutoverForwardByToken(w, r, "me", nil) {
 		return
 	}
 	u, err := s.userFromToken(r)
@@ -454,7 +454,9 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 		firstLoginChange = true
 	} else {
 		// 切流（TD-60 方案 C）：已登录主动改密按 JWT 用户名裁决（名册用户的密码本体在对侧）。
-		if s.cutoverForwardByToken(w, r, "change-password") {
+		// 本分支**有 body**（oldPassword/newPassword）⇒ 必须带 rawBody 让转发前还原——
+		// 漏还原即 502（`ContentLength=… with Body length 0`，2026-10-13 端到端复演实测）。
+		if s.cutoverForwardByToken(w, r, "change-password", rawBody) {
 			return
 		}
 		user, err := s.userFromToken(r)

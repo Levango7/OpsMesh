@@ -179,21 +179,30 @@ cmd_migrate(){
 
 cmd_unroute(){
   local user="${1:?用法: unroute u1}"
-  echo "== 单用户回退：从名册摘除 $user（热加载 ≤30s）=="
-  python - "$ROSTER_FILE" "$user" <<'PYEOF'
-import sys
-p, u = sys.argv[1], sys.argv[2]
-lines = [l for l in open(p, encoding='utf-8').read().splitlines() if l.split('#')[0].strip() != u]
-open(p, 'w', encoding='utf-8', newline='\n').write('\n'.join(lines) + '\n')
-print('摘除后名册:', [l for l in lines if l.strip() and not l.strip().startswith('#')])
-PYEOF
-  echo "等待热加载（轮询 cp.log，最多 40s）…"
-  local n=0
+  echo "== 单用户回退：摘名册 + **吊销对侧会话**（走产品子命令 cutover-unroute，与 runbook §3 同路径）=="
+  # 为什么必须走产品子命令而不是手改名册（2026-10-13 第 3 波演练实证）：手改只摘名册、**不吊销**，
+  # 对侧残留活跃 rt（实测摘除后仍 refresh 200 并拿到新令牌）⇒ "回退完整"的假象；而 runbook 早已
+  # 写明"手改文件不会吊销会话 ⇒ 回退须走 cutover-unroute"。演练台此前只做了一半（W3-D1）。
+  local before
+  # 注意：`grep -c` 无匹配时**也打印 0** 且退出码 1——不能写 `$(grep -c ... || echo 0)`（会得 "0\n0"，
+  # 下一行 [ 比较直接报 integer expected；本台首跑实测）。取到空串（文件不存在）才兜底 0。
+  before="$(grep -c '"msg":"切流名册已变更"' "$OUT/cp.log" 2>/dev/null)"; before="${before:-0}"
+  (cd "$ROOT" && AUTH_CUTOVER_ROSTER_FILE="$ROSTER_FILE" AUTH_SVC_URL="$AS" \
+    AUTH_SVC_MIGRATE_ADMIN_USER=admin AUTH_SVC_MIGRATE_ADMIN_PASSWORD="$ADMINPASS2" \
+    GOSUMDB=sum.golang.org go run ./cmd/opsmesh cutover-unroute \
+      --users "$user" --store mysql --mysql-dsn "$MYSQL_DSN" 2>&1) | tail -20
+  echo
+  echo "== 名册现状（$ROSTER_FILE）=="
+  cat "$ROSTER_FILE"
+  echo "== 等待热加载（按**变更事件数自增**判据，最多 40s）=="
+  # 旧写法 grep -q 会命中历史日志行 ⇒ 任何一次执行都"秒报已热加载"（W3-D2 假绿，实测真实生效在 12s 后）。
+  local n=0 now
   while [ "$n" -lt 40 ]; do
-    if grep -q '"msg":"切流名册已变更"' "$OUT/cp.log"; then echo "  ✓ 已热加载（${n}s）"; break; fi
+    now="$(grep -c '"msg":"切流名册已变更"' "$OUT/cp.log" 2>/dev/null)"; now="${now:-0}"
+    if [ "$now" -gt "$before" ]; then echo "  ✓ 已热加载（${n}s，变更事件 #$now）"; break; fi
     sleep 1; n=$((n+1))
   done
-  [ "$n" -lt 40 ] || echo "  ⚠ 40s 内未见热加载日志"
+  [ "$n" -lt 40 ] || echo "  ⚠ 40s 内未见新的热加载事件（before=$before）"
 }
 
 cmd_status(){

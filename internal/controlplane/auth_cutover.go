@@ -156,7 +156,11 @@ func (s *Server) observeForwardedLogin(username string, status int) {
 // 状态码观测复用 server_middleware.go 的 statusRecorder（HTTP 指标中间件同款，透传 Flush）。
 
 // cutoverForwardByToken me/logout/主动改密口：按 JWT 的 username 裁决（认证前可读，不查库）。
-func (s *Server) cutoverForwardByToken(w http.ResponseWriter, r *http.Request, endpoint string) bool {
+// rawBody = 调用方在解析前取的请求体快照；**有 body 的端点在转发前必须还原**
+// （2026-10-13 端到端复演实测：主动改密走这里、漏还原 ⇒ 转发请求 `ContentLength=111 with
+// Body length 0` ⇒ 用户拿 502；首登改密分支与登录口当年都修过同一形状，这里漏了）。
+// me/logout 无 body，传 nil 即可（还原成空体、ContentLength=0，不发脏请求）。
+func (s *Server) cutoverForwardByToken(w http.ResponseWriter, r *http.Request, endpoint string, rawBody []byte) bool {
 	rt := s.cutoverRouter
 	if rt == nil {
 		return false
@@ -165,6 +169,7 @@ func (s *Server) cutoverForwardByToken(w http.ResponseWriter, r *http.Request, e
 	if !rt.RouteUser(username) {
 		return false
 	}
+	restoreRequestBody(r, rawBody) // 同上：整请求转发
 	if !s.forwardAuthToSvc(w, r) {
 		return false
 	}
