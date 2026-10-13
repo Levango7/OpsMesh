@@ -5,7 +5,7 @@
 
 状态列：**已解决**（代码已落地）、**进行中**、**待启动**、**已明确不做（见理由）**。
 
-<!-- td-ledger-check: rows=64 unique=64 resolved=27 closed=30 inprogress=0 pending=5 wontfix=2 -->
+<!-- td-ledger-check: rows=65 unique=65 resolved=27 closed=30 inprogress=0 pending=6 wontfix=2 -->
 
 > 计数可复算：以上标记行由门禁第 24 节每次实测复算，缺失或与实际行数不符即判红（红时会打印正确的整行，直接粘贴即可）。本文件正文里带日期的引用块/节内的计数是**历史快照**，按当年事实记录、不受今日行数影响。
 
@@ -114,6 +114,7 @@
 | TD-89 | **CI 镜像构建依赖 Docker Hub 匿名拉取（429/5xx 判红，与提交内容无关）** | 2026-10-10 登记。**证据**（run 37979767826 的 attempt 1 与 attempt 2 **两次**同形态失败）：`image-agent` 报 `429 Too Many Requests from registry-1.docker.io/v2/library/golang/manifests/1.26-bookworm`；`image` 报 `auth.docker.io/token: 500 Internal Server Error`。两次失败都发生在**解析基础镜像元数据**阶段、**未编译任何代码**；同一 run 的代码 gates（build-test / Race detector / services / integration / security / E2E 双向）全绿 ⇒ 判红与提交内容无关，是 Docker Hub 侧限流/故障。**影响**：两条线并行高频推送时 CI 会因此判红，容易被误读为「提交坏了」（本行就是为这个误读形态留档）。**缓解进展（2026-10-10）**：**选项 ① 的 CI 侧接线已落地**——`ci.yml` 的 6 个拉镜像 job（security / release-dryrun / image / image-agent / e2e-real / e2e-sec）与 `release.yml` 的 2 个构建 job 均已加 `docker/login-action@v3`，以**工作流级 `env`** 承载凭据并作跳过判据（步骤级 `if:` **不允许** `secrets` 上下文——本仓 actionlint v1.7.7 门禁实测报错，故走 env；未配 secrets 时该步自动跳过，流水线行为与之前逐字一致）。**用户决定（2026-10-10）：不配 secrets**——登录步维持「未配置即跳过」，继续匿名拉取；只读 PAT 虽低风险，但属额外的凭据面，而实测 429 频率不高（数十个 run 命中一次），不为偶发假红引入长期凭据。**替代缓解（触发即做，不再问）**：若 429/5xx 假红再次出现，就实施选项 ③（**2026-10-13 更新：不再等触发，已由 TD-94 proactive 落地**——`docker-pull-retry.sh` 有界重试 + ci.yml/release.yml 五处预热接线；本行剩余面=service containers，仍待选项②）——给解析元数据的构建步骤加**一次**有界重试（仅 429/5xx 重试、真失败不拖时长）；彻底解法仍是选项 ②（基础镜像改 GHCR 镜像源，且能覆盖 service containers 那两处 runner 预拉取）。**已知残余面**：`integration`/`services` 的 **service containers（mysql）由 runner 在 steps 之前拉取**，登录步对它无效——那两处仍受匿名限流约束，彻底解决需选项 ②（GHCR 镜像源）。**其余缓解选项**（仍待拍板）：——匿名拉取按 IP 限流，登录后配额显著提升（需要 Docker Hub 账号凭据入 secrets）；② 基础镜像改走 GHCR 镜像或镜像源；③ 给 build 步骤加**有界重试**（仅对 429/5xx 重试，避免真失败被拖成 3 倍时长）；④ 钉 digest（Renovate 计划）不改拉取量、只保证确定性，不解决本项。**判据提醒**：镜像 job 判红先看**失败步骤名与错误码**，别先怀疑代码。 |
 
 | TD-95 | **发布链的「发布物回核」与 tag 触发的 `ci` run 竞态：首跑必红，而产物其实是好的** | "
+| TD-96 | **门禁第 16 节的「日期代理」在 tag 落在提交序列中间时产生假阳性**（2026-10-13 v0.14.0 发布当日实测） | **现象**：`build-test` 的部署资产门禁第 16 节判红 `归版账目错标 1 处（released_max=2026-10-13 unreleased=2 offenders=1）`，被点名的块是 `CHANGELOG.md:825 ## [Unreleased] — 2026-10-12（模拟用户演练 A3：授权拒绝入审计链）`。**为什么是假阳性**：§16 的判据是「日期早于最新发布版本日期 ⇒ 已发货却仍标 Unreleased」（它自己的注释写明：CI 是浅检出、拿不到 tag 列表，所以用日期做代理）。但 v0.14.0 的 tag 打在 `f4968bb`，而 A3 的提交 `087a9bd`（10-13 10:03+08）**在 tag 之后**才进 main ⇒ 这块**确实没发货**、不该归到 0.14.0，只因作者把块写成工作发生日（10-12）就判红。**两条出路（归属方定，§16 是你们建的节）**：① 加一本**归版豁免账**（键=块标题，含过期检查，PASS 行报豁免条数——照第 24 节"历史快照豁免"的既有做法），把"tag 之后落地但日期更早"的块显式记进去，账目不能静默增长；② 把判据从"比日期"换成"比提交可达性"——`release.yml` 的 job 已有 `fetch-depth: 0`，可以在**那条** job 里用 `git tag --contains <块引入提交>` 做真判据，§16 在浅检出的 `build-test` 里继续用日期做粗筛并**降为 warning**。**不要的修法**：把块的日期改成发布日之后来消红——那是把自己的账改到通过门禁，下一次真漏归版就再也抓不到。**本次的临时事实**：main 在 `701b18b`/`82a406f` 两笔上会因这条持续红，直到 ① 或 ② 落地（或该块被显式归到下一版）。登记时未改 §16、未改并行线那行日期。 |
 "2026-10-13 v0.14.0 首跑实测登记。**现象**：`release.yml` 的 run `38335486330` 里 12 个 `build-and-push` "
 "与 12 个 `promote` 全 success、`github-release` success（Release `v0.14.0` 于 02:40:04Z 发布），"
 "但最后的「发布物回核」job step 4 判红：`PASS=2 FAIL=6 UNVERIFIED=2`。**四条 FAIL 全指向同两个东西**——"
