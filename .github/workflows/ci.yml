@@ -82,6 +82,14 @@ jobs:
         # 9 例覆盖限流/token 500 阳性、manifest unknown 阴性、耗尽有界、多镜像独立预算、
         # 用法错误判红；假 docker 按队列演出，用调用计数断言重试次数。
         run: bash deploy/scripts/docker-pull-retry.selftest.sh
+      - name: 判据自测（发布物回核 ③ 的分诊 verify-release-artifacts.sh）
+        # 同 TD-80/TD-94 自测的文化：这层分诊的失效方式是**静默说错话**——把「gh 没凭证」
+        # 报成「Release 不存在」（每次发布都有人去找一个不存在的发布事故），或把真 404
+        # 报成 UNVERIFIED（release.yml 的 wrapper 对 UNVERIFIED 是 warning 放行 ⇒ 真没
+        # 发布反而变绿，比前者更危险）。2026-10-13 v0.14.0 实测踩中前者的形状。
+        # 7 例覆盖：全绿基线（rc=0，同时是 ①②④⑤ 的回归网）、真 404 判红「不存在」、
+        # 无凭证判红且指名 GH_TOKEN、5xx/未知⇒UNVERIFIED、assets=0、正文缺「能力降级清单」。
+        run: bash deploy/scripts/verify-release-artifacts.selftest.sh
       - name: Test (unit, memory store, -race + coverage)
         # -race 启用竞态检测；-coverprofile 产出覆盖率。
         # OPSMESH_TEST_BCRYPT_COST=4：400+ 测试每个都 NewMemoryStore→seedRBAC

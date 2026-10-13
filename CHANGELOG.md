@@ -4,6 +4,38 @@
 
 > 当前最新已发布版本：`v0.14.0`（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-13（发布回核 ③ 的凭证缺陷：gh 无凭证让门禁把「没发布」说成结论）
+
+- **症状**：`release.yml` 的「发布物回核」job 在 v0.14.0 首跑判红（run `38335486330`，
+  `PASS=2 FAIL=6 UNVERIFIED=2`），唯一**非竞态**的 FAIL 是「GitHub Release v0.14.0 不存在」——
+  而那一刻 Release 已发布 **3 分 46 秒**（`02:40:04Z` 发布 / `02:43:50Z` 判红）。重跑该 run 后
+  竞态行全部消失、只剩这一条（`FAIL=1`）⇒ 确定性复现，与跨 workflow 竞态无关（TD-95 初判
+  是"等待预算定小了"，补证见下）。
+- **根因两条**：① 回核 step **从未注入 `GH_TOKEN`**（Actions 不会自动把 `GITHUB_TOKEN` 放进
+  环境变量；本仓 `shadow-observe.yml:218` 早有正确形态），`gh release view` 无凭证 **exit=4**；
+  ② 脚本第 ③ 项把 gh 的**任何**非零退出都写成"不存在"——"没凭证"与"没发布"处置相反却被并成
+  一类；连带效应：③ 那句不在 wrapper 的竞态集合里 ⇒ 有界等待循环**第一轮就 exit**，
+  45 分钟等待预算一秒没用上。门禁自 2026-10-05 诞生起 ③ 就恒红这句话（v0.13.0 那次被
+  errexit 吞掉输出，第一个真正把它打印出来的就是 v0.14.0）。
+- **修法**：① `release.yml` 回核 step 注入 `GH_TOKEN: ${{ github.token }}`（job 已声明
+  `permissions: contents: read`，读 Release 足够）；② 脚本 ③ 三路分诊——真 404
+  （`release not found`）判红「不存在」；无凭证（exit=4 / 文案含 auth）判红**并指名病因**
+  「门禁自身的配置缺陷，修 release.yml 的 env」；其余（5xx/超时/未知）记 UNVERIFIED
+  （重跑本 job），不再伪装成发布事故。
+- **守卫**：新增 `deploy/scripts/verify-release-artifacts.selftest.sh`（假 gh/curl/helm 夹具，
+  7 例：全绿基线 `rc=0`（假 curl/helm 让 ①②④⑤ 自洽 ⇒ 同时是整脚本回归网）、真 404 判红
+  「不存在」、无凭证判红且指名 GH_TOKEN、5xx/未知⇒UNVERIFIED、assets=0、正文缺
+  「能力降级清单」）；变异逐例判红。接线：ci.yml build-test 增一步跑自测（同 TD-80/TD-94
+  文化）；`validate-deploy-assets.sh` 第 17 节增两条——回核 step 必须注入 GH_TOKEN
+  （结构断言，`va_gh_token=` 进 SUMMARY）、自测必须挂进 ci.yml 并**真跑一次**（"判据存在但
+  没人跑"是 TD-62 老病）。
+- **实证**：自测 7/7 通过。对真实 v0.14.0 实弹三连：**有凭证 `PASS=8 FAIL=0`、退出码 0**
+  （与 TD-95 的独立取证一致：14/14 镜像 tag+sig+att、Release 5 assets、正文 6208 字符含
+  「能力降级清单」、提权是改标 14/14）；**无凭证**如实报「门禁自身的配置缺陷」；**不存在的
+  版本号**如实报「不存在（gh 确认 404）」。v0.14.0 那次 run 的红报保持历史原样（tag 的
+  workflow 取自 tag 提交，修复对下一次 tag 生效）；产物侧本身完好——CHANGELOG 顶部与
+  release-notes 的 `PASS=8 FAIL=0` 与本次实弹是同一份事实。
+
 ## [0.14.0] — 2026-10-12（模拟用户演练 B1：device-sim 不再假成功）
 
 - **症状**：`cmd/device-sim` 日志打出 "20/20 devices registered"，而那 20 台设备**从未存在过**——

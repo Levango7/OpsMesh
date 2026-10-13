@@ -467,6 +467,12 @@ jobs:
           # 不让脚本去 git 解析 tag——verify-artifacts job 的 checkout 深度不足以可靠拿到
           # tag 指向的提交，而解析不到时脚本会退成"未核对"，那就等于这道判据在 CI 里空转。
           RELEASE_SHA: ${{ github.sha }}
+          # gh 需要凭证，而 Actions **不会**自动把 GITHUB_TOKEN 放进环境变量——必须显式注入
+          # （本仓 shadow-observe.yml:218 同形）。2026-10-13 v0.14.0 实测：缺这行 ⇒ 脚本第 ③ 项
+          # （Release assets）的 `gh release view` 无凭证 exit=4 ⇒ 恒报「Release 不存在」，
+          # 重跑也复现——把"门禁没凭证"伪装成"没发布"（那是 §19/§32.9 级发布事故的形状）。
+          # 本 job 已声明 permissions: contents: read，读 Release 足够（draft 也不需要）。
+          GH_TOKEN: ${{ github.token }}
         # 三种结论分开处置（脚本自己已经分好，这里只是把它们接到 CI 语义上）：
         #   FAIL>0        ⇒ job 判红：核对到了缺失，属发布事故，必须人去看；
         #   UNVERIFIED>0  ⇒ 只出 warning 并放行：GHCR 是公网服务，传输失败可恢复，

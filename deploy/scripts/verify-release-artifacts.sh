@@ -28,6 +28,9 @@
 #       （第 ⑤ 项要拿"发布提交"与版本 tag 比 digest。CI 里由 release.yml 直接给 github.sha；
 #        本地不给就退到 `git rev-list -n1 v<版本>`，仓库里没有那个 tag 时如实报未核对。）
 # 依赖：curl（匿名打 GHCR token）、gh（读 Release；缺失时第 ③ 项判红而不是跳过）。
+#   · gh 需要**凭证**：本地靠 gh auth login，CI 靠 step env 显式注入 GH_TOKEN——
+#     Actions 不会自动把 GITHUB_TOKEN 放进环境。缺凭证时 ③ 报「门禁自身的配置缺陷」
+#     而不是「Release 不存在」（2026-10-13 v0.14.0 实测过一次反向，详见 ③ 处注释）。
 #
 # 三种结论，各有不同处置（这是本脚本能否被信任的关键）：
 #   [PASS]        核对到了，符合预期；
@@ -215,7 +218,17 @@ echo "== ③ GitHub Release v${VER} 的 assets =="
 if ! command -v gh >/dev/null 2>&1; then
     bad "本机没有 gh 命令，无法核对 Release assets（判红而不是跳过）"
 else
-    if gh release view "v${VER}" --repo "$REPO" >/dev/null 2>&1; then
+    # 先分诊「查得到吗」，再判「查到了什么」。原实现把 `gh release view` 的任何非零退出
+    # 都写成"不存在"——而这三类失败的处置完全相反，失效方向又都是**静默说错话**：
+    #   · gh 无凭证（exit=4）——2026-10-13 v0.14.0 实测踩中：release.yml 的回核 step 从未
+    #     注入 GH_TOKEN（Actions 不会自动把 GITHUB_TOKEN 放进环境），于是 ③ 自诞生起恒报
+    #     "Release 不存在"，重跑也复现（v0.13.0 那次被 errexit 吞掉输出，第一个真正把这句话
+    #     打出来的就是 v0.14.0 这次）。把"门禁没凭证"说成"没发布"，红得再及时，也没人能从
+    #     它的话里知道该修什么——判红但**指名病因**；
+    #   · 真 404（"release not found"）⇒ 真的没发布，判红；
+    #   · 其余（5xx/超时/未知）⇒ 没能核对上，UNVERIFIED（重跑本 job）——不能伪装成发布事故。
+    rel_err="$(gh release view "v${VER}" --repo "$REPO" 2>&1)"; rel_rc=$?
+    if [ "$rel_rc" -eq 0 ]; then
         n="$(gh release view "v${VER}" --repo "$REPO" --json assets --jq '.assets | length' 2>/dev/null)"
         body_len="$(gh release view "v${VER}" --repo "$REPO" --json body --jq '.body | length' 2>/dev/null)"
         if [ "${n:-0}" -gt 0 ]; then
@@ -231,7 +244,13 @@ else
             bad "Release 正文没有「能力降级清单」——客户在 Releases 页看不到当前哪些能力是降级的"
         fi
     else
-        bad "GitHub Release v${VER} 不存在"
+        if [ "$rel_rc" -eq 4 ] || grep -qiE 'GH_TOKEN|auth' <<<"$rel_err"; then
+            bad "GitHub Release v${VER} 没法查询：gh 没有凭证（exit=${rel_rc}）——这是**门禁自身的配置缺陷**（回核 step 未注入 GH_TOKEN），不是发布缺陷；修 release.yml 的 env 后重跑"
+        elif grep -qiE 'not found|HTTP 404' <<<"$rel_err"; then
+            bad "GitHub Release v${VER} 不存在（gh 确认 404）"
+        else
+            unver "GitHub Release v${VER} 查询失败（gh exit=${rel_rc}）：${rel_err%%$'\n'*}——没能核对上，重跑本 job"
+        fi
     fi
 fi
 

@@ -1584,6 +1584,24 @@ gr = needs("github-release")
 if gr is not None and "promote" not in gr:
     errs.append("github-release 不再 needs promote ⇒ 提权失败也会对外发布 Release")
 
+# 回核 job 的第 ③ 项（Release assets）靠 `gh release view`，而 gh 在 Actions 里**必须显式注入
+# GH_TOKEN**（GITHUB_TOKEN 不会自动进环境变量，本仓 shadow-observe.yml:218 即此形）。
+# 2026-10-13 v0.14.0 实测：缺这行 ⇒ ③ 恒报「Release 不存在」（gh 无凭证 exit=4），重跑也复现
+# ——发布链上"门禁自己没凭证"被说成"没发布"，与 §19/§32.9 的事故形状撞脸，查错方向全错。
+# 这条性质与本节其余判据同源：只在打 tag 那一刻才第一次执行，常规 CI 完全看不见。
+va = jobs.get("verify-artifacts") or {}
+gh_steps = [st for st in (va.get("steps") or [])
+            if "verify-release-artifacts.sh" in str(st.get("run") or "")]
+va_gh_token = "缺失"
+if not gh_steps:
+    errs.append("verify-artifacts 里找不到运行 verify-release-artifacts.sh 的 step（本节失去比较对象）")
+for st in gh_steps:
+    env = st.get("env") or {}
+    if env.get("GH_TOKEN") or env.get("GITHUB_TOKEN"):
+        va_gh_token = "ok"
+    else:
+        errs.append("verify-release-artifacts.sh 的 step 没注入 GH_TOKEN/GITHUB_TOKEN ⇒ gh 无凭证，第 ③ 项（Release assets）恒报「不存在」")
+
 # 串行闸：发布链必须是"同一时刻只跑一条"。两个 tag 短间隔推送时，promote 会并发重打 :latest，
 # 最终 :latest 由最后完成者而不是版本最新者决定（与 §20 里"feature 分支刻意不打 latest"同源）。
 # cancel-in-progress 必须显式为 false：true 会掐断正在发布的 run——镜像推一半、Release 建一半，
@@ -1634,7 +1652,7 @@ for r in refs:
     elif "github.sha" not in r and "GITHUB_SHA" not in r:
         errs.append(f"构建腿推送了非 :<sha> 的可变 tag（版本 tag 应交由 promote 改标）：{r}")
 
-print(f"SUMMARY build_tags={len(refs)} promote_needs={needs('promote')} gr_needs={gr} concurrency={conc_desc}")
+print(f"SUMMARY build_tags={len(refs)} promote_needs={needs('promote')} gr_needs={gr} concurrency={conc_desc} va_gh_token={va_gh_token}")
 print("\n".join(errs))
 PY
 )"
@@ -1652,6 +1670,21 @@ PY
                 ok "发布链顺序成立（${CHAIN_SUMMARY#SUMMARY }）"
             fi
         fi
+    fi
+    # 回核 ③ 的分诊要有一份自己的自测，且必须真的接线（"判据存在但没人跑"是 TD-62 的老病，
+    # 第 19 节对 TD-80 判据是同款处置）：静态看在不在 ci.yml，再**真跑一次**——文本对账会
+    # 跟着实现一起说谎，跑过一次才算证据。2026-10-13 v0.14.0 的回核红正是这个自测要挡的形状
+    #（"门禁没凭证"被说成"Release 不存在"）。
+    REL_SELFTEST="deploy/scripts/verify-release-artifacts.selftest.sh"
+    if [ ! -r "$REL_SELFTEST" ]; then
+        bad "回核 ③ 的分诊自测缺失（$REL_SELFTEST）——判据改动无人验证"
+    elif ! grep -qF "bash $REL_SELFTEST" .github/workflows/ci.yml; then
+        bad "ci.yml 未接线「bash $REL_SELFTEST」（自测存在但没人跑）"
+    elif REL_SELFTEST_OUT="$(bash "$REL_SELFTEST" 2>&1)"; then
+        ok "回核 ③ 分诊自测通过：$(grep -F 'PASS: 全部' <<<"$REL_SELFTEST_OUT" | head -1)"
+    else
+        bad "回核 ③ 分诊自测判红（③ 的判词不可信）："
+        printf '%s\n' "$REL_SELFTEST_OUT" | sed 's/^/         /'
     fi
 else
     bad "找不到 .github/workflows/release.yml，第 17 节无从核对（判红）"
