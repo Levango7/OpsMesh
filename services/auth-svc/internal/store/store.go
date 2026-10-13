@@ -82,6 +82,7 @@ func NewMemoryStore() *MemoryStore {
 	}
 	s.seedPermissions()
 	s.seedAdminRole()
+	s.seedOperatorRole()
 	s.seedViewerRole()
 	s.seedAdminUser()
 	return s
@@ -115,6 +116,42 @@ func (s *MemoryStore) seedAdminRole() {
 		ID:          "role-admin",
 		Name:        "admin",
 		Description: "Administrator with full access",
+		Permissions: perms,
+		CreatedAt:   time.Now(),
+	}
+	s.roles[role.ID] = role
+	s.rolesByName[role.Name] = role.ID
+}
+
+// seedOperatorRole seeds the operator role（2026-10-13 补种，演练移交项）。
+//
+// 背景：controlplane 的预置角色是三件套 admin/operator/viewer（internal/store/
+// memory/memory.go 的 seedRBAC + sqlstore/sql_rbac.go 的 seedRBAC），而本侧
+// 只 seed 了 admin/viewer ⇒ controlplane 侧持 `role-operator` 的用户被
+// cutover-migrate 搬过来时，`DroppedRoles=[role-operator]`（对侧无此角色），
+// 用户 /me 出现 `roleIDs:[]` / `permissions:null`——迁移成功但身份面残废。
+//
+// 权限投影（为什么是"全部只读"）：controlplane 的 operator 派生规则
+// （internal/store/model/perm.go RolePermissions）只覆盖业务组（device/task/
+// alert/deploy/...），**刻意不含 user/role 的任何权限**（用户与角色管理是
+// admin 专属）；而本服务权限目录只有 user/role/permission 三组。把该规则投影
+// 到本目录 ⇒ operator 在目录内恰好等于"全部 `*:read`"——与 viewer 同集是
+// **符合控制面语义的结果，不是偷懒**：控制面里 operator 同样不持 user/role 的
+// read（业务组的 read 它才有）。operator/viewer 的层级区分在业务面（控制面
+// RBAC 按 token roles 展开），不在本目录内。将来本目录若长出业务组，按
+// controlplane 同款 operatorGroups 规则扩展本函数即可。
+func (s *MemoryStore) seedOperatorRole() {
+	perms := make([]string, 0, len(s.permissions))
+	for _, p := range s.permissions {
+		if strings.HasSuffix(p.Name, ":read") {
+			perms = append(perms, p.Name)
+		}
+	}
+	sort.Strings(perms)
+	role := &Role{
+		ID:          "role-operator",
+		Name:        "operator",
+		Description: "Operator (read-only within auth-svc catalog; business-plane RBAC decided by controlplane)",
 		Permissions: perms,
 		CreatedAt:   time.Now(),
 	}

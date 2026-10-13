@@ -399,6 +399,11 @@ func runCutoverMigrate() int {
 	for _, f := range res.Failed {
 		fmt.Fprintf(os.Stderr, "  [失败] %s：%s（未写名册，留在本地登录面）\n", f.Username, f.Reason)
 	}
+	// 丢失角色（2026-10-13 补报，演练移交项）：只透传对侧存在的角色，缺的原先只躺在
+	// 返回结构里、汇总从不展开 ⇒ 用户 /me 出现 roleIDs:[]/permissions:null 时无迹可查。
+	for _, line := range cutover.DroppedRoleLines(res) {
+		fmt.Fprintln(os.Stderr, line)
+	}
 	creds := res.Created
 	if *dryRun {
 		creds = nil

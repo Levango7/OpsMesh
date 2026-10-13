@@ -137,6 +137,47 @@ func (s *MySQLStore) seedDefaults() error {
 		}
 	}
 
+	// operator 角色（2026-10-13 补种，演练移交项）：controlplane 预置三件套
+	// admin/operator/viewer，本侧此前只有 admin/viewer ⇒ controlplane 侧持
+	// role-operator 的用户搬过来时 DroppedRoles=[role-operator]，/me 出现
+	// roleIDs:[]/permissions:null。权限投影与内存后端 seedOperatorRole 同规则
+	// （目录内全部只读；理由见该函数注释——控制面 operator 不持 user/role 权限，
+	// 投影到本目录恰好是只读）。权限点由 SQL 现算（LIKE '%:read'）不手抄。
+	err = s.db.QueryRow("SELECT COUNT(*) FROM roles WHERE name = ?", "operator").Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check operator role: %w", err)
+	}
+	if count == 0 {
+		if _, err = s.db.Exec(
+			"INSERT INTO roles (id, name, description, created_at) VALUES (?, ?, ?, ?)",
+			"role-operator", "operator", "Operator (read-only within auth-svc catalog; business-plane RBAC decided by controlplane)", time.Now(),
+		); err != nil {
+			return fmt.Errorf("seed operator role: %w", err)
+		}
+		rows, err := s.db.Query("SELECT name FROM permissions WHERE name LIKE '%:read'")
+		if err != nil {
+			return fmt.Errorf("query read-only permissions for operator: %w", err)
+		}
+		if err := func() error {
+			defer rows.Close()
+			for rows.Next() {
+				var name string
+				if err := rows.Scan(&name); err != nil {
+					return err
+				}
+				if _, err := s.db.Exec(
+					"INSERT INTO role_permissions (role_id, permission_name) VALUES (?, ?)",
+					"role-operator", name,
+				); err != nil {
+					return err
+				}
+			}
+			return rows.Err()
+		}(); err != nil {
+			return fmt.Errorf("seed operator role_permissions: %w", err)
+		}
+	}
+
 	// viewer 角色（TD-60 A-2：自注册用户默认绑定）。派生规则与内存后端
 	// seedViewerRole、controlplane RolePermissions() 三处一致：全部 `*:read`。
 	// 权限点由 SQL 现算（LIKE '%:read'）而非硬编码，目录新增只读点时自动生效。

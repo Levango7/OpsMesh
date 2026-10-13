@@ -41,6 +41,13 @@ func TestMySQLStoreIntegration(t *testing.T) {
 	if role := s.GetRoleByName("admin"); role == nil {
 		t.Error("GetRoleByName(admin) 为 nil：admin 角色未种入")
 	}
+	// role-operator（2026-10-13 补种，演练移交项）：SQL 种子路径也必须种入——
+	// 否则 controlplane 持 role-operator 的用户搬过来后 DroppedRoles=[role-operator]、
+	// /me 出现 roleIDs:[]/permissions:null。内存后端由 operator_seed_test.go 钉，
+	// 这里钉 MySQL 种子（两条路径各自的 seedDefaults，历史证明会漂）。
+	if role := s.GetRoleByName("operator"); role == nil {
+		t.Error("GetRoleByName(operator) 为 nil：role-operator 未种入（MySQL 种子路径漏了）")
+	}
 
 	// 3) 用户往返：建 → 按名读 → 改密 → 删除。
 	u, err := s.CreateUser(&User{Username: "itest-user", Email: "itest@example.com", PasswordHash: "x"})

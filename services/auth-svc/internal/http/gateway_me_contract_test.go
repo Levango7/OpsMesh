@@ -105,3 +105,60 @@ func sortedKeys(m map[string]any) []string {
 	}
 	return out
 }
+
+// TestMe_OperatorUserKeepsRoleAndPermissions 演练移交项（2026-10-13）的症状守卫：
+// 持 role-operator 的用户 /me 必须 roleIDs 非空且 permissions 非空。
+//
+// 背景（对侧第八十四则移交）：auth-svc 曾只 seed admin/viewer 两个角色，controlplane
+// 持 role-operator 的用户被 cutover-migrate 搬过来后 DroppedRoles=[role-operator]
+// ⇒ /me 出现 roleIDs:[]/permissions:null（迁移成功但身份面残废，前端侧栏全灭）。
+// role-operator 种子已补（store.seedOperatorRole）；本用例钉住端到端症状本身——
+// 只测"角色存在"不够：链路是 种子⇒user_roles 绑定⇒ValidateToken  claims⇒
+// effectivePermissions，任一环断了都是同一个用户可见形态。
+func TestMe_OperatorUserKeepsRoleAndPermissions(t *testing.T) {
+	_, mux, svc := newTestGateway()
+	cookies := loginAsAdmin(t, mux, svc)
+
+	// 用管理员建一个绑 role-operator 的用户（模拟迁移过来的 operator）。
+	rec := doReq(t, mux, http.MethodPost, "/api/v1/users",
+		`{"username":"migrated-op","password":"SomePass123!x","email":"op@x.io","role_ids":["role-operator"]}`, cookies)
+	if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+		t.Fatalf("建用户: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	u := svc.Store().GetUserByUsername("migrated-op")
+	if u == nil {
+		t.Fatal("前置失败：migrated-op 未落库")
+	}
+	if len(u.RoleIDs) != 1 || u.RoleIDs[0] != "role-operator" {
+		t.Fatalf("用户应绑定 role-operator，实得 %v", u.RoleIDs)
+	}
+
+	// 以该用户登录后打 /me：roleIDs 与 permissions 都必须非空。
+	loginRec := doReq(t, mux, http.MethodPost, "/api/v1/auth/login",
+		`{"username":"migrated-op","password":"SomePass123!x"}`, nil)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("operator 登录: got %d, body=%s", loginRec.Code, loginRec.Body.String())
+	}
+	opCookies := map[string]string{
+		"Cookie": "opsmesh_at=" + findCookie(t, loginRec, "opsmesh_at").Value,
+	}
+	me := doReq(t, mux, http.MethodGet, "/api/v1/auth/me", "", opCookies)
+	if me.Code != http.StatusOK {
+		t.Fatalf("operator /me: got %d, body=%s", me.Code, me.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(me.Body.Bytes(), &body); err != nil {
+		t.Fatalf("解析 /me: %v", err)
+	}
+	roleIDs, _ := body["roleIDs"].([]any)
+	if len(roleIDs) == 0 {
+		t.Fatalf("operator /me 的 roleIDs 为空——正是演练移交的症状形态；body=%s", me.Body.String())
+	}
+	if roleIDs[0] != "role-operator" {
+		t.Errorf("roleIDs[0] = %v, want role-operator", roleIDs[0])
+	}
+	perms, _ := body["permissions"].([]any)
+	if len(perms) == 0 {
+		t.Fatalf("operator /me 的 permissions 为空（role-operator 种子缺失或展开链断）；body=%s", me.Body.String())
+	}
+}

@@ -190,6 +190,39 @@
   ② handler 有意写的 JSON 404 原样放行（修复不得篡改语义）；③ 只写 404 头不写 body 也收口。
   变异（去掉收口）⇒ 判红并打印实测 `text/plain "404 page not found"`，还原复绿。
 
+## [Unreleased] — 2026-10-14（演练移交项：auth-svc 补 `role-operator` 种子 + migrate 汇总必报丢失角色）
+
+- **背景**（对侧第八十四则移交）：auth-svc 只 seed `role-admin`/`role-viewer`，而
+  controlplane 预置三件套 admin/operator/viewer ⇒ 持 `role-operator` 的用户被
+  cutover-migrate 搬过来时 `DroppedRoles=[role-operator]`，用户 `/me` 出现
+  `roleIDs:[]`/`permissions:null`——迁移成功但身份面残废（前端侧栏全灭）。
+  且 DroppedRoles 一直只躺在返回结构体里、CLI 汇总从不展开 ⇒ 排障时无迹可查。
+- **修复 1：补种子**（两个后端）：`MemoryStore.seedOperatorRole` 与 MySQL
+  `seedDefaults` 均种入 `role-operator`。**权限投影=目录内全部 `*:read`**（与
+  viewer 同集）——这不是巧合而是控制面语义的正确投影：controlplane 的 operator
+  派生规则只覆盖业务组（device/task/alert/deploy…）、**刻意不含 user/role 任何
+  权限**（用户/角色管理是 admin 专属），而本目录只有 user/role/permission 三组；
+  operator/viewer 的层级区分在业务面（控制面 RBAC 按 token roles 展开），不在本
+  目录内。目录将来长出业务组时按 controlplane 同款 `operatorGroups` 规则扩展。
+- **修复 2：汇总必报丢失角色**：`cutover.DroppedRoleLines`（纯函数，cmd 层不可
+  测故判据入包）生成"[丢失角色] <用户>:<角色,…>（对侧无此角色；/me 的
+  roleIDs/permissions 不含它——控制面业务闸仍按本侧角色判，不受影响）"，
+  Created 与 Adopted 两类都报（收编路径同样可能带丢失角色，演练里最隐蔽的正是
+  这条），`runCutoverMigrate` 汇总里逐行打印。定向说明防运维误判"业务面也残了"。
+- **守卫 5 条 + 变异 2/2**：`operator_seed_test.go`（种子存在+只读投影+按名可达）、
+  MySQL 集成测试加 operator 读回（SQL 种子路径单独钉——两条 seedDefaults 历史
+  证明会漂）、`TestMe_OperatorUserKeepsRoleAndPermissions`（端到端症状链：
+  建号→登录→/me 的 roleIDs/permissions 非空，正是移交项描述的用户可见形态）、
+  `dropped_roles_report_test.go`（行内容/顺序/定向说明/干跑报告）。变异：判据
+  失明 ⇒ 2 行红；撤 seedOperatorRole 调用 ⇒ 3 条红。
+- **过程记账**：`mysql.go` 中部插入种子块使 `mysql_scan_test.go` 的
+  scanSiteExemptions（行号键）6 条全部漂移 +41 ⇒ 门禁就地判红——**这是行号键
+  台账的预期行为**（站点消失必须重键，否则"曾经合理"变永久免检），已按门禁输出
+  的新行号逐条重键而非删条目了事。
+- **验证**：auth-svc 全模块 `go test ./...` 绿（store/http/...）、根模块
+  cutover 包绿、双模块 build 0、双 lint（根 `.golangci.yml` / services
+  `.golangci.services.yml`）0 issues、gofmt 净。
+
 ## [Unreleased] — 2026-10-13（F6 接管收口：`/auth/me` 字段集收单名——切流前后同一响应形状）
 
 - **问题**（演练批次 0 F6，原归属对侧、裁定迟未落地，本线接管）：auth-svc

@@ -2784,3 +2784,39 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
   建号 mustChangePassword 透传、审计 userID 语义分裂等）**如实留在报告 §6 待办**，未在本笔动。
 
 - **取号**：本则第八十四 ⇒ 下一则第八十五；不占新 TD 号，下一可用仍是 **TD-97**。
+
+---
+
+## 2026-10-14 第八十五则（本线：接管你们第八十四则移交的那项——`role-operator` 种子 + DroppedRoles 必报）
+
+- **移交接收**：你们第八十四则第四节移交的那项（auth-svc 无 `role-operator` 种子 +
+  migrate 的 DroppedRoles 未在汇总打印，症状=对侧 `/me` 的
+  `permissions:null`/`roleIDs:[]`）已由本线落地，与你们同族纪律保持一致：
+  **双 backend 同改、两侧各钉守卫、变异可判红**。
+- **裁定（权限投影）**：`role-operator` 在 auth-svc 目录内 = **全部 `*:read`**
+  （与 viewer 同集）。依据：你们控制面的 operator 派生规则（`RolePermissions()`）
+  只覆盖业务组、**刻意不含 user/role 任何权限**（用户/角色管理 admin 专属），
+  而 auth-svc 目录只有 user/role/permission 三组 ⇒ 投影结果恰好是只读。
+  operator/viewer 的层级区分在业务面（控制面 RBAC 按 token roles 展开），不在
+  本目录内；目录将来长出业务组时按你们同款 `operatorGroups` 规则扩展
+  （已写进 `seedOperatorRole` 注释）。**未新增 operator 用户种子**（超出移交
+  范围，且等于新开一个凭证面——要做请单独拍板）。
+- **DroppedRoles 必报**：`cutover.DroppedRoleLines` 纯函数（cmd 不可测，判据入包）
+  + `runCutoverMigrate` 汇总逐行打印；Created/Adopted 两类都报（收编路径同样
+  可能丢角色——演练里最隐蔽的正是这条）；行尾带定向说明（控制面业务闸仍按本侧
+  角色判，防运维误判业务面也残）。
+- **守卫 5 条 + 变异 2/2**：种子存在/只读投影/按名可达；MySQL 集成测试加
+  operator 读回（SQL 种子路径单独钉——两条 seedDefaults 会漂）；
+  `TestMe_OperatorUserKeepsRoleAndPermissions` 端到端症状链（建号→登录→/me
+  非空）；提示行判据（内容/顺序/定向说明/干跑）。变异：判据失明⇒2 红；
+  撤 seedOperatorRole⇒3 红。
+- **过程记账（一个值得记住的门禁行为）**：在 `mysql.go` 中部插种子块，使
+  `mysql_scan_test.go` 的 `scanSiteExemptions`（**行号键**）6 条全部漂移 +41，
+  门禁就地判红列出新旧两套行号。已按输出逐条**重键**而非删条目——行号键台账的
+  设计意图正是"站点消失/漂移必须显式处理，否则曾经合理变永久免检"。
+  对侧以后动 auth-svc 的 `mysql.go` 也会撞上同一条，留意。
+- **状态**：auth-svc 全模块 `go test ./...` 绿、根 cutover 包绿、双 build 0、
+  双 lint 0 issues、gofmt 净；MySQL 种子的真库路径以 CI services 腿为准
+  （本机无 DSN，集成用例会自带 Skip）。
+- **取号**：本则第八十五 ⇒ 下一则第八十六；不占新 TD 号（演练移交项非债项），
+  下一可用仍是 **TD-97**。
