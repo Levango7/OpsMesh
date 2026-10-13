@@ -133,7 +133,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.setAuthCookies(w, token, rt) // ：at+rt 双 HttpOnly Cookie 下发
-		paginate.WriteJSON(w, http.StatusCreated, authResponse{Token: token, User: u})
+		paginate.WriteJSON(w, http.StatusCreated, authResponse{Token: token, User: s.authUserWithPerms(u)})
 		return
 	}
 	// 默认：不签发 token，返回待审批提示。
@@ -227,7 +227,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		paginate.WriteJSON(w, http.StatusOK, authResponse{
-			User:                u,
+			User:                s.authUserWithPerms(u),
 			MustChangePassword:  true,
 			ChangePasswordToken: cpt,
 		})
@@ -247,7 +247,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setAuthCookies(w, token, rt)
-	paginate.WriteJSON(w, http.StatusOK, authResponse{Token: token, User: u})
+	paginate.WriteJSON(w, http.StatusOK, authResponse{Token: token, User: s.authUserWithPerms(u)})
 }
 
 // handleAuthLogout 处理 POST /api/v1/auth/logout：登出并清除会话 Cookie。
@@ -328,6 +328,24 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setAuthCookies(w, at, rt)
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"user": u})
+}
+
+// authUserWithPerms 返回用户的**浅拷贝**并填入角色展开后的有效权限（供响应体使用）。
+//
+// 为什么登录响应也要填（B4，2026-10-12 模拟用户演练）：store.User.EffectivePermissions 的设计
+// 意图是「供前端侧栏按权限过滤功能入口，与后端 RBAC 闸同源」（见 model.go 字段注释），而此前
+// **只有 /auth/me 填它**——登录响应里是 null ⇒ 用户从登录那一刻起不知道自己能做什么；
+// 演练里新人据此误判"viewer 什么都不能读"、审计员据 roles:null 误解自己的权限面。
+// 拷贝而非原地填：u 是 store 的共享指针，原地改会污染库内对象（并发下还会被其它请求读到）。
+func (s *Server) authUserWithPerms(u *store.User) *store.User {
+	if u == nil {
+		return nil
+	}
+	cp := *u
+	if len(cp.EffectivePermissions) == 0 {
+		cp.EffectivePermissions = s.userPermissions(u)
+	}
+	return &cp
 }
 
 // handleAuthMe 处理 GET /api/v1/auth/me：返回当前登录用户信息。
@@ -492,7 +510,7 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 			return
 		}
 		s.setAuthCookies(w, token, rt)
-		paginate.WriteJSON(w, http.StatusOK, authResponse{Token: token, User: u})
+		paginate.WriteJSON(w, http.StatusOK, authResponse{Token: token, User: s.authUserWithPerms(u)})
 		return
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]string{"message": "password changed"})
