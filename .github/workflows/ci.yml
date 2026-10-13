@@ -873,9 +873,12 @@ jobs:
         # 未覆盖（如实记账）：runner 拉的 service containers 够不着（见账 TD-89/TD-94）。
         run: |
           set -euo pipefail
-          imgs="$(grep -E '^[[:space:]]*FROM ' Dockerfile | awk '{print $2}' | sort -u)"
-          echo "本次预热 refs（Dockerfile）："; printf '  - %s\n' $imgs
-          bash deploy/scripts/docker-pull-retry.sh $imgs
+          # 用数组而不是裸字符串：镜像清单天然多词，按词展开是有意的，但无引号 $var
+          # 会被判 SC2086（CI 的 actionlint 集成 shellcheck 会为此判红）；数组 +
+          # 引号展开既不触发告警也不改变语义。
+          mapfile -t imgs < <(grep -E '^[[:space:]]*FROM ' Dockerfile | awk '{print $2}' | sort -u)
+          echo "本次预热 refs（Dockerfile）："; printf '  - %s\n' "${imgs[@]}"
+          bash deploy/scripts/docker-pull-retry.sh "${imgs[@]}"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: 登录镜像仓库
@@ -1265,9 +1268,12 @@ jobs:
         # 未覆盖（如实记账）：runner 拉的 service containers 够不着（见账 TD-89/TD-94）。
         run: |
           set -euo pipefail
-          imgs="$(grep -E '^[[:space:]]*FROM ' Dockerfile.agent | awk '{print $2}' | sort -u)"
-          echo "本次预热 refs（Dockerfile.agent）："; printf '  - %s\n' $imgs
-          bash deploy/scripts/docker-pull-retry.sh $imgs
+          # 用数组而不是裸字符串：镜像清单天然多词，按词展开是有意的，但无引号 $var
+          # 会被判 SC2086（CI 的 actionlint 集成 shellcheck 会为此判红）；数组 +
+          # 引号展开既不触发告警也不改变语义。
+          mapfile -t imgs < <(grep -E '^[[:space:]]*FROM ' Dockerfile.agent | awk '{print $2}' | sort -u)
+          echo "本次预热 refs（Dockerfile.agent）："; printf '  - %s\n' "${imgs[@]}"
+          bash deploy/scripts/docker-pull-retry.sh "${imgs[@]}"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: 登录镜像仓库
@@ -1732,9 +1738,10 @@ jobs:
         # mysql:8/redis:7 与 Dockerfile 基镜像一并预热（refs 同样从 FROM 行提取）。
         run: |
           set -euo pipefail
-          imgs="mysql:8 redis:7 $(grep -hE '^[[:space:]]*FROM ' Dockerfile Dockerfile.agent | awk '{print $2}' | sort -u)"
-          echo "本次预热 refs："; printf '  - %s\n' $imgs
-          bash deploy/scripts/docker-pull-retry.sh $imgs
+          # 数组化同 image job：避免 SC2086 误判（CI actionlint 判红），语义不变。
+          mapfile -t imgs < <(printf '%s\n' mysql:8 redis:7; grep -hE '^[[:space:]]*FROM ' Dockerfile Dockerfile.agent | awk '{print $2}' | sort -u)
+          echo "本次预热 refs："; printf '  - %s\n' "${imgs[@]}"
+          bash deploy/scripts/docker-pull-retry.sh "${imgs[@]}"
       - name: 启动整栈（docker compose）
         env:
           MYSQL_ROOT_PASSWORD: ciroot
@@ -1851,9 +1858,10 @@ jobs:
         # mysql:8/redis:7 与 Dockerfile 基镜像一并预热（refs 同样从 FROM 行提取）。
         run: |
           set -euo pipefail
-          imgs="mysql:8 redis:7 $(grep -hE '^[[:space:]]*FROM ' Dockerfile Dockerfile.agent | awk '{print $2}' | sort -u)"
-          echo "本次预热 refs："; printf '  - %s\n' $imgs
-          bash deploy/scripts/docker-pull-retry.sh $imgs
+          # 数组化同 image job：避免 SC2086 误判（CI actionlint 判红），语义不变。
+          mapfile -t imgs < <(printf '%s\n' mysql:8 redis:7; grep -hE '^[[:space:]]*FROM ' Dockerfile Dockerfile.agent | awk '{print $2}' | sort -u)
+          echo "本次预热 refs："; printf '  - %s\n' "${imgs[@]}"
+          bash deploy/scripts/docker-pull-retry.sh "${imgs[@]}"
       - name: 启动安全栈（docker compose e2e-sec）
         env:
           MYSQL_ROOT_PASSWORD: ciroot

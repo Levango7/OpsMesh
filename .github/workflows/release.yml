@@ -122,9 +122,12 @@ jobs:
         # Dockerfile.service 的 FROM 行提取，换基镜像自动跟随。
         run: |
           set -euo pipefail
-          imgs="$(grep -E '^[[:space:]]*FROM ' Dockerfile.service | awk '{print $2}' | sort -u)"
-          echo "本次预热 refs（Dockerfile.service）："; printf '  - %s\n' $imgs
-          bash deploy/scripts/docker-pull-retry.sh $imgs
+          # 用数组而不是裸字符串：镜像清单天然多词，按词展开是有意的，但无引号 $var
+          # 会被判 SC2086（CI 的 actionlint 集成 shellcheck 会为此判红）；数组 +
+          # 引号展开既不触发告警也不改变语义。
+          mapfile -t imgs < <(grep -E '^[[:space:]]*FROM ' Dockerfile.service | awk '{print $2}' | sort -u)
+          echo "本次预热 refs（Dockerfile.service）："; printf '  - %s\n' "${imgs[@]}"
+          bash deploy/scripts/docker-pull-retry.sh "${imgs[@]}"
       - name: Build Docker image（只推不可变的 :<sha>，版本 tag 与 :latest 交给 promote job）
         # 为什么拆两段（原形态是实测缺陷）：一条 buildx 同时推 :sha、:<版本> 与 :latest，
         # 而 Trivy（下一步，exit-code 1）、SBOM、签名全部排在推送**之后**——扫描判红的镜像
