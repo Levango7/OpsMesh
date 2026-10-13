@@ -32,7 +32,7 @@ spec:
     spec:
       containers:
         - name: alert-svc
-          image: opsmesh/alert-svc:0.14.0
+          image: opsmesh/alert-svc:0.15.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
