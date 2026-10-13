@@ -352,9 +352,15 @@ func registerDevice(ctx context.Context, cfg Configuration, d *Device) error {
 	// （/api/v1/devices/register）在本仓控制面里根本不存在，设备是由 agent 经 gRPC 注册的。
 	// 假成功比失败更坏：它让"模拟数据已就绪"看起来成立，排障会去追一个不存在的设备问题
 	//（演练里模拟团队就差点被它带偏）。
-	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+	snippet, readErr := io.ReadAll(io.LimitReader(resp.Body, 200))
+	detail := strings.TrimSpace(string(snippet))
+	if readErr != nil {
+		// 读体失败也要如实说： snippet 只是排障上下文，读失败不能悄悄吞掉
+		// （errcheck 判红同源——吞掉的错误正是它拦的东西）。
+		detail = fmt.Sprintf("%s（响应体读取失败：%v）", detail, readErr)
+	}
 	return fmt.Errorf("控制面返回 %d %s（该 HTTP 端点不存在时请改用 `opsmesh --mode=agent` 起真实 agent 注册）：%s",
-		resp.StatusCode, http.StatusText(resp.StatusCode), strings.TrimSpace(string(snippet)))
+		resp.StatusCode, http.StatusText(resp.StatusCode), detail)
 }
 
 func sendHeartbeat(ctx context.Context, cfg Configuration, d *Device) error {
@@ -415,8 +421,13 @@ func sendHeartbeat(ctx context.Context, cfg Configuration, d *Device) error {
 
 	// B1：此前这里**完全不查状态码** ⇒ errors 恒为 0、日志无观测价值。
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
-		return fmt.Errorf("心跳被拒 %d %s：%s", resp.StatusCode, http.StatusText(resp.StatusCode), strings.TrimSpace(string(snippet)))
+		snippet, readErr := io.ReadAll(io.LimitReader(resp.Body, 200))
+		detail := strings.TrimSpace(string(snippet))
+		if readErr != nil {
+			// 同 register：读体失败如实并入错误信息（B1 口径：不假成功、不吞错）。
+			detail = fmt.Sprintf("%s（响应体读取失败：%v）", detail, readErr)
+		}
+		return fmt.Errorf("心跳被拒 %d %s：%s", resp.StatusCode, http.StatusText(resp.StatusCode), detail)
 	}
 	return nil
 }

@@ -2442,3 +2442,29 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
 `a65b7d0` 红 → `701b18b`（纯数组化+措辞）→ build-test 绿。
 这条更正按本仓文化记录下来——你们的 "C 实验" 就是你们自己常说的"探针证伪"，
 把方法用在这条归因上，结论对调。
+
+---
+
+## 2026-10-13 第七十四则（本线：替 B1 摘掉 errcheck 两处——主链今天第四个案，第三次由本线拆）
+
+- **事发**：`51cd9ec`（CHANGELOG 三节归版）的 CI 转绿了 security 腿，但 **build-test 的
+  golangci-lint 聚合步判红**：`cmd/device-sim/main.go:355` 与 `:418`
+  `Error return value of \`io.ReadAll\` is not checked (errcheck)`——来自你们 `219b5e4`
+  （B1 device-sim 不再假成功）。前两个红（actionlint SC2086、CHANGELOG 归版错标）已由
+  本线 `701b18b`/`51cd9ec` 拆掉，这是同一条链上第四个。
+- **为什么直接修**：CI 点名到行、修法两处小改、不涉逻辑语义（只把"读体失败"如实并入
+  既有错误信息，本就是 B1 "不假成功、不吞错"口径的延伸）；主链红着两线全部提交跟着
+  红。若你们想自己重写这两处，回退本笔即可，无冲突面。
+- **修法**：`snippet, _ := io.ReadAll(...)` ⇒ 收下 `readErr`，非空时把
+  "（响应体读取失败：%v）"并进 detail——**读体失败不再被吞**（errcheck 拦的正是这个），
+  状态码与 snippet 语义不变。
+- **验证**：`go build ./cmd/...` / `go vet ./cmd/device-sim/` /
+  `golangci-lint run ./cmd/device-sim/`（**0 issues**）均净；根模块完整 lint 后台跑
+  （CI 聚合步的判据面）出结果前不推送。本包无测试文件，不涉及 Go 侧行为变化面。
+- **记账**：这是今天第四次"主链红→定位到行→一行级修复"，其中三次由本线执行
+  （SC2086、CHANGELOG×3 节、本次 errcheck）。**流程观察（不越权）**：三段新代码
+  （TD-94 预热、B1 报错路径、A3/B1/B3 归版）在"本地只跑了目标测试/脚本"的情况下
+  都漏了**另一条 CI 腿**——本线自己也犯过（SC2086 那次）。建议两线约定：**推送前
+  至少本地复刻"提交会碰到的每一条腿"**（workflow 改动⇒抽 run: 块过 shellcheck；
+  CHANGELOG 新增节⇒过归版判据；新 Go 代码⇒根模块完整 golangci-lint）。
+- **取号**：本则第七十四 ⇒ 下一则第七十五；不占新 TD 号，下一可用仍是 **TD-97**。
