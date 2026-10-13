@@ -4,7 +4,25 @@
 
 > 当前最新已发布版本：`v0.14.0`（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
-## [Unreleased] — 2026-10-13（模拟用户环境台重建 + 发布链文档更正 + agent 多实例警示）
+## [0.15.0] — 2026-10-13（v0.14.0 之后全部改动归版；发布链"回核"从"猜等待"变成"判收敛"，另有三处对客户可见的行为变化：404 统一 JSON 信封 / 登录响应补权限 / 越权被拒进审计）
+
+- **先说发布链本身**：本版把「发布物回核」的两次真实事故做了根治——v0.13.0 首跑的"等待值靠估计"、
+  v0.14.0 的"GH_TOKEN 未注入把'门禁没凭证'说成'Release 不存在'"。现在回核前先按发布提交把
+  **tag 触发的 `ci` run 等到终态**（可判定收敛，`deploy/scripts/wait-tag-ci.sh`），失败三态各有
+  独立判词与处置（真 404=发布事故 / 无凭证=门禁配置缺陷并指名修哪 / 传输抖动=UNVERIFIED 重跑）。
+  **本版自身的发布即是对它的第一次真实检验**（首跑是否免人工重跑即绿，见 `docs/release-notes.md`）。
+- **三处客户可见的行为变化**：① 404 面统一为 JSON 信封（含 catch-all 缺页；此前是纯文本
+  `404 page not found`）；② 登录/注册/刷新响应带有效权限 `permissions`（此前恒 null，前端
+  侧栏门控的唯一数据源）；③ "已认证但被拒"的 403 开始进审计（越权尝试不再零留痕；401 刻意不记，
+  避免扫描器噪音）。另：auth-svc 用户字段名对齐单体契约（`roleIDs`/`role_ids` 为规范名、
+  旧拼写保留为过渡别名，**零断裂**）。
+- **如实标注的残留**：跨 workflow 竞态本身仍在（binary/agent 镜像与 Release assets 由 ci.yml 的
+  tag 腿产出；若某次 ci run 长于等待上限，回核仍会"等满"硬红）；方向①（并入同一 needs 图）
+  留作彻底解——见 `docs/tech-debt.md` 的 TD-95 行。
+- 全部明细见下方各 `[0.15.0]` 分块；对客户的行为承诺、降级清单与本版验证证据见
+  `docs/release-notes.md` 的 v0.15.0 小节。
+
+## [0.15.0] — 2026-10-13（模拟用户环境台重建 + 发布链文档更正 + agent 多实例警示）
 
 - **`deploy/scripts/sim-users.sh` 重建**（原版随工作区被清空丢失，仅教训留在演习记录里）：
   从 **`git archive <ref>` 导出构建**（绝不就地构建、绝不碰工作树——共享工作区随时有别的线在
@@ -23,7 +41,7 @@
   PASS/FAIL/UNVERIFIED 三态判读表 + 发布链「发布物回核」红的四种分诊（含 wait-tag-ci 指出的
   "ci run 终态失败"一类：先修那条 run，别重跑回核）。
 
-## [Unreleased] — 2026-10-13（F6 契约字段名收口：auth-svc 对齐单体契约 + 补对侧缺的 permissions）
+## [0.15.0] — 2026-10-13（F6 契约字段名收口：auth-svc 对齐单体契约 + 补对侧缺的 permissions）
 
 - **背景**：batch-0 演练 F6——两侧同义字段拼写不同（对侧 `roleIds` vs 本侧 `roleIDs`），
   "前端若依赖某一种写法，切换即裂"。盘完三侧：**单体与前端早已统一**（请求 `role_ids`、
@@ -46,7 +64,7 @@
   （静默忽略形态）：before=[role-viewer] after=[role-viewer]"判红。验证：`go test ./internal/http/`
   整包过（26.2s）、`go vet` 与 `gofmt` 净。
 
-## [Unreleased] — 2026-10-13（发布回核 ③ 的凭证缺陷：gh 无凭证让门禁把「没发布」说成结论）
+## [0.15.0] — 2026-10-13（发布回核 ③ 的凭证缺陷：gh 无凭证让门禁把「没发布」说成结论）
 
 - **症状**：`release.yml` 的「发布物回核」job 在 v0.14.0 首跑判红（run `38335486330`，
   `PASS=2 FAIL=6 UNVERIFIED=2`），唯一**非竞态**的 FAIL 是「GitHub Release v0.14.0 不存在」——
@@ -98,7 +116,7 @@
   v0.14.0 的 tag run 找到并收敛 `rc=0`；无对应 run 的 sha 如实报未知 `rc=2`）；release.yml
   接线后 `CORE_WAIT` 轮询降级为兜底（"run 已 success 但 GHCR 还没可见"的分钟级窗口）。
 
-## [Unreleased] — 2026-10-13（TD-96 收口：门禁第 16 节归版判据的「日期代理」假阳性——抽成可执行脚本 + 归版豁免账）
+## [0.15.0] — 2026-10-13（TD-96 收口：门禁第 16 节归版判据的「日期代理」假阳性——抽成可执行脚本 + 归版豁免账）
 
 - **问题**：部署资产门禁第 16 节用「块日期早于最新发布版本日期 ⇒ 已发货却仍标 [Unreleased]」做判据
   （CI 是浅检出、取不到 tag 列表，故拿日期做代理）。v0.14.0 的 tag 打在 `f4968bb`，而 A3/B1/B3 三笔
@@ -115,7 +133,7 @@
 - **验证**：部署资产门禁整跑 `PASS=77 FAIL=0 SKIP=1`，§16 报 `released_max=2026-10-13 released_blocks=149
   unreleased=7 exempt=3 offenders=0 stale=0`；`shellcheck -S info` 两个脚本 0 命中。
 
-## [Unreleased] — 2026-10-12（模拟用户演练 B1：device-sim 不再假成功）
+## [0.15.0] — 2026-10-12（模拟用户演练 B1：device-sim 不再假成功）
 
 - **症状**：`cmd/device-sim` 日志打出 "20/20 devices registered"，而那 20 台设备**从未存在过**——
   它打的 `/api/v1/devices/register` 与 `/api/v1/devices/{id}/heartbeat` 两个 HTTP 端点在控制面里
@@ -127,7 +145,7 @@
 - **真机验证**：对桩服务（返回 501）实测，逐台打印 `registration failed: 控制面返回 501 …（该 HTTP
   端点不存在时请改用 opsmesh --mode=agent …）`，汇总为 0/N——不再是静默的 N/N。
 
-## [Unreleased] — 2026-10-12（模拟用户演练 B3：404 面统一为 JSON 信封）
+## [0.15.0] — 2026-10-12（模拟用户演练 B3：404 面统一为 JSON 信封）
 
 - **症状**：客户端看到两种 404 形态——未注册路径回 JSON 信封，而"命中 catch-all 的缺页"
   （SPA/静态处理器注册在 "/" 上，http.NotFound / FileServer 写纯文本）回 `404 page not found`。
@@ -142,7 +160,7 @@
   ② handler 有意写的 JSON 404 原样放行（修复不得篡改语义）；③ 只写 404 头不写 body 也收口。
   变异（去掉收口）⇒ 判红并打印实测 `text/plain "404 page not found"`，还原复绿。
 
-## [Unreleased] — 2026-10-13（TD-94 承接 TD-89 选项③：Docker Hub 限流的有界重试 + 五处预热接线）
+## [0.15.0] — 2026-10-13（TD-94 承接 TD-89 选项③：Docker Hub 限流的有界重试 + 五处预热接线）
 
 - **问题**（母项 TD-89，2026-10-10 实测两次同形态）：`registry-1.docker.io` 拉基础镜像
   元数据 429 / `auth.docker.io/token` 500，失败发生在 `docker/build-push-action` **内部**
@@ -960,7 +978,7 @@ values-production.yaml 的三处镜像 tag、gitops production-segment 的 tag �
 - **守卫 2 条**：① 登录响应必须带非空权限；② 填权限不得写回 store（浅拷贝）。
   变异（登录响应不填权限）⇒ 判红点名"B4 原形状"，还原后整包复绿。
 
-## [Unreleased] — 2026-10-12（模拟用户演练 A3：授权拒绝入审计链）
+## [0.15.0] — 2026-10-12（模拟用户演练 A3：授权拒绝入审计链）
 
 - **症状（两个"模拟用户"独立复现）**：被拒的越权尝试**零留痕**——6 项越权写操作（下发任务/建号/
   改角色/删设备/建网关路由）+ 跨租户读之后，审计链里仍只有 user_login/user_create/user_change_password，
