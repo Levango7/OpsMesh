@@ -538,20 +538,29 @@ func (g *Gateway) handleMe(w http.ResponseWriter, r *http.Request) {
 	// 而前端 stores/auth.js:31 以 user.permissions 作为侧栏/操作门控的唯一
 	// 数据源——缺失时 hasPerm() 对一切返回 false，侧栏全线隐藏。此处按与
 	// internal/controlplane/auth_login.go:323-337 相同的语义补齐。
-	// 其余字段为双轨期与 controlplane 的字段名对齐（两种拼写并存，消费者按需取一）。
+	//
+	// F6 收口（2026-10-13，本线接管裁定）：字段名**收成单一一套**——与控制面
+	// /auth/me 本地形态（store.User 的 JSON tag）逐字一致：id / tenantId /
+	// roleIDs。此前这里同时回 tenantID+tenantId、userID+id、roles+roleIDs
+	// 两套拼写（"两种拼写并存，消费者按需取一"），后果是**切流前后响应形状
+	// 不同**：名册用户被切到 auth-svc 后拿到一套键、本地用户拿到另一套——
+	// 与 TD-60"两套认证面对同一用户同一响应"的目标正相反，且任一侧删键都会
+	// 静默改掉另一侧的契约面（前端只读 permissions，但文档/客户端无从知道
+	// 该信哪套）。裁定依据：① 前端唯一功能消费是 permissions（auth.js:31），
+	// 其余键无人读；② store.User tag 是控制面 /auth/me 的既有形状，镜像它
+	// 即"零差异切流"；③ /api/v1/me（网关注入身份）是另一端点另一方言
+	// （tenantID/userID/roles），不受本裁定影响。删键守卫见
+	// gateway_me_contract_test.go。
 	writeJSON(w, http.StatusOK, map[string]any{
-		"tenantID":           resp.TenantId,
-		"userID":             u.ID,
-		"roles":              u.RoleIDs,
-		"mode":               "self-validated", // auth-svc 自验 JWT（vs controlplane "gateway-injected"）
-		"tenantId":           resp.TenantId,
-		"roleIDs":            u.RoleIDs,
-		"status":             u.Status,
-		"mustChangePassword": u.MustChangePassword,
-		"permissions":        g.effectivePermissions(u.RoleIDs),
 		"id":                 u.ID,
 		"username":           u.Username,
 		"email":              u.Email,
+		"tenantId":           resp.TenantId,
+		"roleIDs":            u.RoleIDs,
+		"mode":               "self-validated", // auth-svc 自验 JWT（vs controlplane "gateway-injected"）
+		"status":             u.Status,
+		"mustChangePassword": u.MustChangePassword,
+		"permissions":        g.effectivePermissions(u.RoleIDs),
 	})
 }
 

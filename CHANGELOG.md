@@ -160,6 +160,36 @@
   ② handler 有意写的 JSON 404 原样放行（修复不得篡改语义）；③ 只写 404 头不写 body 也收口。
   变异（去掉收口）⇒ 判红并打印实测 `text/plain "404 page not found"`，还原复绿。
 
+## [Unreleased] — 2026-10-13（F6 接管收口：`/auth/me` 字段集收单名——切流前后同一响应形状）
+
+- **问题**（演练批次 0 F6，原归属对侧、裁定迟未落地，本线接管）：auth-svc
+  `/auth/me` 同时回 `tenantID`+`tenantId`、`userID`+`id`、`roles`+`roleIDs`
+  两套拼写（"两种拼写并存，消费者按需取一"）。后果不是多几个键，而是
+  **切流前后响应形状不同**：名册用户被切到 auth-svc 后拿到一套键、本地用户
+  （控制面 `/auth/me`）拿到另一套——与 TD-60"同一用户两套认证面同一响应"
+  正相反；任一侧增删键都会静默改写另一侧契约面，而文档/客户端无从知道该信哪套。
+- **裁定（规范集 = 控制面 `/auth/me` 本地形态 = `store.User` 的 JSON tag）**：
+  `id` / `username` / `email` / `tenantId` / `roleIDs` + auth-svc 补充键
+  `status` / `mustChangePassword` / `permissions` / `mode`。删除
+  `tenantID` / `userID` / `roles` 三个同义键。依据：① 前端唯一功能消费是
+  `permissions`（`stores/auth.js:31`），其余键零读取；② 镜像 `store.User` tag
+  即"零差异切流"；③ `/api/v1/me`（网关注入身份，`tenantID`/`userID`/`roles`
+  方言）是另一端点另一消费方，不受影响。
+- **守卫（两侧双钉，跨 Go module 零编译期保证故各钉一套）**：
+  `services/auth-svc/internal/http/gateway_me_contract_test.go`——键集**恰为**
+  规范集（集外键/缺键/同义键三类判红 + 取值与库内一致）；`internal/controlplane/
+  auth_me_contract_test.go`——规范源自身（防把调试字段顺手塞进响应）。**变异
+  1/1**：塞回 `roles` ⇒ auth-svc 守卫两条判红并打印全集。
+- **文档**：api-reference §auth/me 字段表示例更新（原例文竟是第三种方言
+  `roles`/`tenant_id`，与两侧实现都不一致，一并纠正）+ 明确"字段集即契约"与
+  两端点方言的边界；演练报告 F6 标注收口并留裁定依据。
+- **兼容性**：删除的三个键全仓零消费方（前端只读 `permissions`；e2e 只断言
+  `username`）⇒ 无客户端破坏面。若外部有私有客户端依赖 `userID`/`tenantID`
+  （docs 从未承诺过），按规范集改取值即可。
+- **验证**：auth-svc `internal/http` 全包 go test 绿（含新守卫）、
+  `golangci-lint run -c .golangci.services.yml ./...` 0 issues（services 模块
+  独立配置，CI 同款）；控制面 `TestAuthMe*` 绿；gofmt 净。
+
 ## [0.15.0] — 2026-10-13（TD-94 承接 TD-89 选项③：Docker Hub 限流的有界重试 + 五处预热接线）
 
 - **问题**（母项 TD-89，2026-10-10 实测两次同形态）：`registry-1.docker.io` 拉基础镜像

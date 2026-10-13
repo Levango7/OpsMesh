@@ -237,11 +237,28 @@ Prometheus 文本格式指标。**监听在独立端口 9091**（非主 8080 端
 {
   "id": "u-001",
   "username": "admin",
-  "roles": ["admin"],
-  "tenant_id": "t1",
-  "status": "active"
+  "email": "admin@opsmesh.local",
+  "tenantId": "t1",
+  "roleIDs": ["r-admin"],
+  "status": "active",
+  "mustChangePassword": false,
+  "permissions": ["device:read", "task:write"],
+  "mode": "self-validated"
 }
 ```
+
+**字段集即契约（F6，2026-10-13 收单名裁定）**：本端点字段集为**单一名套**，与
+`store.User` 的 JSON tag 一致（`id` / `username` / `email` / `tenantId` /
+`roleIDs` / `status` / `createdAt` / `mustChangePassword` / `permissions`），
+auth-svc 侧另回 `mode`（自验标识）。**不再存在同义双返**——历史上曾同时回
+`tenantID`+`tenantId`、`userID`+`id`、`roles`+`roleIDs` 两套拼写，导致切流前后
+响应形状不同（详见 docs/td60-batch0-drill-2026-10-12.md F6）。新增字段须两侧
+同步（auth-svc `gateway_me_contract_test.go` 与控制面
+`auth_me_contract_test.go` 各钉一套，任一侧漂移即判红）。
+
+> 注意与 **GET /api/v1/me**（网关注入身份，另一端点）区分：后者回
+> `tenantID` / `userID` / `roles` / `mode` 方言，服务对象是仪表盘身份标识，
+> 不归本裁定管。
 
 ### POST /api/v1/auth/logout
 

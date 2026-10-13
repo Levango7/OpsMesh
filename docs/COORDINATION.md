@@ -2707,3 +2707,31 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
 - **环境事件如实记账**：Docker Desktop 演练中途自行停机 26.7 分钟（**复发问题**），全队登录被
   3.6 所述的假 401 击退；审计人设自行拉起引擎并恢复。演练台缺"引擎级故障恢复步骤"文档（待办）。
 - **取号**：本则第八十二 ⇒ 下一则第八十三；不占新 TD 号，下一可用仍是 **TD-97**。
+## 2026-10-13 第八十三则（本线：**F6 接管收口**——用户指示"对方效率太低就强行接管"，本条即为接管记录）
+
+- **接管范围**：F6 的 **B 半场**（`/auth/me` 字段同义双返）。F6 实为两个半场——
+  A 半场（用户管理面请求/响应拼写分歧）已由对侧在**第七十九则**收口；B 半场
+  （本则）原按用户当日决定整体交 ZCode（见第六十二则），迟未裁定，本次按用户
+  "强行接管"指示由本线裁定并落地。两半场合集才是完整 F6，演练报告 F6 节已按
+  "两个半场、两侧分头闭合"重写并互引。**只接管 B 半场**；F2 对侧已交付，
+  其余 auth-svc 领地事项不碰。
+- **裁定**：规范集 = 控制面 `/auth/me` 本地形态（`store.User` 的 JSON tag）：
+  `id`/`username`/`email`/`tenantId`/`roleIDs` + auth-svc 补充键
+  `status`/`mustChangePassword`/`permissions`/`mode`；删 `tenantID`/`userID`/
+  `roles` 三个同义键。依据三条（前端零读取除 permissions 外、镜像 tag 即零差异
+  切流、`/api/v1/me` 是另一端点另一方言）已写进 api-reference 与演练报告 F6 节。
+- **实现**：`services/auth-svc/internal/http/gateway.go` handleMe 收单名（含
+  归因注释）；双钉守卫：auth-svc `gateway_me_contract_test.go`（键集恰为规范集
+  +同义键禁入+取值对账）与控制面 `auth_me_contract_test.go`（规范源自身）——
+  两个 Go module 零编译期共享，故各钉一套、注释互引。**变异 1/1**：塞回
+  `roles` ⇒ auth-svc 守卫判红并打印全集。
+- **对侧无需配合项**：删键零消费方（前端只读 `permissions`、e2e 只断言
+  `username`），无破坏面；若你们后续要在 auth-svc 加字段，**两侧同步加**，
+  任一守卫会先红。
+- **验证**：auth-svc `internal/http` 全包绿；`golangci-lint run -c
+  .golangci.services.yml ./...` 0 issues（注意：services 模块用
+  `.golangci.services.yml` 而非根 `.golangci.yml`，CI 同款——本线第一遍用根
+  配置跑出 11 条既有告警，是配置用错，非代码问题）；控制面 `TestAuthMe*` 绿；
+  gofmt 净；根模块 lint 0 issues。
+- **取号**：不占新 TD 号（F6 是演练清单项非债项行）；下一可用仍是 **TD-97**，
+  下一则第八十四（对侧已到第八十二，本线第七十七、八十三条间插不改对侧编号）。

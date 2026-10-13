@@ -112,21 +112,42 @@ return localUserInRoster        // 本侧令牌：按名册
 
 切换后同一请求的安全头出现**两份**：`Content-Security-Policy`、`Referrer-Policy`、`X-Frame-Options`、`X-Content-Type-Options`（对侧还额外补了 CORS 与 HSTS）。疑似两层各加一遍。属卫生问题（个别客户端/缓存对重复头行为不一致），建议对侧收敛为单一来源。
 
-### F6 两侧字段命名不一致（低-中）
+### F6 两侧字段命名不一致（低-中）——**2026-10-13 已收口（两个半场，两侧分头闭合）**
 
 同一语义字段两侧写法不同：对侧 `roleIds` vs 本侧 `roleIDs`；对侧 `/me` 同时返回
 `roleIDs`+`roles`、`tenantID`+`tenantId`、`userID`+`id` 等重复语义。前端若依赖某一种写法，切换即裂。
 本仓 TD-60 的老毛病（"契约面裂缝"）在 auth 域已修完探明的部分，这条是本次演练新暴露的残余。
 
-- **状态（2026-10-13 晚，板第七十九则）**：已收口。规范名定死 = controlplane 既有契约（不新造拼写）：
-  请求 `role_ids`（auth_users.go:110/303；前端 UsersView 按此发）、响应 `roleIDs`/`createdAt`/
-  `mustChangePassword`（store.User 的 json tag；前端按此读）——单体与前端本就统一，**偏差全在 auth-svc**，
-  本笔只收 auth-svc 侧：请求收规范名 + 旧拼写作过渡别名；列表逐项经 toPublicUser（此前直出 proto 的
-  `role_ids`/`created_at`(对象)/`must_change_password` ⇒ 前端"角色列空白 + 时间列 Invalid Date"）；
-  登录/注册/改密的 user 补 `permissions`/`roleIDs`/`createdAt`（B4 的对侧半边）。最险的一条：
-  改号 PUT 此前只认 `roleIds` 而前端发 `role_ids` ⇒ 切流后"改角色"**静默忽略**（200、字段没动）——
-  守卫 5 条 + 变异 1/1 钉住（`gateway_field_names_test.go`），规范名表见
-  `docs/td60-auth-consistency-report.md` §7。过渡别名只增不减、零断裂，切流完成后统一删。
+**收口记录（2026-10-13）**——F6 实为两个半场，两侧分头闭合：
+
+- **半场 A（对侧，板第七十九则）——用户管理面请求/响应拼写分歧**：规范名定死 =
+  controlplane 既有契约（不新造拼写）：请求 `role_ids`（auth_users.go:110/303，
+  前端 UsersView 按此发）、响应 `roleIDs`/`createdAt`/`mustChangePassword`
+  （store.User 的 json tag，前端按此读）——单体与前端本就统一，**偏差全在 auth-svc**；
+  本笔只收 auth-svc 侧：请求收规范名 + 旧拼写作过渡别名；列表逐项经 toPublicUser
+  （此前直出 proto 的 `role_ids`/`created_at`(对象)/`must_change_password` ⇒ 前端
+  "角色列空白 + 时间列 Invalid Date"）；登录/注册/改密的 user 补
+  `permissions`/`roleIDs`/`createdAt`（B4 的对侧半边）。最险的一条：改号 PUT 此前
+  只认 `roleIds` 而前端发 `role_ids` ⇒ 切流后"改角色"**静默忽略**（200、字段没动）
+  ——守卫 5 条 + 变异 1/1 钉住（`gateway_field_names_test.go`），规范名总表见
+  `docs/td60-auth-consistency-report.md` §7；过渡别名只增不减、零断裂，切流完成后统一删。
+- **半场 B（本线，板第七十七则）——`/me` 同义双返**：auth-svc `/auth/me` 收成
+  **单一名套**：`id`/`username`/`email`/`tenantId`/`roleIDs` +
+  `status`/`mustChangePassword`/`permissions`/`mode`（即 store.User 的 JSON
+  tag 集 + auth-svc 补充键），删除 `tenantID`/`userID`/`roles` 三个同义键。裁定
+  依据：① 前端唯一功能消费是 `permissions`（`stores/auth.js:31`），其余键零读取；
+  ② 镜像 store.User tag 即"零差异切流"；③ `/api/v1/me`（网关注入身份，
+  `tenantID`/`userID`/`roles` 方言）是另一端点，不受影响。守卫：auth-svc
+  `gateway_me_contract_test.go`（键集恰为规范集 + 同义键禁入 + 变异 1/1）与
+  控制面 `auth_me_contract_test.go`（规范源自身）双钉；api-reference §auth/me
+  字段表同步更新（原例文竟是第三种方言 `roles`/`tenant_id`，一并纠正）。
+
+两半场合起来才是完整 F6：A 管"增删改查的字段名"，B 管"身份自述端点的键集"。
+任一半后续加字段都须两侧同步——现有四支守卫各钉一角：
+auth-svc `gateway_field_names_test.go`（A）、auth-svc
+`gateway_me_contract_test.go`（B·auth-svc 侧）、控制面 `auth_me_contract_test.go`
+（B·规范源侧）。
+
 
 ### F7 两条正向验证 ✓
 
