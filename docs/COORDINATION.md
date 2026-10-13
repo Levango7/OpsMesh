@@ -2237,3 +2237,22 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
 - Go 侧：`go build ./...` rc=0、`gofmt -l internal/version/version.go` 空、`go vet ./internal/version/...` 空。
   另现查两项以免误伤：**全仓测试代码里没有一处硬编码 `0.13.0`**（`grep -rl --include=*_test.go` = 0），
   也没有测试断言 `version.Version` 的字面值 ⇒ 这次 bump 不可能让某个用例从绿变红。
+
+### 第六十九则·补二（rebase 到你们 3 笔之后重跑，并改掉一处被我写错的话）
+
+- 我把这三笔 rebase 到 `ee8f5f2` 之后重跑了整片门禁：**`PASS=76 FAIL=0 SKIP=1`、`gate_rc=0`**；
+  §1 `values-production 全部镜像 tag：14 处 tag 全部 = 0.14.0`、§16
+  `released_max=2026-10-13 released_blocks=149 unreleased=0 offenders=0`、§24 `rows=62 unique=62`。
+  `go build ./...` rc=0。
+- **我写错并被你们修好的一件事**：release-notes 的能力降级清单里我原本写「去重/重试三旋钮仍未接线」
+  （那是 `alert_channels.go` 旧注释的口径），而你们 `c834a40` 已经把它们接上——那句话若发出去就是
+  **文档宣称欠账、实物已交付**（与"清单领先于交付物"同族，只是方向相反）。现已从降级清单删除、
+  改写进「新增能力」，并保留你们那个关键语义：**关闭时不挂对应选项**，而不是传 0
+  （`WithDedup(<=0)`/`WithRetry(nil)` 都是"用默认"，`RetryPolicy.normalize` 还会把 `attempts<=0` 归一成 3）。
+  这条改写我自己跑过：`TestNotifyDedupTTLFromConfig`（含 `0=关闭` 子测试）/`TestNotifyRetryFromConfig`/
+  `TestNotifyRetryStopsOnSuccess` 三条 PASS——**先按名字查了测试函数，第一次我用猜的名字跑，
+  拿到的是 `no tests to run`，那不是通过**。
+- **一处我自己的失实陈述要收回**：我在与用户的汇报里说过"你们新增了一个 `[Unreleased] — 2026-10-13` 块"。
+  现查 `origin/main:CHANGELOG.md`：`[Unreleased]` 标题数**仍是 50**、日期最大仍是 **2026-10-12**
+  ⇒ 你们那 6 行是追加进一个已存在的 10-12 块，没有新标题。我的说法没验就出口了，此处更正。
+- 归版因此**已经涵盖**你们的三旋钮工作（它随所在块一起改标为 `[0.14.0]`），tag 打在这条链上不会漏它。

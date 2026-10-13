@@ -64,6 +64,12 @@
   父包剩 199 个顶层 .go（88 个非测试 / 25,339 行，现查于本版发布提交）；两份逐行等价的手抄 SSRF 私网判定
   合一为 `egress.IsPrivateIP`。
 
+- **通知的去重/重试旋钮真正生效**：`--notify-dedup-ttl-min` 与 `--notify-retry-*` 此前被硬编码值
+  （5 分钟 / 默认策略）架空，本版接线（`internal/controlplane/alert_channels.go` 的 `notifyDedupRetryOptions`）。
+  关键语义是**关闭时不挂对应选项**而不是传 0——`WithDedup(<=0)` 与 `WithRetry(nil)` 都表示"用默认"，
+  且 `RetryPolicy.normalize` 会把 `attempts<=0` 归一成 3，直接传 0 会让"0=关闭"变成"0=默认"。
+  默认值与接线前逐字一致；守卫在 `internal/controlplane/notify_knobs_test.go`（4 条）并做过变异检验。
+
 ### 缺陷修复（本版内已闭，逐条证据在 `CHANGELOG.md` 的 `[0.14.0]` 明细块）
 
 - `task-svc` 的 `depends_on` 空值写成空串 ⇒ MySQL `Error 3140 Invalid JSON text` 让整条 UPDATE 失败，
@@ -92,9 +98,6 @@
 
 ### 能力降级清单（本版如实标注；按能力表验收时请跳过这些或先确认前置）
 
-- **通知的限流/重试旋钮仍未接线**：`cfg.NotifyDedupTTLMin` 与 `NotifyRetry*` 三个旋钮仍按既有硬编码值
-  （5 分钟 / `DefaultRetryPolicy`）——`WithDedup(0)` 的语义是"用默认 5 分钟"而不是配置注释所说的"关闭"，
-  径直接上会把 0 从"关闭"变成"默认"，属语义翻车，所以**记账不暗修**（`alert_channels.go:85-88` 注释）。
 - **插件宿主默认不启用**：`--plugin-manifest` 未配置时 `initPluginHost` 返回 nil，`opsmesh_plugin_hook_calls_total` 恒 0
   ⇒ 对外只承诺"可接线的功能，默认零行为变化"。
 - **alert-svc 的 gRPC 面默认仍无鉴权**（TD-86 是 opt-in）：`ALERT_SVC_GRPC_TOKEN` 空=行为不变；设了才强制
