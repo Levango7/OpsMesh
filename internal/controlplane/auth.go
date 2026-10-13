@@ -115,6 +115,7 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, requi
 			return u, true
 		}
 	}
+	s.auditAuthzDenied(r, required, "permission denied")
 	paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "permission denied: " + required})
 	return nil, false
 }
@@ -193,6 +194,7 @@ func (s *Server) authorizeByRoles(w http.ResponseWriter, r *http.Request, requir
 			}
 		}
 	}
+	s.auditAuthzDenied(r, required, "permission denied (gateway roles)")
 	paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "permission denied: " + required})
 	return nil, false
 }

@@ -130,6 +130,7 @@ func (s *Server) authorizeByAPIKey(w http.ResponseWriter, r *http.Request, requi
 		reqTenant = ak.TenantID // 头缺省时取 key 自身租户
 	}
 	if reqTenant != ak.TenantID {
+		s.auditAuthzDenied(r, "", "tenant mismatch (X-Tenant-ID vs api key)")
 		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch between X-Tenant-ID header and api key tenant"})
 		return nil, false
 	}

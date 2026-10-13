@@ -123,12 +123,14 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 	// 修复 3：X-User-Id 与令牌 user 交叉校验（同租户内审计伪造防护）。
 	// 置于租户分支之前：租户头空、令牌带租户的回退路径同样覆盖。
 	if !trustGateway && tokenUser != "" && actx.UserID != "" && actx.UserID != tokenUser {
+		s.auditAuthzDenied(r, "", "user mismatch (X-User-Id vs JWT)")
 		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "user mismatch between X-User-Id header and JWT claims"})
 		return actx, false
 	}
 	if actx.TenantID != "" {
 		// 头非空：若 token 也携带 tenant_id，校验两者一致，防绕过网关伪造租户头。
 		if tokenTenant != "" && tokenTenant != actx.TenantID {
+			s.auditAuthzDenied(r, "", "tenant mismatch (X-Tenant-ID vs JWT)")
 			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch between X-Tenant-ID header and JWT claims"})
 			return actx, false
 		}
