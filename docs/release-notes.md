@@ -6,6 +6,118 @@
 
 ---
 
+## v0.14.0 — 2026-10-13 三域双轨走到"能按批切、能回退" + 两个巨型父包下沉 + 凭据面收成一条口径
+
+三件事：把 TD-60 的三域双轨从「能接通」推进到「能按批切、能回退、出事能定位」；把 `internal/store` 与
+`internal/controlplane` 两个巨型父包按域下沉；把凭据与告警外发收成一条口径（引用格式优先、渠道单一来源、
+形状判断只剩一份）。本版**有两处客户会直接感觉到的行为变化**，都在下面的「破坏性 / 行为变更」里，读它再升级。
+
+### 破坏性 / 行为变更（升级前必读）
+
+- **破坏性｜`secrets` 表不再接受明文值**：写入路径经 `model.RequireSecretReference`
+  （`internal/store/model/secretref.go:26`）校验，非 `${provider:key}` 形态一律拒绝并返回错误；
+  memory 与 sqlstore 两个后端各调一行（`internal/store/memory/memory_secret.go:72`、
+  `internal/store/sqlstore/sql_secret.go:68`）。错误信息**只报收到多少字节，不回显值本身**。
+  存量明文**不阻断启动**——只在启动时告警点名 key（`internal/controlplane/server_secrets.go:345` 的
+  `warnPlaintextSecrets`），把"该迁移"变成可观测事件。
+  ⇒ 如果你有用明文往 `secrets` 写入的自动化/脚本，升级后那一步会开始失败；改法是凭据进
+  `--secret-provider`（env/file/vault，见 `docs/security-mechanism.md` §6.2）后写引用。
+- **行为变更｜告警自动外发第一次真正生效**：此前 M2 告警规则的聚合通知走 `notify.Notifier`，而两处生产构造
+  都没有注入渠道 ⇒ `sendToAll` 在 `len(channels)==0` 时直接返回 nil，**一条都不会发出，也不报错**。
+  本版接上单一口径（`internal/controlplane/alert_channels.go` 的 `buildNotifierChannels` / `newAlertNotifier`），
+  `deliverAlert`（`:124`）还会按规则遍历 UI 里配的渠道（`:141`）。
+  ⇒ "配置文件与前端通知页里配好、但一直没动静"的渠道，**升级后会开始真实外发**；构造期仍过 SSRF 校验（`:52`），
+  但这是"以前不会发生的事现在会发生"，请先把渠道目标确认成你自己要的。
+- **行为变更｜预置账号的公开弱口令被随机替换**：内置 `admin` 首登必须改密，预置 `operator`/`viewer`
+  的出厂弱口令被替换为随机口令并**直接不可登录**（要用就以 admin 重建）。老环境里靠默认口令登进去的习惯，
+  升级后不再成立。
+- **行为变更｜CMDB 检索的召回口径回到 `LIKE`**：实测证明任何形态的 `MATCH` 都不等价于 `LIKE`
+  （两字符查空、子串丢行），所以召回改回不漏的一侧（`docs/tech-debt.md` TD-91 行）。
+  ⇒ 升级后"搜两个字符什么都搜不到"这类现象消失；全文索引与迁移 020/021 原样保留，**没有改迁移文件**
+  （校验和按内容算，改文件会让存量库校验失败）。
+- **行为变更（修复带来的）**：MySQL 后端下 `GetK8sCluster` 恒返 nil（SELECT 7 列 / Scan 8 目标）、
+  `GetTasks` 恒返空列表（8 列 / 9 目标）⇒ 「按 ID 查/改/删单个集群」「租户归属校验」「任务列表」此前是
+  **恒失败但内存后端正常**，所以长期没被发现。本版修好并补了真库往返用例（TD-90 的列数↔扫描数对账守卫
+  机制下沉 `pkg/sqlguard`，10 个包接入、201 处站点参与比对）。
+- **行为变更｜`GET /api/v1/me` 带 `X-Tenant-ID` 时不再丢身份**：按文档带租户头反而返回空壳
+  （`{mode:gateway-injected, roles:null, userID:""}`）的那条路径已修；不带该头的行为不变。
+
+> **本节刻意没有「先说发布本身」小节**：tag 与产物还没生成，此刻写不出成立的发布事实。
+> 打 tag 之后回填该小节（口径见同文件 v0.13.0 那一节：五项产物回核，含 14 个镜像的
+> `:<版本>` 与 `:<发布提交>` 同 manifest digest 这一项）。在那之前本节只描述变更内容本身。
+
+### 新增能力
+
+- **切流可操作**（TD-60 A-2）：归属闸门 `TASK_SVC_OWNS_NEW_TASKS` 与域路由开关联锁（判据是
+  `os.Getenv(...) == "true"`，**不设即不接管**，所以默认零行为变化）、决策式搬号 job `opsmesh cutover-migrate`、
+  回退面 `opsmesh cutover-unroute`（含按用户吊销会话，消除"半死会话"）、批次 0 的模拟用户演练台。
+- **task 域 R6**：批量/灰度记录持久化（此前是进程内内存，**重启即丢批次视图**），`CreateTask` 契约补 `error`
+  通道 ⇒ 17 处调用点不再"假成功"。
+- **auth 域契约对齐**：`/auth/me` 补有效权限集合、注册审批与改密后会话保持、自注册用户绑定只读默认角色。
+- **12 个微服务 `GET /version`**（TD-76）：`service/version/commit/date/goVersion/goarch`，与控制面同口径，
+  `Dockerfile.service` 的 `-X` 注入从死注入变生效。（模块清单现查：aio/alert/auth/autoscaler/config/device/
+  gpu/incident/log/portal/runbook/task 共 12 个。）
+- **链路可查**（TD-75）：otel-config 的 traces pipeline 挂 Jaeger exporter + compose 起 jaeger all-in-one
+  （UI 只绑 `127.0.0.1:16686`）；采样口径以 `docs/operations.md` §4.7 为准（本文件不复述倍数，
+  我未能在部署配置里独立验到「10% → 100%」那个数，那是并行线的记账）。
+- **包结构**（TD-61/TD-87）：`internal/store` 顶层 113 → 20 个 .go；`internal/controlplane` 拆出 20 个子包，
+  父包剩 199 个顶层 .go（88 个非测试 / 25,339 行，现查于本版发布提交）；两份逐行等价的手抄 SSRF 私网判定
+  合一为 `egress.IsPrivateIP`。
+
+### 缺陷修复（本版内已闭，逐条证据在 `CHANGELOG.md` 的 `[0.14.0]` 明细块）
+
+- `task-svc` 的 `depends_on` 空值写成空串 ⇒ MySQL `Error 3140 Invalid JSON text` 让整条 UPDATE 失败，
+  并连带使 10-08 那次 `last_fired_at` 修复**从未真正生效**（同分钟去重失效、失败计数指标虚高）；
+  改用与 `CreateTask` 同源的 `jsonStringSlice`。
+- `auth` 代理规则引用了权限目录里不存在的权限组 ⇒ 任何身份含 admin 一律 403（切流面上是阻断级）；
+  以规则权限哨兵 + 把规则数据纳入目录守护收口。同批把一处 `gosec G706`（日志落外部可控 id）
+  按本仓先例改成不落原值。
+- `Create*` 一族"返回填充对象却不报错"的假成功：`CreateTask` 契约补 `error` 通道（17 处调用点不再假成功），
+  另 31 处调用面审计闭合两个 nil-panic 洞。
+- 代理响应头重复（安全头/CORS 各两份）收敛为外层单一来源；改密后丢会话（首登改密签发 at+rt、
+  常规改密保留现有会话）；`GET /api/v1/me` 带 `X-Tenant-ID` 时身份被丢。
+
+
+### 供应链与门禁
+
+- `services` 腿的 golangci-lint 从「runner 现编译」改成**钉版 tarball + 钉 sha256 + 留痕实测值**（TD-85），
+  CI 两次独立复算出同一摘要；门禁新增**第 23 节**「两条腿版本对账」与**第 24 节**「台账计数可复算」。
+- `web/enterprise` 锁文件的 `resolved` 全部指回官方源（TD-81）：现查 `registry.npmmirror.com` **残留 0 条**、
+  `registry.npmjs.org` 357 条，tarball/integrity 不变（`npm ci` 照常校验）。
+- 机密静态加密原语下沉 `pkg/secretcrypto`（`enc:v1:` + base64(nonce||GCM)），config-svc 与 controlplane
+  的 kubeconfig 两个存量消费方均迁移，并由 `no_dup_impl_test.go` 全仓扫描守住「不得再写第四份实现」。
+- CI 的镜像构建接上 Docker Hub 登录以躲匿名限流（TD-89）。**需要你在仓库 secrets 里建
+  `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`** 才生效；不建也照常跑（该步骤自动跳过），但 429/5xx
+  仍会把无关提交判红——判红时先看失败步骤名与错误码，别先怀疑代码。
+
+### 能力降级清单（本版如实标注；按能力表验收时请跳过这些或先确认前置）
+
+- **通知的限流/重试旋钮仍未接线**：`cfg.NotifyDedupTTLMin` 与 `NotifyRetry*` 三个旋钮仍按既有硬编码值
+  （5 分钟 / `DefaultRetryPolicy`）——`WithDedup(0)` 的语义是"用默认 5 分钟"而不是配置注释所说的"关闭"，
+  径直接上会把 0 从"关闭"变成"默认"，属语义翻车，所以**记账不暗修**（`alert_channels.go:85-88` 注释）。
+- **插件宿主默认不启用**：`--plugin-manifest` 未配置时 `initPluginHost` 返回 nil，`opsmesh_plugin_hook_calls_total` 恒 0
+  ⇒ 对外只承诺"可接线的功能，默认零行为变化"。
+- **alert-svc 的 gRPC 面默认仍无鉴权**（TD-86 是 opt-in）：`ALERT_SVC_GRPC_TOKEN` 空=行为不变；设了才强制
+  Bearer；**开了 `PAGERDUTY_ENABLED` 又不给 token 会拒绝启动**。跨机暴露该面仍需自行前置认证。
+- **三域双轨的开关默认全关**（`*_SVC_URL` 显式化 + `OPSMESH_SERVICE_PROXY` 逐域 + `AUTH_SVC_HTTP_ENABLED=false`）
+  ⇒ 升级后仍是单体路径在服务，切流是运维动作而非默认。
+- **`--multi-schema` 启用时**，每租户首访承担整段 DDL（固定成本 ≈8s/schema），迁移未在部署前显式前置。
+- **存量升级的迁移预算**：`ci_items` 约 30 万行 ⇒ 020+021 墙钟 117s，逼近 `deploy.sh` 的 120s 健康等待预算；
+  大库请先按 §44 的阈值预约维护窗口。
+- **告警外发的渠道仍只有已接的两类来源**（配置文件 + UI 渠道表），按规则选渠道的映射在 UI 侧刚接入，
+  跨副本一致性未验。
+
+### 本版可复核的验证证据（都带观测量，不是静态结论）
+
+- tip `d22c4ac` 的 CI run `38282079631` = `completed/success`，13 条 job 中 **12 success + `release` skipped**
+  （非 tag 推送属预期），其中 `Race detector` 耗时 34 分钟无竞态。
+- 部署资产门禁整跑 `PASS=76 FAIL=0 SKIP=1`；第 16 节归版账目 `offenders=0`（本版把 50 个历史
+  `[Unreleased]` 块全部归版，`[Unreleased]` 现为 0）；第 24 节台账 `rows=62 unique=62`。
+- 版本源点位随本版整体前移：**14 个文件 40 处**（`internal/version`、`Chart.yaml` 两处、
+  `values-production.yaml` 的 14 个生效 tag + 注释示例、`production-segment` 的 tag、5 份 `deployments/*.yaml`、
+  `deploy-opsmesh.sh` 默认值、compose 与 `deploy.sh` 的报错示例、`README` 构建示例、门禁 §4 的 compose fixture），
+  由逐处「预期命中数」断言脚本完成——第一次跑就拦下我数错的 22≠23；三处历史叙述里的 `0.13.0` **刻意没抹平**。
+
 ## v0.13.0 — 2026-10-07 CMDB 检索真实化 + 插件宿主可接线 + 发布链"先过门禁再提权"，并首次量出存量升级阈值
 
 三件事：把能力表里那行 ❌ 的 CMDB 检索换成真的全文索引召回；把"可插拔扩展"从框架变成**能接线的功能**

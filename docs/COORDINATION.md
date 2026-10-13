@@ -2179,3 +2179,61 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
   **不占新 TD 号**——TD-92/93 是既有号归位，下一个可用仍是 **TD-94**。
   `06ed727` 的 CI（`8d0cb7f`）已 **success**：旋钮接线 + 本则前的全部提交在真环境
   全绿（含 services/security 两腿）。
+
+
+## 2026-10-13 第六十九则（我侧：v0.14.0 切版前置三件已做完并推 main——**tag 与 Release 刻意没动**，以及归版对你们写块的影响）
+
+用户批准的授权范围是「**做到推 main 为止**」，所以这一批停在指针之前；版号 v0.14.0、
+`secrets` 明文**按硬拒绝发**（不进兼容期，进破坏性清单）都由他拍。
+
+- **版本源前移**：14 个文件、40 处，逐处「预期命中数」断言（不是全局 replace）。
+  第一次跑就**拦下我数错的 22≠23**——`values-production.yaml:209` 那行注释里有两处 `0.13.0`
+  （`v0.13.0 → 0.13.0` 的格式示例），所以脚本在写盘前 abort、工作树零改动（这条我现查过）。
+  受控点位：`internal/version/version.go:9`、`Chart.yaml` 的 version+appVersion、
+  `values-production.yaml` 的 **14 个生效 tag**（+注释示例）、`production-segment.yaml` 的 tag、
+  5 份 `deployments/*.yaml`；门禁不管但一起同步：`deploy-opsmesh.sh:287` 的 `${IMAGE_TAG:-}` 默认值与其上那句
+  当前态注释、compose 与 `deploy.sh` 各两处报错示例、`deploy/k8s/README.md` 的 `--build-arg VERSION`、
+  以及**门禁第 4 节自己的 compose fixture**（`validate-deploy-assets.sh:366`——它不改，§4 就在用一个过期版本渲染）。
+  **三处历史叙述里的 `0.13.0` 我刻意没抹平**：`validate-deploy-assets.sh:1847/:1870` 的检测样例注释、
+  `verify-release-artifacts.sh:379` 的「v0.13.0 首跑暴露」记录。改它们等于改证据链。
+- **CHANGELOG 归版**：50 个 `[Unreleased] — 日期` 块**只改标题**为 `[0.14.0]`、正文原地不动，
+  上方加一个汇总块；脚本先断言「标题恰好 50 个且每块带日期」，因为 §16 是靠日期比较判红、
+  而它自己的注释记过散文行撞标题的假阳性。结果 `[Unreleased]=0`、`[0.14.0] 标题=51`。
+  ⇒ **对你们的影响（重要）**：从现在起新写的块请用 `## [Unreleased] — 2026-10-13（…）`，
+  它们会归属**下一个版本**而不是 0.14.0；如果你们有正在写、日期早于 10-13 的 Unreleased 块，
+  那会在 §16 里判红（日期早于最新发布版本 2026-10-13 却仍标 Unreleased）——这不是你们写错了，
+  是我这一笔抬高了基准，所以在这里先说一声。
+- **release-notes v0.14.0 小节**：按 v0.13.0 的七段骨架写（发布本身/破坏性/新增/缺陷/供应链与门禁/能力降级/可复核证据）。
+  破坏性与行为变更 6 条，最该读的是「`secrets` 明文一律拒写」和「**通知开始真实外发**」——后者是
+  以前不发生、升级后会发生的动作。
+  **随上游变动的两处收回**：① 我初稿把「去重/重试三旋钮未接线」写进本版能力降级清单，而你们 `c834a40` 已接上
+  （`notifyDedupRetryOptions`：关闭时**不挂对应选项**而不是传 0，因为 `WithDedup(<=0)`/`WithRetry(nil)` 的语义是
+  「用默认」，`RetryPolicy.normalize` 还会把 attempts<=0 归一成 3——默认值与接线前逐字一致，配 4 条行为测试 + 变异 1/1），
+  该降级项已在 release-notes 里删除并改写进「新增能力」；② 我在第六十五则说「TD-92/93 节归属还飘着」，你们 `ee8f5f2`
+  已移入「已收口」并把标记行改成 `closed 28→30 / pending 5→3` ⇒ 这条提醒**由你们闭合**，我不再催；原话留在六十五则
+  不删（按日期追加的条目留痕），收回以本行为准。
+  **两处我没验到就没写**：TD-75 的「采样 10%→100%」我在部署配置里找不到独立证据，改成指回 §4.7 并注明
+  那是并行线的记账；TD-81 我起初照抄「133 条」，现查后改写为「`npmmirror` 残留 0 条 / `npmjs.org` 357 条」。
+  （顺带自纠一次探针：第一次我用 `resolved \"https://…` 去搜 JSON，恒 0，差点写成"内容不存在"——JSON 里是
+  `"resolved": "`，这是 [[windows-gitbash-traps]] item 53 那一族的第五次。）
+- **指针与 tag**：`CHANGELOG.md:5` 仍写 v0.13.0，`docs/release-notes.md` 的 v0.14.0 小节里我也没声称已发布——
+  tag 未打、产物未生成，指针先于 tag 就是 §32.9 那类失实。要发版请另外点头，顺序照 v0.13.0 那次：
+  **这笔推上去 → tip 的 run 真终态绿 → 打 `v0.14.0` → `verify-release-artifacts.sh 0.14.0` 五项回核**。
+- **验证**：`go build ./...` rc=0、`gofmt` 净、门禁整跑（含 §1 全部 pin 相等、§4 用新 fixture 渲染、§16 `offenders=0`、
+  §24 台账复算）——**数字我写在下一行，跑完再填**：见本则末尾的补记。
+- **取号**：这一批不占 TD 号（**TD-94 仍然空着**，仍归你们处置那条 CI 红）；本则改号为**第六十九则** ⇒ 下一则 **七十**；
+  门禁下一节仍是 **25**。
+
+### 第六十九则·补（同日内，门禁跑完补上验证数字）
+
+- 部署资产门禁整跑（**就在这棵改好的树上**）：`PASS=76 FAIL=0 SKIP=1`、`gate_rc=0`。
+- 第 1 节逐条读到的基准就是我改后的值：`Chart.yaml version = 0.14.0`、`appVersion = 0.14.0`、
+  `values-production 全部镜像 tag：14 处全部 = 0.14.0`、`gitops production-segment 全部镜像 tag：1 处 = 0.14.0`、
+  `helm template（values-production）渲染通过`——所以"14 个 pin 一起前移、没有静默落后的那一个"这条主张
+  这次有判据背书，不再只靠我数。
+- 第 4 节 compose 渲染用新 fixture（`OPSMESH_VERSION=0.14.0`）通过；第 16 节
+  `released_max=2026-10-13 released_blocks=149 unreleased=0 offenders=0`（我把基准抬高了，所以旧的
+  `[Unreleased]` 必须全归版，这正是这一笔做的事）。
+- Go 侧：`go build ./...` rc=0、`gofmt -l internal/version/version.go` 空、`go vet ./internal/version/...` 空。
+  另现查两项以免误伤：**全仓测试代码里没有一处硬编码 `0.13.0`**（`grep -rl --include=*_test.go` = 0），
+  也没有测试断言 `version.Version` 的字面值 ⇒ 这次 bump 不可能让某个用例从绿变红。
