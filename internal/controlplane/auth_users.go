@@ -6,9 +6,12 @@
 package controlplane
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -104,11 +107,15 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Username string   `json:"username"`
-		Password string   `json:"password"`
-		Email    string   `json:"email"`
-		RoleIDs  []string `json:"role_ids"`
-		TenantID string   `json:"tenantId"`
+		Username           string   `json:"username"`
+		Password           string   `json:"password"`
+		Email              string   `json:"email"`
+		RoleIDs            []string `json:"role_ids"`
+		TenantID           string   `json:"tenantId"`
+		MustChangePassword bool     `json:"mustChangePassword"`
+		// must_change_password 为 snake 别名（与 role_ids/roleIDs 双名同策）：
+		// 两键同时出现时取 OR——管理脚本用 snake、前端用 camel，任一为真即强制改密。
+		MustChangePasswordSnake bool `json:"must_change_password"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		log.Printf("controlplane: handleCreateUser 解析请求体失败: %v", err)
@@ -152,6 +159,11 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		PasswordHash: hash,
 		Status:       "active",
 		RoleIDs:      body.RoleIDs,
+		// 首登强制改密透传（2026-10-14 演练 §3.2）：此前请求体不收该字段 ⇒ 管理员经
+		// 单体 HTTP 面造不出"首登强制改密"账号，而 auth-svc 侧支持
+		// （cutover-migrate --force-change 走的就是对侧）⇒ 两侧不对称，而首登改密
+		// 恰是切流交接口令的关键机制（一次性口令的承重墙）。
+		MustChangePassword: body.MustChangePassword || body.MustChangePasswordSnake,
 	}
 	if s.store.CreateUser(u) == nil {
 		paginate.WriteJSON(w, http.StatusConflict, map[string]string{"error": "username already exists"})
@@ -163,7 +175,16 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		TenantID: targetTenant, UserID: caller.ID, Action: "user_create", Target: u.ID,
 		Detail: sanitizeAuditDetail("username=" + u.Username + " tenant=" + targetTenant),
 	})
-	paginate.WriteJSON(w, http.StatusCreated, u)
+	// 回读落库对象再响应（2026-10-14 演练 §3.4）：此前直接回请求体 u，SQL 后端实测
+	// createdAt:"0001-01-01T00:00:00Z"（store 在自己的副本上补时间，不回写请求对象）、
+	// permissions:null ⇒ 管理面建号响应是"请求回显"而不是"落库事实"，客户端据
+	// "建号时间丢了"误判。回读后与 GET /users/{id} 同源，并按 login 同规则展开
+	// 有效权限（authUserWithPerms）。极端并发（建完即删）退回请求体，不 500。
+	stored := s.store.GetUser(u.ID)
+	if stored == nil {
+		stored = u
+	}
+	paginate.WriteJSON(w, http.StatusCreated, s.authUserWithPerms(stored))
 }
 
 // handleUserRouting 分派 /api/v1/users/{id} 子路径：
@@ -291,23 +312,81 @@ func (s *Server) handleRejectUser(w http.ResponseWriter, r *http.Request, id str
 	paginate.WriteJSON(w, http.StatusOK, s.store.GetUser(id))
 }
 
+// userUpdateFields 是 PUT /api/v1/users/{id} 认可的键集（含 F6 过渡别名 roleIDs）。
+// 顺序即报错信息里的展示顺序（调用方照抄即可）。
+var userUpdateFields = []string{"email", "role_ids", "roleIDs", "status", "tenantId"}
+
+// unknownUserUpdateKeys 返回请求体里不在认可集内的键（排序后；空体/空对象返回空）。
+// 纯函数：handler 只能黑盒断言状态码，报错里"点了哪些键、排序是否稳定"这类契约
+// 必须由可测函数承载（与 plaintextSecretKeys / DroppedRoleLines 同一文化）。
+func unknownUserUpdateKeys(raw []byte) ([]string, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil, nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	allowed := make(map[string]bool, len(userUpdateFields))
+	for _, f := range userUpdateFields {
+		allowed[f] = true
+	}
+	var unknown []string
+	for k := range m {
+		if !allowed[k] {
+			unknown = append(unknown, k)
+		}
+	}
+	sort.Strings(unknown)
+	return unknown, nil
+}
+
 // handleUpdateUser 处理 PUT /api/v1/users/{id}：更新用户 email/roles/status/tenantId（需 user:write 权限）。
 // 请求体：{email?, role_ids?, status?, tenantId?}；仅更新非空字段。
+//
+// 未识别键一律 400（2026-10-14 演练 §3.3）：此前 struct 解码静默丢弃未知键 ⇒ 客户端
+// 拼错字段名时拿到 200 no-op，据"成功"假象得出反的结论——演练里"HTTP 面无法授予角色"
+// 那条**误报**的根因就在此（人设用 roles，规范名是 role_ids；PUT 200 但库里没动）。
+// 与 http_infra.go decodeJSONBody 的全局宽容策略（不启用 DisallowUnknownFields、保前端
+// 多传字段）不冲突：那是全局默认，本端点是管理面精确语义端点，逐点声明严格。
+// roleIDs（驼峰）为 role_ids 的过渡别名（F6 双名策略；两键同时出现以 role_ids 为准）。
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request, id string) {
 	caller, ok := s.requirePermission(w, r, "user:write")
 	if !ok {
 		return
 	}
-	var body struct {
-		Email    string   `json:"email"`
-		RoleIDs  []string `json:"role_ids"`
-		Status   string   `json:"status"`
-		TenantID string   `json:"tenantId"`
-	}
-	if err := decodeJSONBody(w, r, &body); err != nil {
+
+	// 先取原始体做键集校验（bufferRequestBody 已带与 decodeJSONBody 同款上限并还原 r.Body）。
+	raw := bufferRequestBody(w, r)
+	unknown, err := unknownUserUpdateKeys(raw)
+	if err != nil {
 		log.Printf("controlplane: handleUpdateUser 解析请求体失败: %v", err)
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
+	}
+	if len(unknown) > 0 {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "unknown field(s): " + strings.Join(unknown, ",") +
+				"; recognized: " + strings.Join(userUpdateFields, ","),
+		})
+		return
+	}
+
+	var body struct {
+		Email        string   `json:"email"`
+		RoleIDs      []string `json:"role_ids"`
+		RoleIDsCamel []string `json:"roleIDs"`
+		Status       string   `json:"status"`
+		TenantID     string   `json:"tenantId"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil && err != io.EOF {
+		log.Printf("controlplane: handleUpdateUser 解析请求体失败: %v", err)
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	// F6 双名：仅 camel 出现时按 role_ids 语义生效（两键都有以规范名为准）。
+	if body.RoleIDs == nil && body.RoleIDsCamel != nil {
+		body.RoleIDs = body.RoleIDsCamel
 	}
 	// 状态变更需更高权限：仅 user:write 不能激活/禁用账号，须 user:approve（与 审批模型一致），
 	// 防止低权限用户自行把 Status 置 active/rejected 绕过审批流。

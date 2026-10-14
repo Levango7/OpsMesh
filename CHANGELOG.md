@@ -190,6 +190,39 @@
   ② handler 有意写的 JSON 404 原样放行（修复不得篡改语义）；③ 只写 404 头不写 body 也收口。
   变异（去掉收口）⇒ 判红并打印实测 `text/plain "404 page not found"`，还原复绿。
 
+## [Unreleased] — 2026-10-14（演练移交/待办第二批：建号闭环两件 + PUT 未知键 400 + 审计 actor 不采信自称头）
+
+- **§3.2 建号透传 `mustChangePassword`**（控制面 `POST /users`）：此前请求体不收该
+  字段 ⇒ 管理员经单体 HTTP 面**造不出"首登强制改密"账号**，而 auth-svc 侧支持
+  （`cutover-migrate --force-change` 走的就是对侧）⇒ 两侧不对称，而首登改密恰是
+  切流交接口令（一次性口令）的承重墙。现收 `mustChangePassword`（camel）+ 
+  `must_change_password`（snake 别名，OR 语义），落库并经响应回显。
+- **§3.4 建号响应回读落库对象**：此前直接回请求体 ⇒ SQL 后端实测
+  `createdAt:"0001-01-01T00:00:00Z"` + `permissions:null`（store 在自己的副本上
+  补时间，不回写请求对象）⇒ 管理面建号响应是"请求回显"而非"落库事实"。现回读
+  `GetUser(id)` 并按 login 同规则展开有效权限（`authUserWithPerms`）；极端并发
+  （建完即删）退回请求体不 500。
+- **§3.3 PUT /users/{id} 未识别键 400**：此前 struct 解码静默丢弃未知键 ⇒ 客户端
+  拼错字段名拿到 200 no-op——演练里"HTTP 面无法授予角色"那条**误报**的根因就在此
+  （人设用 `roles`，规范名是 `role_ids`）。现 `unknownUserUpdateKeys`（纯函数）逐键
+  校验，400 响应点名未知键（字典序）与认可集；`roleIDs`（驼峰）为 `role_ids` 的
+  过渡别名照常生效。与全局宽容策略（`decodeJSONBody` 不启用 DisallowUnknownFields
+  保前端兼容）的边界已写进注释：全局宽容 vs 管理面精确端点逐点严格。
+- **§3.5 审计 actor 不采信自称头 + UserID 语义统一**（`auditAuthzDenied`）：actor/
+  tenant 只信两个可信源——① JWT 的 `user_id`/`tenant_id`（存储 ID，与 user_login
+  同口径）；② `--trust-gateway-headers` 注入模式下的头（受信网关注入）。客户端自称
+  `X-User-Id` 一律降级为 detail 里的 `claimed_user=` **证据**——演练人设实测两条
+  伪造署名入库（`user mismatch` 那类 403 的 actor 竟是被拒的头值）。两源皆无记
+  `unknown`（身份不适用就不编）；用户名以 `actor_name=` 进 detail。UserID 自此
+  统一为存储 ID，与"同字段两种含义（用户名/存储 ID）"的旧裂口告别。
+- **守卫 7 条 + 变异 4/4**：mustChangePassword 双拼写透传（库内+响应双断言）、
+  建号响应为落库对象（createdAt 非零+permissions 非空）、PUT 未知键 400/别名生效/
+  多键排序、`unknownUserUpdateKeys` 表驱动 9 例、伪造署名不入库（actor=JWT 存储
+  ID+claimed_user 证据）、无身份记 unknown。变异：撤透传/撤未知键校验/撤回读/
+  恢复采信自称头，逐条判红。
+- **验证**：`internal/controlplane` 整包 go test 全绿（含既有 A3 三条——注入模式
+  行为不变）、go vet 0、golangci-lint 0 issues、gofmt 净。
+
 ## [Unreleased] — 2026-10-14（演练移交项：auth-svc 补 `role-operator` 种子 + migrate 汇总必报丢失角色）
 
 - **背景**（对侧第八十四则移交）：auth-svc 只 seed `role-admin`/`role-viewer`，而
