@@ -1,0 +1,420 @@
+name: _publish-image
+
+# 内部复用工作流：把"构建 → Trivy 扫描 → syft SBOM → cosign 签名+attest → 提权 latest/版本 tag
+# → 自验 digest"这条对外的镜像发布管线收在一处，供 ci.yml 与（TD-95 方向① 后续阶段）release.yml
+# 共同 `uses:`，避免 ~400 行逻辑复制两份而漂移。
+#
+# 抽取出身：本文件逐步骤来自 ci.yml 原 `image` / `image-agent` 两个 job（Tip `d35f895`）。
+# 二者仅在下述入参上不同，行为逐字保持：
+#   - image_leaf   opsmesh-binary | opsmesh-agent
+#   - dockerfile   Dockerfile | Dockerfile.agent
+#   - sbom_prefix  controlplane | agent（SBOM / attest 谓词文件名前缀）
+#   - job_label    image job | image-agent job（覆盖自述小节标题，保持原有措辞）
+#   - gitops       true | false（仅 controlplane 侧写回 GitOps values；agent 侧无此段）
+#
+# 安全前提：调用方以 `secrets: inherit` 传全部所需 secret；本 job 把它们提升到 job 级 env，
+# 使 step 级 `if:`（读不到本 step 自身 env）能判定 COSIGN_PRIVATE_KEY / GITOPS_* 是否配置。
+# 未配置即空串，各可选步骤的 `!= ''` 守卫照常跳过，不阻塞流水线（与原 ci.yml 同形）。
+
+'on':
+  workflow_call:
+    inputs:
+      image_leaf:
+        type: string
+        required: true
+      dockerfile:
+        type: string
+        required: true
+      sbom_prefix:
+        type: string
+        required: true
+      job_label:
+        type: string
+        required: true
+      gitops:
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      COSIGN_PRIVATE_KEY:
+        required: false
+      COSIGN_PASSWORD:
+        required: false
+      GITOPS_REPO:
+        required: false
+      GITOPS_PAT:
+        required: false
+      REGISTRY:
+        required: false
+      REGISTRY_USER:
+        required: false
+      REGISTRY_TOKEN:
+        required: false
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish-image:
+    runs-on: ubuntu-latest
+    # GHCR 推送需 packages:write；keyless cosign 走 Fulcio OIDC 需 id-token:write。
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+      COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+      GITOPS_REPO: ${{ secrets.GITOPS_REPO }}
+      GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+      REGISTRY: ${{ secrets.REGISTRY }}
+      REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: 登录 Docker Hub（提升匿名拉取配额；未配置 secrets 时自动跳过）
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+      - name: 解析镜像仓库（私有凭证齐备 → 私有；否则 GHCR + GITHUB_TOKEN）
+        id: check
+        env:
+          IMAGE_LEAF: ${{ inputs.image_leaf }}
+        run: |
+          set -euo pipefail
+          : "${IMAGE_LEAF:?IMAGE_LEAF 未设置：前缀与标签集都只从这一个 env 取，避免两套来源}"
+          # 先定前缀，再按前缀出标签集：两个分支都必须落到同一个 PREFIX，
+          # 否则会出现"私有分支写了 prefix 输出、TAGS 却用 GHCR 前缀"这类半改状态。
+          if [ -n "${REGISTRY:-}" ] && [ -n "${REGISTRY_USER:-}" ] && [ -n "${REGISTRY_TOKEN:-}" ]; then
+            STEP_MODE=private
+            STEP_REGISTRY="${REGISTRY}"
+            STEP_USER="${REGISTRY_USER}"
+            PREFIX="${REGISTRY}/${IMAGE_LEAF}"
+            echo "::notice::镜像目标=私有仓库 ${PREFIX}（三凭证齐备）"
+          else
+            # 三者缺一即回落，避免半配置状态下 login 报错把流水线弄红。
+            # Docker 要求仓库名全小写，而 GITHUB_REPOSITORY_OWNER 保留原始大小写（本仓 Levango7）
+            # → 拼进 tag 会被 buildx 拒：invalid tag "ghcr.io/Levango7/...": repository name must
+            # be lowercase（首跑实测踩到），故统一转小写。
+            GHCR_OWNER="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+            STEP_MODE=ghcr
+            STEP_REGISTRY=ghcr.io
+            STEP_USER="${GITHUB_ACTOR}"
+            PREFIX="ghcr.io/${GHCR_OWNER}/${IMAGE_LEAF}"
+            echo "::warning::REGISTRY/REGISTRY_USER/REGISTRY_TOKEN 未齐备 → 本次改用 GHCR（凭证=GITHUB_TOKEN）；消费方设 image.repository=${PREFIX}"
+          fi
+          DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          # ── 标签集 ────────────────────────────────────────────────────────────
+          #   任何 push     → :<sha>（不可变、可精确复现，也是 GitOps 写回的锚点）
+          #   默认分支 push → 追加 :latest
+          #   tag push      → 追加 :<版本号>（剥前导 v）与 :latest
+          # 刻意不给 feature 分支打 latest：否则 latest 会被"最后合入者之外"的推送改写。
+          # 构建只推不可变的 :<sha>；:latest 与 :<版本> 由本 job 末尾的提权步骤在门禁全绿后用
+          # registry 侧改标完成（不重建 ⇒ digest 不变，被 Trivy 与签名看过的那份就是客户拉到的那份）。
+          TAGS="${PREFIX}:${GITHUB_SHA}"
+          MOVE_TAGS=""
+          if [ "${GITHUB_REF:-}" = "refs/heads/main" ]; then
+            MOVE_TAGS="${PREFIX}:latest"
+          fi
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            MOVE_TAGS="${MOVE_TAGS}"$'\n'"${PREFIX}:${VERSION}"$'\n'"${PREFIX}:latest"
+          fi
+          # 多行输出必须用 heredoc 定界符写 GITHUB_OUTPUT：直接 echo "k=多行值" 只取到第一行
+          # （其余被当成新的 key=value 解析），tags 会静默退化成单个 :<sha>。
+          {
+            echo "mode=${STEP_MODE}"
+            echo "registry=${STEP_REGISTRY}"
+            echo "username=${STEP_USER}"
+            echo "prefix=${PREFIX}"
+            echo "date=${DATE}"
+            echo "tags<<TAGSEOF"
+            printf '%s\n' "${TAGS}"
+            echo "TAGSEOF"
+            echo "move_tags<<MOVEEOF"
+            printf '%s\n' "${MOVE_TAGS}"
+            echo "MOVEEOF"
+          } >>"$GITHUB_OUTPUT"
+          echo "本次推送标签集（${STEP_MODE} 路径）："
+          printf '  - %s\n' "${TAGS}"
+      - name: 预热基础镜像（TD-94：429/5xx 有界重试，把限流挡在可重试的 shell 步骤）
+        run: |
+          set -euo pipefail
+          # 用数组而不是裸字符串：镜像清单天然多词，按词展开是有意的，但无引号的变量引用
+          # 会被判 SC2086（CI 的 actionlint 集成 shellcheck 会为此判红）；数组 + 引号展开两全。
+          mapfile -t imgs < <(grep -E '^[[:space:]]*FROM ' "${{ inputs.dockerfile }}" | awk '{print $2}' | sort -u)
+          echo "本次预热 refs（${{ inputs.dockerfile }}）："; printf '  - %s\n' "${imgs[@]}"
+          bash deploy/scripts/docker-pull-retry.sh "${imgs[@]}"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: 登录镜像仓库
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ steps.check.outputs.registry }}
+          username: ${{ steps.check.outputs.username }}
+          # 私有路径用 REGISTRY_TOKEN；GHCR 路径用内置 GITHUB_TOKEN（三者齐备才走私有）。
+          password: ${{ steps.check.outputs.mode == 'private' && secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: 构建并推送（钉死 digest）
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          push: true
+          build-args: |
+            VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.check.outputs.date }}
+          # load: true —— 同时载入本地 docker daemon，供随后的 Trivy 扫描直接取用，
+          # 避免扫描步骤依赖"能否凭 docker config 从（默认 private 的）GHCR 拉取"这一不确定条件。
+          load: true
+          tags: ${{ steps.check.outputs.tags }}
+      - name: Trivy 镜像扫描
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          # 兜底：镜像不在本地时应能凭凭证从 registry 拉取（私有路径同用）。
+          TRIVY_USERNAME: ${{ steps.check.outputs.username }}
+          TRIVY_PASSWORD: ${{ steps.check.outputs.mode == 'private' && secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          # ignore-unfixed：只对「上游已发布修复但镜像未升级」判红；上游尚无修复版本的条目仍逐条
+          # 打印但不阻断（基础镜像扫描通行做法；长期红的门禁会被忽略，见教训 11）。
+          ignore-unfixed: true
+      # SBOM：syft 对推送后的镜像出 SPDX JSON 并作为 workflow artifact 留存（供应链证据）。
+      # 不改变镜像产物形态（不用 buildx attestation），避免私有路径的消费方行为变化。
+      - name: 生成镜像 SBOM（syft v1.51.1，钉版）
+        env:
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
+          SBOM_PREFIX: ${{ inputs.sbom_prefix }}
+        run: |
+          set -euo pipefail
+          command -v syft >/dev/null 2>&1 || {
+            curl -sSL https://github.com/anchore/syft/releases/download/v1.51.1/syft_1.51.1_linux_amd64.tar.gz -o /tmp/syft.tar.gz
+            tar -xzf /tmp/syft.tar.gz -C /tmp syft
+            sudo mv /tmp/syft /usr/local/bin/syft
+          }
+          syft version
+          syft "${IMAGE}" -o spdx-json > "sbom-${SBOM_PREFIX}-${GITHUB_SHA}.spdx.json"
+          python3 -c 'import json,sys; ps=(json.load(open(sys.argv[1])) or {}).get("packages") or []; sys.exit("SPDX packages 为空——SBOM 没抓到任何组件，判红（空证据比没证据更坏）") if not ps else print("SBOM 包条目数:", len(ps))' "sbom-${SBOM_PREFIX}-${GITHUB_SHA}.spdx.json"
+          # 第二份 CycloneDX 专供 `cosign attest --type cyclonedx` 当谓词（cosign 无 --type spdx）。
+          syft "${IMAGE}" -o cyclonedx-json > "sbom-${SBOM_PREFIX}-${GITHUB_SHA}.cdx.json"
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); cs=d.get("components") or []; sys.exit("CycloneDX components 为空或缺 bomFormat/specVersion——attest 谓词不可用，判红") if (not cs or "bomFormat" not in d or "specVersion" not in d) else print("CycloneDX 组件数:", len(cs), "/ bomFormat", d["bomFormat"], "/ specVersion", d["specVersion"])' "sbom-${SBOM_PREFIX}-${GITHUB_SHA}.cdx.json"
+      - name: 上传 SBOM 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ inputs.sbom_prefix }}-${{ github.sha }}
+          path: sbom-${{ inputs.sbom_prefix }}-*.json
+          retention-days: 30
+      # 供应链安全：对推送的镜像做 cosign 签名，两条互斥路径：
+      # ① 私有路径（COSIGN_PRIVATE_KEY 已配置）→ key-based，--tlog-upload=false（内网无 OIDC 场景）。
+      # ② GHCR 路径（无密钥）→ keyless，以本 workflow 的 OIDC 身份签名并上传 Rekor 透明日志，零 secret。
+      - name: 安装 cosign（官方 installer，钉死 commit）
+        if: env.COSIGN_PRIVATE_KEY != '' || steps.check.outputs.mode == 'ghcr'
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
+        with:
+          cosign-release: 'v2.2.4'
+      - name: cosign 签名镜像（key-based，私有仓库路径）
+        if: env.COSIGN_PRIVATE_KEY != ''
+        env:
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false "${IMAGE}"
+          echo "已签名（key-based）: ${IMAGE}"
+      - name: cosign 签名镜像（keyless OIDC，GHCR 路径）
+        if: env.COSIGN_PRIVATE_KEY == '' && steps.check.outputs.mode == 'ghcr'
+        env:
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # --yes 跳过多镜像确认；默认上传 Rekor 透明日志（keyless 的可验证性正来自此）。
+          cosign sign --yes "${IMAGE}"
+          echo "已签名（keyless/OIDC）: ${IMAGE}"
+      # 签名只回答"这镜像是我们发的"，回答不了"里面有什么"。attest 把 SBOM 作为镜像的
+      # 内联证据挂上去（`.att` tag），客户 `cosign verify-attestation` 即可离线核对成分。
+      - name: cosign 出具 SBOM 证据（attest，产出 .att）
+        if: env.COSIGN_PRIVATE_KEY != '' || steps.check.outputs.mode == 'ghcr'
+        env:
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
+          SBOM_PREFIX: ${{ inputs.sbom_prefix }}
+        run: |
+          set -euo pipefail
+          PRED="sbom-${SBOM_PREFIX}-${GITHUB_SHA}.cdx.json"
+          if [ -n "${COSIGN_PRIVATE_KEY:-}" ]; then
+              cosign attest --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false \
+                  --type cyclonedx --predicate "$PRED" "$IMAGE"
+              echo "attestation 已出具（key-based）: ${IMAGE}"
+          else
+              cosign attest --yes --type cyclonedx --predicate "$PRED" "$IMAGE"
+              echo "attestation 已出具（keyless/OIDC）: ${IMAGE}"
+          fi
+      - name: 自验证 attestation（出完必须验得过，判据不放宽）
+        if: env.COSIGN_PRIVATE_KEY != '' || steps.check.outputs.mode == 'ghcr'
+        env:
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
+          SBOM_PREFIX: ${{ inputs.sbom_prefix }}
+        run: |
+          set -euo pipefail
+          if [ -n "${COSIGN_PRIVATE_KEY:-}" ]; then
+              VERIFY=(cosign verify-attestation --key env://COSIGN_PRIVATE_KEY --type cyclonedx)
+          else
+              VERIFY=(cosign verify-attestation --type cyclonedx
+                      --certificate-identity-regexp "^https://github\.com/${GITHUB_REPOSITORY}/\.github/workflows/ci\.yml@"
+                      --certificate-oidc-issuer https://token.actions.githubusercontent.com)
+          fi
+          for i in 1 2 3 4 5; do
+              if "${VERIFY[@]}" "$IMAGE" >/dev/null; then
+                  echo "SBOM 证据已验证：${SBOM_PREFIX}（第 ${i} 次尝试）"
+                  exit 0
+              fi
+              if [ "$i" = 5 ]; then
+                  echo "::error::cosign verify-attestation 连续 5 次失败：attestation 确实不在 ${IMAGE}"
+                  exit 1
+              fi
+              echo "第 ${i} 次 verify-attestation 未命中（写后读窗口），$((i * 10))s 后重试"
+              sleep $((i * 10))
+          done
+      # 自述本次实际覆盖到的链路，缺 secret 的可选段显式列出——
+      # 直接针对"job 报了 success 但整段没跑"这类假绿（报告 §15.2）。
+      - name: 本次覆盖范围自述（防空转绿）
+        env:
+          SBOM_PREFIX: ${{ inputs.sbom_prefix }}
+          JOB_LABEL: ${{ inputs.job_label }}
+          GITOPS_ENABLED: ${{ inputs.gitops }}
+        run: |
+          set -euo pipefail
+          MODE="${{ steps.check.outputs.mode }}"
+          PREFIX="${{ steps.check.outputs.prefix }}"
+          if [ -n "${COSIGN_PRIVATE_KEY:-}" ]; then
+            cosign_mode="key-based（COSIGN_PRIVATE_KEY）"
+          elif [ "$MODE" = "ghcr" ]; then
+            cosign_mode="keyless/OIDC（GHCR 路径，无需密钥）"
+          else
+            cosign_mode="未启用（私有路径且无 COSIGN_PRIVATE_KEY）"
+          fi
+          {
+            echo "### ${JOB_LABEL} 本次实际覆盖"
+            echo ""
+            echo "| 环节 | 状态 |"
+            echo "|---|---|"
+            echo "| 构建 + 推送 | \`${PREFIX}:${{ github.sha }}\`（模式=${MODE}） |"
+            echo "| Trivy 扫描 | HIGH/CRITICAL 门禁 |"
+            echo "| SBOM | syft SPDX + CycloneDX JSON（artifact） |"
+            echo "| cosign 签名 | ${cosign_mode} |"
+            echo "| cosign attest（镜像侧 .att 证据） | ${cosign_mode}（未启用即无） |"
+          } >>"$GITHUB_STEP_SUMMARY"
+          if [ "${GITOPS_ENABLED}" = "true" ]; then
+            if [ -n "${GITOPS_REPO:-}" ] && [ -n "${GITOPS_PAT:-}" ]; then
+              gitops_mode="启用"
+            else
+              gitops_mode="未启用（缺 GITOPS_REPO/GITOPS_PAT）"
+              echo "::warning::GitOps tag/digest 写回未启用——发布链路此段本次未验证"
+            fi
+            echo "| GitOps 写回 | ${gitops_mode} |" >>"$GITHUB_STEP_SUMMARY"
+          fi
+      - name: 提权 latest/版本 tag（门禁全绿后才落，registry 侧改标、不重建）
+        # 与 release.yml 的 promote job 同一口径：这里每个调用只出一个镜像，故在本 job 末尾提权即可
+        # （前一个 gate 步骤红，就跑不到这里）。MOVE_TAGS 为空是合法状态：feature 分支只推不可变
+        # :<sha>，刻意不动 :latest（否则 latest 被"最后合入者之外"的推送改写）——如实跳过并说明。
+        env:
+          PREFIX: ${{ steps.check.outputs.prefix }}
+          MOVE_TAGS: ${{ steps.check.outputs.move_tags }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(printf '%s' "$MOVE_TAGS" | tr -d '[:space:]')" ]; then
+            echo "本次 ref 不需要提权（非默认分支、非 tag）：只保留 :${GITHUB_SHA}，跳过";
+            exit 0
+          fi
+          SRC="${PREFIX}:${GITHUB_SHA}"
+          n=0
+          while IFS= read -r t; do
+            [ -z "$t" ] && continue
+            docker buildx imagetools create -t "$t" "$SRC"
+            echo "已提权: ${t} <- ${SRC}"
+            n=$((n + 1))
+          done <<< "$MOVE_TAGS"
+          [ "$n" -gt 0 ] || { echo "::error::MOVE_TAGS 非空却一个都没提权，判红"; exit 1; }
+      - name: 自验提权后的 digest 与被扫的那份是同一份
+        # 判据是"digest 相同"而不是"tag 存在"：改标若被解析成重新构建，就会推出一份 Trivy 从没
+        # 看过的镜像，而 job 照样全绿。重试必需（GHCR 写后读窗口，本仓 .sig 上实测过），5 次退避后
+        # 仍拿不到判红，并把"读不到"与"digest 不一致"分开报——前者重跑，后者是发布事故。
+        env:
+          PREFIX: ${{ steps.check.outputs.prefix }}
+          MOVE_TAGS: ${{ steps.check.outputs.move_tags }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(printf '%s' "$MOVE_TAGS" | tr -d '[:space:]')" ]; then
+            echo "无需提权，跳过核对"; exit 0
+          fi
+          # --raw 取回 manifest 原文再求 sha256：两边同一个函数，断言"两个 tag 指向同一份内容"。
+          dig() { docker buildx imagetools inspect --raw "$1" | sha256sum | awk '{print "sha256:"$1}'; }
+          SRC="${PREFIX}:${GITHUB_SHA}"
+          SRC_DIGEST=""
+          for i in 1 2 3 4 5; do
+            if SRC_DIGEST=$(dig "$SRC") && [ -n "$SRC_DIGEST" ]; then break; fi
+            if [ "$i" = 5 ]; then echo "::error::读不到源 tag ${SRC} 的 manifest"; exit 1; fi
+            echo "第 ${i} 次未读到源 manifest（GHCR 写后读窗口），$((i * 10))s 后重试"; sleep $((i * 10))
+          done
+          while IFS= read -r t; do
+            [ -z "$t" ] && continue
+            got=""
+            for i in 1 2 3 4 5; do
+              if got=$(dig "$t") && [ -n "$got" ]; then break; fi
+              if [ "$i" = 5 ]; then echo "::error::提权后读不到 ${t}——没核对上就不当它已提权"; exit 1; fi
+              echo "第 ${i} 次未读到 ${t}，$((i * 10))s 后重试"; sleep $((i * 10))
+            done
+            if [ "$got" != "$SRC_DIGEST" ]; then
+              echo "::error::digest 不一致：${t}=${got} 而源 ${SRC}=${SRC_DIGEST}"
+              echo "::error::⇒ 提权后的 tag 指向的不是被 Trivy/签名看过的那份，属发布事故"; exit 1
+            fi
+            echo "digest 一致: ${t} = ${got}"
+          done <<< "$MOVE_TAGS"
+      - name: 钉死镜像 tag 写回 GitOps values（E4，可选）
+        if: ${{ inputs.gitops && env.GITOPS_REPO != '' && env.GITOPS_PAT != '' }}
+        env:
+          TAG: ${{ github.sha }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          GITOPS_REPO: ${{ secrets.GITOPS_REPO }}
+          GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+        run: |
+          echo "pinned tag = ${TAG}, digest = ${DIGEST}"
+          command -v yq >/dev/null 2>&1 || {
+            # 钉死 yq v4.40.5，防 latest 供应链漂移
+            curl -sSL https://github.com/mikefarah/yq/releases/download/v4.40.5/yq_linux_amd64 -o /usr/local/bin/yq
+            chmod +x /usr/local/bin/yq
+          }
+          git config --global user.email "ci@opsmesh"
+          git config --global user.name "OpsMesh CI"
+          if ! git clone --depth 1 "https://${GITOPS_PAT}@${GITOPS_REPO}" /tmp/gitops; then
+            echo "::warning::GitOps 仓库 clone 失败（未创建或无权限），跳过写回"
+            exit 0
+          fi
+          cd /tmp/gitops
+          if [ ! -f charts/opsmesh-controlplane/values.yaml ]; then
+            echo "::warning::charts/opsmesh-controlplane/values.yaml 不存在，跳过（待 chart 仓库初始化）"
+            exit 0
+          fi
+          # 同时写回 tag 与 digest：tag 作可读标记，digest 为不可变引用的最终防线
+          # （helm helper：digest 非空时优先于 tag 输出 repo@sha256:... 引用）。
+          yq -i '.global.image.tag = strenv(TAG) | .global.image.digest = strenv(DIGEST)' charts/opsmesh-controlplane/values.yaml
+          if grep -q 'tag: *"0.1"' charts/opsmesh-controlplane/values.yaml; then
+            echo "::error::image tag 写回后仍含占位符 0.1"
+            exit 1
+          fi
+          if grep -q 'tag: *"latest"' charts/opsmesh-controlplane/values.yaml; then
+            echo "::error::image tag 写回后仍为 latest"
+            exit 1
+          fi
+          git add charts/opsmesh-controlplane/values.yaml
+          git commit -m "ci: pin ${{ inputs.image_leaf }} to ${TAG}" || exit 0
+          git push || { echo "::warning::git push 失败，跳过"; exit 0; }
