@@ -21,6 +21,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
 	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // 审计查询限制常量（L7 魔法数提取）。
@@ -38,9 +39,13 @@ const (
 // 查询参数：
 //   - action：按动作过滤（空=不限）
 //   - user：按用户过滤（空=不限，匹配 Actor 字段）
+//   - tenant：按租户过滤（**仅平台租户 default 可用**；§3.8 统一，2026-10-14）
 //   - from：起始时间（RFC3339，空=不限）
 //   - to：结束时间（RFC3339，空=不限）
 //   - limit：返回上限（默认 100，上限 1000）
+//
+// 租户口径与 /api/v1/audits 对齐（§3.8）：非平台租户调用者一律只看本租户；
+// 平台租户可用 tenant= 跨租户查询（运维排障，与 handleListUsers 同策）。
 func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "audit:read"); !ok {
 		return
@@ -60,6 +65,10 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	action := q.Get("action")
 	user := q.Get("user")
+	tenant := actx.TenantID
+	if t := q.Get("tenant"); t != "" && tenantOrDefault(tenant) == store.DefaultTenantID {
+		tenant = t // §3.8：仅平台租户可跨租户查询
+	}
 	from := q.Get("from")
 	to := q.Get("to")
 	limit := auditDefaultLimit
@@ -88,7 +97,7 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		until = t
 	}
-	events := s.store.QueryAudits(actx.TenantID, action, since, until, limit)
+	events := s.store.QueryAudits(tenant, action, since, until, limit)
 	// 按 user 过滤（QueryAudits 不支持 user 维度，内存过滤）。
 	if user != "" {
 		filtered := make([]*proto.AuditEvent, 0, len(events))
@@ -129,6 +138,11 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	action := q.Get("action")
 	from := q.Get("from")
 	to := q.Get("to")
+	tenant := actx.TenantID
+	// §3.8：导出端点与查询端点同口径——仅平台租户可用 tenant= 跨租户导出。
+	if tt := q.Get("tenant"); tt != "" && tenantOrDefault(tenant) == store.DefaultTenantID {
+		tenant = tt
+	}
 	limit := exportDefaultLimit
 	if v := q.Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -155,7 +169,7 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 		}
 		until = t
 	}
-	events := s.store.QueryAudits(actx.TenantID, action, since, until, limit)
+	events := s.store.QueryAudits(tenant, action, since, until, limit)
 	paginate.WriteJSON(w, http.StatusOK, events)
 }
 

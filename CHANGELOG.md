@@ -190,6 +190,13 @@
   ② handler 有意写的 JSON 404 原样放行（修复不得篡改语义）；③ 只写 404 头不写 body 也收口。
   变异（去掉收口）⇒ 判红并打印实测 `text/plain "404 page not found"`，还原复绿。
 
+## [Unreleased] — 2026-10-14（§3.8 收口：两个审计端点租户口径统一——requireAuth=false 形态的越权读面消除）
+
+- **问题**（演练 §3.8）：`GET /api/v1/audits` 不带 tenant 参数返回**全租户**（人设实测 96 条）、`?tenant=<他租户>` 可定向读；而 `GET /api/v1/audit/events` 严格收敛调用方租户。旧的"隔离交给前置网关"前提在 **requireAuth=false**（本仓默认部署）下不成立——控制面自身仍执行 RBAC，两个端点的差异于是成为真实越权读面。
+- **裁定（两端点同口径）**：非平台租户调用者一律只看本租户（`actx.TenantID` 由 `requireTenantContext` 从令牌/头解出，客户端传什么都不看）；平台租户（`default`）保留跨租户查询能力（运维排障，与 `handleListUsers` 同策）。`/api/v1/audit/events` 与 `/api/v1/audit/export` 同步获得平台租户 `tenant=` 能力（与 `/api/v1/audits` 逐字同策）。
+- **守卫 3 条 + 变异 1/1**：非平台调用者带/不带 `?tenant=` 都只见本租户、平台保留跨租户与全租户视图、events 端点同一规则（令牌租户为唯一分支条件）。变异：把 `/api/v1/audits` 改回"仅 requireAuth 时强制" ⇒ 非平台越权用例判红。
+- **验证**：`internal/controlplane` 整包 go test 全绿（含既有 audit/tenant 用例）、go vet 0、golangci-lint 0 issues、gofmt 净。
+
 ## [Unreleased] — 2026-10-14（演练移交/待办第二批：建号闭环两件 + PUT 未知键 400 + 审计 actor 不采信自称头）
 
 - **§3.2 建号透传 `mustChangePassword`**（控制面 `POST /users`）：此前请求体不收该
