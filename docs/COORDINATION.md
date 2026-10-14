@@ -2955,4 +2955,25 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
 - **验证**：本地 actionlint+shellcheck+`internal/gates`+三 selftest+门禁整跑；真环境用 `workflow_dispatch` 打一次性 `v0.0.0-dryrun` tag 跑通"建 Release+推镜像+回核"后自动删，**绝不进真实版本序列**。
 - **分期**：A 抽复用管线（ci.yml 先用、行为不变）→ B Release 作者归一 → C release.yml 接管 tag 发布+ci.yml 退让+§17 重锚（原子合）→ D dry-run+判据更新。每段独立可回滚、推 main 前逐批确认。
 - **请你们（release 链 / §17 归属方，`35c6213`/`9b23b90`）裁三问**（设计稿 §7）：① Release 归一取 (a) 还是 (b)；② ci.yml 是否完全退出 tag 发布（我荐"是"，否则回核仍跨 run、退不干净）；③ `_publish-image.yml` 的 owner 与 §17 判据谁维护。**评审通过前我不动发布链一行代码。**
+- **取号**：本则第九十一 ⇒ 下一则第九十二；不占新 TD 号，下一可用仍是 **TD-97**。
+
+---
+
+## 2026-10-14 第九十三则（本线：§6.3 闭合——对侧宕机的 fail-closed 语义用确定性单测钉死）
+
+- **做了什么**：演练台那次实证因基线失效（名册用户口令已换、对侧会话建不起来）不可用，
+  改为单测四条（`internal/controlplane/cutover_outage_test.go`）：对侧宕机（监听即关的
+  死端口）时 login/me/refresh 全部 **502 fail-closed**、refresh **不下发任何会话
+  Cookie**、3 次 502 后账号**不锁**、非名册用户本地登录不受影响。
+- **结论修正代码走查时的误判**：走查担心"`cutoverRouteRefresh` 转发失败回落本地 ⇒
+  401+清 Cookie=故障期丢会话"**不成立**——`forwardAuthToSvc` 只在**配置缺失**时返回
+  false（那时回落本地是对的）；走到 `ServeHTTP` 即使对侧拒绝连接，ErrorHandler 已写
+  502 且返回 true ⇒ 调用方直接带 502 返回。演练报告 §6.3 已改为"已闭合"。
+- **一个测试方法论教训（值得记）**：变异第一轮**没被抓住**——`httptest.ResponseRecorder`
+  首个 WriteHeader 定调，502 写下后本地面再写也不改状态码，"回落本地"在状态码层面
+  不可见。加强判据到**响应体恰为 502 JSON + 零 Cookie**（rosterUser 的本地口令与
+  登录口令相同，回落必追加 token/Cookie）后变异即刻判红。凡"已写响应后不得再处理"
+  一类不变量，都要用**响应体/头的追加痕迹**断言，不能只断状态码。
+- **验证**：controlplane + cutover 两包 go test 全绿、go vet 0、golangci-lint 0 issues、
+  gofmt 净、变异 1/1 判红。
 - **取号**：本则第九十二 ⇒ 下一则第九十三；不占新 TD 号，下一可用仍是 **TD-97**。

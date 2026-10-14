@@ -216,13 +216,13 @@ leader（15 秒内）。⇒ 演练台缺一页"引擎级故障恢复步骤（含
    名册还在）。修法：fault 恢复段重跑 admin 引导；名册用户重建须**先 unroute 再
    migrate**（幂等只认名册）。
 
-**§6.3 仍未闭环的一条（如实记账）**：名册用户"**持有效对侧会话 + 对侧被击杀**"时
-refresh 的确切状态码未取到实证——本机 probe 卡在演练台的路径口径上（`go run` 起的
-migrate job 把 `--credentials-out` 的 MSYS 路径 `/tmp/...` 按 Windows 语义解析，
-creds 文件报"已写入"但三方遍寻不见，一次性口令取不到 ⇒ 对侧会话建不起来）。
-代码层已知风险点（未验证）：`cutoverRouteRefresh` 在 `forwardAuthToSvc` 失败时
-**回落本地消费** ⇒ 名册用户的 rt 不在本地 ⇒ 401 + 清 Cookie，即"对侧故障期刷新会
-丢会话"——与 §3.7 的修复（store 故障不清会话）同类但不同路径。**建议**：下轮补
-`forwardAuthToSvc` 失败时的 fail-closed 分支（拒绝 + 不清 Cookie），并按 §6.3 的
-顺序（unroute→migrate→建会话→杀对侧→refresh）实证。本机复现脚本留在
-`.smoke-logs/gap-probe.sh`（路径口径修好即可直接跑）。
+**§6.3 已闭环（2026-10-14 确定性单测替代演练脚本实证）**：名册用户"**持有效对侧会话 +
+对侧被击杀**"时 refresh 的确切状态码已用单测钉死（演练脚本那次因基线失效不可用）。
+代码走查时担心的"`cutoverRouteRefresh` 转发失败回落本地消费 ⇒ 401+清 Cookie"**不成立**：
+`forwardAuthToSvc` 只在**配置缺失**（无规则/未配 URL）时返回 false ⇒ 回落本地；一旦走到
+`proxy.ServeHTTP`，即使对侧连接被拒，ErrorHandler 已写 502 且函数返回 true ⇒ 各切流
+口的调用方直接带 502 返回，不回落本地、不清 Cookie、不累计锁。四支守卫
+（`cutover_outage_test.go`）：login 502 且响应体恰为 502 JSON（防止"同一请求被处理
+两次"——recorder 首写定调会掩盖回落，故断言响应体与 Cookie 而非仅状态码）、3 次 502
+后账号不锁、refresh 502 且不下发任何会话 Cookie、me 502。**变异 1/1**：把
+"已写错误响应"改回 false ⇒ 登录守卫判红。
