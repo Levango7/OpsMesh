@@ -84,6 +84,72 @@ func scanRole(row rowScanner) *Role {
 // userColumns users 表查询的列列表（含 must_change_password，安全债；tenant_id 由迁移 018 保证）。
 const userColumns = `id, username, email, password_hash, status, role_ids, created_at, must_change_password, tenant_id`
 
+// GetUserByUsernameErr 是 GetUserByUsername 的**可区分错误变体**（§3.6/§3.7，2026-10-14
+// 演练）：`scanUser` 把「查无此人」与「读失败」压成同一个 nil（sql.ErrNoRows 与真错误
+// 不可区分），login 路径据此把后端故障当成"invalid username or password"、refresh 路径
+// 当成"user not active"而清 Cookie 毁会话——一次 DB 抖动 = 全体用户被击退 + 活跃用户被锁
+// 15 分钟（演练两个人设独立复现）。本变体把两者分开：返回 (nil, nil)=查无、(nil, err)=读失败。
+//
+// 走**可选接口**而非改 store 主契约（model.Store.GetUserByUsername 三十五处引用）：
+// 内存后端无读失败路径，无需实现；控制面按类型断言选用，零波及。
+//
+// 为什么两个入口各写一份 QueryRowContext+Scan（而不是共用一个 helper）：包级对账门禁
+// `TestSelectColumnCountMatchesScanTargets`（TD-90）要求 SELECT 列清单与 Scan 目标
+// **同函数可见**才静态可判；把 SQL 当参数传进共享 helper 会让该站点落入
+// 「静态不可判」而必须登记豁免。列清单本身仍单一来源（userColumns），不漂。
+func (s *SQLStore) GetUserByUsernameErr(username string) (*User, error) {
+	var u User
+	var email, passwordHash, status, tenantID sql.NullString
+	var roleIDsJSON []byte
+	var createdAt sql.NullTime
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT `+userColumns+` FROM users WHERE username=?`, username).
+		Scan(&u.ID, &u.Username, &email, &passwordHash, &status, &roleIDsJSON, &createdAt, &u.MustChangePassword, &tenantID)
+	if err != nil {
+		return nil, userScanErr(err, &u, &roleIDsJSON)
+	}
+	fillUserNullables(&u, email, passwordHash, status, roleIDsJSON, createdAt, tenantID)
+	return &u, nil
+}
+
+// GetUserErr 是 GetUser 的可区分错误变体（语义同 GetUserByUsernameErr）。
+func (s *SQLStore) GetUserErr(id string) (*User, error) {
+	var u User
+	var email, passwordHash, status, tenantID sql.NullString
+	var roleIDsJSON []byte
+	var createdAt sql.NullTime
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT `+userColumns+` FROM users WHERE id=?`, id).
+		Scan(&u.ID, &u.Username, &email, &passwordHash, &status, &roleIDsJSON, &createdAt, &u.MustChangePassword, &tenantID)
+	if err != nil {
+		return nil, userScanErr(err, &u, &roleIDsJSON)
+	}
+	fillUserNullables(&u, email, passwordHash, status, roleIDsJSON, createdAt, tenantID)
+	return &u, nil
+}
+
+// userScanErr 判定一次用户扫描失败的语义：ErrNoRows ⇒ (nil, nil) 查无；其余 ⇒
+// 记 storefail 并原样返回（读失败）。
+func userScanErr(err error, u *User, roleIDsJSON *[]byte) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // 查无此人：与读失败分开
+	}
+	storefail.Record("store: 读用户失败: %v", err)
+	return err
+}
+
+// fillUserNullables 把可空列填进用户（与 scanUser 的赋值逐字同序，防两处漂移）。
+func fillUserNullables(u *User, email, passwordHash, status sql.NullString, roleIDsJSON []byte, createdAt sql.NullTime, tenantID sql.NullString) {
+	u.Email, u.PasswordHash, u.Status = email.String, passwordHash.String, status.String
+	u.CreatedAt = createdAt.Time
+	u.TenantID = normalizeTenantID(strings.TrimSpace(tenantID.String))
+	if len(roleIDsJSON) > 0 {
+		if err := json.Unmarshal(roleIDsJSON, &u.RoleIDs); err != nil {
+			storefail.Record("store: 解析 role_ids JSON 失败 (user=%s): %v", u.ID, err)
+		}
+	}
+}
+
 // GetUser 按 ID 返回单用户（不存在返回 nil）。
 func (s *SQLStore) GetUser(id string) *User {
 	row := s.db.QueryRowContext(context.Background(),

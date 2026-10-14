@@ -190,6 +190,33 @@
   ② handler 有意写的 JSON 404 原样放行（修复不得篡改语义）；③ 只写 404 头不写 body 也收口。
   变异（去掉收口）⇒ 判红并打印实测 `text/plain "404 page not found"`，还原复绿。
 
+## [Unreleased] — 2026-10-14（§3.6+§3.7 收口：store 读故障不再伪装成凭据错误/身份消失）
+
+- **问题**（演练两个人设独立复现实测）：后端抖动窗口内任意账号登录 ⇒ 401
+  `invalid username or password`，且失败**计入** `loginGuard` ⇒ 运维 5 次后被锁
+  15 分钟（恢复后原口令立即可登——口令从来没错）；§3.7 同源：refresh 路径把
+  `GetUser` 的 nil（读失败与查无被 `scanUser` 压成同一个 nil）当
+  `user not active` ⇒ 清 Cookie + 401 ⇒ 故障期一次 refresh 销毁活跃会话。
+  一次 DB 抖动 = 全体用户被"看起来像密码错"击退 + 活跃用户被锁 + 会话被毁。
+- **修法（分流，不猜）**：SQL 后端新增**可区分错误变体** `GetUserByUsernameErr` /
+  `GetUserErr`（`(nil, nil)`=查无、`(nil, err)`=读失败），经**可选接口**
+  `userLookupErr` 由控制面 login/refresh 按类型断言选用——store 主契约
+  （35 处引用的 `GetUser*`）零改动，内存后端无读失败路径故不实现、行为逐字不变。
+  login 遇读失败 ⇒ **503 + 不记防爆破失败**（故障不把用户锁在门外，也不冒充凭据
+  错误）；refresh 遇读失败 ⇒ **503 + 不清 Cookie**（活跃会话不被一次故障摧毁）。
+  未命中故障的用户走原路径（错误口令仍 401 + 照常计数——分流没有顺手关掉真防爆破）。
+- **为什么是 503**：演练原文把"故障期返回什么状态码"列为产品裁定项；按本仓
+  "不把未知伪装成缺陷"的纪律，503（可恢复、与凭据无关、不改任何计数状态）是
+  唯一自洽选项，且前端既有 401 链路（静默 refresh → 失败跳登录）不会被 503
+  误触发。若后续要改语义（如 429+Retry-After），改动点仅两处、契约已有守卫钉住。
+- **守卫 5 条 + 变异 2/2**：login 故障 ⇒ 503 且不锁号、非故障用户 401+计数不受
+  影响、refresh 故障 ⇒ 503 且不清 Cookie；SQL 侧（nil, nil）查无 /（nil, err）
+  读失败 / 不映射成 ErrNoRows / 两个导出变体同形。变异：两路各自把故障当查无
+  ⇒ 对应守卫判红。列数对账门禁（TD-90）已满足：两个入口的 SELECT 与 Scan 同函数
+  可见（列清单仍单一来源 `userColumns`）。
+- **验证**：controlplane + store 全系 go test 全绿、go vet 0、golangci-lint
+  0 issues、gofmt 净；真库路径（sqlstore 集成用例）以 CI services 腿为准。
+
 ## [Unreleased] — 2026-10-14（§3.8 收口：两个审计端点租户口径统一——requireAuth=false 形态的越权读面消除）
 
 - **问题**（演练 §3.8）：`GET /api/v1/audits` 不带 tenant 参数返回**全租户**（人设实测 96 条）、`?tenant=<他租户>` 可定向读；而 `GET /api/v1/audit/events` 严格收敛调用方租户。旧的"隔离交给前置网关"前提在 **requireAuth=false**（本仓默认部署）下不成立——控制面自身仍执行 RBAC，两个端点的差异于是成为真实越权读面。

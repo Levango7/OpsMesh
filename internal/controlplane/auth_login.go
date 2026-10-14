@@ -183,7 +183,17 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if s.cutoverForwardLogin(w, r, body.Username, rawBody) {
 		return
 	}
-	u := s.store.GetUserByUsername(body.Username)
+	u, lookupErr := s.lookupUserByName(body.Username)
+	if lookupErr != nil {
+		// §3.6（2026-10-14 演练）：store 读失败是**服务端故障**——绝不记入防爆破
+		// 计数、绝不返回 401 冒充凭据错误。演练两个人设独立复现：后端抖动窗口内
+		// 任意账号登录 ⇒ "invalid username or password"，且失败**计入** loginGuard
+		// ⇒ 活跃用户 5 次后被锁 15 分钟（一次 DB 抖动 = 全体击退 + 全员锁号）。
+		// 503 的语义：故障可恢复、与凭据无关、不改变任何计数状态。
+		log.Printf("controlplane: handleAuthLogin 读用户失败（store 故障，按不可用分流）: %v", lookupErr)
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "authentication temporarily unavailable, retry shortly"})
+		return
+	}
 	if u == nil {
 		// 用户名不存在也计入限流计数窗口（不暴露账号是否存在，同样走锁定逻辑防枚举）。
 		s.loginGuard.RecordFail(body.Username)
@@ -307,7 +317,16 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired refresh token"})
 		return
 	}
-	u := s.store.GetUser(sess.UserID)
+	u, lookupErr := s.lookupUserByID(sess.UserID)
+	if lookupErr != nil {
+		// §3.7（2026-10-14 演练）：读失败**不清 Cookie、不毁会话**。旧逻辑把
+		// GetUser 的 nil（读失败与查无压成同一个 nil）一律当"user not active" ⇒
+		// 清 Cookie + 401 ⇒ 故障期一次 refresh 就销毁活跃会话（演练实测，
+		// "能登录、能刷新，偏偏故障窗口刷新一次就被踢下线"）。
+		log.Printf("controlplane: handleAuthRefresh 读用户失败（store 故障，按不可用分流）: %v", lookupErr)
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "session service temporarily unavailable, retry shortly"})
+		return
+	}
 	if u == nil || u.Status != "active" {
 		s.clearAuthCookies(w)
 		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "user not active"})
@@ -330,8 +349,34 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"user": u})
 }
 
-// authUserWithPerms 返回用户的**浅拷贝**并填入角色展开后的有效权限（供响应体使用）。
-//
+// userLookupErr 是「能区分查无与读失败」的用户查询**可选接口**（§3.6/§3.7，
+// 2026-10-14 演练）：SQL 后端实现（sqlstore.GetUserByUsernameErr/GetUserErr），
+// 内存后端无读失败路径故不实现——按类型断言选用，零波及 store 主契约
+// （model.Store 的 GetUser* 返回值压掉 sql.ErrNoRows 与真错误的差别，正是本次
+// 要把故障伪装成凭据错误/身份消失的根因）。
+type userLookupErr interface {
+	GetUserByUsernameErr(username string) (*store.User, error)
+	GetUserErr(id string) (*store.User, error)
+}
+
+// lookupUserByName 带故障分辨的用户查询：(nil, nil)=查无此人；(nil, err)=store 读失败
+// （调用方必须按服务端故障分流，不得当作"用户不存在"）。
+func (s *Server) lookupUserByName(username string) (*store.User, error) {
+	if lu, ok := s.store.(userLookupErr); ok {
+		return lu.GetUserByUsernameErr(username)
+	}
+	return s.store.GetUserByUsername(username), nil
+}
+
+// lookupUserByID 同上（按 ID 维度）。
+func (s *Server) lookupUserByID(id string) (*store.User, error) {
+	if lu, ok := s.store.(userLookupErr); ok {
+		return lu.GetUserErr(id)
+	}
+	return s.store.GetUser(id), nil
+}
+
+// authUserWithPerms 返回用户的**浅拷贝**并填入角色展开后的有效权限（供响应体使用）。//
 // 为什么登录响应也要填（B4，2026-10-12 模拟用户演练）：store.User.EffectivePermissions 的设计
 // 意图是「供前端侧栏按权限过滤功能入口，与后端 RBAC 闸同源」（见 model.go 字段注释），而此前
 // **只有 /auth/me 填它**——登录响应里是 null ⇒ 用户从登录那一刻起不知道自己能做什么；
