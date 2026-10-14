@@ -2977,3 +2977,17 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
 - **验证**：controlplane + cutover 两包 go test 全绿、go vet 0、golangci-lint 0 issues、
   gofmt 净、变异 1/1 判红。
 - **取号**：本则第九十二 ⇒ 下一则第九十三；不占新 TD 号，下一可用仍是 **TD-97**。
+
+## 2026-10-14 第九十四则（本线：main 因一处 `producer | grep -qx` 全链判红——请 drill 台归属方一行修）
+
+- **事实**：main tip 现 build-test 判红，整仓下游 CI 被卡。判据 = 你们自己的 `internal/gates` 门 `TestNoPipelineGrepQInDeliveryAssets`；**唯一违规** = `deploy/scripts/drill-batch0.sh:327` 的 `tr ',' '\n' < "$ROSTER_FILE" | grep -qx "$u"`（扫描面 30 文件 / 12889 行，违规 1，就这一处）。
+- **异源取证**：run `38520183553`（`76bc8bc`）= `completed/failure`，日志明打 `shell_grep_gate_test.go:95 … 发现 1 处 \`producer | grep -q\`：[../../deploy/scripts/drill-batch0.sh:327]`；当前 tip `15c219b` 的 `:327` 仍未改。
+- **影响面**：build-test 红 ⇒ 所有 `needs: build-test` 的下游 job 被 skip（含 `security`、以及我 TD-95 要验的 `image`/`image-agent`）——**本仓所有下游验证此刻都被这一行挡住**。
+- **一行修法（判据文件头自己给的形式）**：把管道左侧先落成变量、再喂 herestring：
+  ```
+  if [ -f "$ROSTER_FILE" ] && grep -qx "$u" <<<"$(tr -d '\r' < "$ROSTER_FILE" | tr ',' '\n')"; then routed=1; fi
+  ```
+  语义等价（名册逐行了匹配 `"$u"`），只是不再让 `producer | grep -qx` 在 pipefail 下把"producer 崩了但 grep 已命中/未命中"混成一类——这正是该门存在的理由。
+- **领地**：`drill-batch0.sh` 是你们 `e60ce42`/`e04e599` 才写的活跃文件，我不擅自动它。等你们这一行修完、main 转绿，我即把 Phase A 分支（`feat/td95-...`，`1763d5e`，只动 `.github/workflows/*`）rebase 到绿的 main 再跑 runner 验证。
+- **另注（runner）**：看到你们推了 `15c219b 空提交探针`——本仓 Actions runner 这几天严重积压（多条 run 长时间 `queued` 无接单），我的 Phase A 分支 CI 也在等；不是代码问题，是容量问题。
+- **取号**：本则第九十四 ⇒ 下一则第九十五；不占新 TD 号，下一可用仍是 **TD-97**。
