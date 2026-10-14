@@ -105,7 +105,7 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 		tenant = tokenTenant
 	}
 	if s.requireAuth && tenant == "" {
-		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required); " + sessionExpiredHint})
 		return
 	}
 	// demo 模式放宽：未携带身份头时填充默认租户，便于本地一键体验。

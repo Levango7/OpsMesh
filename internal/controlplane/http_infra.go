@@ -88,6 +88,17 @@ func restoreRequestBody(r *http.Request, snapshot []byte) {
 	r.ContentLength = int64(len(snapshot))
 }
 
+// sessionExpiredHint 是「身份类失败」响应的统一收尾（§3.10，2026-10-14 演练）：
+// 会话过期/未认证时用户撞到的文案曾有三套并存——400 `missing X-Tenant-ID header`、
+// 401 `missing identity context`、401 `missing Authorization header`——且**没有一套**
+// 提示"该重新登录了"。演练里两个人设在过期后各自撞到其中一套，都先去排查网络与账号
+// 状态（真实用户同样会判"系统坏了"）。
+//
+// 状态码一律不动（各分支的 400/401/403 是既有契约，E2E 与前端 401 链路都依赖），
+// 只在身份类失败的 body 上补同一收尾：第一眼就知道该怎么办。新代码请复用本常量，
+// 不要再造第四种说法。
+const sessionExpiredHint = "session may have expired; please log in again"
+
 // requireTenantContext 提取并校验网关注入的租户身份上下文（认证防御）。
 //
 // 行为矩阵（修复 1+2 + CI E2E-sec 越权漏洞真修 + 修复 3 用户交叉校验）：
@@ -140,7 +151,7 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 		// （声明有可信网关认证后剥离凭证只留头转发，即 README IAM 路径 B）才放行。
 		// requireAuth=false 保留内网头直通（部署方自行保证前置）。
 		if tokenTenant == "" && s.requireAuth && !trustGateway {
-			paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "identity header without verifiable credential (require-auth; enable --trust-gateway-headers if behind a trusted gateway)"})
+			paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "identity header without verifiable credential (require-auth; enable --trust-gateway-headers if behind a trusted gateway); " + sessionExpiredHint})
 			return actx, false
 		}
 		// A2 修复（2026-10-12 模拟用户演练）：头非空时也要把**令牌里的身份**回填进来。
@@ -169,7 +180,7 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 		return actx, true
 	}
 	if s.requireAuth {
-		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required)"})
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required); " + sessionExpiredHint})
 		return actx, false
 	}
 	if s.cfg != nil && s.cfg.Demo {
@@ -181,7 +192,7 @@ func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (a
 		return actx, true
 	}
 	// 非生产非 demo 模式：拒绝空租户头，防越权伪造。
-	paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "missing X-Tenant-ID header (tenant context required)"})
+	paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "missing X-Tenant-ID header (tenant context required); " + sessionExpiredHint})
 	return actx, false
 }
 

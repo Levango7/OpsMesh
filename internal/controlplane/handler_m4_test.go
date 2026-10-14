@@ -278,7 +278,8 @@ func TestHandlerM4Agents_Happy(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	var agents []map[string]string
+	// §3.9 起列表项含布尔 live（心跳派生）——解到 map[string]any 并按类型断言。
+	var agents []map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &agents); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -286,7 +287,10 @@ func TestHandlerM4Agents_Happy(t *testing.T) {
 		t.Fatal("expected at least 1 agent, got empty list")
 	}
 	if agents[0]["agentID"] != "m4-agent-1" {
-		t.Fatalf("agentID=%q, want m4-agent-1", agents[0]["agentID"])
+		t.Errorf("agentID = %v, want m4-agent-1", agents[0]["agentID"])
+	}
+	if live, ok := agents[0]["live"].(bool); !ok || !live {
+		t.Errorf("刚注册的 agent 应 live=true，实得 %v (%T)", agents[0]["live"], agents[0]["live"])
 	}
 }
 

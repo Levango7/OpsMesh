@@ -190,6 +190,27 @@
   ② handler 有意写的 JSON 404 原样放行（修复不得篡改语义）；③ 只写 404 头不写 body 也收口。
   变异（去掉收口）⇒ 判红并打印实测 `text/plain "404 page not found"`，还原复绿。
 
+## [Unreleased] — 2026-10-14（可见性三件收口：agent 失联可判 / 身份失败统一"请重新登录" / 零角色账号有指引）
+
+- **§3.9 agent 列表补 lastSeen + 派生 live**：此前只回自报 `status`——agent 进程
+  死了也恒 `"online"`（演练实测停机 ≥7 分钟仍 online），运维看不出"这台失联
+  多久"。现列表补 `lastSeen`（RFC3339）与 `live`（心跳 10s/次，30s 即 3 个节拍
+  未更新判失联）；自报 `status` 原样保留（旧字段兼容）——派生而非改库：store 的
+  status 语义是"自报状态"，别处还在消费。
+- **§3.10 身份类失败统一收尾**：会话过期/未认证的文案曾三套并存（400 missing
+  X-Tenant-ID / 401 missing identity / 401 missing Authorization header）且**没有
+  一套**提示"该重新登录"（演练两个人设各自撞到一套，都先排查网络与账号）。现五处
+  身份类失败点统一追加 `sessionExpiredHint`（"session may have expired; please
+  log in again"）——状态码一律不动（各分支 400/401/403 是既有契约），只补文案。
+- **§3.11 零角色账号登录指引**：零角色账号此前登录成功、permissions 空、**零
+  提示** ⇒ 真实新人判"系统坏了"（此后每个读取 403）。现登录响应在零角色时追加
+  `notice`（omitempty，有角色的用户响应体与之前逐字一致）。
+- **守卫 3 条**：失联 agent live=false + lastSeen 在场 + 自报 status 保留、身份
+  失败带重登收尾、零角色登录带 notice 且有角色账号无 notice。既有 agents 列表
+  用例随契约增长同步更新（解码目标改 `map[string]any`）。
+- **验证**：`internal/controlplane` 整包 go test 全绿、go vet 0、golangci-lint
+  0 issues、gofmt 净。
+
 ## [Unreleased] — 2026-10-14（§3.6+§3.7 收口：store 读故障不再伪装成凭据错误/身份消失）
 
 - **问题**（演练两个人设独立复现实测）：后端抖动窗口内任意账号登录 ⇒ 401

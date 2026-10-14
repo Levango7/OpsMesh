@@ -286,7 +286,7 @@ func (s *Server) userFromToken(r *http.Request) (*store.User, error) {
 func extractBearer(r *http.Request) (string, error) {
 	v := r.Header.Get("Authorization")
 	if v == "" {
-		return "", errors.New("missing Authorization header")
+		return "", errors.New("missing Authorization header; " + sessionExpiredHint)
 	}
 	const prefix = "Bearer "
 	if len(v) < len(prefix) || !strings.EqualFold(v[:len(prefix)], prefix) {

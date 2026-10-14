@@ -257,7 +257,14 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setAuthCookies(w, token, rt)
-	paginate.WriteJSON(w, http.StatusOK, authResponse{Token: token, User: s.authUserWithPerms(u)})
+	// §3.11（2026-10-14 演练）：零角色账号此前登录成功、permissions 空、**零提示**
+	// ⇒ 真实新人会判"系统坏了"（此后每个读取都 403）。登录响应补一条显式指引，
+	// 只在零角色时出现（有角色的用户看不到，不制造噪音）。
+	resp := authResponse{Token: token, User: s.authUserWithPerms(u)}
+	if len(u.RoleIDs) == 0 {
+		resp.Notice = "account has no role assigned yet; reads will be denied until an admin assigns a role"
+	}
+	paginate.WriteJSON(w, http.StatusOK, resp)
 }
 
 // handleAuthLogout 处理 POST /api/v1/auth/logout：登出并清除会话 Cookie。

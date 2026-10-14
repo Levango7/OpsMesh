@@ -72,6 +72,9 @@ type authResponse struct {
 	User                *store.User `json:"user"`
 	MustChangePassword  bool        `json:"mustChangePassword"`
 	ChangePasswordToken string      `json:"changePasswordToken,omitempty"`
+	// Notice：零角色账号的登录指引（§3.11，2026-10-12→14 演练）。仅零角色时非空，
+	// omitempty 保证有角色的用户响应体与之前逐字一致。
+	Notice string `json:"notice,omitempty"`
 }
 
 // ============================================================================

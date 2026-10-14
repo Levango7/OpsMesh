@@ -62,6 +62,10 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// agentLiveWindow 是 agent 判定失联的心跳窗口（§3.9）：心跳 10s/次，30s（3 个
+// 节拍）未更新即不再视为在线。仅用于列表派生字段 live，不写回 store 的自报 status。
+const agentLiveWindow = 30 * time.Second
+
 // handleAgents 处理 GET /api/v1/agents，按网关注入租户返回已注册 agent 列表（供前端下拉框）。
 func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -76,13 +80,23 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireProd(w, r, "device:read"); !ok {
 		return
 	}
-	out := make([]map[string]string, 0)
+	// §3.9（2026-10-14 演练）：列表补 lastSeen 与**推导**的 live 判定。此前只回自报
+	// status——agent 进程死了也恒 "online"（人设实测停机 ≥7 分钟仍 online），运维
+	// 看不出"这台失联多久"。心跳 10s/次（internal/agent 的 heartbeatLoop），
+	// 30s（3 个节拍）未更新即判失联。自报 status 原样保留（旧字段兼容），
+	// 真相由 live + lastSeen 表达——派生而非改库：store 的 status 语义是"自报状态"，
+	// 改它会影响别处对自报值的消费。
+	now := time.Now()
+	out := make([]map[string]any, 0)
 	for _, a := range s.store.Agents(actx.TenantID) {
-		out = append(out, map[string]string{
+		live := a.Status == "online" && !a.LastSeen.IsZero() && now.Sub(a.LastSeen) <= agentLiveWindow
+		out = append(out, map[string]any{
 			"agentID":  a.AgentID,
 			"hostname": a.Hostname,
 			"segment":  a.Segment,
 			"status":   a.Status,
+			"lastSeen": a.LastSeen.UTC().Format(time.RFC3339),
+			"live":     live,
 		})
 	}
 	// 修复 3：分页（向后兼容：不传 page 返回全量）。
