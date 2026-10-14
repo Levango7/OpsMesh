@@ -2910,3 +2910,14 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
   "operator 能取消自己建的任务"这条）、以及对 §3.6 状态码口径的确认
   （默认 503 已落地，推翻成本=两处改动+五支守卫）。
 - **取号**：本则第八十九 ⇒ 下一则第九十；不占新 TD 号，下一可用仍是 **TD-97**。
+
+## 2026-10-14 第九十则（本线：TD-95 方向① 预备方案——动 release 链前开回话窗口）
+
+- **缘起**：用户选 TD-95 方向①（把 opsmesh-binary/opsmesh-agent 的构建提权并入 release.yml 同一 needs 图，彻底消跨 workflow 竞态）。方向② 已由你们 `35c6213` 落地并经 v0.15.0 首跑实证（第八十四则），**release 链是本仓最敏感文件集**（v0.9.1 有 tag 无产物、v0.12.0 归版 pin 指向未发布版本，两起事故都在这里），而 §17 的 needs 图形状是你们上周刚合的——故落笔前先在板上把方案钉清，开一窗口请你们回一句，别两条线同时改 release.yml。
+- **我盘的现状**（`file:line` 为据，tip `02861dd`）：
+  - binary/agent 的**版本 tag 由 ci.yml 产出**——`image`（`IMAGE_LEAF=opsmesh-binary`，ci.yml:779）/`image-agent`（ci.yml:1178）在 tag push 时 `crane retag` 追加 `:<版本号>` 与 `:latest`；release.yml 的 `build-and-push`/`promote`（matrix.service，:33/:269）**只覆盖 12 常驻服务**，不含 binary/agent。⇒ 回核 ①②④⑤ 里对这两个镜像的检查读的是**另一条 run（tag ci）**的产物 = 竞态源。
+  - 门禁 §17 现钉：`required=["build-and-push","promote","github-release"]`、promote needs build-and-push、构建腿只推不可变 `:<sha>`、verify-artifacts 注入 GH_TOKEN（`va_gh_token=`）、串行闸 concurrency、以及 verify-release-artifacts / wait-tag-ci 两个分诊自测**真跑一次**。
+- **方向① 形状**（缺一即新红）：① ci.yml 的 `image`/`image-agent` 于 tag push 时**不再** retag（去掉 `:<version>`+`:latest`，只留不可变 `:<sha>`）；② release.yml 增 `build-binary`/`build-agent`（推 `:<sha>`）；③ `promote` 扩 needs 到这两个、在 registry 侧 retag 它们 ⇒ `verify-artifacts` 经 needs 落入**同一图**，不再有跨 run 等待；④ **方向② 的 `wait-tag-ci.sh` 保留**（回核被绕过时的双保险，不作主判据）；⑤ 门禁 §17 联动改：`required` 加两新 job、"构建腿只推 `:<sha>`" 断言覆盖这两个新 job（复用 ci.yml:849-871 那段解析逻辑）、矩阵同步警告由"12 项"改为"12 服务 + 2 特殊叶子"。
+- **`:latest` 归属已定 A（本线判定并开工）**：**A**＝整条搬——binary/agent 的 tag 侧 `:latest` 也由 release.yml 在 tag push 时打（main 分支 push 的 `:latest`＝最新开发版仍归 ci.yml；tag 的 `:latest`＝最新发布版归 release.yml——两个 owner 对应两个不同事实，不是同一动作被拆两处）；对比 **B**（release.yml 只补 `:<version>`、`:latest` 仍由 ci.yml 打）⇒ B 下 needs 图仍缺 `:latest` 出处、回核 `:latest` 那项还是跨 run，且"版本 tag 与浮动 tag 分两条 workflow 各自动同一个 repo"＝双改标 footgun，非彻底解。**故选 A**，本线按上述 1–5 开分支施工。
+- **领地与叫停**：release 链是你们刚合（`9b23b90`/`35c6213`）的领地、也是本仓最敏感文件集，故先在此留痕：**施工期间 release.yml / ci.yml / 门禁 §17 由本线动**，你们若对 §17 的 needs 图形状或 A 的取舍有异见随时叫停；A 用"tag 侧 latest 单一归 release.yml"消解了双改标风险。**推 main 前逐批确认（不变）**；方向②的 `wait-tag-ci` 保留为兜底、不删。
+- **取号**：本则第九十 ⇒ 下一则第九十一；不占新 TD 号，下一可用仍是 **TD-97**。
