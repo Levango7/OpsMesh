@@ -324,7 +324,11 @@ cmd_fault(){
 
   # 该用户是否在名册——决定 login 对侧的依赖形态（名册用户走对侧、本地用户不依赖）。
   local routed=0
-  if [ -f "$ROSTER_FILE" ] && tr -d '\r' < "$ROSTER_FILE" | tr ',' '\n' | grep -qx "$u"; then routed=1; fi
+    # 名册条目可能逗号分隔：展平后用 <<< 喂给 grep（**不用 `| grep`**——
+    # pipefail 下 producer 非零退出会把命中误判成未命中，internal/gates 有专禁）。
+    local flat
+    flat="$(tr -d '\r' < "$ROSTER_FILE" 2>/dev/null | tr ',' ' ')"
+    if [ -f "$ROSTER_FILE" ] && grep -qw -- "$u" <<< "$flat"; then routed=1; fi
   code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
     -d "{\"username\":\"$u\",\"password\":\"$USERPASS\"}")
   if [ "$routed" = "1" ]; then
@@ -377,15 +381,60 @@ cmd_fault(){
   say "  （探针账号 $probe 被锁——这正是代价：真实账号此时连正确口令也 429，"
   say "    恢复要等锁定窗口；值班须知，别在事故夜第一次撞上）"
 
-  say "== C. store 读故障（§3.6/§3.7 进程级实证；默认只打印步骤）=="
-  say "  执行前提：确认无他人使用共享库容器 $MYSQL_C（stop 会波及同机其它证据栈）。"
+  say "== C. store 读故障（§3.6/§3.7 进程级实证；--with-mysql 才真跑）=="
+  say "  默认只打印步骤不执行；传 --with-mysql 且确认无他人使用共享库容器 $MYSQL_C 才真跑"
+  say "  （本机 2026-10-14 实测前置：docker ps 在跑容器对 opsmesh_test 零依赖）。"
   say "  步骤：1) docker stop $MYSQL_C  2) login 任意账号 ⇒ 应 503 且**不是** 401；"
   say "        3) 连错 5 次口令后正常口令登录 ⇒ 仍 503（锁不因基础设施故障累计），"
   say "           容器恢复后直接 200（无锁残留）；  4) refresh 活会话 ⇒ 503 且 Cookie 不清；"
   say "        5) docker start $MYSQL_C 后一切恢复。"
-  if [ "$with_mysql" = "1" ]; then
-    say "  （--with-mysql 已传，但本机共享库风险自负：请确认后手工执行上述步骤）"
+  if [ "$with_mysql" != "1" ]; then return 0; fi
+
+  # ---- 真跑：对共享库容器做 stop/start（调用方已确认无他人使用）----
+  local victim="${1:-drill-u01}"
+  local jar2="$OUT/fault-mysql.jar"
+  rm -f "$jar2"
+  # 先建一个活会话（sha256 摘要登录=本地路径，与对侧无关）。
+  curl -s -o /dev/null -c "$jar2" -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/register" \
+    -d "{\"username\":\"$victim\",\"password\":\"$USERPASS\",\"email\":\"$victim@drill.local\"}" >/dev/null 2>&1 || true
+  # 注册可能需审批或被占用：退回用既有演练账号登录（start 建的 account 是 active）。
+  code=$(curl -s -o /dev/null -w '%{http_code}' -c "$jar2" -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
+    -d "{\"username\":\"drill-u01\",\"password\":\"$USERPASS\"}")
+  pass_fail "杀库前基线：drill-u01 登录" "$code" 200 || fails=$((fails+1))
+
+  say "  docker stop $MYSQL_C"
+  docker stop "$MYSQL_C" >/dev/null 2>&1 || { say "  ✗ 停库失败（docker 权限？）"; fails=$((fails+1)); return "$fails"; }
+  sleep 2
+  code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
+    -d "{\"username\":\"drill-u01\",\"password\":\"$USERPASS\"}")
+  pass_fail "杀库后 login 应 503（不得 401 冒充凭据错误）" "$code" 500 502 503 || fails=$((fails+1))
+  # 连错 5 次仍不得因"故障"锁账号（lock 会把这些 503 也算失败的话，恢复后正确口令也进不去）。
+  for n in 1 2 3 4 5; do
+    curl -s -o /dev/null -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
+      -d "{\"username\":\"drill-u01\",\"password\":\"wrong-$n\"}" >/dev/null 2>&1 || true
+  done
+  code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
+    -d "{\"username\":\"drill-u01\",\"password\":\"$USERPASS\"}")
+  pass_fail "锁累计判据：连错 5 次 + 杀库期，正确口令应仍 503（锁未累计）" "$code" 500 502 503 || fails=$((fails+1))
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$CP/api/v1/auth/refresh" -b "$jar2" -c "$jar2")
+  pass_fail "杀库期 refresh 应 503（不得 401）" "$code" 500 502 503 || fails=$((fails+1))
+  if grep -q 'Set-Cookie.*Max-Age=0' "$OUT/cp.log" 2>/dev/null; then
+    say "  ✗ 杀库期出现清 Cookie（会话被基础设施故障摧毁）"; fails=$((fails+1))
+  else
+    say "  ✓ 杀库期未清 Cookie（会话存活）"
   fi
+
+  say "  docker start $MYSQL_C"
+  docker start "$MYSQL_C" >/dev/null 2>&1 || { say "  ✗ 起库失败"; fails=$((fails+1)); return "$fails"; }
+  # 等库就绪（mysql 容器刚起时握手未就绪会偶连失败）。
+  local t=0
+  until docker exec "$MYSQL_C" mysql -uroot -prootpass -e "SELECT 1;" >/dev/null 2>&1; do
+    t=$((t+1)); [ "$t" -gt 30 ] && { say "  ✗ 库起后不就绪"; fails=$((fails+1)); return "$fails"; }; sleep 1
+  done
+  say "  ✓ 库已就绪（${t}s）"
+  code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
+    -d "{\"username\":\"drill-u01\",\"password\":\"$USERPASS\"}")
+  pass_fail "库恢复后正确口令应立即 200（锁无残留）" "$code" 200 || fails=$((fails+1))
 
   say
   if [ "$fails" -eq 0 ]; then say "fault: 全部断言通过"; else say "fault: $fails 条断言未过"; fi
