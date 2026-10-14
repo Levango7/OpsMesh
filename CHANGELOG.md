@@ -190,6 +190,31 @@
   ② handler 有意写的 JSON 404 原样放行（修复不得篡改语义）；③ 只写 404 头不写 body 也收口。
   变异（去掉收口）⇒ 判红并打印实测 `text/plain "404 page not found"`，还原复绿。
 
+## [Unreleased] — 2026-10-14（§3.12 收口：operator 补三个作业动词——RBAC 矩阵细化，不上归属授权）
+
+- **用户裁定（权限设计二选一的答复）**：走 **RBAC 矩阵细化**，不做基于场景/归属的
+  授权。三条依据：① 本平面授权模型只有角色矩阵一份（`RolePermissions()` 是
+  seedRBAC 与 RBAC 闸的共同单一来源），不存在任何 subject-object-relation 概念，
+  再造"只能取消自己建的任务"等于引入第二套授权机制与第二套语义（代发任务归属谁？
+  交接班时上一班的失控任务谁停？）；② 演练查到的是矩阵洞不是机制缺失——
+  `task:cancel`/`alert:ack`/`alert:silence` 所在组本就在 operatorGroups 里，只是
+  动作名不在 {read,write,execute} 派生集内被静默丢弃；③ 交接场景恰恰要求下一班能停
+  上一班的任务，归属限制会把"能开不能关"换个形状带回来。归属维度授权若要建设另立
+  设计项，不塞进这次补洞。
+- **改动**：operator 派生动作集由 {read, write, execute} 扩为
+  {read, write, execute, **cancel, ack, silence**}。演练症状（三个人设独立复现）
+  "operator 建得了任务却取消不了、告警确认/静默全 403"随之消除。
+- **边界（同笔钉住）**：审批类（task:approve / cmdb:approve / approval:approve）
+  与毁灭性动作（device:delete / role:delete / user:delete / k8s:delete）与
+  diagnostics:dump **仍 admin-only**；viewer 仍无取消权。单源派生 ⇒ memory/sqlstore
+  两个后端的 seedRBAC 与 RBAC 闸同时生效，既有库重启补种。
+- **顺带清账**：权限目录里 `audit:read` 有**两条重复定义**（44 行与 75 行，描述
+  文案不同），删除重复项——`PermSpecs` 是"目录长度"判据的输入（admin 集=全量目录），
+  重复会让这类对账永远差 1。
+- **守卫 6 条 + 变异 1/1**：operator 持有三动词、不持有八个管理动词、operator ⊂
+  admin 且 adm=全量目录、handler 层 operator 取消/确认/静默均 200、operator 审批仍
+  403、viewer 取消仍 403。变异（撤回三动词）⇒ 模型层与 handler 层守卫同时判红。
+
 ## [Unreleased] — 2026-10-14（可见性三件收口：agent 失联可判 / 身份失败统一"请重新登录" / 零角色账号有指引）
 
 - **§3.9 agent 列表补 lastSeen + 派生 live**：此前只回自报 `status`——agent 进程

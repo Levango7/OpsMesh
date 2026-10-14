@@ -72,7 +72,6 @@ var PermSpecs = []PermSpec{
 	{"argocd", "argocd:write", "编辑ArgoCD应用"},
 	{"compliance", "compliance:read", "查看合规报告"},
 	{"compliance", "compliance:write", "执行合规扫描"},
-	{"audit", "audit:read", "查询审计事件"},
 	{"ha", "ha:read", "查看HA状态"},
 	{"ha", "ha:write", "手动切换leader"},
 	{"backup", "backup:read", "查看备份记录"},
@@ -185,6 +184,25 @@ func RolePermissions() map[string][]string {
 	operatorReadOnlyGroups := map[string]bool{
 		"gpu": true, "runbook": true, "incident": true, "k8s": true,
 	}
+	// operatorGroupActions 是 operator 在 operatorGroups 各组内拿到的动作集。
+	// 2026-10-14 §3.12（用户裁定：RBAC 矩阵细化，不上基于归属的场景授权）：
+	// 在 read/write/execute 之外追加 **cancel/ack/silence 三个作业动词**。
+	// 背景（演练 §3.12，三个人设独立复现）：task:cancel 与 alert:ack/alert:silence
+	// 所在的组（task/alert）本就在 operatorGroups 里，但动作名不属于
+	// read/write/execute ⇒ 派生循环静默丢弃 ⇒ operator「建得了任务却取消不了、
+	// 告警确认与静默全 403」——值班角色能开不能关。
+	// 为什么不是按场景（归属）授权：本平面的授权模型只有角色矩阵一份
+	// （RolePermissions 是 seedRBAC 与 RBAC 闸的共同单一来源），不存在任何
+	// subject-object-relation 概念；再造一套"只能取消自己建的任务"等于引入第二套
+	// 授权机制与第二套语义（代发任务归属谁？交接班时上一班的失控任务谁停？），
+	// 而交接场景恰恰要求下一班能停上一班的任务。归属维度授权若要建设，另立设计项。
+	// 刻意**不含** approve（cmdb:approve / approval:approve / task:approve 仍
+	// admin-only——审批是管理动作不是作业动词）与 delete（device:delete /
+	// role:delete / user:delete / k8s:delete 等毁灭性动作仍 admin-only）。
+	operatorGroupActions := map[string]bool{
+		"read": true, "write": true, "execute": true,
+		"cancel": true, "ack": true, "silence": true,
+	}
 	for _, p := range allPerms {
 		idx := strings.Index(p, ":")
 		if idx <= 0 {
@@ -194,7 +212,7 @@ func RolePermissions() map[string][]string {
 		if strings.HasSuffix(p, ":read") {
 			viewerPerms = append(viewerPerms, p)
 		}
-		if (operatorGroups[group] && (action == "read" || action == "write" || action == "execute")) ||
+		if (operatorGroups[group] && operatorGroupActions[action]) ||
 			(operatorReadOnlyGroups[group] && action == "read") {
 			operatorPerms = append(operatorPerms, p)
 		}
