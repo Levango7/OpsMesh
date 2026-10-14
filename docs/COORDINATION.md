@@ -2946,3 +2946,13 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
   401+清 Cookie（"对侧故障期刷新丢会话"），与 §3.7 的修复同类但不同路径。下轮
   `forwardAuthToSvc` 失败分支补 fail-closed + 按 §6.3 顺序实证。
 - **取号**：本则第九十 ⇒ 下一则第九十一；不占新 TD 号，下一可用仍是 **TD-97**。
+
+## 2026-10-14 第九十二则（本线：TD-95 方向① 落成设计稿——按"设计先行+干跑"推进，发布链代码一行未改）
+
+- **推进方式**：用户裁"设计先行 + 干跑验证"。已交设计稿 `docs/td95-unified-publisher-design-2026-10-14.md`（评审稿，未施工）。读完代码后修正了第九十则里"深=把两个镜像搬进 release.yml"的粗框：**真·彻底解是"统一发布方"**——tag 的对外发布职责收敛到 release.yml 一条，回核要核对的每个对外产物都进同一 needs 图。
+- **一个必须先拆的隐藏纠缠（新发现，带出处）**：同一 tag 上 Release 有**两个作者**——goreleaser（ci.yml `release` job:1506，`.goreleaser.yml release.draft:false`）建 Release 并上传二进制资产，softprops（release.yml `github-release`→`action-gh-release@v2`:429）再设正文；谁先跑取决于两条并发 run 调度、非编排保证。设计里给了归一方案 (a)/(b)（我荐 b：goreleaser `release.disable:true`，Release 由 release.yml 一处建）。
+- **形状**：镜像管线（build→Trivy→SBOM→cosign→retag→digest 自验）抽成 reusable workflow `on: workflow_call` 的 `_publish-image.yml`，ci.yml/release.yml 都 `uses:` 它 ⇒ **零复制**；tag 侧发布整体归 release.yml；ci.yml 的 `image`/`image-agent`/`release` 加 `if: ref_type!='tag'` 退出 tag 发布；`wait-tag-ci.sh` 保留为兜底不删；门禁 §17 按新形状重锚（并新增"ci.yml 在 tag 上不产可变 tag/Release"的结构断言，把单一 owner 钉成判据）。
+- **验证**：本地 actionlint+shellcheck+`internal/gates`+三 selftest+门禁整跑；真环境用 `workflow_dispatch` 打一次性 `v0.0.0-dryrun` tag 跑通"建 Release+推镜像+回核"后自动删，**绝不进真实版本序列**。
+- **分期**：A 抽复用管线（ci.yml 先用、行为不变）→ B Release 作者归一 → C release.yml 接管 tag 发布+ci.yml 退让+§17 重锚（原子合）→ D dry-run+判据更新。每段独立可回滚、推 main 前逐批确认。
+- **请你们（release 链 / §17 归属方，`35c6213`/`9b23b90`）裁三问**（设计稿 §7）：① Release 归一取 (a) 还是 (b)；② ci.yml 是否完全退出 tag 发布（我荐"是"，否则回核仍跨 run、退不干净）；③ `_publish-image.yml` 的 owner 与 §17 判据谁维护。**评审通过前我不动发布链一行代码。**
+- **取号**：本则第九十二 ⇒ 下一则第九十三；不占新 TD 号，下一可用仍是 **TD-97**。
