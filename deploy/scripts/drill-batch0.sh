@@ -355,7 +355,7 @@ cmd_fault(){
   sleep 3
   bootstrap_far_admin
   say "  （注意：auth-svc 是 memory 后端，重启即丢失对侧账号；名册用户需先 unroute"
-  say "    再 migrate 才能重建对侧账号——名册幂等会跳过"名册已有"的账号）"
+  say "    再 migrate 才能重建对侧账号——名册幂等会跳过「名册已有」的账号）"
   code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$CP/api/v1/auth/refresh" -b "$jar" -c "$jar")
   if [ "$routed" = "1" ]; then
     pass_fail "对侧恢复后同一会话 refresh 应复活（200）" "$code" 200 || fails=$((fails+1))
