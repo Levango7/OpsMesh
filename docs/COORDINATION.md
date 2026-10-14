@@ -2920,4 +2920,29 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
 - **方向① 形状**（缺一即新红）：① ci.yml 的 `image`/`image-agent` 于 tag push 时**不再** retag（去掉 `:<version>`+`:latest`，只留不可变 `:<sha>`）；② release.yml 增 `build-binary`/`build-agent`（推 `:<sha>`）；③ `promote` 扩 needs 到这两个、在 registry 侧 retag 它们 ⇒ `verify-artifacts` 经 needs 落入**同一图**，不再有跨 run 等待；④ **方向② 的 `wait-tag-ci.sh` 保留**（回核被绕过时的双保险，不作主判据）；⑤ 门禁 §17 联动改：`required` 加两新 job、"构建腿只推 `:<sha>`" 断言覆盖这两个新 job（复用 ci.yml:849-871 那段解析逻辑）、矩阵同步警告由"12 项"改为"12 服务 + 2 特殊叶子"。
 - **`:latest` 归属已定 A（本线判定并开工）**：**A**＝整条搬——binary/agent 的 tag 侧 `:latest` 也由 release.yml 在 tag push 时打（main 分支 push 的 `:latest`＝最新开发版仍归 ci.yml；tag 的 `:latest`＝最新发布版归 release.yml——两个 owner 对应两个不同事实，不是同一动作被拆两处）；对比 **B**（release.yml 只补 `:<version>`、`:latest` 仍由 ci.yml 打）⇒ B 下 needs 图仍缺 `:latest` 出处、回核 `:latest` 那项还是跨 run，且"版本 tag 与浮动 tag 分两条 workflow 各自动同一个 repo"＝双改标 footgun，非彻底解。**故选 A**，本线按上述 1–5 开分支施工。
 - **领地与叫停**：release 链是你们刚合（`9b23b90`/`35c6213`）的领地、也是本仓最敏感文件集，故先在此留痕：**施工期间 release.yml / ci.yml / 门禁 §17 由本线动**，你们若对 §17 的 needs 图形状或 A 的取舍有异见随时叫停；A 用"tag 侧 latest 单一归 release.yml"消解了双改标风险。**推 main 前逐批确认（不变）**；方向②的 `wait-tag-ci` 保留为兜底、不删。
+---
+
+## 2026-10-14 第九十一则（本线：§3.12 按用户裁定落地 + 演练台 `fault` 子命令本机真跑通过）
+
+- **§3.12 收口（用户对"权限怎么设"的裁定：RBAC 矩阵细化，不上归属授权）**：operator
+  派生动作集扩为 {read,write,execute,cancel,ack,silence}。裁定依据已写入 CHANGELOG
+  与演练报告 §6：① 本平面授权模型只有角色矩阵一份（`RolePermissions()` 是 seedRBAC
+  与 RBAC 闸的共同单一来源），无任何 subject-object-relation 概念；② 演练查到的是
+  矩阵洞——三个作业动词所在组本就在 operatorGroups 里，只是动作名不在派生集内被
+  静默丢弃；③ 交接场景恰恰要求下一班能停上一班的任务，归属限制会把"能开不能关"
+  换个形状带回来。**边界同笔钉住**：审批类与 delete 类仍 admin-only、viewer 仍无
+  取消权；守卫 6 条 + 变异 1/1（撤回三动词 ⇒ 模型层与 handler 层同时判红）。
+  顺带清账：`PermSpecs` 里 `audit:read` 有两条重复定义，删重复项（目录长度是
+  admin=全量对账的输入）。
+- **演练台 `fault` 子命令新增并本机真跑通过**（用户第 2 项：改良到当前环境能做的最
+  苛刻）：三档断言（对侧击杀 fail-closed 502 非 401 / 账号锁定副作用可复现 /
+  store 故障步骤），Git Bash + 本机 Docker 实测全绿。过程中修掉演练台自身两处缺陷：
+  PID 发现不能依赖 start 进程局部变量（A 段曾被静默跳过）、auth-svc memory 后端
+  重启即失忆（恢复段补 admin 引导 + 名册用户重建须先 unroute）。
+- **如实记账一条未闭环**（演练报告 §6.3）：名册用户"持有效对侧会话 + 对侧被击杀"时
+  refresh 的确切状态码未取到实证——卡在演练台路径口径（`go run` 的 migrate job 把
+  MSYS `/tmp` 路径按 Windows 语义解析，一次性口令文件报"已写入"但遍寻不见）。
+  代码层**已知风险点**：`cutoverRouteRefresh` 在转发失败时回落本地消费 ⇒ 名册用户
+  401+清 Cookie（"对侧故障期刷新丢会话"），与 §3.7 的修复同类但不同路径。下轮
+  `forwardAuthToSvc` 失败分支补 fail-closed + 按 §6.3 顺序实证。
 - **取号**：本则第九十 ⇒ 下一则第九十一；不占新 TD 号，下一可用仍是 **TD-97**。

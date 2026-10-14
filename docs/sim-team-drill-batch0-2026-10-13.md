@@ -182,5 +182,47 @@ leader（15 秒内）。⇒ 演练台缺一页"引擎级故障恢复步骤（含
 7. **可见性三件（§3.9+3.10+3.11，仍开放）**：agent 心跳可见 / 会话过期文案 / 零角色提示。
 8. **租户口径（§3.8，仍开放）**：两审计端点统一。
 9. **演练台文档**：引擎级故障恢复步骤（含锁号副作用）+ 本文件 §5 末的"复演的坑"三则。
-10. **产品决策（§3.12，仍开放）**：operator 的 task:cancel/alert:ack 权限缺口。
+10. **产品决策（§3.12）**：operator 的 `task:cancel`/`alert:ack`/`alert:silence` 权限缺口。
+    **2026-10-14 已裁定并落地（用户拍板：RBAC 矩阵细化，不上归属授权）**：operator 派生动作
+    集由 {read,write,execute} 扩为 {read,write,execute,**cancel,ack,silence**}；审批类
+    （task:approve/cmdb:approve/approval:approve）与 delete 类仍 admin-only。见 §6 新节。
 11. **重演**：以上修完（至少 2/3/9）后，按同一套人设团队重跑批次 0——**重演通过前不真开切**。
+
+---
+
+## 6. 2026-10-14 复演与收口记录（本机真跑）
+
+**§6.1 `fault` 子命令新增（待办 9 的"引擎级故障恢复步骤"落地为可重放断言）**。
+`deploy/scripts/drill-batch0.sh fault [user]` 三档断言（Git Bash + 本机 Docker 实测通过）：
+
+- **A. 对侧击杀（fail-closed 与会话存活）**：按镜像名杀 auth-svc ⇒ 名册用户 login
+  实测 **502（不是 401）**——基础设施故障不伪装成凭据错误，与 §3.6 的修复同口径；
+  本地（未切）用户 login/refresh 不受影响（200）；故障期**未清 Cookie**（会话不被
+  一次故障摧毁）；重启 + 重跑 admin 引导后会话恢复。
+- **B. 账号锁定副作用（可复现）**：对**不存在账号**连错 6 次口令 ⇒ 429，探针即锁。
+  代价如实呈现：真实账号锁定期内连正确口令也 429，恢复要等窗口——值班须知。
+  （2026-10-14 修正：首版用 admin 当探针，会把演练 admin 真锁住、后续 migrate/unroute
+  全部 429；改不存在账号后无副作用。）
+- **C. store 读故障（§3.6/§3.7 进程级实证）**：默认只打印步骤不执行——演练库
+  （opsmesh_test）与同机其它证据栈共用容器 `opsmesh-mysql-evidence-v2`，stop/pause
+  会波及他人；步骤已写明（杀库 ⇒ login 503 非 401、锁不累计、refresh 不清 Cookie、
+  恢复后无残留）。要真跑需专用容器或确认无他人使用。
+
+**§6.2 演练台自身两处实测教训（已修，记入脚本注释）**：
+1. **fault 的 PID 发现不能依赖 start 进程的局部变量**（`AS_PID` 跨 bash 取不到，A 段被
+   静默跳过）；且 Git Bash 无 pgrep ⇒ 改按镜像名 taskkill + curl 反证击杀生效。
+2. **auth-svc 是 memory 后端 ⇒ 故障重启即失忆**：对侧 admin 改密状态与全部对侧账号
+   丢失 ⇒ 后续 migrate 被 401 拒（admin 口令回退）或被名册幂等跳过（账号已不在但
+   名册还在）。修法：fault 恢复段重跑 admin 引导；名册用户重建须**先 unroute 再
+   migrate**（幂等只认名册）。
+
+**§6.3 仍未闭环的一条（如实记账）**：名册用户"**持有效对侧会话 + 对侧被击杀**"时
+refresh 的确切状态码未取到实证——本机 probe 卡在演练台的路径口径上（`go run` 起的
+migrate job 把 `--credentials-out` 的 MSYS 路径 `/tmp/...` 按 Windows 语义解析，
+creds 文件报"已写入"但三方遍寻不见，一次性口令取不到 ⇒ 对侧会话建不起来）。
+代码层已知风险点（未验证）：`cutoverRouteRefresh` 在 `forwardAuthToSvc` 失败时
+**回落本地消费** ⇒ 名册用户的 rt 不在本地 ⇒ 401 + 清 Cookie，即"对侧故障期刷新会
+丢会话"——与 §3.7 的修复（store 故障不清会话）同类但不同路径。**建议**：下轮补
+`forwardAuthToSvc` 失败时的 fail-closed 分支（拒绝 + 不清 Cookie），并按 §6.3 的
+顺序（unroute→migrate→建会话→杀对侧→refresh）实证。本机复现脚本留在
+`.smoke-logs/gap-probe.sh`（路径口径修好即可直接跑）。

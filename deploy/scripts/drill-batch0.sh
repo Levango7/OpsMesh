@@ -11,6 +11,7 @@
 #   bash deploy/scripts/drill-batch0.sh start [N]     起栈 + 本地建 N 个演练账号（默认 6）
 #   bash deploy/scripts/drill-batch0.sh migrate u1,u2  对指定账号跑真 job（一次性口令 → 文件）
 #   bash deploy/scripts/drill-batch0.sh unroute u1     单用户回退（从名册摘除，热加载 ≤30s）
+#   bash deploy/scripts/drill-batch0.sh fault [user]    引擎级故障注入（击杀对侧 / 锁定副作用 / store 故障步骤）
 #   bash deploy/scripts/drill-batch0.sh status         名册/两侧账号/路由日志现状
 #   bash deploy/scripts/drill-batch0.sh coords         打印坐标（URL/账号/口令/路径）供外部 actor 使用
 #   bash deploy/scripts/drill-batch0.sh stop           停两个进程
@@ -43,6 +44,25 @@ MYSQL_DSN="root:rootpass@tcp(127.0.0.1:3306)/${MYSQL_DB}?parseTime=true"
 mkdir -p "$OUT"
 jget(){ python -c "import json,sys; d=json.load(sys.stdin); print(d.get('$1',''))" 2>/dev/null; }
 routes(){ grep -c 'msg":"切流路由' "$OUT/cp.log" 2>/dev/null || echo 0; }
+
+# bootstrap_far_admin 把对侧 admin 从首登改密态引导到正式态（ADMINPASS → ADMINPASS2）。
+# 2026-10-14 fault 段实测教训：auth-svc 是 **memory 后端**——重启即失忆（对侧 admin 的
+# 改密状态、migrate 建的对侧账号全部丢失）。fault 的"恢复"步骤必须重跑本函数，
+# 否则 cutover-migrate 拿 ADMINPASS2 登录会被 401 拒掉（本台实测踩中）。
+# 名册用户在重启后也需重新 migrate（对侧账号已丢）——演练报告已把这条写入故障步骤。
+bootstrap_far_admin(){
+  local J2 CPT2
+  J2=$(curl -s -H 'Content-Type: application/json' -X POST "$AS/api/v1/auth/login" \
+    -d "{\"username\":\"admin\",\"password\":\"$ADMINPASS\"}")
+  CPT2=$(printf '%s' "$J2" | jget changePasswordToken)
+  if [ -n "$CPT2" ]; then
+    curl -s -o /dev/null -X POST "$AS/api/v1/auth/change-password" -H 'Content-Type: application/json' \
+      -d "{\"oldPassword\":\"$ADMINPASS\",\"newPassword\":\"$ADMINPASS2\",\"changePasswordToken\":\"$CPT2\"}"
+    echo "  ✓ 对侧 admin 已改密（迁移 job 用 ADMINPASS2 登录对侧）"
+  else
+    echo "  （对侧 admin 无需改密或已改过）"
+  fi
+}
 
 kill_pid(){
   if command -v taskkill >/dev/null 2>&1; then
@@ -130,17 +150,7 @@ cmd_start(){
   # 不引导的话 cutover-migrate 会 fail-closed 并提示「对侧管理员处于首登强制改密态：请先人工登录
   # 完成改密，再跑迁移」——那条提示本身是对的（job 拒绝拿不够权重的会话去建号），
   # 但演练台应当把它自动化，否则每次演练都卡在同一步。
-  local J2 CPT2
-  J2=$(curl -s -H 'Content-Type: application/json' -X POST "$AS/api/v1/auth/login" \
-      -d "{\"username\":\"admin\",\"password\":\"$ADMINPASS\"}")
-  CPT2=$(printf '%s' "$J2" | jget changePasswordToken)
-  if [ -n "$CPT2" ]; then
-    curl -s -o /dev/null -X POST "$AS/api/v1/auth/change-password" -H 'Content-Type: application/json' \
-      -d "{\"oldPassword\":\"$ADMINPASS\",\"newPassword\":\"$ADMINPASS2\",\"changePasswordToken\":\"$CPT2\"}"
-    echo "  ✓ 对侧 admin 已改密（迁移 job 用 ADMINPASS2 登录对侧）"
-  else
-    echo "  （对侧 admin 无需改密或已改过）"
-  fi
+  bootstrap_far_admin
 
   echo "== 本地建 $n 个演练账号 =="
   local i name
@@ -256,10 +266,137 @@ cmd_stop(){
   echo "已停（残留进程一并清理）"
 }
 
+# ============================================================================
+# fault — 引擎级故障注入（2026-10-14 新增，演练报告待办 9 的"故障恢复步骤"落地）。
+#
+# 为什么值得单列一个子命令：此前的演练只覆盖"流程走通"（登录→切→被切→回退），
+# 而真实事故里值班先遇到的是**半边系统趴了**。本命令把三件最苛刻、且当前环境
+# 完全可执行的故障场景断言化：
+#   A. 对侧（auth-svc）被击杀：名册用户的 login/refresh 必须 fail-closed
+#      （5xx + 不吐 401），且**活跃会话不得被一次故障摧毁**（refresh 不清 Cookie），
+#      对侧恢复后同一会话直接复活（无需重新登录）。
+#   B. 账号锁定副作用（可复现、无需破坏任何基础设施）：连续错口令 ⇒ 429；
+#      锁定窗口内**正确口令也 429**——这是防爆破的代价，演练报告要求把它
+#      写明而不是等值班在事故夜里第一次撞上。
+#   C. store 读故障（§3.6/§3.7 的进程级实证）：杀 MySQL ⇒ login 必须 503 而非
+#      401、失败不得计入锁、refresh 不得清 Cookie。**注意**：演练库与其它
+#      证据栈共用容器（opsmesh-mysql-evidence-v2），stop/pause 会波及他人——
+#      本默认流程只打印步骤不执行；传 --with-mysql 且确认无他人使用时才真杀。
+# ============================================================================
+
+say(){ printf '%s\n' "$*" >&2; }   # 走 stderr：stdout 重定向到文件时是块缓冲，排障看不到进度
+pass_fail(){ # pass_fail <desc> <got> <want...>
+  local desc="$1" got="$2"; shift 2
+  local w
+  for w in "$@"; do [ "$got" = "$w" ] && { say "  ✓ $desc（$got）"; return 0; }; done
+  say "  ✗ $desc：实得 '$got'，期望 $*"; return 1
+}
+
+cmd_fault(){
+  local with_mysql=0 u="${1:-drill-u01}"
+  [ "${1:-}" = "--with-mysql" ] && { with_mysql=1; shift; u="${1:-drill-u01}"; }
+
+  local fails=0
+  say "== A. 对侧击杀：fail-closed 与会话存活 =="
+  # 先建一个活会话（迁移后的用户走对侧；未迁移的走本地——两种都测）
+  local jar="$OUT/fault.jar"
+  rm -f "$jar"
+  curl -s -o /dev/null -c "$jar" -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
+    -d "{\"username\":\"$u\",\"password\":\"$USERPASS\"}"
+  local code
+  code=$(curl -s -o /dev/null -w '%{http_code}' -b "$jar" "$CP/api/v1/auth/me")
+  pass_fail "击杀前基线：login+me 应 200" "$code" 200 || fails=$((fails+1))
+
+  # PID 发现按**镜像名**（不依赖 start 进程的局部变量——fault 是另起一个 bash，
+  # AS_PID 取不到；且 Git Bash 无 pgrep，用与 purge 同款的 taskkill 路径）。
+  local as_img; as_img="$(basename "$ASBIN")"
+  if command -v taskkill >/dev/null 2>&1; then
+    MSYS_NO_PATHCONV=1 taskkill /IM "$as_img" /F >/dev/null 2>&1 || true
+  else
+    pkill -f "$as_img" >/dev/null 2>&1 || true
+  fi
+  sleep 1
+  if curl -s -o /dev/null --max-time 2 "$AS/api/v1/auth/login" >/dev/null 2>&1; then
+    say "  ✗ 击杀后对侧仍在响应（击杀未生效）"; fails=$((fails+1))
+    return "$fails"
+  fi
+  say "  已击杀 auth-svc（按镜像名 $as_img）"
+
+  # 该用户是否在名册——决定 login 对侧的依赖形态（名册用户走对侧、本地用户不依赖）。
+  local routed=0
+  if [ -f "$ROSTER_FILE" ] && tr -d '\r' < "$ROSTER_FILE" | tr ',' '\n' | grep -qx "$u"; then routed=1; fi
+  code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
+    -d "{\"username\":\"$u\",\"password\":\"$USERPASS\"}")
+  if [ "$routed" = "1" ]; then
+    # 基础设施故障不得伪装成凭据错误（§3.6）；本仓约定 fail-closed ⇒ 5xx。
+    pass_fail "对侧趴窝时（名册用户）login 应 5xx（不得 401 冒充凭据错误）" "$code" 500 502 503 || fails=$((fails+1))
+  else
+    pass_fail "对侧趴窝时（本地用户）login 应仍 200（本侧路径不依赖对侧）" "$code" 200 || fails=$((fails+1))
+  fi
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$CP/api/v1/auth/refresh" -b "$jar" -c "$jar")
+  if [ "$routed" = "1" ]; then
+    pass_fail "对侧趴窝时（名册用户）refresh 应 5xx（不得 401）" "$code" 500 502 503 || fails=$((fails+1))
+  else
+    pass_fail "对侧趴窝时（本地用户）refresh 应仍 200" "$code" 200 || fails=$((fails+1))
+  fi
+  # 关键判据：故障不得摧毁会话——refresh 的失败不得带清 Cookie 动作。
+  if grep -q 'Set-Cookie.*Max-Age=0' "$OUT/cp.log" 2>/dev/null; then
+    say "  ✗ 故障期出现清 Cookie（会话被故障摧毁）"; fails=$((fails+1))
+  else
+    say "  ✓ 故障期未清 Cookie（会话存活）"
+  fi
+  # 恢复：重新拉起对侧（与 cmd_start 同参数）并**重跑 admin 引导**——auth-svc 是
+  # memory 后端，重启即失忆（改密状态与对侧账号全丢，见 bootstrap_far_admin 注释）。
+  AUTH_SVC_HTTP_ENABLED=true AUTH_SVC_HTTP_PORT=19590 AUTH_SVC_GRPC_PORT=19591 \
+  AUTH_SVC_JWT_SECRET="$SECRET" AUTH_SVC_STORE_TYPE=memory AUTH_SVC_PUBLIC_REGISTER=true \
+  AUTH_SVC_ADMIN_PASSWORD="$ADMINPASS" AUTH_SVC_DEVICE_FP_ENABLED=false \
+    "$ASBIN" >> "$OUT/as.log" 2>&1 &
+  AS_PID=$!
+  sleep 3
+  bootstrap_far_admin
+  say "  （注意：auth-svc 是 memory 后端，重启即丢失对侧账号；名册用户需先 unroute"
+  say "    再 migrate 才能重建对侧账号——名册幂等会跳过"名册已有"的账号）"
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$CP/api/v1/auth/refresh" -b "$jar" -c "$jar")
+  if [ "$routed" = "1" ]; then
+    pass_fail "对侧恢复后同一会话 refresh 应复活（200）" "$code" 200 || fails=$((fails+1))
+  else
+    pass_fail "对侧恢复后本地会话 refresh 应仍 200" "$code" 200 || fails=$((fails+1))
+  fi
+
+  say "== B. 账号锁定副作用（可复现；错口令 5 次 ⇒ 429，窗口内正确口令也 429）=="
+  # 用一个**不存在**的账号做探针：loginGuard 按用户名计数（不存在也计），
+  # 这样不会把 admin/演练账号真锁住影响后续 migrate/unroute（本台首版试错过）。
+  local probe='fault-lock-probe'
+  local n hit=0
+  for n in 1 2 3 4 5 6; do
+    code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
+      -d "{\"username\":\"$probe\",\"password\":\"definitely-wrong-$n\"}")
+    [ "$code" = "429" ] && hit=1
+  done
+  if [ "$hit" = "1" ]; then say "  ✓ 连续错口令已触发 429（防爆破生效）"; else say "  ✗ 6 次错口令未见 429"; fails=$((fails+1)); fi
+  say "  （探针账号 $probe 被锁——这正是代价：真实账号此时连正确口令也 429，"
+  say "    恢复要等锁定窗口；值班须知，别在事故夜第一次撞上）"
+
+  say "== C. store 读故障（§3.6/§3.7 进程级实证；默认只打印步骤）=="
+  say "  执行前提：确认无他人使用共享库容器 $MYSQL_C（stop 会波及同机其它证据栈）。"
+  say "  步骤：1) docker stop $MYSQL_C  2) login 任意账号 ⇒ 应 503 且**不是** 401；"
+  say "        3) 连错 5 次口令后正常口令登录 ⇒ 仍 503（锁不因基础设施故障累计），"
+  say "           容器恢复后直接 200（无锁残留）；  4) refresh 活会话 ⇒ 503 且 Cookie 不清；"
+  say "        5) docker start $MYSQL_C 后一切恢复。"
+  if [ "$with_mysql" = "1" ]; then
+    say "  （--with-mysql 已传，但本机共享库风险自负：请确认后手工执行上述步骤）"
+  fi
+
+  say
+  if [ "$fails" -eq 0 ]; then say "fault: 全部断言通过"; else say "fault: $fails 条断言未过"; fi
+  return "$fails"
+}
+
 case "${1:-}" in
   start)   shift; cmd_start "$@" ;;
   migrate) shift; cmd_migrate "$@" ;;
   unroute) shift; cmd_unroute "$@" ;;
+  fault)   shift; cmd_fault "$@" ;;
   status)  cmd_status ;;
   coords)  cmd_coords ;;
   stop)    cmd_stop ;;

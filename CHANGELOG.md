@@ -190,6 +190,26 @@
   ② handler 有意写的 JSON 404 原样放行（修复不得篡改语义）；③ 只写 404 头不写 body 也收口。
   变异（去掉收口）⇒ 判红并打印实测 `text/plain "404 page not found"`，还原复绿。
 
+## [Unreleased] — 2026-10-14（演练台 `fault` 子命令：引擎级故障注入本机真跑通过）
+
+- **新增 `drill-batch0.sh fault [user]`**（演练报告待办 9 的"引擎级故障恢复步骤"落地为
+  可重放断言）：三档——A. 按镜像名击杀 auth-svc ⇒ 名册用户 login **502（fail-closed，
+  不得 401 冒充凭据错误）**、本地用户 200（不依赖对侧）、故障期**不清 Cookie**
+  （会话不被故障摧毁）、重启+重跑 admin 引导后恢复；B. 账号锁定副作用可复现
+  （不存在账号连错 6 次 ⇒ 429；代价=锁定期内正确口令也 429）；C. store 读故障
+  （§3.6/§3.7 进程级实证）默认只打印步骤——演练库与同机证据栈共用容器，
+  stop/pause 会波及他人，须专用容器或确认无他人使用才真跑。
+- **演练台自身两处缺陷已修**：① fault 的 PID 发现不能依赖 start 进程的局部变量
+  （`AS_PID` 跨 bash 取不到导致 A 段被静默跳过；Git Bash 无 pgrep ⇒ 改按镜像名
+  taskkill + curl 反证击杀生效）；② auth-svc 是 memory 后端、重启即失忆
+  （对侧 admin 改密状态与对侧账号全丢 ⇒ migrate 被 401 拒或被名册幂等跳过）⇒
+  恢复段重跑 admin 引导，名册用户重建须先 unroute 再 migrate。
+- **一条未闭环（如实记账，演练报告 §6.3）**：名册用户"持有效对侧会话 + 对侧被击杀"
+  时 refresh 的确切状态码未取到实证（`go run` 起的 migrate job 把 `--credentials-out`
+  的 MSYS 路径按 Windows 语义解析，一次性口令文件报"已写入"但遍寻不见）。
+  代码层已知风险点：`cutoverRouteRefresh` 转发失败时回落本地消费 ⇒ 名册用户
+  401+清 Cookie（对侧故障期刷新丢会话）。下轮补 fail-closed 分支并实证。
+
 ## [Unreleased] — 2026-10-14（§3.12 收口：operator 补三个作业动词——RBAC 矩阵细化，不上归属授权）
 
 - **用户裁定（权限设计二选一的答复）**：走 **RBAC 矩阵细化**，不做基于场景/归属的
