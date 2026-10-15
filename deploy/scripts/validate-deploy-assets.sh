@@ -617,7 +617,13 @@ if [ -f .github/workflows/release.yml ]; then
     # **0x20~0x2D 的字符区间**（空格到连字符，含 '-' 与全部数字），于是 auth-svc 被洗成
     # authsvc、任何版本号也被洗残；两边集合都变形后，门禁会以"对不上"的方式长期误判。
 fi
-grep -hoE 'IMAGE_LEAF: [a-z0-9-]+' .github/workflows/ci.yml 2>/dev/null \
+# Phase A（TD-95 方向①，板第九十四/九十五则）后，两个核心镜像的构建逻辑抽进 reusable
+# workflow `.github/workflows/_publish-image.yml`；ci.yml 的 `image`/`image-agent` job 改为
+# `uses:` 调用点，叶子名的**字面量随之移到 ci.yml 的 `with: image_leaf:`**。这里同时认
+# 旧式 `IMAGE_LEAF: <名>`（step env）与新式 `image_leaf: <名>`（调用点入参），两个文件都扫；
+# 复用件自身里的 `IMAGE_LEAF: ${{ inputs.image_leaf }}` 是变量（`$` 不在字符类内）不会误入集合，
+# 而 `_publish-image.yml` 的输入声明 `image_leaf:` 后换行接 `type: string`，不同行也不匹配。
+grep -hoE '(IMAGE_LEAF|image_leaf): [a-z0-9-]+' .github/workflows/ci.yml .github/workflows/_publish-image.yml 2>/dev/null \
     | awk '{print $2}' >> "$PUBLISHED_FILE"
 sort -u -o "$PUBLISHED_FILE" "$PUBLISHED_FILE"
 
@@ -627,7 +633,7 @@ if [ "${PUB_N:-0}" -lt 3 ]; then
     # 而"瞎了的门禁"必须以红的形态被发现，不能静默退化成永远 PASS（教训 11）。
     bad "未能从 workflow 解析出 CI 发布名集合（只得到 ${PUB_N} 条）——请同步本脚本的解析规则"
 else
-    ok "解析到 CI 发布名 ${PUB_N} 个（release.yml 矩阵 + ci.yml IMAGE_LEAF）"
+    ok "解析到 CI 发布名 ${PUB_N} 个（release.yml 矩阵 + ci.yml IMAGE_LEAF/with:image_leaf）"
 fi
 
 # chart 侧：values.yaml / values-production.yaml 里每个 image.repository 的叶子名都必须有人推
