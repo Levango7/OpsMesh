@@ -268,8 +268,13 @@ jobs:
           if [ -n "${COSIGN_PRIVATE_KEY:-}" ]; then
               VERIFY=(cosign verify-attestation --key env://COSIGN_PRIVATE_KEY --type cyclonedx)
           else
+              # keyless 身份 = **实际签名的 workflow 文件**。构建搬进本复用件后，cosign 的
+              # 证书 subject 变成 `…/_publish-image.yml@<ref>`（runner 实测：got subjects
+              # [.../_publish-image.yml@refs/heads/main]），不再是调用方 ci.yml@。早先这里钉的是
+              # ci.yml@，reusable 化后必然"no matching attestations"——故改钉复用件自身文件名。
+              # （ref 段不约束：main push 是 refs/heads/main、tag 是 refs/tags/v*，都归同一文件。）
               VERIFY=(cosign verify-attestation --type cyclonedx
-                      --certificate-identity-regexp "^https://github\.com/${GITHUB_REPOSITORY}/\.github/workflows/ci\.yml@"
+                      --certificate-identity-regexp "^https://github\.com/${GITHUB_REPOSITORY}/\.github/workflows/_publish-image\.yml@"
                       --certificate-oidc-issuer https://token.actions.githubusercontent.com)
           fi
           for i in 1 2 3 4 5; do
