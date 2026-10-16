@@ -14,6 +14,7 @@ import (
 //	POST /api/v1/aiops/analyze      告警根因分析
 //	POST /api/v1/aiops/remediate    生成修复方案
 //	POST /api/v1/aiops/remediate-nl 自然语言转结构化任务
+//	POST /api/v1/aiops/execute      自动执行修复（下发任务到 agent）
 //	GET  /api/v1/aiops/status        引擎状态（启用/模型/统计）
 type Handler struct {
 	eng   *Engine
@@ -35,6 +36,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/aiops/analyze", h.authorize(h.handleAnalyze, "aiops:read", "aiops:write"))
 	mux.HandleFunc("/api/v1/aiops/remediate", h.authorize(h.handleRemediate, "aiops:read", "aiops:write"))
 	mux.HandleFunc("/api/v1/aiops/remediate-nl", h.authorize(h.handleRemediateNL, "aiops:read", "aiops:write"))
+	mux.HandleFunc("/api/v1/aiops/execute", h.authorize(h.handleExecute, "aiops:write", "aiops:write"))
 	mux.HandleFunc("/api/v1/aiops/status", h.authorize(h.handleStatus, "aiops:read", "aiops:write"))
 }
 
@@ -152,6 +154,45 @@ func (h *Handler) handleRemediateNL(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, http.StatusOK, plan)
 }
 
+// handleExecute 自动执行修复方案：将 RemediationPlan 下发为 proto.Task。
+// Body: {"plan":{...},"autoExecute":true}
+func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.respondError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+
+	var req ExecuteRemediationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	results, err := h.eng.ExecuteRemediation(r.Context(), &req)
+	if err != nil {
+		if err == ErrDisabled {
+			h.respondError(w, http.StatusServiceUnavailable, "aiops engine not enabled")
+		} else {
+			h.respondError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	// 累计成功下发数
+	dispatched := int64(0)
+	for _, res := range results {
+		if res.Status == "dispatched" {
+			dispatched++
+		}
+	}
+
+	h.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"results":    results,
+		"dispatched": dispatched,
+		"total":      len(results),
+	})
+}
+
 // handleStatus 返回 AIOps 引擎状态。
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -166,9 +207,10 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"model":     stats.Model,
 		"startedAt": stats.StartedAt.Format(time.RFC3339),
 		"stats": map[string]int64{
-			"analyzesTotal": stats.AnalyzesTotal,
-			"remediations":  stats.Remediations,
-			"nlParses":      stats.NLParses,
+			"analyzesTotal":        stats.AnalyzesTotal,
+			"remediations":         stats.Remediations,
+			"nlParses":             stats.NLParses,
+			"executedRemediations": stats.ExecutedRemediations,
 		},
 		"lastErr": stats.LastErr,
 	}

@@ -346,7 +346,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		logHandler:    factory.NewLogHandler(st, cfg),
 		deployHandler: deployHandler,
 		orchHandler:   orchHandler,
-		aiopsHandler:  aiops.NewHandler(aiops.NewEngine(cfg)),
+		aiopsHandler:  aiops.NewHandler(aiops.NewEngine(cfg, st)),
 		eventSubs:     make(map[chan SSEEvent]struct{}), // SSE 订阅者集合
 		alertAggr:     notify.NewAlertAggregator(),      // 告警聚合器
 		alertChannels: &notify.Channels{ // 多通道（Webhook + Email）

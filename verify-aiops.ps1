@@ -177,13 +177,51 @@ try {
 
 Write-Host ""
 
-# 测试 5: 控制面 AIOps 状态查询
-Write-Host "--- 测试 5: 控制面 AIOps 状态查询 ---" -ForegroundColor Yellow
+# 测试 5: 控制面 AIOps 自动执行修复 API（下发任务到 agent）
+Write-Host "--- 测试 5: 控制面 AIOps 自动执行修复 API ---" -ForegroundColor Yellow
+$executeBody = @{
+    plan = @{
+        title = "重启 nginx 服务"
+        steps = @(
+            @{ order = 1; title = "重启服务"; action = "restart"; target = "dev-web-01"; command = "systemctl restart nginx"; verifyCmd = "systemctl status nginx" }
+        )
+        commands = @(
+            @{ agentID = "dev-web-01"; command = "systemctl restart nginx"; type = "shell"; timeout = 30; priority = 5 }
+        )
+        dagNodes = @(
+            @{ id = "n1"; name = "重启 nginx"; type = "shell"; command = "systemctl restart nginx"; dependsOn = @(); retryCount = 3; retryDelay = 5 }
+        )
+        safety = @{ requiresConfirm = $false; rollbackCmd = ""; riskLevel = "low"; notes = @("注意备份配置") }
+    }
+    autoExecute = $true
+} | ConvertTo-Json
+
+try {
+    $resp = Invoke-WebRequest -Uri "$cpURL/api/v1/aiops/execute" -Method POST -ContentType "application/json" -Headers @{ "X-Tenant-ID" = "default" } -Body $executeBody -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop
+    $result = $resp.Content | ConvertFrom-Json
+    Write-Host "下发总数: $($result.total) | 成功: $($result.dispatched)" -ForegroundColor Green
+    foreach ($r in $result.results) {
+        Write-Host "  命令 $($r.CommandID): status=$($r.Status) taskID=$($r.TaskID) agent=$($r.AgentID)" -ForegroundColor Gray
+        if ($r.Reason) { Write-Host "    原因: $($r.Reason)" -ForegroundColor Gray }
+    }
+} catch {
+    Write-Host "执行修复 API 调用失败: $($_.Exception.Response.StatusCode)" -ForegroundColor Red
+    if ($_.Exception.Response) {
+        $stream = $_.Exception.Response.GetResponseStream()
+        $reader = New-Object System.IO.StreamReader($stream)
+        Write-Host "响应体: $($reader.ReadToEnd())" -ForegroundColor Red
+    }
+}
+
+Write-Host ""
+
+# 测试 6: 控制面 AIOps 状态查询
+Write-Host "--- 测试 6: 控制面 AIOps 状态查询 ---" -ForegroundColor Yellow
 try {
     $resp = Invoke-WebRequest -Uri "$cpURL/api/v1/aiops/status" -Method GET -Headers @{ "X-Tenant-ID" = "default" } -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
     $status = $resp.Content | ConvertFrom-Json
     Write-Host "启用: $($status.enabled) | 提供商: $($status.provider) | 模型: $($status.model)" -ForegroundColor Green
-    Write-Host "统计: 分析=$($status.stats.analyzesTotal) 修复=$($status.stats.remediations) 自然语言=$($status.stats.nlParses)" -ForegroundColor Gray
+    Write-Host "统计: 分析=$($status.stats.analyzesTotal) 修复=$($status.stats.remediations) 自然语言=$($status.stats.nlParses) 执行=$($status.stats.executedRemediations)" -ForegroundColor Gray
 } catch {
     Write-Host "状态查询失败: $($_.Exception.Response.StatusCode)" -ForegroundColor Red
 }
