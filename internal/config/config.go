@@ -456,6 +456,18 @@ type Config struct {
 	// Validate 中的拒绝启动分支被跳过，本开关保留向后兼容（未来新桩领域可复用）。
 	// memory 后端与 demo/开发模式不受影响；运行期由 store 层 stub_guard 限频告警兜底。
 	AllowStubStores bool // --allow-stub-stores 允许 SQL 后端桩存储（生产默认 false=拒绝启动）
+
+	// AIOps（故障根因分析 + 智能修复生成 + 自然语言运维）。
+	// 默认关闭（向后兼容）；开启后控制面接入 LLM（Kilo Gateway / OpenAI 兼容接口）做 AIOps。
+	// 相关 API：POST /api/v1/aiops/analyze|remediate|remediate-nl，GET /api/v1/aiops/status。
+	AIOpsEnabled     bool    // --aiops-enabled 启用 AIOps 引擎（默认 false；或 env OPSMESH_AIOPS_ENABLED）
+	AIOpsProvider    string  // --aiops-provider LLM 提供商：kilo|openai|anthropic（默认 kilo；或 env OPSMESH_AIOPS_PROVIDER）
+	AIOpsModel       string  // --aiops-model LLM 模型 ID（如 qvac/qwen3.5-0.8b、nemotron-3-ultra-550b-a55b-free；或 env OPSMESH_AIOPS_MODEL）
+	AIOpsBaseURL     string  // --aiops-base-url LLM API 端点（如 https://api.kilo.ai/v1；或 env OPSMESH_AIOPS_BASE_URL）
+	AIOpsAPIKey      string  // --aiops-api-key LLM API 密钥（推荐 env OPSMESH_AIOPS_API_KEY，避免命令行暴露）
+	AIOpsTemperature float64 // --aiops-temperature LLM 采样温度（默认 0.3；或 env OPSMESH_AIOPS_TEMPERATURE）
+	AIOpsMaxTokens   int     // --aiops-max-tokens LLM 最大输出 token 数（默认 4096；或 env OPSMESH_AIOPS_MAX_TOKENS）
+	AIOpsTimeout     int     // --aiops-timeout LLM 调用超时秒（默认 30；或 env OPSMESH_AIOPS_TIMEOUT）
 }
 
 // Load 解析 flag 并用环境变量兜底，返回 *Config。
@@ -646,6 +658,15 @@ func Load() *Config {
 	quotaMaxAlerts := flag.Int("quota-max-alerts", 0, "默认最大告警数（未显式设置配额的租户回退到此值；0=不限，默认）；或 env OPSMESH_QUOTA_MAX_ALERTS")
 	// H2/H3 配套开关：SQL 后端桩存储放行开关（生产模式 + --store=mysql 时默认拒绝启动）。
 	allowStubStores := flag.Bool("allow-stub-stores", false, "H2/H3 止血：允许 SQL 后端继续使用 P1-P6 桩存储（15 个领域写入不持久化，见启动日志清单）；生产模式（--production=true）+ --store=mysql 时默认 false=拒绝启动，须显式 true 确认接受桩限制；memory 后端不受影响；或 env OPSMESH_ALLOW_STUB_STORES")
+	// AIOps（故障根因分析 + 智能修复生成 + 自然语言运维）：接入 Kilo Gateway / OpenAI 兼容接口。
+	aiopsEnabled := flag.Bool("aiops-enabled", false, "启用 AIOps 引擎（故障根因分析+智能修复+自然语言运维）；默认 false（向后兼容）；或 env OPSMESH_AIOPS_ENABLED")
+	aiopsProvider := flag.String("aiops-provider", "kilo", "AIOps LLM 提供商：kilo|openai|anthropic（默认 kilo，走 Kilo Gateway 路由免费模型）；或 env OPSMESH_AIOPS_PROVIDER")
+	aiopsModel := flag.String("aiops-model", "qvac/qwen3.5-0.8b", "AIOps LLM 模型 ID（如 qvac/qwen3.5-0.8b、nemotron-3-ultra-550b-a55b-free；见 kilo gateway 免费模型目录；或 env OPSMESH_AIOPS_MODEL）")
+	aiopsBaseURL := flag.String("aiops-base-url", "https://api.kilo.ai/v1", "AIOps LLM API 端点（如 https://api.kilo.ai/v1；或 env OPSMESH_AIOPS_BASE_URL）")
+	aiopsAPIKey := flag.String("aiops-api-key", "", "AIOps LLM API 密钥（推荐 env OPSMESH_AIOPS_API_KEY，避免命令行暴露）")
+	aiopsTemperature := flag.Float64("aiops-temperature", 0.3, "AIOps LLM 采样温度（0.0~1.0，越低越确定性；默认 0.3；或 env OPSMESH_AIOPS_TEMPERATURE）")
+	aiopsMaxTokens := flag.Int("aiops-max-tokens", 4096, "AIOps LLM 最大输出 token 数（默认 4096；或 env OPSMESH_AIOPS_MAX_TOKENS）")
+	aiopsTimeout := flag.Int("aiops-timeout", 30, "AIOps LLM 调用超时秒（默认 30；或 env OPSMESH_AIOPS_TIMEOUT）")
 	// 自动化引擎评估周期。
 	automationEvalInterval := flag.Duration("automation-eval-interval", 30*time.Second, "自动化引擎评估周期：周期评估 enabled 自动化规则并执行命中动作（默认 30s；或 env OPSMESH_AUTOMATION_EVAL_INTERVAL）")
 	flag.Parse()
@@ -829,6 +850,14 @@ func Load() *Config {
 		QuotaMaxTasks:              valInt("quota-max-tasks", *quotaMaxTasks, "OPSMESH_QUOTA_MAX_TASKS"),
 		QuotaMaxAlerts:             valInt("quota-max-alerts", *quotaMaxAlerts, "OPSMESH_QUOTA_MAX_ALERTS"),
 		AllowStubStores:            valBool("allow-stub-stores", *allowStubStores, "OPSMESH_ALLOW_STUB_STORES"),
+		AIOpsEnabled:               valBool("aiops-enabled", *aiopsEnabled, "OPSMESH_AIOPS_ENABLED"),
+		AIOpsProvider:              val("aiops-provider", *aiopsProvider, "OPSMESH_AIOPS_PROVIDER"),
+		AIOpsModel:                 val("aiops-model", *aiopsModel, "OPSMESH_AIOPS_MODEL"),
+		AIOpsBaseURL:               val("aiops-base-url", *aiopsBaseURL, "OPSMESH_AIOPS_BASE_URL"),
+		AIOpsAPIKey:                val("aiops-api-key", *aiopsAPIKey, "OPSMESH_AIOPS_API_KEY"),
+		AIOpsTemperature:           valFloat64("aiops-temperature", *aiopsTemperature, "OPSMESH_AIOPS_TEMPERATURE"),
+		AIOpsMaxTokens:             valInt("aiops-max-tokens", *aiopsMaxTokens, "OPSMESH_AIOPS_MAX_TOKENS"),
+		AIOpsTimeout:               valInt("aiops-timeout", *aiopsTimeout, "OPSMESH_AIOPS_TIMEOUT"),
 		AutomationEvalInterval:     valDur("automation-eval-interval", *automationEvalInterval, "OPSMESH_AUTOMATION_EVAL_INTERVAL"),
 	}
 	// --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，

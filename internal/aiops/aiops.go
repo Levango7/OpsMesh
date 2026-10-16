@@ -5,14 +5,17 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/config"
 )
 
 // Engine AIOps 引擎：协调 LLM 客户端、分析器、修复生成器与自然语言解析器。
 //
 // 使用方式：
-//   cfg := aiops.DefaultConfig()
-//   cfg.Enabled = true
-//   cfg.APIKey = "your-key"
+//   cfg := config.Load()
+//   cfg.AIOpsEnabled = true
+//   cfg.AIOpsModel = "qvac/qwen3.5-0.8b"
+//   cfg.AIOpsAPIKey = "your-key"
 //   eng := aiops.NewEngine(cfg)
 //   eng.Start(ctx)
 //
@@ -37,9 +40,19 @@ type Engine struct {
 	started bool
 }
 
-// NewEngine 构造 AIOps 引擎。
-func NewEngine(cfg Config) *Engine {
-	e := &Engine{cfg: cfg}
+// NewEngine 构造 AIOps 引擎（从控制面 Config 构造，支持 --aiops-* flags / OPSMESH_AIOPS_* env）。
+func NewEngine(cfg *config.Config) *Engine {
+	acfg := Config{
+		Enabled:     cfg.AIOpsEnabled,
+		Provider:    Provider(cfg.AIOpsProvider),
+		Model:       cfg.AIOpsModel,
+		BaseURL:     cfg.AIOpsBaseURL,
+		APIKey:      cfg.AIOpsAPIKey,
+		Temperature: cfg.AIOpsTemperature,
+		MaxTokens:   cfg.AIOpsMaxTokens,
+		Timeout:     cfg.AIOpsTimeout,
+	}
+	e := &Engine{cfg: acfg}
 	if e.cfg.MaxTokens <= 0 {
 		e.cfg.MaxTokens = 4096
 	}
