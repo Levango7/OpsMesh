@@ -3,6 +3,7 @@ package aiops
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/authctx"
@@ -16,6 +17,7 @@ import (
 //	POST /api/v1/aiops/remediate-nl 自然语言转结构化任务
 //	POST /api/v1/aiops/execute      自动执行修复（下发任务到 agent）
 //	GET  /api/v1/aiops/status        引擎状态（启用/模型/统计）
+//	GET  /api/v1/aiops/executions    执行历史（最近 100 条）
 type Handler struct {
 	eng   *Engine
 	authz func(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool)
@@ -38,6 +40,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/aiops/remediate-nl", h.authorize(h.handleRemediateNL, "aiops:read", "aiops:write"))
 	mux.HandleFunc("/api/v1/aiops/execute", h.authorize(h.handleExecute, "aiops:write", "aiops:write"))
 	mux.HandleFunc("/api/v1/aiops/status", h.authorize(h.handleStatus, "aiops:read", "aiops:write"))
+	mux.HandleFunc("/api/v1/aiops/executions", h.authorize(h.handleExecutions, "aiops:read", "aiops:read"))
 }
 
 func (h *Handler) authorize(fn http.HandlerFunc, readPerm, writePerm string) http.HandlerFunc {
@@ -111,6 +114,11 @@ func (h *Handler) handleRemediate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.RootCause == nil {
+		h.respondError(w, http.StatusBadRequest, "rootCause is required")
+		return
+	}
+
 	plan, err := h.eng.GenerateRemediation(r.Context(), &req)
 	if err != nil {
 		if err == ErrDisabled {
@@ -141,6 +149,11 @@ func (h *Handler) handleRemediateNL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if body.Input == "" {
+		h.respondError(w, http.StatusBadRequest, "input is required")
+		return
+	}
+
 	plan, err := h.eng.NaturalLanguage(r.Context(), body.Input, body.Devices)
 	if err != nil {
 		if err == ErrDisabled {
@@ -168,6 +181,11 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Plan == nil {
+		h.respondError(w, http.StatusBadRequest, "plan is required")
+		return
+	}
+
 	results, err := h.eng.ExecuteRemediation(r.Context(), &req)
 	if err != nil {
 		if err == ErrDisabled {
@@ -187,9 +205,9 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.respondJSON(w, http.StatusOK, map[string]interface{}{
-		"results":    results,
+		"results":   results,
 		"dispatched": dispatched,
-		"total":      len(results),
+		"total":     len(results),
 	})
 }
 
@@ -207,12 +225,34 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"model":     stats.Model,
 		"startedAt": stats.StartedAt.Format(time.RFC3339),
 		"stats": map[string]int64{
-			"analyzesTotal":        stats.AnalyzesTotal,
-			"remediations":         stats.Remediations,
-			"nlParses":             stats.NLParses,
+			"analyzesTotal":       stats.AnalyzesTotal,
+			"remediations":        stats.Remediations,
+			"nlParses":            stats.NLParses,
 			"executedRemediations": stats.ExecutedRemediations,
 		},
 		"lastErr": stats.LastErr,
 	}
 	h.respondJSON(w, http.StatusOK, resp)
+}
+
+// handleExecutions 返回执行历史。
+// Query: limit（默认 20，最大 100）
+func (h *Handler) handleExecutions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.respondError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+
+	history := h.eng.ExecutionHistory(limit)
+	h.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"executions": history,
+		"count":      len(history),
+	})
 }

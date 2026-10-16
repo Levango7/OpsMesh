@@ -81,7 +81,7 @@ func (s *Server) Start() error {
 	s.orchHandler.RegisterRoutes(orchMux)
 	mux.Handle("/api/v1/workflows", paginate.PaginateJSONHandler(orchMux))
 	mux.Handle("/api/v1/workflows/", orchMux)
-	// AIOps：POST /api/v1/aiops/analyze|remediate|remediate-nl，GET /api/v1/aiops/status。
+	// AIOps：POST /api/v1/aiops/analyze|remediate|remediate-nl|execute，GET /api/v1/aiops/status|executions。
 	s.aiopsHandler.RegisterRoutes(mux)
 	// M13 微服务聚合代理：gpu/runbook/incident/autoscaler/portal 五域转发到
 	// services/* 独立进程（规则表见 service_proxy.go；bot 域由 bot_bridge.go 提供

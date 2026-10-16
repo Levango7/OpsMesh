@@ -132,6 +132,14 @@
       "loading": "Loading...",
       "generating": "Generating...",
       "analyzing": "Analyzing..."
-    }
+    },
+    "tab_history": "Execution History",
+    "history_title": "Execution History",
+    "history_id": "ID",
+    "history_total": "Total",
+    "history_dispatched": "Dispatched",
+    "history_time": "Created At",
+    "history_no_data": "No execution history yet",
+    "history_detail": "Execution Detail"
   }
 }

@@ -27,6 +27,7 @@
       <button :class="{ active: activeTab === 'remediate' }" @click="activeTab = 'remediate'">{{ $t('aiops.tab_remediate') }}</button>
       <button :class="{ active: activeTab === 'nl' }" @click="activeTab = 'nl'">{{ $t('aiops.tab_nl') }}</button>
       <button :class="{ active: activeTab === 'execute' }" @click="activeTab = 'execute'">{{ $t('aiops.tab_execute') }}</button>
+      <button :class="{ active: activeTab === 'history' }" @click="activeTab = 'history'">{{ $t('aiops.tab_history') }}</button>
     </div>
 
     <!-- Tab 1: 故障根因分析 -->
@@ -207,12 +208,56 @@
       </div>
       <div v-else class="muted">{{ $t('aiops.execute_no_results') }}</div>
     </div>
+
+    <!-- Tab 5: 执行历史 -->
+    <div v-if="activeTab === 'history'" class="card">
+      <div class="flowbar">
+        <h3 style="margin: 0">{{ $t('aiops.history_title') }}</h3>
+        <button class="xs outline" @click="loadExecutions">↻ {{ $t('common.refresh') }}</button>
+      </div>
+
+      <div v-if="executionsLoading" class="muted">{{ $t('common.loading') }}</div>
+      <div v-else-if="executions.length === 0" class="muted">{{ $t('aiops.history_no_data') }}</div>
+      <div v-else>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>{{ $t('aiops.history_id') }}</th>
+              <th>{{ $t('aiops.history_title') }}</th>
+              <th>{{ $t('aiops.history_total') }}</th>
+              <th>{{ $t('aiops.history_dispatched') }}</th>
+              <th>{{ $t('aiops.history_time') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(rec, i) in executions" :key="i">
+              <td>{{ rec.ID }}</td>
+              <td>{{ rec.PlanTitle }}</td>
+              <td>{{ rec.Total }}</td>
+              <td>{{ rec.Dispatched }}</td>
+              <td>{{ rec.CreatedAt }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="result-box" v-if="selectedExec">
+          <h4>{{ $t('aiops.history_detail') }}: {{ selectedExec.PlanTitle }}</h4>
+          <ul>
+            <li v-for="(r, i) in selectedExec.Results" :key="i">
+              <b>{{ r.CommandID }}</b>: <span :class="{ ok: r.Status === 'dispatched', warn: r.Status !== 'dispatched' }">{{ r.Status }}</span>
+              <span v-if="r.TaskID">taskID={{ r.TaskID }}</span>
+              <span v-if="r.AgentID">agent={{ r.AgentID }}</span>
+              <span v-if="r.Reason" class="muted">— {{ r.Reason }}</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { reactive, ref, onMounted } from 'vue'
-import { getAIOpsStatus, analyzeAIOps, generateRemediation, generateRemediationNL, executeRemediation } from '@/api/aiops'
+import { getAIOpsStatus, analyzeAIOps, generateRemediation, generateRemediationNL, executeRemediation, getAIOpsExecutions } from '@/api/aiops'
 import { t } from '@/i18n'
 import Icon from '@/components/Icon.vue'
 import MetricsCard from '@/components/MetricsCard.vue'
@@ -255,12 +300,33 @@ const nlPlan = ref(null)
 const executeResults = reactive([])
 const executeStats = reactive({ dispatched: 0, total: 0 })
 
+// 执行历史
+const executionsLoading = ref(false)
+const executions = reactive([])
+const selectedExec = ref(null)
+
 async function loadStatus() {
   try {
     Object.assign(status, await getAIOpsStatus())
   } catch (e) {
     status.error = e.j?.error || e.s
   }
+}
+
+async function loadExecutions() {
+  executionsLoading.value = true
+  try {
+    const resp = await getAIOpsExecutions()
+    executions.splice(0, executions.length, ...resp.executions)
+  } catch (e) {
+    status.error = e.j?.error || e.s
+  } finally {
+    executionsLoading.value = false
+  }
+}
+
+function selectExec(rec) {
+  selectedExec.value = rec
 }
 
 async function runAnalyze() {
@@ -330,6 +396,7 @@ async function executePlan(plan) {
 
 onMounted(() => {
   loadStatus()
+  loadExecutions()
 })
 </script>
 
@@ -359,5 +426,9 @@ ul { margin: 6px 0; padding-left: 20px; }
 code { background: var(--muted); padding: 2px 6px; border-radius: var(--radius-sm); font-size: 12px; }
 .hint { font-size: 12px; color: var(--text-2); margin-top: 4px; }
 .poll-err { padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm); background: var(--fail-soft); border: 1px solid var(--fail-bg); color: var(--fail); font-size: 12.5px; font-weight: 500; }
+.data-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+.data-table th, .data-table td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; }
+.data-table th { background: var(--muted); color: var(--text-2); font-size: 12px; }
+.data-table tr:hover { background: var(--muted-soft); }
 @media (max-width: 768px) { .metrics-row { grid-template-columns: repeat(2, 1fr); } }
 </style>

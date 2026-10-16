@@ -17,3 +17,5 @@ export const generateRemediation = (body) => postJSON('/aiops/remediate', body)
 export const generateRemediationNL = (body) => postJSON('/aiops/remediate-nl', body)
 
 export const executeRemediation = (body) => postJSON('/aiops/execute', body)
+
+export const getAIOpsExecutions = () => getJSON('/aiops/executions')

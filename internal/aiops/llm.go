@@ -1,14 +1,3 @@
-// Package aiops 实现 AIOps 引擎：故障根因分析 + 智能修复生成 + 自然语言运维。
-//
-// 设计原则：
-//   - 零外部 AI SDK 依赖：通过标准 net/http 调用 OpenAI 兼容接口，支持 Kilo Gateway。
-//   - 纯领域模型 + 可注入 LLM 客户端，便于单元测试（mock LLM 即可全覆盖）。
-//   - 复用 internal/proto 的 Task/Device/Alert/Metric 类型，与控制面 Store 无反向依赖。
-//
-// 架构：
-//
-//	LLM ← Analyzer (alert+log+metric+topology → root cause) → Remediation (root cause → task/DAG)
-//	LLM ← NLParser (natural language → structured task)
 package aiops
 
 import (
@@ -18,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -25,8 +15,8 @@ import (
 type Provider string
 
 const (
-	ProviderKilo      Provider = "kilo"      // Kilo Gateway (默认)
-	ProviderOpenAI    Provider = "openai"    // OpenAI 兼容 API
+	ProviderKilo     Provider = "kilo"      // Kilo Gateway (默认)
+	ProviderOpenAI   Provider = "openai"    // OpenAI 兼容 API
 	ProviderAnthropic Provider = "anthropic" // Anthropic 兼容 API (未来扩展)
 )
 
@@ -34,9 +24,9 @@ const (
 type Config struct {
 	Enabled     bool     `json:"enabled"`
 	Provider    Provider `json:"provider"`
-	Model       string   `json:"model"`       // 模型 ID，如 qvac/qwen3.5-0.8b
-	BaseURL     string   `json:"baseURL"`     // API 端点
-	APIKey      string   `json:"-"`           // 密钥（不序列化）
+	Model       string   `json:"model"`      // 模型 ID，如 qvac/qwen3.5-0.8b
+	BaseURL     string   `json:"baseURL"`    // API 端点
+	APIKey      string   `json:"-"`          // 密钥（不序列化）
 	Temperature float64  `json:"temperature"` // 默认 0.3
 	MaxTokens   int      `json:"maxTokens"`   // 默认 4096
 	Timeout     int      `json:"timeout"`     // 秒，默认 30
@@ -66,8 +56,14 @@ func (c Config) Validate() error {
 	if c.BaseURL == "" {
 		return fmt.Errorf("aiops: base_url is required when enabled")
 	}
-	if c.Timeout <= 0 {
-		c.Timeout = 30
+	if c.Temperature < 0 || c.Temperature > 2 {
+		return fmt.Errorf("aiops: temperature must be between 0 and 2, got %f", c.Temperature)
+	}
+	if c.MaxTokens > 32768 {
+		return fmt.Errorf("aiops: maxTokens must not exceed 32768, got %d", c.MaxTokens)
+	}
+	if c.Timeout < 0 {
+		return fmt.Errorf("aiops: timeout must not be negative, got %d", c.Timeout)
 	}
 	return nil
 }
@@ -122,14 +118,42 @@ func NewHTTPClient(cfg Config) *HTTPClient {
 	}
 }
 
-// Chat 实现 LLM 接口：调用 OpenAI 兼容聊天接口。
+// Chat 实现 LLM 接口：调用 OpenAI 兼容聊天接口，带重试。
 func (c *HTTPClient) Chat(ctx context.Context, req ChatRequest) (*LLMResponse, error) {
+	var lastErr error
+	const maxRetries = 2
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		resp, err := c.doChat(ctx, req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+
+		// 只对可重试错误（网络、5xx、429）重试
+		if !isRetryable(err) {
+			return nil, err
+		}
+		if attempt < maxRetries {
+			backoff := time.Duration(1<<attempt) * time.Second
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+	}
+	return nil, fmt.Errorf("aiops: LLM call failed after %d retries: %w", maxRetries, lastErr)
+}
+
+// doChat 执行单次 LLM 调用。
+func (c *HTTPClient) doChat(ctx context.Context, req ChatRequest) (*LLMResponse, error) {
 	reqBytes, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("aiops: marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/chat/completions", c.cfg.BaseURL)
+	url := strings.TrimSuffix(c.cfg.BaseURL, "/") + "/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBytes))
 	if err != nil {
 		return nil, fmt.Errorf("aiops: create request: %w", err)
@@ -145,8 +169,12 @@ func (c *HTTPClient) Chat(ctx context.Context, req ChatRequest) (*LLMResponse, e
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("aiops: read response: %w", err)
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("aiops: LLM returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -154,12 +182,13 @@ func (c *HTTPClient) Chat(ctx context.Context, req ChatRequest) (*LLMResponse, e
 	var raw struct {
 		Choices []struct {
 			Message struct {
+				Role    string `json:"role"`
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
 		Usage Usage `json:"usage"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("aiops: decode response: %w", err)
 	}
 
@@ -167,8 +196,56 @@ func (c *HTTPClient) Chat(ctx context.Context, req ChatRequest) (*LLMResponse, e
 		return nil, fmt.Errorf("aiops: empty response from LLM")
 	}
 
+	content := strings.TrimSpace(raw.Choices[0].Message.Content)
+	if content == "" {
+		return nil, fmt.Errorf("aiops: LLM returned empty content")
+	}
+
 	return &LLMResponse{
-		Content: raw.Choices[0].Message.Content,
+		Content: content,
 		Usage:   raw.Usage,
 	}, nil
+}
+
+// isRetryable 判断错误是否可重试（网络错误、429、5xx）。
+func isRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	// 网络连接错误
+	if strings.Contains(msg, "connection") ||
+		strings.Contains(msg, "EOF") ||
+		strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "i/o timeout") {
+		return true
+	}
+	// 429 Too Many Requests / 5xx
+	for _, code := range []string{"429", "500", "502", "503", "504"} {
+		if strings.Contains(msg, code) {
+			return true
+		}
+	}
+	return false
+}
+
+// BuildSystemMessages 构造带系统角色的消息列表。
+// system 提示词固定角色定义，user 是具体任务描述。
+func BuildSystemMessages(systemPrompt, userPrompt string) []Message {
+	msgs := []Message{}
+	if systemPrompt != "" {
+		msgs = append(msgs, Message{Role: "system", Content: systemPrompt})
+	}
+	msgs = append(msgs, Message{Role: "user", Content: userPrompt})
+	return msgs
+}
+
+// SanitizeJSON 从 LLM 返回中提取 JSON（去除 Markdown 代码块包装）。
+func SanitizeJSON(content string) string {
+	content = strings.TrimSpace(content)
+	content = strings.TrimPrefix(content, "```json")
+	content = strings.TrimPrefix(content, "```JSON")
+	content = strings.TrimPrefix(content, "```")
+	content = strings.TrimSuffix(content, "```")
+	return strings.TrimSpace(content)
 }

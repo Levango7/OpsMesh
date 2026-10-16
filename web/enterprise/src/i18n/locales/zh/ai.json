@@ -132,6 +132,14 @@
       "loading": "加载中...",
       "generating": "生成中...",
       "analyzing": "分析中..."
-    }
+    },
+    "tab_history": "执行历史",
+    "history_title": "执行历史",
+    "history_id": "ID",
+    "history_total": "总数",
+    "history_dispatched": "已下发",
+    "history_time": "创建时间",
+    "history_no_data": "暂无执行历史",
+    "history_detail": "执行详情"
   }
 }

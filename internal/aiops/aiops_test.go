@@ -102,12 +102,12 @@ func TestParseRootCause(t *testing.T) {
 			wantConf: 0.95,
 		},
 		{
-			name:     "empty content",
-			content:  "",
-			wantCat:  "未知",
-			wantComp: "未知",
-			wantDesc: "",
-			wantConf: 0.5,
+			name:       "empty content",
+			content:    "",
+			wantCat:    "未知",
+			wantComp:   "未知",
+			wantDesc:   "",
+			wantConf:   0.3,
 		},
 	}
 

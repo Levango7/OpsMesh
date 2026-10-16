@@ -21,11 +21,11 @@ const (
 
 // DeviceContext 设备上下文：设备信息 + 最近指标 + 状态。
 type DeviceContext struct {
-	DeviceInfo *proto.DeviceInfo    `json:"deviceInfo"`
-	Metrics    *proto.DeviceMetrics `json:"metrics,omitempty"`
-	Tasks      []*proto.Task        `json:"tasks,omitempty"`  // 近期任务记录
-	Alerts     []*proto.Alert       `json:"alerts,omitempty"` // 设备相关告警
-	Uptime     int64                `json:"uptime"`           // 运行时长（秒）
+	DeviceInfo *proto.DeviceInfo      `json:"deviceInfo"`
+	Metrics    *proto.DeviceMetrics   `json:"metrics,omitempty"`
+	Tasks      []*proto.Task          `json:"tasks,omitempty"`   // 近期任务记录
+	Alerts     []*proto.Alert         `json:"alerts,omitempty"`  // 设备相关告警
+	Uptime     int64                  `json:"uptime"`            // 运行时长（秒）
 }
 
 // LogEntry 单条日志。
@@ -38,79 +38,43 @@ type LogEntry struct {
 
 // AlertContext 告警上下文。
 type AlertContext struct {
-	Alert      *proto.Alert   `json:"alert"`
-	Logs       []*LogEntry    `json:"logs,omitempty"`           // 告警窗口内相关日志
-	Metrics    *DeviceContext `json:"metrics,omitempty"`        // 告警设备的指标上下文
-	RelatedDev []string       `json:"relatedDevices,omitempty"` // 拓扑邻居设备 ID
-	NeighborTx []string       `json:"neighborTasks,omitempty"`  // 邻居设备近期任务
+	Alert      *proto.Alert    `json:"alert"`
+	Logs       []*LogEntry     `json:"logs,omitempty"`       // 告警窗口内相关日志
+	Metrics    *DeviceContext  `json:"metrics,omitempty"`    // 告警设备的指标上下文
+	RelatedDev []string        `json:"relatedDevices,omitempty"` // 拓扑邻居设备 ID
+	NeighborTx []string        `json:"neighborTasks,omitempty"` // 邻居设备近期任务
+}
+
+// Validate 校验告警上下文完整性。
+func (a *AlertContext) Validate() error {
+	if a == nil {
+		return fmt.Errorf("aiops: alert context is nil")
+	}
+	if a.Alert == nil {
+		return fmt.Errorf("aiops: alert is nil")
+	}
+	if a.Alert.AlertID == "" {
+		return fmt.Errorf("aiops: alert.alertID is required")
+	}
+	if a.Alert.DeviceID == "" {
+		return fmt.Errorf("aiops: alert.deviceID is required")
+	}
+	return nil
 }
 
 // RootCause 根因分析结果。
 type RootCause struct {
-	Category    string   `json:"category"`    // 硬件/软件/网络/配置/资源
-	Component   string   `json:"component"`   // 具体组件/服务
-	Description string   `json:"description"` // 根因描述
-	Confidence  float64  `json:"confidence"`  // 信心度 0-1
-	Evidence    []string `json:"evidence"`    // 证据列表（日志片段/指标值）
-}
-
-// RemediationPlan 修复方案。
-type RemediationPlan struct {
-	Title         string               `json:"title"`              // 修复标题
-	Steps         []RemediationStep    `json:"steps"`              // 执行步骤
-	Commands      []RemediationCommand `json:"commands"`           // 命令列表
-	DAGNodes      []DAGNodeSpec        `json:"dagNodes,omitempty"` // DAG 节点（复杂修复）
-	Safety        RemediationSafety    `json:"safety"`             // 安全建议
-	EstimatedTime string               `json:"estimatedTime"`      // 预估耗时
-}
-
-// RemediationStep 修复步骤（人工确认用）。
-type RemediationStep struct {
-	Order     int    `json:"order"`
-	Title     string `json:"title"`
-	Action    string `json:"action"`    // execute_task / restart / scale / isolate
-	Target    string `json:"target"`    // 目标设备/服务
-	Command   string `json:"command"`   // shell 命令（Action=execute_task 时）
-	Condition string `json:"condition"` // 执行条件（用于 DAG 条件分支）
-	VerifyCmd string `json:"verifyCmd"` // 验证命令
-}
-
-// RemediationCommand 待执行的命令。
-type RemediationCommand struct {
-	AgentID  string `json:"agentID"`  // 目标 agent（设备）
-	Command  string `json:"command"`  // shell 命令
-	Type     string `json:"type"`     // shell/service/file (default shell)
-	Timeout  int    `json:"timeout"`  // 超时秒
-	Priority int    `json:"priority"` // 优先级 1-10
-}
-
-// DAGNodeSpec DAG 节点规范（用于生成多步骤修复工作流）。
-type DAGNodeSpec struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Type       string   `json:"type"` // shell/service/file
-	Command    string   `json:"command"`
-	Path       string   `json:"path"`
-	DependsOn  []string `json:"dependsOn"`
-	RetryCount int      `json:"retryCount"`
-	RetryDelay int      `json:"retryDelay"`
-	Condition  string   `json:"condition,omitempty"`
-	ThenNodes  []string `json:"thenNodes,omitempty"`
-	ElseNodes  []string `json:"elseNodes,omitempty"`
-}
-
-// RemediationSafety 安全建议。
-type RemediationSafety struct {
-	RequiresConfirm bool     `json:"requiresConfirm"` // 是否需要人工确认
-	RollbackCmd     string   `json:"rollbackCmd"`     // 回滚命令
-	RiskLevel       string   `json:"riskLevel"`       // low/medium/high
-	Notes           []string `json:"notes"`           // 安全提示
+	Category    string   `json:"category"`              // 硬件/软件/网络/配置/资源
+	Component   string   `json:"component"`             // 具体组件/服务
+	Description string   `json:"description"`           // 根因描述
+	Confidence  float64  `json:"confidence"`            // 信心度 0-1
+	Evidence    []string `json:"evidence"`              // 证据列表（日志片段/指标值）
 }
 
 // Analyzer 故障分析器：将告警 + 日志 + 指标 + 拓扑上下文交给 LLM，获取根因分析。
 type Analyzer struct {
-	llm LLM
-	cfg Config
+	llm  LLM
+	cfg  Config
 }
 
 // NewAnalyzer 构造故障分析器。
@@ -120,16 +84,19 @@ func NewAnalyzer(llm LLM, cfg Config) *Analyzer {
 
 // Analyze 执行根因分析。
 func (a *Analyzer) Analyze(ctx context.Context, alertCtx *AlertContext) (*RootCause, error) {
-	if alertCtx == nil || alertCtx.Alert == nil {
-		return nil, fmt.Errorf("aiops: alert context is nil")
+	if err := alertCtx.Validate(); err != nil {
+		return nil, fmt.Errorf("aiops: %w", err)
 	}
 
 	prompt := a.buildAnalyzePrompt(alertCtx)
+	systemPrompt := systemPromptRootCause()
+	msgs := BuildSystemMessages(systemPrompt, prompt)
+
 	resp, err := a.llm.Chat(ctx, ChatRequest{
 		Model:       a.cfg.Model,
-		Messages:    []Message{{Role: "user", Content: prompt}},
-		Temperature: a.cfg.Temperature,
-		MaxTokens:   a.cfg.MaxTokens,
+		Messages:    msgs,
+		Temperature: 0.2, // 根因分析需要确定性，温度较低
+		MaxTokens:   1536,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("aiops: analyze LLM call: %w", err)
@@ -142,14 +109,25 @@ func (a *Analyzer) Analyze(ctx context.Context, alertCtx *AlertContext) (*RootCa
 	return rc, nil
 }
 
+// systemPromptRootCause 根因分析的系统角色提示词。
+func systemPromptRootCause() string {
+	return `你是一名资深 SRE，负责分析生产环境告警并定位根因。
+输入包含：告警信息、设备指标、相关日志、拓扑邻居、近期任务。
+请基于证据链（指标异常→日志错误→关联事件）推导最可能的根因，输出 JSON。
+字段：
+- category：硬件/软件/网络/配置/资源 五选一
+- component：具体组件名（如 nginx、mysql、磁盘、网卡）
+- description：简洁的根因描述（≤200 字）
+- confidence：0~1 的信心度
+- evidence：证据列表，每条引用具体指标值或日志片段
+不要编造不存在的证据，若证据不足则 confidence 设为 0.5 以下。`
+}
+
 // buildAnalyzePrompt 构造分析提示词。
 func (a *Analyzer) buildAnalyzePrompt(ctx *AlertContext) string {
 	var sb strings.Builder
 
-	sb.WriteString("你是一名资深 SRE，负责分析生产环境告警。请分析以下告警的根因，输出 JSON。\n\n")
-
-	// 告警基本信息
-	sb.WriteString(fmt.Sprintf("## 告警信息\n"))
+	sb.WriteString("## 告警信息\n")
 	sb.WriteString(fmt.Sprintf("- ID: %s\n", ctx.Alert.AlertID))
 	sb.WriteString(fmt.Sprintf("- 设备: %s\n", ctx.Alert.DeviceID))
 	sb.WriteString(fmt.Sprintf("- 级别: %s\n", ctx.Alert.Severity))
@@ -238,23 +216,35 @@ func truncateCmd(s string) string {
 
 // parseRootCause 解析 LLM 返回的 JSON 为 RootCause。
 func parseRootCause(content string) (*RootCause, error) {
-	// LLM 可能在代码块中返回 JSON
-	content = strings.TrimSpace(content)
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
-	content = strings.TrimSpace(content)
+	content = SanitizeJSON(content)
 
 	var rc RootCause
 	if err := json.Unmarshal([]byte(content), &rc); err != nil {
 		// 降级：如果 LLM 返回非 JSON 格式，将其作为 description
 		return &RootCause{
 			Category:    "未知",
-			Component:   "未知",
-			Description: content,
-			Confidence:  0.5,
-			Evidence:    []string{},
+			Component:     "未知",
+			Description:   content,
+			Confidence:    0.3,
+			Evidence:      []string{},
 		}, nil
+	}
+
+	// 归一化字段
+	if rc.Category == "" {
+		rc.Category = "未知"
+	}
+	if rc.Component == "" {
+		rc.Component = "未知"
+	}
+	if rc.Confidence < 0 {
+		rc.Confidence = 0
+	}
+	if rc.Confidence > 1 {
+		rc.Confidence = 1
+	}
+	if rc.Evidence == nil {
+		rc.Evidence = []string{}
 	}
 	return &rc, nil
 }
