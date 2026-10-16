@@ -190,6 +190,8 @@ var systemInventoryLastCol time.Time
 func collectSystem(m *proto.DeviceMetrics) {
 	if time.Since(systemInventoryLastCol) < systemInventoryInterval && systemInventoryCache != nil {
 		cp := *systemInventoryCache
+		// 服务状态变化较快，每次采集时用最新值覆盖（其余字段复用缓存）。
+		cp.Services = collectServiceList()
 		m.System = &cp
 		return
 	}
@@ -197,9 +199,23 @@ func collectSystem(m *proto.DeviceMetrics) {
 	collectUsers(&inv.Users)
 	collectGroups(&inv.Groups)
 	collectFirewall(inv)
+	inv.Services = collectServiceList()
 	systemInventoryCache = inv
 	systemInventoryLastCol = time.Now()
 	m.System = inv
+}
+
+// collectServiceList 采集关注服务的状态列表（复用 monitoredServices 白名单）。
+func collectServiceList() []proto.ServiceInfo {
+	var out []proto.ServiceInfo
+	for _, name := range monitoredServices {
+		status, enabled := queryService(name)
+		if status == "" {
+			continue
+		}
+		out = append(out, proto.ServiceInfo{Name: name, Status: status, Enabled: enabled})
+	}
+	return out
 }
 
 // systemInventoryCache 系统清单缓存（节流复用，避免每次采集都执行 getent/iptables）。

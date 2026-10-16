@@ -25,3 +25,10 @@ export const deleteSystemGroup = (body) => deleteJSONBody('/system/groups', body
 // 防火墙管理
 export const addFirewallRule = (body) => postJSON('/system/firewall', body)
 export const deleteFirewallRule = (body) => deleteJSONBody('/system/firewall', body)
+
+// systemctl 服务操作（start/stop/restart/reload/enable/disable/status）
+export const systemServiceAction = (body) => postJSON('/system/services', body)
+
+// journal 日志查询（下发 journalctl 查询任务，结果经 /api/v1/tasks/{id}/result 查询）
+export const queryJournal = (body) => postJSON('/system/journal', body)
+export const getTaskResult = (taskID) => getJSON(`/tasks/${encodeURIComponent(taskID)}/result`)

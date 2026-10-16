@@ -218,6 +218,7 @@ type SystemInventory struct {
 	Users           []UserInfo     `json:"users"`
 	Groups          []GroupInfo    `json:"groups"`
 	Firewall        []FirewallRule `json:"firewall"`
+	Services        []ServiceInfo  `json:"services"`        // 关注的服务状态（与 DeviceMetrics.Services 同源）
 	FirewallBackend string         `json:"firewallBackend"` // iptables / firewalld / none
 	CollectedAt     time.Time      `json:"collectedAt"`
 }

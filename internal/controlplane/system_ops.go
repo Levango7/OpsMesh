@@ -32,10 +32,11 @@ import (
 
 // 系统操作参数校验正则（严格字符集，防命令注入）。
 var (
-	safeNameRe  = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)          // 用户名/组名/服务名
-	safePortRe  = regexp.MustCompile(`^[0-9]{1,5}(:[0-9]{1,5})?$`) // 端口或端口范围
-	safeProtoRe = regexp.MustCompile(`^(tcp|udp)$`)                // 协议
-	safeIPRe    = regexp.MustCompile(`^[0-9a-fA-F:.]{1,45}$`)      // IPv4/IPv6 粗校验
+	safeNameRe         = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)          // 用户名/组名/服务名
+	safePortRe         = regexp.MustCompile(`^[0-9]{1,5}(:[0-9]{1,5})?$`) // 端口或端口范围
+	safeProtoRe        = regexp.MustCompile(`^(tcp|udp)$`)                // 协议
+	safeIPRe           = regexp.MustCompile(`^[0-9a-fA-F:.]{1,45}$`)      // IPv4/IPv6 粗校验
+	safeJournalSinceRe = regexp.MustCompile(`^[a-zA-Z0-9 :\-.]+$`)        // journalctl --since 参数（防注入）
 )
 
 // handleDeviceSystemInfo 处理 GET /api/v1/devices/{id}/system：返回结构化系统清单。

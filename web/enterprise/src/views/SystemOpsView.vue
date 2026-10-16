@@ -35,6 +35,12 @@
         <button :class="['tab', { active: tab === 'firewall' }]" @click="tab = 'firewall'" data-testid="tab-firewall">
           {{ $t('system_ops.tab_firewall') }} ({{ firewall.length }})
         </button>
+        <button :class="['tab', { active: tab === 'services' }]" @click="tab = 'services'" data-testid="tab-services">
+          {{ $t('system_ops.tab_services') }} ({{ services.length }})
+        </button>
+        <button :class="['tab', { active: tab === 'journal' }]" @click="tab = 'journal'" data-testid="tab-journal">
+          {{ $t('system_ops.tab_journal') }}
+        </button>
       </div>
 
       <!-- 用户 -->
@@ -132,6 +138,74 @@
           </tbody>
         </table>
       </div>
+
+      <!-- 服务管理 -->
+      <div v-show="tab === 'services'" class="card">
+        <div class="flowbar">
+          <h3 style="margin: 0">{{ $t('system_ops.services_title') }}</h3>
+          <span class="muted">{{ $t('system_ops.services_hint') }}</span>
+          <button class="xs outline" @click="loadSystemInfo"><Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}</button>
+        </div>
+        <table class="data-table" data-testid="services-table">
+          <thead>
+            <tr>
+              <th>{{ $t('system_ops.col_service') }}</th>
+              <th>{{ $t('system_ops.col_status') }}</th>
+              <th>{{ $t('system_ops.col_enabled') }}</th>
+              <th>{{ $t('system_ops.col_actions') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in services" :key="s.name">
+              <td><code>{{ s.name }}</code></td>
+              <td><span class="tag" :class="s.status === 'running' ? 'ok' : 'off'">{{ s.status }}</span></td>
+              <td>{{ s.enabled ? $t('system_ops.enabled') : $t('system_ops.disabled') }}</td>
+              <td class="svc-actions">
+                <button class="xs outline" @click="svcAction(s.name, 'restart')">{{ $t('system_ops.svc_restart') }}</button>
+                <button class="xs outline" @click="svcAction(s.name, 'stop')">{{ $t('system_ops.svc_stop') }}</button>
+                <button class="xs primary" @click="svcAction(s.name, 'start')">{{ $t('system_ops.svc_start') }}</button>
+                <button class="xs outline" @click="svcAction(s.name, 'status')">{{ $t('system_ops.svc_status') }}</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- journal 日志查询 -->
+      <div v-show="tab === 'journal'" class="card">
+        <div class="flowbar">
+          <h3 style="margin: 0">{{ $t('system_ops.journal_title') }}</h3>
+        </div>
+        <div class="journal-form">
+          <div class="field">
+            <label>{{ $t('system_ops.journal_unit') }}</label>
+            <input v-model.trim="journalForm.unit" placeholder="nginx.service" />
+          </div>
+          <div class="field">
+            <label>{{ $t('system_ops.journal_lines') }}</label>
+            <input v-model.number="journalForm.lines" type="number" min="1" max="2000" placeholder="100" />
+          </div>
+          <div class="field">
+            <label>{{ $t('system_ops.journal_level') }}</label>
+            <select v-model="journalForm.level">
+              <option value="">{{ $t('system_ops.journal_all_levels') }}</option>
+              <option value="err">err</option>
+              <option value="warning">warning</option>
+              <option value="info">info</option>
+              <option value="debug">debug</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>{{ $t('system_ops.journal_since') }}</label>
+            <input v-model.trim="journalForm.since" placeholder="1 hour ago" />
+          </div>
+          <button class="xs primary" @click="runJournalQuery" :disabled="journalLoading" data-testid="journal-query-btn">
+            {{ journalLoading ? $t('common.loading') : $t('system_ops.journal_query') }}
+          </button>
+        </div>
+        <div v-if="journalError" class="poll-err">{{ journalError }}</div>
+        <pre v-if="journalResult" class="journal-output" data-testid="journal-output">{{ journalResult }}</pre>
+      </div>
     </template>
 
     <!-- 创建用户弹窗 -->
@@ -225,6 +299,9 @@ import {
   deleteSystemGroup,
   addFirewallRule,
   deleteFirewallRule,
+  systemServiceAction,
+  queryJournal,
+  getTaskResult,
 } from '@/api/system-ops'
 
 const deviceStore = useDeviceStore()
@@ -240,6 +317,13 @@ const users = ref([])
 const groups = ref([])
 const firewall = ref([])
 const firewallBackend = ref('')
+const services = ref([])
+
+// journal 查询状态
+const journalForm = reactive({ unit: '', lines: 100, level: '', since: '' })
+const journalLoading = ref(false)
+const journalResult = ref('')
+const journalError = ref('')
 
 const userSearch = ref('')
 const groupSearch = ref('')
@@ -278,6 +362,7 @@ async function loadSystemInfo() {
     groups.value = inv.groups || []
     firewall.value = inv.firewall || []
     firewallBackend.value = inv.firewallBackend || ''
+    services.value = inv.services || []
   } catch (e) {
     error.value = e.j?.error || t('system_ops.load_failed')
   } finally {
@@ -371,6 +456,55 @@ async function doDelete() {
   }
 }
 
+async function svcAction(service, action) {
+  try {
+    await systemServiceAction({ agentID: currentAgentID(), service, action })
+    toast.success(t('system_ops.task_dispatched'))
+    setTimeout(loadSystemInfo, 3000)
+  } catch (e) {
+    error.value = e.j?.error || t('system_ops.op_failed')
+  }
+}
+
+async function runJournalQuery() {
+  journalLoading.value = true
+  journalResult.value = ''
+  journalError.value = ''
+  try {
+    const resp = await queryJournal({
+      agentID: currentAgentID(),
+      unit: journalForm.unit,
+      lines: journalForm.lines,
+      level: journalForm.level,
+      since: journalForm.since,
+    })
+    const taskID = resp.taskID || resp.j?.taskID
+    if (!taskID) throw new Error('no taskID returned')
+    // 轮询任务结果。
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 1500))
+      try {
+        const res = await getTaskResult(taskID)
+        const out = res.stdout || res.j?.stdout || ''
+        const stderr = res.stderr || res.j?.stderr || ''
+        if (out || stderr) {
+          journalResult.value = out || stderr
+          break
+        }
+      } catch {
+        // 结果未就绪，继续轮询。
+      }
+    }
+    if (!journalResult.value) {
+      journalError.value = t('system_ops.journal_no_result')
+    }
+  } catch (e) {
+    journalError.value = e.j?.error || t('system_ops.journal_failed')
+  } finally {
+    journalLoading.value = false
+  }
+}
+
 onMounted(() => {
   deviceStore.fetchDevices?.()
 })
@@ -396,4 +530,7 @@ onMounted(() => {
 .op-form { display: flex; flex-direction: column; gap: 10px; }
 .btnbar { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
 .poll-err { padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm); background: var(--fail-soft); border: 1px solid var(--fail-bg); color: var(--fail); font-size: 12.5px; }
+.svc-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.journal-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 12px; }
+.journal-output { background: var(--surface-3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; font-family: monospace; font-size: 12px; max-height: 500px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
 </style>

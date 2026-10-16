@@ -177,6 +177,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/system/users", s.handleSystemUsers)       // POST 创建 / DELETE 删除用户
 	mux.HandleFunc("/api/v1/system/groups", s.handleSystemGroups)     // POST 创建 / DELETE 删除组
 	mux.HandleFunc("/api/v1/system/firewall", s.handleSystemFirewall) // POST 添加 / DELETE 删除规则
+	// systemctl 服务管理 + journal 日志查询。
+	mux.HandleFunc("/api/v1/system/services", s.handleSystemServices) // POST 服务操作（start/stop/restart/...）
+	mux.HandleFunc("/api/v1/system/journal", s.handleSystemJournal)   // POST journalctl 查询下发
 	// 中间件部署：预置模板列表 + 详情 + 在指定 agent 上部署 + 已部署实例查询 + 卸载。
 	mux.HandleFunc("/api/v1/middleware-templates", s.handleMiddlewareTemplates)
 	mux.HandleFunc("/api/v1/middleware-templates/", s.handleMiddlewareTemplateDetail) // 子路径：{id} 和 {id}/deploy
