@@ -171,6 +171,43 @@
         </DataTable>
       </MetricsCard>
 
+      <!-- GPU 监控 -->
+      <MetricsCard v-if="gpus.length" :title="$t('device_detail.gpu')" icon="deploy" accent="--purple">
+        <div v-if="gpus.length === 0" class="muted">{{ $t('device_detail.no_gpu') }}</div>
+        <div v-else class="gpu-list">
+          <div v-for="g in gpus" :key="g.index" class="gpu-row">
+            <div class="gpu-head">
+              <code class="gpu-name">{{ g.name }}</code>
+              <span class="gpu-uuid">{{ g.uuid }}</span>
+            </div>
+            <div class="gpu-meta-row">
+              <span class="gpu-meta">{{ $t('device_detail.gpu_usage') }}: {{ g.usage.toFixed(1) }}%</span>
+              <span class="gpu-meta">{{ $t('device_detail.gpu_mem') }}: {{ fmtBytes(g.memUsed * 1024 * 1024) }} / {{ fmtBytes(g.memTotal * 1024 * 1024) }} ({{ g.memUsage.toFixed(1) }}%)</span>
+              <span class="gpu-meta">{{ $t('device_detail.gpu_temp') }}: {{ g.temp }}°C</span>
+              <span class="gpu-meta">{{ $t('device_detail.gpu_power') }}: {{ g.powerDraw.toFixed(1) }}W / {{ g.powerLimit.toFixed(1) }}W</span>
+              <span class="gpu-meta">{{ $t('device_detail.gpu_driver') }}: {{ g.driver }}</span>
+            </div>
+            <div class="gpu-bar-track">
+              <div class="gpu-bar-fill" :style="{ width: g.usage + '%', background: barColor(g.usage) }" />
+            </div>
+            <div class="gpu-bar-track">
+              <div class="gpu-bar-fill" :style="{ width: g.memUsage + '%', background: barColor(g.memUsage) }" />
+            </div>
+          </div>
+        </div>
+      </MetricsCard>
+
+      <!-- 环境依赖 -->
+      <MetricsCard v-if="envs.length" :title="$t('device_detail.env_deps')" icon="logs" accent="--indigo">
+        <div v-if="envs.length === 0" class="muted">{{ $t('device_detail.no_env_deps') }}</div>
+        <div v-else class="env-list">
+          <div v-for="e in envs" :key="e.name" class="env-row">
+            <span class="env-name">{{ e.name }}</span>
+            <span class="env-version">{{ e.version }}</span>
+          </div>
+        </div>
+      </MetricsCard>
+
       <!-- 服务状态 + 进程信息（左右两栏） -->
       <div class="row">
         <div class="col col-half">
@@ -265,6 +302,10 @@ const disks = computed(() => metrics.value?.disks || [])
 const network = computed(() => metrics.value?.network || [])
 // 服务列表
 const services = computed(() => metrics.value?.services || [])
+// GPU 列表
+const gpus = computed(() => metrics.value?.gpus || [])
+// 环境依赖列表
+const envs = computed(() => metrics.value?.envs || [])
 
 // 网络表格列定义
 const netCols = [
@@ -474,6 +515,36 @@ onUnmounted(() => {
 .proc-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 0; }
 .proc-big { font-size: 36px; font-weight: 700; color: var(--text); line-height: 1; font-variant-numeric: tabular-nums; }
 .proc-label { font-size: 12.5px; color: var(--text-3); }
+
+/* GPU 列表 */
+.gpu-list { display: flex; flex-direction: column; gap: 12px; }
+.gpu-row {
+  background: var(--surface-3); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 10px 12px;
+}
+.gpu-head { display: flex; justify-content: space-between; margin-bottom: 8px; }
+.gpu-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.gpu-uuid { font-size: 11px; color: var(--text-3); font-family: monospace; }
+.gpu-meta-row { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 8px; }
+.gpu-meta { font-size: 12px; color: var(--text-2); }
+.gpu-bar-track {
+  height: 8px; background: var(--surface); border-radius: 999px; overflow: hidden;
+  border: 1px solid var(--border); margin-bottom: 6px;
+}
+.gpu-bar-fill {
+  height: 100%; border-radius: 999px;
+  transition: width .35s ease, background .2s ease;
+}
+
+/* 环境依赖列表 */
+.env-list { display: flex; flex-direction: column; gap: 8px; }
+.env-row {
+  background: var(--surface-3); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 8px 12px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.env-name { font-size: 13px; color: var(--text); font-weight: 500; }
+.env-version { font-size: 13px; color: var(--text-2); font-family: monospace; }
 
 /* 响应式 */
 @media (max-width: 768px) {

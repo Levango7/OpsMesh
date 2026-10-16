@@ -71,6 +71,8 @@ type DeviceMetrics struct {
 	Disks        []DiskMetrics `json:"disks"`
 	Network      []NetMetrics  `json:"network"`
 	Services     []ServiceInfo `json:"services"`
+	GPUs     []GPUMetrics   `json:"gpus"`       // GPU 指标（无 GPU 时为空）
+	Envs     []EnvDependency `json:"envs"`      // 环境依赖版本信息
 	ProcessCount int           `json:"processCount"`
 	CollectedAt  time.Time     `json:"collectedAt"`
 }
@@ -125,6 +127,40 @@ type ServiceInfo struct {
 	Name    string `json:"name"`    // 服务名
 	Status  string `json:"status"`  // running/stopped
 	Enabled bool   `json:"enabled"` // 是否开机自启
+}
+
+// GPUMetrics GPU 指标（NVIDIA nvidia-smi / AMD rocm-smi 采集，无 GPU 时为空）。
+type GPUMetrics struct {
+	Index      int     `json:"index"`      // GPU 索引
+	Name       string  `json:"name"`       // GPU 型号
+	UUID       string  `json:"uuid"`       // GPU UUID
+	Usage      float64 `json:"usage"`      // GPU 核心使用率 0-100
+	MemTotal   uint64  `json:"memTotal"`   // 显存总量（MB）
+	MemUsed    uint64  `json:"memUsed"`    // 显存已用（MB）
+	MemUsage   float64 `json:"memUsage"`   // 显存使用率 0-100
+	Temp       int     `json:"temp"`       // 温度（摄氏度）
+	PowerDraw  float64 `json:"powerDraw"`  // 功耗（瓦）
+	PowerLimit float64 `json:"powerLimit"` // 功耗上限（瓦）
+	Driver     string  `json:"driver"`     // 驱动版本
+}
+
+// EnvDependency 环境依赖版本信息（用于跨机器环境一致性对比）。
+type EnvDependency struct {
+	Name    string `json:"name"`    // 依赖名（如 glibc、openssl、python3、java）
+	Version string `json:"version"` // 版本号
+	Path    string `json:"path"`    // 安装路径（可选）
+}
+
+// ProcessInfo 进程详情（用于进程列表查询，不常驻 DeviceMetrics）。
+type ProcessInfo struct {
+	PID      int32   `json:"pid"`      // 进程 ID
+	Name     string  `json:"name"`     // 进程名
+	CPU      float64 `json:"cpu"`      // CPU 使用率 0-100
+	Mem      float64 `json:"mem"`      // 内存使用率 0-100
+	MemBytes uint64  `json:"memBytes"` // 内存占用（MB）
+	Status   string  `json:"status"`   // 状态（running/sleeping/zombie等）
+	Cmd      string  `json:"cmd"`      // 命令行（截断）
+	User     string  `json:"user"`     // 所属用户
 }
 
 // 任务类型常量（agent 按 Type 选择执行器）。

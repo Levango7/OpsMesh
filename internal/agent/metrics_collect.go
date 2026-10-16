@@ -13,6 +13,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -168,6 +169,8 @@ func CollectMetrics(deviceID string) *proto.DeviceMetrics {
 	collectNet(m)          // 各网卡 IP/MAC/收发字节
 	collectServices(m)     // 关注的服务状态
 	collectProcessCount(m) // 进程数
+	collectGPU(m)          // GPU 指标（NVIDIA/AMD，无 GPU 时为空）
+	collectEnvs(m)         // 环境依赖版本（glibc/openssl/python/java 等）
 	return m
 }
 
@@ -446,4 +449,154 @@ func collectProcessCount(m *proto.DeviceMetrics) {
 		return
 	}
 	m.ProcessCount = len(pids)
+}
+
+// collectGPU 采集 GPU 指标（优先 nvidia-smi，回退 rocm-smi；无 GPU 时留空）。
+// 输出格式（逗号分隔）：index,name,uuid,utilization.gpu,memory.total,memory.used,temperature.gpu,power.draw,power.limit,driver_version
+// 单 GPU 时单行输出；多 GPU 多行。
+func collectGPU(m *proto.DeviceMetrics) {
+	out, err := exec.Command("nvidia-smi", "--query-gpu=index,name,uuid,utilization.gpu,memory.total,memory.used,temperature.gpu,power.draw,power.limit,driver_version", "--format=csv,noheader,nounits").Output()
+	if err != nil {
+		// 回退 rocm-smi（AMD GPU）。
+		out, err = exec.Command("rocm-smi", "--showproductname", "--showuuid", "--showuse", "--showmemuse", "--showtemp", "--showpower", "--showpowerlimit", "--showdriverversion", "--csv").Output()
+		if err != nil {
+			return // 无 GPU 或工具不可用，留空
+		}
+		m.GPUs = parseROCmSmiOutput(string(out))
+		return
+	}
+	m.GPUs = parseNvidiaSmiOutput(string(out))
+}
+
+// parseNvidiaSmiOutput 解析 nvidia-smi CSV 输出。
+func parseNvidiaSmiOutput(output string) []proto.GPUMetrics {
+	var gpus []proto.GPUMetrics
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, ",")
+		if len(fields) < 10 {
+			continue
+		}
+		g := proto.GPUMetrics{}
+		g.Index = parseInt(fields[0])
+		g.Name = strings.TrimSpace(fields[1])
+		g.UUID = strings.TrimSpace(fields[2])
+		g.Usage = parseFloat(fields[3])
+		g.MemTotal = parseUint(fields[4])
+		g.MemUsed = parseUint(fields[5])
+		if g.MemTotal > 0 {
+			g.MemUsage = float64(g.MemUsed) / float64(g.MemTotal) * 100
+		}
+		g.Temp = parseInt(fields[6])
+		g.PowerDraw = parseFloat(fields[7])
+		g.PowerLimit = parseFloat(fields[8])
+		g.Driver = strings.TrimSpace(fields[9])
+		gpus = append(gpus, g)
+	}
+	return gpus
+}
+
+// parseROCmSmiOutput 解析 rocm-smi CSV 输出（简化版，仅保留关键字段）。
+func parseROCmSmiOutput(output string) []proto.GPUMetrics {
+	var gpus []proto.GPUMetrics
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 2 {
+		return gpus
+	}
+	// 跳过表头，逐行解析（格式依 rocm-smi 版本而异，此处尽力解析）。
+	for _, line := range lines[1:] {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, ",")
+		if len(fields) < 3 {
+			continue
+		}
+		g := proto.GPUMetrics{}
+		g.Name = strings.TrimSpace(fields[0])
+		g.UUID = strings.TrimSpace(fields[1])
+		gpus = append(gpus, g)
+	}
+	return gpus
+}
+
+// collectEnvs 采集环境依赖版本信息（glibc/openssl/python3/java/node等）。
+// 任一命令失败不中断，仅跳过该依赖。
+func collectEnvs(m *proto.DeviceMetrics) {
+	checks := []struct {
+		name  string
+		cmd   string
+		args  []string
+		parse func(string) string
+	}{
+		{"glibc", "ldd", []string{"--version"}, parseFirstLine},
+		{"openssl", "openssl", []string{"version"}, parseFirstLine},
+		{"python3", "python3", []string{"--version"}, parseFirstLine},
+		{"java", "java", []string{"-version"}, parseJavaVersion},
+		{"node", "node", []string{"--version"}, parseFirstLine},
+		{"git", "git", []string{"--version"}, parseFirstLine},
+		{"docker", "docker", []string{"version", "--format", "{{.Server.Version}}"}, parseFirstLine},
+		{"kubectl", "kubectl", []string{"version", "--client", "--short"}, parseFirstLine},
+		{"opsmesh-agent", "opsmesh-agent", []string{"--version"}, parseFirstLine},
+	}
+	for _, c := range checks {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		out, err := exec.CommandContext(ctx, c.cmd, c.args...).CombinedOutput()
+		cancel()
+		if err != nil {
+			continue // 命令不存在或执行失败，跳过
+		}
+		ver := c.parse(string(out))
+		if ver == "" {
+			continue
+		}
+		m.Envs = append(m.Envs, proto.EnvDependency{
+			Name:    c.name,
+			Version: ver,
+		})
+	}
+}
+
+// parseFirstLine 取输出第一行并去空白。
+func parseFirstLine(out string) string {
+	return strings.TrimSpace(strings.Split(out, "\n")[0])
+}
+
+// parseJavaVersion 解析 java -version 输出（版本在双引号内，如 "17.0.5"）。
+func parseJavaVersion(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if i := strings.Index(line, `"`); i >= 0 {
+			rest := line[i+1:]
+			if j := strings.Index(rest, `"`); j >= 0 {
+				return rest[:j]
+			}
+		}
+	}
+	return ""
+}
+
+// parseInt 安全解析 int（失败返回 0）。
+func parseInt(s string) int {
+	var n int
+	_, _ = fmt.Sscanf(strings.TrimSpace(s), "%d", &n)
+	return n
+}
+
+// parseFloat 安全解析 float64（失败返回 0）。
+func parseFloat(s string) float64 {
+	var n float64
+	_, _ = fmt.Sscanf(strings.TrimSpace(s), "%f", &n)
+	return n
+}
+
+// parseUint 安全解析 uint64（失败返回 0）。
+func parseUint(s string) uint64 {
+	var n uint64
+	_, _ = fmt.Sscanf(strings.TrimSpace(s), "%d", &n)
+	return n
 }

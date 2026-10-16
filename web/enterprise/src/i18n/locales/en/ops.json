@@ -76,7 +76,16 @@
     "enabled": "enabled",
     "disabled": "disabled",
     "process_info": "Processes",
-    "process_count": "Process Count"
+    "process_count": "Process Count",
+    "gpu": "GPU",
+    "no_gpu": "No GPU detected",
+    "gpu_usage": "Core",
+    "gpu_mem": "VRAM",
+    "gpu_temp": "Temp",
+    "gpu_power": "Power",
+    "gpu_driver": "Driver",
+    "env_deps": "Env Dependencies",
+    "no_env_deps": "No env dependencies detected"
   },
   "tasks": {
     "title": "Tasks",

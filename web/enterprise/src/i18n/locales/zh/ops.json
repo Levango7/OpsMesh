@@ -76,7 +76,16 @@
     "enabled": "已启用",
     "disabled": "已禁用",
     "process_info": "进程信息",
-    "process_count": "进程总数"
+    "process_count": "进程总数",
+    "gpu": "GPU 监控",
+    "no_gpu": "未检测到 GPU",
+    "gpu_usage": "核心",
+    "gpu_mem": "显存",
+    "gpu_temp": "温度",
+    "gpu_power": "功耗",
+    "gpu_driver": "驱动",
+    "env_deps": "环境依赖",
+    "no_env_deps": "未检测到环境依赖"
   },
   "tasks": {
     "title": "任务下发",
