@@ -4,6 +4,17 @@
 
 > 当前最新已发布版本：`v0.15.0`（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-16（TD-95 收口：镜像发布抽成复用件 _publish-image.yml 并在 main 验绿；方向① 经评估主动不做）
+
+- **Phase A（已落地 + runner 验绿）**：把 ci.yml 的 `image`/`image-agent` 两个 ~400 行镜像发布 job
+  逐步骤（build→Trivy→syft SBOM→keyless cosign sign+attest→attest 自验→提权 `:<版本>`/`:latest`→digest
+  自验→可选 GitOps 写回）抽成 reusable workflow `.github/workflows/_publish-image.yml`（`on: workflow_call`，
+  入参 `image_leaf/dockerfile/sbom_prefix/job_label/gitops`，`secrets: inherit`），`image`/`image-agent` 改 `uses:` 调用点、行为不变。
+  main run `38807434499` 的 `image / publish-image`、`image-agent / publish-image` **completed/success**——复用件在真 runner 上端到端跑通。
+- **两处只有 runner 才暴露的 reusable 回归（已修）**：① 门禁 §7「chart 引用的镜像名必须有人推」原只 grep ci.yml 的 `IMAGE_LEAF:`，reusable 化后叶子名移到调用点 `with: image_leaf:` ⇒ 误报"CI 不再发布 opsmesh-binary/agent"；解析现同认两写法、扫两文件。② keyless cosign 证书 subject = 实际签名的 workflow 文件，构建进复用件后从 `ci.yml@` 变 `_publish-image.yml@` ⇒ attest 自验 `--certificate-identity-regexp` 改钉复用件自身（核对：release.yml 的 verify 钉 `release.yml@` 不受影响、回核脚本不做身份校验）。
+- **方向① 合并 B+C（发布整体搬进 release.yml）经核代码主动不做**：release.yml 全程不吃测试，"测试全绿才发布"仅挂在 ci.yml 的 release job（needs 8 测试 job + if tag）；把发布搬进 release.yml 会拆掉这道闸（跨 workflow 不能 needs，正是本债死结）。真·自洽须反向把测试并入同一 workflow、只能靠 dry-run tag 验，ROI 不抵方向②。TD-95 由「待启动」移入「已解决」。
+- 关联设计稿 `docs/td95-unified-publisher-design-2026-10-14.md`（记录评估与形状）、协调板第九十五则。
+
 ## [Unreleased] — 2026-10-14（切流演练阻断级两缺陷修复：对侧会话身份回落 + 主动改密转发还原 body；演练台回退路径补齐）
 
 - **背景**：模拟用户团队批次 0 演练（三人设 + 协调者逐条复核，报告与证据见

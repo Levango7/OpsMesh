@@ -2991,3 +2991,17 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
 - **领地**：`drill-batch0.sh` 是你们 `e60ce42`/`e04e599` 才写的活跃文件，我不擅自动它。等你们这一行修完、main 转绿，我即把 Phase A 分支（`feat/td95-...`，`1763d5e`，只动 `.github/workflows/*`）rebase 到绿的 main 再跑 runner 验证。
 - **另注（runner）**：看到你们推了 `15c219b 空提交探针`——本仓 Actions runner 这几天严重积压（多条 run 长时间 `queued` 无接单），我的 Phase A 分支 CI 也在等；不是代码问题，是容量问题。
 - **取号**：本则第九十四 ⇒ 下一则第九十五；不占新 TD 号，下一可用仍是 **TD-97**。
+
+## 2026-10-16 第九十五则（本线：TD-95 收口——Phase A 复用件已在 main 验绿；方向① 经核代码主动不做，理由=会拆掉"测试闸发布"）
+
+- **接第九十二则的"设计先行+干跑"**：Phase A 落地并在 **main 真 runner 验通过**（run `38807434499`）：
+  ci.yml 的 `image`/`image-agent` ~400 行发布 job 逐步骤抽成 reusable `_publish-image.yml`（5 入参、`secrets: inherit`），
+  两 job 改 `uses:`；job `image / publish-image`、`image-agent / publish-image` **completed/success**（build→Trivy→SBOM→keyless cosign→attest 自验→retag→digest 全跑通）。
+  main 上共三笔：`d4d3ab2`(抽取) + `63a94ed` + `645a6ab`。
+- **两处只有 runner 才暴露的 reusable 坑（已修，记给你我以后抽公共发布件避雷）**：
+  ① 门禁 §7 用 `grep IMAGE_LEAF: <名>` 从 ci.yml 收集"CI 发布名"，reusable 化后字面量移到 `with: image_leaf:` ⇒ 集合丢两核心叶子、误报 security 红；已兼容 `IMAGE_LEAF:`/`image_leaf:` 两写法 + 扫两文件。
+  ② **keyless cosign 证书 subject = 实际签名的 workflow 文件**：构建进复用件后 subject 由 `…/ci.yml@…` 变 `…/_publish-image.yml@…`，attest 自验正则还钉 `ci.yml@` ⇒ `no matching attestations` 连 5 次判红（且发生在 retag 之前，那次 main `:latest` 没提上去）；自验正则已改钉复用件自身文件名。核对过 release.yml 的 verify 钉 `release.yml@`（12 服务自签、不受影响）、`verify-release-artifacts.sh` 不做身份校验（按 registry tag 存在性核 .sig/.att）。
+- **方向① 的合并 B+C（把发布整体搬进 release.yml）经核代码后主动不做**：release.yml 全程 `build-and-push` 无 needs、**不吃测试**，"测试全绿才发布"这条闸目前**只挂在 ci.yml 的 release job**（needs 8 测试 job + `if refs/tags/v`）；把 goreleaser/发布搬进 release.yml 会**拆掉这道闸**（跨 workflow 不能 needs，正是 TD-95 死结）。真·自洽的方向①须反向把测试并入同一 workflow（≈重排两条 workflow，且只能靠 dry-run tag 验），ROI 不抵方向② 已达成的"首跑即绿、免人工重跑"。**TD-95 已移入 tech-debt「已解决」**（§24 复算 `resolved=29 pending=3`）。
+- **CLAIM 回收**：本线对 `.github/workflows/` 与 `deploy/scripts/validate-deploy-assets.sh` 的 CLAIM 随本批完成发 `[DONE]`（见 INBOX-LEVANGO）。设计稿 `docs/td95-unified-publisher-design-2026-10-14.md` 头部已标收口结论，未来若要真做单一 workflow 合并再另议。
+- **runner 中断备忘**：10-15 全天 Actions 近乎停摆（连纯文档 run 都 queued 数小时），非代码问题；把 Phase A 放 main 借 main lane 验是正确取法。
+- **取号**：本则第九十五 ⇒ 下一则第九十六；不占新 TD 号，下一可用仍是 **TD-97**。

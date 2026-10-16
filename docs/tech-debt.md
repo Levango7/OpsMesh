@@ -5,7 +5,7 @@
 
 状态列：**已解决**（代码已落地）、**进行中**、**待启动**、**已明确不做（见理由）**。
 
-<!-- td-ledger-check: rows=65 unique=65 resolved=28 closed=31 inprogress=0 pending=4 wontfix=2 -->
+<!-- td-ledger-check: rows=65 unique=65 resolved=29 closed=31 inprogress=0 pending=3 wontfix=2 -->
 
 > 计数可复算：以上标记行由门禁第 24 节每次实测复算，缺失或与实际行数不符即判红（红时会打印正确的整行，直接粘贴即可）。本文件正文里带日期的引用块/节内的计数是**历史快照**，按当年事实记录、不受今日行数影响。
 
@@ -46,6 +46,52 @@
 | TD-96 | **门禁第 16 节的「日期代理」在 tag 落在提交序列中间时产生假阳性**（2026-10-13 v0.14.0 发布当日实测） | ✅ **2026-10-13 已解决（选项 ①：归版豁免账 + 判据抽成可执行脚本 + 现场自测）**。**问题**：`build-test` 的 §16 用「块日期早于最新发布版本日期 ⇒ 已发货却仍标 Unreleased」做判据（CI 浅检出拿不到 tag 列表，故用日期代理），但 v0.14.0 的 tag 打在 `f4968bb`，而 A3/B1/B3 三块（`087a9bd`/`219b5e4`/`56ac092`，10-13 才进 main）**不是**该 tag 的祖先（`git merge-base --is-ancestor <sha> v0.14.0^{commit}` 逐条 NO）⇒ 确实没发货，却因标题写成工作发生日（10-12）被判「漏归版」假阳性。**为什么不选「把日期改成发布日之后」**：那是把自己的账改到通过门禁，下一次真漏归版就再也抓不到（登记时已明写「不要的修法」）。**落地**：① 把 §16 判据从内联 heredoc 抽成独立可执行脚本 `deploy/scripts/changelog-fold-gate.py`（CLI：`CHANGELOG.md <账>`，stdout 打 `SUMMARY released_max/…`，退出码 = 0 干净 / 1 有 offenders 或过期条目）；② 新增**归版豁免账** `deploy/scripts/changelog-fold-exempt.tsv`（键 = 块标题整行，含「过期检查」——账里每行必须仍对应一个「当前且早于发布日」的 `[Unreleased]` 块，块一旦归版/改名而不删行即判红，照第 24 节历史快照豁免的既有做法，PASS 行报豁免条数防后门）；③ §16 接线为「跑脚本 + 跑脚本自测」；三块 CHANGELOG 标题**还原**为如实的 `[Unreleased]`（不归进 0.14.0——那会让文档领先于产物）。**现场自测**：`deploy/scripts/changelog-fold-gate.selftest.sh` 10 例（干净 / offender 判红 / 豁免转绿 / 幽灵过期条目判红 / 无谓豁免判红 / 缺日期判红 / 散文行不是标题 / 无 base 判红 + **变异 2 例**：把日期比较改成 `>`、把 `is_unreleased` 放宽成子串匹配 ⇒ 各自判红），全绿收尾。**实测**：部署资产门禁整跑 `PASS=77 FAIL=0 SKIP=1`，§16 报 `released_max=2026-10-13 released_blocks=149 unreleased=7 exempt=3 offenders=0 stale=0`；`shellcheck -S info` 两个脚本 0 命中。**判据**：§16 判红先看 SUMMARY 的 `offenders`（真漏归版）还是 `stale`（账里过期条目），别先改块日期。未采纳选项 ②（把判据换成 `git tag --contains` 提交可达性）——它要改 `release.yml` 的 job 面并把 build-test 侧降为 warning，改动面大于 ① 且 ① 与第 24 节做法一致；若将来 tag/CI 检出条件变化再评估。 |
 
 ---
+| TD-95 | **发布链的「发布物回核」与 tag 触发的 `ci` run 竞态：首跑必红，而产物其实是好的** | "
+"2026-10-13 v0.14.0 首跑实测登记。**现象**：`release.yml` 的 run `38335486330` 里 12 个 `build-and-push` "
+"与 12 个 `promote` 全 success、`github-release` success（Release `v0.14.0` 于 02:40:04Z 发布），"
+"但最后的「发布物回核」job step 4 判红：`PASS=2 FAIL=6 UNVERIFIED=2`。**四条 FAIL 全指向同两个东西**——"
+"`opsmesh-binary` / `opsmesh-agent` 的 `:0.14.0` manifest 404、`GitHub Release v0.14.0 不存在`（assets 当时为 0）"
+"与 chart 引用不存在的镜像；而这两个镜像与那 5 个 assets 由**另一条 workflow** 产出——tag 触发的 `ci` run "
+"`38335486341`，它在那一刻仍 `in_progress`（`Race detector`/`services`/`security` 在跑），"
+"03:00:27Z 才 completed/success（13 条 job 全绿）。**根因**：回核的有界等待 `CORE_WAIT=${CORE_WAIT_LIMIT_SEC:-2700}`"
+"（45 分钟）小于单次 `ci` run 的实际时长——v0.13.0 那次为消掉同类竞态引入的就是这个有界等待，"
+"值定小了；这与本仓反复出事的形状同源：**等待值来自估计，而不是来自可判定的收敛条件**。"
+"**产物侧无损伤（已独立取证）**：等那条 run 终态后本机重跑 `deploy/scripts/verify-release-artifacts.sh 0.14.0`"
+" ⇒ `PASS=8 FAIL=0`、退出码 0，第 ⑤ 项 **14/14** 镜像 `:0.14.0` 与发布提交 `f4968bb` 同 manifest digest、"
+"14/14 有 `.sig` 与 `.att`、Release assets=5、正文 6208 字符含「能力降级清单」。"
+"**为什么仍要修**：Releases 页面挂一条红 job，客户与运维都会读成"这次发布没验过"；"
+"而下一次发版若没人手工补跑，这个红会长期存在——**红因文案还会把人引向错误的处置**"
+"（`release job 未跑成功，或该仓库没进矩阵`，其实是在跑还没跑到）。"
+"**方向（按彻底程度排序）**：① 把 `opsmesh-binary` / `opsmesh-agent` 的构建提权并入 `release.yml`，"
+"让回核与它们在**同一张 needs 图**里（消除跨 workflow 依赖，最彻底）；"
+"② 回核前先按 `head_sha` 轮询那条 `ci` run 到**终态**（可判定收敛，而不是固定秒数），"
+"超时上限只做兜底；③ 最低成本：抬 `CORE_WAIT` 到实测 P95 之上，并把文案改成可区分的两态"
+"（"产物不存在"判红 / "产物未到期"记 UNVERIFIED 并打印对方 run 的当前状态与链接）。"
+"**交付判据**：下一次 tag 的首跑，`发布物回核` 不需要人工重跑即可为绿；若仍红，判据必须能一眼分出"
+"「产物缺失」与「等待不足」。**2026-10-13 对侧补证与修复（当日晚）**：重跑该 run 后竞态行全消、"
+"只剩 ③「Release 不存在」一条（FAIL=1）⇒ 确定性复现、与竞态无关。补证：等待循环**第一轮就 exit**"
+"（③ 那句不在竞态集合，other=1 硬红），CORE_WAIT 数值在任何一次执行里都没被用到；**主因=回核 step "
+"从未注入 GH_TOKEN**（gh 无凭证 exit=4）+ ③ 把任何非零退出都写成「不存在」。修复已落地：release.yml 注入 "
+"`GH_TOKEN: ${{ github.token }}`；③ 三路分诊（真 404 判红 / 无凭证判红并指名病因 / 其余 UNVERIFIED）；"
+"新增 `verify-release-artifacts.selftest.sh` 7 例 + ci.yml 接线 + 门禁第 17 节两条结构断言。实证："
+"自测 7/7、实弹三连（有凭证 PASS=8 FAIL=0 / 无凭证报配置缺陷 / 假版本报 404）。**本行残留"
+"（2026-10-13 深夜更新）**：方向②**已落地**——`deploy/scripts/wait-tag-ci.sh` 按 `head_sha` 轮询"
+"tag 触发的 ci run 到终态（0=成功 / 1=终态失败判红并给 run 链接、别重跑回核白等 / 2=未知不判红），"
+"release.yml 接线后 `CORE_WAIT` 轮询降级为兜底；4 例自测 + 实弹两例（真实 v0.14.0 tag run 收敛 "
+"rc=0；无对应 run 的 sha 如实 rc=2）；ci.yml 与门禁 §17 同步接线该自测。**方向①（把 binary/agent "
+"构建并入 release.yml 同一 needs 图）未做**，留作彻底解；v0.14.0 那次 run 红报保持历史原样；"
+"交付判据仍待下一次 tag 首跑实证——届时按 ③ 的新判词直接读三态；若出现"等满 CORE_WAIT"再考虑方向①。"
+"**2026-10-16 本行收口（方向② 达标 + 方向① 经评估主动不做，判红→已解决）**："
+"① **方向② 的交付判据已实证**：v0.15.0 回核首跑即绿（板第八十四则），发布链红不再需人工重跑。"
+"② **Phase A 已落地并在 main 真验通过**（`645a6ab`）：把 ci.yml 的 image/image-agent ~400 行发布 job"
+"逐步骤抽成 reusable workflow `.github/workflows/_publish-image.yml`（5 入参、secrets:inherit），"
+"run 38807434499 的 image/image-agent 经复用件 build→Trivy→SBOM→keyless cosign→attest 自验→retag→digest 全绿。"
+"③ **合并 B+C（把发布整体搬进 release.yml 做单一 needs 图）经核代码主动不做**：release.yml 全程不吃测试"
+"（build-and-push 无 needs），"测试全绿才发布"这条闸目前**只挂在 ci.yml 的 release job**（needs 8 个测试 job + if tag）；"
+"把 goreleaser/发布搬进 release.yml 会拆掉这道闸（跨 workflow 无法 needs，正是本债死结）。真正自洽的方向①"
+"须反向把测试也并入同一 workflow（≈重排两条 workflow + 只能靠 dry-run tag 验），ROI 不抵方向② 已达成的收益。"
+"④ 两处只有 runner 才暴露的 reusable 坑已修：门禁 §7 发布名解析（认 `image_leaf:`）、keyless 证书 subject 变 `_publish-image.yml@`。"
+"母项关系：与 TD-89（Docker Hub 限流）同为"发布链外部依赖"族，但成因不同，不复用。 |
 
 ## 已收口（2026-10-07 新增节：行内自述闭合或撤销，实物逐条核过）
 
@@ -114,42 +160,6 @@
 | TD-66 | **API 网关完整数据面** | 当前 `/gw/` 为最小反向代理：PathPrefix 匹配 ✓、路由级限流 ✓（gatewayRouteEntry.RateLimiter，超出 429）、统计 ✓；缺数据面级鉴权/熔断/租户隔离。**2026-09-05 决策：明确声明为控制面预览形态**（路由规则 CRUD/统计是产品能力，数据面转发是 demo 级），完整数据面不在当前路线图——生产流量应走 APISIX/Envoy 等正式网关（README 部署架构已按此口径），本网关定位为轻量路由编排预览。升级为正式数据面需重新立项。**2026-10-05 编号消歧（TD-74 线移交项）**：本行自 2026-09-05 起登记为 TD-62，2026-10-04 登记的「插件框架有 API 无宿主接线」行撞用了同一编号。消歧方向按引用权重而非登记先后：「插件框架」的 TD-62 已被 CHANGELOG 两轮记账、release-notes、README、COORDINATION 与十几处代码注释（plugin_host.go / hooks.go / plugin_hook_gate_test.go 等，宿主接线 e8ffa68）按号引用，改它等于推翻在制工作；本行仅 .golangci.yml 注释与 CHANGELOG 第十二轮两处按号引用，已同步改为 TD-66。TD-66 此前全仓缺失，本行补位后 ID 与行数恢复一一对应 | **2026-10-11 只读勘测（docs/td66-gateway-survey-2026-10-11.md）**：数据面管线 7 步逐项核实（鉴权/租户隔离/匹配/限流/SSRF 双检/统计），安全债修复全部在岗；缺口 14 项成清单（熔断/健康检查/重试/超时/多后端/gRPC 不一致/持久化/metrics 埋点等），升级定价分三档（最小可用 1.5~2 天 = 路由持久化+熔断+埋点）。**维持 2026-09-05 决策不变**；低垂果实一处：创建路由允许 grpc:// 但数据面 502（模型与实现不一致，建议创建时即拒）。 **2026-10-11 立项（docs/td66-gateway-upgrade-scope-2026-10-11.md）**：MVP 四件——P1 路由持久化（store 加表+启动加载）、P2 熔断/离群摘除（进程内断路器，连续 5 次 5xx⇒503 fast-fail，30s 冷却后半开）、P3 Prometheus 埋点（每路由 requests_total + latency histogram）、P4 超时治理（RouteRule 加 timeoutMs）。鉴权/租户隔离/SSRF 勘测确认质量好、**不动**。明确不做：多后端/gRPC/OPA/WebSocket/主动健康检查。约 2.5 天（含测试+真进程验证）。 **2026-10-11 MVP 全部落地并验收（27ea687 + 0f57052）**：立项文档 §4 五条验收标准全勾（重启不丢/熔断 fast-fail/metrics 出时序/超时 504/既有用例不回归），真进程（控制面+MySQL+两后端）16 项逐条过。
 | TD-89 | **CI 镜像构建依赖 Docker Hub 匿名拉取（429/5xx 判红，与提交内容无关）** | 2026-10-10 登记。**证据**（run 37979767826 的 attempt 1 与 attempt 2 **两次**同形态失败）：`image-agent` 报 `429 Too Many Requests from registry-1.docker.io/v2/library/golang/manifests/1.26-bookworm`；`image` 报 `auth.docker.io/token: 500 Internal Server Error`。两次失败都发生在**解析基础镜像元数据**阶段、**未编译任何代码**；同一 run 的代码 gates（build-test / Race detector / services / integration / security / E2E 双向）全绿 ⇒ 判红与提交内容无关，是 Docker Hub 侧限流/故障。**影响**：两条线并行高频推送时 CI 会因此判红，容易被误读为「提交坏了」（本行就是为这个误读形态留档）。**缓解进展（2026-10-10）**：**选项 ① 的 CI 侧接线已落地**——`ci.yml` 的 6 个拉镜像 job（security / release-dryrun / image / image-agent / e2e-real / e2e-sec）与 `release.yml` 的 2 个构建 job 均已加 `docker/login-action@v3`，以**工作流级 `env`** 承载凭据并作跳过判据（步骤级 `if:` **不允许** `secrets` 上下文——本仓 actionlint v1.7.7 门禁实测报错，故走 env；未配 secrets 时该步自动跳过，流水线行为与之前逐字一致）。**用户决定（2026-10-10）：不配 secrets**——登录步维持「未配置即跳过」，继续匿名拉取；只读 PAT 虽低风险，但属额外的凭据面，而实测 429 频率不高（数十个 run 命中一次），不为偶发假红引入长期凭据。**替代缓解（触发即做，不再问）**：若 429/5xx 假红再次出现，就实施选项 ③（**2026-10-13 更新：不再等触发，已由 TD-94 proactive 落地**——`docker-pull-retry.sh` 有界重试 + ci.yml/release.yml 五处预热接线；本行剩余面=service containers，仍待选项②）——给解析元数据的构建步骤加**一次**有界重试（仅 429/5xx 重试、真失败不拖时长）；彻底解法仍是选项 ②（基础镜像改 GHCR 镜像源，且能覆盖 service containers 那两处 runner 预拉取）。**已知残余面**：`integration`/`services` 的 **service containers（mysql）由 runner 在 steps 之前拉取**，登录步对它无效——那两处仍受匿名限流约束，彻底解决需选项 ②（GHCR 镜像源）。**其余缓解选项**（仍待拍板）：——匿名拉取按 IP 限流，登录后配额显著提升（需要 Docker Hub 账号凭据入 secrets）；② 基础镜像改走 GHCR 镜像或镜像源；③ 给 build 步骤加**有界重试**（仅对 429/5xx 重试，避免真失败被拖成 3 倍时长）；④ 钉 digest（Renovate 计划）不改拉取量、只保证确定性，不解决本项。**判据提醒**：镜像 job 判红先看**失败步骤名与错误码**，别先怀疑代码。 |
 
-| TD-95 | **发布链的「发布物回核」与 tag 触发的 `ci` run 竞态：首跑必红，而产物其实是好的** | "
-"2026-10-13 v0.14.0 首跑实测登记。**现象**：`release.yml` 的 run `38335486330` 里 12 个 `build-and-push` "
-"与 12 个 `promote` 全 success、`github-release` success（Release `v0.14.0` 于 02:40:04Z 发布），"
-"但最后的「发布物回核」job step 4 判红：`PASS=2 FAIL=6 UNVERIFIED=2`。**四条 FAIL 全指向同两个东西**——"
-"`opsmesh-binary` / `opsmesh-agent` 的 `:0.14.0` manifest 404、`GitHub Release v0.14.0 不存在`（assets 当时为 0）"
-"与 chart 引用不存在的镜像；而这两个镜像与那 5 个 assets 由**另一条 workflow** 产出——tag 触发的 `ci` run "
-"`38335486341`，它在那一刻仍 `in_progress`（`Race detector`/`services`/`security` 在跑），"
-"03:00:27Z 才 completed/success（13 条 job 全绿）。**根因**：回核的有界等待 `CORE_WAIT=${CORE_WAIT_LIMIT_SEC:-2700}`"
-"（45 分钟）小于单次 `ci` run 的实际时长——v0.13.0 那次为消掉同类竞态引入的就是这个有界等待，"
-"值定小了；这与本仓反复出事的形状同源：**等待值来自估计，而不是来自可判定的收敛条件**。"
-"**产物侧无损伤（已独立取证）**：等那条 run 终态后本机重跑 `deploy/scripts/verify-release-artifacts.sh 0.14.0`"
-" ⇒ `PASS=8 FAIL=0`、退出码 0，第 ⑤ 项 **14/14** 镜像 `:0.14.0` 与发布提交 `f4968bb` 同 manifest digest、"
-"14/14 有 `.sig` 与 `.att`、Release assets=5、正文 6208 字符含「能力降级清单」。"
-"**为什么仍要修**：Releases 页面挂一条红 job，客户与运维都会读成"这次发布没验过"；"
-"而下一次发版若没人手工补跑，这个红会长期存在——**红因文案还会把人引向错误的处置**"
-"（`release job 未跑成功，或该仓库没进矩阵`，其实是在跑还没跑到）。"
-"**方向（按彻底程度排序）**：① 把 `opsmesh-binary` / `opsmesh-agent` 的构建提权并入 `release.yml`，"
-"让回核与它们在**同一张 needs 图**里（消除跨 workflow 依赖，最彻底）；"
-"② 回核前先按 `head_sha` 轮询那条 `ci` run 到**终态**（可判定收敛，而不是固定秒数），"
-"超时上限只做兜底；③ 最低成本：抬 `CORE_WAIT` 到实测 P95 之上，并把文案改成可区分的两态"
-"（"产物不存在"判红 / "产物未到期"记 UNVERIFIED 并打印对方 run 的当前状态与链接）。"
-"**交付判据**：下一次 tag 的首跑，`发布物回核` 不需要人工重跑即可为绿；若仍红，判据必须能一眼分出"
-"「产物缺失」与「等待不足」。**2026-10-13 对侧补证与修复（当日晚）**：重跑该 run 后竞态行全消、"
-"只剩 ③「Release 不存在」一条（FAIL=1）⇒ 确定性复现、与竞态无关。补证：等待循环**第一轮就 exit**"
-"（③ 那句不在竞态集合，other=1 硬红），CORE_WAIT 数值在任何一次执行里都没被用到；**主因=回核 step "
-"从未注入 GH_TOKEN**（gh 无凭证 exit=4）+ ③ 把任何非零退出都写成「不存在」。修复已落地：release.yml 注入 "
-"`GH_TOKEN: ${{ github.token }}`；③ 三路分诊（真 404 判红 / 无凭证判红并指名病因 / 其余 UNVERIFIED）；"
-"新增 `verify-release-artifacts.selftest.sh` 7 例 + ci.yml 接线 + 门禁第 17 节两条结构断言。实证："
-"自测 7/7、实弹三连（有凭证 PASS=8 FAIL=0 / 无凭证报配置缺陷 / 假版本报 404）。**本行残留"
-"（2026-10-13 深夜更新）**：方向②**已落地**——`deploy/scripts/wait-tag-ci.sh` 按 `head_sha` 轮询"
-"tag 触发的 ci run 到终态（0=成功 / 1=终态失败判红并给 run 链接、别重跑回核白等 / 2=未知不判红），"
-"release.yml 接线后 `CORE_WAIT` 轮询降级为兜底；4 例自测 + 实弹两例（真实 v0.14.0 tag run 收敛 "
-"rc=0；无对应 run 的 sha 如实 rc=2）；ci.yml 与门禁 §17 同步接线该自测。**方向①（把 binary/agent "
-"构建并入 release.yml 同一 needs 图）未做**，留作彻底解；v0.14.0 那次 run 红报保持历史原样；"
-"交付判据仍待下一次 tag 首跑实证——届时按 ③ 的新判词直接读三态；若出现"等满 CORE_WAIT"再考虑方向①。"
-"母项关系：与 TD-89（Docker Hub 限流）同为"发布链外部依赖"族，但成因不同，不复用。 |
 
 
 ---
