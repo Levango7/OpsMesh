@@ -89,3 +89,15 @@ CREATE TABLE IF NOT EXISTS batch_tasks (
     PRIMARY KEY (batch_id, task_id),
     INDEX idx_batch_tasks_batch (batch_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 灰度发布记录（R6，2026-10-15 落库）：整条记录只按 ID 读写，Phases 是嵌套结构，
+-- 故用"信封 + JSON 载荷"而非逐字段建列——与 controlplane task_records 同一取舍
+-- （理由见 internal/store/model/task_record.go 文件头）。列名/契约见 models.CanaryRelease
+-- 的 JSON tag。
+CREATE TABLE IF NOT EXISTS canary_releases (
+    canary_id VARCHAR(64) PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL,
+    payload JSON NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_canary_tenant (tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

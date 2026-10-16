@@ -37,9 +37,11 @@ const judgedSitesFloor = 1
 
 // scanSiteExemptions 登记「参数≥3 但不参与判定」的站点及理由。
 // 键是 "文件名:行号"。没有条目可留空——空表本身也是合法状态。
+// 行号键的脆弱性是已知代价（TD-91 同族记录）：本包任何一次编辑都会让条目过期，
+// 由 TestEveryWideScanSiteIsJudgedOrExempted 的过期检查强制刷新——这正是它存在的原因。
 var scanSiteExemptions = map[string]string{
-	"mysql.go:843": "batches 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT 或主键）",
-	"mysql.go:879": "batches 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT 或主键）",
+	"mysql.go:855": "batches 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT 或主键）",
+	"mysql.go:891": "batches 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT 或主键）",
 }
 
 // riskyNullableColumns 解析建表来源，得到 table → {可空且无 DEFAULT 的列}。

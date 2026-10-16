@@ -37,7 +37,7 @@ type Service struct {
 	scheduleStore store.ScheduleStore
 	resultStore   store.ResultStore
 	batchStore    store.BatchStore
-	canaryStore   store.CanaryStore // 灰度发布内存索引（可选注入，nil 时 canary API 返回 503）
+	canaryStore   store.CanaryStore // 灰度发布记录（SQL 模式落 canary_releases 表，memory 模式为内存索引；nil 时 canary API 返回 503）
 	breaker       *circuit.Breaker
 	// 事件总线/审计/SSE 桥接（A-2 阶段：可选注入，nil 时跳过发射，向后兼容）。
 	bus       events.EventBus
@@ -80,7 +80,9 @@ func (s *Service) SetSSEBridge(bridge events.SSEBridge) {
 }
 
 // SetCanaryStore 注入灰度发布存储（可选：nil 时 canary API 返回 503，向后兼容）。
-// 生产环境由 main 注入 MemoryStore（同进程内存索引），与 controlplane batchStore.canaries 对齐。
+// 生产环境由 main 与其余四个 store 同源注入：SQL 模式为 MySQLStore（落
+// canary_releases 表，重启后仍可按 canaryID 查回——TD-60 R6 任务侧收口），
+// memory 模式为 MemoryStore（同进程内存索引）。
 func (s *Service) SetCanaryStore(cs store.CanaryStore) {
 	s.canaryStore = cs
 }

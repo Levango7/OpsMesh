@@ -147,6 +147,277 @@ func TestTaskStoreLastFiredAtRoundTrip(t *testing.T) {
 	t.Logf("ROUNDTRIP_OK: last_fired_at add-column / write-back / read-back all pass; ordinal last_fired_at=%d; batch_id=%d", lastOrd, batchOrd)
 }
 
+// TestRecordTablesExistAfterNewMySQLStore 是 migrateRecordTables 的真库判据：
+// NewMySQLStore 之后，任务周边五张表（结果/日志/批次/灰度）必须真的存在。
+//
+// 缺陷原型（2026-10-15 修复前）：NewMySQLStore 只建 tasks 与 schedules，另外五张表
+// 在「服务自建表」路径下从来不存在——而写路径多为 best-effort（只打日志），
+// SQL 模式（compose 出厂 TASK_SVC_STORE_TYPE=sql）下批次视图恒 404、执行结果
+// 与日志静默不落库。这类"缺表"缺陷在单测层永远绿（sqlmock 不校验表存在），
+// 只有真库能证。
+//
+// 门控：OPSMESH_TEST_MYSQL_DSN 缺失时 t.Skip 并打印原因。
+func TestRecordTablesExistAfterNewMySQLStore(t *testing.T) {
+	dsn, ok := os.LookupEnv("OPSMESH_TEST_MYSQL_DSN")
+	if !ok {
+		t.Skip("skipping MySQL integration smoke: missing OPSMESH_TEST_MYSQL_DSN env; set it to a real MySQL DSN to run")
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatalf("open test mysql: %v", err)
+	}
+	defer db.Close()
+	if err := db.Ping(); err != nil {
+		t.Fatalf("ping test mysql: %v", err)
+	}
+
+	st, err := NewMySQLStore(dsn)
+	if err != nil {
+		t.Fatalf("NewMySQLStore: %v", err)
+	}
+	defer st.Close()
+
+	for _, table := range recordTables {
+		var count int
+		if err := db.QueryRow(
+			"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+			table,
+		).Scan(&count); err != nil {
+			t.Fatalf("information_schema 查询 %s 失败: %v", table, err)
+		}
+		if count != 1 {
+			t.Errorf("NewMySQLStore 之后 %s 表不存在（count=%d）——该表上的读写会 Unknown table", table, count)
+		}
+	}
+}
+
+// TestCanaryRecordSurvivesRestartMySQL 灰度记录的真库重启判据（R6 任务侧）：
+// 建 → 换一个 store 实例（= 重启）→ 仍按 canaryID 查回，且阶段结构完整；
+// 推进后**再重启**，推进结果仍在（写穿生效）。
+//
+// 修前形态：canary store 由 main 无条件注入 MemoryStore，SQL 模式下灰度记录
+// 重启即丢——批次视图能落的库，灰度落不下去。
+func TestCanaryRecordSurvivesRestartMySQL(t *testing.T) {
+	dsn, ok := os.LookupEnv("OPSMESH_TEST_MYSQL_DSN")
+	if !ok {
+		t.Skip("skipping MySQL integration smoke: missing OPSMESH_TEST_MYSQL_DSN env; set it to a real MySQL DSN to run")
+	}
+
+	canaryID := "itest-canary-" + fmt.Sprintf("%06d", time.Now().UTC().UnixMicro()%1000000)
+	cleanup := func(t *testing.T, db *sql.DB) {
+		if _, err := db.Exec("DELETE FROM canary_releases WHERE canary_id = ?", canaryID); err != nil {
+			t.Logf("cleanup 失败（不影响判据）: %v", err)
+		}
+	}
+
+	st1, err := NewMySQLStore(dsn)
+	if err != nil {
+		t.Fatalf("NewMySQLStore #1: %v", err)
+	}
+	defer st1.Close()
+	created := sampleCanaryRecord(canaryID)
+	if got := st1.CreateCanary(created); got == nil {
+		t.Fatal("CreateCanary 返回 nil（写入失败）")
+	}
+
+	// 重启 #1：新 store 实例，内存索引为空
+	st2, err := NewMySQLStore(dsn)
+	if err != nil {
+		t.Fatalf("NewMySQLStore #2: %v", err)
+	}
+	defer st2.Close()
+	back := st2.GetCanary(canaryID)
+	if back == nil {
+		t.Fatal("重启后灰度记录读不回（未落库或键不一致）")
+	}
+	if len(back.Phases) != 2 || back.Phases[0].Tasks[0].TaskID != "task-1" {
+		t.Errorf("阶段结构不完整：%+v", back.Phases)
+	}
+
+	// 推进第一阶段，然后重启 #2：推进结果必须仍在
+	back.Phases[0].Status = "done"
+	back.Phases[1].Status = "running"
+	st2.UpdateCanary(back)
+
+	st3, err := NewMySQLStore(dsn)
+	if err != nil {
+		t.Fatalf("NewMySQLStore #3: %v", err)
+	}
+	defer st3.Close()
+	after := st3.GetCanary(canaryID)
+	if after == nil || after.Phases[0].Status != "done" || after.Phases[1].Status != "running" {
+		t.Errorf("推进结果未写穿（二次重启后倒回）：%+v", after)
+	}
+	cleanup(t, st3.db)
+
+	// 跨租户隔离：另一个租户查不到这条记录（service 层同样校验，这里证明库层可按租户过滤）
+	if got := st3.ListCanaries("other-tenant"); len(got) != 0 {
+		t.Errorf("other-tenant 不应读到 t1 的灰度，实得 %d 条", len(got))
+	}
+}
+
+// TestBatchRecordRoundTripMySQL 批次视图的真库往返（同一缺表缺陷的用户可见面）：
+// 建批次 → 挂任务 → 查状态 → 改状态。修前 SQL 模式下 batches/batch_tasks 表不存在，
+// CreateBatch 的 INSERT 静默失败（返回 nil）、GetBatchStatus 恒 404——
+// 用户侧的形态是"批量执行接口说建好了，一查就 404"。
+func TestBatchRecordRoundTripMySQL(t *testing.T) {
+	dsn, ok := os.LookupEnv("OPSMESH_TEST_MYSQL_DSN")
+	if !ok {
+		t.Skip("skipping MySQL integration smoke: missing OPSMESH_TEST_MYSQL_DSN env; set it to a real MySQL DSN to run")
+	}
+
+	st, err := NewMySQLStore(dsn)
+	if err != nil {
+		t.Fatalf("NewMySQLStore: %v", err)
+	}
+	defer st.Close()
+
+	batchID := "itest-batch-" + fmt.Sprintf("%06d", time.Now().UTC().UnixMicro()%1000000)
+	batch := &models.BatchTask{
+		BatchID:      batchID,
+		TenantID:     "t1",
+		Name:         "r6 batch",
+		TotalCount:   2,
+		PendingCount: 2,
+		Status:       models.BatchStatusPending,
+		CreatedAt:    time.Now().UTC(),
+	}
+	if got := st.CreateBatch(batch); got == nil {
+		t.Fatal("CreateBatch 返回 nil（batches 表缺失或写入失败）")
+	}
+	st.AddTaskToBatch(batchID, "task-a")
+	st.AddTaskToBatch(batchID, "task-b")
+
+	back := st.GetBatch(batchID)
+	if back == nil || back.TotalCount != 2 || back.Status != models.BatchStatusPending {
+		t.Fatalf("GetBatch 读回不符：%+v", back)
+	}
+	if ids := st.GetBatchTasks(batchID); len(ids) != 2 {
+		t.Errorf("GetBatchTasks 应读到 2 个任务，实得 %d", len(ids))
+	}
+	back.SuccessCount, back.PendingCount, back.Status = 2, 0, models.BatchStatusDone
+	st.UpdateBatch(back)
+	if again := st.GetBatch(batchID); again == nil || again.Status != models.BatchStatusDone {
+		t.Errorf("UpdateBatch 未生效：%+v", again)
+	}
+	if got := st.ListBatches("t1"); len(got) == 0 {
+		t.Error("ListBatches 至少应含刚建的批次")
+	}
+
+	t.Cleanup(func() {
+		_, _ = st.db.Exec("DELETE FROM batch_tasks WHERE batch_id = ?", batchID)
+		_, _ = st.db.Exec("DELETE FROM batches WHERE batch_id = ?", batchID)
+	})
+}
+
+// sampleCanaryRecord 造一条两阶段灰度记录（与单测同形，避免两份构造漂移）。
+func sampleCanaryRecord(canaryID string) *models.CanaryRelease {
+	now := time.Now().UTC()
+	return &models.CanaryRelease{
+		CanaryID:   canaryID,
+		TenantID:   "t1",
+		TaskType:   models.TaskTypeShell,
+		Command:    "echo r6",
+		Strategy:   "percentage",
+		Percentage: 50,
+		CreatedAt:  now,
+		CreatedBy:  "u-admin",
+		Phases: []models.CanaryPhase{
+			{Phase: 1, DeviceIDs: []string{"dev-0"}, Status: "running",
+				Tasks: []models.BatchTaskItem{{DeviceID: "dev-0", TaskID: "task-1", Status: "running"}}},
+			{Phase: 2, DeviceIDs: []string{"dev-1"}, Status: "pending"},
+		},
+	}
+}
+
+// TestRecordTablesReconcileSharedDBShapeMySQL 同库部署路径的真库判据：
+// 先用**控制面形态**的 task_results（6 列、无 duration_ms/claim_epoch，且已有历史行）
+// 建表，再跑 NewMySQLStore（= task-svc 启动），断言两列被补上、历史行仍在且新列为默认 0。
+//
+// 为什么必须真库：CREATE TABLE IF NOT EXISTS 对异形既有表是**静默 no-op**，
+// sqlmock 不校验表存在与列存在，只有真库能把"补列没发生 ⇒ 运行时 Unknown column"照出来。
+func TestRecordTablesReconcileSharedDBShapeMySQL(t *testing.T) {
+	dsn, ok := os.LookupEnv("OPSMESH_TEST_MYSQL_DSN")
+	if !ok {
+		t.Skip("skipping MySQL integration smoke: missing OPSMESH_TEST_MYSQL_DSN env; set it to a real MySQL DSN to run")
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatalf("open test mysql: %v", err)
+	}
+	defer db.Close()
+	if err := db.Ping(); err != nil {
+		t.Fatalf("ping test mysql: %v", err)
+	}
+
+	// 控制面 internal/store/sqlstore/migrations/001_initial.sql 的 task_results 形态。
+	if _, err := db.Exec("DROP TABLE IF EXISTS task_results"); err != nil {
+		t.Fatalf("drop task_results: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE task_results (
+		task_id VARCHAR(64) PRIMARY KEY,
+		agent_id VARCHAR(64),
+		exit_code INT,
+		stdout MEDIUMTEXT,
+		stderr MEDIUMTEXT,
+		finished_at DATETIME
+	)`); err != nil {
+		t.Fatalf("create controlplane-shaped task_results: %v", err)
+	}
+	if _, err := db.Exec(
+		"INSERT INTO task_results (task_id, agent_id, exit_code) VALUES (?, ?, ?)",
+		"cp-legacy-row", "agent-cp", 0,
+	); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	for _, col := range []string{"duration_ms", "claim_epoch"} {
+		if columnExists(t, db, "task_results", col) {
+			t.Fatalf("precondition failed: task_results.%s already exists", col)
+		}
+	}
+
+	// task-svc 启动路径
+	st, err := NewMySQLStore(dsn)
+	if err != nil {
+		t.Fatalf("NewMySQLStore（应在既有异形表上补列而不是失败）: %v", err)
+	}
+	defer st.Close()
+
+	for _, col := range []string{"duration_ms", "claim_epoch"} {
+		if !columnExists(t, db, "task_results", col) {
+			t.Errorf("补列未发生：task_results.%s 仍不存在（同库部署下本服务的读写会在运行时 Unknown column）", col)
+		}
+	}
+	// 历史行必须还在，且新列取到默认 0（补列 DDL 带 NOT NULL DEFAULT 的依据）。
+	var duration, epoch int64
+	if err := db.QueryRow(
+		"SELECT duration_ms, claim_epoch FROM task_results WHERE task_id = ?", "cp-legacy-row",
+	).Scan(&duration, &epoch); err != nil {
+		t.Fatalf("既有行读不出（补列把行丢了？）: %v", err)
+	}
+	if duration != 0 || epoch != 0 {
+		t.Errorf("既有行新列初值应为 0，实得 duration_ms=%d claim_epoch=%d", duration, epoch)
+	}
+	// 补列后本服务能正常写入并读回（原先 Unknown column 的路径）。
+	r := &models.TaskResult{TaskID: "cp-legacy-row", AgentID: "agent-cp", ExitCode: 0, DurationMs: 1234, ClaimEpoch: 7}
+	st.SaveResult(r)
+	got := st.GetTaskResult("cp-legacy-row")
+	if got == nil || got.DurationMs != 1234 || got.ClaimEpoch != 7 {
+		t.Errorf("补列后写入/读回不符：%+v", got)
+	}
+
+	// 零值 FinishedAt（任务未跑完的形态）必须能落库：driver 会把 time.Time{} 序列化成
+	// '0000-00-00'，MySQL 严格模式报 1292 ⇒ 整行写不进去（SaveResult 只留痕 ⇒ 静默）。
+	// 这里显式钉住"零值也要写得进"。
+	zero := &models.TaskResult{TaskID: "cp-legacy-row-zero", AgentID: "agent-cp", DurationMs: 5}
+	st.SaveResult(zero)
+	if gz := st.GetTaskResult("cp-legacy-row-zero"); gz == nil || gz.DurationMs != 5 {
+		t.Errorf("零值 FinishedAt 的结果未落库（被 1292 挡掉）：%+v", gz)
+	}
+
+	t.Cleanup(func() { _, _ = db.Exec("DROP TABLE IF EXISTS task_results") })
+}
+
 // columnExists 从 information_schema.columns 读指定表是否存在某列。
 // 走 raw SQL 是为了不让业务封装层把“查不到”伪装成其它语义，从而掩盖
 // “列真的没补上”这个失败形态。

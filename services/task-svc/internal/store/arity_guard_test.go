@@ -5,6 +5,8 @@
 // scanX(row.Scan)），并解析 `x.dest()...` 展开。本文件只保留本包的政策：覆盖率棘轮下限与豁免账。
 //
 // 接入实测基线（2026-10-10）：judged=17、mismatch=0、wide=0。
+// 2026-10-15 R6 灰度落库后复测：judged=19（canary_releases 两条单列 SELECT 各 +1）、
+// mismatch=0、wide=0——下限同步上调，覆盖变差必须有人写下理由。
 // 缺陷形态（根 store 已发生两次、均在真库暴露）：`rows.Scan` 列数不等 ⇒ database/sql 报
 // `expected N destination arguments in Scan, not M`，调用方多半只记日志后返回空 ⇒ 读路径静默失效。
 package store
@@ -18,7 +20,7 @@ import (
 )
 
 // arityJudgedFloor 参与比对的站点数棘轮下限（只许上调；覆盖变差必须有人写下理由）。
-const arityJudgedFloor = 17
+const arityJudgedFloor = 19
 
 // arityWideExemptions 是「消费侧 ≥3 而 SQL 不可判」的显式账目（键 file#fn#var），空表也合法。
 var arityWideExemptions = map[string]string{}

@@ -86,14 +86,22 @@ func TestEnsureColumnsMatchSchema(t *testing.T) {
 	if len(taskEnsureColumns) == 0 {
 		t.Fatal("taskEnsureColumns 为空——若补列机制已删除，请连本测试一起删并说明理由")
 	}
-	for _, col := range taskEnsureColumns {
-		// ALTER 语句必须是往 tasks 表加这一列（词边界，防止改名漏判）。
-		re := regexp.MustCompile(`(?i)ALTER\s+TABLE\s+tasks\s+ADD\s+COLUMN\s+` + col.name + `\b`)
-		if !re.MatchString(col.ddl) {
-			t.Errorf("taskEnsureColumns[%s] 的 DDL 不是往 tasks 表加该列: %s", col.name, col.ddl)
-		}
-		if !ddl["tasks"][col.name] {
-			t.Errorf("taskEnsureColumns 要补列 %s，但 schema.sql 的 tasks 建表里没有它——新建库与旧库将得到两种表", col.name)
+	// 两套清单同一判据：tasks 的 taskEnsureColumns + 周边表的 recordEnsureColumns
+	// （后者拦的是「同库既有异形表」形态，见 migration.go recordEnsureColumns 文件头）。
+	lists := map[string][]struct{ name, ddl string }{"tasks": taskEnsureColumns}
+	for table, cols := range recordEnsureColumns {
+		lists[table] = cols
+	}
+	for table, cols := range lists {
+		for _, col := range cols {
+			// ALTER 语句必须是往该表加这一列（词边界，防止改名漏判）。
+			re := regexp.MustCompile(`(?i)ALTER\s+TABLE\s+` + table + `\s+ADD\s+COLUMN\s+` + col.name + `\b`)
+			if !re.MatchString(col.ddl) {
+				t.Errorf("%s 的补列 DDL 不是往该表加该列: %s", col.name, col.ddl)
+			}
+			if !ddl[table][col.name] {
+				t.Errorf("补列清单要补 %s.%s，但 schema.sql 的该表建表里没有它——新建库与旧库将得到两种表", table, col.name)
+			}
 		}
 	}
 	mig, err := os.ReadFile("migration.go")

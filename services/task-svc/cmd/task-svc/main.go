@@ -113,13 +113,15 @@ func main() {
 	defer shutdown(context.Background())
 
 	// Store 初始化：SQL 模式自动迁移 tasks 表；初始化失败必须阻断启动，不能静默回退内存。
-	// MemoryStore / MySQLStore 均实现 TaskStore、ScheduleStore、ResultStore、BatchStore 四个接口。
+	// MemoryStore / MySQLStore 均实现 TaskStore、ScheduleStore、ResultStore、BatchStore、
+	// CanaryStore 五个接口。
 	memStore := store.NewMemoryStore()
 	var (
 		ts store.TaskStore     = memStore
 		ss store.ScheduleStore = memStore
 		rs store.ResultStore   = memStore
 		bs store.BatchStore    = memStore
+		cs store.CanaryStore   = memStore
 	)
 	if cfg.StoreType == "sql" {
 		// 显式要求 sql 却没配 DSN ⇒ 拒绝启动。
@@ -133,15 +135,18 @@ func main() {
 		if ms, err := store.NewMySQLStore(cfg.DSN); err != nil {
 			lgr.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
 		} else {
-			ts, ss, rs, bs = ms, ms, ms, ms
+			ts, ss, rs, bs, cs = ms, ms, ms, ms, ms
 			log.Printf("MySQL store 已启用")
 			defer func() { _ = ms.Close() }()
 		}
 	}
 	svc := service.NewService(ts, ss, rs, bs)
 
-	// M5 增强：初始化 canary store（内存索引，不持久化）
-	svc.SetCanaryStore(store.NewMemoryStore())
+	// M5 增强：灰度发布存储。SQL 模式与其余四个 store 同源（落 canary_releases 表，
+	// 重启后仍可按 canaryID 查到——R6）；memory 模式仍是同进程内存索引。
+	// 修前此处无条件注入 MemoryStore 并注释"不持久化"：SQL 模式下灰度记录重启即丢，
+	// 而 compose 出厂就是 TASK_SVC_STORE_TYPE=sql。
+	svc.SetCanaryStore(cs)
 
 	// A-2 阶段：事件总线/审计/SSE 桥接注入（接口注入模式，生产环境由 main 注入真实实现）。
 	// 默认 LogBus/LogAuditSink/StubSSEBridge（开发/单机可见）；生产环境可通过环境变量切换。

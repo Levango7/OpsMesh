@@ -41,6 +41,12 @@ func NewMySQLStore(dsn string) (*MySQLStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("failed to migrate mysql schedules: %w", err)
 	}
+	// 任务周边五张表（结果/日志/批次/灰度）此前漏建：SQL 模式下批次视图恒 404、
+	// 结果与日志静默不落库（见 migrateRecordTables 文件头）。
+	if err := s.migrateRecordTables(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to migrate mysql record tables: %w", err)
+	}
 	return s, nil
 }
 
@@ -700,11 +706,17 @@ func (s *MySQLStore) ListSchedules(tenantID string) []*models.Schedule {
 // === ResultStore implementation ===
 
 // SaveResult saves a task result.
+//
+// finished_at 走 nullTime（2026-10-15 真库实测暴露）：本方法无返回值且只留痕，
+// 而零值 time.Time 会被 driver 序列化成 '0000-00-00'/'0001-01-01'——MySQL 严格模式
+// 报 1292 ⇒ 整行写不进去、执行结果静默不落库（与 UpdateCanary 零值同一坑，
+// 本文件 nullTime 的存在理由）。结果未跑完时 FinishedAt 正是零值。
 func (s *MySQLStore) SaveResult(r *models.TaskResult) {
+	finishedAt := nullTime(r.FinishedAt)
 	if _, err := s.db.Exec(
 		"INSERT INTO task_results (task_id, agent_id, exit_code, stdout, stderr, duration_ms, finished_at, claim_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE agent_id = ?, exit_code = ?, stdout = ?, stderr = ?, duration_ms = ?, finished_at = ?, claim_epoch = ?",
-		r.TaskID, r.AgentID, r.ExitCode, r.Stdout, r.Stderr, r.DurationMs, r.FinishedAt, r.ClaimEpoch,
-		r.AgentID, r.ExitCode, r.Stdout, r.Stderr, r.DurationMs, r.FinishedAt, r.ClaimEpoch,
+		r.TaskID, r.AgentID, r.ExitCode, r.Stdout, r.Stderr, r.DurationMs, finishedAt, r.ClaimEpoch,
+		r.AgentID, r.ExitCode, r.Stdout, r.Stderr, r.DurationMs, finishedAt, r.ClaimEpoch,
 	); err != nil {
 		log.Printf("[store] best-effort exec: %v", err)
 	}
@@ -912,10 +924,122 @@ func (s *MySQLStore) GetBatchTasks(batchID string) []string {
 	return ids
 }
 
-// 编译期断言：MySQLStore 实现全部四个 store 接口。
+// === CanaryStore implementation ===
+
+// canaryUpsert 灰度记录写入（建/改同一路径）：整条序列化进 payload。
+// ON DUPLICATE 只改 tenant_id/payload，**不动 created_at**——与 MemoryStore 的
+// 「已存在保留原创建时间」一致，重复创建不刷新灰度起点。
+const canaryUpsert = "INSERT INTO canary_releases (canary_id, tenant_id, payload, created_at) " +
+	"VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE tenant_id = ?, payload = ?"
+
+// CreateCanary creates a canary release record.
+func (s *MySQLStore) CreateCanary(c *models.CanaryRelease) *models.CanaryRelease {
+	if c == nil {
+		return nil
+	}
+	if c.CreatedAt.IsZero() {
+		c.CreatedAt = time.Now()
+	}
+	payload, err := json.Marshal(c)
+	if err != nil {
+		log.Printf("[store] canary marshal %s: %v", c.CanaryID, err)
+		return nil
+	}
+	if _, err := s.db.Exec(canaryUpsert,
+		c.CanaryID, c.TenantID, payload, c.CreatedAt, c.TenantID, payload,
+	); err != nil {
+		log.Printf("[store] best-effort exec: %v", err)
+		return nil
+	}
+	return c
+}
+
+// GetCanary returns a canary release by ID.
+//
+// 载荷解不出来（存量行版本漂移 / 存储被截断）按「记录不存在」返回 nil——
+// 不返回半条记录：半条会让调用方看到一个没有 phases 的灰度，比 404 更误导
+// （与 controlplane batch_records.go loadTaskRecord 同口径）。
+func (s *MySQLStore) GetCanary(canaryID string) *models.CanaryRelease {
+	var payload []byte
+	if err := s.db.QueryRow(
+		"SELECT payload FROM canary_releases WHERE canary_id = ?",
+		canaryID,
+	).Scan(&payload); err != nil {
+		return nil
+	}
+	var c models.CanaryRelease
+	if err := json.Unmarshal(payload, &c); err != nil {
+		log.Printf("[store] canary payload %s 解不出，按不存在处理: %v", canaryID, err)
+		return nil
+	}
+	return &c
+}
+
+// UpdateCanary updates a canary release record (whole-record write).
+//
+// 零值 CreatedAt 必须补齐（CreateCanary 同样处理）：canaryUpsert 的 VALUES 把 c.CreatedAt
+// 写进 created_at TIMESTAMP NOT NULL，而 go-sql-driver 会把 time.Time{} 序列化成
+// '0001-01-01 00:00:00'——超出 TIMESTAMP 下界，严格模式下 MySQL 直接报 1292（本文件
+// nullTime 的注释记的就是这个坑）。本方法无返回值且只留痕，若不补齐，一次推进会在
+// 「记录被持久化前的历史行 / 外部构造的载荷」上静默丢失（HTTP 仍回 200），
+// 而 MemoryStore.UpdateCanary 对同样入参是成功的——两个后端必须一致。
+func (s *MySQLStore) UpdateCanary(c *models.CanaryRelease) {
+	if c == nil {
+		return
+	}
+	if c.CreatedAt.IsZero() {
+		c.CreatedAt = time.Now()
+	}
+	payload, err := json.Marshal(c)
+	if err != nil {
+		log.Printf("[store] canary marshal %s: %v", c.CanaryID, err)
+		return
+	}
+	if _, err := s.db.Exec(canaryUpsert,
+		c.CanaryID, c.TenantID, payload, c.CreatedAt, c.TenantID, payload,
+	); err != nil {
+		log.Printf("[store] best-effort exec: %v", err)
+	}
+}
+
+// ListCanaries returns canary releases, optionally filtered by tenant.
+// 坏载荷跳过（不返回半条），与 GetCanary 同口径。
+func (s *MySQLStore) ListCanaries(tenantID string) []*models.CanaryRelease {
+	query := "SELECT payload FROM canary_releases"
+	args := []interface{}{}
+	if tenantID != "" {
+		query += " WHERE tenant_id = ?"
+		args = append(args, tenantID)
+	}
+	query += " ORDER BY created_at DESC"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var out []*models.CanaryRelease
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			continue
+		}
+		var c models.CanaryRelease
+		if err := json.Unmarshal(payload, &c); err != nil {
+			log.Printf("[store] canary payload 解不出，跳过该行: %v", err)
+			continue
+		}
+		out = append(out, &c)
+	}
+	return out
+}
+
+// 编译期断言：MySQLStore 实现全部五个 store 接口。
 var (
 	_ TaskStore     = (*MySQLStore)(nil)
 	_ ScheduleStore = (*MySQLStore)(nil)
 	_ ResultStore   = (*MySQLStore)(nil)
 	_ BatchStore    = (*MySQLStore)(nil)
+	_ CanaryStore   = (*MySQLStore)(nil)
 )

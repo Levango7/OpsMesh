@@ -126,26 +126,32 @@ type BatchTaskItem struct {
 }
 
 // CanaryRelease 灰度发布记录。
+//
+// JSON tag 的用途（2026-10-15 R6 落库）：task-svc 的 MySQL 后端把整条灰度记录
+// 序列化进 canary_releases.payload（设计取舍与 controlplane task_records 同：
+// 只按 ID 整条读写、Phases 是嵌套结构，逐列建列必然漂移）。tag 即该载荷的
+// 字段契约——改名会让存量行的该字段解不出来（按"记录不可用"处理，不返回半条），
+// 故字段名演化必须连同这里一起改。
 type CanaryRelease struct {
-	CanaryID   string            // 灰度 ID
-	TenantID   string            // 租户
-	TaskType   string            // 任务类型
-	Command    string            // 命令
-	Strategy   string            // 策略：percentage/group/label
-	Percentage int               // 比例（strategy=percentage 时有效）
-	Groups     []string          // 分组（strategy=group 时有效）
-	Labels     map[string]string // 标签（strategy=label 时有效）
-	CreatedAt  time.Time
-	CreatedBy  string
-	Phases     []CanaryPhase // 各阶段执行情况
+	CanaryID   string            `json:"canaryID"`         // 灰度 ID
+	TenantID   string            `json:"tenantID"`         // 租户
+	TaskType   string            `json:"taskType"`         // 任务类型
+	Command    string            `json:"command"`          // 命令
+	Strategy   string            `json:"strategy"`         // 策略：percentage/group/label
+	Percentage int               `json:"percentage"`       // 比例（strategy=percentage 时有效）
+	Groups     []string          `json:"groups,omitempty"` // 分组（strategy=group 时有效）
+	Labels     map[string]string `json:"labels,omitempty"` // 标签（strategy=label 时有效）
+	CreatedAt  time.Time         `json:"createdAt"`
+	CreatedBy  string            `json:"createdBy"`
+	Phases     []CanaryPhase     `json:"phases"` // 各阶段执行情况
 }
 
 // CanaryPhase 灰度发布单阶段。
 type CanaryPhase struct {
-	Phase      int             // 阶段序号（1-based）
-	DeviceIDs  []string        // 本阶段设备
-	Status     string          // 阶段状态：pending/running/done/failed/aborted
-	Tasks      []BatchTaskItem // 本阶段每设备任务
-	StartedAt  time.Time
-	FinishedAt time.Time
+	Phase      int             `json:"phase"`     // 阶段序号（1-based）
+	DeviceIDs  []string        `json:"deviceIDs"` // 本阶段设备
+	Status     string          `json:"status"`    // 阶段状态：pending/running/done/failed/aborted
+	Tasks      []BatchTaskItem `json:"tasks"`     // 本阶段每设备任务
+	StartedAt  time.Time       `json:"startedAt"`
+	FinishedAt time.Time       `json:"finishedAt"`
 }

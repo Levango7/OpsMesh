@@ -80,6 +80,32 @@
 
 ## 3. 阻断项 R6：批量/灰度状态是进程内内存（peer 发现，本文补入）
 
+> **2026-10-15 更新：R6 两侧已收口（任务侧为本文最后一笔）**。① 控制面侧落库为
+> `internal/store/model/task_record.go` 的「信封 + JSON 载荷」+ 迁移 `023_task_records.sql`
+> （memory/sqlstore/multischema 三实现 + `batch_records.go` 接线 + 重启判据测试）；
+> ② task-svc 侧本轮补齐：新增 `canary_releases` 表（同取舍）+ `MySQLStore` 的 `CanaryStore`
+> 实现 + `main` 接线（此前无条件注入内存索引、SQL 模式重启即丢）。
+> **同时修掉一个与 R6 同源的缺表缺陷（真库已证）**：`NewMySQLStore` 此前只建 `tasks` 与
+> `schedules`，`batches`/`batch_tasks`/`task_results`/`task_logs` 在「服务自建表」路径下
+> **从来不存在** ⇒ SQL 模式（compose 出厂 `TASK_STORE_TYPE=sql`）下批次视图恒 404、
+> 执行结果与日志静默不落库（TD-68「假装持久化」同族）。已由 `migrateRecordTables` 补齐并
+> 用 DSN 门控真库用例（`TestRecordTablesExistAfterNewMySQLStore` / `TestBatchRecordRoundTripMySQL`
+> / `TestCanaryRecordSurvivesRestartMySQL`）钉死。
+> **仍未闭合的边界（如实记账）**：本文下方列的「多副本下该功能不成立」仍成立——
+> 记录虽已落库，但批次的**聚合计数**是读时按任务状态重算还是写入时快照，两侧实现不同
+> （单体 `handleBatchStatus` 读时聚合；task-svc `GetBatchStatus` 读 `batches` 表的计数列），
+> 多副本/双写期间可能让计数与任务实际状态不一致。切流 runbook 需写明「切换前排空在飞批次」。
+> **深复核追加（2026-10-15 复查）**：① task-svc 的 DSN 有两条库不同的部署路径——compose 用专用库
+> `opsmesh_task`，Helm 生产复用控制面的 `opsmesh` 库（`microservices.yaml` 把 `<前缀>_DSN` 渲染自
+> 控制面 `mysql-dsn` Secret）。同库那一路，控制面迁移早已建了**异形** `task_results`（6 列，无
+> `duration_ms`/`claim_epoch`），`CREATE TABLE IF NOT EXISTS` 会静默让位 ⇒ 运行时 `Unknown column`。
+> 已按 `tasks` 既有做法加 `recordEnsureColumns` 补列收敛，并用真库用例
+> `TestRecordTablesReconcileSharedDBShapeMySQL`（先建控制面形态旧表 + 历史行，再启动本服务）钉死。
+> ② 真库用例顺带暴露 `SaveResult` 的同类零值缺陷：`finished_at` 直接传 `time.Time{}` 时 driver 发
+> `'0000-00-00'`，严格模式 1292 ⇒ 整行写不进、执行结果静默不落库（未跑完的任务 `FinishedAt` 即零值）。
+> 已改用本文件既有的 `nullTime` 转换。
+> 下方原文保留（含当时的三条后果），供对照。
+
 **这不是路由问题，是切流方案的决定性约束**：
 
 - 单体 `server_batch.go` 文件头自述「批量状态仅内存索引（重启后丢失），任务实例本身持久化在 store 中」；
@@ -122,19 +148,23 @@
 | R3 | 在飞任务/批次的状态连续性 | 高 | R6 的具体形态：切换丢批次视图 |
 | R4 | 批量与灰度的权限点两侧一致 | 高 | `svcproxy/proxy.go:340-355` 已声明镜像单体，待对账 |
 | R5 | schedules 的 pause/resume 语义 | 中 | `gateway.go:489-495` 已实现，待对账 |
-| R6 | 批量/灰度状态进程内内存 | **阻断** | §3 |
+| R6 | 批量/灰度状态进程内内存 | **已收口（2026-10-15）** | §3 更新：两侧均落库；同源缺表缺陷（周边四张表从未创建）已修 |
 
 ---
 
 ## 6. 建议施工顺序
 
 1. **处置死代码**（前端侧）：删 `batchDispatch`/`dispatch()` 及其单测，或修契约裂缝后启用。
-   这是 §2.2 唯一缺口的正解，工作量最小。
+   这是 §2.2 唯一缺口的正解，工作量最小。— **✅ 已完成（TD-94）**
 2. **补契约对账报告**：照 auth 体例逐端点比对响应体，重点 batch-exec 的
-   `targets` vs `deviceIDs` 字段名差异。
+   `targets` vs `deviceIDs` 字段名差异。— **✅ 已完成（docs/td60-task-contract-audit.md）**
 3. **定数据面开关**：`TASK_SVC_OWNS_NEW_TASKS`（语义同 auth 的 `OWNS_NEW_ACCOUNTS`）。
+   — **✅ 已落地（`4e88294`，cutover/router.go + 四个建任务入口 409）**
 4. **R6 单独立项**：批量/灰度状态落库（schema 工作），不混进切流。
+   — **✅ 两侧已收口（2026-10-15，见 §3 更新）**
 5. **切流执行**：沿用 auth 的 D+C + 信号化设计；runbook 补「切换前排空在飞批次」。
+   — **待做**（下一步：切流 runbook 的 task 域版本 + 真进程冒烟；注意 §3 更新里
+   「批次聚合计数两侧口径不同」这条边界）
 
 ---
 
