@@ -12,6 +12,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
 	"github.com/Levango7/OpsMesh/internal/alertengine"
+	"github.com/Levango7/OpsMesh/internal/aiops"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -218,12 +219,48 @@ func (s *Server) notifyAlertGroup(ctx context.Context, g *alertengine.AlertGroup
 		if s.alertInhibitor != nil {
 			s.alertInhibitor.TrackActive(alert)
 		}
-		// 发布 SSE 事件通知前端
+		// 发布 SSE 事件通知前端；若 AIOps 启用，先做根因分析并附带结果
+		rootCauseJSON := ""
+		rootCauseEvidence := ""
+		if s.aiopsEngine != nil && s.aiopsEngine.IsEnabled() {
+			// 构造最小告警上下文（alert + 设备指标），用于 AIOps 根因分析
+			alertCtx := &aiops.AlertContext{
+				Alert: alert,
+			}
+			if dm := s.store.DeviceMetrics(ev.DeviceID); dm != nil {
+				alertCtx.Metrics = &aiops.DeviceContext{
+					DeviceInfo: &proto.DeviceInfo{
+						DeviceID: dm.DeviceID,
+						Hostname: dm.Hostname,
+						OS:       dm.OS,
+						Arch:     dm.Arch,
+						State:    "online",
+					},
+					Metrics: &proto.DeviceMetrics{
+						CPU:          dm.CPU,
+						Memory:       dm.Memory,
+						Disks:        dm.Disks,
+						Network:      dm.Network,
+						ProcessCount: dm.ProcessCount,
+						Uptime:       dm.Uptime,
+					},
+					Uptime: dm.Uptime,
+				}
+			}
+			if rc, err := s.aiopsEngine.Analyze(ctx, alertCtx); err == nil {
+				rootCauseJSON = fmt.Sprintf(`{"category":"%s","component":"%s","description":"%s","confidence":%.2f}`,
+					rc.Category, rc.Component, rc.Description, rc.Confidence)
+				rootCauseEvidence = strings.Join(rc.Evidence, " || ")
+			}
+			// AIOps 分析失败不阻断告警处理，仅跳过附带根因
+		}
 		s.publishEvent(ctx, "alert_new", ev.TenantID, map[string]string{
-			"alertID":  alert.AlertID,
-			"ruleID":   ev.RuleID,
-			"deviceID": ev.DeviceID,
-			"severity": ev.Severity,
+			"alertID":           alert.AlertID,
+			"ruleID":            ev.RuleID,
+			"deviceID":          ev.DeviceID,
+			"severity":          ev.Severity,
+			"rootCause":         rootCauseJSON,
+			"rootCauseEvidence": rootCauseEvidence,
 		})
 	}
 }
