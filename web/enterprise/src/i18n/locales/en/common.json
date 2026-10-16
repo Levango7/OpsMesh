@@ -43,6 +43,8 @@
                 "traffic":  "Traffic Policies",
                 "pipeline":  "Pipelines",
                 "argocd":  "ArgoCD Apps",
+                "flux":    "Flux Apps",
+                "gitops-dashboard":  "GitOps Dashboard",
                 "compliance":  "Compliance",
                 "ha":  "High Availability",
                 "backups":  "Backups",

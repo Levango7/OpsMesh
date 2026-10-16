@@ -60,11 +60,13 @@ export const ROUTE_DOMAIN_MAP = {
   pipeline: 'delivery',
   argocd: 'delivery',
   canary: 'delivery',
+  flux: 'delivery',
   // 可观测性 → observability
   logs: 'observability',
   slos: 'observability',
   'alert-rules': 'observability',
   trace: 'observability',
+  'gitops-dashboard': 'observability',
   // 系统管理 → system
   users: 'system',
   roles: 'system',

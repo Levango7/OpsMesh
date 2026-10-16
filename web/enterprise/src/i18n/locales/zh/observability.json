@@ -114,5 +114,23 @@
     "deleted": "删除成功",
     "save_failed": "保存失败",
     "delete_failed": "删除失败"
+  },
+  "gitops": {
+    "title": "GitOps 仪表盘",
+    "subtitle": "GitOps 应用统一视图：涵盖 ArgoCD 和 Flux 的健康度、同步状态、集群分布和最近同步。",
+    "stats_total_apps": "应用总数",
+    "stats_healthy": "健康",
+    "stats_degraded": "降级",
+    "stats_out_of_sync": "不同步",
+    "stats_clusters": "集群数",
+    "app_status_distribution": "应用状态分布",
+    "health_distribution": "健康度分布",
+    "recent_syncs": "最近同步",
+    "no_syncs": "暂无最近同步",
+    "quick_links": "快捷入口",
+    "col_app": "应用",
+    "col_type": "类型",
+    "col_status": "状态",
+    "col_time": "时间"
   }
 }

@@ -149,5 +149,23 @@
     "services_unavailable": "Jaeger query service unavailable",
     "tags_hint": "Format: key=value,key2=value2",
     "min_duration_hint": "e.g. 100ms, 1s"
+  },
+  "gitops": {
+    "title": "GitOps Dashboard",
+    "subtitle": "Unified view of GitOps applications across ArgoCD and Flux: health status, sync status, cluster distribution, and recent syncs.",
+    "stats_total_apps": "Total Apps",
+    "stats_healthy": "Healthy",
+    "stats_degraded": "Degraded",
+    "stats_out_of_sync": "Out Of Sync",
+    "stats_clusters": "Clusters",
+    "app_status_distribution": "Application Status Distribution",
+    "health_distribution": "Health Distribution",
+    "recent_syncs": "Recent Syncs",
+    "no_syncs": "No recent syncs",
+    "quick_links": "Quick Links",
+    "col_app": "App",
+    "col_type": "Type",
+    "col_status": "Status",
+    "col_time": "Time"
   }
 }

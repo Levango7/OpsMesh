@@ -43,6 +43,8 @@
                 "traffic":  "流量策略",
                 "pipeline":  "流水线",
                 "argocd":  "ArgoCD 应用",
+                "flux":    "Flux 应用",
+                "gitops-dashboard":  "GitOps 仪表盘",
                 "compliance":  "合规检查",
                 "ha":  "高可用",
                 "backups":  "灾备备份",

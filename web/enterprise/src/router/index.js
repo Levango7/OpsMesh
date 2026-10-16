@@ -136,6 +136,12 @@ const routes = [
   // ArgoCD 应用（交付中心）
   { path: '/argocd', name: 'argocd', component: () => import('@/views/ArgoCDView.vue'), meta: { title: 'nav.argocd', group: '交付中心', icon: 'deploy', requirePerm: 'argocd:read' } },
 
+  // Flux 应用（交付中心，GitOps 原生第二大支柱）
+  { path: '/flux', name: 'flux', component: () => import('@/views/FluxView.vue'), meta: { title: 'nav.flux', group: '交付中心', icon: 'flow', requirePerm: 'flux:read' } },
+
+  // GitOps 整体仪表盘（可观测性）
+  { path: '/gitops/dashboard', name: 'gitops-dashboard', component: () => import('@/views/GitOpsDashboardView.vue'), meta: { title: 'nav.gitops', group: '可观测性', icon: 'alerts', requirePerm: 'observability:read' } },
+
   // 合规管理（系统管理）
   { path: '/compliance', name: 'compliance', component: () => import('@/views/ComplianceView.vue'), meta: { title: 'nav.compliance', group: '系统管理', icon: 'permissions', requirePerm: 'compliance:read' } },
 
