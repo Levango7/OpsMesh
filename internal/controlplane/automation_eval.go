@@ -14,7 +14,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/aiops"
 	"github.com/Levango7/OpsMesh/internal/automation"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // defaultAutomationEvalInterval 评估周期兜底值（interval<=0 时使用）。
@@ -69,6 +71,34 @@ func (s *Server) processAutomationRules() {
 		if !automationEngine.Evaluate(domain, ctx) {
 			continue
 		}
+
+		// AIOps 增强：alert 类型规则命中时，先用 AIOps 做根因分析 + 智能修复方案生成，
+		// 将生成的修复命令下发为任务，形成"告警→根因→修复→自动执行"闭环。
+		if s.aiopsEngine != nil && s.aiopsEngine.IsEnabled() &&
+			domain.Trigger.Type == automation.TriggerTypeAlert {
+			if alertID := ctx["alert"]; alertID != "" {
+				if alert := s.findAlertByID(rule.TenantID, alertID); alert != nil {
+					if _, plan, err := s.aiopsEngine.AnalyzeAndRemediate(
+						context.Background(),
+						&aiops.AlertContext{
+							Alert: alert,
+							Logs:    nil,
+							Metrics: s.buildDeviceContext(alert.DeviceID),
+						},
+						aiops.RemediationConstraints{
+							MaxSteps:       5,
+							RiskTolerance:  "low",
+							RequireApproval: false,
+							TimeoutSec:     30,
+							AutoExecute:    true,
+						},
+					); err == nil && plan != nil {
+						s.executeRemediationPlan(rule.TenantID, plan)
+					}
+				}
+			}
+		}
+
 		exec := automationEngine.Execute(domain)
 		if exec == nil {
 			continue
@@ -151,4 +181,77 @@ func (s *Server) deviceMetricValue(tenantID, metric string) (float64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// findAlertByID 按租户 + AlertID 从活跃告警中查找告警对象。
+func (s *Server) findAlertByID(tenantID, alertID string) *proto.Alert {
+	if s.store == nil || alertID == "" {
+		return nil
+	}
+	for _, a := range s.store.Alerts(tenantID) {
+		if a != nil && a.AlertID == alertID {
+			return a
+		}
+	}
+	return nil
+}
+
+// buildDeviceContext 从设备最新指标构建 aiops.DeviceContext。
+func (s *Server) buildDeviceContext(deviceID string) *aiops.DeviceContext {
+	if s.store == nil || deviceID == "" {
+		return nil
+	}
+	m := s.store.DeviceMetrics(deviceID)
+	if m == nil {
+		return nil
+	}
+	return &aiops.DeviceContext{
+		DeviceInfo: &proto.DeviceInfo{
+			DeviceID: m.DeviceID,
+			Hostname: m.Hostname,
+			OS:       m.OS,
+			Arch:     m.Arch,
+			State:    "online",
+		},
+		Metrics: &proto.DeviceMetrics{
+			CPU:          m.CPU,
+			Memory:       m.Memory,
+			Disks:        m.Disks,
+			Network:      m.Network,
+			ProcessCount: m.ProcessCount,
+			Uptime:       m.Uptime,
+		},
+		Uptime: m.Uptime,
+	}
+}
+
+// executeRemediationPlan 将 AIOps 修复方案中的 commands 下发为任务。
+func (s *Server) executeRemediationPlan(tenantID string, plan *aiops.RemediationPlan) {
+	if s.store == nil || plan == nil {
+		return
+	}
+	for _, cmd := range plan.Commands {
+		if cmd.AgentID == "" || cmd.Command == "" {
+			continue
+		}
+		task := &proto.Task{
+			AgentID:  cmd.AgentID,
+			TenantID: tenantID,
+			Type:     cmd.Type,
+			Command:  cmd.Command,
+			Status:   "pending",
+			Timeout:  cmd.Timeout,
+			MaxRetries: 3,
+			CreatedAt: time.Now(),
+		}
+		if task.Type == "" {
+			task.Type = proto.TaskTypeShell
+		}
+		if task.MaxRetries <= 0 {
+			task.MaxRetries = 3
+		}
+		if _, err := s.store.CreateTask(task); err != nil {
+			log.Printf("controlplane: aiops remediation dispatch failed for agent %s: %v", cmd.AgentID, err)
+		}
+	}
 }
