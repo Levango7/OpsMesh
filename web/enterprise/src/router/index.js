@@ -114,6 +114,11 @@ const routes = [
   // 自动扩缩容
   { path: '/autoscaler', name: 'autoscaler', component: () => import('@/views/AutoscalerView.vue'), meta: { title: 'nav.autoscaler', group: '自动化', icon: 'settings', requirePerm: 'autoscaler:read' } },
 
+  // AIOps（AI 算力）：故障根因分析 + 智能修复生成 + 自然语言运维 + 自动执行
+  // 后端 handler 在 internal/aiops/handler.go，mux 在 internal/controlplane/server_lifecycle.go 注册，
+  // API 契约见 src/api/aiops.js 注释头。
+  { path: '/aiops', name: 'aiops', component: () => import('@/views/AIOpsView.vue'), meta: { title: 'nav.aiops', group: 'AI 算力', icon: 'alerts', requirePerm: 'aiops:read' } },
+
   // 自助服务门户
   { path: '/portal', name: 'portal', component: () => import('@/views/PortalView.vue'), meta: { title: 'nav.portal', group: '平台', icon: 'users', requirePerm: 'portal:read' } },
 

@@ -87,6 +87,7 @@ export const ROUTE_DOMAIN_MAP = {
   // AI 算力 → ai
   gpu: 'ai',
   bot: 'ai',
+  aiops: 'ai',
   // 平台 → platform
   plugins: 'platform',
   portal: 'platform',

@@ -29,6 +29,7 @@
     "secrets": "Secrets",
     "gpu": "GPU",
     "bot": "ChatOps",
+    "aiops": "AIOps",
     "runbooks": "Runbooks",
     "incidents": "Incidents",
     "autoscaler": "Autoscaler",

@@ -29,6 +29,7 @@
     "secrets": "密钥管理",
     "gpu": "GPU 管理",
     "bot": "ChatOps",
+    "aiops": "AIOps 智能运维",
     "runbooks": "Runbook",
     "incidents": "事件管理",
     "autoscaler": "自动扩缩容",
