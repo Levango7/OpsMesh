@@ -36,6 +36,7 @@ const routes = [
   { path: '/tasks', name: 'tasks', component: () => import('@/views/TasksView.vue'), meta: { title: 'nav.tasks', group: '运维管理', icon: 'task', requirePerm: 'task:read' } },
   { path: '/alerts', name: 'alerts', component: () => import('@/views/AlertsView.vue'), meta: { title: 'nav.alerts', group: '运维管理', icon: 'alerts', requirePerm: 'alert:read' } },
   { path: '/os-optimize', name: 'os-optimize', component: () => import('@/views/OSOptimizeView.vue'), meta: { title: 'nav.osopt', group: '运维管理', icon: 'task', requirePerm: 'task:read' } },
+  { path: '/system-ops', name: 'system-ops', component: () => import('@/views/SystemOpsView.vue'), meta: { title: 'nav.system_ops', group: '运维管理', icon: 'settings', requirePerm: 'system:write' } },
   { path: '/middleware', name: 'middleware', component: () => import('@/views/MiddlewareDeployView.vue'), meta: { title: 'nav.mwdep', group: '运维管理', icon: 'deploy', requirePerm: 'deploy:read' } },
   { path: '/k8s', name: 'k8s', component: () => import('@/views/K8sManageView.vue'), meta: { title: 'nav.k8s', group: '运维管理', icon: 'device', requirePerm: 'device:read' } },
   // 批量运维（运维管理）：多设备批量下发 + 状态查看

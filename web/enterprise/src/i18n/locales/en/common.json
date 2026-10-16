@@ -17,6 +17,7 @@
                 "tasks":  "Tasks",
                 "alerts":  "Alerts",
                 "osopt":  "OS Optimize",
+                "system_ops":  "System Ops",
                 "mwdep":  "Middleware",
                 "k8s":  "K8s",
                 "cmdb":  "CMDB",

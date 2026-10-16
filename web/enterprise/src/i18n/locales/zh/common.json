@@ -17,6 +17,7 @@
                 "tasks":  "任务下发",
                 "alerts":  "监控告警",
                 "osopt":  "OS 优化",
+                "system_ops":  "系统运维",
                 "mwdep":  "中间件部署",
                 "k8s":  "K8s 管理",
                 "cmdb":  "配置项 CMDB",

@@ -173,6 +173,10 @@ func (s *Server) Start() error {
 	// OS 基础环境优化：预置模板列表 + 详情 + 在指定 agent 上执行。
 	mux.HandleFunc("/api/v1/os-templates", s.handleListOSTemplates)
 	mux.HandleFunc("/api/v1/os-templates/", s.handleOSTemplateRouting) // 子路径：{id} 和 {id}/execute
+	// 系统运维操作：用户/组/防火墙的 shell 模板执行（查询走 /api/v1/devices/{id}/system）。
+	mux.HandleFunc("/api/v1/system/users", s.handleSystemUsers)       // POST 创建 / DELETE 删除用户
+	mux.HandleFunc("/api/v1/system/groups", s.handleSystemGroups)     // POST 创建 / DELETE 删除组
+	mux.HandleFunc("/api/v1/system/firewall", s.handleSystemFirewall) // POST 添加 / DELETE 删除规则
 	// 中间件部署：预置模板列表 + 详情 + 在指定 agent 上部署 + 已部署实例查询 + 卸载。
 	mux.HandleFunc("/api/v1/middleware-templates", s.handleMiddlewareTemplates)
 	mux.HandleFunc("/api/v1/middleware-templates/", s.handleMiddlewareTemplateDetail) // 子路径：{id} 和 {id}/deploy
@@ -303,7 +307,7 @@ func (s *Server) Start() error {
 	// Phase 2 Flux 应用管理（GitOps 原生第二大支柱）：GET/POST /api/v1/flux/apps，子路径 {id} GET/PUT/DELETE、{id}/sync。
 	mux.HandleFunc("/api/v1/flux/apps", s.handleFluxApps)
 	mux.HandleFunc("/api/v1/flux/apps/", s.handleFluxApp)
-	mux.HandleFunc("/api/v1/canary/", s.handleCanaryEnhance)  // 子路径：{id}/traffic-split、{id}/metrics
+	mux.HandleFunc("/api/v1/canary/", s.handleCanaryEnhance) // 子路径：{id}/traffic-split、{id}/metrics
 	mux.HandleFunc("/api/v1/config/hotpush", s.handleConfigHotpush)
 	mux.HandleFunc("/api/v1/config/canary", s.handleConfigCanary)
 	mux.HandleFunc("/api/v1/config/versions", s.handleConfigVersions)

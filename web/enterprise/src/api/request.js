@@ -114,3 +114,8 @@ export async function deleteJSON(url, silent) {
   const { s, j } = await http.delete(url, { silent })
   return { s, j }
 }
+// DELETE 携带请求体（用于用户/组/防火墙删除等需 body 的场景）
+export async function deleteJSONBody(url, body, silent) {
+  const { s, j } = await http.delete(url, { data: body, silent })
+  return { s, j }
+}

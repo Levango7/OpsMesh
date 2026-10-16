@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"runtime"
 	"testing"
 	"time"
 
@@ -249,5 +250,58 @@ func TestMetricsHistory_DefaultCap(t *testing.T) {
 	h2 := NewMetricsHistory(-1)
 	if h2.Cap() != MetricsHistoryDefaultCap {
 		t.Fatalf("Cap() = %d, want %d", h2.Cap(), MetricsHistoryDefaultCap)
+	}
+}
+
+// TestParseIptablesOutput 验证 iptables -L -n 输出解析。
+func TestParseIptablesOutput(t *testing.T) {
+	output := "Chain INPUT (policy ACCEPT)\n" +
+		"num  target     prot opt source               destination\n" +
+		"1    ACCEPT     tcp  --  0.0.0.0/0            0.0.0.0/0            tcp dpt:22\n" +
+		"2    DROP       all  --  10.0.0.0/8           0.0.0.0/0\n\n" +
+		"Chain FORWARD (policy ACCEPT)\n" +
+		"num  target     prot opt source               destination\n"
+	rules := parseIptablesOutput(output)
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 rules, got %d", len(rules))
+	}
+	if rules[0].Chain != "INPUT" || rules[0].Target != "ACCEPT" || rules[0].Protocol != "tcp" {
+		t.Errorf("rule[0] mismatch: %+v", rules[0])
+	}
+	if rules[1].Target != "DROP" {
+		t.Errorf("rule[1] target should be DROP: %+v", rules[1])
+	}
+}
+
+// TestParseFirewalldOutput 验证 firewall-cmd --list-all 输出解析。
+func TestParseFirewalldOutput(t *testing.T) {
+	output := "public (active)\n" +
+		"  target: default\n" +
+		"  services: ssh dhcpv6-client\n" +
+		"  ports: 8080/tcp 9090/tcp\n" +
+		"  protocols:\n"
+	rules := parseFirewalldOutput(output)
+	if len(rules) != 4 {
+		t.Fatalf("expected 4 rules, got %d: %+v", len(rules), rules)
+	}
+	found := false
+	for _, r := range rules {
+		if r.Port == "8080" && r.Protocol == "tcp" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("should parse port 8080/tcp: %+v", rules)
+	}
+}
+
+// TestCollectUsersGroups_NoPanic 验证用户/组采集不 panic。
+func TestCollectUsersGroups_NoPanic(t *testing.T) {
+	var users []proto.UserInfo
+	collectUsers(&users)
+	var groups []proto.GroupInfo
+	collectGroups(&groups)
+	if runtime.GOOS == "linux" && len(users) == 0 {
+		t.Log("collectUsers returned empty (getent may be unavailable)")
 	}
 }

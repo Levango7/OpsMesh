@@ -71,11 +71,12 @@ type DeviceMetrics struct {
 	Disks        []DiskMetrics      `json:"disks"`
 	Network      []NetMetrics       `json:"network"`
 	Services     []ServiceInfo      `json:"services"`
-	GPUs         []GPUMetrics       `json:"gpus"`      // GPU 指标（无 GPU 时为空）
-	Envs         []EnvDependency    `json:"envs"`      // 环境依赖版本信息
-	Processes    []ProcessInfo      `json:"processes"` // 进程 Top 列表（按 CPU/内存排序，前 N 条）
-	Inodes       []DiskInodeMetrics `json:"inodes"`    // Inode 使用率
-	IOPS         []DiskIOMetrics    `json:"iops"`      // 磁盘 IOPS/延迟
+	GPUs         []GPUMetrics       `json:"gpus"`             // GPU 指标（无 GPU 时为空）
+	Envs         []EnvDependency    `json:"envs"`             // 环境依赖版本信息
+	Processes    []ProcessInfo      `json:"processes"`        // 进程 Top 列表（按 CPU/内存排序，前 N 条）
+	Inodes       []DiskInodeMetrics `json:"inodes"`           // Inode 使用率
+	IOPS         []DiskIOMetrics    `json:"iops"`             // 磁盘 IOPS/延迟
+	System       *SystemInventory   `json:"system,omitempty"` // 系统清单（用户/组/防火墙，低频率采集）
 	ProcessCount int                `json:"processCount"`
 	CollectedAt  time.Time          `json:"collectedAt"`
 }
@@ -182,6 +183,43 @@ type ProcessInfo struct {
 	Status   string  `json:"status"`   // 状态（running/sleeping/zombie等）
 	Cmd      string  `json:"cmd"`      // 命令行（截断）
 	User     string  `json:"user"`     // 所属用户
+}
+
+// UserInfo 系统用户信息（来自 /etc/passwd，供用户管理结构化查询）。
+type UserInfo struct {
+	Name  string `json:"name"`  // 用户名
+	UID   int    `json:"uid"`   // 用户 ID
+	GID   int    `json:"gid"`   // 主组 ID
+	Home  string `json:"home"`  // 家目录
+	Shell string `json:"shell"` // 登录 shell
+	// System 标记：UID < 1000（Linux 系统用户约定）时为 true，前端可折叠。
+	System bool `json:"system"`
+}
+
+// GroupInfo 系统用户组信息（来自 /etc/group）。
+type GroupInfo struct {
+	Name    string   `json:"name"`    // 组名
+	GID     int      `json:"gid"`     // 组 ID
+	Members []string `json:"members"` // 组成员列表
+}
+
+// FirewallRule 防火墙规则（iptables/firewalld 统一视图）。
+type FirewallRule struct {
+	Chain    string `json:"chain"`    // 链名（INPUT/OUTPUT/FORWARD 或 firewalld zone）
+	Rule     string `json:"rule"`     // 规则文本（原始规则行）
+	Target   string `json:"target"`   // 动作（ACCEPT/DROP/REJECT）
+	Protocol string `json:"protocol"` // 协议（tcp/udp/all）
+	Port     string `json:"port"`     // 端口
+	Source   string `json:"source"`   // 源地址（可选）
+}
+
+// SystemInventory 系统清单（用户/组/防火墙），低频率采集，供结构化查询。
+type SystemInventory struct {
+	Users           []UserInfo     `json:"users"`
+	Groups          []GroupInfo    `json:"groups"`
+	Firewall        []FirewallRule `json:"firewall"`
+	FirewallBackend string         `json:"firewallBackend"` // iptables / firewalld / none
+	CollectedAt     time.Time      `json:"collectedAt"`
 }
 
 // 任务类型常量（agent 按 Type 选择执行器）。

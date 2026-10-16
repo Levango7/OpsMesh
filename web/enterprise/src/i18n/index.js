@@ -48,6 +48,7 @@ export const ROUTE_DOMAIN_MAP = {
   tasks: 'ops',
   alerts: 'ops',
   'os-optimize': 'ops',
+  'system-ops': 'ops',
   middleware: 'ops',
   k8s: 'ops',
   batch: 'ops',

@@ -175,7 +175,201 @@ func CollectMetrics(deviceID string) *proto.DeviceMetrics {
 	collectProcesses(&m.Processes) // 进程 Top 列表（按 CPU/内存排序）
 	collectGPU(m)                  // GPU 指标（NVIDIA/AMD，无 GPU 时为空）
 	collectEnvs(m)                 // 环境依赖版本（glibc/openssl/python/java 等）
+	collectSystem(m)               // 系统清单（用户/组/防火墙，5 分钟节流）
 	return m
+}
+
+// systemInventoryInterval 系统清单采集节流间隔（用户/组/防火墙变化不频繁，5 分钟一次足够）。
+const systemInventoryInterval = 5 * time.Minute
+
+// systemInventoryLastCol 上次系统清单采集时间（包级，CollectMetrics 间共享）。
+var systemInventoryLastCol time.Time
+
+// collectSystem 采集系统清单（用户/组/防火墙规则），5 分钟节流：间隔内复用上次结果。
+// 由于 DeviceMetrics 每次新建，节流时从缓存复制上次结果。
+func collectSystem(m *proto.DeviceMetrics) {
+	if time.Since(systemInventoryLastCol) < systemInventoryInterval && systemInventoryCache != nil {
+		cp := *systemInventoryCache
+		m.System = &cp
+		return
+	}
+	inv := &proto.SystemInventory{CollectedAt: time.Now()}
+	collectUsers(&inv.Users)
+	collectGroups(&inv.Groups)
+	collectFirewall(inv)
+	systemInventoryCache = inv
+	systemInventoryLastCol = time.Now()
+	m.System = inv
+}
+
+// systemInventoryCache 系统清单缓存（节流复用，避免每次采集都执行 getent/iptables）。
+var systemInventoryCache *proto.SystemInventory
+
+// collectUsers 采集系统用户（Linux: getent passwd；Windows 跳过）。
+func collectUsers(out *[]proto.UserInfo) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "getent", "passwd").Output()
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		fields := strings.Split(line, ":")
+		if len(fields) < 7 {
+			continue
+		}
+		uid := parseInt(fields[2])
+		gid := parseInt(fields[3])
+		*out = append(*out, proto.UserInfo{
+			Name:   fields[0],
+			UID:    uid,
+			GID:    gid,
+			Home:   fields[5],
+			Shell:  fields[6],
+			System: uid < 1000,
+		})
+	}
+}
+
+// collectGroups 采集系统用户组（Linux: getent group；Windows 跳过）。
+func collectGroups(out *[]proto.GroupInfo) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "getent", "group").Output()
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		fields := strings.Split(line, ":")
+		if len(fields) < 4 {
+			continue
+		}
+		var members []string
+		if fields[3] != "" {
+			members = strings.Split(fields[3], ",")
+		}
+		*out = append(*out, proto.GroupInfo{
+			Name:    fields[0],
+			GID:     parseInt(fields[2]),
+			Members: members,
+		})
+	}
+}
+
+// collectFirewall 采集防火墙规则（优先 firewalld，回退 iptables）。
+func collectFirewall(inv *proto.SystemInventory) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	// 优先检测 firewalld。
+	if _, err := exec.LookPath("firewall-cmd"); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		if out, err := exec.CommandContext(ctx, "firewall-cmd", "--list-all").Output(); err == nil {
+			inv.FirewallBackend = "firewalld"
+			inv.Firewall = parseFirewalldOutput(string(out))
+			return
+		}
+	}
+	// 回退 iptables。
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "iptables", "-L", "-n", "--line-numbers").Output()
+	if err != nil {
+		inv.FirewallBackend = "none"
+		return
+	}
+	inv.FirewallBackend = "iptables"
+	inv.Firewall = parseIptablesOutput(string(out))
+}
+
+// parseIptablesOutput 解析 iptables -L -n 输出为结构化规则。
+func parseIptablesOutput(output string) []proto.FirewallRule {
+	var rules []proto.FirewallRule
+	chain := ""
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// 链头：Chain INPUT (policy ACCEPT)
+		if strings.HasPrefix(line, "Chain ") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				chain = fields[1]
+			}
+			continue
+		}
+		// 跳过表头（num target prot opt source destination）。
+		if strings.HasPrefix(line, "num") || strings.HasPrefix(line, "pkts") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		// 格式：num target prot opt source destination [额外匹配]
+		rule := proto.FirewallRule{
+			Chain:    chain,
+			Target:   fields[1],
+			Protocol: fields[2],
+			Source:   fields[4],
+		}
+		// 逐行原始文本作为 Rule（便于排查）。
+		rule.Rule = line
+		rules = append(rules, rule)
+	}
+	return rules
+}
+
+// parseFirewalldOutput 解析 firewall-cmd --list-all 输出为结构化规则。
+func parseFirewalldOutput(output string) []proto.FirewallRule {
+	var rules []proto.FirewallRule
+	zone := ""
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "public") || strings.HasPrefix(line, "trusted") ||
+			strings.HasPrefix(line, "block") || strings.HasPrefix(line, "drop") {
+			zone = strings.Fields(line)[0]
+			continue
+		}
+		if strings.HasPrefix(line, "ports:") {
+			ports := strings.TrimSpace(strings.TrimPrefix(line, "ports:"))
+			if ports == "" {
+				continue
+			}
+			for _, p := range strings.Fields(ports) {
+				parts := strings.Split(p, "/")
+				rule := proto.FirewallRule{Chain: zone, Target: "allow"}
+				if len(parts) == 2 {
+					rule.Port = parts[0]
+					rule.Protocol = parts[1]
+				}
+				rule.Rule = "port " + p
+				rules = append(rules, rule)
+			}
+		}
+		if strings.HasPrefix(line, "services:") {
+			svcs := strings.TrimSpace(strings.TrimPrefix(line, "services:"))
+			for _, s := range strings.Fields(svcs) {
+				rules = append(rules, proto.FirewallRule{
+					Chain:  zone,
+					Target: "allow",
+					Rule:   "service " + s,
+				})
+			}
+		}
+	}
+	return rules
 }
 
 // collectHost 采集主机信息：操作系统/版本/内核/架构/运行时长/主机名。

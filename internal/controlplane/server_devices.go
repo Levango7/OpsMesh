@@ -217,6 +217,8 @@ func (s *Server) handleDeviceRouting(w http.ResponseWriter, r *http.Request) {
 		s.handleProvision(w, r, id)
 	case len(parts) == 2 && parts[1] == "metrics" && r.Method == http.MethodGet:
 		s.handleDeviceMetrics(w, r, id)
+	case len(parts) == 2 && parts[1] == "system" && r.Method == http.MethodGet:
+		s.handleDeviceSystemInfo(w, r, id)
 	default:
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
 	}
