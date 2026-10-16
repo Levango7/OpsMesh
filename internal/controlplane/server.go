@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/aiops"
 	"github.com/Levango7/OpsMesh/internal/alertengine"
 	"github.com/Levango7/OpsMesh/internal/approval"
 	"github.com/Levango7/OpsMesh/internal/cmdb"
@@ -66,6 +67,7 @@ type Server struct {
 	logHandler    *logstore.Handler      // M6 日志检索处理器
 	deployHandler *deploy.Handler        // M3 部署中心处理器
 	orchHandler   *orchestration.Handler // M5 作业编排中心处理器
+	aiopsHandler  *aiops.Handler         // AIOps 故障分析与智能修复
 	// 告警推送去重（notifyLoop 防重复）：按告警指纹（AlertID）记录已推送集合，
 	// 替代旧版全局单一时间高水位 lastAlertSent——时间水位对乱序插入/跨租户告警/
 	// 多副本时钟偏差不免疫（任一租户推送后水位前移，其它租户 CreatedAt 更早的
@@ -344,6 +346,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		logHandler:    factory.NewLogHandler(st, cfg),
 		deployHandler: deployHandler,
 		orchHandler:   orchHandler,
+		aiopsHandler:  aiops.NewHandler(aiops.NewEngine(aiops.DefaultConfig())),
 		eventSubs:     make(map[chan SSEEvent]struct{}), // SSE 订阅者集合
 		alertAggr:     notify.NewAlertAggregator(),      // 告警聚合器
 		alertChannels: &notify.Channels{ // 多通道（Webhook + Email）
