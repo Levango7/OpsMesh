@@ -68,7 +68,7 @@ type Server struct {
 	deployHandler *deploy.Handler        // M3 部署中心处理器
 	orchHandler   *orchestration.Handler // M5 作业编排中心处理器
 	aiopsHandler  *aiops.Handler         // AIOps 故障分析与智能修复
-	aiopsEngine   *aiops.Engine         // AIOps 引擎实例（供告警→根因分析集成调用）
+	aiopsEngine   *aiops.Engine          // AIOps 引擎实例（供告警→根因分析集成调用）
 	// 告警推送去重（notifyLoop 防重复）：按告警指纹（AlertID）记录已推送集合，
 	// 替代旧版全局单一时间高水位 lastAlertSent——时间水位对乱序插入/跨租户告警/
 	// 多副本时钟偏差不免疫（任一租户推送后水位前移，其它租户 CreatedAt 更早的
@@ -398,10 +398,10 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	if s.alertEngine != nil {
 		defaultAlertRules := []alertengine.AlertRule{
 			{
-				ID:          "infra-cpu-high",
-				Name:        "CPU 使用率过高",
-				TenantID:    "system",
-				Enabled:     true,
+				ID:       "infra-cpu-high",
+				Name:     "CPU 使用率过高",
+				TenantID: "system",
+				Enabled:  true,
 				Conditions: []alertengine.Condition{
 					{Metric: "cpu_usage", Operator: alertengine.OpGT, Threshold: 90, Window: 0},
 				},
@@ -413,10 +413,10 @@ func NewServer(cfg *config.Config) (*Server, error) {
 				UpdatedAt:      time.Now(),
 			},
 			{
-				ID:          "infra-mem-high",
-				Name:        "内存使用率过高",
-				TenantID:    "system",
-				Enabled:     true,
+				ID:       "infra-mem-high",
+				Name:     "内存使用率过高",
+				TenantID: "system",
+				Enabled:  true,
 				Conditions: []alertengine.Condition{
 					{Metric: "mem_usage", Operator: alertengine.OpGT, Threshold: 90, Window: 0},
 				},
@@ -428,12 +428,57 @@ func NewServer(cfg *config.Config) (*Server, error) {
 				UpdatedAt:      time.Now(),
 			},
 			{
-				ID:          "infra-disk-high",
-				Name:        "磁盘使用率过高",
-				TenantID:    "system",
-				Enabled:     true,
+				ID:       "infra-disk-high",
+				Name:     "磁盘使用率过高",
+				TenantID: "system",
+				Enabled:  true,
 				Conditions: []alertengine.Condition{
 					{Metric: "disk_usage", Operator: alertengine.OpGT, Threshold: 90, Window: 0},
+				},
+				Logic:          alertengine.LogicAnd,
+				Duration:       0,
+				Severity:       alertengine.SeverityCritical,
+				NotifyChannels: nil,
+				CreatedAt:      time.Now(),
+				UpdatedAt:      time.Now(),
+			},
+			{
+				ID:       "infra-gpu-usage-high",
+				Name:     "GPU 核心使用率过高",
+				TenantID: "system",
+				Enabled:  true,
+				Conditions: []alertengine.Condition{
+					{Metric: "gpu_usage", Operator: alertengine.OpGT, Threshold: 90, Window: 0},
+				},
+				Logic:          alertengine.LogicAnd,
+				Duration:       0,
+				Severity:       alertengine.SeverityWarning,
+				NotifyChannels: nil,
+				CreatedAt:      time.Now(),
+				UpdatedAt:      time.Now(),
+			},
+			{
+				ID:       "infra-gpu-mem-high",
+				Name:     "GPU 显存使用率过高",
+				TenantID: "system",
+				Enabled:  true,
+				Conditions: []alertengine.Condition{
+					{Metric: "gpu_mem_usage", Operator: alertengine.OpGT, Threshold: 90, Window: 0},
+				},
+				Logic:          alertengine.LogicAnd,
+				Duration:       0,
+				Severity:       alertengine.SeverityWarning,
+				NotifyChannels: nil,
+				CreatedAt:      time.Now(),
+				UpdatedAt:      time.Now(),
+			},
+			{
+				ID:       "infra-gpu-temp-high",
+				Name:     "GPU 温度过高",
+				TenantID: "system",
+				Enabled:  true,
+				Conditions: []alertengine.Condition{
+					{Metric: "gpu_temp", Operator: alertengine.OpGT, Threshold: 80, Window: 0},
 				},
 				Logic:          alertengine.LogicAnd,
 				Duration:       0,

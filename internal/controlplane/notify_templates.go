@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Levango7/OpsMesh/internal/alertengine"
 	"github.com/Levango7/OpsMesh/internal/aiops"
+	"github.com/Levango7/OpsMesh/internal/alertengine"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
-	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
 // handleNotifyTemplates 处理 /api/v1/notify-templates：GET 列表 / POST 创建。
@@ -384,12 +384,12 @@ func (s *Server) autoRemediateOnAlert(ctx context.Context, ruleID, deviceID stri
 
 	// 下发 shell 任务（模板 Commands 作为命令）。
 	task := &proto.Task{
-		AgentID:   agentID,
-		TenantID:  tenantID,
-		Type:      proto.TaskTypeShell,
-		Command:   tpl.Commands,
-		Status:    "pending",
-		Timeout:   300, // 5 分钟超时
+		AgentID:    agentID,
+		TenantID:   tenantID,
+		Type:       proto.TaskTypeShell,
+		Command:    tpl.Commands,
+		Status:     "pending",
+		Timeout:    300, // 5 分钟超时
 		MaxRetries: 1,
 		CreatedAt:  time.Now(),
 	}

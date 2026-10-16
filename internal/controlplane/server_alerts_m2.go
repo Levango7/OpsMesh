@@ -31,6 +31,7 @@ package controlplane
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/alertengine"
@@ -140,6 +141,104 @@ func (s *Server) evaluateAlertsOnce(ctx context.Context) {
 	// 聚合
 	groups := s.alertAggregator.Aggregate(filtered)
 	// 推送每个聚合组
+	for _, g := range groups {
+		s.notifyAlertGroup(ctx, g)
+	}
+	// 环境依赖跨机器差异检测：对同一 segment 内的设备，比对关键依赖版本（glibc/openssl 等），
+	// 发现不一致时产生告警事件，进入同一静默/聚合/通知链。
+	s.evaluateEnvConsistency(ctx)
+}
+
+// evaluateEnvConsistency 对同一 segment 内的设备比对关键环境依赖版本，
+// 发现不一致时产生 alertengine.AlertEvent，进入同一静默/聚合/通知链。
+// 仅检查 glibc/openssl 等基础运行时依赖，版本不一致时产生 warning 级别告警。
+func (s *Server) evaluateEnvConsistency(ctx context.Context) {
+	if s.alertEngine == nil || s.store == nil {
+		return
+	}
+	snapshot := s.store.Snapshot("")
+	// 按 (segment, depName) 聚合版本
+	type depVersion struct {
+		segment string
+		depName string
+	}
+	type deviceVersion struct {
+		deviceID string
+		version  string
+	}
+	groupMap := make(map[depVersion][]deviceVersion)
+	for segment, devices := range snapshot {
+		for _, d := range devices {
+			if d.Retired || d.AgentID == "" {
+				continue
+			}
+			dm := s.store.DeviceMetrics(d.DeviceID)
+			if dm == nil {
+				continue
+			}
+			for _, e := range dm.Envs {
+				if e.Name != "glibc" && e.Name != "openssl" && e.Name != "python3" {
+					continue // 只检查关键基础依赖
+				}
+				key := depVersion{segment: segment, depName: e.Name}
+				groupMap[key] = append(groupMap[key], deviceVersion{deviceID: d.DeviceID, version: e.Version})
+			}
+		}
+	}
+	var allEvents []*alertengine.AlertEvent
+	for key, devices := range groupMap {
+		if len(devices) < 2 {
+			continue // 只有一台设备，无法比对
+		}
+		firstVersion := devices[0].version
+		inconsistent := false
+		for _, d := range devices[1:] {
+			if d.version != firstVersion {
+				inconsistent = true
+				break
+			}
+		}
+		if !inconsistent {
+			continue
+		}
+		// 版本不一致，产生告警
+		var deviceIDs []string
+		for _, d := range devices {
+			deviceIDs = append(deviceIDs, d.deviceID)
+		}
+		ev := &alertengine.AlertEvent{
+			RuleID:   "env-dep-mismatch",
+			TenantID: "system",
+			DeviceID: devices[0].deviceID, // 主设备为第一个
+			Severity: alertengine.SeverityWarning,
+			Message:  fmt.Sprintf("环境依赖 %s 版本不一致：%s", key.depName, strings.Join(deviceIDs, ",")),
+			Labels: map[string]string{
+				"ruleID":   "env-dep-mismatch",
+				"deviceID": devices[0].deviceID,
+				"severity": alertengine.SeverityWarning,
+				"depName":  key.depName,
+				"segment":  key.segment,
+			},
+			FiredAt: time.Now(),
+			Values:  map[string]float64{},
+		}
+		allEvents = append(allEvents, ev)
+	}
+	if len(allEvents) == 0 {
+		return
+	}
+	// 静默过滤
+	var filtered []*alertengine.AlertEvent
+	for _, ev := range allEvents {
+		if !s.alertSilencer.IsSilenced(ev) {
+			filtered = append(filtered, ev)
+		}
+	}
+	if len(filtered) == 0 {
+		return
+	}
+	// 聚合
+	groups := s.alertAggregator.Aggregate(filtered)
 	for _, g := range groups {
 		s.notifyAlertGroup(ctx, g)
 	}

@@ -59,22 +59,25 @@ type DeviceInfo struct {
 // 同时保留最近 N 小时历史快照（环形缓冲，默认 2h/240 条），供 GET /api/v1/devices/{id}/metrics?range=2h 查询。
 // agent 每 30 秒采集一次（心跳每 10 秒一次，但采集频率独立降低以减少系统开销）。
 type DeviceMetrics struct {
-	DeviceID     string        `json:"deviceID"`
-	Hostname     string        `json:"hostname"`
-	OS           string        `json:"os"`        // windows / linux / darwin
-	OSVersion    string        `json:"osVersion"` // 如 "Microsoft Windows 11 Pro" / "Ubuntu 22.04 LTS"
-	Kernel       string        `json:"kernel"`    // 内核版本
-	Arch         string        `json:"arch"`      // amd64 / arm64
-	Uptime       int64         `json:"uptime"`    // 运行时长（秒）
-	CPU          CPUMetrics    `json:"cpu"`
-	Memory       MemMetrics    `json:"memory"`
-	Disks        []DiskMetrics `json:"disks"`
-	Network      []NetMetrics  `json:"network"`
-	Services     []ServiceInfo `json:"services"`
-	GPUs     []GPUMetrics   `json:"gpus"`       // GPU 指标（无 GPU 时为空）
-	Envs     []EnvDependency `json:"envs"`      // 环境依赖版本信息
-	ProcessCount int           `json:"processCount"`
-	CollectedAt  time.Time     `json:"collectedAt"`
+	DeviceID     string             `json:"deviceID"`
+	Hostname     string             `json:"hostname"`
+	OS           string             `json:"os"`        // windows / linux / darwin
+	OSVersion    string             `json:"osVersion"` // 如 "Microsoft Windows 11 Pro" / "Ubuntu 22.04 LTS"
+	Kernel       string             `json:"kernel"`    // 内核版本
+	Arch         string             `json:"arch"`      // amd64 / arm64
+	Uptime       int64              `json:"uptime"`    // 运行时长（秒）
+	CPU          CPUMetrics         `json:"cpu"`
+	Memory       MemMetrics         `json:"memory"`
+	Disks        []DiskMetrics      `json:"disks"`
+	Network      []NetMetrics       `json:"network"`
+	Services     []ServiceInfo      `json:"services"`
+	GPUs         []GPUMetrics       `json:"gpus"`      // GPU 指标（无 GPU 时为空）
+	Envs         []EnvDependency    `json:"envs"`      // 环境依赖版本信息
+	Processes    []ProcessInfo      `json:"processes"` // 进程 Top 列表（按 CPU/内存排序，前 N 条）
+	Inodes       []DiskInodeMetrics `json:"inodes"`    // Inode 使用率
+	IOPS         []DiskIOMetrics    `json:"iops"`      // 磁盘 IOPS/延迟
+	ProcessCount int                `json:"processCount"`
+	CollectedAt  time.Time          `json:"collectedAt"`
 }
 
 // MetricsSeries 设备监控指标历史时序数据（环形缓冲查询结果）。
@@ -109,6 +112,24 @@ type DiskMetrics struct {
 	Free  uint64  `json:"free"`  // 可用（GB）
 	Usage float64 `json:"usage"` // 使用率 0-100
 	Type  string  `json:"type"`  // 文件系统类型 NTFS/ext4
+}
+
+// DiskInodeMetrics 单个分区 Inode 指标。
+type DiskInodeMetrics struct {
+	Mount string  `json:"mount"` // 挂载点
+	Total uint64  `json:"total"` // inode 总数
+	Used  uint64  `json:"used"`  // inode 已用
+	Free  uint64  `json:"free"`  // inode 可用
+	Usage float64 `json:"usage"` // inode 使用率 0-100
+}
+
+// DiskIOMetrics 单个磁盘 IO 指标（IOPS/延迟）。
+type DiskIOMetrics struct {
+	Mount        string  `json:"mount"`        // 挂载点
+	ReadIOPS     float64 `json:"readIOPS"`     // 读 IOPS
+	WriteIOPS    float64 `json:"writeIOPS"`    // 写 IOPS
+	ReadLatency  float64 `json:"readLatency"`  // 读延迟（ms）
+	WriteLatency float64 `json:"writeLatency"` // 写延迟（ms）
 }
 
 // NetMetrics 单个网卡指标。

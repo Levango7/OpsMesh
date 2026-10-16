@@ -150,6 +150,15 @@
               <span>{{ $t('device_detail.disk_used') }}: {{ fmtBytes(d.used) }} / {{ fmtBytes(d.total) }}</span>
               <span class="muted">{{ $t('device_detail.disk_free') }}: {{ fmtBytes(d.free) }}</span>
             </div>
+            <!-- Inode -->
+            <div v-if="inodeMap[d.mount]" class="disk-foot">
+              <span class="muted">{{ $t('device_detail.inode_used') }}: {{ inodeMap[d.mount].used }} / {{ inodeMap[d.mount].total }} ({{ inodeMap[d.mount].usage.toFixed(1) }}%)</span>
+            </div>
+            <!-- IOPS -->
+            <div v-if="iopsMap[d.mount]" class="disk-foot">
+              <span class="muted">{{ $t('device_detail.iops_read') }}: {{ iopsMap[d.mount].readIOPS.toFixed(0) }} / {{ $t('device_detail.iops_write') }}: {{ iopsMap[d.mount].writeIOPS.toFixed(0) }}</span>
+              <span class="muted">{{ $t('device_detail.iops_read_lat') }}: {{ iopsMap[d.mount].readLatency.toFixed(1) }}ms / {{ $t('device_detail.iops_write_lat') }}: {{ iopsMap[d.mount].writeLatency.toFixed(1) }}ms</span>
+            </div>
           </div>
         </div>
       </MetricsCard>
@@ -232,6 +241,20 @@
             </div>
           </MetricsCard>
         </div>
+        <div class="col col-full">
+          <MetricsCard :title="$t('device_detail.process_top')" icon="task" accent="--purple">
+            <div v-if="!processes.length" class="muted">{{ $t('common.no_data') }}</div>
+            <div v-else class="proc-top-list">
+              <div v-for="(p, idx) in processes" :key="p.pid" class="proc-row">
+                <span class="proc-pid">{{ p.pid }}</span>
+                <span class="proc-name">{{ p.name || p.cmd }}</span>
+                <span class="proc-cpu">{{ p.cpu.toFixed(1) }}%</span>
+                <span class="proc-mem">{{ p.mem.toFixed(1) }}%</span>
+                <span class="proc-user">{{ p.user || '—' }}</span>
+              </div>
+            </div>
+          </MetricsCard>
+        </div>
       </div>
     </template>
   </div>
@@ -306,6 +329,25 @@ const services = computed(() => metrics.value?.services || [])
 const gpus = computed(() => metrics.value?.gpus || [])
 // 环境依赖列表
 const envs = computed(() => metrics.value?.envs || [])
+
+// Inode 映射（按 mount 索引）
+const inodeMap = computed(() => {
+  const map = {}
+  const inodes = metrics.value?.inodes || []
+  inodes.forEach(d => { map[d.mount] = d })
+  return map
+})
+
+// IOPS 映射（按 mount 索引）
+const iopsMap = computed(() => {
+  const map = {}
+  const iops = metrics.value?.iops || []
+  iops.forEach(d => { map[d.mount] = d })
+  return map
+})
+
+// 进程 Top 列表
+const processes = computed(() => metrics.value?.processes || [])
 
 // 网络表格列定义
 const netCols = [
@@ -515,6 +557,20 @@ onUnmounted(() => {
 .proc-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 0; }
 .proc-big { font-size: 36px; font-weight: 700; color: var(--text); line-height: 1; font-variant-numeric: tabular-nums; }
 .proc-label { font-size: 12.5px; color: var(--text-3); }
+
+/* 进程 Top 列表 */
+.proc-top-list { display: flex; flex-direction: column; gap: 4px; }
+.proc-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px; border-radius: var(--radius-sm);
+  background: var(--surface-3); border: 1px solid var(--border);
+  font-size: 12px;
+}
+.proc-pid { width: 50px; color: var(--text-2); font-family: monospace; }
+.proc-name { flex: 1; color: var(--text); font-weight: 500; }
+.proc-cpu { width: 70px; color: var(--text-2); font-family: monospace; }
+.proc-mem { width: 70px; color: var(--text-2); font-family: monospace; }
+.proc-user { width: 100px; color: var(--text-2); }
 
 /* GPU 列表 */
 .gpu-list { display: flex; flex-direction: column; gap: 12px; }

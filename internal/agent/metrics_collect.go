@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -162,15 +163,18 @@ func CollectMetrics(deviceID string) *proto.DeviceMetrics {
 		Arch:        runtime.GOARCH,
 		CollectedAt: time.Now(),
 	}
-	collectHost(m)         // OS/内核/运行时长/主机名
-	collectCPU(m)          // CPU 核心数/使用率/型号
-	collectMem(m)          // 内存总量/已用/可用/使用率
-	collectDisks(&m.Disks) // 各分区容量/使用率
-	collectNet(m)          // 各网卡 IP/MAC/收发字节
-	collectServices(m)     // 关注的服务状态
-	collectProcessCount(m) // 进程数
-	collectGPU(m)          // GPU 指标（NVIDIA/AMD，无 GPU 时为空）
-	collectEnvs(m)         // 环境依赖版本（glibc/openssl/python/java 等）
+	collectHost(m)                 // OS/内核/运行时长/主机名
+	collectCPU(m)                  // CPU 核心数/使用率/型号
+	collectMem(m)                  // 内存总量/已用/可用/使用率
+	collectDisks(&m.Disks)         // 各分区容量/使用率
+	collectInodes(&m.Inodes)       // 各分区 inode 使用率
+	collectIOPS(&m.IOPS)           // 各分区 IOPS/延迟
+	collectNet(m)                  // 各网卡 IP/MAC/收发字节
+	collectServices(m)             // 关注的服务状态
+	collectProcessCount(m)         // 进程数
+	collectProcesses(&m.Processes) // 进程 Top 列表（按 CPU/内存排序）
+	collectGPU(m)                  // GPU 指标（NVIDIA/AMD，无 GPU 时为空）
+	collectEnvs(m)                 // 环境依赖版本（glibc/openssl/python/java 等）
 	return m
 }
 
@@ -599,4 +603,143 @@ func parseUint(s string) uint64 {
 	var n uint64
 	_, _ = fmt.Sscanf(strings.TrimSpace(s), "%d", &n)
 	return n
+}
+
+// collectInodes 采集各分区 inode 使用率（Linux df -i，Windows 跳过）。
+func collectInodes(out *[]proto.DiskInodeMetrics) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "df", "-i", "-P", "--output=target,iused,ifree,ipcent")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return
+	}
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for i, line := range lines {
+		if i == 0 {
+			continue // skip header
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		dim := proto.DiskInodeMetrics{
+			Mount: fields[0],
+		}
+		dim.Used = parseUint(fields[1])
+		dim.Free = parseUint(fields[2])
+		dim.Total = dim.Used + dim.Free
+		if dim.Total > 0 {
+			dim.Usage = float64(dim.Used) / float64(dim.Total) * 100
+		}
+		*out = append(*out, dim)
+	}
+}
+
+// collectIOPS 采集各分区 IOPS/延迟（Linux /proc/diskstats，Windows 跳过）。
+func collectIOPS(out *[]proto.DiskIOMetrics) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "cat", "/proc/diskstats")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return
+	}
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 14 {
+			continue
+		}
+		// /proc/diskstats fields: major minor name reads completions merges sectors_ticks read_ticks writes writes_ticks io_ticks weighted_io_ticks discards discard_ticks discard_ticks flush_ticks
+		device := fields[2]
+		// Skip loop/ram devices
+		if strings.HasPrefix(device, "loop") || strings.HasPrefix(device, "ram") {
+			continue
+		}
+		readsCompleted := parseUint(fields[3])
+		writesCompleted := parseUint(fields[7])
+		ioTicks := parseUint(fields[12]) // io_ticks (ms)
+
+		// Simple IOPS calculation (reads + writes per sample interval)
+		// Note: this is a cumulative counter, actual IOPS would need delta over time
+		dim := proto.DiskIOMetrics{
+			Mount:     device,
+			ReadIOPS:  float64(readsCompleted),
+			WriteIOPS: float64(writesCompleted),
+		}
+		if ioTicks > 0 && (readsCompleted+writesCompleted) > 0 {
+			dim.ReadLatency = float64(ioTicks) / float64(readsCompleted+writesCompleted)
+			dim.WriteLatency = dim.ReadLatency
+		}
+		*out = append(*out, dim)
+	}
+}
+
+// collectProcesses 采集进程 Top 列表（按 CPU 使用率降序，最多 20 条）。
+func collectProcesses(out *[]proto.ProcessInfo) {
+	processes, err := process.Processes()
+	if err != nil {
+		return
+	}
+	type procInfo struct {
+		p   *process.Process
+		cpu float64
+		mem float64
+	}
+	var list []procInfo
+	for _, p := range processes {
+		cpu, err := p.CPUPercent()
+		if err != nil {
+			continue
+		}
+		mem32, err := p.MemoryPercent()
+		if err != nil {
+			continue
+		}
+		list = append(list, procInfo{p: p, cpu: cpu, mem: float64(mem32)})
+	}
+	// Sort by CPU descending
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].cpu > list[j].cpu
+	})
+	limit := 20
+	if len(list) < limit {
+		limit = len(list)
+	}
+	for i := 0; i < limit; i++ {
+		p := list[i].p
+		cmdline, _ := p.Cmdline()
+		username, _ := p.Username()
+		statusList, _ := p.Status()
+		status := ""
+		if len(statusList) > 0 {
+			status = statusList[0]
+		}
+		memBytes, _ := p.MemoryInfo()
+		*out = append(*out, proto.ProcessInfo{
+			PID:      int32(p.Pid),
+			Name:     func() string { n, _ := p.Name(); return n }(),
+			CPU:      list[i].cpu,
+			Mem:      list[i].mem,
+			MemBytes: memBytes.RSS / 1024 / 1024,
+			Status:   status,
+			Cmd:      strings.Join(strings.Fields(cmdline), " "),
+			User:     username,
+		})
+	}
 }

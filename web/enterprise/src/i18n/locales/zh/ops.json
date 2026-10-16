@@ -85,7 +85,13 @@
     "gpu_power": "功耗",
     "gpu_driver": "驱动",
     "env_deps": "环境依赖",
-    "no_env_deps": "未检测到环境依赖"
+    "no_env_deps": "未检测到环境依赖",
+    "process_top": "进程 Top",
+    "inode_used": "Inode 已用",
+    "iops_read": "读 IOPS",
+    "iops_write": "写 IOPS",
+    "iops_read_lat": "读延迟",
+    "iops_write_lat": "写延迟"
   },
   "tasks": {
     "title": "任务下发",

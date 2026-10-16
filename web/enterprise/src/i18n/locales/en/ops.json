@@ -85,7 +85,13 @@
     "gpu_power": "Power",
     "gpu_driver": "Driver",
     "env_deps": "Env Dependencies",
-    "no_env_deps": "No env dependencies detected"
+    "no_env_deps": "No env dependencies detected",
+    "process_top": "Process Top",
+    "inode_used": "Inode Used",
+    "iops_read": "Read IOPS",
+    "iops_write": "Write IOPS",
+    "iops_read_lat": "Read Lat",
+    "iops_write_lat": "Write Lat"
   },
   "tasks": {
     "title": "Tasks",
