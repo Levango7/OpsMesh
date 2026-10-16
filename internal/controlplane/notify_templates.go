@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
-
 	"github.com/Levango7/OpsMesh/internal/alertengine"
 	"github.com/Levango7/OpsMesh/internal/aiops"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
 // handleNotifyTemplates 处理 /api/v1/notify-templates：GET 列表 / POST 创建。
@@ -219,6 +219,13 @@ func (s *Server) notifyAlertGroup(ctx context.Context, g *alertengine.AlertGroup
 		if s.alertInhibitor != nil {
 			s.alertInhibitor.TrackActive(alert)
 		}
+
+		// 自动调优：基础设施预警触发且 autoRemediateEnabled 为 true 时，
+		// 自动下发对应 OS 优化模板任务到受影响设备（一键自愈）。
+		if s.autoRemediateEnabled {
+			s.autoRemediateOnAlert(ctx, ev.RuleID, ev.DeviceID)
+		}
+
 		// 发布 SSE 事件通知前端；若 AIOps 启用，先做根因分析并附带结果
 		rootCauseJSON := ""
 		rootCauseEvidence := ""
@@ -326,4 +333,69 @@ func maskSensitiveConfig(configJSON string) string {
 		return configJSON
 	}
 	return string(out)
+}
+
+// autoRemediateTemplate 规则 ID → OS 优化模板 ID 映射（基础设施预警自愈）。
+var autoRemediateTemplate = map[string]string{
+	"infra-cpu-high":  "kernel-tune", // CPU 过高 → 内核参数调优（somaxconn/backlog/keepalive 等）
+	"infra-mem-high":  "kernel-tune", // 内存过高 → 内核参数调优（vm.swappiness 等）
+	"infra-disk-high": "",            // 磁盘过高：无直接对应模板，跳过（建议人工清理）
+}
+
+// autoRemediateOnAlert 基础设施预警触发时自动下发 OS 优化模板任务（一键自愈）。
+// 仅当 s.autoRemediateEnabled 为 true 且规则有对应模板时才下发；下发失败不阻断告警流程。
+func (s *Server) autoRemediateOnAlert(ctx context.Context, ruleID, deviceID string) {
+	tplID, ok := autoRemediateTemplate[ruleID]
+	if !ok || tplID == "" {
+		return // 无对应模板，跳过
+	}
+	if s.store == nil {
+		return
+	}
+
+	// 查找设备的 agentID 和 租户 ID（从所有 segment 中匹配 deviceID）。
+	var agentID, tenantID string
+	for _, devices := range s.store.Snapshot("") {
+		for _, d := range devices {
+			if d.DeviceID == deviceID && d.AgentID != "" {
+				agentID = d.AgentID
+				tenantID = d.TenantID
+				if tenantID == "" {
+					tenantID = "default"
+				}
+				break
+			}
+		}
+		if agentID != "" {
+			break
+		}
+	}
+	if agentID == "" {
+		logx.Warn(ctx, "自动调优：未找到设备 agentID，跳过下发", "deviceID", deviceID, "ruleID", ruleID)
+		return
+	}
+
+	// 获取模板内容。
+	tpl := s.getOSTemplateByID(tplID)
+	if tpl == nil {
+		logx.Warn(ctx, "自动调优：模板不存在，跳过下发", "templateID", tplID, "deviceID", deviceID)
+		return
+	}
+
+	// 下发 shell 任务（模板 Commands 作为命令）。
+	task := &proto.Task{
+		AgentID:   agentID,
+		TenantID:  tenantID,
+		Type:      proto.TaskTypeShell,
+		Command:   tpl.Commands,
+		Status:    "pending",
+		Timeout:   300, // 5 分钟超时
+		MaxRetries: 1,
+		CreatedAt:  time.Now(),
+	}
+	if _, err := s.store.CreateTask(task); err != nil {
+		logx.Warn(ctx, "自动调优：下发任务失败", "deviceID", deviceID, "templateID", tplID, "error", err)
+		return
+	}
+	logx.Info(ctx, "自动调优：已下发优化模板任务", "deviceID", deviceID, "agentID", agentID, "templateID", tplID, "ruleID", ruleID)
 }

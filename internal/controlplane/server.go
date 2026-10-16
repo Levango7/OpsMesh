@@ -168,6 +168,9 @@ type Server struct {
 	alertSilencer   *alertengine.Silencer
 	alertAggregator *alertengine.Aggregator
 	alertNotifier   *notify.Notifier
+	// autoRemediateEnabled 开启后，基础设施预警（CPU/内存/磁盘）触发时，
+	// 自动下发对应的 OS 优化模板任务到受影响设备（一键自愈）。默认 false。
+	autoRemediateEnabled bool
 
 	// 告警通道密钥外置：SecretProvider 实例（env/file/vault/chain）。
 	// 由 NewServer 调用 secrets.FromConfig 构造；nil=未启用密钥外置（向后兼容）。
@@ -370,7 +373,6 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		alertEngine:     alertengine.NewEngine(nil, nil, nil),
 		alertSilencer:   alertengine.NewSilencer(nil),
 		alertAggregator: alertengine.NewAggregator([]string{"deviceID", "severity"}, 100),
-		// TD-92：Notifier 的唯一装配入口（去重+重试+--notify-channels-config 文件渠道）。
 		// 此前两处生产构造都不传 WithChannels ⇒ channels 恒空 ⇒ M2/自动化的通知全部
 		// 静默丢弃；SecretProvider 重建（下方）也走同一 helper，渠道不再丢失。
 		alertNotifier: newAlertNotifier(cfg, nil),
@@ -390,6 +392,62 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		automationEvalInterval: cfg.AutomationEvalInterval,
 		// 灾备备份归档目录：data-dir/backups（与 CLI backup 子命令同源，便于运维统一备份数据目录）。
 		backupDir: filepath.Join(cfg.DataDir, "backups"),
+	}
+	// 默认基础设施预警规则（CPU/内存/磁盘阈值），租户隔离用 "system"。
+	// 规则启用后，alertEngineLoop 会对设备指标周期评估并触发告警事件。
+	if s.alertEngine != nil {
+		defaultAlertRules := []alertengine.AlertRule{
+			{
+				ID:          "infra-cpu-high",
+				Name:        "CPU 使用率过高",
+				TenantID:    "system",
+				Enabled:     true,
+				Conditions: []alertengine.Condition{
+					{Metric: "cpu_usage", Operator: alertengine.OpGT, Threshold: 90, Window: 0},
+				},
+				Logic:          alertengine.LogicAnd,
+				Duration:       0,
+				Severity:       alertengine.SeverityWarning,
+				NotifyChannels: nil,
+				CreatedAt:      time.Now(),
+				UpdatedAt:      time.Now(),
+			},
+			{
+				ID:          "infra-mem-high",
+				Name:        "内存使用率过高",
+				TenantID:    "system",
+				Enabled:     true,
+				Conditions: []alertengine.Condition{
+					{Metric: "mem_usage", Operator: alertengine.OpGT, Threshold: 90, Window: 0},
+				},
+				Logic:          alertengine.LogicAnd,
+				Duration:       0,
+				Severity:       alertengine.SeverityWarning,
+				NotifyChannels: nil,
+				CreatedAt:      time.Now(),
+				UpdatedAt:      time.Now(),
+			},
+			{
+				ID:          "infra-disk-high",
+				Name:        "磁盘使用率过高",
+				TenantID:    "system",
+				Enabled:     true,
+				Conditions: []alertengine.Condition{
+					{Metric: "disk_usage", Operator: alertengine.OpGT, Threshold: 90, Window: 0},
+				},
+				Logic:          alertengine.LogicAnd,
+				Duration:       0,
+				Severity:       alertengine.SeverityCritical,
+				NotifyChannels: nil,
+				CreatedAt:      time.Now(),
+				UpdatedAt:      time.Now(),
+			},
+		}
+		for _, r := range defaultAlertRules {
+			if err := s.alertEngine.AddRule(&r); err != nil {
+				log.Printf("controlplane: register default alert rule %s failed: %v", r.ID, err)
+			}
+		}
 	}
 	// 告警通知出网策略注入（必须在开始接收流量前完成，notify 侧之后只读）。
 	//
