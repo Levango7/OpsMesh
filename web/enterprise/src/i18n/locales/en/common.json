@@ -229,6 +229,7 @@
                   "federationPeersFailed":  "Failed to fetch federation peers",
                   "federationDevicesFailed":  "Failed to fetch federation devices",
                   "federationForwardFailed":  "Failed to forward task",
+                  "federationTaskStatusFailed":  "Failed to query federation task status",
                   "federationDeploysListFailed":  "Failed to fetch federation deploys",
                   "federationDeployCreateFailed":  "Failed to create federation deploy",
                   "federationDeployDetailFailed":  "Failed to fetch federation deploy detail",

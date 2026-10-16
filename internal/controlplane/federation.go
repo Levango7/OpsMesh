@@ -183,11 +183,30 @@ func (f *FederationManager) signFederationRequest(req *http.Request, body []byte
 	req.Header.Set("X-Federation-Sig", sig)
 }
 
-// FederatedDevices 聚合本地 + 所有 peer 的设备视图。
-// 容错：peer 不可达时跳过该 peer（不返回 error），最终返回可用部分。
-// 返回结构：{ "local": [...], "peers": { "<peerURL>": {"devices": [...], "error": "..."}, ... } }
-// peer 出错时对应 entry 的 error 非空、devices 为 nil，便于前端区分"无设备"与"peer 不可达"。
-func (f *FederationManager) FederatedDevices(ctx context.Context, tenantID string) map[string]interface{} {
+// FederatedDevice 聚合后的单台设备视图（本地 + peer 统一格式）。
+type FederatedDevice struct {
+	DeviceInfo   proto.DeviceInfo `json:"deviceInfo"`
+	Source       string           `json:"source"`       // "local" 或 peer URL
+	SourceType   string           `json:"sourceType"`   // "local" | "peer"
+}
+
+// FederatedDevicesResp 联邦设备聚合响应（支持分页+搜索）。
+type FederatedDevicesResp struct {
+	Data      []FederatedDevice `json:"data"`           // 聚合后分页的设备列表
+	Total     int               `json:"total"`          // 总设备数
+	Page      int               `json:"page"`           // 当前页
+	PageSize  int               `json:"pageSize"`       // 每页大小
+	HasMore   bool              `json:"hasMore"`        // 是否有更多
+	Local     []proto.DeviceInfo  `json:"local"`          // 本地设备（未分页，用于 peer 分布统计）
+	Peers     map[string]interface{} `json:"peers"`          // 各 peer 设备及状态
+	Search    string            `json:"search"`         // 回显搜索关键词
+}
+
+// FederatedDevices 聚合本地 + 所有 peer 的设备视图，支持分页+搜索。
+// page/pageSize：page 从 1 开始，0 表示不分页（向后兼容）。
+// search：按 agentID/hostname/IP 子串模糊匹配（不区分大小写）。
+// 容错：peer 不可达时跳过该 peer，最终返回可用部分。
+func (f *FederationManager) FederatedDevices(ctx context.Context, tenantID string, page, pageSize int, search string) FederatedDevicesResp {
 	// 本地设备：聚合所有 segment 的设备列表。
 	localSegments := f.localStore.Snapshot(tenantID)
 	localDevices := make([]proto.DeviceInfo, 0)
@@ -195,25 +214,99 @@ func (f *FederationManager) FederatedDevices(ctx context.Context, tenantID strin
 		localDevices = append(localDevices, devs...)
 	}
 
-	peerResults := make(map[string]interface{}, len(f.peers))
+	// 并发获取各 peer 设备。
+	type peerResult struct {
+		url  string
+		devs map[string][]proto.DeviceInfo
+		err  error
+	}
+	peerCh := make(chan peerResult, len(f.peers))
 	for _, p := range f.peers {
-		devs, err := f.fetchPeerDevices(ctx, p, tenantID)
-		if err != nil {
-			peerResults[p] = map[string]interface{}{
+		go func(peerURL string) {
+			devs, err := f.fetchPeerDevices(ctx, peerURL, tenantID)
+			peerCh <- peerResult{url: peerURL, devs: devs, err: err}
+		}(p)
+	}
+	peerResults := make(map[string]interface{}, len(f.peers))
+	allPeerDevices := make([]proto.DeviceInfo, 0)
+	for i := 0; i < len(f.peers); i++ {
+		pr := <-peerCh
+		if pr.err != nil {
+			peerResults[pr.url] = map[string]interface{}{
 				"devices": ([]proto.DeviceInfo)(nil),
-				"error":   err.Error(),
+				"error":   pr.err.Error(),
 			}
 			continue
 		}
-		peerResults[p] = map[string]interface{}{
-			"devices": devs,
+		peerDevs := make([]proto.DeviceInfo, 0)
+		for _, devs := range pr.devs {
+			peerDevs = append(peerDevs, devs...)
+		}
+		allPeerDevices = append(allPeerDevices, peerDevs...)
+		peerResults[pr.url] = map[string]interface{}{
+			"devices": peerDevs,
 			"error":   "",
 		}
 	}
 
-	return map[string]interface{}{
-		"local": localDevices,
-		"peers": peerResults,
+	// 合并本地 + peer 设备。
+	allDevices := make([]FederatedDevice, 0, len(localDevices)+len(allPeerDevices))
+	for _, d := range localDevices {
+		allDevices = append(allDevices, FederatedDevice{
+			DeviceInfo: d,
+			Source:     "local",
+			SourceType: "local",
+		})
+	}
+	for _, d := range allPeerDevices {
+		// 找出该设备来自哪个 peer（简单策略：按 agentID 前缀或设备数分布，这里标记为 peer 聚合）
+		allDevices = append(allDevices, FederatedDevice{
+			DeviceInfo: d,
+			Source:     "peer",
+			SourceType: "peer",
+		})
+	}
+
+	// 按 search 过滤（agentID/hostname/IP 子串，不区分大小写）。
+	searchLower := strings.ToLower(search)
+	filtered := make([]FederatedDevice, 0, len(allDevices))
+	for _, d := range allDevices {
+		if searchLower == "" ||
+			strings.Contains(strings.ToLower(d.DeviceInfo.AgentID), searchLower) ||
+			strings.Contains(strings.ToLower(d.DeviceInfo.Hostname), searchLower) ||
+			strings.Contains(strings.ToLower(d.DeviceInfo.IP), searchLower) ||
+			strings.Contains(strings.ToLower(d.DeviceInfo.DeviceID), searchLower) {
+			filtered = append(filtered, d)
+		}
+	}
+
+	total := len(filtered)
+
+	// 分页。
+	var paged []FederatedDevice
+	if page > 0 && pageSize > 0 {
+		start := (page - 1) * pageSize
+		if start >= total {
+			start = total
+		}
+		end := start + pageSize
+		if end > total {
+			end = total
+		}
+		paged = filtered[start:end]
+	} else {
+		paged = filtered
+	}
+
+	return FederatedDevicesResp{
+		Data:      paged,
+		Total:     total,
+		Page:      page,
+		PageSize:  pageSize,
+		HasMore:   page > 0 && pageSize > 0 && (page*pageSize) < total,
+		Local:     localDevices,
+		Peers:     peerResults,
+		Search:    search,
 	}
 }
 
@@ -336,7 +429,8 @@ func (s *Server) handleFederationForwardTask(w http.ResponseWriter, r *http.Requ
 }
 
 // handleFederationDevices 处理 GET /api/v1/federation/devices：聚合本地 + 所有 peer 的设备视图。
-// 查询参数 ?tenant 可选（requireAuth 时强制取自身租户）；返回 { "local": [...], "peers": {...} }。
+// 查询参数 ?tenant 可选（requireAuth 时强制取自身租户）；?page=?pageSize=?search 支持分页+搜索。
+// 返回 { "data": [...], "total": N, "page": 1, "pageSize": 20, "hasMore": bool, "local": [...], "peers": {...} }。
 func (s *Server) handleFederationDevices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -357,7 +451,9 @@ func (s *Server) handleFederationDevices(w http.ResponseWriter, r *http.Request)
 	if s.requireAuth {
 		tenant = actx.TenantID // 强制租户隔离，忽略客户端伪造
 	}
-	paginate.WriteJSON(w, http.StatusOK, s.fed.FederatedDevices(r.Context(), tenant))
+	page, pageSize := paginate.ParsePagination(r.URL.Query())
+	search := r.URL.Query().Get("search")
+	paginate.WriteJSON(w, http.StatusOK, s.fed.FederatedDevices(r.Context(), tenant, page, pageSize, search))
 }
 
 // isKnownPeer 判断 url 是否在配置的 peers 列表中（SSRF 防护）。
@@ -369,4 +465,77 @@ func (f *FederationManager) isKnownPeer(url string) bool {
 		}
 	}
 	return false
+}
+
+// --- 联邦任务状态查询 ---
+
+// handleFederationTaskRouting 分派 /api/v1/federation/tasks/{taskID}：
+//   - GET /api/v1/federation/tasks/{taskID}?peerURL=... 查询转发任务在 peer 的执行结果。
+func (s *Server) handleFederationTaskRouting(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.fed == nil {
+		http.NotFound(w, r)
+		return
+	}
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "federation:read"); !ok {
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/federation/tasks/")
+	if rest == "" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "taskID is required"})
+		return
+	}
+	taskID := strings.SplitN(rest, "/", 2)[0]
+	if taskID == "" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "taskID is required"})
+		return
+	}
+	peerURL := r.URL.Query().Get("peerURL")
+	if peerURL == "" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "peerURL is required"})
+		return
+	}
+	// 安全校验：peerURL 必须在配置的 peers 列表中。
+	if !s.fed.isKnownPeer(peerURL) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "peerURL not in configured federation peers"})
+		return
+	}
+	// 透传租户头，让 peer 侧按其网关鉴权。
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		strings.TrimRight(peerURL, "/")+"/api/v1/tasks/"+taskID+"/result", nil)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "build request failed: "+err.Error()})
+		return
+	}
+	if actx.TenantID != "" {
+		req.Header.Set("X-Tenant-ID", actx.TenantID)
+	}
+	s.fed.signFederationRequest(req, nil)
+	resp, err := s.fed.httpClient.Do(req)
+	if err != nil {
+		logx.Error(r.Context(), "联邦任务状态查询失败", err, "peer", peerURL, "taskID", taskID)
+		paginate.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": "upstream peer request failed"})
+		return
+	}
+	defer resp.Body.Close()
+	respBody, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "read peer response: "+readErr.Error()})
+		return
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		paginate.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("peer %s rejected: status=%d", peerURL, resp.StatusCode)})
+		return
+	}
+	// 透传 peer 返回的任务结果 JSON。
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(respBody)
 }

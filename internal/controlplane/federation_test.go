@@ -112,30 +112,25 @@ func TestFederationManager_FederatedDevices(t *testing.T) {
 
 	fed := NewFederationManager([]string{peer1.URL, peer2URL}, localStore, "", nil)
 	// 认证防御：传 t1 租户，peer 侧 demo 模式但 agent 属于 t1，需带 X-Tenant-ID 才能查到。
-	result := fed.FederatedDevices(context.Background(), "t1")
+	result := fed.FederatedDevices(context.Background(), "t1", 0, 0, "")
 
 	// local 部分应有至少 1 台设备。
-	localDevs, _ := result["local"].([]proto.DeviceInfo)
-	if len(localDevs) == 0 {
+	if len(result.Local) == 0 {
 		t.Fatal("local devices empty, want >=1")
 	}
 
-	peersMap, ok := result["peers"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("peers map type = %T", result["peers"])
-	}
 	// peer1 应成功（error 为空、devices 非 nil）。
-	p1Entry, ok := peersMap[peer1.URL].(map[string]interface{})
+	p1Entry, ok := result.Peers[peer1.URL].(map[string]interface{})
 	if !ok {
-		t.Fatalf("peer1 entry type = %T", peersMap[peer1.URL])
+		t.Fatalf("peer1 entry type = %T", result.Peers[peer1.URL])
 	}
 	if p1Entry["error"] != "" {
 		t.Fatalf("peer1 error = %v, want empty", p1Entry["error"])
 	}
 	// peer2 应失败（error 非空）。
-	p2Entry, ok := peersMap[peer2URL].(map[string]interface{})
+	p2Entry, ok := result.Peers[peer2URL].(map[string]interface{})
 	if !ok {
-		t.Fatalf("peer2 entry type = %T", peersMap[peer2URL])
+		t.Fatalf("peer2 entry type = %T", result.Peers[peer2URL])
 	}
 	if p2Entry["error"] == "" {
 		t.Fatal("peer2 error empty, want non-empty (peer unreachable)")

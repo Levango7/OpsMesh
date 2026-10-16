@@ -51,18 +51,18 @@
       <div class="chart-placeholder" v-if="!loading">
         <div class="dist-row">
           <span class="dist-label">{{ $t('gitops.status_synced') }}</span>
-          <div class="dist-bar" :style="{ width: syncedPct + '%' }}"></div>
-          <span class="dist-val">{{ syncedCount }}</div>
+          <div class="dist-bar" :style="syncedBarStyle"></div>
+          <span class="dist-val">{{ syncedCount }}</span>
         </div>
         <div class="dist-row">
           <span class="dist-label">{{ $t('gitops.status_outofsync') }}</span>
-          <div class="dist-bar" :style="{ width: outOfSyncPct + '%' }}"></div>
-          <span class="dist-val">{{ outOfSyncCount }}</div>
+          <div class="dist-bar" :style="outOfSyncBarStyle"></div>
+          <span class="dist-val">{{ outOfSyncCount }}</span>
         </div>
         <div class="dist-row">
           <span class="dist-label">{{ $t('gitops.status_unknown') }}</span>
-          <div class="dist-bar" :style="{ width: unknownPct + '%' }}"></div>
-          <span class="dist-val">{{ unknownCount }}</div>
+          <div class="dist-bar" :style="unknownBarStyle"></div>
+          <span class="dist-val">{{ unknownCount }}</span>
         </div>
       </div>
     </div>
@@ -73,18 +73,18 @@
       <div class="chart-placeholder" v-if="!loading">
         <div class="dist-row">
           <span class="dist-label">{{ $t('flux.health_healthy') }}</span>
-          <div class="dist-bar" :style="{ width: healthyPct + '%' }}"></div>
-          <span class="dist-val">{{ healthyCount }}</div>
+          <div class="dist-bar" :style="healthyBarStyle"></div>
+          <span class="dist-val">{{ healthyCount }}</span>
         </div>
         <div class="dist-row">
           <span class="dist-label">{{ $t('flux.health_degraded') }}</span>
-          <div class="dist-bar" :style="{ width: degradedPct + '%' }}"></div>
-          <span class="dist-val">{{ degradedCount }}</div>
+          <div class="dist-bar" :style="degradedBarStyle"></div>
+          <span class="dist-val">{{ degradedCount }}</span>
         </div>
         <div class="dist-row">
           <span class="dist-label">{{ $t('flux.health_missing') }}</span>
-          <div class="dist-bar" :style="{ width: missingPct + '%' }}"></div>
-          <span class="dist-val">{{ missingCount }}</div>
+          <div class="dist-bar" :style="missingBarStyle"></div>
+          <span class="dist-val">{{ missingCount }}</span>
         </div>
       </div>
     </div>
@@ -135,7 +135,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, computed, onMounted } from 'vue'
 import { listApps } from '@/api/argocd'
 import { listFluxApps } from '@/api/flux'
 import { t } from '@/i18n'
@@ -161,6 +161,13 @@ const unknownPct = ref(0)
 const healthyPct = ref(0)
 const degradedPct = ref(0)
 const missingPct = ref(0)
+
+const syncedBarStyle = computed(() => ({ width: syncedPct.value + '%' }))
+const outOfSyncBarStyle = computed(() => ({ width: outOfSyncPct.value + '%' }))
+const unknownBarStyle = computed(() => ({ width: unknownPct.value + '%' }))
+const healthyBarStyle = computed(() => ({ width: healthyPct.value + '%' }))
+const degradedBarStyle = computed(() => ({ width: degradedPct.value + '%' }))
+const missingBarStyle = computed(() => ({ width: missingPct.value + '%' }))
 
 function fmtTime(ts) {
   if (!ts) return '-'

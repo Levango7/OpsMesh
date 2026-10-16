@@ -38,27 +38,57 @@
       </DataTable>
     </div>
 
-    <!-- ========== Tab 2: 设备聚合视图 ========== -->
+    <!-- ========== Tab 2: 设备聚合视图（分页+搜索） ========== -->
     <div v-show="activeTab === 'devices'">
       <div class="btnbar">
-        <button class="outline" @click="store.fetchDevices()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+        <button class="outline" @click="loadDevices()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+        <input
+          v-model="deviceSearch"
+          :placeholder="$t('federation.device_search_placeholder')"
+          class="search-input"
+          @keyup.enter="loadDevices"
+        />
+        <button class="xs primary" @click="loadDevices">{{ $t('federation.device_search') }}</button>
       </div>
-      <div v-if="store.devicePeers.length" class="peer-summary">
-        <span v-for="p in store.devicePeers" :key="p.url" class="peer-chip" :class="p.online ? 'ok' : 'off'">
-          <code>{{ p.url }}</code>
-          <small>{{ p.online ? $t('federation.online') : $t('federation.offline') }} · {{ p.deviceCount ?? 0 }}</small>
-        </span>
+
+      <div v-if="deviceLoading && !devices.length" class="muted">{{ $t('common.loading') }}</div>
+
+      <!-- 分页信息 -->
+      <div v-if="devices.length || deviceTotal > 0" class="page-info">
+        <span>{{ $t('federation.device_total') }}: <strong>{{ deviceTotal }}</strong></span>
+        <span>{{ $t('federation.device_page') }}: <strong>{{ devicePage }}</strong></span>
+        <span>{{ $t('federation.device_page_size') }}: <strong>{{ devicePageSize }}</strong></span>
+        <button
+          class="xs outline"
+          :disabled="devicePage <= 1"
+          @click="prevPage"
+          data-testid="federation-device-prev"
+        >{{ $t('federation.device_prev') }}</button>
+        <button
+          class="xs outline"
+          :disabled="!deviceHasMore"
+          @click="nextPage"
+          data-testid="federation-device-next"
+        >{{ $t('federation.device_next') }}</button>
       </div>
-      <div v-if="store.loading && !store.devices.length" class="muted">{{ $t('common.loading') }}</div>
+
+      <div v-if="deviceLoading && !devices.length" class="muted">{{ $t('common.loading') }}</div>
       <DataTable
         v-else
         :columns="deviceColumns"
-        :rows="store.devices"
+        :rows="devices"
         row-key="agentID"
-        :loading="store.loading"
+        :loading="deviceLoading"
         :empty-text="$t('federation.empty_devices')"
       >
         <template #cell-agentID="{ value }"><code>{{ value }}</code></template>
+        <template #cell-hostname="{ value }">{{ value || '—' }}</template>
+        <template #cell-ip="{ value }">{{ value || '—' }}</template>
+        <template #cell-os="{ value }">{{ value || '—' }}</template>
+        <template #cell-tenant="{ value }">{{ value || '—' }}</template>
+        <template #cell-source="{ value }">
+          <span class="tag" :class="value === 'local' ? 'ok' : 'off'">{{ value === 'local' ? $t('federation.source_local') : $t('federation.source_peer') }}</span>
+        </template>
       </DataTable>
     </div>
 
@@ -117,6 +147,49 @@
       </div>
     </div>
 
+    <!-- ========== Tab 4: 联邦任务状态查询 ========== -->
+    <div v-show="activeTab === 'taskstatus'">
+      <div class="card">
+        <h3>{{ $t('federation.taskstatus_title') }}</h3>
+        <p class="muted">{{ $t('federation.taskstatus_desc') }}</p>
+        <form @submit.prevent="queryTaskStatus">
+          <div class="row-2">
+            <div class="field">
+              <label>{{ $t('federation.field_taskID') }}</label>
+              <input v-model="taskStatusForm.taskID" type="text" :placeholder="$t('federation.taskID_placeholder')" required />
+            </div>
+            <div class="field">
+              <label>{{ $t('federation.field_peerURL') }}</label>
+              <select v-model="taskStatusForm.peerURL" required>
+                <option value="">{{ $t('federation.please_select') }}</option>
+                <option v-for="p in store.peers" :key="p.url" :value="p.url">{{ p.url }}{{ p.online ? '' : ' (offline)' }}</option>
+              </select>
+            </div>
+          </div>
+          <div class="btnbar">
+            <button type="submit" class="primary" :disabled="taskStatusLoading" data-testid="federation-taskstatus-query">
+              {{ taskStatusLoading ? $t('common.loading') : $t('federation.taskstatus_query') }}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div v-if="taskStatusResult" class="card result-box">
+        <h4>{{ $t('federation.taskstatus_result') }}</h4>
+        <div class="kv-grid">
+          <div class="kv"><span class="k">{{ $t('federation.field_taskID') }}</span><span class="v"><code>{{ taskStatusResult.taskID || taskStatusForm.taskID }}</code></span></div>
+          <div class="kv"><span class="k">{{ $t('federation.field_peerURL') }}</span><span class="v">{{ taskStatusResult.peerURL || taskStatusForm.peerURL }}</span></div>
+          <div class="kv"><span class="k">{{ $t('federation.field_status') }}</span><span class="v"><span class="status-pill" :class="taskStatusResult.status === 'success' ? 'ok' : (taskStatusResult.status === 'failed' ? 'off' : '')">{{ taskStatusResult.status || '—' }}</span></span></div>
+          <div class="kv"><span class="k">{{ $t('federation.field_agentID') }}</span><span class="v">{{ taskStatusResult.agentID || '—' }}</span></div>
+          <div class="kv"><span class="k">{{ $t('federation.field_command') }}</span><span class="v">{{ taskStatusResult.command || '—' }}</span></div>
+          <div class="kv"><span class="k">{{ $t('federation.field_result') }}</span><span class="v">{{ taskStatusResult.result || '—' }}</span></div>
+          <div class="kv" v-if="taskStatusResult.error"><span class="k">{{ $t('common.error') }}</span><span class="v" style="color: var(--fail)">{{ taskStatusResult.error }}</span></div>
+        </div>
+      </div>
+
+      <div v-if="taskStatusError" class="poll-err"><Icon name="warning" :size="14" /> {{ taskStatusError }}</div>
+    </div>
+
     <ConfirmModal
       v-model="errorConfirm.show"
       data-testid="federation-error-modal"
@@ -128,13 +201,13 @@
 </template>
 
 <script setup>
-// 控制面联邦页 — 三 Tab：Peer 管理 / 设备聚合 / 任务转发
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useFederationStore } from '@/stores/federation'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import { getFederationDevices, getFederationTaskStatus } from '@/api/federation'
 
 const store = useFederationStore()
 const activeTab = ref('peers')
@@ -143,10 +216,20 @@ const msg = ref('')
 const msgOk = ref(false)
 const errorConfirm = reactive({ show: false, message: '' })
 
+// 设备列表分页+搜索状态
+const deviceSearch = ref('')
+const devicePage = ref(1)
+const devicePageSize = ref(50)
+const deviceTotal = ref(0)
+const deviceHasMore = ref(false)
+const deviceLoading = ref(false)
+const devices = reactive([])
+
 const tabs = [
   { key: 'peers', label: 'federation.tab_peers' },
   { key: 'devices', label: 'federation.tab_devices' },
-  { key: 'forward', label: 'federation.tab_forward' }
+  { key: 'forward', label: 'federation.tab_forward' },
+  { key: 'taskstatus', label: 'federation.tab_taskstatus' }
 ]
 
 const peerColumns = computed(() => [
@@ -161,16 +244,55 @@ const deviceColumns = computed(() => [
   { key: 'hostname', title: t('federation.field_hostname') },
   { key: 'ip', title: t('federation.field_ip') },
   { key: 'os', title: t('federation.field_os') },
-  { key: 'tenant', title: t('federation.field_tenant') }
+  { key: 'tenant', title: t('federation.field_tenant') },
+  { key: 'source', title: t('federation.field_source'), slot: 'cell-source' }
 ])
 
 const form = ref({ peerURL: '', taskType: 'shell', command: '', deviceID: '', timeoutSec: 30 })
+const taskStatusForm = ref({ taskID: '', peerURL: '' })
+const taskStatusLoading = ref(false)
+const taskStatusResult = ref(null)
+const taskStatusError = ref('')
 
 function switchTab(key) {
   activeTab.value = key
   if (key === 'peers' && !store.peers.length) store.fetchPeers()
-  else if (key === 'devices' && !store.devices.length) store.fetchDevices()
+  else if (key === 'devices' && !devices.length) loadDevices()
   else if (key === 'forward' && !store.peers.length) store.fetchPeers()
+  else if (key === 'taskstatus' && !store.peers.length) store.fetchPeers()
+}
+
+async function loadDevices() {
+  deviceLoading.value = true
+  devices.splice(0, devices.length)
+  try {
+    const resp = await getFederationDevices({
+      page: devicePage.value,
+      pageSize: devicePageSize.value,
+      search: deviceSearch.value
+    })
+    devices.splice(0, devices.length, ...(resp.data || []))
+    deviceTotal.value = resp.total || 0
+    deviceHasMore.value = resp.hasMore || false
+  } catch (e) {
+    store.error = e.j?.error || t('error.federationDevicesFailed')
+  } finally {
+    deviceLoading.value = false
+  }
+}
+
+function prevPage() {
+  if (devicePage.value > 1) {
+    devicePage.value--
+    loadDevices()
+  }
+}
+
+function nextPage() {
+  if (deviceHasMore.value) {
+    devicePage.value++
+    loadDevices()
+  }
 }
 
 async function onForward() {
@@ -195,6 +317,21 @@ async function onForward() {
   }
 }
 
+async function queryTaskStatus() {
+  if (!taskStatusForm.value.taskID || !taskStatusForm.value.peerURL) return
+  taskStatusLoading.value = true
+  taskStatusError = ''
+  taskStatusResult = null
+  try {
+    const result = await getFederationTaskStatus(taskStatusForm.value.taskID, taskStatusForm.value.peerURL)
+    taskStatusResult.value = result.j || result
+  } catch (e) {
+    taskStatusError = e.j?.error || e.message || t('federation.taskstatus_failed')
+  } finally {
+    taskStatusLoading.value = false
+  }
+}
+
 onMounted(() => {
   store.fetchPeers().catch((e) => {
     errorConfirm.message = e.j?.error || t('error.federationPeersFailed')
@@ -210,10 +347,23 @@ onMounted(() => {
   box-shadow: var(--shadow);
 }
 .card h3 { margin: 0 0 12px; font-size: 14px; }
-.btnbar { display: flex; gap: 8px; margin-top: 8px; }
+.btnbar {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; min-width: 220px; }
 .field label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.search-input {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  min-width: 240px;
+}
 
 .peer-summary { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .peer-chip {
@@ -231,6 +381,18 @@ onMounted(() => {
 .kv .k { font-size: 11.5px; color: var(--text-3); }
 .kv .v { font-size: 13px; color: var(--text); word-break: break-all; }
 
+.page-info {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 8px 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.page-info strong { color: var(--text); }
+
+.result-box { margin-top: 12px; padding: 12px; background: var(--muted-soft); border-radius: var(--radius-sm); }
+
 .poll-err {
   padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
   background: var(--fail-soft); border: 1px solid var(--fail-bg);
@@ -239,5 +401,6 @@ onMounted(() => {
 
 @media (max-width: 768px) {
   .row-2 { grid-template-columns: 1fr; }
+  .btnbar { flex-direction: column; align-items: stretch; }
 }
 </style>

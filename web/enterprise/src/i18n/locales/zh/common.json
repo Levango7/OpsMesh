@@ -229,6 +229,7 @@
                   "federationPeersFailed":  "联邦 Peer 列表拉取失败",
                   "federationDevicesFailed":  "联邦设备聚合拉取失败",
                   "federationForwardFailed":  "任务转发失败",
+                  "federationTaskStatusFailed":  "联邦任务状态查询失败",
                   "federationDeploysListFailed":  "联邦部署列表拉取失败",
                   "federationDeployCreateFailed":  "联邦部署创建失败",
                   "federationDeployDetailFailed":  "联邦部署详情拉取失败",

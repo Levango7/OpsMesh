@@ -155,6 +155,7 @@ func (s *Server) Start() error {
 		mux.HandleFunc("/api/v1/federation/peers", s.handleFederationPeers)
 		mux.HandleFunc("/api/v1/federation/forward/task", s.handleFederationForwardTask)
 		mux.HandleFunc("/api/v1/federation/devices", s.handleFederationDevices)
+		mux.HandleFunc("/api/v1/federation/tasks/", s.handleFederationTaskRouting) // 子路径：{taskID} GET 查询任务状态
 	}
 	// 用户中心（RBAC + JWT）：注册/登录/查询当前用户 + 用户/角色/权限 CRUD。
 	// 与网关注入身份模式并存：用户中心用于 B/S 仪表盘登录，网关注入用于 agent gRPC 通道。

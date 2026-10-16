@@ -17,5 +17,8 @@ export const getPeers = () => getJSON('/federation/peers')
 // 转发任务到指定 Peer
 export const forwardTask = (body) => postJSON('/federation/forward/task', body)
 
-// 跨 Peer 聚合设备视图
-export const getFederationDevices = () => getJSON('/federation/devices')
+// 跨 Peer 聚合设备视图（支持分页+搜索：?page=&pageSize=&search=）
+export const getFederationDevices = (params) => getJSON('/federation/devices', params)
+
+// 查询联邦任务在指定 Peer 的执行状态：?peerURL=
+export const getFederationTaskStatus = (taskID, peerURL) => getJSON(`/federation/tasks/${encodeURIComponent(taskID)}`, { peerURL })
