@@ -119,6 +119,9 @@ const routes = [
   // API 契约见 src/api/aiops.js 注释头。
   { path: '/aiops', name: 'aiops', component: () => import('@/views/AIOpsView.vue'), meta: { title: 'nav.aiops', group: 'AI 算力', icon: 'alerts', requirePerm: 'aiops:read' } },
 
+  // 可观测性：链路追踪（Jaeger / OTLP collector 查询）
+  { path: '/trace', name: 'trace', component: () => import('@/views/TraceView.vue'), meta: { title: 'nav.trace', group: '可观测性', icon: 'alerts', requirePerm: 'observability:read' } },
+
   // 自助服务门户
   { path: '/portal', name: 'portal', component: () => import('@/views/PortalView.vue'), meta: { title: 'nav.portal', group: '平台', icon: 'users', requirePerm: 'portal:read' } },
 

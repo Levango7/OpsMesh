@@ -308,6 +308,7 @@
                 },
                 "alerts": {
                     "root_cause": "根因",
-                    "confidence": "置信度"
+                    "confidence": "置信度",
+                    "trace_id": "追踪 ID"
                 }
             }

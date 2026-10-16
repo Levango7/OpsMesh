@@ -50,6 +50,11 @@
         <span class="rc-desc">{{ getRootCause(a).description }}</span>
         <span class="rc-conf">{{ $t('alerts.confidence') }} {{ (getRootCause(a).confidence * 100).toFixed(0) }}%</span>
       </div>
+      <!-- 链路追踪（SSE 推送 traceID 后缓存到 store） -->
+      <div v-if="store.traceIDs[a.alertID]" class="root-cause rc-trace">
+        <span class="rc-label">{{ $t('alerts.trace_id') }}:</span>
+        <button class="xs outline" @click="goToTrace(a)" data-testid="alert-trace-link">{{ store.traceIDs[a.alertID] }}</button>
+      </div>
       <div class="alert-actions">
         <template v-if="(a.status || 'firing') === 'firing'">
           <button class="xs" @click="onAck(a.alertID)" data-testid="alert-ack-btn">{{ $t('alerts.ack') }}</button>
@@ -92,6 +97,7 @@
 <script setup>
 import { computed, reactive, onMounted, defineAsyncComponent } from 'vue'
 import { useAlertStore } from '@/stores/alert'
+import { useRouter } from 'vue-router'
 import { t } from '@/i18n'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
@@ -101,6 +107,7 @@ import { fmtTime } from '@/composables/useFormatTime'
 const PromptModal = defineAsyncComponent(() => import('@/components/PromptModal.vue'))
 
 const store = useAlertStore()
+const router = useRouter()
 
 const ackedCount = computed(() =>
   store.list.filter((a) => (a.status || 'firing') !== 'firing').length
@@ -118,6 +125,14 @@ function alertStatusText(a) {
 // 获取告警的 AIOps 根因（SSE 推送后缓存到 store）
 function getRootCause(a) {
   return store.rootCauses[a.alertID]
+}
+
+// 跳转到链路追踪详情
+function goToTrace(a) {
+  const traceID = store.traceIDs[a.alertID]
+  if (traceID) {
+    router.push({ name: 'trace', query: { traceID } })
+  }
 }
 
 // 错误提示弹窗（替代 alert）

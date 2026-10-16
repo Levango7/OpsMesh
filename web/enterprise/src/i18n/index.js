@@ -64,6 +64,7 @@ export const ROUTE_DOMAIN_MAP = {
   logs: 'observability',
   slos: 'observability',
   'alert-rules': 'observability',
+  trace: 'observability',
   // 系统管理 → system
   users: 'system',
   roles: 'system',

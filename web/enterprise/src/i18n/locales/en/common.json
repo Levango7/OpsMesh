@@ -308,6 +308,7 @@
                 },
                 "alerts": {
                     "root_cause": "Root Cause",
-                    "confidence": "Confidence"
+                    "confidence": "Confidence",
+                    "trace_id": "Trace ID"
                 }
             }

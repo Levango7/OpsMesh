@@ -8,7 +8,8 @@ export const useAlertStore = defineStore('alert', {
     list: [],
     loading: false,
     error: '',
-    rootCauses: {} // alertID -> {category, component, description, confidence, evidence}
+    rootCauses: {}, // alertID -> {category, component, description, confidence, evidence}
+    traceIDs: {}    // alertID -> traceID (from SSE AIOps root cause analysis)
   }),
   getters: {
     critical: (s) => s.list.filter((a) => a.severity === 'critical'),
@@ -27,6 +28,9 @@ export const useAlertStore = defineStore('alert', {
     },
     setRootCause(alertID, rootCause) {
       this.rootCauses[alertID] = rootCause
+    },
+    setTraceID(alertID, traceID) {
+      this.traceIDs[alertID] = traceID
     },
     async ack(id) {
       try {

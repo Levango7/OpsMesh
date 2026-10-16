@@ -272,6 +272,10 @@ function handleSSEEvent(ev) {
             evidence: parsed.evidence || []
           })
         }
+        // 缓存 traceID，供告警详情页跳转到链路追踪
+        if (ev.data.traceID) {
+          alertStore.setTraceID(ev.data.alertID, ev.data.traceID)
+        }
       } catch {
         // 根因解析失败不阻断告警刷新
       }
