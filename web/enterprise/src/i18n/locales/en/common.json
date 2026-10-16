@@ -303,7 +303,11 @@
                    "next":  "Next ›",
                    "api_base":  "API: /api/v1",
                    "web_base":  "Base: /enterprise/",
-                   "back":  "Back",
-                   "menu":  "Menu"
-               }
-}
+                    "back":  "Back",
+                    "menu":  "Menu"
+                },
+                "alerts": {
+                    "root_cause": "Root Cause",
+                    "confidence": "Confidence"
+                }
+            }

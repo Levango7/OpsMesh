@@ -7,7 +7,8 @@ export const useAlertStore = defineStore('alert', {
   state: () => ({
     list: [],
     loading: false,
-    error: ''
+    error: '',
+    rootCauses: {} // alertID -> {category, component, description, confidence, evidence}
   }),
   getters: {
     critical: (s) => s.list.filter((a) => a.severity === 'critical'),
@@ -23,6 +24,9 @@ export const useAlertStore = defineStore('alert', {
       } finally {
         this.loading = false
       }
+    },
+    setRootCause(alertID, rootCause) {
+      this.rootCauses[alertID] = rootCause
     },
     async ack(id) {
       try {

@@ -256,6 +256,25 @@ function handleSSEEvent(ev) {
       break
     case 'alert_new':
       alertStore.fetchAlerts()
+      // 将 AIOps 根因分析结果缓存到 store，供告警视图展示
+      try {
+        const rc = ev.data.rootCause
+        if (rc) {
+          let parsed = rc
+          if (typeof rc === 'string') {
+            parsed = JSON.parse(rc)
+          }
+          alertStore.setRootCause(ev.data.alertID, {
+            category: parsed.category,
+            component: parsed.component,
+            description: parsed.description,
+            confidence: parsed.confidence,
+            evidence: parsed.evidence || []
+          })
+        }
+      } catch {
+        // 根因解析失败不阻断告警刷新
+      }
       break
     case 'task_status':
       // 任务状态变更：task store 在路由懒加载中，此处经事件总线通知各视图自行刷新。

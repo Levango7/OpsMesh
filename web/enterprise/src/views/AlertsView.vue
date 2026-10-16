@@ -44,6 +44,12 @@
       <small v-if="a.comment" class="muted"><br />{{ $t('alerts.comment_label') }}{{ a.comment }}</small>
       <br />{{ a.message }}
       <br /><small class="muted">{{ fmtTime(a.createdAt) }}</small>
+      <!-- AIOps 根因分析（SSE 推送后缓存到 store） -->
+      <div v-if="getRootCause(a)" class="root-cause">
+        <span class="rc-label">{{ $t('alerts.root_cause') }}:</span>
+        <span class="rc-desc">{{ getRootCause(a).description }}</span>
+        <span class="rc-conf">{{ $t('alerts.confidence') }} {{ (getRootCause(a).confidence * 100).toFixed(0) }}%</span>
+      </div>
       <div class="alert-actions">
         <template v-if="(a.status || 'firing') === 'firing'">
           <button class="xs" @click="onAck(a.alertID)" data-testid="alert-ack-btn">{{ $t('alerts.ack') }}</button>
@@ -107,6 +113,11 @@ function alertStatus(a) {
 function alertStatusText(a) {
   const s = a.status || 'firing'
   return s === 'acknowledged' ? t('alerts.status_acknowledged') : s === 'silenced' ? t('alerts.status_silenced') : t('alerts.status_firing')
+}
+
+// 获取告警的 AIOps 根因（SSE 推送后缓存到 store）
+function getRootCause(a) {
+  return store.rootCauses[a.alertID]
 }
 
 // 错误提示弹窗（替代 alert）
@@ -180,5 +191,12 @@ onMounted(() => { if (!store.list.length) store.fetchAlerts() })
   background: var(--fail-soft); border: 1px solid var(--fail-bg);
   color: var(--fail); font-size: 12.5px; font-weight: 500;
 }
+.root-cause {
+  margin-top: 6px; padding: 6px 10px; background: var(--muted-soft);
+  border-radius: var(--radius-sm); font-size: 12.5px;
+}
+.root-cause .rc-label { color: var(--text-2); font-weight: 600; margin-right: 6px; }
+.root-cause .rc-desc { color: var(--text); margin-right: 8px; }
+.root-cause .rc-conf { color: var(--text-2); font-size: 11.5px; }
 @media (max-width: 768px) { .stats { grid-template-columns: repeat(2, 1fr); } }
 </style>
