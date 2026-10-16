@@ -71,8 +71,6 @@
 ```
 ACTIVE CLAIMS:
   docs/COORDINATION-BOARD.md                     <- main  (ttl=72h)
-  services/task-svc/                             <- main  (ttl=24h)
-  docs/td60-task-cutover-runbook.md              <- main  (ttl=24h)
 ```
 
 ---

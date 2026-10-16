@@ -71,3 +71,15 @@ golangci-lint services 严格档 0 issues；部署资产门禁 PASS=75 FAIL=0 SK
 暂未跑通；步骤 0-1 已双进程真库往返验证，步骤 2 需合法会话 Token 才能触达代理层鉴权）。
 
 下一则取号：第十六则。
+
+[DONE] 2026-10-16T15:30:00Z from=main scope=services/task-svc/ commit=f995afa
+正文：TD-60 R6 任务侧已提交（commit f995afa）：canary_releases 表 + MySQLStore.CanaryStore +
+migrateRecordTables（5 张 record 表）；修 UpdateCanary/SaveResult 零值时间 1292；
+修共享库 task_results 异形表补列；service_proxy 改用 requireProd（demo 透传）。
+全模块 go test 绿 + lint 0 + gofmt/vet 清。
+
+[DONE] 2026-10-16T15:30:00Z from=main scope=docs/td60-task-cutover-runbook.md commit=f995afa
+正文：TD-60 task 域切流运维 Runbook 已提交（commit f995afa）：整域开关 + 增量开关 +
+OPSMESH_SERVICE_PROXY 联锁 + 回退判据 + 切换记录模板。与 auth 域差异：无名册、无搬号 job、无重登。
+
+下一则取号：第十七则。
