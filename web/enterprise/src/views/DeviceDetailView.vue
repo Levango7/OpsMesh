@@ -245,7 +245,7 @@
           <MetricsCard :title="$t('device_detail.process_top')" icon="task" accent="--purple">
             <div v-if="!processes.length" class="muted">{{ $t('common.no_data') }}</div>
             <div v-else class="proc-top-list">
-              <div v-for="(p, idx) in processes" :key="p.pid" class="proc-row">
+              <div v-for="p in processes" :key="p.pid" class="proc-row">
                 <span class="proc-pid">{{ p.pid }}</span>
                 <span class="proc-name">{{ p.name || p.cmd }}</span>
                 <span class="proc-cpu">{{ p.cpu.toFixed(1) }}%</span>

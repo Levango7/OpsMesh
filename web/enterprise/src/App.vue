@@ -155,7 +155,9 @@ const navGroups = [
       { name: 'tasks', icon: 'task', labelKey: 'nav.tasks', required: 'task:read' },
       { name: 'alerts', icon: 'alerts', labelKey: 'nav.alerts', required: 'alert:read' },
       { name: 'os-optimize', icon: 'task', labelKey: 'nav.osopt', required: 'task:read' },
+      { name: 'system-ops', icon: 'settings', labelKey: 'nav.system_ops', required: 'system:write' },
       { name: 'middleware', icon: 'deploy', labelKey: 'nav.mwdep', required: 'deploy:read' },
+      { name: 'infra-console', icon: 'flow', labelKey: 'nav.infra_console', required: 'device:read' },
       { name: 'k8s', icon: 'device', labelKey: 'nav.k8s', required: 'device:read' }
     ]
   },

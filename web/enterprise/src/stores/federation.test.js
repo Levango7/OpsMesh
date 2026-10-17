@@ -115,9 +115,11 @@ describe('useFederationStore', () => {
 
   describe('fetchDevices 动作', () => {
     it('成功时设置 devices 与 devicePeers', async () => {
+      // P2+ 分页契约：聚合视图响应为 {data, peers, total, page, pageSize, hasMore}。
       const mockResp = {
-        devices: [{ id: 'd1', hostname: 'host-1' }],
+        data: [{ id: 'd1', hostname: 'host-1' }],
         peers: [{ id: 'p1', name: 'peer-1' }],
+        total: 1,
       }
       getFederationDevices.mockResolvedValueOnce(mockResp)
 
@@ -157,7 +159,8 @@ describe('useFederationStore', () => {
       getFederationDevices.mockRejectedValueOnce({ j: { error: '聚合视图拉取失败' } })
 
       const store = useFederationStore()
-      await store.fetchDevices()
+      // fetchDevices 失败时 rethrow（供分页调用方感知），测试需捕获。
+      await expect(store.fetchDevices()).rejects.toBeTruthy()
 
       expect(store.error).toBe('聚合视图拉取失败')
       expect(store.loading).toBe(false)
@@ -167,7 +170,7 @@ describe('useFederationStore', () => {
       getFederationDevices.mockRejectedValueOnce({})
 
       const store = useFederationStore()
-      await store.fetchDevices()
+      await expect(store.fetchDevices()).rejects.toBeTruthy()
 
       expect(store.error).toBe('联邦设备聚合拉取失败')
       expect(store.loading).toBe(false)

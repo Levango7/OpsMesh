@@ -320,13 +320,13 @@ async function onForward() {
 async function queryTaskStatus() {
   if (!taskStatusForm.value.taskID || !taskStatusForm.value.peerURL) return
   taskStatusLoading.value = true
-  taskStatusError = ''
-  taskStatusResult = null
+  taskStatusError.value = ''
+  taskStatusResult.value = null
   try {
     const result = await getFederationTaskStatus(taskStatusForm.value.taskID, taskStatusForm.value.peerURL)
     taskStatusResult.value = result.j || result
   } catch (e) {
-    taskStatusError = e.j?.error || e.message || t('federation.taskstatus_failed')
+    taskStatusError.value = e.j?.error || e.message || t('federation.taskstatus_failed')
   } finally {
     taskStatusLoading.value = false
   }

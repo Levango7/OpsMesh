@@ -16,58 +16,58 @@
       </div>
 
       <div class="query-form">
-      <div class="form-row">
-        <div class="form-field">
-          <label>{{ $t('trace.trace_id_label_short') }}</label>
-          <input v-model="query.traceID" placeholder="trace ID" />
+        <div class="form-row">
+          <div class="form-field">
+            <label>{{ $t('trace.trace_id_label_short') }}</label>
+            <input v-model="query.traceID" placeholder="trace ID" />
+          </div>
+          <div class="form-field">
+            <label>{{ $t('trace.service') }}</label>
+            <select v-model="query.service" @change="onServiceChange">
+              <option value="">{{ $t('trace.all_services') }}</option>
+              <option v-for="s in services" :key="s" :value="s">{{ s }}</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>{{ $t('trace.operation') }}</label>
+            <select v-model="query.operation">
+              <option value="">{{ $t('trace.all_operations') }}</option>
+              <option v-for="op in operations" :key="op" :value="op">{{ op }}</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>{{ $t('trace.limit') }}</label>
+            <select v-model="query.limit">
+              <option value="10">10</option>
+              <option value="20">20</option>
+              <option value="50">50</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>{{ $t('trace.lookback') }}</label>
+            <select v-model="query.lookback">
+              <option value="1h">1 小时</option>
+              <option value="6h">6 小时</option>
+              <option value="24h">24 小时</option>
+            </select>
+          </div>
         </div>
-        <div class="form-field">
-          <label>{{ $t('trace.service') }}</label>
-          <select v-model="query.service" @change="onServiceChange">
-            <option value="">{{ $t('trace.all_services') }}</option>
-            <option v-for="s in services" :key="s" :value="s">{{ s }}</option>
-          </select>
+        <div class="form-row">
+          <div class="form-field">
+            <label>{{ $t('trace.min_duration') }}</label>
+            <input v-model="query.minDuration" placeholder="100ms" />
+          </div>
+          <div class="form-field">
+            <label>{{ $t('trace.tags') }}</label>
+            <input v-model="query.tags" placeholder="key=value,key2=value2" />
+          </div>
+          <div class="form-field action-field">
+            <button class="xs primary" @click="searchTraces" :disabled="queryLoading" data-testid="trace-search-btn">
+              {{ $t('trace.search') }}
+            </button>
+            <button class="xs outline" @click="loadServices">↻ {{ $t('common.refresh') }}</button>
+          </div>
         </div>
-        <div class="form-field">
-          <label>{{ $t('trace.operation') }}</label>
-          <select v-model="query.operation">
-            <option value="">{{ $t('trace.all_operations') }}</option>
-            <option v-for="op in operations" :key="op" :value="op">{{ op }}</option>
-          </select>
-        </div>
-        <div class="form-field">
-          <label>{{ $t('trace.limit') }}</label>
-          <select v-model="query.limit">
-            <option value="10">10</option>
-            <option value="20">20</option>
-            <option value="50">50</option>
-          </select>
-        </div>
-        <div class="form-field">
-          <label>{{ $t('trace.lookback') }}</label>
-          <select v-model="query.lookback">
-            <option value="1h">1 小时</option>
-            <option value="6h">6 小时</option>
-            <option value="24h">24 小时</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-field">
-          <label>{{ $t('trace.min_duration') }}</label>
-          <input v-model="query.minDuration" placeholder="100ms" />
-        </div>
-        <div class="form-field">
-          <label>{{ $t('trace.tags') }}</label>
-          <input v-model="query.tags" placeholder="key=value,key2=value2" />
-        </div>
-        <div class="form-field action-field">
-          <button class="xs primary" @click="searchTraces" :disabled="queryLoading" data-testid="trace-search-btn">
-            {{ $t('trace.search') }}
-          </button>
-          <button class="xs outline" @click="loadServices">↻ {{ $t('common.refresh') }}</button>
-        </div>
-      </div>
       </div>
 
       <div v-if="queryLoading" class="muted">{{ $t('trace.searching') }}</div>
