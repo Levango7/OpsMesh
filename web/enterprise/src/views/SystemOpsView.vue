@@ -306,7 +306,8 @@ import {
 
 const deviceStore = useDeviceStore()
 
-const devices = computed(() => deviceStore.list || [])
+// device store 的设备列表 getter 是 flat（segments 扁平化）；此前误用不存在的 .list 导致下拉恒空。
+const devices = computed(() => deviceStore.flat || [])
 const selectedDevice = ref('')
 const loading = ref(false)
 const submitting = ref(false)

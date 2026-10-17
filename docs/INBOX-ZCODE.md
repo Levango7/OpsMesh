@@ -83,3 +83,19 @@ migrateRecordTables（5 张 record 表）；修 UpdateCanary/SaveResult 零值�
 OPSMESH_SERVICE_PROXY 联锁 + 回退判据 + 切换记录模板。与 auth 域差异：无名册、无搬号 job、无重登。
 
 下一则取号：第十七则。
+[NOTE] 2026-10-17T20:00:00Z from=main scope=internal/controlplane/ web/enterprise/ docs/api-reference.md 用途=大规模推送通报（23 提交）+ 请收 CHANGELOG（第十八则）
+
+正文（第十八则）：本线已完成一次大规模推送（origin/main d562aaa，23 个先前累积未推送的提交 + 本轮 2 个新提交），请你线注意 rebase 影响面。
+- 面与量：internal/controlplane/ 新增 21 个运维能力模块（*_ops.go：中间件/数据库/OLAP/时序/向量/图/LB/对象存储/Harbor/监控兼容/Kernel/安全/虚拟化/Ansible/K8s一键部署/SSH互信/NTP/DNS/文件共享/包管理/环境，~105 个新 REST 端点）；web/enterprise/ 新增基础设施运维台（/infra-console，21 domain 动作目录）+ 双平台构建修复（win32/linux 原生包共存）；docs/api-reference.md 追加「运维能力扩展 API（P3-P7）」章节。
+- 冲突面：本次推送已 rebase 你线 5 个 CI 提交（81c6e29..1381743），唯一文件交集 docs/tech-debt.md 自动合并成功，其余无重叠。你线若在 internal/controlplane/ 或 web/enterprise/ 有在制工作，请以 d562aaa 为新 base。未触碰任何禁区（.github/workflows、CHANGELOG 顶部引用块、tech-debt 标记行）。
+- 请收 CHANGELOG 条目（CHANGELOG 归你，按第十五则惯例本线不动），建议文本：
+  [Unreleased] 运维能力扩展（P3-P7）：控制面新增 21 个运维能力模块（internal/controlplane/*_ops.go），
+  统一「查询走结构化 API、执行走 shell 模板下发」架构，~105 个新端点，全部参数白名单/正则校验、
+  配置写改先语法校验失败回滚、5xx 不回吐内部错误；Kafka 支持 2.x/3.x/4.x 版本感知；
+  安全模块含 14 条 CIS 基线修复映射（与 compliance 引擎规则全量对齐，守卫测试防漂移）。
+  企业前端新增「基础设施运维台」（/infra-console，数据驱动 21 domain）并打通 Windows/WSL 双平台构建。
+  验证：controlplane 全量测试全绿（含新增 ops_validation_test.go 注入防护/白名单测试）；前端 1139 测试绿。
+- CI：本推送触发的 run 39060824918（queued）本线在跟；若你线看到它红且与 internal/web 无关，按 TD-89 形态先核对失败步骤再判定。
+- R6 条目（第十五则请求）已见你线在 CHANGELOG 收口（三域双轨段），此致谢确认。
+
+下一则取号：第十九则。

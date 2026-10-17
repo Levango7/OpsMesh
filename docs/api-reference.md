@@ -59,6 +59,7 @@
 - [Webhook 与脚本 API](#webhook-与脚本-api)
 - [网络设备 API](#网络设备-api)
 - [审计扩展 API](#审计扩展-api)
+- [运维能力扩展 API（P3-P7）](#运维能力扩展-apip3-p7)
 - [gRPC API](#grpc-api)
 
 ---
@@ -4961,6 +4962,250 @@ aio-svc 的 5 个引擎（异常检测 / 根因 / 降噪 / 预测 / 巡检）+ G
 - `GET /api/v1/bot/history` — Bot 命令历史
 - `GET /api/v1/bot/platforms` — Bot 平台列表
 - `GET /api/v1/bot/quick-commands` — Bot 快捷命令列表
+
+---
+
+## 运维能力扩展 API（P3-P7）
+
+> 2026-10-17 增补。统一设计：**查询走结构化 API，执行走 shell 模板下发**（返回 `Task`，经 `GET /api/v1/tasks/{id}/result` 取输出，见「任务 API」）。
+> 执行类接口要求 `system:write`（状态/查询类要求 `device:read`）；参数经白名单/正则校验；配置类写改先语法校验（named-checkzone/testparm/dnsmasq --test）、失败回滚；5xx 不回吐内部错误。
+
+### 包管理 API（yum/dnf/apt）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/system/packages` | 安装/升级/卸载 `{deviceID, package, action: install\|upgrade\|remove, manager: auto\|yum\|apt}`（自动探测包管理器，幂等） |
+
+### 中间件运维 API（Kafka / Redis / Zookeeper / RabbitMQ / ActiveMQ）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/middleware/{deviceID}` | 中间件状态查询 |
+| POST | `/api/v1/middleware/deploy` | 部署 `{type, mode, version}`（Redis 支持 standalone/master-slave/sentinel/cluster） |
+| POST | `/api/v1/middleware/{type}/{action}` | 启停 `action: start/stop/restart/status` |
+| POST | `/api/v1/middleware/kafka/topic` | Kafka Topic `{action: list/create/delete, topic, partitions, replicas}` |
+| POST | `/api/v1/middleware/kafka/consumer-group` | 消费组 `{action: list/describe, group}` |
+| POST | `/api/v1/middleware/redis/sentinel` | Sentinel `{action: monitor/failover, master, host}` |
+| POST | `/api/v1/middleware/redis/cluster` | Cluster `{action: nodes/slots/rebalance, host}` |
+| POST | `/api/v1/middleware/zookeeper/cmd` | 四字命令 `{cmd: stat/ruok/mntr/cons/envi/conf/dump/wchs..., host}` |
+| POST | `/api/v1/middleware/rabbitmq/{vhost\|queue\|exchange}` | RabbitMQ 资源 `{action: list/create/delete, name, vhost}` |
+| POST | `/api/v1/middleware/activemq/{queue\|topic}` | ActiveMQ `{action: list/create/delete, name}` |
+
+Kafka CLI 参数按主版本自动切换（2.x `--zookeeper`；3.x/4.x `--bootstrap-server`，4.x 为 KRaft 默认）。
+
+### 数据库运维 API（PostgreSQL / Oracle / TiDB / OceanBase / MongoDB）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/db/{deviceID}` | 数据库状态 |
+| POST | `/api/v1/db/deploy` | 部署 `{type, mode, version}`（mode: single/ha/rac/cluster） |
+| POST | `/api/v1/db/{type}/{action}` | 启停 `action: start/stop/restart/status` |
+| POST | `/api/v1/db/{type}/instance` | 实例管理 `{action: list/create/drop, name}` |
+| GET | `/api/v1/mongo/{deviceID}` | MongoDB 状态 |
+| POST | `/api/v1/mongo/deploy` | 部署 `{mode: single/replicaSet/sharded, version, port}` |
+| POST | `/api/v1/mongo/lifecycle` | 启停 `{action: start/stop/restart/status}` |
+| POST | `/api/v1/mongo/database` | 库管理 `{action: list/create/delete, database}` |
+| POST | `/api/v1/mongo/collection` | 集合管理 `{action: list/create/delete, database, collection}` |
+| POST | `/api/v1/mongo/query` | 查询 `{database, collection, filter, limit}` |
+| POST | `/api/v1/mongo/backup` | 备份/恢复 `{action: export/import, database, path}` |
+
+### OLAP 分析引擎 API（ClickHouse / Doris / Trino）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/olap/{deviceID}` | OLAP 状态 |
+| POST | `/api/v1/olap/deploy` | 部署 `{type, mode: single/cluster, version}` |
+| POST | `/api/v1/olap/{type}/{action}` | 启停 `action: start/stop/restart/status` |
+| POST | `/api/v1/olap/{type}/database` | 库管理 `{action: list/create/delete, name}` |
+| POST | `/api/v1/olap/{type}/table` | 表管理 `{action: list/create/delete, database, table, schema}` |
+| POST | `/api/v1/olap/{type}/query` | SQL 查询 `{database, query}` |
+
+### 时序存储 API（InfluxDB / TDengine / VictoriaMetrics）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/tsdb/{deviceID}` | 时序库状态 |
+| POST | `/api/v1/tsdb/deploy` | 部署 `{type, version}` |
+| POST | `/api/v1/tsdb/{type}/{action}` | 启停 `action: start/stop/restart/status` |
+| POST | `/api/v1/tsdb/{type}/database` | 库/桶管理 `{action: list/create/delete, name}` |
+| POST | `/api/v1/tsdb/{type}/write` | 写入 `{database, measure, line}`（line protocol / SQL VALUES / remote-write 文本） |
+| POST | `/api/v1/tsdb/{type}/query` | 查询 `{database, query}`（InfluxQL / SQL / PromQL） |
+
+### 向量数据库 API（Milvus / Qdrant / pgvector）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/vector/{deviceID}` | 向量库状态 |
+| POST | `/api/v1/vector/deploy` | 部署 `{type, mode, version}` |
+| POST | `/api/v1/vector/{type}/{action}` | 启停/扩缩容 `action: start/stop/restart/status/scale, replicas` |
+| POST | `/api/v1/vector/{type}/collection` | 集合管理 `{action: list/create/delete, collection, dimension, metric}` |
+| POST | `/api/v1/vector/{type}/write` | 向量写入 `{collection, id, vector: [], payload}` |
+| POST | `/api/v1/vector/{type}/search` | 相似检索 `{collection, vector: [], topK}` |
+| POST | `/api/v1/vector/{type}/index` | 索引管理 `{action: list/create/delete, collection}` |
+| POST | `/api/v1/vector/{type}/migrate` | 迁移 `{action: export/import, collection}` |
+
+### 图数据库 API（Neo4j / NebulaGraph）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/graph/{deviceID}` | 图库状态 |
+| POST | `/api/v1/graph/deploy` | 部署 `{type, mode, version}` |
+| POST | `/api/v1/graph/{type}/{action}` | 启停 `action: start/stop/restart/status` |
+| POST | `/api/v1/graph/{type}/database` | 库/图空间管理 `{action: list/create/delete, name}` |
+| POST | `/api/v1/graph/{type}/cypher` | 查询 `{database, query}`（Cypher / nGQL；拒绝 NUL/换行） |
+| POST | `/api/v1/graph/{type}/backup` | 备份/恢复 `{action: export/import, database}` |
+
+### 负载均衡 API（HaProxy / LVS / keepalived）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/lb/{deviceID}` | 负载均衡状态 |
+| POST | `/api/v1/lb/deploy` | 部署 `{type, mode}`（LVS: nat/dr/tun；keepalived: vrrp） |
+| POST | `/api/v1/lb/{type}/{action}` | 启停 `action: start/stop/restart/status` |
+| POST | `/api/v1/lb/{type}/backend` | 后端管理 `{action: list/add/delete/enable/disable, backend: host:port, weight}` |
+| POST | `/api/v1/lb/haproxy/frontend` | 前端监听 `{action: list/add/delete, frontend: host:port}` |
+
+### 对象存储 API（Amazon S3 / Aliyun OSS / MinIO）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/storage/{deviceID}` | 对象存储状态 |
+| POST | `/api/v1/storage/deploy` | 部署 MinIO `{type, mode}` |
+| POST | `/api/v1/storage/{type}/bucket` | 桶管理 `{action: list/create/delete, bucket}` |
+| POST | `/api/v1/storage/{type}/object` | 对象管理 `{action: list/upload/download/delete, bucket, object, local}` |
+
+凭证经 agent 环境变量注入（`OPSMESH_S3_ACCESS_KEY`/`OPSMESH_OSS_ACCESS_KEY_ID` 等），不经 shell 参数明文传递。
+
+### 镜像仓库 API（Harbor）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/harbor/{deviceID}` | Harbor 状态 |
+| POST | `/api/v1/harbor/deploy` | 部署 `{mode, version}` |
+| POST | `/api/v1/harbor/{action}` | 启停 `action: start/stop/restart/status` |
+| POST | `/api/v1/harbor/project` | 项目管理 `{action: list/create/delete, project}` |
+| POST | `/api/v1/harbor/repository` | 仓库管理 `{action: list/delete, project, repository}` |
+| POST | `/api/v1/harbor/artifact` | artifact 管理 `{action: list/delete, project, repository, reference}` |
+
+凭证经环境变量 `HARBOR_ADMIN_USER`/`HARBOR_ADMIN_PASSWORD` 注入。
+
+### 监控系统兼容 API（Zabbix / 夜莺 / SkyWalking）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/monitor/{deviceID}` | 监控系统状态 |
+| POST | `/api/v1/monitor/deploy` | 部署 `{type, mode, version}` |
+| POST | `/api/v1/monitor/{type}/{action}` | 启停 `action: start/stop/restart/status` |
+| POST | `/api/v1/monitor/zabbix/host` | Zabbix 主机 `{action: list/create/delete, host, hostIP}` |
+| POST | `/api/v1/monitor/zabbix/item` | Zabbix 监控项检索 `{host, search}` |
+| POST | `/api/v1/monitor/nightingale/query` | 夜莺查询（PromQL 兼容）`{query, start, end, step}` |
+| POST | `/api/v1/monitor/skywalking/trace` | SkyWalking 链路 `{traceID, serviceID}`（GraphQL） |
+
+### 内核运维 API（Kernel）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/kernel/{deviceID}` | 内核信息（版本/OS/架构） |
+| POST | `/api/v1/kernel/param` | sysctl `{action: query/set, name, value}`（set 持久化 `/etc/sysctl.d/99-opsmesh.conf`） |
+| POST | `/api/v1/kernel/module` | 模块 `{action: list/load/unload, name}`（load 持久化 `/etc/modules-load.d/`） |
+| POST | `/api/v1/kernel/upgrade` | 内核升级 `{action: list/install, version}` |
+| POST | `/api/v1/kernel/grub` | GRUB `{action: list/set-default, index}` |
+
+### 安全运维 API（CVE / 基线 / 组件更新）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/security/{deviceID}` | 安全态势（OS/内核/主机名） |
+| POST | `/api/v1/security/scan` | 漏洞扫描 `{cve?}`（yum/dnf updateinfo --security；按 CVE 检索） |
+| POST | `/api/v1/security/baseline` | 基线检查/修复 `{fix: bool, ruleIDs?: []}`（14 条 CIS 规则；修复为内置映射脚本） |
+| POST | `/api/v1/security/patch` | 组件更新 `{action: check/update, packages?: [], securityOnly?: bool}` |
+| POST | `/api/v1/security/rollback` | 更新回滚 `{transactionID}`（yum history undo） |
+
+### 虚拟化 API（KVM / vSphere / OpenStack / Proxmox）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/virt/{deviceID}` | 虚拟化平台状态 |
+| POST | `/api/v1/virt/deploy` | 部署/配置 `{type, mode: host/client}` |
+| POST | `/api/v1/virt/{type}/{action}` | 平台启停/连接测试 `action: start/stop/restart/status` |
+| POST | `/api/v1/virt/{type}/vm` | VM 管理 `{action: list/start/stop/restart/delete, name}` |
+| POST | `/api/v1/virt/{type}/snapshot` | 快照 `{action: list/create/revert/delete, name, snapshot}`（kvm/proxmox） |
+
+### Ansible 自动化 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/ansible/{deviceID}` | Ansible 状态 |
+| POST | `/api/v1/ansible/deploy` | 安装 ansible-core |
+| POST | `/api/v1/ansible/adhoc` | ad-hoc `{pattern, module, args}`（模块白名单） |
+| POST | `/api/v1/ansible/playbook` | playbook `{action: run/check/syntax, name, content?}`（写入 `/etc/ansible/playbooks/`） |
+| POST | `/api/v1/ansible/inventory` | inventory `{action: list/sync, hosts?}` |
+
+### K8s 一键部署 API（kubeadm / kind / k3s）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/k8s/provision` | 部署集群 `{tool, mode, version, clusterName, podCIDR, nodes}` |
+| POST | `/api/v1/k8s/provision/lifecycle` | 集群启停/删除 `{tool, action: start/stop/delete/status, clusterName}` |
+| POST | `/api/v1/k8s/provision/join` | 加入节点 `{tool, role, masterAddr, token, certHash}` |
+| POST | `/api/v1/k8s/provision/kubeconfig` | 导出 kubeconfig `{tool, clusterName}` |
+
+（与「K8s 管理 API」不同：此处为"从零部署/引导集群"，K8s 管理 API 为"连接与管理已有集群"。）
+
+### 环境依赖 API（运行时 / fd-limit / IPVS）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/env/{deviceID}` | 环境查询（运行时版本 + fd-limit） |
+| POST | `/api/v1/env/install` | 安装运行时 `{type: java/nodejs/python2/python3/go, version}` |
+| POST | `/api/v1/env/{type}/version` | 版本查询 |
+| POST | `/api/v1/env/fdlimit` | fd-limit `{action: query/set, limit}` |
+| POST | `/api/v1/env/ipvs` | IPVS `{action: list/add/del, vip, port, protocol}` |
+
+### SSH 互信 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/ssh-trust/keygen` | 生成密钥对 `{user, keyType: ed25519/rsa/ecdsa}`（已存在幂等跳过，输出公钥） |
+| POST | `/api/v1/ssh-trust/authorize` | 分发公钥 `{user, publicKey}`（严格格式校验，幂等写入 authorized_keys） |
+| POST | `/api/v1/ssh-trust/revoke` | 撤销公钥 `{user, publicKey}` |
+| POST | `/api/v1/ssh-trust/list` | 授权清单（指纹 + 本机公钥 + known_hosts 计数） |
+| POST | `/api/v1/ssh-trust/test` | 免密测试 `{user, host, port}`（BatchMode，5s 超时） |
+
+### NTP 时间同步 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/ntp/status` | 时间状态（timedatectl + chronyc tracking/sources） |
+| POST | `/api/v1/ntp/sync` | 立即校时（chronyc makestep / ntpdate 回退） |
+| POST | `/api/v1/ntp/config` | 时间源配置 `{servers: []}`（drop-in + 重启 chronyd） |
+| POST | `/api/v1/ntp/timezone` | 时区 `{timezone}`（如 Asia/Shanghai） |
+| POST | `/api/v1/ntp/deploy` | 时间服务端部署 `{servers: [], allowCIDR}`（allow 网段 + 防火墙放行） |
+| POST | `/api/v1/ntp/service` | 服务管理 `{service: status/start/stop/restart}` |
+
+### DNS 服务 API（bind / dnsmasq）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/dns/status` | 服务与托管记录状态 `{zone}` |
+| POST | `/api/v1/dns/deploy` | 部署 `{type: bind/dnsmasq, zone, forwarders: []}` |
+| POST | `/api/v1/dns/record` | 记录管理 `{type, op: list/add/delete, zone, name, recordType: A/AAAA/CNAME/MX/TXT, value, ttl}`（托管文件 + 语法校验 + 失败回滚） |
+| POST | `/api/v1/dns/query` | 解析测试 `{name, recordType, server}`（dig/nslookup） |
+| POST | `/api/v1/dns/service` | 服务管理 `{service: status/start/stop/restart}` |
+
+### 文件共享 API（NFS / Samba / vsftpd）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/fileshare/status` | 服务与托管共享状态 |
+| POST | `/api/v1/fileshare/deploy` | 部署 `{type: nfs/samba/vsftpd, anonymousOK?}` |
+| POST | `/api/v1/fileshare/share` | 共享管理 `{type, op: list/add/delete, name, path, options}`（NFS 导出/Samba 共享段，校验回滚） |
+| POST | `/api/v1/fileshare/mount` | NFS 挂载 `{op: list/mount/umount, server, exportPath, mountPoint, mountOpts}`（fstab 持久化） |
+| POST | `/api/v1/fileshare/service` | 服务管理 `{type, service: status/start/stop/restart}` |
+
+### 通用结果约定
+
+以上执行类接口统一返回 `Task`（`{id, state, ...}`）。任务由目标 agent 异步拉取执行，输出经 `GET /api/v1/tasks/{id}/result` 获取（stdout/stderr/exitCode）。前端「基础设施运维台」（`/infra-console`）按统一动作目录（`web/enterprise/src/api/infra-ops.js`，21 个 domain）动态渲染表单并展示结果。
 
 ---
 
