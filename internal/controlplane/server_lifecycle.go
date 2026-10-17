@@ -180,14 +180,60 @@ func (s *Server) Start() error {
 	// systemctl 服务管理 + journal 日志查询。
 	mux.HandleFunc("/api/v1/system/services", s.handleSystemServices) // POST 服务操作（start/stop/restart/...）
 	mux.HandleFunc("/api/v1/system/journal", s.handleSystemJournal)   // POST journalctl 查询下发
+	// 包管理（yum/apt）：POST 安装/升级，DELETE 卸载。
+	mux.HandleFunc("/api/v1/system/packages", s.handleSystemPackages) // POST install/upgrade / DELETE remove
+	// 中间件运维：Kafka Topic 等固定路径优先注册（ServeMux 精确匹配优先于前缀匹配）。
+	mux.HandleFunc("/api/v1/middleware/kafka/topic", s.handleKafkaTopic) // POST Kafka Topic 管理
+	// 中间件运维泛路由：GET /api/v1/middleware/{deviceID} / POST /api/v1/middleware/{type}/{action}。
+	s.registerMiddlewareRoutes(mux)
 	// 中间件部署：预置模板列表 + 详情 + 在指定 agent 上部署 + 已部署实例查询 + 卸载。
 	mux.HandleFunc("/api/v1/middleware-templates", s.handleMiddlewareTemplates)
 	mux.HandleFunc("/api/v1/middleware-templates/", s.handleMiddlewareTemplateDetail) // 子路径：{id} 和 {id}/deploy
 	mux.HandleFunc("/api/v1/middleware-instances", s.handleMiddlewareInstances)
 	mux.HandleFunc("/api/v1/middleware-instances/", s.handleMiddlewareInstanceRouting) // 子路径：{id}/uninstall
+	// 数据库运维：PostgreSQL/Oracle/TiDB/OceanBase（固定路径优先，再泛路由 /api/v1/db/）。
+	s.registerDBRoutes(mux)
+	// 负载均衡运维：HaProxy/LVS/keepalived（固定路径优先，再泛路由 /api/v1/lb/）。
+	s.registerLBRoutes(mux)
+	// 对象存储运维：Amazon S3 / Aliyun OSS / MinIO（固定路径优先，再泛路由 /api/v1/storage/）。
+	s.registerStorageRoutes(mux)
+	// 镜像仓库运维：Harbor（固定路径优先，再泛路由 /api/v1/harbor/）。
+	s.registerHarborRoutes(mux)
+	// 环境依赖优化：Java/node.js/Python/Go + fd-limit/IPVS（固定路径优先，再泛路由 /api/v1/env/）。
+	s.registerEnvRoutes(mux)
+	// 监控系统兼容：Zabbix/夜莺/SkyWalking（固定路径优先，再泛路由 /api/v1/monitor/）。
+	s.registerMonitorRoutes(mux)
+	// 时序/流数据存储：InfluxDB/TDengine/VictoriaMetrics（固定路径优先，再泛路由 /api/v1/tsdb/）。
+	s.registerTSDBRoutes(mux)
+	// 向量数据库：Milvus/Qdrant/pgvector（固定路径优先，再泛路由 /api/v1/vector/）。
+	s.registerVectorRoutes(mux)
+	// 图数据库：Neo4j/NebulaGraph（固定路径优先，再泛路由 /api/v1/graph/）。
+	s.registerGraphRoutes(mux)
+	// MongoDB 运维：固定路径优先，再泛路由 /api/v1/mongo/{deviceID}。
+	s.registerMongoRoutes(mux)
+	// OLAP 分析引擎：ClickHouse/Doris/Trino（固定路径优先，再泛路由 /api/v1/olap/）。
+	s.registerOLAPRoutes(mux)
+	// 内核运维：参数/模块/升级/GRUB（固定路径优先，再泛路由 /api/v1/kernel/）。
+	s.registerKernelRoutes(mux)
+	// 安全运维：漏洞扫描/基线修复/组件更新/回滚（固定路径优先，再泛路由 /api/v1/security/）。
+	s.registerSecurityRoutes(mux)
+	// 虚拟化衔接：KVM/vSphere/OpenStack/Proxmox（固定路径优先，再泛路由 /api/v1/virt/）。
+	s.registerVirtRoutes(mux)
+	// Ansible 自动化运维：inventory/playbook/ad-hoc（固定路径优先，再泛路由 /api/v1/ansible/）。
+	s.registerAnsibleRoutes(mux)
+	// SSH 互信：keygen/authorize/revoke/list/test。
+	s.registerSSHTrustRoutes(mux)
+	// NTP 时间同步：status/sync/config/timezone/deploy/service。
+	s.registerNTPRoutes(mux)
+	// DNS 服务：status/deploy/record/query/service（bind/dnsmasq）。
+	s.registerDNSRoutes(mux)
+	// 文件共享：FTP/Samba/NFS（status/deploy/share/mount/service）。
+	s.registerFSShareRoutes(mux)
 	// Phase 3 K8s 集群管理：GET/POST 集群列表 + DELETE 单集群 + POST 测试连接。
 	mux.HandleFunc("/api/v1/k8s/clusters", s.handleK8sClusters)
 	mux.HandleFunc("/api/v1/k8s/clusters/", s.handleK8sClusterRouting) // 子路径：{id} 和 {id}/test
+	// K8s 集群一键部署：kubeadm/kind/k3s。
+	s.registerK8sProvisionRoutes(mux)
 	// 修复 9：告警规则 CRUD API。
 	mux.HandleFunc("/api/v1/alert-rules", s.handleAlertRules)
 	mux.HandleFunc("/api/v1/alert-rules/", s.handleAlertRuleRouting) // 子路径：{id} DELETE 删除

@@ -81,16 +81,16 @@ func (s *Server) processAutomationRules() {
 					if _, plan, err := s.aiopsEngine.AnalyzeAndRemediate(
 						context.Background(),
 						&aiops.AlertContext{
-							Alert: alert,
+							Alert:   alert,
 							Logs:    nil,
 							Metrics: s.buildDeviceContext(alert.DeviceID),
 						},
 						aiops.RemediationConstraints{
-							MaxSteps:       5,
-							RiskTolerance:  "low",
+							MaxSteps:        5,
+							RiskTolerance:   "low",
 							RequireApproval: false,
-							TimeoutSec:     30,
-							AutoExecute:    true,
+							TimeoutSec:      30,
+							AutoExecute:     true,
 						},
 					); err == nil && plan != nil {
 						s.executeRemediationPlan(rule.TenantID, plan)
@@ -235,14 +235,14 @@ func (s *Server) executeRemediationPlan(tenantID string, plan *aiops.Remediation
 			continue
 		}
 		task := &proto.Task{
-			AgentID:  cmd.AgentID,
-			TenantID: tenantID,
-			Type:     cmd.Type,
-			Command:  cmd.Command,
-			Status:   "pending",
-			Timeout:  cmd.Timeout,
+			AgentID:    cmd.AgentID,
+			TenantID:   tenantID,
+			Type:       cmd.Type,
+			Command:    cmd.Command,
+			Status:     "pending",
+			Timeout:    cmd.Timeout,
 			MaxRetries: 3,
-			CreatedAt: time.Now(),
+			CreatedAt:  time.Now(),
 		}
 		if task.Type == "" {
 			task.Type = proto.TaskTypeShell

@@ -185,21 +185,21 @@ func (f *FederationManager) signFederationRequest(req *http.Request, body []byte
 
 // FederatedDevice 聚合后的单台设备视图（本地 + peer 统一格式）。
 type FederatedDevice struct {
-	DeviceInfo   proto.DeviceInfo `json:"deviceInfo"`
-	Source       string           `json:"source"`       // "local" 或 peer URL
-	SourceType   string           `json:"sourceType"`   // "local" | "peer"
+	DeviceInfo proto.DeviceInfo `json:"deviceInfo"`
+	Source     string           `json:"source"`     // "local" 或 peer URL
+	SourceType string           `json:"sourceType"` // "local" | "peer"
 }
 
 // FederatedDevicesResp 联邦设备聚合响应（支持分页+搜索）。
 type FederatedDevicesResp struct {
-	Data      []FederatedDevice `json:"data"`           // 聚合后分页的设备列表
-	Total     int               `json:"total"`          // 总设备数
-	Page      int               `json:"page"`           // 当前页
-	PageSize  int               `json:"pageSize"`       // 每页大小
-	HasMore   bool              `json:"hasMore"`        // 是否有更多
-	Local     []proto.DeviceInfo  `json:"local"`          // 本地设备（未分页，用于 peer 分布统计）
-	Peers     map[string]interface{} `json:"peers"`          // 各 peer 设备及状态
-	Search    string            `json:"search"`         // 回显搜索关键词
+	Data     []FederatedDevice      `json:"data"`     // 聚合后分页的设备列表
+	Total    int                    `json:"total"`    // 总设备数
+	Page     int                    `json:"page"`     // 当前页
+	PageSize int                    `json:"pageSize"` // 每页大小
+	HasMore  bool                   `json:"hasMore"`  // 是否有更多
+	Local    []proto.DeviceInfo     `json:"local"`    // 本地设备（未分页，用于 peer 分布统计）
+	Peers    map[string]interface{} `json:"peers"`    // 各 peer 设备及状态
+	Search   string                 `json:"search"`   // 回显搜索关键词
 }
 
 // FederatedDevices 聚合本地 + 所有 peer 的设备视图，支持分页+搜索。
@@ -299,14 +299,14 @@ func (f *FederationManager) FederatedDevices(ctx context.Context, tenantID strin
 	}
 
 	return FederatedDevicesResp{
-		Data:      paged,
-		Total:     total,
-		Page:      page,
-		PageSize:  pageSize,
-		HasMore:   page > 0 && pageSize > 0 && (page*pageSize) < total,
-		Local:     localDevices,
-		Peers:     peerResults,
-		Search:    search,
+		Data:     paged,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+		HasMore:  page > 0 && pageSize > 0 && (page*pageSize) < total,
+		Local:    localDevices,
+		Peers:    peerResults,
+		Search:   search,
 	}
 }
 
@@ -511,7 +511,7 @@ func (s *Server) handleFederationTaskRouting(w http.ResponseWriter, r *http.Requ
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
 		strings.TrimRight(peerURL, "/")+"/api/v1/tasks/"+taskID+"/result", nil)
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "build request failed: "+err.Error()})
+		writeInternalError(r.Context(), w, "federation.forwardTaskResult", err)
 		return
 	}
 	if actx.TenantID != "" {
@@ -527,7 +527,7 @@ func (s *Server) handleFederationTaskRouting(w http.ResponseWriter, r *http.Requ
 	defer resp.Body.Close()
 	respBody, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "read peer response: "+readErr.Error()})
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "read peer response: " + readErr.Error()})
 		return
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

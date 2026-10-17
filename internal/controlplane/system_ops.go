@@ -3,7 +3,7 @@
 // 设计原则（对应"查询走 API、执行走 shell"架构）：
 //   - 查询类（用户/组/防火墙规则列表）：从 agent 采集的 DeviceMetrics.System 读取结构化数据，
 //     返回 JSON 供前端表格渲染，避免前端解析 shell 文本。
-//   - 执行类（增删改：useradd/chmod/iptables -A 等）：构造 shell 脚本作为 task 下发到 agent，
+//   - 执行类（增删改：useradd/chmod/iptables -A/yum install 等）：构造 shell 脚本作为 task 下发到 agent，
 //     复用现有 store.CreateTask + agent executeShell 机制（含白名单 + 元字符防护 + 超时）。
 //
 // API 端点：
@@ -13,8 +13,10 @@
 //   - POST /api/v1/system/groups                — 创建用户组
 //   - POST /api/v1/system/firewall              — 添加防火墙规则
 //   - DELETE /api/v1/system/firewall            — 删除防火墙规则
+//   - POST /api/v1/system/packages              — 安装/升级包（shell 模板下发，yum/apt）
+//   - DELETE /api/v1/system/packages            — 卸载包（shell 模板下发，yum/apt）
 //
-// 参数校验：用户名/组名/端口走严格正则（^[a-zA-Z0-9_.-]+$），杜绝命令注入。
+// 参数校验：用户名/组名/端口/包名走严格正则，杜绝命令注入。
 package controlplane
 
 import (
@@ -32,11 +34,14 @@ import (
 
 // 系统操作参数校验正则（严格字符集，防命令注入）。
 var (
-	safeNameRe         = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)          // 用户名/组名/服务名
-	safePortRe         = regexp.MustCompile(`^[0-9]{1,5}(:[0-9]{1,5})?$`) // 端口或端口范围
-	safeProtoRe        = regexp.MustCompile(`^(tcp|udp)$`)                // 协议
-	safeIPRe           = regexp.MustCompile(`^[0-9a-fA-F:.]{1,45}$`)      // IPv4/IPv6 粗校验
-	safeJournalSinceRe = regexp.MustCompile(`^[a-zA-Z0-9 :\-.]+$`)        // journalctl --since 参数（防注入）
+	safeNameRe = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`) // 用户名/组名/服务名
+	// 端口或端口范围：1-65535
+	safePortRe         = regexp.MustCompile(`^(?:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$`)
+	safeProtoRe        = regexp.MustCompile(`^(tcp|udp)$`)           // 协议
+	safeIPRe           = regexp.MustCompile(`^[0-9a-fA-F:.]{1,45}$`) // IPv4/IPv6 粗校验
+	safeJournalSinceRe = regexp.MustCompile(`^[a-zA-Z0-9 :\-.]+$`)   // journalctl --since 参数（防注入）
+	// 包名：允许字母数字点下划线连字符，兼容 nginx-1.20 / git-all 等；不允许元字符，杜绝注入。
+	safePackageRe = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 )
 
 // handleDeviceSystemInfo 处理 GET /api/v1/devices/{id}/system：返回结构化系统清单。
@@ -133,7 +138,7 @@ func (s *Server) handleSystemUsers(w http.ResponseWriter, r *http.Request) {
 
 	task, err := s.createSystemTask(actx.TenantID, req.AgentID, script, action)
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(r.Context(), w, "system.user", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
@@ -203,7 +208,7 @@ func (s *Server) handleSystemGroups(w http.ResponseWriter, r *http.Request) {
 
 	task, err := s.createSystemTask(actx.TenantID, req.AgentID, script, action)
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(r.Context(), w, "system.group", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
@@ -262,7 +267,7 @@ func (s *Server) handleSystemFirewall(w http.ResponseWriter, r *http.Request) {
 
 	task, err := s.createSystemTask(actx.TenantID, req.AgentID, script, action)
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(r.Context(), w, "system.firewall", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
@@ -312,6 +317,117 @@ func buildFirewallScript(req systemOpRequest, add bool) string {
 	}
 	b.WriteString("fi\n")
 	b.WriteString("echo 'firewall rule applied'\n")
+	return b.String()
+}
+
+// ============================================================================
+// 执行类：包管理（yum/apt，shell 模板下发）
+// ============================================================================
+
+// packageOpRequest 包管理请求体。
+type packageOpRequest struct {
+	AgentID string `json:"agentID"`
+	Package string `json:"package"`
+	Action  string `json:"action"`  // install/remove/upgrade
+	Manager string `json:"manager"` // yum/apt/auto（auto 自动探测）
+}
+
+// allowedPackageActions 包操作白名单。
+var allowedPackageActions = map[string]bool{
+	"install": true,
+	"remove":  true,
+	"upgrade": true,
+}
+
+// handleSystemPackages 处理 POST/DELETE /api/v1/system/packages：
+//   - POST  安装或升级包（action=install/upgrade）
+//   - DELETE 卸载包（action=remove）
+//
+// Body: {agentID, package, action, manager}
+// 安全：package 名走 safePackageRe 校验；action 走白名单；manager 限 yum/apt/auto。
+func (s *Server) handleSystemPackages(w http.ResponseWriter, r *http.Request) {
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+		return
+	}
+	var req packageOpRequest
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if !safePackageRe.MatchString(req.Package) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid package name (allowed: a-zA-Z0-9_.-)"})
+		return
+	}
+	if !allowedPackageActions[req.Action] {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid action (allowed: install/remove/upgrade)"})
+		return
+	}
+	if req.Manager != "" && req.Manager != "yum" && req.Manager != "apt" && req.Manager != "auto" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid manager (allowed: yum/apt/auto)"})
+		return
+	}
+	if req.AgentID == "" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "agentID is required"})
+		return
+	}
+
+	script := buildPackageScript(req)
+	action := "pkg_" + req.Action
+
+	task, err := s.createSystemTask(actx.TenantID, req.AgentID, script, action)
+	if err != nil {
+		writeInternalError(r.Context(), w, "system.package", err)
+		return
+	}
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Package,
+		Detail: sanitizeAuditDetail(fmt.Sprintf("agentID=%s manager=%s", req.AgentID, req.Manager)),
+	})
+	paginate.WriteJSON(w, http.StatusOK, task)
+}
+
+// buildPackageScript 构造包管理 shell 脚本（yum/apt 自动探测，幂等）。
+func buildPackageScript(req packageOpRequest) string {
+	var b strings.Builder
+	b.WriteString("set -e\n")
+	b.WriteString("# 自动探测包管理器：yum（RHEL/CentOS/Fedora）或 apt（Debian/Ubuntu）\n")
+	b.WriteString("if command -v yum >/dev/null 2>&1; then\n")
+	b.WriteString(fmt.Sprintf("  PKG_MGR=yum\n"))
+	b.WriteString("elif command -v dnf >/dev/null 2>&1; then\n")
+	b.WriteString(fmt.Sprintf("  PKG_MGR=dnf\n"))
+	b.WriteString("elif command -v apt-get >/dev/null 2>&1; then\n")
+	b.WriteString(fmt.Sprintf("  PKG_MGR=apt-get\n"))
+	b.WriteString("else\n")
+	b.WriteString(fmt.Sprintf("  echo '未找到 yum/dnf/apt-get 包管理器' && exit 1\n"))
+	b.WriteString("fi\n")
+	b.WriteString(fmt.Sprintf("PKG=%q\n", req.Package))
+	switch req.Action {
+	case "install":
+		b.WriteString("if $PKG_MGR list installed \"$PKG\" >/dev/null 2>&1; then\n")
+		b.WriteString(fmt.Sprintf("  echo '包已安装: $PKG'\n"))
+		b.WriteString("else\n")
+		if req.Manager == "apt" || req.Manager == "apt-get" {
+			b.WriteString("  apt-get update -qq && apt-get install -y \"$PKG\"\n")
+		} else {
+			b.WriteString("  $PKG_MGR install -y \"$PKG\"\n")
+		}
+		b.WriteString("fi\n")
+		b.WriteString(fmt.Sprintf("echo '包安装完成: $PKG'\n"))
+	case "remove":
+		b.WriteString("if $PKG_MGR list installed \"$PKG\" >/dev/null 2>&1; then\n")
+		b.WriteString(fmt.Sprintf("  $PKG_MGR remove -y \"$PKG\"\n"))
+		b.WriteString("  echo '包已卸载: $PKG'\n")
+		b.WriteString("else\n")
+		b.WriteString(fmt.Sprintf("  echo '包未安装: $PKG'\n"))
+		b.WriteString("fi\n")
+	case "upgrade":
+		b.WriteString(fmt.Sprintf("  $PKG_MGR install -y \"$PKG\"\n"))
+		b.WriteString(fmt.Sprintf("echo '包已升级: $PKG'\n"))
+	}
 	return b.String()
 }
 

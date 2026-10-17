@@ -83,7 +83,7 @@ func (s *Server) handleSystemServices(w http.ResponseWriter, r *http.Request) {
 
 	task, err := s.createSystemTask(actx.TenantID, req.AgentID, script, "service_"+req.Action)
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(r.Context(), w, "system.service.control", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
@@ -167,7 +167,7 @@ func (s *Server) handleSystemJournal(w http.ResponseWriter, r *http.Request) {
 
 	task, err := s.createSystemTask(actx.TenantID, req.AgentID, script, "journal_query")
 	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeInternalError(r.Context(), w, "system.journal.query", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
