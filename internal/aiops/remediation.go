@@ -52,71 +52,71 @@ func NewRemediationGenerator(llm LLM, cfg Config) *RemediationGenerator {
 
 // RemediationRequest 修复生成请求。
 type RemediationRequest struct {
-	RootCause      *RootCause            `json:"rootCause"`
-	DeviceContext  *DeviceContext        `json:"deviceContext"`
-	AlertContext   *AlertContext         `json:"alertContext,omitempty"`
-	Constraints    RemediationConstraints `json:"constraints"`
+	RootCause     *RootCause             `json:"rootCause"`
+	DeviceContext *DeviceContext         `json:"deviceContext"`
+	AlertContext  *AlertContext          `json:"alertContext,omitempty"`
+	Constraints   RemediationConstraints `json:"constraints"`
 }
 
 // RemediationConstraints 修复约束。
 type RemediationConstraints struct {
-	MaxSteps       int    `json:"maxSteps"`         // 最大步骤数
-	RiskTolerance  string `json:"riskTolerance"`    // low/medium/high
-	RequireApproval bool   `json:"requireApproval"`  // 高风险操作是否需要审批
-	TimeoutSec     int    `json:"timeoutSec"`       // 单步超时（秒）
-	AutoExecute    bool   `json:"autoExecute"`      // 是否自动执行（false=仅生成计划）
+	MaxSteps        int    `json:"maxSteps"`        // 最大步骤数
+	RiskTolerance   string `json:"riskTolerance"`   // low/medium/high
+	RequireApproval bool   `json:"requireApproval"` // 高风险操作是否需要审批
+	TimeoutSec      int    `json:"timeoutSec"`      // 单步超时（秒）
+	AutoExecute     bool   `json:"autoExecute"`     // 是否自动执行（false=仅生成计划）
 }
 
 // RemediationPlan 修复方案。
 type RemediationPlan struct {
-	Title         string               `json:"title"`               // 修复标题
-	Steps         []RemediationStep    `json:"steps"`               // 执行步骤
-	Commands      []RemediationCommand `json:"commands"`            // 命令列表
-	DAGNodes      []DAGNodeSpec        `json:"dagNodes,omitempty"`  // DAG 节点（复杂修复）
-	Safety        RemediationSafety    `json:"safety"`              // 安全建议
-	EstimatedTime string               `json:"estimatedTime"`       // 预估耗时
+	Title         string               `json:"title"`              // 修复标题
+	Steps         []RemediationStep    `json:"steps"`              // 执行步骤
+	Commands      []RemediationCommand `json:"commands"`           // 命令列表
+	DAGNodes      []DAGNodeSpec        `json:"dagNodes,omitempty"` // DAG 节点（复杂修复）
+	Safety        RemediationSafety    `json:"safety"`             // 安全建议
+	EstimatedTime string               `json:"estimatedTime"`      // 预估耗时
 }
 
 // RemediationStep 修复步骤（人工确认用）。
 type RemediationStep struct {
-	Order     int      `json:"order"`
-	Title     string   `json:"title"`
-	Action    string   `json:"action"`    // execute_task / restart / scale / isolate
-	Target    string   `json:"target"`    // 目标设备/服务
-	Command   string   `json:"command"`   // shell 命令（Action=execute_task 时）
-	Condition string   `json:"condition"` // 执行条件（用于 DAG 条件分支）
-	VerifyCmd string   `json:"verifyCmd"` // 验证命令
+	Order     int    `json:"order"`
+	Title     string `json:"title"`
+	Action    string `json:"action"`    // execute_task / restart / scale / isolate
+	Target    string `json:"target"`    // 目标设备/服务
+	Command   string `json:"command"`   // shell 命令（Action=execute_task 时）
+	Condition string `json:"condition"` // 执行条件（用于 DAG 条件分支）
+	VerifyCmd string `json:"verifyCmd"` // 验证命令
 }
 
 // RemediationCommand 待执行的命令。
 type RemediationCommand struct {
-	AgentID  string `json:"agentID"`   // 目标 agent（设备）
-	Command  string `json:"command"`   // shell 命令
-	Type     string `json:"type"`      // shell/service/file (default shell)
-	Timeout  int    `json:"timeout"`   // 超时秒
-	Priority int    `json:"priority"`  // 优先级 1-10
+	AgentID  string `json:"agentID"`  // 目标 agent（设备）
+	Command  string `json:"command"`  // shell 命令
+	Type     string `json:"type"`     // shell/service/file (default shell)
+	Timeout  int    `json:"timeout"`  // 超时秒
+	Priority int    `json:"priority"` // 优先级 1-10
 }
 
 // DAGNodeSpec DAG 节点规范（用于生成多步骤修复工作流）。
 type DAGNodeSpec struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Type         string   `json:"type"`       // shell/service/file
-	Command      string   `json:"command"`
-	Path         string   `json:"path"`
-	DependsOn    []string `json:"dependsOn"`
-	RetryCount   int      `json:"retryCount"`
-	RetryDelay   int      `json:"retryDelay"`
-	Condition    string   `json:"condition,omitempty"`
-	ThenNodes    []string `json:"thenNodes,omitempty"`
-	ElseNodes    []string `json:"elseNodes,omitempty"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Type       string   `json:"type"` // shell/service/file
+	Command    string   `json:"command"`
+	Path       string   `json:"path"`
+	DependsOn  []string `json:"dependsOn"`
+	RetryCount int      `json:"retryCount"`
+	RetryDelay int      `json:"retryDelay"`
+	Condition  string   `json:"condition,omitempty"`
+	ThenNodes  []string `json:"thenNodes,omitempty"`
+	ElseNodes  []string `json:"elseNodes,omitempty"`
 }
 
 // RemediationSafety 安全建议。
 type RemediationSafety struct {
-	RequiresConfirm bool     `json:"requiresConfirm"`  // 是否需要人工确认
-	RollbackCmd     string   `json:"rollbackCmd"`      // 回滚命令
-	RiskLevel       string   `json:"riskLevel"`        // low/medium/high
+	RequiresConfirm bool     `json:"requiresConfirm"` // 是否需要人工确认
+	RollbackCmd     string   `json:"rollbackCmd"`     // 回滚命令
+	RiskLevel       string   `json:"riskLevel"`       // low/medium/high
 	Notes           []string `json:"notes"`           // 安全提示
 }
 
@@ -179,44 +179,44 @@ func (g *RemediationGenerator) buildRemediationPrompt(req *RemediationRequest) s
 	var sb strings.Builder
 
 	sb.WriteString("## 根因分析\n")
-	sb.WriteString(fmt.Sprintf("- 类别: %s\n", req.RootCause.Category))
-	sb.WriteString(fmt.Sprintf("- 组件: %s\n", req.RootCause.Component))
-	sb.WriteString(fmt.Sprintf("- 描述: %s\n", req.RootCause.Description))
-	sb.WriteString(fmt.Sprintf("- 信心度: %.0f%%\n", req.RootCause.Confidence*100))
-	sb.WriteString(fmt.Sprintf("- 证据: %v\n", req.RootCause.Evidence))
+	fmt.Fprintf(&sb, "- 类别: %s\n", req.RootCause.Category)
+	fmt.Fprintf(&sb, "- 组件: %s\n", req.RootCause.Component)
+	fmt.Fprintf(&sb, "- 描述: %s\n", req.RootCause.Description)
+	fmt.Fprintf(&sb, "- 信心度: %.0f%%\n", req.RootCause.Confidence*100)
+	fmt.Fprintf(&sb, "- 证据: %v\n", req.RootCause.Evidence)
 
 	if req.AlertContext != nil && req.AlertContext.Alert != nil {
 		sb.WriteString("\n## 告警上下文\n")
-		sb.WriteString(fmt.Sprintf("- 告警 ID: %s\n", req.AlertContext.Alert.AlertID))
-		sb.WriteString(fmt.Sprintf("- 设备: %s\n", req.AlertContext.Alert.DeviceID))
-		sb.WriteString(fmt.Sprintf("- 级别: %s\n", req.AlertContext.Alert.Severity))
-		sb.WriteString(fmt.Sprintf("- 指标: %s\n", req.AlertContext.Alert.Metric))
-		sb.WriteString(fmt.Sprintf("- 消息: %s\n", req.AlertContext.Alert.Message))
+		fmt.Fprintf(&sb, "- 告警 ID: %s\n", req.AlertContext.Alert.AlertID)
+		fmt.Fprintf(&sb, "- 设备: %s\n", req.AlertContext.Alert.DeviceID)
+		fmt.Fprintf(&sb, "- 级别: %s\n", req.AlertContext.Alert.Severity)
+		fmt.Fprintf(&sb, "- 指标: %s\n", req.AlertContext.Alert.Metric)
+		fmt.Fprintf(&sb, "- 消息: %s\n", req.AlertContext.Alert.Message)
 	}
 
 	if req.DeviceContext != nil {
 		sb.WriteString("\n## 设备上下文\n")
 		if req.DeviceContext.DeviceInfo != nil {
 			d := req.DeviceContext.DeviceInfo
-			sb.WriteString(fmt.Sprintf("- 主机名: %s\n", d.Hostname))
-			sb.WriteString(fmt.Sprintf("- IP: %s\n", d.IP))
-			sb.WriteString(fmt.Sprintf("- OS: %s %s\n", d.OS, d.Arch))
-			sb.WriteString(fmt.Sprintf("- 状态: %s\n", d.State))
+			fmt.Fprintf(&sb, "- 主机名: %s\n", d.Hostname)
+			fmt.Fprintf(&sb, "- IP: %s\n", d.IP)
+			fmt.Fprintf(&sb, "- OS: %s %s\n", d.OS, d.Arch)
+			fmt.Fprintf(&sb, "- 状态: %s\n", d.State)
 		}
 		if req.DeviceContext.Metrics != nil {
 			m := req.DeviceContext.Metrics
-			sb.WriteString(fmt.Sprintf("- CPU: %.1f%%\n", m.CPU.Usage))
-			sb.WriteString(fmt.Sprintf("- 内存: %.1f%%\n", m.Memory.Usage))
-			sb.WriteString(fmt.Sprintf("- 运行时间: %ds\n", m.Uptime))
+			fmt.Fprintf(&sb, "- CPU: %.1f%%\n", m.CPU.Usage)
+			fmt.Fprintf(&sb, "- 内存: %.1f%%\n", m.Memory.Usage)
+			fmt.Fprintf(&sb, "- 运行时间: %ds\n", m.Uptime)
 		}
 	}
 
 	sb.WriteString("\n## 约束\n")
-	sb.WriteString(fmt.Sprintf("- 最大步骤数: %d\n", req.Constraints.MaxSteps))
-	sb.WriteString(fmt.Sprintf("- 风险容忍度: %s\n", req.Constraints.RiskTolerance))
-	sb.WriteString(fmt.Sprintf("- 需要审批: %t\n", req.Constraints.RequireApproval))
-	sb.WriteString(fmt.Sprintf("- 超时: %ds\n", req.Constraints.TimeoutSec))
-	sb.WriteString(fmt.Sprintf("- 自动执行: %t\n", req.Constraints.AutoExecute))
+	fmt.Fprintf(&sb, "- 最大步骤数: %d\n", req.Constraints.MaxSteps)
+	fmt.Fprintf(&sb, "- 风险容忍度: %s\n", req.Constraints.RiskTolerance)
+	fmt.Fprintf(&sb, "- 需要审批: %t\n", req.Constraints.RequireApproval)
+	fmt.Fprintf(&sb, "- 超时: %ds\n", req.Constraints.TimeoutSec)
+	fmt.Fprintf(&sb, "- 自动执行: %t\n", req.Constraints.AutoExecute)
 
 	sb.WriteString("\n## 输出格式 (JSON)\n")
 	sb.WriteString(`{
@@ -324,15 +324,15 @@ func (g *RemediationGenerator) buildNLGPrompt(input string, ctx_ *DeviceContext)
 		sb.WriteString("## 设备上下文\n")
 		if ctx_.DeviceInfo != nil {
 			d := ctx_.DeviceInfo
-			sb.WriteString(fmt.Sprintf("- 主机名: %s\n", d.Hostname))
-			sb.WriteString(fmt.Sprintf("- IP: %s\n", d.IP))
-			sb.WriteString(fmt.Sprintf("- OS: %s %s\n", d.OS, d.Arch))
+			fmt.Fprintf(&sb, "- 主机名: %s\n", d.Hostname)
+			fmt.Fprintf(&sb, "- IP: %s\n", d.IP)
+			fmt.Fprintf(&sb, "- OS: %s %s\n", d.OS, d.Arch)
 		}
 		if ctx_.Metrics != nil {
 			m := ctx_.Metrics
-			sb.WriteString(fmt.Sprintf("- CPU: %.1f%%\n", m.CPU.Usage))
-			sb.WriteString(fmt.Sprintf("- 内存: %.1f%%\n", m.Memory.Usage))
-			sb.WriteString(fmt.Sprintf("- 运行时间: %ds\n", m.Uptime))
+			fmt.Fprintf(&sb, "- CPU: %.1f%%\n", m.CPU.Usage)
+			fmt.Fprintf(&sb, "- 内存: %.1f%%\n", m.Memory.Usage)
+			fmt.Fprintf(&sb, "- 运行时间: %ds\n", m.Uptime)
 		}
 	}
 

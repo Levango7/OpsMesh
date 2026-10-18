@@ -160,29 +160,29 @@ func buildEnvInstallScript(req envInstallReq) string {
 	switch req.Type {
 	case "java":
 		b.WriteString("# Java 环境安装（OpenJDK）\n")
-		b.WriteString(fmt.Sprintf("$PKG_MGR install -y java-%s-openjdk || $PKG_MGR install -y jdk-%s || true\n", req.Version, req.Version))
+		fmt.Fprintf(&b, "$PKG_MGR install -y java-%s-openjdk || $PKG_MGR install -y jdk-%s || true\n", req.Version, req.Version)
 		b.WriteString("java -version\n")
 	case "nodejs":
 		b.WriteString("# Node.js 环境安装（nvm）\n")
 		b.WriteString("curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash\n")
 		b.WriteString("source ~/.nvm/nvm.sh\n")
-		b.WriteString(fmt.Sprintf("nvm install %s && nvm use %s && node --version\n", req.Version, req.Version))
+		fmt.Fprintf(&b, "nvm install %s && nvm use %s && node --version\n", req.Version, req.Version)
 	case "python2":
 		b.WriteString("# Python 2.x 环境安装（已弃用，仅支持旧系统）\n")
-		b.WriteString(fmt.Sprintf("$PKG_MGR install -y python2 || $PKG_MGR install -y python2.%s || true\n", req.Version))
+		fmt.Fprintf(&b, "$PKG_MGR install -y python2 || $PKG_MGR install -y python2.%s || true\n", req.Version)
 		b.WriteString("python2 --version\n")
 	case "python3":
 		b.WriteString("# Python 3.x 环境安装\n")
-		b.WriteString(fmt.Sprintf("$PKG_MGR install -y python3.%s || $PKG_MGR install -y python3 || true\n", req.Version))
+		fmt.Fprintf(&b, "$PKG_MGR install -y python3.%s || $PKG_MGR install -y python3 || true\n", req.Version)
 		b.WriteString("python3 --version\n")
 	case "go":
 		b.WriteString("# Go 环境安装\n")
-		b.WriteString(fmt.Sprintf("wget -q https://go.dev/dl/go%s.linux-amd64.tar.gz -O /tmp/go.tar.gz || true\n", req.Version))
+		fmt.Fprintf(&b, "wget -q https://go.dev/dl/go%s.linux-amd64.tar.gz -O /tmp/go.tar.gz || true\n", req.Version)
 		b.WriteString("rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz\n")
 		b.WriteString("export PATH=$PATH:/usr/local/go/bin\n")
 		b.WriteString("go version\n")
 	}
-	b.WriteString(fmt.Sprintf("echo '%s %s 环境安装完成\n", req.Type, req.Version))
+	fmt.Fprintf(&b, "echo '%s %s 环境安装完成\n", req.Type, req.Version)
 	return b.String()
 }
 
@@ -310,8 +310,8 @@ func buildFdLimitScript(req fdLimitReq) string {
 		b.WriteString("ulimit -n\n")
 		b.WriteString("cat /etc/security/limits.conf 2>/dev/null | grep -v '^#' | grep -v '^$' || true\n")
 	case "set":
-		b.WriteString(fmt.Sprintf("* soft nofile %d\n", req.Limit))
-		b.WriteString(fmt.Sprintf("* hard nofile %d\n", req.Limit))
+		fmt.Fprintf(&b, "* soft nofile %d\n", req.Limit)
+		fmt.Fprintf(&b, "* hard nofile %d\n", req.Limit)
 		b.WriteString("echo 'fd-limit 已写入 /etc/security/limits.conf，需重新登录生效'\n")
 	}
 	return b.String()
@@ -383,11 +383,11 @@ func buildIPVSScript(req ipvsReq) string {
 	case "list":
 		b.WriteString("ipvsadm -L -n\n")
 	case "add":
-		b.WriteString(fmt.Sprintf("ipvsadm -A -t %s:%d -s rr || true\n", req.VIP, req.Port))
+		fmt.Fprintf(&b, "ipvsadm -A -t %s:%d -s rr || true\n", req.VIP, req.Port)
 	case "del":
-		b.WriteString(fmt.Sprintf("ipvsadm -D -t %s:%d || true\n", req.VIP, req.Port))
+		fmt.Fprintf(&b, "ipvsadm -D -t %s:%d || true\n", req.VIP, req.Port)
 	}
-	b.WriteString(fmt.Sprintf("echo 'IPVS %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo 'IPVS %s 操作完成\n", req.Action)
 	return b.String()
 }
 

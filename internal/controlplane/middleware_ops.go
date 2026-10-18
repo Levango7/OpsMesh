@@ -217,7 +217,7 @@ func buildMiddlewareDeployScript(req middlewareDeployRequest) string {
 	case "activemq":
 		buildActiveMQDeployScript(req, &b)
 	}
-	b.WriteString(fmt.Sprintf("echo '%s %s 部署脚本执行完成\n", req.Type, req.Mode))
+	fmt.Fprintf(&b, "echo '%s %s 部署脚本执行完成\n", req.Type, req.Mode)
 	return b.String()
 }
 
@@ -344,9 +344,9 @@ func buildKafkaConsumerGroupScript(req kafkaConsumerGroupReq) string {
 	case "list":
 		b.WriteString("kafka-consumer-groups.sh $KAFKA_OPTS --list\n")
 	case "describe":
-		b.WriteString(fmt.Sprintf("kafka-consumer-groups.sh $KAFKA_OPTS --describe --group %s\n", req.Group))
+		fmt.Fprintf(&b, "kafka-consumer-groups.sh $KAFKA_OPTS --describe --group %s\n", req.Group)
 	}
-	b.WriteString(fmt.Sprintf("echo 'Kafka Consumer Group %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo 'Kafka Consumer Group %s 操作完成\n", req.Action)
 	return b.String()
 }
 
@@ -424,9 +424,9 @@ func (s *Server) handleZookeeperCmd(w http.ResponseWriter, r *http.Request) {
 func buildZookeeperCmdScript(req zookeeperCmdReq) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	b.WriteString(fmt.Sprintf("HOST=%q\n", req.Host))
-	b.WriteString(fmt.Sprintf("echo %q | nc -w 2 $HOST\n", req.Cmd))
-	b.WriteString(fmt.Sprintf("echo 'Zookeeper %s 命令执行完成 (host=%s)\n", req.Cmd, req.Host))
+	fmt.Fprintf(&b, "HOST=%q\n", req.Host)
+	fmt.Fprintf(&b, "echo %q | nc -w 2 $HOST\n", req.Cmd)
+	fmt.Fprintf(&b, "echo 'Zookeeper %s 命令执行完成 (host=%s)\n", req.Cmd, req.Host)
 	return b.String()
 }
 
@@ -578,7 +578,7 @@ func buildMiddlewareActionScript(req middlewareOpsRequest) string {
 			b.WriteString("activemq status || echo 'not running'\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '%s %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '%s %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 
@@ -651,13 +651,13 @@ func buildKafkaTopicScript(req kafkaTopicReq) string {
 		if req.Replicas <= 0 {
 			req.Replicas = 1
 		}
-		b.WriteString(fmt.Sprintf("kafka-topics.sh --create --topic %s --partitions %d --replication-factor %d --bootstrap-server $BOOTSTRAP\n", req.Topic, req.Partitions, req.Replicas))
+		fmt.Fprintf(&b, "kafka-topics.sh --create --topic %s --partitions %d --replication-factor %d --bootstrap-server $BOOTSTRAP\n", req.Topic, req.Partitions, req.Replicas)
 	case "delete":
-		b.WriteString(fmt.Sprintf("kafka-topics.sh --delete --topic %s --bootstrap-server $BOOTSTRAP\n", req.Topic))
+		fmt.Fprintf(&b, "kafka-topics.sh --delete --topic %s --bootstrap-server $BOOTSTRAP\n", req.Topic)
 	case "list":
 		b.WriteString("kafka-topics.sh --list --bootstrap-server $BOOTSTRAP\n")
 	}
-	b.WriteString(fmt.Sprintf("echo 'Kafka Topic %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo 'Kafka Topic %s 操作完成\n", req.Action)
 	return b.String()
 }
 
@@ -687,12 +687,17 @@ func (s *Server) handleMiddlewareRouting(w http.ResponseWriter, r *http.Request)
 	segments := strings.Split(path, "/")
 	switch len(segments) {
 	case 1:
-		// /api/v1/middleware/{deviceID}
-		if segments[0] != "" {
-			s.handleMiddleware(w, r, segments[0])
-		} else {
+		if segments[0] == "" {
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
 		}
+		// POST /api/v1/middleware/deploy：部署中间件（此前未接线——前端"部署"动作会 405）。
+		if r.Method == http.MethodPost && segments[0] == "deploy" {
+			s.handleMiddlewareDeploy(w, r)
+			return
+		}
+		// GET /api/v1/middleware/{deviceID}
+		s.handleMiddleware(w, r, segments[0])
 	case 2:
 		// /api/v1/middleware/{type}/{action}
 		if segments[0] != "" && segments[1] != "" {
@@ -763,21 +768,21 @@ func (s *Server) handleRedisSentinel(w http.ResponseWriter, r *http.Request) {
 func buildRedisSentinelScript(req redisSentinelReq) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	b.WriteString(fmt.Sprintf("SENTINEL_HOST=%q\n", req.Host))
+	fmt.Fprintf(&b, "SENTINEL_HOST=%q\n", req.Host)
 	switch req.Action {
 	case "monitor":
 		if req.Master == "" {
 			b.WriteString("echo 'sentinel monitor 需指定 master 名称' && exit 1\n")
 		} else {
-			b.WriteString(fmt.Sprintf("redis-cli -h %s SENTINEL monitor %s 127.0.0.1 6379 2\n", req.Host, req.Master))
-			b.WriteString(fmt.Sprintf("echo 'Sentinel 已监控 master: %s'\n", req.Master))
+			fmt.Fprintf(&b, "redis-cli -h %s SENTINEL monitor %s 127.0.0.1 6379 2\n", req.Host, req.Master)
+			fmt.Fprintf(&b, "echo 'Sentinel 已监控 master: %s'\n", req.Master)
 		}
 	case "failover":
 		if req.Master == "" {
 			b.WriteString("echo 'sentinel failover 需指定 master 名称' && exit 1\n")
 		} else {
-			b.WriteString(fmt.Sprintf("redis-cli -h %s SENTINEL failover %s\n", req.Host, req.Master))
-			b.WriteString(fmt.Sprintf("echo 'Sentinel 已触发 master %s 故障转移'\n", req.Master))
+			fmt.Fprintf(&b, "redis-cli -h %s SENTINEL failover %s\n", req.Host, req.Master)
+			fmt.Fprintf(&b, "echo 'Sentinel 已触发 master %s 故障转移'\n", req.Master)
 		}
 	}
 	return b.String()
@@ -840,16 +845,16 @@ func (s *Server) handleRedisCluster(w http.ResponseWriter, r *http.Request) {
 func buildRedisClusterScript(req redisClusterReq) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	b.WriteString(fmt.Sprintf("CLUSTER_HOST=%q\n", req.Host))
+	fmt.Fprintf(&b, "CLUSTER_HOST=%q\n", req.Host)
 	switch req.Action {
 	case "nodes":
-		b.WriteString(fmt.Sprintf("redis-cli -h %s CLUSTER NODES\n", req.Host))
+		fmt.Fprintf(&b, "redis-cli -h %s CLUSTER NODES\n", req.Host)
 	case "slots":
-		b.WriteString(fmt.Sprintf("redis-cli -h %s CLUSTER SLOTS\n", req.Host))
+		fmt.Fprintf(&b, "redis-cli -h %s CLUSTER SLOTS\n", req.Host)
 	case "rebalance":
-		b.WriteString(fmt.Sprintf("echo 'rebalance 需在 redis-cli --cluster rebalance 中手动执行，host=%s'\n", req.Host))
+		fmt.Fprintf(&b, "echo 'rebalance 需在 redis-cli --cluster rebalance 中手动执行，host=%s'\n", req.Host)
 	}
-	b.WriteString(fmt.Sprintf("echo 'Redis Cluster %s 操作完成 (host=%s)\n", req.Action, req.Host))
+	fmt.Fprintf(&b, "echo 'Redis Cluster %s 操作完成 (host=%s)\n", req.Action, req.Host)
 	return b.String()
 }
 
@@ -925,14 +930,14 @@ func (s *Server) handleRabbitMQResource(w http.ResponseWriter, r *http.Request, 
 func buildRabbitMQScript(req rabbitMQReq, resource string) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	b.WriteString(fmt.Sprintf("VHOST=%q\n", req.Vhost))
+	fmt.Fprintf(&b, "VHOST=%q\n", req.Vhost)
 	switch resource {
 	case "vhost":
 		switch req.Action {
 		case "create":
-			b.WriteString(fmt.Sprintf("rabbitmqctl add_vhost %s\n", shellQuote(req.Name)))
+			fmt.Fprintf(&b, "rabbitmqctl add_vhost %s\n", shellQuote(req.Name))
 		case "delete":
-			b.WriteString(fmt.Sprintf("rabbitmqctl delete_vhost %s\n", shellQuote(req.Name)))
+			fmt.Fprintf(&b, "rabbitmqctl delete_vhost %s\n", shellQuote(req.Name))
 		case "list":
 			b.WriteString("rabbitmqctl list_vhosts\n")
 		}
@@ -942,12 +947,12 @@ func buildRabbitMQScript(req rabbitMQReq, resource string) string {
 			if req.Name == "" {
 				b.WriteString("echo 'queue create 需指定 queue 名称' && exit 1\n")
 			} else {
-				b.WriteString(fmt.Sprintf("rabbitmqctl declare_queue name=%s vhost=%s\n", shellQuote(req.Name), req.Vhost))
+				fmt.Fprintf(&b, "rabbitmqctl declare_queue name=%s vhost=%s\n", shellQuote(req.Name), req.Vhost)
 			}
 		case "delete":
-			b.WriteString(fmt.Sprintf("rabbitmqctl delete_queue name=%s vhost=%s\n", shellQuote(req.Name), req.Vhost))
+			fmt.Fprintf(&b, "rabbitmqctl delete_queue name=%s vhost=%s\n", shellQuote(req.Name), req.Vhost)
 		case "list":
-			b.WriteString(fmt.Sprintf("rabbitmqctl list_queues -p %s\n", req.Vhost))
+			fmt.Fprintf(&b, "rabbitmqctl list_queues -p %s\n", req.Vhost)
 		}
 	case "exchange":
 		switch req.Action {
@@ -955,15 +960,15 @@ func buildRabbitMQScript(req rabbitMQReq, resource string) string {
 			if req.Name == "" {
 				b.WriteString("echo 'exchange create 需指定 exchange 名称' && exit 1\n")
 			} else {
-				b.WriteString(fmt.Sprintf("rabbitmqctl declare_exchange name=%s type=direct vhost=%s\n", shellQuote(req.Name), req.Vhost))
+				fmt.Fprintf(&b, "rabbitmqctl declare_exchange name=%s type=direct vhost=%s\n", shellQuote(req.Name), req.Vhost)
 			}
 		case "delete":
-			b.WriteString(fmt.Sprintf("rabbitmqctl delete_exchange name=%s vhost=%s\n", shellQuote(req.Name), req.Vhost))
+			fmt.Fprintf(&b, "rabbitmqctl delete_exchange name=%s vhost=%s\n", shellQuote(req.Name), req.Vhost)
 		case "list":
-			b.WriteString(fmt.Sprintf("rabbitmqctl list_exchanges -p %s\n", req.Vhost))
+			fmt.Fprintf(&b, "rabbitmqctl list_exchanges -p %s\n", req.Vhost)
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo 'RabbitMQ %s %s 操作完成\n", resource, req.Action))
+	fmt.Fprintf(&b, "echo 'RabbitMQ %s %s 操作完成\n", resource, req.Action)
 	return b.String()
 }
 
@@ -1037,13 +1042,13 @@ func buildActiveMQScript(req activeMQReq) string {
 		if req.Name == "" {
 			b.WriteString("echo 'create 需指定名称' && exit 1\n")
 		} else {
-			b.WriteString(fmt.Sprintf("activemq create %s --type %s\n", shellQuote(req.Name), req.Type))
+			fmt.Fprintf(&b, "activemq create %s --type %s\n", shellQuote(req.Name), req.Type)
 		}
 	case "delete":
-		b.WriteString(fmt.Sprintf("activemq delete %s --type %s\n", shellQuote(req.Name), req.Type))
+		fmt.Fprintf(&b, "activemq delete %s --type %s\n", shellQuote(req.Name), req.Type)
 	case "list":
-		b.WriteString(fmt.Sprintf("activemq list %s\n", req.Type))
+		fmt.Fprintf(&b, "activemq list %s\n", req.Type)
 	}
-	b.WriteString(fmt.Sprintf("echo 'ActiveMQ %s %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo 'ActiveMQ %s %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }

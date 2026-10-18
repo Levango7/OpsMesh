@@ -152,7 +152,7 @@ func (s *Server) handleSystemUsers(w http.ResponseWriter, r *http.Request) {
 func buildUserAddScript(req systemOpRequest) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	b.WriteString(fmt.Sprintf("if id %q >/dev/null 2>&1; then echo 'user already exists: %s'; exit 0; fi\n", req.Username, req.Username))
+	fmt.Fprintf(&b, "if id %q >/dev/null 2>&1; then echo 'user already exists: %s'; exit 0; fi\n", req.Username, req.Username)
 	args := fmt.Sprintf("%q", req.Username)
 	if req.Group != "" && safeNameRe.MatchString(req.Group) {
 		args += fmt.Sprintf(" -g %q", req.Group)
@@ -163,8 +163,8 @@ func buildUserAddScript(req systemOpRequest) string {
 	if req.Shell != "" && strings.HasPrefix(req.Shell, "/") {
 		args += fmt.Sprintf(" -s %q", req.Shell)
 	}
-	b.WriteString(fmt.Sprintf("useradd %s\n", args))
-	b.WriteString(fmt.Sprintf("echo 'user created: %s'\n", req.Username))
+	fmt.Fprintf(&b, "useradd %s\n", args)
+	fmt.Fprintf(&b, "echo 'user created: %s'\n", req.Username)
 	return b.String()
 }
 
@@ -295,7 +295,7 @@ func buildFirewallScript(req systemOpRequest, add bool) string {
 		if !add {
 			verb = "--remove-port"
 		}
-		b.WriteString(fmt.Sprintf("  firewall-cmd --permanent %s=%s && firewall-cmd --reload\n", verb, portSpec))
+		fmt.Fprintf(&b, "  firewall-cmd --permanent %s=%s && firewall-cmd --reload\n", verb, portSpec)
 	}
 	b.WriteString("else\n")
 	// iptables 回退。
@@ -310,9 +310,9 @@ func buildFirewallScript(req systemOpRequest, add bool) string {
 			proto = "tcp"
 		}
 		if add {
-			b.WriteString(fmt.Sprintf("  iptables -A %s -p %s --dport %s -j %s\n", chain, proto, req.Port, action))
+			fmt.Fprintf(&b, "  iptables -A %s -p %s --dport %s -j %s\n", chain, proto, req.Port, action)
 		} else {
-			b.WriteString(fmt.Sprintf("  iptables -D %s -p %s --dport %s -j %s || true\n", chain, proto, req.Port, action))
+			fmt.Fprintf(&b, "  iptables -D %s -p %s --dport %s -j %s || true\n", chain, proto, req.Port, action)
 		}
 	}
 	b.WriteString("fi\n")
@@ -396,19 +396,19 @@ func buildPackageScript(req packageOpRequest) string {
 	b.WriteString("set -e\n")
 	b.WriteString("# 自动探测包管理器：yum（RHEL/CentOS/Fedora）或 apt（Debian/Ubuntu）\n")
 	b.WriteString("if command -v yum >/dev/null 2>&1; then\n")
-	b.WriteString(fmt.Sprintf("  PKG_MGR=yum\n"))
+	fmt.Fprintf(&b, "  PKG_MGR=yum\n")
 	b.WriteString("elif command -v dnf >/dev/null 2>&1; then\n")
-	b.WriteString(fmt.Sprintf("  PKG_MGR=dnf\n"))
+	fmt.Fprintf(&b, "  PKG_MGR=dnf\n")
 	b.WriteString("elif command -v apt-get >/dev/null 2>&1; then\n")
-	b.WriteString(fmt.Sprintf("  PKG_MGR=apt-get\n"))
+	fmt.Fprintf(&b, "  PKG_MGR=apt-get\n")
 	b.WriteString("else\n")
-	b.WriteString(fmt.Sprintf("  echo '未找到 yum/dnf/apt-get 包管理器' && exit 1\n"))
+	fmt.Fprintf(&b, "  echo '未找到 yum/dnf/apt-get 包管理器' && exit 1\n")
 	b.WriteString("fi\n")
-	b.WriteString(fmt.Sprintf("PKG=%q\n", req.Package))
+	fmt.Fprintf(&b, "PKG=%q\n", req.Package)
 	switch req.Action {
 	case "install":
 		b.WriteString("if $PKG_MGR list installed \"$PKG\" >/dev/null 2>&1; then\n")
-		b.WriteString(fmt.Sprintf("  echo '包已安装: $PKG'\n"))
+		fmt.Fprintf(&b, "  echo '包已安装: $PKG'\n")
 		b.WriteString("else\n")
 		if req.Manager == "apt" || req.Manager == "apt-get" {
 			b.WriteString("  apt-get update -qq && apt-get install -y \"$PKG\"\n")
@@ -416,17 +416,17 @@ func buildPackageScript(req packageOpRequest) string {
 			b.WriteString("  $PKG_MGR install -y \"$PKG\"\n")
 		}
 		b.WriteString("fi\n")
-		b.WriteString(fmt.Sprintf("echo '包安装完成: $PKG'\n"))
+		fmt.Fprintf(&b, "echo '包安装完成: $PKG'\n")
 	case "remove":
 		b.WriteString("if $PKG_MGR list installed \"$PKG\" >/dev/null 2>&1; then\n")
-		b.WriteString(fmt.Sprintf("  $PKG_MGR remove -y \"$PKG\"\n"))
+		fmt.Fprintf(&b, "  $PKG_MGR remove -y \"$PKG\"\n")
 		b.WriteString("  echo '包已卸载: $PKG'\n")
 		b.WriteString("else\n")
-		b.WriteString(fmt.Sprintf("  echo '包未安装: $PKG'\n"))
+		fmt.Fprintf(&b, "  echo '包未安装: $PKG'\n")
 		b.WriteString("fi\n")
 	case "upgrade":
-		b.WriteString(fmt.Sprintf("  $PKG_MGR install -y \"$PKG\"\n"))
-		b.WriteString(fmt.Sprintf("echo '包已升级: $PKG'\n"))
+		fmt.Fprintf(&b, "  $PKG_MGR install -y \"$PKG\"\n")
+		fmt.Fprintf(&b, "echo '包已升级: $PKG'\n")
 	}
 	return b.String()
 }

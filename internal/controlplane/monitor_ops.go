@@ -316,7 +316,7 @@ func buildMonitorActionScript(req monitorOpsRequest) string {
 			b.WriteString("pgrep -f oap-server >/dev/null && echo 'running' || echo 'not running'\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '监控系统 %s %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '监控系统 %s %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 
@@ -373,11 +373,11 @@ func buildZabbixHostScript(req zabbixHostReq) string {
 	case "list":
 		b.WriteString("curl -s -X POST \"$ZABBIX_URL\" -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"hostid\",\"host\",\"status\"]},\"id\":1}'\n")
 	case "create":
-		b.WriteString(fmt.Sprintf("echo 'Zabbix host.create: %s (%s) — 需先 auth 获取 token 后调用 host.create'\n", req.Host, req.HostIP))
+		fmt.Fprintf(&b, "echo 'Zabbix host.create: %s (%s) — 需先 auth 获取 token 后调用 host.create'\n", req.Host, req.HostIP)
 	case "delete":
-		b.WriteString(fmt.Sprintf("echo 'Zabbix host.delete: %s'\n", req.Host))
+		fmt.Fprintf(&b, "echo 'Zabbix host.delete: %s'\n", req.Host)
 	}
-	b.WriteString(fmt.Sprintf("echo 'Zabbix 主机 %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo 'Zabbix 主机 %s 操作完成\n", req.Action)
 	return b.String()
 }
 
@@ -429,7 +429,7 @@ func buildZabbixItemScript(req zabbixItemReq) string {
 	if search == "" {
 		search = req.Host
 	}
-	b.WriteString(fmt.Sprintf("curl -s -X POST \"$ZABBIX_URL\" -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"item.get\",\"params\":{\"output\":[\"itemid\",\"name\",\"key_\",\"lastvalue\",\"lastclock\"],\"search\":{\"name\":\"%s\"}},\"id\":1}'\n", search))
+	fmt.Fprintf(&b, "curl -s -X POST \"$ZABBIX_URL\" -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"item.get\",\"params\":{\"output\":[\"itemid\",\"name\",\"key_\",\"lastvalue\",\"lastclock\"],\"search\":{\"name\":\"%s\"}},\"id\":1}'\n", search)
 	b.WriteString("echo 'Zabbix 监控项查询完成'\n")
 	return b.String()
 }
@@ -489,8 +489,8 @@ func buildNightingaleQueryScript(req nightingaleQueryReq) string {
 	if end == 0 {
 		end = 0
 	}
-	b.WriteString(fmt.Sprintf("curl -s -H \"Authorization: Bearer $N9E_TOKEN\" \"$N9E_URL/api/v1/query_range?query=%s&start=%d&end=%d&step=%d\"\n",
-		urlQueryEscape(req.Query), start, end, req.Step))
+	fmt.Fprintf(&b, "curl -s -H \"Authorization: Bearer $N9E_TOKEN\" \"$N9E_URL/api/v1/query_range?query=%s&start=%d&end=%d&step=%d\"\n",
+		urlQueryEscape(req.Query), start, end, req.Step)
 	b.WriteString("echo '夜莺查询完成'\n")
 	return b.String()
 }
@@ -541,9 +541,9 @@ func buildSkyWalkingTraceScript(req skywalkingTraceReq) string {
 	b.WriteString("# SkyWalking 链路查询（GraphQL API，默认 UI:8080/graphql）\n")
 	b.WriteString("SW_URL=${SW_URL:-http://localhost:8080/graphql}\n")
 	if req.TraceID != "" {
-		b.WriteString(fmt.Sprintf("curl -s -X POST \"$SW_URL\" -H 'Content-Type: application/json' -d '{\"query\":\"query trace($traceId: ID!) { trace(traceId: $traceId) { spans { traceId segmentId spanId parentSpanId serviceCode startTime endTime endpointName type peer } } }\",\"variables\":{\"traceId\":\"%s\"}}'\n", req.TraceID))
+		fmt.Fprintf(&b, "curl -s -X POST \"$SW_URL\" -H 'Content-Type: application/json' -d '{\"query\":\"query trace($traceId: ID!) { trace(traceId: $traceId) { spans { traceId segmentId spanId parentSpanId serviceCode startTime endTime endpointName type peer } } }\",\"variables\":{\"traceId\":\"%s\"}}'\n", req.TraceID)
 	} else {
-		b.WriteString(fmt.Sprintf("echo 'SkyWalking 服务 %s 查询 — 需先调用 queryBasicTraces 获取 traceId 列表'\n", req.ServiceID))
+		fmt.Fprintf(&b, "echo 'SkyWalking 服务 %s 查询 — 需先调用 queryBasicTraces 获取 traceId 列表'\n", req.ServiceID)
 	}
 	b.WriteString("echo 'SkyWalking 链路查询完成'\n")
 	return b.String()

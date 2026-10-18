@@ -181,7 +181,7 @@ func buildNTPScript(req ntpReq) string {
 		b.WriteString("cat > \"$TARGET\" <<'OPSMESH_NTP_EOF'\n")
 		b.WriteString("# OpsMesh 托管：NTP 时间源配置\n")
 		for _, srv := range req.Servers {
-			b.WriteString(fmt.Sprintf("server %s iburst\n", srv))
+			fmt.Fprintf(&b, "server %s iburst\n", srv)
 		}
 		b.WriteString("OPSMESH_NTP_EOF\n")
 		b.WriteString("systemctl restart chronyd 2>/dev/null || systemctl restart chrony 2>/dev/null || service chronyd restart || true\n")
@@ -199,12 +199,12 @@ func buildNTPScript(req ntpReq) string {
 		b.WriteString("# OpsMesh 托管：chrony 服务端（内网时间源）\n")
 		b.WriteString("local stratum 10\n")
 		if req.AllowCIDR != "" {
-			b.WriteString(fmt.Sprintf("allow %s\n", req.AllowCIDR))
+			fmt.Fprintf(&b, "allow %s\n", req.AllowCIDR)
 		} else {
 			b.WriteString("allow 0.0.0.0/0\n")
 		}
 		for _, srv := range req.Servers {
-			b.WriteString(fmt.Sprintf("server %s iburst\n", srv))
+			fmt.Fprintf(&b, "server %s iburst\n", srv)
 		}
 		b.WriteString("OPSMESH_NTP_EOF\n")
 		b.WriteString("systemctl enable --now chronyd 2>/dev/null || systemctl enable --now chrony 2>/dev/null || true\n")
@@ -215,7 +215,7 @@ func buildNTPScript(req ntpReq) string {
 
 	case "timezone":
 		b.WriteString("# 设置时区\n")
-		b.WriteString(fmt.Sprintf("timedatectl set-timezone %s\n", req.Timezone))
+		fmt.Fprintf(&b, "timedatectl set-timezone %s\n", req.Timezone)
 		b.WriteString("timedatectl | grep -E 'Time zone|Local time' || true\n")
 
 	case "service":
@@ -230,7 +230,7 @@ func buildNTPScript(req ntpReq) string {
 		case "status":
 			b.WriteString("systemctl is-active chronyd 2>/dev/null || systemctl is-active chrony 2>/dev/null || echo 'not running'\n")
 		}
-		b.WriteString(fmt.Sprintf("echo 'chronyd %s 操作完成'\n", req.Service))
+		fmt.Fprintf(&b, "echo 'chronyd %s 操作完成'\n", req.Service)
 	}
 	return b.String()
 }

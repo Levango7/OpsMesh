@@ -247,9 +247,9 @@ func buildAnsibleAdhocScript(req ansibleAdhocReq, pattern string) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	if req.Args != "" {
-		b.WriteString(fmt.Sprintf("ansible %s -m %s -a %s\n", pattern, req.Module, shellQuote(req.Args)))
+		fmt.Fprintf(&b, "ansible %s -m %s -a %s\n", pattern, req.Module, shellQuote(req.Args))
 	} else {
-		b.WriteString(fmt.Sprintf("ansible %s -m %s\n", pattern, req.Module))
+		fmt.Fprintf(&b, "ansible %s -m %s\n", pattern, req.Module)
 	}
 	b.WriteString("echo 'Ansible ad-hoc 执行完成'\n")
 	return b.String()
@@ -309,7 +309,7 @@ func buildAnsiblePlaybookScript(req ansiblePlaybookReq) string {
 	pbPath := "/etc/ansible/playbooks/" + req.Name + ".yml"
 	if req.Content != "" {
 		b.WriteString("# 写入剧本（heredoc 防止 shell 解释）\n")
-		b.WriteString(fmt.Sprintf("cat > %s <<'ANSIBLE_PLAYBOOK_EOF'\n", pbPath))
+		fmt.Fprintf(&b, "cat > %s <<'ANSIBLE_PLAYBOOK_EOF'\n", pbPath)
 		b.WriteString(req.Content)
 		if !strings.HasSuffix(req.Content, "\n") {
 			b.WriteString("\n")
@@ -318,13 +318,13 @@ func buildAnsiblePlaybookScript(req ansiblePlaybookReq) string {
 	}
 	switch req.Action {
 	case "syntax":
-		b.WriteString(fmt.Sprintf("ansible-playbook --syntax-check %s\n", pbPath))
+		fmt.Fprintf(&b, "ansible-playbook --syntax-check %s\n", pbPath)
 	case "check":
-		b.WriteString(fmt.Sprintf("ansible-playbook --check %s\n", pbPath))
+		fmt.Fprintf(&b, "ansible-playbook --check %s\n", pbPath)
 	case "run":
-		b.WriteString(fmt.Sprintf("ansible-playbook %s\n", pbPath))
+		fmt.Fprintf(&b, "ansible-playbook %s\n", pbPath)
 	}
-	b.WriteString(fmt.Sprintf("echo 'Ansible playbook %s 执行完成\n", req.Action))
+	fmt.Fprintf(&b, "echo 'Ansible playbook %s 执行完成\n", req.Action)
 	return b.String()
 }
 

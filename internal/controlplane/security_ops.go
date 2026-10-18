@@ -159,11 +159,11 @@ func buildSecurityScanScript(req securityScanReq) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	if req.CVE != "" {
-		b.WriteString(fmt.Sprintf("# 按 CVE 检索受影响包: %s\n", req.CVE))
+		fmt.Fprintf(&b, "# 按 CVE 检索受影响包: %s\n", req.CVE)
 		b.WriteString("if command -v yum >/dev/null 2>&1; then\n")
-		b.WriteString(fmt.Sprintf("  yum updateinfo list cve.%s 2>/dev/null || yum updateinfo list security\n", strings.ToLower(req.CVE)))
+		fmt.Fprintf(&b, "  yum updateinfo list cve.%s 2>/dev/null || yum updateinfo list security\n", strings.ToLower(req.CVE))
 		b.WriteString("elif command -v dnf >/dev/null 2>&1; then\n")
-		b.WriteString(fmt.Sprintf("  dnf updateinfo list cve.%s 2>/dev/null || dnf updateinfo list security\n", strings.ToLower(req.CVE)))
+		fmt.Fprintf(&b, "  dnf updateinfo list cve.%s 2>/dev/null || dnf updateinfo list security\n", strings.ToLower(req.CVE))
 		b.WriteString("elif command -v apt-get >/dev/null 2>&1; then\n")
 		b.WriteString("  echo 'Debian/Ubuntu 按 CVE 检索需 ubuntu-security-status 或 debsecan 工具'\n")
 		b.WriteString("  apt list --upgradable 2>/dev/null | head -50\n")
@@ -193,7 +193,7 @@ func buildSecurityScanScript(req securityScanReq) string {
 //   - sysctl 类：临时生效 + /etc/sysctl.d 持久化
 //   - 服务类：systemctl enable --now
 //   - 文件权限类：chmod 至基线值
-var baselineFixScripts = map[string]string{
+var baselineFixScripts = map[string]string{ //nolint:gosec // 修复脚本模板含 sshd 配置项名（PasswordAuthentication 等），非硬编码凭据。
 	"cis-ssh-01": `sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && systemctl reload sshd || systemctl reload ssh
 echo 'SSH PermitRootLogin=no 已设置'`,
 	"cis-ssh-02": `sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config && systemctl reload sshd || systemctl reload ssh
@@ -290,7 +290,7 @@ func buildSecurityBaselineScript(req securityBaselineReq) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	// 规则检查脚本（与 compliance 引擎一致的精简检查集）。
-	checks := map[string]string{
+	checks := map[string]string{ //nolint:gosec // 检查脚本含 sshd 配置项名（PasswordAuthentication 等），非硬编码凭据。
 		"cis-ssh-01":      `grep -qE "^PermitRootLogin\s+no" /etc/ssh/sshd_config && echo "PASS cis-ssh-01" || echo "FAIL cis-ssh-01"`,
 		"cis-ssh-02":      `grep -qE "^PasswordAuthentication\s+no" /etc/ssh/sshd_config && echo "PASS cis-ssh-02" || echo "FAIL cis-ssh-02"`,
 		"cis-firewall-01": `(systemctl is-active firewalld >/dev/null 2>&1 || systemctl is-active ufw >/dev/null 2>&1) && echo "PASS cis-firewall-01" || echo "FAIL cis-firewall-01"`,
@@ -326,7 +326,7 @@ func buildSecurityBaselineScript(req securityBaselineReq) string {
 		b.WriteString("# 基线修复\n")
 		for _, id := range selected {
 			if fix, ok := baselineFixScripts[id]; ok {
-				b.WriteString(fmt.Sprintf("# --- 修复 %s ---\n", id))
+				fmt.Fprintf(&b, "# --- 修复 %s ---\n", id)
 				b.WriteString(fix + "\n")
 			}
 		}
@@ -395,8 +395,8 @@ func buildSecurityPatchScript(req securityPatchReq) string {
 		b.WriteString("# 查询组件当前版本与可用版本\n")
 		if len(req.Packages) > 0 {
 			for _, pkg := range req.Packages {
-				b.WriteString(fmt.Sprintf("echo '=== %s ==='\n", pkg))
-				b.WriteString(fmt.Sprintf("if command -v rpm >/dev/null 2>&1; then rpm -q %s 2>/dev/null || echo '未安装'; yum list available %s 2>/dev/null | tail -3 || true; elif command -v dpkg >/dev/null 2>&1; then dpkg -l %s 2>/dev/null | tail -2 || echo '未安装'; apt list --upgradable 2>/dev/null | grep '^%s/' || true; fi\n", pkg, pkg, pkg, pkg))
+				fmt.Fprintf(&b, "echo '=== %s ==='\n", pkg)
+				fmt.Fprintf(&b, "if command -v rpm >/dev/null 2>&1; then rpm -q %s 2>/dev/null || echo '未安装'; yum list available %s 2>/dev/null | tail -3 || true; elif command -v dpkg >/dev/null 2>&1; then dpkg -l %s 2>/dev/null | tail -2 || echo '未安装'; apt list --upgradable 2>/dev/null | grep '^%s/' || true; fi\n", pkg, pkg, pkg, pkg)
 			}
 		} else {
 			b.WriteString("if command -v yum >/dev/null 2>&1; then yum check-update 2>/dev/null | tail -n +2 | head -100 || true; elif command -v apt-get >/dev/null 2>&1; then apt list --upgradable 2>/dev/null | head -100; fi\n")
@@ -405,9 +405,9 @@ func buildSecurityPatchScript(req securityPatchReq) string {
 		b.WriteString("# 执行组件更新\n")
 		if len(req.Packages) > 0 {
 			if req.SecurityOnly {
-				b.WriteString(fmt.Sprintf("if command -v yum >/dev/null 2>&1; then yum update -y --security %s || yum update -y %s; elif command -v apt-get >/dev/null 2>&1; then apt-get install -y --only-upgrade %s; fi\n", pkgList, pkgList, pkgList))
+				fmt.Fprintf(&b, "if command -v yum >/dev/null 2>&1; then yum update -y --security %s || yum update -y %s; elif command -v apt-get >/dev/null 2>&1; then apt-get install -y --only-upgrade %s; fi\n", pkgList, pkgList, pkgList)
 			} else {
-				b.WriteString(fmt.Sprintf("if command -v yum >/dev/null 2>&1; then yum update -y %s; elif command -v dnf >/dev/null 2>&1; then dnf update -y %s; elif command -v apt-get >/dev/null 2>&1; then apt-get install -y --only-upgrade %s; fi\n", pkgList, pkgList, pkgList))
+				fmt.Fprintf(&b, "if command -v yum >/dev/null 2>&1; then yum update -y %s; elif command -v dnf >/dev/null 2>&1; then dnf update -y %s; elif command -v apt-get >/dev/null 2>&1; then apt-get install -y --only-upgrade %s; fi\n", pkgList, pkgList, pkgList)
 			}
 		} else {
 			b.WriteString("if command -v yum >/dev/null 2>&1; then yum update -y --security || yum update -y --bugfix; elif command -v apt-get >/dev/null 2>&1; then apt-get upgrade -y; fi\n")
@@ -462,9 +462,9 @@ func buildSecurityRollbackScript(req securityRollbackReq) string {
 	b.WriteString("set -e\n")
 	b.WriteString("# 回滚最近的更新事务\n")
 	b.WriteString("if command -v yum >/dev/null 2>&1; then\n")
-	b.WriteString(fmt.Sprintf("  yum history undo %s -y || echo '回滚失败（事务不存在或不可逆）'\n", req.TransactionID))
+	fmt.Fprintf(&b, "  yum history undo %s -y || echo '回滚失败（事务不存在或不可逆）'\n", req.TransactionID)
 	b.WriteString("elif command -v dnf >/dev/null 2>&1; then\n")
-	b.WriteString(fmt.Sprintf("  dnf history undo %s -y || echo '回滚失败'\n", req.TransactionID))
+	fmt.Fprintf(&b, "  dnf history undo %s -y || echo '回滚失败'\n", req.TransactionID)
 	b.WriteString("elif command -v apt-get >/dev/null 2>&1; then\n")
 	b.WriteString("  echo 'Debian/Ubuntu 回滚需手动降级：apt-get install <pkg>=<old-version>'\n")
 	b.WriteString(fiProbe())

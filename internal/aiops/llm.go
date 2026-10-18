@@ -15,8 +15,8 @@ import (
 type Provider string
 
 const (
-	ProviderKilo     Provider = "kilo"      // Kilo Gateway (默认)
-	ProviderOpenAI   Provider = "openai"    // OpenAI 兼容 API
+	ProviderKilo      Provider = "kilo"      // Kilo Gateway (默认)
+	ProviderOpenAI    Provider = "openai"    // OpenAI 兼容 API
 	ProviderAnthropic Provider = "anthropic" // Anthropic 兼容 API (未来扩展)
 )
 
@@ -24,9 +24,9 @@ const (
 type Config struct {
 	Enabled     bool     `json:"enabled"`
 	Provider    Provider `json:"provider"`
-	Model       string   `json:"model"`      // 模型 ID，如 qvac/qwen3.5-0.8b
-	BaseURL     string   `json:"baseURL"`    // API 端点
-	APIKey      string   `json:"-"`          // 密钥（不序列化）
+	Model       string   `json:"model"`       // 模型 ID，如 qvac/qwen3.5-0.8b
+	BaseURL     string   `json:"baseURL"`     // API 端点
+	APIKey      string   `json:"-"`           // 密钥（不序列化）
 	Temperature float64  `json:"temperature"` // 默认 0.3
 	MaxTokens   int      `json:"maxTokens"`   // 默认 4096
 	Timeout     int      `json:"timeout"`     // 秒，默认 30

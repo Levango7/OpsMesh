@@ -213,22 +213,22 @@ func buildKindProvisionScript(req k8sProvisionReq) string {
 	}
 	if req.Mode == "multi" {
 		b.WriteString("# 多节点集群：生成 kind 配置\n")
-		b.WriteString(fmt.Sprintf("cat > /tmp/kind-%s.yaml <<EOF\nkind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnodes:\n- role: control-plane\n", cluster))
-		b.WriteString(fmt.Sprintf("  extraPortMappings:\n  - containerPort: 30000\n    hostPort: 30000\n    protocol: TCP\n"))
+		fmt.Fprintf(&b, "cat > /tmp/kind-%s.yaml <<EOF\nkind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnodes:\n- role: control-plane\n", cluster)
+		fmt.Fprintf(&b, "  extraPortMappings:\n  - containerPort: 30000\n    hostPort: 30000\n    protocol: TCP\n")
 		for i := 0; i < nodes; i++ {
 			b.WriteString("- role: worker\n")
 		}
 		b.WriteString("EOF\n")
 		ver := strings.TrimPrefix(req.Version, "v")
 		if ver != "" {
-			b.WriteString(fmt.Sprintf("kind create cluster --name %s --config /tmp/kind-%s.yaml --image kindest/node:v%s || true\n", cluster, cluster, ver))
+			fmt.Fprintf(&b, "kind create cluster --name %s --config /tmp/kind-%s.yaml --image kindest/node:v%s || true\n", cluster, cluster, ver)
 		} else {
-			b.WriteString(fmt.Sprintf("kind create cluster --name %s --config /tmp/kind-%s.yaml || true\n", cluster, cluster))
+			fmt.Fprintf(&b, "kind create cluster --name %s --config /tmp/kind-%s.yaml || true\n", cluster, cluster)
 		}
 	} else {
-		b.WriteString(fmt.Sprintf("kind create cluster --name %s || true\n", cluster))
+		fmt.Fprintf(&b, "kind create cluster --name %s || true\n", cluster)
 	}
-	b.WriteString(fmt.Sprintf("kind get kubeconfig --name %s > /etc/kubernetes/kind-%s.kubeconfig || true\n", cluster, cluster))
+	fmt.Fprintf(&b, "kind get kubeconfig --name %s > /etc/kubernetes/kind-%s.kubeconfig || true\n", cluster, cluster)
 	b.WriteString("echo 'kind 集群已创建'\n")
 	return b.String()
 }
@@ -323,11 +323,11 @@ func buildK8sLifecycleScript(req k8sLifecycleReq) string {
 		b.WriteString("# kind 集群生命周期\n")
 		switch req.Action {
 		case "start":
-			b.WriteString(fmt.Sprintf("docker start $(kind get nodes --name %s 2>/dev/null) 2>/dev/null || true\n", cluster))
+			fmt.Fprintf(&b, "docker start $(kind get nodes --name %s 2>/dev/null) 2>/dev/null || true\n", cluster)
 		case "stop":
-			b.WriteString(fmt.Sprintf("docker stop $(kind get nodes --name %s 2>/dev/null) 2>/dev/null || true\n", cluster))
+			fmt.Fprintf(&b, "docker stop $(kind get nodes --name %s 2>/dev/null) 2>/dev/null || true\n", cluster)
 		case "delete":
-			b.WriteString(fmt.Sprintf("kind delete cluster --name %s || true\n", cluster))
+			fmt.Fprintf(&b, "kind delete cluster --name %s || true\n", cluster)
 		case "status":
 			b.WriteString("kind get clusters 2>/dev/null || echo 'not running'\n")
 		}
@@ -344,7 +344,7 @@ func buildK8sLifecycleScript(req k8sLifecycleReq) string {
 			b.WriteString("systemctl is-active k3s || echo 'not running'\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo 'K8s(%s) %s 操作完成\n", req.Tool, req.Action))
+	fmt.Fprintf(&b, "echo 'K8s(%s) %s 操作完成\n", req.Tool, req.Action)
 	return b.String()
 }
 
@@ -410,13 +410,13 @@ func buildK8sJoinScript(req k8sJoinReq) string {
 	case "kubeadm":
 		b.WriteString("# kubeadm 节点加入\n")
 		if req.Role == "controlplane" {
-			b.WriteString(fmt.Sprintf("kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash %s --control-plane || true\n", req.MasterAddr, req.Token, defaultIfEmpty(req.CertHash, "sha256:<hash>")))
+			fmt.Fprintf(&b, "kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash %s --control-plane || true\n", req.MasterAddr, req.Token, defaultIfEmpty(req.CertHash, "sha256:<hash>"))
 		} else {
-			b.WriteString(fmt.Sprintf("kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash %s || true\n", req.MasterAddr, req.Token, defaultIfEmpty(req.CertHash, "sha256:<hash>")))
+			fmt.Fprintf(&b, "kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash %s || true\n", req.MasterAddr, req.Token, defaultIfEmpty(req.CertHash, "sha256:<hash>"))
 		}
 	case "k3s":
 		b.WriteString("# k3s 节点加入（agent）\n")
-		b.WriteString(fmt.Sprintf("curl -sfL https://get.k3s.io | K3S_URL=https://%s:6443 K3S_TOKEN=%s sh - || true\n", req.MasterAddr, req.Token))
+		fmt.Fprintf(&b, "curl -sfL https://get.k3s.io | K3S_URL=https://%s:6443 K3S_TOKEN=%s sh - || true\n", req.MasterAddr, req.Token)
 	}
 	b.WriteString("echo '节点加入完成'\n")
 	return b.String()
@@ -472,7 +472,7 @@ func buildK8sKubeconfigScript(req k8sLifecycleReq) string {
 	case "kubeadm":
 		b.WriteString("cat /etc/kubernetes/admin.conf\n")
 	case "kind":
-		b.WriteString(fmt.Sprintf("kind get kubeconfig --name %s\n", defaultIfEmpty(req.ClusterName, "opsmesh-kind")))
+		fmt.Fprintf(&b, "kind get kubeconfig --name %s\n", defaultIfEmpty(req.ClusterName, "opsmesh-kind"))
 	case "k3s":
 		b.WriteString("cat /etc/rancher/k3s/k3s.yaml\n")
 	}

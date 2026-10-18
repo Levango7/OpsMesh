@@ -181,16 +181,16 @@ func buildKernelParamScript(req kernelParamReq) string {
 	switch req.Action {
 	case "query":
 		if req.Name != "" {
-			b.WriteString(fmt.Sprintf("sysctl %s\n", req.Name))
+			fmt.Fprintf(&b, "sysctl %s\n", req.Name)
 		} else {
 			b.WriteString("sysctl -a 2>/dev/null | head -200\n")
 		}
 	case "set":
 		// 临时生效 + 持久化到 /etc/sysctl.d/99-opsmesh.conf
-		b.WriteString(fmt.Sprintf("sysctl -w %s=%s\n", req.Name, req.Value))
+		fmt.Fprintf(&b, "sysctl -w %s=%s\n", req.Name, req.Value)
 		b.WriteString("# 持久化（幂等：先删除同名行再追加）\n")
-		b.WriteString(fmt.Sprintf("sed -i '/^%s[[:space:]]*=/d' /etc/sysctl.d/99-opsmesh.conf 2>/dev/null || true\n", req.Name))
-		b.WriteString(fmt.Sprintf("echo '%s = %s' >> /etc/sysctl.d/99-opsmesh.conf\n", req.Name, req.Value))
+		fmt.Fprintf(&b, "sed -i '/^%s[[:space:]]*=/d' /etc/sysctl.d/99-opsmesh.conf 2>/dev/null || true\n", req.Name)
+		fmt.Fprintf(&b, "echo '%s = %s' >> /etc/sysctl.d/99-opsmesh.conf\n", req.Name, req.Value)
 		b.WriteString("echo '内核参数已设置并持久化（/etc/sysctl.d/99-opsmesh.conf）'\n")
 	}
 	return b.String()
@@ -248,12 +248,12 @@ func buildKernelModuleScript(req kernelModuleReq) string {
 		b.WriteString("lsmod\n")
 	case "load":
 		// 加载 + 持久化 /etc/modules-load.d/opsmesh.conf
-		b.WriteString(fmt.Sprintf("modprobe %s\n", req.Name))
-		b.WriteString(fmt.Sprintf("grep -qxF %s /etc/modules-load.d/opsmesh.conf 2>/dev/null || echo %s >> /etc/modules-load.d/opsmesh.conf\n", req.Name, req.Name))
-		b.WriteString(fmt.Sprintf("echo '模块已加载并持久化: %s'\n", req.Name))
+		fmt.Fprintf(&b, "modprobe %s\n", req.Name)
+		fmt.Fprintf(&b, "grep -qxF %s /etc/modules-load.d/opsmesh.conf 2>/dev/null || echo %s >> /etc/modules-load.d/opsmesh.conf\n", req.Name, req.Name)
+		fmt.Fprintf(&b, "echo '模块已加载并持久化: %s'\n", req.Name)
 	case "unload":
-		b.WriteString(fmt.Sprintf("modprobe -r %s || echo '卸载失败（可能被占用）'\n", req.Name))
-		b.WriteString(fmt.Sprintf("sed -i '/^%s$/d' /etc/modules-load.d/opsmesh.conf 2>/dev/null || true\n", req.Name))
+		fmt.Fprintf(&b, "modprobe -r %s || echo '卸载失败（可能被占用）'\n", req.Name)
+		fmt.Fprintf(&b, "sed -i '/^%s$/d' /etc/modules-load.d/opsmesh.conf 2>/dev/null || true\n", req.Name)
 	}
 	return b.String()
 }
@@ -321,11 +321,11 @@ func buildKernelUpgradeScript(req kernelUpgradeReq) string {
 	} else {
 		b.WriteString("# 内核安装/升级\n")
 		b.WriteString("if command -v yum >/dev/null 2>&1; then\n")
-		b.WriteString(fmt.Sprintf("  yum install -y kernel-%s kernel-devel-%s || yum update -y kernel\n", req.Version, req.Version))
+		fmt.Fprintf(&b, "  yum install -y kernel-%s kernel-devel-%s || yum update -y kernel\n", req.Version, req.Version)
 		b.WriteString("elif command -v dnf >/dev/null 2>&1; then\n")
-		b.WriteString(fmt.Sprintf("  dnf install -y kernel-%s || dnf update -y kernel\n", req.Version))
+		fmt.Fprintf(&b, "  dnf install -y kernel-%s || dnf update -y kernel\n", req.Version)
 		b.WriteString("elif command -v apt-get >/dev/null 2>&1; then\n")
-		b.WriteString(fmt.Sprintf("  apt-get install -y linux-image-%s || apt-get install -y --only-upgrade linux-image-generic\n", req.Version))
+		fmt.Fprintf(&b, "  apt-get install -y linux-image-%s || apt-get install -y --only-upgrade linux-image-generic\n", req.Version)
 		b.WriteString("fi\n")
 		b.WriteString("echo '内核已安装，需重启生效（reboot required）'\n")
 	}
@@ -391,9 +391,9 @@ func buildKernelGrubScript(req kernelGrubReq) string {
 		b.WriteString("else echo '未找到 GRUB 配置'\nfi\n")
 	case "set-default":
 		b.WriteString("# 设置默认启动内核\n")
-		b.WriteString(fmt.Sprintf("if command -v grubby >/dev/null 2>&1; then grubby --set-default-index=%d || echo '设置失败（索引越界？）'; fi\n", req.Index))
-		b.WriteString(fmt.Sprintf("if command -v grub2-set-default >/dev/null 2>&1; then grub2-set-default %d || true; fi\n", req.Index))
-		b.WriteString(fmt.Sprintf("if command -v sed >/dev/null 2>&1 && [ -f /etc/default/grub ]; then sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT=%d/' /etc/default/grub || true; fi\n", req.Index))
+		fmt.Fprintf(&b, "if command -v grubby >/dev/null 2>&1; then grubby --set-default-index=%d || echo '设置失败（索引越界？）'; fi\n", req.Index)
+		fmt.Fprintf(&b, "if command -v grub2-set-default >/dev/null 2>&1; then grub2-set-default %d || true; fi\n", req.Index)
+		fmt.Fprintf(&b, "if command -v sed >/dev/null 2>&1 && [ -f /etc/default/grub ]; then sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT=%d/' /etc/default/grub || true; fi\n", req.Index)
 		b.WriteString("echo '默认内核已设置，重启后生效'\n")
 	}
 	return b.String()

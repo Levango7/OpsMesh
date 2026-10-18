@@ -53,14 +53,6 @@ var allowedVectorActions = map[string]bool{
 	"undeploy": true,
 }
 
-// 向量库资源动作白名单。
-var allowedVectorResourceActions = map[string]bool{
-	"create":  true,
-	"delete":  true,
-	"list":    true,
-	"migrate": true,
-}
-
 // 向量集合名/库名正则。
 var vectorCollectionRe = regexp.MustCompile(`^[a-zA-Z0-9_]{1,255}$`)
 
@@ -295,7 +287,7 @@ func buildVectorActionScript(req vectorOpsRequest) string {
 			if req.Replicas <= 0 {
 				req.Replicas = 1
 			}
-			b.WriteString(fmt.Sprintf("cd /opt && docker compose up -d --scale milvus-standalone=%d || true\n", req.Replicas))
+			fmt.Fprintf(&b, "cd /opt && docker compose up -d --scale milvus-standalone=%d || true\n", req.Replicas)
 		}
 	case "qdrant":
 		b.WriteString("# Qdrant 启停/扩缩容\n")
@@ -326,7 +318,7 @@ func buildVectorActionScript(req vectorOpsRequest) string {
 			b.WriteString("echo 'pgvector 扩缩容：随 PostgreSQL 扩缩容（主从/citus）'\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '向量库 %s %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '向量库 %s %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 
@@ -395,9 +387,9 @@ func buildVectorCollectionScript(req vectorCollectionReq) string {
 			if req.Metric == "" {
 				req.Metric = "COSINE"
 			}
-			b.WriteString(fmt.Sprintf("curl -s -X POST 'http://localhost:19530/v2/vectordb/collections/create' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"dimension\":%d,\"metricType\":\"%s\"}'\n", req.Collection, req.Dimension, req.Metric))
+			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/collections/create' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"dimension\":%d,\"metricType\":\"%s\"}'\n", req.Collection, req.Dimension, req.Metric)
 		case "delete":
-			b.WriteString(fmt.Sprintf("curl -s -X POST 'http://localhost:19530/v2/vectordb/collections/drop' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\"}'\n", req.Collection))
+			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/collections/drop' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\"}'\n", req.Collection)
 		case "list":
 			b.WriteString("curl -s -X POST 'http://localhost:19530/v2/vectordb/collections/list' -H 'Content-Type: application/json' -d '{}'\n")
 		}
@@ -408,9 +400,9 @@ func buildVectorCollectionScript(req vectorCollectionReq) string {
 			if req.Metric == "" {
 				req.Metric = "Cosine"
 			}
-			b.WriteString(fmt.Sprintf("curl -s -X PUT 'http://localhost:6333/collections/%s' -H 'Content-Type: application/json' -d '{\"vectors\":{\"size\":%d,\"distance\":\"%s\"}}'\n", req.Collection, req.Dimension, req.Metric))
+			fmt.Fprintf(&b, "curl -s -X PUT 'http://localhost:6333/collections/%s' -H 'Content-Type: application/json' -d '{\"vectors\":{\"size\":%d,\"distance\":\"%s\"}}'\n", req.Collection, req.Dimension, req.Metric)
 		case "delete":
-			b.WriteString(fmt.Sprintf("curl -s -X DELETE 'http://localhost:6333/collections/%s'\n", req.Collection))
+			fmt.Fprintf(&b, "curl -s -X DELETE 'http://localhost:6333/collections/%s'\n", req.Collection)
 		case "list":
 			b.WriteString("curl -s 'http://localhost:6333/collections'\n")
 		}
@@ -418,14 +410,14 @@ func buildVectorCollectionScript(req vectorCollectionReq) string {
 		b.WriteString("# pgvector 表管理（SQL）\n")
 		switch req.Action {
 		case "create":
-			b.WriteString(fmt.Sprintf("psql -c 'CREATE EXTENSION IF NOT EXISTS vector; CREATE TABLE IF NOT EXISTS %s (id text PRIMARY KEY, embedding vector(%d), payload jsonb)' || echo '创建失败'\n", req.Collection, req.Dimension))
+			fmt.Fprintf(&b, "psql -c 'CREATE EXTENSION IF NOT EXISTS vector; CREATE TABLE IF NOT EXISTS %s (id text PRIMARY KEY, embedding vector(%d), payload jsonb)' || echo '创建失败'\n", req.Collection, req.Dimension)
 		case "delete":
-			b.WriteString(fmt.Sprintf("psql -c 'DROP TABLE IF EXISTS %s' || echo '删除失败'\n", req.Collection))
+			fmt.Fprintf(&b, "psql -c 'DROP TABLE IF EXISTS %s' || echo '删除失败'\n", req.Collection)
 		case "list":
 			b.WriteString("psql -c '\\dt'\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '向量集合 %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo '向量集合 %s 操作完成\n", req.Action)
 	return b.String()
 }
 
@@ -485,13 +477,13 @@ func buildVectorWriteScript(req vectorWriteReq) string {
 	switch req.Type {
 	case "milvus":
 		b.WriteString("# Milvus 向量写入\n")
-		b.WriteString(fmt.Sprintf("curl -s -X POST 'http://localhost:19530/v2/vectordb/entities/insert' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"data\":[{\"id\":\"%s\",\"vector\":%s}]}'\n", req.Collection, req.ID, vecJSON))
+		fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/entities/insert' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"data\":[{\"id\":\"%s\",\"vector\":%s}]}'\n", req.Collection, req.ID, vecJSON)
 	case "qdrant":
 		b.WriteString("# Qdrant 向量写入（point id 需为整数或 UUID，此处用哈希）\n")
-		b.WriteString(fmt.Sprintf("curl -s -X PUT 'http://localhost:6333/collections/%s/points' -H 'Content-Type: application/json' -d '{\"points\":[{\"id\":1,\"vector\":%s,\"payload\":%s}]}'\n", req.Collection, vecJSON, nonEmptyPayload(req.Payload)))
+		fmt.Fprintf(&b, "curl -s -X PUT 'http://localhost:6333/collections/%s/points' -H 'Content-Type: application/json' -d '{\"points\":[{\"id\":1,\"vector\":%s,\"payload\":%s}]}'\n", req.Collection, vecJSON, nonEmptyPayload(req.Payload))
 	case "pgvector":
 		b.WriteString("# pgvector 向量写入\n")
-		b.WriteString(fmt.Sprintf("psql -c \"INSERT INTO %s (id, embedding) VALUES ('%s', '%s') ON CONFLICT (id) DO UPDATE SET embedding=EXCLUDED.embedding\" || echo '写入失败'\n", req.Collection, req.ID, vecJSON))
+		fmt.Fprintf(&b, "psql -c \"INSERT INTO %s (id, embedding) VALUES ('%s', '%s') ON CONFLICT (id) DO UPDATE SET embedding=EXCLUDED.embedding\" || echo '写入失败'\n", req.Collection, req.ID, vecJSON)
 	}
 	b.WriteString("echo '向量写入完成'\n")
 	return b.String()
@@ -556,13 +548,13 @@ func buildVectorSearchScript(req vectorSearchReq) string {
 	switch req.Type {
 	case "milvus":
 		b.WriteString("# Milvus 相似检索\n")
-		b.WriteString(fmt.Sprintf("curl -s -X POST 'http://localhost:19530/v2/vectordb/entities/search' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"data\":[%s],\"limit\":%d}'\n", req.Collection, vecJSON, req.TopK))
+		fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/entities/search' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"data\":[%s],\"limit\":%d}'\n", req.Collection, vecJSON, req.TopK)
 	case "qdrant":
 		b.WriteString("# Qdrant 相似检索\n")
-		b.WriteString(fmt.Sprintf("curl -s -X POST 'http://localhost:6333/collections/%s/points/search' -H 'Content-Type: application/json' -d '{\"vector\":%s,\"limit\":%d}'\n", req.Collection, vecJSON, req.TopK))
+		fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:6333/collections/%s/points/search' -H 'Content-Type: application/json' -d '{\"vector\":%s,\"limit\":%d}'\n", req.Collection, vecJSON, req.TopK)
 	case "pgvector":
 		b.WriteString("# pgvector 相似检索（L2 距离 <->）\n")
-		b.WriteString(fmt.Sprintf("psql -c 'SELECT id, embedding <-> ''%s'' AS distance FROM %s ORDER BY distance LIMIT %d' || echo '检索失败'\n", vecJSON, req.Collection, req.TopK))
+		fmt.Fprintf(&b, "psql -c 'SELECT id, embedding <-> ''%s'' AS distance FROM %s ORDER BY distance LIMIT %d' || echo '检索失败'\n", vecJSON, req.Collection, req.TopK)
 	}
 	b.WriteString("echo '向量检索完成'\n")
 	return b.String()
@@ -626,34 +618,34 @@ func buildVectorIndexScript(req vectorCollectionReq) string {
 		b.WriteString("# Milvus 索引管理（IVF_FLAT / HNSW）\n")
 		switch req.Action {
 		case "create":
-			b.WriteString(fmt.Sprintf("curl -s -X POST 'http://localhost:19530/v2/vectordb/indexes/create' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"indexParams\":[{\"fieldName\":\"vector\",\"indexType\":\"HNSW\",\"metricType\":\"COSINE\"}]}'\n", req.Collection))
+			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/indexes/create' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"indexParams\":[{\"fieldName\":\"vector\",\"indexType\":\"HNSW\",\"metricType\":\"COSINE\"}]}'\n", req.Collection)
 		case "delete":
-			b.WriteString(fmt.Sprintf("curl -s -X POST 'http://localhost:19530/v2/vectordb/indexes/drop' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"indexName\":\"vector\"}'\n", req.Collection))
+			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/indexes/drop' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"indexName\":\"vector\"}'\n", req.Collection)
 		case "list":
-			b.WriteString(fmt.Sprintf("curl -s -X POST 'http://localhost:19530/v2/vectordb/indexes/list' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\"}'\n", req.Collection))
+			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/indexes/list' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\"}'\n", req.Collection)
 		}
 	case "qdrant":
 		b.WriteString("# Qdrant 索引管理（payload 字段索引）\n")
 		switch req.Action {
 		case "create":
-			b.WriteString(fmt.Sprintf("curl -s -X PUT 'http://localhost:6333/collections/%s/index' -H 'Content-Type: application/json' -d '{\"field_name\":\"payload\",\"field_schema\":\"keyword\"}'\n", req.Collection))
+			fmt.Fprintf(&b, "curl -s -X PUT 'http://localhost:6333/collections/%s/index' -H 'Content-Type: application/json' -d '{\"field_name\":\"payload\",\"field_schema\":\"keyword\"}'\n", req.Collection)
 		case "delete":
-			b.WriteString(fmt.Sprintf("curl -s -X DELETE 'http://localhost:6333/collections/%s/index/payload'\n", req.Collection))
+			fmt.Fprintf(&b, "curl -s -X DELETE 'http://localhost:6333/collections/%s/index/payload'\n", req.Collection)
 		case "list":
-			b.WriteString(fmt.Sprintf("curl -s 'http://localhost:6333/collections/%s'\n", req.Collection))
+			fmt.Fprintf(&b, "curl -s 'http://localhost:6333/collections/%s'\n", req.Collection)
 		}
 	case "pgvector":
 		b.WriteString("# pgvector 索引管理（IVFFlat / HNSW）\n")
 		switch req.Action {
 		case "create":
-			b.WriteString(fmt.Sprintf("psql -c 'CREATE INDEX ON %s USING hnsw (embedding vector_cosine_ops)' || echo '创建索引失败'\n", req.Collection))
+			fmt.Fprintf(&b, "psql -c 'CREATE INDEX ON %s USING hnsw (embedding vector_cosine_ops)' || echo '创建索引失败'\n", req.Collection)
 		case "delete":
-			b.WriteString(fmt.Sprintf("psql -c 'DROP INDEX IF EXISTS %s_embedding_idx'\n", req.Collection))
+			fmt.Fprintf(&b, "psql -c 'DROP INDEX IF EXISTS %s_embedding_idx'\n", req.Collection)
 		case "list":
-			b.WriteString(fmt.Sprintf("psql -c '\\di'\n"))
+			fmt.Fprintf(&b, "psql -c '\\di'\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '向量索引 %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo '向量索引 %s 操作完成\n", req.Action)
 	return b.String()
 }
 
@@ -715,28 +707,28 @@ func buildVectorMigrateScript(req vectorCollectionReq) string {
 		b.WriteString("# Milvus 迁移（milvus-backup 工具）\n")
 		switch req.Action {
 		case "export":
-			b.WriteString(fmt.Sprintf("milvus-backup create -n backup_%s -c %s || echo '导出失败，需配置 milvus-backup'\n", req.Collection, req.Collection))
+			fmt.Fprintf(&b, "milvus-backup create -n backup_%s -c %s || echo '导出失败，需配置 milvus-backup'\n", req.Collection, req.Collection)
 		case "import":
-			b.WriteString(fmt.Sprintf("milvus-backup restore -n backup_%s -c %s || echo '导入失败，需配置 milvus-backup'\n", req.Collection, req.Collection))
+			fmt.Fprintf(&b, "milvus-backup restore -n backup_%s -c %s || echo '导入失败，需配置 milvus-backup'\n", req.Collection, req.Collection)
 		}
 	case "qdrant":
 		b.WriteString("# Qdrant 迁移（快照 snapshot）\n")
 		switch req.Action {
 		case "export":
-			b.WriteString(fmt.Sprintf("curl -s -X POST 'http://localhost:6333/collections/%s/snapshots'\n", req.Collection))
+			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:6333/collections/%s/snapshots'\n", req.Collection)
 		case "import":
-			b.WriteString(fmt.Sprintf("echo 'Qdrant 导入：PUT /collections/%s/snapshots/upload（需上传快照文件）'\n", req.Collection))
+			fmt.Fprintf(&b, "echo 'Qdrant 导入：PUT /collections/%s/snapshots/upload（需上传快照文件）'\n", req.Collection)
 		}
 	case "pgvector":
 		b.WriteString("# pgvector 迁移（pg_dump/restore）\n")
 		switch req.Action {
 		case "export":
-			b.WriteString(fmt.Sprintf("pg_dump -t %s > /tmp/%s_dump.sql || echo '导出失败'\n", req.Collection, req.Collection))
+			fmt.Fprintf(&b, "pg_dump -t %s > /tmp/%s_dump.sql || echo '导出失败'\n", req.Collection, req.Collection)
 		case "import":
-			b.WriteString(fmt.Sprintf("psql < /tmp/%s_dump.sql || echo '导入失败'\n", req.Collection))
+			fmt.Fprintf(&b, "psql < /tmp/%s_dump.sql || echo '导入失败'\n", req.Collection)
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '向量库迁移 %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo '向量库迁移 %s 操作完成\n", req.Action)
 	return b.String()
 }
 
@@ -748,7 +740,7 @@ func floatSliceToJSON(v []float64) string {
 		if i > 0 {
 			sb.WriteByte(',')
 		}
-		sb.WriteString(fmt.Sprintf("%g", f))
+		fmt.Fprintf(&sb, "%g", f)
 	}
 	sb.WriteByte(']')
 	return sb.String()

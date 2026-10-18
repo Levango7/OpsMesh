@@ -18,10 +18,11 @@ package controlplane
 
 import (
 	"fmt"
-	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
@@ -221,7 +222,7 @@ func buildLBDeployScript(req lbDeployRequest) string {
 	case "keepalived":
 		buildKeepalivedDeployScript(req, &b)
 	}
-	b.WriteString(fmt.Sprintf("echo '%s %s 负载均衡部署脚本执行完成\n", req.Type, req.Mode))
+	fmt.Fprintf(&b, "echo '%s %s 负载均衡部署脚本执行完成\n", req.Type, req.Mode)
 	return b.String()
 }
 
@@ -356,7 +357,7 @@ func buildLBActionScript(req lbOpsRequest) string {
 			b.WriteString("systemctl is-active --quiet keepalived && echo 'running' || echo 'not running'\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '%s %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '%s %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 
@@ -420,13 +421,13 @@ func buildLBBackendScript(req lbBackendReq) string {
 		b.WriteString("# HaProxy 后端管理（需 haproxy sock 或 配置文件热重载）\n")
 		switch req.Action {
 		case "add":
-			b.WriteString(fmt.Sprintf("echo 'HaProxy 后端 add: %s weight=%d（需写入 haproxy.cfg 并重载）'\n", req.Backend, req.Weight))
+			fmt.Fprintf(&b, "echo 'HaProxy 后端 add: %s weight=%d（需写入 haproxy.cfg 并重载）'\n", req.Backend, req.Weight)
 		case "delete":
-			b.WriteString(fmt.Sprintf("echo 'HaProxy 后端 delete: %s（需写入 haproxy.cfg 并重载）'\n", req.Backend))
+			fmt.Fprintf(&b, "echo 'HaProxy 后端 delete: %s（需写入 haproxy.cfg 并重载）'\n", req.Backend)
 		case "enable":
-			b.WriteString(fmt.Sprintf("echo 'enable backend %s via haproxy sock'\n", req.Backend))
+			fmt.Fprintf(&b, "echo 'enable backend %s via haproxy sock'\n", req.Backend)
 		case "disable":
-			b.WriteString(fmt.Sprintf("echo 'disable backend %s via haproxy sock'\n", req.Backend))
+			fmt.Fprintf(&b, "echo 'disable backend %s via haproxy sock'\n", req.Backend)
 		case "list":
 			b.WriteString("echo 'HaProxy 后端列表：查看 /etc/haproxy/haproxy.cfg backend 段'\n")
 		}
@@ -434,19 +435,19 @@ func buildLBBackendScript(req lbBackendReq) string {
 		b.WriteString("# LVS(ipvsadm) 后端管理\n")
 		switch req.Action {
 		case "add":
-			b.WriteString(fmt.Sprintf("ipvsadm -A -t %s -s rr || true\n", req.Backend))
-			b.WriteString(fmt.Sprintf("ipvsadm -a -t %s -r %s -m -w %d || true\n", req.Backend, req.Backend, req.Weight))
+			fmt.Fprintf(&b, "ipvsadm -A -t %s -s rr || true\n", req.Backend)
+			fmt.Fprintf(&b, "ipvsadm -a -t %s -r %s -m -w %d || true\n", req.Backend, req.Backend, req.Weight)
 		case "delete":
-			b.WriteString(fmt.Sprintf("ipvsadm -D -t %s || true\n", req.Backend))
+			fmt.Fprintf(&b, "ipvsadm -D -t %s || true\n", req.Backend)
 		case "enable":
-			b.WriteString(fmt.Sprintf("ipvsadm -e -t %s -r %s -m -w %d || true\n", req.Backend, req.Backend, req.Weight))
+			fmt.Fprintf(&b, "ipvsadm -e -t %s -r %s -m -w %d || true\n", req.Backend, req.Backend, req.Weight)
 		case "disable":
-			b.WriteString(fmt.Sprintf("echo 'LVS disable 需 ipvsadm -d -t %s -r %s'\n", req.Backend, req.Backend))
+			fmt.Fprintf(&b, "echo 'LVS disable 需 ipvsadm -d -t %s -r %s'\n", req.Backend, req.Backend)
 		case "list":
 			b.WriteString("ipvsadm -L -n\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo 'LB %s 后端 %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo 'LB %s 后端 %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 
@@ -498,13 +499,13 @@ func buildLBFrontendScript(req lbFrontendReq) string {
 	b.WriteString("set -e\n")
 	switch req.Action {
 	case "add":
-		b.WriteString(fmt.Sprintf("echo 'HaProxy 前端 add: %s（需写入 haproxy.cfg frontend 段并重载）'\n", req.Frontend))
+		fmt.Fprintf(&b, "echo 'HaProxy 前端 add: %s（需写入 haproxy.cfg frontend 段并重载）'\n", req.Frontend)
 	case "delete":
-		b.WriteString(fmt.Sprintf("echo 'HaProxy 前端 delete: %s（需写入 haproxy.cfg frontend 段并重载）'\n", req.Frontend))
+		fmt.Fprintf(&b, "echo 'HaProxy 前端 delete: %s（需写入 haproxy.cfg frontend 段并重载）'\n", req.Frontend)
 	case "list":
 		b.WriteString("echo 'HaProxy 前端列表：查看 /etc/haproxy/haproxy.cfg frontend 段'\n")
 	}
-	b.WriteString(fmt.Sprintf("echo 'LB 前端 %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo 'LB 前端 %s 操作完成\n", req.Action)
 	return b.String()
 }
 

@@ -355,7 +355,7 @@ func buildVirtActionScript(req virtOpsReq) string {
 			b.WriteString("echo 'OpenStack 是外部平台，启停由控制节点管理'\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '虚拟化 %s %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '虚拟化 %s %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 
@@ -418,13 +418,13 @@ func buildVirtVMScript(req virtVMReq) string {
 		case "list":
 			b.WriteString("virsh list --all\n")
 		case "start":
-			b.WriteString(fmt.Sprintf("virsh start %s\n", req.Name))
+			fmt.Fprintf(&b, "virsh start %s\n", req.Name)
 		case "stop":
-			b.WriteString(fmt.Sprintf("virsh shutdown %s || virsh destroy %s\n", req.Name, req.Name))
+			fmt.Fprintf(&b, "virsh shutdown %s || virsh destroy %s\n", req.Name, req.Name)
 		case "restart":
-			b.WriteString(fmt.Sprintf("virsh reboot %s || (virsh destroy %s && virsh start %s)\n", req.Name, req.Name, req.Name))
+			fmt.Fprintf(&b, "virsh reboot %s || (virsh destroy %s && virsh start %s)\n", req.Name, req.Name, req.Name)
 		case "delete":
-			b.WriteString(fmt.Sprintf("virsh destroy %s 2>/dev/null || true\nvirsh undefine %s --remove-all-storage || echo '删除失败（VM 不存在？）'\n", req.Name, req.Name))
+			fmt.Fprintf(&b, "virsh destroy %s 2>/dev/null || true\nvirsh undefine %s --remove-all-storage || echo '删除失败（VM 不存在？）'\n", req.Name, req.Name)
 		}
 	case "proxmox":
 		b.WriteString("# Proxmox VM 管理（qm，VMID 为数字）\n")
@@ -432,13 +432,13 @@ func buildVirtVMScript(req virtVMReq) string {
 		case "list":
 			b.WriteString("qm list\n")
 		case "start":
-			b.WriteString(fmt.Sprintf("qm start %s\n", req.Name))
+			fmt.Fprintf(&b, "qm start %s\n", req.Name)
 		case "stop":
-			b.WriteString(fmt.Sprintf("qm shutdown %s || qm stop %s\n", req.Name, req.Name))
+			fmt.Fprintf(&b, "qm shutdown %s || qm stop %s\n", req.Name, req.Name)
 		case "restart":
-			b.WriteString(fmt.Sprintf("qm reboot %s || (qm stop %s && qm start %s)\n", req.Name, req.Name, req.Name))
+			fmt.Fprintf(&b, "qm reboot %s || (qm stop %s && qm start %s)\n", req.Name, req.Name, req.Name)
 		case "delete":
-			b.WriteString(fmt.Sprintf("qm destroy %s --purge || echo '删除失败'\n", req.Name))
+			fmt.Fprintf(&b, "qm destroy %s --purge || echo '删除失败'\n", req.Name)
 		}
 	case "vsphere":
 		b.WriteString("# vSphere VM 管理（govc）\n")
@@ -446,13 +446,13 @@ func buildVirtVMScript(req virtVMReq) string {
 		case "list":
 			b.WriteString("govc ls /DC/vm 2>/dev/null || govc find . -type m 2>/dev/null || echo '未连接 vSphere'\n")
 		case "start":
-			b.WriteString(fmt.Sprintf("govc vm.power -on %s\n", req.Name))
+			fmt.Fprintf(&b, "govc vm.power -on %s\n", req.Name)
 		case "stop":
-			b.WriteString(fmt.Sprintf("govc vm.power -off %s\n", req.Name))
+			fmt.Fprintf(&b, "govc vm.power -off %s\n", req.Name)
 		case "restart":
-			b.WriteString(fmt.Sprintf("govc vm.power -reset %s\n", req.Name))
+			fmt.Fprintf(&b, "govc vm.power -reset %s\n", req.Name)
 		case "delete":
-			b.WriteString(fmt.Sprintf("govc vm.destroy %s || echo '删除失败'\n", req.Name))
+			fmt.Fprintf(&b, "govc vm.destroy %s || echo '删除失败'\n", req.Name)
 		}
 	case "openstack":
 		b.WriteString("# OpenStack VM 管理（openstack CLI）\n")
@@ -460,16 +460,16 @@ func buildVirtVMScript(req virtVMReq) string {
 		case "list":
 			b.WriteString("openstack server list\n")
 		case "start":
-			b.WriteString(fmt.Sprintf("openstack server start %s\n", req.Name))
+			fmt.Fprintf(&b, "openstack server start %s\n", req.Name)
 		case "stop":
-			b.WriteString(fmt.Sprintf("openstack server stop %s\n", req.Name))
+			fmt.Fprintf(&b, "openstack server stop %s\n", req.Name)
 		case "restart":
-			b.WriteString(fmt.Sprintf("openstack server reboot %s\n", req.Name))
+			fmt.Fprintf(&b, "openstack server reboot %s\n", req.Name)
 		case "delete":
-			b.WriteString(fmt.Sprintf("openstack server delete %s || echo '删除失败'\n", req.Name))
+			fmt.Fprintf(&b, "openstack server delete %s || echo '删除失败'\n", req.Name)
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '虚拟化 %s VM %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '虚拟化 %s VM %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 
@@ -534,28 +534,28 @@ func buildVirtSnapshotScript(req virtSnapshotReq) string {
 		b.WriteString("# KVM 快照（virsh）\n")
 		switch req.Action {
 		case "list":
-			b.WriteString(fmt.Sprintf("virsh snapshot-list %s\n", req.Name))
+			fmt.Fprintf(&b, "virsh snapshot-list %s\n", req.Name)
 		case "create":
-			b.WriteString(fmt.Sprintf("virsh snapshot-create-as %s %s --disk-only --atomic || virsh snapshot-create-as %s %s\n", req.Name, req.Snapshot, req.Name, req.Snapshot))
+			fmt.Fprintf(&b, "virsh snapshot-create-as %s %s --disk-only --atomic || virsh snapshot-create-as %s %s\n", req.Name, req.Snapshot, req.Name, req.Snapshot)
 		case "revert":
-			b.WriteString(fmt.Sprintf("virsh snapshot-revert %s %s\n", req.Name, req.Snapshot))
+			fmt.Fprintf(&b, "virsh snapshot-revert %s %s\n", req.Name, req.Snapshot)
 		case "delete":
-			b.WriteString(fmt.Sprintf("virsh snapshot-delete %s %s\n", req.Name, req.Snapshot))
+			fmt.Fprintf(&b, "virsh snapshot-delete %s %s\n", req.Name, req.Snapshot)
 		}
 	case "proxmox":
 		b.WriteString("# Proxmox 快照（qm）\n")
 		switch req.Action {
 		case "list":
-			b.WriteString(fmt.Sprintf("qm listsnapshot %s\n", req.Name))
+			fmt.Fprintf(&b, "qm listsnapshot %s\n", req.Name)
 		case "create":
-			b.WriteString(fmt.Sprintf("qm snapshot %s %s\n", req.Name, req.Snapshot))
+			fmt.Fprintf(&b, "qm snapshot %s %s\n", req.Name, req.Snapshot)
 		case "revert":
-			b.WriteString(fmt.Sprintf("qm rollback %s %s\n", req.Name, req.Snapshot))
+			fmt.Fprintf(&b, "qm rollback %s %s\n", req.Name, req.Snapshot)
 		case "delete":
-			b.WriteString(fmt.Sprintf("qm delsnapshot %s %s\n", req.Name, req.Snapshot))
+			fmt.Fprintf(&b, "qm delsnapshot %s %s\n", req.Name, req.Snapshot)
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '虚拟化 %s 快照 %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '虚拟化 %s 快照 %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 

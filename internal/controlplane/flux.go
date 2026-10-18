@@ -61,9 +61,7 @@ func fluxKey(tenantID, id string) string {
 	return tenantID + ":" + id
 }
 
-// fluxAppID 生成简单应用 ID。
-var fluxAppIDCounter int64
-
+// nextFluxAppID 生成简单应用 ID。
 func nextFluxAppID() string {
 	return fmt.Sprintf("flux-%d", time.Now().UnixNano())
 }
@@ -397,17 +395,4 @@ func syncFluxApp(name, namespace, appType string) error {
 		return fmt.Errorf("flux reconcile %s/%s failed: %v (output: %s)", subType, name, err, string(output))
 	}
 	return nil
-}
-
-// getFluxAppList 返回指定租户的所有 Flux 应用（供 GitOps 仪表盘调用）。
-func (s *Server) getFluxAppList(tenantID string) []*FluxApp {
-	fluxStore.mu.RLock()
-	defer fluxStore.mu.RUnlock()
-	apps := make([]*FluxApp, 0)
-	for _, a := range fluxStore.apps {
-		if a.TenantID == tenantID {
-			apps = append(apps, a)
-		}
-	}
-	return apps
 }

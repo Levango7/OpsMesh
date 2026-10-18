@@ -119,9 +119,9 @@
 | 联邦 | gRPC (mTLS) | 9090 | 跨控制面任务转发/设备视图同步 |
 | Metrics | HTTP | 9091 | Prometheus 指标采集（HTTP 延迟/Go runtime） |
 
-### internal 包职责（38 个）
+### internal 包职责（39 个）
 
-> 完整设计见 `docs/module-design.md`。下表按 8 个领域分组列出 38 个 internal 包的职责简述。
+> 完整设计见 `docs/module-design.md`。下表按 8 个领域分组列出 39 个 internal 包的职责简述。
 >
 > ⚠️ 计数口径：**只数 `internal/` 下真实存在的目录**（CI 的 `Verify internal package count`
 > 门禁会拿 `find internal -maxdepth 1 -type d` 与本节标题里的数字对账，三处必须一致）。
@@ -170,6 +170,7 @@
 | `internal/helm` | Helm 应用商店：仓库管理 + Chart 搜索 + Release 部署/回滚 + 预置 24 个应用目录 |
 | `internal/network` | 网络管理引擎：网络设备模型（switch/router/firewall/LB）+ 监控指标 + 拓扑邻接表 + 子网发现 |
 | `internal/automation` | 自动化闭环引擎：规则（条件→动作）+ 触发器（alert/metric_threshold/schedule/event）+ 动作（execute_task/send_notify/scale/restart/isolate）+ 规则引擎 Evaluate |
+| `internal/aiops` | 智能运维（AIOps）：LLM 驱动的故障根因分析（Analyze）+ 智能修复方案生成（GenerateRemediation）+ 自然语言运维（NaturalLanguage）+ 修复执行与历史（ExecuteRemediation/ExecutionHistory）+ 统计累计（EngineStats） |
 
 #### 存储与安全域
 

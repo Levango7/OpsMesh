@@ -35,12 +35,12 @@ import (
 
 // ExecutionRecord 单次执行记录（用于审计与追溯）。
 type ExecutionRecord struct {
-	ID        string    `json:"id"`
-	PlanTitle string    `json:"planTitle"`
-	Results   []*ExecuteResult `json:"results"`
-	Dispatched int      `json:"dispatched"`
-	Total     int      `json:"total"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID         string           `json:"id"`
+	PlanTitle  string           `json:"planTitle"`
+	Results    []*ExecuteResult `json:"results"`
+	Dispatched int              `json:"dispatched"`
+	Total      int              `json:"total"`
+	CreatedAt  time.Time        `json:"createdAt"`
 }
 
 // Engine AIOps 引擎。
@@ -52,10 +52,10 @@ type Engine struct {
 	nl  *NLParser
 	st  store.TaskStore // 任务下发：将修复命令创建为 proto.Task，由 agent 拉取执行
 
-	mu           sync.RWMutex
-	started      bool
-	stats        EngineStats
-	execHistory  []*ExecutionRecord // 执行历史记录（最近 100 条，内存留痕）
+	mu          sync.RWMutex
+	started     bool
+	stats       EngineStats
+	execHistory []*ExecutionRecord // 执行历史记录（最近 100 条，内存留痕）
 }
 
 // NewEngine 构造 AIOps 引擎（从控制面 Config 构造，支持 --aiops-* flags / OPSMESH_AIOPS_* env）。
@@ -85,9 +85,9 @@ func NewEngine(cfg *config.Config, st store.TaskStore) *Engine {
 		e.cfg.Provider = ProviderKilo
 	}
 	e.stats = EngineStats{
-		Enabled:   e.cfg.Enabled,
-		Provider:  string(e.cfg.Provider),
-		Model:     e.cfg.Model,
+		Enabled:  e.cfg.Enabled,
+		Provider: string(e.cfg.Provider),
+		Model:    e.cfg.Model,
 	}
 	return e
 }
@@ -188,8 +188,8 @@ func (e *Engine) AnalyzeAndRemediate(ctx context.Context, alertCtx *AlertContext
 
 // ExecuteRemediationRequest 自动执行修复请求。
 type ExecuteRemediationRequest struct {
-	Plan       *RemediationPlan `json:"plan"`        // 待执行的修复方案
-	AutoExecute bool            `json:"autoExecute"` // true=直接下发任务；false=仅校验不下发（预检）
+	Plan        *RemediationPlan `json:"plan"`        // 待执行的修复方案
+	AutoExecute bool             `json:"autoExecute"` // true=直接下发任务；false=仅校验不下发（预检）
 }
 
 // ExecuteResult 单条修复命令的执行结果。
@@ -281,14 +281,14 @@ func (e *Engine) ExecuteRemediation(ctx context.Context, req *ExecuteRemediation
 	dispatched := 0
 	for i, cmd := range plan.Commands {
 		task := &proto.Task{
-			AgentID:   cmd.AgentID,
-			TenantID:  "", // 由 handler 注入租户
-			Type:      cmd.Type,
-			Command:   cmd.Command,
-			Path:      "",
-			Content:   "",
-			Status:    "pending",
-			Timeout:   cmd.Timeout,
+			AgentID:    cmd.AgentID,
+			TenantID:   "", // 由 handler 注入租户
+			Type:       cmd.Type,
+			Command:    cmd.Command,
+			Path:       "",
+			Content:    "",
+			Status:     "pending",
+			Timeout:    cmd.Timeout,
 			RetryCount: 0,
 			MaxRetries: 3,
 			DeadLetter: false,
@@ -426,14 +426,14 @@ func (e *Engine) Stats() EngineStats {
 	defer e.mu.RUnlock()
 
 	s := EngineStats{
-		Enabled:             e.cfg.Enabled,
-		Provider:            string(e.cfg.Provider),
-		Model:               e.cfg.Model,
-		AnalyzesTotal:       e.stats.AnalyzesTotal,
-		Remediations:        e.stats.Remediations,
-		NLParses:            e.stats.NLParses,
+		Enabled:              e.cfg.Enabled,
+		Provider:             string(e.cfg.Provider),
+		Model:                e.cfg.Model,
+		AnalyzesTotal:        e.stats.AnalyzesTotal,
+		Remediations:         e.stats.Remediations,
+		NLParses:             e.stats.NLParses,
 		ExecutedRemediations: e.stats.ExecutedRemediations,
-		LastErr:             e.stats.LastErr,
+		LastErr:              e.stats.LastErr,
 	}
 	if e.started {
 		s.StartedAt = e.stats.StartedAt

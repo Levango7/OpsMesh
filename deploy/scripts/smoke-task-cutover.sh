@@ -119,7 +119,7 @@ c=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -
   -X POST "$CP/api/v1/task-svc/tasks" -d '{"agentID":"agent-demo-1","type":"shell","command":"uname -a"}')
 if [ "$c" = "201" ]; then ok "代理前缀 /api/v1/task-svc/tasks 落到 task-svc（201）"; else no "代理前缀应 201，实得 $c"; fi
 J=$(curl -s -H 'X-Tenant-ID: default' "$CP/api/v1/admin/service-routing")
-if printf '%s' "$J" | grep -q '"domain":"task"'; then ok "service-routing 报告 task 域状态"; else no "service-routing 缺失 task 域"; fi
+if grep -q '"domain":"task"' <<<"$J"; then ok "service-routing 报告 task 域状态"; else no "service-routing 缺失 task 域"; fi
 
 echo "== 3. 增量开关打开：四个入口 409 + 指引 =="
 # 判据读 env 在**请求时**，但已在运行的控制面进程不会继承脚本后来导出的变量——
@@ -135,7 +135,7 @@ c=$(local_create /api/v1/tasks '{"agentID":"agent-demo-1","type":"shell","comman
 if [ "$c" = "409" ]; then ok "单建入口 409（增量开关生效）"; else no "单建入口应 409，实得 $c"; fi
 B=$(curl -s -H 'Content-Type: application/json' -H 'X-Tenant-ID: default' -X POST "$CP/api/v1/tasks" \
   -d '{"agentID":"agent-demo-1","type":"shell","command":"uname -a"}')
-if printf '%s' "$B" | grep -q 'task-svc'; then ok "409 文案指引去 task-svc 侧"; else no "409 文案未指引：$B"; fi
+if grep -q 'task-svc' <<<"$B"; then ok "409 文案指引去 task-svc 侧"; else no "409 文案未指引：$B"; fi
 for ep in "/api/v1/tasks/batch|{\"targets\":[\"agent-demo-1\"],\"type\":\"shell\",\"command\":\"uname -a\"}" \
           "/api/v1/tasks/batch-exec|{\"agentIDs\":[\"agent-demo-1\"],\"type\":\"shell\",\"command\":\"uname -a\"}" \
           "/api/v1/tasks/canary|{\"deviceIDs\":[\"dev-demo-01\"],\"type\":\"shell\",\"command\":\"uname -a\"}"; do

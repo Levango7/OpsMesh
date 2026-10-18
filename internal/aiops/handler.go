@@ -205,9 +205,9 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.respondJSON(w, http.StatusOK, map[string]interface{}{
-		"results":   results,
+		"results":    results,
 		"dispatched": dispatched,
-		"total":     len(results),
+		"total":      len(results),
 	})
 }
 
@@ -225,9 +225,9 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"model":     stats.Model,
 		"startedAt": stats.StartedAt.Format(time.RFC3339),
 		"stats": map[string]int64{
-			"analyzesTotal":       stats.AnalyzesTotal,
-			"remediations":        stats.Remediations,
-			"nlParses":            stats.NLParses,
+			"analyzesTotal":        stats.AnalyzesTotal,
+			"remediations":         stats.Remediations,
+			"nlParses":             stats.NLParses,
 			"executedRemediations": stats.ExecutedRemediations,
 		},
 		"lastErr": stats.LastErr,

@@ -54,9 +54,6 @@ var allowedTSDBActions = map[string]bool{
 // TDengine/InfluxDB 数据库名/桶名正则。
 var tsdbDBRe = regexp.MustCompile(`^[a-zA-Z0-9_\-]{1,64}$`)
 
-// 度量名/测量名正则。
-var tsdbMeasureRe = regexp.MustCompile(`^[a-zA-Z0-9_\.\-]{1,128}$`)
-
 // 时序库部署请求体。
 type tsdbDeployRequest struct {
 	DeviceID string `json:"deviceID"`
@@ -307,7 +304,7 @@ func buildTSDBActionScript(req tsdbOpsRequest) string {
 			b.WriteString("systemctl is-active victoria-metrics || (pgrep -f victoria-metrics >/dev/null && echo running || echo 'not running')\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '时序库 %s %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '时序库 %s %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 
@@ -369,9 +366,9 @@ func buildTSDBDatabaseScript(req tsdbDatabaseReq) string {
 		b.WriteString("# InfluxDB 桶/数据库管理（influx CLI，凭证从环境变量 INFLUX_TOKEN / INFLUX_ORG 读取）\n")
 		switch req.Action {
 		case "create":
-			b.WriteString(fmt.Sprintf("influx bucket create --name %s --org \"$INFLUX_ORG\" --retention 30d || echo '创建失败: %s'\n", req.Name, req.Name))
+			fmt.Fprintf(&b, "influx bucket create --name %s --org \"$INFLUX_ORG\" --retention 30d || echo '创建失败: %s'\n", req.Name, req.Name)
 		case "delete":
-			b.WriteString(fmt.Sprintf("influx bucket delete --name %s --org \"$INFLUX_ORG\" || echo '删除失败: %s'\n", req.Name, req.Name))
+			fmt.Fprintf(&b, "influx bucket delete --name %s --org \"$INFLUX_ORG\" || echo '删除失败: %s'\n", req.Name, req.Name)
 		case "list":
 			b.WriteString("influx bucket list\n")
 		}
@@ -379,9 +376,9 @@ func buildTSDBDatabaseScript(req tsdbDatabaseReq) string {
 		b.WriteString("# TDengine 数据库管理（taos CLI）\n")
 		switch req.Action {
 		case "create":
-			b.WriteString(fmt.Sprintf("taos -s \"CREATE DATABASE IF NOT EXISTS %s\" || echo '创建失败: %s'\n", req.Name, req.Name))
+			fmt.Fprintf(&b, "taos -s \"CREATE DATABASE IF NOT EXISTS %s\" || echo '创建失败: %s'\n", req.Name, req.Name)
 		case "delete":
-			b.WriteString(fmt.Sprintf("taos -s \"DROP DATABASE IF EXISTS %s\" || echo '删除失败: %s'\n", req.Name, req.Name))
+			fmt.Fprintf(&b, "taos -s \"DROP DATABASE IF EXISTS %s\" || echo '删除失败: %s'\n", req.Name, req.Name)
 		case "list":
 			b.WriteString("taos -s \"SHOW DATABASES\"\n")
 		}
@@ -394,7 +391,7 @@ func buildTSDBDatabaseScript(req tsdbDatabaseReq) string {
 			b.WriteString("echo 'VictoriaMetrics 使用单一存储，无需创建/删除数据库'\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '时序库 %s 数据库 %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '时序库 %s 数据库 %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 
@@ -454,13 +451,13 @@ func buildTSDBWriteScript(req tsdbWriteReq) string {
 	switch req.Type {
 	case "influxdb":
 		b.WriteString("# InfluxDB 写入（line protocol，v1 /write 或 v2 /api/v2/write）\n")
-		b.WriteString(fmt.Sprintf("curl -s -X POST 'http://localhost:8086/api/v2/write?org=%s&bucket=%s&precision=s' -H \"Authorization: Token $INFLUX_TOKEN\" --data-binary %s\n", "${INFLUX_ORG:-default}", req.Database, payload))
+		fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:8086/api/v2/write?org=%s&bucket=%s&precision=s' -H \"Authorization: Token $INFLUX_TOKEN\" --data-binary %s\n", "${INFLUX_ORG:-default}", req.Database, payload)
 	case "tdengine":
 		b.WriteString("# TDengine 写入（SQL INSERT）\n")
-		b.WriteString(fmt.Sprintf("taos -d %s -s %s\n", req.Database, shellQuote("INSERT INTO "+req.Line)))
+		fmt.Fprintf(&b, "taos -d %s -s %s\n", req.Database, shellQuote("INSERT INTO "+req.Line))
 	case "victoriametrics":
 		b.WriteString("# VictoriaMetrics 写入（Prometheus remote-write 文本格式）\n")
-		b.WriteString(fmt.Sprintf("curl -s -X POST 'http://localhost:8428/api/v1/import/prometheus' --data-binary %s\n", payload))
+		fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:8428/api/v1/import/prometheus' --data-binary %s\n", payload)
 	}
 	b.WriteString("echo '时序数据写入完成'\n")
 	return b.String()
@@ -521,13 +518,13 @@ func buildTSDBQueryScript(req tsdbQueryReq) string {
 	switch req.Type {
 	case "influxdb":
 		b.WriteString("# InfluxDB 查询（InfluxQL via v1 query API）\n")
-		b.WriteString(fmt.Sprintf("curl -s -G 'http://localhost:8086/query?db=%s' --data-urlencode %s\n", req.Database, shellQuote("q="+req.Query)))
+		fmt.Fprintf(&b, "curl -s -G 'http://localhost:8086/query?db=%s' --data-urlencode %s\n", req.Database, shellQuote("q="+req.Query))
 	case "tdengine":
 		b.WriteString("# TDengine 查询（SQL）\n")
-		b.WriteString(fmt.Sprintf("taos -d %s -s %s\n", req.Database, shellQuote(req.Query)))
+		fmt.Fprintf(&b, "taos -d %s -s %s\n", req.Database, shellQuote(req.Query))
 	case "victoriametrics":
 		b.WriteString("# VictoriaMetrics 查询（PromQL，/api/v1/query）\n")
-		b.WriteString(fmt.Sprintf("curl -s -G 'http://localhost:8428/api/v1/query' --data-urlencode %s\n", shellQuote("query="+req.Query)))
+		fmt.Fprintf(&b, "curl -s -G 'http://localhost:8428/api/v1/query' --data-urlencode %s\n", shellQuote("query="+req.Query))
 	}
 	b.WriteString("echo '时序数据查询完成'\n")
 	return b.String()

@@ -215,7 +215,7 @@ func buildDBDeployScript(req dbDeployRequest) string {
 	case "oceanbase":
 		buildOceanBaseDeployScript(req, &b)
 	}
-	b.WriteString(fmt.Sprintf("echo '%s %s 数据库部署脚本执行完成\n", req.Type, req.Mode))
+	fmt.Fprintf(&b, "echo '%s %s 数据库部署脚本执行完成\n", req.Type, req.Mode)
 	return b.String()
 }
 
@@ -373,7 +373,7 @@ func buildDBActionScript(req dbOpsRequest) string {
 			b.WriteString("obclient -h 127.0.0.1 -P 2881 -e 'select 1' || echo 'not running'\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '%s %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '%s %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 
@@ -434,9 +434,9 @@ func buildDBInstanceScript(req dbInstanceReq) string {
 		b.WriteString("# PostgreSQL 实例管理\n")
 		switch req.Action {
 		case "create":
-			b.WriteString(fmt.Sprintf("createdb %s || echo '数据库已存在或创建失败: %s'\n", shellQuote(req.Name), req.Name))
+			fmt.Fprintf(&b, "createdb %s || echo '数据库已存在或创建失败: %s'\n", shellQuote(req.Name), req.Name)
 		case "drop":
-			b.WriteString(fmt.Sprintf("dropdb %s || echo '数据库不存在或删除失败: %s'\n", shellQuote(req.Name), req.Name))
+			fmt.Fprintf(&b, "dropdb %s || echo '数据库不存在或删除失败: %s'\n", shellQuote(req.Name), req.Name)
 		case "list":
 			b.WriteString("psql -c '\\l'\n")
 		}
@@ -444,9 +444,9 @@ func buildDBInstanceScript(req dbInstanceReq) string {
 		b.WriteString("# Oracle 实例管理（sqlplus /sys as sysdba）\n")
 		switch req.Action {
 		case "create":
-			b.WriteString(fmt.Sprintf("sqlplus / as sysdba <<EOF\ncreate database %s;\nexit;\nEOF\n", shellQuote(req.Name)))
+			fmt.Fprintf(&b, "sqlplus / as sysdba <<EOF\ncreate database %s;\nexit;\nEOF\n", shellQuote(req.Name))
 		case "drop":
-			b.WriteString(fmt.Sprintf("sqlplus / as sysdba <<EOF\ndrop database %s;\nexit;\nEOF\n", shellQuote(req.Name)))
+			fmt.Fprintf(&b, "sqlplus / as sysdba <<EOF\ndrop database %s;\nexit;\nEOF\n", shellQuote(req.Name))
 		case "list":
 			b.WriteString("sqlplus / as sysdba <<EOF\nselect name from v$database;\nexit;\nEOF\n")
 		}
@@ -454,9 +454,9 @@ func buildDBInstanceScript(req dbInstanceReq) string {
 		b.WriteString("# TiDB 实例管理（mysql 客户端）\n")
 		switch req.Action {
 		case "create":
-			b.WriteString(fmt.Sprintf("mysql -h 127.0.0.1 -P 4000 -u root -e 'create database %s' || echo '创建失败: %s'\n", shellQuote(req.Name), req.Name))
+			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 4000 -u root -e 'create database %s' || echo '创建失败: %s'\n", shellQuote(req.Name), req.Name)
 		case "drop":
-			b.WriteString(fmt.Sprintf("mysql -h 127.0.0.1 -P 4000 -u root -e 'drop database %s' || echo '删除失败: %s'\n", shellQuote(req.Name), req.Name))
+			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 4000 -u root -e 'drop database %s' || echo '删除失败: %s'\n", shellQuote(req.Name), req.Name)
 		case "list":
 			b.WriteString("mysql -h 127.0.0.1 -P 4000 -u root -e 'show databases'\n")
 		}
@@ -464,14 +464,14 @@ func buildDBInstanceScript(req dbInstanceReq) string {
 		b.WriteString("# OceanBase 实例管理（obclient）\n")
 		switch req.Action {
 		case "create":
-			b.WriteString(fmt.Sprintf("obclient -h 127.0.0.1 -P 2881 -u root -e 'create database %s' || echo '创建失败: %s'\n", shellQuote(req.Name), req.Name))
+			fmt.Fprintf(&b, "obclient -h 127.0.0.1 -P 2881 -u root -e 'create database %s' || echo '创建失败: %s'\n", shellQuote(req.Name), req.Name)
 		case "drop":
-			b.WriteString(fmt.Sprintf("obclient -h 127.0.0.1 -P 2881 -u root -e 'drop database %s' || echo '删除失败: %s'\n", shellQuote(req.Name), req.Name))
+			fmt.Fprintf(&b, "obclient -h 127.0.0.1 -P 2881 -u root -e 'drop database %s' || echo '删除失败: %s'\n", shellQuote(req.Name), req.Name)
 		case "list":
 			b.WriteString("obclient -h 127.0.0.1 -P 2881 -u root -e 'show databases'\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '数据库 %s %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '数据库 %s %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 

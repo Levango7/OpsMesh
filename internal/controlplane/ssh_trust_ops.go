@@ -178,10 +178,10 @@ func buildSSHTrustScript(req sshTrustReq) string {
 		case "ecdsa":
 			keyPath = "$USER_HOME/.ssh/id_ecdsa"
 		}
-		b.WriteString(fmt.Sprintf("KEY_PATH=%q\n", keyPath))
+		fmt.Fprintf(&b, "KEY_PATH=%q\n", keyPath)
 		b.WriteString("if [ ! -f \"$KEY_PATH\" ]; then\n")
 		b.WriteString("  mkdir -p \"$USER_HOME/.ssh\" && chmod 700 \"$USER_HOME/.ssh\"\n")
-		b.WriteString(fmt.Sprintf("  ssh-keygen -t %s -N '' -f \"$KEY_PATH\" -C \"opsmesh@$(hostname)\"\n", req.KeyType))
+		fmt.Fprintf(&b, "  ssh-keygen -t %s -N '' -f \"$KEY_PATH\" -C \"opsmesh@$(hostname)\"\n", req.KeyType)
 		b.WriteString("  chown -R \"$TARGET_USER\" \"$USER_HOME/.ssh\" 2>/dev/null || true\n")
 		b.WriteString("  echo '密钥对已生成'\n")
 		b.WriteString("else echo '密钥对已存在（幂等跳过）'\nfi\n")
@@ -194,10 +194,10 @@ func buildSSHTrustScript(req sshTrustReq) string {
 		b.WriteString("[ -f \"$USER_HOME/.ssh/authorized_keys\" ] && chmod 600 \"$USER_HOME/.ssh/authorized_keys\"\n")
 		b.WriteString("touch \"$USER_HOME/.ssh/authorized_keys\"\n")
 		pk := req.PublicKey
-		b.WriteString(fmt.Sprintf("if grep -qF %s \"$USER_HOME/.ssh/authorized_keys\" 2>/dev/null; then\n", shellQuote(pk)))
+		fmt.Fprintf(&b, "if grep -qF %s \"$USER_HOME/.ssh/authorized_keys\" 2>/dev/null; then\n", shellQuote(pk))
 		b.WriteString("  echo '公钥已存在（幂等跳过）'\n")
 		b.WriteString("else\n")
-		b.WriteString(fmt.Sprintf("  printf '%%s\\n' %s >> \"$USER_HOME/.ssh/authorized_keys\"\n", shellQuote(pk)))
+		fmt.Fprintf(&b, "  printf '%%s\\n' %s >> \"$USER_HOME/.ssh/authorized_keys\"\n", shellQuote(pk))
 		b.WriteString("  echo '公钥已授权'\nfi\n")
 		b.WriteString("chown -R \"$TARGET_USER\" \"$USER_HOME/.ssh\" 2>/dev/null || true\n")
 		b.WriteString("chmod 600 \"$USER_HOME/.ssh/authorized_keys\"\n")
@@ -206,7 +206,7 @@ func buildSSHTrustScript(req sshTrustReq) string {
 		b.WriteString("if [ ! -f \"$USER_HOME/.ssh/authorized_keys\" ]; then echo 'authorized_keys 不存在，无需撤销'; exit 0; fi\n")
 		pk := req.PublicKey
 		b.WriteString("BEFORE=$(wc -l < \"$USER_HOME/.ssh/authorized_keys\")\n")
-		b.WriteString(fmt.Sprintf("grep -vF %s \"$USER_HOME/.ssh/authorized_keys\" > \"$USER_HOME/.ssh/authorized_keys.tmp\" || true\n", shellQuote(pk)))
+		fmt.Fprintf(&b, "grep -vF %s \"$USER_HOME/.ssh/authorized_keys\" > \"$USER_HOME/.ssh/authorized_keys.tmp\" || true\n", shellQuote(pk))
 		b.WriteString("mv \"$USER_HOME/.ssh/authorized_keys.tmp\" \"$USER_HOME/.ssh/authorized_keys\"\n")
 		b.WriteString("chmod 600 \"$USER_HOME/.ssh/authorized_keys\"\n")
 		b.WriteString("AFTER=$(wc -l < \"$USER_HOME/.ssh/authorized_keys\")\n")
@@ -226,8 +226,8 @@ func buildSSHTrustScript(req sshTrustReq) string {
 		host := req.Host
 		port := req.Port
 		b.WriteString("# 免密连通测试（BatchMode 禁止交互密码；accept-new 自动记录已知主机）\n")
-		b.WriteString(fmt.Sprintf("if ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -p %d %s@%s 'echo OPSMESH_SSH_OK' 2>&1; then\n",
-			port, req.User, host))
+		fmt.Fprintf(&b, "if ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -p %d %s@%s 'echo OPSMESH_SSH_OK' 2>&1; then\n",
+			port, req.User, host)
 		b.WriteString("  echo '免密连通测试通过'\n")
 		b.WriteString("else\n")
 		b.WriteString("  echo '免密连通测试失败（检查 authorized_keys / sshd 配置 / 网络可达）'\n")

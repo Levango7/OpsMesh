@@ -28,7 +28,7 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构：
 
 ## 第2章 包总览表
 
-下表汇总 37 个 internal 包的核心属性，详细设计见第3章。
+下表汇总 39 个 internal 包的核心属性，详细设计见第3章。
 
 > ⚠️ 计数口径：只数 `internal/` 下真实存在的目录，CI 的 `Verify internal package count` 门禁会
 > 与 README、本节数字三方对账。原第 6 行的 `provision` 已于 D3-a/b 迁至 `pkg/provision`
@@ -76,6 +76,7 @@ OpsMesh 采用控制面 / 数据面分离的双模式单二进制架构：
 | 36 | platform | 其他 | 平台化业务引擎：租户管理 + API Key + 插件市场 + 计费 | `Tenant`/`APIKey`/`SubscriptionPlan`/`Plugin` | — | ✓ |
 | 37 | gates | 其他 | 跨模块结构性门禁（包内只有测试）：静默退内存、幻影 HPA 指标、包数三方对账 | `TestNoSilentSQLFallbackInServiceMains`/`TestHPAPodMetricsMustBeProduced` | 无（仅测试） | ✓ |
 | 38 | fulltext | 数据 | 通用检索原语（2026-10-05 从 logstore 下沉）：中英文混合分词 + 泛型倒排索引 + TF-IDF + 前缀检索 | `Tokenize`/`Index[K]`/`NewIndex[K]` | 无（零依赖） | ✓✓ |
+| 39 | aiops | 运维 | 智能运维（AIOps）：LLM 故障根因分析 + 修复方案生成 + 自然语言运维 + 修复执行/历史 + 统计累计 | `Engine`/`RootCause`/`RemediationPlan`/`AlertContext`/`ExecutionRecord`/`EngineStats` | config/store | ✓✓ |
 
 ## 第3章 详细设计
 
@@ -1773,4 +1774,4 @@ OpsMesh 包依赖遵循"核心 → 领域 → 基础"自顶向下分层，避免
 
 ---
 
-文档版本：v1.2  |  生成日期：2026-08-17  |  更新日期：2026-10-04  |  覆盖包数：38  |  维护者：OpsMesh 技术文档工程师
+文档版本：v1.2  |  生成日期：2026-08-17  |  更新日期：2026-10-18  |  覆盖包数：39  |  维护者：OpsMesh 技术文档工程师

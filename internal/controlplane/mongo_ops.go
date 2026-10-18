@@ -42,15 +42,6 @@ var allowedMongoActions = map[string]bool{
 	"undeploy": true,
 }
 
-// MongoDB 资源动作白名单。
-var allowedMongoResourceActions = map[string]bool{
-	"create": true,
-	"delete": true,
-	"list":   true,
-	"export": true,
-	"import": true,
-}
-
 // MongoDB 库名/集合名正则。
 var mongoNameRe = regexp.MustCompile(`^[a-zA-Z0-9_.\-]{1,120}$`)
 
@@ -196,7 +187,7 @@ func buildMongoDeployScript(req mongoDeployRequest, mode string) string {
 	if port <= 0 {
 		port = 27017
 	}
-	b.WriteString(fmt.Sprintf("PORT=%d\n", port))
+	fmt.Fprintf(&b, "PORT=%d\n", port)
 	b.WriteString("if command -v mongod >/dev/null 2>&1; then echo 'MongoDB 已安装'; else\n")
 	b.WriteString("  if command -v yum >/dev/null 2>&1; then\n")
 	b.WriteString("    cat > /etc/yum.repos.d/mongodb-org.repo <<'EOF'\n[mongodb-org]\nname=MongoDB Repository\nbaseurl=https://repo.mongodb.org/yum/redhat/$releasever/mongodb-org/7.0/x86_64/\ngpgcheck=1\nenabled=1\ngpgkey=https://www.mongodb.org/static/pgp/server-7.0.asc\nEOF\n")
@@ -232,7 +223,7 @@ func buildMongoActionScript(req mongoOpsRequest) string {
 	case "status":
 		b.WriteString("mongosh --quiet --eval 'db.runCommand({ ping: 1 })' 2>/dev/null || systemctl is-active mongod || echo 'not running'\n")
 	}
-	b.WriteString(fmt.Sprintf("echo 'MongoDB %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo 'MongoDB %s 操作完成\n", req.Action)
 	return b.String()
 }
 
@@ -286,13 +277,13 @@ func buildMongoDatabaseScript(req mongoDatabaseReq) string {
 	b.WriteString("set -e\n")
 	switch req.Action {
 	case "create":
-		b.WriteString(fmt.Sprintf("mongosh --quiet --eval 'db.getSiblingDB(\"%s\").createCollection(\"_init\")' || echo '创建失败: %s'\n", req.Database, req.Database))
+		fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").createCollection(\"_init\")' || echo '创建失败: %s'\n", req.Database, req.Database)
 	case "delete":
-		b.WriteString(fmt.Sprintf("mongosh --quiet --eval 'db.getSiblingDB(\"%s\").dropDatabase()' || echo '删除失败: %s'\n", req.Database, req.Database))
+		fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").dropDatabase()' || echo '删除失败: %s'\n", req.Database, req.Database)
 	case "list":
 		b.WriteString("mongosh --quiet --eval 'db.adminCommand({ listDatabases: 1 }).databases.forEach(d => print(d.name))'\n")
 	}
-	b.WriteString(fmt.Sprintf("echo 'MongoDB 数据库 %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo 'MongoDB 数据库 %s 操作完成\n", req.Action)
 	return b.String()
 }
 
@@ -350,13 +341,13 @@ func buildMongoCollectionScript(req mongoCollectionReq) string {
 	b.WriteString("set -e\n")
 	switch req.Action {
 	case "create":
-		b.WriteString(fmt.Sprintf("mongosh --quiet --eval 'db.getSiblingDB(\"%s\").createCollection(\"%s\")' || echo '创建失败'\n", req.Database, req.Collection))
+		fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").createCollection(\"%s\")' || echo '创建失败'\n", req.Database, req.Collection)
 	case "delete":
-		b.WriteString(fmt.Sprintf("mongosh --quiet --eval 'db.getSiblingDB(\"%s\").\"%s\".drop()' || echo '删除失败'\n", req.Database, req.Collection))
+		fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").\"%s\".drop()' || echo '删除失败'\n", req.Database, req.Collection)
 	case "list":
-		b.WriteString(fmt.Sprintf("mongosh --quiet --eval 'db.getSiblingDB(\"%s\").getCollectionNames().forEach(c => print(c))'\n", req.Database))
+		fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").getCollectionNames().forEach(c => print(c))'\n", req.Database)
 	}
-	b.WriteString(fmt.Sprintf("echo 'MongoDB 集合 %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo 'MongoDB 集合 %s 操作完成\n", req.Action)
 	return b.String()
 }
 
@@ -410,8 +401,8 @@ func buildMongoQueryScript(req mongoQueryReq) string {
 	if strings.TrimSpace(filter) == "" {
 		filter = "{}"
 	}
-	b.WriteString(fmt.Sprintf("mongosh --quiet --eval 'db.getSiblingDB(\"%s\").\"%s\".find(%s).limit(%d).forEach(d => printjson(d))' || echo '查询失败'\n",
-		req.Database, req.Collection, filter, req.Limit))
+	fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").\"%s\".find(%s).limit(%d).forEach(d => printjson(d))' || echo '查询失败'\n",
+		req.Database, req.Collection, filter, req.Limit)
 	b.WriteString("echo 'MongoDB 查询完成'\n")
 	return b.String()
 }
@@ -473,11 +464,11 @@ func buildMongoBackupScript(req mongoBackupReq) string {
 	b.WriteString("set -e\n")
 	switch req.Action {
 	case "export":
-		b.WriteString(fmt.Sprintf("mkdir -p %s && mongodump --db %s --out %s || echo '导出失败'\n", shellQuote(req.Path), req.Database, shellQuote(req.Path)))
+		fmt.Fprintf(&b, "mkdir -p %s && mongodump --db %s --out %s || echo '导出失败'\n", shellQuote(req.Path), req.Database, shellQuote(req.Path))
 	case "import":
-		b.WriteString(fmt.Sprintf("mongorestore --db %s %s || echo '导入失败'\n", req.Database, shellQuote(req.Path+"/"+req.Database)))
+		fmt.Fprintf(&b, "mongorestore --db %s %s || echo '导入失败'\n", req.Database, shellQuote(req.Path+"/"+req.Database))
 	}
-	b.WriteString(fmt.Sprintf("echo 'MongoDB 备份 %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo 'MongoDB 备份 %s 操作完成\n", req.Action)
 	return b.String()
 }
 

@@ -49,15 +49,6 @@ var allowedGraphActions = map[string]bool{
 	"undeploy": true,
 }
 
-// 图库资源动作白名单。
-var allowedGraphResourceActions = map[string]bool{
-	"create": true,
-	"delete": true,
-	"list":   true,
-	"export": true,
-	"import": true,
-}
-
 // 图空间/数据库名正则。
 var graphDatabaseRe = regexp.MustCompile(`^[a-zA-Z0-9_]{1,64}$`)
 
@@ -290,7 +281,7 @@ func buildGraphActionScript(req graphOpsRequest) string {
 			b.WriteString("/usr/local/nebula/scripts/nebula.service status all || echo 'not running'\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '图库 %s %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '图库 %s %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 
@@ -352,9 +343,9 @@ func buildGraphDatabaseScript(req graphDatabaseReq) string {
 		b.WriteString("# Neo4j 数据库管理（cypher-shell，凭证从环境变量 NEO4J_USER / NEO4J_PASSWORD 读取）\n")
 		switch req.Action {
 		case "create":
-			b.WriteString(fmt.Sprintf("cypher-shell -u \"$NEO4J_USER\" -p \"$NEO4J_PASSWORD\" 'CREATE DATABASE %s' || echo '创建失败'\n", req.Name))
+			fmt.Fprintf(&b, "cypher-shell -u \"$NEO4J_USER\" -p \"$NEO4J_PASSWORD\" 'CREATE DATABASE %s' || echo '创建失败'\n", req.Name)
 		case "delete":
-			b.WriteString(fmt.Sprintf("cypher-shell -u \"$NEO4J_USER\" -p \"$NEO4J_PASSWORD\" 'DROP DATABASE %s' || echo '删除失败'\n", req.Name))
+			fmt.Fprintf(&b, "cypher-shell -u \"$NEO4J_USER\" -p \"$NEO4J_PASSWORD\" 'DROP DATABASE %s' || echo '删除失败'\n", req.Name)
 		case "list":
 			b.WriteString("cypher-shell -u \"$NEO4J_USER\" -p \"$NEO4J_PASSWORD\" 'SHOW DATABASES'\n")
 		}
@@ -362,14 +353,14 @@ func buildGraphDatabaseScript(req graphDatabaseReq) string {
 		b.WriteString("# NebulaGraph 图空间管理（nebula-console，凭证从环境变量 NEBULA_USER / NEBULA_PASSWORD 读取）\n")
 		switch req.Action {
 		case "create":
-			b.WriteString(fmt.Sprintf("nebula-console -addr 127.0.0.1 -port 9669 -u \"$NEBULA_USER\" -p \"$NEBULA_PASSWORD\" -e 'CREATE SPACE IF NOT EXISTS %s (vid_type=FIXED_STRING(64))' || echo '创建失败'\n", req.Name))
+			fmt.Fprintf(&b, "nebula-console -addr 127.0.0.1 -port 9669 -u \"$NEBULA_USER\" -p \"$NEBULA_PASSWORD\" -e 'CREATE SPACE IF NOT EXISTS %s (vid_type=FIXED_STRING(64))' || echo '创建失败'\n", req.Name)
 		case "delete":
-			b.WriteString(fmt.Sprintf("nebula-console -addr 127.0.0.1 -port 9669 -u \"$NEBULA_USER\" -p \"$NEBULA_PASSWORD\" -e 'DROP SPACE %s' || echo '删除失败'\n", req.Name))
+			fmt.Fprintf(&b, "nebula-console -addr 127.0.0.1 -port 9669 -u \"$NEBULA_USER\" -p \"$NEBULA_PASSWORD\" -e 'DROP SPACE %s' || echo '删除失败'\n", req.Name)
 		case "list":
 			b.WriteString("nebula-console -addr 127.0.0.1 -port 9669 -u \"$NEBULA_USER\" -p \"$NEBULA_PASSWORD\" -e 'SHOW SPACES'\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '图库 %s 数据库 %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '图库 %s 数据库 %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 
@@ -434,15 +425,15 @@ func buildGraphQueryScript(req graphQueryReq) string {
 	switch req.Type {
 	case "neo4j":
 		if req.Database != "" {
-			b.WriteString(fmt.Sprintf("cypher-shell -u \"$NEO4J_USER\" -p \"$NEO4J_PASSWORD\" -d %s %s\n", req.Database, q))
+			fmt.Fprintf(&b, "cypher-shell -u \"$NEO4J_USER\" -p \"$NEO4J_PASSWORD\" -d %s %s\n", req.Database, q)
 		} else {
-			b.WriteString(fmt.Sprintf("cypher-shell -u \"$NEO4J_USER\" -p \"$NEO4J_PASSWORD\" %s\n", q))
+			fmt.Fprintf(&b, "cypher-shell -u \"$NEO4J_USER\" -p \"$NEO4J_PASSWORD\" %s\n", q)
 		}
 	case "nebulagraph":
 		if req.Database != "" {
-			b.WriteString(fmt.Sprintf("nebula-console -addr 127.0.0.1 -port 9669 -u \"$NEBULA_USER\" -p \"$NEBULA_PASSWORD\" -space %s -e %s\n", req.Database, q))
+			fmt.Fprintf(&b, "nebula-console -addr 127.0.0.1 -port 9669 -u \"$NEBULA_USER\" -p \"$NEBULA_PASSWORD\" -space %s -e %s\n", req.Database, q)
 		} else {
-			b.WriteString(fmt.Sprintf("nebula-console -addr 127.0.0.1 -port 9669 -u \"$NEBULA_USER\" -p \"$NEBULA_PASSWORD\" -e %s\n", q))
+			fmt.Fprintf(&b, "nebula-console -addr 127.0.0.1 -port 9669 -u \"$NEBULA_USER\" -p \"$NEBULA_PASSWORD\" -e %s\n", q)
 		}
 	}
 	b.WriteString("echo '图查询完成'\n")
@@ -507,20 +498,20 @@ func buildGraphBackupScript(req graphBackupReq) string {
 		b.WriteString("# Neo4j 备份（neo4j-admin，需停库或企业版在线备份）\n")
 		switch req.Action {
 		case "export":
-			b.WriteString(fmt.Sprintf("neo4j-admin database dump %s --to-path=/backup/ || echo '导出失败'\n", req.Database))
+			fmt.Fprintf(&b, "neo4j-admin database dump %s --to-path=/backup/ || echo '导出失败'\n", req.Database)
 		case "import":
-			b.WriteString(fmt.Sprintf("neo4j-admin database load %s --from-path=/backup/ || echo '导入失败'\n", req.Database))
+			fmt.Fprintf(&b, "neo4j-admin database load %s --from-path=/backup/ || echo '导入失败'\n", req.Database)
 		}
 	case "nebulagraph":
 		b.WriteString("# NebulaGraph 备份（nebula-br 工具）\n")
 		switch req.Action {
 		case "export":
-			b.WriteString(fmt.Sprintf("nebula-br backup full --space %s --meta 127.0.0.1:9559 --storage local:///backup/ || echo '导出失败'\n", req.Database))
+			fmt.Fprintf(&b, "nebula-br backup full --space %s --meta 127.0.0.1:9559 --storage local:///backup/ || echo '导出失败'\n", req.Database)
 		case "import":
-			b.WriteString(fmt.Sprintf("nebula-br restore full --space %s --name <backup-name> || echo '导入失败'\n", req.Database))
+			fmt.Fprintf(&b, "nebula-br restore full --space %s --name <backup-name> || echo '导入失败'\n", req.Database)
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '图库备份 %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo '图库备份 %s 操作完成\n", req.Action)
 	return b.String()
 }
 

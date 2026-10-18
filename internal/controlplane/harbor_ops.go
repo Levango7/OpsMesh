@@ -244,7 +244,7 @@ func buildHarborActionScript(req harborOpsRequest) string {
 	case "status":
 		b.WriteString("docker-compose ps || echo 'not running'\n")
 	}
-	b.WriteString(fmt.Sprintf("echo 'Harbor %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo 'Harbor %s 操作完成\n", req.Action)
 	return b.String()
 }
 
@@ -300,13 +300,13 @@ func buildHarborProjectScript(req harborProjectReq) string {
 	b.WriteString("AUTH=\"$HARBOR_ADMIN_USER:$HARBOR_ADMIN_PASSWORD\"\n")
 	switch req.Action {
 	case "create":
-		b.WriteString(fmt.Sprintf("curl -s -u \"$AUTH\" -X POST \"$HARBOR_URL/api/v2.0/projects\" -H 'Content-Type: application/json' -d '{\"project_name\": \"%s\", \"public\": false}' || echo '创建失败: %s'\n", req.Project, req.Project))
+		fmt.Fprintf(&b, "curl -s -u \"$AUTH\" -X POST \"$HARBOR_URL/api/v2.0/projects\" -H 'Content-Type: application/json' -d '{\"project_name\": \"%s\", \"public\": false}' || echo '创建失败: %s'\n", req.Project, req.Project)
 	case "delete":
-		b.WriteString(fmt.Sprintf("curl -s -u \"$AUTH\" -X DELETE \"$HARBOR_URL/api/v2.0/projects/%s\" || echo '删除失败: %s'\n", req.Project, req.Project))
+		fmt.Fprintf(&b, "curl -s -u \"$AUTH\" -X DELETE \"$HARBOR_URL/api/v2.0/projects/%s\" || echo '删除失败: %s'\n", req.Project, req.Project)
 	case "list":
 		b.WriteString("curl -s -u \"$AUTH\" \"$HARBOR_URL/api/v2.0/projects\"\n")
 	}
-	b.WriteString(fmt.Sprintf("echo 'Harbor 项目 %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo 'Harbor 项目 %s 操作完成\n", req.Action)
 	return b.String()
 }
 
@@ -366,11 +366,11 @@ func buildHarborRepositoryScript(req harborRepositoryReq) string {
 	b.WriteString("AUTH=\"$HARBOR_ADMIN_USER:$HARBOR_ADMIN_PASSWORD\"\n")
 	switch req.Action {
 	case "list":
-		b.WriteString(fmt.Sprintf("curl -s -u \"$AUTH\" \"$HARBOR_URL/api/v2.0/projects/%s/repositories\"\n", req.Project))
+		fmt.Fprintf(&b, "curl -s -u \"$AUTH\" \"$HARBOR_URL/api/v2.0/projects/%s/repositories\"\n", req.Project)
 	case "delete":
-		b.WriteString(fmt.Sprintf("curl -s -u \"$AUTH\" -X DELETE \"$HARBOR_URL/api/v2.0/projects/%s/repositories/%s\" || echo '删除失败'\n", req.Project, req.Repository))
+		fmt.Fprintf(&b, "curl -s -u \"$AUTH\" -X DELETE \"$HARBOR_URL/api/v2.0/projects/%s/repositories/%s\" || echo '删除失败'\n", req.Project, req.Repository)
 	}
-	b.WriteString(fmt.Sprintf("echo 'Harbor 仓库 %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo 'Harbor 仓库 %s 操作完成\n", req.Action)
 	return b.String()
 }
 
@@ -434,11 +434,11 @@ func buildHarborArtifactScript(req harborArtifactReq) string {
 	b.WriteString("AUTH=\"$HARBOR_ADMIN_USER:$HARBOR_ADMIN_PASSWORD\"\n")
 	switch req.Action {
 	case "list":
-		b.WriteString(fmt.Sprintf("curl -s -u \"$AUTH\" \"$HARBOR_URL/api/v2.0/projects/%s/repositories/%s/artifacts\"\n", req.Project, req.Repository))
+		fmt.Fprintf(&b, "curl -s -u \"$AUTH\" \"$HARBOR_URL/api/v2.0/projects/%s/repositories/%s/artifacts\"\n", req.Project, req.Repository)
 	case "delete":
-		b.WriteString(fmt.Sprintf("curl -s -u \"$AUTH\" -X DELETE \"$HARBOR_URL/api/v2.0/projects/%s/repositories/%s/artifacts/%s\" || echo '删除失败'\n", req.Project, req.Repository, req.Reference))
+		fmt.Fprintf(&b, "curl -s -u \"$AUTH\" -X DELETE \"$HARBOR_URL/api/v2.0/projects/%s/repositories/%s/artifacts/%s\" || echo '删除失败'\n", req.Project, req.Repository, req.Reference)
 	}
-	b.WriteString(fmt.Sprintf("echo 'Harbor artifact %s 操作完成\n", req.Action))
+	fmt.Fprintf(&b, "echo 'Harbor artifact %s 操作完成\n", req.Action)
 	return b.String()
 }
 

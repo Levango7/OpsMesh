@@ -272,9 +272,9 @@ func buildStorageActionScript(req storageOpsRequest) string {
 			b.WriteString("systemctl is-active --quiet minio && echo 'running' || (pgrep -f 'minio server' >/dev/null && echo 'running' || echo 'not running')\n")
 		}
 	case "s3", "oss":
-		b.WriteString(fmt.Sprintf("# %s 是云服务，启停由云厂商控制台或 API 完成\n", req.Type))
+		fmt.Fprintf(&b, "# %s 是云服务，启停由云厂商控制台或 API 完成\n", req.Type)
 	}
-	b.WriteString(fmt.Sprintf("echo '%s %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '%s %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 
@@ -337,9 +337,9 @@ func buildBucketScript(req bucketReq) string {
 		b.WriteString("export AWS_SECRET_ACCESS_KEY=${OPSMESH_S3_SECRET_KEY}\n")
 		switch req.Action {
 		case "create":
-			b.WriteString(fmt.Sprintf("aws s3api create-bucket --bucket %s || echo '桶已存在或创建失败: %s'\n", req.Bucket, req.Bucket))
+			fmt.Fprintf(&b, "aws s3api create-bucket --bucket %s || echo '桶已存在或创建失败: %s'\n", req.Bucket, req.Bucket)
 		case "delete":
-			b.WriteString(fmt.Sprintf("aws s3api delete-bucket --bucket %s || echo '桶不存在或删除失败: %s'\n", req.Bucket, req.Bucket))
+			fmt.Fprintf(&b, "aws s3api delete-bucket --bucket %s || echo '桶不存在或删除失败: %s'\n", req.Bucket, req.Bucket)
 		case "list":
 			b.WriteString("aws s3api list-buckets --query 'Buckets[].Name'\n")
 		}
@@ -349,14 +349,14 @@ func buildBucketScript(req bucketReq) string {
 		b.WriteString("export OSS_ACCESS_KEY_SECRET=${OPSMESH_OSS_ACCESS_KEY_SECRET}\n")
 		switch req.Action {
 		case "create":
-			b.WriteString(fmt.Sprintf("ossutil mb oss://%s || echo '桶已存在或创建失败: %s'\n", req.Bucket, req.Bucket))
+			fmt.Fprintf(&b, "ossutil mb oss://%s || echo '桶已存在或创建失败: %s'\n", req.Bucket, req.Bucket)
 		case "delete":
-			b.WriteString(fmt.Sprintf("ossutil rm oss://%s --force || echo '桶不存在或删除失败: %s'\n", req.Bucket, req.Bucket))
+			fmt.Fprintf(&b, "ossutil rm oss://%s --force || echo '桶不存在或删除失败: %s'\n", req.Bucket, req.Bucket)
 		case "list":
 			b.WriteString("ossutil ls\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '对象存储 %s 桶 %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '对象存储 %s 桶 %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 
@@ -422,29 +422,29 @@ func buildObjectScript(req objectReq) string {
 		b.WriteString("export AWS_SECRET_ACCESS_KEY=${OPSMESH_S3_SECRET_KEY}\n")
 		switch req.Action {
 		case "upload":
-			b.WriteString(fmt.Sprintf("aws s3 cp %s s3://%s/%s\n", shellQuote(req.Local), req.Bucket, req.Object))
+			fmt.Fprintf(&b, "aws s3 cp %s s3://%s/%s\n", shellQuote(req.Local), req.Bucket, req.Object)
 		case "download":
-			b.WriteString(fmt.Sprintf("aws s3 cp s3://%s/%s %s\n", req.Bucket, req.Object, shellQuote(req.Local)))
+			fmt.Fprintf(&b, "aws s3 cp s3://%s/%s %s\n", req.Bucket, req.Object, shellQuote(req.Local))
 		case "delete":
-			b.WriteString(fmt.Sprintf("aws s3 rm s3://%s/%s\n", req.Bucket, req.Object))
+			fmt.Fprintf(&b, "aws s3 rm s3://%s/%s\n", req.Bucket, req.Object)
 		case "list":
-			b.WriteString(fmt.Sprintf("aws s3 ls s3://%s/\n", req.Bucket))
+			fmt.Fprintf(&b, "aws s3 ls s3://%s/\n", req.Bucket)
 		}
 	case "oss":
 		b.WriteString("export OSS_ACCESS_KEY_ID=${OPSMESH_OSS_ACCESS_KEY_ID}\n")
 		b.WriteString("export OSS_ACCESS_KEY_SECRET=${OPSMESH_OSS_ACCESS_KEY_SECRET}\n")
 		switch req.Action {
 		case "upload":
-			b.WriteString(fmt.Sprintf("ossutil cp %s oss://%s/%s\n", shellQuote(req.Local), req.Bucket, req.Object))
+			fmt.Fprintf(&b, "ossutil cp %s oss://%s/%s\n", shellQuote(req.Local), req.Bucket, req.Object)
 		case "download":
-			b.WriteString(fmt.Sprintf("ossutil cp oss://%s/%s %s\n", req.Bucket, req.Object, shellQuote(req.Local)))
+			fmt.Fprintf(&b, "ossutil cp oss://%s/%s %s\n", req.Bucket, req.Object, shellQuote(req.Local))
 		case "delete":
-			b.WriteString(fmt.Sprintf("ossutil rm oss://%s/%s --force\n", req.Bucket, req.Object))
+			fmt.Fprintf(&b, "ossutil rm oss://%s/%s --force\n", req.Bucket, req.Object)
 		case "list":
-			b.WriteString(fmt.Sprintf("ossutil ls oss://%s/\n", req.Bucket))
+			fmt.Fprintf(&b, "ossutil ls oss://%s/\n", req.Bucket)
 		}
 	}
-	b.WriteString(fmt.Sprintf("echo '对象存储 %s 对象 %s 操作完成\n", req.Type, req.Action))
+	fmt.Fprintf(&b, "echo '对象存储 %s 对象 %s 操作完成\n", req.Type, req.Action)
 	return b.String()
 }
 

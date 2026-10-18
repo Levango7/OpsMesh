@@ -797,21 +797,27 @@ func parseJavaVersion(out string) string {
 // parseInt 安全解析 int（失败返回 0）。
 func parseInt(s string) int {
 	var n int
-	_, _ = fmt.Sscanf(strings.TrimSpace(s), "%d", &n)
+	if _, err := fmt.Sscanf(strings.TrimSpace(s), "%d", &n); err != nil {
+		return 0
+	}
 	return n
 }
 
 // parseFloat 安全解析 float64（失败返回 0）。
 func parseFloat(s string) float64 {
 	var n float64
-	_, _ = fmt.Sscanf(strings.TrimSpace(s), "%f", &n)
+	if _, err := fmt.Sscanf(strings.TrimSpace(s), "%f", &n); err != nil {
+		return 0
+	}
 	return n
 }
 
 // parseUint 安全解析 uint64（失败返回 0）。
 func parseUint(s string) uint64 {
 	var n uint64
-	_, _ = fmt.Sscanf(strings.TrimSpace(s), "%d", &n)
+	if _, err := fmt.Sscanf(strings.TrimSpace(s), "%d", &n); err != nil {
+		return 0
+	}
 	return n
 }
 
@@ -933,20 +939,33 @@ func collectProcesses(out *[]proto.ProcessInfo) {
 	}
 	for i := 0; i < limit; i++ {
 		p := list[i].p
-		cmdline, _ := p.Cmdline()
-		username, _ := p.Username()
-		statusList, _ := p.Status()
-		status := ""
-		if len(statusList) > 0 {
-			status = statusList[0]
+		// gopsutil 取值失败时逐项降级为空/零值（进程可能在采集间隙退出）。
+		cmdline := ""
+		if v, err := p.Cmdline(); err == nil {
+			cmdline = v
 		}
-		memBytes, _ := p.MemoryInfo()
+		username := ""
+		if v, err := p.Username(); err == nil {
+			username = v
+		}
+		status := ""
+		if v, err := p.Status(); err == nil && len(v) > 0 {
+			status = v[0]
+		}
+		var rssBytes uint64
+		if v, err := p.MemoryInfo(); err == nil && v != nil {
+			rssBytes = v.RSS
+		}
+		name := ""
+		if v, err := p.Name(); err == nil {
+			name = v
+		}
 		*out = append(*out, proto.ProcessInfo{
 			PID:      int32(p.Pid),
-			Name:     func() string { n, _ := p.Name(); return n }(),
+			Name:     name,
 			CPU:      list[i].cpu,
 			Mem:      list[i].mem,
-			MemBytes: memBytes.RSS / 1024 / 1024,
+			MemBytes: rssBytes / 1024 / 1024,
 			Status:   status,
 			Cmd:      strings.Join(strings.Fields(cmdline), " "),
 			User:     username,

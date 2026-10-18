@@ -21,11 +21,11 @@ const (
 
 // DeviceContext 设备上下文：设备信息 + 最近指标 + 状态。
 type DeviceContext struct {
-	DeviceInfo *proto.DeviceInfo      `json:"deviceInfo"`
-	Metrics    *proto.DeviceMetrics   `json:"metrics,omitempty"`
-	Tasks      []*proto.Task          `json:"tasks,omitempty"`   // 近期任务记录
-	Alerts     []*proto.Alert         `json:"alerts,omitempty"`  // 设备相关告警
-	Uptime     int64                  `json:"uptime"`            // 运行时长（秒）
+	DeviceInfo *proto.DeviceInfo    `json:"deviceInfo"`
+	Metrics    *proto.DeviceMetrics `json:"metrics,omitempty"`
+	Tasks      []*proto.Task        `json:"tasks,omitempty"`  // 近期任务记录
+	Alerts     []*proto.Alert       `json:"alerts,omitempty"` // 设备相关告警
+	Uptime     int64                `json:"uptime"`           // 运行时长（秒）
 }
 
 // LogEntry 单条日志。
@@ -38,11 +38,11 @@ type LogEntry struct {
 
 // AlertContext 告警上下文。
 type AlertContext struct {
-	Alert      *proto.Alert    `json:"alert"`
-	Logs       []*LogEntry     `json:"logs,omitempty"`       // 告警窗口内相关日志
-	Metrics    *DeviceContext  `json:"metrics,omitempty"`    // 告警设备的指标上下文
-	RelatedDev []string        `json:"relatedDevices,omitempty"` // 拓扑邻居设备 ID
-	NeighborTx []string        `json:"neighborTasks,omitempty"` // 邻居设备近期任务
+	Alert      *proto.Alert   `json:"alert"`
+	Logs       []*LogEntry    `json:"logs,omitempty"`           // 告警窗口内相关日志
+	Metrics    *DeviceContext `json:"metrics,omitempty"`        // 告警设备的指标上下文
+	RelatedDev []string       `json:"relatedDevices,omitempty"` // 拓扑邻居设备 ID
+	NeighborTx []string       `json:"neighborTasks,omitempty"`  // 邻居设备近期任务
 }
 
 // Validate 校验告警上下文完整性。
@@ -64,17 +64,17 @@ func (a *AlertContext) Validate() error {
 
 // RootCause 根因分析结果。
 type RootCause struct {
-	Category    string   `json:"category"`              // 硬件/软件/网络/配置/资源
-	Component   string   `json:"component"`             // 具体组件/服务
-	Description string   `json:"description"`           // 根因描述
-	Confidence  float64  `json:"confidence"`            // 信心度 0-1
-	Evidence    []string `json:"evidence"`              // 证据列表（日志片段/指标值）
+	Category    string   `json:"category"`    // 硬件/软件/网络/配置/资源
+	Component   string   `json:"component"`   // 具体组件/服务
+	Description string   `json:"description"` // 根因描述
+	Confidence  float64  `json:"confidence"`  // 信心度 0-1
+	Evidence    []string `json:"evidence"`    // 证据列表（日志片段/指标值）
 }
 
 // Analyzer 故障分析器：将告警 + 日志 + 指标 + 拓扑上下文交给 LLM，获取根因分析。
 type Analyzer struct {
-	llm  LLM
-	cfg  Config
+	llm LLM
+	cfg Config
 }
 
 // NewAnalyzer 构造故障分析器。
@@ -128,76 +128,76 @@ func (a *Analyzer) buildAnalyzePrompt(ctx *AlertContext) string {
 	var sb strings.Builder
 
 	sb.WriteString("## 告警信息\n")
-	sb.WriteString(fmt.Sprintf("- ID: %s\n", ctx.Alert.AlertID))
-	sb.WriteString(fmt.Sprintf("- 设备: %s\n", ctx.Alert.DeviceID))
-	sb.WriteString(fmt.Sprintf("- 级别: %s\n", ctx.Alert.Severity))
-	sb.WriteString(fmt.Sprintf("- 指标: %s\n", ctx.Alert.Metric))
-	sb.WriteString(fmt.Sprintf("- 消息: %s\n", ctx.Alert.Message))
-	sb.WriteString(fmt.Sprintf("- 时间: %s\n", ctx.Alert.CreatedAt.Format(time.RFC3339)))
+	fmt.Fprintf(&sb, "- ID: %s\n", ctx.Alert.AlertID)
+	fmt.Fprintf(&sb, "- 设备: %s\n", ctx.Alert.DeviceID)
+	fmt.Fprintf(&sb, "- 级别: %s\n", ctx.Alert.Severity)
+	fmt.Fprintf(&sb, "- 指标: %s\n", ctx.Alert.Metric)
+	fmt.Fprintf(&sb, "- 消息: %s\n", ctx.Alert.Message)
+	fmt.Fprintf(&sb, "- 时间: %s\n", ctx.Alert.CreatedAt.Format(time.RFC3339))
 
 	// 设备上下文
 	if ctx.Metrics != nil && ctx.Metrics.DeviceInfo != nil {
 		d := ctx.Metrics.DeviceInfo
-		sb.WriteString(fmt.Sprintf("\n## 设备基本信息\n"))
-		sb.WriteString(fmt.Sprintf("- 主机名: %s\n", d.Hostname))
-		sb.WriteString(fmt.Sprintf("- IP: %s\n", d.IP))
-		sb.WriteString(fmt.Sprintf("- OS: %s %s\n", d.OS, d.Arch))
-		sb.WriteString(fmt.Sprintf("- 状态: %s\n", d.State))
+		fmt.Fprintf(&sb, "\n## 设备基本信息\n")
+		fmt.Fprintf(&sb, "- 主机名: %s\n", d.Hostname)
+		fmt.Fprintf(&sb, "- IP: %s\n", d.IP)
+		fmt.Fprintf(&sb, "- OS: %s %s\n", d.OS, d.Arch)
+		fmt.Fprintf(&sb, "- 状态: %s\n", d.State)
 	}
 
 	// 设备指标
 	if ctx.Metrics != nil && ctx.Metrics.Metrics != nil {
 		m := ctx.Metrics.Metrics
-		sb.WriteString(fmt.Sprintf("\n## 设备指标\n"))
-		sb.WriteString(fmt.Sprintf("- CPU: %.1f%% (%d cores)\n", m.CPU.Usage, m.CPU.Cores))
-		sb.WriteString(fmt.Sprintf("- 内存: %.1f%% (%.0f/%.0f MB)\n", m.Memory.Usage, float64(m.Memory.Used), float64(m.Memory.Total)))
+		fmt.Fprintf(&sb, "\n## 设备指标\n")
+		fmt.Fprintf(&sb, "- CPU: %.1f%% (%d cores)\n", m.CPU.Usage, m.CPU.Cores)
+		fmt.Fprintf(&sb, "- 内存: %.1f%% (%.0f/%.0f MB)\n", m.Memory.Usage, float64(m.Memory.Used), float64(m.Memory.Total))
 		for _, d := range m.Disks {
-			sb.WriteString(fmt.Sprintf("- 磁盘 %s: %.1f%%\n", d.Mount, d.Usage))
+			fmt.Fprintf(&sb, "- 磁盘 %s: %.1f%%\n", d.Mount, d.Usage)
 		}
 		for _, n := range m.Network {
-			sb.WriteString(fmt.Sprintf("- 网络 %s: %s %s\n", n.Name, n.Status, n.IP))
+			fmt.Fprintf(&sb, "- 网络 %s: %s %s\n", n.Name, n.Status, n.IP)
 		}
-		sb.WriteString(fmt.Sprintf("- 进程数: %d\n", m.ProcessCount))
-		sb.WriteString(fmt.Sprintf("- 运行时间: %ds\n", m.Uptime))
+		fmt.Fprintf(&sb, "- 进程数: %d\n", m.ProcessCount)
+		fmt.Fprintf(&sb, "- 运行时间: %ds\n", m.Uptime)
 	}
 
 	// 相关告警
 	if ctx.Metrics != nil && len(ctx.Metrics.Alerts) > 0 {
-		sb.WriteString(fmt.Sprintf("\n## 相关告警 (%d 条)\n", len(ctx.Metrics.Alerts)))
+		fmt.Fprintf(&sb, "\n## 相关告警 (%d 条)\n", len(ctx.Metrics.Alerts))
 		for _, al := range ctx.Metrics.Alerts {
-			sb.WriteString(fmt.Sprintf("- [%s] %s (设备: %s, 指标: %s)\n", al.Severity, al.Message, al.DeviceID, al.Metric))
+			fmt.Fprintf(&sb, "- [%s] %s (设备: %s, 指标: %s)\n", al.Severity, al.Message, al.DeviceID, al.Metric)
 		}
 	}
 
 	// 相关日志（限制 30 条）
 	if len(ctx.Logs) > 0 {
-		sb.WriteString(fmt.Sprintf("\n## 相关日志 (最多 30 条)\n"))
+		fmt.Fprintf(&sb, "\n## 相关日志 (最多 30 条)\n")
 		maxLogs := 30
 		if len(ctx.Logs) > maxLogs {
 			ctx.Logs = ctx.Logs[len(ctx.Logs)-maxLogs:]
 		}
 		for _, l := range ctx.Logs {
-			sb.WriteString(fmt.Sprintf("[%s] [%s] [%s] %s\n", l.Timestamp.Format(time.RFC3339), l.Level, l.Source, l.Message))
+			fmt.Fprintf(&sb, "[%s] [%s] [%s] %s\n", l.Timestamp.Format(time.RFC3339), l.Level, l.Source, l.Message)
 		}
 	}
 
 	// 拓扑邻居
 	if len(ctx.RelatedDev) > 0 {
-		sb.WriteString(fmt.Sprintf("\n## 拓扑邻居设备: %v\n", ctx.RelatedDev))
+		fmt.Fprintf(&sb, "\n## 拓扑邻居设备: %v\n", ctx.RelatedDev)
 	}
 	if len(ctx.NeighborTx) > 0 {
-		sb.WriteString(fmt.Sprintf("\n## 邻居设备近期事务: %v\n", ctx.NeighborTx))
+		fmt.Fprintf(&sb, "\n## 邻居设备近期事务: %v\n", ctx.NeighborTx)
 	}
 
 	// 近期任务
 	if ctx.Metrics != nil && len(ctx.Metrics.Tasks) > 0 {
-		sb.WriteString(fmt.Sprintf("\n## 该设备近期任务 (最多 10 条)\n"))
+		fmt.Fprintf(&sb, "\n## 该设备近期任务 (最多 10 条)\n")
 		maxTasks := 10
 		if len(ctx.Metrics.Tasks) > maxTasks {
 			ctx.Metrics.Tasks = ctx.Metrics.Tasks[:maxTasks]
 		}
 		for _, t := range ctx.Metrics.Tasks {
-			sb.WriteString(fmt.Sprintf("- [%s] type=%s cmd=%s status=%s\n", t.TaskID, t.Type, truncateCmd(t.Command), t.Status))
+			fmt.Fprintf(&sb, "- [%s] type=%s cmd=%s status=%s\n", t.TaskID, t.Type, truncateCmd(t.Command), t.Status)
 		}
 	}
 
@@ -223,10 +223,10 @@ func parseRootCause(content string) (*RootCause, error) {
 		// 降级：如果 LLM 返回非 JSON 格式，将其作为 description
 		return &RootCause{
 			Category:    "未知",
-			Component:     "未知",
-			Description:   content,
-			Confidence:    0.3,
-			Evidence:      []string{},
+			Component:   "未知",
+			Description: content,
+			Confidence:  0.3,
+			Evidence:    []string{},
 		}, nil
 	}
 
