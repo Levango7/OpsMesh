@@ -134,6 +134,11 @@
               <td>{{ r.port || '—' }}</td>
               <td class="muted">{{ r.source || '—' }}</td>
               <td class="muted mono">{{ r.rule }}</td>
+              <td>
+                <button class="xs danger" @click="deleteFirewallRule(r, i)" data-testid="delete-firewall-rule" title="{{ $t('common.delete') }}">
+                  <Icon name="delete" :size="12" />
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -298,7 +303,7 @@ import {
   createSystemGroup,
   deleteSystemGroup,
   addFirewallRule,
-  deleteFirewallRule,
+  deleteFirewallRule as deleteFirewallRuleApi,
   systemServiceAction,
   queryJournal,
   getTaskResult,
@@ -495,14 +500,24 @@ async function runJournalQuery() {
       } catch {
         // 结果未就绪，继续轮询。
       }
-    }
-    if (!journalResult.value) {
-      journalError.value = t('system_ops.journal_no_result')
+      if (!journalResult.value) {
+        journalError.value = t('system_ops.journal_no_result')
+      }
     }
   } catch (e) {
     journalError.value = e.j?.error || t('system_ops.journal_failed')
   } finally {
     journalLoading.value = false
+  }
+}
+
+async function deleteFirewallRule(rule) {
+  try {
+    await deleteFirewallRuleApi({ rule: rule.rule, chain: rule.chain })
+    toast.success(t('system_ops.task_dispatched'))
+    setTimeout(loadSystemInfo, 3000)
+} catch (e) {
+    error.value = e.j?.error || t('system_ops.op_failed')
   }
 }
 

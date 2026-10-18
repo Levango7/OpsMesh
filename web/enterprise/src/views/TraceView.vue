@@ -91,17 +91,17 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="t in traces" :key="t.traceID">
+          <tr v-for="trace in traces" :key="trace.traceID">
             <td>
-              <code class="trace-id">{{ t.traceID }}</code>
+              <code class="trace-id">{{ trace.traceID }}</code>
             </td>
-            <td>{{ t.service || '-' }}</td>
-            <td>{{ t.operation || '-' }}</td>
-            <td>{{ t.totalDurationMs }} ms</td>
-            <td>{{ t.spanCount }}</td>
-            <td>{{ fmtTime(t.startTimeMs) }}</td>
+            <td>{{ trace.service || '-' }}</td>
+            <td>{{ trace.operation || '-' }}</td>
+            <td>{{ trace.totalDurationMs }} ms</td>
+            <td>{{ trace.spanCount }}</td>
+            <td>{{ fmtTime(trace.startTimeMs) }}</td>
             <td>
-              <button class="xs primary" @click="selectTrace(t)" data-testid="trace-detail-btn">
+              <button class="xs primary" @click="selectTrace(trace)" data-testid="trace-detail-btn">
                 {{ $t('trace.detail') }}
               </button>
             </td>
@@ -173,7 +173,6 @@ import {
   getTrace,
   normalizeTrace,
 } from '@/api/trace'
-import { t } from '@/i18n'
 import Icon from '@/components/Icon.vue'
 import MetricsCard from '@/components/MetricsCard.vue'
 
@@ -242,10 +241,10 @@ async function searchTraces() {
     }
     const resp = await getTraces(params)
     const raw = resp.data || []
-    raw.forEach((t) => {
-      const normalized = normalizeTrace(t)
-      if (normalized) traces.push(normalized)
-    })
+raw.forEach((traceItem) => {
+    const normalized = normalizeTrace(traceItem)
+    if (normalized) traces.push(normalized)
+  })
   } catch (e) {
     servicesError.value = e.j?.error || e.s
   } finally {
