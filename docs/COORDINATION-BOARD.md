@@ -116,10 +116,10 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  docs/                                          <- ZCode  (dispatch by kilo, ddl 2026-10-27T00:00:00Z)
+  (无)
 
 TASKS:
-  T-001 <- ZCode  [open] ddl=2026-10-27T00:00:00Z note=协作板v2落地+v0.16.0归版+路线图状态修正
+  (无)
 ```
 
 ---
