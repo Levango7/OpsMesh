@@ -2,9 +2,100 @@
 
 本文件记录 OpsMesh 所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [Semantic Versioning](https://semver.org/)。
 
-> 当前最新已发布版本：`v0.15.0`（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
+> 当前最新已发布版本：`v0.16.0`（**tag 与产物于 2026-10-26 生成，发布提交见 tag 指向**；归版判据以门禁 §16 复算为准）。上一版 `v0.15.0`（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
-## [Unreleased] — 2026-10-16（TD-95 收口：镜像发布抽成复用件 _publish-image.yml 并在 main 验绿；方向① 经评估主动不做）
+## [0.16.0] — 2026-10-26（v0.15.0 之后全部改动归版：发布链复用件 TD-95 + 切流演练两批修复 + 21 域运维能力扩展 P0-P7 + AIOps/监控/GitOps/联邦/链路上线 + 协作板 v2）
+
+- **本版体量与性质**：v0.15.0 之后 8 个自然日的全部 main 提交归版——这批代码早在 10-17/18
+  就已进 main 且 CI 绿，但 CHANGELOG 一直未补登（协作通报曾托付对面补记、未见落地，
+  见 INBOX-ZCODE 第十八则）；本版归版时按产物实际补齐全部条目。
+- **对客户可见的能力增量（发布口径以本块为准）**：
+  ① **运维能力扩展 P0-P7**——控制面新增 21 个运维域（`*_ops.go`：用户/组/防火墙、
+  systemctl/journal、包管理/中间件/数据库/OLAP/时序/向量/图/负载均衡/对象存储/Harbor/
+  监控兼容/Kernel/安全 CIS 基线/虚拟化/Ansible/K8s 一键部署/SSH 互信/NTP/DNS/文件共享/
+  环境），约 105 个新 REST 端点；② **AIOps 上线**——告警触发自动根因分析 + 修复生成下发
+  agent 执行 + SSE 推送 + 自然语言运维，带 `--aiops-*` 配置旗帜与真 LLM 集成验证；
+  ③ **可观测GitOps化**——Jaeger/Tempo 链路查询 + 告警 trace 关联、Flux GitOps 仪表盘、
+  多集群联邦设备分页/检索；④ **基础设施监控**——GPU 与环境依赖采集/阈值预警/自动调优 +
+  进程 Top + Inode/IOPS；⑤ **TD-60 task 域收口**——灰度/批次记录落库（R6）+ 切流 runbook +
+  冒烟脚本；⑥ **发布链 TD-95 收口**——镜像发布抽 reusable workflow（见下方 10-16 块）。
+- **如实标注的限制**：21 个运维域默认是「查询走结构化 API、执行走 shell 模板下发」的
+  广度覆盖，深度按域实测不齐（详见各域 handler 注释与 release-notes 的能力降级清单）；
+  TD-60 阶段 2 的 auth 域切流执行仍未开始（机制就绪、等运维窗口），gpu/portal 双轨未下线；
+  device 域 netsec/federation 仍未下沉为新服务（遗留自 v0.15.0，非本版新增债）。
+- **协作板 v2（2026-10-26，本归版同批）**：多 agent 留言板扩为多线名册 + DISPATCH/BLOCKED
+  层级语义 + `docs/CLAIMS.md` 单一日志 + 门禁脚本时序重放（修 10-17 误提交的硬编码路径）。
+  明细见下方 10-26 块。
+
+## [0.16.0] — 2026-10-18（CI 门禁三红修复：lint 429 处清零 + 包数同步 + smoke 反模式 + 中间件部署接线；前端防火墙规则删除落地）
+
+- 修 `4982741`：main 因 lint **429 处**告警 + H4 门禁包数不同步 + smoke 脚本反模式 +
+  middleware deploy 接线未通而三红，全部清零后 13 腿恢复全绿。
+- 修 `705994d`：前端代码质量修复——消除 lint 警告；防火墙规则**删除**功能在 infra-console 落地（此前只有新增/查询）。
+
+## [0.16.0] — 2026-10-17（运维能力扩展 P0-P7：21 域 ~105 端点 + 基础设施运维台 infra-console + 双平台构建修复）
+
+- **控制面（`internal/controlplane/*_ops.go`，21 域）**：K8s 一键部署 / 包管理 / 中间件 /
+  数据库 / OLAP / 时序 / 向量 / 图 / 负载均衡 / 对象存储 / Harbor / 监控兼容 / Kernel /
+  安全（14 条 CIS 基线修复映射，与 compliance 引擎规则全量对齐 + 守卫防漂移）/ 虚拟化 /
+  Ansible / SSH 互信 / NTP / DNS / 文件共享 / 环境 / 用户与组 / 防火墙；Kafka 支持
+  2.x/3.x/4.x 版本感知。统一「查询走结构化 API、执行走 shell 模板下发」架构，
+  全部参数白名单/正则校验、配置写改先语法校验失败回滚、5xx 不回吐内部错误。
+- **企业前端**：新增「基础设施运维台」`/infra-console`（数据驱动 21 domain 动作目录）
+  + Windows/WSL 双平台构建修复（原生包共存）。
+- **验证**：controlplane 全量测试全绿（含 `ops_validation_test.go` 注入防护/白名单用例）；
+  前端 1139 测试绿；`docs/api-reference.md` 追加「运维能力扩展 API（P3-P7）」章节。
+
+## [0.16.0] — 2026-10-17（AIOps 上线：故障根因分析 + 智能修复生成 + 自然语言运维 + 告警引擎集成）
+
+- 告警规则命中自动触发根因分析并把生成的任务下发 store、由 agent 拉取执行；
+  SSE 推送 `rootCause` → 前端 store 缓存 → 告警卡片展示；执行历史 Tab。
+- 工程化：统计累计 + 安全检查 + 系统 prompt 固化 + `--aiops-*` flags / `OPSMESH_AIOPS_*`
+  环境变量配置旗帜 + 真 LLM 集成测试与用户验证脚本（`verify-aiops.ps1`）。
+- **机制边界（联系 TD-60/演练发现口径）**：模拟数据源在 `/ready` 与响应体如实标注
+  `source`/`simulated`——「生成曲线当观测值」一类误读有判据可查。
+
+## [0.16.0] — 2026-10-17（可观测与 GitOps：Jaeger/Tempo 链路查询 + 告警 trace 关联 + Flux 应用管理 + 多集群联邦；基础设施监控 GPU/环境依赖）
+
+- Jaeger/Tempo 链路追踪前端查询 + 告警与 trace 关联（TD-75 的"查得到"侧推进到产品面）。
+- GitOps 原生：Flux 应用管理 + GitOps 仪表盘（`b9ab5fe`）；多集群联邦：设备分页 + 检索 +
+  联邦任务状态查询（`0f8fab3`）。
+- 基础设施监控：GPU / 环境依赖采集、阈值预警、自动调优（`e62b336`/`6d84bfb`）+
+  进程 Top / Inode / IOPS 增补（`6e56432`/`6d84bfb`）。
+
+## [0.16.0] — 2026-10-17（TD-60 task 域收口：R6 批次/灰度记录落库 + 切流 runbook + 冒烟脚本 + 代理鉴权修复）
+
+- **R6 任务侧**：`canary_releases` 表 + `MySQLStore.CanaryStore` + `migrateRecordTables`
+  （tasks/schedules 之外的 batches/batch_tasks/task_results/task_logs/canary_releases 五表）——
+  此前 SQL 模式下灰度与批次记录**重启即丢**（无条件内存注入）；同批修「NewMySQLStore 缺四张
+  record 表 ⇒ 批次视图恒 404、执行结果静默不落库」（TD-68 同族，真库钉住）。
+- **同库部署路径**：控制面迁移早已建出**异形** `task_results`（缺 `duration_ms`/`claim_epoch`），
+  `CREATE TABLE IF NOT EXISTS` 静默让位 ⇒ 运行时 Unknown column；按既有 `ensureColumns` 做法补列收敛，
+  真库用例 `TestRecordTablesReconcileSharedDBShapeMySQL` 钉住。
+- **零值时间三处**：`UpdateCanary`/`SaveResult` 直传 `time.Time{}` 触发严格模式 1292 ⇒ 静默丢失，
+  已改 `nullTime` 转换；`service_proxy` 鉴权改用 `requireProd`（demo 透传）。
+- **切流运维材料**：`docs/td60-task-cutover-runbook.md` + `deploy/scripts/smoke-task-cutover.sh`——
+  整域开关 + 增量开关 + `OPSMESH_SERVICE_PROXY` 联锁 + 回退判据；与 auth 域差异：无名册、无搬号 job、无重登。
+
+
+## [0.16.0] — 2026-10-26（协作板 v2：多线名册 + CLAIMS.md 单一日志 + DISPATCH/BLOCKED 层级语义 + 门禁时序重放；路线图里程碑状态回写；归版 v0.16.0）
+
+- **协作板 v2（`d8fad52`）**：双线协议扩为多线——`kilo` 主力线（lead，唯一可发 DISPATCH）、
+  workbuddy/qoder/ZCode 机动线；旧「互投对方 INBOX」改为 `docs/CLAIMS.md` 单一追加日志 +
+  `INBOX-<线>.md` 只收定向消息；BLOCKED 必须先报不得绕道施工别的 scope；
+  `scripts/coord-gate.py` 重写：删 10-17 误提交的硬编码绝对路径（换机必报错），
+  改仓库根相对 + realpath 越界拒绝；事件按时间戳全局重放（旧档案 CLAIM 关不上新日志
+  RELEASE 的解析缺陷）；解析 DISPATCH/STATUS/BLOCKED/ROLE 并渲染 LEAD/TASKS 状态块。
+- **路线图状态回写（`8a6167b`）**：`docs/product-roadmap.md` §8.1 的 M1/M2 由「进行中」
+  回写为「已完成」（交付物均在册），M3 标「部分完成」（Vue3+SSE+buf 契约已落地、JWT 验签
+  与前端测试基线仍开放），M4 注预研进展（联邦+多集群查询）。
+- **归版 v0.16.0**：版本源 14 文件（`internal/version/version.go` 0.15.0→0.16.0、Chart/values、
+  compose 出厂、k8s deployments、gitops segment、deploy 脚本与 README、
+  `validate-deploy-assets.sh §1` 基准）；CHANGELOG 顶部引用块更新；本批全部 [0.16.0] 块
+ （含补登 10-17/18 三大块，此前 CHANGELOG 漏登）；豁免账按纪律复核（本版无豁免需求，
+  全部块随本版发货）。
+
+## [0.16.0] — 2026-10-16（TD-95 收口：镜像发布抽成复用件 _publish-image.yml 并在 main 验绿；方向① 经评估主动不做）
 
 - **Phase A（已落地 + runner 验绿）**：把 ci.yml 的 `image`/`image-agent` 两个 ~400 行镜像发布 job
   逐步骤（build→Trivy→syft SBOM→keyless cosign sign+attest→attest 自验→提权 `:<版本>`/`:latest`→digest
@@ -15,7 +106,7 @@
 - **方向① 合并 B+C（发布整体搬进 release.yml）经核代码主动不做**：release.yml 全程不吃测试，"测试全绿才发布"仅挂在 ci.yml 的 release job（needs 8 测试 job + if tag）；把发布搬进 release.yml 会拆掉这道闸（跨 workflow 不能 needs，正是本债死结）。真·自洽须反向把测试并入同一 workflow、只能靠 dry-run tag 验，ROI 不抵方向②。TD-95 由「待启动」移入「已解决」。
 - 关联设计稿 `docs/td95-unified-publisher-design-2026-10-14.md`（记录评估与形状）、协调板第九十五则。
 
-## [Unreleased] — 2026-10-14（切流演练阻断级两缺陷修复：对侧会话身份回落 + 主动改密转发还原 body；演练台回退路径补齐）
+## [0.16.0] — 2026-10-14（切流演练阻断级两缺陷修复：对侧会话身份回落 + 主动改密转发还原 body；演练台回退路径补齐）
 
 - **背景**：模拟用户团队批次 0 演练（三人设 + 协调者逐条复核，报告与证据见
   `docs/sim-team-drill-batch0-2026-10-13.md` 与 `F:\tmp\persona-*`）第 2/3 波抓到两个**阻断级**
@@ -201,7 +292,7 @@
   ② handler 有意写的 JSON 404 原样放行（修复不得篡改语义）；③ 只写 404 头不写 body 也收口。
   变异（去掉收口）⇒ 判红并打印实测 `text/plain "404 page not found"`，还原复绿。
 
-## [Unreleased] — 2026-10-14（演练台 `fault` 子命令：引擎级故障注入本机真跑通过）
+## [0.16.0] — 2026-10-14（演练台 `fault` 子命令：引擎级故障注入本机真跑通过）
 
 - **新增 `drill-batch0.sh fault [user]`**（演练报告待办 9 的"引擎级故障恢复步骤"落地为
   可重放断言）：三档——A. 按镜像名击杀 auth-svc ⇒ 名册用户 login **502（fail-closed，
@@ -221,7 +312,7 @@
   代码层已知风险点：`cutoverRouteRefresh` 转发失败时回落本地消费 ⇒ 名册用户
   401+清 Cookie（对侧故障期刷新丢会话）。下轮补 fail-closed 分支并实证。
 
-## [Unreleased] — 2026-10-14（§3.12 收口：operator 补三个作业动词——RBAC 矩阵细化，不上归属授权）
+## [0.16.0] — 2026-10-14（§3.12 收口：operator 补三个作业动词——RBAC 矩阵细化，不上归属授权）
 
 - **用户裁定（权限设计二选一的答复）**：走 **RBAC 矩阵细化**，不做基于场景/归属的
   授权。三条依据：① 本平面授权模型只有角色矩阵一份（`RolePermissions()` 是
@@ -246,7 +337,7 @@
   admin 且 adm=全量目录、handler 层 operator 取消/确认/静默均 200、operator 审批仍
   403、viewer 取消仍 403。变异（撤回三动词）⇒ 模型层与 handler 层守卫同时判红。
 
-## [Unreleased] — 2026-10-14（可见性三件收口：agent 失联可判 / 身份失败统一"请重新登录" / 零角色账号有指引）
+## [0.16.0] — 2026-10-14（可见性三件收口：agent 失联可判 / 身份失败统一"请重新登录" / 零角色账号有指引）
 
 - **§3.9 agent 列表补 lastSeen + 派生 live**：此前只回自报 `status`——agent 进程
   死了也恒 `"online"`（演练实测停机 ≥7 分钟仍 online），运维看不出"这台失联
@@ -267,7 +358,7 @@
 - **验证**：`internal/controlplane` 整包 go test 全绿、go vet 0、golangci-lint
   0 issues、gofmt 净。
 
-## [Unreleased] — 2026-10-14（§3.6+§3.7 收口：store 读故障不再伪装成凭据错误/身份消失）
+## [0.16.0] — 2026-10-14（§3.6+§3.7 收口：store 读故障不再伪装成凭据错误/身份消失）
 
 - **问题**（演练两个人设独立复现实测）：后端抖动窗口内任意账号登录 ⇒ 401
   `invalid username or password`，且失败**计入** `loginGuard` ⇒ 运维 5 次后被锁
@@ -294,14 +385,14 @@
 - **验证**：controlplane + store 全系 go test 全绿、go vet 0、golangci-lint
   0 issues、gofmt 净；真库路径（sqlstore 集成用例）以 CI services 腿为准。
 
-## [Unreleased] — 2026-10-14（§3.8 收口：两个审计端点租户口径统一——requireAuth=false 形态的越权读面消除）
+## [0.16.0] — 2026-10-14（§3.8 收口：两个审计端点租户口径统一——requireAuth=false 形态的越权读面消除）
 
 - **问题**（演练 §3.8）：`GET /api/v1/audits` 不带 tenant 参数返回**全租户**（人设实测 96 条）、`?tenant=<他租户>` 可定向读；而 `GET /api/v1/audit/events` 严格收敛调用方租户。旧的"隔离交给前置网关"前提在 **requireAuth=false**（本仓默认部署）下不成立——控制面自身仍执行 RBAC，两个端点的差异于是成为真实越权读面。
 - **裁定（两端点同口径）**：非平台租户调用者一律只看本租户（`actx.TenantID` 由 `requireTenantContext` 从令牌/头解出，客户端传什么都不看）；平台租户（`default`）保留跨租户查询能力（运维排障，与 `handleListUsers` 同策）。`/api/v1/audit/events` 与 `/api/v1/audit/export` 同步获得平台租户 `tenant=` 能力（与 `/api/v1/audits` 逐字同策）。
 - **守卫 3 条 + 变异 1/1**：非平台调用者带/不带 `?tenant=` 都只见本租户、平台保留跨租户与全租户视图、events 端点同一规则（令牌租户为唯一分支条件）。变异：把 `/api/v1/audits` 改回"仅 requireAuth 时强制" ⇒ 非平台越权用例判红。
 - **验证**：`internal/controlplane` 整包 go test 全绿（含既有 audit/tenant 用例）、go vet 0、golangci-lint 0 issues、gofmt 净。
 
-## [Unreleased] — 2026-10-14（演练移交/待办第二批：建号闭环两件 + PUT 未知键 400 + 审计 actor 不采信自称头）
+## [0.16.0] — 2026-10-14（演练移交/待办第二批：建号闭环两件 + PUT 未知键 400 + 审计 actor 不采信自称头）
 
 - **§3.2 建号透传 `mustChangePassword`**（控制面 `POST /users`）：此前请求体不收该
   字段 ⇒ 管理员经单体 HTTP 面**造不出"首登强制改密"账号**，而 auth-svc 侧支持
@@ -334,7 +425,7 @@
 - **验证**：`internal/controlplane` 整包 go test 全绿（含既有 A3 三条——注入模式
   行为不变）、go vet 0、golangci-lint 0 issues、gofmt 净。
 
-## [Unreleased] — 2026-10-14（演练移交项：auth-svc 补 `role-operator` 种子 + migrate 汇总必报丢失角色）
+## [0.16.0] — 2026-10-14（演练移交项：auth-svc 补 `role-operator` 种子 + migrate 汇总必报丢失角色）
 
 - **背景**（对侧第八十四则移交）：auth-svc 只 seed `role-admin`/`role-viewer`，而
   controlplane 预置三件套 admin/operator/viewer ⇒ 持 `role-operator` 的用户被
@@ -367,7 +458,7 @@
   cutover 包绿、双模块 build 0、双 lint（根 `.golangci.yml` / services
   `.golangci.services.yml`）0 issues、gofmt 净。
 
-## [Unreleased] — 2026-10-13（F6 接管收口：`/auth/me` 字段集收单名——切流前后同一响应形状）
+## [0.16.0] — 2026-10-13（F6 接管收口：`/auth/me` 字段集收单名——切流前后同一响应形状）
 
 - **问题**（演练批次 0 F6，原归属对侧、裁定迟未落地，本线接管）：auth-svc
   `/auth/me` 同时回 `tenantID`+`tenantId`、`userID`+`id`、`roles`+`roleIDs`
