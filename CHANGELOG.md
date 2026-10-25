@@ -33,6 +33,12 @@
   release.yml（1 处）的 `go-version` 钉版 1.26.9→1.26.10；根 go.mod `toolchain` 同步抬到
   go1.26.10（容器构建经 GOTOOLCHAIN=auto 强制补丁版标准库，产物侧同批干净）。
   workflows 属协作板禁区，本笔为安全驱动机械升版并已留痕（CLAIMS.md NOTE）。
+- **依赖漏洞三连升（2026-10-26，同上发布阻断）**：Trivy 漏洞库 10-18→10-26 刷新后
+  新命中 3 条 HIGH（与提交内容无关，库驱动红，TD-89 同族）——①根 `go.mod`
+  `github.com/klauspost/compress` v1.15.9→v1.18.7（CVE-2026-63209，字典处理整数溢出 DoS）；
+  ②③ `web/enterprise` 锁文件 `follow-redirects` 1.16.0→1.16.2
+  （CVE-2026-111755/111756，跨域重定向信息泄露；resolved 仍钉 registry.npmjs.org，
+  TD-81 纪律不破）。全量 `go build ./...` + `go mod verify` 过。
 
 ## [0.16.0] — 2026-10-18（CI 门禁三红修复：lint 429 处清零 + 包数同步 + smoke 反模式 + 中间件部署接线；前端防火墙规则删除落地）
 
