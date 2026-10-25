@@ -86,7 +86,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.10"
 
       - name: 登录 Docker Hub（提升匿名拉取配额；未配置 secrets 时自动跳过）
         if: ${{ env.DOCKERHUB_USERNAME != '' }}

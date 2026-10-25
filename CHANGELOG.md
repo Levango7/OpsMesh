@@ -26,6 +26,13 @@
 - **协作板 v2（2026-10-26，本归版同批）**：多 agent 留言板扩为多线名册 + DISPATCH/BLOCKED
   层级语义 + `docs/CLAIMS.md` 单一日志 + 门禁脚本时序重放（修 10-17 误提交的硬编码路径）。
   明细见下方 10-26 块。
+- **Go 工具链安全升版（2026-10-26，发布阻断修复）**：govulncheck 报 `crypto/x509@go1.26.9`
+  漏洞（修复版 go1.26.10；可达路径 `plugins/remote-example/main.go:154`
+  `http.Server.ListenAndServe → x509.Certificate.Verify`），security 腿自 10-26 起
+  **与提交内容无关**地红（扫描器标准库版本驱动，TD-89 同族）。修法：ci.yml（7 处）与
+  release.yml（1 处）的 `go-version` 钉版 1.26.9→1.26.10；根 go.mod `toolchain` 同步抬到
+  go1.26.10（容器构建经 GOTOOLCHAIN=auto 强制补丁版标准库，产物侧同批干净）。
+  workflows 属协作板禁区，本笔为安全驱动机械升版并已留痕（CLAIMS.md NOTE）。
 
 ## [0.16.0] — 2026-10-18（CI 门禁三红修复：lint 429 处清零 + 包数同步 + smoke 反模式 + 中间件部署接线；前端防火墙规则删除落地）
 

@@ -2,7 +2,7 @@ module github.com/Levango7/OpsMesh
 
 go 1.26.0
 
-toolchain go1.26.6
+toolchain go1.26.10
 
 require (
 	github.com/go-sql-driver/mysql v1.10.0
