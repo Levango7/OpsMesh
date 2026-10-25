@@ -467,10 +467,10 @@ Vue3 企业版为唯一主线，按以下阶段渐进增强；原生 JS 个人�
 | 里程碑 | 时间窗 | 主题 | 关键交付 | 状态 |
 |---|---|---|---|---|
 | **M0** | **2026-09-03** | **前端功能差距补齐 + 测试 + 契约 + 质量** | **企业版 13 子域 + 个人版 21 功能域全量补齐；vitest 1121 passed；eslint 0/0；API 契约 100%** | **✅ 已完成** |
-| M1 | 1–2 周 | 修复与交付补全 | 本次 修复完成、`docker-compose.yaml`、`goreleaser`、`golangci-lint` 全量门禁 | 进行中 |
-| M2 | 1 个月 | 测试与工程化基线 | 测试覆盖率 ≥ 70%、Helm Chart、前端 Phase 1 组件化与设计系统、Store 接口拆分 | 进行中 |
-| M3 | 2–3 个月 | 前端主线增强与协议标准化 | 前端 Vue 3 主线增强（SSE/类型/测试基线）、protobuf 引入、JWT 验签 | 规划中 |
-| M4 | 远期 | 规模化与生态 | K8s operator、控制面联邦、多租户 schema 隔离、ELK/Loki 集成 | 规划中 |
+| M1 | 1–2 周 | 修复与交付补全 | 本次 修复完成、`docker-compose.yaml`、`goreleaser`、`golangci-lint` 全量门禁 | ✅ 已完成（2026-10-26 回写：交付物均已落地——compose 一键栈、goreleaser 发布流水线、lint 门禁入 CI 且 14+ 模块零报点，证据链见 CHANGELOG 与 tech-debt 台账） |
+| M2 | 1 个月 | 测试与工程化基线 | 测试覆盖率 ≥ 70%、Helm Chart、前端 Phase 1 组件化与设计系统、Store 接口拆分 | ✅ 已完成（2026-10-26 回写：codecov patch≥70% 门禁在岗、Helm chart 17 模板全量、设计 tokens + 基础组件基线在册、TD-01/TD-61 Store 分包收口；覆盖率仍由门禁棘轮守住） |
+| M3 | 2–3 个月 | 前端主线增强与协议标准化 | 前端 Vue 3 主线增强（SSE/类型/测试基线）、protobuf 引入、JWT 验签 | 🟡 部分完成（2026-10-26 实测：Vue3 主线 + SSE 实时推送 + buf 单一来源契约（TD-63）+ trace 查询后端已落地；JWT 网关公钥验签与前端测试基线增强仍开放） |
+| M4 | 远期 | 规模化与生态 | K8s operator、控制面联邦、多租户 schema 隔离、ELK/Loki 集成 | 规划中（controlplane 联邦 + 多集群查询已于 v0.16 前夜部分预研，见 CHANGELOG 联邦治理块） |
 
 ### 8.2 M0 详细目标（前端功能差距补齐，2026-09-03 已完成）
 
