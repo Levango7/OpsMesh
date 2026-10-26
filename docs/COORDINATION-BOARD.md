@@ -116,7 +116,11 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  (无)
+  deploy/scripts/collect-os-package-licenses.sh  <- qoder  (ttl=8h by qoder)
+  deploy/scripts/gen-third-party-licenses.sh     <- qoder  (ttl=8h by qoder)
+  docs/license-compliance-deliverable.md         <- qoder  (ttl=8h by qoder)
+  docs/third-party-licenses-npm.md               <- qoder  (ttl=8h by qoder)
+  docs/third-party-licenses.md                   <- qoder  (ttl=8h by qoder)
 
 TASKS:
   (无)
