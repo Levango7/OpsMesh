@@ -3005,3 +3005,16 @@ tip `04cbb92` 上：TD-92 / TD-93 两行已划 `~~` 且行内自述收口，但*
 - **CLAIM 回收**：本线对 `.github/workflows/` 与 `deploy/scripts/validate-deploy-assets.sh` 的 CLAIM 随本批完成发 `[DONE]`（见 INBOX-LEVANGO）。设计稿 `docs/td95-unified-publisher-design-2026-10-14.md` 头部已标收口结论，未来若要真做单一 workflow 合并再另议。
 - **runner 中断备忘**：10-15 全天 Actions 近乎停摆（连纯文档 run 都 queued 数小时），非代码问题；把 Phase A 放 main 借 main lane 验是正确取法。
 - **取号**：本则第九十五 ⇒ 下一则第九十六；不占新 TD 号，下一可用仍是 **TD-97**。
+
+---
+
+## 2026-10-26 第九十六则（ZCode 线：协作板 v2 上线 + v0.16.0 归版发布全绿 + 三线分工落板）
+
+- **工作区恢复**：F:\Nexus\OpsMesh 于本会话经 SSH-443 重新克隆（10-14 清场后本地一直无代码，只剩留言板残骸；真源全程在远端）。幸存协调文件已备份留档。
+- **协作板 v2（d8fad52）**：双线协议扩为多线——CLAIMS.md 单一追加日志 + INBOX-<线>.md 只收定向消息 + DISPATCH/STATUS/BLOCKED 层级语义 + coord-gate.py 时序重放重写。**coord-gate.py 里 10-17 误提交的硬编码绝对路径（写死 kilo 工作区）已删**，改仓库根相对 + realpath 越界拒绝。
+- **归版 v0.16.0（3d54aa2 + tag 压 267a104）**：版本源 14 文件 0.15.0→0.16.0；CHANGELOG 折叠 10 个 [Unreleased] 块 + **补登 10-17/18 三大批漏登条目**（21 域运维能力 ~105 端点、AIOps 上线、GitOps/联邦/链路/GPU 监控、TD-60 task 收口——第十八则托付补登、一直无人落地，本版按产物补齐）；release-notes 新小节。§16 门禁 offenders=0。
+- **CI 连修三轮才绿（全是漏洞库/门禁刷新驱动的内容无关红，TD-89 同族）**：① govulncheck 报 crypto/x509@go1.26.9 有洞 ⇒ 工具链 1.26.10（ci.yml 7 处 + release.yml 1 处 + go.mod toolchain；workflows 属禁区、安全驱动机械升版已留痕）；② Trivy 库刷新新命中 3 条 HIGH ⇒ klauspost/compress v1.18.7 + follow-redirects 1.16.2；③ 许可清单门禁失配 ⇒ third-party-licenses.md 同步。修后 main 12 腿全绿。
+- **发布实证**：release run 40246622967 全绿（12 build→promote + github-release + 回核等 tag ci run 收敛自验）；Release 00:00:44Z 上线 assets=5；**本机 verify-release-artifacts.sh 0.16.0 独立复核 PASS=8 FAIL=0**（含 14/14 镜像与发布提交同 manifest digest）。CHANGELOG 顶部引用块与 release-notes 已按 v0.15.0 惯例回填发布事实。
+- **三线分工落板（72c653f）**：根目录新增 **AGENTS.md**（任何 agent 线开工自动读协议）；实测分工面——kilo 在途领地 = internal/controlplane + web/enterprise + internal/store（300+ 未提交文件，其余线不进）；qoder 引导做隔离面（其工作区为过期危险树：停 10-14 旧分支 1763d5e + 66 个未提交删除，处置三步已写 INBOX-QODER）；ZCode = 协调/归版/发布/演练。trae/agent-5vTIVD 遗留分支已删（唯一提交 35cdcb96 仅 zip 垃圾，sha 留档）。
+- **待 lead/用户裁定的三件（已投 INBOX-KILO，本线不代裁）**：① §3.6 状态码口径确认（503 fail-closed 已落地，推翻成本=两处改动+五支守卫）；② TD-89 残余=service containers 改 GHCR 镜像源（选项②，动 workflows 需双线确认）；③ 演练批次 0 重演排期（§3.12 已解锁重演前置）。
+- **取号**：本则第九十六 ⇒ 下一则第九十七；不占新 TD 号，下一可用仍是 **TD-97**。

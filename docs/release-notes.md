@@ -11,9 +11,12 @@
 的工程收口（TD-95 复用件、演练缺陷修复、协作板 v2）。**本版没有破坏性 API 变更**；
 可直接按同一部署形态滚动升级。
 
-> **发布本身**：tag `v0.16.0` 压在本归版提交上。产物核验沿用 v0.15.0 落地的流程：
-> `deploy/scripts/verify-release-artifacts.sh 0.16.0`（三态判读与「回核」红的分诊
-> 见 `docs/deployment-guide.md` 的「发布物核验」节）。
+> **发布本身（2026-10-26 回填，客户会直接撞到）**：tag `v0.16.0` 压在发布提交
+> **`267a104`** 上并已上线：GitHub Release `2026-10-26T00:00:44Z` 发布、**assets=5**
+> （`opsmesh-0.16.0-linux-amd64.tar.gz` 20.2MB / `-arm64.tar.gz` 17.9MB / 两份 SBOM json /
+> `checksums.txt`）。发布链 run `40246622967` 全绿——12 服务镜像 build→promote、
+> `github-release`、**「发布物回核」等 tag 的 ci run 收敛后自验通过**（TD-95 机制第二次实战）。
+> 产物自查仍是一条命令：`deploy/scripts/verify-release-artifacts.sh 0.16.0`。
 
 ### 客户可见的能力增量（按能力表验收时逐条对照）
 
