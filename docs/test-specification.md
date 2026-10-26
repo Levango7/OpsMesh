@@ -3,7 +3,23 @@
 > 文档版本：v1.0 · 编制日期：2026-08-17
 > 适用范围：OpsMesh 控制面（controlplane）+ Agent + Store + 前端（web/enterprise）+ CI 流水线
 > 编写依据：源码审计 + `.github/workflows/ci.yml` 实测 + `go test -cover ./...` 实测覆盖率（2026-08-17）
-> 配套文档：[architecture.md](./architecture.md)、[security-mechanism.md](./security-mechanism.md)、[tech-debt.md](./tech-debt.md)、[deployment-guide.md](./deployment-guide.md)
+> 配套文档：[architecture.md](./architecture.md)、[security-mechanism.md](./security-mechanism.md)
+
+> **2026-10-26 复核（本文件的 ✅ 是历史断言，不是现状）**：用 `internal/gates/doc_paths_gate_test.go`
+> 做了路径核对，结果三类：
+> - **已修正（文件确实搬了）**：`internal/store/memory.go` → `internal/store/memory/memory.go`（×2）、
+>   `internal/tlsutil/tls_test.go` → `internal/tlsutil/tlsutil_test.go`、
+>   `internal/notify/ssrf_test.go` → `internal/notify/egress_policy_test.go`
+>   （SSRF/loopback/metadata 拒绝对例在此，实测命中 15 处相关断言）。
+> - **对不上、因此没有硬改（改了就是编造）的 9 处**：`internal/agent/exec_test.go`（SSH 通道已不在代码里：
+>   `grep crypto/ssh` 于 `internal/agent` 命中 0）、`internal/agent/sftp_test.go`（SFTP 同样已无实现）、
+>   `internal/authctx/jwt_sign_test.go`、`internal/controlplane/authz_test.go`、
+>   `internal/controlplane/csrf_test.go`、`internal/cron/clock.go`（`FakeClock` 全仓 grep 命中 0）、
+>   `internal/grpcx/server_test.go`（bufconn 不在 grpcx 内）、`internal/store/sql_tenant_test.go`、
+>   `internal/store/sql_test.go`。它们已逐条登记进门禁的 `docPathAllow` 并写明原因——
+>   **新增漂移会判红，存量债务在代码里可见**。
+> - **结论**：在逐行重写前，测试覆盖的权威依据是代码里的 `*_test.go` 与 CI 运行结果；
+>   本文档的表格只作历史参考，不要按 ✅ 推断"现在有这个用例"。、[tech-debt.md](./tech-debt.md)、[deployment-guide.md](./deployment-guide.md)
 
 ---
 
@@ -109,7 +125,7 @@ OpsMesh 不引入 testify 等第三方断言库，统一使用标准库 `testing
 
 | 被测依赖 | mock 方式 | 位置示例 |
 |---------|----------|---------|
-| Store 接口 | 自研 fake 实现（`MemoryStore` 即生产级 fake） | `internal/store/memory.go` |
+| Store 接口 | 自研 fake 实现（`MemoryStore` 即生产级 fake） | `internal/store/memory/memory.go` |
 | HTTP 客户端 | `httptest.NewServer` 起本地服务器 | `internal/agent/grpcclient_test.go` |
 | gRPC 通道 | `bufconn.Listen` 起本地 gRPC 服务器（无端口占用） | `internal/grpcx/server_test.go` |
 | SQL 驱动 | `github.com/DATA-DOG/go-sqlmock` 拦截 SQL | `internal/store/sql_test.go` |
@@ -163,7 +179,7 @@ func TestValidateStrongPassword_Table(t *testing.T) {
 - 顶层测试默认串行（避免全局状态竞争）；子测试默认 `t.Parallel()`。
 - 共享只读夹具可在 `TestMain` 中初始化；可变状态必须每个子测试独立构造。
 - CI 启用 `-race`（见 ci.yml `build-test` job），本地跑 `go test -race ./...` 复现竞态。
-- bcrypt 在测试中降 cost：`OPSMESH_TEST_BCRYPT_COST=4`（生产仍用 cost=10，见 `internal/store/memory.go`），避免 400+ 测试每个 seedRBAC 3 次 cost=10 在 `-race` 下纯哈希 120s+ 超时。
+- bcrypt 在测试中降 cost：`OPSMESH_TEST_BCRYPT_COST=4`（生产仍用 cost=10，见 `internal/store/memory/memory.go`），避免 400+ 测试每个 seedRBAC 3 次 cost=10 在 `-race` 下纯哈希 120s+ 超时。
 
 ### 2.2 集成测试
 
@@ -565,8 +581,8 @@ export default function () {
 | 威胁 | 测试用例 | 层级 | 位置 | 状态 |
 |------|---------|------|------|------|
 | mTLS 双向校验 | agent 带客户端证书注册，无证书拒绝 | E2E (e2e-sec) | `e2e-real/security.spec.js` | ✅ |
-| mTLS 证书过期 | 注入过期 client 证书，握手失败 | 集成 | `internal/tlsutil/tls_test.go` | ✅ |
-| SSRF | webhook URL 禁内网地址（169.254.0.0/16、127.0.0.0/8） | 单元 | `internal/notify/ssrf_test.go` | ✅ |
+| mTLS 证书过期 | 注入过期 client 证书，握手失败 | 集成 | `internal/tlsutil/tlsutil_test.go` | ✅ |
+| SSRF | webhook URL 禁内网地址（169.254.0.0/16、127.0.0.0/8） | 单元 | `internal/notify/egress_policy_test.go` | ✅ |
 | SQL 注入 | 租户 ID 含 `' OR 1=1 --`，参数化查询拒绝 | 集成 | `internal/store/sql_tenant_test.go` | ✅ |
 | 越权（租户隔离） | tenant A 的 token 访问 tenant B 资源，403 | E2E (e2e-sec) | `e2e-real/security.spec.js` | ✅ |
 | 越权（垂直） | 普通用户访问 admin 接口，403 | 集成 | `internal/controlplane/authz_test.go` | ✅ |
