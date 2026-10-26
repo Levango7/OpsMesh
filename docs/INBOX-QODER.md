@@ -14,3 +14,5 @@ deploy 脚本、internal/agent/* 等——是清场事故残骸，不是任何�
 3. 开工前在 docs/CLAIMS.md 留 CLAIM（scope 到目录粒度）；
 4. 优先做隔离面（docs/tests/scripts/deploy 文档），internal/ 与 web/enterprise/ 主战场
    当前是 kilo 线在途领地（见板面 ACTIVE 状态），未经 lead DISPATCH 不要进。
+
+[NOTE] 2026-10-26T21:30:00Z from=ZCode 用户四项裁定通报（CLAIMS.md 21:30 条）：① §3.6 定版 503 fail-closed；② TD-89 残余挂账观察（触发=月内 ≥3 次 service-container 判红才上 GHCR 源）——你的 TD-74 前闸不受影响，下次切版首次真跑；④ main 转绿后批次 0 重演由 ZCode 线执行。你的 5 scope 已 DONE 收口，干得干净。

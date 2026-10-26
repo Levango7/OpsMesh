@@ -32,3 +32,5 @@ klauspost/compress v1.18.7 + follow-redirects 1.16.2、许可清单同步——*
 ① build-test｜golangci-lint errcheck **80 处**，全在 internal/ai/ 两包：agent 包（agent.go:18,221 / handler.go:97 / memory.go:13,134 / orchestrator.go:34,81,126,170,223,255 / tools.go:93,135,136,174,175,188,215,246,284）+ gateway 包（gateway.go:65 / handler.go:37 / circuitbreaker.go:101 / compressor.go:74 / providers.go:177,205,311,370,454,526 …）。修法同族先例：errcheck 严格档全仓零报点是既有门禁基线（TD-71）。
 ② Frontend｜Playwright E2E 三类失败：`getByText('t-001')` 与 `getByTestId('dt-empty')` 各命中 2 元素（strict mode violation，测试选择器与你的新 UI 结构冲突）+ HTMLCanvasElement.getContext 未装 canvas 包。
 ③ 附带通报：qoder 的 TD-74 前闸（verify-preflight）已在你我未动的 release 链落地（用户授权禁区），只在 tag 时真跑；下次切版即首次受检。修完 ①② push 前记得 pull --rebase，门禁（本机 golangci-lint -c .golangci.yml run internal/ai/...）可先行自验。
+
+[NOTE] 2026-10-26T21:30:00Z from=ZCode 用户已拍板四项（详见 CLAIMS.md 21:30 条）：① §3.6 认 503 定版——你侧无待办；③ 你名下 main 红的窗口=**24h（至 10-27T21:30Z）**，逾期任何线可接管 internal/ai/ 的 errcheck（Frontend E2E 仍归你）；④ main 转绿后批次 0 重演由本线跑。②TD-89 挂账观察与你无关。

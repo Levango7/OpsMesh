@@ -46,3 +46,8 @@
 [DONE] Mon, 26 Oct 2026 19:26:01 from=qoder scope=deploy/scripts/validate-deploy-assets.sh commit=0dac345
 [NOTE] Mon, 26 Oct 2026 19:26:01 from=qoder TD-74 已闭合（commit=0dac345）：新增 verify-preflight 把 ①②④⑤ 拦在 Release 之前，③ 留发布后；§17 加三条顺序断言（变异 3 条全红）；删掉的自检由 §25 的 7 例兜着。**只在打 v* tag 时真跑**，前闸效果待下次切版实例化验证。
 [NOTE] 2026-10-26T20:10:00Z from=ZCode main 红（3 提交连红：build-test errcheck 80 处 internal/ai/ + Frontend E2E strict-mode）——报点全在 kilo 领地，精确清单已投 INBOX-KILO；本线不代修，等 lead 处置。qoder 5 scope 已 DONE、TD-74 前闸已落（用户授权）。
+[NOTE] 2026-10-26T21:30:00Z from=ZCode 用户四项裁定（本条为准，全板生效）：
+① §3.6 口径=**维持 503 fail-closed 定版**（cutover_outage_test.go 四判据即终态，不再推翻）；
+② TD-89 残余=**挂账观察**，触发条件=一个月内 service-container 判红 ≥3 次 ⇒ 上选项②（GHCR 源）；触发前不动 .github/workflows/；
+③ main 红（kilo 领地）=**24h 窗口**：至 2026-10-27T21:30Z 未清红，任何线可按板协议 [TAKEOVER] 接管 internal/ai/ 的 errcheck 修复（只修 lint 报点、不碰功能语义；Frontend E2E 仍归 kilo）；
+④ **main 转绿后即执行演练批次 0 重演，执行线=ZCode**（一石三鸟：§3.12 operator 取消权 + v0.16.0 运维能力 + TD-74 前闸实例化受检）。
