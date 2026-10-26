@@ -1571,18 +1571,44 @@ if gr is not None and "promote" not in gr:
 # 2026-10-13 v0.14.0 实测：缺这行 ⇒ ③ 恒报「Release 不存在」（gh 无凭证 exit=4），重跑也复现
 # ——发布链上"门禁自己没凭证"被说成"没发布"，与 §19/§32.9 的事故形状撞脸，查错方向全错。
 # 这条性质与本节其余判据同源：只在打 tag 那一刻才第一次执行，常规 CI 完全看不见。
-va = jobs.get("verify-artifacts") or {}
-gh_steps = [st for st in (va.get("steps") or [])
-            if "verify-release-artifacts.sh" in str(st.get("run") or "")]
-va_gh_token = "缺失"
-if not gh_steps:
-    errs.append("verify-artifacts 里找不到运行 verify-release-artifacts.sh 的 step（本节失去比较对象）")
-for st in gh_steps:
-    env = st.get("env") or {}
-    if env.get("GH_TOKEN") or env.get("GITHUB_TOKEN"):
-        va_gh_token = "ok"
-    else:
-        errs.append("verify-release-artifacts.sh 的 step 没注入 GH_TOKEN/GITHUB_TOKEN ⇒ gh 无凭证，第 ③ 项（Release assets）恒报「不存在」")
+# TD-74（2026-10-26）之后回核分两处：发布前 verify-preflight（① ② ④ ⑤ 拦在 Release 之前）、
+# 发布后 verify-artifacts（含 ③ Release 对象与 assets）。两处共用驱动脚本 verify-artifacts-ci.sh，
+# **两处都必须注入凭据**——只查一处就会漏掉另一半（③ 无凭证时 gh exit=4，会被说成"没发布"）。
+def release_verify_token(job_name):
+    job = jobs.get(job_name) or {}
+    steps = [st for st in (job.get("steps") or [])
+             if "verify-artifacts-ci.sh" in str(st.get("run") or "")]
+    if not steps:
+        return None
+    for st in steps:
+        env = st.get("env") or {}
+        if env.get("GH_TOKEN") or env.get("GITHUB_TOKEN"):
+            return "ok"
+    return "missing"
+
+va_tokens = {}
+for jname in ("verify-preflight", "verify-artifacts"):
+    if jname not in jobs:
+        errs.append(f"缺少 job：{jname}（TD-74 要求回核分发布前/发布后两处）")
+        va_tokens[jname] = "缺job"
+        continue
+    t = release_verify_token(jname)
+    va_tokens[jname] = t or "无step"
+    if t is None:
+        errs.append(f"{jname} 里找不到运行 verify-artifacts-ci.sh 的 step（本节失去比较对象）")
+    elif t == "missing":
+        errs.append(f"{jname} 的 verify-artifacts-ci.sh step 没注入 GH_TOKEN/GITHUB_TOKEN ⇒ 第 ③ 项（Release assets）恒报「不存在」")
+
+# TD-74 的核心性质：**发布物回核必须在 Release 之前**。旧形态 github-release → verify-artifacts
+# 红在发布**之后**，客户已经看得见一个"发了版本但没有产物"的 Release，门禁只能事后喊话。
+if "github-release" in jobs and "verify-preflight" not in needs("github-release"):
+    errs.append("github-release 不再 needs verify-preflight ⇒ 回核退回发布之后（TD-74 复发的形态）")
+if "verify-preflight" in jobs and "promote" not in needs("verify-preflight"):
+    errs.append("verify-preflight 不再 needs promote ⇒ 会在 :<版本> 提权前核对 ①，必然假红或漏判")
+_pf = jobs.get("verify-preflight") or {}
+_pf_run = " ".join(str(st.get("run") or "") for st in (_pf.get("steps") or []))
+if "--pre-release" not in _pf_run:
+    errs.append("verify-preflight 没有以 --pre-release 调用回核 ⇒ ③ 会在 Release 创建前被判红，或被静默跳过而不计入 SKIP")
 
 # 串行闸：发布链必须是"同一时刻只跑一条"。两个 tag 短间隔推送时，promote 会并发重打 :latest，
 # 最终 :latest 由最后完成者而不是版本最新者决定（与 §20 里"feature 分支刻意不打 latest"同源）。
@@ -1634,7 +1660,7 @@ for r in refs:
     elif "github.sha" not in r and "GITHUB_SHA" not in r:
         errs.append(f"构建腿推送了非 :<sha> 的可变 tag（版本 tag 应交由 promote 改标）：{r}")
 
-print(f"SUMMARY build_tags={len(refs)} promote_needs={needs('promote')} gr_needs={gr} concurrency={conc_desc} va_gh_token={va_gh_token}")
+print(f"SUMMARY build_tags={len(refs)} promote_needs={needs('promote')} gr_needs={gr} concurrency={conc_desc} pf_needs={needs('verify-preflight')} va_tokens={va_tokens}")
 print("\n".join(errs))
 PY
 )"

@@ -42,18 +42,29 @@
 # 而 release run 37221272686 的 12 个 build-and-push 全是 success、直查 tag 三轮全 200。
 set -uo pipefail
 
-VER="${1:-}"
+VER=""
+PRE_RELEASE=0
+for _a in "$@"; do
+    case "$_a" in
+        --pre-release) PRE_RELEASE=1 ;;
+        -*) echo "未知选项：${_a}" >&2; exit 2 ;;
+        *) if [ -z "$VER" ]; then VER="$_a"; else echo "多余的参数：${_a}" >&2; exit 2; fi ;;
+    esac
+done
 REPO="${OPSMESH_GITHUB_REPO:-Levango7/OpsMesh}"
 NS="${OPSMESH_GHCR_NAMESPACE:-levango7}"          # GHCR 路径必须全小写（大写会被 buildx 拒）
 if [ -z "$VER" ]; then
-    echo "用法: $0 <版本号，如 0.12.0（不带 v）>" >&2
+    echo "用法: $0 <版本号，如 0.12.0（不带 v）> [--pre-release]" >&2
     exit 2
 fi
 case "$REPO" in */*) ;; *) echo "仓库需为 owner/name 形式（实际：$REPO）" >&2; exit 2 ;; esac
 
-PASS=0; FAIL=0; UNVERIFIED=0
+PASS=0; FAIL=0; UNVERIFIED=0; SKIP=0
 ok()  { printf '  [PASS] %s\n' "$*"; PASS=$((PASS+1)); }
 bad() { printf '  [FAIL] %s\n' "$*"; FAIL=$((FAIL+1)); }
+# skip() 记「本轮不适用」：既不通过也不失败，但**必须出现在结论里**——
+# 发布前回核跳过 ③ 是设计如此，把跳过混进 PASS 就等于宣称"Release 也验过了"。
+skip() { printf '  [SKIP] %s\n' "$*"; SKIP=$((SKIP+1)); }
 # unver() 记「没能核对」而不是「核对失败」：仍然非零退出（不把没验的东西当通过），
 # 但输出上与真缺陷分开——这两种红的处置动作完全相反（前者重跑/换网络，后者是发布事故）。
 unver() { printf '  [UNVERIFIED] %s\n' "$*"; UNVERIFIED=$((UNVERIFIED+1)); }
@@ -215,7 +226,12 @@ done
 [ ${#MISSING_ATT[@]} -eq 0 ] && ok "${NLEAVES} 个镜像的 :${VER} 都有 .att 证据链" || echo "         缺 .att: ${MISSING_ATT[*]-}"
 
 echo "== ③ GitHub Release v${VER} 的 assets =="
-if ! command -v gh >/dev/null 2>&1; then
+# --pre-release（发布链的发布前回核，TD-74）：此时 Release 对象**还没创建**，
+# ③ 在语义上不适用。跳过要**显式计数**（SKIP），不混进 PASS——
+# "没检查"与"检查通过"必须在结论里能区分，否则发布前那道门禁会把 ③ 的缺失藏起来。
+if [ "${PRE_RELEASE:-0}" = "1" ]; then
+    skip "③ GitHub Release（--pre-release：发布对象尚未创建，由发布后的 verify-artifacts 复核）"
+elif ! command -v gh >/dev/null 2>&1; then
     bad "本机没有 gh 命令，无法核对 Release assets（判红而不是跳过）"
 else
     # 先分诊「查得到吗」，再判「查到了什么」。原实现把 `gh release view` 的任何非零退出
@@ -427,8 +443,13 @@ echo
 echo "==================================================="
 sum="  发布物验收 ${VER}：PASS=${PASS} FAIL=${FAIL}"
 [ "$UNVERIFIED" -gt 0 ] && sum="${sum} UNVERIFIED=${UNVERIFIED}"
+[ "$SKIP" -gt 0 ] && sum="${sum} SKIP=${SKIP}"
 echo "$sum"
 echo "==================================================="
+if [ "$SKIP" -gt 0 ]; then
+    echo "  有 ${SKIP} 项本轮**不适用**（--pre-release：Release 对象尚未创建）——" >&2
+    echo "  它们由发布后的 verify-artifacts 复核，不是「验过了」。" >&2
+fi
 if [ "$UNVERIFIED" -gt 0 ]; then
     echo "  有 ${UNVERIFIED} 项**没能核对上**（GHCR 传输失败，已重试 ${GHCR_ATTEMPTS} 次）。" >&2
     echo "  它既不代表发布有缺陷、也不代表发布没问题——是「未知」。处置动作是重跑本脚本" >&2
