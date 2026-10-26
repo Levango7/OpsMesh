@@ -585,12 +585,12 @@ Vue3 企业版按里程碑持续演进；原生 JS 个人版仅维持 修复至 
 | controlplane 单包拆分 | ① 无 >500 行的单文件；② `go test ./internal/controlplane/...` 全过；③ README 功能矩阵不变 |
 | Registry 去除或强化 | 若选 A：无独立 registry 文件，消费方直接引子接口；若选 B：Registry 有明确编排/缓存职责并有单测覆盖 |
 | agent 连接健壮性 | 已具备 连接复用（见 TD-08）；✅ 断线日志分级（evictConn WARN）+ 故障指标化（`agent_grpc_conn_failures` expvar /debug/vars）已落地 |
-| 前端 SSE 契约一致 | ✅ ① `docs/sse-protocol.md` 与 `sse.go` 字段/事件名一致，有契约性单测；✅ ② 前端 `api/sse.js` 内置 `EVENT_CONTRACT` 10 种事件契约表（运行时校验 + vitest 用例），`App.vue` 已接入 SSE 事件驱动刷新 |
+| 前端 SSE 契约一致 | ✅ ① `docs/sse-protocol.md` 与 `sse.go` 字段/事件名一致，有契约性单测；✅ ② 前端 `web/enterprise/src/api/sse.js` 内置 `EVENT_CONTRACT` 10 种事件契约表（运行时校验 + vitest 用例），`App.vue` 已接入 SSE 事件驱动刷新 |
 | protobuf/JSON codec 收敛 | ① 明确留用 JSON codec 的原因已在 tech-selection §3 记录；✅ ② grpcx/codec.go 新增 deprecation 警告日志（sync.Once 仅打印一次，迁移期有效） |
 | e2e-real 真实后端 | ① `e2e-real/` 至少覆盖健康检查、登录、任务创建/取消、SSE 可见性；② CI `e2e-real` job 在 push 时通过 |
 | operator Go 版本对齐 | `operator/go.mod` 与根模块一致，`go mod tidy && go build` 通过（本迭代已落地） |
 | 安全 E2E（4.5） | ✅ 已落地：`security.spec.js` + `docker-compose.e2e-sec.yaml` + CI `e2e-sec` job（require-auth 401 / 租户越权 / 任务取消全链路 / mTLS 无证书被拒），openssl 生成 CA/server/client 证书挂载 |
-| 前端 SSE 实时推送（3.4） | ✅ 已落地：`api/sse.js`（fetch 流式客户端 + 自动重连 + 契约校验，10 种事件契约表）+ App.vue 事件驱动刷新（device_online/offline→devices、alert_new→alerts、task_status→任务列表事件总线）+ TasksView 监听刷新 + vitest 15 用例；轮询降级为断线兜底 |
+| 前端 SSE 实时推送（3.4） | ✅ 已落地：`web/enterprise/src/api/sse.js`（fetch 流式客户端 + 自动重连 + 契约校验，10 种事件契约表）+ App.vue 事件驱动刷新（device_online/offline→devices、alert_new→alerts、task_status→任务列表事件总线）+ TasksView 监听刷新 + vitest 15 用例；轮询降级为断线兜底 |
 
 ---
 

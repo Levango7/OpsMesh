@@ -45,12 +45,12 @@
 | 19 | `ci_items` | CMDB | `id` | 001 |
 | 20 | `ci_relations` | CMDB | `id` (自增) | 001 |
 | 21 | `ci_attr_templates` | CMDB | `id` (自增) | 001 |
-| 22 | `deploy_tasks` | 部署 | `id` (自增) | `deploy/sql.go` |
-| 23 | `workflow_defs` | 编排 | `id` (自增) | `orchestration/sql.go` |
-| 24 | `workflow_runs` | 编排 | `id` (自增) | `orchestration/sql.go` |
+| 22 | `deploy_tasks` | 部署 | `id` (自增) | `internal/deploy/sql.go` |
+| 23 | `workflow_defs` | 编排 | `id` (自增) | `internal/orchestration/sql.go` |
+| 24 | `workflow_runs` | 编排 | `id` (自增) | `internal/orchestration/sql.go` |
 | 25 | `os_templates` | 模板 | `id` | 001 / 003 |
 | 26 | `middleware_templates` | 模板 | `id` | 001 / 003 |
-| 27 | `log_entries` | 日志检索 | `id` (自增) | `logstore/sql.go` |
+| 27 | `log_entries` | 日志检索 | `id` (自增) | `internal/logstore/sql.go` |
 | 28 | `schema_migrations` | 迁移元 | `version` | `sql.go` 运行期 |
 | 29 | `leader_lease` | 领导权 | `id` (=1 单行) | 001 |
 | 30 | `secrets` | 密钥外置 | `id` | 007 |
@@ -489,7 +489,7 @@ erDiagram
 | `last_seen` | `DATETIME` | NULL | NULL | 最近心跳时间（`Heartbeat` 刷新） |
 | `secret` | `VARCHAR(64)` | NULL | NULL | HMAC 签名密钥（gRPC 身份绑定，注册时随机 32 字节 hex） |
 
-来源：`migrations/001_initial.sql`；`secret` 列由 `applyLegacyColumnFixups` 兼容老库补列。
+来源：`internal/store/sqlstore/migrations/001_initial.sql`；`secret` 列由 `applyLegacyColumnFixups` 兼容老库补列。
 
 #### 3.1.2 devices — 被纳管设备
 
@@ -510,7 +510,7 @@ erDiagram
 | `os` | `VARCHAR(32)` | NULL | NULL | 操作系统 |
 | `arch` | `VARCHAR(32)` | NULL | NULL | CPU 架构 |
 
-来源：`migrations/001_initial.sql`；`managed / last_result / last_result_at / retired / hostname / os / arch` 由 `applyLegacyColumnFixups` 兼容补列。
+来源：`internal/store/sqlstore/migrations/001_initial.sql`；`managed / last_result / last_result_at / retired / hostname / os / arch` 由 `applyLegacyColumnFixups` 兼容补列。
 
 #### 3.1.3 agent_logs（内存暂存，无表）
 
@@ -552,7 +552,7 @@ erDiagram
 | `approved_by` | `VARCHAR(64)` | NULL | NULL | 审批人 |
 | `approved_at` | `DATETIME` | NULL | NULL | 审批时间 |
 
-来源：`migrations/001_initial.sql` + `002_add_claim_epoch.sql`；其余列由 `applyLegacyColumnFixups` / `initSchemaExtra` 兼容补列。
+来源：`internal/store/sqlstore/migrations/001_initial.sql` + `002_add_claim_epoch.sql`；其余列由 `applyLegacyColumnFixups` / `initSchemaExtra` 兼容补列。
 
 #### 3.2.2 task_results — 任务执行结果
 
@@ -565,7 +565,7 @@ erDiagram
 | `stderr` | `MEDIUMTEXT` | NULL | NULL | 标准错误 |
 | `finished_at` | `DATETIME` | NULL | NULL | 完成时间 |
 
-来源：`migrations/001_initial.sql`。`SubmitResult` 用 `ON DUPLICATE KEY UPDATE` 幂等写入。
+来源：`internal/store/sqlstore/migrations/001_initial.sql`。`SubmitResult` 用 `ON DUPLICATE KEY UPDATE` 幂等写入。
 
 ### 3.3 告警管理领域
 
@@ -587,7 +587,7 @@ erDiagram
 | `comment` | `TEXT` | NULL | NULL | 备注 |
 | `updated_at` | `DATETIME` | NULL | NULL | 最近状态变更时间 |
 
-来源：`migrations/001_initial.sql`；M7 ack/silence 扩展列由 `applyLegacyColumnFixups` 兼容补列。
+来源：`internal/store/sqlstore/migrations/001_initial.sql`；M7 ack/silence 扩展列由 `applyLegacyColumnFixups` 兼容补列。
 
 #### 3.3.2 alert_rules — 告警规则
 
@@ -605,7 +605,7 @@ erDiagram
 | `created_at` | `DATETIME` | NULL | NULL | 创建时间 |
 | `created_by` | `VARCHAR(64)` | NULL | NULL | 创建人（M2，005 迁移补列） |
 
-来源：`migrations/001_initial.sql` + `003_legacy_tables.sql` + `005_m2_alert_governance.sql`。
+来源：`internal/store/sqlstore/migrations/001_initial.sql` + `003_legacy_tables.sql` + `005_m2_alert_governance.sql`。
 
 #### 3.3.3 alert_silences — 静默规则
 
@@ -621,7 +621,7 @@ erDiagram
 | `created_at` | `DATETIME` | NULL | NULL | 创建时间 |
 
 索引：`idx_tenant (tenant_id)`。
-来源：`migrations/005_m2_alert_governance.sql`。
+来源：`internal/store/sqlstore/migrations/005_m2_alert_governance.sql`。
 
 #### 3.3.4 notify_channels — 通知渠道
 
@@ -637,7 +637,7 @@ erDiagram
 | `updated_at` | `DATETIME` | NULL | NULL | 更新时间 |
 
 索引：`idx_tenant (tenant_id)`。
-来源：`migrations/005_m2_alert_governance.sql`。
+来源：`internal/store/sqlstore/migrations/005_m2_alert_governance.sql`。
 
 #### 3.3.5 notify_templates — 通知模板
 
@@ -654,7 +654,7 @@ erDiagram
 | `updated_at` | `DATETIME` | NULL | NULL | 更新时间 |
 
 索引：`idx_tenant (tenant_id)`。
-来源：`migrations/005_m2_alert_governance.sql`。
+来源：`internal/store/sqlstore/migrations/005_m2_alert_governance.sql`。
 
 ### 3.4 用户权限领域
 
@@ -671,7 +671,7 @@ erDiagram
 | `created_at` | `DATETIME` | NULL | NULL | 创建时间 |
 | `must_change_password` | `BOOLEAN` | NULL | 0 | 首登强制改密标记（安全债） |
 
-来源：`migrations/001_initial.sql`；`must_change_password` 由 `applyLegacyColumnFixups` 兼容补列。`seedRBAC` 预置 `admin / operator / viewer` 三用户（弱口令 + `must_change_password=1`）。
+来源：`internal/store/sqlstore/migrations/001_initial.sql`；`must_change_password` 由 `applyLegacyColumnFixups` 兼容补列。`seedRBAC` 预置 `admin / operator / viewer` 三用户（弱口令 + `must_change_password=1`）。
 
 #### 3.4.2 roles — 角色
 
@@ -683,7 +683,7 @@ erDiagram
 | `permissions` | `JSON` | NULL | NULL | 权限名数组 |
 | `created_at` | `DATETIME` | NULL | NULL | 创建时间 |
 
-来源：`migrations/001_initial.sql`。`seedRBAC` 预置 `admin / operator / viewer` 三角色。
+来源：`internal/store/sqlstore/migrations/001_initial.sql`。`seedRBAC` 预置 `admin / operator / viewer` 三角色。
 
 #### 3.4.3 permissions — 权限
 
@@ -694,7 +694,7 @@ erDiagram
 | `description` | `VARCHAR(255)` | NULL | NULL | 描述 |
 | `group_name` | `VARCHAR(64)` | NULL | NULL | 权限组（如 `device` / `task`） |
 
-来源：`migrations/001_initial.sql`。`seedRBAC` 预置 33 条权限（device/task/alert/cmdb/deploy/workflow/log/audit/user/role/federation/os/middleware/provision/k8s 共 15 组）。
+来源：`internal/store/sqlstore/migrations/001_initial.sql`。`seedRBAC` 预置 33 条权限（device/task/alert/cmdb/deploy/workflow/log/audit/user/role/federation/os/middleware/provision/k8s 共 15 组）。
 
 #### 3.4.4 refresh_tokens — 刷新令牌
 
@@ -708,7 +708,7 @@ erDiagram
 | `created_at` | `DATETIME` | NULL | NULL | 创建时间 |
 
 索引：`idx_refresh_tokens_user (user_id)`、`idx_refresh_tokens_expires (expires_at)`（由 `initSchemaExtra` 补）。
-来源：`migrations/001_initial.sql` + `003_legacy_tables.sql`。
+来源：`internal/store/sqlstore/migrations/001_initial.sql` + `003_legacy_tables.sql`。
 
 #### 3.4.5 install_tokens — 自动纳管 Install Token
 
@@ -720,7 +720,7 @@ erDiagram
 | `expires_at` | `DATETIME` | NULL | NULL | 过期时间（默认 15min） |
 | `consumed` | `BOOLEAN` | NULL | 0 | 是否已消费（原子 `UPDATE ... WHERE consumed=0` 防双消费） |
 
-来源：`migrations/001_initial.sql`。`ConsumeToken` 用原子条件 `UPDATE` + `RowsAffected==1` 消除 TOCTOU 竞态。
+来源：`internal/store/sqlstore/migrations/001_initial.sql`。`ConsumeToken` 用原子条件 `UPDATE` + `RowsAffected==1` 消除 TOCTOU 竞态。
 
 > 说明：任务书提及的 `sessions` 表当前**未持久化**，session 走 Redis（`redis_session.go`）。
 
@@ -740,7 +740,7 @@ erDiagram
 | `trace_id` | `VARCHAR(64)` | NULL | NULL | OTel 链路追踪 ID（004 迁移补列） |
 
 索引：`idx_audit_trace (trace_id)`（004 迁移）、`idx_audit_tenant_created (tenant_id, created_at DESC)`（`applyLegacyColumnFixups` 补）。
-来源：`migrations/001_initial.sql` + `004_add_audit_trace_id.sql`。
+来源：`internal/store/sqlstore/migrations/001_initial.sql` + `004_add_audit_trace_id.sql`。
 
 > 说明：任务书提及的 `audit_events` 实际表名为 `audit_log`。
 
@@ -756,7 +756,7 @@ erDiagram
 | `max_alerts` | `INT` | NOT NULL | 0 | 最大告警数（0=不限） |
 | `updated_at` | `DATETIME` | NULL | NULL | 最近变更时间 |
 
-来源：`migrations/006_quota_configs.sql`。
+来源：`internal/store/sqlstore/migrations/006_quota_configs.sql`。
 
 ### 3.7 K8s 领域
 
@@ -773,7 +773,7 @@ erDiagram
 | `created_at` | `DATETIME` | NULL | NULL | 创建时间 |
 | `updated_at` | `DATETIME` | NULL | NULL | 更新时间 |
 
-来源：`migrations/001_initial.sql`；`tenant_id` 由 `applyLegacyColumnFixups` 兼容补列。`SaveK8sCluster` 的 `ON DUPLICATE KEY UPDATE` 不更新 `tenant_id`，防 upsert 改写集群租户归属。
+来源：`internal/store/sqlstore/migrations/001_initial.sql`；`tenant_id` 由 `applyLegacyColumnFixups` 兼容补列。`SaveK8sCluster` 的 `ON DUPLICATE KEY UPDATE` 不更新 `tenant_id`，防 upsert 改写集群租户归属。
 
 ### 3.8 CMDB 领域
 
@@ -787,7 +787,7 @@ erDiagram
 | `builtin` | `BOOLEAN` | NULL | 1 | 是否内置类型 |
 | `created_at` | `DATETIME` | NULL | NULL | 创建时间 |
 
-来源：`migrations/001_initial.sql`。
+来源：`internal/store/sqlstore/migrations/001_initial.sql`。
 
 #### 3.8.2 ci_items — CI 实例
 
@@ -809,7 +809,7 @@ erDiagram
 | `created_at` | `DATETIME` | NULL | NULL | 创建时间 |
 | `updated_at` | `DATETIME` | NULL | NULL | 更新时间 |
 
-来源：`migrations/001_initial.sql`；`approval_status` 由 `applyLegacyColumnFixups` 兼容补列。
+来源：`internal/store/sqlstore/migrations/001_initial.sql`；`approval_status` 由 `applyLegacyColumnFixups` 兼容补列。
 
 #### 3.8.3 ci_relations — CI 关系
 
@@ -824,7 +824,7 @@ erDiagram
 | `created_at` | `DATETIME` | NULL | NULL | 创建时间 |
 
 唯一键：`uq_rel (source_ci_id, target_ci_id, relation_type)`。
-来源：`migrations/001_initial.sql`。
+来源：`internal/store/sqlstore/migrations/001_initial.sql`。
 
 #### 3.8.4 ci_attr_templates — CI 属性模板
 
@@ -841,7 +841,7 @@ erDiagram
 | `created_at` | `DATETIME` | NULL | NULL | 创建时间 |
 
 唯一键：`uq_tmpl (ci_type, attr_key)`。
-来源：`migrations/001_initial.sql`。
+来源：`internal/store/sqlstore/migrations/001_initial.sql`。
 
 ### 3.9 部署领域
 
@@ -926,7 +926,7 @@ erDiagram
 | `created_at` | `DATETIME` | NULL | NULL | 创建时间 |
 | `updated_at` | `DATETIME` | NULL | NULL | 更新时间 |
 
-来源：`migrations/001_initial.sql` + `003_legacy_tables.sql`。
+来源：`internal/store/sqlstore/migrations/001_initial.sql` + `003_legacy_tables.sql`。
 
 #### 3.11.2 middleware_templates — 中间件部署模板
 
@@ -943,7 +943,7 @@ erDiagram
 | `created_at` | `DATETIME` | NULL | NULL | 创建时间 |
 | `updated_at` | `DATETIME` | NULL | NULL | 更新时间 |
 
-来源：`migrations/001_initial.sql` + `003_legacy_tables.sql`。
+来源：`internal/store/sqlstore/migrations/001_initial.sql` + `003_legacy_tables.sql`。
 
 ### 3.12 日志检索领域
 
@@ -978,7 +978,7 @@ erDiagram
 | `applied_at` | `DATETIME` | NULL | NULL | 应用时间 |
 | `checksum` | `VARCHAR(64)` | NOT NULL | `''` | 迁移文件 sha256 摘要（防篡改） |
 
-来源：`internal/store/sql.go` `runMigrations` 运行期 `CREATE TABLE IF NOT EXISTS`。`checksum` 列由 `alterColumnIfMissing` 兼容老库补列。
+来源：`internal/store/sqlstore/sql.go` `runMigrations` 运行期 `CREATE TABLE IF NOT EXISTS`。`checksum` 列由 `alterColumnIfMissing` 兼容老库补列。
 
 ### 3.14 领导权领域
 
@@ -991,7 +991,7 @@ erDiagram
 | `expires_at` | `DATETIME` | NULL | NULL | 租约过期时间 |
 | `updated_at` | `DATETIME` | NULL | NULL | 最近续租时间 |
 
-来源：`migrations/001_initial.sql`。`RenewLeadership` 用 `INSERT ... ON DUPLICATE KEY UPDATE` + `IF(expires_at < now OR holder=VALUES(holder), ...)` 在单条 SQL 内完成原子抢占/续租，避免多副本并发下的 read-modify-write 竞态。
+来源：`internal/store/sqlstore/migrations/001_initial.sql`。`RenewLeadership` 用 `INSERT ... ON DUPLICATE KEY UPDATE` + `IF(expires_at < now OR holder=VALUES(holder), ...)` 在单条 SQL 内完成原子抢占/续租，避免多副本并发下的 read-modify-write 竞态。
 
 ---
 
@@ -1016,7 +1016,7 @@ erDiagram
 | `alert_silences` | `idx_tenant` | `(tenant_id)` | `005_m2_alert_governance.sql` | 按租户过滤静默规则 |
 | `notify_channels` | `idx_tenant` | `(tenant_id)` | `005_m2_alert_governance.sql` | 按租户过滤通知渠道 |
 | `notify_templates` | `idx_tenant` | `(tenant_id)` | `005_m2_alert_governance.sql` | 按租户过滤通知模板 |
-| `log_entries` | `idx_logs_tenant_created` | `(tenant_id, ts DESC)` | `logstore/sql.go` | 按租户分页检索日志 |
+| `log_entries` | `idx_logs_tenant_created` | `(tenant_id, ts DESC)` | `internal/logstore/sql.go` | 按租户分页检索日志 |
 
 ### 4.2 设计原则
 
@@ -1128,7 +1128,7 @@ WHERE status='running' AND claimed_at < NOW() - INTERVAL maxAge SECOND
 
 ### 7.1 版本化迁移框架
 
-实现位置：`internal/store/sql.go` `runMigrations`。
+实现位置：`internal/store/sqlstore/sql.go` `runMigrations`。
 
 #### 7.1.1 流程
 
@@ -1320,9 +1320,9 @@ MySQL 容器可能尚未就绪（compose 起栈时 mysql 与 controlplane 并发
 | `017_g3_devices_hostname_os_arch.sql` | `sql_devices.go` | devices/agents 基础元信息列正式化 |
 | —（运行期） | `sql.go` `runMigrations` | `schema_migrations` 表 + checksum 校验 |
 | —（兼容补丁） | `sql.go` `applyLegacyColumnFixups` + `sql_legacy.go` `initSchemaExtra` | 老库增量补列/补索引 |
-| —（独立模块） | `orchestration/sql.go` | `workflow_defs` / `workflow_runs` |
-| —（独立模块） | `deploy/sql.go` | `deploy_tasks` |
-| —（独立模块） | `logstore/sql.go` | `log_entries` |
+| —（独立模块） | `internal/orchestration/sql.go` | `workflow_defs` / `workflow_runs` |
+| —（独立模块） | `internal/deploy/sql.go` | `deploy_tasks` |
+| —（独立模块） | `internal/logstore/sql.go` | `log_entries` |
 
 ## 附录 B：领域小接口与表对应关系
 

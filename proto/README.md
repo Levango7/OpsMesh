@@ -107,7 +107,7 @@ task-svc 的 `task.proto` 是同一形态（`d=services/task-svc/api/proto/v1`�
 
 ### 漂移门禁（不需要在 CI 里装 protoc，也能判红）
 
-每个服务包的 `api/proto/v1/wire_test.go` 两条检查，实现见 `pkg/grpcwire`：
+每个服务包各有一份 api/proto/v1/wire_test.go（例如 `services/alert-svc/api/proto/v1/wire_test.go`），两条检查，实现见 `pkg/grpcwire`：
 
 1. `AssertUnaryMethodsCrossCodec(t, "opsmesh.<svc>.v1")`——用 protobuf 反射把该包
    **每一条 unary 方法**的请求与响应真过一遍 grpc 的 proto codec（bufconn 上的真

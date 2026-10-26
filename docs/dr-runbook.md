@@ -64,7 +64,7 @@
 
 ### 2.2 MySQL 定期备份（CronJob）
 
-由 Helm 模板 `templates/mysql-backup-cronjob.yaml` 渲染，启用条件：`mysql.enabled=true && controlplane.store=mysql && mysql.backup.enabled=true`。
+由 Helm 模板 `deploy/helm/opsmesh/templates/mysql-backup-cronjob.yaml` 渲染，启用条件：`mysql.enabled=true && controlplane.store=mysql && mysql.backup.enabled=true`。
 
 **关键参数**（`values.yaml` 的 `mysql.backup` 段，均有默认值）：
 

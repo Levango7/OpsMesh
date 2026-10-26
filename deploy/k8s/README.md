@@ -20,7 +20,7 @@
 ## 本样例【不】覆盖什么（与生产的差距）
 
 - **无 RBAC**：样例 Pod 运行期不访问 K8s API——`task-svc` 多副本选主默认走进程内 stub
-  （`cmd/task-svc/main.go` → `leader.NewStub()`）。控制面集群能力（`internal/k8s/client.go`）
+  （`services/task-svc/cmd/task-svc/main.go` → `leader.NewStub()`）。控制面集群能力（`internal/k8s/client.go`）
   所需 RBAC 由 Helm / 生产侧提供。原样例曾给 Pod 绑定含 `secrets` 写、`namespace` 删除的
   过权 ClusterRole，已删除。
 - **无 TLS**：仅 Kind 本地网络，生产侧由反代/网关终结 TLS。

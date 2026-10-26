@@ -972,7 +972,7 @@ curl "$CP/api/v1/tasks/<task-id>/result" -H "$AUTH" -H "X-Tenant-ID: $TENANT"
 
 ### 4.2 ServiceMonitor 配置
 
-Helm Chart 内置 `templates/servicemonitor.yaml`，开启方式：
+Helm Chart 内置 `deploy/helm/opsmesh/templates/servicemonitor.yaml`，开启方式：
 
 ```yaml
 observability:
@@ -1131,7 +1131,7 @@ kubectl apply -f opsmesh-custom-rules.yaml -n opsmesh
 Alertmanager 的配置**不读环境变量**。所以出厂链路是：
 
 - 模板：`deploy/monitoring/alertmanager.yml.template`（含占位 `__ALERT_WEBHOOK_RECEIVER__`）
-- 渲染：`deploy/scripts/deploy.sh` 的 `render_alertmanager_config()` 在 `up` 里执行，读 `.env` 的
+- 渲染：`deploy/docker/scripts/deploy.sh` 的 `render_alertmanager_config()` 在 `up` 里执行，读 `.env` 的
   `ALERT_WEBHOOK_URL` / `ALERT_WEBHOOK_BEARER`，生成 `deploy/docker/generated/alertmanager.yml`
   （权限 0600，且 `deploy/docker/generated/` 已进 `.gitignore`——里面可能有 bearer token）
 - 挂载：compose 用 `${ALERTMANAGER_CONFIG:-./generated/alertmanager.yml}` 挂进去，操作者可改指自己的文件
@@ -1498,7 +1498,7 @@ Loki/ES 后端配置保留策略：
 
 #### 6.1.1 自动备份（CronJob）
 
-Helm Chart 内置 `templates/mysql-backup-cronjob.yaml`，启用条件：`mysql.enabled=true && controlplane.store=mysql && mysql.backup.enabled=true`。
+Helm Chart 内置 `deploy/helm/opsmesh/templates/mysql-backup-cronjob.yaml`，启用条件：`mysql.enabled=true && controlplane.store=mysql && mysql.backup.enabled=true`。
 
 ```yaml:values.yaml
 mysql:
@@ -1579,7 +1579,7 @@ kubectl scale deploy opsmesh-controlplane -n opsmesh --replicas=3
 #### 6.3.1 Schema 迁移（自动，启动期）
 
 OpsMesh 的 schema 由控制面/微服务启动期自动迁移，**无需手工执行建表**。执行入口是
-`internal/store/sql.go` 的 `runMigrations()`（每个 `*SQLStore` 构造时运行；多租户模式下
+`internal/store/sqlstore/sql.go` 的 `runMigrations()`（每个 `*SQLStore` 构造时运行；多租户模式下
 每个租户 schema 各跑一次）。
 
 机制（P0-5 加固后）：

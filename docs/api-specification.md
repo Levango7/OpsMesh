@@ -1350,14 +1350,14 @@ GET / PUT / DELETE 天然幂等（同请求多次执行结果一致），无需 
 | 规范章节 | 代码事实源 | 守护测试 |
 |----------|------------|----------|
 | 1.1 路由注册 | `internal/controlplane/server_lifecycle.go` `Start()` | `endpoint_test.go` |
-| 1.3 状态码 | `internal/controlplane/server_paginate.go` `jsonError` | `handler_extra_test.go` |
+| 1.3 状态码 | `internal/controlplane/paginate/server_paginate.go` `jsonError` | `handler_extra_test.go` |
 | 2 OpenAPI | 本文档（手工维护） | 计划引入 `oapi-codegen` + CI 校验 |
 | 3 错误码 | `internal/controlplane/server_middleware.go` `recoveryMiddleware` | `server_middleware_extra_test.go` |
 | 4 认证 | `internal/authctx/authctx.go` `FromRequest` | `auth_test.go` |
 | 5 版本 | 路径前缀 `/api/v1`（全端点） | — |
-| 6 分页 | `internal/controlplane/server_paginate.go` `paginateJSONHandler` | `server_paginate_extra_test.go` |
+| 6 分页 | `internal/controlplane/paginate/server_paginate.go` `paginateJSONHandler` | `server_paginate_extra_test.go` |
 | 7 SSE | `internal/controlplane/sse.go` | `sse_contract_test.go` |
-| 8 gRPC | `proto/opsmesh/v1/registration.proto` + `internal/controlplane/grpc.go` | `grpc_test.go` + `buf breaking` |
+| 8 gRPC | `proto/opsmesh/v1/registration.proto` + `internal/controlplane/grpc/grpc.go` | `grpc_test.go` + `buf breaking` |
 | 9 限流 | `internal/controlplane/server_security.go` `rateLimitMiddleware` | `server_security_extra_test.go` |
 | 10 幂等 | 未实现（规范先行） | — |
 

@@ -227,7 +227,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | 密钥管理 | Env/File/Vault/KMS provider + 前端 SecretsView UI | 🟡 Vault/KMS 后端已实现（`internal/secrets/`）；**密钥轮转未实现**（全仓无 rotate 实现） |
 | 审计合规 | 100% 留痕 | ✅ + 6 月归档 + 导出 + 等保三级报告 |
 | 插件市场 | 🟡 资产分发（注册/下载/SHA256 校验/落盘/启停） | 🟡 同左，**但无执行层**：全仓无代码加载 `plugin.bin`，安装成功≠插件会运行（2026-10-04 复核，2026-10-07 复测仍成立）。市场条目的"装载二进制"与下面的"独立进程插件"是两条不同路径 |
-| 插件扩展（控制面钩子） | ✅ 3 个扩展点可被**独立进程插件**接管（HTTP 契约 + 清单装载：`internal/plugin/remote.go`、`internal/controlplane/plugin_remote.go`；契约与用法 `plugins/remote-example/README.md`） | ✅ 同左（本项不分版本）。两个必须写清的前提：① 需显式配 `--plugin-manifest` 并重启，默认部署不启用；② 准入类扩展点 fail-closed——插件不可达时平台配置写入会被拒 400，配套告警 `OpsMeshPluginHookFailed` |
+| 插件扩展（控制面钩子） | ✅ 3 个扩展点可被**独立进程插件**接管（HTTP 契约 + 清单装载：`internal/plugin/remote.go`、`internal/controlplane/pluginhost/remote.go`；契约与用法 `plugins/remote-example/README.md`） | ✅ 同左（本项不分版本）。两个必须写清的前提：① 需显式配 `--plugin-manifest` 并重启，默认部署不启用；② 准入类扩展点 fail-closed——插件不可达时平台配置写入会被拒 400，配套告警 `OpsMeshPluginHookFailed` |
 | 商业支持 | 社区 issue | SLA 保障 + 工单系统 + 专属技术支持 |
 
 ### 5.3 云服务

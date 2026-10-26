@@ -357,7 +357,7 @@ func (s *Server) isAdmin(actx authctx.Context) bool {
 auth 域例外的原因：auth-svc 网关是**自验 token 模型**（`bearerOrCookie` → `ValidateToken`），不读注入身份头；
 剥 Cookie 会让到达它的每个请求无凭无据恒 401（2026-10-10 双轨端到端冒烟实测，
 见 `td60-auth-data-plane-proposal.md` §9.2）。判据是**凭证只投递给凭证签发方**：
-`ForwardCookie` 仅允许 auth 域置位，由 `svcproxy/perm_catalog_test.go` 的
+`ForwardCookie` 仅允许 auth 域置位，由 `internal/controlplane/svcproxy/perm_catalog_test.go` 的
 `TestCredentialForwardingRestrictedToAuthDomain` 静态拦截其他域（带双下限防守卫空转）。
 
 #### 2.3.6 切流路由（TD-60 方案 C）的安全语义
@@ -749,7 +749,7 @@ chmod 600 "$DATA_DIR/install.token"
 而内存后端是加密的——同一份配置、两个后端、两种安全语义。修复后三条写路径（`CreateSecret`/`UpdateSecret`/`RotateSecret`）
 落库前加密，读路径（`GetSecret`）解密；`ListSecrets` 只回元数据（`SecretMeta` 无值字段），无需解密。
 
-**判据（可复跑，见 `config-svc/internal/store/mysql_integration_test.go` 与 `secret_crypto_test.go`）**：
+**判据（可复跑，见 `services/config-svc/internal/store/mysql_integration_test.go` 与 `secret_crypto_test.go`）**：
 
 - 密文必带 `enc:v1:` 前缀（集成测试直接读 `config_secrets.value` 断言，不是只看 API 返回值）；
 - **历史明文存量**（无前缀）原样放行并打告警（提示用 `RotateSecret` 轮换），轮换后即变密文——升级不打断老数据；
@@ -800,14 +800,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 ```
 
-`migrations/004_add_audit_trace_id.sql` 增加 `trace_id` 列（VARCHAR(64)，存 32 字符 hex trace_id），使审计日志可与 OTel 链路追踪/日志/SSE 事件跨域关联检索：
+`internal/store/sqlstore/migrations/004_add_audit_trace_id.sql` 增加 `trace_id` 列（VARCHAR(64)，存 32 字符 hex trace_id），使审计日志可与 OTel 链路追踪/日志/SSE 事件跨域关联检索：
 
 ```sql
 ALTER TABLE audit_log ADD COLUMN trace_id VARCHAR(64);
 CREATE INDEX idx_audit_trace ON audit_log (trace_id);
 ```
 
-`migrations/019_audit_chain.sql`（P1-3）增加哈希链列与配套表/索引：
+`internal/store/sqlstore/migrations/019_audit_chain.sql`（P1-3）增加哈希链列与配套表/索引：
 
 ```sql
 ALTER TABLE audit_log ADD COLUMN prev_hash  CHAR(64) NULL;   -- 前一行的 entry_hash（创世为空串）
@@ -871,7 +871,7 @@ CREATE TABLE audit_archive_meta (id, archived_through_id, boundary_hash, archive
 
 ### 7.7 防篡改哈希链（P1-3）
 
-「只追加」是接口层约束，DBA 或拿到库写权限的人仍可直接 `UPDATE/DELETE` 审计表。P1-3 在此基础上加了一层**可校验的哈希链**（`internal/store/sql_audit_chain.go`）：历史行被改写或删除后，校验能从行号到原因精确定位。
+「只追加」是接口层约束，DBA 或拿到库写权限的人仍可直接 `UPDATE/DELETE` 审计表。P1-3 在此基础上加了一层**可校验的哈希链**（`internal/store/sqlstore/sql_audit_chain.go`）：历史行被改写或删除后，校验能从行号到原因精确定位。
 
 **链接算法**
 
@@ -918,7 +918,7 @@ entry_hash = sha256( prev_hash ‖ H(tenant) ‖ H(user) ‖ H(action) ‖ H(tar
 
 ### 8.1 行级隔离（tenant_id）
 
-所有业务表均含 `tenant_id VARCHAR(64)` 列（`migrations/001_initial.sql`），按租户过滤：
+所有业务表均含 `tenant_id VARCHAR(64)` 列（`internal/store/sqlstore/migrations/001_initial.sql`），按租户过滤：
 
 - `Snapshot(tenantID)`、`AllTasks(tenantID)`、`Alerts(tenantID)` 等方法显式按 tenant 过滤。
 - 索引 `idx_tenant` 加速按租户过滤（`migrations/005_m2_alert_governance.sql:36`）。
@@ -955,7 +955,7 @@ entry_hash = sha256( prev_hash ‖ H(tenant) ‖ H(user) ‖ H(action) ‖ H(tar
 `QuotaManager`（`internal/controlplane/quota.go`）租户级资源配额管理：
 
 - `--quota-enabled=true` 时构造，启用后设备/任务/告警创建路径调用 `CheckDevice`/`CheckTask`/`CheckAlert` 校验是否超额。
-- 配额配置表 `quota_configs`（`migrations/006_quota_configs.sql`），按 `tenant_id` 主键。
+- 配额配置表 `quota_configs`（`internal/store/sqlstore/migrations/006_quota_configs.sql`），按 `tenant_id` 主键。
 - API 路由 `/api/v1/quotas[/{tenantID}]`，admin 可跨租户管理，非 admin 仅可查看本租户。
 - `isAdmin`（`quota.go:379`）判定 admin/role-admin 角色。
 

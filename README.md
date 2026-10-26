@@ -187,7 +187,7 @@
 | 包 | 职责 |
 |---|---|
 | `internal/platform` | 平台化业务引擎：租户管理 + API Key（`om_` 前缀 + SHA-256 hash）+ 插件市场 + 计费（计划/订阅/账单） |
-| `internal/plugin` | 插件框架：Plugin 接口 + Hook 扩展点 + HookHandler + Manager（注册/钩子触发/生命周期）+ 远程插件传输。**能力边界（2026-10-07 复测，替换 10-06 的"两件未交付"口径）**：`AllHooks()` 冻结的 3 个扩展点**都已有控制面触发点**——`platform_config.go:117`（`config.preSet`，可阻断）、`:155`（`config.postSet`，只记审计）、`server_netsec.go:103`（`task.preClaim`，可阻断），统一经 `plugin_host.go:77` 落到 `Manager.FireHook`，并由 `plugin_hook_gate_test.go` 强制"新增扩展点必须同时有触发点与测试"。**运行时模型已选定并交付：独立进程 + HTTP 契约**——传输 `internal/plugin/remote.go`，清单装载与 SSRF/令牌校验 `internal/controlplane/plugin_remote.go`，启动接线在 `internal/controlplane/server.go` 的插件宿主段（开关 `--plugin-manifest` / `OPSMESH_PLUGIN_MANIFEST`，环回插件端点需 `--plugin-allow-private`），参考实现与契约见 `plugins/remote-example/README.md`，可观测面 `opsmesh_plugin_remote_plugins` 与 `opsmesh_plugin_hook_calls_total`（按扩展点区分 ok / denied / error），出厂告警 `OpsMeshPluginHookFailed` 见 `deploy/monitoring/prometheus-alerts.yml`。仍未交付的一件：插件市场的 `plugin.bin` **无加载器**（`internal/controlplane/marketplace.go:18` 自述，全仓 `plugin.Open(` 命中 0）——那是"把二进制丢进市场就能装载"的另一件事，与上面这条路径不要混为一句宣传。⇒ "不改核心代码扩展控制面行为"现在的形状是**3 个扩展点可被外部进程接管**（需显式配清单并重启；插件不可达时准入类扩展点 fail-closed，配置写入会被拒），而不是"任意扩展点可用"，也不是"市场里的插件可装载"；立项与剩余项见 `docs/tech-debt.md` TD-62 |
+| `internal/plugin` | 插件框架：Plugin 接口 + Hook 扩展点 + HookHandler + Manager（注册/钩子触发/生命周期）+ 远程插件传输。**能力边界（2026-10-07 复测，替换 10-06 的"两件未交付"口径）**：`AllHooks()` 冻结的 3 个扩展点**都已有控制面触发点**——`platform_config.go:117`（`config.preSet`，可阻断）、`:155`（`config.postSet`，只记审计）、`server_netsec.go:103`（`task.preClaim`，可阻断），统一经 `plugin_host.go:77` 落到 `Manager.FireHook`，并由 `plugin_hook_gate_test.go` 强制"新增扩展点必须同时有触发点与测试"。**运行时模型已选定并交付：独立进程 + HTTP 契约**——传输 `internal/plugin/remote.go`，清单装载与 SSRF/令牌校验 `internal/controlplane/pluginhost/remote.go`，启动接线在 `internal/controlplane/server.go` 的插件宿主段（开关 `--plugin-manifest` / `OPSMESH_PLUGIN_MANIFEST`，环回插件端点需 `--plugin-allow-private`），参考实现与契约见 `plugins/remote-example/README.md`，可观测面 `opsmesh_plugin_remote_plugins` 与 `opsmesh_plugin_hook_calls_total`（按扩展点区分 ok / denied / error），出厂告警 `OpsMeshPluginHookFailed` 见 `deploy/monitoring/prometheus-alerts.yml`。仍未交付的一件：插件市场的 `plugin.bin` **无加载器**（`internal/controlplane/marketplace.go:18` 自述，全仓 `plugin.Open(` 命中 0）——那是"把二进制丢进市场就能装载"的另一件事，与上面这条路径不要混为一句宣传。⇒ "不改核心代码扩展控制面行为"现在的形状是**3 个扩展点可被外部进程接管**（需显式配清单并重启；插件不可达时准入类扩展点 fail-closed，配置写入会被拒），而不是"任意扩展点可用"，也不是"市场里的插件可装载"；立项与剩余项见 `docs/tech-debt.md` TD-62 |
 | `internal/extension` | API 网关引擎：路由规则匹配（PathPrefix 前缀 + 方法白名单）+ 令牌桶限流 + 网关统计聚合 |
 | `internal/gates` | 跨模块**结构性门禁**测试（包内只有测试）：扫 `services/*/cmd/*/main.go` 拦"要求 sql 却没配 DSN 就静默退内存"，扫 HPA 清单拦"引用没产出的 Pods 指标"，并对账 internal 包数与文档三处数字 |
 
@@ -447,7 +447,7 @@ Chart 要点：
 
 ### 微服务部署（可选，默认不启用）
 
-`services/` 下的微服务默认不经 Helm 部署——values 中 `services.*` 全部 `enabled: false`，`templates/microservices.yaml` 渲染为空，**存量部署行为 100% 不变**。服务镜像统一由仓库根的 `Dockerfile.service` 模板构建（`--build-arg SERVICE=<svc>`，与 `release.yml` / `deploy/docker/docker-compose.prod.yml` 同一契约；各服务目录下不再有独立 Dockerfile），全部服务均可按需单独开启：
+`services/` 下的微服务默认不经 Helm 部署——values 中 `services.*` 全部 `enabled: false`，`deploy/helm/opsmesh/templates/microservices.yaml` 渲染为空，**存量部署行为 100% 不变**。服务镜像统一由仓库根的 `Dockerfile.service` 模板构建（`--build-arg SERVICE=<svc>`，与 `release.yml` / `deploy/docker/docker-compose.prod.yml` 同一契约；各服务目录下不再有独立 Dockerfile），全部服务均可按需单独开启：
 
 ```bash
 # 开启单个微服务（键名用下划线，K8s 资源名自动转连字符：opsmesh-task-svc）
@@ -468,7 +468,7 @@ helm upgrade opsmesh ./deploy/helm/opsmesh -n opsmesh \
 
 每个启用的服务渲染 `Deployment` + `Service`（HTTP/gRPC 双端口，gRPC 缺省的服务如 aio-svc 自动省略 gRPC 端口）：
 
-- **端口对照源码**：HTTP/gRPC 端口取各服务 `pkg/config/config.go` 默认值（auth/device/task 8081/50052、alert 8080/50051、config 8083/50054、log 8080/9090、portal 8080/50051、aio 8100（纯 HTTP））。
+- **端口对照源码**：HTTP/gRPC 端口取各服务 `internal/config/config.go` 默认值（auth/device/task 8081/50052、alert 8080/50051、config 8083/50054、log 8080/9090、portal 8080/50051、aio 8100（纯 HTTP））。
 - **健康探针**：liveness/readiness 探各服务 HTTP 端口的健康路径（多数为 `/health`，log-svc 为 `/healthz`，见 `services/*/cmd/*/main.go`）。
 - **镜像来源**：release.yml 推送至 `ghcr.io/<owner>/<service>`，三连 tag：`v<version>` / `<github.sha>` / `latest`；默认 `latest`，生产用 `values-production.yaml` 的 `services` 注释示例钉 semver/digest。
 - **存储接线**：`storeEnvPrefix` 非空时渲染 `<前缀>_STORE_TYPE`；chart 全局 MySQL 可用时同步注入 `<前缀>_DSN`（与控制面同库同凭据）。log-svc 后端选择走 `LOG_SVC_BACKEND`（env），aio-svc 无存储 env。

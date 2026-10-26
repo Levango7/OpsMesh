@@ -3723,7 +3723,7 @@ Phase 1 服务台：工单管理 + SLO 管理，均按租户隔离（`X-Tenant-I
 #### SLI 指标支持集（重要）
 
 `slis[].metric` 只能是**存储里有取值路径**的指标，权威清单见
-`internal/store/slo_eval.go`（`SupportedSLIMetrics()`）：
+`internal/store/model/slo_eval.go`（`SupportedSLIMetrics()`）：
 
 | metric（含别名） | 含义 | 内存后端 | SQL 后端 |
 |---|---|---|---|
@@ -4871,7 +4871,7 @@ GetAlert/ListAlerts/AckAlert/SilenceAlert…），**没有 REST 路由**；出�
   incident 的唯一线索；换成别的值就等于"每次确认都开一个新事件"。
 - `severity` 是枚举（`critical|error|warning|info`）。ack/resolve 不填它，早先的序列化会发出
   `"severity":""`——空字符串**是非法值**而不是"字段缺省"，真实端点会判 400。现在这个键
-  在 ack/resolve 的载荷里整个不出现（`internal/notify/pagerduty_payload_contract_test.go`
+  在 ack/resolve 的载荷里整个不出现（`services/alert-svc/internal/notify/pagerduty_payload_contract_test.go`
   按"原始 JSON 里有没有这个键"断言，因为按 struct 反序列化看不出这个差别）。
 - `payload.source` 取告警的 `device_id`。它曾因读侧丢行而恒为空（见上一节），
   实测修复后带回真实设备名。

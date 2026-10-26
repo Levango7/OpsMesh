@@ -301,7 +301,11 @@ builds:
 
 ### 4.1 平台能力接口
 
-`PlatformCapability` 是 PAL 的核心接口，聚合十类平台相关能力。接口定义在 `internal/agent/platform/platform.go`，每个能力是一个 mixin 接口，OS 实现按需组合。
+`PlatformCapability` 是 PAL 的核心接口（**设计稿，尚未实现**），聚合十类平台相关能力；按设计应定义在 `internal/agent/platform/` 包内，每个能力是一个 mixin 接口，OS 实现按需组合。
+
+> 现状（2026-10-26 实测）：仓库里**没有** `PlatformCapability` 接口，也没有 `internal/agent/platform/` 包；
+> Agent 的 OS 特化目前是 build tag 分文件——`internal/agent/exec_unix.go` / `exec_other.go`、
+> `internal/agent/rlimit_unix.go` / `rlimit_other.go`。本章以下内容是**目标形态**，读代码时别按它找文件。
 
 ```go
 // 代码示例：PlatformCapability 核心接口（Go）

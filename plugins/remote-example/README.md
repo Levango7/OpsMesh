@@ -1,7 +1,7 @@
 # 独立进程插件示例（`plugins/remote-example`）
 
 这是 OpsMesh **插件运行时模型**的参考实现（`docs/tech-debt.md` TD-62 决策点 ①）。
-控制面一侧的契约代码在 `internal/plugin/remote.go`，接线在 `internal/controlplane/plugin_remote.go`。
+控制面一侧的契约代码在 `internal/plugin/remote.go`，接线在 `internal/controlplane/pluginhost/remote.go`。
 
 选"独立进程 + HTTP"而不是 Go `plugin.Open` 或 WASM 的原因写在 `internal/plugin/remote.go` 的包注释里，
 一句话版：**插件作者不需要和宿主同版本 Go、同依赖图、同平台**，而本产品本来就在交付
