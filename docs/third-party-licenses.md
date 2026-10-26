@@ -1,7 +1,7 @@
 # 第三方依赖许可证清单（自动生成，勿手改）
 
 > 生成命令：`bash deploy/scripts/gen-third-party-licenses.sh`（CI 用 `--check` 阻止文档与 go.sum 漂移）  
-> 生成时间：2026-10-09T07:04:51Z  
+> 生成时间：2026-10-26T14:34:52Z  
 > 依赖来源：根模块 + `services/*/go.mod` + `operator/go.mod` 的全部 `go.sum`（162 个 module@version）  
 > 许可证识别：读本地 Go 模块缓存里各模块自带的 LICENSE 文件，按签名表分类为常见 SPDX 名。
 
@@ -67,7 +67,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `google.golang.org/grpc` | v1.83.2 | `NOTICE.txt` |
 | `gopkg.in/yaml.v3` | v3.0.1 | `NOTICE` |
 
-## 同一模块存在多个版本（6 个）
+## 同一模块存在多个版本（7 个）
 
 上表**按模块取语义最高版本**判定许可证。以下是 `go.sum` 里同时出现多个版本的模块——
 低版本若许可证不同，本清单不会体现，故逐个列出供核对。
@@ -76,6 +76,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 
 | 模块 | go.sum 内全部版本 | 本清单判定用 |
 |---|---|---|
+| `github.com/klauspost/compress` | v1.15.9, v1.18.7 | `v1.18.7` |
 | `golang.org/x/net` | v0.58.0, v0.59.0, v0.60.0 | `v0.60.0` |
 | `golang.org/x/sync` | v0.22.0, v0.23.0 | `v0.23.0` |
 | `golang.org/x/sys` | v0.47.0, v0.48.0 | `v0.48.0` |
@@ -277,10 +278,26 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `github.com/shoenig/go-m1cpu` | v0.1.6 | 间接 |
 | `github.com/shoenig/test` | v0.6.4 | 间接 |
 
-## 基础镜像（另一条供应链线，不在此清单）
+## 基础镜像（第三条供应链：容器操作系统包）
 
-Go 依赖不等于镜像内容：镜像里还有 `FROM` 的操作系统包。见
-`Dockerfile` / `Dockerfile.agent` / `Dockerfile.service` / `deploy/docker/Dockerfile.*` 的 `FROM`
-（已钉 digest，由 Renovate 维护），以及 Trivy 扫描结果——两侧的许可证义务不同（镜像内系统包
-通常触发 GPL/LGPL 的**二进制再分发**条款，需单独结论）。
+下表是各 Dockerfile 的**运行时**基础镜像，由脚本从 `FROM` 行推导（取每个文件的最后一个 stage；
+构建期 `golang:*` / `node:*` 不进产物，故不计入）。**这一栏是推导值不是手抄**——
+10-06 的许可决策材料曾按「distroless 最省事」描述，而实际 12 个微服务镜像跑在 alpine、
+agent 镜像跑在 debian-slim 上；手写口径会落后于构建文件，推导不会。
+
+| Dockerfile | 运行时基础镜像 |
+|---|---|
+| `Dockerfile` | `gcr.io/distroless/static-debian12` |
+| `Dockerfile.agent` | `debian:bookworm-slim` |
+| `Dockerfile.service` | `alpine:3.23` |
+| `deploy/docker/Dockerfile.controlplane` | `alpine:3.23` |
+| `deploy/docker/Dockerfile.micro` | `alpine:3.23` |
+| `operator/Dockerfile` | `gcr.io/distroless/static-debian12:nonroot` |
+
+镜像内的系统包（alpine 的 busybox/apk-tools、debian 的 coreutils/bash 等）触发的是
+**二进制再分发**条款（GPL-2.0/LGPL 等），与 Go/npm 两侧结论不同：基线实测、源码获取途径
+与书面要约见 `docs/license-compliance-deliverable.md`；
+枚举命令：`bash deploy/scripts/collect-os-package-licenses.sh <镜像>`。
+
+前端 npm 包是第四条供应链，独立成文：`docs/third-party-licenses-npm.md`（本脚本同时生成）。
 

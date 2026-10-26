@@ -8,9 +8,20 @@
 #     "需法务确认"段——商用可交付性属商务+法务决定，脚本不越权替它签字。
 #
 # 用法：
-#   bash deploy/scripts/gen-third-party-licenses.sh            # 生成/覆盖 docs/third-party-licenses.md
+#   bash deploy/scripts/gen-third-party-licenses.sh            # 生成/覆盖两个清单（Go 模块 + npm 包）
 #   bash deploy/scripts/gen-third-party-licenses.sh --check    # 只比对：与已提交文档不一致即 rc=1（CI 用）
 #   bash deploy/scripts/gen-third-party-licenses.sh --emit-notice  # 汇编仓库根 NOTICE（Apache-2.0 §4(d) 上游署名）
+#
+# 两条供应链、两种证据强度（2026-10-26 补 npm 时实测）：
+#   - Go 模块：依赖集合来自 go.sum，许可证文本来自**本地模块缓存** ⇒ 缓存残缺时只能做集合对账，
+#     故 --check 用「集合相等 + 两侧都读到时判定一致 + 源码覆盖率下限」三条与环境无关的断言。
+#   - npm：依赖集合与许可证**同时**来自 web/enterprise/package-lock.json（lockfileVersion 3）。
+#     实测 357 个条目 **全部自带 license 字段**（缺 0）⇒ 清单可完全离线、确定性地生成，
+#     --check 能直接断言"集合 + 许可证"逐项一致，不需要 node_modules、也不受机器差异影响。
+#   - 容器操作系统包：**不在**本脚本内——需要拉镜像才能枚举（见 deploy/scripts/collect-os-package-licenses.sh
+#     与 docs/license-compliance-deliverable.md），本脚本只把「各 Dockerfile 的运行时基础镜像」
+#     从文件里推导出来写进清单，防止文档口径与构建文件漂移（10-06 就出现过"文档说 distroless、
+#     实际 12 个微服务镜像跑 alpine"的滞后方）。
 #
 # --check 为什么**不**做全文 diff（第一版做了，随即改掉）：
 #   许可证识别依赖本地 Go 模块缓存，CI 的缓存必然比开发机残缺 → 同一份代码在 CI 会多出
@@ -26,9 +37,11 @@ ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "$ROOT" || exit 1
 
 OUT="docs/third-party-licenses.md"
+OUT_NPM="docs/third-party-licenses-npm.md"
 MODE="${1:-gen}"
 MIN_COVERAGE_PCT="${MIN_COVERAGE_PCT:-90}"
 TMP="$(mktemp)"
+TMP_NPM="${TMP}.npm"
 
 PY=""
 for _c in python3 python; do
@@ -43,7 +56,7 @@ case "$MODE" in
     --check) CHECK_MODE=check ;;
     --emit-notice) CHECK_MODE=notice ;;
 esac
-"$PY" - "$TMP" "$CHECK_MODE" "$OUT" "$MIN_COVERAGE_PCT" <<'PYEOF'
+"$PY" - "$TMP" "$CHECK_MODE" "$OUT" "$MIN_COVERAGE_PCT" "$OUT_NPM" "$TMP_NPM" <<'PYEOF'
 import os, re, subprocess, sys, datetime, glob
 
 root = os.getcwd()
@@ -54,6 +67,128 @@ min_cov = int(sys.argv[4])    # 本轮至少要有多少百分比的模块能读
 mode = sys.argv[2]
 doc_path = sys.argv[3]
 min_cov = int(sys.argv[4])
+npm_out = sys.argv[5]         # 已提交的 npm 清单（check 模式比对对象）
+npm_tmp = sys.argv[6]         # 本轮 npm 生成结果（gen 模式由 bash 拷到 OUT_NPM）
+
+# ---------- npm 侧的固定口径 ----------
+# 许可证与版本**都来自 package-lock.json**（lockfileVersion>=3 的 packages[*].license）。
+# 为什么不用 node_modules：CI 的各腿不保证装了前端依赖，用 node_modules 会让门禁在某些腿空转；
+# 而锁文件是入库产物，任何腿读到的都是同一份 ⇒ 判据与环境无关（与 Go 侧刻意相反，原因见文件头）。
+NPM_LOCK = os.path.join(root, "web/enterprise", "package-lock.json")
+# copyleft 家族（与 Go 侧的 COPYLEFT 同源，但 npm 的 SPDX 串可能是复合表达式，故用子串匹配）
+NPM_COPYLEFT_MARKS = ("MPL", "GPL", "LGPL", "AGPL", "EPL", "CDDL", "EUPL", "CC-BY-SA", "SSPL")
+
+
+def npm_inventory():
+    """返回 {(name, version): {"license": str, "dev": bool}}；锁文件缺失返回 None。"""
+    if not os.path.exists(NPM_LOCK):
+        return None
+    import json
+    with open(NPM_LOCK, encoding="utf-8") as f:
+        d = json.load(f)
+    inv = {}
+    for path, meta in d.get("packages", {}).items():
+        if not path or "node_modules/" not in path:
+            continue                      # 根条目（"" 键）与 workspace 条目不是外部依赖
+        name = path.split("node_modules/")[-1]
+        inv[(name, meta.get("version", "?"))] = {
+            "license": meta.get("license") or "UNKNOWN",
+            "dev": bool(meta.get("dev")),
+        }
+    return inv
+
+
+def npm_doc(inv):
+    """渲染 npm 清单。分发面分「生产（进前端 bundle）」与「构建（不进产物）」两栏——
+    这不是审美问题：devDependencies 的许可证义务在"不分发"的前提下与客户无关，
+    把它们和随产物一起分发的包混在一张表里，会让义务清单失真。"""
+    prod = {k: v for k, v in inv.items() if not v["dev"]}
+    dev = {k: v for k, v in inv.items() if v["dev"]}
+    by_lic_prod, by_lic_dev = {}, {}
+    for (n, ver), meta in prod.items():
+        by_lic_prod.setdefault(meta["license"], []).append((n, ver))
+    for (n, ver), meta in dev.items():
+        by_lic_dev.setdefault(meta["license"], []).append((n, ver))
+    copyleft = sorted(
+        [(n, ver, m["license"], "生产" if not m["dev"] else "构建")
+         for (n, ver), m in inv.items()
+         if any(tag in m["license"].upper() for tag in NPM_COPYLEFT_MARKS)]
+    )
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    out = []
+    out.append("# 前端（npm）第三方依赖许可证清单（自动生成，勿手改）")
+    out.append("")
+    out.append("> 生成命令：`bash deploy/scripts/gen-third-party-licenses.sh`（CI 用 `--check` 阻止与锁文件漂移）  ")
+    out.append(f"> 生成时间：{now}  ")
+    out.append("> 依赖来源：`web/enterprise/package-lock.json`（版本与 `license` 字段**均取自锁文件**，不需要 node_modules）  ")
+    out.append(f"> 条目数：{len(inv)}（生产 {len(prod)} / 构建 {len(dev)}）  ")
+    out.append("")
+    out.append("## 本清单**不做**的事（必须人判）")
+    out.append("")
+    out.append("- 不判定「某个许可证能否随 OpsMesh 商用分发」——商务 + 法务决定。")
+    out.append("- 不区分「生产依赖里哪些代码真的进了最终 bundle」：bundler tree-shaking 可能排除部分模块，")
+    out.append("  产物级权威清单是镜像 SBOM（release.yml 的 syft 产物）与前端构建产物分析。")
+    out.append("- 复合 SPDX 表达式（如 `MIT OR Apache-2.0`）按原样列出，脚本不替客户选其中一个。")
+    out.append("")
+    out.append("## 汇总（按许可证 × 分发面）")
+    out.append("")
+    out.append("| 许可证 | 生产（进 bundle） | 构建（不进产物） |")
+    out.append("|---|---|---|")
+    for lic in sorted(set(by_lic_prod) | set(by_lic_dev),
+                      key=lambda k: (-(len(by_lic_prod.get(k, [])) + len(by_lic_dev.get(k, []))), k)):
+        out.append(f"| `{esc(lic)}` | {len(by_lic_prod.get(lic, []))} | {len(by_lic_dev.get(lic, []))} |")
+    out.append("")
+    out.append(f"## 需法务确认（{len(copyleft)} 个）")
+    out.append("")
+    if not copyleft:
+        out.append("（无：npm 侧全部条目都落在宽松许可证家族内——**这是本轮实测结论**，不是假设）")
+    else:
+        out.append("| 包 | 版本 | 许可证 | 分发面 |")
+        out.append("|---|---|---|---|")
+        for n, ver, lic, face in copyleft:
+            out.append(f"| `{esc(n)}` | `{ver}` | `{esc(lic)}` | {face} |")
+    out.append("")
+    out.append("## 生产依赖全量（随前端产物分发，许可证义务与客户相关）")
+    out.append("")
+    for lic in sorted(by_lic_prod):
+        out.append(f"### `{esc(lic)}`（{len(by_lic_prod[lic])}）")
+        out.append("")
+        out.append("| 包 | 版本 | 许可证 | 分发面 |")
+        out.append("|---|---|---|---|")
+        for n, ver in sorted(by_lic_prod[lic]):
+            out.append(f"| `{esc(n)}` | `{ver}` | `{esc(lic)}` | 生产 |")
+        out.append("")
+    out.append("## 构建依赖全量（不进交付产物，仅供供应链审查）")
+    out.append("")
+    for lic in sorted(by_lic_dev):
+        out.append(f"### `{esc(lic)}`（{len(by_lic_dev[lic])}）")
+        out.append("")
+        out.append("| 包 | 版本 | 许可证 | 分发面 |")
+        out.append("|---|---|---|---|")
+        for n, ver in sorted(by_lic_dev[lic]):
+            out.append(f"| `{esc(n)}` | `{ver}` | `{esc(lic)}` | 构建 |")
+        out.append("")
+    out.append(f"SUMMARY npm_total={len(inv)} npm_prod={len(prod)} npm_dev={len(dev)} "
+               f"npm_copyleft={len(copyleft)}")
+    out.append("")
+    return "\n".join(out) + "\n"
+
+
+def parse_npm_doc(path):
+    """回收 {(name, version): license}。行格式由本脚本固定为四列，表头/分隔行按首列名排除。"""
+    got = {}
+    for line in open(path, encoding="utf-8", errors="replace"):
+        if not line.startswith("| "):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) != 4:
+            continue
+        name, ver, lic = cells[0], cells[1], cells[2]
+        if not (name.startswith("`") and ver.startswith("`") and lic.startswith("`")):
+            continue                      # 表头与 |---| 分隔行不走这条
+        key = (name.strip("`").replace("\\|", "|"), ver.strip("`"))
+        got[key] = lic.strip("`").replace("\\|", "|")
+    return got
 
 # ---------- 1) 依赖全集：来自所有 go.sum（module + version，去掉 /go.mod 行）----------
 sums = [os.path.join(root, "go.sum")]
@@ -292,13 +427,47 @@ for lic in sorted(by_lic):
     for _, m, v, kind in sorted(by_lic[lic], key=lambda r: r[1]):
         L.append(f"| `{esc(m)}` | {v} | {kind} |")
     L.append("")
-L.append("## 基础镜像（另一条供应链线，不在此清单）")
+L.append("## 基础镜像（第三条供应链：容器操作系统包）")
 L.append("")
-L.append("Go 依赖不等于镜像内容：镜像里还有 `FROM` 的操作系统包。见")
-L.append("`Dockerfile` / `Dockerfile.agent` / `Dockerfile.service` / `deploy/docker/Dockerfile.*` 的 `FROM`")
-L.append("（已钉 digest，由 Renovate 维护），以及 Trivy 扫描结果——两侧的许可证义务不同（镜像内系统包")
-L.append("通常触发 GPL/LGPL 的**二进制再分发**条款，需单独结论）。")
+L.append("下表是各 Dockerfile 的**运行时**基础镜像，由脚本从 `FROM` 行推导（取每个文件的最后一个 stage；")
+L.append("构建期 `golang:*` / `node:*` 不进产物，故不计入）。**这一栏是推导值不是手抄**——")
+L.append("10-06 的许可决策材料曾按「distroless 最省事」描述，而实际 12 个微服务镜像跑在 alpine、")
+L.append("agent 镜像跑在 debian-slim 上；手写口径会落后于构建文件，推导不会。")
 L.append("")
+L.append("| Dockerfile | 运行时基础镜像 |")
+L.append("|---|---|")
+_base_rows = []
+for _p in sorted(glob.glob(os.path.join("**", "Dockerfile*"), recursive=True)):
+    if "node_modules" in _p:
+        continue
+    _img = None
+    for _line in open(_p, encoding="utf-8", errors="replace"):
+        _m = re.match(r"^\s*FROM\s+(\S+)", _line, re.I)
+        if _m:
+            _img = _m.group(1)
+    if _img:
+        _base_rows.append((_p.replace(os.sep, "/"), _img))
+for _rel, _img in _base_rows:
+    L.append(f"| `{_rel}` | `{_img}` |")
+if not _base_rows:
+    L.append("| （未找到 Dockerfile——判据失明，请检查工作目录） | — |")
+L.append("")
+L.append("镜像内的系统包（alpine 的 busybox/apk-tools、debian 的 coreutils/bash 等）触发的是")
+L.append("**二进制再分发**条款（GPL-2.0/LGPL 等），与 Go/npm 两侧结论不同：基线实测、源码获取途径")
+L.append("与书面要约见 `docs/license-compliance-deliverable.md`；")
+L.append("枚举命令：`bash deploy/scripts/collect-os-package-licenses.sh <镜像>`。")
+L.append("")
+L.append("前端 npm 包是第四条供应链，独立成文：`docs/third-party-licenses-npm.md`（本脚本同时生成）。")
+L.append("")
+# ---------- npm 清单（与 Go 清单同一轮生成，失败即整轮失败）----------
+# 锁文件缺失 = npm 侧的判定面不存在。这里**判红而不是跳过**：跳过会让 CI 绿着、
+# 而清单文件永远不更新（"缺了某条供应链"与"该供应链干净"必须能区分）。
+_npm_inv = npm_inventory()
+if _npm_inv is None:
+    print("[FAIL] 找不到 web/enterprise/package-lock.json —— npm 判定面不存在（判红而不是跳过）")
+    sys.exit(1)
+open(npm_tmp, "w", encoding="utf-8", newline="\n").write(npm_doc(_npm_inv))
+
 open(tmp_path, "w", encoding="utf-8", newline="\n").write("\n".join(L) + "\n")
 
 # ---------- 4) check：与环境无关的三条硬断言 ----------
@@ -405,6 +574,39 @@ if cov < min_cov:
     ok = False
     print(f"[FAIL] 源码覆盖率 {cov}% < 门禁下限 {min_cov}%：本轮等于没检查（空转绿）。"
           f" 先执行 go mod download all（含 services/* 与 operator）再重跑。")
+# ---------- npm 侧断言：集合 + 许可证逐项一致 ----------
+# 与 Go 侧不同，这里两侧数据**都来自入库文件**（锁文件 vs 已提交清单）⇒ 完全确定，
+# 不需要覆盖率下限，也不会因为机器差异产生假红/空转绿。
+_npm_fresh = npm_inventory()
+if _npm_fresh is None:
+    ok = False
+    print("[FAIL] 找不到 web/enterprise/package-lock.json —— npm 判定面缺失（判红而不是跳过）")
+elif not os.path.exists(npm_out):
+    ok = False
+    print(f"[FAIL] 缺少 {npm_out} —— npm 清单没生成（先跑不带参数的一次生成）")
+else:
+    _doc_map = parse_npm_doc(npm_out)
+    _fset, _dset = set(_npm_fresh), set(_doc_map)
+    _add, _rem = sorted(_fset - _dset), sorted(_dset - _fset)
+    if _add or _rem:
+        ok = False
+        print(f"[FAIL] npm 清单与锁文件不一致：清单缺 {len(_add)} 个、清单多 {len(_rem)} 个"
+              f"（口径：以锁文件为准）")
+        for _k in _add[:15]:
+            print(f"  + {_k[0]}@{_k[1]} ({_npm_fresh[_k]['license']})")
+        for _k in _rem[:15]:
+            print(f"  - {_k[0]}@{_k[1]} ({_doc_map[_k]})")
+    _chg = [(k, _doc_map[k], _npm_fresh[k]["license"]) for k in sorted(_fset & _dset)
+            if _doc_map[k] != _npm_fresh[k]["license"]]
+    if _chg:
+        ok = False
+        print(f"[FAIL] npm 清单里 {len(_chg)} 个包的许可证与锁文件不符")
+        for _k, _a, _b in _chg[:15]:
+            print(f"  {_k[0]}@{_k[1]}: {_a} -> {_b}")
+    if not (_add or _rem or _chg):
+        print(f"[PASS] npm 清单与锁文件一致（{len(_fset)} 个包，"
+              f"生产 {sum(1 for v in _npm_fresh.values() if not v['dev'])} 个）")
+
 if ok:
     print(f"[PASS] 依赖许可证清单与 go.sum 一致（{len(fresh)} 个模块，源码覆盖率 {cov}%）")
 sys.exit(0 if ok else 1)
@@ -415,14 +617,17 @@ PYRC=$?
 if [ "$CHECK_MODE" = "gen" ]; then
     if [ "$PYRC" != 0 ]; then
         # 生成失败时**不覆盖**已有文档：半截输出被当成"已重新生成"是最坏情形。
-        rm -f "$TMP"; echo "[FAIL] 生成失败（python rc=${PYRC}），未覆盖 $OUT"; exit 1
+        # 两个清单同一口径：要么都写，要么都不写（只更新一个会留下互相矛盾的两份清单）。
+        rm -f "$TMP" "$TMP_NPM"; echo "[FAIL] 生成失败（python rc=${PYRC}），未覆盖 $OUT / $OUT_NPM"; exit 1
     fi
     cp "$TMP" "$OUT"
-    rm -f "$TMP"
+    cp "$TMP_NPM" "$OUT_NPM"
+    rm -f "$TMP" "$TMP_NPM"
     echo "[OK] 已写入 $OUT"
+    echo "[OK] 已写入 $OUT_NPM"
     exit 0
 fi
 # check 模式：结论必须由退出码带出去。此前这里是 `rm -f "$TMP"` 收尾，
 # 末命令恒为 0 ⇒ 门禁无论判出什么都绿灯（本机故障注入实测抓到，见报告 §23）。
-rm -f "$TMP"
+rm -f "$TMP" "$TMP_NPM"
 exit "$PYRC"
