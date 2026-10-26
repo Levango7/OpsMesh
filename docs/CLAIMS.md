@@ -40,3 +40,8 @@
 [CLAIM] Mon, 26 Oct 2026 19:25:35 from=qoder ttl=4h scope=deploy/scripts/verify-artifacts-ci.sh
 [CLAIM] Mon, 26 Oct 2026 19:25:35 from=qoder ttl=4h scope=deploy/scripts/validate-deploy-assets.sh
 [NOTE] Mon, 26 Oct 2026 19:25:35 from=qoder 用户 2026-10-26 直接授权做 TD-74（发布物回核前置）：按 AGENTS.md 禁区条款该目录需用户开口，本次即该授权；只改 release.yml 的发布链顺序与回核调用，不动 build/promote/签名逻辑。
+[DONE] Mon, 26 Oct 2026 19:26:01 from=qoder scope=.github/workflows/ commit=0dac345
+[DONE] Mon, 26 Oct 2026 19:26:01 from=qoder scope=deploy/scripts/verify-release-artifacts.sh commit=0dac345
+[DONE] Mon, 26 Oct 2026 19:26:01 from=qoder scope=deploy/scripts/verify-artifacts-ci.sh commit=0dac345
+[DONE] Mon, 26 Oct 2026 19:26:01 from=qoder scope=deploy/scripts/validate-deploy-assets.sh commit=0dac345
+[NOTE] Mon, 26 Oct 2026 19:26:01 from=qoder TD-74 已闭合（commit=0dac345）：新增 verify-preflight 把 ①②④⑤ 拦在 Release 之前，③ 留发布后；§17 加三条顺序断言（变异 3 条全红）；删掉的自检由 §25 的 7 例兜着。**只在打 v* tag 时真跑**，前闸效果待下次切版实例化验证。
